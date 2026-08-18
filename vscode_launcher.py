@@ -30,6 +30,7 @@ from pathlib import Path
 
 def main():
     """VSCode专用启动器 - 静默启动GUI"""
+    os.chdir(Path(__file__).resolve().parent)
     
     # 添加静默模式参数
     if '--silent' not in sys.argv and '--gui' not in sys.argv:

@@ -5,11 +5,13 @@ import pyvisa
 import time
 from typing import Dict, List, Union, Optional
 from enum import Enum
+from project_paths import CONFIG_FILE, resolve_path
 
 
 class InstrumentControl:
-    def __init__(self, config_path: str = "config.json"):
+    def __init__(self, config_path=None):
         """初始化仪器控制类"""
+        config_path = resolve_path(config_path, CONFIG_FILE)
         with open(config_path, 'r') as f:
             self.config = json.load(f)
 

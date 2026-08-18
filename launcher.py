@@ -9,6 +9,8 @@ import subprocess
 from pathlib import Path
 import json
 
+PROJECT_ROOT = Path(__file__).resolve().parent
+
 def print_header():
     """打印标题"""
     print("=" * 60)
@@ -111,7 +113,7 @@ def launch_gui_version(version, packages, silent=False):
     if version == 'enhanced':
         try:
             # 启动增强版GUI
-            if Path("enhanced_main_gui.py").exists():
+            if (PROJECT_ROOT / "enhanced_main_gui.py").exists():
                 if not silent:
                     print("   使用文件: enhanced_main_gui.py")
                 import enhanced_main_gui
@@ -163,6 +165,12 @@ def show_installation_guide(packages, silent=False):
 def main():
     """主函数"""
     try:
+        # Windows 默认控制台可能使用 GBK，确保启动检查信息可正常输出。
+        for stream in (sys.stdout, sys.stderr):
+            if hasattr(stream, 'reconfigure'):
+                stream.reconfigure(encoding='utf-8', errors='replace')
+        # 兼容现有模块中的相对路径调用，统一从项目根目录运行。
+        os.chdir(PROJECT_ROOT)
         # 检查是否为静默模式（GUI模式）
         silent_mode = '--silent' in sys.argv or '--gui' in sys.argv
         

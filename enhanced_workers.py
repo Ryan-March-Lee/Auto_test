@@ -13,12 +13,13 @@ from instrument_control import InstrumentControl
 from cable_loss_measurement import CableLossMeasurement
 from driver_power_mapping import DriverPowerMapping
 from amplifier_measurement import AmplifierMeasurement
+from project_paths import CONFIG_FILE, resolve_path
 
 
 class EnhancedCableLossMeasurement(CableLossMeasurement):
     """增强的线损测量类，支持进度和消息回调，支持分步骤测量"""
     
-    def __init__(self, config_path: str = "config.json", progress_callback=None, message_callback=None):
+    def __init__(self, config_path=None, progress_callback=None, message_callback=None):
         super().__init__(config_path)
         self.progress_callback = progress_callback
         self.message_callback = message_callback
@@ -133,7 +134,7 @@ class EnhancedCableLossMeasurement(CableLossMeasurement):
 class EnhancedDriverPowerMapping(DriverPowerMapping):
     """增强的驱动映射类，支持实时数据更新"""
     
-    def __init__(self, config_path: str = "config.json", loss_data_path: str = "cable_loss_results.json",
+    def __init__(self, config_path=None, loss_data_path=None,
                  progress_callback=None, message_callback=None, data_callback=None):
         super().__init__(config_path, loss_data_path)
         self.progress_callback = progress_callback
@@ -255,7 +256,7 @@ class EnhancedDriverPowerMapping(DriverPowerMapping):
 class EnhancedAmplifierMeasurement(AmplifierMeasurement):
     """增强的功放测量类，支持实时数据更新"""
     
-    def __init__(self, config_path: str = "config.json", loss_data_path: str = "cable_loss_results.json",
+    def __init__(self, config_path=None, loss_data_path=None,
                  driver_mapping_path: Optional[str] = None, progress_callback=None, 
                  message_callback=None, data_callback=None):
         super().__init__(config_path, loss_data_path, driver_mapping_path)
@@ -480,9 +481,9 @@ class WorkerSignals(QObject):
 class InstrumentWorker(QThread):
     """仪器连接工作线程"""
     
-    def __init__(self, config_path: str = "config.json"):
+    def __init__(self, config_path=None):
         super().__init__()
-        self.config_path = config_path
+        self.config_path = resolve_path(config_path, CONFIG_FILE)
         self.signals = WorkerSignals()
         
     def run(self):

@@ -6,13 +6,15 @@ from typing import Dict, List, Optional
 import time
 from datetime import datetime
 from instrument_control import InstrumentControl
+from project_paths import CABLE_LOSS_FILE, CONFIG_FILE, PROJECT_ROOT, resolve_path
 # from mock_instrument_control import MockInstrumentControl as InstrumentControl
 
 
 class DriverPowerMapping:
-    def __init__(self, config_path: str = "config.json", 
-                 loss_data_path: str = "cable_loss_results.json"):
+    def __init__(self, config_path=None, loss_data_path=None):
         """初始化驱动功放功率映射测量类"""
+        config_path = resolve_path(config_path, CONFIG_FILE)
+        loss_data_path = resolve_path(loss_data_path, CABLE_LOSS_FILE)
         with open(config_path, 'r') as f:
             self.config = json.load(f)
             
@@ -96,7 +98,7 @@ class DriverPowerMapping:
     def save_results(self):
         """保存功率映射测量结果"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f'driver_power_mapping_{timestamp}.json'
+        filename = PROJECT_ROOT / f'driver_power_mapping_{timestamp}.json'
         
         results = {
             'measurement_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),

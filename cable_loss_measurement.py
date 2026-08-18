@@ -4,15 +4,17 @@ import json
 import time
 from typing import Dict
 from instrument_control import InstrumentControl
+from project_paths import CABLE_LOSS_FILE, CONFIG_FILE, resolve_path
 # from mock_instrument_control import MockInstrumentControl as InstrumentControl
 
 class CableLossMeasurement:
-    def __init__(self, config_path: str = "config.json"):
+    def __init__(self, config_path=None):
         """初始化线损测量类
 
         Args:
             config_path: 配置文件路径
         """
+        config_path = resolve_path(config_path, CONFIG_FILE)
         with open(config_path, 'r') as f:
             self.config = json.load(f)
 
@@ -108,7 +110,7 @@ class CableLossMeasurement:
             'cable_losses': {str(k): v for k, v in self.cable_losses.items()}  # 确保key是字符串
         }
 
-        filename = 'cable_loss_results.json'
+        filename = CABLE_LOSS_FILE
         with open(filename, 'w') as f:
             json.dump(results, f, indent=4)
         print(f"\n线损测量结果已保存至 '{filename}'")

@@ -9,6 +9,7 @@ import pandas as pd
 from datetime import datetime
 import seaborn as sns
 from pathlib import Path
+from project_paths import PROJECT_ROOT, TEST_RESULTS_DIR
 
 # --- MODIFIED: Define font properties globally for easy access ---
 # 确保你的系统中有这些字体文件，并且路径正确
@@ -33,7 +34,7 @@ class DataVisualization:
         plt.rcParams['font.serif'] = ['Times New Roman'] + plt.rcParams['font.serif']
 
         plt.rcParams['axes.unicode_minus'] = False
-        self.output_dir = Path('test_results') / datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.output_dir = TEST_RESULTS_DIR / datetime.now().strftime("%Y%m%d_%H%M%S")
         self.output_dir.mkdir(parents=True, exist_ok=True)
         sns.set_style("whitegrid")
         sns.set_context("notebook", font_scale=1.2)
@@ -351,7 +352,7 @@ class DataVisualization:
 def main():
     try:
         visualizer = DataVisualization()
-        dut_files = sorted(Path('.').glob('amplifier_measurement_*.json'), key=Path.stat)
+        dut_files = sorted(PROJECT_ROOT.glob('amplifier_measurement_*.json'), key=Path.stat)
         if not dut_files:
             print("错误: 未找到任何 'amplifier_measurement_*.json' 文件进行可视化。")
             return

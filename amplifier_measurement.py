@@ -7,6 +7,7 @@ import time
 from datetime import datetime
 from instrument_control import InstrumentControl 
 from pathlib import Path
+from project_paths import CABLE_LOSS_FILE, CONFIG_FILE, PROJECT_ROOT, resolve_path
 
 
 # --- ADDED: Custom JSON Encoder to handle NumPy types ---
@@ -26,10 +27,12 @@ class NumpyJSONEncoder(json.JSONEncoder):
         return super(NumpyJSONEncoder, self).default(obj)
 
 class AmplifierMeasurement:
-    def __init__(self, config_path: str = "config.json",
-                 loss_data_path: str = "cable_loss_results.json",
+    def __init__(self, config_path=None,
+                 loss_data_path=None,
                  driver_mapping_path: Optional[str] = None):
         """初始化主功放测量类"""
+        config_path = resolve_path(config_path, CONFIG_FILE)
+        loss_data_path = resolve_path(loss_data_path, CABLE_LOSS_FILE)
         with open(config_path, 'r') as f:
             self.config = json.load(f)
 
@@ -40,7 +43,7 @@ class AmplifierMeasurement:
 
         if self.config['driver_mode']['enabled']:
             if driver_mapping_path is None:
-                driver_files = sorted(Path('.').glob('driver_power_mapping_*.json'), key=lambda p: p.stat().st_mtime)
+                driver_files = sorted(PROJECT_ROOT.glob('driver_power_mapping_*.json'), key=lambda p: p.stat().st_mtime)
                 if not driver_files:
                     raise FileNotFoundError("驱动模式已开启，但未找到任何 'driver_power_mapping_*.json' 文件!")
                 driver_mapping_path = str(driver_files[-1])
@@ -249,7 +252,7 @@ class AmplifierMeasurement:
     def save_results(self):
         """保存测量结果"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f'amplifier_measurement_{timestamp}.json'
+        filename = PROJECT_ROOT / f'amplifier_measurement_{timestamp}.json'
 
         results = {
             'measurement_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),

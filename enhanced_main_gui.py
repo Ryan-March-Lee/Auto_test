@@ -54,6 +54,15 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 from llm import LLMChat
+from project_paths import (
+    CABLE_LOSS_FILE,
+    CHAT_HISTORY_FILE,
+    CONFIG_FILE,
+    ICONS_DIR,
+    PROJECT_ROOT,
+    SEARCH_API_CONFIG_FILE,
+    TEST_RESULTS_DIR,
+)
 
 
 class ChatWorker(QThread):
@@ -119,10 +128,10 @@ class ChatHistoryDialog(QDialog):
             from datetime import datetime
             
             # 查找所有历史文件
-            history_files = glob.glob("chat_history_*.json")
+            history_files = [str(path) for path in PROJECT_ROOT.glob("chat_history_*.json")]
             
             # 添加当前活动对话
-            if os.path.exists("chat_history.json"):
+            if CHAT_HISTORY_FILE.exists():
                 self.history_list.addItem("📝 当前对话")
             
             # 添加已保存的历史文件
@@ -167,7 +176,7 @@ class ChatHistoryDialog(QDialog):
                 # 返回当前对话历史
                 try:
                     import json
-                    with open("chat_history.json", 'r', encoding='utf-8') as f:
+                    with open(CHAT_HISTORY_FILE, 'r', encoding='utf-8') as f:
                         return json.load(f)
                 except:
                     return []
@@ -350,7 +359,7 @@ class ChatSettingsDialog(QDialog):
     def load_search_config(self):
         """加载搜索API配置"""
         try:
-            config_file = "search_api_config.json"
+            config_file = SEARCH_API_CONFIG_FILE
             if os.path.exists(config_file):
                 with open(config_file, 'r', encoding='utf-8') as f:
                     config = json.load(f)
@@ -370,7 +379,7 @@ class ChatSettingsDialog(QDialog):
                 'note': "请在此配置您的搜索API密钥。如果不配置，将使用DuckDuckGo免费搜索（功能有限）。"
             }
             
-            with open("search_api_config.json", 'w', encoding='utf-8') as f:
+            with open(SEARCH_API_CONFIG_FILE, 'w', encoding='utf-8') as f:
                 json.dump(config, f, ensure_ascii=False, indent=2)
             
             # 更新Function Handler的API配置
@@ -435,7 +444,7 @@ class ChatPanel(QWidget):
         
         # 新对话按钮
         self.new_chat_btn = QPushButton()
-        self.new_chat_btn.setIcon(QIcon("icons/plus.png"))
+        self.new_chat_btn.setIcon(QIcon(str(ICONS_DIR / "plus.png")))
         self.new_chat_btn.setIconSize(QSize(23, 23))
         self.new_chat_btn.setMaximumSize(30, 30)
         self.new_chat_btn.setToolTip("开始新对话")
@@ -457,7 +466,7 @@ class ChatPanel(QWidget):
         
         # 历史记录按钮
         self.history_btn = QPushButton()
-        self.history_btn.setIcon(QIcon("icons/history.png"))
+        self.history_btn.setIcon(QIcon(str(ICONS_DIR / "history.png")))
         self.history_btn.setIconSize(QSize(13, 13))
         self.history_btn.setMaximumSize(30, 30)
         self.history_btn.setToolTip("查看历史对话")
@@ -479,7 +488,7 @@ class ChatPanel(QWidget):
         
         # 设置按钮
         self.settings_btn = QPushButton()
-        self.settings_btn.setIcon(QIcon("icons/setting.png"))
+        self.settings_btn.setIcon(QIcon(str(ICONS_DIR / "setting.png")))
         self.settings_btn.setIconSize(QSize(20, 20))
         self.settings_btn.setMaximumSize(30, 30)
         self.settings_btn.setToolTip("设置")
@@ -501,7 +510,7 @@ class ChatPanel(QWidget):
         
         # 关闭按钮
         close_btn = QPushButton()
-        close_btn.setIcon(QIcon("icons/close.png"))
+        close_btn.setIcon(QIcon(str(ICONS_DIR / "close.png")))
         close_btn.setIconSize(QSize(23, 23))
         close_btn.setMaximumSize(30, 30)
         close_btn.setToolTip("关闭聊天")
@@ -897,7 +906,7 @@ class ChatPanel(QWidget):
             if self.llm_chat.conversation_history:
                 from datetime import datetime
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                backup_file = f"chat_history_{timestamp}.json"
+                backup_file = PROJECT_ROOT / f"chat_history_{timestamp}.json"
                 
                 # 先保存到备份文件
                 import json
@@ -1537,7 +1546,7 @@ class MainWindow(QMainWindow):
     def load_config(self):
         """加载配置文件"""
         try:
-            with open('config.json', 'r', encoding='utf-8') as f:
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                 self.config = json.load(f)
         except Exception as e:
             QMessageBox.warning(self, "配置加载", f"无法加载配置文件: {e}")
@@ -2599,7 +2608,7 @@ class MainWindow(QMainWindow):
             return
         
         # 启动仪器连接工作线程
-        self.current_worker = InstrumentWorker('config.json')
+        self.current_worker = InstrumentWorker(str(CONFIG_FILE))
         self.current_worker.signals.finished.connect(self.on_instrument_connected)
         self.current_worker.signals.error.connect(self.on_worker_error)
         self.current_worker.signals.message.connect(self.add_log_message)
@@ -2626,7 +2635,7 @@ class MainWindow(QMainWindow):
         self.add_log_message("开始线损测量...")
         self.cable_loss_btn.setEnabled(False)
         
-        self.current_worker = CableLossWorker('config.json')
+        self.current_worker = CableLossWorker(str(CONFIG_FILE))
         self.current_worker.signals.finished.connect(lambda: self.on_measurement_finished(self.cable_loss_btn))
         self.current_worker.signals.error.connect(self.on_worker_error)
         self.current_worker.signals.message.connect(self.add_log_message)
@@ -2670,7 +2679,7 @@ class MainWindow(QMainWindow):
         self.driver_mapping_btn.setEnabled(False)
         self.driver_emergency_stop_btn.setEnabled(True)  # 启用紧急停止按钮
         
-        self.current_worker = DriverMappingWorker('config.json')
+        self.current_worker = DriverMappingWorker(str(CONFIG_FILE))
         self.current_worker.signals.finished.connect(lambda: self.on_measurement_finished(self.driver_mapping_btn))
         self.current_worker.signals.error.connect(self.on_worker_error)
         self.current_worker.signals.message.connect(self.add_log_message)
@@ -2697,7 +2706,7 @@ class MainWindow(QMainWindow):
         self.emergency_stop_btn.setEnabled(True)  # 启用紧急停止按钮
         self.emergency_stop = False
         
-        self.current_worker = AmplifierWorker('config.json')
+        self.current_worker = AmplifierWorker(str(CONFIG_FILE))
         self.current_worker.signals.finished.connect(lambda: self.on_measurement_finished(self.amplifier_test_btn))
         self.current_worker.signals.error.connect(self.on_worker_error)
         self.current_worker.signals.message.connect(self.add_log_message)
@@ -2766,7 +2775,7 @@ class MainWindow(QMainWindow):
     def load_cable_loss_results(self):
         """加载线损测量结果到表格"""
         try:
-            with open('cable_loss_results.json', 'r', encoding='utf-8') as f:
+            with open(CABLE_LOSS_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
             cable_losses = data.get('cable_losses', {})
@@ -2940,7 +2949,7 @@ class MainWindow(QMainWindow):
         """更新UI配置并保存到文件"""
         self.update_config_from_ui()
         try:
-            with open('config.json', 'w', encoding='utf-8') as f:
+            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
                 json.dump(self.config, f, indent=4, ensure_ascii=False)
             self.add_log_message("配置已更新并保存")
             return True
@@ -2952,7 +2961,7 @@ class MainWindow(QMainWindow):
         """保存配置"""
         self.update_config_from_ui()
         try:
-            with open('config.json', 'w', encoding='utf-8') as f:
+            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
                 json.dump(self.config, f, indent=4, ensure_ascii=False)
             self.add_log_message("配置已保存")
             QMessageBox.information(self, "保存成功", "配置文件已保存")
@@ -3183,7 +3192,7 @@ class MainWindow(QMainWindow):
                 }
                 
                 # 创建临时文件用于报告生成
-                temp_file = Path('temp_loaded_data.json')
+                temp_file = PROJECT_ROOT / 'temp_loaded_data.json'
                 with open(temp_file, 'w', encoding='utf-8') as f:
                     json.dump(report_data, f, indent=2, ensure_ascii=False)
                 
@@ -3196,7 +3205,7 @@ class MainWindow(QMainWindow):
                 self.add_log_message("基于已加载数据生成测试报告")
             else:
                 # 查找最新的测试数据文件
-                dut_files = sorted(Path('.').glob('amplifier_measurement_*.json'), key=lambda x: x.stat().st_mtime)
+                dut_files = sorted(PROJECT_ROOT.glob('amplifier_measurement_*.json'), key=lambda x: x.stat().st_mtime)
                 if not dut_files:
                     QMessageBox.warning(self, "报告生成", "未找到测试数据文件，请先加载数据或进行测试")
                     return
@@ -3220,14 +3229,14 @@ class MainWindow(QMainWindow):
         
         # 查找各种数据文件
         file_patterns = [
-            ('cable_loss_results.json', '线损数据'),
+            (CABLE_LOSS_FILE.name, '线损数据'),
             ('driver_power_mapping_*.json', '驱动映射'),
             ('amplifier_measurement_*.json', '功放测试'),
         ]
         
         row = 0
         for pattern, file_type in file_patterns:
-            files = list(Path('.').glob(pattern))
+            files = list(PROJECT_ROOT.glob(pattern))
             for file_path in sorted(files, key=lambda x: x.stat().st_mtime, reverse=True):
                 self.file_table.insertRow(row)
                 self.file_table.setItem(row, 0, QTableWidgetItem(file_path.name))
@@ -3251,7 +3260,7 @@ class MainWindow(QMainWindow):
         if save_path:
             try:
                 import shutil
-                shutil.copy2(filename, save_path)
+                shutil.copy2(PROJECT_ROOT / filename, save_path)
                 self.add_log_message(f"JSON文件已导出: {save_path}")
                 QMessageBox.information(self, "导出成功", f"文件已导出到: {save_path}")
             except Exception as e:
@@ -3276,11 +3285,11 @@ class MainWindow(QMainWindow):
         if save_path:
             try:
                 visualizer = DataVisualization()
-                visualizer.generate_csv_report(filename)
+                visualizer.generate_csv_report(str(PROJECT_ROOT / filename))
                 
                 # 移动生成的CSV文件到用户选择的位置
                 import shutil
-                generated_csv = Path('test_results') / datetime.now().strftime("%Y%m%d_%H%M%S") / "full_sweep_data.csv"
+                generated_csv = TEST_RESULTS_DIR / datetime.now().strftime("%Y%m%d_%H%M%S") / "full_sweep_data.csv"
                 if generated_csv.exists():
                     shutil.copy2(generated_csv, save_path)
                     

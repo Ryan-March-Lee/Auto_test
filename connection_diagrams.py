@@ -3,6 +3,7 @@
 """
 
 import matplotlib.pyplot as plt
+from project_paths import PROJECT_ROOT
 import matplotlib.patches as patches
 from matplotlib.figure import Figure
 from io import BytesIO
@@ -322,7 +323,7 @@ def create_all_diagrams():
     
     # 保存为图片文件
     for name, fig in diagrams.items():
-        fig.savefig(f'{name}_diagram.png', dpi=150, bbox_inches='tight')
+        fig.savefig(PROJECT_ROOT / f'{name}_diagram.png', dpi=150, bbox_inches='tight')
         plt.close(fig)
     
     print("所有连接示意图已保存完成！")

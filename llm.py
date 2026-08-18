@@ -3,6 +3,7 @@ import json
 import os
 from datetime import datetime
 from typing import List, Dict, Optional
+from project_paths import CHAT_HISTORY_FILE, CHAT_SETTINGS_FILE, resolve_path
 
 # 导入Function Calling网络搜索工具
 try:
@@ -16,8 +17,8 @@ OLLAMA_URL = "http://192.168.1.101:11434/api/chat"
 OLLAMA_MODEL = "qwen3:8b"  # 
 
 class LLMChat:
-    def __init__(self, history_file="chat_history.json"):
-        self.history_file = history_file
+    def __init__(self, history_file=None):
+        self.history_file = resolve_path(history_file, CHAT_HISTORY_FILE)
         self.conversation_history = []
         self.enable_web_search = False
         # 可配置的设置
@@ -66,7 +67,7 @@ class LLMChat:
     def load_settings(self):
         """加载设置"""
         try:
-            settings_file = "chat_settings.json"
+            settings_file = CHAT_SETTINGS_FILE
             if os.path.exists(settings_file):
                 with open(settings_file, 'r', encoding='utf-8') as f:
                     settings = json.load(f)
@@ -92,7 +93,7 @@ class LLMChat:
                 'history_limit': self.history_limit,
                 'enable_web_search': self.enable_web_search
             }
-            with open("chat_settings.json", 'w', encoding='utf-8') as f:
+            with open(CHAT_SETTINGS_FILE, 'w', encoding='utf-8') as f:
                 json.dump(settings, f, ensure_ascii=False, indent=2)
         except Exception as e:
             print(f"保存设置失败: {e}")

@@ -61,7 +61,6 @@ from project_paths import (
     ICONS_DIR,
     PROJECT_ROOT,
     SEARCH_API_CONFIG_FILE,
-    TEST_RESULTS_DIR,
 )
 
 
@@ -3287,11 +3286,13 @@ class MainWindow(QMainWindow):
                 visualizer = DataVisualization()
                 visualizer.generate_csv_report(str(PROJECT_ROOT / filename))
                 
-                # 移动生成的CSV文件到用户选择的位置
+                # 使用当前可视化实例创建的目录，避免跨秒时计算到错误路径。
                 import shutil
-                generated_csv = TEST_RESULTS_DIR / datetime.now().strftime("%Y%m%d_%H%M%S") / "full_sweep_data.csv"
+                generated_csv = visualizer.output_dir / "full_sweep_data.csv"
                 if generated_csv.exists():
                     shutil.copy2(generated_csv, save_path)
+                else:
+                    raise FileNotFoundError(f"未生成CSV文件: {generated_csv}")
                     
                 self.add_log_message(f"CSV文件已导出: {save_path}")
                 QMessageBox.information(self, "导出成功", f"CSV文件已导出到: {save_path}")
@@ -3313,7 +3314,7 @@ class MainWindow(QMainWindow):
             
         try:
             visualizer = DataVisualization()
-            visualizer.create_summary_report(filename)
+            visualizer.create_summary_report(str(PROJECT_ROOT / filename))
             
             self.add_log_message("PDF报告已生成在test_results文件夹中")
             QMessageBox.information(self, "导出成功", "PDF报告已生成在test_results文件夹中")

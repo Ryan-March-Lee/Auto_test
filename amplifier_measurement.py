@@ -1,0 +1,282 @@
+# --- START OF FILE amplifier_measurement.py (REFACTORED BASED ON NEW LOGIC) ---
+
+import json
+import numpy as np
+from typing import Dict, List, Optional, Tuple
+import time
+from datetime import datetime
+from instrument_control import InstrumentControl 
+from pathlib import Path
+
+
+# --- ADDED: Custom JSON Encoder to handle NumPy types ---
+class NumpyJSONEncoder(json.JSONEncoder):
+    """
+    自定义的JSON Encoder，可以处理NumPy的数据类型，防止序列化错误。
+    """
+    def default(self, obj):
+        if isinstance(obj, (np.int_, np.intc, np.intp, np.int8,
+                            np.int16, np.int32, np.int64, np.uint8,
+                            np.uint16, np.uint32, np.uint64)):
+            return int(obj)
+        elif isinstance(obj, (np.float_, np.float16, np.float32, np.float64)):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist() # 将NumPy数组转换为Python列表
+        return super(NumpyJSONEncoder, self).default(obj)
+
+class AmplifierMeasurement:
+    def __init__(self, config_path: str = "config.json",
+                 loss_data_path: str = "cable_loss_results.json",
+                 driver_mapping_path: Optional[str] = None):
+        """初始化主功放测量类"""
+        with open(config_path, 'r') as f:
+            self.config = json.load(f)
+
+        with open(loss_data_path, 'r') as f:
+            self.loss_data = json.load(f)
+
+        self.inst_ctrl = InstrumentControl(config_path)
+
+        if self.config['driver_mode']['enabled']:
+            if driver_mapping_path is None:
+                driver_files = sorted(Path('.').glob('driver_power_mapping_*.json'), key=lambda p: p.stat().st_mtime)
+                if not driver_files:
+                    raise FileNotFoundError("驱动模式已开启，但未找到任何 'driver_power_mapping_*.json' 文件!")
+                driver_mapping_path = str(driver_files[-1])
+                print(f"自动加载最新的驱动映射文件: {driver_mapping_path}")
+
+            with open(driver_mapping_path, 'r') as f:
+                self.driver_mapping = json.load(f)['power_mapping']
+        else:
+            self.driver_mapping = None
+
+        self.measurement_results: Dict[str, Dict] = {}
+
+    def calculate_actual_power(self, frequency: float, measured_power: float) -> float:
+        """计算DUT的实际输出功率（补偿线损）"""
+        freq_losses = self.loss_data['cable_losses'][str(frequency)]
+        attenuator_loss = float(self.config['attenuator']['type'].replace('dB', ''))
+        loss_after_dut = (freq_losses['cable4'] +
+                          attenuator_loss + freq_losses['cable2'])
+        return measured_power + loss_after_dut  #返回待测功放出来的功率值
+
+    # --- NEW: Function to get driver's OUTPUT power based on SG input ---
+    def get_driver_output_power(self, frequency: float, sg_power_input: float) -> float:
+        """
+        根据信号源的输入功率，通过插值正向计算驱动功放的输出功率。
+        这个输出功率就是DUT的输入功率。
+        """
+        freq_mapping = self.driver_mapping[str(frequency)]
+
+        input_powers = np.array(list(map(float, freq_mapping.keys())))
+        output_powers = np.array(list(map(float, freq_mapping.values())))
+
+        # 使用线性插值找到驱动功放的输出功率
+        # np.interp要求x坐标(input_powers)是单调递增的
+        sorted_indices = np.argsort(input_powers)
+        input_powers_sorted = input_powers[sorted_indices]
+        output_powers_sorted = output_powers[sorted_indices]
+
+        return np.interp(sg_power_input, input_powers_sorted, output_powers_sorted)
+
+    # --- REFACTORED: The core power sweep logic is now completely changed ---
+    def perform_power_sweep(self, frequency: float) -> Dict:
+        """
+        在指定频率下执行功率扫描，同时测量RF和DC参数。
+        此版本假设config.json中的功率范围是针对信号源(SG)的。
+        """
+        print(f"\n开始在 {frequency} GHz 进行功率扫描...")
+
+        compression_type = self.config['compression_point']['type']
+        compression_value = float(compression_type.replace('dB', ''))
+
+        max_dut_input_power = self.config.get('dut_config', {}).get('max_input_power', float('inf'))
+        if max_dut_input_power == float('inf'):
+            print("警告：未在config.json中设置 'dut_config.max_input_power'，无输入功率保护。")
+        else:
+            print(f"  - DUT最大输入功率限制: {max_dut_input_power} dBm")
+
+        self.inst_ctrl.set_power(-40)
+        self.inst_ctrl.set_frequency(frequency) #应该是设置信号源的信号频率
+        self.inst_ctrl.set_center_frequency(frequency)
+        self.inst_ctrl.set_span(10)
+
+        # 扫描范围是信号源的功率
+        start_power_sg = self.config['signal_source']['start_power']
+        stop_power_sg = self.config['signal_source']['stop_power']
+        step_sg = self.config['signal_source']['step']
+
+        sweep_data = {
+            'input_power_dut': [], 'output_power_dut': [], 'gain': [],
+            'sg_power': [],  # Also store sg_power for reference
+            'voltages': [], 'currents': [], 'dc_power': [], 'efficiency': []
+        }
+
+        dut_supply_config = self.config['power_supply_assignment']['dut_amplifier']['supplies']
+
+        self.inst_ctrl.rf_output_on() #打开信号源RF输出开关
+        small_gain_points = 3
+        sg_powers_all = np.arange(start_power_sg, stop_power_sg + step_sg, step_sg)
+        small_signal_gains = []
+
+        # 循环变量是信号源功率 (sg_power)
+        for idx, sg_power in enumerate(sg_powers_all):
+
+            #1. 计算DUT的实际输入功率
+            if self.driver_mapping:
+                # 正向查找驱动功放的输出，得到DUT的输入
+                dut_input_power = self.get_driver_output_power(frequency, sg_power)
+            else:
+                # 没有驱动，DUT的输入功率就是信号源功率 (减去线缆1损耗)
+                cable_loss_1 = self.loss_data['cable_losses'][str(frequency)]['cable1']  # 单位为 dB
+                dut_input_power = sg_power - cable_loss_1
+
+            # --- 安全检查逻辑 ---
+            if dut_input_power > max_dut_input_power:
+                print(f"  - 保护！计算出的DUT输入功率 {dut_input_power:.2f} dBm "
+                      f"超过了设定的最大值 {max_dut_input_power} dBm。")
+                print(f"  - 在 {frequency} GHz 的扫描已停止以保护DUT。")
+                break  # 立即退出当前频率的扫描循环
+
+            # 2. 设置信号源功率
+            self.inst_ctrl.set_power(sg_power)
+            time.sleep(5) #设置完功率输出后等待直流源及频谱仪读数稳定
+
+
+            # 3. 测量DUT输出功率
+            measured_power = self.inst_ctrl.measure_power_with_average()
+            actual_output_power = self.calculate_actual_power(frequency, measured_power)
+
+            # 4. 测量DC功耗
+            total_dc_power = 0
+            v_reading, i_reading = {}, {}
+            for supply_name, info in dut_supply_config.items():
+                ps_name, channels = info['name'], info['channel']
+                for ch in channels:
+                    v = self.inst_ctrl.read_voltage(ps_name, ch)
+                    i = self.inst_ctrl.read_current(ps_name, ch)
+                    total_dc_power += v * i
+                    v_reading[f"{supply_name}_{ch}"] = v
+                    i_reading[f"{supply_name}_{ch}"] = i
+
+            # 5. 计算各项指标
+            output_power_watts = 10 ** ((actual_output_power - 30) / 10)
+            efficiency = (output_power_watts / total_dc_power) * 100 if total_dc_power > 0 else 0
+            gain = actual_output_power - dut_input_power
+
+            # 6. 存储数据
+            sweep_data['sg_power'].append(sg_power)
+            sweep_data['input_power_dut'].append(dut_input_power)
+            sweep_data['output_power_dut'].append(actual_output_power)
+            sweep_data['gain'].append(gain)
+            sweep_data['voltages'].append(v_reading)
+            sweep_data['currents'].append(i_reading)
+            sweep_data['dc_power'].append(total_dc_power)
+            sweep_data['efficiency'].append(efficiency)
+
+            print(f"SG Power: {sg_power:.1f}, DUT Pin: {dut_input_power:.2f}, Pout: {actual_output_power:.1f}, Gain: {gain:.1f}, Eff: {efficiency:.1f}%")
+            if idx < small_gain_points:
+                small_signal_gains.append(gain)
+
+                # 第四个点及以后，实时检测压缩点
+            if idx >= small_gain_points:
+                small_signal_gain = np.mean(small_signal_gains)
+                compression_gain = small_signal_gain - gain
+                if compression_gain >= compression_value:
+                    print(f"达到目标压缩点 {compression_value} dB，停止扫描。")
+                    break
+        self.inst_ctrl.rf_output_off()
+
+        # 7. 计算压缩点 (基于DUT的输入和增益)
+        gains = np.array(sweep_data['gain'])
+        small_signal_gain = np.mean(gains[:small_gain_points]) if len(gains) >= small_gain_points else (gains[0] if len(gains) > 0 else 0)
+
+        compression_gains = small_signal_gain - gains
+        # 检查是否达到目标压缩值
+        compression_achieved = bool(np.any(compression_gains >= compression_value))
+        if not compression_achieved:
+            print(f"\n⚠️ 警告：未达到目标压缩点 {compression_value} dB，"
+                  f"最大压缩仅为 {compression_gains.max():.2f} dB。")
+        # 找到最接近目标压缩值的点的索引
+        idx = np.abs(compression_gains - compression_value).argmin()
+
+        compression_point_data = {
+            'input_power': sweep_data['input_power_dut'][idx],
+            'output_power': sweep_data['output_power_dut'][idx],
+            'gain': sweep_data['gain'][idx],
+            'efficiency': sweep_data['efficiency'][idx],
+            'compression_dB': compression_gains[idx],
+            'sg_power_at_compression': sweep_data['sg_power'][idx]
+        }
+
+        return {
+            'compression_type': compression_type,
+            'compression_point': compression_point_data,
+            'small_signal_gain': small_signal_gain,
+            'sweep_data': sweep_data,
+            'compression_achieved': compression_achieved
+        }
+
+    # measure_all_frequencies, save_results, main 等函数无需修改，因为它们调用的是顶层方法
+    def measure_all_frequencies(self):
+        """测量所有配置频率"""
+        try:
+            print("Setting up power supplies...")
+            if self.config['driver_mode']['enabled']:
+                self.inst_ctrl.setup_driver_amplifier_power()
+            self.inst_ctrl.setup_dut_power()
+
+            print("Powering on devices...")
+            self.inst_ctrl.power_on_sequence()
+            time.sleep(2)
+
+            for freq in self.config['test_frequencies']:
+                self.measurement_results[str(freq)] = self.perform_power_sweep(freq)
+
+            self.save_results()
+
+        except Exception as e:
+            print(f"Error during measurement: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            print("Shutting down...")
+            self.inst_ctrl.rf_output_off()
+            self.inst_ctrl.power_off_sequence()
+            self.inst_ctrl.close_all()
+
+    def save_results(self):
+        """保存测量结果"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f'amplifier_measurement_{timestamp}.json'
+
+        results = {
+            'measurement_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'config': self.config,
+            'results': self.measurement_results
+        }
+
+        with open(filename, 'w') as f:
+            json.dump(results, f, indent=4, cls=NumpyJSONEncoder)
+        print(f"\nResults saved to {filename}")
+
+
+def main():
+    """主函数"""
+    try:
+        input("请按测试要求连接好主功放测试链路，然后按 Enter 继续...")
+        # 确保构造函数名是 __init__
+        amp_measurement = AmplifierMeasurement()
+        amp_measurement.measure_all_frequencies()
+        print("\nAmplifier measurement completed successfully!")
+    except Exception as e:
+        print(f"\nError occurred: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+if __name__ == "__main__":
+    main()
+
+# --- END OF FILE amplifier_measurement.py (REFACTORED BASED ON NEW LOGIC) ---

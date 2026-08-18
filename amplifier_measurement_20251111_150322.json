@@ -1,0 +1,1021 @@
+{
+    "measurement_time": "2025-11-11 15:03:22",
+    "config": {
+        "test_frequencies": [
+            0.7,
+            0.9,
+            1.1,
+            1.3,
+            1.5,
+            1.7,
+            1.9,
+            2.0
+        ],
+        "signal_source": {
+            "start_power": -30.0,
+            "stop_power": -25.0,
+            "step": 1.0
+        },
+        "compression_point": {
+            "type": "3dB"
+        },
+        "driver_mode": {
+            "enabled": true
+        },
+        "attenuator": {
+            "type": "40dB"
+        },
+        "dut_config": {
+            "max_input_power": 31.0,
+            "power_supply_count": 1
+        },
+        "instruments": {
+            "signal_generator": {
+                "address": "TCPIP0::192.168.1.201::inst0::INSTR",
+                "enabled": true
+            },
+            "spectrum_analyzer": {
+                "address": "TCPIP0::192.168.1.202::inst0::INSTR",
+                "enabled": true
+            },
+            "power_supplies": {
+                "PS1": {
+                    "address": "TCPIP0::192.168.1.108::inst0::INSTR",
+                    "channels": {
+                        "CH1": {
+                            "voltage": {
+                                "value": 2.98,
+                                "protection": 1.0,
+                                "protection_enabled": false
+                            },
+                            "current": {
+                                "value": 0.1,
+                                "protection": 0.0,
+                                "protection_enabled": false
+                            }
+                        },
+                        "CH2": {
+                            "voltage": {
+                                "value": 28.0,
+                                "protection": 30.0,
+                                "protection_enabled": true
+                            },
+                            "current": {
+                                "value": 2.8,
+                                "protection": 2.0,
+                                "protection_enabled": true
+                            }
+                        }
+                    },
+                    "enabled": false
+                },
+                "PS2": {
+                    "address": "TCPIP0::192.168.1.109::inst0::INSTR",
+                    "channels": {
+                        "CH1": {
+                            "voltage": {
+                                "value": 2.9,
+                                "protection": 1.0,
+                                "protection_enabled": false
+                            },
+                            "current": {
+                                "value": 0.1,
+                                "protection": 1.0,
+                                "protection_enabled": false
+                            }
+                        },
+                        "CH2": {
+                            "voltage": {
+                                "value": 28.0,
+                                "protection": 30.0,
+                                "protection_enabled": true
+                            },
+                            "current": {
+                                "value": 1.0,
+                                "protection": 1.1,
+                                "protection_enabled": true
+                            }
+                        }
+                    },
+                    "enabled": true
+                },
+                "PS3": {
+                    "address": "TCPIP0::192.168.1.110::inst0::INSTR",
+                    "channels": {
+                        "CH1": {
+                            "voltage": {
+                                "value": 2.7,
+                                "protection": 0.1,
+                                "protection_enabled": false
+                            },
+                            "current": {
+                                "value": 0.1,
+                                "protection": 1.0,
+                                "protection_enabled": false
+                            }
+                        },
+                        "CH2": {
+                            "voltage": {
+                                "value": 28.0,
+                                "protection": 30.0,
+                                "protection_enabled": true
+                            },
+                            "current": {
+                                "value": 1.0,
+                                "protection": 1.1,
+                                "protection_enabled": true
+                            }
+                        }
+                    },
+                    "enabled": false
+                },
+                "PS4": {
+                    "address": "TCPIP0::192.168.1.111::inst0::INSTR",
+                    "channels": {
+                        "CH1": {
+                            "voltage": {
+                                "value": 2.7,
+                                "protection": 1.0,
+                                "protection_enabled": false
+                            },
+                            "current": {
+                                "value": 0.1,
+                                "protection": 1.0,
+                                "protection_enabled": false
+                            }
+                        },
+                        "CH2": {
+                            "voltage": {
+                                "value": 28.0,
+                                "protection": 8.0,
+                                "protection_enabled": true
+                            },
+                            "current": {
+                                "value": 1.0,
+                                "protection": 1.1,
+                                "protection_enabled": true
+                            }
+                        }
+                    },
+                    "enabled": false
+                }
+            }
+        },
+        "power_supply_assignment": {
+            "driver_amplifier": {
+                "power_supply_count": 0,
+                "supplies": {}
+            },
+            "dut_amplifier": {
+                "power_supply_count": 1,
+                "supplies": {
+                    "carrier": {
+                        "name": "PS2",
+                        "channel": [
+                            "CH1",
+                            "CH2"
+                        ]
+                    }
+                }
+            }
+        }
+    },
+    "results": {
+        "0.7": {
+            "compression_type": "3dB",
+            "compression_point": {
+                "input_power": 30.36,
+                "output_power": 41.19500000000001,
+                "gain": 10.835000000000008,
+                "efficiency": 60.59208534810545,
+                "compression_dB": 1.0233333333333317,
+                "sg_power_at_compression": -28.0
+            },
+            "small_signal_gain": 11.85833333333334,
+            "sweep_data": {
+                "input_power_dut": [
+                    28.580000000000002,
+                    29.46,
+                    30.36
+                ],
+                "output_power_dut": [
+                    41.455000000000005,
+                    41.325,
+                    41.19500000000001
+                ],
+                "gain": [
+                    12.875000000000004,
+                    11.865000000000002,
+                    10.835000000000008
+                ],
+                "sg_power": [
+                    -30.0,
+                    -29.0,
+                    -28.0
+                ],
+                "voltages": [
+                    {
+                        "carrier_CH1": 2.8957,
+                        "carrier_CH2": 24.9447
+                    },
+                    {
+                        "carrier_CH1": 2.8956,
+                        "carrier_CH2": 23.0857
+                    },
+                    {
+                        "carrier_CH1": 2.8957,
+                        "carrier_CH2": 21.7835
+                    }
+                ],
+                "currents": [
+                    {
+                        "carrier_CH1": 0.0001,
+                        "carrier_CH2": 0.9976
+                    },
+                    {
+                        "carrier_CH1": 0.0,
+                        "carrier_CH2": 0.9976
+                    },
+                    {
+                        "carrier_CH1": 0.0,
+                        "carrier_CH2": 0.9976
+                    }
+                ],
+                "dc_power": [
+                    24.88512229,
+                    23.03029432,
+                    21.7312196
+                ],
+                "efficiency": [
+                    56.17721701470416,
+                    58.911558465044514,
+                    60.59208534810545
+                ]
+            },
+            "compression_achieved": false
+        },
+        "0.9": {
+            "compression_type": "3dB",
+            "compression_point": {
+                "input_power": 30.365000000000002,
+                "output_power": 40.800000000000004,
+                "gain": 10.435000000000002,
+                "efficiency": 57.13810027326605,
+                "compression_dB": 1.1299999999999972,
+                "sg_power_at_compression": -28.0
+            },
+            "small_signal_gain": 11.565,
+            "sweep_data": {
+                "input_power_dut": [
+                    28.535000000000004,
+                    29.445,
+                    30.365000000000002
+                ],
+                "output_power_dut": [
+                    41.24,
+                    41.0,
+                    40.800000000000004
+                ],
+                "gain": [
+                    12.704999999999998,
+                    11.555,
+                    10.435000000000002
+                ],
+                "sg_power": [
+                    -30.0,
+                    -29.0,
+                    -28.0
+                ],
+                "voltages": [
+                    {
+                        "carrier_CH1": 2.8961,
+                        "carrier_CH2": 25.2165
+                    },
+                    {
+                        "carrier_CH1": 2.8961,
+                        "carrier_CH2": 22.6112
+                    },
+                    {
+                        "carrier_CH1": 2.8961,
+                        "carrier_CH2": 21.092
+                    }
+                ],
+                "currents": [
+                    {
+                        "carrier_CH1": 0.0,
+                        "carrier_CH2": 0.9976
+                    },
+                    {
+                        "carrier_CH1": 0.0,
+                        "carrier_CH2": 0.9976
+                    },
+                    {
+                        "carrier_CH1": 0.0,
+                        "carrier_CH2": 0.9976
+                    }
+                ],
+                "dc_power": [
+                    25.1559804,
+                    22.55693312,
+                    21.041379199999998
+                ],
+                "efficiency": [
+                    52.88819584141874,
+                    55.81101850578912,
+                    57.13810027326605
+                ]
+            },
+            "compression_achieved": false
+        },
+        "1.1": {
+            "compression_type": "3dB",
+            "compression_point": {
+                "input_power": 30.759999999999998,
+                "output_power": 40.714999999999996,
+                "gain": 9.954999999999998,
+                "efficiency": 53.325698432629,
+                "compression_dB": 2.2799999999999994,
+                "sg_power_at_compression": -25.0
+            },
+            "small_signal_gain": 12.234999999999998,
+            "sweep_data": {
+                "input_power_dut": [
+                    26.270000000000003,
+                    27.200000000000003,
+                    28.11,
+                    29.0,
+                    29.89,
+                    30.759999999999998
+                ],
+                "output_power_dut": [
+                    38.565,
+                    39.445,
+                    40.275,
+                    41.025,
+                    40.865,
+                    40.714999999999996
+                ],
+                "gain": [
+                    12.294999999999995,
+                    12.244999999999997,
+                    12.165,
+                    12.024999999999999,
+                    10.975000000000001,
+                    9.954999999999998
+                ],
+                "sg_power": [
+                    -30.0,
+                    -29.0,
+                    -28.0,
+                    -27.0,
+                    -26.0,
+                    -25.0
+                ],
+                "voltages": [
+                    {
+                        "carrier_CH1": 2.8965,
+                        "carrier_CH2": 27.9994
+                    },
+                    {
+                        "carrier_CH1": 2.8966,
+                        "carrier_CH2": 27.9991
+                    },
+                    {
+                        "carrier_CH1": 2.8967,
+                        "carrier_CH2": 27.9993
+                    },
+                    {
+                        "carrier_CH1": 2.8969,
+                        "carrier_CH2": 27.9992
+                    },
+                    {
+                        "carrier_CH1": 2.8969,
+                        "carrier_CH2": 23.9641
+                    },
+                    {
+                        "carrier_CH1": 2.8967,
+                        "carrier_CH2": 22.1705
+                    }
+                ],
+                "currents": [
+                    {
+                        "carrier_CH1": 0.0001,
+                        "carrier_CH2": 0.7178
+                    },
+                    {
+                        "carrier_CH1": 0.0001,
+                        "carrier_CH2": 0.8018
+                    },
+                    {
+                        "carrier_CH1": 0.0001,
+                        "carrier_CH2": 0.8936
+                    },
+                    {
+                        "carrier_CH1": 0.0001,
+                        "carrier_CH2": 0.9896
+                    },
+                    {
+                        "carrier_CH1": 0.0001,
+                        "carrier_CH2": 0.9973
+                    },
+                    {
+                        "carrier_CH1": 0.0001,
+                        "carrier_CH2": 0.9972
+                    }
+                ],
+                "dc_power": [
+                    20.09825897,
+                    22.449968039999998,
+                    25.020464150000002,
+                    27.708298009999996,
+                    23.899686619999997,
+                    22.10871227
+                ],
+                "efficiency": [
+                    35.75539351210069,
+                    39.19983806299098,
+                    42.57990008820691,
+                    45.69725888807646,
+                    51.063172507168176,
+                    53.325698432629
+                ]
+            },
+            "compression_achieved": false
+        },
+        "1.3": {
+            "compression_type": "3dB",
+            "compression_point": {
+                "input_power": 28.439999999999998,
+                "output_power": 40.435,
+                "gain": 11.995000000000005,
+                "efficiency": 50.31377545072302,
+                "compression_dB": 0.5933333333333284,
+                "sg_power_at_compression": -25.0
+            },
+            "small_signal_gain": 12.588333333333333,
+            "sweep_data": {
+                "input_power_dut": [
+                    23.7,
+                    24.659999999999997,
+                    25.619999999999997,
+                    26.57,
+                    27.509999999999998,
+                    28.439999999999998
+                ],
+                "output_power_dut": [
+                    36.345,
+                    37.265,
+                    38.135,
+                    38.995,
+                    39.835,
+                    40.435
+                ],
+                "gain": [
+                    12.645,
+                    12.605000000000004,
+                    12.515,
+                    12.424999999999997,
+                    12.325000000000003,
+                    11.995000000000005
+                ],
+                "sg_power": [
+                    -30.0,
+                    -29.0,
+                    -28.0,
+                    -27.0,
+                    -26.0,
+                    -25.0
+                ],
+                "voltages": [
+                    {
+                        "carrier_CH1": 2.8958,
+                        "carrier_CH2": 27.9969
+                    },
+                    {
+                        "carrier_CH1": 2.8959,
+                        "carrier_CH2": 27.9964
+                    },
+                    {
+                        "carrier_CH1": 2.896,
+                        "carrier_CH2": 27.9956
+                    },
+                    {
+                        "carrier_CH1": 2.896,
+                        "carrier_CH2": 27.9948
+                    },
+                    {
+                        "carrier_CH1": 2.896,
+                        "carrier_CH2": 27.994
+                    },
+                    {
+                        "carrier_CH1": 2.8961,
+                        "carrier_CH2": 27.9933
+                    }
+                ],
+                "currents": [
+                    {
+                        "carrier_CH1": 0.0,
+                        "carrier_CH2": 0.4669
+                    },
+                    {
+                        "carrier_CH1": 0.0,
+                        "carrier_CH2": 0.5238
+                    },
+                    {
+                        "carrier_CH1": 0.0,
+                        "carrier_CH2": 0.5835
+                    },
+                    {
+                        "carrier_CH1": 0.0,
+                        "carrier_CH2": 0.6503
+                    },
+                    {
+                        "carrier_CH1": 0.0,
+                        "carrier_CH2": 0.7228
+                    },
+                    {
+                        "carrier_CH1": 0.0,
+                        "carrier_CH2": 0.7848
+                    }
+                ],
+                "dc_power": [
+                    13.071752609999999,
+                    14.664514320000002,
+                    16.3354326,
+                    18.20501844,
+                    20.2340632,
+                    21.969141840000002
+                ],
+                "efficiency": [
+                    32.97358593485464,
+                    36.327232712809135,
+                    39.84458978089194,
+                    43.58217265157159,
+                    47.57917396310791,
+                    50.31377545072302
+                ]
+            },
+            "compression_achieved": false
+        },
+        "1.5": {
+            "compression_type": "3dB",
+            "compression_point": {
+                "input_power": 30.154999999999994,
+                "output_power": 40.364999999999995,
+                "gain": 10.21,
+                "efficiency": 45.39384927436747,
+                "compression_dB": 0.9233333333333267,
+                "sg_power_at_compression": -25.0
+            },
+            "small_signal_gain": 11.133333333333328,
+            "sweep_data": {
+                "input_power_dut": [
+                    25.534999999999997,
+                    26.484999999999992,
+                    27.434999999999995,
+                    28.344999999999995,
+                    29.254999999999995,
+                    30.154999999999994
+                ],
+                "output_power_dut": [
+                    36.78499999999999,
+                    37.64499999999999,
+                    38.42499999999999,
+                    39.18499999999999,
+                    39.84499999999999,
+                    40.364999999999995
+                ],
+                "gain": [
+                    11.249999999999993,
+                    11.159999999999997,
+                    10.989999999999995,
+                    10.839999999999993,
+                    10.589999999999996,
+                    10.21
+                ],
+                "sg_power": [
+                    -30.0,
+                    -29.0,
+                    -28.0,
+                    -27.0,
+                    -26.0,
+                    -25.0
+                ],
+                "voltages": [
+                    {
+                        "carrier_CH1": 2.8956,
+                        "carrier_CH2": 27.9985
+                    },
+                    {
+                        "carrier_CH1": 2.8957,
+                        "carrier_CH2": 27.9982
+                    },
+                    {
+                        "carrier_CH1": 2.8956,
+                        "carrier_CH2": 27.9984
+                    },
+                    {
+                        "carrier_CH1": 2.8957,
+                        "carrier_CH2": 27.9983
+                    },
+                    {
+                        "carrier_CH1": 2.8957,
+                        "carrier_CH2": 27.9978
+                    },
+                    {
+                        "carrier_CH1": 2.8957,
+                        "carrier_CH2": 27.9979
+                    }
+                ],
+                "currents": [
+                    {
+                        "carrier_CH1": 0.0001,
+                        "carrier_CH2": 0.5351
+                    },
+                    {
+                        "carrier_CH1": 0.0001,
+                        "carrier_CH2": 0.5954
+                    },
+                    {
+                        "carrier_CH1": 0.0001,
+                        "carrier_CH2": 0.6617
+                    },
+                    {
+                        "carrier_CH1": 0.0001,
+                        "carrier_CH2": 0.7269
+                    },
+                    {
+                        "carrier_CH1": 0.0001,
+                        "carrier_CH2": 0.7945
+                    },
+                    {
+                        "carrier_CH1": 0.0001,
+                        "carrier_CH2": 0.8558
+                    }
+                ],
+                "dc_power": [
+                    14.982286910000001,
+                    16.67041785,
+                    18.52683084,
+                    20.35225384,
+                    22.24454167,
+                    23.96089239
+                ],
+                "efficiency": [
+                    31.836248830668023,
+                    34.87815587708533,
+                    37.557689208145426,
+                    40.727475334648425,
+                    43.37870054238704,
+                    45.39384927436747
+                ]
+            },
+            "compression_achieved": false
+        },
+        "1.7": {
+            "compression_type": "3dB",
+            "compression_point": {
+                "input_power": 28.615000000000002,
+                "output_power": 38.440000000000005,
+                "gain": 9.825000000000003,
+                "efficiency": 30.743401809967562,
+                "compression_dB": 0.14666666666666828,
+                "sg_power_at_compression": -25.0
+            },
+            "small_signal_gain": 9.971666666666671,
+            "sweep_data": {
+                "input_power_dut": [
+                    23.865000000000002,
+                    24.825,
+                    25.785,
+                    26.745,
+                    27.685000000000002,
+                    28.615000000000002
+                ],
+                "output_power_dut": [
+                    33.830000000000005,
+                    34.830000000000005,
+                    35.730000000000004,
+                    36.690000000000005,
+                    37.60000000000001,
+                    38.440000000000005
+                ],
+                "gain": [
+                    9.965000000000003,
+                    10.005000000000006,
+                    9.945000000000004,
+                    9.945000000000004,
+                    9.915000000000006,
+                    9.825000000000003
+                ],
+                "sg_power": [
+                    -30.0,
+                    -29.0,
+                    -28.0,
+                    -27.0,
+                    -26.0,
+                    -25.0
+                ],
+                "voltages": [
+                    {
+                        "carrier_CH1": 2.8957,
+                        "carrier_CH2": 27.9977
+                    },
+                    {
+                        "carrier_CH1": 2.8957,
+                        "carrier_CH2": 27.998
+                    },
+                    {
+                        "carrier_CH1": 2.8956,
+                        "carrier_CH2": 27.9979
+                    },
+                    {
+                        "carrier_CH1": 2.8955,
+                        "carrier_CH2": 27.9973
+                    },
+                    {
+                        "carrier_CH1": 2.8957,
+                        "carrier_CH2": 27.9973
+                    },
+                    {
+                        "carrier_CH1": 2.8956,
+                        "carrier_CH2": 27.9972
+                    }
+                ],
+                "currents": [
+                    {
+                        "carrier_CH1": 0.0001,
+                        "carrier_CH2": 0.4605
+                    },
+                    {
+                        "carrier_CH1": 0.0001,
+                        "carrier_CH2": 0.52
+                    },
+                    {
+                        "carrier_CH1": 0.0001,
+                        "carrier_CH2": 0.5841
+                    },
+                    {
+                        "carrier_CH1": 0.0001,
+                        "carrier_CH2": 0.6536
+                    },
+                    {
+                        "carrier_CH1": 0.0001,
+                        "carrier_CH2": 0.7303
+                    },
+                    {
+                        "carrier_CH1": 0.0001,
+                        "carrier_CH2": 0.8112
+                    }
+                ],
+                "dc_power": [
+                    12.89323042,
+                    14.55924957,
+                    16.35386295,
+                    18.29932483,
+                    20.44671776,
+                    22.7116182
+                ],
+                "efficiency": [
+                    18.734333877242097,
+                    20.886275841731333,
+                    22.875976728914296,
+                    25.501453449760376,
+                    28.143389276047703,
+                    30.743401809967562
+                ]
+            },
+            "compression_achieved": false
+        },
+        "1.9": {
+            "compression_type": "3dB",
+            "compression_point": {
+                "input_power": 24.544999999999998,
+                "output_power": -4.644999999999996,
+                "gain": -29.189999999999994,
+                "efficiency": 0.0384294485609694,
+                "compression_dB": 0.15666666666666273,
+                "sg_power_at_compression": -30.0
+            },
+            "small_signal_gain": -29.03333333333333,
+            "sweep_data": {
+                "input_power_dut": [
+                    24.544999999999998,
+                    25.525,
+                    26.494999999999997,
+                    27.464999999999996,
+                    28.435,
+                    29.375
+                ],
+                "output_power_dut": [
+                    -4.644999999999996,
+                    -3.4649999999999963,
+                    -2.424999999999997,
+                    -1.2650000000000006,
+                    -0.015000000000000568,
+                    1.4950000000000045
+                ],
+                "gain": [
+                    -29.189999999999994,
+                    -28.989999999999995,
+                    -28.919999999999995,
+                    -28.729999999999997,
+                    -28.45,
+                    -27.879999999999995
+                ],
+                "sg_power": [
+                    -30.0,
+                    -29.0,
+                    -28.0,
+                    -27.0,
+                    -26.0,
+                    -25.0
+                ],
+                "voltages": [
+                    {
+                        "carrier_CH1": 2.0271,
+                        "carrier_CH2": 0.6956
+                    },
+                    {
+                        "carrier_CH1": 2.0279,
+                        "carrier_CH2": 0.692
+                    },
+                    {
+                        "carrier_CH1": 2.0278,
+                        "carrier_CH2": 0.6932
+                    },
+                    {
+                        "carrier_CH1": 2.0256,
+                        "carrier_CH2": 0.6966
+                    },
+                    {
+                        "carrier_CH1": 2.0291,
+                        "carrier_CH2": 0.7037
+                    },
+                    {
+                        "carrier_CH1": 2.0346,
+                        "carrier_CH2": 0.7153
+                    }
+                ],
+                "currents": [
+                    {
+                        "carrier_CH1": 0.0986,
+                        "carrier_CH2": 0.9964
+                    },
+                    {
+                        "carrier_CH1": 0.0986,
+                        "carrier_CH2": 0.9964
+                    },
+                    {
+                        "carrier_CH1": 0.0986,
+                        "carrier_CH2": 0.9964
+                    },
+                    {
+                        "carrier_CH1": 0.0986,
+                        "carrier_CH2": 0.9963
+                    },
+                    {
+                        "carrier_CH1": 0.0986,
+                        "carrier_CH2": 0.9963
+                    },
+                    {
+                        "carrier_CH1": 0.0986,
+                        "carrier_CH2": 0.9963
+                    }
+                ],
+                "dc_power": [
+                    0.8929678999999999,
+                    0.8894597399999999,
+                    0.89064556,
+                    0.8937467399999999,
+                    0.90116557,
+                    0.9132649500000001
+                ],
+                "efficiency": [
+                    0.0384294485609694,
+                    0.05062601049127747,
+                    0.0642384558288627,
+                    0.08361525706838117,
+                    0.11058479299589398,
+                    0.15449100903939192
+                ]
+            },
+            "compression_achieved": false
+        },
+        "2.0": {
+            "compression_type": "3dB",
+            "compression_point": {
+                "input_power": 25.049999999999997,
+                "output_power": -6.164999999999999,
+                "gain": -31.214999999999996,
+                "efficiency": 0.027591993384822447,
+                "compression_dB": 0.11999999999999744,
+                "sg_power_at_compression": -29.0
+            },
+            "small_signal_gain": -31.095,
+            "sweep_data": {
+                "input_power_dut": [
+                    24.07,
+                    25.049999999999997,
+                    26.009999999999998,
+                    26.979999999999997,
+                    27.95,
+                    28.909999999999997
+                ],
+                "output_power_dut": [
+                    -7.104999999999997,
+                    -6.164999999999999,
+                    -4.884999999999998,
+                    -1.4149999999999991,
+                    0.4350000000000023,
+                    6.555000000000007
+                ],
+                "gain": [
+                    -31.174999999999997,
+                    -31.214999999999996,
+                    -30.894999999999996,
+                    -28.394999999999996,
+                    -27.514999999999997,
+                    -22.35499999999999
+                ],
+                "sg_power": [
+                    -30.0,
+                    -29.0,
+                    -28.0,
+                    -27.0,
+                    -26.0,
+                    -25.0
+                ],
+                "voltages": [
+                    {
+                        "carrier_CH1": 2.0407,
+                        "carrier_CH2": 0.677
+                    },
+                    {
+                        "carrier_CH1": 2.0369,
+                        "carrier_CH2": 0.6781
+                    },
+                    {
+                        "carrier_CH1": 2.0376,
+                        "carrier_CH2": 0.6797
+                    },
+                    {
+                        "carrier_CH1": 2.1835,
+                        "carrier_CH2": 0.6934
+                    },
+                    {
+                        "carrier_CH1": 2.1794,
+                        "carrier_CH2": 0.7154
+                    },
+                    {
+                        "carrier_CH1": 2.1204,
+                        "carrier_CH2": 0.7177
+                    }
+                ],
+                "currents": [
+                    {
+                        "carrier_CH1": 0.0986,
+                        "carrier_CH2": 0.9963
+                    },
+                    {
+                        "carrier_CH1": 0.0986,
+                        "carrier_CH2": 0.9963
+                    },
+                    {
+                        "carrier_CH1": 0.0986,
+                        "carrier_CH2": 0.9963
+                    },
+                    {
+                        "carrier_CH1": 0.0986,
+                        "carrier_CH2": 0.9963
+                    },
+                    {
+                        "carrier_CH1": 0.0985,
+                        "carrier_CH2": 0.9963
+                    },
+                    {
+                        "carrier_CH1": 0.0986,
+                        "carrier_CH2": 0.9963
+                    }
+                ],
+                "dc_power": [
+                    0.87570812,
+                    0.87642937,
+                    0.8780924699999999,
+                    0.90612752,
+                    0.92742392,
+                    0.92411595
+                ],
+                "efficiency": [
+                    0.02224029908438467,
+                    0.027591993384822447,
+                    0.03697939035598411,
+                    0.07967290993845544,
+                    0.11918502914857361,
+                    0.4895234871040809
+                ]
+            },
+            "compression_achieved": false
+        }
+    }
+}

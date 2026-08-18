@@ -1,0 +1,30 @@
+# Python cache and local build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE and editor state
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local application state
+chat_history.json
+chat_history_*.json
+chat_settings.json
+temp_loaded_data.json
+
+# Generated reports and temporary files
+test_results/
+temp/
+/temp
+*.log
+
+# Local secrets and machine-specific configuration
+.env
+.env.*
+search_api_config.local.json

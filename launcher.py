@@ -42,8 +42,17 @@ def check_environment(silent: bool = False) -> bool:
             print("   需要 Python 3.7 或更高版本")
         return False
     if not silent:
-        print(f"   Conda 环境: {os.environ.get('CONDA_DEFAULT_ENV', 'base')}")
+        print(f"   Conda 环境: {get_conda_environment_name()}")
     return True
+
+
+def get_conda_environment_name() -> str:
+    """获取当前 Conda 环境名，兼容直接调用环境解释器的场景。"""
+    configured_name = os.environ.get("CONDA_DEFAULT_ENV")
+    if configured_name:
+        return configured_name
+    prefix_name = Path(sys.prefix).name
+    return prefix_name or "base"
 
 
 def check_packages(silent: bool = False) -> Dict[str, Dict[str, object]]:

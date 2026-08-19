@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0",
+  "template": true,
+  "plan_id": "待填写",
+  "frequencies": {
+    "values": [],
+    "unit": "GHz"
+  },
+  "signal_source": {
+    "start_power": null,
+    "stop_power": null,
+    "step": null,
+    "unit": "dBm"
+  },
+  "compression_point": {
+    "type": null
+  },
+  "attenuator": {
+    "value": null,
+    "unit": "dB"
+  },
+  "dut": {
+    "max_input_power": null,
+    "unit": "dBm",
+    "power_roles": {}
+  },
+  "driver_mode": {
+    "enabled": false,
+    "power_roles": {}
+  },
+  "other_parameters": {},
+  "source_status": {
+    "source": "模板",
+    "complete": false,
+    "instruction": "复制此模板后填写本次测试方案；使用稳定供电角色（如 gate、drain）保存参数，不绑定现场 CH 名称"
+  }
+}

@@ -3,21 +3,24 @@
 import json
 import pyvisa
 import time
-from typing import Dict, List, Union, Optional
+from typing import Callable, Dict, List, Union, Optional
 from enum import Enum
 from project_paths import CONFIG_FILE, resolve_path
 
 
 class InstrumentControl:
-    def __init__(self, config_path=None):
+    def __init__(self, config_path=None, resource_manager=None, sleep_fn: Callable[[float], None] = time.sleep):
         """初始化仪器控制类"""
         config_path = resolve_path(config_path, CONFIG_FILE)
         with open(config_path, 'r') as f:
             self.config = json.load(f)
 
-        self.rm = pyvisa.ResourceManager()
+        self.rm = resource_manager if resource_manager is not None else pyvisa.ResourceManager()
+        self.sleep_fn = sleep_fn
         self.instruments = {}
         self.power_supplies = {}
+        self.signal_gen = None
+        self.spectrum = None
         self.initialize_all_instruments()
 
     # --- HELPER FUNCTION TO GET SCPI CHANNEL NUMBER ---
@@ -201,7 +204,7 @@ class InstrumentControl:
             if ps_name and ps_name in self.power_supplies:  # 只处理已连接的电源
                 for channel in supply_info['channel']:
                     self.power_supply_on(ps_name, channel)
-                    time.sleep(2)
+                    self.sleep_fn(2)
 
     def power_off_driver(self):
         """仅关闭驱动功放电源"""
@@ -211,7 +214,7 @@ class InstrumentControl:
             if ps_name and ps_name in self.power_supplies:  # 只处理已连接的电源
                 for channel in reversed(supply_info['channel']):
                     self.power_supply_off(ps_name, channel)
-                    time.sleep(2)
+                    self.sleep_fn(2)
 
     def power_on_dut(self):
         """仅打开待测功放电源"""
@@ -221,7 +224,7 @@ class InstrumentControl:
             if ps_name and ps_name in self.power_supplies:  # 只处理已连接的电源
                 for channel in supply_info['channel']:
                     self.power_supply_on(ps_name, channel)
-                    time.sleep(1.5)
+                    self.sleep_fn(1.5)
 
     def power_off_dut(self):
         """仅关闭待测功放电源"""
@@ -231,7 +234,7 @@ class InstrumentControl:
             if ps_name and ps_name in self.power_supplies:  # 只处理已连接的电源
                 for channel in reversed(supply_info['channel']):
                     self.power_supply_off(ps_name, channel)
-                    time.sleep(2)
+                    self.sleep_fn(2)
 
     def _get_all_assigned_supplies(self) -> List[Dict]:
         """辅助函数：获取所有被分配的电源配置（驱动和DUT）"""
@@ -257,11 +260,11 @@ class InstrumentControl:
                 if ch == 'CH1':
                     self.power_supply_on(ps_name, ch)
                     print(f"      {ps_name}-{ch} ON")
-                    time.sleep(0.5)
+                    self.sleep_fn(0.5)
 
         # 稳定延时
         print("  -> 栅极电源已稳定，等待1.5秒...")
-        time.sleep(1.5)
+        self.sleep_fn(1.5)
 
         # 2. 打开所有漏极电压 (CH2)
         print("  -> 正在打开所有漏极电源 (CH2)...")
@@ -271,7 +274,7 @@ class InstrumentControl:
                 if ch == 'CH2':
                     self.power_supply_on(ps_name, ch)
                     print(f"      {ps_name}-{ch} ON")
-                    time.sleep(0.5)
+                    self.sleep_fn(0.5)
 
         print("上电序列完成。")
 
@@ -283,6 +286,8 @@ class InstrumentControl:
         print("开始掉电序列 (先漏极，后栅极)...")
         all_supplies = self._get_all_assigned_supplies()
 
+        errors = []
+
         # 1. 关闭所有漏极电压 (CH2)
         print("  -> 正在关闭所有漏极电源 (CH2)...")
         # 反向迭代以保证安全
@@ -291,13 +296,17 @@ class InstrumentControl:
             # 反向迭代通道
             for ch in reversed(supply_info['channel']):
                 if ch == 'CH2':
-                    self.power_supply_off(ps_name, ch)
-                    print(f"      {ps_name}-{ch} OFF")
-                    time.sleep(0.5)
+                    try:
+                        self.power_supply_off(ps_name, ch)
+                        print(f"      {ps_name}-{ch} OFF")
+                    except Exception as error:
+                        errors.append((ps_name, ch, error))
+                    finally:
+                        self.sleep_fn(0.5)
 
         # 稳定延时
         print("  -> 漏极电源已关闭，等待2秒...")
-        time.sleep(2)
+        self.sleep_fn(2)
 
         # 2. 关闭所有栅极电压 (CH1)
         print("  -> 正在关闭所有栅极电源 (CH1)...")
@@ -305,11 +314,18 @@ class InstrumentControl:
             ps_name = supply_info['name']
             for ch in reversed(supply_info['channel']):
                 if ch == 'CH1':
-                    self.power_supply_off(ps_name, ch)
-                    print(f"      {ps_name}-{ch} OFF")
-                    time.sleep(0.5)
+                    try:
+                        self.power_supply_off(ps_name, ch)
+                        print(f"      {ps_name}-{ch} OFF")
+                    except Exception as error:
+                        errors.append((ps_name, ch, error))
+                    finally:
+                        self.sleep_fn(0.5)
 
         print("掉电序列完成。")
+        if errors:
+            details = "; ".join(f"{name}-{channel}: {error}" for name, channel, error in errors)
+            raise RuntimeError(f"电源掉电序列存在失败: {details}") from errors[0][2]
 
 
     # The rest of the file (Signal Gen, Spectrum Analyzer control) is assumed to be correct
@@ -325,7 +341,7 @@ class InstrumentControl:
             raise Exception("Signal generator is not connected")
         self.signal_gen.write("OUTP:STAT OFF")
         self.signal_gen.write('POW -50dBm')
-        time.sleep(0.2)
+        self.sleep_fn(0.2)
 
     def set_frequency(self, freq: float):
         if self.signal_gen is None:
@@ -367,24 +383,45 @@ class InstrumentControl:
             return power
 
 
-    def close_all(self):
+    def close_all(self, close_rf: bool = True):
         """关闭所有仪器连接。不管理电源状态。"""
         print("Closing all instrument connections...")
-        try:
-            self.rf_output_off()
-        except Exception:
-            pass
+        errors = []
+        if close_rf and self.signal_gen is not None:
+            try:
+                self.rf_output_off()
+            except Exception as error:
+                errors.append(error)
 
         for instrument in [self.signal_gen, self.spectrum] + list(self.power_supplies.values()):
             try:
-                instrument.close()
-            except Exception:
-                pass
+                if instrument is not None:
+                    instrument.close()
+            except Exception as error:
+                errors.append(error)
         try:
             self.rm.close()
-        except Exception:
-            pass
+        except Exception as error:
+            errors.append(error)
         print("Connections closed.")
+        return errors
+
+    def safe_shutdown(self):
+        """尽最大努力关闭 RF、电源输出和连接，并在结束后报告所有失败。"""
+        errors = []
+        if self.signal_gen is not None:
+            try:
+                self.rf_output_off()
+            except Exception as error:
+                errors.append(error)
+        try:
+            self.power_off_sequence()
+        except Exception as error:
+            errors.append(error)
+        errors.extend(self.close_all(close_rf=False))
+        if errors:
+            details = "; ".join(str(error) for error in errors)
+            raise RuntimeError(f"安全关闭存在失败: {details}") from errors[0]
 
 
 def main():
@@ -416,9 +453,7 @@ def main():
     finally:
         if inst_ctrl:
             print("Shutting down...")
-            inst_ctrl.rf_output_off()
-            inst_ctrl.power_off_sequence()
-            inst_ctrl.close_all()
+            inst_ctrl.safe_shutdown()
 
 
 if __name__ == "__main__":

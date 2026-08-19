@@ -95,6 +95,16 @@ class LauncherTests(unittest.TestCase):
             packages = launcher.check_packages(silent=True)
         self.assertTrue(packages["requests"]["installed"])
 
+    def test_environment_name_uses_python_prefix_when_conda_variable_is_missing(self):
+        with patch.dict("os.environ", {}, clear=True), patch.object(sys, "prefix", r"C:\envs\Auto_test"):
+            self.assertEqual(launcher.get_conda_environment_name(), "Auto_test")
+
+    def test_environment_variable_takes_precedence_over_python_prefix(self):
+        with patch.dict("os.environ", {"CONDA_DEFAULT_ENV": "Auto_test"}), patch.object(
+            sys, "prefix", r"C:\envs\other"
+        ):
+            self.assertEqual(launcher.get_conda_environment_name(), "Auto_test")
+
     def test_main_does_not_reference_silent_mode_before_initialization(self):
         with patch.object(launcher, "check_environment", side_effect=RuntimeError("boom")):
             with patch.object(launcher, "check_packages"):

@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0",
+  "template": true,
+  "run_id": null,
+  "run_datetime": null,
+  "operator": null,
+  "instruments": {
+    "signal_generator": {
+      "model": null,
+      "visa_address": null,
+      "address_status": "未提供"
+    },
+    "spectrum_analyzer": {
+      "model": null,
+      "visa_address": null,
+      "address_status": "未提供"
+    },
+    "power_supply": {
+      "model": null,
+      "visa_address": null,
+      "address_status": "未提供"
+    }
+  },
+  "driver_mode": {
+    "enabled": false,
+    "power_channels": [],
+    "connection_status": "不适用"
+  },
+  "dut_power_channels": [],
+  "wiring": {
+    "confirmed": false,
+    "connection_note": null
+  },
+  "test_status": {
+    "completed_normally": null,
+    "status": "待填写"
+  },
+  "result_files": {
+    "cable_loss": null,
+    "driver_mapping": null,
+    "amplifier_measurement": null,
+    "report": null
+  },
+  "notes": null,
+  "source_status": {
+    "source": "模板",
+    "complete": false,
+    "instruction": "每次测试前填写实际设备、地址、通道和现场接线；电源每个实际使用通道单独记录"
+  }
+}

@@ -1,284 +1,236 @@
-"""
-PA自动测试系统启动器
-自动检测环境并选择合适的GUI版本
-"""
+"""PA 自动测试系统启动器。"""
 
-import sys
 import os
-import subprocess
+import sys
+import argparse
+import importlib
+import importlib.util
+import traceback
 from pathlib import Path
-import json
+from typing import Dict
+
+from config_validation import ConfigValidationResult, validate_config_file
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+EXIT_SUCCESS = 0
+EXIT_CONFIG_ERROR = 2
+EXIT_CONFIG_FILE_ERROR = 3
+EXIT_ENVIRONMENT_ERROR = 4
+EXIT_DEPENDENCY_ERROR = 5
+EXIT_GUI_ERROR = 6
+EXIT_INTERRUPTED = 130
 
-def print_header():
-    """打印标题"""
+
+def print_header() -> None:
+    """打印标题。"""
     print("=" * 60)
-    print("   PA自动测试系统 - 智能启动器")
-    print("   Power Amplifier Auto Test System")  
+    print("   PA 自动测试系统 - 启动器")
+    print("   Power Amplifier Auto Test System")
     print("=" * 60)
 
-def check_environment(silent=False):
-    """检查运行环境"""
+
+def check_environment(silent: bool = False) -> bool:
+    """检查运行环境。"""
     if not silent:
-        print("🔍 正在检查运行环境...")
-    
-    # 检查Python版本
+        print("正在检查运行环境...")
     python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     if not silent:
-        print(f"   Python版本: {python_version}")
-    
+        print(f"   Python 版本: {python_version}")
     if sys.version_info < (3, 7):
         if not silent:
-            print("   ❌ 需要Python 3.7或更高版本")
+            print("   需要 Python 3.7 或更高版本")
         return False
-    
-    # 检查conda环境
-    conda_env = os.environ.get('CONDA_DEFAULT_ENV', 'base')
     if not silent:
-        print(f"   Conda环境: {conda_env}")
-    
+        print(f"   Conda 环境: {os.environ.get('CONDA_DEFAULT_ENV', 'base')}")
     return True
 
-def check_packages(silent=False):
-    """检查必需的包"""
+
+def check_packages(silent: bool = False) -> Dict[str, Dict[str, object]]:
+    """检查 GUI 启动所需依赖包。"""
     if not silent:
-        print("🔍 正在检查依赖包...")
-    
-    packages = {
-        'PySide6': {'required': True, 'installed': False, 'version': ''},
-        'matplotlib': {'required': True, 'installed': False, 'version': ''},
-        'numpy': {'required': True, 'installed': False, 'version': ''},
-        'pandas': {'required': True, 'installed': False, 'version': ''},
-        'pyvisa': {'required': False, 'installed': False, 'version': ''},
-        'seaborn': {'required': False, 'installed': False, 'version': ''}
+        print("正在检查依赖包...")
+    packages: Dict[str, Dict[str, object]] = {
+        "PySide6": {"required": True, "installed": False, "version": ""},
+        "matplotlib": {"required": True, "installed": False, "version": ""},
+        "numpy": {"required": True, "installed": False, "version": ""},
+        "pandas": {"required": True, "installed": False, "version": ""},
+        "pyvisa": {"required": True, "installed": False, "version": "", "error": ""},
+        "seaborn": {"required": True, "installed": False, "version": "", "error": ""},
+        "markdown": {"required": True, "installed": False, "version": "", "error": ""},
+        "requests": {"required": True, "installed": False, "version": "", "error": ""},
     }
-    
-    for package_name in packages.keys():
+    for package_name, package in packages.items():
         try:
-            if package_name == 'PySide6':
-                import PySide6
-                packages[package_name]['installed'] = True
-                packages[package_name]['version'] = PySide6.__version__
-            elif package_name == 'matplotlib':
-                import matplotlib
-                packages[package_name]['installed'] = True  
-                packages[package_name]['version'] = matplotlib.__version__
-            elif package_name == 'numpy':
-                import numpy
-                packages[package_name]['installed'] = True
-                packages[package_name]['version'] = numpy.__version__
-            elif package_name == 'pandas':
-                import pandas
-                packages[package_name]['installed'] = True
-                packages[package_name]['version'] = pandas.__version__
-            elif package_name == 'pyvisa':
-                import pyvisa
-                packages[package_name]['installed'] = True
-                packages[package_name]['version'] = pyvisa.__version__
-            elif package_name == 'seaborn':
-                import seaborn
-                packages[package_name]['installed'] = True
-                packages[package_name]['version'] = seaborn.__version__
-        except ImportError:
-            pass
-    
-    # 显示结果
+            if importlib.util.find_spec(package_name) is None:
+                package["error"] = "未找到模块"
+                continue
+            module = importlib.import_module(package_name)
+        except Exception as error:
+            package["error"] = f"导入失败: {error}"
+            continue
+        package["installed"] = True
+        package["version"] = getattr(module, "__version__", "未知版本")
     if not silent:
         for name, info in packages.items():
-            status = "✓" if info['installed'] else "✗"
-            version = f" ({info['version']})" if info['version'] else ""
-            required = " [必需]" if info['required'] else " [可选]"
-            print(f"   {status} {name}{version}{required}")
-    
+            status = "已安装" if info["installed"] else "未安装"
+            required = "必需" if info["required"] else "可选"
+            version = f" ({info['version']})" if info["version"] else ""
+            reason = f" - {info['error']}" if info.get("error") else ""
+            print(f"   {name}: {status}{version} [{required}]{reason}")
     return packages
 
-def get_gui_version(packages):
-    """根据可用包选择GUI版本"""
-    if packages['PySide6']['installed']:
-        return 'enhanced'  # 只使用完整版
+
+def has_missing_required_packages(packages: Dict[str, Dict[str, object]]) -> bool:
+    """判断是否缺少必需依赖。"""
+    return any(bool(info["required"]) and not bool(info["installed"]) for info in packages.values())
+
+
+def print_config_validation(result: ConfigValidationResult) -> None:
+    """输出配置校验结果。"""
+    if result.valid:
+        print("配置校验通过。")
     else:
-        return 'none'      # 无法启动
+        print("配置校验失败:", file=sys.stderr)
+        for issue in result.errors:
+            print(f"   错误 [{issue.path}]: {issue.message}", file=sys.stderr)
+    for issue in result.warnings:
+        print(f"   警告 [{issue.path}]: {issue.message}")
 
-def launch_gui_version(version, packages, silent=False):
-    """启动指定版本的GUI"""
-    if version == 'none':
-        if not silent:
-            print("❌ 无法启动GUI - 缺少必需的依赖包")
-        return False
-        
-    if not silent:
-        print(f"🚀 正在启动 {version} 版本的GUI...")
-    
-    if version == 'enhanced':
-        try:
-            # 启动增强版GUI
-            if (PROJECT_ROOT / "enhanced_main_gui.py").exists():
-                if not silent:
-                    print("   使用文件: enhanced_main_gui.py")
-                import enhanced_main_gui
-                enhanced_main_gui.main()
-                return True
-            else:
-                if not silent:
-                    print("   ❌ enhanced_main_gui.py 文件不存在")
-                return False
-        except Exception as e:
-            if not silent:
-                print(f"   ❌ GUI启动失败: {e}")
-                import traceback
-                print("   详细错误信息:")
-                traceback.print_exc()
-            return False
-    
-    return False
 
-def show_installation_guide(packages, silent=False):
-    """显示安装指南"""
-    if silent:
-        return
-        
-    print("\n" + "=" * 60)
-    print("📦 依赖包安装指南")
-    print("=" * 60)
-    
-    missing_required = [name for name, info in packages.items() 
-                       if info['required'] and not info['installed']]
-    
-    if missing_required:
-        print("⚠️  缺少必需的依赖包:")
-        for pkg in missing_required:
-            print(f"   • {pkg}")
-        
-        print("\n🔧 安装命令:")
-        print(f"   pip install {' '.join(missing_required)}")
-        print("\n   或使用conda:")
-        print(f"   conda install {' '.join(missing_required)}")
-        
-    print("\n🎯 推荐完整安装:")
-    print("   pip install PySide6 matplotlib numpy pandas seaborn pyvisa")
-    
-    print("\n🐍 或使用预配置的conda环境:")
-    print("   conda activate VISA_demo")
-    print("   python launcher.py")
-
-def main():
-    """主函数"""
+def validate_default_config() -> int:
+    """校验默认生产配置，且不连接真实仪器。"""
     try:
-        # Windows 默认控制台可能使用 GBK，确保启动检查信息可正常输出。
+        result = validate_config_file()
+    except FileNotFoundError:
+        print("配置文件不存在: config.json", file=sys.stderr)
+        return EXIT_CONFIG_FILE_ERROR
+    except UnicodeDecodeError:
+        print("配置文件不是有效的 UTF-8 文本: config.json", file=sys.stderr)
+        return EXIT_CONFIG_FILE_ERROR
+    except ValueError as error:
+        print(f"配置文件不是有效的 JSON: {error}", file=sys.stderr)
+        return EXIT_CONFIG_FILE_ERROR
+    print_config_validation(result)
+    return EXIT_SUCCESS if result.valid else EXIT_CONFIG_ERROR
+
+
+def get_gui_version(packages: Dict[str, Dict[str, object]]) -> str:
+    """保留旧版启动器接口，当前始终使用增强版 GUI。"""
+    return "enhanced" if packages.get("PySide6", {}).get("installed") else "none"
+
+
+def launch_gui_version(version=None, packages=None, silent: bool = False) -> bool:
+    """启动当前唯一支持的 GUI 版本。"""
+    # 兼容旧调用：launch_gui_version(version, packages, silent=False)。
+    if isinstance(version, bool) and packages is None:
+        silent = version
+    elif version == "none":
+        return False
+    gui_file = PROJECT_ROOT / "enhanced_main_gui.py"
+    if not gui_file.exists():
+        if not silent:
+            print("GUI 启动失败: enhanced_main_gui.py 文件不存在")
+        return False
+    if not silent:
+        print("正在启动增强版 GUI...")
+    try:
+        import enhanced_main_gui
+
+        enhanced_main_gui.main()
+        return True
+    except Exception as error:
+        if not silent:
+            print(f"GUI 启动失败: {error}")
+            traceback.print_exc()
+        return False
+
+
+def show_installation_guide(packages: Dict[str, Dict[str, object]]) -> None:
+    """显示缺失依赖的安装建议。"""
+    missing_required = [name for name, info in packages.items() if info["required"] and not info["installed"]]
+    if not missing_required:
+        return
+    print("缺少必需依赖: " + ", ".join(missing_required))
+    print("安装命令: pip install " + " ".join(missing_required))
+    print("推荐环境: conda activate Auto_test")
+
+
+def show_help() -> None:
+    """显示帮助信息。"""
+    print(
+        """
+使用方法:
+    python launcher.py                       启动 GUI
+    python launcher.py --check               检查 Python 和依赖包
+    python launcher.py --validate-config     只读校验 config.json，不连接仪器
+    python launcher.py --help                显示本帮助
+
+退出码:
+    0  成功
+    2  配置校验失败
+    3  配置文件不存在或 JSON 无效
+    4  Python 运行环境不满足要求
+    5  缺少 GUI 必需依赖
+    6  GUI 启动失败
+""".strip()
+    )
+
+
+def build_argument_parser() -> argparse.ArgumentParser:
+    """构造启动器参数解析器。"""
+    parser = argparse.ArgumentParser(description="PA 自动测试系统启动器")
+    command_group = parser.add_mutually_exclusive_group()
+    command_group.add_argument("--check", "-c", action="store_true", help="检查 Python 和 GUI 依赖")
+    command_group.add_argument("--validate-config", action="store_true", help="只读校验配置，不连接仪器")
+    parser.add_argument("--silent", action="store_true", help="隐藏常规启动输出")
+    parser.add_argument("--gui", action="store_true", help="兼容旧版静默 GUI 参数")
+    return parser
+
+
+def main(argv: object = None) -> int:
+    """运行启动器并返回可供脚本使用的退出码。"""
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    parser = build_argument_parser()
+    try:
+        parsed = parser.parse_args(arguments)
+    except SystemExit as error:
+        return int(error.code)
+    silent_mode = parsed.silent or parsed.gui
+    try:
         for stream in (sys.stdout, sys.stderr):
-            if hasattr(stream, 'reconfigure'):
-                stream.reconfigure(encoding='utf-8', errors='replace')
-        # 兼容现有模块中的相对路径调用，统一从项目根目录运行。
+            if hasattr(stream, "reconfigure"):
+                stream.reconfigure(encoding="utf-8", errors="replace")
         os.chdir(PROJECT_ROOT)
-        # 检查是否为静默模式（GUI模式）
-        silent_mode = '--silent' in sys.argv or '--gui' in sys.argv
-        
+        if parsed.validate_config:
+            return validate_default_config()
         if not silent_mode:
-            # 打印标题
             print_header()
-        
-        # 处理命令行参数
-        if len(sys.argv) > 1:
-            if sys.argv[1] in ['--help', '-h']:
-                show_help()
-                return
-            elif sys.argv[1] in ['--check', '-c']:
-                check_environment()
-                packages = check_packages()
-                show_installation_guide(packages, False)
-                return
-        
-        # 检查环境
         if not check_environment(silent_mode):
-            if not silent_mode:
-                print("❌ 环境检查失败")
-            return
-        
-        # 检查包依赖
+            return EXIT_ENVIRONMENT_ERROR
         packages = check_packages(silent_mode)
-        
-        # 选择GUI版本
-        version = get_gui_version(packages)
-        if not silent_mode:
-            print(f"\n🎯 自动选择GUI版本: {version}")
-            
-            version_descriptions = {
-                'enhanced': '完整版 (PySide6 + matplotlib + 科学计算包)',
-                'none': '缺少依赖，无法启动'
-            }
-            print(f"   {version_descriptions.get(version, '未知版本')}")
-        
-        # 启动GUI
-        success = launch_gui_version(version, packages, silent_mode)
-        
-        if not success:
+        if parsed.check:
+            show_installation_guide(packages)
+            return EXIT_DEPENDENCY_ERROR if has_missing_required_packages(packages) else EXIT_SUCCESS
+        if has_missing_required_packages(packages):
             if not silent_mode:
-                print("\n❌ GUI启动失败")
-                show_installation_guide(packages, silent_mode)
-        
+                show_installation_guide(packages)
+            return EXIT_DEPENDENCY_ERROR
+
+        config_exit_code = validate_default_config()
+        if config_exit_code != EXIT_SUCCESS:
+            return config_exit_code
+        return EXIT_SUCCESS if launch_gui_version(silent=silent_mode) else EXIT_GUI_ERROR
     except KeyboardInterrupt:
         if not silent_mode:
-            print("\n\n👋 用户中断程序")
-    except Exception as e:
+            print("\n用户中断程序")
+        return EXIT_INTERRUPTED
+    except Exception as error:
         if not silent_mode:
-            print(f"\n❌ 程序异常: {e}")
-            import traceback
+            print(f"启动器发生未处理异常: {error}", file=sys.stderr)
             traceback.print_exc()
-    
-    if not silent_mode:
-        print("\n按回车键退出...")
-        try:
-            input()
-        except:
-            pass
+        return EXIT_GUI_ERROR
 
-def show_help():
-    """显示帮助信息"""
-    help_text = """
-🔧 PA自动测试系统启动器 - 帮助信息
-
-📋 使用方法:
-    python launcher.py          # 自动选择并启动GUI
-    python launcher.py -h       # 显示此帮助信息  
-    python launcher.py -c       # 仅检查环境和依赖
-
-🎮 GUI版本说明:
-    enhanced    完整版 - PySide6 + matplotlib + 科学计算包
-                提供完整功能：实时可视化、连接图表、数据导出
-                要求安装所有依赖包，启动失败将显示详细错误
-
-🛠️ 环境要求:
-    • Python 3.7+
-    • 推荐使用conda环境：VISA_demo  
-    
-📦 依赖安装:
-    # 完整安装（推荐）
-    pip install PySide6 matplotlib numpy pandas seaborn pyvisa
-    
-    # 最小安装
-    pip install PySide6
-    
-    # 使用conda
-    conda install pyside6 matplotlib numpy pandas seaborn pyvisa
-
-🚀 快速启动:
-    # 如果已有VISA_demo环境
-    conda activate VISA_demo
-    python launcher.py
-    
-    # 或者使用批处理文件
-    start_gui.bat
-
-📞 技术支持:
-    确保config.json文件存在并配置正确
-    仪器地址格式：TCPIP::IP地址::INSTR
-    测试频率格式：[4.0, 4.4, 4.8, 5.2, 5.6, 5.8]
-    
-    出现问题时运行: python launcher.py -c
-    查看详细环境和依赖状态
-"""
-    print(help_text)
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

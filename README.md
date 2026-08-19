@@ -75,8 +75,16 @@
 
 ### 环境要求
 ```bash
-conda activate VISA_demo
+conda activate Auto_test
 ```
+
+已验证的项目运行环境：
+
+- Conda 环境：`Auto_test`
+- Python：3.11.15
+- 环境路径：`C:\My_Document\Anaconda\envs\Auto_test`
+
+`VISA_demo` 是历史文档中引用的环境名，当前机器上不存在。请使用 `Auto_test`，不要在 `base` 环境中安装或运行本项目依赖。
 
 ### 必需的Python包
 - PySide6 >= 6.6.0
@@ -89,22 +97,39 @@ conda activate VISA_demo
 ### 启动方法
 
 #### 方法1: 使用批处理文件
-```bash
+```text
 双击运行 start_gui.bat
 ```
 
 #### 方法2: 命令行启动
 ```bash
-conda activate VISA_demo
-python enhanced_main_gui.py
+conda activate Auto_test
+python launcher.py --check
+python launcher.py --validate-config
+python launcher.py
 ```
+
+也可以直接使用已验证环境的解释器：
+
+```powershell
+& "C:\My_Document\Anaconda\envs\Auto_test\python.exe" launcher.py
+```
+
+#### 启动前检查
+```bash
+python launcher.py --check
+python launcher.py --validate-config
+```
+
+`--validate-config` 只读取并校验 `config.json`，不会连接 VISA 仪器，也不会改变射频或电源状态。发现错误时请先修正配置，再开始测量；只有警告时仍可继续启动，但应由操作者确认。
+
+`--check` 检查当前 Python 环境是否具备启动 GUI 所需的依赖；`--validate-config` 只检查配置内容，不能替代依赖检查。两个命令不能同时使用。未知命令行参数会返回退出码 `2`。
 
 ## 文件结构
 
 ```
 pa_auto_test/
 ├── enhanced_main_gui.py          # 主GUI应用
-├── main_gui.py                   # 简化版GUI应用
 ├── enhanced_workers.py           # 增强的工作线程类
 ├── connection_diagrams.py        # 连接图生成模块
 ├── instrument_control.py         # 仪器控制模块
@@ -116,6 +141,8 @@ pa_auto_test/
 ├── start_gui.bat                 # Windows启动脚本
 └── README.md                     # 本文档
 ```
+
+生产环境建议通过 `start_gui.bat` 或 `python launcher.py` 启动，不直接运行 GUI 模块。
 
 ## 使用流程
 

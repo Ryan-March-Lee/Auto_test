@@ -46,8 +46,7 @@ def main():
     try:
         # 直接导入并运行launcher模块，使用静默模式
         import launcher
-        launcher.main()
-        return 0
+        return launcher.main()
         
     except Exception as e:
         print(f"启动失败: {e}")

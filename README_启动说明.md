@@ -2,8 +2,18 @@
 
 ## VSCode中的使用方法
 
-### 推荐方法：使用VSCode专用启动器
-在VSCode中点击运行 `vscode_launcher.py` 文件，而不是直接运行 `launcher.py`。
+### 推荐方法：使用主启动器
+日常使用建议在已激活 `Auto_test` 环境的终端中运行 `python launcher.py`。VSCode 中如需避免输出缓冲，再运行 `vscode_launcher.py`。
+
+### 已验证运行环境
+
+```text
+Conda 环境：Auto_test
+Python：3.11.15
+环境路径：C:\My_Document\Anaconda\envs\Auto_test
+```
+
+历史文档中的 `VISA_demo` 环境当前不存在。不要在 `base` 环境中运行本项目；`base` 缺少 GUI 和仪器控制依赖。
 
 **优势**：
 - ✅ 输出立即显示，不会被缓冲
@@ -22,15 +32,18 @@
 #### 2. 手动终端命令
 在VSCode终端中执行：
 ```powershell
-conda activate VISA_demo
+conda activate Auto_test
+python launcher.py --check
+python launcher.py --validate-config
 python launcher.py
 ```
 
 #### 3. 系统终端
 直接在PowerShell或CMD中：
 ```powershell
-cd "D:\All_Projects\VsCode_projects\pa_auto_test"
-conda activate VISA_demo  
+cd "C:\My_Document\Python_project\pa_auto_test"
+conda activate Auto_test
+python launcher.py --validate-config
 python launcher.py
 ```
 
@@ -51,4 +64,22 @@ python launcher.py
 - `launcher.py` - 主启动器（推荐在终端中使用）
 - `vscode_launcher.py` - VSCode专用启动器（推荐在VSCode中使用）
 - `enhanced_main_gui.py` - 主GUI程序
-- `start_gui.bat` - Windows批处理启动文件
+- `start_gui.bat` - Windows批处理启动文件，会激活 `Auto_test` 并将命令行参数转发给 `launcher.py`
+
+## 启动检查
+
+- `python launcher.py --check`：检查 Python 和 GUI 依赖。
+- `python launcher.py --validate-config`：只读检查 `config.json`，不会连接仪器或改变仪器状态。
+- 配置存在错误时，启动器会返回非零退出码并阻止 GUI 启动；配置只有警告时仍允许继续，但应先确认警告内容。
+- `--check` 与 `--validate-config` 不能同时使用；未知参数会返回退出码 `2`。
+- `--validate-config` 不检查 GUI 依赖，启动前应分别执行这两个检查。
+
+## 直接解释器启动
+
+无需激活 Conda 环境时，可直接使用已验证解释器：
+
+```powershell
+& "C:\My_Document\Anaconda\envs\Auto_test\python.exe" launcher.py --check
+& "C:\My_Document\Anaconda\envs\Auto_test\python.exe" launcher.py --validate-config
+& "C:\My_Document\Anaconda\envs\Auto_test\python.exe" launcher.py
+```

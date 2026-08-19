@@ -14,6 +14,7 @@ CHAT_SETTINGS_FILE = PROJECT_ROOT / "chat_settings.json"
 SEARCH_API_CONFIG_FILE = PROJECT_ROOT / "search_api_config.json"
 ICONS_DIR = PROJECT_ROOT / "icons"
 TEST_RESULTS_DIR = PROJECT_ROOT / "test_results"
+TEMP_DIR = PROJECT_ROOT / "temp"
 
 
 def resolve_path(path_value: Optional[PathLike], default_path: Path) -> Path:

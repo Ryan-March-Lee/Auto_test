@@ -7,6 +7,7 @@ import time
 from datetime import datetime
 from instrument_control import InstrumentControl
 from project_paths import CABLE_LOSS_FILE, CONFIG_FILE, PROJECT_ROOT, resolve_path
+from measurement_calculations import compensate_driver_output_power
 # from mock_instrument_control import MockInstrumentControl as InstrumentControl
 
 
@@ -30,15 +31,16 @@ class DriverPowerMapping:
         计算实际功率（补偿线损）。
         目标: "线③出来这个点的功率"。
         路径: SG -> 线① -> 驱动 -> 线③ -> 衰减器 -> 线② -> 频谱仪.
-        因此，我们需要将频谱仪的读数补偿上 "衰减器" 和 "线②" 的损耗。
+
+        兼容包装入口，实际计算委托给纯函数
+        :func:`compensate_driver_output_power`。
         """
-        freq_losses = self.loss_data['cable_losses'][str(frequency)]
-        
-        # 损耗 = 衰减器损耗 + 线②损耗
-        loss_after_cable3 = (float(self.config['attenuator']['type'].replace('dB', '')) +
-                             freq_losses['cable2'])
-        
-        return measured_power + loss_after_cable3
+        attenuator_value = float(self.config['attenuator']['type'].replace('dB', ''))
+        return compensate_driver_output_power(
+            measured_power=measured_power,
+            frequency=frequency,
+            loss_data=self.loss_data['cable_losses'],
+            attenuator_value=attenuator_value)
 
 
         

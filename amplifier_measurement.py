@@ -8,6 +8,13 @@ from datetime import datetime
 from instrument_control import InstrumentControl 
 from pathlib import Path
 from project_paths import CABLE_LOSS_FILE, CONFIG_FILE, PROJECT_ROOT, resolve_path
+from measurement_calculations import (
+    compensate_amplifier_output_power,
+    calculate_dut_input_power,
+    calculate_gain,
+    calculate_efficiency,
+    calculate_compression_result,
+)
 
 
 # --- ADDED: Custom JSON Encoder to handle NumPy types ---
@@ -57,31 +64,32 @@ class AmplifierMeasurement:
         self.measurement_results: Dict[str, Dict] = {}
 
     def calculate_actual_power(self, frequency: float, measured_power: float) -> float:
-        """计算DUT的实际输出功率（补偿线损）"""
-        freq_losses = self.loss_data['cable_losses'][str(frequency)]
+        """计算DUT的实际输出功率（补偿线损）
+
+        兼容包装入口，实际计算委托给纯函数
+        :func:`compensate_amplifier_output_power`。
+        """
         attenuator_loss = float(self.config['attenuator']['type'].replace('dB', ''))
-        loss_after_dut = (freq_losses['cable4'] +
-                          attenuator_loss + freq_losses['cable2'])
-        return measured_power + loss_after_dut  #返回待测功放出来的功率值
+        return compensate_amplifier_output_power(
+            measured_power=measured_power,
+            frequency=frequency,
+            loss_data=self.loss_data['cable_losses'],
+            attenuator_value=attenuator_loss)
 
     # --- NEW: Function to get driver's OUTPUT power based on SG input ---
     def get_driver_output_power(self, frequency: float, sg_power_input: float) -> float:
         """
         根据信号源的输入功率，通过插值正向计算驱动功放的输出功率。
         这个输出功率就是DUT的输入功率。
+
+        兼容包装入口，实际计算委托给纯函数
+        :func:`interpolate_driver_output_power`。
         """
-        freq_mapping = self.driver_mapping[str(frequency)]
-
-        input_powers = np.array(list(map(float, freq_mapping.keys())))
-        output_powers = np.array(list(map(float, freq_mapping.values())))
-
-        # 使用线性插值找到驱动功放的输出功率
-        # np.interp要求x坐标(input_powers)是单调递增的
-        sorted_indices = np.argsort(input_powers)
-        input_powers_sorted = input_powers[sorted_indices]
-        output_powers_sorted = output_powers[sorted_indices]
-
-        return np.interp(sg_power_input, input_powers_sorted, output_powers_sorted)
+        from measurement_calculations import interpolate_driver_output_power
+        return interpolate_driver_output_power(
+            frequency=frequency,
+            sg_power=sg_power_input,
+            driver_mapping=self.driver_mapping)
 
     # --- REFACTORED: The core power sweep logic is now completely changed ---
     def perform_power_sweep(self, frequency: float) -> Dict:
@@ -127,13 +135,11 @@ class AmplifierMeasurement:
         for idx, sg_power in enumerate(sg_powers_all):
 
             #1. 计算DUT的实际输入功率
-            if self.driver_mapping:
-                # 正向查找驱动功放的输出，得到DUT的输入
-                dut_input_power = self.get_driver_output_power(frequency, sg_power)
-            else:
-                # 没有驱动，DUT的输入功率就是信号源功率 (减去线缆1损耗)
-                cable_loss_1 = self.loss_data['cable_losses'][str(frequency)]['cable1']  # 单位为 dB
-                dut_input_power = sg_power - cable_loss_1
+            dut_input_power = calculate_dut_input_power(
+                sg_power=sg_power,
+                frequency=frequency,
+                loss_data=self.loss_data['cable_losses'],
+                driver_mapping=self.driver_mapping)
 
             # --- 安全检查逻辑 ---
             if dut_input_power > max_dut_input_power:
@@ -164,9 +170,8 @@ class AmplifierMeasurement:
                     i_reading[f"{supply_name}_{ch}"] = i
 
             # 5. 计算各项指标
-            output_power_watts = 10 ** ((actual_output_power - 30) / 10)
-            efficiency = (output_power_watts / total_dc_power) * 100 if total_dc_power > 0 else 0
-            gain = actual_output_power - dut_input_power
+            efficiency = calculate_efficiency(actual_output_power, total_dc_power)
+            gain = calculate_gain(actual_output_power, dut_input_power)
 
             # 6. 存储数据
             sweep_data['sg_power'].append(sg_power)
@@ -185,33 +190,34 @@ class AmplifierMeasurement:
                 # 第四个点及以后，实时检测压缩点
             if idx >= small_gain_points:
                 small_signal_gain = np.mean(small_signal_gains)
-                compression_gain = small_signal_gain - gain
+                compression_gain = calculate_gain(
+                    small_signal_gain, gain)
                 if compression_gain >= compression_value:
                     print(f"达到目标压缩点 {compression_value} dB，停止扫描。")
                     break
         self.inst_ctrl.rf_output_off()
 
         # 7. 计算压缩点 (基于DUT的输入和增益)
-        gains = np.array(sweep_data['gain'])
-        small_signal_gain = np.mean(gains[:small_gain_points]) if len(gains) >= small_gain_points else (gains[0] if len(gains) > 0 else 0)
+        if not sweep_data['gain']:
+            # 保留原同步入口在 compression_gains.max() 处抛出的 ValueError。
+            np.array(sweep_data['gain']).max()
 
-        compression_gains = small_signal_gain - gains
-        # 检查是否达到目标压缩值
-        compression_achieved = bool(np.any(compression_gains >= compression_value))
+        comp_result = calculate_compression_result(
+            gains=sweep_data['gain'],
+            input_powers=sweep_data['input_power_dut'],
+            output_powers=sweep_data['output_power_dut'],
+            efficiencies=sweep_data['efficiency'],
+            sg_powers=sweep_data['sg_power'],
+            compression_value=compression_value,
+            small_gain_points=small_gain_points)
+
+        small_signal_gain = comp_result['small_signal_gain']
+        compression_achieved = comp_result['compression_achieved']
+        compression_point_data = comp_result['compression_point']
+
         if not compression_achieved:
             print(f"\n⚠️ 警告：未达到目标压缩点 {compression_value} dB，"
-                  f"最大压缩仅为 {compression_gains.max():.2f} dB。")
-        # 找到最接近目标压缩值的点的索引
-        idx = np.abs(compression_gains - compression_value).argmin()
-
-        compression_point_data = {
-            'input_power': sweep_data['input_power_dut'][idx],
-            'output_power': sweep_data['output_power_dut'][idx],
-            'gain': sweep_data['gain'][idx],
-            'efficiency': sweep_data['efficiency'][idx],
-            'compression_dB': compression_gains[idx],
-            'sg_power_at_compression': sweep_data['sg_power'][idx]
-        }
+                  f"最大压缩仅为 {comp_result['max_compression']:.2f} dB。")
 
         return {
             'compression_type': compression_type,

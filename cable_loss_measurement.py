@@ -5,6 +5,7 @@ import time
 from typing import Dict
 from instrument_control import InstrumentControl
 from project_paths import CABLE_LOSS_FILE, CONFIG_FILE, resolve_path
+from measurement_calculations import calculate_cable_losses
 # from mock_instrument_control import MockInstrumentControl as InstrumentControl
 
 class CableLossMeasurement:
@@ -83,20 +84,13 @@ class CableLossMeasurement:
             p1_loss = path1_losses[freq]
             p2_loss = path2_losses[freq]
 
-            # 计算线①和线②的损耗（假设它们相等）
-            cable12_loss = (p1_loss - self.attenuator_value) / 2
+            self.cable_losses[freq] = calculate_cable_losses(
+                path1_loss=p1_loss,
+                path2_loss=p2_loss,
+                attenuator_value=self.attenuator_value)
 
-            # 计算线③和线④的损耗（假设它们相等）
-            cable34_loss = (p2_loss - p1_loss) / 2
-
-            self.cable_losses[freq] = {
-                'cable1': cable12_loss,
-                'cable2': cable12_loss,
-                'cable3': cable34_loss,
-                'cable4': cable34_loss,
-                'total_path1': p1_loss,
-                'total_path2': p2_loss
-            }
+            cable12_loss = self.cable_losses[freq]['cable1']
+            cable34_loss = self.cable_losses[freq]['cable3']
             print(f"  {freq} GHz: Cable1/2={cable12_loss:.2f} dB, Cable3/4={cable34_loss:.2f} dB")
         print("=" * 50)
 

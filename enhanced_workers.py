@@ -14,6 +14,13 @@ from cable_loss_measurement import CableLossMeasurement
 from driver_power_mapping import DriverPowerMapping
 from amplifier_measurement import AmplifierMeasurement
 from project_paths import CONFIG_FILE, resolve_path
+from measurement_calculations import (
+    calculate_cable_losses,
+    calculate_dut_input_power,
+    calculate_gain,
+    calculate_efficiency,
+    calculate_compression_result,
+)
 
 
 class EnhancedCableLossMeasurement(CableLossMeasurement):
@@ -113,18 +120,11 @@ class EnhancedCableLossMeasurement(CableLossMeasurement):
         for freq in test_frequencies:
             p1_loss = self.path1_losses[freq]
             p2_loss = path2_losses[freq]
-            
-            cable12_loss = (p1_loss - self.attenuator_value) / 2
-            cable34_loss = (p2_loss - p1_loss) / 2
-            
-            self.cable_losses[freq] = {
-                'cable1': cable12_loss,
-                'cable2': cable12_loss,
-                'cable3': cable34_loss,
-                'cable4': cable34_loss,
-                'total_path1': p1_loss,
-                'total_path2': p2_loss
-            }
+
+            self.cable_losses[freq] = calculate_cable_losses(
+                path1_loss=p1_loss,
+                path2_loss=p2_loss,
+                attenuator_value=self.attenuator_value)
             
         self.save_results()
         self.emit_progress(100)
@@ -201,7 +201,7 @@ class EnhancedDriverPowerMapping(DriverPowerMapping):
             self.power_mapping[str(frequency)][str(input_power)] = actual_power
             
             # 计算增益
-            gain = actual_power - input_power
+            gain = calculate_gain(actual_power, input_power)
             
             # 更新实时数据
             sweep_data['input_power_sg'].append(input_power)
@@ -322,11 +322,11 @@ class EnhancedAmplifierMeasurement(AmplifierMeasurement):
                 return {}
                 
             # 计算DUT的实际输入功率
-            if self.driver_mapping:
-                dut_input_power = self.get_driver_output_power(frequency, sg_power)
-            else:
-                cable_loss_1 = self.loss_data['cable_losses'][str(frequency)]['cable1']
-                dut_input_power = sg_power - cable_loss_1
+            dut_input_power = calculate_dut_input_power(
+                sg_power=sg_power,
+                frequency=frequency,
+                loss_data=self.loss_data['cable_losses'],
+                driver_mapping=self.driver_mapping)
                 
             # 安全检查
             if dut_input_power > max_dut_input_power:
@@ -354,9 +354,8 @@ class EnhancedAmplifierMeasurement(AmplifierMeasurement):
                     i_reading[f"{supply_name}_{ch}"] = i
                     
             # 计算各项指标
-            output_power_watts = 10 ** ((actual_output_power - 30) / 10)
-            efficiency = (output_power_watts / total_dc_power) * 100 if total_dc_power > 0 else 0
-            gain = actual_output_power - dut_input_power
+            efficiency = calculate_efficiency(actual_output_power, total_dc_power)
+            gain = calculate_gain(actual_output_power, dut_input_power)
             
             # 存储数据
             sweep_data['sg_power'].append(sg_power)
@@ -393,7 +392,8 @@ class EnhancedAmplifierMeasurement(AmplifierMeasurement):
             # 压缩点检测
             if idx >= small_gain_points:
                 small_signal_gain = np.mean(small_signal_gains)
-                compression_gain = small_signal_gain - gain
+                compression_gain = calculate_gain(
+                    small_signal_gain, gain)
                 if compression_gain >= compression_value:
                     self.emit_message(f"达到目标压缩点 {compression_value} dB，停止扫描")
                     break
@@ -404,25 +404,25 @@ class EnhancedAmplifierMeasurement(AmplifierMeasurement):
             return {}
             
         # 计算压缩点
-        gains = np.array(sweep_data['gain'])
-        small_signal_gain = np.mean(gains[:small_gain_points]) if len(gains) >= small_gain_points else (gains[0] if len(gains) > 0 else 0)
-        
-        compression_gains = small_signal_gain - gains
-        compression_achieved = bool(np.any(compression_gains >= compression_value))
+        if not sweep_data['gain']:
+            # 保留原增强入口的提示副作用，再由纯函数在 argmin() 处抛 ValueError。
+            self.emit_message(f"警告：未达到目标压缩点 {compression_value} dB")
+
+        comp_result = calculate_compression_result(
+            gains=sweep_data['gain'],
+            input_powers=sweep_data['input_power_dut'],
+            output_powers=sweep_data['output_power_dut'],
+            efficiencies=sweep_data['efficiency'],
+            sg_powers=sweep_data['sg_power'],
+            compression_value=compression_value,
+            small_gain_points=small_gain_points)
+
+        small_signal_gain = comp_result['small_signal_gain']
+        compression_achieved = comp_result['compression_achieved']
+        compression_point_data = comp_result['compression_point']
         
         if not compression_achieved:
             self.emit_message(f"警告：未达到目标压缩点 {compression_value} dB")
-            
-        idx = np.abs(compression_gains - compression_value).argmin()
-        
-        compression_point_data = {
-            'input_power': sweep_data['input_power_dut'][idx],
-            'output_power': sweep_data['output_power_dut'][idx],
-            'gain': sweep_data['gain'][idx],
-            'efficiency': sweep_data['efficiency'][idx],
-            'compression_dB': compression_gains[idx],
-            'sg_power_at_compression': sweep_data['sg_power'][idx]
-        }
         
         return {
             'compression_type': compression_type,

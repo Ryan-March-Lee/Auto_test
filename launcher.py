@@ -212,13 +212,8 @@ def main(argv: object = None) -> int:
             if hasattr(stream, "reconfigure"):
                 stream.reconfigure(encoding="utf-8", errors="replace")
         os.chdir(PROJECT_ROOT)
-        # 阶段 0.3：最小日志。失败不阻断启动（launcher 本身无可写日志目标时忽略）。
-        try:
-            setup_logging()
-        except Exception as logging_error:
-            if not silent_mode:
-                print(f"日志初始化失败（忽略）: {logging_error}")
         if parsed.validate_config:
+            # 只读校验命令：保持无文件副作用，不初始化日志。
             return validate_default_config()
         if not silent_mode:
             print_header()
@@ -226,6 +221,7 @@ def main(argv: object = None) -> int:
             return EXIT_ENVIRONMENT_ERROR
         packages = check_packages(silent_mode)
         if parsed.check:
+            # 依赖检查命令：保持无文件副作用，不初始化日志。
             show_installation_guide(packages)
             return EXIT_DEPENDENCY_ERROR if has_missing_required_packages(packages) else EXIT_SUCCESS
         if has_missing_required_packages(packages):
@@ -236,6 +232,12 @@ def main(argv: object = None) -> int:
         config_exit_code = validate_default_config()
         if config_exit_code != EXIT_SUCCESS:
             return config_exit_code
+        # 阶段 0.3：进入 GUI 前初始化最小日志；失败不阻断启动。
+        try:
+            setup_logging()
+        except Exception as logging_error:
+            if not silent_mode:
+                print(f"日志初始化失败（忽略）: {logging_error}")
         return EXIT_SUCCESS if launch_gui_version(silent=silent_mode) else EXIT_GUI_ERROR
     except KeyboardInterrupt:
         if not silent_mode:

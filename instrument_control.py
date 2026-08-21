@@ -3,12 +3,12 @@
 import json
 import pyvisa
 import time
-import logging
 from typing import Callable, Dict, List, Union, Optional
 from enum import Enum
 from project_paths import CONFIG_FILE, resolve_path
+from app_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class InstrumentControl:

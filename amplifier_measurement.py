@@ -4,7 +4,6 @@ import json
 import numpy as np
 from typing import Dict, List, Optional, Tuple
 import time
-import logging
 from datetime import datetime
 from instrument_control import InstrumentControl 
 from pathlib import Path
@@ -16,8 +15,9 @@ from measurement_calculations import (
     calculate_efficiency,
     calculate_compression_result,
 )
+from app_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # --- ADDED: Custom JSON Encoder to handle NumPy types ---

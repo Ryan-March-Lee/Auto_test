@@ -2,14 +2,14 @@
 
 import json
 import time
-import logging
 from typing import Dict
 from instrument_control import InstrumentControl
 from project_paths import CABLE_LOSS_FILE, CONFIG_FILE, resolve_path
 from measurement_calculations import calculate_cable_losses
+from app_logging import get_logger
 # from mock_instrument_control import MockInstrumentControl as InstrumentControl
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 class CableLossMeasurement:
     def __init__(self, config_path=None):

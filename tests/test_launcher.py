@@ -105,6 +105,51 @@ class LauncherTests(unittest.TestCase):
         ):
             self.assertEqual(launcher.get_conda_environment_name(), "Auto_test")
 
+    def test_validate_config_does_not_initialize_logging(self):
+        # --validate-config 是只读命令：不得创建日志文件。
+        with patch.object(launcher, "validate_config_file", return_value=launcher.ConfigValidationResult([], [])), patch.object(
+            launcher, "setup_logging", side_effect=AssertionError("不应初始化日志")
+        ):
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(launcher.main(["--validate-config"]), launcher.EXIT_SUCCESS)
+
+    def test_check_does_not_initialize_logging(self):
+        # --check 是只读命令：不得创建日志文件。
+        with patch.object(launcher, "check_environment", return_value=True), patch.object(
+            launcher, "check_packages"
+        ), patch.object(launcher, "setup_logging", side_effect=AssertionError("不应初始化日志")):
+            with redirect_stdout(io.StringIO()):
+                launcher.main(["--check"])
+
+    def test_gui_start_initializes_logging_before_launch(self):
+        # 正常 GUI 启动路径应在启动 GUI 前完成日志初始化。
+        calls = []
+        with patch.object(launcher, "check_environment", return_value=True), patch.object(
+            launcher, "check_packages", return_value={}
+        ), patch.object(
+            launcher, "validate_default_config", return_value=launcher.EXIT_SUCCESS
+        ), patch.object(
+            launcher, "setup_logging", side_effect=lambda: calls.append("log")
+        ), patch.object(
+            launcher, "launch_gui_version", side_effect=lambda **kw: calls.append("gui") or True
+        ):
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(launcher.main([]), launcher.EXIT_SUCCESS)
+        self.assertEqual(calls, ["log", "gui"])
+
+    def test_logging_failure_does_not_block_gui_start(self):
+        with patch.object(launcher, "check_environment", return_value=True), patch.object(
+            launcher, "check_packages", return_value={}
+        ), patch.object(
+            launcher, "validate_default_config", return_value=launcher.EXIT_SUCCESS
+        ), patch.object(
+            launcher, "setup_logging", side_effect=OSError("磁盘不可写")
+        ), patch.object(
+            launcher, "launch_gui_version", return_value=True
+        ):
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(launcher.main([]), launcher.EXIT_SUCCESS)
+
     def test_main_does_not_reference_silent_mode_before_initialization(self):
         with patch.object(launcher, "check_environment", side_effect=RuntimeError("boom")):
             with patch.object(launcher, "check_packages"):

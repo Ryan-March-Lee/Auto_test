@@ -4,14 +4,14 @@ import json
 import numpy as np
 from typing import Dict, List, Optional
 import time
-import logging
 from datetime import datetime
 from instrument_control import InstrumentControl
 from project_paths import CABLE_LOSS_FILE, CONFIG_FILE, PROJECT_ROOT, resolve_path
 from measurement_calculations import compensate_driver_output_power
+from app_logging import get_logger
 # from mock_instrument_control import MockInstrumentControl as InstrumentControl
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class DriverPowerMapping:

@@ -4,7 +4,6 @@
 
 import time
 import json
-import logging
 import numpy as np
 from typing import Dict, Any, Optional
 from pathlib import Path
@@ -22,8 +21,9 @@ from measurement_calculations import (
     calculate_efficiency,
     calculate_compression_result,
 )
+from app_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class EnhancedCableLossMeasurement(CableLossMeasurement):

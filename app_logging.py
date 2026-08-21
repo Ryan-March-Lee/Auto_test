@@ -32,16 +32,24 @@ ROOT_LOGGER_NAME = "pa_auto_test"
 _LOG_FORMAT = "%(asctime)s %(levelname)-7s %(name)s: %(message)s"
 _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 _MARKER_ATTRIBUTE = "_pa_auto_test_handler"
+_NULL_HANDLER_ATTRIBUTE = "_pa_auto_test_null_handler"
 
 # 脱敏规则：按顺序应用；匹配内容替换为 [REDACTED:类别]。
-# 1. VISA 地址，例如 TCPIP0::192.168.1.201::inst0::INSTR / GPIB0::18::INSTR
+# 1. VISA 地址，例如 TCPIP0::192.168.1.201::inst0::INSTR、
+#    TCPIP0::192.168.1.201::5025::SOCKET、USB0::...::RAW。
 _VISA_ADDRESS_PATTERN = re.compile(
-    r"(?:TCPIP|GPIB|USB|ASRL|VXI|ENET|SOCKET)[0-9]*::[^\s'\"]*::INSTR",
+    r"(?:TCPIP|GPIB|USB|ASRL|VXI|ENET|SOCKET)[0-9]*::"
+    r"(?:[^\s'\"]+::)*(?:INSTR|SOCKET|RAW)",
     re.IGNORECASE,
 )
 # 2. URL 中的用户凭证 user:pass@host
 _URL_CREDENTIALS_PATTERN = re.compile(r"(?<=://)[^\s/@:]+:[^\s/@]+@")
-# 3. 常见密钥参数 key=... / token=... / Authorization 头
+# 3. Authorization Bearer 头必须先于通用 key-value 规则处理，
+#    否则通用规则会把 Bearer 当成值而留下真正的 token。
+_AUTHORIZATION_BEARER_PATTERN = re.compile(
+    r"(?i)\bAuthorization\s*:\s*Bearer\s+[^\s,;]+"
+)
+# 4. 常见密钥参数 key=... / token=... / password=...
 _KEY_VALUE_PATTERN = re.compile(
     r"(?i)\b((?:api[_-]?key|subscription[_-]?key|secret|token|password|passwd|authorization)"
     r"([_ -]?[a-z0-9_]*)?)\s*[=:]\s*['\"]?([^\s'\",;]+)"
@@ -52,6 +60,9 @@ def _redact_message(message: str) -> str:
     """对已格式化的日志消息做脱敏替换。"""
     message = _VISA_ADDRESS_PATTERN.sub(r"[REDACTED:visa]", message)
     message = _URL_CREDENTIALS_PATTERN.sub(r"[REDACTED:credentials]@", message)
+    message = _AUTHORIZATION_BEARER_PATTERN.sub(
+        "Authorization: [REDACTED:secret]", message
+    )
     message = _KEY_VALUE_PATTERN.sub(r"\1=[REDACTED:secret]", message)
     return message
 
@@ -63,19 +74,36 @@ class RedactingFormatter(logging.Formatter):
         return _redact_message(super().format(record))
 
 
+def _ensure_null_handler(logger: logging.Logger) -> None:
+    """在正式日志初始化前静默丢弃记录，避免触发 logging.lastResort。"""
+    if getattr(logger, _NULL_HANDLER_ATTRIBUTE, False):
+        return
+    logger.addHandler(logging.NullHandler())
+    setattr(logger, _NULL_HANDLER_ATTRIBUTE, True)
+
+
 def get_logger(name: Optional[str] = None) -> logging.Logger:
     """返回挂在 ``pa_auto_test`` 专用 logger 下的模块 logger。
 
-    ``name`` 传 ``__name__`` 即可；会自动去掉包前缀差异，保证
-    挂在 ``pa_auto_test.<module>`` 下。不初始化时也可安全调用
+    ``name`` 传 ``__name__`` 即可，完整保留模块路径，挂在
+    ``pa_auto_test.<module path>`` 下。不初始化时也可安全调用
     （记录会因 ``propagate=False`` 被丢弃，不会漏到 root）。
     """
     if not name:
-        return logging.getLogger(ROOT_LOGGER_NAME)
-    short_name = name.rsplit(".", 1)[-1] if "." in name else name
-    if short_name == ROOT_LOGGER_NAME:
-        return logging.getLogger(ROOT_LOGGER_NAME)
-    return logging.getLogger(f"{ROOT_LOGGER_NAME}.{short_name}")
+        logger = logging.getLogger(ROOT_LOGGER_NAME)
+        _ensure_null_handler(logger)
+        return logger
+    if name == ROOT_LOGGER_NAME:
+        logger = logging.getLogger(ROOT_LOGGER_NAME)
+        _ensure_null_handler(logger)
+        return logger
+    if name.startswith(f"{ROOT_LOGGER_NAME}."):
+        root_logger = logging.getLogger(ROOT_LOGGER_NAME)
+        _ensure_null_handler(root_logger)
+        return logging.getLogger(name)
+    root_logger = logging.getLogger(ROOT_LOGGER_NAME)
+    _ensure_null_handler(root_logger)
+    return logging.getLogger(f"{ROOT_LOGGER_NAME}.{name}")
 
 
 def setup_logging(
@@ -90,6 +118,7 @@ def setup_logging(
     只影响 ``pa_auto_test`` logger；root logger 的级别和处理器不变。
     """
     root_logger = logging.getLogger(ROOT_LOGGER_NAME)
+    _ensure_null_handler(root_logger)
     existing = getattr(root_logger, _MARKER_ATTRIBUTE, None)
     if existing is not None:
         return existing
@@ -133,5 +162,7 @@ def reset_logging() -> None:
     for handler in list(logger.handlers):
         logger.removeHandler(handler)
         handler.close()
+    setattr(logger, _NULL_HANDLER_ATTRIBUTE, False)
+    _ensure_null_handler(logger)
     logger.propagate = False
     logger.setLevel(logging.NOTSET)

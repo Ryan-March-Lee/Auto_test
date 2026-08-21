@@ -34,7 +34,7 @@ class AppLoggingTests(unittest.TestCase):
         self._flush()
         content = log_path.read_text(encoding="utf-8")
         self.assertIn("hello-logging", content)
-        self.assertIn("pa_auto_test.module", content)
+        self.assertIn("pa_auto_test.test.module", content)
 
     def test_setup_logging_is_idempotent(self):
         first = app_logging.setup_logging(self.directory)
@@ -71,6 +71,45 @@ class AppLoggingTests(unittest.TestCase):
         self.assertNotIn("192.168.1.201", content)
         self.assertIn("[REDACTED:visa]", content)
         self.assertIn("仪器初始化失败", content)
+
+    def test_non_instr_visa_resources_are_redacted(self):
+        log_path = app_logging.setup_logging(self.directory)
+        addresses = (
+            "TCPIP0::192.168.1.201::5025::SOCKET",
+            "USB0::0x1234::0x5678::SERIAL::RAW",
+            "ASRL1::INSTR",
+        )
+        app_logging.get_logger("instrument_control").error(
+            "资源失败: %s | %s | %s", *addresses
+        )
+        self._flush()
+        content = log_path.read_text(encoding="utf-8")
+        for address in addresses:
+            self.assertNotIn(address, content)
+        self.assertEqual(content.count("[REDACTED:visa]"), 3)
+
+    def test_authorization_bearer_token_is_redacted(self):
+        log_path = app_logging.setup_logging(self.directory)
+        app_logging.get_logger("assistant").warning(
+            "请求失败 Authorization: Bearer SECRET-BEARER-123")
+        self._flush()
+        content = log_path.read_text(encoding="utf-8")
+        self.assertNotIn("SECRET-BEARER-123", content)
+        self.assertIn("Authorization=[REDACTED:secret]", content)
+
+    def test_logger_keeps_full_module_path(self):
+        self.assertEqual(
+            app_logging.get_logger("package_a.instrument_control").name,
+            "pa_auto_test.package_a.instrument_control",
+        )
+        self.assertNotEqual(
+            app_logging.get_logger("package_a.instrument_control").name,
+            app_logging.get_logger("package_b.instrument_control").name,
+        )
+        self.assertEqual(
+            app_logging.get_logger("pa_auto_test.package_a.instrument_control").name,
+            "pa_auto_test.package_a.instrument_control",
+        )
 
     def test_secrets_are_redacted(self):
         log_path = app_logging.setup_logging(self.directory)

@@ -74,6 +74,30 @@ python launcher.py
 - `--check` 与 `--validate-config` 不能同时使用；未知参数会返回退出码 `2`。
 - `--validate-config` 不检查 GUI 依赖，启动前应分别执行这两个检查。
 
+## 自动化测试环境
+
+不要直接使用未激活环境的 `python -m unittest`，因为 Windows 上的 `python` 可能指向 Anaconda base 环境。
+项目提供了固定环境入口，会优先使用 `Auto_test` 解释器：
+
+```powershell
+./run_tests.bat
+```
+
+或在 PowerShell 中运行：
+
+```powershell
+./run_tests.ps1
+```
+
+默认解释器为 `C:\My_Document\Anaconda\envs\Auto_test\python.exe`。如环境路径变化，可设置：
+
+```powershell
+$env:AUTO_TEST_PYTHON = "D:\path\to\Auto_test\python.exe"
+./run_tests.ps1
+```
+
+脚本会先执行编译检查，再运行完整 unittest 测试集，并在开始时打印实际使用的解释器路径。
+
 ## 直接解释器启动
 
 无需激活 Conda 环境时，可直接使用已验证解释器：

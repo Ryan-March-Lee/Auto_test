@@ -31,31 +31,38 @@ class InstrumentControl:
     def initialize_all_instruments(self):
         """初始化所有仪器（只连接启用的仪器）"""
         try:
-            # 只连接启用的信号发生器
-            sg_config = self.config['instruments']['signal_generator']
-            if sg_config.get('enabled', True):
-                self.signal_gen = self.rm.open_resource(sg_config['address'])
-                self.initialize_signal_generator()
-            else:
-                self.signal_gen = None
-
-            # 只连接启用的频谱分析仪
-            sa_config = self.config['instruments']['spectrum_analyzer']
-            if sa_config.get('enabled', True):
-                self.spectrum = self.rm.open_resource(sa_config['address'])
-                self.initialize_spectrum_analyzer()
-            else:
-                self.spectrum = None
-
-            # 只连接启用的电源
-            for ps_name, ps_config in self.config['instruments']['power_supplies'].items():
-                if ps_config.get('enabled', True):
-                    ps = self.rm.open_resource(ps_config['address'])
-                    self.power_supplies[ps_name] = ps
-                    self.initialize_power_supply(ps_name)
+            self._initialize_signal_generator_if_enabled()
+            self._initialize_spectrum_analyzer_if_enabled()
+            self._initialize_enabled_power_supplies()
         except Exception as e:
             self.close_all()
             raise Exception(f"Failed to initialize instruments: {str(e)}")
+
+    def _initialize_signal_generator_if_enabled(self):
+        """连接并初始化信号发生器（仅在启用时）"""
+        sg_config = self.config['instruments']['signal_generator']
+        if sg_config.get('enabled', True):
+            self.signal_gen = self.rm.open_resource(sg_config['address'])
+            self.initialize_signal_generator()
+        else:
+            self.signal_gen = None
+
+    def _initialize_spectrum_analyzer_if_enabled(self):
+        """连接并初始化频谱分析仪（仅在启用时）"""
+        sa_config = self.config['instruments']['spectrum_analyzer']
+        if sa_config.get('enabled', True):
+            self.spectrum = self.rm.open_resource(sa_config['address'])
+            self.initialize_spectrum_analyzer()
+        else:
+            self.spectrum = None
+
+    def _initialize_enabled_power_supplies(self):
+        """连接并初始化所有启用的电源（保持配置字典顺序）"""
+        for ps_name, ps_config in self.config['instruments']['power_supplies'].items():
+            if ps_config.get('enabled', True):
+                ps = self.rm.open_resource(ps_config['address'])
+                self.power_supplies[ps_name] = ps
+                self.initialize_power_supply(ps_name)
 
     def initialize_signal_generator(self):
         self.signal_gen.write("*RST")
@@ -246,13 +253,26 @@ class InstrumentControl:
 
     def power_on_sequence(self):
         """
-        按“先栅后漏”的专业顺序打开所有电源。
+        按"先栅后漏"的专业顺序打开所有电源。
         假设: CH1为栅压, CH2为漏压。
         """
         print("开始上电序列 (先栅极，后漏极)...")
         all_supplies = self._get_all_assigned_supplies()
 
         # 1. 打开所有栅极电压 (CH1)
+        self._power_on_gate_channels(all_supplies)
+
+        # 稳定延时
+        print("  -> 栅极电源已稳定，等待1.5秒...")
+        self.sleep_fn(1.5)
+
+        # 2. 打开所有漏极电压 (CH2)
+        self._power_on_drain_channels(all_supplies)
+
+        print("上电序列完成。")
+
+    def _power_on_gate_channels(self, all_supplies: List[Dict]):
+        """打开所有分配电源的栅极通道 (CH1)"""
         print("  -> 正在打开所有栅极电源 (CH1)...")
         for supply_info in all_supplies:
             ps_name = supply_info['name']
@@ -262,11 +282,8 @@ class InstrumentControl:
                     print(f"      {ps_name}-{ch} ON")
                     self.sleep_fn(0.5)
 
-        # 稳定延时
-        print("  -> 栅极电源已稳定，等待1.5秒...")
-        self.sleep_fn(1.5)
-
-        # 2. 打开所有漏极电压 (CH2)
+    def _power_on_drain_channels(self, all_supplies: List[Dict]):
+        """打开所有分配电源的漏极通道 (CH2)"""
         print("  -> 正在打开所有漏极电源 (CH2)...")
         for supply_info in all_supplies:
             ps_name = supply_info['name']
@@ -276,11 +293,9 @@ class InstrumentControl:
                     print(f"      {ps_name}-{ch} ON")
                     self.sleep_fn(0.5)
 
-        print("上电序列完成。")
-
     def power_off_sequence(self):
         """
-        按“先漏后栅”的安全顺序关闭所有电源。
+        按"先漏后栅"的安全顺序关闭所有电源。
         假设: CH1为栅压, CH2为漏压。
         """
         print("开始掉电序列 (先漏极，后栅极)...")
@@ -289,11 +304,25 @@ class InstrumentControl:
         errors = []
 
         # 1. 关闭所有漏极电压 (CH2)
+        self._power_off_drain_channels(all_supplies, errors)
+
+        # 稳定延时
+        print("  -> 漏极电源已关闭，等待2秒...")
+        self.sleep_fn(2)
+
+        # 2. 关闭所有栅极电压 (CH1)
+        self._power_off_gate_channels(all_supplies, errors)
+
+        print("掉电序列完成。")
+        if errors:
+            details = "; ".join(f"{name}-{channel}: {error}" for name, channel, error in errors)
+            raise RuntimeError(f"电源掉电序列存在失败: {details}") from errors[0][2]
+
+    def _power_off_drain_channels(self, all_supplies: List[Dict], errors: list):
+        """关闭所有分配电源的漏极通道 (CH2)，反向迭代以保证安全"""
         print("  -> 正在关闭所有漏极电源 (CH2)...")
-        # 反向迭代以保证安全
         for supply_info in reversed(all_supplies):
             ps_name = supply_info['name']
-            # 反向迭代通道
             for ch in reversed(supply_info['channel']):
                 if ch == 'CH2':
                     try:
@@ -304,11 +333,8 @@ class InstrumentControl:
                     finally:
                         self.sleep_fn(0.5)
 
-        # 稳定延时
-        print("  -> 漏极电源已关闭，等待2秒...")
-        self.sleep_fn(2)
-
-        # 2. 关闭所有栅极电压 (CH1)
+    def _power_off_gate_channels(self, all_supplies: List[Dict], errors: list):
+        """关闭所有分配电源的栅极通道 (CH1)，反向迭代以保证安全"""
         print("  -> 正在关闭所有栅极电源 (CH1)...")
         for supply_info in reversed(all_supplies):
             ps_name = supply_info['name']
@@ -321,11 +347,6 @@ class InstrumentControl:
                         errors.append((ps_name, ch, error))
                     finally:
                         self.sleep_fn(0.5)
-
-        print("掉电序列完成。")
-        if errors:
-            details = "; ".join(f"{name}-{channel}: {error}" for name, channel, error in errors)
-            raise RuntimeError(f"电源掉电序列存在失败: {details}") from errors[0][2]
 
 
     # The rest of the file (Signal Gen, Spectrum Analyzer control) is assumed to be correct

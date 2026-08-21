@@ -2805,168 +2805,230 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.add_log_message(f"加载线损测量结果失败: {e}")
         
-    def update_config_from_ui(self):
-        """从UI更新配置"""
-        # 更新仪器地址
-        if 'instruments' not in self.config:
-            self.config['instruments'] = {}
-            
-        self.config['instruments']['signal_generator'] = {
-            'address': self.sg_address.text(),
-            'enabled': self.sg_enabled.isChecked()
-        }
-        self.config['instruments']['spectrum_analyzer'] = {
-            'address': self.sa_address.text(),
-            'enabled': self.sa_enabled.isChecked()
-        }
-        
-        if 'power_supplies' not in self.config['instruments']:
-            self.config['instruments']['power_supplies'] = {}
-            
-        # 保持现有的电源配置结构，只更新地址和启用状态
+    def _read_instrument_config_from_ui(self) -> dict:
+        """从UI读取仪器地址和启用状态，保留现有通道和其他字段。"""
+        import copy
+        instruments = self.config.get('instruments', {})
+        if not isinstance(instruments, dict):
+            instruments = {}
+        else:
+            instruments = copy.deepcopy(instruments)
+
+        existing_power_supplies = instruments.get('power_supplies', {})
+        if not isinstance(existing_power_supplies, dict):
+            existing_power_supplies = {}
+        else:
+            existing_power_supplies = copy.deepcopy(existing_power_supplies)
+
         ps_widgets = [
             ('PS1', self.ps1_address, self.ps1_enabled),
             ('PS2', self.ps2_address, self.ps2_enabled),
             ('PS3', self.ps3_address, self.ps3_enabled),
             ('PS4', self.ps4_address, self.ps4_enabled)
         ]
+        power_supplies = existing_power_supplies
         for ps_name, address_widget, enabled_widget in ps_widgets:
-            if ps_name not in self.config['instruments']['power_supplies']:
-                self.config['instruments']['power_supplies'][ps_name] = {}
-            self.config['instruments']['power_supplies'][ps_name]['address'] = address_widget.text()
-            self.config['instruments']['power_supplies'][ps_name]['enabled'] = enabled_widget.isChecked()
-            
-        # 更新测试参数
+            ps_config = power_supplies.get(ps_name, {})
+            if not isinstance(ps_config, dict):
+                ps_config = {}
+            else:
+                ps_config = copy.deepcopy(ps_config)
+            ps_config['address'] = address_widget.text()
+            ps_config['enabled'] = enabled_widget.isChecked()
+            power_supplies[ps_name] = ps_config
+
+        instruments['signal_generator'] = {
+            'address': self.sg_address.text(),
+            'enabled': self.sg_enabled.isChecked()
+        }
+        instruments['spectrum_analyzer'] = {
+            'address': self.sa_address.text(),
+            'enabled': self.sa_enabled.isChecked()
+        }
+        instruments['power_supplies'] = power_supplies
+        return {'instruments': instruments}
+
+    def _read_test_parameters_from_ui(self) -> dict:
+        """从UI读取测试参数，不修改self.config。"""
+        result = {}
         try:
             freq_list = eval(self.freq_edit.text())
-            self.config['test_frequencies'] = freq_list
+            result['test_frequencies'] = freq_list
         except:
             pass
-            
-        self.config['signal_source'] = {
+        result['signal_source'] = {
             'start_power': self.start_power.value(),
             'stop_power': self.stop_power.value(),
             'step': self.power_step.value()
         }
-        
-        self.config['compression_point'] = {'type': self.compression_combo.currentText()}
-        self.config['attenuator'] = {'type': self.attenuator_combo.currentText()}
-        self.config['driver_mode'] = {'enabled': self.driver_mode_check.isChecked()}
-        
-        # 更新DUT配置
-        if 'dut_config' not in self.config:
-            self.config['dut_config'] = {}
-        self.config['dut_config']['max_input_power'] = self.max_input_power.value()
-        
-        # 根据PA单元数量设置电源数量
-        pa_unit_count = int(self.pa_unit_count_combo.currentText())
-        self.config['dut_config']['power_supply_count'] = pa_unit_count
-        
-        # 更新电源详细配置
-        if hasattr(self, 'power_config_widgets'):
-            if 'power_supplies' not in self.config['instruments']:
-                self.config['instruments']['power_supplies'] = {}
-                
-            for ps_name, ps_widgets in self.power_config_widgets.items():
-                if ps_name not in self.config['instruments']['power_supplies']:
-                    self.config['instruments']['power_supplies'][ps_name] = {}
-                
-                # 不在此处更新地址，因为已经在上面从主要地址输入框更新过了
-                # 注释掉以下行以防覆盖用户在“仪器连接配置”中修改的地址
-                # self.config['instruments']['power_supplies'][ps_name]['address'] = ps_widgets['address'].text()
-                
-                # 更新通道配置
-                if 'channels' not in self.config['instruments']['power_supplies'][ps_name]:
-                    self.config['instruments']['power_supplies'][ps_name]['channels'] = {}
-                
-                for ch_name, ch_widgets in ps_widgets['channels'].items():
-                    self.config['instruments']['power_supplies'][ps_name]['channels'][ch_name] = {
-                        'voltage': {
-                            'value': ch_widgets['voltage'].value(),
-                            'protection': ch_widgets['voltage_protection'].value(),
-                            'protection_enabled': ch_widgets['voltage_protection_enabled'].isChecked()
-                        },
-                        'current': {
-                            'value': ch_widgets['current'].value(),
-                            'protection': ch_widgets['current_protection'].value(),
-                            'protection_enabled': ch_widgets['current_protection_enabled'].isChecked()
-                        }
+        result['compression_point'] = {'type': self.compression_combo.currentText()}
+        result['attenuator'] = {'type': self.attenuator_combo.currentText()}
+        result['driver_mode'] = {'enabled': self.driver_mode_check.isChecked()}
+        return result
+
+    def _read_power_supply_config_from_ui(self) -> dict:
+        """从UI读取电源通道详细配置，按电源名称分组返回。"""
+        if not hasattr(self, 'power_config_widgets'):
+            return {}
+        result = {}
+        for ps_name, ps_widgets in self.power_config_widgets.items():
+            channels = {}
+            for ch_name, ch_widgets in ps_widgets['channels'].items():
+                channels[ch_name] = {
+                    'voltage': {
+                        'value': ch_widgets['voltage'].value(),
+                        'protection': ch_widgets['voltage_protection'].value(),
+                        'protection_enabled': ch_widgets['voltage_protection_enabled'].isChecked()
+                    },
+                    'current': {
+                        'value': ch_widgets['current'].value(),
+                        'protection': ch_widgets['current_protection'].value(),
+                        'protection_enabled': ch_widgets['current_protection_enabled'].isChecked()
                     }
-        
-        # 更新电源分配配置
-        if hasattr(self, 'power_assignment_widgets'):
-            if 'power_supply_assignment' not in self.config:
-                self.config['power_supply_assignment'] = {}
-            
-            # 驱动功放电源分配
-            driver_enabled = self.power_assignment_widgets['driver_enabled'].isChecked()
-            self.config['power_supply_assignment']['driver_amplifier'] = {
-                'power_supply_count': 1 if driver_enabled else 0,
-                'supplies': {}
+                }
+            result[ps_name] = {'channels': channels}
+        return {'instruments': {'power_supplies': result}}
+
+    def _read_power_assignment_from_ui(self) -> dict:
+        """从UI读取电源分配配置，返回完整的power_supply_assignment片段。"""
+        if not hasattr(self, 'power_assignment_widgets'):
+            return {}
+
+        # 驱动功放电源分配
+        driver_enabled = self.power_assignment_widgets['driver_enabled'].isChecked()
+        driver_amplifier = {
+            'power_supply_count': 1 if driver_enabled else 0,
+            'supplies': {}
+        }
+        if driver_enabled:
+            driver_ps = self.power_assignment_widgets['driver_power'].currentText()
+            driver_amplifier['supplies']['main'] = {
+                'name': driver_ps,
+                'channel': ['CH1', 'CH2']
             }
-            
-            if driver_enabled:
-                driver_ps = self.power_assignment_widgets['driver_power'].currentText()
-                self.config['power_supply_assignment']['driver_amplifier']['supplies']['main'] = {
-                    'name': driver_ps,
-                    'channel': ['CH1', 'CH2']
-                }
-            
-            # DUT功放电源分配
-            pa_unit_count = int(self.pa_unit_count_combo.currentText())
-            unit1_ps = self.power_assignment_widgets['pa_unit1_power'].currentText()
-            
-            dut_supplies = {
-                'carrier': {  # 保持carrier键名以兼容现有配置
-                    'name': unit1_ps,
-                    'channel': ['CH1', 'CH2']
+
+        # DUT功放电源分配
+        pa_unit_count = int(self.pa_unit_count_combo.currentText())
+        unit1_ps = self.power_assignment_widgets['pa_unit1_power'].currentText()
+        dut_supplies = {
+            'carrier': {  # 保持carrier键名以兼容现有配置
+                'name': unit1_ps,
+                'channel': ['CH1', 'CH2']
+            }
+        }
+        if pa_unit_count >= 2:
+            unit2_ps = self.power_assignment_widgets['pa_unit2_power'].currentText()
+            dut_supplies['peaking'] = {  # 保持peaking键名以兼容现有配置
+                'name': unit2_ps,
+                'channel': ['CH1', 'CH2']
+            }
+        if pa_unit_count >= 3:
+            unit3_ps = self.power_assignment_widgets['pa_unit3_power'].currentText()
+            dut_supplies['peaking2'] = {  # 保持peaking2键名以兼容现有配置
+                'name': unit3_ps,
+                'channel': ['CH1', 'CH2']
+            }
+
+        return {
+            'power_supply_assignment': {
+                'driver_amplifier': driver_amplifier,
+                'dut_amplifier': {
+                    'power_supply_count': pa_unit_count,
+                    'supplies': dut_supplies
                 }
             }
-            
-            # 如果有PA Unit2，添加配置
-            if pa_unit_count >= 2:
-                unit2_ps = self.power_assignment_widgets['pa_unit2_power'].currentText()
-                dut_supplies['peaking'] = {  # 保持peaking键名以兼容现有配置
-                    'name': unit2_ps,
-                    'channel': ['CH1', 'CH2']
-                }
-            
-            # 如果有PA Unit3，添加配置
-            if pa_unit_count >= 3:
-                unit3_ps = self.power_assignment_widgets['pa_unit3_power'].currentText()
-                dut_supplies['peaking2'] = {  # 保持peaking2键名以兼容现有配置
-                    'name': unit3_ps,
-                    'channel': ['CH1', 'CH2']
-                }
-            
-            self.config['power_supply_assignment']['dut_amplifier'] = {
-                'power_supply_count': pa_unit_count,
-                'supplies': dut_supplies
-            }
+        }
+
+    def _build_config_from_ui(self) -> dict:
+        """基于 self.config 和当前 UI 状态组装完整配置字典。
+
+        该方法不修改 self.config，不写文件，不记录日志，不弹窗。
+        """
+        import copy
+        config = copy.deepcopy(self.config)
+
+        # 合并仪器地址/启用状态（保留已有 channels 和未知字段）
+        instrument_fragment = self._read_instrument_config_from_ui()
+        config.setdefault('instruments', {})
+        config['instruments'] = instrument_fragment['instruments']
+
+        # 合并测试参数
+        test_params = self._read_test_parameters_from_ui()
+        config.update(test_params)
+
+        # 更新 DUT 配置
+        config.setdefault('dut_config', {})
+        config['dut_config']['max_input_power'] = self.max_input_power.value()
+        pa_unit_count = int(self.pa_unit_count_combo.currentText())
+        config['dut_config']['power_supply_count'] = pa_unit_count
+
+        # 合并电源通道详细参数（只替换对应 PS 的 channels，保留地址和启用状态）
+        power_supply_fragment = self._read_power_supply_config_from_ui()
+        if power_supply_fragment:
+            fragment_supplies = power_supply_fragment.get('instruments', {}).get('power_supplies', {})
+            config.setdefault('instruments', {})
+            config_power_supplies = config['instruments'].get('power_supplies', {})
+            if not isinstance(config_power_supplies, dict):
+                config_power_supplies = {}
+            else:
+                config_power_supplies = dict(config_power_supplies)
+            for ps_name, ps_fragment in fragment_supplies.items():
+                ps_config = config_power_supplies.get(ps_name, {})
+                if not isinstance(ps_config, dict):
+                    ps_config = {}
+                else:
+                    ps_config = dict(ps_config)
+                existing_channels = ps_config.get('channels', {})
+                if not isinstance(existing_channels, dict):
+                    existing_channels = {}
+                else:
+                    existing_channels = dict(existing_channels)
+                for channel_name, channel_config in ps_fragment.get('channels', {}).items():
+                    existing_channels[channel_name] = channel_config
+                ps_config['channels'] = existing_channels
+                config_power_supplies[ps_name] = ps_config
+            config['instruments']['power_supplies'] = config_power_supplies
+
+        # 合并电源分配配置
+        assignment_fragment = self._read_power_assignment_from_ui()
+        if assignment_fragment:
+            config['power_supply_assignment'] = assignment_fragment['power_supply_assignment']
+
+        return config
+
+    def update_config_from_ui(self):
+        """从UI更新配置"""
+        self.config = self._build_config_from_ui()
+
+    def _save_config_file(self) -> bool:
+        """将 self.config 写入 CONFIG_FILE，成功返回 True，失败返回 False。"""
+        try:
+            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+                json.dump(self.config, f, indent=4, ensure_ascii=False)
+            return True
+        except Exception as e:
+            self._last_save_error = e
+            return False
         
     def update_and_save_config(self):
         """更新UI配置并保存到文件"""
         self.update_config_from_ui()
-        try:
-            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-                json.dump(self.config, f, indent=4, ensure_ascii=False)
+        if self._save_config_file():
             self.add_log_message("配置已更新并保存")
             return True
-        except Exception as e:
-            self.add_log_message(f"配置保存失败: {e}")
+        else:
+            self.add_log_message(f"配置保存失败: {self._last_save_error}")
             return False
         
     def save_config(self):
         """保存配置"""
         self.update_config_from_ui()
-        try:
-            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-                json.dump(self.config, f, indent=4, ensure_ascii=False)
+        if self._save_config_file():
             self.add_log_message("配置已保存")
             QMessageBox.information(self, "保存成功", "配置文件已保存")
-        except Exception as e:
-            self.add_log_message(f"配置保存失败: {e}")
-            QMessageBox.warning(self, "保存失败", f"配置保存失败: {e}")
+        else:
+            self.add_log_message(f"配置保存失败: {self._last_save_error}")
+            QMessageBox.warning(self, "保存失败", f"配置保存失败: {self._last_save_error}")
             
     def load_test_data(self):
         """加载测试数据"""

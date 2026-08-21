@@ -16,6 +16,8 @@ from measurement_calculations import (
     calculate_compression_result,
 )
 from app_logging import get_logger
+from measurement_lifecycle import cleanup_measurement
+from result_storage import create_run_directory, load_json_result, new_run_id, save_json_result
 
 logger = get_logger(__name__)
 
@@ -39,17 +41,19 @@ class NumpyJSONEncoder(json.JSONEncoder):
 class AmplifierMeasurement:
     def __init__(self, config_path=None,
                  loss_data_path=None,
-                 driver_mapping_path: Optional[str] = None):
+                 driver_mapping_path: Optional[str] = None,
+                 run_id: Optional[str] = None):
         """初始化主功放测量类"""
         config_path = resolve_path(config_path, CONFIG_FILE)
         loss_data_path = resolve_path(loss_data_path, CABLE_LOSS_FILE)
         with open(config_path, 'r') as f:
             self.config = json.load(f)
 
-        with open(loss_data_path, 'r') as f:
-            self.loss_data = json.load(f)
+        self.loss_data = load_json_result(loss_data_path)
 
         self.inst_ctrl = InstrumentControl(config_path)
+        self.run_id = run_id or new_run_id()
+        self.run_directory = None
 
         if self.config['driver_mode']['enabled']:
             if driver_mapping_path is None:
@@ -59,8 +63,7 @@ class AmplifierMeasurement:
                 driver_mapping_path = str(driver_files[-1])
                 print(f"自动加载最新的驱动映射文件: {driver_mapping_path}")
 
-            with open(driver_mapping_path, 'r') as f:
-                self.driver_mapping = json.load(f)['power_mapping']
+            self.driver_mapping = load_json_result(driver_mapping_path)['power_mapping']
         else:
             self.driver_mapping = None
 
@@ -263,9 +266,7 @@ class AmplifierMeasurement:
         finally:
             logger.info("主功放测量清理: RF 关闭、掉电序列、断开连接")
             print("Shutting down...")
-            self.inst_ctrl.rf_output_off()
-            self.inst_ctrl.power_off_sequence()
-            self.inst_ctrl.close_all()
+            cleanup_measurement(self.inst_ctrl, power_cleanup=self.inst_ctrl.power_off_sequence)
 
     def save_results(self):
         """保存测量结果"""
@@ -278,10 +279,22 @@ class AmplifierMeasurement:
             'results': self.measurement_results
         }
 
-        with open(filename, 'w') as f:
-            json.dump(results, f, indent=4, cls=NumpyJSONEncoder)
-        logger.info("主功放结果已保存: %s", filename)
-        print(f"\nResults saved to {filename}")
+        if self.run_directory is None:
+            self.run_directory = create_run_directory(self.run_id)
+        run_filename = save_json_result(
+            self.run_directory / filename.name,
+            results,
+            result_type="amplifier_measurement",
+            encoder=NumpyJSONEncoder,
+        )
+        save_json_result(
+            filename,
+            results,
+            result_type="amplifier_measurement",
+            encoder=NumpyJSONEncoder,
+        )
+        logger.info("主功放结果已保存: 兼容路径=%s，运行路径=%s", filename, run_filename)
+        print(f"\nResults saved to {filename}; archived to {run_filename}")
 
 
 def main():

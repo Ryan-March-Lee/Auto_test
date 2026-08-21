@@ -22,6 +22,7 @@ from measurement_calculations import (
     calculate_compression_result,
 )
 from app_logging import get_logger
+from measurement_lifecycle import cleanup_measurement
 
 logger = get_logger(__name__)
 
@@ -256,9 +257,7 @@ class EnhancedDriverPowerMapping(DriverPowerMapping):
         finally:
             logger.info("增强驱动映射测量清理: RF 关闭、驱动电源关闭、断开连接")
             self.emit_message("关闭驱动功放电源...")
-            self.inst_ctrl.rf_output_off()
-            self.inst_ctrl.power_off_driver()
-            self.inst_ctrl.close_all()
+            cleanup_measurement(self.inst_ctrl, power_cleanup=self.inst_ctrl.power_off_driver)
 
 
 class EnhancedAmplifierMeasurement(AmplifierMeasurement):
@@ -479,9 +478,7 @@ class EnhancedAmplifierMeasurement(AmplifierMeasurement):
         finally:
             logger.info("增强主功放测量清理: RF 关闭、掉电序列、断开连接")
             self.emit_message("执行掉电序列...")
-            self.inst_ctrl.rf_output_off()
-            self.inst_ctrl.power_off_sequence()
-            self.inst_ctrl.close_all()
+            cleanup_measurement(self.inst_ctrl, power_cleanup=self.inst_ctrl.power_off_sequence)
 
 
 class WorkerSignals(QObject):

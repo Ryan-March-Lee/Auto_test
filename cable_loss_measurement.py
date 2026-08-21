@@ -7,22 +7,25 @@ from instrument_control import InstrumentControl
 from project_paths import CABLE_LOSS_FILE, CONFIG_FILE, resolve_path
 from measurement_calculations import calculate_cable_losses
 from app_logging import get_logger
+from measurement_lifecycle import cleanup_measurement
+from result_storage import create_run_directory, load_json_result, new_run_id, save_json_result
 # from mock_instrument_control import MockInstrumentControl as InstrumentControl
 
 logger = get_logger(__name__)
 
 class CableLossMeasurement:
-    def __init__(self, config_path=None):
+    def __init__(self, config_path=None, run_id=None):
         """初始化线损测量类
 
         Args:
             config_path: 配置文件路径
         """
         config_path = resolve_path(config_path, CONFIG_FILE)
-        with open(config_path, 'r') as f:
-            self.config = json.load(f)
+        self.config = load_json_result(config_path)
 
         self.inst_ctrl = InstrumentControl(config_path)
+        self.run_id = run_id or new_run_id()
+        self.run_directory = None
 
         self.attenuator_value = float(self.config['attenuator']['type'].replace('dB', ''))
         self.cable_losses: Dict[float, Dict[str, float]] = {}
@@ -109,14 +112,20 @@ class CableLossMeasurement:
         }
 
         filename = CABLE_LOSS_FILE
-        with open(filename, 'w') as f:
-            json.dump(results, f, indent=4)
-        logger.info("线损结果已保存: %s", filename)
-        print(f"\n线损测量结果已保存至 '{filename}'")
+        if self.run_directory is None:
+            self.run_directory = create_run_directory(self.run_id)
+        run_filename = save_json_result(
+            self.run_directory / "cable_loss_results.json",
+            results,
+            result_type="cable_loss",
+        )
+        save_json_result(filename, results, result_type="cable_loss")
+        logger.info("线损结果已保存: 兼容路径=%s，运行路径=%s", filename, run_filename)
+        print(f"\n线损结果已保存至 '{filename}'，运行归档为 '{run_filename}'")
 
     def close(self):
         """关闭仪器连接"""
-        self.inst_ctrl.close_all()
+        cleanup_measurement(self.inst_ctrl)
 
 
 def main():

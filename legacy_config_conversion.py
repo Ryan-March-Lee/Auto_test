@@ -193,6 +193,16 @@ def convert_legacy_config(
     unresolved: List[str] = []
     _require_mapping(config, "config")
 
+    for section in (
+        "signal_source",
+        "compression_point",
+        "instruments",
+        "dut_config",
+        "power_supply_assignment",
+    ):
+        if section not in config or not isinstance(config[section], Mapping):
+            errors.append(ConfigIssue("error", section, "旧配置缺少对象配置段"))
+
     try:
         plan = legacy_config_to_test_plan(config)
         mapping = legacy_config_to_run_mapping(config, selected_supply=selected_supply)

@@ -85,6 +85,18 @@ class LegacyConfigConversionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 convert_legacy_config_file(path)
 
+    def test_missing_legacy_sections_are_reported_without_hardware_access(self):
+        config = copy.deepcopy(self.base_config)
+        del config["signal_source"]
+        result = convert_legacy_config(config)
+        self.assertTrue(any(issue.path == "signal_source" for issue in result.errors))
+
+    def test_missing_power_assignment_is_reported(self):
+        config = copy.deepcopy(self.base_config)
+        del config["power_supply_assignment"]
+        result = convert_legacy_config(config)
+        self.assertTrue(any(issue.path == "power_supply_assignment" for issue in result.errors))
+
 
 if __name__ == "__main__":
     unittest.main()

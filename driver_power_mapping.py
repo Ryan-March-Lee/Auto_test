@@ -4,11 +4,14 @@ import json
 import numpy as np
 from typing import Dict, List, Optional
 import time
+import logging
 from datetime import datetime
 from instrument_control import InstrumentControl
 from project_paths import CABLE_LOSS_FILE, CONFIG_FILE, PROJECT_ROOT, resolve_path
 from measurement_calculations import compensate_driver_output_power
 # from mock_instrument_control import MockInstrumentControl as InstrumentControl
+
+logger = logging.getLogger(__name__)
 
 
 class DriverPowerMapping:
@@ -47,6 +50,7 @@ class DriverPowerMapping:
     def measure_power_mapping(self, frequency: float):
         """测量指定频率下的功率映射关系"""
         print(f"\nMeasuring power mapping at {frequency} GHz...")
+        logger.info("驱动映射扫描开始: %s GHz", frequency)
         self.inst_ctrl.set_power(-40)
         self.inst_ctrl.set_frequency(frequency)
         self.inst_ctrl.set_center_frequency(frequency)
@@ -76,6 +80,7 @@ class DriverPowerMapping:
     def measure_all_frequencies(self):
         """测量所有配置频率下的功率映射关系"""
         try:
+            logger.info("驱动映射测量开始: 频率=%s", self.config['test_frequencies'])
             print("Setting up driver amplifier power supplies...")
             self.inst_ctrl.setup_driver_amplifier_power()
             
@@ -87,10 +92,12 @@ class DriverPowerMapping:
                 self.measure_power_mapping(freq)
                 
             self.save_results()
-            
+
         except Exception as e:
+            logger.exception("驱动映射测量失败: %s", e)
             print(f"Error during measurement: {str(e)}")
         finally:
+            logger.info("驱动映射测量清理: RF 关闭、驱动电源关闭、断开连接")
             print("Shutting down...")
             self.inst_ctrl.rf_output_off()
             # --- MODIFIED: Use granular power control ---
@@ -114,6 +121,7 @@ class DriverPowerMapping:
         
         with open(filename, 'w') as f:
             json.dump(results, f, indent=4)
+        logger.info("驱动映射结果已保存: %s", filename)
         print(f"\nResults saved to {filename}")
 
     # --- MODIFIED: Removed plot_mapping_curves method ---

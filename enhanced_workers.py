@@ -4,6 +4,7 @@
 
 import time
 import json
+import logging
 import numpy as np
 from typing import Dict, Any, Optional
 from pathlib import Path
@@ -21,6 +22,8 @@ from measurement_calculations import (
     calculate_efficiency,
     calculate_compression_result,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class EnhancedCableLossMeasurement(CableLossMeasurement):
@@ -48,10 +51,12 @@ class EnhancedCableLossMeasurement(CableLossMeasurement):
             self.message_callback(message)
             
     def stop_measurement(self):
+        logger.info("线损测量收到停止请求")
         self.should_stop = True
         
     def continue_to_step2(self):
         """继续执行第二步测量"""
+        logger.info("线损测量继续进入路径2")
         self.current_step = 2
         self._measure_step2()
         
@@ -155,6 +160,7 @@ class EnhancedDriverPowerMapping(DriverPowerMapping):
             self.data_callback(data)
             
     def stop_measurement(self):
+        logger.info("驱动映射测量收到停止请求")
         self.should_stop = True
         
     def measure_power_mapping(self, frequency: float):
@@ -245,8 +251,10 @@ class EnhancedDriverPowerMapping(DriverPowerMapping):
                 self.emit_message("驱动功放映射测量完成！")
                 
         except Exception as e:
+            logger.exception("增强驱动映射测量失败: %s", e)
             self.emit_message(f"测量过程中出现错误: {str(e)}")
         finally:
+            logger.info("增强驱动映射测量清理: RF 关闭、驱动电源关闭、断开连接")
             self.emit_message("关闭驱动功放电源...")
             self.inst_ctrl.rf_output_off()
             self.inst_ctrl.power_off_driver()
@@ -278,6 +286,7 @@ class EnhancedAmplifierMeasurement(AmplifierMeasurement):
             self.data_callback(data)
             
     def stop_measurement(self):
+        logger.info("主功放测量收到停止请求")
         self.should_stop = True
         
     def perform_power_sweep(self, frequency: float) -> Dict:
@@ -330,6 +339,9 @@ class EnhancedAmplifierMeasurement(AmplifierMeasurement):
                 
             # 安全检查
             if dut_input_power > max_dut_input_power:
+                logger.warning(
+                    "DUT 输入保护触发: %s GHz 计算输入功率 %.2f dBm 超过最大值 %.2f dBm，停止该频率扫描",
+                    frequency, dut_input_power, max_dut_input_power)
                 self.emit_message(f"达到DUT最大输入功率限制 {max_dut_input_power} dBm，停止扫描")
                 break
                 
@@ -462,8 +474,10 @@ class EnhancedAmplifierMeasurement(AmplifierMeasurement):
                 self.emit_message("主功放测量完成！")
                 
         except Exception as e:
+            logger.exception("增强主功放测量失败: %s", e)
             self.emit_message(f"测量过程中出现错误: {str(e)}")
         finally:
+            logger.info("增强主功放测量清理: RF 关闭、掉电序列、断开连接")
             self.emit_message("执行掉电序列...")
             self.inst_ctrl.rf_output_off()
             self.inst_ctrl.power_off_sequence()

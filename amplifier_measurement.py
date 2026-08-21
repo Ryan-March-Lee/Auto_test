@@ -4,6 +4,7 @@ import json
 import numpy as np
 from typing import Dict, List, Optional, Tuple
 import time
+import logging
 from datetime import datetime
 from instrument_control import InstrumentControl 
 from pathlib import Path
@@ -15,6 +16,8 @@ from measurement_calculations import (
     calculate_efficiency,
     calculate_compression_result,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # --- ADDED: Custom JSON Encoder to handle NumPy types ---
@@ -98,6 +101,7 @@ class AmplifierMeasurement:
         此版本假设config.json中的功率范围是针对信号源(SG)的。
         """
         print(f"\n开始在 {frequency} GHz 进行功率扫描...")
+        logger.info("功率扫描开始: %s GHz", frequency)
 
         compression_type = self.config['compression_point']['type']
         compression_value = float(compression_type.replace('dB', ''))
@@ -143,6 +147,9 @@ class AmplifierMeasurement:
 
             # --- 安全检查逻辑 ---
             if dut_input_power > max_dut_input_power:
+                logger.warning(
+                    "DUT 输入保护触发: %s GHz 计算输入功率 %.2f dBm 超过最大值 %.2f dBm，停止该频率扫描",
+                    frequency, dut_input_power, max_dut_input_power)
                 print(f"  - 保护！计算出的DUT输入功率 {dut_input_power:.2f} dBm "
                       f"超过了设定的最大值 {max_dut_input_power} dBm。")
                 print(f"  - 在 {frequency} GHz 的扫描已停止以保护DUT。")
@@ -193,9 +200,11 @@ class AmplifierMeasurement:
                 compression_gain = calculate_gain(
                     small_signal_gain, gain)
                 if compression_gain >= compression_value:
+                    logger.info("达到目标压缩点 %.1f dB，停止 %s GHz 扫描", compression_value, frequency)
                     print(f"达到目标压缩点 {compression_value} dB，停止扫描。")
                     break
         self.inst_ctrl.rf_output_off()
+        logger.info("功率扫描结束: %s GHz (点数=%d)", frequency, len(sweep_data['gain']))
 
         # 7. 计算压缩点 (基于DUT的输入和增益)
         if not sweep_data['gain']:
@@ -231,6 +240,7 @@ class AmplifierMeasurement:
     def measure_all_frequencies(self):
         """测量所有配置频率"""
         try:
+            logger.info("主功放测量开始: 频率=%s", self.config['test_frequencies'])
             print("Setting up power supplies...")
             if self.config['driver_mode']['enabled']:
                 self.inst_ctrl.setup_driver_amplifier_power()
@@ -246,10 +256,12 @@ class AmplifierMeasurement:
             self.save_results()
 
         except Exception as e:
+            logger.exception("主功放测量失败: %s", e)
             print(f"Error during measurement: {e}")
             import traceback
             traceback.print_exc()
         finally:
+            logger.info("主功放测量清理: RF 关闭、掉电序列、断开连接")
             print("Shutting down...")
             self.inst_ctrl.rf_output_off()
             self.inst_ctrl.power_off_sequence()
@@ -268,6 +280,7 @@ class AmplifierMeasurement:
 
         with open(filename, 'w') as f:
             json.dump(results, f, indent=4, cls=NumpyJSONEncoder)
+        logger.info("主功放结果已保存: %s", filename)
         print(f"\nResults saved to {filename}")
 
 

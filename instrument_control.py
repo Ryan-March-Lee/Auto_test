@@ -3,9 +3,12 @@
 import json
 import pyvisa
 import time
+import logging
 from typing import Callable, Dict, List, Union, Optional
 from enum import Enum
 from project_paths import CONFIG_FILE, resolve_path
+
+logger = logging.getLogger(__name__)
 
 
 class InstrumentControl:
@@ -34,7 +37,11 @@ class InstrumentControl:
             self._initialize_signal_generator_if_enabled()
             self._initialize_spectrum_analyzer_if_enabled()
             self._initialize_enabled_power_supplies()
+            logger.info("仪器初始化完成: 信号源=%s, 频谱仪=%s, 电源=%s",
+                        self.signal_gen is not None, self.spectrum is not None,
+                        sorted(self.power_supplies))
         except Exception as e:
+            logger.exception("仪器初始化失败: %s", e)
             self.close_all()
             raise Exception(f"Failed to initialize instruments: {str(e)}")
 
@@ -257,6 +264,7 @@ class InstrumentControl:
         假设: CH1为栅压, CH2为漏压。
         """
         print("开始上电序列 (先栅极，后漏极)...")
+        logger.info("上电序列开始 (先栅后漏)")
         all_supplies = self._get_all_assigned_supplies()
 
         # 1. 打开所有栅极电压 (CH1)
@@ -270,6 +278,7 @@ class InstrumentControl:
         self._power_on_drain_channels(all_supplies)
 
         print("上电序列完成。")
+        logger.info("上电序列完成")
 
     def _power_on_gate_channels(self, all_supplies: List[Dict]):
         """打开所有分配电源的栅极通道 (CH1)"""
@@ -299,6 +308,7 @@ class InstrumentControl:
         假设: CH1为栅压, CH2为漏压。
         """
         print("开始掉电序列 (先漏极，后栅极)...")
+        logger.info("掉电序列开始 (先漏后栅)")
         all_supplies = self._get_all_assigned_supplies()
 
         errors = []
@@ -314,6 +324,7 @@ class InstrumentControl:
         self._power_off_gate_channels(all_supplies, errors)
 
         print("掉电序列完成。")
+        logger.info("掉电序列完成 (失败数=%d)", len(errors))
         if errors:
             details = "; ".join(f"{name}-{channel}: {error}" for name, channel, error in errors)
             raise RuntimeError(f"电源掉电序列存在失败: {details}") from errors[0][2]
@@ -355,11 +366,13 @@ class InstrumentControl:
     def rf_output_on(self):
         if self.signal_gen is None:
             raise Exception("Signal generator is not connected")
+        logger.info("RF 输出开启")
         self.signal_gen.write("OUTP:STAT ON")
 
     def rf_output_off(self):
         if self.signal_gen is None:
             raise Exception("Signal generator is not connected")
+        logger.info("RF 输出关闭")
         self.signal_gen.write("OUTP:STAT OFF")
         self.signal_gen.write('POW -50dBm')
         self.sleep_fn(0.2)
@@ -407,6 +420,7 @@ class InstrumentControl:
     def close_all(self, close_rf: bool = True):
         """关闭所有仪器连接。不管理电源状态。"""
         print("Closing all instrument connections...")
+        logger.info("关闭所有仪器连接 (close_rf=%s)", close_rf)
         errors = []
         if close_rf and self.signal_gen is not None:
             try:
@@ -425,10 +439,15 @@ class InstrumentControl:
         except Exception as error:
             errors.append(error)
         print("Connections closed.")
+        if errors:
+            logger.warning("关闭仪器连接存在失败: %s", errors)
+        else:
+            logger.info("仪器连接已全部关闭")
         return errors
 
     def safe_shutdown(self):
         """尽最大努力关闭 RF、电源输出和连接，并在结束后报告所有失败。"""
+        logger.info("安全关闭流程开始")
         errors = []
         if self.signal_gen is not None:
             try:
@@ -441,8 +460,10 @@ class InstrumentControl:
             errors.append(error)
         errors.extend(self.close_all(close_rf=False))
         if errors:
+            logger.error("安全关闭存在失败: %s", errors)
             details = "; ".join(str(error) for error in errors)
             raise RuntimeError(f"安全关闭存在失败: {details}") from errors[0]
+        logger.info("安全关闭流程完成")
 
 
 def main():

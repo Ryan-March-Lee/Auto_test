@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Dict
 
 from config_validation import ConfigValidationResult, validate_config_file
+from app_logging import setup_logging
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -211,6 +212,12 @@ def main(argv: object = None) -> int:
             if hasattr(stream, "reconfigure"):
                 stream.reconfigure(encoding="utf-8", errors="replace")
         os.chdir(PROJECT_ROOT)
+        # 阶段 0.3：最小日志。失败不阻断启动（launcher 本身无可写日志目标时忽略）。
+        try:
+            setup_logging()
+        except Exception as logging_error:
+            if not silent_mode:
+                print(f"日志初始化失败（忽略）: {logging_error}")
         if parsed.validate_config:
             return validate_default_config()
         if not silent_mode:

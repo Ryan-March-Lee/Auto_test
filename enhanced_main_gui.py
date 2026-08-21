@@ -62,6 +62,7 @@ from project_paths import (
     PROJECT_ROOT,
     SEARCH_API_CONFIG_FILE,
 )
+from app_logging import setup_logging
 
 
 class ChatWorker(QThread):
@@ -3402,6 +3403,11 @@ class MainWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
+    # 阶段 0.3：最小日志（幂等；launcher 已初始化时保持原文件）。
+    try:
+        setup_logging()
+    except Exception as logging_error:
+        print(f"日志初始化失败（忽略）: {logging_error}")
     # 使用Windows原生样式以获得正常的按钮显示
     # app.setStyle('Fusion')
     

@@ -2,11 +2,14 @@
 
 import json
 import time
+import logging
 from typing import Dict
 from instrument_control import InstrumentControl
 from project_paths import CABLE_LOSS_FILE, CONFIG_FILE, resolve_path
 from measurement_calculations import calculate_cable_losses
 # from mock_instrument_control import MockInstrumentControl as InstrumentControl
+
+logger = logging.getLogger(__name__)
 
 class CableLossMeasurement:
     def __init__(self, config_path=None):
@@ -50,6 +53,7 @@ class CableLossMeasurement:
     def measure_all_frequencies(self):
         """测量所有配置频率下的线损，优化流程，减少硬件更换次数"""
         # self.initialize_instruments()
+        logger.info("线损测量开始: 频率=%s", self.config['test_frequencies'])
 
         test_frequencies = self.config['test_frequencies']
         path1_losses = {}
@@ -107,6 +111,7 @@ class CableLossMeasurement:
         filename = CABLE_LOSS_FILE
         with open(filename, 'w') as f:
             json.dump(results, f, indent=4)
+        logger.info("线损结果已保存: %s", filename)
         print(f"\n线损测量结果已保存至 '{filename}'")
 
     def close(self):

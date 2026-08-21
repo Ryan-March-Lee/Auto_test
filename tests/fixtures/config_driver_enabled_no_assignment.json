@@ -1,0 +1,115 @@
+{
+    "test_frequencies": [
+        2.2,
+        2.4,
+        3.0
+    ],
+    "signal_source": {
+        "start_power": -10.0,
+        "stop_power": 15.0,
+        "step": 1.0
+    },
+    "compression_point": {
+        "type": "5dB"
+    },
+    "driver_mode": {
+        "enabled": true
+    },
+    "attenuator": {
+        "type": "30dB"
+    },
+    "dut_config": {
+        "max_input_power": 29.51,
+        "power_supply_count": 1
+    },
+    "instruments": {
+        "signal_generator": {
+            "address": "TCPIP0::192.0.2.201::inst0::INSTR",
+            "enabled": true
+        },
+        "spectrum_analyzer": {
+            "address": "TCPIP0::192.0.2.202::inst0::INSTR",
+            "enabled": true
+        },
+        "power_supplies": {
+            "PS1": {
+                "address": "TCPIP0::192.0.2.101::inst0::INSTR",
+                "channels": {
+                    "CH1": {
+                        "voltage": {
+                            "value": 2.98,
+                            "protection": 1.0,
+                            "protection_enabled": false
+                        },
+                        "current": {
+                            "value": 0.1,
+                            "protection": 0.0,
+                            "protection_enabled": false
+                        }
+                    },
+                    "CH2": {
+                        "voltage": {
+                            "value": 28.0,
+                            "protection": 30.0,
+                            "protection_enabled": true
+                        },
+                        "current": {
+                            "value": 2.8,
+                            "protection": 2.0,
+                            "protection_enabled": true
+                        }
+                    }
+                },
+                "enabled": false
+            },
+            "PS4": {
+                "address": "TCPIP0::192.0.2.108::inst0::INSTR",
+                "channels": {
+                    "CH1": {
+                        "voltage": {
+                            "value": 2.8,
+                            "protection": 1.0,
+                            "protection_enabled": false
+                        },
+                        "current": {
+                            "value": 0.1,
+                            "protection": 1.0,
+                            "protection_enabled": false
+                        }
+                    },
+                    "CH2": {
+                        "voltage": {
+                            "value": 28.0,
+                            "protection": 30.0,
+                            "protection_enabled": true
+                        },
+                        "current": {
+                            "value": 1.0,
+                            "protection": 1.1,
+                            "protection_enabled": true
+                        }
+                    }
+                },
+                "enabled": true
+            }
+        }
+    },
+    "power_supply_assignment": {
+        "driver_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {}
+        },
+        "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+                "carrier": {
+                    "name": "PS4",
+                    "channel": [
+                        "CH1",
+                        "CH2"
+                    ]
+                }
+            }
+        }
+    }
+}

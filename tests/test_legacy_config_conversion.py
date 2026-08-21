@@ -12,12 +12,15 @@ from legacy_config_conversion import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "config_driver_enabled_no_assignment.json"
 
 
 class LegacyConfigConversionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        with (PROJECT_ROOT / "config.json").open("r", encoding="utf-8") as config_file:
+        # 固定夹具：驱动模式启用但未配置驱动供电分配。
+        # 不读取现场 config.json，避免测试结果随每日现场配置变化。
+        with FIXTURE_PATH.open("r", encoding="utf-8") as config_file:
             cls.base_config = json.load(config_file)
 
     def test_attenuator_parser(self):

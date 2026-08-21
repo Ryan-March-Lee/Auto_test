@@ -10,7 +10,12 @@ from project_paths import CABLE_LOSS_FILE, CONFIG_FILE, PROJECT_ROOT, resolve_pa
 from measurement_calculations import compensate_driver_output_power
 from app_logging import get_logger
 from measurement_lifecycle import cleanup_measurement
-from result_storage import create_run_directory, load_json_result, new_run_id, save_json_result
+from result_storage import (
+    load_json_result,
+    new_run_id,
+    save_measurement_result,
+    write_legacy_run_snapshot,
+)
 # from mock_instrument_control import MockInstrumentControl as InstrumentControl
 
 logger = get_logger(__name__)
@@ -26,9 +31,13 @@ class DriverPowerMapping:
             
         self.loss_data = load_json_result(loss_data_path)
             
-        self.inst_ctrl = InstrumentControl(config_path)
         self.run_id = run_id or new_run_id()
-        self.run_directory = None
+        self.run_directory = write_legacy_run_snapshot(
+            self.run_id,
+            self.config,
+            status="created",
+        )
+        self.inst_ctrl = InstrumentControl(config_path)
         self.power_mapping: Dict[str, Dict[str, float]] = {}
         
     # --- MODIFIED: CRITICAL FIX in power calculation logic ---
@@ -106,9 +115,6 @@ class DriverPowerMapping:
             
     def save_results(self):
         """保存功率映射测量结果"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = PROJECT_ROOT / f'driver_power_mapping_{timestamp}.json'
-        
         results = {
             'measurement_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'power_mapping': self.power_mapping,
@@ -119,16 +125,17 @@ class DriverPowerMapping:
             }
         }
         
-        if self.run_directory is None:
-            self.run_directory = create_run_directory(self.run_id)
-        run_filename = save_json_result(
-            self.run_directory / filename.name,
+        legacy_path = PROJECT_ROOT / f'driver_power_mapping_{datetime.now():%Y%m%d_%H%M%S}.json'
+        archive_path, legacy_path = save_measurement_result(
             results,
             result_type="driver_power_mapping",
+            legacy_path=legacy_path,
+            run_id=self.run_id,
+            run_directory=self.run_directory,
         )
-        save_json_result(filename, results, result_type="driver_power_mapping")
-        logger.info("驱动映射结果已保存: 兼容路径=%s，运行路径=%s", filename, run_filename)
-        print(f"\nResults saved to {filename}; archived to {run_filename}")
+        self.run_directory = archive_path.parent
+        logger.info("驱动映射结果已保存: 兼容路径=%s，运行路径=%s", legacy_path, archive_path)
+        print(f"\nResults saved to {legacy_path}; archived to {archive_path}")
 
     # --- MODIFIED: Removed plot_mapping_curves method ---
 

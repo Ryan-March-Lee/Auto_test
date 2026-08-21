@@ -10,6 +10,7 @@ from datetime import datetime
 import seaborn as sns
 from pathlib import Path
 from project_paths import PROJECT_ROOT, TEST_RESULTS_DIR
+from result_reading import load_measurement_result, get_sweep_dataframe_data, get_saturation_points
 
 # --- MODIFIED: Define font properties globally for easy access ---
 # 确保你的系统中有这些字体文件，并且路径正确
@@ -64,8 +65,7 @@ class DataVisualization:
         self.base_color_palette = base_colors
 
     def load_data(self, file_path: str) -> dict:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        return load_measurement_result(file_path)
 
     def _save_plot(self, fig, base_name: str) -> Path:
         save_path_png = self.output_dir / f"{base_name}.png"
@@ -77,29 +77,17 @@ class DataVisualization:
         return save_path_png
 
     def _extract_data_for_plotting(self, data: dict) -> Dict[float, pd.DataFrame]:
-        dfs = {}
-        results = data.get('results', {})
-        for freq_str, result in results.items():
-            freq = float(freq_str)
-            sweep_data = result.get('sweep_data', {})
-            if sweep_data:
-                df = pd.DataFrame(sweep_data)
-                if 'voltages' in df.columns:
-                    df = df.drop(columns=['voltages', 'currents']).join(
-                        pd.json_normalize(df['voltages']).add_prefix('V_')).join(
-                        pd.json_normalize(df['currents']).add_prefix('I_'))
-                dfs[freq] = df
-        return dfs
+        return {
+            float(freq): pd.DataFrame(points)
+            for freq, points in get_sweep_dataframe_data(data).items()
+            if points
+        }
 
     def _find_saturation_points(self, data: dict) -> pd.DataFrame:
-        sat_points = []
-        results = data.get('results', {})
-        for freq_str, result in results.items():
-            point_data = result.get('compression_point', {})
-            if point_data:
-                point_data['frequency'] = float(freq_str)
-                sat_points.append(point_data)
-        return pd.DataFrame(sat_points)
+        points = get_saturation_points(data)
+        for point in points:
+            point["frequency"] = float(point["frequency"])
+        return pd.DataFrame(points)
 
     # --- MODIFIED: Applied specific fonts to all plotting functions ---
 

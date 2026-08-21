@@ -8,7 +8,12 @@ from project_paths import CABLE_LOSS_FILE, CONFIG_FILE, resolve_path
 from measurement_calculations import calculate_cable_losses
 from app_logging import get_logger
 from measurement_lifecycle import cleanup_measurement
-from result_storage import create_run_directory, load_json_result, new_run_id, save_json_result
+from result_storage import (
+    load_json_result,
+    new_run_id,
+    save_measurement_result,
+    write_legacy_run_snapshot,
+)
 # from mock_instrument_control import MockInstrumentControl as InstrumentControl
 
 logger = get_logger(__name__)
@@ -23,9 +28,13 @@ class CableLossMeasurement:
         config_path = resolve_path(config_path, CONFIG_FILE)
         self.config = load_json_result(config_path)
 
-        self.inst_ctrl = InstrumentControl(config_path)
         self.run_id = run_id or new_run_id()
-        self.run_directory = None
+        self.run_directory = write_legacy_run_snapshot(
+            self.run_id,
+            self.config,
+            status="created",
+        )
+        self.inst_ctrl = InstrumentControl(config_path)
 
         self.attenuator_value = float(self.config['attenuator']['type'].replace('dB', ''))
         self.cable_losses: Dict[float, Dict[str, float]] = {}
@@ -111,17 +120,16 @@ class CableLossMeasurement:
             'cable_losses': {str(k): v for k, v in self.cable_losses.items()}  # 确保key是字符串
         }
 
-        filename = CABLE_LOSS_FILE
-        if self.run_directory is None:
-            self.run_directory = create_run_directory(self.run_id)
-        run_filename = save_json_result(
-            self.run_directory / "cable_loss_results.json",
+        archive_path, legacy_path = save_measurement_result(
             results,
             result_type="cable_loss",
+            legacy_path=CABLE_LOSS_FILE,
+            run_id=self.run_id,
+            run_directory=self.run_directory,
         )
-        save_json_result(filename, results, result_type="cable_loss")
-        logger.info("线损结果已保存: 兼容路径=%s，运行路径=%s", filename, run_filename)
-        print(f"\n线损结果已保存至 '{filename}'，运行归档为 '{run_filename}'")
+        self.run_directory = archive_path.parent
+        logger.info("线损结果已保存: 兼容路径=%s，运行路径=%s", legacy_path, archive_path)
+        print(f"\n线损结果已保存至 '{legacy_path}'，运行归档为 '{archive_path}'")
 
     def close(self):
         """关闭仪器连接"""

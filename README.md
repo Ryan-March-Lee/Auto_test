@@ -125,6 +125,8 @@ python launcher.py --validate-config
 
 `--check` 检查当前 Python 环境是否具备启动 GUI 所需的依赖；`--validate-config` 只检查配置内容，不能替代依赖检查。两个命令不能同时使用。未知命令行参数会返回退出码 `2`。
 
+项目启动器会拒绝非 `Auto_test` 环境。代理、编辑器任务和自动化脚本不要直接调用裸 `python`，请使用 `start_gui.bat` 或 `run_tests.bat`；这些入口会固定到已验证的 `Auto_test` 解释器。
+
 ## 文件结构
 
 ```

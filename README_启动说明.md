@@ -96,6 +96,8 @@ $env:AUTO_TEST_PYTHON = "D:\path\to\Auto_test\python.exe"
 ./run_tests.ps1
 ```
 
+代理或编辑器执行命令时也应使用 `run_tests.bat`/`run_tests.ps1`，不要直接调用裸 `python`。工具进程不会继承其他终端中的 Conda 激活状态，Windows 的 `python` 还可能解析到 `base` 环境。项目脚本会打印实际解释器、执行编译检查，并固定使用 `Auto_test`。
+
 脚本会先执行编译检查，再运行完整 unittest 测试集，并在开始时打印实际使用的解释器路径。
 
 ## 直接解释器启动

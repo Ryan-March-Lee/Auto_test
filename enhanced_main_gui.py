@@ -61,7 +61,10 @@ from project_paths import (
     ICONS_DIR,
     PROJECT_ROOT,
     SEARCH_API_CONFIG_FILE,
+    TEMP_DIR,
+    TEST_RESULTS_DIR,
 )
+from config_io import load_config_file
 from app_logging import setup_logging
 
 
@@ -1546,8 +1549,7 @@ class MainWindow(QMainWindow):
     def load_config(self):
         """加载配置文件"""
         try:
-            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                self.config = json.load(f)
+            self.config = load_config_file(CONFIG_FILE)
         except Exception as e:
             QMessageBox.warning(self, "配置加载", f"无法加载配置文件: {e}")
             self.config = {}
@@ -3254,7 +3256,8 @@ class MainWindow(QMainWindow):
                 }
                 
                 # 创建临时文件用于报告生成
-                temp_file = PROJECT_ROOT / 'temp_loaded_data.json'
+                TEMP_DIR.mkdir(parents=True, exist_ok=True)
+                temp_file = TEMP_DIR / 'temp_loaded_data.json'
                 with open(temp_file, 'w', encoding='utf-8') as f:
                     json.dump(report_data, f, indent=2, ensure_ascii=False)
                 
@@ -3267,7 +3270,7 @@ class MainWindow(QMainWindow):
                 self.add_log_message("基于已加载数据生成测试报告")
             else:
                 # 查找最新的测试数据文件
-                dut_files = sorted(PROJECT_ROOT.glob('amplifier_measurement_*.json'), key=lambda x: x.stat().st_mtime)
+                dut_files = sorted(TEST_RESULTS_DIR.glob('amplifier_measurement_*.json'), key=lambda x: x.stat().st_mtime)
                 if not dut_files:
                     QMessageBox.warning(self, "报告生成", "未找到测试数据文件，请先加载数据或进行测试")
                     return
@@ -3298,7 +3301,7 @@ class MainWindow(QMainWindow):
         
         row = 0
         for pattern, file_type in file_patterns:
-            files = list(PROJECT_ROOT.glob(pattern))
+            files = list(TEST_RESULTS_DIR.glob(pattern))
             for file_path in sorted(files, key=lambda x: x.stat().st_mtime, reverse=True):
                 self.file_table.insertRow(row)
                 self.file_table.setItem(row, 0, QTableWidgetItem(file_path.name))
@@ -3322,7 +3325,7 @@ class MainWindow(QMainWindow):
         if save_path:
             try:
                 import shutil
-                shutil.copy2(PROJECT_ROOT / filename, save_path)
+                shutil.copy2(TEST_RESULTS_DIR / filename, save_path)
                 self.add_log_message(f"JSON文件已导出: {save_path}")
                 QMessageBox.information(self, "导出成功", f"文件已导出到: {save_path}")
             except Exception as e:
@@ -3347,7 +3350,7 @@ class MainWindow(QMainWindow):
         if save_path:
             try:
                 visualizer = DataVisualization()
-                visualizer.generate_csv_report(str(PROJECT_ROOT / filename))
+                visualizer.generate_csv_report(str(TEST_RESULTS_DIR / filename))
                 
                 # 使用当前可视化实例创建的目录，避免跨秒时计算到错误路径。
                 import shutil
@@ -3377,7 +3380,7 @@ class MainWindow(QMainWindow):
             
         try:
             visualizer = DataVisualization()
-            visualizer.create_summary_report(str(PROJECT_ROOT / filename))
+            visualizer.create_summary_report(str(TEST_RESULTS_DIR / filename))
             
             self.add_log_message("PDF报告已生成在test_results文件夹中")
             QMessageBox.information(self, "导出成功", "PDF报告已生成在test_results文件夹中")

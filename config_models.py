@@ -5,13 +5,13 @@
 
 from __future__ import annotations
 
-import json
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Union
 
 from config_validation import ConfigIssue, ConfigValidationResult
+from config_io import load_json_object
 
 
 PathLike = Union[str, Path]
@@ -248,11 +248,7 @@ class RunConfiguration:
 
 def load_json(path: PathLike) -> Dict[str, Any]:
     """读取 JSON 文件，不执行任何硬件操作。"""
-    with Path(path).open("r", encoding="utf-8") as config_file:
-        value = json.load(config_file)
-    if not isinstance(value, dict):
-        raise ValueError("配置根节点必须是 JSON 对象")
-    return value
+    return load_json_object(path)
 
 
 def load_test_plan(path: PathLike) -> TestPlan:

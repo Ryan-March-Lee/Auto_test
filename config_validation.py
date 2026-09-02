@@ -1,6 +1,5 @@
 """生产配置的只读加载和校验。"""
 
-import json
 import math
 import re
 from dataclasses import dataclass
@@ -8,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from project_paths import CONFIG_FILE, resolve_path
+from config_io import load_config_file
 
 
 PathLike = Union[str, Path]
@@ -37,9 +37,7 @@ class ConfigValidationResult:
 
 def load_config(config_path: Optional[PathLike] = None) -> Dict[str, Any]:
     """加载 JSON 配置，不创建仪器连接，也不修改文件。"""
-    path = resolve_path(config_path, CONFIG_FILE)
-    with path.open("r", encoding="utf-8") as config_file:
-        return json.load(config_file)
+    return load_config_file(config_path)
 
 
 def validate_config(config: Dict[str, Any]) -> ConfigValidationResult:

@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import json
 import math
 import re
 from dataclasses import dataclass, field
@@ -22,6 +21,7 @@ from config_models import (
     TestPlan,
 )
 from config_validation import ConfigIssue
+from config_io import load_config_file
 
 
 PathLike = Union[str, Path]
@@ -61,11 +61,7 @@ def parse_legacy_attenuator(value: Any) -> Optional[float]:
 
 def load_legacy_config(path: PathLike) -> Dict[str, Any]:
     """只读加载旧配置文件。"""
-    with Path(path).open("r", encoding="utf-8") as config_file:
-        value = json.load(config_file)
-    if not isinstance(value, dict):
-        raise ValueError("旧配置根节点必须是 JSON 对象")
-    return value
+    return load_config_file(path)
 
 
 def legacy_config_to_test_plan(config: Mapping[str, Any]) -> TestPlan:

@@ -340,7 +340,7 @@ class DataVisualization:
 def main():
     try:
         visualizer = DataVisualization()
-        dut_files = sorted(PROJECT_ROOT.glob('amplifier_measurement_*.json'), key=Path.stat)
+        dut_files = sorted(TEST_RESULTS_DIR.glob('amplifier_measurement_*.json'), key=Path.stat)
         if not dut_files:
             print("错误: 未找到任何 'amplifier_measurement_*.json' 文件进行可视化。")
             return

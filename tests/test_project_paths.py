@@ -2,12 +2,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from project_paths import CONFIG_FILE, PROJECT_ROOT, TEMP_DIR, ensure_directory, resolve_path
+from project_paths import CONFIG_FILE, CABLE_LOSS_FILE, ICONS_DIR, IMAGES_DIR, PROJECT_ROOT, TEMP_DIR, TEST_RESULTS_DIR, ensure_directory, resolve_path
 
 
 class ProjectPathsTests(unittest.TestCase):
     def test_default_paths_are_under_project_root(self):
         self.assertEqual(CONFIG_FILE, PROJECT_ROOT / "config.json")
+        self.assertEqual(CABLE_LOSS_FILE, TEST_RESULTS_DIR / "cable_loss_results.json")
+        self.assertEqual(ICONS_DIR, PROJECT_ROOT / "assets" / "icons")
+        self.assertEqual(IMAGES_DIR, PROJECT_ROOT / "assets" / "images")
         self.assertEqual(TEMP_DIR, PROJECT_ROOT / "temp")
 
     def test_absolute_path_is_preserved(self):

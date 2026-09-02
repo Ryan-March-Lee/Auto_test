@@ -7,13 +7,15 @@ from typing import Optional, Union
 PathLike = Union[str, Path]
 PROJECT_ROOT = Path(__file__).resolve().parent
 
+TEST_RESULTS_DIR = PROJECT_ROOT / "test_results"
 CONFIG_FILE = PROJECT_ROOT / "config.json"
-CABLE_LOSS_FILE = PROJECT_ROOT / "cable_loss_results.json"
+CABLE_LOSS_FILE = TEST_RESULTS_DIR / "cable_loss_results.json"
 CHAT_HISTORY_FILE = PROJECT_ROOT / "chat_history.json"
 CHAT_SETTINGS_FILE = PROJECT_ROOT / "chat_settings.json"
 SEARCH_API_CONFIG_FILE = PROJECT_ROOT / "search_api_config.json"
-ICONS_DIR = PROJECT_ROOT / "icons"
-TEST_RESULTS_DIR = PROJECT_ROOT / "test_results"
+ASSETS_DIR = PROJECT_ROOT / "assets"
+ICONS_DIR = ASSETS_DIR / "icons"
+IMAGES_DIR = ASSETS_DIR / "images"
 TEMP_DIR = PROJECT_ROOT / "temp"
 LOGS_DIR = PROJECT_ROOT / "logs"
 

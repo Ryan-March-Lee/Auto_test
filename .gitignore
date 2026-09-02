@@ -19,15 +19,14 @@ chat_settings.json
 temp_loaded_data.json
 
 # Generated reports and temporary files
-test_results/
+test_results/**
+!test_results/.gitkeep
 temp/
 /temp
 *.log
 logs/
 
 # Runtime measurement outputs (site data, not source code; see 重构执行.md R-010)
-amplifier_measurement_*.json
-driver_power_mapping_*.json
 power_data.mdf
 
 # Local secrets and machine-specific configuration

@@ -30,8 +30,8 @@ logger = get_logger(__name__)
 class EnhancedCableLossMeasurement(CableLossMeasurement):
     """增强的线损测量类，支持进度和消息回调，支持分步骤测量"""
     
-    def __init__(self, config_path=None, progress_callback=None, message_callback=None):
-        super().__init__(config_path)
+    def __init__(self, config_path=None, progress_callback=None, message_callback=None, sleep_fn=None):
+        super().__init__(config_path, sleep_fn=sleep_fn)
         self.progress_callback = progress_callback
         self.message_callback = message_callback
         self.should_stop = False
@@ -141,8 +141,9 @@ class EnhancedDriverPowerMapping(DriverPowerMapping):
     """增强的驱动映射类，支持实时数据更新"""
     
     def __init__(self, config_path=None, loss_data_path=None,
-                 progress_callback=None, message_callback=None, data_callback=None):
-        super().__init__(config_path, loss_data_path)
+                 progress_callback=None, message_callback=None, data_callback=None,
+                 sleep_fn=None):
+        super().__init__(config_path, loss_data_path, sleep_fn=sleep_fn)
         self.progress_callback = progress_callback
         self.message_callback = message_callback
         self.data_callback = data_callback
@@ -200,7 +201,7 @@ class EnhancedDriverPowerMapping(DriverPowerMapping):
                 return
                 
             self.inst_ctrl.set_power(input_power)
-            time.sleep(3)
+            self._sleep(3)
             
             measured_power = self.inst_ctrl.measure_power_with_average()
             actual_power = self.calculate_actual_power(frequency, measured_power)
@@ -264,9 +265,9 @@ class EnhancedAmplifierMeasurement(AmplifierMeasurement):
     """增强的功放测量类，支持实时数据更新"""
     
     def __init__(self, config_path=None, loss_data_path=None,
-                 driver_mapping_path: Optional[str] = None, progress_callback=None, 
-                 message_callback=None, data_callback=None):
-        super().__init__(config_path, loss_data_path, driver_mapping_path)
+                 driver_mapping_path: Optional[str] = None, progress_callback=None,
+                 message_callback=None, data_callback=None, sleep_fn=None):
+        super().__init__(config_path, loss_data_path, driver_mapping_path, sleep_fn=sleep_fn)
         self.progress_callback = progress_callback
         self.message_callback = message_callback
         self.data_callback = data_callback
@@ -346,7 +347,7 @@ class EnhancedAmplifierMeasurement(AmplifierMeasurement):
                 
             # 设置信号源功率
             self.inst_ctrl.set_power(sg_power)
-            time.sleep(3)
+            self._sleep(3)
             
             # 测量DUT输出功率
             measured_power = self.inst_ctrl.measure_power_with_average()
@@ -453,7 +454,7 @@ class EnhancedAmplifierMeasurement(AmplifierMeasurement):
             
             self.emit_message("执行上电序列...")
             self.inst_ctrl.power_on_sequence()
-            time.sleep(2)
+            self._sleep(2)
             
             frequencies = self.config['test_frequencies']
             for i, freq in enumerate(frequencies):
@@ -492,9 +493,10 @@ class WorkerSignals(QObject):
 class InstrumentWorker(QThread):
     """仪器连接工作线程"""
     
-    def __init__(self, config_path=None):
+    def __init__(self, config_path=None, sleep_fn=None):
         super().__init__()
         self.config_path = resolve_path(config_path, CONFIG_FILE)
+        self.sleep_fn = sleep_fn or time.sleep
         self.signals = WorkerSignals()
         
     def run(self):
@@ -510,7 +512,7 @@ class InstrumentWorker(QThread):
             self.signals.message.emit("仪器初始化完成")
             
             # 模拟一些初始化时间
-            time.sleep(1)
+            self.sleep_fn(1)
             
             self.signals.progress.emit(100)
             self.signals.message.emit("所有启用的仪器连接成功")

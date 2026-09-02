@@ -1,6 +1,5 @@
 # --- START OF FILE cable_loss_measurement.py ---
 
-import json
 import time
 from typing import Dict
 from instrument_control import InstrumentControl
@@ -14,21 +13,23 @@ from result_storage import (
     save_measurement_result,
     write_legacy_run_snapshot,
 )
+from config_io import load_config_file
 # from mock_instrument_control import MockInstrumentControl as InstrumentControl
 
 logger = get_logger(__name__)
 
 class CableLossMeasurement:
-    def __init__(self, config_path=None, run_id=None):
+    def __init__(self, config_path=None, run_id=None, sleep_fn=None):
         """初始化线损测量类
 
         Args:
             config_path: 配置文件路径
         """
         config_path = resolve_path(config_path, CONFIG_FILE)
-        self.config = load_json_result(config_path)
+        self.config = load_config_file(config_path)
 
         self.run_id = run_id or new_run_id()
+        self.sleep_fn = sleep_fn or time.sleep
         self.run_directory = write_legacy_run_snapshot(
             self.run_id,
             self.config,
@@ -38,6 +39,10 @@ class CableLossMeasurement:
 
         self.attenuator_value = float(self.config['attenuator']['type'].replace('dB', ''))
         self.cable_losses: Dict[float, Dict[str, float]] = {}
+
+    def _sleep(self, seconds: float) -> None:
+        """使用注入的等待函数；兼容旧测试绕过构造函数的对象。"""
+        getattr(self, "sleep_fn", time.sleep)(seconds)
 
     # def initialize_instruments(self):
     #     """初始化信号源和频谱仪的基本设置"""
@@ -50,7 +55,7 @@ class CableLossMeasurement:
         self.inst_ctrl.set_center_frequency(frequency)
         self.inst_ctrl.set_span(10)
         power = self.inst_ctrl.measure_power_with_average()
-        time.sleep(1)
+        self._sleep(1)
         return power
 
     def measure_path_loss(self, frequency: float) -> float:

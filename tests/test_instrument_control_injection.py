@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import Mock
 from unittest.mock import patch
 
 from instrument_control import InstrumentControl
@@ -81,6 +82,16 @@ class InstrumentControlInjectionTests(unittest.TestCase):
         self.assertIn(2, delays)
         self.assertGreaterEqual(delays.count(0.5), 4)
         self.assertNotIn(1, delays)
+
+    def test_injected_sleep_function_is_used_for_peak_measurement_wait(self):
+        manager = self.make_manager()
+        delays = []
+        controller = InstrumentControl(resource_manager=manager, sleep_fn=delays.append)
+        controller.spectrum = Mock()
+        controller.spectrum.query.return_value = "-20.0"
+
+        self.assertEqual(controller.read_peak_power(), -20.0)
+        self.assertIn(2, delays)
 
     def test_initialization_failure_preserves_original_error_and_closes_resources(self):
         manager = MinimalResourceManager((self.ADDRESSES[0],))

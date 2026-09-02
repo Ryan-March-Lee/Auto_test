@@ -7,7 +7,7 @@ import time
 from datetime import datetime
 from instrument_control import InstrumentControl 
 from pathlib import Path
-from project_paths import CABLE_LOSS_FILE, CONFIG_FILE, PROJECT_ROOT, resolve_path
+from project_paths import CABLE_LOSS_FILE, CONFIG_FILE, PROJECT_ROOT, TEST_RESULTS_DIR, resolve_path
 from measurement_calculations import (
     compensate_amplifier_output_power,
     calculate_dut_input_power,
@@ -23,6 +23,7 @@ from result_storage import (
     save_measurement_result,
     write_legacy_run_snapshot,
 )
+from config_io import load_config_file
 
 logger = get_logger(__name__)
 
@@ -47,16 +48,17 @@ class AmplifierMeasurement:
     def __init__(self, config_path=None,
                  loss_data_path=None,
                  driver_mapping_path: Optional[str] = None,
-                 run_id: Optional[str] = None):
+                 run_id: Optional[str] = None,
+                 sleep_fn=None):
         """初始化主功放测量类"""
         config_path = resolve_path(config_path, CONFIG_FILE)
         loss_data_path = resolve_path(loss_data_path, CABLE_LOSS_FILE)
-        with open(config_path, 'r') as f:
-            self.config = json.load(f)
+        self.config = load_config_file(config_path)
 
         self.loss_data = load_json_result(loss_data_path)
 
         self.run_id = run_id or new_run_id()
+        self.sleep_fn = sleep_fn or time.sleep
         self.run_directory = write_legacy_run_snapshot(
             self.run_id,
             self.config,
@@ -66,7 +68,7 @@ class AmplifierMeasurement:
 
         if self.config['driver_mode']['enabled']:
             if driver_mapping_path is None:
-                driver_files = sorted(PROJECT_ROOT.glob('driver_power_mapping_*.json'), key=lambda p: p.stat().st_mtime)
+                driver_files = sorted(TEST_RESULTS_DIR.glob('driver_power_mapping_*.json'), key=lambda p: p.stat().st_mtime)
                 if not driver_files:
                     raise FileNotFoundError("驱动模式已开启，但未找到任何 'driver_power_mapping_*.json' 文件!")
                 driver_mapping_path = str(driver_files[-1])
@@ -77,6 +79,10 @@ class AmplifierMeasurement:
             self.driver_mapping = None
 
         self.measurement_results: Dict[str, Dict] = {}
+
+    def _sleep(self, seconds: float) -> None:
+        """使用注入的等待函数；兼容旧测试绕过构造函数的对象。"""
+        getattr(self, "sleep_fn", time.sleep)(seconds)
 
     def calculate_actual_power(self, frequency: float, measured_power: float) -> float:
         """计算DUT的实际输出功率（补偿线损）
@@ -169,7 +175,7 @@ class AmplifierMeasurement:
 
             # 2. 设置信号源功率
             self.inst_ctrl.set_power(sg_power)
-            time.sleep(5) #设置完功率输出后等待直流源及频谱仪读数稳定
+            self._sleep(5) #设置完功率输出后等待直流源及频谱仪读数稳定
 
 
             # 3. 测量DUT输出功率
@@ -260,7 +266,7 @@ class AmplifierMeasurement:
 
             print("Powering on devices...")
             self.inst_ctrl.power_on_sequence()
-            time.sleep(2)
+            self._sleep(2)
 
             for freq in self.config['test_frequencies']:
                 self.measurement_results[str(freq)] = self.perform_power_sweep(freq)
@@ -285,7 +291,7 @@ class AmplifierMeasurement:
             'results': self.measurement_results
         }
 
-        legacy_path = PROJECT_ROOT / f'amplifier_measurement_{datetime.now():%Y%m%d_%H%M%S}.json'
+        legacy_path = TEST_RESULTS_DIR / f'amplifier_measurement_{datetime.now():%Y%m%d_%H%M%S}.json'
         archive_path, legacy_path = save_measurement_result(
             results,
             result_type="amplifier_measurement",

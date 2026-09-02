@@ -1,12 +1,11 @@
 # --- START OF FILE driver_power_mapping.py ---
 
-import json
 import numpy as np
 from typing import Dict, List, Optional
 import time
 from datetime import datetime
 from instrument_control import InstrumentControl
-from project_paths import CABLE_LOSS_FILE, CONFIG_FILE, PROJECT_ROOT, resolve_path
+from project_paths import CABLE_LOSS_FILE, CONFIG_FILE, PROJECT_ROOT, TEST_RESULTS_DIR, resolve_path
 from measurement_calculations import compensate_driver_output_power
 from app_logging import get_logger
 from measurement_lifecycle import cleanup_measurement
@@ -16,22 +15,23 @@ from result_storage import (
     save_measurement_result,
     write_legacy_run_snapshot,
 )
+from config_io import load_config_file
 # from mock_instrument_control import MockInstrumentControl as InstrumentControl
 
 logger = get_logger(__name__)
 
 
 class DriverPowerMapping:
-    def __init__(self, config_path=None, loss_data_path=None, run_id=None):
+    def __init__(self, config_path=None, loss_data_path=None, run_id=None, sleep_fn=None):
         """初始化驱动功放功率映射测量类"""
         config_path = resolve_path(config_path, CONFIG_FILE)
         loss_data_path = resolve_path(loss_data_path, CABLE_LOSS_FILE)
-        with open(config_path, 'r') as f:
-            self.config = json.load(f)
+        self.config = load_config_file(config_path)
             
         self.loss_data = load_json_result(loss_data_path)
             
         self.run_id = run_id or new_run_id()
+        self.sleep_fn = sleep_fn or time.sleep
         self.run_directory = write_legacy_run_snapshot(
             self.run_id,
             self.config,
@@ -39,6 +39,10 @@ class DriverPowerMapping:
         )
         self.inst_ctrl = InstrumentControl(config_path)
         self.power_mapping: Dict[str, Dict[str, float]] = {}
+
+    def _sleep(self, seconds: float) -> None:
+        """使用注入的等待函数；兼容旧测试绕过构造函数的对象。"""
+        getattr(self, "sleep_fn", time.sleep)(seconds)
         
     # --- MODIFIED: CRITICAL FIX in power calculation logic ---
     def calculate_actual_power(self, frequency: float, measured_power: float) -> float:
@@ -77,7 +81,7 @@ class DriverPowerMapping:
         self.inst_ctrl.rf_output_on()
         for input_power in np.arange(start_power, stop_power + step, step):
             self.inst_ctrl.set_power(input_power)
-            time.sleep(5)
+            self._sleep(5)
             
             measured_power = self.inst_ctrl.measure_power_with_average()
             actual_power = self.calculate_actual_power(frequency, measured_power)
@@ -125,7 +129,7 @@ class DriverPowerMapping:
             }
         }
         
-        legacy_path = PROJECT_ROOT / f'driver_power_mapping_{datetime.now():%Y%m%d_%H%M%S}.json'
+        legacy_path = TEST_RESULTS_DIR / f'driver_power_mapping_{datetime.now():%Y%m%d_%H%M%S}.json'
         archive_path, legacy_path = save_measurement_result(
             results,
             result_type="driver_power_mapping",

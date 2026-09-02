@@ -1,0 +1,12 @@
+# PA 自动测试系统 - 运行依赖（主 GUI 测试系统）
+# 安装：conda activate Auto_test; pip install -r requirements.txt
+# 环境: Python 3.11.x (已用 3.11.15 验证), Anaconda/Miniconda
+
+PySide6>=6.6.0
+matplotlib>=3.10.0
+numpy>=1.26.4
+pandas>=2.3.1
+seaborn>=0.13.2
+PyVISA>=1.14.1
+markdown>=3.5
+requests>=2.31

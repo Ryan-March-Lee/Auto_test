@@ -105,6 +105,14 @@ class LauncherTests(unittest.TestCase):
         ):
             self.assertEqual(launcher.get_conda_environment_name(), "Auto_test")
 
+    def test_environment_check_rejects_non_project_environment(self):
+        with patch.dict("os.environ", {"CONDA_DEFAULT_ENV": "base"}, clear=True), redirect_stdout(io.StringIO()):
+            self.assertFalse(launcher.check_environment(silent=True))
+
+    def test_environment_check_accepts_auto_test_environment(self):
+        with patch.dict("os.environ", {"CONDA_DEFAULT_ENV": "Auto_test"}, clear=True), redirect_stdout(io.StringIO()):
+            self.assertTrue(launcher.check_environment(silent=True))
+
     def test_validate_config_does_not_initialize_logging(self):
         # --validate-config 是只读命令：不得创建日志文件。
         with patch.object(launcher, "validate_config_file", return_value=launcher.ConfigValidationResult([], [])), patch.object(

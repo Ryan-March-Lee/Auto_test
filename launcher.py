@@ -21,6 +21,7 @@ EXIT_ENVIRONMENT_ERROR = 4
 EXIT_DEPENDENCY_ERROR = 5
 EXIT_GUI_ERROR = 6
 EXIT_INTERRUPTED = 130
+EXPECTED_CONDA_ENV = "Auto_test"
 
 
 def print_header() -> None:
@@ -44,6 +45,14 @@ def check_environment(silent: bool = False) -> bool:
         return False
     if not silent:
         print(f"   Conda 环境: {get_conda_environment_name()}")
+    environment_name = get_conda_environment_name()
+    if environment_name.lower() != EXPECTED_CONDA_ENV.lower():
+        if not silent:
+            print(
+                f"   环境错误: 本项目必须使用 {EXPECTED_CONDA_ENV}，"
+                f"当前为 {environment_name}。"
+            )
+        return False
     return True
 
 

@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from instrument_control import InstrumentControl
+from instrument_control import InstrumentControl, resolve_power_channel_role
 from tests.fakes import FakeResourceManager, FakeVisaResource
 
 
@@ -110,6 +110,44 @@ class InstrumentPowerControlTests(unittest.TestCase):
 
     def tearDown(self):
         self.temporary_directory.cleanup()
+
+    def test_power_channel_role_prefers_explicit_role_and_keeps_legacy_fallback(self):
+        self.assertEqual(resolve_power_channel_role("A", {"role": "gate"}), "gate")
+        self.assertEqual(resolve_power_channel_role("B", {"connection": "漏极"}), "drain")
+        self.assertEqual(resolve_power_channel_role("B", {"role": None, "connection": "gate"}), "gate")
+        self.assertIsNone(resolve_power_channel_role("CH1", {"role": "invalid"}))
+        self.assertEqual(resolve_power_channel_role("CH1", {}), "gate")
+        self.assertEqual(resolve_power_channel_role("CH2", {}), "drain")
+        self.assertIsNone(resolve_power_channel_role("CH3", {}))
+
+    def test_power_sequence_uses_explicit_channel_roles(self):
+        config = fake_power_config()
+        config["instruments"]["power_supplies"]["PS"]["channels"] = {
+            "A": {
+                "role": "drain",
+                "voltage": {"value": 28.0, "protection": 30.0, "protection_enabled": False},
+                "current": {"value": 1.0, "protection": 1.2, "protection_enabled": False},
+            },
+            "B": {
+                "role": "gate",
+                "voltage": {"value": 2.8, "protection": 3.0, "protection_enabled": True},
+                "current": {"value": 0.1, "protection": 0.2, "protection_enabled": True},
+            },
+        }
+        config["power_supply_assignment"]["dut_amplifier"]["supplies"]["dut"]["channel"] = ["A", "B"]
+        self.config_path.write_text(json.dumps(config), encoding="utf-8")
+        controller = InstrumentControl(
+            self.config_path,
+            resource_manager=self.manager,
+            sleep_fn=lambda _: None,
+        )
+        self.power_supply.writes.clear()
+
+        controller.power_on_sequence()
+        self.assertEqual(
+            self.power_supply.writes[-2:],
+            [":OUTPut B,ON", ":OUTPut A,ON"],
+        )
 
     def test_initialization_sets_protection_state_before_protection_value(self):
         self.assertEqual(

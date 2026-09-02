@@ -1,22 +1,37 @@
 # --- START OF FILE instrument_control.py (CORRECTED) ---
 
-import json
 import pyvisa
 import time
 from typing import Callable, Dict, List, Union, Optional
 from enum import Enum
 from project_paths import CONFIG_FILE, resolve_path
+from config_io import load_config_file
 from app_logging import get_logger
 
 logger = get_logger(__name__)
+
+
+def resolve_power_channel_role(channel: str, channel_config: Optional[Dict] = None) -> Optional[str]:
+    """解析电源通道的电气角色，并兼容旧版 CH1/CH2 配置。"""
+    settings = channel_config if isinstance(channel_config, dict) else {}
+    has_explicit_role = "role" in settings or "connection" in settings
+    explicit_role = settings.get("role") or settings.get("connection")
+    if isinstance(explicit_role, str):
+        role = explicit_role.strip().lower()
+        if role in {"gate", "栅", "栅极", "gate_voltage"}:
+            return "gate"
+        if role in {"drain", "漏", "漏极", "drain_voltage"}:
+            return "drain"
+    if has_explicit_role:
+        return None
+    return {"CH1": "gate", "CH2": "drain"}.get(str(channel).upper())
 
 
 class InstrumentControl:
     def __init__(self, config_path=None, resource_manager=None, sleep_fn: Callable[[float], None] = time.sleep):
         """初始化仪器控制类"""
         config_path = resolve_path(config_path, CONFIG_FILE)
-        with open(config_path, 'r') as f:
-            self.config = json.load(f)
+        self.config = load_config_file(config_path)
 
         self.rm = resource_manager if resource_manager is not None else pyvisa.ResourceManager()
         self.sleep_fn = sleep_fn
@@ -30,6 +45,17 @@ class InstrumentControl:
     def _get_channel_num(self, channel_str: str) -> str:
         """从 'CH1', 'CH2' 等字符串中提取数字"""
         return channel_str.replace("CH", "")
+
+    def _get_power_channel_role(self, ps_name: str, channel: str) -> Optional[str]:
+        """读取显式通道角色；没有角色时使用旧 CH1/CH2 兼容规则。"""
+        channel_config = (
+            self.config.get("instruments", {})
+            .get("power_supplies", {})
+            .get(ps_name, {})
+            .get("channels", {})
+            .get(channel, {})
+        )
+        return resolve_power_channel_role(channel, channel_config)
 
     def initialize_all_instruments(self):
         """初始化所有仪器（只连接启用的仪器）"""
@@ -286,7 +312,7 @@ class InstrumentControl:
         for supply_info in all_supplies:
             ps_name = supply_info['name']
             for ch in supply_info['channel']:
-                if ch == 'CH1':
+                if self._get_power_channel_role(ps_name, ch) == "gate":
                     self.power_supply_on(ps_name, ch)
                     print(f"      {ps_name}-{ch} ON")
                     self.sleep_fn(0.5)
@@ -297,7 +323,7 @@ class InstrumentControl:
         for supply_info in all_supplies:
             ps_name = supply_info['name']
             for ch in supply_info['channel']:
-                if ch == 'CH2':
+                if self._get_power_channel_role(ps_name, ch) == "drain":
                     self.power_supply_on(ps_name, ch)
                     print(f"      {ps_name}-{ch} ON")
                     self.sleep_fn(0.5)
@@ -335,7 +361,7 @@ class InstrumentControl:
         for supply_info in reversed(all_supplies):
             ps_name = supply_info['name']
             for ch in reversed(supply_info['channel']):
-                if ch == 'CH2':
+                if self._get_power_channel_role(ps_name, ch) == "drain":
                     try:
                         self.power_supply_off(ps_name, ch)
                         print(f"      {ps_name}-{ch} OFF")
@@ -350,7 +376,7 @@ class InstrumentControl:
         for supply_info in reversed(all_supplies):
             ps_name = supply_info['name']
             for ch in reversed(supply_info['channel']):
-                if ch == 'CH1':
+                if self._get_power_channel_role(ps_name, ch) == "gate":
                     try:
                         self.power_supply_off(ps_name, ch)
                         print(f"      {ps_name}-{ch} OFF")
@@ -401,7 +427,7 @@ class InstrumentControl:
     def read_peak_power(self) -> float:
         if self.spectrum is None:
             raise Exception("Spectrum analyzer is not connected")
-        time.sleep(2)
+        self.sleep_fn(2)
         self.spectrum.write("CALC:MARK1:MAX")
         return float(self.spectrum.query("CALC:MARK1:Y?"))
 

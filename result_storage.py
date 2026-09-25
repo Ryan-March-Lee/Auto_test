@@ -104,6 +104,8 @@ def write_run_snapshot(
     返回运行目录路径。
     """
     validate_run_id(run_id)
+    test_plan = _with_run_id(test_plan, run_id, "测试方案快照")
+    run_mapping = _with_run_id(run_mapping, run_id, "运行映射快照")
     run_directory = create_run_directory(run_id)
     try:
         save_json_result(
@@ -145,17 +147,17 @@ def write_legacy_run_snapshot(
     **kwargs: Any,
 ) -> Path:
     """将旧版 config.json 转成新模型格式后写入运行快照。"""
-    from legacy_config_conversion import convert_legacy_config
+    from persistence.config_repository import ConfigurationRepository
 
-    converted = convert_legacy_config(legacy_config)
-    if converted.errors:
-        details = "; ".join(f"{item.path}: {item.message}" for item in converted.errors)
+    loaded = ConfigurationRepository().load_legacy_data(dict(legacy_config))
+    if loaded.conversion_errors:
+        details = "; ".join(f"{item.path}: {item.message}" for item in loaded.conversion_errors)
         raise ValueError(f"旧配置无法生成运行快照: {details}")
 
     run_directory = write_run_snapshot(
         run_id,
-        converted.test_plan.to_dict(),
-        converted.run_mapping.to_dict(),
+        loaded.configuration.test_plan.to_dict(),
+        loaded.configuration.run_mapping.to_dict(),
         **kwargs,
     )
     try:
@@ -163,9 +165,13 @@ def write_legacy_run_snapshot(
         save_json_result(
             run_directory / "conversion_review.json",
             {
-                "status": converted.status,
-                "warnings": [item.__dict__ for item in converted.warnings],
-                "unresolved_fields": converted.unresolved_fields,
+                "status": (
+                    "invalid" if loaded.conversion_errors
+                    else "needs_review" if loaded.warnings or loaded.unresolved_fields
+                    else "converted"
+                ),
+                "warnings": [item.__dict__ for item in loaded.warnings],
+                "unresolved_fields": loaded.unresolved_fields,
                 "source": "legacy_config",
             },
             result_type="conversion_review",
@@ -191,6 +197,7 @@ def save_measurement_result(
     返回 (归档路径, 旧路径兼容副本)。
     """
     validate_run_id(run_id)
+    result = _with_run_id(result, run_id, "测量结果")
 
     # 创建运行目录（如果未提供）
     if run_directory is None:
@@ -220,3 +227,12 @@ def save_measurement_result(
     )
 
     return archive_path, legacy_path
+
+
+def _with_run_id(value: Mapping[str, Any], run_id: str, label: str) -> Dict[str, Any]:
+    payload = dict(value)
+    existing = payload.get("run_id")
+    if existing not in (None, run_id):
+        raise ValueError(f"{label} run_id 不一致: {existing} != {run_id}")
+    payload["run_id"] = run_id
+    return payload

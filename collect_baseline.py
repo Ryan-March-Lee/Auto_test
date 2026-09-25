@@ -18,7 +18,8 @@ from importlib import metadata
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from project_paths import CONFIG_FILE, PROJECT_ROOT, TEST_RESULTS_DIR
+from project_paths import PROJECT_ROOT, TEST_RESULTS_DIR
+from result_storage import validate_run_id
 
 
 MEASUREMENT_PATTERNS = {
@@ -28,12 +29,6 @@ MEASUREMENT_PATTERNS = {
 }
 REPORT_PATTERNS = ("*.html", "*.pdf", "*.csv")
 PACKAGE_NAMES = ("PySide6", "matplotlib", "numpy", "pandas", "seaborn", "pyvisa", "markdown", "requests")
-
-
-def _json_files(directory: Path, pattern: str) -> Iterable[Path]:
-    """返回结果目录及其运行子目录中的 JSON 文件。"""
-    yield from directory.glob(pattern)
-    yield from directory.glob(f"*/{pattern}")
 
 
 def _latest(paths: Iterable[Path]) -> Optional[Path]:
@@ -87,11 +82,18 @@ def collect_baseline(
     output_dir: Path = PROJECT_ROOT / "baseline",
     run_id: Optional[str] = None,
 ) -> Tuple[Path, Dict[str, object]]:
-    """收集最新结果，返回新建的基线目录和清单。"""
+    """只从指定运行目录收集结果；缺少关联文件时将基线标记为不完整。"""
     results_dir = Path(results_dir)
     output_dir = Path(output_dir)
+    if run_id is None:
+        raise ValueError("必须指定 run_id")
+    validate_run_id(run_id)
     if not results_dir.exists():
         raise FileNotFoundError(f"结果目录不存在: {results_dir}")
+
+    run_directory = results_dir / run_id
+    if not run_directory.is_dir():
+        raise FileNotFoundError(f"运行目录不存在: {run_directory}")
 
     baseline_id = f"{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
     baseline_dir = output_dir / "collected" / baseline_id
@@ -100,11 +102,8 @@ def collect_baseline(
     artifacts: Dict[str, List[Dict[str, str]]] = {}
     selected: Dict[str, Optional[Path]] = {}
     for kind, pattern in MEASUREMENT_PATTERNS.items():
-        candidate = Path(run_id) if run_id else None
-        if candidate:
-            selected[kind] = _latest((results_dir / candidate).glob(pattern))
-        else:
-            selected[kind] = _latest(_json_files(results_dir, pattern))
+        candidates = sorted(run_directory.glob(pattern))
+        selected[kind] = candidates[0] if candidates else None
         source = selected[kind]
         if source:
             destination = baseline_dir / "results" / source.name
@@ -112,30 +111,46 @@ def collect_baseline(
         else:
             artifacts[kind] = []
 
-    # 快照通常位于各测量自己的运行目录中，收集最新的一组可用快照。
+    # Snapshot and reports must come from the exact same run as measurement data.
     for kind, filename in (
         ("test_plan_snapshot", "test_plan_snapshot.json"),
         ("run_mapping_snapshot", "run_mapping_snapshot.json"),
         ("run_metadata", "run_metadata.json"),
         ("conversion_review", "conversion_review.json"),
     ):
-        source = _latest(results_dir.glob(f"*/{filename}"))
+        source = run_directory / filename if (run_directory / filename).is_file() else None
         if source:
             artifacts[kind] = [_copy_artifact(source, baseline_dir / "snapshots" / filename, PROJECT_ROOT, baseline_dir)]
         else:
             artifacts[kind] = []
 
-    if CONFIG_FILE.exists():
-        artifacts["config"] = [_copy_artifact(CONFIG_FILE, baseline_dir / "config.json", PROJECT_ROOT, baseline_dir)]
-    else:
-        artifacts["config"] = []
+    artifacts["config"] = []
 
     reports = []
     for pattern in REPORT_PATTERNS:
-        report = _latest(list(results_dir.glob(pattern)) + list(results_dir.glob(f"*/{pattern}")))
+        report = _latest(run_directory.glob(pattern))
         if report:
             reports.append(_copy_artifact(report, baseline_dir / "reports" / report.name, PROJECT_ROOT, baseline_dir))
     artifacts["reports"] = reports
+
+    required_kinds = ("test_plan_snapshot", "run_mapping_snapshot", "run_metadata", *MEASUREMENT_PATTERNS)
+    integrity_issues = []
+    for kind in required_kinds:
+        paths = artifacts.get(kind, [])
+        if not paths:
+            integrity_issues.append(f"missing:{kind}")
+            continue
+        artifact_path = baseline_dir / paths[0]["path"]
+        try:
+            content = json.loads(artifact_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            integrity_issues.append(f"invalid_json:{kind}")
+            continue
+        if not isinstance(content, dict):
+            integrity_issues.append(f"invalid_root:{kind}")
+            continue
+        if content.get("run_id") != run_id:
+            integrity_issues.append(f"run_id_mismatch:{kind}")
 
     manifest: Dict[str, object] = {
         "schema_version": "1.0",
@@ -154,6 +169,8 @@ def collect_baseline(
             "dependencies": _dependency_versions(),
         },
         "artifacts": artifacts,
+        "complete": not integrity_issues,
+        "integrity_issues": integrity_issues,
         "measurement_status": {
             kind: "available" if files else "not_found"
             for kind, files in artifacts.items()
@@ -161,7 +178,7 @@ def collect_baseline(
         },
         "notes": [
             "本清单由 collect_baseline.py 自动生成。",
-            "not_found 表示该测量类型未在结果目录中找到，不代表测试失败。",
+            "只有指定运行目录中的文件会被收集；缺少快照或任一测量结果时 complete=false。",
             "请在真实设备项目中另行确认接线和安全清理状态。",
         ],
     }
@@ -172,7 +189,7 @@ def collect_baseline(
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="自动整理阶段 0.1 基线样例")
-    parser.add_argument("--run-id", help="只收集指定运行目录中的结果")
+    parser.add_argument("--run-id", required=True, help="只收集指定运行目录中的结果")
     parser.add_argument("--results-dir", type=Path, default=TEST_RESULTS_DIR)
     parser.add_argument("--output-dir", type=Path, default=PROJECT_ROOT / "baseline")
     args = parser.parse_args(argv)
@@ -190,6 +207,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"清单文件: {baseline_dir / 'baseline_manifest.json'}")
     for kind, status in manifest["measurement_status"].items():
         print(f"{kind}: {status}")
+    print(f"complete: {str(manifest['complete']).lower()}")
     return 0
 
 

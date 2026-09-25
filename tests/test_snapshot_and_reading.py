@@ -11,6 +11,7 @@ from result_storage import (
     new_run_id,
     save_measurement_result,
     write_run_snapshot,
+    write_legacy_run_snapshot,
 )
 from result_reading import (
     get_config_snapshot,
@@ -71,11 +72,13 @@ class RunSnapshotTests(unittest.TestCase):
                 # 读取并验证测试方案快照
                 plan_snapshot = load_json_result(run_directory / "test_plan_snapshot.json")
                 self.assertEqual(plan_snapshot["frequencies"], [1.0, 2.0])
+                self.assertEqual(plan_snapshot["run_id"], run_id)
                 self.assertEqual(plan_snapshot["result_type"], "test_plan_snapshot")
 
                 # 读取并验证运行映射快照
                 mapping_snapshot = load_json_result(run_directory / "run_mapping_snapshot.json")
                 self.assertEqual(mapping_snapshot["instruments"]["signal_generator"], "SG1")
+                self.assertEqual(mapping_snapshot["run_id"], run_id)
                 self.assertEqual(mapping_snapshot["result_type"], "run_mapping_snapshot")
 
                 # 读取并验证运行元数据
@@ -118,6 +121,21 @@ class RunSnapshotTests(unittest.TestCase):
                     )
             self.assertFalse((Path(directory) / "partial-run").exists())
 
+    def test_legacy_production_snapshot_uses_configuration_repository(self):
+        fixture = Path(__file__).parent / "fixtures" / "config_driver_enabled_no_assignment.json"
+        legacy_config = json.loads(fixture.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as directory:
+            with patch("result_storage.TEST_RESULTS_DIR", Path(directory)):
+                run_directory = write_legacy_run_snapshot("repository-run", legacy_config)
+
+            plan = load_json_result(run_directory / "test_plan_snapshot.json")
+            mapping = load_json_result(run_directory / "run_mapping_snapshot.json")
+            review = load_json_result(run_directory / "conversion_review.json")
+
+        self.assertEqual(plan["run_id"], "repository-run")
+        self.assertEqual(mapping["run_id"], "repository-run")
+        self.assertEqual(review["status"], "needs_review")
+
 
 class SaveMeasurementResultTests(unittest.TestCase):
     """统一保存测量结果测试。"""
@@ -150,7 +168,15 @@ class SaveMeasurementResultTests(unittest.TestCase):
                 archive_data = load_json_result(archive_path)
                 legacy_data = load_json_result(legacy_path)
                 self.assertEqual(archive_data["data"], [1, 2, 3])
+                self.assertEqual(archive_data["run_id"], run_id)
                 self.assertEqual(legacy_data["data"], [1, 2, 3])
+
+    def test_snapshot_rejects_mismatched_run_id_before_creating_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch("result_storage.TEST_RESULTS_DIR", Path(directory)):
+                with self.assertRaisesRegex(ValueError, "run_id 不一致"):
+                    write_run_snapshot("run-expected", {"run_id": "run-other"}, {})
+                self.assertFalse((Path(directory) / "run-expected").exists())
 
     def test_save_measurement_result_rejects_implicit_directory_collision(self):
         """未显式传入运行目录时，重复 run_id 不得覆盖已有归档。"""

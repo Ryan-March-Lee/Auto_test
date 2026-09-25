@@ -10,7 +10,7 @@
 ```text
 Conda 环境：Auto_test
 Python：3.11.15
-环境路径：C:\My_Document\Anaconda\envs\Auto_test
+环境路径：D:\Anaconda\envs\Auto_test
 ```
 
 历史文档中的 `VISA_demo` 环境当前不存在。不要在 `base` 环境中运行本项目；`base` 缺少 GUI 和仪器控制依赖。
@@ -41,7 +41,7 @@ python launcher.py
 #### 3. 系统终端
 直接在PowerShell或CMD中：
 ```powershell
-cd "C:\My_Document\Python_project\pa_auto_test"
+cd "D:\Python_project\Auto_test"
 conda activate Auto_test
 python launcher.py --validate-config
 python launcher.py
@@ -89,7 +89,7 @@ python launcher.py
 ./run_tests.ps1
 ```
 
-默认解释器为 `C:\My_Document\Anaconda\envs\Auto_test\python.exe`。如环境路径变化，可设置：
+默认解释器为 `D:\Anaconda\envs\Auto_test\python.exe`。如环境路径变化，可设置：
 
 ```powershell
 $env:AUTO_TEST_PYTHON = "D:\path\to\Auto_test\python.exe"
@@ -105,9 +105,9 @@ $env:AUTO_TEST_PYTHON = "D:\path\to\Auto_test\python.exe"
 无需激活 Conda 环境时，可直接使用已验证解释器：
 
 ```powershell
-& "C:\My_Document\Anaconda\envs\Auto_test\python.exe" launcher.py --check
-& "C:\My_Document\Anaconda\envs\Auto_test\python.exe" launcher.py --validate-config
-& "C:\My_Document\Anaconda\envs\Auto_test\python.exe" launcher.py
+& "D:\Anaconda\envs\Auto_test\python.exe" launcher.py --check
+& "D:\Anaconda\envs\Auto_test\python.exe" launcher.py --validate-config
+& "D:\Anaconda\envs\Auto_test\python.exe" launcher.py
 ```
 
 ## 阶段 0.1 基线整理

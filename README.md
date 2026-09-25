@@ -82,7 +82,7 @@ conda activate Auto_test
 
 - Conda 环境：`Auto_test`
 - Python：3.11.15
-- 环境路径：`C:\My_Document\Anaconda\envs\Auto_test`
+- 环境路径：`D:\Anaconda\envs\Auto_test`
 
 `VISA_demo` 是历史文档中引用的环境名，当前机器上不存在。请使用 `Auto_test`，不要在 `base` 环境中安装或运行本项目依赖。
 
@@ -112,7 +112,7 @@ python launcher.py
 也可以直接使用已验证环境的解释器：
 
 ```powershell
-& "C:\My_Document\Anaconda\envs\Auto_test\python.exe" launcher.py
+& "D:\Anaconda\envs\Auto_test\python.exe" launcher.py
 ```
 
 #### 启动前检查

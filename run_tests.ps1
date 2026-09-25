@@ -4,7 +4,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$DefaultPython = "C:\My_Document\Anaconda\envs\Auto_test\python.exe"
+$DefaultPython = "D:\Anaconda\envs\Auto_test\python.exe"
 $Python = if ($env:AUTO_TEST_PYTHON) { $env:AUTO_TEST_PYTHON } else { $DefaultPython }
 
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {

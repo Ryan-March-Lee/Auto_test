@@ -1,0 +1,80 @@
+{
+  "schema_version": "1.0",
+  "baseline_id": "20260925-203233-586899",
+  "created_at": "2026-09-25T20:32:33",
+  "purpose": "阶段 0.1 基线样例",
+  "source": {
+    "results_directory": "test_results",
+    "requested_run_id": null
+  },
+  "environment": {
+    "python_version": "3.11.15",
+    "python_executable": "C:\\My_Document\\Anaconda\\envs\\Auto_test\\python.exe",
+    "platform": "Windows-10-10.0.26200-SP0",
+    "git_commit": "3c860755b1e66ebff579538fc50d0dd9668465df",
+    "dependencies": {
+      "PySide6": "6.11.1 ",
+      "matplotlib": "3.11.1",
+      "numpy": "2.4.6",
+      "pandas": "3.0.5",
+      "seaborn": "0.13.2",
+      "pyvisa": "1.16.2",
+      "markdown": "3.10.3",
+      "requests": "2.34.2"
+    }
+  },
+  "artifacts": {
+    "cable_loss": [
+      {
+        "source": "test_results\\cable_loss_results.json",
+        "path": "results\\cable_loss_results.json"
+      }
+    ],
+    "driver_mapping": [
+      {
+        "source": "test_results\\driver_power_mapping_20260629_114346.json",
+        "path": "results\\driver_power_mapping_20260629_114346.json"
+      }
+    ],
+    "amplifier_measurement": [
+      {
+        "source": "test_results\\amplifier_measurement_20260820_205415.json",
+        "path": "results\\amplifier_measurement_20260820_205415.json"
+      }
+    ],
+    "test_plan_snapshot": [],
+    "run_mapping_snapshot": [],
+    "run_metadata": [],
+    "conversion_review": [],
+    "config": [
+      {
+        "source": "config.json",
+        "path": "config.json"
+      }
+    ],
+    "reports": [
+      {
+        "source": "test_results\\20260821_131016\\test_report.html",
+        "path": "reports\\test_report.html"
+      },
+      {
+        "source": "test_results\\20260821_131016\\freq_vs_all_sat_metrics.pdf",
+        "path": "reports\\freq_vs_all_sat_metrics.pdf"
+      },
+      {
+        "source": "test_results\\20260821_131016\\full_sweep_data.csv",
+        "path": "reports\\full_sweep_data.csv"
+      }
+    ]
+  },
+  "measurement_status": {
+    "cable_loss": "available",
+    "driver_mapping": "available",
+    "amplifier_measurement": "available"
+  },
+  "notes": [
+    "本清单由 collect_baseline.py 自动生成。",
+    "not_found 表示该测量类型未在结果目录中找到，不代表测试失败。",
+    "请在真实设备项目中另行确认接线和安全清理状态。"
+  ]
+}

@@ -10,6 +10,14 @@ from .ports import (
     SignalGeneratorPort,
     SpectrumAnalyzerPort,
 )
+from .simulation import (
+    CommandRecorder,
+    RecordedSequence,
+    SafetyInstrumentSession,
+    SimulatedPowerSupply,
+    SimulatedSignalGenerator,
+    SimulatedSpectrumAnalyzer,
+)
 
 __all__ = [
     "InstrumentSession",
@@ -17,4 +25,10 @@ __all__ = [
     "PowerSupplyPort",
     "SignalGeneratorPort",
     "SpectrumAnalyzerPort",
+    "CommandRecorder",
+    "RecordedSequence",
+    "SafetyInstrumentSession",
+    "SimulatedPowerSupply",
+    "SimulatedSignalGenerator",
+    "SimulatedSpectrumAnalyzer",
 ]

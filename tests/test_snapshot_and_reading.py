@@ -19,7 +19,9 @@ from result_reading import (
     get_saturation_points,
     get_sweep_dataframe_data,
     get_sweep_results,
+    load_result_model,
     normalize_frequency_key,
+    parse_result_model,
 )
 
 
@@ -373,6 +375,76 @@ class ResultReadingTests(unittest.TestCase):
         self.assertEqual(get_config_snapshot({}), {})
         self.assertEqual(get_config_snapshot({"config": None}), {})
         self.assertEqual(get_config_snapshot({"config": "not a dict"}), {})
+
+    def test_legacy_amplifier_result_adapts_to_versioned_model(self):
+        legacy = {
+            "measurement_time": "2026-08-21 10:00:00",
+            "results": {
+                "1.0": {
+                    "sweep_data": {
+                        "input_power_dut": [1.0, 2.0],
+                        "output_power_dut": [10.0, 19.0],
+                        "gain": [9.0, 17.0],
+                        "efficiency": [30.0, 40.0],
+                    },
+                    "compression_point": {"output_power": 19.0, "gain": 17.0},
+                }
+            },
+        }
+        model = parse_result_model(legacy)
+        self.assertEqual(model.run_id, "legacy")
+        self.assertEqual(model.schema_version, "1.0")
+        self.assertEqual(len(model.points), 2)
+        self.assertEqual(model.points[1].output_power_dbm, 19.0)
+        self.assertEqual(get_sweep_dataframe_data(model)["1.0"][0]["gain"], 9.0)
+        self.assertEqual(get_saturation_points(model)[0]["gain"], 17.0)
+
+    def test_model_analysis_does_not_require_raw_amplifier_results(self):
+        from domain.models import AmplifierMeasurementResult, CompressionPoint
+
+        model = AmplifierMeasurementResult(
+            run_id="run-1",
+            points=(),
+            raw_readings={},
+            compression_points={"1.0": CompressionPoint(output_power_dbm=25.0, gain_db=12.0)},
+        )
+        points = get_saturation_points(model)
+        self.assertEqual(points[0]["output_power"], 25.0)
+        self.assertEqual(points[0]["gain"], 12.0)
+
+    def test_cable_and_driver_results_use_specific_models(self):
+        from domain.models import CableLossResult, DriverPowerMappingResult
+
+        cable = parse_result_model({"cable_losses": {"1.0": {
+            "cable1": 1.2, "total_path1": 30.0, "total_path2": 31.0,
+        }}})
+        driver = parse_result_model({"power_mapping": {"1.0": {
+            "0.0": 11.0, "1.0": 12.0,
+        }}})
+        self.assertIsInstance(cable, CableLossResult)
+        self.assertEqual(cable.points[0].cable_losses_db["cable1"], 1.2)
+        self.assertIsInstance(driver, DriverPowerMappingResult)
+        self.assertEqual(len(driver.points), 2)
+        self.assertEqual(driver.points[0].compensated_output_power_dbm, 11.0)
+        self.assertEqual(cable.points[0].path1_output_power_dbm, None)
+        self.assertEqual(cable.points[0].path1_loss_db, 30.0)
+
+    def test_driver_legacy_object_mapping_is_also_supported(self):
+        model = parse_result_model({"power_mapping": {"1.0": {
+            "input_power": 0.0, "output_power": 10.0, "actual_output_power": 11.0,
+        }}})
+        self.assertEqual(len(model.points), 1)
+        self.assertEqual(model.points[0].input_power_dbm, 0.0)
+        self.assertEqual(model.points[0].compensated_output_power_dbm, 11.0)
+
+    def test_load_result_model_reads_historical_json(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "legacy.json"
+            path.write_text(json.dumps({"power_mapping": {"2.0": {
+                "input_power": 1, "output_power": 5,
+            }}}), encoding="utf-8")
+            model = load_result_model(path)
+        self.assertEqual(model.points[0].frequency_hz, 2.0)
 
 
 if __name__ == "__main__":

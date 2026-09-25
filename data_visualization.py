@@ -10,7 +10,7 @@ from datetime import datetime
 import seaborn as sns
 from pathlib import Path
 from project_paths import PROJECT_ROOT, TEST_RESULTS_DIR
-from result_reading import load_measurement_result, get_sweep_dataframe_data, get_saturation_points
+from result_reading import load_measurement_result, load_result_model, get_sweep_dataframe_data, get_saturation_points
 
 # --- MODIFIED: Define font properties globally for easy access ---
 # 确保你的系统中有这些字体文件，并且路径正确
@@ -67,6 +67,10 @@ class DataVisualization:
     def load_data(self, file_path: str) -> dict:
         return load_measurement_result(file_path)
 
+    def load_result(self, file_path: str):
+        """返回稳定领域结果模型，供分析/导出入口使用。"""
+        return load_result_model(file_path)
+
     def _save_plot(self, fig, base_name: str) -> Path:
         save_path_png = self.output_dir / f"{base_name}.png"
         save_path_pdf = self.output_dir / f"{base_name}.pdf"
@@ -76,14 +80,14 @@ class DataVisualization:
         print(f"图表已保存: {save_path_png.name}, {save_path_pdf.name}")
         return save_path_png
 
-    def _extract_data_for_plotting(self, data: dict) -> Dict[float, pd.DataFrame]:
+    def _extract_data_for_plotting(self, data) -> Dict[float, pd.DataFrame]:
         return {
             float(freq): pd.DataFrame(points)
             for freq, points in get_sweep_dataframe_data(data).items()
             if points
         }
 
-    def _find_saturation_points(self, data: dict) -> pd.DataFrame:
+    def _find_saturation_points(self, data) -> pd.DataFrame:
         points = get_saturation_points(data)
         for point in points:
             point["frequency"] = float(point["frequency"])
@@ -91,7 +95,7 @@ class DataVisualization:
 
     # --- MODIFIED: Applied specific fonts to all plotting functions ---
 
-    def plot_p_in_vs_p_out(self, data: dict) -> Path:
+    def plot_p_in_vs_p_out(self, data) -> Path:
         dfs = self._extract_data_for_plotting(data)
         fig, ax = plt.subplots(figsize=(8, 6))
         # 使用高对比度颜色，确保容易区分
@@ -113,7 +117,7 @@ class DataVisualization:
         ax.grid(True, which='both', linestyle='--')
         return self._save_plot(fig, 'p_in_vs_p_out')
 
-    def plot_p_out_vs_efficiency(self, data: dict) -> Path:
+    def plot_p_out_vs_efficiency(self, data) -> Path:
         dfs = self._extract_data_for_plotting(data)
         fig, ax = plt.subplots(figsize=(8, 6))
         # 使用高对比度颜色，确保容易区分
@@ -134,7 +138,7 @@ class DataVisualization:
         ax.grid(True, which='both', linestyle='--')
         return self._save_plot(fig, 'p_out_vs_efficiency')
 
-    def plot_p_out_vs_gain(self, data: dict) -> Path:
+    def plot_p_out_vs_gain(self, data) -> Path:
         dfs = self._extract_data_for_plotting(data)
         fig, ax = plt.subplots(figsize=(8, 6))
         # 使用高对比度颜色，确保容易区分
@@ -155,7 +159,7 @@ class DataVisualization:
         ax.grid(True, which='both', linestyle='--')
         return self._save_plot(fig, 'p_out_vs_gain')
 
-    def plot_freq_vs_saturation_metrics(self, data: dict) -> Path:
+    def plot_freq_vs_saturation_metrics(self, data) -> Path:
         sat_df = self._find_saturation_points(data)
         if sat_df.empty: return None
         fig, ax = plt.subplots(figsize=(8, 6))
@@ -168,7 +172,7 @@ class DataVisualization:
         ax.grid(True, which='both', linestyle='--')
         return self._save_plot(fig, 'freq_vs_sat_efficiency')
 
-    def plot_freq_vs_sat_power_and_gain(self, data: dict) -> Path:
+    def plot_freq_vs_sat_power_and_gain(self, data) -> Path:
         sat_df = self._find_saturation_points(data)
         if sat_df.empty: return None
         fig, ax1 = plt.subplots(figsize=(8, 6))
@@ -189,7 +193,7 @@ class DataVisualization:
         fig.tight_layout()
         return self._save_plot(fig, 'freq_vs_sat_pout_gain')
 
-    def plot_p_out_vs_eff_and_gain_combined(self, data: dict) -> Path:
+    def plot_p_out_vs_eff_and_gain_combined(self, data) -> Path:
         dfs = self._extract_data_for_plotting(data)
         num_freqs = len(dfs)
         if num_freqs == 0: return None
@@ -220,7 +224,7 @@ class DataVisualization:
         fig.tight_layout(rect=[0, 0.03, 1, 0.95])
         return self._save_plot(fig, 'p_out_vs_eff_gain_combined')
 
-    def plot_freq_vs_all_sat_metrics_combined(self, data: dict) -> Path:
+    def plot_freq_vs_all_sat_metrics_combined(self, data) -> Path:
         sat_df = self._find_saturation_points(data)
         if sat_df.empty: return None
         fig, ax1 = plt.subplots(figsize=(10, 7))
@@ -244,7 +248,7 @@ class DataVisualization:
         return self._save_plot(fig, 'freq_vs_all_sat_metrics')
 
     # generate_csv_report 和 create_summary_report 函数不需要修改字体设置
-    def generate_csv_report(self, data: dict) -> Path:
+    def generate_csv_report(self, data) -> Path:
         dfs = self._extract_data_for_plotting(data)
         csv_path = self.output_dir / "full_sweep_data.csv"
 
@@ -264,23 +268,24 @@ class DataVisualization:
         return csv_path
 
     def create_summary_report(self, dut_data_file: str, original_filename: str = None):
-        data = self.load_data(dut_data_file)
+        result = self.load_result(dut_data_file)
         report_file = self.output_dir / "test_report.html"
         
         # 使用传入的原始文件名，如果没有则从数据中获取，最后回退到文件路径
-        display_filename = original_filename or data.get('original_filename') or Path(dut_data_file).name
+        source_data = result.raw_readings
+        display_filename = original_filename or source_data.get('original_filename') or Path(dut_data_file).name
 
         plot_paths = {
-            "p_in_vs_p_out": self.plot_p_in_vs_p_out(data),
-            "p_out_vs_gain": self.plot_p_out_vs_gain(data),
-            "p_out_vs_efficiency": self.plot_p_out_vs_efficiency(data),
-            "p_out_vs_eff_and_gain": self.plot_p_out_vs_eff_and_gain_combined(data),
-            "freq_vs_sat_efficiency": self.plot_freq_vs_saturation_metrics(data),
-            "freq_vs_sat_pout_gain": self.plot_freq_vs_sat_power_and_gain(data),
-            "freq_vs_all_sat_metrics": self.plot_freq_vs_all_sat_metrics_combined(data),
+            "p_in_vs_p_out": self.plot_p_in_vs_p_out(result),
+            "p_out_vs_gain": self.plot_p_out_vs_gain(result),
+            "p_out_vs_efficiency": self.plot_p_out_vs_efficiency(result),
+            "p_out_vs_eff_and_gain": self.plot_p_out_vs_eff_and_gain_combined(result),
+            "freq_vs_sat_efficiency": self.plot_freq_vs_saturation_metrics(result),
+            "freq_vs_sat_pout_gain": self.plot_freq_vs_sat_power_and_gain(result),
+            "freq_vs_all_sat_metrics": self.plot_freq_vs_all_sat_metrics_combined(result),
         }
 
-        csv_path = self.generate_csv_report(data)
+        csv_path = self.generate_csv_report(result)
 
         # HTML report generation remains the same
         with open(report_file, 'w', encoding='utf-8') as f:
@@ -298,7 +303,7 @@ class DataVisualization:
             <h1>功放测试报告</h1>
             <div class="section">
                 <h2>测试信息</h2>
-                <p>测试时间: {data.get('measurement_time', 'N/A')}</p>
+                <p>测试时间: {result.metadata.measurement_time or 'N/A'}</p>
                 <p>数据文件: {display_filename}</p>
                 {f'<p>数据导出: <a href="{csv_path.name}">{csv_path.name}</a></p>' if csv_path else ''}
             </div>
@@ -330,7 +335,7 @@ class DataVisualization:
 
             <div class="section">
                 <h2>测试配置</h2>
-                <pre>{json.dumps(data.get('config', {}), indent=4, ensure_ascii=False)}</pre>
+                 <pre>{json.dumps(result.plan_snapshot, indent=4, ensure_ascii=False)}</pre>
             </div>
 
             </div></body></html>""")

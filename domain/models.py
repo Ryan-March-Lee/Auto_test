@@ -114,6 +114,25 @@ class MeasurementState(str, Enum):
 
 
 @dataclass(frozen=True)
+class ResultMetadata:
+    """跨结果类型共享的可追溯信息。"""
+
+    run_id: str = "legacy"
+    result_type: str = "unknown"
+    saved_at: str | None = None
+    measurement_time: str | None = None
+    schema_version: str = SCHEMA_VERSION
+    method_version: str = METHOD_VERSION
+
+    def __post_init__(self) -> None:
+        if not self.run_id.strip():
+            raise ValueError("run_id 不能为空")
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class ScanPoint:
     """单个扫描点，区分原始读数、补偿读数和派生指标。"""
 
@@ -141,6 +160,20 @@ class MeasurementResult:
     method_version: str = METHOD_VERSION
     plan_snapshot: Mapping[str, Any] = field(default_factory=dict)
     resource_snapshot: Mapping[str, Any] = field(default_factory=dict)
+    metadata: ResultMetadata = field(default_factory=ResultMetadata)
+
+    def __post_init__(self) -> None:
+        if not self.run_id.strip():
+            raise ValueError("run_id 不能为空")
+        if self.metadata.run_id == "legacy" and self.run_id != "legacy":
+            object.__setattr__(self, "metadata", ResultMetadata(
+                run_id=self.run_id,
+                result_type=self.measurement_type,
+                saved_at=self.metadata.saved_at,
+                measurement_time=self.metadata.measurement_time,
+                schema_version=self.metadata.schema_version,
+                method_version=self.metadata.method_version,
+            ))
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
@@ -152,10 +185,11 @@ class MeasurementResult:
 @dataclass(frozen=True)
 class CableLossPoint:
     frequency_hz: float
-    path1_output_power_dbm: float
-    path2_output_power_dbm: float
-    path1_loss_db: float
-    path2_loss_db: float
+    # 保留旧位置参数；线损结果没有 dBm 输出功率，这两个字段应为 None。
+    path1_output_power_dbm: float | None = None
+    path2_output_power_dbm: float | None = None
+    path1_loss_db: float = 0.0
+    path2_loss_db: float = 0.0
     cable_losses_db: Mapping[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -191,10 +225,26 @@ class AmplifierScanPoint:
     dc_current_a: float | None = None
     dc_power_w: float | None = None
     efficiency_percent: float | None = None
+    voltages_v: Mapping[str, float] = field(default_factory=dict)
+    currents_a: Mapping[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.frequency_hz <= 0:
             raise ValueError("frequency_hz 必须为正数")
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class CompressionPoint:
+    output_power_dbm: float | None = None
+    input_power_dbm: float | None = None
+    gain_db: float | None = None
+    efficiency_percent: float | None = None
+    signal_generator_power_dbm: float | None = None
+    compression_db: float | None = None
+    achieved: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -217,6 +267,7 @@ class AmplifierMeasurementResult(MeasurementResult):
     points: tuple[AmplifierScanPoint, ...] = ()
     measurement_type: str = "amplifier"
     compression_points_dbm: Mapping[str, float | None] = field(default_factory=dict)
+    compression_points: Mapping[str, CompressionPoint] = field(default_factory=dict)
 
 
 @dataclass

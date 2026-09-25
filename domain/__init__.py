@@ -3,6 +3,7 @@
 from .models import (
     AmplifierMeasurementResult,
     AmplifierScanPoint,
+    CompressionPoint,
     CableLossPoint,
     CableLossResult,
     DriverPowerMappingPoint,
@@ -11,6 +12,7 @@ from .models import (
     MeasurementSession,
     MeasurementState,
     ResultStatus,
+    ResultMetadata,
     RunContext,
     ScanPoint,
     TestPlan,
@@ -19,6 +21,7 @@ from .models import (
 __all__ = [
     "AmplifierMeasurementResult",
     "AmplifierScanPoint",
+    "CompressionPoint",
     "CableLossPoint",
     "CableLossResult",
     "DriverPowerMappingPoint",
@@ -27,6 +30,7 @@ __all__ = [
     "MeasurementSession",
     "MeasurementState",
     "ResultStatus",
+    "ResultMetadata",
     "RunContext",
     "ScanPoint",
     "TestPlan",

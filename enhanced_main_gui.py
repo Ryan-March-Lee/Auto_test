@@ -1103,15 +1103,7 @@ class CableLossWorker(BaseWorker):
         """停止线损测量并立即关闭仪器"""
         super().stop()  # 设置should_stop标志
         if self.loss_measurement:
-            self.loss_measurement.stop_measurement()  # 停止测量类
-            # 立即关闭仪器输出
-            try:
-                if hasattr(self.loss_measurement, 'inst_ctrl') and self.loss_measurement.inst_ctrl:
-                    self.loss_measurement.inst_ctrl.rf_output_off()
-                    self.loss_measurement.inst_ctrl.power_off_sequence()
-                    self.emit_message("紧急停止：已关闭信号源输出和电源")
-            except Exception as e:
-                self.emit_message(f"紧急停止时关闭仪器失败: {str(e)}")
+            self.loss_measurement.stop_measurement()
         self.quit()  # 强制退出线程
 
 
@@ -1141,15 +1133,7 @@ class DriverMappingWorker(BaseWorker):
         """停止驱动映射测量并立即关闭仪器"""
         super().stop()  # 设置should_stop标志
         if self.mapping:
-            self.mapping.stop_measurement()  # 停止测量类
-            # 立即关闭仪器输出
-            try:
-                if hasattr(self.mapping, 'inst_ctrl') and self.mapping.inst_ctrl:
-                    self.mapping.inst_ctrl.rf_output_off()
-                    self.mapping.inst_ctrl.power_off_sequence()
-                    self.emit_message("紧急停止：已关闭信号源输出和电源")
-            except Exception as e:
-                self.emit_message(f"紧急停止时关闭仪器失败: {str(e)}")
+            self.mapping.stop_measurement()
         self.quit()  # 强制退出线程
 
 
@@ -1179,15 +1163,7 @@ class AmplifierWorker(BaseWorker):
         """停止测量并立即关闭仪器"""
         super().stop()  # 设置should_stop标志
         if self.amp_measurement:
-            self.amp_measurement.stop_measurement()  # 停止测量类
-            # 立即关闭仪器输出
-            try:
-                if hasattr(self.amp_measurement, 'inst_ctrl') and self.amp_measurement.inst_ctrl:
-                    self.amp_measurement.inst_ctrl.rf_output_off()
-                    self.amp_measurement.inst_ctrl.power_off_sequence()
-                    self.emit_message("紧急停止：已关闭信号源输出和电源")
-            except Exception as e:
-                self.emit_message(f"紧急停止时关闭仪器失败: {str(e)}")
+            self.amp_measurement.stop_measurement()
         self.quit()  # 强制退出线程
 
 

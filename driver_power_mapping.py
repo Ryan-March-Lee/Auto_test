@@ -16,6 +16,7 @@ from result_storage import (
     write_legacy_run_snapshot,
 )
 from config_io import load_config_file
+from measurement_services import DriverPowerMappingService
 # from mock_instrument_control import MockInstrumentControl as InstrumentControl
 
 logger = get_logger(__name__)
@@ -95,6 +96,15 @@ class DriverPowerMapping:
         
     def measure_all_frequencies(self):
         """测量所有配置频率下的功率映射关系"""
+        service = DriverPowerMappingService(
+            self.config, self.inst_ctrl, self.loss_data,
+            run_id=self.run_id, sleep_fn=self.sleep_fn,
+        )
+        result = service.run()
+        self.power_mapping = result.get('power_mapping', {})
+        self.save_results()
+        return result
+        # Legacy implementation retained below as a rollback reference.
         try:
             logger.info("驱动映射测量开始: 频率=%s", self.config['test_frequencies'])
             print("Setting up driver amplifier power supplies...")

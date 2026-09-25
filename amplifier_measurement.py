@@ -24,6 +24,7 @@ from result_storage import (
     write_legacy_run_snapshot,
 )
 from config_io import load_config_file
+from measurement_services import AmplifierMeasurementService
 
 logger = get_logger(__name__)
 
@@ -118,6 +119,11 @@ class AmplifierMeasurement:
         在指定频率下执行功率扫描，同时测量RF和DC参数。
         此版本假设config.json中的功率范围是针对信号源(SG)的。
         """
+        service = AmplifierMeasurementService(
+            self.config, self.inst_ctrl, self.loss_data, self.driver_mapping,
+            run_id=getattr(self, 'run_id', 'run-legacy'), sleep_fn=getattr(self, 'sleep_fn', time.sleep),
+        )
+        return service.perform_power_sweep(frequency)
         print(f"\n开始在 {frequency} GHz 进行功率扫描...")
         logger.info("功率扫描开始: %s GHz", frequency)
 
@@ -257,6 +263,15 @@ class AmplifierMeasurement:
     # measure_all_frequencies, save_results, main 等函数无需修改，因为它们调用的是顶层方法
     def measure_all_frequencies(self):
         """测量所有配置频率"""
+        service = AmplifierMeasurementService(
+            self.config, self.inst_ctrl, self.loss_data, self.driver_mapping,
+            run_id=self.run_id, sleep_fn=self.sleep_fn,
+        )
+        result = service.run()
+        self.measurement_results = result.get('results', {})
+        self.save_results()
+        return result
+        # Legacy implementation retained below as a rollback reference.
         try:
             logger.info("主功放测量开始: 频率=%s", self.config['test_frequencies'])
             print("Setting up power supplies...")

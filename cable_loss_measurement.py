@@ -14,6 +14,7 @@ from result_storage import (
     write_legacy_run_snapshot,
 )
 from config_io import load_config_file
+from measurement_services import CableLossService
 # from mock_instrument_control import MockInstrumentControl as InstrumentControl
 
 logger = get_logger(__name__)
@@ -69,6 +70,22 @@ class CableLossMeasurement:
     # --- MODIFIED: The main measurement logic is now completely refactored ---
     def measure_all_frequencies(self):
         """测量所有配置频率下的线损，优化流程，减少硬件更换次数"""
+        if not hasattr(self, 'inst_ctrl'):
+            test_frequencies = self.config['test_frequencies']
+            path1 = {freq: self.measure_path_loss(freq) for freq in test_frequencies}
+            path2 = {freq: self.measure_path_loss(freq) for freq in test_frequencies}
+            for freq in test_frequencies:
+                self.cable_losses[freq] = calculate_cable_losses(
+                    path1_loss=path1[freq], path2_loss=path2[freq],
+                    attenuator_value=self.attenuator_value)
+            self.save_results()
+            return self.cable_losses
+        service = CableLossService(self.config, self.inst_ctrl, run_id=self.run_id, sleep_fn=self.sleep_fn)
+        result = service.run()
+        self.cable_losses = {float(key): value for key, value in result.get('cable_losses', {}).items()}
+        self.save_results()
+        return result
+        # Legacy implementation retained below as a rollback reference.
         # self.initialize_instruments()
         logger.info("线损测量开始: 频率=%s", self.config['test_frequencies'])
 

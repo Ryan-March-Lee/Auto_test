@@ -109,3 +109,21 @@ $env:AUTO_TEST_PYTHON = "D:\path\to\Auto_test\python.exe"
 & "C:\My_Document\Anaconda\envs\Auto_test\python.exe" launcher.py --validate-config
 & "C:\My_Document\Anaconda\envs\Auto_test\python.exe" launcher.py
 ```
+
+## 阶段 0.1 基线整理
+
+完成一次完整测试并成功生成 HTML 报告后，程序会自动在 `baseline/collected/` 下创建一份基线样例，包含配置、运行快照、测量结果、报告索引和 Python/依赖版本。
+
+如果报告生成前中断，或需要重新整理最近一次结果，可在项目根目录执行：
+
+```powershell
+python collect_baseline.py
+```
+
+也可以只整理指定运行目录：
+
+```powershell
+python collect_baseline.py --run-id <运行目录名>
+```
+
+脚本只复制和汇总已有文件，不覆盖 `test_results/` 中的原始结果。没有某类测量结果时，该类会在 `baseline_manifest.json` 中标记为 `not_found`，不代表测试失败。

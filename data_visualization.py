@@ -336,6 +336,16 @@ class DataVisualization:
             </div></body></html>""")
         print(f"\nHTML报告已生成: {report_file}")
 
+        # 报告生成代表一次完整测试资料已具备，自动留下阶段 0.1 基线索引。
+        try:
+            from collect_baseline import collect_baseline
+
+            baseline_dir, _ = collect_baseline()
+            print(f"阶段 0.1 基线已自动整理: {baseline_dir}")
+        except Exception as error:
+            # 基线整理失败不应让已经生成的报告失效；错误仍明确输出，便于补采集。
+            print(f"阶段 0.1 基线整理失败，请稍后运行 collect_baseline.py: {error}")
+
 
 def main():
     try:

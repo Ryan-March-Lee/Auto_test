@@ -226,7 +226,74 @@ def save_measurement_result(
         encoder=encoder,
     )
 
+    # Canonical results are additive: a legacy consumer still reads the exact
+    # same file while new analysis code receives an explicit model envelope.
+    if result_type in {"cable_loss", "driver_power_mapping", "amplifier_measurement", "amplifier"}:
+        from result_reading import parse_result_model
+        from dataclasses import replace
+
+        model = parse_result_model(result)
+        plan_snapshot = _load_snapshot(run_directory / "test_plan_snapshot.json")
+        resource_snapshot = _load_snapshot(run_directory / "run_mapping_snapshot.json")
+        model = replace(
+            model,
+            plan_snapshot=plan_snapshot,
+            resource_snapshot=resource_snapshot,
+        )
+        save_measurement_model(
+            model,
+            legacy_payload=result,
+            run_directory=run_directory,
+            filename=f"{result_type}_model.json",
+            encoder=encoder,
+        )
+
     return archive_path, legacy_path
+
+
+def _load_snapshot(path: Path) -> Dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        return load_json_result(path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+
+
+def save_measurement_model(
+    model: Any,
+    *,
+    legacy_payload: Mapping[str, Any],
+    run_directory: PathLike,
+    filename: str | None = None,
+    encoder: type[json.JSONEncoder] = json.JSONEncoder,
+) -> Path:
+    """Write the versioned result envelope without rewriting legacy JSON.
+
+    ``legacy_payload`` is retained as a read-only compatibility source.  The
+    canonical model snapshot is explicit and is always written into the run
+    directory, so reports no longer need to understand measurement dictionaries.
+    """
+    run_directory = Path(run_directory)
+    ensure_directory(run_directory)
+    model_dict = model.to_dict()
+    run_id = str(model_dict.get("run_id", "legacy"))
+    name = filename or f"{model_dict.get('measurement_type', 'measurement')}_model.json"
+    payload = {
+        "canonical_model": model_dict,
+        "legacy_payload": dict(legacy_payload),
+        "run_id": run_id,
+        "result_type": "versioned_measurement_result",
+        "schema_version": model_dict.get("schema_version", "1.0"),
+        "method_version": model_dict.get("method_version", "1.0"),
+    }
+    return save_json_result(
+        run_directory / name,
+        payload,
+        result_type="versioned_measurement_result",
+        schema_version=str(model_dict.get("schema_version", "1.0")),
+        encoder=encoder,
+    )
 
 
 def _with_run_id(value: Mapping[str, Any], run_id: str, label: str) -> Dict[str, Any]:

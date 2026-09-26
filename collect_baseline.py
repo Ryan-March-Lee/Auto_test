@@ -27,6 +27,11 @@ MEASUREMENT_PATTERNS = {
     "driver_mapping": "driver_power_mapping_*.json",
     "amplifier_measurement": "amplifier_measurement_*.json",
 }
+MODEL_PATTERNS = {
+    "cable_loss_model": "cable_loss_model.json",
+    "driver_mapping_model": "driver_power_mapping_model.json",
+    "amplifier_measurement_model": "amplifier_measurement_model.json",
+}
 REPORT_PATTERNS = ("*.html", "*.pdf", "*.csv")
 PACKAGE_NAMES = ("PySide6", "matplotlib", "numpy", "pandas", "seaborn", "pyvisa", "markdown", "requests")
 
@@ -110,6 +115,13 @@ def collect_baseline(
             artifacts[kind] = [_copy_artifact(source, destination, PROJECT_ROOT, baseline_dir)]
         else:
             artifacts[kind] = []
+
+    for kind, filename in MODEL_PATTERNS.items():
+        source = run_directory / filename if (run_directory / filename).is_file() else None
+        artifacts[kind] = (
+            [_copy_artifact(source, baseline_dir / "results" / filename, PROJECT_ROOT, baseline_dir)]
+            if source else []
+        )
 
     # Snapshot and reports must come from the exact same run as measurement data.
     for kind, filename in (

@@ -58,6 +58,13 @@ def parse_result_model(data: Mapping[str, Any]) -> MeasurementResult:
     """
     if not isinstance(data, Mapping):
         raise ValueError("结果必须是映射对象")
+    canonical = data.get("canonical_model")
+    if isinstance(canonical, Mapping):
+        legacy_payload = data.get("legacy_payload")
+        if isinstance(legacy_payload, Mapping):
+            parsed = parse_result_model(legacy_payload)
+            return _model_with_canonical_metadata(parsed, canonical)
+        data = canonical
     result_type = str(data.get("result_type", ""))
     if result_type == "cable_loss" or "cable_losses" in data:
         points = []
@@ -182,6 +189,33 @@ def _metadata(data: Mapping[str, Any], default_type: str) -> Any:
 def load_result_model(path: PathLike) -> MeasurementResult:
     """读取结果并返回领域模型，历史 JSON 由只读适配器转换。"""
     return parse_result_model(load_json_result(path))
+
+
+def _model_with_canonical_metadata(model: MeasurementResult, canonical: Mapping[str, Any]) -> MeasurementResult:
+    """Overlay canonical snapshots while retaining legacy-specific points."""
+    from dataclasses import replace
+
+    metadata = model.metadata
+    canonical_metadata = canonical.get("metadata")
+    if isinstance(canonical_metadata, Mapping):
+        from domain.models import ResultMetadata
+        metadata = ResultMetadata(
+            run_id=str(canonical_metadata.get("run_id", model.run_id)),
+            result_type=str(canonical_metadata.get("result_type", model.measurement_type)),
+            saved_at=canonical_metadata.get("saved_at"),
+            measurement_time=canonical_metadata.get("measurement_time"),
+            schema_version=str(canonical_metadata.get("schema_version", model.schema_version)),
+            method_version=str(canonical_metadata.get("method_version", model.method_version)),
+        )
+    return replace(
+        model,
+        run_id=str(canonical.get("run_id", model.run_id)),
+        schema_version=str(canonical.get("schema_version", model.schema_version)),
+        method_version=str(canonical.get("method_version", model.method_version)),
+        plan_snapshot=canonical.get("plan_snapshot", model.plan_snapshot),
+        resource_snapshot=canonical.get("resource_snapshot", model.resource_snapshot),
+        metadata=metadata,
+    )
 
 
 def _number(value: Any, default: float | None = None) -> float | None:

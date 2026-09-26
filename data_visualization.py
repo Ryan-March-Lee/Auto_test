@@ -80,6 +80,15 @@ class DataVisualization:
         print(f"图表已保存: {save_path_png.name}, {save_path_pdf.name}")
         return save_path_png
 
+    def export_model_reports(self, result, *, csv_path: str | Path, html_path: str | Path) -> tuple[Path, Path]:
+        """Export a domain result through the analysis boundary."""
+        from analysis.reporting import export_csv, render_html_report
+
+        return (
+            export_csv(result, csv_path),
+            render_html_report(result, html_path),
+        )
+
     def _extract_data_for_plotting(self, data) -> Dict[float, pd.DataFrame]:
         return {
             float(freq): pd.DataFrame(points)
@@ -269,6 +278,8 @@ class DataVisualization:
 
     def create_summary_report(self, dut_data_file: str, original_filename: str = None):
         result = self.load_result(dut_data_file)
+        if not result.points:
+            raise ValueError("结果中没有可生成报告的扫描点")
         report_file = self.output_dir / "test_report.html"
         
         # 使用传入的原始文件名，如果没有则从数据中获取，最后回退到文件路径
@@ -283,6 +294,22 @@ class DataVisualization:
             "freq_vs_sat_efficiency": self.plot_freq_vs_saturation_metrics(result),
             "freq_vs_sat_pout_gain": self.plot_freq_vs_sat_power_and_gain(result),
             "freq_vs_all_sat_metrics": self.plot_freq_vs_all_sat_metrics_combined(result),
+        }
+        plot_paths = {name: path for name, path in plot_paths.items() if path is not None}
+        detailed_plots = {
+            name: path
+            for name, path in plot_paths.items()
+            if name in {"p_in_vs_p_out", "p_out_vs_gain", "p_out_vs_efficiency"}
+        }
+        combined_plots = {
+            name: path
+            for name, path in plot_paths.items()
+            if name in {"p_out_vs_eff_and_gain", "freq_vs_all_sat_metrics"}
+        }
+        saturation_plots = {
+            name: path
+            for name, path in plot_paths.items()
+            if name in {"freq_vs_sat_efficiency", "freq_vs_sat_pout_gain"}
         }
 
         csv_path = self.generate_csv_report(result)
@@ -311,25 +338,21 @@ class DataVisualization:
             <div class="section">
                 <h2>详细性能曲线</h2>
                 <div class="grid-container">
-                    <div class="grid-item"><img src="{plot_paths['p_in_vs_p_out'].name}" alt="Pin vs Pout"></div>
-                    <div class="grid-item"><img src="{plot_paths['p_out_vs_gain'].name}" alt="Pout vs Gain"></div>
-                    <div class="grid-item"><img src="{plot_paths['p_out_vs_efficiency'].name}" alt="Pout vs Efficiency"></div>
+                    {''.join(f'<div class="grid-item"><img src="{path.name}" alt="{name}"></div>' for name, path in plot_paths.items())}
                 </div>
             </div>
 
              <div class="section">
                 <h2>组合性能图 (双Y轴)</h2>
-                <div class="grid-container">
-                     <div class="grid-item"><img src="{plot_paths['p_out_vs_eff_and_gain'].name}" alt="Pout vs Eff/Gain"></div>
-                </div>
+                 <div class="grid-container">
+                    {''.join(f'<div class="grid-item">"{path.name}"</div>' for name, path in combined_plots.items())}
+                 </div>
             </div>
 
             <div class="section">
                 <h2>饱和点性能 vs 频率</h2>
                 <div class="grid-container">
-                    <div class="grid-item"><img src="{plot_paths['freq_vs_sat_efficiency'].name}" alt="Freq vs Saturation Efficiency"></div>
-                    <div class="grid-item"><img src="{plot_paths['freq_vs_sat_pout_gain'].name}" alt="Freq vs Saturation Pout/Gain"></div>
-                    <div class="grid-item"><img src="{plot_paths['freq_vs_all_sat_metrics'].name}" alt="Freq vs All Saturation Metrics"></div>
+                    {''.join(f'<div class="grid-item">"{path.name}"</div>' for name, path in saturation_plots.items())}
                 </div>
             </div>
 

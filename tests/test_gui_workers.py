@@ -37,7 +37,9 @@ class GuiWorkerTests(unittest.TestCase):
         service = _CableService(path1_done)
         worker = CableLossWorker("config.json", sleep_fn=lambda _: None)
 
-        with patch("app.gui_runtime.create_cable_loss_measurement", return_value=service):
+        prepared = object()
+        with patch("app.gui_runtime.prepare_configuration", return_value=prepared), \
+                patch("app.gui_runtime.create_cable_loss_measurement", return_value=service) as factory:
             worker.start()
             self.assertTrue(path1_done.wait(1))
             deadline = time.monotonic() + 1
@@ -48,6 +50,7 @@ class GuiWorkerTests(unittest.TestCase):
             self.assertTrue(service.continue_called.wait(1))
             worker.wait(1000)
 
+        self.assertIs(factory.call_args.kwargs["prepared_run"], prepared)
         self.assertTrue(service.continue_called.is_set())
         self.assertFalse(worker.isRunning())
 
@@ -56,7 +59,9 @@ class GuiWorkerTests(unittest.TestCase):
         service = _CableService(path1_done)
         worker = CableLossWorker("config.json", sleep_fn=lambda _: None)
 
-        with patch("app.gui_runtime.create_cable_loss_measurement", return_value=service):
+        prepared = object()
+        with patch("app.gui_runtime.prepare_configuration", return_value=prepared), \
+                patch("app.gui_runtime.create_cable_loss_measurement", return_value=service):
             worker.start()
             self.assertTrue(path1_done.wait(1))
             worker.stop()
@@ -64,6 +69,18 @@ class GuiWorkerTests(unittest.TestCase):
 
         self.assertTrue(service.stop_called.is_set())
         self.assertFalse(worker.isRunning())
+
+    def test_preflight_failure_prevents_measurement_service_creation(self):
+        worker = CableLossWorker("config.json", sleep_fn=lambda _: None)
+
+        with patch(
+            "app.gui_runtime.prepare_configuration",
+            side_effect=OSError("snapshot failed"),
+        ), patch("app.gui_runtime.create_cable_loss_measurement") as factory:
+            worker.run()
+
+        factory.assert_not_called()
+        self.assertIsNone(worker.service)
 
 
 if __name__ == "__main__":

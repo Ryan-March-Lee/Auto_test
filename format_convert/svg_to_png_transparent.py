@@ -2,9 +2,6 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from PIL import Image
 import io
 
 def get_desktop_path():
@@ -37,6 +34,15 @@ def svg_to_png_chrome(svg_path, output_path=None, dpi=300, quality='high', save_
         save_to_desktop: 是否保存到桌面
     """
     
+    try:
+        from selenium import webdriver
+        from selenium.webdriver.chrome.options import Options
+        from PIL import Image
+    except ImportError as error:
+        raise RuntimeError(
+            "SVG 转换是可选能力，请安装 selenium 和 Pillow 后重试"
+        ) from error
+
     if not os.path.exists(svg_path):
         raise FileNotFoundError(f"❌ 找不到输入文件: {svg_path}")
 

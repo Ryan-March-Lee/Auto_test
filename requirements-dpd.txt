@@ -1,0 +1,11 @@
+# Optional dependencies for DPD_auto_test only.
+numpy>=1.26
+matplotlib>=3.10
+scipy>=1.11
+tensorflow>=2.13
+nptdms>=1.10
+pyvisa>=1.14
+jupyter>=1.0
+
+# RsSmw is a vendor/local instrument driver imported by the notebooks. It is
+# not distributed on PyPI and must be supplied separately by the lab.

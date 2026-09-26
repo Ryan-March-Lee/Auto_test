@@ -76,8 +76,10 @@ def check_packages(silent: bool = False) -> Dict[str, Dict[str, object]]:
         "pandas": {"required": True, "installed": False, "version": ""},
         "pyvisa": {"required": True, "installed": False, "version": "", "error": ""},
         "seaborn": {"required": True, "installed": False, "version": "", "error": ""},
-        "markdown": {"required": True, "installed": False, "version": "", "error": ""},
-        "requests": {"required": True, "installed": False, "version": "", "error": ""},
+        # AI/chat rendering dependencies are optional and must not block
+        # measurement GUI startup.
+        "markdown": {"required": False, "installed": False, "version": "", "error": ""},
+        "requests": {"required": False, "installed": False, "version": "", "error": ""},
     }
     for package_name, package in packages.items():
         try:

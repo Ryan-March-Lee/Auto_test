@@ -7,7 +7,6 @@ import os
 import json
 import time
 import traceback
-import markdown
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, Optional
@@ -43,7 +42,6 @@ matplotlib.font_manager._get_font.cache_clear()
 from instrument_control import InstrumentControl
 from data_visualization import DataVisualization
 from enhanced_workers import EnhancedAmplifierMeasurement, EnhancedCableLossMeasurement, EnhancedDriverPowerMapping
-from connection_diagrams import ConnectionDiagram
 from presentation.qt.pages import build_pages
 from presentation.qt.workers import (
     AmplifierWorker,
@@ -58,19 +56,54 @@ import os
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
-from llm import LLMChat
 from project_paths import (
     CABLE_LOSS_FILE,
-    CHAT_HISTORY_FILE,
     CONFIG_FILE,
     ICONS_DIR,
     PROJECT_ROOT,
-    SEARCH_API_CONFIG_FILE,
     TEMP_DIR,
     TEST_RESULTS_DIR,
 )
 from config_io import load_config_file
 from app_logging import setup_logging
+from assistant.storage import (
+    has_current_history,
+    list_history_files,
+    load_history_file,
+    load_search_api_config,
+    save_search_api_config,
+)
+
+
+class _UnavailableAssistant:
+    """No-op assistant used when optional AI dependencies are unavailable."""
+
+    available = False
+    server_url = ""
+    model_name = "AI unavailable"
+    temperature = 0.7
+    max_tokens = 2000
+    auto_save = False
+    history_limit = 0
+    enable_web_search = False
+    function_handler = None
+    def __init__(self):
+        self.conversation_history = []
+
+    def chat(self, *_args, **_kwargs):
+        return "AI 助手当前不可用，请检查可选依赖和服务配置。"
+
+    def update_settings(self, **_kwargs):
+        return None
+
+    def set_web_search(self, _enabled):
+        return None
+
+    def clear_history(self):
+        self.conversation_history = []
+
+    def save_history(self):
+        return None
 
 
 class ChatWorker(QThread):
@@ -132,14 +165,13 @@ class ChatHistoryDialog(QDialog):
     def load_history_list(self):
         """加载历史记录列表"""
         try:
-            import glob
             from datetime import datetime
             
             # 查找所有历史文件
-            history_files = [str(path) for path in PROJECT_ROOT.glob("chat_history_*.json")]
+            history_files = [str(path) for path in list_history_files()]
             
             # 添加当前活动对话
-            if CHAT_HISTORY_FILE.exists():
+            if has_current_history():
                 self.history_list.addItem("📝 当前对话")
             
             # 添加已保存的历史文件
@@ -183,22 +215,14 @@ class ChatHistoryDialog(QDialog):
             if text.startswith("📝 当前对话"):
                 # 返回当前对话历史
                 try:
-                    import json
-                    with open(CHAT_HISTORY_FILE, 'r', encoding='utf-8') as f:
-                        return json.load(f)
-                except:
+                    return load_history_file()
+                except Exception:
                     return []
             elif text.startswith("💾"):
                 # 获取实际文件路径
                 file_path = current_item.data(Qt.UserRole)
                 if file_path:
-                    try:
-                        import json
-                        with open(file_path, 'r', encoding='utf-8') as f:
-                            return json.load(f)
-                    except Exception as e:
-                        print(f"加载历史文件失败: {e}")
-                        return []
+                    return load_history_file(file_path)
         return None
     
     def delete_selected(self):
@@ -337,6 +361,11 @@ class ChatSettingsDialog(QDialog):
         """测试AI服务连接"""
         try:
             import requests
+        except ImportError:
+            QMessageBox.warning(self, "功能不可用", "AI 连接测试需要可选的 requests 依赖。")
+            return
+
+        try:
             url = self.server_url_edit.text()
             model = self.model_name_edit.text()
             
@@ -367,13 +396,10 @@ class ChatSettingsDialog(QDialog):
     def load_search_config(self):
         """加载搜索API配置"""
         try:
-            config_file = SEARCH_API_CONFIG_FILE
-            if os.path.exists(config_file):
-                with open(config_file, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-                    self.bing_key_edit.setText(config.get('bing_subscription_key', ''))
-                    self.google_key_edit.setText(config.get('google_api_key', ''))
-                    self.google_cx_edit.setText(config.get('google_cx', ''))
+            config = load_search_api_config()
+            self.bing_key_edit.setText(config.get('bing_subscription_key', ''))
+            self.google_key_edit.setText(config.get('google_api_key', ''))
+            self.google_cx_edit.setText(config.get('google_cx', ''))
         except Exception as e:
             print(f"加载搜索API配置失败: {e}")
     
@@ -387,8 +413,7 @@ class ChatSettingsDialog(QDialog):
                 'note': "请在此配置您的搜索API密钥。如果不配置，将使用DuckDuckGo免费搜索（功能有限）。"
             }
             
-            with open(SEARCH_API_CONFIG_FILE, 'w', encoding='utf-8') as f:
-                json.dump(config, f, ensure_ascii=False, indent=2)
+            save_search_api_config(config)
             
             # 更新Function Handler的API配置
             if hasattr(self.llm_chat, 'function_handler') and self.llm_chat.function_handler:
@@ -426,7 +451,13 @@ class ChatPanel(QWidget):
     """聊天面板组件"""
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.llm_chat = LLMChat()
+        try:
+            from assistant.llm import LLMChat
+            self.llm_chat = LLMChat()
+        except Exception as error:
+            # Assistant startup must not prevent the measurement UI from opening.
+            print(f"AI 助手未启用: {error}")
+            self.llm_chat = _UnavailableAssistant()
         self.main_window = parent
         self.current_worker = None  # 当前的AI工作线程
         self.thinking_message_visible = False  # 跟踪"思考中"消息状态
@@ -705,6 +736,7 @@ class ChatPanel(QWidget):
         try:
             # 移除可能破坏QTextEdit的特殊字符
             safe_message = message.replace('```', '\n```\n') 
+            import markdown
             html_message = markdown.markdown(message, extensions=['fenced_code', 'tables', 'nl2br'])
             # 简单的修复，使代码块在QTextEdit中显示得更好一点
             html_message = html_message.replace('<pre><code>', '<div style="background-color: #f1f3f5; padding: 10px; border-radius: 5px; font-family: Consolas, monospace;"><pre><code>')
@@ -995,8 +1027,17 @@ class ConnectionDialog(QDialog):
         
         layout = QVBoxLayout(self)
         
+        # 连接图是可选展示能力，按需加载，不进入主 GUI 导入路径。
+        try:
+            from connection_diagrams import ConnectionDiagram
+        except Exception as error:
+            print(f"连接图功能未启用: {error}")
+            ConnectionDiagram = None
+
         # 创建对应的连接图
-        if diagram_type == 'cable_loss_path1':
+        if ConnectionDiagram is None:
+            fig = Figure()
+        elif diagram_type == 'cable_loss_path1':
             fig = ConnectionDiagram.create_cable_loss_path1()
         elif diagram_type == 'cable_loss_path2':
             fig = ConnectionDiagram.create_cable_loss_path2()

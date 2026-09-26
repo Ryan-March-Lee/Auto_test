@@ -3,7 +3,7 @@
 ## VSCode中的使用方法
 
 ### 推荐方法：使用主启动器
-日常使用建议在已激活 `Auto_test` 环境的终端中运行 `python launcher.py`。VSCode 中如需避免输出缓冲，再运行 `vscode_launcher.py`。
+`launcher.py` 是唯一生产入口。日常使用建议在已激活 `Auto_test` 环境的终端中运行 `python launcher.py`。VSCode 中如需避免输出缓冲，可运行仅负责转发参数的 `vscode_launcher.py`。
 
 ### 已验证运行环境
 
@@ -62,8 +62,8 @@ python launcher.py
 ## 文件说明
 
 - `launcher.py` - 主启动器（推荐在终端中使用）
-- `vscode_launcher.py` - VSCode专用启动器（推荐在VSCode中使用）
-- `enhanced_main_gui.py` - 主GUI程序
+- `vscode_launcher.py` - VSCode兼容转发器（推荐在VSCode中使用）
+- `enhanced_main_gui.py` - 由 `launcher.py` 加载的兼容 GUI 外壳
 - `start_gui.bat` - Windows批处理启动文件，会激活 `Auto_test` 并将命令行参数转发给 `launcher.py`
 
 ## 启动检查

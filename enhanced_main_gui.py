@@ -41,12 +41,17 @@ matplotlib.font_manager._get_font.cache_clear()
 
 # 导入我们的测试模块和连接图
 from instrument_control import InstrumentControl
-from cable_loss_measurement import CableLossMeasurement  
-from driver_power_mapping import DriverPowerMapping
-from amplifier_measurement import AmplifierMeasurement
 from data_visualization import DataVisualization
-from enhanced_workers import EnhancedCableLossMeasurement, EnhancedDriverPowerMapping, EnhancedAmplifierMeasurement
+from enhanced_workers import EnhancedAmplifierMeasurement, EnhancedCableLossMeasurement, EnhancedDriverPowerMapping
 from connection_diagrams import ConnectionDiagram
+from presentation.qt.pages import build_pages
+from presentation.qt.workers import (
+    AmplifierWorker,
+    BaseWorker,
+    CableLossWorker,
+    DriverMappingWorker,
+    InstrumentWorker,
+)
 import sys
 import os
 # 添加当前目录到Python路径，以便导入llm模块
@@ -1021,7 +1026,7 @@ class ConnectionDialog(QDialog):
         layout.addLayout(button_layout)
 
 
-class WorkerSignals(QObject):
+class LegacyWorkerSignals(QObject):
     """工作线程的信号类"""
     finished = Signal()
     error = Signal(str)
@@ -1032,11 +1037,11 @@ class WorkerSignals(QObject):
     step_pause = Signal(str)  # 步骤暂停信号
 
 
-class BaseWorker(QThread):
+class LegacyBaseWorker(QThread):
     """基础工作线程类"""
     def __init__(self):
         super().__init__()
-        self.signals = WorkerSignals()
+        self.signals = LegacyWorkerSignals()
         self.should_stop = False
         
     def stop(self):
@@ -1046,7 +1051,7 @@ class BaseWorker(QThread):
         self.signals.message.emit(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
 
 
-class InstrumentWorker(BaseWorker):
+class LegacyInstrumentWorker(LegacyBaseWorker):
     """仪器连接和配置工作线程"""
     def __init__(self, config_path: str):
         super().__init__()
@@ -1066,7 +1071,7 @@ class InstrumentWorker(BaseWorker):
             self.signals.error.emit(f"仪器连接失败: {str(e)}")
 
 
-class CableLossWorker(BaseWorker):
+class LegacyCableLossWorker(LegacyBaseWorker):
     """线损测量工作线程，支持分步骤测量"""
     def __init__(self, config_path: str):
         super().__init__()
@@ -1107,7 +1112,7 @@ class CableLossWorker(BaseWorker):
         self.quit()  # 强制退出线程
 
 
-class DriverMappingWorker(BaseWorker):
+class LegacyDriverMappingWorker(LegacyBaseWorker):
     """驱动映射工作线程"""
     def __init__(self, config_path: str):
         super().__init__()
@@ -1137,7 +1142,7 @@ class DriverMappingWorker(BaseWorker):
         self.quit()  # 强制退出线程
 
 
-class AmplifierWorker(BaseWorker):
+class LegacyAmplifierWorker(LegacyBaseWorker):
     """功放测试工作线程"""
     def __init__(self, config_path: str):
         super().__init__()
@@ -1546,13 +1551,8 @@ class MainWindow(QMainWindow):
         self.tab_widget = QTabWidget()
         left_layout.addWidget(self.tab_widget)
         
-        # 创建各个选项卡
-        self.create_config_tab()
-        self.create_cable_loss_tab()
-        self.create_driver_mapping_tab()
-        self.create_amplifier_test_tab()
-        self.create_visualization_tab()
-        self.create_data_export_tab()
+        # 页面顺序和职责由 presentation 层登记；窗口暂时提供兼容 builder。
+        build_pages(self)
         
         # 状态栏和控制面板
         self.create_status_panel(left_layout)
@@ -2588,11 +2588,17 @@ class MainWindow(QMainWindow):
         # 启动仪器连接工作线程
         self.current_worker = InstrumentWorker(str(CONFIG_FILE))
         self.current_worker.signals.finished.connect(self.on_instrument_connected)
+        self.current_worker.signals.result.connect(self.on_instrument_controller_ready)
+        self.current_worker.signals.stopped.connect(self.on_worker_stopped)
         self.current_worker.signals.error.connect(self.on_worker_error)
         self.current_worker.signals.message.connect(self.add_log_message)
         self.current_worker.signals.progress.connect(self.progress_bar.setValue)
         self.current_worker.start()
         
+    def on_instrument_controller_ready(self, controller):
+        """Keep the connected controller so window shutdown can clean it up."""
+        self.instrument_ctrl = controller
+
     def on_instrument_connected(self):
         """仪器连接完成"""
         self.connect_btn.setEnabled(True)
@@ -2616,6 +2622,7 @@ class MainWindow(QMainWindow):
         self.current_worker = CableLossWorker(str(CONFIG_FILE))
         self.current_worker.signals.finished.connect(lambda: self.on_measurement_finished(self.cable_loss_btn))
         self.current_worker.signals.error.connect(self.on_worker_error)
+        self.current_worker.signals.stopped.connect(self.on_worker_stopped)
         self.current_worker.signals.message.connect(self.add_log_message)
         self.current_worker.signals.progress.connect(self.progress_bar.setValue)
         # 添加步骤暂停信号处理
@@ -2660,6 +2667,7 @@ class MainWindow(QMainWindow):
         self.current_worker = DriverMappingWorker(str(CONFIG_FILE))
         self.current_worker.signals.finished.connect(lambda: self.on_measurement_finished(self.driver_mapping_btn))
         self.current_worker.signals.error.connect(self.on_worker_error)
+        self.current_worker.signals.stopped.connect(self.on_worker_stopped)
         self.current_worker.signals.message.connect(self.add_log_message)
         self.current_worker.signals.progress.connect(self.progress_bar.setValue)
         self.current_worker.signals.data_update.connect(self.store_real_time_data)
@@ -2748,6 +2756,19 @@ class MainWindow(QMainWindow):
         self.amplifier_test_btn.setEnabled(True)
         
         # 重置进度条
+        self.progress_bar.setValue(0)
+
+    def on_worker_stopped(self, reason):
+        """Handle ordinary and emergency worker cancellation consistently."""
+        self.add_log_message(f"测量已停止: {reason}")
+        self.connect_btn.setEnabled(True)
+        self.cable_loss_btn.setEnabled(True)
+        self.driver_mapping_btn.setEnabled(True)
+        self.amplifier_test_btn.setEnabled(True)
+        if hasattr(self, "driver_emergency_stop_btn"):
+            self.driver_emergency_stop_btn.setEnabled(False)
+        if hasattr(self, "emergency_stop_btn"):
+            self.emergency_stop_btn.setEnabled(False)
         self.progress_bar.setValue(0)
         
     def load_cable_loss_results(self):
@@ -3373,10 +3394,20 @@ class MainWindow(QMainWindow):
                 if self.current_worker:
                     self.current_worker.stop()
                     self.current_worker.wait()
+                if self.instrument_ctrl is not None:
+                    try:
+                        self.instrument_ctrl.safe_shutdown()
+                    except Exception as error:
+                        self.add_log_message(f"仪器清理失败: {error}")
                 event.accept()
             else:
                 event.ignore()
         else:
+            if self.instrument_ctrl is not None:
+                try:
+                    self.instrument_ctrl.safe_shutdown()
+                except Exception as error:
+                    self.add_log_message(f"仪器清理失败: {error}")
             event.accept()
 
 

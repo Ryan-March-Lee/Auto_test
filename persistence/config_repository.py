@@ -80,3 +80,27 @@ class ConfigurationRepository:
             source_format="legacy",
             conversion_errors=converted.errors,
         )
+
+    def load_for_run(self, path: PathLike, mapping_path: Optional[PathLike] = None) -> ConfigurationLoadResult:
+        """Load a configuration for execution and reject incomplete mappings.
+
+        ``load`` remains useful for conversion review.  This stricter entry
+        point is the only one intended for an application run.
+        """
+        loaded = self.load(path, mapping_path)
+        if not loaded.valid:
+            return loaded
+        if not loaded.configuration.run_mapping.wiring_confirmed:
+            issue = ConfigIssue("error", "wiring.confirmed", "运行前必须确认现场接线")
+            return ConfigurationLoadResult(
+                configuration=loaded.configuration,
+                validation=ConfigValidationResult(
+                    errors=loaded.validation.errors + [issue],
+                    warnings=loaded.validation.warnings,
+                ),
+                warnings=loaded.warnings,
+                unresolved_fields=loaded.unresolved_fields,
+                source_format=loaded.source_format,
+                conversion_errors=loaded.conversion_errors,
+            )
+        return loaded

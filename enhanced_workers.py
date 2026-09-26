@@ -12,6 +12,7 @@ from PySide6.QtCore import QThread, Signal, QObject
 
 from app.cancellation import CancellationToken
 from app.events import CheckpointEvent, MessageEvent, ProgressEvent, RealtimeDataEvent
+from domain.models import RunContext
 from app_logging import get_logger
 from config_io import load_config_file
 from instrument_control import InstrumentControl
@@ -19,6 +20,7 @@ from measurement_calculations import compensate_amplifier_output_power
 from measurement_calculations import calculate_cable_losses
 from measurement_services import CableLossService, DriverPowerMappingService, AmplifierMeasurementService
 from project_paths import CABLE_LOSS_FILE, CONFIG_FILE, TEST_RESULTS_DIR, resolve_path
+from persistence.config_repository import ConfigurationRepository
 from result_storage import load_json_result, new_run_id, save_measurement_result, write_legacy_run_snapshot
 
 
@@ -55,10 +57,14 @@ class _CallbackEventSink:
 
 
 class _LegacyResultAdapter:
-    def __init__(self, config, *, run_id=None):
+    def __init__(self, config, *, run_id=None, run_directory=None):
         self.config = config
         self.run_id = run_id or new_run_id()
-        self.run_directory = write_legacy_run_snapshot(self.run_id, config, status="created")
+        loaded = ConfigurationRepository().load_legacy_data(dict(config))
+        self.context = RunContext.from_resource_mapping(
+            loaded.configuration.run_mapping.to_dict(), run_id=self.run_id
+        )
+        self.run_directory = run_directory or write_legacy_run_snapshot(self.run_id, config, status="created")
 
     def _save(self, result, result_type, legacy_path, *, encoder=None):
         archive_path, _ = save_measurement_result(
@@ -71,10 +77,10 @@ class _LegacyResultAdapter:
 
 class EnhancedCableLossMeasurement(_LegacyResultAdapter):
     def __init__(self, config_path=None, progress_callback=None, message_callback=None,
-                 sleep_fn=None, run_id=None):
+                 sleep_fn=None, run_id=None, run_directory=None):
         config_path = resolve_path(config_path, CONFIG_FILE)
         config = load_config_file(config_path)
-        super().__init__(config, run_id=run_id)
+        super().__init__(config, run_id=run_id, run_directory=run_directory)
         self.inst_ctrl = InstrumentControl(config_path)
         self.sleep_fn = sleep_fn or time.sleep
         self._token = CancellationToken()
@@ -137,11 +143,11 @@ class EnhancedCableLossMeasurement(_LegacyResultAdapter):
 
 class EnhancedDriverPowerMapping(_LegacyResultAdapter):
     def __init__(self, config_path=None, loss_data_path=None, progress_callback=None,
-                 message_callback=None, data_callback=None, sleep_fn=None, run_id=None):
+                 message_callback=None, data_callback=None, sleep_fn=None, run_id=None, run_directory=None):
         config_path = resolve_path(config_path, CONFIG_FILE)
         loss_data_path = resolve_path(loss_data_path, CABLE_LOSS_FILE)
         config = load_config_file(config_path)
-        super().__init__(config, run_id=run_id)
+        super().__init__(config, run_id=run_id, run_directory=run_directory)
         self.inst_ctrl = InstrumentControl(config_path)
         self.sleep_fn = sleep_fn or time.sleep
         self._token = CancellationToken()
@@ -169,11 +175,11 @@ class EnhancedDriverPowerMapping(_LegacyResultAdapter):
 class EnhancedAmplifierMeasurement(_LegacyResultAdapter):
     def __init__(self, config_path=None, loss_data_path=None, driver_mapping_path=None,
                  progress_callback=None, message_callback=None, data_callback=None,
-                 sleep_fn=None, run_id=None):
+                 sleep_fn=None, run_id=None, run_directory=None):
         config_path = resolve_path(config_path, CONFIG_FILE)
         loss_data_path = resolve_path(loss_data_path, CABLE_LOSS_FILE)
         config = load_config_file(config_path)
-        super().__init__(config, run_id=run_id)
+        super().__init__(config, run_id=run_id, run_directory=run_directory)
         driver_mapping = None
         if config["driver_mode"]["enabled"]:
             if driver_mapping_path is None:

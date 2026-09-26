@@ -436,6 +436,13 @@ def _number(value: Any, path: str, error: Any, *, positive: bool = False, non_ne
     return parsed
 
 
+def _optional_number(value: Any, path: str, error: Any, *, positive: bool = False, non_negative: bool = False) -> Optional[float]:
+    """Validate an optional numeric field without treating omission as zero."""
+    if value is None:
+        return None
+    return _number(value, path, error, positive=positive, non_negative=non_negative)
+
+
 def _validate_channels(channels: Mapping[str, PowerChannelPlan], path: str, error: Any) -> None:
     for name, channel in channels.items():
         channel_path = f"{path}.{name}"
@@ -443,10 +450,10 @@ def _validate_channels(channels: Mapping[str, PowerChannelPlan], path: str, erro
             error(channel_path, "通道名称不能是空值或占位值")
         if not isinstance(channel.role, str) or not channel.role.strip() or channel.role in PLACEHOLDER_VALUES:
             error(f"{channel_path}.role", "必须填写稳定的供电角色，不能填写现场 CH 名称")
-        _number(channel.voltage, f"{channel_path}.voltage", error)
-        _number(channel.current, f"{channel_path}.current", error, non_negative=True)
-        _number(channel.voltage_protection, f"{channel_path}.voltage_protection", error)
-        _number(channel.current_protection, f"{channel_path}.current_protection", error, non_negative=True)
+        _optional_number(channel.voltage, f"{channel_path}.voltage", error)
+        _optional_number(channel.current, f"{channel_path}.current", error, non_negative=True)
+        _optional_number(channel.voltage_protection, f"{channel_path}.voltage_protection", error)
+        _optional_number(channel.current_protection, f"{channel_path}.current_protection", error, non_negative=True)
 
 
 def _validate_mappings(mappings: List[ChannelMapping], path: str, error: Any) -> None:

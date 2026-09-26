@@ -94,10 +94,12 @@ class CableLossWorker(BaseWorker):
     def run(self) -> None:
         try:
             self.emit_message("开始线损测量...")
-            from app.gui_runtime import create_cable_loss_measurement
+            from app.gui_runtime import create_cable_loss_measurement, prepare_configuration
 
+            prepared = prepare_configuration(self.config_path)
             self._service = create_cable_loss_measurement(
                 self.config_path,
+                prepared_run=prepared,
                 progress_callback=self.signals.progress.emit,
                 message_callback=self.signals.message.emit,
                 sleep_fn=self.sleep_fn,
@@ -145,10 +147,12 @@ class DriverMappingWorker(BaseWorker):
     def run(self) -> None:
         try:
             self.emit_message("开始驱动功放映射测量...")
-            from app.gui_runtime import create_driver_mapping_measurement
+            from app.gui_runtime import create_driver_mapping_measurement, prepare_configuration
 
+            prepared = prepare_configuration(self.config_path)
             self._service = create_driver_mapping_measurement(
                 self.config_path,
+                prepared_run=prepared,
                 progress_callback=self.signals.progress.emit,
                 message_callback=self.signals.message.emit,
                 data_callback=self.signals.data_update.emit,
@@ -172,10 +176,12 @@ class AmplifierWorker(BaseWorker):
     def run(self) -> None:
         try:
             self.emit_message("开始主功放测量...")
-            from app.gui_runtime import create_amplifier_measurement
+            from app.gui_runtime import create_amplifier_measurement, prepare_configuration
 
+            prepared = prepare_configuration(self.config_path)
             self._service = create_amplifier_measurement(
                 self.config_path,
+                prepared_run=prepared,
                 progress_callback=self.signals.progress.emit,
                 message_callback=self.signals.message.emit,
                 data_callback=self.signals.data_update.emit,

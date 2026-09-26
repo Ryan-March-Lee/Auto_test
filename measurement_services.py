@@ -14,6 +14,7 @@ import numpy as np
 
 from app.cancellation import CancellationToken
 from app.events import CheckpointEvent, EventSink, MessageEvent, ProgressEvent, RealtimeDataEvent
+from app.events import StoppedEvent
 from measurement_calculations import (
     calculate_cable_losses,
     calculate_compression_result,
@@ -221,6 +222,13 @@ class AmplifierMeasurementService(_Service):
                 self._check_cancelled()
                 dut_input = calculate_dut_input_power(sg_power, frequency, self.loss_data["cable_losses"], self.driver_mapping)
                 if dut_input > maximum:
+                    self._message(
+                        f"DUT 输入保护触发: {frequency} GHz, {dut_input:.2f} dBm > {maximum:.2f} dBm"
+                    )
+                    _publish(
+                        self.event_sink,
+                        StoppedEvent(self.run_id, reason="DUT 输入功率保护", emergency=True),
+                    )
                     break
                 self.inst_ctrl.set_power(sg_power)
                 getattr(self, "sleep_fn", time.sleep)(self.settle_delay_s)

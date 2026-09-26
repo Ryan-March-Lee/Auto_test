@@ -93,6 +93,51 @@ class RunContext:
             "schema_version": self.schema_version,
         }
 
+    @classmethod
+    def from_resource_mapping(
+        cls,
+        mapping: Mapping[str, Any],
+        *,
+        run_id: str | None = None,
+        software_version: str = "unknown",
+    ) -> "RunContext":
+        """Build the runtime contract from a validated resource mapping.
+
+        The conversion deliberately keeps device addresses and physical channel
+        names inside the context.  Domain services can therefore receive one
+        immutable snapshot without embedding site-specific names in their logic.
+        """
+        instruments = mapping.get("instruments", {})
+        instruments = instruments if isinstance(instruments, Mapping) else {}
+        power_supply = instruments.get("power_supply", {})
+        power_supply = power_supply if isinstance(power_supply, Mapping) else {}
+        channels = {}
+        for section in ("dut_power_channels", "driver_mode"):
+            values = mapping.get(section, [])
+            if isinstance(values, Mapping):
+                values = values.get("power_channels", [])
+            if not isinstance(values, (list, tuple)):
+                continue
+            for item in values:
+                if isinstance(item, Mapping):
+                    role = item.get("role")
+                    connection = item.get("connection") or item.get("channel")
+                    if role and connection:
+                        channels[str(role)] = str(connection)
+        wiring = mapping.get("wiring", {})
+        wiring = wiring if isinstance(wiring, Mapping) else {}
+        return cls(
+            run_id=run_id or str(mapping.get("run_id") or uuid4()),
+            operator=mapping.get("operator"),
+            software_version=software_version,
+            signal_generator=_instrument_snapshot(instruments.get("signal_generator")),
+            spectrum_analyzer=_instrument_snapshot(instruments.get("spectrum_analyzer")),
+            power_supply=_instrument_snapshot(power_supply),
+            power_channel_mapping=channels,
+            wiring_confirmed=bool(wiring.get("confirmed", False)),
+            notes=mapping.get("notes") or wiring.get("connection_note"),
+        )
+
 
 class ResultStatus(str, Enum):
     COMPLETED = "completed"
@@ -180,6 +225,17 @@ class MeasurementResult:
         value["status"] = self.status.value
         value["points"] = [point.to_dict() for point in self.points]
         return value
+
+
+def _instrument_snapshot(value: Any) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        return {}
+    result = {}
+    for key in ("model", "visa_address"):
+        item = value.get(key)
+        if item is not None:
+            result[key] = str(item)
+    return result
 
 
 @dataclass(frozen=True)

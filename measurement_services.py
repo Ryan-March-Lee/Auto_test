@@ -121,7 +121,9 @@ class CableLossService(_Service):
             if not path2_confirmed:
                 waiting_for_path2 = True
                 return {"path1_losses": path1, "path2_losses": path2, "status": "waiting"}
-            _publish(self.event_sink, CheckpointEvent(self.run_id, checkpoint="path2", prompt="请连接路径2"))
+            # 路径2的确认由GUI在第一次运行返回waiting后完成。
+            # 继续运行时不能再次发布检查点，否则GUI会把同一个确认事件
+            # 当成新的弹窗请求，而路径2测量已经开始执行。
             for index, frequency in enumerate(frequencies):
                 path2[frequency] = self.measure_path_loss(frequency)
                 self._progress(0.5 + (index + 1) / (2 * len(frequencies)), "path2")

@@ -2648,6 +2648,9 @@ class MainWindow(QMainWindow):
         
     def start_cable_loss_measurement(self):
         """开始线损测量"""
+        if self.current_worker and self.current_worker.isRunning():
+            return
+
         # 先保存当前参数。保存会使旧的接线确认失效，避免把上一次现场
         # 的确认复用于已经改变的仪器或测试参数。
         if not self.update_and_save_config():
@@ -2690,17 +2693,21 @@ class MainWindow(QMainWindow):
         
     def on_cable_loss_step_pause(self, message):
         """处理线损测量步骤暂停"""
+        worker = self.current_worker
+        if not worker or not worker.isRunning() or not getattr(worker, '_waiting_for_continue', False):
+            return
+
         # 显示第二步的连接确认对话框（带图示）
         dialog = ConnectionDialog('cable_loss_path2', self)
         
         if dialog.exec() == QDialog.Accepted:
             # 继续第二步测量
-            if self.current_worker and hasattr(self.current_worker, 'continue_measurement'):
-                self.current_worker.continue_measurement()
+            if worker is self.current_worker and hasattr(worker, 'continue_measurement'):
+                worker.continue_measurement()
         else:
             # 用户取消，停止测量
-            if self.current_worker:
-                self.current_worker.stop()
+            if worker is self.current_worker:
+                worker.stop()
             self.cable_loss_btn.setEnabled(True)
             self.progress_bar.setValue(0)
             self.add_log_message("线损测量已取消")

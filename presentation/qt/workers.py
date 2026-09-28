@@ -90,6 +90,7 @@ class CableLossWorker(BaseWorker):
         self.sleep_fn = sleep_fn
         self._continue_event = Event()
         self._waiting_for_continue = False
+        self._continue_requested = False
 
     def run(self) -> None:
         try:
@@ -127,8 +128,9 @@ class CableLossWorker(BaseWorker):
             self._waiting_for_continue = False
 
     def continue_measurement(self) -> None:
-        if self._service is None:
+        if self._service is None or not self._waiting_for_continue or self._continue_requested:
             return
+        self._continue_requested = True
         self._continue_event.set()
 
     def stop(self) -> None:

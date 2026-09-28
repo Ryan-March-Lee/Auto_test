@@ -177,9 +177,9 @@
         }
     },
     "wiring": {
-        "confirmed": true,
-        "connection_note": "已通过线损测量连接确认对话框确认现场接线",
-        "confirmed_at": "2026-09-28T05:50:39+00:00",
-        "confirmation_source": "cable_loss_path1_dialog"
+        "confirmed": false,
+        "connection_note": null,
+        "confirmed_at": null,
+        "confirmation_source": null
     }
 }

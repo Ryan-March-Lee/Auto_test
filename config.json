@@ -60,8 +60,8 @@
                             "protection_enabled": true
                         },
                         "current": {
-                            "value": 1.0,
-                            "protection": 2.0,
+                            "value": 2.0,
+                            "protection": 2.5,
                             "protection_enabled": true
                         }
                     }
@@ -179,9 +179,9 @@
         }
     },
     "wiring": {
-        "confirmed": false,
-        "connection_note": null,
-        "confirmed_at": null,
-        "confirmation_source": null
+        "confirmed": true,
+        "connection_note": "现场已确认最终 DUT 测试链路连接完成；驱动功放采用外部独立供电，不由本系统电源配置提供。",
+        "confirmed_at": "2026-09-28T19:03:26+08:00",
+        "confirmation_source": "用户现场确认"
     }
 }

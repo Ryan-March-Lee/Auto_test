@@ -21,6 +21,8 @@ temp_loaded_data.json
 # Generated reports and temporary files
 test_results/**
 !test_results/.gitkeep
+# Generated baseline samples (see 重构基线.md §1; local-only artifacts)
+baseline/collected/**
 temp/
 /temp
 *.log

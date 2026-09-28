@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from collect_baseline import collect_baseline
+from collect_baseline import collect_baseline, collect_batch_baseline
 
 
 class CollectBaselineTests(unittest.TestCase):
@@ -118,6 +118,47 @@ class CollectBaselineTests(unittest.TestCase):
 
         self.assertFalse(manifest["complete"])
         self.assertIn("run_id_mismatch:run_mapping_snapshot", manifest["integrity_issues"])
+
+    def test_collects_cross_run_batch_and_preserves_sources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            results = root / "test_results"
+            report_dir = root / "reports"
+            report_dir.mkdir(parents=True)
+            for run_id in ("cable-run", "driver-run", "amp-run"):
+                run = results / run_id
+                run.mkdir(parents=True)
+                for filename in ("test_plan_snapshot.json", "run_mapping_snapshot.json", "run_metadata.json"):
+                    (run / filename).write_text(json.dumps({"run_id": run_id}), encoding="utf-8")
+            (results / "cable-run" / "cable_loss_results.json").write_text(
+                json.dumps({"run_id": "cable-run", "result_type": "cable_loss"}), encoding="utf-8"
+            )
+            (results / "driver-run" / "driver_power_mapping_1.json").write_text(
+                json.dumps({"run_id": "driver-run", "result_type": "driver_power_mapping"}), encoding="utf-8"
+            )
+            (results / "amp-run" / "amplifier_measurement_1.json").write_text(
+                json.dumps({"run_id": "amp-run", "result_type": "amplifier_measurement"}), encoding="utf-8"
+            )
+            (report_dir / "test_report.html").write_text("<html>", encoding="utf-8")
+
+            baseline, manifest = collect_batch_baseline(
+                results_dir=results,
+                output_dir=root / "baseline",
+                cable_loss_run_id="cable-run",
+                driver_mapping_run_id="driver-run",
+                amplifier_run_id="amp-run",
+                report_dir=report_dir,
+            )
+
+            self.assertTrue(manifest["complete"])
+            self.assertEqual(
+                manifest["source"]["batch_run_ids"],
+                {"cable_loss": "cable-run", "driver_mapping": "driver-run", "amplifier_measurement": "amp-run"},
+            )
+            self.assertTrue((baseline / "results" / "cable_loss_results.json").exists())
+            self.assertTrue((baseline / "results" / "driver_power_mapping_1.json").exists())
+            self.assertTrue((baseline / "results" / "amplifier_measurement_1.json").exists())
+            self.assertTrue((baseline / "reports" / "test_report.html").exists())
 
 
 if __name__ == "__main__":

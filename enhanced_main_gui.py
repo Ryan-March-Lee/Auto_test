@@ -2756,18 +2756,32 @@ class MainWindow(QMainWindow):
         
     def start_amplifier_test(self):
         """开始功放测试"""
+        # 先落盘当前参数。保存会使已有现场确认失效，确认对话框必须放在
+        # 保存之后，否则下面的 update_and_save_config 会覆盖刚完成的确认。
+        if not self.update_and_save_config():
+            return
+
         # 显示连接确认对话框
         dialog = ConnectionDialog('amplifier_test', self)
         if dialog.exec() != QDialog.Accepted:
             return
-            
+
+        # 功放测试的接线确认必须写入后台预检读取的配置文件。
+        self.config.setdefault('wiring', {})
+        self.config['wiring'].update({
+            'confirmed': True,
+            'connection_note': '已通过主功放测试连接确认对话框确认现场接线',
+            'confirmed_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+            'confirmation_source': 'amplifier_test_dialog',
+        })
+        if not self._save_config_file():
+            self.add_log_message(f"配置保存失败: {self._last_save_error}")
+            return
+        self.add_log_message("现场接线确认已保存")
+             
         # 清除之前的实时测量历史数据
         self.clear_real_time_data()
-            
-        # 更新配置并保存到文件
-        if not self.update_and_save_config():
-            return
-            
+             
         self.add_log_message("开始主功放测试...")
         self.amplifier_test_btn.setEnabled(False)
         self.emergency_stop_btn.setEnabled(True)  # 启用紧急停止按钮
@@ -2949,14 +2963,23 @@ class MainWindow(QMainWindow):
             ps_config['enabled'] = enabled_widget.isChecked()
             power_supplies[ps_name] = ps_config
 
-        instruments['signal_generator'] = {
-            'address': self.sg_address.text(),
-            'enabled': self.sg_enabled.isChecked()
-        }
-        instruments['spectrum_analyzer'] = {
-            'address': self.sa_address.text(),
-            'enabled': self.sa_enabled.isChecked()
-        }
+        # 保留现代运行映射中的 model 及其他扩展字段。旧实现整体替换
+        # 这两个对象，会在每次保存时把实际仪器型号清空。
+        signal_generator = instruments.get('signal_generator', {})
+        if not isinstance(signal_generator, dict):
+            signal_generator = {}
+        signal_generator = copy.deepcopy(signal_generator)
+        signal_generator['address'] = self.sg_address.text()
+        signal_generator['enabled'] = self.sg_enabled.isChecked()
+        instruments['signal_generator'] = signal_generator
+
+        spectrum_analyzer = instruments.get('spectrum_analyzer', {})
+        if not isinstance(spectrum_analyzer, dict):
+            spectrum_analyzer = {}
+        spectrum_analyzer = copy.deepcopy(spectrum_analyzer)
+        spectrum_analyzer['address'] = self.sa_address.text()
+        spectrum_analyzer['enabled'] = self.sa_enabled.isChecked()
+        instruments['spectrum_analyzer'] = spectrum_analyzer
         instruments['power_supplies'] = power_supplies
         return {'instruments': instruments}
 

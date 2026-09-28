@@ -29,10 +29,12 @@
     "instruments": {
         "signal_generator": {
             "address": "TCPIP0::192.168.1.201::inst0::INSTR",
+            "model": "R&S SMW200A",
             "enabled": true
         },
         "spectrum_analyzer": {
             "address": "TCPIP0::192.168.1.202::inst0::INSTR",
+            "model": "Ceyear 4082F",
             "enabled": true
         },
         "power_supplies": {

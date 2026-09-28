@@ -1,6 +1,7 @@
 """旧版 ``config.json`` 到新配置模型的只读转换。
 
 转换器只处理配置数据，不连接 VISA、不修改旧配置，也不执行任何测量或上电。
+兼容当前固定现场接线：DUT CH1=gate、CH2=drain。
 旧配置中的物理通道不能自动推断为稳定供电角色，因此不完整的转换结果会
 通过 ``unresolved_fields`` 标记为需要现场确认。
 """
@@ -90,8 +91,21 @@ def legacy_config_to_test_plan(config: Mapping[str, Any]) -> TestPlan:
         supply_channels = supply_config.get("channels", {}) if isinstance(supply_config, Mapping) else {}
         for channel in supply_assignment.get("channel", []):
             if isinstance(channel, str):
-                power_channels.setdefault(channel, PowerChannelPlan(role=None))
                 channel_config = supply_channels.get(channel, {}) if isinstance(supply_channels, Mapping) else {}
+                # 现场固定接线兼容策略：DUT 的 CH1 永远是 gate，CH2 永远是
+                # drain。物理通道名仍保留在运行映射中，测试方案只使用稳定角色。
+                fixed_role = {"CH1": "gate", "CH2": "drain"}.get(channel)
+                plan_key = fixed_role or channel
+                power_channels.setdefault(
+                    plan_key,
+                    PowerChannelPlan(
+                        role=fixed_role,
+                        voltage=_legacy_setting_value(channel_config, "voltage", "value"),
+                        current=_legacy_setting_value(channel_config, "current", "value"),
+                        voltage_protection=_legacy_setting_value(channel_config, "voltage", "protection"),
+                        current_protection=_legacy_setting_value(channel_config, "current", "protection"),
+                    ),
+                )
                 legacy_channel_candidates.append({
                     "supply": supply_name,
                     "channel": channel,
@@ -115,11 +129,16 @@ def legacy_config_to_test_plan(config: Mapping[str, Any]) -> TestPlan:
         attenuator_unit="dB",
         max_input_power=dut_config.get("max_input_power"),
         dut_power_channels=power_channels,
-        driver_enabled=driver_mode.get("enabled", False),
+        # 旧版配置没有驱动功放本机供电通道时，按外部供电处理；驱动模式
+        # 本身仍保留在原始 config.json 中，供测量服务加载驱动映射结果。
+        driver_enabled=bool(driver_mode.get("enabled", False)) and bool(
+            _mapping(assignments.get("driver_amplifier"), "power_supply_assignment.driver_amplifier").get("supplies")
+        ),
         driver_power_channels={},
         other_parameters={
             "legacy_dut_power_supply_count": dut_config.get("power_supply_count"),
             "legacy_power_channel_candidates": legacy_channel_candidates,
+            "fixed_power_channel_mapping": True,
         },
         raw=dict(config),
     )
@@ -128,7 +147,7 @@ def legacy_config_to_test_plan(config: Mapping[str, Any]) -> TestPlan:
 def legacy_config_to_run_mapping(
     config: Mapping[str, Any], *, selected_supply: Optional[str] = None
 ) -> RunResourceMapping:
-    """将旧配置转换为历史默认运行映射，不猜测现场接线。"""
+    """将旧配置转换为运行映射，并应用已约定的固定 DUT 通道角色。"""
     _require_mapping(config, "config")
     instruments = _mapping(config.get("instruments"), "instruments")
     signal_generator = _instrument(instruments, "signal_generator")
@@ -142,8 +161,9 @@ def legacy_config_to_run_mapping(
     driver_assignment = _mapping(assignments.get("driver_amplifier"), "power_supply_assignment.driver_amplifier")
     wiring = _mapping(config.get("wiring"), "wiring")
 
-    dut_channels = _legacy_channel_mappings(dut_assignment)
+    dut_channels = _legacy_channel_mappings(dut_assignment, fixed_roles=True)
     driver_channels = _legacy_channel_mappings(driver_assignment)
+    driver_locally_powered = bool(driver_channels)
     return RunResourceMapping(
         schema_version="1.0",
         template=False,
@@ -152,11 +172,11 @@ def legacy_config_to_run_mapping(
         operator=None,
         instruments={
             "signal_generator": InstrumentMapping(
-                model=None,
+                model=signal_generator.get("model"),
                 visa_address=signal_generator.get("address") if signal_generator.get("enabled", True) else None,
             ),
             "spectrum_analyzer": InstrumentMapping(
-                model=None,
+                model=spectrum_analyzer.get("model"),
                 visa_address=spectrum_analyzer.get("address") if spectrum_analyzer.get("enabled", True) else None,
             ),
             "power_supply": InstrumentMapping(
@@ -164,16 +184,20 @@ def legacy_config_to_run_mapping(
                 visa_address=selected.get("address") if isinstance(selected, Mapping) else None,
             ),
         },
-        driver_enabled=config.get("driver_mode", {}).get("enabled", False)
-        if isinstance(config.get("driver_mode"), Mapping)
-        else False,
+        # 没有本机驱动功放电源分配时，驱动功放按外部供电处理。旧版
+        # 测量配置仍保留 driver_mode.enabled，实际测量服务不会因此改变。
+        driver_enabled=(
+            bool(config.get("driver_mode", {}).get("enabled", False)) and driver_locally_powered
+            if isinstance(config.get("driver_mode"), Mapping)
+            else False
+        ),
         driver_power_channels=driver_channels,
         dut_power_channels=dut_channels,
         wiring_confirmed=bool(wiring.get("confirmed", False)),
         connection_note=wiring.get("connection_note"),
         wiring_confirmed_at=wiring.get("confirmed_at"),
         wiring_confirmation_source=wiring.get("confirmation_source"),
-        notes="由旧 config.json 转换；需要现场确认设备、角色和接线",
+        notes="由旧 config.json 转换；固定现场映射 CH1=gate、CH2=drain",
         raw={
             "source": "legacy_config",
             "selected_supply": selected_name,
@@ -229,9 +253,10 @@ def convert_legacy_config(
         unresolved.append("run_mapping.dut_power_channels")
         warnings.append(ConfigIssue("warning", "power_supply_assignment.dut_amplifier", "旧配置没有可转换的 DUT 通道分配"))
     else:
-        unresolved.extend(f"test_plan.dut.power_roles.{name}" for name in plan.dut_power_channels)
-        unresolved.extend(f"run_mapping.dut_power_channels[{index}].role" for index, _ in enumerate(mapping.dut_power_channels))
-        warnings.append(ConfigIssue("warning", "power_supply_assignment.dut_amplifier", "旧配置只有物理通道名，未自动推断 gate/drain 角色"))
+        if not plan.other_parameters.get("fixed_power_channel_mapping"):
+            unresolved.extend(f"test_plan.dut.power_roles.{name}" for name in plan.dut_power_channels)
+            unresolved.extend(f"run_mapping.dut_power_channels[{index}].role" for index, _ in enumerate(mapping.dut_power_channels))
+            warnings.append(ConfigIssue("warning", "power_supply_assignment.dut_amplifier", "旧配置只有物理通道名，未自动推断 gate/drain 角色"))
     if plan.driver_enabled and not mapping.driver_power_channels:
         unresolved.append("run_mapping.driver_mode.power_channels")
         warnings.append(ConfigIssue("warning", "driver_mode.enabled", "驱动模式已启用但旧配置没有驱动功放通道"))
@@ -282,7 +307,9 @@ def _unique_enabled_supply(supplies: Mapping[str, Any]) -> Optional[str]:
     return enabled[0] if len(enabled) == 1 else None
 
 
-def _legacy_channel_mappings(assignment: Mapping[str, Any]) -> List[ChannelMapping]:
+def _legacy_channel_mappings(
+    assignment: Mapping[str, Any], *, fixed_roles: bool = False
+) -> List[ChannelMapping]:
     mappings: List[ChannelMapping] = []
     supplies = assignment.get("supplies", {})
     if not isinstance(supplies, Mapping):
@@ -295,5 +322,20 @@ def _legacy_channel_mappings(assignment: Mapping[str, Any]) -> List[ChannelMappi
             continue
         for channel in channels:
             if isinstance(channel, str):
-                mappings.append(ChannelMapping(channel=channel, role=None, connection=None))
+                role = {"CH1": "gate", "CH2": "drain"}.get(channel) if fixed_roles else None
+                connection = f"{supply_assignment.get('name', 'power-supply')}-{channel}"
+                if role:
+                    connection = f"{connection} -> DUT {('栅极' if role == 'gate' else '漏极')}"
+                mappings.append(ChannelMapping(channel=channel, role=role, connection=connection if fixed_roles else None))
     return mappings
+
+
+def _legacy_setting_value(channel: Any, section: str, key: str) -> Optional[float]:
+    """读取旧版电源通道的数值字段，非法或缺失时返回 None。"""
+    if not isinstance(channel, Mapping):
+        return None
+    value = channel.get(section, {})
+    if not isinstance(value, Mapping):
+        return None
+    value = value.get(key)
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None

@@ -45,25 +45,33 @@ class LegacyConfigConversionTests(unittest.TestCase):
             self.base_config["instruments"]["power_supplies"]["PS4"]["address"],
         )
 
+    def test_instrument_models_are_preserved_from_legacy_config(self):
+        config = copy.deepcopy(self.base_config)
+        config["instruments"]["signal_generator"]["model"] = "R&S SMW200A"
+        config["instruments"]["spectrum_analyzer"]["model"] = "Ceyear 4082F"
+        result = convert_legacy_config(config)
+        self.assertEqual(result.run_mapping.instruments["signal_generator"].model, "R&S SMW200A")
+        self.assertEqual(result.run_mapping.instruments["spectrum_analyzer"].model, "Ceyear 4082F")
+
     def test_explicit_unknown_supply_is_error(self):
         result = convert_legacy_config(self.base_config, selected_supply="PS_UNKNOWN")
         self.assertFalse(result.errors == [])
         self.assertTrue(any(issue.path == "selected_supply" for issue in result.errors))
 
-    def test_old_channels_do_not_become_roles_automatically(self):
+    def test_fixed_old_channels_map_to_stable_roles(self):
         result = convert_legacy_config(self.base_config)
         self.assertEqual([item.channel for item in result.run_mapping.dut_power_channels], ["CH1", "CH2"])
-        self.assertTrue(all(item.role is None for item in result.run_mapping.dut_power_channels))
-        self.assertTrue(any("gate/drain" in issue.message for issue in result.warnings))
+        self.assertEqual([item.role for item in result.run_mapping.dut_power_channels], ["gate", "drain"])
+        self.assertTrue(all(item.connection for item in result.run_mapping.dut_power_channels))
         candidates = result.test_plan.other_parameters["legacy_power_channel_candidates"]
         self.assertEqual([item["channel"] for item in candidates], ["CH1", "CH2"])
         self.assertEqual(candidates[0]["settings"]["voltage"]["value"], 2.8)
 
-    def test_driver_enabled_without_assignment_requires_review(self):
+    def test_driver_without_local_assignment_uses_external_power(self):
         result = convert_legacy_config(self.base_config)
-        self.assertTrue(result.test_plan.driver_enabled)
+        self.assertFalse(result.test_plan.driver_enabled)
         self.assertEqual(result.run_mapping.driver_power_channels, [])
-        self.assertIn("run_mapping.driver_mode.power_channels", result.unresolved_fields)
+        self.assertNotIn("run_mapping.driver_mode.power_channels", result.unresolved_fields)
 
     def test_multiple_enabled_supplies_are_not_selected_implicitly(self):
         config = copy.deepcopy(self.base_config)

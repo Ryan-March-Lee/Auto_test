@@ -89,25 +89,24 @@ python launcher.py
 ./run_tests.ps1
 ```
 
-默认解释器为 `D:\Anaconda\envs\Auto_test\python.exe`。如环境路径变化，可设置：
+项目根目录支持本机 `.env` 文件，用于配置每台电脑自己的解释器路径。先复制 `.env.example` 为 `.env`，再填写：
 
 ```powershell
-$env:AUTO_TEST_PYTHON = "D:\path\to\Auto_test\python.exe"
-./run_tests.ps1
+AUTO_TEST_PYTHON=C:\path\to\Anaconda\envs\Auto_test\python.exe
 ```
 
-代理或编辑器执行命令时也应使用 `run_tests.bat`/`run_tests.ps1`，不要直接调用裸 `python`。工具进程不会继承其他终端中的 Conda 激活状态，Windows 的 `python` 还可能解析到 `base` 环境。项目脚本会打印实际解释器、执行编译检查，并固定使用 `Auto_test`。
+`AUTO_TEST_PYTHON` 的优先级高于 `.env`，其次使用当前已激活的 `Auto_test` 环境，最后使用系统 PATH 中的 `python`。`.env` 已被 Git 忽略，不会同步到另一台电脑。代理或编辑器执行命令时应使用 `run_tests.bat`/`run_tests.ps1`，项目脚本会打印实际解释器。
 
 脚本会先执行编译检查，再运行完整 unittest 测试集，并在开始时打印实际使用的解释器路径。
 
 ## 直接解释器启动
 
-无需激活 Conda 环境时，可直接使用已验证解释器：
+无需激活 Conda 环境时，可以直接执行启动器：
 
 ```powershell
-& "D:\Anaconda\envs\Auto_test\python.exe" launcher.py --check
-& "D:\Anaconda\envs\Auto_test\python.exe" launcher.py --validate-config
-& "D:\Anaconda\envs\Auto_test\python.exe" launcher.py
+./start_gui.bat --check
+./start_gui.bat --validate-config
+./start_gui.bat
 ```
 
 ## 阶段 0.1 基线整理

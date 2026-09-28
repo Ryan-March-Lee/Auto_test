@@ -32,4 +32,5 @@ power_data.mdf
 # Local secrets and machine-specific configuration
 .env
 .env.*
+!.env.example
 search_api_config.local.json

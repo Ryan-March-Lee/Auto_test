@@ -109,10 +109,10 @@ python launcher.py --validate-config
 python launcher.py
 ```
 
-也可以直接使用已验证环境的解释器：
+也可以使用项目启动脚本；解释器路径从本机 `.env` 读取：
 
 ```powershell
-& "D:\Anaconda\envs\Auto_test\python.exe" launcher.py
+./start_gui.bat
 ```
 
 #### 启动前检查

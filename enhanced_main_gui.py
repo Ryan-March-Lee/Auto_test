@@ -2687,6 +2687,7 @@ class MainWindow(QMainWindow):
         self.current_worker.signals.stopped.connect(self.on_worker_stopped)
         self.current_worker.signals.message.connect(self.add_log_message)
         self.current_worker.signals.progress.connect(self.progress_bar.setValue)
+        self.current_worker.signals.data_update.connect(self.update_cable_loss_realtime)
         # 添加步骤暂停信号处理
         self.current_worker.signals.step_pause.connect(self.on_cable_loss_step_pause)
         self.current_worker.start()
@@ -2870,6 +2871,32 @@ class MainWindow(QMainWindow):
             self.add_log_message("未找到线损测量结果文件")
         except Exception as e:
             self.add_log_message(f"加载线损测量结果失败: {e}")
+
+    def update_cable_loss_realtime(self, data):
+        """按采集进度更新线损表格，路径2完成后显示最终四根线缆损耗。"""
+        if 'frequency' not in data:
+            return
+        frequency = str(data['frequency'])
+        row = next(
+            (index for index in range(self.cable_loss_table.rowCount())
+             if self.cable_loss_table.item(index, 0)
+             and self.cable_loss_table.item(index, 0).text() == frequency),
+            -1,
+        )
+        if row < 0:
+            row = self.cable_loss_table.rowCount()
+            self.cable_loss_table.insertRow(row)
+            self.cable_loss_table.setItem(row, 0, QTableWidgetItem(frequency))
+
+        losses = data.get('cable_losses', {})
+        if losses:
+            values = [losses.get(f'cable{index}', 0) for index in range(1, 5)]
+        else:
+            values = ['', '', '', '']
+        for column, value in enumerate(values, start=1):
+            if value != '':
+                self.cable_loss_table.setItem(row, column, QTableWidgetItem(f"{value:.3f}"))
+        self.cable_loss_table.resizeColumnsToContents()
         
     def _read_instrument_config_from_ui(self) -> dict:
         """从UI读取仪器地址和启用状态，保留现有通道和其他字段。"""

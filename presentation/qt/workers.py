@@ -103,6 +103,7 @@ class CableLossWorker(BaseWorker):
                 prepared_run=prepared,
                 progress_callback=self.signals.progress.emit,
                 message_callback=self.signals.message.emit,
+                data_callback=self.signals.data_update.emit,
                 sleep_fn=self.sleep_fn,
             )
             if self._stop_requested:

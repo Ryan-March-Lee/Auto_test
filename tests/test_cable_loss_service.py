@@ -1,7 +1,7 @@
 import unittest
 
 from measurement_services import CableLossService
-from app.events import CheckpointEvent
+from app.events import CheckpointEvent, RealtimeDataEvent
 
 
 class _Instrument:
@@ -55,12 +55,16 @@ class CableLossServiceTests(unittest.TestCase):
         waiting = service.run(path2_confirmed=False)
         self.assertEqual(waiting["status"], "waiting")
         checkpoints = [event.checkpoint for event in events.events if isinstance(event, CheckpointEvent)]
-        self.assertEqual(checkpoints, ["path1"])
+        self.assertEqual(checkpoints, ["path1", "path2"])
 
         result = service.run(path2_confirmed=True)
         self.assertIn("cable_losses", result)
         checkpoints = [event.checkpoint for event in events.events if isinstance(event, CheckpointEvent)]
-        self.assertEqual(checkpoints, ["path1"])
+        self.assertEqual(checkpoints, ["path1", "path2"])
+
+        realtime = [event for event in events.events if isinstance(event, RealtimeDataEvent)]
+        self.assertEqual([event.data["path"] for event in realtime], [1, 2])
+        self.assertEqual(realtime[-1].data["cable_losses"]["cable1"], 0.0)
 
 
 if __name__ == "__main__":

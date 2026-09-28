@@ -116,16 +116,48 @@ class CableLossService(_Service):
                 _publish(self.event_sink, CheckpointEvent(self.run_id, checkpoint="path1", prompt="请连接路径1"))
                 for index, frequency in enumerate(frequencies):
                     path1[frequency] = self.measure_path_loss(frequency)
+                    _publish(
+                        self.event_sink,
+                        RealtimeDataEvent(
+                            self.run_id,
+                            measurement=self.measurement_type,
+                            data={
+                                "frequency": frequency,
+                                "path": 1,
+                                "path1_loss": path1[frequency],
+                                "cable_losses": calculate_cable_losses(
+                                    path1[frequency], path1[frequency], self.attenuator_value
+                                ),
+                            },
+                        ),
+                    )
                     self._progress((index + 1) / (2 * len(frequencies)), "path1")
                 self._path1_losses = dict(path1)
             if not path2_confirmed:
                 waiting_for_path2 = True
+                _publish(self.event_sink, CheckpointEvent(self.run_id, checkpoint="path2", prompt="请连接路径2"))
                 return {"path1_losses": path1, "path2_losses": path2, "status": "waiting"}
             # 路径2的确认由GUI在第一次运行返回waiting后完成。
             # 继续运行时不能再次发布检查点，否则GUI会把同一个确认事件
             # 当成新的弹窗请求，而路径2测量已经开始执行。
             for index, frequency in enumerate(frequencies):
                 path2[frequency] = self.measure_path_loss(frequency)
+                _publish(
+                    self.event_sink,
+                    RealtimeDataEvent(
+                        self.run_id,
+                        measurement=self.measurement_type,
+                        data={
+                            "frequency": frequency,
+                            "path": 2,
+                            "path1_loss": path1[frequency],
+                            "path2_loss": path2[frequency],
+                            "cable_losses": calculate_cable_losses(
+                                path1[frequency], path2[frequency], self.attenuator_value
+                            ),
+                        },
+                    ),
+                )
                 self._progress(0.5 + (index + 1) / (2 * len(frequencies)), "path2")
             losses = {frequency: calculate_cable_losses(path1[frequency], path2[frequency], self.attenuator_value)
                       for frequency in frequencies}

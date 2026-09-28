@@ -77,7 +77,7 @@ class _LegacyResultAdapter:
 
 class EnhancedCableLossMeasurement(_LegacyResultAdapter):
     def __init__(self, config_path=None, progress_callback=None, message_callback=None,
-                 sleep_fn=None, run_id=None, run_directory=None):
+                 data_callback=None, sleep_fn=None, run_id=None, run_directory=None):
         config_path = resolve_path(config_path, CONFIG_FILE)
         config = load_config_file(config_path)
         super().__init__(config, run_id=run_id, run_directory=run_directory)
@@ -86,7 +86,9 @@ class EnhancedCableLossMeasurement(_LegacyResultAdapter):
         self._token = CancellationToken()
         self._service = CableLossService(
             config, self.inst_ctrl, run_id=self.run_id,
-            event_sink=_CallbackEventSink(progress_callback, message_callback, checkpoint=self._pause),
+            event_sink=_CallbackEventSink(
+                progress_callback, message_callback, data_callback, checkpoint=self._pause
+            ),
             cancellation_token=self._token, sleep_fn=self.sleep_fn,
         )
         self.path1_losses = self._service._path1_losses

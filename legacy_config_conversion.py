@@ -140,6 +140,7 @@ def legacy_config_to_run_mapping(
     assignments = _mapping(config.get("power_supply_assignment"), "power_supply_assignment")
     dut_assignment = _mapping(assignments.get("dut_amplifier"), "power_supply_assignment.dut_amplifier")
     driver_assignment = _mapping(assignments.get("driver_amplifier"), "power_supply_assignment.driver_amplifier")
+    wiring = _mapping(config.get("wiring"), "wiring")
 
     dut_channels = _legacy_channel_mappings(dut_assignment)
     driver_channels = _legacy_channel_mappings(driver_assignment)
@@ -168,8 +169,10 @@ def legacy_config_to_run_mapping(
         else False,
         driver_power_channels=driver_channels,
         dut_power_channels=dut_channels,
-        wiring_confirmed=False,
-        connection_note=None,
+        wiring_confirmed=bool(wiring.get("confirmed", False)),
+        connection_note=wiring.get("connection_note"),
+        wiring_confirmed_at=wiring.get("confirmed_at"),
+        wiring_confirmation_source=wiring.get("confirmation_source"),
         notes="由旧 config.json 转换；需要现场确认设备、角色和接线",
         raw={
             "source": "legacy_config",
@@ -232,8 +235,12 @@ def convert_legacy_config(
     if plan.driver_enabled and not mapping.driver_power_channels:
         unresolved.append("run_mapping.driver_mode.power_channels")
         warnings.append(ConfigIssue("warning", "driver_mode.enabled", "驱动模式已启用但旧配置没有驱动功放通道"))
-    unresolved.append("run_mapping.wiring.confirmed")
-    warnings.append(ConfigIssue("warning", "wiring.confirmed", "旧配置没有现场接线确认，转换结果不能直接连接或上电"))
+    wiring = _mapping(config.get("wiring"), "wiring")
+    wiring_confirmed = wiring.get("confirmed") is True
+    connection_note = wiring.get("connection_note")
+    if not wiring_confirmed or not isinstance(connection_note, str) or not connection_note.strip():
+        unresolved.append("run_mapping.wiring.confirmed")
+        warnings.append(ConfigIssue("warning", "wiring.confirmed", "旧配置没有完整现场接线确认，转换结果不能直接连接或上电"))
 
     return LegacyConfigConversionResult(
         test_plan=plan,

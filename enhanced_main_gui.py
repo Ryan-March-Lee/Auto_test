@@ -8,7 +8,7 @@ import json
 import time
 import traceback
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 import threading
 
@@ -2648,15 +2648,33 @@ class MainWindow(QMainWindow):
         
     def start_cable_loss_measurement(self):
         """开始线损测量"""
+        # 先保存当前参数。保存会使旧的接线确认失效，避免把上一次现场
+        # 的确认复用于已经改变的仪器或测试参数。
+        if not self.update_and_save_config():
+            return
+
         # 显示连接确认对话框
         dialog = ConnectionDialog('cable_loss_path1', self)
         if dialog.exec() != QDialog.Accepted:
             return
-            
-        # 更新配置并保存到文件
-        if not self.update_and_save_config():
+
+        # 线损连接确认是运行前置条件，必须写回配置供后台预检读取。
+        self.config.setdefault('wiring', {})
+        self.config['wiring'].update({
+            'confirmed': True,
+            'connection_note': '已通过线损测量连接确认对话框确认现场接线',
+            'confirmed_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+            'confirmation_source': 'cable_loss_path1_dialog',
+        })
+
+        # 保存本次对话框产生的现场确认元数据。此处不能再次调用
+        # update_and_save_config，因为该方法会主动使接线确认失效。
+        if self._save_config_file():
+            self.add_log_message("现场接线确认已保存")
+        else:
+            self.add_log_message(f"配置保存失败: {self._last_save_error}")
             return
-            
+
         self.add_log_message("开始线损测量...")
         self.cable_loss_btn.setEnabled(False)
         
@@ -3034,6 +3052,14 @@ class MainWindow(QMainWindow):
         assignment_fragment = self._read_power_assignment_from_ui()
         if assignment_fragment:
             config['power_supply_assignment'] = assignment_fragment['power_supply_assignment']
+
+        # 任意参数、仪器或电源分配变更都必须重新确认现场接线。
+        config['wiring'] = {
+            'confirmed': False,
+            'connection_note': None,
+            'confirmed_at': None,
+            'confirmation_source': None,
+        }
 
         return config
 

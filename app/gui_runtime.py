@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from enhanced_workers import (
     EnhancedAmplifierMeasurement,
@@ -10,8 +10,13 @@ from enhanced_workers import (
     EnhancedDriverPowerMapping,
 )
 from persistence.config_repository import ConfigurationRepository
+from config_models import validate_cable_loss_configuration
+from config_validation import ConfigValidationResult
 from result_storage import new_run_id
 from .run_context import PreparedRun, environment_version, prepare_run
+
+
+Operation = Literal["full", "cable_loss"]
 
 
 def connect_instruments(config_path: str) -> Any:
@@ -21,9 +26,32 @@ def connect_instruments(config_path: str) -> Any:
     return InstrumentControl(config_path)
 
 
-def prepare_configuration(config_path: str, *, run_id: str | None = None) -> PreparedRun:
+def prepare_configuration(
+    config_path: str, *, run_id: str | None = None, operation: Operation = "full"
+) -> PreparedRun:
     """Perform the GUI preflight and snapshot before an instrument is created."""
-    loaded = ConfigurationRepository().load_for_run(config_path)
+    if operation not in ("full", "cable_loss"):
+        raise ValueError(f"不支持的测量类型: {operation}")
+    repository = ConfigurationRepository()
+    loaded = repository.load_for_run(config_path)
+    if operation == "cable_loss":
+        # The legacy GUI stores one combined config.json. Convert it as usual,
+        # then apply the smaller contract required by cable-loss measurement.
+        # DUT roles and driver channels belong to other measurements.
+        cable_validation = validate_cable_loss_configuration(loaded.configuration)
+        if loaded.conversion_errors:
+            cable_validation = ConfigValidationResult(
+                errors=cable_validation.errors + loaded.conversion_errors,
+                warnings=cable_validation.warnings,
+            )
+        loaded = type(loaded)(
+            configuration=loaded.configuration,
+            validation=cable_validation,
+            warnings=loaded.warnings,
+            unresolved_fields=loaded.unresolved_fields,
+            source_format=loaded.source_format,
+            conversion_errors=loaded.conversion_errors,
+        )
     return prepare_run(
         loaded,
         run_id=run_id or new_run_id(),

@@ -78,6 +78,17 @@ class LegacyConfigConversionTests(unittest.TestCase):
         self.assertEqual(result.selected_supply, "PS4")
         self.assertEqual(result.run_mapping.raw["selected_supply"], "PS4")
 
+    def test_saved_wiring_confirmation_is_preserved(self):
+        config = copy.deepcopy(self.base_config)
+        config["wiring"] = {
+            "confirmed": True,
+            "connection_note": "已通过线损测量连接确认对话框确认现场接线",
+        }
+        result = convert_legacy_config(config)
+        self.assertTrue(result.run_mapping.wiring_confirmed)
+        self.assertEqual(result.run_mapping.connection_note, config["wiring"]["connection_note"])
+        self.assertNotIn("run_mapping.wiring.confirmed", result.unresolved_fields)
+
     def test_invalid_legacy_root_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"

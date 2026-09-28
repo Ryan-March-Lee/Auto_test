@@ -96,7 +96,7 @@ class CableLossWorker(BaseWorker):
             self.emit_message("开始线损测量...")
             from app.gui_runtime import create_cable_loss_measurement, prepare_configuration
 
-            prepared = prepare_configuration(self.config_path)
+            prepared = prepare_configuration(self.config_path, operation="cable_loss")
             self._service = create_cable_loss_measurement(
                 self.config_path,
                 prepared_run=prepared,

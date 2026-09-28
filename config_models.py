@@ -195,6 +195,8 @@ class RunResourceMapping:
     dut_power_channels: List[ChannelMapping] = field(default_factory=list)
     wiring_confirmed: bool = False
     connection_note: Optional[str] = None
+    wiring_confirmed_at: Optional[str] = None
+    wiring_confirmation_source: Optional[str] = None
     notes: Optional[str] = None
     raw: Dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
@@ -218,6 +220,8 @@ class RunResourceMapping:
             dut_power_channels=_channel_mappings(value.get("dut_power_channels", [])),
             wiring_confirmed=wiring.get("confirmed", False) if isinstance(wiring, Mapping) else False,
             connection_note=wiring.get("connection_note") if isinstance(wiring, Mapping) else None,
+            wiring_confirmed_at=wiring.get("confirmed_at") if isinstance(wiring, Mapping) else None,
+            wiring_confirmation_source=wiring.get("confirmation_source") if isinstance(wiring, Mapping) else None,
             notes=value.get("notes"),
             raw=dict(value),
         )
@@ -235,7 +239,12 @@ class RunResourceMapping:
                 "power_channels": [item.to_dict() for item in self.driver_power_channels],
             },
             "dut_power_channels": [item.to_dict() for item in self.dut_power_channels],
-            "wiring": {"confirmed": self.wiring_confirmed, "connection_note": self.connection_note},
+            "wiring": {
+                "confirmed": self.wiring_confirmed,
+                "connection_note": self.connection_note,
+                "confirmed_at": self.wiring_confirmed_at,
+                "confirmation_source": self.wiring_confirmation_source,
+            },
             "notes": self.notes,
         }
 
@@ -363,6 +372,37 @@ def validate_run_configuration(configuration: RunConfiguration) -> ConfigValidat
         errors=errors,
         warnings=warnings,
     )
+
+
+def validate_cable_loss_configuration(configuration: RunConfiguration) -> ConfigValidationResult:
+    """校验线损测量所需的最小配置。
+
+    线损测量只使用信号源、频谱仪、衰减器和现场接线确认，不应被
+    功放测试的供电角色或驱动功放映射阻塞。完整功放运行仍使用
+    ``validate_run_configuration``。
+    """
+    errors: List[ConfigIssue] = []
+    error = lambda path, message: errors.append(ConfigIssue("error", path, message))
+    plan = configuration.test_plan
+    mapping = configuration.run_mapping
+
+    _validate_version(plan.schema_version, "schema_version", error)
+    _finite_list(plan.frequencies, "frequencies.values", error, positive=True)
+    if not plan.frequencies:
+        error("frequencies.values", "必须是非空列表")
+    _number(plan.attenuator_value, "attenuator.value", error, non_negative=True)
+
+    for name in ("signal_generator", "spectrum_analyzer"):
+        instrument = mapping.instruments.get(name)
+        if instrument is None:
+            error(f"instruments.{name}", "缺少仪器配置")
+            continue
+        _required_text(instrument.visa_address, f"instruments.{name}.visa_address", error)
+
+    if not mapping.wiring_confirmed:
+        error("wiring.confirmed", "连接或上电前必须确认现场接线")
+    _required_text(mapping.connection_note, "wiring.connection_note", error)
+    return ConfigValidationResult(errors=errors, warnings=[])
 
 
 def _as_test_plan(value: Union[TestPlan, Mapping[str, Any]]) -> TestPlan:

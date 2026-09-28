@@ -367,9 +367,21 @@ class GuiConfigBuildTests(unittest.TestCase):
         expected_keys = {
             'instruments', 'test_frequencies', 'signal_source',
             'compression_point', 'attenuator', 'driver_mode',
-            'dut_config', 'power_supply_assignment', 'top_level_extra',
+            'dut_config', 'power_supply_assignment', 'top_level_extra', 'wiring',
         }
         self.assertEqual(set(result.keys()), expected_keys)
+
+    def test_build_invalidates_previous_wiring_confirmation(self):
+        self.window.config['wiring'] = {
+            'confirmed': True,
+            'connection_note': 'previous',
+            'confirmed_at': 'old',
+            'confirmation_source': 'old',
+        }
+        result = self.window._build_config_from_ui()
+        self.assertFalse(result['wiring']['confirmed'])
+        self.assertIsNone(result['wiring']['connection_note'])
+        self.assertIsNone(result['wiring']['confirmed_at'])
 
 
 class GuiConfigSaveTests(unittest.TestCase):

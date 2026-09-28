@@ -11,6 +11,7 @@ from config_models import (
     load_run_mapping,
     load_test_plan,
     validate_run_configuration,
+    validate_cable_loss_configuration,
     validate_run_mapping,
     validate_test_plan,
 )
@@ -74,6 +75,43 @@ def complete_mapping():
 
 
 class ConfigModelTests(unittest.TestCase):
+    def test_cable_loss_does_not_require_amplifier_power_roles(self):
+        plan = complete_plan()
+        plan["dut"]["power_channels"] = {}
+        plan["driver_mode"] = {"enabled": True, "power_channels": {}}
+        mapping = complete_mapping()
+        mapping["dut_power_channels"] = []
+        mapping["driver_mode"] = {"enabled": True, "power_channels": []}
+        mapping["wiring"] = {"confirmed": True, "connection_note": "已确认线损路径"}
+        result = validate_cable_loss_configuration(
+            RunConfiguration(TestPlan.from_dict(plan), RunResourceMapping.from_dict(mapping))
+        )
+        self.assertTrue(result.valid, result.errors)
+
+    def test_cable_loss_requires_saved_wiring_confirmation(self):
+        plan = complete_plan()
+        mapping = complete_mapping()
+        mapping["wiring"] = {"confirmed": False, "connection_note": None}
+        result = validate_cable_loss_configuration(
+            RunConfiguration(TestPlan.from_dict(plan), RunResourceMapping.from_dict(mapping))
+        )
+        paths = {issue.path for issue in result.errors}
+        self.assertIn("wiring.confirmed", paths)
+        self.assertIn("wiring.connection_note", paths)
+
+    def test_wiring_confirmation_metadata_round_trips(self):
+        mapping = complete_mapping()
+        mapping["wiring"].update({
+            "confirmed_at": "2026-09-28T12:00:00+00:00",
+            "confirmation_source": "cable_loss_path1_dialog",
+        })
+        parsed = RunResourceMapping.from_dict(mapping)
+        self.assertEqual(parsed.to_dict()["wiring"]["confirmed_at"], mapping["wiring"]["confirmed_at"])
+        self.assertEqual(
+            parsed.to_dict()["wiring"]["confirmation_source"],
+            mapping["wiring"]["confirmation_source"],
+        )
+
     def test_templates_load_but_do_not_pass_formal_validation(self):
         plan = load_test_plan(PROJECT_ROOT / "baseline" / "test_plan.json")
         mapping = load_run_mapping(PROJECT_ROOT / "baseline" / "run_mapping.json")

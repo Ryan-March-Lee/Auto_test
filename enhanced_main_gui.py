@@ -2678,6 +2678,8 @@ class MainWindow(QMainWindow):
             self.add_log_message(f"配置保存失败: {self._last_save_error}")
             return
 
+        # 测量线程启动前清空旧结果，后续由实时信号逐频点填充本次数据。
+        self.clear_cable_loss_results()
         self.add_log_message("开始线损测量...")
         self.cable_loss_btn.setEnabled(False)
         
@@ -2871,6 +2873,11 @@ class MainWindow(QMainWindow):
             self.add_log_message("未找到线损测量结果文件")
         except Exception as e:
             self.add_log_message(f"加载线损测量结果失败: {e}")
+
+    def clear_cable_loss_results(self):
+        """清空线损输出表，准备接收本次测量的实时结果。"""
+        self.cable_loss_table.setRowCount(0)
+        self.add_log_message("已清空上一次线损测量结果")
 
     def update_cable_loss_realtime(self, data):
         """按采集进度更新线损表格，路径2完成后显示最终四根线缆损耗。"""

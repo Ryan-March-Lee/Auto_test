@@ -1,6 +1,8 @@
+import json
 import unittest
 from unittest.mock import Mock
 from unittest.mock import patch
+from pathlib import Path
 
 from instrument_control import InstrumentControl
 
@@ -44,6 +46,16 @@ class InstrumentControlInjectionTests(unittest.TestCase):
 
     def make_manager(self):
         return MinimalResourceManager(self.ADDRESSES)
+
+    def setUp(self):
+        fixture = Path(__file__).parent / "fixtures" / "config_driver_enabled_no_assignment.json"
+        config = json.loads(fixture.read_text(encoding="utf-8"))
+        config["instruments"]["signal_generator"]["address"] = self.ADDRESSES[0]
+        config["instruments"]["spectrum_analyzer"]["address"] = self.ADDRESSES[1]
+        config["instruments"]["power_supplies"]["PS4"]["address"] = self.ADDRESSES[2]
+        self.config_loader = patch("instrument_control.load_config_file", return_value=config)
+        self.config_loader.start()
+        self.addCleanup(self.config_loader.stop)
 
     def test_injected_resource_manager_prevents_real_visa_creation(self):
         manager = self.make_manager()

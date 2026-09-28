@@ -2717,17 +2717,29 @@ class MainWindow(QMainWindow):
         
     def start_driver_mapping(self):
         """开始驱动映射"""
+        # 先保存当前参数，再弹出接线确认；保存配置会使旧确认失效。
+        if not self.update_and_save_config():
+            return
+
         # 显示连接确认对话框
         dialog = ConnectionDialog('driver_mapping', self)
         if dialog.exec() != QDialog.Accepted:
             return
+
+        self.config.setdefault('wiring', {})
+        self.config['wiring'].update({
+            'confirmed': True,
+            'connection_note': '已通过驱动功放映射连接确认对话框确认现场接线',
+            'confirmed_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+            'confirmation_source': 'driver_mapping_dialog',
+        })
+        if not self._save_config_file():
+            self.add_log_message(f"配置保存失败: {self._last_save_error}")
+            return
+        self.add_log_message("现场接线确认已保存")
             
         # 清除之前的实时测量历史数据
         self.clear_real_time_data()
-            
-        # 更新配置并保存到文件
-        if not self.update_and_save_config():
-            return
             
         self.add_log_message("开始驱动功放映射...")
         self.driver_mapping_btn.setEnabled(False)

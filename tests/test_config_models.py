@@ -12,6 +12,7 @@ from config_models import (
     load_test_plan,
     validate_run_configuration,
     validate_cable_loss_configuration,
+    validate_driver_mapping_configuration,
     validate_run_mapping,
     validate_test_plan,
 )
@@ -98,6 +99,19 @@ class ConfigModelTests(unittest.TestCase):
         paths = {issue.path for issue in result.errors}
         self.assertIn("wiring.confirmed", paths)
         self.assertIn("wiring.connection_note", paths)
+
+    def test_driver_mapping_does_not_require_any_power_channel_assignment(self):
+        plan = complete_plan()
+        plan["dut"]["power_channels"] = {}
+        plan["driver_mode"] = {"enabled": True, "power_channels": {}}
+        mapping = complete_mapping()
+        mapping["dut_power_channels"] = []
+        mapping["driver_mode"] = {"enabled": True, "power_channels": []}
+        mapping["wiring"] = {"confirmed": True, "connection_note": "已确认驱动映射接线"}
+        result = validate_driver_mapping_configuration(
+            RunConfiguration(TestPlan.from_dict(plan), RunResourceMapping.from_dict(mapping))
+        )
+        self.assertTrue(result.valid, result.errors)
 
     def test_wiring_confirmation_metadata_round_trips(self):
         mapping = complete_mapping()

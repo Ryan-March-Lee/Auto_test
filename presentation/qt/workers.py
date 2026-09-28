@@ -152,7 +152,7 @@ class DriverMappingWorker(BaseWorker):
             self.emit_message("开始驱动功放映射测量...")
             from app.gui_runtime import create_driver_mapping_measurement, prepare_configuration
 
-            prepared = prepare_configuration(self.config_path)
+            prepared = prepare_configuration(self.config_path, operation="driver_mapping")
             self._service = create_driver_mapping_measurement(
                 self.config_path,
                 prepared_run=prepared,

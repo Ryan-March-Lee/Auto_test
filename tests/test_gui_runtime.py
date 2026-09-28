@@ -33,6 +33,17 @@ class GuiRuntimePreparationTests(unittest.TestCase):
         finally:
             directory.cleanup()
 
+    def test_driver_mapping_preparation_allows_external_driver_power(self):
+        directory, path = self._write_config()
+        try:
+            with patch("app.gui_runtime.prepare_run", return_value="prepared") as prepare_run:
+                result = prepare_configuration(str(path), operation="driver_mapping")
+            self.assertEqual(result, "prepared")
+            loaded = prepare_run.call_args.args[0]
+            self.assertTrue(loaded.valid)
+        finally:
+            directory.cleanup()
+
     def test_cable_loss_preparation_rejects_missing_wiring_confirmation(self):
         directory, path = self._write_config(confirmed=False)
         try:

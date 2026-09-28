@@ -10,13 +10,16 @@ from enhanced_workers import (
     EnhancedDriverPowerMapping,
 )
 from persistence.config_repository import ConfigurationRepository
-from config_models import validate_cable_loss_configuration
+from config_models import (
+    validate_cable_loss_configuration,
+    validate_driver_mapping_configuration,
+)
 from config_validation import ConfigValidationResult
 from result_storage import new_run_id
 from .run_context import PreparedRun, environment_version, prepare_run
 
 
-Operation = Literal["full", "cable_loss"]
+Operation = Literal["full", "cable_loss", "driver_mapping"]
 
 
 def connect_instruments(config_path: str) -> Any:
@@ -30,7 +33,7 @@ def prepare_configuration(
     config_path: str, *, run_id: str | None = None, operation: Operation = "full"
 ) -> PreparedRun:
     """Perform the GUI preflight and snapshot before an instrument is created."""
-    if operation not in ("full", "cable_loss"):
+    if operation not in ("full", "cable_loss", "driver_mapping"):
         raise ValueError(f"不支持的测量类型: {operation}")
     repository = ConfigurationRepository()
     loaded = repository.load_for_run(config_path)
@@ -47,6 +50,23 @@ def prepare_configuration(
         loaded = type(loaded)(
             configuration=loaded.configuration,
             validation=cable_validation,
+            warnings=loaded.warnings,
+            unresolved_fields=loaded.unresolved_fields,
+            source_format=loaded.source_format,
+            conversion_errors=loaded.conversion_errors,
+        )
+    elif operation == "driver_mapping":
+        # 驱动功放可以由外部供电；映射测量不使用 DUT 电源角色，也不要求
+        # 驱动功放必须分配到本机电源。
+        mapping_validation = validate_driver_mapping_configuration(loaded.configuration)
+        if loaded.conversion_errors:
+            mapping_validation = ConfigValidationResult(
+                errors=mapping_validation.errors + loaded.conversion_errors,
+                warnings=mapping_validation.warnings,
+            )
+        loaded = type(loaded)(
+            configuration=loaded.configuration,
+            validation=mapping_validation,
             warnings=loaded.warnings,
             unresolved_fields=loaded.unresolved_fields,
             source_format=loaded.source_format,

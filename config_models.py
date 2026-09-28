@@ -405,6 +405,40 @@ def validate_cable_loss_configuration(configuration: RunConfiguration) -> Config
     return ConfigValidationResult(errors=errors, warnings=[])
 
 
+def validate_driver_mapping_configuration(configuration: RunConfiguration) -> ConfigValidationResult:
+    """校验驱动功放映射所需的最小配置。
+
+    驱动映射只测量信号源到频谱仪之间的 RF 链路。驱动功放可能由
+    外部电源供电，因此不能把 DUT 供电角色或驱动功放电源分配作为本
+    测量的必填项。
+    """
+    errors: List[ConfigIssue] = []
+    error = lambda path, message: errors.append(ConfigIssue("error", path, message))
+    plan = configuration.test_plan
+    mapping = configuration.run_mapping
+
+    _validate_version(plan.schema_version, "schema_version", error)
+    _finite_list(plan.frequencies, "frequencies.values", error, positive=True)
+    if not plan.frequencies:
+        error("frequencies.values", "必须是非空列表")
+    _number(plan.start_power, "signal_source.start_power", error)
+    _number(plan.stop_power, "signal_source.stop_power", error)
+    _number(plan.power_step, "signal_source.step", error, positive=True)
+    _number(plan.attenuator_value, "attenuator.value", error, non_negative=True)
+
+    for name in ("signal_generator", "spectrum_analyzer"):
+        instrument = mapping.instruments.get(name)
+        if instrument is None:
+            error(f"instruments.{name}", "缺少仪器配置")
+            continue
+        _required_text(instrument.visa_address, f"instruments.{name}.visa_address", error)
+
+    if not mapping.wiring_confirmed:
+        error("wiring.confirmed", "连接或上电前必须确认现场接线")
+    _required_text(mapping.connection_note, "wiring.connection_note", error)
+    return ConfigValidationResult(errors=errors, warnings=[])
+
+
 def _as_test_plan(value: Union[TestPlan, Mapping[str, Any]]) -> TestPlan:
     return value if isinstance(value, TestPlan) else TestPlan.from_dict(value)
 

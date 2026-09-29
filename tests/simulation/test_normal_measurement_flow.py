@@ -7,6 +7,7 @@ from config_io import load_config_file
 from instrument.ports import InstrumentState
 from instrument.simulation import (
     CommandRecorder,
+    RecordedSequence,
     SafetyInstrumentSession,
     SimulatedPowerSupply,
     SimulatedSignalGenerator,
@@ -108,25 +109,23 @@ class NormalSimulatedMeasurementFlowTests(unittest.TestCase):
             self.assertFalse(spectrum_analyzer.connected)
             self.assertFalse(power_supply.connected)
 
-            commands = recorder.commands
-            rf_off = commands.index(("signal_generator", "rf_off", None))
-            drain_off = commands.index(("power_supply", "output_off", "B"))
-            gate_off = commands.index(("power_supply", "output_off", "A"))
-            close_indexes = [
-                index for index, (device, action, _value) in enumerate(commands)
-                if action == "close"
-            ]
-            self.assertLess(rf_off, drain_off)
-            self.assertLess(drain_off, gate_off)
-            self.assertTrue(close_indexes)
-            self.assertGreater(min(close_indexes), gate_off)
-
-            actions = [(device, action) for device, action, _value in commands]
-            gate_on = commands.index(("power_supply", "output_on", "A"))
-            drain_on = commands.index(("power_supply", "output_on", "B"))
-            rf_on = commands.index(("signal_generator", "rf_on", None))
-            self.assertLess(gate_on, drain_on)
-            self.assertLess(drain_on, rf_on)
+            sequence = RecordedSequence.from_recorder(recorder)
+            sequence.assert_order(
+                ("signal_generator", "rf_off", None),
+                ("power_supply", "output_off", "B"),
+                ("power_supply", "output_off", "A"),
+            )
+            sequence.assert_order(
+                ("power_supply", "output_off", "A"),
+                ("spectrum_analyzer", "close", None),
+                ("power_supply", "close", None),
+                ("signal_generator", "close", None),
+            )
+            sequence.assert_order(
+                ("power_supply", "output_on", "A"),
+                ("power_supply", "output_on", "B"),
+                ("signal_generator", "rf_on", None),
+            )
 
 
 if __name__ == "__main__":

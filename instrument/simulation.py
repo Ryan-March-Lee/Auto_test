@@ -413,6 +413,48 @@ class RecordedSequence:
         for command in self.commands:
             handler(*command)
 
+    def assert_order(self, *expected: Tuple[str, str, object]) -> None:
+        """Assert that recorded commands occur in the supplied order.
+
+        Other commands may occur between the expected commands.  Matching the
+        complete command tuple, rather than only the action name, keeps the
+        assertion useful for multi-channel safety flows.
+        """
+        for command in expected:
+            if not isinstance(command, tuple) or len(command) != 3:
+                raise ValueError("expected commands must be 3-item tuples")
+
+        command_index = 0
+        for expected_command in expected:
+            try:
+                command_index = self.commands.index(expected_command, command_index) + 1
+            except ValueError as error:
+                recorded = self.commands[max(0, command_index - 2):command_index + 3]
+                raise AssertionError(
+                    "expected command order was not recorded: "
+                    f"{expected_command!r} after index {command_index - 1}; "
+                    f"nearby commands: {recorded!r}"
+                ) from error
+
+    def assert_action_order(self, *expected: Tuple[str, str]) -> None:
+        """Assert device/action order while ignoring command values."""
+        for action in expected:
+            if not isinstance(action, tuple) or len(action) != 2:
+                raise ValueError("expected actions must be 2-item tuples")
+
+        actions = [(device, action) for device, action, _value in self.commands]
+        action_index = 0
+        for expected_action in expected:
+            try:
+                action_index = actions.index(expected_action, action_index) + 1
+            except ValueError as error:
+                nearby = actions[max(0, action_index - 2):action_index + 3]
+                raise AssertionError(
+                    "expected device/action order was not recorded: "
+                    f"{expected_action!r} after index {action_index - 1}; "
+                    f"nearby actions: {nearby!r}"
+                ) from error
+
     def to_json(self) -> str:
         return json.dumps(self.commands, ensure_ascii=False)
 

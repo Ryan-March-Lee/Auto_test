@@ -267,6 +267,35 @@ class SimulationLifecycleTests(unittest.TestCase):
         restored.replay(lambda *command: replayed.append(command))
         self.assertEqual(replayed, [("signal_generator", "set_power_dbm", 10.0)])
 
+    def test_recorded_sequence_asserts_order_across_interleaved_commands(self):
+        self.recorder.commands = [
+            ("power_supply", "set_voltage", ("A", 2.8)),
+            ("power_supply", "output_on", "A"),
+            ("spectrum_analyzer", "measure_power_dbm", None),
+            ("power_supply", "output_on", "B"),
+        ]
+        sequence = RecordedSequence.from_recorder(self.recorder)
+
+        sequence.assert_order(
+            ("power_supply", "output_on", "A"),
+            ("power_supply", "output_on", "B"),
+        )
+        sequence.assert_action_order(
+            ("power_supply", "output_on"),
+            ("spectrum_analyzer", "measure_power_dbm"),
+        )
+
+        with self.assertRaisesRegex(AssertionError, "nearby commands"):
+            sequence.assert_order(
+                ("power_supply", "output_on", "B"),
+                ("power_supply", "output_on", "A"),
+            )
+
+        with self.assertRaisesRegex(ValueError, "3-item tuples"):
+            sequence.assert_order(("power_supply", "output_on"))
+        with self.assertRaisesRegex(ValueError, "2-item tuples"):
+            sequence.assert_action_order(("power_supply",))
+
     def test_all_devices_share_one_step_failure_injection_contract(self):
         for device, action in (
             (self.sg, "connect"),

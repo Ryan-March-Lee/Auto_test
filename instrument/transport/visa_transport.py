@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+import math
 
 from pyvisa import constants
 
@@ -19,8 +20,8 @@ class VisaScpiTransport:
     """
 
     def __init__(self, resource: Any, *, timeout_s: float = 5.0) -> None:
-        if timeout_s <= 0:
-            raise ValueError("timeout_s 必须大于 0")
+        if not math.isfinite(float(timeout_s)) or timeout_s <= 0:
+            raise ValueError("timeout_s 必须是有限正数")
         self.resource = resource
         self.timeout_s = float(timeout_s)
         self.closed = False
@@ -36,6 +37,17 @@ class VisaScpiTransport:
             self.resource.write(command)
         except Exception as exc:
             raise _translate_error(exc, command) from exc
+
+    def set_timeout_s(self, timeout_s: float) -> None:
+        timeout_s = float(timeout_s)
+        if not math.isfinite(timeout_s) or timeout_s <= 0:
+            raise ValueError("timeout_s 必须是有限正数")
+        self._ensure_open()
+        try:
+            self.resource.timeout = int(timeout_s * 1000)
+        except Exception as exc:
+            raise ScpiTransportError("无法配置 VISA 超时") from exc
+        self.timeout_s = timeout_s
 
     def query(self, command: str) -> str:
         self._ensure_open()

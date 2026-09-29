@@ -25,6 +25,11 @@ from .transport import (
     ScpiTransportTimeoutError,
     VisaScpiTransport,
 )
+from .drivers import (
+    ScpiPowerSupplyDriver,
+    ScpiSignalGeneratorDriver,
+    ScpiSpectrumAnalyzerDriver,
+)
 
 __all__ = [
     "InstrumentSession",
@@ -43,4 +48,7 @@ __all__ = [
     "ScpiTransportError",
     "ScpiTransportTimeoutError",
     "VisaScpiTransport",
+    "ScpiPowerSupplyDriver",
+    "ScpiSignalGeneratorDriver",
+    "ScpiSpectrumAnalyzerDriver",
 ]

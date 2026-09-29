@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Callable, Mapping, Protocol, Union
+import math
 
 
 class ScpiTransportError(RuntimeError):
@@ -14,6 +15,9 @@ class ScpiTransportTimeoutError(ScpiTransportError, TimeoutError):
 
 
 class ScpiTransport(Protocol):
+    def set_timeout_s(self, timeout_s: float) -> None:
+        ...
+
     """Minimal transport contract required by SCPI drivers."""
 
     def write(self, command: str) -> None:
@@ -49,8 +53,8 @@ class MockScpiTransport:
         fail_on_query: FailureRule = None,
         fail_on_close: bool = False,
     ) -> None:
-        if timeout_s <= 0:
-            raise ValueError("timeout_s 必须大于 0")
+        if not math.isfinite(float(timeout_s)) or timeout_s <= 0:
+            raise ValueError("timeout_s 必须是有限正数")
         self.responses = dict(responses or {})
         self.timeout_s = float(timeout_s)
         self.timeout_on_write = timeout_on_write
@@ -90,6 +94,12 @@ class MockScpiTransport:
         self.close_count += 1
         if self.fail_on_close:
             raise ScpiTransportError("SCPI transport 关闭失败")
+
+    def set_timeout_s(self, timeout_s: float) -> None:
+        timeout_s = float(timeout_s)
+        if not math.isfinite(timeout_s) or timeout_s <= 0:
+            raise ValueError("timeout_s 必须是有限正数")
+        self.timeout_s = timeout_s
 
     def _ensure_open(self) -> None:
         if self.closed:

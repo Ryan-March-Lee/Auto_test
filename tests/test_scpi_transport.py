@@ -31,6 +31,13 @@ class MockScpiTransportTests(unittest.TestCase):
         with self.assertRaisesRegex(ScpiTransportTimeoutError, "1.5s"):
             transport.query("MEAS?")
 
+    def test_timeout_can_be_changed_for_the_next_operation(self):
+        transport = MockScpiTransport()
+        transport.set_timeout_s(1.25)
+        self.assertEqual(transport.timeout_s, 1.25)
+        with self.assertRaises(ValueError):
+            transport.set_timeout_s(float("inf"))
+
     def test_close_is_idempotent(self):
         transport = MockScpiTransport()
         transport.close()
@@ -78,6 +85,13 @@ class VisaScpiTransportTests(unittest.TestCase):
         self.assertEqual(transport.query("MEAS?"), "OK")
         self.assertEqual(resource.timeout, 2500)
         self.assertEqual(resource.calls[:2], [("write", "CONF"), ("query", "MEAS?")])
+
+    def test_updates_resource_timeout_for_each_operation_timeout(self):
+        resource = self.Resource()
+        transport = VisaScpiTransport(resource, timeout_s=2.5)
+        transport.set_timeout_s(1.25)
+        self.assertEqual(resource.timeout, 1250)
+        self.assertEqual(transport.timeout_s, 1.25)
 
     def test_translates_timeout_and_closes_once(self):
         resource = self.Resource()

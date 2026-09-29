@@ -18,6 +18,13 @@ from .simulation import (
     SimulatedSignalGenerator,
     SimulatedSpectrumAnalyzer,
 )
+from .transport import (
+    MockScpiTransport,
+    ScpiTransport,
+    ScpiTransportError,
+    ScpiTransportTimeoutError,
+    VisaScpiTransport,
+)
 
 __all__ = [
     "InstrumentSession",
@@ -31,4 +38,9 @@ __all__ = [
     "SimulatedPowerSupply",
     "SimulatedSignalGenerator",
     "SimulatedSpectrumAnalyzer",
+    "MockScpiTransport",
+    "ScpiTransport",
+    "ScpiTransportError",
+    "ScpiTransportTimeoutError",
+    "VisaScpiTransport",
 ]

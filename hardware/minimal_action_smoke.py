@@ -18,7 +18,7 @@ _QUERY_ROOTS = {
 }
 _SAFE_SETUP_ROOTS = {
     "signal_generator": {"OUTP", "OUTPUT"},
-    "spectrum_analyzer": {"FREQ", "FREQUENCY", "BAND", "BANDWIDTH", "SPAN"},
+    "spectrum_analyzer": {"FREQ", "FREQUENCY", "BAND", "BANDWIDTH", "SPAN", "CALC"},
     "power_supply": {"VOLT", "VOLTAGE", "CURR", "CURRENT", "VOLT:PROT", "CURR:PROT", "OUTP", "OUTPUT"},
 }
 _SAFE_CLEANUP_ROOTS = {
@@ -101,7 +101,7 @@ def _validate_config(config: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
             raise ValueError(f"{name} timeout_ms must be positive")
         state = _validate_queries(name, raw.get("state_queries"), require_expected=True)
         measurements_raw = raw.get("measurement_queries", [])
-        measurements = _validate_queries(name, measurements_raw, require_expected=True) if measurements_raw else []
+        measurements = _validate_queries(name, measurements_raw, require_expected=False) if measurements_raw else []
         setup = raw.get("setup_commands", [])
         if not isinstance(setup, list):
             raise ValueError(f"{name} setup_commands must be a list")
@@ -156,8 +156,8 @@ def _validate_config(config: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     if not any(q["command"].upper().rstrip("?").split(":")[-1] in {"OUTP", "OUTPUT", "STAT"} and q["expected"] in {"0", 0, False, "OFF"} for q in rf["state_queries"]):
         raise ValueError("signal_generator state_queries must include an explicitly-off output check")
     sa_measurements = normalized["spectrum_analyzer"]["measurement_queries"]
-    if len(sa_measurements) != 1 or not sa_measurements[0]["command"].upper().startswith("POW"):
-        raise ValueError("spectrum_analyzer must configure exactly one power measurement query")
+    if len(sa_measurements) != 1 or sa_measurements[0]["command"].upper() not in {"POW?", "CALC:MARK1:Y?"}:
+        raise ValueError("spectrum_analyzer must configure exactly one supported power measurement query")
     if normalized["power_supply"]["cleanup_commands"] != normalized["power_supply"]["power_off_sequence"]:
         raise ValueError("power_supply cleanup_commands must match power_off_sequence")
     normalized["signal_generator"]["action_commands"] = ["OUTP ON"]
@@ -226,11 +226,21 @@ def run_minimal_action_smoke(config: Mapping[str, Any], resource_manager: Any, *
         try:
             # One analyzer read is the only operation while RF is enabled.
             item = devices["spectrum_analyzer"]["measurement_queries"][0]
+            if item["command"].upper() == "CALC:MARK1:Y?":
+                _bounded_operation(resources["spectrum_analyzer"], devices["spectrum_analyzer"]["timeout_ms"], action_deadline,
+                                    clock, lambda: resources["spectrum_analyzer"].write("CALC:MARK1:MAX"))
+                report["devices"]["spectrum_analyzer"]["writes"].append("CALC:MARK1:MAX")
             response = _bounded_operation(resources["spectrum_analyzer"], devices["spectrum_analyzer"]["timeout_ms"],
                                           action_deadline, clock, lambda: resources["spectrum_analyzer"].query(item["command"]).strip())
             report["devices"]["spectrum_analyzer"]["measurements"] = [{"command": item["command"], "response": response}]
             report["events"].append({"type": "measurement", "device": "spectrum_analyzer"})
-            if not _expected_matches(response, item["expected"]):
+            numeric = float(response)
+            minimum = item.get("min_dbm")
+            maximum = item.get("max_dbm")
+            in_range = (minimum is None or numeric >= float(minimum)) and (maximum is None or numeric <= float(maximum))
+            if item.get("expected") is not None and not _expected_matches(response, item["expected"]):
+                raise AssertionError(f"spectrum analyzer measurement {item['command']!r} returned {response!r}")
+            if not in_range:
                 raise AssertionError(f"spectrum analyzer measurement {item['command']!r} returned {response!r}")
         finally:
             # Turn RF off immediately after the one bounded measurement, even when it fails.

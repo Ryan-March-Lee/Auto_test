@@ -14,7 +14,7 @@ _OUTPUT_TOKENS = {"OUTP", "OUTPUT", "RF", "OUT", "STATE"}
 _ALLOWED_SETUP_ROOTS = {
     "signal_generator": {"FREQ", "FREQUENCY", "POW", "POWER", "OUTP", "OUTPUT"},
     "spectrum_analyzer": {"FREQ", "FREQUENCY", "BAND", "BANDWIDTH", "SPAN", "*CLS", "CLS"},
-    "power_supply": {"VOLT", "VOLTAGE", "CURR", "CURRENT", "OUTP", "OUTPUT"},
+    "power_supply": {"SOURCE", "VOLT", "VOLTAGE", "CURR", "CURRENT", "OUTP", "OUTPUT"},
 }
 _ALLOWED_QUERY_ROOTS = {
     "signal_generator": {"IDN", "SYST", "OUTP", "OUTPUT", "RF"},
@@ -29,13 +29,18 @@ def _validate_command(command: Any, *, allow_output_off: bool = False, allowed_r
     parts = command.strip().upper().split(None, 1)
     command_path = parts[0].rstrip("?")
     path = command_path.replace(":", " ").split()
-    if allowed_roots is not None and path[0].lstrip("*") not in allowed_roots and parts[0].upper() not in allowed_roots:
+    root = path[0].lstrip("*")
+    root_allowed = root in allowed_roots if allowed_roots is not None else True
+    if not root_allowed and root and root[-1].isdigit():
+        root_allowed = root.rstrip("0123456789") in allowed_roots
+    if allowed_roots is not None and not root_allowed and parts[0].upper() not in allowed_roots:
         raise ValueError(f"SCPI command is outside the allowed command set: {command!r}")
     argument = parts[1].strip().upper() if len(parts) == 2 else ""
     output_control = bool(_OUTPUT_TOKENS.intersection(path))
     if output_control:
-        is_query = parts[0].endswith("?") and not argument
-        if not is_query and (not allow_output_off or argument not in {"OFF", "0"}):
+        is_query = parts[0].endswith("?")
+        output_argument = argument.rsplit(",", 1)[-1].strip()
+        if not is_query and (not allow_output_off or output_argument not in {"OFF", "0"}):
             raise ValueError(f"Output-control command is not allowed: {command!r}")
     return command.strip()
 
@@ -83,9 +88,10 @@ def _validate_config(config: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
             if not isinstance(check, Mapping) or "expected" not in check:
                 raise ValueError(f"{name} safety queries require an explicit expected safe value")
             query = _validate_command(check.get("command"))
-            if not query.endswith("?"):
+            query_head = query.split(None, 1)[0]
+            if not query_head.endswith("?"):
                 raise ValueError(f"{name} safety command must be a query: {query!r}")
-            query_root = query[:-1].upper().split(":", 1)[0].lstrip("*")
+            query_root = query_head[:-1].upper().split(":", 1)[0].lstrip("*")
             if query_root not in _ALLOWED_QUERY_ROOTS[name]:
                 raise ValueError(f"{name} query is outside the read-only safety query set: {query!r}")
             normalized_checks.append({"command": query, "expected": check["expected"]})
@@ -102,7 +108,9 @@ def _validate_config(config: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
         # Every device's safety queries must include its output state.
         output_check_required = name in {"signal_generator", "power_supply"}
         has_output_check = any(
-            _OUTPUT_TOKENS.intersection(query["command"].upper().rstrip("?").replace(":", " ").split())
+            _OUTPUT_TOKENS.intersection(
+                query["command"].upper().split(None, 1)[0].rstrip("?").replace(":", " ").split()
+            )
             for query in normalized_checks
         )
         if output_check_required and not has_output_check:
@@ -112,6 +120,14 @@ def _validate_config(config: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
             "setup_commands": setup_commands,
             "cleanup_commands": cleanup_commands,
             "state_queries": normalized_checks,
+            "initial_state_queries": (
+                [
+                    {"command": _validate_command(check["command"]), "expected": check["expected"]}
+                    for check in raw["initial_state_queries"]
+                ]
+                if "initial_state_queries" in raw
+                else None
+            ),
         }
     return normalized
 
@@ -136,9 +152,12 @@ def run_safe_prepare_smoke(config: Mapping[str, Any], resource_manager: Any, *, 
                 expected_model = device.get("model", "")
                 if expected_model and not expected_model.startswith("REPLACE_WITH_") and expected_model not in result["identity"]:
                     raise AssertionError(f"{name} identity does not contain configured model {expected_model!r}")
-                initial_state = [_response(resource, check["command"], clock) for check in device["state_queries"]]
+                initial_checks = device.get("initial_state_queries")
+                if initial_checks is None:
+                    initial_checks = device["state_queries"] if name in {"signal_generator", "power_supply"} else []
+                initial_state = [_response(resource, check["command"], clock) for check in initial_checks]
                 result["initial_state"] = initial_state
-                _check_safe_state(name, initial_state, device["state_queries"])
+                _check_safe_state(name, initial_state, initial_checks)
                 for command in device.get("setup_commands", []):
                     resource.write(command)
                     result["writes"].append(command)

@@ -22,3 +22,15 @@ cleanup SCPI roots are restricted per device; confirm those command forms and
 limits against the actual instrument manuals before site use. Cleanup commands
 are attempted independently, and any cleanup or final-state verification
 failure fails the smoke and is retained in the local report.
+
+Current site status: `safe_prepare` and the formal `read_only` entry have
+passed with the local configuration. The runs confirmed matching identities,
+RF off, both power-supply channels off, and closed VISA resources.
+`minimal_action` was interrupted before `OUTP ON`; no real RF action or
+measurement was performed. Before retrying it, complete the offline validation
+of the pending measurement-command change, switch the local configuration to
+`minimal_action`, confirm the equipment is unloaded, and obtain explicit
+authorization for one bounded RF action. A front-panel remote-control
+indicator may remain after VISA cleanup; use the instrument's documented Local
+operation and check for other VISA clients before treating that indicator as a
+connection leak.

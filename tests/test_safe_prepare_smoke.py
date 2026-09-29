@@ -75,7 +75,11 @@ class SafePrepareSmokeTests(unittest.TestCase):
         self.assertTrue(report["resources_closed"])
         self.assertTrue(all(resource.closed for resource in resources.values()))
         self.assertTrue(all(result["safe_after_cleanup"] for result in report["devices"].values()))
-        self.assertIn(("query", "OUTP?"), resources["sim::sg"].commands)
+        signal_commands = resources["sim::sg"].commands
+        self.assertLess(
+            signal_commands.index(("query", "OUTP?")),
+            signal_commands.index(("write", "FREQ 1000000")),
+        )
 
     def test_rejects_output_enable_and_cleans_up(self):
         setup = config()

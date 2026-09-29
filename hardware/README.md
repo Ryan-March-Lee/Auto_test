@@ -27,10 +27,11 @@ Current site status: `safe_prepare` and the formal `read_only` entry have
 passed with the local configuration. The runs confirmed matching identities,
 RF off, both power-supply channels off, and closed VISA resources.
 `minimal_action` was interrupted before `OUTP ON`; no real RF action or
-measurement was performed. Before retrying it, complete the offline validation
-of the pending measurement-command change, switch the local configuration to
-`minimal_action`, confirm the equipment is unloaded, and obtain explicit
-authorization for one bounded RF action. A front-panel remote-control
-indicator may remain after VISA cleanup; use the instrument's documented Local
-operation and check for other VISA clients before treating that indicator as a
-connection leak.
+measurement was performed. The offline validation is now complete, including
+the `CALC:MARK1:MAX` -> `CALC:MARK1:Y?` sequence, measurement bounds, action
+budget, timeout, and RF/power cleanup. The untracked local configuration is
+prepared for `minimal_action` at 2.3 GHz and -30 dBm. Before executing it,
+confirm the equipment is unloaded and obtain explicit authorization for one
+bounded RF action. A front-panel remote-control indicator may remain after
+VISA cleanup; use the instrument's documented Local operation and check for
+other VISA clients before treating that indicator as a connection leak.

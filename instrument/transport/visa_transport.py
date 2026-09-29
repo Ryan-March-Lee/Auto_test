@@ -7,7 +7,12 @@ import math
 
 from pyvisa import constants
 
-from .scpi_transport import ScpiTransportError, ScpiTransportTimeoutError
+from .scpi_transport import (
+    ScpiTransportError,
+    ScpiTransportTimeoutError,
+    _command_summary,
+    _validate_command,
+)
 
 
 class VisaScpiTransport:
@@ -27,16 +32,21 @@ class VisaScpiTransport:
         self.closed = False
         self.close_count = 0
         try:
-            self.resource.timeout = int(self.timeout_s * 1000)
+            self.resource.timeout = _timeout_ms(self.timeout_s)
         except Exception as exc:
-            raise ScpiTransportError("无法配置 VISA 超时") from exc
+            raise ScpiTransportError(
+                "无法配置 VISA 超时",
+                operation="configure_timeout",
+                original_error=exc,
+            ) from exc
 
     def write(self, command: str) -> None:
+        command = _validate_command(command)
         self._ensure_open()
         try:
             self.resource.write(command)
         except Exception as exc:
-            raise _translate_error(exc, command) from exc
+            raise _translate_error(exc, command, "write") from exc
 
     def set_timeout_s(self, timeout_s: float) -> None:
         timeout_s = float(timeout_s)
@@ -44,17 +54,29 @@ class VisaScpiTransport:
             raise ValueError("timeout_s 必须是有限正数")
         self._ensure_open()
         try:
-            self.resource.timeout = int(timeout_s * 1000)
+            self.resource.timeout = _timeout_ms(timeout_s)
         except Exception as exc:
-            raise ScpiTransportError("无法配置 VISA 超时") from exc
+            raise ScpiTransportError(
+                "无法配置 VISA 超时",
+                operation="configure_timeout",
+                original_error=exc,
+            ) from exc
         self.timeout_s = timeout_s
 
     def query(self, command: str) -> str:
+        command = _validate_command(command)
         self._ensure_open()
         try:
-            return self.resource.query(command)
+            response = self.resource.query(command)
         except Exception as exc:
-            raise _translate_error(exc, command) from exc
+            raise _translate_error(exc, command, "query") from exc
+        if not isinstance(response, str):
+            raise ScpiTransportError(
+                "SCPI 查询响应必须是字符串",
+                operation="query",
+                command=command,
+            )
+        return response
 
     def close(self) -> None:
         if self.closed:
@@ -64,17 +86,36 @@ class VisaScpiTransport:
         try:
             self.resource.close()
         except Exception as exc:
-            raise _translate_error(exc, "close") from exc
+            raise _translate_error(exc, "close", "close") from exc
 
     def _ensure_open(self) -> None:
         if self.closed:
-            raise ScpiTransportError("SCPI transport 已关闭")
+            raise ScpiTransportError("SCPI transport 已关闭", operation="transport")
 
 
-def _translate_error(error: Exception, command: str) -> ScpiTransportError:
+def _translate_error(error: Exception, command: str, operation: str) -> ScpiTransportError:
     if getattr(error, "error_code", None) == constants.StatusCode.error_timeout:
-        return ScpiTransportTimeoutError(f"SCPI 操作超时: {command}")
+        return ScpiTransportTimeoutError(
+            f"SCPI 操作超时: {_command_summary(command)}",
+            operation=operation,
+            command=command,
+            original_error=error,
+        )
     text = str(error).lower()
     if isinstance(error, TimeoutError) or "timeout" in text or "timed out" in text:
-        return ScpiTransportTimeoutError(f"SCPI 操作超时: {command}")
-    return ScpiTransportError(f"SCPI 通信失败: {command}: {error}")
+        return ScpiTransportTimeoutError(
+            f"SCPI 操作超时: {_command_summary(command)}",
+            operation=operation,
+            command=command,
+            original_error=error,
+        )
+    return ScpiTransportError(
+        f"SCPI 通信失败: {_command_summary(command)}",
+        operation=operation,
+        command=command,
+        original_error=error,
+    )
+
+
+def _timeout_ms(timeout_s: float) -> int:
+    return max(1, int(timeout_s * 1000))

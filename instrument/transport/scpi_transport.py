@@ -9,6 +9,19 @@ import math
 class ScpiTransportError(RuntimeError):
     """Base error for communication failures at the SCPI transport boundary."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        operation: str | None = None,
+        command: str | None = None,
+        original_error: Exception | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.operation = operation
+        self.command_summary = _command_summary(command)
+        self.original_error = original_error
+
 
 class ScpiTransportTimeoutError(ScpiTransportError, TimeoutError):
     """Raised when a SCPI operation exceeds its configured timeout."""
@@ -30,7 +43,7 @@ class ScpiTransport(Protocol):
         ...
 
 
-FailureRule = Union[str, Callable[[str], bool], None]
+FailureRule = Union[str, Callable[[str], bool], Exception, None]
 
 
 class MockScpiTransport:
@@ -69,23 +82,36 @@ class MockScpiTransport:
         self.close_count = 0
 
     def write(self, command: str) -> None:
+        command = _validate_command(command)
         self._ensure_open()
         self.operations.append(("write", command))
         self.writes.append(command)
-        self._raise_if_timeout(self.timeout_on_write, command)
+        self._raise_if_timeout(self.timeout_on_write, command, "write")
         if _matches_failure_rule(self.fail_on_write, command):
-            raise ScpiTransportError(f"SCPI 写入失败: {command}")
+            raise _failure_for(self.fail_on_write, "write", command, "SCPI 写入失败")
 
     def query(self, command: str) -> str:
+        command = _validate_command(command)
         self._ensure_open()
         self.operations.append(("query", command))
         self.queries.append(command)
-        self._raise_if_timeout(self.timeout_on_query, command)
+        self._raise_if_timeout(self.timeout_on_query, command, "query")
         if _matches_failure_rule(self.fail_on_query, command):
-            raise ScpiTransportError(f"SCPI 查询失败: {command}")
+            raise _failure_for(self.fail_on_query, "query", command, "SCPI 查询失败")
         if command not in self.responses:
-            raise ScpiTransportError(f"未配置 SCPI 查询响应: {command}")
-        return self.responses[command]
+            raise ScpiTransportError(
+                f"未配置 SCPI 查询响应: {_command_summary(command)}",
+                operation="query",
+                command=command,
+            )
+        response = self.responses[command]
+        if not isinstance(response, str):
+            raise ScpiTransportError(
+                "SCPI 查询响应必须是字符串",
+                operation="query",
+                command=command,
+            )
+        return response
 
     def close(self) -> None:
         if self.closed:
@@ -93,7 +119,11 @@ class MockScpiTransport:
         self.closed = True
         self.close_count += 1
         if self.fail_on_close:
-            raise ScpiTransportError("SCPI transport 关闭失败")
+            raise ScpiTransportError(
+                "SCPI transport 关闭失败",
+                operation="close",
+                original_error=self.fail_on_close if isinstance(self.fail_on_close, Exception) else None,
+            )
 
     def set_timeout_s(self, timeout_s: float) -> None:
         timeout_s = float(timeout_s)
@@ -103,12 +133,14 @@ class MockScpiTransport:
 
     def _ensure_open(self) -> None:
         if self.closed:
-            raise ScpiTransportError("SCPI transport 已关闭")
+            raise ScpiTransportError("SCPI transport 已关闭", operation="transport")
 
-    def _raise_if_timeout(self, rule: FailureRule, command: str) -> None:
+    def _raise_if_timeout(self, rule: FailureRule, command: str, operation: str) -> None:
         if _matches_failure_rule(rule, command):
             raise ScpiTransportTimeoutError(
-                f"SCPI 操作超时 ({self.timeout_s:g}s): {command}"
+                f"SCPI 操作超时 ({self.timeout_s:g}s): {_command_summary(command)}",
+                operation=operation,
+                command=command,
             )
 
 
@@ -117,4 +149,39 @@ def _matches_failure_rule(rule: FailureRule, value: str) -> bool:
         return False
     if isinstance(rule, str):
         return rule == value
+    if isinstance(rule, Exception):
+        return True
     return bool(rule(value))
+
+
+def _failure_for(rule: FailureRule, operation: str, command: str, prefix: str) -> ScpiTransportError:
+    if isinstance(rule, Exception):
+        error_type = (
+            ScpiTransportTimeoutError
+            if isinstance(rule, ScpiTransportTimeoutError)
+            else ScpiTransportError
+        )
+        return error_type(
+            f"{prefix}: {_command_summary(command)}",
+            operation=operation,
+            command=command,
+            original_error=rule,
+        )
+    return ScpiTransportError(
+        f"{prefix}: {_command_summary(command)}",
+        operation=operation,
+        command=command,
+    )
+
+
+def _validate_command(command: str) -> str:
+    if not isinstance(command, str) or not command.strip():
+        raise ValueError("SCPI command 必须是非空字符串")
+    return command
+
+
+def _command_summary(command: str | None, limit: int = 120) -> str:
+    if command is None:
+        return ""
+    compact = " ".join(str(command).split())
+    return compact if len(compact) <= limit else compact[: limit - 3] + "..."

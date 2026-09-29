@@ -26,10 +26,40 @@ class MockScpiTransportTests(unittest.TestCase):
         with self.assertRaisesRegex(ScpiTransportError, "未配置 SCPI 查询响应"):
             MockScpiTransport().query("*IDN?")
 
+    def test_rejects_empty_commands_before_recording_an_operation(self):
+        transport = MockScpiTransport()
+        with self.assertRaises(ValueError):
+            transport.write("  ")
+        with self.assertRaises(ValueError):
+            transport.query("")
+        self.assertEqual(transport.operations, [])
+
+    def test_mock_can_inject_a_specific_write_exception_with_context(self):
+        cause = RuntimeError("device rejected command")
+        transport = MockScpiTransport(fail_on_write=cause)
+        with self.assertRaises(ScpiTransportError) as raised:
+            transport.write("CONF")
+        self.assertEqual(raised.exception.operation, "write")
+        self.assertIs(raised.exception.original_error, cause)
+
+    def test_mock_preserves_injected_timeout_type_with_context(self):
+        cause = ScpiTransportTimeoutError("injected timeout")
+        transport = MockScpiTransport(fail_on_query=cause)
+        with self.assertRaises(ScpiTransportTimeoutError) as raised:
+            transport.query("MEAS?")
+        self.assertEqual(raised.exception.operation, "query")
+        self.assertEqual(raised.exception.command_summary, "MEAS?")
+        self.assertIs(raised.exception.original_error, cause)
+
+    def test_query_response_must_be_text(self):
+        with self.assertRaises(ScpiTransportError):
+            MockScpiTransport({"MEAS?": 1.25}).query("MEAS?")
+
     def test_timeout_is_configurable_without_sleeping(self):
         transport = MockScpiTransport(timeout_s=1.5, timeout_on_query="MEAS?")
         with self.assertRaisesRegex(ScpiTransportTimeoutError, "1.5s"):
             transport.query("MEAS?")
+        self.assertEqual(transport.operations, [("query", "MEAS?")])
 
     def test_timeout_can_be_changed_for_the_next_operation(self):
         transport = MockScpiTransport()
@@ -86,6 +116,15 @@ class VisaScpiTransportTests(unittest.TestCase):
         self.assertEqual(resource.timeout, 2500)
         self.assertEqual(resource.calls[:2], [("write", "CONF"), ("query", "MEAS?")])
 
+    def test_rejects_empty_commands_before_touching_resource(self):
+        resource = self.Resource()
+        transport = VisaScpiTransport(resource)
+        with self.assertRaises(ValueError):
+            transport.write(" ")
+        with self.assertRaises(ValueError):
+            transport.query("")
+        self.assertEqual(resource.calls, [])
+
     def test_updates_resource_timeout_for_each_operation_timeout(self):
         resource = self.Resource()
         transport = VisaScpiTransport(resource, timeout_s=2.5)
@@ -125,6 +164,10 @@ class VisaScpiTransportTests(unittest.TestCase):
         with self.assertRaises(ScpiTransportError) as raised:
             transport.write("CONF")
         self.assertNotIsInstance(raised.exception, ScpiTransportTimeoutError)
+        self.assertEqual(raised.exception.operation, "write")
+        self.assertEqual(raised.exception.command_summary, "CONF")
+        self.assertIsNotNone(raised.exception.original_error)
+        self.assertNotIn("-1073807298", str(raised.exception))
 
     def test_failed_close_is_terminal_and_is_not_retried(self):
         resource = self.Resource()
@@ -166,8 +209,17 @@ class VisaScpiTransportTests(unittest.TestCase):
             def timeout(self, _value):
                 raise RuntimeError("timeout cannot be configured")
 
-        with self.assertRaises(ScpiTransportError):
+        with self.assertRaises(ScpiTransportError) as raised:
             VisaScpiTransport(ResourceWithReadOnlyTimeout())
+        self.assertEqual(raised.exception.operation, "configure_timeout")
+        self.assertIsNotNone(raised.exception.original_error)
+
+    def test_query_rejects_non_text_resource_response(self):
+        resource = self.Resource()
+        resource.response = 1.25
+        transport = VisaScpiTransport(resource)
+        with self.assertRaises(ScpiTransportError):
+            transport.query("MEAS?")
 
 
 if __name__ == "__main__":

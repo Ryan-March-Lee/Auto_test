@@ -14,5 +14,7 @@ $env:HARDWARE_SMOKE_ENABLED = "1"
 
 The entry point requires the interpreter from `.env`, a non-example
 `hardware_smoke` configuration, explicit confirmation, and a non-CI process.
-The registered smoke test only sends `*IDN?` and closes every opened resource;
-it does not enable RF or power outputs.
+The registered smoke test sends only configured, allow-listed query commands
+(`*IDN?`, `SYST:ERR?`, and `OUTP?`) and closes every opened resource; it does
+not enable RF or power outputs. The example configuration shows the expected
+identity, error-state, and output-state checks for each device.

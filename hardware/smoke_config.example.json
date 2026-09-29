@@ -4,18 +4,28 @@
   "require_user_confirmation": true,
   "max_action_count": 0,
   "max_duration_s": 30,
+  "result_path": "smoke_result.local.json",
   "devices": {
     "signal_generator": {
       "address": "TCPIP0::REPLACE_WITH_DEVICE::inst0::INSTR",
-      "model": "REPLACE_WITH_MODEL"
+      "model": "REPLACE_WITH_MODEL",
+      "timeout_ms": 5000,
+      "queries": ["*IDN?", "SYST:ERR?", "OUTP?"],
+      "expected_responses": {"SYST:ERR?": "0", "OUTP?": "0"}
     },
     "spectrum_analyzer": {
       "address": "TCPIP0::REPLACE_WITH_DEVICE::inst0::INSTR",
-      "model": "REPLACE_WITH_MODEL"
+      "model": "REPLACE_WITH_MODEL",
+      "timeout_ms": 5000,
+      "queries": ["*IDN?", "SYST:ERR?"],
+      "expected_responses": {"SYST:ERR?": "0"}
     },
     "power_supply": {
       "address": "TCPIP0::REPLACE_WITH_DEVICE::inst0::INSTR",
-      "model": "REPLACE_WITH_MODEL"
+      "model": "REPLACE_WITH_MODEL",
+      "timeout_ms": 5000,
+      "queries": ["*IDN?", "SYST:ERR?", "OUTP?"],
+      "expected_responses": {"SYST:ERR?": "0", "OUTP?": "0"}
     }
   }
 }

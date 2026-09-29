@@ -36,3 +36,4 @@ power_data.mdf
 .env.*
 !.env.example
 search_api_config.local.json
+hardware/smoke_config.local.json

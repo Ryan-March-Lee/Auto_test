@@ -1,0 +1,21 @@
+{
+  "environment": "hardware_smoke",
+  "require_empty_setup": true,
+  "require_user_confirmation": true,
+  "max_action_count": 0,
+  "max_duration_s": 30,
+  "devices": {
+    "signal_generator": {
+      "address": "TCPIP0::REPLACE_WITH_DEVICE::inst0::INSTR",
+      "model": "REPLACE_WITH_MODEL"
+    },
+    "spectrum_analyzer": {
+      "address": "TCPIP0::REPLACE_WITH_DEVICE::inst0::INSTR",
+      "model": "REPLACE_WITH_MODEL"
+    },
+    "power_supply": {
+      "address": "TCPIP0::REPLACE_WITH_DEVICE::inst0::INSTR",
+      "model": "REPLACE_WITH_MODEL"
+    }
+  }
+}

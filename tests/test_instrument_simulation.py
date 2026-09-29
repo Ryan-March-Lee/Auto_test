@@ -3,6 +3,7 @@ import unittest
 from instrument.ports import InstrumentState
 from instrument.simulation import (
     CommandRecorder,
+    FailureInjector,
     RecordedSequence,
     SafetyInstrumentSession,
     SimulatedPowerSupply,
@@ -163,6 +164,50 @@ class SimulationLifecycleTests(unittest.TestCase):
         replayed = []
         restored.replay(lambda *command: replayed.append(command))
         self.assertEqual(replayed, [("signal_generator", "set_power_dbm", 10.0)])
+
+    def test_all_devices_share_one_step_failure_injection_contract(self):
+        for device, action in (
+            (self.sg, "connect"),
+            (self.sa, "connect"),
+            (self.ps, "connect"),
+        ):
+            with self.subTest(device=device.device_name):
+                device.inject_failure(action)
+                with self.assertRaisesRegex(RuntimeError, action):
+                    device.connect()
+                device.connect()
+                self.assertEqual(
+                    [entry[1] for entry in self.recorder.commands[-2:]],
+                    [action, action],
+                )
+
+    def test_query_and_cleanup_failures_are_injected_independently(self):
+        self.sg.connect()
+        self.sg.inject_failure("close", phase="cleanup")
+        with self.assertRaisesRegex(RuntimeError, "close"):
+            self.sg.close()
+        self.assertTrue(self.sg.connected)
+        self.sg.close()
+        self.assertFalse(self.sg.connected)
+
+        self.sa.connect()
+        self.sa.configure_center_frequency_hz(1e9)
+        self.sa.inject_failure("measure_power_dbm", phase="query")
+        with self.assertRaisesRegex(RuntimeError, "query failure"):
+            self.sa.measure_power_dbm()
+        self.assertEqual(self.sa.measure_power_dbm(), -30.0)
+
+    def test_failure_injector_rejects_unknown_phase(self):
+        with self.assertRaises(ValueError):
+            FailureInjector().inject("connect", phase="unknown")
+
+    def test_persistent_action_failure_remains_active(self):
+        device = SimulatedSignalGenerator(self.recorder)
+        device.inject_failure("connect", once=False)
+        with self.assertRaisesRegex(RuntimeError, "connect"):
+            device.connect()
+        with self.assertRaisesRegex(RuntimeError, "connect"):
+            device.connect()
 
 
 if __name__ == "__main__":

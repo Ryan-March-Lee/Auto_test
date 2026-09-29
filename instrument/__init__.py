@@ -12,6 +12,7 @@ from .ports import (
 )
 from .simulation import (
     CommandRecorder,
+    FailureInjector,
     RecordedSequence,
     SafetyInstrumentSession,
     SimulatedPowerSupply,
@@ -38,6 +39,7 @@ __all__ = [
     "SignalGeneratorPort",
     "SpectrumAnalyzerPort",
     "CommandRecorder",
+    "FailureInjector",
     "RecordedSequence",
     "SafetyInstrumentSession",
     "SimulatedPowerSupply",

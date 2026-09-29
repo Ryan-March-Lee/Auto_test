@@ -26,10 +26,72 @@ class CommandRecorder:
         self.commands.append((device, action, value))
 
 
-class SimulatedSignalGenerator:
-    def __init__(self, recorder: Optional[CommandRecorder] = None, *, fail_on: FailureRule = None):
+class FailureInjector:
+    """统一的模拟故障注入器；默认注入一次，便于测试恢复路径。"""
+
+    def __init__(self, fail_on: FailureRule = None):
+        self.fail_on = fail_on
+        self.fail_on_query: FailureRule = None
+        self.fail_on_cleanup: FailureRule = None
+        self._once: List[Tuple[str, FailureRule]] = []
+
+    def inject(self, action: FailureRule, *, once: bool = True, phase: str = "action") -> None:
+        if phase not in {"action", "query", "cleanup"}:
+            raise ValueError("phase must be action, query or cleanup")
+        if once:
+            self._once.append((phase, action))
+        elif phase == "action":
+            self.fail_on = action
+        elif phase == "query":
+            self.fail_on_query = action
+        else:
+            self.fail_on_cleanup = action
+
+    def should_fail(self, action: str, *, phase: str = "action") -> bool:
+        for index, (rule_phase, rule) in enumerate(self._once):
+            if rule_phase == phase and _matches_failure(rule, action):
+                self._once.pop(index)
+                return True
+        rule = {
+            "action": self.fail_on,
+            "query": self.fail_on_query,
+            "cleanup": self.fail_on_cleanup,
+        }[phase]
+        if rule is None and phase != "action":
+            rule = self.fail_on
+        return _matches_failure(rule, action)
+
+
+class _SimulatedDevice:
+    """共享模拟设备的记录和故障注入行为。"""
+
+    device_name = "device"
+
+    def _init_simulation(self, recorder: Optional[CommandRecorder], fail_on: FailureRule) -> None:
         self.recorder = recorder or CommandRecorder()
         self.fail_on = fail_on
+        self.failure_injector = FailureInjector(fail_on)
+
+    def inject_failure(self, action: FailureRule, *, once: bool = True, phase: str = "action") -> None:
+        self.failure_injector.inject(action, once=once, phase=phase)
+        if not once and phase == "action":
+            # ``fail_on`` 是保留的公开兼容属性；同步它才能让持续注入
+            # 与旧调用方式以及后续动作使用同一份规则。
+            self.fail_on = action
+
+    def _record(self, action: str, value=None, *, phase: str = "action") -> None:
+        self.recorder.record(self.device_name, action, value)
+        # 保持旧测试直接修改 ``fail_on`` 的兼容性。
+        self.failure_injector.fail_on = self.fail_on
+        if self.failure_injector.should_fail(action, phase=phase):
+            display_name = self.device_name.replace("_", " ")
+            raise RuntimeError(f"simulated {display_name} failure: {action}")
+
+
+class SimulatedSignalGenerator(_SimulatedDevice):
+    device_name = "signal_generator"
+    def __init__(self, recorder: Optional[CommandRecorder] = None, *, fail_on: FailureRule = None):
+        self._init_simulation(recorder, fail_on)
         self.connected = False
         self.rf_enabled = False
         self.prepared = False
@@ -37,9 +99,7 @@ class SimulatedSignalGenerator:
         self.power_dbm = None
 
     def _command(self, action: str, value=None):
-        self.recorder.record("signal_generator", action, value)
-        if _matches_failure(self.fail_on, action):
-            raise RuntimeError(f"simulated signal generator failure: {action}")
+        self._record(action, value)
 
     def connect(self, *, timeout_s=10.0):
         self._command("connect")
@@ -66,16 +126,16 @@ class SimulatedSignalGenerator:
     def close(self, *, timeout_s=5.0):
         if self.connected:
             self.set_rf_enabled(False, timeout_s=timeout_s)
-            self._command("close")
+            self._record("close", phase="cleanup")
             self.connected = False
 
 
-class SimulatedSpectrumAnalyzer:
+class SimulatedSpectrumAnalyzer(_SimulatedDevice):
+    device_name = "spectrum_analyzer"
     def __init__(self, readings: Sequence[float] = (-30.0,), recorder=None, *,
                  fail_on: FailureRule = None, reading_model: Optional[Callable[[float], float]] = None,
                  input_power_source=None):
-        self.recorder = recorder or CommandRecorder()
-        self.fail_on = fail_on
+        self._init_simulation(recorder, fail_on)
         self.readings = list(readings)
         self.read_index = 0
         self.reading_model = reading_model
@@ -84,9 +144,7 @@ class SimulatedSpectrumAnalyzer:
         self.configured = False
 
     def _command(self, action, value=None):
-        self.recorder.record("spectrum_analyzer", action, value)
-        if _matches_failure(self.fail_on, action):
-            raise RuntimeError(f"simulated spectrum analyzer failure: {action}")
+        self._record(action, value)
 
     def connect(self, *, timeout_s=10.0):
         self._command("connect")
@@ -106,6 +164,8 @@ class SimulatedSpectrumAnalyzer:
 
     def measure_power_dbm(self, *, timeout_s=10.0):
         self._command("measure_power_dbm")
+        if self.failure_injector.should_fail("measure_power_dbm", phase="query"):
+            raise RuntimeError("simulated spectrum_analyzer query failure: measure_power_dbm")
         if not self.connected or not self.configured:
             raise RuntimeError("analyzer must be connected and configured")
         if not self.readings:
@@ -121,16 +181,16 @@ class SimulatedSpectrumAnalyzer:
 
     def close(self, *, timeout_s=5.0):
         if self.connected:
-            self._command("close")
+            self._record("close", phase="cleanup")
             self.connected = False
 
 
-class SimulatedPowerSupply:
+class SimulatedPowerSupply(_SimulatedDevice):
+    device_name = "power_supply"
     def __init__(self, recorder=None, *, fail_on: FailureRule = None,
                  voltage_readings: Optional[Mapping[str, float]] = None,
                  current_readings: Optional[Mapping[str, float]] = None):
-        self.recorder = recorder or CommandRecorder()
-        self.fail_on = fail_on
+        self._init_simulation(recorder, fail_on)
         self.connected = False
         self.voltages: Dict[str, float] = {}
         self.currents: Dict[str, float] = {}
@@ -139,9 +199,7 @@ class SimulatedPowerSupply:
         self.current_readings = dict(current_readings or {})
 
     def _command(self, action, value=None):
-        self.recorder.record("power_supply", action, value)
-        if _matches_failure(self.fail_on, action):
-            raise RuntimeError(f"simulated power supply failure: {action}")
+        self._record(action, value)
 
     def connect(self, *, timeout_s=10.0):
         self._command("connect")
@@ -167,6 +225,8 @@ class SimulatedPowerSupply:
 
     def read_voltage(self, channel, *, timeout_s=5.0):
         self._command("read_voltage", channel)
+        if self.failure_injector.should_fail("read_voltage", phase="query"):
+            raise RuntimeError("simulated power_supply query failure: read_voltage")
         if not self.connected:
             raise RuntimeError("power supply is not connected")
         if channel in self.voltage_readings:
@@ -175,13 +235,15 @@ class SimulatedPowerSupply:
 
     def read_current(self, channel, *, timeout_s=5.0):
         self._command("read_current", channel)
+        if self.failure_injector.should_fail("read_current", phase="query"):
+            raise RuntimeError("simulated power_supply query failure: read_current")
         if not self.connected:
             raise RuntimeError("power supply is not connected")
         return float(self.current_readings.get(channel, 0.0))
 
     def close(self, *, timeout_s=5.0):
         if self.connected:
-            self._command("close")
+            self._record("close", phase="cleanup")
             self.connected = False
 
 

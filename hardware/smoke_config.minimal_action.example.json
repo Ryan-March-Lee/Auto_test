@@ -1,0 +1,51 @@
+{
+  "environment": "hardware_smoke",
+  "require_empty_setup": true,
+  "require_user_confirmation": true,
+  "smoke_mode": "minimal_action",
+  "max_action_count": 1,
+  "max_duration_s": 30,
+  "action_timeout_s": 1,
+  "cleanup_timeout_s": 2,
+  "result_path": "smoke_result.local.json",
+  "devices": {
+    "signal_generator": {
+      "address": "TCPIP0::REPLACE_WITH_DEVICE::inst0::INSTR",
+      "model": "REPLACE_WITH_MODEL",
+      "timeout_ms": 5000,
+      "setup_commands": [],
+      "rf_parameters": {
+        "frequency_hz": 1000000000,
+        "min_frequency_hz": 900000000,
+        "max_frequency_hz": 1100000000,
+        "power_dbm": -30,
+        "max_power_dbm": -20
+      },
+      "measurement_queries": [],
+      "state_queries": [{"command": "OUTP?", "expected": "0"}],
+      "cleanup_commands": []
+    },
+    "spectrum_analyzer": {
+      "address": "TCPIP0::REPLACE_WITH_DEVICE::inst0::INSTR",
+      "model": "REPLACE_WITH_MODEL",
+      "timeout_ms": 5000,
+      "setup_commands": ["BAND REPLACE_WITH_BANDWIDTH_HZ"],
+      "measurement_queries": [{"command": "POW?", "expected": "REPLACE_WITH_EXPECTED_POWER"}],
+      "state_queries": [{"command": "FREQ:CENT?", "expected": "REPLACE_WITH_FREQUENCY_HZ"}],
+      "cleanup_commands": ["*CLS"]
+    },
+    "power_supply": {
+      "address": "TCPIP0::REPLACE_WITH_DEVICE::inst0::INSTR",
+      "model": "REPLACE_WITH_MODEL",
+      "timeout_ms": 5000,
+      "setup_commands": ["VOLT REPLACE_WITH_VOLTAGE_V", "CURR REPLACE_WITH_CURRENT_A"],
+      "measurement_queries": [],
+      "state_queries": [
+        {"command": "OUTP? CH2", "expected": "0"},
+        {"command": "OUTP? CH1", "expected": "0"}
+      ],
+      "power_off_sequence": [":OUTPut CH2,OFF", ":OUTPut CH1,OFF"],
+      "cleanup_commands": [":OUTPut CH2,OFF", ":OUTPut CH1,OFF"]
+    }
+  }
+}

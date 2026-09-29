@@ -86,6 +86,49 @@ class MinimalActionSmokeTests(unittest.TestCase):
         self.assertLess(resources["ps"].commands.index(("write", "OUTP CH2,OFF")),
                         resources["ps"].commands.index(("write", "OUTP CH1,OFF")))
 
+    def test_marker_measurement_selects_peak_before_reading_value(self):
+        setup = config()
+        setup["devices"]["spectrum_analyzer"]["measurement_queries"] = [
+            {"command": "CALC:MARK1:Y?", "expected": "-30", "min_dbm": -40, "max_dbm": -20}
+        ]
+        resources = self.resources()
+        resources["sa"].responses["CALC:MARK1:Y?"] = "-30"
+
+        report = run_minimal_action_smoke(setup, Manager(resources))
+
+        self.assertEqual(report["action_count"], 1)
+        analyzer_commands = resources["sa"].commands
+        marker_setup = analyzer_commands.index(("write", "CALC:MARK1:MAX"))
+        marker_read = analyzer_commands.index(("query", "CALC:MARK1:Y?"))
+        self.assertLess(marker_setup, marker_read)
+        self.assertEqual(report["devices"]["spectrum_analyzer"]["measurements"][0]["response"], "-30")
+
+    def test_measurement_range_failure_still_turns_rf_off(self):
+        setup = config()
+        setup["devices"]["spectrum_analyzer"]["measurement_queries"][0].update(
+            {"min_dbm": -25, "max_dbm": -20}
+        )
+        resources = self.resources()
+
+        with self.assertRaises(SmokeExecutionError):
+            run_minimal_action_smoke(setup, Manager(resources))
+
+        self.assertIn(("write", "OUTP OFF"), resources["sg"].commands)
+        self.assertTrue(resources["sg"].closed)
+
+    def test_action_timeout_is_enforced_and_cleanup_runs(self):
+        setup = config()
+        setup["max_duration_s"] = 0.005
+        setup["action_timeout_s"] = 0.001
+        resources = self.resources()
+        manager = Manager(resources)
+        clock_values = iter(index * 0.01 for index in range(100))
+
+        with self.assertRaises(SmokeExecutionError):
+            run_minimal_action_smoke(setup, manager, clock=lambda: next(clock_values))
+
+        self.assertTrue(manager.closed)
+
     def test_action_budget_and_output_enable_are_restricted(self):
         setup = config()
         setup["devices"]["signal_generator"]["rf_parameters"]["power_dbm"] = 0

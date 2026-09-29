@@ -13,7 +13,7 @@ from hardware.safe_prepare_smoke import _expected_matches, _validate_command
 _DEVICES = ("signal_generator", "spectrum_analyzer", "power_supply")
 _QUERY_ROOTS = {
     "signal_generator": {"OUTP", "OUTPUT", "RF"},
-    "spectrum_analyzer": {"FREQ", "FREQUENCY", "BAND", "BANDWIDTH", "SPAN", "POW", "POWER"},
+    "spectrum_analyzer": {"FREQ", "FREQUENCY", "BAND", "BANDWIDTH", "SPAN", "POW", "POWER", "CALC"},
     "power_supply": {"OUTP", "OUTPUT"},
 }
 _SAFE_SETUP_ROOTS = {
@@ -58,7 +58,11 @@ def _validate_queries(name: str, values: Any, *, require_expected: bool) -> list
             raise ValueError(f"{name} command must be a query: {command!r}")
         if require_expected and ("expected" not in item or item["expected"] is None):
             raise ValueError(f"{name} safety queries require an explicit expected value")
-        normalized.append({"command": command, "expected": item.get("expected")})
+        normalized_item = {"command": command, "expected": item.get("expected")}
+        for bound in ("min_dbm", "max_dbm"):
+            if bound in item:
+                normalized_item[bound] = _number(item[bound], f"{name}.{bound}")
+        normalized.append(normalized_item)
     return normalized
 
 

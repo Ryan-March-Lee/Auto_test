@@ -62,6 +62,19 @@ class SimulationLifecycleTests(unittest.TestCase):
                 self.assertEqual(len(self.recorder.commands), count)
                 self.assertEqual(self.session.state, InstrumentState.CLEANED)
 
+    def test_ordinary_stop_requires_measurement_but_emergency_stop_accepts_prepared_state(self):
+        self._prepare()
+        with self.assertRaisesRegex(ValueError, "ordinary stop is invalid"):
+            self.session.stop()
+        self.assertEqual(self.session.state, InstrumentState.PREPARED)
+        self.assertTrue(self.sg.connected)
+
+        self.session.stop(emergency=True)
+        self.assertEqual(self.session.state, InstrumentState.CLEANED)
+        self.assertFalse(self.sg.connected)
+        self.assertFalse(self.sa.connected)
+        self.assertFalse(self.ps.connected)
+
     def test_rf_is_default_off_and_power_order_is_gate_then_drain(self):
         self._prepare()
         self.assertFalse(self.sg.rf_enabled)
@@ -99,6 +112,20 @@ class SimulationLifecycleTests(unittest.TestCase):
         self.assertFalse(self.sg.connected)
         self.assertEqual(self.session.state, InstrumentState.CLEANED)
 
+    def test_signal_generator_and_power_supply_connection_failures_are_cleaned(self):
+        for device_name in ("signal_generator", "power_supply"):
+            with self.subTest(device=device_name):
+                self.setUp()
+                device = getattr(self, "sg" if device_name == "signal_generator" else "ps")
+                device.fail_on = "connect"
+                self.session.validate()
+                with self.assertRaisesRegex(RuntimeError, "failure: connect"):
+                    self.session.connect()
+                self.assertEqual(self.session.state, InstrumentState.CLEANED)
+                self.assertFalse(self.sg.connected)
+                self.assertFalse(self.sa.connected)
+                self.assertFalse(self.ps.connected)
+
     def test_setting_reading_and_shutdown_failures_are_injectable_and_cleanup_continues(self):
         self._prepare()
         self.sa.fail_on = "measure_power_dbm"
@@ -122,6 +149,81 @@ class SimulationLifecycleTests(unittest.TestCase):
             self.session.prepare(frequency_hz=1e9)
         self.assertFalse(self.sg.connected)
         self.assertFalse(self.sa.connected)
+        self.assertFalse(self.ps.connected)
+        self.assertEqual(self.session.state, InstrumentState.CLEANED)
+
+    def test_rf_enable_failure_closes_resources_and_never_marks_rf_enabled(self):
+        self._prepare()
+        self.session.power_on()
+        self.session.start_measurement()
+        self.sg.inject_failure("rf_on")
+        with self.assertRaisesRegex(RuntimeError, "failure: rf_on"):
+            self.session.set_rf_enabled(True)
+        self.session.close()
+        self.assertFalse(self.sg.rf_enabled)
+        self.assertFalse(any(self.ps.outputs.values()))
+        self.assertFalse(self.sa.connected)
+        self.assertEqual(self.session.state, InstrumentState.CLEANED)
+
+    def test_query_failure_during_measurement_is_followed_by_safe_cleanup(self):
+        self._prepare()
+        self.session.power_on()
+        self.session.start_measurement()
+        self.session.set_rf_enabled(True)
+        self.sa.inject_failure("measure_power_dbm", phase="query")
+        with self.assertRaisesRegex(RuntimeError, "query failure"):
+            self.sa.measure_power_dbm()
+
+        self.session.close()
+        self.assertFalse(self.sg.rf_enabled)
+        self.assertFalse(any(self.ps.outputs.values()))
+        self.assertFalse(self.sg.connected)
+        self.assertFalse(self.sa.connected)
+        self.assertFalse(self.ps.connected)
+
+    def test_drain_and_gate_shutdown_failures_still_attempt_later_cleanup(self):
+        for failed_channel in ("B", "A"):
+            with self.subTest(failed_channel=failed_channel):
+                self.setUp()
+                self._prepare()
+                self.session.power_on()
+                self.session.set_rf_enabled(True)
+                failed = {"done": False}
+                def fail_selected_shutdown(action):
+                    if action != "output_off":
+                        return False
+                    failed["done"] = not failed["done"]
+                    return failed["done"] if failed_channel == "B" else not failed["done"]
+
+                self.ps.inject_failure(fail_selected_shutdown)
+                with self.assertRaisesRegex(RuntimeError, "cleanup failed"):
+                    self.session.close()
+
+                off_channels = [
+                    value for device, action, value in self.recorder.commands
+                    if device == "power_supply" and action == "output_off"
+                ]
+                self.assertEqual(off_channels, ["B", "A"])
+                self.assertFalse(self.sg.rf_enabled)
+                self.assertFalse(self.sg.connected)
+                self.assertFalse(self.sa.connected)
+                self.assertTrue(self.ps.connected)
+                self.session.close()
+                self.assertFalse(self.ps.connected)
+
+    def test_connection_close_failure_keeps_resource_for_retry_after_other_cleanup(self):
+        self._prepare()
+        self.session.power_on()
+        self.ps.inject_failure("close", phase="cleanup")
+        with self.assertRaisesRegex(RuntimeError, "cleanup failed"):
+            self.session.close()
+
+        self.assertFalse(self.sg.connected)
+        self.assertFalse(self.sa.connected)
+        self.assertTrue(self.ps.connected)
+        self.assertEqual(self.session.state, InstrumentState.STOPPING)
+
+        self.session.close()
         self.assertFalse(self.ps.connected)
         self.assertEqual(self.session.state, InstrumentState.CLEANED)
 

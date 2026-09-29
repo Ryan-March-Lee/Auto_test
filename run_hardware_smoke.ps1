@@ -51,6 +51,10 @@ if ($Config.require_user_confirmation -ne $true) {
 if ($Config.require_empty_setup -ne $true) {
     throw "Hardware smoke configuration must require an empty setup."
 }
+$ConfigText = $Config | ConvertTo-Json -Depth 20 -Compress
+if ($ConfigText -match 'REPLACE_WITH_') {
+    throw "Hardware smoke configuration still contains placeholder values."
+}
 if ($Config.devices.signal_generator.address -match 'REPLACE_WITH_' -or
     $Config.devices.spectrum_analyzer.address -match 'REPLACE_WITH_' -or
     $Config.devices.power_supply.address -match 'REPLACE_WITH_') {

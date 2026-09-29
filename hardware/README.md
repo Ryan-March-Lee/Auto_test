@@ -14,7 +14,11 @@ $env:HARDWARE_SMOKE_ENABLED = "1"
 
 The entry point requires the interpreter from `.env`, a non-example
 `hardware_smoke` configuration, explicit confirmation, and a non-CI process.
-The registered smoke test sends only configured, allow-listed query commands
-(`*IDN?`, `SYST:ERR?`, and `OUTP?`) and closes every opened resource; it does
-not enable RF or power outputs. The example configuration shows the expected
-identity, error-state, and output-state checks for each device.
+The preparation runner requires exactly one signal generator, spectrum
+analyzer, and power supply. Signal generator and supply configurations must
+query their output state before and after cleanup with an explicit expected-off
+value. The analyzer must provide an explicit post-setup state query. Setup and
+cleanup SCPI roots are restricted per device; confirm those command forms and
+limits against the actual instrument manuals before site use. Cleanup commands
+are attempted independently, and any cleanup or final-state verification
+failure fails the smoke and is retained in the local report.

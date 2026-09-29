@@ -2,6 +2,7 @@
   "environment": "hardware_smoke",
   "require_empty_setup": true,
   "require_user_confirmation": true,
+  "smoke_mode": "safe_prepare",
   "max_action_count": 0,
   "max_duration_s": 30,
   "result_path": "smoke_result.local.json",
@@ -11,21 +12,34 @@
       "model": "REPLACE_WITH_MODEL",
       "timeout_ms": 5000,
       "queries": ["*IDN?", "SYST:ERR?", "OUTP?"],
-      "expected_responses": {"SYST:ERR?": "0", "OUTP?": "0"}
+      "expected_responses": {"SYST:ERR?": "0", "OUTP?": "0"},
+      "setup_commands": ["FREQ REPLACE_WITH_FREQUENCY_HZ", "POW REPLACE_WITH_MIN_POWER_DBM"],
+      "state_queries": [{"command": "OUTP?", "expected": "0"}],
+      "cleanup_commands": ["OUTP OFF"]
     },
     "spectrum_analyzer": {
       "address": "TCPIP0::REPLACE_WITH_DEVICE::inst0::INSTR",
       "model": "REPLACE_WITH_MODEL",
       "timeout_ms": 5000,
       "queries": ["*IDN?", "SYST:ERR?"],
-      "expected_responses": {"SYST:ERR?": "0"}
+      "expected_responses": {"SYST:ERR?": "0"},
+      "setup_commands": ["FREQ:CENT REPLACE_WITH_FREQUENCY_HZ", "BAND REPLACE_WITH_BANDWIDTH_HZ"],
+      "state_queries": [
+        {"command": "FREQ:CENT?", "expected": "REPLACE_WITH_FREQUENCY_HZ"},
+        {"command": "BAND?", "expected": "REPLACE_WITH_BANDWIDTH_HZ"},
+        {"command": "SYST:ERR?", "expected": "0"}
+      ],
+      "cleanup_commands": ["*CLS"]
     },
     "power_supply": {
       "address": "TCPIP0::REPLACE_WITH_DEVICE::inst0::INSTR",
       "model": "REPLACE_WITH_MODEL",
       "timeout_ms": 5000,
       "queries": ["*IDN?", "SYST:ERR?", "OUTP?"],
-      "expected_responses": {"SYST:ERR?": "0", "OUTP?": "0"}
+      "expected_responses": {"SYST:ERR?": "0", "OUTP?": "0"},
+      "setup_commands": ["VOLT REPLACE_WITH_VOLTAGE_V", "CURR REPLACE_WITH_CURRENT_A", "VOLT:PROT REPLACE_WITH_VOLTAGE_LIMIT_V", "CURR:PROT REPLACE_WITH_CURRENT_LIMIT_A", "OUTP OFF"],
+      "state_queries": [{"command": "OUTP?", "expected": "0"}],
+      "cleanup_commands": ["OUTP OFF"]
     }
   }
 }

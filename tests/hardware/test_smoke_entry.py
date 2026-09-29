@@ -17,6 +17,8 @@ class HardwareSmokeReadOnlyTests(unittest.TestCase):
 
         config_path = Path(os.environ["HARDWARE_SMOKE_CONFIG"])
         config = json.loads(config_path.read_text(encoding="utf-8"))
+        if config.get("smoke_mode", "read_only") != "read_only":
+            self.skipTest("configured smoke mode is not read_only")
         hardware_root = Path(__file__).resolve().parents[2] / "hardware"
         result_path = config.get("result_path")
         report = execute_and_write_report(

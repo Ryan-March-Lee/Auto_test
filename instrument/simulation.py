@@ -311,12 +311,18 @@ class SafetyInstrumentSession:
                 raise error from cleanup_error
             raise
 
-    def power_on(self, *, timeout_s=10.0):
+    def power_on(self, *, roles=None, power_channels=None, timeout_s=10.0):
         if self.state not in (InstrumentState.PREPARED, InstrumentState.POWERED):
             raise ValueError(f"cannot power on from {self.state.value}")
+        selected_roles = tuple((self.gate_role, self.drain_role) if roles is None else roles)
+        channels = self.power_channels if power_channels is None else power_channels
+        if not set(selected_roles).issubset({self.gate_role, self.drain_role}):
+            raise ValueError("power roles contain an unknown supply role")
         try:
             for role in (self.gate_role, self.drain_role):
-                channel = self.power_channels.get(role)
+                if role not in selected_roles:
+                    continue
+                channel = channels.get(role)
                 if channel is not None:
                     self.power_supply.set_output_enabled(channel, True, timeout_s=timeout_s)
             self.state = InstrumentState.POWERED
@@ -343,12 +349,18 @@ class SafetyInstrumentSession:
             raise ValueError(f"ordinary stop is invalid from {self.state.value}")
         self.close(emergency=emergency, timeout_s=timeout_s)
 
-    def power_off(self, *, timeout_s=10.0):
+    def power_off(self, *, roles=None, power_channels=None, timeout_s=10.0):
         if self.power_supply not in self._connected:
             return
+        selected_roles = tuple((self.drain_role, self.gate_role) if roles is None else roles)
+        channels = self.power_channels if power_channels is None else power_channels
+        if not set(selected_roles).issubset({self.gate_role, self.drain_role}):
+            raise ValueError("power roles contain an unknown supply role")
         errors = []
         for role in (self.drain_role, self.gate_role):
-            channel = self.power_channels.get(role)
+            if role not in selected_roles:
+                continue
+            channel = channels.get(role)
             if channel is not None:
                 try:
                     self.power_supply.set_output_enabled(channel, False, timeout_s=timeout_s)
@@ -357,7 +369,7 @@ class SafetyInstrumentSession:
         if errors:
             raise RuntimeError("power shutdown failed: " + "; ".join(map(str, errors))) from errors[0]
 
-    def close(self, *, emergency=False, timeout_s=30.0):
+    def close(self, *, emergency=False, power_roles=None, power_channels=None, timeout_s=30.0):
         if self.state == InstrumentState.CLEANED:
             return
         self.state = InstrumentState.STOPPING
@@ -372,7 +384,7 @@ class SafetyInstrumentSession:
             else:
                 rf_safe = True
         try:
-            self.power_off(timeout_s=timeout_s)
+            self.power_off(roles=power_roles, power_channels=power_channels, timeout_s=timeout_s)
         except Exception as error:
             errors.append(error)
         else:

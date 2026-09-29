@@ -20,7 +20,7 @@ from measurement_services import CableLossService
 logger = get_logger(__name__)
 
 class CableLossMeasurement:
-    def __init__(self, config_path=None, run_id=None, sleep_fn=None):
+    def __init__(self, config_path=None, run_id=None, sleep_fn=None, measurement_port=None):
         """初始化线损测量类
 
         Args:
@@ -36,7 +36,7 @@ class CableLossMeasurement:
             self.config,
             status="created",
         )
-        self.inst_ctrl = InstrumentControl(config_path)
+        self.inst_ctrl = measurement_port or InstrumentControl(config_path)
 
         self.attenuator_value = float(self.config['attenuator']['type'].replace('dB', ''))
         self.cable_losses: Dict[float, Dict[str, float]] = {}

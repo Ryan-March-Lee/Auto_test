@@ -77,11 +77,12 @@ class _LegacyResultAdapter:
 
 class EnhancedCableLossMeasurement(_LegacyResultAdapter):
     def __init__(self, config_path=None, progress_callback=None, message_callback=None,
-                 data_callback=None, sleep_fn=None, run_id=None, run_directory=None):
+                 data_callback=None, sleep_fn=None, run_id=None, run_directory=None,
+                 measurement_port=None):
         config_path = resolve_path(config_path, CONFIG_FILE)
         config = load_config_file(config_path)
         super().__init__(config, run_id=run_id, run_directory=run_directory)
-        self.inst_ctrl = InstrumentControl(config_path)
+        self.inst_ctrl = measurement_port or InstrumentControl(config_path)
         self.sleep_fn = sleep_fn or time.sleep
         self._token = CancellationToken()
         self._service = CableLossService(
@@ -145,12 +146,13 @@ class EnhancedCableLossMeasurement(_LegacyResultAdapter):
 
 class EnhancedDriverPowerMapping(_LegacyResultAdapter):
     def __init__(self, config_path=None, loss_data_path=None, progress_callback=None,
-                 message_callback=None, data_callback=None, sleep_fn=None, run_id=None, run_directory=None):
+                 message_callback=None, data_callback=None, sleep_fn=None, run_id=None, run_directory=None,
+                 measurement_port=None):
         config_path = resolve_path(config_path, CONFIG_FILE)
         loss_data_path = resolve_path(loss_data_path, CABLE_LOSS_FILE)
         config = load_config_file(config_path)
         super().__init__(config, run_id=run_id, run_directory=run_directory)
-        self.inst_ctrl = InstrumentControl(config_path)
+        self.inst_ctrl = measurement_port or InstrumentControl(config_path)
         self.sleep_fn = sleep_fn or time.sleep
         self._token = CancellationToken()
         self._service = DriverPowerMappingService(
@@ -177,7 +179,7 @@ class EnhancedDriverPowerMapping(_LegacyResultAdapter):
 class EnhancedAmplifierMeasurement(_LegacyResultAdapter):
     def __init__(self, config_path=None, loss_data_path=None, driver_mapping_path=None,
                  progress_callback=None, message_callback=None, data_callback=None,
-                 sleep_fn=None, run_id=None, run_directory=None):
+                 sleep_fn=None, run_id=None, run_directory=None, measurement_port=None):
         config_path = resolve_path(config_path, CONFIG_FILE)
         loss_data_path = resolve_path(loss_data_path, CABLE_LOSS_FILE)
         config = load_config_file(config_path)
@@ -190,7 +192,7 @@ class EnhancedAmplifierMeasurement(_LegacyResultAdapter):
                     raise FileNotFoundError("驱动模式已开启，但未找到驱动映射文件")
                 driver_mapping_path = str(files[-1])
             driver_mapping = load_json_result(driver_mapping_path)["power_mapping"]
-        self.inst_ctrl = InstrumentControl(config_path)
+        self.inst_ctrl = measurement_port or InstrumentControl(config_path)
         self.sleep_fn = sleep_fn or time.sleep
         self._token = CancellationToken()
         self._service = AmplifierMeasurementService(

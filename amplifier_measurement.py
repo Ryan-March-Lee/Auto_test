@@ -50,7 +50,7 @@ class AmplifierMeasurement:
                  loss_data_path=None,
                  driver_mapping_path: Optional[str] = None,
                  run_id: Optional[str] = None,
-                 sleep_fn=None):
+                 sleep_fn=None, measurement_port=None):
         """初始化主功放测量类"""
         config_path = resolve_path(config_path, CONFIG_FILE)
         loss_data_path = resolve_path(loss_data_path, CABLE_LOSS_FILE)
@@ -65,7 +65,7 @@ class AmplifierMeasurement:
             self.config,
             status="created",
         )
-        self.inst_ctrl = InstrumentControl(config_path)
+        self.inst_ctrl = measurement_port or InstrumentControl(config_path)
 
         if self.config['driver_mode']['enabled']:
             if driver_mapping_path is None:

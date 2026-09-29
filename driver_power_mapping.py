@@ -23,7 +23,7 @@ logger = get_logger(__name__)
 
 
 class DriverPowerMapping:
-    def __init__(self, config_path=None, loss_data_path=None, run_id=None, sleep_fn=None):
+    def __init__(self, config_path=None, loss_data_path=None, run_id=None, sleep_fn=None, measurement_port=None):
         """初始化驱动功放功率映射测量类"""
         config_path = resolve_path(config_path, CONFIG_FILE)
         loss_data_path = resolve_path(loss_data_path, CABLE_LOSS_FILE)
@@ -38,7 +38,7 @@ class DriverPowerMapping:
             self.config,
             status="created",
         )
-        self.inst_ctrl = InstrumentControl(config_path)
+        self.inst_ctrl = measurement_port or InstrumentControl(config_path)
         self.power_mapping: Dict[str, Dict[str, float]] = {}
 
     def _sleep(self, seconds: float) -> None:

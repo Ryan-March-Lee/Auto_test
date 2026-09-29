@@ -29,8 +29,11 @@ from .transport import (
 from .drivers import (
     ScpiPowerSupplyDriver,
     ScpiSignalGeneratorDriver,
+    SignalGeneratorDriver,
     ScpiSpectrumAnalyzerDriver,
 )
+from .action import SignalGeneratorActions
+from .signal_generator_factory import create_signal_generator_driver
 
 __all__ = [
     "InstrumentSession",
@@ -52,5 +55,8 @@ __all__ = [
     "VisaScpiTransport",
     "ScpiPowerSupplyDriver",
     "ScpiSignalGeneratorDriver",
+    "SignalGeneratorDriver",
     "ScpiSpectrumAnalyzerDriver",
+    "SignalGeneratorActions",
+    "create_signal_generator_driver",
 ]

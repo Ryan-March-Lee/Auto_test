@@ -4,10 +4,13 @@ import math
 from instrument.drivers import (
     ScpiPowerSupplyDriver,
     ScpiSignalGeneratorDriver,
+    SignalGeneratorDriver,
     ScpiSpectrumAnalyzerDriver,
 )
 from instrument.transport import MockScpiTransport, ScpiTransportError, ScpiTransportTimeoutError
 from instrument.ports import PowerSupplyPort, SignalGeneratorPort, SpectrumAnalyzerPort
+from instrument.action import SignalGeneratorActions
+from instrument.signal_generator_factory import create_signal_generator_driver
 
 
 class InstrumentDriverTests(unittest.TestCase):
@@ -45,6 +48,67 @@ class InstrumentDriverTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             driver.set_rf_enabled(True)
         self.assertEqual(transport.writes, [])
+
+    def test_signal_generator_enforces_configured_ranges_before_transport(self):
+        transport = MockScpiTransport()
+        driver = SignalGeneratorDriver(transport, min_frequency_hz=1e6,
+                                       max_frequency_hz=3e9, min_power_dbm=-40,
+                                       max_power_dbm=5)
+        driver.connect()
+        for operation in (lambda: driver.set_frequency_hz(999999),
+                          lambda: driver.set_frequency_hz(3e9 + 1),
+                          lambda: driver.set_power_dbm(-41),
+                          lambda: driver.set_power_dbm(6)):
+            with self.assertRaises(ValueError):
+                operation()
+        self.assertEqual(transport.operations, [])
+
+    def test_signal_generator_rejects_invalid_ranges_at_construction(self):
+        for limits in (
+            {"min_frequency_hz": 0},
+            {"min_frequency_hz": -1},
+            {"max_frequency_hz": 0},
+            {"max_frequency_hz": -1},
+            {"min_frequency_hz": 2e9, "max_frequency_hz": 1e9},
+            {"min_power_dbm": 1, "max_power_dbm": 0},
+            {"max_power_dbm": math.inf},
+        ):
+            with self.subTest(limits=limits), self.assertRaises(ValueError):
+                SignalGeneratorDriver(MockScpiTransport(), **limits)
+
+    def test_signal_generator_factory_maps_explicit_model_limits(self):
+        transport = MockScpiTransport()
+        driver = create_signal_generator_driver(
+            transport,
+            {
+                "min_frequency_hz": 1e6,
+                "max_frequency_hz": 3e9,
+                "min_power_dbm": -40,
+                "max_power_dbm": 5,
+            },
+        )
+        self.assertEqual(driver.min_frequency_hz, 1e6)
+        self.assertEqual(driver.max_frequency_hz, 3e9)
+        self.assertEqual(driver.min_power_dbm, -40)
+        self.assertEqual(driver.max_power_dbm, 5)
+        self.assertEqual(transport.operations, [])
+
+    def test_signal_generator_public_name_and_legacy_alias(self):
+        self.assertIs(SignalGeneratorDriver, ScpiSignalGeneratorDriver)
+        self.assertEqual(SignalGeneratorDriver.__name__, "SignalGeneratorDriver")
+
+    def test_signal_generator_action_delegates_without_scpi_knowledge(self):
+        transport = MockScpiTransport()
+        driver = SignalGeneratorDriver(transport)
+        actions = SignalGeneratorActions(driver)
+        actions.connect()
+        actions.set_frequency_hz(2.4e9)
+        actions.set_power_dbm(-20)
+        actions.set_rf_enabled(False)
+        self.assertEqual(transport.writes,
+                         ["FREQ 2.4e+09", "POW:LEV -20", "OUTP:STAT OFF"])
+        actions.close()
+        self.assertTrue(transport.closed)
 
     def test_spectrum_analyzer_formats_commands_and_parses_peak(self):
         transport = MockScpiTransport({"CALC:MARK1:Y?": " -23.75\n"})

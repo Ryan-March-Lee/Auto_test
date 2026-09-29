@@ -42,6 +42,20 @@ class MeasurementLifecycleTests(unittest.TestCase):
         self.assertEqual(events, ["power_off"])
         self.assertEqual(controller.events[-1], ("close", False))
 
+    def test_cleanup_error_contains_all_failures(self):
+        controller = FakeController()
+        controller.rf_error = RuntimeError("RF 关闭失败")
+        controller.close_error = RuntimeError("连接关闭失败")
+
+        def power_cleanup():
+            raise RuntimeError("电源关闭失败")
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "RF 关闭失败; 电源关闭失败; 连接关闭失败",
+        ):
+            cleanup_measurement(controller, power_cleanup=power_cleanup)
+
     def test_cleanup_continues_when_connection_close_fails(self):
         controller = FakeController()
         controller.close_error = RuntimeError("连接关闭失败")

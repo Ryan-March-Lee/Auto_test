@@ -1,6 +1,7 @@
 import unittest
 
 from instrument.ports import InstrumentState
+from instrument.action import SpectrumAnalyzerActions
 from instrument.simulation import (
     CommandRecorder,
     FailureInjector,
@@ -164,6 +165,15 @@ class SimulationLifecycleTests(unittest.TestCase):
         self.assertFalse(any(self.ps.outputs.values()))
         self.assertFalse(self.sa.connected)
         self.assertEqual(self.session.state, InstrumentState.CLEANED)
+
+    def test_spectrum_analyzer_action_accepts_simulated_driver(self):
+        analyzer = SimulatedSpectrumAnalyzer((-17.5,), self.recorder)
+        actions = SpectrumAnalyzerActions(analyzer)
+        actions.connect()
+        actions.set_center_frequency_hz(1e9)
+        actions.set_span_hz(1e6)
+        self.assertEqual(actions.measure_peak_power_dbm(), -17.5)
+        actions.close()
 
     def test_query_failure_during_measurement_is_followed_by_safe_cleanup(self):
         self._prepare()

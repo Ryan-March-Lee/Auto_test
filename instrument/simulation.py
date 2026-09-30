@@ -162,6 +162,22 @@ class SimulatedSpectrumAnalyzer(_SimulatedDevice):
             raise ValueError("analyzer must be connected and bandwidth positive")
         self.configured = True
 
+    def set_center_frequency_hz(self, frequency_hz, *, timeout_s=5.0):
+        self.configure_center_frequency_hz(frequency_hz, timeout_s=timeout_s)
+
+    def set_span_hz(self, span_hz, *, timeout_s=5.0):
+        self.configure_bandwidth_hz(span_hz, timeout_s=timeout_s)
+
+    def set_resolution_bandwidth_hz(self, bandwidth_hz, *, timeout_s=5.0):
+        self._command("resolution_bandwidth_hz", bandwidth_hz)
+        if not self.connected or bandwidth_hz <= 0:
+            raise ValueError("analyzer must be connected and resolution bandwidth positive")
+
+    def set_video_bandwidth_hz(self, bandwidth_hz, *, timeout_s=5.0):
+        self._command("video_bandwidth_hz", bandwidth_hz)
+        if not self.connected or bandwidth_hz <= 0:
+            raise ValueError("analyzer must be connected and video bandwidth positive")
+
     def measure_power_dbm(self, *, timeout_s=10.0):
         self._command("measure_power_dbm")
         if self.failure_injector.should_fail("measure_power_dbm", phase="query"):
@@ -178,6 +194,9 @@ class SimulatedSpectrumAnalyzer(_SimulatedDevice):
             value = self.readings[min(self.read_index, len(self.readings) - 1)]
         self.read_index += 1
         return float(value)
+
+    def measure_peak_power_dbm(self, *, timeout_s=10.0):
+        return self.measure_power_dbm(timeout_s=timeout_s)
 
     def close(self, *, timeout_s=5.0):
         if self.connected:

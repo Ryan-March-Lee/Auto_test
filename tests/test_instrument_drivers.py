@@ -6,10 +6,12 @@ from instrument.drivers import (
     ScpiSignalGeneratorDriver,
     SignalGeneratorDriver,
     ScpiSpectrumAnalyzerDriver,
+    SpectrumAnalyzerDeviceError,
+    SpectrumAnalyzerMeasurementError,
 )
 from instrument.transport import MockScpiTransport, ScpiTransportError, ScpiTransportTimeoutError
 from instrument.ports import PowerSupplyPort, SignalGeneratorPort, SpectrumAnalyzerPort
-from instrument.action import SignalGeneratorActions
+from instrument.action import SignalGeneratorActions, SpectrumAnalyzerActions
 from instrument.signal_generator_factory import create_signal_generator_driver
 
 
@@ -122,6 +124,30 @@ class InstrumentDriverTests(unittest.TestCase):
             ["FREQ:CENT 2.4e+09", "FREQ:SPAN 1e+06", "CALC:MARK1:MAX"],
         )
 
+    def test_spectrum_analyzer_supports_optional_bandwidth_configuration(self):
+        transport = MockScpiTransport({"CALC:MARK1:Y?": "-12.5"})
+        driver = ScpiSpectrumAnalyzerDriver(transport)
+        driver.connect()
+        driver.set_center_frequency_hz(2.4e9)
+        driver.set_span_hz(1e6)
+        driver.set_resolution_bandwidth_hz(10e3)
+        driver.set_video_bandwidth_hz(30e3)
+        self.assertEqual(driver.measure_peak_power_dbm(), -12.5)
+        self.assertEqual(transport.writes, [
+            "FREQ:CENT 2.4e+09", "FREQ:SPAN 1e+06", "BAND:RES 10000",
+            "BAND:VID 30000", "CALC:MARK1:MAX",
+        ])
+
+    def test_spectrum_analyzer_action_delegates_without_scpi_knowledge(self):
+        transport = MockScpiTransport({"CALC:MARK1:Y?": "-8"})
+        actions = SpectrumAnalyzerActions(ScpiSpectrumAnalyzerDriver(transport))
+        actions.connect()
+        actions.set_center_frequency_hz(1e9)
+        actions.set_span_hz(1000)
+        self.assertEqual(actions.measure_peak_power_dbm(), -8.0)
+        actions.close()
+        self.assertTrue(transport.closed)
+
     def test_spectrum_analyzer_rejects_bad_reading_and_unconfigured_measurement(self):
         transport = MockScpiTransport({"CALC:MARK1:Y?": "not-a-number"})
         driver = ScpiSpectrumAnalyzerDriver(transport)
@@ -131,6 +157,71 @@ class InstrumentDriverTests(unittest.TestCase):
         driver.set_center_frequency_hz(1e9)
         driver.configure_bandwidth_hz(1000)
         with self.assertRaisesRegex(ValueError, "非数字"):
+            driver.measure_peak_power_dbm()
+
+    def test_spectrum_analyzer_rejects_empty_reading(self):
+        transport = MockScpiTransport({"CALC:MARK1:Y?": "  \n"})
+        driver = ScpiSpectrumAnalyzerDriver(transport)
+        driver.connect()
+        driver.set_center_frequency_hz(1e9)
+        driver.set_span_hz(1000)
+        with self.assertRaises(SpectrumAnalyzerMeasurementError):
+            driver.measure_peak_power_dbm()
+
+    def test_spectrum_analyzer_rejects_invalid_config_before_write(self):
+        transport = MockScpiTransport()
+        driver = ScpiSpectrumAnalyzerDriver(transport, max_span_hz=1e6)
+        driver.connect()
+        with self.assertRaises(ValueError):
+            driver.set_span_hz(1e6 + 1)
+        self.assertEqual(transport.writes, [])
+
+    def test_spectrum_analyzer_normalizes_and_validates_limit_types(self):
+        driver = ScpiSpectrumAnalyzerDriver(MockScpiTransport(), min_span_hz="1000")
+        self.assertEqual(driver._range_limits["span_hz"], (1000.0, None))
+        for value in (object(), [], math.nan, math.inf, 0):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                ScpiSpectrumAnalyzerDriver(MockScpiTransport(), min_span_hz=value)
+
+    def test_spectrum_analyzer_preserves_state_after_configuration_write_failure(self):
+        transport = MockScpiTransport(fail_on_write="FREQ:SPAN 1000")
+        driver = ScpiSpectrumAnalyzerDriver(transport)
+        driver.connect()
+        driver.set_center_frequency_hz(1e9)
+        with self.assertRaises(ScpiTransportError):
+            driver.set_span_hz(1000)
+        with self.assertRaises(SpectrumAnalyzerMeasurementError):
+            driver.measure_peak_power_dbm()
+
+    def test_spectrum_analyzer_preserves_transport_timeout_errors(self):
+        transport = MockScpiTransport(
+            {"CALC:MARK1:Y?": "-10"}, timeout_on_query="CALC:MARK1:Y?"
+        )
+        driver = ScpiSpectrumAnalyzerDriver(transport)
+        driver.connect()
+        driver.set_center_frequency_hz(1e9)
+        driver.set_span_hz(1000)
+        with self.assertRaises(ScpiTransportTimeoutError):
+            driver.measure_peak_power_dbm()
+
+    def test_spectrum_analyzer_rejects_non_numeric_and_non_finite_readings(self):
+        for response in ("nan", "inf", "-inf"):
+            with self.subTest(response=response):
+                transport = MockScpiTransport({"CALC:MARK1:Y?": response})
+                driver = ScpiSpectrumAnalyzerDriver(transport)
+                driver.connect()
+                driver.set_center_frequency_hz(1e9)
+                driver.set_span_hz(1000)
+                with self.assertRaises(SpectrumAnalyzerMeasurementError):
+                    driver.measure_peak_power_dbm()
+
+    def test_spectrum_analyzer_converts_scpi_device_errors(self):
+        transport = MockScpiTransport({"CALC:MARK1:Y?": '-200,"Execution error"'})
+        driver = ScpiSpectrumAnalyzerDriver(transport)
+        driver.connect()
+        driver.set_center_frequency_hz(1e9)
+        driver.set_span_hz(1000)
+        with self.assertRaisesRegex(SpectrumAnalyzerDeviceError, "-200"):
             driver.measure_peak_power_dbm()
 
     def test_spectrum_analyzer_requires_center_frequency_and_bandwidth(self):

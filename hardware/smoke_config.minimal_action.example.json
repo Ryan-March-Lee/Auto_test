@@ -10,8 +10,8 @@
   "result_path": "smoke_result.local.json",
   "devices": {
     "signal_generator": {
-      "address": "TCPIP0::REPLACE_WITH_DEVICE::inst0::INSTR",
-      "model": "REPLACE_WITH_MODEL",
+      "discover": true,
+      "model": "",
       "timeout_ms": 5000,
       "setup_commands": [],
       "rf_parameters": {

@@ -31,8 +31,9 @@ class Resource:
 
 
 class Manager:
-    def __init__(self, resources):
+    def __init__(self, resources, discovered=None):
         self.resources = resources
+        self.discovered = discovered or []
         self.closed = False
 
     def open_resource(self, address, **kwargs):
@@ -40,6 +41,9 @@ class Manager:
 
     def close(self):
         self.closed = True
+
+    def list_resources(self):
+        return tuple(self.discovered)
 
 
 def config():
@@ -85,6 +89,23 @@ class MinimalActionSmokeTests(unittest.TestCase):
         self.assertLess(enabled, disabled)
         self.assertLess(resources["ps"].commands.index(("write", "OUTP CH2,OFF")),
                         resources["ps"].commands.index(("write", "OUTP CH1,OFF")))
+
+    def test_power_supply_can_be_discovered_by_identity(self):
+        setup = config()
+        setup["devices"]["power_supply"].pop("address")
+        setup["devices"]["power_supply"]["discover"] = True
+        setup["devices"]["power_supply"].pop("model")
+        resources = self.resources()
+        manager = Manager(resources, discovered=("unused", "ps"))
+        resources["unused"] = Resource({"*IDN?": "ACME,OTHER", "OUTP? CH2": "1", "OUTP? CH1": "0"})
+
+        report = run_minimal_action_smoke(setup, manager)
+
+        self.assertEqual(report["action_count"], 1)
+        self.assertEqual(report["devices"]["power_supply"]["identity"], "ACME,PS-1")
+        self.assertEqual(report["power_supply_discovery"][0]["address"], "unused")
+        self.assertEqual(report["power_supply_discovery"][1]["address"], "ps")
+        self.assertTrue(all(item["closed"] for item in report["power_supply_discovery"]))
 
     def test_marker_measurement_selects_peak_before_reading_value(self):
         setup = config()

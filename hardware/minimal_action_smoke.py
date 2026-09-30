@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from hardware.read_only_smoke import SmokeExecutionError, resolve_report_path, write_report
+from hardware.power_supply_discovery import discover_power_supply
 from hardware.safe_prepare_smoke import _expected_matches, _validate_command
 
 _DEVICES = ("signal_generator", "spectrum_analyzer", "power_supply")
@@ -98,8 +99,13 @@ def _validate_config(config: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     normalized: dict[str, dict[str, Any]] = {}
     for name in _DEVICES:
         raw = devices[name]
-        if not isinstance(raw, Mapping) or not raw.get("address"):
-            raise ValueError(f"{name} requires a device address")
+        if not isinstance(raw, Mapping):
+            raise ValueError(f"{name} requires a device configuration")
+        if name != "power_supply" or not raw.get("discover"):
+            if not raw.get("address"):
+                raise ValueError(f"{name} requires a device address")
+        elif raw.get("address"):
+            raise ValueError("Discovered power_supply must not also specify address")
         timeout_ms = int(raw.get("timeout_ms", 5000))
         if timeout_ms <= 0:
             raise ValueError(f"{name} timeout_ms must be positive")
@@ -185,6 +191,10 @@ def run_minimal_action_smoke(config: Mapping[str, Any], resource_manager: Any, *
     failure: Exception | None = None
     rf_may_be_on = False
     try:
+        if devices["power_supply"].get("discover"):
+            devices["power_supply"]["address"] = discover_power_supply(
+                resource_manager, devices["power_supply"], report, expected_match=_expected_matches
+            )
         for name in _DEVICES:
             device = devices[name]
             open_ms = min(device["timeout_ms"], max(1, int((deadline - clock()) * 1000)))

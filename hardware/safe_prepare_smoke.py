@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from hardware.read_only_smoke import SmokeExecutionError, resolve_report_path, write_report
+from hardware.power_supply_discovery import discover_power_supply
 
 
 _OUTPUT_TOKENS = {"OUTP", "OUTPUT", "RF", "OUT", "STATE"}
@@ -78,8 +79,13 @@ def _validate_config(config: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
         raise ValueError(f"Safe preparation requires exactly these devices: {sorted(required)}")
     normalized: dict[str, dict[str, Any]] = {}
     for name, raw in devices.items():
-        if not isinstance(raw, Mapping) or not raw.get("address"):
-            raise ValueError(f"{name} requires a device address")
+        if not isinstance(raw, Mapping):
+            raise ValueError(f"{name} requires a device configuration")
+        if name != "power_supply" or not raw.get("discover"):
+            if not raw.get("address"):
+                raise ValueError(f"{name} requires a device address")
+        elif raw.get("address"):
+            raise ValueError("Discovered power_supply must not also specify address")
         checks = raw.get("state_queries")
         if not isinstance(checks, list) or not checks:
             raise ValueError(f"{name} requires safety state_queries")
@@ -140,6 +146,11 @@ def run_safe_prepare_smoke(config: Mapping[str, Any], resource_manager: Any, *, 
     resources: list[tuple[str, Any, list[str]]] = []
     failure: Exception | None = None
     try:
+        if devices["power_supply"].get("discover"):
+            devices["power_supply"]["address"] = discover_power_supply(
+                resource_manager, devices["power_supply"], report,
+                expected_match=_expected_matches,
+            )
         for name, device in devices.items():
             resource = resource_manager.open_resource(device["address"], open_timeout=int(device.get("timeout_ms", 5000)))
             cleanup = list(device.get("cleanup_commands", []))

@@ -15,13 +15,18 @@ $env:HARDWARE_SMOKE_ENABLED = "1"
 The entry point requires the interpreter from `.env`, a non-example
 `hardware_smoke` configuration, explicit confirmation, and a non-CI process.
 The preparation runner requires exactly one signal generator, spectrum
-analyzer, and power supply. Signal generator and supply configurations must
-query their output state before and after cleanup with an explicit expected-off
-value. The analyzer must provide an explicit post-setup state query. Setup and
-cleanup SCPI roots are restricted per device; confirm those command forms and
-limits against the actual instrument manuals before site use. Cleanup commands
-are attempted independently, and any cleanup or final-state verification
-failure fails the smoke and is retained in the local report.
+analyzer, and power supply. For `minimal_action`, the power supply may use
+`discover: true` without an address: the runner enumerates VISA resources,
+queries `*IDN?` and both configured output states, and selects exactly one
+candidate whose channels are off. A configured model remains an optional
+identity filter; ambiguity or no safe match fails before RF is enabled. Signal
+generator and supply configurations must query their output state before and
+after cleanup with an explicit expected-off value. The analyzer must provide
+an explicit post-setup state query. Setup and cleanup SCPI roots are restricted
+per device; confirm those command forms and limits against the actual
+instrument manuals before site use. Cleanup commands are attempted
+independently, and any cleanup or final-state verification failure fails the
+smoke and is retained in the local report.
 
 Current site status: `safe_prepare` and the formal `read_only` entry have
 passed with the local configuration. The runs confirmed matching identities,

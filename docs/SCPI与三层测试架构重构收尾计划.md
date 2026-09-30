@@ -31,11 +31,11 @@ VISA 或仿真设备
 - `instrument/transport/` 已提供真实和模拟 SCPI transport，覆盖超时、异常、空命令、重复关闭和关闭后调用。
 - `instrument/drivers/` 已提供信号源、频谱仪和电源 driver，覆盖命令格式、单位、参数边界、查询解析和设备错误。
 - `instrument/action/`、`instrument/flow/` 和 `SafetyInstrumentSession` 已覆盖 RF、驱动电源、DUT 电源及连接的安全顺序与重复清理。
-- `instrument/measurement_adapter.py`、`instrument/measurement_factory.py` 已提供仿真、硬件和端口适配组装路径；硬件路径动态发现所有符合条件且空载的 DP832A。
+- `instrument/measurement_adapter.py`、`instrument/measurement_factory.py` 已提供仿真、硬件和端口适配组装路径；硬件 smoke 路径动态发现所有符合条件且空载的 DP832A，并逐台执行基础控制验证。
 - 现代 GUI 和 worker 通过应用组装层取得 `measurement_port`；三个增强测量包装器和三个历史测量类在缺少端口时直接拒绝构造，不再隐式创建 `InstrumentControl`。
 - `InstrumentControl` 仅保留在 `app.gui_runtime.connect_instruments_legacy()` 及三个明确命名的 legacy 测量工厂中。
 - 仿真流程已经覆盖正常测量、连接/准备/测量失败、取消、紧急停止、部分初始化和重复清理。
-- 独立 hardware smoke 和新应用组装路径均已完成一次 `minimal_action`，并确认 RF、电源输出和 VISA 资源安全释放。
+- 独立 hardware smoke 和新应用组装路径均已完成一次 `minimal_action`，并确认 RF、电源输出和 VISA 资源安全释放。该结果只证明仪器控制链路和基础安全清理可用，不代表三类生产测量逻辑已验收。
 
 ### 2.2 当前验证基线
 
@@ -61,13 +61,13 @@ VISA 或仿真设备
 **执行内容**
 
 1. 将 `SafetyInstrumentSession` 记录为默认硬件协调边界；保留独立 `action`/`flow`，不再重复讨论已经解决的边界问题。
-2. 明确多台 DP832A 的生产语义：写操作是否必须广播到所有设备，读数是否始终取第一台，或改为按设备/角色分别建模。把结论写入配置说明、组装器和测试名称。
+2. 冻结 smoke 与生产场景边界：smoke 模式发现并逐台测试所有空载 DP832A，不推导生产角色；生产模式必须由正式测量配置和业务逻辑明确每台电源的角色、通道及上下电顺序。生产操作不得依赖设备发现顺序，也不得默认广播。当前生产拓扑尚未实现，不把现有“写操作广播、读数取第一台”的发现电源包装器语义视为最终生产语义。
 3. 确认配置校验中的驱动功放外部供电警告；未确认前不得执行涉及该供电路径的真实测量。
 4. 确认三类完整测量的设备映射、线损数据、功率范围、频谱仪 marker 查询和低功率安全值。
 
 **通过标准**
 
-- 多电源语义有书面结论、对应测试和现场负责人确认。
+- smoke 的多电源语义有书面结论和对应测试；生产电源拓扑、角色、通道及上下电顺序在正式测量逻辑实现后另行定义、测试并由现场负责人确认，不以 smoke 结果替代。
 - 硬件配置只作为本地文件使用，地址、凭据和现场报告不提交版本库。
 - 未确认的现场条件被标记为阻塞，不用离线测试结果替代。
 
@@ -78,7 +78,7 @@ VISA 或仿真设备
 **每种测量的执行步骤**
 
 1. 检查配置、设备身份、空载状态、动作预算和安全功率。
-2. 通过 `app.gui_runtime.connect_instruments()` 组装 `transport -> driver -> SafetyInstrumentSession -> measurement_port`。
+2. 通过 `app.gui_runtime.connect_instruments()` 组装 `transport -> driver -> SafetyInstrumentSession -> measurement_port`；实际生产流程使用明确的电源角色、通道和上下电顺序，不复用 smoke 的逐台探测语义作为生产拓扑。
 3. 执行最小可代表性动作，记录真实 SCPI 操作顺序、测量值、设备身份和动作次数。
 4. 验证完成、异常、取消三条路径都立即关闭 RF，按 `Drain -> Gate` 关闭电源，再释放 VISA resource 和 ResourceManager。
 5. 保存脱敏报告和配置快照；现场原始敏感资料只保存在本机。
@@ -142,7 +142,7 @@ VISA 或仿真设备
 
 1. 三类完整测量均由新应用组装路径完成真实验收，并有脱敏现场证据。
 2. 默认硬件路径使用已确认的 `SafetyInstrumentSession` 协调边界，或有新的架构决定及等价安全测试。
-3. 多电源生产语义、功放供电条件和设备映射均已确认并写入规范。
+3. smoke 的逐台多电源探测语义已经写入规范；生产电源拓扑、角色、通道、上下电顺序、功放供电条件和设备映射均已在正式测量逻辑中确认并写入规范。
 4. 所有生产调用方均经过组装层，服务层没有 VISA、SCPI 或 GUI 依赖。
 5. GUI 端口所有权闭合，完成、异常、取消、停止、部分初始化和重复测量均不会复用已清理端口。
 6. legacy 入口已经删除，或全部明确标记为兼容适配器并具备移除条件。

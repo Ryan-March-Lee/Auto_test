@@ -65,7 +65,7 @@ class SpectrumAnalyzerPort(Protocol):
 
 @runtime_checkable
 class PowerSupplyPort(Protocol):
-    """电源端口；channel 使用现场提供的物理通道名，不使用固定角色名。"""
+    """电源端口；本项目支持设备通道 ``CH1`` 和 ``CH2``。"""
 
     def connect(self, *, timeout_s: float = 10.0) -> None:
         """连接设备；失败抛出异常。"""
@@ -73,8 +73,38 @@ class PowerSupplyPort(Protocol):
     def set_voltage(self, channel: str, voltage_v: float, *, timeout_s: float = 5.0) -> None:
         """设置通道电压；要求已连接且输出关闭。"""
 
+    def set_voltage_v(self, channel: str, voltage_v: float, *, timeout_s: float = 5.0) -> None:
+        """设置通道电压，单位 V；要求已连接且输出关闭。"""
+
     def set_current_limit(self, channel: str, current_a: float, *, timeout_s: float = 5.0) -> None:
         """设置通道电流保护；要求已连接，current_a 必须为非负数。"""
+
+    def set_current_limit_a(self, channel: str, current_a: float, *, timeout_s: float = 5.0) -> None:
+        """设置通道电流限值，单位 A；要求已连接。"""
+
+    def set_voltage_protection_state(self, channel: str, enabled: bool, *, timeout_s: float = 5.0) -> None:
+        """设置过压保护状态；不改变输出状态。"""
+
+    def set_current_protection_state(self, channel: str, enabled: bool, *, timeout_s: float = 5.0) -> None:
+        """设置过流保护状态；不改变输出状态。"""
+
+    def set_voltage_protection(
+        self,
+        channel: str,
+        voltage_protection_v: float,
+        *,
+        timeout_s: float = 5.0,
+    ) -> None:
+        """设置过压保护阈值，单位 V。"""
+
+    def set_current_protection(
+        self,
+        channel: str,
+        current_protection_a: float,
+        *,
+        timeout_s: float = 5.0,
+    ) -> None:
+        """设置过流保护阈值，单位 A。"""
 
     def set_output_enabled(self, channel: str, enabled: bool, *, timeout_s: float = 5.0) -> None:
         """切换输出；上电顺序由应用安全策略保证，关闭操作应幂等。"""
@@ -82,7 +112,13 @@ class PowerSupplyPort(Protocol):
     def read_voltage(self, channel: str, *, timeout_s: float = 5.0) -> float:
         """读取通道电压，单位 V。"""
 
+    def read_voltage_v(self, channel: str, *, timeout_s: float = 5.0) -> float:
+        """读取通道电压，单位 V。"""
+
     def read_current(self, channel: str, *, timeout_s: float = 5.0) -> float:
+        """读取通道电流，单位 A。"""
+
+    def read_current_a(self, channel: str, *, timeout_s: float = 5.0) -> float:
         """读取通道电流，单位 A。"""
 
     def close(self, *, timeout_s: float = 5.0) -> None:

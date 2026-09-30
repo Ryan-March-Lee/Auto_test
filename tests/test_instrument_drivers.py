@@ -11,7 +11,7 @@ from instrument.drivers import (
 )
 from instrument.transport import MockScpiTransport, ScpiTransportError, ScpiTransportTimeoutError
 from instrument.ports import PowerSupplyPort, SignalGeneratorPort, SpectrumAnalyzerPort
-from instrument.action import SignalGeneratorActions, SpectrumAnalyzerActions
+from instrument.action import PowerSupplyActions, SignalGeneratorActions, SpectrumAnalyzerActions
 from instrument.signal_generator_factory import create_signal_generator_driver
 
 
@@ -278,6 +278,85 @@ class InstrumentDriverTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             driver.set_voltage("CH1", 12.0)
         self.assertEqual(transport.writes, [":OUTPut CH1,ON"])
+
+    def test_power_supply_configures_protection_and_keeps_channels_independent(self):
+        transport = MockScpiTransport({
+            ":MEASure:VOLTage? CH2": "28.0",
+            ":MEASure:CURRent? CH1": "0.250",
+        })
+        driver = ScpiPowerSupplyDriver(transport)
+        driver.connect()
+        driver.set_voltage_protection_state("CH1", True)
+        driver.set_current_protection_state("CH1", False)
+        driver.set_voltage_protection("CH1", 3.3)
+        driver.set_current_protection("CH1", 0.25)
+        driver.set_voltage_v("CH1", 2.8)
+        driver.set_current_limit_a("CH2", 1.0)
+        driver.set_output_enabled("CH1", False)
+        driver.set_output_enabled("CH2", False)
+        self.assertEqual(driver.read_voltage_v("CH2"), 28.0)
+        self.assertEqual(driver.read_current_a("CH1"), 0.25)
+        self.assertEqual(transport.writes, [
+            ":SOURce1:VOLTage:PROTection:STATe ON",
+            ":SOURce1:CURRent:PROTection:STATe OFF",
+            ":SOURce1:VOLTage:PROTection 3.3",
+            ":SOURce1:CURRent:PROTection 0.25",
+            ":SOURce1:VOLTage 2.8",
+            ":SOURce2:CURRent 1",
+            ":OUTPut CH1,OFF",
+            ":OUTPut CH2,OFF",
+        ])
+
+    def test_power_supply_rejects_invalid_channel_before_transport(self):
+        transport = MockScpiTransport()
+        driver = ScpiPowerSupplyDriver(transport)
+        driver.connect()
+        for operation in (
+            lambda: driver.set_voltage_v("gate", 1),
+            lambda: driver.set_current_limit_a("CH0", 1),
+            lambda: driver.set_output_enabled("ch1", False),
+            lambda: driver.set_output_enabled("CH 1", False),
+            lambda: driver.set_output_enabled("CH001", False),
+            lambda: driver.set_output_enabled("CHx", False),
+            lambda: driver.read_voltage_v(""),
+        ):
+            with self.assertRaises(ValueError):
+                operation()
+        self.assertEqual(transport.writes, [])
+        self.assertEqual(transport.queries, [])
+
+    def test_power_supply_rejects_negative_readback(self):
+        transport = MockScpiTransport({
+            ":MEASure:VOLTage? CH1": "-0.1",
+            ":MEASure:CURRent? CH2": "-0.01",
+        })
+        driver = ScpiPowerSupplyDriver(transport)
+        driver.connect()
+        with self.assertRaisesRegex(ValueError, "负的 voltage_v"):
+            driver.read_voltage_v("CH1")
+        with self.assertRaisesRegex(ValueError, "负的 current_a"):
+            driver.read_current_a("CH2")
+
+    def test_power_supply_repeated_output_off_is_safe(self):
+        transport = MockScpiTransport()
+        driver = ScpiPowerSupplyDriver(transport)
+        driver.connect()
+        driver.set_output_enabled("CH1", False)
+        driver.set_output_enabled("CH1", False)
+        self.assertEqual(transport.writes, [":OUTPut CH1,OFF", ":OUTPut CH1,OFF"])
+
+    def test_power_supply_action_delegates_without_scpi_knowledge(self):
+        transport = MockScpiTransport({":MEASure:VOLTage? CH1": "5.0"})
+        actions = PowerSupplyActions(ScpiPowerSupplyDriver(transport))
+        actions.connect()
+        actions.set_voltage_v("CH1", 5)
+        actions.set_voltage_protection_state("CH1", True)
+        actions.set_current_protection("CH1", 0.5)
+        actions.set_output_enabled("CH1", False)
+        self.assertEqual(actions.read_voltage_v("CH1"), 5.0)
+        actions.close()
+        actions.close()
+        self.assertEqual(transport.close_count, 1)
 
     def test_signal_generator_close_turns_rf_off_before_closing_transport(self):
         transport = MockScpiTransport()

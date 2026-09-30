@@ -28,11 +28,12 @@ from .transport import (
 )
 from .drivers import (
     ScpiPowerSupplyDriver,
+    PowerSupplyDriver,
     ScpiSignalGeneratorDriver,
     SignalGeneratorDriver,
     ScpiSpectrumAnalyzerDriver,
 )
-from .action import SignalGeneratorActions
+from .action import PowerSupplyActions, SignalGeneratorActions
 from .signal_generator_factory import create_signal_generator_driver
 
 __all__ = [
@@ -54,9 +55,11 @@ __all__ = [
     "ScpiTransportTimeoutError",
     "VisaScpiTransport",
     "ScpiPowerSupplyDriver",
+    "PowerSupplyDriver",
     "ScpiSignalGeneratorDriver",
     "SignalGeneratorDriver",
     "ScpiSpectrumAnalyzerDriver",
     "SignalGeneratorActions",
+    "PowerSupplyActions",
     "create_signal_generator_driver",
 ]

@@ -17,6 +17,7 @@ from config_models import (
 from config_validation import ConfigValidationResult
 from result_storage import new_run_id
 from .run_context import PreparedRun, environment_version, prepare_run
+from instrument.measurement_factory import create_measurement_port
 
 
 Operation = Literal["full", "cable_loss", "driver_mapping"]
@@ -27,6 +28,21 @@ def connect_instruments(config_path: str) -> Any:
     from instrument_control import InstrumentControl
 
     return InstrumentControl(config_path)
+
+
+def create_offline_measurement_port(
+    *,
+    power_channels: dict[str, str] | None = None,
+    driver_power_channels: dict[str, str] | None = None,
+    recorder: Any = None,
+) -> Any:
+    """Create the explicit simulation assembly used by offline callers."""
+    return create_measurement_port(
+        mode="simulation",
+        power_channels=power_channels,
+        driver_power_channels=driver_power_channels,
+        recorder=recorder,
+    )
 
 
 def prepare_configuration(

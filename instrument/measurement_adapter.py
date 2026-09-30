@@ -137,6 +137,11 @@ class PortMeasurementAdapter:
         if self._session_cleaned:
             return []
         errors = []
+        if close_rf:
+            try:
+                self.session.set_rf_enabled(False)
+            except Exception as error:
+                errors.append(error)
         for group, channels in list(self._active_power_groups.items()):
             try:
                 self.session.power_off(roles=tuple(channels), power_channels=channels)

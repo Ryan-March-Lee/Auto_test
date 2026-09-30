@@ -28,15 +28,13 @@ instrument manuals before site use. Cleanup commands are attempted
 independently, and any cleanup or final-state verification failure fails the
 smoke and is retained in the local report.
 
-Current site status: `safe_prepare` and the formal `read_only` entry have
-passed with the local configuration. The runs confirmed matching identities,
-RF off, both power-supply channels off, and closed VISA resources.
-`minimal_action` was interrupted before `OUTP ON`; no real RF action or
-measurement was performed. The offline validation is now complete, including
-the `CALC:MARK1:MAX` -> `CALC:MARK1:Y?` sequence, measurement bounds, action
-budget, timeout, and RF/power cleanup. The untracked local configuration is
-prepared for `minimal_action` at 2.3 GHz and -30 dBm. Before executing it,
-confirm the equipment is unloaded and obtain explicit authorization for one
-bounded RF action. A front-panel remote-control indicator may remain after
-VISA cleanup; use the instrument's documented Local operation and check for
-other VISA clients before treating that indicator as a connection leak.
+Current site status: `safe_prepare`, the formal `read_only` entry, and one
+`minimal_action` run have passed with the local configuration. The minimal
+action used 2.3 GHz and -30 dBm, performed one bounded RF action and analyzer
+measurement, then confirmed RF off, all discovered power-supply channels off,
+and closed VISA resources. The local report remains untracked. Re-run the
+same gate only when the hardware smoke implementation or application assembly
+path changes, and record a fresh report before claiming the changed path is
+validated. A front-panel remote-control indicator may remain after VISA
+cleanup; use the instrument's documented Local operation and check for other
+VISA clients before treating that indicator as a connection leak.

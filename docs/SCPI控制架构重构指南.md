@@ -4,13 +4,14 @@
 
 本次重构尚未完成，本指南继续作为阶段 8 的唯一收尾清单。
 
-截至 2026-09-30，阶段 1 至阶段 7 的离线能力和真实应用默认组装路径已经落地，但最终验收仍被以下事项阻塞：
+截至 2026-09-30，阶段 1 至阶段 7 的离线能力和现代 GUI 的主要组装入口已经落地，但最终验收仍被以下事项阻塞：
 
 1. 2026-09-30 已用本地 `minimal_action` 配置完成一次受限动作，报告确认 RF、两台发现到的电源和 VISA 资源均安全关闭；随后新应用组装路径已动态发现现场空载 DP832A，连接和立即安全关闭均通过。
-2. 生产 GUI/worker 默认通过硬件组装器注入 `measurement_port`；旧控制器仅由明确的 legacy 组装入口调用。历史测量类、`InstrumentControl` 及其测试/脚本调用方仍保留。
-3. 阶段 8 的新路径现场验收和现场记录归档仍未完成；调用方审计已完成离线范围核对，旧实现仅保留为显式兼容/回滚入口，尚不满足删除条件。
+2. 现代 GUI/worker 的主要入口通过硬件组装器注入 `measurement_port`；旧 GUI worker 通过明确命名的 legacy 组装函数调用。三个历史测量类仍可在未传入端口时隐式创建 `InstrumentControl`，因此不能把所有生产入口都视为已收束。
+3. 代码审查发现硬件工厂实际组装的是 `transport -> driver -> SafetyInstrumentSession -> PortMeasurementAdapter`，默认路径没有构造独立的 action/flow；GUI 测量清理端口后也没有闭合自身持有的端口生命周期。
+4. 阶段 8 的新路径现场验收和现场记录归档仍未完成；旧实现、旧测试和脚本调用方仍保留，尚不满足删除条件。
 
-因此当前正确状态是：**离线重构能力、真实应用默认组装路径和离线调用方审计已完成；独立 smoke 入口本次真实动作及安全清理已完成；新应用组装路径因供电配置/网络地址不匹配连接失败，阶段 8 最终验收仍未通过**。
+因此当前正确状态是：**离线重构能力和现代 GUI 的主要端口注入路径已完成；独立 smoke 入口的真实动作及安全清理已完成；默认硬件路径尚未真正接入独立 action/flow，历史类仍有隐式旧控制器回退，且新路径现场测量验收未完成，阶段 8 最终验收仍未通过**。
 
 ## 2. 已完成部分
 
@@ -42,7 +43,7 @@
 - 三类 driver 的命令格式、单位、参数边界、查询解析和设备错误已覆盖测试。
 - action/flow 不直接创建 VISA 连接，也不读取全局配置。
 - 仿真设备已覆盖正常流程、连接/准备/测量失败、取消、紧急停止和重复清理。
-- 测量服务支持注入 `measurement_port`；三个增强测量包装器要求显式注入，不再隐式创建 `InstrumentControl`。`app.gui_runtime.create_legacy_*_measurement()` 是明确的兼容组装入口。
+- 测量服务支持注入 `measurement_port`；三个增强测量包装器要求显式注入，不再隐式创建 `InstrumentControl`。`app.gui_runtime.create_legacy_*_measurement()` 是明确的兼容组装入口，但其下游历史测量类仍保留默认旧控制器回退。
 - 硬件 smoke 已有 `read_only`、`safe_prepare` 和 `minimal_action` 入口及显式安全门禁；三者均已有现场证据，`minimal_action` 已完成一次真实 RF 动作、测量和安全清理。
 
 ### 2.3 本次自动化验收
@@ -66,6 +67,14 @@ Conda：Auto_test
 配置校验仍有已知警告：驱动功放已启用但未配置本机供电分配，需要确认现场由外部供电。该警告不等同于测试失败，但在真实动作前必须确认。
 
 ## 3. 当前未完成项
+
+### 3.0 代码审查新增阻塞项
+
+- `instrument/measurement_factory.py` 默认直接组装 driver 与 `SafetyInstrumentSession`，没有构造独立 action/flow；需要统一职责并增加默认路径命令顺序测试。
+- 三个历史测量类仍使用 `measurement_port or InstrumentControl(config_path)`，并保留可直接启动的历史 `main()`；需强制端口注入或明确隔离为 legacy-only。
+- GUI 测量服务结束时会清理端口，但 GUI 仍保存该端口；第二次测量可能复用已清理 session，需要闭合端口所有权和生命周期。
+- `enhanced_workers.py` 的功放计算仍动态导入含 `InstrumentControl` 的历史模块，应直接依赖纯计算模块。
+- 多台 DP832A 的写操作广播到所有设备，而读数只取第一台；需确认并记录生产语义，或按设备/角色分别建模。
 
 ### 3.1 真实设备最小动作验收（旧 smoke 入口已完成，新组装路径待完成）
 
@@ -102,10 +111,10 @@ $env:HARDWARE_SMOKE_ENABLED = "1"
 
 按以下顺序完成，并为每一步保留可回滚路径：
 
-1. 已有应用组装层真实设备的 `transport -> driver -> action -> flow/session -> measurement_port` 路径；保留并测试连接失败、异常清理和资源关闭行为。
+1. 已有应用组装层真实设备的 `transport -> driver -> session -> measurement_port` 路径；代码审查确认默认工厂尚未接入独立 action/flow，需完成统一或明确架构边界，并保留连接失败、异常清理和资源关闭测试。
 2. 已有 `app/gui_runtime.py`、`enhanced_main_gui.py` 和 worker 的新组装调用链，但必须逐项确认所有生产测量调用方都显式传入端口。
 3. 已将三个增强测量包装器的隐式回退收束到 `app.gui_runtime.create_legacy_*_measurement()`；正式 GUI worker 使用新组装入口。
-4. 已按 `docs/阶段7调用方清单.md` 核查正式调用方、legacy 调用方、直接 VISA 层次和服务层边界；旧方法/旧控制器仍有历史测试与脚本调用方，现场 smoke 前不删除。
+4. 已按 `docs/阶段7调用方清单.md` 核查现代调用方、legacy 调用方、直接 VISA 层次和服务层边界；确认历史测量类仍能隐式构造旧控制器，且 GUI 端口生命周期未闭合。
 5. 在新路径真实 smoke 通过后，逐批删除未使用的旧 SCPI 方法和旧内部实现；每批删除后运行完整离线测试和应用检查。
 
 当前仍可见、需要审计和明确边界的兼容入口包括：
@@ -113,6 +122,8 @@ $env:HARDWARE_SMOKE_ENABLED = "1"
 - `app/gui_runtime.py:connect_instruments_legacy()` 及三个 `create_legacy_*_measurement()` 显式兼容入口；
 - 三个增强测量包装器本身拒绝缺失的 `measurement_port`；
 - `instrument_control.py` 及其历史测试/脚本调用方；
+- 三个历史测量类的默认 `InstrumentControl` 回退和独立 `main()`；
+- `enhanced_main_gui.py` 中并存的 legacy worker，以及现代测量结束后仍保留的已清理端口。
 
 ## 4. 完成判据
 
@@ -122,9 +133,11 @@ $env:HARDWARE_SMOKE_ENABLED = "1"
 2. 真实应用默认路径使用新组装链路，所有 `InstrumentControl` 回退都只存在于明确的兼容/回滚入口。
 3. 调用方审计无遗漏，服务层不包含 VISA resource、SCPI 文本、设备通道硬编码或 GUI 控件访问。
 4. 完整离线测试、相关模拟测试、应用检查和必要的硬件 smoke 均通过，且没有未解释的新回归。
-5. 旧实现已分批删除或明确保留为兼容适配器，并有可恢复的提交或配置开关。
+5. 默认硬件路径实际使用约定的 action/flow，或文档明确调整架构边界并有等价安全测试。
+6. 历史测量类不再通过普通构造隐式创建 `InstrumentControl`；旧实现已分批删除或明确保留为兼容适配器，并有可恢复的提交或配置开关。
+7. GUI 端口生命周期已闭合，重复测量不会复用已清理 session。
 
-现场门槛通过后再将本指南标记完成，并评估归档过程性文档；当前应同步保持相关阶段文档状态一致。新路径真实最小动作待执行、兼容入口保留的结论仍有效。
+现场门槛和上述代码收尾条件全部通过后再将本指南标记完成，并评估归档过程性文档；当前应同步保持相关阶段文档状态一致。新路径真实最小动作待执行、兼容入口保留、默认 action/flow 未接入和 GUI 生命周期问题的结论仍有效。
 
 ## 5. 维护规则
 

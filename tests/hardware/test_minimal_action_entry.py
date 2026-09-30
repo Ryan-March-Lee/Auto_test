@@ -12,6 +12,8 @@ class HardwareMinimalActionTests(unittest.TestCase):
     def test_one_bounded_action_and_safe_shutdown(self):
         config_path = Path(os.environ["HARDWARE_SMOKE_CONFIG"])
         config = json.loads(config_path.read_text(encoding="utf-8"))
+        if config.get("assembly_path") == "new_application":
+            self.skipTest("configured smoke path is new_application")
         if config.get("smoke_mode") != "minimal_action":
             self.skipTest("configured smoke mode is not minimal_action")
         import pyvisa

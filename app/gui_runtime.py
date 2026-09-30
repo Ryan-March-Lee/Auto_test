@@ -25,9 +25,9 @@ Operation = Literal["full", "cable_loss", "driver_mapping"]
 logger = get_logger(__name__)
 
 
-def connect_instruments(config_path: str) -> Any:
+def connect_instruments(config_path: str, *, recorder: Any = None) -> Any:
     """Create the configured hardware port through the composition root."""
-    return create_measurement_port(config_path, mode="hardware")
+    return create_measurement_port(config_path, mode="hardware", recorder=recorder)
 
 
 def connect_instruments_legacy(config_path: str) -> Any:

@@ -43,7 +43,7 @@ def create_measurement_port(
     if mode == "hardware":
         if config_path is None:
             raise ValueError("hardware 模式必须提供 config_path")
-        return _create_hardware_measurement_port(config_path)
+        return _create_hardware_measurement_port(config_path, recorder=recorder)
     if mode != "simulation":
         raise ValueError(f"不支持的测量端口模式: {mode}")
 
@@ -84,6 +84,10 @@ class _VisaSession(SafetyInstrumentSession):
                 if close is not None:
                     close()
                 self._resource_manager_closed = True
+
+    @property
+    def resources_closed(self) -> bool:
+        return self._resource_manager_closed and self.state.value == "cleaned"
 
 
 class _DiscoveredPowerSupply:
@@ -143,7 +147,7 @@ class _DiscoveredPowerSupply:
         return routed
 
 
-def _discover_power_supplies(manager, template_config, *, exclude_addresses=()):
+def _discover_power_supplies(manager, template_config, *, exclude_addresses=(), recorder=None):
     """Discover every idle DP832A and create drivers without fixed addresses."""
     discovered = []
     candidates = manager.list_resources()
@@ -182,11 +186,11 @@ def _discover_power_supplies(manager, template_config, *, exclude_addresses=()):
         raise ValueError("未发现处于空载状态的 DP832A 电源")
     supplies = []
     for address, resource, _identity in discovered:
-        supplies.append(ScpiPowerSupplyDriver(VisaScpiTransport(resource)))
+        supplies.append(ScpiPowerSupplyDriver(VisaScpiTransport(resource, recorder=recorder)))
     return supplies, discovered
 
 
-def _create_hardware_measurement_port(config_path: str):
+def _create_hardware_measurement_port(config_path: str, *, recorder=None):
     from config_io import load_config_file
     config = load_config_file(config_path)
     instruments = config["instruments"]
@@ -221,17 +225,18 @@ def _create_hardware_measurement_port(config_path: str):
             manager,
             power_config,
             exclude_addresses=(signal_config["address"], spectrum_config["address"]),
+            recorder=recorder,
         )
         resources.extend(resource for _address, resource, _identity in discovered)
 
         signal = ScpiSignalGeneratorDriver(
-            VisaScpiTransport(signal_resource),
+            VisaScpiTransport(signal_resource, recorder=recorder),
             min_frequency_hz=signal_config.get("min_frequency_hz"),
             max_frequency_hz=signal_config.get("max_frequency_hz"),
             min_power_dbm=signal_config.get("min_power_dbm"),
             max_power_dbm=signal_config.get("max_power_dbm"),
         )
-        spectrum = ScpiSpectrumAnalyzerDriver(VisaScpiTransport(spectrum_resource))
+        spectrum = ScpiSpectrumAnalyzerDriver(VisaScpiTransport(spectrum_resource, recorder=recorder))
         power = _DiscoveredPowerSupply(power_drivers)
         dut_channels = _assigned_channels(assignments.get("dut_amplifier", {}), power_name, power_config, resolve_power_channel_role)
         driver_channels = _assigned_channels(assignments.get("driver_amplifier", {}), power_name, power_config, resolve_power_channel_role)

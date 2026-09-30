@@ -46,35 +46,54 @@ class PortMeasurementAdapter:
         if overlap:
             raise ValueError(f"DUT and driver power channels overlap: {', '.join(sorted(overlap))}")
 
-    def set_frequency(self, frequency_ghz: float) -> None:
+    def set_frequency(self, frequency_ghz: float, *, timeout_s: float = 5.0) -> None:
         frequency_hz = float(frequency_ghz) * 1e9
-        self.signal_generator.set_frequency_hz(frequency_hz)
-        self.spectrum_analyzer.configure_center_frequency_hz(frequency_hz)
+        self.signal_generator.set_frequency_hz(frequency_hz, timeout_s=timeout_s)
+        self.spectrum_analyzer.configure_center_frequency_hz(frequency_hz, timeout_s=timeout_s)
 
-    def set_power(self, power_dbm: float) -> None:
+    def set_power(self, power_dbm: float, *, timeout_s: float = 5.0) -> None:
         was_enabled = bool(getattr(self.signal_generator, "rf_enabled", False))
         if was_enabled:
-            self.signal_generator.set_rf_enabled(False)
+            self.signal_generator.set_rf_enabled(False, timeout_s=timeout_s)
         try:
-            self.signal_generator.set_power_dbm(power_dbm)
+            self.signal_generator.set_power_dbm(power_dbm, timeout_s=timeout_s)
         finally:
             if was_enabled:
-                self.signal_generator.set_rf_enabled(True)
+                self.signal_generator.set_rf_enabled(True, timeout_s=timeout_s)
 
-    def set_center_frequency(self, frequency_ghz: float) -> None:
-        self.spectrum_analyzer.configure_center_frequency_hz(float(frequency_ghz) * 1e9)
+    def set_center_frequency(self, frequency_ghz: float, *, timeout_s: float = 5.0) -> None:
+        self.spectrum_analyzer.configure_center_frequency_hz(float(frequency_ghz) * 1e9, timeout_s=timeout_s)
 
-    def set_span(self, span_mhz: float) -> None:
-        self.spectrum_analyzer.configure_bandwidth_hz(float(span_mhz) * 1e6)
+    def set_span(self, span_mhz: float, *, timeout_s: float = 5.0) -> None:
+        self.spectrum_analyzer.configure_bandwidth_hz(float(span_mhz) * 1e6, timeout_s=timeout_s)
 
-    def measure_power_with_average(self) -> float:
-        return self.spectrum_analyzer.measure_power_dbm()
+    def measure_power_with_average(self, *, timeout_s: float = 10.0) -> float:
+        return self.spectrum_analyzer.measure_power_dbm(timeout_s=timeout_s)
 
-    def rf_output_on(self) -> None:
-        self.session.set_rf_enabled(True)
+    def rf_output_on(self, *, timeout_s: float = 5.0) -> None:
+        self.session.set_rf_enabled(True, timeout_s=timeout_s)
 
-    def rf_output_off(self) -> None:
-        self.session.set_rf_enabled(False)
+    def rf_output_off(self, *, timeout_s: float = 5.0) -> None:
+        self.session.set_rf_enabled(False, timeout_s=timeout_s)
+
+    def start_measurement(self) -> None:
+        """Enter the measurement state without enabling DUT power outputs."""
+        self.session.start_measurement()
+
+    def emergency_power_off_all(self, *, timeout_s: float = 5.0) -> list[BaseException]:
+        """Turn off both channels on every discovered supply before closing."""
+        errors = []
+        self._last_emergency_power_off: list[tuple[int, str]] = []
+        supplies = getattr(self.power_supply, "supplies", [self.power_supply])
+        for index, supply in enumerate(supplies):
+            for channel in ("CH2", "CH1"):
+                try:
+                    supply.set_output_enabled(channel, False, timeout_s=timeout_s)
+                except Exception as error:
+                    errors.append(error)
+                else:
+                    self._last_emergency_power_off.append((index, channel))
+        return errors
 
     def set_voltage(self, _supply_name: str, channel: str, voltage: float) -> None:
         setter = getattr(self.power_supply, "set_voltage_v", None)
@@ -139,18 +158,18 @@ class PortMeasurementAdapter:
             self.session.power_off(roles=roles, power_channels=self.dut_power_channels)
             self._active_power_groups.pop("dut", None)
 
-    def close_all(self, *, close_rf: bool = False):
+    def close_all(self, *, close_rf: bool = False, timeout_s: float = 30.0):
         if self._session_cleaned:
             return []
         errors = []
         if close_rf:
             try:
-                self.session.set_rf_enabled(False)
+                self.session.set_rf_enabled(False, timeout_s=timeout_s)
             except Exception as error:
                 errors.append(error)
         for group, channels in list(self._active_power_groups.items()):
             try:
-                self.session.power_off(roles=tuple(channels), power_channels=channels)
+                self.session.power_off(roles=tuple(channels), power_channels=channels, timeout_s=timeout_s)
             except Exception as error:
                 errors.append(error)
             else:
@@ -160,6 +179,7 @@ class PortMeasurementAdapter:
                 emergency=True,
                 power_roles=tuple(self.dut_power_channels),
                 power_channels=self.dut_power_channels or None,
+                timeout_s=timeout_s,
             )
         except Exception as error:
             errors.append(error)

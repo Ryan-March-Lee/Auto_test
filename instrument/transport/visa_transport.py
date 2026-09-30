@@ -24,10 +24,11 @@ class VisaScpiTransport:
     ResourceManager, which keeps driver and unit tests hardware-independent.
     """
 
-    def __init__(self, resource: Any, *, timeout_s: float = 5.0) -> None:
+    def __init__(self, resource: Any, *, timeout_s: float = 5.0, recorder: Any = None) -> None:
         if not math.isfinite(float(timeout_s)) or timeout_s <= 0:
             raise ValueError("timeout_s 必须是有限正数")
         self.resource = resource
+        self.recorder = recorder
         self.timeout_s = float(timeout_s)
         self.closed = False
         self.close_count = 0
@@ -45,6 +46,8 @@ class VisaScpiTransport:
         self._ensure_open()
         try:
             self.resource.write(command)
+            if self.recorder is not None:
+                self.recorder("write", command)
         except Exception as exc:
             raise _translate_error(exc, command, "write") from exc
 
@@ -76,6 +79,8 @@ class VisaScpiTransport:
                 operation="query",
                 command=command,
             )
+        if self.recorder is not None:
+            self.recorder("query", command, response.strip())
         return response
 
     def close(self) -> None:

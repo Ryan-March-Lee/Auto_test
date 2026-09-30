@@ -6,12 +6,12 @@
 
 截至 2026-09-30，阶段 1 至阶段 7 的离线能力和现代 GUI 的主要组装入口已经落地，但最终验收仍被以下事项阻塞：
 
-1. 2026-09-30 已用本地 `minimal_action` 配置完成一次受限动作，报告确认 RF、两台发现到的电源和 VISA 资源均安全关闭；随后新应用组装路径已动态发现现场空载 DP832A，连接和立即安全关闭均通过。
+1. 2026-09-30 已用本地 `minimal_action` 配置分别完成独立 smoke 入口和新应用组装路径的一次受限动作；报告确认 RF、两台发现到的电源和 VISA 资源均安全关闭，且新路径记录了初始状态、设备身份、测量顺序、最终状态和真实 SCPI 操作。
 2. 现代 GUI/worker 的主要入口通过硬件组装器注入 `measurement_port`；旧 GUI worker 通过明确命名的 legacy 组装函数调用。三个历史测量类仍可在未传入端口时隐式创建 `InstrumentControl`，因此不能把所有生产入口都视为已收束。
-3. 代码审查发现硬件工厂实际组装的是 `transport -> driver -> SafetyInstrumentSession -> PortMeasurementAdapter`，默认路径没有构造独立的 action/flow；GUI 测量清理端口后也没有闭合自身持有的端口生命周期。
-4. 阶段 8 的新路径现场验收和现场记录归档仍未完成；旧实现、旧测试和脚本调用方仍保留，尚不满足删除条件。
+3. 代码审查确认硬件工厂实际组装的是 `transport -> driver -> SafetyInstrumentSession -> PortMeasurementAdapter`，默认路径没有构造独立的 action/flow；当前将 `SafetyInstrumentSession` 作为兼容协调边界，仍需决定是否正式迁移到独立 action/flow。GUI 测量清理端口后也没有闭合自身持有的端口生命周期。
+4. 新组装路径的最小动作现场验收和本机报告归档已完成；但完整测量类型验收、旧实现处置、历史调用方收束和 GUI 端口生命周期仍未完成，尚不满足全部删除条件。
 
-因此当前正确状态是：**离线重构能力和现代 GUI 的主要端口注入路径已完成；独立 smoke 入口的真实动作及安全清理已完成；默认硬件路径尚未真正接入独立 action/flow，历史类仍有隐式旧控制器回退，且新路径现场测量验收未完成，阶段 8 最终验收仍未通过**。
+因此当前正确状态是：**离线重构能力、现代 GUI 的主要端口注入路径以及新应用组装路径的真实最小动作验收已完成；硬件默认路径当前采用 `SafetyInstrumentSession` 兼容协调边界，尚未正式接入独立 action/flow，历史类仍有隐式旧控制器回退，完整测量类型验收和 GUI 端口生命周期收束仍未完成，阶段 8 最终验收仍未通过**。
 
 ## 2. 已完成部分
 
@@ -33,7 +33,7 @@
 
 - `instrument/transport/`：包含 `ScpiTransport`、`MockScpiTransport` 和 `VisaScpiTransport`，负责通信、超时、异常转换和幂等关闭。
 - `instrument/drivers/`：包含信号源、频谱仪和电源 driver，负责 SCPI 命令、单位、参数校验和查询解析。
-- `instrument/action/`：提供信号源、频谱仪和电源的稳定动作入口，不拼接 SCPI、不创建 VISA 连接。
+- `instrument/action/`：提供信号源、频谱仪和电源的稳定动作入口，不拼接 SCPI、不创建 VISA 连接；当前默认硬件组装仍由 `SafetyInstrumentSession` 兼容协调动作和清理，尚未统一迁移到这些独立 action。
 - `instrument/flow/`：包含安全上电、掉电和统一清理流程，保持 `RF 关闭 → 电源关闭 → 连接关闭`，以及 `Drain → Gate` 的安全顺序。
 - `instrument/simulation.py`、`instrument/measurement_adapter.py` 和 `instrument/measurement_factory.py`：提供仿真 session、端口适配和离线组装路径。
 
@@ -59,7 +59,7 @@ Conda：Auto_test
 执行结果：
 
 ```text
-./run_tests.ps1                         445 项通过
+./run_tests.ps1                         450 项通过
 ./start_gui.bat --check                 通过
 ./start_gui.bat --validate-config       通过
 ```
@@ -76,9 +76,9 @@ Conda：Auto_test
 - `enhanced_workers.py` 的功放计算仍动态导入含 `InstrumentControl` 的历史模块，应直接依赖纯计算模块。
 - 多台 DP832A 的写操作广播到所有设备，而读数只取第一台；需确认并记录生产语义，或按设备/角色分别建模。
 
-### 3.1 真实设备最小动作验收（旧 smoke 入口已完成，新组装路径待完成）
+### 3.1 真实设备最小动作验收（独立 smoke 和新组装路径均已完成）
 
-已有本地 `minimal_action` 报告记录一次受限动作、测量和安全清理；报告确认独立 smoke 的安全闭环。应用组装路径现按 VISA 枚举动态发现所有空载 DP832A，配置中的电源地址仅保留为模板字段，不再作为连接目标；动态发现连接和立即安全关闭已通过，仍需按具体测量类型复验：
+本机已分别归档独立 smoke 和新应用组装路径的 `minimal_action` 报告。新路径通过 `app.gui_runtime.connect_instruments()` 进入应用组装链路，按 VISA 枚举动态发现所有空载 DP832A，配置中的电源地址仅保留为模板字段，不再作为连接目标；初始安全状态、设备身份、一次 RF 动作、测量顺序、最终状态和 VISA 资源释放均已通过。该结果仍不替代 cable loss、driver mapping 和 amplifier 等完整测量类型验收：
 
 ```powershell
 $env:HARDWARE_SMOKE_ENABLED = "1"
@@ -105,7 +105,7 @@ $env:HARDWARE_SMOKE_ENABLED = "1"
 - 所有 VISA resource 和 ResourceManager 均已释放；
 - 报告记录动作数、测量值、设备身份、清理事件、最终状态和异常。
 
-已有报告确认独立 smoke 入口的动作预算、测量顺序、RF 和电源关闭以及 VISA 资源释放；本次新应用组装动态发现连接验证确认所有发现电源均可纳入会话并安全关闭。该结论不替代具体测量动作验收；在完整应用动作验收前不得删除兼容入口。
+已有报告确认独立 smoke 和新应用组装路径的动作预算、测量顺序、RF 和电源关闭、每台发现电源的最终状态以及 VISA 资源释放。该结论不替代具体测量动作验收；在完整应用动作验收、历史调用方收束和 GUI 生命周期闭合前不得删除兼容入口。
 
 ### 3.2 真实应用入口迁移与调用方审计（离线部分已完成）
 
@@ -137,7 +137,7 @@ $env:HARDWARE_SMOKE_ENABLED = "1"
 6. 历史测量类不再通过普通构造隐式创建 `InstrumentControl`；旧实现已分批删除或明确保留为兼容适配器，并有可恢复的提交或配置开关。
 7. GUI 端口生命周期已闭合，重复测量不会复用已清理 session。
 
-现场门槛和上述代码收尾条件全部通过后再将本指南标记完成，并评估归档过程性文档；当前应同步保持相关阶段文档状态一致。新路径真实最小动作待执行、兼容入口保留、默认 action/flow 未接入和 GUI 生命周期问题的结论仍有效。
+现场门槛和上述代码收尾条件全部通过后再将本指南标记完成，并评估归档过程性文档；当前应同步保持相关阶段文档状态一致。新路径真实最小动作已完成，兼容入口仍需保留；默认 action/flow 尚未接入、历史调用方仍有旧控制器回退、完整测量类型验收和 GUI 生命周期问题的结论仍有效。
 
 ## 5. 维护规则
 

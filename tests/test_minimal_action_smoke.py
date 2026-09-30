@@ -32,6 +32,11 @@ class Resource:
         self.closed = True
 
 
+class CloseFailingResource(Resource):
+    def close(self):
+        raise RuntimeError("resource close failed")
+
+
 class Manager:
     def __init__(self, resources, discovered=None):
         self.resources = resources
@@ -122,6 +127,25 @@ class MinimalActionSmokeTests(unittest.TestCase):
         self.assertEqual(report["power_supply_discovery"][0]["address"], "unused")
         self.assertEqual(report["power_supply_discovery"][1]["address"], "ps")
         self.assertTrue(all(item["closed"] for item in report["power_supply_discovery"]))
+
+    def test_power_supply_discovery_close_failure_blocks_rf_action(self):
+        setup = config()
+        setup["devices"]["power_supply"].pop("address")
+        setup["devices"]["power_supply"]["discover"] = True
+        resources = self.resources()
+        resources["ps"] = CloseFailingResource(
+            {"*IDN?": "ACME,PS-1", "OUTP? CH2": "0", "OUTP? CH1": "0"}
+        )
+        manager = Manager(resources, discovered=("ps",))
+
+        with self.assertRaises(SmokeExecutionError) as caught:
+            run_minimal_action_smoke(setup, manager)
+
+        self.assertFalse(any(command == ("write", "OUTP ON") for command in resources["sg"].commands))
+        candidate = caught.exception.report["power_supply_discovery"][0]
+        self.assertFalse(candidate["closed"])
+        self.assertIn("close_error", candidate)
+        self.assertEqual(candidate["reason"], "power supply resource could not be closed")
 
     def test_all_discovered_power_supplies_are_cleaned_and_verified(self):
         setup = config()

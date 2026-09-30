@@ -18,6 +18,7 @@ def discover_power_supplies(resource_manager: Any, device: Mapping[str, Any], re
     for address in resources:
         item: dict[str, Any] = {"address": address}
         resource = None
+        safe = False
         try:
             resource = resource_manager.open_resource(address, open_timeout=int(device["timeout_ms"]))
             resource.timeout = int(device["timeout_ms"])
@@ -35,9 +36,7 @@ def discover_power_supplies(resource_manager: Any, device: Mapping[str, Any], re
                 safe = all(expected_match(entry["response"], check["expected"])
                            for entry, check in zip(states, state_queries))
                 item["matched"] = safe
-                if safe:
-                    matches.append(address)
-                else:
+                if not safe:
                     item["reason"] = "configured power channels were not all off"
         except Exception as exc:
             item["error"] = f"{type(exc).__name__}: {exc}"
@@ -49,6 +48,11 @@ def discover_power_supplies(resource_manager: Any, device: Mapping[str, Any], re
                 except Exception as exc:
                     item["closed"] = False
                     item["close_error"] = f"{type(exc).__name__}: {exc}"
+        if safe and item.get("closed") is True:
+            matches.append(address)
+        elif safe:
+            item["matched"] = False
+            item["reason"] = "power supply resource could not be closed"
         candidates.append(item)
     if not matches:
         raise RuntimeError("Expected at least one usable power supply, found 0")

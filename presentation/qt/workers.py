@@ -75,6 +75,13 @@ class InstrumentWorker(BaseWorker):
             self.signals.progress.emit(25)
             controller = connect_instruments(self.config_path)
             self.measurement_port = controller
+            if self._stop_requested:
+                close = getattr(controller, "close_all", None)
+                if close is not None:
+                    close(close_rf=True)
+                self.measurement_port = None
+                self.signals.stopped.emit("用户停止")
+                return
             self.signals.progress.emit(75)
             self.sleep_fn(1)
             self.signals.progress.emit(100)

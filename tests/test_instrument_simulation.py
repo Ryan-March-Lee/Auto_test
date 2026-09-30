@@ -105,6 +105,20 @@ class SimulationLifecycleTests(unittest.TestCase):
         self.session.close()
         self.assertFalse(self.sg.connected)
 
+    def test_power_shutdown_failure_still_closes_power_connection(self):
+        self._prepare()
+        self.session.power_on()
+        self.ps.inject_failure("output_off", once=False)
+
+        with self.assertRaisesRegex(RuntimeError, "cleanup failed"):
+            self.session.close()
+
+        self.assertFalse(self.ps.connected)
+        self.assertFalse(self.sg.connected)
+        self.ps.fail_on = None
+        self.session.close()
+        self.assertEqual(self.session.state, InstrumentState.CLEANED)
+
     def test_connection_failure_still_closes_already_connected_resources(self):
         self.sa.fail_on = "connect"
         self.session.validate()
@@ -137,7 +151,7 @@ class SimulationLifecycleTests(unittest.TestCase):
             self.session.close()
         self.assertFalse(self.sg.connected)
         self.assertFalse(self.sa.connected)
-        self.assertTrue(self.ps.connected)
+        self.assertFalse(self.ps.connected)
         self.ps.fail_on = None
         self.session.close()
         self.assertFalse(self.ps.connected)
@@ -217,7 +231,7 @@ class SimulationLifecycleTests(unittest.TestCase):
                 self.assertFalse(self.sg.rf_enabled)
                 self.assertFalse(self.sg.connected)
                 self.assertFalse(self.sa.connected)
-                self.assertTrue(self.ps.connected)
+                self.assertFalse(self.ps.connected)
                 self.session.close()
                 self.assertFalse(self.ps.connected)
 

@@ -21,9 +21,17 @@ from measurement_services import CableLossService, DriverPowerMappingService, Am
 from project_paths import CABLE_LOSS_FILE, CONFIG_FILE, TEST_RESULTS_DIR, resolve_path
 from persistence.config_repository import ConfigurationRepository
 from result_storage import load_json_result, new_run_id, save_measurement_result, write_legacy_run_snapshot
+from presentation.qt.workers import InstrumentWorker as _QtInstrumentWorker
 
 
 logger = get_logger(__name__)
+
+
+class InstrumentWorker(_QtInstrumentWorker):
+    """Compatibility import retaining the former optional config path."""
+
+    def __init__(self, config_path=None, sleep_fn=None):
+        super().__init__(str(resolve_path(config_path, CONFIG_FILE)), sleep_fn=sleep_fn)
 
 
 def _require_measurement_port(measurement_port, owner):
@@ -245,27 +253,9 @@ class EnhancedAmplifierMeasurement(_LegacyResultAdapter):
 class WorkerSignals(QObject):
     finished = Signal()
     error = Signal(str)
+    stopped = Signal(str)
+    result = Signal(object)
     message = Signal(str)
     progress = Signal(int)
 
 
-class InstrumentWorker(QThread):
-    def __init__(self, config_path=None, sleep_fn=None):
-        super().__init__()
-        self.config_path = resolve_path(config_path, CONFIG_FILE)
-        self.sleep_fn = sleep_fn or time.sleep
-        self.signals = WorkerSignals()
-
-    def run(self):
-        try:
-            self.signals.message.emit("正在连接仪器...")
-            self.signals.progress.emit(20)
-            _connect_instruments(self.config_path)
-            self.signals.progress.emit(60)
-            self.sleep_fn(1)
-            self.signals.progress.emit(100)
-            self.signals.message.emit("所有启用的仪器连接成功")
-            self.signals.finished.emit()
-        except Exception as error:
-            self.signals.error.emit(f"仪器连接失败: {error}")
-            self.signals.message.emit(f"仪器连接失败: {error}")

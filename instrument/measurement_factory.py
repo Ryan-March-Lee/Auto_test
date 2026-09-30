@@ -76,14 +76,16 @@ class _VisaSession(SafetyInstrumentSession):
         self._resource_manager_closed = False
 
     def close(self, *args, **kwargs):
-        try:
-            return super().close(*args, **kwargs)
-        finally:
-            if not self._resource_manager_closed:
-                close = getattr(self.resource_manager, "close", None)
-                if close is not None:
-                    close()
-                self._resource_manager_closed = True
+        # Keep the manager alive when device cleanup fails: SafetyInstrument-
+        # Session deliberately retains failed resources so a later close()
+        # can retry them.
+        if self.state.value != "cleaned":
+            super().close(*args, **kwargs)
+        if not self._resource_manager_closed:
+            close = getattr(self.resource_manager, "close", None)
+            if close is not None:
+                close()
+            self._resource_manager_closed = True
 
     @property
     def resources_closed(self) -> bool:

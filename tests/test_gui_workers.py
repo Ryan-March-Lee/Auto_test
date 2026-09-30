@@ -6,6 +6,7 @@ from unittest.mock import patch
 from PySide6.QtCore import QCoreApplication
 
 from presentation.qt.workers import CableLossWorker, InstrumentWorker
+from enhanced_workers import InstrumentWorker as LegacyInstrumentWorker
 
 
 class _CableService:
@@ -96,6 +97,43 @@ class GuiWorkerTests(unittest.TestCase):
             worker.run()
         self.assertEqual(port.close_calls, [True])
         self.assertIsNone(worker.measurement_port)
+
+    def test_legacy_instrument_worker_uses_composition_root_and_returns_port(self):
+        class _Port:
+            def __init__(self):
+                self.close_calls = []
+
+            def close_all(self, *, close_rf=False):
+                self.close_calls.append(close_rf)
+
+        port = _Port()
+        worker = LegacyInstrumentWorker("config.json", sleep_fn=lambda _seconds: None)
+        results = []
+        with patch("app.gui_runtime.connect_instruments", return_value=port):
+            worker.signals.result.connect(results.append)
+            worker.run()
+        self.assertEqual(results, [port])
+        self.assertIs(worker.measurement_port, port)
+        self.assertEqual(port.close_calls, [])
+
+    def test_shared_instrument_worker_stops_after_connecting_before_handoff(self):
+        class _Port:
+            def __init__(self):
+                self.close_calls = []
+
+            def close_all(self, *, close_rf=False):
+                self.close_calls.append(close_rf)
+
+        port = _Port()
+        worker = InstrumentWorker("config.json", sleep_fn=lambda _seconds: None)
+        worker.stop()
+        stopped = []
+        worker.signals.stopped.connect(stopped.append)
+        with patch("app.gui_runtime.connect_instruments", return_value=port):
+            worker.run()
+        self.assertEqual(port.close_calls, [True])
+        self.assertIsNone(worker.measurement_port)
+        self.assertEqual(stopped, ["用户停止"])
 
 
 if __name__ == "__main__":

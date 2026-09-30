@@ -425,7 +425,10 @@ class SafetyInstrumentSession:
         devices = []
         if self.spectrum_analyzer in self._attempted:
             devices.append(self.spectrum_analyzer)
-        if power_safe and self.power_supply in self._attempted:
+        # A broadcast power-off can report one supply failure after already
+        # attempting every supply.  Close each owned resource so one failed
+        # broadcast does not prevent cleanup of the remaining connections.
+        if self.power_supply in self._attempted:
             devices.append(self.power_supply)
         if rf_safe and self.signal_generator in self._attempted:
             devices.append(self.signal_generator)

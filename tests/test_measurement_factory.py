@@ -5,7 +5,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from instrument.measurement_adapter import PortMeasurementAdapter
-from instrument.measurement_factory import create_measurement_port
+from instrument.measurement_factory import create_measurement_port, _VisaSession
+from instrument.simulation import SimulatedSignalGenerator, SimulatedSpectrumAnalyzer, SimulatedPowerSupply
 from enhanced_workers import (
     EnhancedAmplifierMeasurement,
     EnhancedCableLossMeasurement,
@@ -45,6 +46,25 @@ class MeasurementFactoryTests(unittest.TestCase):
     def test_hardware_mode_requires_explicit_configuration(self):
         with self.assertRaisesRegex(ValueError, "config_path"):
             create_measurement_port(mode="hardware")
+
+    def test_visa_manager_waits_for_session_cleanup_and_retries(self):
+        manager = _CloseRecorder()
+        signal = SimulatedSignalGenerator()
+        analyzer = SimulatedSpectrumAnalyzer()
+        power = SimulatedPowerSupply()
+        session = _VisaSession(manager, signal, analyzer, power, {"gate": "A", "drain": "B"})
+        session.validate()
+        session.connect()
+        session.prepare()
+        signal.inject_failure("rf_off")
+
+        with self.assertRaises(RuntimeError):
+            session.close()
+        self.assertEqual(manager.close_calls, 0)
+        signal.fail_on = None
+        session.close()
+        self.assertEqual(manager.close_calls, 1)
+        self.assertTrue(session.resources_closed)
 
     def test_hardware_mode_assembles_drivers_and_closes_owned_resources(self):
         config = {
@@ -216,6 +236,14 @@ class _FakeResourceManager:
 
     def close(self):
         self.closed = True
+
+
+class _CloseRecorder:
+    def __init__(self):
+        self.close_calls = 0
+
+    def close(self):
+        self.close_calls += 1
 
 
 class _DiscoveryResourceManager(_FakeResourceManager):

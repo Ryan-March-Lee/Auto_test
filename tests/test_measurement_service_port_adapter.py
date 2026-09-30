@@ -84,6 +84,21 @@ class MeasurementServicePortAdapterTests(unittest.TestCase):
         self.assertEqual(session.state.value, "cleaned")
         self.assertIn(("signal_generator", "rf_off", None), recorder.commands)
 
+    def test_failed_power_change_does_not_reenable_rf(self):
+        adapter, session, recorder = self.make_adapter()
+        adapter.power_on_sequence()
+        adapter.rf_output_on()
+        adapter.signal_generator.inject_failure("set_power_dbm")
+
+        with self.assertRaisesRegex(RuntimeError, "set_power_dbm"):
+            adapter.set_power(-10)
+
+        self.assertFalse(adapter.signal_generator.rf_enabled)
+        self.assertEqual(
+            recorder.commands.count(("signal_generator", "rf_on", None)),
+            1,
+        )
+
     def test_driver_and_dut_power_channels_must_not_overlap(self):
         recorder = CommandRecorder()
         session = SafetyInstrumentSession(

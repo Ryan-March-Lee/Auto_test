@@ -57,7 +57,11 @@ class PortMeasurementAdapter:
             self.signal_generator.set_rf_enabled(False, timeout_s=timeout_s)
         try:
             self.signal_generator.set_power_dbm(power_dbm, timeout_s=timeout_s)
-        finally:
+        except Exception:
+            # A failed power change must leave RF disabled.  Re-enabling it in
+            # finally could energize the previous output after a failed write.
+            raise
+        else:
             if was_enabled:
                 self.signal_generator.set_rf_enabled(True, timeout_s=timeout_s)
 

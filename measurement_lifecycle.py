@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Callable, List
 
 from app_logging import get_logger
+from instrument.flow import SafetyShutdownFlow
 
 
 logger = get_logger(__name__)
@@ -14,8 +15,13 @@ def cleanup_measurement(
     instrument_control: Any,
     *,
     power_cleanup: Callable[[], None] | None = None,
+    safety_flow: SafetyShutdownFlow | None = None,
 ) -> None:
     """按 RF -> 电源 -> 连接顺序尽力清理，并汇总所有失败。"""
+    if safety_flow is not None:
+        safety_flow.run()
+        return
+
     errors: List[BaseException] = []
     logger.info("测量安全清理开始")
 

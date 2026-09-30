@@ -230,11 +230,19 @@ class SimulatedPowerSupply(_SimulatedDevice):
             raise RuntimeError("voltage requires connection and output off")
         self.voltages[channel] = float(voltage_v)
 
+    def set_voltage_v(self, channel, voltage_v, *, timeout_s=5.0):
+        """单位明确的端口别名，与真实电源 driver 保持一致。"""
+        self.set_voltage(channel, voltage_v, timeout_s=timeout_s)
+
     def set_current_limit(self, channel, current_a, *, timeout_s=5.0):
         self._command("set_current_limit", (channel, current_a))
         if not self.connected or current_a < 0:
             raise ValueError("current limit requires connection and non-negative current")
         self.currents[channel] = float(current_a)
+
+    def set_current_limit_a(self, channel, current_a, *, timeout_s=5.0):
+        """单位明确的端口别名，与真实电源 driver 保持一致。"""
+        self.set_current_limit(channel, current_a, timeout_s=timeout_s)
 
     def set_output_enabled(self, channel, enabled, *, timeout_s=5.0):
         self._command("output_on" if enabled else "output_off", channel)
@@ -252,6 +260,9 @@ class SimulatedPowerSupply(_SimulatedDevice):
             return float(self.voltage_readings[channel])
         return self.voltages.get(channel, 0.0) if self.outputs.get(channel, False) else 0.0
 
+    def read_voltage_v(self, channel, *, timeout_s=5.0):
+        return self.read_voltage(channel, timeout_s=timeout_s)
+
     def read_current(self, channel, *, timeout_s=5.0):
         self._command("read_current", channel)
         if self.failure_injector.should_fail("read_current", phase="query"):
@@ -259,6 +270,9 @@ class SimulatedPowerSupply(_SimulatedDevice):
         if not self.connected:
             raise RuntimeError("power supply is not connected")
         return float(self.current_readings.get(channel, 0.0))
+
+    def read_current_a(self, channel, *, timeout_s=5.0):
+        return self.read_current(channel, timeout_s=timeout_s)
 
     def close(self, *, timeout_s=5.0):
         if self.connected:

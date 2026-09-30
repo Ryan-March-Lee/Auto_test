@@ -2,15 +2,15 @@
 
 ## 1. 验收结论
 
-本次重构尚未最终收敛，本指南保留作为阶段 8 的收尾清单。
+本次重构尚未完成，本指南继续作为阶段 8 的唯一收尾清单。
 
-截至 2026-09-30，阶段 1 至阶段 6 的离线代码能力、阶段 7 的当前离线接入切片已经落地，但最终验收仍被以下事项阻塞：
+截至 2026-09-30，阶段 1 至阶段 7 的离线能力和应用组装切片已经落地，但最终验收仍被以下事项阻塞：
 
-1. `minimal_action` 已完成一次真实受限动作，但多电源断言修正后的硬件入口回归和 Simulation 回归仍需重跑并留存记录。
-2. 真实应用默认入口已迁移到组装层：GUI、worker 通过 `transport -> driver -> session -> measurement_port` 获取端口；`InstrumentControl` 仅保留为显式兼容/回滚入口。新硬件组装路径尚未完成现场 smoke。
-3. 阶段 8 的最终验收、现场记录归档和旧实现清理不能仅凭已有离线测试通过而宣告完成。
+1. 已有的 `minimal_action` 现场报告证明旧 smoke 入口完成过一次受限动作，但未证明新应用组装路径完成硬件验收。
+2. GUI/worker 的连接入口已经调用硬件组装器，但三个测量包装器仍保留 `measurement_port` 为空时的 `InstrumentControl` 兼容回退；调用方边界和回退策略尚未最终冻结。
+3. 阶段 8 的新路径现场验收、调用方审计、现场记录归档和旧实现处置仍未完成。
 
-因此当前正确状态是：**离线重构能力和生产入口代码迁移已完成，一次旧路径真实动作验收已完成，新默认硬件路径 smoke 及阶段 8 收尾待完成**。
+因此当前正确状态是：**离线重构能力和应用组装切片已完成，一次旧 smoke 入口真实动作验收已完成；新应用组装路径 smoke、兼容回退审计和阶段 8 收尾待完成**。
 
 ## 2. 已完成部分
 
@@ -42,12 +42,12 @@
 - 三类 driver 的命令格式、单位、参数边界、查询解析和设备错误已覆盖测试。
 - action/flow 不直接创建 VISA 连接，也不读取全局配置。
 - 仿真设备已覆盖正常流程、连接/准备/测量失败、取消、紧急停止和重复清理。
-- 测量服务支持注入 `measurement_port`，旧 `InstrumentControl` 路径仍可回滚。
+- 测量服务支持注入 `measurement_port`；三个测量包装器仍可在未注入时回退到 `InstrumentControl`，该回退尚未从生产边界移除。
 - 硬件 smoke 已有 `read_only`、`safe_prepare` 和 `minimal_action` 入口及显式安全门禁；三者均已有现场证据，`minimal_action` 已完成一次真实 RF 动作、测量和安全清理。
 
 ### 2.3 本次自动化验收
 
-使用 `.env` 中的 `AUTO_TEST_PYTHON`：
+使用 `.env` 中的 `AUTO_TEST_PYTHON`，最近一次记录结果为：
 
 ```text
 解释器：C:\My_Document\Anaconda\envs\Auto_test\python.exe
@@ -58,7 +58,7 @@ Conda：Auto_test
 执行结果：
 
 ```text
-./run_tests.ps1                         427 项通过
+./run_tests.ps1                         431 项通过
 ./start_gui.bat --check                 通过
 ./start_gui.bat --validate-config       通过
 ```
@@ -67,9 +67,9 @@ Conda：Auto_test
 
 ## 3. 当前未完成项
 
-### 3.1 真实设备最小动作验收（已完成，需保留证据）
+### 3.1 真实设备最小动作验收（旧 smoke 入口已完成，新组装路径待完成）
 
-已使用现场配置执行一次受限动作。后续仅在新组装路径或硬件 smoke 代码发生影响行为的变更时，按同一安全门禁复验：
+已有本地 `minimal_action` 报告记录一次受限动作、测量和安全清理；该报告没有标识或证明应用组装路径，因此不能作为阶段 8 的最终验收证据。新组装路径必须在现场授权后按同一安全门禁复验：
 
 ```powershell
 $env:HARDWARE_SMOKE_ENABLED = "1"
@@ -96,35 +96,35 @@ $env:HARDWARE_SMOKE_ENABLED = "1"
 - 所有 VISA resource 和 ResourceManager 均已释放；
 - 报告记录动作数、测量值、设备身份、清理事件、最终状态和异常。
 
-报告已确认动作预算、测量顺序、RF 和电源关闭以及 VISA 资源释放。该结论不自动覆盖尚未迁移的新应用默认入口；在新路径验收前不得删除兼容入口。
+已有报告确认旧 smoke 入口的动作预算、测量顺序、RF 和电源关闭以及 VISA 资源释放。该结论不覆盖新应用组装入口；在新路径验收前不得删除兼容入口。
 
-### 3.2 真实应用入口迁移
+### 3.2 真实应用入口迁移与调用方审计
 
 按以下顺序完成，并为每一步保留可回滚路径：
 
-1. 在应用组装层创建真实设备的 `transport -> driver -> action -> flow/session -> measurement_port` 路径。
-2. 让 `app/gui_runtime.py`、`enhanced_main_gui.py` 和 `enhanced_workers.py` 通过组装层获得端口，不再由应用入口直接构造 `InstrumentControl`。
-3. 让 `cable_loss_measurement.py`、`driver_power_mapping.py` 和 `amplifier_measurement.py` 的生产调用方显式注入端口；默认回退只保留在兼容层，不作为新入口的隐式组装逻辑。
-4. 审计全部 `InstrumentControl` 调用方、旧方法名、参数单位、日志、异常、取消和清理路径；补齐新旧路径行为对照测试。
-5. 完成真实硬件 smoke 后，逐批删除未使用的旧 SCPI 方法和旧内部实现；每批删除后运行完整离线测试和应用检查。
+1. 已有应用组装层真实设备的 `transport -> driver -> action -> flow/session -> measurement_port` 路径；保留并测试连接失败、异常清理和资源关闭行为。
+2. 已有 `app/gui_runtime.py`、`enhanced_main_gui.py` 和 worker 的新组装调用链，但必须逐项确认所有生产测量调用方都显式传入端口。
+3. 将 `cable_loss_measurement.py`、`driver_power_mapping.py`、`amplifier_measurement.py` 中的隐式 `InstrumentControl` 回退限定到明确的兼容入口，或在确认无回滚需求后删除；不得把当前兼容回退误记为迁移完成。
+4. 更新 `docs/阶段7调用方清单.md`，审计全部 `InstrumentControl` 调用方、旧方法名、直接 VISA 使用、参数单位、日志、异常、取消和清理路径；补齐新旧路径行为对照测试。
+5. 在新路径真实 smoke 通过后，逐批删除未使用的旧 SCPI 方法和旧内部实现；每批删除后运行完整离线测试和应用检查。
 
-当前仍可见的兼容入口包括：
+当前仍可见、需要审计和明确边界的兼容入口包括：
 
 - `app/gui_runtime.py:connect_instruments_legacy()`；
-- 三个测量包装器在未注入 `measurement_port` 时的兼容回退；
+- `enhanced_workers.py` 及三个测量包装器在未注入 `measurement_port` 时的兼容回退；
 - `instrument_control.py` 及其历史测试/脚本调用方；
 
 ## 4. 完成判据
 
 只有同时满足以下条件，才能删除本指南及其他仅用于记录本次重构过程的文档：
 
-1. `minimal_action` 真实 smoke 报告通过，最终 RF、电源和连接状态安全，报告已在本机归档。
-2. 真实应用默认路径使用新组装链路，旧 `InstrumentControl` 只作为明确的兼容/回滚入口。
+1. 新应用组装路径的 `minimal_action` 真实 smoke 报告通过，最终 RF、电源和连接状态安全，报告已在本机归档；旧 smoke 报告不能替代该证据。
+2. 真实应用默认路径使用新组装链路，所有 `InstrumentControl` 回退都只存在于明确的兼容/回滚入口。
 3. 调用方审计无遗漏，服务层不包含 VISA resource、SCPI 文本、设备通道硬编码或 GUI 控件访问。
 4. 完整离线测试、相关模拟测试、应用检查和必要的硬件 smoke 均通过，且没有未解释的新回归。
 5. 旧实现已分批删除或明确保留为兼容适配器，并有可恢复的提交或配置开关。
 
-完成后应同步更新 `docs/三层测试架构重构计划.md`、`docs/阶段7完成记录.md` 和 `docs/阶段7调用方清单.md` 的状态；在此之前，这些文档中的“真实最小动作待执行”和“旧入口保留”结论仍然有效。
+完成后应同步更新 `docs/三层测试架构重构计划.md`、`docs/阶段7完成记录.md` 和 `docs/阶段7调用方清单.md` 的状态；在此之前，这些文档中的“新路径真实最小动作待执行”和“兼容入口保留”结论仍然有效。
 
 ## 5. 维护规则
 

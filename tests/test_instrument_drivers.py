@@ -11,7 +11,13 @@ from instrument.drivers import (
 )
 from instrument.transport import MockScpiTransport, ScpiTransportError, ScpiTransportTimeoutError
 from instrument.ports import PowerSupplyPort, SignalGeneratorPort, SpectrumAnalyzerPort
-from instrument.action import PowerSupplyActions, SignalGeneratorActions, SpectrumAnalyzerActions
+from instrument.action import (
+    ActionContext,
+    PowerSupplyActions,
+    SignalGeneratorActions,
+    SpectrumAnalyzerActions,
+    SpectrumAnalyzerPortAdapter,
+)
 from instrument.signal_generator_factory import create_signal_generator_driver
 
 
@@ -147,6 +153,15 @@ class InstrumentDriverTests(unittest.TestCase):
         self.assertEqual(actions.measure_peak_power_dbm(), -8.0)
         actions.close()
         self.assertTrue(transport.closed)
+
+    def test_spectrum_analyzer_action_adapts_legacy_port_explicitly(self):
+        transport = MockScpiTransport({"CALC:MARK1:Y?": "-6.5"})
+        driver = ScpiSpectrumAnalyzerDriver(transport)
+        actions = SpectrumAnalyzerActions(SpectrumAnalyzerPortAdapter(driver))
+        actions.connect()
+        actions.set_center_frequency_hz(1e9)
+        actions.set_span_hz(2e6)
+        self.assertEqual(actions.measure_peak_power_dbm(), -6.5)
 
     def test_spectrum_analyzer_rejects_bad_reading_and_unconfigured_measurement(self):
         transport = MockScpiTransport({"CALC:MARK1:Y?": "not-a-number"})
@@ -347,16 +362,74 @@ class InstrumentDriverTests(unittest.TestCase):
 
     def test_power_supply_action_delegates_without_scpi_knowledge(self):
         transport = MockScpiTransport({":MEASure:VOLTage? CH1": "5.0"})
-        actions = PowerSupplyActions(ScpiPowerSupplyDriver(transport))
+        actions = PowerSupplyActions(ScpiPowerSupplyDriver(transport), channel="CH1")
         actions.connect()
-        actions.set_voltage_v("CH1", 5)
-        actions.set_voltage_protection_state("CH1", True)
-        actions.set_current_protection("CH1", 0.5)
-        actions.set_output_enabled("CH1", False)
-        self.assertEqual(actions.read_voltage_v("CH1"), 5.0)
+        actions.set_voltage_v(5)
+        actions.set_voltage_protection_state(True)
+        actions.set_current_protection(0.5)
+        actions.set_output_enabled(False)
+        self.assertEqual(actions.read_voltage_v(), 5.0)
         actions.close()
         actions.close()
         self.assertEqual(transport.close_count, 1)
+
+    def test_action_logger_receives_context_and_failure_without_swallowing_it(self):
+        transport = MockScpiTransport(fail_on_write="FREQ 1e+09")
+        events = []
+        context = ActionContext(instrument_id="sg-1", measurement_id="measurement-7")
+        actions = SignalGeneratorActions(
+            SignalGeneratorDriver(transport), context=context,
+            logger=lambda name, ctx, values, error: events.append((name, ctx, values, error)),
+        )
+        actions.connect()
+        with self.assertRaises(ScpiTransportError):
+            actions.set_frequency_hz(1e9)
+        self.assertEqual(events[0], ("connect", context, {"timeout_s": 10.0}, None))
+        self.assertEqual(events[1][0:3], ("set_frequency_hz", context, {"timeout_s": 5.0, "frequency_hz": 1e9}))
+        self.assertIsInstance(events[1][3], ScpiTransportError)
+
+    def test_action_logger_failure_never_masks_driver_result(self):
+        transport = MockScpiTransport()
+        actions = SignalGeneratorActions(
+            SignalGeneratorDriver(transport),
+            logger=lambda *_args: (_ for _ in ()).throw(RuntimeError("logger failed")),
+        )
+        actions.connect()
+        actions.set_frequency_hz(1e9)
+        self.assertEqual(transport.writes, ["FREQ 1e+09"])
+
+    def test_power_supply_action_binds_channel_and_context(self):
+        transport = MockScpiTransport()
+        context = ActionContext(instrument_id="psu-a")
+        actions = PowerSupplyActions(ScpiPowerSupplyDriver(transport), channel="CH2", context=context)
+        self.assertEqual(actions.context.channel_id, "CH2")
+        actions.connect()
+        actions.set_voltage_v(5.0)
+        self.assertEqual(transport.writes, [":SOURce2:VOLTage 5"])
+        with self.assertRaises(ValueError):
+            PowerSupplyActions(ScpiPowerSupplyDriver(MockScpiTransport()), channel="CH1",
+                               context=ActionContext(channel_id="CH2"))
+
+    def test_spectrum_analyzer_basic_action_does_not_require_optional_bandwidth(self):
+        class BasicAnalyzer:
+            def connect(self, *, timeout_s=10.0): pass
+            def set_center_frequency_hz(self, value, *, timeout_s=5.0): pass
+            def set_span_hz(self, value, *, timeout_s=5.0): pass
+            def measure_peak_power_dbm(self, *, timeout_s=10.0): return -1.0
+            def close(self, *, timeout_s=5.0): pass
+
+        actions = SpectrumAnalyzerActions(BasicAnalyzer())
+        actions.connect()
+        self.assertEqual(actions.measure_peak_power_dbm(), -1.0)
+        with self.assertRaises(NotImplementedError):
+            actions.set_resolution_bandwidth_hz(1000)
+
+    def test_instrument_package_exports_all_action_entry_points(self):
+        import instrument
+
+        self.assertIs(instrument.SignalGeneratorActions, SignalGeneratorActions)
+        self.assertIs(instrument.SpectrumAnalyzerActions, SpectrumAnalyzerActions)
+        self.assertIs(instrument.PowerSupplyActions, PowerSupplyActions)
 
     def test_signal_generator_close_turns_rf_off_before_closing_transport(self):
         transport = MockScpiTransport()

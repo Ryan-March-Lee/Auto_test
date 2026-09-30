@@ -33,7 +33,14 @@ from .drivers import (
     SignalGeneratorDriver,
     ScpiSpectrumAnalyzerDriver,
 )
-from .action import PowerSupplyActions, SignalGeneratorActions
+from .action import (
+    ActionContext,
+    ActionLogger,
+    PowerSupplyActions,
+    SignalGeneratorActions,
+    SpectrumAnalyzerActions,
+    SpectrumAnalyzerPortAdapter,
+)
 from .signal_generator_factory import create_signal_generator_driver
 
 __all__ = [
@@ -60,6 +67,10 @@ __all__ = [
     "SignalGeneratorDriver",
     "ScpiSpectrumAnalyzerDriver",
     "SignalGeneratorActions",
+    "SpectrumAnalyzerActions",
+    "SpectrumAnalyzerPortAdapter",
     "PowerSupplyActions",
+    "ActionContext",
+    "ActionLogger",
     "create_signal_generator_driver",
 ]

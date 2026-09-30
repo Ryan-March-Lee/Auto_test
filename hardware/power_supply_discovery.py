@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 
-def discover_power_supply(resource_manager: Any, device: Mapping[str, Any], report: dict[str, Any], *, expected_match: Any) -> str:
-    """Return the single safe power-supply VISA address discovered this run."""
+def discover_power_supplies(resource_manager: Any, device: Mapping[str, Any], report: dict[str, Any], *, expected_match: Any) -> list[str]:
+    """Return every discovered power supply that matches the safe-state checks."""
     list_resources = getattr(resource_manager, "list_resources", None)
     if not callable(list_resources):
         raise ValueError("power_supply discovery requires a VISA resource manager with list_resources()")
@@ -50,6 +50,12 @@ def discover_power_supply(resource_manager: Any, device: Mapping[str, Any], repo
                     item["closed"] = False
                     item["close_error"] = f"{type(exc).__name__}: {exc}"
         candidates.append(item)
-    if len(matches) != 1:
-        raise RuntimeError(f"Expected exactly one usable power supply, found {len(matches)}")
-    return matches[0]
+    if not matches:
+        raise RuntimeError("Expected at least one usable power supply, found 0")
+    report["power_supply_discovery_count"] = len(matches)
+    return matches
+
+
+def discover_power_supply(resource_manager: Any, device: Mapping[str, Any], report: dict[str, Any], *, expected_match: Any) -> list[str]:
+    """Compatibility alias for callers migrating from single-supply discovery."""
+    return discover_power_supplies(resource_manager, device, report, expected_match=expected_match)

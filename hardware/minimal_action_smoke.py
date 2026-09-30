@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from hardware.read_only_smoke import SmokeExecutionError, resolve_report_path, write_report
-from hardware.power_supply_discovery import discover_power_supply
+from hardware.power_supply_discovery import discover_power_supplies
 from hardware.safe_prepare_smoke import _expected_matches, _validate_command
 
 _DEVICES = ("signal_generator", "spectrum_analyzer", "power_supply")
@@ -188,14 +188,17 @@ def run_minimal_action_smoke(config: Mapping[str, Any], resource_manager: Any, *
     report: dict[str, Any] = {"mode": "minimal_action", "events": [{"type": "start"}],
                               "action_count": 0, "devices": {}, "resources_closed": False}
     resources: dict[str, Any] = {}
+    power_resources: list[Any] = []
+    power_results: list[dict[str, Any]] = []
     failure: Exception | None = None
     rf_may_be_on = False
     try:
         if devices["power_supply"].get("discover"):
-            devices["power_supply"]["address"] = discover_power_supply(
+            devices["power_supply"]["addresses"] = discover_power_supplies(
                 resource_manager, devices["power_supply"], report, expected_match=_expected_matches
             )
-        for name in _DEVICES:
+        power_addresses = devices["power_supply"].get("addresses") or [devices["power_supply"].get("address")]
+        for name in ("signal_generator", "spectrum_analyzer"):
             device = devices[name]
             open_ms = min(device["timeout_ms"], max(1, int((deadline - clock()) * 1000)))
             resource = resource_manager.open_resource(device["address"], open_timeout=open_ms)
@@ -208,7 +211,12 @@ def run_minimal_action_smoke(config: Mapping[str, Any], resource_manager: Any, *
             expected_model = device.get("model", "")
             if expected_model and expected_model not in identity:
                 raise AssertionError(f"{name} identity does not contain configured model {expected_model!r}")
-            for check in device["state_queries"]:
+            # RF and power outputs must be off before any preparation. The
+            # analyzer center frequency is a preparation target, not a
+            # safety prerequisite, because the instrument may retain a
+            # previous setup such as 3.0 GHz.
+            initial_checks = device["state_queries"] if name in {"signal_generator", "power_supply"} else []
+            for check in initial_checks:
                 response = _bounded_operation(resource, device["timeout_ms"], deadline, clock,
                                               lambda c=check["command"]: resource.query(c).strip())
                 result["queries"].append({"command": check["command"], "response": response})
@@ -223,6 +231,35 @@ def run_minimal_action_smoke(config: Mapping[str, Any], resource_manager: Any, *
                 result["writes"].append(expected_center)
                 _bounded_operation(resource, device["timeout_ms"], deadline, clock,
                                    lambda c=expected_center: resource.write(c))
+
+        power_device = devices["power_supply"]
+        for address in power_addresses:
+            if not address:
+                raise ValueError("power_supply requires an address")
+            open_ms = min(power_device["timeout_ms"], max(1, int((deadline - clock()) * 1000)))
+            resource = resource_manager.open_resource(address, open_timeout=open_ms)
+            power_resources.append(resource)
+            resource.timeout = open_ms
+            result = {"address": address, "writes": [], "queries": [], "cleanup": []}
+            power_results.append(result)
+            identity = _bounded_operation(resource, power_device["timeout_ms"], deadline, clock,
+                                          lambda: resource.query("*IDN?").strip())
+            result["identity"] = identity
+            expected_model = power_device.get("model", "")
+            if expected_model and expected_model not in identity:
+                raise AssertionError(f"power_supply identity does not contain configured model {expected_model!r}")
+            for check in power_device["state_queries"]:
+                response = _bounded_operation(resource, power_device["timeout_ms"], deadline, clock,
+                                              lambda c=check["command"]: resource.query(c).strip())
+                result["queries"].append({"command": check["command"], "response": response})
+                if not _expected_matches(response, check["expected"]):
+                    raise AssertionError(f"power_supply initial state {check['command']!r} was {response!r}, expected {check['expected']!r}")
+        if len(power_results) == 1:
+            resources["power_supply"] = power_resources[0]
+            report["devices"]["power_supply"] = power_results[0]
+        else:
+            resources["power_supply"] = power_resources
+            report["devices"]["power_supply"] = power_results
 
         params = devices["signal_generator"]["rf_parameters"]
         # Values are numeric, range-checked, and rendered here rather than accepted as arbitrary SCPI.
@@ -278,16 +315,30 @@ def run_minimal_action_smoke(config: Mapping[str, Any], resource_manager: Any, *
                 report["events"].append({"type": "cleanup", "device": "signal_generator", "command": "OUTP OFF"})
             except Exception as exc:
                 close_errors.append(f"signal_generator emergency RF off: {type(exc).__name__}: {exc}")
-        ps = resources.get("power_supply")
-        if ps is not None:
+        for index, ps in enumerate(power_resources):
+            result = power_results[index]
             for command in devices["power_supply"]["cleanup_commands"]:
                 try:
                     ps.timeout = cleanup_ms; ps.write(command)
-                    report["devices"]["power_supply"].setdefault("cleanup", []).append(command)
-                    report["events"].append({"type": "cleanup", "device": "power_supply", "command": command})
+                    result.setdefault("cleanup", []).append(command)
+                    report["events"].append({"type": "cleanup", "device": "power_supply", "index": index, "command": command})
                 except Exception as exc:
-                    close_errors.append(f"power_supply cleanup {command!r}: {type(exc).__name__}: {exc}")
-        for name in ("power_supply", "spectrum_analyzer"):
+                    close_errors.append(f"power_supply[{index}] cleanup {command!r}: {type(exc).__name__}: {exc}")
+            try:
+                ps.timeout = cleanup_ms
+                final = []
+                for item in devices["power_supply"]["state_queries"]:
+                    response = ps.query(item["command"]).strip()
+                    final.append({"command": item["command"], "response": response})
+                    if not _expected_matches(response, item["expected"]):
+                        raise AssertionError(f"{item['command']} final state is {response!r}")
+                result["final_state"] = final
+                result["safe_after_cleanup"] = True
+            except Exception as exc:
+                result["safe_after_cleanup"] = False
+                close_errors.append(f"power_supply[{index}] final state: {type(exc).__name__}: {exc}")
+
+        for name in ("spectrum_analyzer",):
             resource = resources.get(name)
             if resource is None:
                 continue
@@ -324,7 +375,7 @@ def run_minimal_action_smoke(config: Mapping[str, Any], resource_manager: Any, *
             except Exception as exc:
                 report["devices"]["signal_generator"]["safe_after_cleanup"] = False
                 close_errors.append(f"signal_generator final state: {type(exc).__name__}: {exc}")
-        for name in ("signal_generator", "power_supply", "spectrum_analyzer"):
+        for name in ("signal_generator", "spectrum_analyzer"):
             resource = resources.get(name)
             if resource is None:
                 continue
@@ -334,6 +385,13 @@ def run_minimal_action_smoke(config: Mapping[str, Any], resource_manager: Any, *
             except Exception as exc:
                 report["devices"][name]["closed"] = False
                 close_errors.append(f"{name} close: {type(exc).__name__}: {exc}")
+        for index, resource in enumerate(power_resources):
+            try:
+                resource.timeout = cleanup_ms; resource.close()
+                power_results[index]["closed"] = True
+            except Exception as exc:
+                power_results[index]["closed"] = False
+                close_errors.append(f"power_supply[{index}] close: {type(exc).__name__}: {exc}")
         try:
             resource_manager.close()
         except Exception as exc:

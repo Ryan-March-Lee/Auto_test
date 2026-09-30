@@ -1,6 +1,6 @@
 import unittest
 
-from hardware.safe_prepare_smoke import run_safe_prepare_smoke
+from hardware.safe_prepare_smoke import _expected_matches, run_safe_prepare_smoke
 from hardware.read_only_smoke import SmokeExecutionError
 
 
@@ -63,6 +63,11 @@ def config():
 
 
 class SafePrepareSmokeTests(unittest.TestCase):
+    def test_off_and_zero_are_equivalent_safe_output_values(self):
+        self.assertTrue(_expected_matches("OFF", "0"))
+        self.assertTrue(_expected_matches("0", "OFF"))
+        self.assertFalse(_expected_matches("ON", "0"))
+
     def test_prepares_and_always_cleans_up(self):
         setup = config()
         resources = {

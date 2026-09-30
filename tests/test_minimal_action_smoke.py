@@ -13,6 +13,8 @@ class Resource:
 
     def write(self, command):
         self.commands.append(("write", command))
+        if command.startswith("FREQ:CENT "):
+            self.responses["FREQ:CENT?"] = command.split(" ", 1)[1]
         if command == "OUTP ON":
             self.responses["OUTP?"] = "1"
         if command == "OUTP OFF":
@@ -90,6 +92,20 @@ class MinimalActionSmokeTests(unittest.TestCase):
         self.assertLess(resources["ps"].commands.index(("write", "OUTP CH2,OFF")),
                         resources["ps"].commands.index(("write", "OUTP CH1,OFF")))
 
+    def test_analyzer_previous_frequency_is_prepared_before_rf_action(self):
+        resources = self.resources()
+        resources["sa"].responses["FREQ:CENT?"] = "3000000000"
+
+        report = run_minimal_action_smoke(config(), Manager(resources))
+
+        self.assertEqual(report["action_count"], 1)
+        analyzer_commands = resources["sa"].commands
+        prepare = ("write", "FREQ:CENT 1000000")
+        enable = ("write", "OUTP ON")
+        self.assertIn(prepare, analyzer_commands)
+        self.assertLess(analyzer_commands.index(prepare), resources["sg"].commands.index(enable))
+        self.assertEqual(report["devices"]["spectrum_analyzer"]["final_state"][0]["response"], "1000000")
+
     def test_power_supply_can_be_discovered_by_identity(self):
         setup = config()
         setup["devices"]["power_supply"].pop("address")
@@ -106,6 +122,27 @@ class MinimalActionSmokeTests(unittest.TestCase):
         self.assertEqual(report["power_supply_discovery"][0]["address"], "unused")
         self.assertEqual(report["power_supply_discovery"][1]["address"], "ps")
         self.assertTrue(all(item["closed"] for item in report["power_supply_discovery"]))
+
+    def test_all_discovered_power_supplies_are_cleaned_and_verified(self):
+        setup = config()
+        setup["devices"]["power_supply"].pop("address")
+        setup["devices"]["power_supply"]["discover"] = True
+        resources = self.resources()
+        resources["ps2"] = Resource({"*IDN?": "ACME,PS-1", "OUTP? CH2": "0", "OUTP? CH1": "0"})
+        manager = Manager(resources, discovered=("ps", "ps2"))
+
+        report = run_minimal_action_smoke(setup, manager)
+
+        self.assertEqual(report["action_count"], 1)
+        self.assertEqual(report["power_supply_discovery_count"], 2)
+        power_results = report["devices"]["power_supply"]
+        self.assertEqual({result["address"] for result in power_results}, {"ps", "ps2"})
+        self.assertTrue(all(result["safe_after_cleanup"] and result["closed"] for result in power_results))
+        for resource in (resources["ps"], resources["ps2"]):
+            self.assertEqual(
+                [command for kind, command in resource.commands if kind == "write"],
+                ["OUTP CH2,OFF", "OUTP CH1,OFF"],
+            )
 
     def test_marker_measurement_selects_peak_before_reading_value(self):
         setup = config()

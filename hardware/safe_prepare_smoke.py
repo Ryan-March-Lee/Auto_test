@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from hardware.read_only_smoke import SmokeExecutionError, resolve_report_path, write_report
-from hardware.power_supply_discovery import discover_power_supply
+from hardware.power_supply_discovery import discover_power_supplies
 
 
 _OUTPUT_TOKENS = {"OUTP", "OUTPUT", "RF", "OUT", "STATE"}
@@ -55,7 +55,11 @@ def _response(resource: Any, command: str, clock: Any) -> dict[str, Any]:
 def _expected_matches(actual: str, expected: Any) -> bool:
     if expected is None:
         return True
-    return actual.split(",", 1)[0].strip() == str(expected).strip()
+    actual_value = actual.split(",", 1)[0].strip().upper()
+    expected_value = str(expected).strip().upper()
+    if expected_value in {"0", "OFF"} and actual_value in {"0", "OFF"}:
+        return True
+    return actual_value == expected_value
 
 
 def _check_safe_state(name: str, state: list[dict[str, Any]], checks: list[dict[str, Any]]) -> None:
@@ -147,11 +151,21 @@ def run_safe_prepare_smoke(config: Mapping[str, Any], resource_manager: Any, *, 
     failure: Exception | None = None
     try:
         if devices["power_supply"].get("discover"):
-            devices["power_supply"]["address"] = discover_power_supply(
+            devices["power_supply"]["addresses"] = discover_power_supplies(
                 resource_manager, devices["power_supply"], report,
                 expected_match=_expected_matches,
             )
-        for name, device in devices.items():
+        power_addresses = devices["power_supply"].get("addresses") or [devices["power_supply"].get("address")]
+        expanded_devices = [
+            ("signal_generator", devices["signal_generator"]),
+            ("spectrum_analyzer", devices["spectrum_analyzer"]),
+        ]
+        expanded_devices.extend(
+            (("power_supply" if len(power_addresses) == 1 else f"power_supply[{index}]"),
+             {**devices["power_supply"], "address": address})
+            for index, address in enumerate(power_addresses)
+        )
+        for name, device in expanded_devices:
             resource = resource_manager.open_resource(device["address"], open_timeout=int(device.get("timeout_ms", 5000)))
             cleanup = list(device.get("cleanup_commands", []))
             resources.append((name, resource, cleanup))
@@ -192,7 +206,8 @@ def run_safe_prepare_smoke(config: Mapping[str, Any], resource_manager: Any, *, 
                 except Exception as exc:
                     close_errors.append(f"{name} cleanup {command!r}: {type(exc).__name__}: {exc}")
             try:
-                checks = devices[name]["state_queries"]
+                base_name = "power_supply" if name.startswith("power_supply[") else name
+                checks = devices[base_name]["state_queries"]
                 final_state = [_response(resource, check["command"], clock) for check in checks]
                 result["final_state"] = final_state
                 _check_safe_state(name, final_state, checks)

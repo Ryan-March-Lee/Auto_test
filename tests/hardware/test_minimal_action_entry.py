@@ -24,7 +24,15 @@ class HardwareMinimalActionTests(unittest.TestCase):
         )
         self.assertEqual(report["action_count"], 1)
         self.assertTrue(report["resources_closed"])
-        for result in report["devices"].values():
+        power_results = report["devices"]["power_supply"]
+        if not isinstance(power_results, list):
+            power_results = [power_results]
+        results = [
+            report["devices"]["signal_generator"],
+            report["devices"]["spectrum_analyzer"],
+            *power_results,
+        ]
+        for result in results:
             self.assertTrue(result["identity"])
             self.assertTrue(result["closed"])
             self.assertTrue(result["safe_after_cleanup"])

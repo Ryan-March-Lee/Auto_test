@@ -77,16 +77,20 @@ class PortMeasurementAdapter:
         self.session.set_rf_enabled(False)
 
     def set_voltage(self, _supply_name: str, channel: str, voltage: float) -> None:
-        self.power_supply.set_voltage(channel, voltage)
+        setter = getattr(self.power_supply, "set_voltage_v", None)
+        (setter or self.power_supply.set_voltage)(channel, voltage)
 
     def set_current(self, _supply_name: str, channel: str, current: float) -> None:
-        self.power_supply.set_current_limit(channel, current)
+        setter = getattr(self.power_supply, "set_current_limit_a", None)
+        (setter or self.power_supply.set_current_limit)(channel, current)
 
     def read_voltage(self, _supply_name: str, channel: str) -> float:
-        return self.power_supply.read_voltage(channel)
+        reader = getattr(self.power_supply, "read_voltage_v", None)
+        return (reader or self.power_supply.read_voltage)(channel)
 
     def read_current(self, _supply_name: str, channel: str) -> float:
-        return self.power_supply.read_current(channel)
+        reader = getattr(self.power_supply, "read_current_a", None)
+        return (reader or self.power_supply.read_current)(channel)
 
     def _power_session(self, roles: Mapping[str, str]) -> None:
         if not roles:
@@ -105,9 +109,11 @@ class PortMeasurementAdapter:
         for role, channel in roles.items():
             settings = self.power_settings.get(role, {})
             if "voltage_v" in settings:
-                self.power_supply.set_voltage(channel, settings["voltage_v"])
+                setter = getattr(self.power_supply, "set_voltage_v", None)
+                (setter or self.power_supply.set_voltage)(channel, settings["voltage_v"])
             if "current_a" in settings:
-                self.power_supply.set_current_limit(channel, settings["current_a"])
+                setter = getattr(self.power_supply, "set_current_limit_a", None)
+                (setter or self.power_supply.set_current_limit)(channel, settings["current_a"])
 
     def power_on_driver(self) -> None:
         self._power_session(self.driver_power_channels)
@@ -160,3 +166,7 @@ class PortMeasurementAdapter:
         else:
             self._session_cleaned = True
         return errors
+
+    def safe_shutdown(self):
+        """Compatibility name for GUI callers during the migration."""
+        return self.close_all(close_rf=True)

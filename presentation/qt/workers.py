@@ -59,10 +59,11 @@ class BaseWorker(QThread):
 class InstrumentWorker(BaseWorker):
     """Connect instruments through the existing application adapter."""
 
-    def __init__(self, config_path: str, sleep_fn=None):
+    def __init__(self, config_path: str, sleep_fn=None, measurement_port=None):
         super().__init__()
         self.config_path = config_path
         self.sleep_fn = sleep_fn or time.sleep
+        self.measurement_port = measurement_port
 
     def run(self) -> None:
         try:
@@ -84,10 +85,11 @@ class InstrumentWorker(BaseWorker):
 class CableLossWorker(BaseWorker):
     """Run the two-step cable-loss service and expose its checkpoint."""
 
-    def __init__(self, config_path: str, sleep_fn=None):
+    def __init__(self, config_path: str, sleep_fn=None, measurement_port=None):
         super().__init__()
         self.config_path = config_path
         self.sleep_fn = sleep_fn
+        self.measurement_port = measurement_port
         self._continue_event = Event()
         self._waiting_for_continue = False
         self._continue_requested = False
@@ -105,6 +107,7 @@ class CableLossWorker(BaseWorker):
                 message_callback=self.signals.message.emit,
                 data_callback=self.signals.data_update.emit,
                 sleep_fn=self.sleep_fn,
+                measurement_port=self.measurement_port,
             )
             if self._stop_requested:
                 self._service.stop_measurement()
@@ -142,10 +145,11 @@ class CableLossWorker(BaseWorker):
 class DriverMappingWorker(BaseWorker):
     """Run the shared driver-power mapping service."""
 
-    def __init__(self, config_path: str, sleep_fn=None):
+    def __init__(self, config_path: str, sleep_fn=None, measurement_port=None):
         super().__init__()
         self.config_path = config_path
         self.sleep_fn = sleep_fn
+        self.measurement_port = measurement_port
 
     def run(self) -> None:
         try:
@@ -160,6 +164,7 @@ class DriverMappingWorker(BaseWorker):
                 message_callback=self.signals.message.emit,
                 data_callback=self.signals.data_update.emit,
                 sleep_fn=self.sleep_fn,
+                measurement_port=self.measurement_port,
             )
             self._service.measure_all_frequencies()
             self.emit_message("驱动功放映射测量完成！")
@@ -171,10 +176,11 @@ class DriverMappingWorker(BaseWorker):
 class AmplifierWorker(BaseWorker):
     """Run the shared amplifier measurement service."""
 
-    def __init__(self, config_path: str, sleep_fn=None):
+    def __init__(self, config_path: str, sleep_fn=None, measurement_port=None):
         super().__init__()
         self.config_path = config_path
         self.sleep_fn = sleep_fn
+        self.measurement_port = measurement_port
 
     def run(self) -> None:
         try:
@@ -189,6 +195,7 @@ class AmplifierWorker(BaseWorker):
                 message_callback=self.signals.message.emit,
                 data_callback=self.signals.data_update.emit,
                 sleep_fn=self.sleep_fn,
+                measurement_port=self.measurement_port,
             )
             self._service.measure_all_frequencies()
             self.emit_message("主功放测量完成！")

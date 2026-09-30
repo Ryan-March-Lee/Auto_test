@@ -39,7 +39,7 @@ plt.rcParams['axes.titleweight'] = 'bold'
 matplotlib.font_manager._get_font.cache_clear()
 
 # 导入我们的测试模块和连接图
-from instrument_control import InstrumentControl
+from app.gui_runtime import connect_instruments
 from data_visualization import DataVisualization
 from enhanced_workers import EnhancedAmplifierMeasurement, EnhancedCableLossMeasurement, EnhancedDriverPowerMapping
 from presentation.qt.pages import build_pages
@@ -1102,7 +1102,7 @@ class LegacyInstrumentWorker(LegacyBaseWorker):
         try:
             self.emit_message("正在初始化仪器控制...")
             self.signals.progress.emit(25)
-            self.instrument_ctrl = InstrumentControl(self.config_path)
+            self.instrument_ctrl = connect_instruments(self.config_path)
             self.signals.progress.emit(75)
             self.emit_message("仪器连接成功！")
             self.signals.progress.emit(100)
@@ -2638,7 +2638,19 @@ class MainWindow(QMainWindow):
         
     def on_instrument_controller_ready(self, controller):
         """Keep the connected controller so window shutdown can clean it up."""
+        if self.instrument_ctrl is not None and self.instrument_ctrl is not controller:
+            self._close_instrument_port(self.instrument_ctrl)
         self.instrument_ctrl = controller
+
+    @staticmethod
+    def _close_instrument_port(port):
+        close = getattr(port, "close_all", None)
+        if close is not None:
+            return close(close_rf=True)
+        shutdown = getattr(port, "safe_shutdown", None)
+        if shutdown is not None:
+            return shutdown()
+        return None
 
     def on_instrument_connected(self):
         """仪器连接完成"""
@@ -2683,7 +2695,9 @@ class MainWindow(QMainWindow):
         self.add_log_message("开始线损测量...")
         self.cable_loss_btn.setEnabled(False)
         
-        self.current_worker = CableLossWorker(str(CONFIG_FILE))
+        self.current_worker = CableLossWorker(
+            str(CONFIG_FILE), measurement_port=self.instrument_ctrl
+        )
         self.current_worker.signals.finished.connect(lambda: self.on_measurement_finished(self.cable_loss_btn))
         self.current_worker.signals.error.connect(self.on_worker_error)
         self.current_worker.signals.stopped.connect(self.on_worker_stopped)
@@ -2745,7 +2759,9 @@ class MainWindow(QMainWindow):
         self.driver_mapping_btn.setEnabled(False)
         self.driver_emergency_stop_btn.setEnabled(True)  # 启用紧急停止按钮
         
-        self.current_worker = DriverMappingWorker(str(CONFIG_FILE))
+        self.current_worker = DriverMappingWorker(
+            str(CONFIG_FILE), measurement_port=self.instrument_ctrl
+        )
         self.current_worker.signals.finished.connect(lambda: self.on_measurement_finished(self.driver_mapping_btn))
         self.current_worker.signals.error.connect(self.on_worker_error)
         self.current_worker.signals.stopped.connect(self.on_worker_stopped)
@@ -2787,7 +2803,9 @@ class MainWindow(QMainWindow):
         self.emergency_stop_btn.setEnabled(True)  # 启用紧急停止按钮
         self.emergency_stop = False
         
-        self.current_worker = AmplifierWorker(str(CONFIG_FILE))
+        self.current_worker = AmplifierWorker(
+            str(CONFIG_FILE), measurement_port=self.instrument_ctrl
+        )
         self.current_worker.signals.finished.connect(lambda: self.on_measurement_finished(self.amplifier_test_btn))
         self.current_worker.signals.error.connect(self.on_worker_error)
         self.current_worker.signals.message.connect(self.add_log_message)
@@ -2838,6 +2856,8 @@ class MainWindow(QMainWindow):
         
         # 刷新文件列表
         self.refresh_file_list()
+        # 测量服务会清理注入的端口；避免下一次测量复用已关闭 session。
+        self.instrument_ctrl = None
         
     def on_worker_error(self, error_message):
         """工作线程错误处理"""
@@ -2852,6 +2872,12 @@ class MainWindow(QMainWindow):
         
         # 重置进度条
         self.progress_bar.setValue(0)
+        if self.instrument_ctrl is not None:
+            try:
+                self._close_instrument_port(self.instrument_ctrl)
+            except Exception as error:
+                self.add_log_message(f"仪器清理失败: {error}")
+            self.instrument_ctrl = None
 
     def on_worker_stopped(self, reason):
         """Handle ordinary and emergency worker cancellation consistently."""
@@ -2865,6 +2891,12 @@ class MainWindow(QMainWindow):
         if hasattr(self, "emergency_stop_btn"):
             self.emergency_stop_btn.setEnabled(False)
         self.progress_bar.setValue(0)
+        if self.instrument_ctrl is not None:
+            try:
+                self._close_instrument_port(self.instrument_ctrl)
+            except Exception as error:
+                self.add_log_message(f"仪器清理失败: {error}")
+            self.instrument_ctrl = None
         
     def load_cable_loss_results(self):
         """加载线损测量结果到表格"""
@@ -3539,7 +3571,7 @@ class MainWindow(QMainWindow):
                     self.current_worker.wait()
                 if self.instrument_ctrl is not None:
                     try:
-                        self.instrument_ctrl.safe_shutdown()
+                        self._close_instrument_port(self.instrument_ctrl)
                     except Exception as error:
                         self.add_log_message(f"仪器清理失败: {error}")
                 event.accept()
@@ -3548,7 +3580,7 @@ class MainWindow(QMainWindow):
         else:
             if self.instrument_ctrl is not None:
                 try:
-                    self.instrument_ctrl.safe_shutdown()
+                    self._close_instrument_port(self.instrument_ctrl)
                 except Exception as error:
                     self.add_log_message(f"仪器清理失败: {error}")
             event.accept()

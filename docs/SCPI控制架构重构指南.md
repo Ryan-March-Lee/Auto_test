@@ -7,10 +7,10 @@
 截至 2026-09-30，阶段 1 至阶段 6 的离线代码能力、阶段 7 的当前离线接入切片已经落地，但最终验收仍被以下事项阻塞：
 
 1. `minimal_action` 已完成一次真实受限动作，但多电源断言修正后的硬件入口回归和 Simulation 回归仍需重跑并留存记录。
-2. `InstrumentControl` 仍是真实应用入口的默认控制器，GUI、worker 和三个测量包装器仍保留直接构造或隐式回退；阶段 7 的生产入口迁移和删除前审计尚未完成。
+2. 真实应用默认入口已迁移到组装层：GUI、worker 通过 `transport -> driver -> session -> measurement_port` 获取端口；`InstrumentControl` 仅保留为显式兼容/回滚入口。新硬件组装路径尚未完成现场 smoke。
 3. 阶段 8 的最终验收、现场记录归档和旧实现清理不能仅凭已有离线测试通过而宣告完成。
 
-因此当前正确状态是：**离线重构能力和一次真实动作验收已完成，生产入口迁移及阶段 8 收尾待完成**。
+因此当前正确状态是：**离线重构能力和生产入口代码迁移已完成，一次旧路径真实动作验收已完成，新默认硬件路径 smoke 及阶段 8 收尾待完成**。
 
 ## 2. 已完成部分
 
@@ -108,12 +108,11 @@ $env:HARDWARE_SMOKE_ENABLED = "1"
 4. 审计全部 `InstrumentControl` 调用方、旧方法名、参数单位、日志、异常、取消和清理路径；补齐新旧路径行为对照测试。
 5. 完成真实硬件 smoke 后，逐批删除未使用的旧 SCPI 方法和旧内部实现；每批删除后运行完整离线测试和应用检查。
 
-当前仍可见的直接旧入口包括：
+当前仍可见的兼容入口包括：
 
-- `app/gui_runtime.py:connect_instruments()`；
-- `enhanced_main_gui.py` 的默认构造路径；
-- `enhanced_workers.py` 的默认构造路径；
-- 三个测量包装器中的 `measurement_port or InstrumentControl(config_path)` 回退。
+- `app/gui_runtime.py:connect_instruments_legacy()`；
+- 三个测量包装器在未注入 `measurement_port` 时的兼容回退；
+- `instrument_control.py` 及其历史测试/脚本调用方；
 
 ## 4. 完成判据
 

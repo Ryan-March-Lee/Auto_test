@@ -24,7 +24,12 @@ Operation = Literal["full", "cable_loss", "driver_mapping"]
 
 
 def connect_instruments(config_path: str) -> Any:
-    """Create the configured instrument session for the application layer."""
+    """Create the configured hardware port through the composition root."""
+    return create_measurement_port(config_path, mode="hardware")
+
+
+def connect_instruments_legacy(config_path: str) -> Any:
+    """Explicit rollback entry for the pre-refactor controller."""
     from instrument_control import InstrumentControl
 
     return InstrumentControl(config_path)
@@ -102,6 +107,8 @@ def create_cable_loss_measurement(
         run_id=prepared_run.context.run_id,
         run_directory=prepared_run.run_directory,
     )
+    if callbacks.get("measurement_port") is None:
+        callbacks["measurement_port"] = connect_instruments(config_path)
     return EnhancedCableLossMeasurement(config_path, **callbacks)
 
 
@@ -112,6 +119,8 @@ def create_driver_mapping_measurement(
         run_id=prepared_run.context.run_id,
         run_directory=prepared_run.run_directory,
     )
+    if callbacks.get("measurement_port") is None:
+        callbacks["measurement_port"] = connect_instruments(config_path)
     return EnhancedDriverPowerMapping(config_path, **callbacks)
 
 
@@ -122,4 +131,6 @@ def create_amplifier_measurement(
         run_id=prepared_run.context.run_id,
         run_directory=prepared_run.run_directory,
     )
+    if callbacks.get("measurement_port") is None:
+        callbacks["measurement_port"] = connect_instruments(config_path)
     return EnhancedAmplifierMeasurement(config_path, **callbacks)

@@ -15,7 +15,6 @@ from app.events import CheckpointEvent, MessageEvent, ProgressEvent, RealtimeDat
 from domain.models import RunContext
 from app_logging import get_logger
 from config_io import load_config_file
-from instrument_control import InstrumentControl
 from measurement_calculations import compensate_amplifier_output_power
 from measurement_calculations import calculate_cable_losses
 from measurement_services import CableLossService, DriverPowerMappingService, AmplifierMeasurementService
@@ -25,6 +24,12 @@ from result_storage import load_json_result, new_run_id, save_measurement_result
 
 
 logger = get_logger(__name__)
+
+
+def _connect_instruments(config_path):
+    from app.gui_runtime import connect_instruments
+
+    return connect_instruments(config_path)
 
 
 class _NumpyJSONEncoder(json.JSONEncoder):
@@ -82,7 +87,7 @@ class EnhancedCableLossMeasurement(_LegacyResultAdapter):
         config_path = resolve_path(config_path, CONFIG_FILE)
         config = load_config_file(config_path)
         super().__init__(config, run_id=run_id, run_directory=run_directory)
-        self.inst_ctrl = measurement_port or InstrumentControl(config_path)
+        self.inst_ctrl = measurement_port or _connect_instruments(config_path)
         self.sleep_fn = sleep_fn or time.sleep
         self._token = CancellationToken()
         self._service = CableLossService(
@@ -152,7 +157,7 @@ class EnhancedDriverPowerMapping(_LegacyResultAdapter):
         loss_data_path = resolve_path(loss_data_path, CABLE_LOSS_FILE)
         config = load_config_file(config_path)
         super().__init__(config, run_id=run_id, run_directory=run_directory)
-        self.inst_ctrl = measurement_port or InstrumentControl(config_path)
+        self.inst_ctrl = measurement_port or _connect_instruments(config_path)
         self.sleep_fn = sleep_fn or time.sleep
         self._token = CancellationToken()
         self._service = DriverPowerMappingService(
@@ -192,7 +197,7 @@ class EnhancedAmplifierMeasurement(_LegacyResultAdapter):
                     raise FileNotFoundError("驱动模式已开启，但未找到驱动映射文件")
                 driver_mapping_path = str(files[-1])
             driver_mapping = load_json_result(driver_mapping_path)["power_mapping"]
-        self.inst_ctrl = measurement_port or InstrumentControl(config_path)
+        self.inst_ctrl = measurement_port or _connect_instruments(config_path)
         self.sleep_fn = sleep_fn or time.sleep
         self._token = CancellationToken()
         self._service = AmplifierMeasurementService(
@@ -252,7 +257,7 @@ class InstrumentWorker(QThread):
         try:
             self.signals.message.emit("正在连接仪器...")
             self.signals.progress.emit(20)
-            InstrumentControl(self.config_path)
+            _connect_instruments(self.config_path)
             self.signals.progress.emit(60)
             self.sleep_fn(1)
             self.signals.progress.emit(100)

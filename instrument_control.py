@@ -7,24 +7,9 @@ from enum import Enum
 from project_paths import CONFIG_FILE, resolve_path
 from config_io import load_config_file
 from app_logging import get_logger
+from instrument.power_roles import resolve_power_channel_role
 
 logger = get_logger(__name__)
-
-
-def resolve_power_channel_role(channel: str, channel_config: Optional[Dict] = None) -> Optional[str]:
-    """解析电源通道的电气角色，并兼容旧版 CH1/CH2 配置。"""
-    settings = channel_config if isinstance(channel_config, dict) else {}
-    has_explicit_role = "role" in settings or "connection" in settings
-    explicit_role = settings.get("role") or settings.get("connection")
-    if isinstance(explicit_role, str):
-        role = explicit_role.strip().lower()
-        if role in {"gate", "栅", "栅极", "gate_voltage"}:
-            return "gate"
-        if role in {"drain", "漏", "漏极", "drain_voltage"}:
-            return "drain"
-    if has_explicit_role:
-        return None
-    return {"CH1": "gate", "CH2": "drain"}.get(str(channel).upper())
 
 
 class InstrumentControl:

@@ -15,12 +15,14 @@ from config_models import (
     validate_driver_mapping_configuration,
 )
 from config_validation import ConfigValidationResult
+from app_logging import get_logger
 from result_storage import new_run_id
 from .run_context import PreparedRun, environment_version, prepare_run
 from instrument.measurement_factory import create_measurement_port
 
 
 Operation = Literal["full", "cable_loss", "driver_mapping"]
+logger = get_logger(__name__)
 
 
 def connect_instruments(config_path: str) -> Any:
@@ -33,6 +35,39 @@ def connect_instruments_legacy(config_path: str) -> Any:
     from instrument_control import InstrumentControl
 
     return InstrumentControl(config_path)
+
+
+def _close_owned_measurement_port(port: Any) -> None:
+    """Best-effort cleanup when composition fails after opening instruments."""
+    try:
+        close = getattr(port, "close_all", None)
+        if close is not None:
+            close(close_rf=True)
+            return
+        shutdown = getattr(port, "safe_shutdown", None)
+        if shutdown is not None:
+            shutdown()
+    except Exception:
+        logger.exception("测量对象构造失败后的仪器清理也失败")
+
+
+def _assemble_measurement(
+    measurement_type: Any,
+    config_path: str,
+    callbacks: dict[str, Any],
+    *,
+    port_factory: Any,
+) -> Any:
+    """Create a measurement and close only ports owned by this composition call."""
+    owned_port = callbacks.get("measurement_port") is None
+    if owned_port:
+        callbacks["measurement_port"] = port_factory(config_path)
+    try:
+        return measurement_type(config_path, **callbacks)
+    except Exception:
+        if owned_port:
+            _close_owned_measurement_port(callbacks["measurement_port"])
+        raise
 
 
 def create_offline_measurement_port(
@@ -107,9 +142,12 @@ def create_cable_loss_measurement(
         run_id=prepared_run.context.run_id,
         run_directory=prepared_run.run_directory,
     )
-    if callbacks.get("measurement_port") is None:
-        callbacks["measurement_port"] = connect_instruments(config_path)
-    return EnhancedCableLossMeasurement(config_path, **callbacks)
+    return _assemble_measurement(
+        EnhancedCableLossMeasurement,
+        config_path,
+        callbacks,
+        port_factory=connect_instruments,
+    )
 
 
 def create_driver_mapping_measurement(
@@ -119,9 +157,12 @@ def create_driver_mapping_measurement(
         run_id=prepared_run.context.run_id,
         run_directory=prepared_run.run_directory,
     )
-    if callbacks.get("measurement_port") is None:
-        callbacks["measurement_port"] = connect_instruments(config_path)
-    return EnhancedDriverPowerMapping(config_path, **callbacks)
+    return _assemble_measurement(
+        EnhancedDriverPowerMapping,
+        config_path,
+        callbacks,
+        port_factory=connect_instruments,
+    )
 
 
 def create_amplifier_measurement(
@@ -131,6 +172,42 @@ def create_amplifier_measurement(
         run_id=prepared_run.context.run_id,
         run_directory=prepared_run.run_directory,
     )
-    if callbacks.get("measurement_port") is None:
-        callbacks["measurement_port"] = connect_instruments(config_path)
-    return EnhancedAmplifierMeasurement(config_path, **callbacks)
+    return _assemble_measurement(
+        EnhancedAmplifierMeasurement,
+        config_path,
+        callbacks,
+        port_factory=connect_instruments,
+    )
+
+
+def create_legacy_cable_loss_measurement(config_path: str, **callbacks: Any) -> Any:
+    """Explicit rollback assembly for cable-loss measurement."""
+    callbacks["measurement_port"] = None
+    return _assemble_measurement(
+        EnhancedCableLossMeasurement,
+        config_path,
+        callbacks,
+        port_factory=connect_instruments_legacy,
+    )
+
+
+def create_legacy_driver_mapping_measurement(config_path: str, **callbacks: Any) -> Any:
+    """Explicit rollback assembly for driver-power mapping."""
+    callbacks["measurement_port"] = None
+    return _assemble_measurement(
+        EnhancedDriverPowerMapping,
+        config_path,
+        callbacks,
+        port_factory=connect_instruments_legacy,
+    )
+
+
+def create_legacy_amplifier_measurement(config_path: str, **callbacks: Any) -> Any:
+    """Explicit rollback assembly for amplifier measurement."""
+    callbacks["measurement_port"] = None
+    return _assemble_measurement(
+        EnhancedAmplifierMeasurement,
+        config_path,
+        callbacks,
+        port_factory=connect_instruments_legacy,
+    )

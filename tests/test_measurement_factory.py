@@ -6,9 +6,24 @@ from unittest.mock import patch
 
 from instrument.measurement_adapter import PortMeasurementAdapter
 from instrument.measurement_factory import create_measurement_port
+from enhanced_workers import (
+    EnhancedAmplifierMeasurement,
+    EnhancedCableLossMeasurement,
+    EnhancedDriverPowerMapping,
+)
 
 
 class MeasurementFactoryTests(unittest.TestCase):
+    def test_enhanced_measurement_requires_explicit_port(self):
+        for measurement_type in (
+            EnhancedCableLossMeasurement,
+            EnhancedDriverPowerMapping,
+            EnhancedAmplifierMeasurement,
+        ):
+            with self.subTest(measurement_type=measurement_type.__name__):
+                with self.assertRaisesRegex(ValueError, "必须由应用组装层注入"):
+                    measurement_type("missing-config.json")
+
     def test_legacy_mode_preserves_controller_fallback(self):
         self.assertIsNone(create_measurement_port(mode="legacy"))
 

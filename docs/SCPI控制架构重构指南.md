@@ -111,7 +111,7 @@ $env:HARDWARE_SMOKE_ENABLED = "1"
 当前仍可见、需要审计和明确边界的兼容入口包括：
 
 - `app/gui_runtime.py:connect_instruments_legacy()`；
-- `enhanced_workers.py` 及三个测量包装器在未注入 `measurement_port` 时的兼容回退；
+- `app/gui_runtime.py` 的 `create_legacy_*_measurement()` 显式兼容入口；三个测量包装器本身拒绝未注入 `measurement_port`；
 - `instrument_control.py` 及其历史测试/脚本调用方；
 
 ## 4. 完成判据

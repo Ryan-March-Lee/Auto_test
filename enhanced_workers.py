@@ -26,10 +26,14 @@ from result_storage import load_json_result, new_run_id, save_measurement_result
 logger = get_logger(__name__)
 
 
-def _connect_instruments(config_path):
-    from app.gui_runtime import connect_instruments
-
-    return connect_instruments(config_path)
+def _require_measurement_port(measurement_port, owner):
+    """Prevent production adapters from silently re-entering the legacy path."""
+    if measurement_port is None:
+        raise ValueError(
+            f"{owner} 必须由应用组装层注入 measurement_port；"
+            "回滚请使用明确的 legacy 构造入口"
+        )
+    return measurement_port
 
 
 class _NumpyJSONEncoder(json.JSONEncoder):
@@ -84,10 +88,10 @@ class EnhancedCableLossMeasurement(_LegacyResultAdapter):
     def __init__(self, config_path=None, progress_callback=None, message_callback=None,
                  data_callback=None, sleep_fn=None, run_id=None, run_directory=None,
                  measurement_port=None):
+        self.inst_ctrl = _require_measurement_port(measurement_port, type(self).__name__)
         config_path = resolve_path(config_path, CONFIG_FILE)
         config = load_config_file(config_path)
         super().__init__(config, run_id=run_id, run_directory=run_directory)
-        self.inst_ctrl = measurement_port or _connect_instruments(config_path)
         self.sleep_fn = sleep_fn or time.sleep
         self._token = CancellationToken()
         self._service = CableLossService(
@@ -153,11 +157,11 @@ class EnhancedDriverPowerMapping(_LegacyResultAdapter):
     def __init__(self, config_path=None, loss_data_path=None, progress_callback=None,
                  message_callback=None, data_callback=None, sleep_fn=None, run_id=None, run_directory=None,
                  measurement_port=None):
+        self.inst_ctrl = _require_measurement_port(measurement_port, type(self).__name__)
         config_path = resolve_path(config_path, CONFIG_FILE)
         loss_data_path = resolve_path(loss_data_path, CABLE_LOSS_FILE)
         config = load_config_file(config_path)
         super().__init__(config, run_id=run_id, run_directory=run_directory)
-        self.inst_ctrl = measurement_port or _connect_instruments(config_path)
         self.sleep_fn = sleep_fn or time.sleep
         self._token = CancellationToken()
         self._service = DriverPowerMappingService(
@@ -185,6 +189,7 @@ class EnhancedAmplifierMeasurement(_LegacyResultAdapter):
     def __init__(self, config_path=None, loss_data_path=None, driver_mapping_path=None,
                  progress_callback=None, message_callback=None, data_callback=None,
                  sleep_fn=None, run_id=None, run_directory=None, measurement_port=None):
+        self.inst_ctrl = _require_measurement_port(measurement_port, type(self).__name__)
         config_path = resolve_path(config_path, CONFIG_FILE)
         loss_data_path = resolve_path(loss_data_path, CABLE_LOSS_FILE)
         config = load_config_file(config_path)
@@ -197,7 +202,6 @@ class EnhancedAmplifierMeasurement(_LegacyResultAdapter):
                     raise FileNotFoundError("驱动模式已开启，但未找到驱动映射文件")
                 driver_mapping_path = str(files[-1])
             driver_mapping = load_json_result(driver_mapping_path)["power_mapping"]
-        self.inst_ctrl = measurement_port or _connect_instruments(config_path)
         self.sleep_fn = sleep_fn or time.sleep
         self._token = CancellationToken()
         self._service = AmplifierMeasurementService(

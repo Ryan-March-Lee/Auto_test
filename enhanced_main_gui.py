@@ -39,9 +39,13 @@ plt.rcParams['axes.titleweight'] = 'bold'
 matplotlib.font_manager._get_font.cache_clear()
 
 # 导入我们的测试模块和连接图
-from app.gui_runtime import connect_instruments
+from app.gui_runtime import (
+    connect_instruments,
+    create_legacy_amplifier_measurement,
+    create_legacy_cable_loss_measurement,
+    create_legacy_driver_mapping_measurement,
+)
 from data_visualization import DataVisualization
-from enhanced_workers import EnhancedAmplifierMeasurement, EnhancedCableLossMeasurement, EnhancedDriverPowerMapping
 from presentation.qt.pages import build_pages
 from presentation.qt.workers import (
     AmplifierWorker,
@@ -1122,7 +1126,7 @@ class LegacyCableLossWorker(LegacyBaseWorker):
     def run(self):
         try:
             self.emit_message("开始线损测量...")
-            self.loss_measurement = EnhancedCableLossMeasurement(
+            self.loss_measurement = create_legacy_cable_loss_measurement(
                 self.config_path,
                 progress_callback=self.signals.progress.emit,
                 message_callback=self.signals.message.emit
@@ -1163,7 +1167,7 @@ class LegacyDriverMappingWorker(LegacyBaseWorker):
     def run(self):
         try:
             self.emit_message("开始驱动功放映射测量...")
-            self.mapping = EnhancedDriverPowerMapping(
+            self.mapping = create_legacy_driver_mapping_measurement(
                 self.config_path,
                 progress_callback=self.signals.progress.emit,
                 message_callback=self.signals.message.emit,
@@ -1193,7 +1197,7 @@ class LegacyAmplifierWorker(LegacyBaseWorker):
     def run(self):
         try:
             self.emit_message("开始主功放测量...")
-            self.amp_measurement = EnhancedAmplifierMeasurement(
+            self.amp_measurement = create_legacy_amplifier_measurement(
                 self.config_path,
                 progress_callback=self.signals.progress.emit,
                 message_callback=self.signals.message.emit,

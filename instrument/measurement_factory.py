@@ -86,6 +86,106 @@ class _VisaSession(SafetyInstrumentSession):
                 self._resource_manager_closed = True
 
 
+class _DiscoveredPowerSupply:
+    """Route power operations to discovered supplies and close all of them."""
+
+    def __init__(self, supplies):
+        self.supplies = list(supplies)
+
+    def connect(self, *, timeout_s=10.0):
+        for supply in self.supplies:
+            supply.connect(timeout_s=timeout_s)
+
+    def close(self, *, timeout_s=5.0):
+        errors = []
+        for supply in self.supplies:
+            try:
+                supply.close(timeout_s=timeout_s)
+            except Exception as error:
+                errors.append(error)
+        if errors:
+            raise RuntimeError("power supply close failed: " + "; ".join(map(str, errors))) from errors[0]
+
+    def _selected(self, channel):
+        if not self.supplies:
+            raise RuntimeError("没有可用的已发现电源")
+        return self.supplies[0], channel
+
+    def set_output_enabled(self, channel, enabled, *, timeout_s=5.0):
+        for supply in self.supplies:
+            supply.set_output_enabled(channel, enabled, timeout_s=timeout_s)
+
+    def set_voltage_v(self, channel, voltage_v, *, timeout_s=5.0):
+        for supply in self.supplies:
+            supply.set_voltage_v(channel, voltage_v, timeout_s=timeout_s)
+
+    def set_current_limit_a(self, channel, current_a, *, timeout_s=5.0):
+        for supply in self.supplies:
+            supply.set_current_limit_a(channel, current_a, timeout_s=timeout_s)
+
+    def read_voltage_v(self, channel, *, timeout_s=5.0):
+        supply, physical_channel = self._selected(channel)
+        return supply.read_voltage_v(physical_channel, timeout_s=timeout_s)
+
+    def read_current_a(self, channel, *, timeout_s=5.0):
+        supply, physical_channel = self._selected(channel)
+        return supply.read_current_a(physical_channel, timeout_s=timeout_s)
+
+    def __getattr__(self, name):
+        def routed(channel, *args, **kwargs):
+            if name.startswith("read_"):
+                supply, physical_channel = self._selected(channel)
+                return getattr(supply, name)(physical_channel, *args, **kwargs)
+            result = None
+            for supply in self.supplies:
+                result = getattr(supply, name)(channel, *args, **kwargs)
+            return result
+        return routed
+
+
+def _discover_power_supplies(manager, template_config, *, exclude_addresses=()):
+    """Discover every idle DP832A and create drivers without fixed addresses."""
+    discovered = []
+    candidates = manager.list_resources()
+    try:
+        for address in candidates:
+            if address in set(exclude_addresses):
+                continue
+            if address.endswith("::SOCKET"):
+                continue
+            resource = None
+            try:
+                resource = manager.open_resource(address)
+                identity = resource.query("*IDN?").strip()
+                if "DP832A" not in identity.upper():
+                    resource.close()
+                    continue
+                states = [resource.query(f"OUTP? {channel}").strip().upper() for channel in ("CH1", "CH2")]
+                if any(state not in {"0", "OFF"} for state in states):
+                    raise ValueError(f"发现的 DP832A 输出未关闭: {address}")
+                discovered.append((address, resource, identity))
+            except Exception:
+                if resource is not None:
+                    try:
+                        resource.close()
+                    except Exception:
+                        pass
+                raise
+    except Exception:
+        for _address, resource, _identity in discovered:
+            try:
+                resource.close()
+            except Exception:
+                pass
+        raise
+    if not discovered:
+        raise ValueError("未发现处于空载状态的 DP832A 电源")
+    supplies = []
+    for address, resource, _identity in discovered:
+        supplies.append(ScpiPowerSupplyDriver(VisaScpiTransport(resource)))
+    return supplies, discovered
+
+
 def _create_hardware_measurement_port(config_path: str):
     from config_io import load_config_file
     config = load_config_file(config_path)
@@ -104,30 +204,25 @@ def _create_hardware_measurement_port(config_path: str):
         spectrum_resource = manager.open_resource(spectrum_config["address"])
         resources.append(spectrum_resource)
         assignments = config.get("power_supply_assignment", {})
+        enabled_names = [name for name, item in power_configs.items() if item.get("enabled", True)]
         assigned_names = {
             supply.get("name")
             for group_name in ("dut_amplifier", "driver_amplifier")
             for supply in assignments.get(group_name, {}).get("supplies", {}).values()
             if supply.get("name")
         }
-        enabled_names = [
-            name for name, item in power_configs.items() if item.get("enabled", True)
-        ]
-        if len(assigned_names) > 1:
-            raise ValueError("当前硬件组装器仅支持 DUT 和驱动功放共用一台双通道电源")
-        if assigned_names:
-            power_name = next(iter(assigned_names))
-            if power_name not in enabled_names:
-                raise ValueError(f"供电分配引用了未启用电源: {power_name}")
-        else:
-            if len(enabled_names) != 1:
-                raise ValueError("存在多个或零个启用电源时必须显式配置供电分配")
-            power_name = enabled_names[0]
-        power_config = power_configs.get(power_name) if power_name else None
-        if power_config is None:
-            raise ValueError("硬件测量路径至少需要一个已启用电源")
-        power_resource = manager.open_resource(power_config["address"])
-        resources.append(power_resource)
+        if any(name not in enabled_names for name in assigned_names):
+            raise ValueError("供电分配引用了未启用或不存在的电源模板")
+        if not enabled_names:
+            raise ValueError("硬件测量路径至少需要一个电源模板配置")
+        power_name = next(iter(assigned_names), enabled_names[0])
+        power_config = power_configs[power_name]
+        power_drivers, discovered = _discover_power_supplies(
+            manager,
+            power_config,
+            exclude_addresses=(signal_config["address"], spectrum_config["address"]),
+        )
+        resources.extend(resource for _address, resource, _identity in discovered)
 
         signal = ScpiSignalGeneratorDriver(
             VisaScpiTransport(signal_resource),
@@ -137,11 +232,9 @@ def _create_hardware_measurement_port(config_path: str):
             max_power_dbm=signal_config.get("max_power_dbm"),
         )
         spectrum = ScpiSpectrumAnalyzerDriver(VisaScpiTransport(spectrum_resource))
-        power = ScpiPowerSupplyDriver(VisaScpiTransport(power_resource))
+        power = _DiscoveredPowerSupply(power_drivers)
         dut_channels = _assigned_channels(assignments.get("dut_amplifier", {}), power_name, power_config, resolve_power_channel_role)
         driver_channels = _assigned_channels(assignments.get("driver_amplifier", {}), power_name, power_config, resolve_power_channel_role)
-        if len(set(dut_channels.values()) | set(driver_channels.values())) > 2:
-            raise ValueError("单台双通道电源最多支持两个不同物理通道")
         for label, channels in (("DUT", dut_channels), ("driver", driver_channels)):
             if channels and set(channels) != {"gate", "drain"}:
                 raise ValueError(f"{label} 电源必须同时配置 gate 和 drain 通道")

@@ -4,13 +4,13 @@
 
 本次重构尚未完成，本指南继续作为阶段 8 的唯一收尾清单。
 
-截至 2026-09-30，阶段 1 至阶段 7 的离线能力和应用组装切片已经落地，但最终验收仍被以下事项阻塞：
+截至 2026-09-30，阶段 1 至阶段 7 的离线能力和真实应用默认组装路径已经落地，但最终验收仍被以下事项阻塞：
 
-1. 已有的 `minimal_action` 现场报告证明旧 smoke 入口完成过一次受限动作，但未证明新应用组装路径完成硬件验收。
-2. GUI/worker 的连接入口已经调用硬件组装器，但三个测量包装器仍保留 `measurement_port` 为空时的 `InstrumentControl` 兼容回退；调用方边界和回退策略尚未最终冻结。
-3. 阶段 8 的新路径现场验收、调用方审计、现场记录归档和旧实现处置仍未完成。
+1. 2026-09-30 已用本地 `minimal_action` 配置完成一次受限动作，报告确认 RF、两台发现到的电源和 VISA 资源均安全关闭；随后新应用组装路径已动态发现现场空载 DP832A，连接和立即安全关闭均通过。
+2. 生产 GUI/worker 默认通过硬件组装器注入 `measurement_port`；旧控制器仅由明确的 legacy 组装入口调用。历史测量类、`InstrumentControl` 及其测试/脚本调用方仍保留。
+3. 阶段 8 的新路径现场验收和现场记录归档仍未完成；调用方审计已完成离线范围核对，旧实现仅保留为显式兼容/回滚入口，尚不满足删除条件。
 
-因此当前正确状态是：**离线重构能力和应用组装切片已完成，一次旧 smoke 入口真实动作验收已完成；新应用组装路径 smoke、兼容回退审计和阶段 8 收尾待完成**。
+因此当前正确状态是：**离线重构能力、真实应用默认组装路径和离线调用方审计已完成；独立 smoke 入口本次真实动作及安全清理已完成；新应用组装路径因供电配置/网络地址不匹配连接失败，阶段 8 最终验收仍未通过**。
 
 ## 2. 已完成部分
 
@@ -42,7 +42,7 @@
 - 三类 driver 的命令格式、单位、参数边界、查询解析和设备错误已覆盖测试。
 - action/flow 不直接创建 VISA 连接，也不读取全局配置。
 - 仿真设备已覆盖正常流程、连接/准备/测量失败、取消、紧急停止和重复清理。
-- 测量服务支持注入 `measurement_port`；三个测量包装器仍可在未注入时回退到 `InstrumentControl`，该回退尚未从生产边界移除。
+- 测量服务支持注入 `measurement_port`；三个增强测量包装器要求显式注入，不再隐式创建 `InstrumentControl`。`app.gui_runtime.create_legacy_*_measurement()` 是明确的兼容组装入口。
 - 硬件 smoke 已有 `read_only`、`safe_prepare` 和 `minimal_action` 入口及显式安全门禁；三者均已有现场证据，`minimal_action` 已完成一次真实 RF 动作、测量和安全清理。
 
 ### 2.3 本次自动化验收
@@ -58,7 +58,7 @@ Conda：Auto_test
 执行结果：
 
 ```text
-./run_tests.ps1                         431 项通过
+./run_tests.ps1                         445 项通过
 ./start_gui.bat --check                 通过
 ./start_gui.bat --validate-config       通过
 ```
@@ -69,7 +69,7 @@ Conda：Auto_test
 
 ### 3.1 真实设备最小动作验收（旧 smoke 入口已完成，新组装路径待完成）
 
-已有本地 `minimal_action` 报告记录一次受限动作、测量和安全清理；该报告没有标识或证明应用组装路径，因此不能作为阶段 8 的最终验收证据。新组装路径必须在现场授权后按同一安全门禁复验：
+已有本地 `minimal_action` 报告记录一次受限动作、测量和安全清理；报告确认独立 smoke 的安全闭环。应用组装路径现按 VISA 枚举动态发现所有空载 DP832A，配置中的电源地址仅保留为模板字段，不再作为连接目标；动态发现连接和立即安全关闭已通过，仍需按具体测量类型复验：
 
 ```powershell
 $env:HARDWARE_SMOKE_ENABLED = "1"
@@ -83,7 +83,7 @@ $env:HARDWARE_SMOKE_ENABLED = "1"
 - 信号源、频谱仪、电源身份与配置匹配；
 - 信号源使用现场批准的低功率，当前准备值为 2.3 GHz、-30 dBm；
 - 频谱仪使用已确认可用的 `CALC:MARK1:Y?`，并配置合理的读数范围；
-- 电源初始状态为关闭，掉电顺序保持 `CH2 OFF -> CH1 OFF`；
+- 执行前所有待发现 DP832A 均空载且 CH1/CH2 输出关闭；测试发现并纳入所有匹配电源，掉电顺序保持每台 `CH2 OFF -> CH1 OFF`；
 - 配置校验中的驱动功放供电警告已经得到现场解释。
 
 执行后必须保存未跟踪的现场报告和配置快照，并核对：
@@ -91,27 +91,27 @@ $env:HARDWARE_SMOKE_ENABLED = "1"
 - 只执行一次 RF 开启动作；
 - `CALC:MARK1:MAX` 在 `CALC:MARK1:Y?` 之前执行；
 - 测量完成或异常后立即发送 `OUTP OFF`；
-- 电源按 `Drain CH2 OFF -> Gate CH1 OFF` 清理；
+- 每台发现电源均按 `Drain CH2 OFF -> Gate CH1 OFF` 清理；
 - RF 和电源输出均关闭；
 - 所有 VISA resource 和 ResourceManager 均已释放；
 - 报告记录动作数、测量值、设备身份、清理事件、最终状态和异常。
 
-已有报告确认旧 smoke 入口的动作预算、测量顺序、RF 和电源关闭以及 VISA 资源释放。该结论不覆盖新应用组装入口；在新路径验收前不得删除兼容入口。
+已有报告确认独立 smoke 入口的动作预算、测量顺序、RF 和电源关闭以及 VISA 资源释放；本次新应用组装动态发现连接验证确认所有发现电源均可纳入会话并安全关闭。该结论不替代具体测量动作验收；在完整应用动作验收前不得删除兼容入口。
 
-### 3.2 真实应用入口迁移与调用方审计
+### 3.2 真实应用入口迁移与调用方审计（离线部分已完成）
 
 按以下顺序完成，并为每一步保留可回滚路径：
 
 1. 已有应用组装层真实设备的 `transport -> driver -> action -> flow/session -> measurement_port` 路径；保留并测试连接失败、异常清理和资源关闭行为。
 2. 已有 `app/gui_runtime.py`、`enhanced_main_gui.py` 和 worker 的新组装调用链，但必须逐项确认所有生产测量调用方都显式传入端口。
-3. 将 `cable_loss_measurement.py`、`driver_power_mapping.py`、`amplifier_measurement.py` 中的隐式 `InstrumentControl` 回退限定到明确的兼容入口，或在确认无回滚需求后删除；不得把当前兼容回退误记为迁移完成。
-4. 更新 `docs/阶段7调用方清单.md`，审计全部 `InstrumentControl` 调用方、旧方法名、直接 VISA 使用、参数单位、日志、异常、取消和清理路径；补齐新旧路径行为对照测试。
+3. 已将三个增强测量包装器的隐式回退收束到 `app.gui_runtime.create_legacy_*_measurement()`；正式 GUI worker 使用新组装入口。
+4. 已按 `docs/阶段7调用方清单.md` 核查正式调用方、legacy 调用方、直接 VISA 层次和服务层边界；旧方法/旧控制器仍有历史测试与脚本调用方，现场 smoke 前不删除。
 5. 在新路径真实 smoke 通过后，逐批删除未使用的旧 SCPI 方法和旧内部实现；每批删除后运行完整离线测试和应用检查。
 
 当前仍可见、需要审计和明确边界的兼容入口包括：
 
-- `app/gui_runtime.py:connect_instruments_legacy()`；
-- `app/gui_runtime.py` 的 `create_legacy_*_measurement()` 显式兼容入口；三个测量包装器本身拒绝未注入 `measurement_port`；
+- `app/gui_runtime.py:connect_instruments_legacy()` 及三个 `create_legacy_*_measurement()` 显式兼容入口；
+- 三个增强测量包装器本身拒绝缺失的 `measurement_port`；
 - `instrument_control.py` 及其历史测试/脚本调用方；
 
 ## 4. 完成判据
@@ -124,7 +124,7 @@ $env:HARDWARE_SMOKE_ENABLED = "1"
 4. 完整离线测试、相关模拟测试、应用检查和必要的硬件 smoke 均通过，且没有未解释的新回归。
 5. 旧实现已分批删除或明确保留为兼容适配器，并有可恢复的提交或配置开关。
 
-完成后应同步更新 `docs/三层测试架构重构计划.md`、`docs/阶段7完成记录.md` 和 `docs/阶段7调用方清单.md` 的状态；在此之前，这些文档中的“新路径真实最小动作待执行”和“兼容入口保留”结论仍然有效。
+现场门槛通过后再将本指南标记完成，并评估归档过程性文档；当前应同步保持相关阶段文档状态一致。新路径真实最小动作待执行、兼容入口保留的结论仍有效。
 
 ## 5. 维护规则
 

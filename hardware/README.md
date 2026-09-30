@@ -14,19 +14,17 @@ $env:HARDWARE_SMOKE_ENABLED = "1"
 
 The entry point requires the interpreter from `.env`, a non-example
 `hardware_smoke` configuration, explicit confirmation, and a non-CI process.
-The preparation runner requires exactly one signal generator, spectrum
-analyzer, and power supply. For `minimal_action`, the power supply may use
-`discover: true` without an address: the runner enumerates VISA resources,
-queries `*IDN?` and both configured output states, and selects exactly one
-candidate whose channels are off. A configured model remains an optional
-identity filter; ambiguity or no safe match fails before RF is enabled. Signal
-generator and supply configurations must query their output state before and
-after cleanup with an explicit expected-off value. The analyzer must provide
-an explicit post-setup state query. Setup and cleanup SCPI roots are restricted
-per device; confirm those command forms and limits against the actual
-instrument manuals before site use. Cleanup commands are attempted
-independently, and any cleanup or final-state verification failure fails the
-smoke and is retained in the local report.
+The preparation runner requires exactly one signal generator and spectrum
+analyzer. The power-supply section may use `discover: true` without an
+address: it enumerates VISA resources, queries `*IDN?` and both output states,
+and includes every matching idle DP832A. The operator must ensure all supplies
+are unloaded before starting. Each discovered supply is connected, included in
+the action/cleanup boundary, and verified off; the number and addresses may
+differ between tests. The application hardware factory follows the same rule
+and treats configured power-supply addresses as templates only, not connection
+targets. Measurement assignments still select logical channels and settings.
+Signal-generator and supply configurations must query output state before and
+after cleanup. Cleanup failures fail the smoke and remain in the local report.
 
 Current site status: `safe_prepare`, the formal `read_only` entry, and one
 `minimal_action` run have passed with the local configuration. The minimal

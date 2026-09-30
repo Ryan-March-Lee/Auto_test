@@ -216,8 +216,8 @@ def _validate_power_supply(name: str, supply_config: Any, error: Any, warning: A
     enabled = supply_config.get("enabled", True)
     if not isinstance(enabled, bool):
         error(f"{path}.enabled", "必须是布尔值")
-    if enabled and (not isinstance(supply_config.get("address"), str) or not supply_config["address"].strip()):
-        error(f"{path}.address", "启用的电源必须配置非空地址")
+    # Hardware mode discovers all idle DP832A supplies at run time. The
+    # address remains only as a legacy/template field for UI compatibility.
     channels = supply_config.get("channels")
     if not isinstance(channels, dict) or not channels:
         error(f"{path}.channels", "必须是非空对象")

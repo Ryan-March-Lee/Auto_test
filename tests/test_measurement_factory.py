@@ -79,9 +79,31 @@ class MeasurementFactoryTests(unittest.TestCase):
             errors = port.close_all(close_rf=True)
             self.assertEqual(errors, [])
             self.assertTrue(manager.closed)
+        self.assertTrue(all(resource.closed for resource in manager.resources))
+
+    def test_hardware_mode_discovers_all_idle_dp832a_and_broadcasts_power_actions(self):
+        config = _base_hardware_config()
+        config["instruments"]["power_supplies"]["PS1"]["address"] = "stale-address-is-ignored"
+        config["power_supply_assignment"] = {
+            "dut_amplifier": {"supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}}},
+            "driver_amplifier": {"supplies": {}},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps(config), encoding="utf-8")
+            manager = _DiscoveryResourceManager()
+            with patch("instrument.measurement_factory.pyvisa.ResourceManager", return_value=manager):
+                port = create_measurement_port(str(path), mode="hardware")
+            self.assertEqual(manager.opened_addresses, ["SG", "SA", "PS-A", "PS-B"])
+            port.set_voltage("PS1", "CH1", 2.8)
+            port.power_on_sequence()
+            for resource in manager.resources[2:]:
+                self.assertIn(("write", ":SOURce1:VOLTage 2.8"), resource.commands)
+                self.assertIn(("write", ":OUTPut CH1,ON"), resource.commands)
+            self.assertEqual(port.close_all(close_rf=True), [])
             self.assertTrue(all(resource.closed for resource in manager.resources))
 
-    def test_hardware_mode_rejects_implicit_multiple_supply_selection(self):
+    def test_hardware_mode_accepts_multiple_discovered_supplies_without_fixed_selection(self):
         config = _base_hardware_config()
         config["instruments"]["power_supplies"]["PS2"] = {
             "address": "PS2", "enabled": True, "channels": {}
@@ -90,9 +112,11 @@ class MeasurementFactoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
             path.write_text(json.dumps(config), encoding="utf-8")
-            with patch("instrument.measurement_factory.pyvisa.ResourceManager", return_value=_FakeResourceManager()):
-                with self.assertRaisesRegex(ValueError, "多个或零个"):
-                    create_measurement_port(str(path), mode="hardware")
+            manager = _DiscoveryResourceManager()
+            with patch("instrument.measurement_factory.pyvisa.ResourceManager", return_value=manager):
+                port = create_measurement_port(str(path), mode="hardware")
+            self.assertEqual(manager.opened_addresses, ["SG", "SA", "PS-A", "PS-B"])
+            self.assertEqual(port.close_all(), [])
 
     def test_hardware_mode_rejects_unenabled_assigned_supply(self):
         config = _base_hardware_config()
@@ -165,6 +189,10 @@ class _FakeResource:
 
     def query(self, command):
         self.commands.append(("query", command))
+        if command == "*IDN?" and self.address == "PS":
+            return "RIGOL TECHNOLOGIES,DP832A,TEST,1.0"
+        if command.startswith("OUTP?") and self.address == "PS":
+            return "OFF"
         return "-30.0"
 
     def close(self):
@@ -183,8 +211,37 @@ class _FakeResourceManager:
         self.resources.append(resource)
         return resource
 
+    def list_resources(self):
+        return ("SG", "SA", "PS")
+
     def close(self):
         self.closed = True
+
+
+class _DiscoveryResourceManager(_FakeResourceManager):
+    def __init__(self):
+        super().__init__()
+        self.resources_by_address = {}
+
+    def list_resources(self):
+        return ("SG", "SA", "PS-A", "PS-B")
+
+    def open_resource(self, address):
+        self.opened_addresses.append(address)
+        resource = _DiscoveryResource(address)
+        self.resources.append(resource)
+        self.resources_by_address[address] = resource
+        return resource
+
+
+class _DiscoveryResource(_FakeResource):
+    def query(self, command):
+        self.commands.append(("query", command))
+        if command == "*IDN?":
+            return "RIGOL TECHNOLOGIES,DP832A,TEST,1.0" if self.address.startswith("PS-") else "TEST,DEVICE,1,1"
+        if command.startswith("OUTP?"):
+            return "OFF"
+        return "-30.0"
 
 
 if __name__ == "__main__":

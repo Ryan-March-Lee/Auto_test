@@ -109,6 +109,24 @@ class MeasurementServicePortAdapterTests(unittest.TestCase):
         self.assertEqual(session.state.value, "cleaned")
         self.assertEqual(adapter.close_all(), [])
 
+    def test_close_all_honors_explicit_close_rf_flag(self):
+        adapter, session, recorder = self.make_adapter()
+        adapter.power_on_sequence()
+        adapter.rf_output_on()
+        adapter.close_all(close_rf=True)
+        self.assertEqual(session.state.value, "cleaned")
+        rf_actions = [item for item in recorder.commands if item[:2] == ("signal_generator", "rf_off")]
+
+        legacy_adapter, legacy_session, legacy_recorder = self.make_adapter()
+        legacy_adapter.power_on_sequence()
+        legacy_adapter.rf_output_on()
+        legacy_adapter.close_all(close_rf=False)
+        self.assertEqual(legacy_session.state.value, "cleaned")
+        legacy_rf_actions = [
+            item for item in legacy_recorder.commands if item[:2] == ("signal_generator", "rf_off")
+        ]
+        self.assertEqual(len(rf_actions), len(legacy_rf_actions) + 1)
+
 
 if __name__ == "__main__":
     unittest.main()

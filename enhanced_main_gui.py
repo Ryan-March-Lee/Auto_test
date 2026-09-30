@@ -2666,6 +2666,9 @@ class MainWindow(QMainWindow):
         """开始线损测量"""
         if self.current_worker and self.current_worker.isRunning():
             return
+        if self.instrument_ctrl is None:
+            self.on_worker_error("请先连接仪器；上一次测量结束后端口已安全释放")
+            return
 
         # 先保存当前参数。保存会使旧的接线确认失效，避免把上一次现场
         # 的确认复用于已经改变的仪器或测试参数。
@@ -2735,6 +2738,9 @@ class MainWindow(QMainWindow):
         
     def start_driver_mapping(self):
         """开始驱动映射"""
+        if self.instrument_ctrl is None:
+            self.on_worker_error("请先连接仪器；上一次测量结束后端口已安全释放")
+            return
         # 先保存当前参数，再弹出接线确认；保存配置会使旧确认失效。
         if not self.update_and_save_config():
             return
@@ -2776,6 +2782,9 @@ class MainWindow(QMainWindow):
         
     def start_amplifier_test(self):
         """开始功放测试"""
+        if self.instrument_ctrl is None:
+            self.on_worker_error("请先连接仪器；上一次测量结束后端口已安全释放")
+            return
         # 先落盘当前参数。保存会使已有现场确认失效，确认对话框必须放在
         # 保存之后，否则下面的 update_and_save_config 会覆盖刚完成的确认。
         if not self.update_and_save_config():

@@ -7,11 +7,11 @@
 截至 2026-09-30，阶段 1 至阶段 7 的离线能力和现代 GUI 的主要组装入口已经落地，但最终验收仍被以下事项阻塞：
 
 1. 2026-09-30 已用本地 `minimal_action` 配置分别完成独立 smoke 入口和新应用组装路径的一次受限动作；报告确认 RF、两台发现到的电源和 VISA 资源均安全关闭，且新路径记录了初始状态、设备身份、测量顺序、最终状态和真实 SCPI 操作。
-2. 现代 GUI/worker 的主要入口通过硬件组装器注入 `measurement_port`；旧 GUI worker 通过明确命名的 legacy 组装函数调用。三个历史测量类仍可在未传入端口时隐式创建 `InstrumentControl`，因此不能把所有生产入口都视为已收束。
-3. 代码审查确认硬件工厂实际组装的是 `transport -> driver -> SafetyInstrumentSession -> PortMeasurementAdapter`，默认路径没有构造独立的 action/flow；当前将 `SafetyInstrumentSession` 作为兼容协调边界，仍需决定是否正式迁移到独立 action/flow。GUI 测量清理端口后也没有闭合自身持有的端口生命周期。
-4. 新组装路径的最小动作现场验收和本机报告归档已完成；但完整测量类型验收、旧实现处置、历史调用方收束和 GUI 端口生命周期仍未完成，尚不满足全部删除条件。
+2. 现代 GUI/worker 的主要入口通过硬件组装器注入 `measurement_port`；旧 GUI worker 通过明确命名的 legacy 组装函数调用。三个历史测量类现已拒绝缺失端口，`InstrumentControl` 只由明确的 legacy 组装入口创建。
+3. 代码审查确认硬件工厂实际组装的是 `transport -> driver -> SafetyInstrumentSession -> PortMeasurementAdapter`，默认路径没有构造独立的 action/flow；当前将 `SafetyInstrumentSession` 作为兼容协调边界，仍需决定是否正式迁移到独立 action/flow。GUI 测量完成、异常和取消路径均清理并清空端口，启动测量前拒绝使用已释放端口。
+4. 新组装路径的最小动作现场验收和本机报告归档已完成；但完整测量类型验收、旧实现处置和默认 action/flow 边界仍未完成，尚不满足全部删除条件。
 
-因此当前正确状态是：**离线重构能力、现代 GUI 的主要端口注入路径以及新应用组装路径的真实最小动作验收已完成；硬件默认路径当前采用 `SafetyInstrumentSession` 兼容协调边界，尚未正式接入独立 action/flow，历史类仍有隐式旧控制器回退，完整测量类型验收和 GUI 端口生命周期收束仍未完成，阶段 8 最终验收仍未通过**。
+因此当前正确状态是：**离线重构能力、现代 GUI 的主要端口注入路径、新应用组装路径的真实最小动作验收、历史调用方端口收束和 GUI 端口生命周期收束已完成；硬件默认路径当前采用 `SafetyInstrumentSession` 兼容协调边界，尚未正式接入独立 action/flow，完整测量类型验收仍未完成，阶段 8 最终验收仍未通过**。
 
 ## 2. 已完成部分
 
@@ -43,7 +43,7 @@
 - 三类 driver 的命令格式、单位、参数边界、查询解析和设备错误已覆盖测试。
 - action/flow 不直接创建 VISA 连接，也不读取全局配置。
 - 仿真设备已覆盖正常流程、连接/准备/测量失败、取消、紧急停止和重复清理。
-- 测量服务支持注入 `measurement_port`；三个增强测量包装器要求显式注入，不再隐式创建 `InstrumentControl`。`app.gui_runtime.create_legacy_*_measurement()` 是明确的兼容组装入口，但其下游历史测量类仍保留默认旧控制器回退。
+- 测量服务、三个增强测量包装器和三个历史测量类均要求显式注入 `measurement_port`，不再隐式创建 `InstrumentControl`。`app.gui_runtime.create_legacy_*_measurement()` 是明确的兼容组装入口。
 - 硬件 smoke 已有 `read_only`、`safe_prepare` 和 `minimal_action` 入口及显式安全门禁；三者均已有现场证据，`minimal_action` 已完成一次真实 RF 动作、测量和安全清理。
 
 ### 2.3 本次自动化验收
@@ -114,7 +114,7 @@ $env:HARDWARE_SMOKE_ENABLED = "1"
 1. 已有应用组装层真实设备的 `transport -> driver -> session -> measurement_port` 路径；代码审查确认默认工厂尚未接入独立 action/flow，需完成统一或明确架构边界，并保留连接失败、异常清理和资源关闭测试。
 2. 已有 `app/gui_runtime.py`、`enhanced_main_gui.py` 和 worker 的新组装调用链，但必须逐项确认所有生产测量调用方都显式传入端口。
 3. 已将三个增强测量包装器的隐式回退收束到 `app.gui_runtime.create_legacy_*_measurement()`；正式 GUI worker 使用新组装入口。
-4. 已按 `docs/阶段7调用方清单.md` 核查现代调用方、legacy 调用方、直接 VISA 层次和服务层边界；确认历史测量类仍能隐式构造旧控制器，且 GUI 端口生命周期未闭合。
+4. 已按 `docs/阶段7调用方清单.md` 核查现代调用方、legacy 调用方、直接 VISA 层次和服务层边界；历史测量类已改为显式端口契约，GUI 端口生命周期已闭合。
 5. 在新路径真实 smoke 通过后，逐批删除未使用的旧 SCPI 方法和旧内部实现；每批删除后运行完整离线测试和应用检查。
 
 当前仍可见、需要审计和明确边界的兼容入口包括：
@@ -122,8 +122,8 @@ $env:HARDWARE_SMOKE_ENABLED = "1"
 - `app/gui_runtime.py:connect_instruments_legacy()` 及三个 `create_legacy_*_measurement()` 显式兼容入口；
 - 三个增强测量包装器本身拒绝缺失的 `measurement_port`；
 - `instrument_control.py` 及其历史测试/脚本调用方；
-- 三个历史测量类的默认 `InstrumentControl` 回退和独立 `main()`；
-- `enhanced_main_gui.py` 中并存的 legacy worker，以及现代测量结束后仍保留的已清理端口。
+- 三个历史测量类的 legacy 组装入口；独立脚本入口已删除，避免绕过应用组装层。
+- `enhanced_main_gui.py` 中并存的 legacy worker。
 
 ## 4. 完成判据
 
@@ -137,7 +137,7 @@ $env:HARDWARE_SMOKE_ENABLED = "1"
 6. 历史测量类不再通过普通构造隐式创建 `InstrumentControl`；旧实现已分批删除或明确保留为兼容适配器，并有可恢复的提交或配置开关。
 7. GUI 端口生命周期已闭合，重复测量不会复用已清理 session。
 
-现场门槛和上述代码收尾条件全部通过后再将本指南标记完成，并评估归档过程性文档；当前应同步保持相关阶段文档状态一致。新路径真实最小动作已完成，兼容入口仍需保留；默认 action/flow 尚未接入、历史调用方仍有旧控制器回退、完整测量类型验收和 GUI 生命周期问题的结论仍有效。
+现场门槛和上述代码收尾条件全部通过后再将本指南标记完成，并评估归档过程性文档；当前应同步保持相关阶段文档状态一致。新路径真实最小动作已完成，兼容入口仍需保留；默认 action/flow 尚未接入、完整测量类型验收仍未完成的结论有效。
 
 ## 5. 维护规则
 

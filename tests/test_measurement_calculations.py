@@ -259,7 +259,7 @@ class MeasurementEntryPointDelegationTests(unittest.TestCase):
         measurement.config = {"attenuator": {"type": "30dB"}}
         measurement.loss_data = {"cable_losses": SAMPLE_LOSS_DATA}
 
-        with patch("amplifier_measurement.compensate_amplifier_output_power",
+        with patch("measurement_calculations.compensate_amplifier_output_power",
                    return_value=123.4) as calculate:
             result = measurement.calculate_actual_power(1.0, -10.0)
 
@@ -316,7 +316,7 @@ class MeasurementEntryPointDelegationTests(unittest.TestCase):
         measurement.config = {"attenuator": {"type": "30dB"}}
         measurement.loss_data = {"cable_losses": SAMPLE_LOSS_DATA}
 
-        with patch("amplifier_measurement.compensate_amplifier_output_power",
+        with patch("measurement_calculations.compensate_amplifier_output_power",
                    return_value=123.4) as calculate:
             result = measurement.calculate_actual_power(1.0, -10.0)
 

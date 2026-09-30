@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from PySide6.QtCore import QCoreApplication
 
-from presentation.qt.workers import CableLossWorker
+from presentation.qt.workers import CableLossWorker, InstrumentWorker
 
 
 class _CableService:
@@ -81,6 +81,21 @@ class GuiWorkerTests(unittest.TestCase):
 
         factory.assert_not_called()
         self.assertIsNone(worker.service)
+
+    def test_instrument_worker_closes_port_if_handoff_fails(self):
+        class _Port:
+            def __init__(self):
+                self.close_calls = []
+
+            def close_all(self, *, close_rf=False):
+                self.close_calls.append(close_rf)
+
+        port = _Port()
+        worker = InstrumentWorker("config.json", sleep_fn=lambda _seconds: (_ for _ in ()).throw(OSError("handoff failed")))
+        with patch("app.gui_runtime.connect_instruments", return_value=port):
+            worker.run()
+        self.assertEqual(port.close_calls, [True])
+        self.assertIsNone(worker.measurement_port)
 
 
 if __name__ == "__main__":

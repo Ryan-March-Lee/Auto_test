@@ -15,7 +15,7 @@ from app.events import CheckpointEvent, MessageEvent, ProgressEvent, RealtimeDat
 from domain.models import RunContext
 from app_logging import get_logger
 from config_io import load_config_file
-from measurement_calculations import compensate_amplifier_output_power
+import measurement_calculations
 from measurement_calculations import calculate_cable_losses
 from measurement_services import CableLossService, DriverPowerMappingService, AmplifierMeasurementService
 from project_paths import CABLE_LOSS_FILE, CONFIG_FILE, TEST_RESULTS_DIR, resolve_path
@@ -217,9 +217,8 @@ class EnhancedAmplifierMeasurement(_LegacyResultAdapter):
         self._token.request_emergency_stop(reason="用户停止")
 
     def calculate_actual_power(self, frequency, measured_power):
-        from amplifier_measurement import compensate_amplifier_output_power as calculate
         attenuator = float(self.config["attenuator"]["type"].replace("dB", ""))
-        return calculate(
+        return measurement_calculations.compensate_amplifier_output_power(
             measured_power=measured_power, frequency=frequency,
             loss_data=self.loss_data["cable_losses"], attenuator_value=attenuator,
         )

@@ -5,11 +5,10 @@ import numpy as np
 from typing import Dict, List, Optional, Tuple
 import time
 from datetime import datetime
-from instrument_control import InstrumentControl 
 from pathlib import Path
 from project_paths import CABLE_LOSS_FILE, CONFIG_FILE, PROJECT_ROOT, TEST_RESULTS_DIR, resolve_path
+import measurement_calculations
 from measurement_calculations import (
-    compensate_amplifier_output_power,
     calculate_dut_input_power,
     calculate_gain,
     calculate_efficiency,
@@ -55,6 +54,11 @@ class AmplifierMeasurement:
         config_path = resolve_path(config_path, CONFIG_FILE)
         loss_data_path = resolve_path(loss_data_path, CABLE_LOSS_FILE)
         self.config = load_config_file(config_path)
+        if measurement_port is None:
+            raise ValueError(
+                "AmplifierMeasurement 必须显式传入 measurement_port；"
+                "旧控制器请通过 app.gui_runtime.create_legacy_amplifier_measurement() 组装"
+            )
 
         self.loss_data = load_json_result(loss_data_path)
 
@@ -65,7 +69,7 @@ class AmplifierMeasurement:
             self.config,
             status="created",
         )
-        self.inst_ctrl = measurement_port or InstrumentControl(config_path)
+        self.inst_ctrl = measurement_port
 
         if self.config['driver_mode']['enabled']:
             if driver_mapping_path is None:
@@ -92,7 +96,7 @@ class AmplifierMeasurement:
         :func:`compensate_amplifier_output_power`。
         """
         attenuator_loss = float(self.config['attenuator']['type'].replace('dB', ''))
-        return compensate_amplifier_output_power(
+        return measurement_calculations.compensate_amplifier_output_power(
             measured_power=measured_power,
             frequency=frequency,
             loss_data=self.loss_data['cable_losses'],
@@ -319,22 +323,5 @@ class AmplifierMeasurement:
         logger.info("主功放结果已保存: 兼容路径=%s，运行路径=%s", legacy_path, archive_path)
         print(f"\nResults saved to {legacy_path}; archived to {archive_path}")
 
-
-def main():
-    """主函数"""
-    try:
-        input("请按测试要求连接好主功放测试链路，然后按 Enter 继续...")
-        # 确保构造函数名是 __init__
-        amp_measurement = AmplifierMeasurement()
-        amp_measurement.measure_all_frequencies()
-        print("\nAmplifier measurement completed successfully!")
-    except Exception as e:
-        print(f"\nError occurred: {e}")
-        import traceback
-        traceback.print_exc()
-
-
-if __name__ == "__main__":
-    main()
 
 # --- END OF FILE amplifier_measurement.py (REFACTORED BASED ON NEW LOGIC) ---

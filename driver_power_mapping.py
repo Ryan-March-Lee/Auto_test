@@ -4,7 +4,6 @@ import numpy as np
 from typing import Dict, List, Optional
 import time
 from datetime import datetime
-from instrument_control import InstrumentControl
 from project_paths import CABLE_LOSS_FILE, CONFIG_FILE, PROJECT_ROOT, TEST_RESULTS_DIR, resolve_path
 from measurement_calculations import compensate_driver_output_power
 from app_logging import get_logger
@@ -28,6 +27,11 @@ class DriverPowerMapping:
         config_path = resolve_path(config_path, CONFIG_FILE)
         loss_data_path = resolve_path(loss_data_path, CABLE_LOSS_FILE)
         self.config = load_config_file(config_path)
+        if measurement_port is None:
+            raise ValueError(
+                "DriverPowerMapping 必须显式传入 measurement_port；"
+                "旧控制器请通过 app.gui_runtime.create_legacy_driver_mapping_measurement() 组装"
+            )
             
         self.loss_data = load_json_result(loss_data_path)
             
@@ -38,7 +42,7 @@ class DriverPowerMapping:
             self.config,
             status="created",
         )
-        self.inst_ctrl = measurement_port or InstrumentControl(config_path)
+        self.inst_ctrl = measurement_port
         self.power_mapping: Dict[str, Dict[str, float]] = {}
 
     def _sleep(self, seconds: float) -> None:
@@ -152,19 +156,5 @@ class DriverPowerMapping:
         print(f"\nResults saved to {legacy_path}; archived to {archive_path}")
 
     # --- MODIFIED: Removed plot_mapping_curves method ---
-
-def main():
-    """主函数"""
-    try:
-        # 提示用户连接硬件
-        input("请将信号源连接到线缆①，线缆①连接驱动功放输入，驱动功放输出连接线缆③，线缆③连接衰减器，衰减器连接线缆②，线缆②连接频谱仪。然后按 Enter 继续...")
-        mapping = DriverPowerMapping()
-        mapping.measure_all_frequencies()
-        print("\nDriver power mapping measurement completed successfully!")
-    except Exception as e:
-        print(f"\nError occurred: {str(e)}")
-
-if __name__ == "__main__":
-    main()
 
 # --- END OF FILE driver_power_mapping.py ---

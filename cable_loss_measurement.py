@@ -2,7 +2,6 @@
 
 import time
 from typing import Dict
-from instrument_control import InstrumentControl
 from project_paths import CABLE_LOSS_FILE, CONFIG_FILE, resolve_path
 from measurement_calculations import calculate_cable_losses
 from app_logging import get_logger
@@ -28,6 +27,11 @@ class CableLossMeasurement:
         """
         config_path = resolve_path(config_path, CONFIG_FILE)
         self.config = load_config_file(config_path)
+        if measurement_port is None:
+            raise ValueError(
+                "CableLossMeasurement 必须显式传入 measurement_port；"
+                "旧控制器请通过 app.gui_runtime.create_legacy_cable_loss_measurement() 组装"
+            )
 
         self.run_id = run_id or new_run_id()
         self.sleep_fn = sleep_fn or time.sleep
@@ -36,7 +40,7 @@ class CableLossMeasurement:
             self.config,
             status="created",
         )
-        self.inst_ctrl = measurement_port or InstrumentControl(config_path)
+        self.inst_ctrl = measurement_port
 
         self.attenuator_value = float(self.config['attenuator']['type'].replace('dB', ''))
         self.cable_losses: Dict[float, Dict[str, float]] = {}
@@ -157,21 +161,5 @@ class CableLossMeasurement:
         """关闭仪器连接"""
         cleanup_measurement(self.inst_ctrl)
 
-
-def main():
-    loss_measurement = None
-    try:
-        loss_measurement = CableLossMeasurement()
-        loss_measurement.measure_all_frequencies()
-        print("\n线损测量已成功完成!")
-    except Exception as e:
-        print(f"\n发生错误: {str(e)}")
-    finally:
-        if loss_measurement:
-            loss_measurement.close()
-
-
-if __name__ == "__main__":
-    main()
 
 # --- END OF FILE cable_loss_measurement.py ---

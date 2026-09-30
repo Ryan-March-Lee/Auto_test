@@ -66,19 +66,31 @@ class InstrumentWorker(BaseWorker):
         self.measurement_port = measurement_port
 
     def run(self) -> None:
+        controller = None
+        handed_off = False
         try:
             from app.gui_runtime import connect_instruments
 
             self.emit_message("正在初始化仪器控制...")
             self.signals.progress.emit(25)
             controller = connect_instruments(self.config_path)
+            self.measurement_port = controller
             self.signals.progress.emit(75)
             self.sleep_fn(1)
             self.signals.progress.emit(100)
             self.emit_message("仪器连接成功！")
             self.signals.result.emit(controller)
+            handed_off = True
             self.signals.finished.emit()
         except Exception as error:
+            if controller is not None and not handed_off:
+                close = getattr(controller, "close_all", None)
+                if close is not None:
+                    try:
+                        close(close_rf=True)
+                    except Exception:
+                        pass
+                self.measurement_port = None
             self._failed("仪器连接失败", error)
 
 

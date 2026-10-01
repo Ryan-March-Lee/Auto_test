@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from app.gui_runtime import create_cable_loss_measurement
 from application.dto import CableLossMeasurementRequest
+from application.inputs import ResultInputReader
 
 
 class MeasurementRequestAssemblyTests(unittest.TestCase):
@@ -27,6 +28,7 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
         self.assertEqual(request.run_id, "run-request")
         self.assertEqual(request.run_directory, Path("run-directory"))
         self.assertEqual(request.config_path, Path("config.json"))
+        self.assertIsInstance(request.input_reader, ResultInputReader)
 
     def test_runtime_factory_creates_port_when_call_does_not_inject_one(self):
         prepared = SimpleNamespace(
@@ -74,6 +76,26 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
         self.assertIs(request.cancellation_token, token)
         self.assertIs(request.event_sink, sink)
         self.assertIs(request.result_repository, repository)
+
+    def test_explicit_input_reader_is_injected_only_into_request(self):
+        port = object()
+        reader = object()
+        prepared = SimpleNamespace(
+            configuration=object(),
+            context=SimpleNamespace(run_id="run-request"),
+            run_directory=Path("run-directory"),
+        )
+        with patch("app.gui_runtime.connect_instruments", return_value=port), patch(
+            "app.gui_runtime.EnhancedCableLossMeasurement", return_value=object()
+        ) as measurement:
+            create_cable_loss_measurement(
+                "config.json",
+                prepared_run=prepared,
+                input_reader=reader,
+            )
+
+        self.assertIs(measurement.call_args.kwargs["request"].input_reader, reader)
+        self.assertNotIn("input_reader", measurement.call_args.kwargs)
 
 
 if __name__ == "__main__":

@@ -21,6 +21,7 @@ from result_storage import new_run_id
 from .run_context import PreparedRun, environment_version, prepare_run
 from instrument.measurement_factory import create_measurement_port
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
+from application.inputs import ResultInputReader
 from application.dto import (
     AmplifierMeasurementRequest,
     CableLossMeasurementRequest,
@@ -67,7 +68,11 @@ def _assemble_measurement(
         callbacks.setdefault("result_repository", FileMeasurementResultRepository())
         if request_factory is not None:
             callbacks["request"] = request_factory(callbacks)
-        return measurement_type(config_path, **callbacks)
+        measurement_kwargs = dict(callbacks)
+        # input_reader belongs to the application request.  It must not leak
+        # into the legacy adapter's constructor during the migration period.
+        measurement_kwargs.pop("input_reader", None)
+        return measurement_type(config_path, **measurement_kwargs)
     except Exception:
         if owned_port:
             port = callbacks.get("measurement_port")
@@ -156,6 +161,7 @@ def _request_kwargs(prepared_run: PreparedRun, config_path: str, callbacks: dict
         "event_sink": callbacks.get("event_sink"),
         "cancellation_token": callbacks.get("cancellation_token"),
         "result_repository": repository,
+        "input_reader": callbacks.get("input_reader") or ResultInputReader(repository),
         "config_path": Path(config_path),
     }
 

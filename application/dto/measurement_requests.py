@@ -16,6 +16,7 @@ from app.events import EventSink
 from domain.models import RunContext
 from config_models import RunConfiguration
 from application.ports.result_repository import MeasurementResultRepository
+from application.ports.result_input_reader import ResultInputReader
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,7 @@ class MeasurementRequest:
     event_sink: EventSink | None = None
     cancellation_token: CancellationToken | None = None
     result_repository: MeasurementResultRepository | None = None
+    input_reader: ResultInputReader | None = None
     config_path: Path | None = None
 
     @property

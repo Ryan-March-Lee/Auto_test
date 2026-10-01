@@ -304,6 +304,10 @@ class MeasurementResultRepository(Protocol):
 
 #### 步骤
 
+本阶段同时涉及结果仓储契约、兼容存储实现和三个增强包装器，拆分为三个可独立验证的小步骤。
+
+##### 步骤 1.1：定义仓储契约并建立适配器骨架
+
 1. 定义结果保存返回值，至少包含：
    - 归档路径。
    - 旧路径兼容副本路径。
@@ -311,17 +315,23 @@ class MeasurementResultRepository(Protocol):
    - `run_id`。
 2. 定义最小结果仓储协议或应用层接口。
 3. 创建一个基础文件结果仓储适配器，内部调用现有 `result_storage`。
-4. 将 `_NumpyJSONEncoder` 从 `enhanced_workers.py` 移到持久化实现或通用 JSON 编码模块。
-5. 将 `_LegacyResultAdapter._save()` 的保存逻辑迁移到结果仓储适配器。
-6. 将旧路径名称和结果类型映射集中到结果仓储或应用组装层。
-7. 为仓储适配器增加测试，覆盖：
+4. 将旧路径名称和结果类型映射集中到结果仓储或应用组装层。
+
+##### 步骤 1.2：迁移编码与保存实现
+
+1. 将 `_NumpyJSONEncoder` 从 `enhanced_workers.py` 移到持久化实现或通用 JSON 编码模块。
+2. 将 `_LegacyResultAdapter._save()` 的保存逻辑迁移到结果仓储适配器。
+3. 为仓储适配器增加测试，覆盖：
    - 归档结果写入。
    - 旧路径副本写入。
    - 运行 ID 透传。
    - `numpy` 标量和数组编码。
    - 写入失败时的异常传播。
    - 外部传入的 `run_directory` 不被错误覆盖。
-8. 让 `enhanced_workers.py` 暂时通过注入的仓储对象保存结果，以保持行为不变。
+##### 步骤 1.3：接入兼容包装器并完成行为回归
+
+1. 让 `enhanced_workers.py` 暂时通过注入的仓储对象保存结果，以保持行为不变。
+2. 补充并运行归档碰撞、旧路径副本、版本化模型和显式 `run_directory` 的回归测试。
 
 #### 重要约束
 
@@ -347,6 +357,10 @@ class MeasurementResultRepository(Protocol):
 
 #### 步骤
 
+本阶段同时处理配置转换、运行快照、结果输入读取和端口所有权，拆分为三个可独立验证的小步骤。
+
+##### 步骤 2.1：建立运行上下文和请求对象
+
 1. 明确应用测量用例的输入对象，例如：
    - 已加载的配置。
    - `PreparedRun`。
@@ -356,17 +370,26 @@ class MeasurementResultRepository(Protocol):
    - 事件 sink。
    - 取消令牌。
    - 结果仓储。
-2. 在 `app.gui_runtime` 中完成所有默认组装：
+2. 在 `app.gui_runtime` 中完成配置预检、`PreparedRun` 创建和运行 ID/运行目录注入，暂时保留原有输入文件读取路径。
+
+##### 步骤 2.2：抽取结果输入读取器
+
+1. 把“自动选择最新驱动映射文件”的行为移到明确的输入解析器或结果读取服务。
+2. 把默认文件路径转换集中到应用组装层，不放入测量用例。
+3. 为线损结果、显式驱动映射文件和最新驱动映射发现增加读取测试。
+
+##### 步骤 2.3：完成组装注入和端口所有权回归
+
+1. 在 `app.gui_runtime` 中完成所有默认组装：
    - 配置预检。
    - `PreparedRun` 创建。
    - 测量端口创建或接收。
    - 结果仓储注入。
    - 输入结果加载器注入。
-3. 把“自动选择最新驱动映射文件”的行为移到明确的输入解析器或结果读取服务。
-4. 把默认文件路径转换集中到应用组装层，不放入测量用例。
-5. 测试外部显式提供驱动映射文件时不会扫描目录。
-6. 测试缺少驱动映射文件时仍产生原有错误类型和信息。
-7. 测试测量用例不会自行创建硬件端口。
+2. 测试外部显式提供驱动映射文件时不会扫描目录。
+3. 测试缺少驱动映射文件时仍产生原有错误类型和信息。
+4. 测试测量用例不会自行创建硬件端口。
+5. 测试组装失败时只关闭本次创建的端口，不关闭外部注入端口。
 
 #### 通过标准
 
@@ -399,15 +422,30 @@ application/measurements/amplifier_test.py
 
 #### 步骤
 
-1. 以现有 `CableLossService` 的行为为基线，先建立 `CableLossUseCase` 外部接口。
-2. 以现有 `DriverPowerMappingService` 的行为为基线，建立 `DriverPowerMappingUseCase`。
-3. 以现有 `AmplifierMeasurementService` 的行为为基线，建立 `AmplifierMeasurementUseCase`。
-4. 保持三个服务的事件类型、事件数据字段、取消行为和清理行为不变。
-5. 把原包装器中的结果字段兼容映射变成显式结果 DTO 或结果转换器。
-6. 把 `path1_losses`、`cable_losses`、`power_mapping`、`measurement_results` 等 GUI 所需状态改为用例结果，不继续隐藏在兼容类内部。
-7. 让 `presentation/qt/workers.py` 直接调用新的应用用例。
-8. 将现有 `enhanced_workers.py` 中的增强类改为临时兼容导出，或在生产调用方全部切换后删除。
-9. 更新 `app/gui_runtime.py`，使三个 `create_*_measurement()` 函数返回新的应用对象或明确的应用 facade。
+本阶段一次迁移三个不同生命周期和输入依赖的测量流程，且还要同步处理状态兼容和应用组装，改动量最大。按测量类型拆成三个可独立回归的小步骤；每个步骤都必须保持事件、取消和安全清理行为不变。
+
+##### 步骤 3.1：迁移线损用例
+
+1. 以现有 `CableLossService` 的行为为基线，建立 `CableLossUseCase` 外部接口。
+2. 保持线损两步暂停、继续、停止和清理行为不变。
+3. 把 `path1_losses`、`cable_losses` 等 GUI 所需状态改为用例结果或明确转换结果。
+4. 为正常、异常、取消和等待第二步增加独立测试。
+
+##### 步骤 3.2：迁移驱动映射用例
+
+1. 以现有 `DriverPowerMappingService` 的行为为基线，建立 `DriverPowerMappingUseCase`。
+2. 保持结果事件字段、取消行为、清理行为和结果仓储调用不变。
+3. 将 `power_mapping` 改为明确的用例结果，不继续隐藏在兼容类内部。
+4. 为显式输入、缺失输入、正常完成和取消增加独立测试。
+
+##### 步骤 3.3：迁移主功放用例并完成三类用例组装
+
+1. 以现有 `AmplifierMeasurementService` 的行为为基线，建立 `AmplifierMeasurementUseCase`。
+2. 保持驱动映射输入、功率扫描、事件类型、取消行为和安全清理行为不变。
+3. 将 `measurement_results` 改为明确的用例结果或结果转换器。
+4. 统一三个用例的事件 sink、取消令牌和结果 DTO 约定。
+5. 更新 `app.gui_runtime.py`，使三个 `create_*_measurement()` 函数能够返回新的应用对象或明确的应用 facade；保留旧增强类作为临时兼容入口。
+6. 让 `presentation/qt/workers.py` 在对应测量流程完成回归后切换到新的应用对象。
 
 #### 兼容处理原则
 
@@ -467,16 +505,24 @@ application/measurements/amplifier_test.py
 
 #### 步骤
 
+本阶段的生产切换和所有权测试会同时影响三个工厂入口，但不再承担测量流程迁移。拆分为两个可独立验证的小步骤。
+
+##### 步骤 5.1：切换应用组装入口
+
 1. 将三个 `create_*_measurement()` 函数切换到新的应用用例。
 2. 保留端口所有权规则：
    - 外部注入端口由调用方拥有。
    - 工厂创建的端口在构造失败时由工厂清理。
    - 成功交接后由明确的运行控制者清理。
 3. 删除 `app.gui_runtime` 对 `Enhanced*Measurement` 的导入。
-4. 更新 GUI runtime 测试的 patch 目标和断言。
-5. 增加架构测试，禁止生产应用模块重新导入 `enhanced_workers`。
-6. 更新 `presentation/qt/workers.py` 的模块说明和依赖注释。
-7. 更新调用方清单，记录 `enhanced_workers.py` 已不再是生产默认链路。
+
+##### 步骤 5.2：完成生产依赖审计和所有权回归
+
+1. 更新 GUI runtime 测试的 patch 目标和断言。
+2. 增加架构测试，禁止生产应用模块重新导入 `enhanced_workers`。
+3. 更新 `presentation/qt/workers.py` 的模块说明和依赖注释。
+4. 更新调用方清单，记录 `enhanced_workers.py` 已不再是生产默认链路。
+5. 回归外部注入端口、工厂创建端口、构造失败和成功交接后的清理行为。
 
 #### 通过标准
 

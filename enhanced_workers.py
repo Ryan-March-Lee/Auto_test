@@ -39,7 +39,7 @@ def _require_measurement_port(measurement_port, owner):
     if measurement_port is None:
         raise ValueError(
             f"{owner} 必须由应用组装层注入 measurement_port；"
-            "回滚请使用明确的 legacy 构造入口"
+            "请通过应用组装层显式注入 measurement_port"
         )
     return measurement_port
 

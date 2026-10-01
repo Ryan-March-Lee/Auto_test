@@ -9,9 +9,6 @@ from app.gui_runtime import (
     create_amplifier_measurement,
     create_cable_loss_measurement,
     create_driver_mapping_measurement,
-    create_legacy_amplifier_measurement,
-    create_legacy_cable_loss_measurement,
-    create_legacy_driver_mapping_measurement,
     prepare_configuration,
 )
 
@@ -75,33 +72,6 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
                 )
         connect.assert_not_called()
         self.assertEqual(port.close_calls, [])
-
-    def test_legacy_factories_use_explicit_legacy_port(self):
-        cases = (
-            (create_legacy_cable_loss_measurement, "EnhancedCableLossMeasurement"),
-            (create_legacy_driver_mapping_measurement, "EnhancedDriverPowerMapping"),
-            (create_legacy_amplifier_measurement, "EnhancedAmplifierMeasurement"),
-        )
-        for factory, measurement_name in cases:
-            with self.subTest(factory=factory.__name__):
-                port = _Port()
-                expected = object()
-                with patch("app.gui_runtime.connect_instruments_legacy", return_value=port) as connect, \
-                        patch(f"app.gui_runtime.{measurement_name}", return_value=expected) as measurement:
-                    result = factory("config.json")
-                self.assertIs(result, expected)
-                connect.assert_called_once_with("config.json")
-                self.assertIs(measurement.call_args.kwargs["measurement_port"], port)
-                self.assertEqual(port.close_calls, [])
-
-    def test_legacy_factory_closes_port_when_measurement_construction_fails(self):
-        port = _Port()
-        with patch("app.gui_runtime.connect_instruments_legacy", return_value=port), \
-                patch("app.gui_runtime.EnhancedAmplifierMeasurement", side_effect=FileNotFoundError("mapping missing")):
-            with self.assertRaisesRegex(FileNotFoundError, "mapping missing"):
-                create_legacy_amplifier_measurement("config.json")
-        self.assertEqual(port.close_calls, [True])
-
 
 class GuiRuntimePreparationTests(unittest.TestCase):
     def _write_config(self, *, confirmed=True):

@@ -30,13 +30,6 @@ def connect_instruments(config_path: str, *, recorder: Any = None) -> Any:
     return create_measurement_port(config_path, mode="hardware", recorder=recorder)
 
 
-def connect_instruments_legacy(config_path: str) -> Any:
-    """Explicit rollback entry for the pre-refactor controller."""
-    from instrument_control import InstrumentControl
-
-    return InstrumentControl(config_path)
-
-
 def _close_owned_measurement_port(port: Any) -> None:
     """Best-effort cleanup when composition fails after opening instruments."""
     try:
@@ -177,37 +170,4 @@ def create_amplifier_measurement(
         config_path,
         callbacks,
         port_factory=connect_instruments,
-    )
-
-
-def create_legacy_cable_loss_measurement(config_path: str, **callbacks: Any) -> Any:
-    """Explicit rollback assembly for cable-loss measurement."""
-    callbacks["measurement_port"] = None
-    return _assemble_measurement(
-        EnhancedCableLossMeasurement,
-        config_path,
-        callbacks,
-        port_factory=connect_instruments_legacy,
-    )
-
-
-def create_legacy_driver_mapping_measurement(config_path: str, **callbacks: Any) -> Any:
-    """Explicit rollback assembly for driver-power mapping."""
-    callbacks["measurement_port"] = None
-    return _assemble_measurement(
-        EnhancedDriverPowerMapping,
-        config_path,
-        callbacks,
-        port_factory=connect_instruments_legacy,
-    )
-
-
-def create_legacy_amplifier_measurement(config_path: str, **callbacks: Any) -> Any:
-    """Explicit rollback assembly for amplifier measurement."""
-    callbacks["measurement_port"] = None
-    return _assemble_measurement(
-        EnhancedAmplifierMeasurement,
-        config_path,
-        callbacks,
-        port_factory=connect_instruments_legacy,
     )

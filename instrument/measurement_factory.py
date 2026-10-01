@@ -1,8 +1,8 @@
-"""Application-level assembly for hardware, legacy, and offline ports.
+"""Application-level assembly for hardware and offline measurement ports.
 
 The factory keeps hardware construction out of measurement services.  The
-legacy mode deliberately returns the existing controller so production callers
-can opt out of the new session path until hardware acceptance is complete.
+    Hardware construction uses the explicit configured power topology.  The
+    discovery wrapper remains isolated to the hardware-smoke entry points.
 """
 
 from __future__ import annotations
@@ -32,14 +32,11 @@ def create_measurement_port(
     power_settings: Mapping[str, Mapping[str, float]] | None = None,
     recorder: Any = None,
 ):
-    """Create a service port for hardware, legacy, or offline simulation mode.
+    """Create a service port for hardware or offline simulation mode.
 
-    ``legacy`` returns ``None`` because callers use their historical
-    ``InstrumentControl`` fallback.  Hardware construction owns the VISA
-    manager and all resources through the returned session.
+    Hardware construction owns the VISA manager and all resources through the
+    returned session.
     """
-    if mode == "legacy":
-        return None
     if mode == "hardware":
         if config_path is None:
             raise ValueError("hardware 模式必须提供 config_path")
@@ -192,6 +189,40 @@ def _discover_power_supplies(manager, template_config, *, exclude_addresses=(), 
     return supplies, discovered
 
 
+class _ConfiguredPowerSupply:
+    """Route logical ``supply/channel`` tokens to configured drivers."""
+
+    def __init__(self, supplies):
+        self.supplies = dict(supplies)
+
+    def connect(self, *, timeout_s=10.0):
+        for supply in self.supplies.values():
+            supply.connect(timeout_s=timeout_s)
+
+    def close(self, *, timeout_s=5.0):
+        errors = []
+        for supply in self.supplies.values():
+            try:
+                supply.close(timeout_s=timeout_s)
+            except Exception as error:
+                errors.append(error)
+        if errors:
+            raise RuntimeError("power supply close failed: " + "; ".join(map(str, errors))) from errors[0]
+
+    def _route(self, channel):
+        try:
+            supply_name, physical_channel = str(channel).split("/", 1)
+            return self.supplies[supply_name], physical_channel
+        except (KeyError, ValueError) as error:
+            raise ValueError(f"未配置的生产电源通道: {channel}") from error
+
+    def __getattr__(self, name):
+        def routed(channel, *args, **kwargs):
+            supply, physical_channel = self._route(channel)
+            return getattr(supply, name)(physical_channel, *args, **kwargs)
+        return routed
+
+
 def _create_hardware_measurement_port(config_path: str, *, recorder=None):
     from config_io import load_config_file
     config = load_config_file(config_path)
@@ -211,6 +242,7 @@ def _create_hardware_measurement_port(config_path: str, *, recorder=None):
         resources.append(spectrum_resource)
         assignments = config.get("power_supply_assignment", {})
         enabled_names = [name for name, item in power_configs.items() if item.get("enabled", True)]
+        assignments = config.get("power_supply_assignment", {})
         assigned_names = {
             supply.get("name")
             for group_name in ("dut_amplifier", "driver_amplifier")
@@ -221,15 +253,28 @@ def _create_hardware_measurement_port(config_path: str, *, recorder=None):
             raise ValueError("供电分配引用了未启用或不存在的电源模板")
         if not enabled_names:
             raise ValueError("硬件测量路径至少需要一个电源模板配置")
-        power_name = next(iter(assigned_names), enabled_names[0])
-        power_config = power_configs[power_name]
-        power_drivers, discovered = _discover_power_supplies(
-            manager,
-            power_config,
-            exclude_addresses=(signal_config["address"], spectrum_config["address"]),
-            recorder=recorder,
-        )
-        resources.extend(resource for _address, resource, _identity in discovered)
+        if not assigned_names:
+            raise ValueError("生产硬件路径必须显式配置电源角色和通道")
+        configured_supplies = {}
+        discovered = []
+        for power_name in sorted(assigned_names):
+            power_config = power_configs[power_name]
+            address = power_config.get("address")
+            if not isinstance(address, str) or not address.strip():
+                raise ValueError(f"生产电源 {power_name} 必须配置 address")
+            if address in (signal_config["address"], spectrum_config["address"]):
+                raise ValueError(f"生产电源 {power_name} 与其他仪器地址重复")
+            resource = manager.open_resource(address)
+            resources.append(resource)
+            identity = resource.query("*IDN?").strip()
+            if "DP832A" not in identity.upper():
+                raise ValueError(f"生产电源 {power_name} 设备身份不是 DP832A: {identity}")
+            states = [resource.query(f"OUTP? {channel}").strip().upper() for channel in power_config["channels"]]
+            if any(state not in {"0", "OFF"} for state in states):
+                raise ValueError(f"生产电源 {power_name} 初始输出未关闭")
+            driver = ScpiPowerSupplyDriver(VisaScpiTransport(resource, recorder=recorder))
+            configured_supplies[power_name] = driver
+            discovered.append((address, resource, identity))
 
         signal = ScpiSignalGeneratorDriver(
             VisaScpiTransport(signal_resource, recorder=recorder),
@@ -239,19 +284,13 @@ def _create_hardware_measurement_port(config_path: str, *, recorder=None):
             max_power_dbm=signal_config.get("max_power_dbm"),
         )
         spectrum = ScpiSpectrumAnalyzerDriver(VisaScpiTransport(spectrum_resource, recorder=recorder))
-        power = _DiscoveredPowerSupply(power_drivers)
-        dut_channels = _assigned_channels(assignments.get("dut_amplifier", {}), power_name, power_config, resolve_power_channel_role)
-        driver_channels = _assigned_channels(assignments.get("driver_amplifier", {}), power_name, power_config, resolve_power_channel_role)
+        power = _ConfiguredPowerSupply(configured_supplies)
+        dut_channels, dut_settings = _assigned_channels(assignments.get("dut_amplifier", {}), power_configs, resolve_power_channel_role)
+        driver_channels, driver_settings = _assigned_channels(assignments.get("driver_amplifier", {}), power_configs, resolve_power_channel_role)
         for label, channels in (("DUT", dut_channels), ("driver", driver_channels)):
             if channels and set(channels) != {"gate", "drain"}:
                 raise ValueError(f"{label} 电源必须同时配置 gate 和 drain 通道")
-        settings = {
-            role: {
-                "voltage_v": power_config["channels"][channel]["voltage"]["value"],
-                "current_a": power_config["channels"][channel]["current"]["value"],
-            }
-            for role, channel in {**driver_channels, **dut_channels}.items()
-        }
+        settings = {**driver_settings, **dut_settings}
         all_channels = {**driver_channels, **dut_channels}
         session = _VisaSession(
             manager, signal, spectrum, power,
@@ -279,18 +318,27 @@ def _create_hardware_measurement_port(config_path: str, *, recorder=None):
         raise
 
 
-def _assigned_channels(assignment, power_name, power_config, role_resolver):
+def _assigned_channels(assignment, power_configs, role_resolver):
     channels = {}
+    settings = {}
     for supply in assignment.get("supplies", {}).values():
-        if supply.get("name") != power_name:
-            continue
+        power_name = supply.get("name")
+        power_config = power_configs.get(power_name)
+        if power_config is None:
+            raise ValueError(f"供电分配引用了不存在的电源: {power_name}")
         for channel in supply.get("channel", []):
             if channel not in power_config.get("channels", {}):
                 raise ValueError(f"供电分配引用了不存在的通道: {power_name}/{channel}")
             role = role_resolver(channel, power_config.get("channels", {}).get(channel, {}))
             if role is None:
                 raise ValueError(f"无法解析供电通道角色: {power_name}/{channel}")
-            if role in channels and channels[role] != channel:
+            token = f"{power_name}/{channel}"
+            if role in channels and channels[role] != token:
                 raise ValueError(f"供电角色重复配置: {power_name}/{role}")
-            channels[role] = channel
-    return channels
+            channels[role] = token
+            channel_config = power_config["channels"][channel]
+            settings[role] = {
+                "voltage_v": channel_config["voltage"]["value"],
+                "current_a": channel_config["current"]["value"],
+            }
+    return channels, settings

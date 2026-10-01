@@ -150,10 +150,12 @@ def validate_config(config: Dict[str, Any]) -> ConfigValidationResult:
         assignments = get_mapping(root.get("power_supply_assignment"), "power_supply_assignment")
         driver_assignment = _validate_assignment(assignments, "driver_amplifier", power_supplies, error, warning)
         _validate_assignment(assignments, "dut_amplifier", power_supplies, error, warning)
-    if driver_enabled is True and not driver_assignment:
+    wiring = root.get("wiring") if isinstance(root.get("wiring"), dict) else {}
+    external_driver_confirmed = wiring.get("driver_amplifier_external_power_confirmed") is True
+    if driver_enabled is True and not driver_assignment and not external_driver_confirmed:
         warning(
             "power_supply_assignment.driver_amplifier.supplies",
-            "驱动模式已启用但未配置驱动功放供电分配；请确认驱动功放由外部供电。",
+            "驱动模式已启用但未配置驱动功放供电分配；请确认驱动功放由外部供电，或配置本机供电分配。",
         )
 
     return ConfigValidationResult(errors=errors, warnings=warnings)

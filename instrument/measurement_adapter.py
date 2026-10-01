@@ -88,32 +88,51 @@ class PortMeasurementAdapter:
         """Turn off both channels on every discovered supply before closing."""
         errors = []
         self._last_emergency_power_off: list[tuple[int, str]] = []
-        supplies = getattr(self.power_supply, "supplies", [self.power_supply])
-        for index, supply in enumerate(supplies):
-            for channel in ("CH2", "CH1"):
-                try:
-                    supply.set_output_enabled(channel, False, timeout_s=timeout_s)
-                except Exception as error:
-                    errors.append(error)
-                else:
-                    self._last_emergency_power_off.append((index, channel))
+        supplies = getattr(self.power_supply, "supplies", None)
+        if isinstance(supplies, dict):
+            routed_channels = [
+                (index, f"{name}/{channel}")
+                for index, name in enumerate(supplies)
+                for channel in ("CH2", "CH1")
+            ]
+        else:
+            supply_list = supplies or [self.power_supply]
+            routed_channels = [
+                (index, channel)
+                for index, _supply in enumerate(supply_list)
+                for channel in ("CH2", "CH1")
+            ]
+        for index, channel in routed_channels:
+            try:
+                self.power_supply.set_output_enabled(channel, False, timeout_s=timeout_s)
+            except Exception as error:
+                errors.append(error)
+            else:
+                self._last_emergency_power_off.append((index, channel))
         return errors
 
     def set_voltage(self, _supply_name: str, channel: str, voltage: float) -> None:
         setter = getattr(self.power_supply, "set_voltage_v", None)
-        (setter or self.power_supply.set_voltage)(channel, voltage)
+        (setter or self.power_supply.set_voltage)(self._physical_channel(_supply_name, channel), voltage)
 
     def set_current(self, _supply_name: str, channel: str, current: float) -> None:
         setter = getattr(self.power_supply, "set_current_limit_a", None)
-        (setter or self.power_supply.set_current_limit)(channel, current)
+        (setter or self.power_supply.set_current_limit)(self._physical_channel(_supply_name, channel), current)
 
     def read_voltage(self, _supply_name: str, channel: str) -> float:
         reader = getattr(self.power_supply, "read_voltage_v", None)
-        return (reader or self.power_supply.read_voltage)(channel)
+        return (reader or self.power_supply.read_voltage)(self._physical_channel(_supply_name, channel))
 
     def read_current(self, _supply_name: str, channel: str) -> float:
         reader = getattr(self.power_supply, "read_current_a", None)
-        return (reader or self.power_supply.read_current)(channel)
+        return (reader or self.power_supply.read_current)(self._physical_channel(_supply_name, channel))
+
+    def _physical_channel(self, supply_name: str, channel: str) -> str:
+        """Preserve the configured supply identity for multi-supply hardware."""
+        supplies = getattr(self.power_supply, "supplies", None)
+        if isinstance(supplies, dict):
+            return f"{supply_name}/{channel}"
+        return channel
 
     def _power_session(self, roles: Mapping[str, str]) -> None:
         if not roles:

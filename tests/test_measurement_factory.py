@@ -25,9 +25,6 @@ class MeasurementFactoryTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "必须由应用组装层注入"):
                     measurement_type("missing-config.json")
 
-    def test_legacy_mode_preserves_controller_fallback(self):
-        self.assertIsNone(create_measurement_port(mode="legacy"))
-
     def test_simulation_mode_assembles_new_session_and_adapter(self):
         port = create_measurement_port(
             mode="simulation",
@@ -101,9 +98,8 @@ class MeasurementFactoryTests(unittest.TestCase):
             self.assertTrue(manager.closed)
         self.assertTrue(all(resource.closed for resource in manager.resources))
 
-    def test_hardware_mode_discovers_all_idle_dp832a_and_broadcasts_power_actions(self):
+    def test_hardware_mode_uses_configured_supply_and_channel_only(self):
         config = _base_hardware_config()
-        config["instruments"]["power_supplies"]["PS1"]["address"] = "stale-address-is-ignored"
         config["power_supply_assignment"] = {
             "dut_amplifier": {"supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}}},
             "driver_amplifier": {"supplies": {}},
@@ -111,19 +107,19 @@ class MeasurementFactoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
             path.write_text(json.dumps(config), encoding="utf-8")
-            manager = _DiscoveryResourceManager()
+            manager = _FakeResourceManager()
             with patch("instrument.measurement_factory.pyvisa.ResourceManager", return_value=manager):
                 port = create_measurement_port(str(path), mode="hardware")
-            self.assertEqual(manager.opened_addresses, ["SG", "SA", "PS-A", "PS-B"])
+            self.assertEqual(manager.opened_addresses, ["SG", "SA", "PS"])
             port.set_voltage("PS1", "CH1", 2.8)
             port.power_on_sequence()
-            for resource in manager.resources[2:]:
-                self.assertIn(("write", ":SOURce1:VOLTage 2.8"), resource.commands)
-                self.assertIn(("write", ":OUTPut CH1,ON"), resource.commands)
+            resource = manager.resources[2]
+            self.assertIn(("write", ":SOURce1:VOLTage 2.8"), resource.commands)
+            self.assertIn(("write", ":OUTPut CH1,ON"), resource.commands)
             self.assertEqual(port.close_all(close_rf=True), [])
             self.assertTrue(all(resource.closed for resource in manager.resources))
 
-    def test_hardware_mode_accepts_multiple_discovered_supplies_without_fixed_selection(self):
+    def test_hardware_mode_rejects_missing_explicit_supply_assignment(self):
         config = _base_hardware_config()
         config["instruments"]["power_supplies"]["PS2"] = {
             "address": "PS2", "enabled": True, "channels": {}
@@ -134,9 +130,8 @@ class MeasurementFactoryTests(unittest.TestCase):
             path.write_text(json.dumps(config), encoding="utf-8")
             manager = _DiscoveryResourceManager()
             with patch("instrument.measurement_factory.pyvisa.ResourceManager", return_value=manager):
-                port = create_measurement_port(str(path), mode="hardware")
-            self.assertEqual(manager.opened_addresses, ["SG", "SA", "PS-A", "PS-B"])
-            self.assertEqual(port.close_all(), [])
+                with self.assertRaisesRegex(ValueError, "必须显式配置电源角色"):
+                    create_measurement_port(str(path), mode="hardware")
 
     def test_hardware_mode_rejects_unenabled_assigned_supply(self):
         config = _base_hardware_config()

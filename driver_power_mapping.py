@@ -30,7 +30,7 @@ class DriverPowerMapping:
         if measurement_port is None:
             raise ValueError(
                 "DriverPowerMapping 必须显式传入 measurement_port；"
-                "旧控制器请通过 app.gui_runtime.create_legacy_driver_mapping_measurement() 组装"
+                "请通过 app.gui_runtime.create_driver_mapping_measurement() 由应用组装层注入端口"
             )
             
         self.loss_data = load_json_result(loss_data_path)

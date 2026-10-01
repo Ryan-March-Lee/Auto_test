@@ -20,9 +20,11 @@ address: it enumerates VISA resources, queries `*IDN?` and both output states,
 and includes every matching idle DP832A. The operator must ensure all supplies
 are unloaded before starting. Each discovered supply is connected, included in
 the action/cleanup boundary, and verified off; the number and addresses may
-differ between tests. The application hardware factory follows the same rule
-and treats configured power-supply addresses as templates only, not connection
-targets. Measurement assignments still select logical channels and settings.
+differ between tests. The application hardware factory is separate from this
+smoke behavior: it opens only configured power-supply addresses and routes each
+logical role to its configured supply and channel. Measurement assignments
+define the production topology; smoke discovery must not be used as that
+topology.
 Signal-generator and supply configurations must query output state before and
 after cleanup. Cleanup failures fail the smoke and remain in the local report.
 

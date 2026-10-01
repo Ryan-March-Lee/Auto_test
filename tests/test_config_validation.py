@@ -24,6 +24,12 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertTrue(result.valid, result.errors)
         self.assertTrue(any("驱动模式已启用" in issue.message for issue in result.warnings))
 
+    def test_confirmed_external_driver_power_has_no_assignment_warning(self):
+        config = copy.deepcopy(self.base_config)
+        config["wiring"] = {"driver_amplifier_external_power_confirmed": True}
+        result = validate_config(config)
+        self.assertFalse(any("驱动模式已启用" in issue.message for issue in result.warnings))
+
     def test_missing_top_level_section_is_error(self):
         config = copy.deepcopy(self.base_config)
         del config["signal_source"]

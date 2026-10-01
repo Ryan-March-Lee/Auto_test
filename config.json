@@ -180,6 +180,7 @@
     },
     "wiring": {
         "confirmed": true,
+        "driver_amplifier_external_power_confirmed": true,
         "connection_note": "现场已确认最终 DUT 测试链路连接完成；驱动功放采用外部独立供电，不由本系统电源配置提供。",
         "confirmed_at": "2026-09-28T19:03:26+08:00",
         "confirmation_source": "用户现场确认"

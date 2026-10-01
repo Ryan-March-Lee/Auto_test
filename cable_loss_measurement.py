@@ -30,7 +30,7 @@ class CableLossMeasurement:
         if measurement_port is None:
             raise ValueError(
                 "CableLossMeasurement 必须显式传入 measurement_port；"
-                "旧控制器请通过 app.gui_runtime.create_legacy_cable_loss_measurement() 组装"
+                "请通过 app.gui_runtime.create_cable_loss_measurement() 由应用组装层注入端口"
             )
 
         self.run_id = run_id or new_run_id()

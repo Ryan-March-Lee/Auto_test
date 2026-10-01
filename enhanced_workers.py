@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import time
 from typing import Any
-
-import numpy as np
 
 from PySide6.QtCore import QThread, Signal, QObject
 
@@ -20,6 +17,7 @@ from measurement_calculations import calculate_cable_losses
 from measurement_services import CableLossService, DriverPowerMappingService, AmplifierMeasurementService
 from project_paths import CABLE_LOSS_FILE, CONFIG_FILE, TEST_RESULTS_DIR, resolve_path
 from persistence.config_repository import ConfigurationRepository
+from infrastructure.persistence.json_encoder import NumpyJSONEncoder
 from result_storage import load_json_result, new_run_id, save_measurement_result, write_legacy_run_snapshot
 from presentation.qt.workers import InstrumentWorker as _QtInstrumentWorker
 
@@ -42,17 +40,6 @@ def _require_measurement_port(measurement_port, owner):
             "请通过应用组装层显式注入 measurement_port"
         )
     return measurement_port
-
-
-class _NumpyJSONEncoder(json.JSONEncoder):
-    def default(self, value):
-        if isinstance(value, np.ndarray):
-            return value.tolist()
-        if isinstance(value, np.integer):
-            return int(value)
-        if isinstance(value, np.floating):
-            return float(value)
-        return super().default(value)
 
 
 class _CallbackEventSink:
@@ -87,7 +74,7 @@ class _LegacyResultAdapter:
         archive_path, _ = save_measurement_result(
             result, result_type=result_type, legacy_path=legacy_path,
             run_id=self.run_id, run_directory=self.run_directory,
-            encoder=encoder or _NumpyJSONEncoder,
+            encoder=encoder or NumpyJSONEncoder,
         )
         self.run_directory = archive_path.parent
 

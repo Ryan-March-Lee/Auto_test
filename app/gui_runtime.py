@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Literal
 
 from enhanced_workers import (
@@ -20,6 +21,11 @@ from result_storage import new_run_id
 from .run_context import PreparedRun, environment_version, prepare_run
 from instrument.measurement_factory import create_measurement_port
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
+from application.dto import (
+    AmplifierMeasurementRequest,
+    CableLossMeasurementRequest,
+    DriverPowerMappingRequest,
+)
 
 
 Operation = Literal["full", "cable_loss", "driver_mapping"]
@@ -51,17 +57,22 @@ def _assemble_measurement(
     callbacks: dict[str, Any],
     *,
     port_factory: Any,
+    request_factory: Any = None,
 ) -> Any:
     """Create a measurement and close only ports owned by this composition call."""
     owned_port = callbacks.get("measurement_port") is None
-    if owned_port:
-        callbacks["measurement_port"] = port_factory(config_path)
-    callbacks.setdefault("result_repository", FileMeasurementResultRepository())
     try:
+        if owned_port:
+            callbacks["measurement_port"] = port_factory(config_path)
+        callbacks.setdefault("result_repository", FileMeasurementResultRepository())
+        if request_factory is not None:
+            callbacks["request"] = request_factory(callbacks)
         return measurement_type(config_path, **callbacks)
     except Exception:
         if owned_port:
-            _close_owned_measurement_port(callbacks["measurement_port"])
+            port = callbacks.get("measurement_port")
+            if port is not None:
+                _close_owned_measurement_port(port)
         raise
 
 
@@ -127,7 +138,26 @@ def prepare_configuration(
         loaded,
         run_id=run_id or new_run_id(),
         software_version=environment_version(),
+        config_path=Path(config_path),
     )
+
+
+def _request_kwargs(prepared_run: PreparedRun, config_path: str, callbacks: dict[str, Any]) -> dict[str, Any]:
+    """Build the shared request inputs at the application composition boundary."""
+    port = callbacks.get("measurement_port")
+    if port is None:
+        raise ValueError("应用测量请求必须显式包含 measurement_port")
+    repository = callbacks.get("result_repository") or FileMeasurementResultRepository()
+    return {
+        "configuration": prepared_run.configuration,
+        "context": prepared_run.context,
+        "run_directory": Path(prepared_run.run_directory),
+        "measurement_port": port,
+        "event_sink": callbacks.get("event_sink"),
+        "cancellation_token": callbacks.get("cancellation_token"),
+        "result_repository": repository,
+        "config_path": Path(config_path),
+    }
 
 
 def create_cable_loss_measurement(
@@ -142,6 +172,9 @@ def create_cable_loss_measurement(
         config_path,
         callbacks,
         port_factory=connect_instruments,
+        request_factory=lambda values: CableLossMeasurementRequest(
+            **_request_kwargs(prepared_run, config_path, values)
+        ),
     )
 
 
@@ -157,6 +190,10 @@ def create_driver_mapping_measurement(
         config_path,
         callbacks,
         port_factory=connect_instruments,
+        request_factory=lambda values: DriverPowerMappingRequest(
+            **_request_kwargs(prepared_run, config_path, values),
+            loss_data_path=(Path(values["loss_data_path"]) if values.get("loss_data_path") else None),
+        ),
     )
 
 
@@ -172,4 +209,12 @@ def create_amplifier_measurement(
         config_path,
         callbacks,
         port_factory=connect_instruments,
+        request_factory=lambda values: AmplifierMeasurementRequest(
+            **_request_kwargs(prepared_run, config_path, values),
+            loss_data_path=(Path(values["loss_data_path"]) if values.get("loss_data_path") else None),
+            driver_mapping_path=(
+                Path(values["driver_mapping_path"])
+                if values.get("driver_mapping_path") else None
+            ),
+        ),
     )

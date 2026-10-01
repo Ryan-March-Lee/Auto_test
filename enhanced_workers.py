@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal, QObject
 
@@ -19,6 +20,11 @@ from persistence.config_repository import ConfigurationRepository
 from application.ports.result_repository import MeasurementResultRepository
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from presentation.qt.workers import InstrumentWorker as _QtInstrumentWorker
+from application.dto import (
+    AmplifierMeasurementRequest,
+    CableLossMeasurementRequest,
+    DriverPowerMappingRequest,
+)
 
 
 logger = get_logger(__name__)
@@ -41,6 +47,18 @@ def _require_measurement_port(measurement_port, owner):
     return measurement_port
 
 
+def _request_value(request, name, legacy, *, compare=None):
+    """Use request values as the single source during compatibility migration."""
+    if request is None:
+        return legacy
+    requested = getattr(request, name)
+    if legacy is not None and requested is not None:
+        same = compare(legacy, requested) if compare else legacy == requested
+        if not same:
+            raise ValueError(f"request.{name} 与兼容参数不一致")
+    return requested
+
+
 class _CallbackEventSink:
     def __init__(self, progress=None, message=None, data=None, checkpoint=None):
         self.progress = progress
@@ -60,14 +78,14 @@ class _CallbackEventSink:
 
 
 class _LegacyResultAdapter:
-    def __init__(self, config, *, run_id=None, run_directory=None, result_repository=None):
+    def __init__(self, config, *, run_id=None, run_directory=None, result_repository=None, context=None):
         self.config = config
         self.result_repository: MeasurementResultRepository = (
             result_repository or FileMeasurementResultRepository()
         )
         self.run_id = run_id or self.result_repository.new_run_id()
         loaded = ConfigurationRepository().load_legacy_data(dict(config))
-        self.context = RunContext.from_resource_mapping(
+        self.context = context or RunContext.from_resource_mapping(
             loaded.configuration.run_mapping.to_dict(), run_id=self.run_id
         )
         self.run_directory = run_directory or self.result_repository.create_legacy_run_snapshot(
@@ -87,19 +105,27 @@ class _LegacyResultAdapter:
 class EnhancedCableLossMeasurement(_LegacyResultAdapter):
     def __init__(self, config_path=None, progress_callback=None, message_callback=None,
                  data_callback=None, sleep_fn=None, run_id=None, run_directory=None,
-                 measurement_port=None, result_repository=None):
+                 measurement_port=None, result_repository=None,
+                 request: CableLossMeasurementRequest | None = None):
+        config_path = _request_value(request, "config_path", config_path, compare=lambda a, b: resolve_path(a, CONFIG_FILE) == resolve_path(b, CONFIG_FILE))
+        measurement_port = _request_value(request, "measurement_port", measurement_port)
+        run_id = _request_value(request, "run_id", run_id)
+        run_directory = _request_value(request, "run_directory", run_directory)
+        result_repository = _request_value(request, "result_repository", result_repository)
+        context = request.context if request else None
         self.inst_ctrl = _require_measurement_port(measurement_port, type(self).__name__)
         config_path = resolve_path(config_path, CONFIG_FILE)
         config = load_config_file(config_path)
         super().__init__(config, run_id=run_id, run_directory=run_directory,
-                         result_repository=result_repository)
+                         result_repository=result_repository, context=context)
         self.sleep_fn = sleep_fn or time.sleep
-        self._token = CancellationToken()
+        self._token = request.cancellation_token if request and request.cancellation_token else CancellationToken()
+        event_sink = request.event_sink if request and request.event_sink else _CallbackEventSink(
+            progress_callback, message_callback, data_callback, checkpoint=self._pause
+        )
         self._service = CableLossService(
             config, self.inst_ctrl, run_id=self.run_id,
-            event_sink=_CallbackEventSink(
-                progress_callback, message_callback, data_callback, checkpoint=self._pause
-            ),
+            event_sink=event_sink,
             cancellation_token=self._token, sleep_fn=self.sleep_fn,
         )
         self.path1_losses = self._service._path1_losses
@@ -157,19 +183,31 @@ class EnhancedCableLossMeasurement(_LegacyResultAdapter):
 class EnhancedDriverPowerMapping(_LegacyResultAdapter):
     def __init__(self, config_path=None, loss_data_path=None, progress_callback=None,
                  message_callback=None, data_callback=None, sleep_fn=None, run_id=None, run_directory=None,
-                 measurement_port=None, result_repository=None):
+                 measurement_port=None, result_repository=None,
+                 request: DriverPowerMappingRequest | None = None):
+        config_path = _request_value(request, "config_path", config_path, compare=lambda a, b: resolve_path(a, CONFIG_FILE) == resolve_path(b, CONFIG_FILE))
+        loss_data_path = _request_value(request, "loss_data_path", loss_data_path, compare=lambda a, b: Path(a) == Path(b))
+        measurement_port = _request_value(request, "measurement_port", measurement_port)
+        run_id = _request_value(request, "run_id", run_id)
+        run_directory = _request_value(request, "run_directory", run_directory)
+        result_repository = _request_value(request, "result_repository", result_repository)
+        context = request.context if request else None
         self.inst_ctrl = _require_measurement_port(measurement_port, type(self).__name__)
         config_path = resolve_path(config_path, CONFIG_FILE)
         result_repository = result_repository or FileMeasurementResultRepository()
         loss_data_path = resolve_path(loss_data_path, result_repository.legacy_path("cable_loss"))
         config = load_config_file(config_path)
         super().__init__(config, run_id=run_id, run_directory=run_directory,
-                         result_repository=result_repository)
+                         result_repository=result_repository, context=context)
         self.sleep_fn = sleep_fn or time.sleep
-        self._token = CancellationToken()
+        self._token = request.cancellation_token if request and request.cancellation_token else CancellationToken()
+        event_sink = request.event_sink if request and request.event_sink else _CallbackEventSink(
+            progress_callback, message_callback, data_callback
+        )
+        loss_data = request.loss_data if request and request.loss_data is not None else self.result_repository.load(loss_data_path)
         self._service = DriverPowerMappingService(
-            config, self.inst_ctrl, self.result_repository.load(loss_data_path), run_id=self.run_id,
-            event_sink=_CallbackEventSink(progress_callback, message_callback, data_callback),
+            config, self.inst_ctrl, loss_data, run_id=self.run_id,
+            event_sink=event_sink,
             cancellation_token=self._token, sleep_fn=self.sleep_fn, settle_delay_s=3.0,
         )
         self.power_mapping = {}
@@ -192,24 +230,38 @@ class EnhancedAmplifierMeasurement(_LegacyResultAdapter):
     def __init__(self, config_path=None, loss_data_path=None, driver_mapping_path=None,
                  progress_callback=None, message_callback=None, data_callback=None,
                  sleep_fn=None, run_id=None, run_directory=None, measurement_port=None,
-                 result_repository=None):
+                 result_repository=None,
+                 request: AmplifierMeasurementRequest | None = None):
+        config_path = _request_value(request, "config_path", config_path, compare=lambda a, b: resolve_path(a, CONFIG_FILE) == resolve_path(b, CONFIG_FILE))
+        loss_data_path = _request_value(request, "loss_data_path", loss_data_path, compare=lambda a, b: Path(a) == Path(b))
+        driver_mapping_path = _request_value(request, "driver_mapping_path", driver_mapping_path, compare=lambda a, b: Path(a) == Path(b))
+        measurement_port = _request_value(request, "measurement_port", measurement_port)
+        run_id = _request_value(request, "run_id", run_id)
+        run_directory = _request_value(request, "run_directory", run_directory)
+        result_repository = _request_value(request, "result_repository", result_repository)
+        context = request.context if request else None
         self.inst_ctrl = _require_measurement_port(measurement_port, type(self).__name__)
         config_path = resolve_path(config_path, CONFIG_FILE)
         result_repository = result_repository or FileMeasurementResultRepository()
         loss_data_path = resolve_path(loss_data_path, result_repository.legacy_path("cable_loss"))
         config = load_config_file(config_path)
         super().__init__(config, run_id=run_id, run_directory=run_directory,
-                         result_repository=result_repository)
-        driver_mapping = None
+                         result_repository=result_repository, context=context)
+        driver_mapping = request.driver_mapping if request else None
         if config["driver_mode"]["enabled"]:
             if driver_mapping_path is None:
                 driver_mapping_path = self.result_repository.latest_path("driver_power_mapping")
-            driver_mapping = self.result_repository.load(driver_mapping_path)["power_mapping"]
+            if driver_mapping is None:
+                driver_mapping = self.result_repository.load(driver_mapping_path)["power_mapping"]
         self.sleep_fn = sleep_fn or time.sleep
-        self._token = CancellationToken()
+        self._token = request.cancellation_token if request and request.cancellation_token else CancellationToken()
+        event_sink = request.event_sink if request and request.event_sink else _CallbackEventSink(
+            progress_callback, message_callback, data_callback
+        )
+        loss_data = request.loss_data if request and request.loss_data is not None else self.result_repository.load(loss_data_path)
         self._service = AmplifierMeasurementService(
-            config, self.inst_ctrl, self.result_repository.load(loss_data_path), driver_mapping,
-            run_id=self.run_id, event_sink=_CallbackEventSink(progress_callback, message_callback, data_callback),
+            config, self.inst_ctrl, loss_data, driver_mapping,
+            run_id=self.run_id, event_sink=event_sink,
             cancellation_token=self._token, sleep_fn=self.sleep_fn, settle_delay_s=3.0,
         )
         self.loss_data = self._service.loss_data

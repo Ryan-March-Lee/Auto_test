@@ -5,6 +5,7 @@ from __future__ import annotations
 import platform
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Mapping
 
 from config_models import RunConfiguration
@@ -19,7 +20,13 @@ class PreparedRun:
 
     configuration: RunConfiguration
     context: RunContext
-    run_directory: Any
+    run_directory: Path
+    config_path: Path | None = None
+
+    @property
+    def run_id(self) -> str:
+        """Expose the prepared identity without making callers unpack context."""
+        return self.context.run_id
 
 
 def prepare_run(
@@ -28,6 +35,7 @@ def prepare_run(
     run_id: str,
     software_version: str = "unknown",
     git_commit: str | None = None,
+    config_path: Path | None = None,
 ) -> PreparedRun:
     """Validate and snapshot a run without importing or opening an instrument.
 
@@ -54,7 +62,7 @@ def prepare_run(
         status="created",
         error=None,
     )
-    return PreparedRun(configuration, context, run_directory)
+    return PreparedRun(configuration, context, Path(run_directory), config_path)
 
 
 def environment_version() -> str:

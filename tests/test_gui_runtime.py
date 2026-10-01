@@ -26,6 +26,7 @@ class _Port:
 
 def _prepared_run():
     return SimpleNamespace(
+        configuration=object(),
         context=SimpleNamespace(run_id="run-assembly-test"),
         run_directory=Path("run-directory"),
     )
@@ -88,9 +89,10 @@ class GuiRuntimePreparationTests(unittest.TestCase):
     def test_cable_loss_preparation_uses_operation_specific_validation(self):
         directory, path = self._write_config()
         try:
-            with patch("app.gui_runtime.prepare_run", return_value="prepared") as prepare_run:
+            prepared = SimpleNamespace(configuration=object(), context=object(), run_directory=Path("run"))
+            with patch("app.gui_runtime.prepare_run", return_value=prepared) as prepare_run:
                 result = prepare_configuration(str(path), operation="cable_loss")
-            self.assertEqual(result, "prepared")
+            self.assertIs(result, prepared)
             loaded = prepare_run.call_args.args[0]
             self.assertTrue(loaded.valid)
         finally:
@@ -99,9 +101,10 @@ class GuiRuntimePreparationTests(unittest.TestCase):
     def test_driver_mapping_preparation_allows_external_driver_power(self):
         directory, path = self._write_config()
         try:
-            with patch("app.gui_runtime.prepare_run", return_value="prepared") as prepare_run:
+            prepared = SimpleNamespace(configuration=object(), context=object(), run_directory=Path("run"))
+            with patch("app.gui_runtime.prepare_run", return_value=prepared) as prepare_run:
                 result = prepare_configuration(str(path), operation="driver_mapping")
-            self.assertEqual(result, "prepared")
+            self.assertIs(result, prepared)
             loaded = prepare_run.call_args.args[0]
             self.assertTrue(loaded.valid)
         finally:

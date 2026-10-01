@@ -71,7 +71,8 @@ def _assemble_measurement(
         measurement_kwargs = dict(callbacks)
         # input_reader belongs to the application request.  It must not leak
         # into the legacy adapter's constructor during the migration period.
-        measurement_kwargs.pop("input_reader", None)
+        for request_only_input in ("input_reader", "loss_data_path", "driver_mapping_path"):
+            measurement_kwargs.pop(request_only_input, None)
         return measurement_type(config_path, **measurement_kwargs)
     except Exception:
         if owned_port:

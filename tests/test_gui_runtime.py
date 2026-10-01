@@ -11,6 +11,8 @@ from app.gui_runtime import (
     create_driver_mapping_measurement,
     prepare_configuration,
 )
+from application.dto import AmplifierMeasurementRequest
+from application.inputs import ResultInputReader
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "config_driver_enabled_no_assignment.json"
@@ -73,6 +75,101 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
                 )
         connect.assert_not_called()
         self.assertEqual(port.close_calls, [])
+
+    def test_all_measurement_factories_inject_the_same_external_port(self):
+        port = _Port()
+        expected = object()
+        cases = (
+            (create_cable_loss_measurement, "EnhancedCableLossMeasurement"),
+            (create_driver_mapping_measurement, "EnhancedDriverPowerMapping"),
+            (create_amplifier_measurement, "EnhancedAmplifierMeasurement"),
+        )
+        for factory, measurement_name in cases:
+            with self.subTest(factory=factory.__name__):
+                with patch("app.gui_runtime.connect_instruments") as connect, patch(
+                    f"app.gui_runtime.{measurement_name}", return_value=expected
+                ) as measurement:
+                    result = factory(
+                        "config.json",
+                        prepared_run=_prepared_run(),
+                        measurement_port=port,
+                    )
+
+                self.assertIs(result, expected)
+                connect.assert_not_called()
+                self.assertIs(measurement.call_args.kwargs["measurement_port"], port)
+                self.assertEqual(port.close_calls, [])
+
+    def test_explicit_driver_mapping_path_is_carried_into_request(self):
+        port = _Port()
+        explicit_path = Path("provided") / "mapping.json"
+        with patch("app.gui_runtime.connect_instruments") as connect, patch(
+            "app.gui_runtime.EnhancedAmplifierMeasurement", return_value=object()
+        ) as measurement:
+            create_amplifier_measurement(
+                "config.json",
+                prepared_run=_prepared_run(),
+                measurement_port=port,
+                driver_mapping_path=explicit_path,
+            )
+
+        request = measurement.call_args.kwargs["request"]
+        self.assertIsInstance(request, AmplifierMeasurementRequest)
+        self.assertEqual(request.config_path, Path("config.json"))
+        self.assertEqual(request.driver_mapping_path, explicit_path)
+        self.assertNotIn("driver_mapping_path", measurement.call_args.kwargs)
+        connect.assert_not_called()
+        self.assertEqual(port.close_calls, [])
+
+    def test_assembled_explicit_driver_mapping_is_read_without_latest_scan(self):
+        port = _Port()
+        explicit_path = Path("provided") / "mapping.json"
+        repository = SimpleNamespace(
+            load=lambda path: {"power_mapping": {"1.0": 2.0}},
+            latest_path=lambda _result_type: self.fail(
+                "显式驱动映射路径不应扫描最新结果"
+            ),
+        )
+        reader = ResultInputReader(repository)
+        observed = {}
+
+        def construct_measurement(_config_path, *, request, **_legacy_kwargs):
+            observed["mapping"] = request.input_reader.read_driver_mapping(
+                request.driver_mapping_path
+            )
+            return request
+
+        with patch("app.gui_runtime.connect_instruments") as connect, patch(
+            "app.gui_runtime.EnhancedAmplifierMeasurement",
+            side_effect=construct_measurement,
+        ):
+            result = create_amplifier_measurement(
+                "config.json",
+                prepared_run=_prepared_run(),
+                measurement_port=port,
+                input_reader=reader,
+                driver_mapping_path=explicit_path,
+            )
+
+        self.assertEqual(observed["mapping"], {"1.0": 2.0})
+        self.assertIs(result.input_reader, reader)
+        self.assertEqual(result.driver_mapping_path, explicit_path)
+        connect.assert_not_called()
+        self.assertEqual(port.close_calls, [])
+
+    def test_assembly_error_from_request_creation_closes_only_owned_port(self):
+        owned_port = _Port()
+        with patch("app.gui_runtime.connect_instruments", return_value=owned_port), patch(
+            "app.gui_runtime.EnhancedDriverPowerMapping", return_value=object()
+        ), patch(
+            "app.gui_runtime.DriverPowerMappingRequest",
+            side_effect=RuntimeError("request assembly failed"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "request assembly failed"):
+                create_driver_mapping_measurement(
+                    "config.json", prepared_run=_prepared_run()
+                )
+        self.assertEqual(owned_port.close_calls, [True])
 
 class GuiRuntimePreparationTests(unittest.TestCase):
     def _write_config(self, *, confirmed=True):

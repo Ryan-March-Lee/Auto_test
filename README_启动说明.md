@@ -1,128 +1,51 @@
-# PA自动测试系统 - 使用说明
+# PA 自动测试系统启动说明
 
-## VSCode中的使用方法
+## 唯一应用启动器
 
-### 推荐方法：使用主启动器
-`launcher.py` 是唯一生产入口。日常使用建议在已激活 `Auto_test` 环境的终端中运行 `python launcher.py`。VSCode 中如需避免输出缓冲，可运行仅负责转发参数的 `vscode_launcher.py`。
+项目只保留根目录的 `launcher.py` 作为应用启动入口。项目已经从 VS Code 迁移到 PyCharm，不再维护 VS Code 专用包装器、VS Code 配置或额外的 GUI 批处理启动脚本。
 
-### 已验证运行环境
+在 PyCharm 中运行时：
 
-```text
-Conda 环境：Auto_test
-Python：3.11.15
-环境路径：D:\Anaconda\envs\Auto_test
-```
+1. 将项目解释器设置为 `Auto_test` Conda 环境。
+2. 创建或使用指向 `$PROJECT_DIR$/launcher.py` 的 Python 运行配置。
+3. 将工作目录设置为项目根目录。
 
-历史文档中的 `VISA_demo` 环境当前不存在。不要在 `base` 环境中运行本项目；`base` 缺少 GUI 和仪器控制依赖。
+也可以在终端中执行：
 
-**优势**：
-- ✅ 输出立即显示，不会被缓冲
-- ✅ 中文显示正常，无乱码
-- ✅ 使用正确的conda环境激活方式
-- ✅ 在GUI启动前就能看到所有检查信息
-
-### 其他启动方法
-
-#### 1. 批处理文件
-双击 `start_gui.bat` 或在终端中运行：
-```
-./start_gui.bat
-```
-
-#### 2. 手动终端命令
-在VSCode终端中执行：
 ```powershell
 conda activate Auto_test
+python launcher.py
+```
+
+启动前检查：
+
+```powershell
 python launcher.py --check
 python launcher.py --validate-config
-python launcher.py
 ```
 
-#### 3. 系统终端
-直接在PowerShell或CMD中：
-```powershell
-cd "D:\Python_project\Auto_test"
-conda activate Auto_test
-python launcher.py --validate-config
-python launcher.py
-```
+`--check` 检查 Python 环境和 GUI 依赖；`--validate-config` 只读校验 `config.json`，不会连接仪器或改变仪器状态。两个参数不能同时使用。
 
-## 问题说明
+## 运行环境
 
-**为什么不直接运行launcher.py？**
-- VSCode的"Run Python File"使用`conda run`命令
-- `conda run`会缓冲所有输出直到程序结束
-- 导致GUI启动时看不到检查信息，关闭GUI后才显示（可能乱码）
-
-**解决方案**
-- `vscode_launcher.py`使用`conda activate`代替`conda run`
-- 设置正确的环境变量确保输出立即显示
-- 使用PowerShell执行，避免编码问题
+项目必须使用 `Auto_test` 环境，不要使用 Anaconda `base` 环境。若未激活环境，可将项目根目录 `.env` 中的 `AUTO_TEST_PYTHON` 配置为该环境的 `python.exe`，然后在 PyCharm 的解释器设置中选择同一个解释器。
 
 ## 文件说明
 
-- `launcher.py` - 主启动器（推荐在终端中使用）
-- `vscode_launcher.py` - VSCode兼容转发器（推荐在VSCode中使用）
-- `enhanced_main_gui.py` - 由 `launcher.py` 加载的兼容 GUI 外壳
-- `start_gui.bat` - Windows批处理启动文件，会激活 `Auto_test` 并将命令行参数转发给 `launcher.py`
+- `launcher.py`：唯一的应用启动器。
+- `enhanced_main_gui.py`：由启动器加载的 GUI 模块，不应作为独立启动入口。
+- `run_tests.ps1` / `run_tests.bat`：测试工具，不是应用启动器。
 
-## 启动检查
+## 自动化测试
 
-- `python launcher.py --check`：检查 Python 和 GUI 依赖。
-- `python launcher.py --validate-config`：只读检查 `config.json`，不会连接仪器或改变仪器状态。
-- 配置存在错误时，启动器会返回非零退出码并阻止 GUI 启动；配置只有警告时仍允许继续，但应先确认警告内容。
-- `--check` 与 `--validate-config` 不能同时使用；未知参数会返回退出码 `2`。
-- `--validate-config` 不检查 GUI 依赖，启动前应分别执行这两个检查。
-
-## 自动化测试环境
-
-不要直接使用未激活环境的 `python -m unittest`，因为 Windows 上的 `python` 可能指向 Anaconda base 环境。
-项目提供了固定环境入口，会优先使用 `Auto_test` 解释器：
-
-```powershell
-./run_tests.bat
-```
-
-或在 PowerShell 中运行：
+不要直接使用未激活环境的 `python -m unittest`。请使用项目测试入口：
 
 ```powershell
 ./run_tests.ps1
 ```
 
-项目根目录支持本机 `.env` 文件，用于配置每台电脑自己的解释器路径。先复制 `.env.example` 为 `.env`，再填写：
+或：
 
 ```powershell
-AUTO_TEST_PYTHON=C:\path\to\Anaconda\envs\Auto_test\python.exe
+./run_tests.bat
 ```
-
-`AUTO_TEST_PYTHON` 的优先级高于 `.env`，其次使用当前已激活的 `Auto_test` 环境，最后使用系统 PATH 中的 `python`。`.env` 已被 Git 忽略，不会同步到另一台电脑。代理或编辑器执行命令时应使用 `run_tests.bat`/`run_tests.ps1`，项目脚本会打印实际解释器。
-
-脚本会先执行编译检查，再运行完整 unittest 测试集，并在开始时打印实际使用的解释器路径。
-
-## 直接解释器启动
-
-无需激活 Conda 环境时，可以直接执行启动器：
-
-```powershell
-./start_gui.bat --check
-./start_gui.bat --validate-config
-./start_gui.bat
-```
-
-## 阶段 0.1 基线整理
-
-完成一次完整测试并成功生成 HTML 报告后，程序会自动在 `baseline/collected/` 下创建一份基线样例，包含配置、运行快照、测量结果、报告索引和 Python/依赖版本。
-
-如果报告生成前中断，或需要重新整理最近一次结果，可在项目根目录执行：
-
-```powershell
-python collect_baseline.py
-```
-
-也可以只整理指定运行目录：
-
-```powershell
-python collect_baseline.py --run-id <运行目录名>
-```
-
-脚本只复制和汇总已有文件，不覆盖 `test_results/` 中的原始结果。没有某类测量结果时，该类会在 `baseline_manifest.json` 中标记为 `not_found`，不代表测试失败。

@@ -43,7 +43,7 @@
 执行命令：
 
 ```powershell
-./start_gui.bat --check
+python launcher.py --check
 ```
 
 结果：通过。
@@ -62,7 +62,7 @@
 执行命令：
 
 ```powershell
-./start_gui.bat --validate-config
+python launcher.py --validate-config
 ```
 
 结果：通过。

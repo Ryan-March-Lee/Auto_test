@@ -54,8 +54,8 @@ VISA 或仿真设备
 | 全量离线测试 | `./run_tests.ps1` | 通过；以最近一次实际记录为准，不手工相加各层数量 |
 | Unit | `./run_tests.ps1 -Layer Unit` | 已通过 |
 | Simulation | `./run_tests.ps1 -Layer Simulation` | 已通过 |
-| 应用依赖检查 | `./start_gui.bat --check` | 通过 |
-| 配置检查 | `./start_gui.bat --validate-config` | 通过；外部供电确认已写入配置 |
+| 应用依赖检查 | `python launcher.py --check` | 通过 |
+| 配置检查 | `python launcher.py --validate-config` | 通过；外部供电确认已写入配置 |
 | Hardware smoke | `./run_hardware_smoke.ps1 ...` | `minimal_action` 已通过一次并安全清理 |
 
 ### 2.3 步骤 5 最终回归记录（2026-10-01）
@@ -67,8 +67,8 @@ VISA 或仿真设备
 | Unit | `./run_tests.ps1 -Layer Unit` | 通过，434 个测试 |
 | Simulation | `./run_tests.ps1 -Layer Simulation` | 通过，25 个测试 |
 | 全量离线测试 | `./run_tests.ps1` | 通过，456 个测试 |
-| 应用依赖检查 | `./start_gui.bat --check` | 通过；必需及可选依赖均已发现 |
-| 配置检查 | `./start_gui.bat --validate-config` | 通过；本次运行无驱动功放外部供电警告 |
+| 应用依赖检查 | `python launcher.py --check` | 通过；必需及可选依赖均已发现 |
+| 配置检查 | `python launcher.py --validate-config` | 通过；本次运行无驱动功放外部供电警告 |
 
 本次未重跑 Hardware smoke：本次明确不执行真实 RF 动作。已有 `minimal_action` 证据继续作为历史现场证据，不替代三类完整测量验收。
 

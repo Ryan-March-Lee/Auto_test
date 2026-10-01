@@ -96,23 +96,12 @@ conda activate Auto_test
 
 ### 启动方法
 
-#### 方法1: 使用批处理文件
-```text
-双击运行 start_gui.bat
-```
-
-#### 方法2: 命令行启动
+项目只保留 `launcher.py` 作为应用启动器。请在 PyCharm 中将项目解释器设置为 `Auto_test`，并运行根目录下的 `launcher.py`；也可以在终端中执行：
 ```bash
 conda activate Auto_test
 python launcher.py --check
 python launcher.py --validate-config
 python launcher.py
-```
-
-也可以使用项目启动脚本；解释器路径从本机 `.env` 读取：
-
-```powershell
-./start_gui.bat
 ```
 
 #### 启动前检查
@@ -125,7 +114,7 @@ python launcher.py --validate-config
 
 `--check` 检查当前 Python 环境是否具备启动 GUI 所需的依赖；`--validate-config` 只检查配置内容，不能替代依赖检查。两个命令不能同时使用。未知命令行参数会返回退出码 `2`。
 
-项目启动器会拒绝非 `Auto_test` 环境。代理、编辑器任务和自动化脚本不要直接调用裸 `python`，请使用 `start_gui.bat` 或 `run_tests.bat`；这些入口会固定到已验证的 `Auto_test` 解释器。
+项目启动器会拒绝非 `Auto_test` 环境。PyCharm 的运行配置应直接指向 `launcher.py`，测试仍使用 `run_tests.bat` 或 `run_tests.ps1`。不要再使用已经移除的 VS Code 包装器或 GUI 批处理入口。
 
 ## 文件结构
 
@@ -140,11 +129,11 @@ pa_auto_test/
 ├── amplifier_measurement.py      # 功放测试模块
 ├── data_visualization.py         # 数据可视化模块
 ├── config.json                   # 配置文件
-├── start_gui.bat                 # Windows启动脚本
+├── launcher.py                   # 唯一应用启动器
 └── README.md                     # 本文档
 ```
 
-生产环境建议通过 `start_gui.bat` 或 `python launcher.py` 启动，不直接运行 GUI 模块。
+生产环境请通过 `python launcher.py` 启动，不直接运行 GUI 模块。
 
 ## 使用流程
 

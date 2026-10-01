@@ -19,6 +19,7 @@ from app_logging import get_logger
 from result_storage import new_run_id
 from .run_context import PreparedRun, environment_version, prepare_run
 from instrument.measurement_factory import create_measurement_port
+from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 
 
 Operation = Literal["full", "cable_loss", "driver_mapping"]
@@ -55,6 +56,7 @@ def _assemble_measurement(
     owned_port = callbacks.get("measurement_port") is None
     if owned_port:
         callbacks["measurement_port"] = port_factory(config_path)
+    callbacks.setdefault("result_repository", FileMeasurementResultRepository())
     try:
         return measurement_type(config_path, **callbacks)
     except Exception:

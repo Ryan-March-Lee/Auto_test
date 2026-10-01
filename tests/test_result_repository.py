@@ -146,6 +146,28 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             FileMeasurementResultRepository().save({}, result_type="unknown", run_id="run-1")
 
+    def test_legacy_paths_and_latest_path_are_resolved_by_repository(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = FileMeasurementResultRepository(results_directory=root)
+            self.assertEqual(
+                repository.legacy_path("cable_loss"),
+                root / "cable_loss_results.json",
+            )
+            first = root / "driver_power_mapping_20261001_100000.json"
+            second = root / "driver_power_mapping_20261001_110000.json"
+            first.write_text("{}", encoding="utf-8")
+            second.write_text("{}", encoding="utf-8")
+            model = root / "driver_power_mapping_model.json"
+            model.write_text("{}", encoding="utf-8")
+            self.assertEqual(repository.latest_path("driver_power_mapping"), second)
+
+    def test_latest_path_reports_missing_timestamped_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = FileMeasurementResultRepository(results_directory=directory)
+            with self.assertRaises(FileNotFoundError):
+                repository.latest_path("driver_power_mapping")
+
 
 if __name__ == "__main__":
     unittest.main()

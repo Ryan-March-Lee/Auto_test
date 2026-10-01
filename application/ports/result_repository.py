@@ -23,6 +23,20 @@ class SavedMeasurementResult:
 class MeasurementResultRepository(Protocol):
     """Minimal persistence boundary required by measurement use cases."""
 
+    def new_run_id(self) -> str:
+        """Create a path-safe identifier for a measurement run."""
+
+    def create_legacy_run_snapshot(
+        self, run_id: str, config: Mapping[str, Any], *, status: str = "created"
+    ) -> Path:
+        """Create a run snapshot from the legacy configuration shape."""
+
+    def legacy_path(self, result_type: str) -> Path:
+        """Return the compatibility path for a result type."""
+
+    def latest_path(self, result_type: str) -> Path:
+        """Return the newest timestamped compatibility result path."""
+
     def save(
         self,
         result: Mapping[str, Any],

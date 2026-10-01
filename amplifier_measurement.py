@@ -1,6 +1,5 @@
 # --- START OF FILE amplifier_measurement.py (REFACTORED BASED ON NEW LOGIC) ---
 
-import json
 import numpy as np
 from typing import Dict, List, Optional, Tuple
 import time
@@ -24,25 +23,10 @@ from result_storage import (
 )
 from config_io import load_config_file
 from measurement_services import AmplifierMeasurementService
+from infrastructure.persistence.json_encoder import NumpyJSONEncoder
 
 logger = get_logger(__name__)
 
-
-# --- ADDED: Custom JSON Encoder to handle NumPy types ---
-class NumpyJSONEncoder(json.JSONEncoder):
-    """
-    自定义的JSON Encoder，可以处理NumPy的数据类型，防止序列化错误。
-    """
-    def default(self, obj):
-        if isinstance(obj, (np.int_, np.intc, np.intp, np.int8,
-                            np.int16, np.int32, np.int64, np.uint8,
-                            np.uint16, np.uint32, np.uint64)):
-            return int(obj)
-        elif isinstance(obj, (np.float_, np.float16, np.float32, np.float64)):
-            return float(obj)
-        elif isinstance(obj, np.ndarray):
-            return obj.tolist() # 将NumPy数组转换为Python列表
-        return super(NumpyJSONEncoder, self).default(obj)
 
 class AmplifierMeasurement:
     def __init__(self, config_path=None,

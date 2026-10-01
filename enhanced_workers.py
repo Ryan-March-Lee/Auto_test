@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-from typing import Any
 
 from PySide6.QtCore import QThread, Signal, QObject
 
@@ -15,10 +14,10 @@ from config_io import load_config_file
 import measurement_calculations
 from measurement_calculations import calculate_cable_losses
 from measurement_services import CableLossService, DriverPowerMappingService, AmplifierMeasurementService
-from project_paths import CABLE_LOSS_FILE, CONFIG_FILE, TEST_RESULTS_DIR, resolve_path
+from project_paths import CONFIG_FILE, resolve_path
 from persistence.config_repository import ConfigurationRepository
-from infrastructure.persistence.json_encoder import NumpyJSONEncoder
-from result_storage import load_json_result, new_run_id, save_measurement_result, write_legacy_run_snapshot
+from application.ports.result_repository import MeasurementResultRepository
+from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from presentation.qt.workers import InstrumentWorker as _QtInstrumentWorker
 
 
@@ -61,32 +60,39 @@ class _CallbackEventSink:
 
 
 class _LegacyResultAdapter:
-    def __init__(self, config, *, run_id=None, run_directory=None):
+    def __init__(self, config, *, run_id=None, run_directory=None, result_repository=None):
         self.config = config
-        self.run_id = run_id or new_run_id()
+        self.result_repository: MeasurementResultRepository = (
+            result_repository or FileMeasurementResultRepository()
+        )
+        self.run_id = run_id or self.result_repository.new_run_id()
         loaded = ConfigurationRepository().load_legacy_data(dict(config))
         self.context = RunContext.from_resource_mapping(
             loaded.configuration.run_mapping.to_dict(), run_id=self.run_id
         )
-        self.run_directory = run_directory or write_legacy_run_snapshot(self.run_id, config, status="created")
-
-    def _save(self, result, result_type, legacy_path, *, encoder=None):
-        archive_path, _ = save_measurement_result(
-            result, result_type=result_type, legacy_path=legacy_path,
-            run_id=self.run_id, run_directory=self.run_directory,
-            encoder=encoder or NumpyJSONEncoder,
+        self.run_directory = run_directory or self.result_repository.create_legacy_run_snapshot(
+            self.run_id, config, status="created"
         )
-        self.run_directory = archive_path.parent
+
+    def _save(self, result, result_type):
+        saved = self.result_repository.save(
+            result,
+            result_type=result_type,
+            run_id=self.run_id,
+            run_directory=self.run_directory,
+        )
+        self.run_directory = saved.run_directory
 
 
 class EnhancedCableLossMeasurement(_LegacyResultAdapter):
     def __init__(self, config_path=None, progress_callback=None, message_callback=None,
                  data_callback=None, sleep_fn=None, run_id=None, run_directory=None,
-                 measurement_port=None):
+                 measurement_port=None, result_repository=None):
         self.inst_ctrl = _require_measurement_port(measurement_port, type(self).__name__)
         config_path = resolve_path(config_path, CONFIG_FILE)
         config = load_config_file(config_path)
-        super().__init__(config, run_id=run_id, run_directory=run_directory)
+        super().__init__(config, run_id=run_id, run_directory=run_directory,
+                         result_repository=result_repository)
         self.sleep_fn = sleep_fn or time.sleep
         self._token = CancellationToken()
         self._service = CableLossService(
@@ -130,7 +136,7 @@ class EnhancedCableLossMeasurement(_LegacyResultAdapter):
         self._save(
             {"attenuator_value": self._service.attenuator_value,
              "cable_losses": result["cable_losses"]},
-            "cable_loss", CABLE_LOSS_FILE,
+            "cable_loss",
         )
         return result
 
@@ -151,16 +157,18 @@ class EnhancedCableLossMeasurement(_LegacyResultAdapter):
 class EnhancedDriverPowerMapping(_LegacyResultAdapter):
     def __init__(self, config_path=None, loss_data_path=None, progress_callback=None,
                  message_callback=None, data_callback=None, sleep_fn=None, run_id=None, run_directory=None,
-                 measurement_port=None):
+                 measurement_port=None, result_repository=None):
         self.inst_ctrl = _require_measurement_port(measurement_port, type(self).__name__)
         config_path = resolve_path(config_path, CONFIG_FILE)
-        loss_data_path = resolve_path(loss_data_path, CABLE_LOSS_FILE)
+        result_repository = result_repository or FileMeasurementResultRepository()
+        loss_data_path = resolve_path(loss_data_path, result_repository.legacy_path("cable_loss"))
         config = load_config_file(config_path)
-        super().__init__(config, run_id=run_id, run_directory=run_directory)
+        super().__init__(config, run_id=run_id, run_directory=run_directory,
+                         result_repository=result_repository)
         self.sleep_fn = sleep_fn or time.sleep
         self._token = CancellationToken()
         self._service = DriverPowerMappingService(
-            config, self.inst_ctrl, load_json_result(loss_data_path), run_id=self.run_id,
+            config, self.inst_ctrl, self.result_repository.load(loss_data_path), run_id=self.run_id,
             event_sink=_CallbackEventSink(progress_callback, message_callback, data_callback),
             cancellation_token=self._token, sleep_fn=self.sleep_fn, settle_delay_s=3.0,
         )
@@ -175,7 +183,7 @@ class EnhancedDriverPowerMapping(_LegacyResultAdapter):
         self._save(
             {"power_mapping": self.power_mapping,
              "config": {key: self.config["signal_source"][key] for key in ("start_power", "stop_power", "step")}},
-            "driver_power_mapping", TEST_RESULTS_DIR / f"driver_power_mapping_{time.strftime('%Y%m%d_%H%M%S')}.json",
+            "driver_power_mapping",
         )
         return result
 
@@ -183,24 +191,24 @@ class EnhancedDriverPowerMapping(_LegacyResultAdapter):
 class EnhancedAmplifierMeasurement(_LegacyResultAdapter):
     def __init__(self, config_path=None, loss_data_path=None, driver_mapping_path=None,
                  progress_callback=None, message_callback=None, data_callback=None,
-                 sleep_fn=None, run_id=None, run_directory=None, measurement_port=None):
+                 sleep_fn=None, run_id=None, run_directory=None, measurement_port=None,
+                 result_repository=None):
         self.inst_ctrl = _require_measurement_port(measurement_port, type(self).__name__)
         config_path = resolve_path(config_path, CONFIG_FILE)
-        loss_data_path = resolve_path(loss_data_path, CABLE_LOSS_FILE)
+        result_repository = result_repository or FileMeasurementResultRepository()
+        loss_data_path = resolve_path(loss_data_path, result_repository.legacy_path("cable_loss"))
         config = load_config_file(config_path)
-        super().__init__(config, run_id=run_id, run_directory=run_directory)
+        super().__init__(config, run_id=run_id, run_directory=run_directory,
+                         result_repository=result_repository)
         driver_mapping = None
         if config["driver_mode"]["enabled"]:
             if driver_mapping_path is None:
-                files = sorted(TEST_RESULTS_DIR.glob("driver_power_mapping_*.json"), key=lambda item: item.stat().st_mtime)
-                if not files:
-                    raise FileNotFoundError("驱动模式已开启，但未找到驱动映射文件")
-                driver_mapping_path = str(files[-1])
-            driver_mapping = load_json_result(driver_mapping_path)["power_mapping"]
+                driver_mapping_path = self.result_repository.latest_path("driver_power_mapping")
+            driver_mapping = self.result_repository.load(driver_mapping_path)["power_mapping"]
         self.sleep_fn = sleep_fn or time.sleep
         self._token = CancellationToken()
         self._service = AmplifierMeasurementService(
-            config, self.inst_ctrl, load_json_result(loss_data_path), driver_mapping,
+            config, self.inst_ctrl, self.result_repository.load(loss_data_path), driver_mapping,
             run_id=self.run_id, event_sink=_CallbackEventSink(progress_callback, message_callback, data_callback),
             cancellation_token=self._token, sleep_fn=self.sleep_fn, settle_delay_s=3.0,
         )
@@ -232,7 +240,6 @@ class EnhancedAmplifierMeasurement(_LegacyResultAdapter):
         self._save(
             {"config": self.config, "results": self.measurement_results},
             "amplifier_measurement",
-            TEST_RESULTS_DIR / f"amplifier_measurement_{time.strftime('%Y%m%d_%H%M%S')}.json",
         )
         return result
 

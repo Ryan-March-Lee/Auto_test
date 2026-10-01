@@ -64,6 +64,35 @@ class _Events:
 
 
 class OfflineRefactorCompletionTests(unittest.TestCase):
+    def test_removed_legacy_gui_workers_stay_out_of_gui_module(self):
+        import ast
+
+        project_root = Path(__file__).resolve().parents[1]
+        gui_source = (project_root / "enhanced_main_gui.py").read_text(encoding="utf-8-sig")
+        class_names = {
+            node.name
+            for node in ast.walk(ast.parse(gui_source))
+            if isinstance(node, ast.ClassDef)
+        }
+
+        removed_workers = {
+            "LegacyWorkerSignals",
+            "LegacyBaseWorker",
+            "LegacyInstrumentWorker",
+            "LegacyCableLossWorker",
+            "LegacyDriverMappingWorker",
+            "LegacyAmplifierWorker",
+        }
+        self.assertTrue(removed_workers.isdisjoint(class_names))
+        modern_worker_import = next(
+            node
+            for node in ast.walk(ast.parse(gui_source))
+            if isinstance(node, ast.ImportFrom)
+            and node.module == "presentation.qt.workers"
+        )
+        imported_names = {alias.name for alias in modern_worker_import.names}
+        self.assertTrue({"InstrumentWorker", "CableLossWorker"}.issubset(imported_names))
+
     def test_prepare_run_writes_context_before_hardware_factory(self):
         plan = {
             "schema_version": "1.0", "template": False, "frequencies": {"values": [1.0], "unit": "GHz"},

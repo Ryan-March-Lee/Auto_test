@@ -577,3 +577,24 @@ controller 不负责：
 - 本步骤未实现 `MeasurementController`，未修改 worker、runtime、测量算法、硬件端口所有权或主窗口行为。
 
 步骤 1.2 回滚点：删除 `presentation/qt/measurement_state.py`、`tests/test_measurement_state.py` 及本节记录；不涉及 worker、runtime、硬件端口或主窗口测量行为。
+
+## 13. 阶段 1 步骤 1.3 记录（2026-10-02）
+
+### 13.1 实际修改
+
+- 新增 `presentation/qt/measurement_controller_contract.py`，定义无 Qt 依赖的 `MeasurementCommand`、`ControllerState`、`MeasurementWorker`、`WorkerFactory`、`WorkerFactories`、`MeasurementControllerSignals` 和 `MeasurementControllerProtocol`；旧名称 `MeasurementRequest` 暂保留为兼容别名。
+- 页面命令只包含 `config_path` 和递归冻结的 `options`，不携带 `measurement_port`；端口等运行时资源由 controller/factory 注入和管理，页面不取得其所有权。
+- 固定三个启动入口：`start_cable_loss(command)`、`start_driver_mapping(command)` 和 `start_amplifier(command)`；固定控制入口：`stop()`、`emergency_stop()` 和 `continue_cable_loss()`。启动和控制方法返回 `bool` 表示请求是否被接受，参数类型错误直接抛出，状态/并发冲突返回 `False` 并发出 `rejected(reason)`。
+- 固定页面可订阅的事件载荷：`progress(int)`、`message(str)`、`data_update(Mapping)`、`result(MeasurementResultReference)`、`finished()`、`stopped(str)`、`error(str)`、`step_pause(str)`、`rejected(str)` 和 `state_changed(ControllerState)`。
+- 明确单一活动测量规则：已有测量处于非终态时，新的启动请求必须返回 `False` 并发出明确拒绝原因；`continue_cable_loss()` 只允许在 `waiting_for_continue` 状态生效；普通停止调用 worker 的 `stop()`，紧急停止必须调用独立的 `emergency_stop()`，不得降级。
+- 以 `WorkerFactory(command, measurement_port=...) -> MeasurementWorker` 作为 worker 注入点，并通过 `WorkerFactories` 按 `MeasurementKind` 显式绑定三类 factory。worker 必须提供 `signals`、`start()`、`stop()` 和 `emergency_stop()`；controller 不通过该契约拥有或关闭外部 `measurement_port`。
+- `ControllerState` 规定 idle 状态不含测量类型和 view state；非 idle 状态必须同时包含匹配的 kind、status 和 `MeasurementViewState`，三者状态必须一致。
+- 新增 `tests/test_measurement_controller_contract.py`，使用纯 Python fake controller/worker 验证入口映射、并发拒绝和拒绝原因、普通/紧急停止区分、线损继续门槛、递归只读命令和状态一致性，不导入 VISA、SCPI、真实配置文件或具体 Qt worker。
+
+### 13.2 验证和边界
+
+- controller 契约和状态对象不依赖 `enhanced_main_gui.py`、具体 Qt worker、`app.gui_runtime`、VISA 或 SCPI；本步骤未实现 `MeasurementController`，不接入 `MainWindow`，不改变现有 worker 生命周期。
+- worker 构造/启动异常在步骤 2.1 统一转换为 `error` 和 `failed` 状态；并发、非法控制时机和无活动测量的控制请求使用 `rejected`，不与运行异常混淆。
+- 仍需在步骤 2.1 将 `MeasurementControllerProtocol` 落地为真实实现，并在步骤 2.3 覆盖真实 worker factory 选择、终态清理、普通/紧急停止和线损等待/继续行为。
+
+步骤 1.3 回滚点：删除 `presentation/qt/measurement_controller_contract.py`、`tests/test_measurement_controller_contract.py` 及本节记录；不涉及 worker、runtime、硬件端口、测量算法或主窗口行为。

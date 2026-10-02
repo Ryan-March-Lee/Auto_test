@@ -18,11 +18,11 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
             run_directory=Path("run-directory"),
         )
         with patch("app.gui_runtime.connect_instruments", return_value=port), patch(
-            "app.gui_runtime.EnhancedCableLossMeasurement", return_value=object()
+            "app.gui_runtime.CableLossUseCase", return_value=object()
         ) as measurement:
             create_cable_loss_measurement("config.json", prepared_run=prepared)
 
-        request = measurement.call_args.kwargs["request"]
+        request = measurement.call_args.args[0]
         self.assertIsInstance(request, CableLossMeasurementRequest)
         self.assertIs(request.measurement_port, port)
         self.assertEqual(request.run_id, "run-request")
@@ -37,10 +37,10 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
             run_directory=Path("run-directory"),
         )
         with patch("app.gui_runtime.connect_instruments", return_value=object()), patch(
-            "app.gui_runtime.EnhancedCableLossMeasurement", return_value=object()
+            "app.gui_runtime.CableLossUseCase", return_value=object()
         ) as measurement:
             create_cable_loss_measurement("config.json", prepared_run=prepared)
-        self.assertIsNotNone(measurement.call_args.kwargs["request"].measurement_port)
+        self.assertIsNotNone(measurement.call_args.args[0].measurement_port)
 
     def test_port_factory_failure_preserves_original_exception(self):
         prepared = SimpleNamespace(
@@ -63,7 +63,7 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
             run_directory=Path("run-directory"),
         )
         with patch("app.gui_runtime.connect_instruments", return_value=port), patch(
-            "app.gui_runtime.EnhancedCableLossMeasurement", return_value=object()
+            "app.gui_runtime.CableLossUseCase", return_value=object()
         ) as measurement:
             create_cable_loss_measurement(
                 "config.json",
@@ -72,7 +72,7 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
                 event_sink=sink,
                 result_repository=repository,
             )
-        request = measurement.call_args.kwargs["request"]
+        request = measurement.call_args.args[0]
         self.assertIs(request.cancellation_token, token)
         self.assertIs(request.event_sink, sink)
         self.assertIs(request.result_repository, repository)
@@ -86,7 +86,7 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
             run_directory=Path("run-directory"),
         )
         with patch("app.gui_runtime.connect_instruments", return_value=port), patch(
-            "app.gui_runtime.EnhancedCableLossMeasurement", return_value=object()
+            "app.gui_runtime.CableLossUseCase", return_value=object()
         ) as measurement:
             create_cable_loss_measurement(
                 "config.json",
@@ -94,7 +94,7 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
                 input_reader=reader,
             )
 
-        self.assertIs(measurement.call_args.kwargs["request"].input_reader, reader)
+        self.assertIs(measurement.call_args.args[0].input_reader, reader)
         self.assertNotIn("input_reader", measurement.call_args.kwargs)
 
 

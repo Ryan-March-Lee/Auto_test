@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal
 
-from enhanced_workers import EnhancedAmplifierMeasurement, EnhancedCableLossMeasurement
 from persistence.config_repository import ConfigurationRepository
 from config_models import (
     validate_cable_loss_configuration,
@@ -18,7 +17,11 @@ from .run_context import PreparedRun, environment_version, prepare_run
 from instrument.measurement_factory import create_measurement_port
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from application.inputs import ResultInputReader
-from application.measurements import DriverPowerMappingUseCase
+from application.measurements import (
+    AmplifierMeasurementUseCase,
+    CableLossUseCase,
+    DriverPowerMappingUseCase,
+)
 from app.events import MessageEvent, ProgressEvent, RealtimeDataEvent
 from application.dto import (
     AmplifierMeasurementRequest,
@@ -187,15 +190,20 @@ def create_cable_loss_measurement(
         run_id=prepared_run.context.run_id,
         run_directory=prepared_run.run_directory,
     )
-    return _assemble_measurement(
-        EnhancedCableLossMeasurement,
-        config_path,
-        callbacks,
-        port_factory=connect_instruments,
-        request_factory=lambda values: CableLossMeasurementRequest(
-            **_request_kwargs(prepared_run, config_path, values)
-        ),
-    )
+    owned_port = callbacks.get("measurement_port") is None
+    try:
+        if owned_port:
+            callbacks["measurement_port"] = connect_instruments(config_path)
+        callbacks.setdefault("result_repository", FileMeasurementResultRepository())
+        callbacks.setdefault("event_sink", _CallbackEventSink(callbacks))
+        request = CableLossMeasurementRequest(
+            **_request_kwargs(prepared_run, config_path, callbacks)
+        )
+        return CableLossUseCase(request, sleep_fn=callbacks.get("sleep_fn"))
+    except Exception:
+        if owned_port and callbacks.get("measurement_port") is not None:
+            _close_owned_measurement_port(callbacks["measurement_port"])
+        raise
 
 
 def create_driver_mapping_measurement(
@@ -231,17 +239,24 @@ def create_amplifier_measurement(
         run_id=prepared_run.context.run_id,
         run_directory=prepared_run.run_directory,
     )
-    return _assemble_measurement(
-        EnhancedAmplifierMeasurement,
-        config_path,
-        callbacks,
-        port_factory=connect_instruments,
-        request_factory=lambda values: AmplifierMeasurementRequest(
-            **_request_kwargs(prepared_run, config_path, values),
-            loss_data_path=(Path(values["loss_data_path"]) if values.get("loss_data_path") else None),
+    owned_port = callbacks.get("measurement_port") is None
+    try:
+        if owned_port:
+            callbacks["measurement_port"] = connect_instruments(config_path)
+        callbacks.setdefault("result_repository", FileMeasurementResultRepository())
+        callbacks.setdefault("event_sink", _CallbackEventSink(callbacks))
+        request = AmplifierMeasurementRequest(
+            **_request_kwargs(prepared_run, config_path, callbacks),
+            loss_data_path=(Path(callbacks["loss_data_path"]) if callbacks.get("loss_data_path") else None),
             driver_mapping_path=(
-                Path(values["driver_mapping_path"])
-                if values.get("driver_mapping_path") else None
+                Path(callbacks["driver_mapping_path"])
+                if callbacks.get("driver_mapping_path") else None
             ),
-        ),
-    )
+            loss_data=callbacks.get("loss_data"),
+            driver_mapping=callbacks.get("driver_mapping"),
+        )
+        return AmplifierMeasurementUseCase(request, sleep_fn=callbacks.get("sleep_fn"))
+    except Exception:
+        if owned_port and callbacks.get("measurement_port") is not None:
+            _close_owned_measurement_port(callbacks["measurement_port"])
+        raise

@@ -1,8 +1,8 @@
-"""Qt thread adapters for the shared measurement services.
+"""Qt thread adapters for the application measurement use cases.
 
-Workers own only Qt thread lifetime, cancellation requests and signal
-translation.  Measurement orchestration remains in the compatibility service
-adapters in :mod:`enhanced_workers` until the production migration is done.
+Workers own Qt thread lifetime, cancellation requests and signal translation.
+Measurement orchestration is assembled by :mod:`app.gui_runtime` and remains
+independent of Qt.
 """
 
 from __future__ import annotations
@@ -203,7 +203,7 @@ class DriverMappingWorker(BaseWorker):
 
 
 class AmplifierWorker(BaseWorker):
-    """Run the shared amplifier measurement service."""
+    """Run the application-level amplifier measurement use case."""
 
     def __init__(self, config_path: str, sleep_fn=None, measurement_port=None):
         super().__init__()
@@ -216,7 +216,13 @@ class AmplifierWorker(BaseWorker):
             self.emit_message("开始主功放测量...")
             from app.gui_runtime import create_amplifier_measurement, prepare_configuration
 
+            if self._stop_requested:
+                self.signals.stopped.emit("用户停止")
+                return
             prepared = prepare_configuration(self.config_path)
+            if self._stop_requested:
+                self.signals.stopped.emit("用户停止")
+                return
             self._service = create_amplifier_measurement(
                 self.config_path,
                 prepared_run=prepared,
@@ -226,6 +232,10 @@ class AmplifierWorker(BaseWorker):
                 sleep_fn=self.sleep_fn,
                 measurement_port=self.measurement_port,
             )
+            if self._stop_requested:
+                self._service.stop_measurement()
+                self.signals.stopped.emit("用户停止")
+                return
             self._service.measure_all_frequencies()
             self.emit_message("主功放测量完成！")
             self.signals.finished.emit()

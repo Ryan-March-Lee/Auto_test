@@ -13,6 +13,10 @@ from app.gui_runtime import (
 )
 from application.dto import AmplifierMeasurementRequest
 from application.inputs import ResultInputReader
+from application.measurements import (
+    AmplifierMeasurementUseCase,
+    CableLossUseCase,
+)
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "config_driver_enabled_no_assignment.json"
@@ -37,9 +41,9 @@ def _prepared_run():
 class GuiRuntimeAssemblyTests(unittest.TestCase):
     def test_default_factories_create_and_inject_hardware_port(self):
         cases = (
-            (create_cable_loss_measurement, "EnhancedCableLossMeasurement"),
+            (create_cable_loss_measurement, "CableLossUseCase"),
             (create_driver_mapping_measurement, "DriverPowerMappingUseCase"),
-            (create_amplifier_measurement, "EnhancedAmplifierMeasurement"),
+            (create_amplifier_measurement, "AmplifierMeasurementUseCase"),
         )
         for factory, measurement_name in cases:
             with self.subTest(factory=factory.__name__):
@@ -50,21 +54,16 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
                     result = factory("config.json", prepared_run=_prepared_run())
                 self.assertIs(result, expected)
                 connect.assert_called_once_with("config.json")
-                if measurement_name == "DriverPowerMappingUseCase":
-                    request = measurement.call_args.args[0]
-                    self.assertIs(request.measurement_port, port)
-                    self.assertEqual(request.run_id, "run-assembly-test")
-                    self.assertEqual(request.run_directory, Path("run-directory"))
-                else:
-                    self.assertIs(measurement.call_args.kwargs["measurement_port"], port)
-                    self.assertEqual(measurement.call_args.kwargs["run_id"], "run-assembly-test")
-                    self.assertEqual(measurement.call_args.kwargs["run_directory"], Path("run-directory"))
+                request = measurement.call_args.args[0]
+                self.assertIs(request.measurement_port, port)
+                self.assertEqual(request.run_id, "run-assembly-test")
+                self.assertEqual(request.run_directory, Path("run-directory"))
                 self.assertEqual(port.close_calls, [])
 
     def test_default_factory_closes_owned_port_when_measurement_construction_fails(self):
         port = _Port()
         with patch("app.gui_runtime.connect_instruments", return_value=port), \
-                patch("app.gui_runtime.EnhancedCableLossMeasurement", side_effect=OSError("bad result file")):
+                patch("app.gui_runtime.CableLossUseCase", side_effect=OSError("bad result file")):
             with self.assertRaisesRegex(OSError, "bad result file"):
                 create_cable_loss_measurement("config.json", prepared_run=_prepared_run())
         self.assertEqual(port.close_calls, [True])
@@ -72,7 +71,7 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
     def test_default_factory_does_not_close_injected_port_on_construction_failure(self):
         port = _Port()
         with patch("app.gui_runtime.connect_instruments") as connect, \
-                patch("app.gui_runtime.EnhancedCableLossMeasurement", side_effect=OSError("bad result file")):
+                patch("app.gui_runtime.CableLossUseCase", side_effect=OSError("bad result file")):
             with self.assertRaisesRegex(OSError, "bad result file"):
                 create_cable_loss_measurement(
                     "config.json",
@@ -86,9 +85,9 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
         port = _Port()
         expected = object()
         cases = (
-            (create_cable_loss_measurement, "EnhancedCableLossMeasurement"),
+            (create_cable_loss_measurement, "CableLossUseCase"),
             (create_driver_mapping_measurement, "DriverPowerMappingUseCase"),
-            (create_amplifier_measurement, "EnhancedAmplifierMeasurement"),
+            (create_amplifier_measurement, "AmplifierMeasurementUseCase"),
         )
         for factory, measurement_name in cases:
             with self.subTest(factory=factory.__name__):
@@ -103,17 +102,14 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
 
                 self.assertIs(result, expected)
                 connect.assert_not_called()
-                if measurement_name == "DriverPowerMappingUseCase":
-                    self.assertIs(measurement.call_args.args[0].measurement_port, port)
-                else:
-                    self.assertIs(measurement.call_args.kwargs["measurement_port"], port)
+                self.assertIs(measurement.call_args.args[0].measurement_port, port)
                 self.assertEqual(port.close_calls, [])
 
     def test_explicit_driver_mapping_path_is_carried_into_request(self):
         port = _Port()
         explicit_path = Path("provided") / "mapping.json"
         with patch("app.gui_runtime.connect_instruments") as connect, patch(
-            "app.gui_runtime.EnhancedAmplifierMeasurement", return_value=object()
+            "app.gui_runtime.AmplifierMeasurementUseCase", return_value=object()
         ) as measurement:
             create_amplifier_measurement(
                 "config.json",
@@ -122,7 +118,7 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
                 driver_mapping_path=explicit_path,
             )
 
-        request = measurement.call_args.kwargs["request"]
+        request = measurement.call_args.args[0]
         self.assertIsInstance(request, AmplifierMeasurementRequest)
         self.assertEqual(request.config_path, Path("config.json"))
         self.assertEqual(request.driver_mapping_path, explicit_path)
@@ -142,14 +138,14 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
         reader = ResultInputReader(repository)
         observed = {}
 
-        def construct_measurement(_config_path, *, request, **_legacy_kwargs):
+        def construct_measurement(request, **_legacy_kwargs):
             observed["mapping"] = request.input_reader.read_driver_mapping(
                 request.driver_mapping_path
             )
             return request
 
         with patch("app.gui_runtime.connect_instruments") as connect, patch(
-            "app.gui_runtime.EnhancedAmplifierMeasurement",
+            "app.gui_runtime.AmplifierMeasurementUseCase",
             side_effect=construct_measurement,
         ):
             result = create_amplifier_measurement(

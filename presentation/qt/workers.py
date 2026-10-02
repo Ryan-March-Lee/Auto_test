@@ -175,7 +175,13 @@ class DriverMappingWorker(BaseWorker):
             self.emit_message("开始驱动功放映射测量...")
             from app.gui_runtime import create_driver_mapping_measurement, prepare_configuration
 
+            if self._stop_requested:
+                self.signals.stopped.emit("用户停止")
+                return
             prepared = prepare_configuration(self.config_path, operation="driver_mapping")
+            if self._stop_requested:
+                self.signals.stopped.emit("用户停止")
+                return
             self._service = create_driver_mapping_measurement(
                 self.config_path,
                 prepared_run=prepared,
@@ -185,6 +191,10 @@ class DriverMappingWorker(BaseWorker):
                 sleep_fn=self.sleep_fn,
                 measurement_port=self.measurement_port,
             )
+            if self._stop_requested:
+                self._service.stop_measurement()
+                self.signals.stopped.emit("用户停止")
+                return
             self._service.measure_all_frequencies()
             self.emit_message("驱动功放映射测量完成！")
             self.signals.finished.emit()

@@ -5,11 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal
 
-from enhanced_workers import (
-    EnhancedAmplifierMeasurement,
-    EnhancedCableLossMeasurement,
-    EnhancedDriverPowerMapping,
-)
+from enhanced_workers import EnhancedAmplifierMeasurement, EnhancedCableLossMeasurement
 from persistence.config_repository import ConfigurationRepository
 from config_models import (
     validate_cable_loss_configuration,
@@ -22,6 +18,8 @@ from .run_context import PreparedRun, environment_version, prepare_run
 from instrument.measurement_factory import create_measurement_port
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from application.inputs import ResultInputReader
+from application.measurements import DriverPowerMappingUseCase
+from app.events import MessageEvent, ProgressEvent, RealtimeDataEvent
 from application.dto import (
     AmplifierMeasurementRequest,
     CableLossMeasurementRequest,
@@ -31,6 +29,21 @@ from application.dto import (
 
 Operation = Literal["full", "cable_loss", "driver_mapping"]
 logger = get_logger(__name__)
+
+
+class _CallbackEventSink:
+    """Translate application events to the callback contract used by Qt."""
+
+    def __init__(self, callbacks: dict[str, Any]) -> None:
+        self.callbacks = callbacks
+
+    def publish(self, event: Any) -> None:
+        if isinstance(event, ProgressEvent) and self.callbacks.get("progress_callback"):
+            self.callbacks["progress_callback"](int(event.fraction * 100))
+        elif isinstance(event, MessageEvent) and self.callbacks.get("message_callback"):
+            self.callbacks["message_callback"](event.message)
+        elif isinstance(event, RealtimeDataEvent) and self.callbacks.get("data_callback"):
+            self.callbacks["data_callback"](dict(event.data))
 
 
 def connect_instruments(config_path: str, *, recorder: Any = None) -> Any:
@@ -192,16 +205,23 @@ def create_driver_mapping_measurement(
         run_id=prepared_run.context.run_id,
         run_directory=prepared_run.run_directory,
     )
-    return _assemble_measurement(
-        EnhancedDriverPowerMapping,
-        config_path,
-        callbacks,
-        port_factory=connect_instruments,
-        request_factory=lambda values: DriverPowerMappingRequest(
-            **_request_kwargs(prepared_run, config_path, values),
-            loss_data_path=(Path(values["loss_data_path"]) if values.get("loss_data_path") else None),
-        ),
-    )
+    owned_port = callbacks.get("measurement_port") is None
+    try:
+        if owned_port:
+            callbacks["measurement_port"] = connect_instruments(config_path)
+        callbacks.setdefault("result_repository", FileMeasurementResultRepository())
+        callbacks.setdefault("event_sink", _CallbackEventSink(callbacks))
+        request = DriverPowerMappingRequest(
+            **_request_kwargs(prepared_run, config_path, callbacks),
+            loss_data_path=(Path(callbacks["loss_data_path"]) if callbacks.get("loss_data_path") else None),
+        )
+        return DriverPowerMappingUseCase(request, sleep_fn=callbacks.get("sleep_fn"))
+    except Exception:
+        if owned_port:
+            port = callbacks.get("measurement_port")
+            if port is not None:
+                _close_owned_measurement_port(port)
+        raise
 
 
 def create_amplifier_measurement(

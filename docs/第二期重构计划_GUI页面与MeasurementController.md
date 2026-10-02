@@ -448,3 +448,113 @@ controller 不负责：
 第一期已确认：`enhanced_workers.py` 已删除，三类应用测量用例、结果仓储、输入读取器、Qt worker 和 runtime 组装边界已经稳定。第二期后续工作应以本文件为指南，不得把持久化、硬件组装或测量算法重新放回页面或 `MainWindow`。
 
 真实 Hardware smoke 当前仍待现场条件具备。只要后续批次不改变 SCPI、设备时序、资源所有权、安全清理顺序或生产配置，即可继续完成离线 GUI 重构并单独记录该现场验收门槛。
+
+---
+
+## 10. 阶段 0 基线记录（2026-10-02）
+
+### 10.1 工作区和验证基线
+
+- 执行前工作区：`git status --short` 无输出，未发现用户未提交改动。
+- 项目解释器：`.env` 中的 `AUTO_TEST_PYTHON` 为 `C:\My_Document\Anaconda\envs\Auto_test\python.exe`。
+- 解释器检查：路径存在；运行环境为 Python 3.11.15，Conda 环境为 `Auto_test`。
+- 全量离线测试命令：`./run_tests.ps1`（使用上述解释器）。
+- 全量离线测试结果：`Ran 511 tests`，`OK`。
+- 应用检查命令：`& 'C:\My_Document\Anaconda\envs\Auto_test\python.exe' launcher.py --check`，通过；必需依赖均已安装。
+- 配置校验命令：`& 'C:\My_Document\Anaconda\envs\Auto_test\python.exe' launcher.py --validate-config`，通过。
+- 本阶段未执行真实 Hardware smoke；本阶段仅记录和冻结 GUI/测试基线，未修改 SCPI、设备时序、资源所有权或安全清理逻辑。
+
+### 10.2 当前页面顺序和 builder 归属
+
+`MainWindow.init_ui()` 创建 `QTabWidget` 后调用 `presentation.qt.pages.build_pages(self)`。当前 `PageDefinition` 仍将页面 builder 转发到窗口方法，页面对象尚未独立化。
+
+| 顺序 | key | 标题 | 当前 builder | 阶段 3 目标 |
+| --- | --- | --- | --- | --- |
+| 1 | `configuration` | 仪器配置 | `MainWindow.create_config_tab()` | 本期保留窗口集成边界 |
+| 2 | `cable_loss` | 线损测量 | `MainWindow.create_cable_loss_tab()` | `CableLossPage` |
+| 3 | `driver_mapping` | 驱动映射 | `MainWindow.create_driver_mapping_tab()` | `DriverMappingPage` |
+| 4 | `amplifier` | 功放测试 | `MainWindow.create_amplifier_test_tab()` | `AmplifierPage` |
+| 5 | `visualization` | 数据可视化 | `MainWindow.create_visualization_tab()` | 本期保留窗口集成边界 |
+| 6 | `export` | 数据导出 | `MainWindow.create_data_export_tab()` | 本期保留窗口集成边界 |
+
+### 10.3 公共控件和页面专用控件
+
+- 公共窗口控件：`tab_widget`、`progress_bar`、`connect_btn`、状态/日志面板、`chat_panel`、全局日志和文件刷新入口。
+- 配置页控件：仪器地址和启用开关、功率分配、测试参数、配置保存/连接仪器控件；由 `create_config_tab()` 创建。
+- 线损页控件：`show_path1_btn`、`show_path2_btn`、`cable_loss_btn`、`load_cable_results_btn`、`cable_loss_table`；结果表为 5 列：频率及 `cable1` 至 `cable4`。
+- 驱动映射页控件：`show_driver_diagram_btn`、`driver_mapping_btn`、`driver_emergency_stop_btn`、`driver_plot_widget`。
+- 主功放页控件：`instruction_text`、`show_amp_diagram_btn`、`amplifier_test_btn`、`emergency_stop_btn`、`amplifier_plot_widget`。
+- 可视化/导出页控件：当前继续由窗口创建和管理，不在阶段 0 迁移。
+
+### 10.4 三类测量入口、回调和目标归属
+
+| 当前方法/行为 | 当前行为摘要 | 后续目标 |
+| --- | --- | --- |
+| `start_cable_loss_measurement()` | 检查 `current_worker` 和 `instrument_ctrl`；保存配置；弹出路径 1 接线确认；写回 wiring 元数据；清空线损表；实例化 `CableLossWorker` 并连接信号后启动 | 页面负责输入、接线确认和显示；`MeasurementController.start_cable_loss()` 负责 worker 生命周期 |
+| `on_cable_loss_step_pause()` | 依赖当前 worker 的私有 `_waiting_for_continue`；弹出路径 2 接线确认；接受时调用 `continue_measurement()`，取消时调用 `worker.stop()` | controller 暴露唯一 `waiting_for_continue` 状态、`continue_cable_loss()` 和停止入口 |
+| `start_driver_mapping()` | 检查端口；保存配置和接线确认；清空实时数据；实例化 `DriverMappingWorker` 并启动；启用紧急停止按钮 | `DriverMappingPage` 组装请求；controller 创建和管理 worker |
+| `start_amplifier_test()` | 检查端口；保存配置和接线确认；清空实时数据；设置 `emergency_stop=False`；实例化 `AmplifierWorker` 并启动 | `AmplifierPage` 组装请求；controller 创建和管理 worker |
+| `emergency_stop_test()` | 二次确认后设置窗口 `emergency_stop=True`，调用当前 worker 的普通 `stop()`，清零进度 | controller 的 `emergency_stop()`，必须保留与普通停止的语义区别 |
+| `emergency_stop_driver_mapping()` | 二次确认后设置窗口 `emergency_stop=True`，调用当前 worker 的普通 `stop()`，恢复驱动映射开始按钮 | controller 的 `emergency_stop()`；按钮状态由页面状态事件驱动 |
+| `on_measurement_finished(button)` | 恢复对应开始按钮；设置进度 100；按按钮禁用紧急停止；线损完成时从文件加载结果；刷新文件列表；当前仅清空窗口中的 `instrument_ctrl` 引用，不在此处显式调用 `_close_instrument_port()` | controller 发布完成状态和结构化结果；页面只转换显示模型；需单独验证完成后的端口清理责任 |
+| `on_worker_error(error_message)` | 记录并弹框；恢复全部按钮；清零进度；关闭并清空 `instrument_ctrl` | controller 发布失败状态；端口关闭仍由既有运行控制者负责 |
+| `on_worker_stopped(reason)` | 记录停止原因；恢复按钮；清零进度；关闭并清空 `instrument_ctrl` | controller 发布 stopped 状态，并区分普通/紧急停止原因 |
+| `load_cable_loss_results()` | 直接读取 `CABLE_LOSS_FILE` JSON 并填充表格 | `CableLossPage` 只消费结构化结果；不得保留页面文件读取 |
+| `clear_cable_loss_results()` / `update_cable_loss_realtime()` | 清空表格并按 `data_update` 逐频点更新 | `CableLossPage` 的结果显示和实时数据转换 |
+
+### 10.5 当前测量状态字段和所有权
+
+- `current_worker`：初始化于 `MainWindow`，是被聊天、仪器连接和三类测量流程轮流复用的单一字段；新 worker 会覆盖旧引用，不能表示多个 worker 的所有权，也不是可靠的测量类型状态。后续 `MeasurementController` 不得接管聊天 worker，仪器连接 worker 也应与测量生命周期区分。
+- `instrument_ctrl`：窗口持有外部注入的 measurement port。失败、停止和窗口关闭路径会由窗口调用 `_close_instrument_port()`；完成路径当前只将窗口引用置空，实际资源清理由测量服务生命周期负责，需在后续 controller 接入时单独验证。当前测量 worker 接收该 port，但 worker 自身不关闭注入 port。
+- `emergency_stop`：窗口级布尔标志，主功放和驱动映射启动/紧急停止时使用；当前未形成明确的 controller 状态。
+- 实时数据：`real_time_data`、`rt_frequency_list`、`rt_current_freq_index`、`rt_user_browsing`；主要服务驱动映射和主功放图表及频点导航。
+- 线损结果：`cable_loss_table` 及其 `clear_cable_loss_results()`、`update_cable_loss_realtime()`、`load_cable_loss_results()` 方法直接由窗口持有。
+- 进度和日志：公共 `progress_bar`、`add_log_message()`；当前三类 worker 的 progress/message 直接连接到窗口。
+- 页面专用实时图：`driver_plot_widget` 和 `amplifier_plot_widget` 连接窗口的频点导航及实时数据方法。
+
+### 10.6 `WorkerSignals` 连接基线
+
+`presentation.qt.workers.WorkerSignals` 当前稳定信号为：`finished()`、`error(str)`、`stopped(str)`、`result(object)`、`progress(int)`、`message(str)`、`data_update(dict)`、`step_pause(str)`。
+
+- 仪器连接入口：`InstrumentWorker` 的 `finished` -> `on_instrument_connected`，`result` -> `on_instrument_controller_ready`，`stopped` -> `on_worker_stopped`，`error` -> `on_worker_error`，`message` -> `add_log_message`，`progress` -> `progress_bar.setValue`。
+- 线损入口：`finished` -> `on_measurement_finished(cable_loss_btn)`，`error` -> `on_worker_error`，`stopped` -> `on_worker_stopped`，`message` -> `add_log_message`，`progress` -> `progress_bar.setValue`，`data_update` -> `update_cable_loss_realtime`，`step_pause` -> `on_cable_loss_step_pause`。
+- 驱动映射入口：`finished` -> `on_measurement_finished(driver_mapping_btn)`，`error` -> `on_worker_error`，`stopped` -> `on_worker_stopped`，`message` -> `add_log_message`，`progress` -> `progress_bar.setValue`，`data_update` -> `store_real_time_data`。
+- 主功放入口：`finished` -> `on_measurement_finished(amplifier_test_btn)`，`error` -> `on_worker_error`，`message` -> `add_log_message`，`progress` -> `progress_bar.setValue`，`data_update` -> `store_real_time_data`；当前未显式连接 `stopped`，这是后续 controller 接入必须覆盖的生命周期缺口。
+- 测试 patch 目标：`tests/test_gui_workers.py` 主要 patch `app.gui_runtime.prepare_configuration` 和三类 `create_*_measurement`；`tests/test_gui_import.py` patch `pyvisa.ResourceManager` 验证 GUI 导入不打开硬件；`tests/test_gui_config_readers.py` patch `enhanced_main_gui.CONFIG_FILE` 验证配置读写。
+
+### 10.7 关闭、切换和重复启动现状
+
+- 关闭窗口：`closeEvent()` 检查 `current_worker.isRunning()`；运行中弹出确认，确认后调用 `worker.stop()`、`worker.wait()`，再关闭 `instrument_ctrl`；未运行时直接关闭端口。当前没有独立 controller 的关闭协议。
+- 页面切换：当前仅由 `QTabWidget` 切换 widget，没有页面 `on_activated()` / `on_deactivated()` 生命周期，也没有解除页面级 signal 连接的逻辑。
+- 重复启动：线损入口显式检查 `current_worker.isRunning()`；驱动映射和主功放入口未做同样的统一并发检查，只依赖按钮禁用和当前窗口状态。三类测量没有统一的“活动测量类型/状态”拒绝机制。
+- 线损暂停：worker 发出 `step_pause` 后，窗口通过 worker 私有 `_waiting_for_continue` 判断是否有效；接受/取消对话框分别继续/停止，当前没有显式 `waiting_for_continue` view state。
+
+### 10.8 阶段 0 清单、通过判断和回滚点
+
+- [x] 已记录 tab 顺序、builder、公共控件和页面专用控件。
+- [x] 已登记三类测量的启动、停止相关现状/紧急停止、线损继续、错误、完成和结果显示方法；当前没有独立的普通停止 GUI 入口，线损取消、紧急停止和窗口关闭均直接调用 worker 的 `stop()`。
+- [x] 已登记 `current_worker`、`instrument_ctrl`、实时数据、结果表格、进度和紧急停止字段。
+- [x] 已登记 `WorkerSignals` 全部信号及当前连接方、测试 patch 目标。
+- [x] 已记录关闭窗口、页面切换和重复启动的当前行为。
+- [x] 已使用 `.env` 指定解释器执行全量离线测试、应用检查和配置校验。
+- [x] 本阶段仅修改本计划文档，未修改生产代码、worker、runtime、配置 schema 或测试实现。
+
+阶段 0 回滚点：删除本节基线记录即可恢复文档状态；不涉及生产代码回滚。后续阶段开始前，应以本节记录作为 tab 顺序、signal 语义、端口所有权和现有用户行为的对照基线。
+
+## 11. 阶段 1 步骤 1.1 记录（2026-10-02）
+
+### 11.1 实际修改
+
+- 在 `presentation/qt/pages.py` 增加无 Qt 依赖的 `PageProtocol`，固定页面的 `build_ui()`、`bind_controller()`、`on_activated()`、`on_deactivated()` 和 `close()` 生命周期接口。
+- 在 `presentation/qt/pages.py` 增加 `BasePage`，统一保存 controller 引用、登记 signal 连接、重新绑定时解除旧连接，以及关闭时幂等清理连接。
+- 保留现有 `PageDefinition`、页面顺序和 `build_pages(window)` 兼容 builder；本步骤未改变 `MainWindow` 的页面创建行为。
+- 新增 `tests/test_gui_pages.py`，使用纯 Python fake signal/controller 验证页面协议、重新绑定、关闭清理和非法绑定行为。
+
+### 11.2 验证和边界
+
+- 页面契约不导入 PySide6、VISA、SCPI、worker、`app.gui_runtime` 或 `enhanced_main_gui`。
+- 定向验证：`& 'C:\My_Document\Anaconda\envs\Auto_test\python.exe' -m unittest tests.test_gui_pages tests.test_gui_import tests.test_gui_config_readers`，`Ran 33 tests`，`OK`。
+- 编译验证：`& 'C:\My_Document\Anaconda\envs\Auto_test\python.exe' -m py_compile presentation\qt\pages.py tests\test_gui_pages.py`，通过。
+- 本步骤未定义测量状态对象、状态转换或 `MeasurementController`，这些内容保留给步骤 1.2 和 1.3。
+
+步骤 1.1 回滚点：删除 `PageProtocol`、`BasePage` 和 `tests/test_gui_pages.py`，恢复 `pages.py` 原有页面注册表；不涉及 worker、runtime、硬件端口或主窗口测量行为。

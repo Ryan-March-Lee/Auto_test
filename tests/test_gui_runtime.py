@@ -38,7 +38,7 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
     def test_default_factories_create_and_inject_hardware_port(self):
         cases = (
             (create_cable_loss_measurement, "EnhancedCableLossMeasurement"),
-            (create_driver_mapping_measurement, "EnhancedDriverPowerMapping"),
+            (create_driver_mapping_measurement, "DriverPowerMappingUseCase"),
             (create_amplifier_measurement, "EnhancedAmplifierMeasurement"),
         )
         for factory, measurement_name in cases:
@@ -50,9 +50,15 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
                     result = factory("config.json", prepared_run=_prepared_run())
                 self.assertIs(result, expected)
                 connect.assert_called_once_with("config.json")
-                self.assertIs(measurement.call_args.kwargs["measurement_port"], port)
-                self.assertEqual(measurement.call_args.kwargs["run_id"], "run-assembly-test")
-                self.assertEqual(measurement.call_args.kwargs["run_directory"], Path("run-directory"))
+                if measurement_name == "DriverPowerMappingUseCase":
+                    request = measurement.call_args.args[0]
+                    self.assertIs(request.measurement_port, port)
+                    self.assertEqual(request.run_id, "run-assembly-test")
+                    self.assertEqual(request.run_directory, Path("run-directory"))
+                else:
+                    self.assertIs(measurement.call_args.kwargs["measurement_port"], port)
+                    self.assertEqual(measurement.call_args.kwargs["run_id"], "run-assembly-test")
+                    self.assertEqual(measurement.call_args.kwargs["run_directory"], Path("run-directory"))
                 self.assertEqual(port.close_calls, [])
 
     def test_default_factory_closes_owned_port_when_measurement_construction_fails(self):
@@ -81,7 +87,7 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
         expected = object()
         cases = (
             (create_cable_loss_measurement, "EnhancedCableLossMeasurement"),
-            (create_driver_mapping_measurement, "EnhancedDriverPowerMapping"),
+            (create_driver_mapping_measurement, "DriverPowerMappingUseCase"),
             (create_amplifier_measurement, "EnhancedAmplifierMeasurement"),
         )
         for factory, measurement_name in cases:
@@ -97,7 +103,10 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
 
                 self.assertIs(result, expected)
                 connect.assert_not_called()
-                self.assertIs(measurement.call_args.kwargs["measurement_port"], port)
+                if measurement_name == "DriverPowerMappingUseCase":
+                    self.assertIs(measurement.call_args.args[0].measurement_port, port)
+                else:
+                    self.assertIs(measurement.call_args.kwargs["measurement_port"], port)
                 self.assertEqual(port.close_calls, [])
 
     def test_explicit_driver_mapping_path_is_carried_into_request(self):
@@ -160,7 +169,7 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
     def test_assembly_error_from_request_creation_closes_only_owned_port(self):
         owned_port = _Port()
         with patch("app.gui_runtime.connect_instruments", return_value=owned_port), patch(
-            "app.gui_runtime.EnhancedDriverPowerMapping", return_value=object()
+            "app.gui_runtime.DriverPowerMappingUseCase", return_value=object()
         ), patch(
             "app.gui_runtime.DriverPowerMappingRequest",
             side_effect=RuntimeError("request assembly failed"),

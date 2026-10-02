@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from PySide6.QtCore import QCoreApplication
 
-from presentation.qt.workers import CableLossWorker, InstrumentWorker
+from presentation.qt.workers import CableLossWorker, DriverMappingWorker, InstrumentWorker
 from enhanced_workers import InstrumentWorker as LegacyInstrumentWorker
 
 
@@ -26,6 +26,18 @@ class _CableService:
 
     def stop_measurement(self):
         self.stop_called.set()
+
+
+class _DriverMappingService:
+    def __init__(self):
+        self.stop_called = threading.Event()
+        self.measure_called = threading.Event()
+
+    def stop_measurement(self):
+        self.stop_called.set()
+
+    def measure_all_frequencies(self):
+        self.measure_called.set()
 
 
 class GuiWorkerTests(unittest.TestCase):
@@ -82,6 +94,59 @@ class GuiWorkerTests(unittest.TestCase):
 
         factory.assert_not_called()
         self.assertIsNone(worker.service)
+
+    def test_driver_mapping_stop_before_run_skips_preflight_and_measurement(self):
+        worker = DriverMappingWorker("config.json", sleep_fn=lambda _: None)
+        stopped = []
+        worker.signals.stopped.connect(stopped.append)
+        worker.stop()
+
+        with patch("app.gui_runtime.prepare_configuration") as prepare, patch(
+            "app.gui_runtime.create_driver_mapping_measurement"
+        ) as factory:
+            worker.run()
+
+        prepare.assert_not_called()
+        factory.assert_not_called()
+        self.assertEqual(stopped, ["用户停止"])
+        self.assertIsNone(worker.service)
+
+    def test_driver_mapping_stop_during_preflight_skips_measurement_creation(self):
+        worker = DriverMappingWorker("config.json", sleep_fn=lambda _: None)
+        stopped = []
+        worker.signals.stopped.connect(stopped.append)
+
+        def prepare_and_stop(*_args, **_kwargs):
+            worker.stop()
+            return object()
+
+        with patch("app.gui_runtime.prepare_configuration", side_effect=prepare_and_stop), patch(
+            "app.gui_runtime.create_driver_mapping_measurement"
+        ) as factory:
+            worker.run()
+
+        factory.assert_not_called()
+        self.assertEqual(stopped, ["用户停止"])
+        self.assertIsNone(worker.service)
+
+    def test_driver_mapping_stop_after_assembly_cancels_service_without_scan(self):
+        worker = DriverMappingWorker("config.json", sleep_fn=lambda _: None)
+        service = _DriverMappingService()
+        stopped = []
+        worker.signals.stopped.connect(stopped.append)
+
+        def create_and_stop(*_args, **_kwargs):
+            worker.stop()
+            return service
+
+        with patch("app.gui_runtime.prepare_configuration", return_value=object()), patch(
+            "app.gui_runtime.create_driver_mapping_measurement", side_effect=create_and_stop
+        ):
+            worker.run()
+
+        self.assertTrue(service.stop_called.is_set())
+        self.assertFalse(service.measure_called.is_set())
+        self.assertEqual(stopped, ["用户停止"])
 
     def test_instrument_worker_closes_port_if_handoff_fails(self):
         class _Port:

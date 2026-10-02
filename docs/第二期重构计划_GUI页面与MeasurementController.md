@@ -558,3 +558,22 @@ controller 不负责：
 - 本步骤未定义测量状态对象、状态转换或 `MeasurementController`，这些内容保留给步骤 1.2 和 1.3。
 
 步骤 1.1 回滚点：删除 `PageProtocol`、`BasePage` 和 `tests/test_gui_pages.py`，恢复 `pages.py` 原有页面注册表；不涉及 worker、runtime、硬件端口或主窗口测量行为。
+
+## 12. 阶段 1 步骤 1.2 记录（2026-10-02）
+
+### 12.1 实际修改
+
+- 新增 `presentation/qt/measurement_state.py`，定义无 Qt 依赖的 `MeasurementKind`、`MeasurementStatus`、`MeasurementResultReference` 和不可变 `MeasurementViewState`。
+- 为状态对象定义 `idle -> preparing -> running`、线损专用 `waiting_for_continue -> running`、停止、失败和完成等合法转换；终态不能再次转换。
+- `MeasurementViewState` 明确保存进度、消息、错误文本、停止原因和结构化结果引用；失败必须有错误文本，停止必须有停止原因，完成结果的测量类型必须匹配。
+- 新增 `PageResultState` 及线损、驱动映射、主功放三类页面结果状态，只保存页面显示所需的只读结构化行数据和元数据，不保存文件路径或持久化 JSON。
+- 新增 `tests/test_measurement_state.py`，覆盖线损等待/继续/完成、停止与失败信息、非法转换、结果类型校验和页面结果只读约束。
+
+### 12.2 验证和边界
+
+- 状态契约不导入 PySide6、VISA、SCPI、worker、`app.gui_runtime` 或 `enhanced_main_gui`。
+- 定向验证：`& 'C:\My_Document\Anaconda\envs\Auto_test\python.exe' -m unittest tests.test_measurement_state tests.test_gui_pages tests.test_gui_import tests.test_gui_config_readers`，`Ran 40 tests`，`OK`。
+- 编译验证：`& 'C:\My_Document\Anaconda\envs\Auto_test\python.exe' -m py_compile presentation\qt\measurement_state.py tests\test_measurement_state.py`，通过。
+- 本步骤未实现 `MeasurementController`，未修改 worker、runtime、测量算法、硬件端口所有权或主窗口行为。
+
+步骤 1.2 回滚点：删除 `presentation/qt/measurement_state.py`、`tests/test_measurement_state.py` 及本节记录；不涉及 worker、runtime、硬件端口或主窗口测量行为。

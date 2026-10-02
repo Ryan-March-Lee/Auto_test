@@ -1,8 +1,10 @@
-"""Qt thread adapters for the application measurement use cases.
+"""Qt-only thread adapters for application measurement use cases.
 
 Workers own Qt thread lifetime, cancellation requests and signal translation.
-Measurement orchestration is assembled by :mod:`app.gui_runtime` and remains
-independent of Qt.
+They resolve factories from :mod:`app.gui_runtime` lazily so the presentation
+layer does not import legacy workers, persistence details, VISA, or SCPI.
+Measurement orchestration and port ownership are assembled by the application
+composition root; an injected port is never closed by a worker.
 """
 
 from __future__ import annotations

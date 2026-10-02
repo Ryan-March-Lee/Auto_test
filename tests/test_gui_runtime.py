@@ -67,26 +67,65 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
                 self.assertEqual(request.run_directory, Path("run-directory"))
                 self.assertEqual(port.close_calls, [])
 
+    def test_successful_factory_handoff_does_not_close_port_early(self):
+        cases = (
+            (create_cable_loss_measurement, "CableLossUseCase"),
+            (create_driver_mapping_measurement, "DriverPowerMappingUseCase"),
+            (create_amplifier_measurement, "AmplifierMeasurementUseCase"),
+        )
+        for factory, use_case_name in cases:
+            with self.subTest(factory=factory.__name__):
+                port = _Port()
+                service = SimpleNamespace()
+                with patch("app.gui_runtime.connect_instruments", return_value=port), patch(
+                    f"app.gui_runtime.{use_case_name}", return_value=service
+                ) as use_case:
+                    result = factory("config.json", prepared_run=_prepared_run())
+
+                self.assertIs(result, service)
+                self.assertIs(use_case.call_args.args[0].measurement_port, port)
+                self.assertEqual(port.close_calls, [])
+                port.close_all(close_rf=True)
+                self.assertEqual(port.close_calls, [True])
+
     def test_default_factory_closes_owned_port_when_measurement_construction_fails(self):
-        port = _Port()
-        with patch("app.gui_runtime.connect_instruments", return_value=port), \
-                patch("app.gui_runtime.CableLossUseCase", side_effect=OSError("bad result file")):
-            with self.assertRaisesRegex(OSError, "bad result file"):
-                create_cable_loss_measurement("config.json", prepared_run=_prepared_run())
-        self.assertEqual(port.close_calls, [True])
+        cases = (
+            (create_cable_loss_measurement, "CableLossUseCase"),
+            (create_driver_mapping_measurement, "DriverPowerMappingUseCase"),
+            (create_amplifier_measurement, "AmplifierMeasurementUseCase"),
+        )
+        for factory, use_case_name in cases:
+            with self.subTest(factory=factory.__name__):
+                port = _Port()
+                with patch("app.gui_runtime.connect_instruments", return_value=port), patch(
+                    f"app.gui_runtime.{use_case_name}",
+                    side_effect=OSError("use case construction failed"),
+                ):
+                    with self.assertRaisesRegex(OSError, "use case construction failed"):
+                        factory("config.json", prepared_run=_prepared_run())
+                self.assertEqual(port.close_calls, [True])
 
     def test_default_factory_does_not_close_injected_port_on_construction_failure(self):
-        port = _Port()
-        with patch("app.gui_runtime.connect_instruments") as connect, \
-                patch("app.gui_runtime.CableLossUseCase", side_effect=OSError("bad result file")):
-            with self.assertRaisesRegex(OSError, "bad result file"):
-                create_cable_loss_measurement(
-                    "config.json",
-                    prepared_run=_prepared_run(),
-                    measurement_port=port,
-                )
-        connect.assert_not_called()
-        self.assertEqual(port.close_calls, [])
+        cases = (
+            (create_cable_loss_measurement, "CableLossUseCase"),
+            (create_driver_mapping_measurement, "DriverPowerMappingUseCase"),
+            (create_amplifier_measurement, "AmplifierMeasurementUseCase"),
+        )
+        for factory, use_case_name in cases:
+            with self.subTest(factory=factory.__name__):
+                port = _Port()
+                with patch("app.gui_runtime.connect_instruments") as connect, patch(
+                    f"app.gui_runtime.{use_case_name}",
+                    side_effect=OSError("use case construction failed"),
+                ):
+                    with self.assertRaisesRegex(OSError, "use case construction failed"):
+                        factory(
+                            "config.json",
+                            prepared_run=_prepared_run(),
+                            measurement_port=port,
+                        )
+                connect.assert_not_called()
+                self.assertEqual(port.close_calls, [])
 
     def test_all_measurement_factories_inject_the_same_external_port(self):
         port = _Port()

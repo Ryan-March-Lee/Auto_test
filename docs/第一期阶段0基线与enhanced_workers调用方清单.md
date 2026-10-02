@@ -120,22 +120,22 @@
 
 ## 5. 调用方分类
 
-### 5.1 生产调用方
+### 5.1 生产调用方（阶段 5.2 更新）
 
 | 调用方 | 位置 | 关系 |
 | --- | --- | --- |
-| 应用组装层 | `app/gui_runtime.py:7-10` | 直接导入三个 `Enhanced*Measurement`；`create_*_measurement()` 负责注入 `prepared_run` 的 `run_id`、`run_directory` 和 measurement port |
-| Qt 线损 worker | `presentation/qt/workers.py:104-162` | 不直接导入模块，通过 `app.gui_runtime.create_cable_loss_measurement()` 间接构造，并调用线损两步方法 |
-| Qt 驱动映射 worker | `presentation/qt/workers.py:164-193` | 不直接导入模块，通过 runtime 工厂间接构造并调用 `measure_all_frequencies()` |
-| Qt 主功放 worker | `presentation/qt/workers.py:195-223` | 不直接导入模块，通过 runtime 工厂间接构造并调用 `measure_all_frequencies()` |
+| 应用组装层 | `app/gui_runtime.py` | 组装三个应用用例，注入 `prepared_run`、结果仓储、输入读取器和 measurement port；不导入 `enhanced_workers` |
+| Qt 线损 worker | `presentation/qt/workers.py` | 通过 `app.gui_runtime.create_cable_loss_measurement()` 构造，并调用线损两步方法 |
+| Qt 驱动映射 worker | `presentation/qt/workers.py` | 通过 runtime 工厂构造并调用 `measure_all_frequencies()` |
+| Qt 主功放 worker | `presentation/qt/workers.py` | 通过 runtime 工厂构造并调用 `measure_all_frequencies()` |
 
-正式 GUI 的当前链路为：`enhanced_main_gui.py -> presentation/qt/workers.py -> app/gui_runtime.py -> enhanced_workers.py -> measurement_services.py -> measurement_port`。
+正式 GUI 的当前链路为：`enhanced_main_gui.py -> presentation/qt/workers.py -> app/gui_runtime.py -> application/measurements/* -> measurement_services.py -> measurement_port`。`enhanced_workers.py` 仅保留测试和历史兼容引用，不属于生产默认链路。
 
 ### 5.2 测试调用方、patch 目标和历史兼容调用方
 
 | 文件 | 类型 | 具体依赖 |
 | --- | --- | --- |
-| `tests/test_gui_runtime.py` | 测试 patch | `app.gui_runtime.EnhancedCableLossMeasurement`、`app.gui_runtime.EnhancedDriverPowerMapping`、`app.gui_runtime.EnhancedAmplifierMeasurement`；覆盖构造失败时端口清理 |
+| `tests/test_gui_runtime.py` | 测试 patch | `app.gui_runtime.*UseCase`；覆盖三类用例组装、外部注入端口、构造失败时端口清理 |
 | `tests/test_gui_workers.py` | 兼容导入测试 | `from enhanced_workers import InstrumentWorker as LegacyInstrumentWorker`，验证旧 worker 导入仍可用 |
 | `tests/test_measurement_calculations.py` | 历史对象测试 | 直接实例化 `EnhancedAmplifierMeasurement`、`EnhancedCableLossMeasurement`；patch `enhanced_workers.calculate_cable_losses` |
 | `tests/test_measurement_factory.py` | 工厂契约测试 | 直接导入三个增强类，验证缺少 `measurement_port` 时拒绝构造 |
@@ -182,3 +182,4 @@
 - 三个测量 worker 支持显式注入 `prepare_factory` 和 `measurement_factory`；默认工厂只在 worker 运行时延迟解析应用组装入口。
 - 应用用例构造失败统一通过 `error` signal 报告；测量取消继续通过 `stopped` signal 报告，线损第二步通过既有 `step_pause` signal 暂停并等待确认。
 - 阶段 4 验证：重点 worker/runtime 测试及完整测试套件通过。
+- 阶段 5.2 审计：`app`、`application`、`infrastructure` 和 `presentation` 生产包通过 AST 依赖检查，均不导入 `enhanced_workers`；应用层不直接导入 VISA 或 Qt。三类 runtime 工厂的外部注入与工厂创建端口所有权回归保留在 `tests/test_gui_runtime.py`。

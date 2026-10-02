@@ -15,6 +15,20 @@ class GuiImportSmokeTests(unittest.TestCase):
             import enhanced_main_gui  # noqa: F401
             resource_manager.assert_not_called()
 
+    def test_gui_composition_controller_closes_handed_off_port(self):
+        import enhanced_main_gui
+
+        class _Port:
+            def __init__(self):
+                self.close_calls = []
+
+            def close_all(self, *, close_rf=False):
+                self.close_calls.append(close_rf)
+
+        port = _Port()
+        self.assertIsNone(enhanced_main_gui.MainWindow._close_instrument_port(port))
+        self.assertEqual(port.close_calls, [True])
+
 
 if __name__ == "__main__":
     unittest.main()

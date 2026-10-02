@@ -204,4 +204,7 @@
 - 已删除旧适配器持久化测试，更新历史增强类测试和回滚清单测试；现代应用用例、Qt worker 和结果仓储测试继续覆盖对应行为。
 - 结果保存仍通过 `MeasurementResultRepository` 和 `FileMeasurementResultRepository`，旧结果格式及兼容副本由现有持久化实现继续维护。
 - 本阶段只做离线结构和测试清理，未改变 SCPI、设备时序、清理顺序或生产配置，因此不执行真实 Hardware smoke。
-- 第一期开启第二期条件满足：生产调用方已脱离该文件，应用用例和 Qt worker 边界稳定，结果保存经过明确仓储接口，端口所有权与安全清理回归保留。
+- 收尾复核结果（2026-10-02）：使用 `.env` 中 `AUTO_TEST_PYTHON` 执行 `./run_tests.ps1`，`511` 项测试全部通过；`launcher.py --check`、`launcher.py --validate-config` 和 `python -m compileall -q .` 均通过。
+- 收尾结构审计确认：`enhanced_workers.py` 已不存在；`app`、`application`、`infrastructure`、`presentation` 生产包无旧模块导入；`release_manifest.py` 无旧文件回滚项。仓库中剩余 `enhanced_workers` 文本仅用于架构禁止依赖的测试断言和历史文档说明。
+- 第一期非硬件工作已闭环：生产调用方已脱离该文件，应用用例和 Qt worker 边界稳定，结果保存经过明确仓储接口，端口所有权与安全清理回归保留。
+- 唯一剩余事项：受控真实 Hardware smoke。执行前需准备设备、地址、供电拓扑、安全限制和现场批准；执行后补充硬件记录，不能用离线测试替代。

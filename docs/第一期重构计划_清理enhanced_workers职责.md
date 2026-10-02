@@ -727,18 +727,18 @@ result_storage compatibility implementation
 
 ## 10. 当前状态
 
-阶段 6 已于 2026-10-02 执行完成；本文以下历史基线描述保留为计划编写时记录，最终处置以本文末尾的阶段 6 记录为准。
+截至 2026-10-02，第一期除真实 Hardware smoke 外的收尾工作已经完成。此前列出的 `enhanced_workers.py`、三个 `Enhanced*Measurement` 和旧 Qt worker 导出均属于历史基线，不代表当前代码状态。
 
-截至本文编写时，已知事实如下：
+当前事实如下：
 
-- `instrument` 四层和 `SafetyInstrumentSession` 已作为默认硬件边界使用。
-- `app.gui_runtime` 当前仍直接导入三个 `Enhanced*Measurement`。
-- `enhanced_workers.py` 当前仍同时承载测量包装、结果保存和历史兼容。
-- `presentation/qt/workers.py` 已承担现代 Qt worker，但其测量对象仍通过 `app.gui_runtime` 间接进入 `enhanced_workers.py`。
-- `result_storage.py` 仍是现有运行快照和结果兼容存储实现，不应在第一期整体删除。
-- 现有文档记录过 Unit、Simulation 和全量离线测试通过；真实三类完整测量验收仍然是独立门槛。
+- `enhanced_workers.py` 已删除，仓库中没有生产模块导入或受支持的兼容入口。
+- `app.gui_runtime` 直接组装三个应用测量用例，并维护 measurement port 的创建、注入和失败清理所有权。
+- 测量流程由 `application/measurements/*` 承担，Qt 生命周期和 signal 转换由 `presentation/qt/workers.py` 承担。
+- 结果保存和读取依赖通过 `application.ports`、`infrastructure.persistence` 和 `application.inputs` 隔离；`result_storage.py` 继续提供旧结果格式、归档、兼容副本和版本化模型能力。
+- 生产包的静态依赖审计未发现 `enhanced_workers` 导入；`release_manifest.py` 未将已删除文件列入回滚文件。
+- 当前唯一未完成的第一期验收事项是真实三类测量的受控 Hardware smoke。该事项不属于本次离线收尾，且在未获得设备、地址和安全窗口前不得执行。
 
-第一期每完成一个阶段，应在本文末尾或对应阶段记录中追加：完成日期、实际改动文件、验证命令、测试数量、未解决问题和回滚点。
+第一期文档收尾要求已完成：实际测试数量、验证命令、审计结论、未解决事项、回滚边界和硬件验收步骤均已记录在本文及阶段 0 调用方清单中。
 
 ### 阶段 6 实际记录（2026-10-02）
 
@@ -748,4 +748,15 @@ result_storage compatibility implementation
 - 兼容保留：`result_storage.py` 的旧结果格式、运行归档、旧路径副本和版本化模型能力继续保留；删除的是职责混合的旧入口，不是结果文件兼容能力。
 - 回滚点：如发现外部兼容导入，只恢复纯兼容 shim；不得恢复旧测量流程、结果保存或 Qt worker 实现。
 - 验收命令：`./run_tests.ps1`、使用 `.env` 中 `AUTO_TEST_PYTHON` 的 `launcher.py --check` 和 `launcher.py --validate-config`。
+- 实际验收结果（2026-10-02 收尾复核）：`./run_tests.ps1` 通过，`511` 项测试通过；`launcher.py --check` 通过；`launcher.py --validate-config` 通过；使用同一解释器执行 `python -m compileall -q .` 通过。
+- 结构审计结果：`enhanced_workers.py` 不存在；生产包 `app`、`application`、`infrastructure`、`presentation` 未发现旧模块导入；`release_manifest.py` 未保留旧文件回滚项。
+- 工作区与回滚：收尾复核开始时工作区无未提交改动；如未来发现仓库外兼容导入，只恢复纯兼容 shim，不恢复测量流程、结果保存或 Qt worker 实现。
 - 硬件验收：未执行真实 Hardware smoke。本批未修改 SCPI 命令、设备时序、资源所有权、安全清理顺序或生产配置。
+
+### 第一阶段收尾后的剩余步骤（仅 Hardware smoke）
+
+1. 准备受控硬件验收窗口：确认设备连接、VISA 地址、供电拓扑、DUT 保护条件、功率上限、停止和紧急停止方案，并记录现场配置版本。
+2. 按既定安全流程执行最小连接和清理 smoke，确认 RF 初始关闭、供电状态符合预期、异常时仍能关闭 RF/电源并释放连接。
+3. 在安全限制和现场批准下，依次验证线损、驱动功率映射、主功放三类完整测量；每类记录仪器动作顺序、结果归档目录、兼容副本和清理结果。
+4. 分别覆盖正常完成、普通停止、紧急停止和测量异常后的重新连接；确认不会复用已清理端口，也不会遗留 RF 或电源开启状态。
+5. 将现场日志、结果文件、异常和清理证据归档，并在本文补充执行日期、设备信息、结果、失败项和回滚决定；在此之前第一期状态保持“离线收尾完成，Hardware smoke 待执行”。

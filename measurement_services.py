@@ -106,6 +106,15 @@ class CableLossService(_Service):
         finally:
             self.inst_ctrl.rf_output_off()
 
+    @property
+    def path1_losses(self) -> dict[Any, float]:
+        """Return the path-1 measurements collected so far."""
+        return dict(self._path1_losses)
+
+    def cleanup(self) -> None:
+        """Expose the common safety cleanup boundary to application callers."""
+        self._cleanup()
+
     def run(self, *, path2_confirmed: bool = True) -> dict[str, Any]:
         frequencies = self.config["test_frequencies"]
         path1: dict[Any, float] = dict(self._path1_losses)

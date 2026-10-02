@@ -39,6 +39,13 @@ def _prepared_run():
 
 
 class GuiRuntimeAssemblyTests(unittest.TestCase):
+    def test_application_assembly_does_not_import_legacy_workers(self):
+        runtime_source = Path(__file__).parents[1] / "app" / "gui_runtime.py"
+        source = runtime_source.read_text(encoding="utf-8")
+        self.assertNotIn("enhanced_workers", source)
+        self.assertNotIn("EnhancedAmplifierMeasurement", source)
+        self.assertNotIn("EnhancedCableLossMeasurement", source)
+
     def test_default_factories_create_and_inject_hardware_port(self):
         cases = (
             (create_cable_loss_measurement, "CableLossUseCase"),

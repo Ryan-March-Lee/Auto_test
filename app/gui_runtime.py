@@ -68,36 +68,6 @@ def _close_owned_measurement_port(port: Any) -> None:
         logger.exception("测量对象构造失败后的仪器清理也失败")
 
 
-def _assemble_measurement(
-    measurement_type: Any,
-    config_path: str,
-    callbacks: dict[str, Any],
-    *,
-    port_factory: Any,
-    request_factory: Any = None,
-) -> Any:
-    """Create a measurement and close only ports owned by this composition call."""
-    owned_port = callbacks.get("measurement_port") is None
-    try:
-        if owned_port:
-            callbacks["measurement_port"] = port_factory(config_path)
-        callbacks.setdefault("result_repository", FileMeasurementResultRepository())
-        if request_factory is not None:
-            callbacks["request"] = request_factory(callbacks)
-        measurement_kwargs = dict(callbacks)
-        # input_reader belongs to the application request.  It must not leak
-        # into the legacy adapter's constructor during the migration period.
-        for request_only_input in ("input_reader", "loss_data_path", "driver_mapping_path"):
-            measurement_kwargs.pop(request_only_input, None)
-        return measurement_type(config_path, **measurement_kwargs)
-    except Exception:
-        if owned_port:
-            port = callbacks.get("measurement_port")
-            if port is not None:
-                _close_owned_measurement_port(port)
-        raise
-
-
 def create_offline_measurement_port(
     *,
     power_channels: dict[str, str] | None = None,

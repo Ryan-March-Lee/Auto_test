@@ -727,7 +727,7 @@ result_storage compatibility implementation
 
 ## 10. 当前状态
 
-本文是计划文档，不代表第一期已经执行完成。
+阶段 6 已于 2026-10-02 执行完成；本文以下历史基线描述保留为计划编写时记录，最终处置以本文末尾的阶段 6 记录为准。
 
 截至本文编写时，已知事实如下：
 
@@ -739,3 +739,13 @@ result_storage compatibility implementation
 - 现有文档记录过 Unit、Simulation 和全量离线测试通过；真实三类完整测量验收仍然是独立门槛。
 
 第一期每完成一个阶段，应在本文末尾或对应阶段记录中追加：完成日期、实际改动文件、验证命令、测试数量、未解决问题和回滚点。
+
+### 阶段 6 实际记录（2026-10-02）
+
+- 处置决定：删除 `enhanced_workers.py`，不保留兼容 shim。仓库内没有生产调用方或已登记的仓库外兼容需求；剩余引用均为内部测试、历史回滚清单或文档引用。
+- 实际改动：删除 `enhanced_workers.py` 及其专用持久化测试；移除旧增强类、旧 worker 兼容导入测试；更新测量循环回归、工厂测试、发布清单、README 和调用方文档。
+- 现代职责归属：测量流程由 `application/measurements/*` 承担，Qt 生命周期和 signal 转换由 `presentation/qt/workers.py` 承担，结果保存由 `application.ports.result_repository` 和 `infrastructure.persistence.result_repository` 承担。
+- 兼容保留：`result_storage.py` 的旧结果格式、运行归档、旧路径副本和版本化模型能力继续保留；删除的是职责混合的旧入口，不是结果文件兼容能力。
+- 回滚点：如发现外部兼容导入，只恢复纯兼容 shim；不得恢复旧测量流程、结果保存或 Qt worker 实现。
+- 验收命令：`./run_tests.ps1`、使用 `.env` 中 `AUTO_TEST_PYTHON` 的 `launcher.py --check` 和 `launcher.py --validate-config`。
+- 硬件验收：未执行真实 Hardware smoke。本批未修改 SCPI 命令、设备时序、资源所有权、安全清理顺序或生产配置。

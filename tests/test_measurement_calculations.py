@@ -309,20 +309,6 @@ class MeasurementEntryPointDelegationTests(unittest.TestCase):
             driver_mapping=SAMPLE_DRIVER_MAPPING,
         )
 
-    def test_enhanced_amplifier_inherits_the_same_entry_point(self):
-        from enhanced_workers import EnhancedAmplifierMeasurement
-
-        measurement = EnhancedAmplifierMeasurement.__new__(EnhancedAmplifierMeasurement)
-        measurement.config = {"attenuator": {"type": "30dB"}}
-        measurement.loss_data = {"cable_losses": SAMPLE_LOSS_DATA}
-
-        with patch("measurement_calculations.compensate_amplifier_output_power",
-                   return_value=123.4) as calculate:
-            result = measurement.calculate_actual_power(1.0, -10.0)
-
-        self.assertEqual(result, 123.4)
-        calculate.assert_called_once()
-
     def test_sync_cable_measurement_delegates_to_pure_function(self):
         from cable_loss_measurement import CableLossMeasurement
 
@@ -348,38 +334,6 @@ class MeasurementEntryPointDelegationTests(unittest.TestCase):
         calculate.assert_called_once_with(
             path1_loss=32.3,
             path2_loss=32.3,
-            attenuator_value=30.0,
-        )
-
-    def test_enhanced_cable_measurement_delegates_to_pure_function(self):
-        from enhanced_workers import EnhancedCableLossMeasurement
-
-        measurement = EnhancedCableLossMeasurement.__new__(EnhancedCableLossMeasurement)
-        measurement.config = {"test_frequencies": [1.0]}
-        measurement.attenuator_value = 30.0
-        measurement.path1_losses = {1.0: 32.3}
-        measurement.cable_losses = {}
-        measurement.should_stop = False
-        measurement.save_results = lambda: None
-        measurement.emit_message = lambda message: None
-        measurement.emit_progress = lambda value: None
-        measurement.measure_path_loss = lambda frequency: 33.21
-
-        result = {
-            "cable1": 1.15, "cable2": 1.15,
-            "cable3": 0.455, "cable4": 0.455,
-            "total_path1": 32.3, "total_path2": 33.21,
-        }
-        with patch(
-            "enhanced_workers.calculate_cable_losses",
-            return_value=result,
-        ) as calculate:
-            measurement._measure_step2()
-
-        self.assertIs(measurement.cable_losses[1.0], result)
-        calculate.assert_called_once_with(
-            path1_loss=32.3,
-            path2_loss=33.21,
             attenuator_value=30.0,
         )
 

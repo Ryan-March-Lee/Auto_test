@@ -121,7 +121,6 @@ python launcher.py --validate-config
 ```
 pa_auto_test/
 ├── enhanced_main_gui.py          # 主GUI应用
-├── enhanced_workers.py           # 增强的工作线程类
 ├── connection_diagrams.py        # 连接图生成模块
 ├── instrument_control.py         # 仪器控制模块
 ├── cable_loss_measurement.py     # 线损测量模块

@@ -25,7 +25,7 @@ def calculate_cable_losses(path1_loss: float,
                            attenuator_value: float) -> dict:
     """根据路径1、路径2测量损耗和衰减器值计算各线缆分摊损耗。
 
-    公式（与现有 cable_loss_measurement.py 和 enhanced_workers.py 一致）::
+    公式与现有 cable_loss_measurement.py 及应用测量用例保持一致::
 
         cable12_loss = (path1_loss - attenuator_value) / 2
         cable34_loss = (path2_loss - path1_loss) / 2

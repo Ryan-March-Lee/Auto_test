@@ -25,7 +25,9 @@
 
 本次未执行真实 Hardware smoke。阶段 0 未修改 SCPI 命令、设备时序、资源所有权或安全清理逻辑，因此不触发硬件验收。
 
-## 3. `enhanced_workers.py` 公开名称和职责
+## 3. 阶段 0 历史基线：`enhanced_workers.py` 公开名称和职责
+
+本节及第 4、6 节记录阶段 0 建立清单时的历史事实，不代表阶段 6 之后的当前接口或职责所有者。`enhanced_workers.py` 已在阶段 6 删除，旧名称仅用于解释迁移来源。
 
 本清单将名称分为两类：
 
@@ -72,7 +74,7 @@
 | `_CallbackEventSink` | 将 `app.events` 转换为 progress/message/data/checkpoint callback |
 | `_LegacyResultAdapter` | 加载旧配置、创建运行 ID、写入运行快照、调用结果归档和旧路径副本 |
 
-## 4. 三个增强包装器接口清单
+## 4. 阶段 0 历史基线：三个增强包装器接口清单
 
 ### 4.1 `EnhancedCableLossMeasurement`
 
@@ -129,9 +131,9 @@
 | Qt 驱动映射 worker | `presentation/qt/workers.py` | 通过 runtime 工厂构造并调用 `measure_all_frequencies()` |
 | Qt 主功放 worker | `presentation/qt/workers.py` | 通过 runtime 工厂构造并调用 `measure_all_frequencies()` |
 
-正式 GUI 的当前链路为：`enhanced_main_gui.py -> presentation/qt/workers.py -> app/gui_runtime.py -> application/measurements/* -> measurement_services.py -> measurement_port`。`enhanced_workers.py` 仅保留测试和历史兼容引用，不属于生产默认链路。
+正式 GUI 的当前链路为：`enhanced_main_gui.py -> presentation/qt/workers.py -> app/gui_runtime.py -> application/measurements/* -> measurement_services.py -> measurement_port`。阶段 6 后，`enhanced_workers.py` 已删除，不再保留测试或历史兼容入口。
 
-### 5.2 测试调用方、patch 目标和历史兼容调用方
+### 5.2 阶段 6 前的测试调用方、patch 目标和历史兼容调用方
 
 | 文件 | 类型 | 具体依赖 |
 | --- | --- | --- |
@@ -144,9 +146,9 @@
 | `release_manifest.py` | 历史回滚边界 | 将 `enhanced_workers.py` 列入 `ROLLBACK_FILES`，不属于生产运行时导入 |
 | `measurement_calculations.py` | 文档引用 | docstring 提及 `enhanced_workers.py`，不是运行时调用 |
 
-本阶段未发现仓库内对 `_LegacyResultAdapter` 的外部直接导入或 patch；其职责仍由三个增强类继承并在模块内部使用。
+阶段 0 未发现仓库内对 `_LegacyResultAdapter` 的外部直接导入或 patch；该职责随后已由结果仓储和应用用例接管，阶段 6 删除了旧适配器及其专用测试。
 
-## 6. 结果、快照和兼容路径
+## 6. 阶段 0 历史基线：结果、快照和兼容路径
 
 | 内容 | 当前位置或模式 | 当前所有者 |
 | --- | --- | --- |
@@ -162,6 +164,17 @@
 | 输入读取 | `load_json_result(CABLE_LOSS_FILE)`、显式驱动映射路径，或最新 `driver_power_mapping_*.json` | 三个增强包装器构造函数 |
 
 `save_measurement_result()` 的现有行为是先写运行目录归档，再写旧路径兼容副本，并按结果类型写入版本化模型；阶段 0 基线要求后续阶段保持这一格式和失败语义。
+
+### 6.1 阶段 6 后的当前职责归属
+
+| 能力 | 当前所有者 |
+| --- | --- |
+| 测量流程 | `application/measurements/cable_loss.py`、`driver_mapping.py`、`amplifier_test.py` |
+| Qt 线程、停止和 signal 转换 | `presentation/qt/workers.py` |
+| 结果保存接口 | `application.ports.result_repository.MeasurementResultRepository` |
+| 文件结果仓储实现 | `infrastructure.persistence.result_repository.FileMeasurementResultRepository` |
+| 结果输入读取和最新文件发现 | `application.inputs.ResultInputReader` |
+| 旧结果格式、兼容副本和版本化模型底层实现 | `result_storage.py` |
 
 驱动映射和主功放的旧路径文件名使用秒级时间戳；同一秒内重复运行可能生成相同文件名，归档路径已存在时由 `save_measurement_result()` 抛出 `FileExistsError`，不会覆盖已有归档。该行为属于当前基线，不是本阶段引入的问题。阶段 1 的结果仓储测试必须明确覆盖：文件名策略、归档碰撞、旧路径副本不被错误覆盖，以及后续是否保持或有计划地改变该行为。
 
@@ -183,3 +196,12 @@
 - 应用用例构造失败统一通过 `error` signal 报告；测量取消继续通过 `stopped` signal 报告，线损第二步通过既有 `step_pause` signal 暂停并等待确认。
 - 阶段 4 验证：重点 worker/runtime 测试及完整测试套件通过。
 - 阶段 5.2 审计：`app`、`application`、`infrastructure` 和 `presentation` 生产包通过 AST 依赖检查，均不导入 `enhanced_workers`；应用层不直接导入 VISA 或 Qt。三类 runtime 工厂的外部注入与工厂创建端口所有权回归保留在 `tests/test_gui_runtime.py`。
+
+## 9. 阶段 6 处置结果（2026-10-02）
+
+- 再次搜索仓库、测试和发布脚本，未发现生产调用方或已登记的仓库外兼容调用方。
+- 已删除 `enhanced_workers.py`，不保留 shim。三个增强测量类、Qt worker 兼容导出和 `_LegacyResultAdapter` 均不再是受支持入口。
+- 已删除旧适配器持久化测试，更新历史增强类测试和回滚清单测试；现代应用用例、Qt worker 和结果仓储测试继续覆盖对应行为。
+- 结果保存仍通过 `MeasurementResultRepository` 和 `FileMeasurementResultRepository`，旧结果格式及兼容副本由现有持久化实现继续维护。
+- 本阶段只做离线结构和测试清理，未改变 SCPI、设备时序、清理顺序或生产配置，因此不执行真实 Hardware smoke。
+- 第一期开启第二期条件满足：生产调用方已脱离该文件，应用用例和 Qt worker 边界稳定，结果保存经过明确仓储接口，端口所有权与安全清理回归保留。

@@ -31,7 +31,6 @@ RELEASE_FILES = (
 )
 ROLLBACK_FILES = (
     "enhanced_main_gui.py",
-    "enhanced_workers.py",
     "cable_loss_measurement.py",
     "driver_power_mapping.py",
     "amplifier_measurement.py",

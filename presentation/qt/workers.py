@@ -7,6 +7,7 @@ independent of Qt.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 from threading import Event
 import time
@@ -55,24 +56,43 @@ class BaseWorker(QThread):
         else:
             self.signals.error.emit(f"{label}: {error}")
 
+    def _construction_failed(self, error: Exception) -> None:
+        """Keep application assembly failures distinct from measurement errors."""
+        self.signals.error.emit(f"应用用例构造失败: {error}")
+
+    @staticmethod
+    def _default_factory(name: str) -> Callable:
+        """Resolve composition functions lazily so this module stays presentation-only."""
+        from app import gui_runtime
+
+        return getattr(gui_runtime, name)
+
 
 class InstrumentWorker(BaseWorker):
     """Connect instruments through the existing application adapter."""
 
-    def __init__(self, config_path: str, sleep_fn=None, measurement_port=None):
+    def __init__(
+        self,
+        config_path: str,
+        sleep_fn=None,
+        measurement_port=None,
+        connect_factory: Callable | None = None,
+    ):
         super().__init__()
         self.config_path = config_path
         self.sleep_fn = sleep_fn or time.sleep
         self.measurement_port = measurement_port
+        self.connect_factory = connect_factory
 
     def run(self) -> None:
         controller = None
         handed_off = False
         try:
-            from app.gui_runtime import connect_instruments
-
             self.emit_message("正在初始化仪器控制...")
             self.signals.progress.emit(25)
+            connect_instruments = self.connect_factory or self._default_factory(
+                "connect_instruments"
+            )
             controller = connect_instruments(self.config_path)
             self.measurement_port = controller
             if self._stop_requested:
@@ -86,8 +106,9 @@ class InstrumentWorker(BaseWorker):
             self.sleep_fn(1)
             self.signals.progress.emit(100)
             self.emit_message("仪器连接成功！")
-            self.signals.result.emit(controller)
+            # result emission transfers ownership to the GUI consumer.
             handed_off = True
+            self.signals.result.emit(controller)
             self.signals.finished.emit()
         except Exception as error:
             if controller is not None and not handed_off:
@@ -104,11 +125,20 @@ class InstrumentWorker(BaseWorker):
 class CableLossWorker(BaseWorker):
     """Run the two-step cable-loss service and expose its checkpoint."""
 
-    def __init__(self, config_path: str, sleep_fn=None, measurement_port=None):
+    def __init__(
+        self,
+        config_path: str,
+        sleep_fn=None,
+        measurement_port=None,
+        measurement_factory: Callable | None = None,
+        prepare_factory: Callable | None = None,
+    ):
         super().__init__()
         self.config_path = config_path
         self.sleep_fn = sleep_fn
         self.measurement_port = measurement_port
+        self.measurement_factory = measurement_factory
+        self.prepare_factory = prepare_factory
         self._continue_event = Event()
         self._waiting_for_continue = False
         self._continue_requested = False
@@ -116,20 +146,29 @@ class CableLossWorker(BaseWorker):
     def run(self) -> None:
         try:
             self.emit_message("开始线损测量...")
-            from app.gui_runtime import create_cable_loss_measurement, prepare_configuration
-
-            prepared = prepare_configuration(self.config_path, operation="cable_loss")
-            self._service = create_cable_loss_measurement(
-                self.config_path,
-                prepared_run=prepared,
-                progress_callback=self.signals.progress.emit,
-                message_callback=self.signals.message.emit,
-                data_callback=self.signals.data_update.emit,
-                sleep_fn=self.sleep_fn,
-                measurement_port=self.measurement_port,
-            )
+            try:
+                prepare_configuration = self.prepare_factory or self._default_factory(
+                    "prepare_configuration"
+                )
+                create_measurement = self.measurement_factory or self._default_factory(
+                    "create_cable_loss_measurement"
+                )
+                prepared = prepare_configuration(self.config_path, operation="cable_loss")
+                self._service = create_measurement(
+                    self.config_path,
+                    prepared_run=prepared,
+                    progress_callback=self.signals.progress.emit,
+                    message_callback=self.signals.message.emit,
+                    data_callback=self.signals.data_update.emit,
+                    sleep_fn=self.sleep_fn,
+                    measurement_port=self.measurement_port,
+                )
+            except Exception as error:
+                self._construction_failed(error)
+                return
             if self._stop_requested:
                 self._service.stop_measurement()
+                self.signals.stopped.emit("用户停止")
                 return
             self._service.set_step_pause_callback(self.signals.step_pause.emit)
             self._service.measure_all_frequencies()
@@ -149,6 +188,7 @@ class CableLossWorker(BaseWorker):
             self._failed("线损测量失败", error)
         finally:
             self._waiting_for_continue = False
+            self.measurement_port = None
 
     def continue_measurement(self) -> None:
         if self._service is None or not self._waiting_for_continue or self._continue_requested:
@@ -164,33 +204,50 @@ class CableLossWorker(BaseWorker):
 class DriverMappingWorker(BaseWorker):
     """Run the shared driver-power mapping service."""
 
-    def __init__(self, config_path: str, sleep_fn=None, measurement_port=None):
+    def __init__(
+        self,
+        config_path: str,
+        sleep_fn=None,
+        measurement_port=None,
+        measurement_factory: Callable | None = None,
+        prepare_factory: Callable | None = None,
+    ):
         super().__init__()
         self.config_path = config_path
         self.sleep_fn = sleep_fn
         self.measurement_port = measurement_port
+        self.measurement_factory = measurement_factory
+        self.prepare_factory = prepare_factory
 
     def run(self) -> None:
         try:
             self.emit_message("开始驱动功放映射测量...")
-            from app.gui_runtime import create_driver_mapping_measurement, prepare_configuration
-
             if self._stop_requested:
                 self.signals.stopped.emit("用户停止")
                 return
-            prepared = prepare_configuration(self.config_path, operation="driver_mapping")
-            if self._stop_requested:
-                self.signals.stopped.emit("用户停止")
+            try:
+                prepare_configuration = self.prepare_factory or self._default_factory(
+                    "prepare_configuration"
+                )
+                create_measurement = self.measurement_factory or self._default_factory(
+                    "create_driver_mapping_measurement"
+                )
+                prepared = prepare_configuration(self.config_path, operation="driver_mapping")
+                if self._stop_requested:
+                    self.signals.stopped.emit("用户停止")
+                    return
+                self._service = create_measurement(
+                    self.config_path,
+                    prepared_run=prepared,
+                    progress_callback=self.signals.progress.emit,
+                    message_callback=self.signals.message.emit,
+                    data_callback=self.signals.data_update.emit,
+                    sleep_fn=self.sleep_fn,
+                    measurement_port=self.measurement_port,
+                )
+            except Exception as error:
+                self._construction_failed(error)
                 return
-            self._service = create_driver_mapping_measurement(
-                self.config_path,
-                prepared_run=prepared,
-                progress_callback=self.signals.progress.emit,
-                message_callback=self.signals.message.emit,
-                data_callback=self.signals.data_update.emit,
-                sleep_fn=self.sleep_fn,
-                measurement_port=self.measurement_port,
-            )
             if self._stop_requested:
                 self._service.stop_measurement()
                 self.signals.stopped.emit("用户停止")
@@ -200,38 +257,57 @@ class DriverMappingWorker(BaseWorker):
             self.signals.finished.emit()
         except Exception as error:
             self._failed("驱动映射测量失败", error)
+        finally:
+            self.measurement_port = None
 
 
 class AmplifierWorker(BaseWorker):
     """Run the application-level amplifier measurement use case."""
 
-    def __init__(self, config_path: str, sleep_fn=None, measurement_port=None):
+    def __init__(
+        self,
+        config_path: str,
+        sleep_fn=None,
+        measurement_port=None,
+        measurement_factory: Callable | None = None,
+        prepare_factory: Callable | None = None,
+    ):
         super().__init__()
         self.config_path = config_path
         self.sleep_fn = sleep_fn
         self.measurement_port = measurement_port
+        self.measurement_factory = measurement_factory
+        self.prepare_factory = prepare_factory
 
     def run(self) -> None:
         try:
             self.emit_message("开始主功放测量...")
-            from app.gui_runtime import create_amplifier_measurement, prepare_configuration
-
             if self._stop_requested:
                 self.signals.stopped.emit("用户停止")
                 return
-            prepared = prepare_configuration(self.config_path)
-            if self._stop_requested:
-                self.signals.stopped.emit("用户停止")
+            try:
+                prepare_configuration = self.prepare_factory or self._default_factory(
+                    "prepare_configuration"
+                )
+                create_measurement = self.measurement_factory or self._default_factory(
+                    "create_amplifier_measurement"
+                )
+                prepared = prepare_configuration(self.config_path)
+                if self._stop_requested:
+                    self.signals.stopped.emit("用户停止")
+                    return
+                self._service = create_measurement(
+                    self.config_path,
+                    prepared_run=prepared,
+                    progress_callback=self.signals.progress.emit,
+                    message_callback=self.signals.message.emit,
+                    data_callback=self.signals.data_update.emit,
+                    sleep_fn=self.sleep_fn,
+                    measurement_port=self.measurement_port,
+                )
+            except Exception as error:
+                self._construction_failed(error)
                 return
-            self._service = create_amplifier_measurement(
-                self.config_path,
-                prepared_run=prepared,
-                progress_callback=self.signals.progress.emit,
-                message_callback=self.signals.message.emit,
-                data_callback=self.signals.data_update.emit,
-                sleep_fn=self.sleep_fn,
-                measurement_port=self.measurement_port,
-            )
             if self._stop_requested:
                 self._service.stop_measurement()
                 self.signals.stopped.emit("用户停止")
@@ -241,6 +317,8 @@ class AmplifierWorker(BaseWorker):
             self.signals.finished.emit()
         except Exception as error:
             self._failed("主功放测量失败", error)
+        finally:
+            self.measurement_port = None
 
 
 __all__ = [

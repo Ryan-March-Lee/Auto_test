@@ -102,6 +102,8 @@ class GuiWorkerTests(unittest.TestCase):
 
     def test_preflight_failure_prevents_measurement_service_creation(self):
         worker = CableLossWorker("config.json", sleep_fn=lambda _: None)
+        errors = []
+        worker.signals.error.connect(errors.append)
 
         with patch(
             "app.gui_runtime.prepare_configuration",
@@ -111,6 +113,94 @@ class GuiWorkerTests(unittest.TestCase):
 
         factory.assert_not_called()
         self.assertIsNone(worker.service)
+        self.assertEqual(errors, ["应用用例构造失败: snapshot failed"])
+
+    def test_cable_loss_stop_after_assembly_emits_stopped(self):
+        service = _CableService(threading.Event())
+        stopped = []
+        worker = CableLossWorker(
+            "config.json",
+            sleep_fn=lambda _: None,
+            prepare_factory=lambda *_args, **_kwargs: object(),
+        )
+        worker.signals.stopped.connect(stopped.append)
+
+        def create_and_stop(*_args, **_kwargs):
+            worker.stop()
+            return service
+
+        worker.measurement_factory = create_and_stop
+        worker.run()
+
+        self.assertTrue(service.stop_called.is_set())
+        self.assertEqual(stopped, ["用户停止"])
+        self.assertIsNone(worker.measurement_port)
+
+    def test_measurement_factory_is_explicitly_injected(self):
+        prepared = object()
+        service = _DriverMappingService()
+        calls = []
+
+        def prepare(*args, **kwargs):
+            calls.append((args, kwargs))
+            return prepared
+
+        def factory(*args, **kwargs):
+            calls.append((args, kwargs))
+            return service
+
+        worker = DriverMappingWorker(
+            "config.json",
+            sleep_fn=lambda _: None,
+            measurement_factory=factory,
+            prepare_factory=prepare,
+        )
+        worker.run()
+
+        self.assertIs(worker.service, service)
+        self.assertTrue(service.measure_called.is_set())
+        self.assertEqual(calls[0][1], {"operation": "driver_mapping"})
+        self.assertIs(calls[1][1]["prepared_run"], prepared)
+
+    def test_measurement_construction_failure_uses_application_error_signal(self):
+        errors = []
+        worker = AmplifierWorker(
+            "config.json",
+            prepare_factory=lambda *_args, **_kwargs: object(),
+            measurement_factory=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("request assembly failed")
+            ),
+        )
+        worker.signals.error.connect(errors.append)
+        worker.run()
+
+        self.assertEqual(errors, ["应用用例构造失败: request assembly failed"])
+        self.assertIsNone(worker.service)
+
+    def test_measurement_construction_failure_does_not_close_injected_port(self):
+        class _Port:
+            def __init__(self):
+                self.close_calls = []
+
+            def close_all(self, *, close_rf=False):
+                self.close_calls.append(close_rf)
+
+        port = _Port()
+        errors = []
+        worker = DriverMappingWorker(
+            "config.json",
+            measurement_port=port,
+            prepare_factory=lambda *_args, **_kwargs: object(),
+            measurement_factory=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("assembly failed")
+            ),
+        )
+        worker.signals.error.connect(errors.append)
+        worker.run()
+
+        self.assertEqual(errors, ["应用用例构造失败: assembly failed"])
+        self.assertEqual(port.close_calls, [])
+        self.assertIsNone(worker.measurement_port)
 
     def test_driver_mapping_stop_before_run_skips_preflight_and_measurement(self):
         worker = DriverMappingWorker("config.json", sleep_fn=lambda _: None)
@@ -230,6 +320,24 @@ class GuiWorkerTests(unittest.TestCase):
             worker.run()
         self.assertEqual(port.close_calls, [True])
         self.assertIsNone(worker.measurement_port)
+
+    def test_instrument_worker_accepts_explicit_connect_factory(self):
+        class _Port:
+            def close_all(self, *, close_rf=False):
+                raise AssertionError("成功交接不应清理端口")
+
+        port = _Port()
+        results = []
+        worker = InstrumentWorker(
+            "config.json",
+            sleep_fn=lambda _seconds: None,
+            connect_factory=lambda path: (self.assertEqual(path, "config.json"), port)[1],
+        )
+        worker.signals.result.connect(results.append)
+        worker.run()
+
+        self.assertEqual(results, [port])
+        self.assertIs(worker.measurement_port, port)
 
     def test_legacy_instrument_worker_uses_composition_root_and_returns_port(self):
         class _Port:

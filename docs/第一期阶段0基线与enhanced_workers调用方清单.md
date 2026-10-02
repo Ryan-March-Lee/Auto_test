@@ -173,3 +173,12 @@
 - 阶段 1 应先抽取结果仓储边界，覆盖运行归档、旧路径副本、`numpy` 编码、版本化模型和显式 `run_directory` 行为。
 - 阶段 2 应把配置加载、运行上下文和驱动映射文件发现移入 `app.gui_runtime` 或明确的输入读取器。
 - 生产调用方清理前不得删除 `enhanced_workers.py`；测试 patch 目标应在每次生产切换批次同步更新。
+
+## 8. 阶段 4 收敛记录
+
+- 阶段 0 基线链路为：`enhanced_main_gui.py -> presentation/qt/workers.py -> app.gui_runtime.py -> enhanced_workers.py -> measurement_services.py -> measurement_port`。
+- 阶段 4 完成后，正式 GUI 默认链路已收敛为：`enhanced_main_gui.py -> presentation/qt/workers.py -> app.gui_runtime.py -> application/measurements/* -> measurement_services.py -> measurement_port`。Qt worker 负责线程生命周期、取消控制、应用用例调用编排以及应用事件到 Qt signal 的转换，不承载测量算法和结果持久化逻辑；`enhanced_workers.py` 不再是生产默认链路的一部分。
+- `presentation/qt/workers.py` 不导入 `enhanced_workers`、`result_storage`，也不访问 `TEST_RESULTS_DIR` 或 `CABLE_LOSS_FILE`。
+- 三个测量 worker 支持显式注入 `prepare_factory` 和 `measurement_factory`；默认工厂只在 worker 运行时延迟解析应用组装入口。
+- 应用用例构造失败统一通过 `error` signal 报告；测量取消继续通过 `stopped` signal 报告，线损第二步通过既有 `step_pause` signal 暂停并等待确认。
+- 阶段 4 验证：重点 worker/runtime 测试及完整测试套件通过。

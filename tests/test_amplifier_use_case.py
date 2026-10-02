@@ -132,6 +132,11 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
         self.assertEqual(use_case.run_directory, Path("saved-run"))
         self.assertEqual(instrument.close_calls, 1)
 
+    def test_measurement_port_is_required_before_input_loading(self):
+        request = _request(None)
+        with self.assertRaisesRegex(ValueError, "注入 measurement_port"):
+            AmplifierMeasurementUseCase(request)
+
     def test_cancelled_request_is_cleaned_by_service(self):
         instrument = _Instrument()
         token = CancellationToken()

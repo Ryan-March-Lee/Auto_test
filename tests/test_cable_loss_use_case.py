@@ -136,6 +136,17 @@ class CableLossUseCaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "result_repository"):
             CableLossUseCase(request)
 
+    def test_measurement_port_is_required_before_other_dependencies(self):
+        request = _request(_Instrument())
+        request = CableLossMeasurementRequest(
+            configuration=request.configuration,
+            context=request.context,
+            run_directory=request.run_directory,
+            measurement_port=None,
+        )
+        with self.assertRaisesRegex(ValueError, "注入 measurement_port"):
+            CableLossUseCase(request)
+
     def test_exception_is_cleaned_by_service_and_not_saved(self):
         instrument = _Instrument(fail=True)
         repository = _Repository()

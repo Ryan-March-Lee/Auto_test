@@ -106,6 +106,14 @@ class DriverPowerMappingUseCaseTests(unittest.TestCase):
                 _request(_Instrument(), reader=_Reader()), sleep_fn=lambda _: None
             )
 
+    def test_measurement_port_is_required_before_input_loading(self):
+        request = _request(
+            None,
+            loss_data={"cable_losses": {"1.0": {"cable2": 2.0}}},
+        )
+        with self.assertRaisesRegex(ValueError, "注入 measurement_port"):
+            DriverPowerMappingUseCase(request)
+
     def test_reader_is_used_for_explicit_input(self):
         reader = _Reader({"cable_losses": {"1.0": {"cable2": 2.0}}})
         use_case = DriverPowerMappingUseCase(

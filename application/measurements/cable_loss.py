@@ -28,6 +28,8 @@ class CableLossUseCase:
         sleep_fn: Callable[[float], None] | None = None,
     ) -> None:
         self.request = request
+        if request.measurement_port is None:
+            raise ValueError("CableLossUseCase 必须由应用组装层注入 measurement_port")
         self.config = _service_config(request.configuration)
         self.inst_ctrl = request.measurement_port
         self.run_id = request.run_id

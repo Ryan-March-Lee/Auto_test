@@ -40,7 +40,7 @@ class PageProtocol(Protocol):
         """解除 controller signal 连接并释放页面资源。"""
 
 
-class BasePage(ABC):
+class PageControllerBindingMixin:
     """页面生命周期的无 Qt 基类。
 
     子类只需实现 ``build_ui``，并在 ``_connect_controller_signals`` 中连接
@@ -58,10 +58,6 @@ class BasePage(ABC):
     def controller(self) -> Any | None:
         """当前绑定的 controller；页面未绑定时为 ``None``。"""
         return self._controller
-
-    @abstractmethod
-    def build_ui(self) -> Any:
-        """创建并返回页面根 widget。"""
 
     def bind_controller(self, controller: Any) -> None:
         """绑定 controller，并让子类建立自己的 signal 连接。"""
@@ -140,6 +136,14 @@ class BasePage(ABC):
         return RuntimeError(f"{message}: {details}")
 
 
+class BasePage(PageControllerBindingMixin, ABC):
+    """可由纯 Python 页面继承的抽象页面基类。"""
+
+    @abstractmethod
+    def build_ui(self) -> Any:
+        """创建并返回页面根 widget。"""
+
+
 @dataclass(frozen=True)
 class PageDefinition:
     key: str
@@ -165,6 +169,7 @@ def build_pages(window: Any) -> None:
 
 __all__ = [
     "PageProtocol",
+    "PageControllerBindingMixin",
     "BasePage",
     "PageDefinition",
     "PAGE_DEFINITIONS",

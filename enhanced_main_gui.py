@@ -44,6 +44,9 @@ from app.gui_runtime import (
 )
 from data_visualization import DataVisualization
 from presentation.qt.pages import build_pages
+from presentation.qt.cable_loss_page import CableLossPage
+from presentation.qt.measurement_controller import MeasurementController
+from presentation.qt.measurement_state import MeasurementKind
 from presentation.qt.workers import (
     AmplifierWorker,
     BaseWorker,
@@ -66,6 +69,7 @@ from project_paths import (
     TEST_RESULTS_DIR,
 )
 from config_io import load_config_file
+from result_reading import load_measurement_result
 from app_logging import setup_logging
 from assistant.storage import (
     has_current_history,
@@ -1399,6 +1403,15 @@ class MainWindow(QMainWindow):
         self.instrument_ctrl = None
         self.current_worker = None
         self.emergency_stop = False
+        self.measurement_controller = MeasurementController(
+            {MeasurementKind.CABLE_LOSS: lambda command, *, measurement_port=None: CableLossWorker(
+                command.config_path, measurement_port=measurement_port
+            )},
+            lambda: str(CONFIG_FILE),
+        )
+        self.measurement_controller.signals.thread_finished.connect(
+            self._on_cable_loss_controller_thread_finished
+        )
         
         # 数据可视化相关变量
         self.loaded_data = None
@@ -2093,68 +2106,52 @@ class MainWindow(QMainWindow):
         
     def create_cable_loss_tab(self):
         """创建线损测量选项卡"""
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        
-        # 连接说明
-        instruction_group = QGroupBox("连接说明")
-        instruction_layout = QVBoxLayout(instruction_group)
-        
-        # 添加连接图示和说明文字
-        instruction_text = QTextEdit()
-        instruction_text.setMaximumHeight(200)
-        instruction_text.setHtml("""
-        <h3>线损测量连接说明:</h3>
-        <p><b>步骤1 - 路径1测量:</b></p>
-        <p>信号源 → 线缆① → 衰减器 → 线缆② → 频谱仪</p>
-        <br>
-        <p><b>步骤2 - 路径2测量:</b></p>  
-        <p>信号源 → 线缆① → 线缆③ → 线缆④ → 衰减器 → 线缆② → 频谱仪</p>
-        <br>
-        <p style="color: red;"><b>注意:</b> 每个步骤会提示您重新连接线缆，请按提示操作</p>
-        """)
-        instruction_layout.addWidget(instruction_text)
-        
-        # 连接图按钮
-        diagram_layout = QHBoxLayout()
-        self.show_path1_btn = QPushButton("查看路径1连接图")
-        self.show_path1_btn.clicked.connect(lambda: self.show_connection_diagram('cable_loss_path1'))
-        diagram_layout.addWidget(self.show_path1_btn)
-        
-        self.show_path2_btn = QPushButton("查看路径2连接图")
-        self.show_path2_btn.clicked.connect(lambda: self.show_connection_diagram('cable_loss_path2'))
-        diagram_layout.addWidget(self.show_path2_btn)
-        
-        instruction_layout.addLayout(diagram_layout)
-        layout.addWidget(instruction_group)
-        
-        # 控制按钮
-        control_group = QGroupBox("测量控制")
-        control_layout = QHBoxLayout(control_group)
-        
-        self.cable_loss_btn = QPushButton("开始线损测量")
-        self.cable_loss_btn.clicked.connect(self.start_cable_loss_measurement)
-        control_layout.addWidget(self.cable_loss_btn)
-        
-        # 加载结果按钮
-        self.load_cable_results_btn = QPushButton("加载测量结果")
-        self.load_cable_results_btn.clicked.connect(self.load_cable_loss_results)
-        control_layout.addWidget(self.load_cable_results_btn)
-        
-        layout.addWidget(control_group)
-        
-        # 结果显示
-        result_group = QGroupBox("测量结果")
-        result_layout = QVBoxLayout(result_group)
-        
-        self.cable_loss_table = QTableWidget()
-        self.cable_loss_table.setColumnCount(5)
-        self.cable_loss_table.setHorizontalHeaderLabels(['频率(GHz)', '线缆1(dB)', '线缆2(dB)', '线缆3(dB)', '线缆4(dB)'])
-        result_layout.addWidget(self.cable_loss_table)
-        
-        layout.addWidget(result_group)
-        
-        self.tab_widget.addTab(tab, "线损测量")
+        self.cable_loss_page = CableLossPage(
+            config_path_provider=lambda: str(CONFIG_FILE),
+            prepare_run=self._prepare_cable_loss_run,
+            confirm_wiring=self._confirm_cable_loss_wiring,
+            connection_dialog_factory=lambda kind, parent: ConnectionDialog(kind, parent),
+            load_results_callback=lambda: load_measurement_result(CABLE_LOSS_FILE),
+            log_callback=self.add_log_message,
+            progress_callback=lambda value: getattr(self, "progress_bar", None)
+            and self.progress_bar.setValue(value),
+            error_callback=lambda message: self.on_worker_error(message, close_port=False),
+        )
+        self.cable_loss_page.bind_controller(self.measurement_controller)
+        self.cable_loss_btn = self.cable_loss_page.cable_loss_btn
+        self.cable_loss_table = self.cable_loss_page.cable_loss_table
+        self.tab_widget.addTab(self.cable_loss_page, "线损测量")
+
+    def _prepare_cable_loss_run(self):
+        if self.instrument_ctrl is None:
+            self.on_worker_error("请先连接仪器；上一次测量结束后端口已安全释放")
+            return False
+        return self.update_and_save_config()
+
+    def _confirm_cable_loss_wiring(self):
+        self.config.setdefault('wiring', {})
+        self.config['wiring'].update({
+            'confirmed': True,
+            'connection_note': '已通过线损测量连接确认对话框确认现场接线',
+            'confirmed_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+            'confirmation_source': 'cable_loss_path1_dialog',
+        })
+        if self._save_config_file():
+            self.add_log_message("现场接线确认已保存")
+            self.measurement_controller.set_measurement_port(self.instrument_ctrl)
+            return True
+        self.add_log_message(f"配置保存失败: {self._last_save_error}")
+        return False
+
+    def _on_cable_loss_controller_thread_finished(self):
+        if self.measurement_controller.state.kind is not MeasurementKind.CABLE_LOSS:
+            return
+        if self.instrument_ctrl is not None:
+            try:
+                self._close_instrument_port(self.instrument_ctrl)
+            except Exception as error:
+                self.add_log_message(f"仪器清理失败: {error}")
+            self.instrument_ctrl = None
         
     def create_driver_mapping_tab(self):
         """创建驱动映射选项卡"""
@@ -2513,80 +2510,6 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self.add_log_message("所有仪器连接成功！")
         
-    def start_cable_loss_measurement(self):
-        """开始线损测量"""
-        if self.current_worker and self.current_worker.isRunning():
-            return
-        if self.instrument_ctrl is None:
-            self.on_worker_error("请先连接仪器；上一次测量结束后端口已安全释放")
-            return
-
-        # 先保存当前参数。保存会使旧的接线确认失效，避免把上一次现场
-        # 的确认复用于已经改变的仪器或测试参数。
-        if not self.update_and_save_config():
-            return
-
-        # 显示连接确认对话框
-        dialog = ConnectionDialog('cable_loss_path1', self)
-        if dialog.exec() != QDialog.Accepted:
-            return
-
-        # 线损连接确认是运行前置条件，必须写回配置供后台预检读取。
-        self.config.setdefault('wiring', {})
-        self.config['wiring'].update({
-            'confirmed': True,
-            'connection_note': '已通过线损测量连接确认对话框确认现场接线',
-            'confirmed_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
-            'confirmation_source': 'cable_loss_path1_dialog',
-        })
-
-        # 保存本次对话框产生的现场确认元数据。此处不能再次调用
-        # update_and_save_config，因为该方法会主动使接线确认失效。
-        if self._save_config_file():
-            self.add_log_message("现场接线确认已保存")
-        else:
-            self.add_log_message(f"配置保存失败: {self._last_save_error}")
-            return
-
-        # 测量线程启动前清空旧结果，后续由实时信号逐频点填充本次数据。
-        self.clear_cable_loss_results()
-        self.add_log_message("开始线损测量...")
-        self.cable_loss_btn.setEnabled(False)
-        
-        self.current_worker = CableLossWorker(
-            str(CONFIG_FILE), measurement_port=self.instrument_ctrl
-        )
-        self.current_worker.signals.finished.connect(lambda: self.on_measurement_finished(self.cable_loss_btn))
-        self.current_worker.signals.error.connect(self.on_worker_error)
-        self.current_worker.signals.stopped.connect(self.on_worker_stopped)
-        self.current_worker.signals.message.connect(self.add_log_message)
-        self.current_worker.signals.progress.connect(self.progress_bar.setValue)
-        self.current_worker.signals.data_update.connect(self.update_cable_loss_realtime)
-        # 添加步骤暂停信号处理
-        self.current_worker.signals.step_pause.connect(self.on_cable_loss_step_pause)
-        self.current_worker.start()
-        
-    def on_cable_loss_step_pause(self, message):
-        """处理线损测量步骤暂停"""
-        worker = self.current_worker
-        if not worker or not worker.isRunning() or not getattr(worker, '_waiting_for_continue', False):
-            return
-
-        # 显示第二步的连接确认对话框（带图示）
-        dialog = ConnectionDialog('cable_loss_path2', self)
-        
-        if dialog.exec() == QDialog.Accepted:
-            # 继续第二步测量
-            if worker is self.current_worker and hasattr(worker, 'continue_measurement'):
-                worker.continue_measurement()
-        else:
-            # 用户取消，停止测量
-            if worker is self.current_worker:
-                worker.stop()
-            self.cable_loss_btn.setEnabled(True)
-            self.progress_bar.setValue(0)
-            self.add_log_message("线损测量已取消")
-        
     def start_driver_mapping(self):
         """开始驱动映射"""
         if self.instrument_ctrl is None:
@@ -2714,16 +2637,12 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'emergency_stop_btn'):
                 self.emergency_stop_btn.setEnabled(False)
         
-        # 如果是线损测量完成，加载结果到表格
-        if button == self.cable_loss_btn:
-            self.load_cable_loss_results()
-        
         # 刷新文件列表
         self.refresh_file_list()
         # 测量服务会清理注入的端口；避免下一次测量复用已关闭 session。
         self.instrument_ctrl = None
         
-    def on_worker_error(self, error_message):
+    def on_worker_error(self, error_message, *, close_port=True):
         """工作线程错误处理"""
         self.add_log_message(f"错误: {error_message}")
         QMessageBox.critical(self, "错误", error_message)
@@ -2736,7 +2655,7 @@ class MainWindow(QMainWindow):
         
         # 重置进度条
         self.progress_bar.setValue(0)
-        if self.instrument_ctrl is not None:
+        if close_port and self.instrument_ctrl is not None:
             try:
                 self._close_instrument_port(self.instrument_ctrl)
             except Exception as error:
@@ -2761,71 +2680,6 @@ class MainWindow(QMainWindow):
             except Exception as error:
                 self.add_log_message(f"仪器清理失败: {error}")
             self.instrument_ctrl = None
-        
-    def load_cable_loss_results(self):
-        """加载线损测量结果到表格"""
-        try:
-            with open(CABLE_LOSS_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            cable_losses = data.get('cable_losses', {})
-            
-            # 设置表格行数
-            self.cable_loss_table.setRowCount(len(cable_losses))
-            
-            # 填充数据
-            for row, (frequency, losses) in enumerate(cable_losses.items()):
-                # 频率
-                self.cable_loss_table.setItem(row, 0, QTableWidgetItem(f"{frequency}"))
-                # 线缆1
-                self.cable_loss_table.setItem(row, 1, QTableWidgetItem(f"{losses.get('cable1', 0):.3f}"))
-                # 线缆2  
-                self.cable_loss_table.setItem(row, 2, QTableWidgetItem(f"{losses.get('cable2', 0):.3f}"))
-                # 线缆3
-                self.cable_loss_table.setItem(row, 3, QTableWidgetItem(f"{losses.get('cable3', 0):.3f}"))
-                # 线缆4
-                self.cable_loss_table.setItem(row, 4, QTableWidgetItem(f"{losses.get('cable4', 0):.3f}"))
-            
-            # 调整列宽
-            self.cable_loss_table.resizeColumnsToContents()
-            
-            self.add_log_message(f"已加载线损测量结果，共 {len(cable_losses)} 个频点")
-            
-        except FileNotFoundError:
-            self.add_log_message("未找到线损测量结果文件")
-        except Exception as e:
-            self.add_log_message(f"加载线损测量结果失败: {e}")
-
-    def clear_cable_loss_results(self):
-        """清空线损输出表，准备接收本次测量的实时结果。"""
-        self.cable_loss_table.setRowCount(0)
-        self.add_log_message("已清空上一次线损测量结果")
-
-    def update_cable_loss_realtime(self, data):
-        """按采集进度更新线损表格，路径2完成后显示最终四根线缆损耗。"""
-        if 'frequency' not in data:
-            return
-        frequency = str(data['frequency'])
-        row = next(
-            (index for index in range(self.cable_loss_table.rowCount())
-             if self.cable_loss_table.item(index, 0)
-             and self.cable_loss_table.item(index, 0).text() == frequency),
-            -1,
-        )
-        if row < 0:
-            row = self.cable_loss_table.rowCount()
-            self.cable_loss_table.insertRow(row)
-            self.cable_loss_table.setItem(row, 0, QTableWidgetItem(frequency))
-
-        losses = data.get('cable_losses', {})
-        if losses:
-            values = [losses.get(f'cable{index}', 0) for index in range(1, 5)]
-        else:
-            values = ['', '', '', '']
-        for column, value in enumerate(values, start=1):
-            if value != '':
-                self.cable_loss_table.setItem(row, column, QTableWidgetItem(f"{value:.3f}"))
-        self.cable_loss_table.resizeColumnsToContents()
         
     def _read_instrument_config_from_ui(self) -> dict:
         """从UI读取仪器地址和启用状态，保留现有通道和其他字段。"""
@@ -3426,6 +3280,24 @@ class MainWindow(QMainWindow):
         
     def closeEvent(self, event):
         """窗口关闭事件"""
+        if self.measurement_controller.state.is_active:
+            reply = QMessageBox.question(self, "退出", "测试正在进行中，确定要退出吗？",
+                                       QMessageBox.Yes | QMessageBox.No)
+            if reply != QMessageBox.Yes:
+                event.ignore()
+                return
+            self.measurement_controller.stop()
+            worker = self.measurement_controller.current_worker
+            if worker is not None and hasattr(worker, "wait"):
+                worker.wait()
+            if self.instrument_ctrl is not None:
+                try:
+                    self._close_instrument_port(self.instrument_ctrl)
+                except Exception as error:
+                    self.add_log_message(f"仪器清理失败: {error}")
+                self.instrument_ctrl = None
+            if hasattr(self, "cable_loss_page"):
+                self.cable_loss_page.close()
         if self.current_worker and self.current_worker.isRunning():
             reply = QMessageBox.question(self, "退出", "测试正在进行中，确定要退出吗？",
                                        QMessageBox.Yes | QMessageBox.No)
@@ -3438,6 +3310,8 @@ class MainWindow(QMainWindow):
                         self._close_instrument_port(self.instrument_ctrl)
                     except Exception as error:
                         self.add_log_message(f"仪器清理失败: {error}")
+                if hasattr(self, "cable_loss_page"):
+                    self.cable_loss_page.close()
                 event.accept()
             else:
                 event.ignore()
@@ -3447,6 +3321,8 @@ class MainWindow(QMainWindow):
                     self._close_instrument_port(self.instrument_ctrl)
                 except Exception as error:
                     self.add_log_message(f"仪器清理失败: {error}")
+            if hasattr(self, "cable_loss_page"):
+                self.cable_loss_page.close()
             event.accept()
 
 

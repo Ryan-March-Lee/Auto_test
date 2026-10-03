@@ -34,6 +34,7 @@ class _ControllerSignals(QObject):
     step_pause = Signal(str)
     rejected = Signal(str)
     state_changed = Signal(object)
+    thread_finished = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -75,6 +76,12 @@ class MeasurementController:
     def current_worker(self) -> Any:
         """当前活动 worker；仅供生命周期诊断，不转移 worker 所有权。"""
         return self._worker
+
+    def set_measurement_port(self, measurement_port: Any) -> None:
+        """更新由 GUI/runtime 注入的当前测量端口引用。"""
+        if self._state.is_active:
+            raise RuntimeError("测量运行期间不能替换测量端口")
+        self._measurement_port = measurement_port
 
     def start_cable_loss(self, command: MeasurementCommand) -> bool:
         return self._start(MeasurementKind.CABLE_LOSS, command)
@@ -238,10 +245,12 @@ class MeasurementController:
                     pass
             self.signals.error.emit(text)
         self._cleanup_worker()
+        self.signals.thread_finished.emit()
 
     def _cleanup_if_non_threaded(self) -> None:
         if self._thread_finished_signal is None:
             self._cleanup_worker()
+            self.signals.thread_finished.emit()
 
     def _cleanup_worker(self) -> None:
         self._disconnect_worker()

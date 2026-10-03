@@ -283,6 +283,18 @@ class MeasurementControllerTests(unittest.TestCase):
         self.assertEqual(self.controller.state.status, MeasurementStatus.FAILED)
         self.assertEqual(self.errors, ["worker 完成但未提供测量结果"])
 
+    def test_thread_finished_signal_is_emitted_after_worker_cleanup(self):
+        events = []
+        self.controller.signals.thread_finished.connect(
+            lambda: events.append(self.controller.current_worker)
+        )
+        self.assertTrue(self.controller.start_amplifier(MeasurementCommand("config.json")))
+        worker = self.workers[-1]
+        worker.signals.result.emit({"value": 1})
+        worker.signals.finished.emit()
+
+        self.assertEqual(events, [None])
+
 
 if __name__ == "__main__":
     unittest.main()

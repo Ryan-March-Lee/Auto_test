@@ -137,6 +137,7 @@ class MeasurementControllerSignals(Protocol):
     step_pause: ControllerSignal  # (message: str)
     rejected: ControllerSignal  # (reason: str)
     state_changed: ControllerSignal  # (state: ControllerState)
+    thread_finished: ControllerSignal  # ()；worker 线程真正结束并清理后
 
 
 @runtime_checkable

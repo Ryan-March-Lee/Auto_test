@@ -145,6 +145,59 @@ class MeasurementControllerTests(unittest.TestCase):
         self.assertEqual(self.errors, ["构造失败"])
         self.assertIsNone(controller.current_worker)
 
+    def test_start_failure_cleans_worker_and_allows_restart(self):
+        calls = 0
+        def factory(command, *, measurement_port=None):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("线程启动失败")
+            worker = Worker()
+            self.workers.append(worker)
+            return worker
+
+        controller = MeasurementController(
+            {MeasurementKind.AMPLIFIER: factory}, lambda: "config.json"
+        )
+        errors = []
+        controller.signals.error.connect(errors.append)
+        command = MeasurementCommand("config.json")
+
+        self.assertFalse(controller.start_amplifier(command))
+        self.assertEqual(controller.state.status, MeasurementStatus.FAILED)
+        self.assertEqual(errors, ["线程启动失败"])
+        self.assertIsNone(controller.current_worker)
+
+        self.assertTrue(controller.start_amplifier(command))
+
+    def test_cancel_signal_cleans_worker_and_allows_restart(self):
+        command = MeasurementCommand("config.json")
+        self.assertTrue(self.controller.start_driver_mapping(command))
+        self.workers[-1].signals.stopped.emit("任务已取消")
+
+        self.assertEqual(self.controller.state.status, MeasurementStatus.STOPPED)
+        self.assertEqual(self.controller.state.view_state.stop_reason, "任务已取消")
+        self.assertIsNone(self.controller.current_worker)
+        self.assertTrue(self.controller.start_amplifier(command))
+
+    def test_waiting_cable_loss_can_be_stopped(self):
+        self.assertTrue(
+            self.controller.start_cable_loss(MeasurementCommand("config.json"))
+        )
+        worker = self.workers[-1]
+        stopped = []
+        self.controller.signals.stopped.connect(stopped.append)
+        worker.signals.step_pause.emit("请接线")
+
+        self.assertTrue(self.controller.stop())
+        self.assertEqual(worker.stop_calls, 1)
+        self.assertEqual(worker.emergency_stop_calls, 0)
+        self.assertEqual(self.controller.state.status, MeasurementStatus.STOPPING)
+        worker.signals.stopped.emit("用户停止")
+        self.assertEqual(self.controller.state.status, MeasurementStatus.STOPPED)
+        self.assertEqual(stopped, ["用户停止"])
+        self.assertIsNone(self.controller.current_worker)
+
     def test_stop_failure_is_reported_and_does_not_escape_to_page(self):
         class StopFailWorker(Worker):
             def stop(self):

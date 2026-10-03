@@ -207,6 +207,48 @@ def _legacy_imports(tree):
 
 
 class ProductionDependencyTests(unittest.TestCase):
+    def test_main_window_registers_pages_without_legacy_builder(self):
+        source = MAIN_WINDOW_SOURCE.read_text(encoding="utf-8-sig")
+        self.assertNotIn("_legacy_tab", source)
+        self.assertNotIn("on_measurement_finished", source)
+        self.assertIn("build_configuration=self.create_config_tab", source)
+        self.assertIn("build_visualization=self.create_visualization_tab", source)
+        self.assertIn("build_export=self.create_data_export_tab", source)
+        self.assertIn("self.tab_widget.addTab(page, definition.title)", source)
+
+    def test_main_window_keeps_measurement_completion_refresh(self):
+        source = MAIN_WINDOW_SOURCE.read_text(encoding="utf-8-sig")
+        self.assertIn(
+            "self.measurement_controller.signals.finished.connect(self.refresh_file_list)",
+            source,
+            "MeasurementController finished 必须恢复导出文件列表刷新",
+        )
+
+    def test_main_window_separates_instrument_worker_callbacks(self):
+        source = MAIN_WINDOW_SOURCE.read_text(encoding="utf-8-sig")
+        self.assertIn(
+            "self.instrument_worker.signals.error.connect(self.on_instrument_error)",
+            source,
+        )
+        self.assertIn(
+            "self.instrument_worker.signals.stopped.connect(self.on_instrument_stopped)",
+            source,
+        )
+        self.assertIn(
+            "error_callback=lambda message: self.on_measurement_error(message)",
+            source,
+        )
+        for callback in ("on_instrument_error", "on_instrument_stopped"):
+            method = next(
+                node
+                for node in _main_window_class(_tree(MAIN_WINDOW_SOURCE)).body
+                if isinstance(node, ast.FunctionDef) and node.name == callback
+            )
+            callback_source = ast.get_source_segment(source, method)
+            self.assertNotIn("cable_loss_btn", callback_source)
+            self.assertNotIn("driver_mapping_btn", callback_source)
+            self.assertNotIn("amplifier_test_btn", callback_source)
+
     def test_production_modules_do_not_import_enhanced_workers(self):
         violations = []
         for source_path in _production_sources():

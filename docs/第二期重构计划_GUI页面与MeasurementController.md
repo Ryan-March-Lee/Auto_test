@@ -626,3 +626,18 @@ controller 不负责：
 - 本步骤还需执行 controller、页面和全量离线测试，以及应用检查和配置校验；Hardware smoke 不属于本次离线架构审计范围。
 
 步骤 5.2 回滚点：删除本节新增的 AST 审计断言并恢复 `tests/test_architecture_dependencies.py`，不涉及生产 GUI、controller、worker、runtime 或硬件行为。
+
+## 15. 阶段 5 步骤 5.3 删除迁移残留记录（2026-10-03）
+
+### 15.1 实际删除和调整
+
+- 删除 `MainWindow._legacy_tab` 临时注册再移除的页面 builder；配置、可视化和导出 builder 现在直接返回页面 widget，由统一页面登记逻辑添加 tab。
+- 删除无调用方的 `MainWindow.on_measurement_finished`，避免保留第二套测量完成处理入口。
+- 将仪器连接 worker 的错误/停止回调改名为 `on_instrument_error`、`on_instrument_stopped`，并移除其中对测量页面按钮的重复状态写入；测量按钮和进度由各页面消费 `MeasurementController` 状态与事件。
+- 删除未使用的窗口级 `emergency_stop` 字段。
+- 保留三组仍有真实调用方的运行准备、接线确认、配置保存、端口注入逻辑，以及可视化、导出和聊天实时数据桥接。
+
+### 15.2 验证和回滚点
+
+- 回滚方式：恢复 `enhanced_main_gui.py` 中上述 builder、连接 worker 回调和无调用方方法的改动；恢复本节记录即可，不涉及 worker、runtime、测量算法、SCPI 或硬件配置。
+- 本步骤的离线验证应覆盖 GUI 导入、页面组合、controller、架构审计、应用检查、配置校验和编译检查；不触发 Hardware smoke。

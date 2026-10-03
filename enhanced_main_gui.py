@@ -1396,13 +1396,13 @@ class MainWindow(QMainWindow):
         self.config = {}
         self.instrument_ctrl = None
         self.instrument_worker = None
-        self.emergency_stop = False
         self.measurement_controller = MeasurementController(
             build_measurement_worker_factories(), lambda: str(CONFIG_FILE)
         )
         self.measurement_controller.signals.thread_finished.connect(
             self._on_measurement_controller_thread_finished
         )
+        self.measurement_controller.signals.finished.connect(self.refresh_file_list)
         self.measurement_controller.signals.message.connect(self.add_log_message)
         self.measurement_controller.signals.rejected.connect(self.add_log_message)
         
@@ -1499,13 +1499,13 @@ class MainWindow(QMainWindow):
             log_callback=self.add_log_message,
             progress_callback=lambda value: getattr(self, "progress_bar", None)
             and self.progress_bar.setValue(value),
-            error_callback=lambda message: self.on_worker_error(message, close_port=False),
+            error_callback=lambda message: self.on_measurement_error(message),
             driver_realtime_data_callback=self._store_driver_mapping_realtime_data,
             amplifier_realtime_data_callback=self._store_amplifier_realtime_data,
             clear_realtime_callback=self.clear_real_time_data,
-            build_configuration=lambda: self._legacy_tab(self.create_config_tab),
-            build_visualization=lambda: self._legacy_tab(self.create_visualization_tab),
-            build_export=lambda: self._legacy_tab(self.create_data_export_tab),
+            build_configuration=self.create_config_tab,
+            build_visualization=self.create_visualization_tab,
+            build_export=self.create_data_export_tab,
         )
         self.pages = {}
         for definition, page in build_pages(context):
@@ -1525,14 +1525,6 @@ class MainWindow(QMainWindow):
         self.emergency_stop_btn = self.amplifier_page.emergency_stop_btn
         self.amplifier_plot_widget = self.amplifier_page.amplifier_plot_widget
         self.cable_loss_page.load_result_requested.connect(self._load_cable_loss_result)
-
-    def _legacy_tab(self, builder):
-        """兼容仍由窗口维护的配置、可视化和导出页面 builder。"""
-        before = self.tab_widget.count()
-        builder()
-        page = self.tab_widget.widget(before)
-        self.tab_widget.removeTab(before)
-        return page
 
     def _load_cable_loss_result(self):
         """由窗口协调结果服务读取，再把结构化引用交给页面显示。"""
@@ -1772,7 +1764,7 @@ class MainWindow(QMainWindow):
         scroll.setWidget(scroll_widget)
         layout.addWidget(scroll)
         
-        self.tab_widget.addTab(tab, "仪器配置")
+        return tab
     
     def create_power_supply_config(self, parent_layout):
         """创建电源详细配置"""
@@ -2166,7 +2158,7 @@ class MainWindow(QMainWindow):
         
     def _prepare_cable_loss_run(self):
         if self.instrument_ctrl is None:
-            self.on_worker_error("请先连接仪器；上一次测量结束后端口已安全释放")
+            self.on_measurement_error("请先连接仪器；上一次测量结束后端口已安全释放")
             return False
         return self.update_and_save_config()
 
@@ -2216,7 +2208,7 @@ class MainWindow(QMainWindow):
 
     def _prepare_driver_mapping_run(self):
         if self.instrument_ctrl is None:
-            self.on_worker_error("请先连接仪器；上一次测量结束后端口已安全释放")
+            self.on_measurement_error("请先连接仪器；上一次测量结束后端口已安全释放")
             return False
         return self.update_and_save_config()
 
@@ -2237,7 +2229,7 @@ class MainWindow(QMainWindow):
         
     def _prepare_amplifier_run(self):
         if self.instrument_ctrl is None:
-            self.on_worker_error("请先连接仪器；上一次测量结束后端口已安全释放")
+            self.on_measurement_error("请先连接仪器；上一次测量结束后端口已安全释放")
             return False
         return self.update_and_save_config()
 
@@ -2320,7 +2312,7 @@ class MainWindow(QMainWindow):
         self.data_plot_widget = RealTimePlotWidget()
         layout.addWidget(self.data_plot_widget)
         
-        self.tab_widget.addTab(tab, "数据可视化")
+        return tab
         
     def create_data_export_tab(self):
         """创建数据导出选项卡"""
@@ -2364,7 +2356,7 @@ class MainWindow(QMainWindow):
         # 初始加载文件列表
         self.refresh_file_list()
         
-        self.tab_widget.addTab(tab, "数据导出")
+        return tab
         
     def create_status_panel(self, main_layout):
         """创建状态面板"""
@@ -2504,8 +2496,8 @@ class MainWindow(QMainWindow):
         self.instrument_worker = InstrumentWorker(str(CONFIG_FILE))
         self.instrument_worker.signals.finished.connect(self.on_instrument_connected)
         self.instrument_worker.signals.result.connect(self.on_instrument_controller_ready)
-        self.instrument_worker.signals.stopped.connect(self.on_worker_stopped)
-        self.instrument_worker.signals.error.connect(self.on_worker_error)
+        self.instrument_worker.signals.stopped.connect(self.on_instrument_stopped)
+        self.instrument_worker.signals.error.connect(self.on_instrument_error)
         self.instrument_worker.signals.message.connect(self.add_log_message)
         self.instrument_worker.signals.progress.connect(self.progress_bar.setValue)
         self.instrument_worker.start()
@@ -2532,55 +2524,32 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self.add_log_message("所有仪器连接成功！")
         
-    def on_measurement_finished(self, button):
-        """测量完成"""
-        button.setEnabled(True)
-        self.progress_bar.setValue(100)
-        self.add_log_message("测量完成！")
-        
-        # 禁用对应的紧急停止按钮
-        if button == self.driver_mapping_btn:
-            self.driver_emergency_stop_btn.setEnabled(False)
-        elif button == self.amplifier_test_btn:
-            if hasattr(self, 'emergency_stop_btn'):
-                self.emergency_stop_btn.setEnabled(False)
-        
-        # 刷新文件列表
-        self.refresh_file_list()
-        # 测量服务会清理注入的端口；避免下一次测量复用已关闭 session。
-        self.instrument_ctrl = None
-        
-    def on_worker_error(self, error_message, *, close_port=True):
-        """工作线程错误处理"""
+    def on_measurement_error(self, error_message):
+        """显示 controller 转发的测量错误；端口生命周期由 controller 统一收尾。"""
+        self.add_log_message(f"错误: {error_message}")
+        QMessageBox.critical(self, "错误", error_message)
+
+    def on_instrument_error(self, error_message):
+        """处理仪器连接 worker 的错误。"""
         self.add_log_message(f"错误: {error_message}")
         QMessageBox.critical(self, "错误", error_message)
         
-        # 重新启用所有按钮
+        # 连接 worker 失败时只恢复连接控件；测量页面由 controller 状态驱动。
         self.connect_btn.setEnabled(True)
-        self.cable_loss_btn.setEnabled(True)
-        self.driver_mapping_btn.setEnabled(True)
-        self.amplifier_test_btn.setEnabled(True)
         
         # 重置进度条
         self.progress_bar.setValue(0)
-        if close_port and self.instrument_ctrl is not None:
+        if self.instrument_ctrl is not None:
             try:
                 self._close_instrument_port(self.instrument_ctrl)
             except Exception as error:
                 self.add_log_message(f"仪器清理失败: {error}")
             self.instrument_ctrl = None
 
-    def on_worker_stopped(self, reason):
-        """Handle ordinary and emergency worker cancellation consistently."""
-        self.add_log_message(f"测量已停止: {reason}")
+    def on_instrument_stopped(self, reason):
+        """处理仪器连接 worker 的停止。"""
+        self.add_log_message(f"仪器连接线程已停止: {reason}")
         self.connect_btn.setEnabled(True)
-        self.cable_loss_btn.setEnabled(True)
-        self.driver_mapping_btn.setEnabled(True)
-        self.amplifier_test_btn.setEnabled(True)
-        if hasattr(self, "driver_emergency_stop_btn"):
-            self.driver_emergency_stop_btn.setEnabled(False)
-        if hasattr(self, "emergency_stop_btn"):
-            self.emergency_stop_btn.setEnabled(False)
         self.progress_bar.setValue(0)
         if self.instrument_ctrl is not None:
             try:

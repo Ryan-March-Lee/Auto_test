@@ -598,3 +598,31 @@ controller 不负责：
 - 仍需在步骤 2.1 将 `MeasurementControllerProtocol` 落地为真实实现，并在步骤 2.3 覆盖真实 worker factory 选择、终态清理、普通/紧急停止和线损等待/继续行为。
 
 步骤 1.3 回滚点：删除 `presentation/qt/measurement_controller_contract.py`、`tests/test_measurement_controller_contract.py` 及本节记录；不涉及 worker、runtime、硬件端口、测量算法或主窗口行为。
+
+## 14. 阶段 5 步骤 5.2 架构依赖审计记录（2026-10-03）
+
+### 14.1 实际修改
+
+- 更新 `tests/test_architecture_dependencies.py`，增加基于 AST 的第二期架构审计。
+- 审计范围包含 `presentation/qt/cable_loss_page.py`、`presentation/qt/driver_mapping_page.py`、`presentation/qt/amplifier_page.py`、`presentation/qt/measurement_controller.py` 和 `enhanced_main_gui.py`。
+- 页面审计禁止 `enhanced_workers`、`result_storage`、`app.gui_runtime`、VISA、SCPI 和三类具体 measurement worker 实例化。
+- controller 审计禁止测量服务、硬件驱动、VISA、SCPI、runtime 组装和结果存储实现导入。
+- `MainWindow` 审计禁止直接调用 `app.gui_runtime.create_cable_loss_measurement()`、`create_driver_mapping_measurement()` 和 `create_amplifier_measurement()`。
+- 审计同时覆盖导入别名、worker 模块属性调用、runtime 模块别名调用，以及页面/controller 经硬件、SCPI、结果存储和 worker 模块间接导入的路径。
+- 对 `MainWindow` 的测量业务状态写入建立显式历史基线；新增状态字段写入会使架构测试失败，现有兼容性字段不因本步骤误报。
+- 本次审计未修改生产测量算法、worker、runtime 组装规则、SCPI 命令或端口所有权。
+
+### 14.2 审计结论
+
+- 页面未发现步骤 5.2 所列禁止依赖；三类页面通过 controller 契约和回调接收输入、状态及结构化结果。
+- `MeasurementController` 仅依赖 controller 契约、状态对象和 Qt signal；未直接导入测量服务、硬件驱动或结果存储实现。
+- `MainWindow` 通过 `build_measurement_worker_factories()` 和共享 `MeasurementController` 组合测量链路，未直接调用三个 `app.gui_runtime.create_*_measurement()` 函数。
+- worker 的具体实现依赖集中在 `presentation/qt/measurement_worker_factories.py`，符合页面/controller 不直接创建具体 worker 的边界。
+- “新代码把业务状态写回 `enhanced_main_gui.py` 的全局字段”已通过历史基线断言；窗口仍保留兼容性的测量状态字段，属于阶段 4 尚未完全清理的集成残留，但本步骤禁止新增字段写入。
+
+### 14.3 验证和边界
+
+- AST 审计命令：`& 'C:\My_Document\Anaconda\envs\Auto_test\python.exe' -m unittest tests.test_architecture_dependencies`，`Ran 8 tests`，`OK`。
+- 本步骤还需执行 controller、页面和全量离线测试，以及应用检查和配置校验；Hardware smoke 不属于本次离线架构审计范围。
+
+步骤 5.2 回滚点：删除本节新增的 AST 审计断言并恢复 `tests/test_architecture_dependencies.py`，不涉及生产 GUI、controller、worker、runtime 或硬件行为。

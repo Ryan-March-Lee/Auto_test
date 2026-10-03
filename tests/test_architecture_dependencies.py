@@ -5,6 +5,152 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 
+PAGE_SOURCES = tuple(
+    ROOT / "presentation" / "qt" / name
+    for name in ("cable_loss_page.py", "driver_mapping_page.py", "amplifier_page.py")
+)
+CONTROLLER_SOURCE = ROOT / "presentation" / "qt" / "measurement_controller.py"
+MAIN_WINDOW_SOURCE = ROOT / "enhanced_main_gui.py"
+MEASUREMENT_STATE_FIELDS = {
+    "current_worker",
+    "instrument_ctrl",
+    "instrument_worker",
+    "emergency_stop",
+    "real_time_data",
+    "rt_frequency_list",
+    "rt_current_freq_index",
+    "rt_user_browsing",
+}
+LEGACY_MAIN_WINDOW_MEASUREMENT_WRITES = {
+    "instrument_ctrl",
+    "instrument_worker",
+    "emergency_stop",
+    "real_time_data",
+    "rt_frequency_list",
+    "rt_current_freq_index",
+    "rt_user_browsing",
+}
+FORBIDDEN_PAGE_IMPORT_ROOTS = {
+    "enhanced_workers",
+    "result_storage",
+    "pyvisa",
+    "visa",
+    "scpi",
+    "hardware",
+    "instrument",
+    "instrument_control",
+}
+FORBIDDEN_CONTROLLER_IMPORT_ROOTS = FORBIDDEN_PAGE_IMPORT_ROOTS | {
+    "measurement_services",
+    "cable_loss_measurement",
+    "driver_power_mapping",
+    "amplifier_measurement",
+    "result_reading",
+    "app",
+    "infrastructure",
+    "workers",
+}
+FORBIDDEN_MEASUREMENT_CALLS = {
+    "create_cable_loss_measurement",
+    "create_driver_mapping_measurement",
+    "create_amplifier_measurement",
+}
+MEASUREMENT_WORKERS = {
+    "CableLossWorker",
+    "DriverMappingWorker",
+    "AmplifierWorker",
+}
+
+
+def _tree(path):
+    return ast.parse(path.read_text(encoding="utf-8-sig"), str(path))
+
+
+def _imported_modules(tree):
+    imports = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imports.extend((alias.name, alias.asname, alias.name.split(".")[0]) for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            imports.extend(
+                (module, alias.asname or alias.name, alias.name)
+                for alias in node.names
+            )
+    return tuple(imports)
+
+
+def _module_has_forbidden_root(module, forbidden_roots):
+    parts = module.lower().split(".")
+    return any(part in {root.lower() for root in forbidden_roots} for part in parts)
+
+
+def _called_name(node):
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+def _worker_aliases(tree):
+    aliases = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.module and node.module.split(".")[-1] == "workers":
+                aliases.update(
+                    alias.asname or alias.name
+                    for alias in node.names
+                    if alias.name in MEASUREMENT_WORKERS
+                )
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.endswith(".workers"):
+                    aliases.add(alias.asname or alias.name.split(".")[-1])
+    return aliases
+
+
+def _worker_construction_violations(tree):
+    aliases = _worker_aliases(tree)
+    violations = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        called = _called_name(node.func)
+        if called in MEASUREMENT_WORKERS or called in aliases:
+            violations.append(node)
+        elif isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+            if node.func.value.id in aliases and node.func.attr in MEASUREMENT_WORKERS:
+                violations.append(node)
+    return violations
+
+
+def _main_window_class(tree):
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == "MainWindow":
+            return node
+    raise AssertionError("enhanced_main_gui.py 中未找到 MainWindow 类")
+
+
+def _main_window_measurement_writes(tree):
+    writes = set()
+    for node in ast.walk(_main_window_class(tree)):
+        targets = []
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        elif isinstance(node, ast.NamedExpr):
+            targets = [node.target]
+        for target in targets:
+            for child in ast.walk(target):
+                if (
+                    isinstance(child, ast.Attribute)
+                    and isinstance(child.value, ast.Name)
+                    and child.value.id == "self"
+                    and child.attr in MEASUREMENT_STATE_FIELDS
+                ):
+                    writes.add(child.attr)
+    return writes
+
 
 def _production_sources():
     """Return every project Python source outside tests and tooling helpers."""
@@ -87,6 +233,113 @@ class ProductionDependencyTests(unittest.TestCase):
                         violations.append(str(source_path.relative_to(ROOT)))
 
         self.assertEqual(violations, [], "应用层不得直接依赖硬件或 Qt: " + ", ".join(violations))
+
+    def test_measurement_pages_have_no_forbidden_architecture_dependencies(self):
+        violations = []
+        for source_path in PAGE_SOURCES:
+            tree = _tree(source_path)
+            for module, _alias, _name in _imported_modules(tree):
+                if _module_has_forbidden_root(module, FORBIDDEN_PAGE_IMPORT_ROOTS):
+                    violations.append(f"{source_path.relative_to(ROOT)} imports {module}")
+                if module == "app.gui_runtime" or module.startswith("app.gui_runtime."):
+                    violations.append(f"{source_path.relative_to(ROOT)} imports {module}")
+                if module.endswith("workers"):
+                    violations.append(f"{source_path.relative_to(ROOT)} imports worker module {module}")
+            violations.extend(
+                f"{source_path.relative_to(ROOT)} constructs a measurement worker"
+                for _ in _worker_construction_violations(tree)
+            )
+        self.assertEqual(violations, [], "测量页面存在禁止依赖: " + "; ".join(violations))
+
+    def test_measurement_controller_has_no_implementation_dependencies(self):
+        tree = _tree(CONTROLLER_SOURCE)
+        violations = [
+            f"{CONTROLLER_SOURCE.relative_to(ROOT)} imports {module}"
+            for module, _alias, _name in _imported_modules(tree)
+            if _module_has_forbidden_root(module, FORBIDDEN_CONTROLLER_IMPORT_ROOTS)
+            or module == "instrument"
+            or module.startswith("instrument.")
+        ]
+        self.assertEqual(violations, [], "controller 存在实现层依赖: " + "; ".join(violations))
+
+    def test_main_window_does_not_directly_assemble_measurements(self):
+        tree = _tree(MAIN_WINDOW_SOURCE)
+        main_window = _main_window_class(tree)
+        imported_aliases = {
+            alias
+            for module, alias, name in _imported_modules(tree)
+            if module == "app.gui_runtime" and name in FORBIDDEN_MEASUREMENT_CALLS
+        }
+        runtime_module_aliases = {
+            alias
+            for module, alias, _name in _imported_modules(tree)
+            if module == "app.gui_runtime"
+        }
+        forbidden_names = FORBIDDEN_MEASUREMENT_CALLS | imported_aliases
+        calls = set()
+        for node in ast.walk(main_window):
+            if not isinstance(node, ast.Call):
+                continue
+            called = _called_name(node.func)
+            if called in forbidden_names:
+                calls.add(called)
+            elif (
+                isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id in runtime_module_aliases
+                and node.func.attr in FORBIDDEN_MEASUREMENT_CALLS
+            ):
+                calls.add(f"{node.func.value.id}.{node.func.attr}")
+        self.assertEqual(
+            calls,
+            set(),
+            "MainWindow 不得直接调用 app.gui_runtime 测量组装函数: " + ", ".join(sorted(calls)),
+        )
+
+    def test_main_window_measurement_state_writes_stay_within_legacy_baseline(self):
+        writes = _main_window_measurement_writes(_tree(MAIN_WINDOW_SOURCE))
+        added_writes = writes - LEGACY_MAIN_WINDOW_MEASUREMENT_WRITES
+        self.assertEqual(
+            added_writes,
+            set(),
+            "MainWindow 新增测量业务状态写入: " + ", ".join(sorted(added_writes)),
+        )
+
+    def test_worker_aliases_and_attribute_construction_are_detected(self):
+        source = """
+from presentation.qt.workers import CableLossWorker as Worker
+import presentation.qt.workers as worker_module
+Worker()
+worker_module.AmplifierWorker()
+"""
+        tree = ast.parse(source)
+        self.assertEqual(len(_worker_construction_violations(tree)), 2)
+
+    def test_runtime_module_alias_calls_are_detected(self):
+        source = """
+import app.gui_runtime as runtime
+
+class MainWindow:
+    def start(self):
+        runtime.create_amplifier_measurement()
+"""
+        tree = ast.parse(source)
+        main_window = _main_window_class(tree)
+        runtime_aliases = {
+            alias
+            for module, alias, _name in _imported_modules(tree)
+            if module == "app.gui_runtime"
+        }
+        calls = [
+            node
+            for node in ast.walk(main_window)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id in runtime_aliases
+            and node.func.attr in FORBIDDEN_MEASUREMENT_CALLS
+        ]
+        self.assertEqual(len(calls), 1)
 
 
 if __name__ == "__main__":

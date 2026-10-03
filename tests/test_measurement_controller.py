@@ -29,9 +29,18 @@ class Signals:
             setattr(self, name, Signal())
 
 
-class Worker:
+class Port:
     def __init__(self):
+        self.close_calls = 0
+
+    def close(self):
+        self.close_calls += 1
+
+
+class Worker:
+    def __init__(self, kind=None):
         self.signals = Signals()
+        self.kind = kind
         self.start_calls = 0
         self.stop_calls = 0
         self.emergency_stop_calls = 0
@@ -53,10 +62,11 @@ class Worker:
 class MeasurementControllerTests(unittest.TestCase):
     def setUp(self):
         self.workers = []
+        self.factory_calls = []
         self.factories = {
-            kind: self._factory for kind in MeasurementKind
+            kind: self._make_factory(kind) for kind in MeasurementKind
         }
-        self.port = object()
+        self.port = Port()
         self.controller = MeasurementController(
             self.factories, lambda: "runtime-config.json", measurement_port=self.port
         )
@@ -65,12 +75,32 @@ class MeasurementControllerTests(unittest.TestCase):
         self.controller.signals.error.connect(self.errors.append)
         self.controller.signals.rejected.connect(self.rejections.append)
 
-    def _factory(self, command, *, measurement_port=None):
-        worker = Worker()
-        worker.command = command
-        worker.measurement_port = measurement_port
-        self.workers.append(worker)
-        return worker
+    def _make_factory(self, kind):
+        def factory(command, *, measurement_port=None):
+            self.factory_calls.append((kind, command, measurement_port))
+            worker = Worker(kind)
+            worker.command = command
+            worker.measurement_port = measurement_port
+            self.workers.append(worker)
+            return worker
+
+        return factory
+
+    def test_each_measurement_entry_uses_matching_factory(self):
+        command = MeasurementCommand("page-config.json")
+
+        for kind, start in (
+            (MeasurementKind.CABLE_LOSS, self.controller.start_cable_loss),
+            (MeasurementKind.DRIVER_MAPPING, self.controller.start_driver_mapping),
+            (MeasurementKind.AMPLIFIER, self.controller.start_amplifier),
+        ):
+            self.assertTrue(start(command))
+            worker = self.workers[-1]
+            self.assertEqual(worker.kind, kind)
+            self.assertEqual(self.factory_calls[-1][0], kind)
+            self.assertIs(self.factory_calls[-1][2], self.port)
+            worker.signals.result.emit({"kind": kind.value})
+            worker.signals.finished.emit()
 
     def test_selects_factory_and_cleans_worker_after_finished(self):
         command = MeasurementCommand("page-config.json")
@@ -86,6 +116,38 @@ class MeasurementControllerTests(unittest.TestCase):
         self.assertEqual(self.controller.state.status, MeasurementStatus.FINISHED)
         self.assertIsNone(self.controller.current_worker)
         self.assertTrue(self.controller.start_amplifier(command))
+
+    def test_controller_does_not_close_external_measurement_port(self):
+        command = MeasurementCommand("config.json")
+        self.assertTrue(self.controller.start_amplifier(command))
+        worker = self.workers[-1]
+
+        worker.signals.result.emit({"value": 1})
+        worker.signals.finished.emit()
+
+        self.assertEqual(self.port.close_calls, 0)
+        self.assertTrue(self.controller.start_driver_mapping(command))
+        worker = self.workers[-1]
+        self.assertTrue(self.controller.stop())
+        worker.signals.stopped.emit("用户停止")
+        self.assertEqual(self.port.close_calls, 0)
+
+        self.assertTrue(self.controller.start_cable_loss(command))
+        worker = self.workers[-1]
+        self.assertTrue(self.controller.emergency_stop())
+        worker.signals.stopped.emit("紧急停止")
+        self.assertEqual(self.port.close_calls, 0)
+
+        def broken_factory(command, *, measurement_port=None):
+            raise RuntimeError("构造失败")
+
+        controller = MeasurementController(
+            {MeasurementKind.AMPLIFIER: broken_factory},
+            lambda: "config.json",
+            measurement_port=self.port,
+        )
+        self.assertFalse(controller.start_amplifier(command))
+        self.assertEqual(self.port.close_calls, 0)
 
     def test_runtime_config_provider_is_the_worker_config_authority(self):
         self.assertTrue(self.controller.start_amplifier(MeasurementCommand("stale.json")))

@@ -79,12 +79,13 @@ class CableLossPageTests(unittest.TestCase):
             prepare_run=lambda: True,
             confirm_wiring=lambda: True,
             connection_dialog_factory=lambda *_: Dialog(self.dialog_results.pop(0)),
-            load_results_callback=lambda: {
-                "cable_losses": {"3.5": {"cable1": 1.111, "cable4": 4.444}}
-            },
             log_callback=self.logs.append,
         )
         self.page.bind_controller(self.controller)
+
+        self.assertEqual(self.page.cable_loss_table.columnCount(), 5)
+        self.assertFalse(self.page.stop_cable_loss_btn.isEnabled())
+        self.assertFalse(self.page.continue_cable_loss_btn.isEnabled())
 
     def test_start_is_forwarded_as_measurement_command(self):
         self.page.start_measurement()
@@ -120,8 +121,17 @@ class CableLossPageTests(unittest.TestCase):
         self.controller.signals.step_pause.emit("请重新接线")
         self.assertEqual(self.controller.calls, [("continue",), ("stop",)])
 
-    def test_load_results_uses_injected_structured_provider(self):
-        self.page.load_results()
+    def test_load_results_requests_window_owned_structured_result(self):
+        requests = []
+        self.page.load_result_requested.connect(lambda: requests.append(True))
+        self.page.load_cable_results_btn.click()
+        self.assertEqual(requests, [True])
+        self.page.show_loaded_result(MeasurementResultReference(
+            "loaded-result",
+            MeasurementKind.CABLE_LOSS,
+            {"cable_losses": {"3.5": {"cable1": 1.111, "cable4": 4.444}}},
+            source="result_service",
+        ))
 
         self.assertEqual(self.page.cable_loss_table.rowCount(), 1)
         self.assertEqual(self.page.cable_loss_table.item(0, 0).text(), "3.5")

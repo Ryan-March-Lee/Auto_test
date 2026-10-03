@@ -40,6 +40,7 @@ class GuiImportSmokeTests(unittest.TestCase):
                 self.close_calls.append(close_rf)
 
         for kind in (
+            enhanced_main_gui.MeasurementKind.CABLE_LOSS,
             enhanced_main_gui.MeasurementKind.DRIVER_MAPPING,
             enhanced_main_gui.MeasurementKind.AMPLIFIER,
         ):

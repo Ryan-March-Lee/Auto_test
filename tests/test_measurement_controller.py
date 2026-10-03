@@ -45,6 +45,7 @@ class Worker:
         self.stop_calls = 0
         self.emergency_stop_calls = 0
         self.continue_calls = 0
+        self.wait_result = True
 
     def start(self):
         self.start_calls += 1
@@ -57,6 +58,9 @@ class Worker:
 
     def continue_measurement(self):
         self.continue_calls += 1
+
+    def wait(self, timeout=None):
+        return self.wait_result
 
 
 class MeasurementControllerTests(unittest.TestCase):
@@ -193,6 +197,30 @@ class MeasurementControllerTests(unittest.TestCase):
         self.assertTrue(self.controller.emergency_stop())
         self.assertEqual(worker.stop_calls, 0)
         self.assertEqual(worker.emergency_stop_calls, 1)
+        self.assertEqual(
+            self.controller.state.view_state.stop_reason,
+            "紧急停止",
+        )
+
+    def test_shutdown_stops_worker_with_timeout_and_cleans_reference(self):
+        command = MeasurementCommand("config.json")
+        self.assertTrue(self.controller.start_amplifier(command))
+        worker = self.workers[-1]
+
+        self.assertTrue(self.controller.shutdown(timeout_ms=25))
+        self.assertEqual(worker.stop_calls, 1)
+        self.assertIsNone(self.controller.current_worker)
+        self.assertEqual(self.controller.state.status, MeasurementStatus.STOPPED)
+
+    def test_shutdown_timeout_keeps_worker_for_retry(self):
+        command = MeasurementCommand("config.json")
+        self.assertTrue(self.controller.start_amplifier(command))
+        worker = self.workers[-1]
+        worker.wait_result = False
+
+        self.assertFalse(self.controller.shutdown(timeout_ms=25))
+        self.assertIs(self.controller.current_worker, worker)
+        self.assertEqual(self.controller.state.status, MeasurementStatus.STOPPING)
 
     def test_factory_failure_does_not_start_worker(self):
         def broken_factory(command, *, measurement_port=None):

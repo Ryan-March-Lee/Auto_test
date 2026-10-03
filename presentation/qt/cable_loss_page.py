@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from types import SimpleNamespace
 from typing import Any, Callable
 
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QDialog,
     QGroupBox,
@@ -27,6 +27,8 @@ from .pages import PageControllerBindingMixin
 class CableLossPage(PageControllerBindingMixin, QWidget):
     """线损测量输入、接线确认与结果展示。"""
 
+    load_result_requested = Signal()
+
     def __init__(
         self,
         *,
@@ -34,7 +36,6 @@ class CableLossPage(PageControllerBindingMixin, QWidget):
         prepare_run: Callable[[], bool],
         confirm_wiring: Callable[[], bool],
         connection_dialog_factory: Callable[[str, QWidget], Any],
-        load_results_callback: Callable[[], Mapping[str, Any]] | None = None,
         log_callback: Callable[[str], Any] | None = None,
         progress_callback: Callable[[int], Any] | None = None,
         error_callback: Callable[[str], Any] | None = None,
@@ -45,7 +46,6 @@ class CableLossPage(PageControllerBindingMixin, QWidget):
         self._prepare_run = prepare_run
         self._confirm_wiring = confirm_wiring
         self._connection_dialog_factory = connection_dialog_factory
-        self._load_results_callback = load_results_callback
         self._log_callback = log_callback or (lambda _message: None)
         self._progress_callback = progress_callback or (lambda _value: None)
         self._error_callback = error_callback or self._show_error
@@ -89,7 +89,7 @@ class CableLossPage(PageControllerBindingMixin, QWidget):
         self.stop_cable_loss_btn.setEnabled(False)
         self.continue_cable_loss_btn.setEnabled(False)
         self.cable_loss_btn.clicked.connect(self.start_measurement)
-        self.load_cable_results_btn.clicked.connect(self.load_results)
+        self.load_cable_results_btn.clicked.connect(self.load_result_requested.emit)
         self.stop_cable_loss_btn.clicked.connect(self.stop_measurement)
         self.continue_cable_loss_btn.clicked.connect(self.continue_measurement)
         control_layout.addWidget(self.cable_loss_btn)
@@ -199,19 +199,11 @@ class CableLossPage(PageControllerBindingMixin, QWidget):
         self.cable_loss_table.setRowCount(0)
         self._log_callback("已清空上一次线损测量结果")
 
-    def load_results(self) -> None:
-        if self._load_results_callback is None:
-            self._log_callback("当前没有可加载的线损结果")
-            return
-        try:
-            payload = self._load_results_callback()
-            self.clear_results()
-            self.show_result(SimpleNamespace(kind=MeasurementKind.CABLE_LOSS, value=payload))
-            self._log_callback(f"已加载线损测量结果，共 {self.cable_loss_table.rowCount()} 个频点")
-        except FileNotFoundError:
-            self._log_callback("未找到线损测量结果文件")
-        except Exception as error:
-            self._log_callback(f"加载线损测量结果失败: {error}")
+    def show_loaded_result(self, reference: Any) -> None:
+        """显示由窗口/结果服务提供的结构化结果，不读取文件。"""
+        self.clear_results()
+        self.show_result(reference)
+        self._log_callback(f"已加载线损测量结果，共 {self.cable_loss_table.rowCount()} 个频点")
 
     def update_realtime(self, data: Any) -> None:
         if not isinstance(data, Mapping) or "frequency" not in data:

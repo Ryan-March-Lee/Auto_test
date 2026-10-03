@@ -100,6 +100,10 @@ class DriverMappingPageTests(unittest.TestCase):
         )
         self.page.bind_controller(self.controller)
 
+        self.assertTrue(self.page.driver_mapping_btn.isEnabled())
+        self.assertFalse(self.page.driver_stop_btn.isEnabled())
+        self.assertFalse(self.page.driver_emergency_stop_btn.isEnabled())
+
         self.assertEqual(self.controller.signals.message.slots, [])
         self.assertEqual(self.controller.signals.rejected.slots, [])
 

@@ -45,7 +45,7 @@ from app.gui_runtime import (
 from data_visualization import DataVisualization
 from presentation.qt.pages import PageContext, build_pages
 from presentation.qt.measurement_controller import MeasurementController
-from presentation.qt.measurement_state import MeasurementKind
+from presentation.qt.measurement_state import MeasurementKind, MeasurementResultReference
 from presentation.qt.measurement_worker_factories import build_measurement_worker_factories
 from presentation.qt.workers import BaseWorker, InstrumentWorker
 import sys
@@ -458,7 +458,7 @@ class ChatPanel(QWidget):
             print(f"AI 助手未启用: {error}")
             self.llm_chat = _UnavailableAssistant()
         self.main_window = parent
-        self.current_worker = None  # 当前的AI工作线程
+        self.chat_worker = None  # 当前的AI工作线程
         self.thinking_message_visible = False  # 跟踪"思考中"消息状态
         self.init_ui()
     
@@ -669,9 +669,9 @@ class ChatPanel(QWidget):
     def closeEvent(self, event):
         """窗口关闭事件"""
         # 停止所有正在运行的AI请求
-        if self.current_worker and self.current_worker.isRunning():
-            self.current_worker.terminate()
-            self.current_worker.wait()
+        if self.chat_worker and self.chat_worker.isRunning():
+            self.chat_worker.terminate()
+            self.chat_worker.wait()
         
         # 保存当前对话
         if hasattr(self, 'llm_chat') and self.llm_chat.conversation_history:
@@ -765,7 +765,7 @@ class ChatPanel(QWidget):
             return
         
         # 如果正在处理请求，则忽略新请求
-        if self.current_worker and self.current_worker.isRunning():
+        if self.chat_worker and self.chat_worker.isRunning():
             self.add_system_message("请等待当前请求完成...")
             return
         
@@ -785,18 +785,18 @@ class ChatPanel(QWidget):
     def get_ai_response(self, message, context):
         """获取AI回复（使用后台线程）"""
         # 停止之前的请求（如果有的话）
-        if self.current_worker and self.current_worker.isRunning():
-            self.current_worker.terminate()
-            self.current_worker.wait()
+        if self.chat_worker and self.chat_worker.isRunning():
+            self.chat_worker.terminate()
+            self.chat_worker.wait()
         
         # 创建新的工作线程
-        self.current_worker = ChatWorker(self.llm_chat, message, context)
-        self.current_worker.response_ready.connect(self.on_ai_response_ready)
-        self.current_worker.error_occurred.connect(self.on_ai_error)
-        self.current_worker.finished.connect(self.on_ai_finished)
+        self.chat_worker = ChatWorker(self.llm_chat, message, context)
+        self.chat_worker.response_ready.connect(self.on_ai_response_ready)
+        self.chat_worker.error_occurred.connect(self.on_ai_error)
+        self.chat_worker.finished.connect(self.on_ai_finished)
         
         # 启动线程
-        self.current_worker.start()
+        self.chat_worker.start()
         self.thinking_message_visible = True
     
     def on_ai_response_ready(self, response):
@@ -814,9 +814,9 @@ class ChatPanel(QWidget):
     def on_ai_finished(self):
         """AI线程完成回调"""
         self.thinking_message_visible = False
-        if self.current_worker:
-            self.current_worker.deleteLater()
-            self.current_worker = None
+        if self.chat_worker:
+            self.chat_worker.deleteLater()
+            self.chat_worker = None
     
     def remove_thinking_message(self):
         """移除思考中消息"""
@@ -1395,7 +1395,7 @@ class MainWindow(QMainWindow):
         # 初始化变量
         self.config = {}
         self.instrument_ctrl = None
-        self.current_worker = None
+        self.instrument_worker = None
         self.emergency_stop = False
         self.measurement_controller = MeasurementController(
             build_measurement_worker_factories(), lambda: str(CONFIG_FILE)
@@ -1496,7 +1496,6 @@ class MainWindow(QMainWindow):
             driver_mode_provider=lambda: self.driver_mode_check.isChecked(),
             connection_dialog_factory=lambda kind, parent: ConnectionDialog(kind, parent),
             plot_widget_factory=lambda _parent: RealTimePlotWidget(show_nav_buttons=True),
-            load_results_callback=lambda: load_measurement_result(CABLE_LOSS_FILE),
             log_callback=self.add_log_message,
             progress_callback=lambda value: getattr(self, "progress_bar", None)
             and self.progress_bar.setValue(value),
@@ -1525,6 +1524,7 @@ class MainWindow(QMainWindow):
         self.amplifier_test_btn = self.amplifier_page.amplifier_test_btn
         self.emergency_stop_btn = self.amplifier_page.emergency_stop_btn
         self.amplifier_plot_widget = self.amplifier_page.amplifier_plot_widget
+        self.cable_loss_page.load_result_requested.connect(self._load_cable_loss_result)
 
     def _legacy_tab(self, builder):
         """兼容仍由窗口维护的配置、可视化和导出页面 builder。"""
@@ -1533,6 +1533,21 @@ class MainWindow(QMainWindow):
         page = self.tab_widget.widget(before)
         self.tab_widget.removeTab(before)
         return page
+
+    def _load_cable_loss_result(self):
+        """由窗口协调结果服务读取，再把结构化引用交给页面显示。"""
+        try:
+            reference = MeasurementResultReference(
+                result_id=f"loaded-{datetime.now(timezone.utc).isoformat()}",
+                kind=MeasurementKind.CABLE_LOSS,
+                value=load_measurement_result(CABLE_LOSS_FILE),
+                source="result_service",
+            )
+            self.cable_loss_page.show_loaded_result(reference)
+        except FileNotFoundError:
+            self.add_log_message("未找到线损测量结果文件")
+        except Exception as error:
+            self.add_log_message(f"加载线损测量结果失败: {error}")
 
     def toggle_chat_panel(self):
         """切换聊天面板显示/隐藏"""
@@ -2486,14 +2501,14 @@ class MainWindow(QMainWindow):
             return
         
         # 启动仪器连接工作线程
-        self.current_worker = InstrumentWorker(str(CONFIG_FILE))
-        self.current_worker.signals.finished.connect(self.on_instrument_connected)
-        self.current_worker.signals.result.connect(self.on_instrument_controller_ready)
-        self.current_worker.signals.stopped.connect(self.on_worker_stopped)
-        self.current_worker.signals.error.connect(self.on_worker_error)
-        self.current_worker.signals.message.connect(self.add_log_message)
-        self.current_worker.signals.progress.connect(self.progress_bar.setValue)
-        self.current_worker.start()
+        self.instrument_worker = InstrumentWorker(str(CONFIG_FILE))
+        self.instrument_worker.signals.finished.connect(self.on_instrument_connected)
+        self.instrument_worker.signals.result.connect(self.on_instrument_controller_ready)
+        self.instrument_worker.signals.stopped.connect(self.on_worker_stopped)
+        self.instrument_worker.signals.error.connect(self.on_worker_error)
+        self.instrument_worker.signals.message.connect(self.add_log_message)
+        self.instrument_worker.signals.progress.connect(self.progress_bar.setValue)
+        self.instrument_worker.start()
         
     def on_instrument_controller_ready(self, controller):
         """Keep the connected controller so window shutdown can clean it up."""
@@ -3179,16 +3194,18 @@ class MainWindow(QMainWindow):
             if reply != QMessageBox.Yes:
                 event.ignore()
                 return
-            self.measurement_controller.stop()
-            worker = self.measurement_controller.current_worker
-            if worker is not None and hasattr(worker, "wait"):
-                worker.wait()
-        if self.current_worker and self.current_worker.isRunning():
+            if not self.measurement_controller.shutdown(timeout_ms=5000):
+                event.ignore()
+                return
+        if self.instrument_worker and self.instrument_worker.isRunning():
             reply = QMessageBox.question(self, "退出", "测试正在进行中，确定要退出吗？",
                                        QMessageBox.Yes | QMessageBox.No)
             if reply == QMessageBox.Yes:
-                self.current_worker.stop()
-                self.current_worker.wait()
+                self.instrument_worker.stop()
+                if not self.instrument_worker.wait(5000):
+                    self.add_log_message("仪器连接线程未能在关闭期限内停止")
+                    event.ignore()
+                    return
             else:
                 event.ignore()
                 return

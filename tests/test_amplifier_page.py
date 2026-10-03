@@ -88,6 +88,10 @@ class AmplifierPageTests(unittest.TestCase):
         )
         self.page.bind_controller(self.controller)
 
+        self.assertTrue(self.page.amplifier_test_btn.isEnabled())
+        self.assertFalse(self.page.emergency_stop_btn.isEnabled())
+        self.assertEqual(self.page.result_table.columnCount(), 4)
+
         self.assertEqual(self.controller.signals.message.slots, [])
         self.assertEqual(self.controller.signals.rejected.slots, [])
 

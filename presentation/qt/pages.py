@@ -162,7 +162,6 @@ class PageContext:
     driver_mode_provider: Callable[[], bool]
     connection_dialog_factory: Callable[[str, Any], Any]
     plot_widget_factory: Callable[[Any], Any]
-    load_results_callback: Callable[[], Any]
     log_callback: Callable[[str], Any]
     progress_callback: Callable[[int], Any]
     error_callback: Callable[[str], Any]
@@ -189,7 +188,6 @@ def _build_cable_loss_page(context: PageContext) -> Any:
         prepare_run=context.prepare_cable_loss,
         confirm_wiring=context.confirm_cable_loss,
         connection_dialog_factory=context.connection_dialog_factory,
-        load_results_callback=context.load_results_callback,
         log_callback=context.log_callback,
         progress_callback=context.progress_callback,
         error_callback=context.error_callback,

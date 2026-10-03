@@ -67,6 +67,8 @@ class MeasurementController:
         self._worker: Any = None
         self._worker_slots: list[tuple[Any, Callable[..., Any]]] = []
         self._thread_finished_signal: Any = None
+        self._shutdown_waiting = False
+        self._ignore_thread_finished_once = False
 
     @property
     def state(self) -> ControllerState:
@@ -98,6 +100,7 @@ class MeasurementController:
         if self._state.is_active:
             self.signals.rejected.emit("已有测量正在运行")
             return False
+        self._ignore_thread_finished_once = False
 
         preparing = MeasurementViewState(kind).prepare()
         self._set_state(kind, preparing)
@@ -235,6 +238,11 @@ class MeasurementController:
         self._cleanup_if_non_threaded()
 
     def _on_thread_finished(self) -> None:
+        if self._shutdown_waiting:
+            return
+        if self._ignore_thread_finished_once:
+            self._ignore_thread_finished_once = False
+            return
         if self._state.is_active:
             text = "worker 线程结束但未报告终态"
             view = self._state.view_state
@@ -270,13 +278,54 @@ class MeasurementController:
 
     def _request_stop(self, method: str) -> bool:
         view = self._state.view_state
+        reason = "紧急停止" if method == "emergency_stop" else "用户停止"
         if view is not None and view.status in {MeasurementStatus.RUNNING, MeasurementStatus.WAITING_FOR_CONTINUE, MeasurementStatus.PREPARING}:
-            self._set_state(view.kind, view.stop("用户停止", stopping=True))
+            self._set_state(view.kind, view.stop(reason, stopping=True))
         try:
             getattr(self._worker, method)()
         except Exception as error:
             self._on_error(str(error) or error.__class__.__name__)
             return False
+        return True
+
+    def shutdown(self, timeout_ms: int = 5000) -> bool:
+        """请求停止并在有限时间内等待 worker 退出。
+
+        关闭窗口时不能无限期阻塞 Qt GUI 线程。若 worker 未在期限内退出，
+        保留 worker 引用并返回 ``False``，由窗口拒绝关闭，等待后续重试。
+        controller 不负责关闭外部注入的 measurement port。
+        """
+        if not isinstance(timeout_ms, int) or timeout_ms < 0:
+            raise ValueError("timeout_ms 必须是非负整数")
+        worker = self._worker
+        if not self._state.is_active or worker is None:
+            return True
+        if not self._request_stop("stop"):
+            return False
+        if self._worker is None:
+            return True
+        wait = getattr(worker, "wait", None)
+        if wait is None:
+            return False
+        try:
+            self._shutdown_waiting = True
+            completed = wait(timeout_ms)
+        except TypeError:
+            completed = wait()
+        finally:
+            self._shutdown_waiting = False
+        if completed is False:
+            self.signals.error.emit("测量线程未能在关闭期限内停止")
+            return False
+
+        view = self._state.view_state
+        if view is not None and self._state.status is MeasurementStatus.STOPPING:
+            reason = view.stop_reason or "用户停止"
+            self._set_state(view.kind, view.stop(reason))
+            self.signals.stopped.emit(reason)
+        self._ignore_thread_finished_once = True
+        self._cleanup_worker()
+        self.signals.thread_finished.emit()
         return True
 
     def continue_cable_loss(self) -> bool:

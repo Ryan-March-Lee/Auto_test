@@ -46,6 +46,7 @@ from data_visualization import DataVisualization
 from presentation.qt.pages import build_pages
 from presentation.qt.cable_loss_page import CableLossPage
 from presentation.qt.driver_mapping_page import DriverMappingPage
+from presentation.qt.amplifier_page import AmplifierPage
 from presentation.qt.measurement_controller import MeasurementController
 from presentation.qt.measurement_state import MeasurementKind
 from presentation.qt.workers import (
@@ -1412,6 +1413,9 @@ class MainWindow(QMainWindow):
                 MeasurementKind.DRIVER_MAPPING: lambda command, *, measurement_port=None: DriverMappingWorker(
                     command.config_path, measurement_port=measurement_port
                 ),
+                MeasurementKind.AMPLIFIER: lambda command, *, measurement_port=None: AmplifierWorker(
+                    command.config_path, measurement_port=measurement_port
+                ),
             },
             lambda: str(CONFIG_FILE),
         )
@@ -2153,6 +2157,7 @@ class MainWindow(QMainWindow):
         if self.measurement_controller.state.kind not in {
             MeasurementKind.CABLE_LOSS,
             MeasurementKind.DRIVER_MAPPING,
+            MeasurementKind.AMPLIFIER,
         }:
             return
         if self.instrument_ctrl is not None:
@@ -2221,50 +2226,63 @@ class MainWindow(QMainWindow):
         return False
         
     def create_amplifier_test_tab(self):
-        """创建功放测试选项卡"""
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        
-        # 连接说明
-        instruction_group = QGroupBox("连接说明")
-        instruction_layout = QVBoxLayout(instruction_group)
-        
-        self.instruction_text = QTextEdit()
-        self.instruction_text.setMaximumHeight(120)
-        self.update_amplifier_instruction_text()  # 根据驱动模式更新连接说明
-        instruction_layout.addWidget(self.instruction_text)
-        
-        # 连接图按钮
-        self.show_amp_diagram_btn = QPushButton("查看连接图")
-        self.show_amp_diagram_btn.clicked.connect(self.show_amplifier_connection_diagram)
-        instruction_layout.addWidget(self.show_amp_diagram_btn)
-        
-        layout.addWidget(instruction_group)
-        
-        # 控制按钮
-        control_group = QGroupBox("测量控制")
-        control_layout = QHBoxLayout(control_group)
-        
-        self.amplifier_test_btn = QPushButton("开始功放测试")
-        self.amplifier_test_btn.clicked.connect(self.start_amplifier_test)
-        control_layout.addWidget(self.amplifier_test_btn)
-        
-        # 紧急停止按钮
-        self.emergency_stop_btn = QPushButton("紧急停止")
-        self.emergency_stop_btn.setStyleSheet("QPushButton { background-color: red; color: white; font-weight: bold; font-size: 14px; }")
-        self.emergency_stop_btn.clicked.connect(self.emergency_stop_test)
-        control_layout.addWidget(self.emergency_stop_btn)
-        
-        layout.addWidget(control_group)
-        
-        # 实时可视化 - 显示导航按钮
-        self.amplifier_plot_widget = RealTimePlotWidget(show_nav_buttons=True)
-        # 连接频点切换信号
-        self.amplifier_plot_widget.prev_clicked.connect(self.rt_prev_frequency)
-        self.amplifier_plot_widget.next_clicked.connect(self.rt_next_frequency)
-        layout.addWidget(self.amplifier_plot_widget)
-        
-        self.tab_widget.addTab(tab, "功放测试")
+        """创建独立的功放测试页面。"""
+        self.amplifier_page = AmplifierPage(
+            config_path_provider=lambda: str(CONFIG_FILE),
+            prepare_run=self._prepare_amplifier_run,
+            confirm_wiring=self._confirm_amplifier_wiring,
+            driver_mode_provider=lambda: self.driver_mode_check.isChecked(),
+            connection_dialog_factory=lambda kind, parent: ConnectionDialog(kind, parent),
+            plot_widget_factory=lambda parent: RealTimePlotWidget(show_nav_buttons=True),
+            realtime_data_callback=self._store_amplifier_realtime_data,
+            clear_realtime_callback=self.clear_real_time_data,
+            log_callback=self.add_log_message,
+            progress_callback=lambda value: getattr(self, "progress_bar", None)
+            and self.progress_bar.setValue(value),
+            error_callback=lambda message: self.on_worker_error(message, close_port=False),
+        )
+        self.amplifier_page.bind_controller(self.measurement_controller)
+        self.instruction_text = self.amplifier_page.instruction_text
+        self.amplifier_test_btn = self.amplifier_page.amplifier_test_btn
+        self.emergency_stop_btn = self.amplifier_page.emergency_stop_btn
+        self.amplifier_plot_widget = self.amplifier_page.amplifier_plot_widget
+        self.tab_widget.addTab(self.amplifier_page, "功放测试")
+
+    def _prepare_amplifier_run(self):
+        if self.instrument_ctrl is None:
+            self.on_worker_error("请先连接仪器；上一次测量结束后端口已安全释放")
+            return False
+        return self.update_and_save_config()
+
+    def _confirm_amplifier_wiring(self):
+        self.config.setdefault("wiring", {})
+        self.config["wiring"].update({
+            "confirmed": True,
+            "connection_note": "已通过主功放测试连接确认对话框确认现场接线",
+            "confirmed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "confirmation_source": "amplifier_test_dialog",
+        })
+        if self._save_config_file():
+            self.add_log_message("现场接线确认已保存")
+            self.measurement_controller.set_measurement_port(self.instrument_ctrl)
+            return True
+        self.add_log_message(f"配置保存失败: {self._last_save_error}")
+        return False
+
+    def _store_amplifier_realtime_data(self, data):
+        """保留功放实时数据供聊天上下文使用，不接管页面绘图。"""
+        if not isinstance(data, dict) or "frequency" not in data:
+            return
+        frequency = str(data["frequency"])
+        self.real_time_data[frequency] = data.copy()
+        if frequency not in [str(value) for value in self.rt_frequency_list]:
+            try:
+                self.rt_frequency_list.append(float(frequency))
+            except (TypeError, ValueError):
+                return
+            self.rt_frequency_list.sort()
+            if not self.rt_user_browsing:
+                self.rt_current_freq_index = len(self.rt_frequency_list) - 1
         
     def create_visualization_tab(self):
         """创建数据可视化选项卡"""
@@ -2527,63 +2545,6 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self.add_log_message("所有仪器连接成功！")
         
-    def start_amplifier_test(self):
-        """开始功放测试"""
-        if self.instrument_ctrl is None:
-            self.on_worker_error("请先连接仪器；上一次测量结束后端口已安全释放")
-            return
-        # 先落盘当前参数。保存会使已有现场确认失效，确认对话框必须放在
-        # 保存之后，否则下面的 update_and_save_config 会覆盖刚完成的确认。
-        if not self.update_and_save_config():
-            return
-
-        # 显示连接确认对话框
-        dialog = ConnectionDialog('amplifier_test', self)
-        if dialog.exec() != QDialog.Accepted:
-            return
-
-        # 功放测试的接线确认必须写入后台预检读取的配置文件。
-        self.config.setdefault('wiring', {})
-        self.config['wiring'].update({
-            'confirmed': True,
-            'connection_note': '已通过主功放测试连接确认对话框确认现场接线',
-            'confirmed_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
-            'confirmation_source': 'amplifier_test_dialog',
-        })
-        if not self._save_config_file():
-            self.add_log_message(f"配置保存失败: {self._last_save_error}")
-            return
-        self.add_log_message("现场接线确认已保存")
-             
-        # 清除之前的实时测量历史数据
-        self.clear_real_time_data()
-             
-        self.add_log_message("开始主功放测试...")
-        self.amplifier_test_btn.setEnabled(False)
-        self.emergency_stop_btn.setEnabled(True)  # 启用紧急停止按钮
-        self.emergency_stop = False
-        
-        self.current_worker = AmplifierWorker(
-            str(CONFIG_FILE), measurement_port=self.instrument_ctrl
-        )
-        self.current_worker.signals.finished.connect(lambda: self.on_measurement_finished(self.amplifier_test_btn))
-        self.current_worker.signals.error.connect(self.on_worker_error)
-        self.current_worker.signals.message.connect(self.add_log_message)
-        self.current_worker.signals.progress.connect(self.progress_bar.setValue)
-        self.current_worker.signals.data_update.connect(self.store_real_time_data)
-        self.current_worker.start()
-        
-    def emergency_stop_test(self):
-        """紧急停止测试"""
-        reply = QMessageBox.question(self, "紧急停止", "确定要紧急停止当前测试吗？",
-                                   QMessageBox.Yes | QMessageBox.No)
-        if reply == QMessageBox.Yes:
-            self.emergency_stop = True
-            if self.current_worker:
-                self.current_worker.stop()
-            self.add_log_message("用户执行紧急停止！")
-            self.progress_bar.setValue(0)
-    
     def on_measurement_finished(self, button):
         """测量完成"""
         button.setEnabled(True)
@@ -3260,6 +3221,8 @@ class MainWindow(QMainWindow):
                 self.cable_loss_page.close()
             if hasattr(self, "driver_mapping_page"):
                 self.driver_mapping_page.close()
+            if hasattr(self, "amplifier_page"):
+                self.amplifier_page.close()
         if self.current_worker and self.current_worker.isRunning():
             reply = QMessageBox.question(self, "退出", "测试正在进行中，确定要退出吗？",
                                        QMessageBox.Yes | QMessageBox.No)
@@ -3276,6 +3239,8 @@ class MainWindow(QMainWindow):
                     self.cable_loss_page.close()
                 if hasattr(self, "driver_mapping_page"):
                     self.driver_mapping_page.close()
+                if hasattr(self, "amplifier_page"):
+                    self.amplifier_page.close()
                 event.accept()
             else:
                 event.ignore()
@@ -3289,6 +3254,8 @@ class MainWindow(QMainWindow):
                 self.cable_loss_page.close()
             if hasattr(self, "driver_mapping_page"):
                 self.driver_mapping_page.close()
+            if hasattr(self, "amplifier_page"):
+                self.amplifier_page.close()
             event.accept()
 
 

@@ -641,3 +641,37 @@ controller 不负责：
 
 - 回滚方式：恢复 `enhanced_main_gui.py` 中上述 builder、连接 worker 回调和无调用方方法的改动；恢复本节记录即可，不涉及 worker、runtime、测量算法、SCPI 或硬件配置。
 - 本步骤的离线验证应覆盖 GUI 导入、页面组合、controller、架构审计、应用检查、配置校验和编译检查；不触发 Hardware smoke。
+
+## 16. 阶段 6 第二期验收记录（2026-10-04）
+
+### 16.1 本期完成结论
+
+- 第二期三类测量页面已是独立对象：`CableLossPage`、`DriverMappingPage`、`AmplifierPage`。
+- `MeasurementController` 是 GUI 测量生命周期的唯一协调入口，提供三类启动、普通停止、紧急停止和线损继续操作；`MainWindow` 不直接创建三类测量 worker。
+- 页面、controller、worker 和 runtime 的依赖方向已通过阶段 5.2 AST 审计；controller 不导入测量服务、硬件驱动、VISA、SCPI 或结果存储实现。
+- controller 离线回归覆盖单一活动测量、构造/启动失败、完成/异常/停止终态清理、普通停止与紧急停止区分、线损等待/继续、关闭超时和外部 measurement port 不越权关闭。
+- 本阶段未修改 SCPI 命令、设备时序、资源所有权、安全清理顺序或生产配置，因此不触发真实 Hardware smoke。
+
+### 16.2 验收命令与结果
+
+| 验收项 | 命令 | 结果 |
+| --- | --- | --- |
+| 全量离线测试 | `./run_tests.ps1` | 通过，579 项；内置编译检查通过 |
+| 应用依赖检查 | `& $env:AUTO_TEST_PYTHON launcher.py --check` | 通过；Python 3.11.15，Conda 环境 `Auto_test`，必需依赖已安装 |
+| 配置校验 | `& $env:AUTO_TEST_PYTHON launcher.py --validate-config` | 通过 |
+| 编译检查 | `./run_tests.ps1` 内置 `tools/compile_check.py` | 通过 |
+| 阶段 5.2 架构审计 | `& $env:AUTO_TEST_PYTHON -m unittest tests.test_architecture_dependencies` | 通过，11 项 |
+| 阶段 6 离线门槛回归 | `& $env:AUTO_TEST_PYTHON -m unittest tests.test_second_refactor_acceptance` | 通过，1 项 |
+
+以上结果使用 `.env` 中的 `AUTO_TEST_PYTHON` 实际执行；测试数量来自命令输出，不是估算值。
+
+### 16.3 Hardware smoke 独立门槛
+
+- **Hardware smoke 状态：待现场条件具备**。
+- 本期未执行真实 Hardware smoke，理由是本期只完成 Qt 页面、controller 生命周期、离线架构审计和兼容清理，没有改变 SCPI、设备时序、端口所有权、安全清理顺序或生产配置；不以离线测试通过替代真实设备验收。
+- 现场条件具备后，必须按 `docs/SCPI与三层测试架构重构收尾计划.md` 的现场清单，依次完成线损、驱动功率映射和主功放三类完整测量，并独立保存脱敏报告、设备身份、配置快照、结果和清理证据。
+- Hardware smoke 通过前，第二期只能标记为“离线重构验收通过，真实设备验收待完成”，不得宣称第二期现场验收完成。
+
+### 16.4 回滚点
+
+阶段 6 仅新增验收记录和离线门槛回归测试。回滚时删除本节和 `tests/test_second_refactor_acceptance.py` 即可，不回滚已通过的页面、`MeasurementController`、worker、runtime、SCPI、硬件配置或端口所有权实现。真实现场验收另有独立报告和回滚决定，不与离线文档回滚混用。

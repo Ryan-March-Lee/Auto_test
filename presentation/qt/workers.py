@@ -39,6 +39,7 @@ class BaseWorker(QThread):
         self.signals = WorkerSignals()
         self._service = None
         self._stop_requested = False
+        self._emergency_stop_requested = False
 
     @property
     def service(self):
@@ -47,6 +48,26 @@ class BaseWorker(QThread):
     def stop(self) -> None:
         self._stop_requested = True
         if self._service is not None:
+            self._service.stop_measurement()
+
+    def emergency_stop(self) -> None:
+        self._stop_requested = True
+        self._emergency_stop_requested = True
+        if self._service is not None:
+            emergency_stop = getattr(self._service, "emergency_stop", None)
+            if emergency_stop is None:
+                raise RuntimeError("测量服务不支持紧急停止")
+            emergency_stop()
+
+    def _stop_service(self) -> None:
+        if self._service is None:
+            return
+        if self._emergency_stop_requested:
+            emergency_stop = getattr(self._service, "emergency_stop", None)
+            if emergency_stop is None:
+                raise RuntimeError("测量服务不支持紧急停止")
+            emergency_stop()
+        else:
             self._service.stop_measurement()
 
     def emit_message(self, message: str) -> None:
@@ -169,7 +190,7 @@ class CableLossWorker(BaseWorker):
                 self._construction_failed(error)
                 return
             if self._stop_requested:
-                self._service.stop_measurement()
+                self._stop_service()
                 self.signals.stopped.emit("用户停止")
                 return
             self._service.set_step_pause_callback(self.signals.step_pause.emit)
@@ -200,6 +221,10 @@ class CableLossWorker(BaseWorker):
 
     def stop(self) -> None:
         super().stop()
+        self._continue_event.set()
+
+    def emergency_stop(self) -> None:
+        super().emergency_stop()
         self._continue_event.set()
 
 
@@ -251,7 +276,7 @@ class DriverMappingWorker(BaseWorker):
                 self._construction_failed(error)
                 return
             if self._stop_requested:
-                self._service.stop_measurement()
+                self._stop_service()
                 self.signals.stopped.emit("用户停止")
                 return
             self._service.measure_all_frequencies()
@@ -311,7 +336,7 @@ class AmplifierWorker(BaseWorker):
                 self._construction_failed(error)
                 return
             if self._stop_requested:
-                self._service.stop_measurement()
+                self._stop_service()
                 self.signals.stopped.emit("用户停止")
                 return
             self._service.measure_all_frequencies()

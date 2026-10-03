@@ -55,7 +55,11 @@ class DriverPowerMappingUseCase:
 
     def stop_measurement(self) -> None:
         """Request cancellation; the service owns the safety cleanup."""
-        self._token.request_emergency_stop(reason="用户停止")
+        self._token.request_stop(reason="用户停止")
+
+    def emergency_stop(self) -> None:
+        """Request emergency cancellation; the service owns safety cleanup."""
+        self._token.request_emergency_stop(reason="紧急停止")
 
     def measure_all_frequencies(self) -> dict[str, Any]:
         result = self._service.run()

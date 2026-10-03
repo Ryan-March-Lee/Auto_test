@@ -64,7 +64,10 @@ class AmplifierMeasurementUseCase:
         self.last_result: dict[str, Any] | None = None
 
     def stop_measurement(self) -> None:
-        self._token.request_emergency_stop(reason="用户停止")
+        self._token.request_stop(reason="用户停止")
+
+    def emergency_stop(self) -> None:
+        self._token.request_emergency_stop(reason="紧急停止")
 
     def calculate_actual_power(self, frequency: float, measured_power: float) -> float:
         attenuator = float(self.config["attenuator"]["type"].replace("dB", ""))

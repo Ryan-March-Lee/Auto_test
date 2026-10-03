@@ -45,6 +45,7 @@ from app.gui_runtime import (
 from data_visualization import DataVisualization
 from presentation.qt.pages import build_pages
 from presentation.qt.cable_loss_page import CableLossPage
+from presentation.qt.driver_mapping_page import DriverMappingPage
 from presentation.qt.measurement_controller import MeasurementController
 from presentation.qt.measurement_state import MeasurementKind
 from presentation.qt.workers import (
@@ -1404,13 +1405,18 @@ class MainWindow(QMainWindow):
         self.current_worker = None
         self.emergency_stop = False
         self.measurement_controller = MeasurementController(
-            {MeasurementKind.CABLE_LOSS: lambda command, *, measurement_port=None: CableLossWorker(
-                command.config_path, measurement_port=measurement_port
-            )},
+            {
+                MeasurementKind.CABLE_LOSS: lambda command, *, measurement_port=None: CableLossWorker(
+                    command.config_path, measurement_port=measurement_port
+                ),
+                MeasurementKind.DRIVER_MAPPING: lambda command, *, measurement_port=None: DriverMappingWorker(
+                    command.config_path, measurement_port=measurement_port
+                ),
+            },
             lambda: str(CONFIG_FILE),
         )
         self.measurement_controller.signals.thread_finished.connect(
-            self._on_cable_loss_controller_thread_finished
+            self._on_measurement_controller_thread_finished
         )
         
         # 数据可视化相关变量
@@ -2143,8 +2149,11 @@ class MainWindow(QMainWindow):
         self.add_log_message(f"配置保存失败: {self._last_save_error}")
         return False
 
-    def _on_cable_loss_controller_thread_finished(self):
-        if self.measurement_controller.state.kind is not MeasurementKind.CABLE_LOSS:
+    def _on_measurement_controller_thread_finished(self):
+        if self.measurement_controller.state.kind not in {
+            MeasurementKind.CABLE_LOSS,
+            MeasurementKind.DRIVER_MAPPING,
+        }:
             return
         if self.instrument_ctrl is not None:
             try:
@@ -2154,54 +2163,62 @@ class MainWindow(QMainWindow):
             self.instrument_ctrl = None
         
     def create_driver_mapping_tab(self):
-        """创建驱动映射选项卡"""
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        
-        # 连接说明
-        instruction_group = QGroupBox("连接说明")
-        instruction_layout = QVBoxLayout(instruction_group)
-        
-        instruction_text = QTextEdit()
-        instruction_text.setMaximumHeight(120)
-        instruction_text.setHtml("""
-        <h3>驱动功放映射测量连接说明:</h3>
-        <p>信号源 → 线缆① → 驱动功放 → 线缆③ → 衰减器 → 线缆② → 频谱仪</p>
-        """)
-        instruction_layout.addWidget(instruction_text)
-        
-        # 连接图按钮
-        self.show_driver_diagram_btn = QPushButton("查看连接图")
-        self.show_driver_diagram_btn.clicked.connect(lambda: self.show_connection_diagram('driver_mapping'))
-        instruction_layout.addWidget(self.show_driver_diagram_btn)
-        
-        layout.addWidget(instruction_group)
-        
-        # 控制按钮
-        control_group = QGroupBox("测量控制")
-        control_layout = QHBoxLayout(control_group)
-        
-        self.driver_mapping_btn = QPushButton("开始驱动映射")
-        self.driver_mapping_btn.clicked.connect(self.start_driver_mapping)
-        control_layout.addWidget(self.driver_mapping_btn)
-        
-        # 紧急停止按钮
-        self.driver_emergency_stop_btn = QPushButton("紧急停止")
-        self.driver_emergency_stop_btn.setStyleSheet("QPushButton { background-color: #dc3545; color: white; font-weight: bold; }")
-        self.driver_emergency_stop_btn.setEnabled(False)  # 初始状态禁用
-        self.driver_emergency_stop_btn.clicked.connect(self.emergency_stop_driver_mapping)
-        control_layout.addWidget(self.driver_emergency_stop_btn)
-        
-        layout.addWidget(control_group)
-        
-        # 实时可视化 - 显示导航按钮
-        self.driver_plot_widget = RealTimePlotWidget(show_nav_buttons=True)
-        # 连接频点切换信号
-        self.driver_plot_widget.prev_clicked.connect(self.rt_prev_frequency)
-        self.driver_plot_widget.next_clicked.connect(self.rt_next_frequency)
-        layout.addWidget(self.driver_plot_widget)
-        
-        self.tab_widget.addTab(tab, "驱动映射")
+        """创建驱动映射页面。"""
+        self.driver_mapping_page = DriverMappingPage(
+            config_path_provider=lambda: str(CONFIG_FILE),
+            prepare_run=self._prepare_driver_mapping_run,
+            confirm_wiring=self._confirm_driver_mapping_wiring,
+            connection_dialog_factory=lambda kind, parent: ConnectionDialog(kind, parent),
+            plot_widget_factory=lambda parent: RealTimePlotWidget(show_nav_buttons=True),
+            realtime_data_callback=self._store_driver_mapping_realtime_data,
+            clear_realtime_callback=self.clear_real_time_data,
+            log_callback=self.add_log_message,
+            progress_callback=lambda value: getattr(self, "progress_bar", None)
+            and self.progress_bar.setValue(value),
+            error_callback=lambda message: self.on_worker_error(message, close_port=False),
+        )
+        self.driver_mapping_page.bind_controller(self.measurement_controller)
+        self.driver_mapping_btn = self.driver_mapping_page.driver_mapping_btn
+        self.driver_stop_btn = self.driver_mapping_page.driver_stop_btn
+        self.driver_emergency_stop_btn = self.driver_mapping_page.driver_emergency_stop_btn
+        self.driver_plot_widget = self.driver_mapping_page.driver_plot_widget
+        self.tab_widget.addTab(self.driver_mapping_page, "驱动映射")
+
+    def _store_driver_mapping_realtime_data(self, data):
+        """保留聊天上下文需要的实时数据，不接管页面绘图。"""
+        if not isinstance(data, dict) or "frequency" not in data:
+            return
+        frequency = str(data["frequency"])
+        self.real_time_data[frequency] = data.copy()
+        if frequency not in [str(value) for value in self.rt_frequency_list]:
+            try:
+                self.rt_frequency_list.append(float(frequency))
+            except (TypeError, ValueError):
+                return
+            self.rt_frequency_list.sort()
+            if not self.rt_user_browsing:
+                self.rt_current_freq_index = len(self.rt_frequency_list) - 1
+
+    def _prepare_driver_mapping_run(self):
+        if self.instrument_ctrl is None:
+            self.on_worker_error("请先连接仪器；上一次测量结束后端口已安全释放")
+            return False
+        return self.update_and_save_config()
+
+    def _confirm_driver_mapping_wiring(self):
+        self.config.setdefault("wiring", {})
+        self.config["wiring"].update({
+            "confirmed": True,
+            "connection_note": "已通过驱动功放映射连接确认对话框确认现场接线",
+            "confirmed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "confirmation_source": "driver_mapping_dialog",
+        })
+        if self._save_config_file():
+            self.add_log_message("现场接线确认已保存")
+            self.measurement_controller.set_measurement_port(self.instrument_ctrl)
+            return True
+        self.add_log_message(f"配置保存失败: {self._last_save_error}")
+        return False
         
     def create_amplifier_test_tab(self):
         """创建功放测试选项卡"""
@@ -2510,50 +2527,6 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self.add_log_message("所有仪器连接成功！")
         
-    def start_driver_mapping(self):
-        """开始驱动映射"""
-        if self.instrument_ctrl is None:
-            self.on_worker_error("请先连接仪器；上一次测量结束后端口已安全释放")
-            return
-        # 先保存当前参数，再弹出接线确认；保存配置会使旧确认失效。
-        if not self.update_and_save_config():
-            return
-
-        # 显示连接确认对话框
-        dialog = ConnectionDialog('driver_mapping', self)
-        if dialog.exec() != QDialog.Accepted:
-            return
-
-        self.config.setdefault('wiring', {})
-        self.config['wiring'].update({
-            'confirmed': True,
-            'connection_note': '已通过驱动功放映射连接确认对话框确认现场接线',
-            'confirmed_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
-            'confirmation_source': 'driver_mapping_dialog',
-        })
-        if not self._save_config_file():
-            self.add_log_message(f"配置保存失败: {self._last_save_error}")
-            return
-        self.add_log_message("现场接线确认已保存")
-            
-        # 清除之前的实时测量历史数据
-        self.clear_real_time_data()
-            
-        self.add_log_message("开始驱动功放映射...")
-        self.driver_mapping_btn.setEnabled(False)
-        self.driver_emergency_stop_btn.setEnabled(True)  # 启用紧急停止按钮
-        
-        self.current_worker = DriverMappingWorker(
-            str(CONFIG_FILE), measurement_port=self.instrument_ctrl
-        )
-        self.current_worker.signals.finished.connect(lambda: self.on_measurement_finished(self.driver_mapping_btn))
-        self.current_worker.signals.error.connect(self.on_worker_error)
-        self.current_worker.signals.stopped.connect(self.on_worker_stopped)
-        self.current_worker.signals.message.connect(self.add_log_message)
-        self.current_worker.signals.progress.connect(self.progress_bar.setValue)
-        self.current_worker.signals.data_update.connect(self.store_real_time_data)
-        self.current_worker.start()
-        
     def start_amplifier_test(self):
         """开始功放测试"""
         if self.instrument_ctrl is None:
@@ -2611,19 +2584,6 @@ class MainWindow(QMainWindow):
             self.add_log_message("用户执行紧急停止！")
             self.progress_bar.setValue(0)
     
-    def emergency_stop_driver_mapping(self):
-        """紧急停止驱动映射测试"""
-        reply = QMessageBox.question(self, "紧急停止", "确定要紧急停止当前驱动映射测试吗？",
-                                   QMessageBox.Yes | QMessageBox.No)
-        if reply == QMessageBox.Yes:
-            self.emergency_stop = True
-            if self.current_worker:
-                self.current_worker.stop()
-            self.add_log_message("用户执行驱动映射紧急停止！")
-            self.progress_bar.setValue(0)
-            # 恢复按钮状态
-            self.driver_mapping_btn.setEnabled(True)
-            
     def on_measurement_finished(self, button):
         """测量完成"""
         button.setEnabled(True)
@@ -3298,6 +3258,8 @@ class MainWindow(QMainWindow):
                 self.instrument_ctrl = None
             if hasattr(self, "cable_loss_page"):
                 self.cable_loss_page.close()
+            if hasattr(self, "driver_mapping_page"):
+                self.driver_mapping_page.close()
         if self.current_worker and self.current_worker.isRunning():
             reply = QMessageBox.question(self, "退出", "测试正在进行中，确定要退出吗？",
                                        QMessageBox.Yes | QMessageBox.No)
@@ -3312,6 +3274,8 @@ class MainWindow(QMainWindow):
                         self.add_log_message(f"仪器清理失败: {error}")
                 if hasattr(self, "cable_loss_page"):
                     self.cable_loss_page.close()
+                if hasattr(self, "driver_mapping_page"):
+                    self.driver_mapping_page.close()
                 event.accept()
             else:
                 event.ignore()
@@ -3323,6 +3287,8 @@ class MainWindow(QMainWindow):
                     self.add_log_message(f"仪器清理失败: {error}")
             if hasattr(self, "cable_loss_page"):
                 self.cable_loss_page.close()
+            if hasattr(self, "driver_mapping_page"):
+                self.driver_mapping_page.close()
             event.accept()
 
 

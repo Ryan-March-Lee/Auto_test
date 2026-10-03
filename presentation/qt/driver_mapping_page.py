@@ -108,14 +108,12 @@ class DriverMappingPage(PageControllerBindingMixin, QWidget):
     def _connect_controller_signals(self, controller: Any) -> None:
         signals = controller.signals
         self._connect_signal(signals.progress, self._progress_callback)
-        self._connect_signal(signals.message, self._log_callback)
         self._connect_signal(signals.data_update, self.update_realtime)
         self._connect_signal(signals.result, self.show_result)
         self._connect_signal(signals.state_changed, self._on_state_changed)
         self._connect_signal(signals.error, self._on_error)
         self._connect_signal(signals.stopped, self._on_stopped)
         self._connect_signal(signals.finished, self._on_finished)
-        self._connect_signal(signals.rejected, self._log_callback)
 
     def start_measurement(self) -> None:
         controller = self.controller
@@ -282,12 +280,22 @@ class DriverMappingPage(PageControllerBindingMixin, QWidget):
         self.driver_emergency_stop_btn.setEnabled(active)
 
     def _on_error(self, message: str) -> None:
+        if self.controller is None or (
+            self.controller.state.kind is not None
+            and self.controller.state.kind is not MeasurementKind.DRIVER_MAPPING
+        ):
+            return
         self.driver_mapping_btn.setEnabled(True)
         self.driver_stop_btn.setEnabled(False)
         self.driver_emergency_stop_btn.setEnabled(False)
         self._error_callback(message)
 
     def _on_stopped(self, reason: str) -> None:
+        if self.controller is None or (
+            self.controller.state.kind is not None
+            and self.controller.state.kind is not MeasurementKind.DRIVER_MAPPING
+        ):
+            return
         self.driver_mapping_btn.setEnabled(True)
         self.driver_stop_btn.setEnabled(False)
         self.driver_emergency_stop_btn.setEnabled(False)
@@ -295,6 +303,11 @@ class DriverMappingPage(PageControllerBindingMixin, QWidget):
         self._progress_callback(0)
 
     def _on_finished(self) -> None:
+        if self.controller is None or (
+            self.controller.state.kind is not None
+            and self.controller.state.kind is not MeasurementKind.DRIVER_MAPPING
+        ):
+            return
         self.driver_mapping_btn.setEnabled(True)
         self.driver_stop_btn.setEnabled(False)
         self.driver_emergency_stop_btn.setEnabled(False)

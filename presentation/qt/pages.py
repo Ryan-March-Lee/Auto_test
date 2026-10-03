@@ -145,26 +145,114 @@ class BasePage(PageControllerBindingMixin, ABC):
 
 
 @dataclass(frozen=True)
+class PageContext:
+    """页面构造所需的窄组合接口。
+
+    页面定义只消费这些回调和共享 controller，不需要知道主窗口的实现。
+    """
+
+    controller: Any
+    config_path_provider: Callable[[], str]
+    prepare_cable_loss: Callable[[], bool]
+    confirm_cable_loss: Callable[[], bool]
+    prepare_driver_mapping: Callable[[], bool]
+    confirm_driver_mapping: Callable[[], bool]
+    prepare_amplifier: Callable[[], bool]
+    confirm_amplifier: Callable[[], bool]
+    driver_mode_provider: Callable[[], bool]
+    connection_dialog_factory: Callable[[str, Any], Any]
+    plot_widget_factory: Callable[[Any], Any]
+    load_results_callback: Callable[[], Any]
+    log_callback: Callable[[str], Any]
+    progress_callback: Callable[[int], Any]
+    error_callback: Callable[[str], Any]
+    driver_realtime_data_callback: Callable[[Any], Any]
+    amplifier_realtime_data_callback: Callable[[Any], Any]
+    clear_realtime_callback: Callable[[], Any]
+    build_configuration: Callable[[], Any]
+    build_visualization: Callable[[], Any]
+    build_export: Callable[[], Any]
+
+
+@dataclass(frozen=True)
 class PageDefinition:
     key: str
     title: str
     builder: Callable[[Any], Any]
 
 
+def _build_cable_loss_page(context: PageContext) -> Any:
+    from .cable_loss_page import CableLossPage
+
+    page = CableLossPage(
+        config_path_provider=context.config_path_provider,
+        prepare_run=context.prepare_cable_loss,
+        confirm_wiring=context.confirm_cable_loss,
+        connection_dialog_factory=context.connection_dialog_factory,
+        load_results_callback=context.load_results_callback,
+        log_callback=context.log_callback,
+        progress_callback=context.progress_callback,
+        error_callback=context.error_callback,
+    )
+    page.bind_controller(context.controller)
+    return page
+
+
+def _build_driver_mapping_page(context: PageContext) -> Any:
+    from .driver_mapping_page import DriverMappingPage
+
+    page = DriverMappingPage(
+        config_path_provider=context.config_path_provider,
+        prepare_run=context.prepare_driver_mapping,
+        confirm_wiring=context.confirm_driver_mapping,
+        connection_dialog_factory=context.connection_dialog_factory,
+        plot_widget_factory=context.plot_widget_factory,
+        realtime_data_callback=context.driver_realtime_data_callback,
+        clear_realtime_callback=context.clear_realtime_callback,
+        log_callback=context.log_callback,
+        progress_callback=context.progress_callback,
+        error_callback=context.error_callback,
+    )
+    page.bind_controller(context.controller)
+    return page
+
+
+def _build_amplifier_page(context: PageContext) -> Any:
+    from .amplifier_page import AmplifierPage
+
+    page = AmplifierPage(
+        config_path_provider=context.config_path_provider,
+        prepare_run=context.prepare_amplifier,
+        confirm_wiring=context.confirm_amplifier,
+        driver_mode_provider=context.driver_mode_provider,
+        connection_dialog_factory=context.connection_dialog_factory,
+        plot_widget_factory=context.plot_widget_factory,
+        realtime_data_callback=context.amplifier_realtime_data_callback,
+        clear_realtime_callback=context.clear_realtime_callback,
+        log_callback=context.log_callback,
+        progress_callback=context.progress_callback,
+        error_callback=context.error_callback,
+    )
+    page.bind_controller(context.controller)
+    return page
+
+
 PAGE_DEFINITIONS = (
-    PageDefinition("configuration", "仪器配置", lambda window: window.create_config_tab()),
-    PageDefinition("cable_loss", "线损测量", lambda window: window.create_cable_loss_tab()),
-    PageDefinition("driver_mapping", "驱动映射", lambda window: window.create_driver_mapping_tab()),
-    PageDefinition("amplifier", "功放测试", lambda window: window.create_amplifier_test_tab()),
-    PageDefinition("visualization", "数据可视化", lambda window: window.create_visualization_tab()),
-    PageDefinition("export", "数据导出", lambda window: window.create_data_export_tab()),
+    PageDefinition("configuration", "仪器配置", lambda context: context.build_configuration()),
+    PageDefinition("cable_loss", "线损测量", _build_cable_loss_page),
+    PageDefinition("driver_mapping", "驱动映射", _build_driver_mapping_page),
+    PageDefinition("amplifier", "功放测试", _build_amplifier_page),
+    PageDefinition("visualization", "数据可视化", lambda context: context.build_visualization()),
+    PageDefinition("export", "数据导出", lambda context: context.build_export()),
 )
 
 
-def build_pages(window: Any) -> None:
-    """Build the pages owned by *window* in the stable user-facing order."""
+def build_pages(context: Any) -> list[Any]:
+    """Build and return pages in the stable user-facing order."""
+    pages = []
     for page in PAGE_DEFINITIONS:
-        page.builder(window)
+        pages.append((page, page.builder(context)))
+    return pages
 
 
 __all__ = [
@@ -172,6 +260,7 @@ __all__ = [
     "PageControllerBindingMixin",
     "BasePage",
     "PageDefinition",
+    "PageContext",
     "PAGE_DEFINITIONS",
     "build_pages",
 ]

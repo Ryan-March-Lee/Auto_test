@@ -64,7 +64,7 @@ class _Events:
 
 
 class OfflineRefactorCompletionTests(unittest.TestCase):
-    def test_removed_legacy_gui_workers_stay_out_of_gui_module(self):
+    def test_measurement_workers_are_created_outside_main_window_module(self):
         import ast
 
         project_root = Path(__file__).resolve().parents[1]
@@ -84,14 +84,15 @@ class OfflineRefactorCompletionTests(unittest.TestCase):
             "LegacyAmplifierWorker",
         }
         self.assertTrue(removed_workers.isdisjoint(class_names))
-        modern_worker_import = next(
-            node
+        imported_modules = {
+            node.module: {alias.name for alias in node.names}
             for node in ast.walk(ast.parse(gui_source))
             if isinstance(node, ast.ImportFrom)
-            and node.module == "presentation.qt.workers"
-        )
-        imported_names = {alias.name for alias in modern_worker_import.names}
-        self.assertTrue({"InstrumentWorker", "CableLossWorker"}.issubset(imported_names))
+        }
+        self.assertIn("InstrumentWorker", imported_modules["presentation.qt.workers"])
+        self.assertNotIn("CableLossWorker", imported_modules["presentation.qt.workers"])
+        self.assertNotIn("DriverMappingWorker", imported_modules["presentation.qt.workers"])
+        self.assertNotIn("AmplifierWorker", imported_modules["presentation.qt.workers"])
 
     def test_prepare_run_writes_context_before_hardware_factory(self):
         plan = {

@@ -100,6 +100,9 @@ class DriverMappingPageTests(unittest.TestCase):
         )
         self.page.bind_controller(self.controller)
 
+        self.assertEqual(self.controller.signals.message.slots, [])
+        self.assertEqual(self.controller.signals.rejected.slots, [])
+
     def test_start_forwards_explicit_command_after_preparation(self):
         self.page.start_measurement()
         self.assertEqual(self.prepared, [True])
@@ -163,8 +166,21 @@ class DriverMappingPageTests(unittest.TestCase):
         self.assertIn("测量已停止: 用户停止", self.logs)
         self.controller.signals.error.emit("测量失败")
         self.assertEqual(self.errors, ["测量失败"])
+        self.controller.state = type(
+            "State", (), {"kind": MeasurementKind.DRIVER_MAPPING, "is_active": True}
+        )()
         self.controller.signals.finished.emit()
         self.assertIn("测量完成！", self.logs)
+
+    def test_other_measurement_terminal_events_are_ignored(self):
+        self.controller.state = type(
+            "State", (), {"kind": MeasurementKind.AMPLIFIER, "is_active": True}
+        )()
+        self.controller.signals.error.emit("其他测量失败")
+        self.controller.signals.stopped.emit("其他测量停止")
+        self.controller.signals.finished.emit()
+        self.assertEqual(self.errors, [])
+        self.assertEqual(self.logs, [])
 
     def test_repeated_start_is_rejected_before_preparation(self):
         self.controller.state = type(

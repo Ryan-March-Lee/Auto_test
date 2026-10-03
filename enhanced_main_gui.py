@@ -43,19 +43,11 @@ from app.gui_runtime import (
     connect_instruments,
 )
 from data_visualization import DataVisualization
-from presentation.qt.pages import build_pages
-from presentation.qt.cable_loss_page import CableLossPage
-from presentation.qt.driver_mapping_page import DriverMappingPage
-from presentation.qt.amplifier_page import AmplifierPage
+from presentation.qt.pages import PageContext, build_pages
 from presentation.qt.measurement_controller import MeasurementController
 from presentation.qt.measurement_state import MeasurementKind
-from presentation.qt.workers import (
-    AmplifierWorker,
-    BaseWorker,
-    CableLossWorker,
-    DriverMappingWorker,
-    InstrumentWorker,
-)
+from presentation.qt.measurement_worker_factories import build_measurement_worker_factories
+from presentation.qt.workers import BaseWorker, InstrumentWorker
 import sys
 import os
 # 添加当前目录到Python路径，以便导入llm模块
@@ -1406,22 +1398,13 @@ class MainWindow(QMainWindow):
         self.current_worker = None
         self.emergency_stop = False
         self.measurement_controller = MeasurementController(
-            {
-                MeasurementKind.CABLE_LOSS: lambda command, *, measurement_port=None: CableLossWorker(
-                    command.config_path, measurement_port=measurement_port
-                ),
-                MeasurementKind.DRIVER_MAPPING: lambda command, *, measurement_port=None: DriverMappingWorker(
-                    command.config_path, measurement_port=measurement_port
-                ),
-                MeasurementKind.AMPLIFIER: lambda command, *, measurement_port=None: AmplifierWorker(
-                    command.config_path, measurement_port=measurement_port
-                ),
-            },
-            lambda: str(CONFIG_FILE),
+            build_measurement_worker_factories(), lambda: str(CONFIG_FILE)
         )
         self.measurement_controller.signals.thread_finished.connect(
             self._on_measurement_controller_thread_finished
         )
+        self.measurement_controller.signals.message.connect(self.add_log_message)
+        self.measurement_controller.signals.rejected.connect(self.add_log_message)
         
         # 数据可视化相关变量
         self.loaded_data = None
@@ -1470,8 +1453,8 @@ class MainWindow(QMainWindow):
         self.tab_widget = QTabWidget()
         left_layout.addWidget(self.tab_widget)
         
-        # 页面顺序和职责由 presentation 层登记；窗口暂时提供兼容 builder。
-        build_pages(self)
+        # 页面由 presentation 层构造；窗口只登记页面并提供全局 UI 回调。
+        self._register_pages()
         
         # 状态栏和控制面板
         self.create_status_panel(left_layout)
@@ -1498,7 +1481,59 @@ class MainWindow(QMainWindow):
         # 初始化聊天面板状态（默认隐藏）
         self.chat_panel.hide()
         self.chat_visible = False
-    
+
+    def _register_pages(self):
+        """构造页面并登记 tab；测量页面通过共享 controller 连接。"""
+        context = PageContext(
+            controller=self.measurement_controller,
+            config_path_provider=lambda: str(CONFIG_FILE),
+            prepare_cable_loss=self._prepare_cable_loss_run,
+            confirm_cable_loss=self._confirm_cable_loss_wiring,
+            prepare_driver_mapping=self._prepare_driver_mapping_run,
+            confirm_driver_mapping=self._confirm_driver_mapping_wiring,
+            prepare_amplifier=self._prepare_amplifier_run,
+            confirm_amplifier=self._confirm_amplifier_wiring,
+            driver_mode_provider=lambda: self.driver_mode_check.isChecked(),
+            connection_dialog_factory=lambda kind, parent: ConnectionDialog(kind, parent),
+            plot_widget_factory=lambda _parent: RealTimePlotWidget(show_nav_buttons=True),
+            load_results_callback=lambda: load_measurement_result(CABLE_LOSS_FILE),
+            log_callback=self.add_log_message,
+            progress_callback=lambda value: getattr(self, "progress_bar", None)
+            and self.progress_bar.setValue(value),
+            error_callback=lambda message: self.on_worker_error(message, close_port=False),
+            driver_realtime_data_callback=self._store_driver_mapping_realtime_data,
+            amplifier_realtime_data_callback=self._store_amplifier_realtime_data,
+            clear_realtime_callback=self.clear_real_time_data,
+            build_configuration=lambda: self._legacy_tab(self.create_config_tab),
+            build_visualization=lambda: self._legacy_tab(self.create_visualization_tab),
+            build_export=lambda: self._legacy_tab(self.create_data_export_tab),
+        )
+        self.pages = {}
+        for definition, page in build_pages(context):
+            self.pages[definition.key] = page
+            self.tab_widget.addTab(page, definition.title)
+        self.cable_loss_page = self.pages["cable_loss"]
+        self.driver_mapping_page = self.pages["driver_mapping"]
+        self.amplifier_page = self.pages["amplifier"]
+        self.cable_loss_btn = self.cable_loss_page.cable_loss_btn
+        self.cable_loss_table = self.cable_loss_page.cable_loss_table
+        self.driver_mapping_btn = self.driver_mapping_page.driver_mapping_btn
+        self.driver_stop_btn = self.driver_mapping_page.driver_stop_btn
+        self.driver_emergency_stop_btn = self.driver_mapping_page.driver_emergency_stop_btn
+        self.driver_plot_widget = self.driver_mapping_page.driver_plot_widget
+        self.instruction_text = self.amplifier_page.instruction_text
+        self.amplifier_test_btn = self.amplifier_page.amplifier_test_btn
+        self.emergency_stop_btn = self.amplifier_page.emergency_stop_btn
+        self.amplifier_plot_widget = self.amplifier_page.amplifier_plot_widget
+
+    def _legacy_tab(self, builder):
+        """兼容仍由窗口维护的配置、可视化和导出页面 builder。"""
+        before = self.tab_widget.count()
+        builder()
+        page = self.tab_widget.widget(before)
+        self.tab_widget.removeTab(before)
+        return page
+
     def toggle_chat_panel(self):
         """切换聊天面板显示/隐藏"""
         if self.chat_visible:
@@ -2114,24 +2149,6 @@ class MainWindow(QMainWindow):
             if current_unit3 in enabled_ps:
                 self.power_assignment_widgets['pa_unit3_power'].setCurrentText(current_unit3)
         
-    def create_cable_loss_tab(self):
-        """创建线损测量选项卡"""
-        self.cable_loss_page = CableLossPage(
-            config_path_provider=lambda: str(CONFIG_FILE),
-            prepare_run=self._prepare_cable_loss_run,
-            confirm_wiring=self._confirm_cable_loss_wiring,
-            connection_dialog_factory=lambda kind, parent: ConnectionDialog(kind, parent),
-            load_results_callback=lambda: load_measurement_result(CABLE_LOSS_FILE),
-            log_callback=self.add_log_message,
-            progress_callback=lambda value: getattr(self, "progress_bar", None)
-            and self.progress_bar.setValue(value),
-            error_callback=lambda message: self.on_worker_error(message, close_port=False),
-        )
-        self.cable_loss_page.bind_controller(self.measurement_controller)
-        self.cable_loss_btn = self.cable_loss_page.cable_loss_btn
-        self.cable_loss_table = self.cable_loss_page.cable_loss_table
-        self.tab_widget.addTab(self.cable_loss_page, "线损测量")
-
     def _prepare_cable_loss_run(self):
         if self.instrument_ctrl is None:
             self.on_worker_error("请先连接仪器；上一次测量结束后端口已安全释放")
@@ -2167,28 +2184,6 @@ class MainWindow(QMainWindow):
                 self.add_log_message(f"仪器清理失败: {error}")
             self.instrument_ctrl = None
         
-    def create_driver_mapping_tab(self):
-        """创建驱动映射页面。"""
-        self.driver_mapping_page = DriverMappingPage(
-            config_path_provider=lambda: str(CONFIG_FILE),
-            prepare_run=self._prepare_driver_mapping_run,
-            confirm_wiring=self._confirm_driver_mapping_wiring,
-            connection_dialog_factory=lambda kind, parent: ConnectionDialog(kind, parent),
-            plot_widget_factory=lambda parent: RealTimePlotWidget(show_nav_buttons=True),
-            realtime_data_callback=self._store_driver_mapping_realtime_data,
-            clear_realtime_callback=self.clear_real_time_data,
-            log_callback=self.add_log_message,
-            progress_callback=lambda value: getattr(self, "progress_bar", None)
-            and self.progress_bar.setValue(value),
-            error_callback=lambda message: self.on_worker_error(message, close_port=False),
-        )
-        self.driver_mapping_page.bind_controller(self.measurement_controller)
-        self.driver_mapping_btn = self.driver_mapping_page.driver_mapping_btn
-        self.driver_stop_btn = self.driver_mapping_page.driver_stop_btn
-        self.driver_emergency_stop_btn = self.driver_mapping_page.driver_emergency_stop_btn
-        self.driver_plot_widget = self.driver_mapping_page.driver_plot_widget
-        self.tab_widget.addTab(self.driver_mapping_page, "驱动映射")
-
     def _store_driver_mapping_realtime_data(self, data):
         """保留聊天上下文需要的实时数据，不接管页面绘图。"""
         if not isinstance(data, dict) or "frequency" not in data:
@@ -2225,29 +2220,6 @@ class MainWindow(QMainWindow):
         self.add_log_message(f"配置保存失败: {self._last_save_error}")
         return False
         
-    def create_amplifier_test_tab(self):
-        """创建独立的功放测试页面。"""
-        self.amplifier_page = AmplifierPage(
-            config_path_provider=lambda: str(CONFIG_FILE),
-            prepare_run=self._prepare_amplifier_run,
-            confirm_wiring=self._confirm_amplifier_wiring,
-            driver_mode_provider=lambda: self.driver_mode_check.isChecked(),
-            connection_dialog_factory=lambda kind, parent: ConnectionDialog(kind, parent),
-            plot_widget_factory=lambda parent: RealTimePlotWidget(show_nav_buttons=True),
-            realtime_data_callback=self._store_amplifier_realtime_data,
-            clear_realtime_callback=self.clear_real_time_data,
-            log_callback=self.add_log_message,
-            progress_callback=lambda value: getattr(self, "progress_bar", None)
-            and self.progress_bar.setValue(value),
-            error_callback=lambda message: self.on_worker_error(message, close_port=False),
-        )
-        self.amplifier_page.bind_controller(self.measurement_controller)
-        self.instruction_text = self.amplifier_page.instruction_text
-        self.amplifier_test_btn = self.amplifier_page.amplifier_test_btn
-        self.emergency_stop_btn = self.amplifier_page.emergency_stop_btn
-        self.amplifier_plot_widget = self.amplifier_page.amplifier_plot_widget
-        self.tab_widget.addTab(self.amplifier_page, "功放测试")
-
     def _prepare_amplifier_run(self):
         if self.instrument_ctrl is None:
             self.on_worker_error("请先连接仪器；上一次测量结束后端口已安全释放")
@@ -3211,52 +3183,26 @@ class MainWindow(QMainWindow):
             worker = self.measurement_controller.current_worker
             if worker is not None and hasattr(worker, "wait"):
                 worker.wait()
-            if self.instrument_ctrl is not None:
-                try:
-                    self._close_instrument_port(self.instrument_ctrl)
-                except Exception as error:
-                    self.add_log_message(f"仪器清理失败: {error}")
-                self.instrument_ctrl = None
-            if hasattr(self, "cable_loss_page"):
-                self.cable_loss_page.close()
-            if hasattr(self, "driver_mapping_page"):
-                self.driver_mapping_page.close()
-            if hasattr(self, "amplifier_page"):
-                self.amplifier_page.close()
         if self.current_worker and self.current_worker.isRunning():
             reply = QMessageBox.question(self, "退出", "测试正在进行中，确定要退出吗？",
                                        QMessageBox.Yes | QMessageBox.No)
             if reply == QMessageBox.Yes:
-                if self.current_worker:
-                    self.current_worker.stop()
-                    self.current_worker.wait()
-                if self.instrument_ctrl is not None:
-                    try:
-                        self._close_instrument_port(self.instrument_ctrl)
-                    except Exception as error:
-                        self.add_log_message(f"仪器清理失败: {error}")
-                if hasattr(self, "cable_loss_page"):
-                    self.cable_loss_page.close()
-                if hasattr(self, "driver_mapping_page"):
-                    self.driver_mapping_page.close()
-                if hasattr(self, "amplifier_page"):
-                    self.amplifier_page.close()
-                event.accept()
+                self.current_worker.stop()
+                self.current_worker.wait()
             else:
                 event.ignore()
+                return
         else:
-            if self.instrument_ctrl is not None:
-                try:
-                    self._close_instrument_port(self.instrument_ctrl)
-                except Exception as error:
-                    self.add_log_message(f"仪器清理失败: {error}")
-            if hasattr(self, "cable_loss_page"):
-                self.cable_loss_page.close()
-            if hasattr(self, "driver_mapping_page"):
-                self.driver_mapping_page.close()
-            if hasattr(self, "amplifier_page"):
-                self.amplifier_page.close()
-            event.accept()
+            pass
+        if self.instrument_ctrl is not None:
+            try:
+                self._close_instrument_port(self.instrument_ctrl)
+            except Exception as error:
+                self.add_log_message(f"仪器清理失败: {error}")
+            self.instrument_ctrl = None
+        for page in getattr(self, "pages", {}).values():
+            page.close()
+        event.accept()
 
 
 def main():

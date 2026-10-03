@@ -88,6 +88,9 @@ class AmplifierPageTests(unittest.TestCase):
         )
         self.page.bind_controller(self.controller)
 
+        self.assertEqual(self.controller.signals.message.slots, [])
+        self.assertEqual(self.controller.signals.rejected.slots, [])
+
     def test_start_forwards_command_to_controller(self):
         self.page.start_measurement()
         command = self.controller.calls[0][1]

@@ -443,7 +443,7 @@ controller 不负责：
 
 ## 9. 当前状态
 
-本文于 2026-10-02 建立，当前状态为“计划已建立，阶段 0 待执行”。
+本文于 2026-10-02 建立。经 2026-10-04 至 2026-10-05 收尾，当前状态为“离线重构已完成，真实 Hardware smoke 待现场条件具备”。
 
 第一期已确认：`enhanced_workers.py` 已删除，三类应用测量用例、结果仓储、输入读取器、Qt worker 和 runtime 组装边界已经稳定。第二期后续工作应以本文件为指南，不得把持久化、硬件组装或测量算法重新放回页面或 `MainWindow`。
 
@@ -644,26 +644,26 @@ controller 不负责：
 
 ## 16. 阶段 6 第二期验收记录（2026-10-04）
 
-### 16.1 本期完成结论
+### 16.1 本期离线完成结论
 
-- 第二期三类测量页面已是独立对象：`CableLossPage`、`DriverMappingPage`、`AmplifierPage`。
-- `MeasurementController` 是 GUI 测量生命周期的唯一协调入口，提供三类启动、普通停止、紧急停止和线损继续操作；`MainWindow` 不直接创建三类测量 worker。
-- 页面、controller、worker 和 runtime 的依赖方向已通过阶段 5.2 AST 审计；controller 不导入测量服务、硬件驱动、VISA、SCPI 或结果存储实现。
-- controller 离线回归覆盖单一活动测量、构造/启动失败、完成/异常/停止终态清理、普通停止与紧急停止区分、线损等待/继续、关闭超时和外部 measurement port 不越权关闭。
-- 本阶段未修改 SCPI 命令、设备时序、资源所有权、安全清理顺序或生产配置，因此不触发真实 Hardware smoke。
+- 已完成的主体：`CableLossPage`、`DriverMappingPage`、`AmplifierPage` 已成为独立 Qt 页面对象；三类测量启动、停止、紧急停止、线损继续和 worker 终态清理已集中到 `MeasurementController`。
+- `MainWindow` 已通过共享 controller 和 `measurement_worker_factories` 组合测量链路，不再直接实例化三类测量 worker；阶段 5.2 AST 依赖审计已通过。
+- 已完成的离线 controller 回归包括单一活动测量、构造/启动失败、完成/异常/停止清理、普通/紧急停止区分、线损等待/继续、关闭超时和外部 measurement port 不越权关闭。
+- 阶段 4/5.1 收尾已完成：页面激活/停用协议已接入 tab 切换；worker 通过 `result` signal 发布结构化结果，controller 不再读取 worker service；验收矩阵已扩展并逐项绑定测试。`MainWindow` 保留的实时数据字段已确认仍被聊天上下文使用，作为只读兼容桥接保留，不作为页面测量状态或第二套绘图入口。
+- 本阶段未修改 SCPI 命令、设备时序、资源所有权、安全清理顺序或生产配置，因此真实 Hardware smoke 仍是独立门槛，不得据离线通过宣称现场验收完成。
 
 ### 16.2 验收命令与结果
 
 | 验收项 | 命令 | 结果 |
 | --- | --- | --- |
-| 全量离线测试 | `./run_tests.ps1` | 通过，579 项；内置编译检查通过 |
+| 全量离线测试 | `./run_tests.ps1` | 通过，584 项；内置编译检查通过 |
 | 应用依赖检查 | `& $env:AUTO_TEST_PYTHON launcher.py --check` | 通过；Python 3.11.15，Conda 环境 `Auto_test`，必需依赖已安装 |
 | 配置校验 | `& $env:AUTO_TEST_PYTHON launcher.py --validate-config` | 通过 |
 | 编译检查 | `./run_tests.ps1` 内置 `tools/compile_check.py` | 通过 |
 | 阶段 5.2 架构审计 | `& $env:AUTO_TEST_PYTHON -m unittest tests.test_architecture_dependencies` | 通过，11 项 |
-| 阶段 6 离线门槛回归 | `& $env:AUTO_TEST_PYTHON -m unittest tests.test_second_refactor_acceptance` | 通过，1 项 |
+| 阶段 6 离线门槛回归 | `& $env:AUTO_TEST_PYTHON -m unittest tests.test_second_refactor_acceptance` | 通过，4 项 |
 
-以上结果使用 `.env` 中的 `AUTO_TEST_PYTHON` 实际执行；测试数量来自命令输出，不是估算值。
+以上结果使用 `.env` 中的 `AUTO_TEST_PYTHON` 实际执行；收尾后全量测试为 `584` 项，全部通过。测试通过证明离线重构验收完成，不代表真实设备验收已经完成。
 
 ### 16.3 Hardware smoke 独立门槛
 
@@ -674,4 +674,39 @@ controller 不负责：
 
 ### 16.4 回滚点
 
-阶段 6 仅新增验收记录和离线门槛回归测试。回滚时删除本节和 `tests/test_second_refactor_acceptance.py` 即可，不回滚已通过的页面、`MeasurementController`、worker、runtime、SCPI、硬件配置或端口所有权实现。真实现场验收另有独立报告和回滚决定，不与离线文档回滚混用。
+阶段 6 包含页面生命周期、worker 结果信号和离线验收矩阵的收尾改动。回滚时应按提交差异同步恢复 `enhanced_main_gui.py`、`presentation/qt/measurement_controller.py`、`presentation/qt/workers.py` 及对应测试，再删除本节记录；不得单独删除测试而保留不匹配的生产代码。真实现场验收另有独立报告和回滚决定，不与离线文档回滚混用。
+
+## 17. 2026-10-04 审查结论与收尾记录
+
+### 17.1 审查结论
+
+本期离线重构已完成。真实 Hardware smoke 仍未执行，属于不改变代码即可独立安排的现场验收门槛。
+
+1. 阶段 5.1 离线验收矩阵已补齐并绑定到页面、controller、worker、主窗口组合和 Hardware smoke 独立门槛测试。
+2. 页面协议已通过 `QTabWidget.currentChanged` 接入主窗口，关闭窗口前解除 tab 生命周期连接，再关闭页面 signal。
+3. `MainWindow` 的实时数据字段仍被聊天上下文读取，已确认其为只读兼容桥接；页面绘图和测量结果不再通过窗口级第二入口处理。
+4. 三类测量 worker 已发布结构化 `result` signal，`MeasurementController` 只消费该 signal，不再访问 `worker.service.last_result`。
+
+### 17.2 已执行的收尾步骤
+
+以下步骤已于本次收尾执行：
+
+1. **验收矩阵：** 扩展 `tests/test_second_refactor_acceptance.py`，覆盖矩阵记录、页面生命周期、controller 结果边界和 Hardware smoke 独立门槛。
+2. **页面生命周期：** 在 `MainWindow` 接入 `currentChanged`，初始化激活当前页，关闭前解除连接并调用页面 `close()`。
+3. **结果边界：** 三类 worker 发布结构化 `result` signal；删除 controller 的 service 结果回退，并增加禁止读取测试。
+4. **兼容边界：** 保留聊天上下文所需的 `real_time_data` / `rt_*` 桥接，确认页面不再依赖窗口绘图状态。
+5. **离线门槛：** `./run_tests.ps1` 通过 `584` 项；`launcher.py --check` 和 `launcher.py --validate-config` 均通过；编译检查通过。
+
+### 17.3 当前状态
+
+当前应使用以下状态描述：**“第二期 GUI 重构离线验收完成；Hardware smoke 待现场条件具备。”**
+
+在现场报告完成前，不得使用“真实设备验收完成”。
+
+### 17.4 现场门槛复核（2026-10-04）
+
+- 已阅读唯一现场验收清单 `docs/SCPI与三层测试架构重构收尾计划.md`，确认真实三类测量必须按线损、驱动功率映射、主功放顺序执行，并需要现场授权、设备身份、空载状态、配置快照、SCPI 顺序和安全清理证据。
+- 已检查 `run_hardware_smoke.ps1` 的安全门禁：必须使用 `.env` 的 `AUTO_TEST_PYTHON`、本地非示例配置、`HARDWARE_SMOKE_ENABLED=1`、`-ConfirmHardwareSmoke`，且禁止在 CI 执行。
+- 已执行 `tests.test_hardware_smoke_contract`、`tests.test_safe_prepare_smoke`、`tests.test_minimal_action_smoke`、`tests.test_new_path_minimal_action_smoke` 的离线安全/契约测试，共 33 项通过；未设置 `HARDWARE_SMOKE_CONFIG`，因此未执行会打开真实 VISA 资源的现场入口测试。
+- 已对 `hardware/smoke_config.local.json` 执行静态配置检查，确认环境、用户确认、空载要求和动作预算字段有效；该检查未打开 VISA、未执行 RF 或电源动作。
+- 当前没有新的现场授权或三类完整测量证据，因此 Hardware smoke 和真实测量验收仍保持待现场条件具备，不得用历史 `minimal_action` 报告替代。

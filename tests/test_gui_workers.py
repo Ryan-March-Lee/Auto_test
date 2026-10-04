@@ -16,6 +16,7 @@ from presentation.qt.workers import (
 class _CableService:
     def __init__(self, path1_done):
         self.path1_done = path1_done
+        self.last_result = {"cable_losses": {"2.4": {"cable1": 1.0}}}
         self.continue_called = threading.Event()
         self.stop_called = threading.Event()
 
@@ -34,6 +35,7 @@ class _CableService:
 
 class _DriverMappingService:
     def __init__(self):
+        self.last_result = {"power_mapping": {"2.4": {"-10": 1.0}}}
         self.stop_called = threading.Event()
         self.measure_called = threading.Event()
 
@@ -46,6 +48,7 @@ class _DriverMappingService:
 
 class _AmplifierService:
     def __init__(self):
+        self.last_result = {"results": {"2.4": {"compression_point": 1.0}}}
         self.stop_called = threading.Event()
         self.measure_called = threading.Event()
 
@@ -160,6 +163,25 @@ class GuiWorkerTests(unittest.TestCase):
         self.assertTrue(service.measure_called.is_set())
         self.assertEqual(calls[0][1], {"operation": "driver_mapping"})
         self.assertIs(calls[1][1]["prepared_run"], prepared)
+
+    def test_measurement_workers_publish_structured_results(self):
+        cases = (
+            (DriverMappingWorker, _DriverMappingService, "driver_mapping"),
+            (AmplifierWorker, _AmplifierService, "amplifier"),
+        )
+        for worker_type, service_type, _label in cases:
+            with self.subTest(worker=worker_type.__name__):
+                results = []
+                worker = worker_type(
+                    "config.json",
+                    sleep_fn=lambda _: None,
+                    prepare_factory=lambda *_args, **_kwargs: object(),
+                    measurement_factory=lambda *_args, **_kwargs: service_type(),
+                )
+                worker.signals.result.connect(results.append)
+                worker.run()
+                self.assertEqual(len(results), 1)
+                self.assertIsInstance(results[0], dict)
 
     def test_measurement_construction_failure_uses_application_error_signal(self):
         errors = []

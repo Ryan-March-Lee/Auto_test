@@ -205,6 +205,10 @@ class CableLossWorker(BaseWorker):
                 self.signals.stopped.emit("用户停止")
                 return
             self._service.continue_to_step2()
+            result = getattr(self._service, "last_result", None)
+            if result is None:
+                raise RuntimeError("线损测量完成但未提供结构化结果")
+            self.signals.result.emit(result)
             self.emit_message("线损测量完成！")
             self.signals.finished.emit()
         except Exception as error:
@@ -280,6 +284,10 @@ class DriverMappingWorker(BaseWorker):
                 self.signals.stopped.emit("用户停止")
                 return
             self._service.measure_all_frequencies()
+            result = getattr(self._service, "last_result", None)
+            if result is None:
+                raise RuntimeError("驱动映射测量完成但未提供结构化结果")
+            self.signals.result.emit(result)
             self.emit_message("驱动功放映射测量完成！")
             self.signals.finished.emit()
         except Exception as error:
@@ -340,6 +348,10 @@ class AmplifierWorker(BaseWorker):
                 self.signals.stopped.emit("用户停止")
                 return
             self._service.measure_all_frequencies()
+            result = getattr(self._service, "last_result", None)
+            if result is None:
+                raise RuntimeError("主功放测量完成但未提供结构化结果")
+            self.signals.result.emit(result)
             self.emit_message("主功放测量完成！")
             self.signals.finished.emit()
         except Exception as error:

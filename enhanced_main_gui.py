@@ -1511,6 +1511,11 @@ class MainWindow(QMainWindow):
         for definition, page in build_pages(context):
             self.pages[definition.key] = page
             self.tab_widget.addTab(page, definition.title)
+        self._active_page_index = self.tab_widget.currentIndex()
+        self.tab_widget.currentChanged.connect(self._on_page_changed)
+        pages = list(self.pages.values())
+        if 0 <= self._active_page_index < len(pages):
+            pages[self._active_page_index].on_activated()
         self.cable_loss_page = self.pages["cable_loss"]
         self.driver_mapping_page = self.pages["driver_mapping"]
         self.amplifier_page = self.pages["amplifier"]
@@ -1525,6 +1530,18 @@ class MainWindow(QMainWindow):
         self.emergency_stop_btn = self.amplifier_page.emergency_stop_btn
         self.amplifier_plot_widget = self.amplifier_page.amplifier_plot_widget
         self.cable_loss_page.load_result_requested.connect(self._load_cable_loss_result)
+
+    def _on_page_changed(self, index):
+        """Keep page activation hooks aligned with the visible tab."""
+        previous = getattr(self, "_active_page_index", -1)
+        if previous == index:
+            return
+        pages = list(getattr(self, "pages", {}).values())
+        if 0 <= previous < len(pages):
+            pages[previous].on_deactivated()
+        if 0 <= index < len(pages):
+            pages[index].on_activated()
+        self._active_page_index = index
 
     def _load_cable_loss_result(self):
         """由窗口协调结果服务读取，再把结构化引用交给页面显示。"""
@@ -3186,6 +3203,11 @@ class MainWindow(QMainWindow):
             except Exception as error:
                 self.add_log_message(f"仪器清理失败: {error}")
             self.instrument_ctrl = None
+        if hasattr(self, "tab_widget"):
+            try:
+                self.tab_widget.currentChanged.disconnect(self._on_page_changed)
+            except (RuntimeError, TypeError):
+                pass
         for page in getattr(self, "pages", {}).values():
             page.close()
         event.accept()

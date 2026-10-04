@@ -311,6 +311,14 @@ class MeasurementControllerTests(unittest.TestCase):
         self.assertEqual(self.controller.state.status, MeasurementStatus.FAILED)
         self.assertEqual(self.errors, ["worker 完成但未提供测量结果"])
 
+    def test_finished_does_not_read_worker_service_as_result_fallback(self):
+        self.assertTrue(self.controller.start_amplifier(MeasurementCommand("config.json")))
+        worker = self.workers[-1]
+        worker.service = type("Service", (), {"last_result": {"unexpected": True}})()
+        worker.signals.finished.emit()
+        self.assertEqual(self.controller.state.status, MeasurementStatus.FAILED)
+        self.assertEqual(self.errors, ["worker 完成但未提供测量结果"])
+
     def test_thread_finished_signal_is_emitted_after_worker_cleanup(self):
         events = []
         self.controller.signals.thread_finished.connect(

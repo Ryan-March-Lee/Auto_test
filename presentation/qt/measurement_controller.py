@@ -201,7 +201,7 @@ class MeasurementController:
     def _on_finished(self) -> None:
         view = self._state.view_state
         if view is not None and not view.status.is_terminal:
-            result = view.result or self._worker_result_reference(view.kind)
+            result = view.result
             if result is None:
                 self._on_error("worker 完成但未提供测量结果")
                 return
@@ -212,13 +212,6 @@ class MeasurementController:
                 self.signals.error.emit("worker 在非法状态下完成")
         self.signals.finished.emit()
         self._cleanup_if_non_threaded()
-
-    def _worker_result_reference(self, kind: MeasurementKind) -> MeasurementResultReference | None:
-        service = getattr(self._worker, "service", None)
-        value = getattr(service, "last_result", None)
-        if value is None:
-            return None
-        return MeasurementResultReference(str(uuid4()), kind, value)
 
     def _on_stopped(self, reason: str) -> None:
         view = self._state.view_state

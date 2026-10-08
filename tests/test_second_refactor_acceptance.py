@@ -16,21 +16,20 @@ class SecondRefactorAcceptanceTests(unittest.TestCase):
         self.assertEqual(build_manifest(self.ROOT, real_device_acceptance="passed")["real_device_acceptance"], "passed")
         with self.assertRaises(ValueError):
             build_manifest(self.ROOT, real_device_acceptance="approved")
-        plan = (self.ROOT / "docs/第二期重构计划_GUI页面与MeasurementController.md").read_text(
+        plan = (self.ROOT / "docs/重构收尾与真实HardwareSmoke验收.md").read_text(
             encoding="utf-8"
         )
-        self.assertIn("Hardware smoke", plan)
-        self.assertIn("不以离线测试通过替代真实设备验收", plan)
+        self.assertIn("第二期", plan)
+        self.assertIn("不得将离线测试或历史 `minimal_action` 结果视为完整现场验收", plan)
 
     def test_offline_acceptance_matrix_is_explicitly_recorded(self):
-        plan = (self.ROOT / "docs/第二期重构计划_GUI页面与MeasurementController.md").read_text(
+        plan = (self.ROOT / "docs/重构收尾与真实HardwareSmoke验收.md").read_text(
             encoding="utf-8"
         )
         for item in (
-            "验收矩阵：",
-            "页面生命周期：",
-            "结果边界：",
-            "离线门槛：",
+            "页面、状态对象、controller、worker、窗口组合和架构依赖均已完成离线回归",
+            "每类测量都必须覆盖正常完成、普通停止、紧急停止和测量异常后的重新连接",
+            "Hardware smoke 及必要的真实测量没有未解释失败",
         ):
             self.assertIn(item, plan)
 

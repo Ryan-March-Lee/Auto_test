@@ -7,7 +7,6 @@ import os
 import json
 import time
 import traceback
-from pathlib import Path
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 import threading
@@ -17,8 +16,8 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QTabWidget, QLabel, QLineEdit, QPushButton, QTextEdit, QGroupBox,
     QSpinBox, QDoubleSpinBox, QComboBox, QCheckBox, QProgressBar,
-    QTableWidget, QTableWidgetItem, QSplitter, QFrame, QGridLayout,
-    QMessageBox, QFileDialog, QFormLayout, QScrollArea, QDialog,
+    QSplitter, QFrame, QGridLayout,
+    QMessageBox, QFormLayout, QScrollArea, QDialog,
     QListWidget
 )
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QObject, QEvent, QSize
@@ -125,11 +124,6 @@ class MainWindow(QMainWindow):
         self.measurement_controller.signals.message.connect(self.add_log_message)
         self.measurement_controller.signals.rejected.connect(self.add_log_message)
         
-        # 数据可视化相关变量
-        self.loaded_data = None
-        self.frequency_list = []
-        self.current_freq_index = 0
-        
         # 实时图预览历史数据存储
         self.real_time_data = {}  # 存储实时测量的所有频点数据
         self.rt_frequency_list = []  # 实时测量的频点列表
@@ -148,6 +142,38 @@ class MainWindow(QMainWindow):
         self.log_timer.timeout.connect(self.update_status)
         self.log_timer.start(100)  # 100ms更新一次
         
+    @property
+    def loaded_data(self):
+        return self.visualization_page.loaded_data
+
+    @loaded_data.setter
+    def loaded_data(self, value):
+        self.visualization_page.loaded_data = value
+
+    @property
+    def frequency_list(self):
+        return self.visualization_page.frequency_list
+
+    @frequency_list.setter
+    def frequency_list(self, value):
+        self.visualization_page.frequency_list = value
+
+    @property
+    def current_freq_index(self):
+        return self.visualization_page.current_freq_index
+
+    @current_freq_index.setter
+    def current_freq_index(self, value):
+        self.visualization_page.current_freq_index = value
+
+    @property
+    def loaded_filename(self):
+        return self.visualization_page.loaded_filename
+
+    @loaded_filename.setter
+    def loaded_filename(self, value):
+        self.visualization_page.loaded_filename = value
+
     def load_config(self):
         """加载配置文件"""
         try:
@@ -1039,108 +1065,28 @@ class MainWindow(QMainWindow):
             log_callback=self.add_log_message,
             parent=self,
         )
+        self.load_data_btn = self.visualization_page.load_data_btn
+        self.generate_report_btn = self.visualization_page.generate_report_btn
+        self.freq_prev_btn = self.visualization_page.freq_prev_btn
+        self.freq_label = self.visualization_page.freq_label
+        self.freq_next_btn = self.visualization_page.freq_next_btn
+        self.data_plot_widget = self.visualization_page.data_plot_widget
         return self.visualization_page
-        # Legacy implementation retained below during the compatibility window.
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        
-        # 控制面板
-        control_group = QGroupBox("可视化控制")
-        control_layout = QVBoxLayout(control_group)
-        
-        # 第一行：文件操作按钮
-        file_layout = QHBoxLayout()
-        self.load_data_btn = QPushButton("加载测试数据")
-        self.load_data_btn.clicked.connect(self.load_test_data)
-        file_layout.addWidget(self.load_data_btn)
-        
-        self.generate_report_btn = QPushButton("生成报告")
-        self.generate_report_btn.clicked.connect(self.generate_report)
-        file_layout.addWidget(self.generate_report_btn)
-        
-        control_layout.addLayout(file_layout)
-        
-        # 第二行：频率切换控件
-        freq_layout = QHBoxLayout()
-        freq_layout.addWidget(QLabel("频率切换:"))
-        
-        self.freq_prev_btn = QPushButton("◀ 上一个")
-        self.freq_prev_btn.setEnabled(False)
-        self.freq_prev_btn.clicked.connect(self.prev_frequency)
-        freq_layout.addWidget(self.freq_prev_btn)
-        
-        self.freq_label = QLabel("未加载数据")
-        self.freq_label.setAlignment(Qt.AlignCenter)
-        self.freq_label.setStyleSheet("QLabel { background-color: #f0f0f0; padding: 5px; border: 1px solid #ccc; }")
-        freq_layout.addWidget(self.freq_label)
-        
-        self.freq_next_btn = QPushButton("下一个 ▶")
-        self.freq_next_btn.setEnabled(False)
-        self.freq_next_btn.clicked.connect(self.next_frequency)
-        freq_layout.addWidget(self.freq_next_btn)
-        
-        freq_layout.addStretch()  # 添加弹性空间
-        control_layout.addLayout(freq_layout)
-        
-        layout.addWidget(control_group)
-        
-        # 数据显示区域
-        self.data_plot_widget = RealTimePlotWidget()
-        layout.addWidget(self.data_plot_widget)
-        
-        return tab
         
     def create_data_export_tab(self):
         """创建数据导出选项卡"""
         self.export_page = ExportPage(
             results_dir=TEST_RESULTS_DIR,
             cable_loss_file=CABLE_LOSS_FILE,
+            visualizer_factory=DataVisualization,
             log_callback=self.add_log_message,
             parent=self,
         )
+        self.file_table = self.export_page.file_table
+        self.export_json_btn = self.export_page.export_json_btn
+        self.export_csv_btn = self.export_page.export_csv_btn
+        self.export_pdf_btn = self.export_page.export_pdf_btn
         return self.export_page
-        # Legacy implementation retained below during the compatibility window.
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        
-        # 文件列表
-        file_group = QGroupBox("数据文件")
-        file_layout = QVBoxLayout(file_group)
-        
-        self.file_table = QTableWidget()
-        self.file_table.setColumnCount(3)
-        self.file_table.setHorizontalHeaderLabels(['文件名', '类型', '修改时间'])
-        file_layout.addWidget(self.file_table)
-        
-        # 刷新按钮
-        refresh_btn = QPushButton("刷新文件列表")
-        refresh_btn.clicked.connect(self.refresh_file_list)
-        file_layout.addWidget(refresh_btn)
-        
-        layout.addWidget(file_group)
-        
-        # 导出控制
-        export_group = QGroupBox("导出控制")
-        export_layout = QHBoxLayout(export_group)
-        
-        self.export_json_btn = QPushButton("导出JSON")
-        self.export_json_btn.clicked.connect(self.export_json)
-        export_layout.addWidget(self.export_json_btn)
-        
-        self.export_csv_btn = QPushButton("导出CSV")  
-        self.export_csv_btn.clicked.connect(self.export_csv)
-        export_layout.addWidget(self.export_csv_btn)
-        
-        self.export_pdf_btn = QPushButton("导出PDF报告")
-        self.export_pdf_btn.clicked.connect(self.export_pdf)
-        export_layout.addWidget(self.export_pdf_btn)
-        
-        layout.addWidget(export_group)
-        
-        # 初始加载文件列表
-        self.refresh_file_list()
-        
-        return tab
         
     def create_status_panel(self, main_layout):
         """创建状态面板"""
@@ -1413,111 +1359,22 @@ class MainWindow(QMainWindow):
     def load_test_data(self):
         """加载测试数据"""
         return self.visualization_page.load_test_data()
-        # Legacy implementation retained below during the compatibility window.
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "选择测试数据文件", "", 
-            "JSON files (*.json);;All files (*.*)"
-        )
-        if file_path:
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                
-                # 初始化数据存储
-                self.loaded_data = None
-                self.current_freq_index = 0
-                self.frequency_list = []
-                # 保存原始文件名用于报告生成
-                self.loaded_filename = Path(file_path).name
-                
-                # 处理不同类型的数据文件
-                if 'results' in data:
-                    # 功放测试数据格式
-                    self.loaded_data = data['results']
-                    self.frequency_list = sorted([float(f) for f in data['results'].keys()])
-                    self.add_log_message(f"已加载功放测试数据: {Path(file_path).name}")
-                elif 'power_mapping' in data:
-                    # 驱动映射数据格式，需要转换为标准格式
-                    self.loaded_data = {}
-                    for freq, power_map in data['power_mapping'].items():
-                        # 转换驱动映射数据为sweep_data格式
-                        input_powers = [float(p) for p in power_map.keys()]
-                        output_powers = list(power_map.values())
-                        
-                        # 计算增益 (Gain = Pout - Pin)
-                        gains = [pout - pin for pin, pout in zip(input_powers, output_powers)]
-                        
-                        self.loaded_data[freq] = {
-                            'sweep_data': {
-                                'input_power_sg': input_powers,
-                                'output_power_driver': output_powers,
-                                'gain': gains  # 添加增益数据
-                            }
-                        }
-                    self.frequency_list = sorted([float(f) for f in data['power_mapping'].keys()])
-                    self.add_log_message(f"已加载驱动映射数据: {Path(file_path).name}")
-                else:
-                    raise ValueError("不支持的数据格式")
-                
-                # 更新UI状态
-                if self.frequency_list:
-                    self.current_freq_index = 0
-                    self.update_frequency_display()
-                    self.display_current_frequency_data()
-                    
-                    # 启用频率切换按钮
-                    self.freq_prev_btn.setEnabled(len(self.frequency_list) > 1)
-                    self.freq_next_btn.setEnabled(len(self.frequency_list) > 1)
-                else:
-                    raise ValueError("未找到有效的频率数据")
-                    
-            except Exception as e:
-                self.add_log_message(f"数据加载失败: {e}")
-                # 重置UI状态
-                self.freq_label.setText("数据加载失败")
-                self.freq_prev_btn.setEnabled(False)
-                self.freq_next_btn.setEnabled(False)
     
     def update_frequency_display(self):
         """更新频率显示"""
         return self.visualization_page.update_frequency_display()
-        if hasattr(self, 'frequency_list') and self.frequency_list:
-            current_freq = self.frequency_list[self.current_freq_index]
-            total_freq = len(self.frequency_list)
-            self.freq_label.setText(f"{current_freq} GHz ({self.current_freq_index + 1}/{total_freq})")
-        else:
-            self.freq_label.setText("未加载数据")
     
     def display_current_frequency_data(self):
         """显示当前频率的数据"""
         return self.visualization_page.display_current_frequency_data()
-        if hasattr(self, 'loaded_data') and self.loaded_data and hasattr(self, 'frequency_list'):
-            current_freq = str(self.frequency_list[self.current_freq_index])
-            if current_freq in self.loaded_data:
-                freq_data = self.loaded_data[current_freq]
-                self.data_plot_widget.update_plot({
-                    'frequency': float(current_freq),
-                    'sweep_data': freq_data.get('sweep_data', {})
-                })
-                self.add_log_message(f"显示频率 {current_freq} GHz 的数据")
     
     def prev_frequency(self):
         """切换到上一个频率"""
         return self.visualization_page.prev_frequency()
-        if hasattr(self, 'frequency_list') and self.frequency_list:
-            if self.current_freq_index > 0:
-                self.current_freq_index -= 1
-                self.update_frequency_display()
-                self.display_current_frequency_data()
     
     def next_frequency(self):
         """切换到下一个频率"""
         return self.visualization_page.next_frequency()
-        if hasattr(self, 'frequency_list') and self.frequency_list:
-            if self.current_freq_index < len(self.frequency_list) - 1:
-                self.current_freq_index += 1
-                self.update_frequency_display()
-                self.display_current_frequency_data()
     
     def store_real_time_data(self, data):
         """存储实时测量数据并更新图表"""
@@ -1623,161 +1480,23 @@ class MainWindow(QMainWindow):
     def generate_report(self):
         """生成报告"""
         return self.visualization_page.generate_report()
-        # Legacy implementation retained below during the compatibility window.
-        try:
-            visualizer = DataVisualization()
-            
-            # 首先检查是否有已加载的数据
-            if hasattr(self, 'loaded_data') and self.loaded_data:
-                # 使用已加载的数据生成报告
-                # 获取原始文件名
-                original_filename = getattr(self, 'loaded_filename', '已加载的测试数据')
-                # 构造完整的数据结构
-                report_data = {
-                    'results': self.loaded_data,
-                    'measurement_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    'config': getattr(self, 'config', {}),
-                    'original_filename': original_filename
-                }
-                
-                # 创建临时文件用于报告生成
-                TEMP_DIR.mkdir(parents=True, exist_ok=True)
-                temp_file = TEMP_DIR / 'temp_loaded_data.json'
-                with open(temp_file, 'w', encoding='utf-8') as f:
-                    json.dump(report_data, f, indent=2, ensure_ascii=False)
-                
-                visualizer.create_summary_report(str(temp_file), original_filename)
-                
-                # 清理临时文件
-                if temp_file.exists():
-                    temp_file.unlink()
-                    
-                self.add_log_message("基于已加载数据生成测试报告")
-            else:
-                # 查找最新的测试数据文件
-                dut_files = sorted(TEST_RESULTS_DIR.glob('amplifier_measurement_*.json'), key=lambda x: x.stat().st_mtime)
-                if not dut_files:
-                    QMessageBox.warning(self, "报告生成", "未找到测试数据文件，请先加载数据或进行测试")
-                    return
-                    
-                latest_file = dut_files[-1]
-                visualizer.create_summary_report(str(latest_file))
-                self.add_log_message(f"基于文件 {latest_file.name} 生成测试报告")
-            
-            QMessageBox.information(self, "报告生成", "测试报告已生成完成")
-            
-        except Exception as e:
-            self.add_log_message(f"报告生成失败: {e}")
-            # 添加更详细的错误信息用于调试
-            import traceback
-            self.add_log_message(f"详细错误信息: {traceback.format_exc()}")
-            QMessageBox.warning(self, "报告生成", f"报告生成失败: {e}")
             
     def refresh_file_list(self):
         """刷新文件列表"""
         return self.export_page.refresh_file_list()
-        # Legacy implementation retained below during the compatibility window.
-        self.file_table.setRowCount(0)
-        
-        # 查找各种数据文件
-        file_patterns = [
-            (CABLE_LOSS_FILE.name, '线损数据'),
-            ('driver_power_mapping_*.json', '驱动映射'),
-            ('amplifier_measurement_*.json', '功放测试'),
-        ]
-        
-        row = 0
-        for pattern, file_type in file_patterns:
-            files = list(TEST_RESULTS_DIR.glob(pattern))
-            for file_path in sorted(files, key=lambda x: x.stat().st_mtime, reverse=True):
-                self.file_table.insertRow(row)
-                self.file_table.setItem(row, 0, QTableWidgetItem(file_path.name))
-                self.file_table.setItem(row, 1, QTableWidgetItem(file_type))
-                self.file_table.setItem(row, 2, QTableWidgetItem(
-                    datetime.fromtimestamp(file_path.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')
-                ))
-                row += 1
                 
     def export_json(self):
         """导出JSON"""
         return self.export_page.export_json()
-        current_row = self.file_table.currentRow()
-        if current_row < 0:
-            QMessageBox.warning(self, "导出", "请先选择要导出的文件")
-            return
-            
-        filename = self.file_table.item(current_row, 0).text()
-        save_path, _ = QFileDialog.getSaveFileName(
-            self, "保存JSON文件", filename, "JSON files (*.json)"
-        )
-        if save_path:
-            try:
-                import shutil
-                shutil.copy2(TEST_RESULTS_DIR / filename, save_path)
-                self.add_log_message(f"JSON文件已导出: {save_path}")
-                QMessageBox.information(self, "导出成功", f"文件已导出到: {save_path}")
-            except Exception as e:
-                self.add_log_message(f"JSON导出失败: {e}")
-                QMessageBox.warning(self, "导出失败", str(e))
         
     def export_csv(self):
         """导出CSV"""
         return self.export_page.export_csv()
-        current_row = self.file_table.currentRow()
-        if current_row < 0:
-            QMessageBox.warning(self, "导出", "请先选择要导出的文件")
-            return
-            
-        filename = self.file_table.item(current_row, 0).text()
-        if not filename.startswith('amplifier_measurement_'):
-            QMessageBox.warning(self, "导出", "只有功放测试数据支持CSV导出")
-            return
-            
-        save_path, _ = QFileDialog.getSaveFileName(
-            self, "保存CSV文件", filename.replace('.json', '.csv'), "CSV files (*.csv)"
-        )
-        if save_path:
-            try:
-                visualizer = DataVisualization()
-                visualizer.generate_csv_report(str(TEST_RESULTS_DIR / filename))
-                
-                # 使用当前可视化实例创建的目录，避免跨秒时计算到错误路径。
-                import shutil
-                generated_csv = visualizer.output_dir / "full_sweep_data.csv"
-                if generated_csv.exists():
-                    shutil.copy2(generated_csv, save_path)
-                else:
-                    raise FileNotFoundError(f"未生成CSV文件: {generated_csv}")
-                    
-                self.add_log_message(f"CSV文件已导出: {save_path}")
-                QMessageBox.information(self, "导出成功", f"CSV文件已导出到: {save_path}")
-            except Exception as e:
-                self.add_log_message(f"CSV导出失败: {e}")
-                QMessageBox.warning(self, "导出失败", str(e))
-        
+
     def export_pdf(self):
         """导出PDF"""
         return self.export_page.export_pdf()
-        current_row = self.file_table.currentRow()
-        if current_row < 0:
-            QMessageBox.warning(self, "导出", "请先选择要导出的文件")
-            return
-            
-        filename = self.file_table.item(current_row, 0).text()
-        if not filename.startswith('amplifier_measurement_'):
-            QMessageBox.warning(self, "导出", "只有功放测试数据支持PDF导出")
-            return
-            
-        try:
-            visualizer = DataVisualization()
-            visualizer.create_summary_report(str(TEST_RESULTS_DIR / filename))
-            
-            self.add_log_message("PDF报告已生成在test_results文件夹中")
-            QMessageBox.information(self, "导出成功", "PDF报告已生成在test_results文件夹中")
-        except Exception as e:
-            self.add_log_message(f"PDF导出失败: {e}")
-            QMessageBox.warning(self, "导出失败", str(e))
-        
+
     def closeEvent(self, event):
         """窗口关闭事件"""
         if self.measurement_controller.state.is_active:

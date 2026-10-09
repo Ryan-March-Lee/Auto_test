@@ -10,7 +10,7 @@ PAGE_SOURCES = tuple(
     for name in ("cable_loss_page.py", "driver_mapping_page.py", "amplifier_page.py")
 )
 CONTROLLER_SOURCE = ROOT / "presentation" / "qt" / "measurement_controller.py"
-MAIN_WINDOW_SOURCE = ROOT / "enhanced_main_gui.py"
+MAIN_WINDOW_SOURCE = ROOT / "presentation" / "qt" / "main_window.py"
 MEASUREMENT_STATE_FIELDS = {
     "current_worker",
     "instrument_ctrl",

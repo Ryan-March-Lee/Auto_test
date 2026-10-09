@@ -68,7 +68,7 @@ class OfflineRefactorCompletionTests(unittest.TestCase):
         import ast
 
         project_root = Path(__file__).resolve().parents[1]
-        gui_source = (project_root / "enhanced_main_gui.py").read_text(encoding="utf-8-sig")
+        gui_source = (project_root / "presentation" / "qt" / "main_window.py").read_text(encoding="utf-8-sig")
         class_names = {
             node.name
             for node in ast.walk(ast.parse(gui_source))

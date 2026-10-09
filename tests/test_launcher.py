@@ -60,9 +60,9 @@ class LauncherTests(unittest.TestCase):
                 self.assertEqual(launcher.main(["--silent"]), launcher.EXIT_DEPENDENCY_ERROR)
 
     def test_legacy_gui_launcher_signature_remains_available(self):
-        fake_gui = types.ModuleType("enhanced_main_gui")
+        fake_gui = types.ModuleType("presentation.qt.main_window")
         fake_gui.main = Mock()
-        with patch.dict(sys.modules, {"enhanced_main_gui": fake_gui}):
+        with patch.dict(sys.modules, {"presentation.qt.main_window": fake_gui}):
             self.assertTrue(launcher.launch_gui_version("enhanced", {"PySide6": {"installed": True}}, False))
         fake_gui.main.assert_called_once()
 

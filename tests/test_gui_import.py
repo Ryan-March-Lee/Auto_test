@@ -15,6 +15,12 @@ class GuiImportSmokeTests(unittest.TestCase):
             import enhanced_main_gui  # noqa: F401
             resource_manager.assert_not_called()
 
+    def test_compatibility_entry_uses_new_main_window_class(self):
+        import enhanced_main_gui
+        from presentation.qt.main_window import MainWindow
+
+        self.assertIs(enhanced_main_gui.MainWindow, MainWindow)
+
     def test_gui_composition_controller_closes_handed_off_port(self):
         import enhanced_main_gui
 

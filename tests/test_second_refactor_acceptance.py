@@ -34,7 +34,7 @@ class SecondRefactorAcceptanceTests(unittest.TestCase):
             self.assertIn(item, plan)
 
     def test_main_window_connects_page_lifecycle(self):
-        source = (self.ROOT / "enhanced_main_gui.py").read_text(encoding="utf-8-sig")
+        source = (self.ROOT / "presentation" / "qt" / "main_window.py").read_text(encoding="utf-8-sig")
         self.assertIn("currentChanged.connect(self._on_page_changed)", source)
         self.assertIn("currentChanged.disconnect(self._on_page_changed)", source)
         self.assertIn("pages[previous].on_deactivated()", source)

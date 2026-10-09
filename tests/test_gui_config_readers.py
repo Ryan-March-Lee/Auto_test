@@ -400,7 +400,7 @@ class GuiConfigSaveTests(unittest.TestCase):
     def test_save_config_file_writes_json(self):
         with tempfile.TemporaryDirectory() as d:
             config_path = Path(d) / 'config.json'
-            with patch('enhanced_main_gui.CONFIG_FILE', config_path):
+            with patch('presentation.qt.main_window.CONFIG_FILE', config_path):
                 result = self.window._save_config_file()
 
             self.assertTrue(result)
@@ -410,7 +410,7 @@ class GuiConfigSaveTests(unittest.TestCase):
             self.assertEqual(saved['signal_source']['step'], 1)
 
     def test_save_config_file_returns_false_on_error(self):
-        with patch('enhanced_main_gui.CONFIG_FILE', '/nonexistent/path/config.json'):
+        with patch('presentation.qt.main_window.CONFIG_FILE', '/nonexistent/path/config.json'):
             result = self.window._save_config_file()
 
         self.assertFalse(result)
@@ -422,7 +422,7 @@ class GuiConfigSaveTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             config_path = Path(d) / 'config.json'
-            with patch('enhanced_main_gui.CONFIG_FILE', config_path):
+            with patch('presentation.qt.main_window.CONFIG_FILE', config_path):
                 result = self.window.update_and_save_config()
 
         self.assertTrue(result)
@@ -433,7 +433,7 @@ class GuiConfigSaveTests(unittest.TestCase):
         self.window.update_config_from_ui = MagicMock()
         self.window.add_log_message = self.window.log_messages.append
 
-        with patch('enhanced_main_gui.CONFIG_FILE', '/nonexistent/path/config.json'):
+        with patch('presentation.qt.main_window.CONFIG_FILE', '/nonexistent/path/config.json'):
             result = self.window.update_and_save_config()
 
         self.assertFalse(result)
@@ -448,7 +448,7 @@ class GuiConfigSaveTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             config_path = Path(d) / 'config.json'
-            with patch('enhanced_main_gui.CONFIG_FILE', config_path):
+            with patch('presentation.qt.main_window.CONFIG_FILE', config_path):
                 with patch.object(__import__('enhanced_main_gui').QMessageBox, 'information', side_effect=fake_msg_box):
                     self.window.save_config()
 
@@ -462,7 +462,7 @@ class GuiConfigSaveTests(unittest.TestCase):
         def fake_warning(icon, title, text):
             self.window._msg_box_calls.append((title, text))
 
-        with patch('enhanced_main_gui.CONFIG_FILE', '/nonexistent/path/config.json'):
+        with patch('presentation.qt.main_window.CONFIG_FILE', '/nonexistent/path/config.json'):
             with patch.object(__import__('enhanced_main_gui').QMessageBox, 'warning', side_effect=fake_warning):
                 self.window.save_config()
 

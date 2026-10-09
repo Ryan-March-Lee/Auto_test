@@ -148,17 +148,17 @@ def launch_gui_version(version=None, packages=None, silent: bool = False) -> boo
         silent = version
     elif version == "none":
         return False
-    gui_file = PROJECT_ROOT / "enhanced_main_gui.py"
+    gui_file = PROJECT_ROOT / "presentation" / "qt" / "main_window.py"
     if not gui_file.exists():
         if not silent:
-            print("GUI 启动失败: enhanced_main_gui.py 文件不存在")
+            print("GUI 启动失败: presentation/qt/main_window.py 文件不存在")
         return False
     if not silent:
         print("正在启动增强版 GUI...")
     try:
-        import enhanced_main_gui
+        from presentation.qt.main_window import main
 
-        enhanced_main_gui.main()
+        main()
         return True
     except Exception as error:
         if not silent:

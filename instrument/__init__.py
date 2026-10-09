@@ -10,15 +10,16 @@ from .ports import (
     SignalGeneratorPort,
     SpectrumAnalyzerPort,
 )
+from .session import ManagedInstrumentSession, InstrumentSessionError
 from .simulation import (
     CommandRecorder,
     FailureInjector,
     RecordedSequence,
-    SafetyInstrumentSession,
     SimulatedPowerSupply,
     SimulatedSignalGenerator,
     SimulatedSpectrumAnalyzer,
 )
+SafetyInstrumentSession = ManagedInstrumentSession
 from .transport import (
     MockScpiTransport,
     ScpiTransport,
@@ -51,6 +52,8 @@ from .flow import (
     SafetyShutdownError,
     SafetyShutdownFlow,
 )
+from .power_control import PowerController, PowerControlError
+from .safety import InstrumentSafetyError, shutdown_instruments
 
 __all__ = [
     "InstrumentSession",
@@ -89,4 +92,11 @@ __all__ = [
     "PowerOffFlowError",
     "SafetyShutdownFlow",
     "SafetyShutdownError",
+    "InstrumentSession",
+    "ManagedInstrumentSession",
+    "InstrumentSessionError",
+    "PowerController",
+    "PowerControlError",
+    "InstrumentSafetyError",
+    "shutdown_instruments",
 ]

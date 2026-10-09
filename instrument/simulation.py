@@ -280,7 +280,7 @@ class SimulatedPowerSupply(_SimulatedDevice):
             self.connected = False
 
 
-class SafetyInstrumentSession:
+class _LegacySafetyInstrumentSession:
     """Coordinates state transitions and best-effort RF/power/connection cleanup."""
 
     def __init__(self, signal_generator, spectrum_analyzer, power_supply,
@@ -512,3 +512,9 @@ class RecordedSequence:
         if not isinstance(commands, list) or any(not isinstance(item, list) or len(item) != 3 for item in commands):
             raise ValueError("invalid recorded command sequence")
         return cls([tuple(item) for item in commands])
+
+
+# 迁移期兼容名称。正式实现位于 instrument.session，仿真设备仍可直接注入。
+from .session import ManagedInstrumentSession
+
+SafetyInstrumentSession = ManagedInstrumentSession

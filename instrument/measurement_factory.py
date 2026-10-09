@@ -13,7 +13,7 @@ import pyvisa
 
 from .measurement_adapter import PortMeasurementAdapter
 from .drivers import ScpiPowerSupplyDriver, ScpiSignalGeneratorDriver, ScpiSpectrumAnalyzerDriver
-from .simulation import SafetyInstrumentSession
+from .session import ManagedInstrumentSession
 from .transport import VisaScpiTransport
 from .power_roles import resolve_power_channel_role
 from .simulation import (
@@ -47,7 +47,7 @@ def create_measurement_port(
     dut_channels = dict(power_channels or {})
     driver_channels = dict(driver_power_channels or {})
     session_channels = dut_channels or {"gate": "A", "drain": "B"}
-    session = SafetyInstrumentSession(
+    session = ManagedInstrumentSession(
         SimulatedSignalGenerator(recorder),
         SimulatedSpectrumAnalyzer(recorder=recorder),
         SimulatedPowerSupply(recorder),
@@ -64,7 +64,7 @@ def create_measurement_port(
     )
 
 
-class _VisaSession(SafetyInstrumentSession):
+class _VisaSession(ManagedInstrumentSession):
     """Session variant that also releases the ResourceManager it owns."""
 
     def __init__(self, resource_manager, *devices, **kwargs):

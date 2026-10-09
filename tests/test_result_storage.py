@@ -12,6 +12,7 @@ from result_storage import (
     save_json_result,
     validate_run_id,
 )
+from infrastructure.persistence import json_result_repository as canonical_storage
 
 
 class ResultStorageTests(unittest.TestCase):
@@ -37,7 +38,7 @@ class ResultStorageTests(unittest.TestCase):
 
     def test_run_directory_requires_unique_name(self):
         with tempfile.TemporaryDirectory() as directory:
-            with patch("result_storage.TEST_RESULTS_DIR", Path(directory)):
+            with patch.object(canonical_storage, "TEST_RESULTS_DIR", Path(directory)):
                 first = create_run_directory("run-1")
                 self.assertEqual(first, Path(directory) / "run-1")
                 with self.assertRaises(FileExistsError):
@@ -55,7 +56,7 @@ class ResultStorageTests(unittest.TestCase):
             root = Path(directory)
             legacy_path = root / "cable_loss_results.json"
             with patch("cable_loss_measurement.CABLE_LOSS_FILE", legacy_path), patch(
-                "result_storage.TEST_RESULTS_DIR", root / "test_results"
+                "infrastructure.persistence.json_result_repository.TEST_RESULTS_DIR", root / "test_results"
             ):
                 measurement = CableLossMeasurement.__new__(CableLossMeasurement)
                 measurement.attenuator_value = 30.0
@@ -75,7 +76,7 @@ class ResultStorageTests(unittest.TestCase):
             legacy_path = root / "cable_loss_results.json"
             legacy_path.write_text(json.dumps({"old": True}), encoding="utf-8")
             with patch("cable_loss_measurement.CABLE_LOSS_FILE", legacy_path), patch(
-                "result_storage.TEST_RESULTS_DIR", root / "test_results"
+                "infrastructure.persistence.json_result_repository.TEST_RESULTS_DIR", root / "test_results"
             ):
                 first = CableLossMeasurement.__new__(CableLossMeasurement)
                 first.attenuator_value = 30.0

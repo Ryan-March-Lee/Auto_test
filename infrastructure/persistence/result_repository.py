@@ -1,8 +1,4 @@
-"""File-backed measurement result repository adapter.
-
-The adapter deliberately delegates file format and atomic-write behavior to
-the existing :mod:`result_storage` compatibility implementation.
-"""
+"""File-backed measurement result repository adapter."""
 
 from __future__ import annotations
 
@@ -10,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Any, Mapping
 
-import result_storage
+from infrastructure.persistence import json_result_repository as result_storage
 from application.ports.result_repository import (
     MeasurementResultRepository,
     PathLike,

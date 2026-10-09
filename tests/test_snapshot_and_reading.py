@@ -31,7 +31,7 @@ class RunSnapshotTests(unittest.TestCase):
     def test_write_run_snapshot_creates_directory_and_files(self):
         """快照写入应创建运行目录和三个快照文件。"""
         with tempfile.TemporaryDirectory() as directory:
-            with patch("result_storage.TEST_RESULTS_DIR", Path(directory)):
+            with patch("infrastructure.persistence.json_result_repository.TEST_RESULTS_DIR", Path(directory)):
                 run_id = "test-run-001"
                 test_plan = {"frequencies": [1.0, 2.0], "template": False}
                 run_mapping = {"instruments": {}, "template": False}
@@ -56,7 +56,7 @@ class RunSnapshotTests(unittest.TestCase):
     def test_write_run_snapshot_contains_correct_data(self):
         """快照文件应包含正确的数据内容。"""
         with tempfile.TemporaryDirectory() as directory:
-            with patch("result_storage.TEST_RESULTS_DIR", Path(directory)):
+            with patch("infrastructure.persistence.json_result_repository.TEST_RESULTS_DIR", Path(directory)):
                 run_id = "test-run-002"
                 test_plan = {"frequencies": [1.0, 2.0], "template": False}
                 run_mapping = {"instruments": {"signal_generator": "SG1"}, "template": False}
@@ -96,7 +96,7 @@ class RunSnapshotTests(unittest.TestCase):
     def test_write_run_snapshot_rejects_duplicate_run_id(self):
         """重复的运行 ID 应抛出 FileExistsError。"""
         with tempfile.TemporaryDirectory() as directory:
-            with patch("result_storage.TEST_RESULTS_DIR", Path(directory)):
+            with patch("infrastructure.persistence.json_result_repository.TEST_RESULTS_DIR", Path(directory)):
                 run_id = "duplicate-run"
                 test_plan = {"template": False}
                 run_mapping = {"template": False}
@@ -111,8 +111,8 @@ class RunSnapshotTests(unittest.TestCase):
     def test_write_run_snapshot_removes_partial_directory_on_failure(self):
         """任一快照文件写入失败时，不应留下半成品运行目录。"""
         with tempfile.TemporaryDirectory() as directory:
-            with patch("result_storage.TEST_RESULTS_DIR", Path(directory)), patch(
-                "result_storage.save_json_result",
+            with patch("infrastructure.persistence.json_result_repository.TEST_RESULTS_DIR", Path(directory)), patch(
+                "infrastructure.persistence.json_result_repository.save_json_result",
                 side_effect=[None, OSError("写入失败")],
             ):
                 with self.assertRaises(OSError):
@@ -127,7 +127,7 @@ class RunSnapshotTests(unittest.TestCase):
         fixture = Path(__file__).parent / "fixtures" / "config_driver_enabled_no_assignment.json"
         legacy_config = json.loads(fixture.read_text(encoding="utf-8"))
         with tempfile.TemporaryDirectory() as directory:
-            with patch("result_storage.TEST_RESULTS_DIR", Path(directory)):
+            with patch("infrastructure.persistence.json_result_repository.TEST_RESULTS_DIR", Path(directory)):
                 run_directory = write_legacy_run_snapshot("repository-run", legacy_config)
 
             plan = load_json_result(run_directory / "test_plan_snapshot.json")
@@ -146,7 +146,7 @@ class SaveMeasurementResultTests(unittest.TestCase):
         """统一保存应同时创建归档文件和旧路径兼容副本。"""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            with patch("result_storage.TEST_RESULTS_DIR", root / "test_results"):
+            with patch("infrastructure.persistence.json_result_repository.TEST_RESULTS_DIR", root / "test_results"):
                 result = {"measurement_time": "2026-08-21T10:00:00", "data": [1, 2, 3]}
                 legacy_path = root / "legacy_result.json"
                 run_id = "test-save-001"
@@ -175,7 +175,7 @@ class SaveMeasurementResultTests(unittest.TestCase):
 
     def test_snapshot_rejects_mismatched_run_id_before_creating_directory(self):
         with tempfile.TemporaryDirectory() as directory:
-            with patch("result_storage.TEST_RESULTS_DIR", Path(directory)):
+            with patch("infrastructure.persistence.json_result_repository.TEST_RESULTS_DIR", Path(directory)):
                 with self.assertRaisesRegex(ValueError, "run_id 不一致"):
                     write_run_snapshot("run-expected", {"run_id": "run-other"}, {})
                 self.assertFalse((Path(directory) / "run-expected").exists())
@@ -184,7 +184,7 @@ class SaveMeasurementResultTests(unittest.TestCase):
         """未显式传入运行目录时，重复 run_id 不得覆盖已有归档。"""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            with patch("result_storage.TEST_RESULTS_DIR", root / "test_results"):
+            with patch("infrastructure.persistence.json_result_repository.TEST_RESULTS_DIR", root / "test_results"):
                 result = {"data": "test"}
                 legacy_path = root / "legacy.json"
                 run_id = "reuse-run"

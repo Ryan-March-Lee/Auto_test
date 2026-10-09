@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from project_paths import PROJECT_ROOT, TEST_RESULTS_DIR
-from result_storage import validate_run_id
+from infrastructure.persistence.json_result_repository import validate_run_id
 
 
 MEASUREMENT_PATTERNS = {

@@ -10,8 +10,8 @@ from typing import Any, Mapping
 
 from config_models import RunConfiguration
 from domain.models import RunContext
-from persistence.config_repository import ConfigurationLoadResult
-from result_storage import write_run_snapshot
+from application.ports.config_repository import ConfigurationLoadResult
+from infrastructure.persistence.json_result_repository import write_run_snapshot
 
 
 @dataclass(frozen=True)

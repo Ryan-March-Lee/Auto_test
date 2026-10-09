@@ -19,7 +19,7 @@ from domain.models import (
     DriverPowerMappingResult,
     MeasurementResult,
 )
-from result_storage import load_json_result
+from infrastructure.persistence.json_result_repository import load_json_result
 
 
 PathLike = Union[str, Path]

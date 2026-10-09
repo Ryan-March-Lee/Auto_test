@@ -207,6 +207,58 @@ def _legacy_imports(tree):
 
 
 class ProductionDependencyTests(unittest.TestCase):
+    def test_persistence_implementations_have_one_infrastructure_boundary(self):
+        legacy_config = _tree(ROOT / "persistence" / "config_repository.py")
+        result_adapter = _tree(ROOT / "infrastructure" / "persistence" / "result_repository.py")
+        legacy_results = _tree(ROOT / "result_storage.py")
+
+        legacy_business_definitions = {
+            node.name
+            for node in legacy_config.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        }
+        self.assertEqual(legacy_business_definitions, set())
+        self.assertNotIn(
+            "result_storage",
+            {
+                module.split(".")[0]
+                for module, _alias, _name in _imported_modules(result_adapter)
+            },
+        )
+        legacy_result_definitions = {
+            node.name
+            for node in legacy_results.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        }
+        self.assertEqual(
+            legacy_result_definitions,
+            {
+                "_canonical_path_scope",
+                "load_json_result",
+                "save_json_result",
+                "create_run_directory",
+                "validate_run_id",
+                "new_run_id",
+                "write_run_snapshot",
+                "write_legacy_run_snapshot",
+                "save_measurement_result",
+                "save_measurement_model",
+            },
+        )
+        production_legacy_imports = []
+        for source_path in _production_sources():
+            if source_path in {ROOT / "result_storage.py", ROOT / "persistence" / "config_repository.py"}:
+                continue
+            tree = _tree(source_path)
+            if any(
+                module == "result_storage" or module == "persistence.config_repository"
+                for module, _alias, _name in _imported_modules(tree)
+            ):
+                production_legacy_imports.append(str(source_path.relative_to(ROOT)))
+        self.assertEqual(production_legacy_imports, [])
+        self.assertTrue((ROOT / "infrastructure" / "persistence" / "json_config_repository.py").is_file())
+        self.assertTrue((ROOT / "infrastructure" / "persistence" / "json_result_repository.py").is_file())
+
     def test_configuration_page_owns_configuration_ui(self):
         source = MAIN_WINDOW_SOURCE.read_text(encoding="utf-8-sig")
         tree = _tree(MAIN_WINDOW_SOURCE)

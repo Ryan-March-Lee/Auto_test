@@ -15,7 +15,7 @@ from measurement_calculations import (
 )
 from app_logging import get_logger
 from measurement_lifecycle import cleanup_measurement
-from result_storage import (
+from infrastructure.persistence.json_result_repository import (
     load_json_result,
     new_run_id,
     save_measurement_result,

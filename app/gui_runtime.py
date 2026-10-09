@@ -5,14 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal
 
-from persistence.config_repository import ConfigurationRepository
+from infrastructure.persistence.json_config_repository import JsonConfigurationRepository
 from config_models import (
     validate_cable_loss_configuration,
     validate_driver_mapping_configuration,
 )
 from config_validation import ConfigValidationResult
 from app_logging import get_logger
-from result_storage import new_run_id
+from infrastructure.persistence.json_result_repository import new_run_id
 from .run_context import PreparedRun, environment_version, prepare_run
 from instrument.measurement_factory import create_measurement_port
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
@@ -89,7 +89,7 @@ def prepare_configuration(
     """Perform the GUI preflight and snapshot before an instrument is created."""
     if operation not in ("full", "cable_loss", "driver_mapping"):
         raise ValueError(f"不支持的测量类型: {operation}")
-    repository = ConfigurationRepository()
+    repository = JsonConfigurationRepository()
     loaded = repository.load_for_run(config_path)
     if operation == "cable_loss":
         # The legacy GUI stores one combined config.json. Convert it as usual,

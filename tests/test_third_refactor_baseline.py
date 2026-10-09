@@ -88,15 +88,16 @@ class ThirdRefactorBaselineTests(unittest.TestCase):
         missing = [name for name in COMPATIBLE_EXPORTS if not hasattr(module, name)]
         self.assertEqual(missing, [])
 
-    def test_third_refactor_plan_records_phase_3_0_gate(self):
-        plan = (ROOT / "docs/第三期重构计划_enhanced_main_gui拆分与离线验收.md").read_text(
+    def test_closeout_plan_records_third_refactor_and_remaining_gate(self):
+        plan = (ROOT / "docs/重构收尾与真实HardwareSmoke验收.md").read_text(
             encoding="utf-8"
         )
         for item in (
-            "## 阶段 3.0：修复基线并建立第三期门禁",
-            "## 7. 测试和验收矩阵",
-            "### 7.2 第三期最终离线门槛",
-            "真实 Hardware smoke 不属于 3.1 至 3.5 的中间步骤",
+            "第三期“`enhanced_main_gui` 拆分”",
+            "`enhanced_main_gui.py` 已收敛为兼容入口",
+            "第三期纯 UI、配置、可视化导出、状态实时、主窗口和架构门禁",
+            "## 3. 现场验收前置条件",
+            "## 4. 真实 Hardware smoke 执行顺序",
         ):
             self.assertIn(item, plan)
 

@@ -100,6 +100,8 @@ from presentation.qt.config_form_state import ConfigFormState
 from presentation.qt.config_page import ConfigPage
 from presentation.qt.visualization_page import VisualizationPage
 from presentation.qt.export_page import ExportPage
+from presentation.qt.status_panel import StatusPanel
+from presentation.qt.realtime_buffer import RealtimeMeasurementBuffer, normalize_frequency
 
 
 class MainWindow(QMainWindow):
@@ -124,12 +126,8 @@ class MainWindow(QMainWindow):
         self.measurement_controller.signals.message.connect(self.add_log_message)
         self.measurement_controller.signals.rejected.connect(self.add_log_message)
         
-        # 实时图预览历史数据存储
-        self.real_time_data = {}  # 存储实时测量的所有频点数据
-        self.rt_frequency_list = []  # 实时测量的频点列表
-        self.rt_current_freq_index = 0  # 当前显示的频点索引
-        self.rt_user_browsing = False  # 用户是否在手动浏览历史数据
-        self.log_user_scrolling = False  # 用户是否在手动滚动查看历史日志
+        # 实时绘图由页面拥有；这里仅保留聊天上下文所需的统一浏览缓存。
+        self.realtime_buffer = RealtimeMeasurementBuffer()
         
         # 加载配置
         self.load_config()
@@ -173,6 +171,38 @@ class MainWindow(QMainWindow):
     @loaded_filename.setter
     def loaded_filename(self, value):
         self.visualization_page.loaded_filename = value
+
+    @property
+    def real_time_data(self):
+        return self.realtime_buffer.data
+
+    @property
+    def rt_frequency_list(self):
+        return self.realtime_buffer.frequencies
+
+    @property
+    def rt_current_freq_index(self):
+        return self.realtime_buffer.current_index
+
+    @rt_current_freq_index.setter
+    def rt_current_freq_index(self, value):
+        self.realtime_buffer.current_index = value
+
+    @property
+    def rt_user_browsing(self):
+        return self.realtime_buffer.user_browsing
+
+    @rt_user_browsing.setter
+    def rt_user_browsing(self, value):
+        self.realtime_buffer.user_browsing = value
+
+    @property
+    def log_user_scrolling(self):
+        return self.status_panel.log_user_scrolling
+
+    @log_user_scrolling.setter
+    def log_user_scrolling(self, value):
+        self.status_panel.log_user_scrolling = value
 
     def load_config(self):
         """加载配置文件"""
@@ -988,16 +1018,20 @@ class MainWindow(QMainWindow):
         """保留聊天上下文需要的实时数据，不接管页面绘图。"""
         if not isinstance(data, dict) or "frequency" not in data:
             return
-        frequency = str(data["frequency"])
-        self.real_time_data[frequency] = data.copy()
-        if frequency not in [str(value) for value in self.rt_frequency_list]:
-            try:
-                self.rt_frequency_list.append(float(frequency))
-            except (TypeError, ValueError):
+        buffer = getattr(self, "realtime_buffer", None)
+        if buffer is None:
+            frequency_value = normalize_frequency(data["frequency"])
+            if frequency_value is None:
                 return
-            self.rt_frequency_list.sort()
-            if not self.rt_user_browsing:
-                self.rt_current_freq_index = len(self.rt_frequency_list) - 1
+            frequency = str(frequency_value)
+            self.real_time_data[frequency] = data.copy()
+            if frequency not in [str(value) for value in self.rt_frequency_list]:
+                self.rt_frequency_list.append(frequency_value)
+                self.rt_frequency_list.sort()
+                if not self.rt_user_browsing:
+                    self.rt_current_freq_index = len(self.rt_frequency_list) - 1
+            return
+        buffer.store(data)
 
     def _prepare_driver_mapping_run(self):
         if self.instrument_ctrl is None:
@@ -1045,16 +1079,33 @@ class MainWindow(QMainWindow):
         """保留功放实时数据供聊天上下文使用，不接管页面绘图。"""
         if not isinstance(data, dict) or "frequency" not in data:
             return
-        frequency = str(data["frequency"])
-        self.real_time_data[frequency] = data.copy()
-        if frequency not in [str(value) for value in self.rt_frequency_list]:
-            try:
-                self.rt_frequency_list.append(float(frequency))
-            except (TypeError, ValueError):
+        buffer = getattr(self, "realtime_buffer", None)
+        if buffer is None:
+            frequency_value = normalize_frequency(data["frequency"])
+            if frequency_value is None:
                 return
-            self.rt_frequency_list.sort()
-            if not self.rt_user_browsing:
-                self.rt_current_freq_index = len(self.rt_frequency_list) - 1
+            frequency = str(frequency_value)
+            self.real_time_data[frequency] = data.copy()
+            if frequency not in [str(value) for value in self.rt_frequency_list]:
+                self.rt_frequency_list.append(frequency_value)
+                self.rt_frequency_list.sort()
+                if not self.rt_user_browsing:
+                    self.rt_current_freq_index = len(self.rt_frequency_list) - 1
+            return
+        buffer.store(data)
+
+    def _current_realtime_page(self):
+        controller = getattr(self, "measurement_controller", None)
+        kind = getattr(getattr(controller, "state", None), "kind", None)
+        if kind is MeasurementKind.DRIVER_MAPPING:
+            return getattr(self, "driver_mapping_page", None)
+        if kind is MeasurementKind.AMPLIFIER:
+            return getattr(self, "amplifier_page", None)
+        for name in ("driver_mapping_page", "amplifier_page"):
+            page = getattr(self, name, None)
+            if page is not None:
+                return page
+        return None
         
     def create_visualization_tab(self):
         """创建数据可视化选项卡"""
@@ -1090,68 +1141,14 @@ class MainWindow(QMainWindow):
         
     def create_status_panel(self, main_layout):
         """创建状态面板"""
-        status_frame = QFrame()
-        status_frame.setFrameStyle(QFrame.StyledPanel)
-        status_layout = QVBoxLayout(status_frame)
-        
-        # 进度条
-        progress_layout = QHBoxLayout()
-        progress_label = QLabel("测量进度:")
-        progress_label.setStyleSheet("color: black; font-weight: bold;")
-        progress_layout.addWidget(progress_label)
-        self.progress_bar = QProgressBar()
-        progress_layout.addWidget(self.progress_bar)
-        status_layout.addLayout(progress_layout)
-        
-        # 日志显示
-        log_group = QGroupBox("实时日志")
-        log_group.setStyleSheet("QGroupBox { color: black; font-weight: bold; }")
-        log_layout = QVBoxLayout(log_group)
-        
-        self.log_text = QTextEdit()
-        self.log_text.setMaximumHeight(180)
-        self.log_text.setFont(QFont("Consolas", 9))
-        
-        # 添加滚动条事件监听
-        scrollbar = self.log_text.verticalScrollBar()
-        scrollbar.valueChanged.connect(self.on_log_scroll_changed)
-        
-        log_layout.addWidget(self.log_text)
-        
-        # 日志控制按钮
-        log_btn_layout = QHBoxLayout()
-        
-        clear_log_btn = QPushButton("清除日志")
-        clear_log_btn.clicked.connect(self.clear_log)
-        log_btn_layout.addWidget(clear_log_btn)
-        
-        # CHAT按钮
-        self.ai_assistant_btn = QPushButton("💬 CHAT")
-        self.ai_assistant_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #28a745;
-                color: white;
-                border: none;
-                border-radius: 5px;
-                padding: 8px 16px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #218838;
-            }
-            QPushButton:checked {
-                background-color: #1e7e34;
-            }
-        """)
-        self.ai_assistant_btn.setCheckable(True)
-        self.ai_assistant_btn.clicked.connect(self.toggle_chat_panel)
-        log_btn_layout.addWidget(self.ai_assistant_btn)
-        
-        log_layout.addLayout(log_btn_layout)
-        
-        status_layout.addWidget(log_group)
-        
-        main_layout.addWidget(status_frame)
+        self.status_panel = StatusPanel(
+            chat_toggle_callback=self.toggle_chat_panel,
+            parent=self,
+        )
+        self.progress_bar = self.status_panel.progress_bar
+        self.log_text = self.status_panel.log_text
+        self.ai_assistant_btn = self.status_panel.ai_assistant_btn
+        main_layout.addWidget(self.status_panel)
         
     def show_connection_diagram(self, diagram_type: str):
         """显示连接图"""
@@ -1182,35 +1179,16 @@ class MainWindow(QMainWindow):
         self.instruction_text.setHtml(instruction_html)
         
     def add_log_message(self, message: str):
-        """添加日志消息"""
-        self.log_text.append(message)
-        # 只在用户没有手动滚动时才自动滚动到底部
-        if not self.log_user_scrolling:
-            cursor = self.log_text.textCursor()
-            cursor.movePosition(QTextCursor.End)
-            self.log_text.setTextCursor(cursor)
-            # 确保滚动到最底部
-            scrollbar = self.log_text.verticalScrollBar()
-            scrollbar.setValue(scrollbar.maximum())
+        self.status_panel.add_log_message(message)
         
     def on_log_scroll_changed(self, value):
-        """处理日志滚动事件"""
-        scrollbar = self.log_text.verticalScrollBar()
-        # 如果用户滚动到了底部，重置浏览标志
-        if value >= scrollbar.maximum() - 5:  # 给予一些容错空间
-            self.log_user_scrolling = False
-        elif value < scrollbar.maximum() - 10:  # 用户向上滚动了一定距离
-            self.log_user_scrolling = True
+        self.status_panel.on_log_scroll_changed(value)
             
     def clear_log(self):
-        """清除日志"""
-        self.log_text.clear()
-        self.log_user_scrolling = False  # 重置滚动标志
+        self.status_panel.clear_log()
         
     def update_status(self):
-        """更新状态"""
-        # 这里可以添加定期状态更新逻辑
-        pass
+        self.status_panel.update_status()
         
     def connect_instruments(self):
         """连接仪器"""
@@ -1377,32 +1355,16 @@ class MainWindow(QMainWindow):
         return self.visualization_page.next_frequency()
     
     def store_real_time_data(self, data):
-        """存储实时测量数据并更新图表"""
-        if 'frequency' in data and 'sweep_data' in data:
-            frequency = str(data['frequency'])
-            
-            # 存储数据到历史记录
-            self.real_time_data[frequency] = data.copy()
-            
-            # 更新频点列表
-            if frequency not in [str(f) for f in self.rt_frequency_list]:
-                self.rt_frequency_list.append(float(frequency))
-                self.rt_frequency_list.sort()
-                # 只在用户没有手动浏览时才跳转到最新频点
-                if not self.rt_user_browsing:
-                    self.rt_current_freq_index = len(self.rt_frequency_list) - 1
-        
-        # 更新实时图表（显示当前数据）
-        if hasattr(self, 'driver_plot_widget'):
-            self.driver_plot_widget.update_plot(data)
-        if hasattr(self, 'amplifier_plot_widget'):
-            self.amplifier_plot_widget.update_plot(data)
-        
-        # 更新导航按钮状态
-        self.update_rt_nav_buttons()
-        
-        # 更新频点显示标签
-        self.update_rt_frequency_display()
+        """兼容入口：更新上下文并委托当前页面刷新实时图。"""
+        if not isinstance(data, dict):
+            return False
+        page = self._current_realtime_page()
+        if page is not None and getattr(page, "realtime_buffer", None) is not None:
+            if not page.realtime_buffer.store(data):
+                return False
+            page._display_current_frequency()
+        buffer = getattr(self, "realtime_buffer", None)
+        return buffer.store(data) if buffer is not None else True
     
     def update_rt_frequency_display(self):
         """更新实时预览的频点显示"""
@@ -1410,71 +1372,41 @@ class MainWindow(QMainWindow):
         pass
     
     def display_current_rt_frequency_data(self):
-        """显示当前选择的实时频点数据"""
-        if self.rt_frequency_list and 0 <= self.rt_current_freq_index < len(self.rt_frequency_list):
-            current_freq = str(self.rt_frequency_list[self.rt_current_freq_index])
-            if current_freq in self.real_time_data:
-                freq_data = self.real_time_data[current_freq]
-                
-                # 更新图表
-                if hasattr(self, 'driver_plot_widget'):
-                    self.driver_plot_widget.update_plot(freq_data)
-                if hasattr(self, 'amplifier_plot_widget'):
-                    self.amplifier_plot_widget.update_plot(freq_data)
-                
-                # 更新导航按钮状态
-                self.update_rt_nav_buttons()
-                
-                self.add_log_message(f"显示实时测量频率 {current_freq} GHz 的数据")
+        page = self._current_realtime_page()
+        if page is not None and hasattr(page, "_display_current_frequency"):
+            page._display_current_frequency()
+            return page.realtime_buffer.current()
+        return self.realtime_buffer.current()
     
     def rt_prev_frequency(self):
-        """切换到上一个实时测量频率"""
-        if self.rt_frequency_list:
-            if self.rt_current_freq_index > 0:
-                self.rt_current_freq_index -= 1
-                self.rt_user_browsing = True  # 标记用户正在手动浏览
-                self.update_rt_frequency_display()
-                self.display_current_rt_frequency_data()
+        page = self._current_realtime_page()
+        if page is not None and hasattr(page, "previous_frequency"):
+            page.previous_frequency()
+            return page.realtime_buffer.current()
+        return self.realtime_buffer.previous()
     
     def rt_next_frequency(self):
-        """切换到下一个实时测量频率"""
-        if self.rt_frequency_list:
-            if self.rt_current_freq_index < len(self.rt_frequency_list) - 1:
-                self.rt_current_freq_index += 1
-                self.rt_user_browsing = True  # 标记用户正在手动浏览
-                # 如果到达最新频点，重置浏览标志
-                if self.rt_current_freq_index == len(self.rt_frequency_list) - 1:
-                    self.rt_user_browsing = False
-                self.update_rt_frequency_display()
-                self.display_current_rt_frequency_data()
+        page = self._current_realtime_page()
+        if page is not None and hasattr(page, "next_frequency"):
+            page.next_frequency()
+            return page.realtime_buffer.current()
+        return self.realtime_buffer.next()
     
     def update_rt_nav_buttons(self):
-        """更新实时预览导航按钮的状态"""
-        has_data = len(self.rt_frequency_list) > 1
-        has_prev = self.rt_current_freq_index > 0
-        has_next = self.rt_current_freq_index < len(self.rt_frequency_list) - 1
-        
-        # 更新驱动映射的导航按钮
-        if hasattr(self, 'driver_plot_widget') and hasattr(self.driver_plot_widget, 'nav_prev_btn'):
-            self.driver_plot_widget.nav_prev_btn.setEnabled(has_data and has_prev)
-            self.driver_plot_widget.nav_next_btn.setEnabled(has_data and has_next)
-        
-        # 更新功放测试的导航按钮
-        if hasattr(self, 'amplifier_plot_widget') and hasattr(self.amplifier_plot_widget, 'nav_prev_btn'):
-            self.amplifier_plot_widget.nav_prev_btn.setEnabled(has_data and has_prev)
-            self.amplifier_plot_widget.nav_next_btn.setEnabled(has_data and has_next)
+        page = self._current_realtime_page()
+        if page is not None and hasattr(page, "_update_navigation"):
+            return page._update_navigation()
+        return None
 
     def clear_real_time_data(self):
         """清除实时测量的历史数据"""
-        self.real_time_data = {}
-        self.rt_frequency_list = []
-        self.rt_current_freq_index = 0
-        self.rt_user_browsing = False  # 重置用户浏览标志
-        
-        # 更新频点显示和按钮状态
-        self.update_rt_frequency_display()
-        self.update_rt_nav_buttons()
-        
+        buffer = getattr(self, "realtime_buffer", None)
+        if buffer is not None:
+            buffer.clear()
+        for name in ("driver_mapping_page", "amplifier_page"):
+            page = getattr(self, name, None)
+            if page is not None and hasattr(page, "clear_realtime_buffer"):
+                page.clear_realtime_buffer()
         self.add_log_message("已清除实时测量历史数据")
                 
     def generate_report(self):

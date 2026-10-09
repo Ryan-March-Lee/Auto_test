@@ -22,9 +22,11 @@ from .measurement_state import (
     MeasurementStatus,
 )
 from .pages import PageControllerBindingMixin
+from .realtime_buffer import RealtimeMeasurementBuffer
+from .realtime_page import RealtimePageMixin
 
 
-class DriverMappingPage(PageControllerBindingMixin, QWidget):
+class DriverMappingPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
     """驱动映射输入、接线确认、进度和结构化结果展示。"""
 
     def __init__(
@@ -53,10 +55,7 @@ class DriverMappingPage(PageControllerBindingMixin, QWidget):
         self._log_callback = log_callback or (lambda _message: None)
         self._progress_callback = progress_callback or (lambda _value: None)
         self._error_callback = error_callback or self._show_error
-        self._realtime_data: dict[str, Mapping[str, Any]] = {}
-        self._frequency_list: list[str] = []
-        self._current_frequency_index = 0
-        self._user_browsing = False
+        self.realtime_buffer = RealtimeMeasurementBuffer()
         self.root = self.build_ui()
 
     def build_ui(self) -> QWidget:
@@ -96,6 +95,7 @@ class DriverMappingPage(PageControllerBindingMixin, QWidget):
         layout.addWidget(control_group)
 
         self.driver_plot_widget = self._plot_widget_factory(self)
+        self._realtime_plot_widget = self.driver_plot_widget
         prev_clicked = getattr(self.driver_plot_widget, "prev_clicked", None)
         next_clicked = getattr(self.driver_plot_widget, "next_clicked", None)
         if prev_clicked is not None:
@@ -127,8 +127,7 @@ class DriverMappingPage(PageControllerBindingMixin, QWidget):
         dialog = self._connection_dialog_factory("driver_mapping", self)
         if dialog.exec() != QDialog.Accepted or not self._confirm_wiring():
             return
-        self.clear_realtime_data()
-        self._clear_realtime_callback()
+        self.reset_realtime_data()
         self._log_callback("开始驱动功放映射...")
         controller.start_driver_mapping(MeasurementCommand(self._config_path_provider()))
 
@@ -149,29 +148,13 @@ class DriverMappingPage(PageControllerBindingMixin, QWidget):
     def show_connection_diagram(self) -> None:
         self._connection_dialog_factory("driver_mapping", self).exec()
 
-    def clear_realtime_data(self) -> None:
-        self._realtime_data.clear()
-        self._frequency_list.clear()
-        self._current_frequency_index = 0
-        self._user_browsing = False
-        self._update_navigation()
+    @property
+    def _realtime_data(self):
+        return self.realtime_buffer.data
 
-    def update_realtime(self, data: Any) -> None:
-        if not isinstance(data, Mapping) or "frequency" not in data:
-            return
-        frequency = str(data["frequency"])
-        self._realtime_data[frequency] = dict(data)
-        if frequency not in self._frequency_list:
-            self._frequency_list.append(frequency)
-            try:
-                self._frequency_list.sort(key=float)
-            except (TypeError, ValueError):
-                self._frequency_list.sort()
-            if not self._user_browsing:
-                self._current_frequency_index = len(self._frequency_list) - 1
-        self._update_plot(data)
-        self._realtime_data_callback(dict(data))
-        self._update_navigation()
+    @property
+    def _frequency_list(self):
+        return [str(value) for value in self.realtime_buffer.frequencies]
 
     def show_result(self, reference: Any) -> None:
         if getattr(reference, "kind", None) is not MeasurementKind.DRIVER_MAPPING:
@@ -244,34 +227,6 @@ class DriverMappingPage(PageControllerBindingMixin, QWidget):
         update_plot = getattr(self.driver_plot_widget, "update_plot", None)
         if update_plot is not None:
             update_plot(dict(data))
-
-    def _update_navigation(self) -> None:
-        has_data = len(self._frequency_list) > 1
-        previous = getattr(self.driver_plot_widget, "nav_prev_btn", None)
-        following = getattr(self.driver_plot_widget, "nav_next_btn", None)
-        if previous is not None:
-            previous.setEnabled(has_data and self._current_frequency_index > 0)
-        if following is not None:
-            following.setEnabled(
-                has_data and self._current_frequency_index < len(self._frequency_list) - 1
-            )
-
-    def previous_frequency(self) -> None:
-        if self._current_frequency_index > 0:
-            self._current_frequency_index -= 1
-            self._user_browsing = True
-            self._display_current_frequency()
-
-    def next_frequency(self) -> None:
-        if self._current_frequency_index < len(self._frequency_list) - 1:
-            self._current_frequency_index += 1
-            self._user_browsing = self._current_frequency_index != len(self._frequency_list) - 1
-            self._display_current_frequency()
-
-    def _display_current_frequency(self) -> None:
-        if self._frequency_list:
-            self._update_plot(self._realtime_data[self._frequency_list[self._current_frequency_index]])
-            self._update_navigation()
 
     def _on_state_changed(self, state: Any) -> None:
         active = state.kind is MeasurementKind.DRIVER_MAPPING and state.is_active

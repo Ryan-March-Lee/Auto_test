@@ -20,9 +20,11 @@ from PySide6.QtWidgets import (
 from .measurement_controller_contract import MeasurementCommand
 from .measurement_state import AmplifierPageResultState, MeasurementKind
 from .pages import PageControllerBindingMixin
+from .realtime_buffer import RealtimeMeasurementBuffer
+from .realtime_page import RealtimePageMixin
 
 
-class AmplifierPage(PageControllerBindingMixin, QWidget):
+class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
     """主功放测量的输入、接线确认、进度和结果展示。"""
 
     def __init__(
@@ -53,10 +55,7 @@ class AmplifierPage(PageControllerBindingMixin, QWidget):
         self._log_callback = log_callback or (lambda _message: None)
         self._progress_callback = progress_callback or (lambda _value: None)
         self._error_callback = error_callback or self._show_error
-        self._frequency_data: dict[str, Mapping[str, Any]] = {}
-        self._frequencies: list[str] = []
-        self._frequency_index = 0
-        self._user_browsing = False
+        self.realtime_buffer = RealtimeMeasurementBuffer()
         self.root = self.build_ui()
 
     def build_ui(self) -> QWidget:
@@ -95,6 +94,7 @@ class AmplifierPage(PageControllerBindingMixin, QWidget):
         layout.addWidget(result_group)
 
         self.amplifier_plot_widget = self._plot_widget_factory(self)
+        self._realtime_plot_widget = self.amplifier_plot_widget
         for signal_name, slot in (("prev_clicked", self.previous_frequency), ("next_clicked", self.next_frequency)):
             signal = getattr(self.amplifier_plot_widget, signal_name, None)
             if signal is not None:
@@ -135,7 +135,7 @@ class AmplifierPage(PageControllerBindingMixin, QWidget):
             return
         if not self._confirm_wiring():
             return
-        self.clear_realtime_data()
+        self.reset_realtime_data()
         self.result_table.setRowCount(0)
         self._log_callback("开始主功放测试...")
         # 功放参数已在 prepare_run 中保存到运行配置；controller 只接收配置路径，
@@ -156,31 +156,6 @@ class AmplifierPage(PageControllerBindingMixin, QWidget):
     def show_connection_diagram(self) -> None:
         diagram = "amplifier_test" if self._driver_mode_provider() else "amplifier_test_no_driver"
         self._connection_dialog_factory(diagram, self).exec()
-
-    def clear_realtime_data(self) -> None:
-        self._frequency_data.clear()
-        self._frequencies.clear()
-        self._frequency_index = 0
-        self._user_browsing = False
-        self._update_navigation()
-        self._clear_realtime_callback()
-
-    def update_realtime(self, data: Any) -> None:
-        if not isinstance(data, Mapping) or "frequency" not in data:
-            return
-        frequency = str(data["frequency"])
-        self._frequency_data[frequency] = dict(data)
-        if frequency not in self._frequencies:
-            self._frequencies.append(frequency)
-            try:
-                self._frequencies.sort(key=float)
-            except (TypeError, ValueError):
-                self._frequencies.sort()
-            if not self._user_browsing:
-                self._frequency_index = len(self._frequencies) - 1
-        self._update_plot(data)
-        self._realtime_data_callback(dict(data))
-        self._update_navigation()
 
     def show_result(self, reference: Any) -> None:
         if getattr(reference, "kind", None) is not MeasurementKind.AMPLIFIER:
@@ -222,32 +197,6 @@ class AmplifierPage(PageControllerBindingMixin, QWidget):
         update_plot = getattr(self.amplifier_plot_widget, "update_plot", None)
         if update_plot is not None:
             update_plot(dict(data))
-
-    def _update_navigation(self) -> None:
-        previous = getattr(self.amplifier_plot_widget, "nav_prev_btn", None)
-        following = getattr(self.amplifier_plot_widget, "nav_next_btn", None)
-        has_data = len(self._frequencies) > 1
-        if previous is not None:
-            previous.setEnabled(has_data and self._frequency_index > 0)
-        if following is not None:
-            following.setEnabled(has_data and self._frequency_index < len(self._frequencies) - 1)
-
-    def previous_frequency(self) -> None:
-        if self._frequency_index > 0:
-            self._frequency_index -= 1
-            self._user_browsing = True
-            self._display_current_frequency()
-
-    def next_frequency(self) -> None:
-        if self._frequency_index < len(self._frequencies) - 1:
-            self._frequency_index += 1
-            self._user_browsing = self._frequency_index != len(self._frequencies) - 1
-            self._display_current_frequency()
-
-    def _display_current_frequency(self) -> None:
-        if self._frequencies:
-            self._update_plot(self._frequency_data[self._frequencies[self._frequency_index]])
-            self._update_navigation()
 
     def _on_state_changed(self, state: Any) -> None:
         active = state.kind is MeasurementKind.AMPLIFIER and state.is_active

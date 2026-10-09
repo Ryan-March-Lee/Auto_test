@@ -97,6 +97,10 @@ from presentation.qt.assistant.chat_panel import ChatPanel
 from presentation.qt.assistant.chat_worker import UnavailableAssistant as _UnavailableAssistant
 from presentation.qt.assistant.chat_worker import ChatWorker
 from presentation.qt.assistant.chat_dialogs import ChatHistoryDialog, ChatSettingsDialog
+from presentation.qt.config_form_state import ConfigFormState
+from presentation.qt.config_page import ConfigPage
+from presentation.qt.visualization_page import VisualizationPage
+from presentation.qt.export_page import ExportPage
 
 
 class MainWindow(QMainWindow):
@@ -208,7 +212,7 @@ class MainWindow(QMainWindow):
             confirm_driver_mapping=self._confirm_driver_mapping_wiring,
             prepare_amplifier=self._prepare_amplifier_run,
             confirm_amplifier=self._confirm_amplifier_wiring,
-            driver_mode_provider=lambda: self.driver_mode_check.isChecked(),
+            driver_mode_provider=lambda: self.config_page.driver_mode_check.isChecked(),
             connection_dialog_factory=lambda kind, parent: ConnectionDialog(kind, parent),
             plot_widget_factory=lambda _parent: RealTimePlotWidget(show_nav_buttons=True),
             log_callback=self.add_log_message,
@@ -301,7 +305,35 @@ class MainWindow(QMainWindow):
         
     def create_config_tab(self):
         """创建仪器配置选项卡"""
-        tab = QWidget()
+        tab = ConfigPage(self.config, self)
+        tab.save_requested.connect(self.save_config)
+        tab.connect_requested.connect(self.connect_instruments)
+        tab.validation_failed.connect(lambda message: self.add_log_message(f"配置校验失败: {message}"))
+        tab.driver_mode_changed.connect(lambda _checked: self.update_amplifier_instruction_text())
+        self.config_page = tab
+        self._install_config_compatibility_aliases(tab)
+        return tab
+
+    def _install_config_compatibility_aliases(self, page):
+        """兼容旧测试和外部入口；配置控件的所有权仍属于 ConfigPage。"""
+        for name in (
+            'sg_address', 'sg_enabled', 'sa_address', 'sa_enabled',
+            'ps1_address', 'ps1_enabled', 'ps2_address', 'ps2_enabled',
+            'ps3_address', 'ps3_enabled', 'ps4_address', 'ps4_enabled',
+            'freq_edit', 'start_power', 'stop_power', 'power_step',
+            'compression_combo', 'attenuator_combo', 'driver_mode_check',
+            'max_input_power', 'pa_unit_count_combo', 'power_config_widgets',
+            'power_assignment_widgets', 'driver_power_enabled',
+            'driver_power_combo', 'driver_power_label', 'pa_unit1_power_combo',
+            'pa_unit2_power_combo', 'pa_unit2_label', 'pa_unit3_power_combo',
+            'pa_unit3_label', 'connect_btn', 'save_config_btn',
+        ):
+            setattr(self, name, getattr(page, name))
+
+        # 以下旧实现只保留为兼容入口，具体状态逻辑由页面持有。
+        return page
+
+        '''Legacy configuration-page implementation retained temporarily for source compatibility.
         layout = QVBoxLayout(tab)
         
         # 创建滚动区域
@@ -377,7 +409,7 @@ class MainWindow(QMainWindow):
         
         # 连接按钮
         self.connect_btn = QPushButton("连接仪器")
-        self.connect_btn.clicked.connect(self.connect_instruments)
+        self.connect_btn.clicked.connect(tab.connect_requested.emit)
         connection_layout.addWidget(self.connect_btn, 6, 0, 1, 2)
         
         # 创建主要内容的水平布局
@@ -496,8 +528,10 @@ class MainWindow(QMainWindow):
         scroll.setWidget(scroll_widget)
         layout.addWidget(scroll)
         
-        return tab
+        return tab'''
     
+    '''Legacy configuration helpers removed in Phase 3.2; ConfigPage owns this UI.
+
     def create_power_supply_config(self, parent_layout):
         """创建电源详细配置"""
         power_group = QGroupBox("电源详细配置")
@@ -776,7 +810,7 @@ class MainWindow(QMainWindow):
         
         # 保存配置按钮
         self.save_config_btn = QPushButton("保存配置")
-        self.save_config_btn.clicked.connect(self.save_config)
+        self.save_config_btn.clicked.connect(tab.save_requested.emit)
         self.save_config_btn.setMinimumHeight(35)
         parent_layout.addWidget(self.save_config_btn)
         
@@ -888,6 +922,7 @@ class MainWindow(QMainWindow):
             if current_unit3 in enabled_ps:
                 self.power_assignment_widgets['pa_unit3_power'].setCurrentText(current_unit3)
         
+    '''
     def _prepare_cable_loss_run(self):
         if self.instrument_ctrl is None:
             self.on_measurement_error("请先连接仪器；上一次测量结束后端口已安全释放")
@@ -997,6 +1032,15 @@ class MainWindow(QMainWindow):
         
     def create_visualization_tab(self):
         """创建数据可视化选项卡"""
+        self.visualization_page = VisualizationPage(
+            config_provider=lambda: self.config,
+            temp_dir=TEMP_DIR,
+            results_dir=TEST_RESULTS_DIR,
+            log_callback=self.add_log_message,
+            parent=self,
+        )
+        return self.visualization_page
+        # Legacy implementation retained below during the compatibility window.
         tab = QWidget()
         layout = QVBoxLayout(tab)
         
@@ -1048,6 +1092,14 @@ class MainWindow(QMainWindow):
         
     def create_data_export_tab(self):
         """创建数据导出选项卡"""
+        self.export_page = ExportPage(
+            results_dir=TEST_RESULTS_DIR,
+            cable_loss_file=CABLE_LOSS_FILE,
+            log_callback=self.add_log_message,
+            parent=self,
+        )
+        return self.export_page
+        # Legacy implementation retained below during the compatibility window.
         tab = QWidget()
         layout = QVBoxLayout(tab)
         
@@ -1292,215 +1344,41 @@ class MainWindow(QMainWindow):
         
     def _read_instrument_config_from_ui(self) -> dict:
         """从UI读取仪器地址和启用状态，保留现有通道和其他字段。"""
-        import copy
-        instruments = self.config.get('instruments', {})
-        if not isinstance(instruments, dict):
-            instruments = {}
-        else:
-            instruments = copy.deepcopy(instruments)
-
-        existing_power_supplies = instruments.get('power_supplies', {})
-        if not isinstance(existing_power_supplies, dict):
-            existing_power_supplies = {}
-        else:
-            existing_power_supplies = copy.deepcopy(existing_power_supplies)
-
-        ps_widgets = [
-            ('PS1', self.ps1_address, self.ps1_enabled),
-            ('PS2', self.ps2_address, self.ps2_enabled),
-            ('PS3', self.ps3_address, self.ps3_enabled),
-            ('PS4', self.ps4_address, self.ps4_enabled)
-        ]
-        power_supplies = existing_power_supplies
-        for ps_name, address_widget, enabled_widget in ps_widgets:
-            ps_config = power_supplies.get(ps_name, {})
-            if not isinstance(ps_config, dict):
-                ps_config = {}
-            else:
-                ps_config = copy.deepcopy(ps_config)
-            ps_config['address'] = address_widget.text()
-            ps_config['enabled'] = enabled_widget.isChecked()
-            power_supplies[ps_name] = ps_config
-
-        # 保留现代运行映射中的 model 及其他扩展字段。旧实现整体替换
-        # 这两个对象，会在每次保存时把实际仪器型号清空。
-        signal_generator = instruments.get('signal_generator', {})
-        if not isinstance(signal_generator, dict):
-            signal_generator = {}
-        signal_generator = copy.deepcopy(signal_generator)
-        signal_generator['address'] = self.sg_address.text()
-        signal_generator['enabled'] = self.sg_enabled.isChecked()
-        instruments['signal_generator'] = signal_generator
-
-        spectrum_analyzer = instruments.get('spectrum_analyzer', {})
-        if not isinstance(spectrum_analyzer, dict):
-            spectrum_analyzer = {}
-        spectrum_analyzer = copy.deepcopy(spectrum_analyzer)
-        spectrum_analyzer['address'] = self.sa_address.text()
-        spectrum_analyzer['enabled'] = self.sa_enabled.isChecked()
-        instruments['spectrum_analyzer'] = spectrum_analyzer
-        instruments['power_supplies'] = power_supplies
-        return {'instruments': instruments}
+        if hasattr(self, 'config_page'):
+            return ConfigFormState(self.config, self.config_page).read_instrument_config()
+        return ConfigFormState(self.config, self).read_instrument_config()
 
     def _read_test_parameters_from_ui(self) -> dict:
         """从UI读取测试参数，不修改self.config。"""
-        result = {}
-        try:
-            freq_list = eval(self.freq_edit.text())
-            result['test_frequencies'] = freq_list
-        except:
-            pass
-        result['signal_source'] = {
-            'start_power': self.start_power.value(),
-            'stop_power': self.stop_power.value(),
-            'step': self.power_step.value()
-        }
-        result['compression_point'] = {'type': self.compression_combo.currentText()}
-        result['attenuator'] = {'type': self.attenuator_combo.currentText()}
-        result['driver_mode'] = {'enabled': self.driver_mode_check.isChecked()}
-        return result
+        if hasattr(self, 'config_page'):
+            return ConfigFormState(self.config, self.config_page).read_test_parameters()
+        return ConfigFormState(self.config, self).read_test_parameters()
 
     def _read_power_supply_config_from_ui(self) -> dict:
         """从UI读取电源通道详细配置，按电源名称分组返回。"""
-        if not hasattr(self, 'power_config_widgets'):
-            return {}
-        result = {}
-        for ps_name, ps_widgets in self.power_config_widgets.items():
-            channels = {}
-            for ch_name, ch_widgets in ps_widgets['channels'].items():
-                channels[ch_name] = {
-                    'voltage': {
-                        'value': ch_widgets['voltage'].value(),
-                        'protection': ch_widgets['voltage_protection'].value(),
-                        'protection_enabled': ch_widgets['voltage_protection_enabled'].isChecked()
-                    },
-                    'current': {
-                        'value': ch_widgets['current'].value(),
-                        'protection': ch_widgets['current_protection'].value(),
-                        'protection_enabled': ch_widgets['current_protection_enabled'].isChecked()
-                    }
-                }
-            result[ps_name] = {'channels': channels}
-        return {'instruments': {'power_supplies': result}}
+        if hasattr(self, 'config_page'):
+            return ConfigFormState(self.config, self.config_page).read_power_supply_config()
+        return ConfigFormState(self.config, self).read_power_supply_config()
 
     def _read_power_assignment_from_ui(self) -> dict:
         """从UI读取电源分配配置，返回完整的power_supply_assignment片段。"""
-        if not hasattr(self, 'power_assignment_widgets'):
-            return {}
-
-        # 驱动功放电源分配
-        driver_enabled = self.power_assignment_widgets['driver_enabled'].isChecked()
-        driver_amplifier = {
-            'power_supply_count': 1 if driver_enabled else 0,
-            'supplies': {}
-        }
-        if driver_enabled:
-            driver_ps = self.power_assignment_widgets['driver_power'].currentText()
-            driver_amplifier['supplies']['main'] = {
-                'name': driver_ps,
-                'channel': ['CH1', 'CH2']
-            }
-
-        # DUT功放电源分配
-        pa_unit_count = int(self.pa_unit_count_combo.currentText())
-        unit1_ps = self.power_assignment_widgets['pa_unit1_power'].currentText()
-        dut_supplies = {
-            'carrier': {  # 保持carrier键名以兼容现有配置
-                'name': unit1_ps,
-                'channel': ['CH1', 'CH2']
-            }
-        }
-        if pa_unit_count >= 2:
-            unit2_ps = self.power_assignment_widgets['pa_unit2_power'].currentText()
-            dut_supplies['peaking'] = {  # 保持peaking键名以兼容现有配置
-                'name': unit2_ps,
-                'channel': ['CH1', 'CH2']
-            }
-        if pa_unit_count >= 3:
-            unit3_ps = self.power_assignment_widgets['pa_unit3_power'].currentText()
-            dut_supplies['peaking2'] = {  # 保持peaking2键名以兼容现有配置
-                'name': unit3_ps,
-                'channel': ['CH1', 'CH2']
-            }
-
-        return {
-            'power_supply_assignment': {
-                'driver_amplifier': driver_amplifier,
-                'dut_amplifier': {
-                    'power_supply_count': pa_unit_count,
-                    'supplies': dut_supplies
-                }
-            }
-        }
+        if hasattr(self, 'config_page'):
+            return ConfigFormState(self.config, self.config_page).read_power_assignment()
+        return ConfigFormState(self.config, self).read_power_assignment()
 
     def _build_config_from_ui(self) -> dict:
         """基于 self.config 和当前 UI 状态组装完整配置字典。
 
         该方法不修改 self.config，不写文件，不记录日志，不弹窗。
         """
-        import copy
-        config = copy.deepcopy(self.config)
-
-        # 合并仪器地址/启用状态（保留已有 channels 和未知字段）
-        instrument_fragment = self._read_instrument_config_from_ui()
-        config.setdefault('instruments', {})
-        config['instruments'] = instrument_fragment['instruments']
-
-        # 合并测试参数
-        test_params = self._read_test_parameters_from_ui()
-        config.update(test_params)
-
-        # 更新 DUT 配置
-        config.setdefault('dut_config', {})
-        config['dut_config']['max_input_power'] = self.max_input_power.value()
-        pa_unit_count = int(self.pa_unit_count_combo.currentText())
-        config['dut_config']['power_supply_count'] = pa_unit_count
-
-        # 合并电源通道详细参数（只替换对应 PS 的 channels，保留地址和启用状态）
-        power_supply_fragment = self._read_power_supply_config_from_ui()
-        if power_supply_fragment:
-            fragment_supplies = power_supply_fragment.get('instruments', {}).get('power_supplies', {})
-            config.setdefault('instruments', {})
-            config_power_supplies = config['instruments'].get('power_supplies', {})
-            if not isinstance(config_power_supplies, dict):
-                config_power_supplies = {}
-            else:
-                config_power_supplies = dict(config_power_supplies)
-            for ps_name, ps_fragment in fragment_supplies.items():
-                ps_config = config_power_supplies.get(ps_name, {})
-                if not isinstance(ps_config, dict):
-                    ps_config = {}
-                else:
-                    ps_config = dict(ps_config)
-                existing_channels = ps_config.get('channels', {})
-                if not isinstance(existing_channels, dict):
-                    existing_channels = {}
-                else:
-                    existing_channels = dict(existing_channels)
-                for channel_name, channel_config in ps_fragment.get('channels', {}).items():
-                    existing_channels[channel_name] = channel_config
-                ps_config['channels'] = existing_channels
-                config_power_supplies[ps_name] = ps_config
-            config['instruments']['power_supplies'] = config_power_supplies
-
-        # 合并电源分配配置
-        assignment_fragment = self._read_power_assignment_from_ui()
-        if assignment_fragment:
-            config['power_supply_assignment'] = assignment_fragment['power_supply_assignment']
-
-        # 任意参数、仪器或电源分配变更都必须重新确认现场接线。
-        config['wiring'] = {
-            'confirmed': False,
-            'connection_note': None,
-            'confirmed_at': None,
-            'confirmation_source': None,
-        }
-
-        return config
+        widgets = self.config_page if hasattr(self, 'config_page') else self
+        return ConfigFormState(self.config, widgets).build_config()
 
     def update_config_from_ui(self):
         """从UI更新配置"""
         self.config = self._build_config_from_ui()
+        if hasattr(self, 'config_page'):
+            self.config_page.config = self.config
 
     def _save_config_file(self) -> bool:
         """将 self.config 写入 CONFIG_FILE，成功返回 True，失败返回 False。"""
@@ -1534,6 +1412,8 @@ class MainWindow(QMainWindow):
             
     def load_test_data(self):
         """加载测试数据"""
+        return self.visualization_page.load_test_data()
+        # Legacy implementation retained below during the compatibility window.
         file_path, _ = QFileDialog.getOpenFileName(
             self, "选择测试数据文件", "", 
             "JSON files (*.json);;All files (*.*)"
@@ -1600,6 +1480,7 @@ class MainWindow(QMainWindow):
     
     def update_frequency_display(self):
         """更新频率显示"""
+        return self.visualization_page.update_frequency_display()
         if hasattr(self, 'frequency_list') and self.frequency_list:
             current_freq = self.frequency_list[self.current_freq_index]
             total_freq = len(self.frequency_list)
@@ -1609,6 +1490,7 @@ class MainWindow(QMainWindow):
     
     def display_current_frequency_data(self):
         """显示当前频率的数据"""
+        return self.visualization_page.display_current_frequency_data()
         if hasattr(self, 'loaded_data') and self.loaded_data and hasattr(self, 'frequency_list'):
             current_freq = str(self.frequency_list[self.current_freq_index])
             if current_freq in self.loaded_data:
@@ -1621,6 +1503,7 @@ class MainWindow(QMainWindow):
     
     def prev_frequency(self):
         """切换到上一个频率"""
+        return self.visualization_page.prev_frequency()
         if hasattr(self, 'frequency_list') and self.frequency_list:
             if self.current_freq_index > 0:
                 self.current_freq_index -= 1
@@ -1629,6 +1512,7 @@ class MainWindow(QMainWindow):
     
     def next_frequency(self):
         """切换到下一个频率"""
+        return self.visualization_page.next_frequency()
         if hasattr(self, 'frequency_list') and self.frequency_list:
             if self.current_freq_index < len(self.frequency_list) - 1:
                 self.current_freq_index += 1
@@ -1738,6 +1622,8 @@ class MainWindow(QMainWindow):
                 
     def generate_report(self):
         """生成报告"""
+        return self.visualization_page.generate_report()
+        # Legacy implementation retained below during the compatibility window.
         try:
             visualizer = DataVisualization()
             
@@ -1789,6 +1675,8 @@ class MainWindow(QMainWindow):
             
     def refresh_file_list(self):
         """刷新文件列表"""
+        return self.export_page.refresh_file_list()
+        # Legacy implementation retained below during the compatibility window.
         self.file_table.setRowCount(0)
         
         # 查找各种数据文件
@@ -1812,6 +1700,7 @@ class MainWindow(QMainWindow):
                 
     def export_json(self):
         """导出JSON"""
+        return self.export_page.export_json()
         current_row = self.file_table.currentRow()
         if current_row < 0:
             QMessageBox.warning(self, "导出", "请先选择要导出的文件")
@@ -1833,6 +1722,7 @@ class MainWindow(QMainWindow):
         
     def export_csv(self):
         """导出CSV"""
+        return self.export_page.export_csv()
         current_row = self.file_table.currentRow()
         if current_row < 0:
             QMessageBox.warning(self, "导出", "请先选择要导出的文件")
@@ -1867,6 +1757,7 @@ class MainWindow(QMainWindow):
         
     def export_pdf(self):
         """导出PDF"""
+        return self.export_page.export_pdf()
         current_row = self.file_table.currentRow()
         if current_row < 0:
             QMessageBox.warning(self, "导出", "请先选择要导出的文件")

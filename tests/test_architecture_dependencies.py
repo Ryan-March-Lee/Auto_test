@@ -207,6 +207,24 @@ def _legacy_imports(tree):
 
 
 class ProductionDependencyTests(unittest.TestCase):
+    def test_configuration_page_owns_configuration_ui(self):
+        source = MAIN_WINDOW_SOURCE.read_text(encoding="utf-8-sig")
+        tree = _tree(MAIN_WINDOW_SOURCE)
+        methods = {
+            node.name
+            for node in _main_window_class(tree).body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        self.assertNotIn("create_power_supply_config", methods)
+        self.assertNotIn("create_power_assignment_config", methods)
+        self.assertNotIn("on_pa_unit_count_changed", methods)
+
+    def test_configuration_modules_do_not_depend_on_main_window(self):
+        for path in (Path("presentation/qt/config_page.py"), Path("presentation/qt/config_form_state.py")):
+            source = path.read_text(encoding="utf-8-sig")
+            self.assertNotIn("enhanced_main_gui", source)
+            self.assertNotIn("MeasurementController", source)
+
     def test_main_window_registers_pages_without_legacy_builder(self):
         source = MAIN_WINDOW_SOURCE.read_text(encoding="utf-8-sig")
         self.assertNotIn("_legacy_tab", source)

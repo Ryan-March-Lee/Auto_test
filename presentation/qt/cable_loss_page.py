@@ -92,10 +92,14 @@ class CableLossPage(PageControllerBindingMixin, QWidget):
         self.cable_loss_btn.clicked.connect(self.start_measurement)
         self.load_cable_results_btn.clicked.connect(self.load_result_requested.emit)
         self.stop_cable_loss_btn.clicked.connect(self.stop_measurement)
+        self.cancel_cable_loss_btn = QPushButton("取消")
+        self.cancel_cable_loss_btn.setEnabled(False)
+        self.cancel_cable_loss_btn.clicked.connect(self.cancel_measurement)
         self.continue_cable_loss_btn.clicked.connect(self.continue_measurement)
         control_layout.addWidget(self.cable_loss_btn)
         control_layout.addWidget(self.load_cable_results_btn)
         control_layout.addWidget(self.stop_cable_loss_btn)
+        control_layout.addWidget(self.cancel_cable_loss_btn)
         control_layout.addWidget(self.continue_cable_loss_btn)
         layout.addWidget(control_group)
 
@@ -140,6 +144,10 @@ class CableLossPage(PageControllerBindingMixin, QWidget):
         if self.controller is not None:
             self.controller.stop()
 
+    def cancel_measurement(self) -> None:
+        if self.controller is not None:
+            self.controller.cancel()
+
     def continue_measurement(self) -> None:
         if self.controller is not None:
             self.controller.continue_cable_loss()
@@ -162,6 +170,7 @@ class CableLossPage(PageControllerBindingMixin, QWidget):
         active = state.kind is MeasurementKind.CABLE_LOSS and state.is_active
         self.cable_loss_btn.setEnabled(not active)
         self.stop_cable_loss_btn.setEnabled(active)
+        self.cancel_cable_loss_btn.setEnabled(active)
         self.continue_cable_loss_btn.setEnabled(
             state.kind is MeasurementKind.CABLE_LOSS
             and state.status is MeasurementStatus.WAITING_FOR_CONTINUE
@@ -175,6 +184,7 @@ class CableLossPage(PageControllerBindingMixin, QWidget):
             return
         self.cable_loss_btn.setEnabled(True)
         self.stop_cable_loss_btn.setEnabled(False)
+        self.cancel_cable_loss_btn.setEnabled(False)
         self.continue_cable_loss_btn.setEnabled(False)
         self._error_callback(message)
 

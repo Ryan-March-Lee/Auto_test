@@ -76,6 +76,9 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         control_layout = QVBoxLayout(control_group)
         self.amplifier_test_btn = QPushButton("开始功放测试")
         self.amplifier_test_btn.clicked.connect(self.start_measurement)
+        self.cancel_btn = QPushButton("取消")
+        self.cancel_btn.setEnabled(False)
+        self.cancel_btn.clicked.connect(self.cancel_measurement)
         self.emergency_stop_btn = QPushButton("紧急停止")
         self.emergency_stop_btn.setStyleSheet(
             "QPushButton { background-color: red; color: white; font-weight: bold; }"
@@ -83,6 +86,7 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         self.emergency_stop_btn.setEnabled(False)
         self.emergency_stop_btn.clicked.connect(self.emergency_stop_measurement)
         control_layout.addWidget(self.amplifier_test_btn)
+        control_layout.addWidget(self.cancel_btn)
         control_layout.addWidget(self.emergency_stop_btn)
         layout.addWidget(control_group)
 
@@ -147,6 +151,10 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         if self.controller is not None:
             self.controller.stop()
 
+    def cancel_measurement(self) -> None:
+        if self.controller is not None:
+            self.controller.cancel()
+
     def emergency_stop_measurement(self) -> None:
         if self.controller is None:
             return
@@ -202,6 +210,7 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         active = state.kind is MeasurementKind.AMPLIFIER and state.is_active
         self.amplifier_test_btn.setEnabled(not active)
         self.emergency_stop_btn.setEnabled(active)
+        self.cancel_btn.setEnabled(active)
 
     def _on_error(self, message: str) -> None:
         if self.controller is None or (
@@ -211,6 +220,7 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
             return
         self.amplifier_test_btn.setEnabled(True)
         self.emergency_stop_btn.setEnabled(False)
+        self.cancel_btn.setEnabled(False)
         self._error_callback(message)
 
     def _on_stopped(self, reason: str) -> None:
@@ -221,6 +231,7 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
             return
         self.amplifier_test_btn.setEnabled(True)
         self.emergency_stop_btn.setEnabled(False)
+        self.cancel_btn.setEnabled(False)
         self._progress_callback(0)
         self._log_callback(f"测量已停止: {reason}")
 

@@ -35,11 +35,18 @@ def legacy_result(
     status, source_status = legacy_status(payload.get("status", MeasurementStatus.COMPLETED.value))
     if source_status == "waiting":
         payload["pending_action"] = "connect_path_2"
+    termination = None
+    if source_status == "stopped":
+        termination = {
+            "intent": payload.get("termination_intent", "stop"),
+            "reason": payload.get("termination_reason", "用户停止"),
+        }
     return MeasurementResult.from_payload(
         measurement_type,
         payload,
         run_id=run_id,
         status=status,
+        termination=termination,
     )
 
 

@@ -136,6 +136,15 @@ class CableLossUseCase:
             self._terminal = True
             self._cleaned_after_stop = True
 
+    def cancel_measurement(self) -> None:
+        self._token.request_cancel(reason="任务已取消")
+        if self._waiting_for_path2 and not self._cleaned_after_stop:
+            self._service.cleanup()
+            self._waiting_for_path2 = False
+            self._started = False
+            self._terminal = True
+            self._cleaned_after_stop = True
+
     def emergency_stop(self) -> None:
         self._token.request_emergency_stop(reason="紧急停止")
         if self._waiting_for_path2 and not self._cleaned_after_stop:

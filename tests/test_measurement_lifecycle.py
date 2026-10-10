@@ -18,6 +18,14 @@ class MeasurementLifecycleTests(unittest.TestCase):
         self.assertEqual(stopped.status, MeasurementStatus.EMERGENCY_STOPPED)
         self.assertEqual(stopped.stop_intent, StopIntent.EMERGENCY)
 
+    def test_cancel_is_distinct_from_normal_stop_intent(self):
+        lifecycle = MeasurementLifecycle().prepare().start().request_cancel("用户取消")
+        self.assertEqual(lifecycle.status, MeasurementStatus.STOPPING)
+        self.assertEqual(lifecycle.stop_intent, StopIntent.CANCEL)
+        stopped = lifecycle.worker_stopped()
+        self.assertEqual(stopped.status, MeasurementStatus.CANCELLED)
+        self.assertEqual(stopped.reason, "用户取消")
+
     def test_idle_is_not_terminal_and_terminal_states_cannot_continue(self):
         self.assertFalse(MeasurementStatus.IDLE.is_terminal)
         completed = MeasurementLifecycle().prepare().start().complete()

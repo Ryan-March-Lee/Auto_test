@@ -43,6 +43,7 @@ class Worker:
         self.kind = kind
         self.start_calls = 0
         self.stop_calls = 0
+        self.cancel_calls = 0
         self.emergency_stop_calls = 0
         self.continue_calls = 0
         self.wait_result = True
@@ -52,6 +53,9 @@ class Worker:
 
     def stop(self):
         self.stop_calls += 1
+
+    def cancel(self):
+        self.cancel_calls += 1
 
     def emergency_stop(self):
         self.emergency_stop_calls += 1
@@ -203,6 +207,49 @@ class MeasurementControllerTests(unittest.TestCase):
         )
         worker.signals.stopped.emit("用户停止")
         self.assertEqual(self.controller.state.status, MeasurementStatus.EMERGENCY_STOPPED)
+
+    def test_cancel_is_distinct_from_stop_and_emergency_stop(self):
+        command = MeasurementCommand("config.json")
+        self.assertTrue(self.controller.start_amplifier(command))
+        worker = self.workers[-1]
+        self.assertTrue(self.controller.cancel())
+        self.assertEqual(worker.cancel_calls, 1)
+        self.assertEqual(worker.stop_calls, 0)
+        self.assertEqual(worker.emergency_stop_calls, 0)
+        self.assertEqual(self.controller.state.view_state.stop_reason, "任务已取消")
+        worker.signals.stopped.emit("任务已取消")
+        self.assertEqual(self.controller.state.status, MeasurementStatus.CANCELLED)
+
+    def test_stop_intent_wins_over_late_worker_finished_event(self):
+        for request, expected_reason in ((self.controller.stop, "用户停止"), (self.controller.cancel, "任务已取消")):
+            self.assertTrue(self.controller.start_amplifier(MeasurementCommand("config.json")))
+            worker = self.workers[-1]
+            self.assertTrue(request())
+            worker.signals.result.emit({"value": 1})
+            worker.signals.finished.emit()
+            self.assertEqual(self.controller.state.status, MeasurementStatus.CANCELLED)
+            self.assertEqual(self.controller.state.view_state.stop_reason, expected_reason)
+
+    def test_termination_does_not_emit_finished(self):
+        events = []
+        self.controller.signals.finished.connect(lambda: events.append("finished"))
+        self.controller.signals.stopped.connect(lambda reason: events.append(("stopped", reason)))
+        self.assertTrue(self.controller.start_amplifier(MeasurementCommand("config.json")))
+        worker = self.workers[-1]
+        self.controller.stop()
+        worker.signals.finished.emit()
+        self.assertEqual(events, [("stopped", "用户停止")])
+
+    def test_emergency_reason_wins_over_late_worker_stop_reason(self):
+        stopped = []
+        self.controller.signals.stopped.connect(stopped.append)
+        self.assertTrue(self.controller.start_amplifier(MeasurementCommand("config.json")))
+        worker = self.workers[-1]
+        self.controller.emergency_stop()
+        worker.signals.stopped.emit("用户停止")
+        self.assertEqual(self.controller.state.status, MeasurementStatus.EMERGENCY_STOPPED)
+        self.assertEqual(self.controller.state.view_state.stop_reason, "紧急停止")
+        self.assertEqual(stopped, ["紧急停止"])
 
     def test_emergency_stop_wins_over_worker_finished_event(self):
         self.assertTrue(self.controller.start_amplifier(MeasurementCommand("config.json")))

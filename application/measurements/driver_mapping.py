@@ -57,6 +57,10 @@ class DriverPowerMappingUseCase:
         """Request cancellation; the service owns the safety cleanup."""
         self._token.request_stop(reason="用户停止")
 
+    def cancel_measurement(self) -> None:
+        """Request cancellation without emergency escalation."""
+        self._token.request_cancel(reason="任务已取消")
+
     def emergency_stop(self) -> None:
         """Request emergency cancellation; the service owns safety cleanup."""
         self._token.request_emergency_stop(reason="紧急停止")

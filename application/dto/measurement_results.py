@@ -76,6 +76,7 @@ class MeasurementResult(Mapping[str, Any]):
     summary: Mapping[str, Any] = field(default_factory=dict)
     error: str | None = None
     cleanup: Mapping[str, Any] = field(default_factory=dict)
+    termination: Mapping[str, Any] | None = None
     payload: Mapping[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -85,8 +86,14 @@ class MeasurementResult(Mapping[str, Any]):
             raise ValueError("run_id 不能为空")
         object.__setattr__(self, "measurement_type", measurement_type)
         object.__setattr__(self, "status", status)
-        for name in ("data_reference", "summary", "cleanup", "payload"):
+        for name in ("data_reference", "summary", "cleanup", "termination", "payload"):
             object.__setattr__(self, name, freeze(getattr(self, name)))
+        if status is MeasurementStatus.COMPLETED and self.termination is not None:
+            raise ValueError("completed 结果不能包含 termination")
+        if status is MeasurementStatus.EMERGENCY_STOPPED:
+            _validate_termination(self.termination, "emergency_stop")
+        if status is MeasurementStatus.CANCELLED:
+            _validate_termination(self.termination, None)
         if status is MeasurementStatus.FAILED and not self.error:
             raise ValueError("failed 结果必须包含 error")
 
@@ -100,6 +107,7 @@ class MeasurementResult(Mapping[str, Any]):
         status: MeasurementStatus | str | None = None,
         error: str | None = None,
         cleanup: Mapping[str, Any] | None = None,
+        termination: Mapping[str, Any] | None = None,
     ) -> "MeasurementResult":
         value = dict(payload)
         raw_status = status or value.get("status", MeasurementStatus.COMPLETED.value)
@@ -117,6 +125,7 @@ class MeasurementResult(Mapping[str, Any]):
             summary=summary,
             error=error or value.get("error"),
             cleanup=raw_cleanup,
+            termination=termination if termination is not None else value.get("termination"),
             payload=value,
         )
 
@@ -143,6 +152,7 @@ class MeasurementResult(Mapping[str, Any]):
             "summary": thaw(self.summary),
             "error": self.error,
             "cleanup": thaw(self.cleanup),
+            "termination": thaw(self.termination) if self.termination is not None else None,
         })
         return result
 
@@ -184,3 +194,16 @@ def _summary_for(payload: Mapping[str, Any]) -> dict[str, Any]:
         for key in ("cable_losses", "power_mapping", "results", "path1_losses", "path2_losses")
         if key in payload
     }
+
+
+def _validate_termination(value: Mapping[str, Any] | None, expected: str | None) -> None:
+    if not isinstance(value, Mapping):
+        raise ValueError("终止结果必须包含 termination")
+    intent = value.get("intent")
+    if intent not in {"stop", "cancel", "emergency_stop"}:
+        raise ValueError("termination.intent 无效")
+    if expected is not None and intent != expected:
+        raise ValueError(f"termination.intent 必须为 {expected}")
+    reason = value.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValueError("termination.reason 不能为空")

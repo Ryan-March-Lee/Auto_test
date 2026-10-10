@@ -7,8 +7,11 @@ from threading import Event, Lock
 
 
 class CancellationMode(str, Enum):
-    NORMAL = "normal"
-    EMERGENCY = "emergency"
+    STOP = "stop"
+    CANCEL = "cancel"
+    EMERGENCY_STOP = "emergency_stop"
+    NORMAL = "stop"
+    EMERGENCY = "emergency_stop"
 
 
 class MeasurementCancelled(Exception):
@@ -47,21 +50,28 @@ class CancellationToken:
     def is_cancelled(self) -> bool:
         return self._event.is_set()
 
-    def cancel(self, mode: CancellationMode = CancellationMode.NORMAL, *, reason: str | None = None) -> None:
-        """设置取消请求；已请求紧急停止时不能被普通停止降级。"""
+    def cancel(self, mode: CancellationMode = CancellationMode.STOP, *, reason: str | None = None) -> None:
+        """设置终止请求；紧急停止不可降级，普通意图不可互相改写。"""
         with self._lock:
-            if self._mode is CancellationMode.EMERGENCY:
+            if self._mode is CancellationMode.EMERGENCY_STOP:
                 return
+            if self._mode is not None and self._mode is not mode:
+                if mode is not CancellationMode.EMERGENCY_STOP:
+                    return
             self._mode = mode
             self._reason = reason or mode.value
             self._event.set()
 
     def request_stop(self, *, reason: str | None = None) -> None:
-        self.cancel(CancellationMode.NORMAL, reason=reason)
+        self.cancel(CancellationMode.STOP, reason=reason)
+
+    def request_cancel(self, *, reason: str | None = None) -> None:
+        """请求尽快结束用户已不再需要的任务。"""
+        self.cancel(CancellationMode.CANCEL, reason=reason)
 
     def request_emergency_stop(self, *, reason: str | None = None) -> None:
-        self.cancel(CancellationMode.EMERGENCY, reason=reason)
+        self.cancel(CancellationMode.EMERGENCY_STOP, reason=reason)
 
     def raise_if_cancelled(self) -> None:
         if self.is_cancelled:
-            raise MeasurementCancelled(self.mode or CancellationMode.NORMAL, self.reason)
+            raise MeasurementCancelled(self.mode or CancellationMode.STOP, self.reason)

@@ -165,6 +165,24 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             MeasurementResult("driver_power_mapping", "stopped", "run-result")
 
+    def test_result_dto_records_structured_termination(self):
+        result = MeasurementResult.from_payload(
+            "amplifier",
+            {"termination": {"intent": "cancel", "reason": "任务已取消"}},
+            run_id="run-result",
+            status=MeasurementStatus.CANCELLED,
+        )
+        self.assertEqual(result.termination["intent"], "cancel")
+        self.assertEqual(result.to_dict()["termination"]["reason"], "任务已取消")
+        emergency = MeasurementResult.from_payload(
+            "amplifier",
+            {},
+            run_id="run-emergency",
+            status=MeasurementStatus.EMERGENCY_STOPPED,
+            termination={"intent": "emergency_stop", "reason": "过流保护"},
+        )
+        self.assertEqual(emergency.termination["intent"], "emergency_stop")
+
     def test_legacy_result_status_is_normalized_only_by_adapter(self):
         from application.dto import legacy_result
 

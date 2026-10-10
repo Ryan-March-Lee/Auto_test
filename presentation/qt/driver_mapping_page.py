@@ -81,7 +81,11 @@ class DriverMappingPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         control_layout = QVBoxLayout(control_group)
         self.driver_mapping_btn = QPushButton("开始驱动映射")
         self.driver_mapping_btn.clicked.connect(self.start_measurement)
+        self.driver_cancel_btn = QPushButton("取消")
+        self.driver_cancel_btn.setEnabled(False)
+        self.driver_cancel_btn.clicked.connect(self.cancel_measurement)
         control_layout.addWidget(self.driver_mapping_btn)
+        control_layout.addWidget(self.driver_cancel_btn)
         self.driver_stop_btn = QPushButton("停止测量")
         self.driver_stop_btn.setEnabled(False)
         self.driver_stop_btn.clicked.connect(self.stop_measurement)
@@ -135,6 +139,10 @@ class DriverMappingPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
     def stop_measurement(self) -> None:
         if self.controller is not None:
             self.controller.stop()
+
+    def cancel_measurement(self) -> None:
+        if self.controller is not None:
+            self.controller.cancel()
 
     def emergency_stop_measurement(self) -> None:
         if self.controller is None:
@@ -233,6 +241,7 @@ class DriverMappingPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         self.driver_mapping_btn.setEnabled(not active)
         self.driver_stop_btn.setEnabled(active)
         self.driver_emergency_stop_btn.setEnabled(active)
+        self.driver_cancel_btn.setEnabled(active)
 
     def _on_error(self, message: str) -> None:
         if self.controller is None or (
@@ -243,6 +252,7 @@ class DriverMappingPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         self.driver_mapping_btn.setEnabled(True)
         self.driver_stop_btn.setEnabled(False)
         self.driver_emergency_stop_btn.setEnabled(False)
+        self.driver_cancel_btn.setEnabled(False)
         self._error_callback(message)
 
     def _on_stopped(self, reason: str) -> None:
@@ -254,6 +264,7 @@ class DriverMappingPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         self.driver_mapping_btn.setEnabled(True)
         self.driver_stop_btn.setEnabled(False)
         self.driver_emergency_stop_btn.setEnabled(False)
+        self.driver_cancel_btn.setEnabled(False)
         self._log_callback(f"测量已停止: {reason}")
         self._progress_callback(0)
 

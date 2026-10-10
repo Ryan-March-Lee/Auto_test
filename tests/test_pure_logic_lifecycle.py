@@ -43,6 +43,15 @@ class CancellationTokenTests(unittest.TestCase):
         self.assertEqual(token.mode, CancellationMode.EMERGENCY)
         self.assertEqual(token.reason, "紧急停止")
 
+    def test_cancel_has_its_own_mode_and_can_be_escalated(self):
+        token = CancellationToken()
+        token.request_cancel(reason="任务已取消")
+        self.assertEqual(token.mode, CancellationMode.CANCEL)
+        self.assertEqual(token.reason, "任务已取消")
+        token.request_emergency_stop(reason="保护动作")
+        self.assertEqual(token.mode, CancellationMode.EMERGENCY)
+        self.assertEqual(token.reason, "保护动作")
+
 
 class MeasurementSessionTests(unittest.TestCase):
     def test_normal_lifecycle_records_timestamps_and_clean_state(self):

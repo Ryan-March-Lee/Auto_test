@@ -66,6 +66,9 @@ class AmplifierMeasurementUseCase:
     def stop_measurement(self) -> None:
         self._token.request_stop(reason="用户停止")
 
+    def cancel_measurement(self) -> None:
+        self._token.request_cancel(reason="任务已取消")
+
     def emergency_stop(self) -> None:
         self._token.request_emergency_stop(reason="紧急停止")
 

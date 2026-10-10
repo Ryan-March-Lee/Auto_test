@@ -9,7 +9,38 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from .measurement_results import MeasurementResult, thaw
+from .measurement_results import MeasurementResult, MeasurementStatus, thaw
+
+
+def legacy_status(value: Any) -> tuple[MeasurementStatus, str | None]:
+    """Translate historical service status without expanding the new protocol."""
+    mapping = {
+        "waiting": (MeasurementStatus.WAITING_FOR_CONTINUE, "waiting"),
+        "finished": (MeasurementStatus.COMPLETED, "finished"),
+        "stopped": (MeasurementStatus.CANCELLED, "stopped"),
+    }
+    if value in mapping:
+        return mapping[value]
+    return MeasurementStatus(value), None
+
+
+def legacy_result(
+    measurement_type: Any,
+    value: Mapping[str, Any],
+    *,
+    run_id: str,
+) -> MeasurementResult:
+    """Build a normalized result from a historical service payload."""
+    payload = dict(value)
+    status, source_status = legacy_status(payload.get("status", MeasurementStatus.COMPLETED.value))
+    if source_status == "waiting":
+        payload["pending_action"] = "connect_path_2"
+    return MeasurementResult.from_payload(
+        measurement_type,
+        payload,
+        run_id=run_id,
+        status=status,
+    )
 
 
 def legacy_payload(value: MeasurementResult | Mapping[str, Any]) -> Mapping[str, Any]:
@@ -21,4 +52,4 @@ def legacy_payload(value: MeasurementResult | Mapping[str, Any]) -> Mapping[str,
     return {}
 
 
-__all__ = ["legacy_payload"]
+__all__ = ["legacy_payload", "legacy_result", "legacy_status"]

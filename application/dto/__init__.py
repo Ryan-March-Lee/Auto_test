@@ -7,7 +7,7 @@ from .measurement_requests import (
     MeasurementRequest,
 )
 from .measurement_results import MeasurementResult, MeasurementStatus, MeasurementType
-from .legacy_result_adapter import legacy_payload
+from .legacy_result_adapter import legacy_payload, legacy_result, legacy_status
 
 __all__ = [
     "MeasurementRequest",
@@ -18,4 +18,6 @@ __all__ = [
     "MeasurementStatus",
     "MeasurementType",
     "legacy_payload",
+    "legacy_result",
+    "legacy_status",
 ]

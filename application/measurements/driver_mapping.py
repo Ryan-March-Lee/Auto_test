@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from app.cancellation import CancellationToken
-from application.dto import DriverPowerMappingRequest, MeasurementResult
+from application.dto import DriverPowerMappingRequest, MeasurementResult, legacy_result
 from measurement_services import DriverPowerMappingService
 
 
@@ -63,7 +63,7 @@ class DriverPowerMappingUseCase:
 
     def measure_all_frequencies(self) -> MeasurementResult:
         payload = self._service.run()
-        result = MeasurementResult.from_payload(
+        result = legacy_result(
             self.request.measurement_type,
             payload,
             run_id=self.run_id,

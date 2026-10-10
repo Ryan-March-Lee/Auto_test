@@ -7,6 +7,7 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from PySide6.QtCore import QObject, Signal
+from application.lifecycle import StopIntent
 
 from .measurement_controller_contract import (
     ControllerState,
@@ -69,6 +70,7 @@ class MeasurementController:
         self._thread_finished_signal: Any = None
         self._shutdown_waiting = False
         self._ignore_thread_finished_once = False
+        self._stop_intent: StopIntent | None = None
 
     @property
     def state(self) -> ControllerState:
@@ -101,6 +103,7 @@ class MeasurementController:
             self.signals.rejected.emit("已有测量正在运行")
             return False
         self._ignore_thread_finished_once = False
+        self._stop_intent = None
 
         preparing = MeasurementViewState(kind).prepare()
         self._set_state(kind, preparing)
@@ -201,6 +204,11 @@ class MeasurementController:
     def _on_finished(self) -> None:
         view = self._state.view_state
         if view is not None and not view.status.is_terminal:
+            if self._stop_intent is StopIntent.EMERGENCY:
+                self._set_state(view.kind, view.emergency_stop(view.stop_reason or "紧急停止"))
+                self.signals.finished.emit()
+                self._cleanup_if_non_threaded()
+                return
             result = view.result
             if result is None:
                 self._on_error("worker 完成但未提供测量结果")
@@ -216,10 +224,14 @@ class MeasurementController:
     def _on_stopped(self, reason: str) -> None:
         view = self._state.view_state
         if view is not None and not view.status.is_terminal:
-            try:
-                self._set_state(view.kind, view.stop(reason or "用户停止"))
-            except ValueError:
-                self._set_state(view.kind, view.transition(MeasurementStatus.STOPPED, stop_reason=reason or "用户停止"))
+            final_reason = reason or view.stop_reason or "用户停止"
+            if self._stop_intent is StopIntent.EMERGENCY:
+                self._set_state(view.kind, view.emergency_stop(final_reason))
+            else:
+                try:
+                    self._set_state(view.kind, view.stop(final_reason))
+                except ValueError:
+                    self._set_state(view.kind, view.transition(MeasurementStatus.CANCELLED, stop_reason=final_reason))
         self.signals.stopped.emit(reason)
         self._cleanup_if_non_threaded()
 
@@ -272,6 +284,9 @@ class MeasurementController:
     def _request_stop(self, method: str) -> bool:
         view = self._state.view_state
         reason = "紧急停止" if method == "emergency_stop" else "用户停止"
+        intent = StopIntent.EMERGENCY if method == "emergency_stop" else StopIntent.NORMAL
+        if self._stop_intent is not StopIntent.EMERGENCY:
+            self._stop_intent = intent
         if view is not None and view.status in {MeasurementStatus.RUNNING, MeasurementStatus.WAITING_FOR_CONTINUE, MeasurementStatus.PREPARING}:
             self._set_state(view.kind, view.stop(reason, stopping=True))
         try:
@@ -314,7 +329,10 @@ class MeasurementController:
         view = self._state.view_state
         if view is not None and self._state.status is MeasurementStatus.STOPPING:
             reason = view.stop_reason or "用户停止"
-            self._set_state(view.kind, view.stop(reason))
+            if self._stop_intent is StopIntent.EMERGENCY:
+                self._set_state(view.kind, view.emergency_stop(reason))
+            else:
+                self._set_state(view.kind, view.stop(reason))
             self.signals.stopped.emit(reason)
         self._ignore_thread_finished_once = True
         self._cleanup_worker()

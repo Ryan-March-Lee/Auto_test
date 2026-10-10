@@ -9,9 +9,23 @@ from presentation.qt.measurement_state import (
     MeasurementStatus,
     MeasurementViewState,
 )
+from application.dto import MeasurementStatus as ApplicationMeasurementStatus
 
 
 class MeasurementStateTests(unittest.TestCase):
+    def test_lifecycle_status_is_shared_with_application_dto(self):
+        self.assertIs(MeasurementStatus, ApplicationMeasurementStatus)
+        self.assertEqual(MeasurementStatus.COMPLETED.value, "completed")
+        self.assertEqual(MeasurementStatus.CANCELLED.value, "cancelled")
+        self.assertEqual(MeasurementStatus.EMERGENCY_STOPPED.value, "emergency_stopped")
+        self.assertTrue(MeasurementStatus.EMERGENCY_STOPPED.is_terminal)
+        self.assertFalse(MeasurementStatus.IDLE.is_terminal)
+
+    def test_emergency_stop_has_distinct_terminal_state(self):
+        state = MeasurementViewState(MeasurementKind.AMPLIFIER).prepare().run()
+        stopped = state.stop("紧急停止", stopping=True).emergency_stop("紧急停止")
+        self.assertEqual(stopped.status, MeasurementStatus.EMERGENCY_STOPPED)
+
     def test_cable_loss_wait_continue_and_finish(self):
         state = MeasurementViewState(MeasurementKind.CABLE_LOSS)
         state = state.prepare().run()
@@ -20,14 +34,14 @@ class MeasurementStateTests(unittest.TestCase):
         finished = waiting.continue_running().finish(
             MeasurementResultReference("run-1", MeasurementKind.CABLE_LOSS, {"rows": ()})
         )
-        self.assertEqual(finished.status, MeasurementStatus.FINISHED)
+        self.assertEqual(finished.status, MeasurementStatus.COMPLETED)
         self.assertEqual(finished.progress, 100)
 
     def test_stop_and_failure_preserve_explicit_reason(self):
         state = MeasurementViewState(MeasurementKind.AMPLIFIER).prepare().run()
         stopping = state.stop("用户请求停止", stopping=True)
         stopped = stopping.stop("用户请求停止")
-        self.assertEqual(stopped.status, MeasurementStatus.STOPPED)
+        self.assertEqual(stopped.status, MeasurementStatus.CANCELLED)
         self.assertEqual(stopped.stop_reason, "用户请求停止")
 
         failed = MeasurementViewState(MeasurementKind.DRIVER_MAPPING).prepare().run().fail("worker 异常")
@@ -98,7 +112,7 @@ class MeasurementStateTests(unittest.TestCase):
             )
 
         stopped = state.stop("用户请求停止", stopping=True).stop("用户请求停止")
-        self.assertEqual(stopped.status, MeasurementStatus.STOPPED)
+        self.assertEqual(stopped.status, MeasurementStatus.CANCELLED)
         with self.assertRaises(ValueError):
             stopped.run()
 

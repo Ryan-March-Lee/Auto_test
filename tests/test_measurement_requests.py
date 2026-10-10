@@ -162,6 +162,17 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
                 MeasurementStatus.FAILED,
                 "run-result",
             )
+        with self.assertRaises(ValueError):
+            MeasurementResult("driver_power_mapping", "stopped", "run-result")
+
+    def test_legacy_result_status_is_normalized_only_by_adapter(self):
+        from application.dto import legacy_result
+
+        waiting = legacy_result(
+            "cable_loss", {"status": "waiting"}, run_id="run-result"
+        )
+        self.assertEqual(waiting.status, MeasurementStatus.WAITING_FOR_CONTINUE)
+        self.assertEqual(waiting["pending_action"], "connect_path_2")
 
     def test_specialized_request_rejects_mismatched_measurement_type(self):
         with self.assertRaises(ValueError):

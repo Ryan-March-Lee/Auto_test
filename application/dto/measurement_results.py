@@ -21,11 +21,26 @@ class MeasurementType(str, Enum):
 
 
 class MeasurementStatus(str, Enum):
-    WAITING = "waiting"
+    """统一的测量生命周期状态。"""
+
+    IDLE = "idle"
+    PREPARING = "preparing"
+    RUNNING = "running"
+    WAITING_FOR_CONTINUE = "waiting_for_continue"
+    STOPPING = "stopping"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
     EMERGENCY_STOPPED = "emergency_stopped"
+
+    @property
+    def is_terminal(self) -> bool:
+        return self in {
+            MeasurementStatus.COMPLETED,
+            MeasurementStatus.FAILED,
+            MeasurementStatus.CANCELLED,
+            MeasurementStatus.EMERGENCY_STOPPED,
+        }
 
 
 def freeze(value: Any) -> Any:

@@ -11,31 +11,14 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Any, Mapping
 
+from application.dto.measurement_results import MeasurementStatus
+from application.lifecycle import MeasurementLifecycle
+
 
 class MeasurementKind(str, Enum):
     CABLE_LOSS = "cable_loss"
     DRIVER_MAPPING = "driver_mapping"
     AMPLIFIER = "amplifier"
-
-
-class MeasurementStatus(str, Enum):
-    IDLE = "idle"
-    PREPARING = "preparing"
-    RUNNING = "running"
-    WAITING_FOR_CONTINUE = "waiting_for_continue"
-    STOPPING = "stopping"
-    FINISHED = "finished"
-    FAILED = "failed"
-    STOPPED = "stopped"
-
-    @property
-    def is_terminal(self) -> bool:
-        return self in {
-            MeasurementStatus.IDLE,
-            MeasurementStatus.FINISHED,
-            MeasurementStatus.FAILED,
-            MeasurementStatus.STOPPED,
-        }
 
 
 def _freeze(value: Any) -> Any:
@@ -95,47 +78,15 @@ class MeasurementViewState:
             raise ValueError("progress 必须在 0 到 100 之间")
         if self.status is MeasurementStatus.FAILED and not self.error_text:
             raise ValueError("failed 状态必须包含 error_text")
-        if self.status is MeasurementStatus.STOPPED and not self.stop_reason:
-            raise ValueError("stopped 状态必须包含 stop_reason")
+        if self.status in {MeasurementStatus.CANCELLED, MeasurementStatus.EMERGENCY_STOPPED} and not self.stop_reason:
+            raise ValueError("取消或紧急停止状态必须包含 stop_reason")
         if self.result is not None and self.result.kind is not self.kind:
             raise ValueError("结果类型必须与测量类型一致")
 
     def transition(self, status: MeasurementStatus, **changes: Any) -> "MeasurementViewState":
         """按 GUI 生命周期转换状态，非法路径统一抛出 ``ValueError``。"""
-        if not isinstance(status, MeasurementStatus):
-            raise TypeError("status 必须是 MeasurementStatus")
-        allowed = {
-            MeasurementStatus.IDLE: {MeasurementStatus.PREPARING},
-            MeasurementStatus.PREPARING: {
-                MeasurementStatus.RUNNING,
-                MeasurementStatus.STOPPING,
-                MeasurementStatus.FAILED,
-                MeasurementStatus.STOPPED,
-            },
-            MeasurementStatus.RUNNING: {
-                MeasurementStatus.RUNNING,
-                MeasurementStatus.WAITING_FOR_CONTINUE,
-                MeasurementStatus.STOPPING,
-                MeasurementStatus.FINISHED,
-                MeasurementStatus.FAILED,
-                MeasurementStatus.STOPPED,
-            },
-            MeasurementStatus.WAITING_FOR_CONTINUE: {
-                MeasurementStatus.RUNNING,
-                MeasurementStatus.STOPPING,
-                MeasurementStatus.FAILED,
-                MeasurementStatus.STOPPED,
-            },
-            MeasurementStatus.STOPPING: {
-                MeasurementStatus.STOPPED,
-                MeasurementStatus.FAILED,
-            },
-            MeasurementStatus.FINISHED: set(),
-            MeasurementStatus.FAILED: set(),
-            MeasurementStatus.STOPPED: set(),
-        }
-        if status not in allowed[self.status]:
-            raise ValueError(f"状态 {self.status.value} 不能转换为 {status.value}")
+        lifecycle = MeasurementLifecycle(self.status)
+        lifecycle.transition(status, reason=changes.get("stop_reason"), error=changes.get("error_text"))
         return replace(self, status=status, **changes)
 
     def prepare(self) -> "MeasurementViewState":
@@ -153,8 +104,13 @@ class MeasurementViewState:
     def stop(self, reason: str, *, stopping: bool = False) -> "MeasurementViewState":
         if not reason.strip():
             raise ValueError("停止原因不能为空")
-        status = MeasurementStatus.STOPPING if stopping else MeasurementStatus.STOPPED
+        status = MeasurementStatus.STOPPING if stopping else MeasurementStatus.CANCELLED
         return self.transition(status, stop_reason=reason)
+
+    def emergency_stop(self, reason: str) -> "MeasurementViewState":
+        if not reason.strip():
+            raise ValueError("紧急停止原因不能为空")
+        return self.transition(MeasurementStatus.EMERGENCY_STOPPED, stop_reason=reason)
 
     def fail(self, error_text: str) -> "MeasurementViewState":
         if not error_text.strip():
@@ -164,7 +120,7 @@ class MeasurementViewState:
     def finish(self, result: MeasurementResultReference) -> "MeasurementViewState":
         if result.kind is not self.kind:
             raise ValueError("结果类型必须与测量类型一致")
-        return self.transition(MeasurementStatus.FINISHED, progress=100, result=result)
+        return self.transition(MeasurementStatus.COMPLETED, progress=100, result=result)
 
 
 @dataclass(frozen=True)

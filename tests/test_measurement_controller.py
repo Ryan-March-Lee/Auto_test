@@ -117,7 +117,7 @@ class MeasurementControllerTests(unittest.TestCase):
         worker.signals.result.emit({"value": 1})
         worker.signals.finished.emit()
 
-        self.assertEqual(self.controller.state.status, MeasurementStatus.FINISHED)
+        self.assertEqual(self.controller.state.status, MeasurementStatus.COMPLETED)
         self.assertIsNone(self.controller.current_worker)
         self.assertTrue(self.controller.start_amplifier(command))
 
@@ -191,7 +191,7 @@ class MeasurementControllerTests(unittest.TestCase):
         self.assertEqual(worker.stop_calls, 1)
         self.assertEqual(worker.emergency_stop_calls, 0)
         worker.signals.stopped.emit("用户停止")
-        self.assertEqual(self.controller.state.status, MeasurementStatus.STOPPED)
+        self.assertEqual(self.controller.state.status, MeasurementStatus.CANCELLED)
         self.assertTrue(self.controller.start_amplifier(command))
         worker = self.workers[-1]
         self.assertTrue(self.controller.emergency_stop())
@@ -201,6 +201,16 @@ class MeasurementControllerTests(unittest.TestCase):
             self.controller.state.view_state.stop_reason,
             "紧急停止",
         )
+        worker.signals.stopped.emit("用户停止")
+        self.assertEqual(self.controller.state.status, MeasurementStatus.EMERGENCY_STOPPED)
+
+    def test_emergency_stop_wins_over_worker_finished_event(self):
+        self.assertTrue(self.controller.start_amplifier(MeasurementCommand("config.json")))
+        worker = self.workers[-1]
+        self.controller.emergency_stop()
+        worker.signals.result.emit({"gain": 1.0})
+        worker.signals.finished.emit()
+        self.assertEqual(self.controller.state.status, MeasurementStatus.EMERGENCY_STOPPED)
 
     def test_shutdown_stops_worker_with_timeout_and_cleans_reference(self):
         command = MeasurementCommand("config.json")
@@ -210,7 +220,7 @@ class MeasurementControllerTests(unittest.TestCase):
         self.assertTrue(self.controller.shutdown(timeout_ms=25))
         self.assertEqual(worker.stop_calls, 1)
         self.assertIsNone(self.controller.current_worker)
-        self.assertEqual(self.controller.state.status, MeasurementStatus.STOPPED)
+        self.assertEqual(self.controller.state.status, MeasurementStatus.CANCELLED)
 
     def test_shutdown_timeout_keeps_worker_for_retry(self):
         command = MeasurementCommand("config.json")
@@ -265,7 +275,7 @@ class MeasurementControllerTests(unittest.TestCase):
         self.assertTrue(self.controller.start_driver_mapping(command))
         self.workers[-1].signals.stopped.emit("任务已取消")
 
-        self.assertEqual(self.controller.state.status, MeasurementStatus.STOPPED)
+        self.assertEqual(self.controller.state.status, MeasurementStatus.CANCELLED)
         self.assertEqual(self.controller.state.view_state.stop_reason, "任务已取消")
         self.assertIsNone(self.controller.current_worker)
         self.assertTrue(self.controller.start_amplifier(command))
@@ -284,7 +294,7 @@ class MeasurementControllerTests(unittest.TestCase):
         self.assertEqual(worker.emergency_stop_calls, 0)
         self.assertEqual(self.controller.state.status, MeasurementStatus.STOPPING)
         worker.signals.stopped.emit("用户停止")
-        self.assertEqual(self.controller.state.status, MeasurementStatus.STOPPED)
+        self.assertEqual(self.controller.state.status, MeasurementStatus.CANCELLED)
         self.assertEqual(stopped, ["用户停止"])
         self.assertIsNone(self.controller.current_worker)
 

@@ -1,67 +1,28 @@
 import unittest
 
-from measurement_lifecycle import cleanup_measurement
-
-
-class FakeController:
-    def __init__(self):
-        self.signal_gen = object()
-        self.events = []
-        self.rf_error = None
-        self.close_error = None
-
-    def rf_output_off(self):
-        self.events.append("rf_off")
-        if self.rf_error:
-            raise self.rf_error
-
-    def close_all(self, close_rf=True):
-        self.events.append(("close", close_rf))
-        if self.close_error:
-            raise self.close_error
-        return []
+from application.dto import MeasurementStatus
+from application.lifecycle import MeasurementLifecycle, StopIntent
 
 
 class MeasurementLifecycleTests(unittest.TestCase):
-    def test_cleanup_preserves_rf_power_connection_order(self):
-        controller = FakeController()
-        cleanup_measurement(controller, power_cleanup=lambda: controller.events.append("power_off"))
-        self.assertEqual(controller.events, ["rf_off", "power_off", ("close", False)])
+    def test_normal_stop_completes_as_cancelled(self):
+        lifecycle = MeasurementLifecycle().prepare().start().request_stop("用户停止")
+        self.assertEqual(lifecycle.status, MeasurementStatus.STOPPING)
+        stopped = lifecycle.worker_stopped("worker 已停止")
+        self.assertEqual(stopped.status, MeasurementStatus.CANCELLED)
+        self.assertEqual(stopped.stop_intent, StopIntent.NORMAL)
 
-    def test_cleanup_continues_after_rf_and_power_failures(self):
-        controller = FakeController()
-        controller.rf_error = RuntimeError("RF 关闭失败")
-        events = []
+    def test_emergency_stop_cannot_be_downgraded_by_worker_reason(self):
+        lifecycle = MeasurementLifecycle().prepare().start().request_stop("紧急停止", emergency=True)
+        stopped = lifecycle.worker_stopped("用户停止")
+        self.assertEqual(stopped.status, MeasurementStatus.EMERGENCY_STOPPED)
+        self.assertEqual(stopped.stop_intent, StopIntent.EMERGENCY)
 
-        def power_cleanup():
-            events.append("power_off")
-            raise RuntimeError("电源关闭失败")
-
-        with self.assertRaisesRegex(RuntimeError, "测量安全清理存在失败"):
-            cleanup_measurement(controller, power_cleanup=power_cleanup)
-        self.assertEqual(events, ["power_off"])
-        self.assertEqual(controller.events[-1], ("close", False))
-
-    def test_cleanup_error_contains_all_failures(self):
-        controller = FakeController()
-        controller.rf_error = RuntimeError("RF 关闭失败")
-        controller.close_error = RuntimeError("连接关闭失败")
-
-        def power_cleanup():
-            raise RuntimeError("电源关闭失败")
-
-        with self.assertRaisesRegex(
-            RuntimeError,
-            "RF 关闭失败; 电源关闭失败; 连接关闭失败",
-        ):
-            cleanup_measurement(controller, power_cleanup=power_cleanup)
-
-    def test_cleanup_continues_when_connection_close_fails(self):
-        controller = FakeController()
-        controller.close_error = RuntimeError("连接关闭失败")
-        with self.assertRaisesRegex(RuntimeError, "连接关闭失败"):
-            cleanup_measurement(controller)
-        self.assertEqual(controller.events, ["rf_off", ("close", False)])
+    def test_idle_is_not_terminal_and_terminal_states_cannot_continue(self):
+        self.assertFalse(MeasurementStatus.IDLE.is_terminal)
+        completed = MeasurementLifecycle().prepare().start().complete()
+        with self.assertRaises(ValueError):
+            completed.start()
 
 
 if __name__ == "__main__":

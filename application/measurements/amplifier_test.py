@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 import measurement_calculations
 from app.cancellation import CancellationToken
-from application.dto import AmplifierMeasurementRequest, MeasurementResult
+from application.dto import AmplifierMeasurementRequest, MeasurementResult, legacy_result
 from measurement_services import AmplifierMeasurementService
 
 
@@ -83,7 +83,7 @@ class AmplifierMeasurementUseCase:
 
     def measure_all_frequencies(self) -> MeasurementResult:
         payload = self._service.run()
-        result = MeasurementResult.from_payload(
+        result = legacy_result(
             self.request.measurement_type,
             payload,
             run_id=self.run_id,

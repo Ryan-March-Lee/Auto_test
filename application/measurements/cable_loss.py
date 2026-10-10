@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import Any, Callable
 
 from app.cancellation import CancellationToken
-from application.dto import CableLossMeasurementRequest, MeasurementResult
+from application.dto import CableLossMeasurementRequest, MeasurementResult, legacy_result
 from application.ports.result_repository import MeasurementResultRepository
 from measurement_services import CableLossService
 
@@ -85,12 +85,12 @@ class CableLossUseCase:
         self._started = True
         try:
             payload = self._service.run(path2_confirmed=False)
-            result = MeasurementResult.from_payload(
+            result = legacy_result(
                 self.request.measurement_type,
                 payload,
                 run_id=self.run_id,
             )
-            self._waiting_for_path2 = result.status == "waiting"
+            self._waiting_for_path2 = result.status.value == "waiting_for_continue"
             self.last_result = result
             if self._waiting_for_path2 and self._step_pause_callback:
                 self._step_pause_callback("请连接路径2")
@@ -109,7 +109,7 @@ class CableLossUseCase:
             raise RuntimeError("线损测量当前不在等待路径2确认状态")
         try:
             payload = self._service.run(path2_confirmed=True)
-            result = MeasurementResult.from_payload(
+            result = legacy_result(
                 self.request.measurement_type,
                 payload,
                 run_id=self.run_id,

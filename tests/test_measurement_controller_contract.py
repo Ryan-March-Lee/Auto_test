@@ -164,7 +164,7 @@ class MeasurementControllerContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ControllerState(MeasurementKind.CABLE_LOSS, MeasurementStatus.RUNNING)
         with self.assertRaises(ValueError):
-            ControllerState(MeasurementKind.CABLE_LOSS, MeasurementStatus.FINISHED, view_state)
+            ControllerState(MeasurementKind.CABLE_LOSS, MeasurementStatus.COMPLETED, view_state)
 
     def test_idle_state_has_no_measurement_payload(self):
         state = ControllerState()

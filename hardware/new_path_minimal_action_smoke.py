@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from app.gui_runtime import connect_instruments
-from config_io import load_config_file
+from infrastructure.config.json_io import load_config_file
 from hardware.read_only_smoke import SmokeExecutionError, resolve_report_path, write_report
 
 

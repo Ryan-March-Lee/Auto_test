@@ -9,7 +9,7 @@ import pandas as pd
 from datetime import datetime
 import seaborn as sns
 from pathlib import Path
-from project_paths import PROJECT_ROOT, TEST_RESULTS_DIR
+from infrastructure.filesystem.paths import PROJECT_ROOT, TEST_RESULTS_DIR
 from domain.result_reading import get_sweep_dataframe_data, get_saturation_points
 from infrastructure.persistence.json_result_repository import load_json_result
 from domain.result_reading import parse_result_model

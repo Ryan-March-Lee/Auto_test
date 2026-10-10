@@ -27,7 +27,7 @@ import os
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
-from project_paths import (
+from infrastructure.filesystem.paths import (
     CABLE_LOSS_FILE,
     CONFIG_FILE,
     ICONS_DIR,
@@ -35,9 +35,9 @@ from project_paths import (
     TEMP_DIR,
     TEST_RESULTS_DIR,
 )
-from config_io import load_config_file
+from infrastructure.config.json_io import load_config_file
 from infrastructure.persistence.json_result_repository import load_json_result
-from app_logging import setup_logging
+from infrastructure.logging.app_logging import setup_logging
 from assistant.storage import (
     has_current_history,
     list_history_files,

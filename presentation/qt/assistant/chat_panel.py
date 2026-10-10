@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QHBoxLayout, QLabel, QMessage
                                QPushButton, QTextEdit, QVBoxLayout, QWidget)
 from PySide6.QtCore import QEvent, Qt
 
-from project_paths import ICONS_DIR
+from infrastructure.filesystem.paths import ICONS_DIR
 from .chat_dialogs import ChatHistoryDialog, ChatSettingsDialog
 from .chat_worker import ChatWorker, UnavailableAssistant
 

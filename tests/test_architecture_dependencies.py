@@ -207,6 +207,61 @@ def _legacy_imports(tree):
 
 
 class ProductionDependencyTests(unittest.TestCase):
+    def test_domain_configuration_does_not_depend_on_infrastructure(self):
+        forbidden = {"infrastructure", "json", "pathlib", "pyvisa", "PySide6", "PyQt5"}
+        violations = []
+        for source_path in (ROOT / "domain" / "configuration").rglob("*.py"):
+            tree = _tree(source_path)
+            for module, _alias, _name in _imported_modules(tree):
+                root = module.split(".")[0]
+                if root in forbidden:
+                    violations.append(f"{source_path.relative_to(ROOT)} imports {module}")
+        self.assertEqual(violations, [], "配置领域层不得依赖基础设施或文件格式: " + "; ".join(violations))
+
+    def test_configuration_compatibility_modules_are_explicit_reexports(self):
+        modules = (
+            ROOT / "app_logging.py",
+            ROOT / "project_paths.py",
+            ROOT / "config_io.py",
+            ROOT / "config_models.py",
+            ROOT / "config_validation.py",
+            ROOT / "legacy_config_conversion.py",
+        )
+        for source_path in modules:
+            tree = _tree(source_path)
+            definitions = [
+                node.name
+                for node in tree.body
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            ]
+            self.assertEqual(definitions, [], str(source_path.relative_to(ROOT)))
+            self.assertTrue(
+                any(isinstance(node, ast.Assign) and any(
+                    isinstance(target, ast.Name) and target.id == "__all__"
+                    for target in node.targets
+                ) for node in tree.body),
+                str(source_path.relative_to(ROOT)) + " 必须显式声明 __all__",
+            )
+
+    def test_configuration_compatibility_exports_match_canonical_objects(self):
+        import app_logging
+        import config_io
+        import config_models
+        import config_validation
+        import infrastructure.config.json_io as canonical_io
+        import infrastructure.logging.app_logging as canonical_logging
+        import project_paths
+        from domain.configuration import models as canonical_models
+        from domain.configuration import rules as canonical_rules
+
+        self.assertIs(app_logging.get_logger, canonical_logging.get_logger)
+        self.assertIs(config_io.load_config_file, canonical_io.load_config_file)
+        self.assertIs(project_paths.resolve_path, __import__(
+            "infrastructure.filesystem.paths", fromlist=["resolve_path"]
+        ).resolve_path)
+        self.assertIs(config_models.TestPlan, canonical_models.TestPlan)
+        self.assertIs(config_validation.validate_config, canonical_rules.validate_config)
+
     def test_persistence_implementations_have_one_infrastructure_boundary(self):
         legacy_config = _tree(ROOT / "persistence" / "config_repository.py")
         result_adapter = _tree(ROOT / "infrastructure" / "persistence" / "result_repository.py")

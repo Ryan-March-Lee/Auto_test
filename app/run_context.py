@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-from config_models import RunConfiguration
+from domain.configuration.models import RunConfiguration
 from domain.models import RunContext
 from application.ports.config_repository import ConfigurationLoadResult
 from infrastructure.persistence.json_result_repository import write_run_snapshot

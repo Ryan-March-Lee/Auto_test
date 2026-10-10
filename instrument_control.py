@@ -6,9 +6,9 @@
 
 import pyvisa
 
-from config_io import load_config_file
-from project_paths import CONFIG_FILE, resolve_path
-from app_logging import get_logger
+from infrastructure.config.json_io import load_config_file
+from infrastructure.filesystem.paths import CONFIG_FILE, resolve_path
+from infrastructure.logging.app_logging import get_logger
 from instrument.power_roles import resolve_power_channel_role
 from instrument.legacy_control import InstrumentControl as _InstrumentControl
 

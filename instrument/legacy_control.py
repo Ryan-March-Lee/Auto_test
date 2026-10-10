@@ -4,9 +4,9 @@ import pyvisa
 import time
 from typing import Callable, Dict, List, Union, Optional
 from enum import Enum
-from project_paths import CONFIG_FILE, resolve_path
-from config_io import load_config_file
-from app_logging import get_logger
+from infrastructure.filesystem.paths import CONFIG_FILE, resolve_path
+from infrastructure.config.json_io import load_config_file
+from infrastructure.logging.app_logging import get_logger
 from instrument.power_roles import resolve_power_channel_role
 
 logger = get_logger(__name__)

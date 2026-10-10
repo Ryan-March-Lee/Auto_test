@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from project_paths import (
+from infrastructure.filesystem.paths import (
     CHAT_HISTORY_FILE,
     SEARCH_API_CONFIG_FILE,
     PROJECT_ROOT,

@@ -9,38 +9,55 @@ from application.ports.config_repository import (
     ConfigurationRepository as ConfigurationRepositoryPort,
     PathLike,
 )
-from config_models import (
+from domain.configuration.models import (
     RunConfiguration,
     RunResourceMapping,
     TestPlan,
-    load_json,
     validate_run_configuration,
 )
-from config_validation import ConfigIssue, ConfigValidationResult
-from legacy_config_conversion import LegacyConfigConversionResult, convert_legacy_config
+from domain.configuration.types import ConfigIssue, ConfigValidationResult
+from infrastructure.config.json_io import load_json_object
+from infrastructure.config.legacy_conversion import LegacyConfigConversionResult, convert_legacy_config
+
+
+def load_json(path: PathLike) -> dict:
+    """兼容旧配置模型 API 的文件读取入口。"""
+    return load_json_object(path)
+
+
+def load_test_plan(path: PathLike) -> TestPlan:
+    return TestPlan.from_dict(load_json(path))
+
+
+def load_run_mapping(path: PathLike) -> RunResourceMapping:
+    return RunResourceMapping.from_dict(load_json(path))
+
+
+def load_run_configuration(plan_path: PathLike, mapping_path: PathLike) -> RunConfiguration:
+    return RunConfiguration(load_test_plan(plan_path), load_run_mapping(mapping_path))
 
 
 class JsonTestPlanRepository:
     def load(self, path: PathLike) -> TestPlan:
-        return TestPlan.from_dict(load_json(path))
+        return TestPlan.from_dict(load_json_object(path))
 
 
 class JsonRunMappingRepository:
     def load(self, path: PathLike) -> RunResourceMapping:
-        return RunResourceMapping.from_dict(load_json(path))
+        return RunResourceMapping.from_dict(load_json_object(path))
 
 
 class JsonConfigurationRepository(ConfigurationRepositoryPort):
     """Load split JSON configuration or convert the legacy combined format."""
 
     def load(self, plan_path: PathLike, mapping_path: PathLike | None = None) -> ConfigurationLoadResult:
-        plan_data = load_json(plan_path)
+        plan_data = load_json_object(plan_path)
         if mapping_path is None:
             return self.load_legacy_data(plan_data)
 
         configuration = RunConfiguration(
             TestPlan.from_dict(plan_data),
-            RunResourceMapping.from_dict(load_json(mapping_path)),
+            RunResourceMapping.from_dict(load_json_object(mapping_path)),
         )
         return ConfigurationLoadResult(configuration, validate_run_configuration(configuration))
 
@@ -84,3 +101,16 @@ class JsonConfigurationRepository(ConfigurationRepositoryPort):
 TestPlanRepository = JsonTestPlanRepository
 RunMappingRepository = JsonRunMappingRepository
 ConfigurationRepository = JsonConfigurationRepository
+
+__all__ = [
+    "load_json",
+    "load_test_plan",
+    "load_run_mapping",
+    "load_run_configuration",
+    "JsonTestPlanRepository",
+    "JsonRunMappingRepository",
+    "JsonConfigurationRepository",
+    "TestPlanRepository",
+    "RunMappingRepository",
+    "ConfigurationRepository",
+]

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Union
 
 from infrastructure.persistence.json_encoder import NumpyJSONEncoder
-from project_paths import TEST_RESULTS_DIR, ensure_directory
+from infrastructure.filesystem.paths import TEST_RESULTS_DIR, ensure_directory
 
 PathLike = Union[str, Path]
 RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")

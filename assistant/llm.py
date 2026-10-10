@@ -3,7 +3,7 @@ import json
 import os
 from datetime import datetime
 from typing import List, Dict, Optional
-from project_paths import CHAT_HISTORY_FILE, CHAT_SETTINGS_FILE, resolve_path
+from infrastructure.filesystem.paths import CHAT_HISTORY_FILE, CHAT_SETTINGS_FILE, resolve_path
 
 # 导入Function Calling网络搜索工具
 try:

@@ -14,7 +14,7 @@ from typing import Any, Mapping
 from app.cancellation import CancellationToken
 from app.events import EventSink
 from domain.models import RunContext
-from config_models import RunConfiguration
+from domain.configuration.models import RunConfiguration
 from application.ports.result_repository import MeasurementResultRepository
 from application.ports.result_input_reader import ResultInputReader
 

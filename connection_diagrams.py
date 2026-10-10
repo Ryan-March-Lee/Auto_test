@@ -3,7 +3,7 @@
 """
 
 import matplotlib.pyplot as plt
-from project_paths import IMAGES_DIR, ensure_directory
+from infrastructure.filesystem.paths import IMAGES_DIR, ensure_directory
 import matplotlib.patches as patches
 from matplotlib.figure import Figure
 from io import BytesIO

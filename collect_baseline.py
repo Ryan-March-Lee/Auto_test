@@ -18,7 +18,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from project_paths import PROJECT_ROOT, TEST_RESULTS_DIR
+from infrastructure.filesystem.paths import PROJECT_ROOT, TEST_RESULTS_DIR
 from infrastructure.persistence.json_result_repository import validate_run_id
 
 

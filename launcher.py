@@ -9,8 +9,9 @@ import traceback
 from pathlib import Path
 from typing import Dict
 
-from config_validation import ConfigValidationResult, validate_config_file
-from app_logging import setup_logging
+from domain.configuration.types import ConfigValidationResult
+from infrastructure.config.validation import validate_config_file
+from infrastructure.logging.app_logging import setup_logging
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent

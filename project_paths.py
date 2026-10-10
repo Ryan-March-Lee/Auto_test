@@ -1,35 +1,15 @@
-"""项目文件路径集中定义。"""
+"""兼容入口：路径服务已迁移到 infrastructure.filesystem。"""
 
-from pathlib import Path
-from typing import Optional, Union
+from infrastructure.filesystem.paths import (
+    ASSETS_DIR, CABLE_LOSS_FILE, CHAT_HISTORY_FILE, CHAT_SETTINGS_FILE,
+    CONFIG_FILE, ICONS_DIR, IMAGES_DIR, LOGS_DIR, PathLike, PROJECT_ROOT,
+    SEARCH_API_CONFIG_FILE, TEMP_DIR, TEST_RESULTS_DIR, ensure_directory,
+    resolve_path,
+)
 
-
-PathLike = Union[str, Path]
-PROJECT_ROOT = Path(__file__).resolve().parent
-
-TEST_RESULTS_DIR = PROJECT_ROOT / "test_results"
-CONFIG_FILE = PROJECT_ROOT / "config.json"
-CABLE_LOSS_FILE = TEST_RESULTS_DIR / "cable_loss_results.json"
-CHAT_HISTORY_FILE = PROJECT_ROOT / "chat_history.json"
-CHAT_SETTINGS_FILE = PROJECT_ROOT / "chat_settings.json"
-SEARCH_API_CONFIG_FILE = PROJECT_ROOT / "search_api_config.json"
-ASSETS_DIR = PROJECT_ROOT / "assets"
-ICONS_DIR = ASSETS_DIR / "icons"
-IMAGES_DIR = ASSETS_DIR / "images"
-TEMP_DIR = PROJECT_ROOT / "temp"
-LOGS_DIR = PROJECT_ROOT / "logs"
-
-
-def resolve_path(path_value: Optional[PathLike], default_path: Path) -> Path:
-    """省略路径时使用项目默认路径，显式相对路径保持旧语义。"""
-    if path_value is None:
-        return default_path
-    path = Path(path_value).expanduser()
-    return path if path.is_absolute() else path.resolve()
-
-
-def ensure_directory(path: PathLike) -> Path:
-    """确保目录存在并返回 Path 对象。"""
-    directory = Path(path)
-    directory.mkdir(parents=True, exist_ok=True)
-    return directory
+__all__ = [
+    "ASSETS_DIR", "CABLE_LOSS_FILE", "CHAT_HISTORY_FILE", "CHAT_SETTINGS_FILE",
+    "CONFIG_FILE", "ICONS_DIR", "IMAGES_DIR", "LOGS_DIR", "PathLike",
+    "PROJECT_ROOT", "SEARCH_API_CONFIG_FILE", "TEMP_DIR", "TEST_RESULTS_DIR",
+    "ensure_directory", "resolve_path",
+]

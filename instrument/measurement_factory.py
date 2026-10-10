@@ -224,7 +224,7 @@ class _ConfiguredPowerSupply:
 
 
 def _create_hardware_measurement_port(config_path: str, *, recorder=None):
-    from config_io import load_config_file
+    from infrastructure.config.json_io import load_config_file
     config = load_config_file(config_path)
     instruments = config["instruments"]
     manager = pyvisa.ResourceManager()

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, List
 
-from app_logging import get_logger
+from infrastructure.logging.app_logging import get_logger
 from instrument.flow import SafetyShutdownFlow
 
 

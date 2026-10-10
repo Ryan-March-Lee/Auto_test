@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from config_models import RunConfiguration, RunResourceMapping, TestPlan
-from config_validation import ConfigIssue, ConfigValidationResult
+from domain.configuration.models import RunConfiguration, RunResourceMapping, TestPlan
+from domain.configuration.types import ConfigIssue, ConfigValidationResult
 
 
 PathLike = str | Path

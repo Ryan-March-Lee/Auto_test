@@ -23,9 +23,9 @@ class ConfigIoTests(unittest.TestCase):
             default_path.write_text(json.dumps({"source": "default"}), encoding="utf-8")
             relative_path.write_text(json.dumps({"source": "relative"}), encoding="utf-8")
 
-            with patch("config_io.CONFIG_FILE", default_path):
+            with patch("infrastructure.config.json_io.CONFIG_FILE", default_path):
                 self.assertEqual(load_config_file()["source"], "default")
-            with patch("config_io.resolve_path", return_value=relative_path):
+            with patch("infrastructure.config.json_io.resolve_path", return_value=relative_path):
                 self.assertEqual(load_config_file("relative.json")["source"], "relative")
 
     def test_load_config_file_preserves_utf8_content(self):

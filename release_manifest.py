@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
-from project_paths import PROJECT_ROOT
+from infrastructure.filesystem.paths import PROJECT_ROOT
 
 
 RELEASE_FILES = (

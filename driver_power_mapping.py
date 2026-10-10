@@ -4,9 +4,9 @@ import numpy as np
 from typing import Dict, List, Optional
 import time
 from datetime import datetime
-from project_paths import CABLE_LOSS_FILE, CONFIG_FILE, PROJECT_ROOT, TEST_RESULTS_DIR, resolve_path
+from infrastructure.filesystem.paths import CABLE_LOSS_FILE, CONFIG_FILE, PROJECT_ROOT, TEST_RESULTS_DIR, resolve_path
 from measurement_calculations import compensate_driver_output_power
-from app_logging import get_logger
+from infrastructure.logging.app_logging import get_logger
 from measurement_lifecycle import cleanup_measurement
 from infrastructure.persistence.json_result_repository import (
     load_json_result,
@@ -14,7 +14,7 @@ from infrastructure.persistence.json_result_repository import (
     save_measurement_result,
     write_legacy_run_snapshot,
 )
-from config_io import load_config_file
+from infrastructure.config.json_io import load_config_file
 from measurement_services import DriverPowerMappingService
 # from mock_instrument_control import MockInstrumentControl as InstrumentControl
 

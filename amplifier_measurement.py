@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Tuple
 import time
 from datetime import datetime
 from pathlib import Path
-from project_paths import CABLE_LOSS_FILE, CONFIG_FILE, PROJECT_ROOT, TEST_RESULTS_DIR, resolve_path
+from infrastructure.filesystem.paths import CABLE_LOSS_FILE, CONFIG_FILE, PROJECT_ROOT, TEST_RESULTS_DIR, resolve_path
 import measurement_calculations
 from measurement_calculations import (
     calculate_dut_input_power,
@@ -13,7 +13,7 @@ from measurement_calculations import (
     calculate_efficiency,
     calculate_compression_result,
 )
-from app_logging import get_logger
+from infrastructure.logging.app_logging import get_logger
 from measurement_lifecycle import cleanup_measurement
 from infrastructure.persistence.json_result_repository import (
     load_json_result,
@@ -21,7 +21,7 @@ from infrastructure.persistence.json_result_repository import (
     save_measurement_result,
     write_legacy_run_snapshot,
 )
-from config_io import load_config_file
+from infrastructure.config.json_io import load_config_file
 from measurement_services import AmplifierMeasurementService
 from infrastructure.persistence.json_encoder import NumpyJSONEncoder
 

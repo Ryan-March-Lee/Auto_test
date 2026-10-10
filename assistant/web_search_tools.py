@@ -6,7 +6,7 @@
 """
 
 import requests
-from project_paths import SEARCH_API_CONFIG_FILE, resolve_path
+from infrastructure.filesystem.paths import SEARCH_API_CONFIG_FILE, resolve_path
 import json
 import os
 import time

@@ -6,10 +6,16 @@ from .measurement_requests import (
     DriverPowerMappingRequest,
     MeasurementRequest,
 )
+from .measurement_results import MeasurementResult, MeasurementStatus, MeasurementType
+from .legacy_result_adapter import legacy_payload
 
 __all__ = [
     "MeasurementRequest",
     "CableLossMeasurementRequest",
     "DriverPowerMappingRequest",
     "AmplifierMeasurementRequest",
+    "MeasurementResult",
+    "MeasurementStatus",
+    "MeasurementType",
+    "legacy_payload",
 ]

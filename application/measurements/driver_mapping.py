@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from app.cancellation import CancellationToken
-from application.dto import DriverPowerMappingRequest
+from application.dto import DriverPowerMappingRequest, MeasurementResult
 from measurement_services import DriverPowerMappingService
 
 
@@ -51,7 +51,7 @@ class DriverPowerMappingUseCase:
             settle_delay_s=3.0,
         )
         self.power_mapping: dict[str, dict[str, float]] = {}
-        self.last_result: dict[str, Any] | None = None
+        self.last_result: MeasurementResult | None = None
 
     def stop_measurement(self) -> None:
         """Request cancellation; the service owns the safety cleanup."""
@@ -61,23 +61,26 @@ class DriverPowerMappingUseCase:
         """Request emergency cancellation; the service owns safety cleanup."""
         self._token.request_emergency_stop(reason="紧急停止")
 
-    def measure_all_frequencies(self) -> dict[str, Any]:
-        result = self._service.run()
-        self.last_result = result
+    def measure_all_frequencies(self) -> MeasurementResult:
+        payload = self._service.run()
+        result = MeasurementResult.from_payload(
+            self.request.measurement_type,
+            payload,
+            run_id=self.run_id,
+        )
         self.power_mapping = result["power_mapping"]
         saved = self.result_repository.save(
-            {
-                "power_mapping": self.power_mapping,
-                "config": {
-                    key: self.config["signal_source"][key]
-                    for key in ("start_power", "stop_power", "step")
-                },
-            },
+            result.to_dict(),
             result_type="driver_power_mapping",
             run_id=self.run_id,
             run_directory=self.run_directory,
         )
         self.run_directory = saved.run_directory
+        result = result.with_saved_result(
+            archive_path=_saved_path(saved, "archive_path"),
+            legacy_copy_path=_saved_path(saved, "legacy_copy_path"),
+        )
+        self.last_result = result
         return result
 
 
@@ -95,3 +98,8 @@ def _service_config(configuration: Any) -> Mapping[str, Any]:
             "step": plan.power_step,
         },
     }
+
+
+def _saved_path(saved: Any, name: str) -> str | None:
+    value = getattr(saved, name, None)
+    return str(value) if value is not None else None

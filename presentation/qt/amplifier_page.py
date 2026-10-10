@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from .measurement_controller_contract import MeasurementCommand
+from application.dto.legacy_result_adapter import legacy_payload
 from .measurement_state import AmplifierPageResultState, MeasurementKind
 from .pages import PageControllerBindingMixin
 from .realtime_buffer import RealtimeMeasurementBuffer
@@ -163,10 +164,9 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         value = getattr(reference, "value", None)
         if isinstance(value, AmplifierPageResultState):
             rows = value.rows
-        elif isinstance(value, Mapping):
-            rows = self._result_rows(value.get("results", value))
         else:
-            return
+            value = legacy_payload(value)
+            rows = self._result_rows(value.get("results", value))
         self.result_table.setRowCount(0)
         for row_data in rows:
             row = self.result_table.rowCount()

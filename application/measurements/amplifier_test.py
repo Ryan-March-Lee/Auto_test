@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 import measurement_calculations
 from app.cancellation import CancellationToken
-from application.dto import AmplifierMeasurementRequest
+from application.dto import AmplifierMeasurementRequest, MeasurementResult
 from measurement_services import AmplifierMeasurementService
 
 
@@ -61,7 +61,7 @@ class AmplifierMeasurementUseCase:
             settle_delay_s=3.0,
         )
         self.measurement_results: dict[str, Any] = {}
-        self.last_result: dict[str, Any] | None = None
+        self.last_result: MeasurementResult | None = None
 
     def stop_measurement(self) -> None:
         self._token.request_stop(reason="用户停止")
@@ -81,17 +81,26 @@ class AmplifierMeasurementUseCase:
     def perform_power_sweep(self, frequency: float) -> dict[str, Any]:
         return self._service.perform_power_sweep(frequency)
 
-    def measure_all_frequencies(self) -> dict[str, Any]:
-        result = self._service.run()
-        self.last_result = result
+    def measure_all_frequencies(self) -> MeasurementResult:
+        payload = self._service.run()
+        result = MeasurementResult.from_payload(
+            self.request.measurement_type,
+            payload,
+            run_id=self.run_id,
+        )
         self.measurement_results = result["results"]
         saved = self.result_repository.save(
-            {"config": self.config, "results": self.measurement_results},
+            result.to_dict(),
             result_type="amplifier_measurement",
             run_id=self.run_id,
             run_directory=self.run_directory,
         )
         self.run_directory = saved.run_directory
+        result = result.with_saved_result(
+            archive_path=_saved_path(saved, "archive_path"),
+            legacy_copy_path=_saved_path(saved, "legacy_copy_path"),
+        )
+        self.last_result = result
         return result
 
 
@@ -101,6 +110,11 @@ def _service_config(configuration: Any) -> Mapping[str, Any]:
     if hasattr(configuration, "test_plan") and hasattr(configuration, "run_mapping"):
         return _run_configuration_to_service_config(configuration)
     raise TypeError("无法将运行配置转换为主功放测量配置")
+
+
+def _saved_path(saved: Any, name: str) -> str | None:
+    value = getattr(saved, name, None)
+    return str(value) if value is not None else None
 
 
 def _run_configuration_to_service_config(configuration: Any) -> dict[str, Any]:

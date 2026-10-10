@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import Any, Callable
 
 from app.cancellation import CancellationToken
-from application.dto import CableLossMeasurementRequest
+from application.dto import CableLossMeasurementRequest, MeasurementResult
 from application.ports.result_repository import MeasurementResultRepository
 from measurement_services import CableLossService
 
@@ -53,7 +53,7 @@ class CableLossUseCase:
         self._terminal = False
         self._cleaned_after_stop = False
         self._step_pause_callback: Callable[[str], None] | None = None
-        self.last_result: dict[str, Any] | None = None
+        self.last_result: MeasurementResult | None = None
 
     @property
     def path1_losses(self) -> dict[Any, float]:
@@ -63,7 +63,9 @@ class CableLossUseCase:
     @property
     def cable_losses(self) -> dict[float, dict[str, float]]:
         """Return completed cable-loss values, normalized to float keys."""
-        result = self.last_result or {}
+        result = self.last_result or MeasurementResult.from_payload(
+            self.request.measurement_type, {}, run_id=self.run_id
+        )
         return {
             float(key): value for key, value in result.get("cable_losses", {}).items()
         }
@@ -75,15 +77,20 @@ class CableLossUseCase:
     def measure_path_loss(self, frequency: float) -> float:
         return self._service.measure_path_loss(frequency)
 
-    def measure_all_frequencies(self) -> dict[str, Any]:
+    def measure_all_frequencies(self) -> MeasurementResult:
         if self._terminal:
             raise RuntimeError("线损测量已经结束，不能重复执行")
         if self._started:
             raise RuntimeError("线损测量已经开始，不能重复开始")
         self._started = True
         try:
-            result = self._service.run(path2_confirmed=False)
-            self._waiting_for_path2 = result.get("status") == "waiting"
+            payload = self._service.run(path2_confirmed=False)
+            result = MeasurementResult.from_payload(
+                self.request.measurement_type,
+                payload,
+                run_id=self.run_id,
+            )
+            self._waiting_for_path2 = result.status == "waiting"
             self.last_result = result
             if self._waiting_for_path2 and self._step_pause_callback:
                 self._step_pause_callback("请连接路径2")
@@ -95,15 +102,21 @@ class CableLossUseCase:
             if not self._waiting_for_path2:
                 self._started = False
 
-    def continue_to_step2(self) -> dict[str, Any]:
+    def continue_to_step2(self) -> MeasurementResult:
         if self._terminal:
             raise RuntimeError("线损测量已经结束，不能继续")
         if not self._waiting_for_path2:
             raise RuntimeError("线损测量当前不在等待路径2确认状态")
         try:
-            result = self._service.run(path2_confirmed=True)
+            payload = self._service.run(path2_confirmed=True)
+            result = MeasurementResult.from_payload(
+                self.request.measurement_type,
+                payload,
+                run_id=self.run_id,
+            )
             self.last_result = result
-            self._save(result)
+            result = self._save(result)
+            self.last_result = result
             self._completed = True
             self._terminal = True
             return result
@@ -132,14 +145,18 @@ class CableLossUseCase:
             self._terminal = True
             self._cleaned_after_stop = True
 
-    def _save(self, result: Mapping[str, Any]) -> None:
+    def _save(self, result: MeasurementResult) -> MeasurementResult:
         saved = self.result_repository.save(
-            result,
+            result.to_dict(),
             result_type="cable_loss",
             run_id=self.run_id,
             run_directory=self.run_directory,
         )
         self.run_directory = saved.run_directory
+        return result.with_saved_result(
+            archive_path=_saved_path(saved, "archive_path"),
+            legacy_copy_path=_saved_path(saved, "legacy_copy_path"),
+        )
 
 
 def _service_config(configuration: Any) -> Mapping[str, Any]:
@@ -152,3 +169,8 @@ def _service_config(configuration: Any) -> Mapping[str, Any]:
         "test_frequencies": list(plan.frequencies),
         "attenuator": {"type": f"{attenuator}dB"},
     }
+
+
+def _saved_path(saved: Any, name: str) -> str | None:
+    value = getattr(saved, name, None)
+    return str(value) if value is not None else None

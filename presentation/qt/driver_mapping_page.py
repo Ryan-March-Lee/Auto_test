@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from .measurement_controller_contract import MeasurementCommand
+from application.dto.legacy_result_adapter import legacy_payload
 from .measurement_state import (
     DriverMappingPageResultState,
     MeasurementKind,
@@ -162,11 +163,10 @@ class DriverMappingPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         value = getattr(reference, "value", None)
         if isinstance(value, DriverMappingPageResultState):
             rows = value.rows
-        elif isinstance(value, Mapping):
+        else:
+            value = legacy_payload(value)
             mapping = value.get("power_mapping", value)
             rows = self._mapping_rows(mapping)
-        else:
-            return
         invalid_rows = False
         for row in rows:
             frequency = str(row.get("frequency", ""))

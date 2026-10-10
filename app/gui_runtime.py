@@ -150,6 +150,11 @@ def _request_kwargs(prepared_run: PreparedRun, config_path: str, callbacks: dict
         "result_repository": repository,
         "input_reader": callbacks.get("input_reader") or ResultInputReader(repository),
         "config_path": Path(config_path),
+        "safety_options": {
+            "owns_measurement_port": bool(callbacks.get("owns_measurement_port", False)),
+            "close_rf_on_cleanup": True,
+            "power_cleanup_required": True,
+        },
     }
 
 
@@ -164,6 +169,7 @@ def create_cable_loss_measurement(
     try:
         if owned_port:
             callbacks["measurement_port"] = connect_instruments(config_path)
+        callbacks["owns_measurement_port"] = owned_port
         callbacks.setdefault("result_repository", FileMeasurementResultRepository())
         callbacks.setdefault("event_sink", _CallbackEventSink(callbacks))
         request = CableLossMeasurementRequest(
@@ -187,6 +193,7 @@ def create_driver_mapping_measurement(
     try:
         if owned_port:
             callbacks["measurement_port"] = connect_instruments(config_path)
+        callbacks["owns_measurement_port"] = owned_port
         callbacks.setdefault("result_repository", FileMeasurementResultRepository())
         callbacks.setdefault("event_sink", _CallbackEventSink(callbacks))
         request = DriverPowerMappingRequest(
@@ -213,6 +220,7 @@ def create_amplifier_measurement(
     try:
         if owned_port:
             callbacks["measurement_port"] = connect_instruments(config_path)
+        callbacks["owns_measurement_port"] = owned_port
         callbacks.setdefault("result_repository", FileMeasurementResultRepository())
         callbacks.setdefault("event_sink", _CallbackEventSink(callbacks))
         request = AmplifierMeasurementRequest(

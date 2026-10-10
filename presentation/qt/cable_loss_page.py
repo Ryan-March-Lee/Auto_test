@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from .measurement_controller_contract import MeasurementCommand
+from application.dto.legacy_result_adapter import legacy_payload
 from .measurement_state import CableLossPageResultState, MeasurementKind, MeasurementStatus
 from .pages import PageControllerBindingMixin
 
@@ -224,7 +225,8 @@ class CableLossPage(PageControllerBindingMixin, QWidget):
         if isinstance(value, CableLossPageResultState):
             for item in value.rows:
                 self.update_realtime(item)
-        elif isinstance(value, Mapping):
+        else:
+            value = legacy_payload(value)
             cable_losses = value.get("cable_losses", value)
             if isinstance(cable_losses, Mapping):
                 for frequency, losses in cable_losses.items():

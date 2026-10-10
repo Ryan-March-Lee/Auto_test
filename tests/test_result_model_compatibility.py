@@ -4,7 +4,7 @@ import copy
 import unittest
 
 from domain.models import AmplifierMeasurementResult, CableLossResult
-from result_reading import parse_result_model
+from domain.result_reading import parse_result_model
 
 
 class ResultModelCompatibilityTests(unittest.TestCase):

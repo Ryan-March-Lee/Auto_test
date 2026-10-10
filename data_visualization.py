@@ -10,7 +10,17 @@ from datetime import datetime
 import seaborn as sns
 from pathlib import Path
 from project_paths import PROJECT_ROOT, TEST_RESULTS_DIR
-from result_reading import load_measurement_result, load_result_model, get_sweep_dataframe_data, get_saturation_points
+from domain.result_reading import get_sweep_dataframe_data, get_saturation_points
+from infrastructure.persistence.json_result_repository import load_json_result
+from domain.result_reading import parse_result_model
+
+
+def load_measurement_result(path):
+    return load_json_result(path)
+
+
+def load_result_model(path):
+    return parse_result_model(load_json_result(path))
 
 # --- MODIFIED: Define font properties globally for easy access ---
 # 确保你的系统中有这些字体文件，并且路径正确

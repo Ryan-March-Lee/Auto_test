@@ -6,23 +6,23 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from result_storage import (
+from infrastructure.persistence.json_result_repository import (
     load_json_result,
     new_run_id,
     save_measurement_result,
     write_run_snapshot,
     write_legacy_run_snapshot,
 )
-from result_reading import (
+from domain.result_reading import (
     get_config_snapshot,
     get_result_metadata,
     get_saturation_points,
     get_sweep_dataframe_data,
     get_sweep_results,
-    load_result_model,
     normalize_frequency_key,
     parse_result_model,
 )
+from infrastructure.persistence.json_result_repository import load_json_result
 
 
 class RunSnapshotTests(unittest.TestCase):
@@ -443,7 +443,7 @@ class ResultReadingTests(unittest.TestCase):
             path.write_text(json.dumps({"power_mapping": {"2.0": {
                 "input_power": 1, "output_power": 5,
             }}}), encoding="utf-8")
-            model = load_result_model(path)
+            model = parse_result_model(load_json_result(path))
         self.assertEqual(model.points[0].frequency_hz, 2.0)
 
 

@@ -13,7 +13,7 @@ from instrument.simulation import (
     SimulatedSignalGenerator,
     SimulatedSpectrumAnalyzer,
 )
-from result_storage import save_measurement_result
+from infrastructure.persistence.json_result_repository import save_measurement_result
 
 
 class NormalSimulatedMeasurementFlowTests(unittest.TestCase):

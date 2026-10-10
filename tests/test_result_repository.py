@@ -8,7 +8,7 @@ import numpy as np
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from infrastructure.persistence.json_encoder import NumpyJSONEncoder
 from application.ports.result_repository import SavedMeasurementResult
-from result_storage import load_json_result
+from infrastructure.persistence.json_result_repository import load_json_result
 
 
 class FileMeasurementResultRepositoryTests(unittest.TestCase):
@@ -18,7 +18,7 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
             expected_archive = run_directory / "cable_loss_results.json"
             expected_legacy = Path(directory) / "cable_loss_results.json"
             with patch(
-                "infrastructure.persistence.result_repository.result_storage.save_measurement_result",
+                "infrastructure.persistence.result_repository.json_result_repository.save_measurement_result",
                 return_value=(expected_archive, expected_legacy),
             ) as save:
                 saved = FileMeasurementResultRepository(results_directory=directory).save(
@@ -122,7 +122,7 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
     def test_save_passes_through_storage_failures(self):
         error = OSError("写入失败")
         with patch(
-            "infrastructure.persistence.result_repository.result_storage.save_measurement_result",
+            "infrastructure.persistence.result_repository.json_result_repository.save_measurement_result",
             side_effect=error,
         ):
             with self.assertRaises(OSError) as raised:
@@ -132,9 +132,9 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
 
         self.assertIs(raised.exception, error)
 
-    def test_load_delegates_to_legacy_storage(self):
+    def test_load_delegates_to_json_repository(self):
         with patch(
-            "infrastructure.persistence.result_repository.result_storage.load_json_result",
+            "infrastructure.persistence.result_repository.json_result_repository.load_json_result",
             return_value={"value": 1},
         ) as load:
             result = FileMeasurementResultRepository().load("result.json")

@@ -10,8 +10,9 @@ from config_models import RunConfiguration
 from domain.models import AmplifierMeasurementResult, AmplifierScanPoint
 from measurement_services import AmplifierMeasurementService
 from persistence.config_repository import ConfigurationRepository
-from result_reading import load_result_model
-from result_storage import save_measurement_model
+from domain.result_reading import parse_result_model
+from infrastructure.persistence.json_result_repository import load_json_result
+from infrastructure.persistence.json_result_repository import save_measurement_model
 from analysis.reporting import export_csv, render_html_report
 from release_manifest import build_manifest
 
@@ -121,7 +122,7 @@ class OfflineRefactorCompletionTests(unittest.TestCase):
             mapping_path.write_text(json.dumps(mapping), encoding="utf-8")
             loaded = ConfigurationRepository().load_for_run(plan_path, mapping_path)
             self.assertTrue(loaded.valid)
-            with patch("result_storage.TEST_RESULTS_DIR", root / "results"):
+            with patch("infrastructure.persistence.json_result_repository.TEST_RESULTS_DIR", root / "results"):
                 prepared = prepare_run(loaded, run_id="offline-run", software_version="test")
             self.assertEqual(prepared.context.run_id, "offline-run")
             self.assertEqual(prepared.context.power_channel_mapping["gate"], "gate")
@@ -153,7 +154,7 @@ class OfflineRefactorCompletionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             model_path = save_measurement_model(result, legacy_payload={"results": {}}, run_directory=root)
-            loaded = load_result_model(model_path)
+            loaded = parse_result_model(load_json_result(model_path))
             self.assertEqual(loaded.run_id, "report-run")
             csv_path = export_csv(loaded, root / "report.csv")
             html_path = render_html_report(loaded, root / "report.html")

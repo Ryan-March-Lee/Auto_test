@@ -21,10 +21,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from result_reading import (
-    normalize_frequency_key, load_measurement_result, parse_result_model,
+from domain.result_reading import (
+    normalize_frequency_key, parse_result_model,
     get_sweep_dataframe_data,
 )
+from infrastructure.persistence.json_result_repository import load_json_result
+
+
+def load_measurement_result(path):
+    return load_json_result(path)
 
 from .realtime_plot import RealTimePlotWidget
 

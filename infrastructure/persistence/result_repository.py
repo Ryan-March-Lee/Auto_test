@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Any, Mapping
 
-from infrastructure.persistence import json_result_repository as result_storage
+from infrastructure.persistence import json_result_repository
 from application.ports.result_repository import (
     MeasurementResultRepository,
     PathLike,
@@ -42,7 +42,7 @@ class FileMeasurementResultRepository(MeasurementResultRepository):
     ) -> SavedMeasurementResult:
         legacy_path = self.legacy_path(result_type)
         effective_run_directory = self._run_directory(run_id, run_directory)
-        archive_path, legacy_copy_path = result_storage.save_measurement_result(
+        archive_path, legacy_copy_path = json_result_repository.save_measurement_result(
             result,
             result_type=result_type,
             legacy_path=legacy_path,
@@ -58,15 +58,15 @@ class FileMeasurementResultRepository(MeasurementResultRepository):
         )
 
     def new_run_id(self) -> str:
-        return result_storage.new_run_id()
+        return json_result_repository.new_run_id()
 
     def create_legacy_run_snapshot(
         self, run_id: str, config: Mapping[str, Any], *, status: str = "created"
     ) -> Path:
-        return result_storage.write_legacy_run_snapshot(run_id, config, status=status)
+        return json_result_repository.write_legacy_run_snapshot(run_id, config, status=status)
 
     def load(self, path: PathLike) -> Mapping[str, Any]:
-        return result_storage.load_json_result(path)
+        return json_result_repository.load_json_result(path)
 
     def legacy_path(self, result_type: str) -> Path:
         if result_type in self._FIXED_LEGACY_PATHS:
@@ -96,7 +96,7 @@ class FileMeasurementResultRepository(MeasurementResultRepository):
 
     def _results_directory(self) -> Path:
         """Resolve the default lazily so path configuration remains patchable."""
-        return self.results_directory or Path(result_storage.TEST_RESULTS_DIR)
+        return self.results_directory or Path(json_result_repository.TEST_RESULTS_DIR)
 
     def _run_directory(self, run_id: str, run_directory: PathLike | None) -> Path | None:
         if run_directory is not None:
@@ -104,7 +104,7 @@ class FileMeasurementResultRepository(MeasurementResultRepository):
         if self.results_directory is None:
             return None
 
-        result_storage.validate_run_id(run_id)
+        json_result_repository.validate_run_id(run_id)
         directory = self.results_directory / run_id
         directory.mkdir(parents=True, exist_ok=False)
         return directory

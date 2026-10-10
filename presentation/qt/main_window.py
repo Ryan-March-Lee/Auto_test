@@ -36,7 +36,7 @@ from project_paths import (
     TEST_RESULTS_DIR,
 )
 from config_io import load_config_file
-from result_reading import load_measurement_result
+from infrastructure.persistence.json_result_repository import load_json_result
 from app_logging import setup_logging
 from assistant.storage import (
     has_current_history,
@@ -329,7 +329,7 @@ class MainWindow(QMainWindow):
             reference = MeasurementResultReference(
                 result_id=f"loaded-{datetime.now(timezone.utc).isoformat()}",
                 kind=MeasurementKind.CABLE_LOSS,
-                value=load_measurement_result(CABLE_LOSS_FILE),
+                value=load_json_result(CABLE_LOSS_FILE),
                 source="result_service",
             )
             self.cable_loss_page.show_loaded_result(reference)

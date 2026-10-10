@@ -170,7 +170,7 @@ def save_measurement_result(
     try:
         save_json_result(legacy_path, result, result_type=result_type, encoder=encoder)
         if result_type in {"cable_loss", "driver_power_mapping", "amplifier_measurement", "amplifier"}:
-            from result_reading import parse_result_model
+            from domain.result_reading import parse_result_model
 
             model = parse_result_model(result)
             model = replace(

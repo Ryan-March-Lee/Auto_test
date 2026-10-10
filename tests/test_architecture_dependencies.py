@@ -346,6 +346,21 @@ class ProductionDependencyTests(unittest.TestCase):
 
         self.assertEqual(violations, [], "应用层不得直接依赖硬件或 Qt: " + ", ".join(violations))
 
+    def test_application_inputs_do_not_import_infrastructure(self):
+        violations = []
+        for source_path in (ROOT / "application").rglob("*.py"):
+            tree = _tree(source_path)
+            for module, _alias, _name in _imported_modules(tree):
+                if module == "infrastructure" or module.startswith("infrastructure."):
+                    violations.append(f"{source_path.relative_to(ROOT)} imports {module}")
+        self.assertEqual(violations, [], "应用层不得反向依赖基础设施: " + "; ".join(violations))
+
+    def test_result_persistence_does_not_import_application_reader(self):
+        source = ROOT / "infrastructure" / "persistence" / "json_result_repository.py"
+        tree = _tree(source)
+        modules = {module for module, _alias, _name in _imported_modules(tree)}
+        self.assertNotIn("application.inputs.result_reading", modules)
+
     def test_measurement_pages_have_no_forbidden_architecture_dependencies(self):
         violations = []
         for source_path in PAGE_SOURCES:

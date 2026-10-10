@@ -4,12 +4,18 @@ import unittest
 from pathlib import Path
 
 from persistence.config_repository import ConfigurationRepository
+from infrastructure.config.json_config_repository import (
+    ConfigurationRepository as CanonicalConfigurationRepository,
+)
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "config_driver_enabled_no_assignment.json"
 
 
 class ConfigurationRepositoryTests(unittest.TestCase):
+    def test_compatibility_entry_points_to_canonical_repository(self):
+        self.assertIs(ConfigurationRepository, CanonicalConfigurationRepository)
+
     def test_loads_legacy_config_with_conversion_report_without_hardware_access(self):
         result = ConfigurationRepository().load(FIXTURE)
 

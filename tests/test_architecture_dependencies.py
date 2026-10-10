@@ -218,6 +218,44 @@ class ProductionDependencyTests(unittest.TestCase):
                     violations.append(f"{source_path.relative_to(ROOT)} imports {module}")
         self.assertEqual(violations, [], "配置领域层不得依赖基础设施或文件格式: " + "; ".join(violations))
 
+    def test_application_configuration_service_depends_on_port_not_json_repository(self):
+        source_path = ROOT / "application" / "configuration_service.py"
+        imports = _imported_modules(_tree(source_path))
+        modules = {module for module, _alias, _name in imports}
+        self.assertIn("application.ports.config_repository", modules)
+        self.assertNotIn("infrastructure.config.json_config_repository", modules)
+
+    def test_production_code_does_not_use_legacy_configuration_modules(self):
+        forbidden = {
+            "config_models",
+            "config_io",
+            "config_validation",
+            "infrastructure.persistence.json_config_repository",
+        }
+        compatibility = {
+            ROOT / "config_models.py",
+            ROOT / "config_io.py",
+            ROOT / "config_validation.py",
+            ROOT / "infrastructure" / "persistence" / "json_config_repository.py",
+        }
+        violations = []
+        for source_path in _production_sources():
+            if source_path in compatibility:
+                continue
+            for module, _alias, _name in _imported_modules(_tree(source_path)):
+                if module in forbidden:
+                    violations.append(f"{source_path.relative_to(ROOT)} imports {module}")
+        self.assertEqual(violations, [])
+
+    def test_configuration_legacy_persistence_path_is_reexport_only(self):
+        source_path = ROOT / "infrastructure" / "persistence" / "json_config_repository.py"
+        definitions = {
+            node.name
+            for node in _tree(source_path).body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        }
+        self.assertEqual(definitions, set())
+
     def test_configuration_compatibility_modules_are_explicit_reexports(self):
         modules = (
             ROOT / "app_logging.py",

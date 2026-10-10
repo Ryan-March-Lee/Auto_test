@@ -277,6 +277,42 @@ class GuiRuntimePreparationTests(unittest.TestCase):
         finally:
             directory.cleanup()
 
+    def test_preparation_accepts_an_injected_configuration_repository(self):
+        directory, path = self._write_config()
+        try:
+            repository = MockConfigurationRepository()
+            prepared = SimpleNamespace(configuration=object(), context=object(), run_directory=Path("run"))
+            with patch("app.gui_runtime.prepare_run", return_value=prepared):
+                result = prepare_configuration(str(path), repository=repository)
+            self.assertIs(result, prepared)
+            self.assertEqual(repository.loaded_paths, [(str(path), None)])
+        finally:
+            directory.cleanup()
+
+
+class MockConfigurationRepository:
+    def __init__(self):
+        self.loaded_paths = []
+
+    def load(self, path, mapping_path=None):
+        from application.ports.config_repository import ConfigurationLoadResult
+        from domain.configuration.models import (
+            RunConfiguration,
+            RunResourceMapping,
+            TestPlan,
+            validate_run_configuration,
+        )
+
+        self.loaded_paths.append((path, mapping_path))
+        configuration = RunConfiguration(TestPlan(), RunResourceMapping())
+        return ConfigurationLoadResult(configuration, validate_run_configuration(configuration))
+
+    def load_legacy_data(self, value):
+        raise AssertionError("应用服务不应直接调用 legacy 转换入口")
+
+    def load_for_run(self, path, mapping_path=None):
+        raise AssertionError("应用服务应通过 load 后自行执行运行前门禁")
+
 
 if __name__ == "__main__":
     unittest.main()

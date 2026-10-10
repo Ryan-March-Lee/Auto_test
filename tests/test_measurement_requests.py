@@ -183,6 +183,25 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
         )
         self.assertEqual(emergency.termination["intent"], "emergency_stop")
 
+    def test_result_dto_separates_raw_and_saved_references(self):
+        result = MeasurementResult.from_payload(
+            "amplifier",
+            {
+                "raw_data_path": "raw.csv",
+                "archive_path": "archive.json",
+                "errors": ["warning-1", "warning-2"],
+                "cleanup_records": [{"power_off": "ok"}, {"close": "ok"}],
+            },
+            run_id="run-reference",
+        )
+        self.assertEqual(result.raw_data_reference["raw_data_path"], "raw.csv")
+        self.assertEqual(result.result_reference["archive_path"], "archive.json")
+        self.assertEqual(result.errors, ("warning-1", "warning-2"))
+        self.assertEqual(len(result.cleanup_records), 2)
+        saved = result.with_saved_result(archive_path="new-archive.json")
+        self.assertEqual(saved.result_reference["archive_path"], "new-archive.json")
+        self.assertEqual(saved.raw_data_reference["raw_data_path"], "raw.csv")
+
     def test_legacy_result_status_is_normalized_only_by_adapter(self):
         from application.dto import legacy_result
 

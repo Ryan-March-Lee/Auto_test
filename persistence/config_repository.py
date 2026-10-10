@@ -1,6 +1,6 @@
 """Compatibility exports for the JSON configuration repository."""
 
-from infrastructure.persistence.json_config_repository import (
+from infrastructure.config.json_config_repository import (
     ConfigurationRepository,
     JsonConfigurationRepository,
     JsonRunMappingRepository,

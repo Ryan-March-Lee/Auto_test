@@ -118,7 +118,7 @@ def write_run_snapshot(
 
 def write_legacy_run_snapshot(run_id: str, legacy_config: Mapping[str, Any], **kwargs: Any) -> Path:
     """将旧版 config.json 转成新模型格式后写入运行快照。"""
-    from infrastructure.persistence.json_config_repository import JsonConfigurationRepository
+    from infrastructure.config.json_config_repository import JsonConfigurationRepository
 
     loaded = JsonConfigurationRepository().load_legacy_data(dict(legacy_config))
     if loaded.conversion_errors:

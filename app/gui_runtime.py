@@ -5,7 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal
 
-from infrastructure.persistence.json_config_repository import JsonConfigurationRepository
+from application.configuration_service import load_for_run
+from application.ports.config_repository import ConfigurationRepository
 from domain.configuration.models import (
     validate_cable_loss_configuration,
     validate_driver_mapping_configuration,
@@ -84,13 +85,22 @@ def create_offline_measurement_port(
 
 
 def prepare_configuration(
-    config_path: str, *, run_id: str | None = None, operation: Operation = "full"
+    config_path: str,
+    *,
+    run_id: str | None = None,
+    operation: Operation = "full",
+    repository: ConfigurationRepository | None = None,
 ) -> PreparedRun:
     """Perform the GUI preflight and snapshot before an instrument is created."""
     if operation not in ("full", "cable_loss", "driver_mapping"):
         raise ValueError(f"不支持的测量类型: {operation}")
-    repository = JsonConfigurationRepository()
-    loaded = repository.load_for_run(config_path)
+    if repository is None:
+        # Compatibility composition for historical callers. New application
+        # callers should inject the port implementation at the composition root.
+        from infrastructure.config.json_config_repository import JsonConfigurationRepository
+
+        repository = JsonConfigurationRepository()
+    loaded = load_for_run(repository, config_path)
     if operation == "cable_loss":
         # The legacy GUI stores one combined config.json. Convert it as usual,
         # then apply the smaller contract required by cable-loss measurement.

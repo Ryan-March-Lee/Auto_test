@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from types import MappingProxyType
@@ -206,6 +206,16 @@ class MeasurementResult:
     plan_snapshot: Mapping[str, Any] = field(default_factory=dict)
     resource_snapshot: Mapping[str, Any] = field(default_factory=dict)
     metadata: ResultMetadata = field(default_factory=ResultMetadata)
+    # 统一结果契约中的跨测量类型字段。旧字段保留用于兼容已有调用方。
+    configuration_snapshot: Mapping[str, Any] = field(default_factory=dict)
+    device_summary: Mapping[str, Any] = field(default_factory=dict)
+    raw_data_reference: Mapping[str, Any] = field(default_factory=dict)
+    calculation_summary: Mapping[str, Any] = field(default_factory=dict)
+    errors: tuple[str, ...] = ()
+    cleanup_records: tuple[Mapping[str, Any], ...] = ()
+    termination: Mapping[str, Any] | None = None
+    result_reference: Mapping[str, Any] = field(default_factory=dict)
+    created_at: str | None = field(default_factory=lambda: _utc_now().isoformat())
 
     def __post_init__(self) -> None:
         if not self.run_id.strip():
@@ -219,12 +229,81 @@ class MeasurementResult:
                 schema_version=self.metadata.schema_version,
                 method_version=self.metadata.method_version,
             ))
+        if not isinstance(self.measurement_type, str) or not self.measurement_type.strip():
+            raise ValueError("measurement_type 不能为空")
+        for name in (
+            "plan_snapshot",
+            "resource_snapshot",
+            "configuration_snapshot",
+            "device_summary",
+            "raw_data_reference",
+            "calculation_summary",
+        ):
+            value = getattr(self, name)
+            object.__setattr__(self, name, _freeze_mapping(value, name))
+        object.__setattr__(self, "errors", _freeze_errors(self.errors))
+        object.__setattr__(
+            self,
+            "cleanup_records",
+            _freeze_records(self.cleanup_records),
+        )
+        object.__setattr__(self, "termination", _freeze_optional_mapping(self.termination, "termination"))
+        object.__setattr__(self, "result_reference", _freeze_mapping(self.result_reference, "result_reference"))
 
     def to_dict(self) -> dict[str, Any]:
-        value = asdict(self)
+        value = _plain(self)
         value["status"] = self.status.value
         value["points"] = [point.to_dict() for point in self.points]
         return value
+
+
+def _plain(value: Any) -> Any:
+    """将冻结的领域对象转换成可 JSON 序列化的普通容器。"""
+    if is_dataclass(value):
+        return {item.name: _plain(getattr(value, item.name)) for item in fields(value)}
+    if isinstance(value, Mapping):
+        return {key: _plain(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(item) for item in value]
+    if isinstance(value, Enum):
+        return value.value
+    return value
+
+
+def _freeze_mapping(value: Any, name: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{name} 必须是映射")
+    return MappingProxyType({key: _freeze_value(item) for key, item in value.items()})
+
+
+def _freeze_optional_mapping(value: Any, name: str) -> Mapping[str, Any] | None:
+    if value is None:
+        return None
+    return _freeze_mapping(value, name)
+
+
+def _freeze_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze_value(item) for key, item in value.items()})
+    if isinstance(value, list) or isinstance(value, tuple):
+        return tuple(_freeze_value(item) for item in value)
+    if isinstance(value, set):
+        return frozenset(_freeze_value(item) for item in value)
+    return value
+
+
+def _freeze_errors(value: Any) -> tuple[str, ...]:
+    if isinstance(value, str):
+        return (value,)
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("errors 必须是字符串或字符串序列")
+    return tuple(str(item) for item in value)
+
+
+def _freeze_records(value: Any) -> tuple[Mapping[str, Any], ...]:
+    if isinstance(value, Mapping) or not isinstance(value, (list, tuple)):
+        raise ValueError("cleanup_records 必须是映射序列")
+    return tuple(_freeze_mapping(item, "cleanup_records") for item in value)
 
 
 def _instrument_snapshot(value: Any) -> dict[str, str]:

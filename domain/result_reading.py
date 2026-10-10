@@ -82,7 +82,8 @@ def parse_result_model(data: Mapping[str, Any]) -> MeasurementResult:
         return CableLossResult(run_id=str(data.get("run_id", "legacy")), points=tuple(points),
                                raw_readings=dict(data),
                                schema_version=str(data.get("schema_version", "1.0")),
-                               metadata=_metadata(data, "cable_loss"))
+                               metadata=_metadata(data, "cable_loss"),
+                               **_common_result_fields(data))
 
     if result_type == "driver_power_mapping" or "power_mapping" in data:
         points = []
@@ -114,7 +115,8 @@ def parse_result_model(data: Mapping[str, Any]) -> MeasurementResult:
         return DriverPowerMappingResult(run_id=str(data.get("run_id", "legacy")), points=tuple(points),
                                         raw_readings=dict(data),
                                         schema_version=str(data.get("schema_version", "1.0")),
-                                        metadata=_metadata(data, "driver_power_mapping"))
+                                        metadata=_metadata(data, "driver_power_mapping"),
+                                        **_common_result_fields(data))
 
     points = []
     compression = {}
@@ -165,6 +167,7 @@ def parse_result_model(data: Mapping[str, Any]) -> MeasurementResult:
         metadata=_metadata(data, "amplifier_measurement"),
         plan_snapshot=data.get("config", data.get("plan_snapshot", {})),
         resource_snapshot=data.get("resource_snapshot", {}),
+        **_common_result_fields(data),
     )
 
 
@@ -180,6 +183,51 @@ def _metadata(data: Mapping[str, Any], default_type: str) -> Any:
         schema_version=str(data.get("schema_version", "1.0")),
         method_version=str(data.get("method_version", "1.0")),
     )
+
+
+def _common_result_fields(data: Mapping[str, Any]) -> dict[str, Any]:
+    """读取统一契约字段，同时兼容旧结果中的常见别名。"""
+    errors = data.get("errors", data.get("error"))
+    if isinstance(errors, str):
+        errors = (errors,)
+    elif not isinstance(errors, (list, tuple)):
+        errors = ()
+    cleanup = data.get("cleanup_records", data.get("cleanup", ()))
+    if isinstance(cleanup, Mapping):
+        cleanup = (cleanup,)
+    elif not isinstance(cleanup, (list, tuple)):
+        cleanup = ()
+    return {
+        "configuration_snapshot": data.get("configuration_snapshot", data.get("config", {})),
+        "device_summary": data.get("device_summary", data.get("resource_snapshot", {})),
+        "raw_data_reference": data.get("raw_data_reference", _raw_data_reference(data)),
+        "calculation_summary": data.get("calculation_summary", data.get("derived_metrics", {})),
+        "errors": tuple(str(error) for error in errors),
+        "cleanup_records": tuple(item for item in cleanup if isinstance(item, Mapping)),
+        "created_at": _created_at(data),
+        "termination": data.get("termination"),
+        "result_reference": data.get("result_reference", {}),
+    }
+
+
+def _raw_data_reference(data: Mapping[str, Any]) -> dict[str, Any]:
+    source = data.get("data_reference", {})
+    if not isinstance(source, Mapping):
+        source = {}
+    return {
+        key: source[key]
+        for key in ("raw_data_path",)
+        if key in source
+    } or {
+        key: data[key]
+        for key in ("raw_data_path",)
+        if key in data
+    }
+
+
+def _created_at(data: Mapping[str, Any]) -> str | None:
+    value = data.get("created_at", data.get("saved_at"))
+    return value if isinstance(value, str) and value.strip() else None
 
 
 def _model_with_canonical_metadata(model: MeasurementResult, canonical: Mapping[str, Any]) -> MeasurementResult:
@@ -205,6 +253,15 @@ def _model_with_canonical_metadata(model: MeasurementResult, canonical: Mapping[
         method_version=str(canonical.get("method_version", model.method_version)),
         plan_snapshot=canonical.get("plan_snapshot", model.plan_snapshot),
         resource_snapshot=canonical.get("resource_snapshot", model.resource_snapshot),
+        configuration_snapshot=canonical.get("configuration_snapshot", model.configuration_snapshot),
+        device_summary=canonical.get("device_summary", model.device_summary),
+        raw_data_reference=canonical.get("raw_data_reference", model.raw_data_reference),
+        calculation_summary=canonical.get("calculation_summary", model.calculation_summary),
+        errors=canonical.get("errors", model.errors),
+        cleanup_records=canonical.get("cleanup_records", model.cleanup_records),
+        termination=canonical.get("termination", model.termination),
+        result_reference=canonical.get("result_reference", model.result_reference),
+        created_at=canonical.get("created_at", model.created_at),
         metadata=metadata,
     )
 

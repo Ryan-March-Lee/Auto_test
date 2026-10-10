@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from enum import Enum
 from types import MappingProxyType
 from typing import Any
@@ -78,6 +79,14 @@ class MeasurementResult(Mapping[str, Any]):
     cleanup: Mapping[str, Any] = field(default_factory=dict)
     termination: Mapping[str, Any] | None = None
     payload: Mapping[str, Any] = field(default_factory=dict, repr=False, compare=False)
+    configuration_snapshot: Mapping[str, Any] = field(default_factory=dict)
+    device_summary: Mapping[str, Any] = field(default_factory=dict)
+    raw_data_reference: Mapping[str, Any] = field(default_factory=dict)
+    calculation_summary: Mapping[str, Any] = field(default_factory=dict)
+    errors: tuple[str, ...] = ()
+    cleanup_records: tuple[Mapping[str, Any], ...] = ()
+    result_reference: Mapping[str, Any] = field(default_factory=dict)
+    created_at: str | None = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def __post_init__(self) -> None:
         measurement_type = _enum_value(self.measurement_type, MeasurementType, "measurement_type")
@@ -86,8 +95,15 @@ class MeasurementResult(Mapping[str, Any]):
             raise ValueError("run_id 不能为空")
         object.__setattr__(self, "measurement_type", measurement_type)
         object.__setattr__(self, "status", status)
-        for name in ("data_reference", "summary", "cleanup", "termination", "payload"):
+        for name in (
+            "data_reference", "summary", "cleanup", "termination", "payload",
+            "configuration_snapshot", "device_summary", "raw_data_reference",
+            "calculation_summary",
+            "result_reference",
+        ):
             object.__setattr__(self, name, freeze(getattr(self, name)))
+        object.__setattr__(self, "errors", _errors(getattr(self, "errors")))
+        object.__setattr__(self, "cleanup_records", _records(getattr(self, "cleanup_records")))
         if status is MeasurementStatus.COMPLETED and self.termination is not None:
             raise ValueError("completed 结果不能包含 termination")
         if status is MeasurementStatus.EMERGENCY_STOPPED:
@@ -115,8 +131,16 @@ class MeasurementResult(Mapping[str, Any]):
         if not isinstance(summary, Mapping):
             summary = _summary_for(value)
         raw_cleanup = cleanup if cleanup is not None else value.get("cleanup", {})
-        if not isinstance(raw_cleanup, Mapping):
-            raw_cleanup = {}
+        cleanup_records = value.get("cleanup_records", raw_cleanup)
+        if isinstance(cleanup_records, Mapping):
+            cleanup_records = (cleanup_records,)
+        elif not isinstance(cleanup_records, (list, tuple)):
+            cleanup_records = ()
+        raw_errors = value.get("errors", error or value.get("error"))
+        if isinstance(raw_errors, str):
+            raw_errors = (raw_errors,)
+        elif not isinstance(raw_errors, (list, tuple)):
+            raw_errors = ()
         return cls(
             measurement_type=measurement_type,
             status=raw_status,
@@ -127,6 +151,14 @@ class MeasurementResult(Mapping[str, Any]):
             cleanup=raw_cleanup,
             termination=termination if termination is not None else value.get("termination"),
             payload=value,
+            configuration_snapshot=value.get("configuration_snapshot", value.get("config", {})),
+            device_summary=value.get("device_summary", value.get("resource_snapshot", {})),
+            raw_data_reference=value.get("raw_data_reference", _raw_data_reference(value)),
+            result_reference=value.get("result_reference", _result_reference(value)),
+            calculation_summary=value.get("calculation_summary", value.get("derived_metrics", {})),
+            errors=raw_errors,
+            cleanup_records=cleanup_records,
+            created_at=value.get("created_at", value.get("saved_at")),
         )
 
     def with_saved_result(
@@ -135,12 +167,12 @@ class MeasurementResult(Mapping[str, Any]):
         archive_path: str | None = None,
         legacy_copy_path: str | None = None,
     ) -> "MeasurementResult":
-        references = dict(self.data_reference)
+        references = dict(self.result_reference)
         if archive_path is not None:
             references["archive_path"] = archive_path
         if legacy_copy_path is not None:
             references["legacy_copy_path"] = legacy_copy_path
-        return replace(self, data_reference=references)
+        return replace(self, result_reference=references, data_reference=references)
 
     def to_dict(self) -> dict[str, Any]:
         result = thaw(self.payload)
@@ -153,6 +185,14 @@ class MeasurementResult(Mapping[str, Any]):
             "error": self.error,
             "cleanup": thaw(self.cleanup),
             "termination": thaw(self.termination) if self.termination is not None else None,
+            "configuration_snapshot": thaw(self.configuration_snapshot),
+            "device_summary": thaw(self.device_summary),
+            "raw_data_reference": thaw(self.raw_data_reference),
+            "calculation_summary": thaw(self.calculation_summary),
+            "created_at": self.created_at,
+            "errors": list(self.errors),
+            "cleanup_records": thaw(self.cleanup_records),
+            "result_reference": thaw(self.result_reference),
         })
         return result
 
@@ -186,6 +226,36 @@ def _data_reference(payload: Mapping[str, Any]) -> dict[str, Any]:
         for key in ("result_path", "archive_path", "raw_data_path")
         if key in payload
     }
+
+
+def _raw_data_reference(payload: Mapping[str, Any]) -> dict[str, Any]:
+    return {key: payload[key] for key in ("raw_data_path",) if key in payload}
+
+
+def _result_reference(payload: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        key: payload[key]
+        for key in ("result_path", "archive_path", "legacy_copy_path")
+        if key in payload
+    }
+
+
+def _errors(value: Any) -> tuple[str, ...]:
+    if isinstance(value, str):
+        return (value,)
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("errors 必须是字符串或字符串序列")
+    return tuple(str(item) for item in value)
+
+
+def _records(value: Any) -> tuple[Mapping[str, Any], ...]:
+    if isinstance(value, Mapping):
+        value = (value,)
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("cleanup_records 必须是映射序列")
+    if not all(isinstance(item, Mapping) for item in value):
+        raise ValueError("cleanup_records 中的每项必须是映射")
+    return tuple(value)
 
 
 def _summary_for(payload: Mapping[str, Any]) -> dict[str, Any]:

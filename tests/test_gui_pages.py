@@ -1,6 +1,7 @@
 import unittest
 
 from presentation.qt.pages import BasePage, PageProtocol
+from presentation.qt.config_page import ConfigPage
 
 
 class _Signal:
@@ -51,6 +52,14 @@ class _Page(BasePage):
 
 
 class PageContractTests(unittest.TestCase):
+    def test_config_page_implements_page_lifecycle_hooks(self):
+        page = ConfigPage({})
+
+        self.assertIsInstance(page, PageProtocol)
+        page.on_activated()
+        page.on_deactivated()
+        page.close()
+
     def test_page_protocol_is_implementable_without_qt(self):
         page = _Page()
         self.assertIsInstance(page, PageProtocol)

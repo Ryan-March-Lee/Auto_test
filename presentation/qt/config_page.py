@@ -12,22 +12,29 @@ from PySide6.QtWidgets import (
 )
 
 from .config_form_state import ConfigFormState
+from .pages import PageControllerBindingMixin
 
 
-class ConfigPage(QWidget):
+class ConfigPage(PageControllerBindingMixin, QWidget):
     save_requested = Signal()
     connect_requested = Signal()
     validation_failed = Signal(str)
     driver_mode_changed = Signal(bool)
 
     def __init__(self, config=None, parent=None):
-        super().__init__(parent)
+        PageControllerBindingMixin.__init__(self)
+        QWidget.__init__(self, parent)
         self.config = config if isinstance(config, dict) else {}
-        self._build_ui()
+        self.build_ui()
         self._connect_signals()
         self.update_pa_unit_ui()
         self.update_driver_power_ui()
         self.update_power_supply_options()
+
+    def build_ui(self):
+        """按页面协议构建并返回配置页根 widget。"""
+        self._build_ui()
+        return self
 
     def _build_ui(self):
         root = QVBoxLayout(self)

@@ -32,6 +32,9 @@ class CableLossUseCase:
             raise ValueError("CableLossUseCase 必须由应用组装层注入 measurement_port")
         self.config = _service_config(request.configuration)
         self.inst_ctrl = request.measurement_port
+        self.owns_measurement_port = bool(
+            request.safety_options.get("owns_measurement_port", False)
+        )
         self.run_id = request.run_id
         self.run_directory = request.run_directory
         self.result_repository = request.result_repository
@@ -46,6 +49,7 @@ class CableLossUseCase:
             event_sink=request.event_sink,
             cancellation_token=self._token,
             sleep_fn=self.sleep_fn,
+            owns_measurement_port=self.owns_measurement_port,
         )
         self._waiting_for_path2 = False
         self._started = False

@@ -72,6 +72,7 @@ def _request(instrument, *, loss_data=None, reader=None, events=None, token=None
         result_repository=repository or _Repository(),
         input_reader=reader,
         loss_data=loss_data,
+        safety_options={"owns_measurement_port": True},
     )
 
 

@@ -7,7 +7,7 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from PySide6.QtCore import QObject, Signal
-from application.lifecycle import StopIntent
+from application.lifecycle import MeasurementRuntimeCoordinator, StopIntent
 
 from .measurement_controller_contract import (
     ControllerState,
@@ -20,6 +20,7 @@ from .measurement_state import (
     MeasurementStatus,
     MeasurementViewState,
 )
+from .worker_lifecycle import WorkerLifecycleCoordinator
 
 
 class _ControllerSignals(QObject):
@@ -66,11 +67,23 @@ class MeasurementController:
         self.signals = _ControllerSignals()
         self._state = ControllerState()
         self._worker: Any = None
-        self._worker_slots: list[tuple[Any, Callable[..., Any]]] = []
-        self._thread_finished_signal: Any = None
+        self._worker_lifecycle = WorkerLifecycleCoordinator(
+            {
+                "progress": self._on_progress,
+                "message": self._on_message,
+                "data_update": self.signals.data_update.emit,
+                "result": self._on_result,
+                "finished": self._on_finished,
+                "stopped": self._on_stopped,
+                "error": self._on_error,
+                "step_pause": self._on_step_pause,
+            },
+            self._on_thread_finished,
+        )
         self._shutdown_waiting = False
         self._ignore_thread_finished_once = False
         self._stop_intent: StopIntent | None = None
+        self._runtime = MeasurementRuntimeCoordinator()
 
     @property
     def state(self) -> ControllerState:
@@ -104,6 +117,7 @@ class MeasurementController:
             return False
         self._ignore_thread_finished_once = False
         self._stop_intent = None
+        self._runtime = MeasurementRuntimeCoordinator()
 
         preparing = MeasurementViewState(kind).prepare()
         self._set_state(kind, preparing)
@@ -115,51 +129,16 @@ class MeasurementController:
             effective_command = MeasurementCommand(config_path, command.options)
             worker = factory(effective_command, measurement_port=self._measurement_port)
             self._worker = worker
-            self._bind_worker(worker)
+            self._worker_lifecycle.bind(worker)
             self._set_state(kind, preparing.run())
             worker.start()
             return True
         except Exception as error:
-            self._disconnect_worker()
+            self._worker_lifecycle.disconnect()
             self._worker = None
             self._set_state(kind, preparing.fail(str(error) or error.__class__.__name__))
             self.signals.error.emit(str(error))
             return False
-
-    def _bind_worker(self, worker: Any) -> None:
-        mapping = {
-            "progress": self._on_progress,
-            "message": self._on_message,
-            "data_update": self.signals.data_update.emit,
-            "result": self._on_result,
-            "finished": self._on_finished,
-            "stopped": self._on_stopped,
-            "error": self._on_error,
-            "step_pause": self._on_step_pause,
-        }
-        for name, slot in mapping.items():
-            signal = getattr(worker.signals, name, None)
-            if signal is not None:
-                signal.connect(slot)
-                self._worker_slots.append((signal, slot))
-        thread_finished = getattr(worker, "finished", None)
-        if thread_finished is not None and thread_finished is not getattr(worker.signals, "finished", None):
-            thread_finished.connect(self._on_thread_finished)
-            self._thread_finished_signal = thread_finished
-
-    def _disconnect_worker(self) -> None:
-        for signal, slot in self._worker_slots:
-            try:
-                signal.disconnect(slot)
-            except (RuntimeError, TypeError, ValueError):
-                pass
-        self._worker_slots.clear()
-        if self._thread_finished_signal is not None:
-            try:
-                self._thread_finished_signal.disconnect(self._on_thread_finished)
-            except (RuntimeError, TypeError, ValueError):
-                pass
-            self._thread_finished_signal = None
 
     def _set_state(self, kind: MeasurementKind, view_state: MeasurementViewState) -> None:
         self._state = ControllerState(kind, view_state.status, view_state)
@@ -204,27 +183,21 @@ class MeasurementController:
     def _on_finished(self) -> None:
         view = self._state.view_state
         if view is not None and not view.status.is_terminal:
-            if self._stop_intent is not None:
-                if self._stop_intent is StopIntent.EMERGENCY_STOP:
-                    reason = view.stop_reason or "紧急停止"
-                    self._set_state(view.kind, view.emergency_stop(reason))
+            decision = self._runtime.finished(view.result)
+            if decision.status is not MeasurementStatus.COMPLETED:
+                if decision.status is MeasurementStatus.EMERGENCY_STOPPED:
+                    self._set_state(view.kind, view.emergency_stop(decision.reason or "紧急停止"))
+                    self.signals.stopped.emit(decision.reason or "紧急停止")
+                elif decision.status is MeasurementStatus.CANCELLED:
+                    self._set_state(view.kind, view.stop(decision.reason or "用户停止"))
+                    self.signals.stopped.emit(decision.reason or "用户停止")
                 else:
-                    reason = view.stop_reason or (
-                        "任务已取消" if self._stop_intent is StopIntent.CANCEL else "用户停止"
-                    )
-                    try:
-                        self._set_state(view.kind, view.stop(reason))
-                    except ValueError:
-                        self._set_state(view.kind, view.transition(MeasurementStatus.CANCELLED, stop_reason=reason))
-                self.signals.stopped.emit(reason)
+                    self._set_state(view.kind, view.fail(decision.error or "测量失败"))
+                    self.signals.error.emit(decision.error or "测量失败")
                 self._cleanup_if_non_threaded()
                 return
-            result = view.result
-            if result is None:
-                self._on_error("worker 完成但未提供测量结果")
-                return
             try:
-                self._set_state(view.kind, view.finish(result))
+                self._set_state(view.kind, view.finish(decision.result))
             except ValueError:
                 self._set_state(view.kind, view.transition(MeasurementStatus.FAILED, error_text="worker 在非法状态下完成"))
                 self.signals.error.emit("worker 在非法状态下完成")
@@ -233,7 +206,8 @@ class MeasurementController:
 
     def _on_stopped(self, reason: str) -> None:
         view = self._state.view_state
-        final_reason = reason or (view.stop_reason if view is not None else None) or "用户停止"
+        decision = self._runtime.stopped(reason)
+        final_reason = decision.reason or (view.stop_reason if view is not None else None) or "用户停止"
         if view is not None and not view.status.is_terminal:
             if self._stop_intent is not None:
                 final_reason = view.stop_reason or (
@@ -243,7 +217,7 @@ class MeasurementController:
                 )
             else:
                 final_reason = reason or view.stop_reason or "用户停止"
-            if self._stop_intent is StopIntent.EMERGENCY_STOP:
+            if decision.status is MeasurementStatus.EMERGENCY_STOPPED:
                 self._set_state(view.kind, view.emergency_stop(final_reason))
             else:
                 try:
@@ -256,7 +230,8 @@ class MeasurementController:
     def _on_error(self, text: str) -> None:
         view = self._state.view_state
         if view is not None and not view.status.is_terminal:
-            self._set_state(view.kind, view.fail(text or "测量失败"))
+            decision = self._runtime.failed(text)
+            self._set_state(view.kind, view.fail(decision.error or "测量失败"))
         self.signals.error.emit(text)
         self._cleanup_if_non_threaded()
 
@@ -279,12 +254,12 @@ class MeasurementController:
         self.signals.thread_finished.emit()
 
     def _cleanup_if_non_threaded(self) -> None:
-        if self._thread_finished_signal is None:
+        if self._worker_lifecycle.thread_signal is None:
             self._cleanup_worker()
             self.signals.thread_finished.emit()
 
     def _cleanup_worker(self) -> None:
-        self._disconnect_worker()
+        self._worker_lifecycle.disconnect()
         self._worker = None
 
     def stop(self) -> bool:
@@ -319,6 +294,7 @@ class MeasurementController:
         else:
             intent = self._stop_intent
             reason = "任务已取消" if intent is StopIntent.CANCEL else "用户停止"
+        self._runtime.request(intent)
         if view is not None and view.status in {MeasurementStatus.RUNNING, MeasurementStatus.WAITING_FOR_CONTINUE, MeasurementStatus.PREPARING}:
             self._set_state(view.kind, view.stop(reason, stopping=True))
         try:

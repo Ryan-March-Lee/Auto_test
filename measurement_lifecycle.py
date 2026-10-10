@@ -16,10 +16,11 @@ def cleanup_measurement(
     *,
     power_cleanup: Callable[[], None] | None = None,
     safety_flow: SafetyShutdownFlow | None = None,
+    close_resource: bool = True,
 ) -> None:
     """按 RF -> 电源 -> 连接顺序尽力清理，并汇总所有失败。"""
     if safety_flow is not None:
-        safety_flow.run()
+        safety_flow.run(close_resource=close_resource)
         return
 
     errors: List[BaseException] = []
@@ -39,11 +40,12 @@ def cleanup_measurement(
             errors.append(error)
             logger.exception("电源清理失败: %s", error)
 
-    try:
-        errors.extend(instrument_control.close_all(close_rf=False))
-    except Exception as error:
-        errors.append(error)
-        logger.exception("仪器连接清理失败: %s", error)
+    if close_resource:
+        try:
+            errors.extend(instrument_control.close_all(close_rf=False))
+        except Exception as error:
+            errors.append(error)
+            logger.exception("仪器连接清理失败: %s", error)
 
     if errors:
         details = "; ".join(str(error) for error in errors)

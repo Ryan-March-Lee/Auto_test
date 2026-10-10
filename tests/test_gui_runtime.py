@@ -65,6 +65,7 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
                 self.assertIs(request.measurement_port, port)
                 self.assertEqual(request.run_id, "run-assembly-test")
                 self.assertEqual(request.run_directory, Path("run-directory"))
+                self.assertTrue(request.safety_options["owns_measurement_port"])
                 self.assertEqual(port.close_calls, [])
 
     def test_successful_factory_handoff_does_not_close_port_early(self):
@@ -84,6 +85,7 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
 
                 self.assertIs(result, service)
                 self.assertIs(use_case.call_args.args[0].measurement_port, port)
+                self.assertTrue(use_case.call_args.args[0].safety_options["owns_measurement_port"])
                 self.assertEqual(port.close_calls, [])
                 port.close_all(close_rf=True)
                 self.assertEqual(port.close_calls, [True])
@@ -149,6 +151,7 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
                 self.assertIs(result, expected)
                 connect.assert_not_called()
                 self.assertIs(measurement.call_args.args[0].measurement_port, port)
+                self.assertFalse(measurement.call_args.args[0].safety_options["owns_measurement_port"])
                 self.assertEqual(port.close_calls, [])
 
     def test_explicit_driver_mapping_path_is_carried_into_request(self):

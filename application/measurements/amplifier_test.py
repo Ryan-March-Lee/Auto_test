@@ -26,6 +26,9 @@ class AmplifierMeasurementUseCase:
             raise ValueError("AmplifierMeasurementUseCase 必须由应用组装层注入 measurement_port")
         self.config = _service_config(request.configuration)
         self.inst_ctrl = request.measurement_port
+        self.owns_measurement_port = bool(
+            request.safety_options.get("owns_measurement_port", False)
+        )
         self.run_id = request.run_id
         self.run_directory = request.run_directory
         self.result_repository = request.result_repository
@@ -59,6 +62,7 @@ class AmplifierMeasurementUseCase:
             cancellation_token=self._token,
             sleep_fn=self.sleep_fn,
             settle_delay_s=3.0,
+            owns_measurement_port=self.owns_measurement_port,
         )
         self.measurement_results: dict[str, Any] = {}
         self.last_result: MeasurementResult | None = None

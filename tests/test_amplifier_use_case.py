@@ -73,6 +73,7 @@ def _request(instrument, *, token=None, repository=None):
                 }
             }
         },
+        safety_options={"owns_measurement_port": True},
     )
 
 

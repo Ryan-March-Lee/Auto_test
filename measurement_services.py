@@ -50,7 +50,8 @@ class _Service:
                  event_sink: EventSink | None = None, cancellation_token: CancellationToken | None = None,
                  result_repository: ResultRepository | Callable[[Any], Any] | None = None,
                  sleep_fn: Callable[[float], None] | None = None,
-                 settle_delay_s: float = 5.0):
+                 settle_delay_s: float = 5.0,
+                 owns_measurement_port: bool = True):
         self.config = config
         self.inst_ctrl = instrument
         self.run_id = run_id
@@ -59,6 +60,7 @@ class _Service:
         self.result_repository = result_repository
         self.sleep_fn = sleep_fn or time.sleep
         self.settle_delay_s = settle_delay_s
+        self.owns_measurement_port = owns_measurement_port
 
     def _check_cancelled(self) -> None:
         token = getattr(self, "cancellation_token", None)
@@ -79,7 +81,11 @@ class _Service:
         return saver(result)
 
     def _cleanup(self, power_cleanup: Callable[[], None] | None = None) -> None:
-        cleanup_measurement(self.inst_ctrl, power_cleanup=power_cleanup)
+        cleanup_measurement(
+            self.inst_ctrl,
+            power_cleanup=power_cleanup,
+            close_resource=getattr(self, "owns_measurement_port", True),
+        )
 
 
 class CableLossService(_Service):

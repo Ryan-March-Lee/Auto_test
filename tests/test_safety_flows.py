@@ -10,6 +10,7 @@ from instrument.flow import (
     SafetyShutdownError,
     SafetyShutdownFlow,
 )
+from measurement_lifecycle import cleanup_measurement
 from instrument.simulation import CommandRecorder, SimulatedPowerSupply, SimulatedSignalGenerator
 
 
@@ -93,6 +94,26 @@ class SafetyFlowTests(unittest.TestCase):
         with self.assertRaises(SafetyShutdownError) as raised:
             flow.run()
         self.assertEqual([str(error) for error in raised.exception.errors], ["rf", "power", "close"])
+
+    def test_shutdown_can_leave_borrowed_resource_open(self):
+        events = []
+        flow = SafetyShutdownFlow(
+            rf_off=lambda: events.append("rf_off"),
+            power_off=lambda: events.append("power_off"),
+            close=lambda **_flags: events.append("close") or [],
+        )
+        flow.run(close_resource=False)
+        self.assertEqual(events, ["rf_off", "power_off"])
+
+    def test_cleanup_measurement_passes_borrowed_resource_boundary_to_flow(self):
+        events = []
+        flow = SafetyShutdownFlow(
+            rf_off=lambda: events.append("rf_off"),
+            power_off=lambda: events.append("power_off"),
+            close=lambda **_flags: events.append("close") or [],
+        )
+        cleanup_measurement(object(), safety_flow=flow, close_resource=False)
+        self.assertEqual(events, ["rf_off", "power_off"])
 
     def test_shutdown_still_closes_legacy_connections_after_power_failure(self):
         events = []

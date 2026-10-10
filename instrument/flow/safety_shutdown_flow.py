@@ -26,7 +26,7 @@ class SafetyShutdownFlow:
         self.close = close
         self._cleaned = False
 
-    def run(self) -> None:
+    def run(self, *, close_resource: bool = True) -> None:
         if self._cleaned:
             return
         errors: list[BaseException] = []
@@ -44,7 +44,7 @@ class SafetyShutdownFlow:
                 power_safe = True
             except Exception as error:
                 errors.append(error)
-        if self.close is not None:
+        if self.close is not None and close_resource:
             try:
                 close_errors = self.close(rf_safe=rf_safe, power_safe=power_safe)
                 if close_errors:

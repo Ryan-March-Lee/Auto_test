@@ -55,10 +55,27 @@ def _request(instrument, *, events=None, token=None, repository=None):
         event_sink=events,
         cancellation_token=token,
         result_repository=repository or _Repository(),
+        safety_options={"owns_measurement_port": True},
     )
 
 
 class CableLossUseCaseTests(unittest.TestCase):
+    def test_borrowed_measurement_port_is_not_closed(self):
+        instrument = _Instrument()
+        request = _request(instrument)
+        borrowed_request = CableLossMeasurementRequest(
+            configuration=request.configuration,
+            context=request.context,
+            run_directory=request.run_directory,
+            measurement_port=request.measurement_port,
+            result_repository=request.result_repository,
+            safety_options={"owns_measurement_port": False},
+        )
+        use_case = CableLossUseCase(borrowed_request, sleep_fn=lambda _: None)
+        use_case.measure_all_frequencies()
+        use_case.continue_to_step2()
+        self.assertEqual(instrument.close_calls, 0)
+
     def test_waits_then_continues_and_saves_only_completed_result(self):
         instrument = _Instrument()
         events = _Events()

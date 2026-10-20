@@ -207,6 +207,37 @@ def _legacy_imports(tree):
 
 
 class ProductionDependencyTests(unittest.TestCase):
+    def test_production_code_uses_path_service_instead_of_global_path_constants(self):
+        forbidden_names = {
+            "PROJECT_ROOT", "TEST_RESULTS_DIR", "CONFIG_FILE", "CABLE_LOSS_FILE",
+            "LOGS_DIR", "ASSETS_DIR", "ICONS_DIR", "IMAGES_DIR", "TEMP_DIR",
+        }
+        allowed = {
+            ROOT / "project_paths.py",
+            ROOT / "infrastructure" / "filesystem" / "paths.py",
+            ROOT / "infrastructure" / "config" / "json_io.py",
+            ROOT / "infrastructure" / "persistence" / "json_result_repository.py",
+            ROOT / "infrastructure" / "logging" / "app_logging.py",
+            ROOT / "instrument_control.py",
+            ROOT / "instrument" / "legacy_control.py",
+            ROOT / "tests" / "test_project_paths.py",
+            ROOT / "tests" / "test_config_io.py",
+            ROOT / "tests" / "test_result_storage.py",
+        }
+        violations = []
+        for source_path in _production_sources():
+            if source_path in allowed:
+                continue
+            tree = _tree(source_path)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module == "infrastructure.filesystem.paths":
+                    names = {alias.name for alias in node.names}
+                    violations.extend(
+                        f"{source_path.relative_to(ROOT)} imports {name}"
+                        for name in names & forbidden_names
+                    )
+        self.assertEqual(violations, [])
+
     def test_domain_configuration_does_not_depend_on_infrastructure(self):
         forbidden = {"infrastructure", "json", "pathlib", "pyvisa", "PySide6", "PyQt5"}
         violations = []

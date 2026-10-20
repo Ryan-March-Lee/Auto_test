@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from project_paths import CONFIG_FILE, CABLE_LOSS_FILE, ICONS_DIR, IMAGES_DIR, PROJECT_ROOT, TEMP_DIR, TEST_RESULTS_DIR, ensure_directory, resolve_path
+from infrastructure.filesystem.paths import PathService
 
 
 class ProjectPathsTests(unittest.TestCase):
@@ -35,6 +36,14 @@ class ProjectPathsTests(unittest.TestCase):
             self.assertEqual(ensure_directory(target), target)
             self.assertTrue(target.is_dir())
             self.assertEqual(ensure_directory(target), target)
+
+    def test_path_service_can_be_injected_for_an_isolated_root(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            paths = PathService(temporary_directory)
+            self.assertEqual(paths.config_file, Path(temporary_directory) / "config.json")
+            self.assertEqual(paths.test_results_dir, Path(temporary_directory) / "test_results")
+            self.assertEqual(paths.logs_dir, Path(temporary_directory) / "logs")
+            self.assertFalse(paths.test_results_dir.exists())
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
-from infrastructure.filesystem.paths import PROJECT_ROOT
+from infrastructure.filesystem.paths import DEFAULT_PATHS
 
 
 RELEASE_FILES = (
@@ -54,11 +54,11 @@ def _existing(paths: Iterable[str], root: Path) -> list[str]:
 
 
 def build_manifest(
-    root: Path = PROJECT_ROOT,
+    root: Path | None = None,
     *,
     real_device_acceptance: str = "pending",
 ) -> dict:
-    root = Path(root)
+    root = Path(root) if root is not None else DEFAULT_PATHS.project_root
     if real_device_acceptance not in REAL_DEVICE_ACCEPTANCE_STATES:
         raise ValueError(
             "real_device_acceptance 必须是 pending 或 passed"
@@ -83,7 +83,7 @@ def build_manifest(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="生成 PA 自动测试发布/回滚清单")
-    parser.add_argument("--output", type=Path, default=PROJECT_ROOT / "release_manifest.json")
+    parser.add_argument("--output", type=Path, default=DEFAULT_PATHS.project_root / "release_manifest.json")
     parser.add_argument(
         "--real-device-acceptance",
         choices=sorted(REAL_DEVICE_ACCEPTANCE_STATES),

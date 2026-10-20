@@ -13,6 +13,7 @@ from application.ports.result_repository import (
     SavedMeasurementResult,
 )
 from infrastructure.persistence.json_encoder import NumpyJSONEncoder
+from infrastructure.filesystem.paths import PathService
 
 
 class FileMeasurementResultRepository(MeasurementResultRepository):
@@ -27,7 +28,13 @@ class FileMeasurementResultRepository(MeasurementResultRepository):
         "amplifier_measurement": "amplifier_measurement",
     }
 
-    def __init__(self, *, results_directory: PathLike | None = None):
+    def __init__(
+        self,
+        *,
+        results_directory: PathLike | None = None,
+        paths: PathService | None = None,
+    ):
+        self.paths = paths
         self.results_directory = (
             Path(results_directory) if results_directory is not None else None
         )
@@ -42,13 +49,17 @@ class FileMeasurementResultRepository(MeasurementResultRepository):
     ) -> SavedMeasurementResult:
         legacy_path = self.legacy_path(result_type)
         effective_run_directory = self._run_directory(run_id, run_directory)
+        save_kwargs = {
+            "result_type": result_type,
+            "legacy_path": legacy_path,
+            "run_id": run_id,
+            "run_directory": effective_run_directory,
+            "encoder": NumpyJSONEncoder,
+        }
+        if self.paths is not None:
+            save_kwargs["paths"] = self.paths
         archive_path, legacy_copy_path = json_result_repository.save_measurement_result(
-            result,
-            result_type=result_type,
-            legacy_path=legacy_path,
-            run_id=run_id,
-            run_directory=effective_run_directory,
-            encoder=NumpyJSONEncoder,
+            result, **save_kwargs
         )
         return SavedMeasurementResult(
             archive_path=archive_path,
@@ -63,7 +74,10 @@ class FileMeasurementResultRepository(MeasurementResultRepository):
     def create_legacy_run_snapshot(
         self, run_id: str, config: Mapping[str, Any], *, status: str = "created"
     ) -> Path:
-        return json_result_repository.write_legacy_run_snapshot(run_id, config, status=status)
+        kwargs: dict[str, Any] = {"status": status}
+        if self.paths is not None:
+            kwargs["paths"] = self.paths
+        return json_result_repository.write_legacy_run_snapshot(run_id, config, **kwargs)
 
     def load(self, path: PathLike) -> Mapping[str, Any]:
         return json_result_repository.load_json_result(path)
@@ -96,13 +110,20 @@ class FileMeasurementResultRepository(MeasurementResultRepository):
 
     def _results_directory(self) -> Path:
         """Resolve the default lazily so path configuration remains patchable."""
-        return self.results_directory or Path(json_result_repository.TEST_RESULTS_DIR)
+        if self.results_directory is not None:
+            return self.results_directory
+        return self.paths.test_results_dir if self.paths is not None else Path(json_result_repository.TEST_RESULTS_DIR)
 
     def _run_directory(self, run_id: str, run_directory: PathLike | None) -> Path | None:
         if run_directory is not None:
             return Path(run_directory)
         if self.results_directory is None:
-            return None
+            if self.paths is None:
+                return None
+            json_result_repository.validate_run_id(run_id)
+            directory = self.paths.test_results_dir / run_id
+            directory.mkdir(parents=True, exist_ok=False)
+            return directory
 
         json_result_repository.validate_run_id(run_id)
         directory = self.results_directory / run_id

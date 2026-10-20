@@ -28,13 +28,11 @@ project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 from infrastructure.filesystem.paths import (
-    CABLE_LOSS_FILE,
-    CONFIG_FILE,
-    ICONS_DIR,
-    PROJECT_ROOT,
-    TEMP_DIR,
-    TEST_RESULTS_DIR,
+    DEFAULT_PATHS,
+    PathService,
 )
+# Legacy patch target; normal instances use the injected PathService.
+CONFIG_FILE = DEFAULT_PATHS.config_file
 from infrastructure.config.json_io import load_config_file
 from infrastructure.persistence.json_result_repository import load_json_result
 from infrastructure.logging.app_logging import setup_logging
@@ -111,9 +109,10 @@ QPushButton:disabled { background-color: #cccccc; color: #666666; }
 class MainWindow(QMainWindow):
     """主窗口类"""
 
-    def __init__(self, config_path=None):
+    def __init__(self, config_path=None, *, paths: PathService | None = None):
         super().__init__()
-        self.config_path = Path(config_path or CONFIG_FILE)
+        self.paths = paths or DEFAULT_PATHS
+        self.config_path = Path(config_path or self.paths.config_file)
         self.setWindowTitle("PA自动测试系统 v1.0")
         self.setGeometry(100, 100, 1600, 1000)
         
@@ -243,7 +242,7 @@ class MainWindow(QMainWindow):
         main_splitter.addWidget(left_widget)
         
         # 右侧聊天面板
-        self.chat_panel = ChatPanel(self)
+        self.chat_panel = ChatPanel(self, paths=self.paths)
         self.chat_panel.setMinimumWidth(350)
         self.chat_panel.setMaximumWidth(600)
         main_splitter.addWidget(self.chat_panel)
@@ -329,7 +328,7 @@ class MainWindow(QMainWindow):
             reference = MeasurementResultReference(
                 result_id=f"loaded-{datetime.now(timezone.utc).isoformat()}",
                 kind=MeasurementKind.CABLE_LOSS,
-                value=load_json_result(CABLE_LOSS_FILE),
+                value=load_json_result(self.paths.cable_loss_file),
                 source="result_service",
             )
             self.cable_loss_page.show_loaded_result(reference)
@@ -1116,8 +1115,8 @@ class MainWindow(QMainWindow):
         """创建数据可视化选项卡"""
         self.visualization_page = VisualizationPage(
             config_provider=lambda: self.config,
-            temp_dir=TEMP_DIR,
-            results_dir=TEST_RESULTS_DIR,
+            temp_dir=self.paths.temp_dir,
+            results_dir=self.paths.test_results_dir,
             log_callback=self.add_log_message,
             parent=self,
         )
@@ -1132,9 +1131,9 @@ class MainWindow(QMainWindow):
     def create_data_export_tab(self):
         """创建数据导出选项卡"""
         self.export_page = ExportPage(
-            results_dir=TEST_RESULTS_DIR,
-            cable_loss_file=CABLE_LOSS_FILE,
-            visualizer_factory=DataVisualization,
+            results_dir=self.paths.test_results_dir,
+            cable_loss_file=self.paths.cable_loss_file,
+            visualizer_factory=lambda: DataVisualization(paths=self.paths),
             log_callback=self.add_log_message,
             parent=self,
         )
@@ -1310,9 +1309,14 @@ class MainWindow(QMainWindow):
             self.config_page.config = self.config
 
     def _save_config_file(self) -> bool:
-        """将 self.config 写入 CONFIG_FILE，成功返回 True，失败返回 False。"""
+        """将 self.config 写入配置路径，成功返回 True，失败返回 False。"""
         try:
-            with open(getattr(self, "config_path", CONFIG_FILE), 'w', encoding='utf-8') as f:
+            with open(
+                getattr(self, "config_path", getattr(self, "paths", DEFAULT_PATHS).config_file)
+                if hasattr(self, "config_path")
+                else CONFIG_FILE,
+                'w', encoding='utf-8'
+            ) as f:
                 json.dump(self.config, f, indent=4, ensure_ascii=False)
             return True
         except Exception as e:
@@ -1475,13 +1479,13 @@ class MainWindow(QMainWindow):
         event.accept()
 
 
-def build_application(argv=None):
+def build_application(argv=None, *, paths: PathService | None = None):
     """创建配置完成的 Qt 应用，不创建窗口或连接仪器。"""
     app = QApplication.instance()
     if app is None:
         app = QApplication(sys.argv if argv is None else argv)
     try:
-        setup_logging()
+        setup_logging(paths=paths or DEFAULT_PATHS)
     except Exception as logging_error:
         print(f"日志初始化失败（忽略）: {logging_error}")
     app.setApplicationName("PA自动测试系统")

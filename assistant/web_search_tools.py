@@ -6,7 +6,7 @@
 """
 
 import requests
-from infrastructure.filesystem.paths import SEARCH_API_CONFIG_FILE, resolve_path
+from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService, resolve_path
 import json
 import os
 import time
@@ -265,9 +265,9 @@ class FunctionCallHandler:
         if google_cx:
             self.web_search_api.google_cx = google_cx
     
-    def load_api_config(self, config_file=None):
+    def load_api_config(self, config_file=None, *, paths: PathService | None = None):
         """从配置文件加载API密钥"""
-        config_file = resolve_path(config_file, SEARCH_API_CONFIG_FILE)
+        config_file = resolve_path(config_file, (paths or DEFAULT_PATHS).search_api_config_file)
         try:
             if os.path.exists(config_file):
                 with open(config_file, 'r', encoding='utf-8') as f:

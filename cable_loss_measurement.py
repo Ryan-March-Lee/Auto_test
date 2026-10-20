@@ -2,7 +2,10 @@
 
 import time
 from typing import Dict
-from infrastructure.filesystem.paths import CABLE_LOSS_FILE, CONFIG_FILE, resolve_path
+from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService, resolve_path
+
+# Historical patch target retained for external scripts; new instances use PathService.
+CABLE_LOSS_FILE = DEFAULT_PATHS.cable_loss_file
 from measurement_calculations import calculate_cable_losses
 from infrastructure.logging.app_logging import get_logger
 from measurement_lifecycle import cleanup_measurement
@@ -14,19 +17,21 @@ from infrastructure.persistence.json_result_repository import (
 )
 from infrastructure.config.json_io import load_config_file
 from measurement_services import CableLossService
+from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 # from mock_instrument_control import MockInstrumentControl as InstrumentControl
 
 logger = get_logger(__name__)
 
 class CableLossMeasurement:
-    def __init__(self, config_path=None, run_id=None, sleep_fn=None, measurement_port=None):
+    def __init__(self, config_path=None, run_id=None, sleep_fn=None, measurement_port=None, paths: PathService | None = None):
         """初始化线损测量类
 
         Args:
             config_path: 配置文件路径
         """
-        config_path = resolve_path(config_path, CONFIG_FILE)
-        self.config = load_config_file(config_path)
+        self.paths = paths or DEFAULT_PATHS
+        config_path = resolve_path(config_path, self.paths.config_file)
+        self.config = load_config_file(config_path, paths=self.paths)
         if measurement_port is None:
             raise ValueError(
                 "CableLossMeasurement 必须显式传入 measurement_port；"
@@ -39,6 +44,7 @@ class CableLossMeasurement:
             self.run_id,
             self.config,
             status="created",
+            paths=self.paths,
         )
         self.inst_ctrl = measurement_port
 
@@ -146,13 +152,25 @@ class CableLossMeasurement:
             'cable_losses': {str(k): v for k, v in self.cable_losses.items()}  # 确保key是字符串
         }
 
-        archive_path, legacy_path = save_measurement_result(
-            results,
-            result_type="cable_loss",
-            legacy_path=CABLE_LOSS_FILE,
-            run_id=self.run_id,
-            run_directory=self.run_directory,
-        )
+        paths = getattr(self, "paths", None)
+        if paths is None:
+            archive_path, legacy_path = save_measurement_result(
+                results,
+                result_type="cable_loss",
+                legacy_path=CABLE_LOSS_FILE,
+                run_id=self.run_id,
+                run_directory=self.run_directory,
+            )
+        else:
+            repository = FileMeasurementResultRepository(paths=paths)
+            saved = repository.save(
+                results,
+                result_type="cable_loss",
+                run_id=self.run_id,
+                run_directory=self.run_directory,
+            )
+            archive_path = saved.archive_path
+            legacy_path = saved.legacy_copy_path
         self.run_directory = archive_path.parent
         logger.info("线损结果已保存: 兼容路径=%s，运行路径=%s", legacy_path, archive_path)
         print(f"\n线损结果已保存至 '{legacy_path}'，运行归档为 '{archive_path}'")

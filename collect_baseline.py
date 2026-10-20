@@ -18,7 +18,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from infrastructure.filesystem.paths import PROJECT_ROOT, TEST_RESULTS_DIR
+from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService
 from infrastructure.persistence.json_result_repository import validate_run_id
 
 
@@ -48,11 +48,11 @@ def _relative_or_name(path: Path, root: Path) -> str:
         return path.name
 
 
-def _git_commit() -> Optional[str]:
+def _git_commit(root: Path) -> Optional[str]:
     try:
         completed = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            cwd=PROJECT_ROOT,
+            cwd=root,
             capture_output=True,
             text=True,
             check=True,
@@ -83,13 +83,16 @@ def _copy_artifact(source: Path, destination: Path, project_root: Path, artifact
 
 def collect_baseline(
     *,
-    results_dir: Path = TEST_RESULTS_DIR,
-    output_dir: Path = PROJECT_ROOT / "baseline",
+    results_dir: Path | None = None,
+    output_dir: Path | None = None,
     run_id: Optional[str] = None,
+    paths: PathService | None = None,
 ) -> Tuple[Path, Dict[str, object]]:
     """只从指定运行目录收集结果；缺少关联文件时将基线标记为不完整。"""
-    results_dir = Path(results_dir)
-    output_dir = Path(output_dir)
+    paths = paths or DEFAULT_PATHS
+    project_root = paths.project_root
+    results_dir = Path(results_dir) if results_dir is not None else paths.test_results_dir
+    output_dir = Path(output_dir) if output_dir is not None else project_root / "baseline"
     if run_id is None:
         raise ValueError("必须指定 run_id")
     validate_run_id(run_id)
@@ -112,14 +115,14 @@ def collect_baseline(
         source = selected[kind]
         if source:
             destination = baseline_dir / "results" / source.name
-            artifacts[kind] = [_copy_artifact(source, destination, PROJECT_ROOT, baseline_dir)]
+            artifacts[kind] = [_copy_artifact(source, destination, project_root, baseline_dir)]
         else:
             artifacts[kind] = []
 
     for kind, filename in MODEL_PATTERNS.items():
         source = run_directory / filename if (run_directory / filename).is_file() else None
         artifacts[kind] = (
-            [_copy_artifact(source, baseline_dir / "results" / filename, PROJECT_ROOT, baseline_dir)]
+            [_copy_artifact(source, baseline_dir / "results" / filename, project_root, baseline_dir)]
             if source else []
         )
 
@@ -132,7 +135,7 @@ def collect_baseline(
     ):
         source = run_directory / filename if (run_directory / filename).is_file() else None
         if source:
-            artifacts[kind] = [_copy_artifact(source, baseline_dir / "snapshots" / filename, PROJECT_ROOT, baseline_dir)]
+            artifacts[kind] = [_copy_artifact(source, baseline_dir / "snapshots" / filename, project_root, baseline_dir)]
         else:
             artifacts[kind] = []
 
@@ -142,7 +145,7 @@ def collect_baseline(
     for pattern in REPORT_PATTERNS:
         report = _latest(run_directory.glob(pattern))
         if report:
-            reports.append(_copy_artifact(report, baseline_dir / "reports" / report.name, PROJECT_ROOT, baseline_dir))
+            reports.append(_copy_artifact(report, baseline_dir / "reports" / report.name, project_root, baseline_dir))
     artifacts["reports"] = reports
 
     required_kinds = ("test_plan_snapshot", "run_mapping_snapshot", "run_metadata", *MEASUREMENT_PATTERNS)
@@ -170,14 +173,14 @@ def collect_baseline(
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "purpose": "阶段 0.1 基线样例",
         "source": {
-            "results_directory": _relative_or_name(results_dir, PROJECT_ROOT),
+            "results_directory": _relative_or_name(results_dir, project_root),
             "requested_run_id": run_id,
         },
         "environment": {
             "python_version": platform.python_version(),
             "python_executable": sys.executable,
             "platform": platform.platform(),
-            "git_commit": _git_commit(),
+            "git_commit": _git_commit(project_root),
             "dependencies": _dependency_versions(),
         },
         "artifacts": artifacts,
@@ -201,16 +204,19 @@ def collect_baseline(
 
 def collect_batch_baseline(
     *,
-    results_dir: Path = TEST_RESULTS_DIR,
-    output_dir: Path = PROJECT_ROOT / "baseline",
+    results_dir: Path | None = None,
+    output_dir: Path | None = None,
     cable_loss_run_id: str,
     driver_mapping_run_id: str,
     amplifier_run_id: str,
     report_dir: Optional[Path] = None,
+    paths: PathService | None = None,
 ) -> Tuple[Path, Dict[str, object]]:
     """收集允许跨 ``run_id`` 复用结果的一个生产测试批次。"""
-    results_dir = Path(results_dir)
-    output_dir = Path(output_dir)
+    paths = paths or DEFAULT_PATHS
+    project_root = paths.project_root
+    results_dir = Path(results_dir) if results_dir is not None else paths.test_results_dir
+    output_dir = Path(output_dir) if output_dir is not None else project_root / "baseline"
     source_runs = {
         "cable_loss": cable_loss_run_id,
         "driver_mapping": driver_mapping_run_id,
@@ -252,7 +258,7 @@ def collect_batch_baseline(
             integrity_issues.append(f"missing:{kind}")
         else:
             destination = baseline_dir / "results" / result.name
-            artifacts[kind] = [_copy_artifact(result, destination, PROJECT_ROOT, baseline_dir)]
+            artifacts[kind] = [_copy_artifact(result, destination, project_root, baseline_dir)]
             try:
                 content = json.loads(result.read_text(encoding="utf-8"))
                 if not isinstance(content, dict):
@@ -267,7 +273,7 @@ def collect_batch_baseline(
         model = run_directory / model_name
         model_kind = f"{kind}_model"
         artifacts[model_kind] = (
-            [_copy_artifact(model, baseline_dir / "results" / model_name, PROJECT_ROOT, baseline_dir)]
+            [_copy_artifact(model, baseline_dir / "results" / model_name, project_root, baseline_dir)]
             if model.is_file()
             else []
         )
@@ -284,7 +290,7 @@ def collect_batch_baseline(
                 continue
             destination = baseline_dir / "snapshots" / f"{role}_{filename}"
             artifacts["snapshots"].append(
-                _copy_artifact(source, destination, PROJECT_ROOT, baseline_dir)
+                _copy_artifact(source, destination, project_root, baseline_dir)
             )
 
     artifacts["reports"] = []
@@ -295,7 +301,7 @@ def collect_batch_baseline(
         for pattern in REPORT_PATTERNS:
             for report in sorted(report_dir.glob(pattern)):
                 artifacts["reports"].append(
-                    _copy_artifact(report, baseline_dir / "reports" / report.name, PROJECT_ROOT, baseline_dir)
+                    _copy_artifact(report, baseline_dir / "reports" / report.name, project_root, baseline_dir)
                 )
     else:
         integrity_issues.append("missing:reports")
@@ -306,15 +312,15 @@ def collect_batch_baseline(
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "purpose": "阶段 0 生产基线测试批次",
         "source": {
-            "results_directory": _relative_or_name(results_dir, PROJECT_ROOT),
+            "results_directory": _relative_or_name(results_dir, project_root),
             "batch_run_ids": source_runs,
-            "report_directory": _relative_or_name(report_dir, PROJECT_ROOT) if report_dir else None,
+            "report_directory": _relative_or_name(report_dir, project_root) if report_dir else None,
         },
         "environment": {
             "python_version": platform.python_version(),
             "python_executable": sys.executable,
             "platform": platform.platform(),
-            "git_commit": _git_commit(),
+            "git_commit": _git_commit(project_root),
             "dependencies": _dependency_versions(),
         },
         "artifacts": artifacts,
@@ -348,8 +354,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--driver-mapping-run-id", help="批次模式的驱动映射来源运行 ID")
     parser.add_argument("--amplifier-run-id", help="批次模式的主功放来源运行 ID")
     parser.add_argument("--report-dir", type=Path, help="批次模式的报告目录")
-    parser.add_argument("--results-dir", type=Path, default=TEST_RESULTS_DIR)
-    parser.add_argument("--output-dir", type=Path, default=PROJECT_ROOT / "baseline")
+    parser.add_argument("--results-dir", type=Path)
+    parser.add_argument("--output-dir", type=Path)
     args = parser.parse_args(argv)
     try:
         if args.batch:

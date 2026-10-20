@@ -9,7 +9,7 @@ import pandas as pd
 from datetime import datetime
 import seaborn as sns
 from pathlib import Path
-from infrastructure.filesystem.paths import PROJECT_ROOT, TEST_RESULTS_DIR
+from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService
 from domain.result_reading import get_sweep_dataframe_data, get_saturation_points
 from infrastructure.persistence.json_result_repository import load_json_result
 from domain.result_reading import parse_result_model
@@ -35,7 +35,8 @@ except FileNotFoundError:
 
 
 class DataVisualization:
-    def __init__(self):
+    def __init__(self, *, paths: PathService | None = None):
+        paths = paths or DEFAULT_PATHS
         # --- MODIFIED: Set global font to Times New Roman ---
         # 移除黑体设置
         # plt.rcParams['font.sans-serif'] = ['SimHei']
@@ -45,7 +46,7 @@ class DataVisualization:
         plt.rcParams['font.serif'] = ['Times New Roman'] + plt.rcParams['font.serif']
 
         plt.rcParams['axes.unicode_minus'] = False
-        self.output_dir = TEST_RESULTS_DIR / datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.output_dir = paths.test_results_dir / datetime.now().strftime("%Y%m%d_%H%M%S")
         self.output_dir.mkdir(parents=True, exist_ok=True)
         sns.set_style("whitegrid")
         sns.set_context("notebook", font_scale=1.2)

@@ -4,7 +4,7 @@ import numpy as np
 from typing import Dict, List, Optional
 import time
 from datetime import datetime
-from infrastructure.filesystem.paths import CABLE_LOSS_FILE, CONFIG_FILE, PROJECT_ROOT, TEST_RESULTS_DIR, resolve_path
+from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService, resolve_path
 from measurement_calculations import compensate_driver_output_power
 from infrastructure.logging.app_logging import get_logger
 from measurement_lifecycle import cleanup_measurement
@@ -16,17 +16,19 @@ from infrastructure.persistence.json_result_repository import (
 )
 from infrastructure.config.json_io import load_config_file
 from measurement_services import DriverPowerMappingService
+from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 # from mock_instrument_control import MockInstrumentControl as InstrumentControl
 
 logger = get_logger(__name__)
 
 
 class DriverPowerMapping:
-    def __init__(self, config_path=None, loss_data_path=None, run_id=None, sleep_fn=None, measurement_port=None):
+    def __init__(self, config_path=None, loss_data_path=None, run_id=None, sleep_fn=None, measurement_port=None, paths: PathService | None = None):
         """初始化驱动功放功率映射测量类"""
-        config_path = resolve_path(config_path, CONFIG_FILE)
-        loss_data_path = resolve_path(loss_data_path, CABLE_LOSS_FILE)
-        self.config = load_config_file(config_path)
+        self.paths = paths or DEFAULT_PATHS
+        config_path = resolve_path(config_path, self.paths.config_file)
+        loss_data_path = resolve_path(loss_data_path, self.paths.cable_loss_file)
+        self.config = load_config_file(config_path, paths=self.paths)
         if measurement_port is None:
             raise ValueError(
                 "DriverPowerMapping 必须显式传入 measurement_port；"
@@ -41,6 +43,7 @@ class DriverPowerMapping:
             self.run_id,
             self.config,
             status="created",
+            paths=self.paths,
         )
         self.inst_ctrl = measurement_port
         self.power_mapping: Dict[str, Dict[str, float]] = {}
@@ -143,14 +146,15 @@ class DriverPowerMapping:
             }
         }
         
-        legacy_path = TEST_RESULTS_DIR / f'driver_power_mapping_{datetime.now():%Y%m%d_%H%M%S}.json'
-        archive_path, legacy_path = save_measurement_result(
+        repository = FileMeasurementResultRepository(paths=getattr(self, "paths", DEFAULT_PATHS))
+        saved = repository.save(
             results,
             result_type="driver_power_mapping",
-            legacy_path=legacy_path,
             run_id=self.run_id,
             run_directory=self.run_directory,
         )
+        archive_path = saved.archive_path
+        legacy_path = saved.legacy_copy_path
         self.run_directory = archive_path.parent
         logger.info("驱动映射结果已保存: 兼容路径=%s，运行路径=%s", legacy_path, archive_path)
         print(f"\nResults saved to {legacy_path}; archived to {archive_path}")

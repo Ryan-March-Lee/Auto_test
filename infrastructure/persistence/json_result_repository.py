@@ -14,7 +14,9 @@ from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Union
 
 from infrastructure.persistence.json_encoder import NumpyJSONEncoder
-from infrastructure.filesystem.paths import TEST_RESULTS_DIR, ensure_directory
+from infrastructure.filesystem.paths import (
+    DEFAULT_PATHS, TEST_RESULTS_DIR, PathService, ensure_directory,
+)
 
 PathLike = Union[str, Path]
 RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
@@ -62,9 +64,9 @@ def save_json_result(
     return destination
 
 
-def create_run_directory(run_id: str) -> Path:
+def create_run_directory(run_id: str, *, paths: PathService | None = None) -> Path:
     validate_run_id(run_id)
-    directory = TEST_RESULTS_DIR / run_id
+    directory = (paths.test_results_dir if paths is not None else TEST_RESULTS_DIR) / run_id
     directory.mkdir(parents=True, exist_ok=False)
     return directory
 
@@ -89,11 +91,12 @@ def write_run_snapshot(
     start_time: Optional[str] = None,
     status: str = "created",
     error: Optional[str] = None,
+    paths: PathService | None = None,
 ) -> Path:
     validate_run_id(run_id)
     test_plan = _with_run_id(test_plan, run_id, "测试方案快照")
     run_mapping = _with_run_id(run_mapping, run_id, "运行映射快照")
-    run_directory = create_run_directory(run_id)
+    run_directory = create_run_directory(run_id, paths=paths)
     try:
         save_json_result(run_directory / "test_plan_snapshot.json", test_plan, result_type="test_plan_snapshot")
         save_json_result(run_directory / "run_mapping_snapshot.json", run_mapping, result_type="run_mapping_snapshot")
@@ -116,7 +119,13 @@ def write_run_snapshot(
     return run_directory
 
 
-def write_legacy_run_snapshot(run_id: str, legacy_config: Mapping[str, Any], **kwargs: Any) -> Path:
+def write_legacy_run_snapshot(
+    run_id: str,
+    legacy_config: Mapping[str, Any],
+    *,
+    paths: PathService | None = None,
+    **kwargs: Any,
+) -> Path:
     """将旧版 config.json 转成新模型格式后写入运行快照。"""
     from infrastructure.config.json_config_repository import JsonConfigurationRepository
 
@@ -129,6 +138,7 @@ def write_legacy_run_snapshot(run_id: str, legacy_config: Mapping[str, Any], **k
         run_id,
         loaded.configuration.test_plan.to_dict(),
         loaded.configuration.run_mapping.to_dict(),
+        paths=paths,
         **kwargs,
     )
     try:
@@ -156,12 +166,13 @@ def save_measurement_result(
     run_id: str,
     run_directory: Optional[Path] = None,
     encoder: type[json.JSONEncoder] = json.JSONEncoder,
+    paths: PathService | None = None,
 ) -> tuple[Path, Path]:
     """归档结果并写入旧路径兼容副本，同时生成 canonical model。"""
     validate_run_id(run_id)
     result = _with_run_id(result, run_id, "测量结果")
     if run_directory is None:
-        run_directory = create_run_directory(run_id)
+        run_directory = create_run_directory(run_id, paths=paths)
     legacy_path = Path(legacy_path)
     archive_path = Path(run_directory) / legacy_path.name
     if archive_path.exists():

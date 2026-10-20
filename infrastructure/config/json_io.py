@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from infrastructure.filesystem.paths import CONFIG_FILE, PathLike, resolve_path
+from infrastructure.filesystem.paths import CONFIG_FILE, DEFAULT_PATHS, PathLike, PathService, resolve_path
 
 
 def load_json_object(path: PathLike) -> Dict[str, Any]:
@@ -37,9 +37,14 @@ def load_json_object(path: PathLike) -> Dict[str, Any]:
     return data
 
 
-def load_config_file(path: Optional[PathLike] = None) -> Dict[str, Any]:
+def load_config_file(
+    path: Optional[PathLike] = None,
+    *,
+    paths: PathService | None = None,
+) -> Dict[str, Any]:
     """读取配置文件，保持项目既有的默认路径和相对路径语义。"""
-    return load_json_object(resolve_path(path, CONFIG_FILE))
+    default_path = (paths or DEFAULT_PATHS).config_file if paths is not None else CONFIG_FILE
+    return load_json_object(resolve_path(path, default_path))
 
 
-__all__ = ["CONFIG_FILE", "PathLike", "load_config_file", "load_json_object", "resolve_path"]
+__all__ = ["CONFIG_FILE", "PathLike", "PathService", "load_config_file", "load_json_object", "resolve_path"]

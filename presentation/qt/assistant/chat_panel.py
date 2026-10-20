@@ -3,17 +3,18 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QHBoxLayout, QLabel, QMessage
                                QPushButton, QTextEdit, QVBoxLayout, QWidget)
 from PySide6.QtCore import QEvent, Qt
 
-from infrastructure.filesystem.paths import ICONS_DIR
+from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService
 from .chat_dialogs import ChatHistoryDialog, ChatSettingsDialog
 from .chat_worker import ChatWorker, UnavailableAssistant
 
 
 class ChatPanel(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, paths: PathService | None = None):
         super().__init__(parent)
+        self.paths = paths or DEFAULT_PATHS
         try:
             from assistant.llm import LLMChat
-            self.llm_chat = LLMChat()
+            self.llm_chat = LLMChat(paths=self.paths)
         except Exception as error:
             print(f"AI 助手未启用: {error}")
             self.llm_chat = UnavailableAssistant()

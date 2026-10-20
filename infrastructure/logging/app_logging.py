@@ -23,7 +23,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Union
 
-from infrastructure.filesystem.paths import LOGS_DIR, PROJECT_ROOT
+from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService
 
 
 PathLike = Union[str, Path]
@@ -109,6 +109,7 @@ def get_logger(name: Optional[str] = None) -> logging.Logger:
 def setup_logging(
     log_directory: Optional[PathLike] = None,
     *,
+    paths: PathService | None = None,
     console: bool = False,
     level: int = logging.INFO,
 ) -> Path:
@@ -123,7 +124,7 @@ def setup_logging(
     if existing is not None:
         return existing
 
-    directory = Path(log_directory) if log_directory is not None else LOGS_DIR
+    directory = Path(log_directory) if log_directory is not None else (paths or DEFAULT_PATHS).logs_dir
     directory.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_path = directory / f"pa_auto_test_{timestamp}_{os.getpid()}.log"
@@ -144,7 +145,7 @@ def setup_logging(
 
     setattr(root_logger, _MARKER_ATTRIBUTE, log_path)
     root_logger.info("日志初始化完成: %s (项目根: %s, 进程: %d)",
-                     log_path, PROJECT_ROOT, os.getpid())
+                     log_path, (paths or DEFAULT_PATHS).project_root, os.getpid())
     return log_path
 
 

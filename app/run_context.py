@@ -12,6 +12,7 @@ from domain.configuration.models import RunConfiguration
 from domain.models import RunContext
 from application.ports.config_repository import ConfigurationLoadResult
 from infrastructure.persistence.json_result_repository import write_run_snapshot
+from infrastructure.filesystem.paths import PathService
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,7 @@ def prepare_run(
     software_version: str = "unknown",
     git_commit: str | None = None,
     config_path: Path | None = None,
+    paths: PathService | None = None,
 ) -> PreparedRun:
     """Validate and snapshot a run without importing or opening an instrument.
 
@@ -61,6 +63,7 @@ def prepare_run(
         start_time=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         status="created",
         error=None,
+        paths=paths,
     )
     return PreparedRun(configuration, context, Path(run_directory), config_path)
 

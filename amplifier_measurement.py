@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Tuple
 import time
 from datetime import datetime
 from pathlib import Path
-from infrastructure.filesystem.paths import CABLE_LOSS_FILE, CONFIG_FILE, PROJECT_ROOT, TEST_RESULTS_DIR, resolve_path
+from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService, resolve_path
 import measurement_calculations
 from measurement_calculations import (
     calculate_dut_input_power,
@@ -24,6 +24,7 @@ from infrastructure.persistence.json_result_repository import (
 from infrastructure.config.json_io import load_config_file
 from measurement_services import AmplifierMeasurementService
 from infrastructure.persistence.json_encoder import NumpyJSONEncoder
+from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 
 logger = get_logger(__name__)
 
@@ -33,11 +34,12 @@ class AmplifierMeasurement:
                  loss_data_path=None,
                  driver_mapping_path: Optional[str] = None,
                  run_id: Optional[str] = None,
-                 sleep_fn=None, measurement_port=None):
+                 sleep_fn=None, measurement_port=None, paths: PathService | None = None):
         """初始化主功放测量类"""
-        config_path = resolve_path(config_path, CONFIG_FILE)
-        loss_data_path = resolve_path(loss_data_path, CABLE_LOSS_FILE)
-        self.config = load_config_file(config_path)
+        self.paths = paths or DEFAULT_PATHS
+        config_path = resolve_path(config_path, self.paths.config_file)
+        loss_data_path = resolve_path(loss_data_path, self.paths.cable_loss_file)
+        self.config = load_config_file(config_path, paths=self.paths)
         if measurement_port is None:
             raise ValueError(
                 "AmplifierMeasurement 必须显式传入 measurement_port；"
@@ -52,12 +54,13 @@ class AmplifierMeasurement:
             self.run_id,
             self.config,
             status="created",
+            paths=self.paths,
         )
         self.inst_ctrl = measurement_port
 
         if self.config['driver_mode']['enabled']:
             if driver_mapping_path is None:
-                driver_files = sorted(TEST_RESULTS_DIR.glob('driver_power_mapping_*.json'), key=lambda p: p.stat().st_mtime)
+                driver_files = sorted(self.paths.test_results_dir.glob('driver_power_mapping_*.json'), key=lambda p: p.stat().st_mtime)
                 if not driver_files:
                     raise FileNotFoundError("驱动模式已开启，但未找到任何 'driver_power_mapping_*.json' 文件!")
                 driver_mapping_path = str(driver_files[-1])
@@ -294,15 +297,16 @@ class AmplifierMeasurement:
             'results': self.measurement_results
         }
 
-        legacy_path = TEST_RESULTS_DIR / f'amplifier_measurement_{datetime.now():%Y%m%d_%H%M%S}.json'
-        archive_path, legacy_path = save_measurement_result(
+        repository = FileMeasurementResultRepository(paths=getattr(self, "paths", DEFAULT_PATHS))
+        legacy_path = repository.legacy_path("amplifier_measurement")
+        saved = repository.save(
             results,
             result_type="amplifier_measurement",
-            legacy_path=legacy_path,
             run_id=self.run_id,
             run_directory=self.run_directory,
-            encoder=NumpyJSONEncoder,
         )
+        archive_path = saved.archive_path
+        legacy_path = saved.legacy_copy_path
         self.run_directory = archive_path.parent
         logger.info("主功放结果已保存: 兼容路径=%s，运行路径=%s", legacy_path, archive_path)
         print(f"\nResults saved to {legacy_path}; archived to {archive_path}")

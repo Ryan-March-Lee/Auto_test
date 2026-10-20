@@ -3,7 +3,7 @@
 """
 
 import matplotlib.pyplot as plt
-from infrastructure.filesystem.paths import IMAGES_DIR, ensure_directory
+from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService, ensure_directory
 import matplotlib.patches as patches
 from matplotlib.figure import Figure
 from io import BytesIO
@@ -312,7 +312,7 @@ class ConnectionDiagram:
         return img_base64
 
 
-def create_all_diagrams():
+def create_all_diagrams(*, paths: PathService | None = None):
     """创建所有连接示意图并保存"""
     diagrams = {
         'cable_loss_path1': ConnectionDiagram.create_cable_loss_path1(),
@@ -322,9 +322,10 @@ def create_all_diagrams():
     }
     
     # 保存为图片文件
-    ensure_directory(IMAGES_DIR)
+    images_dir = (paths or DEFAULT_PATHS).images_dir
+    ensure_directory(images_dir)
     for name, fig in diagrams.items():
-        fig.savefig(IMAGES_DIR / f'{name}_diagram.png', dpi=150, bbox_inches='tight')
+        fig.savefig(images_dir / f'{name}_diagram.png', dpi=150, bbox_inches='tight')
         plt.close(fig)
     
     print("所有连接示意图已保存完成！")

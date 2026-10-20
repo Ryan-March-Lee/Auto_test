@@ -29,6 +29,7 @@ from application.dto import (
     CableLossMeasurementRequest,
     DriverPowerMappingRequest,
 )
+from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService
 
 
 Operation = Literal["full", "cable_loss", "driver_mapping"]
@@ -90,6 +91,7 @@ def prepare_configuration(
     run_id: str | None = None,
     operation: Operation = "full",
     repository: ConfigurationRepository | None = None,
+    paths: PathService | None = None,
 ) -> PreparedRun:
     """Perform the GUI preflight and snapshot before an instrument is created."""
     if operation not in ("full", "cable_loss", "driver_mapping"):
@@ -141,6 +143,7 @@ def prepare_configuration(
         run_id=run_id or new_run_id(),
         software_version=environment_version(),
         config_path=Path(config_path),
+        paths=paths,
     )
 
 
@@ -149,7 +152,8 @@ def _request_kwargs(prepared_run: PreparedRun, config_path: str, callbacks: dict
     port = callbacks.get("measurement_port")
     if port is None:
         raise ValueError("应用测量请求必须显式包含 measurement_port")
-    repository = callbacks.get("result_repository") or FileMeasurementResultRepository()
+    paths = callbacks.get("paths") or DEFAULT_PATHS
+    repository = callbacks.get("result_repository") or FileMeasurementResultRepository(paths=paths)
     return {
         "configuration": prepared_run.configuration,
         "context": prepared_run.context,
@@ -174,13 +178,14 @@ def create_cable_loss_measurement(
     callbacks.update(
         run_id=prepared_run.context.run_id,
         run_directory=prepared_run.run_directory,
+        paths=callbacks.get("paths"),
     )
     owned_port = callbacks.get("measurement_port") is None
     try:
         if owned_port:
             callbacks["measurement_port"] = connect_instruments(config_path)
         callbacks["owns_measurement_port"] = owned_port
-        callbacks.setdefault("result_repository", FileMeasurementResultRepository())
+        callbacks.setdefault("result_repository", FileMeasurementResultRepository(paths=callbacks.get("paths") or DEFAULT_PATHS))
         callbacks.setdefault("event_sink", _CallbackEventSink(callbacks))
         request = CableLossMeasurementRequest(
             **_request_kwargs(prepared_run, config_path, callbacks)
@@ -198,13 +203,14 @@ def create_driver_mapping_measurement(
     callbacks.update(
         run_id=prepared_run.context.run_id,
         run_directory=prepared_run.run_directory,
+        paths=callbacks.get("paths"),
     )
     owned_port = callbacks.get("measurement_port") is None
     try:
         if owned_port:
             callbacks["measurement_port"] = connect_instruments(config_path)
         callbacks["owns_measurement_port"] = owned_port
-        callbacks.setdefault("result_repository", FileMeasurementResultRepository())
+        callbacks.setdefault("result_repository", FileMeasurementResultRepository(paths=callbacks.get("paths") or DEFAULT_PATHS))
         callbacks.setdefault("event_sink", _CallbackEventSink(callbacks))
         request = DriverPowerMappingRequest(
             **_request_kwargs(prepared_run, config_path, callbacks),
@@ -225,13 +231,14 @@ def create_amplifier_measurement(
     callbacks.update(
         run_id=prepared_run.context.run_id,
         run_directory=prepared_run.run_directory,
+        paths=callbacks.get("paths"),
     )
     owned_port = callbacks.get("measurement_port") is None
     try:
         if owned_port:
             callbacks["measurement_port"] = connect_instruments(config_path)
         callbacks["owns_measurement_port"] = owned_port
-        callbacks.setdefault("result_repository", FileMeasurementResultRepository())
+        callbacks.setdefault("result_repository", FileMeasurementResultRepository(paths=callbacks.get("paths") or DEFAULT_PATHS))
         callbacks.setdefault("event_sink", _CallbackEventSink(callbacks))
         request = AmplifierMeasurementRequest(
             **_request_kwargs(prepared_run, config_path, callbacks),

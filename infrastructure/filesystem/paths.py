@@ -1,23 +1,89 @@
-"""项目文件路径集中定义。"""
+"""项目文件系统路径服务及兼容路径导出。"""
 
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Optional, Union
 
 
 PathLike = Union[str, Path]
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-TEST_RESULTS_DIR = PROJECT_ROOT / "test_results"
-CONFIG_FILE = PROJECT_ROOT / "config.json"
-CABLE_LOSS_FILE = TEST_RESULTS_DIR / "cable_loss_results.json"
-CHAT_HISTORY_FILE = PROJECT_ROOT / "chat_history.json"
-CHAT_SETTINGS_FILE = PROJECT_ROOT / "chat_settings.json"
-SEARCH_API_CONFIG_FILE = PROJECT_ROOT / "search_api_config.json"
-ASSETS_DIR = PROJECT_ROOT / "assets"
-ICONS_DIR = ASSETS_DIR / "icons"
-IMAGES_DIR = ASSETS_DIR / "images"
-TEMP_DIR = PROJECT_ROOT / "temp"
-LOGS_DIR = PROJECT_ROOT / "logs"
+
+@dataclass(frozen=True)
+class PathService:
+    """从一个数据根目录派生应用所需的全部文件系统路径。
+
+    服务不创建目录，也不读取环境变量，因此可以安全地在测试中注入临时根目录。
+    """
+
+    root: Path
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "root", Path(self.root).expanduser().resolve())
+
+    @property
+    def project_root(self) -> Path:
+        return self.root
+
+    @property
+    def test_results_dir(self) -> Path:
+        return self.root / "test_results"
+
+    @property
+    def config_file(self) -> Path:
+        return self.root / "config.json"
+
+    @property
+    def cable_loss_file(self) -> Path:
+        return self.test_results_dir / "cable_loss_results.json"
+
+    @property
+    def chat_history_file(self) -> Path:
+        return self.root / "chat_history.json"
+
+    @property
+    def chat_settings_file(self) -> Path:
+        return self.root / "chat_settings.json"
+
+    @property
+    def search_api_config_file(self) -> Path:
+        return self.root / "search_api_config.json"
+
+    @property
+    def assets_dir(self) -> Path:
+        return self.root / "assets"
+
+    @property
+    def icons_dir(self) -> Path:
+        return self.assets_dir / "icons"
+
+    @property
+    def images_dir(self) -> Path:
+        return self.assets_dir / "images"
+
+    @property
+    def temp_dir(self) -> Path:
+        return self.root / "temp"
+
+    @property
+    def logs_dir(self) -> Path:
+        return self.root / "logs"
+
+
+DEFAULT_PATHS = PathService(Path(__file__).resolve().parents[2])
+
+# 历史模块导出的常量保留为默认服务的只读快照，新的代码应注入 PathService。
+PROJECT_ROOT = DEFAULT_PATHS.project_root
+TEST_RESULTS_DIR = DEFAULT_PATHS.test_results_dir
+CONFIG_FILE = DEFAULT_PATHS.config_file
+CABLE_LOSS_FILE = DEFAULT_PATHS.cable_loss_file
+CHAT_HISTORY_FILE = DEFAULT_PATHS.chat_history_file
+CHAT_SETTINGS_FILE = DEFAULT_PATHS.chat_settings_file
+SEARCH_API_CONFIG_FILE = DEFAULT_PATHS.search_api_config_file
+ASSETS_DIR = DEFAULT_PATHS.assets_dir
+ICONS_DIR = DEFAULT_PATHS.icons_dir
+IMAGES_DIR = DEFAULT_PATHS.images_dir
+TEMP_DIR = DEFAULT_PATHS.temp_dir
+LOGS_DIR = DEFAULT_PATHS.logs_dir
 
 
 def resolve_path(path_value: Optional[PathLike], default_path: Path) -> Path:
@@ -38,6 +104,7 @@ def ensure_directory(path: PathLike) -> Path:
 __all__ = [
     "ASSETS_DIR", "CABLE_LOSS_FILE", "CHAT_HISTORY_FILE", "CHAT_SETTINGS_FILE",
     "CONFIG_FILE", "ICONS_DIR", "IMAGES_DIR", "LOGS_DIR", "PathLike",
-    "PROJECT_ROOT", "SEARCH_API_CONFIG_FILE", "TEMP_DIR", "TEST_RESULTS_DIR",
+    "DEFAULT_PATHS", "PathService", "PROJECT_ROOT", "SEARCH_API_CONFIG_FILE",
+    "TEMP_DIR", "TEST_RESULTS_DIR",
     "ensure_directory", "resolve_path",
 ]

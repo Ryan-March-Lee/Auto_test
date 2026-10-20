@@ -66,11 +66,11 @@ def write_legacy_run_snapshot(run_id: str, legacy_config: Mapping[str, Any], **k
 
 def save_measurement_result(result: Mapping[str, Any], *, result_type: str, legacy_path: PathLike,
                             run_id: str, run_directory: Optional[Path] = None,
-                            encoder: type = __import__("json").JSONEncoder):
+                            encoder: type = __import__("json").JSONEncoder, **kwargs: Any):
     with _canonical_path_scope():
         return _canonical.save_measurement_result(
             result, result_type=result_type, legacy_path=legacy_path, run_id=run_id,
-            run_directory=run_directory, encoder=encoder,
+            run_directory=run_directory, encoder=encoder, **kwargs,
         )
 
 

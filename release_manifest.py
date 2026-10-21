@@ -17,14 +17,13 @@ from infrastructure.runtime import current_runtime, runtime_id
 
 RELEASE_FILES = (
     "launcher.py",
-    "measurement_services.py",
-    "measurement_lifecycle.py",
     "domain/measurement",
     "domain/configuration",
     "infrastructure/config",
     "infrastructure/persistence",
     "domain",
     "app",
+    "application",
     "instrument",
     "persistence",
     "analysis",
@@ -38,6 +37,8 @@ ROLLBACK_FILES = (
     "instrument_control.py",
 )
 COMPATIBILITY_FILES = (
+    "measurement_services.py",
+    "measurement_lifecycle.py",
     "config_models.py",
     "measurement_calculations.py",
     "result_storage.py",

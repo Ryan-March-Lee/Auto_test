@@ -9,8 +9,8 @@ from instrument.flow import (
     PowerChannelSetup,
     SafetyShutdownError,
     SafetyShutdownFlow,
+    cleanup_measurement,
 )
-from measurement_lifecycle import cleanup_measurement
 from instrument.simulation import CommandRecorder, SimulatedPowerSupply, SimulatedSignalGenerator
 
 
@@ -114,6 +114,54 @@ class SafetyFlowTests(unittest.TestCase):
         )
         cleanup_measurement(object(), safety_flow=flow, close_resource=False)
         self.assertEqual(events, ["rf_off", "power_off"])
+
+    def test_cleanup_measurement_closes_legacy_controller_after_power_failure(self):
+        events = []
+
+        class _Controller:
+            signal_gen = object()
+
+            def rf_output_off(self):
+                events.append("rf_off")
+
+            def close_all(self, *, close_rf):
+                events.append(("close", close_rf))
+                return []
+
+        def power_cleanup():
+            events.append("power_off")
+            raise RuntimeError("power")
+
+        with self.assertRaisesRegex(RuntimeError, "测量安全清理存在失败"):
+            cleanup_measurement(_Controller(), power_cleanup=power_cleanup)
+        self.assertEqual(events, ["rf_off", "power_off", ("close", False)])
+
+    def test_cleanup_measurement_skips_rf_when_signal_generator_is_absent(self):
+        events = []
+
+        class _Controller:
+            def close_all(self, *, close_rf):
+                events.append(("close", close_rf))
+                return []
+
+        cleanup_measurement(_Controller())
+        self.assertEqual(events, [("close", False)])
+
+    def test_cleanup_measurement_can_leave_borrowed_controller_open(self):
+        events = []
+
+        class _Controller:
+            signal_gen = object()
+
+            def rf_output_off(self):
+                events.append("rf_off")
+
+            def close_all(self, *, close_rf):  # pragma: no cover - must not be called
+                events.append("close")
+                return []
+
+        cleanup_measurement(_Controller(), close_resource=False)
+        self.assertEqual(events, ["rf_off"])
 
     def test_shutdown_still_closes_legacy_connections_after_power_failure(self):
         events = []

@@ -1,8 +1,8 @@
 """同步测量循环的硬件动作和保护行为回归测试。
 
 历史入口 ``amplifier_measurement`` 的扫描逻辑已委托给正式实现
-:class:`measurement_services.AmplifierMeasurementService`，因此这里直接针对
-正式实现验证硬件动作顺序与 DUT 输入保护。
+:class:`application.measurements.services.AmplifierMeasurementService`，因此这里
+直接针对正式实现验证硬件动作顺序与 DUT 输入保护。
 """
 
 import sys
@@ -12,7 +12,7 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from measurement_services import AmplifierMeasurementService
+from application.measurements.services import AmplifierMeasurementService
 
 
 class FakeMeasurementInstrument:

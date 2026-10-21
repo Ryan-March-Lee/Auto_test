@@ -1,7 +1,7 @@
 import unittest
 
 from instrument.measurement_adapter import PortMeasurementAdapter
-from measurement_services import DriverPowerMappingService
+from application.measurements.services import DriverPowerMappingService
 from instrument.simulation import (
     CommandRecorder,
     SafetyInstrumentSession,

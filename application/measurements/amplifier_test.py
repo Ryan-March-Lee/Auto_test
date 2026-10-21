@@ -9,7 +9,7 @@ from typing import Any, Callable
 import domain.measurement.calculations as measurement_calculations
 from app.cancellation import CancellationToken
 from application.dto import AmplifierMeasurementRequest, MeasurementResult, legacy_result
-from measurement_services import AmplifierMeasurementService
+from application.measurements.services import AmplifierMeasurementService
 
 
 class AmplifierMeasurementUseCase:

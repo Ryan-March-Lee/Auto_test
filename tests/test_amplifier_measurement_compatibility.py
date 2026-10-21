@@ -1,7 +1,7 @@
 """``amplifier_measurement`` 历史入口的兼容转发回归。
 
-正式实现位于 :class:`measurement_services.AmplifierMeasurementService` 与
-:class:`application.measurements.amplifier_test.AmplifierMeasurementUseCase`；
+正式实现位于 :class:`application.measurements.services.AmplifierMeasurementService`
+与 :class:`application.measurements.amplifier_test.AmplifierMeasurementUseCase`；
 历史装配适配器位于 :class:`app.legacy_amplifier_measurement.AmplifierMeasurement`。
 ``amplifier_measurement`` 根模块只允许重新导出历史符号，这些测试确认它没有
 自己的扫描/计算实现，且保留的公开 API 仍按旧契约转发。

@@ -9,7 +9,7 @@ from typing import Any, Callable
 from app.cancellation import CancellationToken
 from application.dto import CableLossMeasurementRequest, MeasurementResult, legacy_result
 from application.ports.result_repository import MeasurementResultRepository
-from measurement_services import CableLossService
+from application.measurements.services import CableLossService
 
 
 class CableLossUseCase:

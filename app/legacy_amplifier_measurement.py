@@ -1,6 +1,6 @@
 """主功放测量的历史装配适配器。
 
-正式的测量逻辑位于 :class:`measurement_services.AmplifierMeasurementService`。
+正式的测量逻辑位于 :class:`application.measurements.services.AmplifierMeasurementService`。
 本模块只服务仍需历史 ``AmplifierMeasurement(config_path, ...)`` 入口的外部脚本与
 回滚场景：把旧单文件配置、线损数据、驱动映射和运行快照装配成正式服务可用的对象，
 并把历史公开方法转发给正式实现，不新增任何测量计算。
@@ -22,7 +22,7 @@ from infrastructure.persistence.json_result_repository import (
     write_legacy_run_snapshot,
 )
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
-from measurement_services import AmplifierMeasurementService
+from application.measurements.services import AmplifierMeasurementService
 
 logger = get_logger(__name__)
 
@@ -105,7 +105,7 @@ class AmplifierMeasurement:
         在指定频率下执行功率扫描，同时测量RF和DC参数。
 
         兼容入口：实际扫描委托给正式实现
-        :class:`measurement_services.AmplifierMeasurementService`。
+        :class:`application.measurements.services.AmplifierMeasurementService`。
         """
         service = AmplifierMeasurementService(
             self.config, self.inst_ctrl, self.loss_data, self.driver_mapping,

@@ -8,7 +8,7 @@ from app.events import StoppedEvent
 from app.run_context import prepare_run
 from config_models import RunConfiguration
 from domain.models import AmplifierMeasurementResult, AmplifierScanPoint
-from measurement_services import AmplifierMeasurementService
+from application.measurements.services import AmplifierMeasurementService
 from persistence.config_repository import ConfigurationRepository
 from domain.result_reading import parse_result_model
 from infrastructure.persistence.json_result_repository import load_json_result
@@ -165,7 +165,10 @@ class OfflineRefactorCompletionTests(unittest.TestCase):
         manifest = build_manifest(Path(__file__).resolve().parents[1])
         self.assertIn("launcher.py", manifest["release_files"])
         self.assertIn("domain/measurement", manifest["release_files"])
+        self.assertIn("application", manifest["release_files"])
         self.assertIn("measurement_calculations.py", manifest["compatibility_files"])
+        self.assertIn("measurement_services.py", manifest["compatibility_files"])
+        self.assertIn("measurement_lifecycle.py", manifest["compatibility_files"])
         self.assertNotIn("enhanced_workers.py", manifest["rollback_files"])
         self.assertEqual(manifest["real_device_acceptance"], "pending")
 

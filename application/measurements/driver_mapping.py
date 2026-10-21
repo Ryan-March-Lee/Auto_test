@@ -9,7 +9,7 @@ from typing import Any, Callable
 
 from app.cancellation import CancellationToken
 from application.dto import DriverPowerMappingRequest, MeasurementResult, legacy_result
-from measurement_services import DriverPowerMappingService
+from application.measurements.services import DriverPowerMappingService
 
 
 class DriverPowerMappingUseCase:

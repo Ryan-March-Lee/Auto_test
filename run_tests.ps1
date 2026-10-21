@@ -6,27 +6,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$EnvFile = Join-Path $ProjectRoot ".env"
-if (-not $env:AUTO_TEST_PYTHON -and (Test-Path -LiteralPath $EnvFile -PathType Leaf)) {
-    foreach ($Line in Get-Content -LiteralPath $EnvFile) {
-        if ($Line -match '^\s*AUTO_TEST_PYTHON\s*=\s*(.*?)\s*$') {
-            $env:AUTO_TEST_PYTHON = $Matches[1].Trim().Trim('"').Trim("'")
-            break
-        }
-    }
-}
-$Python = if ($env:AUTO_TEST_PYTHON) {
-    $env:AUTO_TEST_PYTHON
-} else {
-    throw "AUTO_TEST_PYTHON is not set. Configure it in .env before running project commands."
-}
-
-if ($Python -match '^(?:[A-Za-z]:[\\/]|\\\\)' -and -not (Test-Path -LiteralPath $Python -PathType Leaf)) {
-    throw "Python interpreter was not found: $Python. Set AUTO_TEST_PYTHON in .env or activate the Auto_test environment."
-}
+$RuntimeHelper = Join-Path $ProjectRoot "tools\runtime_environment.ps1"
+. $RuntimeHelper -Purpose "offline tests"
+$Python = $env:AUTO_TEST_PYTHON
 
 $Version = & $Python -c 'import sys; print(sys.version.split()[0])'
-Write-Host "Python: $Python"
 Write-Host "Version: $Version"
 
 Push-Location -LiteralPath $ProjectRoot

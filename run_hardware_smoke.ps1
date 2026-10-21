@@ -6,24 +6,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$EnvFile = Join-Path $ProjectRoot ".env"
-
-if (-not $env:AUTO_TEST_PYTHON -and (Test-Path -LiteralPath $EnvFile -PathType Leaf)) {
-    foreach ($Line in Get-Content -LiteralPath $EnvFile) {
-        if ($Line -match '^\s*AUTO_TEST_PYTHON\s*=\s*(.*?)\s*$') {
-            $env:AUTO_TEST_PYTHON = $Matches[1].Trim().Trim('"').Trim("'")
-            break
-        }
-    }
-}
-
+$RuntimeHelper = Join-Path $ProjectRoot "tools\runtime_environment.ps1"
+. $RuntimeHelper -Purpose "hardware smoke"
 $Python = $env:AUTO_TEST_PYTHON
-if (-not $Python) {
-    throw "AUTO_TEST_PYTHON is not set. Configure it in .env before running hardware smoke."
-}
-if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
-    throw "Python interpreter was not found: $Python"
-}
 
 $ResolvedConfig = [System.IO.Path]::GetFullPath((Join-Path $ProjectRoot $ConfigPath))
 $HardwareRoot = [System.IO.Path]::GetFullPath((Join-Path $ProjectRoot "hardware"))

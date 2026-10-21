@@ -12,6 +12,7 @@ from typing import Dict
 from domain.configuration.types import ConfigValidationResult
 from infrastructure.config.validation import validate_config_file
 from infrastructure.logging.app_logging import setup_logging
+from infrastructure.runtime import validate_python_interpreter
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -54,6 +55,13 @@ def check_environment(silent: bool = False) -> bool:
                 f"当前为 {environment_name}。"
             )
         return False
+    interpreter_ok, interpreter_detail = validate_python_interpreter()
+    if not interpreter_ok:
+        if not silent:
+            print(f"   解释器错误: {interpreter_detail}")
+        return False
+    if not silent:
+        print(f"   项目解释器: {interpreter_detail}")
     return True
 
 
@@ -186,6 +194,7 @@ def show_help() -> None:
     python launcher.py                       启动 GUI
     python launcher.py --check               检查 Python 和依赖包
     python launcher.py --validate-config     只读校验 config.json，不连接仪器
+    python release_manifest.py                生成可回滚发布清单和运行标识
     python launcher.py --help                显示本帮助
 
 退出码:
@@ -224,6 +233,12 @@ def main(argv: object = None) -> int:
             if hasattr(stream, "reconfigure"):
                 stream.reconfigure(encoding="utf-8", errors="replace")
         os.chdir(PROJECT_ROOT)
+        # 所有入口都验证同一项目解释器；只读命令仍不会初始化日志或设备。
+        interpreter_ok, interpreter_detail = validate_python_interpreter()
+        if not interpreter_ok:
+            if not silent_mode or parsed.check:
+                print(f"运行环境错误: {interpreter_detail}", file=sys.stderr)
+            return EXIT_ENVIRONMENT_ERROR
         if parsed.validate_config:
             # 只读校验命令：保持无文件副作用，不初始化日志。
             return validate_default_config()

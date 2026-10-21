@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Iterable
 
 from infrastructure.filesystem.paths import DEFAULT_PATHS
+from infrastructure.runtime import current_runtime, runtime_id
 
 
 RELEASE_FILES = (
@@ -82,6 +83,8 @@ def build_manifest(
         "git_commit": _git_commit(root),
         "python": sys.version,
         "platform": platform.platform(),
+        "runtime": current_runtime(),
+        "run_id": runtime_id(),
         "release_files": _existing(RELEASE_FILES, root),
         "compatibility_files": _existing(COMPATIBILITY_FILES, root),
         "rollback_files": _existing(ROLLBACK_FILES, root),
@@ -92,6 +95,11 @@ def build_manifest(
             "config_validation": "python launcher.py --validate-config",
         },
         "real_device_acceptance": real_device_acceptance,
+        "evidence": {
+            "required": ["config_snapshot", "result_snapshot", "cleanup_record", "现场报告"],
+            "sensitive_data_policy": "现场证据仅保存于受控归档，不提交版本库",
+            "rollback_decision": "pending",
+        },
     }
 
 

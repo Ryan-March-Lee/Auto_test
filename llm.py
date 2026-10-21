@@ -1,4 +1,4 @@
-"""Compatibility import for the optional assistant package."""
+"""已弃用兼容入口：请迁移到 ``assistant.llm``。"""
 
 from assistant.llm import LLMChat, chat
 

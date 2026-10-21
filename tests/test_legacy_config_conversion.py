@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from legacy_config_conversion import (
+from infrastructure.config.legacy_conversion import (
     convert_legacy_config,
     convert_legacy_config_file,
     parse_legacy_attenuator,

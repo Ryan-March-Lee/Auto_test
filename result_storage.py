@@ -1,4 +1,4 @@
-"""Legacy compatibility exports for canonical persistence implementation."""
+"""已弃用兼容入口：请迁移到 ``infrastructure.persistence.json_result_repository``。"""
 
 from __future__ import annotations
 

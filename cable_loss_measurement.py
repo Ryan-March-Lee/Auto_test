@@ -6,7 +6,7 @@ from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService, resolve_
 
 # Historical patch target retained for external scripts; new instances use PathService.
 CABLE_LOSS_FILE = DEFAULT_PATHS.cable_loss_file
-from measurement_calculations import calculate_cable_losses
+from domain.measurement.calculations import calculate_cable_losses
 from infrastructure.logging.app_logging import get_logger
 from measurement_lifecycle import cleanup_measurement
 from infrastructure.persistence.json_result_repository import (

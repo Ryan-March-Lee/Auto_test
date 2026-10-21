@@ -1,4 +1,4 @@
-"""迁移期兼容入口。
+"""已弃用兼容入口，请迁移到 ``domain.configuration`` 和 ``infrastructure.config``。
 
 配置对象的正式入口是 ``domain.configuration``；JSON 文件读取和仓储的正式
 入口是 ``infrastructure.config``。新生产代码不得依赖本模块。

@@ -267,6 +267,7 @@ class ProductionDependencyTests(unittest.TestCase):
             ROOT / "config_models.py",
             ROOT / "config_io.py",
             ROOT / "config_validation.py",
+            ROOT / "measurement_calculations.py",
             ROOT / "infrastructure" / "persistence" / "json_config_repository.py",
         }
         violations = []
@@ -311,6 +312,28 @@ class ProductionDependencyTests(unittest.TestCase):
                 ) for node in tree.body),
                 str(source_path.relative_to(ROOT)) + " 必须显式声明 __all__",
             )
+
+    def test_legacy_config_conversion_is_an_explicit_reexport(self):
+        source_path = ROOT / "legacy_config_conversion.py"
+        tree = _tree(source_path)
+        definitions = [
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        ]
+        self.assertEqual(definitions, [])
+        self.assertTrue(any(
+            isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "__all__" for target in node.targets)
+            for node in tree.body
+        ))
+
+    def test_legacy_config_conversion_exports_match_canonical_objects(self):
+        import infrastructure.config.legacy_conversion as canonical
+        import legacy_config_conversion as compatibility
+
+        for name in compatibility.__all__:
+            self.assertIs(getattr(compatibility, name), getattr(canonical, name), name)
 
     def test_configuration_compatibility_exports_match_canonical_objects(self):
         import app_logging

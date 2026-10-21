@@ -1,4 +1,4 @@
-"""兼容入口：日志服务已迁移到 infrastructure.logging。"""
+"""已弃用兼容入口：请迁移到 ``infrastructure.logging.app_logging``。"""
 
 from infrastructure.logging.app_logging import (
     ROOT_LOGGER_NAME, RedactingFormatter, current_log_path, get_logger,

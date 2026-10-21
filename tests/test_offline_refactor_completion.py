@@ -164,6 +164,8 @@ class OfflineRefactorCompletionTests(unittest.TestCase):
     def test_release_manifest_contains_release_and_rollback_boundaries(self):
         manifest = build_manifest(Path(__file__).resolve().parents[1])
         self.assertIn("launcher.py", manifest["release_files"])
+        self.assertIn("domain/measurement", manifest["release_files"])
+        self.assertIn("measurement_calculations.py", manifest["compatibility_files"])
         self.assertNotIn("enhanced_workers.py", manifest["rollback_files"])
         self.assertEqual(manifest["real_device_acceptance"], "pending")
 

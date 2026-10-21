@@ -5,7 +5,7 @@ from typing import Dict, List, Optional
 import time
 from datetime import datetime
 from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService, resolve_path
-from measurement_calculations import compensate_driver_output_power
+from domain.measurement.calculations import compensate_driver_output_power
 from infrastructure.logging.app_logging import get_logger
 from measurement_lifecycle import cleanup_measurement
 from infrastructure.persistence.json_result_repository import (

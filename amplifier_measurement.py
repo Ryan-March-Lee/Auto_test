@@ -6,8 +6,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService, resolve_path
-import measurement_calculations
-from measurement_calculations import (
+import domain.measurement.calculations as measurement_calculations
+from domain.measurement.calculations import (
     calculate_dut_input_power,
     calculate_gain,
     calculate_efficiency,
@@ -98,7 +98,7 @@ class AmplifierMeasurement:
         兼容包装入口，实际计算委托给纯函数
         :func:`interpolate_driver_output_power`。
         """
-        from measurement_calculations import interpolate_driver_output_power
+        from domain.measurement.calculations import interpolate_driver_output_power
         return interpolate_driver_output_power(
             frequency=frequency,
             sg_power=sg_power_input,

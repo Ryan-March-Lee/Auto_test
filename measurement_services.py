@@ -15,7 +15,7 @@ import numpy as np
 from app.cancellation import CancellationToken
 from app.events import CheckpointEvent, EventSink, MessageEvent, ProgressEvent, RealtimeDataEvent
 from app.events import StoppedEvent
-from measurement_calculations import (
+from domain.measurement.calculations import (
     calculate_cable_losses,
     calculate_compression_result,
     calculate_dut_input_power,

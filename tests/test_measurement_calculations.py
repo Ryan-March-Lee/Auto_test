@@ -12,7 +12,7 @@ from unittest.mock import patch
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from measurement_calculations import (
+from domain.measurement.calculations import (
     calculate_cable_losses,
     compensate_amplifier_output_power,
     compensate_driver_output_power,
@@ -259,7 +259,7 @@ class MeasurementEntryPointDelegationTests(unittest.TestCase):
         measurement.config = {"attenuator": {"type": "30dB"}}
         measurement.loss_data = {"cable_losses": SAMPLE_LOSS_DATA}
 
-        with patch("measurement_calculations.compensate_amplifier_output_power",
+        with patch("domain.measurement.calculations.compensate_amplifier_output_power",
                    return_value=123.4) as calculate:
             result = measurement.calculate_actual_power(1.0, -10.0)
 
@@ -297,7 +297,7 @@ class MeasurementEntryPointDelegationTests(unittest.TestCase):
         measurement.driver_mapping = SAMPLE_DRIVER_MAPPING
 
         with patch(
-            "measurement_calculations.interpolate_driver_output_power",
+            "domain.measurement.calculations.interpolate_driver_output_power",
             return_value=21.5,
         ) as calculate:
             result = measurement.get_driver_output_power(1.0, -39.0)
@@ -308,6 +308,13 @@ class MeasurementEntryPointDelegationTests(unittest.TestCase):
             sg_power=-39.0,
             driver_mapping=SAMPLE_DRIVER_MAPPING,
         )
+
+    def test_legacy_module_reexports_canonical_functions(self):
+        import measurement_calculations as compatibility
+        import domain.measurement.calculations as canonical
+
+        for name in canonical.__all__:
+            self.assertIs(getattr(compatibility, name), getattr(canonical, name), name)
 
     def test_sync_cable_measurement_delegates_to_pure_function(self):
         from cable_loss_measurement import CableLossMeasurement

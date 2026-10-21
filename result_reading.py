@@ -1,4 +1,4 @@
-"""兼容入口：结果解析已迁移到 domain，文件读取保留在基础设施。"""
+"""已弃用兼容入口：结果解析已迁移到 ``domain.result_reading``，文件读取保留在基础设施。"""
 
 from domain.result_reading import *
 from domain.result_reading import __all__

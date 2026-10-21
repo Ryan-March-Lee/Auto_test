@@ -1,4 +1,4 @@
-"""Compatibility import for the optional assistant search package."""
+"""已弃用兼容入口：请迁移到 ``assistant.web_search_tools``。"""
 
 from assistant.web_search_tools import FunctionCallHandler, WebSearchAPI
 

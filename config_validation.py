@@ -1,4 +1,4 @@
-"""迁移期兼容入口：配置规则和文件校验已迁移到正式分层模块。"""
+"""已弃用兼容入口：请迁移到 ``domain.configuration`` 和 ``infrastructure.config``。"""
 
 from domain.configuration.rules import validate_config
 from domain.configuration.types import ConfigIssue, ConfigValidationResult

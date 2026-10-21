@@ -16,12 +16,12 @@ from infrastructure.filesystem.paths import DEFAULT_PATHS
 
 RELEASE_FILES = (
     "launcher.py",
-    "config_models.py",
     "measurement_services.py",
-    "measurement_calculations.py",
     "measurement_lifecycle.py",
-    "result_storage.py",
-    "result_reading.py",
+    "domain/measurement",
+    "domain/configuration",
+    "infrastructure/config",
+    "infrastructure/persistence",
     "domain",
     "app",
     "instrument",
@@ -35,6 +35,19 @@ ROLLBACK_FILES = (
     "driver_power_mapping.py",
     "amplifier_measurement.py",
     "instrument_control.py",
+)
+COMPATIBILITY_FILES = (
+    "config_models.py",
+    "measurement_calculations.py",
+    "result_storage.py",
+    "result_reading.py",
+    "legacy_config_conversion.py",
+    "app_logging.py",
+    "project_paths.py",
+    "config_io.py",
+    "config_validation.py",
+    "llm.py",
+    "web_search_tools.py",
 )
 REAL_DEVICE_ACCEPTANCE_STATES = frozenset({"pending", "passed"})
 
@@ -70,6 +83,7 @@ def build_manifest(
         "python": sys.version,
         "platform": platform.platform(),
         "release_files": _existing(RELEASE_FILES, root),
+        "compatibility_files": _existing(COMPATIBILITY_FILES, root),
         "rollback_files": _existing(ROLLBACK_FILES, root),
         "verification": {
             "unit_tests": "python -m unittest discover -s tests -v",

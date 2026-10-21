@@ -1,4 +1,4 @@
-"""兼容入口：旧配置转换已迁移到 infrastructure.config。"""
+"""已弃用兼容入口：请迁移到 ``infrastructure.config.legacy_conversion``。"""
 
 from infrastructure.config.legacy_conversion import (
     LegacyConfigConversionResult, PathLike, convert_legacy_config,

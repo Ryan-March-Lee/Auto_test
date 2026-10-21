@@ -6,7 +6,7 @@ import time
 from collections.abc import Mapping
 from typing import Any, Callable
 
-import measurement_calculations
+import domain.measurement.calculations as measurement_calculations
 from app.cancellation import CancellationToken
 from application.dto import AmplifierMeasurementRequest, MeasurementResult, legacy_result
 from measurement_services import AmplifierMeasurementService

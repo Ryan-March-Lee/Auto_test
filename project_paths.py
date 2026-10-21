@@ -1,4 +1,4 @@
-"""兼容入口：路径服务已迁移到 infrastructure.filesystem。"""
+"""已弃用兼容入口：请迁移到 ``infrastructure.filesystem.paths``。"""
 
 from infrastructure.filesystem.paths import (
     ASSETS_DIR, CABLE_LOSS_FILE, CHAT_HISTORY_FILE, CHAT_SETTINGS_FILE,

@@ -252,25 +252,6 @@ class CompensateDriverOutputPowerTests(unittest.TestCase):
 class MeasurementEntryPointDelegationTests(unittest.TestCase):
     """验证同步类和增强类的兼容入口确实委托给纯函数。"""
 
-    def test_amplifier_entry_point_delegates_to_pure_function(self):
-        from amplifier_measurement import AmplifierMeasurement
-
-        measurement = AmplifierMeasurement.__new__(AmplifierMeasurement)
-        measurement.config = {"attenuator": {"type": "30dB"}}
-        measurement.loss_data = {"cable_losses": SAMPLE_LOSS_DATA}
-
-        with patch("domain.measurement.calculations.compensate_amplifier_output_power",
-                   return_value=123.4) as calculate:
-            result = measurement.calculate_actual_power(1.0, -10.0)
-
-        self.assertEqual(result, 123.4)
-        calculate.assert_called_once_with(
-            measured_power=-10.0,
-            frequency=1.0,
-            loss_data=SAMPLE_LOSS_DATA,
-            attenuator_value=30.0,
-        )
-
     def test_driver_entry_point_delegates_to_pure_function(self):
         from driver_power_mapping import DriverPowerMapping
 
@@ -288,25 +269,6 @@ class MeasurementEntryPointDelegationTests(unittest.TestCase):
             frequency=1.0,
             loss_data=SAMPLE_LOSS_DATA,
             attenuator_value=30.0,
-        )
-
-    def test_driver_output_wrapper_delegates_to_interpolation(self):
-        from amplifier_measurement import AmplifierMeasurement
-
-        measurement = AmplifierMeasurement.__new__(AmplifierMeasurement)
-        measurement.driver_mapping = SAMPLE_DRIVER_MAPPING
-
-        with patch(
-            "domain.measurement.calculations.interpolate_driver_output_power",
-            return_value=21.5,
-        ) as calculate:
-            result = measurement.get_driver_output_power(1.0, -39.0)
-
-        self.assertEqual(result, 21.5)
-        calculate.assert_called_once_with(
-            frequency=1.0,
-            sg_power=-39.0,
-            driver_mapping=SAMPLE_DRIVER_MAPPING,
         )
 
     def test_legacy_module_reexports_canonical_functions(self):

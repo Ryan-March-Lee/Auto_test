@@ -313,6 +313,27 @@ class ProductionDependencyTests(unittest.TestCase):
                 str(source_path.relative_to(ROOT)) + " 必须显式声明 __all__",
             )
 
+    def test_legacy_amplifier_entry_is_an_explicit_reexport(self):
+        source_path = ROOT / "amplifier_measurement.py"
+        tree = _tree(source_path)
+        definitions = [
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        ]
+        self.assertEqual(definitions, [], str(source_path.relative_to(ROOT)))
+        self.assertTrue(
+            any(
+                isinstance(node, ast.Assign)
+                and any(
+                    isinstance(target, ast.Name) and target.id == "__all__"
+                    for target in node.targets
+                )
+                for node in tree.body
+            ),
+            str(source_path.relative_to(ROOT)) + " 必须显式声明 __all__",
+        )
+
     def test_legacy_config_conversion_is_an_explicit_reexport(self):
         source_path = ROOT / "legacy_config_conversion.py"
         tree = _tree(source_path)

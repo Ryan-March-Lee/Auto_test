@@ -1,6 +1,7 @@
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from app.cancellation import CancellationToken, MeasurementCancelled
 from application.dto import AmplifierMeasurementRequest
@@ -116,6 +117,27 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
         self.assertEqual(
             use_case.config["power_supply_assignment"]["dut_amplifier"]["supplies"]["PS1"],
             {"name": "PS1", "channel": ["CH2"]},
+        )
+
+    def test_calculate_actual_power_delegates_to_pure_function(self):
+        instrument = _Instrument()
+        use_case = AmplifierMeasurementUseCase(
+            _request(instrument), sleep_fn=lambda _: None
+        )
+
+        with patch(
+            "application.measurements.amplifier_test.measurement_calculations"
+            ".compensate_amplifier_output_power",
+            return_value=123.4,
+        ) as calculate:
+            result = use_case.calculate_actual_power(1.0, -10.0)
+
+        self.assertEqual(result, 123.4)
+        calculate.assert_called_once_with(
+            measured_power=-10.0,
+            frequency=1.0,
+            loss_data=use_case.loss_data["cable_losses"],
+            attenuator_value=10.0,
         )
 
     def test_completes_and_saves_structured_result(self):

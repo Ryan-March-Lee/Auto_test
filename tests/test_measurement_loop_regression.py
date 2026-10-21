@@ -1,14 +1,18 @@
-"""同步测量循环的硬件动作和保护行为回归测试。"""
+"""同步测量循环的硬件动作和保护行为回归测试。
+
+历史入口 ``amplifier_measurement`` 的扫描逻辑已委托给正式实现
+:class:`measurement_services.AmplifierMeasurementService`，因此这里直接针对
+正式实现验证硬件动作顺序与 DUT 输入保护。
+"""
 
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from amplifier_measurement import AmplifierMeasurement
+from measurement_services import AmplifierMeasurementService
 
 
 class FakeMeasurementInstrument:
@@ -52,9 +56,8 @@ class FakeMeasurementInstrument:
         return 2.0
 
 
-def make_measurement(measurement_class, max_input_power=float("inf")):
-    measurement = measurement_class.__new__(measurement_class)
-    measurement.config = {
+def make_service(max_input_power=float("inf")):
+    config = {
         "compression_point": {"type": "5dB"},
         "attenuator": {"type": "0dB"},
         "dut_config": {"max_input_power": max_input_power},
@@ -67,7 +70,7 @@ def make_measurement(measurement_class, max_input_power=float("inf")):
             },
         },
     }
-    measurement.loss_data = {
+    loss_data = {
         "cable_losses": {
             "1.0": {
                 "cable1": 0.0,
@@ -77,25 +80,24 @@ def make_measurement(measurement_class, max_input_power=float("inf")):
             },
         },
     }
-    measurement.driver_mapping = None
-    measurement.inst_ctrl = FakeMeasurementInstrument()
-    measurement.progress_callback = None
-    measurement.message_callback = None
-    measurement.data_callback = None
-    measurement.should_stop = False
-    return measurement
+    return AmplifierMeasurementService(
+        config,
+        FakeMeasurementInstrument(),
+        loss_data,
+        None,
+        sleep_fn=lambda _: None,
+    )
 
 
 class MeasurementLoopRegressionTests(unittest.TestCase):
-    def run_sweep(self, measurement_class):
-        measurement = make_measurement(measurement_class)
-        with patch("amplifier_measurement.time.sleep"), patch("builtins.print"):
-            result = measurement.perform_power_sweep(1.0)
-        return measurement, result
+    def run_sweep(self, max_input_power=float("inf")):
+        service = make_service(max_input_power)
+        result = service.perform_power_sweep(1.0)
+        return service, result
 
     def test_hardware_action_order_is_preserved(self):
-        measurement, result = self.run_sweep(AmplifierMeasurement)
-        operations = measurement.inst_ctrl.operations
+        service, result = self.run_sweep()
+        operations = service.inst_ctrl.operations
 
         self.assertEqual(
             operations[:6],
@@ -122,14 +124,12 @@ class MeasurementLoopRegressionTests(unittest.TestCase):
         self.assertEqual(len(result["sweep_data"]["sg_power"]), 4)
 
     def test_protection_happens_before_hardware_measurement(self):
-        measurement = make_measurement(AmplifierMeasurement, max_input_power=-2.0)
-        with patch("amplifier_measurement.time.sleep"), patch("builtins.print"):
-            result = measurement.perform_power_sweep(1.0)
+        service, result = self.run_sweep(max_input_power=-2.0)
 
-        operations = measurement.inst_ctrl.operations
+        operations = service.inst_ctrl.operations
         set_power_values = [operation[1] for operation in operations if operation[0] == "set_power"]
         self.assertEqual(set_power_values, [-40, -3.0, -2.0])
-        self.assertEqual(measurement.inst_ctrl.measurement_count, 2)
+        self.assertEqual(service.inst_ctrl.measurement_count, 2)
         self.assertEqual(len(result["sweep_data"]["sg_power"]), 2)
         self.assertNotIn(("set_power", -1.0), operations)
 

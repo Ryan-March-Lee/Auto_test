@@ -2,7 +2,6 @@
 
 import sys
 import os
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 from PySide6.QtWidgets import (
@@ -33,8 +32,8 @@ from infrastructure.filesystem.paths import (
 )
 # Legacy patch target; normal instances use the injected PathService.
 CONFIG_FILE = DEFAULT_PATHS.config_file
-from infrastructure.config.json_io import load_config_file
-from infrastructure.persistence.json_result_repository import load_json_result
+from application.gui_data_service import GuiDataService
+from presentation.qt.composition import build_gui_data_service
 from infrastructure.logging.app_logging import setup_logging
 from assistant.storage import (
     has_current_history,
@@ -113,6 +112,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.paths = paths or DEFAULT_PATHS
         self.config_path = Path(config_path or self.paths.config_file)
+        self.gui_data_service: GuiDataService = build_gui_data_service(
+            self.paths, config_path=self.config_path
+        )
         self.setWindowTitle("PA自动测试系统 v1.0")
         self.setGeometry(100, 100, 1600, 1000)
         
@@ -211,7 +213,7 @@ class MainWindow(QMainWindow):
     def load_config(self):
         """加载配置文件"""
         try:
-            self.config = load_config_file(self.config_path)
+            self.config = dict(self.gui_data_service.configuration.load())
         except Exception as e:
             QMessageBox.warning(self, "配置加载", f"无法加载配置文件: {e}")
             self.config = {}
@@ -328,7 +330,7 @@ class MainWindow(QMainWindow):
             reference = MeasurementResultReference(
                 result_id=f"loaded-{datetime.now(timezone.utc).isoformat()}",
                 kind=MeasurementKind.CABLE_LOSS,
-                value=load_json_result(self.paths.cable_loss_file),
+                value=self.gui_data_service.results.latest("cable_loss").data,
                 source="result_service",
             )
             self.cable_loss_page.show_loaded_result(reference)
@@ -1115,8 +1117,9 @@ class MainWindow(QMainWindow):
         """创建数据可视化选项卡"""
         self.visualization_page = VisualizationPage(
             config_provider=lambda: self.config,
-            temp_dir=self.paths.temp_dir,
-            results_dir=self.paths.test_results_dir,
+            result_loader=self.gui_data_service.results.choose_and_load,
+            latest_result_provider=self.gui_data_service.results.latest,
+            report_service=self.gui_data_service.reports.create_summary_report,
             log_callback=self.add_log_message,
             parent=self,
         )
@@ -1131,9 +1134,7 @@ class MainWindow(QMainWindow):
     def create_data_export_tab(self):
         """创建数据导出选项卡"""
         self.export_page = ExportPage(
-            results_dir=self.paths.test_results_dir,
-            cable_loss_file=self.paths.cable_loss_file,
-            visualizer_factory=lambda: DataVisualization(paths=self.paths),
+            result_service=self.gui_data_service.results,
             log_callback=self.add_log_message,
             parent=self,
         )
@@ -1311,13 +1312,15 @@ class MainWindow(QMainWindow):
     def _save_config_file(self) -> bool:
         """将 self.config 写入配置路径，成功返回 True，失败返回 False。"""
         try:
-            with open(
+            path = (
                 getattr(self, "config_path", getattr(self, "paths", DEFAULT_PATHS).config_file)
-                if hasattr(self, "config_path")
-                else CONFIG_FILE,
-                'w', encoding='utf-8'
-            ) as f:
-                json.dump(self.config, f, indent=4, ensure_ascii=False)
+                if hasattr(self, "config_path") or hasattr(self, "paths")
+                else CONFIG_FILE
+            )
+            service = getattr(self, "gui_data_service", None)
+            if service is None:
+                raise RuntimeError("未配置 GUI 数据服务")
+            service.configuration.save(self.config)
             return True
         except Exception as e:
             self._last_save_error = e

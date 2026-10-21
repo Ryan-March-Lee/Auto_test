@@ -479,6 +479,43 @@ class ProductionDependencyTests(unittest.TestCase):
                     violations.append(f"{source_path.relative_to(ROOT)} imports {module}")
         self.assertEqual(violations, [], "应用层不得反向依赖基础设施: " + "; ".join(violations))
 
+    def test_gui_data_pages_do_not_access_storage_implementations(self):
+        sources = (
+            ROOT / "presentation" / "qt" / "config_page.py",
+            ROOT / "presentation" / "qt" / "visualization_page.py",
+            ROOT / "presentation" / "qt" / "export_page.py",
+        )
+        forbidden_imports = ("infrastructure", "result_storage", "json_result_repository")
+        forbidden_calls = {"open", "glob", "stat", "unlink", "copy2", "mkdir"}
+        violations = []
+        for source in sources:
+            tree = _tree(source)
+            for module, _alias, _name in _imported_modules(tree):
+                if any(module == root or module.startswith(root + ".") for root in forbidden_imports):
+                    violations.append(f"{source.relative_to(ROOT)} imports {module}")
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                    if node.func.attr in forbidden_calls:
+                        violations.append(f"{source.relative_to(ROOT)} calls {node.func.attr}")
+        self.assertEqual(violations, [], "; ".join(violations))
+
+    def test_gui_result_dto_does_not_expose_paths(self):
+        source = ROOT / "application" / "ports" / "gui_data_service.py"
+        tree = _tree(source)
+        annotated = {
+            node.target.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+        }
+        self.assertNotIn("path", annotated)
+        self.assertNotIn("file_path", annotated)
+
+    def test_main_window_does_not_assemble_storage_implementations(self):
+        tree = _tree(MAIN_WINDOW_SOURCE)
+        modules = {module for module, _alias, _name in _imported_modules(tree)}
+        self.assertFalse(any(module.startswith("infrastructure.persistence") for module in modules))
+        self.assertFalse(any(module.startswith("infrastructure.config") for module in modules))
+
     def test_result_persistence_does_not_import_application_reader(self):
         source = ROOT / "infrastructure" / "persistence" / "json_result_repository.py"
         tree = _tree(source)

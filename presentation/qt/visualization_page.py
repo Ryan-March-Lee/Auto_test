@@ -2,16 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import math
-import tempfile
-from datetime import datetime
-from pathlib import Path
 from typing import Any, Callable
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -25,12 +20,7 @@ from domain.result_reading import (
     normalize_frequency_key, parse_result_model,
     get_sweep_dataframe_data,
 )
-from infrastructure.persistence.json_result_repository import load_json_result
-
-
-def load_measurement_result(path):
-    return load_json_result(path)
-
+from application.ports.gui_data_service import LoadedResultDto
 from .realtime_plot import RealTimePlotWidget
 
 
@@ -91,17 +81,17 @@ class VisualizationPage(QWidget):
         self,
         *,
         config_provider: Callable[[], dict[str, Any]] | None = None,
-        report_factory: Callable[[], Any] | None = None,
-        temp_dir: Path | None = None,
-        results_dir: Path | None = None,
+        result_loader: Callable[[], Any] | None = None,
+        latest_result_provider: Callable[[str], Any] | None = None,
+        report_service: Callable[[dict[str, Any], dict[str, Any], str], Any] | None = None,
         log_callback: Callable[[str], Any] | None = None,
         parent=None,
     ):
         super().__init__(parent)
         self.config_provider = config_provider or (lambda: {})
-        self.report_factory = report_factory
-        self.temp_dir = Path(temp_dir) if temp_dir else None
-        self.results_dir = Path(results_dir) if results_dir else None
+        self.result_loader = result_loader
+        self.latest_result_provider = latest_result_provider
+        self.report_service = report_service
         self.log_callback = log_callback or (lambda _message: None)
         self.loaded_data: dict[str, Any] | None = None
         self.loaded_result_type: str | None = None
@@ -162,14 +152,17 @@ class VisualizationPage(QWidget):
         self.freq_next_btn.setEnabled(False)
 
     def load_test_data(self, file_path: str | None = None):
-        if file_path is None:
-            file_path, _ = QFileDialog.getOpenFileName(
-                self, "选择测试数据文件", "", "JSON files (*.json);;All files (*.*)"
-            )
-        if not file_path:
-            return False
         try:
-            source = load_measurement_result(file_path)
+            if self.result_loader is None:
+                raise RuntimeError("未配置结果读取服务")
+            loaded = self.result_loader() if file_path is None else None
+            if loaded is None and file_path is not None:
+                raise RuntimeError("外部路径加载已停用，请通过结果查询服务选择文件")
+            if loaded is None:
+                return False
+            if not isinstance(loaded, LoadedResultDto):
+                raise TypeError("结果服务必须返回 LoadedResultDto")
+            source = dict(loaded.data)
             data, frequencies, result_type = normalize_visualization_data(source)
             if not frequencies:
                 raise ValueError("未找到有效的频率数据")
@@ -177,7 +170,7 @@ class VisualizationPage(QWidget):
             self.loaded_result_type = result_type
             self.frequency_list = frequencies
             self.current_freq_index = 0
-            self.loaded_filename = Path(file_path).name
+            self.loaded_filename = loaded.filename
             self.loaded_source = source
             self.update_frequency_display()
             self.display_current_frequency_data()
@@ -233,43 +226,28 @@ class VisualizationPage(QWidget):
             QMessageBox.warning(self, "报告生成", "驱动映射数据不支持功放测试报告")
             return False
         try:
-            if self.report_factory is None:
-                from data_visualization import DataVisualization
-                factory = DataVisualization
-            else:
-                factory = self.report_factory
-            visualizer = factory()
+            if self.report_service is None:
+                raise RuntimeError("未配置报告生成服务")
             if self.loaded_data is not None:
                 if not self.loaded_data:
                     raise ValueError("结果中没有可生成报告的扫描点")
-                report_data = self.loaded_source or {
-                    "results": self.loaded_data,
-                    "measurement_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "config": self.config_provider(),
-                    "original_filename": self.loaded_filename,
-                }
-                temp_dir = self.temp_dir or Path.cwd()
-                temp_dir.mkdir(parents=True, exist_ok=True)
-                with tempfile.NamedTemporaryFile(dir=temp_dir, suffix=".json", delete=False) as stream:
-                    temp_file = Path(stream.name)
-                try:
-                    with open(temp_file, "w", encoding="utf-8") as stream:
-                        json.dump(report_data, stream, indent=2, ensure_ascii=False)
-                    visualizer.create_summary_report(str(temp_file), self.loaded_filename)
-                finally:
-                    temp_file.unlink(missing_ok=True)
+                self.report_service(
+                    self.loaded_source, self.config_provider(), self.loaded_filename
+                )
                 self._log("基于已加载数据生成测试报告")
             else:
-                results_dir = self.results_dir or Path.cwd()
-                files = sorted(
-                    results_dir.glob("amplifier_measurement_*.json"),
-                    key=lambda path: path.stat().st_mtime,
-                )
-                if not files:
+                if self.latest_result_provider is None:
+                    raise RuntimeError("未配置最新结果查询服务")
+                try:
+                    latest = self.latest_result_provider("amplifier_measurement")
+                except FileNotFoundError:
                     QMessageBox.warning(self, "报告生成", "未找到测试数据文件，请先加载数据或进行测试")
                     return False
-                visualizer.create_summary_report(str(files[-1]))
-                self._log(f"基于文件 {files[-1].name} 生成测试报告")
+                if not isinstance(latest, LoadedResultDto):
+                    raise TypeError("结果服务必须返回 LoadedResultDto")
+                self.report_service(dict(latest.data), self.config_provider(), latest.filename)
+                latest_name = latest.filename
+                self._log(f"基于文件 {latest_name} 生成测试报告")
             QMessageBox.information(self, "报告生成", "测试报告已生成完成")
             return True
         except Exception as error:

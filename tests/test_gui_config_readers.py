@@ -396,22 +396,17 @@ class GuiConfigSaveTests(unittest.TestCase):
         self.window._last_save_error = None
         self.window.log_messages = []
         self.window._msg_box_calls = []
+        self.window.gui_data_service = MagicMock()
+        self.window.gui_data_service.configuration.save.return_value = None
 
     def test_save_config_file_writes_json(self):
-        with tempfile.TemporaryDirectory() as d:
-            config_path = Path(d) / 'config.json'
-            with patch('presentation.qt.main_window.CONFIG_FILE', config_path):
-                result = self.window._save_config_file()
-
-            self.assertTrue(result)
-            with config_path.open('r', encoding='utf-8') as f:
-                saved = json.load(f)
-            self.assertEqual(saved['test_frequencies'], [1.0])
-            self.assertEqual(saved['signal_source']['step'], 1)
+        result = self.window._save_config_file()
+        self.assertTrue(result)
+        self.window.gui_data_service.configuration.save.assert_called_once_with(self.window.config)
 
     def test_save_config_file_returns_false_on_error(self):
-        with patch('presentation.qt.main_window.CONFIG_FILE', '/nonexistent/path/config.json'):
-            result = self.window._save_config_file()
+        self.window.gui_data_service.configuration.save.side_effect = OSError("test write failure")
+        result = self.window._save_config_file()
 
         self.assertFalse(result)
         self.assertIsNotNone(self.window._last_save_error)
@@ -420,10 +415,7 @@ class GuiConfigSaveTests(unittest.TestCase):
         self.window.update_config_from_ui = MagicMock()
         self.window.add_log_message = self.window.log_messages.append
 
-        with tempfile.TemporaryDirectory() as d:
-            config_path = Path(d) / 'config.json'
-            with patch('presentation.qt.main_window.CONFIG_FILE', config_path):
-                result = self.window.update_and_save_config()
+        result = self.window.update_and_save_config()
 
         self.assertTrue(result)
         self.window.update_config_from_ui.assert_called_once()
@@ -433,8 +425,8 @@ class GuiConfigSaveTests(unittest.TestCase):
         self.window.update_config_from_ui = MagicMock()
         self.window.add_log_message = self.window.log_messages.append
 
-        with patch('presentation.qt.main_window.CONFIG_FILE', '/nonexistent/path/config.json'):
-            result = self.window.update_and_save_config()
+        self.window.gui_data_service.configuration.save.side_effect = OSError("test write failure")
+        result = self.window.update_and_save_config()
 
         self.assertFalse(result)
         self.assertTrue(any('配置保存失败' in msg for msg in self.window.log_messages))
@@ -446,11 +438,8 @@ class GuiConfigSaveTests(unittest.TestCase):
         def fake_msg_box(icon, title, text):
             self.window._msg_box_calls.append((title, text))
 
-        with tempfile.TemporaryDirectory() as d:
-            config_path = Path(d) / 'config.json'
-            with patch('presentation.qt.main_window.CONFIG_FILE', config_path):
-                with patch.object(__import__('enhanced_main_gui').QMessageBox, 'information', side_effect=fake_msg_box):
-                    self.window.save_config()
+        with patch.object(__import__('enhanced_main_gui').QMessageBox, 'information', side_effect=fake_msg_box):
+            self.window.save_config()
 
         self.assertIn(('保存成功', '配置文件已保存'), self.window._msg_box_calls)
         self.assertIn('配置已保存', self.window.log_messages)
@@ -462,9 +451,9 @@ class GuiConfigSaveTests(unittest.TestCase):
         def fake_warning(icon, title, text):
             self.window._msg_box_calls.append((title, text))
 
-        with patch('presentation.qt.main_window.CONFIG_FILE', '/nonexistent/path/config.json'):
-            with patch.object(__import__('enhanced_main_gui').QMessageBox, 'warning', side_effect=fake_warning):
-                self.window.save_config()
+        self.window.gui_data_service.configuration.save.side_effect = OSError("test write failure")
+        with patch.object(__import__('enhanced_main_gui').QMessageBox, 'warning', side_effect=fake_warning):
+            self.window.save_config()
 
         self.assertTrue(any('保存失败' in title for title, _ in self.window._msg_box_calls))
         self.assertTrue(any('配置保存失败' in msg for msg in self.window.log_messages))

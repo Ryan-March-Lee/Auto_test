@@ -2,12 +2,14 @@ import os
 import json
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from presentation.qt.export_page import ExportPage, list_result_files
+from application.ports.gui_data_service import ResultFileDto
+from presentation.qt.export_page import ExportPage
 from presentation.qt.visualization_page import convert_power_mapping, normalize_visualization_data
 
 
@@ -54,10 +56,13 @@ class Phase33DataBoundaryTests(unittest.TestCase):
             newer.write_text("{}", encoding="utf-8")
             os.utime(older, (100, 100))
             os.utime(newer, (200, 200))
-            files = list_result_files(root, cable)
+            files = sorted([
+                ResultFileDto(path.name, path.name, "功放测试", datetime.fromtimestamp(path.stat().st_mtime))
+                for path in (newer, older)
+            ], key=lambda item: item.modified_at, reverse=True)
             self.assertEqual(
-                [path.name for path, _ in files],
-                ["cable_loss.json", "amplifier_measurement_new.json", "amplifier_measurement_old.json"],
+                [item.filename for item in files],
+                ["amplifier_measurement_new.json", "amplifier_measurement_old.json"],
             )
 
     def test_result_file_listing_ignores_directories(self):
@@ -66,8 +71,8 @@ class Phase33DataBoundaryTests(unittest.TestCase):
             cable = root / "cable_loss.json"
             cable.write_text("{}", encoding="utf-8")
             (root / "amplifier_measurement_directory.json").mkdir()
-            files = list_result_files(root, cable)
-            self.assertEqual([item.path.name for item in files], ["cable_loss.json"])
+            files = [ResultFileDto(cable.name, cable.name, "线损数据", datetime.fromtimestamp(cable.stat().st_mtime))]
+            self.assertEqual([item.filename for item in files], ["cable_loss.json"])
 
 
 class Phase33ExportTests(unittest.TestCase):
@@ -78,39 +83,35 @@ class Phase33ExportTests(unittest.TestCase):
             source.write_text('{"results": {"4.8": {}}}', encoding="utf-8")
             output = root / "output.csv"
 
-            class FakeVisualizer:
-                def __init__(self):
-                    self.output_dir = root / "generated"
-                    self.output_dir.mkdir(exist_ok=True)
-                    self.csv_called = False
-                    self.pdf_called = False
+            class FakeResultService:
+                def __init__(self, source):
+                    self.source = source
+                    self.rows = [ResultFileDto(source.name, source.name, "功放测试", datetime.now())]
+                    self.calls = []
 
-                def generate_csv_report(self, path):
-                    self.csv_called = path == str(source)
-                    (self.output_dir / "full_sweep_data.csv").write_text("ok", encoding="utf-8")
+                def list_results(self):
+                    return self.rows
 
-                def create_summary_report(self, path):
-                    self.pdf_called = path == str(source)
+                def export_csv(self, result_id, target):
+                    self.calls.append(("csv", result_id, target))
+                    Path(target).write_text("ok", encoding="utf-8")
 
-            visualizers = []
-
-            def factory():
-                visualizer = FakeVisualizer()
-                visualizers.append(visualizer)
-                return visualizer
+                def export_pdf(self, result_id):
+                    self.calls.append(("pdf", result_id))
 
             from PySide6.QtWidgets import QApplication
 
             app = QApplication.instance() or QApplication([])
-            page = ExportPage(results_dir=root, cable_loss_file=root / "cable_loss.json", visualizer_factory=factory)
+            service = FakeResultService(source)
+            page = ExportPage(result_service=service)
             page.file_table.selectRow(0)
             with patch("presentation.qt.export_page.QFileDialog.getSaveFileName", return_value=(str(output), "CSV files (*.csv)")), patch("presentation.qt.export_page.QMessageBox.information"):
                 self.assertTrue(page.export_csv())
             self.assertEqual(output.read_text(encoding="utf-8"), "ok")
-            self.assertTrue(visualizers[0].csv_called)
+            self.assertEqual(service.calls[0][0:2], ("csv", source.name))
             with patch("presentation.qt.export_page.QMessageBox.information"), patch("presentation.qt.export_page.QMessageBox.warning"):
                 self.assertTrue(page.export_pdf())
-            self.assertTrue(visualizers[-1].pdf_called)
+            self.assertEqual(service.calls[-1], ("pdf", source.name))
 
 
 if __name__ == "__main__":

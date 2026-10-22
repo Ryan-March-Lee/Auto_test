@@ -22,7 +22,7 @@ from domain.configuration.models import (
     validate_run_configuration,
 )
 from domain.configuration.types import ConfigIssue, ConfigValidationResult
-from domain.run.models import RunStatus, StageStatus
+from domain.run.models import HARDWARE_CONFIG_INPUT_PATH, RunStatus, StageStatus
 from infrastructure.config.json_config_repository import ConfigurationRepository
 from infrastructure.persistence.run_repository import RunRepository
 
@@ -233,6 +233,57 @@ class CreateRunSnapshotTests(unittest.TestCase):
         self.assertIsNotNone(manifest.config)
         self.assertEqual(manifest.config.path, "config.json")
         self.assertEqual(manifest.config.size_bytes, snapshot.config_path.stat().st_size)
+
+    def test_hardware_config_is_frozen_and_registered(self):
+        hardware = {
+            "instruments": {"signal_generator": {"address": "sim::sg", "enabled": True}},
+            "power_supply_assignment": {},
+        }
+
+        snapshot = create_run_snapshot(
+            self.loaded,
+            run_repository=self.repository,
+            run_id=RUN_ID,
+            hardware_config=hardware,
+            now=CREATED_AT,
+        )
+
+        self.assertIsNotNone(snapshot.hardware_config_path)
+        self.assertTrue(snapshot.hardware_config_path.is_file())
+        self.assertEqual(
+            json.loads(snapshot.hardware_config_path.read_text(encoding="utf-8")),
+            hardware,
+        )
+        manifest = self.repository.load_manifest(RUN_ID)
+        registered = {item.path: item for item in manifest.inputs}
+        self.assertIn(HARDWARE_CONFIG_INPUT_PATH, registered)
+        self.assertIsNotNone(registered[HARDWARE_CONFIG_INPUT_PATH].sha256)
+        self.assertEqual(
+            registered[HARDWARE_CONFIG_INPUT_PATH].size_bytes,
+            snapshot.hardware_config_path.stat().st_size,
+        )
+
+    def test_hardware_config_failure_does_not_leave_a_registered_snapshot(self):
+        class _FailingRegisterRepository(RunRepository):
+            def register_file(self, run_id, path, **kwargs):
+                raise OSError("register failed")
+
+        repository = _FailingRegisterRepository(self.root / "runs")
+        with self.assertRaisesRegex(OSError, "register failed"):
+            create_run_snapshot(
+                self.loaded,
+                run_repository=repository,
+                run_id=RUN_ID,
+                hardware_config={"instruments": {}},
+                now=CREATED_AT,
+            )
+
+        manifest = repository.load_manifest(RUN_ID)
+        self.assertEqual(
+            [item.path for item in manifest.inputs if item.path == HARDWARE_CONFIG_INPUT_PATH],
+            [],
+        )
+        self.assertFalse((repository.root / RUN_ID / HARDWARE_CONFIG_INPUT_PATH).exists())
 
 
 class CreatePreparedRunTests(unittest.TestCase):

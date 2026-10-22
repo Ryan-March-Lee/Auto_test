@@ -267,3 +267,134 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             if current in enabled: combo.setCurrentText(current)
 
     def build_config(self): return ConfigFormState(self.config, self).build_config()
+
+    # -- 冻结运行配置回填 ---------------------------------------------------
+    def apply_config(self, config) -> None:
+        """把一份已冻结配置回填到控件，使界面与当前运行保持一致。
+
+        只更新控件显示，不写文件、不保存、不连接仪器；运行期间的测量输入仍来自
+        运行目录内的冻结快照。
+        """
+        if not isinstance(config, dict):
+            return
+        self.config = config
+        self._apply_instrument_widgets(config.get("instruments"))
+        self._apply_test_parameter_widgets(config)
+        self._apply_power_supply_widgets(config.get("instruments"))
+        self._apply_power_assignment_widgets(config.get("power_supply_assignment"))
+        self.update_pa_unit_ui()
+        self.update_driver_power_ui()
+        self.update_power_supply_options()
+
+    def _apply_instrument_widgets(self, instruments) -> None:
+        instruments = instruments if isinstance(instruments, dict) else {}
+        supplies = instruments.get("power_supplies")
+        supplies = supplies if isinstance(supplies, dict) else {}
+        for name, source in (("sg", "signal_generator"), ("sa", "spectrum_analyzer")):
+            item = instruments.get(source)
+            item = item if isinstance(item, dict) else {}
+            address = getattr(self, f"{name}_address", None)
+            if address is not None:
+                address.setText(str(item.get("address", "")))
+            enabled = getattr(self, f"{name}_enabled", None)
+            if enabled is not None:
+                enabled.setChecked(bool(item.get("enabled", True)))
+        for name in ("PS1", "PS2", "PS3", "PS4"):
+            item = supplies.get(name)
+            item = item if isinstance(item, dict) else {}
+            address = getattr(self, f"{name.lower()}_address", None)
+            if address is not None:
+                address.setText(str(item.get("address", "")))
+            enabled = getattr(self, f"{name.lower()}_enabled", None)
+            if enabled is not None:
+                enabled.setChecked(bool(item.get("enabled", name in ("PS1", "PS2"))))
+
+    def _apply_test_parameter_widgets(self, config) -> None:
+        frequencies = config.get("test_frequencies")
+        if isinstance(frequencies, list):
+            self.freq_edit.setText(str(frequencies))
+        signal_source = config.get("signal_source")
+        signal_source = signal_source if isinstance(signal_source, dict) else {}
+        for widget, key, default in (
+            (self.start_power, "start_power", -38),
+            (self.stop_power, "stop_power", -16),
+            (self.power_step, "step", 1),
+        ):
+            value = signal_source.get(key, default)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                widget.setValue(float(value))
+        compression = config.get("compression_point")
+        compression = compression if isinstance(compression, dict) else {}
+        self._set_combo(self.compression_combo, compression.get("type"))
+        attenuator = config.get("attenuator")
+        attenuator = attenuator if isinstance(attenuator, dict) else {}
+        self._set_combo(self.attenuator_combo, attenuator.get("type"))
+        mode = config.get("driver_mode")
+        mode = mode if isinstance(mode, dict) else {}
+        self.driver_mode_check.setChecked(bool(mode.get("enabled", True)))
+        dut = config.get("dut_config")
+        dut = dut if isinstance(dut, dict) else {}
+        value = dut.get("max_input_power")
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            self.max_input_power.setValue(float(value))
+        self._set_combo(self.pa_unit_count_combo, dut.get("power_supply_count"))
+
+    def _apply_power_supply_widgets(self, instruments) -> None:
+        instruments = instruments if isinstance(instruments, dict) else {}
+        supplies = instruments.get("power_supplies")
+        supplies = supplies if isinstance(supplies, dict) else {}
+        for name, record in getattr(self, "power_config_widgets", {}).items():
+            source = supplies.get(name)
+            source = source if isinstance(source, dict) else {}
+            channels = source.get("channels")
+            channels = channels if isinstance(channels, dict) else {}
+            for channel, controls in record.get("channels", {}).items():
+                values = channels.get(channel)
+                values = values if isinstance(values, dict) else {}
+                self._apply_channel_widgets(controls, values)
+
+    @staticmethod
+    def _apply_channel_widgets(controls, values) -> None:
+        voltage = values.get("voltage")
+        voltage = voltage if isinstance(voltage, dict) else {}
+        current = values.get("current")
+        current = current if isinstance(current, dict) else {}
+        for key, value in (("voltage", voltage.get("value")), ("voltage_protection", voltage.get("protection")),
+                           ("current", current.get("value")), ("current_protection", current.get("protection"))):
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                controls[key].setValue(float(value))
+        for key, value in (("voltage_protection_enabled", voltage.get("protection_enabled")),
+                           ("current_protection_enabled", current.get("protection_enabled"))):
+            controls[key].setChecked(bool(value))
+
+    def _apply_power_assignment_widgets(self, assignment) -> None:
+        assignment = assignment if isinstance(assignment, dict) else {}
+        driver = assignment.get("driver_amplifier")
+        driver = driver if isinstance(driver, dict) else {}
+        dut = assignment.get("dut_amplifier")
+        dut = dut if isinstance(dut, dict) else {}
+        widgets = getattr(self, "power_assignment_widgets", {})
+        if not widgets:
+            return
+        driver_supplies = driver.get("supplies")
+        driver_supplies = driver_supplies if isinstance(driver_supplies, dict) else {}
+        main = driver_supplies.get("main")
+        main = main if isinstance(main, dict) else {}
+        enabled = driver.get("power_supply_count", 0)
+        widgets["driver_enabled"].setChecked(isinstance(enabled, (int, float)) and enabled > 0)
+        self._set_combo(widgets["driver_power"], main.get("name"))
+        dut_supplies = dut.get("supplies")
+        dut_supplies = dut_supplies if isinstance(dut_supplies, dict) else {}
+        for role, key in (("carrier", "pa_unit1_power"), ("peaking", "pa_unit2_power"), ("peaking2", "pa_unit3_power")):
+            item = dut_supplies.get(role)
+            item = item if isinstance(item, dict) else {}
+            if item.get("name"):
+                self._set_combo(widgets[key], item.get("name"))
+
+    @staticmethod
+    def _set_combo(combo, value) -> None:
+        if value is None:
+            return
+        text = str(value)
+        if combo.findText(text) >= 0:
+            combo.setCurrentText(text)

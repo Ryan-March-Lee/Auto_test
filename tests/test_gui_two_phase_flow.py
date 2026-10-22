@@ -19,6 +19,8 @@ from PySide6.QtCore import QCoreApplication
 
 from app.run_context import PreparedRun, load_prepared_run
 from app.gui_runtime import prepare_configuration
+from application.run_service import RunNotResumable
+from domain.run.models import HARDWARE_CONFIG_INPUT_PATH, RunStatus
 from infrastructure.persistence.run_repository import RunRepository
 from presentation.qt.measurement_controller import MeasurementController
 from presentation.qt.measurement_controller_contract import MeasurementCommand
@@ -183,6 +185,54 @@ class RunContractReopenTests(unittest.TestCase):
         self.assertIs(reopened.run_repository, self.repository)
         self.assertEqual(reopened.run_repository.load_manifest(RUN_ID).run_id, RUN_ID)
 
+    def test_reopened_run_hardware_config_is_frozen_inside_the_run(self):
+        created, config_path = self._create_run()
+
+        # 修改全局兼容配置后重新打开：硬件连接仍必须使用运行目录内的冻结快照。
+        changed = _fully_valid_gui_config()
+        changed["test_frequencies"] = [9.9]
+        config_path.write_text(json.dumps(changed), encoding="utf-8")
+
+        reopened = load_prepared_run(
+            RUN_ID, config_path=config_path, run_repository=self.repository
+        )
+
+        frozen = created.run_directory / HARDWARE_CONFIG_INPUT_PATH
+        self.assertEqual(reopened.hardware_config_path, frozen)
+        self.assertEqual(reopened.hardware_connection_path(), frozen)
+        self.assertTrue(frozen.is_file())
+        self.assertEqual(reopened.hardware_config["test_frequencies"], [2.4])
+        self.assertNotEqual(reopened.hardware_config["test_frequencies"], [9.9])
+
+    def test_terminal_run_cannot_be_reopened(self):
+        self._create_run()
+        manifest = self.repository.load_manifest(RUN_ID)
+        self.repository.update_manifest(
+            RUN_ID, manifest.with_status(RunStatus.FAILED, error="硬件异常")
+        )
+
+        with self.assertRaises(RunNotResumable):
+            load_prepared_run(RUN_ID, run_repository=self.repository)
+
+    def test_run_without_hardware_config_snapshot_is_not_resumable(self):
+        # 直接创建一个只有领域快照的运行，模拟创建中断或旧版本运行目录。
+        self.repository.create_run(
+            {"schema_version": 1, "test_plan": {}, "run_mapping": {}},
+            run_id=RUN_ID,
+        )
+        with self.assertRaises(RunNotResumable):
+            load_prepared_run(RUN_ID, run_repository=self.repository)
+
+    def test_tampered_hardware_config_is_rejected_on_reopen(self):
+        created, _config_path = self._create_run()
+        tampered = created.run_directory / HARDWARE_CONFIG_INPUT_PATH
+        payload = json.loads(tampered.read_text(encoding="utf-8"))
+        payload["test_frequencies"] = [1.0]
+        tampered.write_text(json.dumps(payload), encoding="utf-8")
+
+        with self.assertRaises(RunNotResumable):
+            load_prepared_run(RUN_ID, run_repository=self.repository)
+
 
 class MeasurementCommandRunContractTests(unittest.TestCase):
     def test_command_carries_an_opaque_run_contract(self):
@@ -340,9 +390,12 @@ class MainWindowTwoPhaseTests(unittest.TestCase):
 
         self.assertIs(result, prepared)
         self.assertIs(window.prepared_run, prepared)
-        create.assert_called_once_with(
-            str(window.config_path), run_contract=True, paths=None
-        )
+        create.assert_called_once()
+        args, kwargs = create.call_args
+        self.assertEqual(args, (str(window.config_path),))
+        self.assertTrue(kwargs["run_contract"])
+        self.assertIsNone(kwargs["paths"])
+        self.assertEqual(kwargs["hardware_config"], window.config)
 
     def test_create_prepared_run_aborts_when_validation_fails(self):
         from presentation.qt.main_window import MainWindow
@@ -356,6 +409,55 @@ class MainWindowTwoPhaseTests(unittest.TestCase):
             self.assertIsNone(MainWindow._create_prepared_run(window))
 
         create.assert_not_called()
+
+    def test_measurement_config_path_prefers_frozen_run_config(self):
+        from presentation.qt.main_window import MainWindow
+
+        window = MainWindow.__new__(MainWindow)
+        window.config_path = Path("global-config.json")
+        frozen = Path("runs") / RUN_ID / HARDWARE_CONFIG_INPUT_PATH
+        window.prepared_run = type(
+            "PreparedRun",
+            (),
+            {"hardware_connection_path": lambda self: frozen},
+        )()
+
+        self.assertEqual(MainWindow._measurement_config_path(window), str(frozen))
+
+        # 未创建运行时才回退到全局兼容配置。
+        window.prepared_run = None
+        self.assertEqual(
+            MainWindow._measurement_config_path(window), str(Path("global-config.json"))
+        )
+
+    def test_load_run_releases_previous_instrument_port(self):
+        from presentation.qt.main_window import MainWindow
+
+        port = object()
+        window = MainWindow.__new__(MainWindow)
+        window.instrument_ctrl = port
+        window.instrument_worker = None
+        window.config_path = Path("global-config.json")
+        window.paths = None
+        window.config_page = MagicMock()
+        window.add_log_message = MagicMock()
+        window._update_run_status = MagicMock()
+        window._close_instrument_port = MagicMock(return_value=None)
+        window.on_measurement_error = MagicMock()
+
+        prepared = type(
+            "PreparedRun",
+            (),
+            {"run_id": RUN_ID, "run_directory": Path("runs") / RUN_ID,
+             "hardware_config": {"test_frequencies": [2.4]}},
+        )()
+        with patch(
+            "presentation.qt.main_window.load_prepared_run", return_value=prepared
+        ):
+            MainWindow._load_prepared_run(window, RUN_ID)
+
+        window._close_instrument_port.assert_called_once_with(port)
+        self.assertIsNone(window.instrument_ctrl)
 
     def test_confirm_wiring_does_not_rewrite_frozen_config(self):
         from presentation.qt.main_window import MainWindow
@@ -376,7 +478,8 @@ class MainWindowTwoPhaseTests(unittest.TestCase):
             window.config["wiring"],
             {"confirmed": True, "connection_note": "frozen"},
         )
-        window.measurement_controller.set_measurement_port.assert_called()
+        # 端口注入已从接线确认回调移到连接成功后的交接点。
+        window.measurement_controller.set_measurement_port.assert_not_called()
 
 
 class ConfigPageRunEntryTests(unittest.TestCase):
@@ -426,6 +529,23 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         page = ConfigPage({})
         page.set_run_status(f"当前运行: {RUN_ID}")
         self.assertEqual(page.run_status_label.text(), f"当前运行: {RUN_ID}")
+
+    def test_apply_config_reflects_a_frozen_run_on_the_widgets(self):
+        from presentation.qt.config_page import ConfigPage
+
+        page = ConfigPage({})
+        frozen = _fully_valid_gui_config()
+        frozen["test_frequencies"] = [2.4, 2.6]
+        frozen["driver_mode"] = {"enabled": False}
+
+        page.apply_config(frozen)
+
+        self.assertEqual(page.freq_edit.text(), "[2.4, 2.6]")
+        self.assertFalse(page.driver_mode_check.isChecked())
+        self.assertEqual(page.sg_address.text(), "sim::sg")
+        self.assertEqual(page.ps1_address.text(), "sim::ps1")
+        self.assertEqual(page.pa_unit1_power_combo.currentText(), "PS1")
+        self.assertEqual(page.power_config_widgets["PS1"]["channels"]["CH2"]["voltage"].value(), 28.0)
 
 
 if __name__ == "__main__":

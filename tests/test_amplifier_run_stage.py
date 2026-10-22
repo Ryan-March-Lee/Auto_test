@@ -641,7 +641,7 @@ class AmplifierRunStageTests(unittest.TestCase):
 
         connect.assert_not_called()
 
-    def test_composition_rejects_config_modified_after_run_creation(self):
+    def test_composition_ignores_global_config_modified_after_run_creation(self):
         config_path = self.base / "config.json"
         config_path.write_text(json.dumps(_fully_valid_gui_config()), encoding="utf-8")
         prepared = prepare_configuration(
@@ -659,15 +659,17 @@ class AmplifierRunStageTests(unittest.TestCase):
         cable_case.measure_all_frequencies()
         cable_case.continue_to_step2()
 
+        # 修改全局兼容配置：运行契约必须完全忽略它，改用自己的冻结硬件配置。
         modified = _fully_valid_gui_config()
         modified["test_frequencies"] = [2.0]
         config_path.write_text(json.dumps(modified), encoding="utf-8")
 
-        with patch("app.gui_runtime.connect_instruments") as connect:
-            with self.assertRaisesRegex(ValueError, "已被修改"):
-                create_amplifier_measurement(str(config_path), prepared_run=prepared)
+        with patch("app.gui_runtime.connect_instruments", return_value=_Instrument()) as connect, patch(
+            "app.gui_runtime.AmplifierMeasurementUseCase", return_value=object()
+        ):
+            create_amplifier_measurement(str(config_path), prepared_run=prepared)
 
-        connect.assert_not_called()
+        connect.assert_called_once_with(str(prepared.hardware_config_path))
 
     def test_composition_requires_mapping_before_hardware_when_driver_enabled(self):
         layout = self._create_run()

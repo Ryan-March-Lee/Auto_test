@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from application.ports.config_repository import ConfigurationLoadResult
 from application.ports.run_repository import RunRepositoryPort
@@ -27,10 +27,22 @@ from domain.configuration.models import (
     validate_run_configuration,
 )
 from domain.configuration.types import ConfigValidationResult
-from domain.run.models import RunManifest, utc_now_iso
+from domain.run.models import (
+    HARDWARE_CONFIG_INPUT_PATH,
+    TERMINAL_RUN_STATUSES,
+    RunManifest,
+    utc_now_iso,
+)
 
 
 RUN_CONFIG_SNAPSHOT_SCHEMA_VERSION = 1
+
+
+class RunNotResumable(ValueError):
+    """运行不可继续测量（终态、缺硬件配置快照或快照校验失败）。
+
+    调用方应据此提示用户创建新运行，而不是回退到全局配置或其它运行目录。
+    """
 
 
 @dataclass(frozen=True)
@@ -41,6 +53,7 @@ class RunSnapshot:
     run_directory: Path
     config_path: Path
     manifest: RunManifest
+    hardware_config_path: Path | None = None
 
 
 def configuration_snapshot(
@@ -76,6 +89,7 @@ def create_run_snapshot(
     git_commit: str | None = None,
     notes: str | None = None,
     product_name: str | None = None,
+    hardware_config: Mapping[str, Any] | None = None,
     now: datetime | None = None,
 ) -> RunSnapshot:
     """校验配置并创建运行快照，失败时不产生可运行的运行目录。
@@ -87,6 +101,10 @@ def create_run_snapshot(
 
     因此阶段专用校验（线损、驱动映射）通过但完整运行校验失败的配置，仍会被
     拒绝，不会留下半成品运行目录，也不会被后续阶段误当作可运行运行。
+
+    ``hardware_config`` 是本次运行用于装配硬件端口的完整配置（旧版组合格式）。
+    它会被冻结为 ``inputs/hardware_config.json`` 并登记到 manifest，使运行目录
+    自包含；硬件连接和测量阶段只消费该快照，而不是全局可变配置。
     """
     if not loaded.valid:
         raise ValueError(
@@ -113,12 +131,49 @@ def create_run_snapshot(
         product_name=product_name,
         now=now,
     )
+    hardware_config_path: Path | None = None
+    if hardware_config is not None:
+        hardware_config_path = _freeze_hardware_config(
+            run_repository, layout.run_id, hardware_config, now=now
+        )
     return RunSnapshot(
         run_id=manifest.run_id,
         run_directory=Path(layout.run_directory),
         config_path=Path(layout.config_path),
         manifest=manifest,
+        hardware_config_path=hardware_config_path,
     )
+
+
+def _freeze_hardware_config(
+    run_repository: RunRepositoryPort,
+    run_id: str,
+    hardware_config: Mapping[str, Any],
+    *,
+    now: datetime | None,
+) -> Path:
+    """把硬件装配配置原子写入运行目录并登记，失败时清理未提交文件。"""
+    if not isinstance(hardware_config, Mapping):
+        raise ValueError("hardware_config 必须是配置映射")
+    try:
+        relative = run_repository.write_run_json(
+            run_id, HARDWARE_CONFIG_INPUT_PATH, dict(hardware_config)
+        )
+        reference = run_repository.register_file(
+            run_id,
+            relative,
+            description="硬件组装配置快照",
+            now=now,
+        )
+    except Exception:
+        # 提交失败不留“看起来完整”的硬件配置；登记不存在时按无操作处理。
+        try:
+            run_repository.discard_file(run_id, HARDWARE_CONFIG_INPUT_PATH)
+        except Exception:  # noqa: BLE001 - 清理失败不掩盖原始异常
+            pass
+        raise
+    layout = run_repository.layout(run_id)
+    return Path(layout.run_directory) / reference.path
 
 
 def load_run_configuration(
@@ -150,10 +205,51 @@ def load_run_configuration(
     )
 
 
+def ensure_run_resumable(manifest: RunManifest) -> None:
+    """拒绝把已完成、失败或取消的运行当作可继续测量的运行。
+
+    重跑终态运行必须创建新运行或走显式覆盖流程，因此加载阶段就要失败，
+    避免把用户带到连接仪器和接线确认之后才在阶段启动时失败。
+    """
+    if manifest.status in TERMINAL_RUN_STATUSES:
+        raise RunNotResumable(
+            f"运行 {manifest.run_id} 已处于终态 {manifest.status.value}，不能继续测量；"
+            "请创建新运行"
+        )
+
+
+def find_run_hardware_config(
+    run_repository: RunRepositoryPort, run_id: str
+) -> Path:
+    """返回当前运行**已登记且校验通过**的硬件配置快照绝对路径。
+
+    运行目录内没有登记硬件配置快照、文件缺失或 SHA-256 不一致时抛出
+    :class:`RunNotResumable`，保证硬件连接与测量阶段不会回退到全局可变配置。
+    """
+    manifest = run_repository.load_manifest(run_id)
+    reference = next(
+        (item for item in manifest.inputs if item.path == HARDWARE_CONFIG_INPUT_PATH),
+        None,
+    )
+    if reference is None:
+        raise RunNotResumable(
+            f"运行 {run_id} 缺少硬件配置快照，不能继续测量；请重新创建运行"
+        )
+    try:
+        return run_repository.verify_file(run_id, reference)
+    except (FileNotFoundError, ValueError) as error:
+        raise RunNotResumable(
+            f"运行 {run_id} 的硬件配置快照校验失败: {error}"
+        ) from error
+
+
 __all__ = [
     "RUN_CONFIG_SNAPSHOT_SCHEMA_VERSION",
+    "RunNotResumable",
     "RunSnapshot",
     "configuration_snapshot",
     "create_run_snapshot",
+    "ensure_run_resumable",
+    "find_run_hardware_config",
     "load_run_configuration",
 ]

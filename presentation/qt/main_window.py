@@ -125,7 +125,7 @@ class MainWindow(QMainWindow):
         # 配置阶段创建（或按 run_id 重新打开）的当前运行契约；测量页面只消费它。
         self.prepared_run = None
         self.measurement_controller = MeasurementController(
-            build_measurement_worker_factories(), lambda: str(self.config_path)
+            build_measurement_worker_factories(), self._measurement_config_path
         )
         self.measurement_controller.signals.thread_finished.connect(
             self._on_measurement_controller_thread_finished
@@ -269,7 +269,7 @@ class MainWindow(QMainWindow):
         """构造页面并登记 tab；测量页面通过共享 controller 连接。"""
         context = PageContext(
             controller=self.measurement_controller,
-            config_path_provider=lambda: str(self.config_path),
+            config_path_provider=self._measurement_config_path,
             run_provider=self._resolve_measurement_run,
             confirm_cable_loss=self._confirm_cable_loss_wiring,
             confirm_driver_mapping=self._confirm_driver_mapping_wiring,
@@ -988,6 +988,21 @@ class MainWindow(QMainWindow):
                 self.power_assignment_widgets['pa_unit3_power'].setCurrentText(current_unit3)
         
     '''
+    def _measurement_config_path(self) -> str:
+        """返回硬件连接与测量应使用的配置路径。
+
+        运行契约运行固定返回运行目录内冻结的 ``inputs/hardware_config.json``，
+        因此测量阶段不会再读取全局可变配置；只有尚未创建运行（旧流程）时才回退
+        到全局兼容配置。
+        """
+        run = getattr(self, "prepared_run", None)
+        if run is not None:
+            try:
+                return str(run.hardware_connection_path())
+            except Exception:  # noqa: BLE001 - 运行缺少可用硬件配置时回退兼容路径
+                pass
+        return str(self.config_path)
+
     def _resolve_measurement_run(self):
         """返回当前运行契约，供测量页面消费；不可用时给出兼容提示并返回 None。
 
@@ -1020,12 +1035,16 @@ class MainWindow(QMainWindow):
             return None
         try:
             prepared = prepare_configuration(
-                str(self.config_path), run_contract=True, paths=self.paths
+                str(self.config_path),
+                run_contract=True,
+                paths=self.paths,
+                hardware_config=self.config,
             )
         except Exception as error:
             self.add_log_message(f"创建运行失败: {error}")
             QMessageBox.warning(self, "创建运行失败", str(error))
             return None
+        self._release_instrument_for_new_run()
         self.prepared_run = prepared
         self._update_run_status()
         self.add_log_message(
@@ -1043,12 +1062,41 @@ class MainWindow(QMainWindow):
             self.add_log_message(f"加载运行失败: {error}")
             QMessageBox.warning(self, "加载运行失败", str(error))
             return None
+        self._release_instrument_for_new_run()
         self.prepared_run = prepared
+        self._apply_run_configuration_to_page(prepared)
         self._update_run_status()
         self.add_log_message(
             f"已加载运行 {prepared.run_id}，运行目录: {prepared.run_directory}"
         )
         return prepared
+
+    def _release_instrument_for_new_run(self):
+        """切换运行前释放已连接端口，避免新运行复用旧配置的仪器资源。"""
+        if getattr(self, "instrument_ctrl", None) is None:
+            return
+        try:
+            self._close_instrument_port(self.instrument_ctrl)
+        except Exception as error:
+            self.add_log_message(f"切换运行前仪器清理失败: {error}")
+        self.instrument_ctrl = None
+        self.add_log_message("已释放上一次连接的仪器端口；请重新连接仪器")
+
+    def _apply_run_configuration_to_page(self, prepared):
+        """把已冻结运行配置同步到配置页，使界面与本次运行保持一致。"""
+        page = getattr(self, "config_page", None)
+        config = getattr(prepared, "hardware_config", None)
+        if page is None or not isinstance(config, dict):
+            return
+        applier = getattr(page, "apply_config", None)
+        if applier is None:
+            return
+        try:
+            applier(config)
+            page.config = dict(config)
+            self.config = dict(config)
+        except Exception:  # noqa: BLE001 - 展示失败不影响运行契约
+            self.add_log_message("冻结配置同步到配置页失败；测量仍使用运行快照")
 
     def _update_run_status(self):
         page = getattr(self, "config_page", None)
@@ -1090,8 +1138,7 @@ class MainWindow(QMainWindow):
         return True
 
     def _confirm_cable_loss_wiring(self):
-        """线损测量前的现场接线确认；运行已冻结，只绑定端口不再改写配置。"""
-        self.measurement_controller.set_measurement_port(self.instrument_ctrl)
+        """线损测量前的现场接线确认；运行已冻结，不再改写配置。"""
         self.add_log_message("线损路径1现场接线已确认")
         return True
 
@@ -1129,14 +1176,12 @@ class MainWindow(QMainWindow):
         buffer.store(data)
 
     def _confirm_driver_mapping_wiring(self):
-        """驱动映射测量前的现场接线确认；运行已冻结，只绑定端口不再改写配置。"""
-        self.measurement_controller.set_measurement_port(self.instrument_ctrl)
+        """驱动映射测量前的现场接线确认；运行已冻结，不再改写配置。"""
         self.add_log_message("驱动映射现场接线已确认")
         return True
 
     def _confirm_amplifier_wiring(self):
-        """主功放测量前的现场接线确认；运行已冻结，只绑定端口不再改写配置。"""
-        self.measurement_controller.set_measurement_port(self.instrument_ctrl)
+        """主功放测量前的现场接线确认；运行已冻结，不再改写配置。"""
         self.add_log_message("主功放现场接线已确认")
         return True
 
@@ -1259,8 +1304,8 @@ class MainWindow(QMainWindow):
         self.add_log_message("开始连接仪器...")
         self.connect_btn.setEnabled(False)
 
-        # 已创建运行时配置已冻结：连接仪器直接使用冻结配置，不再用页面状态覆盖
-        # 兼容配置文件（否则会让当前运行与磁盘配置漂移）。
+        # 已创建运行时配置已冻结：连接仪器直接使用运行目录内冻结的硬件配置，
+        # 不再用页面状态覆盖兼容配置文件。
         if getattr(self, "prepared_run", None) is None:
             if not self.update_and_save_config():
                 self.connect_btn.setEnabled(True)
@@ -1270,8 +1315,8 @@ class MainWindow(QMainWindow):
                 f"使用已冻结的运行配置连接仪器: {self.prepared_run.run_id}"
             )
 
-        # 启动仪器连接工作线程
-        self.instrument_worker = InstrumentWorker(str(self.config_path))
+        # 启动仪器连接工作线程；连接配置由 _measurement_config_path 决定。
+        self.instrument_worker = InstrumentWorker(self._measurement_config_path())
         self.instrument_worker.signals.finished.connect(self.on_instrument_connected)
         self.instrument_worker.signals.result.connect(self.on_instrument_controller_ready)
         self.instrument_worker.signals.stopped.connect(self.on_instrument_stopped)
@@ -1285,6 +1330,11 @@ class MainWindow(QMainWindow):
         if self.instrument_ctrl is not None and self.instrument_ctrl is not controller:
             self._close_instrument_port(self.instrument_ctrl)
         self.instrument_ctrl = controller
+        # 端口在成功交接后立即注入 controller，测量页面不再承担端口绑定职责。
+        try:
+            self.measurement_controller.set_measurement_port(controller)
+        except RuntimeError as error:
+            self.add_log_message(f"注入测量端口失败: {error}")
 
     @staticmethod
     def _close_instrument_port(port):

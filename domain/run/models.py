@@ -45,6 +45,10 @@ DEFAULT_STAGE_NAMES = (STAGE_CABLE_LOSS, STAGE_DRIVER_MAPPING, STAGE_AMPLIFIER)
 
 CABLE_LOSS_INPUT_PATH = "inputs/cable_loss.json"
 DRIVER_MAPPING_INPUT_PATH = "inputs/driver_mapping.json"
+# 本次运行用于装配硬件端口的完整配置快照（旧版组合配置格式）。它和领域配置
+# 快照 ``config.json`` 一起冻结在运行目录内，硬件连接与测量阶段只能消费它，
+# 不能再读取全局可变 ``config.json``。
+HARDWARE_CONFIG_INPUT_PATH = "inputs/hardware_config.json"
 # 主功放阶段的权威结果文件；主功放允许存在多个拆分结果文件，因此它不是
 # ``default_stage_result_path`` 的固定路径，而由调用方显式指定为主结果。
 AMPLIFIER_RESULT_PATH = "results/amplifier_measurement.json"
@@ -652,6 +656,7 @@ __all__ = [
     "DRIVER_MAPPING_INPUT_PATH",
     "FileReference",
     "GENERATED_RUN_ID_PATTERN",
+    "HARDWARE_CONFIG_INPUT_PATH",
     "INPUTS_DIRNAME",
     "MANIFEST_FILENAME",
     "MANIFEST_SCHEMA_VERSION",

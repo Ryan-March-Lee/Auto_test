@@ -6,6 +6,7 @@ from .runtime_contract import (
     current_runtime,
     load_env_value,
     runtime_id,
+    software_version_tag,
     validate_python_interpreter,
 )
 
@@ -15,5 +16,6 @@ __all__ = [
     "current_runtime",
     "load_env_value",
     "runtime_id",
+    "software_version_tag",
     "validate_python_interpreter",
 ]

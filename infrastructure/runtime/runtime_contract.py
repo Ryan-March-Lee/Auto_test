@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import os
+import platform
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 DEFAULT_RUN_ID_PREFIX = "pa-auto-test"
+
+
+def software_version_tag() -> str:
+    """返回写入运行快照的软件版本标识，避免硬编码解释器版本。"""
+    return f"python-{platform.python_version()}"
 
 
 def load_env_value(name: str, env_file: Path | None = None) -> str | None:

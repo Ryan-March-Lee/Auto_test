@@ -2,7 +2,7 @@
 
 ## 1. 当前结论
 
-第一期“清理 `enhanced_workers` 职责”、第二期“GUI 页面与 `MeasurementController` 重构”以及第三期“`enhanced_main_gui` 拆分”的代码和离线验收均已完成。
+第一期“清理 `enhanced_workers` 职责”、第二期“GUI 页面与 `MeasurementController` 重构”、第三期“GUI 主窗口拆分”以及后续兼容入口收口（任务 1-6）的代码和离线验收均已完成。
 
 当前唯一未完成事项是现场真实 Hardware smoke，包括线损、驱动功率映射和主功放三类完整测量。未取得现场授权、设备信息和安全窗口前，不得执行真实 RF 或电源动作，也不得将离线测试或历史 `minimal_action` 结果视为完整现场验收。
 
@@ -15,7 +15,7 @@
 - `MeasurementController` 已统一三类测量的启动、停止、紧急停止、线损继续、状态转发和 worker 终态清理。
 - `MainWindow` 通过应用组装层和 worker factory 接入测量链路，不直接实例化三类测量 worker。
 - 页面、状态对象、controller、worker、窗口组合和架构依赖均已完成离线回归；页面不直接访问 VISA、SCPI、结果存储或具体测量服务。
-- `enhanced_main_gui.py` 已收敛为兼容入口；配置、可视化、导出、状态、实时缓存、连接图、绘图和聊天职责已迁移到 `presentation/qt/`。
+- 根目录 GUI 兼容入口已删除；配置、可视化、导出、状态、实时缓存、连接图、绘图和聊天职责均位于 `presentation/qt/`。
 - `MainWindow` 已迁移到 `presentation.qt.main_window`，主要负责应用组装、页面注册、连接协调和窗口关闭生命周期。
 - 第三期纯 UI、配置、可视化导出、状态实时、主窗口和架构门禁均已通过离线回归。
 - 硬件默认边界已固定为：

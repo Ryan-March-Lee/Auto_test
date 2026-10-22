@@ -32,8 +32,7 @@ python launcher.py --validate-config
 
 ## 文件说明
 
-- `launcher.py`：唯一的应用启动器。
-- `enhanced_main_gui.py`：由启动器加载的 GUI 模块，不应作为独立启动入口。
+- `launcher.py`：唯一的应用启动器；GUI 主窗口位于 `presentation/qt/main_window.py`。
 - `run_tests.ps1` / `run_tests.bat`：测试工具，不是应用启动器。
 
 ## 自动化测试

@@ -141,17 +141,20 @@ python launcher.py --validate-config
 
 ```
 pa_auto_test/
-├── enhanced_main_gui.py          # 主GUI应用
-├── connection_diagrams.py        # 连接图兼容入口（实现在 presentation/qt/connection_diagrams.py）
-├── instrument_control.py         # 仪器控制模块
-├── cable_loss_measurement.py     # 线损测量模块
-├── driver_power_mapping.py       # 驱动映射模块
-├── amplifier_measurement.py      # 功放测试模块
-├── data_visualization.py         # 数据可视化兼容入口（实现在 analysis/visualization.py）
-├── config.json                   # 配置文件
-├── launcher.py                   # 唯一应用启动器
-└── README.md                     # 本文档
+├── launcher.py                     # 唯一应用启动器
+├── config.json                     # 配置文件
+├── cable_loss_measurement.py       # 线损测量历史入口（任务 2 待迁移）
+├── driver_power_mapping.py         # 驱动映射历史入口（任务 2 待迁移）
+├── measurement_services.py         # 测量服务兼容入口（实现在 application/measurements/services.py）
+├── measurement_lifecycle.py        # 测量清理兼容入口（实现在 instrument/flow/cleanup.py）
+├── presentation/qt/                # GUI 页面、controller、主窗口、绘图与连接图
+├── application/                    # 测量用例、端口与 DTO
+├── infrastructure/                 # 配置、结果与路径实现
+├── instrument/                     # 设备会话、driver、transport 与安全流程
+└── README.md                       # 本文档
 ```
+
+其中 `cable_loss_measurement.py`、`driver_power_mapping.py` 与 `measurement_services.py`、`measurement_lifecycle.py` 是任务 2 尚未收口的过渡入口，将在任务 2 完成后统一评估删除。
 
 生产环境请通过 `python launcher.py` 启动，不直接运行 GUI 模块。
 

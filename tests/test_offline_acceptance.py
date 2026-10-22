@@ -5,8 +5,8 @@ import ast
 from release_manifest import REAL_DEVICE_ACCEPTANCE_STATES, build_manifest
 
 
-class SecondRefactorAcceptanceTests(unittest.TestCase):
-    """第二期阶段 6 的离线验收和现场门槛回归。"""
+class OfflineAcceptanceTests(unittest.TestCase):
+    """离线验收矩阵与真实设备现场门槛回归。"""
 
     ROOT = Path(__file__).resolve().parents[1]
 
@@ -19,10 +19,9 @@ class SecondRefactorAcceptanceTests(unittest.TestCase):
         plan = (self.ROOT / "docs/重构收尾与真实HardwareSmoke验收.md").read_text(
             encoding="utf-8"
         )
-        self.assertIn("第二期", plan)
         self.assertIn("不得将离线测试或历史 `minimal_action` 结果视为完整现场验收", plan)
 
-    def test_offline_acceptance_matrix_is_explicitly_recorded(self):
+    def test_offline_acceptance_matrix_is_recorded(self):
         plan = (self.ROOT / "docs/重构收尾与真实HardwareSmoke验收.md").read_text(
             encoding="utf-8"
         )
@@ -30,6 +29,17 @@ class SecondRefactorAcceptanceTests(unittest.TestCase):
             "页面、状态对象、controller、worker、窗口组合和架构依赖均已完成离线回归",
             "每类测量都必须覆盖正常完成、普通停止、紧急停止和测量异常后的重新连接",
             "Hardware smoke 及必要的真实测量没有未解释失败",
+        ):
+            self.assertIn(item, plan)
+
+    def test_real_device_acceptance_sections_remain_documented(self):
+        plan = (self.ROOT / "docs/重构收尾与真实HardwareSmoke验收.md").read_text(
+            encoding="utf-8"
+        )
+        for item in (
+            "## 3. 现场验收前置条件",
+            "## 4. 真实 Hardware smoke 执行顺序",
+            "不得执行真实 RF 或电源动作",
         ):
             self.assertIn(item, plan)
 

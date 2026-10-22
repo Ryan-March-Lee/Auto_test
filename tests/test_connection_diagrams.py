@@ -143,17 +143,5 @@ class ConnectionDiagramOutputTests(unittest.TestCase):
         )
 
 
-class ConnectionDiagramCompatibilityTests(unittest.TestCase):
-    def test_legacy_root_forwards_to_presentation_module(self):
-        import connection_diagrams as legacy_root
-
-        self.assertEqual(
-            legacy_root.__all__,
-            ["ConnectionDiagram", "create_all_diagrams"],
-        )
-        self.assertIs(legacy_root.ConnectionDiagram, ConnectionDiagram)
-        self.assertIs(legacy_root.create_all_diagrams, create_all_diagrams)
-
-
 if __name__ == "__main__":
     unittest.main()

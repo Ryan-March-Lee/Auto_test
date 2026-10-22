@@ -1,14 +1,13 @@
 """数据可视化迁移后的行为回归。
 
-覆盖纯分析入口（analysis.visualization）与历史根入口（data_visualization）的
-CSV/HTML 报告装配、HTML 转义、唯一输出目录、结果文件读取与转发身份。
+覆盖纯分析入口（analysis.visualization）的 CSV/HTML 报告装配、HTML 转义、
+唯一输出目录与报告输入规范化。
 
 注意：当前测试环境中的 matplotlib/numpy 在渲染图像时会触发原生崩溃，因此这里的
 用例替换绘图方法，只验证报告装配与数据契约；真实渲染由
 ``tests/test_visualization_rendering.py`` 在可用环境中验证。
 """
 
-import json
 import tempfile
 import unittest
 from contextlib import ExitStack
@@ -198,70 +197,6 @@ class ReportInputTests(unittest.TestCase):
 
         names = {unique_directory_name("report") for _ in range(50)}
         self.assertEqual(len(names), 50)
-
-
-class VisualizationCompatibilityTests(unittest.TestCase):
-    def test_legacy_root_forwards_to_assembly_adapter(self):
-        import app.legacy_visualization
-        import data_visualization
-
-        self.assertEqual(
-            data_visualization.__all__,
-            ["DataVisualization", "load_measurement_result", "load_result_model"],
-        )
-        self.assertIs(
-            data_visualization.DataVisualization,
-            app.legacy_visualization.DataVisualization,
-        )
-        self.assertIs(
-            data_visualization.load_measurement_result,
-            app.legacy_visualization.load_measurement_result,
-        )
-
-    def test_legacy_adapter_uses_composition_not_inheritance(self):
-        import app.legacy_visualization
-
-        self.assertFalse(
-            issubclass(
-                app.legacy_visualization.DataVisualization,
-                AnalysisDataVisualization,
-            )
-        )
-        with tempfile.TemporaryDirectory() as directory:
-            paths = PathService(Path(directory))
-            visualizer = app.legacy_visualization.DataVisualization(paths=paths)
-            self.assertIsInstance(visualizer._analysis, AnalysisDataVisualization)
-
-    def test_legacy_adapter_allocates_unique_output_dirs(self):
-        import app.legacy_visualization
-
-        with tempfile.TemporaryDirectory() as directory:
-            paths = PathService(Path(directory))
-            first = app.legacy_visualization.DataVisualization(paths=paths)
-            second = app.legacy_visualization.DataVisualization(paths=paths)
-            self.assertNotEqual(first.output_dir, second.output_dir)
-
-    def test_legacy_adapter_reads_result_files_and_reports(self):
-        import data_visualization
-
-        with tempfile.TemporaryDirectory() as directory:
-            paths = PathService(Path(directory))
-            source = paths.test_results_dir / "amplifier_measurement_sample.json"
-            source.parent.mkdir(parents=True, exist_ok=True)
-            source.write_text(json.dumps(_sample_data()), encoding="utf-8")
-
-            visualizer = data_visualization.DataVisualization(
-                paths=paths, output_dir=paths.test_results_dir / "out"
-            )
-            self.assertEqual(visualizer.load_data(str(source))["run_id"], "viz-run")
-            self.assertEqual(visualizer.load_result(str(source)).run_id, "viz-run")
-            with _patch_plots():
-                report = visualizer.create_summary_report(str(source))
-            self.assertTrue(report.is_file())
-            self.assertIn(
-                "amplifier_measurement_sample.json",
-                report.read_text(encoding="utf-8"),
-            )
 
 
 if __name__ == "__main__":

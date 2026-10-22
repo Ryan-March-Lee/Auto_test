@@ -40,6 +40,17 @@ FORBIDDEN_PAGE_IMPORT_ROOTS = {
     "instrument",
     "instrument_control",
 }
+# 任务 6 已删除的历史兼容根入口；生产包与测试都不得再导入或重新引入。
+DELETED_ROOT_MODULES = {
+    "enhanced_main_gui",
+    "legacy_config_conversion",
+    "llm",
+    "web_search_tools",
+    "instrument_control",
+    "data_visualization",
+    "connection_diagrams",
+    "persistence",
+}
 FORBIDDEN_CONTROLLER_IMPORT_ROOTS = FORBIDDEN_PAGE_IMPORT_ROOTS | {
     "measurement_services",
     "cable_loss_measurement",
@@ -129,7 +140,7 @@ def _main_window_class(tree):
     for node in tree.body:
         if isinstance(node, ast.ClassDef) and node.name == "MainWindow":
             return node
-    raise AssertionError("enhanced_main_gui.py 中未找到 MainWindow 类")
+    raise AssertionError("main_window.py 中未找到 MainWindow 类")
 
 
 def _main_window_measurement_writes(tree):
@@ -313,7 +324,6 @@ class ProductionDependencyTests(unittest.TestCase):
             ROOT / "config_io.py",
             ROOT / "config_models.py",
             ROOT / "config_validation.py",
-            ROOT / "legacy_config_conversion.py",
         )
         for source_path in modules:
             tree = _tree(source_path)
@@ -377,144 +387,6 @@ class ProductionDependencyTests(unittest.TestCase):
             str(source_path.relative_to(ROOT)) + " 必须显式声明 __all__",
         )
 
-    def test_legacy_instrument_control_root_is_an_explicit_reexport(self):
-        source_path = ROOT / "instrument_control.py"
-        tree = _tree(source_path)
-        definitions = [
-            node.name
-            for node in tree.body
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-        ]
-        self.assertEqual(definitions, [], str(source_path.relative_to(ROOT)))
-        self.assertTrue(
-            any(
-                isinstance(node, ast.Assign)
-                and any(
-                    isinstance(target, ast.Name) and target.id == "__all__"
-                    for target in node.targets
-                )
-                for node in tree.body
-            ),
-            str(source_path.relative_to(ROOT)) + " 必须显式声明 __all__",
-        )
-
-        import instrument_control
-        import instrument.legacy_control as legacy_control
-        import instrument.power_roles as power_roles
-
-        self.assertEqual(
-            set(instrument_control.__all__),
-            {"InstrumentControl", "resolve_power_channel_role"},
-        )
-        self.assertIs(instrument_control.InstrumentControl, legacy_control.InstrumentControl)
-        self.assertIs(
-            instrument_control.resolve_power_channel_role,
-            power_roles.resolve_power_channel_role,
-        )
-
-    def test_legacy_visualization_root_is_an_explicit_reexport(self):
-        source_path = ROOT / "data_visualization.py"
-        tree = _tree(source_path)
-        definitions = [
-            node.name
-            for node in tree.body
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-        ]
-        self.assertEqual(definitions, [], str(source_path.relative_to(ROOT)))
-        self.assertTrue(
-            any(
-                isinstance(node, ast.Assign)
-                and any(
-                    isinstance(target, ast.Name) and target.id == "__all__"
-                    for target in node.targets
-                )
-                for node in tree.body
-            ),
-            str(source_path.relative_to(ROOT)) + " 必须显式声明 __all__",
-        )
-
-        import app.legacy_visualization
-        import data_visualization
-
-        self.assertEqual(
-            set(data_visualization.__all__),
-            {"DataVisualization", "load_measurement_result", "load_result_model"},
-        )
-        self.assertIs(
-            data_visualization.DataVisualization,
-            app.legacy_visualization.DataVisualization,
-        )
-        self.assertIs(
-            data_visualization.load_measurement_result,
-            app.legacy_visualization.load_measurement_result,
-        )
-
-    def test_legacy_connection_diagrams_root_is_an_explicit_reexport(self):
-        source_path = ROOT / "connection_diagrams.py"
-        tree = _tree(source_path)
-        definitions = [
-            node.name
-            for node in tree.body
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-        ]
-        self.assertEqual(definitions, [], str(source_path.relative_to(ROOT)))
-        self.assertTrue(
-            any(
-                isinstance(node, ast.Assign)
-                and any(
-                    isinstance(target, ast.Name) and target.id == "__all__"
-                    for target in node.targets
-                )
-                for node in tree.body
-            ),
-            str(source_path.relative_to(ROOT)) + " 必须显式声明 __all__",
-        )
-
-        import connection_diagrams
-        import presentation.qt.connection_diagrams as presentation_diagrams
-
-        self.assertEqual(
-            set(connection_diagrams.__all__),
-            {"ConnectionDiagram", "create_all_diagrams"},
-        )
-        self.assertIs(
-            connection_diagrams.ConnectionDiagram,
-            presentation_diagrams.ConnectionDiagram,
-        )
-
-    def test_production_packages_do_not_import_legacy_visualization_roots(self):
-        violations = _package_root_import_violations(
-            ("app", "application", "presentation", "infrastructure", "instrument"),
-            {"data_visualization", "connection_diagrams"},
-        )
-        self.assertEqual(
-            violations,
-            [],
-            "生产包不得依赖历史可视化/连接图根入口: " + "; ".join(violations),
-        )
-
-    def test_legacy_config_conversion_is_an_explicit_reexport(self):
-        source_path = ROOT / "legacy_config_conversion.py"
-        tree = _tree(source_path)
-        definitions = [
-            node.name
-            for node in tree.body
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-        ]
-        self.assertEqual(definitions, [])
-        self.assertTrue(any(
-            isinstance(node, ast.Assign)
-            and any(isinstance(target, ast.Name) and target.id == "__all__" for target in node.targets)
-            for node in tree.body
-        ))
-
-    def test_legacy_config_conversion_exports_match_canonical_objects(self):
-        import infrastructure.config.legacy_conversion as canonical
-        import legacy_config_conversion as compatibility
-
-        for name in compatibility.__all__:
-            self.assertIs(getattr(compatibility, name), getattr(canonical, name), name)
-
     def test_configuration_compatibility_exports_match_canonical_objects(self):
         import app_logging
         import config_io
@@ -535,16 +407,9 @@ class ProductionDependencyTests(unittest.TestCase):
         self.assertIs(config_validation.validate_config, canonical_rules.validate_config)
 
     def test_persistence_implementations_have_one_infrastructure_boundary(self):
-        legacy_config = _tree(ROOT / "persistence" / "config_repository.py")
         result_adapter = _tree(ROOT / "infrastructure" / "persistence" / "result_repository.py")
         legacy_results = _tree(ROOT / "result_storage.py")
 
-        legacy_business_definitions = {
-            node.name
-            for node in legacy_config.body
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-        }
-        self.assertEqual(legacy_business_definitions, set())
         self.assertNotIn(
             "result_storage",
             {
@@ -574,11 +439,11 @@ class ProductionDependencyTests(unittest.TestCase):
         )
         production_legacy_imports = []
         for source_path in _production_sources():
-            if source_path in {ROOT / "result_storage.py", ROOT / "persistence" / "config_repository.py"}:
+            if source_path == ROOT / "result_storage.py":
                 continue
             tree = _tree(source_path)
             if any(
-                module == "result_storage" or module == "persistence.config_repository"
+                module == "result_storage"
                 for module, _alias, _name in _imported_modules(tree)
             ):
                 production_legacy_imports.append(str(source_path.relative_to(ROOT)))
@@ -700,13 +565,36 @@ class ProductionDependencyTests(unittest.TestCase):
             violations, [], "生产包不得依赖历史测量根入口: " + "; ".join(violations)
         )
 
-    def test_production_packages_do_not_import_legacy_instrument_control_root(self):
-        violations = _package_root_import_violations(
-            ("app", "application", "presentation", "infrastructure", "instrument"),
-            {"instrument_control"},
-        )
+    def test_deleted_root_modules_are_absent_and_unimported(self):
+        for module in DELETED_ROOT_MODULES:
+            module_path = ROOT / (module.replace(".", "/") + ".py")
+            self.assertFalse(
+                module_path.exists(), f"{module} 已删除，不应再存在源文件"
+            )
+            self.assertFalse(
+                (ROOT / module / "__init__.py").exists(),
+                f"{module} 包已删除，不应再存在",
+            )
+
+        packages = ("app", "application", "presentation", "infrastructure", "instrument")
+        violations = _package_root_import_violations(packages, DELETED_ROOT_MODULES)
         self.assertEqual(
-            violations, [], "生产包不得依赖历史设备控制根入口: " + "; ".join(violations)
+            violations,
+            [],
+            "生产包不得导入已删除的历史入口: " + "; ".join(violations),
+        )
+
+        test_violations = []
+        for source_path in (ROOT / "tests").rglob("*.py"):
+            for module, _alias, _name in _imported_modules(_tree(source_path)):
+                if module.split(".")[0] in DELETED_ROOT_MODULES:
+                    test_violations.append(
+                        f"{source_path.relative_to(ROOT)} imports {module}"
+                    )
+        self.assertEqual(
+            test_violations,
+            [],
+            "测试不得导入已删除的历史入口: " + "; ".join(test_violations),
         )
 
     def test_gui_data_pages_do_not_access_storage_implementations(self):

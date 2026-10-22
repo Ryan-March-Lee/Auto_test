@@ -9,13 +9,7 @@ from unittest.mock import Mock, patch
 ROOT = Path(__file__).resolve().parents[1]
 
 
-class Phase35MainWindowTests(unittest.TestCase):
-    def test_compatibility_entry_reexports_same_main_window(self):
-        import enhanced_main_gui
-        from presentation.qt.main_window import MainWindow
-
-        self.assertIs(enhanced_main_gui.MainWindow, MainWindow)
-
+class MainWindowTests(unittest.TestCase):
     def test_build_application_reuses_qapplication(self):
         from PySide6.QtWidgets import QApplication
         from presentation.qt.main_window import build_application

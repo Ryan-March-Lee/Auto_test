@@ -13,7 +13,7 @@ from presentation.qt.export_page import ExportPage
 from presentation.qt.visualization_page import convert_power_mapping, normalize_visualization_data
 
 
-class Phase33DataBoundaryTests(unittest.TestCase):
+class VisualizationDataBoundaryTests(unittest.TestCase):
     def test_amplifier_results_are_sorted_by_numeric_frequency(self):
         data, frequencies, kind = normalize_visualization_data(
             {"results": {"5.2": {}, "4.8": {}, "10": {}}}
@@ -75,7 +75,7 @@ class Phase33DataBoundaryTests(unittest.TestCase):
             self.assertEqual([item.filename for item in files], ["cable_loss.json"])
 
 
-class Phase33ExportTests(unittest.TestCase):
+class VisualizationExportTests(unittest.TestCase):
     def test_fake_visualizer_exports_csv_and_pdf(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

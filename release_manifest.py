@@ -25,33 +25,25 @@ RELEASE_FILES = (
     "app",
     "application",
     "instrument",
-    "persistence",
     "analysis",
     "presentation",
 )
 ROLLBACK_FILES = (
-    "enhanced_main_gui.py",
     "cable_loss_measurement.py",
     "driver_power_mapping.py",
     "amplifier_measurement.py",
 )
 COMPATIBILITY_FILES = (
-    "instrument_control.py",
     "measurement_services.py",
     "measurement_lifecycle.py",
-    "data_visualization.py",
-    "connection_diagrams.py",
     "config_models.py",
     "measurement_calculations.py",
     "result_storage.py",
     "result_reading.py",
-    "legacy_config_conversion.py",
     "app_logging.py",
     "project_paths.py",
     "config_io.py",
     "config_validation.py",
-    "llm.py",
-    "web_search_tools.py",
 )
 REAL_DEVICE_ACCEPTANCE_STATES = frozenset({"pending", "passed"})
 

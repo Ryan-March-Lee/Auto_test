@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from enhanced_main_gui import MainWindow
+from presentation.qt.main_window import MainWindow
 
 
 class FakeTextWidget:
@@ -438,7 +438,7 @@ class GuiConfigSaveTests(unittest.TestCase):
         def fake_msg_box(icon, title, text):
             self.window._msg_box_calls.append((title, text))
 
-        with patch.object(__import__('enhanced_main_gui').QMessageBox, 'information', side_effect=fake_msg_box):
+        with patch('presentation.qt.main_window.QMessageBox.information', side_effect=fake_msg_box):
             self.window.save_config()
 
         self.assertIn(('保存成功', '配置文件已保存'), self.window._msg_box_calls)
@@ -452,7 +452,7 @@ class GuiConfigSaveTests(unittest.TestCase):
             self.window._msg_box_calls.append((title, text))
 
         self.window.gui_data_service.configuration.save.side_effect = OSError("test write failure")
-        with patch.object(__import__('enhanced_main_gui').QMessageBox, 'warning', side_effect=fake_warning):
+        with patch('presentation.qt.main_window.QMessageBox.warning', side_effect=fake_warning):
             self.window.save_config()
 
         self.assertTrue(any('保存失败' in title for title, _ in self.window._msg_box_calls))

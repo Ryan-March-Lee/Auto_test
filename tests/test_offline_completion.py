@@ -9,7 +9,7 @@ from app.run_context import prepare_run
 from config_models import RunConfiguration
 from domain.models import AmplifierMeasurementResult, AmplifierScanPoint
 from application.measurements.services import AmplifierMeasurementService
-from persistence.config_repository import ConfigurationRepository
+from infrastructure.config.json_config_repository import ConfigurationRepository
 from domain.result_reading import parse_result_model
 from infrastructure.persistence.json_result_repository import load_json_result
 from infrastructure.persistence.json_result_repository import save_measurement_model
@@ -64,7 +64,7 @@ class _Events:
         self.items.append(event)
 
 
-class OfflineRefactorCompletionTests(unittest.TestCase):
+class OfflineCompletionTests(unittest.TestCase):
     def test_measurement_workers_are_created_outside_main_window_module(self):
         import ast
 
@@ -169,12 +169,31 @@ class OfflineRefactorCompletionTests(unittest.TestCase):
         self.assertIn("measurement_calculations.py", manifest["compatibility_files"])
         self.assertIn("measurement_services.py", manifest["compatibility_files"])
         self.assertIn("measurement_lifecycle.py", manifest["compatibility_files"])
-        self.assertIn("instrument_control.py", manifest["compatibility_files"])
-        self.assertIn("data_visualization.py", manifest["compatibility_files"])
-        self.assertIn("connection_diagrams.py", manifest["compatibility_files"])
-        self.assertNotIn("instrument_control.py", manifest["rollback_files"])
+        for removed in (
+            "enhanced_main_gui.py",
+            "instrument_control.py",
+            "data_visualization.py",
+            "connection_diagrams.py",
+            "legacy_config_conversion.py",
+            "llm.py",
+            "web_search_tools.py",
+        ):
+            self.assertNotIn(removed, manifest["compatibility_files"])
+            self.assertNotIn(removed, manifest["rollback_files"])
+        self.assertIn("amplifier_measurement.py", manifest["rollback_files"])
         self.assertNotIn("enhanced_workers.py", manifest["rollback_files"])
         self.assertEqual(manifest["real_device_acceptance"], "pending")
+
+    def test_release_manifest_constants_reference_existing_paths(self):
+        import release_manifest
+
+        project_root = Path(__file__).resolve().parents[1]
+        for entry in (
+            release_manifest.RELEASE_FILES
+            + release_manifest.ROLLBACK_FILES
+            + release_manifest.COMPATIBILITY_FILES
+        ):
+            self.assertTrue((project_root / entry).exists(), f"发布清单条目不存在: {entry}")
 
 
 if __name__ == "__main__":

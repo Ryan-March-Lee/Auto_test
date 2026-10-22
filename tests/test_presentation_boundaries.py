@@ -1,5 +1,4 @@
 import ast
-import importlib.util
 import unittest
 from pathlib import Path
 
@@ -7,7 +6,7 @@ from tests.test_architecture_dependencies import _worker_construction_violations
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MAIN_WINDOW = ROOT / "enhanced_main_gui.py"
+MAIN_WINDOW = ROOT / "presentation" / "qt" / "main_window.py"
 QT_ROOT = ROOT / "presentation" / "qt"
 FORBIDDEN_REVERSE_IMPORTS = {"enhanced_main_gui", "enhanced_workers"}
 HARDWARE_ROOTS = {
@@ -17,13 +16,6 @@ HARDWARE_ROOTS = {
     "visa",
     "scpi",
     "hardware",
-}
-COMPATIBLE_EXPORTS = {
-    "MainWindow",
-    "ChatPanel",
-    "RealTimePlotWidget",
-    "ConnectionDialog",
-    "MeasurementKind",
 }
 
 
@@ -41,8 +33,8 @@ def _imported_roots(tree):
     return roots
 
 
-class ThirdRefactorBaselineTests(unittest.TestCase):
-    """第三期 3.0 的静态门禁，确保迁移从可回退基线开始。"""
+class PresentationBoundaryTests(unittest.TestCase):
+    """presentation 层与 Qt 模块的静态边界门禁。"""
 
     def test_new_qt_modules_do_not_import_legacy_gui(self):
         violations = []
@@ -80,26 +72,6 @@ class ThirdRefactorBaselineTests(unittest.TestCase):
                 if called in forbidden:
                     calls.append(called)
         self.assertEqual(calls, [])
-
-    def test_compatibility_entrypoint_exports_required_names(self):
-        if not all(importlib.util.find_spec(name) for name in ("PySide6", "matplotlib")):
-            self.skipTest("当前环境缺少 GUI 导入依赖")
-        module = __import__("enhanced_main_gui")
-        missing = [name for name in COMPATIBLE_EXPORTS if not hasattr(module, name)]
-        self.assertEqual(missing, [])
-
-    def test_closeout_plan_records_third_refactor_and_remaining_gate(self):
-        plan = (ROOT / "docs/重构收尾与真实HardwareSmoke验收.md").read_text(
-            encoding="utf-8"
-        )
-        for item in (
-            "第三期“`enhanced_main_gui` 拆分”",
-            "`enhanced_main_gui.py` 已收敛为兼容入口",
-            "第三期纯 UI、配置、可视化导出、状态实时、主窗口和架构门禁",
-            "## 3. 现场验收前置条件",
-            "## 4. 真实 Hardware smoke 执行顺序",
-        ):
-            self.assertIn(item, plan)
 
     def test_qt_peripheral_modules_have_no_hardware_imports(self):
         peripheral_paths = (

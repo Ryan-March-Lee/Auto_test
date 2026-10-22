@@ -12,17 +12,12 @@ def gui_dependencies_available():
 class GuiImportSmokeTests(unittest.TestCase):
     def test_gui_module_import_does_not_open_instruments(self):
         with patch("pyvisa.ResourceManager") as resource_manager:
-            import enhanced_main_gui  # noqa: F401
+            import presentation.qt.main_window  # noqa: F401
+
             resource_manager.assert_not_called()
 
-    def test_compatibility_entry_uses_new_main_window_class(self):
-        import enhanced_main_gui
-        from presentation.qt.main_window import MainWindow
-
-        self.assertIs(enhanced_main_gui.MainWindow, MainWindow)
-
     def test_gui_composition_controller_closes_handed_off_port(self):
-        import enhanced_main_gui
+        from presentation.qt.main_window import MainWindow
 
         class _Port:
             def __init__(self):
@@ -32,11 +27,11 @@ class GuiImportSmokeTests(unittest.TestCase):
                 self.close_calls.append(close_rf)
 
         port = _Port()
-        self.assertIsNone(enhanced_main_gui.MainWindow._close_instrument_port(port))
+        self.assertIsNone(MainWindow._close_instrument_port(port))
         self.assertEqual(port.close_calls, [True])
 
     def test_measurement_thread_cleanup_releases_port_reference(self):
-        import enhanced_main_gui
+        from presentation.qt.main_window import MainWindow, MeasurementKind
 
         class _Port:
             def __init__(self):
@@ -46,9 +41,9 @@ class GuiImportSmokeTests(unittest.TestCase):
                 self.close_calls.append(close_rf)
 
         for kind in (
-            enhanced_main_gui.MeasurementKind.CABLE_LOSS,
-            enhanced_main_gui.MeasurementKind.DRIVER_MAPPING,
-            enhanced_main_gui.MeasurementKind.AMPLIFIER,
+            MeasurementKind.CABLE_LOSS,
+            MeasurementKind.DRIVER_MAPPING,
+            MeasurementKind.AMPLIFIER,
         ):
             class _Window:
                 instrument_ctrl = _Port()
@@ -60,19 +55,19 @@ class GuiImportSmokeTests(unittest.TestCase):
 
                 @staticmethod
                 def _close_instrument_port(port):
-                    return enhanced_main_gui.MainWindow._close_instrument_port(port)
+                    return MainWindow._close_instrument_port(port)
 
                 def add_log_message(self, message):
                     pass
 
             window = _Window()
             port = window.instrument_ctrl
-            enhanced_main_gui.MainWindow._on_measurement_controller_thread_finished(window)
+            MainWindow._on_measurement_controller_thread_finished(window)
             self.assertIsNone(window.instrument_ctrl)
             self.assertEqual(port.close_calls, [True])
 
     def test_driver_mapping_realtime_bridge_updates_chat_context(self):
-        import enhanced_main_gui
+        from presentation.qt.main_window import MainWindow
 
         class _Window:
             real_time_data = {}
@@ -81,7 +76,7 @@ class GuiImportSmokeTests(unittest.TestCase):
             rt_current_freq_index = 0
 
         window = _Window()
-        enhanced_main_gui.MainWindow._store_driver_mapping_realtime_data(
+        MainWindow._store_driver_mapping_realtime_data(
             window,
             {"frequency": "2.4", "sweep_data": {"input_power_sg": [-10]}},
         )
@@ -90,7 +85,7 @@ class GuiImportSmokeTests(unittest.TestCase):
         self.assertEqual(window.rt_current_freq_index, 0)
 
     def test_amplifier_realtime_bridge_updates_chat_context(self):
-        import enhanced_main_gui
+        from presentation.qt.main_window import MainWindow
 
         class _Window:
             real_time_data = {}
@@ -99,7 +94,7 @@ class GuiImportSmokeTests(unittest.TestCase):
             rt_current_freq_index = 0
 
         window = _Window()
-        enhanced_main_gui.MainWindow._store_amplifier_realtime_data(
+        MainWindow._store_amplifier_realtime_data(
             window,
             {"frequency": "5.8", "sweep_data": {"output_power_dut": [10]}},
         )

@@ -12,8 +12,8 @@ class OptionalCapabilityBoundaryTests(unittest.TestCase):
         assistant = importlib.import_module("assistant")
         self.assertEqual(assistant.__all__, [])
 
-        legacy_llm = importlib.import_module("llm")
-        self.assertTrue(hasattr(legacy_llm, "LLMChat"))
+        llm = importlib.import_module("assistant.llm")
+        self.assertTrue(hasattr(llm, "LLMChat"))
 
     def test_csv_converter_has_no_import_time_file_access(self):
         with patch("pathlib.Path.open", side_effect=AssertionError("import accessed a file")):
@@ -32,14 +32,6 @@ class OptionalCapabilityBoundaryTests(unittest.TestCase):
         requirements = (PROJECT_ROOT / "requirements-dpd.txt").read_text(encoding="utf-8")
         for dependency in ("numpy", "matplotlib", "scipy", "tensorflow", "nptdms", "pyvisa", "jupyter"):
             self.assertIn(dependency, requirements)
-
-    def test_unavailable_assistant_histories_are_not_shared(self):
-        gui = importlib.import_module("enhanced_main_gui")
-        first = gui._UnavailableAssistant()
-        second = gui._UnavailableAssistant()
-        first.conversation_history.append({"role": "user", "content": "x"})
-        self.assertEqual(second.conversation_history, [])
-
 
 if __name__ == "__main__":
     unittest.main()

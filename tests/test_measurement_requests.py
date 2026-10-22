@@ -101,6 +101,35 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
         self.assertIs(measurement.call_args.args[0].input_reader, reader)
         self.assertNotIn("input_reader", measurement.call_args.kwargs)
 
+    def test_run_contract_prepared_run_injects_stage_recorder(self):
+        prepared = SimpleNamespace(
+            configuration=object(),
+            context=SimpleNamespace(run_id="run-contract"),
+            run_directory=Path("runs") / "run-contract",
+            run_repository=object(),
+        )
+        with patch("app.gui_runtime.connect_instruments", return_value=object()), patch(
+            "app.gui_runtime.CableLossUseCase", return_value=object()
+        ) as measurement:
+            create_cable_loss_measurement("config.json", prepared_run=prepared)
+
+        recorder = measurement.call_args.args[0].stage_recorder
+        self.assertIsNotNone(recorder)
+        self.assertEqual(recorder.run_id, "run-contract")
+
+    def test_legacy_prepared_run_has_no_stage_recorder(self):
+        prepared = SimpleNamespace(
+            configuration=object(),
+            context=SimpleNamespace(run_id="run-legacy"),
+            run_directory=Path("run-directory"),
+        )
+        with patch("app.gui_runtime.connect_instruments", return_value=object()), patch(
+            "app.gui_runtime.CableLossUseCase", return_value=object()
+        ) as measurement:
+            create_cable_loss_measurement("config.json", prepared_run=prepared)
+
+        self.assertIsNone(measurement.call_args.args[0].stage_recorder)
+
     def test_request_exposes_common_runtime_shape(self):
         configuration = SimpleNamespace(
             test_plan=SimpleNamespace(

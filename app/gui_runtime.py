@@ -14,10 +14,16 @@ from domain.configuration.models import (
 from domain.configuration.rules import ConfigValidationResult
 from infrastructure.logging.app_logging import get_logger
 from infrastructure.persistence.json_result_repository import new_run_id
-from .run_context import PreparedRun, environment_version, prepare_run
+from .run_context import (
+    PreparedRun,
+    create_prepared_run,
+    environment_version,
+    prepare_run,
+)
 from instrument.measurement_factory import create_measurement_port
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from application.inputs import ResultInputReader
+from application.run_stages import RunStageRecorder
 from application.measurements import (
     AmplifierMeasurementUseCase,
     CableLossUseCase,
@@ -92,8 +98,16 @@ def prepare_configuration(
     operation: Operation = "full",
     repository: ConfigurationRepository | None = None,
     paths: PathService | None = None,
+    run_contract: bool = False,
+    run_repository: Any = None,
 ) -> PreparedRun:
-    """Perform the GUI preflight and snapshot before an instrument is created."""
+    """Perform the GUI preflight and snapshot before an instrument is created.
+
+    ``run_contract=True`` 是本重构引入的“创建运行”入口：配置必须通过**完整运行
+    校验**，随后冻结为 ``runs/<run_id>/`` 运行目录快照（``config.json`` +
+    ``manifest.json``），返回携带运行仓储的 :class:`PreparedRun`。默认
+    ``run_contract=False`` 时保持旧兼容快照行为，GUI 与步骤 5-7 迁移前不会受影响。
+    """
     if operation not in ("full", "cable_loss", "driver_mapping"):
         raise ValueError(f"不支持的测量类型: {operation}")
     if repository is None:
@@ -103,6 +117,17 @@ def prepare_configuration(
 
         repository = JsonConfigurationRepository()
     loaded = load_for_run(repository, config_path)
+    if run_contract:
+        # 运行契约要求完整运行配置；阶段专用校验通过但完整校验失败的配置不会
+        # 产生运行目录，因此这里不套用阶段专用校验。
+        return create_prepared_run(
+            loaded,
+            run_id=run_id,
+            software_version=environment_version(),
+            config_path=Path(config_path),
+            paths=paths,
+            run_repository=run_repository,
+        )
     if operation == "cable_loss":
         # The legacy GUI stores one combined config.json. Convert it as usual,
         # then apply the smaller contract required by cable-loss measurement.
@@ -154,6 +179,12 @@ def _request_kwargs(prepared_run: PreparedRun, config_path: str, callbacks: dict
         raise ValueError("应用测量请求必须显式包含 measurement_port")
     paths = callbacks.get("paths") or DEFAULT_PATHS
     repository = callbacks.get("result_repository") or FileMeasurementResultRepository(paths=paths)
+    run_repository = getattr(prepared_run, "run_repository", None)
+    stage_recorder = (
+        RunStageRecorder(run_repository, prepared_run.context.run_id)
+        if run_repository is not None
+        else None
+    )
     return {
         "configuration": prepared_run.configuration,
         "context": prepared_run.context,
@@ -163,6 +194,7 @@ def _request_kwargs(prepared_run: PreparedRun, config_path: str, callbacks: dict
         "cancellation_token": callbacks.get("cancellation_token"),
         "result_repository": repository,
         "input_reader": callbacks.get("input_reader") or ResultInputReader(repository),
+        "stage_recorder": stage_recorder,
         "config_path": Path(config_path),
         "safety_options": {
             "owns_measurement_port": bool(callbacks.get("owns_measurement_port", False)),

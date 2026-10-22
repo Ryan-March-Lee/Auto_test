@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Protocol
 
-from domain.run.models import RunManifest
+from domain.run.models import FileReference, RunManifest
 
 
 class RunLayout(Protocol):
@@ -47,8 +47,37 @@ class RunRepositoryPort(Protocol):
     def load_manifest(self, run_id: str) -> RunManifest:
         """读取并校验指定运行的 manifest。"""
 
+    def update_manifest(
+        self, run_id: str, manifest: RunManifest, *, now: datetime | None = None
+    ) -> RunManifest:
+        """原子写回 manifest；不隐式创建运行目录。"""
+
     def read_config(self, run_id: str, *, verify: bool = True) -> Any:
         """按 manifest 登记的校验值读取运行配置快照。"""
+
+    def write_run_json(self, run_id: str, relative_path: str, payload: Any) -> str:
+        """原子写入运行目录 ``inputs/`` 或 ``results/`` 下的 JSON 文件。
+
+        返回规范化后的相对路径；只允许在运行目录内写入，不允许覆盖运行目录外文件。
+        """
+
+    def register_file(
+        self,
+        run_id: str,
+        path: str,
+        *,
+        stage: str | None = None,
+        description: str | None = None,
+        now: datetime | None = None,
+    ) -> FileReference:
+        """登记运行目录内已完成的文件并同步更新 manifest。"""
+
+    def discard_file(self, run_id: str, relative_path: str) -> str:
+        """删除运行目录内的文件并撤销 manifest 登记。
+
+        用于阶段失败/取消或提交失败时清理未提交的结果文件。文件或登记不存在时
+        按无操作处理并返回规范化后的相对路径。
+        """
 
     def run_exists(self, run_id: str) -> bool:
         """判断指定运行目录是否完整存在并可用。"""

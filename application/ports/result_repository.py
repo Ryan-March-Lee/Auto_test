@@ -47,5 +47,18 @@ class MeasurementResultRepository(Protocol):
     ) -> SavedMeasurementResult:
         """Persist a result and return its archive and compatibility paths."""
 
+    def save_compatibility_copy(
+        self,
+        result: Mapping[str, Any],
+        *,
+        result_type: str,
+        run_id: str,
+    ) -> Path:
+        """Write only the global compatibility copy, without a run archive.
+
+        迁移到运行目录契约的阶段用它保留旧读取路径，同时不再把结果写入兼容
+        运行目录（运行目录中的权威结果是 ``inputs/<stage>.json``）。
+        """
+
     def load(self, path: PathLike) -> Mapping[str, Any]:
         """Load a previously persisted result."""

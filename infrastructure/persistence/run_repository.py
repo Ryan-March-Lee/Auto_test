@@ -39,6 +39,7 @@ from domain.run.models import (
     RunManifest,
     default_manifest,
     generate_run_id,
+    normalize_relative_path,
     utc_now_iso,
     validate_run_id,
 )
@@ -193,6 +194,45 @@ class RunRepository:
             updated = replace(manifest, outputs=_upsert(manifest.outputs, reference))
         self.update_manifest(run_id, updated, now=now)
         return reference
+
+    def write_run_json(self, run_id: str, relative_path: str, payload: Any) -> str:
+        """原子写入运行目录 ``inputs/`` 或 ``results/`` 下的 JSON 文件。
+
+        只允许写在运行目录内，返回规范化后的相对路径。本方法只负责落盘，
+        不修改 manifest；调用方应在文件写完后通过 :meth:`register_file` 登记校验值。
+        采用临时文件加原子替换，进程中断不会留下半截目标文件。
+        """
+        layout = self._require_existing_run(run_id)
+        normalized = normalize_relative_path(relative_path, field_name="运行文件路径")
+        self._classify(normalized)
+        target = self._resolve_reference_path(layout, normalized)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(target, payload, encoder=NumpyJSONEncoder)
+        return normalized
+
+    def discard_file(self, run_id: str, relative_path: str) -> str:
+        """删除运行目录内的文件并撤销 manifest 登记。
+
+        这是 :meth:`write_run_json` / :meth:`register_file` 的补偿操作：阶段提交
+        失败或阶段被取消时，用它清除未提交的结果，避免 manifest 或文件系统里留下
+        看起来完整的阶段结果。文件不存在、未登记时按无操作处理。
+        """
+        layout = self._require_existing_run(run_id)
+        normalized = normalize_relative_path(relative_path, field_name="运行文件路径")
+        category = self._classify(normalized)
+        target = self._resolve_reference_path(layout, normalized)
+        target.unlink(missing_ok=True)
+
+        manifest = load_run_manifest(layout.manifest_path)
+        references = manifest.inputs if category == "input" else manifest.outputs
+        remaining = tuple(item for item in references if item.path != normalized)
+        if len(remaining) != len(references):
+            if category == "input":
+                manifest = replace(manifest, inputs=remaining)
+            else:
+                manifest = replace(manifest, outputs=remaining)
+            self.update_manifest(run_id, manifest)
+        return normalized
 
     def read_config(self, run_id: str, *, verify: bool = True) -> Any:
         """读取运行目录中的配置快照 ``config.json``。

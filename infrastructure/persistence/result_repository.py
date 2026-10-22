@@ -68,6 +68,21 @@ class FileMeasurementResultRepository(MeasurementResultRepository):
             run_id=run_id,
         )
 
+    def save_compatibility_copy(
+        self,
+        result: Mapping[str, Any],
+        *,
+        result_type: str,
+        run_id: str,
+    ) -> Path:
+        return json_result_repository.write_compatibility_copy(
+            result,
+            result_type=result_type,
+            legacy_path=self.legacy_path(result_type),
+            run_id=run_id,
+            encoder=NumpyJSONEncoder,
+        )
+
     def new_run_id(self) -> str:
         return json_result_repository.new_run_id()
 

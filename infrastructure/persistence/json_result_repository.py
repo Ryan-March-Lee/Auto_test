@@ -199,6 +199,28 @@ def save_measurement_result(
     return Path(archive_path), legacy_path
 
 
+def write_compatibility_copy(
+    result: Mapping[str, Any],
+    *,
+    result_type: str,
+    legacy_path: PathLike,
+    run_id: str,
+    encoder: type[json.JSONEncoder] = json.JSONEncoder,
+) -> Path:
+    """只写入全局兼容结果副本，不创建或改写运行归档。
+
+    迁移到运行目录契约的阶段用它在 ``inputs/<stage>.json`` 之外保留旧读取路径，
+    但兼容副本不再作为新流程的输入来源。
+    """
+    validate_run_id(run_id)
+    payload = _with_run_id(result, run_id, "测量结果")
+    # 明确标记为兼容副本，避免被误解为运行目录内的权威结果。
+    payload.setdefault("compatibility_copy", True)
+    destination = Path(legacy_path)
+    save_json_result(destination, payload, result_type=result_type, encoder=encoder)
+    return destination
+
+
 def _load_snapshot(path: Path) -> Dict[str, Any]:
     if not path.is_file():
         return {}

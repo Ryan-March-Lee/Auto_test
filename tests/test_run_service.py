@@ -249,6 +249,9 @@ class CreatePreparedRunTests(unittest.TestCase):
             self.assertEqual(prepared.run_directory, repository.root / RUN_ID)
             self.assertTrue((prepared.run_directory / "config.json").is_file())
             self.assertEqual(repository.read_config(RUN_ID)["run_id"], RUN_ID)
+            # 运行契约 PreparedRun 携带创建它的仓储，供步骤 4 之后的阶段记录使用。
+            self.assertTrue(prepared.has_run_contract)
+            self.assertIs(prepared.run_repository, repository)
 
     def test_create_prepared_run_does_not_use_the_legacy_snapshot_names(self):
         with tempfile.TemporaryDirectory() as directory:

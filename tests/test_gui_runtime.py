@@ -261,6 +261,25 @@ class GuiRuntimePreparationTests(unittest.TestCase):
         finally:
             directory.cleanup()
 
+    def test_run_contract_preparation_uses_create_prepared_run(self):
+        directory, path = self._write_config()
+        try:
+            prepared = SimpleNamespace(
+                configuration=object(),
+                context=object(),
+                run_directory=Path("runs") / "run-contract",
+            )
+            with patch(
+                "app.gui_runtime.create_prepared_run", return_value=prepared
+            ) as create_prepared, patch("app.gui_runtime.prepare_run") as prepare_run:
+                result = prepare_configuration(str(path), run_contract=True)
+
+            self.assertIs(result, prepared)
+            create_prepared.assert_called_once()
+            prepare_run.assert_not_called()
+        finally:
+            directory.cleanup()
+
     def test_cable_loss_preparation_rejects_missing_wiring_confirmation(self):
         directory, path = self._write_config(confirmed=False)
         try:

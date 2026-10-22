@@ -132,6 +132,34 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
 
         self.assertIs(raised.exception, error)
 
+    def test_repository_implements_the_result_repository_port(self):
+        from application.ports.result_repository import MeasurementResultRepository as Port
+
+        repository = FileMeasurementResultRepository()
+        required = {
+            name for name in dir(Port) if not name.startswith("_")
+        }
+        missing = {name for name in required if not hasattr(repository, name)}
+        self.assertEqual(missing, set())
+
+    def test_save_compatibility_copy_writes_only_the_global_copy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = FileMeasurementResultRepository(results_directory=root)
+
+            path = repository.save_compatibility_copy(
+                {"cable_losses": {"1.0": 0.5}},
+                result_type="cable_loss",
+                run_id="run-1",
+            )
+
+            self.assertEqual(path, root / "cable_loss_results.json")
+            payload = load_json_result(path)
+            self.assertTrue(payload["compatibility_copy"])
+            self.assertEqual(payload["run_id"], "run-1")
+            # 运行目录归档是权威结果，兼容副本不得再创建兼容运行目录。
+            self.assertFalse((root / "run-1").exists())
+
     def test_load_delegates_to_json_repository(self):
         with patch(
             "infrastructure.persistence.result_repository.json_result_repository.load_json_result",

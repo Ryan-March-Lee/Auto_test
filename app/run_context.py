@@ -26,11 +26,18 @@ class PreparedRun:
     context: RunContext
     run_directory: Path
     config_path: Path | None = None
+    # 运行契约运行会携带创建它的仓储；旧兼容快照为 None，表示还没有 manifest 契约。
+    run_repository: RunRepositoryPort | None = None
 
     @property
     def run_id(self) -> str:
         """Expose the prepared identity without making callers unpack context."""
         return self.context.run_id
+
+    @property
+    def has_run_contract(self) -> bool:
+        """是否携带 ``runs/<run_id>/`` 运行目录契约（可用于阶段结果记录）。"""
+        return self.run_repository is not None
 
 
 def prepare_run(
@@ -106,7 +113,13 @@ def create_prepared_run(
         run_id=snapshot.run_id,
         software_version=software_version,
     )
-    return PreparedRun(loaded.configuration, context, Path(snapshot.run_directory), config_path)
+    return PreparedRun(
+        loaded.configuration,
+        context,
+        Path(snapshot.run_directory),
+        config_path,
+        repository,
+    )
 
 
 def environment_version() -> str:

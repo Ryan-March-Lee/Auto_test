@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import json
 import shutil
-import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping
 
+from application.inputs.result_reading import build_report_model
 from application.ports.gui_data_service import LoadedResultDto, ResultFileDto
-from data_visualization import DataVisualization
+from analysis.visualization import DataVisualization
 from infrastructure.config.json_io import load_config_file
-from infrastructure.filesystem.paths import PathService, ensure_directory
+from infrastructure.filesystem.paths import (
+    PathService,
+    ensure_directory,
+    unique_directory_name,
+)
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from PySide6.QtWidgets import QFileDialog
 
@@ -97,15 +101,23 @@ class ResultExportAdapter:
         shutil.copy2(self._source(result_id), Path(target))
 
     def export_csv(self, result_id: str, target: str) -> None:
-        visualizer = DataVisualization(paths=self.paths)
-        visualizer.generate_csv_report(str(self._source(result_id)))
+        # 结果读取走 application 输入端口，分析层只接收已加载的数据。
+        loaded = self.query.load(result_id)
+        visualizer = DataVisualization(output_dir=self._report_output_dir())
+        visualizer.generate_csv_report(loaded.data)
         generated = Path(visualizer.output_dir) / "full_sweep_data.csv"
         if not generated.is_file():
             raise FileNotFoundError(str(generated))
         shutil.copy2(generated, Path(target))
 
     def export_pdf(self, result_id: str) -> None:
-        DataVisualization(paths=self.paths).create_summary_report(str(self._source(result_id)))
+        loaded = self.query.load(result_id)
+        DataVisualization(output_dir=self._report_output_dir()).create_summary_report(
+            loaded.data, loaded.filename
+        )
+
+    def _report_output_dir(self) -> Path:
+        return self.paths.test_results_dir / unique_directory_name("report")
 
 
 class ReportAdapter:
@@ -113,21 +125,12 @@ class ReportAdapter:
         self.paths = paths
 
     def create_summary_report(self, result, configuration, filename) -> None:
-        ensure_directory(self.paths.temp_dir)
-        temp_file = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="w", encoding="utf-8", suffix=".json", delete=False,
-                dir=self.paths.temp_dir,
-            ) as stream:
-                temp_file = Path(stream.name)
-                json.dump({
-                    "results": result.get("results", result),
-                    "measurement_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "config": configuration,
-                    "original_filename": filename,
-                }, stream, indent=2, ensure_ascii=False)
-            DataVisualization(paths=self.paths).create_summary_report(str(temp_file), filename)
-        finally:
-            if temp_file is not None:
-                temp_file.unlink(missing_ok=True)
+        # 结果规范化走 application 输入；分析层只接收稳定的领域模型，不落地临时文件。
+        model = build_report_model(
+            result,
+            configuration=configuration,
+            original_filename=filename,
+            measurement_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        )
+        output_dir = self.paths.test_results_dir / unique_directory_name("report")
+        DataVisualization(output_dir=output_dir).create_summary_report(model, filename)

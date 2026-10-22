@@ -12,7 +12,7 @@ class ConnectionDialog(QDialog):
         self.setModal(True)
         self.resize(800, 600)
         try:
-            from connection_diagrams import ConnectionDiagram
+            from presentation.qt.connection_diagrams import ConnectionDiagram
         except Exception as error:
             print(f"连接图功能未启用: {error}")
             ConnectionDiagram = None

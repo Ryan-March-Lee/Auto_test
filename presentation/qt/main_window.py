@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer
 
 # 导入我们的测试模块和连接图
-from data_visualization import DataVisualization
 from presentation.qt.pages import PageContext, build_pages
 from presentation.qt.measurement_controller import MeasurementController
 from presentation.qt.measurement_state import MeasurementKind, MeasurementResultReference

@@ -39,6 +39,8 @@ COMPATIBILITY_FILES = (
     "instrument_control.py",
     "measurement_services.py",
     "measurement_lifecycle.py",
+    "data_visualization.py",
+    "connection_diagrams.py",
     "config_models.py",
     "measurement_calculations.py",
     "result_storage.py",

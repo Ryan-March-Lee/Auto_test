@@ -2,7 +2,9 @@
 
 from pathlib import Path
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Optional, Union
+from uuid import uuid4
 
 
 PathLike = Union[str, Path]
@@ -101,10 +103,16 @@ def ensure_directory(path: PathLike) -> Path:
     return directory
 
 
+def unique_directory_name(prefix: str) -> str:
+    """生成带时间戳与随机后缀的目录名，避免同一秒内的输出互相覆盖。"""
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"{prefix}_{stamp}_{uuid4().hex[:8]}"
+
+
 __all__ = [
     "ASSETS_DIR", "CABLE_LOSS_FILE", "CHAT_HISTORY_FILE", "CHAT_SETTINGS_FILE",
     "CONFIG_FILE", "ICONS_DIR", "IMAGES_DIR", "LOGS_DIR", "PathLike",
     "DEFAULT_PATHS", "PathService", "PROJECT_ROOT", "SEARCH_API_CONFIG_FILE",
     "TEMP_DIR", "TEST_RESULTS_DIR",
-    "ensure_directory", "resolve_path",
+    "ensure_directory", "resolve_path", "unique_directory_name",
 ]

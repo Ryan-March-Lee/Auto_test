@@ -114,5 +114,51 @@ class Phase33ExportTests(unittest.TestCase):
             self.assertEqual(service.calls[-1], ("pdf", source.name))
 
 
+class ReportAdapterContractTests(unittest.TestCase):
+    def test_report_adapter_normalizes_input_and_forwards_model(self):
+        import infrastructure.gui_data_service as gui_data
+        from domain.models import MeasurementResult
+        from infrastructure.filesystem.paths import PathService
+
+        captured = {}
+
+        class FakeVisualizer:
+            def __init__(self, *, output_dir):
+                captured.setdefault("dirs", []).append(Path(output_dir))
+
+            def create_summary_report(self, data, original_filename=None):
+                captured["data"] = data
+                captured["filename"] = original_filename
+
+        with tempfile.TemporaryDirectory() as directory:
+            paths = PathService(Path(directory))
+            adapter = gui_data.ReportAdapter(paths)
+            with patch.object(gui_data, "DataVisualization", FakeVisualizer):
+                adapter.create_summary_report(
+                    {"results": {"4.8": {"sweep_data": [
+                        {"input_power_dut": -10.0, "output_power_dut": 0.0, "gain": 10.0, "efficiency": 20.0},
+                    ]}}},
+                    {"freq": 4.8},
+                    "amp.json",
+                )
+
+        self.assertIsInstance(captured["data"], MeasurementResult)
+        self.assertTrue(captured["data"].points)
+        self.assertEqual(captured["filename"], "amp.json")
+        self.assertEqual(dict(captured["data"].plan_snapshot), {"freq": 4.8})
+        self.assertEqual(captured["dirs"][0].parent, paths.test_results_dir)
+
+    def test_result_export_output_dirs_are_unique(self):
+        import infrastructure.gui_data_service as gui_data
+        from infrastructure.filesystem.paths import PathService
+
+        with tempfile.TemporaryDirectory() as directory:
+            paths = PathService(Path(directory))
+            adapter = gui_data.ResultExportAdapter(query=None, paths=paths)
+            self.assertNotEqual(
+                adapter._report_output_dir(), adapter._report_output_dir()
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

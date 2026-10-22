@@ -412,6 +412,87 @@ class ProductionDependencyTests(unittest.TestCase):
             power_roles.resolve_power_channel_role,
         )
 
+    def test_legacy_visualization_root_is_an_explicit_reexport(self):
+        source_path = ROOT / "data_visualization.py"
+        tree = _tree(source_path)
+        definitions = [
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        ]
+        self.assertEqual(definitions, [], str(source_path.relative_to(ROOT)))
+        self.assertTrue(
+            any(
+                isinstance(node, ast.Assign)
+                and any(
+                    isinstance(target, ast.Name) and target.id == "__all__"
+                    for target in node.targets
+                )
+                for node in tree.body
+            ),
+            str(source_path.relative_to(ROOT)) + " 必须显式声明 __all__",
+        )
+
+        import app.legacy_visualization
+        import data_visualization
+
+        self.assertEqual(
+            set(data_visualization.__all__),
+            {"DataVisualization", "load_measurement_result", "load_result_model"},
+        )
+        self.assertIs(
+            data_visualization.DataVisualization,
+            app.legacy_visualization.DataVisualization,
+        )
+        self.assertIs(
+            data_visualization.load_measurement_result,
+            app.legacy_visualization.load_measurement_result,
+        )
+
+    def test_legacy_connection_diagrams_root_is_an_explicit_reexport(self):
+        source_path = ROOT / "connection_diagrams.py"
+        tree = _tree(source_path)
+        definitions = [
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        ]
+        self.assertEqual(definitions, [], str(source_path.relative_to(ROOT)))
+        self.assertTrue(
+            any(
+                isinstance(node, ast.Assign)
+                and any(
+                    isinstance(target, ast.Name) and target.id == "__all__"
+                    for target in node.targets
+                )
+                for node in tree.body
+            ),
+            str(source_path.relative_to(ROOT)) + " 必须显式声明 __all__",
+        )
+
+        import connection_diagrams
+        import presentation.qt.connection_diagrams as presentation_diagrams
+
+        self.assertEqual(
+            set(connection_diagrams.__all__),
+            {"ConnectionDiagram", "create_all_diagrams"},
+        )
+        self.assertIs(
+            connection_diagrams.ConnectionDiagram,
+            presentation_diagrams.ConnectionDiagram,
+        )
+
+    def test_production_packages_do_not_import_legacy_visualization_roots(self):
+        violations = _package_root_import_violations(
+            ("app", "application", "presentation", "infrastructure", "instrument"),
+            {"data_visualization", "connection_diagrams"},
+        )
+        self.assertEqual(
+            violations,
+            [],
+            "生产包不得依赖历史可视化/连接图根入口: " + "; ".join(violations),
+        )
+
     def test_legacy_config_conversion_is_an_explicit_reexport(self):
         source_path = ROOT / "legacy_config_conversion.py"
         tree = _tree(source_path)
@@ -600,6 +681,15 @@ class ProductionDependencyTests(unittest.TestCase):
                 if module == "infrastructure" or module.startswith("infrastructure."):
                     violations.append(f"{source_path.relative_to(ROOT)} imports {module}")
         self.assertEqual(violations, [], "应用层不得反向依赖基础设施: " + "; ".join(violations))
+
+    def test_analysis_layer_does_not_import_infrastructure(self):
+        violations = []
+        for source_path in (ROOT / "analysis").rglob("*.py"):
+            tree = _tree(source_path)
+            for module, _alias, _name in _imported_modules(tree):
+                if module == "infrastructure" or module.startswith("infrastructure."):
+                    violations.append(f"{source_path.relative_to(ROOT)} imports {module}")
+        self.assertEqual(violations, [], "分析层不得依赖基础设施: " + "; ".join(violations))
 
     def test_production_packages_do_not_import_legacy_measurement_roots(self):
         violations = _package_root_import_violations(

@@ -142,12 +142,12 @@ python launcher.py --validate-config
 ```
 pa_auto_test/
 ├── enhanced_main_gui.py          # 主GUI应用
-├── connection_diagrams.py        # 连接图生成模块
+├── connection_diagrams.py        # 连接图兼容入口（实现在 presentation/qt/connection_diagrams.py）
 ├── instrument_control.py         # 仪器控制模块
 ├── cable_loss_measurement.py     # 线损测量模块
 ├── driver_power_mapping.py       # 驱动映射模块
 ├── amplifier_measurement.py      # 功放测试模块
-├── data_visualization.py         # 数据可视化模块
+├── data_visualization.py         # 数据可视化兼容入口（实现在 analysis/visualization.py）
 ├── config.json                   # 配置文件
 ├── launcher.py                   # 唯一应用启动器
 └── README.md                     # 本文档

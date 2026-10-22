@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
 
@@ -24,12 +25,14 @@ from instrument.measurement_factory import create_measurement_port
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from application.inputs import ResultInputReader
 from application.run_stages import RunStageRecorder
-from domain.run.models import STAGE_CABLE_LOSS
+from domain.run.models import STAGE_CABLE_LOSS, STAGE_DRIVER_MAPPING
 from application.measurements import (
     AmplifierMeasurementUseCase,
     CableLossUseCase,
     DriverPowerMappingUseCase,
+    validate_amplifier_calibration_inputs,
 )
+from application.run_service import configuration_snapshot
 from app.events import MessageEvent, ProgressEvent, RealtimeDataEvent
 from application.dto import (
     AmplifierMeasurementRequest,
@@ -188,6 +191,99 @@ def _require_stage_inputs(prepared_run: PreparedRun, *stages: str) -> None:
         recorder.verified_result_path(stage)
 
 
+def _driver_mode_enabled(prepared_run: PreparedRun) -> bool:
+    """判断当前运行配置是否启用驱动模式，用于决定是否需要驱动映射输入。
+
+    兼容旧版组合配置映射和现代拆分配置模型；无法识别时按未启用处理，避免对
+    旧兼容快照或多注入的替身对象错误地强制要求映射文件。
+    """
+    configuration = getattr(prepared_run, "configuration", None)
+    plan = getattr(configuration, "test_plan", None)
+    if plan is not None:
+        return bool(getattr(plan, "driver_enabled", False))
+    if isinstance(configuration, Mapping):
+        mode = configuration.get("driver_mode", {})
+        return bool(mode.get("enabled")) if isinstance(mode, Mapping) else False
+    return False
+
+
+def _test_frequencies(prepared_run: PreparedRun) -> tuple[Any, ...]:
+    """从已冻结配置中读取测试频率，供运行前输入结构校验使用。"""
+    configuration = getattr(prepared_run, "configuration", None)
+    plan = getattr(configuration, "test_plan", None)
+    if plan is not None:
+        return tuple(getattr(plan, "frequencies", ()) or ())
+    if isinstance(configuration, Mapping):
+        return tuple(configuration.get("test_frequencies", ()) or ())
+    return ()
+
+
+def _preflight_amplifier_inputs(
+    prepared_run: PreparedRun, repository: Any, input_reader: Any
+) -> None:
+    """在连接仪器前读取并校验主功放的当前运行校准输入。
+
+    运行契约运行先从当前运行目录读取已校验的线损与（按需）驱动映射，再做结构
+    校验，因此结构无效的输入会在打开仪器或执行任何 RF 动作前失败。旧兼容快照
+    没有阶段契约，保持原行为。
+    """
+    run_repository = getattr(prepared_run, "run_repository", None)
+    if run_repository is None:
+        return
+    recorder = RunStageRecorder(run_repository, prepared_run.context.run_id)
+    loss_data = input_reader.read_cable_loss(recorder.verified_result_path(STAGE_CABLE_LOSS))
+    driver_enabled = _driver_mode_enabled(prepared_run)
+    driver_mapping = None
+    if driver_enabled:
+        driver_mapping = input_reader.read_driver_mapping(
+            recorder.verified_result_path(STAGE_DRIVER_MAPPING)
+        )
+    validate_amplifier_calibration_inputs(
+        loss_data,
+        driver_mapping,
+        frequencies=_test_frequencies(prepared_run),
+        driver_enabled=driver_enabled,
+    )
+
+
+def _ensure_frozen_config_matches(
+    prepared_run: PreparedRun, config_path: str, *, repository: Any = None
+) -> None:
+    """确认 ``config_path`` 仍与运行冻结配置一致，拒绝用可变配置连接仪器。
+
+    运行目录中的 ``config.json`` 是本次运行的唯一配置事实来源。硬件端口当前仍按
+    ``config_path`` 打开仪器，因此运行契约运行必须确认该文件自创建运行后没有被
+    修改：一旦检测到配置漂移，就在连接仪器前失败，避免仪器地址或供电通道与冻结
+    配置不一致。把硬件端口完全改为从运行快照装配属于后续 GUI 两阶段收敛步骤。
+    """
+    run_repository = getattr(prepared_run, "run_repository", None)
+    # 只有实现了运行目录端口（能读取冻结配置）的运行才需要做配置一致性校验；
+    # 旧兼容快照和最小替身对象没有该能力，按无冻结配置处理。
+    if run_repository is None or not hasattr(run_repository, "read_config"):
+        return
+    try:
+        frozen = run_repository.read_config(prepared_run.context.run_id)
+    except Exception as error:  # noqa: BLE001 - 统一转成前置校验失败
+        raise ValueError(f"无法读取运行配置快照，拒绝连接仪器: {error}") from error
+    if repository is None:
+        from infrastructure.config.json_config_repository import JsonConfigurationRepository
+
+        repository = JsonConfigurationRepository()
+    loaded = load_for_run(repository, config_path)
+    if not loaded.valid:
+        raise ValueError("配置文件当前无效，不能用于连接仪器；请重新创建运行")
+    current = configuration_snapshot(
+        loaded.configuration, run_id=prepared_run.context.run_id
+    )
+    if (
+        current["test_plan"] != frozen.get("test_plan")
+        or current["run_mapping"] != frozen.get("run_mapping")
+    ):
+        raise ValueError(
+            "配置文件在创建运行后已被修改，拒绝使用可变配置连接仪器；请重新创建运行"
+        )
+
+
 def _request_kwargs(prepared_run: PreparedRun, config_path: str, callbacks: dict[str, Any]) -> dict[str, Any]:
     """Build the shared request inputs at the application composition boundary."""
     port = callbacks.get("measurement_port")
@@ -230,6 +326,8 @@ def create_cable_loss_measurement(
     )
     owned_port = callbacks.get("measurement_port") is None
     try:
+        # 运行契约运行在连接仪器前确认配置文件未被创建运行后修改。
+        _ensure_frozen_config_matches(prepared_run, config_path)
         if owned_port:
             callbacks["measurement_port"] = connect_instruments(config_path)
         callbacks["owns_measurement_port"] = owned_port
@@ -257,6 +355,7 @@ def create_driver_mapping_measurement(
     try:
         # 运行契约运行在连接仪器前校验当前运行的线损输入，缺失时不做任何硬件动作。
         _require_stage_inputs(prepared_run, STAGE_CABLE_LOSS)
+        _ensure_frozen_config_matches(prepared_run, config_path)
         if owned_port:
             callbacks["measurement_port"] = connect_instruments(config_path)
         callbacks["owns_measurement_port"] = owned_port
@@ -285,10 +384,19 @@ def create_amplifier_measurement(
     )
     owned_port = callbacks.get("measurement_port") is None
     try:
+        paths = callbacks.get("paths") or DEFAULT_PATHS
+        repository = callbacks.get("result_repository") or FileMeasurementResultRepository(paths=paths)
+        input_reader = callbacks.get("input_reader") or ResultInputReader(repository)
+        # 运行契约运行在连接仪器前读取并校验当前运行的校准输入：主功放始终需要
+        # 线损，仅在驱动模式启用时才需要驱动映射；结构无效或配置漂移都在打开仪器
+        # 或执行任何 RF 动作前失败。
+        _preflight_amplifier_inputs(prepared_run, repository, input_reader)
+        _ensure_frozen_config_matches(prepared_run, config_path)
         if owned_port:
             callbacks["measurement_port"] = connect_instruments(config_path)
         callbacks["owns_measurement_port"] = owned_port
-        callbacks.setdefault("result_repository", FileMeasurementResultRepository(paths=callbacks.get("paths") or DEFAULT_PATHS))
+        callbacks["result_repository"] = repository
+        callbacks["input_reader"] = input_reader
         callbacks.setdefault("event_sink", _CallbackEventSink(callbacks))
         request = AmplifierMeasurementRequest(
             **_request_kwargs(prepared_run, config_path, callbacks),

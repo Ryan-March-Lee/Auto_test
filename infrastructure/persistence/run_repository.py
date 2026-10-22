@@ -195,17 +195,25 @@ class RunRepository:
         self.update_manifest(run_id, updated, now=now)
         return reference
 
-    def write_run_json(self, run_id: str, relative_path: str, payload: Any) -> str:
+    def write_run_json(
+        self, run_id: str, relative_path: str, payload: Any, *, overwrite: bool = False
+    ) -> str:
         """原子写入运行目录 ``inputs/`` 或 ``results/`` 下的 JSON 文件。
 
         只允许写在运行目录内，返回规范化后的相对路径。本方法只负责落盘，
         不修改 manifest；调用方应在文件写完后通过 :meth:`register_file` 登记校验值。
         采用临时文件加原子替换，进程中断不会留下半截目标文件。
+
+        默认 ``overwrite=False``：目标文件已存在时抛 ``FileExistsError``，避免阶段
+        提交或拆分文件写入静默覆盖已有运行结果。仅显式的重跑/覆盖流程才允许传入
+        ``overwrite=True``。
         """
         layout = self._require_existing_run(run_id)
         normalized = normalize_relative_path(relative_path, field_name="运行文件路径")
         self._classify(normalized)
         target = self._resolve_reference_path(layout, normalized)
+        if not overwrite and target.exists():
+            raise FileExistsError(f"运行文件已存在，不允许覆盖: {normalized}")
         target.parent.mkdir(parents=True, exist_ok=True)
         write_json_atomic(target, payload, encoder=NumpyJSONEncoder)
         return normalized

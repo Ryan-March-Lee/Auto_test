@@ -45,6 +45,9 @@ DEFAULT_STAGE_NAMES = (STAGE_CABLE_LOSS, STAGE_DRIVER_MAPPING, STAGE_AMPLIFIER)
 
 CABLE_LOSS_INPUT_PATH = "inputs/cable_loss.json"
 DRIVER_MAPPING_INPUT_PATH = "inputs/driver_mapping.json"
+# 主功放阶段的权威结果文件；主功放允许存在多个拆分结果文件，因此它不是
+# ``default_stage_result_path`` 的固定路径，而由调用方显式指定为主结果。
+AMPLIFIER_RESULT_PATH = "results/amplifier_measurement.json"
 
 # 阶段结果在运行目录内的固定相对路径；``amplifier`` 允许存在多个结果文件，故为空。
 STAGE_RESULT_PATHS: Mapping[str, str] = MappingProxyType(
@@ -642,6 +645,7 @@ def _coerce_references(value: Any, field_name: str) -> tuple[FileReference, ...]
 
 
 __all__ = [
+    "AMPLIFIER_RESULT_PATH",
     "CABLE_LOSS_INPUT_PATH",
     "CONFIG_FILENAME",
     "DEFAULT_STAGE_NAMES",

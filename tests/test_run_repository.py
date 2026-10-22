@@ -341,6 +341,37 @@ class RegisterFileTests(unittest.TestCase):
         self.assertEqual(manifest.outputs[0], reference)
         self.assertEqual(reference.sha256, file_sha256(result))
 
+    def test_write_run_json_refuses_to_overwrite_existing_file(self):
+        target = self.layout.results_dir / "amplifier_measurement.json"
+        self.repository.write_run_json(
+            RUN_ID, "results/amplifier_measurement.json", {"version": 1}
+        )
+
+        with self.assertRaises(FileExistsError):
+            self.repository.write_run_json(
+                RUN_ID, "results/amplifier_measurement.json", {"version": 2}
+            )
+
+        self.assertEqual(
+            json.loads(target.read_text(encoding="utf-8"))["version"], 1
+        )
+
+    def test_write_run_json_allows_explicit_overwrite(self):
+        target = self.layout.results_dir / "amplifier_measurement.json"
+        self.repository.write_run_json(
+            RUN_ID, "results/amplifier_measurement.json", {"version": 1}
+        )
+        self.repository.write_run_json(
+            RUN_ID,
+            "results/amplifier_measurement.json",
+            {"version": 2},
+            overwrite=True,
+        )
+
+        self.assertEqual(
+            json.loads(target.read_text(encoding="utf-8"))["version"], 2
+        )
+
 
 class VerifyFileTests(unittest.TestCase):
     def setUp(self):

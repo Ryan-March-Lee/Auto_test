@@ -55,10 +55,14 @@ class RunRepositoryPort(Protocol):
     def read_config(self, run_id: str, *, verify: bool = True) -> Any:
         """按 manifest 登记的校验值读取运行配置快照。"""
 
-    def write_run_json(self, run_id: str, relative_path: str, payload: Any) -> str:
+    def write_run_json(
+        self, run_id: str, relative_path: str, payload: Any, *, overwrite: bool = False
+    ) -> str:
         """原子写入运行目录 ``inputs/`` 或 ``results/`` 下的 JSON 文件。
 
         返回规范化后的相对路径；只允许在运行目录内写入，不允许覆盖运行目录外文件。
+        默认 ``overwrite=False``，目标文件已存在时抛 ``FileExistsError``，避免阶段
+        提交或拆分文件写入静默覆盖已有运行结果。
         """
 
     def register_file(

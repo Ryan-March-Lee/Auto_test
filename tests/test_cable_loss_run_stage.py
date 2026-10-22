@@ -275,11 +275,11 @@ class CableLossRunStageTests(unittest.TestCase):
         self.assertEqual(manifest.stage("cable_loss").status, StageStatus.FAILED)
         self.assertEqual(manifest.inputs, ())
 
-    def test_fail_from_pending_keeps_run_status_consistent(self):
+    def test_fail_from_pending_fails_the_run(self):
         self._create_run()
         recorder = RunStageRecorder(self.repository, RUN_ID)
         manifest = recorder.fail("cable_loss", "未开始即失败", now=CREATED_AT)
-        self.assertEqual(manifest.status, RunStatus.RUNNING)
+        self.assertEqual(manifest.status, RunStatus.FAILED)
         self.assertEqual(manifest.stage("cable_loss").status, StageStatus.FAILED)
 
     def test_cancel_removes_uncommitted_stage_result(self):
@@ -424,6 +424,87 @@ class RunStageRecorderTests(unittest.TestCase):
         stage = manifest.stage("cable_loss")
         self.assertEqual(stage.status, StageStatus.FAILED)
         self.assertEqual(stage.error, "硬件未就绪")
+
+    def test_skip_only_accepts_pending_and_is_idempotent(self):
+        self.recorder.start("driver_mapping", now=CREATED_AT)
+        with self.assertRaisesRegex(ValueError, "skipped"):
+            self.recorder.skip("driver_mapping", now=CREATED_AT)
+
+        self.recorder.cancel("driver_mapping", "停止", now=CREATED_AT)
+        with self.assertRaisesRegex(ValueError, "skipped"):
+            self.recorder.skip("driver_mapping", now=CREATED_AT)
+
+    def test_skip_is_idempotent_for_already_skipped_stage(self):
+        self.recorder.skip("driver_mapping", now=CREATED_AT)
+        manifest = self.recorder.skip("driver_mapping", now=CREATED_AT)
+        self.assertEqual(manifest.stage("driver_mapping").status, StageStatus.SKIPPED)
+
+    def test_complete_run_rejects_unfinished_stages(self):
+        self.recorder.start("cable_loss", now=CREATED_AT)
+        with self.assertRaisesRegex(ValueError, "未完成"):
+            self.recorder.complete_run(now=CREATED_AT)
+        self.assertEqual(self.repository.load_manifest(RUN_ID).status, RunStatus.RUNNING)
+
+    def test_complete_run_rejects_while_any_stage_still_pending(self):
+        self.recorder.start("cable_loss", now=CREATED_AT)
+        self.recorder.complete("cable_loss", {"cable_losses": {}}, now=CREATED_AT)
+        self.recorder.skip("driver_mapping", now=CREATED_AT)
+        # amplifier 仍为 pending。
+        with self.assertRaisesRegex(ValueError, "amplifier"):
+            self.recorder.complete_run(now=CREATED_AT)
+
+    def test_complete_run_marks_run_completed_when_all_stages_finish(self):
+        self.recorder.start("cable_loss", now=CREATED_AT)
+        self.recorder.complete("cable_loss", {"cable_losses": {}}, now=CREATED_AT)
+        self.recorder.skip("driver_mapping", now=CREATED_AT)
+        self.recorder.start("amplifier", now=CREATED_AT)
+        self.recorder.complete(
+            "amplifier",
+            {"results": {}},
+            result_path="results/amplifier_measurement.json",
+            now=CREATED_AT,
+        )
+
+        manifest = self.recorder.complete_run(now=CREATED_AT)
+
+        self.assertEqual(manifest.status, RunStatus.COMPLETED)
+        self.assertEqual(manifest.stage("amplifier").status, StageStatus.COMPLETED)
+
+    def test_cancel_converges_run_status_and_blocks_new_stages(self):
+        self.recorder.start("cable_loss", now=CREATED_AT)
+        manifest = self.recorder.cancel("cable_loss", "用户停止", now=CREATED_AT)
+
+        self.assertEqual(manifest.status, RunStatus.CANCELLED)
+        with self.assertRaisesRegex(ValueError, "终态"):
+            self.recorder.start("driver_mapping", now=CREATED_AT)
+
+    def test_fail_converges_run_status(self):
+        self.recorder.start("cable_loss", now=CREATED_AT)
+        manifest = self.recorder.fail("cable_loss", "硬件异常", now=CREATED_AT)
+
+        self.assertEqual(manifest.status, RunStatus.FAILED)
+        with self.assertRaisesRegex(ValueError, "终态"):
+            self.recorder.start("driver_mapping", now=CREATED_AT)
+
+    def test_complete_rollback_keeps_preexisting_split_file(self):
+        layout = self.repository.layout(RUN_ID)
+        preexisting = layout.results_dir / "amplifier_measurement_1.0.json"
+        preexisting.write_text('{"old": true}', encoding="utf-8")
+        self.recorder.start("amplifier", now=CREATED_AT)
+
+        with self.assertRaises(FileExistsError):
+            self.recorder.complete(
+                "amplifier",
+                {"results": {}},
+                result_path="results/amplifier_measurement.json",
+                extra_files={"results/amplifier_measurement_1.0.json": {"frequency": 1.0}},
+                now=CREATED_AT,
+            )
+
+        # 主结果属于本次提交，回滚后删除；预先存在的拆分文件必须原样保留。
+        self.assertFalse((layout.results_dir / "amplifier_measurement.json").exists())
+        self.assertEqual(preexisting.read_text(encoding="utf-8"), '{"old": true}')
+        self.assertEqual(self.repository.load_manifest(RUN_ID).outputs, ())
 
     def test_complete_rejects_missing_result_path_for_dynamic_stage(self):
         with self.assertRaisesRegex(ValueError, "固定结果路径"):

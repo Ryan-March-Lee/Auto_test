@@ -1,11 +1,15 @@
 """应用层运行阶段服务：在已创建的运行目录内记录阶段状态和阶段结果。
 
-本模块实现重构指南步骤 4 需要的“阶段边界”：
+本模块实现重构指南步骤 4-6 需要的“阶段边界”：
 
 - 阶段开始时把 manifest 中的阶段从 ``pending`` 推进到 ``running``。
-- 阶段成功时先把结果原子写入运行目录（默认为 ``inputs/<stage>.json``），
+- 阶段成功时先把结果原子写入运行目录（固定阶段默认为 ``inputs/<stage>.json``，
+  主功放显式指定 ``results/`` 下的主结果并可用 ``extra_files`` 附带多个拆分文件），
   校验并登记文件，再把阶段推进到 ``completed``，因此 manifest 中的
   ``completed`` 一定对应一个真实存在且校验值一致的结果文件。
+- 未启用的阶段（例如驱动模式关闭时的 ``driver_mapping``）可用 ``skip`` 标记为
+  ``skipped``；标志性阶段全部结束后用 ``complete_run`` 把运行级状态收敛为
+  ``completed``。
 - 失败和取消分别把阶段标记为 ``failed`` / ``cancelled``，且不会生成或保留
   看起来完整的阶段结果文件；对已经进入终态的阶段再次写入会被忽略，避免把
   旧数据重新标记为完成。
@@ -19,7 +23,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from application.ports.run_repository import RunRepositoryPort
 from domain.run.models import (
@@ -29,6 +33,7 @@ from domain.run.models import (
     RunManifest,
     RunStatus,
     StageStatus,
+    TERMINAL_RUN_STATUSES,
     TERMINAL_STAGE_STATUSES,
     default_stage_result_path,
 )
@@ -115,9 +120,14 @@ class RunStageRecorder:
     def start(self, stage: str, *, now: datetime | None = None) -> RunManifest:
         """把 ``pending`` 阶段推进到 ``running``；已 ``running`` 时保持不变。
 
-        已进入终态的阶段不能被重新开始；重跑必须创建新运行或显式覆盖。
+        已进入终态的阶段不能被重新开始；运行本身进入 ``completed`` / ``failed`` /
+        ``cancelled`` 终态后也不允许再开始新阶段，避免终态运行被跑出新结果。
         """
         manifest = self.repository.load_manifest(self.run_id)
+        if manifest.status in TERMINAL_RUN_STATUSES:
+            raise ValueError(
+                f"运行 {self.run_id} 已处于终态 {manifest.status.value}，不能开始新的阶段"
+            )
         record = manifest.stage(stage)
         if record.status is StageStatus.RUNNING:
             return manifest
@@ -135,14 +145,19 @@ class RunStageRecorder:
         payload: Any,
         *,
         result_path: str | None = None,
+        extra_files: Mapping[str, Any] | None = None,
         description: str | None = None,
         now: datetime | None = None,
     ) -> FileReference:
-        """写入阶段结果并登记为 ``completed``，返回结果文件引用。
+        """写入阶段结果并登记为 ``completed``，返回主结果文件引用。
 
         顺序固定为“文件完成 -> 校验登记 -> 更新 manifest”，因此 manifest 报告
         完成时结果文件必定存在且校验值一致。阶段尚未开始时自动先推进到 ``running``；
         阶段已进入终态时拒绝覆盖。
+
+        ``extra_files`` 用于 ``amplifier`` 这类允许保存多个拆分结果文件的阶段：
+        ``{相对路径: 载荷}``，会依次原子写入并登记到 manifest。任一文件提交失败时
+        回滚本次已写入的全部文件，不留下“看起来完整”的伪完成结果。
         """
         manifest = self.repository.load_manifest(self.run_id)
         record = manifest.stage(stage)
@@ -158,8 +173,10 @@ class RunStageRecorder:
             manifest = manifest.transition_stage(stage, StageStatus.RUNNING, now=now)
             self.repository.update_manifest(self.run_id, manifest, now=now)
 
-        relative = self.repository.write_run_json(self.run_id, path, payload)
+        written: list[str] = []
         try:
+            relative = self.repository.write_run_json(self.run_id, path, payload)
+            written.append(relative)
             reference = self.repository.register_file(
                 self.run_id,
                 relative,
@@ -167,6 +184,18 @@ class RunStageRecorder:
                 description=description,
                 now=now,
             )
+            for extra_path, extra_payload in (extra_files or {}).items():
+                extra_relative = self.repository.write_run_json(
+                    self.run_id, extra_path, extra_payload
+                )
+                written.append(extra_relative)
+                self.repository.register_file(
+                    self.run_id,
+                    extra_relative,
+                    stage=stage,
+                    description=description,
+                    now=now,
+                )
             manifest = self.repository.load_manifest(self.run_id)
             manifest = manifest.transition_stage(
                 stage, StageStatus.COMPLETED, result=reference.path, now=now
@@ -174,12 +203,71 @@ class RunStageRecorder:
             self.repository.update_manifest(self.run_id, manifest, now=now)
         except Exception:
             # 提交失败必须回滚本次写入，避免留下“看起来完整”的阶段结果。
-            self._discard_quietly(relative)
+            for written_path in written:
+                self._discard_quietly(written_path)
             raise
         return reference
 
+    def skip(self, stage: str, *, note: str | None = None, now: datetime | None = None) -> RunManifest:
+        """把 ``pending`` 阶段标记为 ``skipped``；已 ``skipped`` 时幂等返回。
+
+        未启用驱动模式时用它把 ``driver_mapping`` 阶段标记为 ``skipped``，使主功放
+        阶段不会要求映射文件存在，同时记录阶段被有意跳过。
+
+        只允许从 ``pending`` 进入 ``skipped``：``running`` / ``completed`` /
+        ``failed`` / ``cancelled`` 等状态不能被静默改成“已跳过”，否则会把未完成或
+        已失败的阶段伪装成正常跳过；调用方应改用对应的完成/失败/取消路径。
+        """
+        manifest = self.repository.load_manifest(self.run_id)
+        record = manifest.stage(stage)
+        if record.status is StageStatus.SKIPPED:
+            return manifest
+        if record.status is not StageStatus.PENDING:
+            raise ValueError(
+                f"阶段 {stage} 当前状态为 {record.status.value}，不能标记为 skipped"
+            )
+        manifest = manifest.transition_stage(stage, StageStatus.SKIPPED, note=note, now=now)
+        return self.repository.update_manifest(self.run_id, manifest, now=now)
+
+    def complete_run(self, *, now: datetime | None = None) -> RunManifest:
+        """把运行级状态收敛为 ``completed``。
+
+        只有**所有阶段都已进入 ``completed`` 或 ``skipped``** 时才允许完成运行；
+        任何 ``pending`` / ``running`` / ``failed`` / ``cancelled`` 阶段都会让完成
+        请求被拒绝，避免把一个仍有未完成或失败阶段的运行标记为完成。
+
+        - 已经 ``completed`` 时按无操作处理，保持幂等。
+        - 尚未开始（``created``）或被中断（``interrupted``）的运行先回到 ``running``
+          再完成。
+        - ``failed`` / ``cancelled`` 运行不允许被静默改成完成，交由运行状态转换
+          规则拒绝。
+        """
+        manifest = self.repository.load_manifest(self.run_id)
+        if manifest.status is RunStatus.COMPLETED:
+            return manifest
+        unfinished = [
+            name
+            for name, record in manifest.stages.items()
+            if record.status not in (StageStatus.COMPLETED, StageStatus.SKIPPED)
+        ]
+        if unfinished:
+            raise ValueError(
+                f"运行 {self.run_id} 仍有未完成的阶段，不能标记为 completed: "
+                + ", ".join(f"{name}={manifest.stage(name).status.value}" for name in unfinished)
+            )
+        if manifest.status in (RunStatus.CREATED, RunStatus.INTERRUPTED):
+            manifest = manifest.with_status(RunStatus.RUNNING, now=now)
+        manifest = manifest.with_status(RunStatus.COMPLETED, now=now)
+        return self.repository.update_manifest(self.run_id, manifest, now=now)
+
     def fail(self, stage: str, error: str, *, now: datetime | None = None) -> RunManifest:
-        """把阶段标记为 ``failed``，记录错误原因并清理未提交结果；终态保持不变。"""
+        """把阶段标记为 ``failed``，并把运行级状态同步收敛为 ``failed``。
+
+        阶段失败后本次运行不可能再作为完整运行使用，因此运行级状态也一并置为
+        ``failed``（``created`` / ``running`` 允许转换；已终态的运行保持不变），
+        避免 manifest 在阶段失败后仍长期显示为 ``running``。已进入终态的阶段不受
+        影响。
+        """
         manifest = self.repository.load_manifest(self.run_id)
         record = manifest.stage(stage)
         if record.status in TERMINAL_STAGE_STATUSES:
@@ -194,13 +282,14 @@ class RunStageRecorder:
         manifest = manifest.transition_stage(
             stage, StageStatus.FAILED, error=str(error) or "阶段失败", now=now
         )
+        manifest = self._set_run_terminal(manifest, RunStatus.FAILED, now=now)
         return self.repository.update_manifest(self.run_id, manifest, now=now)
 
     def cancel(self, stage: str, reason: str | None = None, *, now: datetime | None = None) -> RunManifest:
-        """把未完成的阶段标记为 ``cancelled`` 并清理未提交结果；终态不变。
+        """把未完成的阶段标记为 ``cancelled`` 并清理未提交结果，运行级同步为 ``cancelled``。
 
         ``pending`` 阶段直接取消，``running`` 阶段取消并记录原因，均不会保留
-        阶段结果文件。
+        阶段结果文件。被取消的运行不能再被标记为完成；已进入终态的阶段不受影响。
         """
         manifest = self.repository.load_manifest(self.run_id)
         record = manifest.stage(stage)
@@ -210,14 +299,23 @@ class RunStageRecorder:
         self._discard_stage_result(stage)
         manifest = self.repository.load_manifest(self.run_id)
         manifest = manifest.transition_stage(stage, StageStatus.CANCELLED, note=note, now=now)
+        manifest = self._set_run_terminal(manifest, RunStatus.CANCELLED, now=now)
         return self.repository.update_manifest(self.run_id, manifest, now=now)
 
     # -- 内部工具 ---------------------------------------------------------
 
     def _mark_run_running(self, manifest: RunManifest, *, now: datetime | None) -> RunManifest:
-        """第一个阶段开始时把运行状态从 ``created`` 推进到 ``running``。"""
-        if manifest.status is RunStatus.CREATED:
+        """第一个阶段开始时把运行状态从 ``created`` / ``interrupted`` 推进到 ``running``。"""
+        if manifest.status in (RunStatus.CREATED, RunStatus.INTERRUPTED):
             return manifest.with_status(RunStatus.RUNNING, now=now)
+        return manifest
+
+    def _set_run_terminal(
+        self, manifest: RunManifest, target: RunStatus, *, now: datetime | None
+    ) -> RunManifest:
+        """阶段失败/取消时把活跃运行同步收敛到对应终态；已终态运行保持不变。"""
+        if manifest.status in (RunStatus.CREATED, RunStatus.RUNNING):
+            return manifest.with_status(target, now=now)
         return manifest
 
     def _discard_stage_result(self, stage: str) -> None:

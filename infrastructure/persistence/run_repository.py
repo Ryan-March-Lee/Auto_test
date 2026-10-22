@@ -16,8 +16,10 @@
 - 不启动测量、不访问仪器，也不在运行创建后改写 ``config.json``。
 - 所有 JSON 都使用“临时文件 + 原子替换”，进程中断不会留下半截目标文件。
 
-后续步骤 3 会为配置服务引入 ``application.ports.run_repository`` 协议端口，
-本实现届时作为该端口的基础设施适配器。
+本实现是 ``application.ports.run_repository`` 协议端口的基础设施适配器：
+应用层的 ``application.run_service.create_run_snapshot`` 与
+``app.run_context.create_prepared_run`` 通过该端口创建运行快照和读取配置。
+测量流程迁移到新运行目录属于后续步骤，当前 ``prepare_run`` 仍写兼容快照。
 """
 
 from __future__ import annotations

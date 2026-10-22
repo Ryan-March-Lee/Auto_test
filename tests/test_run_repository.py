@@ -425,6 +425,71 @@ class VerifyFileTests(unittest.TestCase):
             self.repository.verify_file(RUN_ID, FileReference(path="results/link.json"))
 
 
+class DiscardRunTests(unittest.TestCase):
+    def setUp(self):
+        self._temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temporary.cleanup)
+        self.repository = RunRepository(Path(self._temporary.name) / "runs")
+        self.layout, _ = self.repository.create_run(CONFIG, run_id=RUN_ID, now=CREATED_AT)
+        self.other_layout, _ = self.repository.create_run(CONFIG, run_id=OTHER_ID, now=CREATED_AT)
+
+    def _other_run_digest(self) -> tuple:
+        """记录另一个运行的目录内容与 manifest 文本，用于比较删除前后是否变化。"""
+        files = sorted(
+            path.relative_to(self.other_layout.run_directory).as_posix()
+            for path in self.other_layout.run_directory.rglob("*")
+            if path.is_file()
+        )
+        return (
+            files,
+            self.other_layout.manifest_path.read_text(encoding="utf-8"),
+            json.loads(self.other_layout.config_path.read_text(encoding="utf-8")),
+        )
+
+    def test_discard_run_removes_only_target_run(self):
+        before = self._other_run_digest()
+
+        result = self.repository.discard_run(RUN_ID)
+
+        self.assertEqual(result, RUN_ID)
+        self.assertFalse(self.layout.run_directory.exists())
+        self.assertFalse(self.repository.run_exists(RUN_ID))
+        self.assertNotIn(RUN_ID, self.repository.list_run_ids())
+        self.assertTrue(self.repository.run_exists(OTHER_ID))
+        self.assertIn(OTHER_ID, self.repository.list_run_ids())
+        self.assertEqual(self._other_run_digest(), before)
+
+    def test_discard_run_removes_registered_files_and_manifest(self):
+        result_file = self.layout.results_dir / "amplifier_measurement.json"
+        result_file.write_text('{"ok": true}', encoding="utf-8")
+        self.repository.register_file(RUN_ID, result_file, now=STARTED_AT)
+
+        self.repository.discard_run(RUN_ID)
+
+        self.assertFalse(self.layout.run_directory.exists())
+
+    def test_discard_run_is_idempotent(self):
+        self.repository.discard_run(RUN_ID)
+        self.assertEqual(self.repository.discard_run(RUN_ID), RUN_ID)
+        self.assertFalse(self.layout.run_directory.exists())
+
+        missing_id = "20261022T190000Z_deadbeef"
+        self.assertEqual(self.repository.discard_run(missing_id), missing_id)
+        self.assertNotIn(missing_id, self.repository.list_run_ids())
+
+    def test_discard_run_tolerates_missing_root(self):
+        empty = RunRepository(Path(self._temporary.name) / "missing" / "runs")
+        self.assertEqual(empty.discard_run(RUN_ID), RUN_ID)
+
+    def test_discard_run_rejects_invalid_run_id(self):
+        for invalid in ("../escape", "..", "a/b", "", "with space", "nested/../.."):
+            with self.assertRaises(ValueError):
+                self.repository.discard_run(invalid)
+        self.assertTrue(self.repository.run_exists(RUN_ID))
+        self.assertTrue(self.repository.run_exists(OTHER_ID))
+        self.assertFalse((self.repository.root / ".." / "escape").exists())
+
+
 class RepositoryRootTests(unittest.TestCase):
     def test_root_defaults_to_result_directory_runs(self):
         paths = PathService(Path("C:/pa-auto-test-root"))

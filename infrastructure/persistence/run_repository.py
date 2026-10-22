@@ -7,6 +7,7 @@
 - ``load_manifest`` / ``update_manifest``：原子读取和更新 manifest。
 - ``register_file``：按 ``inputs/`` 与 ``results/`` 目录登记文件及其 SHA-256、字节数。
 - ``verify_file`` / ``verify_manifest_files``：校验登记文件是否仍与 manifest 一致。
+- ``discard_file`` / ``discard_run``：撤销未提交的文件或整个半成品运行目录。
 - ``read_config`` / ``list_run_ids``：校验读取配置快照并枚举有效运行。
 
 职责边界：
@@ -241,6 +242,23 @@ class RunRepository:
                 manifest = replace(manifest, outputs=remaining)
             self.update_manifest(run_id, manifest)
         return normalized
+
+    def discard_run(self, run_id: str) -> str:
+        """撤销整个运行目录，用于创建失败后的补偿清理。
+
+        这是 :meth:`create_run` 的逆操作：只删除 ``run_id`` 对应的运行目录，
+        不触碰其他运行的目录、manifest 和结果文件，也不影响全局配置。
+        运行目录不存在时按幂等无操作处理；``run_id`` 不合法（例如包含路径
+        穿越片段）时在删除前直接抛出 ``ValueError``，不会触及运行根目录之外的路径。
+        """
+        layout = self.layout(run_id)
+        target = layout.run_directory
+        if target.is_symlink() or target.is_file():
+            # 避免顺着符号链接删除运行根目录之外的内容，只移除链接本身。
+            target.unlink(missing_ok=True)
+        elif target.is_dir():
+            shutil.rmtree(target)
+        return layout.run_id
 
     def read_config(self, run_id: str, *, verify: bool = True) -> Any:
         """读取运行目录中的配置快照 ``config.json``。

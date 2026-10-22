@@ -86,6 +86,14 @@ class RunRepositoryPort(Protocol):
         按无操作处理并返回规范化后的相对路径。
         """
 
+    def discard_run(self, run_id: str) -> str:
+        """撤销整个运行目录，用于创建失败后的补偿清理。
+
+        只删除 ``run_id`` 对应的运行目录，不触碰其他运行、全局配置或兼容结果。
+        运行目录不存在时按幂等无操作处理；``run_id`` 不合法（例如包含路径穿越
+        片段）时拒绝执行并抛出 ``ValueError``。
+        """
+
     def verify_file(self, run_id: str, reference: FileReference) -> Path:
         """校验登记文件仍位于运行目录内，且 SHA-256 和大小与引用一致。
 

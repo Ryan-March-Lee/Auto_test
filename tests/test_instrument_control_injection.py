@@ -4,7 +4,7 @@ from unittest.mock import Mock
 from unittest.mock import patch
 from pathlib import Path
 
-from instrument_control import InstrumentControl
+from instrument.legacy_control import InstrumentControl
 
 
 class MinimalVisaResource:
@@ -53,13 +53,13 @@ class InstrumentControlInjectionTests(unittest.TestCase):
         config["instruments"]["signal_generator"]["address"] = self.ADDRESSES[0]
         config["instruments"]["spectrum_analyzer"]["address"] = self.ADDRESSES[1]
         config["instruments"]["power_supplies"]["PS4"]["address"] = self.ADDRESSES[2]
-        self.config_loader = patch("instrument_control.load_config_file", return_value=config)
+        self.config_loader = patch("instrument.legacy_control.load_config_file", return_value=config)
         self.config_loader.start()
         self.addCleanup(self.config_loader.stop)
 
     def test_injected_resource_manager_prevents_real_visa_creation(self):
         manager = self.make_manager()
-        with patch("instrument_control.pyvisa.ResourceManager") as resource_manager_factory:
+        with patch("instrument.legacy_control.pyvisa.ResourceManager") as resource_manager_factory:
             controller = InstrumentControl(resource_manager=manager, sleep_fn=lambda _: None)
 
         resource_manager_factory.assert_not_called()
@@ -68,7 +68,7 @@ class InstrumentControlInjectionTests(unittest.TestCase):
 
     def test_default_resource_manager_path_remains_available_without_real_connection(self):
         manager = self.make_manager()
-        with patch("instrument_control.pyvisa.ResourceManager", return_value=manager) as resource_manager_factory:
+        with patch("instrument.legacy_control.pyvisa.ResourceManager", return_value=manager) as resource_manager_factory:
             controller = InstrumentControl(sleep_fn=lambda _: None)
 
         resource_manager_factory.assert_called_once_with()
@@ -76,7 +76,7 @@ class InstrumentControlInjectionTests(unittest.TestCase):
 
     def test_legacy_single_path_constructor_remains_compatible(self):
         manager = self.make_manager()
-        with patch("instrument_control.pyvisa.ResourceManager", return_value=manager):
+        with patch("instrument.legacy_control.pyvisa.ResourceManager", return_value=manager):
             controller = InstrumentControl(None, manager)
 
         self.assertIs(controller.rm, manager)
@@ -112,6 +112,20 @@ class InstrumentControlInjectionTests(unittest.TestCase):
 
         self.assertTrue(manager.resources[self.ADDRESSES[0]].closed)
         self.assertTrue(manager.closed)
+
+    def test_injected_resource_manager_is_released_by_legacy_cleanup(self):
+        """历史兼容控制器按既有契约在清理时关闭注入的 ResourceManager。
+
+        正式 ``ManagedInstrumentSession`` 改为只关闭自己拥有的端口；这里固定
+        历史入口的既有所有权行为，避免兼容层静默改变现场脚本的资源生命周期。
+        """
+        manager = self.make_manager()
+        controller = InstrumentControl(resource_manager=manager, sleep_fn=lambda _: None)
+
+        controller.close_all()
+
+        self.assertTrue(manager.closed)
+        self.assertTrue(all(resource.closed for resource in manager.resources.values()))
 
 
 if __name__ == "__main__":

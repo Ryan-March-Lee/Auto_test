@@ -169,6 +169,8 @@ class OfflineRefactorCompletionTests(unittest.TestCase):
         self.assertIn("measurement_calculations.py", manifest["compatibility_files"])
         self.assertIn("measurement_services.py", manifest["compatibility_files"])
         self.assertIn("measurement_lifecycle.py", manifest["compatibility_files"])
+        self.assertIn("instrument_control.py", manifest["compatibility_files"])
+        self.assertNotIn("instrument_control.py", manifest["rollback_files"])
         self.assertNotIn("enhanced_workers.py", manifest["rollback_files"])
         self.assertEqual(manifest["real_device_acceptance"], "pending")
 

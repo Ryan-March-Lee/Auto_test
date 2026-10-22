@@ -34,9 +34,9 @@ ROLLBACK_FILES = (
     "cable_loss_measurement.py",
     "driver_power_mapping.py",
     "amplifier_measurement.py",
-    "instrument_control.py",
 )
 COMPATIBILITY_FILES = (
+    "instrument_control.py",
     "measurement_services.py",
     "measurement_lifecycle.py",
     "config_models.py",

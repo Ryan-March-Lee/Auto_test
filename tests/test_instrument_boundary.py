@@ -55,6 +55,24 @@ class InstrumentBoundaryTests(unittest.TestCase):
         self.assertTrue(supply.connected)
         self.assertEqual(session.state.value, "cleaned")
 
+    def test_formal_session_closes_devices_it_owns(self):
+        recorder = CommandRecorder()
+        signal = SimulatedSignalGenerator(recorder)
+        analyzer = SimulatedSpectrumAnalyzer(recorder=recorder)
+        supply = SimulatedPowerSupply(recorder)
+        session = ManagedInstrumentSession(
+            signal, analyzer, supply, {"gate": "CH1", "drain": "CH2"},
+        )
+        session.validate()
+        session.connect()
+        session.prepare()
+        session.close()
+
+        self.assertFalse(signal.connected)
+        self.assertFalse(analyzer.connected)
+        self.assertFalse(supply.connected)
+        self.assertEqual(session.state.value, "cleaned")
+
 
 if __name__ == "__main__":
     unittest.main()

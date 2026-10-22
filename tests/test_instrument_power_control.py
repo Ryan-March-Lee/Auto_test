@@ -3,7 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from instrument_control import InstrumentControl, resolve_power_channel_role
+from instrument.legacy_control import InstrumentControl
+from instrument.power_roles import resolve_power_channel_role
 from tests.fakes import FakeResourceManager, FakeVisaResource
 
 

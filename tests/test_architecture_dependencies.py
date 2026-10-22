@@ -206,6 +206,25 @@ def _legacy_imports(tree):
     return violations
 
 
+def _package_root_import_violations(packages, forbidden_roots):
+    """Return production-package imports of forbidden legacy root modules."""
+    violations = []
+    for package in packages:
+        for source_path in (ROOT / package).rglob("*.py"):
+            for node in ast.walk(_tree(source_path)):
+                if isinstance(node, ast.Import):
+                    modules = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom) and not node.level:
+                    modules = [node.module or ""]
+                else:
+                    # 相对导入始终停留在同一个正式包内，不是根入口转发。
+                    continue
+                for module in modules:
+                    if module.split(".")[0] in forbidden_roots:
+                        violations.append(f"{source_path.relative_to(ROOT)} imports {module}")
+    return violations
+
+
 class ProductionDependencyTests(unittest.TestCase):
     def test_production_code_uses_path_service_instead_of_global_path_constants(self):
         forbidden_names = {
@@ -218,7 +237,6 @@ class ProductionDependencyTests(unittest.TestCase):
             ROOT / "infrastructure" / "config" / "json_io.py",
             ROOT / "infrastructure" / "persistence" / "json_result_repository.py",
             ROOT / "infrastructure" / "logging" / "app_logging.py",
-            ROOT / "instrument_control.py",
             ROOT / "instrument" / "legacy_control.py",
             ROOT / "tests" / "test_project_paths.py",
             ROOT / "tests" / "test_config_io.py",
@@ -357,6 +375,41 @@ class ProductionDependencyTests(unittest.TestCase):
                 for node in tree.body
             ),
             str(source_path.relative_to(ROOT)) + " 必须显式声明 __all__",
+        )
+
+    def test_legacy_instrument_control_root_is_an_explicit_reexport(self):
+        source_path = ROOT / "instrument_control.py"
+        tree = _tree(source_path)
+        definitions = [
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        ]
+        self.assertEqual(definitions, [], str(source_path.relative_to(ROOT)))
+        self.assertTrue(
+            any(
+                isinstance(node, ast.Assign)
+                and any(
+                    isinstance(target, ast.Name) and target.id == "__all__"
+                    for target in node.targets
+                )
+                for node in tree.body
+            ),
+            str(source_path.relative_to(ROOT)) + " 必须显式声明 __all__",
+        )
+
+        import instrument_control
+        import instrument.legacy_control as legacy_control
+        import instrument.power_roles as power_roles
+
+        self.assertEqual(
+            set(instrument_control.__all__),
+            {"InstrumentControl", "resolve_power_channel_role"},
+        )
+        self.assertIs(instrument_control.InstrumentControl, legacy_control.InstrumentControl)
+        self.assertIs(
+            instrument_control.resolve_power_channel_role,
+            power_roles.resolve_power_channel_role,
         )
 
     def test_legacy_config_conversion_is_an_explicit_reexport(self):
@@ -549,25 +602,21 @@ class ProductionDependencyTests(unittest.TestCase):
         self.assertEqual(violations, [], "应用层不得反向依赖基础设施: " + "; ".join(violations))
 
     def test_production_packages_do_not_import_legacy_measurement_roots(self):
-        forbidden = {"measurement_services", "measurement_lifecycle"}
-        violations = []
-        for package in ("app", "application", "presentation", "infrastructure"):
-            for source_path in (ROOT / package).rglob("*.py"):
-                for node in ast.walk(_tree(source_path)):
-                    if isinstance(node, ast.Import):
-                        modules = [alias.name for alias in node.names]
-                    elif isinstance(node, ast.ImportFrom) and not node.level:
-                        modules = [node.module or ""]
-                    else:
-                        # 相对导入始终停留在同一个正式包内，不是根入口转发。
-                        continue
-                    for module in modules:
-                        if module.split(".")[0] in forbidden:
-                            violations.append(
-                                f"{source_path.relative_to(ROOT)} imports {module}"
-                            )
+        violations = _package_root_import_violations(
+            ("app", "application", "presentation", "infrastructure"),
+            {"measurement_services", "measurement_lifecycle"},
+        )
         self.assertEqual(
             violations, [], "生产包不得依赖历史测量根入口: " + "; ".join(violations)
+        )
+
+    def test_production_packages_do_not_import_legacy_instrument_control_root(self):
+        violations = _package_root_import_violations(
+            ("app", "application", "presentation", "infrastructure", "instrument"),
+            {"instrument_control"},
+        )
+        self.assertEqual(
+            violations, [], "生产包不得依赖历史设备控制根入口: " + "; ".join(violations)
         )
 
     def test_gui_data_pages_do_not_access_storage_implementations(self):

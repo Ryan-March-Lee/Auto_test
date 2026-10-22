@@ -19,15 +19,27 @@ def build_measurement_worker_factories() -> WorkerFactories:
 
 
 def _cable_loss_factory(command: MeasurementCommand, *, measurement_port: Any = None) -> Any:
-    return CableLossWorker(command.config_path, measurement_port=measurement_port)
+    return CableLossWorker(
+        command.config_path,
+        measurement_port=measurement_port,
+        prepared_run=command.prepared_run,
+    )
 
 
 def _driver_mapping_factory(command: MeasurementCommand, *, measurement_port: Any = None) -> Any:
-    return DriverMappingWorker(command.config_path, measurement_port=measurement_port)
+    return DriverMappingWorker(
+        command.config_path,
+        measurement_port=measurement_port,
+        prepared_run=command.prepared_run,
+    )
 
 
 def _amplifier_factory(command: MeasurementCommand, *, measurement_port: Any = None) -> Any:
-    return AmplifierWorker(command.config_path, measurement_port=measurement_port)
+    return AmplifierWorker(
+        command.config_path,
+        measurement_port=measurement_port,
+        prepared_run=command.prepared_run,
+    )
 
 
 __all__ = ["build_measurement_worker_factories"]

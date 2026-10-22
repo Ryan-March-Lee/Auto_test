@@ -59,6 +59,10 @@ class MeasurementController:
         path carried by a page command is retained as page input metadata, but
         is intentionally replaced by the provider value before worker
         construction so stale page input cannot select another run.
+
+        The command's ``prepared_run`` (the configuration-phase run contract) is
+        forwarded unchanged to the worker factory, so measurements started from
+        a page reuse the frozen run instead of re-preparing from GUI state.
         """
         self._worker_factories = dict(worker_factories)
         self._config_path_provider = config_path_provider
@@ -126,7 +130,9 @@ class MeasurementController:
             config_path = self._config_path_provider()
             if not isinstance(config_path, str) or not config_path.strip():
                 raise ValueError("配置路径提供者返回了空路径")
-            effective_command = MeasurementCommand(config_path, command.options)
+            effective_command = MeasurementCommand(
+                config_path, command.options, command.prepared_run
+            )
             worker = factory(effective_command, measurement_port=self._measurement_port)
             self._worker = worker
             self._worker_lifecycle.bind(worker)

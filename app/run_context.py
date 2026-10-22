@@ -12,7 +12,11 @@ from domain.models import RunContext
 from domain.run.models import generate_run_id
 from application.ports.config_repository import ConfigurationLoadResult
 from application.ports.run_repository import RunRepositoryPort
-from application.run_service import RunSnapshot, create_run_snapshot
+from application.run_service import (
+    RunSnapshot,
+    create_run_snapshot,
+    load_run_configuration,
+)
 from infrastructure.filesystem.paths import PathService
 from infrastructure.persistence.json_result_repository import write_run_snapshot
 from infrastructure.persistence.run_repository import RunRepository
@@ -117,6 +121,45 @@ def create_prepared_run(
         loaded.configuration,
         context,
         Path(snapshot.run_directory),
+        config_path,
+        repository,
+    )
+
+
+def load_prepared_run(
+    run_id: str,
+    *,
+    config_path: Path | None = None,
+    paths: PathService | None = None,
+    run_repository: RunRepositoryPort | None = None,
+) -> PreparedRun:
+    """Reconstruct a :class:`PreparedRun` from an existing ``runs/<run_id>/`` run.
+
+    This is the step-7 "reopen by run_id" entry point: the frozen
+    ``config.json`` is loaded from the run directory (never from GUI memory) and
+    re-validated as a complete run, so a measurement can continue after the GUI
+    was closed and reopened.  Only the run identifier and the run repository
+    decide which configuration is used; the GUI configuration file is passed
+    through as the hardware compatibility path but is not the source of truth.
+    """
+    repository = run_repository if run_repository is not None else RunRepository(paths=paths)
+    if not repository.run_exists(run_id):
+        raise FileNotFoundError(f"运行不存在或结构不完整: {run_id}")
+    loaded = load_run_configuration(repository, run_id)
+    if not loaded.valid:
+        details = "; ".join(f"{issue.path}: {issue.message}" for issue in loaded.validation.errors)
+        raise ValueError(f"运行 {run_id} 的配置快照校验失败: {details}")
+    configuration = loaded.configuration
+    context = RunContext.from_resource_mapping(
+        configuration.run_mapping.to_dict(),
+        run_id=run_id,
+        software_version=environment_version(),
+    )
+    layout = repository.layout(run_id)
+    return PreparedRun(
+        configuration,
+        context,
+        Path(layout.run_directory),
         config_path,
         repository,
     )

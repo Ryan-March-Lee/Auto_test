@@ -18,6 +18,8 @@ from .pages import PageControllerBindingMixin
 class ConfigPage(PageControllerBindingMixin, QWidget):
     save_requested = Signal()
     connect_requested = Signal()
+    create_run_requested = Signal()
+    load_run_requested = Signal(str)
     validation_failed = Signal(str)
     driver_mode_changed = Signal(bool)
 
@@ -187,9 +189,26 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             "pa_unit2_label": self.pa_unit2_label, "pa_unit3_power": self.pa_unit3_power_combo, "pa_unit3_label": self.pa_unit3_label}
         self.save_config_btn = QPushButton("保存配置"); layout.addWidget(self.save_config_btn)
 
+        # 配置阶段入口：校验并创建一次运行。运行创建后测量页面只消费该不可变快照。
+        run_group = QGroupBox("运行")
+        run_form = QFormLayout(run_group)
+        self.create_run_btn = QPushButton("校验并创建运行")
+        self.run_status_label = QLabel("当前运行: 未创建")
+        self.run_status_label.setWordWrap(True)
+        self.load_run_id_edit = QLineEdit()
+        self.load_run_id_edit.setPlaceholderText("输入 run_id 以重新打开已有运行")
+        self.load_run_btn = QPushButton("加载运行")
+        run_form.addRow(self.create_run_btn)
+        run_form.addRow(self.run_status_label)
+        run_form.addRow("run_id:", self.load_run_id_edit)
+        run_form.addRow(self.load_run_btn)
+        layout.addWidget(run_group)
+
     def _connect_signals(self):
         self.connect_btn.clicked.connect(self.request_connect)
         self.save_config_btn.clicked.connect(self.request_save)
+        self.create_run_btn.clicked.connect(self.request_create_run)
+        self.load_run_btn.clicked.connect(self.request_load_run)
         self.pa_unit_count_combo.currentTextChanged.connect(self.on_pa_unit_count_changed)
         self.driver_mode_check.toggled.connect(self.on_driver_mode_toggled)
         self.driver_power_enabled.toggled.connect(self.on_driver_power_toggled)
@@ -201,6 +220,20 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
 
     def request_connect(self):
         if self.validate(): self.connect_requested.emit()
+
+    def request_create_run(self):
+        if self.validate(): self.create_run_requested.emit()
+
+    def request_load_run(self):
+        run_id = self.load_run_id_edit.text().strip()
+        if not run_id:
+            self.validation_failed.emit("请输入要加载的 run_id")
+            return
+        self.load_run_requested.emit(run_id)
+
+    def set_run_status(self, text: str) -> None:
+        """显示当前运行状态；由窗口在创建/加载运行后更新。"""
+        self.run_status_label.setText(text)
 
     def validate(self):
         errors = ConfigFormState(self.config, self).validation_errors()

@@ -77,9 +77,10 @@ class AmplifierPageTests(unittest.TestCase):
 
     def setUp(self):
         self.controller = Controller()
+        self.run = type("PreparedRun", (), {"run_id": "run-amplifier"})()
         self.page = AmplifierPage(
             config_path_provider=lambda: "config.json",
-            prepare_run=lambda: True,
+            run_provider=lambda: self.run,
             confirm_wiring=lambda: True,
             driver_mode_provider=lambda: True,
             connection_dialog_factory=lambda *_: Dialog(),
@@ -101,6 +102,14 @@ class AmplifierPageTests(unittest.TestCase):
         self.assertIsInstance(command, MeasurementCommand)
         self.assertEqual(command.config_path, "config.json")
         self.assertEqual(dict(command.options), {})
+        self.assertIs(command.prepared_run, self.run)
+
+    def test_missing_current_run_does_not_start_measurement(self):
+        self.page._run_provider = lambda: None
+
+        self.page.start_measurement()
+
+        self.assertEqual(self.controller.calls, [])
 
     def test_realtime_data_and_result_update_page_models(self):
         self.controller.signals.data_update.emit({"frequency": "4.0", "sweep_data": {"output_power_dut": [10]}})

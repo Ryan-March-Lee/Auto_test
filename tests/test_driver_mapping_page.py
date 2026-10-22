@@ -87,9 +87,10 @@ class DriverMappingPageTests(unittest.TestCase):
         self.errors = []
         self.realtime = []
         self.clears = []
+        self.run = type("PreparedRun", (), {"run_id": "run-driver"})()
         self.page = DriverMappingPage(
             config_path_provider=lambda: "config.json",
-            prepare_run=lambda: self.prepared.append(True) or True,
+            run_provider=lambda: self.prepared.append(True) or self.run,
             confirm_wiring=lambda: self.confirmed.append(True) or True,
             connection_dialog_factory=lambda *_: self.dialog,
             plot_widget_factory=lambda parent: Plot(parent),
@@ -113,15 +114,17 @@ class DriverMappingPageTests(unittest.TestCase):
         self.assertEqual(self.confirmed, [True])
         self.assertEqual(self.controller.calls[0][0], "start")
         self.assertIsInstance(self.controller.calls[0][1], MeasurementCommand)
-        self.assertEqual(self.controller.calls[0][1].config_path, "config.json")
+        command = self.controller.calls[0][1]
+        self.assertEqual(command.config_path, "config.json")
+        self.assertIs(command.prepared_run, self.run)
         self.assertEqual(self.clears, [True])
 
     def test_missing_input_or_rejected_wiring_does_not_start(self):
-        self.page._prepare_run = lambda: False
+        self.page._run_provider = lambda: None
         self.page.start_measurement()
         self.assertEqual(self.controller.calls, [])
         self.dialog.result = QDialog.Rejected
-        self.page._prepare_run = lambda: True
+        self.page._run_provider = lambda: self.run
         self.page.start_measurement()
         self.assertEqual(self.controller.calls, [])
 

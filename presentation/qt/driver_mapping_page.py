@@ -34,7 +34,7 @@ class DriverMappingPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         self,
         *,
         config_path_provider: Callable[[], str],
-        prepare_run: Callable[[], bool],
+        run_provider: Callable[[], Any],
         confirm_wiring: Callable[[], bool],
         connection_dialog_factory: Callable[[str, QWidget], Any],
         plot_widget_factory: Callable[[QWidget], QWidget],
@@ -47,7 +47,7 @@ class DriverMappingPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         PageControllerBindingMixin.__init__(self)
         QWidget.__init__(self)
         self._config_path_provider = config_path_provider
-        self._prepare_run = prepare_run
+        self._run_provider = run_provider
         self._confirm_wiring = confirm_wiring
         self._connection_dialog_factory = connection_dialog_factory
         self._plot_widget_factory = plot_widget_factory
@@ -127,14 +127,18 @@ class DriverMappingPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         if getattr(controller.state, "is_active", False):
             self._log_callback("已有测量正在运行")
             return
-        if not self._prepare_run():
+        # 只接受配置阶段创建（或按 run_id 重新打开）的当前运行契约。
+        run = self._run_provider()
+        if run is None:
             return
         dialog = self._connection_dialog_factory("driver_mapping", self)
         if dialog.exec() != QDialog.Accepted or not self._confirm_wiring():
             return
         self.reset_realtime_data()
         self._log_callback("开始驱动功放映射...")
-        controller.start_driver_mapping(MeasurementCommand(self._config_path_provider()))
+        controller.start_driver_mapping(
+            MeasurementCommand(self._config_path_provider(), prepared_run=run)
+        )
 
     def stop_measurement(self) -> None:
         if self.controller is not None:

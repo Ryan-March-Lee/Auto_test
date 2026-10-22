@@ -19,6 +19,7 @@ from .run_context import (
     PreparedRun,
     create_prepared_run,
     environment_version,
+    load_prepared_run,
     prepare_run,
 )
 from instrument.measurement_factory import create_measurement_port

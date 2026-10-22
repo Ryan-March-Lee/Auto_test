@@ -32,6 +32,9 @@ class RunLayout(Protocol):
 class RunRepositoryPort(Protocol):
     """应用层创建和读取一次运行所需的最小仓储接口。"""
 
+    def layout(self, run_id: str) -> RunLayout:
+        """返回指定运行的目录布局（目录、配置快照和 manifest 的物理位置）。"""
+
     def create_run(
         self,
         config: Mapping[str, Any],

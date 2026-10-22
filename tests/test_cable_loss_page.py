@@ -74,9 +74,10 @@ class CableLossPageTests(unittest.TestCase):
         self.controller = Controller()
         self.dialog_results = [QDialog.Accepted]
         self.logs = []
+        self.run = type("PreparedRun", (), {"run_id": "run-cable-loss"})()
         self.page = CableLossPage(
             config_path_provider=lambda: "config.json",
-            prepare_run=lambda: True,
+            run_provider=lambda: self.run,
             confirm_wiring=lambda: True,
             connection_dialog_factory=lambda *_: Dialog(self.dialog_results.pop(0)),
             log_callback=self.logs.append,
@@ -91,8 +92,17 @@ class CableLossPageTests(unittest.TestCase):
         self.page.start_measurement()
 
         self.assertEqual(self.controller.calls[0][0], "start")
-        self.assertIsInstance(self.controller.calls[0][1], MeasurementCommand)
-        self.assertEqual(self.controller.calls[0][1].config_path, "config.json")
+        command = self.controller.calls[0][1]
+        self.assertIsInstance(command, MeasurementCommand)
+        self.assertEqual(command.config_path, "config.json")
+        self.assertIs(command.prepared_run, self.run)
+
+    def test_missing_current_run_does_not_start_measurement(self):
+        self.page._run_provider = lambda: None
+
+        self.page.start_measurement()
+
+        self.assertEqual(self.controller.calls, [])
 
     def test_realtime_and_structured_result_fill_table(self):
         self.controller.signals.data_update.emit({

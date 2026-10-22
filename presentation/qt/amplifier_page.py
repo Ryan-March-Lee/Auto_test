@@ -32,7 +32,7 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         self,
         *,
         config_path_provider: Callable[[], str],
-        prepare_run: Callable[[], bool],
+        run_provider: Callable[[], Any],
         confirm_wiring: Callable[[], bool],
         driver_mode_provider: Callable[[], bool],
         connection_dialog_factory: Callable[[str, QWidget], Any],
@@ -46,7 +46,7 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         PageControllerBindingMixin.__init__(self)
         QWidget.__init__(self)
         self._config_path_provider = config_path_provider
-        self._prepare_run = prepare_run
+        self._run_provider = run_provider
         self._confirm_wiring = confirm_wiring
         self._driver_mode_provider = driver_mode_provider
         self._connection_dialog_factory = connection_dialog_factory
@@ -132,7 +132,10 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         if getattr(controller.state, "is_active", False):
             self._log_callback("已有测量正在运行")
             return
-        if not self._prepare_run():
+        # 只接受配置阶段创建（或按 run_id 重新打开）的当前运行契约；主功放参数已在
+        # 该运行的冻结快照中，不再从 GUI 重新保存配置。
+        run = self._run_provider()
+        if run is None:
             return
         self.update_instruction_text()
         diagram = "amplifier_test" if self._driver_mode_provider() else "amplifier_test_no_driver"
@@ -143,9 +146,9 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         self.reset_realtime_data()
         self.result_table.setRowCount(0)
         self._log_callback("开始主功放测试...")
-        # 功放参数已在 prepare_run 中保存到运行配置；controller 只接收配置路径，
-        # 避免携带但不会被 worker 消费的伪 options 接口。
-        controller.start_amplifier(MeasurementCommand(self._config_path_provider()))
+        controller.start_amplifier(
+            MeasurementCommand(self._config_path_provider(), prepared_run=run)
+        )
 
     def stop_measurement(self) -> None:
         if self.controller is not None:

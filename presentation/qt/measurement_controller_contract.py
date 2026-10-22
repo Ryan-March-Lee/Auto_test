@@ -36,10 +36,15 @@ class MeasurementCommand:
     """页面提交给 controller 的不可变测量命令。
 
     配置解析、worker 创建、端口所有权和结果保存不属于页面命令职责。
+
+    ``prepared_run`` 是配置阶段创建（或按 run_id 重新打开）的运行契约
+    :class:`app.run_context.PreparedRun`；测量页面只携带它，不能携带运行期间可变
+    的 GUI 配置状态。为 ``None`` 时表示旧兼容命令，worker 仍会自行预检。
     """
 
     config_path: str
     options: Mapping[str, Any] = field(default_factory=dict)
+    prepared_run: Any = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.config_path, str) or not self.config_path.strip():

@@ -33,6 +33,7 @@ from infrastructure.filesystem.paths import (
 CONFIG_FILE = DEFAULT_PATHS.config_file
 from application.gui_data_service import GuiDataService
 from presentation.qt.composition import build_gui_data_service
+from app.gui_runtime import load_prepared_run, prepare_configuration
 from infrastructure.logging.app_logging import setup_logging
 from assistant.storage import (
     has_current_history,
@@ -121,6 +122,8 @@ class MainWindow(QMainWindow):
         self.config = {}
         self.instrument_ctrl = None
         self.instrument_worker = None
+        # 配置阶段创建（或按 run_id 重新打开）的当前运行契约；测量页面只消费它。
+        self.prepared_run = None
         self.measurement_controller = MeasurementController(
             build_measurement_worker_factories(), lambda: str(self.config_path)
         )
@@ -267,13 +270,11 @@ class MainWindow(QMainWindow):
         context = PageContext(
             controller=self.measurement_controller,
             config_path_provider=lambda: str(self.config_path),
-            prepare_cable_loss=self._prepare_cable_loss_run,
+            run_provider=self._resolve_measurement_run,
             confirm_cable_loss=self._confirm_cable_loss_wiring,
-            prepare_driver_mapping=self._prepare_driver_mapping_run,
             confirm_driver_mapping=self._confirm_driver_mapping_wiring,
-            prepare_amplifier=self._prepare_amplifier_run,
             confirm_amplifier=self._confirm_amplifier_wiring,
-            driver_mode_provider=lambda: self.config_page.driver_mode_check.isChecked(),
+            driver_mode_provider=self._amplifier_driver_mode,
             connection_dialog_factory=lambda kind, parent: ConnectionDialog(kind, parent),
             plot_widget_factory=lambda _parent: RealTimePlotWidget(show_nav_buttons=True),
             log_callback=self.add_log_message,
@@ -369,6 +370,8 @@ class MainWindow(QMainWindow):
         tab = ConfigPage(self.config, self)
         tab.save_requested.connect(self.save_config)
         tab.connect_requested.connect(self.connect_instruments)
+        tab.create_run_requested.connect(self._create_prepared_run)
+        tab.load_run_requested.connect(self._load_prepared_run)
         tab.validation_failed.connect(lambda message: self.add_log_message(f"配置校验失败: {message}"))
         tab.driver_mode_changed.connect(lambda _checked: self.update_amplifier_instruction_text())
         self.config_page = tab
@@ -388,6 +391,7 @@ class MainWindow(QMainWindow):
             'driver_power_combo', 'driver_power_label', 'pa_unit1_power_combo',
             'pa_unit2_power_combo', 'pa_unit2_label', 'pa_unit3_power_combo',
             'pa_unit3_label', 'connect_btn', 'save_config_btn',
+            'create_run_btn', 'load_run_btn', 'load_run_id_edit', 'run_status_label',
         ):
             setattr(self, name, getattr(page, name))
 
@@ -984,26 +988,112 @@ class MainWindow(QMainWindow):
                 self.power_assignment_widgets['pa_unit3_power'].setCurrentText(current_unit3)
         
     '''
-    def _prepare_cable_loss_run(self):
+    def _resolve_measurement_run(self):
+        """返回当前运行契约，供测量页面消费；不可用时给出兼容提示并返回 None。
+
+        这是“两阶段”中的第二阶段入口：测量页面只接受这里返回的
+        :class:`PreparedRun`，不再在开始前重新保存 GUI 配置，因此已冻结的
+        ``runs/<run_id>/config.json`` 不会被覆盖。
+        """
+        if self.prepared_run is None:
+            self.on_measurement_error(
+                "尚未创建运行：请先在“仪器配置”页点击“校验并创建运行”"
+            )
+            return None
         if self.instrument_ctrl is None:
             self.on_measurement_error("请先连接仪器；上一次测量结束后端口已安全释放")
+            return None
+        return self.prepared_run
+
+    def _create_prepared_run(self):
+        """配置阶段：校验配置、确认接线并冻结为不可变的运行目录快照。"""
+        if not self.config_page.validate():
+            return None
+        self.update_config_from_ui()
+        # 配置阶段负责接线确认校验：接受接线图对话框后把确认写入快照。
+        if not self._confirm_create_run_wiring():
+            self.add_log_message("已取消创建运行：现场接线未确认")
+            return None
+        if not self._save_config_file():
+            self.add_log_message(f"配置保存失败: {self._last_save_error}")
+            QMessageBox.warning(self, "创建运行失败", f"配置保存失败: {self._last_save_error}")
+            return None
+        try:
+            prepared = prepare_configuration(
+                str(self.config_path), run_contract=True, paths=self.paths
+            )
+        except Exception as error:
+            self.add_log_message(f"创建运行失败: {error}")
+            QMessageBox.warning(self, "创建运行失败", str(error))
+            return None
+        self.prepared_run = prepared
+        self._update_run_status()
+        self.add_log_message(
+            f"已创建运行 {prepared.run_id}，运行目录: {prepared.run_directory}"
+        )
+        return prepared
+
+    def _load_prepared_run(self, run_id):
+        """配置阶段：按 run_id 重新打开已有运行，不依赖 GUI 内存中的配置。"""
+        try:
+            prepared = load_prepared_run(
+                run_id, config_path=Path(self.config_path), paths=self.paths
+            )
+        except Exception as error:
+            self.add_log_message(f"加载运行失败: {error}")
+            QMessageBox.warning(self, "加载运行失败", str(error))
+            return None
+        self.prepared_run = prepared
+        self._update_run_status()
+        self.add_log_message(
+            f"已加载运行 {prepared.run_id}，运行目录: {prepared.run_directory}"
+        )
+        return prepared
+
+    def _update_run_status(self):
+        page = getattr(self, "config_page", None)
+        if page is None:
+            return
+        run = self.prepared_run
+        if run is None:
+            page.set_run_status("当前运行: 未创建")
+        else:
+            page.set_run_status(f"当前运行: {run.run_id}")
+
+    def _amplifier_driver_mode(self) -> bool:
+        """返回当前驱动模式；优先使用已冻结运行，回退到配置页仅用于创建运行前预览。"""
+        run = getattr(self, "prepared_run", None)
+        if run is not None:
+            configuration = getattr(run, "configuration", None)
+            plan = getattr(configuration, "test_plan", None)
+            if plan is not None:
+                return bool(getattr(plan, "driver_enabled", False))
+        page = getattr(self, "config_page", None)
+        if page is not None:
+            return page.driver_mode_check.isChecked()
+        return False
+
+    def _confirm_create_run_wiring(self) -> bool:
+        """创建运行前确认现场接线，并把确认固化到即将冻结的配置中。"""
+        driver_enabled = self.config_page.driver_mode_check.isChecked()
+        diagram = "amplifier_test" if driver_enabled else "amplifier_test_no_driver"
+        if ConnectionDialog(diagram, self).exec() != QDialog.Accepted:
             return False
-        return self.update_and_save_config()
+        self.config.setdefault("wiring", {})
+        self.config["wiring"].update({
+            "confirmed": True,
+            "connection_note": "已通过创建运行连接确认对话框确认现场接线",
+            "confirmed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "confirmation_source": "create_run_dialog",
+        })
+        self.config_page.config = self.config
+        return True
 
     def _confirm_cable_loss_wiring(self):
-        self.config.setdefault('wiring', {})
-        self.config['wiring'].update({
-            'confirmed': True,
-            'connection_note': '已通过线损测量连接确认对话框确认现场接线',
-            'confirmed_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
-            'confirmation_source': 'cable_loss_path1_dialog',
-        })
-        if self._save_config_file():
-            self.add_log_message("现场接线确认已保存")
-            self.measurement_controller.set_measurement_port(self.instrument_ctrl)
-            return True
-        self.add_log_message(f"配置保存失败: {self._last_save_error}")
-        return False
+        """线损测量前的现场接线确认；运行已冻结，只绑定端口不再改写配置。"""
+        self.measurement_controller.set_measurement_port(self.instrument_ctrl)
+        self.add_log_message("线损路径1现场接线已确认")
+        return True
 
     def _on_measurement_controller_thread_finished(self):
         if self.measurement_controller.state.kind not in {
@@ -1038,47 +1128,17 @@ class MainWindow(QMainWindow):
             return
         buffer.store(data)
 
-    def _prepare_driver_mapping_run(self):
-        if self.instrument_ctrl is None:
-            self.on_measurement_error("请先连接仪器；上一次测量结束后端口已安全释放")
-            return False
-        return self.update_and_save_config()
-
     def _confirm_driver_mapping_wiring(self):
-        self.config.setdefault("wiring", {})
-        self.config["wiring"].update({
-            "confirmed": True,
-            "connection_note": "已通过驱动功放映射连接确认对话框确认现场接线",
-            "confirmed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "confirmation_source": "driver_mapping_dialog",
-        })
-        if self._save_config_file():
-            self.add_log_message("现场接线确认已保存")
-            self.measurement_controller.set_measurement_port(self.instrument_ctrl)
-            return True
-        self.add_log_message(f"配置保存失败: {self._last_save_error}")
-        return False
-        
-    def _prepare_amplifier_run(self):
-        if self.instrument_ctrl is None:
-            self.on_measurement_error("请先连接仪器；上一次测量结束后端口已安全释放")
-            return False
-        return self.update_and_save_config()
+        """驱动映射测量前的现场接线确认；运行已冻结，只绑定端口不再改写配置。"""
+        self.measurement_controller.set_measurement_port(self.instrument_ctrl)
+        self.add_log_message("驱动映射现场接线已确认")
+        return True
 
     def _confirm_amplifier_wiring(self):
-        self.config.setdefault("wiring", {})
-        self.config["wiring"].update({
-            "confirmed": True,
-            "connection_note": "已通过主功放测试连接确认对话框确认现场接线",
-            "confirmed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "confirmation_source": "amplifier_test_dialog",
-        })
-        if self._save_config_file():
-            self.add_log_message("现场接线确认已保存")
-            self.measurement_controller.set_measurement_port(self.instrument_ctrl)
-            return True
-        self.add_log_message(f"配置保存失败: {self._last_save_error}")
-        return False
+        """主功放测量前的现场接线确认；运行已冻结，只绑定端口不再改写配置。"""
+        self.measurement_controller.set_measurement_port(self.instrument_ctrl)
+        self.add_log_message("主功放现场接线已确认")
+        return True
 
     def _store_amplifier_realtime_data(self, data):
         """保留功放实时数据供聊天上下文使用，不接管页面绘图。"""
@@ -1198,12 +1258,18 @@ class MainWindow(QMainWindow):
         """连接仪器"""
         self.add_log_message("开始连接仪器...")
         self.connect_btn.setEnabled(False)
-        
-        # 更新配置并保存到文件
-        if not self.update_and_save_config():
-            self.connect_btn.setEnabled(True)
-            return
-        
+
+        # 已创建运行时配置已冻结：连接仪器直接使用冻结配置，不再用页面状态覆盖
+        # 兼容配置文件（否则会让当前运行与磁盘配置漂移）。
+        if getattr(self, "prepared_run", None) is None:
+            if not self.update_and_save_config():
+                self.connect_btn.setEnabled(True)
+                return
+        else:
+            self.add_log_message(
+                f"使用已冻结的运行配置连接仪器: {self.prepared_run.run_id}"
+            )
+
         # 启动仪器连接工作线程
         self.instrument_worker = InstrumentWorker(str(self.config_path))
         self.instrument_worker.signals.finished.connect(self.on_instrument_connected)
@@ -1340,6 +1406,11 @@ class MainWindow(QMainWindow):
         self.update_config_from_ui()
         if self._save_config_file():
             self.add_log_message("配置已保存")
+            if getattr(self, "prepared_run", None) is not None:
+                self.add_log_message(
+                    f"注意：当前运行 {self.prepared_run.run_id} 的配置已冻结；"
+                    "若要使用本次修改，请重新“校验并创建运行”"
+                )
             QMessageBox.information(self, "保存成功", "配置文件已保存")
         else:
             self.add_log_message(f"配置保存失败: {self._last_save_error}")

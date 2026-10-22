@@ -161,13 +161,14 @@ class InstrumentWorker(BaseWorker):
 
 
 class CableLossWorker(BaseWorker):
-    def __init__(self, config_path: str, sleep_fn=None, measurement_port=None, measurement_factory=None, prepare_factory=None):
+    def __init__(self, config_path: str, sleep_fn=None, measurement_port=None, measurement_factory=None, prepare_factory=None, prepared_run=None):
         super().__init__()
         self.config_path = config_path
         self.sleep_fn = sleep_fn
         self.measurement_port = measurement_port
         self.measurement_factory = measurement_factory
         self.prepare_factory = prepare_factory
+        self.prepared_run = prepared_run
         self._continue_event = Event()
         self._waiting_for_continue = False
         self._continue_requested = False
@@ -176,9 +177,11 @@ class CableLossWorker(BaseWorker):
         try:
             self.emit_message("开始线损测量...")
             try:
-                prepare_configuration = self.prepare_factory or self._default_factory("prepare_configuration")
                 create_measurement = self.measurement_factory or self._default_factory("create_cable_loss_measurement")
-                prepared = prepare_configuration(self.config_path, operation="cable_loss")
+                prepared = self.prepared_run
+                if prepared is None:
+                    prepare_configuration = self.prepare_factory or self._default_factory("prepare_configuration")
+                    prepared = prepare_configuration(self.config_path, operation="cable_loss")
                 self._service = create_measurement(self.config_path, prepared_run=prepared,
                     progress_callback=self.signals.progress.emit, message_callback=self.signals.message.emit,
                     data_callback=self.signals.data_update.emit, sleep_fn=self.sleep_fn,
@@ -234,13 +237,14 @@ class CableLossWorker(BaseWorker):
 
 
 class DriverMappingWorker(BaseWorker):
-    def __init__(self, config_path: str, sleep_fn=None, measurement_port=None, measurement_factory=None, prepare_factory=None):
+    def __init__(self, config_path: str, sleep_fn=None, measurement_port=None, measurement_factory=None, prepare_factory=None, prepared_run=None):
         super().__init__()
         self.config_path = config_path
         self.sleep_fn = sleep_fn
         self.measurement_port = measurement_port
         self.measurement_factory = measurement_factory
         self.prepare_factory = prepare_factory
+        self.prepared_run = prepared_run
 
     def run(self) -> None:
         self._run_measurement("开始驱动功放映射测量...", "create_driver_mapping_measurement", "driver_mapping", "驱动映射测量")
@@ -252,12 +256,14 @@ class DriverMappingWorker(BaseWorker):
                 self.signals.stopped.emit(self.stop_reason)
                 return
             try:
-                prepare_configuration = self.prepare_factory or self._default_factory("prepare_configuration")
                 create_measurement = self.measurement_factory or self._default_factory(factory_name)
-                if operation is None:
-                    prepared = prepare_configuration(self.config_path)
-                else:
-                    prepared = prepare_configuration(self.config_path, operation=operation)
+                prepared = self.prepared_run
+                if prepared is None:
+                    prepare_configuration = self.prepare_factory or self._default_factory("prepare_configuration")
+                    if operation is None:
+                        prepared = prepare_configuration(self.config_path)
+                    else:
+                        prepared = prepare_configuration(self.config_path, operation=operation)
                 if self._stop_requested:
                     self.signals.stopped.emit(self.stop_reason)
                     return
@@ -286,13 +292,14 @@ class DriverMappingWorker(BaseWorker):
 
 
 class AmplifierWorker(BaseWorker):
-    def __init__(self, config_path: str, sleep_fn=None, measurement_port=None, measurement_factory=None, prepare_factory=None):
+    def __init__(self, config_path: str, sleep_fn=None, measurement_port=None, measurement_factory=None, prepare_factory=None, prepared_run=None):
         super().__init__()
         self.config_path = config_path
         self.sleep_fn = sleep_fn
         self.measurement_port = measurement_port
         self.measurement_factory = measurement_factory
         self.prepare_factory = prepare_factory
+        self.prepared_run = prepared_run
 
     def run(self) -> None:
         try:
@@ -301,9 +308,11 @@ class AmplifierWorker(BaseWorker):
                 self.signals.stopped.emit(self.stop_reason)
                 return
             try:
-                prepare_configuration = self.prepare_factory or self._default_factory("prepare_configuration")
                 create_measurement = self.measurement_factory or self._default_factory("create_amplifier_measurement")
-                prepared = prepare_configuration(self.config_path)
+                prepared = self.prepared_run
+                if prepared is None:
+                    prepare_configuration = self.prepare_factory or self._default_factory("prepare_configuration")
+                    prepared = prepare_configuration(self.config_path)
                 if self._stop_requested:
                     self.signals.stopped.emit(self.stop_reason)
                     return

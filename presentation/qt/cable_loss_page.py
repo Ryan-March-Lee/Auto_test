@@ -34,7 +34,7 @@ class CableLossPage(PageControllerBindingMixin, QWidget):
         self,
         *,
         config_path_provider: Callable[[], str],
-        prepare_run: Callable[[], bool],
+        run_provider: Callable[[], Any],
         confirm_wiring: Callable[[], bool],
         connection_dialog_factory: Callable[[str, QWidget], Any],
         log_callback: Callable[[str], Any] | None = None,
@@ -44,7 +44,7 @@ class CableLossPage(PageControllerBindingMixin, QWidget):
         PageControllerBindingMixin.__init__(self)
         QWidget.__init__(self)
         self._config_path_provider = config_path_provider
-        self._prepare_run = prepare_run
+        self._run_provider = run_provider
         self._confirm_wiring = confirm_wiring
         self._connection_dialog_factory = connection_dialog_factory
         self._log_callback = log_callback or (lambda _message: None)
@@ -129,7 +129,10 @@ class CableLossPage(PageControllerBindingMixin, QWidget):
         controller = self.controller
         if controller is None:
             return
-        if not self._prepare_run():
+        # 只接受配置阶段创建（或按 run_id 重新打开）的当前运行契约；不再在开始前
+        # 重新保存 GUI 配置，因此已冻结快照不会被覆盖。
+        run = self._run_provider()
+        if run is None:
             return
         dialog = self._connection_dialog_factory("cable_loss_path1", self)
         if dialog.exec() != QDialog.Accepted:
@@ -138,7 +141,9 @@ class CableLossPage(PageControllerBindingMixin, QWidget):
             return
         self.clear_results()
         self._log_callback("开始线损测量...")
-        controller.start_cable_loss(MeasurementCommand(self._config_path_provider()))
+        controller.start_cable_loss(
+            MeasurementCommand(self._config_path_provider(), prepared_run=run)
+        )
 
     def stop_measurement(self) -> None:
         if self.controller is not None:

@@ -250,13 +250,17 @@ class RunRepository:
         不触碰其他运行的目录、manifest 和结果文件，也不影响全局配置。
         运行目录不存在时按幂等无操作处理；``run_id`` 不合法（例如包含路径
         穿越片段）时在删除前直接抛出 ``ValueError``，不会触及运行根目录之外的路径。
+        目标路径不是目录（普通文件或符号链接）时同样拒绝执行，避免误删
+        非运行数据或顺着链接删除运行根目录之外的内容。
         """
         layout = self.layout(run_id)
         target = layout.run_directory
-        if target.is_symlink() or target.is_file():
-            # 避免顺着符号链接删除运行根目录之外的内容，只移除链接本身。
-            target.unlink(missing_ok=True)
-        elif target.is_dir():
+        if target.is_symlink():
+            # 符号链接不是本仓储创建的运行目录，拒绝删除，防止误删链接目标。
+            raise ValueError(f"运行目录是符号链接，拒绝撤销: {run_id}")
+        if target.exists():
+            if not target.is_dir():
+                raise NotADirectoryError(f"运行路径不是目录，拒绝撤销: {target}")
             shutil.rmtree(target)
         return layout.run_id
 

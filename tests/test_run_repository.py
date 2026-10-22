@@ -432,18 +432,21 @@ class DiscardRunTests(unittest.TestCase):
         self.repository = RunRepository(Path(self._temporary.name) / "runs")
         self.layout, _ = self.repository.create_run(CONFIG, run_id=RUN_ID, now=CREATED_AT)
         self.other_layout, _ = self.repository.create_run(CONFIG, run_id=OTHER_ID, now=CREATED_AT)
+        other_result = self.other_layout.results_dir / "amplifier_measurement.json"
+        other_result.write_text('{"kept": true}', encoding="utf-8")
+        self.other_reference = self.repository.register_file(OTHER_ID, other_result, now=STARTED_AT)
 
     def _other_run_digest(self) -> tuple:
-        """记录另一个运行的目录内容与 manifest 文本，用于比较删除前后是否变化。"""
-        files = sorted(
-            path.relative_to(self.other_layout.run_directory).as_posix()
-            for path in self.other_layout.run_directory.rglob("*")
-            if path.is_file()
-        )
-        return (
-            files,
-            self.other_layout.manifest_path.read_text(encoding="utf-8"),
-            json.loads(self.other_layout.config_path.read_text(encoding="utf-8")),
+        """逐文件记录另一个运行的相对路径与 SHA-256，用于比较删除前后是否变化。"""
+        return tuple(
+            sorted(
+                (
+                    path.relative_to(self.other_layout.run_directory).as_posix(),
+                    file_sha256(path),
+                )
+                for path in self.other_layout.run_directory.rglob("*")
+                if path.is_file()
+            )
         )
 
     def test_discard_run_removes_only_target_run(self):
@@ -458,6 +461,7 @@ class DiscardRunTests(unittest.TestCase):
         self.assertTrue(self.repository.run_exists(OTHER_ID))
         self.assertIn(OTHER_ID, self.repository.list_run_ids())
         self.assertEqual(self._other_run_digest(), before)
+        self.repository.verify_file(OTHER_ID, self.other_reference)
 
     def test_discard_run_removes_registered_files_and_manifest(self):
         result_file = self.layout.results_dir / "amplifier_measurement.json"
@@ -488,6 +492,38 @@ class DiscardRunTests(unittest.TestCase):
         self.assertTrue(self.repository.run_exists(RUN_ID))
         self.assertTrue(self.repository.run_exists(OTHER_ID))
         self.assertFalse((self.repository.root / ".." / "escape").exists())
+
+    def test_discard_run_rejects_plain_file_at_run_path(self):
+        before = self._other_run_digest()
+        stray_id = "20261022T200000Z_deadbeef"
+        stray = self.repository.root / stray_id
+        stray.write_text("not a run", encoding="utf-8")
+
+        with self.assertRaises(NotADirectoryError):
+            self.repository.discard_run(stray_id)
+
+        self.assertTrue(stray.is_file())
+        self.assertEqual(stray.read_text(encoding="utf-8"), "not a run")
+        self.assertTrue(self.repository.run_exists(RUN_ID))
+        self.assertTrue(self.repository.run_exists(OTHER_ID))
+        self.assertEqual(self._other_run_digest(), before)
+
+    def test_discard_run_rejects_symlink_at_run_path(self):
+        before = self._other_run_digest()
+        linked_id = "20261022T210000Z_deadbeef"
+        link = self.repository.root / linked_id
+        try:
+            link.symlink_to(self.other_layout.run_directory, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("当前环境不支持创建符号链接")
+
+        with self.assertRaises(ValueError):
+            self.repository.discard_run(linked_id)
+
+        self.assertTrue(link.is_symlink())
+        self.assertTrue(self.repository.run_exists(OTHER_ID))
+        self.assertTrue(self.repository.run_exists(RUN_ID))
+        self.assertEqual(self._other_run_digest(), before)
 
 
 class RepositoryRootTests(unittest.TestCase):

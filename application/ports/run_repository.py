@@ -91,7 +91,8 @@ class RunRepositoryPort(Protocol):
 
         只删除 ``run_id`` 对应的运行目录，不触碰其他运行、全局配置或兼容结果。
         运行目录不存在时按幂等无操作处理；``run_id`` 不合法（例如包含路径穿越
-        片段）时拒绝执行并抛出 ``ValueError``。
+        片段）或目标路径不是目录（普通文件、符号链接）时拒绝执行并抛出异常，
+        避免误删运行根目录之外或非本仓储创建的内容。
         """
 
     def verify_file(self, run_id: str, reference: FileReference) -> Path:

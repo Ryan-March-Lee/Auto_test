@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from application.ports.run_repository import RunRepositoryPort
@@ -37,6 +38,14 @@ logger = logging.getLogger(__name__)
 
 # 除 ``amplifier`` 外，各阶段有固定结果路径；``amplifier`` 允许多个结果文件。
 _MISSING_RESULT_PATH = "阶段 {stage} 没有固定结果路径，调用方必须显式指定结果路径"
+
+
+class StageInputUnavailable(RuntimeError):
+    """前置阶段输入未完成、未登记或与 manifest 校验值不一致。
+
+    后续阶段在硬件动作前用它表示“当前运行明确指定的输入不可用”，
+    调用方不应回退到全局兼容结果或其它运行目录继续执行。
+    """
 
 
 class RunStageRecorder:
@@ -68,6 +77,38 @@ class RunStageRecorder:
         """返回已完成阶段登记的结果相对路径；未完成时为 ``None``。"""
         record = self.manifest().stage(stage)
         return record.result if record.status is StageStatus.COMPLETED else None
+
+    def verified_result_path(self, stage: str) -> Path:
+        """校验前置阶段输入可用，返回当前运行内的绝对路径。
+
+        只有同时满足以下条件才认为阶段输入可被后续阶段消费：
+
+        - 阶段状态为 ``completed`` 且登记了结果路径；
+        - 结果文件已登记到 manifest 的 ``inputs``；
+        - 文件存在，且 SHA-256 和大小与登记值一致。
+
+        任一条件不满足都抛出 :class:`StageInputUnavailable`，绝不返回可继续使用的
+        路径，从而保证后续阶段不会消费缺失或已被替换的当前运行输入。
+        """
+        manifest = self.repository.load_manifest(self.run_id)
+        record = manifest.stage(stage)
+        if record.status is not StageStatus.COMPLETED or record.result is None:
+            raise StageInputUnavailable(
+                f"当前运行 {self.run_id} 的阶段 {stage} 尚未完成，不能作为后续阶段的输入"
+            )
+        reference = next(
+            (item for item in manifest.inputs if item.path == record.result), None
+        )
+        if reference is None:
+            raise StageInputUnavailable(
+                f"当前运行 {self.run_id} 的阶段 {stage} 结果 {record.result} 未登记到 manifest"
+            )
+        try:
+            return self.repository.verify_file(self.run_id, reference)
+        except (FileNotFoundError, ValueError) as error:
+            raise StageInputUnavailable(
+                f"当前运行 {self.run_id} 的阶段 {stage} 输入校验失败: {error}"
+            ) from error
 
     # -- 阶段生命周期 -----------------------------------------------------
 
@@ -198,4 +239,5 @@ __all__ = [
     "STAGE_CABLE_LOSS",
     "STAGE_DRIVER_MAPPING",
     "RunStageRecorder",
+    "StageInputUnavailable",
 ]

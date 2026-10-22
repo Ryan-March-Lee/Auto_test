@@ -2,18 +2,30 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Callable
 
-from app.cancellation import CancellationToken
+from app.cancellation import CancellationToken, MeasurementCancelled
 from application.dto import DriverPowerMappingRequest, MeasurementResult, legacy_result
 from application.measurements.services import DriverPowerMappingService
+from domain.run.models import STAGE_CABLE_LOSS, STAGE_DRIVER_MAPPING
+
+
+logger = logging.getLogger(__name__)
 
 
 class DriverPowerMappingUseCase:
-    """Coordinate driver mapping with explicit inputs and persistence."""
+    """Coordinate driver mapping with explicit inputs and persistence.
+
+    运行契约运行（注入 ``stage_recorder``）只消费**当前运行**显式登记的线损输入
+    ``inputs/cable_loss.json``，并把映射结果写回同一运行的
+    ``inputs/driver_mapping.json``；当前运行线损阶段未完成时在硬件动作前失败。
+    旧兼容流程不注入 ``stage_recorder``，仍通过 ``loss_data`` / ``loss_data_path``
+    读取全局线损结果作为过渡兼容层。
+    """
 
     def __init__(
         self,
@@ -35,12 +47,11 @@ class DriverPowerMappingUseCase:
         if self.result_repository is None:
             raise ValueError("DriverPowerMappingUseCase 必须注入 result_repository")
         self.input_reader = request.input_reader
-        if request.loss_data is not None:
-            self.loss_data = request.loss_data
-        else:
-            if self.input_reader is None:
-                raise ValueError("DriverPowerMappingUseCase 必须注入 input_reader 或 loss_data")
-            self.loss_data = self.input_reader.read_cable_loss(request.loss_data_path)
+        # 运行契约运行会注入阶段记录器：线损输入只从当前运行目录读取，映射结果写入
+        # inputs/driver_mapping.json 并更新 manifest；旧兼容流程不注入，保持全局路径行为。
+        self.stage_recorder = request.stage_recorder
+        self._stage_open = False
+        self.loss_data = self._load_loss_data(request)
         self.sleep_fn = sleep_fn or time.sleep
         self._token = request.cancellation_token or CancellationToken()
         self._service = DriverPowerMappingService(
@@ -70,13 +81,107 @@ class DriverPowerMappingUseCase:
         self._token.request_emergency_stop(reason="紧急停止")
 
     def measure_all_frequencies(self) -> MeasurementResult:
-        payload = self._service.run()
-        result = legacy_result(
-            self.request.measurement_type,
-            payload,
-            run_id=self.run_id,
+        try:
+            self._begin_stage()
+            payload = self._service.run()
+            result = legacy_result(
+                self.request.measurement_type,
+                payload,
+                run_id=self.run_id,
+            )
+            self.power_mapping = result["power_mapping"]
+            result = self._save(result)
+            self.last_result = result
+            return result
+        except MeasurementCancelled as error:
+            self._record_cancel(getattr(error, "reason", None) or "测量已取消")
+            raise
+        except Exception as error:
+            self._record_failure(error)
+            raise
+
+    # -- 运行契约：线损输入 ------------------------------------------------
+
+    def _load_loss_data(self, request: DriverPowerMappingRequest) -> Mapping[str, Any]:
+        """解析本次运行实际消费的线损输入。
+
+        运行契约运行（注入 ``stage_recorder``）以当前运行目录为唯一输入来源：
+        强制校验 ``inputs/cable_loss.json`` 已完成且校验值一致，显式
+        ``loss_data`` / ``loss_data_path`` 只记录告警、不参与解析；旧兼容流程
+        （``stage_recorder`` 为 ``None``）保持 ``loss_data`` / ``loss_data_path``
+        的全局路径行为。
+        """
+        if self.stage_recorder is not None:
+            if request.loss_data is not None or request.loss_data_path is not None:
+                logger.warning(
+                    "运行契约运行 %s 忽略显式 loss_data/loss_data_path，只消费当前运行输入",
+                    self.run_id,
+                )
+            return self._read_run_cable_loss()
+        if request.loss_data is not None:
+            return request.loss_data
+        if self.input_reader is None:
+            raise ValueError("DriverPowerMappingUseCase 必须注入 input_reader 或 loss_data")
+        return self.input_reader.read_cable_loss(request.loss_data_path)
+
+    def _read_run_cable_loss(self) -> Mapping[str, Any]:
+        """只从当前运行目录读取已校验的线损输入，缺失时在硬件动作前失败。
+
+        通过 :meth:`RunStageRecorder.verified_result_path` 校验线损阶段已完成、结果
+        文件已登记且校验值一致；绝不回退到全局兼容结果或扫描其它运行目录，因此
+        另一个运行的线损数据不会被自动使用，已被替换的输入也会被拒绝。
+        """
+        if self.input_reader is None:
+            raise ValueError("驱动映射读取当前运行线损输入时必须注入 input_reader")
+        path = self.stage_recorder.verified_result_path(STAGE_CABLE_LOSS)
+        return self.input_reader.read_cable_loss(path)
+
+    # -- 运行契约：阶段生命周期 --------------------------------------------
+
+    def _begin_stage(self) -> None:
+        """开始当前运行的驱动映射阶段；未注入记录器时保持旧流程行为。"""
+        if self.stage_recorder is None:
+            return
+        self.stage_recorder.start(STAGE_DRIVER_MAPPING)
+        self._stage_open = True
+
+    def _record_complete(self, result: MeasurementResult) -> Any:
+        """把完成的映射结果写入当前运行并登记为 ``completed``。"""
+        if self.stage_recorder is None:
+            return None
+        reference = self.stage_recorder.complete(STAGE_DRIVER_MAPPING, result.to_dict())
+        self._stage_open = False
+        return reference
+
+    def _record_failure(self, error: Exception) -> None:
+        if self.stage_recorder is None or not self._stage_open:
+            return
+        self._stage_open = False
+        self._try_record(
+            lambda: self.stage_recorder.fail(
+                STAGE_DRIVER_MAPPING, str(error) or error.__class__.__name__
+            )
         )
-        self.power_mapping = result["power_mapping"]
+
+    def _record_cancel(self, reason: str) -> None:
+        if self.stage_recorder is None or not self._stage_open:
+            return
+        self._stage_open = False
+        self._try_record(lambda: self.stage_recorder.cancel(STAGE_DRIVER_MAPPING, reason))
+
+    @staticmethod
+    def _try_record(action: Callable[[], Any]) -> None:
+        """阶段状态写入失败不应掩盖原始测量结果或异常。"""
+        try:
+            action()
+        except Exception:
+            logger.exception("驱动映射阶段状态记录失败")
+
+    # -- 运行契约：结果持久化 ----------------------------------------------
+
+    def _save(self, result: MeasurementResult) -> MeasurementResult:
+        if self.stage_recorder is not None:
+            return self._save_to_run_directory(result)
         saved = self.result_repository.save(
             result.to_dict(),
             result_type="driver_power_mapping",
@@ -84,12 +189,37 @@ class DriverPowerMappingUseCase:
             run_directory=self.run_directory,
         )
         self.run_directory = saved.run_directory
-        result = result.with_saved_result(
+        return result.with_saved_result(
             archive_path=_saved_path(saved, "archive_path"),
             legacy_copy_path=_saved_path(saved, "legacy_copy_path"),
         )
-        self.last_result = result
-        return result
+
+    def _save_to_run_directory(self, result: MeasurementResult) -> MeasurementResult:
+        """运行契约运行：权威结果写入 ``inputs/driver_mapping.json``。
+
+        运行目录结果是本次运行的权威来源，先原子提交并登记 manifest；全局旧路径
+        只作兼容副本，写入失败只记录兼容性告警，不把已完成的阶段重新判定为失败。
+        """
+        payload = result.to_dict()
+        reference = self._record_complete(result)
+        compatibility_copy = self._write_compatibility_copy(payload)
+        archive_path = Path(self.run_directory) / reference.path
+        return result.with_saved_result(
+            archive_path=str(archive_path),
+            legacy_copy_path=str(compatibility_copy) if compatibility_copy is not None else None,
+        )
+
+    def _write_compatibility_copy(self, payload: Mapping[str, Any]) -> Path | None:
+        """尽力写入全局兼容副本；失败时保留权威结果并记录告警。"""
+        try:
+            return self.result_repository.save_compatibility_copy(
+                payload,
+                result_type="driver_power_mapping",
+                run_id=self.run_id,
+            )
+        except Exception:
+            logger.exception("驱动映射全局兼容副本写入失败，运行目录结果仍然有效")
+            return None
 
 
 def _service_config(configuration: Any) -> Mapping[str, Any]:

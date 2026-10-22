@@ -79,6 +79,13 @@ class RunRepositoryPort(Protocol):
         按无操作处理并返回规范化后的相对路径。
         """
 
+    def verify_file(self, run_id: str, reference: FileReference) -> Path:
+        """校验登记文件仍位于运行目录内，且 SHA-256 和大小与引用一致。
+
+        返回已校验文件的绝对路径；文件缺失或校验值不一致时直接失败，
+        供后续阶段在消费前确认前置输入没有被替换。
+        """
+
     def run_exists(self, run_id: str) -> bool:
         """判断指定运行目录是否完整存在并可用。"""
 

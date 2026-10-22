@@ -24,6 +24,7 @@ from instrument.measurement_factory import create_measurement_port
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from application.inputs import ResultInputReader
 from application.run_stages import RunStageRecorder
+from domain.run.models import STAGE_CABLE_LOSS
 from application.measurements import (
     AmplifierMeasurementUseCase,
     CableLossUseCase,
@@ -172,6 +173,21 @@ def prepare_configuration(
     )
 
 
+def _require_stage_inputs(prepared_run: PreparedRun, *stages: str) -> None:
+    """在连接仪器前校验运行契约运行的前置阶段输入已就绪。
+
+    只有携带运行仓储的运行契约运行才需要校验；旧兼容快照没有阶段契约，保持原行为。
+    校验失败会抛出 :class:`StageInputUnavailable`，从而在打开仪器或执行任何硬件
+    动作前终止，避免为无效输入付出连接代价或产生硬件副作用。
+    """
+    run_repository = getattr(prepared_run, "run_repository", None)
+    if run_repository is None:
+        return
+    recorder = RunStageRecorder(run_repository, prepared_run.context.run_id)
+    for stage in stages:
+        recorder.verified_result_path(stage)
+
+
 def _request_kwargs(prepared_run: PreparedRun, config_path: str, callbacks: dict[str, Any]) -> dict[str, Any]:
     """Build the shared request inputs at the application composition boundary."""
     port = callbacks.get("measurement_port")
@@ -239,6 +255,8 @@ def create_driver_mapping_measurement(
     )
     owned_port = callbacks.get("measurement_port") is None
     try:
+        # 运行契约运行在连接仪器前校验当前运行的线损输入，缺失时不做任何硬件动作。
+        _require_stage_inputs(prepared_run, STAGE_CABLE_LOSS)
         if owned_port:
             callbacks["measurement_port"] = connect_instruments(config_path)
         callbacks["owns_measurement_port"] = owned_port

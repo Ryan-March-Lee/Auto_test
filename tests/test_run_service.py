@@ -263,7 +263,52 @@ class CreateRunSnapshotTests(unittest.TestCase):
             snapshot.hardware_config_path.stat().st_size,
         )
 
-    def test_hardware_config_failure_does_not_leave_a_registered_snapshot(self):
+    def test_hardware_config_write_failure_discards_run(self):
+        class _FailingWriteRepository(RunRepository):
+            def write_run_json(self, run_id, relative_path, payload, **kwargs):
+                raise OSError("disk full")
+
+        repository = _FailingWriteRepository(self.root / "runs")
+        with self.assertRaisesRegex(OSError, "disk full"):
+            create_run_snapshot(
+                self.loaded,
+                run_repository=repository,
+                run_id=RUN_ID,
+                hardware_config={"instruments": {}},
+                now=CREATED_AT,
+            )
+
+        self.assertFalse((repository.root / RUN_ID).exists())
+        self.assertEqual(repository.list_run_ids(), ())
+
+    def test_hardware_config_write_failure_after_side_effects_discards_run(self):
+        # 文件已真实落盘后才失败：补偿清理仍必须撤销整个运行目录，
+        # 而不是只删掉硬件快照文件、留下“看似有效”的运行。
+        class _WriteThenFailRepository(RunRepository):
+            file_existed_at_failure = False
+
+            def write_run_json(self, run_id, relative_path, payload, **kwargs):
+                super().write_run_json(run_id, relative_path, payload, **kwargs)
+                self.file_existed_at_failure = (
+                    self.root / run_id / relative_path
+                ).is_file()
+                raise OSError("write failed after flushing")
+
+        repository = _WriteThenFailRepository(self.root / "runs")
+        with self.assertRaisesRegex(OSError, "write failed after flushing"):
+            create_run_snapshot(
+                self.loaded,
+                run_repository=repository,
+                run_id=RUN_ID,
+                hardware_config={"instruments": {}},
+                now=CREATED_AT,
+            )
+
+        self.assertTrue(repository.file_existed_at_failure)
+        self.assertFalse((repository.root / RUN_ID).exists())
+        self.assertEqual(repository.list_run_ids(), ())
+
+    def test_hardware_config_register_failure_discards_run(self):
         class _FailingRegisterRepository(RunRepository):
             def register_file(self, run_id, path, **kwargs):
                 raise OSError("register failed")
@@ -278,12 +323,84 @@ class CreateRunSnapshotTests(unittest.TestCase):
                 now=CREATED_AT,
             )
 
-        manifest = repository.load_manifest(RUN_ID)
-        self.assertEqual(
-            [item.path for item in manifest.inputs if item.path == HARDWARE_CONFIG_INPUT_PATH],
-            [],
-        )
-        self.assertFalse((repository.root / RUN_ID / HARDWARE_CONFIG_INPUT_PATH).exists())
+        self.assertFalse((repository.root / RUN_ID).exists())
+        self.assertEqual(repository.list_run_ids(), ())
+
+    def test_hardware_config_manifest_failure_discards_run(self):
+        class _FailingManifestRepository(RunRepository):
+            def update_manifest(self, run_id, manifest, **kwargs):
+                raise OSError("manifest write failed")
+
+        repository = _FailingManifestRepository(self.root / "runs")
+        with self.assertRaisesRegex(OSError, "manifest write failed"):
+            create_run_snapshot(
+                self.loaded,
+                run_repository=repository,
+                run_id=RUN_ID,
+                hardware_config={"instruments": {}},
+                now=CREATED_AT,
+            )
+
+        self.assertFalse((repository.root / RUN_ID).exists())
+        self.assertEqual(repository.list_run_ids(), ())
+
+    def test_hardware_config_manifest_failure_after_side_effects_discards_run(self):
+        # manifest 已真实更新后才失败（例如登记后的收尾步骤抛错）：
+        # 运行目录同样必须被整体撤销，不遗留登记了一半的 manifest。
+        class _RegisterThenFailRepository(RunRepository):
+            registered_at_failure = False
+
+            def register_file(self, run_id, path, **kwargs):
+                reference = super().register_file(run_id, path, **kwargs)
+                self.registered_at_failure = (
+                    self.load_manifest(run_id).inputs[-1].path == reference.path
+                )
+                raise OSError("failed after manifest update")
+
+        repository = _RegisterThenFailRepository(self.root / "runs")
+        with self.assertRaisesRegex(OSError, "failed after manifest update"):
+            create_run_snapshot(
+                self.loaded,
+                run_repository=repository,
+                run_id=RUN_ID,
+                hardware_config={"instruments": {}},
+                now=CREATED_AT,
+            )
+
+        self.assertTrue(repository.registered_at_failure)
+        self.assertFalse((repository.root / RUN_ID).exists())
+        self.assertEqual(repository.list_run_ids(), ())
+
+    def test_original_creation_error_is_preserved(self):
+        # 写入和补偿清理都失败时，调用方看到的仍然是原始创建错误，
+        # 清理异常不允许覆盖它；清理失败上下文必须进入项目 logger 树，
+        # 以便运维从 setup_logging 的日志文件中发现残留的半成品运行。
+        class _FailingWriteAndCleanupRepository(RunRepository):
+            def write_run_json(self, run_id, relative_path, payload, **kwargs):
+                raise OSError("original write error")
+
+            def discard_run(self, run_id):
+                raise RuntimeError("cleanup also failed")
+
+        repository = _FailingWriteAndCleanupRepository(self.root / "runs")
+        with self.assertLogs("pa_auto_test", level="ERROR") as captured:
+            with self.assertRaisesRegex(OSError, "original write error"):
+                create_run_snapshot(
+                    self.loaded,
+                    run_repository=repository,
+                    run_id=RUN_ID,
+                    hardware_config={"instruments": {}},
+                    now=CREATED_AT,
+                )
+
+        self.assertEqual(len(captured.records), 1)
+        record = captured.records[0]
+        self.assertEqual(record.levelname, "ERROR")
+        # 清理失败日志挂在项目专用 logger 树下，携带运行 ID 与清理异常。
+        self.assertTrue(record.name.startswith("pa_auto_test."))
+        self.assertIn(RUN_ID, record.getMessage())
+        self.assertIsNotNone(record.exc_info)
+        self.assertIn("cleanup also failed", str(record.exc_info[1]))
 
 
 class CreatePreparedRunTests(unittest.TestCase):

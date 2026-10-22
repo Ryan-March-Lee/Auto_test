@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -36,6 +37,11 @@ from domain.run.models import (
 
 
 RUN_CONFIG_SNAPSHOT_SCHEMA_VERSION = 1
+
+# 挂到项目专用 ``pa_auto_test`` logger 树下（与 infrastructure.logging.get_logger
+# 的命名规则一致），清理失败的 ERROR 日志才能进入 ``setup_logging`` 的日志文件；
+# 不直接导入 infrastructure，保持应用层依赖边界。
+logger = logging.getLogger("pa_auto_test." + __name__)
 
 
 class RunNotResumable(ValueError):
@@ -105,6 +111,10 @@ def create_run_snapshot(
     ``hardware_config`` 是本次运行用于装配硬件端口的完整配置（旧版组合格式）。
     它会被冻结为 ``inputs/hardware_config.json`` 并登记到 manifest，使运行目录
     自包含；硬件连接和测量阶段只消费该快照，而不是全局可变配置。
+
+    硬件快照写入、登记或 manifest 更新失败时，会调用仓储的 ``discard_run``
+    撤销刚创建的整个运行目录，不遗留看似有效的半成品运行；原始异常仍向
+    调用方抛出，清理失败只记录日志，不掩盖创建错误。
     """
     if not loaded.valid:
         raise ValueError(
@@ -133,9 +143,14 @@ def create_run_snapshot(
     )
     hardware_config_path: Path | None = None
     if hardware_config is not None:
-        hardware_config_path = _freeze_hardware_config(
-            run_repository, layout.run_id, hardware_config, now=now
-        )
+        try:
+            hardware_config_path = _freeze_hardware_config(
+                run_repository, layout.run_id, hardware_config, now=now
+            )
+        except Exception:
+            # 创建后的任何失败都撤销整个运行目录，不遗留半成品运行。
+            _discard_created_run(run_repository, layout.run_id)
+            raise
     return RunSnapshot(
         run_id=manifest.run_id,
         run_directory=Path(layout.run_directory),
@@ -145,6 +160,19 @@ def create_run_snapshot(
     )
 
 
+def _discard_created_run(run_repository: RunRepositoryPort, run_id: str) -> None:
+    """创建失败后补偿清理整个运行目录；清理失败不掩盖原始创建异常。"""
+    try:
+        run_repository.discard_run(run_id)
+    except Exception:  # noqa: BLE001 - 只记录清理失败上下文，仍抛原始异常
+        logger.error(
+            "硬件快照写入失败后清理运行目录 %s 也失败了；"
+            "运行根目录中可能残留半成品运行，请人工检查",
+            run_id,
+            exc_info=True,
+        )
+
+
 def _freeze_hardware_config(
     run_repository: RunRepositoryPort,
     run_id: str,
@@ -152,26 +180,23 @@ def _freeze_hardware_config(
     *,
     now: datetime | None,
 ) -> Path:
-    """把硬件装配配置原子写入运行目录并登记，失败时清理未提交文件。"""
+    """把硬件装配配置原子写入运行目录并登记，返回快照绝对路径。
+
+    写入、登记或 manifest 更新抛出的异常直接上抛，由调用方
+    :func:`create_run_snapshot` 通过 ``discard_run`` 撤销整个运行目录，
+    因此本函数不做文件级补偿清理。
+    """
     if not isinstance(hardware_config, Mapping):
         raise ValueError("hardware_config 必须是配置映射")
-    try:
-        relative = run_repository.write_run_json(
-            run_id, HARDWARE_CONFIG_INPUT_PATH, dict(hardware_config)
-        )
-        reference = run_repository.register_file(
-            run_id,
-            relative,
-            description="硬件组装配置快照",
-            now=now,
-        )
-    except Exception:
-        # 提交失败不留“看起来完整”的硬件配置；登记不存在时按无操作处理。
-        try:
-            run_repository.discard_file(run_id, HARDWARE_CONFIG_INPUT_PATH)
-        except Exception:  # noqa: BLE001 - 清理失败不掩盖原始异常
-            pass
-        raise
+    relative = run_repository.write_run_json(
+        run_id, HARDWARE_CONFIG_INPUT_PATH, dict(hardware_config)
+    )
+    reference = run_repository.register_file(
+        run_id,
+        relative,
+        description="硬件组装配置快照",
+        now=now,
+    )
     layout = run_repository.layout(run_id)
     return Path(layout.run_directory) / reference.path
 

@@ -143,8 +143,8 @@ def create_prepared_run(
     is **required by the run contract** and freezes the hardware assembly
     configuration inside the run directory (``inputs/hardware_config.json``), so
     the created run is always resumable via :func:`load_prepared_run` and later
-    stages never read the global mutable ``config.json``.  Passing ``None``
-    fails before any run directory is created.
+    stages never read the global mutable ``config.json``.  Passing ``None`` or a
+    non-mapping value fails before any run directory is created.
     """
     if hardware_config is None:
         raise ValueError(

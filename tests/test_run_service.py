@@ -9,6 +9,7 @@ from pathlib import Path
 from app.run_context import create_prepared_run, load_prepared_run, prepare_run
 from application.ports.config_repository import ConfigurationLoadResult
 from application.run_service import (
+    RunSnapshot,
     create_run_snapshot,
     load_run_configuration,
 )
@@ -22,7 +23,12 @@ from domain.configuration.models import (
     validate_run_configuration,
 )
 from domain.configuration.types import ConfigIssue, ConfigValidationResult
-from domain.run.models import HARDWARE_CONFIG_INPUT_PATH, RunStatus, StageStatus
+from domain.run.models import (
+    HARDWARE_CONFIG_INPUT_PATH,
+    RunStatus,
+    StageStatus,
+    default_manifest,
+)
 from infrastructure.config.json_config_repository import ConfigurationRepository
 from infrastructure.filesystem.paths import PathService
 from infrastructure.persistence.run_repository import RunRepository
@@ -461,6 +467,35 @@ class CreateRunSnapshotTests(unittest.TestCase):
         self.assertEqual(
             reopened.hardware_connection_path(), snapshot.hardware_config_path
         )
+        # 重新加载得到的内容副本与冻结写入的硬件配置一致。
+        self.assertEqual(reopened.hardware_config, _gui_config())
+
+    def test_non_mapping_hardware_config_is_rejected_without_creating_a_run(self):
+        # 非法参数（非映射）在创建运行目录之前就被拒绝，不依赖补偿清理。
+        with self.assertRaisesRegex(ValueError, "配置映射"):
+            create_run_snapshot(
+                self.loaded,
+                run_repository=self.repository,
+                run_id=RUN_ID,
+                hardware_config=["not", "a", "mapping"],
+                now=CREATED_AT,
+            )
+
+        self.assertFalse((self.repository.root / RUN_ID).exists())
+        self.assertEqual(self.repository.list_run_ids(), ())
+
+    def test_run_snapshot_rejects_empty_hardware_config_path(self):
+        # RunSnapshot 的运行时契约：即便显式传入 None 也不能构造出
+        # 缺少硬件配置路径的运行契约快照。
+        manifest = default_manifest(RUN_ID, created_at="2026-10-22T15:30:00Z")
+        with self.assertRaisesRegex(ValueError, "hardware_config_path"):
+            RunSnapshot(
+                run_id=RUN_ID,
+                run_directory=Path("runs") / RUN_ID,
+                config_path=Path("runs") / RUN_ID / "config.json",
+                manifest=manifest,
+                hardware_config_path=None,
+            )
 
     def test_legacy_prepare_run_remains_non_contract_compatible(self):
         # 旧版 prepare_run 保留为兼容快照：它写兼容目录、不冻结硬件配置，

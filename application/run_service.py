@@ -56,7 +56,7 @@ class RunSnapshot:
     """一次已创建运行的标识、目录和初始配置快照引用。
 
     运行契约快照必须同时冻结硬件配置，因此 ``hardware_config_path`` 是必需
-    字段，不再允许为空；旧版兼容快照请使用 ``app.run_context.prepare_run``。
+    字段且不允许为空；旧版兼容快照请使用 ``app.run_context.prepare_run``。
     """
 
     run_id: str
@@ -64,6 +64,15 @@ class RunSnapshot:
     config_path: Path
     manifest: RunManifest
     hardware_config_path: Path
+
+    def __post_init__(self) -> None:
+        # 类型标注只提供静态保证，这里补上运行时保证：即便显式传入 None 也拒绝，
+        # 避免构造出缺少硬件配置、无法被 load_prepared_run 恢复的快照。
+        if self.hardware_config_path is None:
+            raise ValueError(
+                "RunSnapshot.hardware_config_path 不能为空："
+                "运行契约快照必须包含 inputs/hardware_config.json"
+            )
 
 
 def configuration_snapshot(
@@ -115,8 +124,8 @@ def create_run_snapshot(
     ``hardware_config`` 是**必需参数**：本次运行用于装配硬件端口的完整配置
     （旧版组合格式）。它会被冻结为 ``inputs/hardware_config.json`` 并登记到
     manifest，使运行目录自包含；硬件连接和测量阶段只消费该快照，而不是全局
-    可变配置。缺少该参数（或显式传入 ``None``）的调用在入口立即失败且不创建
-    运行目录，保证任何成功创建的运行都可以按当前恢复规则（
+    可变配置。缺少该参数、显式传入 ``None`` 或传入非映射对象时，都在创建任何
+    运行目录之前立即失败，保证任何成功创建的运行都可以按当前恢复规则（
     ``load_prepared_run``）重新加载。不携带硬件配置的兼容快照请改用
     ``app.run_context.prepare_run``，它不属于可恢复运行契约。
 
@@ -129,6 +138,9 @@ def create_run_snapshot(
             "运行契约必须包含硬件配置快照：create_run_snapshot 的 "
             "hardware_config 不能为 None，缺少硬件配置的运行无法恢复"
         )
+    if not isinstance(hardware_config, Mapping):
+        # 在创建运行目录前拒绝非法参数，避免依赖后续补偿清理。
+        raise ValueError("hardware_config 必须是配置映射")
     if not loaded.valid:
         raise ValueError(
             "运行配置校验失败，不能创建运行快照: " + _validation_details(loaded.validation)
@@ -193,12 +205,11 @@ def _freeze_hardware_config(
 ) -> Path:
     """把硬件装配配置原子写入运行目录并登记，返回快照绝对路径。
 
-    写入、登记或 manifest 更新抛出的异常直接上抛，由调用方
-    :func:`create_run_snapshot` 通过 ``discard_run`` 撤销整个运行目录，
-    因此本函数不做文件级补偿清理。
+    调用方 :func:`create_run_snapshot` 已在创建运行目录前校验 ``hardware_config``
+    是配置映射，因此本函数不再重复校验类型。写入、登记或 manifest 更新抛出的
+    异常直接上抛，由调用方通过 ``discard_run`` 撤销整个运行目录，因此本函数不做
+    文件级补偿清理。
     """
-    if not isinstance(hardware_config, Mapping):
-        raise ValueError("hardware_config 必须是配置映射")
     relative = run_repository.write_run_json(
         run_id, HARDWARE_CONFIG_INPUT_PATH, dict(hardware_config)
     )

@@ -197,15 +197,19 @@ def _load_hardware_config(config_path: str) -> dict[str, Any]:
 def _hardware_config_path(prepared_run: PreparedRun, config_path: str) -> str:
     """返回硬件连接与测量应使用的配置路径。
 
-    运行契约运行固定使用运行目录内冻结的 ``inputs/hardware_config.json``；携带运行
-    契约却没有冻结硬件路径时抛出 :class:`RunNotResumable`，绝不回退到调用方传入的
-    全局可变配置，避免用与本次运行无关的仪器地址连接硬件。只有不带运行契约的旧兼容
-    快照（以及最小替身对象）才使用调用方路径。
+    运行契约运行固定使用运行目录内冻结的 ``inputs/hardware_config.json``，并统一走
+    :meth:`PreparedRun.hardware_connection_path` 的校验入口：路径缺失、快照被删除或
+    manifest/SHA-256 不一致时抛出 :class:`RunNotResumable`，绝不回退到调用方传入的
+    全局可变配置。只有不带运行契约的旧兼容快照（以及最小替身对象）才使用调用方路径。
     """
+    run_repository = getattr(prepared_run, "run_repository", None)
+    resolver = getattr(prepared_run, "hardware_connection_path", None)
+    if run_repository is not None and resolver is not None:
+        return str(resolver())
     frozen = getattr(prepared_run, "hardware_config_path", None)
     if frozen is not None:
         return str(frozen)
-    if getattr(prepared_run, "run_repository", None) is not None:
+    if run_repository is not None:
         raise RunNotResumable(
             "运行契约缺少有效的硬件配置快照，拒绝使用全局配置连接仪器；"
             "请重新创建或重新加载运行"

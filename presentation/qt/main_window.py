@@ -992,18 +992,23 @@ class MainWindow(QMainWindow):
     def _measurement_config_path(self) -> str:
         """返回硬件连接与测量应使用的配置路径。
 
-        运行契约运行固定返回运行目录内冻结的 ``inputs/hardware_config.json``，
-        因此测量阶段不会再读取全局可变配置；只有尚未创建运行
+        运行契约运行固定返回运行目录内冻结的 ``inputs/hardware_config.json``，并在
+        返回前校验该快照仍然可用（存在、未被删除或篡改）；只有尚未创建运行
         （``prepared_run is None``）的旧兼容流程才回退到全局兼容配置。
 
-        运行契约存在但冻结硬件路径无效时，:meth:`PreparedRun.hardware_connection_path`
-        会抛出 :class:`RunNotResumable`，这里**不再**捕获并回退到全局 ``config.json``：
-        已创建运行必须使用自己的快照，否则会用与该运行无关的仪器地址连接硬件。
+        运行契约不可用（快照缺失、被删除、校验失败，或对象没有校验入口）时直接抛出
+        :class:`RunNotResumable`，**绝不**回退到全局 ``config.json``：已创建运行必须
+        使用自己的快照，否则会用与该运行无关的仪器地址连接硬件。
         """
         run = getattr(self, "prepared_run", None)
         if run is None:
             return str(self.config_path)
-        return str(run.hardware_connection_path())
+        resolver = getattr(run, "hardware_connection_path", None)
+        if resolver is None:
+            raise RunNotResumable(
+                "当前运行契约不可用，不能连接仪器；请重新创建或重新加载运行"
+            )
+        return str(resolver())
 
     def _resolve_measurement_run(self):
         """返回当前运行契约，供测量页面消费；不可用时给出兼容提示并返回 None。
@@ -1018,15 +1023,14 @@ class MainWindow(QMainWindow):
                 "尚未创建运行：请先在“仪器配置”页点击“校验并创建运行”"
             )
             return None
-        resolver = getattr(self.prepared_run, "hardware_connection_path", None)
-        if resolver is not None:
-            try:
-                resolver()
-            except RunNotResumable as error:
-                self.on_measurement_error(str(error))
-                return None
         if self.instrument_ctrl is None:
             self.on_measurement_error("请先连接仪器；上一次测量结束后端口已安全释放")
+            return None
+        # 复用连接阶段同一套校验：运行契约快照不可用时明确失败，不放行到测量页面。
+        try:
+            self._measurement_config_path()
+        except RunNotResumable as error:
+            self.on_measurement_error(str(error))
             return None
         return self.prepared_run
 

@@ -39,6 +39,26 @@ def _prepared_run():
     )
 
 
+def _contract_run_stub(*, hardware_config_path, run_repository=None):
+    """运行契约替身：把 :class:`PreparedRun` 的方法作为类属性绑定，行为与生产一致。"""
+    from app.run_context import PreparedRun
+
+    return type(
+        "ContractRunStub",
+        (),
+        {
+            "run_id": "run-contract",
+            "context": SimpleNamespace(run_id="run-contract"),
+            "run_directory": Path("runs") / "run-contract",
+            "run_repository": run_repository if run_repository is not None else object(),
+            "has_run_contract": PreparedRun.has_run_contract,
+            "hardware_config_path": hardware_config_path,
+            "hardware_connection_path": PreparedRun.hardware_connection_path,
+            "_verified_hardware_snapshot": PreparedRun._verified_hardware_snapshot,
+        },
+    )()
+
+
 class GuiRuntimeAssemblyTests(unittest.TestCase):
     def test_application_assembly_does_not_import_legacy_workers(self):
         runtime_source = Path(__file__).parents[1] / "app" / "gui_runtime.py"
@@ -168,6 +188,28 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
             with self.assertRaisesRegex(RunNotResumable, "硬件配置快照"):
                 create_cable_loss_measurement("config.json", prepared_run=prepared)
         connect.assert_not_called()
+
+    def test_unusable_contract_snapshot_blocks_every_measurement_factory(self):
+        cases = (
+            (create_cable_loss_measurement, "CableLossUseCase"),
+            (create_driver_mapping_measurement, "DriverPowerMappingUseCase"),
+            (create_amplifier_measurement, "AmplifierMeasurementUseCase"),
+        )
+        snapshots = {
+            "空路径": Path(""),
+            "快照文件不存在": Path("missing-hardware.json"),
+            "快照路径指向目录": Path(__file__).parent,
+        }
+        for factory, use_case_name in cases:
+            for label, snapshot in snapshots.items():
+                with self.subTest(factory=factory.__name__, case=label):
+                    prepared = _contract_run_stub(hardware_config_path=snapshot)
+                    with patch("app.gui_runtime.connect_instruments") as connect, patch(
+                        f"app.gui_runtime.{use_case_name}", return_value=object()
+                    ):
+                        with self.assertRaisesRegex(RunNotResumable, "硬件配置快照"):
+                            factory("config.json", prepared_run=prepared)
+                    connect.assert_not_called()
 
     def test_legacy_assembly_still_uses_the_caller_config_path(self):
         # 不带运行契约的旧兼容快照继续使用调用方传入的全局配置路径。

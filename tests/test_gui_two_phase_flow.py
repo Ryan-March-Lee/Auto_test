@@ -12,6 +12,7 @@
 import json
 import threading
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -65,8 +66,11 @@ def _fully_valid_gui_config() -> dict:
     }
 
 
-def _broken_contract_run():
-    """运行契约存在但缺少冻结硬件快照的最小替身（模拟快照损坏或缺失）。"""
+def _broken_contract_run(hardware_config_path=None):
+    """运行契约存在但冻结硬件快照不可用的替身（缺失、空路径、被删除或指向目录）。
+
+    绑定 :class:`PreparedRun` 的真实方法，保证替身与生产对象的判定规则一致。
+    """
     from app.run_context import PreparedRun
 
     return type(
@@ -74,10 +78,26 @@ def _broken_contract_run():
         (),
         {
             "run_id": RUN_ID,
-            "has_run_contract": True,
-            "hardware_config_path": None,
+            "run_repository": object(),
             "config_path": Path("global-config.json"),
+            "has_run_contract": PreparedRun.has_run_contract,
+            "hardware_config_path": (
+                None if hardware_config_path is None else Path(hardware_config_path)
+            ),
             "hardware_connection_path": PreparedRun.hardware_connection_path,
+            "_verified_hardware_snapshot": PreparedRun._verified_hardware_snapshot,
+        },
+    )()
+
+
+def _resolvable_contract_run(path="frozen-hardware.json"):
+    """可正常解析硬件快照的运行替身，供只关心门控顺序的测试使用。"""
+    return type(
+        "ResolvableContractRun",
+        (),
+        {
+            "run_id": RUN_ID,
+            "hardware_connection_path": lambda self, _path=path: Path(_path),
         },
     )()
 
@@ -250,6 +270,42 @@ class RunContractReopenTests(unittest.TestCase):
         with self.assertRaises(RunNotResumable):
             load_prepared_run(RUN_ID, run_repository=self.repository)
 
+    def test_deleted_hardware_snapshot_cannot_be_used_for_connection(self):
+        created, _config_path = self._create_run()
+        frozen = created.run_directory / HARDWARE_CONFIG_INPUT_PATH
+        self.assertTrue(frozen.is_file())
+        frozen.unlink()
+
+        with self.assertRaises(RunNotResumable) as raised:
+            created.hardware_connection_path()
+        self.assertIn("硬件配置快照", str(raised.exception))
+
+    def test_snapshot_tampered_after_reopen_cannot_be_used_for_connection(self):
+        created, _config_path = self._create_run()
+        reopened = load_prepared_run(RUN_ID, run_repository=self.repository)
+        frozen = created.run_directory / HARDWARE_CONFIG_INPUT_PATH
+        self.assertEqual(reopened.hardware_connection_path(), frozen)
+
+        # 加载后快照被替换：SHA-256 不再匹配，必须拒绝连接而不是继续使用。
+        frozen.write_text(json.dumps({"test_frequencies": [1.0]}), encoding="utf-8")
+
+        with self.assertRaises(RunNotResumable) as raised:
+            reopened.hardware_connection_path()
+        self.assertIn("硬件配置快照", str(raised.exception))
+
+    def test_deregistered_hardware_snapshot_cannot_be_used_for_connection(self):
+        created, _config_path = self._create_run()
+        manifest = self.repository.load_manifest(RUN_ID)
+        self.repository.update_manifest(RUN_ID, replace(manifest, inputs=()))
+
+        # 文件仍在磁盘上，但 manifest 不再登记它：仍然必须拒绝连接。
+        self.assertTrue(
+            (created.run_directory / HARDWARE_CONFIG_INPUT_PATH).is_file()
+        )
+        with self.assertRaises(RunNotResumable) as raised:
+            created.hardware_connection_path()
+        self.assertIn("硬件配置快照", str(raised.exception))
+
 
 class MeasurementCommandRunContractTests(unittest.TestCase):
     def test_command_carries_an_opaque_run_contract(self):
@@ -362,8 +418,9 @@ class MainWindowTwoPhaseTests(unittest.TestCase):
     def test_resolve_measurement_run_requires_contract_and_instrument(self):
         from presentation.qt.main_window import MainWindow
 
-        run = object()
+        run = _resolvable_contract_run()
         window = MainWindow.__new__(MainWindow)
+        window.config_path = Path("global-config.json")
         window.prepared_run = run
         window.instrument_ctrl = object()
         window.add_log_message = MagicMock()
@@ -384,16 +441,24 @@ class MainWindowTwoPhaseTests(unittest.TestCase):
     def test_invalid_contract_blocks_measurement_run_resolution(self):
         from presentation.qt.main_window import MainWindow
 
-        window = MainWindow.__new__(MainWindow)
-        window.prepared_run = _broken_contract_run()
-        window.instrument_ctrl = object()
-        window.on_measurement_error = MagicMock()
+        cases = {
+            "缺少快照字段": None,
+            "快照文件不存在": Path("missing-hardware.json"),
+        }
+        for label, value in cases.items():
+            with self.subTest(case=label):
+                window = MainWindow.__new__(MainWindow)
+                window.config_path = Path("global-config.json")
+                window.prepared_run = _broken_contract_run(value)
+                window.instrument_ctrl = object()
+                window.on_measurement_error = MagicMock()
 
-        self.assertIsNone(MainWindow._resolve_measurement_run(window))
-        window.on_measurement_error.assert_called_once()
-        self.assertIn(
-            "硬件配置快照", str(window.on_measurement_error.call_args.args[0])
-        )
+                self.assertIsNone(MainWindow._resolve_measurement_run(window))
+                window.on_measurement_error.assert_called_once()
+                self.assertIn(
+                    "硬件配置快照",
+                    str(window.on_measurement_error.call_args.args[0]),
+                )
 
     def test_create_prepared_run_freezes_the_run_contract(self):
         from presentation.qt.main_window import MainWindow
@@ -464,48 +529,75 @@ class MainWindowTwoPhaseTests(unittest.TestCase):
     def test_measurement_config_path_does_not_fallback_for_contract_run(self):
         from presentation.qt.main_window import MainWindow
 
-        window = MainWindow.__new__(MainWindow)
-        window.config_path = Path("global-config.json")
-        window.prepared_run = _broken_contract_run()
+        cases = {
+            "缺少快照字段": None,
+            "空路径": "",
+            "快照文件不存在": Path("missing-hardware.json"),
+            "快照路径指向目录": Path(__file__).parent,
+        }
+        for label, value in cases.items():
+            with self.subTest(case=label):
+                window = MainWindow.__new__(MainWindow)
+                window.config_path = Path("global-config.json")
+                window.prepared_run = _broken_contract_run(value)
 
-        # 运行契约存在但冻结硬件路径无效：必须明确失败，绝不回退全局配置。
-        with self.assertRaises(RunNotResumable) as raised:
-            MainWindow._measurement_config_path(window)
+                # 运行契约存在但冻结硬件快照不可用：必须明确失败，绝不回退全局配置。
+                with self.assertRaises(RunNotResumable) as raised:
+                    MainWindow._measurement_config_path(window)
 
-        self.assertIn("硬件配置快照", str(raised.exception))
-        self.assertNotIn("global-config.json", str(raised.exception))
-        self.assertIsInstance(raised.exception, ValueError)
+                self.assertIn("硬件配置快照", str(raised.exception))
+                self.assertNotIn("global-config.json", str(raised.exception))
+                self.assertIsInstance(raised.exception, ValueError)
 
-    def test_invalid_contract_blocks_instrument_connection(self):
+    def test_missing_contract_resolver_is_rejected(self):
         from presentation.qt.main_window import MainWindow
 
         window = MainWindow.__new__(MainWindow)
         window.config_path = Path("global-config.json")
-        window.prepared_run = _broken_contract_run()
-        window.connect_btn = MagicMock()
-        window.instrument_worker = None
-        window.add_log_message = MagicMock()
-        window.update_and_save_config = MagicMock(return_value=True)
+        # 对象没有契约校验入口（例如被替换成错误类型）也必须明确失败。
+        window.prepared_run = object()
 
-        with patch("presentation.qt.main_window.InstrumentWorker") as worker, patch(
-            "presentation.qt.main_window.QMessageBox.warning"
-        ) as warning:
-            MainWindow.connect_instruments(window)
+        with self.assertRaisesRegex(RunNotResumable, "运行契约不可用"):
+            MainWindow._measurement_config_path(window)
 
-        # 不得构造 InstrumentWorker，也不得留下工作线程引用。
-        worker.assert_not_called()
-        self.assertIsNone(window.instrument_worker)
-        # 用户可以看到明确的失败提示，并重新启用连接按钮。
-        warning.assert_called_once()
-        self.assertIn("硬件配置快照", str(warning.call_args.args[2]))
-        window.connect_btn.setEnabled.assert_called_with(True)
-        self.assertTrue(
-            any(
-                "无法连接仪器" in str(call.args[0])
-                for call in window.add_log_message.call_args_list
-                if call.args
-            )
-        )
+    def test_invalid_contract_blocks_instrument_connection(self):
+        from presentation.qt.main_window import MainWindow
+
+        cases = {
+            "缺少快照字段": None,
+            "快照文件不存在": Path("missing-hardware.json"),
+        }
+        for label, value in cases.items():
+            with self.subTest(case=label):
+                window = MainWindow.__new__(MainWindow)
+                window.config_path = Path("global-config.json")
+                window.prepared_run = _broken_contract_run(value)
+                window.connect_btn = MagicMock()
+                window.instrument_worker = None
+                window.add_log_message = MagicMock()
+                window.update_and_save_config = MagicMock(return_value=True)
+
+                with patch(
+                    "presentation.qt.main_window.InstrumentWorker"
+                ) as worker, patch(
+                    "presentation.qt.main_window.QMessageBox.warning"
+                ) as warning:
+                    MainWindow.connect_instruments(window)
+
+                # 不得构造 InstrumentWorker，也不得留下工作线程引用。
+                worker.assert_not_called()
+                self.assertIsNone(window.instrument_worker)
+                # 用户可以看到明确的失败提示，并重新启用连接按钮。
+                warning.assert_called_once()
+                self.assertIn("硬件配置快照", str(warning.call_args.args[2]))
+                window.connect_btn.setEnabled.assert_called_with(True)
+                self.assertTrue(
+                    any(
+                        "无法连接仪器" in str(call.args[0])
+                        for call in window.add_log_message.call_args_list
+                        if call.args
+                    )
+                )
 
     def test_legacy_flow_still_uses_global_config(self):
         from app.run_context import PreparedRun

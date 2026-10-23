@@ -71,14 +71,17 @@ class PreparedRun:
     def hardware_connection_path(self) -> Path:
         """硬件连接与测量应使用的配置路径。
 
-        运行契约运行固定使用运行目录内冻结的硬件配置；如果运行携带运行契约却没有
-        可用的冻结硬件路径（快照缺失或对象不完整），直接抛出
-        :class:`RunNotResumable`，**绝不**回退到全局可变配置，避免用与本次运行无关
-        的仪器地址连接硬件。只有不带运行目录契约的旧兼容快照才回退到创建时的源
-        配置路径。
+        运行契约运行固定使用运行目录内冻结的硬件配置，并在返回前确认该快照仍然
+        可用：路径缺失、文件被删除或指向目录、manifest 登记项与 SHA-256 不一致时
+        都抛出 :class:`RunNotResumable`。**绝不**回退到全局可变配置，避免用与本次
+        运行无关的仪器地址连接硬件。只有不带运行目录契约的旧兼容快照才回退到创建
+        时的源配置路径。
         """
         if self.hardware_config_path is not None:
-            return Path(self.hardware_config_path)
+            frozen = Path(self.hardware_config_path)
+            if not self.has_run_contract:
+                return frozen
+            return self._verified_hardware_snapshot(frozen)
         if self.has_run_contract:
             raise RunNotResumable(
                 f"运行 {self.run_id} 缺少有效的硬件配置快照，不能连接仪器；"
@@ -89,6 +92,38 @@ class PreparedRun:
                 "运行没有可用的硬件配置路径，不能连接仪器；请重新创建运行"
             )
         return Path(self.config_path)
+
+    def _verified_hardware_snapshot(self, frozen: Path) -> Path:
+        """确认契约运行的冻结硬件快照仍可用，返回可用的快照路径。
+
+        先做文件级检查（存在、是普通文件），再在仓储具备 manifest 能力时确认登记项
+        的 SHA-256/大小未被篡改；任一失败都转成 :class:`RunNotResumable`，让调用方
+        明确失败而不是换成其它配置。仓储不具备该能力（最小替身对象）时只做文件级
+        检查，避免把测试替身或旧装配误判为契约损坏。
+        """
+        try:
+            usable = frozen.is_file()
+        except OSError as error:
+            raise RunNotResumable(
+                f"运行 {self.run_id} 的硬件配置快照不可读: {error}"
+            ) from error
+        if not usable:
+            raise RunNotResumable(
+                f"运行 {self.run_id} 缺少有效的硬件配置快照"
+                f"（{frozen} 不存在或不是普通文件）；请重新创建或重新加载运行"
+            )
+        repository = getattr(self, "run_repository", None)
+        if repository is None or not hasattr(repository, "load_manifest"):
+            return frozen
+        try:
+            # 以 manifest 登记项为准校验：硬件快照被单独替换或删除都会在这里失败。
+            return Path(find_run_hardware_config(repository, self.run_id))
+        except RunNotResumable:
+            raise
+        except (OSError, ValueError) as error:
+            raise RunNotResumable(
+                f"运行 {self.run_id} 的硬件配置快照校验失败: {error}"
+            ) from error
 
 
 def prepare_run(

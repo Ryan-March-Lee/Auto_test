@@ -59,6 +59,30 @@ class _AmplifierService:
         self.measure_called.set()
 
 
+class _StopDuringValidation:
+    """在 worker 校验运行契约时触发停止请求的替身运行契约。
+
+    worker 必须在校验通过后、创建测量用例前再次检查停止意图：这里让
+    ``has_run_contract`` 的读取触发 ``worker.stop()``，从而精确覆盖该分支，
+    证明停止后不再装配测量对象（也就不会有任何硬件动作）。
+    """
+
+    def __init__(self, worker):
+        self._worker = worker
+
+    @property
+    def has_run_contract(self):
+        self._worker.stop()
+        return True
+
+    run_repository = object()
+    run_id = "run-worker"
+    run_directory = "runs/run-worker"
+
+    def hardware_connection_path(self):
+        return None
+
+
 class GuiWorkerTests(unittest.TestCase):
     @staticmethod
     def _contract_run():
@@ -97,13 +121,13 @@ class GuiWorkerTests(unittest.TestCase):
     def test_stopping_at_cable_loss_checkpoint_releases_worker(self):
         path1_done = threading.Event()
         service = _CableService(path1_done)
+        prepared = self._contract_run()
         worker = CableLossWorker(
             "config.json",
             sleep_fn=lambda _: None,
-            prepare_factory=lambda *_args, **_kwargs: self._contract_run(),
+            prepared_run=prepared,
         )
 
-        prepared = self._contract_run()
         with patch("app.gui_runtime.prepare_configuration", return_value=prepared), \
                 patch("app.gui_runtime.create_cable_loss_measurement", return_value=service):
             worker.start()
@@ -114,7 +138,7 @@ class GuiWorkerTests(unittest.TestCase):
         self.assertTrue(service.stop_called.is_set())
         self.assertFalse(worker.isRunning())
 
-    def test_preflight_failure_prevents_measurement_service_creation(self):
+    def test_missing_prepared_run_prevents_measurement_service_creation(self):
         worker = CableLossWorker("config.json", sleep_fn=lambda _: None)
         errors = []
         worker.signals.error.connect(errors.append)
@@ -127,7 +151,10 @@ class GuiWorkerTests(unittest.TestCase):
         prepare.assert_not_called()
         factory.assert_not_called()
         self.assertIsNone(worker.service)
-        self.assertEqual(errors, ["应用用例构造失败: 正式线损测量必须携带 PreparedRun；请先创建或重新加载运行"])
+        self.assertEqual(
+            errors,
+            ["应用用例构造失败: 正式线损测量必须携带有效 PreparedRun；请先创建或重新加载运行"],
+        )
 
     def test_workers_do_not_implicitly_prepare_a_legacy_run(self):
         for worker_type, factory_name in (
@@ -145,7 +172,41 @@ class GuiWorkerTests(unittest.TestCase):
                 prepare.assert_not_called()
                 factory.assert_not_called()
                 self.assertEqual(len(errors), 1)
-                self.assertIn("必须携带 PreparedRun", errors[0])
+                self.assertIn("必须携带有效 PreparedRun", errors[0])
+
+    def test_workers_reject_non_contract_run_objects(self):
+        """传入的不是运行契约对象时同样在创建测量前失败。"""
+        for worker_type, factory_name, label in (
+            (CableLossWorker, "create_cable_loss_measurement", "线损"),
+            (DriverMappingWorker, "create_driver_mapping_measurement", "驱动映射"),
+            (AmplifierWorker, "create_amplifier_measurement", "主功放"),
+        ):
+            with self.subTest(worker=worker_type.__name__):
+                errors = []
+                worker = worker_type("config.json", sleep_fn=lambda _: None, prepared_run=object())
+                worker.signals.error.connect(errors.append)
+                with patch(f"app.gui_runtime.{factory_name}") as factory:
+                    worker.run()
+                factory.assert_not_called()
+                self.assertIsNone(worker.service)
+                self.assertEqual(
+                    errors,
+                    [f"应用用例构造失败: 正式{label}测量必须携带有效 PreparedRun；请先创建或重新加载运行"],
+                )
+
+    def test_cable_loss_stop_during_run_contract_validation_skips_measurement(self):
+        """运行契约校验期间收到停止请求时，不得继续创建测量服务（无硬件动作）。"""
+        worker = CableLossWorker("config.json", sleep_fn=lambda _: None)
+        stopped = []
+        worker.signals.stopped.connect(stopped.append)
+        worker.prepared_run = _StopDuringValidation(worker)
+
+        with patch("app.gui_runtime.create_cable_loss_measurement") as factory:
+            worker.run()
+
+        factory.assert_not_called()
+        self.assertEqual(stopped, ["用户停止"])
+        self.assertIsNone(worker.service)
 
     def test_cable_loss_stop_after_assembly_emits_stopped(self):
         service = _CableService(threading.Event())
@@ -153,7 +214,7 @@ class GuiWorkerTests(unittest.TestCase):
         worker = CableLossWorker(
             "config.json",
             sleep_fn=lambda _: None,
-            prepare_factory=lambda *_args, **_kwargs: object(),
+            prepared_run=self._contract_run(),
         )
         worker.signals.stopped.connect(stopped.append)
 
@@ -173,10 +234,6 @@ class GuiWorkerTests(unittest.TestCase):
         service = _DriverMappingService()
         calls = []
 
-        def prepare(*args, **kwargs):
-            calls.append((args, kwargs))
-            return prepared
-
         def factory(*args, **kwargs):
             calls.append((args, kwargs))
             return service
@@ -185,14 +242,15 @@ class GuiWorkerTests(unittest.TestCase):
             "config.json",
             sleep_fn=lambda _: None,
             measurement_factory=factory,
-            prepare_factory=prepare,
+            prepared_run=prepared,
         )
         worker.run()
 
         self.assertIs(worker.service, service)
         self.assertTrue(service.measure_called.is_set())
-        self.assertEqual(calls[0][1], {"operation": "driver_mapping"})
-        self.assertIs(calls[1][1]["prepared_run"], prepared)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0], ("config.json",))
+        self.assertIs(calls[0][1]["prepared_run"], prepared)
 
     def test_measurement_workers_publish_structured_results(self):
         cases = (
@@ -205,7 +263,7 @@ class GuiWorkerTests(unittest.TestCase):
                 worker = worker_type(
                     "config.json",
                     sleep_fn=lambda _: None,
-                    prepare_factory=lambda *_args, **_kwargs: object(),
+                    prepared_run=self._contract_run(),
                     measurement_factory=lambda *_args, **_kwargs: service_type(),
                 )
                 worker.signals.result.connect(results.append)
@@ -217,7 +275,7 @@ class GuiWorkerTests(unittest.TestCase):
         errors = []
         worker = AmplifierWorker(
             "config.json",
-            prepare_factory=lambda *_args, **_kwargs: object(),
+            prepared_run=self._contract_run(),
             measurement_factory=lambda *_args, **_kwargs: (_ for _ in ()).throw(
                 RuntimeError("request assembly failed")
             ),
@@ -241,7 +299,7 @@ class GuiWorkerTests(unittest.TestCase):
         worker = DriverMappingWorker(
             "config.json",
             measurement_port=port,
-            prepare_factory=lambda *_args, **_kwargs: object(),
+            prepared_run=self._contract_run(),
             measurement_factory=lambda *_args, **_kwargs: (_ for _ in ()).throw(
                 RuntimeError("assembly failed")
             ),
@@ -253,7 +311,7 @@ class GuiWorkerTests(unittest.TestCase):
         self.assertEqual(port.close_calls, [])
         self.assertIsNone(worker.measurement_port)
 
-    def test_driver_mapping_stop_before_run_skips_preflight_and_measurement(self):
+    def test_driver_mapping_stop_before_run_skips_measurement(self):
         worker = DriverMappingWorker("config.json", sleep_fn=lambda _: None)
         stopped = []
         worker.signals.stopped.connect(stopped.append)
@@ -269,20 +327,14 @@ class GuiWorkerTests(unittest.TestCase):
         self.assertEqual(stopped, ["用户停止"])
         self.assertIsNone(worker.service)
 
-    def test_driver_mapping_stop_during_preflight_skips_measurement_creation(self):
-        worker = DriverMappingWorker("config.json", sleep_fn=lambda _: None, prepare_factory=lambda *_args, **_kwargs: object())
+    def test_driver_mapping_stop_during_run_contract_validation_skips_measurement(self):
+        """运行契约校验期间收到停止请求时，不得继续创建测量服务。"""
+        worker = DriverMappingWorker("config.json", sleep_fn=lambda _: None)
         stopped = []
         worker.signals.stopped.connect(stopped.append)
+        worker.prepared_run = _StopDuringValidation(worker)
 
-        def prepare_and_stop(*_args, **_kwargs):
-            worker.stop()
-            return object()
-
-        worker.prepare_factory = prepare_and_stop
-
-        with patch("app.gui_runtime.prepare_configuration", side_effect=prepare_and_stop), patch(
-            "app.gui_runtime.create_driver_mapping_measurement"
-        ) as factory:
+        with patch("app.gui_runtime.create_driver_mapping_measurement") as factory:
             worker.run()
 
         factory.assert_not_called()
@@ -290,7 +342,11 @@ class GuiWorkerTests(unittest.TestCase):
         self.assertIsNone(worker.service)
 
     def test_driver_mapping_stop_after_assembly_cancels_service_without_scan(self):
-        worker = DriverMappingWorker("config.json", sleep_fn=lambda _: None, prepare_factory=lambda *_args, **_kwargs: object())
+        worker = DriverMappingWorker(
+            "config.json",
+            sleep_fn=lambda _: None,
+            prepared_run=self._contract_run(),
+        )
         service = _DriverMappingService()
         stopped = []
         worker.signals.stopped.connect(stopped.append)
@@ -299,7 +355,7 @@ class GuiWorkerTests(unittest.TestCase):
             worker.stop()
             return service
 
-        with patch("app.gui_runtime.prepare_configuration", return_value=object()), patch(
+        with patch(
             "app.gui_runtime.create_driver_mapping_measurement", side_effect=create_and_stop
         ):
             worker.run()
@@ -308,7 +364,7 @@ class GuiWorkerTests(unittest.TestCase):
         self.assertFalse(service.measure_called.is_set())
         self.assertEqual(stopped, ["用户停止"])
 
-    def test_amplifier_stop_before_preflight_skips_measurement(self):
+    def test_amplifier_stop_before_run_skips_measurement(self):
         worker = AmplifierWorker("config.json", sleep_fn=lambda _: None)
         stopped = []
         worker.signals.stopped.connect(stopped.append)
@@ -323,27 +379,25 @@ class GuiWorkerTests(unittest.TestCase):
         factory.assert_not_called()
         self.assertEqual(stopped, ["用户停止"])
 
-    def test_amplifier_stop_during_preflight_skips_assembly(self):
-        worker = AmplifierWorker("config.json", sleep_fn=lambda _: None, prepare_factory=lambda *_args, **_kwargs: object())
+    def test_amplifier_stop_during_run_contract_validation_skips_assembly(self):
+        """运行契约校验期间收到停止请求时，不得继续装配测量用例。"""
+        worker = AmplifierWorker("config.json", sleep_fn=lambda _: None)
         stopped = []
         worker.signals.stopped.connect(stopped.append)
+        worker.prepared_run = _StopDuringValidation(worker)
 
-        def prepare_and_stop(*_args, **_kwargs):
-            worker.stop()
-            return object()
-
-        worker.prepare_factory = prepare_and_stop
-
-        with patch("app.gui_runtime.prepare_configuration", side_effect=prepare_and_stop), patch(
-            "app.gui_runtime.create_amplifier_measurement"
-        ) as factory:
+        with patch("app.gui_runtime.create_amplifier_measurement") as factory:
             worker.run()
 
         factory.assert_not_called()
         self.assertEqual(stopped, ["用户停止"])
 
     def test_amplifier_stop_after_assembly_cancels_service_without_scan(self):
-        worker = AmplifierWorker("config.json", sleep_fn=lambda _: None, prepare_factory=lambda *_args, **_kwargs: object())
+        worker = AmplifierWorker(
+            "config.json",
+            sleep_fn=lambda _: None,
+            prepared_run=self._contract_run(),
+        )
         service = _AmplifierService()
         stopped = []
         worker.signals.stopped.connect(stopped.append)
@@ -352,7 +406,7 @@ class GuiWorkerTests(unittest.TestCase):
             worker.stop()
             return service
 
-        with patch("app.gui_runtime.prepare_configuration", return_value=object()), patch(
+        with patch(
             "app.gui_runtime.create_amplifier_measurement", side_effect=create_and_stop
         ):
             worker.run()
@@ -360,6 +414,7 @@ class GuiWorkerTests(unittest.TestCase):
         self.assertTrue(service.stop_called.is_set())
         self.assertFalse(service.measure_called.is_set())
         self.assertEqual(stopped, ["用户停止"])
+
 
     def test_instrument_worker_closes_port_if_handoff_fails(self):
         class _Port:

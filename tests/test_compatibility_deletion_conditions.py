@@ -5,6 +5,8 @@
 
 - 每个待删除接口在生产代码中的调用文件集合必须与该说明一致；新增调用方会失败。
   清单包含仍在使用的正式流程和旧兼容调用，不等同于“零生产引用”。
+- 步骤 A 已删除的旧 GUI 测量入口（worker 的 ``prepare_factory`` 后备）必须保持消失
+  状态，不允许以任何形式回归。
 - 生产代码不得显式请求兼容快照（``run_contract=False``），也不得注入旧
   ``prepare_factory`` 后备工厂。
 - 说明必须为每个待删除接口写出删除条件、迁移方式和目标版本。
@@ -55,8 +57,8 @@ DEPRECATED_INTERFACE_CALLERS = {
         "infrastructure/persistence/result_repository.py",
         "result_storage.py",
     },
-    # 3.4 旧 GUI 测量入口的后备工厂
-    "prepare_factory": {"presentation/qt/workers.py"},
+    # 3.4 旧 GUI 测量入口的后备工厂：步骤 A1 删除后生产代码中必须彻底消失
+    "prepare_factory": set(),
 }
 
 REQUIRED_NOTE_MARKERS = (
@@ -245,6 +247,14 @@ class LegacyGuiEntryTests(unittest.TestCase):
             offenders, [], "生产代码不得注入旧 prepare_factory: " + ", ".join(offenders)
         )
 
+    def test_workers_keep_no_prepare_factory_fallback(self):
+        workers = (ROOT / "presentation" / "qt" / "workers.py").read_text(
+            encoding="utf-8-sig"
+        )
+        self.assertNotIn("prepare_factory", workers)
+        # 三类正式 worker 都必须显式校验注入的 PreparedRun。
+        self.assertEqual(workers.count("require_prepared_run(self.prepared_run"), 3)
+
 
 class ReleaseNotesTests(unittest.TestCase):
     """删除条件、迁移方式和目标版本必须留在发布说明里，而不是只存在于讨论中。"""
@@ -278,7 +288,8 @@ class ReleaseNotesTests(unittest.TestCase):
 
     def test_guide_records_step_e_and_links_the_release_notes(self):
         guide = GUIDE.read_text(encoding="utf-8")
-        self.assertIn("步骤 E 执行记录", guide)
+        # 指南收敛为“未完成小步清单”后，步骤 E 以标题形式保留，并链接发布说明。
+        self.assertIn("### E. ", guide)
         self.assertIn("兼容层弃用与删除发布说明", guide)
 
 

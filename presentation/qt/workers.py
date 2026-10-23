@@ -162,13 +162,12 @@ class InstrumentWorker(BaseWorker):
 
 
 class CableLossWorker(BaseWorker):
-    def __init__(self, config_path: str, sleep_fn=None, measurement_port=None, measurement_factory=None, prepare_factory=None, prepared_run=None):
+    def __init__(self, config_path: str, sleep_fn=None, measurement_port=None, measurement_factory=None, prepared_run=None):
         super().__init__()
         self.config_path = config_path
         self.sleep_fn = sleep_fn
         self.measurement_port = measurement_port
         self.measurement_factory = measurement_factory
-        self.prepare_factory = prepare_factory
         self.prepared_run = prepared_run
         self._continue_event = Event()
         self._waiting_for_continue = False
@@ -179,13 +178,13 @@ class CableLossWorker(BaseWorker):
             self.emit_message("开始线损测量...")
             try:
                 create_measurement = self.measurement_factory or self._default_factory("create_cable_loss_measurement")
-                prepared = self.prepared_run
-                if prepared is None:
-                    if self.prepare_factory is None:
-                        raise ValueError("正式线损测量必须携带 PreparedRun；请先创建或重新加载运行")
-                    prepared = self.prepare_factory(self.config_path, operation="cable_loss")
-                else:
-                    require_prepared_run(prepared, "线损")
+                # 缺少运行契约时明确失败，绝不在 worker 内隐式创建运行。
+                prepared = require_prepared_run(self.prepared_run, "线损")
+                # 校验通过后、装配测量用例前再次检查停止意图：应用组装层可能连接仪器，
+                # 因此停止请求必须在这里拦下，而不是等到组装完成。
+                if self._stop_requested:
+                    self.signals.stopped.emit(self.stop_reason)
+                    return
                 self._service = create_measurement(self.config_path, prepared_run=prepared,
                     progress_callback=self.signals.progress.emit, message_callback=self.signals.message.emit,
                     data_callback=self.signals.data_update.emit, sleep_fn=self.sleep_fn,
@@ -241,19 +240,18 @@ class CableLossWorker(BaseWorker):
 
 
 class DriverMappingWorker(BaseWorker):
-    def __init__(self, config_path: str, sleep_fn=None, measurement_port=None, measurement_factory=None, prepare_factory=None, prepared_run=None):
+    def __init__(self, config_path: str, sleep_fn=None, measurement_port=None, measurement_factory=None, prepared_run=None):
         super().__init__()
         self.config_path = config_path
         self.sleep_fn = sleep_fn
         self.measurement_port = measurement_port
         self.measurement_factory = measurement_factory
-        self.prepare_factory = prepare_factory
         self.prepared_run = prepared_run
 
     def run(self) -> None:
-        self._run_measurement("开始驱动功放映射测量...", "create_driver_mapping_measurement", "driver_mapping", "驱动映射测量")
+        self._run_measurement("开始驱动功放映射测量...", "create_driver_mapping_measurement", "驱动映射测量")
 
-    def _run_measurement(self, start_message, factory_name, operation, label):
+    def _run_measurement(self, start_message, factory_name, label):
         try:
             self.emit_message(start_message)
             if self._stop_requested:
@@ -261,16 +259,8 @@ class DriverMappingWorker(BaseWorker):
                 return
             try:
                 create_measurement = self.measurement_factory or self._default_factory(factory_name)
-                prepared = self.prepared_run
-                if prepared is None:
-                    if self.prepare_factory is None:
-                        raise ValueError("正式驱动映射测量必须携带 PreparedRun；请先创建或重新加载运行")
-                    if operation is None:
-                        prepared = self.prepare_factory(self.config_path)
-                    else:
-                        prepared = self.prepare_factory(self.config_path, operation=operation)
-                else:
-                    require_prepared_run(prepared, "驱动映射")
+                # 缺少运行契约时明确失败，绝不在 worker 内隐式创建运行。
+                prepared = require_prepared_run(self.prepared_run, "驱动映射")
                 if self._stop_requested:
                     self.signals.stopped.emit(self.stop_reason)
                     return
@@ -299,13 +289,12 @@ class DriverMappingWorker(BaseWorker):
 
 
 class AmplifierWorker(BaseWorker):
-    def __init__(self, config_path: str, sleep_fn=None, measurement_port=None, measurement_factory=None, prepare_factory=None, prepared_run=None):
+    def __init__(self, config_path: str, sleep_fn=None, measurement_port=None, measurement_factory=None, prepared_run=None):
         super().__init__()
         self.config_path = config_path
         self.sleep_fn = sleep_fn
         self.measurement_port = measurement_port
         self.measurement_factory = measurement_factory
-        self.prepare_factory = prepare_factory
         self.prepared_run = prepared_run
 
     def run(self) -> None:
@@ -316,13 +305,8 @@ class AmplifierWorker(BaseWorker):
                 return
             try:
                 create_measurement = self.measurement_factory or self._default_factory("create_amplifier_measurement")
-                prepared = self.prepared_run
-                if prepared is None:
-                    if self.prepare_factory is None:
-                        raise ValueError("正式主功放测量必须携带 PreparedRun；请先创建或重新加载运行")
-                    prepared = self.prepare_factory(self.config_path)
-                else:
-                    require_prepared_run(prepared, "主功放")
+                # 缺少运行契约时明确失败，绝不在 worker 内隐式创建运行。
+                prepared = require_prepared_run(self.prepared_run, "主功放")
                 if self._stop_requested:
                     self.signals.stopped.emit(self.stop_reason)
                     return

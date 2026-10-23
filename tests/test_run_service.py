@@ -9,8 +9,11 @@ from pathlib import Path
 from app.run_context import create_prepared_run, load_prepared_run, prepare_run
 from application.ports.config_repository import ConfigurationLoadResult
 from application.run_service import (
+    RunNotResumable,
     RunSnapshot,
     create_run_snapshot,
+    find_run_hardware_config,
+    load_hardware_config,
     load_run_configuration,
 )
 from domain.configuration.models import (
@@ -519,6 +522,172 @@ class CreateRunSnapshotTests(unittest.TestCase):
         # 它没有创建 runs/<run_id>/ 运行契约目录，因此不能重新加载。
         with self.assertRaises(FileNotFoundError):
             load_prepared_run(run_id, run_repository=self.repository)
+
+
+SECOND_RUN_ID = "20261022T160000Z_b2c3d4e5"
+
+
+class RunSnapshotIsolationTests(unittest.TestCase):
+    """步骤 G：运行之间完全隔离，快照篡改与全局配置变化不相互串扰。"""
+
+    def setUp(self):
+        self._temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temporary.cleanup)
+        self.root = Path(self._temporary.name)
+        self.repository = RunRepository(self.root / "runs")
+
+    def _hardware_config(self, *, start_power: float, address: str) -> dict:
+        hardware = _gui_config(start_power=start_power)
+        hardware["instruments"]["signal_generator"]["address"] = address
+        return hardware
+
+    def _create(self, run_id: str, *, start_power: float, address: str) -> RunSnapshot:
+        return create_run_snapshot(
+            _loaded(_valid_configuration(start_power=start_power)),
+            run_repository=self.repository,
+            run_id=run_id,
+            hardware_config=self._hardware_config(start_power=start_power, address=address),
+            now=CREATED_AT,
+        )
+
+    def test_two_contract_runs_keep_independent_snapshots(self):
+        first = self._create(RUN_ID, start_power=-10.0, address="sim::sg-a")
+        second = self._create(SECOND_RUN_ID, start_power=-20.0, address="sim::sg-b")
+
+        # 两个运行都被登记且目录互不覆盖。
+        self.assertEqual(self.repository.list_run_ids(), (RUN_ID, SECOND_RUN_ID))
+        self.assertNotEqual(first.run_directory, second.run_directory)
+
+        # 领域配置快照各自独立。
+        first_domain = load_run_configuration(self.repository, RUN_ID)
+        second_domain = load_run_configuration(self.repository, SECOND_RUN_ID)
+        self.assertEqual(first_domain.configuration.test_plan.start_power, -10.0)
+        self.assertEqual(second_domain.configuration.test_plan.start_power, -20.0)
+        self.assertEqual(first_domain.configuration.test_plan.frequencies, [2.2, 2.4])
+
+        # 硬件装配快照各自独立，不会串用另一个运行的仪器地址。
+        first_hardware = load_hardware_config(self.repository, RUN_ID)
+        second_hardware = load_hardware_config(self.repository, SECOND_RUN_ID)
+        self.assertEqual(
+            first_hardware["instruments"]["signal_generator"]["address"],
+            "sim::sg-a",
+        )
+        self.assertEqual(
+            second_hardware["instruments"]["signal_generator"]["address"],
+            "sim::sg-b",
+        )
+
+        second_config_before = second.config_path.read_bytes()
+        second_hardware_before = second.hardware_config_path.read_bytes()
+        second_manifest_before = (second.run_directory / "manifest.json").read_bytes()
+
+        # 修改运行 A 的快照文件不会改变运行 B 自己的快照、manifest 或可恢复性。
+        first_config_payload = json.loads(first.config_path.read_text(encoding="utf-8"))
+        first_config_payload["test_plan"]["signal_source"]["start_power"] = -99.0
+        first.config_path.write_text(json.dumps(first_config_payload), encoding="utf-8")
+        first_hardware_payload = json.loads(
+            first.hardware_config_path.read_text(encoding="utf-8")
+        )
+        first_hardware_payload["instruments"]["signal_generator"]["address"] = "sim::tampered"
+        first.hardware_config_path.write_text(
+            json.dumps(first_hardware_payload), encoding="utf-8"
+        )
+
+        self.assertEqual(second.config_path.read_bytes(), second_config_before)
+        self.assertEqual(second.hardware_config_path.read_bytes(), second_hardware_before)
+        self.assertEqual(
+            (second.run_directory / "manifest.json").read_bytes(), second_manifest_before
+        )
+        reopened_second = load_prepared_run(
+            SECOND_RUN_ID, run_repository=self.repository
+        )
+        self.assertEqual(reopened_second.configuration.test_plan.start_power, -20.0)
+        self.assertEqual(
+            reopened_second.hardware_config["instruments"]["signal_generator"]["address"],
+            "sim::sg-b",
+        )
+
+        # 撤销运行 A 后，运行 B 仍独立存在并可恢复。
+        self.repository.discard_run(RUN_ID)
+        self.assertEqual(self.repository.list_run_ids(), (SECOND_RUN_ID,))
+        self.assertFalse(first.run_directory.exists())
+        self.assertTrue(second.run_directory.exists())
+        self.assertEqual(
+            load_run_configuration(self.repository, SECOND_RUN_ID)
+            .configuration.test_plan.start_power,
+            -20.0,
+        )
+
+    def test_global_config_change_does_not_affect_created_run(self):
+        global_config_path = self.root / "config.json"
+        source = self._hardware_config(start_power=-10.0, address="sim::sg-frozen")
+        global_config_path.write_text(json.dumps(source), encoding="utf-8")
+        loaded = ConfigurationRepository().load_for_run(global_config_path)
+        self.assertTrue(loaded.valid, loaded.validation.errors)
+        snapshot = create_run_snapshot(
+            loaded,
+            run_repository=self.repository,
+            run_id=RUN_ID,
+            hardware_config=source,
+            now=CREATED_AT,
+        )
+        frozen_domain = snapshot.config_path.read_text(encoding="utf-8")
+        frozen_hardware = snapshot.hardware_config_path.read_text(encoding="utf-8")
+
+        # 修改磁盘上的全局兼容配置，再按 run_id 恢复时必须只使用运行目录快照。
+        changed_global_config = self._hardware_config(
+            start_power=-20.0, address="sim::sg-changed"
+        )
+        changed_global_config["test_frequencies"] = [9.9]
+        global_config_path.write_text(json.dumps(changed_global_config), encoding="utf-8")
+        reopened = load_prepared_run(
+            RUN_ID,
+            config_path=global_config_path,
+            run_repository=self.repository,
+        )
+
+        self.assertEqual(reopened.configuration.test_plan.start_power, -10.0)
+        self.assertEqual(reopened.hardware_config["test_frequencies"], [2.4])
+        self.assertEqual(
+            reopened.hardware_config["instruments"]["signal_generator"]["address"],
+            "sim::sg-frozen",
+        )
+        self.assertEqual(reopened.hardware_connection_path(), snapshot.hardware_config_path)
+        self.assertEqual(
+            load_hardware_config(self.repository, RUN_ID)["instruments"]["signal_generator"]["address"],
+            "sim::sg-frozen",
+        )
+        self.assertEqual(snapshot.config_path.read_text(encoding="utf-8"), frozen_domain)
+        self.assertEqual(
+            snapshot.hardware_config_path.read_text(encoding="utf-8"), frozen_hardware
+        )
+
+    def test_tampered_hardware_snapshot_is_rejected(self):
+        snapshot = self._create(RUN_ID, start_power=-10.0, address="sim::sg-a")
+        frozen = snapshot.hardware_config_path
+        payload = json.loads(frozen.read_text(encoding="utf-8"))
+        payload["test_frequencies"] = [9.9]
+        # 只改文件、不更新 manifest：SHA-256 不再匹配。
+        frozen.write_text(json.dumps(payload), encoding="utf-8")
+
+        with self.assertRaises(RunNotResumable):
+            load_hardware_config(self.repository, RUN_ID)
+        with self.assertRaises(RunNotResumable):
+            find_run_hardware_config(self.repository, RUN_ID)
+        with self.assertRaisesRegex(RunNotResumable, "硬件配置快照"):
+            load_prepared_run(RUN_ID, run_repository=self.repository)
+
+    def test_tampered_domain_snapshot_is_rejected(self):
+        snapshot = self._create(RUN_ID, start_power=-10.0, address="sim::sg-a")
+        domain_snapshot = snapshot.run_directory / "config.json"
+        payload = json.loads(domain_snapshot.read_text(encoding="utf-8"))
+        payload["test_plan"]["signal_source"]["start_power"] = -99.0
+        domain_snapshot.write_text(json.dumps(payload), encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "SHA-256"):
+            load_run_configuration(self.repository, RUN_ID)
+        with self.assertRaisesRegex(ValueError, "SHA-256"):
+            load_prepared_run(RUN_ID, run_repository=self.repository)
 
 
 class CreatePreparedRunTests(unittest.TestCase):

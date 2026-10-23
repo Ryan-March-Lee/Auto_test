@@ -507,6 +507,73 @@ class MainWindowTwoPhaseTests(unittest.TestCase):
 
         create.assert_not_called()
 
+    def test_create_prepared_run_releases_previous_instrument_port(self):
+        from presentation.qt.main_window import MainWindow
+
+        port = object()
+        window = MainWindow.__new__(MainWindow)
+        window.config_page = MagicMock()
+        window.config_page.validate.return_value = True
+        window.config = {}
+        window.config_path = Path("config.json")
+        window.paths = None
+        window.instrument_ctrl = port
+        window.instrument_worker = None
+        window.prepared_run = None
+        window.add_log_message = MagicMock()
+        window.update_config_from_ui = MagicMock()
+        window._confirm_create_run_wiring = MagicMock(return_value=True)
+        window._save_config_file = MagicMock(return_value=True)
+        window._update_run_status = MagicMock()
+        window._close_instrument_port = MagicMock()
+
+        prepared = SimpleNamespace(run_id=RUN_ID, run_directory=Path("runs") / RUN_ID)
+        with patch(
+            "presentation.qt.main_window.prepare_configuration", return_value=prepared
+        ):
+            result = MainWindow._create_prepared_run(window)
+
+        # 创建新运行必须释放旧连接的仪器端口，避免新运行复用旧配置的资源。
+        self.assertIs(result, prepared)
+        window._close_instrument_port.assert_called_once_with(port)
+        self.assertIsNone(window.instrument_ctrl)
+        self.assertIs(window.prepared_run, prepared)
+
+    def test_create_prepared_run_failure_keeps_previous_run_and_port(self):
+        from presentation.qt.main_window import MainWindow
+
+        port = object()
+        previous_run = object()
+        window = MainWindow.__new__(MainWindow)
+        window.config_page = MagicMock()
+        window.config_page.validate.return_value = True
+        window.config = {}
+        window.config_path = Path("config.json")
+        window.paths = None
+        window.instrument_ctrl = port
+        window.instrument_worker = None
+        window.prepared_run = previous_run
+        window.add_log_message = MagicMock()
+        window.update_config_from_ui = MagicMock()
+        window._confirm_create_run_wiring = MagicMock(return_value=True)
+        window._save_config_file = MagicMock(return_value=True)
+        window._update_run_status = MagicMock()
+        window._close_instrument_port = MagicMock()
+
+        with patch(
+            "presentation.qt.main_window.prepare_configuration",
+            side_effect=RuntimeError("创建运行失败：磁盘已满"),
+        ), patch("presentation.qt.main_window.QMessageBox.warning") as warning:
+            result = MainWindow._create_prepared_run(window)
+
+        # 创建失败不得切换运行、释放端口或报告为新状态。
+        self.assertIsNone(result)
+        self.assertIs(window.prepared_run, previous_run)
+        self.assertIs(window.instrument_ctrl, port)
+        window._close_instrument_port.assert_not_called()
+        window._update_run_status.assert_not_called()
+        warning.assert_called_once()
+
     def test_measurement_config_path_prefers_frozen_run_config(self):
         from presentation.qt.main_window import MainWindow
 

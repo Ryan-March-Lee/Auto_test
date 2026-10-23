@@ -12,6 +12,7 @@
 import json
 import tempfile
 import unittest
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -226,6 +227,39 @@ class DriverMappingRunStageTests(unittest.TestCase):
         mapping = reader.read_driver_mapping(result_path)
         self.assertIn("1.0", mapping)
         self.assertEqual(len(mapping["1.0"]), 1)
+
+    def test_current_run_input_does_not_use_deprecated_latest_lookup(self):
+        self._create_run()
+        self._complete_cable_loss()
+        expected_path = self.repository.layout(RUN_ID).run_directory / CABLE_LOSS_INPUT_PATH
+        loaded_paths = []
+        original_load = self.result_repository.load
+
+        def load(path):
+            loaded_paths.append(Path(path))
+            return original_load(path)
+
+        with warnings.catch_warnings(record=True) as captured:
+            warnings.simplefilter("always", DeprecationWarning)
+            with patch.object(
+                self.result_repository,
+                "latest_path",
+                side_effect=AssertionError("current-run input must not call latest_path"),
+            ) as latest_path:
+                with patch.object(self.result_repository, "load", side_effect=load):
+                    DriverPowerMappingUseCase(
+                        self._request(), sleep_fn=lambda _: None
+                    ).measure_all_frequencies()
+
+        self.assertEqual(loaded_paths[0], expected_path)
+        latest_path.assert_not_called()
+        self.assertFalse(
+            [
+                warning
+                for warning in captured
+                if issubclass(warning.category, DeprecationWarning)
+            ]
+        )
 
     def test_global_compatibility_copy_is_still_written(self):
         self._create_run()

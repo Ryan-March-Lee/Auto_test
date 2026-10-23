@@ -6,9 +6,10 @@
 - 每个待删除接口在生产代码中的调用文件集合必须与该说明一致；新增调用方会失败。
   清单包含仍在使用的正式流程和旧兼容调用，不等同于“零生产引用”。
 - 步骤 A 已删除的旧 GUI 测量入口（``prepare_configuration`` 的兼容快照开关、
-  worker 的 ``prepare_factory`` 后备）必须保持消失状态，不允许以任何形式回归。
-- 生产代码不得再使用 ``run_contract`` 开关，也不得注入旧 ``prepare_factory`` 后备工厂。
-- 说明必须为每个待删除接口写出删除条件、迁移方式和目标版本。
+  worker 的 ``prepare_factory`` 后备、``ResultQueryAdapter.latest()`` 与
+  ``LegacyResultQueryPort``）必须保持消失状态，不允许以任何形式回归。
+- 说明必须为每个待删除接口写出删除条件、迁移方式和目标版本，并保留步骤 A 执行
+  记录（外部调用方台账与回滚版本）。
 
 旧兼容/回滚入口本身（``cable_loss_measurement.py``、``driver_power_mapping.py``、
 ``app/legacy_amplifier_measurement.py``）在说明 3.5 节记录为**本次保留**，因此这里
@@ -308,6 +309,29 @@ class ReleaseNotesTests(unittest.TestCase):
         # 指南收敛为“未完成小步清单”后，步骤 E 以标题形式保留，并链接发布说明。
         self.assertIn("### E. ", guide)
         self.assertIn("兼容层弃用与删除发布说明", guide)
+
+    def test_release_notes_record_step_a_execution_evidence(self):
+        """步骤 A 的删除必须有可审计记录：外部调用方台账与回滚基线。"""
+        for marker in (
+            "步骤 A 执行记录",
+            "外部调用方台账",
+            "回滚基线",
+            "代码已删除（步骤 A",
+        ):
+            self.assertIn(marker, self.document)
+
+    def test_release_notes_keep_the_external_signoff_pending(self):
+        """外部签署未完成时不得宣称 A4 完成，必须显式登记待签署与偏差。"""
+        self.assertIn("待签署", self.document)
+        self.assertIn("偏差登记", self.document)
+        # 全局条件 2 未满足时，不得把步骤 A 写成“已归档可发布”。
+        self.assertNotIn("步骤 A 已可发布", self.document)
+
+    def test_guide_keeps_a4_open_until_the_external_signoff(self):
+        guide = GUIDE.read_text(encoding="utf-8")
+        self.assertIn("4. [ ] **A4", guide)
+        self.assertIn("待签署", guide)
+        self.assertIn("A4 待外部确认签署", guide)
 
 
 if __name__ == "__main__":

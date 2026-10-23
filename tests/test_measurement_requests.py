@@ -107,6 +107,7 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
             context=SimpleNamespace(run_id="run-contract"),
             run_directory=Path("runs") / "run-contract",
             run_repository=object(),
+            hardware_config_path=Path("runs") / "run-contract" / "inputs" / "hardware_config.json",
         )
         with patch("app.gui_runtime.connect_instruments", return_value=object()), patch(
             "app.gui_runtime.CableLossUseCase", return_value=object()

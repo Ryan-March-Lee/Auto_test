@@ -34,6 +34,7 @@ from domain.run.models import (
     AMPLIFIER_RESULT_PATH,
     CABLE_LOSS_INPUT_PATH,
     DRIVER_MAPPING_INPUT_PATH,
+    HARDWARE_CONFIG_INPUT_PATH,
     STAGE_AMPLIFIER,
     STAGE_CABLE_LOSS,
     STAGE_DRIVER_MAPPING,
@@ -609,6 +610,7 @@ class AmplifierRunStageTests(unittest.TestCase):
             context=SimpleNamespace(run_id=RUN_ID),
             run_directory=layout.run_directory,
             run_repository=self.repository,
+            hardware_config_path=layout.run_directory / HARDWARE_CONFIG_INPUT_PATH,
         )
 
         with patch("app.gui_runtime.connect_instruments") as connect:
@@ -633,6 +635,7 @@ class AmplifierRunStageTests(unittest.TestCase):
             context=SimpleNamespace(run_id=RUN_ID),
             run_directory=layout.run_directory,
             run_repository=self.repository,
+            hardware_config_path=layout.run_directory / HARDWARE_CONFIG_INPUT_PATH,
         )
 
         with patch("app.gui_runtime.connect_instruments") as connect:
@@ -681,6 +684,7 @@ class AmplifierRunStageTests(unittest.TestCase):
             context=SimpleNamespace(run_id=RUN_ID),
             run_directory=layout.run_directory,
             run_repository=self.repository,
+            hardware_config_path=layout.run_directory / HARDWARE_CONFIG_INPUT_PATH,
         )
 
         with patch("app.gui_runtime.connect_instruments") as connect:

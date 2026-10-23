@@ -17,6 +17,7 @@ from application.measurements import (
     AmplifierMeasurementUseCase,
     CableLossUseCase,
 )
+from application.run_service import RunNotResumable
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "config_driver_enabled_no_assignment.json"
@@ -153,6 +154,34 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
                 self.assertIs(measurement.call_args.args[0].measurement_port, port)
                 self.assertFalse(measurement.call_args.args[0].safety_options["owns_measurement_port"])
                 self.assertEqual(port.close_calls, [])
+
+    def test_contract_run_without_hardware_snapshot_is_rejected_before_connecting(self):
+        # 运行契约存在却没有冻结硬件路径：组合层必须明确失败，绝不回退全局配置。
+        prepared = SimpleNamespace(
+            configuration=object(),
+            context=SimpleNamespace(run_id="run-contract"),
+            run_directory=Path("runs") / "run-contract",
+            run_repository=object(),
+            hardware_config_path=None,
+        )
+        with patch("app.gui_runtime.connect_instruments") as connect:
+            with self.assertRaisesRegex(RunNotResumable, "硬件配置快照"):
+                create_cable_loss_measurement("config.json", prepared_run=prepared)
+        connect.assert_not_called()
+
+    def test_legacy_assembly_still_uses_the_caller_config_path(self):
+        # 不带运行契约的旧兼容快照继续使用调用方传入的全局配置路径。
+        prepared = SimpleNamespace(
+            configuration=object(),
+            context=SimpleNamespace(run_id="run-legacy"),
+            run_directory=Path("run-directory"),
+        )
+        port = _Port()
+        with patch("app.gui_runtime.connect_instruments", return_value=port) as connect, patch(
+            "app.gui_runtime.CableLossUseCase", return_value=object()
+        ):
+            create_cable_loss_measurement("config.json", prepared_run=prepared)
+        connect.assert_called_once_with("config.json")
 
     def test_explicit_driver_mapping_path_is_carried_into_request(self):
         port = _Port()

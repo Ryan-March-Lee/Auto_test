@@ -33,7 +33,7 @@ from application.measurements import (
     DriverPowerMappingUseCase,
     validate_amplifier_calibration_inputs,
 )
-from application.run_service import configuration_snapshot
+from application.run_service import RunNotResumable, configuration_snapshot
 from app.events import MessageEvent, ProgressEvent, RealtimeDataEvent
 from application.dto import (
     AmplifierMeasurementRequest,
@@ -197,12 +197,19 @@ def _load_hardware_config(config_path: str) -> dict[str, Any]:
 def _hardware_config_path(prepared_run: PreparedRun, config_path: str) -> str:
     """返回硬件连接与测量应使用的配置路径。
 
-    运行契约运行固定使用运行目录内冻结的 ``inputs/hardware_config.json``；
-    只有旧兼容快照（没有运行目录契约）才回退到调用方传入的路径。
+    运行契约运行固定使用运行目录内冻结的 ``inputs/hardware_config.json``；携带运行
+    契约却没有冻结硬件路径时抛出 :class:`RunNotResumable`，绝不回退到调用方传入的
+    全局可变配置，避免用与本次运行无关的仪器地址连接硬件。只有不带运行契约的旧兼容
+    快照（以及最小替身对象）才使用调用方路径。
     """
     frozen = getattr(prepared_run, "hardware_config_path", None)
     if frozen is not None:
         return str(frozen)
+    if getattr(prepared_run, "run_repository", None) is not None:
+        raise RunNotResumable(
+            "运行契约缺少有效的硬件配置快照，拒绝使用全局配置连接仪器；"
+            "请重新创建或重新加载运行"
+        )
     return config_path
 
 

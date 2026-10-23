@@ -30,6 +30,7 @@ from application.run_stages import RunStageRecorder, StageInputUnavailable
 from domain.run.models import (
     CABLE_LOSS_INPUT_PATH,
     DRIVER_MAPPING_INPUT_PATH,
+    HARDWARE_CONFIG_INPUT_PATH,
     STAGE_CABLE_LOSS,
     STAGE_DRIVER_MAPPING,
     RunStatus,
@@ -472,6 +473,7 @@ class DriverMappingRunStageTests(unittest.TestCase):
             context=SimpleNamespace(run_id=RUN_ID),
             run_directory=layout.run_directory,
             run_repository=self.repository,
+            hardware_config_path=layout.run_directory / HARDWARE_CONFIG_INPUT_PATH,
         )
 
         with patch("app.gui_runtime.connect_instruments") as connect:

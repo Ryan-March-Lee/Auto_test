@@ -14,6 +14,7 @@ from domain.run.models import generate_run_id
 from application.ports.config_repository import ConfigurationLoadResult
 from application.ports.run_repository import RunRepositoryPort
 from application.run_service import (
+    RunNotResumable,
     RunSnapshot,
     create_run_snapshot,
     ensure_run_resumable,
@@ -70,13 +71,23 @@ class PreparedRun:
     def hardware_connection_path(self) -> Path:
         """硬件连接与测量应使用的配置路径。
 
-        运行契约运行固定使用运行目录内冻结的硬件配置；旧兼容快照没有运行目录，
-        才回退到创建时的源配置路径。
+        运行契约运行固定使用运行目录内冻结的硬件配置；如果运行携带运行契约却没有
+        可用的冻结硬件路径（快照缺失或对象不完整），直接抛出
+        :class:`RunNotResumable`，**绝不**回退到全局可变配置，避免用与本次运行无关
+        的仪器地址连接硬件。只有不带运行目录契约的旧兼容快照才回退到创建时的源
+        配置路径。
         """
         if self.hardware_config_path is not None:
             return Path(self.hardware_config_path)
+        if self.has_run_contract:
+            raise RunNotResumable(
+                f"运行 {self.run_id} 缺少有效的硬件配置快照，不能连接仪器；"
+                "请重新创建或重新加载运行"
+            )
         if self.config_path is None:
-            raise ValueError("运行没有可用的硬件配置路径")
+            raise RunNotResumable(
+                "运行没有可用的硬件配置路径，不能连接仪器；请重新创建运行"
+            )
         return Path(self.config_path)
 
 

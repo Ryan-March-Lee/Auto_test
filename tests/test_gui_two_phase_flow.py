@@ -65,6 +65,23 @@ def _fully_valid_gui_config() -> dict:
     }
 
 
+def _broken_contract_run():
+    """运行契约存在但缺少冻结硬件快照的最小替身（模拟快照损坏或缺失）。"""
+    from app.run_context import PreparedRun
+
+    return type(
+        "BrokenContractRun",
+        (),
+        {
+            "run_id": RUN_ID,
+            "has_run_contract": True,
+            "hardware_config_path": None,
+            "config_path": Path("global-config.json"),
+            "hardware_connection_path": PreparedRun.hardware_connection_path,
+        },
+    )()
+
+
 class _CableService:
     def __init__(self):
         self.last_result = {"cable_losses": {"2.4": {"cable1": 1.0}}}
@@ -364,6 +381,20 @@ class MainWindowTwoPhaseTests(unittest.TestCase):
         self.assertIsNone(MainWindow._resolve_measurement_run(window))
         self.assertEqual(window.on_measurement_error.call_count, 2)
 
+    def test_invalid_contract_blocks_measurement_run_resolution(self):
+        from presentation.qt.main_window import MainWindow
+
+        window = MainWindow.__new__(MainWindow)
+        window.prepared_run = _broken_contract_run()
+        window.instrument_ctrl = object()
+        window.on_measurement_error = MagicMock()
+
+        self.assertIsNone(MainWindow._resolve_measurement_run(window))
+        window.on_measurement_error.assert_called_once()
+        self.assertIn(
+            "硬件配置快照", str(window.on_measurement_error.call_args.args[0])
+        )
+
     def test_create_prepared_run_freezes_the_run_contract(self):
         from presentation.qt.main_window import MainWindow
 
@@ -428,6 +459,74 @@ class MainWindowTwoPhaseTests(unittest.TestCase):
         window.prepared_run = None
         self.assertEqual(
             MainWindow._measurement_config_path(window), str(Path("global-config.json"))
+        )
+
+    def test_measurement_config_path_does_not_fallback_for_contract_run(self):
+        from presentation.qt.main_window import MainWindow
+
+        window = MainWindow.__new__(MainWindow)
+        window.config_path = Path("global-config.json")
+        window.prepared_run = _broken_contract_run()
+
+        # 运行契约存在但冻结硬件路径无效：必须明确失败，绝不回退全局配置。
+        with self.assertRaises(RunNotResumable) as raised:
+            MainWindow._measurement_config_path(window)
+
+        self.assertIn("硬件配置快照", str(raised.exception))
+        self.assertNotIn("global-config.json", str(raised.exception))
+        self.assertIsInstance(raised.exception, ValueError)
+
+    def test_invalid_contract_blocks_instrument_connection(self):
+        from presentation.qt.main_window import MainWindow
+
+        window = MainWindow.__new__(MainWindow)
+        window.config_path = Path("global-config.json")
+        window.prepared_run = _broken_contract_run()
+        window.connect_btn = MagicMock()
+        window.instrument_worker = None
+        window.add_log_message = MagicMock()
+        window.update_and_save_config = MagicMock(return_value=True)
+
+        with patch("presentation.qt.main_window.InstrumentWorker") as worker, patch(
+            "presentation.qt.main_window.QMessageBox.warning"
+        ) as warning:
+            MainWindow.connect_instruments(window)
+
+        # 不得构造 InstrumentWorker，也不得留下工作线程引用。
+        worker.assert_not_called()
+        self.assertIsNone(window.instrument_worker)
+        # 用户可以看到明确的失败提示，并重新启用连接按钮。
+        warning.assert_called_once()
+        self.assertIn("硬件配置快照", str(warning.call_args.args[2]))
+        window.connect_btn.setEnabled.assert_called_with(True)
+        self.assertTrue(
+            any(
+                "无法连接仪器" in str(call.args[0])
+                for call in window.add_log_message.call_args_list
+                if call.args
+            )
+        )
+
+    def test_legacy_flow_still_uses_global_config(self):
+        from app.run_context import PreparedRun
+        from presentation.qt.main_window import MainWindow
+
+        window = MainWindow.__new__(MainWindow)
+        window.config_path = Path("global-config.json")
+        window.prepared_run = None
+        self.assertEqual(
+            MainWindow._measurement_config_path(window), str(Path("global-config.json"))
+        )
+
+        # 旧兼容快照不带运行契约，仍使用创建时的源配置路径。
+        window.prepared_run = PreparedRun(
+            configuration=None,
+            context=None,
+            run_directory=Path("legacy-run"),
+            config_path=Path("legacy-config.json"),
+        )
+        self.assertEqual(
+            MainWindow._measurement_config_path(window), str(Path("legacy-config.json"))
         )
 
     def test_load_run_releases_previous_instrument_port(self):

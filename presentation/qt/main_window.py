@@ -32,6 +32,7 @@ from infrastructure.filesystem.paths import (
 # Legacy patch target; normal instances use the injected PathService.
 CONFIG_FILE = DEFAULT_PATHS.config_file
 from application.gui_data_service import GuiDataService
+from application.run_service import RunNotResumable
 from presentation.qt.composition import build_gui_data_service
 from app.gui_runtime import load_prepared_run, prepare_configuration
 from infrastructure.logging.app_logging import setup_logging
@@ -992,29 +993,38 @@ class MainWindow(QMainWindow):
         """返回硬件连接与测量应使用的配置路径。
 
         运行契约运行固定返回运行目录内冻结的 ``inputs/hardware_config.json``，
-        因此测量阶段不会再读取全局可变配置；只有尚未创建运行（旧流程）时才回退
-        到全局兼容配置。
+        因此测量阶段不会再读取全局可变配置；只有尚未创建运行
+        （``prepared_run is None``）的旧兼容流程才回退到全局兼容配置。
+
+        运行契约存在但冻结硬件路径无效时，:meth:`PreparedRun.hardware_connection_path`
+        会抛出 :class:`RunNotResumable`，这里**不再**捕获并回退到全局 ``config.json``：
+        已创建运行必须使用自己的快照，否则会用与该运行无关的仪器地址连接硬件。
         """
         run = getattr(self, "prepared_run", None)
-        if run is not None:
-            try:
-                return str(run.hardware_connection_path())
-            except Exception:  # noqa: BLE001 - 运行缺少可用硬件配置时回退兼容路径
-                pass
-        return str(self.config_path)
+        if run is None:
+            return str(self.config_path)
+        return str(run.hardware_connection_path())
 
     def _resolve_measurement_run(self):
         """返回当前运行契约，供测量页面消费；不可用时给出兼容提示并返回 None。
 
         这是“两阶段”中的第二阶段入口：测量页面只接受这里返回的
         :class:`PreparedRun`，不再在开始前重新保存 GUI 配置，因此已冻结的
-        ``runs/<run_id>/config.json`` 不会被覆盖。
+        ``runs/<run_id>/config.json`` 不会被覆盖。运行契约的冻结硬件路径无效时
+        直接给出明确错误并返回 ``None``，绝不回退到全局配置继续测量。
         """
         if self.prepared_run is None:
             self.on_measurement_error(
                 "尚未创建运行：请先在“仪器配置”页点击“校验并创建运行”"
             )
             return None
+        resolver = getattr(self.prepared_run, "hardware_connection_path", None)
+        if resolver is not None:
+            try:
+                resolver()
+            except RunNotResumable as error:
+                self.on_measurement_error(str(error))
+                return None
         if self.instrument_ctrl is None:
             self.on_measurement_error("请先连接仪器；上一次测量结束后端口已安全释放")
             return None
@@ -1315,8 +1325,18 @@ class MainWindow(QMainWindow):
                 f"使用已冻结的运行配置连接仪器: {self.prepared_run.run_id}"
             )
 
-        # 启动仪器连接工作线程；连接配置由 _measurement_config_path 决定。
-        self.instrument_worker = InstrumentWorker(self._measurement_config_path())
+        # 运行契约存在时硬件配置路径必须先解析成功：解析失败必须明确失败并提示
+        # 重新创建/加载运行，绝不能吞掉异常后回退到全局配置连接仪器。
+        try:
+            config_path = self._measurement_config_path()
+        except RunNotResumable as error:
+            self.add_log_message(f"无法连接仪器: {error}")
+            QMessageBox.warning(self, "仪器连接失败", str(error))
+            self.connect_btn.setEnabled(True)
+            return
+
+        # 启动仪器连接工作线程；连接配置由运行契约（或旧兼容全局配置）决定。
+        self.instrument_worker = InstrumentWorker(config_path)
         self.instrument_worker.signals.finished.connect(self.on_instrument_connected)
         self.instrument_worker.signals.result.connect(self.on_instrument_controller_ready)
         self.instrument_worker.signals.stopped.connect(self.on_instrument_stopped)

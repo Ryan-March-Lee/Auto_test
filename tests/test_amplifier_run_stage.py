@@ -571,7 +571,6 @@ class AmplifierRunStageTests(unittest.TestCase):
         config_path.write_text(json.dumps(_fully_valid_gui_config()), encoding="utf-8")
         prepared = prepare_configuration(
             str(config_path),
-            run_contract=True,
             run_id=RUN_ID,
             run_repository=self.repository,
         )
@@ -649,7 +648,6 @@ class AmplifierRunStageTests(unittest.TestCase):
         config_path.write_text(json.dumps(_fully_valid_gui_config()), encoding="utf-8")
         prepared = prepare_configuration(
             str(config_path),
-            run_contract=True,
             run_id=RUN_ID,
             run_repository=self.repository,
         )

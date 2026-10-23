@@ -1050,7 +1050,6 @@ class MainWindow(QMainWindow):
         try:
             prepared = prepare_configuration(
                 str(self.config_path),
-                run_contract=True,
                 paths=self.paths,
                 hardware_config=self.config,
             )

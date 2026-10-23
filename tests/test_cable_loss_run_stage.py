@@ -323,9 +323,7 @@ class CableLossRunStageTests(unittest.TestCase):
         config_path.write_text(json.dumps(_fully_valid_gui_config()), encoding="utf-8")
         prepared = prepare_configuration(
             str(config_path),
-            operation="cable_loss",
             run_id=RUN_ID,
-            run_contract=True,
             run_repository=self.repository,
         )
 

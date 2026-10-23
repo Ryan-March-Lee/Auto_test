@@ -4,23 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from application.configuration_service import load_for_run
 from application.ports.config_repository import ConfigurationRepository
-from domain.configuration.models import (
-    validate_cable_loss_configuration,
-    validate_driver_mapping_configuration,
-)
-from domain.configuration.rules import ConfigValidationResult
 from infrastructure.logging.app_logging import get_logger
-from infrastructure.persistence.json_result_repository import new_run_id
 from .run_context import (
     PreparedRun,
     create_prepared_run,
     environment_version,
     load_prepared_run,
-    prepare_run,
 )
 from instrument.measurement_factory import create_measurement_port
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
@@ -48,7 +41,6 @@ from application.dto import (
 from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService
 
 
-Operation = Literal["full", "cable_loss", "driver_mapping"]
 logger = get_logger(__name__)
 
 
@@ -105,25 +97,25 @@ def prepare_configuration(
     config_path: str,
     *,
     run_id: str | None = None,
-    operation: Operation = "full",
     repository: ConfigurationRepository | None = None,
     paths: PathService | None = None,
-    run_contract: bool = False,
     run_repository: Any = None,
     hardware_config: Mapping[str, Any] | None = None,
 ) -> PreparedRun:
-    """Perform the GUI preflight and snapshot before an instrument is created.
+    """Create the ``runs/<run_id>/`` run contract before an instrument is created.
 
-    ``run_contract=True`` 是本重构引入的“创建运行”入口：配置必须通过**完整运行
-    校验**，随后冻结为 ``runs/<run_id>/`` 运行目录快照（``config.json`` +
-    ``manifest.json`` + 硬件配置 ``inputs/hardware_config.json``），返回携带运行
-    仓储的 :class:`PreparedRun`。默认 ``run_contract=False`` 时保持旧兼容快照行为。
+    这是唯一的“创建运行”入口：配置必须通过**完整运行校验**，随后冻结为
+    ``runs/<run_id>/`` 运行目录快照（``config.json`` + ``manifest.json`` + 硬件配置
+    ``inputs/hardware_config.json``），返回携带运行仓储的 :class:`PreparedRun`。
+    需要重新打开既有运行时使用 :func:`load_prepared_run`。
+
+    旧的 ``run_contract=False`` 兼容快照分支（只做阶段预检、不创建运行目录）已在重构
+    步骤 A2 删除：没有运行目录就没有 ``PreparedRun``，也就没有可追溯的结果边界，因此
+    这里不再提供“只预检不建运行”的路径。
 
     ``hardware_config`` 省略时会从 ``config_path`` 读取硬件装配所需的原始配置并
     一并冻结，使运行目录自包含，硬件连接不再依赖全局可变配置。
     """
-    if operation not in ("full", "cable_loss", "driver_mapping"):
-        raise ValueError(f"不支持的测量类型: {operation}")
     if repository is None:
         # Compatibility composition for historical callers. New application
         # callers should inject the port implementation at the composition root.
@@ -131,61 +123,16 @@ def prepare_configuration(
 
         repository = JsonConfigurationRepository()
     loaded = load_for_run(repository, config_path)
-    if run_contract:
-        # 运行契约要求完整运行配置；阶段专用校验通过但完整校验失败的配置不会
-        # 产生运行目录，因此这里不套用阶段专用校验。
-        if hardware_config is None:
-            hardware_config = _load_hardware_config(config_path)
-        return create_prepared_run(
-            loaded,
-            run_id=run_id,
-            software_version=environment_version(),
-            config_path=Path(config_path),
-            paths=paths,
-            run_repository=run_repository,
-            hardware_config=hardware_config,
-        )
-    if operation == "cable_loss":
-        # The legacy GUI stores one combined config.json. Convert it as usual,
-        # then apply the smaller contract required by cable-loss measurement.
-        # DUT roles and driver channels belong to other measurements.
-        cable_validation = validate_cable_loss_configuration(loaded.configuration)
-        if loaded.conversion_errors:
-            cable_validation = ConfigValidationResult(
-                errors=cable_validation.errors + loaded.conversion_errors,
-                warnings=cable_validation.warnings,
-            )
-        loaded = type(loaded)(
-            configuration=loaded.configuration,
-            validation=cable_validation,
-            warnings=loaded.warnings,
-            unresolved_fields=loaded.unresolved_fields,
-            source_format=loaded.source_format,
-            conversion_errors=loaded.conversion_errors,
-        )
-    elif operation == "driver_mapping":
-        # 驱动功放可以由外部供电；映射测量不使用 DUT 电源角色，也不要求
-        # 驱动功放必须分配到本机电源。
-        mapping_validation = validate_driver_mapping_configuration(loaded.configuration)
-        if loaded.conversion_errors:
-            mapping_validation = ConfigValidationResult(
-                errors=mapping_validation.errors + loaded.conversion_errors,
-                warnings=mapping_validation.warnings,
-            )
-        loaded = type(loaded)(
-            configuration=loaded.configuration,
-            validation=mapping_validation,
-            warnings=loaded.warnings,
-            unresolved_fields=loaded.unresolved_fields,
-            source_format=loaded.source_format,
-            conversion_errors=loaded.conversion_errors,
-        )
-    return prepare_run(
+    if hardware_config is None:
+        hardware_config = _load_hardware_config(config_path)
+    return create_prepared_run(
         loaded,
-        run_id=run_id or new_run_id(),
+        run_id=run_id,
         software_version=environment_version(),
         config_path=Path(config_path),
         paths=paths,
+        run_repository=run_repository,
+        hardware_config=hardware_config,
     )
 
 

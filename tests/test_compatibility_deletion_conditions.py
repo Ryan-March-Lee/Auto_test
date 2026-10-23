@@ -5,10 +5,9 @@
 
 - 每个待删除接口在生产代码中的调用文件集合必须与该说明一致；新增调用方会失败。
   清单包含仍在使用的正式流程和旧兼容调用，不等同于“零生产引用”。
-- 步骤 A 已删除的旧 GUI 测量入口（worker 的 ``prepare_factory`` 后备）必须保持消失
-  状态，不允许以任何形式回归。
-- 生产代码不得显式请求兼容快照（``run_contract=False``），也不得注入旧
-  ``prepare_factory`` 后备工厂。
+- 步骤 A 已删除的旧 GUI 测量入口（``prepare_configuration`` 的兼容快照开关、
+  worker 的 ``prepare_factory`` 后备）必须保持消失状态，不允许以任何形式回归。
+- 生产代码不得再使用 ``run_contract`` 开关，也不得注入旧 ``prepare_factory`` 后备工厂。
 - 说明必须为每个待删除接口写出删除条件、迁移方式和目标版本。
 
 旧兼容/回滚入口本身（``cable_loss_measurement.py``、``driver_power_mapping.py``、
@@ -212,7 +211,7 @@ class DeprecatedInterfaceCallerTests(unittest.TestCase):
 
 
 class LegacyGuiEntryTests(unittest.TestCase):
-    """旧 GUI 测量入口在生产代码中必须已无实际调用。"""
+    """旧 GUI 测量入口在生产代码中必须已删除且不再回归。"""
 
     def test_production_code_never_requests_the_compatibility_snapshot(self):
         offenders = []
@@ -221,18 +220,37 @@ class LegacyGuiEntryTests(unittest.TestCase):
                 if not isinstance(node, ast.Call):
                     continue
                 for keyword in node.keywords:
-                    if keyword.arg == "run_contract" and ast.unparse(
-                        keyword.value
-                    ) != "True":
+                    if keyword.arg == "run_contract":
                         offenders.append(f"{_relative(path)}:{node.lineno}")
         self.assertEqual(
-            offenders, [], "生产代码不得显式使用 run_contract=False: " + ", ".join(offenders)
+            offenders, [], "生产代码不得再使用 run_contract 开关: " + ", ".join(offenders)
         )
 
-    def test_prepare_configuration_is_only_called_with_a_run_contract(self):
+    def test_prepare_configuration_has_no_compatibility_snapshot_switch(self):
+        """``prepare_configuration`` 只剩“创建运行”语义，参数表中不得有旧开关。"""
+        runtime = ROOT / "app" / "gui_runtime.py"
+        signature = None
+        for node in ast.walk(_tree(runtime)):
+            if isinstance(node, ast.FunctionDef) and node.name == "prepare_configuration":
+                signature = node
+                break
+        self.assertIsNotNone(signature, "缺少 prepare_configuration 定义")
+        parameters = {
+            argument.arg
+            for argument in (
+                list(signature.args.args)
+                + list(signature.args.kwonlyargs)
+            )
+        }
+        self.assertNotIn("run_contract", parameters)
+        self.assertNotIn("operation", parameters)
+
+    def test_prepare_configuration_is_only_called_from_the_gui_entry(self):
         sites = _calls("prepare_configuration")
         self.assertEqual([site[0] for site in sites], ["presentation/qt/main_window.py"])
-        self.assertEqual(sites[0][1].get("run_contract"), "True")
+        self.assertEqual(
+            sites[0][1], {"paths": "self.paths", "hardware_config": "self.config"}
+        )
 
     def test_production_code_never_injects_the_legacy_prepare_factory(self):
         offenders = [

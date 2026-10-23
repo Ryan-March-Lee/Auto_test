@@ -188,7 +188,6 @@ class RunContractReopenTests(unittest.TestCase):
         config_path.write_text(json.dumps(_fully_valid_gui_config()), encoding="utf-8")
         prepared = prepare_configuration(
             str(config_path),
-            run_contract=True,
             run_id=run_id,
             run_repository=self.repository,
         )
@@ -500,7 +499,8 @@ class MainWindowTwoPhaseTests(unittest.TestCase):
         create.assert_called_once()
         args, kwargs = create.call_args
         self.assertEqual(args, (str(window.config_path),))
-        self.assertTrue(kwargs["run_contract"])
+        # 创建运行入口不再接受 run_contract 开关：GUI 只走唯一的运行契约路径。
+        self.assertNotIn("run_contract", kwargs)
         self.assertIsNone(kwargs["paths"])
         self.assertEqual(kwargs["hardware_config"], window.config)
 
@@ -1102,7 +1102,6 @@ class FrozenSnapshotValidationBoundaryTests(unittest.TestCase):
     def _create_run(self, *, hardware_config=None):
         return prepare_configuration(
             str(self.config_path),
-            run_contract=True,
             run_id=RUN_ID,
             run_repository=self.repository,
             hardware_config=hardware_config,

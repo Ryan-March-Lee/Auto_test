@@ -23,6 +23,38 @@ from application.run_service import RunNotResumable
 FIXTURE = Path(__file__).parent / "fixtures" / "config_driver_enabled_no_assignment.json"
 
 
+FULLY_VALID_CONFIG = {
+    "test_frequencies": [2.4],
+    "signal_source": {"start_power": -10.0, "stop_power": 0.0, "step": 1.0},
+    "compression_point": {"type": "5dB"},
+    "driver_mode": {"enabled": False},
+    "attenuator": {"type": "30dB"},
+    "dut_config": {"max_input_power": 30.0, "power_supply_count": 1},
+    "instruments": {
+        "signal_generator": {"address": "sim::sg", "model": "SG", "enabled": True},
+        "spectrum_analyzer": {"address": "sim::sa", "model": "SA", "enabled": True},
+        "power_supplies": {
+            "PS1": {
+                "address": "sim::ps1",
+                "enabled": True,
+                "channels": {
+                    "CH1": {"voltage": {"value": 2.8}, "current": {"value": 0.1}},
+                    "CH2": {"voltage": {"value": 28.0}, "current": {"value": 2.0}},
+                },
+            }
+        },
+    },
+    "power_supply_assignment": {
+        "driver_amplifier": {"power_supply_count": 0, "supplies": {}},
+        "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}},
+        },
+    },
+    "wiring": {"confirmed": True, "connection_note": "现场接线已确认"},
+}
+
+
 class _Port:
     def __init__(self):
         self.close_calls = []
@@ -308,32 +340,14 @@ class GuiRuntimePreparationTests(unittest.TestCase):
         path.write_text(json.dumps(config), encoding="utf-8")
         return directory, path
 
-    def test_cable_loss_preparation_uses_operation_specific_validation(self):
-        directory, path = self._write_config()
-        try:
-            prepared = SimpleNamespace(configuration=object(), context=object(), run_directory=Path("run"))
-            with patch("app.gui_runtime.prepare_run", return_value=prepared) as prepare_run:
-                result = prepare_configuration(str(path), operation="cable_loss")
-            self.assertIs(result, prepared)
-            loaded = prepare_run.call_args.args[0]
-            self.assertTrue(loaded.valid)
-        finally:
-            directory.cleanup()
+    def _write_fully_valid_config(self):
+        directory = tempfile.TemporaryDirectory()
+        path = Path(directory.name) / "config.json"
+        path.write_text(json.dumps(FULLY_VALID_CONFIG), encoding="utf-8")
+        return directory, path
 
-    def test_driver_mapping_preparation_allows_external_driver_power(self):
-        directory, path = self._write_config()
-        try:
-            prepared = SimpleNamespace(configuration=object(), context=object(), run_directory=Path("run"))
-            with patch("app.gui_runtime.prepare_run", return_value=prepared) as prepare_run:
-                result = prepare_configuration(str(path), operation="driver_mapping")
-            self.assertIs(result, prepared)
-            loaded = prepare_run.call_args.args[0]
-            self.assertTrue(loaded.valid)
-        finally:
-            directory.cleanup()
-
-    def test_run_contract_preparation_uses_create_prepared_run(self):
-        directory, path = self._write_config()
+    def test_preparation_creates_a_run_contract_with_frozen_hardware_config(self):
+        directory, path = self._write_fully_valid_config()
         try:
             prepared = SimpleNamespace(
                 configuration=object(),
@@ -342,28 +356,76 @@ class GuiRuntimePreparationTests(unittest.TestCase):
             )
             with patch(
                 "app.gui_runtime.create_prepared_run", return_value=prepared
-            ) as create_prepared, patch("app.gui_runtime.prepare_run") as prepare_run:
-                result = prepare_configuration(str(path), run_contract=True)
+            ) as create_prepared:
+                result = prepare_configuration(str(path), run_id="run-contract")
 
             self.assertIs(result, prepared)
-            create_prepared.assert_called_once()
-            prepare_run.assert_not_called()
+            kwargs = create_prepared.call_args.kwargs
+            loaded = create_prepared.call_args.args[0]
+            self.assertTrue(loaded.valid)
+            self.assertEqual(kwargs["run_id"], "run-contract")
+            self.assertEqual(kwargs["config_path"], path)
+            # 未显式给出硬件配置时，从源配置读取并冻结进运行目录。
+            self.assertEqual(
+                kwargs["hardware_config"],
+                json.loads(path.read_text(encoding="utf-8")),
+            )
         finally:
             directory.cleanup()
 
-    def test_cable_loss_preparation_rejects_missing_wiring_confirmation(self):
+    def test_preparation_requires_the_complete_run_validation(self):
+        """只通过阶段专用校验的配置不再产生兼容快照，必须按完整运行校验拒绝。"""
+        directory, path = self._write_fully_valid_config()
+        try:
+            config = json.loads(path.read_text(encoding="utf-8"))
+            # 去掉 DUT 电源分配：线损阶段专用校验不关心 DUT 角色，因此仍然通过；
+            # 完整运行校验会拒绝，旧兼容快照正是把这种配置当作“预检通过”。
+            config["power_supply_assignment"]["dut_amplifier"] = {
+                "power_supply_count": 0,
+                "supplies": {},
+            }
+            path.write_text(json.dumps(config), encoding="utf-8")
+
+            from application.configuration_service import load_for_run
+            from domain.configuration.models import validate_cable_loss_configuration
+            from infrastructure.config.json_config_repository import (
+                JsonConfigurationRepository,
+            )
+            from infrastructure.persistence.run_repository import RunRepository
+
+            loaded = load_for_run(JsonConfigurationRepository(), str(path))
+            self.assertTrue(
+                validate_cable_loss_configuration(loaded.configuration).valid,
+                "该配置应该仍通过线损阶段专用校验（差异证明点）",
+            )
+            self.assertFalse(loaded.valid, "完整运行校验必须拒绝该配置")
+
+            runs_root = Path(directory.name) / "runs"
+            with self.assertRaisesRegex(ValueError, "运行配置校验失败"):
+                prepare_configuration(
+                    str(path), run_repository=RunRepository(runs_root)
+                )
+            # 校验失败不得留下任何运行目录。
+            self.assertFalse(runs_root.exists() and any(runs_root.iterdir()))
+        finally:
+            directory.cleanup()
+
+    def test_preparation_rejects_missing_wiring_confirmation(self):
         directory, path = self._write_config(confirmed=False)
         try:
             with self.assertRaisesRegex(ValueError, "wiring.confirmed"):
-                prepare_configuration(str(path), operation="cable_loss")
+                prepare_configuration(str(path))
         finally:
             directory.cleanup()
 
-    def test_unknown_operation_is_rejected(self):
+    def test_legacy_preparation_switches_are_removed(self):
+        """旧的 ``run_contract`` / ``operation`` 兼容快照开关必须明确失败。"""
         directory, path = self._write_config()
         try:
-            with self.assertRaisesRegex(ValueError, "不支持的测量类型"):
-                prepare_configuration(str(path), operation="unknown")
+            with self.assertRaises(TypeError):
+                prepare_configuration(str(path), run_contract=True)
+            with self.assertRaises(TypeError):
+                prepare_configuration(str(path), operation="cable_loss")
         finally:
             directory.cleanup()
 
@@ -371,8 +433,10 @@ class GuiRuntimePreparationTests(unittest.TestCase):
         directory, path = self._write_config()
         try:
             repository = MockConfigurationRepository()
-            prepared = SimpleNamespace(configuration=object(), context=object(), run_directory=Path("run"))
-            with patch("app.gui_runtime.prepare_run", return_value=prepared):
+            prepared = SimpleNamespace(
+                configuration=object(), context=object(), run_directory=Path("run")
+            )
+            with patch("app.gui_runtime.create_prepared_run", return_value=prepared):
                 result = prepare_configuration(str(path), repository=repository)
             self.assertIs(result, prepared)
             self.assertEqual(repository.loaded_paths, [(str(path), None)])

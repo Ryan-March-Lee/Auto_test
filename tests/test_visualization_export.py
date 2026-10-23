@@ -2,9 +2,10 @@ import os
 import json
 import tempfile
 import unittest
+import warnings
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -115,6 +116,29 @@ class VisualizationExportTests(unittest.TestCase):
 
 
 class ReportAdapterContractTests(unittest.TestCase):
+    def test_latest_legacy_result_is_a_non_deprecated_browsing_api(self):
+        import infrastructure.gui_data_service as gui_data
+        from application.ports.gui_data_service import LoadedResultDto
+        from infrastructure.filesystem.paths import PathService
+
+        with tempfile.TemporaryDirectory() as directory:
+            paths = PathService(Path(directory))
+            result_path = paths.test_results_dir / "cable_loss_results.json"
+            result_path.parent.mkdir(parents=True)
+            result_path.write_text('{"value": 1}', encoding="utf-8")
+            repository = Mock()
+            repository.latest_compatibility_path.return_value = result_path
+            repository.load.return_value = {"value": 1}
+            adapter = gui_data.ResultQueryAdapter(paths, repository)
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", DeprecationWarning)
+                loaded = adapter.latest_legacy_result("cable_loss")
+
+        self.assertIsInstance(loaded, LoadedResultDto)
+        self.assertEqual(loaded.data, {"value": 1})
+        repository.latest_compatibility_path.assert_called_once_with("cable_loss")
+
     def test_report_adapter_normalizes_input_and_forwards_model(self):
         import infrastructure.gui_data_service as gui_data
         from domain.models import MeasurementResult

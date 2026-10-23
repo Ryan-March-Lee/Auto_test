@@ -26,6 +26,8 @@ python launcher.py --validate-config
 
 `--check` 检查 Python 环境和 GUI 依赖；`--validate-config` 只读校验 `config.json`，不会连接仪器或改变仪器状态。两个参数不能同时使用。
 
+`--validate-config` 校验的是旧配置编辑/迁移入口，不代表已创建运行。新测量应先校验并创建运行快照，随后使用同一个 `run_id` 恢复或执行各阶段；禁止将全局 `config.json` 或“最新结果”作为运行阶段的隐式输入。旧结果只可查看/导出，迁移校准输入时须人工核验来源并登记到目标运行的 manifest。旧 latest 查询仍处于弃用兼容期，只服务历史浏览或旧调用，并会发出告警。
+
 ## 运行环境
 
 项目必须使用 `Auto_test` 环境，不要使用 Anaconda `base` 环境。若未激活环境，可将项目根目录 `.env` 中的 `AUTO_TEST_PYTHON` 配置为该环境的 `python.exe`，然后在 PyCharm 的解释器设置中选择同一个解释器。

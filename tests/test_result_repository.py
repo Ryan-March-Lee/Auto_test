@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 from unittest.mock import patch
 
@@ -188,13 +189,33 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
             second.write_text("{}", encoding="utf-8")
             model = root / "driver_power_mapping_model.json"
             model.write_text("{}", encoding="utf-8")
-            self.assertEqual(repository.latest_path("driver_power_mapping"), second)
+            with self.assertWarns(DeprecationWarning):
+                self.assertEqual(repository.latest_path("driver_power_mapping"), second)
 
     def test_latest_path_reports_missing_timestamped_result(self):
         with tempfile.TemporaryDirectory() as directory:
             repository = FileMeasurementResultRepository(results_directory=directory)
-            with self.assertRaises(FileNotFoundError):
-                repository.latest_path("driver_power_mapping")
+            with self.assertWarns(DeprecationWarning):
+                with self.assertRaises(FileNotFoundError):
+                    repository.latest_path("driver_power_mapping")
+
+    def test_latest_compatibility_path_is_available_for_legacy_browsing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = FileMeasurementResultRepository(results_directory=root)
+            result = root / "driver_power_mapping_20261001_110000.json"
+            result.write_text("{}", encoding="utf-8")
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", DeprecationWarning)
+                self.assertEqual(repository.latest_compatibility_path("driver_power_mapping"), result)
+
+    def test_result_input_port_marks_latest_path_as_compatibility_only(self):
+        from application.ports.result_repository import MeasurementResultRepository
+
+        doc = MeasurementResultRepository.latest_path.__doc__
+        self.assertIn("Deprecated", doc)
+        self.assertIn("current run manifest", doc)
 
 
 if __name__ == "__main__":

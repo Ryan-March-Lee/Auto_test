@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import time
+import warnings
 from datetime import datetime
 from typing import Dict, Optional
 
@@ -36,6 +37,15 @@ class AmplifierMeasurement:
                  run_id: Optional[str] = None,
                  sleep_fn=None, measurement_port=None, paths: PathService | None = None):
         """初始化主功放测量适配器；测量实现全部委托给正式服务。"""
+        warnings.warn(
+            "app.legacy_amplifier_measurement.AmplifierMeasurement 已弃用；"
+            "请通过运行目录和 app.gui_runtime 创建正式测量请求",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        logger.warning(
+            "使用已弃用的主功放兼容入口；请迁移到运行目录契约和正式测量服务"
+        )
         self.paths = paths or DEFAULT_PATHS
         config_path = resolve_path(config_path, self.paths.config_file)
         loss_data_path = resolve_path(loss_data_path, self.paths.cable_loss_file)
@@ -60,11 +70,10 @@ class AmplifierMeasurement:
 
         if self.config['driver_mode']['enabled']:
             if driver_mapping_path is None:
-                driver_files = sorted(self.paths.test_results_dir.glob('driver_power_mapping_*.json'), key=lambda p: p.stat().st_mtime)
-                if not driver_files:
-                    raise FileNotFoundError("驱动模式已开启，但未找到任何 'driver_power_mapping_*.json' 文件!")
-                driver_mapping_path = str(driver_files[-1])
-                print(f"自动加载最新的驱动映射文件: {driver_mapping_path}")
+                raise ValueError(
+                    "驱动模式已开启，兼容入口必须显式传入 driver_mapping_path；"
+                    "不会再自动加载全局目录中的最新映射结果"
+                )
 
             self.driver_mapping = load_json_result(driver_mapping_path)['power_mapping']
         else:

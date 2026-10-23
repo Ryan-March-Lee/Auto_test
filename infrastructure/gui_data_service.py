@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping
@@ -84,9 +85,23 @@ class ResultQueryAdapter:
             raise FileNotFoundError(path.name)
         return LoadedResultDto(path.name, path.name, self.repository.load(path))
 
-    def latest(self, result_type: str) -> LoadedResultDto:
-        path = self.repository.latest_path(result_type)
+    def latest_legacy_result(self, result_type: str) -> LoadedResultDto:
+        """Load the newest global compatibility result for legacy browsing only."""
+        return self._load_latest_legacy_result(result_type)
+
+    def _load_latest_legacy_result(self, result_type: str) -> LoadedResultDto:
+        path = self.repository.latest_compatibility_path(result_type)
         return self.load(path.name)
+
+    def latest(self, result_type: str) -> LoadedResultDto:
+        """Deprecated alias for browsing the newest global compatibility result."""
+        warnings.warn(
+            "ResultQueryAdapter.latest() 已弃用；历史浏览请使用 latest_legacy_result()，"
+            "运行输入请读取当前 run_id manifest",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._load_latest_legacy_result(result_type)
 
 
 class ResultExportAdapter:

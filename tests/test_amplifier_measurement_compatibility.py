@@ -116,7 +116,7 @@ class AmplifierLegacyConstructorCompatibilityTests(unittest.TestCase):
     def test_constructor_keeps_injected_sleep_function(self):
         injected_sleep = lambda _: None
         config_patch, loss_patch, snapshot_patch = self._loader_patches()
-        with config_patch, loss_patch, snapshot_patch:
+        with config_patch, loss_patch, snapshot_patch, self.assertWarns(DeprecationWarning):
             measurement = AmplifierMeasurement(
                 sleep_fn=injected_sleep, measurement_port=object()
             )
@@ -147,7 +147,7 @@ class AmplifierLegacyConstructorCompatibilityTests(unittest.TestCase):
 
     def test_measure_all_frequencies_forwards_to_service_and_saves(self):
         config_patch, loss_patch, snapshot_patch = self._loader_patches()
-        with config_patch, loss_patch, snapshot_patch, patch(
+        with config_patch, loss_patch, snapshot_patch, self.assertWarns(DeprecationWarning), patch(
             f"{IMPLEMENTATION}.AmplifierMeasurementService"
         ) as service_cls:
             service_cls.return_value.run.return_value = {"results": {"1.0": {"gain": 20.0}}}
@@ -162,7 +162,7 @@ class AmplifierLegacyConstructorCompatibilityTests(unittest.TestCase):
 
     def test_save_results_uses_result_repository(self):
         config_patch, loss_patch, snapshot_patch = self._loader_patches()
-        with config_patch, loss_patch, snapshot_patch, patch(
+        with config_patch, loss_patch, snapshot_patch, self.assertWarns(DeprecationWarning), patch(
             f"{IMPLEMENTATION}.FileMeasurementResultRepository"
         ) as repository_cls:
             saved = Mock()

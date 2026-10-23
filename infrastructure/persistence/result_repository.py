@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import warnings
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -108,6 +109,16 @@ class FileMeasurementResultRepository(MeasurementResultRepository):
         return self._results_directory() / f"{prefix}_{time.strftime('%Y%m%d_%H%M%S')}.json"
 
     def latest_path(self, result_type: str) -> Path:
+        warnings.warn(
+            "FileMeasurementResultRepository.latest_path() 已弃用；"
+            "新流程必须从当前 run_id 的 manifest 读取明确结果",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.latest_compatibility_path(result_type)
+
+    def latest_compatibility_path(self, result_type: str) -> Path:
+        """Return a global newest result for read-only legacy browsing."""
         prefix = self._TIMESTAMPED_PREFIXES.get(result_type)
         if prefix is None:
             return self.legacy_path(result_type)

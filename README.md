@@ -160,6 +160,14 @@ pa_auto_test/
 
 ## 使用流程
 
+### 运行目录与旧数据迁移
+
+新测量应从配置校验和运行创建流程开始，并在后续阶段始终使用同一个 `run_id`。运行配置冻结在 `runs/<run_id>/config.json`，硬件装配配置位于 `inputs/hardware_config.json`，线损和驱动映射等阶段输入由当前运行目录持有，结果位置以 `manifest.json` 登记为准。不得以全局 `config.json`、固定兼容结果文件或目录中修改时间最新的结果替代当前运行输入。
+
+根目录/旧配置 `config.json` 仅是配置编辑和迁移入口。旧版组合配置可通过 `JsonConfigurationRepository.load_legacy_data()` 转换；必须检查转换告警及 `unresolved_fields`，人工确认后再创建新运行。历史全局结果（如 `test_results/cable_loss_results.json` 和带时间戳的映射/功放 JSON）只用于旧结果查看、导出或显式指定的兼容调用，不会自动导入新运行。需要迁移校准数据时，应核验来源和 `run_id`，将所需文件复制到目标运行 `inputs/` 并登记 manifest；无法确认归属的数据不得作为新运行输入。
+
+旧结果仓储的 `latest_path()`、GUI `latest()` 查询及历史主功放入口均已弃用，并会发出弃用告警。弃用期仍保留旧读取能力，但这些接口只能用于兼容或历史浏览，不能作为新运行阶段输入。驱动模式的历史主功放入口要求显式传入 `driver_mapping_path`；旧输入读取器的无路径调用仅暂时保留并告警，不会被新运行流程使用。新流程必须从当前运行 manifest 读取阶段输入。
+
 ### 1. 系统配置
 1. 打开"仪器配置"选项卡
 2. 填入所有仪器的VISA地址

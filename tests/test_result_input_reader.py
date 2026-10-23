@@ -1,11 +1,10 @@
-import tempfile
 import unittest
+import warnings
 from pathlib import Path
 from unittest.mock import Mock
 
 from application.inputs import ResultInputReader
 from application.ports.result_input_reader import ResultInputReader as ResultInputReaderPort
-from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 
 
 class ResultInputReaderTests(unittest.TestCase):
@@ -36,13 +35,27 @@ class ResultInputReaderTests(unittest.TestCase):
         repository.load.assert_called_once_with((Path("provided/mapping.json")).resolve())
         repository.latest_path.assert_not_called()
 
-    def test_missing_driver_mapping_keeps_repository_error(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repository = FileMeasurementResultRepository(results_directory=Path(directory))
-            reader = ResultInputReader(repository)
+    def test_implicit_driver_mapping_lookup_is_deprecated_compatibility(self):
+        repository = Mock()
+        repository.latest_path.return_value = Path("results/driver_power_mapping_old.json")
+        reader = ResultInputReader(repository)
 
-            with self.assertRaisesRegex(FileNotFoundError, "driver_power_mapping"):
-                reader.read_driver_mapping()
+        with self.assertWarnsRegex(DeprecationWarning, "兼容读取已弃用"):
+            result = reader.driver_mapping_path()
+
+        self.assertEqual(result, Path("results/driver_power_mapping_old.json"))
+        repository.latest_path.assert_called_once_with("driver_power_mapping")
+
+    def test_explicit_driver_mapping_path_does_not_warn_or_scan_latest(self):
+        repository = Mock()
+        reader = ResultInputReader(repository)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            result = reader.driver_mapping_path("provided/mapping.json")
+
+        self.assertEqual(result, Path("provided/mapping.json").resolve())
+        repository.latest_path.assert_not_called()
 
     def test_driver_mapping_requires_power_mapping_field(self):
         repository = Mock()

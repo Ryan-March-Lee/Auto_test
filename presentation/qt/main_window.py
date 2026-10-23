@@ -331,7 +331,7 @@ class MainWindow(QMainWindow):
             reference = MeasurementResultReference(
                 result_id=f"loaded-{datetime.now(timezone.utc).isoformat()}",
                 kind=MeasurementKind.CABLE_LOSS,
-                value=self.gui_data_service.results.latest("cable_loss").data,
+                value=self.gui_data_service.results.latest_legacy_result("cable_loss").data,
                 source="result_service",
             )
             self.cable_loss_page.show_loaded_result(reference)

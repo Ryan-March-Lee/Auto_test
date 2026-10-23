@@ -22,8 +22,79 @@ EXIT_CONFIG_FILE_ERROR = 3
 EXIT_ENVIRONMENT_ERROR = 4
 EXIT_DEPENDENCY_ERROR = 5
 EXIT_GUI_ERROR = 6
+EXIT_RUN_NOT_FOUND = 7
+EXIT_RUN_NOT_RESUMABLE = 8
+EXIT_RUN_INTEGRITY_ERROR = 9
+EXIT_RUN_INVALID = 10
 EXIT_INTERRUPTED = 130
 EXPECTED_CONDA_ENV = "Auto_test"
+
+
+def inspect_run(run_id: str, *, resume: bool = False, verify: bool = False, runs_root=None) -> int:
+    """离线读取或校验运行状态；不修改运行目录、不启动测量。"""
+    from application.run_service import inspect_run as inspect_run_service
+    from infrastructure.persistence.run_repository import RunRepository
+
+    repository = RunRepository(root=runs_root) if runs_root is not None else RunRepository()
+    try:
+        result = inspect_run_service(repository, run_id, verify_files=verify)
+    except FileNotFoundError as error:
+        print(f"运行不存在: {error}", file=sys.stderr)
+        return EXIT_RUN_NOT_FOUND
+    except ValueError as error:
+        print(f"运行无效: {error}", file=sys.stderr)
+        return EXIT_RUN_INVALID
+
+    manifest = result.manifest
+    if resume and not result.resumable:
+        print(f"运行 {run_id} 不可恢复: {result.reason}", file=sys.stderr)
+        return (
+            EXIT_RUN_INTEGRITY_ERROR
+            if result.failure_kind == "integrity"
+            else EXIT_RUN_NOT_RESUMABLE
+        )
+    print(f"运行: {manifest.run_id}")
+    print(f"状态: {manifest.status.value}")
+    print(f"创建时间: {manifest.created_at}")
+    if manifest.updated_at:
+        print(f"更新时间: {manifest.updated_at}")
+    if manifest.error:
+        print(f"运行错误: {manifest.error}")
+    for name, stage in manifest.stages.items():
+        print(f"阶段 {name}: {stage.status.value}")
+        if stage.error:
+            print(f"  错误: {stage.error}")
+        if stage.result:
+            print(f"  结果: {stage.result}")
+    if result.files:
+        print("文件校验:")
+        for check in result.files:
+            suffix = "通过" if check.valid else f"失败: {check.error}"
+            print(f"  {check.path}: {suffix}")
+    if resume:
+        print(f"运行 {run_id} 离线恢复检查通过；尚未启动测量。")
+    elif verify and not result.resumable:
+        print(f"完整性/可恢复性检查失败: {result.reason}", file=sys.stderr)
+        return (
+            EXIT_RUN_NOT_RESUMABLE
+            if result.failure_kind == "not_resumable"
+            else EXIT_RUN_INTEGRITY_ERROR
+        )
+    return EXIT_SUCCESS
+
+
+def list_runs(*, runs_root=None) -> int:
+    """离线列出运行及其状态。"""
+    from infrastructure.persistence.run_repository import RunRepository
+
+    repository = RunRepository(root=runs_root) if runs_root is not None else RunRepository()
+    for run_id in repository.list_run_ids(include_invalid=True):
+        try:
+            manifest = repository.load_manifest(run_id)
+            print(f"{run_id}\t{manifest.status.value}")
+        except Exception as error:
+            print(f"{run_id}\t无效: {error}")
+    return EXIT_SUCCESS
 
 
 def print_header() -> None:
@@ -194,6 +265,11 @@ def show_help() -> None:
     python launcher.py                       启动 GUI
     python launcher.py --check               检查 Python 和依赖包
     python launcher.py --validate-config     只读校验 config.json，不连接仪器
+    python launcher.py --list-runs            列出运行目录及状态
+    python launcher.py --run-id RUN_ID        离线查看运行 manifest 和结果文件
+    python launcher.py --verify-run RUN_ID    校验运行文件与配置快照
+    python launcher.py --resume-run RUN_ID    离线执行恢复前置检查，不启动测量
+    上述运行命令可附加 --runs-root PATH 指定离线运行根目录
     python release_manifest.py                生成可回滚发布清单和运行标识
     python launcher.py --help                显示本帮助
 
@@ -214,6 +290,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
     command_group = parser.add_mutually_exclusive_group()
     command_group.add_argument("--check", "-c", action="store_true", help="检查 Python 和 GUI 依赖")
     command_group.add_argument("--validate-config", action="store_true", help="只读校验配置，不连接仪器")
+    command_group.add_argument("--run-id", metavar="RUN_ID", help="离线查看指定运行的 manifest、阶段和结果")
+    command_group.add_argument("--resume-run", metavar="RUN_ID", help="按 run_id 执行离线恢复前置检查，不启动测量")
+    command_group.add_argument("--verify-run", metavar="RUN_ID", help="校验运行文件与配置快照")
+    command_group.add_argument("--list-runs", action="store_true", help="列出运行及状态")
+    parser.add_argument("--runs-root", metavar="PATH", help="指定 runs 目录（离线归档或迁移目录）")
     parser.add_argument("--silent", action="store_true", help="隐藏常规启动输出")
     parser.add_argument("--gui", action="store_true", help="兼容旧版静默 GUI 参数")
     return parser
@@ -242,6 +323,14 @@ def main(argv: object = None) -> int:
         if parsed.validate_config:
             # 只读校验命令：保持无文件副作用，不初始化日志。
             return validate_default_config()
+        if parsed.run_id:
+            return inspect_run(parsed.run_id, runs_root=parsed.runs_root)
+        if parsed.resume_run:
+            return inspect_run(parsed.resume_run, resume=True, runs_root=parsed.runs_root)
+        if parsed.verify_run:
+            return inspect_run(parsed.verify_run, verify=True, runs_root=parsed.runs_root)
+        if parsed.list_runs:
+            return list_runs(runs_root=parsed.runs_root)
         if not silent_mode:
             print_header()
         if not check_environment(silent_mode):

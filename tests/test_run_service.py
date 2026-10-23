@@ -15,6 +15,7 @@ from application.run_service import (
     find_run_hardware_config,
     load_hardware_config,
     load_run_configuration,
+    inspect_run,
 )
 from domain.configuration.models import (
     ChannelMapping,
@@ -549,6 +550,38 @@ class RunSnapshotIsolationTests(unittest.TestCase):
             hardware_config=self._hardware_config(start_power=start_power, address=address),
             now=CREATED_AT,
         )
+
+    def test_offline_inspection_accepts_created_run(self):
+        self._create(RUN_ID, start_power=-10.0, address="sim::sg-a")
+        before = (self.repository.root / RUN_ID / "manifest.json").read_bytes()
+        result = inspect_run(self.repository, RUN_ID)
+        self.assertTrue(result.resumable, result.reason)
+        self.assertEqual(result.manifest.status, RunStatus.CREATED)
+        self.assertEqual((self.repository.root / RUN_ID / "manifest.json").read_bytes(), before)
+
+    def test_offline_inspection_rejects_running_run_without_mutation(self):
+        self._create(RUN_ID, start_power=-10.0, address="sim::sg-a")
+        manifest = self.repository.load_manifest(RUN_ID).with_status(RunStatus.RUNNING)
+        self.repository.update_manifest(RUN_ID, manifest)
+        before = (self.repository.root / RUN_ID / "manifest.json").read_bytes()
+        result = inspect_run(self.repository, RUN_ID)
+        self.assertFalse(result.resumable)
+        self.assertIn("running", result.reason)
+        self.assertEqual((self.repository.root / RUN_ID / "manifest.json").read_bytes(), before)
+
+    def test_offline_inspection_reports_tampered_hardware_snapshot(self):
+        snapshot = self._create(RUN_ID, start_power=-10.0, address="sim::sg-a")
+        snapshot.hardware_config_path.write_text("{}", encoding="utf-8")
+        result = inspect_run(self.repository, RUN_ID, verify_files=True)
+        self.assertFalse(result.resumable)
+        self.assertTrue(any(not item.valid for item in result.files))
+
+    def test_offline_inspection_reports_tampered_domain_snapshot(self):
+        snapshot = self._create(RUN_ID, start_power=-10.0, address="sim::sg-a")
+        snapshot.config_path.write_text("{}", encoding="utf-8")
+        result = inspect_run(self.repository, RUN_ID)
+        self.assertFalse(result.resumable)
+        self.assertTrue(any(item.path == "config.json" and not item.valid for item in result.files))
 
     def test_two_contract_runs_keep_independent_snapshots(self):
         first = self._create(RUN_ID, start_power=-10.0, address="sim::sg-a")

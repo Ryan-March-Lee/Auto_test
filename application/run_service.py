@@ -30,8 +30,13 @@ from domain.configuration.models import (
 from domain.configuration.types import ConfigValidationResult
 from domain.run.models import (
     HARDWARE_CONFIG_INPUT_PATH,
+    STAGE_CABLE_LOSS,
+    STAGE_DRIVER_MAPPING,
+    FileReference,
+    StageStatus,
     TERMINAL_RUN_STATUSES,
     RunManifest,
+    RunStatus,
     utc_now_iso,
 )
 
@@ -49,6 +54,102 @@ class RunNotResumable(ValueError):
 
     调用方应据此提示用户创建新运行，而不是回退到全局配置或其它运行目录。
     """
+
+
+class RunIntegrityError(RunNotResumable):
+    """运行目录文件缺失、被替换或未通过快照校验。"""
+
+
+@dataclass(frozen=True)
+class FileCheck:
+    """一个 manifest 文件引用的离线校验结果。"""
+
+    path: str
+    valid: bool
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class RunInspection:
+    """运行目录的只读诊断结果。"""
+
+    manifest: RunManifest
+    files: tuple[FileCheck, ...]
+    resumable: bool
+    reason: str | None = None
+    failure_kind: str | None = None
+
+
+def inspect_run(
+    run_repository: RunRepositoryPort,
+    run_id: str,
+    *,
+    verify_files: bool = False,
+) -> RunInspection:
+    """只读检查运行状态、配置和可恢复性，不修改 manifest 或连接硬件。"""
+    manifest = run_repository.load_manifest(run_id)
+    checks: list[FileCheck] = []
+    references: list[FileReference] = []
+    if manifest.config is not None:
+        references.append(manifest.config)
+    references.extend(manifest.inputs)
+    if verify_files:
+        references.extend(manifest.outputs)
+    for reference in references:
+        try:
+            run_repository.verify_file(run_id, reference)
+        except (OSError, ValueError) as error:
+            checks.append(FileCheck(reference.path, False, str(error)))
+        else:
+            checks.append(FileCheck(reference.path, True))
+
+    if any(not item.valid for item in checks):
+        return RunInspection(
+            manifest, tuple(checks), False, "运行目录存在文件完整性错误", "integrity"
+        )
+
+    if manifest.status is RunStatus.RUNNING:
+        return RunInspection(
+            manifest, tuple(checks), False,
+            "运行仍处于 running，必须确认原进程已退出后再显式处理",
+            "not_resumable",
+        )
+    if manifest.status in TERMINAL_RUN_STATUSES:
+        return RunInspection(
+            manifest, tuple(checks), False,
+            f"运行已处于终态 {manifest.status.value}，请创建新运行",
+            "not_resumable",
+        )
+    try:
+        loaded = load_run_configuration(run_repository, run_id)
+        if not loaded.valid:
+            raise RunIntegrityError(
+                "运行配置快照校验失败: " + _validation_details(loaded.validation)
+            )
+        load_hardware_config(run_repository, run_id)
+        _require_completed_stage_inputs(run_repository, manifest)
+    except OSError as error:
+        return RunInspection(manifest, tuple(checks), False, str(error), "integrity")
+    except ValueError as error:
+        return RunInspection(manifest, tuple(checks), False, str(error), "integrity")
+    return RunInspection(manifest, tuple(checks), True)
+
+
+def _require_completed_stage_inputs(
+    run_repository: RunRepositoryPort, manifest: RunManifest
+) -> None:
+    """只校验已完成阶段的结果输入，避免无关输出阻断前置恢复检查。"""
+    for name in (STAGE_CABLE_LOSS, STAGE_DRIVER_MAPPING):
+        record = manifest.stage(name)
+        if record.status is not StageStatus.COMPLETED or record.result is None:
+            continue
+        reference = next((item for item in manifest.inputs if item.path == record.result), None)
+        if reference is None:
+            raise RunIntegrityError(f"阶段 {name} 的结果未登记: {record.result}")
+        try:
+            run_repository.verify_file(manifest.run_id, reference)
+        except (OSError, ValueError) as error:
+            raise RunIntegrityError(f"阶段 {name} 的输入校验失败: {error}") from error
 
 
 @dataclass(frozen=True)
@@ -363,12 +464,16 @@ __all__ = [
     "RUN_CONFIG_SNAPSHOT_SCHEMA_VERSION",
     "REQUIRED_RUN_REPOSITORY_METHODS",
     "RunNotResumable",
+    "RunIntegrityError",
+    "RunInspection",
+    "FileCheck",
     "RunSnapshot",
     "configuration_snapshot",
     "create_run_snapshot",
     "ensure_run_repository_supports_run_contract",
     "ensure_run_resumable",
     "find_run_hardware_config",
+    "inspect_run",
     "load_hardware_config",
     "load_run_configuration",
 ]

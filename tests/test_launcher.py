@@ -9,6 +9,87 @@ import launcher
 
 
 class LauncherTests(unittest.TestCase):
+    def test_run_inspection_prints_failure_stage_and_error(self):
+        from domain.run.models import RunManifest, RunStatus, StageRecord, StageStatus
+
+        manifest = RunManifest(
+            run_id="20261022T153000Z_a1b2c3d4",
+            created_at="2026-10-22T15:30:00Z",
+            status=RunStatus.FAILED,
+            stages={
+                "cable_loss": StageRecord("cable_loss", StageStatus.FAILED, error="仪器超时"),
+                "driver_mapping": StageRecord("driver_mapping"),
+                "amplifier": StageRecord("amplifier"),
+            },
+        )
+        output = io.StringIO()
+        with patch("infrastructure.persistence.run_repository.RunRepository") as repository_type:
+            repository_type.return_value.load_manifest.return_value = manifest
+            with redirect_stdout(output):
+                self.assertEqual(launcher.inspect_run(manifest.run_id), launcher.EXIT_SUCCESS)
+        self.assertIn("状态: failed", output.getvalue())
+        self.assertIn("阶段 cable_loss: failed", output.getvalue())
+        self.assertIn("错误: 仪器超时", output.getvalue())
+
+    def test_resume_run_does_not_allow_completed_run(self):
+        from domain.run.models import RunManifest, RunStatus, StageRecord
+
+        manifest = RunManifest(
+            run_id="20261022T153000Z_a1b2c3d4",
+            created_at="2026-10-22T15:30:00Z",
+            status=RunStatus.COMPLETED,
+            stages={name: StageRecord(name) for name in ("cable_loss", "driver_mapping", "amplifier")},
+        )
+        error = io.StringIO()
+        with patch("infrastructure.persistence.run_repository.RunRepository") as repository_type:
+            repository_type.return_value.load_manifest.return_value = manifest
+            with redirect_stderr(error):
+                self.assertEqual(
+                    launcher.inspect_run(manifest.run_id, resume=True), launcher.EXIT_RUN_NOT_RESUMABLE
+                )
+        self.assertIn("已处于终态 completed", error.getvalue())
+        repository_type.return_value.verify_file.assert_not_called()
+
+    def test_resume_run_rejects_running_manifest(self):
+        from domain.run.models import RunManifest, RunStatus, StageRecord
+
+        manifest = RunManifest(
+            run_id="20261022T153000Z_a1b2c3d4",
+            created_at="2026-10-22T15:30:00Z",
+            status=RunStatus.RUNNING,
+            stages={name: StageRecord(name) for name in ("cable_loss", "driver_mapping", "amplifier")},
+        )
+        error = io.StringIO()
+        with patch("infrastructure.persistence.run_repository.RunRepository") as repository_type:
+            repository_type.return_value.load_manifest.return_value = manifest
+            with redirect_stderr(error):
+                code = launcher.inspect_run(manifest.run_id, resume=True)
+        self.assertEqual(code, launcher.EXIT_RUN_NOT_RESUMABLE)
+        self.assertIn("仍处于 running", error.getvalue())
+        repository_type.return_value.update_manifest.assert_not_called()
+
+    def test_inspection_can_use_external_runs_root(self):
+        from domain.run.models import RunManifest, RunStatus, StageRecord
+
+        manifest = RunManifest(
+            run_id="20261022T153000Z_a1b2c3d4",
+            created_at="2026-10-22T15:30:00Z",
+            status=RunStatus.CREATED,
+            stages={name: StageRecord(name) for name in ("cable_loss", "driver_mapping", "amplifier")},
+        )
+        with patch("infrastructure.persistence.run_repository.RunRepository") as repository_type:
+            repository_type.return_value.load_manifest.return_value = manifest
+            with redirect_stdout(io.StringIO()):
+                launcher.inspect_run(manifest.run_id, runs_root="archive/runs")
+        repository_type.assert_called_once_with(root="archive/runs")
+
+    def test_cli_dispatches_verify_run_and_runs_root(self):
+        with patch.object(launcher, "inspect_run", return_value=launcher.EXIT_SUCCESS) as inspect:
+            with redirect_stdout(io.StringIO()):
+                code = launcher.main(["--verify-run", "run-a", "--runs-root", "archive/runs"])
+        self.assertEqual(code, launcher.EXIT_SUCCESS)
+        inspect.assert_called_once_with("run-a", verify=True, runs_root="archive/runs")
+
     def test_help_returns_success(self):
         with redirect_stdout(io.StringIO()):
             self.assertEqual(launcher.main(["--help"]), launcher.EXIT_SUCCESS)

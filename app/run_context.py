@@ -17,8 +17,10 @@ from application.run_service import (
     RunNotResumable,
     RunSnapshot,
     create_run_snapshot,
+    ensure_run_repository_supports_run_contract,
     ensure_run_resumable,
     find_run_hardware_config,
+    load_hardware_config,
     load_run_configuration,
 )
 from infrastructure.filesystem.paths import PathService
@@ -96,10 +98,10 @@ class PreparedRun:
     def _verified_hardware_snapshot(self, frozen: Path) -> Path:
         """确认契约运行的冻结硬件快照仍可用，返回可用的快照路径。
 
-        先做文件级检查（存在、是普通文件），再在仓储具备 manifest 能力时确认登记项
-        的 SHA-256/大小未被篡改；任一失败都转成 :class:`RunNotResumable`，让调用方
-        明确失败而不是换成其它配置。仓储不具备该能力（最小替身对象）时只做文件级
-        检查，避免把测试替身或旧装配误判为契约损坏。
+        先做文件级检查（存在、是普通文件），再要求运行契约仓储具备 manifest 校验
+        能力，并以 manifest 登记项为准确认 SHA-256/大小未被篡改。任一失败都转成
+        :class:`RunNotResumable`，让调用方明确失败而不是换成其它配置；仓储不完整
+        同样明确失败，绝不因为缺少校验方法而放行未校验的快照。
         """
         try:
             usable = frozen.is_file()
@@ -113,8 +115,14 @@ class PreparedRun:
                 f"（{frozen} 不存在或不是普通文件）；请重新创建或重新加载运行"
             )
         repository = getattr(self, "run_repository", None)
-        if repository is None or not hasattr(repository, "load_manifest"):
-            return frozen
+        # 能进入本方法说明该对象被视为运行契约运行；仓储缺失或能力不完整都必须
+        # 明确失败，避免未做完整性校验的硬件快照被用于连接仪器。
+        if repository is None:
+            raise RunNotResumable(
+                f"运行 {self.run_id} 缺少运行契约仓储，无法校验硬件配置快照；"
+                "请重新创建或重新加载运行"
+            )
+        ensure_run_repository_supports_run_contract(repository)
         try:
             # 以 manifest 登记项为准校验：硬件快照被单独替换或删除都会在这里失败。
             return Path(find_run_hardware_config(repository, self.run_id))
@@ -241,6 +249,7 @@ def load_prepared_run(
         raise FileNotFoundError(f"运行不存在或结构不完整: {run_id}")
     ensure_run_resumable(repository.load_manifest(run_id))
     hardware_config_path = find_run_hardware_config(repository, run_id)
+    hardware_config = load_hardware_config(repository, run_id)
     loaded = load_run_configuration(repository, run_id)
     if not loaded.valid:
         details = "; ".join(f"{issue.path}: {issue.message}" for issue in loaded.validation.errors)
@@ -259,18 +268,8 @@ def load_prepared_run(
         config_path,
         repository,
         hardware_config_path,
-        _read_json_object(hardware_config_path),
+        hardware_config,
     )
-
-
-def _read_json_object(path: Path) -> Mapping[str, Any]:
-    """读取运行目录内已校验的硬件配置快照内容。"""
-    from infrastructure.filesystem.atomic_json import read_json
-
-    payload = read_json(path)
-    if not isinstance(payload, dict):
-        raise ValueError(f"硬件配置快照根节点必须是对象: {path}")
-    return payload
 
 
 def environment_version() -> str:

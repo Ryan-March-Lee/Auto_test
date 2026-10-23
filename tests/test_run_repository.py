@@ -393,6 +393,44 @@ class VerifyFileTests(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             self.repository.read_config(RUN_ID)
 
+    def test_read_run_json_returns_a_registered_input(self):
+        self.repository.write_run_json(
+            RUN_ID, "inputs/hardware_config.json", {"hardware": {"sg": "sim::sg"}}
+        )
+        self.repository.register_file(RUN_ID, "inputs/hardware_config.json")
+
+        self.assertEqual(
+            self.repository.read_run_json(RUN_ID, "inputs/hardware_config.json"),
+            {"hardware": {"sg": "sim::sg"}},
+        )
+
+    def test_read_run_json_rejects_unregistered_file(self):
+        self.repository.write_run_json(RUN_ID, "inputs/unregistered.json", {"x": 1})
+
+        with self.assertRaises(ValueError):
+            self.repository.read_run_json(RUN_ID, "inputs/unregistered.json")
+
+    def test_read_run_json_rejects_tampered_file(self):
+        target = self.layout.inputs_dir / "hardware_config.json"
+        self.repository.write_run_json(
+            RUN_ID, "inputs/hardware_config.json", {"hardware": {"sg": "sim::sg"}}
+        )
+        self.repository.register_file(RUN_ID, "inputs/hardware_config.json")
+
+        target.write_text('{"hardware": {"sg": "tampered"}}', encoding="utf-8")
+        with self.assertRaises(ValueError):
+            self.repository.read_run_json(RUN_ID, "inputs/hardware_config.json")
+        self.assertEqual(
+            self.repository.read_run_json(
+                RUN_ID, "inputs/hardware_config.json", verify=False
+            ),
+            {"hardware": {"sg": "tampered"}},
+        )
+
+    def test_read_run_json_rejects_paths_outside_the_run(self):
+        with self.assertRaises(ValueError):
+            self.repository.read_run_json(RUN_ID, "../outside.json")
+
     def test_verify_manifest_files_detects_tampering_and_removal(self):
         cable_loss = self.layout.inputs_dir / "cable_loss.json"
         cable_loss.write_text('{"loss_db": 1.5}', encoding="utf-8")

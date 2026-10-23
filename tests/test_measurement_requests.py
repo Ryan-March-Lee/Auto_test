@@ -11,6 +11,74 @@ from application.dto import (
     MeasurementStatus,
 )
 from application.inputs import ResultInputReader
+from application.run_service import configuration_snapshot
+from domain.configuration.models import (
+    ChannelMapping,
+    InstrumentMapping,
+    PowerChannelPlan,
+    RunConfiguration,
+    RunResourceMapping,
+    TestPlan,
+)
+from domain.run.models import HARDWARE_CONFIG_INPUT_PATH
+
+
+def _valid_domain_snapshot(run_id: str) -> dict:
+    """构造一份可通过完整运行校验的领域配置快照（供契约替身返回）。"""
+    plan = TestPlan(
+        frequencies=[2.4],
+        start_power=-10.0,
+        stop_power=0.0,
+        power_step=1.0,
+        compression_point="5dB",
+        attenuator_value=30.0,
+        max_input_power=30.0,
+        dut_power_channels={
+            "gate": PowerChannelPlan(role="gate", voltage=2.0, current=1.0)
+        },
+        driver_enabled=False,
+    )
+    mapping = RunResourceMapping(
+        instruments={
+            "signal_generator": InstrumentMapping("SG", "sim::sg"),
+            "spectrum_analyzer": InstrumentMapping("SA", "sim::sa"),
+            "power_supply": InstrumentMapping("PS", "sim::ps"),
+        },
+        dut_power_channels=[
+            ChannelMapping(channel="CH1", role="gate", connection="gate")
+        ],
+        wiring_confirmed=True,
+        connection_note="测试接线已确认",
+    )
+    return configuration_snapshot(RunConfiguration(plan, mapping), run_id=run_id)
+
+
+class _VerifiedContractRepository:
+    """组合层测试用的最小运行契约仓储替身：校验能力完整，返回固定快照内容。
+
+    运行契约仓储必须具备 ``read_config`` / ``read_run_json`` / ``load_manifest`` /
+    ``verify_file``，否则组合层会拒绝继续。这里只用于验证组合层在快照可用时能正常
+    组装，因此直接返回已校验的内容而不触碰磁盘。
+    """
+
+    def __init__(self, *, config_payload, hardware_payload):
+        self.config_payload = config_payload
+        self.hardware_payload = hardware_payload
+        self.read_run_json_paths = []
+
+    def read_config(self, run_id, *, verify=True):
+        return self.config_payload
+
+    def read_run_json(self, run_id, relative_path, *, verify=True):
+        self.read_run_json_paths.append(relative_path)
+        return self.hardware_payload
+
+    def load_manifest(self, run_id):
+        raise AssertionError("该替身不通过 manifest 读取硬件快照")
+
+    def verify_file(self, run_id, reference):
+        raise AssertionError("该替身不通过 manifest 校验文件")
+
 
 
 class MeasurementRequestAssemblyTests(unittest.TestCase):
@@ -102,11 +170,16 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
         self.assertNotIn("input_reader", measurement.call_args.kwargs)
 
     def test_run_contract_prepared_run_injects_stage_recorder(self):
+        # 运行契约准备对象必须由能力完整的仓储提供，组合层才会执行快照校验并组装。
+        repository = _VerifiedContractRepository(
+            config_payload=_valid_domain_snapshot("run-contract"),
+            hardware_payload={"instruments": {}},
+        )
         prepared = SimpleNamespace(
             configuration=object(),
             context=SimpleNamespace(run_id="run-contract"),
             run_directory=Path("runs") / "run-contract",
-            run_repository=object(),
+            run_repository=repository,
             hardware_config_path=Path("runs") / "run-contract" / "inputs" / "hardware_config.json",
         )
         with patch("app.gui_runtime.connect_instruments", return_value=object()), patch(
@@ -117,6 +190,8 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
         recorder = measurement.call_args.args[0].stage_recorder
         self.assertIsNotNone(recorder)
         self.assertEqual(recorder.run_id, "run-contract")
+        # 硬件快照通过统一入口按已登记 JSON 读取，而不是再次解析领域配置。
+        self.assertEqual(repository.read_run_json_paths, [HARDWARE_CONFIG_INPUT_PATH])
 
     def test_legacy_prepared_run_has_no_stage_recorder(self):
         prepared = SimpleNamespace(

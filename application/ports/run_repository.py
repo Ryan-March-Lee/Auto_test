@@ -58,6 +58,14 @@ class RunRepositoryPort(Protocol):
     def read_config(self, run_id: str, *, verify: bool = True) -> Any:
         """按 manifest 登记的校验值读取运行配置快照。"""
 
+    def read_run_json(self, run_id: str, relative_path: str, *, verify: bool = True) -> Any:
+        """按 manifest 登记的校验值读取运行目录 ``inputs/`` / ``results/`` 下的 JSON 文件。
+
+        默认只在文件已被 manifest 登记且 SHA-256/大小一致时返回内容，供上层按各自
+        语义校验快照（例如领域配置快照与硬件装配快照使用不同 schema）。文件或登记
+        不存在、校验值不一致时直接失败，绝不回退到运行目录之外的文件。
+        """
+
     def write_run_json(
         self, run_id: str, relative_path: str, payload: Any, *, overwrite: bool = False
     ) -> str:

@@ -14,6 +14,7 @@ import threading
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from PySide6.QtCore import QCoreApplication
@@ -744,6 +745,9 @@ class FrozenSnapshotValidationBoundaryTests(unittest.TestCase):
 
     硬件快照不得再被当作领域运行配置解析，只做 JSON 对象校验与 manifest
     SHA-256/大小校验；领域快照则继续按领域运行配置校验。
+
+    独立性用例在**创建运行时**就冻结不同 schema 的硬件配置（不事后改写登记项），
+    默认可变性用例则只改文件、不更新 manifest，从而验证完整性校验而非受控覆盖。
     """
 
     def setUp(self):
@@ -757,34 +761,28 @@ class FrozenSnapshotValidationBoundaryTests(unittest.TestCase):
         self.config_path.write_text(
             json.dumps(_fully_valid_gui_config()), encoding="utf-8"
         )
-        self.prepared = prepare_configuration(
+
+    def _create_run(self, *, hardware_config=None):
+        return prepare_configuration(
             str(self.config_path),
             run_contract=True,
             run_id=RUN_ID,
             run_repository=self.repository,
+            hardware_config=hardware_config,
         )
 
-    def _replace_hardware_snapshot(self, payload):
-        """替换冻结硬件快照并重新登记，保持 manifest 的 SHA-256/大小一致。"""
-        self.repository.write_run_json(
-            RUN_ID, HARDWARE_CONFIG_INPUT_PATH, payload, overwrite=True
-        )
-        self.repository.register_file(
-            RUN_ID, HARDWARE_CONFIG_INPUT_PATH, description="硬件组装配置快照"
-        )
-        return self.prepared.run_directory / HARDWARE_CONFIG_INPUT_PATH
-
-    def _assemble_cable_loss(self):
+    def _assemble_cable_loss(self, prepared):
         with patch(
             "app.gui_runtime.connect_instruments", return_value=object()
         ) as connect, patch("app.gui_runtime.CableLossUseCase", return_value=object()):
             create_cable_loss_measurement(
-                str(self.config_path), prepared_run=self.prepared
+                str(self.config_path), prepared_run=prepared
             )
         return connect
 
-    def test_hardware_snapshot_can_use_independent_schema(self):
-        # 与领域运行配置字段集合完全不同的硬件装配快照仍可加载和连接。
+    def test_independent_schema_hardware_config_is_loadable_and_connectable(self):
+        # 创建运行时冻结的硬件装配快照与领域配置字段集合完全不同：
+        # 它必须能通过加载校验并被用于连接，说明两种 schema 互不套用。
         independent = {
             "hardware": {
                 "signal_generator": {"address": "sim::sg"},
@@ -792,19 +790,23 @@ class FrozenSnapshotValidationBoundaryTests(unittest.TestCase):
             },
             "meta": {"assembler": "lab"},
         }
-        frozen = self._replace_hardware_snapshot(independent)
+        prepared = self._create_run(hardware_config=independent)
+        frozen = prepared.run_directory / HARDWARE_CONFIG_INPUT_PATH
+        self.assertEqual(
+            json.loads(frozen.read_text(encoding="utf-8")), independent
+        )
 
         reopened = load_prepared_run(RUN_ID, run_repository=self.repository)
         self.assertEqual(reopened.hardware_config, independent)
         self.assertEqual(reopened.hardware_connection_path(), frozen)
 
-        connect = self._assemble_cable_loss()
+        connect = self._assemble_cable_loss(reopened)
         connect.assert_called_once_with(str(frozen))
 
     def test_non_object_hardware_snapshot_is_rejected(self):
-        # 仓储只允许写入 JSON 对象，这里直接落盘一个 JSON 数组并重新登记，
-        # 模拟“已登记、SHA-256 一致但根节点不是对象”的非法硬件快照。
-        frozen = self.prepared.run_directory / HARDWARE_CONFIG_INPUT_PATH
+        # 已登记、SHA-256 一致但根节点不是 JSON 对象的硬件快照必须被拒绝。
+        prepared = self._create_run()
+        frozen = prepared.run_directory / HARDWARE_CONFIG_INPUT_PATH
         frozen.write_text(json.dumps(["not", "an", "object"]), encoding="utf-8")
         self.repository.register_file(
             RUN_ID, HARDWARE_CONFIG_INPUT_PATH, description="硬件组装配置快照"
@@ -813,15 +815,17 @@ class FrozenSnapshotValidationBoundaryTests(unittest.TestCase):
         with patch("app.gui_runtime.connect_instruments") as connect:
             with self.assertRaises(RunNotResumable) as raised:
                 create_cable_loss_measurement(
-                    str(self.config_path), prepared_run=self.prepared
+                    str(self.config_path), prepared_run=prepared
                 )
 
         connect.assert_not_called()
         self.assertIn("硬件配置快照", str(raised.exception))
         self.assertTrue(frozen.is_file())
 
-    def test_hardware_snapshot_hash_tampering_is_rejected(self):
-        frozen = self.prepared.hardware_config_path
+    def test_hardware_snapshot_tampering_without_manifest_update_is_rejected(self):
+        # 创建后只改硬件快照文件、不更新 manifest：SHA-256 不一致必须被拒绝。
+        prepared = self._create_run()
+        frozen = prepared.run_directory / HARDWARE_CONFIG_INPUT_PATH
         payload = json.loads(frozen.read_text(encoding="utf-8"))
         payload["test_frequencies"] = [9.9]
         frozen.write_text(json.dumps(payload), encoding="utf-8")
@@ -829,14 +833,16 @@ class FrozenSnapshotValidationBoundaryTests(unittest.TestCase):
         with patch("app.gui_runtime.connect_instruments") as connect:
             with self.assertRaises(RunNotResumable) as raised:
                 create_cable_loss_measurement(
-                    str(self.config_path), prepared_run=self.prepared
+                    str(self.config_path), prepared_run=prepared
                 )
 
         connect.assert_not_called()
         self.assertIn("硬件配置快照", str(raised.exception))
 
-    def test_domain_snapshot_tampering_is_rejected(self):
-        domain_snapshot = self.prepared.run_directory / "config.json"
+    def test_domain_snapshot_tampering_without_manifest_update_is_rejected(self):
+        # 创建后只改领域快照文件、不更新 manifest：同样必须被拒绝。
+        prepared = self._create_run()
+        domain_snapshot = prepared.run_directory / "config.json"
         payload = json.loads(domain_snapshot.read_text(encoding="utf-8"))
         payload["test_plan"] = {"frequencies": [9.9]}
         domain_snapshot.write_text(json.dumps(payload), encoding="utf-8")
@@ -844,19 +850,101 @@ class FrozenSnapshotValidationBoundaryTests(unittest.TestCase):
         with patch("app.gui_runtime.connect_instruments") as connect:
             with self.assertRaises(ValueError) as raised:
                 create_cable_loss_measurement(
-                    str(self.config_path), prepared_run=self.prepared
+                    str(self.config_path), prepared_run=prepared
                 )
 
         connect.assert_not_called()
         self.assertIn("配置快照", str(raised.exception))
 
     def test_global_config_change_is_ignored(self):
+        prepared = self._create_run()
         changed = _fully_valid_gui_config()
         changed["test_frequencies"] = [9.9]
         self.config_path.write_text(json.dumps(changed), encoding="utf-8")
 
-        connect = self._assemble_cable_loss()
-        connect.assert_called_once_with(str(self.prepared.hardware_config_path))
+        connect = self._assemble_cable_loss(prepared)
+        connect.assert_called_once_with(str(prepared.hardware_config_path))
+
+
+class ContractRepositoryCapabilityTests(unittest.TestCase):
+    """运行契约仓储能力不完整时必须明确失败，绝不静默跳过快照校验。"""
+
+    def setUp(self):
+        import tempfile
+
+        self._temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temporary.cleanup)
+        self.base = Path(self._temporary.name)
+        self.repository = RunRepository(self.base / "runs")
+        self.config_path = self.base / "config.json"
+        self.config_path.write_text(
+            json.dumps(_fully_valid_gui_config()), encoding="utf-8"
+        )
+
+    def test_contract_run_with_incomplete_repository_is_rejected(self):
+        # 契约对象指向一个存在的普通文件，但仓储缺少全部校验能力。
+        prepared = SimpleNamespace(
+            configuration=object(),
+            context=SimpleNamespace(run_id=RUN_ID),
+            run_directory=self.base / "runs" / RUN_ID,
+            run_repository=object(),
+            hardware_config_path=Path(__file__),
+        )
+
+        with patch("app.gui_runtime.connect_instruments") as connect:
+            with self.assertRaisesRegex(RunNotResumable, "仓储不完整"):
+                create_cable_loss_measurement(
+                    str(self.config_path), prepared_run=prepared
+                )
+
+        connect.assert_not_called()
+
+    def test_contract_run_missing_hardware_reader_is_rejected(self):
+        class _PartialRepository:
+            """具备领域快照读取与 manifest 校验，但缺少已登记 JSON 读取能力。"""
+
+            def read_config(self, run_id, *, verify=True):
+                return {}
+
+            def load_manifest(self, run_id):
+                raise AssertionError("不应读取 manifest")
+
+            def verify_file(self, run_id, reference):
+                raise AssertionError("不应校验登记文件")
+
+        prepared = SimpleNamespace(
+            configuration=object(),
+            context=SimpleNamespace(run_id=RUN_ID),
+            run_directory=self.base / "runs" / RUN_ID,
+            run_repository=_PartialRepository(),
+            hardware_config_path=Path(__file__),
+        )
+
+        with patch("app.gui_runtime.connect_instruments") as connect:
+            with self.assertRaisesRegex(RunNotResumable, "read_run_json"):
+                create_cable_loss_measurement(
+                    str(self.config_path), prepared_run=prepared
+                )
+
+        connect.assert_not_called()
+
+    def test_prepared_run_rejects_incomplete_contract_repository(self):
+        # 运行上下文层使用同一能力契约：仓储不完整时不得放行未校验的快照。
+        run = type(
+            "IncompleteContractRun",
+            (),
+            {
+                "run_id": RUN_ID,
+                "run_repository": object(),
+                "has_run_contract": PreparedRun.has_run_contract,
+                "hardware_config_path": Path(__file__),
+                "hardware_connection_path": PreparedRun.hardware_connection_path,
+                "_verified_hardware_snapshot": PreparedRun._verified_hardware_snapshot,
+            },
+        )()
+
+        with self.assertRaisesRegex(RunNotResumable, "仓储不完整"):
+            run.hardware_connection_path()
 
 
 if __name__ == "__main__":

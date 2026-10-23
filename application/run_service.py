@@ -265,6 +265,69 @@ def ensure_run_resumable(manifest: RunManifest) -> None:
         )
 
 
+# 运行契约完整性校验所需的最小仓储能力：
+#
+# - ``read_config`` / ``read_run_json``：分别读取领域配置快照和任意已登记 JSON 输入；
+# - ``load_manifest`` / ``verify_file``：解析硬件快照登记项并校验 SHA-256 与大小。
+#
+# ``run_repository`` 非空即代表这是一个运行契约运行；此时缺少任一能力都必须明确
+# 失败，绝不因为方法缺失而静默跳过快照校验后继续连接仪器。
+REQUIRED_RUN_REPOSITORY_METHODS: tuple[str, ...] = (
+    "read_config",
+    "read_run_json",
+    "load_manifest",
+    "verify_file",
+)
+
+
+def ensure_run_repository_supports_run_contract(run_repository: Any) -> None:
+    """确认运行契约仓储具备快照完整性校验所需的全部能力。
+
+    ``None`` 表示旧兼容流程，直接返回。运行契约仓储缺少必需方法时抛出
+    :class:`RunNotResumable`：装配不完整（错误注入、旧替身或未实现的适配器）
+    不允许被当成“无需校验”，否则会绕过冻结快照的完整性检查。
+    """
+    if run_repository is None:
+        return
+    missing = [
+        name
+        for name in REQUIRED_RUN_REPOSITORY_METHODS
+        if not callable(getattr(run_repository, name, None))
+    ]
+    if missing:
+        raise RunNotResumable(
+            "运行契约仓储不完整，缺少 " + ", ".join(missing)
+            + "，无法校验冻结快照；请重新创建或重新加载运行"
+        )
+
+
+def load_hardware_config(
+    run_repository: RunRepositoryPort, run_id: str
+) -> Mapping[str, Any]:
+    """读取并校验当前运行已登记的硬件配置快照对象。
+
+    这是硬件装配快照的**统一校验入口**：按 manifest 登记查找
+    ``inputs/hardware_config.json``、校验 SHA-256 与大小，再确认根节点是 JSON
+    对象。硬件快照不按领域运行配置解析，因此允许拥有与 ``config.json`` 完全不同的
+    字段集合；缺少登记、文件被替换或根节点不是对象时抛出 :class:`RunNotResumable`，
+    绝不回退到全局配置。
+    """
+    ensure_run_repository_supports_run_contract(run_repository)
+    try:
+        payload = run_repository.read_run_json(run_id, HARDWARE_CONFIG_INPUT_PATH)
+    except RunNotResumable:
+        raise
+    except (OSError, ValueError) as error:
+        raise RunNotResumable(
+            f"运行 {run_id} 的硬件配置快照校验失败: {error}"
+        ) from error
+    if not isinstance(payload, Mapping):
+        raise RunNotResumable(
+            f"运行 {run_id} 的硬件配置快照根节点必须是 JSON 对象"
+        )
+    return payload
+
+
 def find_run_hardware_config(
     run_repository: RunRepositoryPort, run_id: str
 ) -> Path:
@@ -278,6 +341,7 @@ def find_run_hardware_config(
     快照 ``config.json`` 相互独立、可以各自演化；两者的从属关系由同一份带
     ``run_id`` 的运行 manifest 保证，无需互相套用对方的 schema。
     """
+    ensure_run_repository_supports_run_contract(run_repository)
     manifest = run_repository.load_manifest(run_id)
     reference = next(
         (item for item in manifest.inputs if item.path == HARDWARE_CONFIG_INPUT_PATH),
@@ -297,11 +361,14 @@ def find_run_hardware_config(
 
 __all__ = [
     "RUN_CONFIG_SNAPSHOT_SCHEMA_VERSION",
+    "REQUIRED_RUN_REPOSITORY_METHODS",
     "RunNotResumable",
     "RunSnapshot",
     "configuration_snapshot",
     "create_run_snapshot",
+    "ensure_run_repository_supports_run_contract",
     "ensure_run_resumable",
     "find_run_hardware_config",
+    "load_hardware_config",
     "load_run_configuration",
 ]

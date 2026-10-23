@@ -280,6 +280,30 @@ class RunRepository:
             self.verify_file(run_id, manifest.config)
         return read_json(layout.config_path)
 
+    def read_run_json(
+        self, run_id: str, relative_path: str, *, verify: bool = True
+    ) -> Any:
+        """按 manifest 登记的校验值读取运行目录内的 JSON 文件。
+
+        默认要求目标文件已被 manifest 登记，且 SHA-256 与大小与登记项一致，否则
+        拒绝返回，避免上层把被替换或漏登记的文件当作有效快照。调用方按各自语义
+        校验内容（例如领域配置快照或硬件装配快照使用不同 schema）。
+        """
+        layout = self._require_existing_run(run_id)
+        normalized = normalize_relative_path(relative_path, field_name="运行文件路径")
+        category = self._classify(normalized)
+        if verify:
+            manifest = load_run_manifest(layout.manifest_path)
+            references = manifest.inputs if category == "input" else manifest.outputs
+            reference = next(
+                (item for item in references if item.path == normalized), None
+            )
+            if reference is None:
+                raise ValueError(f"manifest 未登记运行文件: {normalized}")
+            self.verify_file(run_id, reference)
+        target = self._resolve_reference_path(layout, normalized)
+        return read_json(target)
+
     def verify_file(self, run_id: str, reference: FileReference) -> Path:
         """校验登记文件仍位于运行目录内，且 SHA-256 和大小与引用一致。"""
         if not isinstance(reference, FileReference):

@@ -13,7 +13,6 @@ from domain.configuration.models import (
     validate_driver_mapping_configuration,
 )
 from domain.configuration.rules import ConfigValidationResult
-from infrastructure.filesystem.atomic_json import read_json
 from infrastructure.logging.app_logging import get_logger
 from infrastructure.persistence.json_result_repository import new_run_id
 from .run_context import (
@@ -36,7 +35,8 @@ from application.measurements import (
 )
 from application.run_service import (
     RunNotResumable,
-    find_run_hardware_config,
+    ensure_run_repository_supports_run_contract,
+    load_hardware_config,
     load_run_configuration,
 )
 from app.events import MessageEvent, ProgressEvent, RealtimeDataEvent
@@ -321,30 +321,13 @@ def _ensure_domain_snapshot_is_intact(run_repository: Any, run_id: str) -> None:
 def _ensure_hardware_snapshot_is_intact(run_repository: Any, run_id: str) -> None:
     """按**硬件装配快照**规则校验运行目录内的 ``inputs/hardware_config.json``。
 
-    硬件快照只要求是“已登记且未被篡改的 JSON 对象”：manifest 登记的 SHA-256 和
-    大小一致性由 :func:`find_run_hardware_config` 完成，这里再确认根节点是 JSON
-    对象。硬件配置格式与领域运行配置格式彼此独立，**不**互相套用 schema；两份
-    快照的从属关系由它们同处一个带 ``run_id`` 的 manifest 保证，因此硬件快照可以
-    合法地拥有与 ``config.json`` 完全不同的字段集合并独立演化。
+    统一委托 :func:`application.run_service.load_hardware_config`：manifest 登记的
+    SHA-256 和大小一致性校验与 JSON 对象校验都在那里完成。硬件配置格式与领域运行
+    配置格式彼此独立，**不**互相套用 schema；两份快照的从属关系由它们同处一个带
+    ``run_id`` 的 manifest 保证，因此硬件快照可以合法地拥有与 ``config.json``
+    完全不同的字段集合并独立演化。
     """
-    try:
-        path = find_run_hardware_config(run_repository, run_id)
-    except RunNotResumable:
-        raise
-    except (OSError, ValueError) as error:
-        raise RunNotResumable(
-            f"运行 {run_id} 的硬件配置快照校验失败: {error}"
-        ) from error
-    try:
-        payload = read_json(path)
-    except (OSError, ValueError) as error:
-        raise RunNotResumable(
-            f"运行 {run_id} 的硬件配置快照不可读: {error}"
-        ) from error
-    if not isinstance(payload, Mapping):
-        raise RunNotResumable(
-            f"运行 {run_id} 的硬件配置快照根节点必须是 JSON 对象: {path}"
-        )
+    load_hardware_config(run_repository, run_id)
 
 
 def _ensure_run_snapshots_are_intact(prepared_run: PreparedRun) -> None:
@@ -355,16 +338,17 @@ def _ensure_run_snapshots_are_intact(prepared_run: PreparedRun) -> None:
       校验。
 
     两种快照拥有独立、清晰的校验边界，任何一方被替换或损坏都在连接仪器前失败。
-    旧兼容快照和最小替身对象没有运行目录契约能力，保持原行为（不做该校验）。
+    ``run_repository`` 非空即代表运行契约运行：仓储必须提供完整的校验能力，缺少
+    任一能力都明确失败，绝不静默跳过后继续连接仪器。只有不带运行目录契约的旧兼容
+    快照（``run_repository is None``）才保持原行为、不做该校验。
     """
     run_repository = getattr(prepared_run, "run_repository", None)
     if run_repository is None:
         return
+    ensure_run_repository_supports_run_contract(run_repository)
     run_id = prepared_run.context.run_id
-    if hasattr(run_repository, "read_config"):
-        _ensure_domain_snapshot_is_intact(run_repository, run_id)
-    if hasattr(run_repository, "load_manifest"):
-        _ensure_hardware_snapshot_is_intact(run_repository, run_id)
+    _ensure_domain_snapshot_is_intact(run_repository, run_id)
+    _ensure_hardware_snapshot_is_intact(run_repository, run_id)
 
 
 def _request_kwargs(prepared_run: PreparedRun, config_path: str, callbacks: dict[str, Any]) -> dict[str, Any]:

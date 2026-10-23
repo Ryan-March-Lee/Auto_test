@@ -13,6 +13,7 @@ from domain.configuration.models import (
     validate_driver_mapping_configuration,
 )
 from domain.configuration.rules import ConfigValidationResult
+from infrastructure.filesystem.atomic_json import read_json
 from infrastructure.logging.app_logging import get_logger
 from infrastructure.persistence.json_result_repository import new_run_id
 from .run_context import (
@@ -33,7 +34,11 @@ from application.measurements import (
     DriverPowerMappingUseCase,
     validate_amplifier_calibration_inputs,
 )
-from application.run_service import RunNotResumable, configuration_snapshot
+from application.run_service import (
+    RunNotResumable,
+    find_run_hardware_config,
+    load_run_configuration,
+)
 from app.events import MessageEvent, ProgressEvent, RealtimeDataEvent
 from application.dto import (
     AmplifierMeasurementRequest,
@@ -287,42 +292,79 @@ def _preflight_amplifier_inputs(
     )
 
 
-def _ensure_frozen_config_matches(
-    prepared_run: PreparedRun, config_path: str, *, repository: Any = None
-) -> None:
-    """确认用于连接仪器的硬件配置仍与运行的领域配置快照一致。
+def _ensure_domain_snapshot_is_intact(run_repository: Any, run_id: str) -> None:
+    """按**领域运行配置**规则校验运行目录内的 ``config.json``。
 
-    运行契约运行传入的是运行目录内冻结的 ``inputs/hardware_config.json``，因此
-    该校验退化为“运行目录内两份快照互相一致”的完整性检查：一旦硬件配置快照被
-    单独替换，就在连接仪器前失败。旧兼容快照传入全局配置路径，仍保持原有的漂移
-    检测行为。把硬件端口改为只从运行快照装配由 :func:`_hardware_config_path` 完成。
+    这是领域配置快照的唯一校验入口：``read_config`` 先按 manifest 登记的 SHA-256
+    和大小确认文件未被替换，:func:`load_run_configuration` 再把内容重建为领域运行
+    配置并执行完整运行校验。快照被篡改、``schema_version`` 不受支持或配置语义无效
+    时，都在连接仪器前失败。
+    """
+    try:
+        loaded = load_run_configuration(run_repository, run_id)
+    except RunNotResumable:
+        raise
+    except Exception as error:  # noqa: BLE001 - 统一转成前置校验失败
+        raise RunNotResumable(
+            f"无法读取运行 {run_id} 的配置快照，拒绝连接仪器: {error}"
+        ) from error
+    if not loaded.valid:
+        details = "; ".join(
+            f"{issue.path}: {issue.message}" for issue in loaded.validation.errors
+        )
+        raise RunNotResumable(
+            f"运行 {run_id} 的配置快照校验失败，拒绝连接仪器；"
+            f"请重新创建运行: {details}"
+        )
+
+
+def _ensure_hardware_snapshot_is_intact(run_repository: Any, run_id: str) -> None:
+    """按**硬件装配快照**规则校验运行目录内的 ``inputs/hardware_config.json``。
+
+    硬件快照只要求是“已登记且未被篡改的 JSON 对象”：manifest 登记的 SHA-256 和
+    大小一致性由 :func:`find_run_hardware_config` 完成，这里再确认根节点是 JSON
+    对象。硬件配置格式与领域运行配置格式彼此独立，**不**互相套用 schema；两份
+    快照的从属关系由它们同处一个带 ``run_id`` 的 manifest 保证，因此硬件快照可以
+    合法地拥有与 ``config.json`` 完全不同的字段集合并独立演化。
+    """
+    try:
+        path = find_run_hardware_config(run_repository, run_id)
+    except RunNotResumable:
+        raise
+    except (OSError, ValueError) as error:
+        raise RunNotResumable(
+            f"运行 {run_id} 的硬件配置快照校验失败: {error}"
+        ) from error
+    try:
+        payload = read_json(path)
+    except (OSError, ValueError) as error:
+        raise RunNotResumable(
+            f"运行 {run_id} 的硬件配置快照不可读: {error}"
+        ) from error
+    if not isinstance(payload, Mapping):
+        raise RunNotResumable(
+            f"运行 {run_id} 的硬件配置快照根节点必须是 JSON 对象: {path}"
+        )
+
+
+def _ensure_run_snapshots_are_intact(prepared_run: PreparedRun) -> None:
+    """连接仪器前，按各自职责分别校验运行契约的两份冻结快照。
+
+    - ``config.json`` 走领域运行配置校验（领域 schema + 完整运行校验）；
+    - ``inputs/hardware_config.json`` 只做 JSON 对象校验和 manifest SHA-256/大小
+      校验。
+
+    两种快照拥有独立、清晰的校验边界，任何一方被替换或损坏都在连接仪器前失败。
+    旧兼容快照和最小替身对象没有运行目录契约能力，保持原行为（不做该校验）。
     """
     run_repository = getattr(prepared_run, "run_repository", None)
-    # 只有实现了运行目录端口（能读取冻结配置）的运行才需要做配置一致性校验；
-    # 旧兼容快照和最小替身对象没有该能力，按无冻结配置处理。
-    if run_repository is None or not hasattr(run_repository, "read_config"):
+    if run_repository is None:
         return
-    try:
-        frozen = run_repository.read_config(prepared_run.context.run_id)
-    except Exception as error:  # noqa: BLE001 - 统一转成前置校验失败
-        raise ValueError(f"无法读取运行配置快照，拒绝连接仪器: {error}") from error
-    if repository is None:
-        from infrastructure.config.json_config_repository import JsonConfigurationRepository
-
-        repository = JsonConfigurationRepository()
-    loaded = load_for_run(repository, config_path)
-    if not loaded.valid:
-        raise ValueError("配置文件当前无效，不能用于连接仪器；请重新创建运行")
-    current = configuration_snapshot(
-        loaded.configuration, run_id=prepared_run.context.run_id
-    )
-    if (
-        current["test_plan"] != frozen.get("test_plan")
-        or current["run_mapping"] != frozen.get("run_mapping")
-    ):
-        raise ValueError(
-            "配置文件在创建运行后已被修改，拒绝使用可变配置连接仪器；请重新创建运行"
-        )
+    run_id = prepared_run.context.run_id
+    if hasattr(run_repository, "read_config"):
+        _ensure_domain_snapshot_is_intact(run_repository, run_id)
+    if hasattr(run_repository, "load_manifest"):
+        _ensure_hardware_snapshot_is_intact(run_repository, run_id)
 
 
 def _request_kwargs(prepared_run: PreparedRun, config_path: str, callbacks: dict[str, Any]) -> dict[str, Any]:
@@ -368,9 +410,9 @@ def create_cable_loss_measurement(
     owned_port = callbacks.get("measurement_port") is None
     effective_config_path = _hardware_config_path(prepared_run, config_path)
     try:
-        # 运行契约运行固定使用运行目录内冻结的硬件配置，并在连接仪器前确认它与
-        # 领域快照一致，避免用可变全局配置打开仪器。
-        _ensure_frozen_config_matches(prepared_run, effective_config_path)
+        # 运行契约运行固定使用运行目录内冻结的硬件配置；连接仪器前分别按领域和
+        # 硬件两套职责校验冻结快照，避免用被篡改或损坏的快照打开仪器。
+        _ensure_run_snapshots_are_intact(prepared_run)
         if owned_port:
             callbacks["measurement_port"] = connect_instruments(effective_config_path)
         callbacks["owns_measurement_port"] = owned_port
@@ -397,9 +439,10 @@ def create_driver_mapping_measurement(
     owned_port = callbacks.get("measurement_port") is None
     effective_config_path = _hardware_config_path(prepared_run, config_path)
     try:
-        # 运行契约运行在连接仪器前校验当前运行的线损输入，缺失时不做任何硬件动作。
+        # 运行契约运行在连接仪器前校验当前运行的线损输入，缺失时不做任何硬件动作；
+        # 随后按领域/硬件两套职责分别校验冻结快照。
         _require_stage_inputs(prepared_run, STAGE_CABLE_LOSS)
-        _ensure_frozen_config_matches(prepared_run, effective_config_path)
+        _ensure_run_snapshots_are_intact(prepared_run)
         if owned_port:
             callbacks["measurement_port"] = connect_instruments(effective_config_path)
         callbacks["owns_measurement_port"] = owned_port
@@ -434,9 +477,9 @@ def create_amplifier_measurement(
         input_reader = callbacks.get("input_reader") or ResultInputReader(repository)
         # 运行契约运行在连接仪器前读取并校验当前运行的校准输入：主功放始终需要
         # 线损，仅在驱动模式启用时才需要驱动映射；结构无效或配置漂移都在打开仪器
-        # 或执行任何 RF 动作前失败。
+        # 或执行任何 RF 动作前失败。随后按领域/硬件两套职责分别校验冻结快照。
         _preflight_amplifier_inputs(prepared_run, repository, input_reader)
-        _ensure_frozen_config_matches(prepared_run, effective_config_path)
+        _ensure_run_snapshots_are_intact(prepared_run)
         if owned_port:
             callbacks["measurement_port"] = connect_instruments(effective_config_path)
         callbacks["owns_measurement_port"] = owned_port

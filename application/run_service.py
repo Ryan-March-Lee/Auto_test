@@ -270,8 +270,13 @@ def find_run_hardware_config(
 ) -> Path:
     """返回当前运行**已登记且校验通过**的硬件配置快照绝对路径。
 
-    运行目录内没有登记硬件配置快照、文件缺失或 SHA-256 不一致时抛出
+    运行目录内没有登记硬件配置快照、文件缺失或 SHA-256/大小不一致时抛出
     :class:`RunNotResumable`，保证硬件连接与测量阶段不会回退到全局可变配置。
+
+    本函数只按硬件装配快照的规则做登记与完整性校验（manifest 引用 + SHA-256/
+    大小），**不**把硬件配置当作领域运行配置解析。硬件快照的 schema 与领域配置
+    快照 ``config.json`` 相互独立、可以各自演化；两者的从属关系由同一份带
+    ``run_id`` 的运行 manifest 保证，无需互相套用对方的 schema。
     """
     manifest = run_repository.load_manifest(run_id)
     reference = next(

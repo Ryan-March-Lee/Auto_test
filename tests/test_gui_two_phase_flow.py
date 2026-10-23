@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch
 from PySide6.QtCore import QCoreApplication
 
 from app.run_context import PreparedRun, load_prepared_run
-from app.gui_runtime import prepare_configuration
+from app.gui_runtime import create_cable_loss_measurement, prepare_configuration
 from application.run_service import RunNotResumable
 from domain.run.models import HARDWARE_CONFIG_INPUT_PATH, RunStatus
 from infrastructure.persistence.run_repository import RunRepository
@@ -737,6 +737,126 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         self.assertEqual(page.ps1_address.text(), "sim::ps1")
         self.assertEqual(page.pa_unit1_power_combo.currentText(), "PS1")
         self.assertEqual(page.power_config_widgets["PS1"]["channels"]["CH2"]["voltage"].value(), 28.0)
+
+
+class FrozenSnapshotValidationBoundaryTests(unittest.TestCase):
+    """步骤 E：领域配置快照与硬件装配快照使用各自独立的校验规则。
+
+    硬件快照不得再被当作领域运行配置解析，只做 JSON 对象校验与 manifest
+    SHA-256/大小校验；领域快照则继续按领域运行配置校验。
+    """
+
+    def setUp(self):
+        import tempfile
+
+        self._temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temporary.cleanup)
+        self.base = Path(self._temporary.name)
+        self.repository = RunRepository(self.base / "runs")
+        self.config_path = self.base / "config.json"
+        self.config_path.write_text(
+            json.dumps(_fully_valid_gui_config()), encoding="utf-8"
+        )
+        self.prepared = prepare_configuration(
+            str(self.config_path),
+            run_contract=True,
+            run_id=RUN_ID,
+            run_repository=self.repository,
+        )
+
+    def _replace_hardware_snapshot(self, payload):
+        """替换冻结硬件快照并重新登记，保持 manifest 的 SHA-256/大小一致。"""
+        self.repository.write_run_json(
+            RUN_ID, HARDWARE_CONFIG_INPUT_PATH, payload, overwrite=True
+        )
+        self.repository.register_file(
+            RUN_ID, HARDWARE_CONFIG_INPUT_PATH, description="硬件组装配置快照"
+        )
+        return self.prepared.run_directory / HARDWARE_CONFIG_INPUT_PATH
+
+    def _assemble_cable_loss(self):
+        with patch(
+            "app.gui_runtime.connect_instruments", return_value=object()
+        ) as connect, patch("app.gui_runtime.CableLossUseCase", return_value=object()):
+            create_cable_loss_measurement(
+                str(self.config_path), prepared_run=self.prepared
+            )
+        return connect
+
+    def test_hardware_snapshot_can_use_independent_schema(self):
+        # 与领域运行配置字段集合完全不同的硬件装配快照仍可加载和连接。
+        independent = {
+            "hardware": {
+                "signal_generator": {"address": "sim::sg"},
+                "power_supplies": {"PS1": {"address": "sim::ps1"}},
+            },
+            "meta": {"assembler": "lab"},
+        }
+        frozen = self._replace_hardware_snapshot(independent)
+
+        reopened = load_prepared_run(RUN_ID, run_repository=self.repository)
+        self.assertEqual(reopened.hardware_config, independent)
+        self.assertEqual(reopened.hardware_connection_path(), frozen)
+
+        connect = self._assemble_cable_loss()
+        connect.assert_called_once_with(str(frozen))
+
+    def test_non_object_hardware_snapshot_is_rejected(self):
+        # 仓储只允许写入 JSON 对象，这里直接落盘一个 JSON 数组并重新登记，
+        # 模拟“已登记、SHA-256 一致但根节点不是对象”的非法硬件快照。
+        frozen = self.prepared.run_directory / HARDWARE_CONFIG_INPUT_PATH
+        frozen.write_text(json.dumps(["not", "an", "object"]), encoding="utf-8")
+        self.repository.register_file(
+            RUN_ID, HARDWARE_CONFIG_INPUT_PATH, description="硬件组装配置快照"
+        )
+
+        with patch("app.gui_runtime.connect_instruments") as connect:
+            with self.assertRaises(RunNotResumable) as raised:
+                create_cable_loss_measurement(
+                    str(self.config_path), prepared_run=self.prepared
+                )
+
+        connect.assert_not_called()
+        self.assertIn("硬件配置快照", str(raised.exception))
+        self.assertTrue(frozen.is_file())
+
+    def test_hardware_snapshot_hash_tampering_is_rejected(self):
+        frozen = self.prepared.hardware_config_path
+        payload = json.loads(frozen.read_text(encoding="utf-8"))
+        payload["test_frequencies"] = [9.9]
+        frozen.write_text(json.dumps(payload), encoding="utf-8")
+
+        with patch("app.gui_runtime.connect_instruments") as connect:
+            with self.assertRaises(RunNotResumable) as raised:
+                create_cable_loss_measurement(
+                    str(self.config_path), prepared_run=self.prepared
+                )
+
+        connect.assert_not_called()
+        self.assertIn("硬件配置快照", str(raised.exception))
+
+    def test_domain_snapshot_tampering_is_rejected(self):
+        domain_snapshot = self.prepared.run_directory / "config.json"
+        payload = json.loads(domain_snapshot.read_text(encoding="utf-8"))
+        payload["test_plan"] = {"frequencies": [9.9]}
+        domain_snapshot.write_text(json.dumps(payload), encoding="utf-8")
+
+        with patch("app.gui_runtime.connect_instruments") as connect:
+            with self.assertRaises(ValueError) as raised:
+                create_cable_loss_measurement(
+                    str(self.config_path), prepared_run=self.prepared
+                )
+
+        connect.assert_not_called()
+        self.assertIn("配置快照", str(raised.exception))
+
+    def test_global_config_change_is_ignored(self):
+        changed = _fully_valid_gui_config()
+        changed["test_frequencies"] = [9.9]
+        self.config_path.write_text(json.dumps(changed), encoding="utf-8")
+
+        connect = self._assemble_cable_loss()
+        connect.assert_called_once_with(str(self.prepared.hardware_config_path))
 
 
 if __name__ == "__main__":

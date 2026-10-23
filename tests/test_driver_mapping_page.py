@@ -87,7 +87,11 @@ class DriverMappingPageTests(unittest.TestCase):
         self.errors = []
         self.realtime = []
         self.clears = []
-        self.run = type("PreparedRun", (), {"run_id": "run-driver"})()
+        self.run = type("PreparedRun", (), {
+            "run_id": "run-driver", "run_repository": object(),
+            "has_run_contract": True, "run_directory": "runs/run-driver",
+            "hardware_connection_path": lambda self: None,
+        })()
         self.page = DriverMappingPage(
             config_path_provider=lambda: "config.json",
             run_provider=lambda: self.prepared.append(True) or self.run,
@@ -121,6 +125,11 @@ class DriverMappingPageTests(unittest.TestCase):
 
     def test_missing_input_or_rejected_wiring_does_not_start(self):
         self.page._run_provider = lambda: None
+        self.page.start_measurement()
+        self.assertEqual(self.controller.calls, [])
+        self.page._run_provider = lambda: type(
+            "LegacyRun", (), {"run_id": "legacy", "run_repository": object()}
+        )()
         self.page.start_measurement()
         self.assertEqual(self.controller.calls, [])
         self.dialog.result = QDialog.Rejected

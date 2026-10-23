@@ -39,7 +39,8 @@ class MeasurementCommand:
 
     ``prepared_run`` 是配置阶段创建（或按 run_id 重新打开）的运行契约
     :class:`app.run_context.PreparedRun`；测量页面只携带它，不能携带运行期间可变
-    的 GUI 配置状态。为 ``None`` 时表示旧兼容命令，worker 仍会自行预检。
+    的 GUI 配置状态。正式页面会在提交前校验运行契约；迁移期间底层命令仍允许
+    ``None``，供历史/测试适配器使用。
     """
 
     config_path: str

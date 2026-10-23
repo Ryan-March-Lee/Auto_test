@@ -77,7 +77,11 @@ class AmplifierPageTests(unittest.TestCase):
 
     def setUp(self):
         self.controller = Controller()
-        self.run = type("PreparedRun", (), {"run_id": "run-amplifier"})()
+        self.run = type("PreparedRun", (), {
+            "run_id": "run-amplifier", "run_repository": object(),
+            "has_run_contract": True, "run_directory": "runs/run-amplifier",
+            "hardware_connection_path": lambda self: None,
+        })()
         self.page = AmplifierPage(
             config_path_provider=lambda: "config.json",
             run_provider=lambda: self.run,
@@ -109,6 +113,11 @@ class AmplifierPageTests(unittest.TestCase):
 
         self.page.start_measurement()
 
+        self.assertEqual(self.controller.calls, [])
+        self.page._run_provider = lambda: type(
+            "LegacyRun", (), {"run_id": "legacy", "run_repository": object()}
+        )()
+        self.page.start_measurement()
         self.assertEqual(self.controller.calls, [])
 
     def test_realtime_data_and_result_update_page_models(self):

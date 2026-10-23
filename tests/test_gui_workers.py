@@ -60,6 +60,15 @@ class _AmplifierService:
 
 
 class GuiWorkerTests(unittest.TestCase):
+    @staticmethod
+    def _contract_run():
+        return type("PreparedRun", (), {
+            "has_run_contract": True,
+            "run_repository": object(),
+            "run_id": "run-worker",
+            "run_directory": "runs/run-worker",
+            "hardware_connection_path": lambda self: None,
+        })()
     @classmethod
     def setUpClass(cls):
         cls.qt_app = QCoreApplication.instance() or QCoreApplication([])
@@ -67,9 +76,8 @@ class GuiWorkerTests(unittest.TestCase):
     def test_cable_loss_second_step_runs_in_worker_thread(self):
         path1_done = threading.Event()
         service = _CableService(path1_done)
-        worker = CableLossWorker("config.json", sleep_fn=lambda _: None)
-
-        prepared = object()
+        prepared = self._contract_run()
+        worker = CableLossWorker("config.json", sleep_fn=lambda _: None, prepared_run=prepared)
         with patch("app.gui_runtime.prepare_configuration", return_value=prepared), \
                 patch("app.gui_runtime.create_cable_loss_measurement", return_value=service) as factory:
             worker.start()
@@ -89,9 +97,13 @@ class GuiWorkerTests(unittest.TestCase):
     def test_stopping_at_cable_loss_checkpoint_releases_worker(self):
         path1_done = threading.Event()
         service = _CableService(path1_done)
-        worker = CableLossWorker("config.json", sleep_fn=lambda _: None)
+        worker = CableLossWorker(
+            "config.json",
+            sleep_fn=lambda _: None,
+            prepare_factory=lambda *_args, **_kwargs: self._contract_run(),
+        )
 
-        prepared = object()
+        prepared = self._contract_run()
         with patch("app.gui_runtime.prepare_configuration", return_value=prepared), \
                 patch("app.gui_runtime.create_cable_loss_measurement", return_value=service):
             worker.start()
@@ -107,15 +119,33 @@ class GuiWorkerTests(unittest.TestCase):
         errors = []
         worker.signals.error.connect(errors.append)
 
-        with patch(
-            "app.gui_runtime.prepare_configuration",
-            side_effect=OSError("snapshot failed"),
-        ), patch("app.gui_runtime.create_cable_loss_measurement") as factory:
+        with patch("app.gui_runtime.prepare_configuration") as prepare, patch(
+            "app.gui_runtime.create_cable_loss_measurement"
+        ) as factory:
             worker.run()
 
+        prepare.assert_not_called()
         factory.assert_not_called()
         self.assertIsNone(worker.service)
-        self.assertEqual(errors, ["应用用例构造失败: snapshot failed"])
+        self.assertEqual(errors, ["应用用例构造失败: 正式线损测量必须携带 PreparedRun；请先创建或重新加载运行"])
+
+    def test_workers_do_not_implicitly_prepare_a_legacy_run(self):
+        for worker_type, factory_name in (
+            (DriverMappingWorker, "create_driver_mapping_measurement"),
+            (AmplifierWorker, "create_amplifier_measurement"),
+        ):
+            with self.subTest(worker=worker_type.__name__):
+                errors = []
+                worker = worker_type("config.json")
+                worker.signals.error.connect(errors.append)
+                with patch("app.gui_runtime.prepare_configuration") as prepare, patch(
+                    f"app.gui_runtime.{factory_name}"
+                ) as factory:
+                    worker.run()
+                prepare.assert_not_called()
+                factory.assert_not_called()
+                self.assertEqual(len(errors), 1)
+                self.assertIn("必须携带 PreparedRun", errors[0])
 
     def test_cable_loss_stop_after_assembly_emits_stopped(self):
         service = _CableService(threading.Event())
@@ -139,7 +169,7 @@ class GuiWorkerTests(unittest.TestCase):
         self.assertIsNone(worker.measurement_port)
 
     def test_measurement_factory_is_explicitly_injected(self):
-        prepared = object()
+        prepared = self._contract_run()
         service = _DriverMappingService()
         calls = []
 
@@ -240,13 +270,15 @@ class GuiWorkerTests(unittest.TestCase):
         self.assertIsNone(worker.service)
 
     def test_driver_mapping_stop_during_preflight_skips_measurement_creation(self):
-        worker = DriverMappingWorker("config.json", sleep_fn=lambda _: None)
+        worker = DriverMappingWorker("config.json", sleep_fn=lambda _: None, prepare_factory=lambda *_args, **_kwargs: object())
         stopped = []
         worker.signals.stopped.connect(stopped.append)
 
         def prepare_and_stop(*_args, **_kwargs):
             worker.stop()
             return object()
+
+        worker.prepare_factory = prepare_and_stop
 
         with patch("app.gui_runtime.prepare_configuration", side_effect=prepare_and_stop), patch(
             "app.gui_runtime.create_driver_mapping_measurement"
@@ -258,7 +290,7 @@ class GuiWorkerTests(unittest.TestCase):
         self.assertIsNone(worker.service)
 
     def test_driver_mapping_stop_after_assembly_cancels_service_without_scan(self):
-        worker = DriverMappingWorker("config.json", sleep_fn=lambda _: None)
+        worker = DriverMappingWorker("config.json", sleep_fn=lambda _: None, prepare_factory=lambda *_args, **_kwargs: object())
         service = _DriverMappingService()
         stopped = []
         worker.signals.stopped.connect(stopped.append)
@@ -292,13 +324,15 @@ class GuiWorkerTests(unittest.TestCase):
         self.assertEqual(stopped, ["用户停止"])
 
     def test_amplifier_stop_during_preflight_skips_assembly(self):
-        worker = AmplifierWorker("config.json", sleep_fn=lambda _: None)
+        worker = AmplifierWorker("config.json", sleep_fn=lambda _: None, prepare_factory=lambda *_args, **_kwargs: object())
         stopped = []
         worker.signals.stopped.connect(stopped.append)
 
         def prepare_and_stop(*_args, **_kwargs):
             worker.stop()
             return object()
+
+        worker.prepare_factory = prepare_and_stop
 
         with patch("app.gui_runtime.prepare_configuration", side_effect=prepare_and_stop), patch(
             "app.gui_runtime.create_amplifier_measurement"
@@ -309,7 +343,7 @@ class GuiWorkerTests(unittest.TestCase):
         self.assertEqual(stopped, ["用户停止"])
 
     def test_amplifier_stop_after_assembly_cancels_service_without_scan(self):
-        worker = AmplifierWorker("config.json", sleep_fn=lambda _: None)
+        worker = AmplifierWorker("config.json", sleep_fn=lambda _: None, prepare_factory=lambda *_args, **_kwargs: object())
         service = _AmplifierService()
         stopped = []
         worker.signals.stopped.connect(stopped.append)

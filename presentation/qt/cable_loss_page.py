@@ -23,6 +23,7 @@ from .measurement_controller_contract import MeasurementCommand
 from application.dto.legacy_result_adapter import legacy_payload
 from .measurement_state import CableLossPageResultState, MeasurementKind, MeasurementStatus
 from .pages import PageControllerBindingMixin
+from .run_contract import is_valid_prepared_run
 
 
 class CableLossPage(PageControllerBindingMixin, QWidget):
@@ -132,7 +133,8 @@ class CableLossPage(PageControllerBindingMixin, QWidget):
         # 只接受配置阶段创建（或按 run_id 重新打开）的当前运行契约；不再在开始前
         # 重新保存 GUI 配置，因此已冻结快照不会被覆盖。
         run = self._run_provider()
-        if run is None:
+        if not is_valid_prepared_run(run):
+            self._error_callback("正式线损测量必须先创建或按 run_id 重新加载运行")
             return
         dialog = self._connection_dialog_factory("cable_loss_path1", self)
         if dialog.exec() != QDialog.Accepted:

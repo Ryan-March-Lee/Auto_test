@@ -11,6 +11,7 @@ from PySide6.QtCore import QThread, QObject, Signal
 
 from app.cancellation import MeasurementCancelled
 from application.lifecycle import StopIntent
+from .run_contract import require_prepared_run
 
 
 class WorkerSignals(QObject):
@@ -180,8 +181,11 @@ class CableLossWorker(BaseWorker):
                 create_measurement = self.measurement_factory or self._default_factory("create_cable_loss_measurement")
                 prepared = self.prepared_run
                 if prepared is None:
-                    prepare_configuration = self.prepare_factory or self._default_factory("prepare_configuration")
-                    prepared = prepare_configuration(self.config_path, operation="cable_loss")
+                    if self.prepare_factory is None:
+                        raise ValueError("正式线损测量必须携带 PreparedRun；请先创建或重新加载运行")
+                    prepared = self.prepare_factory(self.config_path, operation="cable_loss")
+                else:
+                    require_prepared_run(prepared, "线损")
                 self._service = create_measurement(self.config_path, prepared_run=prepared,
                     progress_callback=self.signals.progress.emit, message_callback=self.signals.message.emit,
                     data_callback=self.signals.data_update.emit, sleep_fn=self.sleep_fn,
@@ -259,11 +263,14 @@ class DriverMappingWorker(BaseWorker):
                 create_measurement = self.measurement_factory or self._default_factory(factory_name)
                 prepared = self.prepared_run
                 if prepared is None:
-                    prepare_configuration = self.prepare_factory or self._default_factory("prepare_configuration")
+                    if self.prepare_factory is None:
+                        raise ValueError("正式驱动映射测量必须携带 PreparedRun；请先创建或重新加载运行")
                     if operation is None:
-                        prepared = prepare_configuration(self.config_path)
+                        prepared = self.prepare_factory(self.config_path)
                     else:
-                        prepared = prepare_configuration(self.config_path, operation=operation)
+                        prepared = self.prepare_factory(self.config_path, operation=operation)
+                else:
+                    require_prepared_run(prepared, "驱动映射")
                 if self._stop_requested:
                     self.signals.stopped.emit(self.stop_reason)
                     return
@@ -311,8 +318,11 @@ class AmplifierWorker(BaseWorker):
                 create_measurement = self.measurement_factory or self._default_factory("create_amplifier_measurement")
                 prepared = self.prepared_run
                 if prepared is None:
-                    prepare_configuration = self.prepare_factory or self._default_factory("prepare_configuration")
-                    prepared = prepare_configuration(self.config_path)
+                    if self.prepare_factory is None:
+                        raise ValueError("正式主功放测量必须携带 PreparedRun；请先创建或重新加载运行")
+                    prepared = self.prepare_factory(self.config_path)
+                else:
+                    require_prepared_run(prepared, "主功放")
                 if self._stop_requested:
                     self.signals.stopped.emit(self.stop_reason)
                     return

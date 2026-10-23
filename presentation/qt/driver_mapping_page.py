@@ -23,6 +23,7 @@ from .measurement_state import (
     MeasurementStatus,
 )
 from .pages import PageControllerBindingMixin
+from .run_contract import is_valid_prepared_run
 from .realtime_buffer import RealtimeMeasurementBuffer
 from .realtime_page import RealtimePageMixin
 
@@ -129,7 +130,8 @@ class DriverMappingPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
             return
         # 只接受配置阶段创建（或按 run_id 重新打开）的当前运行契约。
         run = self._run_provider()
-        if run is None:
+        if not is_valid_prepared_run(run):
+            self._error_callback("正式驱动映射测量必须先创建或按 run_id 重新加载运行")
             return
         dialog = self._connection_dialog_factory("driver_mapping", self)
         if dialog.exec() != QDialog.Accepted or not self._confirm_wiring():

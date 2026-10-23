@@ -74,13 +74,19 @@ class CableLossPageTests(unittest.TestCase):
         self.controller = Controller()
         self.dialog_results = [QDialog.Accepted]
         self.logs = []
-        self.run = type("PreparedRun", (), {"run_id": "run-cable-loss"})()
+        self.errors = []
+        self.run = type("PreparedRun", (), {
+            "run_id": "run-cable-loss", "run_repository": object(),
+            "has_run_contract": True, "run_directory": "runs/run-cable-loss",
+            "hardware_connection_path": lambda self: None,
+        })()
         self.page = CableLossPage(
             config_path_provider=lambda: "config.json",
             run_provider=lambda: self.run,
             confirm_wiring=lambda: True,
             connection_dialog_factory=lambda *_: Dialog(self.dialog_results.pop(0)),
             log_callback=self.logs.append,
+            error_callback=self.errors.append,
         )
         self.page.bind_controller(self.controller)
 
@@ -102,6 +108,13 @@ class CableLossPageTests(unittest.TestCase):
 
         self.page.start_measurement()
 
+        self.assertEqual(self.controller.calls, [])
+
+    def test_legacy_run_does_not_start_measurement(self):
+        self.page._run_provider = lambda: type(
+            "LegacyRun", (), {"run_id": "legacy", "run_repository": object()}
+        )()
+        self.page.start_measurement()
         self.assertEqual(self.controller.calls, [])
 
     def test_realtime_and_structured_result_fill_table(self):

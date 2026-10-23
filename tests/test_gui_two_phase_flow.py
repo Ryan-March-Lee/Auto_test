@@ -315,7 +315,7 @@ class MeasurementCommandRunContractTests(unittest.TestCase):
         self.assertIs(command.prepared_run, run)
         self.assertEqual(command.config_path, "config.json")
 
-    def test_command_defaults_to_legacy_without_run_contract(self):
+    def test_command_defaults_to_legacy_for_migration_adapters(self):
         self.assertIsNone(MeasurementCommand("config.json").prepared_run)
 
 
@@ -344,13 +344,23 @@ class ControllerRunContractTests(unittest.TestCase):
 
 
 class WorkerReusesPreparedRunTests(unittest.TestCase):
+    @staticmethod
+    def _contract_run():
+        return SimpleNamespace(
+            has_run_contract=True,
+            run_repository=object(),
+            run_id=RUN_ID,
+            run_directory=Path("runs") / RUN_ID,
+            hardware_connection_path=lambda: None,
+        )
+
     @classmethod
     def setUpClass(cls):
         cls.qt_app = QCoreApplication.instance() or QCoreApplication([])
 
     def test_cable_loss_worker_does_not_reprepare_when_run_is_given(self):
         service = _CableService()
-        run = object()
+        run = self._contract_run()
         worker = CableLossWorker(
             "config.json",
             sleep_fn=lambda _: None,
@@ -372,7 +382,7 @@ class WorkerReusesPreparedRunTests(unittest.TestCase):
 
     def test_driver_mapping_worker_uses_injected_run_without_preflight(self):
         service = _MappingService()
-        run = object()
+        run = self._contract_run()
         calls = []
 
         def factory(*args, **kwargs):
@@ -394,7 +404,7 @@ class WorkerReusesPreparedRunTests(unittest.TestCase):
 
     def test_amplifier_worker_uses_injected_run_without_preflight(self):
         service = _MappingService()
-        run = object()
+        run = self._contract_run()
         calls = []
 
         def factory(*args, **kwargs):

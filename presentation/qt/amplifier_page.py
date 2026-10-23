@@ -21,6 +21,7 @@ from .measurement_controller_contract import MeasurementCommand
 from application.dto.legacy_result_adapter import legacy_payload
 from .measurement_state import AmplifierPageResultState, MeasurementKind
 from .pages import PageControllerBindingMixin
+from .run_contract import is_valid_prepared_run
 from .realtime_buffer import RealtimeMeasurementBuffer
 from .realtime_page import RealtimePageMixin
 
@@ -135,7 +136,8 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         # 只接受配置阶段创建（或按 run_id 重新打开）的当前运行契约；主功放参数已在
         # 该运行的冻结快照中，不再从 GUI 重新保存配置。
         run = self._run_provider()
-        if run is None:
+        if not is_valid_prepared_run(run):
+            self._error_callback("正式主功放测量必须先创建或按 run_id 重新加载运行")
             return
         self.update_instruction_text()
         diagram = "amplifier_test" if self._driver_mode_provider() else "amplifier_test_no_driver"

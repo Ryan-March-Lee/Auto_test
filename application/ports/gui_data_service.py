@@ -43,17 +43,6 @@ class ResultQueryPort(Protocol):
         """按类型读取最新全局兼容副本，仅用于历史查看。"""
 
 
-class LegacyResultQueryPort(Protocol):
-    """仅用于兼容期的历史查询别名。
-
-    ``latest()`` 已由 :meth:`ResultQueryPort.latest_legacy_result` 取代，仓库内
-    生产代码不得再调用；保留本协议只是为了记录外部脚本仍可能依赖的旧入口，
-    删除条件见重构指南步骤 E。
-    """
-
-    def latest(self, result_type: str) -> LoadedResultDto: ...
-
-
 class ResultExportPort(Protocol):
     def export_json(self, result_id: str, target: str) -> None: ...
     def export_csv(self, result_id: str, target: str) -> None: ...

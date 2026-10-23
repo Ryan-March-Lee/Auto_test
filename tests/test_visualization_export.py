@@ -257,20 +257,17 @@ class HistoryBrowsingReadOnlyTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 exports.export_json("cable_loss_results.json", str(results))
 
-    def test_deprecated_latest_alias_still_delegates_with_a_warning(self):
+    def test_deprecated_latest_alias_is_removed(self):
+        """旧别名 ``latest()`` 已删除：历史浏览只保留 ``latest_legacy_result()``。"""
         with tempfile.TemporaryDirectory() as directory:
             paths = PathService(Path(directory))
             self._populate(paths)
             adapter = ResultQueryAdapter(paths, FileResultHistoryRepository(paths=paths))
 
-            with warnings.catch_warnings(record=True) as captured:
-                warnings.simplefilter("always", DeprecationWarning)
-                loaded = adapter.latest("cable_loss")
+            self.assertFalse(hasattr(adapter, "latest"))
+            from application.ports import gui_data_service as ports
 
-        self.assertEqual(loaded.data, {"cable_losses": {"1.0": 0.5}})
-        self.assertTrue(
-            any(issubclass(item.category, DeprecationWarning) for item in captured)
-        )
+            self.assertFalse(hasattr(ports, "LegacyResultQueryPort"))
 
 
 class ReportAdapterContractTests(unittest.TestCase):

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping
@@ -90,16 +89,6 @@ class ResultQueryAdapter:
     def latest_legacy_result(self, result_type: str) -> LoadedResultDto:
         """读取最新全局兼容副本，仅用于历史查看/导出，不作为正式测量输入。"""
         return self.load(self.history.latest_result_id(result_type))
-
-    def latest(self, result_type: str) -> LoadedResultDto:
-        """Deprecated alias for browsing the newest global compatibility result."""
-        warnings.warn(
-            "ResultQueryAdapter.latest() 已弃用；历史浏览请使用 latest_legacy_result()，"
-            "运行输入请读取当前 run_id manifest",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.latest_legacy_result(result_type)
 
 
 class ResultExportAdapter:

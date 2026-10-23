@@ -173,12 +173,12 @@ class DeprecatedInterfaceCallerTests(unittest.TestCase):
             callers, REPOSITORY_SAVE_CALLERS
         )
 
-    def test_deprecated_gui_query_alias_has_no_production_caller(self):
-        """``ResultQueryAdapter.latest()`` 只为外部脚本保留，生产代码不得调用。"""
+    def test_deprecated_gui_query_alias_is_removed(self):
+        """``ResultQueryAdapter.latest()`` 已在步骤 A3 删除，生产代码不得再调用。"""
         implementation = (
             ROOT / "infrastructure" / "gui_data_service.py"
         ).read_text(encoding="utf-8-sig")
-        self.assertIn("def latest(self", implementation)
+        self.assertNotIn("def latest(self", implementation)
 
         callers = {
             _relative(path)
@@ -190,8 +190,8 @@ class DeprecatedInterfaceCallerTests(unittest.TestCase):
         }
         self.assertEqual(callers, set())
 
-    def test_deprecated_query_port_is_not_imported_by_production_code(self):
-        """``LegacyResultQueryPort`` 只记录弃用别名，不得被生产模块导入。"""
+    def test_deprecated_query_port_is_removed(self):
+        """``LegacyResultQueryPort`` 已在步骤 A3 删除，任何位置都不应再出现。"""
         mentioners = set()
         for path in _production_sources():
             for node in ast.walk(_tree(path)):
@@ -206,8 +206,7 @@ class DeprecatedInterfaceCallerTests(unittest.TestCase):
                     and node.name == "LegacyResultQueryPort"
                 ):
                     mentioners.add(_relative(path))
-        # 只允许端口模块自身的类定义，任何其它文件出现该名字都是新的生产调用方。
-        self.assertEqual(mentioners, {"application/ports/gui_data_service.py"})
+        self.assertEqual(mentioners, set())
 
 
 class LegacyGuiEntryTests(unittest.TestCase):

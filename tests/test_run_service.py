@@ -6,7 +6,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app.run_context import create_prepared_run
+from app.run_context import create_prepared_run, load_prepared_run, prepare_run
 from application.ports.config_repository import ConfigurationLoadResult
 from application.run_service import (
     create_run_snapshot,
@@ -24,6 +24,7 @@ from domain.configuration.models import (
 from domain.configuration.types import ConfigIssue, ConfigValidationResult
 from domain.run.models import HARDWARE_CONFIG_INPUT_PATH, RunStatus, StageStatus
 from infrastructure.config.json_config_repository import ConfigurationRepository
+from infrastructure.filesystem.paths import PathService
 from infrastructure.persistence.run_repository import RunRepository
 
 
@@ -111,12 +112,19 @@ class CreateRunSnapshotTests(unittest.TestCase):
             software_version="test-runner",
             notes="现场调试",
             product_name="PA-100",
+            hardware_config=_gui_config(),
             now=CREATED_AT,
         )
 
         self.assertEqual(snapshot.run_id, RUN_ID)
         self.assertEqual(snapshot.run_directory, self.repository.root / RUN_ID)
         self.assertTrue(snapshot.config_path.is_file())
+        # 运行契约快照必定携带冻结的硬件配置文件。
+        self.assertEqual(
+            snapshot.hardware_config_path,
+            snapshot.run_directory / HARDWARE_CONFIG_INPUT_PATH,
+        )
+        self.assertTrue(snapshot.hardware_config_path.is_file())
         self.assertEqual(snapshot.manifest.status, RunStatus.CREATED)
         self.assertEqual(snapshot.manifest.product_name, "PA-100")
         self.assertEqual(snapshot.manifest.notes, "现场调试")
@@ -144,6 +152,7 @@ class CreateRunSnapshotTests(unittest.TestCase):
                 invalid,
                 run_repository=self.repository,
                 run_id=RUN_ID,
+                hardware_config=_gui_config(),
                 now=CREATED_AT,
             )
 
@@ -165,6 +174,7 @@ class CreateRunSnapshotTests(unittest.TestCase):
                 stage_only,
                 run_repository=self.repository,
                 run_id=RUN_ID,
+                hardware_config=_gui_config(),
                 now=CREATED_AT,
             )
         self.assertFalse((self.repository.root / RUN_ID).exists())
@@ -178,6 +188,7 @@ class CreateRunSnapshotTests(unittest.TestCase):
             first,
             run_repository=self.repository,
             run_id=RUN_ID,
+            hardware_config=_gui_config(start_power=-10.0),
             now=CREATED_AT,
         )
         frozen = (self.repository.root / RUN_ID / "config.json").read_text(encoding="utf-8")
@@ -201,6 +212,7 @@ class CreateRunSnapshotTests(unittest.TestCase):
             self.loaded,
             run_repository=self.repository,
             run_id=RUN_ID,
+            hardware_config=_gui_config(),
             now=CREATED_AT,
         )
 
@@ -227,6 +239,7 @@ class CreateRunSnapshotTests(unittest.TestCase):
             self.loaded,
             run_repository=self.repository,
             run_id=RUN_ID,
+            hardware_config=_gui_config(),
             now=CREATED_AT,
         )
         manifest = self.repository.load_manifest(RUN_ID)
@@ -402,6 +415,76 @@ class CreateRunSnapshotTests(unittest.TestCase):
         self.assertIsNotNone(record.exc_info)
         self.assertIn("cleanup also failed", str(record.exc_info[1]))
 
+    def test_create_run_snapshot_requires_hardware_config(self):
+        # 缺少 hardware_config 的调用必须立即失败：
+        # - 显式传入 None 在入口被拒绝（签名缺省会直接 TypeError）；
+        # - 两种失败都不允许创建任何运行目录。
+        with self.assertRaisesRegex(ValueError, "hardware_config"):
+            create_run_snapshot(
+                self.loaded,
+                run_repository=self.repository,
+                run_id=RUN_ID,
+                hardware_config=None,
+                now=CREATED_AT,
+            )
+        with self.assertRaises(TypeError):
+            create_run_snapshot(
+                self.loaded,
+                run_repository=self.repository,
+                run_id=RUN_ID,
+                now=CREATED_AT,
+            )
+
+        self.assertFalse((self.repository.root / RUN_ID).exists())
+        self.assertEqual(self.repository.list_run_ids(), ())
+
+    def test_successful_run_snapshot_is_resumable(self):
+        # 成功创建的运行一定登记 inputs/hardware_config.json，
+        # 并且可以被 load_prepared_run() 按当前恢复规则重新加载。
+        snapshot = create_run_snapshot(
+            self.loaded,
+            run_repository=self.repository,
+            run_id=RUN_ID,
+            hardware_config=_gui_config(),
+            now=CREATED_AT,
+        )
+        manifest = self.repository.load_manifest(RUN_ID)
+        registered = {item.path for item in manifest.inputs}
+        self.assertIn(HARDWARE_CONFIG_INPUT_PATH, registered)
+        self.assertTrue(snapshot.hardware_config_path.is_file())
+
+        reopened = load_prepared_run(RUN_ID, run_repository=self.repository)
+        self.assertTrue(reopened.has_run_contract)
+        self.assertEqual(reopened.run_id, RUN_ID)
+        self.assertEqual(reopened.run_directory, snapshot.run_directory)
+        self.assertEqual(reopened.hardware_config_path, snapshot.hardware_config_path)
+        self.assertEqual(
+            reopened.hardware_connection_path(), snapshot.hardware_config_path
+        )
+
+    def test_legacy_prepare_run_remains_non_contract_compatible(self):
+        # 旧版 prepare_run 保留为兼容快照：它写兼容目录、不冻结硬件配置，
+        # 也不属于可恢复运行契约，load_prepared_run 无法按 run_id 打开它。
+        run_id = "20261022T153000Z_legacy0"
+        prepared = prepare_run(
+            self.loaded,
+            run_id=run_id,
+            software_version="test-runner",
+            config_path=self.root / "config.json",
+            paths=PathService(self.root),
+        )
+
+        self.assertFalse(prepared.has_run_contract)
+        self.assertIsNone(prepared.run_repository)
+        self.assertIsNone(prepared.hardware_config_path)
+        # 旧兼容快照的硬件连接回退到创建时的源配置路径。
+        self.assertEqual(
+            prepared.hardware_connection_path(), self.root / "config.json"
+        )
+        # 它没有创建 runs/<run_id>/ 运行契约目录，因此不能重新加载。
+        with self.assertRaises(FileNotFoundError):
+            load_prepared_run(run_id, run_repository=self.repository)
+
 
 class CreatePreparedRunTests(unittest.TestCase):
     def test_create_prepared_run_carries_the_new_run_directory(self):
@@ -412,6 +495,7 @@ class CreatePreparedRunTests(unittest.TestCase):
                 run_id=RUN_ID,
                 software_version="test-runner",
                 run_repository=repository,
+                hardware_config=_gui_config(),
             )
             self.assertEqual(prepared.run_id, RUN_ID)
             self.assertEqual(prepared.run_directory, repository.root / RUN_ID)
@@ -428,9 +512,29 @@ class CreatePreparedRunTests(unittest.TestCase):
                 _loaded(_valid_configuration()),
                 run_id=RUN_ID,
                 run_repository=repository,
+                hardware_config=_gui_config(),
             )
             self.assertFalse((prepared.run_directory / "test_plan_snapshot.json").exists())
             self.assertFalse((prepared.run_directory / "run_mapping_snapshot.json").exists())
+
+    def test_create_prepared_run_requires_hardware_config(self):
+        # 运行契约入口同样拒绝缺少硬件配置的创建请求，且不产生运行目录。
+        with tempfile.TemporaryDirectory() as directory:
+            repository = RunRepository(Path(directory) / "runs")
+            with self.assertRaisesRegex(ValueError, "hardware_config"):
+                create_prepared_run(
+                    _loaded(_valid_configuration()),
+                    run_id=RUN_ID,
+                    run_repository=repository,
+                    hardware_config=None,
+                )
+            with self.assertRaises(TypeError):
+                create_prepared_run(
+                    _loaded(_valid_configuration()),
+                    run_id=RUN_ID,
+                    run_repository=repository,
+                )
+            self.assertEqual(repository.list_run_ids(), ())
 
 
 if __name__ == "__main__":

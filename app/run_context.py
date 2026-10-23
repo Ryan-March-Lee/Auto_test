@@ -91,14 +91,16 @@ def prepare_run(
 ) -> PreparedRun:
     """Validate and snapshot a run without importing or opening an instrument.
 
-    This is the current measurement preflight boundary.  It keeps writing the
+    This is the legacy **compatibility** preflight boundary: it writes the
     compatibility snapshot (``test_plan_snapshot.json`` /
     ``run_mapping_snapshot.json`` / ``run_metadata.json``) so the existing
-    measurement result paths stay unchanged until steps 4-6 migrate the stages
-    to the run-directory contract.
+    measurement result paths stay unchanged.  It does **not** create the
+    ``runs/<run_id>/`` run contract and therefore does not freeze the
+    hardware configuration; such a snapshot is **not** reopenable via
+    :func:`load_prepared_run`.
 
-    New callers that need a frozen ``runs/<run_id>/config.json`` run must use
-    :func:`create_prepared_run` instead.
+    New callers that need a resumable ``runs/<run_id>/`` run must use
+    :func:`create_prepared_run` with an explicit ``hardware_config`` instead.
     """
     if not loaded.valid:
         details = "; ".join(f"{issue.path}: {issue.message}" for issue in loaded.validation.errors)
@@ -132,15 +134,23 @@ def create_prepared_run(
     config_path: Path | None = None,
     paths: PathService | None = None,
     run_repository: RunRepositoryPort | None = None,
-    hardware_config: Mapping[str, Any] | None = None,
+    hardware_config: Mapping[str, Any],
 ) -> PreparedRun:
     """Create an immutable run snapshot (``runs/<run_id>/``).
 
     This is the step-3 "创建运行" entry point: the configuration is validated as
     a complete run, then frozen through the run repository port.  ``hardware_config``
-    additionally freezes the hardware assembly configuration inside the run
-    directory so later stages never read the global mutable ``config.json``.
+    is **required by the run contract** and freezes the hardware assembly
+    configuration inside the run directory (``inputs/hardware_config.json``), so
+    the created run is always resumable via :func:`load_prepared_run` and later
+    stages never read the global mutable ``config.json``.  Passing ``None``
+    fails before any run directory is created.
     """
+    if hardware_config is None:
+        raise ValueError(
+            "运行契约必须包含硬件配置快照：create_prepared_run 的 "
+            "hardware_config 不能为 None，缺少硬件配置的运行无法恢复"
+        )
     repository = run_repository if run_repository is not None else RunRepository(paths=paths)
     snapshot: RunSnapshot = create_run_snapshot(
         loaded,

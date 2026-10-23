@@ -53,13 +53,17 @@ class RunNotResumable(ValueError):
 
 @dataclass(frozen=True)
 class RunSnapshot:
-    """一次已创建运行的标识、目录和初始配置快照引用。"""
+    """一次已创建运行的标识、目录和初始配置快照引用。
+
+    运行契约快照必须同时冻结硬件配置，因此 ``hardware_config_path`` 是必需
+    字段，不再允许为空；旧版兼容快照请使用 ``app.run_context.prepare_run``。
+    """
 
     run_id: str
     run_directory: Path
     config_path: Path
     manifest: RunManifest
-    hardware_config_path: Path | None = None
+    hardware_config_path: Path
 
 
 def configuration_snapshot(
@@ -91,11 +95,11 @@ def create_run_snapshot(
     *,
     run_repository: RunRepositoryPort,
     run_id: str,
+    hardware_config: Mapping[str, Any],
     software_version: str | None = None,
     git_commit: str | None = None,
     notes: str | None = None,
     product_name: str | None = None,
-    hardware_config: Mapping[str, Any] | None = None,
     now: datetime | None = None,
 ) -> RunSnapshot:
     """校验配置并创建运行快照，失败时不产生可运行的运行目录。
@@ -108,14 +112,23 @@ def create_run_snapshot(
     因此阶段专用校验（线损、驱动映射）通过但完整运行校验失败的配置，仍会被
     拒绝，不会留下半成品运行目录，也不会被后续阶段误当作可运行运行。
 
-    ``hardware_config`` 是本次运行用于装配硬件端口的完整配置（旧版组合格式）。
-    它会被冻结为 ``inputs/hardware_config.json`` 并登记到 manifest，使运行目录
-    自包含；硬件连接和测量阶段只消费该快照，而不是全局可变配置。
+    ``hardware_config`` 是**必需参数**：本次运行用于装配硬件端口的完整配置
+    （旧版组合格式）。它会被冻结为 ``inputs/hardware_config.json`` 并登记到
+    manifest，使运行目录自包含；硬件连接和测量阶段只消费该快照，而不是全局
+    可变配置。缺少该参数（或显式传入 ``None``）的调用在入口立即失败且不创建
+    运行目录，保证任何成功创建的运行都可以按当前恢复规则（
+    ``load_prepared_run``）重新加载。不携带硬件配置的兼容快照请改用
+    ``app.run_context.prepare_run``，它不属于可恢复运行契约。
 
     硬件快照写入、登记或 manifest 更新失败时，会调用仓储的 ``discard_run``
     撤销刚创建的整个运行目录，不遗留看似有效的半成品运行；原始异常仍向
     调用方抛出，清理失败只记录日志，不掩盖创建错误。
     """
+    if hardware_config is None:
+        raise ValueError(
+            "运行契约必须包含硬件配置快照：create_run_snapshot 的 "
+            "hardware_config 不能为 None，缺少硬件配置的运行无法恢复"
+        )
     if not loaded.valid:
         raise ValueError(
             "运行配置校验失败，不能创建运行快照: " + _validation_details(loaded.validation)
@@ -141,16 +154,14 @@ def create_run_snapshot(
         product_name=product_name,
         now=now,
     )
-    hardware_config_path: Path | None = None
-    if hardware_config is not None:
-        try:
-            hardware_config_path = _freeze_hardware_config(
-                run_repository, layout.run_id, hardware_config, now=now
-            )
-        except Exception:
-            # 创建后的任何失败都撤销整个运行目录，不遗留半成品运行。
-            _discard_created_run(run_repository, layout.run_id)
-            raise
+    try:
+        hardware_config_path = _freeze_hardware_config(
+            run_repository, layout.run_id, hardware_config, now=now
+        )
+    except Exception:
+        # 创建后的任何失败都撤销整个运行目录，不遗留半成品运行。
+        _discard_created_run(run_repository, layout.run_id)
+        raise
     return RunSnapshot(
         run_id=manifest.run_id,
         run_directory=Path(layout.run_directory),

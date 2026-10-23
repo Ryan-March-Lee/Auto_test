@@ -10,6 +10,10 @@ from unittest.mock import Mock, patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from application.ports.gui_data_service import ResultFileDto
+from application.ports.result_history import ResultHistoryRepository
+from infrastructure.filesystem.paths import PathService
+from infrastructure.gui_data_service import ResultExportAdapter, ResultQueryAdapter
+from infrastructure.persistence.result_history_repository import FileResultHistoryRepository
 from presentation.qt.export_page import ExportPage
 from presentation.qt.visualization_page import convert_power_mapping, normalize_visualization_data
 
@@ -115,29 +119,161 @@ class VisualizationExportTests(unittest.TestCase):
             self.assertEqual(service.calls[-1], ("pdf", source.name))
 
 
-class ReportAdapterContractTests(unittest.TestCase):
+class HistoryBrowsingReadOnlyTests(unittest.TestCase):
+    """步骤 D：历史查看/导出只读，且只依赖专用历史端口。"""
+
+    def _populate(self, paths: PathService) -> Path:
+        results = paths.test_results_dir
+        results.mkdir(parents=True)
+        (results / "cable_loss_results.json").write_text(
+            '{"cable_losses": {"1.0": 0.5}}', encoding="utf-8"
+        )
+        (results / "driver_power_mapping_20261001_110000.json").write_text(
+            '{"power_mapping": {"1.0": {}}}', encoding="utf-8"
+        )
+        (results / "driver_power_mapping_model.json").write_text("{}", encoding="utf-8")
+        return results
+
     def test_latest_legacy_result_is_a_non_deprecated_browsing_api(self):
-        import infrastructure.gui_data_service as gui_data
         from application.ports.gui_data_service import LoadedResultDto
-        from infrastructure.filesystem.paths import PathService
 
         with tempfile.TemporaryDirectory() as directory:
             paths = PathService(Path(directory))
-            result_path = paths.test_results_dir / "cable_loss_results.json"
-            result_path.parent.mkdir(parents=True)
-            result_path.write_text('{"value": 1}', encoding="utf-8")
-            repository = Mock()
-            repository.latest_compatibility_path.return_value = result_path
-            repository.load.return_value = {"value": 1}
-            adapter = gui_data.ResultQueryAdapter(paths, repository)
+            self._populate(paths)
+            adapter = ResultQueryAdapter(paths, FileResultHistoryRepository(paths=paths))
 
             with warnings.catch_warnings():
                 warnings.simplefilter("error", DeprecationWarning)
                 loaded = adapter.latest_legacy_result("cable_loss")
 
         self.assertIsInstance(loaded, LoadedResultDto)
-        self.assertEqual(loaded.data, {"value": 1})
-        repository.latest_compatibility_path.assert_called_once_with("cable_loss")
+        self.assertEqual(loaded.result_id, "cable_loss_results.json")
+        self.assertEqual(loaded.data, {"cable_losses": {"1.0": 0.5}})
+
+    def test_history_query_adapter_depends_only_on_the_read_only_history_port(self):
+        from application.ports.result_history import HistoryResultEntry
+
+        with tempfile.TemporaryDirectory() as directory:
+            paths = PathService(Path(directory))
+            self._populate(paths)
+            now = datetime.now()
+            history = Mock(spec=ResultHistoryRepository)
+            history.list_entries.return_value = (
+                HistoryResultEntry("cable_loss_results.json", "cable_loss", now),
+            )
+            history.latest_result_id.return_value = "cable_loss_results.json"
+            history.load.return_value = {"cable_losses": {"1.0": 0.5}}
+            adapter = ResultQueryAdapter(paths, history)
+
+            rows = adapter.list_results()
+            loaded = adapter.latest_legacy_result("cable_loss")
+            adapter.read_bytes("cable_loss_results.json")
+
+        self.assertEqual([row.filename for row in rows], ["cable_loss_results.json"])
+        self.assertEqual(rows[0].file_type, "线损数据")
+        self.assertEqual(loaded.data, {"cable_losses": {"1.0": 0.5}})
+        history.latest_result_id.assert_called_once_with("cable_loss")
+        history.read_bytes.assert_called_once_with("cable_loss_results.json")
+        # 只读端口没有正式测量输入/写入能力，历史浏览无法误用它们。
+        for forbidden in ("latest_path", "legacy_path", "save", "save_compatibility_copy"):
+            with self.assertRaises(AttributeError):
+                getattr(history, forbidden)
+
+    def test_history_repository_rejects_results_outside_the_history_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = PathService(root)
+            results = self._populate(paths)
+            history = FileResultHistoryRepository(paths=paths)
+            outside = root / "runs" / "run-1" / "inputs"
+            outside.mkdir(parents=True)
+            (outside / "cable_loss.json").write_text("{}", encoding="utf-8")
+
+            for result_id in (
+                "../config.json",
+                "runs/run-1/inputs/cable_loss.json",
+                str(results / "cable_loss_results.json"),
+                "cable_loss_results.txt",
+                "",
+            ):
+                with self.assertRaises(ValueError):
+                    history.load(result_id)
+
+            with self.assertRaises(FileNotFoundError):
+                history.load("missing.json")
+
+    def test_history_listing_and_loading_leave_files_untouched(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = PathService(Path(directory))
+            results = self._populate(paths)
+            adapter = ResultQueryAdapter(paths, FileResultHistoryRepository(paths=paths))
+            before = {
+                path.name: (path.read_bytes(), path.stat().st_mtime_ns)
+                for path in results.iterdir()
+            }
+
+            rows = adapter.list_results()
+            adapter.load("cable_loss_results.json")
+            adapter.latest_legacy_result("driver_power_mapping")
+
+            after = {
+                path.name: (path.read_bytes(), path.stat().st_mtime_ns)
+                for path in results.iterdir()
+            }
+            self.assertEqual(after, before)
+            # canonical model 文件不属于全局历史结果，不会出现在列表里。
+            self.assertEqual(
+                sorted(row.filename for row in rows),
+                [
+                    "cable_loss_results.json",
+                    "driver_power_mapping_20261001_110000.json",
+                ],
+            )
+
+    def test_history_export_copies_source_without_modifying_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = PathService(Path(directory))
+            results = self._populate(paths)
+            source = results / "cable_loss_results.json"
+            original = source.read_bytes()
+            query = ResultQueryAdapter(paths, FileResultHistoryRepository(paths=paths))
+            exports = ResultExportAdapter(query, paths)
+            target = Path(directory) / "copy.json"
+
+            exports.export_json("cable_loss_results.json", str(target))
+
+            self.assertEqual(target.read_bytes(), original)
+            self.assertEqual(source.read_bytes(), original)
+
+    def test_history_export_reports_missing_source_and_directory_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = PathService(Path(directory))
+            results = self._populate(paths)
+            query = ResultQueryAdapter(paths, FileResultHistoryRepository(paths=paths))
+            exports = ResultExportAdapter(query, paths)
+
+            with self.assertRaises(FileNotFoundError):
+                exports.export_json("missing.json", str(Path(directory) / "copy.json"))
+            with self.assertRaises(OSError):
+                exports.export_json("cable_loss_results.json", str(results))
+
+    def test_deprecated_latest_alias_still_delegates_with_a_warning(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = PathService(Path(directory))
+            self._populate(paths)
+            adapter = ResultQueryAdapter(paths, FileResultHistoryRepository(paths=paths))
+
+            with warnings.catch_warnings(record=True) as captured:
+                warnings.simplefilter("always", DeprecationWarning)
+                loaded = adapter.latest("cable_loss")
+
+        self.assertEqual(loaded.data, {"cable_losses": {"1.0": 0.5}})
+        self.assertTrue(
+            any(issubclass(item.category, DeprecationWarning) for item in captured)
+        )
+
+
+class ReportAdapterContractTests(unittest.TestCase):
 
     def test_report_adapter_normalizes_input_and_forwards_model(self):
         import infrastructure.gui_data_service as gui_data

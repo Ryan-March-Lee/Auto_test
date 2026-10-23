@@ -261,6 +261,53 @@ class DriverMappingRunStageTests(unittest.TestCase):
             ]
         )
 
+    def test_newer_global_history_file_is_not_used_as_formal_input(self):
+        """步骤 D：更新的全局历史副本不会被正式测量当作输入。
+
+        与 ``test_current_run_input_does_not_use_deprecated_latest_lookup`` 相比，
+        本用例先制造一个**比当前运行输入更新**的全局历史结果，再跑真实测量链，
+        同时记录所有实际读取路径，证明正式测量只消费当前运行目录内的输入。
+        """
+        self._create_run()
+        self._complete_cable_loss()
+        global_copy = (
+            self.base / "test_results" / "driver_power_mapping_20300101_000000.json"
+        )
+        global_copy.parent.mkdir(parents=True, exist_ok=True)
+        global_copy.write_text(
+            json.dumps(
+                {
+                    "run_id": OTHER_RUN_ID,
+                    "power_mapping": {"1.0": {"-40": -999.0}},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        loaded_paths = []
+        original_load = self.result_repository.load
+
+        def load(path):
+            loaded_paths.append(Path(path).resolve())
+            return original_load(path)
+
+        with patch.object(
+            self.result_repository,
+            "latest_path",
+            side_effect=AssertionError("正式测量不得调用 latest_path"),
+        ):
+            with patch.object(self.result_repository, "load", side_effect=load):
+                DriverPowerMappingUseCase(
+                    self._request(), sleep_fn=lambda _: None
+                ).measure_all_frequencies()
+
+        run_directory = self.repository.layout(RUN_ID).run_directory.resolve()
+        self.assertTrue(loaded_paths)
+        for path in loaded_paths:
+            # 每个实际读取的输入都必须在当前运行目录内，且不是全局历史副本。
+            path.relative_to(run_directory)
+        self.assertNotIn(global_copy.resolve(), loaded_paths)
+
     def test_global_compatibility_copy_is_still_written(self):
         self._create_run()
         self._complete_cable_loss()

@@ -11,6 +11,7 @@ from typing import Any, Mapping
 
 from application.inputs.result_reading import build_report_model
 from application.ports.gui_data_service import LoadedResultDto, ResultFileDto
+from application.ports.result_history import ResultHistoryRepository
 from analysis.visualization import DataVisualization
 from infrastructure.config.json_io import load_config_file
 from infrastructure.filesystem.paths import (
@@ -18,7 +19,6 @@ from infrastructure.filesystem.paths import (
     ensure_directory,
     unique_directory_name,
 )
-from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from PySide6.QtWidgets import QFileDialog
 
 
@@ -36,41 +36,42 @@ class JsonConfigurationAdapter:
 
 
 class ResultQueryAdapter:
-    _TYPES = (
-        ("cable_loss", "cable_loss_results.json", "线损数据"),
-        ("driver_power_mapping", "driver_power_mapping_*.json", "驱动映射"),
-        ("amplifier_measurement", "amplifier_measurement_*.json", "功放测试"),
-    )
+    """历史结果浏览适配器。
 
-    def __init__(self, paths: PathService, repository: FileMeasurementResultRepository):
+    只消费只读历史端口 :class:`ResultHistoryRepository`，不复用正式测量输入
+    仓储：列表、按标识读取、最新副本浏览和导出全部走同一个 ``result_id`` 入口，
+    路径边界由历史仓储统一校验，因此既不能写入旧结果文件，也不会把历史文件
+    带入任何运行 manifest。
+    """
+
+    _LABELS = {
+        "cable_loss": "线损数据",
+        "driver_power_mapping": "驱动映射",
+        "amplifier_measurement": "功放测试",
+    }
+
+    def __init__(self, paths: PathService, history: ResultHistoryRepository):
         self.paths = paths
-        self.repository = repository
+        self.history = history
 
     def list_results(self) -> list[ResultFileDto]:
-        rows = []
-        for result_type, pattern, label in self._TYPES:
-            for path in self.paths.test_results_dir.glob(pattern):
-                if path.is_file():
-                    rows.append(ResultFileDto(
-                        result_id=path.name,
-                        filename=path.name,
-                        file_type=label,
-                        modified_at=datetime.fromtimestamp(path.stat().st_mtime),
-                    ))
+        rows = [
+            ResultFileDto(
+                result_id=entry.result_id,
+                filename=entry.result_id,
+                file_type=self._LABELS.get(entry.result_type, entry.result_type),
+                modified_at=entry.modified_at,
+            )
+            for entry in self.history.list_entries()
+        ]
         return sorted(rows, key=lambda item: item.modified_at, reverse=True)
 
-    def _path(self, result_id: str) -> Path:
-        if Path(result_id).name != result_id or Path(result_id).suffix != ".json":
-            raise ValueError("无效的结果标识")
-        path = self.paths.test_results_dir / result_id
-        path.resolve().relative_to(self.paths.test_results_dir.resolve())
-        if not path.is_file():
-            raise FileNotFoundError(result_id)
-        return path
-
     def load(self, result_id: str) -> LoadedResultDto:
-        path = self._path(result_id)
-        return LoadedResultDto(result_id, path.name, self.repository.load(path))
+        return LoadedResultDto(result_id, result_id, self.history.load(result_id))
+
+    def read_bytes(self, result_id: str) -> bytes:
+        """逐字节读取历史结果，供 JSON 导出使用。"""
+        return self.history.read_bytes(result_id)
 
     def choose_and_load(self) -> LoadedResultDto | None:
         selected, _ = QFileDialog.getOpenFileName(
@@ -80,18 +81,15 @@ class ResultQueryAdapter:
         if not selected:
             return None
         path = Path(selected).expanduser().resolve()
+        # 只接受历史目录内的单个文件；结果标识仍由历史仓储再校验一次。
         path.relative_to(self.paths.test_results_dir.resolve())
         if not path.is_file():
             raise FileNotFoundError(path.name)
-        return LoadedResultDto(path.name, path.name, self.repository.load(path))
+        return self.load(path.name)
 
     def latest_legacy_result(self, result_type: str) -> LoadedResultDto:
-        """Load the newest global compatibility result for legacy browsing only."""
-        return self._load_latest_legacy_result(result_type)
-
-    def _load_latest_legacy_result(self, result_type: str) -> LoadedResultDto:
-        path = self.repository.latest_compatibility_path(result_type)
-        return self.load(path.name)
+        """读取最新全局兼容副本，仅用于历史查看/导出，不作为正式测量输入。"""
+        return self.load(self.history.latest_result_id(result_type))
 
     def latest(self, result_type: str) -> LoadedResultDto:
         """Deprecated alias for browsing the newest global compatibility result."""
@@ -101,7 +99,7 @@ class ResultQueryAdapter:
             DeprecationWarning,
             stacklevel=2,
         )
-        return self._load_latest_legacy_result(result_type)
+        return self.latest_legacy_result(result_type)
 
 
 class ResultExportAdapter:
@@ -109,11 +107,9 @@ class ResultExportAdapter:
         self.query = query
         self.paths = paths
 
-    def _source(self, result_id: str) -> Path:
-        return self.query._path(result_id)
-
     def export_json(self, result_id: str, target: str) -> None:
-        shutil.copy2(self._source(result_id), Path(target))
+        # 逐字节复制历史目录内已校验的源文件，导出不会改动源文件。
+        Path(target).write_bytes(self.query.read_bytes(result_id))
 
     def export_csv(self, result_id: str, target: str) -> None:
         # 结果读取走 application 输入端口，分析层只接收已加载的数据。

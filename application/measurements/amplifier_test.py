@@ -13,6 +13,9 @@ import domain.measurement.calculations as measurement_calculations
 from app.cancellation import CancellationToken, MeasurementCancelled
 from application.dto import AmplifierMeasurementRequest, MeasurementResult, legacy_result
 from application.measurements.services import AmplifierMeasurementService
+from application.ports.legacy_result_input_reader import (
+    LegacyResultInputReader as LegacyResultInputReaderPort,
+)
 from domain.run.models import (
     AMPLIFIER_RESULT_PATH,
     STAGE_AMPLIFIER,
@@ -160,7 +163,9 @@ class AmplifierMeasurementUseCase:
             return request.loss_data
         if self.input_reader is None:
             raise ValueError("AmplifierMeasurementUseCase 必须注入 input_reader 或 loss_data")
-        return self.input_reader.read_cable_loss(request.loss_data_path)
+        if request.loss_data_path is not None:
+            return self.input_reader.read_cable_loss(request.loss_data_path)
+        return self._read_legacy_cable_loss()
 
     def _load_driver_mapping(
         self, request: AmplifierMeasurementRequest
@@ -193,8 +198,33 @@ class AmplifierMeasurementUseCase:
                 raise ValueError(
                     "AmplifierMeasurementUseCase 必须注入 input_reader 或 driver_mapping"
                 )
-            driver_mapping = self.input_reader.read_driver_mapping(request.driver_mapping_path)
+            if request.driver_mapping_path is not None:
+                driver_mapping = self.input_reader.read_driver_mapping(
+                    request.driver_mapping_path
+                )
+            else:
+                driver_mapping = self._read_latest_legacy_driver_mapping()
         return driver_mapping
+
+    def _read_legacy_cable_loss(self) -> Mapping[str, Any]:
+        """旧兼容流程缺少显式线损路径时的读取；要求读取器显式支持兼容查找。"""
+        reader = self.input_reader
+        if not isinstance(reader, LegacyResultInputReaderPort):
+            raise ValueError(
+                "旧兼容流程未提供显式线损输入路径，且注入的读取器不支持兼容读取；"
+                "请传入 loss_data_path 或改用当前运行 manifest 的显式输入"
+            )
+        return reader.read_legacy_cable_loss()
+
+    def _read_latest_legacy_driver_mapping(self) -> Mapping[str, Any]:
+        """旧兼容流程缺少显式映射路径时的读取；要求读取器显式支持兼容查找。"""
+        reader = self.input_reader
+        if not isinstance(reader, LegacyResultInputReaderPort):
+            raise ValueError(
+                "旧兼容流程未提供显式 driver_mapping_path，且注入的读取器不支持兼容读取；"
+                "请传入 driver_mapping_path 或改用当前运行 manifest 的显式输入"
+            )
+        return reader.read_latest_legacy_driver_mapping()
 
     def _read_run_cable_loss(self) -> Mapping[str, Any]:
         """只从当前运行目录读取已校验的线损输入，缺失时在硬件动作前失败。"""

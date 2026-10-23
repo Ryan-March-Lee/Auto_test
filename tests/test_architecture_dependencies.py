@@ -617,6 +617,49 @@ class ProductionDependencyTests(unittest.TestCase):
                         violations.append(f"{source.relative_to(ROOT)} calls {node.func.attr}")
         self.assertEqual(violations, [], "; ".join(violations))
 
+    def test_gui_history_browsing_depends_only_on_the_read_only_history_port(self):
+        source_path = ROOT / "infrastructure" / "gui_data_service.py"
+        source = source_path.read_text(encoding="utf-8-sig")
+        modules = {module for module, _alias, _name in _imported_modules(_tree(source_path))}
+        self.assertNotIn(
+            "infrastructure.persistence.result_repository",
+            modules,
+            "历史查看/导出不得复用正式测量结果仓储",
+        )
+        self.assertIn("application.ports.result_history", modules)
+        self.assertNotIn("latest_path(", source)
+        self.assertNotIn("FileMeasurementResultRepository", source)
+
+    def test_gui_composition_does_not_inject_measurement_result_repository(self):
+        source_path = ROOT / "presentation" / "qt" / "composition.py"
+        source = source_path.read_text(encoding="utf-8-sig")
+        modules = {module for module, _alias, _name in _imported_modules(_tree(source_path))}
+        self.assertNotIn("infrastructure.persistence.result_repository", modules)
+        self.assertIn("FileResultHistoryRepository", source)
+
+    def test_formal_input_reader_has_no_implicit_result_lookup(self):
+        source = (
+            ROOT / "application" / "inputs" / "result_input_reader.py"
+        ).read_text(encoding="utf-8-sig")
+        self.assertNotIn("latest_path", source)
+        self.assertNotIn("legacy_path", source)
+        port = (
+            ROOT / "application" / "ports" / "result_input_reader.py"
+        ).read_text(encoding="utf-8-sig")
+        self.assertNotIn(
+            "path: PathLike | None",
+            port,
+            "正式输入端口不得声明可省略的路径参数",
+        )
+
+    def test_history_port_exposes_result_ids_instead_of_paths(self):
+        source = (
+            ROOT / "application" / "ports" / "result_history.py"
+        ).read_text(encoding="utf-8-sig")
+        self.assertNotIn("-> Path", source)
+        self.assertNotIn("PathLike", source)
+        self.assertIn("result_id: str", source)
+
     def test_gui_result_dto_does_not_expose_paths(self):
         source = ROOT / "application" / "ports" / "gui_data_service.py"
         tree = _tree(source)

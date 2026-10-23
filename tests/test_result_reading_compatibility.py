@@ -14,8 +14,12 @@ class ResultReadingCompatibilityTests(unittest.TestCase):
 
     def test_application_input_package_keeps_reader_export(self):
         inputs = importlib.import_module("application.inputs")
-        self.assertEqual(inputs.__all__, ["ResultInputReader"])
+        # 正式读取器保持导出；兼容读取器是步骤 D 新增的独立导出。
+        self.assertEqual(
+            inputs.__all__, ["LegacyResultInputReader", "ResultInputReader"]
+        )
         self.assertIsNotNone(inputs.ResultInputReader)
+        self.assertIsNotNone(inputs.LegacyResultInputReader)
 
 
 if __name__ == "__main__":

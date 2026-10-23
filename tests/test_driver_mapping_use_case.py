@@ -42,10 +42,29 @@ class _Events:
 
 
 class _Reader:
-    def __init__(self, loss_data=None): self.loss_data = loss_data
-    def read_cable_loss(self, path=None):
+    """同时实现显式读取和旧兼容读取的最小替身。"""
+
+    def __init__(self, loss_data=None):
+        self.loss_data = loss_data
+        self.explicit_paths = []
+        self.legacy_reads = 0
+
+    def read_cable_loss(self, path):
+        self.explicit_paths.append(path)
         if self.loss_data is None:
             raise FileNotFoundError("missing cable loss")
+        return self.loss_data
+
+    def read_legacy_cable_loss(self):
+        self.legacy_reads += 1
+        if self.loss_data is None:
+            raise FileNotFoundError("missing cable loss")
+        return self.loss_data
+
+    def read_latest_legacy_driver_mapping(self):
+        self.legacy_reads += 1
+        if self.loss_data is None:
+            raise FileNotFoundError("missing driver mapping")
         return self.loss_data
 
 

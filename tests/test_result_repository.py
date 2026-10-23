@@ -199,7 +199,8 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
                 with self.assertRaises(FileNotFoundError):
                     repository.latest_path("driver_power_mapping")
 
-    def test_latest_compatibility_path_is_available_for_legacy_browsing(self):
+    def test_latest_compatibility_path_only_serves_legacy_compatibility_calls(self):
+        """新代码的历史浏览走只读历史端口，本方法只保留给弃用的 latest_path()。"""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             repository = FileMeasurementResultRepository(results_directory=root)

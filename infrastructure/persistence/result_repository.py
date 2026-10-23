@@ -18,16 +18,11 @@ from infrastructure.filesystem.paths import PathService
 
 
 class FileMeasurementResultRepository(MeasurementResultRepository):
-    """Adapt the legacy result storage functions to the application port."""
+    """Adapt the legacy result storage functions to the application port.
 
-    _FIXED_LEGACY_PATHS = {
-        "cable_loss": "cable_loss_results.json",
-    }
-
-    _TIMESTAMPED_PREFIXES = {
-        "driver_power_mapping": "driver_power_mapping",
-        "amplifier_measurement": "amplifier_measurement",
-    }
+    本仓储是**正式测量输入/结果写入**的边界；历史查看和导出不得复用它，应使用
+    :class:`infrastructure.persistence.result_history_repository.FileResultHistoryRepository`。
+    """
 
     def __init__(
         self,
@@ -99,11 +94,11 @@ class FileMeasurementResultRepository(MeasurementResultRepository):
         return json_result_repository.load_json_result(path)
 
     def legacy_path(self, result_type: str) -> Path:
-        if result_type in self._FIXED_LEGACY_PATHS:
-            filename = self._FIXED_LEGACY_PATHS[result_type]
+        filename = json_result_repository.fixed_result_filename(result_type)
+        if filename is not None:
             return self._results_directory() / filename
 
-        prefix = self._TIMESTAMPED_PREFIXES.get(result_type)
+        prefix = json_result_repository.timestamped_result_prefix(result_type)
         if prefix is None:
             raise ValueError(f"不支持的测量结果类型: {result_type}")
         return self._results_directory() / f"{prefix}_{time.strftime('%Y%m%d_%H%M%S')}.json"
@@ -118,21 +113,19 @@ class FileMeasurementResultRepository(MeasurementResultRepository):
         return self.latest_compatibility_path(result_type)
 
     def latest_compatibility_path(self, result_type: str) -> Path:
-        """Return a global newest result for read-only legacy browsing."""
-        prefix = self._TIMESTAMPED_PREFIXES.get(result_type)
-        if prefix is None:
-            return self.legacy_path(result_type)
-        files = sorted(
-            (
-                path
-                for path in self._results_directory().glob(f"{prefix}_*.json")
-                if not path.name.endswith("_model.json")
-            ),
-            key=lambda item: item.stat().st_mtime,
+        """Return a global newest result path for legacy compatibility only.
+
+        新代码的历史浏览请使用只读历史端口
+        （:mod:`application.ports.result_history`）；本方法只保留给仍带弃用警告的
+        ``latest_path()`` 兼容链，删除条件见重构指南步骤 E。
+        """
+        fixed = json_result_repository.fixed_result_filename(result_type)
+        if fixed is not None:
+            # 固定文件名类型保持旧行为：路径固定，由调用方处理文件缺失。
+            return self._results_directory() / fixed
+        return json_result_repository.latest_history_result_file(
+            self._results_directory(), result_type
         )
-        if not files:
-            raise FileNotFoundError(f"未找到结果类型为 {result_type} 的结果文件")
-        return files[-1]
 
     def _results_directory(self) -> Path:
         """Resolve the default lazily so path configuration remains patchable."""

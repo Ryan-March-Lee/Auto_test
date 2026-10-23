@@ -16,7 +16,7 @@ from pathlib import Path
 from app.cancellation import CancellationToken, MeasurementCancelled
 from app.gui_runtime import create_cable_loss_measurement, prepare_configuration
 from application.dto import CableLossMeasurementRequest
-from application.inputs import ResultInputReader
+from application.inputs import LegacyResultInputReader
 from application.measurements import CableLossUseCase
 from application.run_stages import RunStageRecorder
 from domain.run.models import (
@@ -188,8 +188,8 @@ class CableLossRunStageTests(unittest.TestCase):
         compatibility_path = self.base / "test_results" / "cable_loss_results.json"
         self.assertTrue(compatibility_path.is_file())
 
-        reader = ResultInputReader(self.result_repository)
-        legacy_payload = reader.read_cable_loss()
+        reader = LegacyResultInputReader(self.result_repository)
+        legacy_payload = reader.read_legacy_cable_loss()
         self.assertEqual(legacy_payload["run_id"], RUN_ID)
         self.assertIn("cable_losses", legacy_payload)
         # 兼容副本被明确标记，不会被误当作运行目录内的权威输入。

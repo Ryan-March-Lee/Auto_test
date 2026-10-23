@@ -24,7 +24,7 @@ from .run_context import (
 )
 from instrument.measurement_factory import create_measurement_port
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
-from application.inputs import ResultInputReader
+from application.inputs import LegacyResultInputReader, ResultInputReader
 from application.run_stages import RunStageRecorder
 from domain.run.models import STAGE_CABLE_LOSS, STAGE_DRIVER_MAPPING
 from application.measurements import (
@@ -351,6 +351,17 @@ def _ensure_run_snapshots_are_intact(prepared_run: PreparedRun) -> None:
     _ensure_hardware_snapshot_is_intact(run_repository, run_id)
 
 
+def _input_reader_for(run_repository: Any, repository: Any) -> Any:
+    """按运行契约选择输入读取器：正式运行只接受显式路径。
+
+    运行契约运行（``run_repository`` 非空）使用只接受显式路径的正式读取器；
+    旧兼容快照保留无路径兼容读取能力，但它们都带弃用警告。
+    """
+    if run_repository is not None:
+        return ResultInputReader(repository)
+    return LegacyResultInputReader(repository)
+
+
 def _request_kwargs(prepared_run: PreparedRun, config_path: str, callbacks: dict[str, Any]) -> dict[str, Any]:
     """Build the shared request inputs at the application composition boundary."""
     port = callbacks.get("measurement_port")
@@ -372,7 +383,9 @@ def _request_kwargs(prepared_run: PreparedRun, config_path: str, callbacks: dict
         "event_sink": callbacks.get("event_sink"),
         "cancellation_token": callbacks.get("cancellation_token"),
         "result_repository": repository,
-        "input_reader": callbacks.get("input_reader") or ResultInputReader(repository),
+        # 运行契约运行只接受显式输入路径；旧兼容快照保留无路径兼容读取能力。
+        "input_reader": callbacks.get("input_reader")
+        or _input_reader_for(run_repository, repository),
         "stage_recorder": stage_recorder,
         "config_path": Path(config_path),
         "safety_options": {
@@ -458,7 +471,9 @@ def create_amplifier_measurement(
     try:
         paths = callbacks.get("paths") or DEFAULT_PATHS
         repository = callbacks.get("result_repository") or FileMeasurementResultRepository(paths=paths)
-        input_reader = callbacks.get("input_reader") or ResultInputReader(repository)
+        input_reader = callbacks.get("input_reader") or _input_reader_for(
+            getattr(prepared_run, "run_repository", None), repository
+        )
         # 运行契约运行在连接仪器前读取并校验当前运行的校准输入：主功放始终需要
         # 线损，仅在驱动模式启用时才需要驱动映射；结构无效或配置漂移都在打开仪器
         # 或执行任何 RF 动作前失败。随后按领域/硬件两套职责分别校验冻结快照。

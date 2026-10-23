@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Protocol, Union
+from typing import Any, Mapping, Protocol
+
+from .types import PathLike
 
 
-PathLike = Union[str, Path]
+__all__ = ["MeasurementResultRepository", "PathLike", "SavedMeasurementResult"]
 
 
 @dataclass(frozen=True)

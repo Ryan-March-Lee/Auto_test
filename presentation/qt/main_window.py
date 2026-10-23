@@ -326,7 +326,7 @@ class MainWindow(QMainWindow):
         self._active_page_index = index
 
     def _load_cable_loss_result(self):
-        """由窗口协调结果服务读取，再把结构化引用交给页面显示。"""
+        """读取最新全局兼容副本，仅供历史查看；不会成为任何运行的输入。"""
         try:
             reference = MeasurementResultReference(
                 result_id=f"loaded-{datetime.now(timezone.utc).isoformat()}",
@@ -1261,7 +1261,8 @@ class MainWindow(QMainWindow):
         self.visualization_page = VisualizationPage(
             config_provider=lambda: self.config,
             result_loader=self.gui_data_service.results.choose_and_load,
-            latest_result_provider=self.gui_data_service.results.latest,
+            # 报告兜底使用只读历史接口；正式测量输入只来自当前运行 manifest。
+            latest_result_provider=self.gui_data_service.results.latest_legacy_result,
             report_service=self.gui_data_service.reports.create_summary_report,
             log_callback=self.add_log_message,
             parent=self,

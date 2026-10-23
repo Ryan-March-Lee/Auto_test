@@ -4,6 +4,9 @@
 controller 或硬件实现。
 """
 
+import copy
+from typing import Any
+
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout, QGroupBox,
@@ -11,8 +14,42 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from .config_form_state import ConfigFormState
+from .config_form_state import ConfigFormState, parse_frequency_text
 from .pages import PageControllerBindingMixin
+
+
+class ConfigBackfillError(ValueError):
+    """冻结配置无法确定性地回填到配置页控件时抛出。
+
+    回填失败必须可识别：调用方要么收到该异常，要么据此明确报告“未回填成功”，
+    不得把它静默当作加载成功。
+    """
+
+
+# 配置页受控控件的空配置基线。``apply_config()`` 先重置到这些默认值，再投影
+# 冻结配置，从而保证 ``apply_config(config)`` 的显示结果与 ``ConfigPage(config)``
+# 的构造结果一致，不会残留上一次运行的显示状态。
+DEFAULT_TEST_FREQUENCIES = [4.0, 4.4, 4.8, 5.2, 5.6, 5.8]
+DEFAULT_SIGNAL_SOURCE = {"start_power": -38.0, "stop_power": -16.0, "step": 1.0}
+DEFAULT_COMPRESSION_TYPE = "5dB"
+DEFAULT_ATTENUATOR_TYPE = "40dB"
+DEFAULT_DRIVER_MODE_ENABLED = True
+DEFAULT_MAX_INPUT_POWER = 33.5
+DEFAULT_PA_UNIT_COUNT = "2"
+DEFAULT_ENABLED_POWER_SUPPLIES = ("PS1", "PS2")
+DEFAULT_POWER_SUPPLY_NAMES = ("PS1", "PS2", "PS3", "PS4")
+# (控件前缀, 中文标签, 配置键, 默认启用) —— 同时供 build 与 reset 使用。
+INSTRUMENT_ENTRIES = (
+    ("sg", "信号发生器", "signal_generator", True),
+    ("sa", "频谱分析仪", "spectrum_analyzer", True),
+)
+# 电源分配组合框的默认映射，重置时逐项恢复。
+DEFAULT_POWER_ASSIGNMENT = {
+    "driver_power": "PS1",
+    "pa_unit1_power": "PS2",
+    "pa_unit2_power": "PS3",
+    "pa_unit3_power": "PS4",
+}
 
 
 class ConfigPage(PageControllerBindingMixin, QWidget):
@@ -57,9 +94,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         connection = QGroupBox("仪器连接配置")
         grid = QGridLayout(connection)
         grid.setColumnStretch(1, 3)
-        entries = (("sg", "信号发生器", "signal_generator", True),
-                   ("sa", "频谱分析仪", "spectrum_analyzer", True))
-        for row, (key, label, source, default) in enumerate(entries):
+        for row, (key, label, source, default) in enumerate(INSTRUMENT_ENTRIES):
             item = instruments.get(source, {})
             if not isinstance(item, dict): item = {}
             address = QLineEdit(str(item.get("address", "")))
@@ -70,12 +105,12 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             grid.addWidget(QLabel(f"{label}地址:"), row, 0)
             grid.addWidget(address, row, 1)
             grid.addWidget(enabled, row, 2)
-        for row, name in enumerate(("PS1", "PS2", "PS3", "PS4"), 2):
+        for row, name in enumerate(DEFAULT_POWER_SUPPLY_NAMES, 2):
             item = supplies.get(name, {})
             if not isinstance(item, dict): item = {}
             address = QLineEdit(str(item.get("address", "")))
             enabled = QCheckBox("启用")
-            enabled.setChecked(item.get("enabled", name in ("PS1", "PS2")))
+            enabled.setChecked(item.get("enabled", name in DEFAULT_ENABLED_POWER_SUPPLIES))
             setattr(self, f"{name.lower()}_address", address)
             setattr(self, f"{name.lower()}_enabled", enabled)
             grid.addWidget(QLabel(f"{name}地址:"), row, 0)
@@ -89,23 +124,23 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         form = QFormLayout(params)
         test = self.config.get("signal_source", {})
         if not isinstance(test, dict): test = {}
-        self.freq_edit = QLineEdit(str(self.config.get("test_frequencies", [4.0, 4.4, 4.8, 5.2, 5.6, 5.8])))
-        self.start_power = self._spin(test.get("start_power", -38), -50, 20)
-        self.stop_power = self._spin(test.get("stop_power", -16), -50, 20)
-        self.power_step = self._spin(test.get("step", 1), 0.1, 5)
+        self.freq_edit = QLineEdit(str(self.config.get("test_frequencies", DEFAULT_TEST_FREQUENCIES)))
+        self.start_power = self._spin(test.get("start_power", DEFAULT_SIGNAL_SOURCE["start_power"]), -50, 20)
+        self.stop_power = self._spin(test.get("stop_power", DEFAULT_SIGNAL_SOURCE["stop_power"]), -50, 20)
+        self.power_step = self._spin(test.get("step", DEFAULT_SIGNAL_SOURCE["step"]), 0.1, 5)
         compression = self.config.get("compression_point", {})
         attenuator = self.config.get("attenuator", {})
         if not isinstance(compression, dict): compression = {}
         if not isinstance(attenuator, dict): attenuator = {}
-        self.compression_combo = self._combo(("1dB", "3dB", "5dB"), compression.get("type", "5dB"))
-        self.attenuator_combo = self._combo(("30dB", "40dB"), attenuator.get("type", "40dB"))
+        self.compression_combo = self._combo(("1dB", "3dB", "5dB"), compression.get("type", DEFAULT_COMPRESSION_TYPE))
+        self.attenuator_combo = self._combo(("30dB", "40dB"), attenuator.get("type", DEFAULT_ATTENUATOR_TYPE))
         self.driver_mode_check = QCheckBox("启用驱动功放模式")
         mode = self.config.get("driver_mode", {})
-        self.driver_mode_check.setChecked(mode.get("enabled", True) if isinstance(mode, dict) else True)
+        self.driver_mode_check.setChecked(mode.get("enabled", DEFAULT_DRIVER_MODE_ENABLED) if isinstance(mode, dict) else DEFAULT_DRIVER_MODE_ENABLED)
         dut = self.config.get("dut_config", {})
         if not isinstance(dut, dict): dut = {}
-        self.max_input_power = self._spin(dut.get("max_input_power", 33.5), 0, 50)
-        self.pa_unit_count_combo = self._combo(("1", "2", "3"), str(dut.get("power_supply_count", 2)))
+        self.max_input_power = self._spin(dut.get("max_input_power", DEFAULT_MAX_INPUT_POWER), 0, 50)
+        self.pa_unit_count_combo = self._combo(("1", "2", "3"), str(dut.get("power_supply_count", DEFAULT_PA_UNIT_COUNT)))
         for label, widget in (("测试频率 (GHz)", self.freq_edit), ("起始功率 (dBm)", self.start_power),
                               ("结束功率 (dBm)", self.stop_power), ("功率步长 (dB)", self.power_step),
                               ("压缩点", self.compression_combo), ("衰减器", self.attenuator_combo),
@@ -130,7 +165,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         detail = QGroupBox("电源详细配置")
         detail_layout = QVBoxLayout(detail)
         tabs = QTabWidget(); self.power_config_widgets = {}
-        for name in ("PS1", "PS2", "PS3", "PS4"):
+        for name in DEFAULT_POWER_SUPPLY_NAMES:
             page = QWidget(); page_layout = QVBoxLayout(page)
             source = supplies.get(name, {})
             if not isinstance(source, dict): source = {}
@@ -176,10 +211,11 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         carrier = dut_supply.get("carrier", {}) if isinstance(dut_supply.get("carrier", {}), dict) else {}
         peaking = dut_supply.get("peaking", {}) if isinstance(dut_supply.get("peaking", {}), dict) else {}
         peaking2 = dut_supply.get("peaking2", {}) if isinstance(dut_supply.get("peaking2", {}), dict) else {}
-        self.driver_power_combo = self._combo(("PS1", "PS2", "PS3", "PS4"), main.get("name", "PS1"))
-        self.pa_unit1_power_combo = self._combo(("PS1", "PS2", "PS3", "PS4"), carrier.get("name", "PS2"))
-        self.pa_unit2_power_combo = self._combo(("PS1", "PS2", "PS3", "PS4"), peaking.get("name", "PS3"))
-        self.pa_unit3_power_combo = self._combo(("PS1", "PS2", "PS3", "PS4"), peaking2.get("name", "PS4"))
+        supplies_choices = DEFAULT_POWER_SUPPLY_NAMES
+        self.driver_power_combo = self._combo(supplies_choices, main.get("name", DEFAULT_POWER_ASSIGNMENT["driver_power"]))
+        self.pa_unit1_power_combo = self._combo(supplies_choices, carrier.get("name", DEFAULT_POWER_ASSIGNMENT["pa_unit1_power"]))
+        self.pa_unit2_power_combo = self._combo(supplies_choices, peaking.get("name", DEFAULT_POWER_ASSIGNMENT["pa_unit2_power"]))
+        self.pa_unit3_power_combo = self._combo(supplies_choices, peaking2.get("name", DEFAULT_POWER_ASSIGNMENT["pa_unit3_power"]))
         self.driver_power_label = QLabel("驱动功放电源:"); self.pa_unit2_label = QLabel("PA Unit2电源:"); self.pa_unit3_label = QLabel("PA Unit3电源:")
         form.addRow(self.driver_power_enabled); form.addRow(self.driver_power_label, self.driver_power_combo)
         form.addRow("PA Unit1电源:", self.pa_unit1_power_combo); form.addRow(self.pa_unit2_label, self.pa_unit2_power_combo); form.addRow(self.pa_unit3_label, self.pa_unit3_power_combo)
@@ -259,7 +295,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         if not enabled: self.driver_power_combo.setCurrentIndex(-1)
     def on_instrument_enabled_changed(self, _checked=False): self.update_power_supply_options()
     def get_enabled_power_supplies(self):
-        return [name for name in ("PS1", "PS2", "PS3", "PS4") if getattr(self, f"{name.lower()}_enabled").isChecked()]
+        return [name for name in DEFAULT_POWER_SUPPLY_NAMES if getattr(self, f"{name.lower()}_enabled").isChecked()]
     def update_power_supply_options(self):
         enabled = self.get_enabled_power_supplies()
         for key in ("driver_power", "pa_unit1_power", "pa_unit2_power", "pa_unit3_power"):
@@ -269,15 +305,41 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
     def build_config(self): return ConfigFormState(self.config, self).build_config()
 
     # -- 冻结运行配置回填 ---------------------------------------------------
+    @staticmethod
+    def _text_or_empty(value: Any) -> str:
+        """只接受字符串文本（如仪器地址）；其它类型一律视为缺失，返回空串。"""
+        return value if isinstance(value, str) else ""
+
+    @staticmethod
+    def _bool_or_default(value: Any, default: bool) -> bool:
+        """只接受真正的布尔值；其它类型（含 ``"false"``/``1``）视为缺失，用默认值。"""
+        return value if isinstance(value, bool) else default
+
+    @staticmethod
+    def _number_or_none(value: Any) -> float | None:
+        """只接受非 bool 的数字；其它类型（含 ``"12"``/``True``）视为缺失。"""
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return float(value)
+
     def apply_config(self, config) -> None:
-        """把一份已冻结配置回填到控件，使界面与当前运行保持一致。
+        """把一份已冻结配置确定性地回填到控件，使界面与当前运行保持一致。
+
+        执行顺序固定：先把所有受控控件重置到空配置基线，再逐字段投影冻结配置。
+        缺失或类型不正确的字段会落到明确默认值（不会被强制转换成字符串或布尔
+        值），绝不残留上一次运行的显示状态；``apply_config(config)`` 的显示结果
+        与 ``ConfigPage(config)`` 的构造结果一致，便于审计。只有全部投影成功后
+        才更新 ``self.config``，避免部分回填失败时页面与配置副本互相矛盾。
 
         只更新控件显示，不写文件、不保存、不连接仪器；运行期间的测量输入仍来自
-        运行目录内的冻结快照。
+        运行目录内的冻结快照。参数不是 JSON 对象（``dict``）时抛出
+        :class:`ConfigBackfillError`，避免把回填失败静默当作加载成功。
         """
         if not isinstance(config, dict):
-            return
-        self.config = config
+            raise ConfigBackfillError(
+                "冻结配置必须是 JSON 对象（dict），无法确定性地回填配置页"
+            )
+        self._reset_control_widgets()
         self._apply_instrument_widgets(config.get("instruments"))
         self._apply_test_parameter_widgets(config)
         self._apply_power_supply_widgets(config.get("instruments"))
@@ -285,44 +347,95 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         self.update_pa_unit_ui()
         self.update_driver_power_ui()
         self.update_power_supply_options()
+        # 全部投影成功后再提交配置副本，使用深拷贝避免与调用方共享可变结构。
+        self.config = copy.deepcopy(config)
+
+    def _reset_control_widgets(self) -> None:
+        """把所有受控控件重置到空配置基线，消除上一次运行的残留值。"""
+        for name, _label, _source, default_enabled in INSTRUMENT_ENTRIES:
+            address = getattr(self, f"{name}_address", None)
+            if address is not None:
+                address.setText("")
+            enabled = getattr(self, f"{name}_enabled", None)
+            if enabled is not None:
+                enabled.setChecked(bool(default_enabled))
+        for name in DEFAULT_POWER_SUPPLY_NAMES:
+            address = getattr(self, f"{name.lower()}_address", None)
+            if address is not None:
+                address.setText("")
+            enabled = getattr(self, f"{name.lower()}_enabled", None)
+            if enabled is not None:
+                enabled.setChecked(name in DEFAULT_ENABLED_POWER_SUPPLIES)
+        self.freq_edit.setText(str(list(DEFAULT_TEST_FREQUENCIES)))
+        self.start_power.setValue(DEFAULT_SIGNAL_SOURCE["start_power"])
+        self.stop_power.setValue(DEFAULT_SIGNAL_SOURCE["stop_power"])
+        self.power_step.setValue(DEFAULT_SIGNAL_SOURCE["step"])
+        self._set_combo(self.compression_combo, DEFAULT_COMPRESSION_TYPE)
+        self._set_combo(self.attenuator_combo, DEFAULT_ATTENUATOR_TYPE)
+        self.driver_mode_check.setChecked(DEFAULT_DRIVER_MODE_ENABLED)
+        self.max_input_power.setValue(DEFAULT_MAX_INPUT_POWER)
+        self._set_combo(self.pa_unit_count_combo, DEFAULT_PA_UNIT_COUNT)
+        self._reset_power_supply_channels()
+        self._reset_power_assignment_widgets()
+
+    def _reset_power_supply_channels(self) -> None:
+        for record in getattr(self, "power_config_widgets", {}).values():
+            for controls in record.get("channels", {}).values():
+                for key in ("voltage", "voltage_protection", "current", "current_protection"):
+                    controls[key].setValue(0.0)
+                for key in ("voltage_protection_enabled", "current_protection_enabled"):
+                    controls[key].setChecked(False)
+
+    def _reset_power_assignment_widgets(self) -> None:
+        widgets = getattr(self, "power_assignment_widgets", {})
+        if not widgets:
+            return
+        widgets["driver_enabled"].setChecked(False)
+        for key, default in DEFAULT_POWER_ASSIGNMENT.items():
+            self._set_combo(widgets[key], default)
 
     def _apply_instrument_widgets(self, instruments) -> None:
         instruments = instruments if isinstance(instruments, dict) else {}
         supplies = instruments.get("power_supplies")
         supplies = supplies if isinstance(supplies, dict) else {}
-        for name, source in (("sg", "signal_generator"), ("sa", "spectrum_analyzer")):
+        for name, _label, source, default_enabled in INSTRUMENT_ENTRIES:
             item = instruments.get(source)
             item = item if isinstance(item, dict) else {}
             address = getattr(self, f"{name}_address", None)
             if address is not None:
-                address.setText(str(item.get("address", "")))
+                address.setText(self._text_or_empty(item.get("address")))
             enabled = getattr(self, f"{name}_enabled", None)
             if enabled is not None:
-                enabled.setChecked(bool(item.get("enabled", True)))
-        for name in ("PS1", "PS2", "PS3", "PS4"):
+                enabled.setChecked(self._bool_or_default(item.get("enabled"), bool(default_enabled)))
+        for name in DEFAULT_POWER_SUPPLY_NAMES:
             item = supplies.get(name)
             item = item if isinstance(item, dict) else {}
             address = getattr(self, f"{name.lower()}_address", None)
             if address is not None:
-                address.setText(str(item.get("address", "")))
+                address.setText(self._text_or_empty(item.get("address")))
             enabled = getattr(self, f"{name.lower()}_enabled", None)
             if enabled is not None:
-                enabled.setChecked(bool(item.get("enabled", name in ("PS1", "PS2"))))
+                enabled.setChecked(
+                    self._bool_or_default(
+                        item.get("enabled"), name in DEFAULT_ENABLED_POWER_SUPPLIES
+                    )
+                )
 
     def _apply_test_parameter_widgets(self, config) -> None:
         frequencies = config.get("test_frequencies")
-        if isinstance(frequencies, list):
+        # 复用频率解析规则：非列表、空列表或含非法元素时保持基线默认值。
+        if isinstance(frequencies, list) and parse_frequency_text(repr(frequencies)) is not None:
             self.freq_edit.setText(str(frequencies))
         signal_source = config.get("signal_source")
         signal_source = signal_source if isinstance(signal_source, dict) else {}
-        for widget, key, default in (
-            (self.start_power, "start_power", -38),
-            (self.stop_power, "stop_power", -16),
-            (self.power_step, "step", 1),
+        for widget, key in (
+            (self.start_power, "start_power"),
+            (self.stop_power, "stop_power"),
+            (self.power_step, "step"),
         ):
-            value = signal_source.get(key, default)
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                widget.setValue(float(value))
+            value = self._number_or_none(signal_source.get(key))
+            if value is not None:
+                widget.setValue(value)
         compression = config.get("compression_point")
         compression = compression if isinstance(compression, dict) else {}
         self._set_combo(self.compression_combo, compression.get("type"))
@@ -331,12 +444,14 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         self._set_combo(self.attenuator_combo, attenuator.get("type"))
         mode = config.get("driver_mode")
         mode = mode if isinstance(mode, dict) else {}
-        self.driver_mode_check.setChecked(bool(mode.get("enabled", True)))
+        self.driver_mode_check.setChecked(
+            self._bool_or_default(mode.get("enabled"), DEFAULT_DRIVER_MODE_ENABLED)
+        )
         dut = config.get("dut_config")
         dut = dut if isinstance(dut, dict) else {}
-        value = dut.get("max_input_power")
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            self.max_input_power.setValue(float(value))
+        value = self._number_or_none(dut.get("max_input_power"))
+        if value is not None:
+            self.max_input_power.setValue(value)
         self._set_combo(self.pa_unit_count_combo, dut.get("power_supply_count"))
 
     def _apply_power_supply_widgets(self, instruments) -> None:
@@ -353,19 +468,19 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
                 values = values if isinstance(values, dict) else {}
                 self._apply_channel_widgets(controls, values)
 
-    @staticmethod
-    def _apply_channel_widgets(controls, values) -> None:
+    def _apply_channel_widgets(self, controls, values) -> None:
         voltage = values.get("voltage")
         voltage = voltage if isinstance(voltage, dict) else {}
         current = values.get("current")
         current = current if isinstance(current, dict) else {}
         for key, value in (("voltage", voltage.get("value")), ("voltage_protection", voltage.get("protection")),
                            ("current", current.get("value")), ("current_protection", current.get("protection"))):
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                controls[key].setValue(float(value))
+            number = self._number_or_none(value)
+            if number is not None:
+                controls[key].setValue(number)
         for key, value in (("voltage_protection_enabled", voltage.get("protection_enabled")),
                            ("current_protection_enabled", current.get("protection_enabled"))):
-            controls[key].setChecked(bool(value))
+            controls[key].setChecked(self._bool_or_default(value, False))
 
     def _apply_power_assignment_widgets(self, assignment) -> None:
         assignment = assignment if isinstance(assignment, dict) else {}
@@ -380,20 +495,26 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         driver_supplies = driver_supplies if isinstance(driver_supplies, dict) else {}
         main = driver_supplies.get("main")
         main = main if isinstance(main, dict) else {}
-        enabled = driver.get("power_supply_count", 0)
-        widgets["driver_enabled"].setChecked(isinstance(enabled, (int, float)) and enabled > 0)
-        self._set_combo(widgets["driver_power"], main.get("name"))
+        count = self._number_or_none(driver.get("power_supply_count"))
+        widgets["driver_enabled"].setChecked(count is not None and count > 0)
+        self._set_combo(
+            widgets["driver_power"],
+            self._text_or_empty(main.get("name")) or DEFAULT_POWER_ASSIGNMENT["driver_power"],
+        )
         dut_supplies = dut.get("supplies")
         dut_supplies = dut_supplies if isinstance(dut_supplies, dict) else {}
         for role, key in (("carrier", "pa_unit1_power"), ("peaking", "pa_unit2_power"), ("peaking2", "pa_unit3_power")):
             item = dut_supplies.get(role)
             item = item if isinstance(item, dict) else {}
-            if item.get("name"):
-                self._set_combo(widgets[key], item.get("name"))
+            self._set_combo(
+                widgets[key],
+                self._text_or_empty(item.get("name")) or DEFAULT_POWER_ASSIGNMENT[key],
+            )
 
     @staticmethod
     def _set_combo(combo, value) -> None:
-        if value is None:
+        # 布尔值不是合法选项（避免 ``True`` 被当成 "True"）：视为缺失，保持当前项。
+        if isinstance(value, bool) or value is None:
             return
         text = str(value)
         if combo.findText(text) >= 0:

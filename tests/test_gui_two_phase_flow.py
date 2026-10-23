@@ -651,6 +651,52 @@ class MainWindowTwoPhaseTests(unittest.TestCase):
         window._close_instrument_port.assert_called_once_with(port)
         self.assertIsNone(window.instrument_ctrl)
 
+    def test_load_run_reports_backfill_failure_instead_of_success(self):
+        from presentation.qt.config_page import ConfigBackfillError
+        from presentation.qt.main_window import MainWindow
+
+        current_port = object()
+        current_run = object()
+        window = MainWindow.__new__(MainWindow)
+        window.instrument_ctrl = current_port
+        window.instrument_worker = None
+        window.config_path = Path("global-config.json")
+        window.paths = None
+        window.prepared_run = current_run
+        window.config = {"sentinel": True}
+        window.config_page = MagicMock()
+        window.config_page.apply_config.side_effect = ConfigBackfillError("坏配置")
+        window.add_log_message = MagicMock()
+        window._update_run_status = MagicMock()
+        window._close_instrument_port = MagicMock()
+
+        prepared = type(
+            "PreparedRun",
+            (),
+            {"run_id": RUN_ID, "run_directory": Path("runs") / RUN_ID,
+             "hardware_config": {"test_frequencies": [2.4]}},
+        )()
+        with patch(
+            "presentation.qt.main_window.load_prepared_run", return_value=prepared
+        ), patch("presentation.qt.main_window.QMessageBox.warning") as warning:
+            result = MainWindow._load_prepared_run(window, RUN_ID)
+
+        # 两阶段提交：回填失败必须放弃切换，绝不报告为加载成功。
+        self.assertIsNone(result)
+        self.assertIs(window.prepared_run, current_run)
+        self.assertEqual(window.config, {"sentinel": True})
+        self.assertIs(window.instrument_ctrl, current_port)
+        window._close_instrument_port.assert_not_called()
+        window._update_run_status.assert_not_called()
+        warning.assert_called_once()
+        messages = [
+            str(call.args[0])
+            for call in window.add_log_message.call_args_list
+            if call.args
+        ]
+        self.assertTrue(any("回填失败" in message for message in messages))
+        self.assertFalse(any("已加载运行" in message for message in messages))
+
     def test_confirm_wiring_does_not_rewrite_frozen_config(self):
         from presentation.qt.main_window import MainWindow
 
@@ -738,6 +784,220 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         self.assertEqual(page.ps1_address.text(), "sim::ps1")
         self.assertEqual(page.pa_unit1_power_combo.currentText(), "PS1")
         self.assertEqual(page.power_config_widgets["PS1"]["channels"]["CH2"]["voltage"].value(), 28.0)
+
+    def test_apply_config_clears_previous_values(self):
+        from presentation.qt.config_page import ConfigPage
+
+        page = ConfigPage({})
+        page.apply_config(_fully_valid_gui_config())
+        # 先确认配置 A 确实写入了非基线值，避免测试空转。
+        self.assertEqual(page.sg_address.text(), "sim::sg")
+        self.assertEqual(page.start_power.value(), -10.0)
+        self.assertFalse(page.driver_mode_check.isChecked())
+
+        # 配置 B 为空：所有受控控件必须回到空配置基线，不残留 A 的值。
+        page.apply_config({})
+
+        self.assertEqual(page.sg_address.text(), "")
+        self.assertEqual(page.ps1_address.text(), "")
+        self.assertEqual(page.freq_edit.text(), "[4.0, 4.4, 4.8, 5.2, 5.6, 5.8]")
+        self.assertEqual(page.start_power.value(), -38.0)
+        self.assertEqual(page.stop_power.value(), -16.0)
+        self.assertEqual(page.power_step.value(), 1.0)
+        self.assertEqual(page.compression_combo.currentText(), "5dB")
+        self.assertEqual(page.attenuator_combo.currentText(), "40dB")
+        self.assertTrue(page.driver_mode_check.isChecked())
+        self.assertEqual(page.max_input_power.value(), 33.5)
+        self.assertEqual(page.pa_unit_count_combo.currentText(), "2")
+        self.assertTrue(page.ps1_enabled.isChecked())
+        self.assertFalse(page.ps3_enabled.isChecked())
+        self.assertEqual(
+            page.power_config_widgets["PS1"]["channels"]["CH2"]["voltage"].value(), 0.0
+        )
+
+    def test_apply_config_projects_all_supported_fields(self):
+        from presentation.qt.config_page import ConfigPage
+
+        frozen = {
+            "test_frequencies": [2.4, 2.6],
+            "signal_source": {"start_power": -30.0, "stop_power": -5.0, "step": 0.5},
+            "compression_point": {"type": "3dB"},
+            "attenuator": {"type": "30dB"},
+            "driver_mode": {"enabled": True},
+            "dut_config": {"max_input_power": 25.5, "power_supply_count": 3},
+            "instruments": {
+                "signal_generator": {"address": "sim::sg2", "enabled": False},
+                "spectrum_analyzer": {"address": "sim::sa2", "enabled": True},
+                "power_supplies": {
+                    "PS1": {
+                        "address": "sim::ps1",
+                        "enabled": True,
+                        "channels": {
+                            "CH1": {
+                                "voltage": {
+                                    "value": 3.3,
+                                    "protection": 5.0,
+                                    "protection_enabled": True,
+                                },
+                                "current": {
+                                    "value": 0.5,
+                                    "protection": 1.0,
+                                    "protection_enabled": True,
+                                },
+                            },
+                            "CH2": {
+                                "voltage": {"value": 12.0},
+                                "current": {"value": 2.5},
+                            },
+                        },
+                    },
+                    "PS2": {"address": "sim::ps2", "enabled": True},
+                    "PS3": {"address": "sim::ps3", "enabled": True},
+                },
+            },
+            "power_supply_assignment": {
+                "driver_amplifier": {
+                    "power_supply_count": 1,
+                    "supplies": {"main": {"name": "PS1", "channel": ["CH1"]}},
+                },
+                "dut_amplifier": {
+                    "power_supply_count": 3,
+                    "supplies": {
+                        "carrier": {"name": "PS2"},
+                        "peaking": {"name": "PS3"},
+                        "peaking2": {"name": "PS1"},
+                    },
+                },
+            },
+        }
+
+        page = ConfigPage({})
+        page.apply_config(frozen)
+
+        self.assertEqual(page.freq_edit.text(), "[2.4, 2.6]")
+        self.assertEqual(page.start_power.value(), -30.0)
+        self.assertEqual(page.stop_power.value(), -5.0)
+        self.assertEqual(page.power_step.value(), 0.5)
+        self.assertEqual(page.compression_combo.currentText(), "3dB")
+        self.assertEqual(page.attenuator_combo.currentText(), "30dB")
+        self.assertTrue(page.driver_mode_check.isChecked())
+        self.assertEqual(page.max_input_power.value(), 25.5)
+        self.assertEqual(page.pa_unit_count_combo.currentText(), "3")
+        self.assertEqual(page.sg_address.text(), "sim::sg2")
+        self.assertFalse(page.sg_enabled.isChecked())
+        self.assertEqual(page.sa_address.text(), "sim::sa2")
+        self.assertTrue(page.sa_enabled.isChecked())
+        self.assertEqual(page.ps1_address.text(), "sim::ps1")
+        self.assertTrue(page.ps3_enabled.isChecked())
+        self.assertFalse(page.ps4_enabled.isChecked())
+        channel = page.power_config_widgets["PS1"]["channels"]["CH1"]
+        self.assertEqual(channel["voltage"].value(), 3.3)
+        self.assertEqual(channel["voltage_protection"].value(), 5.0)
+        self.assertTrue(channel["voltage_protection_enabled"].isChecked())
+        self.assertEqual(channel["current"].value(), 0.5)
+        self.assertEqual(channel["current_protection"].value(), 1.0)
+        self.assertTrue(channel["current_protection_enabled"].isChecked())
+        self.assertTrue(page.driver_power_enabled.isChecked())
+        self.assertEqual(page.driver_power_combo.currentText(), "PS1")
+        self.assertEqual(page.pa_unit1_power_combo.currentText(), "PS2")
+        self.assertEqual(page.pa_unit2_power_combo.currentText(), "PS3")
+        self.assertEqual(page.pa_unit3_power_combo.currentText(), "PS1")
+
+    def test_apply_config_matches_a_freshly_built_page(self):
+        from presentation.qt.config_page import ConfigPage
+
+        partial = {"test_frequencies": [9.0], "driver_mode": {"enabled": False}}
+        rebuilt = ConfigPage(partial)
+        page = ConfigPage({})
+        page.apply_config(_fully_valid_gui_config())
+        page.apply_config(partial)
+
+        self.assertEqual(page.freq_edit.text(), rebuilt.freq_edit.text())
+        self.assertEqual(page.start_power.value(), rebuilt.start_power.value())
+        self.assertEqual(
+            page.compression_combo.currentText(), rebuilt.compression_combo.currentText()
+        )
+        self.assertEqual(
+            page.pa_unit_count_combo.currentText(), rebuilt.pa_unit_count_combo.currentText()
+        )
+        self.assertFalse(page.driver_mode_check.isChecked())
+        self.assertEqual(page.sg_address.text(), rebuilt.sg_address.text())
+        self.assertEqual(
+            page.pa_unit1_power_combo.currentText(),
+            rebuilt.pa_unit1_power_combo.currentText(),
+        )
+
+    def test_apply_config_reports_invalid_payload(self):
+        from presentation.qt.config_page import ConfigBackfillError, ConfigPage
+
+        page = ConfigPage({})
+        for payload in (None, ["not", "a", "mapping"], "text"):
+            with self.subTest(payload=payload):
+                with self.assertRaises(ConfigBackfillError):
+                    page.apply_config(payload)
+
+    def test_apply_config_uses_defaults_for_invalid_field_types(self):
+        from presentation.qt.config_page import ConfigPage
+
+        page = ConfigPage({})
+        # 先写入与默认相反的非默认值，确认非法类型确实被规范化而不是残留。
+        initial = _fully_valid_gui_config()
+        initial["instruments"]["signal_generator"]["enabled"] = False
+        initial["instruments"]["power_supplies"]["PS1"]["enabled"] = False
+        page.apply_config(initial)
+        self.assertFalse(page.sg_enabled.isChecked())
+        self.assertFalse(page.ps1_enabled.isChecked())
+
+        page.apply_config(
+            {
+                "test_frequencies": ["invalid"],
+                "driver_mode": {"enabled": "false"},
+                "dut_config": {"power_supply_count": True, "max_input_power": "30"},
+                "instruments": {
+                    "signal_generator": {"address": None, "enabled": "false"},
+                    "power_supplies": {
+                        "PS1": {
+                            "address": 123,
+                            "enabled": "false",
+                            "channels": {
+                                "CH1": {
+                                    "voltage": {"value": "12"},
+                                    "current": {
+                                        "value": True,
+                                        "protection_enabled": "false",
+                                    },
+                                }
+                            },
+                        }
+                    },
+                },
+            }
+        )
+
+        # 字符串不是合法文本值：地址回落到空串，布尔回落默认，数字回落基线。
+        self.assertEqual(page.sg_address.text(), "")
+        self.assertTrue(page.sg_enabled.isChecked())
+        self.assertEqual(page.ps1_address.text(), "")
+        self.assertTrue(page.ps1_enabled.isChecked())
+        self.assertTrue(page.driver_mode_check.isChecked())
+        self.assertEqual(page.freq_edit.text(), "[4.0, 4.4, 4.8, 5.2, 5.6, 5.8]")
+        self.assertEqual(page.pa_unit_count_combo.currentText(), "2")
+        self.assertEqual(page.max_input_power.value(), 33.5)
+        channel = page.power_config_widgets["PS1"]["channels"]["CH1"]
+        self.assertEqual(channel["voltage"].value(), 0.0)
+        self.assertEqual(channel["current"].value(), 0.0)
+        self.assertFalse(channel["current_protection_enabled"].isChecked())
+
+    def test_apply_config_rejects_invalid_frequency_lists(self):
+        from presentation.qt.config_page import ConfigPage
+
+        page = ConfigPage({})
+        for bad in (None, "not-a-list", [], ["bad"], [True], [float("nan")], [[]]):
+            with self.subTest(bad=bad):
+                page.apply_config({"test_frequencies": bad})
+                self.assertEqual(
+                    page.freq_edit.text(), "[4.0, 4.4, 4.8, 5.2, 5.6, 5.8]"
+                )
 
 
 class FrozenSnapshotValidationBoundaryTests(unittest.TestCase):

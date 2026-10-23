@@ -69,7 +69,7 @@ from presentation.qt.assistant.chat_worker import UnavailableAssistant as _Unava
 from presentation.qt.assistant.chat_worker import ChatWorker
 from presentation.qt.assistant.chat_dialogs import ChatHistoryDialog, ChatSettingsDialog
 from presentation.qt.config_form_state import ConfigFormState
-from presentation.qt.config_page import ConfigPage
+from presentation.qt.config_page import ConfigBackfillError, ConfigPage
 from presentation.qt.visualization_page import VisualizationPage
 from presentation.qt.export_page import ExportPage
 from presentation.qt.status_panel import StatusPanel
@@ -1076,9 +1076,20 @@ class MainWindow(QMainWindow):
             self.add_log_message(f"加载运行失败: {error}")
             QMessageBox.warning(self, "加载运行失败", str(error))
             return None
+        # 两阶段提交：配置页回填成功前不切换当前运行、不释放旧端口、不更新状态，
+        # 避免回填失败却报告为加载成功、并让页面与已选运行互相矛盾。
+        if not self._apply_run_configuration_to_page(prepared):
+            self.add_log_message(
+                f"加载运行 {prepared.run_id} 失败: 配置页回填失败；当前运行保持不变"
+            )
+            QMessageBox.warning(
+                self,
+                "加载运行失败",
+                "配置页回填失败，运行未切换；请检查运行快照后重试",
+            )
+            return None
         self._release_instrument_for_new_run()
         self.prepared_run = prepared
-        self._apply_run_configuration_to_page(prepared)
         self._update_run_status()
         self.add_log_message(
             f"已加载运行 {prepared.run_id}，运行目录: {prepared.run_directory}"
@@ -1096,21 +1107,35 @@ class MainWindow(QMainWindow):
         self.instrument_ctrl = None
         self.add_log_message("已释放上一次连接的仪器端口；请重新连接仪器")
 
-    def _apply_run_configuration_to_page(self, prepared):
-        """把已冻结运行配置同步到配置页，使界面与本次运行保持一致。"""
+    def _apply_run_configuration_to_page(self, prepared) -> bool:
+        """把已冻结运行配置同步到配置页，使界面与本次运行保持一致。
+
+        返回是否成功回填。回填失败必须可识别：不修改窗口持有的配置副本，也不返回
+        True，让调用方在两阶段提交里放弃切换运行，而不是把回填失败静默当作加载
+        成功。页面自身的配置副本由 :meth:`ConfigPage.apply_config` 在成功后提交。
+        """
         page = getattr(self, "config_page", None)
         config = getattr(prepared, "hardware_config", None)
-        if page is None or not isinstance(config, dict):
-            return
+        if page is None:
+            return False
+        if not isinstance(config, dict):
+            # 硬件配置缺失或类型不正确：明确报告未回填，而不是静默保留旧显示。
+            self.add_log_message("运行缺少可展示的硬件配置快照；配置页未回填")
+            return False
         applier = getattr(page, "apply_config", None)
         if applier is None:
-            return
+            self.add_log_message("配置页不支持回填冻结配置；配置页未回填")
+            return False
         try:
             applier(config)
-            page.config = dict(config)
-            self.config = dict(config)
-        except Exception:  # noqa: BLE001 - 展示失败不影响运行契约
-            self.add_log_message("冻结配置同步到配置页失败；测量仍使用运行快照")
+        except ConfigBackfillError as error:
+            self.add_log_message(f"冻结配置同步到配置页失败: {error}")
+            return False
+        except Exception as error:  # noqa: BLE001 - 展示失败不阻断运行契约，但必须可见
+            self.add_log_message(f"冻结配置同步到配置页出现未预期错误: {error}")
+            return False
+        self.config = dict(config)
+        return True
 
     def _update_run_status(self):
         page = getattr(self, "config_page", None)

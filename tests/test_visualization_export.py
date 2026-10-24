@@ -1,9 +1,10 @@
 import os
 import json
 import tempfile
+import time
 import unittest
 import warnings
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -287,11 +288,12 @@ class RunHistoryMigrationTests(unittest.TestCase):
         adapter = ResultQueryAdapter(paths, history, run_history=run_history)
         return paths, runs, history, adapter
 
-    def _complete_cable_loss(self, runs, *, losses):
-        layout, _manifest = runs.create_run({"run_id": self.RUN_ID}, run_id=self.RUN_ID)
-        recorder = RunStageRecorder(runs, self.RUN_ID)
+    def _complete_cable_loss(self, runs, *, losses, run_id=None, now=None):
+        run_id = run_id or self.RUN_ID
+        layout, _manifest = runs.create_run({"run_id": run_id}, run_id=run_id, now=now)
+        recorder = RunStageRecorder(runs, run_id)
         recorder.complete(
-            STAGE_CABLE_LOSS, {"run_id": self.RUN_ID, "cable_losses": losses}
+            STAGE_CABLE_LOSS, {"run_id": run_id, "cable_losses": losses}, now=now
         )
         return layout
 
@@ -340,6 +342,72 @@ class RunHistoryMigrationTests(unittest.TestCase):
             latest = adapter.latest_result("cable_loss")
 
         self.assertEqual(latest.data["cable_losses"], {"1.0": 5.0})
+
+    def test_latest_result_skips_a_corrupted_newest_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _paths, runs, _history, adapter = self._setup(directory)
+            old_id = "20261024T070000Z_aaaaaaaa"
+            new_id = "20261024T090000Z_bbbbbbbb"
+            self._complete_cable_loss(
+                runs,
+                losses={"1.0": 1.0},
+                run_id=old_id,
+                now=datetime(2026, 10, 24, 7, 0, tzinfo=timezone.utc),
+            )
+            new_layout = self._complete_cable_loss(
+                runs,
+                losses={"1.0": 2.0},
+                run_id=new_id,
+                now=datetime(2026, 10, 24, 9, 0, tzinfo=timezone.utc),
+            )
+            (new_layout.run_directory / CABLE_LOSS_INPUT_PATH).write_text(
+                json.dumps({"cable_losses": {"1.0": 999.0}}), encoding="utf-8"
+            )
+
+            latest = adapter.latest_result("cable_loss")
+
+        # 最新运行被篡改，应回退到更旧但有效的运行结果。
+        self.assertEqual(latest.data["cable_losses"], {"1.0": 1.0})
+
+    def test_latest_result_falls_back_to_legacy_when_all_run_results_corrupt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths, runs, _history, adapter = self._setup(directory)
+            layout = self._complete_cable_loss(runs, losses={"1.0": 1.0})
+            (layout.run_directory / CABLE_LOSS_INPUT_PATH).write_text(
+                json.dumps({"cable_losses": {"1.0": 42.0}}), encoding="utf-8"
+            )
+            self._write_legacy_copy(paths, losses={"1.0": 7.0})
+
+            latest = adapter.latest_result("cable_loss")
+
+        self.assertEqual(latest.data["cable_losses"], {"1.0": 7.0})
+
+    def test_latest_result_prefers_newer_run_over_newer_file_mtime(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _paths, runs, _history, adapter = self._setup(directory)
+            old_id = "20261024T070000Z_aaaaaaaa"
+            new_id = "20261024T090000Z_bbbbbbbb"
+            old_layout = self._complete_cable_loss(
+                runs,
+                losses={"1.0": 1.0},
+                run_id=old_id,
+                now=datetime(2026, 10, 24, 7, 0, tzinfo=timezone.utc),
+            )
+            self._complete_cable_loss(
+                runs,
+                losses={"1.0": 2.0},
+                run_id=new_id,
+                now=datetime(2026, 10, 24, 9, 0, tzinfo=timezone.utc),
+            )
+            # 把更旧运行的结果文件 mtime 改成“更晚”，验证顺序按运行创建时间而非 mtime。
+            future = time.time() + 100000
+            os.utime(
+                old_layout.run_directory / CABLE_LOSS_INPUT_PATH, (future, future)
+            )
+
+            latest = adapter.latest_result("cable_loss")
+
+        self.assertEqual(latest.data["cable_losses"], {"1.0": 2.0})
 
     def test_read_bytes_and_export_use_the_run_result(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -1,6 +1,8 @@
 """步骤 D2：只读运行历史仓储的列表、读取与边界拒绝测试。"""
 
 import json
+import os
+import subprocess
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -227,6 +229,84 @@ class RunHistoryRepositoryTests(unittest.TestCase):
         self.assertEqual(self.history.load(LATER_ID, CABLE_LOSS_INPUT_PATH)["run_id"], LATER_ID)
         with self.assertRaises(ValueError):
             self.history.load(RUN_ID, DRIVER_MAPPING_INPUT_PATH)
+
+    # -- 结果白名单：非阶段结果输入不可读 -----------------------------------
+
+    def test_hardware_config_input_is_not_a_history_result(self):
+        _layout, recorder = self._create_run()
+        self._write_hardware_config()
+        recorder.complete(
+            STAGE_CABLE_LOSS,
+            {"run_id": RUN_ID, "cable_losses": {"1.0": {"cable2": 1.5}}},
+            now=CREATED_AT,
+        )
+
+        results = self.history.list_results(RUN_ID)
+
+        self.assertNotIn(HARDWARE_CONFIG_INPUT_PATH, {item.result_id for item in results})
+        with self.assertRaises(ValueError):
+            self.history.load(RUN_ID, HARDWARE_CONFIG_INPUT_PATH)
+        with self.assertRaises(ValueError):
+            self.history.read_bytes(RUN_ID, HARDWARE_CONFIG_INPUT_PATH)
+
+    def test_registered_non_stage_input_is_not_readable(self):
+        _layout, _recorder = self._create_run()
+        relative = self.runs.write_run_json(RUN_ID, "inputs/notes.json", {"note": 1})
+        self.runs.register_file(RUN_ID, relative, description="辅助输入")
+
+        with self.assertRaises(ValueError):
+            self.history.load(RUN_ID, "inputs/notes.json")
+
+    # -- 运行目录符号链接边界 -----------------------------------------------
+
+    def _make_directory_link(self, link: Path, target: Path) -> None:
+        """创建一个目录重解析点：优先符号链接，Windows 回退目录联接。"""
+        try:
+            link.symlink_to(target, target_is_directory=True)
+            return
+        except (OSError, NotImplementedError):
+            pass
+        if os.name == "nt":
+            result = subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+                capture_output=True,
+            )
+            if result.returncode == 0:
+                return
+        self.skipTest("当前平台不支持创建目录符号链接或目录联接")
+
+    def _remove_directory_link(self, link: Path) -> None:
+        if os.name == "nt":
+            subprocess.run(
+                ["cmd", "/c", "rmdir", str(link)], capture_output=True
+            )
+        else:
+            try:
+                link.unlink()
+            except OSError:
+                pass
+
+    def test_symlinked_run_directory_is_rejected(self):
+        outside = self.base / "outside_run"
+        (outside / "inputs").mkdir(parents=True)
+        (outside / "results").mkdir()
+        (outside / "config.json").write_text("{}", encoding="utf-8")
+        save_run_manifest(
+            outside / "manifest.json",
+            default_manifest(RUN_ID, created_at=utc_now_iso(CREATED_AT)),
+        )
+        self.runs.root.mkdir(parents=True, exist_ok=True)
+        link = self.runs.root / RUN_ID
+        self._make_directory_link(link, outside)
+        self.addCleanup(self._remove_directory_link, link)
+
+        entry = next(item for item in self.history.list_runs() if item.run_id == RUN_ID)
+        self.assertEqual(entry.state, RunHistoryState.INVALID)
+        self.assertIn("拒绝作为历史结果", entry.problem or "")
+        with self.assertRaises(ValueError):
+            self.history.list_results(RUN_ID)
+        with self.assertRaises(ValueError):
+            self.history.load(RUN_ID, CABLE_LOSS_INPUT_PATH)
 
     # -- 只读契约 -----------------------------------------------------------
 

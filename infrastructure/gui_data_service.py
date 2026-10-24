@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -25,6 +26,9 @@ from infrastructure.filesystem.paths import (
     unique_directory_name,
 )
 from PySide6.QtWidgets import QFileDialog
+
+
+logger = logging.getLogger(__name__)
 
 
 # 运行目录结果的标识前缀：``run::<run_id>::<运行内相对路径>``。运行标识不允许
@@ -131,16 +135,39 @@ class ResultQueryAdapter:
         return self.load(path.name)
 
     def latest_result(self, result_type: str) -> LoadedResultDto:
-        """返回最新的历史结果：优先运行目录，其次全局兼容副本。
+        """返回最新的**可校验**历史结果：优先运行目录，其次全局兼容副本。
 
-        新流程的运行结果不再写入全局副本，因此历史查看以运行目录为准；只有当前
-        没有该类型的运行结果时才回退到旧的兼容副本，保持旧历史仍可查看。
+        选择顺序是确定性的：先按运行创建时间从新到旧（``list_runs`` 的顺序），
+        同一运行内再按结果修改时间从新到旧，不依赖文件系统 mtime 的跨运行比较。
+
+        每个候选都会做完整性校验；某个候选损坏（被篡改、缺失、未登记）时记录日志
+        并继续尝试更旧的候选，而不是让最新损坏文件阻断可用数据。只有当所有运行
+        候选都不可用时，才回退到旧的全局兼容副本，保持旧历史仍可查看。
         """
         label = self._LABELS.get(result_type, result_type)
-        candidates = [row for row in self._run_rows() if row.file_type == label]
-        if candidates:
-            newest = max(candidates, key=lambda item: item.modified_at)
-            return self.load(newest.result_id)
+        if self.run_history is not None:
+            for run in self.run_history.list_runs():
+                if not run.browsable:
+                    continue
+                try:
+                    results = self.run_history.list_results(run.run_id)
+                except (OSError, ValueError) as error:
+                    logger.warning("跳过无法列出的运行 %s 的历史结果: %s", run.run_id, error)
+                    continue
+                matches = [
+                    result
+                    for result in results
+                    if self._LABELS.get(result.result_type, result.result_type) == label
+                ]
+                for result in sorted(
+                    matches, key=lambda item: item.modified_at.timestamp(), reverse=True
+                ):
+                    result_id = _encode_run_result_id(run.run_id, result.result_id)
+                    try:
+                        return self.load(result_id)
+                    except (OSError, ValueError) as error:
+                        logger.warning("跳过损坏的运行结果 %s: %s", result_id, error)
+                        continue
         return self.latest_legacy_result(result_type)
 
     def latest_legacy_result(self, result_type: str) -> LoadedResultDto:

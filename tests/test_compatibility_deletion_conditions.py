@@ -505,6 +505,17 @@ class ReleaseNotesTests(unittest.TestCase):
         for marker in ("1. [x] **D1", "2. [x] **D2", "3. [x] **D3", "4. [x] **D4"):
             self.assertIn(marker, guide)
 
+    def test_release_notes_record_step_d_review_fixes(self):
+        """步骤 D 的边界/回退修复须登记，避免文档与实现不一致。"""
+        for marker in (
+            "审查修复记录",
+            "符号链接",
+            "阶段结果",
+            "损坏",
+            "回退",
+        ):
+            self.assertIn(marker, self.document)
+
 
 if __name__ == "__main__":
     unittest.main()

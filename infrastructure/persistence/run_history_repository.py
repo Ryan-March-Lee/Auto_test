@@ -3,12 +3,16 @@
 该适配器把运行目录（``runs/<run_id>/``）作为历史浏览的数据源：
 
 - ``list_runs``：枚举运行根目录下的运行，读取 manifest 元数据并给出可用状态
-  （可用 / 结构不完整 / 损坏），不扫描全局结果目录。
-- ``list_results``：按 manifest 登记返回阶段结果元数据，只暴露结果标识和展示
-  元数据，不返回文件系统路径。
-- ``load`` / ``read_bytes``：按 ``run_id`` 与结果标识读取结果，先要求该标识已被
-  当前运行 manifest 登记，再校验 SHA-256 与大小，最后确认文件仍在运行目录内；
-  未登记、被替换或越界的读取一律拒绝。
+  （可用 / 结构不完整 / 损坏 / 符号链接），不扫描全局结果目录。
+- ``list_results``：按 manifest 登记返回**阶段结果**元数据，只暴露结果标识和展示
+  元数据，不返回文件系统路径；硬件配置等非阶段结果输入不会出现在历史结果里。
+- ``load`` / ``read_bytes``：按 ``run_id`` 与结果标识读取结果，先要求该标识是当前
+  运行 manifest 登记的阶段结果，再校验 SHA-256 与大小，最后确认文件仍在运行目录内；
+  未登记、非阶段结果、被替换或越界的读取一律拒绝。
+
+运行目录边界：拒绝作为符号链接的运行目录（避免 ``run_directory.resolve()`` 被链接
+指向运行根目录之外后仍通过“位于运行目录内”的校验），并对结果文件再次确认其解析后
+仍在运行目录内。
 
 本适配器只暴露读取能力：不写入、不删除、不移动运行目录或结果文件，也不把结果
 登记进任何 manifest。正式测量输入仍由
@@ -18,6 +22,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -71,6 +76,39 @@ def _directory_modified_at(directory: Path) -> datetime:
         return _EPOCH
 
 
+def _is_within(root: Path, resolved: Path) -> bool:
+    """按平台大小写规则判断 ``resolved`` 是否严格位于 ``root`` 内。"""
+    root_text = os.path.normcase(str(root))
+    target_text = os.path.normcase(str(resolved))
+    return target_text.startswith(root_text.rstrip(os.sep) + os.sep)
+
+
+def _result_entries(manifest: RunManifest) -> tuple[tuple[str, str | None], ...]:
+    """运行**阶段结果**的 (相对路径, 阶段名) 列表，保持稳定顺序。
+
+    只纳入真正属于阶段结果的路径：
+
+    - 每个 ``completed`` 阶段登记的 ``record.result``；
+    - 登记到某个已知阶段名下的 ``outputs``（主功放拆分结果文件）。
+
+    ``inputs/hardware_config.json`` 等非阶段结果输入不在其中，因此不能被当作
+    历史结果读取或导出。
+    """
+    entries: list[tuple[str, str | None]] = []
+    seen: set[str] = set()
+    for stage, record in manifest.stages.items():
+        if record.result is not None and record.result not in seen:
+            seen.add(record.result)
+            entries.append((record.result, stage))
+    for reference in manifest.outputs:
+        if reference.path in seen:
+            continue
+        if reference.stage is not None and reference.stage in manifest.stages:
+            seen.add(reference.path)
+            entries.append((reference.path, reference.stage))
+    return tuple(entries)
+
+
 class FileRunHistoryRepository(RunHistoryRepository):
     """运行目录内已登记阶段结果的只读历史视图。"""
 
@@ -95,19 +133,10 @@ class FileRunHistoryRepository(RunHistoryRepository):
     def list_results(self, run_id: str) -> tuple[RunStageResultEntry, ...]:
         manifest = self._manifest(run_id)
         references = _reference_index(manifest)
-        results: list[RunStageResultEntry] = []
-        seen: set[str] = set()
-        for stage, record in manifest.stages.items():
-            if record.result is None or record.result in seen:
-                continue
-            seen.add(record.result)
-            results.append(self._entry(manifest, references, record.result, stage))
-        for reference in manifest.outputs:
-            if reference.path in seen:
-                continue
-            seen.add(reference.path)
-            results.append(self._entry(manifest, references, reference.path, None))
-        return tuple(results)
+        return tuple(
+            self._entry(manifest, references, path, stage)
+            for path, stage in _result_entries(manifest)
+        )
 
     # -- 读取 ---------------------------------------------------------------
 
@@ -124,17 +153,48 @@ class FileRunHistoryRepository(RunHistoryRepository):
 
     # -- 内部工具 -----------------------------------------------------------
 
+    def _run_directory(self, run_id: str) -> Path:
+        """返回运行目录，并拒绝符号链接或越出运行根目录的目录。
+
+        ``layout.relative_path`` 以 ``run_directory.resolve()`` 为边界；若运行目录
+        本身是符号链接/联接，``resolve()`` 会跳到运行根目录之外，使“位于运行目录内”
+        的校验失效。因此这里以“解析后的运行目录必须严格位于解析后的运行根目录内”
+        为准，可同时覆盖符号链接与 Windows 目录联接（junction），绝不跟随越界的
+        重解析点。
+        """
+        layout = self.runs.layout(run_id)
+        directory = layout.run_directory
+        root = layout.root.resolve()
+        resolved = directory.resolve()
+        if directory.is_symlink() or resolved == root or not _is_within(root, resolved):
+            raise ValueError(
+                f"运行目录是符号链接或越出运行根目录，拒绝作为历史结果: {run_id}"
+            )
+        return directory
+
     def _manifest(self, run_id: str) -> RunManifest:
         """直接读取运行目录内的 manifest，而不要求运行结构完整。
 
         历史浏览需要能看到配置快照或目录缺失的“结构不完整运行”，因此不能走
-        ``RunRepository.load_manifest``（它会因结构不完整直接失败）。
+        ``RunRepository.load_manifest``（它会因结构不完整直接失败）。符号链接
+        运行目录在这里同样被拒绝。
         """
-        return load_run_manifest(self.runs.layout(run_id).manifest_path)
+        directory = self._run_directory(run_id)
+        return load_run_manifest(directory / "manifest.json")
 
     def _describe(self, run_id: str) -> RunHistoryEntry:
         directory = self.runs.layout(run_id).run_directory
         fallback = _directory_modified_at(directory)
+        try:
+            self._run_directory(run_id)
+        except ValueError as error:
+            return RunHistoryEntry(
+                run_id=run_id,
+                created_at=fallback,
+                status="invalid",
+                state=RunHistoryState.INVALID,
+                problem=str(error),
+            )
         try:
             manifest = self._manifest(run_id)
         except (OSError, ValueError) as error:
@@ -159,7 +219,7 @@ class FileRunHistoryRepository(RunHistoryRepository):
             for record in manifest.stages.values()
             if record.status in _FINISHED_STAGE_STATUSES
         )
-        result_count = len(_result_paths(manifest))
+        result_count = len(_result_entries(manifest))
         if not self.runs.run_exists(run_id):
             return RunHistoryEntry(
                 run_id=run_id,
@@ -196,7 +256,7 @@ class FileRunHistoryRepository(RunHistoryRepository):
                 self.runs.layout(manifest.run_id).run_directory
             ),
         )
-        if target.is_file():
+        if target.is_file() and not target.is_symlink():
             stat = target.stat()
             modified_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
             size_bytes: int | None = stat.st_size
@@ -218,19 +278,22 @@ class FileRunHistoryRepository(RunHistoryRepository):
     def _verified_target(self, run_id: str, result_id: str) -> Path:
         """解析并校验结果标识，返回运行目录内的绝对路径。
 
-        拒绝绝对路径、``..`` 片段和空标识；要求结果已被当前运行 manifest 登记；
-        再校验文件存在且 SHA-256 与大小一致。任一条件不满足都直接失败，绝不
-        跨运行或越界读取。
+        拒绝绝对路径、``..`` 片段和空标识；要求结果**是本运行登记的阶段结果**；
+        再校验文件存在（且不是符号链接）和 SHA-256 与大小一致。任一条件不满足都
+        直接失败，绝不跨运行或越界读取。
         """
         normalized = normalize_relative_path(result_id, field_name="历史结果标识")
         manifest = self._manifest(run_id)
+        allowed = {path for path, _stage in _result_entries(manifest)}
+        if normalized not in allowed:
+            raise ValueError(f"结果不是当前运行登记的阶段结果: {normalized}")
         reference = _reference_index(manifest).get(normalized)
         if reference is None:
             raise ValueError(f"结果未登记到当前运行 manifest: {normalized}")
         target = self._join(run_id, normalized)
         # 边界再确认：解析后的文件必须仍在当前运行目录内。
         self.runs.layout(run_id).relative_path(target)
-        if not target.is_file():
+        if target.is_symlink() or not target.is_file():
             raise ValueError(f"运行结果文件不存在或不是普通文件: {normalized}")
         digest, size = file_sha256_and_size(target)
         if reference.sha256 is not None and digest != reference.sha256:
@@ -249,20 +312,6 @@ def _reference_index(manifest: RunManifest) -> dict[str, FileReference]:
     for reference in (*manifest.inputs, *manifest.outputs):
         references.setdefault(reference.path, reference)
     return references
-
-
-def _result_paths(manifest: RunManifest) -> tuple[str, ...]:
-    paths: list[str] = []
-    seen: set[str] = set()
-    for record in manifest.stages.values():
-        if record.result is not None and record.result not in seen:
-            seen.add(record.result)
-            paths.append(record.result)
-    for reference in manifest.outputs:
-        if reference.path not in seen:
-            seen.add(reference.path)
-            paths.append(reference.path)
-    return tuple(paths)
 
 
 __all__ = ["FileRunHistoryRepository"]

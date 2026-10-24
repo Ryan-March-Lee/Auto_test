@@ -7,12 +7,19 @@ from datetime import datetime
 from typing import Any, Mapping, Protocol
 
 
+# 历史结果的来源：运行目录（新流程）或全局兼容副本（旧历史）。
+RESULT_SOURCE_RUN = "run"
+RESULT_SOURCE_LEGACY = "legacy"
+
+
 @dataclass(frozen=True)
 class ResultFileDto:
     result_id: str
     filename: str
     file_type: str
     modified_at: datetime
+    source: str = RESULT_SOURCE_LEGACY
+    run_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -39,8 +46,11 @@ class ResultQueryPort(Protocol):
     def load(self, result_id: str) -> LoadedResultDto: ...
     def read_bytes(self, result_id: str) -> bytes: ...
     def choose_and_load(self) -> LoadedResultDto | None: ...
+    def latest_result(self, result_type: str) -> LoadedResultDto:
+        """优先返回最新运行目录结果，没有运行结果时回退到最新全局兼容副本。"""
+
     def latest_legacy_result(self, result_type: str) -> LoadedResultDto:
-        """按类型读取最新全局兼容副本，仅用于历史查看。"""
+        """按类型读取最新全局兼容副本，仅用于旧历史的只读查看。"""
 
 
 class ResultExportPort(Protocol):

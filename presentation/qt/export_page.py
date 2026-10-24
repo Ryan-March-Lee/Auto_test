@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from application.ports.gui_data_service import ResultFileDto
+from application.ports.gui_data_service import RESULT_SOURCE_RUN, ResultFileDto
 
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -41,8 +41,8 @@ class ExportPage(QWidget):
         file_group = QGroupBox("数据文件")
         file_layout = QVBoxLayout(file_group)
         self.file_table = QTableWidget()
-        self.file_table.setColumnCount(3)
-        self.file_table.setHorizontalHeaderLabels(["文件名", "类型", "修改时间"])
+        self.file_table.setColumnCount(4)
+        self.file_table.setHorizontalHeaderLabels(["文件名", "类型", "来源", "修改时间"])
         file_layout.addWidget(self.file_table)
         refresh_button = QPushButton("刷新文件列表")
         refresh_button.clicked.connect(self.refresh_file_list)
@@ -70,13 +70,20 @@ class ExportPage(QWidget):
             self.file_table.insertRow(row)
             self.file_table.setItem(row, 0, QTableWidgetItem(result_file.filename))
             self.file_table.setItem(row, 1, QTableWidgetItem(result_file.file_type))
+            self.file_table.setItem(row, 2, QTableWidgetItem(self._source_label(result_file)))
             self.file_table.setItem(
                 row,
-                2,
+                3,
                 QTableWidgetItem(
                     result_file.modified_at.strftime("%Y-%m-%d %H:%M:%S")
                 ),
             )
+
+    @staticmethod
+    def _source_label(result_file: ResultFileDto) -> str:
+        if result_file.source == RESULT_SOURCE_RUN and result_file.run_id:
+            return f"运行 {result_file.run_id}"
+        return "历史兼容副本"
 
     def _selected_file(self) -> ResultFileDto | None:
         row = self.file_table.currentRow()

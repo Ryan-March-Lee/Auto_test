@@ -11,9 +11,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from application.ports.gui_data_service import ResultFileDto
 from application.ports.result_history import ResultHistoryRepository
+from application.run_stages import RunStageRecorder
+from domain.run.models import CABLE_LOSS_INPUT_PATH, STAGE_CABLE_LOSS
 from infrastructure.filesystem.paths import PathService
 from infrastructure.gui_data_service import ResultExportAdapter, ResultQueryAdapter
 from infrastructure.persistence.result_history_repository import FileResultHistoryRepository
+from infrastructure.persistence.run_history_repository import FileRunHistoryRepository
+from infrastructure.persistence.run_repository import RunRepository
 from presentation.qt.export_page import ExportPage
 from presentation.qt.visualization_page import convert_power_mapping, normalize_visualization_data
 
@@ -268,6 +272,136 @@ class HistoryBrowsingReadOnlyTests(unittest.TestCase):
             from application.ports import gui_data_service as ports
 
             self.assertFalse(hasattr(ports, "LegacyResultQueryPort"))
+
+
+class RunHistoryMigrationTests(unittest.TestCase):
+    """步骤 D3：GUI 历史列表/查看/导出切换到运行目录历史，旧历史仍可查看。"""
+
+    RUN_ID = "20261024T080000Z_a1b2c3d4"
+
+    def _setup(self, directory):
+        paths = PathService(Path(directory))
+        runs = RunRepository(paths.test_results_dir / "runs")
+        history = FileResultHistoryRepository(paths=paths)
+        run_history = FileRunHistoryRepository(runs=runs)
+        adapter = ResultQueryAdapter(paths, history, run_history=run_history)
+        return paths, runs, history, adapter
+
+    def _complete_cable_loss(self, runs, *, losses):
+        layout, _manifest = runs.create_run({"run_id": self.RUN_ID}, run_id=self.RUN_ID)
+        recorder = RunStageRecorder(runs, self.RUN_ID)
+        recorder.complete(
+            STAGE_CABLE_LOSS, {"run_id": self.RUN_ID, "cable_losses": losses}
+        )
+        return layout
+
+    def _write_legacy_copy(self, paths, *, losses):
+        results = paths.test_results_dir
+        results.mkdir(parents=True, exist_ok=True)
+        (results / "cable_loss_results.json").write_text(
+            json.dumps({"cable_losses": losses}), encoding="utf-8"
+        )
+
+    def test_history_list_merges_run_results_and_legacy_copies(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths, runs, _history, adapter = self._setup(directory)
+            self._complete_cable_loss(runs, losses={"1.0": 1.0})
+            self._write_legacy_copy(paths, losses={"1.0": 99.0})
+
+            rows = adapter.list_results()
+
+        sources = {row.source for row in rows}
+        self.assertEqual(sources, {"run", "legacy"})
+        run_row = next(row for row in rows if row.source == "run")
+        self.assertEqual(run_row.run_id, self.RUN_ID)
+        self.assertEqual(run_row.filename, CABLE_LOSS_INPUT_PATH.rsplit("/", 1)[-1])
+        self.assertEqual(run_row.file_type, "线损数据")
+
+    def test_load_prefers_the_run_result_over_the_legacy_copy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths, runs, _history, adapter = self._setup(directory)
+            self._complete_cable_loss(runs, losses={"1.0": 1.0})
+            self._write_legacy_copy(paths, losses={"1.0": 99.0})
+
+            run_row = next(row for row in adapter.list_results() if row.source == "run")
+            loaded = adapter.load(run_row.result_id)
+            legacy = adapter.latest_legacy_result("cable_loss")
+            latest = adapter.latest_result("cable_loss")
+
+        self.assertEqual(loaded.data["cable_losses"], {"1.0": 1.0})
+        self.assertEqual(legacy.data["cable_losses"], {"1.0": 99.0})
+        self.assertEqual(latest.data["cable_losses"], {"1.0": 1.0})
+
+    def test_latest_result_falls_back_to_legacy_when_no_run_result_exists(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _paths, _runs, _history, adapter = self._setup(directory)
+            self._write_legacy_copy(PathService(Path(directory)), losses={"1.0": 5.0})
+
+            latest = adapter.latest_result("cable_loss")
+
+        self.assertEqual(latest.data["cable_losses"], {"1.0": 5.0})
+
+    def test_read_bytes_and_export_use_the_run_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths, runs, _history, adapter = self._setup(directory)
+            layout = self._complete_cable_loss(runs, losses={"1.0": 1.0})
+            run_row = next(row for row in adapter.list_results() if row.source == "run")
+            target = Path(directory) / "copy.json"
+
+            raw = adapter.read_bytes(run_row.result_id)
+            ResultExportAdapter(adapter, paths).export_json(run_row.result_id, str(target))
+
+            self.assertEqual(
+                raw, (layout.run_directory / CABLE_LOSS_INPUT_PATH).read_bytes()
+            )
+            self.assertEqual(target.read_bytes(), raw)
+
+    def test_tampered_run_result_is_rejected_by_both_read_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _paths, runs, _history, adapter = self._setup(directory)
+            layout = self._complete_cable_loss(runs, losses={"1.0": 1.0})
+            run_row = next(row for row in adapter.list_results() if row.source == "run")
+            (layout.run_directory / CABLE_LOSS_INPUT_PATH).write_text(
+                json.dumps({"cable_losses": {"1.0": 42.0}}), encoding="utf-8"
+            )
+
+            with self.assertRaises(ValueError):
+                adapter.load(run_row.result_id)
+            with self.assertRaises(ValueError):
+                adapter.read_bytes(run_row.result_id)
+
+    def test_cross_run_encoded_identifier_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _paths, runs, _history, adapter = self._setup(directory)
+            self._complete_cable_loss(runs, losses={"1.0": 1.0})
+
+            for result_id in (
+                "run::bad-run::inputs/cable_loss.json",
+                "run::" + self.RUN_ID + "::../config.json",
+                "run::" + self.RUN_ID + "::",
+                "run::" + self.RUN_ID + "::results/unknown.json",
+            ):
+                with self.subTest(result_id=result_id):
+                    with self.assertRaises((ValueError, FileNotFoundError)):
+                        adapter.load(result_id)
+
+    def test_export_page_shows_the_source_of_each_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths, runs, _history, adapter = self._setup(directory)
+            self._complete_cable_loss(runs, losses={"1.0": 1.0})
+            self._write_legacy_copy(paths, losses={"1.0": 99.0})
+
+            from PySide6.QtWidgets import QApplication
+
+            app = QApplication.instance() or QApplication([])
+            page = ExportPage(result_service=adapter)
+            labels = [
+                page.file_table.item(row, 2).text()
+                for row in range(page.file_table.rowCount())
+            ]
+
+        self.assertIn("历史兼容副本", labels)
+        self.assertTrue(any(label.startswith("运行 ") for label in labels))
 
 
 class ReportAdapterContractTests(unittest.TestCase):

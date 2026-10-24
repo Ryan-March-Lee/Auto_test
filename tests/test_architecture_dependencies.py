@@ -637,6 +637,17 @@ class ProductionDependencyTests(unittest.TestCase):
         self.assertNotIn("infrastructure.persistence.result_repository", modules)
         self.assertIn("FileResultHistoryRepository", source)
 
+    def test_gui_history_browsing_uses_the_run_history_port(self):
+        """步骤 D3：历史浏览以运行目录历史为首选来源，仍只依赖只读端口。"""
+        source_path = ROOT / "infrastructure" / "gui_data_service.py"
+        modules = {module for module, _alias, _name in _imported_modules(_tree(source_path))}
+        self.assertIn("application.ports.run_history", modules)
+        self.assertNotIn("infrastructure.persistence.run_repository", modules)
+        composition = (ROOT / "presentation" / "qt" / "composition.py").read_text(
+            encoding="utf-8-sig"
+        )
+        self.assertIn("FileRunHistoryRepository", composition)
+
     def test_formal_input_reader_has_no_implicit_result_lookup(self):
         source = (
             ROOT / "application" / "inputs" / "result_input_reader.py"

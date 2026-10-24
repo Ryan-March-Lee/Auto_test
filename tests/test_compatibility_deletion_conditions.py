@@ -15,6 +15,9 @@
   分级授权执行。
 - 步骤 C 属**数据类删除**（停止写全局兼容副本），在步骤 D、F 完成前被禁止执行；
   兼容副本写入必须保持存在，并由说明第 8 节登记阻断结论。
+- 步骤 D 已把 GUI 历史列表/查看/导出迁移到运行目录 manifest 视图，旧的全局兼容副本
+  保持只读可查看；运行历史只读端口与仓储必须保持存在，且历史浏览不得复用正式测量
+  结果仓储。
 - 说明必须为每个待删除接口写出删除条件、迁移方式和目标版本，并保留步骤 A 执行
   记录（外部调用方台账与回滚版本）。
 
@@ -367,6 +370,40 @@ class StepCBlockedTests(unittest.TestCase):
         self.assertIn("write_compatibility_copy(", source)
 
 
+class StepDMigrationTests(unittest.TestCase):
+    """步骤 D：历史浏览迁移到运行目录，旧兼容副本保持只读可查看。"""
+
+    def test_run_history_port_and_repository_exist(self):
+        for relative in (
+            "application/ports/run_history.py",
+            "infrastructure/persistence/run_history_repository.py",
+        ):
+            with self.subTest(module=relative):
+                self.assertTrue((ROOT / relative).is_file(), relative)
+
+    def test_gui_history_adapter_uses_the_run_history_port(self):
+        source = (
+            ROOT / "infrastructure" / "gui_data_service.py"
+        ).read_text(encoding="utf-8-sig")
+        self.assertIn("application.ports.run_history", source)
+        # 历史浏览不得复用正式测量结果仓储。
+        self.assertNotIn("result_repository", source)
+        self.assertNotIn("FileMeasurementResultRepository", source)
+
+    def test_composition_injects_the_run_history_repository(self):
+        source = (
+            ROOT / "presentation" / "qt" / "composition.py"
+        ).read_text(encoding="utf-8-sig")
+        self.assertIn("FileRunHistoryRepository", source)
+
+    def test_legacy_global_history_remains_read_only_viewable(self):
+        path = ROOT / "infrastructure" / "persistence" / "result_history_repository.py"
+        self.assertTrue(path.is_file(), "旧的只读全局历史仓储必须保留")
+        source = path.read_text(encoding="utf-8-sig")
+        for forbidden in ("def save", "def delete", "def unlink", "def write"):
+            self.assertNotIn(forbidden, source)
+
+
 class ReleaseNotesTests(unittest.TestCase):
     """删除条件、迁移方式和目标版本必须留在发布说明里，而不是只存在于讨论中。"""
 
@@ -452,6 +489,21 @@ class ReleaseNotesTests(unittest.TestCase):
             "不得执行 C1 至 C4",
         ):
             self.assertIn(marker, self.document)
+
+    def test_release_notes_record_step_d_evidence(self):
+        """步骤 D 必须有执行记录：运行目录历史、数据保留期限与回滚方案。"""
+        for marker in (
+            "步骤 D 执行记录",
+            "运行目录历史",
+            "数据保留期限",
+            "回滚方案",
+        ):
+            self.assertIn(marker, self.document)
+
+    def test_guide_marks_d_complete(self):
+        guide = GUIDE.read_text(encoding="utf-8")
+        for marker in ("1. [x] **D1", "2. [x] **D2", "3. [x] **D3", "4. [x] **D4"):
+            self.assertIn(marker, guide)
 
 
 if __name__ == "__main__":

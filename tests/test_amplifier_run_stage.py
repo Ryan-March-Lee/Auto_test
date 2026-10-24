@@ -693,6 +693,40 @@ class AmplifierRunStageTests(unittest.TestCase):
 
     # -- 旧兼容流程 --------------------------------------------------------
 
+    def test_legacy_composition_requires_loss_input_before_connecting(self):
+        """B2：旧兼容流程缺少显式线损输入时，在连接仪器前失败。"""
+        prepared = SimpleNamespace(
+            configuration=_amplifier_config(driver_enabled=False),
+            context=SimpleNamespace(run_id="run-legacy"),
+            run_directory=self.base,
+            hardware_config_path=self.base / HARDWARE_CONFIG_INPUT_PATH,
+        )
+
+        with patch("app.gui_runtime.connect_instruments") as connect:
+            with self.assertRaisesRegex(ValueError, "必须显式提供 loss_data_path"):
+                create_amplifier_measurement("config.json", prepared_run=prepared)
+
+        connect.assert_not_called()
+
+    def test_legacy_composition_requires_mapping_before_connecting(self):
+        """B2：旧兼容流程驱动模式缺少映射路径时，在连接仪器前失败。"""
+        prepared = SimpleNamespace(
+            configuration=_amplifier_config(driver_enabled=True),
+            context=SimpleNamespace(run_id="run-legacy"),
+            run_directory=self.base,
+            hardware_config_path=self.base / HARDWARE_CONFIG_INPUT_PATH,
+        )
+
+        with patch("app.gui_runtime.connect_instruments") as connect:
+            with self.assertRaisesRegex(ValueError, "必须显式提供 driver_mapping_path"):
+                create_amplifier_measurement(
+                    "config.json",
+                    prepared_run=prepared,
+                    loss_data_path=self.base / "legacy_cable_loss.json",
+                )
+
+        connect.assert_not_called()
+
     def test_legacy_flow_still_reads_explicit_loss_data(self):
         request = AmplifierMeasurementRequest(
             configuration=_amplifier_config(driver_enabled=False),
@@ -710,6 +744,22 @@ class AmplifierRunStageTests(unittest.TestCase):
         self.assertIsNone(use_case.stage_recorder)
         self.assertEqual(use_case.loss_data, {"cable_losses": CABLE_LOSSES})
         self.assertIsNone(use_case.driver_mapping)
+
+    def test_legacy_driver_mode_requires_explicit_mapping_path(self):
+        """无路径兼容读取已删除：驱动模式缺映射输入在硬件动作前失败。"""
+        request = AmplifierMeasurementRequest(
+            configuration=_amplifier_config(driver_enabled=True),
+            context=_Context("run-legacy"),
+            run_directory=self.base,
+            measurement_port=_Instrument(),
+            result_repository=self.result_repository,
+            input_reader=ResultInputReader(self.result_repository),
+            loss_data={"cable_losses": CABLE_LOSSES},
+            safety_options={"owns_measurement_port": True},
+        )
+
+        with self.assertRaisesRegex(ValueError, "必须显式提供 driver_mapping_path"):
+            AmplifierMeasurementUseCase(request, sleep_fn=lambda _: None)
 
     def test_legacy_flow_saves_through_result_repository(self):
         calls = []

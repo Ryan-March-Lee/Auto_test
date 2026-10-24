@@ -8,6 +8,11 @@
 - 步骤 A 已删除的旧 GUI 测量入口（``prepare_configuration`` 的兼容快照开关、
   worker 的 ``prepare_factory`` 后备、``ResultQueryAdapter.latest()`` 与
   ``LegacyResultQueryPort``）必须保持消失状态，不允许以任何形式回归。
+- 步骤 B1/B2 已删除 ``DriverPowerMappingUseCase`` / ``AmplifierMeasurementUseCase``
+  的无路径兼容输入分支，两个用例不得再引用 ``LegacyResultInputReader`` 系列读取，
+  且组装层必须在连接仪器前拒绝旧快照缺少显式输入。
+- 步骤 B3 已删除兼容读取器与 ``latest_path()`` 兼容链；该纯代码删除按说明 6.6 的
+  分级授权执行。
 - 说明必须为每个待删除接口写出删除条件、迁移方式和目标版本，并保留步骤 A 执行
   记录（外部调用方台账与回滚版本）。
 
@@ -29,20 +34,13 @@ GUIDE = ROOT / "docs" / "测试运行目录与配置结果解耦重构指南.md"
 # 发布说明 3.1 至 3.4 记录的“允许出现的生产调用文件”。
 # 任何新增条目都必须先更新发布说明，再更新这里。
 DEPRECATED_INTERFACE_CALLERS = {
-    # 3.1 按时间扫描全局结果的兼容入口
-    "latest_path": {"application/inputs/legacy_result_input_reader.py"},
-    "latest_compatibility_path": {"infrastructure/persistence/result_repository.py"},
-    # 3.2 无路径兼容读取
-    "read_legacy_cable_loss": {
-        "application/measurements/amplifier_test.py",
-        "application/measurements/driver_mapping.py",
-    },
-    "read_latest_legacy_driver_mapping": {
-        "application/measurements/amplifier_test.py",
-    },
-    "latest_legacy_driver_mapping_path": {
-        "application/inputs/legacy_result_input_reader.py",
-    },
+    # 3.1 按时间扫描全局结果的兼容入口：步骤 B3 删除后生产代码为零引用。
+    "latest_path": set(),
+    "latest_compatibility_path": set(),
+    # 3.2 无路径兼容读取：步骤 B1/B2/B3 删除后生产代码为零引用。
+    "read_legacy_cable_loss": set(),
+    "read_latest_legacy_driver_mapping": set(),
+    "latest_legacy_driver_mapping_path": set(),
     # 3.3 旧结果写入
     "save_compatibility_copy": {
         "application/measurements/amplifier_test.py",
@@ -274,6 +272,68 @@ class LegacyGuiEntryTests(unittest.TestCase):
         self.assertEqual(workers.count("require_prepared_run(self.prepared_run"), 3)
 
 
+class StepBCompatibilityInputTests(unittest.TestCase):
+    """步骤 B1/B2：两个正式用例不得再依赖无路径兼容输入读取。"""
+
+    def test_use_cases_no_longer_reference_the_legacy_reader(self):
+        for relative in (
+            "application/measurements/driver_mapping.py",
+            "application/measurements/amplifier_test.py",
+        ):
+            with self.subTest(module=relative):
+                source = (ROOT / relative).read_text(encoding="utf-8-sig")
+                self.assertNotIn("LegacyResultInputReader", source)
+                self.assertNotIn("read_legacy_cable_loss", source)
+                self.assertNotIn("read_latest_legacy_driver_mapping", source)
+
+
+class StepB3RemovalTests(unittest.TestCase):
+    """步骤 B3：兼容读取器与 latest_path 兼容链必须已删除且不再回归。"""
+
+    def test_legacy_reader_modules_are_removed(self):
+        for relative in (
+            "application/inputs/legacy_result_input_reader.py",
+            "application/ports/legacy_result_input_reader.py",
+        ):
+            with self.subTest(module=relative):
+                self.assertFalse((ROOT / relative).exists(), relative)
+
+    def test_production_code_has_no_reference_to_removed_interfaces(self):
+        for interface in (
+            "LegacyResultInputReader",
+            "latest_path",
+            "latest_compatibility_path",
+            "read_legacy_cable_loss",
+            "read_latest_legacy_driver_mapping",
+            "latest_legacy_driver_mapping_path",
+        ):
+            with self.subTest(interface=interface):
+                self.assertEqual(_reference_files(interface), set())
+
+
+class StepBPreConnectValidationTests(unittest.TestCase):
+    """B1/B2：旧快照缺显式输入必须在连接仪器前失败（组装层结构门禁）。"""
+
+    def test_gui_runtime_guards_legacy_inputs_before_connecting(self):
+        source = (ROOT / "app" / "gui_runtime.py").read_text(encoding="utf-8-sig")
+        self.assertIn("_require_legacy_explicit_inputs(", source)
+        for head in (
+            "def create_driver_mapping_measurement",
+            "def create_amplifier_measurement",
+        ):
+            with self.subTest(factory=head):
+                start = source.index(head)
+                next_def = source.find("\ndef ", start + 1)
+                body = source[start: next_def if next_def >= 0 else len(source)]
+                guard_at = body.index("_require_legacy_explicit_inputs(")
+                connect_at = body.index("connect_instruments(")
+                self.assertLess(
+                    guard_at,
+                    connect_at,
+                    f"{head} 必须在 connect_instruments() 之前校验旧快照显式输入",
+                )
+
+
 class ReleaseNotesTests(unittest.TestCase):
     """删除条件、迁移方式和目标版本必须留在发布说明里，而不是只存在于讨论中。"""
 
@@ -320,18 +380,35 @@ class ReleaseNotesTests(unittest.TestCase):
         ):
             self.assertIn(marker, self.document)
 
-    def test_release_notes_keep_the_external_signoff_pending(self):
-        """外部签署未完成时不得宣称 A4 完成，必须显式登记待签署与偏差。"""
-        self.assertIn("待签署", self.document)
+    def test_release_notes_record_the_completed_external_confirmation(self):
+        """外部调用方确认完成后必须显式登记结论、日期与来源。"""
+        self.assertIn("已确认（2026-10-24 / 任务授权人）", self.document)
+        self.assertIn("无外部调用方", self.document)
         self.assertIn("偏差登记", self.document)
-        # 全局条件 2 未满足时，不得把步骤 A 写成“已归档可发布”。
-        self.assertNotIn("步骤 A 已可发布", self.document)
 
-    def test_guide_keeps_a4_open_until_the_external_signoff(self):
+    def test_release_notes_record_the_b3_authorization(self):
+        """纯代码路径删除（B3）必须有授权记录与边界，不能只靠改文字消解门槛冲突。"""
+        for marker in (
+            "删除影响面分级与 B3 授权",
+            "授权日期",
+            "禁止任何数据类删除",
+        ):
+            self.assertIn(marker, self.document)
+
+    def test_guide_marks_a4_complete(self):
         guide = GUIDE.read_text(encoding="utf-8")
-        self.assertIn("4. [ ] **A4", guide)
-        self.assertIn("待签署", guide)
-        self.assertIn("A4 待外部确认签署", guide)
+        self.assertIn("4. [x] **A4", guide)
+
+    def test_release_notes_record_step_b_evidence(self):
+        """步骤 B 的删除必须有可审计记录：执行记录、删除前清单与回滚基线。"""
+        for marker in (
+            "步骤 B 执行记录",
+            "步骤 B1/B2 执行记录",
+            "步骤 B3 执行记录",
+            "删除前调用方清单",
+            "步骤 B3",
+        ):
+            self.assertIn(marker, self.document)
 
 
 if __name__ == "__main__":

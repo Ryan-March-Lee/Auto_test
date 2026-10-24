@@ -12,10 +12,8 @@
 import json
 import tempfile
 import unittest
-import warnings
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import patch
 
 from application.inputs import ResultInputReader
 from application.run_stages import RunStageRecorder
@@ -151,24 +149,10 @@ class HistoryIsolationTests(unittest.TestCase):
         verified = recorder.verified_result_path(STAGE_CABLE_LOSS)
         reader = ResultInputReader(self.results)
 
-        with warnings.catch_warnings(record=True) as captured:
-            warnings.simplefilter("always", DeprecationWarning)
-            with patch.object(
-                self.results,
-                "latest_path",
-                side_effect=AssertionError("正式输入不得按最新结果查找"),
-            ):
-                data = reader.read_cable_loss(verified)
+        data = reader.read_cable_loss(verified)
 
         self.assertEqual(data["cable_losses"], RUN_LOSSES)
         self.assertEqual(verified, layout.run_directory / CABLE_LOSS_INPUT_PATH)
-        self.assertFalse(
-            [
-                item
-                for item in captured
-                if issubclass(item.category, DeprecationWarning)
-            ]
-        )
 
 
 if __name__ == "__main__":

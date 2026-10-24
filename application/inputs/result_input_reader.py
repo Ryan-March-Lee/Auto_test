@@ -1,8 +1,9 @@
 """Read persisted measurement inputs at the application composition boundary.
 
-正式测量输入只接受显式路径：调用方必须传入当前运行 manifest 登记并校验过的阶段
-结果路径。省略路径会立即失败，绝不回退到“最新结果”自动查找，从而保证历史数据
-不会被带入正式运行。
+测量输入读取只接受**显式路径**：本读取器负责解析并加载调用方提供的路径，省略路径
+会立即失败，绝不回退到“最新结果”自动查找。路径的归属与完整性校验不在本读取器内：
+运行契约运行的路径由 :class:`RunStageRecorder.verified_result_path` 按当前 ``run_id``
+manifest 校验后才传入；旧兼容流程则直接传入调用方认可的显式路径。
 """
 
 from __future__ import annotations
@@ -15,8 +16,8 @@ from application.ports.result_repository import MeasurementResultRepository, Pat
 
 
 _MISSING_PATH_MESSAGE = (
-    "正式测量输入必须显式提供当前运行 manifest 登记的路径；"
-    "无路径的兼容读取请使用 application.inputs.LegacyResultInputReader"
+    "测量输入必须显式提供路径（运行契约场景为当前运行 manifest 登记的阶段结果）；"
+    "无路径的“最新结果”兼容读取已在重构步骤 B3 删除"
 )
 
 
@@ -24,7 +25,8 @@ class ResultInputReader(ResultInputReaderPort):
     """Resolve and load calibration inputs from explicitly provided paths.
 
     The reader never discovers a result by modification time: every call requires
-    the path that the current run manifest has verified.
+    an explicit path. Attribution/verification of that path is the caller's
+    responsibility (run-contract callers pass a manifest-verified path).
     """
 
     def __init__(self, repository: MeasurementResultRepository):

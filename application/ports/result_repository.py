@@ -36,13 +36,6 @@ class MeasurementResultRepository(Protocol):
     def legacy_path(self, result_type: str) -> Path:
         """Return the compatibility path for a result type."""
 
-    def latest_path(self, result_type: str) -> Path:
-        """Return the newest timestamped compatibility result path.
-
-        Deprecated for measurement inputs. New-run stages must use paths
-        verified through the current run manifest.
-        """
-
     def save(
         self,
         result: Mapping[str, Any],

@@ -12,7 +12,6 @@
 import json
 import tempfile
 import unittest
-import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -239,27 +238,12 @@ class DriverMappingRunStageTests(unittest.TestCase):
             loaded_paths.append(Path(path))
             return original_load(path)
 
-        with warnings.catch_warnings(record=True) as captured:
-            warnings.simplefilter("always", DeprecationWarning)
-            with patch.object(
-                self.result_repository,
-                "latest_path",
-                side_effect=AssertionError("current-run input must not call latest_path"),
-            ) as latest_path:
-                with patch.object(self.result_repository, "load", side_effect=load):
-                    DriverPowerMappingUseCase(
-                        self._request(), sleep_fn=lambda _: None
-                    ).measure_all_frequencies()
+        with patch.object(self.result_repository, "load", side_effect=load):
+            DriverPowerMappingUseCase(
+                self._request(), sleep_fn=lambda _: None
+            ).measure_all_frequencies()
 
         self.assertEqual(loaded_paths[0], expected_path)
-        latest_path.assert_not_called()
-        self.assertFalse(
-            [
-                warning
-                for warning in captured
-                if issubclass(warning.category, DeprecationWarning)
-            ]
-        )
 
     def test_newer_global_history_file_is_not_used_as_formal_input(self):
         """步骤 D：更新的全局历史副本不会被正式测量当作输入。
@@ -291,15 +275,10 @@ class DriverMappingRunStageTests(unittest.TestCase):
             loaded_paths.append(Path(path).resolve())
             return original_load(path)
 
-        with patch.object(
-            self.result_repository,
-            "latest_path",
-            side_effect=AssertionError("正式测量不得调用 latest_path"),
-        ):
-            with patch.object(self.result_repository, "load", side_effect=load):
-                DriverPowerMappingUseCase(
-                    self._request(), sleep_fn=lambda _: None
-                ).measure_all_frequencies()
+        with patch.object(self.result_repository, "load", side_effect=load):
+            DriverPowerMappingUseCase(
+                self._request(), sleep_fn=lambda _: None
+            ).measure_all_frequencies()
 
         run_directory = self.repository.layout(RUN_ID).run_directory.resolve()
         self.assertTrue(loaded_paths)
@@ -557,6 +536,25 @@ class DriverMappingRunStageTests(unittest.TestCase):
 
         with patch("app.gui_runtime.connect_instruments") as connect:
             with self.assertRaises(StageInputUnavailable):
+                create_driver_mapping_measurement("config.json", prepared_run=prepared)
+
+        connect.assert_not_called()
+
+    def test_legacy_composition_requires_loss_path_before_connecting(self):
+        """B1：旧兼容流程缺少显式线损路径时，在连接仪器前失败。"""
+        prepared = SimpleNamespace(
+            configuration={
+                "test_frequencies": [1.0],
+                "attenuator": {"type": "10dB"},
+                "signal_source": {"start_power": -20, "stop_power": -20, "step": 1},
+            },
+            context=SimpleNamespace(run_id="run-legacy"),
+            run_directory=self.base,
+            hardware_config_path=self.base / HARDWARE_CONFIG_INPUT_PATH,
+        )
+
+        with patch("app.gui_runtime.connect_instruments") as connect:
+            with self.assertRaisesRegex(ValueError, "必须显式提供 loss_data_path"):
                 create_driver_mapping_measurement("config.json", prepared_run=prepared)
 
         connect.assert_not_called()

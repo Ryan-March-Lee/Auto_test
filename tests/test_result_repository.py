@@ -1,6 +1,5 @@
 import tempfile
 import unittest
-import warnings
 from pathlib import Path
 from unittest.mock import patch
 
@@ -175,7 +174,7 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             FileMeasurementResultRepository().save({}, result_type="unknown", run_id="run-1")
 
-    def test_legacy_paths_and_latest_path_are_resolved_by_repository(self):
+    def test_legacy_path_is_resolved_by_repository(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             repository = FileMeasurementResultRepository(results_directory=root)
@@ -183,40 +182,15 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
                 repository.legacy_path("cable_loss"),
                 root / "cable_loss_results.json",
             )
-            first = root / "driver_power_mapping_20261001_100000.json"
-            second = root / "driver_power_mapping_20261001_110000.json"
-            first.write_text("{}", encoding="utf-8")
-            second.write_text("{}", encoding="utf-8")
-            model = root / "driver_power_mapping_model.json"
-            model.write_text("{}", encoding="utf-8")
-            with self.assertWarns(DeprecationWarning):
-                self.assertEqual(repository.latest_path("driver_power_mapping"), second)
 
-    def test_latest_path_reports_missing_timestamped_result(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repository = FileMeasurementResultRepository(results_directory=directory)
-            with self.assertWarns(DeprecationWarning):
-                with self.assertRaises(FileNotFoundError):
-                    repository.latest_path("driver_power_mapping")
-
-    def test_latest_compatibility_path_only_serves_legacy_compatibility_calls(self):
-        """新代码的历史浏览走只读历史端口，本方法只保留给弃用的 latest_path()。"""
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            repository = FileMeasurementResultRepository(results_directory=root)
-            result = root / "driver_power_mapping_20261001_110000.json"
-            result.write_text("{}", encoding="utf-8")
-
-            with warnings.catch_warnings():
-                warnings.simplefilter("error", DeprecationWarning)
-                self.assertEqual(repository.latest_compatibility_path("driver_power_mapping"), result)
-
-    def test_result_input_port_marks_latest_path_as_compatibility_only(self):
+    def test_deprecated_latest_lookup_interfaces_are_removed(self):
+        """步骤 B3：按时间扫描的 ``latest_path`` 兼容链已删除。"""
         from application.ports.result_repository import MeasurementResultRepository
 
-        doc = MeasurementResultRepository.latest_path.__doc__
-        self.assertIn("Deprecated", doc)
-        self.assertIn("current run manifest", doc)
+        repository = FileMeasurementResultRepository()
+        self.assertFalse(hasattr(repository, "latest_path"))
+        self.assertFalse(hasattr(repository, "latest_compatibility_path"))
+        self.assertFalse(hasattr(MeasurementResultRepository, "latest_path"))
 
 
 if __name__ == "__main__":

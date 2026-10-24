@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-import warnings
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -102,30 +101,6 @@ class FileMeasurementResultRepository(MeasurementResultRepository):
         if prefix is None:
             raise ValueError(f"不支持的测量结果类型: {result_type}")
         return self._results_directory() / f"{prefix}_{time.strftime('%Y%m%d_%H%M%S')}.json"
-
-    def latest_path(self, result_type: str) -> Path:
-        warnings.warn(
-            "FileMeasurementResultRepository.latest_path() 已弃用；"
-            "新流程必须从当前 run_id 的 manifest 读取明确结果",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.latest_compatibility_path(result_type)
-
-    def latest_compatibility_path(self, result_type: str) -> Path:
-        """Return a global newest result path for legacy compatibility only.
-
-        新代码的历史浏览请使用只读历史端口
-        （:mod:`application.ports.result_history`）；本方法只保留给仍带弃用警告的
-        ``latest_path()`` 兼容链，删除条件见重构指南步骤 E。
-        """
-        fixed = json_result_repository.fixed_result_filename(result_type)
-        if fixed is not None:
-            # 固定文件名类型保持旧行为：路径固定，由调用方处理文件缺失。
-            return self._results_directory() / fixed
-        return json_result_repository.latest_history_result_file(
-            self._results_directory(), result_type
-        )
 
     def _results_directory(self) -> Path:
         """Resolve the default lazily so path configuration remains patchable."""

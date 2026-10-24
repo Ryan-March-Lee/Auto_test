@@ -166,7 +166,7 @@ pa_auto_test/
 
 根目录/旧配置 `config.json` 仅是配置编辑和迁移入口。旧版组合配置可通过 `JsonConfigurationRepository.load_legacy_data()` 转换；必须检查转换告警及 `unresolved_fields`，人工确认后再创建新运行。历史全局结果（如 `test_results/cable_loss_results.json` 和带时间戳的映射/功放 JSON）只用于旧结果查看、导出或显式指定的兼容调用，不会自动导入新运行。需要迁移校准数据时，应核验来源和 `run_id`，将所需文件复制到目标运行 `inputs/` 并登记 manifest；无法确认归属的数据不得作为新运行输入。
 
-旧结果仓储的 `latest_path()`、GUI `latest()` 查询及历史主功放入口均已弃用，并会发出弃用告警。弃用期仍保留旧读取能力，但这些接口只能用于兼容或历史浏览，不能作为新运行阶段输入。驱动模式的历史主功放入口要求显式传入 `driver_mapping_path`。正式输入读取器 `ResultInputReader` 只接受显式路径，省略路径会立即失败；无路径的兼容查找已拆到 `LegacyResultInputReader`（对应 `read_legacy_cable_loss()` / `read_latest_legacy_driver_mapping()`），仅供尚未迁移的旧兼容入口使用并发出告警，不会被新运行流程使用。历史查看与导出使用只读历史端口（`ResultHistoryRepository`，以 `result_id` 标识结果并限制在 `test_results` 目录内），不复用正式测量结果仓储。新流程必须从当前运行 manifest 读取阶段输入。
+旧结果仓储的 `latest_path()`、GUI `latest()` 查询及历史主功放入口均已弃用。`latest_path()` 兼容链、`LegacyResultInputReader`（无路径 `read_legacy_cable_loss()` / `read_latest_legacy_driver_mapping()`）已在重构步骤 B3 删除：输入读取不再回退到按修改时间扫描的“最新结果”。驱动模式的历史主功放入口要求显式传入 `driver_mapping_path`。测量输入端口 `ResultInputReader` 只接受显式路径，省略路径会立即失败；旧兼容流程缺少显式 `loss_data_path` / `driver_mapping_path`（或运行契约输入）时，在连接仪器或执行硬件动作前失败。历史查看与导出使用只读历史端口（`ResultHistoryRepository`，以 `result_id` 标识结果并限制在 `test_results` 目录内），不复用正式测量结果仓储。新流程必须从当前运行 manifest 读取阶段输入。
 
 ### 1. 系统配置
 1. 打开"仪器配置"选项卡
@@ -237,9 +237,10 @@ pa_auto_test/
 - 计划v1.1: 增加更多自定义配置选项
 - 计划v1.2: 支持更多仪器型号
 
-兼容层（`latest_path()`、无路径映射读取、旧结果写入、旧 GUI 测量入口）的弃用、删除条件、
-迁移方式和目标版本记录在 `docs/兼容层弃用与删除发布说明.md`；删除前必须先完成外部调用方
-迁移确认和真实现场验收，未满足条件的接口继续保留。
+兼容层的弃用、删除条件、迁移方式和目标版本记录在 `docs/兼容层弃用与删除发布说明.md`。
+旧 GUI 测量入口、`latest_path()` 兼容链与无路径映射读取已在重构步骤 A、B 删除（外部调用方
+已确认零调用方）；仍保留的旧结果写入（`save_compatibility_copy()` 等）与旧兼容测量根入口
+须先完成历史浏览迁移和真实现场验收，未满足条件的接口继续保留。
 
 ### 技术支持
 如遇到问题，请检查：

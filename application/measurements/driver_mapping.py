@@ -11,9 +11,6 @@ from typing import Any, Callable
 from app.cancellation import CancellationToken, MeasurementCancelled
 from application.dto import DriverPowerMappingRequest, MeasurementResult, legacy_result
 from application.measurements.services import DriverPowerMappingService
-from application.ports.legacy_result_input_reader import (
-    LegacyResultInputReader as LegacyResultInputReaderPort,
-)
 from domain.run.models import STAGE_CABLE_LOSS, STAGE_DRIVER_MAPPING
 
 
@@ -26,8 +23,9 @@ class DriverPowerMappingUseCase:
     运行契约运行（注入 ``stage_recorder``）只消费**当前运行**显式登记的线损输入
     ``inputs/cable_loss.json``，并把映射结果写回同一运行的
     ``inputs/driver_mapping.json``；当前运行线损阶段未完成时在硬件动作前失败。
-    旧兼容流程不注入 ``stage_recorder``，仍通过 ``loss_data`` / ``loss_data_path``
-    读取全局线损结果作为过渡兼容层。
+    旧兼容流程不注入 ``stage_recorder``，必须显式提供 ``loss_data`` 或
+    ``loss_data_path``；缺少显式输入时在硬件动作前失败，不再回退到按时间扫描的
+    “最新结果”读取。
     """
 
     def __init__(
@@ -111,8 +109,9 @@ class DriverPowerMappingUseCase:
         运行契约运行（注入 ``stage_recorder``）以当前运行目录为唯一输入来源：
         强制校验 ``inputs/cable_loss.json`` 已完成且校验值一致，显式
         ``loss_data`` / ``loss_data_path`` 只记录告警、不参与解析；旧兼容流程
-        （``stage_recorder`` 为 ``None``）保持 ``loss_data`` / ``loss_data_path``
-        的全局路径行为，缺少显式路径时才走兼容读取器。
+        （``stage_recorder`` 为 ``None``）必须显式提供 ``loss_data`` 或
+        ``loss_data_path``，缺少显式输入时在硬件动作前立即失败，绝不回退到按时间
+        扫描的“最新结果”读取。
         """
         if self.stage_recorder is not None:
             if request.loss_data is not None or request.loss_data_path is not None:
@@ -127,17 +126,10 @@ class DriverPowerMappingUseCase:
             raise ValueError("DriverPowerMappingUseCase 必须注入 input_reader 或 loss_data")
         if request.loss_data_path is not None:
             return self.input_reader.read_cable_loss(request.loss_data_path)
-        return self._read_legacy_cable_loss()
-
-    def _read_legacy_cable_loss(self) -> Mapping[str, Any]:
-        """旧兼容流程缺少显式路径时的读取；要求读取器显式支持兼容查找。"""
-        reader = self.input_reader
-        if not isinstance(reader, LegacyResultInputReaderPort):
-            raise ValueError(
-                "旧兼容流程未提供显式线损输入路径，且注入的读取器不支持兼容读取；"
-                "请传入 loss_data_path 或改用当前运行 manifest 的显式输入"
-            )
-        return reader.read_legacy_cable_loss()
+        raise ValueError(
+            "旧兼容流程必须显式提供 loss_data_path（或改用当前运行 manifest 的显式输入）；"
+            "不再自动查找最新线损结果"
+        )
 
     def _read_run_cable_loss(self) -> Mapping[str, Any]:
         """只从当前运行目录读取已校验的线损输入，缺失时在硬件动作前失败。

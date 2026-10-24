@@ -16,7 +16,6 @@ from pathlib import Path
 from app.cancellation import CancellationToken, MeasurementCancelled
 from app.gui_runtime import create_cable_loss_measurement, prepare_configuration
 from application.dto import CableLossMeasurementRequest
-from application.inputs import LegacyResultInputReader
 from application.measurements import CableLossUseCase
 from application.run_stages import RunStageRecorder
 from domain.run.models import (
@@ -188,8 +187,8 @@ class CableLossRunStageTests(unittest.TestCase):
         compatibility_path = self.base / "test_results" / "cable_loss_results.json"
         self.assertTrue(compatibility_path.is_file())
 
-        reader = LegacyResultInputReader(self.result_repository)
-        legacy_payload = reader.read_legacy_cable_loss()
+        # 无路径兼容读取已删除：直接按固定兼容路径读取（步骤 C 才会停止写兼容副本）。
+        legacy_payload = self.result_repository.load(compatibility_path)
         self.assertEqual(legacy_payload["run_id"], RUN_ID)
         self.assertIn("cable_losses", legacy_payload)
         # 兼容副本被明确标记，不会被误当作运行目录内的权威输入。

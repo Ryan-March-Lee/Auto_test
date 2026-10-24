@@ -63,6 +63,10 @@ class _Port:
         self.close_calls.append(close_rf)
 
 
+# 旧兼容快照（无运行契约）必须显式提供输入路径；组装测试用它满足连接前校验。
+_LEGACY_LOSS_PATH = Path("legacy_cable_loss.json")
+
+
 def _prepared_run():
     return SimpleNamespace(
         configuration=object(),
@@ -111,7 +115,11 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
                 expected = object()
                 with patch("app.gui_runtime.connect_instruments", return_value=port) as connect, \
                         patch(f"app.gui_runtime.{measurement_name}", return_value=expected) as measurement:
-                    result = factory("config.json", prepared_run=_prepared_run())
+                    result = factory(
+                        "config.json",
+                        prepared_run=_prepared_run(),
+                        loss_data_path=_LEGACY_LOSS_PATH,
+                    )
                 self.assertIs(result, expected)
                 connect.assert_called_once_with("config.json")
                 request = measurement.call_args.args[0]
@@ -134,7 +142,11 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
                 with patch("app.gui_runtime.connect_instruments", return_value=port), patch(
                     f"app.gui_runtime.{use_case_name}", return_value=service
                 ) as use_case:
-                    result = factory("config.json", prepared_run=_prepared_run())
+                    result = factory(
+                        "config.json",
+                        prepared_run=_prepared_run(),
+                        loss_data_path=_LEGACY_LOSS_PATH,
+                    )
 
                 self.assertIs(result, service)
                 self.assertIs(use_case.call_args.args[0].measurement_port, port)
@@ -157,7 +169,11 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
                     side_effect=OSError("use case construction failed"),
                 ):
                     with self.assertRaisesRegex(OSError, "use case construction failed"):
-                        factory("config.json", prepared_run=_prepared_run())
+                        factory(
+                            "config.json",
+                            prepared_run=_prepared_run(),
+                            loss_data_path=_LEGACY_LOSS_PATH,
+                        )
                 self.assertEqual(port.close_calls, [True])
 
     def test_default_factory_does_not_close_injected_port_on_construction_failure(self):
@@ -177,6 +193,7 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
                         factory(
                             "config.json",
                             prepared_run=_prepared_run(),
+                            loss_data_path=_LEGACY_LOSS_PATH,
                             measurement_port=port,
                         )
                 connect.assert_not_called()
@@ -198,6 +215,7 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
                     result = factory(
                         "config.json",
                         prepared_run=_prepared_run(),
+                        loss_data_path=_LEGACY_LOSS_PATH,
                         measurement_port=port,
                     )
 
@@ -266,6 +284,7 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
             create_amplifier_measurement(
                 "config.json",
                 prepared_run=_prepared_run(),
+                loss_data_path=_LEGACY_LOSS_PATH,
                 measurement_port=port,
                 driver_mapping_path=explicit_path,
             )
@@ -283,9 +302,6 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
         explicit_path = Path("provided") / "mapping.json"
         repository = SimpleNamespace(
             load=lambda path: {"power_mapping": {"1.0": 2.0}},
-            latest_path=lambda _result_type: self.fail(
-                "显式驱动映射路径不应扫描最新结果"
-            ),
         )
         reader = ResultInputReader(repository)
         observed = {}
@@ -303,6 +319,7 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
             result = create_amplifier_measurement(
                 "config.json",
                 prepared_run=_prepared_run(),
+                loss_data_path=_LEGACY_LOSS_PATH,
                 measurement_port=port,
                 input_reader=reader,
                 driver_mapping_path=explicit_path,
@@ -324,7 +341,9 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "request assembly failed"):
                 create_driver_mapping_measurement(
-                    "config.json", prepared_run=_prepared_run()
+                    "config.json",
+                    prepared_run=_prepared_run(),
+                    loss_data_path=_LEGACY_LOSS_PATH,
                 )
         self.assertEqual(owned_port.close_calls, [True])
 

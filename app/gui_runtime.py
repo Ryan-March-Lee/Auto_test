@@ -17,7 +17,7 @@ from .run_context import (
 )
 from instrument.measurement_factory import create_measurement_port
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
-from application.inputs import LegacyResultInputReader, ResultInputReader
+from application.inputs import ResultInputReader
 from application.run_stages import RunStageRecorder
 from domain.run.models import STAGE_CABLE_LOSS, STAGE_DRIVER_MAPPING
 from application.measurements import (
@@ -211,6 +211,44 @@ def _test_frequencies(prepared_run: PreparedRun) -> tuple[Any, ...]:
     return ()
 
 
+_LEGACY_LOSS_INPUT_REQUIRED = (
+    "旧兼容流程必须显式提供 loss_data_path（或改用当前运行 manifest 的显式输入）；"
+    "不再自动查找最新线损结果"
+)
+
+_LEGACY_DRIVER_MAPPING_REQUIRED = (
+    "旧兼容流程在驱动模式下必须显式提供 driver_mapping_path"
+    "（或改用当前运行 manifest 的显式输入）；不再自动查找最新驱动映射结果"
+)
+
+
+def _require_legacy_explicit_inputs(
+    prepared_run: PreparedRun,
+    *,
+    loss_data: Any = None,
+    loss_data_path: Any = None,
+    driver_mapping: Any = None,
+    driver_mapping_path: Any = None,
+) -> None:
+    """旧兼容快照（无运行契约）在连接仪器前校验必需输入已显式提供。
+
+    运行契约运行的输入由 :func:`_preflight_amplifier_inputs` /
+    :func:`_require_stage_inputs` 从当前运行目录读取并校验；旧兼容快照没有阶段
+    契约，必须在这里提前拒绝缺少显式输入的情况，避免先付出仪器连接代价，再在
+    测量用例构造期抛出同样的错误。
+    """
+    if getattr(prepared_run, "run_repository", None) is not None:
+        return
+    if loss_data is None and loss_data_path is None:
+        raise ValueError(_LEGACY_LOSS_INPUT_REQUIRED)
+    if (
+        _driver_mode_enabled(prepared_run)
+        and driver_mapping is None
+        and driver_mapping_path is None
+    ):
+        raise ValueError(_LEGACY_DRIVER_MAPPING_REQUIRED)
+
+
 def _preflight_amplifier_inputs(
     prepared_run: PreparedRun, repository: Any, input_reader: Any
 ) -> None:
@@ -218,7 +256,7 @@ def _preflight_amplifier_inputs(
 
     运行契约运行先从当前运行目录读取已校验的线损与（按需）驱动映射，再做结构
     校验，因此结构无效的输入会在打开仪器或执行任何 RF 动作前失败。旧兼容快照
-    没有阶段契约，保持原行为。
+    没有阶段契约，由 :func:`_require_legacy_explicit_inputs` 在此之外校验显式输入。
     """
     run_repository = getattr(prepared_run, "run_repository", None)
     if run_repository is None:
@@ -298,15 +336,13 @@ def _ensure_run_snapshots_are_intact(prepared_run: PreparedRun) -> None:
     _ensure_hardware_snapshot_is_intact(run_repository, run_id)
 
 
-def _input_reader_for(run_repository: Any, repository: Any) -> Any:
-    """按运行契约选择输入读取器：正式运行只接受显式路径。
+def _input_reader_for(repository: Any) -> Any:
+    """构建只接受显式路径的测量输入读取器。
 
-    运行契约运行（``run_repository`` 非空）使用只接受显式路径的正式读取器；
-    旧兼容快照保留无路径兼容读取能力，但它们都带弃用警告。
+    无路径兼容读取已在重构步骤 B3 删除：所有运行（含旧兼容快照）都必须显式提供
+    路径，输入读取不再回退到按时间扫描的“最新结果”。
     """
-    if run_repository is not None:
-        return ResultInputReader(repository)
-    return LegacyResultInputReader(repository)
+    return ResultInputReader(repository)
 
 
 def _request_kwargs(prepared_run: PreparedRun, config_path: str, callbacks: dict[str, Any]) -> dict[str, Any]:
@@ -330,9 +366,8 @@ def _request_kwargs(prepared_run: PreparedRun, config_path: str, callbacks: dict
         "event_sink": callbacks.get("event_sink"),
         "cancellation_token": callbacks.get("cancellation_token"),
         "result_repository": repository,
-        # 运行契约运行只接受显式输入路径；旧兼容快照保留无路径兼容读取能力。
-        "input_reader": callbacks.get("input_reader")
-        or _input_reader_for(run_repository, repository),
+        # 所有运行只接受显式输入路径；无路径兼容读取已在步骤 B3 删除。
+        "input_reader": callbacks.get("input_reader") or _input_reader_for(repository),
         "stage_recorder": stage_recorder,
         "config_path": Path(config_path),
         "safety_options": {
@@ -383,9 +418,13 @@ def create_driver_mapping_measurement(
     owned_port = callbacks.get("measurement_port") is None
     effective_config_path = _hardware_config_path(prepared_run, config_path)
     try:
-        # 运行契约运行在连接仪器前校验当前运行的线损输入，缺失时不做任何硬件动作；
+        # 连接仪器前校验本次运行实际需要的线损输入：运行契约运行从当前运行目录读取，
+        # 旧兼容快照要求显式 loss_data_path。缺失时不做任何仪器连接或硬件动作；
         # 随后按领域/硬件两套职责分别校验冻结快照。
         _require_stage_inputs(prepared_run, STAGE_CABLE_LOSS)
+        _require_legacy_explicit_inputs(
+            prepared_run, loss_data_path=callbacks.get("loss_data_path")
+        )
         _ensure_run_snapshots_are_intact(prepared_run)
         if owned_port:
             callbacks["measurement_port"] = connect_instruments(effective_config_path)
@@ -418,13 +457,20 @@ def create_amplifier_measurement(
     try:
         paths = callbacks.get("paths") or DEFAULT_PATHS
         repository = callbacks.get("result_repository") or FileMeasurementResultRepository(paths=paths)
-        input_reader = callbacks.get("input_reader") or _input_reader_for(
-            getattr(prepared_run, "run_repository", None), repository
-        )
-        # 运行契约运行在连接仪器前读取并校验当前运行的校准输入：主功放始终需要
-        # 线损，仅在驱动模式启用时才需要驱动映射；结构无效或配置漂移都在打开仪器
-        # 或执行任何 RF 动作前失败。随后按领域/硬件两套职责分别校验冻结快照。
+        input_reader = callbacks.get("input_reader") or _input_reader_for(repository)
+        # 在连接仪器前校验本次运行实际需要的校准输入：主功放始终需要线损，仅在
+        # 驱动模式启用时才需要驱动映射。运行契约运行从当前运行目录读取并做结构
+        # 校验；旧兼容快照要求显式 loss_data_path / driver_mapping_path。结构无效、
+        # 配置漂移或缺少显式输入都在打开仪器或执行任何 RF 动作前失败。随后按领域/
+        # 硬件两套职责分别校验冻结快照。
         _preflight_amplifier_inputs(prepared_run, repository, input_reader)
+        _require_legacy_explicit_inputs(
+            prepared_run,
+            loss_data=callbacks.get("loss_data"),
+            loss_data_path=callbacks.get("loss_data_path"),
+            driver_mapping=callbacks.get("driver_mapping"),
+            driver_mapping_path=callbacks.get("driver_mapping_path"),
+        )
         _ensure_run_snapshots_are_intact(prepared_run)
         if owned_port:
             callbacks["measurement_port"] = connect_instruments(effective_config_path)

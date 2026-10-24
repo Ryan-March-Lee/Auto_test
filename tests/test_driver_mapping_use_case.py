@@ -42,29 +42,16 @@ class _Events:
 
 
 class _Reader:
-    """同时实现显式读取和旧兼容读取的最小替身。"""
+    """只实现正式显式读取的最小替身；不再暴露无路径兼容读取。"""
 
     def __init__(self, loss_data=None):
         self.loss_data = loss_data
         self.explicit_paths = []
-        self.legacy_reads = 0
 
     def read_cable_loss(self, path):
         self.explicit_paths.append(path)
         if self.loss_data is None:
             raise FileNotFoundError("missing cable loss")
-        return self.loss_data
-
-    def read_legacy_cable_loss(self):
-        self.legacy_reads += 1
-        if self.loss_data is None:
-            raise FileNotFoundError("missing cable loss")
-        return self.loss_data
-
-    def read_latest_legacy_driver_mapping(self):
-        self.legacy_reads += 1
-        if self.loss_data is None:
-            raise FileNotFoundError("missing driver mapping")
         return self.loss_data
 
 
@@ -75,7 +62,16 @@ class _Repository:
         return SimpleNamespace(run_directory=Path("saved-run"))
 
 
-def _request(instrument, *, loss_data=None, reader=None, events=None, token=None, repository=None):
+def _request(
+    instrument,
+    *,
+    loss_data=None,
+    loss_data_path=None,
+    reader=None,
+    events=None,
+    token=None,
+    repository=None,
+):
     configuration = {
         "test_frequencies": [1.0],
         "attenuator": {"type": "10dB"},
@@ -91,6 +87,7 @@ def _request(instrument, *, loss_data=None, reader=None, events=None, token=None
         result_repository=repository or _Repository(),
         input_reader=reader,
         loss_data=loss_data,
+        loss_data_path=loss_data_path,
         safety_options={"owns_measurement_port": True},
     )
 
@@ -120,11 +117,14 @@ class DriverPowerMappingUseCaseTests(unittest.TestCase):
         self.assertEqual(instrument.rf_off_calls, 1)
         self.assertEqual(instrument.driver_off_calls, 1)
 
-    def test_missing_loss_input_is_rejected(self):
-        with self.assertRaises(FileNotFoundError):
+    def test_missing_loss_input_is_rejected_before_hardware_action(self):
+        """无路径兼容读取已删除：缺少显式输入必须在硬件动作前失败。"""
+        instrument = _Instrument()
+        with self.assertRaisesRegex(ValueError, "必须显式提供"):
             DriverPowerMappingUseCase(
-                _request(_Instrument(), reader=_Reader()), sleep_fn=lambda _: None
+                _request(instrument, reader=_Reader()), sleep_fn=lambda _: None
             )
+        self.assertEqual(instrument.measured, 0)
 
     def test_measurement_port_is_required_before_input_loading(self):
         request = _request(
@@ -134,12 +134,15 @@ class DriverPowerMappingUseCaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "注入 measurement_port"):
             DriverPowerMappingUseCase(request)
 
-    def test_reader_is_used_for_explicit_input(self):
+    def test_reader_is_used_for_explicit_path_input(self):
         reader = _Reader({"cable_losses": {"1.0": {"cable2": 2.0}}})
+        loss_path = Path("provided/cable_loss.json")
         use_case = DriverPowerMappingUseCase(
-            _request(_Instrument(), reader=reader), sleep_fn=lambda _: None
+            _request(_Instrument(), reader=reader, loss_data_path=loss_path),
+            sleep_fn=lambda _: None,
         )
         self.assertEqual(use_case.loss_data, {"cable_losses": {"1.0": {"cable2": 2.0}}})
+        self.assertEqual(reader.explicit_paths, [loss_path])
 
     def test_cancelled_request_stops_before_measurement_and_cleans_up(self):
         instrument = _Instrument()

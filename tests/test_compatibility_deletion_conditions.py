@@ -13,6 +13,8 @@
   且组装层必须在连接仪器前拒绝旧快照缺少显式输入。
 - 步骤 B3 已删除兼容读取器与 ``latest_path()`` 兼容链；该纯代码删除按说明 6.6 的
   分级授权执行。
+- 步骤 C 属**数据类删除**（停止写全局兼容副本），在步骤 D、F 完成前被禁止执行；
+  兼容副本写入必须保持存在，并由说明第 8 节登记阻断结论。
 - 说明必须为每个待删除接口写出删除条件、迁移方式和目标版本，并保留步骤 A 执行
   记录（外部调用方台账与回滚版本）。
 
@@ -334,6 +336,37 @@ class StepBPreConnectValidationTests(unittest.TestCase):
                 )
 
 
+class StepCBlockedTests(unittest.TestCase):
+    """步骤 C 是数据类删除，在步骤 F 归档前禁止执行。
+
+    门禁固定两点：兼容副本写入必须**仍然存在**（防止未经授权提前删除），
+    且发布说明登记了阻断结论（防止靠改文字消解门槛冲突）。
+    """
+
+    WRITING_USE_CASES = (
+        "application/measurements/amplifier_test.py",
+        "application/measurements/cable_loss.py",
+        "application/measurements/driver_mapping.py",
+    )
+
+    def test_measurement_use_cases_still_write_the_compatibility_copy(self):
+        for relative in self.WRITING_USE_CASES:
+            with self.subTest(module=relative):
+                source = (ROOT / relative).read_text(encoding="utf-8-sig")
+                self.assertIn(
+                    "save_compatibility_copy(",
+                    source,
+                    f"{relative} 的兼容副本写入不得在步骤 D/F 完成前删除",
+                )
+
+    def test_repository_still_exposes_the_compatibility_copy_path(self):
+        source = (
+            ROOT / "infrastructure" / "persistence" / "result_repository.py"
+        ).read_text(encoding="utf-8-sig")
+        self.assertIn("def save_compatibility_copy(", source)
+        self.assertIn("write_compatibility_copy(", source)
+
+
 class ReleaseNotesTests(unittest.TestCase):
     """删除条件、迁移方式和目标版本必须留在发布说明里，而不是只存在于讨论中。"""
 
@@ -407,6 +440,16 @@ class ReleaseNotesTests(unittest.TestCase):
             "步骤 B3 执行记录",
             "删除前调用方清单",
             "步骤 B3",
+        ):
+            self.assertIn(marker, self.document)
+
+    def test_release_notes_record_the_step_c_blocker(self):
+        """步骤 C 属数据类删除，须登记在 F 归档前被阻断，不能被静默执行或删除记录。"""
+        for marker in (
+            "步骤 C 执行评估与阻塞登记",
+            "数据类删除",
+            "步骤 F",
+            "不得执行 C1 至 C4",
         ):
             self.assertIn(marker, self.document)
 

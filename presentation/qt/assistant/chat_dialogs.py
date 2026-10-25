@@ -2,12 +2,13 @@ import os
 from datetime import datetime
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QCheckBox, QDialog, QDoubleSpinBox, QFormLayout,
+from PySide6.QtWidgets import (QCheckBox, QDialog, QFormLayout,
                                QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-                               QMessageBox, QPushButton, QSpinBox, QVBoxLayout)
+                               QMessageBox, QPushButton, QVBoxLayout)
 
 from assistant.storage import (has_current_history, list_history_files, load_history_file,
                                load_search_api_config, save_search_api_config)
+from presentation.qt.input_controls import KeyboardOnlyDoubleSpinBox, KeyboardOnlySpinBox
 
 
 class ChatHistoryDialog(QDialog):
@@ -70,12 +71,12 @@ class ChatSettingsDialog(QDialog):
         form = QFormLayout(group)
         self.server_url_edit = QLineEdit(llm_chat.server_url)
         self.model_name_edit = QLineEdit(llm_chat.model_name)
-        self.temperature_spin = QDoubleSpinBox(); self.temperature_spin.setRange(0, 2); self.temperature_spin.setValue(llm_chat.temperature)
-        self.max_tokens_spin = QSpinBox(); self.max_tokens_spin.setRange(100, 8000); self.max_tokens_spin.setValue(llm_chat.max_tokens)
+        self.temperature_spin = KeyboardOnlyDoubleSpinBox(); self.temperature_spin.setRange(0, 2); self.temperature_spin.setValue(llm_chat.temperature)
+        self.max_tokens_spin = KeyboardOnlySpinBox(); self.max_tokens_spin.setRange(100, 8000); self.max_tokens_spin.setValue(llm_chat.max_tokens)
         for label, widget in (("服务器地址:", self.server_url_edit), ("模型名称:", self.model_name_edit), ("温度 (创造性):", self.temperature_spin), ("最大Token数:", self.max_tokens_spin)): form.addRow(label, widget)
         layout.addWidget(group)
         self.auto_save_check = QCheckBox(); self.auto_save_check.setChecked(llm_chat.auto_save)
-        self.history_limit_spin = QSpinBox(); self.history_limit_spin.setRange(10, 1000); self.history_limit_spin.setValue(llm_chat.history_limit)
+        self.history_limit_spin = KeyboardOnlySpinBox(); self.history_limit_spin.setRange(10, 1000); self.history_limit_spin.setValue(llm_chat.history_limit)
         form.addRow("自动保存历史:", self.auto_save_check); form.addRow("历史记录上限:", self.history_limit_spin)
         self.bing_key_edit = QLineEdit(); self.google_key_edit = QLineEdit(); self.google_cx_edit = QLineEdit()
         self.bing_key_edit.setEchoMode(QLineEdit.Password)

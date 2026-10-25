@@ -7,14 +7,15 @@ controller 或硬件实现。
 import copy
 from typing import Any
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout, QGroupBox,
+    QCheckBox, QFormLayout, QGridLayout, QGroupBox,
     QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QTabWidget,
     QVBoxLayout, QWidget,
 )
 
 from .config_form_state import ConfigFormState, parse_frequency_text
+from .input_controls import KeyboardOnlyDoubleSpinBox, WheelSafeComboBox
 from .pages import PageControllerBindingMixin
 
 
@@ -77,10 +78,25 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
 
     def _build_ui(self):
         root = QVBoxLayout(self)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(6)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
         content = QWidget()
-        layout = QVBoxLayout(content)
+        # 限制内容最大宽度：窗口过宽时不再把分组框横向拉伸成很长的灰色边框。
+        content.setMaximumWidth(1200)
+        # 两栏布局：左侧仪器连接/测试参数/运行，右侧电源配置。避免单个分组框
+        # 随视口无限横向拉伸，同时降低页面总高度。
+        columns = QHBoxLayout(content)
+        columns.setContentsMargins(6, 6, 6, 6)
+        columns.setSpacing(8)
+        left_column = QVBoxLayout()
+        left_column.setSpacing(6)
+        right_column = QVBoxLayout()
+        right_column.setSpacing(6)
+        columns.addLayout(left_column, 3)
+        columns.addLayout(right_column, 2)
         root.addWidget(scroll)
         scroll.setWidget(content)
 
@@ -93,11 +109,12 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
 
         connection = QGroupBox("仪器连接配置")
         grid = QGridLayout(connection)
-        grid.setColumnStretch(1, 3)
+        grid.setColumnStretch(1, 1)
         for row, (key, label, source, default) in enumerate(INSTRUMENT_ENTRIES):
             item = instruments.get(source, {})
             if not isinstance(item, dict): item = {}
             address = QLineEdit(str(item.get("address", "")))
+            address.setMaximumWidth(260)
             enabled = QCheckBox("启用")
             enabled.setChecked(item.get("enabled", default))
             setattr(self, f"{key}_address", address)
@@ -109,6 +126,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             item = supplies.get(name, {})
             if not isinstance(item, dict): item = {}
             address = QLineEdit(str(item.get("address", "")))
+            address.setMaximumWidth(260)
             enabled = QCheckBox("启用")
             enabled.setChecked(item.get("enabled", name in DEFAULT_ENABLED_POWER_SUPPLIES))
             setattr(self, f"{name.lower()}_address", address)
@@ -118,13 +136,14 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             grid.addWidget(enabled, row, 2)
         self.connect_btn = QPushButton("连接仪器")
         grid.addWidget(self.connect_btn, 6, 0, 1, 2)
-        layout.addWidget(connection)
+        left_column.addWidget(connection)
 
         params = QGroupBox("测试参数配置")
-        form = QFormLayout(params)
+        form = QGridLayout(params)
         test = self.config.get("signal_source", {})
         if not isinstance(test, dict): test = {}
         self.freq_edit = QLineEdit(str(self.config.get("test_frequencies", DEFAULT_TEST_FREQUENCIES)))
+        self.freq_edit.setMaximumWidth(320)
         self.start_power = self._spin(test.get("start_power", DEFAULT_SIGNAL_SOURCE["start_power"]), -50, 20)
         self.stop_power = self._spin(test.get("stop_power", DEFAULT_SIGNAL_SOURCE["stop_power"]), -50, 20)
         self.power_step = self._spin(test.get("step", DEFAULT_SIGNAL_SOURCE["step"]), 0.1, 5)
@@ -141,25 +160,33 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         if not isinstance(dut, dict): dut = {}
         self.max_input_power = self._spin(dut.get("max_input_power", DEFAULT_MAX_INPUT_POWER), 0, 50)
         self.pa_unit_count_combo = self._combo(("1", "2", "3"), str(dut.get("power_supply_count", DEFAULT_PA_UNIT_COUNT)))
-        for label, widget in (("测试频率 (GHz)", self.freq_edit), ("起始功率 (dBm)", self.start_power),
-                              ("结束功率 (dBm)", self.stop_power), ("功率步长 (dB)", self.power_step),
-                              ("压缩点", self.compression_combo), ("衰减器", self.attenuator_combo),
-                              ("DUT最大输入功率 (dBm)", self.max_input_power), ("PA单元数量", self.pa_unit_count_combo)):
-            form.addRow(label, widget)
-        form.addRow(self.driver_mode_check)
-        layout.addWidget(params)
-        self._build_power_widgets(layout, supplies)
+        parameter_rows = (("测试频率 (GHz)", self.freq_edit), ("起始功率 (dBm)", self.start_power),
+                          ("结束功率 (dBm)", self.stop_power), ("功率步长 (dB)", self.power_step),
+                          ("压缩点", self.compression_combo), ("衰减器", self.attenuator_combo),
+                          ("DUT最大输入功率 (dBm)", self.max_input_power), ("PA单元数量", self.pa_unit_count_combo))
+        for index, (label, widget) in enumerate(parameter_rows):
+            row, column = divmod(index, 2)
+            form.addWidget(QLabel(label), row, column * 2)
+            form.addWidget(widget, row, column * 2 + 1)
+        form.addWidget(self.driver_mode_check, 4, 0, 1, 2)
+        left_column.addWidget(params)
+        self._build_power_widgets(right_column, supplies)
+        # 运行入口紧随测试参数，保存按钮放在左栏底部。
+        self._build_run_widgets(left_column)
+        left_column.addStretch(1)
+        right_column.addStretch(1)
 
     @staticmethod
     def _spin(value, minimum, maximum):
-        widget = QDoubleSpinBox()
+        widget = KeyboardOnlyDoubleSpinBox()
         widget.setRange(minimum, maximum)
         widget.setValue(float(value))
+        widget.setMaximumWidth(120)
         return widget
 
     @staticmethod
     def _combo(items, current):
-        widget = QComboBox(); widget.addItems(list(items)); widget.setCurrentText(str(current)); return widget
+        widget = WheelSafeComboBox(); widget.addItems(list(items)); widget.setCurrentText(str(current)); return widget
 
     def _build_power_widgets(self, layout, supplies):
         detail = QGroupBox("电源详细配置")
@@ -196,7 +223,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             tabs.addTab(page, name); self.power_config_widgets[name] = record
         detail_layout.addWidget(tabs); layout.addWidget(detail)
 
-        assignment = QGroupBox("电源分配设置"); form = QFormLayout(assignment)
+        assignment = QGroupBox("电源分配设置"); form = QGridLayout(assignment)
         existing = self.config.get("power_supply_assignment", {})
         if not isinstance(existing, dict): existing = {}
         driver = existing.get("driver_amplifier", {}); dut = existing.get("dut_amplifier", {})
@@ -217,12 +244,20 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         self.pa_unit2_power_combo = self._combo(supplies_choices, peaking.get("name", DEFAULT_POWER_ASSIGNMENT["pa_unit2_power"]))
         self.pa_unit3_power_combo = self._combo(supplies_choices, peaking2.get("name", DEFAULT_POWER_ASSIGNMENT["pa_unit3_power"]))
         self.driver_power_label = QLabel("驱动功放电源:"); self.pa_unit2_label = QLabel("PA Unit2电源:"); self.pa_unit3_label = QLabel("PA Unit3电源:")
-        form.addRow(self.driver_power_enabled); form.addRow(self.driver_power_label, self.driver_power_combo)
-        form.addRow("PA Unit1电源:", self.pa_unit1_power_combo); form.addRow(self.pa_unit2_label, self.pa_unit2_power_combo); form.addRow(self.pa_unit3_label, self.pa_unit3_power_combo)
+        # 两列布局（标签 + 下拉框），避免右栏过窄时撑出横向滚动条。
+        form.addWidget(self.driver_power_enabled, 0, 0, 1, 2)
+        form.addWidget(self.driver_power_label, 1, 0); form.addWidget(self.driver_power_combo, 1, 1)
+        form.addWidget(QLabel("PA Unit1电源:"), 2, 0); form.addWidget(self.pa_unit1_power_combo, 2, 1)
+        form.addWidget(self.pa_unit2_label, 3, 0); form.addWidget(self.pa_unit2_power_combo, 3, 1)
+        form.addWidget(self.pa_unit3_label, 4, 0); form.addWidget(self.pa_unit3_power_combo, 4, 1)
+        form.setColumnStretch(1, 1)
         layout.addWidget(assignment)
         self.power_assignment_widgets = {"driver_enabled": self.driver_power_enabled, "driver_power": self.driver_power_combo,
             "pa_unit1_power": self.pa_unit1_power_combo, "pa_unit2_power": self.pa_unit2_power_combo,
             "pa_unit2_label": self.pa_unit2_label, "pa_unit3_power": self.pa_unit3_power_combo, "pa_unit3_label": self.pa_unit3_label}
+
+    def _build_run_widgets(self, layout):
+        """保存按钮与运行入口；与电源配置解耦，便于放在左侧栏底部。"""
         self.save_config_btn = QPushButton("保存配置"); layout.addWidget(self.save_config_btn)
 
         # 配置阶段入口：校验并创建一次运行。运行创建后测量页面只消费该不可变快照。
@@ -232,6 +267,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         self.run_status_label = QLabel("当前运行: 未创建")
         self.run_status_label.setWordWrap(True)
         self.load_run_id_edit = QLineEdit()
+        self.load_run_id_edit.setMaximumWidth(320)
         self.load_run_id_edit.setPlaceholderText("输入 run_id 以重新打开已有运行")
         self.load_run_btn = QPushButton("加载运行")
         run_form.addRow(self.create_run_btn)

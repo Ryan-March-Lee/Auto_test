@@ -18,12 +18,19 @@
 - 步骤 D 已把 GUI 历史列表/查看/导出迁移到运行目录 manifest 视图，旧的全局兼容副本
   保持只读可查看；运行历史只读端口与仓储必须保持存在，且历史浏览不得复用正式测量
   结果仓储。
+- 步骤 E1 已完成旧兼容测量根入口盘点：``release_manifest`` 的 ``rollback_files`` /
+  ``compatibility_files`` 并集必须与盘点表**双向相等**，正式流程不得导入这些旧入口。
+- 步骤 E2 至 E4 的三个测量根入口（``cable_loss_measurement.py`` /
+  ``driver_power_mapping.py`` / ``app/legacy_amplifier_measurement.py``）属**数据类删除**
+  （停止写全局兼容副本/旧运行快照），在步骤 F 归档前禁止退役，仍须保持写盘调用；
+  其余纯再导出模块属**纯代码路径**，独立退役、不受 F 阻断（说明第 10 节）。
+- 步骤 E5 是门禁复核（更新测试/说明、跑全量离线测试与应用检查），非删除动作，本轮执行。
 - 说明必须为每个待删除接口写出删除条件、迁移方式和目标版本，并保留步骤 A 执行
   记录（外部调用方台账与回滚版本）。
 
 旧兼容/回滚入口本身（``cable_loss_measurement.py``、``driver_power_mapping.py``、
 ``app/legacy_amplifier_measurement.py``）在说明 3.5 节记录为**本次保留**，因此这里
-只校验调用方集合，不要求它们消失。
+只校验调用方集合与盘点一致性，不要求它们消失。
 """
 
 import ast
@@ -93,6 +100,57 @@ REPOSITORY_SAVE_CALLERS = {
     "cable_loss_measurement.py",
     "driver_power_mapping.py",
 }
+
+# 发布说明 3.5 / 第 10 节盘点表：旧兼容测量根入口（真实写旧运行快照/兼容副本）。
+LEGACY_MEASUREMENT_DATA_ENTRIES = (
+    "cable_loss_measurement.py",
+    "driver_power_mapping.py",
+    "app/legacy_amplifier_measurement.py",
+)
+
+# 主功放旧入口的公开转发模块（随 E4 数据类批次一并退役）。
+LEGACY_AMPLIFIER_FORWARDER = "amplifier_measurement.py"
+
+# 配置/结果/日志/服务/生命周期等纯再导出模块（纯代码路径，独立退役，不受步骤 F 阻断）。
+LEGACY_REEXPORT_MODULES = (
+    "measurement_services.py",
+    "measurement_lifecycle.py",
+    "measurement_calculations.py",
+    "result_storage.py",
+    "result_reading.py",
+    "app_logging.py",
+    "project_paths.py",
+    "config_io.py",
+    "config_models.py",
+    "config_validation.py",
+)
+
+# 步骤 E1 盘点的完整兼容面 = release_manifest.ROLLBACK_FILES ∪ COMPATIBILITY_FILES。
+LEGACY_AUDITED_SURFACE = (
+    LEGACY_MEASUREMENT_DATA_ENTRIES
+    + (LEGACY_AMPLIFIER_FORWARDER,)
+    + LEGACY_REEXPORT_MODULES
+)
+
+# 上述模块的导入名（用于断言正式流程不导入旧入口）。
+LEGACY_MODULE_NAMES = frozenset(
+    {
+        "cable_loss_measurement",
+        "driver_power_mapping",
+        "amplifier_measurement",
+        "app.legacy_amplifier_measurement",
+        "measurement_services",
+        "measurement_lifecycle",
+        "measurement_calculations",
+        "result_storage",
+        "result_reading",
+        "app_logging",
+        "project_paths",
+        "config_io",
+        "config_models",
+        "config_validation",
+    }
+)
 
 
 def _production_sources():
@@ -404,6 +462,101 @@ class StepDMigrationTests(unittest.TestCase):
             self.assertNotIn(forbidden, source)
 
 
+class StepEAuditTests(unittest.TestCase):
+    """步骤 E1：旧兼容测量入口盘点与门禁清单必须与实际代码一致。
+
+    门禁固定两点：``release_manifest`` 的 ``rollback_files`` / ``compatibility_files``
+    并集与盘点表模块集合**双向相等**（清单不得有未盘点模块，盘点不得有遗漏模块），
+    且正式流程（非 tests）不导入这些旧入口，避免“盘点表与代码脱节”。
+    """
+
+    def test_every_audited_module_exists(self):
+        for relative in LEGACY_AUDITED_SURFACE:
+            with self.subTest(module=relative):
+                self.assertTrue((ROOT / relative).is_file(), relative)
+
+    def test_manifest_surface_equals_the_audited_inventory(self):
+        import release_manifest
+
+        manifest_surface = set(release_manifest.ROLLBACK_FILES) | set(
+            release_manifest.COMPATIBILITY_FILES
+        )
+        self.assertEqual(
+            manifest_surface,
+            set(LEGACY_AUDITED_SURFACE),
+            "release_manifest 清单必须与第 10 节盘点表完全一致（双向比较）",
+        )
+
+    def test_legacy_amplifier_entry_is_registered_for_rollback(self):
+        """主功放旧入口实现随 ``amplifier_measurement.py`` 转发，必须一并可回滚。"""
+        import release_manifest
+
+        self.assertIn(
+            "app/legacy_amplifier_measurement.py", release_manifest.ROLLBACK_FILES
+        )
+
+    def test_production_code_has_no_import_of_legacy_measurement_entries(self):
+        audited = set(LEGACY_AUDITED_SURFACE)
+        offenders = set()
+        for path in _production_sources():
+            if _relative(path) in audited:
+                continue
+            for node in ast.walk(_tree(path)):
+                modules = []
+                if isinstance(node, ast.ImportFrom):
+                    # 跳过相对导入：同一 basename 的模块（如 application.lifecycle.
+                    # measurement_lifecycle）不是根目录兼容再导出模块。
+                    if node.level == 0 and node.module:
+                        modules.append(node.module)
+                elif isinstance(node, ast.Import):
+                    modules.extend(alias.name for alias in node.names)
+                if any(
+                    module in LEGACY_MODULE_NAMES
+                    or module.split(".")[0] in LEGACY_MODULE_NAMES
+                    for module in modules
+                ):
+                    offenders.add(_relative(path))
+        self.assertEqual(
+            offenders,
+            set(),
+            "正式流程不得导入旧兼容测量入口/再导出: " + ", ".join(sorted(offenders)),
+        )
+
+
+class StepEBlockedTests(unittest.TestCase):
+    """步骤 E2 至 E4（数据类）：旧测量根入口必须仍写旧运行快照/兼容副本。
+
+    这三个入口停止写全局兼容结果/旧运行快照属于数据类删除，在步骤 F 归档前禁止退役。
+    本门禁是**源码结构守卫**（断言写盘调用仍在源码中），运行时写入行为由
+    ``tests/test_result_storage.py``、``test_amplifier_measurement_compatibility.py``
+    等兼容测试覆盖；本类不声称复验全部运行时写入路径。
+    """
+
+    def test_cable_loss_entry_still_writes_snapshot_and_copy(self):
+        source = (ROOT / "cable_loss_measurement.py").read_text(encoding="utf-8-sig")
+        self.assertIn("write_legacy_run_snapshot(", source)
+        self.assertIn("save_measurement_result(", source)
+
+    def test_driver_mapping_entry_still_writes_snapshot_and_copy(self):
+        source = (ROOT / "driver_power_mapping.py").read_text(encoding="utf-8-sig")
+        self.assertIn("write_legacy_run_snapshot(", source)
+        self.assertIn("repository.save(", source)
+
+    def test_legacy_amplifier_entry_still_writes_snapshot_and_copy(self):
+        source = (
+            ROOT / "app" / "legacy_amplifier_measurement.py"
+        ).read_text(encoding="utf-8-sig")
+        self.assertIn("write_legacy_run_snapshot(", source)
+        self.assertIn("repository.save(", source)
+
+    def test_amplifier_forwarder_still_reexports_the_legacy_entry(self):
+        source = (ROOT / "amplifier_measurement.py").read_text(encoding="utf-8-sig")
+        self.assertIn(
+            "from app.legacy_amplifier_measurement import AmplifierMeasurement",
+            source,
+        )
+
+
 class ReleaseNotesTests(unittest.TestCase):
     """删除条件、迁移方式和目标版本必须留在发布说明里，而不是只存在于讨论中。"""
 
@@ -515,6 +668,61 @@ class ReleaseNotesTests(unittest.TestCase):
             "回退",
         ):
             self.assertIn(marker, self.document)
+
+    def test_release_notes_record_the_step_e_blocker(self):
+        """数据类入口（E2 至 E4）须登记在 F 归档前被阻断，不能被静默退役。"""
+        for marker in (
+            "步骤 E 执行评估与收尾",
+            "数据类删除",
+            "旧兼容测量根入口",
+            "不得执行 E2",
+        ):
+            self.assertIn(marker, self.document)
+
+    def test_release_notes_record_the_reexport_pure_code_classification(self):
+        """再导出模块必须登记为纯代码路径、独立退役，而非数据类删除。"""
+        for marker in ("纯代码路径", "独立退役"):
+            self.assertIn(marker, self.document)
+
+    def test_release_notes_contain_the_step_e_audit_table(self):
+        """步骤 E1 盘点表必须逐模块登记，含所有者、替代入口与迁移/退役结论。"""
+        for module in (
+            "cable_loss_measurement.py",
+            "driver_power_mapping.py",
+            "app/legacy_amplifier_measurement.py",
+            "amplifier_measurement.py",
+            "result_storage.py",
+            "measurement_services.py",
+            "measurement_lifecycle.py",
+            "measurement_calculations.py",
+            "result_reading.py",
+            "app_logging.py",
+            "project_paths.py",
+            "config_io.py",
+            "config_models.py",
+            "config_validation.py",
+        ):
+            self.assertIn(module, self.document)
+        for column in ("所有者", "替代入口", "迁移/退役结论"):
+            self.assertIn(column, self.document)
+
+    def test_release_notes_record_the_step_e5_verification(self):
+        """E5 门禁复核本轮已执行（非删除动作），须登记命令与结果。"""
+        for marker in (
+            "E5 门禁复核",
+            "全量离线测试",
+            "launcher.py --check",
+            "validate-config",
+        ):
+            self.assertIn(marker, self.document)
+
+    def test_guide_marks_e1_complete(self):
+        guide = GUIDE.read_text(encoding="utf-8")
+        self.assertIn("1. [x] **E1", guide)
+
+    def test_guide_marks_e5_complete(self):
+        guide = GUIDE.read_text(encoding="utf-8")
+        self.assertIn("5. [x] **E5", guide)
 
 
 if __name__ == "__main__":

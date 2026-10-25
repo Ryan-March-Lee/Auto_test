@@ -43,6 +43,40 @@ class OfflineAcceptanceTests(unittest.TestCase):
         ):
             self.assertIn(item, plan)
 
+    def test_step_f_is_the_single_acceptance_standard(self):
+        guide = (self.ROOT / "docs/测试运行目录与配置结果解耦重构指南.md").read_text(
+            encoding="utf-8"
+        )
+        record = (self.ROOT / "docs/重构收尾与真实HardwareSmoke验收.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("唯一验收口径", guide)
+        self.assertIn("以本步骤为准", guide)
+        self.assertIn("以指南步骤 F 为准", record)
+        for marker in ("F1", "F2", "F3", "F4", "F5", "F6"):
+            self.assertIn(marker, guide)
+        self.assertIn("F 归档后", guide)
+        self.assertIn("F 归档不等于全部重构收尾完成", record)
+        self.assertIn("C1 至 C4", record)
+        self.assertIn("E2 至 E4", record)
+
+    def test_merged_record_keeps_the_current_run_contract(self):
+        guide = (self.ROOT / "docs/测试运行目录与配置结果解耦重构指南.md").read_text(
+            encoding="utf-8"
+        )
+        record = (self.ROOT / "docs/重构收尾与真实HardwareSmoke验收.md").read_text(
+            encoding="utf-8"
+        )
+        for document in (guide, record):
+            for item in (
+                "runs/<run_id>/",
+                "manifest",
+                "不创建运行目录",
+                "旧兼容测量入口",
+                "无路径",
+            ):
+                self.assertIn(item, document)
+
     def test_main_window_connects_page_lifecycle(self):
         source = (self.ROOT / "presentation" / "qt" / "main_window.py").read_text(encoding="utf-8-sig")
         self.assertIn("currentChanged.connect(self._on_page_changed)", source)

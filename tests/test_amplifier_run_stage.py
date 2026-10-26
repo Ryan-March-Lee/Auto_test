@@ -694,7 +694,7 @@ class AmplifierRunStageTests(unittest.TestCase):
         """B2：旧兼容流程缺少显式线损输入时，在连接仪器前失败。"""
         prepared = SimpleNamespace(
             configuration=_amplifier_config(driver_enabled=False),
-            context=SimpleNamespace(run_id="run-legacy"),
+            context=SimpleNamespace(run_id="run-compat-snapshot"),
             run_directory=self.base,
             hardware_config_path=self.base / HARDWARE_CONFIG_INPUT_PATH,
         )
@@ -709,7 +709,7 @@ class AmplifierRunStageTests(unittest.TestCase):
         """B2：旧兼容流程驱动模式缺少映射路径时，在连接仪器前失败。"""
         prepared = SimpleNamespace(
             configuration=_amplifier_config(driver_enabled=True),
-            context=SimpleNamespace(run_id="run-legacy"),
+            context=SimpleNamespace(run_id="run-compat-snapshot"),
             run_directory=self.base,
             hardware_config_path=self.base / HARDWARE_CONFIG_INPUT_PATH,
         )
@@ -727,7 +727,7 @@ class AmplifierRunStageTests(unittest.TestCase):
     def test_legacy_flow_still_reads_explicit_loss_data(self):
         request = AmplifierMeasurementRequest(
             configuration=_amplifier_config(driver_enabled=False),
-            context=_Context("run-legacy"),
+            context=_Context("run-compat-snapshot"),
             run_directory=self.base,
             measurement_port=_Instrument(),
             result_repository=self.result_repository,
@@ -746,7 +746,7 @@ class AmplifierRunStageTests(unittest.TestCase):
         """无路径兼容读取已删除：驱动模式缺映射输入在硬件动作前失败。"""
         request = AmplifierMeasurementRequest(
             configuration=_amplifier_config(driver_enabled=True),
-            context=_Context("run-legacy"),
+            context=_Context("run-compat-snapshot"),
             run_directory=self.base,
             measurement_port=_Instrument(),
             result_repository=self.result_repository,
@@ -771,7 +771,7 @@ class AmplifierRunStageTests(unittest.TestCase):
 
         request = AmplifierMeasurementRequest(
             configuration=_amplifier_config(driver_enabled=False),
-            context=_Context("run-legacy"),
+            context=_Context("run-compat-snapshot"),
             run_directory=self.base / "legacy-run",
             measurement_port=_Instrument(),
             result_repository=_Recorder(),
@@ -782,7 +782,7 @@ class AmplifierRunStageTests(unittest.TestCase):
         AmplifierMeasurementUseCase(request, sleep_fn=lambda _: None).measure_all_frequencies()
 
         self.assertEqual(calls[0][1]["result_type"], "amplifier_measurement")
-        self.assertEqual(calls[0][1]["run_id"], "run-legacy")
+        self.assertEqual(calls[0][1]["run_id"], "run-compat-snapshot")
         self.assertNotIn("stage_recorder", calls[0][1])
 
 

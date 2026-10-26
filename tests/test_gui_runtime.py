@@ -265,7 +265,7 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
         # 不带运行契约的旧兼容快照继续使用调用方传入的全局配置路径。
         prepared = SimpleNamespace(
             configuration=object(),
-            context=SimpleNamespace(run_id="run-legacy"),
+            context=SimpleNamespace(run_id="run-compat-snapshot"),
             run_directory=Path("run-directory"),
         )
         port = _Port()

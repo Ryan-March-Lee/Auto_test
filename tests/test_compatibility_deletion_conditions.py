@@ -16,8 +16,8 @@
 - 步骤 3（技术债分阶段重构计划，2026-10-26）已删除兼容副本/旧运行快照写入接口；
   三个旧测量根入口停止写兼容副本，只写运行目录结果，文件本体留待步骤 4 退役。
 - 步骤 4（技术债分阶段重构计划，2026-10-26）已整文件退役三个旧测量根入口及其公开
-  转发：根目录与 ``app/`` 中不再存在旧测量入口，``run-legacy`` 默认运行 ID、隐式配置
-  路径与隐式结果输入一并删除。
+  转发：根目录与 ``app/`` 中不再存在旧测量入口，旧默认运行 ID、隐式配置路径与隐式
+  结果输入一并删除。
 - 步骤 D 已把 GUI 历史列表/查看/导出迁移到运行目录 manifest 视图，旧的全局兼容副本
   保持只读可查看；运行历史只读端口与仓储必须保持存在，且历史浏览不得复用正式测量
   结果仓储。
@@ -36,13 +36,15 @@
 """
 
 import ast
-import importlib
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).parents[1]
 EXCLUDED_PARTS = {".git", "__pycache__", "tests"}
+ALL_EXCLUDED_PARTS = {".git", "__pycache__"}
 RELEASE_NOTES = ROOT / "docs" / "兼容层弃用与删除发布说明.md"
 GUIDE = ROOT / "docs" / "测试运行目录与配置结果解耦重构指南.md"
 
@@ -112,6 +114,9 @@ RETIRED_LEGACY_MODULE_NAMES = (
     "app.legacy_amplifier_measurement",
 )
 
+# 旧入口的默认运行 ID。用拼接构造，避免本文件自身被“源码不得出现该字面量”的门禁命中。
+RETIRED_LEGACY_RUN_ID = "run" + "-" + "legacy"
+
 # 配置/结果/日志/服务/生命周期等纯再导出模块（纯代码路径，独立退役，不受步骤 F 阻断）。
 LEGACY_REEXPORT_MODULES = (
     "measurement_services.py",
@@ -154,6 +159,15 @@ def _production_sources():
         path
         for path in ROOT.rglob("*.py")
         if not (set(path.relative_to(ROOT).parts) & EXCLUDED_PARTS)
+    )
+
+
+def _project_sources():
+    """返回仓库内全部 Python 源文件（含 tests），排除 VCS 与字节码缓存。"""
+    return sorted(
+        path
+        for path in ROOT.rglob("*.py")
+        if not (set(path.relative_to(ROOT).parts) & ALL_EXCLUDED_PARTS)
     )
 
 
@@ -581,8 +595,10 @@ class StepEAuditTests(unittest.TestCase):
 class Step4RetirementTests(unittest.TestCase):
     """步骤 4：三类旧测量根入口已整文件退役，不得以任何形式回归。
 
-    门禁固定四点：文件不存在；任何位置都无法导入该模块；生产代码不再定义旧入口类
-    名；测量服务不再使用 ``run-legacy`` 隐式运行 ID。
+    门禁固定六点：源文件与可直接导入的 sourceless 字节码都不存在；任何位置都无法导入
+    该模块（在独立子进程中验证，不受本进程 ``sys.modules`` 缓存影响）；生产代码不再
+    定义旧入口类名；三条正式测量入口与用例仍在；发布清单不再把旧入口登记为回滚或
+    兼容文件；源码与测试都不再出现旧入口的默认运行 ID。
     """
 
     RETIRED_CLASS_NAMES = (
@@ -596,11 +612,31 @@ class Step4RetirementTests(unittest.TestCase):
             with self.subTest(module=relative):
                 self.assertFalse((ROOT / relative).exists(), relative)
 
+    def test_retired_entry_sourceless_bytecode_does_not_exist(self):
+        """源文件删除后不得留下可直接导入的 sourceless ``.pyc``。"""
+        for relative in RETIRED_LEGACY_MEASUREMENT_ENTRIES:
+            with self.subTest(module=relative):
+                sourceless = ROOT / f"{relative}c"
+                self.assertFalse(sourceless.exists(), f"{sourceless} 不得存在")
+
     def test_retired_entry_modules_cannot_be_imported(self):
+        """在独立子进程中验证导入失败，避免本进程缓存掩盖回归。"""
         for module in RETIRED_LEGACY_MODULE_NAMES:
             with self.subTest(module=module):
-                with self.assertRaises(ModuleNotFoundError):
-                    importlib.import_module(module)
+                sys.modules.pop(module, None)
+                completed = subprocess.run(
+                    [sys.executable, "-c", f"import {module}"],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                self.assertNotEqual(
+                    completed.returncode,
+                    0,
+                    f"{module} 仍可导入: {completed.stdout}{completed.stderr}",
+                )
+                self.assertIn("ModuleNotFoundError", completed.stderr)
 
     def test_retired_entry_classes_are_not_defined_anywhere(self):
         offenders = set()
@@ -617,12 +653,65 @@ class Step4RetirementTests(unittest.TestCase):
             "旧测量入口类不得以转发形式回归: " + ", ".join(sorted(offenders)),
         )
 
+    def test_formal_measurement_entries_still_exist(self):
+        """退役旧入口不得连带删除正式入口：三条路径仍由正式 API 提供。"""
+        runtime = _tree(ROOT / "app" / "gui_runtime.py")
+        functions = {
+            node.name for node in runtime.body if isinstance(node, ast.FunctionDef)
+        }
+        for factory in (
+            "create_cable_loss_measurement",
+            "create_driver_mapping_measurement",
+            "create_amplifier_measurement",
+        ):
+            with self.subTest(factory=factory):
+                self.assertIn(factory, functions)
+
+        package = (
+            ROOT / "application" / "measurements" / "__init__.py"
+        ).read_text(encoding="utf-8-sig")
+        for use_case in (
+            "CableLossUseCase",
+            "DriverPowerMappingUseCase",
+            "AmplifierMeasurementUseCase",
+        ):
+            with self.subTest(use_case=use_case):
+                self.assertIn(use_case, package)
+
+    def test_release_manifest_drops_the_retired_entries(self):
+        """回滚/兼容清单不得再登记已退役入口，发布文件也不得引用它们。"""
+        import release_manifest
+
+        self.assertEqual(release_manifest.ROLLBACK_FILES, ())
+        manifest = release_manifest.build_manifest(ROOT)
+        self.assertEqual(manifest["rollback_files"], [])
+        for relative in RETIRED_LEGACY_MEASUREMENT_ENTRIES:
+            with self.subTest(module=relative):
+                self.assertNotIn(relative, manifest["rollback_files"])
+                self.assertNotIn(relative, manifest["compatibility_files"])
+                self.assertNotIn(relative, release_manifest.RELEASE_FILES)
+
+    def test_no_source_file_keeps_the_retired_run_id(self):
+        """旧默认运行 ID 不得留在源码或测试里（历史文档除外）。"""
+        offenders = {
+            _relative(path)
+            for path in _project_sources()
+            if RETIRED_LEGACY_RUN_ID in path.read_text(encoding="utf-8-sig")
+        }
+        self.assertEqual(
+            offenders,
+            set(),
+            "源码/测试仍引用旧默认运行 ID: " + ", ".join(sorted(offenders)),
+        )
+
     def test_measurement_services_have_no_implicit_run_id(self):
-        """旧入口删除后不再有 ``run-legacy`` 兜底：服务必须显式接收 run_id。"""
+        """旧入口删除后不再有默认运行 ID 兜底：服务必须显式接收 run_id。"""
         source = (
             ROOT / "application" / "measurements" / "services.py"
         ).read_text(encoding="utf-8-sig")
-        self.assertNotIn("run-legacy", source)
+        self.assertNotIn(RETIRED_LEGACY_RUN_ID, source)
+        self.assertIn("*, run_id: str", source)
+        self.assertNotIn("run_id: str =", source)
         for builder in (
             "application/measurements/cable_loss.py",
             "application/measurements/driver_mapping.py",
@@ -801,6 +890,24 @@ class ReleaseNotesTests(unittest.TestCase):
     def test_guide_marks_e5_complete(self):
         guide = GUIDE.read_text(encoding="utf-8")
         self.assertIn("5. [x] **E5", guide)
+
+    def test_release_notes_record_step_4_retirement_and_current_state(self):
+        """步骤 4 必须有执行记录，且现行状态不得再声称旧入口等待 F 归档后删除。"""
+        for marker in (
+            "步骤 4 执行记录",
+            "已从清单移除",
+            "步骤 4 之后的现行状态",
+        ):
+            self.assertIn(marker, self.document)
+        self.assertNotIn(
+            "旧测量根入口文件本体按步骤 E2 至 E4 在 F 归档后退役", self.document
+        )
+
+    def test_guide_describes_step_4_as_completed(self):
+        """指南现行结论不得把 E2 至 E4 描述为待执行项。"""
+        guide = GUIDE.read_text(encoding="utf-8")
+        self.assertIn("步骤 4 已整文件退役", guide)
+        self.assertNotIn("E2 至 E4 只差删除文件本体", guide)
 
 
 if __name__ == "__main__":

@@ -196,7 +196,7 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
     def test_legacy_prepared_run_has_no_stage_recorder(self):
         prepared = SimpleNamespace(
             configuration=object(),
-            context=SimpleNamespace(run_id="run-legacy"),
+            context=SimpleNamespace(run_id="run-compat-snapshot"),
             run_directory=Path("run-directory"),
         )
         with patch("app.gui_runtime.connect_instruments", return_value=object()), patch(

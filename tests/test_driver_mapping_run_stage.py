@@ -546,7 +546,7 @@ class DriverMappingRunStageTests(unittest.TestCase):
                 "attenuator": {"type": "10dB"},
                 "signal_source": {"start_power": -20, "stop_power": -20, "step": 1},
             },
-            context=SimpleNamespace(run_id="run-legacy"),
+            context=SimpleNamespace(run_id="run-compat-snapshot"),
             run_directory=self.base,
             hardware_config_path=self.base / HARDWARE_CONFIG_INPUT_PATH,
         )
@@ -566,7 +566,7 @@ class DriverMappingRunStageTests(unittest.TestCase):
                 "attenuator": {"type": "10dB"},
                 "signal_source": {"start_power": -20, "stop_power": -20, "step": 1},
             },
-            context=_Context("run-legacy"),
+            context=_Context("run-compat-snapshot"),
             run_directory=self.base,
             measurement_port=_Instrument(),
             result_repository=self.result_repository,

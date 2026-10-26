@@ -139,7 +139,7 @@ class OfflineCompletionTests(unittest.TestCase):
         }
         service = AmplifierMeasurementService(
             config, instrument, {"cable_losses": {"1.0": {"cable1": 0, "cable2": 0, "cable4": 0}}},
-            event_sink=events, sleep_fn=lambda _: None,
+            run_id="run-amplifier", event_sink=events, sleep_fn=lambda _: None,
         )
         service.perform_power_sweep(1.0)
         self.assertTrue(any(isinstance(event, StoppedEvent) for event in events.items))
@@ -180,7 +180,8 @@ class OfflineCompletionTests(unittest.TestCase):
         ):
             self.assertNotIn(removed, manifest["compatibility_files"])
             self.assertNotIn(removed, manifest["rollback_files"])
-        self.assertIn("amplifier_measurement.py", manifest["rollback_files"])
+        self.assertNotIn("amplifier_measurement.py", manifest["rollback_files"])
+        self.assertEqual(manifest["rollback_files"], [])
         self.assertNotIn("enhanced_workers.py", manifest["rollback_files"])
         self.assertEqual(manifest["real_device_acceptance"], "pending")
 

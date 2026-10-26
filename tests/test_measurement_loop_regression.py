@@ -85,6 +85,7 @@ def make_service(max_input_power=float("inf")):
         FakeMeasurementInstrument(),
         loss_data,
         None,
+        run_id="run-amplifier",
         sleep_fn=lambda _: None,
     )
 

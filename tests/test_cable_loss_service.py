@@ -48,6 +48,7 @@ class CableLossServiceTests(unittest.TestCase):
         service = CableLossService(
             {"test_frequencies": [1.0], "attenuator": {"type": "10dB"}},
             _Instrument(),
+            run_id="run-cable-loss",
             event_sink=events,
             sleep_fn=lambda _: None,
         )
@@ -108,6 +109,7 @@ def _make_service(instrument, **kwargs):
     return CableLossService(
         {"test_frequencies": [1.0], "attenuator": {"type": "10dB"}},
         instrument,
+        run_id="run-cable-loss",
         sleep_fn=lambda _: None,
         **kwargs,
     )

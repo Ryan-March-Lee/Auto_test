@@ -53,9 +53,15 @@ def _publish(sink: EventSink | None, event: Any) -> None:
 
 
 class _Service:
+    """测量服务基类。
+
+    ``run_id`` 是必需的运行标识：技术债步骤 4 已删除旧入口的默认运行 ID 兜底，
+    测量事件与结果登记都必须携带真实运行 ID，不再有隐式兜底。
+    """
+
     measurement_type = "measurement"
 
-    def __init__(self, config: Mapping[str, Any], instrument: MeasurementInstrumentPort, *, run_id: str = "run-legacy",
+    def __init__(self, config: Mapping[str, Any], instrument: MeasurementInstrumentPort, *, run_id: str,
                  event_sink: EventSink | None = None, cancellation_token: CancellationToken | None = None,
                  result_repository: ResultRepository | Callable[[Any], Any] | None = None,
                  sleep_fn: Callable[[float], None] | None = None,
@@ -77,10 +83,10 @@ class _Service:
             token.raise_if_cancelled()
 
     def _message(self, message: str) -> None:
-        _publish(getattr(self, "event_sink", None), MessageEvent(getattr(self, "run_id", "run-legacy"), message=message))
+        _publish(getattr(self, "event_sink", None), MessageEvent(self.run_id, message=message))
 
     def _progress(self, fraction: float, stage: str) -> None:
-        _publish(getattr(self, "event_sink", None), ProgressEvent(getattr(self, "run_id", "run-legacy"), fraction=fraction, stage=stage))
+        _publish(getattr(self, "event_sink", None), ProgressEvent(self.run_id, fraction=fraction, stage=stage))
 
     def _save(self, result: Any) -> Any:
         repository = getattr(self, "result_repository", None)
@@ -235,7 +241,7 @@ class DriverPowerMappingService(_Service):
                             "output_power_driver": list(values.values()),
                             "gain": [output - float(key) for key, output in values.items()],
                         }
-                        _publish(getattr(self, "event_sink", None), RealtimeDataEvent(getattr(self, "run_id", "run-legacy"), measurement=self.measurement_type,
+                        _publish(getattr(self, "event_sink", None), RealtimeDataEvent(self.run_id, measurement=self.measurement_type,
                             data={"frequency": frequency, "sweep_data": sweep_data,
                                   "current_point": {"input_power": input_power, "output_power": actual}}))
                         self._progress((frequency_index + (point_index + 1) / len(points)) / len(frequencies), "scan")
@@ -306,7 +312,7 @@ class AmplifierMeasurementService(_Service):
                 data["output_power_dut"].append(output); data["gain"].append(gain)
                 data["voltages"].append(voltage); data["currents"].append(current)
                 data["dc_power"].append(dc_power); data["efficiency"].append(calculate_efficiency(output, dc_power))
-                _publish(getattr(self, "event_sink", None), RealtimeDataEvent(getattr(self, "run_id", "run-legacy"), measurement=self.measurement_type,
+                _publish(getattr(self, "event_sink", None), RealtimeDataEvent(self.run_id, measurement=self.measurement_type,
                     data={"frequency": frequency, "sweep_data": {key: list(value) for key, value in data.items()},
                           "current_point": {"sg_power": sg_power, "dut_input_power": dut_input,
                                             "output_power": output, "gain": gain,

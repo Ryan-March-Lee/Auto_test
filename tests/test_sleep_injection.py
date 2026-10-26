@@ -5,9 +5,6 @@ from unittest.mock import patch
 
 from application.dto import AmplifierMeasurementRequest
 from application.measurements import AmplifierMeasurementUseCase
-from app.legacy_amplifier_measurement import AmplifierMeasurement
-from cable_loss_measurement import CableLossMeasurement
-from driver_power_mapping import DriverPowerMapping
 
 
 class _Repository:
@@ -47,19 +44,6 @@ class FormalMeasurementSleepInjectionTests(unittest.TestCase):
     def test_amplifier_use_case_rejects_missing_measurement_port(self):
         with self.assertRaisesRegex(ValueError, "注入 measurement_port"):
             AmplifierMeasurementUseCase(_amplifier_request(None))
-
-
-class LegacyMeasurementEntryGuardTests(unittest.TestCase):
-    def test_legacy_entries_fail_before_loading_or_storage(self):
-        cases = (
-            CableLossMeasurement,
-            DriverPowerMapping,
-            AmplifierMeasurement,
-        )
-        for measurement_type in cases:
-            with self.subTest(measurement_type=measurement_type.__name__):
-                with self.assertRaisesRegex(RuntimeError, "旧入口已停用"):
-                    measurement_type(measurement_port=object())
 
 
 if __name__ == "__main__":

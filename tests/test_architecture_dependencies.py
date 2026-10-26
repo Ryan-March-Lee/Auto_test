@@ -50,6 +50,11 @@ DELETED_ROOT_MODULES = {
     "data_visualization",
     "connection_diagrams",
     "persistence",
+    # 技术债步骤 4 已整文件退役的旧测量入口（含主功放旧实现）。
+    "cable_loss_measurement",
+    "driver_power_mapping",
+    "amplifier_measurement",
+    "app.legacy_amplifier_measurement",
 }
 FORBIDDEN_CONTROLLER_IMPORT_ROOTS = FORBIDDEN_PAGE_IMPORT_ROOTS | {
     "measurement_services",
@@ -365,27 +370,6 @@ class ProductionDependencyTests(unittest.TestCase):
                 ),
                 str(source_path.relative_to(ROOT)) + " 必须显式声明 __all__",
             )
-
-    def test_legacy_amplifier_entry_is_an_explicit_reexport(self):
-        source_path = ROOT / "amplifier_measurement.py"
-        tree = _tree(source_path)
-        definitions = [
-            node.name
-            for node in tree.body
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-        ]
-        self.assertEqual(definitions, [], str(source_path.relative_to(ROOT)))
-        self.assertTrue(
-            any(
-                isinstance(node, ast.Assign)
-                and any(
-                    isinstance(target, ast.Name) and target.id == "__all__"
-                    for target in node.targets
-                )
-                for node in tree.body
-            ),
-            str(source_path.relative_to(ROOT)) + " 必须显式声明 __all__",
-        )
 
     def test_configuration_compatibility_exports_match_canonical_objects(self):
         import app_logging

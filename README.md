@@ -143,8 +143,6 @@ python launcher.py --validate-config
 pa_auto_test/
 ├── launcher.py                     # 唯一应用启动器
 ├── config.json                     # 配置文件
-├── cable_loss_measurement.py       # 线损测量历史入口（任务 2 待迁移）
-├── driver_power_mapping.py         # 驱动映射历史入口（任务 2 待迁移）
 ├── measurement_services.py         # 测量服务兼容入口（实现在 application/measurements/services.py）
 ├── measurement_lifecycle.py        # 测量清理兼容入口（实现在 instrument/flow/cleanup.py）
 ├── presentation/qt/                # GUI 页面、controller、主窗口、绘图与连接图
@@ -154,7 +152,7 @@ pa_auto_test/
 └── README.md                       # 本文档
 ```
 
-其中 `cable_loss_measurement.py`、`driver_power_mapping.py` 与 `measurement_services.py`、`measurement_lifecycle.py` 是任务 2 尚未收口的过渡入口，将在任务 2 完成后统一评估删除。
+`measurement_services.py`、`measurement_lifecycle.py` 是尚未收口的兼容再导出入口，将在后续纯代码路径步骤统一退役；三类旧测量根入口（`cable_loss_measurement.py`、`driver_power_mapping.py`、`app/legacy_amplifier_measurement.py` 及转发 `amplifier_measurement.py`）已在技术债步骤 4 删除，测量只能通过 `app.gui_runtime.create_*_measurement()` 与正式 application 用例启动。
 
 生产环境请通过 `python launcher.py` 启动，不直接运行 GUI 模块。
 

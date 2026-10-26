@@ -28,12 +28,10 @@ RELEASE_FILES = (
     "analysis",
     "presentation",
 )
-ROLLBACK_FILES = (
-    "cable_loss_measurement.py",
-    "driver_power_mapping.py",
-    "amplifier_measurement.py",
-    "app/legacy_amplifier_measurement.py",
-)
+# 技术债步骤 4（2026-10-26）已整文件退役全部旧测量根入口，回滚清单不再包含
+# ``cable_loss_measurement.py`` / ``driver_power_mapping.py`` /
+# ``amplifier_measurement.py`` / ``app/legacy_amplifier_measurement.py``。
+ROLLBACK_FILES = ()
 COMPATIBILITY_FILES = (
     "measurement_services.py",
     "measurement_lifecycle.py",

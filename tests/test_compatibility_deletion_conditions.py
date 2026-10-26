@@ -15,24 +15,28 @@
   分级授权执行。
 - 步骤 3（技术债分阶段重构计划，2026-10-26）已删除兼容副本/旧运行快照写入接口；
   三个旧测量根入口停止写兼容副本，只写运行目录结果，文件本体留待步骤 4 退役。
+- 步骤 4（技术债分阶段重构计划，2026-10-26）已整文件退役三个旧测量根入口及其公开
+  转发：根目录与 ``app/`` 中不再存在旧测量入口，``run-legacy`` 默认运行 ID、隐式配置
+  路径与隐式结果输入一并删除。
 - 步骤 D 已把 GUI 历史列表/查看/导出迁移到运行目录 manifest 视图，旧的全局兼容副本
   保持只读可查看；运行历史只读端口与仓储必须保持存在，且历史浏览不得复用正式测量
   结果仓储。
 - 步骤 E1 已完成旧兼容测量根入口盘点：``release_manifest`` 的 ``rollback_files`` /
   ``compatibility_files`` 并集必须与盘点表**双向相等**，正式流程不得导入这些旧入口。
 - 旧测量根入口（``cable_loss_measurement.py`` / ``driver_power_mapping.py`` /
-  ``app/legacy_amplifier_measurement.py``）在步骤 4 前仍存在，但已改为立即失败的迁移
-  守卫：不得读取配置、连接仪器、创建运行目录、写结果或引用已删除的兼容写入 API。
+  ``app/legacy_amplifier_measurement.py`` 与转发 ``amplifier_measurement.py``）已在
+  步骤 4 退役：文件、类名、导入路径都不得重新出现。
 - 步骤 E5 是门禁复核（更新测试/说明、跑全量离线测试与应用检查），非删除动作，本轮执行。
 - 说明必须为每个待删除接口写出删除条件、迁移方式和目标版本，并保留步骤 A 执行
   记录（外部调用方台账与回滚版本）。
 
-旧兼容/回滚入口本身（``cable_loss_measurement.py``、``driver_power_mapping.py``、
-``app/legacy_amplifier_measurement.py``）在说明 3.5 节记录为**本次保留**，因此这里
-只校验调用方集合与盘点一致性，不要求它们消失。
+旧兼容/回滚入口的**再导出**模块（``measurement_services.py`` 等）仍按说明 3.5 节
+保留，因此这里只校验调用方集合与盘点一致性，不要求它们消失；三个旧测量根入口已
+在步骤 4 删除，改由“文件不存在且无法导入”的门禁固定。
 """
 
 import ast
+import importlib
 import unittest
 from pathlib import Path
 
@@ -91,15 +95,22 @@ REPOSITORY_SAVE_CALLERS = {
     "application/measurements/driver_mapping.py",
 }
 
-# 发布说明 3.5 / 第 10 节盘点表：旧兼容测量根入口（真实写旧运行快照/兼容副本）。
-LEGACY_MEASUREMENT_DATA_ENTRIES = (
+# 发布说明 3.5 / 第 10 节盘点表：三类旧测量根入口（曾真实写旧运行快照/兼容副本）。
+# 步骤 4 已整文件退役，因此这里只作为“必须不存在”的名单保留。
+RETIRED_LEGACY_MEASUREMENT_ENTRIES = (
     "cable_loss_measurement.py",
     "driver_power_mapping.py",
     "app/legacy_amplifier_measurement.py",
+    "amplifier_measurement.py",
 )
 
-# 主功放旧入口的公开转发模块（随 E4 数据类批次一并退役）。
-LEGACY_AMPLIFIER_FORWARDER = "amplifier_measurement.py"
+# 已退役旧入口的导入名（用于断言任何位置都无法再导入）。
+RETIRED_LEGACY_MODULE_NAMES = (
+    "cable_loss_measurement",
+    "driver_power_mapping",
+    "amplifier_measurement",
+    "app.legacy_amplifier_measurement",
+)
 
 # 配置/结果/日志/服务/生命周期等纯再导出模块（纯代码路径，独立退役，不受步骤 F 阻断）。
 LEGACY_REEXPORT_MODULES = (
@@ -114,12 +125,8 @@ LEGACY_REEXPORT_MODULES = (
     "config_validation.py",
 )
 
-# 步骤 E1 盘点的完整兼容面 = release_manifest.ROLLBACK_FILES ∪ COMPATIBILITY_FILES。
-LEGACY_AUDITED_SURFACE = (
-    LEGACY_MEASUREMENT_DATA_ENTRIES
-    + (LEGACY_AMPLIFIER_FORWARDER,)
-    + LEGACY_REEXPORT_MODULES
-)
+# 步骤 E1 盘点的**剩余**兼容面 = release_manifest.ROLLBACK_FILES ∪ COMPATIBILITY_FILES。
+LEGACY_AUDITED_SURFACE = LEGACY_REEXPORT_MODULES
 
 # 上述模块的导入名（用于断言正式流程不导入旧入口）。
 LEGACY_MODULE_NAMES = frozenset(
@@ -460,22 +467,19 @@ class StepCExecutionTests(unittest.TestCase):
         )
 
     def test_old_entry_points_stop_using_the_removed_compatibility_apis(self):
-        """步骤 3 删除兼容写入接口后，旧入口只写运行目录结果，文件本体留待步骤 4 退役。"""
+        """步骤 4 已退役旧入口文件；兼容写入 API 不得借旧入口回归。"""
         removed = (
             "save_compatibility_copy",
             "write_compatibility_copy",
             "write_legacy_run_snapshot",
             "create_legacy_run_snapshot",
         )
-        for relative in LEGACY_MEASUREMENT_DATA_ENTRIES:
+        for relative in RETIRED_LEGACY_MEASUREMENT_ENTRIES:
             with self.subTest(module=relative):
-                source = (ROOT / relative).read_text(encoding="utf-8-sig")
-                for name in removed:
-                    self.assertNotIn(
-                        name,
-                        source,
-                        f"{relative} 不得再引用已删除的兼容 API {name}",
-                    )
+                self.assertFalse((ROOT / relative).exists(), relative)
+        for name in removed:
+            with self.subTest(interface=name):
+                self.assertEqual(_reference_files(name), set())
 
 
 class StepDMigrationTests(unittest.TestCase):
@@ -537,13 +541,14 @@ class StepEAuditTests(unittest.TestCase):
             "release_manifest 清单必须与第 10 节盘点表完全一致（双向比较）",
         )
 
-    def test_legacy_amplifier_entry_is_registered_for_rollback(self):
-        """主功放旧入口实现随 ``amplifier_measurement.py`` 转发，必须一并可回滚。"""
+    def test_legacy_amplifier_entry_is_no_longer_registered_for_rollback(self):
+        """步骤 4 已退役主功放入口，回滚清单不得再引用它。"""
         import release_manifest
 
-        self.assertIn(
+        self.assertNotIn(
             "app/legacy_amplifier_measurement.py", release_manifest.ROLLBACK_FILES
         )
+        self.assertNotIn("amplifier_measurement.py", release_manifest.ROLLBACK_FILES)
 
     def test_production_code_has_no_import_of_legacy_measurement_entries(self):
         audited = set(LEGACY_AUDITED_SURFACE)
@@ -573,44 +578,61 @@ class StepEAuditTests(unittest.TestCase):
         )
 
 
-class StepEBlockedTests(unittest.TestCase):
-    """步骤 3 后：旧测量根入口只是立即失败的迁移守卫。
+class Step4RetirementTests(unittest.TestCase):
+    """步骤 4：三类旧测量根入口已整文件退役，不得以任何形式回归。
 
-    这三个入口的文件本体留待步骤 4 退役；本类固定它们不得读取配置、连接仪器、
-    创建运行目录或写结果。
+    门禁固定四点：文件不存在；任何位置都无法导入该模块；生产代码不再定义旧入口类
+    名；测量服务不再使用 ``run-legacy`` 隐式运行 ID。
     """
 
-    def _assert_guard(self, relative):
-        source = (ROOT / relative).read_text(encoding="utf-8-sig")
-        self.assertIn("旧入口已停用", source)
-        self.assertIn("raise RuntimeError(", source)
-        for forbidden in (
-            "FileMeasurementResultRepository",
-            "load_config_file",
-            "json_result_repository",
-            "save_compatibility_copy",
-            "write_compatibility_copy",
-            "write_legacy_run_snapshot",
-            "create_legacy_run_snapshot",
-            "legacy_path",
-        ):
-            self.assertNotIn(forbidden, source, f"{relative} 不得引用 {forbidden}")
+    RETIRED_CLASS_NAMES = (
+        "CableLossMeasurement",
+        "DriverPowerMapping",
+        "AmplifierMeasurement",
+    )
 
-    def test_cable_loss_entry_is_a_fail_fast_guard(self):
-        self._assert_guard("cable_loss_measurement.py")
+    def test_retired_entry_files_are_gone(self):
+        for relative in RETIRED_LEGACY_MEASUREMENT_ENTRIES:
+            with self.subTest(module=relative):
+                self.assertFalse((ROOT / relative).exists(), relative)
 
-    def test_driver_mapping_entry_is_a_fail_fast_guard(self):
-        self._assert_guard("driver_power_mapping.py")
+    def test_retired_entry_modules_cannot_be_imported(self):
+        for module in RETIRED_LEGACY_MODULE_NAMES:
+            with self.subTest(module=module):
+                with self.assertRaises(ModuleNotFoundError):
+                    importlib.import_module(module)
 
-    def test_legacy_amplifier_entry_is_a_fail_fast_guard(self):
-        self._assert_guard("app/legacy_amplifier_measurement.py")
-
-    def test_amplifier_forwarder_still_reexports_the_legacy_entry(self):
-        source = (ROOT / "amplifier_measurement.py").read_text(encoding="utf-8-sig")
-        self.assertIn(
-            "from app.legacy_amplifier_measurement import AmplifierMeasurement",
-            source,
+    def test_retired_entry_classes_are_not_defined_anywhere(self):
+        offenders = set()
+        for path in _production_sources():
+            for node in ast.walk(_tree(path)):
+                if (
+                    isinstance(node, ast.ClassDef)
+                    and node.name in self.RETIRED_CLASS_NAMES
+                ):
+                    offenders.add(f"{_relative(path)}:{node.lineno}")
+        self.assertEqual(
+            offenders,
+            set(),
+            "旧测量入口类不得以转发形式回归: " + ", ".join(sorted(offenders)),
         )
+
+    def test_measurement_services_have_no_implicit_run_id(self):
+        """旧入口删除后不再有 ``run-legacy`` 兜底：服务必须显式接收 run_id。"""
+        source = (
+            ROOT / "application" / "measurements" / "services.py"
+        ).read_text(encoding="utf-8-sig")
+        self.assertNotIn("run-legacy", source)
+        for builder in (
+            "application/measurements/cable_loss.py",
+            "application/measurements/driver_mapping.py",
+            "application/measurements/amplifier_test.py",
+        ):
+            with self.subTest(module=builder):
+                self.assertIn(
+                    "run_id=self.run_id",
+                    (ROOT / builder).read_text(encoding="utf-8-sig"),
+                )
 
 
 class ReleaseNotesTests(unittest.TestCase):

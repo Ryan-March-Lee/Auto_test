@@ -5,6 +5,9 @@
 本步骤只冻结边界，不删除旧文件：旧模块按步骤 3 至 6、9、16 分批退役。标为“已删除”的模块
 必须保持不存在；标为“待删除”“待清理”的模块在对应步骤执行前仍存在。
 
+步骤 3（2026-10-26）已退役 `result_storage`，步骤 4（2026-10-26）已退役三类旧测量入口及其
+主功放转发模块，因此这四个条目在本文与测试中均为“已删除”。
+
 清单分为三个层次，避免把“可导入”误当成“公共承诺”：
 
 1. **正式公共 API**：对调用方承诺稳定的模块路径和公开名称。
@@ -200,9 +203,9 @@
 
 | 旧模块 | 源文件 | 状态 | 处理步骤 |
 | --- | --- | --- | --- |
-| `cable_loss_measurement` | `cable_loss_measurement.py` | 待删除 | 步骤 4 |
-| `driver_power_mapping` | `driver_power_mapping.py` | 待删除 | 步骤 4 |
-| `amplifier_measurement` | `amplifier_measurement.py` | 待删除 | 步骤 4 |
+| `cable_loss_measurement` | `cable_loss_measurement.py` | 已删除 | 步骤 4 |
+| `driver_power_mapping` | `driver_power_mapping.py` | 已删除 | 步骤 4 |
+| `amplifier_measurement` | `amplifier_measurement.py` | 已删除 | 步骤 4 |
 | `config_io` | `config_io.py` | 待删除 | 步骤 5 |
 | `config_models` | `config_models.py` | 待删除 | 步骤 5 |
 | `config_validation` | `config_validation.py` | 待删除 | 步骤 5 |
@@ -226,7 +229,7 @@
 
 | 旧模块 | 源文件 | 状态 | 处理步骤 |
 | --- | --- | --- | --- |
-| `app.legacy_amplifier_measurement` | `app/legacy_amplifier_measurement.py` | 待删除 | 步骤 4 |
+| `app.legacy_amplifier_measurement` | `app/legacy_amplifier_measurement.py` | 已删除 | 步骤 4 |
 | `infrastructure.config.legacy_conversion` | `infrastructure/config/legacy_conversion.py` | 待删除 | 步骤 5 |
 | `application.dto.legacy_result_adapter` | `application/dto/legacy_result_adapter.py` | 待删除 | 步骤 6 |
 | `instrument.legacy_control` | `instrument/legacy_control.py` | 待清理 | 步骤 9 |

@@ -312,18 +312,18 @@ class LegacyModule:
 # 旧模块唯一登记表：模块名 -> 状态。根目录模块没有点号，正式包内旧实现使用完整模块名。
 # 退役模块时把 present 改为 False（或删除条目），并同步文档与发布清单。
 LEGACY_MODULES = {
-    # 步骤 4：旧测量入口（真实写旧运行快照/兼容副本）
+    # 步骤 4：旧测量入口（已整文件退役）
     "cable_loss_measurement": LegacyModule(
-        "旧线损测量根入口", "待删除", "步骤 4", "cable_loss_measurement.py", True
+        "旧线损测量根入口", "已删除", "步骤 4", "cable_loss_measurement.py", False
     ),
     "driver_power_mapping": LegacyModule(
-        "旧驱动功率映射根入口", "待删除", "步骤 4", "driver_power_mapping.py", True
+        "旧驱动功率映射根入口", "已删除", "步骤 4", "driver_power_mapping.py", False
     ),
     "amplifier_measurement": LegacyModule(
-        "旧主功放测量根入口", "待删除", "步骤 4", "amplifier_measurement.py", True
+        "旧主功放测量根入口", "已删除", "步骤 4", "amplifier_measurement.py", False
     ),
     "app.legacy_amplifier_measurement": LegacyModule(
-        "旧主功放测量入口实现", "待删除", "步骤 4", "app/legacy_amplifier_measurement.py", True
+        "旧主功放测量入口实现", "已删除", "步骤 4", "app/legacy_amplifier_measurement.py", False
     ),
     # 步骤 5：旧配置转换与根目录配置转发
     "config_io": LegacyModule("旧配置读写转发", "待删除", "步骤 5", "config_io.py", True),

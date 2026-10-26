@@ -1,155 +1,29 @@
-# --- START OF FILE driver_power_mapping.py ---
+"""已停用的旧驱动映射测量根入口。
 
-import numpy as np
-from typing import Dict, List, Optional
-import time
-from datetime import datetime
-from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService, resolve_path
-from domain.measurement.calculations import compensate_driver_output_power
-from infrastructure.logging.app_logging import get_logger
-from measurement_lifecycle import cleanup_measurement
-from infrastructure.persistence.json_result_repository import (
-    load_json_result,
-    new_run_id,
-)
-from infrastructure.config.json_io import load_config_file
-from measurement_services import DriverPowerMappingService
-from infrastructure.persistence.result_repository import FileMeasurementResultRepository
-# from mock_instrument_control import MockInstrumentControl as InstrumentControl
+正式入口是 :func:`app.gui_runtime.create_driver_mapping_measurement` 与
+:class:`application.measurements.DriverPowerMappingUseCase`。本模块只保留到步骤 4 删除文件，
+任何构造都会立即失败，不读取配置、不连接仪器、不创建运行目录或写结果。
+"""
 
-logger = get_logger(__name__)
+from __future__ import annotations
+
+from infrastructure.filesystem.paths import PathService
 
 
 class DriverPowerMapping:
-    def __init__(self, config_path=None, loss_data_path=None, run_id=None, sleep_fn=None, measurement_port=None, paths: PathService | None = None):
-        """初始化驱动功放功率映射测量类"""
-        self.paths = paths or DEFAULT_PATHS
-        config_path = resolve_path(config_path, self.paths.config_file)
-        loss_data_path = resolve_path(loss_data_path, self.paths.cable_loss_file)
-        self.config = load_config_file(config_path, paths=self.paths)
-        if measurement_port is None:
-            raise ValueError(
-                "DriverPowerMapping 必须显式传入 measurement_port；"
-                "请通过 app.gui_runtime.create_driver_mapping_measurement() 由应用组装层注入端口"
-            )
-            
-        self.loss_data = load_json_result(loss_data_path)
-            
-        self.run_id = run_id or new_run_id()
-        self.sleep_fn = sleep_fn or time.sleep
-        self.run_directory = None
-        self.inst_ctrl = measurement_port
-        self.power_mapping: Dict[str, Dict[str, float]] = {}
-
-    def _sleep(self, seconds: float) -> None:
-        """使用注入的等待函数；兼容旧测试绕过构造函数的对象。"""
-        getattr(self, "sleep_fn", time.sleep)(seconds)
-        
-    # --- MODIFIED: CRITICAL FIX in power calculation logic ---
-    def calculate_actual_power(self, frequency: float, measured_power: float) -> float:
-        """
-        计算实际功率（补偿线损）。
-        目标: "线③出来这个点的功率"。
-        路径: SG -> 线① -> 驱动 -> 线③ -> 衰减器 -> 线② -> 频谱仪.
-
-        兼容包装入口，实际计算委托给纯函数
-        :func:`compensate_driver_output_power`。
-        """
-        attenuator_value = float(self.config['attenuator']['type'].replace('dB', ''))
-        return compensate_driver_output_power(
-            measured_power=measured_power,
-            frequency=frequency,
-            loss_data=self.loss_data['cable_losses'],
-            attenuator_value=attenuator_value)
-
-
-        
-    def measure_power_mapping(self, frequency: float):
-        """测量指定频率下的功率映射关系"""
-        print(f"\nMeasuring power mapping at {frequency} GHz...")
-        logger.info("驱动映射扫描开始: %s GHz", frequency)
-        self.inst_ctrl.set_power(-40)
-        self.inst_ctrl.set_frequency(frequency)
-        self.inst_ctrl.set_center_frequency(frequency)
-        self.inst_ctrl.set_span(10)
-        
-        start_power = self.config['signal_source']['start_power']
-        stop_power = self.config['signal_source']['stop_power']
-        step = self.config['signal_source']['step']
-        
-        self.power_mapping[str(frequency)] = {}
-        
-        self.inst_ctrl.rf_output_on()
-        for input_power in np.arange(start_power, stop_power + step, step):
-            self.inst_ctrl.set_power(input_power)
-            self._sleep(5)
-            
-            measured_power = self.inst_ctrl.measure_power_with_average()
-            actual_power = self.calculate_actual_power(frequency, measured_power)
-            
-            # Use string keys for JSON compatibility
-            self.power_mapping[str(frequency)][str(input_power)] = actual_power
-            
-            print(f"Input: {input_power:.1f} dBm, Output: {actual_power:.1f} dBm")
-            
-        self.inst_ctrl.rf_output_off()
-        
-    def measure_all_frequencies(self):
-        """测量所有配置频率下的功率映射关系"""
-        service = DriverPowerMappingService(
-            self.config, self.inst_ctrl, self.loss_data,
-            run_id=self.run_id, sleep_fn=self.sleep_fn,
+    def __init__(
+        self,
+        config_path=None,
+        loss_data_path=None,
+        run_id=None,
+        sleep_fn=None,
+        measurement_port=None,
+        paths: PathService | None = None,
+    ):
+        raise RuntimeError(
+            "DriverPowerMapping 旧入口已停用：请通过 "
+            "app.gui_runtime.create_driver_mapping_measurement() 创建带运行契约的正式驱动映射测量"
         )
-        result = service.run()
-        self.power_mapping = result.get('power_mapping', {})
-        self.save_results()
-        return result
-        # Legacy implementation retained below as a rollback reference.
-        try:
-            logger.info("驱动映射测量开始: 频率=%s", self.config['test_frequencies'])
-            print("Setting up driver amplifier power supplies...")
-            self.inst_ctrl.setup_driver_amplifier_power()
-            
-            # --- MODIFIED: Use granular power control ---
-            print("Powering on driver amplifier...")
-            self.inst_ctrl.power_on_driver()
-            
-            for freq in self.config['test_frequencies']:
-                self.measure_power_mapping(freq)
-                
-            self.save_results()
 
-        except Exception as e:
-            logger.exception("驱动映射测量失败: %s", e)
-            print(f"Error during measurement: {str(e)}")
-        finally:
-            logger.info("驱动映射测量清理: RF 关闭、驱动电源关闭、断开连接")
-            print("Shutting down...")
-            cleanup_measurement(self.inst_ctrl, power_cleanup=self.inst_ctrl.power_off_driver)
-            
-    def save_results(self):
-        """保存功率映射测量结果"""
-        results = {
-            'measurement_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'power_mapping': self.power_mapping,
-            'config': {
-                'start_power': self.config['signal_source']['start_power'],
-                'stop_power': self.config['signal_source']['stop_power'],
-                'step': self.config['signal_source']['step']
-            }
-        }
-        
-        repository = FileMeasurementResultRepository(paths=getattr(self, "paths", DEFAULT_PATHS))
-        saved = repository.save(
-            results,
-            result_type="driver_power_mapping",
-            run_id=self.run_id,
-            run_directory=getattr(self, "run_directory", None),
-        )
-        self.run_directory = saved.run_directory
-        logger.info("驱动映射结果已保存: 运行路径=%s", saved.archive_path)
-        print(f"\nResults saved to {saved.archive_path}")
 
-    # --- MODIFIED: Removed plot_mapping_curves method ---
-
-# --- END OF FILE driver_power_mapping.py ---
+__all__ = ["DriverPowerMapping"]

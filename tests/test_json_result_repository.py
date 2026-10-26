@@ -81,6 +81,21 @@ class JsonResultStorageTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     validate_result_filename(value)
 
+    def test_legacy_history_scanning_is_not_exposed_by_the_result_storage(self):
+        """步骤 3：旧历史目录枚举属于只读历史仓储，不属于正式结果存储。"""
+        storage = canonical_storage
+        for name in (
+            "fixed_result_filename",
+            "timestamped_result_prefix",
+            "history_result_files",
+            "latest_history_result_file",
+            "HISTORY_RESULT_TYPES",
+            "FIXED_RESULT_FILENAMES",
+            "TIMESTAMPED_RESULT_PREFIXES",
+        ):
+            with self.subTest(name=name):
+                self.assertFalse(hasattr(storage, name))
+
     def test_result_root_must_be_object(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "invalid.json"

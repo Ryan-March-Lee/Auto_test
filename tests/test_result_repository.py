@@ -98,23 +98,22 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
                     run_id="failed-run",
                 )
 
-    def test_timestamped_result_types_use_their_archive_file_names(self):
+    def test_result_types_use_fixed_run_directory_file_names(self):
         with tempfile.TemporaryDirectory() as directory:
             repository = FileMeasurementResultRepository(results_directory=directory)
-            with patch("infrastructure.persistence.result_repository.time.strftime", return_value="20261001_120000"):
-                driver = repository.save(
-                    {"power_mapping": {}},
-                    result_type="driver_power_mapping",
-                    run_id="driver-run",
-                )
-                amplifier = repository.save(
-                    {"results": {}},
-                    result_type="amplifier_measurement",
-                    run_id="amplifier-run",
-                )
+            driver = repository.save(
+                {"power_mapping": {}},
+                result_type="driver_power_mapping",
+                run_id="driver-run",
+            )
+            amplifier = repository.save(
+                {"results": {}},
+                result_type="amplifier_measurement",
+                run_id="amplifier-run",
+            )
 
-        self.assertEqual(driver.archive_path.name, "driver_power_mapping_20261001_120000.json")
-        self.assertEqual(amplifier.archive_path.name, "amplifier_measurement_20261001_120000.json")
+        self.assertEqual(driver.archive_path.name, "driver_power_mapping_results.json")
+        self.assertEqual(amplifier.archive_path.name, "amplifier_measurement_results.json")
 
     def test_save_passes_through_storage_failures(self):
         error = OSError("写入失败")

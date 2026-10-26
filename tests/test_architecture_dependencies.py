@@ -407,7 +407,12 @@ class ProductionDependencyTests(unittest.TestCase):
         self.assertIs(config_validation.validate_config, canonical_rules.validate_config)
 
     def test_persistence_implementations_have_one_infrastructure_boundary(self):
-        result_adapter = _tree(ROOT / "infrastructure" / "persistence" / "result_repository.py")
+        result_adapter_path = ROOT / "infrastructure" / "persistence" / "result_repository.py"
+        result_adapter = _tree(result_adapter_path)
+        storage_source = (
+            ROOT / "infrastructure" / "persistence" / "json_result_repository.py"
+        ).read_text(encoding="utf-8-sig")
+        history_path = ROOT / "infrastructure" / "persistence" / "result_history_repository.py"
 
         self.assertFalse(
             (ROOT / "result_storage.py").exists(),
@@ -419,6 +424,20 @@ class ProductionDependencyTests(unittest.TestCase):
                 module.split(".")[0]
                 for module, _alias, _name in _imported_modules(result_adapter)
             },
+        )
+        # 正式结果存储不得承载旧历史目录扫描；它只负责运行目录结果。
+        for forbidden in (
+            "history_result_files",
+            "latest_history_result_file",
+            "HISTORY_RESULT_TYPES",
+            "FIXED_RESULT_FILENAMES",
+            "TIMESTAMPED_RESULT_PREFIXES",
+        ):
+            self.assertNotIn(forbidden, storage_source)
+        # 只读历史适配器不得反向依赖正式结果存储实现。
+        self.assertNotIn(
+            "infrastructure.persistence.json_result_repository",
+            {module for module, _alias, _name in _imported_modules(_tree(history_path))},
         )
         self.assertTrue((ROOT / "infrastructure" / "persistence" / "json_config_repository.py").is_file())
         self.assertTrue((ROOT / "infrastructure" / "persistence" / "json_result_repository.py").is_file())

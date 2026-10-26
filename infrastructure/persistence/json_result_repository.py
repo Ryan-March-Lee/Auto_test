@@ -21,65 +21,6 @@ from infrastructure.filesystem.paths import (
 PathLike = Union[str, Path]
 RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 
-# 兼容结果文件命名规则：固定文件名类型（线损）与时间戳前缀类型（映射/功放）。
-# 写入侧和只读历史浏览侧共用同一份定义，避免两套命名漂移。
-FIXED_RESULT_FILENAMES: Mapping[str, str] = {
-    "cable_loss": "cable_loss_results.json",
-}
-TIMESTAMPED_RESULT_PREFIXES: Mapping[str, str] = {
-    "driver_power_mapping": "driver_power_mapping",
-    "amplifier_measurement": "amplifier_measurement",
-}
-# 全局历史/兼容结果的类型清单，供只读历史浏览枚举使用。
-HISTORY_RESULT_TYPES: tuple[str, ...] = (
-    "cable_loss",
-    "driver_power_mapping",
-    "amplifier_measurement",
-)
-
-
-def fixed_result_filename(result_type: str) -> Optional[str]:
-    """返回固定文件名类型的兼容结果文件名；时间戳型返回 ``None``。"""
-    return FIXED_RESULT_FILENAMES.get(result_type)
-
-
-def timestamped_result_prefix(result_type: str) -> Optional[str]:
-    """返回时间戳型结果的文件名前缀；固定文件名类型返回 ``None``。"""
-    return TIMESTAMPED_RESULT_PREFIXES.get(result_type)
-
-
-def history_result_files(root: PathLike, result_type: str) -> tuple[Path, ...]:
-    """按修改时间升序列出某类型的只读历史结果文件。
-
-    ``_model.json`` 是运行归档内的 canonical model 文件，不属于全局历史结果，
-    因此从浏览列表中排除。未知结果类型直接拒绝，避免调用方误以为“没有结果”。
-    """
-    fixed = fixed_result_filename(result_type)
-    if fixed is not None:
-        path = Path(root) / fixed
-        return (path,) if path.is_file() else ()
-    prefix = timestamped_result_prefix(result_type)
-    if prefix is None:
-        raise ValueError(f"不支持的测量结果类型: {result_type}")
-    return tuple(
-        sorted(
-            (
-                path
-                for path in Path(root).glob(f"{prefix}_*.json")
-                if path.is_file() and not path.name.endswith("_model.json")
-            ),
-            key=lambda item: item.stat().st_mtime,
-        )
-    )
-
-
-def latest_history_result_file(root: PathLike, result_type: str) -> Path:
-    """返回某类型最新的只读历史结果文件；没有文件时抛出 ``FileNotFoundError``。"""
-    files = history_result_files(root, result_type)
-    if not files:
-        raise FileNotFoundError(f"未找到结果类型为 {result_type} 的结果文件")
-    return files[-1]
-
 
 def load_json_result(path: PathLike) -> Dict[str, Any]:
     """读取旧格式或带元数据的新格式结果。"""

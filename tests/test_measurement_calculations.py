@@ -1,13 +1,12 @@
 """
 measurement_calculations 纯计算函数的单元测试。
 
-阶段 0-3：冻结公式和边界基线，覆盖纯函数和接入层委托验证。
+阶段 0-3：冻结公式和边界基线，覆盖纯函数与再导出边界。
 """
 
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -250,26 +249,7 @@ class CompensateDriverOutputPowerTests(unittest.TestCase):
 
 
 class MeasurementEntryPointDelegationTests(unittest.TestCase):
-    """验证同步类和增强类的兼容入口确实委托给纯函数。"""
-
-    def test_driver_entry_point_delegates_to_pure_function(self):
-        from driver_power_mapping import DriverPowerMapping
-
-        measurement = DriverPowerMapping.__new__(DriverPowerMapping)
-        measurement.config = {"attenuator": {"type": "30dB"}}
-        measurement.loss_data = {"cable_losses": SAMPLE_LOSS_DATA}
-
-        with patch("driver_power_mapping.compensate_driver_output_power",
-                   return_value=123.4) as calculate:
-            result = measurement.calculate_actual_power(1.0, -10.0)
-
-        self.assertEqual(result, 123.4)
-        calculate.assert_called_once_with(
-            measured_power=-10.0,
-            frequency=1.0,
-            loss_data=SAMPLE_LOSS_DATA,
-            attenuator_value=30.0,
-        )
+    """旧计算再导出模块仍指向正式纯函数；旧测量入口已停用。"""
 
     def test_legacy_module_reexports_canonical_functions(self):
         import measurement_calculations as compatibility
@@ -277,34 +257,6 @@ class MeasurementEntryPointDelegationTests(unittest.TestCase):
 
         for name in canonical.__all__:
             self.assertIs(getattr(compatibility, name), getattr(canonical, name), name)
-
-    def test_sync_cable_measurement_delegates_to_pure_function(self):
-        from cable_loss_measurement import CableLossMeasurement
-
-        measurement = CableLossMeasurement.__new__(CableLossMeasurement)
-        measurement.config = {"test_frequencies": [1.0]}
-        measurement.attenuator_value = 30.0
-        measurement.cable_losses = {}
-        measurement.measure_path_loss = lambda frequency: 32.3
-        measurement.save_results = lambda: None
-
-        result = {
-            "cable1": 1.15, "cable2": 1.15,
-            "cable3": 0.0, "cable4": 0.0,
-            "total_path1": 32.3, "total_path2": 32.3,
-        }
-        with patch("builtins.input", return_value=""), patch(
-            "cable_loss_measurement.calculate_cable_losses",
-            return_value=result,
-        ) as calculate:
-            measurement.measure_all_frequencies()
-
-        self.assertIs(measurement.cable_losses[1.0], result)
-        calculate.assert_called_once_with(
-            path1_loss=32.3,
-            path2_loss=32.3,
-            attenuator_value=30.0,
-        )
 
 
 # ---------------------------------------------------------------------------

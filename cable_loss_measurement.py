@@ -1,160 +1,28 @@
-# --- START OF FILE cable_loss_measurement.py ---
+"""已停用的旧线损测量根入口。
 
-import time
-from typing import Dict
-from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService, resolve_path
+正式入口是 :func:`app.gui_runtime.create_cable_loss_measurement` 与
+:class:`application.measurements.CableLossUseCase`。本模块只保留到步骤 4 删除文件，
+任何构造都会立即失败，不读取配置、不连接仪器、不创建运行目录或写结果。
+"""
 
-from domain.measurement.calculations import calculate_cable_losses
-from infrastructure.logging.app_logging import get_logger
-from measurement_lifecycle import cleanup_measurement
-from infrastructure.persistence.json_result_repository import new_run_id
-from infrastructure.config.json_io import load_config_file
-from measurement_services import CableLossService
-from infrastructure.persistence.result_repository import FileMeasurementResultRepository
-# from mock_instrument_control import MockInstrumentControl as InstrumentControl
+from __future__ import annotations
 
-logger = get_logger(__name__)
+from infrastructure.filesystem.paths import PathService
+
 
 class CableLossMeasurement:
-    def __init__(self, config_path=None, run_id=None, sleep_fn=None, measurement_port=None, paths: PathService | None = None):
-        """初始化线损测量类
-
-        Args:
-            config_path: 配置文件路径
-        """
-        self.paths = paths or DEFAULT_PATHS
-        config_path = resolve_path(config_path, self.paths.config_file)
-        self.config = load_config_file(config_path, paths=self.paths)
-        if measurement_port is None:
-            raise ValueError(
-                "CableLossMeasurement 必须显式传入 measurement_port；"
-                "请通过 app.gui_runtime.create_cable_loss_measurement() 由应用组装层注入端口"
-            )
-
-        self.run_id = run_id or new_run_id()
-        self.sleep_fn = sleep_fn or time.sleep
-        self.run_directory = None
-        self.inst_ctrl = measurement_port
-
-        self.attenuator_value = float(self.config['attenuator']['type'].replace('dB', ''))
-        self.cable_losses: Dict[float, Dict[str, float]] = {}
-
-    def _sleep(self, seconds: float) -> None:
-        """使用注入的等待函数；兼容旧测试绕过构造函数的对象。"""
-        getattr(self, "sleep_fn", time.sleep)(seconds)
-
-    # def initialize_instruments(self):
-    #     """初始化信号源和频谱仪的基本设置"""
-    #     self.inst_ctrl.set_power(0)
-    #     self.inst_ctrl.rf_output_off()
-    #     print("Instruments initialized via InstrumentControl.")
-
-    def measure_power(self, frequency: float) -> float:
-        """测量指定频率下的功率"""
-        self.inst_ctrl.set_center_frequency(frequency)
-        self.inst_ctrl.set_span(10)
-        power = self.inst_ctrl.measure_power_with_average()
-        self._sleep(1)
-        return power
-
-    def measure_path_loss(self, frequency: float) -> float:
-        self.inst_ctrl.set_frequency(frequency)
-        self.inst_ctrl.set_power(0)
-        self.inst_ctrl.rf_output_on()
-        measured_power = self.measure_power(frequency)
-        self.inst_ctrl.rf_output_off()
-        return abs(0 - measured_power)
-
-    # --- MODIFIED: The main measurement logic is now completely refactored ---
-    def measure_all_frequencies(self):
-        """测量所有配置频率下的线损，优化流程，减少硬件更换次数"""
-        if not hasattr(self, 'inst_ctrl'):
-            test_frequencies = self.config['test_frequencies']
-            path1 = {freq: self.measure_path_loss(freq) for freq in test_frequencies}
-            path2 = {freq: self.measure_path_loss(freq) for freq in test_frequencies}
-            for freq in test_frequencies:
-                self.cable_losses[freq] = calculate_cable_losses(
-                    path1_loss=path1[freq], path2_loss=path2[freq],
-                    attenuator_value=self.attenuator_value)
-            self.save_results()
-            return self.cable_losses
-        service = CableLossService(self.config, self.inst_ctrl, run_id=self.run_id, sleep_fn=self.sleep_fn)
-        result = service.run()
-        self.cable_losses = {float(key): value for key, value in result.get('cable_losses', {}).items()}
-        self.save_results()
-        return result
-        # Legacy implementation retained below as a rollback reference.
-        # self.initialize_instruments()
-        logger.info("线损测量开始: 频率=%s", self.config['test_frequencies'])
-
-        test_frequencies = self.config['test_frequencies']
-        path1_losses = {}
-        path2_losses = {}
-
-        # --- 第1步: 测量路径1在所有频率下的损耗 ---
-        print("\n" + "=" * 50)
-        input("第一步: 请连接路径1 (线①+衰减器+线②)，然后按 Enter 继续...")
-        print("=" * 50)
-        for freq in test_frequencies:
-            print(f"正在测量路径1 @ {freq} GHz...")
-            loss = self.measure_path_loss(freq)
-            path1_losses[freq] = loss
-            print(f"  -> 路径1损耗: {loss:.2f} dB")
-        print("\n路径1所有频率测量完成！\n")
-
-        # --- 第2步: 测量路径2在所有频率下的损耗 ---
-        print("=" * 50)
-        input("第二步: 请连接路径2 (线①+线③+线④+衰减器+线②)，然后按 Enter 继续...")
-        print("=" * 50)
-        for freq in test_frequencies:
-            print(f"正在测量路径2 @ {freq} GHz...")
-            loss = self.measure_path_loss(freq)
-            path2_losses[freq] = loss
-            print(f"  -> 路径2损耗: {loss:.2f} dB")
-        print("\n路径2所有频率测量完成！\n")
-
-        # --- 第3步: 计算并整理所有结果 ---
-        print("=" * 50)
-        print("正在计算所有线缆的最终损耗...")
-        for freq in test_frequencies:
-            p1_loss = path1_losses[freq]
-            p2_loss = path2_losses[freq]
-
-            self.cable_losses[freq] = calculate_cable_losses(
-                path1_loss=p1_loss,
-                path2_loss=p2_loss,
-                attenuator_value=self.attenuator_value)
-
-            cable12_loss = self.cable_losses[freq]['cable1']
-            cable34_loss = self.cable_losses[freq]['cable3']
-            print(f"  {freq} GHz: Cable1/2={cable12_loss:.2f} dB, Cable3/4={cable34_loss:.2f} dB")
-        print("=" * 50)
-
-        self.save_results()
-
-    def save_results(self):
-        """保存线损测量结果到JSON文件"""
-        results = {
-            'measurement_time': time.strftime('%Y-%m-%d %H:%M:%S'),
-            'attenuator_value': self.attenuator_value,
-            'cable_losses': {str(k): v for k, v in self.cable_losses.items()}  # 确保key是字符串
-        }
-
-        paths = getattr(self, "paths", None)
-        repository = FileMeasurementResultRepository(paths=paths)
-        saved = repository.save(
-            results,
-            result_type="cable_loss",
-            run_id=self.run_id,
-            run_directory=getattr(self, "run_directory", None),
+    def __init__(
+        self,
+        config_path=None,
+        run_id=None,
+        sleep_fn=None,
+        measurement_port=None,
+        paths: PathService | None = None,
+    ):
+        raise RuntimeError(
+            "CableLossMeasurement 旧入口已停用：请通过 "
+            "app.gui_runtime.create_cable_loss_measurement() 创建带运行契约的正式线损测量"
         )
-        self.run_directory = saved.run_directory
-        logger.info("线损结果已保存: 运行路径=%s", saved.archive_path)
-        print(f"\n线损结果已保存至 '{saved.archive_path}'")
-
-    def close(self):
-        """关闭仪器连接"""
-        cleanup_measurement(self.inst_ctrl)
 
 
-# --- END OF FILE cable_loss_measurement.py ---
+__all__ = ["CableLossMeasurement"]

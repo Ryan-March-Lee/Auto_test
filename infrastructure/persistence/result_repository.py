@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -14,6 +13,15 @@ from application.ports.result_repository import (
 )
 from infrastructure.persistence.json_encoder import NumpyJSONEncoder
 from infrastructure.filesystem.paths import PathService
+
+
+# 正式结果在运行目录内使用固定文件名：run_id 已经提供运行级隔离，不再叠加时间戳。
+# 兼容旧数据读取不属于本仓储，历史目录扫描由 FileResultHistoryRepository 负责。
+RUN_RESULT_FILENAMES: Mapping[str, str] = {
+    "cable_loss": "cable_loss_results.json",
+    "driver_power_mapping": "driver_power_mapping_results.json",
+    "amplifier_measurement": "amplifier_measurement_results.json",
+}
 
 
 class FileMeasurementResultRepository(MeasurementResultRepository):
@@ -70,15 +78,11 @@ class FileMeasurementResultRepository(MeasurementResultRepository):
         return json_result_repository.load_json_result(path)
 
     def _archive_filename(self, result_type: str) -> str:
-        """返回运行目录内的结果文件名（沿用既有归档命名，便于旧运行对照）。"""
-        filename = json_result_repository.fixed_result_filename(result_type)
-        if filename is not None:
-            return filename
-
-        prefix = json_result_repository.timestamped_result_prefix(result_type)
-        if prefix is None:
-            raise ValueError(f"不支持的测量结果类型: {result_type}")
-        return f"{prefix}_{time.strftime('%Y%m%d_%H%M%S')}.json"
+        """返回运行目录内的正式结果文件名；未知类型在写盘前拒绝。"""
+        try:
+            return RUN_RESULT_FILENAMES[result_type]
+        except KeyError as error:
+            raise ValueError(f"不支持的测量结果类型: {result_type}") from error
 
     def _run_directory(self, run_id: str, run_directory: PathLike | None) -> Path | None:
         if run_directory is not None:

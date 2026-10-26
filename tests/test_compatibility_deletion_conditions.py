@@ -21,8 +21,8 @@
 - 步骤 E1 已完成旧兼容测量根入口盘点：``release_manifest`` 的 ``rollback_files`` /
   ``compatibility_files`` 并集必须与盘点表**双向相等**，正式流程不得导入这些旧入口。
 - 旧测量根入口（``cable_loss_measurement.py`` / ``driver_power_mapping.py`` /
-  ``app/legacy_amplifier_measurement.py``）在步骤 4 前仍存在，但不得再引用已删除的
-  兼容写入 API。
+  ``app/legacy_amplifier_measurement.py``）在步骤 4 前仍存在，但已改为立即失败的迁移
+  守卫：不得读取配置、连接仪器、创建运行目录、写结果或引用已删除的兼容写入 API。
 - 步骤 E5 是门禁复核（更新测试/说明、跑全量离线测试与应用检查），非删除动作，本轮执行。
 - 说明必须为每个待删除接口写出删除条件、迁移方式和目标版本，并保留步骤 A 执行
   记录（外部调用方台账与回滚版本）。
@@ -86,12 +86,9 @@ REQUIRED_NOTE_SECTIONS = (
 )
 
 REPOSITORY_SAVE_CALLERS = {
-    "app/legacy_amplifier_measurement.py",
     "application/measurements/amplifier_test.py",
     "application/measurements/cable_loss.py",
     "application/measurements/driver_mapping.py",
-    "cable_loss_measurement.py",
-    "driver_power_mapping.py",
 }
 
 # 发布说明 3.5 / 第 10 节盘点表：旧兼容测量根入口（真实写旧运行快照/兼容副本）。
@@ -577,41 +574,36 @@ class StepEAuditTests(unittest.TestCase):
 
 
 class StepEBlockedTests(unittest.TestCase):
-    """步骤 3 后：旧测量根入口不再写已删除的兼容副本/旧运行快照。
+    """步骤 3 后：旧测量根入口只是立即失败的迁移守卫。
 
-    这三个入口的文件本体留待步骤 4 退役；本类只固定它们不再引用已删除接口，
-    且仍通过结果仓储写运行目录结果。
+    这三个入口的文件本体留待步骤 4 退役；本类固定它们不得读取配置、连接仪器、
+    创建运行目录或写结果。
     """
 
-    REMOVED_APIS = (
-        "save_compatibility_copy",
-        "write_compatibility_copy",
-        "write_legacy_run_snapshot",
-        "create_legacy_run_snapshot",
-        "legacy_path",
-    )
-
-    def _assert_no_removed_api(self, relative):
+    def _assert_guard(self, relative):
         source = (ROOT / relative).read_text(encoding="utf-8-sig")
-        for name in self.REMOVED_APIS:
-            self.assertNotIn(name, source, f"{relative} 不得引用 {name}")
+        self.assertIn("旧入口已停用", source)
+        self.assertIn("raise RuntimeError(", source)
+        for forbidden in (
+            "FileMeasurementResultRepository",
+            "load_config_file",
+            "json_result_repository",
+            "save_compatibility_copy",
+            "write_compatibility_copy",
+            "write_legacy_run_snapshot",
+            "create_legacy_run_snapshot",
+            "legacy_path",
+        ):
+            self.assertNotIn(forbidden, source, f"{relative} 不得引用 {forbidden}")
 
-    def test_cable_loss_entry_only_writes_the_run_result(self):
-        self._assert_no_removed_api("cable_loss_measurement.py")
-        source = (ROOT / "cable_loss_measurement.py").read_text(encoding="utf-8-sig")
-        self.assertIn("repository.save(", source)
+    def test_cable_loss_entry_is_a_fail_fast_guard(self):
+        self._assert_guard("cable_loss_measurement.py")
 
-    def test_driver_mapping_entry_only_writes_the_run_result(self):
-        self._assert_no_removed_api("driver_power_mapping.py")
-        source = (ROOT / "driver_power_mapping.py").read_text(encoding="utf-8-sig")
-        self.assertIn("repository.save(", source)
+    def test_driver_mapping_entry_is_a_fail_fast_guard(self):
+        self._assert_guard("driver_power_mapping.py")
 
-    def test_legacy_amplifier_entry_only_writes_the_run_result(self):
-        self._assert_no_removed_api("app/legacy_amplifier_measurement.py")
-        source = (
-            ROOT / "app" / "legacy_amplifier_measurement.py"
-        ).read_text(encoding="utf-8-sig")
-        self.assertIn("repository.save(", source)
+    def test_legacy_amplifier_entry_is_a_fail_fast_guard(self):
+        self._assert_guard("app/legacy_amplifier_measurement.py")
 
     def test_amplifier_forwarder_still_reexports_the_legacy_entry(self):
         source = (ROOT / "amplifier_measurement.py").read_text(encoding="utf-8-sig")

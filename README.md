@@ -162,7 +162,7 @@ pa_auto_test/
 
 新测量应从配置校验和运行创建流程开始，并在后续阶段始终使用同一个 `run_id`。运行配置冻结在 `runs/<run_id>/config.json`，硬件装配配置位于 `inputs/hardware_config.json`，线损和驱动映射等阶段输入由当前运行目录持有，结果位置以 `manifest.json` 登记为准。不得以全局 `config.json`、固定兼容结果文件或目录中修改时间最新的结果替代当前运行输入。
 
-根目录 `config.json` 由配置页面编辑和保存，保存时直接写出正式 `test_plan` / `run_mapping` 段，可被 `JsonConfigurationRepository` 直接读取；旧版扁平配置的自动转换（`load_legacy_data()` / `unresolved_fields`）已在技术债步骤 5 删除。缺少正式配置段的文件会在创建运行前明确失败，应先在配置页面中补全并保存。历史全局结果（如 `test_results/cable_loss_results.json` 和带时间戳的映射/功放 JSON）只用于旧结果查看、导出或显式指定的兼容调用，不会自动导入新运行。需要迁移校准数据时，应核验来源和 `run_id`，将所需文件复制到目标运行 `inputs/` 并登记 manifest；无法确认归属的数据不得作为新运行输入。
+根目录 `config.json` 由配置页面编辑和保存，保存时直接写出正式 `test_plan` / `run_mapping` 段，可被 `JsonConfigurationRepository` 直接读取；旧版扁平配置的自动转换（`load_legacy_data()` / `unresolved_fields`）已在技术债步骤 5 删除。缺少正式配置段的文件会在创建运行前明确失败，应先在配置页面中补全并保存。`launcher.py --validate-config` 同样执行正式 schema 与硬件装配段两套校验，因此不会再对缺正式段的文件报告“通过”。正式 `run_mapping` 只登记一个本机供电电源，配置页保存时若供电分配引用了多个本机电源会明确报错并说明处理方式，不会写出无法创建运行的配置。历史全局结果（如 `test_results/cable_loss_results.json` 和带时间戳的映射/功放 JSON）只用于旧结果查看、导出或显式指定的兼容调用，不会自动导入新运行。需要迁移校准数据时，应核验来源和 `run_id`，将所需文件复制到目标运行 `inputs/` 并登记 manifest；无法确认归属的数据不得作为新运行输入。
 
 旧结果仓储的 `latest_path()`、GUI `latest()` 查询及历史主功放入口均已弃用。`latest_path()` 兼容链、`LegacyResultInputReader`（无路径 `read_legacy_cable_loss()` / `read_latest_legacy_driver_mapping()`）已在重构步骤 B3 删除：输入读取不再回退到按修改时间扫描的“最新结果”。驱动模式的历史主功放入口要求显式传入 `driver_mapping_path`。测量输入端口 `ResultInputReader` 只接受显式路径，省略路径会立即失败；旧兼容流程缺少显式 `loss_data_path` / `driver_mapping_path`（或运行契约输入）时，在连接仪器或执行硬件动作前失败。历史查看与导出使用只读历史端口（`ResultHistoryRepository`，以 `result_id` 标识结果并限制在 `test_results` 目录内），不复用正式测量结果仓储。新流程必须从当前运行 manifest 读取阶段输入。
 

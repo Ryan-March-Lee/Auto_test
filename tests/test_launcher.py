@@ -1,11 +1,19 @@
 import io
+import json
 import sys
+import tempfile
 import types
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import launcher
+
+
+CONFIG_FIXTURE = (
+    Path(__file__).resolve().parent / "fixtures" / "config_driver_enabled_no_assignment.json"
+)
 
 
 class LauncherTests(unittest.TestCase):
@@ -114,6 +122,26 @@ class LauncherTests(unittest.TestCase):
         with patch.object(launcher, "validate_config_file", side_effect=FileNotFoundError):
             with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                 self.assertEqual(launcher.validate_default_config(), launcher.EXIT_CONFIG_FILE_ERROR)
+
+    def test_validate_config_accepts_the_official_fixture_config(self):
+        with patch("infrastructure.config.json_io.CONFIG_FILE", CONFIG_FIXTURE):
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(launcher.validate_default_config(), launcher.EXIT_SUCCESS)
+
+    def test_validate_config_rejects_flat_config_without_official_sections(self):
+        """只有扁平硬件字段的配置不能被启动器放行（步骤 5 契约）。"""
+        document = json.loads(CONFIG_FIXTURE.read_text(encoding="utf-8"))
+        for key in ("schema_version", "test_plan", "run_mapping"):
+            document.pop(key, None)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            with patch("infrastructure.config.json_io.CONFIG_FILE", path):
+                error = io.StringIO()
+                with redirect_stdout(io.StringIO()), redirect_stderr(error):
+                    code = launcher.validate_default_config()
+        self.assertEqual(code, launcher.EXIT_CONFIG_ERROR)
+        self.assertIn("test_plan", error.getvalue())
 
     def test_unknown_argument_returns_argument_error(self):
         with redirect_stderr(io.StringIO()):

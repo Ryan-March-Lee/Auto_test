@@ -799,6 +799,42 @@ class Step5RetirementTests(unittest.TestCase):
             self.assertIn(marker, source)
         self.assertNotIn("legacy", source.lower())
 
+    def test_launcher_config_check_covers_the_official_schema(self):
+        """启动器的 ``--validate-config`` 必须检查正式 schema，而不是只看扁平硬件字段。"""
+        validation_source = (
+            ROOT / "infrastructure" / "config" / "validation.py"
+        ).read_text(encoding="utf-8-sig")
+        self.assertIn("load_combined_configuration", validation_source)
+        self.assertIn("validate_config_file", validation_source)
+        launcher_source = (ROOT / "launcher.py").read_text(encoding="utf-8-sig")
+        self.assertIn(
+            "from infrastructure.config.validation import validate_config_file", launcher_source
+        )
+        self.assertNotIn("domain.configuration.rules", launcher_source)
+
+    def test_flat_only_configuration_is_rejected_by_the_launcher_check(self):
+        import json
+        import tempfile
+
+        from infrastructure.config.validation import validate_config_file
+
+        document = json.loads(
+            (ROOT / "tests" / "fixtures" / "config_driver_enabled_no_assignment.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        for key in ("schema_version", "test_plan", "run_mapping"):
+            document.pop(key, None)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            result = validate_config_file(path)
+        self.assertFalse(result.valid, "只有扁平字段的配置不得通过启动器配置校验")
+        self.assertTrue(
+            any(issue.path == "test_plan" for issue in result.errors),
+            [issue.path for issue in result.errors],
+        )
+
 
 class ReleaseNotesTests(unittest.TestCase):
     """删除条件、迁移方式和目标版本必须留在发布说明里，而不是只存在于讨论中。"""

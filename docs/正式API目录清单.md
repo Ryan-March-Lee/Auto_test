@@ -100,7 +100,7 @@
 | 模块 | 正式公开名称 |
 | --- | --- |
 | `infrastructure.config.json_io` | `load_json_object`、`load_config_file` |
-| `infrastructure.config.validation` | `load_config`、`validate_config_file` |
+| `infrastructure.config.validation` | `load_config`、`validate_config_file`、`validate_official_config` |
 | `infrastructure.config.json_config_repository` | `JsonConfigurationRepository`、`JsonTestPlanRepository`、`JsonRunMappingRepository`、`load_json`、`load_test_plan`、`load_run_mapping`、`load_run_configuration`、`load_combined_configuration` |
 | `infrastructure.persistence.result_repository` | `FileMeasurementResultRepository` |
 | `infrastructure.persistence.run_repository` | `RunRepository` |
@@ -287,7 +287,8 @@
 
 ## 8. 步骤 1 验收
 
-- 正式公共 API：48 个模块路径、160 个公开名称，已在本文与测试中固定。
+- 正式公共 API：48 个模块路径、161 个公开名称，已在本文与测试中固定（步骤 5 新增
+  `infrastructure.config.validation.validate_official_config`，用于校验已解析的正式配置文档）。
 - 正式内部模块：32 个路径已登记，公共与内部边界不重叠。
 - 旧模块：28 个条目（21 个根模块、7 个正式包内实现），状态与工作树一致。
 - 存量引用基线：4 个旧模块、6 处文件引用，只减不增。

@@ -171,11 +171,11 @@
         "operator": null,
         "instruments": {
             "signal_generator": {
-                "model": null,
+                "model": "FIXTURE SG",
                 "visa_address": "TCPIP0::192.0.2.201::inst0::INSTR"
             },
             "spectrum_analyzer": {
-                "model": null,
+                "model": "FIXTURE SA",
                 "visa_address": "TCPIP0::192.0.2.202::inst0::INSTR"
             },
             "power_supply": {
@@ -200,10 +200,10 @@
             }
         ],
         "wiring": {
-            "confirmed": false,
-            "connection_note": null,
-            "confirmed_at": null,
-            "confirmation_source": null
+            "confirmed": true,
+            "connection_note": "测试夹具：仅用于离线配置校验，不代表现场接线",
+            "confirmed_at": "2026-10-27T09:00:00+08:00",
+            "confirmation_source": "测试夹具"
         },
         "notes": null
     }

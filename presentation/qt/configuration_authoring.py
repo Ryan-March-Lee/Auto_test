@@ -11,6 +11,10 @@
   不生成“待人工确认”的半成品。
 - 现场固定接线的 DUT 通道角色（``CH1`` 栅极、``CH2`` 漏极）在这里作为**编辑约定**
   写入正式角色；不从旧配置文件反推，也不猜测未知通道的角色。
+- 正式 ``run_mapping`` 只登记**一个**本机供电电源，因此表单里被供电分配引用的电源必须
+  唯一。多电源指派无法用当前正式 schema 如实表达，此时抛出
+  :class:`ConfigurationAuthoringError` 明确拒绝，而不是写出一份看不出问题、却永远
+  无法创建运行的半成品配置。
 """
 
 from __future__ import annotations
@@ -24,6 +28,15 @@ OFFICIAL_SCHEMA_VERSION = "1.0"
 DUT_CHANNEL_ROLES = {"CH1": "gate", "CH2": "drain"}
 DRIVER_CHANNEL_ROLE = "driver"
 _DB_VALUE_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*dB\s*$", re.IGNORECASE)
+_ASSIGNMENT_GROUPS = ("dut_amplifier", "driver_amplifier")
+
+
+class ConfigurationAuthoringError(ValueError):
+    """当前表单无法如实表达为一份正式运行配置。
+
+    这只用于“正式 schema 根本表达不了”的情况；缺失或非法字段仍写成 ``None`` /
+    空列表，交给正式校验报告，不在这里提前猜测或补默认值。
+    """
 
 
 def parse_db_value(value: Any) -> float | None:
@@ -40,8 +53,9 @@ def parse_db_value(value: Any) -> float | None:
 def author_official_configuration(config: Mapping[str, Any] | None) -> dict[str, Any]:
     """返回带正式 ``test_plan`` / ``run_mapping`` 段的配置文档副本。
 
-    函数不修改调用方对象；输入可以是任意（含不完整）的表单配置，缺失字段只会
-    导致正式校验失败，不会抛出异常。
+    函数不修改调用方对象；输入可以是任意（含不完整）的表单配置，缺失或非法字段只会
+    导致正式校验失败，不会抛出异常。唯一例外是正式 schema 无法表达的形态（多个本机
+    供电电源同时被分配），此时抛出 :class:`ConfigurationAuthoringError`。
     """
     document = dict(config) if isinstance(config, Mapping) else {}
     document["schema_version"] = OFFICIAL_SCHEMA_VERSION
@@ -95,7 +109,7 @@ def _author_run_mapping(document: Mapping[str, Any]) -> dict[str, Any]:
     signal_generator = _mapping(instruments.get("signal_generator"))
     spectrum_analyzer = _mapping(instruments.get("spectrum_analyzer"))
     supplies = _mapping(instruments.get("power_supplies"))
-    selected_supply = _unique_enabled_supply(supplies)
+    selected_supply = _selected_supply(document)
     selected_config = _mapping(supplies.get(selected_supply)) if selected_supply else {}
     wiring = _mapping(document.get("wiring"))
     driver_channels = _author_driver_channel_mappings(document)
@@ -232,13 +246,27 @@ def _supply_channels(document: Mapping[str, Any], supply_name: Any) -> Mapping[s
     return _mapping(_mapping(supplies.get(supply_name)).get("channels"))
 
 
-def _unique_enabled_supply(supplies: Mapping[str, Any]) -> str | None:
-    enabled = [
-        name
-        for name, value in supplies.items()
-        if isinstance(value, Mapping) and value.get("enabled", True) is True
-    ]
-    return enabled[0] if len(enabled) == 1 else None
+def _selected_supply(document: Mapping[str, Any]) -> str | None:
+    """返回正式 ``run_mapping`` 要登记的本机供电电源名。
+
+    依据是**供电分配**（``power_supply_assignment``）实际引用的电源，而不是“恰好只有
+    一个电源被启用”这类隐式条件；分配为空时返回 ``None``，由正式校验报告缺少电源，
+    不做任何推断。被多个电源同时引用时无法如实表达，直接拒绝。
+    """
+    names: list[str] = []
+    for group in _ASSIGNMENT_GROUPS:
+        for assignment in _assignment_supplies(document, group).values():
+            name = assignment.get("name")
+            if isinstance(name, str) and name.strip() and name not in names:
+                names.append(name)
+    if len(names) > 1:
+        raise ConfigurationAuthoringError(
+            "配置把供电分配给了多个本机电源（"
+            + "、".join(names)
+            + "），但正式 run_mapping 只登记一个本机供电电源："
+            "请只保留一组电源分配，或把驱动功放改为外部供电（取消其本机供电分配）后再保存。"
+        )
+    return names[0] if names else None
 
 
 def _channel_list(value: Any) -> list[str]:
@@ -265,6 +293,7 @@ def _mapping(value: Any) -> Mapping[str, Any]:
 
 
 __all__ = [
+    "ConfigurationAuthoringError",
     "DUT_CHANNEL_ROLES",
     "OFFICIAL_SCHEMA_VERSION",
     "author_official_configuration",

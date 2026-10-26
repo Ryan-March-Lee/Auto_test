@@ -213,7 +213,11 @@ FORMAL_API = {
     ),
     # 基础设施适配器
     "infrastructure.config.json_io": ("load_json_object", "load_config_file"),
-    "infrastructure.config.validation": ("load_config", "validate_config_file"),
+    "infrastructure.config.validation": (
+        "load_config",
+        "validate_config_file",
+        "validate_official_config",
+    ),
     "infrastructure.config.json_config_repository": (
         "JsonConfigurationRepository",
         "JsonTestPlanRepository",

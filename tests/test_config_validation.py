@@ -123,5 +123,90 @@ class ConfigValidationTests(unittest.TestCase):
             self.assertTrue(validate_config_file(config_path).valid)
 
 
+class OfficialConfigFileValidationTests(unittest.TestCase):
+    """文件级校验必须同时覆盖正式运行 schema 与硬件装配段。"""
+
+    @classmethod
+    def setUpClass(cls):
+        with FIXTURE_PATH.open("r", encoding="utf-8") as config_file:
+            cls.base_config = json.load(config_file)
+
+    def _flat_only_config(self):
+        config = copy.deepcopy(self.base_config)
+        for key in ("schema_version", "test_plan", "run_mapping"):
+            config.pop(key, None)
+        return config
+
+    def _write(self, directory, document):
+        path = Path(directory) / "config.json"
+        path.write_text(json.dumps(document), encoding="utf-8")
+        return path
+
+    def test_fixture_is_a_valid_official_configuration(self):
+        """测试夹具本身就是能被正式仓储接受的正式配置。"""
+        with tempfile.TemporaryDirectory() as directory:
+            result = validate_config_file(self._write(directory, self.base_config))
+        self.assertTrue(result.valid, result.errors)
+
+    def test_flat_fields_alone_are_not_a_valid_configuration(self):
+        """扁平硬件字段全部合法、但缺正式段时，文件校验必须失败。
+
+        这是步骤 5 的关键契约：启动器不得用只认扁平字段的旧校验放行无法创建运行的配置。
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            result = validate_config_file(self._write(directory, self._flat_only_config()))
+        self.assertFalse(result.valid)
+        paths = {issue.path for issue in result.errors}
+        self.assertIn("schema_version", paths)
+        self.assertIn("test_plan", paths)
+        self.assertIn("run_mapping", paths)
+
+    def test_unsupported_root_schema_version_is_rejected(self):
+        config = copy.deepcopy(self.base_config)
+        config["schema_version"] = "9.0"
+        with tempfile.TemporaryDirectory() as directory:
+            result = validate_config_file(self._write(directory, config))
+        self.assertFalse(result.valid)
+        self.assertTrue(any(issue.path == "schema_version" for issue in result.errors))
+
+    def test_unconfirmed_wiring_blocks_the_file_level_check(self):
+        config = copy.deepcopy(self.base_config)
+        config["run_mapping"]["wiring"]["confirmed"] = False
+        with tempfile.TemporaryDirectory() as directory:
+            result = validate_config_file(self._write(directory, config))
+        self.assertFalse(result.valid)
+        self.assertTrue(any(issue.path == "wiring.confirmed" for issue in result.errors))
+
+    def test_hardware_section_errors_are_reported_alongside_formal_schema(self):
+        config = copy.deepcopy(self.base_config)
+        config["test_plan"]["frequencies"]["values"] = []
+        config["instruments"]["signal_generator"]["address"] = ""
+        with tempfile.TemporaryDirectory() as directory:
+            result = validate_config_file(self._write(directory, config))
+        paths = {issue.path for issue in result.errors}
+        self.assertIn("frequencies.values", paths)
+        self.assertIn("instruments.signal_generator.address", paths)
+
+    def test_identical_issues_are_reported_once(self):
+        """正式段与硬件段对同一字段的错误不重复堆叠。"""
+        config = copy.deepcopy(self.base_config)
+        config["run_mapping"]["wiring"]["confirmed"] = False
+        with tempfile.TemporaryDirectory() as directory:
+            result = validate_config_file(self._write(directory, config))
+        keys = [(issue.level, issue.path, issue.message) for issue in result.errors]
+        self.assertEqual(len(keys), len(set(keys)))
+
+
+class ShippedConfigValidationTests(unittest.TestCase):
+    """仓库默认生产配置必须通过启动器使用的同一套文件级校验。"""
+
+    def test_repository_config_passes_the_launcher_file_check(self):
+        result = validate_config_file(PROJECT_ROOT / "config.json")
+        self.assertTrue(
+            result.valid,
+            [f"{issue.path}: {issue.message}" for issue in result.errors],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

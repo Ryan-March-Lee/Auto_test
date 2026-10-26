@@ -467,6 +467,36 @@ class GuiConfigSaveTests(unittest.TestCase):
         self.assertFalse(result)
         self.assertIsNotNone(self.window._last_save_error)
 
+    def test_save_config_file_reports_unrepresentable_multi_supply_assignment(self):
+        """多本机电源指派无法写成正式 run_mapping：保存必须显式失败，不写半成品文件。"""
+        self.window.config = {
+            "test_frequencies": [2.4],
+            "signal_source": {"start_power": -10.0, "stop_power": 0.0, "step": 1.0},
+            "compression_point": {"type": "5dB"},
+            "driver_mode": {"enabled": True},
+            "attenuator": {"type": "30dB"},
+            "dut_config": {"max_input_power": 30.0},
+            "instruments": {
+                "signal_generator": {"address": "sim::sg", "model": "SG", "enabled": True},
+                "spectrum_analyzer": {"address": "sim::sa", "model": "SA", "enabled": True},
+                "power_supplies": {
+                    "PS1": {"address": "sim::ps1", "enabled": True, "channels": {"CH1": {}}},
+                    "PS2": {"address": "sim::ps2", "enabled": True, "channels": {"CH1": {}}},
+                },
+            },
+            "power_supply_assignment": {
+                "dut_amplifier": {"supplies": {"carrier": {"name": "PS1", "channel": ["CH1"]}}},
+                "driver_amplifier": {"supplies": {"driver": {"name": "PS2", "channel": ["CH1"]}}},
+            },
+            "wiring": {"confirmed": True, "connection_note": "现场接线已确认"},
+        }
+
+        result = self.window._save_config_file()
+
+        self.assertFalse(result)
+        self.assertIn("PS1", str(self.window._last_save_error))
+        self.window.gui_data_service.configuration.save.assert_not_called()
+
     def test_update_and_save_config_success(self):
         self.window.update_config_from_ui = MagicMock()
         self.window.add_log_message = self.window.log_messages.append

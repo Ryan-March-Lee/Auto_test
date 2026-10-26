@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QDialog, QListWidget
 )
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QColor, QPalette
 
 # 导入我们的测试模块和连接图
 from presentation.qt.pages import PageContext, build_pages
@@ -104,6 +105,46 @@ QPushButton:hover { background-color: #106ebe; }
 QPushButton:pressed { background-color: #005a9e; }
 QPushButton:disabled { background-color: #cccccc; color: #666666; }
 """
+
+
+def _light_palette() -> QPalette:
+    """与样式表一致的浅色调色板。"""
+    palette = QPalette()
+    white = QColor("#ffffff")
+    black = QColor("#000000")
+    palette.setColor(QPalette.Window, white)
+    palette.setColor(QPalette.WindowText, black)
+    palette.setColor(QPalette.Base, white)
+    palette.setColor(QPalette.AlternateBase, QColor("#f5f5f5"))
+    palette.setColor(QPalette.Text, black)
+    palette.setColor(QPalette.Button, QColor("#f0f0f0"))
+    palette.setColor(QPalette.ButtonText, black)
+    palette.setColor(QPalette.BrightText, white)
+    palette.setColor(QPalette.Highlight, QColor("#0078d4"))
+    palette.setColor(QPalette.HighlightedText, white)
+    palette.setColor(QPalette.ToolTipBase, white)
+    palette.setColor(QPalette.ToolTipText, black)
+    palette.setColor(QPalette.PlaceholderText, QColor("#777777"))
+    palette.setColor(QPalette.Link, QColor("#0078d4"))
+    for role in (QPalette.WindowText, QPalette.Text, QPalette.ButtonText):
+        palette.setColor(QPalette.Disabled, role, QColor("#9a9a9a"))
+    return palette
+
+
+def apply_light_theme(app: QApplication) -> None:
+    """固定界面浅色配色，不受系统深色模式影响。
+
+    Windows 处于深色模式时，Qt 6 会给出深色调色板；而样式表只覆盖了部分控件，
+    未被覆盖的容器（滚动区内容、分组框边距、QFrame 边框、布局间隙）会露出深色
+    底，界面上表现为大量“黑框”。这里在安装样式表之前强制浅色配色与浅色调色板，
+    保证未单独设置样式的区域也是白底黑字。
+    """
+    hints = app.styleHints()
+    set_color_scheme = getattr(hints, "setColorScheme", None)
+    if set_color_scheme is not None:  # Qt >= 6.8 才能主动指定配色方案
+        set_color_scheme(Qt.ColorScheme.Light)
+    if app.palette().color(QPalette.Window).lightness() < 128:
+        app.setPalette(_light_palette())
 
 
 class MainWindow(QMainWindow):
@@ -1668,6 +1709,7 @@ def build_application(argv=None, *, paths: PathService | None = None):
     app.setApplicationName("PA自动测试系统")
     app.setApplicationVersion("1.0")
     app.setOrganizationName("PA Test Lab")
+    apply_light_theme(app)
     app.setStyleSheet(APPLICATION_STYLE)
     return app
 

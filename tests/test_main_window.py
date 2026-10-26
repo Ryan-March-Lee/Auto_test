@@ -19,6 +19,20 @@ class MainWindowTests(unittest.TestCase):
         self.assertIs(first, second)
         self.assertIs(first, QApplication.instance())
 
+    def test_build_application_forces_light_palette(self):
+        """系统深色模式不得把未设置样式的容器底色变成深色（表现为界面“黑框”）。"""
+        from PySide6.QtGui import QPalette
+        from presentation.qt.main_window import build_application
+
+        app = build_application([])
+        for role in (QPalette.Window, QPalette.Base, QPalette.Button):
+            color = app.palette().color(role)
+            self.assertGreater(
+                color.lightness(),
+                200,
+                f"{role} 颜色为 {color.name()}，深色调色板会让分组框边距和容器间隙露出黑底",
+            )
+
     def test_launcher_uses_new_main_window_module(self):
         import launcher
 

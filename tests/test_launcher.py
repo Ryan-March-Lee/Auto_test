@@ -100,7 +100,7 @@ class LauncherTests(unittest.TestCase):
                 self.assertEqual(launcher.main(["--validate-config"]), launcher.EXIT_SUCCESS)
 
     def test_validate_config_returns_config_error_without_importing_gui(self):
-        from config_validation import ConfigIssue
+        from domain.configuration.types import ConfigIssue
 
         invalid_result = launcher.ConfigValidationResult(
             errors=[ConfigIssue("error", "test", "invalid")],
@@ -148,7 +148,7 @@ class LauncherTests(unittest.TestCase):
         fake_gui.main.assert_called_once()
 
     def test_silent_config_error_is_written_to_standard_error(self):
-        from config_validation import ConfigIssue
+        from domain.configuration.types import ConfigIssue
 
         invalid_result = launcher.ConfigValidationResult(
             errors=[ConfigIssue("error", "test", "invalid")],

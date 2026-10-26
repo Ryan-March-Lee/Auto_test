@@ -18,6 +18,10 @@
 - 步骤 4（技术债分阶段重构计划，2026-10-26）已整文件退役三个旧测量根入口及其公开
   转发：根目录与 ``app/`` 中不再存在旧测量入口，旧默认运行 ID、隐式配置路径与隐式
   结果输入一并删除。
+- 步骤 5（技术债分阶段重构计划，2026-10-26）已删除旧配置自动转换与根目录配置转发：
+  ``config_io.py`` / ``config_models.py`` / ``config_validation.py`` 与
+  ``infrastructure/config/legacy_conversion.py`` 退役，``load_legacy_data()`` /
+  ``unresolved_fields`` 流程不再存在；配置页面保存时直接写出正式 schema。
 - 步骤 D 已把 GUI 历史列表/查看/导出迁移到运行目录 manifest 视图，旧的全局兼容副本
   保持只读可查看；运行历史只读端口与仓储必须保持存在，且历史浏览不得复用正式测量
   结果仓储。
@@ -118,6 +122,7 @@ RETIRED_LEGACY_MODULE_NAMES = (
 RETIRED_LEGACY_RUN_ID = "run" + "-" + "legacy"
 
 # 配置/结果/日志/服务/生命周期等纯再导出模块（纯代码路径，独立退役，不受步骤 F 阻断）。
+# 步骤 5 已退役三个配置再导出模块；这里只保留仍未退役的条目。
 LEGACY_REEXPORT_MODULES = (
     "measurement_services.py",
     "measurement_lifecycle.py",
@@ -125,9 +130,6 @@ LEGACY_REEXPORT_MODULES = (
     "result_reading.py",
     "app_logging.py",
     "project_paths.py",
-    "config_io.py",
-    "config_models.py",
-    "config_validation.py",
 )
 
 # 步骤 E1 盘点的**剩余**兼容面 = release_manifest.ROLLBACK_FILES ∪ COMPATIBILITY_FILES。
@@ -146,9 +148,6 @@ LEGACY_MODULE_NAMES = frozenset(
         "result_reading",
         "app_logging",
         "project_paths",
-        "config_io",
-        "config_models",
-        "config_validation",
     }
 )
 
@@ -724,6 +723,83 @@ class Step4RetirementTests(unittest.TestCase):
                 )
 
 
+class Step5RetirementTests(unittest.TestCase):
+    """步骤 5：旧配置自动转换与根目录配置转发已整文件退役。
+
+    门禁固定：四个源文件不存在且无法导入；生产代码不再出现 ``load_legacy_data`` /
+    ``unresolved_fields`` / ``source_format`` / ``conversion_errors``；正式配置仓储
+    仍提供组合与拆分两种正式 schema 读取入口。
+    """
+
+    RETIRED_CONFIG_FILES = (
+        "config_io.py",
+        "config_models.py",
+        "config_validation.py",
+        "infrastructure/config/legacy_conversion.py",
+    )
+    RETIRED_CONFIG_MODULES = (
+        "config_io",
+        "config_models",
+        "config_validation",
+        "infrastructure.config.legacy_conversion",
+    )
+    RETIRED_IDENTIFIERS = (
+        "load_legacy_data",
+        "unresolved_fields",
+        "source_format",
+        "conversion_errors",
+    )
+
+    def test_retired_config_files_are_gone(self):
+        for relative in self.RETIRED_CONFIG_FILES:
+            with self.subTest(module=relative):
+                self.assertFalse((ROOT / relative).exists(), relative)
+
+    def test_retired_config_modules_cannot_be_imported(self):
+        for module in self.RETIRED_CONFIG_MODULES:
+            with self.subTest(module=module):
+                sys.modules.pop(module, None)
+                completed = subprocess.run(
+                    [sys.executable, "-c", f"import {module}"],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                self.assertNotEqual(
+                    completed.returncode,
+                    0,
+                    f"{module} 仍可导入: {completed.stdout}{completed.stderr}",
+                )
+                self.assertIn("ModuleNotFoundError", completed.stderr)
+
+    def test_production_code_has_no_legacy_conversion_flow(self):
+        offenders = set()
+        for path in _production_sources():
+            tree = _tree(path)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Name) and node.id in self.RETIRED_IDENTIFIERS:
+                    offenders.add(f"{_relative(path)}:{node.lineno}:{node.id}")
+                elif (
+                    isinstance(node, ast.Attribute)
+                    and node.attr in self.RETIRED_IDENTIFIERS
+                ):
+                    offenders.add(f"{_relative(path)}:{node.lineno}:{node.attr}")
+        self.assertEqual(
+            offenders,
+            set(),
+            "生产代码不得再出现旧配置转换流程: " + ", ".join(sorted(offenders)),
+        )
+
+    def test_formal_configuration_repository_still_reads_official_schema(self):
+        source = (
+            ROOT / "infrastructure" / "config" / "json_config_repository.py"
+        ).read_text(encoding="utf-8-sig")
+        for marker in ("load_combined_configuration", "JsonConfigurationRepository"):
+            self.assertIn(marker, source)
+        self.assertNotIn("legacy", source.lower())
+
+
 class ReleaseNotesTests(unittest.TestCase):
     """删除条件、迁移方式和目标版本必须留在发布说明里，而不是只存在于讨论中。"""
 
@@ -896,7 +972,7 @@ class ReleaseNotesTests(unittest.TestCase):
         for marker in (
             "步骤 4 执行记录",
             "已从清单移除",
-            "步骤 4 之后的现行状态",
+            "步骤 4/5 之后的现行状态",
         ):
             self.assertIn(marker, self.document)
         self.assertNotIn(

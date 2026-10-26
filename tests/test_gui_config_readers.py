@@ -404,6 +404,62 @@ class GuiConfigSaveTests(unittest.TestCase):
         self.assertTrue(result)
         self.window.gui_data_service.configuration.save.assert_called_once_with(self.window.config)
 
+    def test_save_config_file_writes_official_config_readable_by_repository(self):
+        """配置页面保存出的文件无需转换即可被正式配置仓储读取。"""
+        from types import SimpleNamespace
+
+        from infrastructure.config.json_config_repository import ConfigurationRepository
+
+        flat = {
+            "test_frequencies": [2.4],
+            "signal_source": {"start_power": -10.0, "stop_power": 0.0, "step": 1.0},
+            "compression_point": {"type": "5dB"},
+            "driver_mode": {"enabled": False},
+            "attenuator": {"type": "30dB"},
+            "dut_config": {"max_input_power": 30.0, "power_supply_count": 1},
+            "instruments": {
+                "signal_generator": {"address": "sim::sg", "model": "SG", "enabled": True},
+                "spectrum_analyzer": {"address": "sim::sa", "model": "SA", "enabled": True},
+                "power_supplies": {
+                    "PS1": {
+                        "address": "sim::ps1",
+                        "enabled": True,
+                        "channels": {
+                            "CH1": {"voltage": {"value": 2.8}, "current": {"value": 0.1}},
+                            "CH2": {"voltage": {"value": 28.0}, "current": {"value": 2.0}},
+                        },
+                    }
+                },
+            },
+            "power_supply_assignment": {
+                "driver_amplifier": {"power_supply_count": 0, "supplies": {}},
+                "dut_amplifier": {
+                    "power_supply_count": 1,
+                    "supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}},
+                },
+            },
+            "wiring": {"confirmed": True, "connection_note": "现场接线已确认"},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            self.window.config = flat
+
+            class _Configuration:
+                def save(self, configuration):
+                    path.write_text(json.dumps(configuration), encoding="utf-8")
+
+            self.window.gui_data_service = SimpleNamespace(
+                configuration=_Configuration()
+            )
+            self.assertTrue(self.window._save_config_file())
+
+            loaded = ConfigurationRepository().load(path)
+
+        self.assertTrue(loaded.valid, loaded.validation.errors)
+        self.assertEqual(
+            set(loaded.configuration.test_plan.dut_power_channels), {"gate", "drain"}
+        )
+
     def test_save_config_file_returns_false_on_error(self):
         self.window.gui_data_service.configuration.save.side_effect = OSError("test write failure")
         result = self.window._save_config_file()

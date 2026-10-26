@@ -35,13 +35,10 @@ ROLLBACK_FILES = ()
 COMPATIBILITY_FILES = (
     "measurement_services.py",
     "measurement_lifecycle.py",
-    "config_models.py",
     "measurement_calculations.py",
     "result_reading.py",
     "app_logging.py",
     "project_paths.py",
-    "config_io.py",
-    "config_validation.py",
 )
 REAL_DEVICE_ACCEPTANCE_STATES = frozenset({"pending", "passed"})
 

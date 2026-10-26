@@ -15,12 +15,15 @@ PathLike = str | Path
 
 @dataclass(frozen=True)
 class ConfigurationLoadResult:
+    """正式配置加载结果。
+
+    仓储只读取正式配置 schema；不存在“旧格式转换报告”或“待人工确认字段”。
+    不符合正式 schema 的配置通过 ``validation`` 明确失败。
+    """
+
     configuration: RunConfiguration
     validation: ConfigValidationResult
     warnings: list[ConfigIssue] = field(default_factory=list)
-    unresolved_fields: list[str] = field(default_factory=list)
-    source_format: str = "modern"
-    conversion_errors: list[ConfigIssue] = field(default_factory=list)
 
     @property
     def valid(self) -> bool:
@@ -37,7 +40,5 @@ class RunMappingRepository(Protocol):
 
 class ConfigurationRepository(Protocol):
     def load(self, plan_path: PathLike, mapping_path: PathLike | None = None) -> ConfigurationLoadResult: ...
-
-    def load_legacy_data(self, value: dict) -> ConfigurationLoadResult: ...
 
     def load_for_run(self, path: PathLike, mapping_path: PathLike | None = None) -> ConfigurationLoadResult: ...

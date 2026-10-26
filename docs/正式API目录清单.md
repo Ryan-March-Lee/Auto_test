@@ -101,7 +101,7 @@
 | --- | --- |
 | `infrastructure.config.json_io` | `load_json_object`、`load_config_file` |
 | `infrastructure.config.validation` | `load_config`、`validate_config_file` |
-| `infrastructure.config.json_config_repository` | `JsonConfigurationRepository`、`JsonTestPlanRepository`、`JsonRunMappingRepository`、`load_json`、`load_test_plan`、`load_run_mapping`、`load_run_configuration` |
+| `infrastructure.config.json_config_repository` | `JsonConfigurationRepository`、`JsonTestPlanRepository`、`JsonRunMappingRepository`、`load_json`、`load_test_plan`、`load_run_mapping`、`load_run_configuration`、`load_combined_configuration` |
 | `infrastructure.persistence.result_repository` | `FileMeasurementResultRepository` |
 | `infrastructure.persistence.run_repository` | `RunRepository` |
 | `infrastructure.persistence.run_history_repository` | `FileRunHistoryRepository` |
@@ -181,6 +181,7 @@
 | `presentation.qt.assistant.chat_worker` | 助手后台 worker |
 | `presentation.qt.config_form_state` | 配置表单状态 |
 | `presentation.qt.config_page` | 配置页面 |
+| `presentation.qt.configuration_authoring` | 配置页保存时的正式运行配置编写 |
 | `presentation.qt.connection_diagrams` | 连接图渲染 |
 | `presentation.qt.connection_dialog` | 连接确认对话框 |
 | `presentation.qt.export_page` | 导出页面 |
@@ -206,9 +207,9 @@
 | `cable_loss_measurement` | `cable_loss_measurement.py` | 已删除 | 步骤 4 |
 | `driver_power_mapping` | `driver_power_mapping.py` | 已删除 | 步骤 4 |
 | `amplifier_measurement` | `amplifier_measurement.py` | 已删除 | 步骤 4 |
-| `config_io` | `config_io.py` | 待删除 | 步骤 5 |
-| `config_models` | `config_models.py` | 待删除 | 步骤 5 |
-| `config_validation` | `config_validation.py` | 待删除 | 步骤 5 |
+| `config_io` | `config_io.py` | 已删除 | 步骤 5 |
+| `config_models` | `config_models.py` | 已删除 | 步骤 5 |
+| `config_validation` | `config_validation.py` | 已删除 | 步骤 5 |
 | `result_reading` | `result_reading.py` | 待删除 | 步骤 6 |
 | `result_storage` | `result_storage.py` | 已删除 | 步骤 3 |
 | `measurement_calculations` | `measurement_calculations.py` | 待删除 | 步骤 16 |
@@ -230,7 +231,7 @@
 | 旧模块 | 源文件 | 状态 | 处理步骤 |
 | --- | --- | --- | --- |
 | `app.legacy_amplifier_measurement` | `app/legacy_amplifier_measurement.py` | 已删除 | 步骤 4 |
-| `infrastructure.config.legacy_conversion` | `infrastructure/config/legacy_conversion.py` | 待删除 | 步骤 5 |
+| `infrastructure.config.legacy_conversion` | `infrastructure/config/legacy_conversion.py` | 已删除 | 步骤 5 |
 | `application.dto.legacy_result_adapter` | `application/dto/legacy_result_adapter.py` | 待删除 | 步骤 6 |
 | `instrument.legacy_control` | `instrument/legacy_control.py` | 待清理 | 步骤 9 |
 | `instrument.measurement_adapter` | `instrument/measurement_adapter.py` | 待清理 | 步骤 9 |
@@ -246,7 +247,6 @@
 | 旧模块 | 允许继续引用的文件 |
 | --- | --- |
 | `application.dto.legacy_result_adapter` | `presentation/qt/amplifier_page.py`、`presentation/qt/cable_loss_page.py`、`presentation/qt/driver_mapping_page.py` |
-| `infrastructure.config.legacy_conversion` | `infrastructure/config/json_config_repository.py` |
 | `instrument.measurement_factory` | `app/gui_runtime.py` |
 | `instrument.power_roles` | `instrument/legacy_control.py` |
 

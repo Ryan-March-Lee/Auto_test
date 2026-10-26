@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from config_io import load_config_file
+from infrastructure.config.json_io import load_config_file
 from instrument.ports import InstrumentState
 from instrument.simulation import (
     CommandRecorder,

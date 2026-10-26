@@ -4,7 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from config_validation import load_config, validate_config, validate_config_file
+from domain.configuration.rules import validate_config
+from infrastructure.config.validation import load_config, validate_config_file
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]

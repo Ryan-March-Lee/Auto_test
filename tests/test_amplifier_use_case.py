@@ -6,7 +6,7 @@ from unittest.mock import patch
 from app.cancellation import CancellationToken, MeasurementCancelled
 from application.dto import AmplifierMeasurementRequest
 from application.measurements import AmplifierMeasurementUseCase
-from config_models import (
+from domain.configuration.models import (
     ChannelMapping,
     InstrumentMapping,
     PowerChannelPlan,

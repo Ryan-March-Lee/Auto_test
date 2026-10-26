@@ -222,6 +222,7 @@ FORMAL_API = {
         "load_test_plan",
         "load_run_mapping",
         "load_run_configuration",
+        "load_combined_configuration",
     ),
     "infrastructure.persistence.result_repository": ("FileMeasurementResultRepository",),
     "infrastructure.persistence.run_repository": ("RunRepository",),
@@ -279,6 +280,7 @@ INTERNAL_MODULES = {
     "presentation.qt.assistant.chat_worker": "助手后台 worker",
     "presentation.qt.config_form_state": "配置表单状态",
     "presentation.qt.config_page": "配置页面",
+    "presentation.qt.configuration_authoring": "配置页保存时的正式运行配置编写",
     "presentation.qt.connection_diagrams": "连接图渲染",
     "presentation.qt.connection_dialog": "连接确认对话框",
     "presentation.qt.export_page": "导出页面",
@@ -325,16 +327,16 @@ LEGACY_MODULES = {
     "app.legacy_amplifier_measurement": LegacyModule(
         "旧主功放测量入口实现", "已删除", "步骤 4", "app/legacy_amplifier_measurement.py", False
     ),
-    # 步骤 5：旧配置转换与根目录配置转发
-    "config_io": LegacyModule("旧配置读写转发", "待删除", "步骤 5", "config_io.py", True),
+    # 步骤 5：旧配置转换与根目录配置转发（已整文件退役）
+    "config_io": LegacyModule("旧配置读写转发", "已删除", "步骤 5", "config_io.py", False),
     "config_models": LegacyModule(
-        "旧配置模型转发", "待删除", "步骤 5", "config_models.py", True
+        "旧配置模型转发", "已删除", "步骤 5", "config_models.py", False
     ),
     "config_validation": LegacyModule(
-        "旧配置校验转发", "待删除", "步骤 5", "config_validation.py", True
+        "旧配置校验转发", "已删除", "步骤 5", "config_validation.py", False
     ),
     "infrastructure.config.legacy_conversion": LegacyModule(
-        "旧配置自动转换", "待删除", "步骤 5", "infrastructure/config/legacy_conversion.py", True
+        "旧配置自动转换", "已删除", "步骤 5", "infrastructure/config/legacy_conversion.py", False
     ),
     # 步骤 6：旧结果模型与读取转发
     "result_reading": LegacyModule(
@@ -411,9 +413,6 @@ LEGACY_IMPORT_BASELINE = {
         "presentation/qt/amplifier_page.py",
         "presentation/qt/cable_loss_page.py",
         "presentation/qt/driver_mapping_page.py",
-    },
-    "infrastructure.config.legacy_conversion": {
-        "infrastructure/config/json_config_repository.py",
     },
     "instrument.measurement_factory": {
         "app/gui_runtime.py",

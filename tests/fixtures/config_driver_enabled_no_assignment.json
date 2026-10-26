@@ -111,5 +111,100 @@
                 }
             }
         }
+    },
+    "schema_version": "1.0",
+    "test_plan": {
+        "schema_version": "1.0",
+        "template": false,
+        "plan_id": "gui-configuration",
+        "frequencies": {
+            "values": [
+                2.2,
+                2.4,
+                3.0
+            ],
+            "unit": "GHz"
+        },
+        "signal_source": {
+            "start_power": -10.0,
+            "stop_power": 15.0,
+            "step": 1.0,
+            "unit": "dBm"
+        },
+        "compression_point": {
+            "type": "5dB"
+        },
+        "attenuator": {
+            "value": 30.0,
+            "unit": "dB"
+        },
+        "dut": {
+            "max_input_power": 29.51,
+            "power_roles": {
+                "gate": {
+                    "role": "gate",
+                    "voltage": 2.8,
+                    "current": 0.1,
+                    "voltage_protection": 1.0,
+                    "current_protection": 1.0
+                },
+                "drain": {
+                    "role": "drain",
+                    "voltage": 28.0,
+                    "current": 1.0,
+                    "voltage_protection": 30.0,
+                    "current_protection": 1.1
+                }
+            }
+        },
+        "driver_mode": {
+            "enabled": false,
+            "power_roles": {}
+        },
+        "other_parameters": {}
+    },
+    "run_mapping": {
+        "schema_version": "1.0",
+        "template": false,
+        "run_id": null,
+        "run_datetime": null,
+        "operator": null,
+        "instruments": {
+            "signal_generator": {
+                "model": null,
+                "visa_address": "TCPIP0::192.0.2.201::inst0::INSTR"
+            },
+            "spectrum_analyzer": {
+                "model": null,
+                "visa_address": "TCPIP0::192.0.2.202::inst0::INSTR"
+            },
+            "power_supply": {
+                "model": "PS4",
+                "visa_address": "TCPIP0::192.0.2.108::inst0::INSTR"
+            }
+        },
+        "driver_mode": {
+            "enabled": false,
+            "power_channels": []
+        },
+        "dut_power_channels": [
+            {
+                "channel": "CH1",
+                "role": "gate",
+                "connection": "PS4-CH1 -> DUT 栅极"
+            },
+            {
+                "channel": "CH2",
+                "role": "drain",
+                "connection": "PS4-CH2 -> DUT 漏极"
+            }
+        ],
+        "wiring": {
+            "confirmed": false,
+            "connection_note": null,
+            "confirmed_at": null,
+            "confirmation_source": null
+        },
+        "notes": null
     }
 }

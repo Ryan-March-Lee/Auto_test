@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from app.events import StoppedEvent
 from app.run_context import prepare_run
-from config_models import RunConfiguration
+from domain.configuration.models import RunConfiguration
 from domain.models import AmplifierMeasurementResult, AmplifierScanPoint
 from application.measurements.services import AmplifierMeasurementService
 from infrastructure.config.json_config_repository import ConfigurationRepository

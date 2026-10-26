@@ -326,9 +326,6 @@ class ProductionDependencyTests(unittest.TestCase):
         modules = (
             ROOT / "app_logging.py",
             ROOT / "project_paths.py",
-            ROOT / "config_io.py",
-            ROOT / "config_models.py",
-            ROOT / "config_validation.py",
         )
         for source_path in modules:
             tree = _tree(source_path)
@@ -373,22 +370,13 @@ class ProductionDependencyTests(unittest.TestCase):
 
     def test_configuration_compatibility_exports_match_canonical_objects(self):
         import app_logging
-        import config_io
-        import config_models
-        import config_validation
-        import infrastructure.config.json_io as canonical_io
-        import infrastructure.logging.app_logging as canonical_logging
         import project_paths
-        from domain.configuration import models as canonical_models
-        from domain.configuration import rules as canonical_rules
+        import infrastructure.logging.app_logging as canonical_logging
 
         self.assertIs(app_logging.get_logger, canonical_logging.get_logger)
-        self.assertIs(config_io.load_config_file, canonical_io.load_config_file)
         self.assertIs(project_paths.resolve_path, __import__(
             "infrastructure.filesystem.paths", fromlist=["resolve_path"]
         ).resolve_path)
-        self.assertIs(config_models.TestPlan, canonical_models.TestPlan)
-        self.assertIs(config_validation.validate_config, canonical_rules.validate_config)
 
     def test_persistence_implementations_have_one_infrastructure_boundary(self):
         result_adapter_path = ROOT / "infrastructure" / "persistence" / "result_repository.py"

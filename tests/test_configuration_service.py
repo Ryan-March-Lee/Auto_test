@@ -18,9 +18,6 @@ class InMemoryConfigurationRepository:
             ConfigValidationResult([], []),
         )
 
-    def load_legacy_data(self, value):
-        raise AssertionError("不应从内存仓储调用 legacy 转换")
-
     def load_for_run(self, path, mapping_path=None):
         raise AssertionError("应用服务不应依赖仓储的运行门禁实现")
 

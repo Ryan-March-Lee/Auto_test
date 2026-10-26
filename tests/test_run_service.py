@@ -36,6 +36,7 @@ from domain.run.models import (
 from infrastructure.config.json_config_repository import ConfigurationRepository
 from infrastructure.filesystem.paths import PathService
 from infrastructure.persistence.run_repository import RunRepository
+from presentation.qt.configuration_authoring import author_official_configuration
 
 
 CREATED_AT = datetime(2026, 10, 22, 15, 30, tzinfo=timezone.utc)
@@ -72,8 +73,8 @@ def _loaded(configuration: RunConfiguration) -> ConfigurationLoadResult:
 
 
 def _gui_config(*, start_power: float = -10.0) -> dict:
-    """GUI 保存的组合配置（旧版格式），可转换为完整有效运行配置。"""
-    return {
+    """GUI 保存的组合配置（含正式 test_plan / run_mapping 段）。"""
+    return author_official_configuration({
         "test_frequencies": [2.4],
         "signal_source": {"start_power": start_power, "stop_power": 0.0, "step": 1.0},
         "compression_point": {"type": "5dB"},
@@ -102,7 +103,7 @@ def _gui_config(*, start_power: float = -10.0) -> dict:
             },
         },
         "wiring": {"confirmed": True, "connection_note": "现场接线已确认"},
-    }
+    })
 
 
 class CreateRunSnapshotTests(unittest.TestCase):

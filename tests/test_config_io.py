@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from config_io import load_config_file, load_json_object
+from infrastructure.config.json_io import load_config_file, load_json_object
 
 
 class ConfigIoTests(unittest.TestCase):

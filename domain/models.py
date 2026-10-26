@@ -1,8 +1,8 @@
 """阶段 1 冻结的运行、方案和结果模型。
 
 模型不读取文件、不连接硬件，也不依赖 Qt、PyVISA 或绘图库。
-这里的 ``TestPlan`` 是内部领域模型；``config_models.TestPlan`` 继续负责
-现有 JSON 配置输入，二者之间的转换留给后续配置迁移阶段。
+这里的 ``TestPlan`` 是内部领域模型；正式配置对象由 ``domain.configuration.models``
+定义，二者之间的转换留给后续领域收敛阶段。
 """
 
 from __future__ import annotations

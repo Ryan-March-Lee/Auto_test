@@ -3,18 +3,20 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from config_models import (
+from domain.configuration.models import (
     RunConfiguration,
     RunResourceMapping,
     TestPlan,
-    load_run_configuration,
-    load_run_mapping,
-    load_test_plan,
     validate_run_configuration,
     validate_cable_loss_configuration,
     validate_driver_mapping_configuration,
     validate_run_mapping,
     validate_test_plan,
+)
+from infrastructure.config.json_config_repository import (
+    load_run_configuration,
+    load_run_mapping,
+    load_test_plan,
 )
 
 

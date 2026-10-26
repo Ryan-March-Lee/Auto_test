@@ -38,6 +38,7 @@ from domain.run.models import (
 )
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from infrastructure.persistence.run_repository import RunRepository
+from presentation.qt.configuration_authoring import author_official_configuration
 
 
 RUN_ID = "20261022T153000Z_a1b2c3d4"
@@ -48,8 +49,8 @@ CABLE_LOSSES = {"1.0": {"cable2": 2.0}}
 
 
 def _fully_valid_gui_config() -> dict:
-    """完整有效的旧版 GUI 组合配置（驱动模式关闭，DUT 通道已确认接线）。"""
-    return {
+    """完整有效的 GUI 组合配置（驱动模式关闭，DUT 通道已确认接线）。"""
+    return author_official_configuration({
         "test_frequencies": [2.4],
         "signal_source": {"start_power": -10.0, "stop_power": 0.0, "step": 1.0},
         "compression_point": {"type": "5dB"},
@@ -78,7 +79,7 @@ def _fully_valid_gui_config() -> dict:
             },
         },
         "wiring": {"confirmed": True, "connection_note": "现场接线已确认"},
-    }
+    })
 
 
 class _Instrument:

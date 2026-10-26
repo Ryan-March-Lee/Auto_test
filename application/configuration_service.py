@@ -13,10 +13,9 @@ def load_for_run(
     path: PathLike,
     mapping_path: PathLike | None = None,
 ) -> ConfigurationLoadResult:
-    """通过仓储加载配置，并执行运行前接线确认门禁。
+    """通过仓储加载正式配置，并执行运行前接线确认门禁。
 
-    文件格式和 legacy 转换由仓储负责；``wiring.confirmed`` 是运行策略，
-    因此在应用层统一执行。
+    文件格式由仓储负责；``wiring.confirmed`` 是运行策略，因此在应用层统一执行。
     """
     loaded = repository.load(path, mapping_path)
     if not loaded.valid or loaded.configuration.run_mapping.wiring_confirmed:

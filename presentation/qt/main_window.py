@@ -71,6 +71,7 @@ from presentation.qt.assistant.chat_worker import ChatWorker
 from presentation.qt.assistant.chat_dialogs import ChatHistoryDialog, ChatSettingsDialog
 from presentation.qt.config_form_state import ConfigFormState
 from presentation.qt.config_page import ConfigBackfillError, ConfigPage
+from presentation.qt.configuration_authoring import author_official_configuration
 from presentation.qt.visualization_page import VisualizationPage
 from presentation.qt.export_page import ExportPage
 from presentation.qt.status_panel import StatusPanel
@@ -1520,7 +1521,11 @@ class MainWindow(QMainWindow):
             self.config_page.config = self.config
 
     def _save_config_file(self) -> bool:
-        """将 self.config 写入配置路径，成功返回 True，失败返回 False。"""
+        """将 self.config 写入配置路径，成功返回 True，失败返回 False。
+
+        保存前用当前表单值重新编写正式 ``test_plan`` / ``run_mapping`` 段，使配置
+        页面保存出的文件可以被正式配置仓储直接读取；旧配置加载时的自动转换已删除。
+        """
         try:
             path = (
                 getattr(self, "config_path", getattr(self, "paths", DEFAULT_PATHS).config_file)
@@ -1530,6 +1535,9 @@ class MainWindow(QMainWindow):
             service = getattr(self, "gui_data_service", None)
             if service is None:
                 raise RuntimeError("未配置 GUI 数据服务")
+            self.config = author_official_configuration(self.config)
+            if hasattr(self, "config_page"):
+                self.config_page.config = self.config
             service.configuration.save(self.config)
             return True
         except Exception as e:

@@ -18,12 +18,13 @@ from application.measurements import (
     CableLossUseCase,
 )
 from application.run_service import RunNotResumable
+from presentation.qt.configuration_authoring import author_official_configuration
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "config_driver_enabled_no_assignment.json"
 
 
-FULLY_VALID_CONFIG = {
+FULLY_VALID_CONFIG = author_official_configuration({
     "test_frequencies": [2.4],
     "signal_source": {"start_power": -10.0, "stop_power": 0.0, "step": 1.0},
     "compression_point": {"type": "5dB"},
@@ -52,7 +53,7 @@ FULLY_VALID_CONFIG = {
         },
     },
     "wiring": {"confirmed": True, "connection_note": "现场接线已确认"},
-}
+})
 
 
 class _Port:
@@ -354,6 +355,7 @@ class GuiRuntimePreparationTests(unittest.TestCase):
             "confirmed": confirmed,
             "connection_note": "confirmed" if confirmed else None,
         }
+        config = author_official_configuration(config)
         directory = tempfile.TemporaryDirectory()
         path = Path(directory.name) / "config.json"
         path.write_text(json.dumps(config), encoding="utf-8")
@@ -397,8 +399,10 @@ class GuiRuntimePreparationTests(unittest.TestCase):
         directory, path = self._write_fully_valid_config()
         try:
             config = json.loads(path.read_text(encoding="utf-8"))
-            # 去掉 DUT 电源分配：线损阶段专用校验不关心 DUT 角色，因此仍然通过；
-            # 完整运行校验会拒绝，旧兼容快照正是把这种配置当作“预检通过”。
+            # 去掉正式配置中的 DUT 电源角色：线损阶段专用校验不关心 DUT 角色，因此
+            # 仍然通过；完整运行校验会拒绝，旧兼容快照正是把这种配置当作“预检通过”。
+            config["test_plan"]["dut"]["power_roles"] = {}
+            config["run_mapping"]["dut_power_channels"] = []
             config["power_supply_assignment"]["dut_amplifier"] = {
                 "power_supply_count": 0,
                 "supplies": {},
@@ -479,9 +483,6 @@ class MockConfigurationRepository:
         self.loaded_paths.append((path, mapping_path))
         configuration = RunConfiguration(TestPlan(), RunResourceMapping())
         return ConfigurationLoadResult(configuration, validate_run_configuration(configuration))
-
-    def load_legacy_data(self, value):
-        raise AssertionError("应用服务不应直接调用 legacy 转换入口")
 
     def load_for_run(self, path, mapping_path=None):
         raise AssertionError("应用服务应通过 load 后自行执行运行前门禁")

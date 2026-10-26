@@ -24,6 +24,7 @@ from app.gui_runtime import create_cable_loss_measurement, prepare_configuration
 from application.run_service import RunNotResumable
 from domain.run.models import HARDWARE_CONFIG_INPUT_PATH, RunStatus
 from infrastructure.persistence.run_repository import RunRepository
+from presentation.qt.configuration_authoring import author_official_configuration
 from presentation.qt.measurement_controller import MeasurementController
 from presentation.qt.measurement_controller_contract import MeasurementCommand
 from presentation.qt.measurement_state import MeasurementKind
@@ -34,8 +35,8 @@ RUN_ID = "20261022T153000Z_a1b2c3d4"
 
 
 def _fully_valid_gui_config() -> dict:
-    """完整有效的旧版 GUI 组合配置（驱动模式关闭，DUT 通道已确认接线）。"""
-    return {
+    """完整有效的 GUI 组合配置（驱动模式关闭，DUT 通道已确认接线）。"""
+    return author_official_configuration({
         "test_frequencies": [2.4],
         "signal_source": {"start_power": -10.0, "stop_power": 0.0, "step": 1.0},
         "compression_point": {"type": "5dB"},
@@ -64,7 +65,7 @@ def _fully_valid_gui_config() -> dict:
             },
         },
         "wiring": {"confirmed": True, "connection_note": "现场接线已确认"},
-    }
+    })
 
 
 def _broken_contract_run(hardware_config_path=None):

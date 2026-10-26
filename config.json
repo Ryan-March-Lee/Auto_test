@@ -184,5 +184,104 @@
         "connection_note": "现场已确认最终 DUT 测试链路连接完成；驱动功放采用外部独立供电，不由本系统电源配置提供。",
         "confirmed_at": "2026-09-28T19:03:26+08:00",
         "confirmation_source": "用户现场确认"
+    },
+    "schema_version": "1.0",
+    "test_plan": {
+        "schema_version": "1.0",
+        "template": false,
+        "plan_id": "gui-configuration",
+        "frequencies": {
+            "values": [
+                2.3,
+                2.4,
+                2.5,
+                2.6,
+                2.7,
+                2.8,
+                2.9
+            ],
+            "unit": "GHz"
+        },
+        "signal_source": {
+            "start_power": -40.0,
+            "stop_power": -28.0,
+            "step": 0.5,
+            "unit": "dBm"
+        },
+        "compression_point": {
+            "type": "5dB"
+        },
+        "attenuator": {
+            "value": 40.0,
+            "unit": "dB"
+        },
+        "dut": {
+            "max_input_power": 31.0,
+            "power_roles": {
+                "gate": {
+                    "role": "gate",
+                    "voltage": 2.8,
+                    "current": 0.1,
+                    "voltage_protection": 1.0,
+                    "current_protection": 0.0
+                },
+                "drain": {
+                    "role": "drain",
+                    "voltage": 28.0,
+                    "current": 2.0,
+                    "voltage_protection": 30.0,
+                    "current_protection": 2.5
+                }
+            }
+        },
+        "driver_mode": {
+            "enabled": false,
+            "power_roles": {}
+        },
+        "other_parameters": {}
+    },
+    "run_mapping": {
+        "schema_version": "1.0",
+        "template": false,
+        "run_id": null,
+        "run_datetime": null,
+        "operator": null,
+        "instruments": {
+            "signal_generator": {
+                "model": "R&S SMW200A",
+                "visa_address": "TCPIP0::192.168.1.201::inst0::INSTR"
+            },
+            "spectrum_analyzer": {
+                "model": "Ceyear 4082F",
+                "visa_address": "TCPIP0::192.168.1.202::inst0::INSTR"
+            },
+            "power_supply": {
+                "model": "PS1",
+                "visa_address": "TCPIP0::192.168.1.101::inst0::INSTR"
+            }
+        },
+        "driver_mode": {
+            "enabled": false,
+            "power_channels": []
+        },
+        "dut_power_channels": [
+            {
+                "channel": "CH1",
+                "role": "gate",
+                "connection": "PS1-CH1 -> DUT 栅极"
+            },
+            {
+                "channel": "CH2",
+                "role": "drain",
+                "connection": "PS1-CH2 -> DUT 漏极"
+            }
+        ],
+        "wiring": {
+            "confirmed": true,
+            "connection_note": "现场已确认最终 DUT 测试链路连接完成；驱动功放采用外部独立供电，不由本系统电源配置提供。",
+            "confirmed_at": "2026-09-28T19:03:26+08:00",
+            "confirmation_source": "用户现场确认"
+        },
+        "notes": null
     }
 }

@@ -25,7 +25,7 @@ class ConnectionDiagramRenderingTests(unittest.TestCase):
     def test_each_diagram_renders_expected_artists(self):
         for name, expected_devices in DIAGRAM_DEVICES.items():
             with self.subTest(diagram=name):
-                figure = getattr(ConnectionDiagram, name)()
+                figure = getattr(ConnectionDiagram, f"create_{name}")()
                 self.assertIsInstance(figure, Figure)
                 (axis,) = figure.axes
                 self.assertEqual({text.get_text() for text in axis.texts}, set(expected_devices))

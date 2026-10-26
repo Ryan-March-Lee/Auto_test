@@ -106,6 +106,78 @@ class ConfigPageTests(unittest.TestCase):
         self.assertEqual(result["attenuator"]["type"], "30dB")
         self.assertEqual(result["dut_config"]["power_supply_count"], 3)
 
+    @staticmethod
+    def spin_button_rects(widget):
+        from PySide6.QtWidgets import QStyle, QStyleOptionSpinBox
+
+        option = QStyleOptionSpinBox()
+        option.initFrom(widget)
+        option.frame = True
+        option.buttonSymbols = widget.buttonSymbols()
+        style = widget.style()
+        return (
+            style.subControlRect(
+                QStyle.CC_SpinBox, option, QStyle.SC_SpinBoxUp, widget
+            ),
+            style.subControlRect(
+                QStyle.CC_SpinBox, option, QStyle.SC_SpinBoxDown, widget
+            ),
+        )
+
+    def test_spin_buttons_step_up_and_down_exactly_once(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+
+        page = self.make_page()
+        widget = page.start_power
+        up, down = self.spin_button_rects(widget)
+        start = widget.value()
+
+        QTest.mouseClick(widget, Qt.LeftButton, Qt.NoModifier, up.center())
+        self.app.processEvents()
+        self.assertEqual(widget.value(), start + 1)
+
+        widget.setValue(start)
+        QTest.mouseClick(widget, Qt.LeftButton, Qt.NoModifier, down.center())
+        self.app.processEvents()
+        self.assertEqual(widget.value(), start - 1)
+
+    def test_spin_up_button_steps_when_hit_area_is_slightly_off(self):
+        """按钮绘制位置与命中区域差 1px 时，点上箭头仍应增加数值。"""
+        from PySide6.QtCore import QPoint, Qt
+        from PySide6.QtTest import QTest
+
+        page = self.make_page()
+        widget = page.start_power
+        up, _down = self.spin_button_rects(widget)
+        probe = QPoint(up.center().x(), up.top() - 1)
+        self.assertGreaterEqual(probe.y(), 0, "测试假设按钮上方仍有一点空白")
+        start = widget.value()
+
+        QTest.mouseClick(widget, Qt.LeftButton, Qt.NoModifier, probe)
+        self.app.processEvents()
+        self.assertEqual(widget.value(), start + 1)
+
+    def test_spin_click_in_edit_field_does_not_change_value(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QStyle, QStyleOptionSpinBox
+
+        page = self.make_page()
+        widget = page.start_power
+        option = QStyleOptionSpinBox()
+        option.initFrom(widget)
+        option.frame = True
+        option.buttonSymbols = widget.buttonSymbols()
+        edit = widget.style().subControlRect(
+            QStyle.CC_SpinBox, option, QStyle.SC_SpinBoxEditField, widget
+        )
+        start = widget.value()
+
+        QTest.mouseClick(widget, Qt.LeftButton, Qt.NoModifier, edit.center())
+        self.app.processEvents()
+        self.assertEqual(widget.value(), start)
+
     def test_wide_window_keeps_group_boxes_compact(self):
         from PySide6.QtWidgets import QGroupBox
 

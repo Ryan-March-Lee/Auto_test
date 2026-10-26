@@ -162,9 +162,9 @@ pa_auto_test/
 
 新测量应从配置校验和运行创建流程开始，并在后续阶段始终使用同一个 `run_id`。运行配置冻结在 `runs/<run_id>/config.json`，硬件装配配置位于 `inputs/hardware_config.json`，线损和驱动映射等阶段输入由当前运行目录持有，结果位置以 `manifest.json` 登记为准。不得以全局 `config.json`、固定兼容结果文件或目录中修改时间最新的结果替代当前运行输入。
 
-根目录 `config.json` 由配置页面编辑和保存，保存时直接写出正式 `test_plan` / `run_mapping` 段，可被 `JsonConfigurationRepository` 直接读取；旧版扁平配置的自动转换（`load_legacy_data()` / `unresolved_fields`）已在技术债步骤 5 删除。缺少正式配置段的文件会在创建运行前明确失败，应先在配置页面中补全并保存。`launcher.py --validate-config` 同样执行正式 schema 与硬件装配段两套校验，因此不会再对缺正式段的文件报告“通过”。正式 `run_mapping` 只登记一个本机供电电源，配置页保存时若供电分配引用了多个本机电源会明确报错并说明处理方式，不会写出无法创建运行的配置。历史全局结果（如 `test_results/cable_loss_results.json` 和带时间戳的映射/功放 JSON）只用于旧结果查看、导出或显式指定的兼容调用，不会自动导入新运行。需要迁移校准数据时，应核验来源和 `run_id`，将所需文件复制到目标运行 `inputs/` 并登记 manifest；无法确认归属的数据不得作为新运行输入。
+根目录 `config.json` 由配置页面编辑和保存，保存时直接写出正式 `test_plan` / `run_mapping` 段，可被 `JsonConfigurationRepository` 直接读取；旧版扁平配置的自动转换（`load_legacy_data()` / `unresolved_fields`）已在技术债步骤 5 删除。缺少正式配置段的文件会在创建运行前明确失败，应先在配置页面中补全并保存。`launcher.py --validate-config` 同样执行正式 schema 与硬件装配段两套校验，因此不会再对缺正式段的文件报告“通过”。正式 `run_mapping` 只登记一个本机供电电源，配置页保存时若供电分配引用了多个本机电源会明确报错并说明处理方式，不会写出无法创建运行的配置。历史全局结果（如 `test_results/cable_loss_results.json` 和带时间戳的映射/功放 JSON）在技术债步骤 6 之后不再被应用发现或读取：历史查看、导出与报告只读正式运行目录结果。需要迁移校准数据时，应核验来源和 `run_id`，将所需文件复制到目标运行 `inputs/` 并登记 manifest；无法确认归属的数据不得作为新运行输入。
 
-旧结果仓储的 `latest_path()`、GUI `latest()` 查询及历史主功放入口均已弃用。`latest_path()` 兼容链、`LegacyResultInputReader`（无路径 `read_legacy_cable_loss()` / `read_latest_legacy_driver_mapping()`）已在重构步骤 B3 删除：输入读取不再回退到按修改时间扫描的“最新结果”。驱动模式的历史主功放入口要求显式传入 `driver_mapping_path`。测量输入端口 `ResultInputReader` 只接受显式路径，省略路径会立即失败；旧兼容流程缺少显式 `loss_data_path` / `driver_mapping_path`（或运行契约输入）时，在连接仪器或执行硬件动作前失败。历史查看与导出使用只读历史端口（`ResultHistoryRepository`，以 `result_id` 标识结果并限制在 `test_results` 目录内），不复用正式测量结果仓储。新流程必须从当前运行 manifest 读取阶段输入。
+旧结果仓储的 `latest_path()`、GUI `latest()` 查询及历史主功放入口均已弃用。`latest_path()` 兼容链、`LegacyResultInputReader`（无路径 `read_legacy_cable_loss()` / `read_latest_legacy_driver_mapping()`）已在重构步骤 B3 删除：输入读取不再回退到按修改时间扫描的“最新结果”。驱动模式的历史主功放入口要求显式传入 `driver_mapping_path`。测量输入端口 `ResultInputReader` 只接受显式路径，省略路径会立即失败；旧兼容流程缺少显式 `loss_data_path` / `driver_mapping_path`（或运行契约输入）时，在连接仪器或执行硬件动作前失败。历史查看与导出只读正式运行目录结果（`run::<run_id>::<相对路径>`，由运行 manifest 校验），不复用正式测量结果仓储，也不再扫描 `test_results/` 根目录的旧文件。新流程必须从当前运行 manifest 读取阶段输入。
 
 ### 1. 系统配置
 1. 打开"仪器配置"选项卡
@@ -244,10 +244,12 @@ code 只能导入登记的模块路径，旧模块禁止新增引用，由 `test
 停止，正式结果只写 `runs/<run_id>/`。步骤 3 已删除 `save_compatibility_copy()`、`legacy_path()`、
 `create_legacy_run_snapshot()`、`write_compatibility_copy()`、`write_legacy_run_snapshot()` 和
 `result_storage.py`；三个旧兼容测量根入口已停用并立即失败，文件本体随步骤 4 退役。
-步骤 5 已删除旧配置转换与根目录配置转发；步骤 6 已把三类测量结果收敛为显式 DTO
+步骤 5 已删除旧配置转换与根目录配置转发；步骤 6 已把三类测量结果收敛为唯一显式 DTO
 （`CableLossMeasurementResult` / `DriverPowerMappingMeasurementResult` /
-`AmplifierMeasurementResult`），删除根 `result_reading.py` 与
-`application/dto/legacy_result_adapter.py`，旧结果 JSON 形状和旧字段别名不再被解析。
+`AmplifierMeasurementResult`，定义在 `application/dto/measurement_results.py`），删除根
+`result_reading.py`、`domain/result_reading.py`、`application/dto/legacy_result_adapter.py`、
+旧全局历史端口/仓储，旧结果 JSON 形状和旧字段别名不再被解析；`domain.models` 不再定义结果
+模型，展示/导出只使用 DTO 的显式属性。
 
 ### 技术支持
 如遇到问题，请检查：

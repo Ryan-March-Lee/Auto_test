@@ -268,35 +268,39 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
             result.configuration_snapshot["new"] = True
         with self.assertRaises(ValueError):
             MeasurementResult(
-                "driver_power_mapping",
-                MeasurementStatus.FAILED,
-                "run-result",
+                measurement_type="driver_power_mapping",
+                status=MeasurementStatus.FAILED,
+                run_id="run-result",
             )
         with self.assertRaises(ValueError):
-            MeasurementResult("driver_power_mapping", "stopped", "run-result")
+            MeasurementResult(
+                measurement_type="driver_power_mapping",
+                status="stopped",
+                run_id="run-result",
+            )
 
     def test_result_dto_records_structured_termination(self):
         result = MeasurementResult(
-            "amplifier",
-            MeasurementStatus.CANCELLED,
-            "run-result",
+            measurement_type="amplifier",
+            status=MeasurementStatus.CANCELLED,
+            run_id="run-result",
             termination={"intent": "cancel", "reason": "任务已取消"},
         )
         self.assertEqual(result.termination["intent"], "cancel")
         self.assertEqual(result.to_dict()["termination"]["reason"], "任务已取消")
         emergency = MeasurementResult(
-            "amplifier",
-            MeasurementStatus.EMERGENCY_STOPPED,
-            "run-emergency",
+            measurement_type="amplifier",
+            status=MeasurementStatus.EMERGENCY_STOPPED,
+            run_id="run-emergency",
             termination={"intent": "emergency_stop", "reason": "过流保护"},
         )
         self.assertEqual(emergency.termination["intent"], "emergency_stop")
 
     def test_result_dto_keeps_explicit_references(self):
         result = MeasurementResult(
-            "amplifier",
-            MeasurementStatus.COMPLETED,
-            "run-reference",
+            measurement_type="amplifier",
+            status=MeasurementStatus.COMPLETED,
+            run_id="run-reference",
             raw_data_reference={"raw_data_path": "raw.csv"},
             result_reference={"archive_path": "archive.json"},
             errors=("warning-1", "warning-2"),

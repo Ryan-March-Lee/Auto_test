@@ -2,18 +2,19 @@ import unittest
 
 from app.cancellation import CancellationMode, CancellationToken, MeasurementCancelled
 from app.events import CompletedEvent, ProgressEvent
-from domain.models import (
+from application.dto import (
+    AmplifierFrequencyResult,
     AmplifierMeasurementResult,
-    AmplifierScanPoint,
-    CableLossPoint,
-    CableLossResult,
-    DriverPowerMappingPoint,
-    DriverPowerMappingResult,
+    CableLossMeasurementResult,
+    CableLossRow,
+    DriverPowerMappingMeasurementResult,
+    DriverPowerPoint,
     MeasurementResult,
+)
+from domain.models import (
     MeasurementSession,
     MeasurementState,
     RunContext,
-    ScanPoint,
     TestPlan,
 )
 from instrument.ports import InstrumentSession, InstrumentState
@@ -39,17 +40,16 @@ class Stage1ProtocolTests(unittest.TestCase):
     def test_domain_models_are_pure_and_versioned(self):
         plan = TestPlan(frequencies_hz=(1_000_000_000.0,))
         context = RunContext(run_id="run-1", software_version="test", wiring_confirmed=True)
-        result = MeasurementResult(
+        result = CableLossMeasurementResult(
             run_id=context.run_id,
-            measurement_type="cable_loss",
-            points=(ScanPoint(frequency_hz=1_000_000_000.0, raw_output_power_dbm=-3.0),),
-            plan_snapshot={"schema_version": plan.schema_version},
-            resource_snapshot={"run_id": context.run_id},
+            points=(CableLossRow(frequency_ghz="1.0", cable_losses={"cable1": 0.5}),),
+            configuration_snapshot={"schema_version": plan.schema_version},
+            device_summary={"run_id": context.run_id},
         )
         self.assertEqual(plan.to_dict()["frequencies_hz"], [1_000_000_000.0])
         self.assertEqual(context.to_dict()["run_id"], "run-1")
         self.assertEqual(result.to_dict()["run_id"], "run-1")
-        self.assertEqual(result.to_dict()["schema_version"], "1.0")
+        self.assertEqual(result.to_dict()["measurement_type"], "cable_loss")
         self.assertEqual(InstrumentState.CREATED.value, "created")
 
     def test_run_context_copies_and_freezes_resource_mappings(self):
@@ -61,22 +61,28 @@ class Stage1ProtocolTests(unittest.TestCase):
             context.power_channel_mapping["gate"] = "CH3"
 
     def test_specific_result_models_keep_measurement_contracts_explicit(self):
-        cable = CableLossResult(
+        cable = CableLossMeasurementResult(
             run_id="run-1",
-            points=(CableLossPoint(1e9, -2.0, -5.0, 2.0, 5.0),),
+            points=(CableLossRow(frequency_ghz="1.0", cable_losses={"cable1": 2.0}),),
         )
-        driver = DriverPowerMappingResult(
+        driver = DriverPowerMappingMeasurementResult(
             run_id="run-1",
-            points=(DriverPowerMappingPoint(1e9, 0.0, 20.0, 19.0),),
+            points=(DriverPowerPoint(frequency_ghz="1.0", input_power_dbm=0.0, output_power_dbm=19.0),),
         )
         amplifier = AmplifierMeasurementResult(
             run_id="run-1",
-            points=(AmplifierScanPoint(1e9, 0.0, 30.0, 30.0, 28.0, 1.0, 28.0, 50.0),),
-            compression_points_dbm={"1dB": 29.0},
+            frequencies=(
+                AmplifierFrequencyResult(
+                    frequency_ghz="1.0",
+                    small_signal_gain_db=30.0,
+                    sweep_data={"gain": [30.0], "efficiency": [50.0]},
+                ),
+            ),
         )
         self.assertEqual(cable.to_dict()["measurement_type"], "cable_loss")
-        self.assertEqual(driver.points[0].compensated_output_power_dbm, 19.0)
-        self.assertEqual(amplifier.points[0].efficiency_percent, 50.0)
+        self.assertEqual(driver.points[0].output_power_dbm, 19.0)
+        self.assertEqual(amplifier.sweep_rows()["1.0"][0]["efficiency"], 50.0)
+        self.assertIsInstance(cable, MeasurementResult)
 
     def test_cancellation_preserves_emergency_semantics(self):
         token = CancellationToken()

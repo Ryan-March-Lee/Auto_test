@@ -1,37 +1,19 @@
-"""纯 Python 领域模型。"""
+"""纯 Python 领域模型。
+
+测量结果的唯一正式契约在 ``application.dto.measurement_results``；本包只保留运行
+契约、测试方案与会话生命周期模型。
+"""
 
 from .models import (
-    AmplifierMeasurementResult,
-    AmplifierScanPoint,
-    CompressionPoint,
-    CableLossPoint,
-    CableLossResult,
-    DriverPowerMappingPoint,
-    DriverPowerMappingResult,
-    MeasurementResult,
     MeasurementSession,
     MeasurementState,
-    ResultStatus,
-    ResultMetadata,
     RunContext,
-    ScanPoint,
     TestPlan,
 )
 
 __all__ = [
-    "AmplifierMeasurementResult",
-    "AmplifierScanPoint",
-    "CompressionPoint",
-    "CableLossPoint",
-    "CableLossResult",
-    "DriverPowerMappingPoint",
-    "DriverPowerMappingResult",
-    "MeasurementResult",
     "MeasurementSession",
     "MeasurementState",
-    "ResultStatus",
-    "ResultMetadata",
     "RunContext",
-    "ScanPoint",
     "TestPlan",
 ]

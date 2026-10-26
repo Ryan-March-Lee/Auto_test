@@ -1,177 +1,304 @@
-"""正式结果 schema 的解析测试。
+"""正式结果 schema 的唯一读取入口测试。
 
-步骤 6 收敛结果模型后，解析层只接受正式 schema：结果文档必须带 ``run_id``，测量类型
-由 ``cable_losses`` / ``power_mapping`` / ``results`` 之一确定，契约字段只读正式名称。
-历史形状（``canonical_model`` + ``legacy_payload`` 混排、``config`` / ``derived_metrics``
-等旧别名、行式 ``sweep_data``、旧驱动映射对象）必须直接报错。
+步骤 6 收敛结果模型后只有一套正式结果契约（``application.dto.measurement_results``）：
+
+- 文档必须带 ``run_id``、``measurement_type`` 和 ``status``；
+- 测量类型必须与结果数据字段一一对应；
+- 只允许正式字段名：``legacy_payload``、``config``、``derived_metrics``、
+  ``resource_snapshot`` 等旧别名与未知字段一律报错；
+- 行式 ``sweep_data``、列长度不一致、非有限数值、非布尔 ``compression_achieved``
+  都是非正式结果，必须明确报错。
 """
 
-import copy
 import json
 import unittest
 
-from domain.models import AmplifierMeasurementResult, CableLossResult, DriverPowerMappingResult
-from domain.result_reading import parse_result_model
+from application.dto import (
+    AmplifierMeasurementResult,
+    CableLossMeasurementResult,
+    DriverPowerMappingMeasurementResult,
+    MeasurementStatus,
+    MeasurementType,
+    measurement_result_from_document,
+)
 
 
-class ResultSchemaReadingTests(unittest.TestCase):
+def _cable_document(**overrides):
+    document = {
+        "run_id": "cable-run",
+        "measurement_type": "cable_loss",
+        "status": "completed",
+        "attenuator_value": 20.0,
+        "cable_losses": {
+            "1.0": {"total_path1": 10.0, "total_path2": 12.0, "cable1": 1.0},
+        },
+    }
+    document.update(overrides)
+    return document
+
+
+def _driver_document(**overrides):
+    document = {
+        "run_id": "driver-run",
+        "measurement_type": "driver_power_mapping",
+        "status": "completed",
+        "power_mapping": {"1.0": {"-40.0": 5.0, "-30.0": 15.0}},
+    }
+    document.update(overrides)
+    return document
+
+
+def _amplifier_document(**overrides):
+    document = {
+        "run_id": "amp-run",
+        "measurement_type": "amplifier",
+        "status": "completed",
+        "measurement_time": "2026-08-21 10:00:00",
+        "results": {
+            "1.0": {
+                "sweep_data": {
+                    "input_power_dut": [1.0, 2.0],
+                    "output_power_dut": [10.0, 19.0],
+                    "gain": [9.0, 17.0],
+                    "efficiency": [30.0, 40.0],
+                },
+                "compression_point": {
+                    "output_power_dbm": 19.0,
+                    "input_power_dbm": 2.0,
+                    "gain_db": 17.0,
+                },
+                "small_signal_gain_db": 9.0,
+                "compression_achieved": True,
+            }
+        },
+    }
+    document.update(overrides)
+    return document
+
+
+class FormalResultDocumentTests(unittest.TestCase):
     def test_cable_loss_document_becomes_typed_points(self):
-        model = parse_result_model({
-            "run_id": "cable-run",
-            "cable_losses": {
-                "1": {"total_path1": 10, "total_path2": 12, "cable1": 1.0},
-            },
-        })
+        result = measurement_result_from_document(_cable_document())
 
-        self.assertIsInstance(model, CableLossResult)
-        self.assertEqual(len(model.points), 1)
-        self.assertEqual(model.points[0].frequency_hz, 1.0)
-        self.assertEqual(model.points[0].path2_loss_db, 12.0)
-        self.assertEqual(model.points[0].cable_losses_db["cable1"], 1.0)
-
-    def test_cable_loss_invalid_frequency_key_is_rejected(self):
-        with self.assertRaises(ValueError):
-            parse_result_model({
-                "run_id": "cable-run",
-                "cable_losses": {"invalid": {"total_path1": 99}},
-            })
+        self.assertIsInstance(result, CableLossMeasurementResult)
+        self.assertIs(result.measurement_type, MeasurementType.CABLE_LOSS)
+        self.assertIs(result.status, MeasurementStatus.COMPLETED)
+        self.assertEqual(len(result.points), 1)
+        self.assertEqual(result.points[0].frequency_ghz, "1.0")
+        self.assertEqual(result.points[0].cable_losses["cable1"], 1.0)
+        self.assertEqual(result.point_count, 1)
 
     def test_driver_mapping_document_becomes_typed_points(self):
-        model = parse_result_model({
-            "run_id": "driver-run",
-            "power_mapping": {"1.0": {"-40.0": 5.0, "-30.0": 15.0}},
-        })
+        result = measurement_result_from_document(_driver_document())
 
-        self.assertIsInstance(model, DriverPowerMappingResult)
-        self.assertEqual(len(model.points), 2)
-        self.assertEqual(model.points[0].input_power_dbm, -40.0)
-        self.assertEqual(model.points[0].compensated_output_power_dbm, 5.0)
+        self.assertIsInstance(result, DriverPowerMappingMeasurementResult)
+        self.assertEqual(len(result.points), 2)
+        self.assertEqual(result.points[0].input_power_dbm, -40.0)
+        self.assertEqual(result.points[0].output_power_dbm, 5.0)
+        self.assertEqual(
+            result.sweep_rows()["1.0"][1]["gain"], 15.0 - (-30.0)
+        )
+
+    def test_amplifier_document_reads_columnar_sweep_data(self):
+        result = measurement_result_from_document(_amplifier_document())
+
+        self.assertIsInstance(result, AmplifierMeasurementResult)
+        self.assertEqual(len(result.frequencies), 1)
+        frequency = result.frequencies[0]
+        self.assertEqual(frequency.compression_point.output_power_dbm, 19.0)
+        self.assertEqual(frequency.compression_achieved, True)
+        self.assertEqual(len(result.sweep_rows()["1.0"]), 2)
+        self.assertEqual(result.saturation_points()[0]["output_power"], 19.0)
+        self.assertEqual(result.point_count, 2)
+
+    def test_documents_round_trip_through_to_dict(self):
+        for document in (_cable_document(), _driver_document(), _amplifier_document()):
+            with self.subTest(document=document["measurement_type"]):
+                result = measurement_result_from_document(document)
+                restored = measurement_result_from_document(result.to_dict())
+                self.assertEqual(restored.to_dict(), result.to_dict())
+                json.dumps(result.to_dict())
+
+    def test_artifact_metadata_fields_are_accepted(self):
+        document = _cable_document(
+            schema_version="1.0",
+            result_type="cable_loss",
+            saved_at="2026-10-27T00:00:00",
+        )
+        self.assertIsInstance(
+            measurement_result_from_document(document), CableLossMeasurementResult
+        )
+
+
+class NonFormalResultRejectionTests(unittest.TestCase):
+    def test_missing_run_id_is_rejected(self):
+        for document in (_cable_document(), _driver_document(), _amplifier_document()):
+            document.pop("run_id")
+            with self.subTest(document=document["measurement_type"]):
+                with self.assertRaises(ValueError):
+                    measurement_result_from_document(document)
+
+    def test_missing_measurement_type_is_rejected(self):
+        document = _cable_document()
+        document.pop("measurement_type")
+        with self.assertRaises(ValueError):
+            measurement_result_from_document(document)
+
+    def test_unknown_measurement_type_is_rejected(self):
+        with self.assertRaises(ValueError):
+            measurement_result_from_document(_cable_document(measurement_type="unknown"))
+
+    def test_missing_status_is_rejected(self):
+        document = _driver_document()
+        document.pop("status")
+        with self.assertRaises(ValueError):
+            measurement_result_from_document(document)
+
+    def test_measurement_type_must_match_the_result_field(self):
+        with self.assertRaises(ValueError):
+            measurement_result_from_document(
+                _driver_document(cable_losses={"1.0": {"cable1": 1.0}})
+            )
+        with self.assertRaises(ValueError):
+            measurement_result_from_document(
+                _cable_document(measurement_type="amplifier")
+            )
+
+    def test_legacy_payload_and_aliases_are_rejected(self):
+        for key, value in (
+            ("legacy_payload", {"results": {}}),
+            ("config", {"frequency": 1e9}),
+            ("derived_metrics", {"gain_max": 30.0}),
+            ("resource_snapshot", {"analyzer": "sim"}),
+            ("plan_snapshot", {"frequency": 1e9}),
+            ("raw_readings", {"gain": 1.0}),
+            ("metadata", {"run_id": "amp-run"}),
+            ("original_filename", "old.json"),
+        ):
+            with self.subTest(key=key):
+                with self.assertRaises(ValueError):
+                    measurement_result_from_document(_cable_document(**{key: value}))
+
+    def test_unknown_document_field_is_rejected(self):
+        with self.assertRaises(ValueError):
+            measurement_result_from_document(_cable_document(extra_field=1))
+
+    def test_unknown_amplifier_frequency_field_is_rejected(self):
+        document = _amplifier_document()
+        document["results"]["1.0"]["small_signal_gain"] = 9.0
+        with self.assertRaises(ValueError):
+            measurement_result_from_document(document)
+
+    def test_row_shaped_sweep_data_is_rejected(self):
+        with self.assertRaises(ValueError):
+            measurement_result_from_document(
+                _amplifier_document(
+                    results={"1.0": {"sweep_data": [{"gain": 9.0}]}}
+                )
+            )
+
+    def test_mismatched_sweep_columns_are_rejected(self):
+        with self.assertRaises(ValueError):
+            measurement_result_from_document(
+                _amplifier_document(
+                    results={
+                        "1.0": {
+                            "sweep_data": {"gain": [9.0, 17.0], "efficiency": [30.0]}
+                        }
+                    }
+                )
+            )
+
+    def test_non_finite_numbers_are_rejected(self):
+        with self.assertRaises(ValueError):
+            measurement_result_from_document(
+                _driver_document(power_mapping={"1.0": {"-40.0": float("nan")}})
+            )
+        with self.assertRaises(ValueError):
+            measurement_result_from_document(
+                _cable_document(attenuator_value=float("inf"))
+            )
+
+    def test_invalid_frequency_key_is_rejected(self):
+        for document in (
+            _cable_document(cable_losses={"invalid": {"cable1": 1.0}}),
+            _driver_document(power_mapping={"invalid": {"-40.0": 5.0}}),
+            _amplifier_document(results={"invalid": {"sweep_data": {"gain": [1.0]}}}),
+        ):
+            with self.subTest(document=document["measurement_type"]):
+                with self.assertRaises(ValueError):
+                    measurement_result_from_document(document)
 
     def test_driver_mapping_legacy_object_shape_is_rejected(self):
         with self.assertRaises(ValueError):
-            parse_result_model({
-                "run_id": "driver-run",
-                "power_mapping": {
-                    "1.0": {"input_power": 0.0, "output_power": 10.0},
-                },
-            })
-
-    def test_amplifier_document_reads_columnar_sweep_data(self):
-        model = parse_result_model({
-            "run_id": "amp-run",
-            "measurement_time": "2026-08-21 10:00:00",
-            "results": {
-                "1.0": {
-                    "sweep_data": {
-                        "input_power_dut": [1.0, 2.0],
-                        "output_power_dut": [10.0, 19.0],
-                        "gain": [9.0, 17.0],
-                        "efficiency": [30.0, 40.0],
-                    },
-                    "compression_point": {"output_power": 19.0, "gain": 17.0},
-                }
-            },
-        })
-
-        self.assertIsInstance(model, AmplifierMeasurementResult)
-        self.assertEqual(model.run_id, "amp-run")
-        self.assertEqual(model.schema_version, "1.0")
-        self.assertEqual(len(model.points), 2)
-        self.assertEqual(model.points[1].output_power_dbm, 19.0)
-        self.assertEqual(model.compression_points["1.0"].output_power_dbm, 19.0)
-
-    def test_amplifier_row_shaped_sweep_data_is_rejected(self):
-        with self.assertRaises(ValueError):
-            parse_result_model({
-                "run_id": "amp-run",
-                "results": {"1.0": {"sweep_data": [{"gain": 9.0}]}},
-            })
-
-    def test_result_contract_reads_only_formal_field_names(self):
-        model = parse_result_model({
-            "run_id": "trace-run",
-            "configuration_snapshot": {"frequency": 1e9},
-            "device_summary": {"analyzer": "sim"},
-            "raw_data_reference": {"raw_data_path": "raw.csv"},
-            "calculation_summary": {"gain_max": 30.0},
-            "error": "warning",
-            "errors": ["warning"],
-            "cleanup_records": [{"power_off": "ok"}],
-            "created_at": "2026-10-27T00:00:00+00:00",
-            "results": {},
-        })
-
-        self.assertEqual(model.configuration_snapshot["frequency"], 1e9)
-        self.assertEqual(model.device_summary["analyzer"], "sim")
-        self.assertEqual(model.raw_data_reference["raw_data_path"], "raw.csv")
-        self.assertEqual(model.calculation_summary["gain_max"], 30.0)
-        self.assertEqual(model.errors, ("warning",))
-        self.assertEqual(model.cleanup_records[0]["power_off"], "ok")
-        self.assertEqual(model.created_at, "2026-10-27T00:00:00+00:00")
-
-    def test_legacy_field_aliases_are_not_read(self):
-        model = parse_result_model({
-            "run_id": "alias-run",
-            "config": {"frequency": 1e9},
-            "device_summary_legacy": {"analyzer": "sim"},
-            "derived_metrics": {"gain_max": 30.0},
-            "results": {},
-        })
-
-        self.assertEqual(dict(model.configuration_snapshot), {})
-        self.assertEqual(dict(model.calculation_summary), {})
-
-    def test_legacy_payload_wrapper_is_rejected(self):
-        document = {
-            "legacy_payload": {"results": {}},
-            "canonical_model": {"run_id": "canonical-run"},
-        }
-        with self.assertRaises(ValueError):
-            parse_result_model(document)
-
-    def test_document_without_run_id_is_rejected(self):
-        for document in (
-            {"results": {}},
-            {"cable_losses": {}},
-            {"power_mapping": {}},
-        ):
-            with self.subTest(document=document):
-                with self.assertRaises(ValueError):
-                    parse_result_model(document)
-
-    def test_unknown_schema_is_rejected(self):
-        with self.assertRaises(ValueError):
-            parse_result_model({"run_id": "unknown-run", "some_other_field": 1})
+            measurement_result_from_document(
+                _driver_document(
+                    power_mapping={"1.0": {"input_power": 0.0, "output_power": 10.0}}
+                )
+            )
 
     def test_non_mapping_document_is_rejected(self):
         with self.assertRaises(ValueError):
-            parse_result_model(["not", "a", "mapping"])
+            measurement_result_from_document(["not", "a", "mapping"])
 
-    def test_input_mapping_is_not_mutated(self):
-        data = {
-            "run_id": "stable-run",
-            "results": {
-                "1.0": {"sweep_data": {"gain": [9.0, 17.0]}},
-            },
-        }
-        original = copy.deepcopy(data)
 
-        parse_result_model(data)
+class ResultContractValueTests(unittest.TestCase):
+    def test_compression_achieved_parses_false_string(self):
+        document = _amplifier_document()
+        document["results"]["1.0"]["compression_achieved"] = "false"
+        result = measurement_result_from_document(document)
+        self.assertIs(result.frequencies[0].compression_achieved, False)
 
-        self.assertEqual(data, original)
+    def test_invalid_compression_achieved_is_rejected(self):
+        document = _amplifier_document()
+        document["results"]["1.0"]["compression_achieved"] = "maybe"
+        with self.assertRaises(ValueError):
+            measurement_result_from_document(document)
+
+    def test_compression_point_values_are_finite_numbers(self):
+        document = _amplifier_document()
+        document["results"]["1.0"]["compression_point"] = {"output_power_dbm": "oops"}
+        with self.assertRaises(ValueError):
+            measurement_result_from_document(document)
 
     def test_nested_snapshots_are_immutable_and_json_serializable(self):
         source = {"device": {"model": "sim"}, "levels": [1, {"value": 2}]}
-        model = parse_result_model({
-            "run_id": "nested-run",
-            "configuration_snapshot": source,
-            "results": {},
-        })
+        document = _amplifier_document(configuration_snapshot=source)
+        result = measurement_result_from_document(document)
         source["device"]["model"] = "changed"
-        self.assertEqual(model.configuration_snapshot["device"]["model"], "sim")
+        self.assertEqual(result.configuration_snapshot["device"]["model"], "sim")
         with self.assertRaises(TypeError):
-            model.configuration_snapshot["device"]["model"] = "changed"
-        self.assertEqual(json.loads(json.dumps(model.to_dict()))["run_id"], "nested-run")
+            result.configuration_snapshot["device"]["model"] = "changed"
+        self.assertEqual(
+            json.loads(json.dumps(result.to_dict()))["run_id"], "amp-run"
+        )
+
+    def test_result_contract_reads_only_formal_field_names(self):
+        document = _amplifier_document(
+            device_summary={"analyzer": "sim"},
+            raw_data_reference={"raw_data_path": "raw.csv"},
+            calculation_summary={"gain_max": 30.0},
+            error="warning",
+            errors=["warning"],
+            cleanup_records=[{"power_off": "ok"}],
+            created_at="2026-10-27T00:00:00+00:00",
+        )
+        result = measurement_result_from_document(document)
+
+        self.assertEqual(result.device_summary["analyzer"], "sim")
+        self.assertEqual(result.raw_data_reference["raw_data_path"], "raw.csv")
+        self.assertEqual(result.calculation_summary["gain_max"], 30.0)
+        self.assertEqual(result.errors, ("warning",))
+        self.assertEqual(result.cleanup_records[0]["power_off"], "ok")
+        self.assertEqual(result.created_at, "2026-10-27T00:00:00+00:00")
+
+    def test_input_mapping_is_not_mutated(self):
+        document = _amplifier_document()
+        original = json.loads(json.dumps(document))
+
+        measurement_result_from_document(document)
+
+        self.assertEqual(document, original)
 
 
 if __name__ == "__main__":

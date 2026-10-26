@@ -15,6 +15,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from analysis.visualization import DataVisualization as AnalysisDataVisualization
+from application.dto import (
+    AmplifierCompressionPoint,
+    AmplifierFrequencyResult,
+    AmplifierMeasurementResult,
+    CableLossMeasurementResult,
+)
 from infrastructure.filesystem.paths import PathService
 
 
@@ -29,30 +35,40 @@ PLOT_METHODS = (
 )
 
 
-def _sample_data(run_id: str = "viz-run", original_filename: str = "amplifier_measurement_sample.json") -> dict:
-    return {
-        "run_id": run_id,
-        "result_type": "amplifier_measurement",
-        "measurement_time": "2026-01-01 00:00:00",
-        "original_filename": original_filename,
-        "configuration_snapshot": {"frequencies": [1.0]},
-        "results": {
-            "1.0": {
-                "sweep_data": {
+def _sample_result(
+    run_id: str = "viz-run",
+    source_filename: str | None = "amplifier_measurement_sample.json",
+) -> AmplifierMeasurementResult:
+    return AmplifierMeasurementResult(
+        run_id=run_id,
+        measurement_time="2026-01-01 00:00:00",
+        source_filename=source_filename,
+        configuration_snapshot={"frequencies": [1.0]},
+        frequencies=(
+            AmplifierFrequencyResult(
+                frequency_ghz="1.0",
+                compression_type="1dB",
+                compression_point=AmplifierCompressionPoint(
+                    input_power_dbm=-5.0,
+                    output_power_dbm=5.0,
+                    gain_db=10.0,
+                    efficiency_percent=30.0,
+                ),
+                small_signal_gain_db=10.0,
+                compression_achieved=True,
+                sweep_data={
                     "input_power_dut": [-10.0, -5.0],
                     "output_power_dut": [0.0, 5.0],
                     "gain": [10.0, 10.0],
                     "efficiency": [20.0, 30.0],
                 },
-                "compression_point": {
-                    "output_power": 5.0,
-                    "input_power": -5.0,
-                    "gain": 10.0,
-                    "efficiency": 30.0,
-                },
-            }
-        },
-    }
+            ),
+        ),
+    )
+
+
+def _empty_result() -> AmplifierMeasurementResult:
+    return AmplifierMeasurementResult(run_id="empty")
 
 
 def _fake_plot(base_name):
@@ -85,13 +101,13 @@ class VisualizationAnalysisTests(unittest.TestCase):
             target = Path(directory) / "not_yet"
             visualizer = AnalysisDataVisualization(output_dir=target)
             self.assertFalse(target.exists())
-            visualizer.generate_csv_report(_sample_data())
+            visualizer.generate_csv_report(_sample_result())
             self.assertTrue(target.exists())
 
     def test_csv_report_is_generated_from_in_memory_data(self):
         with tempfile.TemporaryDirectory() as directory:
             visualizer = self._visualizer(directory)
-            csv_path = visualizer.generate_csv_report(_sample_data())
+            csv_path = visualizer.generate_csv_report(_sample_result())
             self.assertTrue(csv_path.is_file())
             text = csv_path.read_text(encoding="utf-8-sig")
             self.assertIn("frequency_ghz", text)
@@ -100,13 +116,13 @@ class VisualizationAnalysisTests(unittest.TestCase):
     def test_csv_report_returns_none_without_sweep_data(self):
         with tempfile.TemporaryDirectory() as directory:
             visualizer = self._visualizer(directory)
-            self.assertIsNone(visualizer.generate_csv_report({"results": {}}))
+            self.assertIsNone(visualizer.generate_csv_report(_empty_result()))
 
-    def test_summary_report_assembles_html_from_mapping(self):
+    def test_summary_report_assembles_html_from_result(self):
         with tempfile.TemporaryDirectory() as directory:
             visualizer = self._visualizer(directory)
             with _patch_plots():
-                report = visualizer.create_summary_report(_sample_data())
+                report = visualizer.create_summary_report(_sample_result())
             self.assertTrue(report.is_file())
             html = report.read_text(encoding="utf-8")
             self.assertIn("amplifier_measurement_sample.json", html)
@@ -114,25 +130,30 @@ class VisualizationAnalysisTests(unittest.TestCase):
             self.assertIn("frequencies", html)
             self.assertTrue((visualizer.output_dir / "plot_p_in_vs_p_out.png").is_file())
 
-    def test_summary_report_uses_domain_model_input(self):
-        from domain.result_reading import parse_result_model
-
+    def test_summary_report_uses_formal_result_input(self):
         with tempfile.TemporaryDirectory() as directory:
             visualizer = self._visualizer(directory)
-            model = parse_result_model(_sample_data("model-run"))
+            result = _sample_result("model-run")
             with _patch_plots():
-                report = visualizer.create_summary_report(model)
+                report = visualizer.create_summary_report(result)
             html = report.read_text(encoding="utf-8")
-            self.assertEqual(model.run_id, "model-run")
+            self.assertEqual(result.run_id, "model-run")
             self.assertIn("amplifier_measurement_sample.json", html)
 
+    def test_analysis_rejects_raw_mappings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            visualizer = self._visualizer(directory)
+            with self.assertRaises(ValueError):
+                visualizer.generate_csv_report({"results": {}})
+
     def test_summary_report_escapes_unsafe_html(self):
+        unsafe = '<img src=x onerror=alert(1)>.json'
         with tempfile.TemporaryDirectory() as directory:
             visualizer = self._visualizer(directory)
             with _patch_plots():
                 report = visualizer.create_summary_report(
-                    _sample_data(original_filename='<img src=x onerror=alert(1)>.json'),
-                    original_filename='<img src=x onerror=alert(1)>.json',
+                    _sample_result(source_filename=unsafe),
+                    original_filename=unsafe,
                 )
             html = report.read_text(encoding="utf-8")
             self.assertNotIn("<img src=x", html)
@@ -142,13 +163,13 @@ class VisualizationAnalysisTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             visualizer = self._visualizer(directory)
             with self.assertRaises(ValueError):
-                visualizer.create_summary_report({"run_id": "empty", "results": {}})
+                visualizer.create_summary_report(_empty_result())
 
     def test_summary_report_does_not_trigger_baseline_collection(self):
         with tempfile.TemporaryDirectory() as directory:
             visualizer = self._visualizer(directory)
             with patch("collect_baseline.collect_baseline") as baseline, _patch_plots():
-                visualizer.create_summary_report(_sample_data())
+                visualizer.create_summary_report(_sample_result())
             baseline.assert_not_called()
 
     def test_analysis_module_has_no_infrastructure_imports(self):
@@ -161,38 +182,37 @@ class VisualizationAnalysisTests(unittest.TestCase):
 
 
 class ReportInputTests(unittest.TestCase):
-    def test_report_model_builder_normalizes_and_overrides(self):
-        from application.inputs.result_reading import build_report_model
-        from domain.models import MeasurementResult
+    def test_report_result_builder_applies_overrides(self):
+        from application.inputs.result_reading import build_report_result
 
-        model = build_report_model(
-            _sample_data(),
+        result = build_report_result(
+            _sample_result(),
             configuration={"freq": 4.8},
             original_filename="amp.json",
             measurement_time="2026-02-02 00:00:00",
         )
-        self.assertIsInstance(model, MeasurementResult)
-        self.assertTrue(model.points)
-        self.assertEqual(model.metadata.measurement_time, "2026-02-02 00:00:00")
-        self.assertEqual(dict(model.plan_snapshot), {"freq": 4.8})
-        self.assertEqual(model.raw_readings.get("original_filename"), "amp.json")
+        self.assertIsInstance(result, AmplifierMeasurementResult)
+        self.assertTrue(result.sweep_rows())
+        self.assertEqual(result.measurement_time, "2026-02-02 00:00:00")
+        self.assertEqual(result.source_filename, "amp.json")
+        self.assertEqual(dict(result.configuration_snapshot), {"freq": 4.8})
 
-    def test_report_model_builder_accepts_domain_model(self):
-        from application.inputs.result_reading import build_report_model
-        from domain.result_reading import parse_result_model
+    def test_report_result_builder_accepts_result_without_overrides(self):
+        from application.inputs.result_reading import build_report_result
 
-        model = parse_result_model(_sample_data())
-        rebuilt = build_report_model(model, original_filename="amp.json")
-        self.assertTrue(rebuilt.points)
-        self.assertEqual(rebuilt.raw_readings.get("original_filename"), "amp.json")
+        source = _sample_result()
+        rebuilt = build_report_result(source)
+        self.assertIs(rebuilt, source)
 
-    def test_report_model_builder_rejects_invalid_input(self):
-        from application.inputs.result_reading import build_report_model
+    def test_report_result_builder_rejects_invalid_input(self):
+        from application.inputs.result_reading import build_report_result
 
         with self.assertRaises(ValueError):
-            build_report_model({"results": {}})
+            build_report_result({"results": {}})
         with self.assertRaises(ValueError):
-            build_report_model("not-a-mapping")
+            build_report_result("not-a-mapping")
+        with self.assertRaises(ValueError):
+            build_report_result(CableLossMeasurementResult(run_id="cable-only"))
 
     def test_unique_directory_name_avoids_collisions(self):
         from infrastructure.filesystem.paths import unique_directory_name

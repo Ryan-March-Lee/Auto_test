@@ -16,7 +16,7 @@ from infrastructure.filesystem.paths import PathService
 
 
 # 正式结果在运行目录内使用固定文件名：run_id 已经提供运行级隔离，不再叠加时间戳。
-# 兼容旧数据读取不属于本仓储，历史目录扫描由 FileResultHistoryRepository 负责。
+# 历史浏览只读取运行目录结果，由 infrastructure.gui_data_service 的查询适配器负责。
 RUN_RESULT_FILENAMES: Mapping[str, str] = {
     "cable_loss": "cable_loss_results.json",
     "driver_power_mapping": "driver_power_mapping_results.json",
@@ -28,8 +28,8 @@ class FileMeasurementResultRepository(MeasurementResultRepository):
     """Write measurement results into the current run directory.
 
     本仓储是**正式测量输入/结果写入**的边界；历史查看和导出不得复用它，应使用
-    :class:`infrastructure.persistence.result_history_repository.FileResultHistoryRepository`。
-    写入只产生运行目录内的权威结果，不再额外写全局兼容副本。
+    :class:`infrastructure.gui_data_service.ResultQueryAdapter`。写入只产生运行目录内
+    的权威结果，不再额外写全局兼容副本。
     """
 
     def __init__(

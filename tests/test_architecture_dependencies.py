@@ -407,10 +407,10 @@ class ProductionDependencyTests(unittest.TestCase):
             "TIMESTAMPED_RESULT_PREFIXES",
         ):
             self.assertNotIn(forbidden, storage_source)
-        # 只读历史适配器不得反向依赖正式结果存储实现。
-        self.assertNotIn(
-            "infrastructure.persistence.json_result_repository",
-            {module for module, _alias, _name in _imported_modules(_tree(history_path))},
+        # 旧全局历史适配器已整文件退役，历史查看只读正式运行目录结果。
+        self.assertFalse(
+            history_path.exists(),
+            "步骤 6 已删除旧的全局历史仓储，历史查看不得再扫描 test_results 根目录",
         )
         self.assertTrue((ROOT / "infrastructure" / "persistence" / "json_config_repository.py").is_file())
         self.assertTrue((ROOT / "infrastructure" / "persistence" / "json_result_repository.py").is_file())
@@ -590,7 +590,12 @@ class ProductionDependencyTests(unittest.TestCase):
             modules,
             "历史查看/导出不得复用正式测量结果仓储",
         )
-        self.assertIn("application.ports.result_history", modules)
+        self.assertIn("application.ports.run_history", modules)
+        self.assertNotIn(
+            "application.ports.result_history",
+            modules,
+            "旧全局历史端口已退役，历史查看只读运行目录结果",
+        )
         self.assertNotIn("latest_path(", source)
         self.assertNotIn("FileMeasurementResultRepository", source)
 
@@ -599,7 +604,8 @@ class ProductionDependencyTests(unittest.TestCase):
         source = source_path.read_text(encoding="utf-8-sig")
         modules = {module for module, _alias, _name in _imported_modules(_tree(source_path))}
         self.assertNotIn("infrastructure.persistence.result_repository", modules)
-        self.assertIn("FileResultHistoryRepository", source)
+        self.assertIn("FileRunHistoryRepository", source)
+        self.assertNotIn("FileResultHistoryRepository", source)
 
     def test_gui_history_browsing_uses_the_run_history_port(self):
         """步骤 D3：历史浏览以运行目录历史为首选来源，仍只依赖只读端口。"""
@@ -629,11 +635,15 @@ class ProductionDependencyTests(unittest.TestCase):
 
     def test_history_port_exposes_result_ids_instead_of_paths(self):
         source = (
-            ROOT / "application" / "ports" / "result_history.py"
+            ROOT / "application" / "ports" / "run_history.py"
         ).read_text(encoding="utf-8-sig")
         self.assertNotIn("-> Path", source)
         self.assertNotIn("PathLike", source)
         self.assertIn("result_id: str", source)
+        self.assertFalse(
+            (ROOT / "application" / "ports" / "result_history.py").exists(),
+            "旧全局历史端口已在步骤 6 退役",
+        )
 
     def test_gui_result_dto_does_not_expose_paths(self):
         source = ROOT / "application" / "ports" / "gui_data_service.py"

@@ -140,6 +140,11 @@ def validate_result_filename(filename: str) -> str:
     return filename
 
 
+_FORMAL_RESULT_TYPES = frozenset(
+    {"cable_loss", "driver_power_mapping", "amplifier", "amplifier_measurement"}
+)
+
+
 def save_measurement_result(
     result: Mapping[str, Any],
     *,
@@ -150,34 +155,44 @@ def save_measurement_result(
     encoder: type[json.JSONEncoder] = json.JSONEncoder,
     paths: PathService | None = None,
 ) -> Path:
-    """把测量结果写入当前运行目录，并生成 canonical model。
+    """把正式测量结果写入当前运行目录，并生成 canonical model。
 
-    正式结果只落在运行目录内：不再写 ``test_results/`` 下的固定文件名或时间戳
-    兼容副本。返回值就是本次运行的权威结果路径，调用方据此登记 manifest。
+    写入前把结果文档收敛为正式结果 DTO：非正式 schema（旧字段别名、缺少
+    ``measurement_type`` / ``status``、测量类型与数据字段不一致）在落盘前直接报错，
+    不会写出无法读取的结果。结果文件就是 ``DTO.to_dict()`` 的文档形状，canonical
+    model 工件保存同一个 DTO。
     """
+    from application.dto.measurement_results import measurement_result_from_document
+
+    if result_type not in _FORMAL_RESULT_TYPES:
+        raise ValueError(f"不支持的测量结果类型: {result_type}")
     name = validate_result_filename(filename)
     validate_run_id(run_id)
-    result = _with_run_id(result, run_id, "测量结果")
+    document = measurement_result_from_document(_with_run_id(result, run_id, "测量结果"))
     if run_directory is None:
         run_directory = create_run_directory(run_id, paths=paths)
     archive_path = Path(run_directory) / name
     if archive_path.exists():
         raise FileExistsError(f"归档结果已存在，不允许覆盖: {archive_path}")
-    save_json_result(archive_path, result, result_type=result_type, encoder=encoder)
+    save_json_result(
+        archive_path, document.to_dict(), result_type=result_type, encoder=encoder
+    )
     try:
-        if result_type in {"cable_loss", "driver_power_mapping", "amplifier_measurement", "amplifier"}:
-            from domain.result_reading import parse_result_model
-
-            model = parse_result_model(result)
-            model = replace(
-                model,
-                plan_snapshot=_load_snapshot(Path(run_directory) / "test_plan_snapshot.json"),
-                resource_snapshot=_load_snapshot(Path(run_directory) / "run_mapping_snapshot.json"),
-            )
-            save_measurement_model(
-                model, run_directory=run_directory,
-                filename=f"{result_type}_model.json", encoder=encoder,
-            )
+        model = replace(
+            document,
+            configuration_snapshot=(
+                _load_snapshot(Path(run_directory) / "test_plan_snapshot.json")
+                or document.configuration_snapshot
+            ),
+            device_summary=(
+                _load_snapshot(Path(run_directory) / "run_mapping_snapshot.json")
+                or document.device_summary
+            ),
+        )
+        save_measurement_model(
+            model, run_directory=run_directory,
+            filename=f"{result_type}_model.json", encoder=encoder,
+        )
     except Exception:
         archive_path.unlink(missing_ok=True)
         raise
@@ -203,8 +218,12 @@ def save_measurement_model(
     """把版本化模型工件写入运行目录。
 
     工件只保存正式 ``canonical_model``：原始服务载荷属于运行目录中另行登记的
-    结果文件，不再作为兼容字段复制进模型工件。
+    结果文件，不再作为兼容字段复制进模型工件。模型必须是正式结果 DTO。
     """
+    from application.dto.measurement_results import MeasurementResult
+
+    if not isinstance(model, MeasurementResult):
+        raise ValueError("canonical model 必须是正式结果 DTO")
     run_directory = Path(run_directory)
     ensure_directory(run_directory)
     model_dict = model.to_dict()
@@ -213,12 +232,10 @@ def save_measurement_model(
         "canonical_model": model_dict,
         "run_id": str(model_dict.get("run_id", "")),
         "result_type": "versioned_measurement_result",
-        "schema_version": model_dict.get("schema_version", "1.0"),
-        "method_version": model_dict.get("method_version", "1.0"),
     }
     return save_json_result(
         run_directory / name, payload, result_type="versioned_measurement_result",
-        schema_version=str(model_dict.get("schema_version", "1.0")), encoder=encoder,
+        encoder=encoder,
     )
 
 

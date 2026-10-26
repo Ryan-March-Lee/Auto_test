@@ -1,4 +1,4 @@
-"""运行快照、统一保存和结果读取的测试。"""
+"""运行快照、统一保存和正式结果读取的测试。"""
 
 import json
 import tempfile
@@ -6,23 +6,45 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from application.dto import measurement_result_from_document, normalize_frequency_key
 from infrastructure.persistence.json_result_repository import (
     load_json_result,
-    new_run_id,
     save_measurement_result,
+    save_measurement_model,
     validate_result_filename,
     write_run_snapshot,
 )
-from domain.result_reading import (
-    get_config_snapshot,
-    get_result_metadata,
-    get_saturation_points,
-    get_sweep_dataframe_data,
-    get_sweep_results,
-    normalize_frequency_key,
-    parse_result_model,
-)
-from infrastructure.persistence.json_result_repository import load_json_result
+
+
+def _cable_loss_document(run_id: str = "reading-run") -> dict:
+    return {
+        "run_id": run_id,
+        "measurement_type": "cable_loss",
+        "status": "completed",
+        "attenuator_value": 20.0,
+        "cable_losses": {"1.0": {"total_path1": 10.0, "cable1": 1.0}},
+    }
+
+
+def _amplifier_document(run_id: str = "reading-run") -> dict:
+    return {
+        "run_id": run_id,
+        "measurement_type": "amplifier",
+        "status": "completed",
+        "measurement_time": "2026-08-21 10:00:00",
+        "results": {
+            "1.0": {
+                "sweep_data": {
+                    "input_power_dut": [-10.0, -5.0],
+                    "output_power_dut": [0.0, 5.0],
+                    "gain": [10.0, 10.0],
+                    "efficiency": [20.0, 30.0],
+                },
+                "compression_point": {"output_power_dbm": 5.0, "gain_db": 10.0},
+                "compression_achieved": True,
+            }
+        },
+    }
 
 
 class RunSnapshotTests(unittest.TestCase):
@@ -123,31 +145,61 @@ class RunSnapshotTests(unittest.TestCase):
                     )
             self.assertFalse((Path(directory) / "partial-run").exists())
 
+
 class SaveMeasurementResultTests(unittest.TestCase):
     """统一保存测量结果测试。"""
 
     def test_save_measurement_result_writes_only_the_run_result(self):
-        """统一保存只写入运行目录内的权威结果，不再写全局兼容副本。"""
+        """统一保存只写入运行目录内的权威结果，并生成同一 DTO 的模型工件。"""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             with patch("infrastructure.persistence.json_result_repository.TEST_RESULTS_DIR", root / "test_results"):
-                result = {"measurement_time": "2026-08-21T10:00:00", "data": [1, 2, 3]}
-                run_id = "test-save-001"
+                document = _cable_loss_document("test-save-001")
 
                 archive_path = save_measurement_result(
-                    result,
-                    result_type="test_result",
-                    filename="measurement_result.json",
-                    run_id=run_id,
+                    document,
+                    result_type="cable_loss",
+                    filename="cable_loss_results.json",
+                    run_id="test-save-001",
                 )
 
                 self.assertTrue(archive_path.exists())
-                self.assertEqual(archive_path, root / "test_results" / run_id / "measurement_result.json")
+                self.assertEqual(
+                    archive_path,
+                    root / "test_results" / "test-save-001" / "cable_loss_results.json",
+                )
 
                 archive_data = load_json_result(archive_path)
-                self.assertEqual(archive_data["data"], [1, 2, 3])
-                self.assertEqual(archive_data["run_id"], run_id)
-                self.assertFalse((root / "measurement_result.json").exists())
+                self.assertEqual(archive_data["run_id"], "test-save-001")
+                self.assertEqual(
+                    archive_data["cable_losses"]["1.0"]["cable1"], 1.0
+                )
+                self.assertNotIn("legacy_payload", archive_data)
+
+                model_document = load_json_result(
+                    archive_path.parent / "cable_loss_model.json"
+                )
+                canonical = model_document["canonical_model"]
+                self.assertEqual(
+                    measurement_result_from_document(model_document).to_dict(),
+                    measurement_result_from_document(canonical).to_dict(),
+                )
+
+    def test_save_measurement_result_rejects_non_formal_schema(self):
+        """非正式 schema 在落盘前报错，不会留下归档或模型文件。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_directory = root / "run"
+            run_directory.mkdir()
+            with self.assertRaises(ValueError):
+                save_measurement_result(
+                    {"run_id": "non-formal", "cable_losses": {}},
+                    result_type="cable_loss",
+                    filename="cable_loss_results.json",
+                    run_id="non-formal",
+                    run_directory=run_directory,
+                )
+            self.assertEqual(list(run_directory.iterdir()), [])
 
     def test_snapshot_rejects_mismatched_run_id_before_creating_directory(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -161,23 +213,21 @@ class SaveMeasurementResultTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             with patch("infrastructure.persistence.json_result_repository.TEST_RESULTS_DIR", root / "test_results"):
-                result = {"data": "test"}
-                run_id = "reuse-run"
+                document = _cable_loss_document("reuse-run")
 
-                # 第一次保存
                 archive1 = save_measurement_result(
-                    result,
-                    result_type="test_result",
-                    filename="measurement_result.json",
-                    run_id=run_id,
+                    document,
+                    result_type="cable_loss",
+                    filename="cable_loss_results.json",
+                    run_id="reuse-run",
                 )
 
                 with self.assertRaises(FileExistsError):
                     save_measurement_result(
-                        result,
-                        result_type="test_result",
-                        filename="measurement_result.json",
-                        run_id=run_id,
+                        document,
+                        result_type="cable_loss",
+                        filename="cable_loss_results.json",
+                        run_id="reuse-run",
                     )
                 self.assertTrue(archive1.exists())
 
@@ -188,14 +238,11 @@ class SaveMeasurementResultTests(unittest.TestCase):
             run_directory = root / "custom_run_dir"
             run_directory.mkdir()
 
-            result = {"data": "test"}
-            run_id = "explicit-dir-run"
-
             archive_path = save_measurement_result(
-                result,
-                result_type="test_result",
-                filename="measurement_result.json",
-                run_id=run_id,
+                _cable_loss_document("explicit-dir-run"),
+                result_type="cable_loss",
+                filename="cable_loss_results.json",
+                run_id="explicit-dir-run",
                 run_directory=run_directory,
             )
 
@@ -223,13 +270,27 @@ class SaveMeasurementResultTests(unittest.TestCase):
                 with self.subTest(filename=filename):
                     with self.assertRaises(ValueError):
                         save_measurement_result(
-                            {"data": 1},
-                            result_type="test_result",
+                            _cable_loss_document("unsafe-file"),
+                            result_type="cable_loss",
                             filename=filename,
                             run_id="unsafe-file",
                             run_directory=run_directory,
                         )
                     self.assertFalse(run_directory.exists())
+
+    def test_save_measurement_result_rejects_unknown_result_type(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_directory = Path(directory) / "run"
+            run_directory.mkdir()
+            with self.assertRaises(ValueError):
+                save_measurement_result(
+                    _cable_loss_document("unknown-type"),
+                    result_type="test_result",
+                    filename="result.json",
+                    run_id="unknown-type",
+                    run_directory=run_directory,
+                )
+            self.assertEqual(list(run_directory.iterdir()), [])
 
     def test_validate_result_filename_accepts_a_plain_json_name(self):
         self.assertEqual(
@@ -238,223 +299,55 @@ class SaveMeasurementResultTests(unittest.TestCase):
         )
 
 
-class ResultReadingTests(unittest.TestCase):
-    """结果读取层测试。"""
+class FormalResultReadingTests(unittest.TestCase):
+    """正式结果文档读取与显式行视图测试。"""
 
     def test_normalize_frequency_key(self):
-        """频率键规范化应处理各种输入格式。"""
         self.assertEqual(normalize_frequency_key(1.0), "1.0")
         self.assertEqual(normalize_frequency_key("1.0"), "1.0")
         self.assertEqual(normalize_frequency_key(1), "1.0")
         self.assertEqual(normalize_frequency_key("1"), "1.0")
         self.assertIsNone(normalize_frequency_key(None))
         self.assertIsNone(normalize_frequency_key("invalid"))
+        self.assertIsNone(normalize_frequency_key(True))
 
-    def test_get_sweep_results_extracts_and_normalizes(self):
-        """get_sweep_results 应提取扫描数据并规范化频率键。"""
-        data = {
-            "results": {
-                "1.0": {"sweep_data": [1, 2, 3]},
-                2.0: {"sweep_data": [4, 5, 6]},
-                "invalid": {"sweep_data": [7, 8, 9]},
-            }
-        }
+    def test_amplifier_document_exposes_sweep_rows(self):
+        model = measurement_result_from_document(_amplifier_document())
 
-        sweep_results = get_sweep_results(data)
+        sweep = model.sweep_rows()["1.0"]
+        self.assertEqual(len(sweep), 2)
+        self.assertEqual(sweep[1]["gain"], 10.0)
+        self.assertEqual(model.saturation_points()[0]["output_power"], 5.0)
+        self.assertEqual(model.point_count, 2)
+        self.assertEqual(model.measurement_time, "2026-08-21 10:00:00")
 
-        self.assertIn("1.0", sweep_results)
-        self.assertIn("2.0", sweep_results)
-        self.assertNotIn("invalid", sweep_results)
-        self.assertEqual(sweep_results["1.0"]["sweep_data"], [1, 2, 3])
+    def test_cable_loss_document_exposes_report_rows(self):
+        model = measurement_result_from_document(_cable_loss_document())
 
-    def test_get_sweep_results_handles_missing_data(self):
-        """get_sweep_results 应处理缺失或空数据。"""
-        self.assertEqual(get_sweep_results({}), {})
-        self.assertEqual(get_sweep_results({"results": None}), {})
-        self.assertEqual(get_sweep_results({"results": "not a dict"}), {})
+        self.assertEqual(model.report_rows()[0]["cable1"], 1.0)
+        self.assertEqual(model.sweep_rows(), {})
 
-    def test_get_saturation_points_extracts_compression_data(self):
-        """get_saturation_points 应提取压缩点数据。"""
-        data = {
-            "results": {
-                "1.0": {
-                    "compression_point": {
-                        "output_power": 30.0,
-                        "gain": 10.0,
-                        "efficiency": 50.0,
-                    }
-                },
-                "2.0": {
-                    "compression_point": {
-                        "output_power": 32.0,
-                        "gain": 12.0,
-                        "efficiency": 55.0,
-                    }
-                },
-            }
-        }
-
-        sat_points = get_saturation_points(data)
-
-        self.assertEqual(len(sat_points), 2)
-        self.assertEqual(sat_points[0]["frequency"], "1.0")
-        self.assertEqual(sat_points[0]["output_power"], 30.0)
-        self.assertEqual(sat_points[1]["frequency"], "2.0")
-        self.assertEqual(sat_points[1]["output_power"], 32.0)
-
-    def test_get_saturation_points_handles_missing_compression(self):
-        """get_saturation_points 应处理缺少压缩点的情况。"""
-        data = {
-            "results": {
-                "1.0": {"sweep_data": [1, 2, 3]},  # 没有 compression_point
-                "2.0": {"compression_point": {}},  # 空的 compression_point
-            }
-        }
-
-        sat_points = get_saturation_points(data)
-        self.assertEqual(sat_points, [])
-
-    def test_get_sweep_dataframe_data_extracts_and_flattens(self):
-        """get_sweep_dataframe_data 应提取并展平列式扫描数据。"""
-        data = {
-            "results": {
-                "1.0": {
-                    "sweep_data": {
-                        "input_power_dut": [0.0],
-                        "output_power_dut": [10.0],
-                        "gain": [10.0],
-                        "efficiency": [20.0],
-                        "voltages": [{"CH1": 5.0, "CH2": 10.0}],
-                        "currents": [{"CH1": 1.0, "CH2": 2.0}],
-                    }
-                }
-            }
-        }
-
-        df_data = get_sweep_dataframe_data(data)
-
-        self.assertIn("1.0", df_data)
-        self.assertEqual(len(df_data["1.0"]), 1)
-
-        point = df_data["1.0"][0]
-        self.assertEqual(point["input_power_dut"], 0.0)
-        self.assertEqual(point["output_power_dut"], 10.0)
-        self.assertEqual(point["gain"], 10.0)
-        self.assertEqual(point["efficiency"], 20.0)
-        self.assertEqual(point["V_CH1"], 5.0)
-        self.assertEqual(point["V_CH2"], 10.0)
-        self.assertEqual(point["I_CH1"], 1.0)
-        self.assertEqual(point["I_CH2"], 2.0)
-
-    def test_get_result_metadata_extracts_fields(self):
-        """get_result_metadata 应提取元数据字段。"""
-        data = {
-            "schema_version": "1.0",
-            "result_type": "amplifier_measurement",
-            "saved_at": "2026-08-21T10:00:00",
-            "measurement_time": "2026-08-21T09:55:00",
-            "original_filename": "test.json",
-        }
-
-        metadata = get_result_metadata(data)
-
-        self.assertEqual(metadata["schema_version"], "1.0")
-        self.assertEqual(metadata["result_type"], "amplifier_measurement")
-        self.assertEqual(metadata["saved_at"], "2026-08-21T10:00:00")
-        self.assertEqual(metadata["measurement_time"], "2026-08-21T09:55:00")
-        self.assertEqual(metadata["original_filename"], "test.json")
-
-    def test_get_config_snapshot_extracts_config(self):
-        """get_config_snapshot 只读取正式 configuration_snapshot。"""
-        data = {
-            "configuration_snapshot": {
-                "test_frequencies": [1.0, 2.0],
-                "signal_source": {"start_power": 0, "stop_power": 10},
-            }
-        }
-
-        config = get_config_snapshot(data)
-
-        self.assertEqual(config["test_frequencies"], [1.0, 2.0])
-        self.assertEqual(config["signal_source"]["start_power"], 0)
-
-    def test_get_config_snapshot_handles_missing_config(self):
-        """get_config_snapshot 应处理缺失配置的情况。"""
-        self.assertEqual(get_config_snapshot({}), {})
-        self.assertEqual(get_config_snapshot({"configuration_snapshot": None}), {})
-        self.assertEqual(get_config_snapshot({"configuration_snapshot": "not a dict"}), {})
-        # 旧字段别名 config 不再被读取。
-        self.assertEqual(get_config_snapshot({"config": {"frequency": 1.0}}), {})
-
-    def test_amplifier_result_document_adapts_to_versioned_model(self):
-        document = {
-            "run_id": "amp-run",
-            "measurement_time": "2026-08-21 10:00:00",
-            "results": {
-                "1.0": {
-                    "sweep_data": {
-                        "input_power_dut": [1.0, 2.0],
-                        "output_power_dut": [10.0, 19.0],
-                        "gain": [9.0, 17.0],
-                        "efficiency": [30.0, 40.0],
-                    },
-                    "compression_point": {"output_power": 19.0, "gain": 17.0},
-                }
-            },
-        }
-        model = parse_result_model(document)
-        self.assertEqual(model.run_id, "amp-run")
-        self.assertEqual(model.schema_version, "1.0")
-        self.assertEqual(len(model.points), 2)
-        self.assertEqual(model.points[1].output_power_dbm, 19.0)
-        self.assertEqual(get_sweep_dataframe_data(model)["1.0"][0]["gain"], 9.0)
-        self.assertEqual(get_saturation_points(model)[0]["gain"], 17.0)
-
-    def test_model_analysis_does_not_require_raw_amplifier_results(self):
-        from domain.models import AmplifierMeasurementResult, CompressionPoint
-
-        model = AmplifierMeasurementResult(
-            run_id="run-1",
-            points=(),
-            raw_readings={},
-            compression_points={"1.0": CompressionPoint(output_power_dbm=25.0, gain_db=12.0)},
-        )
-        points = get_saturation_points(model)
-        self.assertEqual(points[0]["output_power"], 25.0)
-        self.assertEqual(points[0]["gain"], 12.0)
-
-    def test_cable_and_driver_results_use_specific_models(self):
-        from domain.models import CableLossResult, DriverPowerMappingResult
-
-        cable = parse_result_model({"run_id": "cable-run", "cable_losses": {"1.0": {
-            "cable1": 1.2, "total_path1": 30.0, "total_path2": 31.0,
-        }}})
-        driver = parse_result_model({"run_id": "driver-run", "power_mapping": {"1.0": {
-            "0.0": 11.0, "1.0": 12.0,
-        }}})
-        self.assertIsInstance(cable, CableLossResult)
-        self.assertEqual(cable.points[0].cable_losses_db["cable1"], 1.2)
-        self.assertIsInstance(driver, DriverPowerMappingResult)
-        self.assertEqual(len(driver.points), 2)
-        self.assertEqual(driver.points[0].compensated_output_power_dbm, 11.0)
-        self.assertEqual(cable.points[0].path1_output_power_dbm, None)
-        self.assertEqual(cable.points[0].path1_loss_db, 30.0)
-
-    def test_driver_legacy_object_mapping_is_rejected(self):
-        with self.assertRaises(ValueError):
-            parse_result_model({"run_id": "driver-run", "power_mapping": {"1.0": {
-                "input_power": 0.0, "output_power": 10.0, "actual_output_power": 11.0,
-            }}})
-
-    def test_parse_result_model_reads_formal_result_json(self):
+    def test_formal_result_json_is_readable(self):
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "result.json"
-            path.write_text(json.dumps({
-                "run_id": "driver-run",
-                "power_mapping": {"2.0": {"1.0": 5.0}},
-            }), encoding="utf-8")
-            model = parse_result_model(load_json_result(path))
-        self.assertEqual(model.points[0].frequency_hz, 2.0)
+            path = Path(directory) / "amplifier_measurement_results.json"
+            path.write_text(
+                json.dumps(_amplifier_document("file-run")), encoding="utf-8"
+            )
+
+            model = measurement_result_from_document(load_json_result(path))
+
+        self.assertEqual(model.run_id, "file-run")
+        self.assertEqual(model.sweep_rows()["1.0"][0]["input_power_dut"], -10.0)
+
+    def test_canonical_model_artifact_round_trips(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = measurement_result_from_document(_amplifier_document("artifact-run"))
+            path = save_measurement_model(model, run_directory=root)
+
+            restored = measurement_result_from_document(load_json_result(path))
+
+        self.assertEqual(restored.to_dict(), model.to_dict())
 
 
 if __name__ == "__main__":

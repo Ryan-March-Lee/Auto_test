@@ -18,6 +18,7 @@ from .measurement_results import (
     MeasurementStatus,
     MeasurementType,
     measurement_result_from_document,
+    normalize_frequency_key,
 )
 
 __all__ = [
@@ -36,4 +37,5 @@ __all__ = [
     "AmplifierCompressionPoint",
     "AmplifierFrequencyResult",
     "measurement_result_from_document",
+    "normalize_frequency_key",
 ]

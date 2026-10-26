@@ -83,7 +83,7 @@ class ExportPage(QWidget):
     def _source_label(result_file: ResultFileDto) -> str:
         if result_file.source == RESULT_SOURCE_RUN and result_file.run_id:
             return f"运行 {result_file.run_id}"
-        return "历史兼容副本"
+        return "未登记来源"
 
     def _selected_file(self) -> ResultFileDto | None:
         row = self.file_table.currentRow()

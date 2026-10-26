@@ -1,4 +1,4 @@
-"""三类正式测量结果的应用层契约。
+"""三类正式测量结果的唯一应用层契约。
 
 结果模型只描述正式结果：
 
@@ -6,14 +6,21 @@
 - 驱动映射按频点保存“输入功率 -> 输出功率”点；
 - 主功放按频点保存压缩点、小信号增益和扫描数据。
 
-结果不再继承 ``Mapping``，也不再保存服务层的原始载荷；``to_dict`` 是唯一的结果
-文档形状，``measurement_result_from_document`` 只接受该形状，其它 schema 直接
-报错，不存在按字段猜测历史格式的兼容路径。
+结果不继承 ``Mapping``，也不保存服务层的原始载荷。``to_dict()`` 是唯一的结果
+文档形状，``measurement_result_from_document()`` 是唯一读取入口：文档必须同时带
+``measurement_type``、``status`` 和非空 ``run_id``，且只允许正式字段名。旧字段别名
+（``legacy_payload``、``config``、``derived_metrics``、``resource_snapshot`` 等）、
+行式 ``sweep_data``、测量类型与数据字段不匹配的文档一律 ``ValueError``，不存在按
+字段猜测历史格式的兼容路径。
+
+展示、报告与导出只使用本模块的显式属性（``report_rows()``、``sweep_rows()``、
+``saturation_points()``），因此不需要把结果当成 ``Mapping[str, Any]`` 读取。
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import math
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
@@ -72,6 +79,16 @@ def thaw(value: Any) -> Any:
     return value
 
 
+def normalize_frequency_key(value: Any) -> str | None:
+    """把频率键规范化为 ``float`` 的字符串形式；无效值返回 ``None``。"""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return str(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
 # -- 结果数据 ---------------------------------------------------------------
 
 
@@ -83,8 +100,9 @@ class CableLossRow:
     cable_losses: Mapping[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.frequency_ghz, str) or not self.frequency_ghz.strip():
-            raise ValueError("线损结果的频点标识不能为空")
+        object.__setattr__(
+            self, "frequency_ghz", _frequency_key(self.frequency_ghz, "线损结果")
+        )
         object.__setattr__(
             self, "cable_losses", _float_mapping(self.cable_losses, "cable_losses")
         )
@@ -99,15 +117,19 @@ class DriverPowerPoint:
     output_power_dbm: float
 
     def __post_init__(self) -> None:
-        if not isinstance(self.frequency_ghz, str) or not self.frequency_ghz.strip():
-            raise ValueError("驱动映射结果的频点标识不能为空")
+        object.__setattr__(
+            self, "frequency_ghz", _frequency_key(self.frequency_ghz, "驱动映射结果")
+        )
         object.__setattr__(self, "input_power_dbm", _float(self.input_power_dbm, "input_power_dbm"))
         object.__setattr__(self, "output_power_dbm", _float(self.output_power_dbm, "output_power_dbm"))
 
 
 @dataclass(frozen=True)
 class AmplifierCompressionPoint:
-    """主功放的压缩点指标，字段缺失表示该指标未计算。"""
+    """主功放的压缩点指标，字段缺失表示该指标未计算。
+
+    所有字段都是 dB / dBm / % 的有限数值或 ``None``；构造时统一转换并拒绝非有限值。
+    """
 
     input_power_dbm: float | None = None
     output_power_dbm: float | None = None
@@ -115,6 +137,19 @@ class AmplifierCompressionPoint:
     efficiency_percent: float | None = None
     compression_db: float | None = None
     signal_generator_power_dbm: float | None = None
+
+    def __post_init__(self) -> None:
+        for name in (
+            "input_power_dbm",
+            "output_power_dbm",
+            "gain_db",
+            "efficiency_percent",
+            "compression_db",
+            "signal_generator_power_dbm",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(self, name, _float(value, name))
 
 
 @dataclass(frozen=True)
@@ -129,24 +164,53 @@ class AmplifierFrequencyResult:
     sweep_data: Mapping[str, tuple[Any, ...]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.frequency_ghz, str) or not self.frequency_ghz.strip():
-            raise ValueError("主功放结果的频点标识不能为空")
+        object.__setattr__(
+            self, "frequency_ghz", _frequency_key(self.frequency_ghz, "主功放结果")
+        )
         if self.compression_point is not None and not isinstance(
             self.compression_point, AmplifierCompressionPoint
         ):
             raise ValueError("compression_point 必须是 AmplifierCompressionPoint")
+        if self.small_signal_gain_db is not None:
+            object.__setattr__(
+                self,
+                "small_signal_gain_db",
+                _float(self.small_signal_gain_db, "small_signal_gain_db"),
+            )
+        if self.compression_achieved is not None and not isinstance(
+            self.compression_achieved, bool
+        ):
+            raise ValueError("compression_achieved 必须是布尔值")
         object.__setattr__(self, "sweep_data", _columns(self.sweep_data, "sweep_data"))
+
+    def sweep_rows(self) -> tuple[dict[str, Any], ...]:
+        """把列式扫描数据展开为逐点行，供绘图和报告使用。"""
+        columns = self.sweep_data
+        count = len(next(iter(columns.values()))) if columns else 0
+        rows = []
+        for index in range(count):
+            row: dict[str, Any] = {}
+            for name, values in columns.items():
+                value = values[index]
+                if name == "voltages" and isinstance(value, Mapping):
+                    row.update({f"V_{key}": item for key, item in value.items()})
+                elif name == "currents" and isinstance(value, Mapping):
+                    row.update({f"I_{key}": item for key, item in value.items()})
+                else:
+                    row[name] = value
+            rows.append(row)
+        return tuple(rows)
 
 
 # -- 结果契约 ---------------------------------------------------------------
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class MeasurementResult:
     """跨三类测量共享的正式结果契约；子类补充测量类型特有字段。"""
 
     measurement_type: MeasurementType | str
-    status: MeasurementStatus | str
+    status: MeasurementStatus | str = MeasurementStatus.COMPLETED
     run_id: str
     error: str | None = None
     errors: tuple[str, ...] = ()
@@ -158,6 +222,8 @@ class MeasurementResult:
     calculation_summary: Mapping[str, Any] = field(default_factory=dict)
     result_reference: Mapping[str, Any] = field(default_factory=dict)
     created_at: str | None = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    measurement_time: str | None = None
+    source_filename: str | None = None
 
     def __post_init__(self) -> None:
         measurement_type = _enum_value(self.measurement_type, MeasurementType, "measurement_type")
@@ -213,9 +279,43 @@ class MeasurementResult:
                 "errors": list(self.errors),
                 "cleanup_records": thaw(self.cleanup_records),
                 "result_reference": thaw(self.result_reference),
+                "measurement_time": self.measurement_time,
+                "source_filename": self.source_filename,
             }
         )
         return document
+
+    def report_rows(self) -> tuple[dict[str, Any], ...]:
+        """报告与 CSV 使用的逐行数据；基类结果没有结果行。"""
+        return ()
+
+    def sweep_rows(self) -> Mapping[str, tuple[dict[str, Any], ...]]:
+        """按频点分组的扫描行；没有扫描数据时为空。"""
+        return {}
+
+    def saturation_points(self) -> tuple[dict[str, Any], ...]:
+        """压缩点/饱和点摘要；没有压缩点结果时为空。"""
+        return ()
+
+    @property
+    def point_count(self) -> int:
+        """结果行数；报告用它判断结果是否可绘制。"""
+        return len(self.report_rows())
+
+    @property
+    def measurement_type_value(self) -> str:
+        """测量类型的正式字符串值，供报告与导出使用。"""
+        return self.measurement_type.value
+
+    @property
+    def status_value(self) -> str:
+        """结果状态的正式字符串值，供报告与导出使用。"""
+        return self.status.value
+
+    @property
+    def is_amplifier(self) -> bool:
+        """是否为可生成功放报告的主功放结果。"""
+        return self.measurement_type is MeasurementType.AMPLIFIER
 
     def with_saved_result(self, *, archive_path: str | None = None) -> "MeasurementResult":
         """登记运行目录中的权威结果路径。"""
@@ -283,6 +383,14 @@ class CableLossMeasurementResult(MeasurementResult):
             },
         }
 
+    def report_rows(self) -> tuple[dict[str, Any], ...]:
+        rows = []
+        for row in self.points:
+            entry: dict[str, Any] = {"frequency_ghz": row.frequency_ghz}
+            entry.update(row.cable_losses)
+            rows.append(entry)
+        return tuple(rows)
+
 
 @dataclass(frozen=True, kw_only=True)
 class DriverPowerMappingMeasurementResult(MeasurementResult):
@@ -337,6 +445,29 @@ class DriverPowerMappingMeasurementResult(MeasurementResult):
             ] = point.output_power_dbm
         return {"power_mapping": mapping}
 
+    def report_rows(self) -> tuple[dict[str, Any], ...]:
+        return tuple(
+            {
+                "frequency_ghz": point.frequency_ghz,
+                "input_power_dbm": point.input_power_dbm,
+                "output_power_dbm": point.output_power_dbm,
+                "gain_db": point.output_power_dbm - point.input_power_dbm,
+            }
+            for point in self.points
+        )
+
+    def sweep_rows(self) -> Mapping[str, tuple[dict[str, Any], ...]]:
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for point in self.points:
+            grouped.setdefault(point.frequency_ghz, []).append(
+                {
+                    "input_power_sg": point.input_power_dbm,
+                    "output_power_driver": point.output_power_dbm,
+                    "gain": point.output_power_dbm - point.input_power_dbm,
+                }
+            )
+        return {frequency: tuple(rows) for frequency, rows in grouped.items()}
+
 
 @dataclass(frozen=True, kw_only=True)
 class AmplifierMeasurementResult(MeasurementResult):
@@ -362,8 +493,8 @@ class AmplifierMeasurementResult(MeasurementResult):
         return cls(
             run_id=run_id,
             status=_service_status(payload.get("status")),
-            frequencies=_amplifier_frequencies(payload.get("results")),
-            configuration_snapshot=payload.get("config", {}),
+            frequencies=_amplifier_frequencies_from_service(payload.get("results")),
+            configuration_snapshot=payload.get("configuration_snapshot", {}),
         )
 
     @classmethod
@@ -375,7 +506,7 @@ class AmplifierMeasurementResult(MeasurementResult):
         return cls(
             run_id=run_id,
             status=_document_status(document),
-            frequencies=_amplifier_frequencies(document.get("results")),
+            frequencies=_amplifier_frequencies_from_document(document.get("results")),
             created_at=_created_at(document),
             **_contract_fields(document),
         )
@@ -387,39 +518,189 @@ class AmplifierMeasurementResult(MeasurementResult):
             }
         }
 
+    def report_rows(self) -> tuple[dict[str, Any], ...]:
+        rows = []
+        for item in self.frequencies:
+            for sweep_row in item.sweep_rows():
+                entry: dict[str, Any] = {"frequency_ghz": item.frequency_ghz}
+                entry.update(sweep_row)
+                rows.append(entry)
+        return tuple(rows)
+
+    def sweep_rows(self) -> Mapping[str, tuple[dict[str, Any], ...]]:
+        return {
+            item.frequency_ghz: item.sweep_rows()
+            for item in self.frequencies
+            if item.sweep_data
+        }
+
+    def saturation_points(self) -> tuple[dict[str, Any], ...]:
+        points = []
+        for item in self.frequencies:
+            point = item.compression_point
+            if point is None:
+                continue
+            points.append(
+                {
+                    "frequency": item.frequency_ghz,
+                    "output_power": point.output_power_dbm,
+                    "input_power": point.input_power_dbm,
+                    "gain": point.gain_db,
+                    "efficiency": point.efficiency_percent,
+                    "sg_power": point.signal_generator_power_dbm,
+                    "compression": point.compression_db,
+                    "compression_achieved": item.compression_achieved,
+                }
+            )
+        return tuple(points)
+
 
 def measurement_result_from_document(document: Mapping[str, Any]) -> MeasurementResult:
     """把运行目录中的正式结果文档转换为显式结果 DTO。
 
-    只接受 ``to_dict`` 产生的正式 schema：缺少 ``run_id`` 或测量类型无法识别时抛出
-    ``ValueError``，不会按字段猜测历史格式。
+    只接受 ``to_dict()`` 产生的正式 schema：
+
+    - ``run_id``、``measurement_type``、``status`` 必须存在且有效；
+    - 测量类型必须与结果数据字段一一对应（``cable_losses`` / ``power_mapping`` /
+      ``results``），类型与数据不一致视为非正式文档；
+    - 旧字段别名、``legacy_payload``、未知字段一律 ``ValueError``。
+
+    不做按字段猜测历史格式的兼容推断。
     """
     if not isinstance(document, Mapping):
         raise ValueError("测量结果文档必须是映射对象")
+    canonical = document.get("canonical_model")
+    if canonical is not None:
+        artifact_extras = set(document) - {
+            "canonical_model",
+            "run_id",
+            "result_type",
+            "schema_version",
+            "saved_at",
+        }
+        if artifact_extras:
+            raise ValueError(
+                "版本化模型工件包含未知字段: " + ", ".join(sorted(artifact_extras))
+            )
+        result = measurement_result_from_document(canonical)
+        artifact_run_id = document.get("run_id")
+        if artifact_run_id is not None and artifact_run_id != result.run_id:
+            raise ValueError("版本化模型工件的 run_id 与 canonical_model 不一致")
+        return result
     run_id = document.get("run_id")
     if not isinstance(run_id, str) or not run_id.strip():
         raise ValueError("正式测量结果必须包含非空 run_id")
-    kind = str(document.get("measurement_type") or _infer_measurement_type(document))
-    if kind in {MeasurementType.CABLE_LOSS.value} or "cable_losses" in document:
+    declared = document.get("measurement_type")
+    if not isinstance(declared, str) or not declared.strip():
+        raise ValueError("正式测量结果必须包含 measurement_type")
+    try:
+        kind = MeasurementType(declared)
+    except ValueError as error:
+        raise ValueError(f"无法识别的正式测量结果 measurement_type: {declared!r}") from error
+    legacy = sorted(_LEGACY_DOCUMENT_KEYS & set(document))
+    if legacy:
+        raise ValueError(f"不是正式结果 schema：包含旧字段 {', '.join(legacy)}")
+    data_fields = _TYPE_ALLOWED_FIELDS[kind]
+    others = sorted(
+        {
+            field
+            for other, fields in _TYPE_ALLOWED_FIELDS.items()
+            if other is not kind
+            for field in fields
+        }
+        & set(document)
+    )
+    if others:
+        raise ValueError(
+            f"{kind.value} 结果不能包含其它测量类型字段: {', '.join(others)}"
+        )
+    missing = sorted(field for field in _TYPE_REQUIRED_FIELDS[kind] if field not in document)
+    if missing:
+        raise ValueError(f"{kind.value} 结果缺少正式字段: {', '.join(missing)}")
+    allowed = _COMMON_DOCUMENT_KEYS | data_fields | _ARTIFACT_METADATA_KEYS
+    unknown = sorted(set(document) - allowed)
+    if unknown:
+        raise ValueError(f"不是正式结果 schema：包含未知字段 {', '.join(unknown)}")
+    if kind is MeasurementType.CABLE_LOSS:
         return CableLossMeasurementResult.from_document(document, run_id=run_id)
-    if kind in {MeasurementType.DRIVER_POWER_MAPPING.value} or "power_mapping" in document:
+    if kind is MeasurementType.DRIVER_POWER_MAPPING:
         return DriverPowerMappingMeasurementResult.from_document(document, run_id=run_id)
-    if kind in {MeasurementType.AMPLIFIER.value, "amplifier_measurement"} or "results" in document:
-        return AmplifierMeasurementResult.from_document(document, run_id=run_id)
-    raise ValueError(f"无法识别的正式测量结果 schema: measurement_type={kind!r}")
+    return AmplifierMeasurementResult.from_document(document, run_id=run_id)
 
 
 # -- 内部工具 ---------------------------------------------------------------
 
 
-def _infer_measurement_type(document: Mapping[str, Any]) -> str:
-    if "cable_losses" in document:
-        return MeasurementType.CABLE_LOSS.value
-    if "power_mapping" in document:
-        return MeasurementType.DRIVER_POWER_MAPPING.value
-    if "results" in document:
-        return MeasurementType.AMPLIFIER.value
-    return ""
+_COMMON_DOCUMENT_KEYS = frozenset(
+    {
+        "measurement_type",
+        "status",
+        "run_id",
+        "error",
+        "errors",
+        "cleanup_records",
+        "termination",
+        "configuration_snapshot",
+        "device_summary",
+        "raw_data_reference",
+        "calculation_summary",
+        "result_reference",
+        "created_at",
+        "measurement_time",
+        "source_filename",
+    }
+)
+_TYPE_REQUIRED_FIELDS: Mapping[MeasurementType, frozenset[str]] = MappingProxyType(
+    {
+        MeasurementType.CABLE_LOSS: frozenset({"cable_losses"}),
+        MeasurementType.DRIVER_POWER_MAPPING: frozenset({"power_mapping"}),
+        MeasurementType.AMPLIFIER: frozenset({"results"}),
+    }
+)
+_TYPE_ALLOWED_FIELDS: Mapping[MeasurementType, frozenset[str]] = MappingProxyType(
+    {
+        MeasurementType.CABLE_LOSS: frozenset({"attenuator_value", "cable_losses"}),
+        MeasurementType.DRIVER_POWER_MAPPING: frozenset({"power_mapping"}),
+        MeasurementType.AMPLIFIER: frozenset({"results"}),
+    }
+)
+# 结果文件由写入层补充的工件元数据；它们是正式字段，不是历史别名。
+_ARTIFACT_METADATA_KEYS = frozenset({"schema_version", "result_type", "saved_at"})
+# 步骤 6 已退役的旧文档字段；出现即视为非正式 schema。
+_LEGACY_DOCUMENT_KEYS = frozenset(
+    {
+        "legacy_payload",
+        "payload",
+        "summary",
+        "data_reference",
+        "config",
+        "derived_metrics",
+        "resource_snapshot",
+        "plan_snapshot",
+        "raw_readings",
+        "metadata",
+        "original_filename",
+    }
+)
+
+
+def _number(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _frequency_key(value: Any, label: str) -> str:
+    """校验频点标识：必须能解析为有限正数；保留原始字符串形式。"""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label}的频点标识不能为空")
+    number = _number(value)
+    if number is None or not math.isfinite(number) or number <= 0:
+        raise ValueError(f"{label}的频点标识非法: {value!r}")
+    return value
 
 
 def _document_status(document: Mapping[str, Any]) -> MeasurementStatus:
@@ -476,7 +757,31 @@ def _power_mapping_points(value: Any) -> tuple[DriverPowerPoint, ...]:
     return tuple(points)
 
 
-def _amplifier_frequencies(value: Any) -> tuple[AmplifierFrequencyResult, ...]:
+_AMPLIFIER_DOCUMENT_KEYS = frozenset(
+    {
+        "compression_type",
+        "compression_point",
+        "small_signal_gain_db",
+        "compression_achieved",
+        "sweep_data",
+    }
+)
+_AMPLIFIER_COMPRESSION_DOCUMENT_KEYS = frozenset(
+    {
+        "input_power_dbm",
+        "output_power_dbm",
+        "gain_db",
+        "efficiency_percent",
+        "compression_db",
+        "signal_generator_power_dbm",
+    }
+)
+
+
+def _amplifier_frequencies_from_service(
+    value: Any,
+) -> tuple[AmplifierFrequencyResult, ...]:
+    """读取测量服务载荷（``results``）；服务字段名只在本函数内翻译一次。"""
     if value is None:
         return ()
     if not isinstance(value, Mapping):
@@ -485,11 +790,16 @@ def _amplifier_frequencies(value: Any) -> tuple[AmplifierFrequencyResult, ...]:
     for frequency, item in value.items():
         if not isinstance(item, Mapping):
             raise ValueError(f"主功放结果 {frequency!r} 必须是映射")
+        point = item.get("compression_point")
         results.append(
             AmplifierFrequencyResult(
                 frequency_ghz=str(frequency),
                 compression_type=_optional_text(item.get("compression_type")),
-                compression_point=_compression_point(item.get("compression_point")),
+                compression_point=_compression_point(
+                    point,
+                    reader=_service_compression_point,
+                    name="compression_point",
+                ),
                 small_signal_gain_db=_float_or_none(item.get("small_signal_gain")),
                 compression_achieved=_optional_bool(item.get("compression_achieved")),
                 sweep_data=item.get("sweep_data", {}),
@@ -498,21 +808,84 @@ def _amplifier_frequencies(value: Any) -> tuple[AmplifierFrequencyResult, ...]:
     return tuple(results)
 
 
-def _compression_point(value: Any) -> AmplifierCompressionPoint | None:
+def _amplifier_frequencies_from_document(
+    value: Any,
+) -> tuple[AmplifierFrequencyResult, ...]:
+    """读取正式结果文档（``results``）；只接受正式字段名。"""
+    if value is None:
+        return ()
+    if not isinstance(value, Mapping):
+        raise ValueError("results 必须是映射")
+    results = []
+    for frequency, item in value.items():
+        if not isinstance(item, Mapping):
+            raise ValueError(f"主功放结果 {frequency!r} 必须是映射")
+        unknown = sorted(set(item) - _AMPLIFIER_DOCUMENT_KEYS)
+        if unknown:
+            raise ValueError(
+                f"主功放结果 {frequency!r} 包含未知字段: {', '.join(unknown)}"
+            )
+        results.append(
+            AmplifierFrequencyResult(
+                frequency_ghz=str(frequency),
+                compression_type=_optional_text(item.get("compression_type")),
+                compression_point=_compression_point(
+                    item.get("compression_point"),
+                    reader=_document_compression_point,
+                    name=f"主功放结果 {frequency!r} 的 compression_point",
+                ),
+                small_signal_gain_db=_float_or_none(item.get("small_signal_gain_db")),
+                compression_achieved=_optional_bool(item.get("compression_achieved")),
+                sweep_data=item.get("sweep_data", {}),
+            )
+        )
+    return tuple(results)
+
+
+def _compression_point(
+    value: Any,
+    *,
+    reader: Callable[[Mapping[str, Any], str], AmplifierCompressionPoint],
+    name: str,
+) -> AmplifierCompressionPoint | None:
     if value is None:
         return None
     if not isinstance(value, Mapping):
-        raise ValueError("compression_point 必须是映射")
+        raise ValueError(f"{name} 必须是映射")
     if not value:
         return None
+    return reader(value, name)
+
+
+def _service_compression_point(
+    value: Mapping[str, Any], name: str
+) -> AmplifierCompressionPoint:
     return AmplifierCompressionPoint(
         input_power_dbm=_float_or_none(value.get("input_power")),
         output_power_dbm=_float_or_none(value.get("output_power")),
         gain_db=_float_or_none(value.get("gain")),
         efficiency_percent=_float_or_none(value.get("efficiency")),
-        compression_db=_float_or_none(value.get("compression_dB", value.get("compression"))),
+        compression_db=_float_or_none(value.get("compression_dB")),
         signal_generator_power_dbm=_float_or_none(
-            value.get("sg_power_at_compression", value.get("sg_power"))
+            value.get("sg_power_at_compression")
+        ),
+    )
+
+
+def _document_compression_point(
+    value: Mapping[str, Any], name: str
+) -> AmplifierCompressionPoint:
+    unknown = sorted(set(value) - _AMPLIFIER_COMPRESSION_DOCUMENT_KEYS)
+    if unknown:
+        raise ValueError(f"{name} 包含未知字段: {', '.join(unknown)}")
+    return AmplifierCompressionPoint(
+        input_power_dbm=_float_or_none(value.get("input_power_dbm")),
+        output_power_dbm=_float_or_none(value.get("output_power_dbm")),
+        gain_db=_float_or_none(value.get("gain_db")),
+        efficiency_percent=_float_or_none(value.get("efficiency_percent")),
+        compression_db=_float_or_none(value.get("compression_db")),
+        signal_generator_power_dbm=_float_or_none(
+            value.get("signal_generator_power_dbm")
         ),
     )
 
@@ -522,14 +895,14 @@ def _amplifier_document(item: AmplifierFrequencyResult) -> dict[str, Any]:
     return {
         "compression_type": item.compression_type,
         "compression_point": {} if point is None else {
-            "input_power": point.input_power_dbm,
-            "output_power": point.output_power_dbm,
-            "gain": point.gain_db,
-            "efficiency": point.efficiency_percent,
-            "compression_dB": point.compression_db,
-            "sg_power_at_compression": point.signal_generator_power_dbm,
+            "input_power_dbm": point.input_power_dbm,
+            "output_power_dbm": point.output_power_dbm,
+            "gain_db": point.gain_db,
+            "efficiency_percent": point.efficiency_percent,
+            "compression_db": point.compression_db,
+            "signal_generator_power_dbm": point.signal_generator_power_dbm,
         },
-        "small_signal_gain": item.small_signal_gain_db,
+        "small_signal_gain_db": item.small_signal_gain_db,
         "sweep_data": {
             name: [thaw(item) for item in values] for name, values in item.sweep_data.items()
         },
@@ -548,6 +921,8 @@ def _contract_fields(document: Mapping[str, Any]) -> dict[str, Any]:
         "raw_data_reference": document.get("raw_data_reference", {}),
         "calculation_summary": document.get("calculation_summary", {}),
         "result_reference": document.get("result_reference", {}),
+        "measurement_time": _optional_text(document.get("measurement_time")),
+        "source_filename": _optional_text(document.get("source_filename")),
     }
 
 
@@ -567,10 +942,15 @@ def _enum_value(value: Any, enum_type: type[Enum], name: str) -> Enum:
 
 
 def _float(value: Any, name: str) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} 必须是数值: {value!r}")
     try:
-        return float(value)
+        number = float(value)
     except (TypeError, ValueError) as error:
         raise ValueError(f"{name} 必须是数值: {value!r}") from error
+    if not math.isfinite(number):
+        raise ValueError(f"{name} 必须是有限数值: {value!r}")
+    return number
 
 
 def _float_or_none(value: Any) -> float | None:
@@ -582,13 +962,25 @@ def _float_or_none(value: Any) -> float | None:
 def _optional_text(value: Any) -> str | None:
     if value is None:
         return None
-    return str(value)
+    text = str(value).strip()
+    return text or None
 
 
 def _optional_bool(value: Any) -> bool | None:
+    """严格读取布尔值：只接受 bool、0/1 与 ``"true"``/``"false"``。"""
     if value is None:
         return None
-    return bool(value)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text == "true":
+            return True
+        if text == "false":
+            return False
+    raise ValueError(f"布尔字段取值非法: {value!r}")
 
 
 def _float_mapping(value: Any, name: str) -> Mapping[str, float]:
@@ -601,9 +993,14 @@ def _columns(value: Any, name: str) -> Mapping[str, tuple[Any, ...]]:
     if not isinstance(value, Mapping):
         raise ValueError(f"{name} 必须是列式映射")
     columns = {}
+    length: int | None = None
     for key, items in value.items():
         if not isinstance(items, (list, tuple)):
             raise ValueError(f"{name}.{key} 必须是扫描点序列")
+        if length is None:
+            length = len(items)
+        elif len(items) != length:
+            raise ValueError(f"{name} 的各列长度必须一致")
         columns[str(key)] = tuple(freeze(item) for item in items)
     return MappingProxyType(columns)
 
@@ -659,6 +1056,7 @@ __all__ = [
     "AmplifierCompressionPoint",
     "AmplifierFrequencyResult",
     "measurement_result_from_document",
+    "normalize_frequency_key",
     "freeze",
     "thaw",
 ]

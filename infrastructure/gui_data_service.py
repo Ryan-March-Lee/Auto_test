@@ -1,4 +1,9 @@
-"""File-backed adapters used by the GUI composition root."""
+"""File-backed adapters used by the GUI composition root.
+
+历史查看、导出和报告只读取**正式运行目录结果**：每条结果都由运行 manifest 登记并
+通过完整性校验，``result_id`` 使用内部 ``run::<run_id>::<相对路径>`` 编码。适配器
+不再扫描 ``test_results/`` 下的旧全局结果文件，也不提供旧历史回退。
+"""
 
 from __future__ import annotations
 
@@ -9,14 +14,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping
 
-from application.inputs.result_reading import build_report_model
+from application.dto.measurement_results import (
+    MeasurementResult,
+    measurement_result_from_document,
+)
+from application.inputs.result_reading import build_report_result
 from application.ports.gui_data_service import (
-    RESULT_SOURCE_LEGACY,
     RESULT_SOURCE_RUN,
     LoadedResultDto,
     ResultFileDto,
 )
-from application.ports.result_history import ResultHistoryRepository
 from application.ports.run_history import RunHistoryRepository
 from analysis.visualization import DataVisualization
 from infrastructure.config.json_io import load_config_file
@@ -32,8 +39,7 @@ logger = logging.getLogger(__name__)
 
 
 # 运行目录结果的标识前缀：``run::<run_id>::<运行内相对路径>``。运行标识不允许
-# 包含 ``:``，因此可以无歧义地把“运行结果”和“全局兼容副本文件名”区分开；该编码
-# 只在本适配器内部使用，不暴露文件系统路径。
+# 包含 ``:``，因此编码没有歧义；该编码只在本适配器内部使用，不暴露文件系统路径。
 _RUN_RESULT_PREFIX = "run::"
 
 
@@ -64,19 +70,11 @@ class JsonConfigurationAdapter:
 
 
 class ResultQueryAdapter:
-    """历史结果浏览适配器。
+    """只读的正式运行结果查询适配器。
 
-    历史浏览同时消费两类只读数据源：
-
-    - 运行目录历史（:class:`RunHistoryRepository`）：新流程写入 ``runs/<run_id>/``
-      并登记到 manifest 的阶段结果，是历史列表的首选来源。
-    - 全局兼容副本（:class:`ResultHistoryRepository`）：迁移前写入的旧历史文件，
-      保持只读可查看。
-
-    两类来源都只提供 ``result_id``（运行结果用内部 ``run::`` 编码）而不是任意
-    文件系统路径：路径边界由各自仓储统一校验，因此历史浏览既不能写入旧结果
-    文件，也不会把历史文件带入任何运行 manifest。列表、按标识读取、最新结果
-    浏览和导出全部走同一个 ``result_id`` 入口。
+    唯一数据源是运行目录：列表、按标识读取、最新结果和导出全部走运行 manifest
+    登记并校验过的结果。旧全局结果文件不再被发现或回退，历史查看只读正式运行
+    目录结果。
     """
 
     _LABELS = {
@@ -88,114 +86,25 @@ class ResultQueryAdapter:
     def __init__(
         self,
         paths: PathService,
-        history: ResultHistoryRepository,
         *,
-        run_history: RunHistoryRepository | None = None,
+        run_history: RunHistoryRepository,
+        runs_root: Path | None = None,
     ):
         self.paths = paths
-        self.history = history
         self.run_history = run_history
+        self.runs_root = runs_root
 
     def list_results(self) -> list[ResultFileDto]:
-        rows = self._run_rows() + self._legacy_rows()
-        # 运行结果时间带时区、旧历史文件时间来自本地 mtime；统一按时间戳排序，
-        # 避免混排时比较“无时区/有时区”的 datetime 报错。
-        return sorted(rows, key=lambda item: item.modified_at.timestamp(), reverse=True)
-
-    def load(self, result_id: str) -> LoadedResultDto:
-        decoded = _decode_run_result_id(result_id)
-        if decoded is not None:
-            run_id, relative_path = decoded
-            filename = Path(relative_path).name
-            return LoadedResultDto(
-                result_id, filename, self._require_run_history().load(run_id, relative_path)
-            )
-        return LoadedResultDto(result_id, result_id, self.history.load(result_id))
-
-    def read_bytes(self, result_id: str) -> bytes:
-        """逐字节读取历史结果，供 JSON 导出使用。"""
-        decoded = _decode_run_result_id(result_id)
-        if decoded is not None:
-            run_id, relative_path = decoded
-            return self._require_run_history().read_bytes(run_id, relative_path)
-        return self.history.read_bytes(result_id)
-
-    def choose_and_load(self) -> LoadedResultDto | None:
-        selected, _ = QFileDialog.getOpenFileName(
-            None, "选择测试数据文件", str(self.paths.test_results_dir),
-            "JSON files (*.json);;All files (*.*)",
-        )
-        if not selected:
-            return None
-        path = Path(selected).expanduser().resolve()
-        # 只接受历史目录内的单个文件；结果标识仍由历史仓储再校验一次。
-        path.relative_to(self.paths.test_results_dir.resolve())
-        if not path.is_file():
-            raise FileNotFoundError(path.name)
-        return self.load(path.name)
-
-    def latest_result(self, result_type: str) -> LoadedResultDto:
-        """返回最新的**可校验**历史结果：优先运行目录，其次全局兼容副本。
-
-        选择顺序是确定性的：先按运行创建时间从新到旧（``list_runs`` 的顺序），
-        同一运行内再按结果修改时间从新到旧，不依赖文件系统 mtime 的跨运行比较。
-
-        每个候选都会做完整性校验；某个候选损坏（被篡改、缺失、未登记）时记录日志
-        并继续尝试更旧的候选，而不是让最新损坏文件阻断可用数据。只有当所有运行
-        候选都不可用时，才回退到旧的全局兼容副本，保持旧历史仍可查看。
-        """
-        label = self._LABELS.get(result_type, result_type)
-        if self.run_history is not None:
-            for run in self.run_history.list_runs():
-                if not run.browsable:
-                    continue
-                try:
-                    results = self.run_history.list_results(run.run_id)
-                except (OSError, ValueError) as error:
-                    logger.warning("跳过无法列出的运行 %s 的历史结果: %s", run.run_id, error)
-                    continue
-                matches = [
-                    result
-                    for result in results
-                    if self._LABELS.get(result.result_type, result.result_type) == label
-                ]
-                for result in sorted(
-                    matches, key=lambda item: item.modified_at.timestamp(), reverse=True
-                ):
-                    result_id = _encode_run_result_id(run.run_id, result.result_id)
-                    try:
-                        return self.load(result_id)
-                    except (OSError, ValueError) as error:
-                        logger.warning("跳过损坏的运行结果 %s: %s", result_id, error)
-                        continue
-        return self.latest_legacy_result(result_type)
-
-    def latest_legacy_result(self, result_type: str) -> LoadedResultDto:
-        """读取最新全局兼容副本，仅用于旧历史的只读查看。"""
-        return self.load(self.history.latest_result_id(result_type))
-
-    # -- 内部工具 -----------------------------------------------------------
-
-    def _legacy_rows(self) -> list[ResultFileDto]:
-        return [
-            ResultFileDto(
-                result_id=entry.result_id,
-                filename=entry.result_id,
-                file_type=self._LABELS.get(entry.result_type, entry.result_type),
-                modified_at=entry.modified_at,
-                source=RESULT_SOURCE_LEGACY,
-            )
-            for entry in self.history.list_entries()
-        ]
-
-    def _run_rows(self) -> list[ResultFileDto]:
-        if self.run_history is None:
-            return []
         rows: list[ResultFileDto] = []
         for run in self.run_history.list_runs():
             if not run.browsable:
                 continue
-            for result in self.run_history.list_results(run.run_id):
+            try:
+                results = self.run_history.list_results(run.run_id)
+            except (OSError, ValueError) as error:
+                logger.warning("跳过无法列出的运行 %s 的历史结果: %s", run.run_id, error)
+                continue
+            for result in results:
                 rows.append(
                     ResultFileDto(
                         result_id=_encode_run_result_id(run.run_id, result.result_id),
@@ -206,12 +115,83 @@ class ResultQueryAdapter:
                         run_id=run.run_id,
                     )
                 )
-        return rows
+        return sorted(rows, key=lambda item: item.modified_at.timestamp(), reverse=True)
 
-    def _require_run_history(self) -> RunHistoryRepository:
-        if self.run_history is None:
-            raise RuntimeError("未配置运行历史仓储，无法读取运行结果")
-        return self.run_history
+    def load(self, result_id: str) -> LoadedResultDto:
+        decoded = _decode_run_result_id(result_id)
+        if decoded is None:
+            raise ValueError(f"无效的结果标识: {result_id!r}")
+        run_id, relative_path = decoded
+        return LoadedResultDto(
+            result_id,
+            Path(relative_path).name,
+            self.run_history.load(run_id, relative_path),
+        )
+
+    def read_bytes(self, result_id: str) -> bytes:
+        """逐字节读取运行结果，供 JSON 导出使用。"""
+        decoded = _decode_run_result_id(result_id)
+        if decoded is None:
+            raise ValueError(f"无效的结果标识: {result_id!r}")
+        run_id, relative_path = decoded
+        return self.run_history.read_bytes(run_id, relative_path)
+
+    def choose_and_load(self) -> LoadedResultDto | None:
+        """从运行目录中选择一个已登记结果；运行目录外的文件一律拒绝。"""
+        if self.runs_root is None:
+            raise RuntimeError("未配置运行结果目录")
+        selected, _ = QFileDialog.getOpenFileName(
+            None, "选择运行结果文件", str(self.runs_root),
+            "JSON files (*.json);;All files (*.*)",
+        )
+        if not selected:
+            return None
+        path = Path(selected).expanduser().resolve()
+        try:
+            relative = path.relative_to(self.runs_root.resolve())
+        except ValueError as error:
+            raise ValueError(f"结果文件必须位于运行目录内: {path}") from error
+        if not path.is_file():
+            raise FileNotFoundError(path.name)
+        if len(relative.parts) < 2:
+            raise ValueError(f"结果文件必须位于运行目录内: {path}")
+        run_id = relative.parts[0]
+        return self.load(
+            _encode_run_result_id(run_id, Path(*relative.parts[1:]).as_posix())
+        )
+
+    def latest_result(self, result_type: str) -> LoadedResultDto:
+        """返回最新的**可校验**正式运行结果。
+
+        顺序是确定性的：先按运行创建时间从新到旧（``list_runs`` 的顺序），同一运行
+        内再按结果修改时间从新到旧，不依赖文件系统 mtime 的跨运行比较。某个候选
+        损坏（被篡改、缺失、未登记）时记录日志并继续尝试更旧的候选。没有任何可用
+        运行结果时抛出 ``FileNotFoundError``。
+        """
+        label = self._LABELS.get(result_type, result_type)
+        for run in self.run_history.list_runs():
+            if not run.browsable:
+                continue
+            try:
+                results = self.run_history.list_results(run.run_id)
+            except (OSError, ValueError) as error:
+                logger.warning("跳过无法列出的运行 %s 的历史结果: %s", run.run_id, error)
+                continue
+            matches = [
+                result
+                for result in results
+                if self._LABELS.get(result.result_type, result.result_type) == label
+            ]
+            for result in sorted(
+                matches, key=lambda item: item.modified_at.timestamp(), reverse=True
+            ):
+                result_id = _encode_run_result_id(run.run_id, result.result_id)
+                try:
+                    return self.load(result_id)
+                except (OSError, ValueError) as error:
+                    logger.warning("跳过损坏的运行结果 %s: %s", result_id, error)
+                    continue
+        raise FileNotFoundError(f"未找到结果类型为 {result_type} 的运行结果")
 
 
 class ResultExportAdapter:
@@ -220,14 +200,15 @@ class ResultExportAdapter:
         self.paths = paths
 
     def export_json(self, result_id: str, target: str) -> None:
-        # 逐字节复制历史目录内已校验的源文件，导出不会改动源文件。
+        # 逐字节复制已校验的源文件，导出不会改动源文件。
         Path(target).write_bytes(self.query.read_bytes(result_id))
 
     def export_csv(self, result_id: str, target: str) -> None:
-        # 结果读取走 application 输入端口，分析层只接收已加载的数据。
+        # 结果读取走运行结果查询，分析层只接收已解析的正式结果 DTO。
         loaded = self.query.load(result_id)
+        result = measurement_result_from_document(loaded.data)
         visualizer = DataVisualization(output_dir=self._report_output_dir())
-        visualizer.generate_csv_report(loaded.data)
+        visualizer.generate_csv_report(result)
         generated = Path(visualizer.output_dir) / "full_sweep_data.csv"
         if not generated.is_file():
             raise FileNotFoundError(str(generated))
@@ -235,8 +216,9 @@ class ResultExportAdapter:
 
     def export_pdf(self, result_id: str) -> None:
         loaded = self.query.load(result_id)
+        result = measurement_result_from_document(loaded.data)
         DataVisualization(output_dir=self._report_output_dir()).create_summary_report(
-            loaded.data, loaded.filename
+            result, loaded.filename
         )
 
     def _report_output_dir(self) -> Path:
@@ -247,13 +229,20 @@ class ReportAdapter:
     def __init__(self, paths: PathService):
         self.paths = paths
 
-    def create_summary_report(self, result, configuration, filename) -> None:
-        # 结果规范化走 application 输入；分析层只接收稳定的领域模型，不落地临时文件。
-        model = build_report_model(
+    def create_summary_report(
+        self,
+        result: MeasurementResult,
+        configuration: Mapping[str, Any],
+        filename: str,
+    ) -> None:
+        # 报告只在正式结果 DTO 上叠加展示参数；分析层不接触原始文档。
+        report_result = build_report_result(
             result,
             configuration=configuration,
             original_filename=filename,
             measurement_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         )
         output_dir = self.paths.test_results_dir / unique_directory_name("report")
-        DataVisualization(output_dir=output_dir).create_summary_report(model, filename)
+        DataVisualization(output_dir=output_dir).create_summary_report(
+            report_result, filename
+        )

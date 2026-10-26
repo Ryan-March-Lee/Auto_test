@@ -1,13 +1,16 @@
-"""阶段 1 冻结的运行、方案和结果模型。
+"""阶段 1 冻结的运行与方案模型。
 
 模型不读取文件、不连接硬件，也不依赖 Qt、PyVISA 或绘图库。
 这里的 ``TestPlan`` 是内部领域模型；正式配置对象由 ``domain.configuration.models``
 定义，二者之间的转换留给后续领域收敛阶段。
+
+测量结果的唯一正式契约在 ``application.dto.measurement_results``；本模块不再定义
+结果模型、结果状态或结果元数据，避免同一份结果存在两套模型。
 """
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field, fields, is_dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from types import MappingProxyType
@@ -139,10 +142,15 @@ class RunContext:
         )
 
 
-class ResultStatus(str, Enum):
-    COMPLETED = "completed"
-    PARTIAL = "partial"
-    FAILED = "failed"
+def _instrument_snapshot(value: Any) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        return {}
+    result = {}
+    for key in ("model", "visa_address"):
+        item = value.get(key)
+        if item is not None:
+            result[key] = str(item)
+    return result
 
 
 class MeasurementState(str, Enum):
@@ -156,253 +164,6 @@ class MeasurementState(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CLEANED = "cleaned"
-
-
-@dataclass(frozen=True)
-class ResultMetadata:
-    """跨结果类型共享的可追溯信息。"""
-
-    run_id: str = "legacy"
-    result_type: str = "unknown"
-    saved_at: str | None = None
-    measurement_time: str | None = None
-    schema_version: str = SCHEMA_VERSION
-    method_version: str = METHOD_VERSION
-
-    def __post_init__(self) -> None:
-        if not self.run_id.strip():
-            raise ValueError("run_id 不能为空")
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass(frozen=True)
-class ScanPoint:
-    """单个扫描点，区分原始读数、补偿读数和派生指标。"""
-
-    frequency_hz: float
-    input_power_dbm: float | None = None
-    raw_output_power_dbm: float | None = None
-    compensated_output_power_dbm: float | None = None
-    voltage_v: float | None = None
-    current_a: float | None = None
-    derived: Mapping[str, float] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass(frozen=True)
-class MeasurementResult:
-    run_id: str
-    measurement_type: str
-    points: tuple[ScanPoint, ...] = ()
-    status: ResultStatus = ResultStatus.COMPLETED
-    raw_readings: Mapping[str, Any] = field(default_factory=dict)
-    derived_metrics: Mapping[str, Any] = field(default_factory=dict)
-    schema_version: str = SCHEMA_VERSION
-    method_version: str = METHOD_VERSION
-    plan_snapshot: Mapping[str, Any] = field(default_factory=dict)
-    resource_snapshot: Mapping[str, Any] = field(default_factory=dict)
-    metadata: ResultMetadata = field(default_factory=ResultMetadata)
-    # 统一结果契约中的跨测量类型字段。旧字段保留用于兼容已有调用方。
-    configuration_snapshot: Mapping[str, Any] = field(default_factory=dict)
-    device_summary: Mapping[str, Any] = field(default_factory=dict)
-    raw_data_reference: Mapping[str, Any] = field(default_factory=dict)
-    calculation_summary: Mapping[str, Any] = field(default_factory=dict)
-    errors: tuple[str, ...] = ()
-    cleanup_records: tuple[Mapping[str, Any], ...] = ()
-    termination: Mapping[str, Any] | None = None
-    result_reference: Mapping[str, Any] = field(default_factory=dict)
-    created_at: str | None = field(default_factory=lambda: _utc_now().isoformat())
-
-    def __post_init__(self) -> None:
-        if not self.run_id.strip():
-            raise ValueError("run_id 不能为空")
-        if self.metadata.run_id == "legacy" and self.run_id != "legacy":
-            object.__setattr__(self, "metadata", ResultMetadata(
-                run_id=self.run_id,
-                result_type=self.measurement_type,
-                saved_at=self.metadata.saved_at,
-                measurement_time=self.metadata.measurement_time,
-                schema_version=self.metadata.schema_version,
-                method_version=self.metadata.method_version,
-            ))
-        if not isinstance(self.measurement_type, str) or not self.measurement_type.strip():
-            raise ValueError("measurement_type 不能为空")
-        for name in (
-            "plan_snapshot",
-            "resource_snapshot",
-            "configuration_snapshot",
-            "device_summary",
-            "raw_data_reference",
-            "calculation_summary",
-        ):
-            value = getattr(self, name)
-            object.__setattr__(self, name, _freeze_mapping(value, name))
-        object.__setattr__(self, "errors", _freeze_errors(self.errors))
-        object.__setattr__(
-            self,
-            "cleanup_records",
-            _freeze_records(self.cleanup_records),
-        )
-        object.__setattr__(self, "termination", _freeze_optional_mapping(self.termination, "termination"))
-        object.__setattr__(self, "result_reference", _freeze_mapping(self.result_reference, "result_reference"))
-
-    def to_dict(self) -> dict[str, Any]:
-        value = _plain(self)
-        value["status"] = self.status.value
-        value["points"] = [point.to_dict() for point in self.points]
-        return value
-
-
-def _plain(value: Any) -> Any:
-    """将冻结的领域对象转换成可 JSON 序列化的普通容器。"""
-    if is_dataclass(value):
-        return {item.name: _plain(getattr(value, item.name)) for item in fields(value)}
-    if isinstance(value, Mapping):
-        return {key: _plain(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_plain(item) for item in value]
-    if isinstance(value, Enum):
-        return value.value
-    return value
-
-
-def _freeze_mapping(value: Any, name: str) -> Mapping[str, Any]:
-    if not isinstance(value, Mapping):
-        raise ValueError(f"{name} 必须是映射")
-    return MappingProxyType({key: _freeze_value(item) for key, item in value.items()})
-
-
-def _freeze_optional_mapping(value: Any, name: str) -> Mapping[str, Any] | None:
-    if value is None:
-        return None
-    return _freeze_mapping(value, name)
-
-
-def _freeze_value(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        return MappingProxyType({key: _freeze_value(item) for key, item in value.items()})
-    if isinstance(value, list) or isinstance(value, tuple):
-        return tuple(_freeze_value(item) for item in value)
-    if isinstance(value, set):
-        return frozenset(_freeze_value(item) for item in value)
-    return value
-
-
-def _freeze_errors(value: Any) -> tuple[str, ...]:
-    if isinstance(value, str):
-        return (value,)
-    if not isinstance(value, (list, tuple)):
-        raise ValueError("errors 必须是字符串或字符串序列")
-    return tuple(str(item) for item in value)
-
-
-def _freeze_records(value: Any) -> tuple[Mapping[str, Any], ...]:
-    if isinstance(value, Mapping) or not isinstance(value, (list, tuple)):
-        raise ValueError("cleanup_records 必须是映射序列")
-    return tuple(_freeze_mapping(item, "cleanup_records") for item in value)
-
-
-def _instrument_snapshot(value: Any) -> dict[str, str]:
-    if not isinstance(value, Mapping):
-        return {}
-    result = {}
-    for key in ("model", "visa_address"):
-        item = value.get(key)
-        if item is not None:
-            result[key] = str(item)
-    return result
-
-
-@dataclass(frozen=True)
-class CableLossPoint:
-    frequency_hz: float
-    # 保留旧位置参数；线损结果没有 dBm 输出功率，这两个字段应为 None。
-    path1_output_power_dbm: float | None = None
-    path2_output_power_dbm: float | None = None
-    path1_loss_db: float = 0.0
-    path2_loss_db: float = 0.0
-    cable_losses_db: Mapping[str, float] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        if self.frequency_hz <= 0:
-            raise ValueError("frequency_hz 必须为正数")
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass(frozen=True)
-class DriverPowerMappingPoint:
-    frequency_hz: float
-    input_power_dbm: float
-    raw_output_power_dbm: float
-    compensated_output_power_dbm: float
-
-    def __post_init__(self) -> None:
-        if self.frequency_hz <= 0:
-            raise ValueError("frequency_hz 必须为正数")
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass(frozen=True)
-class AmplifierScanPoint:
-    frequency_hz: float
-    input_power_dbm: float
-    output_power_dbm: float
-    gain_db: float
-    dc_voltage_v: float | None = None
-    dc_current_a: float | None = None
-    dc_power_w: float | None = None
-    efficiency_percent: float | None = None
-    voltages_v: Mapping[str, float] = field(default_factory=dict)
-    currents_a: Mapping[str, float] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        if self.frequency_hz <= 0:
-            raise ValueError("frequency_hz 必须为正数")
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass(frozen=True)
-class CompressionPoint:
-    output_power_dbm: float | None = None
-    input_power_dbm: float | None = None
-    gain_db: float | None = None
-    efficiency_percent: float | None = None
-    signal_generator_power_dbm: float | None = None
-    compression_db: float | None = None
-    achieved: bool | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass(frozen=True)
-class CableLossResult(MeasurementResult):
-    points: tuple[CableLossPoint, ...] = ()
-    measurement_type: str = "cable_loss"
-
-
-@dataclass(frozen=True)
-class DriverPowerMappingResult(MeasurementResult):
-    points: tuple[DriverPowerMappingPoint, ...] = ()
-    measurement_type: str = "driver_power_mapping"
-
-
-@dataclass(frozen=True)
-class AmplifierMeasurementResult(MeasurementResult):
-    points: tuple[AmplifierScanPoint, ...] = ()
-    measurement_type: str = "amplifier"
-    compression_points_dbm: Mapping[str, float | None] = field(default_factory=dict)
-    compression_points: Mapping[str, CompressionPoint] = field(default_factory=dict)
 
 
 @dataclass

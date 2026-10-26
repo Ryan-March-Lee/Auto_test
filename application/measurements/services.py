@@ -340,7 +340,7 @@ class AmplifierMeasurementService(_Service):
             for frequency in self.config["test_frequencies"]:
                 self._check_cancelled()
                 results[str(frequency)] = self.perform_power_sweep(frequency)
-            result = {"results": results, "config": self.config}
+            result = {"results": results, "configuration_snapshot": self.config}
             self._save(result)
             return result
         finally:

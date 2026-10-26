@@ -13,22 +13,17 @@ from __future__ import annotations
 import html
 import json
 from pathlib import Path
-from typing import Any, Dict, Mapping, Union
+from typing import Dict
 
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.font_manager import FontProperties
 import seaborn as sns
 
-from domain.models import MeasurementResult
-from domain.result_reading import (
-    get_saturation_points,
-    get_sweep_dataframe_data,
-    parse_result_model,
-)
+from analysis.result_source import ReportResult, plain_document, require_report_result
 
 
-ResultSource = Union[MeasurementResult, Mapping[str, Any]]
+ResultSource = ReportResult
 
 
 # --- MODIFIED: Define font properties globally for easy access ---
@@ -75,11 +70,9 @@ def configure_plot_style() -> None:
     sns.set_context("notebook", font_scale=1.2)
 
 
-def _coerce_result(data: ResultSource) -> MeasurementResult:
-    """把结果映射适配成稳定的领域模型；已是模型时保持原样。"""
-    if isinstance(data, MeasurementResult):
-        return data
-    return parse_result_model(data)
+def _coerce_result(data: ResultSource) -> ReportResult:
+    """校验并返回正式结果对象；原始映射与旧结果模型都会被拒绝。"""
+    return require_report_result(data)
 
 
 class DataVisualization:
@@ -114,14 +107,16 @@ class DataVisualization:
         )
 
     def _extract_data_for_plotting(self, data: ResultSource) -> Dict[float, pd.DataFrame]:
+        result = _coerce_result(data)
         return {
-            float(freq): pd.DataFrame(points)
-            for freq, points in get_sweep_dataframe_data(data).items()
+            float(freq): pd.DataFrame(list(points))
+            for freq, points in result.sweep_rows().items()
             if points
         }
 
     def _find_saturation_points(self, data: ResultSource) -> pd.DataFrame:
-        points = get_saturation_points(data)
+        result = _coerce_result(data)
+        points = [dict(point) for point in result.saturation_points()]
         for point in points:
             point["frequency"] = float(point["frequency"])
         return pd.DataFrame(points)
@@ -281,7 +276,7 @@ class DataVisualization:
         return self._save_plot(fig, 'freq_vs_all_sat_metrics')
 
     # generate_csv_report 和 create_summary_report 函数不需要修改字体设置
-    def generate_csv_report(self, data: ResultSource) -> Path:
+    def generate_csv_report(self, data: ResultSource) -> Path | None:
         dfs = self._extract_data_for_plotting(data)
         csv_path = self.output_dir / "full_sweep_data.csv"
 
@@ -304,18 +299,17 @@ class DataVisualization:
     def create_summary_report(
         self, data: ResultSource, original_filename: str | None = None
     ) -> Path:
-        """从已加载的结果模型或映射生成图表、CSV 和 HTML 汇总报告。"""
+        """从正式结果对象生成图表、CSV 和 HTML 汇总报告。"""
         result = _coerce_result(data)
-        if not result.points:
+        if not result.point_count:
             raise ValueError("结果中没有可生成报告的扫描点")
         self._ensure_output_dir()
         report_file = self.output_dir / "test_report.html"
 
-        # 使用传入的原始文件名，如果没有则从数据中获取，最后回退到运行标识
-        source_data = result.raw_readings
+        # 报告展示的数据来源文件名与测试时间都来自正式结果契约。
         display_filename = (
             original_filename
-            or source_data.get('original_filename')
+            or result.source_filename
             or result.run_id
         )
 
@@ -342,10 +336,10 @@ class DataVisualization:
 
         csv_path = self.generate_csv_report(result)
 
-        safe_time = html.escape(str(result.metadata.measurement_time or 'N/A'))
+        safe_time = html.escape(str(result.measurement_time or 'N/A'))
         safe_filename = html.escape(str(display_filename))
         plan_snapshot_json = json.dumps(
-            result.plan_snapshot, indent=4, ensure_ascii=False, default=dict
+            plain_document(result.configuration_snapshot), indent=4, ensure_ascii=False
         )
         csv_section = (
             f'<p>数据导出: <a href="{html.escape(csv_path.name, quote=True)}">'

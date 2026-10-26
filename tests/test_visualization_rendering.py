@@ -11,36 +11,50 @@ from pathlib import Path
 
 from tests._rendering import rendering_available
 from analysis.visualization import DataVisualization
+from application.dto import (
+    AmplifierCompressionPoint,
+    AmplifierFrequencyResult,
+    AmplifierMeasurementResult,
+)
 from infrastructure.filesystem.paths import PathService
 
 
-SAMPLE_DATA = {
-    "run_id": "render-run",
-    "result_type": "amplifier_measurement",
-    "measurement_time": "2026-01-01 00:00:00",
-    "original_filename": "amplifier_measurement_render.json",
-    "configuration_snapshot": {"frequencies": [1.0, 1.2]},
-    "results": {
-        "1.0": {
-            "sweep_data": {
+SAMPLE_DATA = AmplifierMeasurementResult(
+    run_id="render-run",
+    measurement_time="2026-01-01 00:00:00",
+    source_filename="amplifier_measurement_render.json",
+    configuration_snapshot={"frequencies": [1.0, 1.2]},
+    frequencies=(
+        AmplifierFrequencyResult(
+            frequency_ghz="1.0",
+            compression_point=AmplifierCompressionPoint(
+                output_power_dbm=5.0, input_power_dbm=-5.0, gain_db=10.0, efficiency_percent=30.0
+            ),
+            small_signal_gain_db=10.0,
+            compression_achieved=True,
+            sweep_data={
                 "input_power_dut": [-10.0, -5.0],
                 "output_power_dut": [0.0, 5.0],
                 "gain": [10.0, 10.0],
                 "efficiency": [20.0, 30.0],
             },
-            "compression_point": {"output_power": 5.0, "input_power": -5.0, "gain": 10.0, "efficiency": 30.0},
-        },
-        "1.2": {
-            "sweep_data": {
+        ),
+        AmplifierFrequencyResult(
+            frequency_ghz="1.2",
+            compression_point=AmplifierCompressionPoint(
+                output_power_dbm=6.0, input_power_dbm=-5.0, gain_db=11.0, efficiency_percent=32.0
+            ),
+            small_signal_gain_db=11.0,
+            compression_achieved=True,
+            sweep_data={
                 "input_power_dut": [-10.0, -5.0],
                 "output_power_dut": [1.0, 6.0],
                 "gain": [11.0, 11.0],
                 "efficiency": [22.0, 32.0],
             },
-            "compression_point": {"output_power": 6.0, "input_power": -5.0, "gain": 11.0, "efficiency": 32.0},
-        },
-    },
-}
+        ),
+    ),
+)
 
 
 @unittest.skipUnless(rendering_available(), "当前环境无法渲染 matplotlib 图像")

@@ -85,7 +85,6 @@
 | --- | --- |
 | `application.ports.config_repository` | `ConfigurationLoadResult`、`ConfigurationRepository`、`TestPlanRepository`、`RunMappingRepository` |
 | `application.ports.result_repository` | `MeasurementResultRepository`、`SavedMeasurementResult` |
-| `application.ports.result_history` | `ResultHistoryRepository`、`HistoryResultEntry` |
 | `application.ports.run_history` | `RunHistoryRepository`、`RunHistoryEntry`、`RunHistoryState`、`RunStageResultEntry` |
 | `application.ports.run_repository` | `RunRepositoryPort`、`RunLayout` |
 | `application.ports.result_input_reader` | `ResultInputReader` |
@@ -105,7 +104,6 @@
 | `infrastructure.persistence.result_repository` | `FileMeasurementResultRepository` |
 | `infrastructure.persistence.run_repository` | `RunRepository` |
 | `infrastructure.persistence.run_history_repository` | `FileRunHistoryRepository` |
-| `infrastructure.persistence.result_history_repository` | `FileResultHistoryRepository` |
 | `infrastructure.gui_data_service` | `JsonConfigurationAdapter`、`ResultQueryAdapter`、`ResultExportAdapter`、`ReportAdapter` |
 | `infrastructure.logging.app_logging` | `get_logger`、`setup_logging` |
 | `infrastructure.runtime` | `current_runtime`、`runtime_id`、`configured_python` |
@@ -119,7 +117,9 @@
 | `domain.configuration.types` | `ConfigIssue`、`ConfigValidationResult` |
 | `domain.run.models` | `FileReference`、`RunManifest`、`RunStatus`、`StageRecord`、`StageStatus`、`default_manifest`、`generate_run_id`、`validate_run_id`、`utc_now_iso` |
 | `domain.measurement.calculations` | `calculate_cable_losses`、`compensate_amplifier_output_power`、`compensate_driver_output_power`、`interpolate_driver_output_power`、`calculate_dut_input_power`、`calculate_gain`、`calculate_efficiency`、`calculate_compression_result` |
-| `domain.result_reading` | `normalize_frequency_key`、`parse_result_model`、`get_sweep_results`、`get_saturation_points` |
+
+正式结果读取的唯一入口是 `application.dto.measurement_results`（见第 4 节）；领域层不再
+定义结果模型或结果读取模块。
 
 ### 3.6 仪器层
 
@@ -146,12 +146,14 @@
 
 | 模块 | 正式公开名称 | 说明 |
 | --- | --- | --- |
-| `application.dto` | `MeasurementRequest`、`CableLossMeasurementRequest`、`DriverPowerMappingRequest`、`AmplifierMeasurementRequest`、`MeasurementResult`、`MeasurementStatus`、`MeasurementType`、`CableLossMeasurementResult`、`DriverPowerMappingMeasurementResult`、`AmplifierMeasurementResult`、`measurement_result_from_document` | DTO 汇总再导出路径；旧兼容导出已在步骤 6 删除 |
+| `application.dto` | `MeasurementRequest`、`CableLossMeasurementRequest`、`DriverPowerMappingRequest`、`AmplifierMeasurementRequest`、`MeasurementResult`、`MeasurementStatus`、`MeasurementType`、`CableLossMeasurementResult`、`DriverPowerMappingMeasurementResult`、`AmplifierMeasurementResult`、`CableLossRow`、`DriverPowerPoint`、`AmplifierCompressionPoint`、`AmplifierFrequencyResult`、`measurement_result_from_document`、`normalize_frequency_key` | DTO 汇总再导出路径；旧兼容导出已在步骤 6 删除 |
 | `application.dto.measurement_requests` | `MeasurementRequest`、`CableLossMeasurementRequest`、`DriverPowerMappingRequest`、`AmplifierMeasurementRequest` | 测量请求 |
-| `application.dto.measurement_results` | `MeasurementResult`、`MeasurementStatus`、`MeasurementType`、`CableLossMeasurementResult`、`DriverPowerMappingMeasurementResult`、`AmplifierMeasurementResult`、`measurement_result_from_document` | 三类正式测量结果与结果文档解析入口 |
+| `application.dto.measurement_results` | `MeasurementResult`、`MeasurementStatus`、`MeasurementType`、`CableLossMeasurementResult`、`DriverPowerMappingMeasurementResult`、`AmplifierMeasurementResult`、`measurement_result_from_document` | 三类正式测量结果、显式行视图与结果文档唯一解析入口 |
 
-领域层结果模型位于 `domain.models`、`domain.result_reading`、`domain.run.models`；正式展示与导出
-只能消费显式 DTO/领域模型字段，不得依赖 `Mapping[str, Any]` 或旧字段别名。
+测量结果的唯一正式模型是 `application.dto.measurement_results` 的三个 DTO；`domain.models`
+只保留运行、方案与会话模型，`domain.run.models` 保留运行 manifest。正式展示与导出只消费
+DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`）或分析层的
+`analysis.result_source.ReportResult` 结构契约，不得依赖 `Mapping[str, Any]` 或旧字段别名。
 
 ## 5. 正式内部模块
 
@@ -160,14 +162,15 @@
 
 | 模块 | 说明 |
 | --- | --- |
+| `analysis.result_source` | 分析层只读结果协议与文档展平 |
 | `analysis.visualization` | 分析层只读可视化与报告数据构建 |
 | `app` | 装配包（`__init__` 为空）；具体入口见 `app.*` 公共 API |
 | `application.inputs` | 结果输入读取包 |
-| `application.inputs.result_reading` | 报告模型构建（内部实现） |
+| `application.inputs.result_reading` | 报告参数叠加（内部实现；输入必须是正式结果 DTO） |
 | `application.lifecycle` | 测量生命周期包 |
 | `assistant.llm` | 可选助手 LLM 客户端 |
 | `assistant.storage` | 可选助手历史存储 |
-| `domain.models` | 旧领域模型模块；跨层新代码应使用正式 DTO |
+| `domain.models` | 运行、测试方案与会话生命周期模型；测量结果契约在 `application.dto` |
 | `infrastructure.filesystem.atomic_json` | 原子 JSON 写入 |
 | `infrastructure.filesystem.paths` | 路径服务 |
 | `infrastructure.persistence` | 持久化适配器包 |
@@ -233,6 +236,9 @@
 | `app.legacy_amplifier_measurement` | `app/legacy_amplifier_measurement.py` | 已删除 | 步骤 4 |
 | `infrastructure.config.legacy_conversion` | `infrastructure/config/legacy_conversion.py` | 已删除 | 步骤 5 |
 | `application.dto.legacy_result_adapter` | `application/dto/legacy_result_adapter.py` | 已删除 | 步骤 6 |
+| `domain.result_reading` | `domain/result_reading.py` | 已删除 | 步骤 6 |
+| `application.ports.result_history` | `application/ports/result_history.py` | 已删除 | 步骤 6 |
+| `infrastructure.persistence.result_history_repository` | `infrastructure/persistence/result_history_repository.py` | 已删除 | 步骤 6 |
 | `instrument.legacy_control` | `instrument/legacy_control.py` | 待清理 | 步骤 9 |
 | `instrument.measurement_adapter` | `instrument/measurement_adapter.py` | 待清理 | 步骤 9 |
 | `instrument.measurement_factory` | `instrument/measurement_factory.py` | 待清理 | 步骤 9 |
@@ -242,8 +248,9 @@
 
 旧模块禁止新增引用。下列存量引用在对应删除步骤前冻结，清单必须与代码严格一致；删除引用时
 同步删除基线条目，新增引用不得靠扩大基线通过。基线统计跨模块绝对导入；包内相对再导出
-（例如 `application/dto/__init__.py` 对旧适配器的再导出）随对应旧模块在步骤 6 一并删除，
-该旧适配器与根目录结果解析转发已在步骤 6 退役。
+（例如 `application/dto/__init__.py` 对旧适配器的再导出）随对应旧模块在步骤 6 一并删除。
+步骤 6 退役根目录结果解析转发、旧结果 DTO 适配器、旧领域结果读取层与旧全局历史端口/仓储；
+历史查看只读正式运行目录结果。
 
 | 旧模块 | 允许继续引用的文件 |
 | --- | --- |

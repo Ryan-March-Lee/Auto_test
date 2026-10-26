@@ -11,6 +11,17 @@ from application.ports.result_repository import SavedMeasurementResult
 from infrastructure.persistence.json_result_repository import load_json_result
 
 
+def _cable_document(**overrides):
+    document = {
+        "measurement_type": "cable_loss",
+        "status": "completed",
+        "attenuator_value": 20.0,
+        "cable_losses": {},
+    }
+    document.update(overrides)
+    return document
+
+
 class FileMeasurementResultRepositoryTests(unittest.TestCase):
     def test_save_maps_result_type_and_returns_persistence_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -21,7 +32,7 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
                 return_value=expected_archive,
             ) as save:
                 saved = FileMeasurementResultRepository(results_directory=directory).save(
-                    {"value": 1},
+                    _cable_document(),
                     result_type="cable_loss",
                     run_id="run-1",
                     run_directory=run_directory,
@@ -32,7 +43,7 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
         self.assertEqual(saved.run_directory, run_directory)
         self.assertEqual(saved.run_id, "run-1")
         save.assert_called_once_with(
-            {"value": 1},
+            _cable_document(),
             result_type="cable_loss",
             filename="cable_loss_results.json",
             run_id="run-1",
@@ -44,7 +55,7 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             saved = FileMeasurementResultRepository(results_directory=root).save(
-                {"cable_losses": {}}, result_type="cable_loss", run_id="run-1"
+                _cable_document(), result_type="cable_loss", run_id="run-1"
             )
 
             self.assertEqual(saved.run_directory, root / "run-1")
@@ -57,27 +68,28 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
     def test_real_write_encodes_numpy_scalars_and_arrays(self):
         with tempfile.TemporaryDirectory() as directory:
             saved = FileMeasurementResultRepository(results_directory=directory).save(
-                {
-                    "cable_losses": {},
-                    "array": np.array([1, 2]),
-                    "integer": np.int64(3),
-                    "floating": np.float64(4.5),
-                },
+                _cable_document(
+                    attenuator_value=np.float64(4.5),
+                    configuration_snapshot={
+                        "levels": np.array([1, 2]),
+                        "integer": np.int64(3),
+                    },
+                ),
                 result_type="cable_loss",
                 run_id="numpy-run",
             )
 
             payload = load_json_result(saved.archive_path)
-            self.assertEqual(payload["array"], [1, 2])
-            self.assertEqual(payload["integer"], 3)
-            self.assertEqual(payload["floating"], 4.5)
+            self.assertEqual(payload["configuration_snapshot"]["levels"], [1, 2])
+            self.assertEqual(payload["configuration_snapshot"]["integer"], 3)
+            self.assertEqual(payload["attenuator_value"], 4.5)
 
     def test_explicit_run_directory_is_preserved(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             explicit = root / "provided-run"
             saved = FileMeasurementResultRepository(results_directory=root / "results").save(
-                {"cable_losses": {}},
+                _cable_document(),
                 result_type="cable_loss",
                 run_id="explicit-run",
                 run_directory=explicit,
@@ -94,7 +106,7 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(TypeError):
                 FileMeasurementResultRepository(results_directory=directory).save(
-                    {"value": Unsupported()},
+                    _cable_document(configuration_snapshot={"value": Unsupported()}),
                     result_type="cable_loss",
                     run_id="failed-run",
                 )
@@ -103,12 +115,20 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             repository = FileMeasurementResultRepository(results_directory=directory)
             driver = repository.save(
-                {"power_mapping": {}},
+                {
+                    "measurement_type": "driver_power_mapping",
+                    "status": "completed",
+                    "power_mapping": {},
+                },
                 result_type="driver_power_mapping",
                 run_id="driver-run",
             )
             amplifier = repository.save(
-                {"results": {}},
+                {
+                    "measurement_type": "amplifier",
+                    "status": "completed",
+                    "results": {},
+                },
                 result_type="amplifier_measurement",
                 run_id="amplifier-run",
             )
@@ -124,7 +144,7 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
         ):
             with self.assertRaises(OSError) as raised:
                 FileMeasurementResultRepository().save(
-                    {"value": 1}, result_type="cable_loss", run_id="run-1"
+                    _cable_document(), result_type="cable_loss", run_id="run-1"
                 )
 
         self.assertIs(raised.exception, error)
@@ -167,12 +187,24 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
         """步骤 6：写入路径只接受正式结果 schema。"""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            with self.assertRaisesRegex(ValueError, "不是正式测量结果 schema"):
+            with self.assertRaisesRegex(ValueError, "measurement_type"):
                 FileMeasurementResultRepository(results_directory=root).save(
                     {"value": 1}, result_type="cable_loss", run_id="bad-run"
                 )
 
             self.assertFalse((root / "bad-run" / "cable_loss_results.json").exists())
+
+    def test_legacy_alias_result_is_rejected_before_leaving_an_archive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with self.assertRaisesRegex(ValueError, "旧字段"):
+                FileMeasurementResultRepository(results_directory=root).save(
+                    _cable_document(legacy_payload={"cable_losses": {}}),
+                    result_type="cable_loss",
+                    run_id="legacy-run",
+                )
+
+            self.assertFalse((root / "legacy-run" / "cable_loss_results.json").exists())
 
     def test_unknown_result_type_is_rejected_before_writing(self):
         with self.assertRaises(ValueError):

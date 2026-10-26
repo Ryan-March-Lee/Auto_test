@@ -7,10 +7,10 @@ from unittest.mock import patch
 from app.events import StoppedEvent
 from app.run_context import prepare_run
 from domain.configuration.models import RunConfiguration
-from domain.models import AmplifierMeasurementResult, AmplifierScanPoint
+from application.dto import AmplifierFrequencyResult, AmplifierMeasurementResult
 from application.measurements.services import AmplifierMeasurementService
 from infrastructure.config.json_config_repository import ConfigurationRepository
-from domain.result_reading import parse_result_model
+from application.dto import measurement_result_from_document
 from infrastructure.persistence.json_result_repository import load_json_result
 from infrastructure.persistence.json_result_repository import save_measurement_model
 from analysis.reporting import export_csv, render_html_report
@@ -148,13 +148,22 @@ class OfflineCompletionTests(unittest.TestCase):
     def test_versioned_model_and_reports_are_round_trippable(self):
         result = AmplifierMeasurementResult(
             run_id="report-run",
-            points=(AmplifierScanPoint(1.0, 1.0, 20.0, 19.0),),
-            plan_snapshot={"frequencies": [1.0]},
+            frequencies=(
+                AmplifierFrequencyResult(
+                    frequency_ghz="1.0",
+                    sweep_data={
+                        "input_power_dut": [1.0],
+                        "output_power_dut": [20.0],
+                        "gain": [19.0],
+                    },
+                ),
+            ),
+            configuration_snapshot={"frequencies": [1.0]},
         )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             model_path = save_measurement_model(result, run_directory=root)
-            loaded = parse_result_model(load_json_result(model_path))
+            loaded = measurement_result_from_document(load_json_result(model_path))
             self.assertEqual(loaded.run_id, "report-run")
             document = load_json_result(model_path)
             self.assertNotIn("legacy_payload", document)

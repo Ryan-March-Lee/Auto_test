@@ -131,7 +131,6 @@ FORMAL_API = {
         "MeasurementResultRepository",
         "SavedMeasurementResult",
     ),
-    "application.ports.result_history": ("ResultHistoryRepository", "HistoryResultEntry"),
     "application.ports.run_history": (
         "RunHistoryRepository",
         "RunHistoryEntry",
@@ -213,12 +212,7 @@ FORMAL_API = {
         "calculate_efficiency",
         "calculate_compression_result",
     ),
-    "domain.result_reading": (
-        "normalize_frequency_key",
-        "parse_result_model",
-        "get_sweep_results",
-        "get_saturation_points",
-    ),
+    # 结果读取的唯一正式入口是 application.dto.measurement_results（见 3.2 跨层 DTO）。
     # 基础设施适配器
     "infrastructure.config.json_io": ("load_json_object", "load_config_file"),
     "infrastructure.config.validation": (
@@ -239,7 +233,6 @@ FORMAL_API = {
     "infrastructure.persistence.result_repository": ("FileMeasurementResultRepository",),
     "infrastructure.persistence.run_repository": ("RunRepository",),
     "infrastructure.persistence.run_history_repository": ("FileRunHistoryRepository",),
-    "infrastructure.persistence.result_history_repository": ("FileResultHistoryRepository",),
     "infrastructure.gui_data_service": (
         "JsonConfigurationAdapter",
         "ResultQueryAdapter",
@@ -271,6 +264,7 @@ FORMAL_API = {
 # 正式内部模块：允许被正式代码导入，但不是公共 API 承诺，可随实现调整。
 # 内部模块同样按完整路径登记，新增内部模块并跨模块导入时必须先在这里登记。
 INTERNAL_MODULES = {
+    "analysis.result_source": "分析层只读结果协议与文档展平",
     "analysis.visualization": "分析层只读可视化与报告数据构建",
     "app": "装配包（__init__ 为空）；具体入口见 app.* 公共 API",
     "application.inputs": "结果输入读取包",
@@ -278,7 +272,7 @@ INTERNAL_MODULES = {
     "application.lifecycle": "测量生命周期包",
     "assistant.llm": "可选助手 LLM 客户端",
     "assistant.storage": "可选助手历史存储",
-    "domain.models": "旧领域模型模块；跨层新代码应使用正式 DTO",
+    "domain.models": "运行、测试方案与会话生命周期模型；测量结果契约在 application.dto",
     "infrastructure.filesystem.atomic_json": "原子 JSON 写入",
     "infrastructure.filesystem.paths": "路径服务",
     "infrastructure.persistence": "持久化适配器包",
@@ -356,6 +350,19 @@ LEGACY_MODULES = {
     ),
     "application.dto.legacy_result_adapter": LegacyModule(
         "旧结果 DTO 适配器", "已删除", "步骤 6", "application/dto/legacy_result_adapter.py", False
+    ),
+    "domain.result_reading": LegacyModule(
+        "旧领域结果读取层", "已删除", "步骤 6", "domain/result_reading.py", False
+    ),
+    "application.ports.result_history": LegacyModule(
+        "旧全局历史结果端口", "已删除", "步骤 6", "application/ports/result_history.py", False
+    ),
+    "infrastructure.persistence.result_history_repository": LegacyModule(
+        "旧全局历史结果仓储",
+        "已删除",
+        "步骤 6",
+        "infrastructure/persistence/result_history_repository.py",
+        False,
     ),
     # 步骤 3：旧结果仓储/写入链
     "result_storage": LegacyModule(

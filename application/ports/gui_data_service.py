@@ -6,10 +6,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Mapping, Protocol
 
+from application.dto.measurement_results import MeasurementResult
 
-# 历史结果的来源：运行目录（新流程）或全局兼容副本（旧历史）。
+
+# 历史结果只来自正式运行目录；旧全局兼容副本已不再参与历史查看。
 RESULT_SOURCE_RUN = "run"
-RESULT_SOURCE_LEGACY = "legacy"
 
 
 @dataclass(frozen=True)
@@ -18,7 +19,7 @@ class ResultFileDto:
     filename: str
     file_type: str
     modified_at: datetime
-    source: str = RESULT_SOURCE_LEGACY
+    source: str = RESULT_SOURCE_RUN
     run_id: str | None = None
 
 
@@ -39,7 +40,7 @@ class ResultQueryPort(Protocol):
 
     该契约只服务于历史浏览，不提供正式测量输入；正式测量输入必须来自当前
     运行 manifest 登记并校验的阶段结果。查询对象以 ``result_id`` 标识结果，路径
-    解析和目录边界校验由基础设施实现负责。
+    解析和目录边界校验由基础设施实现负责，数据源是正式运行目录结果。
     """
 
     def list_results(self) -> list[ResultFileDto]: ...
@@ -47,10 +48,7 @@ class ResultQueryPort(Protocol):
     def read_bytes(self, result_id: str) -> bytes: ...
     def choose_and_load(self) -> LoadedResultDto | None: ...
     def latest_result(self, result_type: str) -> LoadedResultDto:
-        """优先返回最新运行目录结果，没有运行结果时回退到最新全局兼容副本。"""
-
-    def latest_legacy_result(self, result_type: str) -> LoadedResultDto:
-        """按类型读取最新全局兼容副本，仅用于旧历史的只读查看。"""
+        """返回最新的可校验运行目录结果；没有结果时抛出 ``FileNotFoundError``。"""
 
 
 class ResultExportPort(Protocol):
@@ -61,7 +59,10 @@ class ResultExportPort(Protocol):
 
 class ReportPort(Protocol):
     def create_summary_report(
-        self, result: Mapping[str, Any], configuration: Mapping[str, Any], filename: str
+        self,
+        result: MeasurementResult,
+        configuration: Mapping[str, Any],
+        filename: str,
     ) -> None: ...
 
 

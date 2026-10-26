@@ -5,7 +5,6 @@ from .config_repository import (
     RunMappingRepository,
     TestPlanRepository,
 )
-from .result_history import HistoryResultEntry, ResultHistoryRepository
 from .result_input_reader import ResultInputReader
 from .result_repository import MeasurementResultRepository, SavedMeasurementResult
 from .run_history import (
@@ -20,10 +19,8 @@ from .types import PathLike
 __all__ = [
     "ConfigurationLoadResult",
     "ConfigurationRepository",
-    "HistoryResultEntry",
     "MeasurementResultRepository",
     "PathLike",
-    "ResultHistoryRepository",
     "ResultInputReader",
     "RunHistoryEntry",
     "RunHistoryRepository",
@@ -35,4 +32,3 @@ __all__ = [
     "SavedMeasurementResult",
     "TestPlanRepository",
 ]
-"""Application port package."""

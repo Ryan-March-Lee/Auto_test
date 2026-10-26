@@ -369,10 +369,10 @@ class MainWindow(QMainWindow):
         self._active_page_index = index
 
     def _load_cable_loss_result(self):
-        """读取最新线损结果，仅供历史查看；不会成为任何运行的输入。
+        """读取最新正式运行目录结果，仅供历史查看；不会成为任何运行的输入。
 
-        优先读取最新运行目录内登记的线损阶段结果，没有运行结果时回退到旧的
-        全局兼容副本，保持旧历史仍可查看。
+        只读取运行 manifest 登记并通过校验的线损阶段结果，没有可用运行结果时提示
+        未找到，不回退到旧的全局兼容副本。
         """
         try:
             reference = MeasurementResultReference(
@@ -1309,8 +1309,7 @@ class MainWindow(QMainWindow):
         self.visualization_page = VisualizationPage(
             config_provider=lambda: self.config,
             result_loader=self.gui_data_service.results.choose_and_load,
-            # 报告兜底优先使用最新运行结果，没有运行结果时回退旧历史；正式测量输入
-            # 只来自当前运行 manifest。
+            # 报告兜底使用最新正式运行结果；正式测量输入只来自当前运行 manifest。
             latest_result_provider=self.gui_data_service.results.latest_result,
             report_service=self.gui_data_service.reports.create_summary_report,
             log_callback=self.add_log_message,

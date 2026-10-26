@@ -81,20 +81,27 @@ class NormalSimulatedMeasurementFlowTests(unittest.TestCase):
             self.assertEqual(readings, [-30.0, -25.0])
 
             result = {
-                "frequency_hz": config["frequency_hz"],
-                "input_power_dbm": config["signal_power_dbm"],
-                "readings_dbm": readings,
+                "measurement_type": "cable_loss",
+                "status": "completed",
+                "attenuator_value": 0.0,
+                "cable_losses": {
+                    "1.0": {"total_path1": readings[0], "total_path2": readings[1]}
+                },
             }
             run_directory = root / "run"
             archive_path = save_measurement_result(
                 result,
-                result_type="simulation_measurement",
+                result_type="cable_loss",
                 filename=result_path.name,
                 run_id="simulation-normal-flow",
                 run_directory=run_directory,
             )
-            self.assertEqual(json.loads(archive_path.read_text(encoding="utf-8"))["readings_dbm"],
-                             readings)
+            self.assertEqual(
+                json.loads(archive_path.read_text(encoding="utf-8"))["cable_losses"]["1.0"][
+                    "total_path1"
+                ],
+                readings[0],
+            )
             # 正式结果只落在运行目录，不再写全局兼容副本。
             self.assertFalse(result_path.exists())
 

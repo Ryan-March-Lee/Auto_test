@@ -32,8 +32,9 @@ RELEASE_FILES = (
 # ``cable_loss_measurement.py`` / ``driver_power_mapping.py`` /
 # ``amplifier_measurement.py`` / ``app/legacy_amplifier_measurement.py``。
 ROLLBACK_FILES = ()
-# 技术债步骤 6（2026-10-27）已退役旧结果解析转发 ``result_reading.py``；剩余条目
-# 由步骤 16 统一清理。
+# 技术债步骤 6（2026-10-27）已退役旧结果解析转发 ``result_reading.py``、旧领域结果读取层
+# ``domain/result_reading.py``、旧结果 DTO 适配器与旧全局历史端口/仓储；剩余条目由步骤 16
+# 统一清理。
 COMPATIBILITY_FILES = (
     "measurement_services.py",
     "measurement_lifecycle.py",

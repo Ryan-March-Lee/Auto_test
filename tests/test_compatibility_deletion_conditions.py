@@ -501,7 +501,7 @@ class StepCExecutionTests(unittest.TestCase):
 
 
 class StepDMigrationTests(unittest.TestCase):
-    """步骤 D：历史浏览迁移到运行目录，旧兼容副本保持只读可查看。"""
+    """步骤 D/6：历史浏览迁移到运行目录，旧全局历史副本已退役。"""
 
     def test_run_history_port_and_repository_exist(self):
         for relative in (
@@ -526,11 +526,19 @@ class StepDMigrationTests(unittest.TestCase):
         ).read_text(encoding="utf-8-sig")
         self.assertIn("FileRunHistoryRepository", source)
 
-    def test_legacy_global_history_remains_read_only_viewable(self):
-        path = ROOT / "infrastructure" / "persistence" / "result_history_repository.py"
-        self.assertTrue(path.is_file(), "旧的只读全局历史仓储必须保留")
-        source = path.read_text(encoding="utf-8-sig")
-        for forbidden in ("def save", "def delete", "def unlink", "def write"):
+    def test_legacy_global_history_repository_is_retired(self):
+        """步骤 6：历史查看只读正式运行目录结果，旧全局历史仓储整文件退役。"""
+        for relative in (
+            "infrastructure/persistence/result_history_repository.py",
+            "application/ports/result_history.py",
+        ):
+            with self.subTest(module=relative):
+                self.assertFalse((ROOT / relative).exists(), relative)
+
+        source = (
+            ROOT / "infrastructure" / "gui_data_service.py"
+        ).read_text(encoding="utf-8-sig")
+        for forbidden in ("RESULT_SOURCE_LEGACY", "latest_legacy_result", "_legacy_rows"):
             self.assertNotIn(forbidden, source)
 
 
@@ -852,11 +860,17 @@ class Step6RetirementTests(unittest.TestCase):
 
     RETIRED_RESULT_FILES = (
         "result_reading.py",
+        "domain/result_reading.py",
         "application/dto/legacy_result_adapter.py",
+        "application/ports/result_history.py",
+        "infrastructure/persistence/result_history_repository.py",
     )
     RETIRED_RESULT_MODULES = (
         "result_reading",
+        "domain.result_reading",
         "application.dto.legacy_result_adapter",
+        "application.ports.result_history",
+        "infrastructure.persistence.result_history_repository",
     )
     RETIRED_IDENTIFIERS = (
         "to_legacy_payload",
@@ -961,7 +975,7 @@ class Step6RetirementTests(unittest.TestCase):
                         "sweep_data": {"gain": [30.0, 20.0]},
                     }
                 },
-                "config": {"test_frequencies": [1.0]},
+                "configuration_snapshot": {"test_frequencies": [1.0]},
             },
             run_id="run-amplifier",
         )
@@ -982,6 +996,20 @@ class Step6RetirementTests(unittest.TestCase):
         for document in (
             {"cable_losses": {"1.0": {"cable1": 1.0}}},
             {"run_id": "run-1", "config": {"frequency": 1.0}},
+            {"run_id": "run-1", "cable_losses": {"1.0": {"cable1": 1.0}}},
+            {"run_id": "run-1", "status": "completed", "cable_losses": {}},
+            {
+                "run_id": "run-1",
+                "status": "completed",
+                "measurement_type": "cable_loss",
+                "power_mapping": {"1.0": {"-40.0": 1.0}},
+            },
+            {
+                "run_id": "run-1",
+                "status": "completed",
+                "measurement_type": "amplifier",
+                "results": {"1.0": {"sweep_data": [{"gain": 1.0}]}},
+            },
         ):
             with self.subTest(document=document):
                 with self.assertRaises(ValueError):

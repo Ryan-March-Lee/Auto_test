@@ -178,6 +178,78 @@ class ConfigPageTests(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(widget.value(), start)
 
+    @staticmethod
+    def click_on_line_edit(widget, position_in_widget):
+        """模拟行编辑框自己收到鼠标按下的事件路径（按钮被行编辑框覆盖时的情况）。"""
+        from PySide6.QtCore import QEvent, QPointF, Qt
+        from PySide6.QtGui import QMouseEvent
+
+        line_edit = widget.lineEdit()
+        global_position = widget.mapToGlobal(position_in_widget)
+        local_position = line_edit.mapFromGlobal(global_position)
+        press = QMouseEvent(
+            QEvent.MouseButtonPress,
+            QPointF(local_position),
+            QPointF(global_position),
+            Qt.LeftButton,
+            Qt.LeftButton,
+            Qt.NoModifier,
+        )
+        QApplication.sendEvent(line_edit, press)
+
+    def test_spin_up_clicked_through_line_edit_steps_up(self):
+        """行编辑框盖住上按钮时，落在上箭头上的点击仍应加一。"""
+        page = self.make_page()
+        widget = page.start_power
+        up, _down = self.spin_button_rects(widget)
+        start = widget.value()
+
+        self.click_on_line_edit(widget, up.center())
+        self.app.processEvents()
+        self.assertEqual(widget.value(), start + 1)
+
+    def test_spin_down_clicked_through_line_edit_steps_down(self):
+        page = self.make_page()
+        widget = page.start_power
+        _up, down = self.spin_button_rects(widget)
+        start = widget.value()
+
+        self.click_on_line_edit(widget, down.center())
+        self.app.processEvents()
+        self.assertEqual(widget.value(), start - 1)
+
+    def test_spin_text_area_click_through_line_edit_keeps_value(self):
+        """按钮区以外的行编辑框点击只移动光标，不改变数值。"""
+        from PySide6.QtCore import QPoint
+
+        page = self.make_page()
+        widget = page.start_power
+        up, _down = self.spin_button_rects(widget)
+        start = widget.value()
+
+        self.click_on_line_edit(widget, QPoint(up.center().x() - 50, up.center().y()))
+        self.app.processEvents()
+        self.assertEqual(widget.value(), start)
+
+    def test_line_edit_stops_left_of_spin_buttons(self):
+        """行编辑框不能盖住步进按钮，否则按钮收不到按下事件、没有下沉动画。"""
+        page = self.make_page()
+        widget = page.start_power
+        up, _down = self.spin_button_rects(widget)
+        self.assertLess(widget.lineEdit().geometry().right(), up.left())
+
+    def test_line_edit_is_refitted_when_layout_expands_it(self):
+        """样式表把行编辑框重新撑到按钮上时，控件会再收窄一次。"""
+        page = self.make_page()
+        widget = page.start_power
+        up, _down = self.spin_button_rects(widget)
+        line_edit = widget.lineEdit()
+
+        line_edit.setGeometry(5, 5, up.right() + 5, line_edit.height())
+        self.app.processEvents()
+
+        self.assertLess(line_edit.geometry().right(), up.left())
+
     def test_wide_window_keeps_group_boxes_compact(self):
         from PySide6.QtWidgets import QGroupBox
 

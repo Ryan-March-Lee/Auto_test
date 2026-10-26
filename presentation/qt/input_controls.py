@@ -3,27 +3,40 @@
 这些控件忽略滚轮事件：滚动页面时不会意外改变参数。滚轮事件被忽略后会继续
 传递给父控件，因此页面仍可正常滚动。下拉框仍可通过鼠标点击展开或键盘选择。
 
-另外，原生 Windows 样式与样式表混用时，Qt 计算出的步进按钮命中区域可能与
-按钮实际绘制的位置不一致，表现为“点下箭头能改值、点上箭头没反应”。数值框
-基类在这种情况下会按按钮的绘制矩形补一次步进，保证上下按钮行为对称。
+样式表给数值框设置 ``padding`` 后，Qt 会把内部行编辑框铺满内容区，连步进按钮
+一起盖住。上箭头正好画在被盖住的一段里，点击被行编辑框收下：数值框既收不到
+按下事件（按钮没有下沉动画），也收不到步进，于是“上箭头点了没反应、下箭头
+正常”。基类因此先把行编辑框收窄到按钮左侧，让点击重新落到数值框上，交给 Qt
+原生处理；另外保留两道兜底，应对平台样式绘制与命中区域仍有几像素偏差的情况。
 """
 
-from PySide6.QtCore import QPoint, QRect, Qt
+from PySide6.QtCore import QEvent, QPoint, QRect, Qt
 from PySide6.QtWidgets import (
     QComboBox, QDoubleSpinBox, QSpinBox, QStyle, QStyleOptionSpinBox,
 )
 
 
 class _SpinButtonStepFallback:
-    """让上下步进按钮的点击不依赖平台样式的命中判定。
+    """让步进按钮的点击、动画都不依赖样式表的布局结果。
 
-    默认行为仍交给 Qt：正常点击按钮时 Qt 会在按下时步进，这里不会重复处理。
-    只有在一次左键点击结束后数值没有变化（即 Qt 没把这次点击当成步进按钮）
-    时，才按按钮矩形计算方向并补一次步进。
+    主要手段是把内部行编辑框收窄到步进按钮左侧，使按钮恢复成 Qt 原生的命中
+    区域：按下有下沉动画，长按可以连加。
+
+    另外两道兜底只处理“点击仍然落在行编辑框或按钮边缘”的偏差情形：
+    落在按钮矩形内的按下事件直接换算成一次步进；按钮绘制位置与命中区域差几个
+    像素时，按按钮矩形补一次步进。
     """
 
     # 按钮矩形向外放宽的容差，覆盖绘制与命中区域相差几个像素的情况。
     _HIT_MARGIN = 2
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._spin_press_value = None
+        self._spin_line_edit = self.lineEdit()
+        if self._spin_line_edit is not None:
+            self._spin_line_edit.installEventFilter(self)
+            self._spin_fit_line_edit()
 
     def _spin_button_rects(self) -> tuple[QRect, QRect]:
         option = QStyleOptionSpinBox()
@@ -62,13 +75,63 @@ class _SpinButtonStepFallback:
         down_distance = (position - down.center()).manhattanLength()
         return 1 if up_distance <= down_distance else -1
 
+    def _spin_step(self, direction: int) -> None:
+        if direction > 0:
+            self.stepUp()
+        else:
+            self.stepDown()
+
+    def _spin_fit_line_edit(self) -> None:
+        """把行编辑框右边界收到步进按钮左侧，别让它盖住按钮。
+
+        样式表给数值框加 ``padding`` 后，Qt 会把行编辑框铺满整个内容区，连按钮
+        一起盖住：点击被行编辑框收下，数值框既收不到按下事件（没有下沉动画），
+        也收不到步进。把行编辑框缩到按钮左边之后，点击重新落到数值框上，交给 Qt
+        原生处理——步进、按下动画、长按连加都与未套样式时一致。
+        """
+        edit = self._spin_line_edit
+        if edit is None:
+            return
+        up, _down = self._spin_button_rects()
+        if up.isEmpty():
+            return
+        rect = edit.geometry()
+        available = up.left() - rect.left()
+        if available <= 0 or rect.width() <= available:
+            return
+        edit.setGeometry(rect.left(), rect.top(), available, rect.height())
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._spin_fit_line_edit()
+
+    def eventFilter(self, watched, event):
+        if self._spin_line_edit is not None and watched is self._spin_line_edit:
+            if event.type() == QEvent.Resize:
+                # Qt 每次重新布局行编辑框都可能把它撑回按钮上方，这里再收一次。
+                self._spin_fit_line_edit()
+            elif event.type() in (QEvent.MouseButtonPress, QEvent.MouseButtonDblClick):
+                if event.button() == Qt.LeftButton:
+                    # 先换算到全局再映射回本控件：直接 mapFrom(行编辑框, …) 在
+                    # Qt 6.11 + PySide6 下会得到错误的偏移量。
+                    global_position = self._spin_line_edit.mapToGlobal(
+                        event.position().toPoint()
+                    )
+                    direction = self._spin_button_direction(
+                        self.mapFromGlobal(global_position)
+                    )
+                    if direction:
+                        self._spin_step(direction)
+                        return True
+        return super().eventFilter(watched, event)
+
     def mousePressEvent(self, event):
         self._spin_press_value = self.value()
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
         super().mouseReleaseEvent(event)
-        pressed_value = getattr(self, "_spin_press_value", None)
+        pressed_value = self._spin_press_value
         self._spin_press_value = None
         if pressed_value is None or event.button() != Qt.LeftButton:
             return
@@ -78,10 +141,7 @@ class _SpinButtonStepFallback:
         direction = self._spin_button_direction(event.position().toPoint())
         if not direction:
             return
-        if direction > 0:
-            self.stepUp()
-        else:
-            self.stepDown()
+        self._spin_step(direction)
         event.accept()
 
 

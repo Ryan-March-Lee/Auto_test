@@ -217,6 +217,27 @@ def write_legacy_run_snapshot(
     return run_directory
 
 
+def validate_result_filename(filename: str) -> str:
+    """校验运行目录内的测量结果文件名。
+
+    只接受纯文件名（不能含目录、盘符或 ``.``/``..`` 片段），并要求 ``.json``
+    后缀；非法值直接拒绝，避免调用方把结果写到运行目录之外或产生歧义命名。
+    """
+    if not isinstance(filename, str) or not filename.strip():
+        raise ValueError("测量结果文件名不能为空")
+    if filename != filename.strip():
+        raise ValueError(f"测量结果文件名不能包含首尾空白: {filename!r}")
+    if "\x00" in filename:
+        raise ValueError("测量结果文件名不能包含空字符")
+    if "/" in filename or "\\" in filename or ":" in filename:
+        raise ValueError(f"测量结果文件名必须是运行目录内的纯文件名: {filename!r}")
+    if filename in {".", ".."}:
+        raise ValueError(f"测量结果文件名非法: {filename!r}")
+    if Path(filename).suffix.lower() != ".json":
+        raise ValueError(f"测量结果文件名必须使用 .json 后缀: {filename!r}")
+    return filename
+
+
 def save_measurement_result(
     result: Mapping[str, Any],
     *,
@@ -232,10 +253,8 @@ def save_measurement_result(
     正式结果只落在运行目录内：不再写 ``test_results/`` 下的固定文件名或时间戳
     兼容副本。返回值就是本次运行的权威结果路径，调用方据此登记 manifest。
     """
+    name = validate_result_filename(filename)
     validate_run_id(run_id)
-    name = Path(filename).name
-    if not name:
-        raise ValueError("测量结果文件名不能为空")
     result = _with_run_id(result, run_id, "测量结果")
     if run_directory is None:
         run_directory = create_run_directory(run_id, paths=paths)

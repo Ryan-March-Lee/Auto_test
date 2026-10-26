@@ -51,7 +51,8 @@ class ResultStorageTests(unittest.TestCase):
         generated = new_run_id()
         self.assertEqual(validate_run_id(generated), generated)
 
-    def test_measurement_result_is_archived_in_the_run_directory_only(self):
+    def test_legacy_entry_archives_result_and_preserves_the_compatibility_file(self):
+        """旧测量入口（步骤 4 范围）仍显式写全局兼容副本。"""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             legacy_path = root / "cable_loss_results.json"
@@ -65,16 +66,16 @@ class ResultStorageTests(unittest.TestCase):
                 measurement.run_directory = None
                 measurement.save_results()
 
-            # 正式保存只写运行目录，不再生成全局兼容副本。
-            self.assertFalse(legacy_path.exists())
+            self.assertTrue(legacy_path.exists())
             archived = root / "test_results" / measurement.run_id / "cable_loss_results.json"
             self.assertTrue(archived.exists())
             self.assertEqual(load_json_result(archived)["cable_losses"]["1.0"]["cable1"], 1.0)
 
-    def test_archive_collision_does_not_overwrite_existing_result(self):
+    def test_legacy_entry_archive_collision_does_not_overwrite_compatibility_file(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             legacy_path = root / "cable_loss_results.json"
+            legacy_path.write_text(json.dumps({"old": True}), encoding="utf-8")
             with patch("cable_loss_measurement.CABLE_LOSS_FILE", legacy_path), patch(
                 "infrastructure.persistence.json_result_repository.TEST_RESULTS_DIR", root / "test_results"
             ):
@@ -93,8 +94,30 @@ class ResultStorageTests(unittest.TestCase):
                 with self.assertRaises(FileExistsError):
                     second.save_results()
 
-            archived = root / "test_results" / first.run_id / "cable_loss_results.json"
-            self.assertEqual(load_json_result(archived)["cable_losses"]["1.0"]["cable1"], 1.0)
+            self.assertEqual(load_json_result(legacy_path)["cable_losses"]["1.0"]["cable1"], 1.0)
+
+    def test_legacy_entry_removes_archive_when_compatibility_write_fails(self):
+        """旧入口保持原原子性：兼容副本失败时不留下孤立归档。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_id = "compat-fail-run"
+            with patch("cable_loss_measurement.CABLE_LOSS_FILE", root / "cable_loss_results.json"), patch(
+                "cable_loss_measurement.write_compatibility_copy",
+                side_effect=OSError("兼容副本写入失败"),
+            ), patch(
+                "infrastructure.persistence.json_result_repository.TEST_RESULTS_DIR", root / "test_results"
+            ):
+                measurement = CableLossMeasurement.__new__(CableLossMeasurement)
+                measurement.attenuator_value = 30.0
+                measurement.cable_losses = {1.0: {"cable1": 1.0}}
+                measurement.run_id = run_id
+                measurement.run_directory = None
+                with self.assertRaisesRegex(OSError, "兼容副本写入失败"):
+                    measurement.save_results()
+
+            self.assertFalse(
+                (root / "test_results" / run_id / "cable_loss_results.json").exists()
+            )
 
     def test_result_root_must_be_object(self):
         with tempfile.TemporaryDirectory() as directory:

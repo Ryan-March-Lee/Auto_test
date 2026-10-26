@@ -149,6 +149,16 @@ class AmplifierMeasurement:
             run_directory=self.run_directory,
         )
         archive_path = saved.archive_path
+        try:
+            # 旧入口保留显式全局兼容副本，供回滚与旧脚本读取；正式测量流程不再写该副本。
+            legacy_path = repository.save_compatibility_copy(
+                results,
+                result_type="amplifier_measurement",
+                run_id=self.run_id,
+            )
+        except Exception:
+            archive_path.unlink(missing_ok=True)
+            raise
         self.run_directory = archive_path.parent
-        logger.info("主功放结果已保存: 运行路径=%s", archive_path)
-        print(f"\nResults saved to {archive_path}")
+        logger.info("主功放结果已保存: 兼容路径=%s，运行路径=%s", legacy_path, archive_path)
+        print(f"\nResults saved to {legacy_path}; archived to {archive_path}")

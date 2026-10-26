@@ -54,9 +54,17 @@ DEPRECATED_INTERFACE_CALLERS = {
     "read_latest_legacy_driver_mapping": set(),
     "latest_legacy_driver_mapping_path": set(),
     # 3.3 旧结果写入
-    # 技术债分阶段重构计划步骤 2（2026-10-26）已删除正式用例的兼容副本写入，
-    # 因此生产代码中的 ``save_compatibility_copy`` 调用为零；接口本身留待后续步骤删除。
-    "save_compatibility_copy": set(),
+    # 技术债分阶段重构计划步骤 2（2026-10-26）已删除正式用例与仓储 save() 的兼容副本
+    # 写入；兼容副本只由三个旧测量根入口显式写入（步骤 4 范围），接口本身留待删除。
+    "save_compatibility_copy": {
+        "app/legacy_amplifier_measurement.py",
+        "cable_loss_measurement.py",
+        "driver_power_mapping.py",
+    },
+    "write_compatibility_copy": {
+        "cable_loss_measurement.py",
+        "infrastructure/persistence/result_repository.py",
+    },
     "create_legacy_run_snapshot": set(),
     "write_legacy_run_snapshot": {
         "app/legacy_amplifier_measurement.py",
@@ -398,8 +406,9 @@ class StepBPreConnectValidationTests(unittest.TestCase):
 class StepCExecutionTests(unittest.TestCase):
     """步骤 2（2026-10-26）：正式流程不再写全局兼容副本。
 
-    门禁固定两点：三类正式测量用例不得再引用兼容副本写入 API，仓储 ``save()``
-    也不得再写全局副本；兼容写入接口本身保留到后续删除步骤。
+    门禁固定四点：三类正式测量用例与正式测量包不得引用兼容写入 API；仓储 ``save()``
+    不得写全局副本；``legacy_copy_path`` 只允许存在于结果 DTO；兼容副本只能由旧测量
+    根入口显式写入（步骤 4 范围），接口本身保留到后续删除步骤。
     """
 
     WRITING_USE_CASES = (
@@ -437,6 +446,44 @@ class StepCExecutionTests(unittest.TestCase):
         save_end = source.index("def write_compatibility_copy(", save_start)
         body = source[save_start:save_end]
         self.assertNotIn("legacy_path", body)
+
+    def test_formal_measurement_package_never_references_compatibility_apis(self):
+        """正式测量包不得访问兼容写入/路径 API，兼容调用只属于旧入口。"""
+        package = ROOT / "application" / "measurements"
+        forbidden = (
+            "save_compatibility_copy",
+            "write_compatibility_copy",
+            "legacy_path",
+        )
+        for path in sorted(package.glob("*.py")):
+            source = path.read_text(encoding="utf-8-sig")
+            for name in forbidden:
+                self.assertNotIn(
+                    name,
+                    source,
+                    f"{_relative(path)} 不得引用兼容 API {name}",
+                )
+
+    def test_legacy_result_field_is_confined_to_the_result_dto(self):
+        """``legacy_copy_path`` 已停止由保存流程产生，字段清理留待步骤 6。"""
+        offenders = {
+            _relative(path)
+            for path in _production_sources()
+            if "legacy_copy_path" in path.read_text(encoding="utf-8-sig")
+        }
+        self.assertEqual(
+            offenders,
+            {"application/dto/measurement_results.py"},
+            "legacy_copy_path 只允许作为步骤 6 前的结果模型兼容字段存在",
+        )
+
+    def test_old_entry_points_write_the_compatibility_copy_explicitly(self):
+        """旧入口若保留兼容副本，必须显式调用，不得依赖仓储 save() 的隐式副作用。"""
+        for relative in LEGACY_MEASUREMENT_DATA_ENTRIES:
+            with self.subTest(module=relative):
+                source = (ROOT / relative).read_text(encoding="utf-8-sig")
+                self.assertIn("save_compatibility_copy(", source)
+                self.assertIn("write_legacy_run_snapshot(", source)
 
 
 class StepDMigrationTests(unittest.TestCase):

@@ -10,6 +10,7 @@ from infrastructure.persistence.json_result_repository import (
     load_json_result,
     new_run_id,
     save_measurement_result,
+    validate_result_filename,
     write_run_snapshot,
     write_legacy_run_snapshot,
 )
@@ -216,6 +217,42 @@ class SaveMeasurementResultTests(unittest.TestCase):
             )
 
             self.assertEqual(archive_path.parent, run_directory)
+
+    def test_save_measurement_result_rejects_unsafe_filenames(self):
+        """结果文件名必须是运行目录内的纯 JSON 文件名，且校验先于目录创建。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_directory = root / "run"
+            for filename in (
+                "",
+                "   ",
+                " nested.json",
+                "nested.json ",
+                "nested/result.json",
+                "nested\\result.json",
+                "C:result.json",
+                ".",
+                "..",
+                "result.txt",
+                "result",
+                "result\x00.json",
+            ):
+                with self.subTest(filename=filename):
+                    with self.assertRaises(ValueError):
+                        save_measurement_result(
+                            {"data": 1},
+                            result_type="test_result",
+                            filename=filename,
+                            run_id="unsafe-file",
+                            run_directory=run_directory,
+                        )
+                    self.assertFalse(run_directory.exists())
+
+    def test_validate_result_filename_accepts_a_plain_json_name(self):
+        self.assertEqual(
+            validate_result_filename("measurement_result.json"),
+            "measurement_result.json",
+        )
 
 
 class ResultReadingTests(unittest.TestCase):

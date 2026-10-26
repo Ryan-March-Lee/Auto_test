@@ -14,6 +14,7 @@ from infrastructure.persistence.json_result_repository import (
     load_json_result,
     new_run_id,
     save_measurement_result,
+    write_compatibility_copy,
     write_legacy_run_snapshot,
 )
 from infrastructure.config.json_io import load_config_file
@@ -162,6 +163,17 @@ class CableLossMeasurement:
                 run_id=self.run_id,
                 run_directory=self.run_directory,
             )
+            try:
+                # 旧入口保留显式全局兼容副本，供回滚与旧脚本读取；正式测量流程不再写该副本。
+                legacy_path = write_compatibility_copy(
+                    results,
+                    result_type="cable_loss",
+                    legacy_path=CABLE_LOSS_FILE,
+                    run_id=self.run_id,
+                )
+            except Exception:
+                archive_path.unlink(missing_ok=True)
+                raise
         else:
             repository = FileMeasurementResultRepository(paths=paths)
             saved = repository.save(
@@ -171,9 +183,18 @@ class CableLossMeasurement:
                 run_directory=self.run_directory,
             )
             archive_path = saved.archive_path
+            try:
+                legacy_path = repository.save_compatibility_copy(
+                    results,
+                    result_type="cable_loss",
+                    run_id=self.run_id,
+                )
+            except Exception:
+                archive_path.unlink(missing_ok=True)
+                raise
         self.run_directory = archive_path.parent
-        logger.info("线损结果已保存: 运行路径=%s", archive_path)
-        print(f"\n线损结果已保存至 '{archive_path}'")
+        logger.info("线损结果已保存: 兼容路径=%s，运行路径=%s", legacy_path, archive_path)
+        print(f"\n线损结果已保存至 '{legacy_path}'，运行归档为 '{archive_path}'")
 
     def close(self):
         """关闭仪器连接"""

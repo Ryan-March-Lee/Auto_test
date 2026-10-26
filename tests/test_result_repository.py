@@ -140,6 +140,7 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
         self.assertEqual(missing, set())
 
     def test_save_compatibility_copy_writes_only_the_global_copy(self):
+        """步骤 3 前的兼容 API 保留测试；正式测量流程不再调用它。"""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             repository = FileMeasurementResultRepository(results_directory=root)
@@ -172,6 +173,7 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
             FileMeasurementResultRepository().save({}, result_type="unknown", run_id="run-1")
 
     def test_legacy_path_is_resolved_by_repository(self):
+        """步骤 3 前的兼容 API 保留测试；正式结果写入不再使用该路径。"""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             repository = FileMeasurementResultRepository(results_directory=root)

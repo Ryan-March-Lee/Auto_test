@@ -154,10 +154,9 @@ class DriverPowerMapping:
             run_directory=self.run_directory,
         )
         archive_path = saved.archive_path
-        legacy_path = saved.legacy_copy_path
         self.run_directory = archive_path.parent
-        logger.info("驱动映射结果已保存: 兼容路径=%s，运行路径=%s", legacy_path, archive_path)
-        print(f"\nResults saved to {legacy_path}; archived to {archive_path}")
+        logger.info("驱动映射结果已保存: 运行路径=%s", archive_path)
+        print(f"\nResults saved to {archive_path}")
 
     # --- MODIFIED: Removed plot_mapping_curves method ---
 

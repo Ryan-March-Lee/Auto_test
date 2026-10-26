@@ -165,13 +165,11 @@ class MeasurementResult(Mapping[str, Any]):
         self,
         *,
         archive_path: str | None = None,
-        legacy_copy_path: str | None = None,
     ) -> "MeasurementResult":
+        """登记运行目录中的权威结果路径。"""
         references = dict(self.result_reference)
         if archive_path is not None:
             references["archive_path"] = archive_path
-        if legacy_copy_path is not None:
-            references["legacy_copy_path"] = legacy_copy_path
         return replace(self, result_reference=references, data_reference=references)
 
     def to_dict(self) -> dict[str, Any]:

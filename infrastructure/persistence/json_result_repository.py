@@ -221,24 +221,29 @@ def save_measurement_result(
     result: Mapping[str, Any],
     *,
     result_type: str,
-    legacy_path: PathLike,
+    filename: str,
     run_id: str,
     run_directory: Optional[Path] = None,
     encoder: type[json.JSONEncoder] = json.JSONEncoder,
     paths: PathService | None = None,
-) -> tuple[Path, Path]:
-    """归档结果并写入旧路径兼容副本，同时生成 canonical model。"""
+) -> Path:
+    """把测量结果写入当前运行目录，并生成 canonical model。
+
+    正式结果只落在运行目录内：不再写 ``test_results/`` 下的固定文件名或时间戳
+    兼容副本。返回值就是本次运行的权威结果路径，调用方据此登记 manifest。
+    """
     validate_run_id(run_id)
+    name = Path(filename).name
+    if not name:
+        raise ValueError("测量结果文件名不能为空")
     result = _with_run_id(result, run_id, "测量结果")
     if run_directory is None:
         run_directory = create_run_directory(run_id, paths=paths)
-    legacy_path = Path(legacy_path)
-    archive_path = Path(run_directory) / legacy_path.name
+    archive_path = Path(run_directory) / name
     if archive_path.exists():
         raise FileExistsError(f"归档结果已存在，不允许覆盖: {archive_path}")
     save_json_result(archive_path, result, result_type=result_type, encoder=encoder)
     try:
-        save_json_result(legacy_path, result, result_type=result_type, encoder=encoder)
         if result_type in {"cable_loss", "driver_power_mapping", "amplifier_measurement", "amplifier"}:
             from domain.result_reading import parse_result_model
 
@@ -253,9 +258,9 @@ def save_measurement_result(
                 filename=f"{result_type}_model.json", encoder=encoder,
             )
     except Exception:
-        Path(archive_path).unlink(missing_ok=True)
+        archive_path.unlink(missing_ok=True)
         raise
-    return Path(archive_path), legacy_path
+    return archive_path
 
 
 def write_compatibility_copy(

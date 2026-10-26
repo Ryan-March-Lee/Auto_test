@@ -46,7 +46,7 @@ class CableLossUseCase:
         if self.result_repository is None:
             raise ValueError("CableLossUseCase 必须注入 result_repository")
         # 运行契约运行会注入阶段记录器：结果写入当前运行的 inputs/cable_loss.json
-        # 并更新 manifest；旧兼容流程不注入，保持原有全局结果路径行为。
+        # 并更新 manifest；未注入记录器的旧流程只写运行目录，不产生全局兼容副本。
         self.stage_recorder = request.stage_recorder
         # 只有阶段已开始且尚未结束的阶段才允许写入 failed/cancelled。
         self._stage_open = False
@@ -221,37 +221,17 @@ class CableLossUseCase:
             run_directory=self.run_directory,
         )
         self.run_directory = saved.run_directory
-        return result.with_saved_result(
-            archive_path=_saved_path(saved, "archive_path"),
-            legacy_copy_path=_saved_path(saved, "legacy_copy_path"),
-        )
+        return result.with_saved_result(archive_path=_saved_path(saved, "archive_path"))
 
     def _save_to_run_directory(self, result: MeasurementResult) -> MeasurementResult:
         """运行契约运行：权威结果写入 ``inputs/cable_loss.json``。
 
-        运行目录结果是本次运行的权威来源，先原子提交并登记 manifest；全局旧路径
-        只作兼容副本，写入失败只记录兼容性告警，不把已完成的阶段重新判定为失败。
+        运行目录结果是本次运行的权威来源：先原子提交并登记 manifest，返回值只暴露该
+        权威路径；不再同时写全局兼容副本。
         """
-        payload = result.to_dict()
         reference = self._record_complete(result)
-        compatibility_copy = self._write_compatibility_copy(payload)
         archive_path = Path(self.run_directory) / reference.path
-        return result.with_saved_result(
-            archive_path=str(archive_path),
-            legacy_copy_path=str(compatibility_copy) if compatibility_copy is not None else None,
-        )
-
-    def _write_compatibility_copy(self, payload: Mapping[str, Any]) -> Path | None:
-        """尽力写入全局兼容副本；失败时保留权威结果并记录告警。"""
-        try:
-            return self.result_repository.save_compatibility_copy(
-                payload,
-                result_type="cable_loss",
-                run_id=self.run_id,
-            )
-        except Exception:
-            logger.exception("线损全局兼容副本写入失败，运行目录结果仍然有效")
-            return None
+        return result.with_saved_result(archive_path=str(archive_path))
 
 
 def _service_config(configuration: Any) -> Mapping[str, Any]:

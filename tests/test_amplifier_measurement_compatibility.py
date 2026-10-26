@@ -167,7 +167,6 @@ class AmplifierLegacyConstructorCompatibilityTests(unittest.TestCase):
         ) as repository_cls:
             saved = Mock()
             saved.archive_path.parent = Path("archive")
-            saved.legacy_copy_path = Path("legacy.json")
             repository_cls.return_value.save.return_value = saved
             measurement = AmplifierMeasurement(run_id="run-1", measurement_port=object())
             measurement.measurement_results = {"1.0": {"gain": 20.0}}

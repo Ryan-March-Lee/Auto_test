@@ -142,36 +142,28 @@ class RunSnapshotTests(unittest.TestCase):
 class SaveMeasurementResultTests(unittest.TestCase):
     """统一保存测量结果测试。"""
 
-    def test_save_measurement_result_creates_archive_and_legacy(self):
-        """统一保存应同时创建归档文件和旧路径兼容副本。"""
+    def test_save_measurement_result_writes_only_the_run_result(self):
+        """统一保存只写入运行目录内的权威结果，不再写全局兼容副本。"""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             with patch("infrastructure.persistence.json_result_repository.TEST_RESULTS_DIR", root / "test_results"):
                 result = {"measurement_time": "2026-08-21T10:00:00", "data": [1, 2, 3]}
-                legacy_path = root / "legacy_result.json"
                 run_id = "test-save-001"
 
-                archive_path, legacy_return = save_measurement_result(
+                archive_path = save_measurement_result(
                     result,
                     result_type="test_result",
-                    legacy_path=legacy_path,
+                    filename="measurement_result.json",
                     run_id=run_id,
                 )
 
-                # 验证归档路径
                 self.assertTrue(archive_path.exists())
-                self.assertEqual(archive_path.parent, root / "test_results" / run_id)
+                self.assertEqual(archive_path, root / "test_results" / run_id / "measurement_result.json")
 
-                # 验证旧路径
-                self.assertTrue(legacy_path.exists())
-                self.assertEqual(legacy_return, legacy_path)
-
-                # 验证两个文件内容一致
                 archive_data = load_json_result(archive_path)
-                legacy_data = load_json_result(legacy_path)
                 self.assertEqual(archive_data["data"], [1, 2, 3])
                 self.assertEqual(archive_data["run_id"], run_id)
-                self.assertEqual(legacy_data["data"], [1, 2, 3])
+                self.assertFalse((root / "measurement_result.json").exists())
 
     def test_snapshot_rejects_mismatched_run_id_before_creating_directory(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -186,14 +178,13 @@ class SaveMeasurementResultTests(unittest.TestCase):
             root = Path(directory)
             with patch("infrastructure.persistence.json_result_repository.TEST_RESULTS_DIR", root / "test_results"):
                 result = {"data": "test"}
-                legacy_path = root / "legacy.json"
                 run_id = "reuse-run"
 
                 # 第一次保存
-                archive1, _ = save_measurement_result(
+                archive1 = save_measurement_result(
                     result,
                     result_type="test_result",
-                    legacy_path=legacy_path,
+                    filename="measurement_result.json",
                     run_id=run_id,
                 )
 
@@ -201,7 +192,7 @@ class SaveMeasurementResultTests(unittest.TestCase):
                     save_measurement_result(
                         result,
                         result_type="test_result",
-                        legacy_path=legacy_path,
+                        filename="measurement_result.json",
                         run_id=run_id,
                     )
                 self.assertTrue(archive1.exists())
@@ -214,13 +205,12 @@ class SaveMeasurementResultTests(unittest.TestCase):
             run_directory.mkdir()
 
             result = {"data": "test"}
-            legacy_path = root / "legacy.json"
             run_id = "explicit-dir-run"
 
-            archive_path, _ = save_measurement_result(
+            archive_path = save_measurement_result(
                 result,
                 result_type="test_result",
-                legacy_path=legacy_path,
+                filename="measurement_result.json",
                 run_id=run_id,
                 run_directory=run_directory,
             )

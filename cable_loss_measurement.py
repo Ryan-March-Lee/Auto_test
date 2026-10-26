@@ -1,6 +1,7 @@
 # --- START OF FILE cable_loss_measurement.py ---
 
 import time
+from pathlib import Path
 from typing import Dict
 from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService, resolve_path
 
@@ -154,10 +155,10 @@ class CableLossMeasurement:
 
         paths = getattr(self, "paths", None)
         if paths is None:
-            archive_path, legacy_path = save_measurement_result(
+            archive_path = save_measurement_result(
                 results,
                 result_type="cable_loss",
-                legacy_path=CABLE_LOSS_FILE,
+                filename=Path(CABLE_LOSS_FILE).name,
                 run_id=self.run_id,
                 run_directory=self.run_directory,
             )
@@ -170,10 +171,9 @@ class CableLossMeasurement:
                 run_directory=self.run_directory,
             )
             archive_path = saved.archive_path
-            legacy_path = saved.legacy_copy_path
         self.run_directory = archive_path.parent
-        logger.info("线损结果已保存: 兼容路径=%s，运行路径=%s", legacy_path, archive_path)
-        print(f"\n线损结果已保存至 '{legacy_path}'，运行归档为 '{archive_path}'")
+        logger.info("线损结果已保存: 运行路径=%s", archive_path)
+        print(f"\n线损结果已保存至 '{archive_path}'")
 
     def close(self):
         """关闭仪器连接"""

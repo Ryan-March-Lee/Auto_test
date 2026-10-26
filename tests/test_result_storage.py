@@ -51,7 +51,7 @@ class ResultStorageTests(unittest.TestCase):
         generated = new_run_id()
         self.assertEqual(validate_run_id(generated), generated)
 
-    def test_measurement_result_is_archived_and_legacy_file_is_preserved(self):
+    def test_measurement_result_is_archived_in_the_run_directory_only(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             legacy_path = root / "cable_loss_results.json"
@@ -65,16 +65,16 @@ class ResultStorageTests(unittest.TestCase):
                 measurement.run_directory = None
                 measurement.save_results()
 
-            self.assertTrue(legacy_path.exists())
+            # 正式保存只写运行目录，不再生成全局兼容副本。
+            self.assertFalse(legacy_path.exists())
             archived = root / "test_results" / measurement.run_id / "cable_loss_results.json"
             self.assertTrue(archived.exists())
             self.assertEqual(load_json_result(archived)["cable_losses"]["1.0"]["cable1"], 1.0)
 
-    def test_archive_collision_does_not_overwrite_legacy_file(self):
+    def test_archive_collision_does_not_overwrite_existing_result(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             legacy_path = root / "cable_loss_results.json"
-            legacy_path.write_text(json.dumps({"old": True}), encoding="utf-8")
             with patch("cable_loss_measurement.CABLE_LOSS_FILE", legacy_path), patch(
                 "infrastructure.persistence.json_result_repository.TEST_RESULTS_DIR", root / "test_results"
             ):
@@ -93,7 +93,8 @@ class ResultStorageTests(unittest.TestCase):
                 with self.assertRaises(FileExistsError):
                     second.save_results()
 
-            self.assertEqual(load_json_result(legacy_path)["cable_losses"]["1.0"]["cable1"], 1.0)
+            archived = root / "test_results" / first.run_id / "cable_loss_results.json"
+            self.assertEqual(load_json_result(archived)["cable_losses"]["1.0"]["cable1"], 1.0)
 
     def test_result_root_must_be_object(self):
         with tempfile.TemporaryDirectory() as directory:

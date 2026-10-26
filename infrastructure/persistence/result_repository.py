@@ -17,10 +17,11 @@ from infrastructure.filesystem.paths import PathService
 
 
 class FileMeasurementResultRepository(MeasurementResultRepository):
-    """Adapt the legacy result storage functions to the application port.
+    """Write measurement results into the current run directory.
 
     本仓储是**正式测量输入/结果写入**的边界；历史查看和导出不得复用它，应使用
     :class:`infrastructure.persistence.result_history_repository.FileResultHistoryRepository`。
+    写入只产生运行目录内的权威结果，不再额外写全局兼容副本。
     """
 
     def __init__(
@@ -42,23 +43,22 @@ class FileMeasurementResultRepository(MeasurementResultRepository):
         run_id: str,
         run_directory: PathLike | None = None,
     ) -> SavedMeasurementResult:
-        legacy_path = self.legacy_path(result_type)
+        filename = self._archive_filename(result_type)
         effective_run_directory = self._run_directory(run_id, run_directory)
         save_kwargs = {
             "result_type": result_type,
-            "legacy_path": legacy_path,
+            "filename": filename,
             "run_id": run_id,
             "run_directory": effective_run_directory,
             "encoder": NumpyJSONEncoder,
         }
         if self.paths is not None:
             save_kwargs["paths"] = self.paths
-        archive_path, legacy_copy_path = json_result_repository.save_measurement_result(
+        archive_path = json_result_repository.save_measurement_result(
             result, **save_kwargs
         )
         return SavedMeasurementResult(
             archive_path=archive_path,
-            legacy_copy_path=legacy_copy_path,
             run_directory=archive_path.parent,
             run_id=run_id,
         )
@@ -93,14 +93,18 @@ class FileMeasurementResultRepository(MeasurementResultRepository):
         return json_result_repository.load_json_result(path)
 
     def legacy_path(self, result_type: str) -> Path:
+        return self._results_directory() / self._archive_filename(result_type)
+
+    def _archive_filename(self, result_type: str) -> str:
+        """返回运行目录内的结果文件名（沿用既有归档命名，便于旧运行对照）。"""
         filename = json_result_repository.fixed_result_filename(result_type)
         if filename is not None:
-            return self._results_directory() / filename
+            return filename
 
         prefix = json_result_repository.timestamped_result_prefix(result_type)
         if prefix is None:
             raise ValueError(f"不支持的测量结果类型: {result_type}")
-        return self._results_directory() / f"{prefix}_{time.strftime('%Y%m%d_%H%M%S')}.json"
+        return f"{prefix}_{time.strftime('%Y%m%d_%H%M%S')}.json"
 
     def _results_directory(self) -> Path:
         """Resolve the default lazily so path configuration remains patchable."""

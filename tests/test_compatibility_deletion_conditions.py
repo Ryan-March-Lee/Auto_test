@@ -54,11 +54,9 @@ DEPRECATED_INTERFACE_CALLERS = {
     "read_latest_legacy_driver_mapping": set(),
     "latest_legacy_driver_mapping_path": set(),
     # 3.3 旧结果写入
-    "save_compatibility_copy": {
-        "application/measurements/amplifier_test.py",
-        "application/measurements/cable_loss.py",
-        "application/measurements/driver_mapping.py",
-    },
+    # 技术债分阶段重构计划步骤 2（2026-10-26）已删除正式用例的兼容副本写入，
+    # 因此生产代码中的 ``save_compatibility_copy`` 调用为零；接口本身留待后续步骤删除。
+    "save_compatibility_copy": set(),
     "create_legacy_run_snapshot": set(),
     "write_legacy_run_snapshot": {
         "app/legacy_amplifier_measurement.py",
@@ -397,11 +395,11 @@ class StepBPreConnectValidationTests(unittest.TestCase):
                 )
 
 
-class StepCBlockedTests(unittest.TestCase):
-    """步骤 C 是数据类删除，在步骤 F 归档前禁止执行。
+class StepCExecutionTests(unittest.TestCase):
+    """步骤 2（2026-10-26）：正式流程不再写全局兼容副本。
 
-    门禁固定两点：兼容副本写入必须**仍然存在**（防止未经授权提前删除），
-    且发布说明登记了阻断结论（防止靠改文字消解门槛冲突）。
+    门禁固定两点：三类正式测量用例不得再引用兼容副本写入 API，仓储 ``save()``
+    也不得再写全局副本；兼容写入接口本身保留到后续删除步骤。
     """
 
     WRITING_USE_CASES = (
@@ -410,22 +408,35 @@ class StepCBlockedTests(unittest.TestCase):
         "application/measurements/driver_mapping.py",
     )
 
-    def test_measurement_use_cases_still_write_the_compatibility_copy(self):
+    def test_measurement_use_cases_no_longer_write_the_compatibility_copy(self):
         for relative in self.WRITING_USE_CASES:
             with self.subTest(module=relative):
                 source = (ROOT / relative).read_text(encoding="utf-8-sig")
-                self.assertIn(
+                self.assertNotIn(
                     "save_compatibility_copy(",
                     source,
-                    f"{relative} 的兼容副本写入不得在步骤 D/F 完成前删除",
+                    f"{relative} 不得再写全局兼容副本",
                 )
+                self.assertNotIn("_write_compatibility_copy", source)
 
-    def test_repository_still_exposes_the_compatibility_copy_path(self):
+    def test_repository_save_writes_only_the_run_result(self):
         source = (
             ROOT / "infrastructure" / "persistence" / "result_repository.py"
         ).read_text(encoding="utf-8-sig")
-        self.assertIn("def save_compatibility_copy(", source)
-        self.assertIn("write_compatibility_copy(", source)
+        save_start = source.index("    def save(")
+        save_end = source.index("    def save_compatibility_copy(", save_start)
+        body = source[save_start:save_end]
+        self.assertNotIn("legacy_copy_path", body)
+        self.assertNotIn("write_compatibility_copy(", body)
+
+    def test_storage_function_has_no_global_copy_write(self):
+        source = (
+            ROOT / "infrastructure" / "persistence" / "json_result_repository.py"
+        ).read_text(encoding="utf-8-sig")
+        save_start = source.index("def save_measurement_result(")
+        save_end = source.index("def write_compatibility_copy(", save_start)
+        body = source[save_start:save_end]
+        self.assertNotIn("legacy_path", body)
 
 
 class StepDMigrationTests(unittest.TestCase):

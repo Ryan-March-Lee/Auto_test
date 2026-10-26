@@ -295,38 +295,17 @@ class AmplifierMeasurementUseCase:
             run_directory=self.run_directory,
         )
         self.run_directory = saved.run_directory
-        return result.with_saved_result(
-            archive_path=_saved_path(saved, "archive_path"),
-            legacy_copy_path=_saved_path(saved, "legacy_copy_path"),
-        )
+        return result.with_saved_result(archive_path=_saved_path(saved, "archive_path"))
 
     def _save_to_run_directory(self, result: MeasurementResult) -> MeasurementResult:
         """运行契约运行：权威结果写入当前运行的 ``results/``。
 
-        主功放结果及拆分文件先原子提交并登记 manifest，运行目录结果是本次运行的
-        权威来源；全局旧路径只作兼容副本，写入失败只记录兼容性告警，不把已完成的
-        阶段重新判定为失败。
+        主功放结果及拆分文件先原子提交并登记 manifest，运行目录结果是本次运行的权威
+        来源；返回值只暴露该权威路径，不再同时写全局兼容副本。
         """
-        payload = result.to_dict()
         reference = self._record_complete(result)
-        compatibility_copy = self._write_compatibility_copy(payload)
         archive_path = Path(self.run_directory) / reference.path
-        return result.with_saved_result(
-            archive_path=str(archive_path),
-            legacy_copy_path=str(compatibility_copy) if compatibility_copy is not None else None,
-        )
-
-    def _write_compatibility_copy(self, payload: Mapping[str, Any]) -> Path | None:
-        """尽力写入全局兼容副本；失败时保留权威结果并记录告警。"""
-        try:
-            return self.result_repository.save_compatibility_copy(
-                payload,
-                result_type="amplifier_measurement",
-                run_id=self.run_id,
-            )
-        except Exception:
-            logger.exception("主功放全局兼容副本写入失败，运行目录结果仍然有效")
-            return None
+        return result.with_saved_result(archive_path=str(archive_path))
 
 
 def validate_amplifier_calibration_inputs(

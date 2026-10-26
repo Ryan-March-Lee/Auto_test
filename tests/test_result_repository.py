@@ -16,10 +16,9 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             run_directory = Path(directory) / "run-1"
             expected_archive = run_directory / "cable_loss_results.json"
-            expected_legacy = Path(directory) / "cable_loss_results.json"
             with patch(
                 "infrastructure.persistence.result_repository.json_result_repository.save_measurement_result",
-                return_value=(expected_archive, expected_legacy),
+                return_value=expected_archive,
             ) as save:
                 saved = FileMeasurementResultRepository(results_directory=directory).save(
                     {"value": 1},
@@ -30,19 +29,18 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
 
         self.assertIsInstance(saved, SavedMeasurementResult)
         self.assertEqual(saved.archive_path, expected_archive)
-        self.assertEqual(saved.legacy_copy_path, expected_legacy)
         self.assertEqual(saved.run_directory, run_directory)
         self.assertEqual(saved.run_id, "run-1")
         save.assert_called_once_with(
             {"value": 1},
             result_type="cable_loss",
-            legacy_path=expected_legacy,
+            filename="cable_loss_results.json",
             run_id="run-1",
             run_directory=run_directory,
             encoder=NumpyJSONEncoder,
         )
 
-    def test_custom_results_directory_controls_archive_and_legacy_copy(self):
+    def test_custom_results_directory_controls_archive_location_only(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             saved = FileMeasurementResultRepository(results_directory=root).save(
@@ -51,9 +49,9 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
 
             self.assertEqual(saved.run_directory, root / "run-1")
             self.assertEqual(saved.archive_path, root / "run-1" / "cable_loss_results.json")
-            self.assertEqual(saved.legacy_copy_path, root / "cable_loss_results.json")
             self.assertTrue(saved.archive_path.is_file())
-            self.assertTrue(saved.legacy_copy_path.is_file())
+            # 正式写入只产生运行目录内的权威结果，不落全局兼容目录。
+            self.assertFalse((root / "cable_loss_results.json").exists())
             self.assertEqual(load_json_result(saved.archive_path)["run_id"], "run-1")
 
     def test_real_write_encodes_numpy_scalars_and_arrays(self):
@@ -68,11 +66,10 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
                 run_id="numpy-run",
             )
 
-            for path in (saved.archive_path, saved.legacy_copy_path):
-                payload = load_json_result(path)
-                self.assertEqual(payload["array"], [1, 2])
-                self.assertEqual(payload["integer"], 3)
-                self.assertEqual(payload["floating"], 4.5)
+            payload = load_json_result(saved.archive_path)
+            self.assertEqual(payload["array"], [1, 2])
+            self.assertEqual(payload["integer"], 3)
+            self.assertEqual(payload["floating"], 4.5)
 
     def test_explicit_run_directory_is_preserved(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -101,7 +98,7 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
                     run_id="failed-run",
                 )
 
-    def test_timestamped_result_types_use_their_legacy_file_names(self):
+    def test_timestamped_result_types_use_their_archive_file_names(self):
         with tempfile.TemporaryDirectory() as directory:
             repository = FileMeasurementResultRepository(results_directory=directory)
             with patch("infrastructure.persistence.result_repository.time.strftime", return_value="20261001_120000"):
@@ -116,8 +113,8 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
                     run_id="amplifier-run",
                 )
 
-        self.assertEqual(driver.legacy_copy_path.name, "driver_power_mapping_20261001_120000.json")
-        self.assertEqual(amplifier.legacy_copy_path.name, "amplifier_measurement_20261001_120000.json")
+        self.assertEqual(driver.archive_path.name, "driver_power_mapping_20261001_120000.json")
+        self.assertEqual(amplifier.archive_path.name, "amplifier_measurement_20261001_120000.json")
 
     def test_save_passes_through_storage_failures(self):
         error = OSError("写入失败")

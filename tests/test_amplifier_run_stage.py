@@ -140,11 +140,11 @@ class _Context:
         self.run_id = run_id
 
 
-class _CompatFailingRepository:
-    """兼容副本写入必定失败的替身，用于验证权威结果不受影响。"""
+class _CompatibilityWriteGuard:
+    """正式运行不得再写全局兼容副本：一旦调用就立即失败。"""
 
     def save_compatibility_copy(self, *args, **kwargs):
-        raise OSError("compatibility copy failed")
+        raise AssertionError("正式运行不得写全局兼容副本")
 
 
 class _FailingCommitRepository:
@@ -525,11 +525,11 @@ class AmplifierRunStageTests(unittest.TestCase):
 
     # -- 兼容副本与提交失败 ------------------------------------------------
 
-    def test_compatibility_copy_failure_does_not_fail_the_measurement(self):
+    def test_run_contract_never_touches_the_compatibility_copy_api(self):
         layout = self._create_run()
         self._complete_cable_loss()
         use_case = AmplifierMeasurementUseCase(
-            self._request(repository=_CompatFailingRepository()), sleep_fn=lambda _: None
+            self._request(repository=_CompatibilityWriteGuard()), sleep_fn=lambda _: None
         )
 
         result = use_case.measure_all_frequencies()
@@ -770,7 +770,6 @@ class AmplifierRunStageTests(unittest.TestCase):
                 return SimpleNamespace(
                     run_directory=Path("saved-run"),
                     archive_path=Path("saved-run") / "amplifier_measurement.json",
-                    legacy_copy_path=Path("test_results") / "amplifier_measurement_x.json",
                 )
 
         request = AmplifierMeasurementRequest(

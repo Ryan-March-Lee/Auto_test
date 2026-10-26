@@ -115,11 +115,11 @@ class _Context:
         self.run_id = run_id
 
 
-class _CompatFailingRepository:
-    """兼容副本写入必定失败的替身，用于验证权威结果不受影响。"""
+class _CompatibilityWriteGuard:
+    """正式运行不得再写全局兼容副本：一旦调用就立即失败。"""
 
     def save_compatibility_copy(self, *args, **kwargs):
-        raise OSError("compatibility copy failed")
+        raise AssertionError("正式运行不得写全局兼容副本")
 
 
 class _FailingCommitRepository:
@@ -287,16 +287,17 @@ class DriverMappingRunStageTests(unittest.TestCase):
             path.relative_to(run_directory)
         self.assertNotIn(global_copy.resolve(), loaded_paths)
 
-    def test_global_compatibility_copy_is_still_written(self):
+    def test_global_compatibility_copy_is_not_written(self):
         self._create_run()
         self._complete_cable_loss()
         DriverPowerMappingUseCase(self._request(), sleep_fn=lambda _: None).measure_all_frequencies()
 
-        copies = list((self.base / "test_results").glob("driver_power_mapping_*.json"))
-        self.assertTrue(copies)
-        payload = json.loads(copies[0].read_text(encoding="utf-8"))
-        self.assertEqual(payload["run_id"], RUN_ID)
-        self.assertTrue(payload["compatibility_copy"])
+        self.assertEqual(
+            list((self.base / "test_results").glob("driver_power_mapping_*.json")), []
+        )
+        self.assertTrue(
+            (self.base / "runs" / RUN_ID / DRIVER_MAPPING_INPUT_PATH).is_file()
+        )
 
     # -- 输入隔离与前置失败 ------------------------------------------------
 
@@ -451,10 +452,10 @@ class DriverMappingRunStageTests(unittest.TestCase):
 
     # -- 兼容副本与提交失败 ------------------------------------------------
 
-    def test_compatibility_copy_failure_does_not_fail_the_measurement(self):
+    def test_run_contract_never_touches_the_compatibility_copy_api(self):
         layout = self._create_run()
         self._complete_cable_loss()
-        request = self._request(repository=_CompatFailingRepository())
+        request = self._request(repository=_CompatibilityWriteGuard())
         use_case = DriverPowerMappingUseCase(request, sleep_fn=lambda _: None)
 
         result = use_case.measure_all_frequencies()

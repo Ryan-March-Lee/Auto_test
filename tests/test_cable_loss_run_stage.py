@@ -107,11 +107,11 @@ class _FailingCommitRepository:
         return self.repository.update_manifest(run_id, manifest, now=now)
 
 
-class _CompatFailingRepository:
-    """兼容副本写入必定失败的替身，用于验证权威结果不受影响。"""
+class _CompatibilityWriteGuard:
+    """正式运行不得再写全局兼容副本：一旦调用就立即失败。"""
 
     def save_compatibility_copy(self, *args, **kwargs):
-        raise OSError("compatibility copy failed")
+        raise AssertionError("正式运行不得写全局兼容副本")
 
 
 class CableLossRunStageTests(unittest.TestCase):
@@ -178,21 +178,18 @@ class CableLossRunStageTests(unittest.TestCase):
             result.result_reference["archive_path"], str(result_path)
         )
 
-    def test_global_compatibility_copy_is_still_written_and_readable(self):
+    def test_global_compatibility_copy_is_not_written(self):
         request = self._request()
         use_case = CableLossUseCase(request, sleep_fn=lambda _: None)
         use_case.measure_all_frequencies()
-        use_case.continue_to_step2()
+        result = use_case.continue_to_step2()
 
-        compatibility_path = self.base / "test_results" / "cable_loss_results.json"
-        self.assertTrue(compatibility_path.is_file())
-
-        # 无路径兼容读取已删除：直接按固定兼容路径读取（步骤 C 才会停止写兼容副本）。
-        legacy_payload = self.result_repository.load(compatibility_path)
-        self.assertEqual(legacy_payload["run_id"], RUN_ID)
-        self.assertIn("cable_losses", legacy_payload)
-        # 兼容副本被明确标记，不会被误当作运行目录内的权威输入。
-        self.assertTrue(legacy_payload["compatibility_copy"])
+        # 正式结果只落在运行目录并登记 manifest，全局兼容目录不再出现结果文件。
+        self.assertFalse((self.base / "test_results" / "cable_loss_results.json").exists())
+        self.assertEqual(
+            result.result_reference["archive_path"],
+            str(self.base / "runs" / RUN_ID / CABLE_LOSS_INPUT_PATH),
+        )
 
     def test_failure_marks_stage_failed_without_result_file(self):
         request = self._request(instrument=_Instrument(fail=True))
@@ -294,14 +291,14 @@ class CableLossRunStageTests(unittest.TestCase):
         self.assertEqual(manifest.stage("cable_loss").status, StageStatus.CANCELLED)
         self.assertEqual(manifest.inputs, ())
 
-    def test_compatibility_copy_failure_does_not_fail_the_measurement(self):
+    def test_run_contract_never_touches_the_compatibility_copy_api(self):
         layout = self._create_run()
         request = CableLossMeasurementRequest(
             configuration={"test_frequencies": [1.0], "attenuator": {"type": "10dB"}},
             context=_Context(RUN_ID),
             run_directory=layout.run_directory,
             measurement_port=_Instrument(),
-            result_repository=_CompatFailingRepository(),
+            result_repository=_CompatibilityWriteGuard(),
             stage_recorder=RunStageRecorder(self.repository, RUN_ID),
             safety_options={"owns_measurement_port": True},
         )
@@ -349,7 +346,7 @@ class CableLossRunStageTests(unittest.TestCase):
             self.repository.load_manifest(RUN_ID).stage("cable_loss").status,
             StageStatus.COMPLETED,
         )
-        self.assertTrue(
+        self.assertFalse(
             (self.base / "test_results" / "cable_loss_results.json").is_file()
         )
 

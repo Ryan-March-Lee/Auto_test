@@ -86,17 +86,17 @@ class NormalSimulatedMeasurementFlowTests(unittest.TestCase):
                 "readings_dbm": readings,
             }
             run_directory = root / "run"
-            archive_path, legacy_path = save_measurement_result(
+            archive_path = save_measurement_result(
                 result,
                 result_type="simulation_measurement",
-                legacy_path=result_path,
+                filename=result_path.name,
                 run_id="simulation-normal-flow",
                 run_directory=run_directory,
             )
-            self.assertEqual(json.loads(archive_path.read_text(encoding="utf-8")),
-                             json.loads(legacy_path.read_text(encoding="utf-8")))
             self.assertEqual(json.loads(archive_path.read_text(encoding="utf-8"))["readings_dbm"],
                              readings)
+            # 正式结果只落在运行目录，不再写全局兼容副本。
+            self.assertFalse(result_path.exists())
 
             session.set_rf_enabled(False)
             session.power_off()

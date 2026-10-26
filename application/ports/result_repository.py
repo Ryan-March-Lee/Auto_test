@@ -17,7 +17,6 @@ class SavedMeasurementResult:
     """Locations and identity assigned to a persisted measurement result."""
 
     archive_path: Path
-    legacy_copy_path: Path
     run_directory: Path
     run_id: str
 
@@ -44,7 +43,7 @@ class MeasurementResultRepository(Protocol):
         run_id: str,
         run_directory: PathLike | None = None,
     ) -> SavedMeasurementResult:
-        """Persist a result and return its archive and compatibility paths."""
+        """Persist a result in the run directory and return its authoritative path."""
 
     def save_compatibility_copy(
         self,

@@ -212,6 +212,39 @@ class DriverMappingPageTests(unittest.TestCase):
         self.page.emergency_stop_measurement()
         self.assertEqual(self.controller.calls, [("emergency_stop",)])
 
+    def test_control_buttons_share_one_row(self):
+        page = self.page
+        page.resize(1200, 800)
+        page.show()
+        self.app.processEvents()
+        buttons = (
+            page.driver_mapping_btn,
+            page.driver_stop_btn,
+            page.driver_cancel_btn,
+            page.driver_emergency_stop_btn,
+        )
+        tops = {button.geometry().top() for button in buttons}
+        self.assertEqual(len(tops), 1)
+        lefts = [button.geometry().left() for button in buttons]
+        self.assertEqual(lefts, sorted(lefts))
+        page.close()
+
+    def test_left_column_holds_controls_and_plot_takes_the_right(self):
+        from PySide6.QtWidgets import QGroupBox
+
+        page = self.page
+        page.resize(1400, 800)
+        page.show()
+        self.app.processEvents()
+        titles = [box.title() for box in page.control_panel.findChildren(QGroupBox)]
+        self.assertEqual(titles, ["连接说明", "测量控制"])
+        self.assertLessEqual(page.control_panel.width(), 430)
+        self.assertLess(
+            page.control_panel.x() + page.control_panel.width(),
+            page.driver_plot_widget.x(),
+        )
+        page.close()
+
 
 if __name__ == "__main__":
     unittest.main()

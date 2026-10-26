@@ -8,6 +8,7 @@ from typing import Any, Callable
 from PySide6.QtWidgets import (
     QDialog,
     QGroupBox,
+    QHBoxLayout,
     QMessageBox,
     QPushButton,
     QTextEdit,
@@ -61,7 +62,16 @@ class DriverMappingPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         self.root = self.build_ui()
 
     def build_ui(self) -> QWidget:
-        layout = QVBoxLayout(self)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(8)
+
+        # 左侧只放连接说明和测量控制，宽度固定为窄栏；右侧整块留给四张图。
+        left_panel = QWidget()
+        left_panel.setMaximumWidth(430)
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(6)
 
         instruction_group = QGroupBox("连接说明")
         instruction_layout = QVBoxLayout(instruction_group)
@@ -76,29 +86,37 @@ class DriverMappingPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         self.show_driver_diagram_btn = QPushButton("查看连接图")
         self.show_driver_diagram_btn.clicked.connect(self.show_connection_diagram)
         instruction_layout.addWidget(self.show_driver_diagram_btn)
-        layout.addWidget(instruction_group)
+        left_layout.addWidget(instruction_group)
 
         control_group = QGroupBox("测量控制")
-        control_layout = QVBoxLayout(control_group)
+        control_layout = QHBoxLayout(control_group)
         self.driver_mapping_btn = QPushButton("开始驱动映射")
         self.driver_mapping_btn.clicked.connect(self.start_measurement)
         self.driver_cancel_btn = QPushButton("取消")
         self.driver_cancel_btn.setEnabled(False)
         self.driver_cancel_btn.clicked.connect(self.cancel_measurement)
-        control_layout.addWidget(self.driver_mapping_btn)
-        control_layout.addWidget(self.driver_cancel_btn)
         self.driver_stop_btn = QPushButton("停止测量")
         self.driver_stop_btn.setEnabled(False)
         self.driver_stop_btn.clicked.connect(self.stop_measurement)
-        control_layout.addWidget(self.driver_stop_btn)
         self.driver_emergency_stop_btn = QPushButton("紧急停止")
         self.driver_emergency_stop_btn.setStyleSheet(
             "QPushButton { background-color: #dc3545; color: white; font-weight: bold; }"
         )
         self.driver_emergency_stop_btn.setEnabled(False)
         self.driver_emergency_stop_btn.clicked.connect(self.emergency_stop_measurement)
-        control_layout.addWidget(self.driver_emergency_stop_btn)
-        layout.addWidget(control_group)
+        # 测量控制按钮横向排列在同一行，减少纵向占用面积。
+        for button in (
+            self.driver_mapping_btn,
+            self.driver_stop_btn,
+            self.driver_cancel_btn,
+            self.driver_emergency_stop_btn,
+        ):
+            control_layout.addWidget(button)
+        control_layout.addStretch(1)
+        left_layout.addWidget(control_group)
+        left_layout.addStretch(1)
+        self.control_panel = left_panel
+        layout.addWidget(left_panel)
 
         self.driver_plot_widget = self._plot_widget_factory(self)
         self._realtime_plot_widget = self.driver_plot_widget
@@ -108,7 +126,7 @@ class DriverMappingPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
             prev_clicked.connect(self.previous_frequency)
         if next_clicked is not None:
             next_clicked.connect(self.next_frequency)
-        layout.addWidget(self.driver_plot_widget)
+        layout.addWidget(self.driver_plot_widget, 1)
         return self
 
     def _connect_controller_signals(self, controller: Any) -> None:

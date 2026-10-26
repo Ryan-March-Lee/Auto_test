@@ -146,6 +146,34 @@ class AmplifierPageTests(unittest.TestCase):
         self.controller.signals.error.emit("失败")
         self.assertTrue(self.page.amplifier_test_btn.isEnabled())
 
+    def test_control_buttons_share_one_row(self):
+        page = self.page
+        page.resize(1200, 800)
+        page.show()
+        self.app.processEvents()
+        buttons = (page.amplifier_test_btn, page.cancel_btn, page.emergency_stop_btn)
+        tops = {button.geometry().top() for button in buttons}
+        self.assertEqual(len(tops), 1)
+        lefts = [button.geometry().left() for button in buttons]
+        self.assertEqual(lefts, sorted(lefts))
+        page.close()
+
+    def test_left_column_holds_controls_and_plot_takes_the_right(self):
+        from PySide6.QtWidgets import QGroupBox
+
+        page = self.page
+        page.resize(1600, 900)
+        page.show()
+        self.app.processEvents()
+        titles = [box.title() for box in page.control_panel.findChildren(QGroupBox)]
+        self.assertEqual(titles, ["连接说明", "测量控制", "测量结果"])
+        self.assertLessEqual(page.control_panel.width(), 520)
+        self.assertLess(
+            page.control_panel.x() + page.control_panel.width(),
+            page.amplifier_plot_widget.x(),
+        )
+        page.close()
+
     def test_close_disconnects_controller_signals(self):
         self.assertEqual(len(self.controller.signals.result.slots), 1)
         self.page.close()

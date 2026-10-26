@@ -8,6 +8,7 @@ from typing import Any, Callable
 from PySide6.QtWidgets import (
     QDialog,
     QGroupBox,
+    QHBoxLayout,
     QMessageBox,
     QPushButton,
     QTableWidget,
@@ -61,7 +62,18 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         self.root = self.build_ui()
 
     def build_ui(self) -> QWidget:
-        layout = QVBoxLayout(self)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(8)
+
+        # 左侧窄栏：连接说明、测量控制、测量结果；右侧整块留给四张图。
+        left_panel = QWidget()
+        left_panel.setMinimumWidth(420)
+        left_panel.setMaximumWidth(520)
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(6)
+
         instruction_group = QGroupBox("连接说明")
         instruction_layout = QVBoxLayout(instruction_group)
         self.instruction_text = QTextEdit()
@@ -71,10 +83,10 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         self.show_amp_diagram_btn = QPushButton("查看连接图")
         self.show_amp_diagram_btn.clicked.connect(self.show_connection_diagram)
         instruction_layout.addWidget(self.show_amp_diagram_btn)
-        layout.addWidget(instruction_group)
+        left_layout.addWidget(instruction_group)
 
         control_group = QGroupBox("测量控制")
-        control_layout = QVBoxLayout(control_group)
+        control_layout = QHBoxLayout(control_group)
         self.amplifier_test_btn = QPushButton("开始功放测试")
         self.amplifier_test_btn.clicked.connect(self.start_measurement)
         self.cancel_btn = QPushButton("取消")
@@ -86,10 +98,15 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         )
         self.emergency_stop_btn.setEnabled(False)
         self.emergency_stop_btn.clicked.connect(self.emergency_stop_measurement)
-        control_layout.addWidget(self.amplifier_test_btn)
-        control_layout.addWidget(self.cancel_btn)
-        control_layout.addWidget(self.emergency_stop_btn)
-        layout.addWidget(control_group)
+        # 测量控制按钮横向排列在同一行，减少纵向占用面积。
+        for button in (
+            self.amplifier_test_btn,
+            self.cancel_btn,
+            self.emergency_stop_btn,
+        ):
+            control_layout.addWidget(button)
+        control_layout.addStretch(1)
+        left_layout.addWidget(control_group)
 
         result_group = QGroupBox("测量结果")
         result_layout = QVBoxLayout(result_group)
@@ -97,7 +114,10 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         self.result_table.setColumnCount(4)
         self.result_table.setHorizontalHeaderLabels(["频率(GHz)", "压缩点", "小信号增益(dB)", "是否达到压缩"])
         result_layout.addWidget(self.result_table)
-        layout.addWidget(result_group)
+        # 结果表占据左栏剩余高度，但不再横向铺满整个页面。
+        left_layout.addWidget(result_group, 1)
+        self.control_panel = left_panel
+        layout.addWidget(left_panel)
 
         self.amplifier_plot_widget = self._plot_widget_factory(self)
         self._realtime_plot_widget = self.amplifier_plot_widget
@@ -105,7 +125,7 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
             signal = getattr(self.amplifier_plot_widget, signal_name, None)
             if signal is not None:
                 signal.connect(slot)
-        layout.addWidget(self.amplifier_plot_widget)
+        layout.addWidget(self.amplifier_plot_widget, 1)
         self.update_instruction_text()
         return self
 

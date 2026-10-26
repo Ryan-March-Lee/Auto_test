@@ -27,14 +27,6 @@ class MeasurementResultRepository(Protocol):
     def new_run_id(self) -> str:
         """Create a path-safe identifier for a measurement run."""
 
-    def create_legacy_run_snapshot(
-        self, run_id: str, config: Mapping[str, Any], *, status: str = "created"
-    ) -> Path:
-        """Create a run snapshot from the legacy configuration shape."""
-
-    def legacy_path(self, result_type: str) -> Path:
-        """Return the compatibility path for a result type."""
-
     def save(
         self,
         result: Mapping[str, Any],
@@ -44,19 +36,6 @@ class MeasurementResultRepository(Protocol):
         run_directory: PathLike | None = None,
     ) -> SavedMeasurementResult:
         """Persist a result in the run directory and return its authoritative path."""
-
-    def save_compatibility_copy(
-        self,
-        result: Mapping[str, Any],
-        *,
-        result_type: str,
-        run_id: str,
-    ) -> Path:
-        """Write only the global compatibility copy, without a run archive.
-
-        迁移到运行目录契约的阶段用它保留旧读取路径，同时不再把结果写入兼容
-        运行目录（运行目录中的权威结果是 ``inputs/<stage>.json``）。
-        """
 
     def load(self, path: PathLike) -> Mapping[str, Any]:
         """Load a previously persisted result."""

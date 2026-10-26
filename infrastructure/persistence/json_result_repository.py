@@ -178,45 +178,6 @@ def write_run_snapshot(
     return run_directory
 
 
-def write_legacy_run_snapshot(
-    run_id: str,
-    legacy_config: Mapping[str, Any],
-    *,
-    paths: PathService | None = None,
-    **kwargs: Any,
-) -> Path:
-    """将旧版 config.json 转成新模型格式后写入运行快照。"""
-    from infrastructure.config.json_config_repository import JsonConfigurationRepository
-
-    loaded = JsonConfigurationRepository().load_legacy_data(dict(legacy_config))
-    if loaded.conversion_errors:
-        details = "; ".join(f"{item.path}: {item.message}" for item in loaded.conversion_errors)
-        raise ValueError(f"旧配置无法生成运行快照: {details}")
-
-    run_directory = write_run_snapshot(
-        run_id,
-        loaded.configuration.test_plan.to_dict(),
-        loaded.configuration.run_mapping.to_dict(),
-        paths=paths,
-        **kwargs,
-    )
-    try:
-        save_json_result(
-            run_directory / "conversion_review.json",
-            {
-                "status": "needs_review" if loaded.warnings or loaded.unresolved_fields else "converted",
-                "warnings": [item.__dict__ for item in loaded.warnings],
-                "unresolved_fields": loaded.unresolved_fields,
-                "source": "legacy_config",
-            },
-            result_type="conversion_review",
-        )
-    except Exception:
-        shutil.rmtree(run_directory, ignore_errors=True)
-        raise
-    return run_directory
-
-
 def validate_result_filename(filename: str) -> str:
     """校验运行目录内的测量结果文件名。
 
@@ -280,28 +241,6 @@ def save_measurement_result(
         archive_path.unlink(missing_ok=True)
         raise
     return archive_path
-
-
-def write_compatibility_copy(
-    result: Mapping[str, Any],
-    *,
-    result_type: str,
-    legacy_path: PathLike,
-    run_id: str,
-    encoder: type[json.JSONEncoder] = json.JSONEncoder,
-) -> Path:
-    """只写入全局兼容结果副本，不创建或改写运行归档。
-
-    迁移到运行目录契约的阶段用它在 ``inputs/<stage>.json`` 之外保留旧读取路径，
-    但兼容副本不再作为新流程的输入来源。
-    """
-    validate_run_id(run_id)
-    payload = _with_run_id(result, run_id, "测量结果")
-    # 明确标记为兼容副本，避免被误解为运行目录内的权威结果。
-    payload.setdefault("compatibility_copy", True)
-    destination = Path(legacy_path)
-    save_json_result(destination, payload, result_type=result_type, encoder=encoder)
-    return destination
 
 
 def _load_snapshot(path: Path) -> Dict[str, Any]:

@@ -345,7 +345,7 @@ LEGACY_MODULES = {
     ),
     # 步骤 3：旧结果仓储/写入链
     "result_storage": LegacyModule(
-        "旧结果目录扫描与全局结果写入", "待删除", "步骤 3", "result_storage.py", True
+        "旧结果目录扫描与全局结果写入", "已删除", "步骤 3", "result_storage.py", False
     ),
     # 步骤 9：旧动态仪器路由（按步骤重写或收敛，不保证整文件删除）
     "instrument.legacy_control": LegacyModule(

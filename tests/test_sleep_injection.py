@@ -38,15 +38,13 @@ class SleepInjectionConstructorTests(unittest.TestCase):
     def test_measurement_constructors_keep_injected_sleep_function(self):
         injected_sleep = lambda _: None
         config = self._make_config()
-        with patch("cable_loss_measurement.load_config_file", return_value=config), patch(
-            "cable_loss_measurement.write_legacy_run_snapshot", return_value=None
-        ):
+        with patch("cable_loss_measurement.load_config_file", return_value=config):
             cable = CableLossMeasurement(sleep_fn=injected_sleep, measurement_port=object())
         self.assertIs(cable.sleep_fn, injected_sleep)
 
         with patch("driver_power_mapping.load_config_file", return_value=config), patch(
             "driver_power_mapping.load_json_result", return_value={}
-        ), patch("driver_power_mapping.write_legacy_run_snapshot", return_value=None):
+        ):
             mapping = DriverPowerMapping(sleep_fn=injected_sleep, measurement_port=object())
         self.assertIs(mapping.sleep_fn, injected_sleep)
 
@@ -64,7 +62,7 @@ class SleepInjectionConstructorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "注入 measurement_port"):
             AmplifierMeasurementUseCase(_amplifier_request(None))
 
-    def test_legacy_constructors_reject_missing_measurement_port_before_snapshot(self):
+    def test_legacy_constructors_reject_missing_measurement_port_before_storage(self):
         config = self._make_config()
         cases = (
             ("cable_loss_measurement", CableLossMeasurement, "load_config_file"),
@@ -73,11 +71,11 @@ class SleepInjectionConstructorTests(unittest.TestCase):
         for module_name, measurement_type, loader_name in cases:
             with self.subTest(measurement_type=measurement_type.__name__):
                 with patch(f"{module_name}.{loader_name}", return_value=config), patch(
-                    f"{module_name}.write_legacy_run_snapshot"
-                ) as snapshot:
+                    f"{module_name}.FileMeasurementResultRepository"
+                ) as repository_cls:
                     with self.assertRaisesRegex(ValueError, "必须显式传入 measurement_port"):
                         measurement_type()
-                snapshot.assert_not_called()
+                repository_cls.assert_not_called()
 
 
 if __name__ == "__main__":

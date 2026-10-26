@@ -11,8 +11,6 @@ from measurement_lifecycle import cleanup_measurement
 from infrastructure.persistence.json_result_repository import (
     load_json_result,
     new_run_id,
-    save_measurement_result,
-    write_legacy_run_snapshot,
 )
 from infrastructure.config.json_io import load_config_file
 from measurement_services import DriverPowerMappingService
@@ -39,12 +37,7 @@ class DriverPowerMapping:
             
         self.run_id = run_id or new_run_id()
         self.sleep_fn = sleep_fn or time.sleep
-        self.run_directory = write_legacy_run_snapshot(
-            self.run_id,
-            self.config,
-            status="created",
-            paths=self.paths,
-        )
+        self.run_directory = None
         self.inst_ctrl = measurement_port
         self.power_mapping: Dict[str, Dict[str, float]] = {}
 
@@ -151,22 +144,11 @@ class DriverPowerMapping:
             results,
             result_type="driver_power_mapping",
             run_id=self.run_id,
-            run_directory=self.run_directory,
+            run_directory=getattr(self, "run_directory", None),
         )
-        archive_path = saved.archive_path
-        try:
-            # 旧入口保留显式全局兼容副本，供回滚与旧脚本读取；正式测量流程不再写该副本。
-            legacy_path = repository.save_compatibility_copy(
-                results,
-                result_type="driver_power_mapping",
-                run_id=self.run_id,
-            )
-        except Exception:
-            archive_path.unlink(missing_ok=True)
-            raise
-        self.run_directory = archive_path.parent
-        logger.info("驱动映射结果已保存: 兼容路径=%s，运行路径=%s", legacy_path, archive_path)
-        print(f"\nResults saved to {legacy_path}; archived to {archive_path}")
+        self.run_directory = saved.run_directory
+        logger.info("驱动映射结果已保存: 运行路径=%s", saved.archive_path)
+        print(f"\nResults saved to {saved.archive_path}")
 
     # --- MODIFIED: Removed plot_mapping_curves method ---
 

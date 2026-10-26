@@ -39,7 +39,6 @@ COMPATIBILITY_FILES = (
     "measurement_lifecycle.py",
     "config_models.py",
     "measurement_calculations.py",
-    "result_storage.py",
     "result_reading.py",
     "app_logging.py",
     "project_paths.py",

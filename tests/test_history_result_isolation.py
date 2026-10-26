@@ -2,14 +2,14 @@
 
 覆盖三条独立职责：
 
-- 历史查看：只读端口可以看到最新兼容副本，但读取不会改动文件。
-- 迁移副本登记：兼容副本带 ``compatibility_copy`` 标记，可被历史查看，但不会
+- 历史查看：只读端口可以看到已存在的全局历史文件，但读取不会改动文件。
+- 迁移副本登记：历史文件带 ``compatibility_copy`` 标记，可被历史查看，但不会
   登记进运行 manifest。
 - 正式运行输入：只从当前运行 manifest 校验过的相对路径读取，更新的全局历史
   文件不会被当作“最新结果”自动带入正式运行。
 
-注意：这里的兼容副本由测试**显式**调用保留 API 生成，用于模拟已存在的历史数据；
-步骤 2 之后正式测量流程不再产生全局兼容副本。
+注意：这里的全局历史文件由测试**直接写入磁盘**，模拟步骤 3 之前已存在的旧数据；
+步骤 3 之后生产代码不再提供兼容副本写入接口，正式测量只写运行目录。
 """
 
 import json
@@ -59,14 +59,27 @@ class HistoryIsolationTests(unittest.TestCase):
         )
         return layout, recorder
 
+    def _write_global_history_copy(self, cable_losses=LEGACY_LOSSES):
+        """直接写一份旧全局历史文件，模拟步骤 3 之前产生的兼容副本。"""
+        results_dir = self.paths.test_results_dir
+        results_dir.mkdir(parents=True, exist_ok=True)
+        path = results_dir / "cable_loss_results.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "run_id": RUN_ID,
+                    "compatibility_copy": True,
+                    "cable_losses": cable_losses,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
     def test_compatibility_copy_is_browsable_history_but_not_a_run_input(self):
         layout, _recorder = self._complete_cable_loss()
 
-        copy_path = self.results.save_compatibility_copy(
-            {"cable_losses": LEGACY_LOSSES},
-            result_type="cable_loss",
-            run_id=RUN_ID,
-        )
+        copy_path = self._write_global_history_copy()
 
         # 迁移副本明确标记为非权威兼容结果，且不落在运行目录内。
         payload = json.loads(copy_path.read_text(encoding="utf-8"))
@@ -103,11 +116,7 @@ class HistoryIsolationTests(unittest.TestCase):
         """
         layout, recorder = self._complete_cable_loss()
 
-        self.results.save_compatibility_copy(
-            {"cable_losses": LEGACY_LOSSES},
-            result_type="cable_loss",
-            run_id=RUN_ID,
-        )
+        self._write_global_history_copy()
 
         verified = recorder.verified_result_path(STAGE_CABLE_LOSS)
 
@@ -144,11 +153,7 @@ class HistoryIsolationTests(unittest.TestCase):
 
     def test_formal_input_reader_reads_manifest_path_without_latest_lookup(self):
         layout, recorder = self._complete_cable_loss()
-        self.results.save_compatibility_copy(
-            {"cable_losses": LEGACY_LOSSES},
-            result_type="cable_loss",
-            run_id=RUN_ID,
-        )
+        self._write_global_history_copy()
         verified = recorder.verified_result_path(STAGE_CABLE_LOSS)
         reader = ResultInputReader(self.results)
 

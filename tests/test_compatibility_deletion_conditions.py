@@ -13,17 +13,16 @@
   且组装层必须在连接仪器前拒绝旧快照缺少显式输入。
 - 步骤 B3 已删除兼容读取器与 ``latest_path()`` 兼容链；该纯代码删除按说明 6.6 的
   分级授权执行。
-- 步骤 C 属**数据类删除**（停止写全局兼容副本），在步骤 D、F 完成前被禁止执行；
-  兼容副本写入必须保持存在，并由说明第 8 节登记阻断结论。
+- 步骤 3（技术债分阶段重构计划，2026-10-26）已删除兼容副本/旧运行快照写入接口；
+  三个旧测量根入口停止写兼容副本，只写运行目录结果，文件本体留待步骤 4 退役。
 - 步骤 D 已把 GUI 历史列表/查看/导出迁移到运行目录 manifest 视图，旧的全局兼容副本
   保持只读可查看；运行历史只读端口与仓储必须保持存在，且历史浏览不得复用正式测量
   结果仓储。
 - 步骤 E1 已完成旧兼容测量根入口盘点：``release_manifest`` 的 ``rollback_files`` /
   ``compatibility_files`` 并集必须与盘点表**双向相等**，正式流程不得导入这些旧入口。
-- 步骤 E2 至 E4 的三个测量根入口（``cable_loss_measurement.py`` /
-  ``driver_power_mapping.py`` / ``app/legacy_amplifier_measurement.py``）属**数据类删除**
-  （停止写全局兼容副本/旧运行快照），在步骤 F 归档前禁止退役，仍须保持写盘调用；
-  其余纯再导出模块属**纯代码路径**，独立退役、不受 F 阻断（说明第 10 节）。
+- 旧测量根入口（``cable_loss_measurement.py`` / ``driver_power_mapping.py`` /
+  ``app/legacy_amplifier_measurement.py``）在步骤 4 前仍存在，但不得再引用已删除的
+  兼容写入 API。
 - 步骤 E5 是门禁复核（更新测试/说明、跑全量离线测试与应用检查），非删除动作，本轮执行。
 - 说明必须为每个待删除接口写出删除条件、迁移方式和目标版本，并保留步骤 A 执行
   记录（外部调用方台账与回滚版本）。
@@ -55,24 +54,12 @@ DEPRECATED_INTERFACE_CALLERS = {
     "latest_legacy_driver_mapping_path": set(),
     # 3.3 旧结果写入
     # 技术债分阶段重构计划步骤 2（2026-10-26）已删除正式用例与仓储 save() 的兼容副本
-    # 写入；兼容副本只由三个旧测量根入口显式写入（步骤 4 范围），接口本身留待删除。
-    "save_compatibility_copy": {
-        "app/legacy_amplifier_measurement.py",
-        "cable_loss_measurement.py",
-        "driver_power_mapping.py",
-    },
-    "write_compatibility_copy": {
-        "cable_loss_measurement.py",
-        "infrastructure/persistence/result_repository.py",
-    },
+    # 写入；步骤 3（2026-10-26）删除接口本身，生产代码零引用。
+    "save_compatibility_copy": set(),
+    "write_compatibility_copy": set(),
     "create_legacy_run_snapshot": set(),
-    "write_legacy_run_snapshot": {
-        "app/legacy_amplifier_measurement.py",
-        "cable_loss_measurement.py",
-        "driver_power_mapping.py",
-        "infrastructure/persistence/result_repository.py",
-        "result_storage.py",
-    },
+    "write_legacy_run_snapshot": set(),
+    "legacy_path": set(),
     # 3.4 旧 GUI 测量入口的后备工厂：步骤 A1 删除后生产代码中必须彻底消失
     "prepare_factory": set(),
 }
@@ -122,7 +109,6 @@ LEGACY_REEXPORT_MODULES = (
     "measurement_services.py",
     "measurement_lifecycle.py",
     "measurement_calculations.py",
-    "result_storage.py",
     "result_reading.py",
     "app_logging.py",
     "project_paths.py",
@@ -148,7 +134,6 @@ LEGACY_MODULE_NAMES = frozenset(
         "measurement_services",
         "measurement_lifecycle",
         "measurement_calculations",
-        "result_storage",
         "result_reading",
         "app_logging",
         "project_paths",
@@ -224,8 +209,8 @@ class DeprecatedInterfaceCallerTests(unittest.TestCase):
                     "新增调用方必须先把迁移方案写进发布说明",
                 )
 
-    def test_repository_save_callers_match_the_legacy_copy_inventory(self):
-        """三个用例旧分支与三个旧入口通过仓储 save() 写全局兼容副本。"""
+    def test_repository_save_callers_match_the_result_write_inventory(self):
+        """兼容副本写入已删除：save() 只用于运行目录结果写入。"""
         callers = set()
         for path in _production_sources():
             for node in ast.walk(_tree(path)):
@@ -432,20 +417,20 @@ class StepCExecutionTests(unittest.TestCase):
         source = (
             ROOT / "infrastructure" / "persistence" / "result_repository.py"
         ).read_text(encoding="utf-8-sig")
-        save_start = source.index("    def save(")
-        save_end = source.index("    def save_compatibility_copy(", save_start)
-        body = source[save_start:save_end]
-        self.assertNotIn("legacy_copy_path", body)
-        self.assertNotIn("write_compatibility_copy(", body)
+        self.assertNotIn("legacy_copy_path", source)
+        self.assertNotIn("write_compatibility_copy", source)
+        self.assertNotIn("save_compatibility_copy", source)
+        self.assertNotIn("legacy_path", source)
 
     def test_storage_function_has_no_global_copy_write(self):
         source = (
             ROOT / "infrastructure" / "persistence" / "json_result_repository.py"
         ).read_text(encoding="utf-8-sig")
         save_start = source.index("def save_measurement_result(")
-        save_end = source.index("def write_compatibility_copy(", save_start)
+        save_end = source.index("def _load_snapshot(", save_start)
         body = source[save_start:save_end]
         self.assertNotIn("legacy_path", body)
+        self.assertNotIn("compatibility_copy", body)
 
     def test_formal_measurement_package_never_references_compatibility_apis(self):
         """正式测量包不得访问兼容写入/路径 API，兼容调用只属于旧入口。"""
@@ -477,13 +462,23 @@ class StepCExecutionTests(unittest.TestCase):
             "legacy_copy_path 只允许作为步骤 6 前的结果模型兼容字段存在",
         )
 
-    def test_old_entry_points_write_the_compatibility_copy_explicitly(self):
-        """旧入口若保留兼容副本，必须显式调用，不得依赖仓储 save() 的隐式副作用。"""
+    def test_old_entry_points_stop_using_the_removed_compatibility_apis(self):
+        """步骤 3 删除兼容写入接口后，旧入口只写运行目录结果，文件本体留待步骤 4 退役。"""
+        removed = (
+            "save_compatibility_copy",
+            "write_compatibility_copy",
+            "write_legacy_run_snapshot",
+            "create_legacy_run_snapshot",
+        )
         for relative in LEGACY_MEASUREMENT_DATA_ENTRIES:
             with self.subTest(module=relative):
                 source = (ROOT / relative).read_text(encoding="utf-8-sig")
-                self.assertIn("save_compatibility_copy(", source)
-                self.assertIn("write_legacy_run_snapshot(", source)
+                for name in removed:
+                    self.assertNotIn(
+                        name,
+                        source,
+                        f"{relative} 不得再引用已删除的兼容 API {name}",
+                    )
 
 
 class StepDMigrationTests(unittest.TestCase):
@@ -582,29 +577,40 @@ class StepEAuditTests(unittest.TestCase):
 
 
 class StepEBlockedTests(unittest.TestCase):
-    """步骤 E2 至 E4（数据类）：旧测量根入口必须仍写旧运行快照/兼容副本。
+    """步骤 3 后：旧测量根入口不再写已删除的兼容副本/旧运行快照。
 
-    这三个入口停止写全局兼容结果/旧运行快照属于数据类删除，在步骤 F 归档前禁止退役。
-    本门禁是**源码结构守卫**（断言写盘调用仍在源码中），运行时写入行为由
-    ``tests/test_result_storage.py``、``test_amplifier_measurement_compatibility.py``
-    等兼容测试覆盖；本类不声称复验全部运行时写入路径。
+    这三个入口的文件本体留待步骤 4 退役；本类只固定它们不再引用已删除接口，
+    且仍通过结果仓储写运行目录结果。
     """
 
-    def test_cable_loss_entry_still_writes_snapshot_and_copy(self):
-        source = (ROOT / "cable_loss_measurement.py").read_text(encoding="utf-8-sig")
-        self.assertIn("write_legacy_run_snapshot(", source)
-        self.assertIn("save_measurement_result(", source)
+    REMOVED_APIS = (
+        "save_compatibility_copy",
+        "write_compatibility_copy",
+        "write_legacy_run_snapshot",
+        "create_legacy_run_snapshot",
+        "legacy_path",
+    )
 
-    def test_driver_mapping_entry_still_writes_snapshot_and_copy(self):
-        source = (ROOT / "driver_power_mapping.py").read_text(encoding="utf-8-sig")
-        self.assertIn("write_legacy_run_snapshot(", source)
+    def _assert_no_removed_api(self, relative):
+        source = (ROOT / relative).read_text(encoding="utf-8-sig")
+        for name in self.REMOVED_APIS:
+            self.assertNotIn(name, source, f"{relative} 不得引用 {name}")
+
+    def test_cable_loss_entry_only_writes_the_run_result(self):
+        self._assert_no_removed_api("cable_loss_measurement.py")
+        source = (ROOT / "cable_loss_measurement.py").read_text(encoding="utf-8-sig")
         self.assertIn("repository.save(", source)
 
-    def test_legacy_amplifier_entry_still_writes_snapshot_and_copy(self):
+    def test_driver_mapping_entry_only_writes_the_run_result(self):
+        self._assert_no_removed_api("driver_power_mapping.py")
+        source = (ROOT / "driver_power_mapping.py").read_text(encoding="utf-8-sig")
+        self.assertIn("repository.save(", source)
+
+    def test_legacy_amplifier_entry_only_writes_the_run_result(self):
+        self._assert_no_removed_api("app/legacy_amplifier_measurement.py")
         source = (
             ROOT / "app" / "legacy_amplifier_measurement.py"
         ).read_text(encoding="utf-8-sig")
-        self.assertIn("write_legacy_run_snapshot(", source)
         self.assertIn("repository.save(", source)
 
     def test_amplifier_forwarder_still_reexports_the_legacy_entry(self):

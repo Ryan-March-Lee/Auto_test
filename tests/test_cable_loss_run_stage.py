@@ -107,11 +107,8 @@ class _FailingCommitRepository:
         return self.repository.update_manifest(run_id, manifest, now=now)
 
 
-class _CompatibilityWriteGuard:
-    """正式运行不得再写全局兼容副本：一旦调用就立即失败。"""
-
-    def save_compatibility_copy(self, *args, **kwargs):
-        raise AssertionError("正式运行不得写全局兼容副本")
+class _UnwritableResultRepository:
+    """正式运行只写运行目录结果；该对象不提供任何结果写入能力。"""
 
 
 class CableLossRunStageTests(unittest.TestCase):
@@ -298,7 +295,7 @@ class CableLossRunStageTests(unittest.TestCase):
             context=_Context(RUN_ID),
             run_directory=layout.run_directory,
             measurement_port=_Instrument(),
-            result_repository=_CompatibilityWriteGuard(),
+            result_repository=_UnwritableResultRepository(),
             stage_recorder=RunStageRecorder(self.repository, RUN_ID),
             safety_options={"owns_measurement_port": True},
         )

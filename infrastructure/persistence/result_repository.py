@@ -63,37 +63,11 @@ class FileMeasurementResultRepository(MeasurementResultRepository):
             run_id=run_id,
         )
 
-    def save_compatibility_copy(
-        self,
-        result: Mapping[str, Any],
-        *,
-        result_type: str,
-        run_id: str,
-    ) -> Path:
-        return json_result_repository.write_compatibility_copy(
-            result,
-            result_type=result_type,
-            legacy_path=self.legacy_path(result_type),
-            run_id=run_id,
-            encoder=NumpyJSONEncoder,
-        )
-
     def new_run_id(self) -> str:
         return json_result_repository.new_run_id()
 
-    def create_legacy_run_snapshot(
-        self, run_id: str, config: Mapping[str, Any], *, status: str = "created"
-    ) -> Path:
-        kwargs: dict[str, Any] = {"status": status}
-        if self.paths is not None:
-            kwargs["paths"] = self.paths
-        return json_result_repository.write_legacy_run_snapshot(run_id, config, **kwargs)
-
     def load(self, path: PathLike) -> Mapping[str, Any]:
         return json_result_repository.load_json_result(path)
-
-    def legacy_path(self, result_type: str) -> Path:
-        return self._results_directory() / self._archive_filename(result_type)
 
     def _archive_filename(self, result_type: str) -> str:
         """返回运行目录内的结果文件名（沿用既有归档命名，便于旧运行对照）。"""
@@ -105,12 +79,6 @@ class FileMeasurementResultRepository(MeasurementResultRepository):
         if prefix is None:
             raise ValueError(f"不支持的测量结果类型: {result_type}")
         return f"{prefix}_{time.strftime('%Y%m%d_%H%M%S')}.json"
-
-    def _results_directory(self) -> Path:
-        """Resolve the default lazily so path configuration remains patchable."""
-        if self.results_directory is not None:
-            return self.results_directory
-        return self.paths.test_results_dir if self.paths is not None else Path(json_result_repository.TEST_RESULTS_DIR)
 
     def _run_directory(self, run_id: str, run_directory: PathLike | None) -> Path | None:
         if run_directory is not None:

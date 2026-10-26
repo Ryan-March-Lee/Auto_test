@@ -20,7 +20,6 @@ from infrastructure.logging.app_logging import get_logger
 from infrastructure.persistence.json_result_repository import (
     load_json_result,
     new_run_id,
-    write_legacy_run_snapshot,
 )
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from application.measurements.services import AmplifierMeasurementService
@@ -60,12 +59,7 @@ class AmplifierMeasurement:
 
         self.run_id = run_id or new_run_id()
         self.sleep_fn = sleep_fn or time.sleep
-        self.run_directory = write_legacy_run_snapshot(
-            self.run_id,
-            self.config,
-            status="created",
-            paths=self.paths,
-        )
+        self.run_directory = None
         self.inst_ctrl = measurement_port
 
         if self.config['driver_mode']['enabled']:
@@ -146,19 +140,8 @@ class AmplifierMeasurement:
             results,
             result_type="amplifier_measurement",
             run_id=self.run_id,
-            run_directory=self.run_directory,
+            run_directory=getattr(self, "run_directory", None),
         )
-        archive_path = saved.archive_path
-        try:
-            # 旧入口保留显式全局兼容副本，供回滚与旧脚本读取；正式测量流程不再写该副本。
-            legacy_path = repository.save_compatibility_copy(
-                results,
-                result_type="amplifier_measurement",
-                run_id=self.run_id,
-            )
-        except Exception:
-            archive_path.unlink(missing_ok=True)
-            raise
-        self.run_directory = archive_path.parent
-        logger.info("主功放结果已保存: 兼容路径=%s，运行路径=%s", legacy_path, archive_path)
-        print(f"\nResults saved to {legacy_path}; archived to {archive_path}")
+        self.run_directory = saved.run_directory
+        logger.info("主功放结果已保存: 运行路径=%s", saved.archive_path)
+        print(f"\nResults saved to {saved.archive_path}")

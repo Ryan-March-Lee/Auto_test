@@ -2,7 +2,8 @@
 
 本文是 [技术债分阶段重构计划](技术债分阶段重构计划.md) **步骤 1：建立正式 API 目录清单** 的产出。
 
-本步骤只冻结边界，不删除旧文件：旧模块仍存在于仓库中，直到步骤 3 至 6、9、16 分批退役。
+本步骤只冻结边界，不删除旧文件：旧模块按步骤 3 至 6、9、16 分批退役。标为“已删除”的模块
+必须保持不存在；标为“待删除”“待清理”的模块在对应步骤执行前仍存在。
 
 清单分为三个层次，避免把“可导入”误当成“公共承诺”：
 
@@ -206,7 +207,7 @@
 | `config_models` | `config_models.py` | 待删除 | 步骤 5 |
 | `config_validation` | `config_validation.py` | 待删除 | 步骤 5 |
 | `result_reading` | `result_reading.py` | 待删除 | 步骤 6 |
-| `result_storage` | `result_storage.py` | 待删除 | 步骤 3 |
+| `result_storage` | `result_storage.py` | 已删除 | 步骤 3 |
 | `measurement_calculations` | `measurement_calculations.py` | 待删除 | 步骤 16 |
 | `measurement_lifecycle` | `measurement_lifecycle.py` | 待删除 | 步骤 16 |
 | `measurement_services` | `measurement_services.py` | 待删除 | 步骤 16 |

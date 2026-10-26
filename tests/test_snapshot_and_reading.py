@@ -12,7 +12,6 @@ from infrastructure.persistence.json_result_repository import (
     save_measurement_result,
     validate_result_filename,
     write_run_snapshot,
-    write_legacy_run_snapshot,
 )
 from domain.result_reading import (
     get_config_snapshot,
@@ -123,22 +122,6 @@ class RunSnapshotTests(unittest.TestCase):
                         {"template": False},
                     )
             self.assertFalse((Path(directory) / "partial-run").exists())
-
-    def test_legacy_production_snapshot_uses_configuration_repository(self):
-        fixture = Path(__file__).parent / "fixtures" / "config_driver_enabled_no_assignment.json"
-        legacy_config = json.loads(fixture.read_text(encoding="utf-8"))
-        with tempfile.TemporaryDirectory() as directory:
-            with patch("infrastructure.persistence.json_result_repository.TEST_RESULTS_DIR", Path(directory)):
-                run_directory = write_legacy_run_snapshot("repository-run", legacy_config)
-
-            plan = load_json_result(run_directory / "test_plan_snapshot.json")
-            mapping = load_json_result(run_directory / "run_mapping_snapshot.json")
-            review = load_json_result(run_directory / "conversion_review.json")
-
-        self.assertEqual(plan["run_id"], "repository-run")
-        self.assertEqual(mapping["run_id"], "repository-run")
-        self.assertEqual(review["status"], "needs_review")
-
 
 class SaveMeasurementResultTests(unittest.TestCase):
     """统一保存测量结果测试。"""

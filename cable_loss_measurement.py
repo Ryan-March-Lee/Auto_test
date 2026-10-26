@@ -1,22 +1,13 @@
 # --- START OF FILE cable_loss_measurement.py ---
 
 import time
-from pathlib import Path
 from typing import Dict
 from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService, resolve_path
 
-# Historical patch target retained for external scripts; new instances use PathService.
-CABLE_LOSS_FILE = DEFAULT_PATHS.cable_loss_file
 from domain.measurement.calculations import calculate_cable_losses
 from infrastructure.logging.app_logging import get_logger
 from measurement_lifecycle import cleanup_measurement
-from infrastructure.persistence.json_result_repository import (
-    load_json_result,
-    new_run_id,
-    save_measurement_result,
-    write_compatibility_copy,
-    write_legacy_run_snapshot,
-)
+from infrastructure.persistence.json_result_repository import new_run_id
 from infrastructure.config.json_io import load_config_file
 from measurement_services import CableLossService
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
@@ -42,12 +33,7 @@ class CableLossMeasurement:
 
         self.run_id = run_id or new_run_id()
         self.sleep_fn = sleep_fn or time.sleep
-        self.run_directory = write_legacy_run_snapshot(
-            self.run_id,
-            self.config,
-            status="created",
-            paths=self.paths,
-        )
+        self.run_directory = None
         self.inst_ctrl = measurement_port
 
         self.attenuator_value = float(self.config['attenuator']['type'].replace('dB', ''))
@@ -155,46 +141,16 @@ class CableLossMeasurement:
         }
 
         paths = getattr(self, "paths", None)
-        if paths is None:
-            archive_path = save_measurement_result(
-                results,
-                result_type="cable_loss",
-                filename=Path(CABLE_LOSS_FILE).name,
-                run_id=self.run_id,
-                run_directory=self.run_directory,
-            )
-            try:
-                # 旧入口保留显式全局兼容副本，供回滚与旧脚本读取；正式测量流程不再写该副本。
-                legacy_path = write_compatibility_copy(
-                    results,
-                    result_type="cable_loss",
-                    legacy_path=CABLE_LOSS_FILE,
-                    run_id=self.run_id,
-                )
-            except Exception:
-                archive_path.unlink(missing_ok=True)
-                raise
-        else:
-            repository = FileMeasurementResultRepository(paths=paths)
-            saved = repository.save(
-                results,
-                result_type="cable_loss",
-                run_id=self.run_id,
-                run_directory=self.run_directory,
-            )
-            archive_path = saved.archive_path
-            try:
-                legacy_path = repository.save_compatibility_copy(
-                    results,
-                    result_type="cable_loss",
-                    run_id=self.run_id,
-                )
-            except Exception:
-                archive_path.unlink(missing_ok=True)
-                raise
-        self.run_directory = archive_path.parent
-        logger.info("线损结果已保存: 兼容路径=%s，运行路径=%s", legacy_path, archive_path)
-        print(f"\n线损结果已保存至 '{legacy_path}'，运行归档为 '{archive_path}'")
+        repository = FileMeasurementResultRepository(paths=paths)
+        saved = repository.save(
+            results,
+            result_type="cable_loss",
+            run_id=self.run_id,
+            run_directory=getattr(self, "run_directory", None),
+        )
+        self.run_directory = saved.run_directory
+        logger.info("线损结果已保存: 运行路径=%s", saved.archive_path)
+        print(f"\n线损结果已保存至 '{saved.archive_path}'")
 
     def close(self):
         """关闭仪器连接"""

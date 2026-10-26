@@ -243,8 +243,9 @@ code 只能导入登记的模块路径，旧模块禁止新增引用，由 `test
 静态门禁固定。
 旧 GUI 测量入口、`latest_path()` 兼容链与无路径映射读取已在重构步骤 A、B 删除（外部调用方
 已确认零调用方）；正式测量的全局结果兼容副本写入已在 `docs/技术债分阶段重构计划.md` 步骤 2
-停止，正式结果只写 `runs/<run_id>/`。旧的 `save_compatibility_copy()` 接口继续保留，仅由三个
-旧兼容测量根入口显式调用（供回滚与旧脚本读取），随步骤 4 退役。
+停止，正式结果只写 `runs/<run_id>/`。步骤 3 已删除 `save_compatibility_copy()`、`legacy_path()`、
+`create_legacy_run_snapshot()`、`write_compatibility_copy()`、`write_legacy_run_snapshot()` 和
+`result_storage.py`；三个旧兼容测量根入口不再写兼容副本，文件本体随步骤 4 退役。
 
 ### 技术支持
 如遇到问题，请检查：

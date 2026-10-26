@@ -139,24 +139,19 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
         missing = {name for name in required if not hasattr(repository, name)}
         self.assertEqual(missing, set())
 
-    def test_save_compatibility_copy_writes_only_the_global_copy(self):
-        """步骤 3 前的兼容 API 保留测试；正式测量流程不再调用它。"""
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            repository = FileMeasurementResultRepository(results_directory=root)
+    def test_deprecated_compatibility_interfaces_are_removed(self):
+        """步骤 3：全局兼容副本与旧运行快照接口已删除。"""
+        from application.ports.result_repository import MeasurementResultRepository
 
-            path = repository.save_compatibility_copy(
-                {"cable_losses": {"1.0": 0.5}},
-                result_type="cable_loss",
-                run_id="run-1",
-            )
-
-            self.assertEqual(path, root / "cable_loss_results.json")
-            payload = load_json_result(path)
-            self.assertTrue(payload["compatibility_copy"])
-            self.assertEqual(payload["run_id"], "run-1")
-            # 运行目录归档是权威结果，兼容副本不得再创建兼容运行目录。
-            self.assertFalse((root / "run-1").exists())
+        repository = FileMeasurementResultRepository()
+        for name in (
+            "legacy_path",
+            "save_compatibility_copy",
+            "create_legacy_run_snapshot",
+        ):
+            with self.subTest(interface=name):
+                self.assertFalse(hasattr(repository, name))
+                self.assertFalse(hasattr(MeasurementResultRepository, name))
 
     def test_load_delegates_to_json_repository(self):
         with patch(
@@ -171,16 +166,6 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
     def test_unknown_result_type_is_rejected_before_writing(self):
         with self.assertRaises(ValueError):
             FileMeasurementResultRepository().save({}, result_type="unknown", run_id="run-1")
-
-    def test_legacy_path_is_resolved_by_repository(self):
-        """步骤 3 前的兼容 API 保留测试；正式结果写入不再使用该路径。"""
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            repository = FileMeasurementResultRepository(results_directory=root)
-            self.assertEqual(
-                repository.legacy_path("cable_loss"),
-                root / "cable_loss_results.json",
-            )
 
     def test_deprecated_latest_lookup_interfaces_are_removed(self):
         """步骤 B3：按时间扫描的 ``latest_path`` 兼容链已删除。"""

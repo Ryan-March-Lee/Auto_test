@@ -106,48 +106,46 @@ class AmplifierLegacyConstructorCompatibilityTests(unittest.TestCase):
         "driver_mode": {"enabled": False},
     }
 
-    def _loader_patches(self, *, config=None, loss=None, snapshot=None):
+    def _loader_patches(self, *, config=None, loss=None):
         return (
             patch(f"{IMPLEMENTATION}.load_config_file", return_value=config or self.CONFIG),
             patch(f"{IMPLEMENTATION}.load_json_result", return_value=loss if loss is not None else {}),
-            patch(f"{IMPLEMENTATION}.write_legacy_run_snapshot", return_value=snapshot),
         )
 
     def test_constructor_keeps_injected_sleep_function(self):
         injected_sleep = lambda _: None
-        config_patch, loss_patch, snapshot_patch = self._loader_patches()
-        with config_patch, loss_patch, snapshot_patch, self.assertWarns(DeprecationWarning):
+        config_patch, loss_patch = self._loader_patches()
+        with config_patch, loss_patch, self.assertWarns(DeprecationWarning):
             measurement = AmplifierMeasurement(
                 sleep_fn=injected_sleep, measurement_port=object()
             )
         self.assertIs(measurement.sleep_fn, injected_sleep)
 
-    def test_missing_measurement_port_is_rejected_before_snapshot(self):
+    def test_missing_measurement_port_is_rejected_before_storage(self):
         with patch(f"{IMPLEMENTATION}.load_config_file", return_value=self.CONFIG), patch(
-            f"{IMPLEMENTATION}.write_legacy_run_snapshot"
-        ) as snapshot:
+            f"{IMPLEMENTATION}.FileMeasurementResultRepository"
+        ) as repository_cls:
             with self.assertRaisesRegex(ValueError, "必须显式传入 measurement_port"):
                 AmplifierMeasurement()
-        snapshot.assert_not_called()
+        repository_cls.assert_not_called()
 
-    def test_constructor_loads_config_loss_and_run_snapshot(self):
-        config_patch, loss_patch, snapshot_patch = self._loader_patches(
-            loss={"cable_losses": SAMPLE_LOSS_DATA}, snapshot="run-directory"
+    def test_constructor_loads_config_loss_and_run_state(self):
+        config_patch, loss_patch = self._loader_patches(
+            loss={"cable_losses": SAMPLE_LOSS_DATA}
         )
-        with config_patch as load_config, loss_patch as load_json, snapshot_patch as snapshot:
+        with config_patch as load_config, loss_patch as load_json:
             measurement = AmplifierMeasurement(run_id="run-1", measurement_port=object())
 
         self.assertEqual(measurement.config, self.CONFIG)
         self.assertEqual(measurement.run_id, "run-1")
-        self.assertEqual(measurement.run_directory, "run-directory")
+        self.assertIsNone(measurement.run_directory)
         self.assertIsNone(measurement.driver_mapping)
         load_config.assert_called_once()
         self.assertEqual(load_json.call_count, 1)
-        snapshot.assert_called_once()
 
     def test_measure_all_frequencies_forwards_to_service_and_saves(self):
-        config_patch, loss_patch, snapshot_patch = self._loader_patches()
-        with config_patch, loss_patch, snapshot_patch, self.assertWarns(DeprecationWarning), patch(
+        config_patch, loss_patch = self._loader_patches()
+        with config_patch, loss_patch, self.assertWarns(DeprecationWarning), patch(
             f"{IMPLEMENTATION}.AmplifierMeasurementService"
         ) as service_cls:
             service_cls.return_value.run.return_value = {"results": {"1.0": {"gain": 20.0}}}
@@ -161,12 +159,13 @@ class AmplifierLegacyConstructorCompatibilityTests(unittest.TestCase):
         measurement.save_results.assert_called_once_with()
 
     def test_save_results_uses_result_repository(self):
-        config_patch, loss_patch, snapshot_patch = self._loader_patches()
-        with config_patch, loss_patch, snapshot_patch, self.assertWarns(DeprecationWarning), patch(
+        config_patch, loss_patch = self._loader_patches()
+        with config_patch, loss_patch, self.assertWarns(DeprecationWarning), patch(
             f"{IMPLEMENTATION}.FileMeasurementResultRepository"
         ) as repository_cls:
             saved = Mock()
             saved.archive_path.parent = Path("archive")
+            saved.run_directory = Path("archive")
             repository_cls.return_value.save.return_value = saved
             measurement = AmplifierMeasurement(run_id="run-1", measurement_port=object())
             measurement.measurement_results = {"1.0": {"gain": 20.0}}

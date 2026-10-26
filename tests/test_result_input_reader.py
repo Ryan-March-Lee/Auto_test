@@ -25,7 +25,6 @@ class ResultInputReaderTests(unittest.TestCase):
         repository.load.assert_called_once_with(
             Path("runs/run-1/inputs/cable_loss.json").resolve()
         )
-        repository.legacy_path.assert_not_called()
 
     def test_explicit_driver_mapping_path_does_not_scan_latest(self):
         repository = Mock()
@@ -56,7 +55,6 @@ class ResultInputReaderTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "必须显式提供"):
             reader.read_driver_mapping(None)
 
-        repository.legacy_path.assert_not_called()
         repository.load.assert_not_called()
 
     def test_driver_mapping_requires_power_mapping_field(self):

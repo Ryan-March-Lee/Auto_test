@@ -140,11 +140,8 @@ class _Context:
         self.run_id = run_id
 
 
-class _CompatibilityWriteGuard:
-    """正式运行不得再写全局兼容副本：一旦调用就立即失败。"""
-
-    def save_compatibility_copy(self, *args, **kwargs):
-        raise AssertionError("正式运行不得写全局兼容副本")
+class _UnwritableResultRepository:
+    """正式运行只写运行目录结果；该对象不提供任何结果写入能力。"""
 
 
 class _FailingCommitRepository:
@@ -529,7 +526,7 @@ class AmplifierRunStageTests(unittest.TestCase):
         layout = self._create_run()
         self._complete_cable_loss()
         use_case = AmplifierMeasurementUseCase(
-            self._request(repository=_CompatibilityWriteGuard()), sleep_fn=lambda _: None
+            self._request(repository=_UnwritableResultRepository()), sleep_fn=lambda _: None
         )
 
         result = use_case.measure_all_frequencies()

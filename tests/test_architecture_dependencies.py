@@ -251,7 +251,7 @@ class ProductionDependencyTests(unittest.TestCase):
             ROOT / "instrument" / "legacy_control.py",
             ROOT / "tests" / "test_project_paths.py",
             ROOT / "tests" / "test_config_io.py",
-            ROOT / "tests" / "test_result_storage.py",
+            ROOT / "tests" / "test_json_result_repository.py",
         }
         violations = []
         for source_path in _production_sources():
@@ -408,8 +408,11 @@ class ProductionDependencyTests(unittest.TestCase):
 
     def test_persistence_implementations_have_one_infrastructure_boundary(self):
         result_adapter = _tree(ROOT / "infrastructure" / "persistence" / "result_repository.py")
-        legacy_results = _tree(ROOT / "result_storage.py")
 
+        self.assertFalse(
+            (ROOT / "result_storage.py").exists(),
+            "步骤 3 已删除 result_storage 兼容转发模块，不得重新引入",
+        )
         self.assertNotIn(
             "result_storage",
             {
@@ -417,37 +420,6 @@ class ProductionDependencyTests(unittest.TestCase):
                 for module, _alias, _name in _imported_modules(result_adapter)
             },
         )
-        legacy_result_definitions = {
-            node.name
-            for node in legacy_results.body
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-        }
-        self.assertEqual(
-            legacy_result_definitions,
-            {
-                "_canonical_path_scope",
-                "load_json_result",
-                "save_json_result",
-                "create_run_directory",
-                "validate_run_id",
-                "new_run_id",
-                "write_run_snapshot",
-                "write_legacy_run_snapshot",
-                "save_measurement_result",
-                "save_measurement_model",
-            },
-        )
-        production_legacy_imports = []
-        for source_path in _production_sources():
-            if source_path == ROOT / "result_storage.py":
-                continue
-            tree = _tree(source_path)
-            if any(
-                module == "result_storage"
-                for module, _alias, _name in _imported_modules(tree)
-            ):
-                production_legacy_imports.append(str(source_path.relative_to(ROOT)))
-        self.assertEqual(production_legacy_imports, [])
         self.assertTrue((ROOT / "infrastructure" / "persistence" / "json_config_repository.py").is_file())
         self.assertTrue((ROOT / "infrastructure" / "persistence" / "json_result_repository.py").is_file())
 

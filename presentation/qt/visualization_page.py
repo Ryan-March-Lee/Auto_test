@@ -21,11 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from application.dto import (
-    MeasurementResult,
-    measurement_result_from_document,
-    normalize_frequency_key,
-)
+from application.dto import MeasurementResult, normalize_frequency_key
 from application.ports.gui_data_service import LoadedResultDto
 from .realtime_plot import RealTimePlotWidget
 
@@ -157,7 +153,7 @@ class VisualizationPage(QWidget):
                 return False
             if not isinstance(loaded, LoadedResultDto):
                 raise TypeError("结果服务必须返回 LoadedResultDto")
-            result = measurement_result_from_document(loaded.data)
+            result = loaded.result
             series, frequencies = result_plot_series(result)
             if not frequencies:
                 raise ValueError("未找到有效的频率数据")
@@ -238,7 +234,7 @@ class VisualizationPage(QWidget):
                     return False
                 if not isinstance(latest, LoadedResultDto):
                     raise TypeError("结果服务必须返回 LoadedResultDto")
-                result = measurement_result_from_document(latest.data)
+                result = latest.result
                 self.report_service(result, self.config_provider(), latest.filename)
                 self._log(f"基于文件 {latest.filename} 生成测试报告")
             QMessageBox.information(self, "报告生成", "测试报告已生成完成")

@@ -161,6 +161,8 @@ FORMAL_API = {
         "DriverPowerMappingMeasurementResult",
         "AmplifierMeasurementResult",
         "measurement_result_from_document",
+        "measurement_type_for_result_type",
+        "require_formal_result",
     ),
     "application.dto.measurement_requests": (
         "MeasurementRequest",
@@ -176,6 +178,8 @@ FORMAL_API = {
         "DriverPowerMappingMeasurementResult",
         "AmplifierMeasurementResult",
         "measurement_result_from_document",
+        "measurement_type_for_result_type",
+        "require_formal_result",
     ),
     # 领域层
     "domain.configuration.models": (

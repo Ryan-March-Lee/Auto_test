@@ -242,6 +242,99 @@ class NonFormalResultRejectionTests(unittest.TestCase):
             measurement_result_from_document(["not", "a", "mapping"])
 
 
+class SweepDataContractTests(unittest.TestCase):
+    """扫描数据必须是可通过绘图与 CSV 导出的有限数值列。"""
+
+    def test_non_finite_sweep_value_is_rejected(self):
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(value=value):
+                document = _amplifier_document()
+                document["results"]["1.0"]["sweep_data"]["gain"] = [value]
+                with self.assertRaises(ValueError):
+                    measurement_result_from_document(document)
+
+    def test_non_numeric_sweep_value_is_rejected(self):
+        for value in ("10.0", None, {"value": 1.0}, [1.0]):
+            with self.subTest(value=value):
+                document = _amplifier_document()
+                document["results"]["1.0"]["sweep_data"]["gain"] = [value]
+                with self.assertRaises(ValueError):
+                    measurement_result_from_document(document)
+
+    def test_mapping_sweep_columns_are_validated_and_frozen(self):
+        document = _amplifier_document()
+        document["results"]["1.0"]["sweep_data"]["voltages"] = [
+            {"main_A": 28.0},
+            {"main_A": 28.5},
+        ]
+        result = measurement_result_from_document(document)
+        column = result.frequencies[0].sweep_data["voltages"]
+        self.assertEqual(column[1]["main_A"], 28.5)
+        with self.assertRaises(TypeError):
+            column[0]["main_A"] = 0.0
+
+    def test_mapping_sweep_column_rejects_non_finite_leaf(self):
+        document = _amplifier_document()
+        document["results"]["1.0"]["sweep_data"]["currents"] = [
+            {"main_A": 0.1},
+            {"main_A": float("nan")},
+        ]
+        with self.assertRaises(ValueError):
+            measurement_result_from_document(document)
+
+
+class ArtifactMetadataTests(unittest.TestCase):
+    def test_result_type_label_must_match_measurement_type(self):
+        with self.assertRaisesRegex(ValueError, "result_type"):
+            measurement_result_from_document(
+                _cable_document(result_type="driver_power_mapping")
+            )
+
+    def test_known_alias_label_is_accepted(self):
+        result = measurement_result_from_document(
+            _amplifier_document(result_type="amplifier_measurement")
+        )
+        self.assertEqual(result.measurement_type.value, "amplifier")
+
+    def test_unknown_result_type_label_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "result_type"):
+            measurement_result_from_document(_cable_document(result_type="mystery"))
+
+    def test_unsupported_schema_version_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "schema_version"):
+            measurement_result_from_document(_cable_document(schema_version="2.0"))
+
+    def test_blank_saved_at_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "saved_at"):
+            measurement_result_from_document(_cable_document(saved_at="  "))
+
+    def test_canonical_artifact_requires_its_own_result_type(self):
+        payload = {
+            "canonical_model": _cable_document(),
+            "run_id": "cable-run",
+            "result_type": "cable_loss",
+        }
+        with self.assertRaisesRegex(ValueError, "版本化模型工件"):
+            measurement_result_from_document(payload)
+
+    def test_shared_base_result_is_not_formal(self):
+        from application.dto import MeasurementResult, require_formal_result
+
+        base = MeasurementResult(measurement_type="cable_loss", run_id="base-run")
+        with self.assertRaisesRegex(ValueError, "正式测量结果 DTO"):
+            require_formal_result(base)
+        with self.assertRaisesRegex(ValueError, "正式测量结果 DTO"):
+            require_formal_result({"measurement_type": "cable_loss"})
+
+    def test_concrete_results_are_formal(self):
+        from application.dto import require_formal_result
+
+        for document in (_cable_document(), _driver_document(), _amplifier_document()):
+            with self.subTest(document=document["measurement_type"]):
+                result = require_formal_result(measurement_result_from_document(document))
+                self.assertTrue(result.is_formal_result)
+
+
 class ResultContractValueTests(unittest.TestCase):
     def test_compression_achieved_parses_false_string(self):
         document = _amplifier_document()
@@ -291,6 +384,17 @@ class ResultContractValueTests(unittest.TestCase):
         self.assertEqual(result.errors, ("warning",))
         self.assertEqual(result.cleanup_records[0]["power_off"], "ok")
         self.assertEqual(result.created_at, "2026-10-27T00:00:00+00:00")
+
+    def test_cleanup_records_are_deeply_frozen(self):
+        records = [{"power_off": {"status": "ok"}}]
+        document = _amplifier_document(cleanup_records=records)
+        result = measurement_result_from_document(document)
+
+        records[0]["power_off"]["status"] = "changed"
+
+        self.assertEqual(result.cleanup_records[0]["power_off"]["status"], "ok")
+        with self.assertRaises(TypeError):
+            result.cleanup_records[0]["power_off"]["status"] = "changed"
 
     def test_input_mapping_is_not_mutated(self):
         document = _amplifier_document()

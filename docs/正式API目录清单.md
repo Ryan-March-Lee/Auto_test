@@ -146,14 +146,24 @@
 
 | 模块 | 正式公开名称 | 说明 |
 | --- | --- | --- |
-| `application.dto` | `MeasurementRequest`、`CableLossMeasurementRequest`、`DriverPowerMappingRequest`、`AmplifierMeasurementRequest`、`MeasurementResult`、`MeasurementStatus`、`MeasurementType`、`CableLossMeasurementResult`、`DriverPowerMappingMeasurementResult`、`AmplifierMeasurementResult`、`CableLossRow`、`DriverPowerPoint`、`AmplifierCompressionPoint`、`AmplifierFrequencyResult`、`measurement_result_from_document`、`normalize_frequency_key` | DTO 汇总再导出路径；旧兼容导出已在步骤 6 删除 |
+| `application.dto` | `MeasurementRequest`、`CableLossMeasurementRequest`、`DriverPowerMappingRequest`、`AmplifierMeasurementRequest`、`MeasurementResult`、`MeasurementStatus`、`MeasurementType`、`CableLossMeasurementResult`、`DriverPowerMappingMeasurementResult`、`AmplifierMeasurementResult`、`CableLossRow`、`DriverPowerPoint`、`AmplifierCompressionPoint`、`AmplifierFrequencyResult`、`measurement_result_from_document`、`measurement_type_for_result_type`、`require_formal_result`、`normalize_frequency_key` | DTO 汇总再导出路径；旧兼容导出已在步骤 6 删除 |
 | `application.dto.measurement_requests` | `MeasurementRequest`、`CableLossMeasurementRequest`、`DriverPowerMappingRequest`、`AmplifierMeasurementRequest` | 测量请求 |
-| `application.dto.measurement_results` | `MeasurementResult`、`MeasurementStatus`、`MeasurementType`、`CableLossMeasurementResult`、`DriverPowerMappingMeasurementResult`、`AmplifierMeasurementResult`、`measurement_result_from_document` | 三类正式测量结果、显式行视图与结果文档唯一解析入口 |
+| `application.dto.measurement_results` | `MeasurementResult`、`MeasurementStatus`、`MeasurementType`、`CableLossMeasurementResult`、`DriverPowerMappingMeasurementResult`、`AmplifierMeasurementResult`、`measurement_result_from_document`、`measurement_type_for_result_type`、`require_formal_result` | 三类正式测量结果、显式行视图、结果文档唯一解析入口与正式结果断言 |
 
 测量结果的唯一正式模型是 `application.dto.measurement_results` 的三个 DTO；`domain.models`
 只保留运行、方案与会话模型，`domain.run.models` 保留运行 manifest。正式展示与导出只消费
 DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`）或分析层的
 `analysis.result_source.ReportResult` 结构契约，不得依赖 `Mapping[str, Any]` 或旧字段别名。
+
+- `measurement_result_from_document()` 是唯一读取入口；`require_formal_result()` 断言输入
+  已是三个具体正式结果之一，共享基类 `MeasurementResult` 只是契约载体，不能持久化或展示。
+- `measurement_type_for_result_type()` 是结果类型标签（`cable_loss` /
+  `driver_power_mapping` / `amplifier` / `amplifier_measurement`）到正式测量类型的唯一映射，
+  写入、历史查询和门禁都使用同一份映射，避免标签与模型各自解释。
+- 历史查询端口 `ResultQueryPort.load()` / `latest_result()` 返回的 `LoadedResultDto.result`
+  已经是正式结果 DTO；原始 JSON 只通过 `read_bytes()` 逐字节导出。
+- 实时事件的 `RealtimeDataEvent.data` / `controller` 的 `data_update` 是界面刷新用的临时
+  事件载荷，不是结果模型：它们不进 manifest、不落盘，也不参与历史查看或报告生成。
 
 ## 5. 正式内部模块
 

@@ -102,7 +102,7 @@ class HistoryIsolationTests(unittest.TestCase):
         self.assertEqual({row.source for row in rows}, {RESULT_SOURCE_RUN})
         self.assertNotIn(copy_path.name, [row.filename for row in rows])
         self.assertEqual(
-            self.adapter.latest_result("cable_loss").data["cable_losses"],
+            self.adapter.latest_result("cable_loss").result.cable_losses(),
             RUN_LOSSES,
         )
 
@@ -115,15 +115,15 @@ class HistoryIsolationTests(unittest.TestCase):
             manifest.stage(STAGE_CABLE_LOSS).result, CABLE_LOSS_INPUT_PATH
         )
 
-    def test_latest_run_result_is_the_formal_result_document(self):
-        """运行阶段结果本身就是正式文档，可直接交给唯一解析入口。"""
-        from application.dto import measurement_result_from_document
+    def test_latest_run_result_is_already_the_formal_result(self):
+        """历史查询返回的已经是正式结果 DTO，不需要再解析文档。"""
+        from application.dto import CableLossMeasurementResult
 
         self._complete_cable_loss()
 
-        document = self.adapter.latest_result("cable_loss").data
-        result = measurement_result_from_document(document)
+        result = self.adapter.latest_result("cable_loss").result
 
+        self.assertIsInstance(result, CableLossMeasurementResult)
         self.assertEqual(result.run_id, RUN_ID)
         self.assertEqual(result.points[0].cable_losses["cable2"], 2.0)
 

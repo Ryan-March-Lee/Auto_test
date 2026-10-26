@@ -193,7 +193,7 @@ class DriverPowerMappingUseCase:
         if self.stage_recorder is not None:
             return self._save_to_run_directory(result)
         saved = self.result_repository.save(
-            result.to_dict(),
+            result,
             result_type="driver_power_mapping",
             run_id=self.run_id,
             run_directory=self.run_directory,

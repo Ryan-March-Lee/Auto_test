@@ -8,6 +8,7 @@ from typing import Any, Mapping
 from application.dto.measurement_results import (
     MeasurementResult,
     measurement_result_from_document,
+    require_formal_result,
 )
 
 __all__ = ["build_report_result", "measurement_result_from_document"]
@@ -27,8 +28,7 @@ def build_report_result(
     显式传入的 ``configuration`` / ``original_filename`` / ``measurement_time``
     覆盖结果中的同名字段；没有可绘制的结果行时抛出 ``ValueError``。
     """
-    if not isinstance(result, MeasurementResult):
-        raise ValueError("报告结果必须是正式结果 DTO")
+    result = require_formal_result(result)
     updates: dict[str, Any] = {}
     if configuration is not None:
         updates["configuration_snapshot"] = configuration

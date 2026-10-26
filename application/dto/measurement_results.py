@@ -89,6 +89,27 @@ def normalize_frequency_key(value: Any) -> str | None:
         return None
 
 
+# 结果文件/阶段使用的结果类型标签与正式测量类型的一一对应关系。
+# ``amplifier_measurement`` 是运行目录沿用至今的存储标签，语义等同 ``amplifier``。
+_RESULT_TYPE_LABELS: Mapping[str, MeasurementType] = MappingProxyType(
+    {
+        "cable_loss": MeasurementType.CABLE_LOSS,
+        "driver_power_mapping": MeasurementType.DRIVER_POWER_MAPPING,
+        "amplifier": MeasurementType.AMPLIFIER,
+        "amplifier_measurement": MeasurementType.AMPLIFIER,
+    }
+)
+
+
+def measurement_type_for_result_type(value: Any) -> MeasurementType | None:
+    """把结果类型标签收敛为正式测量类型；无法识别时返回 ``None``。"""
+    if isinstance(value, MeasurementType):
+        return value
+    if not isinstance(value, str):
+        return None
+    return _RESULT_TYPE_LABELS.get(value.strip())
+
+
 # -- 结果数据 ---------------------------------------------------------------
 
 
@@ -324,6 +345,11 @@ class MeasurementResult:
             references["archive_path"] = archive_path
         return replace(self, result_reference=references)
 
+    @property
+    def is_formal_result(self) -> bool:
+        """是否为三个具体正式结果之一；共享基类本身不参与持久化与展示。"""
+        return False
+
 
 @dataclass(frozen=True, kw_only=True)
 class CableLossMeasurementResult(MeasurementResult):
@@ -332,6 +358,10 @@ class CableLossMeasurementResult(MeasurementResult):
     measurement_type: MeasurementType | str = MeasurementType.CABLE_LOSS
     attenuator_value: float | None = None
     points: tuple[CableLossRow, ...] = ()
+
+    @property
+    def is_formal_result(self) -> bool:
+        return True
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -398,6 +428,10 @@ class DriverPowerMappingMeasurementResult(MeasurementResult):
 
     measurement_type: MeasurementType | str = MeasurementType.DRIVER_POWER_MAPPING
     points: tuple[DriverPowerPoint, ...] = ()
+
+    @property
+    def is_formal_result(self) -> bool:
+        return True
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -475,6 +509,10 @@ class AmplifierMeasurementResult(MeasurementResult):
 
     measurement_type: MeasurementType | str = MeasurementType.AMPLIFIER
     frequencies: tuple[AmplifierFrequencyResult, ...] = ()
+
+    @property
+    def is_formal_result(self) -> bool:
+        return True
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -563,7 +601,9 @@ def measurement_result_from_document(document: Mapping[str, Any]) -> Measurement
     - ``run_id``、``measurement_type``、``status`` 必须存在且有效；
     - 测量类型必须与结果数据字段一一对应（``cable_losses`` / ``power_mapping`` /
       ``results``），类型与数据不一致视为非正式文档；
-    - 旧字段别名、``legacy_payload``、未知字段一律 ``ValueError``。
+    - 旧字段别名、``legacy_payload``、未知字段一律 ``ValueError``；
+    - 写入层补充的 ``result_type`` / ``schema_version`` / ``saved_at`` 必须自洽，
+      与 ``measurement_type`` 冲突时同样报错。
 
     不做按字段猜测历史格式的兼容推断。
     """
@@ -571,13 +611,7 @@ def measurement_result_from_document(document: Mapping[str, Any]) -> Measurement
         raise ValueError("测量结果文档必须是映射对象")
     canonical = document.get("canonical_model")
     if canonical is not None:
-        artifact_extras = set(document) - {
-            "canonical_model",
-            "run_id",
-            "result_type",
-            "schema_version",
-            "saved_at",
-        }
+        artifact_extras = set(document) - _CANONICAL_ARTIFACT_KEYS
         if artifact_extras:
             raise ValueError(
                 "版本化模型工件包含未知字段: " + ", ".join(sorted(artifact_extras))
@@ -586,6 +620,12 @@ def measurement_result_from_document(document: Mapping[str, Any]) -> Measurement
         artifact_run_id = document.get("run_id")
         if artifact_run_id is not None and artifact_run_id != result.run_id:
             raise ValueError("版本化模型工件的 run_id 与 canonical_model 不一致")
+        artifact_type = document.get("result_type")
+        if artifact_type is not None and artifact_type != _CANONICAL_ARTIFACT_TYPE:
+            raise ValueError(
+                "版本化模型工件的 result_type 必须为 "
+                f"{_CANONICAL_ARTIFACT_TYPE}: {artifact_type!r}"
+            )
         return result
     run_id = document.get("run_id")
     if not isinstance(run_id, str) or not run_id.strip():
@@ -621,11 +661,27 @@ def measurement_result_from_document(document: Mapping[str, Any]) -> Measurement
     unknown = sorted(set(document) - allowed)
     if unknown:
         raise ValueError(f"不是正式结果 schema：包含未知字段 {', '.join(unknown)}")
+    _validate_artifact_metadata(document, kind)
     if kind is MeasurementType.CABLE_LOSS:
         return CableLossMeasurementResult.from_document(document, run_id=run_id)
     if kind is MeasurementType.DRIVER_POWER_MAPPING:
         return DriverPowerMappingMeasurementResult.from_document(document, run_id=run_id)
     return AmplifierMeasurementResult.from_document(document, run_id=run_id)
+
+
+def require_formal_result(value: Any) -> MeasurementResult:
+    """断言值是三个具体正式结果之一。
+
+    共享基类 ``MeasurementResult`` 只是契约载体：它不描述任何真实测量，也不允许
+    被持久化或展示。映射、字符串等原始文档必须先经过
+    :func:`measurement_result_from_document`。
+    """
+    if isinstance(value, MeasurementResult) and value.is_formal_result:
+        return value
+    raise ValueError(
+        "必须是正式测量结果 DTO（CableLoss/DriverPowerMapping/Amplifier）；"
+        "原始文档请先调用 measurement_result_from_document()"
+    )
 
 
 # -- 内部工具 ---------------------------------------------------------------
@@ -666,6 +722,13 @@ _TYPE_ALLOWED_FIELDS: Mapping[MeasurementType, frozenset[str]] = MappingProxyTyp
 )
 # 结果文件由写入层补充的工件元数据；它们是正式字段，不是历史别名。
 _ARTIFACT_METADATA_KEYS = frozenset({"schema_version", "result_type", "saved_at"})
+# 正式结果文档当前唯一支持的 schema 版本。
+_SUPPORTED_RESULT_SCHEMA_VERSIONS = frozenset({"1.0"})
+# canonical model 工件（``*_model.json``）的外层结构。
+_CANONICAL_ARTIFACT_TYPE = "versioned_measurement_result"
+_CANONICAL_ARTIFACT_KEYS = frozenset(
+    {"canonical_model", "run_id", "result_type", "schema_version", "saved_at"}
+)
 # 步骤 6 已退役的旧文档字段；出现即视为非正式 schema。
 _LEGACY_DOCUMENT_KEYS = frozenset(
     {
@@ -708,6 +771,34 @@ def _document_status(document: Mapping[str, Any]) -> MeasurementStatus:
     if value is None:
         raise ValueError("正式测量结果文档缺少 status 字段")
     return MeasurementStatus(str(value))
+
+
+def _validate_artifact_metadata(document: Mapping[str, Any], kind: MeasurementType) -> None:
+    """校验写入层补充的工件元数据与测量类型自洽。
+
+    这些键由 ``save_json_result`` 追加，属于正式字段，因此必须与 ``measurement_type``
+    一致；冲突的标签说明文件被错误分类，不能当作正式结果读取。
+    """
+    label = document.get("result_type")
+    if label is not None:
+        resolved = measurement_type_for_result_type(label)
+        if resolved is None:
+            raise ValueError(
+                f"不是正式结果 schema：无法识别的 result_type {label!r}"
+            )
+        if resolved is not kind:
+            raise ValueError(
+                f"result_type 与 measurement_type 不一致: {label!r} != {kind.value!r}"
+            )
+    if "schema_version" in document:
+        version = document.get("schema_version")
+        text = str(version).strip() if version is not None else ""
+        if text not in _SUPPORTED_RESULT_SCHEMA_VERSIONS:
+            raise ValueError(f"不支持的测量结果 schema_version: {version!r}")
+    if "saved_at" in document:
+        saved_at = document.get("saved_at")
+        if not isinstance(saved_at, str) or not saved_at.strip():
+            raise ValueError("saved_at 必须是非空字符串")
 
 
 def _service_status(value: Any) -> MeasurementStatus:
@@ -990,9 +1081,15 @@ def _float_mapping(value: Any, name: str) -> Mapping[str, float]:
 
 
 def _columns(value: Any, name: str) -> Mapping[str, tuple[Any, ...]]:
+    """校验列式扫描数据：各列等长，数值列必须是有限浮点。
+
+    ``voltages`` / ``currents`` 是按供电通道分组的映射列，其叶值同样必须是有限浮点；
+    其余列一律视为标量序列。结构化对象、字符串数字混排和 ``NaN`` / ``inf`` 都视为
+    非正式结果，避免把无法绘图的载荷写进结果模型。
+    """
     if not isinstance(value, Mapping):
         raise ValueError(f"{name} 必须是列式映射")
-    columns = {}
+    columns: dict[str, tuple[Any, ...]] = {}
     length: int | None = None
     for key, items in value.items():
         if not isinstance(items, (list, tuple)):
@@ -1001,8 +1098,17 @@ def _columns(value: Any, name: str) -> Mapping[str, tuple[Any, ...]]:
             length = len(items)
         elif len(items) != length:
             raise ValueError(f"{name} 的各列长度必须一致")
-        columns[str(key)] = tuple(freeze(item) for item in items)
+        column = str(key)
+        if column in _SWEEP_MAPPING_COLUMNS:
+            columns[column] = tuple(
+                _float_mapping(item, f"{name}.{column}") for item in items
+            )
+        else:
+            columns[column] = tuple(_float(item, f"{name}.{column}") for item in items)
     return MappingProxyType(columns)
+
+
+_SWEEP_MAPPING_COLUMNS = frozenset({"voltages", "currents"})
 
 
 def _rows(value: Any, expected: type, name: str) -> tuple[Any, ...]:
@@ -1026,9 +1132,13 @@ def _records(value: Any) -> tuple[Mapping[str, Any], ...]:
         value = (value,)
     if not isinstance(value, (list, tuple)):
         raise ValueError("cleanup_records 必须是映射序列")
-    if not all(isinstance(item, Mapping) for item in value):
-        raise ValueError("cleanup_records 中的每项必须是映射")
-    return tuple(value)
+    records = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            raise ValueError("cleanup_records 中的每项必须是映射")
+        # 逐项深冻结：否则冻结 dataclass 的内部记录仍可被外部原始对象改写。
+        records.append(freeze(item))
+    return tuple(records)
 
 
 def _validate_termination(value: Mapping[str, Any] | None, expected: str | None) -> None:
@@ -1056,6 +1166,8 @@ __all__ = [
     "AmplifierCompressionPoint",
     "AmplifierFrequencyResult",
     "measurement_result_from_document",
+    "measurement_type_for_result_type",
+    "require_formal_result",
     "normalize_frequency_key",
     "freeze",
     "thaw",

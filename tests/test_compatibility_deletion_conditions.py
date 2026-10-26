@@ -44,6 +44,7 @@
 """
 
 import ast
+import inspect
 import subprocess
 import sys
 import unittest
@@ -852,10 +853,11 @@ class Step5RetirementTests(unittest.TestCase):
 class Step6RetirementTests(unittest.TestCase):
     """步骤 6：结果模型收敛为显式 DTO，旧解析转发与旧结果适配器已整文件退役。
 
-    门禁固定五点：两个旧文件不存在且无法导入；生产代码不再出现旧载荷 API
+    门禁固定：五个旧文件不存在且无法导入；生产代码不再出现旧载荷 API
     （``to_legacy_payload`` / ``from_payload`` / ``legacy_copy_path`` / 旧结果适配器）；
     应用层结果契约不继承 ``Mapping``、不保存服务层原始载荷；三类正式结果可往返
-    解析；非正式结果 schema 直接报错。
+    解析；非正式结果 schema 直接报错；写入端口收 DTO、历史查询端口返回 DTO，
+    展示层不再自行解析结果文档。
     """
 
     RETIRED_RESULT_FILES = (
@@ -1014,6 +1016,34 @@ class Step6RetirementTests(unittest.TestCase):
             with self.subTest(document=document):
                 with self.assertRaises(ValueError):
                     measurement_result_from_document(document)
+
+    def test_result_ports_carry_formal_results(self):
+        """写入端口收 DTO，历史查询端口返回 DTO，二者都不再以映射承载结果。"""
+        from application.ports.gui_data_service import LoadedResultDto
+        from application.ports.result_repository import MeasurementResultRepository
+
+        self.assertEqual(
+            [item.name for item in dataclass_fields(LoadedResultDto)],
+            ["result_id", "filename", "result"],
+        )
+        signature = inspect.signature(MeasurementResultRepository.save)
+        self.assertEqual(
+            signature.parameters["result"].annotation, "MeasurementResult"
+        )
+
+    def test_display_layer_does_not_reparse_history_results(self):
+        """展示层只消费历史查询返回的 DTO，不再自己解析结果文档。"""
+        for relative in (
+            "presentation/qt/visualization_page.py",
+            "presentation/qt/export_page.py",
+        ):
+            with self.subTest(module=relative):
+                called = {
+                    _called_name(node.func)
+                    for node in ast.walk(_tree(ROOT / relative))
+                    if isinstance(node, ast.Call)
+                }
+                self.assertNotIn("measurement_result_from_document", called)
 
 
 class ReleaseNotesTests(unittest.TestCase):

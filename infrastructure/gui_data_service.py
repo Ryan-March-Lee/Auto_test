@@ -2,7 +2,9 @@
 
 历史查看、导出和报告只读取**正式运行目录结果**：每条结果都由运行 manifest 登记并
 通过完整性校验，``result_id`` 使用内部 ``run::<run_id>::<相对路径>`` 编码。适配器
-不再扫描 ``test_results/`` 下的旧全局结果文件，也不提供旧历史回退。
+在读取边界调用唯一解析入口 ``measurement_result_from_document()``，因此上层拿到的
+一律是正式结果 DTO；不再扫描 ``test_results/`` 下的旧全局结果文件，也不提供旧历史
+回退。
 """
 
 from __future__ import annotations
@@ -16,7 +18,9 @@ from typing import Any, Mapping
 
 from application.dto.measurement_results import (
     MeasurementResult,
+    MeasurementType,
     measurement_result_from_document,
+    measurement_type_for_result_type,
 )
 from application.inputs.result_reading import build_report_result
 from application.ports.gui_data_service import (
@@ -73,8 +77,8 @@ class ResultQueryAdapter:
     """只读的正式运行结果查询适配器。
 
     唯一数据源是运行目录：列表、按标识读取、最新结果和导出全部走运行 manifest
-    登记并校验过的结果。旧全局结果文件不再被发现或回退，历史查看只读正式运行
-    目录结果。
+    登记并校验过的结果。每条结果在返回前都会解析为正式结果 DTO；无法解析的文档
+    （非正式 schema、拆分明细文件、被篡改文件）既不会出现在列表里，也不会被读取。
     """
 
     _LABELS = {
@@ -94,46 +98,69 @@ class ResultQueryAdapter:
         self.run_history = run_history
         self.runs_root = runs_root
 
+    # -- 列表 ---------------------------------------------------------------
+
     def list_results(self) -> list[ResultFileDto]:
         rows: list[ResultFileDto] = []
         for run in self.run_history.list_runs():
             if not run.browsable:
                 continue
             try:
-                results = self.run_history.list_results(run.run_id)
+                entries = self.run_history.list_results(run.run_id)
             except (OSError, ValueError) as error:
                 logger.warning("跳过无法列出的运行 %s 的历史结果: %s", run.run_id, error)
                 continue
-            for result in results:
+            for entry in entries:
+                expected = measurement_type_for_result_type(entry.result_type)
+                if expected is None:
+                    continue
+                result_id = _encode_run_result_id(run.run_id, entry.result_id)
+                try:
+                    document = self.run_history.load(run.run_id, entry.result_id)
+                except (OSError, ValueError) as error:
+                    logger.warning("跳过无法校验的运行结果 %s: %s", result_id, error)
+                    continue
+                try:
+                    result = measurement_result_from_document(document)
+                except ValueError as error:
+                    # 拆分明细等非正式文档属于预期情况，不刷警告。
+                    logger.debug("跳过非正式结果文档 %s: %s", result_id, error)
+                    continue
+                if result.measurement_type is not expected:
+                    logger.warning(
+                        "跳过类型与 manifest 登记不一致的结果 %s: %s != %s",
+                        result_id,
+                        result.measurement_type.value,
+                        expected.value,
+                    )
+                    continue
                 rows.append(
                     ResultFileDto(
-                        result_id=_encode_run_result_id(run.run_id, result.result_id),
-                        filename=Path(result.result_id).name,
-                        file_type=self._LABELS.get(result.result_type, result.result_type),
-                        modified_at=result.modified_at,
+                        result_id=result_id,
+                        filename=Path(entry.result_id).name,
+                        file_type=self._LABELS.get(
+                            entry.result_type, entry.result_type
+                        ),
+                        modified_at=entry.modified_at,
                         source=RESULT_SOURCE_RUN,
                         run_id=run.run_id,
                     )
                 )
         return sorted(rows, key=lambda item: item.modified_at.timestamp(), reverse=True)
 
+    # -- 读取 ---------------------------------------------------------------
+
     def load(self, result_id: str) -> LoadedResultDto:
-        decoded = _decode_run_result_id(result_id)
-        if decoded is None:
-            raise ValueError(f"无效的结果标识: {result_id!r}")
-        run_id, relative_path = decoded
-        return LoadedResultDto(
-            result_id,
-            Path(relative_path).name,
-            self.run_history.load(run_id, relative_path),
-        )
+        run_id, relative_path = self._decode(result_id)
+        expected = self._expected_measurement_type(run_id, relative_path)
+        if expected is None:
+            raise ValueError(f"结果不是正式测量结果类型: {relative_path}")
+        result = self._load_verified(run_id, relative_path, expected)
+        return LoadedResultDto(result_id, Path(relative_path).name, result)
 
     def read_bytes(self, result_id: str) -> bytes:
         """逐字节读取运行结果，供 JSON 导出使用。"""
-        decoded = _decode_run_result_id(result_id)
-        if decoded is None:
-            raise ValueError(f"无效的结果标识: {result_id!r}")
-        run_id, relative_path = decoded
+        run_id, relative_path = self._decode(result_id)
         return self.run_history.read_bytes(run_id, relative_path)
 
     def choose_and_load(self) -> LoadedResultDto | None:
@@ -165,33 +192,68 @@ class ResultQueryAdapter:
 
         顺序是确定性的：先按运行创建时间从新到旧（``list_runs`` 的顺序），同一运行
         内再按结果修改时间从新到旧，不依赖文件系统 mtime 的跨运行比较。某个候选
-        损坏（被篡改、缺失、未登记）时记录日志并继续尝试更旧的候选。没有任何可用
-        运行结果时抛出 ``FileNotFoundError``。
+        损坏（被篡改、缺失、未登记、非正式 schema）时记录日志并继续尝试更旧的候选。
+        没有任何可用运行结果时抛出 ``FileNotFoundError``。
         """
-        label = self._LABELS.get(result_type, result_type)
+        target = measurement_type_for_result_type(result_type)
+        if target is None:
+            raise ValueError(f"无法识别的结果类型: {result_type!r}")
         for run in self.run_history.list_runs():
             if not run.browsable:
                 continue
             try:
-                results = self.run_history.list_results(run.run_id)
+                entries = self.run_history.list_results(run.run_id)
             except (OSError, ValueError) as error:
                 logger.warning("跳过无法列出的运行 %s 的历史结果: %s", run.run_id, error)
                 continue
             matches = [
-                result
-                for result in results
-                if self._LABELS.get(result.result_type, result.result_type) == label
+                entry
+                for entry in entries
+                if measurement_type_for_result_type(entry.result_type) is target
             ]
-            for result in sorted(
+            for entry in sorted(
                 matches, key=lambda item: item.modified_at.timestamp(), reverse=True
             ):
-                result_id = _encode_run_result_id(run.run_id, result.result_id)
+                result_id = _encode_run_result_id(run.run_id, entry.result_id)
                 try:
-                    return self.load(result_id)
-                except (OSError, ValueError) as error:
+                    result = self._load_verified(run.run_id, entry.result_id, target)
+                except (OSError, ValueError, TypeError) as error:
                     logger.warning("跳过损坏的运行结果 %s: %s", result_id, error)
                     continue
+                return LoadedResultDto(
+                    result_id, Path(entry.result_id).name, result
+                )
         raise FileNotFoundError(f"未找到结果类型为 {result_type} 的运行结果")
+
+    # -- 内部工具 -----------------------------------------------------------
+
+    @staticmethod
+    def _decode(result_id: str) -> tuple[str, str]:
+        decoded = _decode_run_result_id(result_id)
+        if decoded is None:
+            raise ValueError(f"无效的结果标识: {result_id!r}")
+        return decoded
+
+    def _expected_measurement_type(
+        self, run_id: str, relative_path: str
+    ) -> MeasurementType | None:
+        for entry in self.run_history.list_results(run_id):
+            if entry.result_id == relative_path:
+                return measurement_type_for_result_type(entry.result_type)
+        return None
+
+    def _load_verified(
+        self, run_id: str, relative_path: str, expected: MeasurementType
+    ) -> MeasurementResult:
+        """读取已登记结果并解析为正式 DTO，同时校验与 manifest 登记类型一致。"""
+        document = self.run_history.load(run_id, relative_path)
+        result = measurement_result_from_document(document)
+        if result.measurement_type is not expected:
+            raise ValueError(
+                "结果文件类型与 manifest 登记不一致: "
+                f"{relative_path} ({result.measurement_type.value} != {expected.value})"
+            )
+        return result
 
 
 class ResultExportAdapter:
@@ -205,8 +267,7 @@ class ResultExportAdapter:
 
     def export_csv(self, result_id: str, target: str) -> None:
         # 结果读取走运行结果查询，分析层只接收已解析的正式结果 DTO。
-        loaded = self.query.load(result_id)
-        result = measurement_result_from_document(loaded.data)
+        result = self.query.load(result_id).result
         visualizer = DataVisualization(output_dir=self._report_output_dir())
         visualizer.generate_csv_report(result)
         generated = Path(visualizer.output_dir) / "full_sweep_data.csv"
@@ -216,9 +277,8 @@ class ResultExportAdapter:
 
     def export_pdf(self, result_id: str) -> None:
         loaded = self.query.load(result_id)
-        result = measurement_result_from_document(loaded.data)
         DataVisualization(output_dir=self._report_output_dir()).create_summary_report(
-            result, loaded.filename
+            loaded.result, loaded.filename
         )
 
     def _report_output_dir(self) -> Path:

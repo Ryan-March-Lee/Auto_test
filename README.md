@@ -249,7 +249,9 @@ code 只能导入登记的模块路径，旧模块禁止新增引用，由 `test
 `AmplifierMeasurementResult`，定义在 `application/dto/measurement_results.py`），删除根
 `result_reading.py`、`domain/result_reading.py`、`application/dto/legacy_result_adapter.py`、
 旧全局历史端口/仓储，旧结果 JSON 形状和旧字段别名不再被解析；`domain.models` 不再定义结果
-模型，展示/导出只使用 DTO 的显式属性。
+模型，展示/导出只使用 DTO 的显式属性。写入端口只接受正式 DTO，结果文件与 canonical model
+属于同一次提交；历史列表只列出能解析为正式结果的文件（功放拆分明细只留在运行目录里，不再
+出现在历史列表），查询返回的已经是结果 DTO。
 
 ### 技术支持
 如遇到问题，请检查：

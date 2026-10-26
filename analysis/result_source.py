@@ -52,11 +52,16 @@ _REQUIRED_MEMBERS = (
 
 
 def require_report_result(value: Any) -> ReportResult:
-    """断言输入是正式结果对象；原始映射会被明确拒绝。"""
+    """断言输入是正式结果对象；原始映射与共享基类都会被明确拒绝。"""
     if isinstance(value, Mapping):
         raise ValueError(
             "分析层只接受正式结果 DTO；请先用 measurement_result_from_document() "
             "解析结果文档"
+        )
+    if getattr(value, "is_formal_result", None) is False:
+        raise ValueError(
+            "分析层只接受三个具体正式结果 DTO"
+            "（CableLoss/DriverPowerMapping/Amplifier），不接受共享基类"
         )
     missing = [name for name in _REQUIRED_MEMBERS if not hasattr(value, name)]
     if missing:

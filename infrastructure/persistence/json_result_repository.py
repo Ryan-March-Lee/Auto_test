@@ -13,9 +13,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Union
 
-from infrastructure.persistence.json_encoder import NumpyJSONEncoder
 from infrastructure.filesystem.paths import (
-    DEFAULT_PATHS, TEST_RESULTS_DIR, PathService, ensure_directory,
+    TEST_RESULTS_DIR, PathService, ensure_directory,
 )
 
 PathLike = Union[str, Path]
@@ -23,7 +22,11 @@ RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 
 
 def load_json_result(path: PathLike) -> Dict[str, Any]:
-    """读取旧格式或带元数据的新格式结果。"""
+    """读取运行目录 JSON 文档（结果或模型工件）的原始对象。
+
+    本函数只做 JSON 解析，不判断结果 schema；正式结果必须先经过
+    ``application.dto.measurement_results.measurement_result_from_document()``。
+    """
     with Path(path).open("r", encoding="utf-8") as result_file:
         value = json.load(result_file)
     if not isinstance(value, dict):
@@ -146,7 +149,7 @@ _FORMAL_RESULT_TYPES = frozenset(
 
 
 def save_measurement_result(
-    result: Mapping[str, Any],
+    result: Any,
     *,
     result_type: str,
     filename: str,
@@ -157,44 +160,90 @@ def save_measurement_result(
 ) -> Path:
     """把正式测量结果写入当前运行目录，并生成 canonical model。
 
-    写入前把结果文档收敛为正式结果 DTO：非正式 schema（旧字段别名、缺少
+    写入前把结果收敛为正式结果 DTO：非正式 schema（旧字段别名、缺少
     ``measurement_type`` / ``status``、测量类型与数据字段不一致）在落盘前直接报错，
-    不会写出无法读取的结果。结果文件就是 ``DTO.to_dict()`` 的文档形状，canonical
-    model 工件保存同一个 DTO。
+    不会写出无法读取的结果。``result_type`` 必须与 DTO 的 ``measurement_type``
+    一致，避免结果文件被错误分类。结果文件就是 ``DTO.to_dict()`` 的文档形状，
+    canonical model 工件保存同一个 DTO。
+
+    结果文件与 canonical model 属于同一次提交：任一步失败都会删除本次写出的文件，
+    并清理本次创建的运行目录，不留下半套结果。
     """
-    from application.dto.measurement_results import measurement_result_from_document
+    from application.dto.measurement_results import (
+        MeasurementResult,
+        measurement_type_for_result_type,
+        measurement_result_from_document,
+        require_formal_result,
+    )
 
     if result_type not in _FORMAL_RESULT_TYPES:
         raise ValueError(f"不支持的测量结果类型: {result_type}")
+    expected_type = measurement_type_for_result_type(result_type)
+    if expected_type is None:
+        raise ValueError(f"不支持的测量结果类型: {result_type}")
     name = validate_result_filename(filename)
     validate_run_id(run_id)
-    document = measurement_result_from_document(_with_run_id(result, run_id, "测量结果"))
+    if isinstance(result, MeasurementResult):
+        document = require_formal_result(result)
+        if document.run_id != run_id:
+            raise ValueError(f"测量结果 run_id 不一致: {document.run_id} != {run_id}")
+    else:
+        document = measurement_result_from_document(
+            _with_run_id(result, run_id, "测量结果")
+        )
+    if document.measurement_type is not expected_type:
+        raise ValueError(
+            f"result_type 与结果类型不一致: {result_type!r} != "
+            f"{document.measurement_type.value!r}"
+        )
+    created_directory = False
     if run_directory is None:
         run_directory = create_run_directory(run_id, paths=paths)
-    archive_path = Path(run_directory) / name
+        created_directory = True
+    else:
+        run_directory = Path(run_directory)
+        # 目录由本次写入首次创建时，失败后要一并清理，不能留下半套运行目录。
+        created_directory = not run_directory.exists()
+    archive_path = run_directory / name
+    model_path = run_directory / f"{result_type}_model.json"
     if archive_path.exists():
         raise FileExistsError(f"归档结果已存在，不允许覆盖: {archive_path}")
-    save_json_result(
-        archive_path, document.to_dict(), result_type=result_type, encoder=encoder
-    )
+    if model_path.exists():
+        raise FileExistsError(f"模型工件已存在，不允许覆盖: {model_path}")
+    written: list[Path] = []
     try:
+        written.append(
+            save_json_result(
+                archive_path, document.to_dict(), result_type=result_type, encoder=encoder
+            )
+        )
         model = replace(
             document,
             configuration_snapshot=(
-                _load_snapshot(Path(run_directory) / "test_plan_snapshot.json")
+                _load_snapshot(run_directory / "test_plan_snapshot.json")
                 or document.configuration_snapshot
             ),
             device_summary=(
-                _load_snapshot(Path(run_directory) / "run_mapping_snapshot.json")
+                _load_snapshot(run_directory / "run_mapping_snapshot.json")
                 or document.device_summary
             ),
         )
-        save_measurement_model(
-            model, run_directory=run_directory,
-            filename=f"{result_type}_model.json", encoder=encoder,
+        written.append(
+            save_measurement_model(
+                model,
+                run_directory=run_directory,
+                filename=model_path.name,
+                encoder=encoder,
+            )
         )
     except Exception:
-        archive_path.unlink(missing_ok=True)
+        for path in (*written, archive_path, model_path):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:  # pragma: no cover - 清理失败不应掩盖原始异常
+                pass
+        if created_directory:
+            shutil.rmtree(run_directory, ignore_errors=True)
         raise
     return archive_path
 
@@ -214,29 +263,36 @@ def save_measurement_model(
     run_directory: PathLike,
     filename: str | None = None,
     encoder: type[json.JSONEncoder] = json.JSONEncoder,
+    overwrite: bool = False,
 ) -> Path:
     """把版本化模型工件写入运行目录。
 
     工件只保存正式 ``canonical_model``：原始服务载荷属于运行目录中另行登记的
-    结果文件，不再作为兼容字段复制进模型工件。模型必须是正式结果 DTO。
+    结果文件，不再作为兼容字段复制进模型工件。模型必须是三个具体正式结果 DTO
+    之一；文件名同样受运行目录纯文件名规则约束，默认拒绝覆盖已有工件。
     """
-    from application.dto.measurement_results import MeasurementResult
+    from application.dto.measurement_results import require_formal_result
 
-    if not isinstance(model, MeasurementResult):
-        raise ValueError("canonical model 必须是正式结果 DTO")
+    document = require_formal_result(model)
     run_directory = Path(run_directory)
+    model_dict = document.to_dict()
+    name = validate_result_filename(
+        filename or f"{model_dict.get('measurement_type', 'measurement')}_model.json"
+    )
     ensure_directory(run_directory)
-    model_dict = model.to_dict()
-    name = filename or f"{model_dict.get('measurement_type', 'measurement')}_model.json"
+    target = run_directory / name
+    if target.exists() and not overwrite:
+        raise FileExistsError(f"模型工件已存在，不允许覆盖: {target}")
     payload = {
         "canonical_model": model_dict,
         "run_id": str(model_dict.get("run_id", "")),
         "result_type": "versioned_measurement_result",
     }
     return save_json_result(
-        run_directory / name, payload, result_type="versioned_measurement_result",
+        target, payload, result_type="versioned_measurement_result",
         encoder=encoder,
     )
+
 
 
 def _with_run_id(value: Mapping[str, Any], run_id: str, label: str) -> Dict[str, Any]:

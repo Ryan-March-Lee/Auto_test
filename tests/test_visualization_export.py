@@ -18,7 +18,12 @@ from application.dto import (
 )
 from application.ports.gui_data_service import RESULT_SOURCE_RUN, ResultFileDto
 from application.run_stages import RunStageRecorder
-from domain.run.models import CABLE_LOSS_INPUT_PATH, STAGE_CABLE_LOSS
+from domain.run.models import (
+    AMPLIFIER_RESULT_PATH,
+    CABLE_LOSS_INPUT_PATH,
+    STAGE_AMPLIFIER,
+    STAGE_CABLE_LOSS,
+)
 from infrastructure.filesystem.paths import PathService
 from infrastructure.gui_data_service import ResultExportAdapter, ResultQueryAdapter
 from infrastructure.persistence.run_history_repository import FileRunHistoryRepository
@@ -158,7 +163,7 @@ class RunHistoryOnlyTests(unittest.TestCase):
     def test_history_list_only_contains_run_results(self):
         with tempfile.TemporaryDirectory() as directory:
             paths, runs, adapter = self._setup(directory)
-            self._complete_cable_loss(runs, losses={"1.0": 1.0})
+            self._complete_cable_loss(runs, losses={"1.0": {"cable1": 1.0}})
             self._write_legacy_copy(paths, losses={"1.0": 99.0})
 
             rows = adapter.list_results()
@@ -173,14 +178,14 @@ class RunHistoryOnlyTests(unittest.TestCase):
     def test_load_and_latest_result_read_the_run_result(self):
         with tempfile.TemporaryDirectory() as directory:
             _paths, runs, adapter = self._setup(directory)
-            self._complete_cable_loss(runs, losses={"1.0": 1.0})
+            self._complete_cable_loss(runs, losses={"1.0": {"cable1": 1.0}})
 
             run_row = adapter.list_results()[0]
             loaded = adapter.load(run_row.result_id)
             latest = adapter.latest_result("cable_loss")
 
-        self.assertEqual(loaded.data["cable_losses"], {"1.0": 1.0})
-        self.assertEqual(latest.data["cable_losses"], {"1.0": 1.0})
+        self.assertEqual(loaded.result.cable_losses()["1.0"]["cable1"], 1.0)
+        self.assertEqual(latest.result.cable_losses()["1.0"]["cable1"], 1.0)
 
     def test_latest_result_ignores_legacy_copies_without_run_results(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -197,13 +202,13 @@ class RunHistoryOnlyTests(unittest.TestCase):
             new_id = "20261024T090000Z_bbbbbbbb"
             self._complete_cable_loss(
                 runs,
-                losses={"1.0": 1.0},
+                losses={"1.0": {"cable1": 1.0}},
                 run_id=old_id,
                 now=datetime(2026, 10, 24, 7, 0, tzinfo=timezone.utc),
             )
             new_layout = self._complete_cable_loss(
                 runs,
-                losses={"1.0": 2.0},
+                losses={"1.0": {"cable1": 2.0}},
                 run_id=new_id,
                 now=datetime(2026, 10, 24, 9, 0, tzinfo=timezone.utc),
             )
@@ -214,12 +219,12 @@ class RunHistoryOnlyTests(unittest.TestCase):
             latest = adapter.latest_result("cable_loss")
 
         # 最新运行被篡改，应回退到更旧但有效的运行结果。
-        self.assertEqual(latest.data["cable_losses"], {"1.0": 1.0})
+        self.assertEqual(latest.result.cable_losses()["1.0"]["cable1"], 1.0)
 
     def test_latest_result_raises_when_all_run_results_are_corrupt(self):
         with tempfile.TemporaryDirectory() as directory:
             paths, runs, adapter = self._setup(directory)
-            layout = self._complete_cable_loss(runs, losses={"1.0": 1.0})
+            layout = self._complete_cable_loss(runs, losses={"1.0": {"cable1": 1.0}})
             (layout.run_directory / CABLE_LOSS_INPUT_PATH).write_text(
                 json.dumps({"cable_losses": {"1.0": 42.0}}), encoding="utf-8"
             )
@@ -235,13 +240,13 @@ class RunHistoryOnlyTests(unittest.TestCase):
             new_id = "20261024T090000Z_bbbbbbbb"
             old_layout = self._complete_cable_loss(
                 runs,
-                losses={"1.0": 1.0},
+                losses={"1.0": {"cable1": 1.0}},
                 run_id=old_id,
                 now=datetime(2026, 10, 24, 7, 0, tzinfo=timezone.utc),
             )
             self._complete_cable_loss(
                 runs,
-                losses={"1.0": 2.0},
+                losses={"1.0": {"cable1": 2.0}},
                 run_id=new_id,
                 now=datetime(2026, 10, 24, 9, 0, tzinfo=timezone.utc),
             )
@@ -253,12 +258,78 @@ class RunHistoryOnlyTests(unittest.TestCase):
 
             latest = adapter.latest_result("cable_loss")
 
-        self.assertEqual(latest.data["cable_losses"], {"1.0": 2.0})
+        self.assertEqual(latest.result.cable_losses()["1.0"]["cable1"], 2.0)
+
+    def test_history_list_skips_non_formal_registered_files(self):
+        """manifest 登记的拆分明细不是正式结果，不得出现在历史列表里。"""
+        with tempfile.TemporaryDirectory() as directory:
+            _paths, runs, adapter = self._setup(directory)
+            runs.create_run({"run_id": self.RUN_ID}, run_id=self.RUN_ID)
+            recorder = RunStageRecorder(runs, self.RUN_ID)
+            recorder.complete(
+                STAGE_AMPLIFIER,
+                {
+                    "run_id": self.RUN_ID,
+                    "measurement_type": "amplifier",
+                    "status": "completed",
+                    "results": {
+                        "1.0": {"sweep_data": {"gain": [10.0], "efficiency": [20.0]}}
+                    },
+                },
+                result_path=AMPLIFIER_RESULT_PATH,
+                extra_files={
+                    "results/amplifier_measurement_1.0.json": {
+                        "schema_version": 1,
+                        "stage": "amplifier",
+                        "run_id": self.RUN_ID,
+                        "measurement_type": "amplifier",
+                        "frequency": "1.0",
+                        "result": {"sweep_data": {"gain": [10.0]}},
+                    }
+                },
+            )
+
+            rows = adapter.list_results()
+            split_id = f"run::{self.RUN_ID}::results/amplifier_measurement_1.0.json"
+            with self.assertRaises(ValueError):
+                adapter.load(split_id)
+            latest = adapter.latest_result("amplifier_measurement")
+
+        self.assertEqual([row.filename for row in rows], ["amplifier_measurement.json"])
+        self.assertTrue(latest.result.is_formal_result)
+
+    def test_result_type_must_match_the_manifest_definition(self):
+        """阶段是线损，但文件内容是主功放结果时不得当作线损结果返回。"""
+        with tempfile.TemporaryDirectory() as directory:
+            _paths, runs, adapter = self._setup(directory)
+            runs.create_run({"run_id": self.RUN_ID}, run_id=self.RUN_ID)
+            recorder = RunStageRecorder(runs, self.RUN_ID)
+            recorder.complete(
+                STAGE_CABLE_LOSS,
+                {
+                    "run_id": self.RUN_ID,
+                    "measurement_type": "amplifier",
+                    "status": "completed",
+                    "results": {},
+                },
+            )
+
+            self.assertEqual(adapter.list_results(), [])
+            with self.assertRaises(ValueError):
+                adapter.load(f"run::{self.RUN_ID}::inputs/cable_loss.json")
+            with self.assertRaises(FileNotFoundError):
+                adapter.latest_result("cable_loss")
+
+    def test_unknown_result_type_is_rejected_by_latest_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _paths, _runs, adapter = self._setup(directory)
+            with self.assertRaises(ValueError):
+                adapter.latest_result("mystery")
 
     def test_read_bytes_and_export_use_the_run_result(self):
         with tempfile.TemporaryDirectory() as directory:
             paths, runs, adapter = self._setup(directory)
-            layout = self._complete_cable_loss(runs, losses={"1.0": 1.0})
+            layout = self._complete_cable_loss(runs, losses={"1.0": {"cable1": 1.0}})
             run_row = adapter.list_results()[0]
             target = Path(directory) / "copy.json"
 
@@ -273,7 +344,7 @@ class RunHistoryOnlyTests(unittest.TestCase):
     def test_tampered_run_result_is_rejected_by_both_read_paths(self):
         with tempfile.TemporaryDirectory() as directory:
             _paths, runs, adapter = self._setup(directory)
-            layout = self._complete_cable_loss(runs, losses={"1.0": 1.0})
+            layout = self._complete_cable_loss(runs, losses={"1.0": {"cable1": 1.0}})
             run_row = adapter.list_results()[0]
             (layout.run_directory / CABLE_LOSS_INPUT_PATH).write_text(
                 json.dumps({"cable_losses": {"1.0": 42.0}}), encoding="utf-8"
@@ -287,7 +358,7 @@ class RunHistoryOnlyTests(unittest.TestCase):
     def test_identifier_must_be_a_run_result(self):
         with tempfile.TemporaryDirectory() as directory:
             _paths, runs, adapter = self._setup(directory)
-            self._complete_cable_loss(runs, losses={"1.0": 1.0})
+            self._complete_cable_loss(runs, losses={"1.0": {"cable1": 1.0}})
 
             for result_id in (
                 "cable_loss_results.json",
@@ -303,7 +374,7 @@ class RunHistoryOnlyTests(unittest.TestCase):
     def test_choose_and_load_rejects_files_outside_the_runs_root(self):
         with tempfile.TemporaryDirectory() as directory:
             paths, runs, adapter = self._setup(directory)
-            self._complete_cable_loss(runs, losses={"1.0": 1.0})
+            self._complete_cable_loss(runs, losses={"1.0": {"cable1": 1.0}})
             outside = paths.test_results_dir / "cable_loss_results.json"
             outside.write_text("{}", encoding="utf-8")
 
@@ -317,7 +388,7 @@ class RunHistoryOnlyTests(unittest.TestCase):
     def test_export_page_shows_the_source_of_each_result(self):
         with tempfile.TemporaryDirectory() as directory:
             paths, runs, adapter = self._setup(directory)
-            self._complete_cable_loss(runs, losses={"1.0": 1.0})
+            self._complete_cable_loss(runs, losses={"1.0": {"cable1": 1.0}})
             self._write_legacy_copy(paths, losses={"1.0": 99.0})
 
             from PySide6.QtWidgets import QApplication

@@ -25,9 +25,16 @@ class ResultFileDto:
 
 @dataclass(frozen=True)
 class LoadedResultDto:
+    """一条已解析的正式历史结果。
+
+    ``result`` 已经是 ``application.dto`` 的正式结果对象：调用方拿到它就可以直接
+    展示、绘图或导出，不需要也不允许再把结果当成 ``Mapping[str, Any]`` 读取。
+    原始 JSON 只通过 ``ResultQueryPort.read_bytes()`` 逐字节导出。
+    """
+
     result_id: str
     filename: str
-    data: Mapping[str, Any]
+    result: MeasurementResult
 
 
 class ConfigurationPort(Protocol):
@@ -41,6 +48,9 @@ class ResultQueryPort(Protocol):
     该契约只服务于历史浏览，不提供正式测量输入；正式测量输入必须来自当前
     运行 manifest 登记并校验的阶段结果。查询对象以 ``result_id`` 标识结果，路径
     解析和目录边界校验由基础设施实现负责，数据源是正式运行目录结果。
+
+    查询结果一律是已解析的正式结果 DTO：非正式 schema、类型与 manifest 登记不一致
+    的文档不会出现在列表中，也不会被 ``load()`` 返回。
     """
 
     def list_results(self) -> list[ResultFileDto]: ...

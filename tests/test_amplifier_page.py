@@ -5,6 +5,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QDialog, QWidget
 
+from application.dto import (
+    AmplifierCompressionPoint,
+    AmplifierFrequencyResult,
+    AmplifierMeasurementResult,
+)
 from presentation.qt.amplifier_page import AmplifierPage
 from presentation.qt.measurement_controller_contract import MeasurementCommand
 from presentation.qt.measurement_state import MeasurementKind, MeasurementStatus
@@ -124,17 +129,36 @@ class AmplifierPageTests(unittest.TestCase):
         self.controller.signals.data_update.emit({"frequency": "4.0", "sweep_data": {"output_power_dut": [10]}})
         self.controller.signals.result.emit(type("Reference", (), {
             "kind": MeasurementKind.AMPLIFIER,
-            "value": {"results": {"4.0": {
-                "compression_point": {"output_power": 20.0},
-                "small_signal_gain": 12.5,
-                "compression_achieved": True,
-                "sweep_data": {"output_power_dut": [20]},
-            }}}
+            "value": AmplifierMeasurementResult(
+                run_id="run-amplifier",
+                status=MeasurementStatus.COMPLETED,
+                frequencies=(
+                    AmplifierFrequencyResult(
+                        frequency_ghz="4.0",
+                        compression_type="1dB",
+                        compression_point=AmplifierCompressionPoint(output_power_dbm=20.0),
+                        small_signal_gain_db=12.5,
+                        compression_achieved=True,
+                        sweep_data={"output_power_dut": [20]},
+                    ),
+                ),
+            ),
         })())
         self.assertEqual(self.page.result_table.rowCount(), 1)
         self.assertEqual(self.page.result_table.item(0, 0).text(), "4.0")
         self.assertEqual(self.page.result_table.item(0, 2).text(), "12.5")
         self.assertEqual(self.page.amplifier_plot_widget.updated[-1]["frequency"], "4.0")
+
+    def test_non_formal_result_is_reported_and_not_displayed(self):
+        errors = []
+        self.page._error_callback = errors.append
+        self.controller.signals.result.emit(type("Reference", (), {
+            "kind": MeasurementKind.AMPLIFIER,
+            "value": {"results": {"4.0": {"small_signal_gain": 12.5}}},
+        })())
+
+        self.assertEqual(self.page.result_table.rowCount(), 0)
+        self.assertEqual(errors, ["主功放测量结果不是正式结果模型，无法显示"])
 
     def test_stop_and_error_restore_controls(self):
         self.controller.signals.state_changed.emit(type("State", (), {

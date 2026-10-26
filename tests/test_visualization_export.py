@@ -34,17 +34,18 @@ class VisualizationDataBoundaryTests(unittest.TestCase):
 
     def test_driver_mapping_is_converted_to_sweep_data(self):
         data, frequencies = convert_power_mapping(
-            {"power_mapping": {"4.8": {"-20": -10, "-10": 1}}}
+            {"run_id": "viz-run", "power_mapping": {"4.8": {"-20": -10, "-10": 1}}}
         )
         self.assertEqual(frequencies, [4.8])
         self.assertEqual(data["4.8"]["sweep_data"]["gain"], [10.0, 11.0])
 
-    def test_driver_mapping_accepts_nested_output_and_canonicalizes_frequency(self):
-        data, frequencies = convert_power_mapping(
-            {"power_mapping": {"4.800": {"-20": {"actual_output_power": -9.5}}}}
-        )
-        self.assertEqual(frequencies, [4.8])
-        self.assertEqual(data["4.8"]["sweep_data"]["output_power_driver"], [-9.5])
+    def test_driver_mapping_requires_a_formal_document(self):
+        with self.assertRaises(ValueError):
+            convert_power_mapping(
+                {"run_id": "viz-run", "power_mapping": {"4.800": {"-20": {"actual_output_power": -9.5}}}}
+            )
+        with self.assertRaises(ValueError):
+            convert_power_mapping({"power_mapping": {"4.8": {"-20": -10}}})
 
     def test_invalid_and_empty_data_are_rejected(self):
         with self.assertRaises(ValueError):
@@ -494,9 +495,19 @@ class ReportAdapterContractTests(unittest.TestCase):
             adapter = gui_data.ReportAdapter(paths)
             with patch.object(gui_data, "DataVisualization", FakeVisualizer):
                 adapter.create_summary_report(
-                    {"results": {"4.8": {"sweep_data": [
-                        {"input_power_dut": -10.0, "output_power_dut": 0.0, "gain": 10.0, "efficiency": 20.0},
-                    ]}}},
+                    {
+                        "run_id": "report-run",
+                        "results": {
+                            "4.8": {
+                                "sweep_data": {
+                                    "input_power_dut": [-10.0],
+                                    "output_power_dut": [0.0],
+                                    "gain": [10.0],
+                                    "efficiency": [20.0],
+                                }
+                            }
+                        },
+                    },
                     {"freq": 4.8},
                     "amp.json",
                 )

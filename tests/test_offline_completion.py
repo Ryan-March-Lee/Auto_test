@@ -153,9 +153,11 @@ class OfflineCompletionTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            model_path = save_measurement_model(result, legacy_payload={"results": {}}, run_directory=root)
+            model_path = save_measurement_model(result, run_directory=root)
             loaded = parse_result_model(load_json_result(model_path))
             self.assertEqual(loaded.run_id, "report-run")
+            document = load_json_result(model_path)
+            self.assertNotIn("legacy_payload", document)
             csv_path = export_csv(loaded, root / "report.csv")
             html_path = render_html_report(loaded, root / "report.html")
             self.assertTrue(csv_path.exists())

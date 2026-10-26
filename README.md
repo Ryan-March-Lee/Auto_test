@@ -244,6 +244,10 @@ code 只能导入登记的模块路径，旧模块禁止新增引用，由 `test
 停止，正式结果只写 `runs/<run_id>/`。步骤 3 已删除 `save_compatibility_copy()`、`legacy_path()`、
 `create_legacy_run_snapshot()`、`write_compatibility_copy()`、`write_legacy_run_snapshot()` 和
 `result_storage.py`；三个旧兼容测量根入口已停用并立即失败，文件本体随步骤 4 退役。
+步骤 5 已删除旧配置转换与根目录配置转发；步骤 6 已把三类测量结果收敛为显式 DTO
+（`CableLossMeasurementResult` / `DriverPowerMappingMeasurementResult` /
+`AmplifierMeasurementResult`），删除根 `result_reading.py` 与
+`application/dto/legacy_result_adapter.py`，旧结果 JSON 形状和旧字段别名不再被解析。
 
 ### 技术支持
 如遇到问题，请检查：

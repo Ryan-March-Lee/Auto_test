@@ -11,7 +11,7 @@ from typing import Any, Callable
 
 import domain.measurement.calculations as measurement_calculations
 from app.cancellation import CancellationToken, MeasurementCancelled
-from application.dto import AmplifierMeasurementRequest, MeasurementResult, legacy_result
+from application.dto import AmplifierMeasurementRequest, AmplifierMeasurementResult, MeasurementResult
 from application.measurements.services import AmplifierMeasurementService
 from domain.run.models import (
     AMPLIFIER_RESULT_PATH,
@@ -121,12 +121,13 @@ class AmplifierMeasurementUseCase:
         try:
             self._begin_stage()
             payload = self._service.run()
-            result = legacy_result(
-                self.request.measurement_type,
+            result = AmplifierMeasurementResult.from_service_payload(
                 payload,
                 run_id=self.run_id,
             )
-            self.measurement_results = result["results"]
+            self.measurement_results = {
+                item.frequency_ghz: item for item in result.frequencies
+            }
             result = self._save(result)
             self.last_result = result
             return result

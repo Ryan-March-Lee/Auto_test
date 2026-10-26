@@ -315,20 +315,18 @@ class ResultReadingTests(unittest.TestCase):
         self.assertEqual(sat_points, [])
 
     def test_get_sweep_dataframe_data_extracts_and_flattens(self):
-        """get_sweep_dataframe_data 应提取并展平扫描数据。"""
+        """get_sweep_dataframe_data 应提取并展平列式扫描数据。"""
         data = {
             "results": {
                 "1.0": {
-                    "sweep_data": [
-                        {
-                            "input_power_dut": 0.0,
-                            "output_power_dut": 10.0,
-                            "gain": 10.0,
-                            "efficiency": 20.0,
-                            "voltages": {"CH1": 5.0, "CH2": 10.0},
-                            "currents": {"CH1": 1.0, "CH2": 2.0},
-                        }
-                    ]
+                    "sweep_data": {
+                        "input_power_dut": [0.0],
+                        "output_power_dut": [10.0],
+                        "gain": [10.0],
+                        "efficiency": [20.0],
+                        "voltages": [{"CH1": 5.0, "CH2": 10.0}],
+                        "currents": [{"CH1": 1.0, "CH2": 2.0}],
+                    }
                 }
             }
         }
@@ -367,9 +365,9 @@ class ResultReadingTests(unittest.TestCase):
         self.assertEqual(metadata["original_filename"], "test.json")
 
     def test_get_config_snapshot_extracts_config(self):
-        """get_config_snapshot 应提取配置快照。"""
+        """get_config_snapshot 只读取正式 configuration_snapshot。"""
         data = {
-            "config": {
+            "configuration_snapshot": {
                 "test_frequencies": [1.0, 2.0],
                 "signal_source": {"start_power": 0, "stop_power": 10},
             }
@@ -381,13 +379,16 @@ class ResultReadingTests(unittest.TestCase):
         self.assertEqual(config["signal_source"]["start_power"], 0)
 
     def test_get_config_snapshot_handles_missing_config(self):
-        """get_config_snapshot 应处理缺少配置的情况。"""
+        """get_config_snapshot 应处理缺失配置的情况。"""
         self.assertEqual(get_config_snapshot({}), {})
-        self.assertEqual(get_config_snapshot({"config": None}), {})
-        self.assertEqual(get_config_snapshot({"config": "not a dict"}), {})
+        self.assertEqual(get_config_snapshot({"configuration_snapshot": None}), {})
+        self.assertEqual(get_config_snapshot({"configuration_snapshot": "not a dict"}), {})
+        # 旧字段别名 config 不再被读取。
+        self.assertEqual(get_config_snapshot({"config": {"frequency": 1.0}}), {})
 
-    def test_legacy_amplifier_result_adapts_to_versioned_model(self):
-        legacy = {
+    def test_amplifier_result_document_adapts_to_versioned_model(self):
+        document = {
+            "run_id": "amp-run",
             "measurement_time": "2026-08-21 10:00:00",
             "results": {
                 "1.0": {
@@ -401,8 +402,8 @@ class ResultReadingTests(unittest.TestCase):
                 }
             },
         }
-        model = parse_result_model(legacy)
-        self.assertEqual(model.run_id, "legacy")
+        model = parse_result_model(document)
+        self.assertEqual(model.run_id, "amp-run")
         self.assertEqual(model.schema_version, "1.0")
         self.assertEqual(len(model.points), 2)
         self.assertEqual(model.points[1].output_power_dbm, 19.0)
@@ -425,10 +426,10 @@ class ResultReadingTests(unittest.TestCase):
     def test_cable_and_driver_results_use_specific_models(self):
         from domain.models import CableLossResult, DriverPowerMappingResult
 
-        cable = parse_result_model({"cable_losses": {"1.0": {
+        cable = parse_result_model({"run_id": "cable-run", "cable_losses": {"1.0": {
             "cable1": 1.2, "total_path1": 30.0, "total_path2": 31.0,
         }}})
-        driver = parse_result_model({"power_mapping": {"1.0": {
+        driver = parse_result_model({"run_id": "driver-run", "power_mapping": {"1.0": {
             "0.0": 11.0, "1.0": 12.0,
         }}})
         self.assertIsInstance(cable, CableLossResult)
@@ -439,20 +440,19 @@ class ResultReadingTests(unittest.TestCase):
         self.assertEqual(cable.points[0].path1_output_power_dbm, None)
         self.assertEqual(cable.points[0].path1_loss_db, 30.0)
 
-    def test_driver_legacy_object_mapping_is_also_supported(self):
-        model = parse_result_model({"power_mapping": {"1.0": {
-            "input_power": 0.0, "output_power": 10.0, "actual_output_power": 11.0,
-        }}})
-        self.assertEqual(len(model.points), 1)
-        self.assertEqual(model.points[0].input_power_dbm, 0.0)
-        self.assertEqual(model.points[0].compensated_output_power_dbm, 11.0)
+    def test_driver_legacy_object_mapping_is_rejected(self):
+        with self.assertRaises(ValueError):
+            parse_result_model({"run_id": "driver-run", "power_mapping": {"1.0": {
+                "input_power": 0.0, "output_power": 10.0, "actual_output_power": 11.0,
+            }}})
 
-    def test_load_result_model_reads_historical_json(self):
+    def test_parse_result_model_reads_formal_result_json(self):
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "legacy.json"
-            path.write_text(json.dumps({"power_mapping": {"2.0": {
-                "input_power": 1, "output_power": 5,
-            }}}), encoding="utf-8")
+            path = Path(directory) / "result.json"
+            path.write_text(json.dumps({
+                "run_id": "driver-run",
+                "power_mapping": {"2.0": {"1.0": 5.0}},
+            }), encoding="utf-8")
             model = parse_result_model(load_json_result(path))
         self.assertEqual(model.points[0].frequency_hz, 2.0)
 

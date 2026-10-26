@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
 
 from domain.result_reading import (
     normalize_frequency_key, parse_result_model,
-    get_sweep_dataframe_data,
 )
 from application.ports.gui_data_service import LoadedResultDto
 from .realtime_plot import RealTimePlotWidget
@@ -200,10 +199,6 @@ class VisualizationPage(QWidget):
         record = self.loaded_data.get(key) if key else None
         if isinstance(record, dict):
             sweep = record.get("sweep_data", {})
-            if isinstance(sweep, list):
-                rows = get_sweep_dataframe_data({"results": {key: record}}).get(key, [])
-                columns = {column for row in rows for column in row}
-                sweep = {column: [row.get(column) for row in rows] for column in columns}
             self.data_plot_widget.update_plot(
                 {"frequency": self.frequency_list[self.current_freq_index], "sweep_data": sweep}
             )

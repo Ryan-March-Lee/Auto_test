@@ -22,6 +22,10 @@
   ``config_io.py`` / ``config_models.py`` / ``config_validation.py`` 与
   ``infrastructure/config/legacy_conversion.py`` 退役，``load_legacy_data()`` /
   ``unresolved_fields`` 流程不再存在；配置页面保存时直接写出正式 schema。
+- 步骤 6（技术债分阶段重构计划，2026-10-27）已收敛结果模型：``result_reading.py``
+  转发模块与 ``application/dto/legacy_result_adapter.py`` 退役，应用层结果契约不再
+  继承 ``Mapping``、不再保存服务层原始载荷，旧字段别名与 ``to_legacy_payload()``
+  一并删除；展示层只消费显式结果 DTO，非正式 schema 直接报错。
 - 步骤 D 已把 GUI 历史列表/查看/导出迁移到运行目录 manifest 视图，旧的全局兼容副本
   保持只读可查看；运行历史只读端口与仓储必须保持存在，且历史浏览不得复用正式测量
   结果仓储。
@@ -43,6 +47,8 @@ import ast
 import subprocess
 import sys
 import unittest
+from collections.abc import Mapping
+from dataclasses import fields as dataclass_fields
 from pathlib import Path
 
 
@@ -122,12 +128,11 @@ RETIRED_LEGACY_MODULE_NAMES = (
 RETIRED_LEGACY_RUN_ID = "run" + "-" + "legacy"
 
 # 配置/结果/日志/服务/生命周期等纯再导出模块（纯代码路径，独立退役，不受步骤 F 阻断）。
-# 步骤 5 已退役三个配置再导出模块；这里只保留仍未退役的条目。
+# 步骤 5 已退役三个配置再导出模块；步骤 6 已退役旧结果解析转发。
 LEGACY_REEXPORT_MODULES = (
     "measurement_services.py",
     "measurement_lifecycle.py",
     "measurement_calculations.py",
-    "result_reading.py",
     "app_logging.py",
     "project_paths.py",
 )
@@ -466,8 +471,8 @@ class StepCExecutionTests(unittest.TestCase):
                     f"{_relative(path)} 不得引用兼容 API {name}",
                 )
 
-    def test_legacy_result_field_is_confined_to_the_result_dto(self):
-        """``legacy_copy_path`` 已停止由保存流程产生，字段清理留待步骤 6。"""
+    def test_legacy_result_field_is_gone_from_production_code(self):
+        """步骤 6 已删除历史兼容字段：生产代码不再出现 ``legacy_copy_path``。"""
         offenders = {
             _relative(path)
             for path in _production_sources()
@@ -475,8 +480,8 @@ class StepCExecutionTests(unittest.TestCase):
         }
         self.assertEqual(
             offenders,
-            {"application/dto/measurement_results.py"},
-            "legacy_copy_path 只允许作为步骤 6 前的结果模型兼容字段存在",
+            set(),
+            "legacy_copy_path 已随结果模型收敛删除: " + ", ".join(sorted(offenders)),
         )
 
     def test_old_entry_points_stop_using_the_removed_compatibility_apis(self):
@@ -834,6 +839,153 @@ class Step5RetirementTests(unittest.TestCase):
             any(issue.path == "test_plan" for issue in result.errors),
             [issue.path for issue in result.errors],
         )
+
+
+class Step6RetirementTests(unittest.TestCase):
+    """步骤 6：结果模型收敛为显式 DTO，旧解析转发与旧结果适配器已整文件退役。
+
+    门禁固定五点：两个旧文件不存在且无法导入；生产代码不再出现旧载荷 API
+    （``to_legacy_payload`` / ``from_payload`` / ``legacy_copy_path`` / 旧结果适配器）；
+    应用层结果契约不继承 ``Mapping``、不保存服务层原始载荷；三类正式结果可往返
+    解析；非正式结果 schema 直接报错。
+    """
+
+    RETIRED_RESULT_FILES = (
+        "result_reading.py",
+        "application/dto/legacy_result_adapter.py",
+    )
+    RETIRED_RESULT_MODULES = (
+        "result_reading",
+        "application.dto.legacy_result_adapter",
+    )
+    RETIRED_IDENTIFIERS = (
+        "to_legacy_payload",
+        "from_payload",
+        "legacy_payload",
+        "legacy_copy_path",
+    )
+
+    def test_retired_result_files_are_gone(self):
+        for relative in self.RETIRED_RESULT_FILES:
+            with self.subTest(module=relative):
+                self.assertFalse((ROOT / relative).exists(), relative)
+
+    def test_retired_result_modules_cannot_be_imported(self):
+        for module in self.RETIRED_RESULT_MODULES:
+            with self.subTest(module=module):
+                sys.modules.pop(module, None)
+                completed = subprocess.run(
+                    [sys.executable, "-c", f"import {module}"],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                self.assertNotEqual(
+                    completed.returncode,
+                    0,
+                    f"{module} 仍可导入: {completed.stdout}{completed.stderr}",
+                )
+                self.assertIn("ModuleNotFoundError", completed.stderr)
+
+    def test_production_code_has_no_legacy_result_payload_api(self):
+        offenders = set()
+        for path in _production_sources():
+            for node in ast.walk(_tree(path)):
+                if isinstance(node, ast.Name) and node.id in self.RETIRED_IDENTIFIERS:
+                    offenders.add(f"{_relative(path)}:{node.lineno}:{node.id}")
+                elif (
+                    isinstance(node, ast.Attribute)
+                    and node.attr in self.RETIRED_IDENTIFIERS
+                ):
+                    offenders.add(f"{_relative(path)}:{node.lineno}:{node.attr}")
+                elif isinstance(node, ast.Call) and _called_name(node.func) == "legacy_payload":
+                    offenders.add(f"{_relative(path)}:{node.lineno}:legacy_payload()")
+        self.assertEqual(
+            offenders,
+            set(),
+            "生产代码不得再调用旧结果载荷 API: " + ", ".join(sorted(offenders)),
+        )
+
+    def test_application_result_contract_is_not_a_mapping(self):
+        from application.dto.measurement_results import (
+            AmplifierMeasurementResult,
+            CableLossMeasurementResult,
+            DriverPowerMappingMeasurementResult,
+            MeasurementResult,
+        )
+
+        for cls in (
+            MeasurementResult,
+            CableLossMeasurementResult,
+            DriverPowerMappingMeasurementResult,
+            AmplifierMeasurementResult,
+        ):
+            with self.subTest(model=cls.__name__):
+                self.assertFalse(issubclass(cls, Mapping))
+                self.assertFalse(hasattr(cls, "to_legacy_payload"))
+                self.assertNotIn("payload", {item.name for item in dataclass_fields(cls)})
+
+    def test_formal_results_round_trip_without_mapping_access(self):
+        from application.dto.measurement_results import (
+            AmplifierMeasurementResult,
+            CableLossMeasurementResult,
+            DriverPowerMappingMeasurementResult,
+            measurement_result_from_document,
+        )
+
+        cable = CableLossMeasurementResult.from_service_payload(
+            {
+                "attenuator_value": 10.0,
+                "cable_losses": {"1.0": {"cable1": 1.5, "total_path1": 31.5}},
+                "status": "waiting",
+            },
+            run_id="run-cable",
+        )
+        self.assertEqual(cable.points[0].cable_losses["cable1"], 1.5)
+        self.assertEqual(cable.status.value, "waiting_for_continue")
+
+        driver = DriverPowerMappingMeasurementResult.from_service_payload(
+            {"power_mapping": {"1.0": {"-40.0": 5.5}}},
+            run_id="run-driver",
+        )
+        self.assertEqual(driver.points[0].output_power_dbm, 5.5)
+
+        amplifier = AmplifierMeasurementResult.from_service_payload(
+            {
+                "results": {
+                    "1.0": {
+                        "compression_point": {"output_power": 20.0, "gain": 15.0},
+                        "small_signal_gain": 30.0,
+                        "compression_achieved": True,
+                        "sweep_data": {"gain": [30.0, 20.0]},
+                    }
+                },
+                "config": {"test_frequencies": [1.0]},
+            },
+            run_id="run-amplifier",
+        )
+        self.assertEqual(amplifier.frequencies[0].compression_point.output_power_dbm, 20.0)
+        self.assertEqual(
+            amplifier.configuration_snapshot["test_frequencies"], (1.0,)
+        )
+
+        for result in (cable, driver, amplifier):
+            with self.subTest(model=type(result).__name__):
+                document = result.to_dict()
+                restored = measurement_result_from_document(document)
+                self.assertEqual(restored.to_dict(), document)
+
+    def test_non_formal_result_schema_is_rejected(self):
+        from application.dto.measurement_results import measurement_result_from_document
+
+        for document in (
+            {"cable_losses": {"1.0": {"cable1": 1.0}}},
+            {"run_id": "run-1", "config": {"frequency": 1.0}},
+        ):
+            with self.subTest(document=document):
+                with self.assertRaises(ValueError):
+                    measurement_result_from_document(document)
 
 
 class ReleaseNotesTests(unittest.TestCase):

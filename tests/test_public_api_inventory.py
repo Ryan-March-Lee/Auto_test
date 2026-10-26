@@ -158,6 +158,10 @@ FORMAL_API = {
         "MeasurementResult",
         "MeasurementStatus",
         "MeasurementType",
+        "CableLossMeasurementResult",
+        "DriverPowerMappingMeasurementResult",
+        "AmplifierMeasurementResult",
+        "measurement_result_from_document",
     ),
     "application.dto.measurement_requests": (
         "MeasurementRequest",
@@ -169,6 +173,10 @@ FORMAL_API = {
         "MeasurementResult",
         "MeasurementStatus",
         "MeasurementType",
+        "CableLossMeasurementResult",
+        "DriverPowerMappingMeasurementResult",
+        "AmplifierMeasurementResult",
+        "measurement_result_from_document",
     ),
     # 领域层
     "domain.configuration.models": (
@@ -342,12 +350,12 @@ LEGACY_MODULES = {
     "infrastructure.config.legacy_conversion": LegacyModule(
         "旧配置自动转换", "已删除", "步骤 5", "infrastructure/config/legacy_conversion.py", False
     ),
-    # 步骤 6：旧结果模型与读取转发
+    # 步骤 6：旧结果模型与读取转发（已整文件退役）
     "result_reading": LegacyModule(
-        "旧结果读取转发", "待删除", "步骤 6", "result_reading.py", True
+        "旧结果读取转发", "已删除", "步骤 6", "result_reading.py", False
     ),
     "application.dto.legacy_result_adapter": LegacyModule(
-        "旧结果 DTO 适配器", "待删除", "步骤 6", "application/dto/legacy_result_adapter.py", True
+        "旧结果 DTO 适配器", "已删除", "步骤 6", "application/dto/legacy_result_adapter.py", False
     ),
     # 步骤 3：旧结果仓储/写入链
     "result_storage": LegacyModule(
@@ -413,11 +421,6 @@ LEGACY_DOTTED_MODULES = frozenset(name for name in LEGACY_MODULES if "." in name
 # 步骤 1 冻结的存量旧模块引用：模块 -> 允许继续引用的文件。
 # 这是“只禁止新增”的精确基线；删除对应引用时必须同步删除条目，保持清单与代码一致。
 LEGACY_IMPORT_BASELINE = {
-    "application.dto.legacy_result_adapter": {
-        "presentation/qt/amplifier_page.py",
-        "presentation/qt/cable_loss_page.py",
-        "presentation/qt/driver_mapping_page.py",
-    },
     "instrument.measurement_factory": {
         "app/gui_runtime.py",
     },

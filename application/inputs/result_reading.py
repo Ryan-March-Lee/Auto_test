@@ -34,12 +34,16 @@ def build_report_model(
 ) -> MeasurementResult:
     """把已加载的结果规范化为报告可用的领域模型。
 
-    兼容旧 ``results``、``legacy_payload`` 与 ``canonical_model`` 格式；显式传入的
-    ``configuration`` / ``original_filename`` / ``measurement_time`` 覆盖结果中的同名字段。
-    没有可绘制扫描点时抛出 ``ValueError``，由调用方决定提示方式。
+    只接受正式结果 schema：``results`` 形式的文档保留 ``run_id`` 与版本字段；
+    显式传入的 ``configuration`` / ``original_filename`` / ``measurement_time``
+    覆盖结果中的同名字段。没有可绘制扫描点时抛出 ``ValueError``，由调用方决定
+    提示方式。
     """
     if isinstance(data, MeasurementResult):
         payload: dict[str, Any] = dict(data.raw_readings)
+        payload["run_id"] = data.run_id
+        payload.setdefault("result_type", data.measurement_type)
+        payload.setdefault("schema_version", data.schema_version)
     elif isinstance(data, Mapping):
         payload = dict(data)
     else:
@@ -47,10 +51,15 @@ def build_report_model(
 
     results = payload.get("results")
     if isinstance(results, Mapping):
-        payload = {"results": dict(results)}
+        payload = {
+            "results": dict(results),
+            "run_id": payload.get("run_id"),
+            "result_type": payload.get("result_type", "amplifier_measurement"),
+            "schema_version": payload.get("schema_version"),
+        }
 
     if configuration is not None:
-        payload["config"] = configuration
+        payload["configuration_snapshot"] = configuration
     if measurement_time is not None:
         payload["measurement_time"] = measurement_time
     if original_filename is not None:

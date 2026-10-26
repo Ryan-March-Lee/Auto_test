@@ -7,8 +7,11 @@ from unittest.mock import patch
 from app.gui_runtime import create_cable_loss_measurement
 from application.dto import (
     CableLossMeasurementRequest,
+    CableLossMeasurementResult,
+    DriverPowerMappingMeasurementResult,
     MeasurementResult,
     MeasurementStatus,
+    MeasurementType,
 )
 from application.inputs import ResultInputReader
 from application.run_service import configuration_snapshot
@@ -240,27 +243,29 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
             create_cable_loss_measurement("config.json", prepared_run=prepared)
         self.assertTrue(measurement.call_args.args[0].safety_options["owns_measurement_port"])
 
-    def test_result_dto_has_normalized_fields_and_legacy_mapping_view(self):
-        result = MeasurementResult.from_payload(
-            "driver_power_mapping",
-            {"power_mapping": {"900": {"gain": 10.0}}},
+    def test_result_dto_has_explicit_fields_without_mapping_view(self):
+        result = DriverPowerMappingMeasurementResult.from_service_payload(
+            {"power_mapping": {"900.0": {"-40.0": 10.0}}},
             run_id="run-result",
         )
-        self.assertEqual(result.measurement_type, "driver_power_mapping")
-        self.assertEqual(result.status, "completed")
-        self.assertEqual(result.summary["power_mapping"]["900"]["gain"], 10.0)
-        self.assertEqual(result["power_mapping"]["900"]["gain"], 10.0)
+        self.assertIs(result.measurement_type, MeasurementType.DRIVER_POWER_MAPPING)
+        self.assertIs(result.status, MeasurementStatus.COMPLETED)
+        self.assertEqual(result.points[0].frequency_ghz, "900.0")
+        self.assertEqual(result.points[0].input_power_dbm, -40.0)
+        self.assertEqual(result.points[0].output_power_dbm, 10.0)
         self.assertEqual(result.to_dict()["run_id"], "run-result")
+        with self.assertRaises(TypeError):
+            result["power_mapping"]
 
     def test_result_dto_freezes_nested_values_and_validates_status(self):
-        source = {"power_mapping": {"900": [1.0]}}
-        result = MeasurementResult.from_payload(
-            "driver_power_mapping", source, run_id="run-result"
+        source = {"power_mapping": {"900.0": {"-40.0": 1.0}}}
+        result = DriverPowerMappingMeasurementResult.from_service_payload(
+            source, run_id="run-result"
         )
-        source["power_mapping"]["900"].append(2.0)
-        self.assertEqual(result["power_mapping"]["900"], (1.0,))
+        source["power_mapping"]["900.0"]["-40.0"] = 2.0
+        self.assertEqual(result.points[0].output_power_dbm, 1.0)
         with self.assertRaises(TypeError):
-            result.summary["new"] = True
+            result.configuration_snapshot["new"] = True
         with self.assertRaises(ValueError):
             MeasurementResult(
                 "driver_power_mapping",
@@ -271,33 +276,31 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
             MeasurementResult("driver_power_mapping", "stopped", "run-result")
 
     def test_result_dto_records_structured_termination(self):
-        result = MeasurementResult.from_payload(
+        result = MeasurementResult(
             "amplifier",
-            {"termination": {"intent": "cancel", "reason": "任务已取消"}},
-            run_id="run-result",
-            status=MeasurementStatus.CANCELLED,
+            MeasurementStatus.CANCELLED,
+            "run-result",
+            termination={"intent": "cancel", "reason": "任务已取消"},
         )
         self.assertEqual(result.termination["intent"], "cancel")
         self.assertEqual(result.to_dict()["termination"]["reason"], "任务已取消")
-        emergency = MeasurementResult.from_payload(
+        emergency = MeasurementResult(
             "amplifier",
-            {},
-            run_id="run-emergency",
-            status=MeasurementStatus.EMERGENCY_STOPPED,
+            MeasurementStatus.EMERGENCY_STOPPED,
+            "run-emergency",
             termination={"intent": "emergency_stop", "reason": "过流保护"},
         )
         self.assertEqual(emergency.termination["intent"], "emergency_stop")
 
-    def test_result_dto_separates_raw_and_saved_references(self):
-        result = MeasurementResult.from_payload(
+    def test_result_dto_keeps_explicit_references(self):
+        result = MeasurementResult(
             "amplifier",
-            {
-                "raw_data_path": "raw.csv",
-                "archive_path": "archive.json",
-                "errors": ["warning-1", "warning-2"],
-                "cleanup_records": [{"power_off": "ok"}, {"close": "ok"}],
-            },
-            run_id="run-reference",
+            MeasurementStatus.COMPLETED,
+            "run-reference",
+            raw_data_reference={"raw_data_path": "raw.csv"},
+            result_reference={"archive_path": "archive.json"},
+            errors=("warning-1", "warning-2"),
+            cleanup_records=({"power_off": "ok"}, {"close": "ok"}),
         )
         self.assertEqual(result.raw_data_reference["raw_data_path"], "raw.csv")
         self.assertEqual(result.result_reference["archive_path"], "archive.json")
@@ -307,14 +310,11 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
         self.assertEqual(saved.result_reference["archive_path"], "new-archive.json")
         self.assertEqual(saved.raw_data_reference["raw_data_path"], "raw.csv")
 
-    def test_legacy_result_status_is_normalized_only_by_adapter(self):
-        from application.dto import legacy_result
-
-        waiting = legacy_result(
-            "cable_loss", {"status": "waiting"}, run_id="run-result"
+    def test_service_status_alias_is_normalized_by_the_result_builder(self):
+        waiting = CableLossMeasurementResult.from_service_payload(
+            {"status": "waiting"}, run_id="run-result"
         )
-        self.assertEqual(waiting.status, MeasurementStatus.WAITING_FOR_CONTINUE)
-        self.assertEqual(waiting["pending_action"], "connect_path_2")
+        self.assertIs(waiting.status, MeasurementStatus.WAITING_FOR_CONTINUE)
 
     def test_specialized_request_rejects_mismatched_measurement_type(self):
         with self.assertRaises(ValueError):

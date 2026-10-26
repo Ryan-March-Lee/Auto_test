@@ -44,7 +44,7 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             saved = FileMeasurementResultRepository(results_directory=root).save(
-                {"value": 1}, result_type="cable_loss", run_id="run-1"
+                {"cable_losses": {}}, result_type="cable_loss", run_id="run-1"
             )
 
             self.assertEqual(saved.run_directory, root / "run-1")
@@ -58,6 +58,7 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             saved = FileMeasurementResultRepository(results_directory=directory).save(
                 {
+                    "cable_losses": {},
                     "array": np.array([1, 2]),
                     "integer": np.int64(3),
                     "floating": np.float64(4.5),
@@ -76,7 +77,7 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
             root = Path(directory)
             explicit = root / "provided-run"
             saved = FileMeasurementResultRepository(results_directory=root / "results").save(
-                {"value": 1},
+                {"cable_losses": {}},
                 result_type="cable_loss",
                 run_id="explicit-run",
                 run_directory=explicit,
@@ -161,6 +162,17 @@ class FileMeasurementResultRepositoryTests(unittest.TestCase):
 
         self.assertEqual(result, {"value": 1})
         load.assert_called_once_with("result.json")
+
+    def test_non_formal_result_is_rejected_before_leaving_an_archive(self):
+        """步骤 6：写入路径只接受正式结果 schema。"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with self.assertRaisesRegex(ValueError, "不是正式测量结果 schema"):
+                FileMeasurementResultRepository(results_directory=root).save(
+                    {"value": 1}, result_type="cable_loss", run_id="bad-run"
+                )
+
+            self.assertFalse((root / "bad-run" / "cable_loss_results.json").exists())
 
     def test_unknown_result_type_is_rejected_before_writing(self):
         with self.assertRaises(ValueError):

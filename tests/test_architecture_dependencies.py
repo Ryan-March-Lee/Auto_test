@@ -55,13 +55,14 @@ DELETED_ROOT_MODULES = {
     "driver_power_mapping",
     "amplifier_measurement",
     "app.legacy_amplifier_measurement",
+    # 技术债步骤 6 已退役的旧结果解析转发入口。
+    "result_reading",
 }
 FORBIDDEN_CONTROLLER_IMPORT_ROOTS = FORBIDDEN_PAGE_IMPORT_ROOTS | {
     "measurement_services",
     "cable_loss_measurement",
     "driver_power_mapping",
     "amplifier_measurement",
-    "result_reading",
     "app",
     "infrastructure",
     "workers",

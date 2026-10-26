@@ -175,7 +175,7 @@ def save_measurement_result(
                 resource_snapshot=_load_snapshot(Path(run_directory) / "run_mapping_snapshot.json"),
             )
             save_measurement_model(
-                model, legacy_payload=result, run_directory=run_directory,
+                model, run_directory=run_directory,
                 filename=f"{result_type}_model.json", encoder=encoder,
             )
     except Exception:
@@ -196,19 +196,22 @@ def _load_snapshot(path: Path) -> Dict[str, Any]:
 def save_measurement_model(
     model: Any,
     *,
-    legacy_payload: Mapping[str, Any],
     run_directory: PathLike,
     filename: str | None = None,
     encoder: type[json.JSONEncoder] = json.JSONEncoder,
 ) -> Path:
+    """把版本化模型工件写入运行目录。
+
+    工件只保存正式 ``canonical_model``：原始服务载荷属于运行目录中另行登记的
+    结果文件，不再作为兼容字段复制进模型工件。
+    """
     run_directory = Path(run_directory)
     ensure_directory(run_directory)
     model_dict = model.to_dict()
     name = filename or f"{model_dict.get('measurement_type', 'measurement')}_model.json"
     payload = {
         "canonical_model": model_dict,
-        "legacy_payload": dict(legacy_payload),
-        "run_id": str(model_dict.get("run_id", "legacy")),
+        "run_id": str(model_dict.get("run_id", "")),
         "result_type": "versioned_measurement_result",
         "schema_version": model_dict.get("schema_version", "1.0"),
         "method_version": model_dict.get("method_version", "1.0"),

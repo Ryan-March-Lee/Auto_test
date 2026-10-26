@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from .measurement_controller_contract import MeasurementCommand
-from application.dto.legacy_result_adapter import legacy_payload
+from application.dto import AmplifierMeasurementResult
 from .measurement_state import AmplifierPageResultState, MeasurementKind
 from .pages import PageControllerBindingMixin
 from .run_contract import is_valid_prepared_run
@@ -197,9 +197,11 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         value = getattr(reference, "value", None)
         if isinstance(value, AmplifierPageResultState):
             rows = value.rows
+        elif isinstance(value, AmplifierMeasurementResult):
+            rows = tuple(_amplifier_row(item) for item in value.frequencies)
         else:
-            value = legacy_payload(value)
-            rows = self._result_rows(value.get("results", value))
+            self._error_callback("主功放测量结果不是正式结果模型，无法显示")
+            return
         self.result_table.setRowCount(0)
         for row_data in rows:
             row = self.result_table.rowCount()
@@ -211,20 +213,6 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
             if isinstance(sweep, Mapping):
                 self.update_realtime({"frequency": row_data.get("frequency", ""), "sweep_data": dict(sweep)})
         self.result_table.resizeColumnsToContents()
-
-    @staticmethod
-    def _result_rows(results: Any) -> tuple[Mapping[str, Any], ...]:
-        if not isinstance(results, Mapping):
-            return ()
-        rows = []
-        for frequency, result in results.items():
-            if not isinstance(result, Mapping):
-                continue
-            point = result.get("compression_point")
-            if isinstance(point, Mapping):
-                point = point.get("output_power", point.get("input_power", ""))
-            rows.append({"frequency": frequency, "compression_point": point, "small_signal_gain": result.get("small_signal_gain", ""), "compression_achieved": result.get("compression_achieved", ""), "sweep_data": result.get("sweep_data", {})})
-        return tuple(rows)
 
     def _update_plot(self, data: Mapping[str, Any]) -> None:
         update_plot = getattr(self.amplifier_plot_widget, "update_plot", None)
@@ -273,6 +261,23 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
 
     def _show_error(self, message: str) -> None:
         QMessageBox.critical(self, "错误", message)
+
+
+def _amplifier_row(item: Any) -> Mapping[str, Any]:
+    """把一个频点的正式主功放结果转换为表格行。"""
+    point = item.compression_point
+    return {
+        "frequency": item.frequency_ghz,
+        "compression_point": "" if point is None or point.output_power_dbm is None
+        else point.output_power_dbm,
+        "small_signal_gain": ""
+        if item.small_signal_gain_db is None
+        else item.small_signal_gain_db,
+        "compression_achieved": ""
+        if item.compression_achieved is None
+        else item.compression_achieved,
+        "sweep_data": item.sweep_data,
+    }
 
 
 __all__ = ["AmplifierPage"]

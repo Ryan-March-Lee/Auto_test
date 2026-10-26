@@ -150,7 +150,10 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
         result = use_case.measure_all_frequencies()
 
         self.assertEqual(result, use_case.last_result)
-        self.assertEqual(use_case.measurement_results, result["results"])
+        self.assertEqual(
+            use_case.measurement_results,
+            {item.frequency_ghz: item for item in result.frequencies},
+        )
         self.assertEqual(repository.calls[0][1]["result_type"], "amplifier_measurement")
         self.assertEqual(use_case.run_directory, Path("saved-run"))
         self.assertEqual(instrument.close_calls, 1)

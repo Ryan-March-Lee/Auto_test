@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from .measurement_controller_contract import MeasurementCommand
-from application.dto.legacy_result_adapter import legacy_payload
+from application.dto import CableLossMeasurementResult
 from .measurement_state import CableLossPageResultState, MeasurementKind, MeasurementStatus
 from .pages import PageControllerBindingMixin
 from .run_contract import is_valid_prepared_run
@@ -242,13 +242,13 @@ class CableLossPage(PageControllerBindingMixin, QWidget):
         if isinstance(value, CableLossPageResultState):
             for item in value.rows:
                 self.update_realtime(item)
+        elif isinstance(value, CableLossMeasurementResult):
+            for row in value.points:
+                self.update_realtime(
+                    {"frequency": row.frequency_ghz, "cable_losses": row.cable_losses}
+                )
         else:
-            value = legacy_payload(value)
-            cable_losses = value.get("cable_losses", value)
-            if isinstance(cable_losses, Mapping):
-                for frequency, losses in cable_losses.items():
-                    if isinstance(losses, Mapping):
-                        self.update_realtime({"frequency": frequency, "cable_losses": losses})
+            self._error_callback("线损测量结果不是正式结果模型，无法显示")
 
     def _find_or_add_row(self, frequency: str) -> int:
         for row in range(self.cable_loss_table.rowCount()):

@@ -83,12 +83,14 @@ class CableLossUseCaseTests(unittest.TestCase):
         use_case = CableLossUseCase(_request(instrument, events=events, repository=repository), sleep_fn=lambda _: None)
 
         waiting = use_case.measure_all_frequencies()
-        self.assertEqual(waiting["status"], "waiting")
+        self.assertEqual(waiting.status.value, "waiting_for_continue")
+        self.assertEqual(waiting.points, ())
         self.assertEqual(instrument.measured, 1)
         self.assertEqual(repository.calls, [])
 
         result = use_case.continue_to_step2()
-        self.assertIn("cable_losses", result)
+        self.assertIn("cable_losses", result.to_dict())
+        self.assertTrue(result.points)
         self.assertEqual(instrument.measured, 2)
         self.assertEqual(repository.calls[0][1], {
             "result_type": "cable_loss",

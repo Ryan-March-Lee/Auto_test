@@ -6,9 +6,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QWidget
 
+from application.dto import DriverPowerMappingMeasurementResult, DriverPowerPoint
 from presentation.qt.driver_mapping_page import DriverMappingPage
 from presentation.qt.measurement_controller_contract import MeasurementCommand
-from presentation.qt.measurement_state import MeasurementKind, MeasurementStatus
+from presentation.qt.measurement_state import (
+    DriverMappingPageResultState,
+    MeasurementKind,
+    MeasurementStatus,
+)
 
 
 class Signal:
@@ -147,7 +152,17 @@ class DriverMappingPageTests(unittest.TestCase):
         reference = type(
             "Reference", (), {
                 "kind": MeasurementKind.DRIVER_MAPPING,
-                "value": {"power_mapping": {"3.0": {"-8.0": 4.0}}},
+                "value": DriverPowerMappingMeasurementResult(
+                    run_id="run-driver",
+                    status=MeasurementStatus.COMPLETED,
+                    points=(
+                        DriverPowerPoint(
+                            frequency_ghz="3.0",
+                            input_power_dbm=-8.0,
+                            output_power_dbm=4.0,
+                        ),
+                    ),
+                ),
             }
         )()
         self.controller.signals.result.emit(reference)
@@ -162,12 +177,25 @@ class DriverMappingPageTests(unittest.TestCase):
         reference = type(
             "Reference", (), {
                 "kind": MeasurementKind.DRIVER_MAPPING,
-                "value": {"power_mapping": {"1.0": {"bad": None}}},
+                "value": DriverMappingPageResultState(
+                    rows=({"frequency": "1.0", "input_power": "bad", "output_power": None},)
+                ),
             }
         )()
         self.controller.signals.result.emit(reference)
         self.assertEqual(self.page._frequency_list, [])
         self.assertEqual(len(self.errors), 1)
+
+    def test_non_formal_result_is_reported_and_not_displayed(self):
+        reference = type(
+            "Reference", (), {
+                "kind": MeasurementKind.DRIVER_MAPPING,
+                "value": {"power_mapping": {"3.0": {"-8.0": 4.0}}},
+            }
+        )()
+        self.controller.signals.result.emit(reference)
+        self.assertEqual(self.page._frequency_list, [])
+        self.assertEqual(self.errors, ["驱动映射测量结果不是正式结果模型，无法显示"])
 
     def test_stop_error_and_finished_update_page_state(self):
         self.controller.signals.state_changed.emit(

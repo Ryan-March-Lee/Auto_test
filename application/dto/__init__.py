@@ -6,8 +6,19 @@ from .measurement_requests import (
     DriverPowerMappingRequest,
     MeasurementRequest,
 )
-from .measurement_results import MeasurementResult, MeasurementStatus, MeasurementType
-from .legacy_result_adapter import legacy_payload, legacy_result, legacy_status
+from .measurement_results import (
+    AmplifierCompressionPoint,
+    AmplifierFrequencyResult,
+    AmplifierMeasurementResult,
+    CableLossMeasurementResult,
+    CableLossRow,
+    DriverPowerMappingMeasurementResult,
+    DriverPowerPoint,
+    MeasurementResult,
+    MeasurementStatus,
+    MeasurementType,
+    measurement_result_from_document,
+)
 
 __all__ = [
     "MeasurementRequest",
@@ -17,7 +28,12 @@ __all__ = [
     "MeasurementResult",
     "MeasurementStatus",
     "MeasurementType",
-    "legacy_payload",
-    "legacy_result",
-    "legacy_status",
+    "CableLossMeasurementResult",
+    "DriverPowerMappingMeasurementResult",
+    "AmplifierMeasurementResult",
+    "CableLossRow",
+    "DriverPowerPoint",
+    "AmplifierCompressionPoint",
+    "AmplifierFrequencyResult",
+    "measurement_result_from_document",
 ]

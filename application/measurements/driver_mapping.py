@@ -9,7 +9,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 from app.cancellation import CancellationToken, MeasurementCancelled
-from application.dto import DriverPowerMappingRequest, MeasurementResult, legacy_result
+from application.dto import (
+    DriverPowerMappingMeasurementResult,
+    DriverPowerMappingRequest,
+    MeasurementResult,
+)
 from application.measurements.services import DriverPowerMappingService
 from domain.run.models import STAGE_CABLE_LOSS, STAGE_DRIVER_MAPPING
 
@@ -85,12 +89,11 @@ class DriverPowerMappingUseCase:
         try:
             self._begin_stage()
             payload = self._service.run()
-            result = legacy_result(
-                self.request.measurement_type,
+            result = DriverPowerMappingMeasurementResult.from_service_payload(
                 payload,
                 run_id=self.run_id,
             )
-            self.power_mapping = result["power_mapping"]
+            self.power_mapping = result.power_mapping()
             result = self._save(result)
             self.last_result = result
             return result

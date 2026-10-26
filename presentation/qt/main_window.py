@@ -33,6 +33,7 @@ from infrastructure.filesystem.paths import (
 # Legacy patch target; normal instances use the injected PathService.
 CONFIG_FILE = DEFAULT_PATHS.config_file
 from application.gui_data_service import GuiDataService
+from application.dto import measurement_result_from_document
 from application.run_service import RunNotResumable
 from presentation.qt.composition import build_gui_data_service
 from app.gui_runtime import load_prepared_run, prepare_configuration
@@ -377,7 +378,9 @@ class MainWindow(QMainWindow):
             reference = MeasurementResultReference(
                 result_id=f"loaded-{datetime.now(timezone.utc).isoformat()}",
                 kind=MeasurementKind.CABLE_LOSS,
-                value=self.gui_data_service.results.latest_result("cable_loss").data,
+                value=measurement_result_from_document(
+                    self.gui_data_service.results.latest_result("cable_loss").data
+                ),
                 source="result_service",
             )
             self.cable_loss_page.show_loaded_result(reference)

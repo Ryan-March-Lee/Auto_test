@@ -146,9 +146,9 @@
 
 | 模块 | 正式公开名称 | 说明 |
 | --- | --- | --- |
-| `application.dto` | `MeasurementRequest`、`CableLossMeasurementRequest`、`DriverPowerMappingRequest`、`AmplifierMeasurementRequest`、`MeasurementResult`、`MeasurementStatus`、`MeasurementType` | DTO 汇总再导出路径；其中的旧兼容导出在步骤 6 删除 |
+| `application.dto` | `MeasurementRequest`、`CableLossMeasurementRequest`、`DriverPowerMappingRequest`、`AmplifierMeasurementRequest`、`MeasurementResult`、`MeasurementStatus`、`MeasurementType`、`CableLossMeasurementResult`、`DriverPowerMappingMeasurementResult`、`AmplifierMeasurementResult`、`measurement_result_from_document` | DTO 汇总再导出路径；旧兼容导出已在步骤 6 删除 |
 | `application.dto.measurement_requests` | `MeasurementRequest`、`CableLossMeasurementRequest`、`DriverPowerMappingRequest`、`AmplifierMeasurementRequest` | 测量请求 |
-| `application.dto.measurement_results` | `MeasurementResult`、`MeasurementStatus`、`MeasurementType` | 正式测量结果 |
+| `application.dto.measurement_results` | `MeasurementResult`、`MeasurementStatus`、`MeasurementType`、`CableLossMeasurementResult`、`DriverPowerMappingMeasurementResult`、`AmplifierMeasurementResult`、`measurement_result_from_document` | 三类正式测量结果与结果文档解析入口 |
 
 领域层结果模型位于 `domain.models`、`domain.result_reading`、`domain.run.models`；正式展示与导出
 只能消费显式 DTO/领域模型字段，不得依赖 `Mapping[str, Any]` 或旧字段别名。
@@ -210,7 +210,7 @@
 | `config_io` | `config_io.py` | 已删除 | 步骤 5 |
 | `config_models` | `config_models.py` | 已删除 | 步骤 5 |
 | `config_validation` | `config_validation.py` | 已删除 | 步骤 5 |
-| `result_reading` | `result_reading.py` | 待删除 | 步骤 6 |
+| `result_reading` | `result_reading.py` | 已删除 | 步骤 6 |
 | `result_storage` | `result_storage.py` | 已删除 | 步骤 3 |
 | `measurement_calculations` | `measurement_calculations.py` | 待删除 | 步骤 16 |
 | `measurement_lifecycle` | `measurement_lifecycle.py` | 待删除 | 步骤 16 |
@@ -232,7 +232,7 @@
 | --- | --- | --- | --- |
 | `app.legacy_amplifier_measurement` | `app/legacy_amplifier_measurement.py` | 已删除 | 步骤 4 |
 | `infrastructure.config.legacy_conversion` | `infrastructure/config/legacy_conversion.py` | 已删除 | 步骤 5 |
-| `application.dto.legacy_result_adapter` | `application/dto/legacy_result_adapter.py` | 待删除 | 步骤 6 |
+| `application.dto.legacy_result_adapter` | `application/dto/legacy_result_adapter.py` | 已删除 | 步骤 6 |
 | `instrument.legacy_control` | `instrument/legacy_control.py` | 待清理 | 步骤 9 |
 | `instrument.measurement_adapter` | `instrument/measurement_adapter.py` | 待清理 | 步骤 9 |
 | `instrument.measurement_factory` | `instrument/measurement_factory.py` | 待清理 | 步骤 9 |
@@ -242,11 +242,11 @@
 
 旧模块禁止新增引用。下列存量引用在对应删除步骤前冻结，清单必须与代码严格一致；删除引用时
 同步删除基线条目，新增引用不得靠扩大基线通过。基线统计跨模块绝对导入；包内相对再导出
-（例如 `application/dto/__init__.py` 对旧适配器的再导出）随对应旧模块在步骤 6 一并删除。
+（例如 `application/dto/__init__.py` 对旧适配器的再导出）随对应旧模块在步骤 6 一并删除，
+该旧适配器与根目录结果解析转发已在步骤 6 退役。
 
 | 旧模块 | 允许继续引用的文件 |
 | --- | --- |
-| `application.dto.legacy_result_adapter` | `presentation/qt/amplifier_page.py`、`presentation/qt/cable_loss_page.py`、`presentation/qt/driver_mapping_page.py` |
 | `instrument.measurement_factory` | `app/gui_runtime.py` |
 | `instrument.power_roles` | `instrument/legacy_control.py` |
 

@@ -8,6 +8,13 @@ from application.ports.result_input_reader import ResultInputReader as ResultInp
 
 
 class ResultInputReaderTests(unittest.TestCase):
+    def test_application_input_package_exports_only_the_formal_reader(self):
+        import application.inputs as inputs
+
+        self.assertEqual(inputs.__all__, ["ResultInputReader"])
+        self.assertIsNotNone(inputs.ResultInputReader)
+        self.assertFalse(hasattr(inputs, "LegacyResultInputReader"))
+
     def test_reader_implements_application_input_port(self):
         self.assertTrue(issubclass(ResultInputReader, ResultInputReaderPort))
         # 步骤 B3 已删除无路径兼容读取能力，正式读取器不得再暴露这些方法。

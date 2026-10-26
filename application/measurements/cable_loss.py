@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from app.cancellation import CancellationToken, MeasurementCancelled
-from application.dto import CableLossMeasurementRequest, MeasurementResult, legacy_result
+from application.dto import CableLossMeasurementRequest, CableLossMeasurementResult, MeasurementResult
 from application.measurements.services import CableLossService
 from domain.run.models import STAGE_CABLE_LOSS
 
@@ -77,11 +77,12 @@ class CableLossUseCase:
     @property
     def cable_losses(self) -> dict[float, dict[str, float]]:
         """Return completed cable-loss values, normalized to float keys."""
-        result = self.last_result or MeasurementResult.from_payload(
-            self.request.measurement_type, {}, run_id=self.run_id
-        )
+        result = self.last_result
+        if not isinstance(result, CableLossMeasurementResult):
+            return {}
         return {
-            float(key): value for key, value in result.get("cable_losses", {}).items()
+            float(frequency): dict(losses)
+            for frequency, losses in result.cable_losses().items()
         }
 
     def set_step_pause_callback(self, callback: Callable[[str], None] | None) -> None:
@@ -100,8 +101,7 @@ class CableLossUseCase:
         try:
             self._begin_stage()
             payload = self._service.run(path2_confirmed=False)
-            result = legacy_result(
-                self.request.measurement_type,
+            result = CableLossMeasurementResult.from_service_payload(
                 payload,
                 run_id=self.run_id,
             )
@@ -129,8 +129,7 @@ class CableLossUseCase:
             raise RuntimeError("线损测量当前不在等待路径2确认状态")
         try:
             payload = self._service.run(path2_confirmed=True)
-            result = legacy_result(
-                self.request.measurement_type,
+            result = CableLossMeasurementResult.from_service_payload(
                 payload,
                 run_id=self.run_id,
             )

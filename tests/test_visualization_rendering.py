@@ -19,20 +19,24 @@ SAMPLE_DATA = {
     "result_type": "amplifier_measurement",
     "measurement_time": "2026-01-01 00:00:00",
     "original_filename": "amplifier_measurement_render.json",
-    "config": {"frequencies": [1.0, 1.2]},
+    "configuration_snapshot": {"frequencies": [1.0, 1.2]},
     "results": {
         "1.0": {
-            "sweep_data": [
-                {"input_power_dut": -10.0, "output_power_dut": 0.0, "gain": 10.0, "efficiency": 20.0},
-                {"input_power_dut": -5.0, "output_power_dut": 5.0, "gain": 10.0, "efficiency": 30.0},
-            ],
+            "sweep_data": {
+                "input_power_dut": [-10.0, -5.0],
+                "output_power_dut": [0.0, 5.0],
+                "gain": [10.0, 10.0],
+                "efficiency": [20.0, 30.0],
+            },
             "compression_point": {"output_power": 5.0, "input_power": -5.0, "gain": 10.0, "efficiency": 30.0},
         },
         "1.2": {
-            "sweep_data": [
-                {"input_power_dut": -10.0, "output_power_dut": 1.0, "gain": 11.0, "efficiency": 22.0},
-                {"input_power_dut": -5.0, "output_power_dut": 6.0, "gain": 11.0, "efficiency": 32.0},
-            ],
+            "sweep_data": {
+                "input_power_dut": [-10.0, -5.0],
+                "output_power_dut": [1.0, 6.0],
+                "gain": [11.0, 11.0],
+                "efficiency": [22.0, 32.0],
+            },
             "compression_point": {"output_power": 6.0, "input_power": -5.0, "gain": 11.0, "efficiency": 32.0},
         },
     },

@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from .measurement_controller_contract import MeasurementCommand
-from application.dto.legacy_result_adapter import legacy_payload
+from application.dto import DriverPowerMappingMeasurementResult
 from .measurement_state import (
     DriverMappingPageResultState,
     MeasurementKind,
@@ -195,10 +195,18 @@ class DriverMappingPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         value = getattr(reference, "value", None)
         if isinstance(value, DriverMappingPageResultState):
             rows = value.rows
+        elif isinstance(value, DriverPowerMappingMeasurementResult):
+            rows = (
+                {
+                    "frequency": point.frequency_ghz,
+                    "input_power": point.input_power_dbm,
+                    "output_power": point.output_power_dbm,
+                }
+                for point in value.points
+            )
         else:
-            value = legacy_payload(value)
-            mapping = value.get("power_mapping", value)
-            rows = self._mapping_rows(mapping)
+            self._error_callback("驱动映射测量结果不是正式结果模型，无法显示")
+            return
         invalid_rows = False
         for row in rows:
             frequency = str(row.get("frequency", ""))
@@ -227,33 +235,6 @@ class DriverMappingPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
             self.update_realtime(sweep)
         if invalid_rows:
             self._error_callback("驱动映射结果包含无效功率点，已跳过无效数据")
-
-    @staticmethod
-    def _mapping_rows(mapping: Any) -> tuple[Mapping[str, Any], ...]:
-        if not isinstance(mapping, Mapping):
-            return ()
-        rows: list[Mapping[str, Any]] = []
-        for frequency, points in mapping.items():
-            if not isinstance(points, Mapping):
-                rows.append({"frequency": frequency})
-                continue
-            if any(key in points for key in ("input_power", "sg_power")):
-                rows.append({
-                    "frequency": frequency,
-                    "input_power": points.get("input_power", points.get("sg_power")),
-                    "output_power": points.get(
-                        "actual_output_power",
-                        points.get("compensated_output_power", points.get("output_power")),
-                    ),
-                })
-                continue
-            for input_power, output_power in points.items():
-                rows.append({
-                    "frequency": frequency,
-                    "input_power": input_power,
-                    "output_power": output_power,
-                })
-        return tuple(rows)
 
     def _update_plot(self, data: Mapping[str, Any]) -> None:
         update_plot = getattr(self.driver_plot_widget, "update_plot", None)

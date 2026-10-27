@@ -5,6 +5,7 @@
 窗口只负责把用户意图转发给协调器、连接 Qt 信号并把结果展示给用户。
 """
 
+import logging
 import sys
 from datetime import datetime, timezone
 
@@ -22,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService
-from infrastructure.logging.app_logging import setup_logging
+from infrastructure.logging.app_logging import get_logger, setup_logging
 from presentation.qt.application_coordinator import ApplicationCoordinator
 from presentation.qt.assistant.chat_panel import ChatPanel
 from presentation.qt.config_page import ConfigPage
@@ -34,6 +35,8 @@ from presentation.qt.pages import PageContext, build_pages
 from presentation.qt.realtime_plot import RealTimePlotWidget
 from presentation.qt.status_panel import StatusPanel
 from presentation.qt.visualization_page import VisualizationPage
+
+logger = get_logger(__name__)
 
 APPLICATION_STYLE = """
 QMainWindow { background-color: white; }
@@ -267,9 +270,7 @@ class MainWindow(QMainWindow):
         tab.validation_failed.connect(
             lambda message: self.add_log_message(f"配置校验失败: {message}")
         )
-        tab.driver_mode_changed.connect(
-            lambda _checked: self.update_amplifier_instruction_text()
-        )
+        tab.driver_mode_changed.connect(self._refresh_amplifier_instruction_text)
         self.config_page = tab
         self.coordinator.bind_config_page(tab)
         return tab
@@ -421,7 +422,9 @@ class MainWindow(QMainWindow):
         """读取最新正式运行目录结果，仅供历史查看；不会成为任何运行的输入。
 
         只读取运行 manifest 登记并通过校验的线损阶段结果，没有可用运行结果时提示
-        未找到，不回退到旧的全局兼容副本。
+        未找到，不回退到旧的全局兼容副本。可预期的失败只有两类：没有可用结果
+        （``FileNotFoundError``）与结果不可读/非正式 schema（``ValueError``/``OSError``）；
+        两者都通过状态栏呈现，不吞掉其他程序错误。
         """
         try:
             reference = MeasurementResultReference(
@@ -430,62 +433,46 @@ class MainWindow(QMainWindow):
                 value=self.gui_data_service.results.latest_result("cable_loss").result,
                 source="result_service",
             )
-            self.cable_loss_page.show_loaded_result(reference)
         except FileNotFoundError:
             self.add_log_message("未找到线损测量结果文件")
-        except Exception as error:
+            return
+        except (OSError, ValueError) as error:
+            logger.warning("加载线损测量结果失败: %s", error)
             self.add_log_message(f"加载线损测量结果失败: {error}")
+            return
+        self.cable_loss_page.show_loaded_result(reference)
 
     def refresh_file_list(self):
         """刷新文件列表"""
         return self.export_page.refresh_file_list()
 
     def toggle_chat_panel(self):
-        """切换聊天面板显示/隐藏"""
-        if self.chat_visible:
-            self.chat_panel.hide()
-            self.ai_assistant_btn.setChecked(False)
-            self.ai_assistant_btn.setText("💬 CHAT")
-            self.chat_visible = False
-            return
-        self.chat_panel.show()
-        self.ai_assistant_btn.setChecked(True)
-        self.ai_assistant_btn.setText("💬 隐藏CHAT")
-        self.chat_visible = True
-        if hasattr(self.chat_panel, 'chat_display'):
-            model_name = getattr(self.chat_panel.llm_chat, 'model_name', '').lower()
-            if 'qwen' in model_name:
-                model_display_name = 'Qwen'
-            elif 'deepseek' in model_name:
-                model_display_name = 'DeepSeek'
-            else:
-                model_display_name = getattr(self.chat_panel.llm_chat, 'model_name', 'AI')
-            welcome_msg = f"你好！我是{model_display_name} AI助手，专门为功放测试系统提供技术支持。我可以帮你：\n\n• 分析测试数据和结果\n• 诊断测试过程中的问题\n• 提供功放设计和测试建议\n• 解答技术疑问\n\n有什么需要帮助的吗？"
-            self.chat_panel.add_assistant_message(welcome_msg)
-
-    def update_amplifier_instruction_text(self):
-        """根据驱动模式更新功放测试连接说明"""
-        page = getattr(self, "config_page", None)
-        driver_enabled = page.driver_mode_requested() if page is not None else False
-        if driver_enabled:
-            instruction_html = """
-            <h3>主功放测试连接说明:</h3>
-            <p>信号源 → 线缆① → 驱动功放 → 线缆③ → 主功放 → 线缆④ → 衰减器 → 线缆② → 频谱仪</p>
-            """
+        """切换聊天面板显示/隐藏；欢迎语由面板自己负责。"""
+        visible = not self.chat_visible
+        if visible:
+            self.chat_panel.show()
+            self.chat_panel.show_welcome_message()
         else:
-            instruction_html = """
-            <h3>主功放测试连接说明（无驱动模式）:</h3>
-            <p>信号源 → 线缆① → 主功放 → 线缆④ → 衰减器 → 线缆② → 频谱仪</p>
-            """
-        self.instruction_text.setHtml(instruction_html)
+            self.chat_panel.hide()
+        self.ai_assistant_btn.setChecked(visible)
+        self.ai_assistant_btn.setText("💬 隐藏CHAT" if visible else "💬 CHAT")
+        self.chat_visible = visible
+
+    def _refresh_amplifier_instruction_text(self, driver_enabled):
+        """驱动模式变化后刷新功放页连接说明。
+
+        说明文本归功放页面所有（``AmplifierPage.update_instruction_text``），窗口只把
+        配置页的意图转发过去；配置页总是先于其他页面登记，取页面时允许尚未登记。
+        """
+        page = getattr(self, "pages", {}).get("amplifier")
+        if page is not None:
+            page.update_instruction_text(driver_enabled)
 
     def clear_real_time_data(self):
-        """清除实时测量的历史数据"""
+        """清除实时测量的历史数据（两个实时测量页面都提供同名缓存入口）。"""
         self.coordinator.clear_realtime_data()
-        for name in ("driver_mapping_page", "amplifier_page"):
-            page = getattr(self, name, None)
-            if page is not None and hasattr(page, "clear_realtime_buffer"):
-                page.clear_realtime_buffer()
+        self.driver_mapping_page.clear_realtime_buffer()
+        self.amplifier_page.clear_realtime_buffer()
         self.add_log_message("已清除实时测量历史数据")
 
     # ---- 状态面板转发 ----
@@ -566,8 +553,12 @@ def build_application(argv=None, *, paths: PathService | None = None):
         app = QApplication(sys.argv if argv is None else argv)
     try:
         setup_logging(paths=paths or DEFAULT_PATHS)
-    except Exception as logging_error:
-        print(f"日志初始化失败（忽略）: {logging_error}")
+    except OSError as logging_error:
+        # 日志目录不可写时仍要启动界面。这里不能用 ``get_logger``：正式日志尚未初始化，
+        # 那条链路上的 NullHandler 会把消息吞掉；标准 logger 至少能落到 stderr。
+        logging.getLogger(__name__).warning(
+            "日志初始化失败（继续启动）: %s", logging_error
+        )
     app.setApplicationName("PA自动测试系统")
     app.setApplicationVersion("1.0")
     app.setOrganizationName("PA Test Lab")

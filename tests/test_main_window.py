@@ -269,5 +269,68 @@ class MainWindowAssemblyBoundaryTests(unittest.TestCase):
             )
 
 
+class MainWindowMigrationResidueTests(unittest.TestCase):
+    """步骤 12：窗口不再保留迁移期的旧实现与空占位方法。"""
+
+    SOURCE = ROOT / "presentation" / "qt" / "main_window.py"
+
+    def setUp(self):
+        self.source = self.SOURCE.read_text(encoding="utf-8-sig")
+        self.tree = ast.parse(self.source)
+
+    def _method(self, name):
+        for node in ast.walk(self.tree):
+            if isinstance(node, ast.FunctionDef) and node.name == name:
+                return node
+        raise AssertionError(f"main_window.py 中未找到 {name}")
+
+    def test_dead_instruction_text_implementation_is_gone(self):
+        # 旧实现写的是窗口自己并不存在的 instruction_text 控件，说明文本归功放页面。
+        methods = {
+            node.name
+            for node in self.tree.body if isinstance(node, ast.FunctionDef)
+        }
+        methods |= {
+            node.name
+            for node in ast.walk(self.tree)
+            if isinstance(node, ast.FunctionDef)
+        }
+        self.assertNotIn("update_amplifier_instruction_text", methods)
+        self.assertNotIn("self.instruction_text", self.source)
+
+    def test_driver_mode_change_refreshes_the_amplifier_page(self):
+        self.assertIn(
+            "tab.driver_mode_changed.connect(self._refresh_amplifier_instruction_text)",
+            self.source,
+            "驱动模式变化必须接到功放页的连接说明刷新",
+        )
+        method = self._method("_refresh_amplifier_instruction_text")
+        segment = ast.get_source_segment(self.source, method)
+        self.assertIn('pages", {}).get("amplifier")', segment)
+        self.assertIn("update_instruction_text(driver_enabled)", segment)
+
+    def test_chat_panel_welcome_text_belongs_to_the_panel(self):
+        # 窗口只切换可见性；欢迎语与模型名展示归面板。
+        self.assertNotIn("你好！我是", self.source)
+        self.assertNotIn("chat_display", self.source)
+        self.assertIn("self.chat_panel.show_welcome_message()", self.source)
+
+    def test_cable_loss_result_loading_declares_its_expected_failures(self):
+        method = self._method("_load_cable_loss_result")
+        handlers = [
+            ast.unparse(handler.type) if handler.type else None
+            for handler in ast.walk(method)
+            if isinstance(handler, ast.ExceptHandler)
+        ]
+        self.assertEqual(
+            handlers,
+            ["FileNotFoundError", "(OSError, ValueError)"],
+            "读取历史结果只处理“没有结果”和“结果不可读”两类明确失败",
+        )
+
+    def test_window_uses_logging_instead_of_print(self):
+        self.assertNotIn("print(", self.source)
+
+
 if __name__ == "__main__":
     unittest.main()

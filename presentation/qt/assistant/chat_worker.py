@@ -1,7 +1,26 @@
+"""助手后台 worker：把一次问答放到 QThread 里执行。
+
+这里是线程边界：助手侧的任何异常都在 ``run()`` 内被转成 ``error_occurred`` 信号，
+由面板显示给用户。异常不会返回主窗口，也不会影响测量线程。
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
 from PySide6.QtCore import QThread, Signal
+
+from infrastructure.logging.app_logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class UnavailableAssistant:
+    """助手不可用时的占位实现：接口齐全、只返回固定说明。
+
+    面板因此不需要为“缺少可选依赖”写第二套代码路径。
+    """
+
     available = False
     server_url = ""
     model_name = "AI unavailable"
@@ -12,35 +31,44 @@ class UnavailableAssistant:
     enable_web_search = False
     function_handler = None
 
-    def __init__(self):
-        self.conversation_history = []
+    def __init__(self) -> None:
+        self.conversation_history: list = []
 
-    def chat(self, *_args, **_kwargs):
+    def chat(self, *_args, **_kwargs) -> str:
         return "AI 助手当前不可用，请检查可选依赖和服务配置。"
 
-    def update_settings(self, **_kwargs):
+    def update_settings(self, **_kwargs) -> None:
         return None
 
-    def set_web_search(self, _enabled):
+    def set_web_search(self, _enabled) -> None:
         return None
 
-    def clear_history(self):
+    def clear_history(self) -> None:
         self.conversation_history = []
 
-    def save_history(self):
+    def save_history(self) -> None:
         return None
 
 
 class ChatWorker(QThread):
+    """在线程里调用一次 ``llm_chat.chat()``，用信号返回结果或错误。"""
+
     response_ready = Signal(str)
     error_occurred = Signal(str)
 
-    def __init__(self, llm_chat, message, context):
+    def __init__(self, llm_chat: Any, message: str, context: str) -> None:
         super().__init__()
-        self.llm_chat, self.message, self.context = llm_chat, message, context
+        self.llm_chat = llm_chat
+        self.message = message
+        self.context = context
 
-    def run(self):
+    def run(self) -> None:
+        # 线程边界：任何助手失败都转成 error 信号，由面板呈现，不静默丢弃。
         try:
             self.response_ready.emit(self.llm_chat.chat(self.message, self.context))
-        except Exception as error:
-            self.error_occurred.emit(str(error))
+        except Exception as error:  # noqa: BLE001 - 助手侧异常一律转成用户可见错误
+            logger.warning("AI 回复失败: %s", error)
+            self.error_occurred.emit(str(error) or type(error).__name__)
+
+
+__all__ = ["ChatWorker", "UnavailableAssistant"]

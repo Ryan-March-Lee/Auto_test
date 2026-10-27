@@ -1,12 +1,11 @@
-"""Page registration and lifecycle contracts for Qt pages.
+"""Qt 页面的注册顺序、构造上下文与生命周期契约。
 
-The legacy window still owns the widgets during the transition.  Keeping the
-page list here makes the ownership explicit and gives later page extraction a
-single integration point without changing the user workflow in this stage.
+本模块是页面注册的唯一位置：``PAGE_DEFINITIONS`` 固定用户可见顺序，``PageContext``
+提供页面构造所需的窄接口，``PageControllerBindingMixin`` 统一 controller 事件的连接
+与解除。窗口只按契约构造页面并登记到标签页，不持有页面内部状态。
 
-The contracts in this module deliberately do not import Qt, workers, runtime
-assembly, or measurement services.  A page may therefore be tested with a
-plain Python fake controller before it is connected to the real GUI.
+这里的契约不导入 Qt、worker、装配层或测量服务，因此页面可以用纯 Python 替身
+controller 单独测试；每个页面把自己的 signal 连接与解除放在自己的生命周期里。
 """
 
 from __future__ import annotations
@@ -257,7 +256,7 @@ PAGE_DEFINITIONS = (
 
 
 def build_pages(context: Any) -> list[Any]:
-    """Build and return pages in the stable user-facing order."""
+    """按用户可见顺序构造并返回 ``(页面定义, 页面实例)`` 列表。"""
     pages = []
     for page in PAGE_DEFINITIONS:
         pages.append((page, page.builder(context)))
@@ -269,7 +268,6 @@ __all__ = [
     "PageControllerBindingMixin",
     "BasePage",
     "PageDefinition",
-    "_page_forwarder",
     "PageContext",
     "PAGE_DEFINITIONS",
     "build_pages",

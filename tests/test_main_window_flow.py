@@ -181,5 +181,70 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         )
 
 
+@unittest.skipUnless(gui_dependencies_available(), "当前环境缺少完整 GUI 依赖")
+class MainWindowMigrationResidueFlowTests(unittest.TestCase):
+    """步骤 12：驱动模式说明刷新与助手面板在真实窗口里的行为。"""
+
+    @classmethod
+    def setUpClass(cls):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from presentation.qt.main_window import build_application
+
+        cls.app = build_application([])
+
+    def setUp(self):
+        self._temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temporary.cleanup)
+        self.root = Path(self._temporary.name)
+        self.paths = PathService(self.root)
+        self.paths.config_file.write_text(
+            json.dumps(_fully_valid_gui_config()), encoding="utf-8"
+        )
+        from PySide6.QtWidgets import QMessageBox
+
+        for name in ("critical", "warning", "information"):
+            patcher = patch(f"presentation.qt.main_window.QMessageBox.{name}")
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        patcher = patch(
+            "presentation.qt.main_window.QMessageBox.question",
+            return_value=QMessageBox.Yes,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _window(self):
+        from presentation.qt.main_window import MainWindow
+
+        window = MainWindow(paths=self.paths)
+        self.addCleanup(window.close)
+        return window
+
+    def test_driver_mode_switch_updates_the_amplifier_page_instruction(self):
+        window = self._window()
+
+        window.config_page.driver_mode_changed.emit(True)
+        self.assertIn("驱动功放", window.amplifier_page.instruction_text.toPlainText())
+
+        window.config_page.driver_mode_changed.emit(False)
+        self.assertNotIn("驱动功放", window.amplifier_page.instruction_text.toPlainText())
+
+    def test_chat_panel_toggle_greets_once_and_keeps_the_window_state(self):
+        window = self._window()
+
+        window.toggle_chat_panel()
+        first = window.chat_panel.chat_display.toPlainText()
+        self.assertTrue(window.chat_visible)
+        self.assertIn("AI助手", first)
+
+        window.toggle_chat_panel()
+        self.assertFalse(window.chat_visible)
+        self.assertEqual(window.chat_panel.chat_display.toPlainText(), first)
+
+        # 再次打开不会重复堆叠同一段欢迎语。
+        window.toggle_chat_panel()
+        self.assertEqual(window.chat_panel.chat_display.toPlainText(), first)
+
+
 if __name__ == "__main__":
     unittest.main()

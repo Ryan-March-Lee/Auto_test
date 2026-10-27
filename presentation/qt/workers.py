@@ -11,7 +11,10 @@ from PySide6.QtCore import QThread, QObject, Signal
 
 from app.cancellation import MeasurementCancelled
 from application.lifecycle import StopIntent
+from infrastructure.logging.app_logging import get_logger
 from .run_contract import require_prepared_run
+
+logger = get_logger(__name__)
 
 
 class WorkerSignals(QObject):
@@ -155,8 +158,10 @@ class InstrumentWorker(BaseWorker):
                 if close is not None:
                     try:
                         close(close_rf=True)
-                    except Exception:
-                        pass
+                    except Exception as close_error:  # noqa: BLE001
+                        # 连接失败时的补救关闭失败不能被吞掉：记录到日志并告知界面。
+                        logger.warning("连接失败后的仪器关闭也存在错误: %s", close_error)
+                        self.emit_message(f"仪器关闭失败: {close_error}")
                 self.measurement_port = None
             self._failed("仪器连接失败", error)
 

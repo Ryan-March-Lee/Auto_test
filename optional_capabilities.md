@@ -6,7 +6,7 @@
 
 - 实现位于 `assistant/llm.py` 和 `assistant/web_search_tools.py`。
 - 聊天历史和搜索配置的路径、JSON 读写由 `assistant/storage.py` 管理，GUI 不直接访问这些文件。
-- `presentation/qt/assistant/chat_panel.py` 按需导入 `assistant.llm`；初始化失败时使用不可用占位面板，主 GUI 和测量页面仍可启动。
+- `presentation/qt/assistant/chat_panel.py` 是 `assistant.llm` 的唯一按需导入点：`create_assistant()` 只把“缺少可选依赖”和“助手配置不可读”转成不可用面板（原因写入日志并显示在聊天区），其他异常照常抛出；不可用时发送消息只提示原因，不启动 worker，主 GUI 与测量页面不受影响。
 - `chat_history*.json`、`chat_settings.json` 和 `search_api_config*.json` 只属于 assistant 配置，不写入测量快照。
 - 根目录 `llm.py`、`web_search_tools.py` 与 `enhanced_main_gui.py` 兼容入口已删除；正式实现分别位于 `assistant/llm.py`、`assistant/web_search_tools.py` 与 `presentation/qt/`。
 
@@ -27,7 +27,7 @@ DPD 的输入输出和依赖见 `DPD_auto_test/README.md` 与 `requirements-dpd.
 
 | 能力 | 当前调用者 | 过渡状态 |
 | --- | --- | --- |
-| `assistant.llm` | GUI `ChatPanel` 按需导入 | 正式实现，无根目录 shim |
+| `assistant.llm` | GUI `ChatPanel` 经 `create_assistant()` 按需导入 | 正式实现，无根目录 shim |
 | `assistant.web_search_tools` | `assistant.llm` | 仅 AI 功能使用 |
 | 聊天历史和搜索配置 | GUI 聊天设置 | 不进入测量快照 |
 | 连接图 | `ConnectionDialog` 按需导入 `presentation.qt.connection_diagrams` | 正式实现，无根目录入口 |

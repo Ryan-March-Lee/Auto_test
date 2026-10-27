@@ -204,6 +204,17 @@ class AmplifierPageTests(unittest.TestCase):
         self.assertEqual(self.controller.signals.result.slots, [])
         self.page.close()
 
+    def test_instruction_text_follows_the_explicit_driver_mode(self):
+        """配置页切换驱动模式时显式传入状态，运行契约仍是默认来源。"""
+        self.page.update_instruction_text(False)
+        self.assertNotIn("驱动功放", self.page.instruction_text.toPlainText())
+        self.page.update_instruction_text(True)
+        self.assertIn("驱动功放", self.page.instruction_text.toPlainText())
+
+        self.page._driver_mode_provider = lambda: False
+        self.page.update_instruction_text()
+        self.assertNotIn("驱动功放", self.page.instruction_text.toPlainText())
+
 
 if __name__ == "__main__":
     unittest.main()

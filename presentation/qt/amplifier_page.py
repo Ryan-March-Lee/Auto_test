@@ -139,8 +139,15 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         self._connect_signal(signals.stopped, self._on_stopped)
         self._connect_signal(signals.finished, self._on_finished)
 
-    def update_instruction_text(self) -> None:
-        if self._driver_mode_provider():
+    def update_instruction_text(self, driver_enabled: bool | None = None) -> None:
+        """按驱动模式刷新连接说明。
+
+        ``driver_enabled`` 不传时取运行契约中的驱动模式；配置页切换驱动模式时直接传入
+        复选框状态，用户在创建运行前也能看到对应的接线说明。
+        """
+        if driver_enabled is None:
+            driver_enabled = self._driver_mode_provider()
+        if driver_enabled:
             text = "<h3>主功放测试连接说明:</h3><p>信号源 → 线缆① → 驱动功放 → 线缆③ → 主功放 → 线缆④ → 衰减器 → 线缆② → 频谱仪</p>"
         else:
             text = "<h3>主功放测试连接说明（无驱动模式）:</h3><p>信号源 → 线缆① → 主功放 → 线缆④ → 衰减器 → 线缆② → 频谱仪</p>"

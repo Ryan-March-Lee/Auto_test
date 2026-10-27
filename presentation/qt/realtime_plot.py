@@ -1,4 +1,4 @@
-"""Reusable real-time measurement plot widget."""
+"""测量页面共享的实时绘图控件。"""
 
 from typing import Any, Dict
 
@@ -7,6 +7,10 @@ from PySide6.QtWidgets import QHBoxLayout, QPushButton, QScrollArea, QVBoxLayout
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+
+from infrastructure.logging.app_logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class RealTimePlotWidget(QWidget):
@@ -102,8 +106,9 @@ class RealTimePlotWidget(QWidget):
                 axis.tick_params(labelsize=7)
             self.figure.tight_layout()
             self.canvas.draw()
-        except Exception as error:
-            print(f"Plot update error: {error}")
+        except Exception as error:  # noqa: BLE001 - 绘图失败不得中断测量线程
+            # 绘图是展示副作用：失败记日志并保持上一帧，不向测量线程抛出。
+            logger.warning("绘图更新失败: %s", error)
 
     def wheelEvent(self, event):
         bar = self.scroll_area.verticalScrollBar()

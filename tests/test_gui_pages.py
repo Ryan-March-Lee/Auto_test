@@ -1,4 +1,10 @@
+import os
 import unittest
+
+# 单独运行本模块时也需要离屏平台：构造 Qt 控件前没有 QApplication 会直接崩。
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtWidgets import QApplication
 
 from presentation.qt.pages import BasePage, PageProtocol
 from presentation.qt.config_page import ConfigPage
@@ -52,6 +58,11 @@ class _Page(BasePage):
 
 
 class PageContractTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # 构造真实页面需要离屏 QApplication；缺失时 Qt 会直接 abort，而不是抛出异常。
+        cls.application = QApplication.instance() or QApplication([])
+
     def test_config_page_implements_page_lifecycle_hooks(self):
         page = ConfigPage({})
 

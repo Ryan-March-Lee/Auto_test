@@ -15,7 +15,9 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 
 from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService, ensure_directory
+from infrastructure.logging.app_logging import get_logger
 
+logger = get_logger(__name__)
 
 _DIAGRAM_STYLE_CONFIGURED = False
 
@@ -360,4 +362,4 @@ def create_all_diagrams(*, paths: PathService | None = None):
         fig.savefig(images_dir / f'{name}_diagram.png', dpi=150, bbox_inches='tight')
         plt.close(fig)
     
-    print("所有连接示意图已保存完成！")
+    logger.info("所有连接示意图已保存完成: %s", images_dir)

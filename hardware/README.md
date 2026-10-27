@@ -29,6 +29,14 @@ not be used as that topology.
 Signal-generator and supply configurations must query output state before and
 after cleanup. Cleanup failures fail the smoke and remain in the local report.
 
+The report destination is configured by `result_path` in the local smoke
+configuration (normally `hardware/smoke_config.local.json`). After a site run,
+retain the local report and production measurement artifacts under
+`runs/<run_id>/` so the maintainer can review actual results and update the
+acceptance record. The operator does not need to transcribe results into
+documentation. Keep real addresses, credentials, and other sensitive raw
+evidence local and untracked.
+
 Current site status: `safe_prepare`, the formal `read_only` entry, and one
 `minimal_action` run have passed with the local configuration. The minimal
 action used 2.3 GHz and -30 dBm, performed one bounded RF action and analyzer

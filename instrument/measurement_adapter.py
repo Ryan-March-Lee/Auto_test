@@ -16,7 +16,9 @@ class PortMeasurementAdapter:
     ``<supply>/<channel>`` tokens (multi-supply hardware), and
     ``emergency_channels`` fixes the exact channels a shutdown must switch off.
     Both are explicit construction inputs; nothing is inferred from attributes
-    of the injected power supply.
+    of the injected power supply.  When ``emergency_channels`` is omitted the
+    adapter switches off the declared driver/DUT roles, drain before gate —
+    never a channel name guessed from a numbering convention.
     """
 
     def __init__(
@@ -41,12 +43,21 @@ class PortMeasurementAdapter:
         self.emergency_channels: Sequence[tuple[int, str]] = (
             tuple(emergency_channels)
             if emergency_channels is not None
-            else ((0, "CH2"), (0, "CH1"))
+            else self._role_emergency_channels()
         )
         self._validate_power_channels()
         self._session_cleaned = False
         self._active_power_groups: dict[str, dict[str, str]] = {}
         self._last_emergency_power_off: list[tuple[int, str]] = []
+
+    def _role_emergency_channels(self) -> tuple[tuple[int, str], ...]:
+        """Declared-role shutdown order: drain before gate, driver before DUT."""
+        return tuple(
+            (0, channels[role])
+            for role in ("drain", "gate")
+            for channels in (self.driver_power_channels, self.dut_power_channels)
+            if role in channels
+        )
 
     def _validate_power_channels(self) -> None:
         for label, channels in (

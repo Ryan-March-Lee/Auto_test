@@ -71,6 +71,16 @@ class ConfigurationAuthoringTests(unittest.TestCase):
         paths = {issue.path for issue in validate_run_configuration(configuration).errors}
         self.assertIn("dut_power_channels[0].role", paths)
 
+    def test_instrument_power_channel_roles_are_not_invented(self):
+        """仪器侧供电角色由配置页控件显式选择，authoring 不按 CH1/CH2 补默认值。"""
+        flat = _flat_config()
+        flat["instruments"]["power_supplies"]["PS1"]["channels"]["CH1"]["role"] = "drain"
+        document = author_official_configuration(flat)
+
+        channels = document["instruments"]["power_supplies"]["PS1"]["channels"]
+        self.assertEqual(channels["CH1"]["role"], "drain")
+        self.assertNotIn("role", channels["CH2"])
+
     def test_authoring_does_not_mutate_the_input(self):
         flat = _flat_config()
         original = copy.deepcopy(flat)

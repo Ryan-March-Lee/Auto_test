@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from .config_form_state import ConfigFormState, parse_frequency_text
+from .configuration_authoring import DUT_CHANNEL_ROLES
 from .input_controls import KeyboardOnlyDoubleSpinBox, WheelSafeComboBox
 from .pages import PageControllerBindingMixin
 
@@ -51,6 +52,10 @@ DEFAULT_POWER_ASSIGNMENT = {
     "pa_unit2_power": "PS3",
     "pa_unit3_power": "PS4",
 }
+# 供电角色是接线事实，由用户在配置页显式选择；``DUT_CHANNEL_ROLES`` 只提供本机
+# 台架固定接线的控件初值（CH1 栅极、CH2 漏极），保存时写入控件当前选择，
+# 装配层不再按通道名推导角色。
+POWER_SUPPLY_ROLES = ("gate", "drain")
 
 
 class ConfigPage(PageControllerBindingMixin, QWidget):
@@ -206,7 +211,11 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
                 if not isinstance(voltage, dict): voltage = {}
                 if not isinstance(current, dict): current = {}
                 box = QGroupBox(f"通道 {channel}"); form = QFormLayout(box)
+                role = value.get("role")
+                if role not in POWER_SUPPLY_ROLES:
+                    role = DUT_CHANNEL_ROLES.get(channel, POWER_SUPPLY_ROLES[0])
                 controls = {
+                    "role": self._combo(POWER_SUPPLY_ROLES, role),
                     "voltage": self._spin(voltage.get("value", 0), 0, 50),
                     "voltage_protection": self._spin(voltage.get("protection", 0), 0, 50),
                     "voltage_protection_enabled": QCheckBox("启用"),
@@ -216,6 +225,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
                 }
                 controls["voltage_protection_enabled"].setChecked(voltage.get("protection_enabled", False))
                 controls["current_protection_enabled"].setChecked(current.get("protection_enabled", False))
+                form.addRow("供电角色", controls["role"])
                 form.addRow("电压 (V)", controls["voltage"]); form.addRow("保护电压 (V)", controls["voltage_protection"])
                 form.addRow("电压保护", controls["voltage_protection_enabled"]); form.addRow("电流 (A)", controls["current"])
                 form.addRow("保护电流 (A)", controls["current_protection"]); form.addRow("电流保护", controls["current_protection_enabled"])
@@ -416,11 +426,12 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
 
     def _reset_power_supply_channels(self) -> None:
         for record in getattr(self, "power_config_widgets", {}).values():
-            for controls in record.get("channels", {}).values():
+            for channel, controls in record.get("channels", {}).items():
                 for key in ("voltage", "voltage_protection", "current", "current_protection"):
                     controls[key].setValue(0.0)
                 for key in ("voltage_protection_enabled", "current_protection_enabled"):
                     controls[key].setChecked(False)
+                controls["role"].setCurrentText(DUT_CHANNEL_ROLES.get(channel, POWER_SUPPLY_ROLES[0]))
 
     def _reset_power_assignment_widgets(self) -> None:
         widgets = getattr(self, "power_assignment_widgets", {})
@@ -509,6 +520,10 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         voltage = voltage if isinstance(voltage, dict) else {}
         current = values.get("current")
         current = current if isinstance(current, dict) else {}
+        role = values.get("role")
+        role_widget = controls.get("role")
+        if role_widget is not None and role in POWER_SUPPLY_ROLES:
+            role_widget.setCurrentText(role)
         for key, value in (("voltage", voltage.get("value")), ("voltage_protection", voltage.get("protection")),
                            ("current", current.get("value")), ("current_protection", current.get("protection"))):
             number = self._number_or_none(value)

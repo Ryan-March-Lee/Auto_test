@@ -39,8 +39,8 @@ class FakeComboWidget:
         return self.value
 
 
-def channel_widgets(voltage, voltage_protection, voltage_enabled, current, current_protection, current_enabled):
-    return {
+def channel_widgets(voltage, voltage_protection, voltage_enabled, current, current_protection, current_enabled, role=None):
+    controls = {
         'voltage': FakeValueWidget(voltage),
         'voltage_protection': FakeValueWidget(voltage_protection),
         'voltage_protection_enabled': FakeCheckWidget(voltage_enabled),
@@ -48,6 +48,9 @@ def channel_widgets(voltage, voltage_protection, voltage_enabled, current, curre
         'current_protection': FakeValueWidget(current_protection),
         'current_protection_enabled': FakeCheckWidget(current_enabled),
     }
+    if role is not None:
+        controls['role'] = FakeComboWidget(role)
+    return controls
 
 
 class GuiConfigReaderTests(unittest.TestCase):
@@ -150,6 +153,57 @@ class GuiConfigReaderTests(unittest.TestCase):
         self.assertTrue(
             result['instruments']['power_supplies']['PS1']['channels']['CH1']['voltage']['protection_enabled']
         )
+
+    def test_power_supply_reader_writes_the_role_selected_in_the_ui(self):
+        self.window.power_config_widgets = {
+            'PS1': {
+                'channels': {
+                    'CH1': channel_widgets(2.8, 3.0, True, 0.1, 0.2, False, role='drain'),
+                    'CH2': channel_widgets(28.0, 30.0, True, 1.0, 2.0, True, role='gate'),
+                }
+            }
+        }
+
+        result = self.window._read_power_supply_config_from_ui()
+
+        channels = result['instruments']['power_supplies']['PS1']['channels']
+        self.assertEqual(channels['CH1']['role'], 'drain')
+        self.assertEqual(channels['CH2']['role'], 'gate')
+
+    def test_power_supply_reader_keeps_existing_role_without_a_role_widget(self):
+        self.window.config['instruments']['power_supplies']['PS1']['channels'] = {
+            'CH1': {'role': 'drain'},
+            'CH2': {'role': 'gate'},
+        }
+        self.window.power_config_widgets = {
+            'PS1': {
+                'channels': {
+                    'CH1': channel_widgets(2.8, 3.0, True, 0.1, 0.2, False),
+                    'CH2': channel_widgets(28.0, 30.0, True, 1.0, 2.0, True),
+                }
+            }
+        }
+
+        result = self.window._read_power_supply_config_from_ui()
+
+        channels = result['instruments']['power_supplies']['PS1']['channels']
+        self.assertEqual(channels['CH1']['role'], 'drain')
+        self.assertEqual(channels['CH2']['role'], 'gate')
+
+    def test_power_supply_reader_does_not_invent_a_missing_role(self):
+        """没有控件、配置里也没有角色时不得按 CH1/CH2 推断。"""
+        self.window.power_config_widgets = {
+            'PS1': {
+                'channels': {
+                    'CH1': channel_widgets(2.8, 3.0, True, 0.1, 0.2, False),
+                }
+            }
+        }
+
+        result = self.window._read_power_supply_config_from_ui()
+
+        channels = result['instruments']['power_supplies']['PS1']['channels']
+        self.assertIsNone(channels['CH1']['role'])
 
     def test_power_assignment_reader_preserves_legacy_roles_and_channels(self):
         self.window.power_assignment_widgets = {

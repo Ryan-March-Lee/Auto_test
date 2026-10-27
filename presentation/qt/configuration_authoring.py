@@ -10,7 +10,10 @@
 - 表单缺失或非法的字段保持 ``None`` / 空列表，由正式校验在连接仪器前明确失败，
   不生成“待人工确认”的半成品。
 - 现场固定接线的 DUT 通道角色（``CH1`` 栅极、``CH2`` 漏极）在这里作为**编辑约定**
-  写入正式角色；不从旧配置文件反推，也不猜测未知通道的角色。
+  写入正式 ``test_plan`` / ``run_mapping`` 角色；不从旧配置文件反推，也不猜测未知
+  通道的角色。
+- ``instruments.power_supplies.<name>.channels.<channel>.role`` 属于接线事实，由配置页
+  控件显式选择后随表单写入；本模块不改写它，也不为缺失角色补默认值。
 - 正式 ``run_mapping`` 只登记**一个**本机供电电源，因此表单里被供电分配引用的电源必须
   唯一。多电源指派无法用当前正式 schema 如实表达，此时抛出
   :class:`ConfigurationAuthoringError` 明确拒绝，而不是写出一份看不出问题、却永远
@@ -62,34 +65,7 @@ def author_official_configuration(config: Mapping[str, Any] | None) -> dict[str,
     document["schema_version"] = OFFICIAL_SCHEMA_VERSION
     document["test_plan"] = _author_test_plan(document)
     document["run_mapping"] = _author_run_mapping(document)
-    if "instruments" in document:
-        document["instruments"] = _author_instrument_power_roles(document["instruments"])
     return document
-
-
-def _author_instrument_power_roles(instruments: Any) -> Any:
-    """给本机电源通道写入显式角色，供生产装配直接使用。
-
-    配置页固定按 ``CH1`` 栅极、``CH2`` 漏极接线；已有合法显式角色保持不变，
-    未知通道不猜测角色。返回值是独立副本，不修改调用方的配置对象。
-    """
-    if not isinstance(instruments, Mapping):
-        return instruments
-    result = copy.deepcopy(dict(instruments))
-    supplies = result.get("power_supplies")
-    if not isinstance(supplies, dict):
-        return result
-    for supply in supplies.values():
-        channels = supply.get("channels") if isinstance(supply, dict) else None
-        if not isinstance(channels, dict):
-            continue
-        for channel, channel_config in channels.items():
-            role = DUT_CHANNEL_ROLES.get(channel)
-            if role is None or not isinstance(channel_config, dict):
-                continue
-            if channel_config.get("role") not in ("gate", "drain"):
-                channel_config["role"] = role
-    return result
 
 
 def _author_test_plan(document: Mapping[str, Any]) -> dict[str, Any]:

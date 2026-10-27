@@ -135,6 +135,31 @@ class ConfigValidationTests(unittest.TestCase):
             [issue.message for issue in result.errors],
         )
 
+    def test_duplicate_assigned_role_across_supplies_is_error(self):
+        """gate 由两个不同电源同时提供同样是重复配置。"""
+        config = copy.deepcopy(self.base_config)
+        config["instruments"]["power_supplies"]["PS1"]["enabled"] = True
+        config["power_supply_assignment"]["dut_amplifier"]["supplies"]["peaking"] = {
+            "name": "PS4",
+            "channel": ["CH1"],
+        }
+        result = validate_config(config)
+        self.assertFalse(result.valid)
+        self.assertTrue(
+            any("供电角色重复配置" in issue.message for issue in result.errors),
+            [issue.message for issue in result.errors],
+        )
+
+    def test_assignment_must_provide_both_gate_and_drain(self):
+        config = copy.deepcopy(self.base_config)
+        config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]["channel"] = ["CH1"]
+        result = validate_config(config)
+        self.assertFalse(result.valid)
+        self.assertTrue(
+            any("gate 和 drain" in issue.message for issue in result.errors),
+            [issue.message for issue in result.errors],
+        )
+
     def test_file_loader_uses_explicit_path_without_hardware_access(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             config_path = Path(temporary_directory) / "config.json"

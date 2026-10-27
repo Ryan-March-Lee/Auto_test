@@ -9,8 +9,6 @@ import copy
 import math
 from typing import Any, Mapping
 
-from presentation.qt.configuration_authoring import DUT_CHANNEL_ROLES
-
 
 def parse_frequency_text(value: str) -> list[float] | None:
     """安全解析频率列表；非法输入返回 ``None``，不会执行任意代码。"""
@@ -62,6 +60,23 @@ class ConfigFormState:
         errors = []
         if parse_frequency_text(self._text(self.widgets.freq_edit)) is None:
             errors.append("测试频率必须是非空数字列表")
+        errors.extend(self._power_role_errors())
+        return errors
+
+    def _power_role_errors(self) -> list[str]:
+        """供电角色必须是显式选择且互不重复，避免保存连接时才失败的配置。"""
+        errors = []
+        fragment = self.read_power_supply_config()
+        supplies = fragment.get("instruments", {}).get("power_supplies", {})
+        for name, supply in supplies.items():
+            roles = [channel.get("role") for channel in supply.get("channels", {}).values()]
+            if any(role is None for role in roles):
+                errors.append(f"{name} 存在未选择供电角色的通道")
+            duplicates = sorted(
+                {role for role in roles if role is not None and roles.count(role) > 1}
+            )
+            if duplicates:
+                errors.append(f"{name} 的通道供电角色重复: {'、'.join(duplicates)}")
         return errors
 
     def read_instrument_config(self) -> dict:
@@ -117,19 +132,27 @@ class ConfigFormState:
             )
             channels = {}
             for channel, controls in supply.get("channels", {}).items():
-                existing_role = _dict_copy(existing_channels.get(channel)).get("role")
-                role = (
-                    existing_role
-                    if existing_role in ("gate", "drain")
-                    else DUT_CHANNEL_ROLES.get(channel)
-                )
                 channels[channel] = {
-                    "role": role,
+                    "role": self._channel_role(controls, existing_channels, channel),
                     "voltage": {"value": self._value(controls["voltage"]), "protection": self._value(controls["voltage_protection"]), "protection_enabled": self._checked(controls["voltage_protection_enabled"])},
                     "current": {"value": self._value(controls["current"]), "protection": self._value(controls["current_protection"]), "protection_enabled": self._checked(controls["current_protection_enabled"])},
                 }
             result[name] = {"channels": channels}
         return {"instruments": {"power_supplies": result}} if result else {}
+
+    @staticmethod
+    def _channel_role(controls: Mapping[str, Any], existing_channels: Mapping[str, Any], channel: str) -> str | None:
+        """读控件里用户显式选择的供电角色。
+
+        角色是接线事实，不按通道名推断：控件缺失或值不可识别时只保留配置里
+        已有的合法角色，其余一律返回 ``None``，由正式校验在连接前报错。
+        """
+        role_widget = controls.get("role")
+        if role_widget is not None:
+            label = role_widget.currentText()
+            return label if label in ("gate", "drain") else None
+        existing = _dict_copy(existing_channels.get(channel)).get("role")
+        return existing if existing in ("gate", "drain") else None
 
     def read_power_assignment(self) -> dict:
         w = self.widgets

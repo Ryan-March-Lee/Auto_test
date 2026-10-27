@@ -827,6 +827,23 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         page.load_run_btn.click()
         self.assertEqual(requested, [RUN_ID])
 
+    def test_validate_blocks_duplicate_power_channel_roles(self):
+        from presentation.qt.config_page import ConfigPage
+
+        page = ConfigPage({})
+        page.power_config_widgets["PS1"]["channels"]["CH1"]["role"].setCurrentText("gate")
+        page.power_config_widgets["PS1"]["channels"]["CH2"]["role"].setCurrentText("gate")
+        failures = []
+        requested = []
+        page.validation_failed.connect(failures.append)
+        page.connect_requested.connect(lambda: requested.append(True))
+
+        page.connect_btn.click()
+
+        self.assertEqual(requested, [])
+        self.assertEqual(len(failures), 1)
+        self.assertIn("供电角色重复", failures[0])
+
     def test_load_run_requires_a_run_id(self):
         from presentation.qt.config_page import ConfigPage
 
@@ -862,6 +879,37 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         self.assertEqual(page.ps1_address.text(), "sim::ps1")
         self.assertEqual(page.pa_unit1_power_combo.currentText(), "PS1")
         self.assertEqual(page.power_config_widgets["PS1"]["channels"]["CH2"]["voltage"].value(), 28.0)
+
+    def test_config_page_makes_power_channel_roles_explicit(self):
+        """保存配置页时按控件当前选择写入显式角色，不再由装配层推导。"""
+        from presentation.qt.config_page import ConfigPage
+
+        page = ConfigPage({})
+        page.apply_config(_fully_valid_gui_config())
+
+        built = page.build_config()
+
+        channels = built["instruments"]["power_supplies"]["PS1"]["channels"]
+        self.assertEqual(channels["CH1"]["role"], "gate")
+        self.assertEqual(channels["CH2"]["role"], "drain")
+
+    def test_config_page_keeps_the_role_declared_in_the_configuration(self):
+        from presentation.qt.config_page import ConfigPage
+
+        config = _fully_valid_gui_config()
+        config["instruments"]["power_supplies"]["PS1"]["channels"]["CH1"]["role"] = "drain"
+        config["instruments"]["power_supplies"]["PS1"]["channels"]["CH2"]["role"] = "gate"
+        page = ConfigPage({})
+        page.apply_config(config)
+
+        self.assertEqual(
+            page.power_config_widgets["PS1"]["channels"]["CH1"]["role"].currentText(),
+            "drain",
+        )
+        built = page.build_config()
+        channels = built["instruments"]["power_supplies"]["PS1"]["channels"]
+        self.assertEqual(channels["CH1"]["role"], "drain")
+        self.assertEqual(channels["CH2"]["role"], "gate")
 
     def test_apply_config_clears_previous_values(self):
         from presentation.qt.config_page import ConfigPage

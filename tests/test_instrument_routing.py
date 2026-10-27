@@ -6,7 +6,8 @@
   不定义 ``__getattr__``，也不按方法名转发设备调用；
 - 旧动态路由实现（``instrument.legacy_control`` / ``instrument.power_roles``）已整文件退役；
 - 自动发现只保留在硬件 smoke 入口，生产装配不调用 ``list_resources()``；
-- 电源、信号源、频谱仪的方法在适配器上显式定义。
+- 电源、信号源、频谱仪的方法在适配器上显式定义；
+- 装配层不把 ``CH1``/``CH2`` 写成角色或通道常量，角色只来自配置。
 
 验证方式：
 
@@ -129,6 +130,21 @@ class DynamicInstrumentRoutingTests(unittest.TestCase):
                 if module in text:
                     violations.append(f"{source.relative_to(ROOT)} references {module}")
         self.assertEqual(violations, [])
+
+    def test_assembly_does_not_hardcode_channel_names(self):
+        """供电角色来自配置：装配层不得把 CH1/CH2 写成角色或通道常量。"""
+        for path in ASSEMBLY_SOURCES:
+            with self.subTest(path=path.name):
+                literals = {
+                    node.value
+                    for node in ast.walk(_tree(path))
+                    if isinstance(node, ast.Constant) and isinstance(node.value, str)
+                }
+                self.assertEqual(
+                    literals & {"CH1", "CH2"},
+                    set(),
+                    f"{path.name} 不得把现场通道名当作装配常量",
+                )
 
     def test_production_assembly_does_not_discover_power_supplies(self):
         discovery = ROOT / "hardware" / "power_supply_discovery.py"

@@ -11,7 +11,7 @@ assembly.
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 import pyvisa
 
@@ -249,7 +249,7 @@ def _create_hardware_measurement_port(config_path: str, *, recorder=None):
             driver_power_channels=plan["driver_channels"],
             power_settings=plan["power_settings"],
             qualified_power_channels=True,
-            emergency_channels=_emergency_channels(plan["supply_channels"]),
+            emergency_channels=plan["emergency_channels"],
         )
     except Exception:
         for resource in reversed(resources):
@@ -279,6 +279,8 @@ def _hardware_assembly_plan(config: Mapping[str, Any]) -> dict[str, Any]:
 
     signal_address = _required_address(signal_config, "信号源")
     spectrum_address = _required_address(spectrum_config, "频谱仪")
+    if signal_address == spectrum_address:
+        raise ValueError(f"信号源与频谱仪的 VISA 地址重复: {signal_address}")
     enabled_names = []
     for name, item in power_configs.items():
         if not isinstance(item, Mapping):
@@ -313,14 +315,26 @@ def _hardware_assembly_plan(config: Mapping[str, Any]) -> dict[str, Any]:
     supply_addresses = {}
     for power_name in sorted(assigned_names):
         address = _required_address(power_configs[power_name], f"生产电源 {power_name}")
-        if address in (signal_address, spectrum_address) or address in supply_addresses.values():
-            raise ValueError(f"生产电源 {power_name} 与其他仪器地址重复")
+        if address == signal_address:
+            raise ValueError(f"生产电源 {power_name} 与信号源地址重复: {address}")
+        if address == spectrum_address:
+            raise ValueError(f"生产电源 {power_name} 与频谱仪地址重复: {address}")
+        for other_name, other_address in supply_addresses.items():
+            if address == other_address:
+                raise ValueError(
+                    f"生产电源 {power_name} 与生产电源 {other_name} 地址重复: {address}"
+                )
         supply_addresses[power_name] = address
 
     dut_channels, dut_settings = _assigned_channels(dut_assignment, power_configs, "DUT")
     driver_channels, driver_settings = _assigned_channels(
         driver_assignment, power_configs, "驱动"
     )
+    overlap = set(dut_channels.values()) & set(driver_channels.values())
+    if overlap:
+        raise ValueError(
+            "DUT 与驱动功放占用了同一个电源通道: " + ", ".join(sorted(overlap))
+        )
     supply_names = sorted(assigned_names)
     return {
         "signal_config": signal_config,
@@ -328,13 +342,13 @@ def _hardware_assembly_plan(config: Mapping[str, Any]) -> dict[str, Any]:
         "spectrum_address": spectrum_address,
         "power_configs": power_configs,
         "supply_names": supply_names,
-        "supply_channels": {
-            name: tuple(_configured_channels(power_configs[name], name)) for name in supply_names
-        },
         "dut_channels": dut_channels,
         "driver_channels": driver_channels,
         "power_settings": {**driver_settings, **dut_settings},
         "all_channels": {**driver_channels, **dut_channels},
+        "emergency_channels": _emergency_channels(
+            supply_names, driver_channels, dut_channels
+        ),
     }
 
 
@@ -394,7 +408,9 @@ def _assigned_channels(
             token = f"{power_name}/{channel}"
             role = _explicit_role(channel_config, token)
             if role in channels and channels[role] != token:
-                raise ValueError(f"供电角色重复配置: {power_name}/{role}")
+                raise ValueError(
+                    f"供电角色重复配置: {role} 同时出现在 {channels[role]} 和 {token}"
+                )
             channels[role] = token
             settings[role] = _channel_settings(channel_config, token)
     if channels and set(channels) != {"gate", "drain"}:
@@ -431,14 +447,25 @@ def _channel_settings(channel_config: Mapping[str, Any], token: str) -> dict[str
 
 
 def _emergency_channels(
-    supply_channels: Mapping[str, tuple[str, ...]]
+    supply_names: Sequence[str],
+    *role_groups: Mapping[str, str],
 ) -> tuple[tuple[int, str], ...]:
-    """返回急停要关闭的显式 ``supply/channel`` 令牌（先漏后栅的顺序）。"""
-    return tuple(
-        (index, f"{name}/{channel}")
-        for index, (name, channels) in enumerate(supply_channels.items())
-        for channel in reversed(channels)
-    )
+    """Return the outputs a shutdown must switch off, drain before gate.
+
+    Only tokens assigned to a declared role are returned: those are the outputs
+    the port can energize, and they are the only channels the power drivers
+    support.  Order follows the safe off sequence (``drain`` before ``gate``)
+    instead of the order channels appear in the configuration.  The first tuple
+    item is the supply index, matching the order drivers are created in.
+    """
+    positions = {name: index for index, name in enumerate(supply_names)}
+    ordered: list[str] = []
+    for role in ("drain", "gate"):
+        for group in role_groups:
+            token = group.get(role)
+            if token is not None and token not in ordered:
+                ordered.append(token)
+    return tuple((positions[token.split("/", 1)[0]], token) for token in ordered)
 
 
 __all__ = ["create_measurement_port"]

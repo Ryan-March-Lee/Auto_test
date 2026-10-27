@@ -117,8 +117,10 @@ python launcher.py --validate-config
 
 生产装配只使用配置中显式声明的地址、角色和物理通道：被供电分配引用的每个电源通道必须声明
 `role: gate` 或 `role: drain`（`instruments.power_supplies.<name>.channels.<channel>.role`），
-不再按 `CH1`/`CH2` 自动推导。配置页面保存时会按现场固定接线写入角色；只在 `CH1`/`CH2`
-接线但未声明角色的旧硬件配置会在 `--validate-config` 或连接前失败。
+不再按 `CH1`/`CH2` 自动推导。配置页为每个通道提供 `gate`/`drain` 选择（初值按现场固定
+接线预置），保存时写入控件当前选择；只在 `CH1`/`CH2` 接线但未声明角色的旧硬件配置会在
+`--validate-config` 或连接前失败。分配内跨电源重复角色、缺少 `gate` 或 `drain`、以及
+DUT 与驱动功放占用同一通道，都会在连接前报错。
 
 `--check` 检查当前 Python 环境是否具备启动 GUI 所需的依赖；`--validate-config` 只检查配置内容，不能替代依赖检查。两个命令不能同时使用。未知命令行参数会返回退出码 `2`。
 

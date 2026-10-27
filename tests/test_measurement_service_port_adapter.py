@@ -104,6 +104,20 @@ class MeasurementServicePortAdapterTests(unittest.TestCase):
             1,
         )
 
+    def test_default_emergency_channels_follow_declared_roles(self):
+        """未显式注入急停通道时，按声明角色先漏后栅关闭，不猜通道名。"""
+        adapter, _session, recorder = self.make_adapter()
+
+        self.assertEqual(
+            adapter.emergency_channels,
+            ((0, "D"), (0, "B"), (0, "C"), (0, "A")),
+        )
+        self.assertEqual(adapter.emergency_power_off_all(), [])
+        self.assertEqual(
+            [item[2] for item in recorder.commands if item[:2] == ("power_supply", "output_off")],
+            ["D", "B", "C", "A"],
+        )
+
     def test_driver_and_dut_power_channels_must_not_overlap(self):
         recorder = CommandRecorder()
         session = SafetyInstrumentSession(

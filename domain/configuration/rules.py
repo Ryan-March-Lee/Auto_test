@@ -253,6 +253,9 @@ def _validate_assignment(
         error(f"{path}.power_supply_count", "必须是非负整数")
     elif configured_count != len(supplies):
         warning(f"{path}.power_supply_count", f"配置值为 {configured_count}，实际分配数量为 {len(supplies)}")
+    # 角色唯一性作用于整个 assignment：不同电源分别提供 gate 也是重复配置，
+    # 生产装配只按角色寻址，无法把两个 gate 分派出去。
+    resolved_roles: Dict[str, str] = {}
     for role, supply_assignment in supplies.items():
         role_path = f"{path}.supplies.{role}"
         if not isinstance(supply_assignment, dict):
@@ -273,25 +276,31 @@ def _validate_assignment(
             error(f"{role_path}.channel", "必须是非空通道列表")
             continue
         configured_channels = supply_config.get("channels", {})
-        resolved_roles: Dict[str, str] = {}
         for channel in channels:
             channel_config = configured_channels.get(channel)
             if not isinstance(channel_config, dict):
                 error(f"{role_path}.channel", f"通道 '{channel}' 不存在于电源 '{supply_name}'")
                 continue
-            role = channel_config.get("role")
-            if role not in ("gate", "drain"):
+            channel_role = channel_config.get("role")
+            token = f"{supply_name}/{channel}"
+            if channel_role not in ("gate", "drain"):
                 error(
                     f"{role_path}.channel",
                     f"通道 '{channel}' 必须显式声明 role 为 gate 或 drain，"
                     "不再按 CH1/CH2 推导供电角色",
                 )
-            elif role in resolved_roles:
+            elif channel_role in resolved_roles:
                 error(
                     f"{role_path}.channel",
-                    f"供电角色重复配置: {role} 同时出现在 "
-                    f"'{resolved_roles[role]}' 和 '{channel}'",
+                    f"供电角色重复配置: {channel_role} 同时出现在 "
+                    f"'{resolved_roles[channel_role]}' 和 '{token}'",
                 )
             else:
-                resolved_roles[role] = channel
+                resolved_roles[channel_role] = token
+    if resolved_roles and set(resolved_roles) != {"gate", "drain"}:
+        missing = sorted({"gate", "drain"} - set(resolved_roles))
+        error(
+            f"{path}.supplies",
+            "供电分配必须同时提供 gate 和 drain 通道，缺少: " + "、".join(missing),
+        )
     return supplies

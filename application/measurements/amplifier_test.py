@@ -16,9 +16,9 @@ from application.measurements.services import AmplifierMeasurementService
 from application.ports.measurement_session import CleanupRecord
 from domain.measurement.values import (
     CableLossTable,
-    Decibels,
     DriverOutputTable,
     Frequency,
+    MeasurementValueError,
     PowerDbm,
 )
 from domain.run.models import (
@@ -123,16 +123,16 @@ class AmplifierMeasurementUseCase:
         self._token.request_emergency_stop(reason="紧急停止")
 
     def calculate_actual_power(self, frequency: float, measured_power: float) -> float:
-        """按强类型值对象补偿 DUT 输出功率，对外仍返回 dBm 浮点数。"""
-        attenuator = Decibels.parse(self.config["attenuator"]["type"])
-        loss_table = CableLossTable.from_mapping(
-            self.loss_data["cable_losses"], source="线损输入"
-        )
+        """按强类型值对象补偿 DUT 输出功率，对外仍返回 dBm 浮点数。
+
+        线损表和衰减器在用例构造时已解析为值对象，与测量扫描使用同一份；
+        这里不再按调用重复解析原始文档。
+        """
         actual = measurement_calculations.compensate_amplifier_output_power(
             measured_power=PowerDbm(measured_power),
             frequency=Frequency.from_ghz(frequency),
-            loss_table=loss_table,
-            attenuator_value=attenuator,
+            loss_table=self._service.loss_table,
+            attenuator_value=self._service.attenuator_value,
         )
         return actual.dbm
 
@@ -347,8 +347,9 @@ def validate_amplifier_calibration_inputs(
     - 补偿 DUT 输出功率始终需要 ``cable2`` 与 ``cable4``；
     - 驱动模式启用时，每个测试频率必须有非空的驱动映射子对象。
 
-    文档在边界处收敛为 :class:`CableLossTable` / :class:`DriverOutputTable`，
-    字符串频率键与 ``cable1`` 等字段名不再由本函数解释。
+    文档在边界处收敛为 :class:`CableLossTable` / :class:`DriverOutputTable`；
+    “某个计算路径需要哪几段线缆”由 :class:`CableLossProfile` 的
+    ``require_*_path()`` 方法表达，本函数不再解释 ``cable1`` 等字符串字段名。
 
     任一项缺失都抛出 :class:`AmplifierCalibrationError`，供组装层在连接仪器前和
     用例构造时统一拒绝无效输入。
@@ -363,20 +364,16 @@ def validate_amplifier_calibration_inputs(
     except (TypeError, ValueError) as error:
         raise AmplifierCalibrationError(str(error)) from error
 
-    required = ["cable2", "cable4"]
-    if not driver_enabled:
-        required.append("cable1")
     frequency_values = [Frequency.from_ghz(value) for value in frequencies]
     for frequency in frequency_values:
-        key = frequency.key
-        profile = loss_table.profiles.get(frequency)
-        if profile is None:
-            raise AmplifierCalibrationError(f"线损输入缺少测试频率 {key} 的线损数据")
-        missing = [name for name in required if getattr(profile, name) is None]
-        if missing:
-            raise AmplifierCalibrationError(
-                f"线损输入 {key} 缺少必需字段: {', '.join(missing)}"
-            )
+        try:
+            profile = loss_table.profile_at(frequency)
+            # DUT 输出补偿始终需要线④ + 线②；无驱动时 DUT 输入还需要线①。
+            profile.require_dut_output_path()
+            if not driver_enabled:
+                profile.require_dut_input_path()
+        except MeasurementValueError as error:
+            raise AmplifierCalibrationError(str(error)) from error
     if not driver_enabled:
         return
     if not isinstance(driver_mapping, Mapping):
@@ -388,10 +385,9 @@ def validate_amplifier_calibration_inputs(
     except (TypeError, ValueError) as error:
         raise AmplifierCalibrationError(str(error)) from error
     for frequency in frequency_values:
-        key = frequency.key
-        if not driver_table.points.get(frequency):
+        if not driver_table.has_points(frequency):
             raise AmplifierCalibrationError(
-                f"驱动映射缺少测试频率 {key} 的有效映射数据"
+                f"驱动映射缺少测试频率 {frequency.key} 的有效映射数据"
             )
 
 

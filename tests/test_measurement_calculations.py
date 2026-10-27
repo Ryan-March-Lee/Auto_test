@@ -85,10 +85,37 @@ class FrequencyValueTests(unittest.TestCase):
         self.assertEqual(Frequency.from_hz(2.4e9).key, "2.4")
         self.assertEqual(Frequency.from_mhz(2300.0).key, "2.3")
 
-    def test_parse_accepts_documented_suffixes(self):
-        for text in ("2.4", "2.4GHz", "2400MHz", "2.4e9Hz", " 2.4 ghz "):
+    def test_parse_accepts_documented_units(self):
+        for text in ("2.4GHz", "2400MHz", "2.4e9Hz", " 2.4 ghz "):
             with self.subTest(text=text):
                 self.assertEqual(Frequency.parse(text), Frequency.from_ghz(2.4))
+
+    def test_parse_rejects_bare_numbers_without_a_unit(self):
+        """裸数值文本无法判断单位：测量文本必须写单位，文档键走另一个入口。"""
+        for text in ("2.4", "2400", "2.4e9"):
+            with self.subTest(text=text):
+                with self.assertRaises(MeasurementUnitError):
+                    Frequency.parse(text)
+
+    def test_document_key_accepts_bare_ghz_and_explicit_units(self):
+        for text in ("2.4", "2.40", " 2.4 ", "2.4GHz", "2400MHz"):
+            with self.subTest(text=text):
+                self.assertEqual(
+                    Frequency.from_document_key(text), Frequency.from_ghz(2.4)
+                )
+
+    def test_document_key_rejects_non_string_keys(self):
+        """JSON 键本来就是字符串；浮点数、布尔值和字节串不能悄悄变成频率。"""
+        for key in (2.4, True, None, b"2.4"):
+            with self.subTest(key=key):
+                with self.assertRaises(TypeError):
+                    Frequency.from_document_key(key)
+
+    def test_document_key_rejects_empty_and_unparsable_keys(self):
+        for key in ("", "   ", "abc", "2.4THz"):
+            with self.subTest(key=key):
+                with self.assertRaises(MeasurementUnitError):
+                    Frequency.from_document_key(key)
 
     def test_parse_rejects_unknown_units_and_nan(self):
         for text in ("2.4GHz-extra", "abc", "", "2.4THz"):
@@ -216,6 +243,19 @@ class CableLossProfileTests(unittest.TestCase):
         self.assertEqual(profile.driver_output_path_loss(db(30.0)), db(31.625))
         self.assertEqual(profile.dut_output_path_loss(db(30.0)), db(31.72))
 
+    def test_path_requirements_report_only_the_missing_segment(self):
+        """路径需求由值对象表达：调用方不再枚举 cable1 等字符串字段名。"""
+        profile = CableLossProfile.from_mapping({"cable2": 2.0, "cable4": 3.0})
+        profile.require_driver_output_path()
+        profile.require_dut_output_path()
+        with self.assertRaises(MeasurementValueError) as raised:
+            profile.require_dut_input_path()
+        self.assertIn("cable1", str(raised.exception))
+
+        with self.assertRaises(MeasurementValueError) as raised:
+            CableLossProfile.from_mapping({"cable2": 2.0}).require_dut_output_path()
+        self.assertIn("cable4", str(raised.exception))
+
 
 class CableLossTableTests(unittest.TestCase):
     """CableLossTable：字符串频率键的集中解析。"""
@@ -242,6 +282,23 @@ class CableLossTableTests(unittest.TestCase):
     def test_table_rejects_untyped_profiles(self):
         with self.assertRaises(TypeError):
             CableLossTable({ghz(1.0): {"cable1": 1.0}})  # type: ignore[dict-item]
+
+    def test_non_string_frequency_key_is_rejected(self):
+        """频率键必须是字符串：数值键会掩盖写入方用错类型或用错单位。"""
+        with self.assertRaises(TypeError):
+            CableLossTable.from_mapping({1.0: {"cable1": 1.0}})  # type: ignore[dict-item]
+
+    def test_equivalent_key_spellings_are_the_same_frequency(self):
+        table = CableLossTable.from_mapping({"2.4": {"cable1": 1.0}})
+        self.assertEqual(table.profile_at(ghz(2.4)).cable1, db(1.0))
+        with self.assertRaises(MeasurementValueError):
+            CableLossTable.from_mapping(
+                {"2.4": {"cable1": 1.0}, "2.40": {"cable1": 2.0}}
+            )
+
+    def test_document_output_uses_the_canonical_frequency_key(self):
+        table = CableLossTable.from_mapping({"2.40": {"cable1": 1.0}})
+        self.assertEqual(table.to_document(), {"2.4": {"cable1": 1.0}})
 
 
 class CalculateCableLossesTests(unittest.TestCase):
@@ -559,6 +616,29 @@ class InterpolateDriverOutputPowerTests(unittest.TestCase):
         with self.assertRaises(MeasurementUnitError):
             self._table({"1.0": {"abc": 10.0}})
 
+    def test_non_string_frequency_key_is_rejected(self):
+        with self.assertRaises(TypeError):
+            self._table({1.0: {"-40.0": 20.0}})  # type: ignore[dict-item]
+
+    def test_numeric_input_power_keys_are_read_as_dbm(self):
+        table = self._table({"1.0": {-40.0: 20.0}})  # type: ignore[dict-item]
+        self.assertEqual(
+            interpolate_driver_output_power(
+                frequency=ghz(1.0), sg_power=dbm(-40.0), driver_mapping=table
+            ).dbm,
+            20.0,
+        )
+
+    def test_boolean_input_power_key_is_rejected(self):
+        with self.assertRaises(MeasurementUnitError):
+            self._table({"1.0": {True: 20.0}})  # type: ignore[dict-item]
+
+    def test_has_points_separates_missing_and_empty_frequencies(self):
+        table = self._table(SAMPLE_DRIVER_MAPPING)
+        self.assertTrue(table.has_points(ghz(1.0)))
+        self.assertFalse(table.has_points(ghz(2.4)))
+        self.assertFalse(self._table({"1.0": {}}).has_points(ghz(1.0)))
+
     def test_raw_mapping_is_not_accepted_by_the_pure_function(self):
         with self.assertRaises(TypeError):
             interpolate_driver_output_power(
@@ -793,6 +873,42 @@ class CalculateCompressionResultTests(unittest.TestCase):
                 gains=[20.0], input_powers=[dbm(10.0)], output_powers=[dbm(30.0)],
                 efficiencies=[Percent(50.0)], sg_powers=[dbm(-10.0)],
                 compression_value=db(5.0))
+
+    def test_invalid_small_gain_point_count_is_rejected(self):
+        """小信号增益点数必须是正整数：布尔值、浮点数、0 和负数都不能进入切片。"""
+        gains = [db(20.0), db(20.0), db(19.0)]
+        inp = [dbm(10.0), dbm(11.0), dbm(12.0)]
+        outp = [dbm(30.0), dbm(31.0), dbm(31.0)]
+        eff = [Percent(50.0), Percent(49.0), Percent(48.0)]
+        sg = [dbm(-10.0), dbm(-9.0), dbm(-8.0)]
+        for value in (True, 1.5, "3", None):
+            with self.subTest(value=value):
+                with self.assertRaises(TypeError):
+                    calculate_compression_result(
+                        gains=gains, input_powers=inp, output_powers=outp,
+                        efficiencies=eff, sg_powers=sg,
+                        compression_value=db(5.0), small_gain_points=value)
+        for value in (0, -1):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    calculate_compression_result(
+                        gains=gains, input_powers=inp, output_powers=outp,
+                        efficiencies=eff, sg_powers=sg,
+                        compression_value=db(5.0), small_gain_points=value)
+
+    def test_small_gain_point_count_controls_the_average(self):
+        gains = [db(20.0), db(22.0), db(18.0), db(10.0)]
+        inp = [dbm(10.0), dbm(11.0), dbm(12.0), dbm(13.0)]
+        outp = [dbm(30.0), dbm(33.0), dbm(30.0), dbm(23.0)]
+        eff = [Percent(50.0), Percent(51.0), Percent(52.0), Percent(53.0)]
+        sg = [dbm(-10.0), dbm(-9.0), dbm(-8.0), dbm(-7.0)]
+        result = calculate_compression_result(
+            gains=gains, input_powers=inp, output_powers=outp,
+            efficiencies=eff, sg_powers=sg,
+            compression_value=db(5.0), small_gain_points=2)
+
+        self.assertAlmostEqual(result.small_signal_gain.db, 21.0)
+        self.assertAlmostEqual(result.max_compression.db, 11.0)
 
     def test_result_mapping_matches_the_result_document(self):
         """``to_mapping()`` 的输出键与既有结果文档一致。"""

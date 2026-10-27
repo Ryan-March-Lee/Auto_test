@@ -14,6 +14,13 @@
 字符串频率键和 ``cable1`` 等字符串字段只在本模块出现：线损拓扑由
 :class:`CableLossProfile` / :class:`CableLossTable` 表达，JSON 文档形状通过
 ``to_mapping()`` / ``to_document()`` 显式转换，不再散落在调用方。
+
+频率文本有两个不同的入口，不能互相顶替：
+
+- :meth:`Frequency.parse` 解析**测量文本**，必须带单位（``"2.4GHz"``），
+  不猜测裸数值的单位；
+- :meth:`Frequency.from_document_key` 解析**结果文档的频率键**：schema 约定
+  无单位键表示 GHz（``"2.4"``），也接受显式单位文本，但只接受字符串键。
 """
 
 from __future__ import annotations
@@ -87,6 +94,17 @@ def _require(value: Any, expected: type, label: str) -> Any:
     return value
 
 
+def _text_number(text: str, label: str, original: Any) -> float:
+    """把文本数值解析为有限 ``float``；语法错误抛单位错误，非有限值抛数值错误。"""
+    try:
+        number = float(text)
+    except ValueError:
+        raise MeasurementUnitError(f"无法解析 {label} 的数值部分: {original!r}") from None
+    if not math.isfinite(number):
+        raise MeasurementValueError(f"{label} 必须是有限数值，收到 {number!r}")
+    return number
+
+
 def _unit_number(text: Any, unit: str, label: str) -> float:
     """解析“数值 + 单位后缀”的文本；后缀缺失或不同一律拒绝。"""
     if not isinstance(text, str):
@@ -102,14 +120,16 @@ def _unit_number(text: Any, unit: str, label: str) -> float:
         raise MeasurementUnitError(
             f"{label} 单位必须是 {unit}，收到 {text!r}；不猜测其他单位"
         )
-    number_text = lowered[: -len(suffix)].strip()
-    try:
-        number = float(number_text)
-    except ValueError:
-        raise MeasurementUnitError(f"无法解析 {label} 的数值部分: {text!r}") from None
-    if not math.isfinite(number):
-        raise MeasurementValueError(f"{label} 必须是有限数值，收到 {number!r}")
-    return number
+    return _text_number(lowered[: -len(suffix)].strip(), label, text)
+
+
+def _power_key(key: Any, label: str) -> float:
+    """解析驱动映射的输入功率键（dBm）；字符串键与数值键都按 dBm 读取。"""
+    if isinstance(key, bool):
+        raise MeasurementUnitError(f"{label} 不能是布尔值: {key!r}")
+    if isinstance(key, str):
+        return _text_number(key.strip(), label, key)
+    return _number(key, label)
 
 
 @dataclass(frozen=True, order=True)
@@ -135,32 +155,50 @@ class Frequency:
 
     @classmethod
     def parse(cls, text: Any) -> "Frequency":
-        """解析频率文本：``"2.4"``（缺省 GHz）、``"2.4GHz"``、``"2400MHz"``、``"2.4e9Hz"``。"""
+        """解析**带单位**的频率文本：``"2.4GHz"`` / ``"2400MHz"`` / ``"2.4e9Hz"``。
+
+        裸数值文本（如 ``"2.4"``、``"2400"``）不是完整测量值：它既可能是 GHz 也可能是
+        MHz，解析时必须由调用方写出单位，不猜测。结果文档里 schema 约定的无单位 GHz
+        键用 :meth:`from_document_key` 读取。
+        """
         if isinstance(text, Frequency):
             return text
         if isinstance(text, bool) or text is None or not isinstance(text, str):
             raise MeasurementUnitError(
-                f"频率必须是带单位或无单位的字符串，收到 {type(text).__name__}"
+                f"频率必须写成带单位的字符串（如 '2.4GHz'），收到 {type(text).__name__}"
             )
         raw = text.strip()
         if not raw:
             raise MeasurementUnitError("频率不能为空")
         lowered = raw.lower()
-        divisor = 1.0
         for unit, factor in _FREQUENCY_UNITS:
             if lowered.endswith(unit):
-                divisor = factor
-                lowered = lowered[: -len(unit)].strip()
-                break
-        try:
-            number = float(lowered)
-        except ValueError:
-            raise MeasurementUnitError(
-                f"无法解析频率 {text!r}；支持 '2.4'、'2.4GHz'、'2400MHz'、'2.4e9Hz'"
-            ) from None
-        if not math.isfinite(number):
-            raise MeasurementValueError(f"频率必须是有限数值，收到 {number!r}")
-        return cls(number / divisor)
+                number = _text_number(lowered[: -len(unit)].strip(), "频率", text)
+                return cls(number / factor)
+        raise MeasurementUnitError(
+            f"频率必须带单位（GHz/MHz/Hz），收到 {text!r}；"
+            "无单位的结果文档频率键请用 Frequency.from_document_key 读取"
+        )
+
+    @classmethod
+    def from_document_key(cls, key: Any) -> "Frequency":
+        """解析结果文档的频率键：无单位时按 schema 约定取 GHz。
+
+        只接受字符串键。JSON 对象键本来就是字符串，把浮点数、布尔值或值对象
+        悄悄转成文本，会掩盖写入方用错类型或用错单位的问题。
+        """
+        if isinstance(key, bool) or not isinstance(key, str):
+            raise TypeError(
+                f"频率键必须是字符串（GHz 或带单位文本），收到 {type(key).__name__}"
+            )
+        raw = key.strip()
+        if not raw:
+            raise MeasurementUnitError("频率键不能为空")
+        lowered = raw.lower()
+        for unit, _factor in _FREQUENCY_UNITS:
+            if lowered.endswith(unit):
+                return cls.parse(raw)
+        return cls(_text_number(raw, "频率键", key))
 
     @property
     def mhz(self) -> float:
@@ -339,21 +377,35 @@ class CableLossProfile:
 
     def dut_input_path_loss(self) -> Decibels:
         """DUT 输入路径（信号源 -> 线① -> DUT）的损耗。"""
-        return self._require_field("cable1", "DUT 输入功率 = sg_power - cable1")
+        return self.require_dut_input_path()
 
     def driver_output_path_loss(self, attenuator_value: Decibels) -> Decibels:
         """驱动功放输出到频谱仪的损耗：衰减器 + 线②（不经过线④）。"""
         attenuator = _require(attenuator_value, Decibels, "衰减器值")
-        return attenuator + self._require_field("cable2", "驱动输出补偿需要线②")
+        return attenuator + self.require_driver_output_path()
 
     def dut_output_path_loss(self, attenuator_value: Decibels) -> Decibels:
-        """DUT 输出到频谱仪的损耗：线④ + 衰减器 + 线②。"""
+        """DUT 输出到频谱仪的损耗：线④ + 衰减器 + 线②（加法顺序与历史公式一致）。"""
         attenuator = _require(attenuator_value, Decibels, "衰减器值")
-        return (
-            self._require_field("cable4", "DUT 输出补偿需要线④")
-            + attenuator
-            + self._require_field("cable2", "DUT 输出补偿需要线②")
-        )
+        cable4, cable2 = self.require_dut_output_path()
+        return cable4 + attenuator + cable2
+
+    # 下面三个方法把“某条计算路径还需要哪些线缆，缺了就报错”表达成值对象自己的能力：
+    # 调用方不再枚举 ``cable1`` 等字符串字段名，错误信息自带路径语义。
+
+    def require_dut_input_path(self) -> Decibels:
+        """校验 DUT 输入路径并返回线①损耗（无驱动时的 DUT 输入功率需要它）。"""
+        return self._require_field("cable1", "DUT 输入功率 = sg_power - cable1")
+
+    def require_driver_output_path(self) -> Decibels:
+        """校验驱动输出补偿路径并返回线②损耗。"""
+        return self._require_field("cable2", "驱动输出补偿需要线②")
+
+    def require_dut_output_path(self) -> tuple[Decibels, Decibels]:
+        """校验 DUT 输出补偿路径并返回 ``(线④, 线②)`` 损耗。"""
+        cable4 = self._require_field("cable4", "DUT 输出补偿需要线④")
+        cable2 = self._require_field("cable2", "DUT 输出补偿需要线②")
+        return cable4, cable2
 
     def _require_field(self, name: str, purpose: str) -> Decibels:
         value = getattr(self, name)
@@ -380,12 +432,16 @@ class CableLossTable:
 
     @classmethod
     def from_mapping(cls, mapping: Any, *, source: str = "cable_losses") -> "CableLossTable":
-        """读取 ``{频率键: {cable1..total_path2}}`` 结果文档。"""
+        """读取 ``{频率键: {cable1..total_path2}}`` 结果文档。
+
+        频率键只能是字符串（schema 约定无单位 GHz，也接受显式单位文本）；同一个
+        频率写成 ``"2.4"`` 和 ``"2.40"`` 会在这里被识别为重复记录并拒绝。
+        """
         if not isinstance(mapping, Mapping):
             raise TypeError(f"{source} 必须是映射，收到 {type(mapping).__name__}")
         profiles = {}
         for key, profile in mapping.items():
-            frequency = Frequency.parse(str(key))
+            frequency = Frequency.from_document_key(key)
             if frequency in profiles:
                 raise MeasurementValueError(f"{source} 含重复频率 {frequency.key}")
             profiles[frequency] = CableLossProfile.from_mapping(
@@ -466,12 +522,16 @@ class DriverOutputTable:
     def from_mapping(
         cls, mapping: Any, *, source: str = "driver_mapping"
     ) -> "DriverOutputTable":
-        """读取 ``{频率键: {输入功率键: 输出功率}}`` 驱动映射文档。"""
+        """读取 ``{频率键: {输入功率键: 输出功率}}`` 驱动映射文档。
+
+        频率键与线损表一样只接受字符串；输入功率键是 dBm 数值文本，字符串键与
+        数值键都按 dBm 读取，布尔值和无法解析的文本一律拒绝。
+        """
         if not isinstance(mapping, Mapping):
             raise TypeError(f"{source} 必须是映射，收到 {type(mapping).__name__}")
         points = {}
         for frequency_key, bucket in mapping.items():
-            frequency = Frequency.parse(str(frequency_key))
+            frequency = Frequency.from_document_key(frequency_key)
             if frequency in points:
                 raise MeasurementValueError(f"{source} 含重复频率 {frequency.key}")
             if not isinstance(bucket, Mapping):
@@ -480,12 +540,13 @@ class DriverOutputTable:
                 )
             pairs = []
             for input_key, output in bucket.items():
+                label = f"{source}[{frequency_key}] 的输入功率键"
                 try:
-                    input_dbm = float(input_key)
-                except (TypeError, ValueError):
+                    input_dbm = _power_key(input_key, label)
+                except MeasurementUnitError as error:
                     raise MeasurementUnitError(
                         f"{source}[{frequency_key}] 含无法解析的输入功率键 {input_key!r}"
-                    ) from None
+                    ) from error
                 pairs.append(
                     (
                         PowerDbm(input_dbm),
@@ -499,6 +560,11 @@ class DriverOutputTable:
 
     def is_empty(self) -> bool:
         return not self.points
+
+    def has_points(self, frequency: Frequency) -> bool:
+        """指定频率是否有可用映射点；缺频率与空映射点都返回 ``False``。"""
+        _require(frequency, Frequency, "频率")
+        return bool(self.points.get(frequency))
 
     def interpolate(self, frequency: Frequency, sg_power: PowerDbm) -> PowerDbm:
         """按输入功率升序线性插值；端点与重复点沿用 ``np.interp`` 行为。"""

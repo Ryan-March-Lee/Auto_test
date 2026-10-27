@@ -1019,5 +1019,66 @@ class MainWindow:
         self.assertEqual(len(calls), 1)
 
 
+# 技术债步骤 13 的单位边界：dBm↔W、%↔比值的换算与线缆字段名都归测量值对象所有。
+MEASUREMENT_VALUE_MODULE = ROOT / "domain" / "measurement" / "values.py"
+CABLE_FIELD_NAMES = frozenset(
+    {"cable1", "cable2", "cable3", "cable4", "total_path1", "total_path2"}
+)
+
+
+def _main_system_sources():
+    """主系统的生产源码；DPD 子系统按步骤 14 继续隔离，不参与主系统单位门禁。"""
+    return [
+        path
+        for path in _production_sources()
+        if path.relative_to(ROOT).parts[0] != "DPD_auto_test"
+    ]
+
+
+class MeasurementValueBoundaryTests(unittest.TestCase):
+    """单位换算与线缆字段名只能出现在测量值对象里。"""
+
+    def test_power_conversions_live_only_in_the_measurement_value_objects(self):
+        offenders = []
+        for path in _main_system_sources():
+            if path == MEASUREMENT_VALUE_MODULE:
+                continue
+            for node in ast.walk(_tree(path)):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "log10"
+                ):
+                    offenders.append(f"{path.relative_to(ROOT)}:{node.lineno}")
+                if (
+                    isinstance(node, ast.BinOp)
+                    and isinstance(node.op, ast.Pow)
+                    and isinstance(node.left, ast.Constant)
+                    and node.left.value == 10
+                ):
+                    offenders.append(f"{path.relative_to(ROOT)}:{node.lineno}")
+        self.assertEqual(
+            offenders,
+            [],
+            "dBm↔W 换算只能出现在 domain/measurement/values.py: "
+            + ", ".join(offenders),
+        )
+
+    def test_cable_field_names_are_confined_to_the_value_objects(self):
+        offenders = []
+        for path in _main_system_sources():
+            if path == MEASUREMENT_VALUE_MODULE:
+                continue
+            for node in ast.walk(_tree(path)):
+                if isinstance(node, ast.Constant) and node.value in CABLE_FIELD_NAMES:
+                    offenders.append(f"{path.relative_to(ROOT)}:{node.lineno}")
+        self.assertEqual(
+            offenders,
+            [],
+            "cable1 等线缆字段名只能出现在 domain/measurement/values.py: "
+            + ", ".join(offenders),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

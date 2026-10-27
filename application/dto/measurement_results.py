@@ -15,6 +15,14 @@
 
 展示、报告与导出只使用本模块的显式属性（``report_rows()``、``sweep_rows()``、
 ``saturation_points()``），因此不需要把结果当成 ``Mapping[str, Any]`` 读取。
+
+本模块是**序列化边界**：字段是 JSON/Qt 可直接消费的基本类型，单位由字段名表达。
+dBm↔W、%↔比值等换算和 dB 运算只允许发生在
+:mod:`domain.measurement.values` / :mod:`domain.measurement.calculations`，
+DTO 与展示层只搬运数值，不重新计算；唯一的例外是
+:class:`CableLossRow` 的线损拓扑，它保存值对象并在 ``to_mapping()`` 时展开。
+读取结果文档时频率键的文本原样保留（``"2.40"`` 不会被改写），但解析走
+:meth:`domain.measurement.values.Frequency.from_document_key`。
 """
 
 from __future__ import annotations
@@ -27,7 +35,7 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Any
 
-from domain.measurement.values import CableLossProfile
+from domain.measurement.values import CableLossProfile, Frequency
 
 
 class MeasurementType(str, Enum):
@@ -759,21 +767,17 @@ _LEGACY_DOCUMENT_KEYS = frozenset(
 )
 
 
-def _number(value: Any) -> float | None:
-    if isinstance(value, bool):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def _frequency_key(value: Any, label: str) -> str:
-    """校验频点标识：必须能解析为有限正数；保留原始字符串形式。"""
+    """校验频点标识：必须是能解析为正频率的字符串；保留原始文本形式。
+
+    读取已有结果时保留文件里的键文本（``"2.40"`` 不会在读取时被悄悄改写成
+    ``"2.4"``），解析本身走唯一的频率边界 ``Frequency.from_document_key``：
+    无单位按 schema 约定取 GHz，带单位按声明单位，非字符串或非法数值一律拒绝。
+    """
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{label}的频点标识不能为空")
-    number = _number(value)
-    if number is None or not math.isfinite(number) or number <= 0:
+    frequency = Frequency.from_document_key(value)
+    if frequency.ghz <= 0:
         raise ValueError(f"{label}的频点标识非法: {value!r}")
     return value
 

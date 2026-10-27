@@ -354,8 +354,8 @@ class DriverPowerMappingService(_Service):
     def __init__(self, config: Mapping[str, Any], instrument: MeasurementInstrumentPort,
                  loss_data: Mapping[str, Any], **kwargs: Any):
         super().__init__(config, instrument, **kwargs)
-        self.loss_data = loss_data
         # 输入文档在构造阶段收敛为值对象：缺失频率、未知字段或非数值在硬件动作前失败。
+        # 服务只保留解析后的表，不再同时持有原始文档副本。
         self.loss_table = _loss_table(loss_data)
         self.attenuator_value = Decibels.parse(config["attenuator"]["type"])
 
@@ -423,15 +423,15 @@ class AmplifierMeasurementService(_Service):
                  loss_data: Mapping[str, Any], driver_mapping: Mapping[str, Any] | None = None,
                  **kwargs: Any):
         super().__init__(config, instrument, **kwargs)
-        self.loss_data = loss_data
-        self.driver_mapping = driver_mapping
-        # 校准输入在构造阶段收敛为值对象，缺字段或错误单位不会等到扫描中途才暴露。
+        # 校准输入在构造阶段收敛为值对象，缺字段或错误单位不会等到扫描中途才暴露；
+        # 服务只保留解析后的表，不再同时持有原始文档副本。
         self.loss_table = _loss_table(loss_data)
         self.driver_table = (
             DriverOutputTable.from_mapping(driver_mapping, source="驱动映射输入")
             if driver_mapping
             else None
         )
+        self.attenuator_value = Decibels.parse(config["attenuator"]["type"])
 
     @classmethod
     def required_capabilities(cls, config: Mapping[str, Any]) -> tuple[str, ...]:
@@ -446,7 +446,7 @@ class AmplifierMeasurementService(_Service):
     def perform_power_sweep(self, frequency: float) -> dict[str, Any]:
         compression_type = self.config["compression_point"]["type"]
         compression_value = Decibels.parse(compression_type)
-        attenuator_value = Decibels.parse(self.config["attenuator"]["type"])
+        attenuator_value = self.attenuator_value
         frequency_value = Frequency.from_ghz(frequency)
         maximum = self.config.get("dut_config", {}).get("max_input_power", float("inf"))
         self.inst_ctrl.set_power(-40)

@@ -230,6 +230,17 @@ class NonFormalResultRejectionTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     measurement_result_from_document(document)
 
+    def test_frequency_key_text_is_preserved_on_read_and_rewrite(self):
+        """读取保留文件里的键文本；解析仍走唯一的频率边界（无单位按 GHz）。"""
+        for key in ("2.40", "2.4GHz"):
+            with self.subTest(key=key):
+                document = _cable_document(
+                    cable_losses={key: {"cable1": 1.0}}
+                )
+                result = measurement_result_from_document(document)
+                self.assertEqual(result.points[0].frequency_ghz, key)
+                self.assertEqual(result.to_dict()["cable_losses"], {key: {"cable1": 1.0}})
+
     def test_driver_mapping_legacy_object_shape_is_rejected(self):
         with self.assertRaises(ValueError):
             measurement_result_from_document(

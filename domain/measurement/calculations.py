@@ -250,6 +250,15 @@ def calculate_efficiency(output_power: PowerDbm, dc_power: PowerWatt) -> Percent
     return Percent.from_ratio(output.to_watt().watts / dc.watts)
 
 
+def _small_gain_point_count(value: Any) -> int:
+    """小信号增益取平均的点数：必须是正整数，布尔值不当作整数。"""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError("small_gain_points 必须是正整数")
+    if value < 1:
+        raise ValueError("small_gain_points 必须大于等于 1")
+    return value
+
+
 def calculate_compression_result(gains: Iterable[Decibels],
                                  input_powers: Iterable[PowerDbm],
                                  output_powers: Iterable[PowerDbm],
@@ -263,7 +272,8 @@ def calculate_compression_result(gains: Iterable[Decibels],
     压缩量为 ``small_signal_gain - gain``，取最接近目标值的点。
 
     空扫描点是无效输入：直接抛 :class:`ValueError`，不再依赖 ``np.argmin()`` 的
-    隐式异常。各列长度必须一致。
+    隐式异常。各列长度必须一致；``small_gain_points`` 必须是正整数（布尔值不当作
+    整数），非整数抛 :class:`TypeError`、非正数抛 :class:`ValueError`。
 
     Args:
         gains: 增益列。
@@ -285,6 +295,7 @@ def calculate_compression_result(gains: Iterable[Decibels],
     efficiency_values = _sequence(efficiencies, Percent, "efficiencies")
     sg_values = _sequence(sg_powers, PowerDbm, "sg_powers")
     target = _require(compression_value, Decibels, "compression_value")
+    point_count = _small_gain_point_count(small_gain_points)
 
     lengths = {
         len(gain_values),
@@ -301,8 +312,8 @@ def calculate_compression_result(gains: Iterable[Decibels],
     gains_arr = np.array([value.db for value in gain_values])
 
     small_signal_gain = (
-        float(np.mean(gains_arr[:small_gain_points]))
-        if len(gains_arr) >= small_gain_points
+        float(np.mean(gains_arr[:point_count]))
+        if len(gains_arr) >= point_count
         else float(gains_arr[0])
     )
 

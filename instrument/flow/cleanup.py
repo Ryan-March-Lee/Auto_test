@@ -71,9 +71,11 @@ def cleanup_measurement(
 class SafetyCleanupAdapter:
     """用 ``SafetyShutdownFlow`` 实现 application 的安全清理端口。
 
-    动作顺序与 :func:`cleanup_measurement` 一致：RF -> 电源 -> 连接。RF 关闭
-    失败时不关闭信号源连接，保留现场重试机会；电源或连接失败仍继续后续安全
-    动作。无论成功或失败都生成结构化清理记录，失败由
+    动作顺序与 :func:`cleanup_measurement` 一致：RF -> 电源 -> 连接。
+    资源释放策略与 ``SafetyShutdownFlow`` 完全一致：RF 关闭失败时连
+    ``close_all`` 都不调用，保留全部连接以便现场重试关闭 RF；电源或连接
+    释放失败时仍释放连接（异常状态的 VISA 会话不可再被后续安全动作依赖），
+    失败写进记录而不会被吞掉。无论成功或失败都生成结构化清理记录，失败由
     :class:`SafetyCleanupError` 携带记录抛出。
     """
 

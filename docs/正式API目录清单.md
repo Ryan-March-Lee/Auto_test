@@ -192,6 +192,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `infrastructure.persistence.run_directory` | 运行目录文件布局 |
 | `infrastructure.runtime.runtime_contract` | 运行时契约实现；公共入口是 `infrastructure.runtime` |
 | `instrument.flow` | 安全流程包；application 只通过 `application.ports.measurement_session` 依赖清理端口 |
+| `instrument.safety` | 设备安全动作与资源所有权边界；关闭回调的安全标记按显式签名判定调用形式 |
 | `presentation.qt.assistant.chat_dialogs` | 助手对话对话框 |
 | `presentation.qt.assistant.chat_panel` | 助手聊天面板 |
 | `presentation.qt.assistant.chat_worker` | 助手后台 worker |
@@ -311,7 +312,8 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 - 正式公共 API：46 个模块路径、174 个公开名称，已在本文与测试中固定（步骤 5 新增
   `infrastructure.config.validation.validate_official_config`，用于校验已解析的正式配置文档；
   步骤 6 收敛结果 DTO；步骤 7 新增 `application.ports.measurement_session`）。
-- 正式内部模块：34 个路径已登记，公共与内部边界不重叠。
+- 正式内部模块：35 个路径已登记，公共与内部边界不重叠（步骤 7 补登记
+  `instrument.safety`：安全标记的显式签名判定是跨模块契约）。
 - 旧模块：31 个条目（21 个根模块、10 个正式包内实现），状态与工作树一致。
 - 存量引用基线：2 个旧模块、2 处文件引用，只减不增。
 - 跨层依赖基线：`application` → `instrument.flow` 已由步骤 7 清零（仅保留安全清理端口）。

@@ -2,11 +2,36 @@
 
 from __future__ import annotations
 
+import inspect
+
 
 class InstrumentSafetyError(RuntimeError):
     def __init__(self, message: str, errors: list[BaseException]):
         super().__init__(message)
         self.errors = tuple(errors)
+
+
+def close_accepts_safety_flags(close: object) -> bool:
+    """判断 ``close`` 回调是否接受 ``rf_safe`` / ``power_safe`` 安全标记。
+
+    安全标记决定连接清理时哪些危险资源必须保留以便现场重试，因此调用形式必须
+    通过签名显式判定，不能依赖“先调用、捕获 ``TypeError`` 再重试”的猜测方式：
+    设备清理内部抛出的 ``TypeError`` 是真实失败，必须原样上报，不能被误判成
+    签名不兼容而换成另一种调用形式重试。
+
+    无法内省的 C 扩展或内置可调用对象按端口契约（带安全标记）调用，失败由
+    调用方记录为真实清理错误。
+    """
+    try:
+        parameters = inspect.signature(close).parameters
+    except (TypeError, ValueError):
+        return True
+    for parameter in parameters.values():
+        if parameter.kind is inspect.Parameter.VAR_KEYWORD:
+            return True
+        if parameter.name in ("rf_safe", "power_safe"):
+            return True
+    return False
 
 
 def shutdown_instruments(*, rf_off=None, power_off=None, close=None,
@@ -16,6 +41,10 @@ def shutdown_instruments(*, rf_off=None, power_off=None, close=None,
     ``close`` 只应关闭本 session 创建并拥有的资源。外部注入的端口由其
     创建方负责关闭；因此所有权通过是否传入 ``close`` 显式表达。
     紧急停止与普通停止都优先 RF 关闭，但紧急停止允许从任意状态进入。
+
+    连接清理始终尽力执行，不会因为 RF 或供电动作失败而跳过；``close`` 接受
+    ``rf_safe`` / ``power_safe`` 时可据此决定保留哪些危险资源，见
+    :func:`close_accepts_safety_flags`。
     """
     del emergency  # 预留给调用方记录策略，当前两种路径都必须先断 RF。
     errors: list[BaseException] = []
@@ -33,21 +62,14 @@ def shutdown_instruments(*, rf_off=None, power_off=None, close=None,
             power_safe = True
         except Exception as error:
             errors.append(error)
-    # 连接清理仍然要尽力执行：设备动作失败不应把连接泄漏到进程之外。
-    # close 实现可以根据 rf_safe/power_safe 决定哪些危险资源保留重试，
-    # 但安全编排器不能静默跳过它。
     if close is not None:
         try:
-            result = close(rf_safe=rf_safe, power_safe=power_safe)
+            if close_accepts_safety_flags(close):
+                result = close(rf_safe=rf_safe, power_safe=power_safe)
+            else:
+                result = close()
             if result:
                 errors.extend(result)
-        except TypeError:
-            try:
-                result = close()
-                if result:
-                    errors.extend(result)
-            except Exception as error:
-                errors.append(error)
         except Exception as error:
             errors.append(error)
     if errors:

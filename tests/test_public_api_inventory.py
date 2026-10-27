@@ -293,6 +293,7 @@ INTERNAL_MODULES = {
     "infrastructure.persistence.run_directory": "运行目录文件布局",
     "infrastructure.runtime.runtime_contract": "运行时契约实现；公共入口是 infrastructure.runtime",
     "instrument.flow": "安全流程包；application 只通过 application.ports.measurement_session 依赖清理端口",
+    "instrument.safety": "设备安全动作与资源所有权边界；关闭回调安全标记契约的显式签名判定",
     "presentation.qt.assistant.chat_dialogs": "助手对话对话框",
     "presentation.qt.assistant.chat_panel": "助手聊天面板",
     "presentation.qt.assistant.chat_worker": "助手后台 worker",

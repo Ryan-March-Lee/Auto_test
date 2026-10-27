@@ -18,6 +18,11 @@ from instrument.flow import (
     cleanup_measurement,
 )
 from instrument.simulation import CommandRecorder, SimulatedPowerSupply, SimulatedSignalGenerator
+from instrument.safety import (
+    InstrumentSafetyError,
+    close_accepts_safety_flags,
+    shutdown_instruments,
+)
 
 
 class SafetyFlowTests(unittest.TestCase):
@@ -190,14 +195,103 @@ class SafetyFlowTests(unittest.TestCase):
         self.assertEqual(events, ["rf_off", "power_off", ("close", False)])
 
 
+class SafetyCloseCallFormTests(unittest.TestCase):
+    """关闭回调的调用形式按签名判定，不靠捕获 TypeError 猜测签名。"""
+
+    def test_close_accepts_safety_flags_detects_both_conventions(self):
+        self.assertTrue(close_accepts_safety_flags(lambda **_: None))
+        self.assertTrue(close_accepts_safety_flags(lambda *, rf_safe: None))
+        self.assertTrue(close_accepts_safety_flags(lambda *, power_safe: None))
+        self.assertFalse(close_accepts_safety_flags(lambda *, close_rf: None))
+        self.assertFalse(close_accepts_safety_flags(lambda: None))
+
+    def test_flagged_close_type_error_is_reported_once_without_retry(self):
+        calls = []
+
+        def close(*, rf_safe, power_safe):
+            calls.append((rf_safe, power_safe))
+            raise TypeError("device write rejected")
+
+        flow = SafetyShutdownFlow(rf_off=lambda: None, close=close)
+        with self.assertRaises(SafetyShutdownError) as raised:
+            flow.run()
+
+        self.assertEqual(
+            [str(error) for error in raised.exception.errors], ["device write rejected"]
+        )
+        self.assertEqual(calls, [(True, True)])
+
+    def test_legacy_close_still_receives_close_rf_flag(self):
+        calls = []
+
+        flow = SafetyShutdownFlow(
+            rf_off=lambda: None, close=lambda *, close_rf: calls.append(close_rf) or []
+        )
+        flow.run()
+
+        self.assertEqual(calls, [False])
+
+    def test_legacy_close_is_skipped_when_rf_close_failed(self):
+        calls = []
+
+        def close(*, close_rf):
+            calls.append(close_rf)
+            return []
+
+        flow = SafetyShutdownFlow(
+            rf_off=lambda: (_ for _ in ()).throw(RuntimeError("rf")), close=close
+        )
+        with self.assertRaises(SafetyShutdownError):
+            flow.run()
+
+        self.assertEqual(calls, [])
+
+    def test_legacy_close_type_error_is_reported_as_is(self):
+        def close(*, close_rf):
+            raise TypeError("close_all rejected")
+
+        flow = SafetyShutdownFlow(close=close)
+        with self.assertRaises(SafetyShutdownError) as raised:
+            flow.run()
+
+        self.assertEqual([str(error) for error in raised.exception.errors], ["close_all rejected"])
+
+
+class ShutdownInstrumentCallFormTests(unittest.TestCase):
+    def test_flagged_close_type_error_is_not_retried(self):
+        calls = []
+
+        def close(*, rf_safe, power_safe):
+            calls.append((rf_safe, power_safe))
+            raise TypeError("device rejected")
+
+        with self.assertRaises(InstrumentSafetyError) as raised:
+            shutdown_instruments(rf_off=lambda: None, close=close)
+
+        self.assertEqual(calls, [(True, True)])
+        self.assertEqual([str(error) for error in raised.exception.errors], ["device rejected"])
+
+    def test_close_without_flags_is_called_once(self):
+        calls = []
+
+        def close():
+            calls.append("closed")
+            return []
+
+        shutdown_instruments(rf_off=lambda: None, close=close)
+
+        self.assertEqual(calls, ["closed"])
+
+
 class _CleanupController:
     """只实现安全清理所需能力，不构造任何 VISA 对象。"""
 
-    def __init__(self, *, has_signal_generator=True, rf_error=None, close_errors=()):
+    def __init__(self, *, has_signal_generator=True, rf_error=None, close_errors=(), close_error=None):
         if has_signal_generator:
             self.signal_gen = object()
         self.rf_error = rf_error
         self.close_errors = list(close_errors)
+        self.close_error = close_error
         self.events = []
 
     def rf_output_off(self):
@@ -207,6 +301,8 @@ class _CleanupController:
 
     def close_all(self, *, close_rf):
         self.events.append(("close", close_rf))
+        if self.close_error is not None:
+            raise self.close_error
         return list(self.close_errors)
 
 
@@ -263,6 +359,17 @@ class SafetyCleanupAdapterTests(unittest.TestCase):
         record = raised.exception.record
         self.assertEqual(record.resources, CleanupStepStatus.FAILED)
         self.assertEqual(record.errors, ("close",))
+
+    def test_close_all_type_error_is_reported_verbatim_without_retry(self):
+        controller = _CleanupController(close_error=TypeError("device write rejected"))
+
+        with self.assertRaises(SafetyCleanupError) as raised:
+            SafetyCleanupAdapter(controller).cleanup()
+
+        record = raised.exception.record
+        self.assertEqual(record.resources, CleanupStepStatus.FAILED)
+        self.assertEqual(record.errors, ("device write rejected",))
+        self.assertEqual(controller.events, ["rf_off", ("close", False)])
 
     def test_borrowed_resource_and_absent_devices_are_marked_skipped(self):
         controller = _CleanupController(has_signal_generator=False)

@@ -28,6 +28,7 @@ from app.events import StoppedEvent
 from application.ports.measurement_session import (
     CleanupRecord,
     MeasurementSessionBinding,
+    MeasurementSessionPort,
     SafetyCleanupError,
     SafetyCleanupPort,
 )
@@ -75,7 +76,9 @@ class _Service:
                  settle_delay_s: float = 5.0,
                  owns_measurement_port: bool = True):
         self.config = config
-        self.session = MeasurementSessionBinding(
+        # 服务只依赖测量会话协议：设备端口与安全清理端口在同一生命周期边界内，
+        # 具体设备 flow 由组装层适配，application 不感知。
+        self.session: MeasurementSessionPort = MeasurementSessionBinding(
             instrument=instrument, safety_cleanup=safety_cleanup
         )
         self.inst_ctrl = self.session.instrument

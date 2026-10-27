@@ -322,7 +322,9 @@ class LegacyGuiEntryTests(unittest.TestCase):
 
     def test_prepare_configuration_is_only_called_from_the_gui_entry(self):
         sites = _calls("prepare_configuration")
-        self.assertEqual([site[0] for site in sites], ["presentation/qt/main_window.py"])
+        self.assertEqual(
+            [site[0] for site in sites], ["presentation/qt/application_coordinator.py"]
+        )
         self.assertEqual(
             sites[0][1], {"paths": "self.paths", "hardware_config": "self.config"}
         )

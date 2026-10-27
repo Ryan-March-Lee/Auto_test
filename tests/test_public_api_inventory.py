@@ -301,6 +301,7 @@ INTERNAL_MODULES = {
     "instrument.measurement_adapter": "测量服务端口的显式适配器；设备方法显式定义，不按方法名转发",
     "instrument.measurement_factory": "硬件/离线测量端口装配；地址、角色和通道在连接前校验",
     "instrument.safety": "设备安全动作与资源所有权边界；关闭回调安全标记契约的显式签名判定",
+    "presentation.qt.application_coordinator": "GUI 运行协调器：配置、运行契约与仪器端口所有者",
     "presentation.qt.assistant.chat_dialogs": "助手对话对话框",
     "presentation.qt.assistant.chat_panel": "助手聊天面板",
     "presentation.qt.assistant.chat_worker": "助手后台 worker",

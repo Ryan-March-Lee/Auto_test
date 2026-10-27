@@ -11,6 +11,7 @@ PAGE_SOURCES = tuple(
 )
 CONTROLLER_SOURCE = ROOT / "presentation" / "qt" / "measurement_controller.py"
 MAIN_WINDOW_SOURCE = ROOT / "presentation" / "qt" / "main_window.py"
+COORDINATOR_SOURCE = ROOT / "presentation" / "qt" / "application_coordinator.py"
 MEASUREMENT_STATE_FIELDS = {
     "current_worker",
     "instrument_ctrl",
@@ -143,10 +144,34 @@ def _worker_construction_violations(tree):
 
 
 def _main_window_class(tree):
+    return _class_node(tree, "MainWindow")
+
+
+def _class_node(tree, name):
     for node in tree.body:
-        if isinstance(node, ast.ClassDef) and node.name == "MainWindow":
+        if isinstance(node, ast.ClassDef) and node.name == name:
             return node
-    raise AssertionError("main_window.py 中未找到 MainWindow 类")
+    raise AssertionError(f"{name} 未找到")
+
+
+def _self_attr_writes(class_node):
+    """返回类中 ``self.<attr> = ...`` 形式写入的属性名集合。"""
+    writes = set()
+    for node in ast.walk(class_node):
+        targets = []
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        elif isinstance(node, ast.NamedExpr):
+            targets = [node.target]
+        for target in targets:
+            for child in ast.walk(target):
+                if (
+                    isinstance(child, ast.Attribute)
+                    and isinstance(child.value, ast.Name)
+                    and child.value.id == "self"
+                ):
+                    writes.add(child.attr)
+    return writes
 
 
 def _main_window_measurement_writes(tree):
@@ -452,11 +477,11 @@ class ProductionDependencyTests(unittest.TestCase):
     def test_main_window_separates_instrument_worker_callbacks(self):
         source = MAIN_WINDOW_SOURCE.read_text(encoding="utf-8-sig")
         self.assertIn(
-            "self.instrument_worker.signals.error.connect(self.on_instrument_error)",
+            "worker.signals.error.connect(self.on_instrument_error)",
             source,
         )
         self.assertIn(
-            "self.instrument_worker.signals.stopped.connect(self.on_instrument_stopped)",
+            "worker.signals.stopped.connect(self.on_instrument_stopped)",
             source,
         )
         self.assertIn(
@@ -736,6 +761,67 @@ class ProductionDependencyTests(unittest.TestCase):
             added_writes,
             set(),
             "MainWindow 新增测量业务状态写入: " + ", ".join(sorted(added_writes)),
+        )
+
+    def test_run_coordinator_owns_configuration_run_contract_and_instrument_port(self):
+        """步骤 10：配置、运行契约和端口只有协调器一个所有者。"""
+        coordinator = _class_node(_tree(COORDINATOR_SOURCE), "ApplicationCoordinator")
+        owned = {"config", "prepared_run", "instrument_ctrl", "instrument_worker"}
+        self.assertTrue(
+            owned <= _self_attr_writes(coordinator),
+            "ApplicationCoordinator 必须持有配置、运行契约和端口: "
+            + ", ".join(sorted(owned - _self_attr_writes(coordinator))),
+        )
+        window_writes = _self_attr_writes(_main_window_class(_tree(MAIN_WINDOW_SOURCE)))
+        self.assertEqual(
+            window_writes & owned,
+            set(),
+            "MainWindow 不得重新持有配置/运行/端口状态: "
+            + ", ".join(sorted(window_writes & owned)),
+        )
+
+    def test_main_window_cannot_create_runs_without_the_coordinator(self):
+        tree = _tree(MAIN_WINDOW_SOURCE)
+        modules = {module for module, _alias, _name in _imported_modules(tree)}
+        self.assertNotIn("app.gui_runtime", modules)
+        self.assertIn("presentation.qt.application_coordinator", modules)
+        # 运行创建/加载只允许出现在协调器。
+        for source_path in (MAIN_WINDOW_SOURCE, COORDINATOR_SOURCE):
+            calls = {
+                _called_name(node.func)
+                for node in ast.walk(_tree(source_path))
+                if isinstance(node, ast.Call)
+            }
+            expected = {"prepare_configuration", "load_prepared_run"}
+            if source_path is COORDINATOR_SOURCE:
+                self.assertTrue(
+                    expected <= calls,
+                    "协调器必须承担创建/加载运行: " + ", ".join(sorted(expected - calls)),
+                )
+            else:
+                self.assertEqual(
+                    calls & expected,
+                    set(),
+                    "主窗口不得直接创建或加载运行: " + ", ".join(sorted(calls & expected)),
+                )
+
+    def test_main_window_does_not_construct_instrument_workers(self):
+        tree = _tree(MAIN_WINDOW_SOURCE)
+        self.assertEqual(
+            _worker_construction_violations(tree),
+            [],
+            "仪器连接 worker 的构造属于协调器，主窗口只连接信号",
+        )
+        coordinator_tree = _tree(COORDINATOR_SOURCE)
+        self.assertIn(
+            "InstrumentWorker",
+            {
+                alias.asname or alias.name
+                for node in ast.walk(coordinator_tree)
+                if isinstance(node, ast.ImportFrom)
+                and (node.module or "").split(".")[-1] == "workers"
+                for alias in node.names
+            },
         )
 
     def test_worker_aliases_and_attribute_construction_are_detected(self):

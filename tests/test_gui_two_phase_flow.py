@@ -425,189 +425,197 @@ class WorkerReusesPreparedRunTests(unittest.TestCase):
         self.assertTrue(service.measure_called.is_set())
 
 
-class MainWindowTwoPhaseTests(unittest.TestCase):
+class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
+    """步骤 10：运行创建/加载与仪器连接由协调器承担，窗口只做组装。"""
+
+    def _coordinator(self, **overrides):
+        from presentation.qt.application_coordinator import ApplicationCoordinator
+
+        kwargs = {
+            "gui_data_service": MagicMock(),
+            "controller": MagicMock(),
+            "config_path": Path("global-config.json"),
+        }
+        kwargs.update(overrides)
+        return ApplicationCoordinator(**kwargs)
+
     def test_resolve_measurement_run_requires_contract_and_instrument(self):
-        from presentation.qt.main_window import MainWindow
-
         run = _resolvable_contract_run()
-        window = MainWindow.__new__(MainWindow)
-        window.config_path = Path("global-config.json")
-        window.prepared_run = run
-        window.instrument_ctrl = object()
-        window.add_log_message = MagicMock()
-        window.on_measurement_error = MagicMock()
+        errors = []
+        coordinator = self._coordinator(error=errors.append)
+        coordinator.prepared_run = run
+        coordinator.instrument_ctrl = object()
 
-        self.assertIs(MainWindow._resolve_measurement_run(window), run)
-        window.on_measurement_error.assert_not_called()
+        self.assertIs(coordinator.resolve_measurement_run(), run)
+        self.assertEqual(errors, [])
 
-        window.prepared_run = None
-        self.assertIsNone(MainWindow._resolve_measurement_run(window))
-        window.on_measurement_error.assert_called_once()
+        coordinator.prepared_run = None
+        self.assertIsNone(coordinator.resolve_measurement_run())
+        self.assertEqual(len(errors), 1)
 
-        window.prepared_run = run
-        window.instrument_ctrl = None
-        self.assertIsNone(MainWindow._resolve_measurement_run(window))
-        self.assertEqual(window.on_measurement_error.call_count, 2)
+        coordinator.prepared_run = run
+        coordinator.instrument_ctrl = None
+        self.assertIsNone(coordinator.resolve_measurement_run())
+        self.assertEqual(len(errors), 2)
 
     def test_invalid_contract_blocks_measurement_run_resolution(self):
-        from presentation.qt.main_window import MainWindow
-
         cases = {
             "缺少快照字段": None,
             "快照文件不存在": Path("missing-hardware.json"),
         }
         for label, value in cases.items():
             with self.subTest(case=label):
-                window = MainWindow.__new__(MainWindow)
-                window.config_path = Path("global-config.json")
-                window.prepared_run = _broken_contract_run(value)
-                window.instrument_ctrl = object()
-                window.on_measurement_error = MagicMock()
+                errors = []
+                coordinator = self._coordinator(error=errors.append)
+                coordinator.prepared_run = _broken_contract_run(value)
+                coordinator.instrument_ctrl = object()
 
-                self.assertIsNone(MainWindow._resolve_measurement_run(window))
-                window.on_measurement_error.assert_called_once()
-                self.assertIn(
-                    "硬件配置快照",
-                    str(window.on_measurement_error.call_args.args[0]),
-                )
+                self.assertIsNone(coordinator.resolve_measurement_run())
+                self.assertEqual(len(errors), 1)
+                self.assertIn("硬件配置快照", errors[0])
 
     def test_create_prepared_run_freezes_the_run_contract(self):
-        from presentation.qt.main_window import MainWindow
-
-        window = MainWindow.__new__(MainWindow)
-        window.config_page = MagicMock()
-        window.config_page.validate.return_value = True
-        window.config = {}
-        window.config_path = Path("config.json")
-        window.paths = None
-        window.prepared_run = None
-        window.add_log_message = MagicMock()
-        window.update_config_from_ui = MagicMock()
-        window._confirm_create_run_wiring = MagicMock(return_value=True)
-        window._save_config_file = MagicMock(return_value=True)
-        window._update_run_status = MagicMock()
-
-        from types import SimpleNamespace
+        page = MagicMock()
+        page.validate.return_value = True
+        warn = MagicMock()
+        coordinator = self._coordinator(
+            warn=warn,
+            widget_host=MagicMock(),
+            confirm_run_wiring=MagicMock(return_value=True),
+        )
+        coordinator.config_page = page
+        coordinator.config = {}
+        coordinator.update_configuration_from_ui = MagicMock()
+        coordinator.save_configuration = MagicMock(return_value=True)
 
         prepared = SimpleNamespace(run_id=RUN_ID, run_directory=Path("runs") / RUN_ID)
         with patch(
-            "presentation.qt.main_window.prepare_configuration", return_value=prepared
+            "presentation.qt.application_coordinator.prepare_configuration",
+            return_value=prepared,
         ) as create:
-            result = MainWindow._create_prepared_run(window)
+            result = coordinator.create_prepared_run()
 
         self.assertIs(result, prepared)
-        self.assertIs(window.prepared_run, prepared)
+        self.assertIs(coordinator.prepared_run, prepared)
+        coordinator.save_configuration.assert_called_once_with()
         create.assert_called_once()
         args, kwargs = create.call_args
-        self.assertEqual(args, (str(window.config_path),))
+        self.assertEqual(args, (str(coordinator.config_path),))
         # 创建运行入口不再接受 run_contract 开关：GUI 只走唯一的运行契约路径。
         self.assertNotIn("run_contract", kwargs)
-        self.assertIsNone(kwargs["paths"])
-        self.assertEqual(kwargs["hardware_config"], window.config)
+        self.assertEqual(kwargs["hardware_config"], coordinator.config)
+        warn.assert_not_called()
 
     def test_create_prepared_run_aborts_when_validation_fails(self):
-        from presentation.qt.main_window import MainWindow
+        page = MagicMock()
+        page.validate.return_value = False
+        coordinator = self._coordinator(widget_host=MagicMock())
+        coordinator.config_page = page
 
-        window = MainWindow.__new__(MainWindow)
-        window.config_page = MagicMock()
-        window.config_page.validate.return_value = False
-        window.prepared_run = None
-
-        with patch("presentation.qt.main_window.prepare_configuration") as create:
-            self.assertIsNone(MainWindow._create_prepared_run(window))
+        with patch(
+            "presentation.qt.application_coordinator.prepare_configuration"
+        ) as create:
+            self.assertIsNone(coordinator.create_prepared_run())
 
         create.assert_not_called()
 
-    def test_create_prepared_run_releases_previous_instrument_port(self):
-        from presentation.qt.main_window import MainWindow
+    def test_create_prepared_run_aborts_without_wiring_confirmation(self):
+        page = MagicMock()
+        page.validate.return_value = True
+        log = MagicMock()
+        coordinator = self._coordinator(
+            log=log, widget_host=MagicMock(), confirm_run_wiring=MagicMock(return_value=False)
+        )
+        coordinator.config_page = page
+        coordinator.update_configuration_from_ui = MagicMock()
+        coordinator.save_configuration = MagicMock(return_value=True)
 
-        port = object()
-        window = MainWindow.__new__(MainWindow)
-        window.config_page = MagicMock()
-        window.config_page.validate.return_value = True
-        window.config = {}
-        window.config_path = Path("config.json")
-        window.paths = None
-        window.instrument_ctrl = port
-        window.instrument_worker = None
-        window.prepared_run = None
-        window.add_log_message = MagicMock()
-        window.update_config_from_ui = MagicMock()
-        window._confirm_create_run_wiring = MagicMock(return_value=True)
-        window._save_config_file = MagicMock(return_value=True)
-        window._update_run_status = MagicMock()
-        window._close_instrument_port = MagicMock()
+        with patch(
+            "presentation.qt.application_coordinator.prepare_configuration"
+        ) as create:
+            self.assertIsNone(coordinator.create_prepared_run())
+
+        create.assert_not_called()
+        self.assertTrue(
+            any("现场接线未确认" in str(call.args[0]) for call in log.call_args_list)
+        )
+
+    def test_create_prepared_run_releases_previous_instrument_port(self):
+        port = MagicMock()
+        page = MagicMock()
+        page.validate.return_value = True
+        coordinator = self._coordinator(
+            widget_host=MagicMock(),
+            confirm_run_wiring=MagicMock(return_value=True),
+        )
+        coordinator.config_page = page
+        coordinator.config = {}
+        coordinator.instrument_ctrl = port
+        coordinator.update_configuration_from_ui = MagicMock()
+        coordinator.save_configuration = MagicMock(return_value=True)
 
         prepared = SimpleNamespace(run_id=RUN_ID, run_directory=Path("runs") / RUN_ID)
         with patch(
-            "presentation.qt.main_window.prepare_configuration", return_value=prepared
+            "presentation.qt.application_coordinator.prepare_configuration",
+            return_value=prepared,
         ):
-            result = MainWindow._create_prepared_run(window)
+            result = coordinator.create_prepared_run()
 
         # 创建新运行必须释放旧连接的仪器端口，避免新运行复用旧配置的资源。
         self.assertIs(result, prepared)
-        window._close_instrument_port.assert_called_once_with(port)
-        self.assertIsNone(window.instrument_ctrl)
-        self.assertIs(window.prepared_run, prepared)
+        port.close_all.assert_called_once_with(close_rf=True)
+        self.assertIsNone(coordinator.instrument_ctrl)
+        self.assertIs(coordinator.prepared_run, prepared)
 
     def test_create_prepared_run_failure_keeps_previous_run_and_port(self):
-        from presentation.qt.main_window import MainWindow
-
-        port = object()
+        port = MagicMock()
         previous_run = object()
-        window = MainWindow.__new__(MainWindow)
-        window.config_page = MagicMock()
-        window.config_page.validate.return_value = True
-        window.config = {}
-        window.config_path = Path("config.json")
-        window.paths = None
-        window.instrument_ctrl = port
-        window.instrument_worker = None
-        window.prepared_run = previous_run
-        window.add_log_message = MagicMock()
-        window.update_config_from_ui = MagicMock()
-        window._confirm_create_run_wiring = MagicMock(return_value=True)
-        window._save_config_file = MagicMock(return_value=True)
-        window._update_run_status = MagicMock()
-        window._close_instrument_port = MagicMock()
+        page = MagicMock()
+        page.validate.return_value = True
+        warn = MagicMock()
+        coordinator = self._coordinator(
+            warn=warn,
+            widget_host=MagicMock(),
+            confirm_run_wiring=MagicMock(return_value=True),
+        )
+        coordinator.config_page = page
+        coordinator.config = {}
+        coordinator.instrument_ctrl = port
+        coordinator.prepared_run = previous_run
+        coordinator.update_configuration_from_ui = MagicMock()
+        coordinator.save_configuration = MagicMock(return_value=True)
 
         with patch(
-            "presentation.qt.main_window.prepare_configuration",
+            "presentation.qt.application_coordinator.prepare_configuration",
             side_effect=RuntimeError("创建运行失败：磁盘已满"),
-        ), patch("presentation.qt.main_window.QMessageBox.warning") as warning:
-            result = MainWindow._create_prepared_run(window)
+        ):
+            result = coordinator.create_prepared_run()
 
         # 创建失败不得切换运行、释放端口或报告为新状态。
         self.assertIsNone(result)
-        self.assertIs(window.prepared_run, previous_run)
-        self.assertIs(window.instrument_ctrl, port)
-        window._close_instrument_port.assert_not_called()
-        window._update_run_status.assert_not_called()
-        warning.assert_called_once()
+        self.assertIs(coordinator.prepared_run, previous_run)
+        self.assertIs(coordinator.instrument_ctrl, port)
+        port.close_all.assert_not_called()
+        warn.assert_called_once()
 
     def test_measurement_config_path_prefers_frozen_run_config(self):
-        from presentation.qt.main_window import MainWindow
-
-        window = MainWindow.__new__(MainWindow)
-        window.config_path = Path("global-config.json")
+        coordinator = self._coordinator()
         frozen = Path("runs") / RUN_ID / HARDWARE_CONFIG_INPUT_PATH
-        window.prepared_run = type(
+        coordinator.prepared_run = type(
             "PreparedRun",
             (),
             {"hardware_connection_path": lambda self: frozen},
         )()
 
-        self.assertEqual(MainWindow._measurement_config_path(window), str(frozen))
+        self.assertEqual(coordinator.measurement_config_path(), str(frozen))
 
-        # 未创建运行时才回退到全局兼容配置。
-        window.prepared_run = None
+        # 未创建运行时才回退到全局配置。
+        coordinator.prepared_run = None
         self.assertEqual(
-            MainWindow._measurement_config_path(window), str(Path("global-config.json"))
+            coordinator.measurement_config_path(), str(Path("global-config.json"))
         )
 
     def test_measurement_config_path_does_not_fallback_for_contract_run(self):
-        from presentation.qt.main_window import MainWindow
-
         cases = {
             "缺少快照字段": None,
             "空路径": "",
@@ -616,104 +624,79 @@ class MainWindowTwoPhaseTests(unittest.TestCase):
         }
         for label, value in cases.items():
             with self.subTest(case=label):
-                window = MainWindow.__new__(MainWindow)
-                window.config_path = Path("global-config.json")
-                window.prepared_run = _broken_contract_run(value)
+                coordinator = self._coordinator()
+                coordinator.prepared_run = _broken_contract_run(value)
 
                 # 运行契约存在但冻结硬件快照不可用：必须明确失败，绝不回退全局配置。
                 with self.assertRaises(RunNotResumable) as raised:
-                    MainWindow._measurement_config_path(window)
+                    coordinator.measurement_config_path()
 
                 self.assertIn("硬件配置快照", str(raised.exception))
                 self.assertNotIn("global-config.json", str(raised.exception))
                 self.assertIsInstance(raised.exception, ValueError)
 
     def test_missing_contract_resolver_is_rejected(self):
-        from presentation.qt.main_window import MainWindow
-
-        window = MainWindow.__new__(MainWindow)
-        window.config_path = Path("global-config.json")
+        coordinator = self._coordinator()
         # 对象没有契约校验入口（例如被替换成错误类型）也必须明确失败。
-        window.prepared_run = object()
+        coordinator.prepared_run = object()
 
         with self.assertRaisesRegex(RunNotResumable, "运行契约不可用"):
-            MainWindow._measurement_config_path(window)
+            coordinator.measurement_config_path()
 
     def test_invalid_contract_blocks_instrument_connection(self):
-        from presentation.qt.main_window import MainWindow
-
         cases = {
             "缺少快照字段": None,
             "快照文件不存在": Path("missing-hardware.json"),
         }
         for label, value in cases.items():
             with self.subTest(case=label):
-                window = MainWindow.__new__(MainWindow)
-                window.config_path = Path("global-config.json")
-                window.prepared_run = _broken_contract_run(value)
-                window.connect_btn = MagicMock()
-                window.instrument_worker = None
-                window.add_log_message = MagicMock()
-                window.update_and_save_config = MagicMock(return_value=True)
+                log = MagicMock()
+                warn = MagicMock()
+                coordinator = self._coordinator(log=log, warn=warn)
+                coordinator.prepared_run = _broken_contract_run(value)
 
                 with patch(
-                    "presentation.qt.main_window.InstrumentWorker"
-                ) as worker, patch(
-                    "presentation.qt.main_window.QMessageBox.warning"
-                ) as warning:
-                    MainWindow.connect_instruments(window)
+                    "presentation.qt.application_coordinator.InstrumentWorker"
+                ) as worker:
+                    started = coordinator.connect_instruments()
 
                 # 不得构造 InstrumentWorker，也不得留下工作线程引用。
+                self.assertFalse(started)
                 worker.assert_not_called()
-                self.assertIsNone(window.instrument_worker)
-                # 用户可以看到明确的失败提示，并重新启用连接按钮。
-                warning.assert_called_once()
-                self.assertIn("硬件配置快照", str(warning.call_args.args[2]))
-                window.connect_btn.setEnabled.assert_called_with(True)
+                self.assertIsNone(coordinator.instrument_worker)
+                # 用户可以看到明确的失败提示。
+                warn.assert_called_once()
+                self.assertIn("硬件配置快照", str(warn.call_args.args[1]))
                 self.assertTrue(
-                    any(
-                        "无法连接仪器" in str(call.args[0])
-                        for call in window.add_log_message.call_args_list
-                        if call.args
-                    )
+                    any("无法连接仪器" in str(call.args[0]) for call in log.call_args_list)
                 )
 
     def test_legacy_flow_still_uses_global_config(self):
         from app.run_context import PreparedRun
-        from presentation.qt.main_window import MainWindow
 
-        window = MainWindow.__new__(MainWindow)
-        window.config_path = Path("global-config.json")
-        window.prepared_run = None
+        coordinator = self._coordinator()
+        coordinator.prepared_run = None
         self.assertEqual(
-            MainWindow._measurement_config_path(window), str(Path("global-config.json"))
+            coordinator.measurement_config_path(), str(Path("global-config.json"))
         )
 
         # 旧兼容快照不带运行契约，仍使用创建时的源配置路径。
-        window.prepared_run = PreparedRun(
+        coordinator.prepared_run = PreparedRun(
             configuration=None,
             context=None,
             run_directory=Path("legacy-run"),
             config_path=Path("legacy-config.json"),
         )
         self.assertEqual(
-            MainWindow._measurement_config_path(window), str(Path("legacy-config.json"))
+            coordinator.measurement_config_path(), str(Path("legacy-config.json"))
         )
 
     def test_load_run_releases_previous_instrument_port(self):
-        from presentation.qt.main_window import MainWindow
-
-        port = object()
-        window = MainWindow.__new__(MainWindow)
-        window.instrument_ctrl = port
-        window.instrument_worker = None
-        window.config_path = Path("global-config.json")
-        window.paths = None
-        window.config_page = MagicMock()
-        window.add_log_message = MagicMock()
-        window._update_run_status = MagicMock()
-        window._close_instrument_port = MagicMock(return_value=None)
-        window.on_measurement_error = MagicMock()
+        port = MagicMock()
+        page = MagicMock()
+        coordinator = self._coordinator(widget_host=MagicMock())
+        coordinator.config_page = page
+        coordinator.instrument_ctrl = port
 
         prepared = type(
             "PreparedRun",
@@ -722,31 +705,32 @@ class MainWindowTwoPhaseTests(unittest.TestCase):
              "hardware_config": {"test_frequencies": [2.4]}},
         )()
         with patch(
-            "presentation.qt.main_window.load_prepared_run", return_value=prepared
+            "presentation.qt.application_coordinator.load_prepared_run",
+            return_value=prepared,
         ):
-            MainWindow._load_prepared_run(window, RUN_ID)
+            result = coordinator.load_prepared_run(RUN_ID)
 
-        window._close_instrument_port.assert_called_once_with(port)
-        self.assertIsNone(window.instrument_ctrl)
+        self.assertIs(result, prepared)
+        page.apply_config.assert_called_once_with({"test_frequencies": [2.4]})
+        port.close_all.assert_called_once_with(close_rf=True)
+        self.assertIsNone(coordinator.instrument_ctrl)
+        self.assertIs(coordinator.prepared_run, prepared)
+        self.assertEqual(coordinator.config, {"test_frequencies": [2.4]})
 
     def test_load_run_reports_backfill_failure_instead_of_success(self):
         from presentation.qt.config_page import ConfigBackfillError
-        from presentation.qt.main_window import MainWindow
 
-        current_port = object()
+        current_port = MagicMock()
         current_run = object()
-        window = MainWindow.__new__(MainWindow)
-        window.instrument_ctrl = current_port
-        window.instrument_worker = None
-        window.config_path = Path("global-config.json")
-        window.paths = None
-        window.prepared_run = current_run
-        window.config = {"sentinel": True}
-        window.config_page = MagicMock()
-        window.config_page.apply_config.side_effect = ConfigBackfillError("坏配置")
-        window.add_log_message = MagicMock()
-        window._update_run_status = MagicMock()
-        window._close_instrument_port = MagicMock()
+        log = MagicMock()
+        warn = MagicMock()
+        page = MagicMock()
+        page.apply_config.side_effect = ConfigBackfillError("坏配置")
+        coordinator = self._coordinator(log=log, warn=warn, widget_host=MagicMock())
+        coordinator.config_page = page
+        coordinator.instrument_ctrl = current_port
+        coordinator.prepared_run = current_run
+        coordinator.config = {"sentinel": True}
 
         prepared = type(
             "PreparedRun",
@@ -755,47 +739,104 @@ class MainWindowTwoPhaseTests(unittest.TestCase):
              "hardware_config": {"test_frequencies": [2.4]}},
         )()
         with patch(
-            "presentation.qt.main_window.load_prepared_run", return_value=prepared
-        ), patch("presentation.qt.main_window.QMessageBox.warning") as warning:
-            result = MainWindow._load_prepared_run(window, RUN_ID)
+            "presentation.qt.application_coordinator.load_prepared_run",
+            return_value=prepared,
+        ):
+            result = coordinator.load_prepared_run(RUN_ID)
 
         # 两阶段提交：回填失败必须放弃切换，绝不报告为加载成功。
         self.assertIsNone(result)
-        self.assertIs(window.prepared_run, current_run)
-        self.assertEqual(window.config, {"sentinel": True})
-        self.assertIs(window.instrument_ctrl, current_port)
-        window._close_instrument_port.assert_not_called()
-        window._update_run_status.assert_not_called()
-        warning.assert_called_once()
-        messages = [
-            str(call.args[0])
-            for call in window.add_log_message.call_args_list
-            if call.args
-        ]
+        self.assertIs(coordinator.prepared_run, current_run)
+        self.assertEqual(coordinator.config, {"sentinel": True})
+        self.assertIs(coordinator.instrument_ctrl, current_port)
+        current_port.close_all.assert_not_called()
+        warn.assert_called_once()
+        messages = [str(call.args[0]) for call in log.call_args_list if call.args]
         self.assertTrue(any("回填失败" in message for message in messages))
         self.assertFalse(any("已加载运行" in message for message in messages))
+
+    def test_measurement_port_is_owned_by_the_coordinator(self):
+        port = MagicMock()
+        coordinator = self._coordinator()
+
+        coordinator.accept_instrument_controller(port)
+
+        self.assertIs(coordinator.instrument_ctrl, port)
+        coordinator.controller.set_measurement_port.assert_called_once_with(port)
+
+    def test_measurement_completion_releases_port_only_for_measurement_kinds(self):
+        coordinator = self._coordinator()
+        coordinator.controller.state.kind = MeasurementKind.CABLE_LOSS
+        port = MagicMock()
+        coordinator.instrument_ctrl = port
+
+        coordinator.release_port_after_measurement()
+
+        port.close_all.assert_called_once_with(close_rf=True)
+        self.assertIsNone(coordinator.instrument_ctrl)
+
+        idle_port = MagicMock()
+        coordinator.controller.state.kind = None
+        coordinator.instrument_ctrl = idle_port
+        coordinator.release_port_after_measurement()
+        idle_port.close_all.assert_not_called()
+        self.assertIs(coordinator.instrument_ctrl, idle_port)
+
+
+class MainWindowCompositionTests(unittest.TestCase):
+    """窗口只剩组装职责：接线确认回调不得改写已冻结的配置。"""
 
     def test_confirm_wiring_does_not_rewrite_frozen_config(self):
         from presentation.qt.main_window import MainWindow
 
         window = MainWindow.__new__(MainWindow)
-        window.config = {"wiring": {"confirmed": True, "connection_note": "frozen"}}
-        window.instrument_ctrl = object()
-        window.measurement_controller = MagicMock()
+        window.coordinator = SimpleNamespace(
+            config={"wiring": {"confirmed": True, "connection_note": "frozen"}},
+            controller=MagicMock(),
+        )
         window.add_log_message = MagicMock()
-        window._save_config_file = MagicMock()
 
         self.assertTrue(MainWindow._confirm_cable_loss_wiring(window))
         self.assertTrue(MainWindow._confirm_driver_mapping_wiring(window))
         self.assertTrue(MainWindow._confirm_amplifier_wiring(window))
 
-        window._save_config_file.assert_not_called()
         self.assertEqual(
             window.config["wiring"],
             {"confirmed": True, "connection_note": "frozen"},
         )
         # 端口注入已从接线确认回调移到连接成功后的交接点。
         window.measurement_controller.set_measurement_port.assert_not_called()
+
+    def test_connect_instruments_restores_button_when_start_fails(self):
+        from presentation.qt.main_window import MainWindow
+
+        window = MainWindow.__new__(MainWindow)
+        window.connect_btn = MagicMock()
+        window.coordinator = MagicMock()
+        window.coordinator.connect_instruments.return_value = False
+
+        MainWindow.connect_instruments(window)
+
+        window.connect_btn.setEnabled.assert_any_call(False)
+        window.connect_btn.setEnabled.assert_called_with(True)
+
+    def test_instrument_worker_callbacks_delegate_to_the_coordinator(self):
+        from presentation.qt.main_window import MainWindow
+
+        window = MainWindow.__new__(MainWindow)
+        window.connect_btn = MagicMock()
+        window.progress_bar = MagicMock()
+        window.add_log_message = MagicMock()
+        window.coordinator = MagicMock()
+
+        with patch("presentation.qt.main_window.QMessageBox.critical") as critical:
+            MainWindow.on_instrument_error(window, "连接失败")
+
+        critical.assert_called_once()
+        window.coordinator.release_instrument_port.assert_called_once_with()
+
+        MainWindow.on_instrument_stopped(window, "用户停止")
+        self.assertEqual(window.coordinator.release_instrument_port.call_count, 2)
 
 
 class ConfigPageRunEntryTests(unittest.TestCase):

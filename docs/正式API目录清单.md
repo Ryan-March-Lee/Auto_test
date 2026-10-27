@@ -195,6 +195,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `instrument.measurement_adapter` | 测量服务端口的显式适配器：设备方法显式定义，不按方法名转发，也不从注入对象推导路由 |
 | `instrument.measurement_factory` | 硬件/离线测量端口装配：地址重复、角色缺失/重复、通道不存在均在连接任何仪器前失败 |
 | `instrument.safety` | 设备安全动作与资源所有权边界；关闭回调的安全标记按显式签名判定调用形式 |
+| `presentation.qt.application_coordinator` | GUI 运行协调器：配置、运行契约与仪器端口所有者 |
 | `presentation.qt.assistant.chat_dialogs` | 助手对话对话框 |
 | `presentation.qt.assistant.chat_panel` | 助手聊天面板 |
 | `presentation.qt.assistant.chat_worker` | 助手后台 worker |

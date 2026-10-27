@@ -1,82 +1,38 @@
-"""主窗口和 Qt 应用组装。"""
+"""主窗口：Qt 窗口组装、页面注册和信号连接。
+
+配置读写、运行创建/加载、仪器连接和端口生命周期由
+:class:`presentation.qt.application_coordinator.ApplicationCoordinator` 持有；
+窗口只负责把用户意图转发给协调器、连接 Qt 信号并把结果展示给用户。
+"""
 
 import sys
-import os
 from datetime import datetime, timezone
-from pathlib import Path
-from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QTabWidget, QLabel, QLineEdit, QPushButton, QTextEdit, QGroupBox,
-    QSpinBox, QDoubleSpinBox, QComboBox, QCheckBox, QProgressBar,
-    QSplitter, QFrame, QGridLayout, QMessageBox, QFormLayout, QScrollArea,
-    QDialog, QListWidget
-)
+
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QPalette
-
-# 导入我们的测试模块和连接图
-from presentation.qt.pages import PageContext, build_pages
-from presentation.qt.measurement_controller import MeasurementController
-from presentation.qt.measurement_state import MeasurementKind, MeasurementResultReference
-from presentation.qt.measurement_worker_factories import build_measurement_worker_factories
-from presentation.qt.workers import BaseWorker, InstrumentWorker
-import sys
-import os
-# 保持从旧入口启动时的项目根目录导入行为。
-project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-from infrastructure.filesystem.paths import (
-    DEFAULT_PATHS,
-    PathService,
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QMainWindow,
+    QMessageBox,
+    QSplitter,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
 )
-# Legacy patch target; normal instances use the injected PathService.
-CONFIG_FILE = DEFAULT_PATHS.config_file
-from application.gui_data_service import GuiDataService
-from application.run_service import RunNotResumable
-from presentation.qt.composition import build_gui_data_service
-from app.gui_runtime import load_prepared_run, prepare_configuration
+
+from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService
 from infrastructure.logging.app_logging import setup_logging
-from assistant.storage import (
-    has_current_history,
-    list_history_files,
-    load_history_file,
-    load_search_api_config,
-    save_search_api_config,
-)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# Phase 3.1 compatibility exports.  MainWindow and legacy callers use the
-# extracted components; the legacy implementations above remain private during
-# the incremental migration and are not part of the public API.
-from presentation.qt.connection_dialog import ConnectionDialog
-from presentation.qt.realtime_plot import RealTimePlotWidget
+from presentation.qt.application_coordinator import ApplicationCoordinator
 from presentation.qt.assistant.chat_panel import ChatPanel
-from presentation.qt.assistant.chat_worker import UnavailableAssistant as _UnavailableAssistant
-from presentation.qt.assistant.chat_worker import ChatWorker
-from presentation.qt.assistant.chat_dialogs import ChatHistoryDialog, ChatSettingsDialog
-from presentation.qt.config_form_state import ConfigFormState
-from presentation.qt.config_page import ConfigBackfillError, ConfigPage
-from presentation.qt.configuration_authoring import author_official_configuration
-from presentation.qt.visualization_page import VisualizationPage
+from presentation.qt.config_page import ConfigPage
+from presentation.qt.connection_dialog import ConnectionDialog
 from presentation.qt.export_page import ExportPage
+from presentation.qt.measurement_state import MeasurementKind, MeasurementResultReference
+from presentation.qt.pages import PageContext, build_pages
+from presentation.qt.realtime_plot import RealTimePlotWidget
 from presentation.qt.status_panel import StatusPanel
-from presentation.qt.realtime_buffer import RealtimeMeasurementBuffer, normalize_frequency
-
+from presentation.qt.visualization_page import VisualizationPage
 
 APPLICATION_STYLE = """
 QMainWindow { background-color: white; }
@@ -149,26 +105,21 @@ def apply_light_theme(app: QApplication) -> None:
 
 
 class MainWindow(QMainWindow):
-    """主窗口类"""
+    """主窗口：只组装 Qt 界面、注册页面并连接信号。"""
 
     def __init__(self, config_path=None, *, paths: PathService | None = None):
         super().__init__()
         self.paths = paths or DEFAULT_PATHS
-        self.config_path = Path(config_path or self.paths.config_file)
-        self.gui_data_service: GuiDataService = build_gui_data_service(
-            self.paths, config_path=self.config_path
-        )
         self.setWindowTitle("PA自动测试系统 v1.0")
         self.setGeometry(100, 100, 1600, 1000)
-        
-        # 初始化变量
-        self.config = {}
-        self.instrument_ctrl = None
-        self.instrument_worker = None
-        # 配置阶段创建（或按 run_id 重新打开）的当前运行契约；测量页面只消费它。
-        self.prepared_run = None
-        self.measurement_controller = MeasurementController(
-            build_measurement_worker_factories(), self._measurement_config_path
+        self.coordinator = ApplicationCoordinator(
+            log=self.add_log_message,
+            warn=lambda title, message: QMessageBox.warning(self, title, message),
+            error=self.on_measurement_error,
+            paths=self.paths,
+            config_path=config_path,
+            widget_host=self,
+            confirm_run_wiring=self._confirm_create_run_wiring,
         )
         self.measurement_controller.signals.thread_finished.connect(
             self._on_measurement_controller_thread_finished
@@ -176,21 +127,32 @@ class MainWindow(QMainWindow):
         self.measurement_controller.signals.finished.connect(self.refresh_file_list)
         self.measurement_controller.signals.message.connect(self.add_log_message)
         self.measurement_controller.signals.rejected.connect(self.add_log_message)
-        
-        # 实时绘图由页面拥有；这里仅保留聊天上下文所需的统一浏览缓存。
-        self.realtime_buffer = RealtimeMeasurementBuffer()
-        
-        # 加载配置
-        self.load_config()
-        
-        # 初始化UI
+        self.coordinator.load_configuration()
         self.init_ui()
-        
-        # 设置定时器用于日志更新
         self.log_timer = QTimer()
         self.log_timer.timeout.connect(self.update_status)
         self.log_timer.start(100)  # 100ms更新一次
-        
+
+    # ---- 协调器持有的状态（只读转发，保证窗口与协调器只有一个数据源） ----
+
+    @property
+    def measurement_controller(self):
+        return self.coordinator.controller
+
+    @property
+    def gui_data_service(self):
+        return self.coordinator.gui_data_service
+
+    @property
+    def config(self):
+        return self.coordinator.config
+
+    @property
+    def prepared_run(self):
+        return self.coordinator.prepared_run
+
+    # ---- 页面数据（聊天上下文只通过这些只读视图取数据） ----
+
     @property
     def loaded_data(self):
         return self.visualization_page.loaded_data
@@ -219,92 +181,59 @@ class MainWindow(QMainWindow):
     def loaded_filename(self):
         return self.visualization_page.loaded_filename
 
-    @loaded_filename.setter
-    def loaded_filename(self, value):
-        self.visualization_page.loaded_filename = value
-
     @property
     def real_time_data(self):
-        return self.realtime_buffer.data
+        return self.coordinator.realtime_buffer.data
 
     @property
     def rt_frequency_list(self):
-        return self.realtime_buffer.frequencies
+        return self.coordinator.realtime_buffer.frequencies
 
     @property
     def rt_current_freq_index(self):
-        return self.realtime_buffer.current_index
+        return self.coordinator.realtime_buffer.current_index
 
     @rt_current_freq_index.setter
     def rt_current_freq_index(self, value):
-        self.realtime_buffer.current_index = value
+        self.coordinator.realtime_buffer.current_index = value
 
     @property
     def rt_user_browsing(self):
-        return self.realtime_buffer.user_browsing
+        return self.coordinator.realtime_buffer.user_browsing
 
     @rt_user_browsing.setter
     def rt_user_browsing(self, value):
-        self.realtime_buffer.user_browsing = value
+        self.coordinator.realtime_buffer.user_browsing = value
 
-    @property
-    def log_user_scrolling(self):
-        return self.status_panel.log_user_scrolling
+    # ---- 窗口组装 ----
 
-    @log_user_scrolling.setter
-    def log_user_scrolling(self, value):
-        self.status_panel.log_user_scrolling = value
-
-    def load_config(self):
-        """加载配置文件"""
-        try:
-            self.config = dict(self.gui_data_service.configuration.load())
-        except Exception as e:
-            QMessageBox.warning(self, "配置加载", f"无法加载配置文件: {e}")
-            self.config = {}
-    
     def init_ui(self):
         """初始化用户界面"""
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        
-        # 主布局改为水平分割器
+
         main_splitter = QSplitter(Qt.Horizontal)
-        
-        # 左侧主要内容区域
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
-        
-        # 创建选项卡
         self.tab_widget = QTabWidget()
         left_layout.addWidget(self.tab_widget)
-        
-        # 页面由 presentation 层构造；窗口只登记页面并提供全局 UI 回调。
         self._register_pages()
-        
-        # 状态栏和控制面板
         self.create_status_panel(left_layout)
-        
-        # 添加左侧到分割器
         main_splitter.addWidget(left_widget)
-        
-        # 右侧聊天面板
+
         self.chat_panel = ChatPanel(self, paths=self.paths)
         self.chat_panel.setMinimumWidth(350)
         self.chat_panel.setMaximumWidth(600)
         main_splitter.addWidget(self.chat_panel)
-        
-        # 设置分割器比例 (主要内容:聊天面板 = 3:1)
+
         main_splitter.setSizes([900, 350])
         main_splitter.setStretchFactor(0, 3)
         main_splitter.setStretchFactor(1, 1)
-        
-        # 设置中央布局
+
         central_layout = QVBoxLayout(central_widget)
         central_layout.setContentsMargins(0, 0, 0, 0)
         central_layout.addWidget(main_splitter)
-        
-        # 初始化聊天面板状态（默认隐藏）
+
         self.chat_panel.hide()
         self.chat_visible = False
 
@@ -312,20 +241,20 @@ class MainWindow(QMainWindow):
         """构造页面并登记 tab；测量页面通过共享 controller 连接。"""
         context = PageContext(
             controller=self.measurement_controller,
-            config_path_provider=self._measurement_config_path,
-            run_provider=self._resolve_measurement_run,
+            config_path_provider=self.coordinator.measurement_config_path,
+            run_provider=self.coordinator.resolve_measurement_run,
             confirm_cable_loss=self._confirm_cable_loss_wiring,
             confirm_driver_mapping=self._confirm_driver_mapping_wiring,
             confirm_amplifier=self._confirm_amplifier_wiring,
-            driver_mode_provider=self._amplifier_driver_mode,
+            driver_mode_provider=self.coordinator.amplifier_driver_mode,
             connection_dialog_factory=lambda kind, parent: ConnectionDialog(kind, parent),
             plot_widget_factory=lambda _parent: RealTimePlotWidget(show_nav_buttons=True),
             log_callback=self.add_log_message,
             progress_callback=lambda value: getattr(self, "progress_bar", None)
             and self.progress_bar.setValue(value),
             error_callback=lambda message: self.on_measurement_error(message),
-            driver_realtime_data_callback=self._store_driver_mapping_realtime_data,
-            amplifier_realtime_data_callback=self._store_amplifier_realtime_data,
+            driver_realtime_data_callback=self.coordinator.store_realtime_data,
+            amplifier_realtime_data_callback=self.coordinator.store_realtime_data,
             clear_realtime_callback=self.clear_real_time_data,
             build_configuration=self.create_config_tab,
             build_visualization=self.create_visualization_tab,
@@ -343,16 +272,6 @@ class MainWindow(QMainWindow):
         self.cable_loss_page = self.pages["cable_loss"]
         self.driver_mapping_page = self.pages["driver_mapping"]
         self.amplifier_page = self.pages["amplifier"]
-        self.cable_loss_btn = self.cable_loss_page.cable_loss_btn
-        self.cable_loss_table = self.cable_loss_page.cable_loss_table
-        self.driver_mapping_btn = self.driver_mapping_page.driver_mapping_btn
-        self.driver_stop_btn = self.driver_mapping_page.driver_stop_btn
-        self.driver_emergency_stop_btn = self.driver_mapping_page.driver_emergency_stop_btn
-        self.driver_plot_widget = self.driver_mapping_page.driver_plot_widget
-        self.instruction_text = self.amplifier_page.instruction_text
-        self.amplifier_test_btn = self.amplifier_page.amplifier_test_btn
-        self.emergency_stop_btn = self.amplifier_page.emergency_stop_btn
-        self.amplifier_plot_widget = self.amplifier_page.amplifier_plot_widget
         self.cable_loss_page.load_result_requested.connect(self._load_cable_loss_result)
 
     def _on_page_changed(self, index):
@@ -366,6 +285,162 @@ class MainWindow(QMainWindow):
         if 0 <= index < len(pages):
             pages[index].on_activated()
         self._active_page_index = index
+
+    def create_config_tab(self):
+        """创建仪器配置选项卡；配置页与协调器在这里互相登记。"""
+        tab = ConfigPage(self.config, self)
+        tab.save_requested.connect(self.save_config)
+        tab.connect_requested.connect(self.connect_instruments)
+        tab.create_run_requested.connect(self.coordinator.create_prepared_run)
+        tab.load_run_requested.connect(self.coordinator.load_prepared_run)
+        tab.validation_failed.connect(
+            lambda message: self.add_log_message(f"配置校验失败: {message}")
+        )
+        tab.driver_mode_changed.connect(
+            lambda _checked: self.update_amplifier_instruction_text()
+        )
+        self.config_page = tab
+        self.coordinator.bind_config_page(tab)
+        return tab
+
+    def create_visualization_tab(self):
+        """创建数据可视化选项卡"""
+        self.visualization_page = VisualizationPage(
+            config_provider=lambda: self.config,
+            result_loader=self.gui_data_service.results.choose_and_load,
+            # 报告兜底使用最新正式运行结果；正式测量输入只来自当前运行 manifest。
+            latest_result_provider=self.gui_data_service.results.latest_result,
+            report_service=self.gui_data_service.reports.create_summary_report,
+            log_callback=self.add_log_message,
+            parent=self,
+        )
+        self.load_data_btn = self.visualization_page.load_data_btn
+        self.generate_report_btn = self.visualization_page.generate_report_btn
+        self.freq_prev_btn = self.visualization_page.freq_prev_btn
+        self.freq_label = self.visualization_page.freq_label
+        self.freq_next_btn = self.visualization_page.freq_next_btn
+        self.data_plot_widget = self.visualization_page.data_plot_widget
+        return self.visualization_page
+
+    def create_data_export_tab(self):
+        """创建数据导出选项卡"""
+        self.export_page = ExportPage(
+            result_service=self.gui_data_service.results,
+            log_callback=self.add_log_message,
+            parent=self,
+        )
+        self.file_table = self.export_page.file_table
+        self.export_json_btn = self.export_page.export_json_btn
+        self.export_csv_btn = self.export_page.export_csv_btn
+        self.export_pdf_btn = self.export_page.export_pdf_btn
+        return self.export_page
+
+    def create_status_panel(self, main_layout):
+        """创建状态面板"""
+        self.status_panel = StatusPanel(
+            chat_toggle_callback=self.toggle_chat_panel,
+            parent=self,
+        )
+        self.progress_bar = self.status_panel.progress_bar
+        self.log_text = self.status_panel.log_text
+        self.ai_assistant_btn = self.status_panel.ai_assistant_btn
+        main_layout.addWidget(self.status_panel)
+
+    # ---- 配置与运行入口（逻辑在协调器，窗口只转发） ----
+
+    def save_config(self):
+        """保存配置：文件写入由协调器完成，提示与对话框留在窗口。"""
+        self.coordinator.update_configuration_from_ui()
+        if not self.coordinator.save_configuration():
+            error = self.coordinator.last_save_error
+            self.add_log_message(f"配置保存失败: {error}")
+            QMessageBox.warning(self, "保存失败", f"配置保存失败: {error}")
+            return
+        self.add_log_message("配置已保存")
+        if self.prepared_run is not None:
+            self.add_log_message(
+                f"注意：当前运行 {self.prepared_run.run_id} 的配置已冻结；"
+                "若要使用本次修改，请重新“校验并创建运行”"
+            )
+        QMessageBox.information(self, "保存成功", "配置文件已保存")
+
+    def _confirm_create_run_wiring(self, config) -> bool:
+        """创建运行前确认现场接线，并把确认固化到即将冻结的配置中。"""
+        driver_enabled = self.config_page.driver_mode_check.isChecked()
+        diagram = "amplifier_test" if driver_enabled else "amplifier_test_no_driver"
+        if ConnectionDialog(diagram, self).exec() != QDialog.Accepted:
+            return False
+        config.setdefault("wiring", {}).update({
+            "confirmed": True,
+            "connection_note": "已通过创建运行连接确认对话框确认现场接线",
+            "confirmed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "confirmation_source": "create_run_dialog",
+        })
+        self.config_page.config = config
+        return True
+
+    def _confirm_cable_loss_wiring(self):
+        """线损测量前的现场接线确认；运行已冻结，不再改写配置。"""
+        self.add_log_message("线损路径1现场接线已确认")
+        return True
+
+    def _confirm_driver_mapping_wiring(self):
+        """驱动映射测量前的现场接线确认；运行已冻结，不再改写配置。"""
+        self.add_log_message("驱动映射现场接线已确认")
+        return True
+
+    def _confirm_amplifier_wiring(self):
+        """主功放测量前的现场接线确认；运行已冻结，不再改写配置。"""
+        self.add_log_message("主功放现场接线已确认")
+        return True
+
+    # ---- 仪器连接（端口与 worker 归协调器，窗口只连接信号） ----
+
+    def connect_instruments(self):
+        """连接仪器；连接成功前按钮保持禁用。"""
+        self.connect_btn.setEnabled(False)
+        if not self.coordinator.connect_instruments(self._bind_instrument_worker_signals):
+            self.connect_btn.setEnabled(True)
+
+    def _bind_instrument_worker_signals(self, worker):
+        worker.signals.finished.connect(self.on_instrument_connected)
+        worker.signals.result.connect(self.on_instrument_controller_ready)
+        worker.signals.stopped.connect(self.on_instrument_stopped)
+        worker.signals.error.connect(self.on_instrument_error)
+        worker.signals.message.connect(self.add_log_message)
+        worker.signals.progress.connect(self.progress_bar.setValue)
+
+    def on_instrument_controller_ready(self, controller):
+        """端口交接：协调器保存端口并注入 controller。"""
+        self.coordinator.accept_instrument_controller(controller)
+
+    def on_instrument_connected(self):
+        """仪器连接完成"""
+        self.connect_btn.setEnabled(True)
+        self.progress_bar.setValue(0)
+        self.add_log_message("所有仪器连接成功！")
+
+    def on_instrument_error(self, error_message):
+        """处理仪器连接 worker 的错误。"""
+        self.add_log_message(f"错误: {error_message}")
+        QMessageBox.critical(self, "错误", error_message)
+        # 连接 worker 失败时只恢复连接控件；测量页面由 controller 状态驱动。
+        self.connect_btn.setEnabled(True)
+        self.progress_bar.setValue(0)
+        self.coordinator.release_instrument_port()
+
+    def on_instrument_stopped(self, reason):
+        """处理仪器连接 worker 的停止。"""
+        self.add_log_message(f"仪器连接线程已停止: {reason}")
+        self.connect_btn.setEnabled(True)
+        self.progress_bar.setValue(0)
+        self.coordinator.release_instrument_port()
+
+    def _on_measurement_controller_thread_finished(self):
+        """测量线程结束后释放端口；端口所有权在协调器。"""
+        self.coordinator.release_port_after_measurement()
+
+    # ---- 页面动作转发 ----
 
     def _load_cable_loss_result(self):
         """读取最新正式运行目录结果，仅供历史查看；不会成为任何运行的输入。
@@ -386,6 +461,10 @@ class MainWindow(QMainWindow):
         except Exception as error:
             self.add_log_message(f"加载线损测量结果失败: {error}")
 
+    def refresh_file_list(self):
+        """刷新文件列表"""
+        return self.export_page.refresh_file_list()
+
     def toggle_chat_panel(self):
         """切换聊天面板显示/隐藏"""
         if self.chat_visible:
@@ -393,973 +472,26 @@ class MainWindow(QMainWindow):
             self.ai_assistant_btn.setChecked(False)
             self.ai_assistant_btn.setText("💬 CHAT")
             self.chat_visible = False
-        else:
-            self.chat_panel.show()
-            self.ai_assistant_btn.setChecked(True)
-            self.ai_assistant_btn.setText("💬 隐藏CHAT")
-            self.chat_visible = True
-            # 欢迎消息
-            if hasattr(self.chat_panel, 'chat_display'):
-                # 动态获取当前使用的模型名称
-                model_name = getattr(self.chat_panel.llm_chat, 'model_name', '').lower()
-                if 'qwen' in model_name:
-                    model_display_name = 'Qwen'
-                elif 'deepseek' in model_name:
-                    model_display_name = 'DeepSeek'
-                else:
-                    model_display_name = getattr(self.chat_panel.llm_chat, 'model_name', 'AI')
-                    
-                welcome_msg = f"你好！我是{model_display_name} AI助手，专门为功放测试系统提供技术支持。我可以帮你：\n\n• 分析测试数据和结果\n• 诊断测试过程中的问题\n• 提供功放设计和测试建议\n• 解答技术疑问\n\n有什么需要帮助的吗？"
-                self.chat_panel.add_assistant_message(welcome_msg)
-        
-    def create_config_tab(self):
-        """创建仪器配置选项卡"""
-        tab = ConfigPage(self.config, self)
-        tab.save_requested.connect(self.save_config)
-        tab.connect_requested.connect(self.connect_instruments)
-        tab.create_run_requested.connect(self._create_prepared_run)
-        tab.load_run_requested.connect(self._load_prepared_run)
-        tab.validation_failed.connect(lambda message: self.add_log_message(f"配置校验失败: {message}"))
-        tab.driver_mode_changed.connect(lambda _checked: self.update_amplifier_instruction_text())
-        self.config_page = tab
-        self._install_config_compatibility_aliases(tab)
-        return tab
-
-    def _install_config_compatibility_aliases(self, page):
-        """兼容旧测试和外部入口；配置控件的所有权仍属于 ConfigPage。"""
-        for name in (
-            'sg_address', 'sg_enabled', 'sa_address', 'sa_enabled',
-            'ps1_address', 'ps1_enabled', 'ps2_address', 'ps2_enabled',
-            'ps3_address', 'ps3_enabled', 'ps4_address', 'ps4_enabled',
-            'freq_edit', 'start_power', 'stop_power', 'power_step',
-            'compression_combo', 'attenuator_combo', 'driver_mode_check',
-            'max_input_power', 'pa_unit_count_combo', 'power_config_widgets',
-            'power_assignment_widgets', 'driver_power_enabled',
-            'driver_power_combo', 'driver_power_label', 'pa_unit1_power_combo',
-            'pa_unit2_power_combo', 'pa_unit2_label', 'pa_unit3_power_combo',
-            'pa_unit3_label', 'connect_btn', 'save_config_btn',
-            'create_run_btn', 'load_run_btn', 'load_run_id_edit', 'run_status_label',
-        ):
-            setattr(self, name, getattr(page, name))
-
-        # 以下旧实现只保留为兼容入口，具体状态逻辑由页面持有。
-        return page
-
-        '''Legacy configuration-page implementation retained temporarily for source compatibility.
-        layout = QVBoxLayout(tab)
-        
-        # 创建滚动区域
-        scroll = QScrollArea()
-        scroll_widget = QWidget()
-        scroll_layout = QVBoxLayout(scroll_widget)
-        
-        # 仪器连接组
-        connection_group = QGroupBox("仪器连接配置")
-        connection_layout = QGridLayout(connection_group)
-        
-        # 设置列宽比例 - 标签、地址输入框、启用复选框
-        connection_layout.setColumnStretch(0, 1)  # 标签列
-        connection_layout.setColumnStretch(1, 3)  # 输入框列，更宽
-        connection_layout.setColumnStretch(2, 0)  # 复选框列，固定宽度
-        
-        # 信号源配置
-        connection_layout.addWidget(QLabel("信号发生器地址:"), 0, 0)
-        self.sg_address = QLineEdit(self.config.get('instruments', {}).get('signal_generator', {}).get('address', ''))
-        self.sg_address.setMinimumWidth(350)  # 设置最小宽度
-        connection_layout.addWidget(self.sg_address, 0, 1)
-        self.sg_enabled = QCheckBox("启用")
-        self.sg_enabled.setChecked(self.config.get('instruments', {}).get('signal_generator', {}).get('enabled', True))  # 从配置加载启用状态
-        self.sg_enabled.toggled.connect(self.on_instrument_enabled_changed)
-        connection_layout.addWidget(self.sg_enabled, 0, 2)
-        
-        # 频谱仪配置  
-        connection_layout.addWidget(QLabel("频谱分析仪地址:"), 1, 0)
-        self.sa_address = QLineEdit(self.config.get('instruments', {}).get('spectrum_analyzer', {}).get('address', ''))
-        self.sa_address.setMinimumWidth(350)
-        connection_layout.addWidget(self.sa_address, 1, 1)
-        self.sa_enabled = QCheckBox("启用")
-        self.sa_enabled.setChecked(self.config.get('instruments', {}).get('spectrum_analyzer', {}).get('enabled', True))  # 从配置加载启用状态
-        self.sa_enabled.toggled.connect(self.on_instrument_enabled_changed)
-        connection_layout.addWidget(self.sa_enabled, 1, 2)
-        
-        # 电源配置
-        connection_layout.addWidget(QLabel("电源1地址:"), 2, 0)
-        self.ps1_address = QLineEdit(self.config.get('instruments', {}).get('power_supplies', {}).get('PS1', {}).get('address', ''))
-        self.ps1_address.setMinimumWidth(350)
-        connection_layout.addWidget(self.ps1_address, 2, 1)
-        self.ps1_enabled = QCheckBox("启用")
-        self.ps1_enabled.setChecked(self.config.get('instruments', {}).get('power_supplies', {}).get('PS1', {}).get('enabled', True))
-        self.ps1_enabled.toggled.connect(self.on_instrument_enabled_changed)
-        connection_layout.addWidget(self.ps1_enabled, 2, 2)
-        
-        connection_layout.addWidget(QLabel("电源2地址:"), 3, 0)
-        self.ps2_address = QLineEdit(self.config.get('instruments', {}).get('power_supplies', {}).get('PS2', {}).get('address', ''))
-        self.ps2_address.setMinimumWidth(350)
-        connection_layout.addWidget(self.ps2_address, 3, 1)
-        self.ps2_enabled = QCheckBox("启用")
-        self.ps2_enabled.setChecked(self.config.get('instruments', {}).get('power_supplies', {}).get('PS2', {}).get('enabled', True))
-        self.ps2_enabled.toggled.connect(self.on_instrument_enabled_changed)
-        connection_layout.addWidget(self.ps2_enabled, 3, 2)
-        
-        connection_layout.addWidget(QLabel("电源3地址:"), 4, 0)
-        self.ps3_address = QLineEdit(self.config.get('instruments', {}).get('power_supplies', {}).get('PS3', {}).get('address', ''))
-        self.ps3_address.setMinimumWidth(350)
-        connection_layout.addWidget(self.ps3_address, 4, 1)
-        self.ps3_enabled = QCheckBox("启用")
-        self.ps3_enabled.setChecked(self.config.get('instruments', {}).get('power_supplies', {}).get('PS3', {}).get('enabled', False))
-        self.ps3_enabled.toggled.connect(self.on_instrument_enabled_changed)
-        connection_layout.addWidget(self.ps3_enabled, 4, 2)
-        
-        connection_layout.addWidget(QLabel("电源4地址:"), 5, 0)
-        self.ps4_address = QLineEdit(self.config.get('instruments', {}).get('power_supplies', {}).get('PS4', {}).get('address', ''))
-        self.ps4_address.setMinimumWidth(350)
-        connection_layout.addWidget(self.ps4_address, 5, 1)
-        self.ps4_enabled = QCheckBox("启用")
-        self.ps4_enabled.setChecked(self.config.get('instruments', {}).get('power_supplies', {}).get('PS4', {}).get('enabled', False))
-        self.ps4_enabled.toggled.connect(self.on_instrument_enabled_changed)
-        connection_layout.addWidget(self.ps4_enabled, 5, 2)
-        
-        # 连接按钮
-        self.connect_btn = QPushButton("连接仪器")
-        self.connect_btn.clicked.connect(tab.connect_requested.emit)
-        connection_layout.addWidget(self.connect_btn, 6, 0, 1, 2)
-        
-        # 创建主要内容的水平布局
-        main_content_widget = QWidget()
-        main_content_layout = QHBoxLayout(main_content_widget)
-        main_content_layout.setContentsMargins(0, 0, 0, 0)
-        
-        # 左侧区域 - 包含仪器连接和测试参数
-        left_widget = QWidget()
-        left_layout = QVBoxLayout(left_widget)
-        left_layout.setContentsMargins(0, 0, 10, 0)
-        
-        left_layout.addWidget(connection_group)
-        
-        # 测试参数配置组
-        params_group = QGroupBox("测试参数配置")
-        params_layout = QGridLayout(params_group)
-        
-        # 设置列宽比例 - 与上面的连接配置保持一致
-        params_layout.setColumnStretch(0, 1)  # 标签列
-        params_layout.setColumnStretch(1, 3)  # 输入框列，更宽
-        
-        # 测试频率
-        params_layout.addWidget(QLabel("测试频率 (GHz):"), 0, 0)
-        self.freq_edit = QLineEdit(str(self.config.get('test_frequencies', [4.0, 4.4, 4.8, 5.2, 5.6, 5.8])))
-        self.freq_edit.setMinimumWidth(350)  # 保持与上面一致的宽度
-        params_layout.addWidget(self.freq_edit, 0, 1)
-        
-        # 功率范围
-        params_layout.addWidget(QLabel("起始功率 (dBm):"), 1, 0)
-        self.start_power = QDoubleSpinBox()
-        self.start_power.setRange(-50.0, 20.0)
-        self.start_power.setDecimals(1)  # 支持小数点后一位
-        self.start_power.setValue(self.config.get('signal_source', {}).get('start_power', -38))
-        self.start_power.setMinimumWidth(150)
-        params_layout.addWidget(self.start_power, 1, 1)
-        
-        params_layout.addWidget(QLabel("结束功率 (dBm):"), 2, 0)
-        self.stop_power = QDoubleSpinBox()
-        self.stop_power.setRange(-50.0, 20.0)
-        self.stop_power.setDecimals(1)  # 支持小数点后一位
-        self.stop_power.setValue(self.config.get('signal_source', {}).get('stop_power', -16))
-        self.stop_power.setMinimumWidth(150)
-        params_layout.addWidget(self.stop_power, 2, 1)
-        
-        params_layout.addWidget(QLabel("功率步长 (dB):"), 3, 0)
-        self.power_step = QDoubleSpinBox()
-        self.power_step.setRange(0.1, 5.0)
-        self.power_step.setValue(self.config.get('signal_source', {}).get('step', 1))
-        self.power_step.setMinimumWidth(150)
-        params_layout.addWidget(self.power_step, 3, 1)
-        
-        # 压缩点选择
-        params_layout.addWidget(QLabel("压缩点:"), 4, 0)
-        self.compression_combo = QComboBox()
-        self.compression_combo.addItems(["1dB", "3dB", "5dB"])
-        self.compression_combo.setCurrentText(self.config.get('compression_point', {}).get('type', '5dB'))
-        self.compression_combo.setMinimumWidth(150)
-        params_layout.addWidget(self.compression_combo, 4, 1)
-        
-        # 衰减器选择
-        params_layout.addWidget(QLabel("衰减器:"), 5, 0)
-        self.attenuator_combo = QComboBox()
-        self.attenuator_combo.addItems(["30dB", "40dB"])
-        self.attenuator_combo.setCurrentText(self.config.get('attenuator', {}).get('type', '40dB'))
-        self.attenuator_combo.setMinimumWidth(150)
-        params_layout.addWidget(self.attenuator_combo, 5, 1)
-        
-        # 驱动模式
-        self.driver_mode_check = QCheckBox("启用驱动功放模式")
-        self.driver_mode_check.setChecked(self.config.get('driver_mode', {}).get('enabled', True))
-        self.driver_mode_check.toggled.connect(self.on_driver_mode_toggled)
-        params_layout.addWidget(self.driver_mode_check, 6, 0, 1, 2)
-        
-        # DUT最大输入功率保护
-        params_layout.addWidget(QLabel("DUT最大输入功率 (dBm):"), 7, 0)
-        self.max_input_power = QDoubleSpinBox()
-        self.max_input_power.setRange(0, 50)
-        self.max_input_power.setValue(self.config.get('dut_config', {}).get('max_input_power', 33.5))
-        self.max_input_power.setMinimumWidth(150)
-        params_layout.addWidget(self.max_input_power, 7, 1)
-        
-        # PA单元数量配置
-        params_layout.addWidget(QLabel("PA单元数量:"), 8, 0)
-        self.pa_unit_count_combo = QComboBox()
-        self.pa_unit_count_combo.addItems(["1", "2", "3"])
-        # 从配置中获取当前的PA单元数量，默认为2
-        current_count = self.config.get('dut_config', {}).get('power_supply_count', 2)
-        self.pa_unit_count_combo.setCurrentText(str(current_count))
-        self.pa_unit_count_combo.currentTextChanged.connect(self.on_pa_unit_count_changed)
-        self.pa_unit_count_combo.setMinimumWidth(150)
-        params_layout.addWidget(self.pa_unit_count_combo, 8, 1)
-        
-        left_layout.addWidget(params_group)
-        
-        # 添加左侧区域到主布局
-        main_content_layout.addWidget(left_widget)
-        
-        # 右侧电源配置区域
-        right_power_widget = QWidget()
-        right_power_layout = QVBoxLayout(right_power_widget)
-        right_power_layout.setContentsMargins(10, 10, 10, 10)
-        
-        # 电源配置组
-        self.create_power_supply_config(right_power_layout)
-        
-        # 电源分配组  
-        self.create_power_assignment_config(right_power_layout)
-        
-        # 添加右侧区域到主布局
-        main_content_layout.addWidget(right_power_widget)
-        
-        # 将主内容添加到滚动布局
-        scroll_layout.addWidget(main_content_widget)
-        
-        scroll.setWidget(scroll_widget)
-        layout.addWidget(scroll)
-        
-        return tab'''
-    
-    '''Legacy configuration helpers removed in Phase 3.2; ConfigPage owns this UI.
-
-    def create_power_supply_config(self, parent_layout):
-        """创建电源详细配置"""
-        power_group = QGroupBox("电源详细配置")
-        power_layout = QVBoxLayout(power_group)
-        
-        # 创建电源配置的标签页
-        power_tabs = QTabWidget()
-        
-        # 存储电源配置控件的字典
-        self.power_config_widgets = {}
-        
-        # 设置电源配置的白色背景样式
-        power_tabs.setStyleSheet("""
-            QTabWidget::pane {
-                background-color: white;
-                border: 1px solid #ccc;
-            }
-            QTabBar::tab {
-                background-color: #f0f0f0;
-                color: black;
-                padding: 8px 16px;
-                margin-right: 2px;
-                border-top-left-radius: 4px;
-                border-top-right-radius: 4px;
-            }
-            QTabBar::tab:selected {
-                background-color: white;
-                color: black;
-                border-bottom: 2px solid #0078d4;
-            }
-            QTabBar::tab:hover {
-                background-color: #e0e0e0;
-            }
-        """)
-        
-        for ps_name in ['PS1', 'PS2', 'PS3', 'PS4']:
-            tab_widget = QWidget()
-            tab_widget.setStyleSheet("""
-                QWidget {
-                    background-color: white;
-                    color: black;
-                }
-                QLabel {
-                    color: black;
-                }
-                QGroupBox {
-                    background-color: #f9f9f9;
-                    border: 1px solid #ccc;
-                    border-radius: 5px;
-                    margin-top: 10px;
-                    padding-top: 10px;
-                    color: black;
-                    font-weight: bold;
-                }
-                QGroupBox::title {
-                    subcontrol-origin: margin;
-                    left: 10px;
-                    padding: 0 5px 0 5px;
-                }
-            """)
-            tab_layout = QVBoxLayout(tab_widget)
-            
-            # 电源地址配置
-            addr_layout = QHBoxLayout()
-            addr_layout.addWidget(QLabel(f"{ps_name}地址:"))
-            addr_edit = QLineEdit(self.config.get('instruments', {}).get('power_supplies', {}).get(ps_name, {}).get('address', ''))
-            addr_edit.setMinimumWidth(300)
-            addr_edit.setReadOnly(True)  # 设置为只读
-            addr_edit.setStyleSheet("background-color: #f0f0f0; color: #555; border: 1px solid #ccc; border-radius: 3px; padding: 2px;")
-            
-            # 绑定主界面地址框的更改信号，实现实时单向同步
-            main_addr_widget = getattr(self, f"{ps_name.lower()}_address", None)
-            if main_addr_widget:
-                addr_edit.setText(main_addr_widget.text())
-                main_addr_widget.textChanged.connect(addr_edit.setText)
-                
-            addr_layout.addWidget(addr_edit)
-            addr_layout.addStretch()
-            tab_layout.addLayout(addr_layout)
-            
-            # 通道配置
-            channels_group = QGroupBox("通道配置")
-            channels_layout = QVBoxLayout(channels_group)
-            
-            ps_config = {}
-            ps_config['address'] = addr_edit
-            ps_config['channels'] = {}
-            
-            for ch_name in ['CH1', 'CH2']:
-                ch_group = QGroupBox(f"通道 {ch_name}")
-                ch_layout = QGridLayout(ch_group)
-                
-                ch_config = self.config.get('instruments', {}).get('power_supplies', {}).get(ps_name, {}).get('channels', {}).get(ch_name, {})
-                
-                # 电压配置
-                ch_layout.addWidget(QLabel("电压 (V):"), 0, 0)
-                voltage_spin = QDoubleSpinBox()
-                voltage_spin.setRange(0, 50)
-                voltage_spin.setDecimals(2)
-                voltage_spin.setValue(ch_config.get('voltage', {}).get('value', 0))
-                ch_layout.addWidget(voltage_spin, 0, 1)
-                
-                ch_layout.addWidget(QLabel("保护电压 (V):"), 0, 2)
-                voltage_prot_spin = QDoubleSpinBox()
-                voltage_prot_spin.setRange(0, 50)
-                voltage_prot_spin.setDecimals(2)
-                voltage_prot_spin.setValue(ch_config.get('voltage', {}).get('protection', 0))
-                ch_layout.addWidget(voltage_prot_spin, 0, 3)
-                
-                voltage_prot_check = QCheckBox("启用电压保护")
-                voltage_prot_check.setChecked(ch_config.get('voltage', {}).get('protection_enabled', False))
-                ch_layout.addWidget(voltage_prot_check, 0, 4)
-                
-                # 电流配置
-                ch_layout.addWidget(QLabel("电流 (A):"), 1, 0)
-                current_spin = QDoubleSpinBox()
-                current_spin.setRange(0, 10)
-                current_spin.setDecimals(2)
-                current_spin.setValue(ch_config.get('current', {}).get('value', 0))
-                ch_layout.addWidget(current_spin, 1, 1)
-                
-                ch_layout.addWidget(QLabel("保护电流 (A):"), 1, 2)
-                current_prot_spin = QDoubleSpinBox()
-                current_prot_spin.setRange(0, 10)
-                current_prot_spin.setDecimals(2)
-                current_prot_spin.setValue(ch_config.get('current', {}).get('protection', 0))
-                ch_layout.addWidget(current_prot_spin, 1, 3)
-                
-                current_prot_check = QCheckBox("启用电流保护")
-                current_prot_check.setChecked(ch_config.get('current', {}).get('protection_enabled', False))
-                ch_layout.addWidget(current_prot_check, 1, 4)
-                
-                channels_layout.addWidget(ch_group)
-                
-                # 保存通道控件引用
-                ps_config['channels'][ch_name] = {
-                    'voltage': voltage_spin,
-                    'voltage_protection': voltage_prot_spin,
-                    'voltage_protection_enabled': voltage_prot_check,
-                    'current': current_spin,
-                    'current_protection': current_prot_spin,
-                    'current_protection_enabled': current_prot_check
-                }
-            
-            tab_layout.addWidget(channels_group)
-            tab_layout.addStretch()
-            
-            power_tabs.addTab(tab_widget, ps_name)
-            
-            # 保存电源配置控件引用
-            self.power_config_widgets[ps_name] = ps_config
-        
-        power_layout.addWidget(power_tabs)
-        parent_layout.addWidget(power_group)
-    
-    def create_power_assignment_config(self, parent_layout):
-        """创建电源分配配置"""
-        assignment_group = QGroupBox("电源分配设置")
-        assignment_group.setStyleSheet("""
-            QGroupBox {
-                background-color: white;
-                border: 1px solid #ccc;
-                border-radius: 5px;
-                margin-top: 10px;
-                padding-top: 10px;
-                color: black;
-                font-weight: bold;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px 0 5px;
-            }
-            QLabel {
-                color: black;
-            }
-        """)
-        assignment_layout = QVBoxLayout(assignment_group)
-        
-        # 驱动功放电源配置
-        driver_group = QGroupBox("驱动功放电源")
-        driver_group.setStyleSheet("""
-            QGroupBox {
-                background-color: white;
-                border: 1px solid #ccc;
-                border-radius: 5px;
-                margin-top: 10px;
-                padding-top: 10px;
-                color: black;
-                font-weight: bold;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px 0 5px;
-            }
-            QGroupBox:disabled {
-                color: #999;
-                border-color: #ddd;
-            }
-            QLabel {
-                color: black;
-            }
-            QLabel:disabled {
-                color: #999;
-            }
-        """)
-        driver_layout = QGridLayout(driver_group)
-        
-        # 驱动功放电源启用选项
-        self.driver_power_enabled = QCheckBox("启用驱动功放电源")
-        driver_assignment = self.config.get('power_supply_assignment', {}).get('driver_amplifier', {})
-        enabled = driver_assignment.get('power_supply_count', 0) > 0
-        self.driver_power_enabled.setChecked(enabled)
-        self.driver_power_enabled.toggled.connect(self.on_driver_power_toggled)
-        driver_layout.addWidget(self.driver_power_enabled, 0, 0, 1, 2)
-        
-        # 驱动功放电源选择
-        self.driver_power_label = QLabel("驱动功放电源:")
-        driver_layout.addWidget(self.driver_power_label, 1, 0)
-        self.driver_power_combo = QComboBox()
-        self.driver_power_combo.addItems(["PS1", "PS2", "PS3", "PS4"])
-        current_driver_ps = driver_assignment.get('supplies', {}).get('main', {}).get('name', 'PS1')
-        self.driver_power_combo.setCurrentText(current_driver_ps)
-        driver_layout.addWidget(self.driver_power_combo, 1, 1)
-        
-        assignment_layout.addWidget(driver_group)
-        
-        # DUT电源配置
-        dut_group = QGroupBox("DUT功放电源分配")
-        dut_layout = QGridLayout(dut_group)
-        
-        dut_assignment = self.config.get('power_supply_assignment', {}).get('dut_amplifier', {})
-        
-        # PA Unit1电源
-        dut_layout.addWidget(QLabel("PA Unit1电源:"), 0, 0)
-        self.pa_unit1_power_combo = QComboBox()
-        self.pa_unit1_power_combo.addItems(["PS1", "PS2", "PS3", "PS4"])
-        unit1_ps = dut_assignment.get('supplies', {}).get('carrier', {}).get('name', 'PS2')
-        self.pa_unit1_power_combo.setCurrentText(unit1_ps)
-        dut_layout.addWidget(self.pa_unit1_power_combo, 0, 1)
-        
-        # PA Unit2电源
-        self.pa_unit2_label = QLabel("PA Unit2电源:")
-        dut_layout.addWidget(self.pa_unit2_label, 1, 0)
-        self.pa_unit2_power_combo = QComboBox()
-        self.pa_unit2_power_combo.addItems(["PS1", "PS2", "PS3", "PS4"])
-        unit2_ps = dut_assignment.get('supplies', {}).get('peaking', {}).get('name', 'PS3')
-        self.pa_unit2_power_combo.setCurrentText(unit2_ps)
-        dut_layout.addWidget(self.pa_unit2_power_combo, 1, 1)
-        
-        # PA Unit3电源（3个PA单元时使用）
-        self.pa_unit3_label = QLabel("PA Unit3电源:")
-        dut_layout.addWidget(self.pa_unit3_label, 2, 0)
-        self.pa_unit3_power_combo = QComboBox()
-        self.pa_unit3_power_combo.addItems(["PS1", "PS2", "PS3", "PS4"])
-        # 从配置中读取peaking2的设置，如果存在的话
-        unit3_ps = dut_assignment.get('supplies', {}).get('peaking2', {}).get('name', 'PS4')
-        self.pa_unit3_power_combo.setCurrentText(unit3_ps)
-        dut_layout.addWidget(self.pa_unit3_power_combo, 2, 1)
-        
-        assignment_layout.addWidget(dut_group)
-        
-        # 保存电源分配控件引用
-        self.power_assignment_widgets = {
-            'driver_enabled': self.driver_power_enabled,
-            'driver_power': self.driver_power_combo,
-            'pa_unit1_power': self.pa_unit1_power_combo,
-            'pa_unit2_power': self.pa_unit2_power_combo,
-            'pa_unit2_label': self.pa_unit2_label,
-            'pa_unit3_power': self.pa_unit3_power_combo,
-            'pa_unit3_label': self.pa_unit3_label
-        }
-        
-        parent_layout.addWidget(assignment_group)
-        
-        # 保存配置按钮
-        self.save_config_btn = QPushButton("保存配置")
-        self.save_config_btn.clicked.connect(tab.save_requested.emit)
-        self.save_config_btn.setMinimumHeight(35)
-        parent_layout.addWidget(self.save_config_btn)
-        
-        # 初始化界面状态
-        self.update_pa_unit_ui()
-        self.update_driver_power_ui()
-        self.update_power_supply_options()
-    
-    def on_pa_unit_count_changed(self, count_str):
-        """PA单元数量改变时的处理"""
-        self.update_pa_unit_ui()
-    
-    def update_pa_unit_ui(self):
-        """更新PA单元相关的UI状态"""
-        pa_unit_count = int(self.pa_unit_count_combo.currentText())
-        
-        # 根据PA单元数量显示/隐藏对应的电源选项
-        if hasattr(self, 'power_assignment_widgets'):
-            # PA Unit2在单元数量>=2时显示
-            show_unit2 = pa_unit_count >= 2
-            self.power_assignment_widgets['pa_unit2_power'].setVisible(show_unit2)
-            self.power_assignment_widgets['pa_unit2_label'].setVisible(show_unit2)
-            
-            # PA Unit3在单元数量>=3时显示
-            show_unit3 = pa_unit_count >= 3
-            self.power_assignment_widgets['pa_unit3_power'].setVisible(show_unit3)
-            self.power_assignment_widgets['pa_unit3_label'].setVisible(show_unit3)
-    
-    def on_driver_mode_toggled(self, checked):
-        """驱动功放模式切换时的处理"""
-        self.update_driver_power_ui()
-        # 更新功放测试连接说明
-        if hasattr(self, 'instruction_text'):
-            self.update_amplifier_instruction_text()
-    
-    def on_driver_power_toggled(self, checked):
-        """驱动功放电源启用切换时的处理"""
-        self.update_driver_power_ui()
-    
-    def update_driver_power_ui(self):
-        """更新驱动功放电源相关的UI状态"""
-        # 首先检查驱动功放模式是否启用
-        driver_mode_enabled = self.driver_mode_check.isChecked()
-        driver_power_enabled = self.driver_power_enabled.isChecked()
-        
-        # 只有在驱动功放模式启用时，驱动功放电源配置才能生效
-        final_enabled = driver_mode_enabled and driver_power_enabled
-        
-        # 设置驱动功放电源相关控件的启用状态
-        # 驱动功放电源启用勾选框本身受驱动功放模式控制
-        self.driver_power_enabled.setEnabled(driver_mode_enabled)
-        
-        # 驱动功放电源选择受两个条件控制
-        self.driver_power_combo.setEnabled(final_enabled)
-        self.driver_power_label.setEnabled(final_enabled)
-        
-        # 如果驱动功放电源被禁用，清空选择
-        if not final_enabled:
-            self.driver_power_combo.setCurrentIndex(-1)  # 清空选择
-        
-        # 注意：我们不再禁用电源详细配置界面，因为那些电源可能被其他功放使用
-        # 电源详细配置界面保持启用状态，让用户可以配置用于待测功放的电源
-    
-    def on_instrument_enabled_changed(self):
-        """仪器启用状态改变时的处理"""
-        self.update_power_supply_options()
-        
-    def get_enabled_power_supplies(self):
-        """获取已启用的电源列表"""
-        enabled_ps = []
-        for ps_name, checkbox in [('PS1', self.ps1_enabled), ('PS2', self.ps2_enabled), 
-                                  ('PS3', self.ps3_enabled), ('PS4', self.ps4_enabled)]:
-            if checkbox.isChecked():
-                enabled_ps.append(ps_name)
-        return enabled_ps
-    
-    def update_power_supply_options(self):
-        """更新电源分配下拉列表的选项"""
-        enabled_ps = self.get_enabled_power_supplies()
-        
-        if hasattr(self, 'power_assignment_widgets'):
-            # 更新驱动功放电源选择
-            current_driver = self.power_assignment_widgets['driver_power'].currentText()
-            self.power_assignment_widgets['driver_power'].clear()
-            self.power_assignment_widgets['driver_power'].addItems(enabled_ps)
-            
-            # 只有在驱动功放电源启用时才恢复选择
-            driver_mode_enabled = self.driver_mode_check.isChecked()
-            driver_power_enabled = self.driver_power_enabled.isChecked()
-            if driver_mode_enabled and driver_power_enabled and current_driver in enabled_ps:
-                self.power_assignment_widgets['driver_power'].setCurrentText(current_driver)
-            
-            # 更新PA Unit电源选择
-            current_unit1 = self.power_assignment_widgets['pa_unit1_power'].currentText()
-            self.power_assignment_widgets['pa_unit1_power'].clear()
-            self.power_assignment_widgets['pa_unit1_power'].addItems(enabled_ps)
-            if current_unit1 in enabled_ps:
-                self.power_assignment_widgets['pa_unit1_power'].setCurrentText(current_unit1)
-                
-            current_unit2 = self.power_assignment_widgets['pa_unit2_power'].currentText()
-            self.power_assignment_widgets['pa_unit2_power'].clear()
-            self.power_assignment_widgets['pa_unit2_power'].addItems(enabled_ps)
-            if current_unit2 in enabled_ps:
-                self.power_assignment_widgets['pa_unit2_power'].setCurrentText(current_unit2)
-                
-            current_unit3 = self.power_assignment_widgets['pa_unit3_power'].currentText()
-            self.power_assignment_widgets['pa_unit3_power'].clear()
-            self.power_assignment_widgets['pa_unit3_power'].addItems(enabled_ps)
-            if current_unit3 in enabled_ps:
-                self.power_assignment_widgets['pa_unit3_power'].setCurrentText(current_unit3)
-        
-    '''
-    def _measurement_config_path(self) -> str:
-        """返回硬件连接与测量应使用的配置路径。
-
-        运行契约运行固定返回运行目录内冻结的 ``inputs/hardware_config.json``，并在
-        返回前校验该快照仍然可用（存在、未被删除或篡改）；只有尚未创建运行
-        （``prepared_run is None``）的旧兼容流程才回退到全局兼容配置。
-
-        运行契约不可用（快照缺失、被删除、校验失败，或对象没有校验入口）时直接抛出
-        :class:`RunNotResumable`，**绝不**回退到全局 ``config.json``：已创建运行必须
-        使用自己的快照，否则会用与该运行无关的仪器地址连接硬件。
-        """
-        run = getattr(self, "prepared_run", None)
-        if run is None:
-            return str(self.config_path)
-        resolver = getattr(run, "hardware_connection_path", None)
-        if resolver is None:
-            raise RunNotResumable(
-                "当前运行契约不可用，不能连接仪器；请重新创建或重新加载运行"
-            )
-        return str(resolver())
-
-    def _resolve_measurement_run(self):
-        """返回当前运行契约，供测量页面消费；不可用时给出兼容提示并返回 None。
-
-        这是“两阶段”中的第二阶段入口：测量页面只接受这里返回的
-        :class:`PreparedRun`，不再在开始前重新保存 GUI 配置，因此已冻结的
-        ``runs/<run_id>/config.json`` 不会被覆盖。运行契约的冻结硬件路径无效时
-        直接给出明确错误并返回 ``None``，绝不回退到全局配置继续测量。
-        """
-        if self.prepared_run is None:
-            self.on_measurement_error(
-                "尚未创建运行：请先在“仪器配置”页点击“校验并创建运行”"
-            )
-            return None
-        if self.instrument_ctrl is None:
-            self.on_measurement_error("请先连接仪器；上一次测量结束后端口已安全释放")
-            return None
-        # 复用连接阶段同一套校验：运行契约快照不可用时明确失败，不放行到测量页面。
-        try:
-            self._measurement_config_path()
-        except RunNotResumable as error:
-            self.on_measurement_error(str(error))
-            return None
-        return self.prepared_run
-
-    def _create_prepared_run(self):
-        """配置阶段：校验配置、确认接线并冻结为不可变的运行目录快照。"""
-        if not self.config_page.validate():
-            return None
-        self.update_config_from_ui()
-        # 配置阶段负责接线确认校验：接受接线图对话框后把确认写入快照。
-        if not self._confirm_create_run_wiring():
-            self.add_log_message("已取消创建运行：现场接线未确认")
-            return None
-        if not self._save_config_file():
-            self.add_log_message(f"配置保存失败: {self._last_save_error}")
-            QMessageBox.warning(self, "创建运行失败", f"配置保存失败: {self._last_save_error}")
-            return None
-        try:
-            prepared = prepare_configuration(
-                str(self.config_path),
-                paths=self.paths,
-                hardware_config=self.config,
-            )
-        except Exception as error:
-            self.add_log_message(f"创建运行失败: {error}")
-            QMessageBox.warning(self, "创建运行失败", str(error))
-            return None
-        self._release_instrument_for_new_run()
-        self.prepared_run = prepared
-        self._update_run_status()
-        self.add_log_message(
-            f"已创建运行 {prepared.run_id}，运行目录: {prepared.run_directory}"
-        )
-        return prepared
-
-    def _load_prepared_run(self, run_id):
-        """配置阶段：按 run_id 重新打开已有运行，不依赖 GUI 内存中的配置。"""
-        try:
-            prepared = load_prepared_run(
-                run_id, config_path=Path(self.config_path), paths=self.paths
-            )
-        except Exception as error:
-            self.add_log_message(f"加载运行失败: {error}")
-            QMessageBox.warning(self, "加载运行失败", str(error))
-            return None
-        # 两阶段提交：配置页回填成功前不切换当前运行、不释放旧端口、不更新状态，
-        # 避免回填失败却报告为加载成功、并让页面与已选运行互相矛盾。
-        if not self._apply_run_configuration_to_page(prepared):
-            self.add_log_message(
-                f"加载运行 {prepared.run_id} 失败: 配置页回填失败；当前运行保持不变"
-            )
-            QMessageBox.warning(
-                self,
-                "加载运行失败",
-                "配置页回填失败，运行未切换；请检查运行快照后重试",
-            )
-            return None
-        self._release_instrument_for_new_run()
-        self.prepared_run = prepared
-        self._update_run_status()
-        self.add_log_message(
-            f"已加载运行 {prepared.run_id}，运行目录: {prepared.run_directory}"
-        )
-        return prepared
-
-    def _release_instrument_for_new_run(self):
-        """切换运行前释放已连接端口，避免新运行复用旧配置的仪器资源。"""
-        if getattr(self, "instrument_ctrl", None) is None:
             return
-        try:
-            self._close_instrument_port(self.instrument_ctrl)
-        except Exception as error:
-            self.add_log_message(f"切换运行前仪器清理失败: {error}")
-        self.instrument_ctrl = None
-        self.add_log_message("已释放上一次连接的仪器端口；请重新连接仪器")
+        self.chat_panel.show()
+        self.ai_assistant_btn.setChecked(True)
+        self.ai_assistant_btn.setText("💬 隐藏CHAT")
+        self.chat_visible = True
+        if hasattr(self.chat_panel, 'chat_display'):
+            model_name = getattr(self.chat_panel.llm_chat, 'model_name', '').lower()
+            if 'qwen' in model_name:
+                model_display_name = 'Qwen'
+            elif 'deepseek' in model_name:
+                model_display_name = 'DeepSeek'
+            else:
+                model_display_name = getattr(self.chat_panel.llm_chat, 'model_name', 'AI')
+            welcome_msg = f"你好！我是{model_display_name} AI助手，专门为功放测试系统提供技术支持。我可以帮你：\n\n• 分析测试数据和结果\n• 诊断测试过程中的问题\n• 提供功放设计和测试建议\n• 解答技术疑问\n\n有什么需要帮助的吗？"
+            self.chat_panel.add_assistant_message(welcome_msg)
 
-    def _apply_run_configuration_to_page(self, prepared) -> bool:
-        """把已冻结运行配置同步到配置页，使界面与本次运行保持一致。
-
-        返回是否成功回填。回填失败必须可识别：不修改窗口持有的配置副本，也不返回
-        True，让调用方在两阶段提交里放弃切换运行，而不是把回填失败静默当作加载
-        成功。页面自身的配置副本由 :meth:`ConfigPage.apply_config` 在成功后提交。
-        """
-        page = getattr(self, "config_page", None)
-        config = getattr(prepared, "hardware_config", None)
-        if page is None:
-            return False
-        if not isinstance(config, dict):
-            # 硬件配置缺失或类型不正确：明确报告未回填，而不是静默保留旧显示。
-            self.add_log_message("运行缺少可展示的硬件配置快照；配置页未回填")
-            return False
-        applier = getattr(page, "apply_config", None)
-        if applier is None:
-            self.add_log_message("配置页不支持回填冻结配置；配置页未回填")
-            return False
-        try:
-            applier(config)
-        except ConfigBackfillError as error:
-            self.add_log_message(f"冻结配置同步到配置页失败: {error}")
-            return False
-        except Exception as error:  # noqa: BLE001 - 展示失败不阻断运行契约，但必须可见
-            self.add_log_message(f"冻结配置同步到配置页出现未预期错误: {error}")
-            return False
-        self.config = dict(config)
-        return True
-
-    def _update_run_status(self):
-        page = getattr(self, "config_page", None)
-        if page is None:
-            return
-        run = self.prepared_run
-        if run is None:
-            page.set_run_status("当前运行: 未创建")
-        else:
-            page.set_run_status(f"当前运行: {run.run_id}")
-
-    def _amplifier_driver_mode(self) -> bool:
-        """返回当前驱动模式；优先使用已冻结运行，回退到配置页仅用于创建运行前预览。"""
-        run = getattr(self, "prepared_run", None)
-        if run is not None:
-            configuration = getattr(run, "configuration", None)
-            plan = getattr(configuration, "test_plan", None)
-            if plan is not None:
-                return bool(getattr(plan, "driver_enabled", False))
-        page = getattr(self, "config_page", None)
-        if page is not None:
-            return page.driver_mode_check.isChecked()
-        return False
-
-    def _confirm_create_run_wiring(self) -> bool:
-        """创建运行前确认现场接线，并把确认固化到即将冻结的配置中。"""
-        driver_enabled = self.config_page.driver_mode_check.isChecked()
-        diagram = "amplifier_test" if driver_enabled else "amplifier_test_no_driver"
-        if ConnectionDialog(diagram, self).exec() != QDialog.Accepted:
-            return False
-        self.config.setdefault("wiring", {})
-        self.config["wiring"].update({
-            "confirmed": True,
-            "connection_note": "已通过创建运行连接确认对话框确认现场接线",
-            "confirmed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "confirmation_source": "create_run_dialog",
-        })
-        self.config_page.config = self.config
-        return True
-
-    def _confirm_cable_loss_wiring(self):
-        """线损测量前的现场接线确认；运行已冻结，不再改写配置。"""
-        self.add_log_message("线损路径1现场接线已确认")
-        return True
-
-    def _on_measurement_controller_thread_finished(self):
-        if self.measurement_controller.state.kind not in {
-            MeasurementKind.CABLE_LOSS,
-            MeasurementKind.DRIVER_MAPPING,
-            MeasurementKind.AMPLIFIER,
-        }:
-            return
-        if self.instrument_ctrl is not None:
-            try:
-                self._close_instrument_port(self.instrument_ctrl)
-            except Exception as error:
-                self.add_log_message(f"仪器清理失败: {error}")
-            self.instrument_ctrl = None
-        
-    def _store_driver_mapping_realtime_data(self, data):
-        """保留聊天上下文需要的实时数据，不接管页面绘图。"""
-        if not isinstance(data, dict) or "frequency" not in data:
-            return
-        buffer = getattr(self, "realtime_buffer", None)
-        if buffer is None:
-            frequency_value = normalize_frequency(data["frequency"])
-            if frequency_value is None:
-                return
-            frequency = str(frequency_value)
-            self.real_time_data[frequency] = data.copy()
-            if frequency not in [str(value) for value in self.rt_frequency_list]:
-                self.rt_frequency_list.append(frequency_value)
-                self.rt_frequency_list.sort()
-                if not self.rt_user_browsing:
-                    self.rt_current_freq_index = len(self.rt_frequency_list) - 1
-            return
-        buffer.store(data)
-
-    def _confirm_driver_mapping_wiring(self):
-        """驱动映射测量前的现场接线确认；运行已冻结，不再改写配置。"""
-        self.add_log_message("驱动映射现场接线已确认")
-        return True
-
-    def _confirm_amplifier_wiring(self):
-        """主功放测量前的现场接线确认；运行已冻结，不再改写配置。"""
-        self.add_log_message("主功放现场接线已确认")
-        return True
-
-    def _store_amplifier_realtime_data(self, data):
-        """保留功放实时数据供聊天上下文使用，不接管页面绘图。"""
-        if not isinstance(data, dict) or "frequency" not in data:
-            return
-        buffer = getattr(self, "realtime_buffer", None)
-        if buffer is None:
-            frequency_value = normalize_frequency(data["frequency"])
-            if frequency_value is None:
-                return
-            frequency = str(frequency_value)
-            self.real_time_data[frequency] = data.copy()
-            if frequency not in [str(value) for value in self.rt_frequency_list]:
-                self.rt_frequency_list.append(frequency_value)
-                self.rt_frequency_list.sort()
-                if not self.rt_user_browsing:
-                    self.rt_current_freq_index = len(self.rt_frequency_list) - 1
-            return
-        buffer.store(data)
-
-    def _current_realtime_page(self):
-        controller = getattr(self, "measurement_controller", None)
-        kind = getattr(getattr(controller, "state", None), "kind", None)
-        if kind is MeasurementKind.DRIVER_MAPPING:
-            return getattr(self, "driver_mapping_page", None)
-        if kind is MeasurementKind.AMPLIFIER:
-            return getattr(self, "amplifier_page", None)
-        for name in ("driver_mapping_page", "amplifier_page"):
-            page = getattr(self, name, None)
-            if page is not None:
-                return page
-        return None
-        
-    def create_visualization_tab(self):
-        """创建数据可视化选项卡"""
-        self.visualization_page = VisualizationPage(
-            config_provider=lambda: self.config,
-            result_loader=self.gui_data_service.results.choose_and_load,
-            # 报告兜底使用最新正式运行结果；正式测量输入只来自当前运行 manifest。
-            latest_result_provider=self.gui_data_service.results.latest_result,
-            report_service=self.gui_data_service.reports.create_summary_report,
-            log_callback=self.add_log_message,
-            parent=self,
-        )
-        self.load_data_btn = self.visualization_page.load_data_btn
-        self.generate_report_btn = self.visualization_page.generate_report_btn
-        self.freq_prev_btn = self.visualization_page.freq_prev_btn
-        self.freq_label = self.visualization_page.freq_label
-        self.freq_next_btn = self.visualization_page.freq_next_btn
-        self.data_plot_widget = self.visualization_page.data_plot_widget
-        return self.visualization_page
-        
-    def create_data_export_tab(self):
-        """创建数据导出选项卡"""
-        self.export_page = ExportPage(
-            result_service=self.gui_data_service.results,
-            log_callback=self.add_log_message,
-            parent=self,
-        )
-        self.file_table = self.export_page.file_table
-        self.export_json_btn = self.export_page.export_json_btn
-        self.export_csv_btn = self.export_page.export_csv_btn
-        self.export_pdf_btn = self.export_page.export_pdf_btn
-        return self.export_page
-        
-    def create_status_panel(self, main_layout):
-        """创建状态面板"""
-        self.status_panel = StatusPanel(
-            chat_toggle_callback=self.toggle_chat_panel,
-            parent=self,
-        )
-        self.progress_bar = self.status_panel.progress_bar
-        self.log_text = self.status_panel.log_text
-        self.ai_assistant_btn = self.status_panel.ai_assistant_btn
-        main_layout.addWidget(self.status_panel)
-        
-    def show_connection_diagram(self, diagram_type: str):
-        """显示连接图"""
-        dialog = ConnectionDialog(diagram_type, self)
-        dialog.exec()
-        
-    def show_amplifier_connection_diagram(self):
-        """显示功放测试连接图，根据驱动模式选择不同图"""
-        # 检查当前驱动模式设置
-        driver_enabled = self.driver_mode_check.isChecked()
-        diagram_type = 'amplifier_test' if driver_enabled else 'amplifier_test_no_driver'
-        dialog = ConnectionDialog(diagram_type, self)
-        dialog.exec()
-        
     def update_amplifier_instruction_text(self):
         """根据驱动模式更新功放测试连接说明"""
-        driver_enabled = self.driver_mode_check.isChecked()
+        page = getattr(self, "config_page", None)
+        driver_enabled = page.driver_mode_check.isChecked() if page is not None else False
         if driver_enabled:
             instruction_html = """
             <h3>主功放测试连接说明:</h3>
@@ -1371,329 +503,54 @@ class MainWindow(QMainWindow):
             <p>信号源 → 线缆① → 主功放 → 线缆④ → 衰减器 → 线缆② → 频谱仪</p>
             """
         self.instruction_text.setHtml(instruction_html)
-        
-    def add_log_message(self, message: str):
-        self.status_panel.add_log_message(message)
-        
-    def on_log_scroll_changed(self, value):
-        self.status_panel.on_log_scroll_changed(value)
-            
-    def clear_log(self):
-        self.status_panel.clear_log()
-        
-    def update_status(self):
-        self.status_panel.update_status()
-        
-    def connect_instruments(self):
-        """连接仪器"""
-        self.add_log_message("开始连接仪器...")
-        self.connect_btn.setEnabled(False)
-
-        # 已创建运行时配置已冻结：连接仪器直接使用运行目录内冻结的硬件配置，
-        # 不再用页面状态覆盖兼容配置文件。
-        if getattr(self, "prepared_run", None) is None:
-            if not self.update_and_save_config():
-                self.connect_btn.setEnabled(True)
-                return
-        else:
-            self.add_log_message(
-                f"使用已冻结的运行配置连接仪器: {self.prepared_run.run_id}"
-            )
-
-        # 运行契约存在时硬件配置路径必须先解析成功：解析失败必须明确失败并提示
-        # 重新创建/加载运行，绝不能吞掉异常后回退到全局配置连接仪器。
-        try:
-            config_path = self._measurement_config_path()
-        except RunNotResumable as error:
-            self.add_log_message(f"无法连接仪器: {error}")
-            QMessageBox.warning(self, "仪器连接失败", str(error))
-            self.connect_btn.setEnabled(True)
-            return
-
-        # 启动仪器连接工作线程；连接配置由运行契约（或旧兼容全局配置）决定。
-        self.instrument_worker = InstrumentWorker(config_path)
-        self.instrument_worker.signals.finished.connect(self.on_instrument_connected)
-        self.instrument_worker.signals.result.connect(self.on_instrument_controller_ready)
-        self.instrument_worker.signals.stopped.connect(self.on_instrument_stopped)
-        self.instrument_worker.signals.error.connect(self.on_instrument_error)
-        self.instrument_worker.signals.message.connect(self.add_log_message)
-        self.instrument_worker.signals.progress.connect(self.progress_bar.setValue)
-        self.instrument_worker.start()
-        
-    def on_instrument_controller_ready(self, controller):
-        """Keep the connected controller so window shutdown can clean it up."""
-        if self.instrument_ctrl is not None and self.instrument_ctrl is not controller:
-            self._close_instrument_port(self.instrument_ctrl)
-        self.instrument_ctrl = controller
-        # 端口在成功交接后立即注入 controller，测量页面不再承担端口绑定职责。
-        try:
-            self.measurement_controller.set_measurement_port(controller)
-        except RuntimeError as error:
-            self.add_log_message(f"注入测量端口失败: {error}")
-
-    @staticmethod
-    def _close_instrument_port(port):
-        close = getattr(port, "close_all", None)
-        if close is not None:
-            return close(close_rf=True)
-        shutdown = getattr(port, "safe_shutdown", None)
-        if shutdown is not None:
-            return shutdown()
-        return None
-
-    def on_instrument_connected(self):
-        """仪器连接完成"""
-        self.connect_btn.setEnabled(True)
-        self.progress_bar.setValue(0)
-        self.add_log_message("所有仪器连接成功！")
-        
-    def on_measurement_error(self, error_message):
-        """显示 controller 转发的测量错误；端口生命周期由 controller 统一收尾。"""
-        self.add_log_message(f"错误: {error_message}")
-        QMessageBox.critical(self, "错误", error_message)
-
-    def on_instrument_error(self, error_message):
-        """处理仪器连接 worker 的错误。"""
-        self.add_log_message(f"错误: {error_message}")
-        QMessageBox.critical(self, "错误", error_message)
-        
-        # 连接 worker 失败时只恢复连接控件；测量页面由 controller 状态驱动。
-        self.connect_btn.setEnabled(True)
-        
-        # 重置进度条
-        self.progress_bar.setValue(0)
-        if self.instrument_ctrl is not None:
-            try:
-                self._close_instrument_port(self.instrument_ctrl)
-            except Exception as error:
-                self.add_log_message(f"仪器清理失败: {error}")
-            self.instrument_ctrl = None
-
-    def on_instrument_stopped(self, reason):
-        """处理仪器连接 worker 的停止。"""
-        self.add_log_message(f"仪器连接线程已停止: {reason}")
-        self.connect_btn.setEnabled(True)
-        self.progress_bar.setValue(0)
-        if self.instrument_ctrl is not None:
-            try:
-                self._close_instrument_port(self.instrument_ctrl)
-            except Exception as error:
-                self.add_log_message(f"仪器清理失败: {error}")
-            self.instrument_ctrl = None
-        
-    def _read_instrument_config_from_ui(self) -> dict:
-        """从UI读取仪器地址和启用状态，保留现有通道和其他字段。"""
-        if hasattr(self, 'config_page'):
-            return ConfigFormState(self.config, self.config_page).read_instrument_config()
-        return ConfigFormState(self.config, self).read_instrument_config()
-
-    def _read_test_parameters_from_ui(self) -> dict:
-        """从UI读取测试参数，不修改self.config。"""
-        if hasattr(self, 'config_page'):
-            return ConfigFormState(self.config, self.config_page).read_test_parameters()
-        return ConfigFormState(self.config, self).read_test_parameters()
-
-    def _read_power_supply_config_from_ui(self) -> dict:
-        """从UI读取电源通道详细配置，按电源名称分组返回。"""
-        if hasattr(self, 'config_page'):
-            return ConfigFormState(self.config, self.config_page).read_power_supply_config()
-        return ConfigFormState(self.config, self).read_power_supply_config()
-
-    def _read_power_assignment_from_ui(self) -> dict:
-        """从UI读取电源分配配置，返回完整的power_supply_assignment片段。"""
-        if hasattr(self, 'config_page'):
-            return ConfigFormState(self.config, self.config_page).read_power_assignment()
-        return ConfigFormState(self.config, self).read_power_assignment()
-
-    def _build_config_from_ui(self) -> dict:
-        """基于 self.config 和当前 UI 状态组装完整配置字典。
-
-        该方法不修改 self.config，不写文件，不记录日志，不弹窗。
-        """
-        widgets = self.config_page if hasattr(self, 'config_page') else self
-        return ConfigFormState(self.config, widgets).build_config()
-
-    def update_config_from_ui(self):
-        """从UI更新配置"""
-        self.config = self._build_config_from_ui()
-        if hasattr(self, 'config_page'):
-            self.config_page.config = self.config
-
-    def _save_config_file(self) -> bool:
-        """将 self.config 写入配置路径，成功返回 True，失败返回 False。
-
-        保存前用当前表单值重新编写正式 ``test_plan`` / ``run_mapping`` 段，使配置
-        页面保存出的文件可以被正式配置仓储直接读取；旧配置加载时的自动转换已删除。
-        """
-        try:
-            path = (
-                getattr(self, "config_path", getattr(self, "paths", DEFAULT_PATHS).config_file)
-                if hasattr(self, "config_path") or hasattr(self, "paths")
-                else CONFIG_FILE
-            )
-            service = getattr(self, "gui_data_service", None)
-            if service is None:
-                raise RuntimeError("未配置 GUI 数据服务")
-            self.config = author_official_configuration(self.config)
-            if hasattr(self, "config_page"):
-                self.config_page.config = self.config
-            service.configuration.save(self.config)
-            return True
-        except Exception as e:
-            self._last_save_error = e
-            return False
-        
-    def update_and_save_config(self):
-        """更新UI配置并保存到文件"""
-        self.update_config_from_ui()
-        if self._save_config_file():
-            self.add_log_message("配置已更新并保存")
-            return True
-        else:
-            self.add_log_message(f"配置保存失败: {self._last_save_error}")
-            return False
-        
-    def save_config(self):
-        """保存配置"""
-        self.update_config_from_ui()
-        if self._save_config_file():
-            self.add_log_message("配置已保存")
-            if getattr(self, "prepared_run", None) is not None:
-                self.add_log_message(
-                    f"注意：当前运行 {self.prepared_run.run_id} 的配置已冻结；"
-                    "若要使用本次修改，请重新“校验并创建运行”"
-                )
-            QMessageBox.information(self, "保存成功", "配置文件已保存")
-        else:
-            self.add_log_message(f"配置保存失败: {self._last_save_error}")
-            QMessageBox.warning(self, "保存失败", f"配置保存失败: {self._last_save_error}")
-            
-    def load_test_data(self):
-        """加载测试数据"""
-        return self.visualization_page.load_test_data()
-    
-    def update_frequency_display(self):
-        """更新频率显示"""
-        return self.visualization_page.update_frequency_display()
-    
-    def display_current_frequency_data(self):
-        """显示当前频率的数据"""
-        return self.visualization_page.display_current_frequency_data()
-    
-    def prev_frequency(self):
-        """切换到上一个频率"""
-        return self.visualization_page.prev_frequency()
-    
-    def next_frequency(self):
-        """切换到下一个频率"""
-        return self.visualization_page.next_frequency()
-    
-    def store_real_time_data(self, data):
-        """兼容入口：更新上下文并委托当前页面刷新实时图。"""
-        if not isinstance(data, dict):
-            return False
-        page = self._current_realtime_page()
-        if page is not None and getattr(page, "realtime_buffer", None) is not None:
-            if not page.realtime_buffer.store(data):
-                return False
-            page._display_current_frequency()
-        buffer = getattr(self, "realtime_buffer", None)
-        return buffer.store(data) if buffer is not None else True
-    
-    def update_rt_frequency_display(self):
-        """更新实时预览的频点显示"""
-        # 现在频点信息直接显示在日志中，不需要更新UI标签
-        pass
-    
-    def display_current_rt_frequency_data(self):
-        page = self._current_realtime_page()
-        if page is not None and hasattr(page, "_display_current_frequency"):
-            page._display_current_frequency()
-            return page.realtime_buffer.current()
-        return self.realtime_buffer.current()
-    
-    def rt_prev_frequency(self):
-        page = self._current_realtime_page()
-        if page is not None and hasattr(page, "previous_frequency"):
-            page.previous_frequency()
-            return page.realtime_buffer.current()
-        return self.realtime_buffer.previous()
-    
-    def rt_next_frequency(self):
-        page = self._current_realtime_page()
-        if page is not None and hasattr(page, "next_frequency"):
-            page.next_frequency()
-            return page.realtime_buffer.current()
-        return self.realtime_buffer.next()
-    
-    def update_rt_nav_buttons(self):
-        page = self._current_realtime_page()
-        if page is not None and hasattr(page, "_update_navigation"):
-            return page._update_navigation()
-        return None
 
     def clear_real_time_data(self):
         """清除实时测量的历史数据"""
-        buffer = getattr(self, "realtime_buffer", None)
-        if buffer is not None:
-            buffer.clear()
+        self.coordinator.clear_realtime_data()
         for name in ("driver_mapping_page", "amplifier_page"):
             page = getattr(self, name, None)
             if page is not None and hasattr(page, "clear_realtime_buffer"):
                 page.clear_realtime_buffer()
         self.add_log_message("已清除实时测量历史数据")
-                
-    def generate_report(self):
-        """生成报告"""
-        return self.visualization_page.generate_report()
-            
-    def refresh_file_list(self):
-        """刷新文件列表"""
-        return self.export_page.refresh_file_list()
-                
-    def export_json(self):
-        """导出JSON"""
-        return self.export_page.export_json()
-        
-    def export_csv(self):
-        """导出CSV"""
-        return self.export_page.export_csv()
 
-    def export_pdf(self):
-        """导出PDF"""
-        return self.export_page.export_pdf()
+    # ---- 状态面板转发 ----
+
+    def add_log_message(self, message: str):
+        self.status_panel.add_log_message(message)
+
+    def update_status(self):
+        self.status_panel.update_status()
+
+    def on_measurement_error(self, error_message):
+        """显示 controller 转发的测量错误；端口生命周期由 controller 统一收尾。"""
+        self.add_log_message(f"错误: {error_message}")
+        QMessageBox.critical(self, "错误", error_message)
 
     def closeEvent(self, event):
-        """窗口关闭事件"""
+        """窗口关闭事件：测量、连接线程和端口都必须在关闭前收尾。"""
         if self.measurement_controller.state.is_active:
-            reply = QMessageBox.question(self, "退出", "测试正在进行中，确定要退出吗？",
-                                       QMessageBox.Yes | QMessageBox.No)
+            reply = QMessageBox.question(
+                self, "退出", "测试正在进行中，确定要退出吗？",
+                QMessageBox.Yes | QMessageBox.No,
+            )
             if reply != QMessageBox.Yes:
                 event.ignore()
                 return
             if not self.measurement_controller.shutdown(timeout_ms=5000):
                 event.ignore()
                 return
-        if self.instrument_worker and self.instrument_worker.isRunning():
-            reply = QMessageBox.question(self, "退出", "测试正在进行中，确定要退出吗？",
-                                       QMessageBox.Yes | QMessageBox.No)
-            if reply == QMessageBox.Yes:
-                self.instrument_worker.stop()
-                if not self.instrument_worker.wait(5000):
-                    self.add_log_message("仪器连接线程未能在关闭期限内停止")
-                    event.ignore()
-                    return
-            else:
+        if self.coordinator.instrument_worker_running():
+            reply = QMessageBox.question(
+                self, "退出", "测试正在进行中，确定要退出吗？",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
                 event.ignore()
                 return
-        else:
-            pass
-        if self.instrument_ctrl is not None:
-            try:
-                self._close_instrument_port(self.instrument_ctrl)
-            except Exception as error:
-                self.add_log_message(f"仪器清理失败: {error}")
-            self.instrument_ctrl = None
+            if not self.coordinator.stop_instrument_worker(5000):
+                event.ignore()
+                return
+        self.coordinator.release_instrument_port()
         if hasattr(self, "tab_widget"):
             try:
                 self.tab_widget.currentChanged.disconnect(self._on_page_changed)
@@ -1735,13 +592,5 @@ def main():
 
 __all__ = [
     "MainWindow", "build_application", "run_application", "main",
-    "ConnectionDialog", "RealTimePlotWidget", "ChatPanel", "ChatWorker",
-    "ChatHistoryDialog", "ChatSettingsDialog", "ConfigFormState", "ConfigPage",
-    "VisualizationPage", "ExportPage", "StatusPanel", "RealtimeMeasurementBuffer",
-    "normalize_frequency", "MeasurementKind", "MeasurementResultReference",
+    "APPLICATION_STYLE", "apply_light_theme",
 ]
-
-
-if __name__ == "__main__":
-    main()
-

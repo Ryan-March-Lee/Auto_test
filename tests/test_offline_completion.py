@@ -100,10 +100,18 @@ class OfflineCompletionTests(unittest.TestCase):
             for node in ast.walk(ast.parse(gui_source))
             if isinstance(node, ast.ImportFrom)
         }
-        self.assertIn("InstrumentWorker", imported_modules["presentation.qt.workers"])
-        self.assertNotIn("CableLossWorker", imported_modules["presentation.qt.workers"])
-        self.assertNotIn("DriverMappingWorker", imported_modules["presentation.qt.workers"])
-        self.assertNotIn("AmplifierWorker", imported_modules["presentation.qt.workers"])
+        # 步骤 10：主窗口不再导入任何 worker；仪器连接 worker 归运行协调器。
+        self.assertNotIn("presentation.qt.workers", imported_modules)
+
+        coordinator_source = (
+            project_root / "presentation" / "qt" / "application_coordinator.py"
+        ).read_text(encoding="utf-8-sig")
+        coordinator_imports = {
+            node.module: {alias.name for alias in node.names}
+            for node in ast.walk(ast.parse(coordinator_source))
+            if isinstance(node, ast.ImportFrom)
+        }
+        self.assertEqual(coordinator_imports["workers"], {"InstrumentWorker"})
 
     def test_prepare_run_writes_context_before_hardware_factory(self):
         plan = {

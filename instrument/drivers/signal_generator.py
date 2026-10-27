@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 
+from ..transport.scpi_transport import ScpiTransportError
 from ._base import DriverTransport, ScpiDriverBase
 
 
@@ -88,14 +89,25 @@ class SignalGeneratorDriver(ScpiDriverBase):
             try:
                 self.transport.write(f"OUTP:STAT {self._format_output_state(False)}")
                 self.rf_enabled = False
-            except Exception as exc:
-                raise RuntimeError("信号源 RF 关闭失败") from exc
+            except ScpiTransportError as exc:
+                # 关闭失败仍然属于命令层失败：保留 ProtocolError 分类，而不是
+                # 降级成一个无法归类的 RuntimeError。
+                raise ScpiTransportError(
+                    "信号源 RF 关闭失败",
+                    operation="close",
+                    command="OUTP:STAT OFF",
+                    original_error=exc,
+                ) from exc
         self.closed = True
         self.connected = False
         try:
             self.transport.close()
-        except Exception as exc:
-            raise RuntimeError("信号源 transport 关闭失败") from exc
+        except ScpiTransportError as exc:
+            raise ScpiTransportError(
+                "信号源 transport 关闭失败",
+                operation="close",
+                original_error=exc,
+            ) from exc
 
     @staticmethod
     def _format_number(value: float) -> str:

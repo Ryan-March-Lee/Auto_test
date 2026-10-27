@@ -76,6 +76,7 @@
 | `application.measurements` | `CableLossUseCase`、`DriverPowerMappingUseCase`、`AmplifierMeasurementUseCase`、`AmplifierCalibrationError`、`validate_amplifier_calibration_inputs` | 三类正式测量用例入口 |
 | `application.measurements.services` | `CableLossService`、`DriverPowerMappingService`、`AmplifierMeasurementService` | 测量服务（依赖注入端口，不导入具体仪器 flow） |
 | `application.gui_data_service` | `GuiDataService` | 只读历史/导出应用服务 |
+| `application.errors` | `AutoTestError`、`ErrorCategory`、`FailureRecord`、`ConfigurationError`、`DeviceConnectionError`、`ProtocolError`、`DeviceCapabilityError`、`MeasurementError`、`CleanupError`、`cause_of`、`normalize_failures` | 跨层异常分类：连接、协议、设备能力、测量、清理与配置；清理聚合异常逐项记录失败动作 |
 | `application.export_service` | `ExportRequestError`、`ResultExportUseCase` | 导出用例：执行 `ExportRequest`，只接受历史列表中的结果标识；报告端口必须返回真实产物位置 |
 | `application.lifecycle.measurement_lifecycle` | `MeasurementLifecycle`、`StopIntent` | 测量生命周期 |
 | `application.lifecycle.measurement_runtime` | `MeasurementRuntimeCoordinator`、`RuntimeDecision` | 运行协调与决策 |
@@ -306,6 +307,10 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 13. 门禁辅助函数自身有回归测试（静态导入、`from package import module`、动态导入别名、
     非常量动态导入、星号导入）。
 
+步骤 15 另有独立的静态质量门禁 `tests/test_static_quality_gate.py`（裸 `except`、静默宽泛
+捕获、生产 `print`、旧模块导入、动态设备路由），与本文的导入登记门禁互补：本文冻结“允许导入
+什么”，步骤 15 冻结“用什么写法处理失败、往哪里输出”。
+
 定向验证命令：
 
 ```powershell
@@ -317,11 +322,12 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 
 ## 8. 步骤 1 验收与现行清单规模
 
-- 正式公共 API：49 个模块路径、200 个公开名称，已在本文与测试中固定（步骤 5 新增
+- 正式公共 API：50 个模块路径、215 个公开名称，已在本文与测试中固定（步骤 5 新增
   `infrastructure.config.validation.validate_official_config`，用于校验已解析的正式配置文档；
   步骤 6 收敛结果 DTO；步骤 7 新增 `application.ports.measurement_session`；步骤 13 新增
-  `domain.measurement.values` 的测量值对象）。
-- 正式内部模块：40 个路径已登记，公共与内部边界不重叠（步骤 7 补登记
+  `domain.measurement.values` 的测量值对象；步骤 15 新增 `application.errors` 的跨层异常分类
+  与失败项归一化 `normalize_failures`）。
+- 正式内部模块：41 个路径已登记，公共与内部边界不重叠（步骤 7 补登记
   `instrument.safety`：安全标记的显式签名判定是跨模块契约）。
 - 旧模块：29 个条目（21 个根模块、8 个正式包内实现），状态与工作树一致。
 - 存量引用基线：空（步骤 4 与步骤 9 已把旧模块引用清零，新增引用直接失败）。

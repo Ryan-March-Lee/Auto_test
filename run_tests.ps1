@@ -25,6 +25,11 @@ try {
     & $Python tools\export_dependency_lock.py --check
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+    # Static quality gates (bare except, silent broad catch, production print,
+    # retired imports, dynamic device routing) fail the run before the suite.
+    & $Python -m unittest tests.test_static_quality_gate tests.test_exception_taxonomy -v
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
     $KnownLayers = @("Offline", "Unit", "Simulation")
     if ($Layer -notin $KnownLayers) {
         # Preserve the original positional form, for example:

@@ -11,6 +11,8 @@ from __future__ import annotations
 from enum import Enum
 from typing import Iterable, Protocol, cast, runtime_checkable
 
+from application.errors import DeviceCapabilityError
+
 
 __all__ = [
     "DRIVER_POWER_CAPABILITIES",
@@ -235,7 +237,7 @@ class MeasurementInstrumentPort(Protocol):
         """释放全部连接并返回未能完成的清理错误。"""
 
 
-class InstrumentCapabilityError(RuntimeError):
+class InstrumentCapabilityError(DeviceCapabilityError):
     """设备对象缺少测量服务必需的端口能力。"""
 
     def __init__(self, requirement: str, missing: Iterable[str]) -> None:

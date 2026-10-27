@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Callable, Mapping
 
+from application.errors import CleanupError, FailureRecord, cause_of
 
-class PowerOffFlowError(RuntimeError):
-    def __init__(self, message: str, errors: list[BaseException]):
-        super().__init__(message)
-        self.errors = tuple(errors)
+
+class PowerOffFlowError(CleanupError):
+    """安全掉电失败；``failures`` 逐项记录失败通道。"""
 
 
 class PowerOffFlow:
@@ -24,21 +24,21 @@ class PowerOffFlow:
         self.event_sink = event_sink or (lambda _step, _status: None)
 
     def run(self, *, timeout_s: float = 5.0) -> tuple[str, ...]:
-        errors: list[BaseException] = []
+        failures: list[FailureRecord] = []
         completed: list[str] = []
         for role in ("drain", "gate"):
             name = f"{role}.output_off"
             self.event_sink(name, "started")
             try:
                 self.channels[role].set_output_enabled(False, timeout_s=timeout_s)
-            except Exception as error:
-                errors.append(error)
+            except Exception as error:  # 先关 drain 再关 gate，两项都必须尝试
+                failures.append(FailureRecord(name, error))
                 self.event_sink(name, "failed")
             else:
                 completed.append(name)
                 self.event_sink(name, "completed")
             if role == "drain":
                 self.sleep_fn(self.settle_time_s)
-        if errors:
-            raise PowerOffFlowError("安全掉电存在失败: " + "; ".join(map(str, errors)), errors) from errors[0]
+        if failures:
+            raise PowerOffFlowError("安全掉电存在失败", failures) from cause_of(failures)
         return tuple(completed)

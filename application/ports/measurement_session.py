@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
 
+from application.errors import CleanupError, FailureRecord
+
 if TYPE_CHECKING:  # 避免 application.ports -> instrument 的运行时导入环
     from instrument.ports import MeasurementInstrumentPort
 
@@ -39,18 +41,30 @@ class CleanupRecord:
     """一次安全清理的结构化结果。
 
     ``rf_output``、``power_supplies`` 和 ``resources`` 分别记录 RF 关闭、
-    电源关闭和连接释放的执行状态；``errors`` 保存全部失败的文本描述。
+    电源关闭和连接释放的执行状态；``errors`` 保存全部失败的文本描述，
+    ``failures`` 逐项保存失败动作（动作名 + 说明），使多故障聚合可以按动作追溯，
+    而不是只剩一串消息。
+
+    只填 ``failures`` 的记录同样算失败：``__post_init__`` 用失败说明补齐
+    ``errors``，避免出现“有失败动作却报告成功”的记录。
     """
 
     rf_output: CleanupStepStatus
     power_supplies: CleanupStepStatus
     resources: CleanupStepStatus
     errors: tuple[str, ...] = ()
+    failures: tuple[FailureRecord, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.failures and not self.errors:
+            object.__setattr__(
+                self, "errors", tuple(item.message() for item in self.failures)
+            )
 
     @property
     def succeeded(self) -> bool:
         """所有动作都完成或按边界跳过时返回 True。"""
-        return not self.errors
+        return not self.errors and not self.failures
 
     def to_dict(self) -> dict[str, Any]:
         """返回可写入运行记录的结果文档。"""
@@ -59,18 +73,29 @@ class CleanupRecord:
             "power_supplies": self.power_supplies.value,
             "resources": self.resources.value,
             "errors": list(self.errors),
+            "failures": [
+                {"action": record.action, "message": record.message()}
+                for record in self.failures
+            ],
             "succeeded": self.succeeded,
         }
 
 
-class SafetyCleanupError(RuntimeError):
-    """安全清理失败；``record`` 是本次清理的完整结构化结果。"""
+class SafetyCleanupError(CleanupError):
+    """安全清理失败；``record`` 是本次清理的完整结构化结果。
+
+    消息与 ``errors`` 覆盖记录里的全部失败：优先使用逐动作的 ``failures``，只有文本
+    消息（例如从运行记录反序列化、或调用方直接构造记录）时按文本补充，不丢任何一项。
+    """
 
     def __init__(self, record: CleanupRecord) -> None:
         self.record = record
-        details = "; ".join(record.errors)
-        message = "测量安全清理存在失败"
-        super().__init__(f"{message}: {details}" if details else message)
+        covered = {item.message() for item in record.failures}
+        failures: list[FailureRecord | str] = list(record.failures)
+        failures.extend(
+            message for message in record.errors if message not in covered
+        )
+        super().__init__("测量安全清理存在失败", failures)
 
 
 @runtime_checkable

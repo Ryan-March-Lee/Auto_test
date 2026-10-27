@@ -95,7 +95,7 @@ def interpreter_command(*arguments: str) -> str:
 
 
 def verification_commands() -> dict[str, str]:
-    """测试、编译、启动检查和配置校验的官方命令集合。
+    """测试、编译、启动检查、静态门禁和配置校验的官方命令集合。
 
     启动器帮助、README、发布清单和 CI 都引用这一份结果，避免各自维护
     裸 ``python`` 命令而产生解释器漂移。
@@ -104,6 +104,13 @@ def verification_commands() -> dict[str, str]:
         "unit_tests": interpreter_command("-m", "unittest", "discover", "-s", "tests", "-v"),
         "compile": interpreter_command("tools/compile_check.py", "."),
         "dependency_lock": interpreter_command("tools/export_dependency_lock.py", "--check"),
+        "static_quality": interpreter_command(
+            "-m",
+            "unittest",
+            "tests.test_static_quality_gate",
+            "tests.test_exception_taxonomy",
+            "-v",
+        ),
         "launcher_check": interpreter_command("launcher.py", "--check"),
         "config_validation": interpreter_command("launcher.py", "--validate-config"),
         "release_manifest": interpreter_command("release_manifest.py"),

@@ -8,15 +8,15 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from application.errors import CleanupError, cause_of
+
 from .ports import InstrumentState
 from .power_control import PowerController
-from .safety import shutdown_instruments
+from .safety import InstrumentSafetyError, shutdown_instruments
 
 
-class InstrumentSessionError(RuntimeError):
-    def __init__(self, message: str, errors: list[BaseException]):
-        super().__init__(message)
-        self.errors = tuple(errors)
+class InstrumentSessionError(CleanupError):
+    """设备会话清理失败；``failures`` 逐项记录失败动作。"""
 
 
 class ManagedInstrumentSession:
@@ -166,7 +166,7 @@ class ManagedInstrumentSession:
             for device in owned:
                 try:
                     device.close(timeout_s=timeout_s)
-                except Exception as error:
+                except Exception as error:  # 单个设备关闭失败不阻止释放其余设备
                     errors.append(error)
                 else:
                     if device in self._connected:
@@ -186,7 +186,9 @@ class ManagedInstrumentSession:
                 close=close_owned,
                 emergency=emergency,
             )
-        except Exception as error:
-            errors = list(getattr(error, "errors", (error,)))
-            raise InstrumentSessionError("instrument cleanup failed", errors) from errors[0]
+        except InstrumentSafetyError as error:
+            # 安全清理只抛出这一种聚合异常；动作名与原始异常已经逐项记录。
+            raise InstrumentSessionError(
+                "instrument cleanup failed", error.failures
+            ) from cause_of(error.failures)
         self.state = InstrumentState.CLEANED

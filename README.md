@@ -156,9 +156,14 @@ DUT 与驱动功放占用同一通道，都会在连接前报错。
 ```powershell
 ./run_tests.ps1
 & $env:AUTO_TEST_PYTHON tools/export_dependency_lock.py --check
+& $env:AUTO_TEST_PYTHON -m unittest tests.test_static_quality_gate tests.test_exception_taxonomy -v
 & $env:AUTO_TEST_PYTHON launcher.py --check
 & $env:AUTO_TEST_PYTHON launcher.py --validate-config
 ```
+
+静态质量门禁（裸 `except`、静默宽泛捕获、生产 `print`、已退役模块导入、动态设备路由）
+与异常分类契约在 `run_tests.ps1` 里先于全量测试执行，失败即终止本次验证，细节见
+[异常分类与静态质量门禁](docs/异常分类与静态质量门禁.md)。
 
 普通测试只执行离线和仿真路径，不会初始化真实设备。Hardware smoke 必须使用
 `run_hardware_smoke.ps1`，同时满足配置位于 `hardware/`、明确用户确认、空载确认、

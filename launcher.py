@@ -320,6 +320,7 @@ def show_help() -> None:
         (interpreter_command("launcher.py"), "启动 GUI"),
         (verification_commands()["launcher_check"], "检查 Python 和依赖包"),
         (verification_commands()["dependency_lock"], "核对依赖锁定清单与当前环境"),
+        (verification_commands()["static_quality"], "静态质量门禁（异常写法、输出、旧入口导入）"),
         (verification_commands()["config_validation"], "只读校验 config.json，不连接仪器"),
         (interpreter_command("launcher.py", "--list-runs"), "列出运行目录及状态"),
         (interpreter_command("launcher.py", "--run-id", "RUN_ID"), "离线查看运行 manifest 和结果文件"),

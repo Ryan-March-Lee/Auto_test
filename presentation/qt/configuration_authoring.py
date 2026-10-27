@@ -27,6 +27,8 @@ import math
 import re
 from typing import Any, Mapping
 
+from application.errors import ConfigurationError
+
 OFFICIAL_SCHEMA_VERSION = "1.0"
 # 现场固定接线的编辑约定：DUT 的 CH1 是栅极、CH2 是漏极。未知通道不猜测角色。
 DUT_CHANNEL_ROLES = {"CH1": "gate", "CH2": "drain"}
@@ -35,7 +37,7 @@ _DB_VALUE_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*dB\s*$", re.IGNORECASE)
 _ASSIGNMENT_GROUPS = ("dut_amplifier", "driver_amplifier")
 
 
-class ConfigurationAuthoringError(ValueError):
+class ConfigurationAuthoringError(ConfigurationError):
     """当前表单无法如实表达为一份正式运行配置。
 
     这只用于“正式 schema 根本表达不了”的情况；缺失或非法字段仍写成 ``None`` /

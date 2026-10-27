@@ -2,6 +2,7 @@
 
 import unittest
 
+from application.errors import FailureRecord
 from application.measurements.services import CableLossService
 from application.ports.measurement_session import (
     CleanupRecord,
@@ -95,6 +96,7 @@ class CleanupRecordTests(unittest.TestCase):
                 "power_supplies": "skipped",
                 "resources": "performed",
                 "errors": [],
+                "failures": [],
                 "succeeded": True,
             },
         )
@@ -104,8 +106,13 @@ class CleanupRecordTests(unittest.TestCase):
             power_supplies=CleanupStepStatus.FAILED,
             resources=CleanupStepStatus.PERFORMED,
             errors=("power",),
+            failures=(FailureRecord("power_supplies", "power"),),
         )
         self.assertFalse(failed.succeeded)
+        self.assertEqual(
+            failed.to_dict()["failures"],
+            [{"action": "power_supplies", "message": "power"}],
+        )
 
     def test_cleanup_error_carries_the_record_and_keeps_the_message_prefix(self):
         record = CleanupRecord(

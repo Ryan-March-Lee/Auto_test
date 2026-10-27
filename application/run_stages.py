@@ -25,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping
 
+from application.errors import ConfigurationError
 from application.ports.run_repository import RunRepositoryPort
 from domain.run.models import (
     STAGE_CABLE_LOSS,
@@ -45,11 +46,14 @@ logger = logging.getLogger(__name__)
 _MISSING_RESULT_PATH = "阶段 {stage} 没有固定结果路径，调用方必须显式指定结果路径"
 
 
-class StageInputUnavailable(RuntimeError):
+class StageInputUnavailable(ConfigurationError, RuntimeError):
     """前置阶段输入未完成、未登记或与 manifest 校验值不一致。
 
     后续阶段在硬件动作前用它表示“当前运行明确指定的输入不可用”，
     调用方不应回退到全局兼容结果或其它运行目录继续执行。
+
+    归类为配置失败（同时是 ``ValueError``），并保留历史上的 ``RuntimeError``
+    基类：分类之前它就是 ``RuntimeError``，既有处理器不得因为归类而失效。
     """
 
 

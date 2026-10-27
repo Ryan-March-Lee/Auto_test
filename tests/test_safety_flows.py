@@ -1,11 +1,13 @@
 import unittest
 
+from application.errors import ErrorCategory
 from application.ports.measurement_session import (
     CleanupRecord,
     CleanupStepStatus,
     SafetyCleanupError,
 )
 from instrument.action import PowerSupplyActions
+from instrument.session import InstrumentSessionError, ManagedInstrumentSession
 from instrument.flow import (
     PowerOffFlow,
     PowerOffFlowError,
@@ -17,7 +19,12 @@ from instrument.flow import (
     SafetyShutdownFlow,
     cleanup_measurement,
 )
-from instrument.simulation import CommandRecorder, SimulatedPowerSupply, SimulatedSignalGenerator
+from instrument.simulation import (
+    CommandRecorder,
+    SimulatedPowerSupply,
+    SimulatedSignalGenerator,
+    SimulatedSpectrumAnalyzer,
+)
 from instrument.safety import (
     InstrumentSafetyError,
     close_accepts_safety_flags,
@@ -105,6 +112,14 @@ class SafetyFlowTests(unittest.TestCase):
         with self.assertRaises(SafetyShutdownError) as raised:
             flow.run()
         self.assertEqual([str(error) for error in raised.exception.errors], ["rf", "power", "close"])
+        # 每个失败动作都必须能被追溯到具体安全动作，而不是只剩一串消息。
+        self.assertEqual(
+            raised.exception.actions, ("rf_output", "power_supplies", "resources")
+        )
+        self.assertEqual(
+            [item.describe() for item in raised.exception.failures],
+            ["rf_output: rf", "power_supplies: power", "resources: close"],
+        )
 
     def test_shutdown_can_leave_borrowed_resource_open(self):
         events = []
@@ -391,9 +406,99 @@ class SafetyCleanupAdapterTests(unittest.TestCase):
                 "power_supplies": "skipped",
                 "resources": "performed",
                 "errors": [],
+                "failures": [],
                 "succeeded": True,
             },
         )
+
+
+class CleanupAggregationTests(unittest.TestCase):
+    """多故障聚合与重复清理：每个失败动作都要留下记录。"""
+
+    def test_adapter_records_every_failed_action_with_its_name(self):
+        controller = _CleanupController(rf_error=RuntimeError("rf"))
+
+        def power_off():
+            raise RuntimeError("power")
+
+        with self.assertRaises(SafetyCleanupError) as raised:
+            SafetyCleanupAdapter(controller).cleanup(power_cleanup=power_off)
+
+        record = raised.exception.record
+        self.assertEqual(record.rf_output, CleanupStepStatus.FAILED)
+        self.assertEqual(record.power_supplies, CleanupStepStatus.FAILED)
+        # RF 未确认关闭时保留连接，既不清理也不谎报成功。
+        self.assertEqual(record.resources, CleanupStepStatus.SKIPPED)
+        self.assertEqual(raised.exception.actions, ("rf_output", "power_supplies"))
+        self.assertEqual(
+            record.to_dict()["failures"],
+            [
+                {"action": "rf_output", "message": "rf"},
+                {"action": "power_supplies", "message": "power"},
+            ],
+        )
+        self.assertEqual(controller.events, ["rf_off"])
+
+    def test_adapter_can_be_repeated_after_a_failed_cleanup(self):
+        controller = _CleanupController(close_errors=[RuntimeError("close")])
+        adapter = SafetyCleanupAdapter(controller)
+
+        with self.assertRaises(SafetyCleanupError):
+            adapter.cleanup()
+
+        # 设备恢复后重复清理：动作重新执行，并得到完整成功记录。
+        controller.close_errors = []
+        record = adapter.cleanup()
+        self.assertTrue(record.succeeded)
+        self.assertEqual(record.errors, ())
+        self.assertEqual(record.failures, ())
+        self.assertEqual(
+            controller.events,
+            ["rf_off", ("close", False), "rf_off", ("close", False)],
+        )
+
+    def test_failed_flow_retries_every_action_on_the_next_run(self):
+        attempts = {"rf": 0, "power": 0}
+
+        def rf_off():
+            attempts["rf"] += 1
+            if attempts["rf"] == 1:
+                raise RuntimeError("rf")
+
+        def power_off():
+            attempts["power"] += 1
+            if attempts["power"] == 1:
+                raise RuntimeError("power")
+
+        flow = SafetyShutdownFlow(
+            rf_off=rf_off, power_off=power_off, close=lambda **_flags: []
+        )
+        with self.assertRaises(SafetyShutdownError) as raised:
+            flow.run()
+        self.assertEqual(raised.exception.actions, ("rf_output", "power_supplies"))
+
+        flow.run()
+        self.assertEqual(attempts, {"rf": 2, "power": 2})
+
+    def test_session_cleanup_error_records_the_failed_actions(self):
+        recorder = CommandRecorder()
+        signal = SimulatedSignalGenerator(recorder)
+        session = ManagedInstrumentSession(
+            signal,
+            SimulatedSpectrumAnalyzer(recorder=recorder),
+            SimulatedPowerSupply(recorder),
+            {"gate": "A", "drain": "B"},
+        )
+        session.validate()
+        session.connect()
+        session.prepare()
+        signal.inject_failure("rf_off")
+
+        with self.assertRaises(InstrumentSessionError) as raised:
+            session.close()
+
+        self.assertEqual(raised.exception.actions, ("rf_output",))
+        self.assertEqual(raised.exception.category, ErrorCategory.CLEANUP)
 
 
 if __name__ == "__main__":

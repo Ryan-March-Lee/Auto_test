@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import inspect
 
+from application.errors import CleanupError, FailureRecord, cause_of
 
-class InstrumentSafetyError(RuntimeError):
-    def __init__(self, message: str, errors: list[BaseException]):
-        super().__init__(message)
-        self.errors = tuple(errors)
+
+class InstrumentSafetyError(CleanupError):
+    """设备安全清理失败；``failures`` 逐项记录失败动作。"""
 
 
 def close_accepts_safety_flags(close: object) -> bool:
@@ -45,23 +45,26 @@ def shutdown_instruments(*, rf_off=None, power_off=None, close=None,
     连接清理始终尽力执行，不会因为 RF 或供电动作失败而跳过；``close`` 接受
     ``rf_safe`` / ``power_safe`` 时可据此决定保留哪些危险资源，见
     :func:`close_accepts_safety_flags`。
+
+    每个失败动作都以 :class:`application.errors.FailureRecord` 记录动作名，
+    最终一次性抛出 :class:`InstrumentSafetyError`；任何失败都不会被丢弃。
     """
     del emergency  # 预留给调用方记录策略，当前两种路径都必须先断 RF。
-    errors: list[BaseException] = []
+    failures: list[FailureRecord] = []
     rf_safe = rf_off is None
     power_safe = power_off is None
     if rf_off is not None:
         try:
             rf_off()
             rf_safe = True
-        except Exception as error:
-            errors.append(error)
+        except Exception as error:  # 清理动作必须聚合任意设备错误后继续
+            failures.append(FailureRecord("rf_output", error))
     if power_off is not None:
         try:
             power_off()
             power_safe = True
-        except Exception as error:
-            errors.append(error)
+        except Exception as error:  # 清理动作必须聚合任意设备错误后继续
+            failures.append(FailureRecord("power_supplies", error))
     if close is not None:
         try:
             if close_accepts_safety_flags(close):
@@ -69,8 +72,8 @@ def shutdown_instruments(*, rf_off=None, power_off=None, close=None,
             else:
                 result = close()
             if result:
-                errors.extend(result)
-        except Exception as error:
-            errors.append(error)
-    if errors:
-        raise InstrumentSafetyError("设备安全清理存在失败", errors) from errors[0]
+                failures.extend(FailureRecord("resources", error) for error in result)
+        except Exception as error:  # 连接释放失败同样进入聚合记录
+            failures.append(FailureRecord("resources", error))
+    if failures:
+        raise InstrumentSafetyError("设备安全清理存在失败", failures) from cause_of(failures)

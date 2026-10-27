@@ -429,7 +429,7 @@ class LockExportToolTests(unittest.TestCase):
 
 
 class UnifiedCommandTests(unittest.TestCase):
-    """测试、编译、锁定核对、启动检查和发布清单共用一份解释器命令。"""
+    """测试、编译、锁定核对、启动检查、静态门禁和发布清单共用一份解释器命令。"""
 
     def test_commands_never_start_with_bare_python(self):
         from infrastructure.runtime import verification_commands
@@ -441,6 +441,7 @@ class UnifiedCommandTests(unittest.TestCase):
                 "unit_tests",
                 "compile",
                 "dependency_lock",
+                "static_quality",
                 "launcher_check",
                 "config_validation",
                 "release_manifest",
@@ -466,6 +467,13 @@ class UnifiedCommandTests(unittest.TestCase):
         lock_command = verification_commands()["dependency_lock"]
         self.assertIn("tools/export_dependency_lock.py", lock_command)
         self.assertIn("--check", lock_command)
+
+    def test_static_quality_command_runs_the_step_15_gates(self):
+        from infrastructure.runtime import verification_commands
+
+        command = verification_commands()["static_quality"]
+        self.assertIn("tests.test_static_quality_gate", command)
+        self.assertIn("tests.test_exception_taxonomy", command)
 
     def test_release_manifest_reuses_the_same_commands(self):
         from infrastructure.runtime import verification_commands

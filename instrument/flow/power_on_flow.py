@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Mapping
 
+from application.errors import FailureRecord, MeasurementError, cause_of
+
 
 @dataclass(frozen=True)
 class PowerChannelSetup:
@@ -14,12 +16,8 @@ class PowerChannelSetup:
     current_a: float
 
 
-class PowerOnFlowError(RuntimeError):
-    """上电失败；errors 保留原始异常，便于日志和上层汇总。"""
-
-    def __init__(self, message: str, errors: list[BaseException]):
-        super().__init__(message)
-        self.errors = tuple(errors)
+class PowerOnFlowError(MeasurementError):
+    """上电失败；``failures`` 保留失败的上电步骤与安全关闭动作。"""
 
 
 class PowerOnFlow:
@@ -37,6 +35,7 @@ class PowerOnFlow:
             raise ValueError("settle_time_s 必须大于或等于 0")
         self.settle_time_s = float(settle_time_s)
         self.event_sink = event_sink or (lambda _step, _status: None)
+        self._current_step: str | None = None
         self._validate_roles()
 
     def _validate_roles(self) -> None:
@@ -60,15 +59,15 @@ class PowerOnFlow:
             self._step("gate.output_on", lambda: self.channels["gate"].set_output_enabled(True, timeout_s=timeout_s), completed)
             self.sleep_fn(self.settle_time_s)
             self._step("drain.output_on", lambda: self.channels["drain"].set_output_enabled(True, timeout_s=timeout_s), completed)
-        except Exception as error:
-            errors = [error]
+        except Exception as error:  # 上电链路的任意一步失败都必须回到安全状态
+            failures = [FailureRecord(self._current_step or "power_on", error)]
             # 上电部分成功时也必须尽力回到安全状态，且不掩盖首个错误。
             for role in ("drain", "gate"):
                 try:
                     self.channels[role].set_output_enabled(False, timeout_s=timeout_s)
-                except Exception as cleanup_error:
-                    errors.append(cleanup_error)
-            raise PowerOnFlowError("安全上电失败: " + "; ".join(map(str, errors)), errors) from error
+                except Exception as cleanup_error:  # 一个通道关闭失败不阻止关闭另一个
+                    failures.append(FailureRecord(f"{role}.output_off", cleanup_error))
+            raise PowerOnFlowError("安全上电失败", failures) from cause_of(failures)
         return tuple(completed)
 
     @staticmethod
@@ -92,11 +91,13 @@ class PowerOnFlow:
         return result
 
     def _step(self, name: str, operation: Callable[[], None], completed: list[str]) -> None:
+        self._current_step = name
         self.event_sink(name, "started")
         try:
             operation()
-        except Exception:
+        except Exception:  # 事件输出后原样抛出，不改变设备行为
             self.event_sink(name, "failed")
             raise
         completed.append(name)
         self.event_sink(name, "completed")
+        self._current_step = None

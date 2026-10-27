@@ -5,8 +5,10 @@ from __future__ import annotations
 from typing import Callable, Mapping, Protocol, Union
 import math
 
+from application.errors import ProtocolError
 
-class ScpiTransportError(RuntimeError):
+
+class ScpiTransportError(ProtocolError):
     """Base error for communication failures at the SCPI transport boundary."""
 
     def __init__(

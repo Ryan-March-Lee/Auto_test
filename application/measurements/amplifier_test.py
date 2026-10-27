@@ -12,6 +12,7 @@ from typing import Any, Callable
 import domain.measurement.calculations as measurement_calculations
 from app.cancellation import CancellationToken, MeasurementCancelled
 from application.dto import AmplifierMeasurementRequest, AmplifierMeasurementResult, MeasurementResult
+from application.errors import ConfigurationError
 from application.measurements.services import AmplifierMeasurementService
 from application.ports.measurement_session import CleanupRecord
 from domain.measurement.values import (
@@ -36,7 +37,7 @@ _UNSAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
 AMPLIFIER_SPLIT_SCHEMA_VERSION = 1
 
 
-class AmplifierCalibrationError(ValueError):
+class AmplifierCalibrationError(ConfigurationError):
     """主功放校准输入（线损 / 驱动映射）结构无效。"""
 
 
@@ -156,7 +157,7 @@ class AmplifierMeasurementUseCase:
         except MeasurementCancelled as error:
             self._record_cancel(getattr(error, "reason", None) or "测量已取消")
             raise
-        except Exception as error:
+        except Exception as error:  # 任何测量失败都要登记阶段失败后原样上抛
             self._record_failure(error)
             raise
 

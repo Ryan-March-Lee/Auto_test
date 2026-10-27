@@ -22,6 +22,8 @@ from __future__ import annotations
 import copy
 from typing import Any, Mapping
 
+from application.errors import ConfigurationError
+
 from .config_form_state import parse_frequency_text
 from .configuration_authoring import DUT_CHANNEL_ROLES
 
@@ -59,7 +61,7 @@ _ASSIGNMENT_ROLE_KEYS = (
 )
 
 
-class ConfigBackfillError(ValueError):
+class ConfigBackfillError(ConfigurationError):
     """冻结配置无法确定性地回填到配置页控件时抛出。
 
     回填失败必须可识别：调用方要么收到该异常，要么据此明确报告“未回填成功”，

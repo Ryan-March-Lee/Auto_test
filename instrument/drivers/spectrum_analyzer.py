@@ -5,10 +5,12 @@ from __future__ import annotations
 import math
 import re
 
+from application.errors import MeasurementError
+
 from ._base import DriverTransport, ScpiDriverBase
 
 
-class SpectrumAnalyzerMeasurementError(RuntimeError, ValueError):
+class SpectrumAnalyzerMeasurementError(MeasurementError, ValueError):
     """Raised when a spectrum-analyzer measurement cannot be interpreted."""
 
 

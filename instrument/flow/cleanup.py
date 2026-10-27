@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, List
 
+from application.errors import FailureRecord, cause_of
 from application.ports.measurement_session import (
     CleanupRecord,
     CleanupStepStatus,
@@ -21,6 +22,7 @@ from application.ports.measurement_session import (
 from infrastructure.logging.app_logging import get_logger
 
 from .safety_shutdown_flow import SafetyShutdownError, SafetyShutdownFlow
+from ..safety import InstrumentSafetyError
 
 
 logger = get_logger(__name__)
@@ -38,33 +40,40 @@ def cleanup_measurement(
         safety_flow.run(close_resource=close_resource)
         return
 
-    errors: List[BaseException] = []
+    failures: List[FailureRecord] = []
     logger.info("测量安全清理开始")
 
-    if getattr(instrument_control, "signal_gen", None) is not None:
+    rf_safe = getattr(instrument_control, "signal_gen", None) is None
+    if not rf_safe:
         try:
             instrument_control.rf_output_off()
-        except Exception as error:
-            errors.append(error)
+            rf_safe = True
+        except Exception as error:  # 清理动作必须聚合任意设备错误后继续
+            failures.append(FailureRecord("rf_output", error))
             logger.exception("RF 关闭失败: %s", error)
 
     if power_cleanup is not None:
         try:
             power_cleanup()
-        except Exception as error:
-            errors.append(error)
+        except Exception as error:  # 清理动作必须聚合任意设备错误后继续
+            failures.append(FailureRecord("power_supplies", error))
             logger.exception("电源清理失败: %s", error)
 
-    if close_resource:
+    # RF 未确认关闭时保留连接，与 SafetyShutdownFlow 一致：现场可以重试关闭 RF，
+    # 而不是在一个无法确认输出状态的会话上做进一步动作。
+    if close_resource and rf_safe:
         try:
-            errors.extend(instrument_control.close_all(close_rf=False))
-        except Exception as error:
-            errors.append(error)
+            close_errors = instrument_control.close_all(close_rf=False) or ()
+        except Exception as error:  # 连接释放失败同样进入聚合记录
+            failures.append(FailureRecord("resources", error))
             logger.exception("仪器连接清理失败: %s", error)
+        else:
+            failures.extend(
+                FailureRecord("resources", error) for error in close_errors
+            )
 
-    if errors:
-        details = "; ".join(str(error) for error in errors)
-        raise RuntimeError(f"测量安全清理存在失败: {details}") from errors[0]
+    if failures:
+        raise InstrumentSafetyError("测量安全清理存在失败", failures) from cause_of(failures)
     logger.info("测量安全清理完成")
 
 
@@ -145,15 +154,13 @@ class SafetyCleanupAdapter:
                 rf_output=statuses["rf_output"],
                 power_supplies=statuses["power_supplies"],
                 resources=statuses["resources"],
-                errors=tuple(
-                    str(item) or item.__class__.__name__ for item in failure.errors
-                ),
+                errors=tuple(item.message() for item in failure.failures),
+                failures=failure.failures,
             )
             logger.error("测量安全清理存在失败: %s", record.errors)
             # 在 except 块之外抛出：调用方正在处理的测量异常仍是本错误的上下文，
             # 清理失败不会被测量错误吞掉，也不会覆盖原始测量异常。
-            cause = failure.errors[0] if failure.errors else failure
-            raise SafetyCleanupError(record) from cause
+            raise SafetyCleanupError(record) from cause_of(failure.failures)
         return CleanupRecord(
             rf_output=statuses["rf_output"],
             power_supplies=statuses["power_supplies"],

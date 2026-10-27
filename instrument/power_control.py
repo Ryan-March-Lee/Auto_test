@@ -10,13 +10,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Callable
 
+from application.errors import CleanupError, FailureRecord, cause_of
 
-class PowerControlError(RuntimeError):
-    """一个或多个供电动作失败。"""
 
-    def __init__(self, message: str, errors: list[BaseException]):
-        super().__init__(message)
-        self.errors = tuple(errors)
+class PowerControlError(CleanupError):
+    """一个或多个供电动作失败；``failures`` 逐项记录失败动作。"""
 
 
 class PowerController:
@@ -50,15 +48,15 @@ class PowerController:
                 self.sleep_fn(self.gate_settle_time_s)
 
     def power_off(self, *, timeout_s: float = 10.0) -> None:
-        errors: list[BaseException] = []
+        failures: list[FailureRecord] = []
         for role in ("drain", "gate"):
             channel = self.channels.get(role)
             if channel is not None:
                 try:
                     self.power_supply.set_output_enabled(channel, False, timeout_s=timeout_s)
-                except Exception as error:
-                    errors.append(error)
+                except Exception as error:  # 先关 drain 再关 gate，两项都必须尝试
+                    failures.append(FailureRecord(f"{role}.output_off", error))
             if role == "drain":
                 self.sleep_fn(self.drain_settle_time_s)
-        if errors:
-            raise PowerControlError("供电安全掉电存在失败", errors) from errors[0]
+        if failures:
+            raise PowerControlError("供电安全掉电存在失败", failures) from cause_of(failures)

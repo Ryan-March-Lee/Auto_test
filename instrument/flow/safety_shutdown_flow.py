@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from typing import Callable
 
+from application.errors import CleanupError, FailureRecord, cause_of
+
 from ..safety import close_accepts_safety_flags
 
 
-class SafetyShutdownError(RuntimeError):
-    def __init__(self, message: str, errors: list[BaseException]):
-        super().__init__(message)
-        self.errors = tuple(errors)
+class SafetyShutdownError(CleanupError):
+    """安全清理失败；``failures`` 逐项记录动作名与原始异常。"""
 
 
 class SafetyShutdownFlow:
@@ -26,6 +26,10 @@ class SafetyShutdownFlow:
     ``close`` 的调用形式按签名判定（带安全标记，或旧式 ``close_all(close_rf=False)``），
     不通过捕获 ``TypeError`` 猜测签名，避免把设备清理内部的真实 ``TypeError``
     误当成签名不兼容而重复执行清理。
+
+    每个失败动作都记录成 :class:`application.errors.FailureRecord`（``rf_output`` /
+    ``power_supplies`` / ``resources``），多故障一次聚合上报；成功后再次调用是
+    无操作，失败后再次调用会重新尝试全部动作。
     """
 
     def __init__(self, *, rf_off: Callable[[], None] | None = None,
@@ -40,21 +44,21 @@ class SafetyShutdownFlow:
     def run(self, *, close_resource: bool = True) -> None:
         if self._cleaned:
             return
-        errors: list[BaseException] = []
+        failures: list[FailureRecord] = []
         rf_safe = self.rf_off is None
         power_safe = self.power_off is None
         if self.rf_off is not None:
             try:
                 self.rf_off()
                 rf_safe = True
-            except Exception as error:
-                errors.append(error)
+            except Exception as error:  # 清理动作必须聚合任意设备错误后继续
+                failures.append(FailureRecord("rf_output", error))
         if self.power_off is not None:
             try:
                 self.power_off()
                 power_safe = True
-            except Exception as error:
-                errors.append(error)
+            except Exception as error:  # 清理动作必须聚合任意设备错误后继续
+                failures.append(FailureRecord("power_supplies", error))
         if self.close is not None and close_resource:
             try:
                 if self._close_accepts_flags:
@@ -63,9 +67,11 @@ class SafetyShutdownFlow:
                     # 旧式 close_all(close_rf=False) 入口：RF 未确认关闭时不调用。
                     close_errors = self.close(close_rf=False) if rf_safe else None
                 if close_errors:
-                    errors.extend(close_errors)
-            except Exception as error:
-                errors.append(error)
-        if errors:
-            raise SafetyShutdownError("安全清理存在失败: " + "; ".join(map(str, errors)), errors) from errors[0]
+                    failures.extend(
+                        FailureRecord("resources", error) for error in close_errors
+                    )
+            except Exception as error:  # 连接释放失败同样进入聚合记录
+                failures.append(FailureRecord("resources", error))
+        if failures:
+            raise SafetyShutdownError("安全清理存在失败", failures) from cause_of(failures)
         self._cleaned = True

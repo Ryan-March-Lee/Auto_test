@@ -81,15 +81,11 @@ class PortMeasurementAdapter:
         was_enabled = bool(self.signal_generator.rf_enabled)
         if was_enabled:
             self.signal_generator.set_rf_enabled(False, timeout_s=timeout_s)
-        try:
-            self.signal_generator.set_power_dbm(power_dbm, timeout_s=timeout_s)
-        except Exception:
-            # A failed power change must leave RF disabled.  Re-enabling it in
-            # finally could energize the previous output after a failed write.
-            raise
-        else:
-            if was_enabled:
-                self.signal_generator.set_rf_enabled(True, timeout_s=timeout_s)
+        # 功率写入成功后才恢复原来的 RF 状态。失败时保持 RF 关闭：在未确认的
+        # 输出电平上重新打开 RF 会把功放置于未知驱动状态。
+        self.signal_generator.set_power_dbm(power_dbm, timeout_s=timeout_s)
+        if was_enabled:
+            self.signal_generator.set_rf_enabled(True, timeout_s=timeout_s)
 
     def set_center_frequency(self, frequency_ghz: float, *, timeout_s: float = 5.0) -> None:
         self.spectrum_analyzer.configure_center_frequency_hz(float(frequency_ghz) * 1e9, timeout_s=timeout_s)

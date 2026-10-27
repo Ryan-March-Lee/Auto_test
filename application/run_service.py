@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping
 
+from application.errors import ConfigurationError
 from application.ports.config_repository import ConfigurationLoadResult
 from application.ports.run_repository import RunRepositoryPort
 from domain.configuration.models import (
@@ -49,7 +50,7 @@ RUN_CONFIG_SNAPSHOT_SCHEMA_VERSION = 1
 logger = logging.getLogger("pa_auto_test." + __name__)
 
 
-class RunNotResumable(ValueError):
+class RunNotResumable(ConfigurationError):
     """运行不可继续测量（终态、缺硬件配置快照或快照校验失败）。
 
     调用方应据此提示用户创建新运行，而不是回退到全局配置或其它运行目录。

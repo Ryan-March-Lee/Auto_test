@@ -4,6 +4,14 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
+from pyvisa import constants, errors
+
+from application.errors import (
+    DeviceCapabilityError,
+    DeviceConnectionError,
+    ErrorCategory,
+    ProtocolError,
+)
 from instrument.measurement_adapter import PortMeasurementAdapter
 from instrument.measurement_factory import create_measurement_port, _VisaSession
 from instrument.ports import PowerSupplyPort
@@ -444,6 +452,122 @@ class _DiscoveryResource(_FakeResource):
         if command.startswith("OUTP?"):
             return "OFF"
         return "-30.0"
+
+
+class _IdentityFailingManager(_FakeResourceManager):
+    """打开成功、身份查询失败：用于区分“连不上”和“命令层失败”。"""
+
+    def open_resource(self, address):
+        self.opened_addresses.append(address)
+        resource = _IdentityFailingResource(address)
+        self.resources.append(resource)
+        return resource
+
+
+class _IdentityFailingResource(_FakeResource):
+    def query(self, command):
+        if command == "*IDN?":
+            raise errors.VisaIOError(constants.StatusCode.error_timeout)
+        return super().query(command)
+
+
+class _WrongModelManager(_FakeResourceManager):
+    def open_resource(self, address):
+        self.opened_addresses.append(address)
+        resource = _WrongModelResource(address)
+        self.resources.append(resource)
+        return resource
+
+
+class _WrongModelResource(_FakeResource):
+    def query(self, command):
+        if command == "*IDN?" and self.address == "PS":
+            return "KEYSIGHT TECHNOLOGIES,E3631A,0,1.0"
+        return super().query(command)
+
+
+def _hardware_config_path(directory):
+    config = _base_hardware_config()
+    config["power_supply_assignment"] = {
+        "dut_amplifier": {"supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}}},
+        "driver_amplifier": {"supplies": {}},
+    }
+    path = Path(directory) / "config.json"
+    path.write_text(json.dumps(config), encoding="utf-8")
+    return str(path)
+
+
+class ConnectionErrorClassificationTests(unittest.TestCase):
+    """连接失败有独立分类，且失败时仍释放已经打开的资源。"""
+
+    def test_unreachable_instrument_is_reported_as_device_connection_error(self):
+        config = _base_hardware_config()
+        config["power_supply_assignment"] = {
+            "dut_amplifier": {"supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}}},
+            "driver_amplifier": {"supplies": {}},
+        }
+        manager = _FakeResourceManager()
+
+        def fail_open(address):
+            raise errors.VisaIOError(constants.StatusCode.error_resource_not_found)
+
+        manager.open_resource = fail_open
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps(config), encoding="utf-8")
+            with patch(
+                "instrument.measurement_factory.pyvisa.ResourceManager", return_value=manager
+            ):
+                with self.assertRaises(DeviceConnectionError) as raised:
+                    create_measurement_port(str(path), mode="hardware")
+
+        self.assertIs(raised.exception.category, ErrorCategory.CONNECTION)
+        self.assertIsInstance(raised.exception.__cause__, errors.VisaIOError)
+        self.assertTrue(manager.closed, "连接失败后仍必须释放已创建的 ResourceManager")
+
+    def test_missing_visa_backend_is_reported_as_device_connection_error(self):
+        """ResourceManager 自身创建失败也属于连接分类，不再是裸 pyvisa 异常。"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = _hardware_config_path(directory)
+            with patch(
+                "instrument.measurement_factory.pyvisa.ResourceManager",
+                side_effect=OSError("VISA library not found"),
+            ):
+                with self.assertRaises(DeviceConnectionError) as raised:
+                    create_measurement_port(path, mode="hardware")
+
+        self.assertIs(raised.exception.category, ErrorCategory.CONNECTION)
+        self.assertIsInstance(raised.exception.__cause__, OSError)
+
+    def test_identity_query_failure_is_reported_as_protocol_error(self):
+        """已打开的仪器查询失败属于命令层失败，不伪装成连不上。"""
+        manager = _IdentityFailingManager()
+        with tempfile.TemporaryDirectory() as directory:
+            path = _hardware_config_path(directory)
+            with patch(
+                "instrument.measurement_factory.pyvisa.ResourceManager", return_value=manager
+            ):
+                with self.assertRaises(ProtocolError) as raised:
+                    create_measurement_port(path, mode="hardware")
+
+        self.assertIs(raised.exception.category, ErrorCategory.PROTOCOL)
+        self.assertIsInstance(raised.exception.__cause__, errors.VisaIOError)
+        self.assertTrue(manager.closed, "装配失败后必须释放 ResourceManager")
+        self.assertTrue(all(resource.closed for resource in manager.resources))
+
+    def test_wrong_power_supply_model_is_reported_as_capability_error(self):
+        manager = _WrongModelManager()
+        with tempfile.TemporaryDirectory() as directory:
+            path = _hardware_config_path(directory)
+            with patch(
+                "instrument.measurement_factory.pyvisa.ResourceManager", return_value=manager
+            ):
+                with self.assertRaises(DeviceCapabilityError) as raised:
+                    create_measurement_port(path, mode="hardware")
+
+        self.assertIs(raised.exception.category, ErrorCategory.CAPABILITY)
+        self.assertIn("DP832A", str(raised.exception))
+        self.assertTrue(manager.closed)
 
 
 if __name__ == "__main__":

@@ -15,6 +15,16 @@ from typing import Any, Mapping, Sequence
 
 import pyvisa
 
+from application.errors import (
+    CleanupError,
+    DeviceCapabilityError,
+    DeviceConnectionError,
+    FailureRecord,
+    ProtocolError,
+    cause_of,
+)
+from infrastructure.logging.app_logging import get_logger
+
 from .drivers import ScpiPowerSupplyDriver, ScpiSignalGeneratorDriver, ScpiSpectrumAnalyzerDriver
 from .measurement_adapter import PortMeasurementAdapter
 from .session import ManagedInstrumentSession
@@ -27,6 +37,8 @@ from .simulation import (
 
 # 生产供电只接受配置中显式声明的角色；不再按 CH1/CH2 推导。
 POWER_ROLES = ("gate", "drain")
+
+logger = get_logger(__name__)
 
 
 def create_measurement_port(
@@ -112,14 +124,14 @@ class _ConfiguredPowerSupply:
             supply.connect(timeout_s=timeout_s)
 
     def close(self, *, timeout_s: float = 5.0) -> None:
-        errors = []
-        for supply in self.supplies.values():
+        failures = []
+        for name, supply in self.supplies.items():
             try:
                 supply.close(timeout_s=timeout_s)
-            except Exception as error:
-                errors.append(error)
-        if errors:
-            raise RuntimeError("power supply close failed: " + "; ".join(map(str, errors))) from errors[0]
+            except Exception as error:  # 单个电源关闭失败不阻止释放其余电源
+                failures.append(FailureRecord(str(name), error))
+        if failures:
+            raise CleanupError("power supply close failed", failures) from cause_of(failures)
 
     def set_voltage_v(self, channel: str, voltage_v: float, *, timeout_s: float = 5.0) -> None:
         supply, physical_channel = self._route(channel)
@@ -189,34 +201,69 @@ class _ConfiguredPowerSupply:
             raise ValueError(f"未配置的生产电源通道: {channel}") from error
 
 
+def _open_resource_manager() -> Any:
+    """创建 VISA 资源管理器；驱动库或底层库失败都属于连接问题。
+
+    只翻译 pyvisa 库错误与操作系统级错误；调用参数错误仍保持 ``TypeError`` /
+    ``ValueError``，不会被伪装成“设备连不上”。
+    """
+    try:
+        return pyvisa.ResourceManager()
+    except (pyvisa.errors.Error, OSError) as error:
+        raise DeviceConnectionError(f"无法创建 VISA 资源管理器: {error}") from error
+
+
+def _open_device(manager: Any, address: str, label: str) -> Any:
+    """打开一个 VISA 资源；连接层失败统一成 :class:`DeviceConnectionError`。
+
+    只翻译 pyvisa 的连接层错误，其余异常原样上抛：装配层的配置错误仍然是
+    ``ValueError``，不会被伪装成设备连接问题。
+    """
+    try:
+        return manager.open_resource(address)
+    except (pyvisa.errors.VisaIOError, OSError) as error:
+        raise DeviceConnectionError(f"无法连接{label} {address}: {error}") from error
+
+
+def _query(resource: Any, command: str, label: str) -> str:
+    """在已打开的 VISA 资源上查询；命令层失败属于协议错误。"""
+    try:
+        return resource.query(command).strip()
+    except (pyvisa.errors.VisaIOError, OSError) as error:
+        raise ProtocolError(f"{label} 查询失败 ({command}): {error}") from error
+
+
 def _create_hardware_measurement_port(config_path: str, *, recorder=None):
     from infrastructure.config.json_io import load_config_file
 
     config = load_config_file(config_path)
     # 装配校验（地址、角色、通道）必须在创建任何 VISA 资源之前完成。
     plan = _hardware_assembly_plan(config)
-    manager = pyvisa.ResourceManager()
+    manager = _open_resource_manager()
     resources = []
     try:
-        signal_resource = manager.open_resource(plan["signal_address"])
+        signal_resource = _open_device(manager, plan["signal_address"], "信号源")
         resources.append(signal_resource)
-        spectrum_resource = manager.open_resource(plan["spectrum_address"])
+        spectrum_resource = _open_device(manager, plan["spectrum_address"], "频谱仪")
         resources.append(spectrum_resource)
 
         configured_supplies = {}
         for power_name in plan["supply_names"]:
             power_config = plan["power_configs"][power_name]
-            resource = manager.open_resource(power_config["address"])
+            label = f"生产电源 {power_name}"
+            resource = _open_device(manager, power_config["address"], label)
             resources.append(resource)
-            identity = resource.query("*IDN?").strip()
+            identity = _query(resource, "*IDN?", label)
             if "DP832A" not in identity.upper():
-                raise ValueError(f"生产电源 {power_name} 设备身份不是 DP832A: {identity}")
+                # 型号不符时设备仍然可用，但不能用于本项目的供电动作：
+                # 这是能力/前提问题，不是连接问题。
+                raise DeviceCapabilityError(f"{label} 设备身份不是 DP832A: {identity}")
             states = [
-                resource.query(f"OUTP? {channel}").strip().upper()
+                _query(resource, f"OUTP? {channel}", label).upper()
                 for channel in _configured_channels(power_config, power_name)
             ]
             if any(state not in {"0", "OFF"} for state in states):
-                raise ValueError(f"生产电源 {power_name} 初始输出未关闭")
+                raise DeviceCapabilityError(f"{label} 初始输出未关闭，禁止上电测量")
             configured_supplies[power_name] = ScpiPowerSupplyDriver(
                 VisaScpiTransport(resource, recorder=recorder)
             )
@@ -241,7 +288,11 @@ def _create_hardware_measurement_port(config_path: str, *, recorder=None):
             plan["all_channels"],
         )
         session.validate()
-        session.connect()
+        try:
+            session.connect()
+        except (pyvisa.errors.VisaIOError, OSError) as error:
+            # 驱动层没翻译的底层连接失败仍必须属于连接分类。
+            raise DeviceConnectionError(f"设备连接失败: {error}") from error
         session.prepare()
         return PortMeasurementAdapter(
             session,
@@ -251,16 +302,16 @@ def _create_hardware_measurement_port(config_path: str, *, recorder=None):
             qualified_power_channels=True,
             emergency_channels=plan["emergency_channels"],
         )
-    except Exception:
+    except Exception:  # 装配失败必须释放已打开的 VISA 资源后原样抛出
         for resource in reversed(resources):
             try:
                 resource.close()
-            except Exception:
-                pass
+            except Exception as error:  # 释放失败只记录，装配异常才是终态
+                logger.warning("装配失败后的 VISA 资源关闭也失败: %s", error)
         try:
             manager.close()
-        except Exception:
-            pass
+        except Exception as error:  # ResourceManager 释放失败同样只记录
+            logger.warning("装配失败后的 ResourceManager 关闭也失败: %s", error)
         raise
 
 

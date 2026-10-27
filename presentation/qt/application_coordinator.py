@@ -20,7 +20,7 @@ from application.run_service import RunNotResumable
 from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService
 
 from .composition import build_gui_data_service
-from .config_page import ConfigBackfillError
+from .config_projection import ConfigBackfillError
 from .configuration_authoring import author_official_configuration
 from .measurement_controller import MeasurementController
 from .measurement_state import MeasurementKind

@@ -6,6 +6,7 @@ from .measurement_requests import (
     DriverPowerMappingRequest,
     MeasurementRequest,
 )
+from .export_requests import ExportFormat, ExportOutcome, ExportRequest
 from .measurement_results import (
     AmplifierCompressionPoint,
     AmplifierFrequencyResult,
@@ -28,6 +29,9 @@ __all__ = [
     "CableLossMeasurementRequest",
     "DriverPowerMappingRequest",
     "AmplifierMeasurementRequest",
+    "ExportFormat",
+    "ExportOutcome",
+    "ExportRequest",
     "MeasurementResult",
     "MeasurementStatus",
     "MeasurementType",

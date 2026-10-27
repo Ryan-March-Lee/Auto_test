@@ -76,6 +76,7 @@
 | `application.measurements` | `CableLossUseCase`、`DriverPowerMappingUseCase`、`AmplifierMeasurementUseCase`、`AmplifierCalibrationError`、`validate_amplifier_calibration_inputs` | 三类正式测量用例入口 |
 | `application.measurements.services` | `CableLossService`、`DriverPowerMappingService`、`AmplifierMeasurementService` | 测量服务（依赖注入端口，不导入具体仪器 flow） |
 | `application.gui_data_service` | `GuiDataService` | 只读历史/导出应用服务 |
+| `application.export_service` | `ExportRequestError`、`ResultExportUseCase` | 导出用例：执行 `ExportRequest`，只接受历史列表中的结果标识；报告端口必须返回真实产物位置 |
 | `application.lifecycle.measurement_lifecycle` | `MeasurementLifecycle`、`StopIntent` | 测量生命周期 |
 | `application.lifecycle.measurement_runtime` | `MeasurementRuntimeCoordinator`、`RuntimeDecision` | 运行协调与决策 |
 
@@ -89,7 +90,7 @@
 | `application.ports.run_repository` | `RunRepositoryPort`、`RunLayout` |
 | `application.ports.result_input_reader` | `ResultInputReader` |
 | `application.ports.measurement_session` | `SafetyCleanupPort`、`MeasurementSessionPort`、`MeasurementSessionBinding`、`CleanupRecord`、`CleanupStepStatus`、`SafetyCleanupError` |
-| `application.ports.gui_data_service` | `GuiDataService`、`ResultFileDto`、`LoadedResultDto`、`ConfigurationPort`、`ResultQueryPort`、`ResultExportPort`、`ReportPort` |
+| `application.ports.gui_data_service` | `GuiDataService`、`ResultFileDto`、`LoadedResultDto`、`ConfigurationPort`、`ResultQueryPort`、`ResultExportPort`、`ResultExportServicePort`、`ReportPort` |
 
 正式配置入口为 `domain.configuration` 和 `infrastructure.config`；正式结果仓储入口为
 `application.ports.result_repository` 及其基础设施实现 `infrastructure.persistence.result_repository`；
@@ -149,7 +150,8 @@
 
 | 模块 | 正式公开名称 | 说明 |
 | --- | --- | --- |
-| `application.dto` | `MeasurementRequest`、`CableLossMeasurementRequest`、`DriverPowerMappingRequest`、`AmplifierMeasurementRequest`、`MeasurementResult`、`MeasurementStatus`、`MeasurementType`、`CableLossMeasurementResult`、`DriverPowerMappingMeasurementResult`、`AmplifierMeasurementResult`、`CableLossRow`、`DriverPowerPoint`、`AmplifierCompressionPoint`、`AmplifierFrequencyResult`、`measurement_result_from_document`、`measurement_type_for_result_type`、`require_formal_result`、`normalize_frequency_key` | DTO 汇总再导出路径；旧兼容导出已在步骤 6 删除 |
+| `application.dto` | `MeasurementRequest`、`CableLossMeasurementRequest`、`DriverPowerMappingRequest`、`AmplifierMeasurementRequest`、`ExportFormat`、`ExportOutcome`、`ExportRequest`、`MeasurementResult`、`MeasurementStatus`、`MeasurementType`、`CableLossMeasurementResult`、`DriverPowerMappingMeasurementResult`、`AmplifierMeasurementResult`、`CableLossRow`、`DriverPowerPoint`、`AmplifierCompressionPoint`、`AmplifierFrequencyResult`、`measurement_result_from_document`、`measurement_type_for_result_type`、`require_formal_result`、`normalize_frequency_key` | DTO 汇总再导出路径；旧兼容导出已在步骤 6 删除 |
+| `application.dto.export_requests` | `ExportFormat`、`ExportRequest`、`ExportOutcome` | 导出请求与结构化结果：格式为 JSON / CSV / 测试报告；JSON、CSV 必须带目标文件，报告位置由导出端口决定；`ExportOutcome` 只含 `result_id`、`format`、`filename`、`artifact_path`，不含界面文案 |
 | `application.dto.measurement_requests` | `MeasurementRequest`、`CableLossMeasurementRequest`、`DriverPowerMappingRequest`、`AmplifierMeasurementRequest` | 测量请求 |
 | `application.dto.measurement_results` | `MeasurementResult`、`MeasurementStatus`、`MeasurementType`、`CableLossMeasurementResult`、`DriverPowerMappingMeasurementResult`、`AmplifierMeasurementResult`、`measurement_result_from_document`、`measurement_type_for_result_type`、`require_formal_result` | 三类正式测量结果、显式行视图、结果文档唯一解析入口与正式结果断言 |
 
@@ -200,18 +202,20 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `presentation.qt.assistant.chat_panel` | 助手聊天面板 |
 | `presentation.qt.assistant.chat_worker` | 助手后台 worker |
 | `presentation.qt.config_form_state` | 配置表单状态 |
-| `presentation.qt.config_page` | 配置页面（向协调器提供 `ConfigurationPagePort` 窄接口） |
+| `presentation.qt.config_page` | 配置页面（编辑配置编写文档；向协调器提供 `ConfigurationPagePort` 窄接口） |
+| `presentation.qt.config_projection` | 配置编写文档（authoring document）到配置页控件的确定性投影：重置、逐字段投影、非法类型回落；正式 `test_plan` / `run_mapping` 只由 `configuration_authoring` 生成 |
 | `presentation.qt.configuration_authoring` | 配置页保存时的正式运行配置编写 |
 | `presentation.qt.connection_diagrams` | 连接图渲染 |
 | `presentation.qt.connection_dialog` | 连接确认对话框 |
-| `presentation.qt.export_page` | 导出页面 |
+| `presentation.qt.export_page` | 导出页面（只构造 `ExportRequest`，按 `ResultExportServicePort` 注入用例；导出由应用层执行，用户文案由页面生成） |
+| `presentation.qt.history_view_model` | 历史查看只读视图模型：列表、选中项、已加载结果与频率浏览（无 Qt、无路径） |
 | `presentation.qt.input_controls` | 通用输入控件 |
 | `presentation.qt.measurement_state` | 测量状态对象 |
 | `presentation.qt.measurement_worker_factories` | 测量 worker 工厂 |
 | `presentation.qt.realtime_buffer` | 实时数据缓冲 |
 | `presentation.qt.realtime_plot` | 实时绘图控件 |
 | `presentation.qt.status_panel` | 状态/日志面板 |
-| `presentation.qt.visualization_page` | 历史可视化页面 |
+| `presentation.qt.visualization_page` | 历史可视化页面（只渲染控件并把动作转发给 `history_view_model`） |
 | `presentation.qt.workers` | 测量 worker 实现 |
 
 ## 6. 旧模块清单（非公共 API）

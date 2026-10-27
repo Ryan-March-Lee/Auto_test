@@ -28,6 +28,7 @@ from presentation.qt.assistant.chat_panel import ChatPanel
 from presentation.qt.config_page import ConfigPage
 from presentation.qt.connection_dialog import ConnectionDialog
 from presentation.qt.export_page import ExportPage
+from presentation.qt.history_view_model import HistoryViewModel
 from presentation.qt.measurement_state import MeasurementKind, MeasurementResultReference
 from presentation.qt.pages import PageContext, build_pages
 from presentation.qt.realtime_plot import RealTimePlotWidget
@@ -276,10 +277,10 @@ class MainWindow(QMainWindow):
     def create_visualization_tab(self):
         """创建数据可视化选项卡"""
         self.visualization_page = VisualizationPage(
+            # 历史查看状态归只读视图模型：列表、选中项、已加载结果与频率浏览。
+            history=HistoryViewModel(self.gui_data_service.results),
+            chooser=self.gui_data_service.results.choose_and_load,
             config_provider=lambda: self.config,
-            result_loader=self.gui_data_service.results.choose_and_load,
-            # 报告兜底使用最新正式运行结果；正式测量输入只来自当前运行 manifest。
-            latest_result_provider=self.gui_data_service.results.latest_result,
             report_service=self.gui_data_service.reports.create_summary_report,
             log_callback=self.add_log_message,
             parent=self,
@@ -295,14 +296,15 @@ class MainWindow(QMainWindow):
     def create_data_export_tab(self):
         """创建数据导出选项卡"""
         self.export_page = ExportPage(
-            result_service=self.gui_data_service.results,
+            history=HistoryViewModel(self.gui_data_service.results),
+            export_service=self.gui_data_service.export_requests,
             log_callback=self.add_log_message,
             parent=self,
         )
         self.file_table = self.export_page.file_table
         self.export_json_btn = self.export_page.export_json_btn
         self.export_csv_btn = self.export_page.export_csv_btn
-        self.export_pdf_btn = self.export_page.export_pdf_btn
+        self.export_report_btn = self.export_page.export_report_btn
         return self.export_page
 
     def create_status_panel(self, main_layout):

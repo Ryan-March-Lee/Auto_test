@@ -1,11 +1,11 @@
 """配置页面及其控件联动。
 
-页面拥有配置控件，窗口只通过信号协调保存和连接。该模块不依赖窗口、测量
-controller 或硬件实现。
+页面拥有配置控件，窗口只通过信号协调保存和连接。该模块只负责控件构建、用户意图
+转发和派生界面状态（单元可见性、驱动模式、电源选项）；把冻结配置投影到控件的规则
+在 :mod:`presentation.qt.config_projection`，读取控件值组装配置的规则在
+:mod:`presentation.qt.config_form_state`。页面不持有逐字段回填逻辑，也不依赖窗口、
+测量 controller 或硬件实现。
 """
-
-import copy
-from typing import Any
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -14,48 +14,31 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from .config_form_state import ConfigFormState, parse_frequency_text
+from .config_form_state import ConfigFormState
+from .config_projection import (
+    DEFAULT_ATTENUATOR_TYPE,
+    DEFAULT_COMPRESSION_TYPE,
+    DEFAULT_DRIVER_MODE_ENABLED,
+    DEFAULT_ENABLED_POWER_SUPPLIES,
+    DEFAULT_MAX_INPUT_POWER,
+    DEFAULT_PA_UNIT_COUNT,
+    DEFAULT_POWER_ASSIGNMENT,
+    DEFAULT_POWER_SUPPLY_NAMES,
+    DEFAULT_SIGNAL_SOURCE,
+    DEFAULT_TEST_FREQUENCIES,
+    INSTRUMENT_ENTRIES,
+    POWER_SUPPLY_ROLES,
+    ConfigBackfillError,
+    project_authoring_config,
+)
 from .configuration_authoring import DUT_CHANNEL_ROLES
 from .input_controls import KeyboardOnlyDoubleSpinBox, WheelSafeComboBox
 from .pages import PageControllerBindingMixin
 
-
-class ConfigBackfillError(ValueError):
-    """冻结配置无法确定性地回填到配置页控件时抛出。
-
-    回填失败必须可识别：调用方要么收到该异常，要么据此明确报告“未回填成功”，
-    不得把它静默当作加载成功。
-    """
-
-
-# 配置页受控控件的空配置基线。``apply_config()`` 先重置到这些默认值，再投影
-# 冻结配置，从而保证 ``apply_config(config)`` 的显示结果与 ``ConfigPage(config)``
-# 的构造结果一致，不会残留上一次运行的显示状态。
-DEFAULT_TEST_FREQUENCIES = [4.0, 4.4, 4.8, 5.2, 5.6, 5.8]
-DEFAULT_SIGNAL_SOURCE = {"start_power": -38.0, "stop_power": -16.0, "step": 1.0}
-DEFAULT_COMPRESSION_TYPE = "5dB"
-DEFAULT_ATTENUATOR_TYPE = "40dB"
-DEFAULT_DRIVER_MODE_ENABLED = True
-DEFAULT_MAX_INPUT_POWER = 33.5
-DEFAULT_PA_UNIT_COUNT = "2"
-DEFAULT_ENABLED_POWER_SUPPLIES = ("PS1", "PS2")
-DEFAULT_POWER_SUPPLY_NAMES = ("PS1", "PS2", "PS3", "PS4")
-# (控件前缀, 中文标签, 配置键, 默认启用) —— 同时供 build 与 reset 使用。
-INSTRUMENT_ENTRIES = (
-    ("sg", "信号发生器", "signal_generator", True),
-    ("sa", "频谱分析仪", "spectrum_analyzer", True),
-)
-# 电源分配组合框的默认映射，重置时逐项恢复。
-DEFAULT_POWER_ASSIGNMENT = {
-    "driver_power": "PS1",
-    "pa_unit1_power": "PS2",
-    "pa_unit2_power": "PS3",
-    "pa_unit3_power": "PS4",
-}
-# 供电角色是接线事实，由用户在配置页显式选择；``DUT_CHANNEL_ROLES`` 只提供本机
-# 台架固定接线的控件初值（CH1 栅极、CH2 漏极），保存时写入控件当前选择，
-# 装配层不再按通道名推导角色。
-POWER_SUPPLY_ROLES = ("gate", "drain")
+__all__ = [
+    "ConfigBackfillError",
+    "ConfigPage",
+]
 
 
 class ConfigPage(PageControllerBindingMixin, QWidget):
@@ -362,222 +345,23 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         return self.driver_mode_check.isChecked()
 
     # -- 冻结运行配置回填 ---------------------------------------------------
-    @staticmethod
-    def _text_or_empty(value: Any) -> str:
-        """只接受字符串文本（如仪器地址）；其它类型一律视为缺失，返回空串。"""
-        return value if isinstance(value, str) else ""
-
-    @staticmethod
-    def _bool_or_default(value: Any, default: bool) -> bool:
-        """只接受真正的布尔值；其它类型（含 ``"false"``/``1``）视为缺失，用默认值。"""
-        return value if isinstance(value, bool) else default
-
-    @staticmethod
-    def _number_or_none(value: Any) -> float | None:
-        """只接受非 bool 的数字；其它类型（含 ``"12"``/``True``）视为缺失。"""
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            return None
-        return float(value)
-
     def apply_config(self, config) -> None:
-        """把一份已冻结配置确定性地回填到控件，使界面与当前运行保持一致。
+        """把一份已冻结的配置编写文档确定性地投影到控件。
 
-        执行顺序固定：先把所有受控控件重置到空配置基线，再逐字段投影冻结配置。
-        缺失或类型不正确的字段会落到明确默认值（不会被强制转换成字符串或布尔
-        值），绝不残留上一次运行的显示状态；``apply_config(config)`` 的显示结果
-        与 ``ConfigPage(config)`` 的构造结果一致，便于审计。只有全部投影成功后
-        才更新 ``self.config``，避免部分回填失败时页面与配置副本互相矛盾。
+        投影规则（重置到空配置基线、逐字段读取编写文档字段、非法类型回落默认值）都在
+        :func:`presentation.qt.config_projection.project_authoring_config` 里，页面只
+        负责刷新派生界面状态。参数不是 JSON 对象（``dict``）时抛出
+        :class:`ConfigBackfillError`，不会被静默当作回填成功；全部投影成功后才更新
+        ``self.config``，避免部分失败时页面与文档副本互相矛盾。
 
         只更新控件显示，不写文件、不保存、不连接仪器；运行期间的测量输入仍来自
-        运行目录内的冻结快照。参数不是 JSON 对象（``dict``）时抛出
-        :class:`ConfigBackfillError`，避免把回填失败静默当作加载成功。
+        运行目录内的冻结快照。正式 ``test_plan`` / ``run_mapping`` 由
+        :func:`presentation.qt.configuration_authoring.author_official_configuration`
+        生成，本页面不读取也不解释它们。
         """
-        if not isinstance(config, dict):
-            raise ConfigBackfillError(
-                "冻结配置必须是 JSON 对象（dict），无法确定性地回填配置页"
-            )
-        self._reset_control_widgets()
-        self._apply_instrument_widgets(config.get("instruments"))
-        self._apply_test_parameter_widgets(config)
-        self._apply_power_supply_widgets(config.get("instruments"))
-        self._apply_power_assignment_widgets(config.get("power_supply_assignment"))
+        projected = project_authoring_config(self, config)
         self.update_pa_unit_ui()
         self.update_driver_power_ui()
         self.update_power_supply_options()
-        # 全部投影成功后再提交配置副本，使用深拷贝避免与调用方共享可变结构。
-        self.config = copy.deepcopy(config)
-
-    def _reset_control_widgets(self) -> None:
-        """把所有受控控件重置到空配置基线，消除上一次运行的残留值。"""
-        for name, _label, _source, default_enabled in INSTRUMENT_ENTRIES:
-            address = getattr(self, f"{name}_address", None)
-            if address is not None:
-                address.setText("")
-            enabled = getattr(self, f"{name}_enabled", None)
-            if enabled is not None:
-                enabled.setChecked(bool(default_enabled))
-        for name in DEFAULT_POWER_SUPPLY_NAMES:
-            address = getattr(self, f"{name.lower()}_address", None)
-            if address is not None:
-                address.setText("")
-            enabled = getattr(self, f"{name.lower()}_enabled", None)
-            if enabled is not None:
-                enabled.setChecked(name in DEFAULT_ENABLED_POWER_SUPPLIES)
-        self.freq_edit.setText(str(list(DEFAULT_TEST_FREQUENCIES)))
-        self.start_power.setValue(DEFAULT_SIGNAL_SOURCE["start_power"])
-        self.stop_power.setValue(DEFAULT_SIGNAL_SOURCE["stop_power"])
-        self.power_step.setValue(DEFAULT_SIGNAL_SOURCE["step"])
-        self._set_combo(self.compression_combo, DEFAULT_COMPRESSION_TYPE)
-        self._set_combo(self.attenuator_combo, DEFAULT_ATTENUATOR_TYPE)
-        self.driver_mode_check.setChecked(DEFAULT_DRIVER_MODE_ENABLED)
-        self.max_input_power.setValue(DEFAULT_MAX_INPUT_POWER)
-        self._set_combo(self.pa_unit_count_combo, DEFAULT_PA_UNIT_COUNT)
-        self._reset_power_supply_channels()
-        self._reset_power_assignment_widgets()
-
-    def _reset_power_supply_channels(self) -> None:
-        for record in getattr(self, "power_config_widgets", {}).values():
-            for channel, controls in record.get("channels", {}).items():
-                for key in ("voltage", "voltage_protection", "current", "current_protection"):
-                    controls[key].setValue(0.0)
-                for key in ("voltage_protection_enabled", "current_protection_enabled"):
-                    controls[key].setChecked(False)
-                controls["role"].setCurrentText(DUT_CHANNEL_ROLES.get(channel, POWER_SUPPLY_ROLES[0]))
-
-    def _reset_power_assignment_widgets(self) -> None:
-        widgets = getattr(self, "power_assignment_widgets", {})
-        if not widgets:
-            return
-        widgets["driver_enabled"].setChecked(False)
-        for key, default in DEFAULT_POWER_ASSIGNMENT.items():
-            self._set_combo(widgets[key], default)
-
-    def _apply_instrument_widgets(self, instruments) -> None:
-        instruments = instruments if isinstance(instruments, dict) else {}
-        supplies = instruments.get("power_supplies")
-        supplies = supplies if isinstance(supplies, dict) else {}
-        for name, _label, source, default_enabled in INSTRUMENT_ENTRIES:
-            item = instruments.get(source)
-            item = item if isinstance(item, dict) else {}
-            address = getattr(self, f"{name}_address", None)
-            if address is not None:
-                address.setText(self._text_or_empty(item.get("address")))
-            enabled = getattr(self, f"{name}_enabled", None)
-            if enabled is not None:
-                enabled.setChecked(self._bool_or_default(item.get("enabled"), bool(default_enabled)))
-        for name in DEFAULT_POWER_SUPPLY_NAMES:
-            item = supplies.get(name)
-            item = item if isinstance(item, dict) else {}
-            address = getattr(self, f"{name.lower()}_address", None)
-            if address is not None:
-                address.setText(self._text_or_empty(item.get("address")))
-            enabled = getattr(self, f"{name.lower()}_enabled", None)
-            if enabled is not None:
-                enabled.setChecked(
-                    self._bool_or_default(
-                        item.get("enabled"), name in DEFAULT_ENABLED_POWER_SUPPLIES
-                    )
-                )
-
-    def _apply_test_parameter_widgets(self, config) -> None:
-        frequencies = config.get("test_frequencies")
-        # 复用频率解析规则：非列表、空列表或含非法元素时保持基线默认值。
-        if isinstance(frequencies, list) and parse_frequency_text(repr(frequencies)) is not None:
-            self.freq_edit.setText(str(frequencies))
-        signal_source = config.get("signal_source")
-        signal_source = signal_source if isinstance(signal_source, dict) else {}
-        for widget, key in (
-            (self.start_power, "start_power"),
-            (self.stop_power, "stop_power"),
-            (self.power_step, "step"),
-        ):
-            value = self._number_or_none(signal_source.get(key))
-            if value is not None:
-                widget.setValue(value)
-        compression = config.get("compression_point")
-        compression = compression if isinstance(compression, dict) else {}
-        self._set_combo(self.compression_combo, compression.get("type"))
-        attenuator = config.get("attenuator")
-        attenuator = attenuator if isinstance(attenuator, dict) else {}
-        self._set_combo(self.attenuator_combo, attenuator.get("type"))
-        mode = config.get("driver_mode")
-        mode = mode if isinstance(mode, dict) else {}
-        self.driver_mode_check.setChecked(
-            self._bool_or_default(mode.get("enabled"), DEFAULT_DRIVER_MODE_ENABLED)
-        )
-        dut = config.get("dut_config")
-        dut = dut if isinstance(dut, dict) else {}
-        value = self._number_or_none(dut.get("max_input_power"))
-        if value is not None:
-            self.max_input_power.setValue(value)
-        self._set_combo(self.pa_unit_count_combo, dut.get("power_supply_count"))
-
-    def _apply_power_supply_widgets(self, instruments) -> None:
-        instruments = instruments if isinstance(instruments, dict) else {}
-        supplies = instruments.get("power_supplies")
-        supplies = supplies if isinstance(supplies, dict) else {}
-        for name, record in getattr(self, "power_config_widgets", {}).items():
-            source = supplies.get(name)
-            source = source if isinstance(source, dict) else {}
-            channels = source.get("channels")
-            channels = channels if isinstance(channels, dict) else {}
-            for channel, controls in record.get("channels", {}).items():
-                values = channels.get(channel)
-                values = values if isinstance(values, dict) else {}
-                self._apply_channel_widgets(controls, values)
-
-    def _apply_channel_widgets(self, controls, values) -> None:
-        voltage = values.get("voltage")
-        voltage = voltage if isinstance(voltage, dict) else {}
-        current = values.get("current")
-        current = current if isinstance(current, dict) else {}
-        role = values.get("role")
-        role_widget = controls.get("role")
-        if role_widget is not None and role in POWER_SUPPLY_ROLES:
-            role_widget.setCurrentText(role)
-        for key, value in (("voltage", voltage.get("value")), ("voltage_protection", voltage.get("protection")),
-                           ("current", current.get("value")), ("current_protection", current.get("protection"))):
-            number = self._number_or_none(value)
-            if number is not None:
-                controls[key].setValue(number)
-        for key, value in (("voltage_protection_enabled", voltage.get("protection_enabled")),
-                           ("current_protection_enabled", current.get("protection_enabled"))):
-            controls[key].setChecked(self._bool_or_default(value, False))
-
-    def _apply_power_assignment_widgets(self, assignment) -> None:
-        assignment = assignment if isinstance(assignment, dict) else {}
-        driver = assignment.get("driver_amplifier")
-        driver = driver if isinstance(driver, dict) else {}
-        dut = assignment.get("dut_amplifier")
-        dut = dut if isinstance(dut, dict) else {}
-        widgets = getattr(self, "power_assignment_widgets", {})
-        if not widgets:
-            return
-        driver_supplies = driver.get("supplies")
-        driver_supplies = driver_supplies if isinstance(driver_supplies, dict) else {}
-        main = driver_supplies.get("main")
-        main = main if isinstance(main, dict) else {}
-        count = self._number_or_none(driver.get("power_supply_count"))
-        widgets["driver_enabled"].setChecked(count is not None and count > 0)
-        self._set_combo(
-            widgets["driver_power"],
-            self._text_or_empty(main.get("name")) or DEFAULT_POWER_ASSIGNMENT["driver_power"],
-        )
-        dut_supplies = dut.get("supplies")
-        dut_supplies = dut_supplies if isinstance(dut_supplies, dict) else {}
-        for role, key in (("carrier", "pa_unit1_power"), ("peaking", "pa_unit2_power"), ("peaking2", "pa_unit3_power")):
-            item = dut_supplies.get(role)
-            item = item if isinstance(item, dict) else {}
-            self._set_combo(
-                widgets[key],
-                self._text_or_empty(item.get("name")) or DEFAULT_POWER_ASSIGNMENT[key],
-            )
-
-    @staticmethod
-    def _set_combo(combo, value) -> None:
-        # 布尔值不是合法选项（避免 ``True`` 被当成 "True"）：视为缺失，保持当前项。
-        if isinstance(value, bool) or value is None:
-            return
-        text = str(value)
-        if combo.findText(text) >= 0:
-            combo.setCurrentText(text)
+        # 全部投影成功后再提交文档副本（project_authoring_config 返回深拷贝）。
+        self.config = projected

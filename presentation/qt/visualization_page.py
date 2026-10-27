@@ -1,13 +1,12 @@
 """历史结果加载、频率浏览和报告入口。
 
-页面只消费正式结果 DTO：结果文件在读取边界由
-``measurement_result_from_document()`` 解析一次，之后绘图和报告都使用 DTO 的显式
-属性，不再把结果当成 ``Mapping[str, Any]`` 读取。
+页面只渲染控件并把用户动作转发给 :class:`HistoryViewModel`：历史列表、选中项、
+已加载结果和频率浏览都在只读视图模型里，页面不解析结果文档、不访问文件路径。
+绘图数据由视图模型一次性从正式结果 DTO 的显式属性构建。
 """
 
 from __future__ import annotations
 
-import math
 from typing import Any, Callable, Mapping
 
 from PySide6.QtCore import Qt
@@ -21,67 +20,76 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from application.dto import MeasurementResult, normalize_frequency_key
-from application.ports.gui_data_service import LoadedResultDto
+from application.dto import MeasurementResult
+from .history_view_model import (
+    AMPLIFIER_RESULT_TYPE,
+    HistoryViewModel,
+    result_kind,
+    result_plot_series,
+)
 from .realtime_plot import RealTimePlotWidget
 
-
-def result_plot_series(
-    result: MeasurementResult,
-) -> tuple[dict[str, dict[str, Any]], list[float]]:
-    """把正式结果转换为绘图用的按频率分组数据。
-
-    返回 ``(series, frequencies)``：``series`` 的键是规范化频率字符串，值是绘图控件
-    需要的 ``sweep_data`` 列；``frequencies`` 是升序频率列表。
-    """
-    series: dict[str, dict[str, Any]] = {}
-    if not isinstance(result, MeasurementResult):
-        raise ValueError("绘图数据必须来自正式结果 DTO")
-    for frequency, rows in result.sweep_rows().items():
-        key = normalize_frequency_key(frequency)
-        if key is None or not math.isfinite(float(key)):
-            raise ValueError(f"包含非法频率: {frequency}")
-        if key in series:
-            raise ValueError(f"重复频率: {frequency}")
-        columns: dict[str, list[Any]] = {}
-        for row in rows:
-            for name, value in row.items():
-                columns.setdefault(name, []).append(value)
-        series[key] = {"sweep_data": columns}
-    return series, sorted(float(key) for key in series)
-
-
-def result_kind(result: MeasurementResult) -> str:
-    """返回绘图/报告使用的测量类型标识。"""
-    return result.measurement_type_value
+__all__ = [
+    "VisualizationPage",
+    "result_kind",
+    "result_plot_series",
+]
 
 
 class VisualizationPage(QWidget):
-    """独立持有历史结果状态，不访问仪器或 measurement worker。"""
+    """独立持有历史查看状态，不访问仪器或 measurement worker。"""
 
     def __init__(
         self,
         *,
+        history: HistoryViewModel,
+        chooser: Callable[[], Any] | None = None,
         config_provider: Callable[[], dict[str, Any]] | None = None,
-        result_loader: Callable[[], Any] | None = None,
-        latest_result_provider: Callable[[str], Any] | None = None,
         report_service: Callable[[MeasurementResult, Mapping[str, Any], str], Any] | None = None,
         log_callback: Callable[[str], Any] | None = None,
         parent=None,
     ):
         super().__init__(parent)
+        self.history = history
+        self.chooser = chooser
         self.config_provider = config_provider or (lambda: {})
-        self.result_loader = result_loader
-        self.latest_result_provider = latest_result_provider
         self.report_service = report_service
         self.log_callback = log_callback or (lambda _message: None)
-        self.loaded_result: MeasurementResult | None = None
-        self.loaded_series: dict[str, dict[str, Any]] | None = None
-        self.loaded_result_type: str | None = None
-        self.frequency_list: list[float] = []
-        self.current_freq_index = 0
-        self.loaded_filename = ""
         self._build_ui()
+
+    # -- 只读视图（窗口与聊天上下文只通过这里读取） -------------------------
+
+    @property
+    def loaded_result(self) -> MeasurementResult | None:
+        loaded = self.history.loaded
+        return None if loaded is None else loaded.result
+
+    @property
+    def loaded_data(self) -> dict[str, dict[str, Any]] | None:
+        """按频率分组的绘图数据**副本**；聊天上下文只读使用，不会改动视图模型。"""
+        loaded = self.history.loaded
+        return None if loaded is None else loaded.series_snapshot()
+
+    @property
+    def loaded_result_type(self) -> str | None:
+        loaded = self.history.loaded
+        return None if loaded is None else loaded.kind
+
+    @property
+    def frequency_list(self) -> list[float]:
+        loaded = self.history.loaded
+        return [] if loaded is None else list(loaded.frequencies)
+
+    @property
+    def current_freq_index(self) -> int:
+        return self.history.frequency_index
+
+    @property
+    def loaded_filename(self) -> str:
+        loaded = self.history.loaded
+        return "" if loaded is None else loaded.filename
+
+    # -- 界面 ---------------------------------------------------------------
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -119,22 +127,8 @@ class VisualizationPage(QWidget):
     def _log(self, message: str):
         self.log_callback(message)
 
-    @property
-    def loaded_data(self) -> dict[str, dict[str, Any]] | None:
-        """按频率分组的绘图数据视图；聊天上下文只读使用。"""
-        return self.loaded_series
-
-    @loaded_data.setter
-    def loaded_data(self, value: dict[str, dict[str, Any]] | None) -> None:
-        self.loaded_series = value
-
     def _set_empty_state(self, message: str):
-        self.loaded_result = None
-        self.loaded_series = None
-        self.loaded_result_type = None
-        self.frequency_list = []
-        self.current_freq_index = 0
-        self.loaded_filename = ""
+        self.history.clear()
         for axis in self.data_plot_widget.figure.axes:
             axis.clear()
         self.data_plot_widget.canvas.draw_idle()
@@ -142,31 +136,20 @@ class VisualizationPage(QWidget):
         self.freq_prev_btn.setEnabled(False)
         self.freq_next_btn.setEnabled(False)
 
-    def load_test_data(self, file_path: str | None = None):
+    # -- 用户动作 -----------------------------------------------------------
+
+    def load_test_data(self):
+        """通过结果查询服务选择并加载一条历史结果。"""
         try:
-            if self.result_loader is None:
+            if self.chooser is None:
                 raise RuntimeError("未配置结果读取服务")
-            loaded = self.result_loader() if file_path is None else None
-            if loaded is None and file_path is not None:
-                raise RuntimeError("外部路径加载已停用，请通过结果查询服务选择文件")
+            loaded = self.chooser()
             if loaded is None:
                 return False
-            if not isinstance(loaded, LoadedResultDto):
-                raise TypeError("结果服务必须返回 LoadedResultDto")
-            result = loaded.result
-            series, frequencies = result_plot_series(result)
-            if not frequencies:
-                raise ValueError("未找到有效的频率数据")
-            self.loaded_result = result
-            self.loaded_series = series
-            self.loaded_result_type = result_kind(result)
-            self.frequency_list = frequencies
-            self.current_freq_index = 0
-            self.loaded_filename = loaded.filename
+            view = self.history.show(loaded)
             self.update_frequency_display()
             self.display_current_frequency_data()
-            label = "功放测试" if result.is_amplifier else "驱动映射"
-            self._log(f"已加载{label}数据: {self.loaded_filename}")
+            self._log(f"已加载{view.label}数据: {view.filename}")
             return True
         except Exception as error:
             self._log(f"数据加载失败: {error}")
@@ -174,68 +157,66 @@ class VisualizationPage(QWidget):
             return False
 
     def update_frequency_display(self):
-        if self.frequency_list:
-            frequency = self.frequency_list[self.current_freq_index]
-            self.freq_label.setText(
-                f"{frequency} GHz ({self.current_freq_index + 1}/{len(self.frequency_list)})"
-            )
-            self.freq_prev_btn.setEnabled(self.current_freq_index > 0)
-            self.freq_next_btn.setEnabled(self.current_freq_index < len(self.frequency_list) - 1)
-        else:
+        frequency = self.history.current_frequency
+        if frequency is None:
             self.freq_label.setText("未加载数据")
+            self.freq_prev_btn.setEnabled(False)
+            self.freq_next_btn.setEnabled(False)
+            return
+        self.freq_label.setText(
+            f"{frequency} GHz ({self.history.frequency_index + 1}/{self.history.frequency_count})"
+        )
+        self.freq_prev_btn.setEnabled(self.history.has_previous)
+        self.freq_next_btn.setEnabled(self.history.has_next)
 
     def display_current_frequency_data(self):
-        if self.loaded_series is None or not self.frequency_list:
+        loaded = self.history.loaded
+        if loaded is None:
             return
-        key = normalize_frequency_key(self.frequency_list[self.current_freq_index])
-        record = self.loaded_series.get(key) if key else None
-        if isinstance(record, dict):
-            self.data_plot_widget.update_plot(
-                {
-                    "frequency": self.frequency_list[self.current_freq_index],
-                    "sweep_data": record.get("sweep_data", {}),
-                }
-            )
-            self._log(f"显示频率 {self.frequency_list[self.current_freq_index]} GHz 的数据")
+        record = loaded.plot_record(self.history.frequency_index)
+        if record is None:
+            return
+        self.data_plot_widget.update_plot(record)
+        self._log(f"显示频率 {record['frequency']} GHz 的数据")
 
     def prev_frequency(self):
-        if self.frequency_list and self.current_freq_index > 0:
-            self.current_freq_index -= 1
+        if self.history.previous_frequency():
             self.update_frequency_display()
             self.display_current_frequency_data()
 
     def next_frequency(self):
-        if self.frequency_list and self.current_freq_index < len(self.frequency_list) - 1:
-            self.current_freq_index += 1
+        if self.history.next_frequency():
             self.update_frequency_display()
             self.display_current_frequency_data()
 
     def generate_report(self):
-        if self.loaded_result is not None and not self.loaded_result.is_amplifier:
+        loaded = self.history.loaded
+        if loaded is not None and not loaded.result.is_amplifier:
             QMessageBox.warning(self, "报告生成", "驱动映射数据不支持功放测试报告")
             return False
         try:
             if self.report_service is None:
                 raise RuntimeError("未配置报告生成服务")
-            if self.loaded_result is not None:
-                if not self.loaded_result.point_count:
+            if loaded is not None:
+                if not loaded.result.point_count:
                     raise ValueError("结果中没有可生成报告的扫描点")
                 self.report_service(
-                    self.loaded_result, self.config_provider(), self.loaded_filename
+                    loaded.result, self.config_provider(), loaded.filename
                 )
                 self._log("基于已加载数据生成测试报告")
             else:
-                if self.latest_result_provider is None:
-                    raise RuntimeError("未配置最新结果查询服务")
                 try:
-                    latest = self.latest_result_provider("amplifier_measurement")
+                    latest = self.history.load_latest(AMPLIFIER_RESULT_TYPE)
                 except FileNotFoundError:
-                    QMessageBox.warning(self, "报告生成", "未找到测试数据文件，请先加载数据或进行测试")
+                    QMessageBox.warning(
+                        self, "报告生成", "未找到测试数据文件，请先加载数据或进行测试"
+                    )
                     return False
-                if not isinstance(latest, LoadedResultDto):
-                    raise TypeError("结果服务必须返回 LoadedResultDto")
-                result = latest.result
-                self.report_service(result, self.config_provider(), latest.filename)
+                self.update_frequency_display()
+                self.display_current_frequency_data()
+                self.report_service(
+                    latest.result, self.config_provider(), latest.filename
+                )
                 self._log(f"基于文件 {latest.filename} 生成测试报告")
             QMessageBox.information(self, "报告生成", "测试报告已生成完成")
             return True

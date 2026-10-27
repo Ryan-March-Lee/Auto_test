@@ -275,11 +275,13 @@ class ResultExportAdapter:
             raise FileNotFoundError(str(generated))
         shutil.copy2(generated, Path(target))
 
-    def export_pdf(self, result_id: str) -> None:
+    def export_report(self, result_id: str) -> str:
+        """生成测试汇总报告（HTML + 图表），返回实际报告位置。"""
         loaded = self.query.load(result_id)
-        DataVisualization(output_dir=self._report_output_dir()).create_summary_report(
-            loaded.result, loaded.filename
-        )
+        report_path = DataVisualization(
+            output_dir=self._report_output_dir()
+        ).create_summary_report(loaded.result, loaded.filename)
+        return str(report_path)
 
     def _report_output_dir(self) -> Path:
         return self.paths.test_results_dir / unique_directory_name("report")

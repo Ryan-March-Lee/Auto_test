@@ -588,6 +588,8 @@ class ProductionDependencyTests(unittest.TestCase):
     def test_gui_data_pages_do_not_access_storage_implementations(self):
         sources = (
             ROOT / "presentation" / "qt" / "config_page.py",
+            ROOT / "presentation" / "qt" / "config_projection.py",
+            ROOT / "presentation" / "qt" / "history_view_model.py",
             ROOT / "presentation" / "qt" / "visualization_page.py",
             ROOT / "presentation" / "qt" / "export_page.py",
         )
@@ -875,6 +877,109 @@ class ProductionDependencyTests(unittest.TestCase):
                 and (node.module or "").split(".")[-1] == "workers"
                 for alias in node.names
             },
+        )
+
+    def test_history_and_export_pages_use_the_read_only_view_model(self):
+        """步骤 11：历史列表/选中/已加载状态只在只读视图模型里。"""
+        view_model_source = (
+            ROOT / "presentation" / "qt" / "history_view_model.py"
+        ).read_text(encoding="utf-8-sig")
+        self.assertNotIn("PySide6", view_model_source)
+        self.assertNotIn("infrastructure", view_model_source)
+
+        cached_state = (
+            "self._row_files =",
+            "self.loaded_series =",
+            "self.loaded_result =",
+            "self.current_freq_index =",
+            "self.frequency_list =",
+        )
+        for name in ("export_page.py", "visualization_page.py"):
+            source = (ROOT / "presentation" / "qt" / name).read_text(
+                encoding="utf-8-sig"
+            )
+            with self.subTest(module=name):
+                self.assertIn("HistoryViewModel", source)
+                for attribute in cached_state:
+                    self.assertNotIn(
+                        attribute,
+                        source,
+                        f"{name} 不得自己缓存历史列表/频率状态（归 HistoryViewModel）",
+                    )
+                self.assertNotIn("legacy_payload", source)
+
+    def test_export_page_only_builds_export_requests(self):
+        """步骤 11：导出由 application 用例执行，页面只描述意图并生成文案。"""
+        source = (ROOT / "presentation" / "qt" / "export_page.py").read_text(
+            encoding="utf-8-sig"
+        )
+        self.assertIn("ExportRequest(", source)
+        self.assertIn("ExportFormat", source)
+        self.assertIn("self.export_service.execute(", source)
+        self.assertIn("ResultExportServicePort", source)
+        self.assertIn("_success_message", source)
+        for direct_port_call in (
+            "self.result_service",
+            ".export_json(",
+            ".export_csv(",
+            ".export_report(",
+            "export_json(source",
+        ):
+            self.assertNotIn(
+                direct_port_call,
+                source,
+                "导出页面不得直接调用导出端口；必须构造 ExportRequest",
+            )
+
+    def test_export_use_case_lives_in_the_application_layer(self):
+        source_path = ROOT / "application" / "export_service.py"
+        self.assertTrue(source_path.is_file(), "缺少 application 导出用例")
+        modules = {module for module, _alias, _name in _imported_modules(_tree(source_path))}
+        roots = {module.split(".")[0] for module in modules}
+        self.assertNotIn("infrastructure", roots)
+        self.assertNotIn("PySide6", roots)
+        self.assertIn("application.ports.gui_data_service", modules)
+        self.assertIn("application.dto.export_requests", modules)
+
+    def test_configuration_page_delegates_backfill_to_the_projection_module(self):
+        """步骤 11：配置页只编辑配置编写文档，回填规则在 config_projection。"""
+        page_source = (ROOT / "presentation" / "qt" / "config_page.py").read_text(
+            encoding="utf-8-sig"
+        )
+        self.assertIn("project_authoring_config(self, config)", page_source)
+        tree = _tree(ROOT / "presentation" / "qt" / "config_page.py")
+        page = _class_node(tree, "ConfigPage")
+        page_methods = {
+            node.name for node in page.body if isinstance(node, ast.FunctionDef)
+        }
+        for helper in (
+            "_reset_control_widgets",
+            "_apply_instrument_widgets",
+            "_apply_test_parameter_widgets",
+            "_apply_power_supply_widgets",
+            "_apply_channel_widgets",
+            "_apply_power_assignment_widgets",
+            "_text_or_empty",
+            "_bool_or_default",
+            "_number_or_none",
+            "_set_combo",
+        ):
+            self.assertNotIn(
+                helper,
+                page_methods,
+                f"逐字段回填规则必须留在 config_projection，不得回到 {helper}",
+            )
+
+    def test_production_sources_have_no_placeholder_text(self):
+        """源码注释/文档不得以占位问号代替说明（回填被截断时能立刻发现）。"""
+        offenders = []
+        for source_path in _production_sources():
+            if "????" in source_path.read_text(encoding="utf-8-sig"):
+                offenders.append(str(source_path.relative_to(ROOT)))
+        self.assertEqual(
+            offenders,
+            [],
+            "生产源码出现占位问号文本，说明注释或文档被截断: " + ", ".join(offenders),
         )
 
     def test_worker_aliases_and_attribute_construction_are_detected(self):

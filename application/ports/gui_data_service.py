@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Mapping, Protocol
 
+from application.dto.export_requests import ExportOutcome, ExportRequest
 from application.dto.measurement_results import MeasurementResult
 
 
@@ -62,9 +63,23 @@ class ResultQueryPort(Protocol):
 
 
 class ResultExportPort(Protocol):
+    """导出实现端口：只接受结果标识，输出位置由实现决定或由调用方给定。
+
+    ``export_report`` 必须返回生成报告的实际位置（非空字符串）；返回 ``None`` 或其它
+    类型会被应用用例判为失败，避免把“没有产物”报告成成功。
+    """
+
     def export_json(self, result_id: str, target: str) -> None: ...
     def export_csv(self, result_id: str, target: str) -> None: ...
-    def export_pdf(self, result_id: str) -> None: ...
+    def export_report(self, result_id: str) -> str:
+        """生成测试汇总报告并返回**实际**产物位置。"""
+
+
+class ResultExportServicePort(Protocol):
+    """导出用例入口：页面只构造 ``ExportRequest``，由应用层执行。"""
+
+    def execute(self, request: ExportRequest) -> ExportOutcome:
+        """执行一次导出请求，返回带用户可见文案的结果。"""
 
 
 class ReportPort(Protocol):
@@ -81,3 +96,4 @@ class GuiDataService(Protocol):
     results: ResultQueryPort
     exports: ResultExportPort
     reports: ReportPort
+    export_requests: ResultExportServicePort

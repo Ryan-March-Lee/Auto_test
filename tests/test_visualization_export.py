@@ -393,8 +393,16 @@ class RunHistoryOnlyTests(unittest.TestCase):
 
             from PySide6.QtWidgets import QApplication
 
+            from application.export_service import ResultExportUseCase
+            from presentation.qt.history_view_model import HistoryViewModel
+
             app = QApplication.instance() or QApplication([])
-            page = ExportPage(result_service=adapter)
+            page = ExportPage(
+                history=HistoryViewModel(adapter),
+                export_service=ResultExportUseCase(
+                    history=adapter, exports=ResultExportAdapter(adapter, paths)
+                ),
+            )
             labels = [
                 page.file_table.item(row, 2).text()
                 for row in range(page.file_table.rowCount())
@@ -402,6 +410,135 @@ class RunHistoryOnlyTests(unittest.TestCase):
 
         self.assertTrue(labels)
         self.assertTrue(all(label.startswith("运行 ") for label in labels))
+
+
+class ExportPageRequestTests(unittest.TestCase):
+    """步骤 11：导出页面只构造 ExportRequest，导出由应用用例执行。"""
+
+    RUN_ID = RunHistoryOnlyTests.RUN_ID
+
+    def setUp(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtWidgets import QApplication
+
+        self.app = QApplication.instance() or QApplication([])
+        self._temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temporary.cleanup)
+        self.root = Path(self._temporary.name)
+        # 离屏环境里任何模态对话框都会永久阻塞：统一替身并记录调用。
+        for name in ("warning", "information", "critical"):
+            patcher = patch(f"presentation.qt.export_page.QMessageBox.{name}")
+            setattr(self, f"{name}_dialog", patcher.start())
+            self.addCleanup(patcher.stop)
+
+    def _page(self, *, amplifier=True):
+        from application.export_service import ResultExportUseCase
+        from presentation.qt.history_view_model import HistoryViewModel
+
+        paths = PathService(self.root)
+        runs = RunRepository(paths.test_results_dir / "runs")
+        query = ResultQueryAdapter(
+            paths,
+            run_history=FileRunHistoryRepository(runs=runs),
+            runs_root=paths.test_results_dir / "runs",
+        )
+        runs.create_run({"run_id": self.RUN_ID}, run_id=self.RUN_ID)
+        recorder = RunStageRecorder(runs, self.RUN_ID)
+        if amplifier:
+            recorder.complete(
+                STAGE_AMPLIFIER,
+                {
+                    "run_id": self.RUN_ID,
+                    "measurement_type": "amplifier",
+                    "status": "completed",
+                    "results": {
+                        "5.2": {
+                            "sweep_data": {
+                                "input_power_dut": [-10.0, -5.0],
+                                "output_power_dut": [0.0, 5.0],
+                                "gain": [10.0, 10.0],
+                                "efficiency": [20.0, 25.0],
+                            }
+                        }
+                    },
+                },
+                result_path=AMPLIFIER_RESULT_PATH,
+            )
+        else:
+            recorder.complete(
+                STAGE_CABLE_LOSS,
+                {
+                    "run_id": self.RUN_ID,
+                    "measurement_type": "cable_loss",
+                    "status": "completed",
+                    "cable_losses": {"1.0": {"cable1": 1.0}},
+                },
+            )
+        page = ExportPage(
+            history=HistoryViewModel(query),
+            export_service=ResultExportUseCase(
+                history=query, exports=ResultExportAdapter(query, paths)
+            ),
+        )
+        page.file_table.setCurrentCell(0, 0)
+        return page
+
+    def test_json_export_writes_the_selected_history_result(self):
+        page = self._page()
+        target = self.root / "exported.json"
+
+        with patch(
+            "presentation.qt.export_page.QFileDialog.getSaveFileName",
+            return_value=(str(target), "JSON files (*.json)"),
+        ):
+            self.assertTrue(page.export_json())
+
+        self.assertTrue(target.is_file())
+        self.information_dialog.assert_called_once()
+        message = self.information_dialog.call_args.args[2]
+        self.assertIn(str(target), message)
+
+    def test_csv_export_is_rejected_for_non_amplifier_results(self):
+        page = self._page(amplifier=False)
+        target = self.root / "exported.csv"
+
+        with patch(
+            "presentation.qt.export_page.QFileDialog.getSaveFileName",
+            return_value=(str(target), "CSV files (*.csv)"),
+        ):
+            self.assertFalse(page.export_csv())
+
+        self.assertFalse(target.is_file())
+        self.warning_dialog.assert_called_once()
+
+    def test_report_export_shows_the_generated_location(self):
+        page = self._page()
+
+        self.assertTrue(page.export_report())
+
+        message = self.information_dialog.call_args.args[2]
+        self.assertIn("test_report.html", message)
+        self.assertTrue(Path(message.split(": ", 1)[1]).is_file())
+
+    def test_report_export_requires_an_amplifier_result(self):
+        page = self._page(amplifier=False)
+
+        self.assertFalse(page.export_report())
+
+        self.warning_dialog.assert_called_once()
+        self.information_dialog.assert_not_called()
+
+    def test_export_without_a_selection_warns_and_does_nothing(self):
+        page = self._page()
+        page.file_table.setCurrentCell(-1, -1)
+
+        with patch(
+            "presentation.qt.export_page.QFileDialog.getSaveFileName"
+        ) as dialog:
+            self.assertFalse(page.export_json())
+
+        self.warning_dialog.assert_called_once()
+        dialog.assert_not_called()
 
 
 class ReportAdapterContractTests(unittest.TestCase):

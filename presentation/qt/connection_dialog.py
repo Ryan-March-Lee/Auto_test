@@ -47,7 +47,11 @@ def build_diagram(diagram_type: str) -> tuple[Figure, str | None]:
 
 
 class ConnectionDialog(QDialog):
-    """现场接线确认对话框：显示连接图并让用户明确确认。"""
+    """现场接线确认对话框：显示连接图并让用户明确确认。
+
+    连接图不可用（可选依赖缺失、图工厂失败或未知图类型）时**禁用确认按钮**：
+    看不到接线图就确认接线等于绕过现场核对，只允许取消。
+    """
 
     def __init__(self, diagram_type: str, parent: Any = None) -> None:
         super().__init__(parent)
@@ -58,12 +62,18 @@ class ConnectionDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(FigureCanvas(self.figure))
         if self.unavailable_reason:
-            layout.addWidget(QLabel(self.unavailable_reason))
+            layout.addWidget(
+                QLabel(
+                    f"{self.unavailable_reason}\n"
+                    "连接图不可用时不能确认接线，请先修复后重新打开该对话框。"
+                )
+            )
         buttons = QHBoxLayout()
         self.cancel_btn = QPushButton("取消")
         self.ok_btn = QPushButton("我已正确连接")
         self.cancel_btn.clicked.connect(self.reject)
         self.ok_btn.clicked.connect(self.accept)
+        self.ok_btn.setEnabled(self.unavailable_reason is None)
         buttons.addWidget(self.cancel_btn)
         buttons.addWidget(self.ok_btn)
         layout.addLayout(buttons)

@@ -199,14 +199,14 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `instrument.safety` | 设备安全动作与资源所有权边界；关闭回调的安全标记按显式签名判定调用形式 |
 | `presentation.qt.application_coordinator` | GUI 运行协调器：配置、运行契约与仪器端口所有者（经 `ConfigurationPagePort` 与配置页交互） |
 | `presentation.qt.assistant.chat_dialogs` | 助手对话与设置对话框：失败经对话框/日志呈现，`requests` 为可选依赖 |
-| `presentation.qt.assistant.chat_panel` | 助手聊天面板；`create_assistant()` 是 `assistant.llm` 的唯一按需导入点，缺失可选依赖时退化为不可用面板 |
+| `presentation.qt.assistant.chat_panel` | 助手聊天面板；`create_assistant()` 是 `assistant.llm` 的唯一按需导入点，整个构造过程的普通异常都降级为不可用面板；`shutdown()` 协作关闭回复线程（不强杀、超时保持引用） |
 | `presentation.qt.assistant.chat_worker` | 助手后台 worker：线程边界把助手异常转成 `error_occurred` 信号 |
 | `presentation.qt.config_form_state` | 配置表单状态 |
 | `presentation.qt.config_page` | 配置页面（编辑配置编写文档；向协调器提供 `ConfigurationPagePort` 窄接口） |
 | `presentation.qt.config_projection` | 配置编写文档（authoring document）到配置页控件的确定性投影：重置、逐字段投影、非法类型回落；正式 `test_plan` / `run_mapping` 只由 `configuration_authoring` 生成 |
 | `presentation.qt.configuration_authoring` | 配置页保存时的正式运行配置编写 |
 | `presentation.qt.connection_diagrams` | 连接图渲染 |
-| `presentation.qt.connection_dialog` | 连接确认对话框：`build_diagram()` 按需渲染连接图，渲染失败时在对话框内说明原因 |
+| `presentation.qt.connection_dialog` | 连接确认对话框：`build_diagram()` 按需渲染连接图；连接图不可用时在对话框内说明原因并禁用确认按钮 |
 | `presentation.qt.export_page` | 导出页面（只构造 `ExportRequest`，按 `ResultExportServicePort` 注入用例；导出由应用层执行，用户文案由页面生成） |
 | `presentation.qt.history_view_model` | 历史查看只读视图模型：列表、选中项、已加载结果与频率浏览（无 Qt、无路径） |
 | `presentation.qt.input_controls` | 通用输入控件 |

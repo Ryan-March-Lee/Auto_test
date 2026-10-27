@@ -40,6 +40,9 @@ class _FakeWorker:
         self.finished = _FakeSignal()
         self.running = False
         self.deleted = False
+        self.interruption_requested = False
+        self.wait_calls = []
+        self.terminated = False
         _FakeWorker.instances.append(self)
 
     def start(self):
@@ -48,8 +51,24 @@ class _FakeWorker:
     def isRunning(self):
         return self.running
 
+    def requestInterruption(self):
+        self.interruption_requested = True
+
+    def wait(self, timeout_ms=None):
+        self.wait_calls.append(timeout_ms)
+        if self.StopOnWait:
+            self.running = False
+        return not self.running
+
+    def terminate(self):
+        self.terminated = True
+        self.running = False
+
     def deleteLater(self):
         self.deleted = True
+
+    # 由用例设置：wait 是否视为线程已结束。
+    StopOnWait = True
 
 
 class _FakeAssistant:
@@ -118,8 +137,37 @@ class AssistantFactoryTests(unittest.TestCase):
         self.assertIsNone(assistant)
         self.assertIn("配置不可读", reason)
 
+    def test_any_other_initialization_failure_is_degraded_not_raised(self):
+        """助手初始化边界：普通异常一律降级，只有 BaseException 才向上传播。"""
+        try:
+            import assistant.llm  # noqa: F401
+        except ImportError as error:
+            self.skipTest(f"可选依赖缺失: {error}")
+        with patch("assistant.llm.LLMChat", side_effect=RuntimeError("搜索工具初始化失败")):
+            assistant, reason = create_assistant()
+
+        self.assertIsNone(assistant)
+        self.assertIn("搜索工具初始化失败", reason)
+
+    def test_panel_survives_an_assistant_factory_that_raises(self):
+        _application()
+
+        def _exploding_factory(_paths):
+            raise RuntimeError("工厂炸了")
+
+        panel = ChatPanel(None, assistant_factory=_exploding_factory)
+
+        self.assertIsInstance(panel.llm_chat, UnavailableAssistant)
+        self.assertIn("工厂炸了", panel.unavailable_reason)
+        panel.message_input.setPlainText("你好")
+        panel.send_message()
+        self.assertIn("AI 助手不可用", panel.chat_display.toPlainText())
+
 
 class ChatPanelBehaviourTests(unittest.TestCase):
+    def setUp(self):
+        _FakeWorker.instances.clear()
+
     def test_welcome_message_is_shown_once_and_names_the_model(self):
         panel, _window, _assistant = _panel()
 
@@ -162,6 +210,27 @@ class ChatPanelBehaviourTests(unittest.TestCase):
             panel.on_ai_finished()
         self.assertTrue(worker.deleted)
 
+    def test_late_finished_signal_only_releases_its_own_worker(self):
+        """迟到的 finished 不能把随后新建的回复线程当成本线程释放掉。"""
+        panel, _window, _assistant = _panel()
+        with patch("presentation.qt.assistant.chat_panel.ChatWorker", _FakeWorker):
+            panel.message_input.setPlainText("第一条")
+            panel.send_message()
+            first = panel.chat_worker
+            panel.on_ai_finished()
+
+            first.running = False
+            panel.message_input.setPlainText("第二条")
+            panel.send_message()
+            second = panel.chat_worker
+
+            # 第一条线程的 finished 迟到送达：只允许释放它自己。
+            first.finished.slots[0]()
+
+        self.assertIs(panel.chat_worker, second)
+        self.assertFalse(second.deleted)
+        self.assertTrue(first.deleted)
+
     def test_second_message_is_refused_while_a_reply_is_pending(self):
         panel, _window, _assistant = _panel()
         with patch("presentation.qt.assistant.chat_panel.ChatWorker", _FakeWorker):
@@ -197,6 +266,54 @@ class ChatPanelBehaviourTests(unittest.TestCase):
         self.assertEqual(
             assistant.conversation_history, [{"role": "user", "content": "历史"}]
         )
+
+
+class ChatPanelShutdownTests(unittest.TestCase):
+    """助手线程收尾：协作中断 + 限时等待，绝不强杀线程。"""
+
+    def setUp(self):
+        _FakeWorker.instances.clear()
+
+    def test_idle_panel_shuts_down_immediately(self):
+        panel, _window, _assistant = _panel()
+
+        self.assertTrue(panel.shutdown(100))
+        self.assertFalse(panel.is_busy())
+
+    def test_running_worker_is_interrupted_and_waited_for(self):
+        panel, _window, _assistant = _panel()
+        with patch("presentation.qt.assistant.chat_panel.ChatWorker", _FakeWorker):
+            panel.message_input.setPlainText("复杂的问题")
+            panel.send_message()
+            worker = panel.chat_worker
+
+            self.assertTrue(panel.shutdown(100))
+
+        self.assertTrue(worker.interruption_requested)
+        self.assertEqual(worker.wait_calls, [100])
+        self.assertTrue(worker.deleted)
+        self.assertFalse(worker.terminated)
+        self.assertIsNone(panel.chat_worker)
+
+    def test_timeout_keeps_the_worker_reference_and_never_terminates(self):
+        panel, _window, _assistant = _panel()
+        with patch("presentation.qt.assistant.chat_panel.ChatWorker", _FakeWorker):
+            panel.message_input.setPlainText("复杂的问题")
+            panel.send_message()
+            worker = panel.chat_worker
+            worker.StopOnWait = False
+
+            self.assertFalse(panel.shutdown(100))
+
+            # 超时后保持引用：窗口可以重试关闭，线程仍由它自己结束。
+            self.assertIs(panel.chat_worker, worker)
+            self.assertFalse(worker.deleted)
+            self.assertFalse(worker.terminated)
+            self.assertTrue(panel.is_busy())
+
+            worker.running = False
+            self.assertTrue(panel.shutdown(100))
+        self.assertIsNone(panel.chat_worker)
 
 
 class ChatPanelContextTests(unittest.TestCase):

@@ -111,6 +111,9 @@ def apply_light_theme(app: QApplication) -> None:
 class MainWindow(QMainWindow):
     """主窗口：只组装 Qt 界面、注册页面并连接信号。"""
 
+    # 助手线程关闭的等待上限：助手是可选能力，等不到就保持窗口打开让用户重试。
+    ASSISTANT_SHUTDOWN_TIMEOUT_MS = 3000
+
     def __init__(self, config_path=None, *, paths: PathService | None = None):
         super().__init__()
         self.paths = paths or DEFAULT_PATHS
@@ -240,6 +243,7 @@ class MainWindow(QMainWindow):
             self.tab_widget.addTab(page, definition.title)
         self._active_page_index = self.tab_widget.currentIndex()
         self.tab_widget.currentChanged.connect(self._on_page_changed)
+        self._page_signals_connected = True
         pages = list(self.pages.values())
         if 0 <= self._active_page_index < len(pages):
             pages[self._active_page_index].on_activated()
@@ -499,7 +503,12 @@ class MainWindow(QMainWindow):
 
         确认只在开头做一次：一旦用户同意退出，停止测量与连接线程就是已提交的
         动作，不会在后续步骤里再被“取消退出”打断（否则会出现“测量已停、窗口还在”
-        的半提交状态）。之后只剩两类明确的失败询问：停止超时与清理未完成。
+        的半提交状态）。之后只剩三类明确的失败询问：停止超时、清理未完成与助手
+        线程仍在生成回复。
+
+        顺序固定为“硬件安全清理 → 助手线程收尾 → 关闭页面 → 接受关闭”：助手是
+        可选能力，它的收尾失败绝不能让仪器端口的安全释放被跳过，但也不能在助手
+        线程仍在运行时销毁窗口（Qt 会带着运行中的 QThread 一起析构）。
         """
         measurement_active = self.measurement_controller.state.is_active
         worker_running = self.coordinator.instrument_worker_running()
@@ -517,14 +526,35 @@ class MainWindow(QMainWindow):
         if self.coordinator.has_unreleased_ports() and not self._confirm_exit_with_unreleased_ports():
             event.ignore()
             return
-        if hasattr(self, "tab_widget"):
-            try:
-                self.tab_widget.currentChanged.disconnect(self._on_page_changed)
-            except (RuntimeError, TypeError):
-                pass
+        if not self._shutdown_assistant():
+            event.ignore()
+            return
+        self._disconnect_page_signals()
         for page in getattr(self, "pages", {}).values():
             page.close()
         event.accept()
+
+    def _disconnect_page_signals(self) -> None:
+        """幂等断开页签切换信号；重复关闭不再触发 libpyside 断开警告。"""
+        if getattr(self, "_page_signals_connected", True) is False:
+            return
+        self._page_signals_connected = False
+        if not hasattr(self, "tab_widget"):
+            return
+        try:
+            self.tab_widget.currentChanged.disconnect(self._on_page_changed)
+        except (RuntimeError, TypeError):
+            pass
+
+    def _shutdown_assistant(self) -> bool:
+        """协作关闭助手回复线程；失败时保持窗口打开以便重试。"""
+        if self.chat_panel.shutdown(self.ASSISTANT_SHUTDOWN_TIMEOUT_MS):
+            return True
+        self.add_log_message(
+            "助手回复仍在生成，未能在关闭期限内停止；窗口保持打开。"
+            "请等当前回复结束后重试关闭（单次请求最长约 60 秒）。"
+        )
+        return False
 
     def _confirm_exit(self) -> bool:
         """退出前的唯一确认点；返回 True 表示后续停止动作已获授权。"""

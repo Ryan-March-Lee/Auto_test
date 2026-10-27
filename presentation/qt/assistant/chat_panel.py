@@ -66,18 +66,23 @@ def create_assistant(
 ) -> tuple[Any | None, str | None]:
     """构造可选 LLM 助手。
 
-    返回 ``(助手实例, 不可用原因)``：可用时原因为 ``None``。只把**预期内**的失败
-    （缺少可选依赖、配置文件不可读/格式非法）转成不可用状态；其他异常照常抛出，
-    由调用方决定如何处理。
+    返回 ``(助手实例, 不可用原因)``：可用时原因为 ``None``。
+
+    **可选能力边界**：这里是助手初始化的唯一入口，因此整个构造过程（导入 +
+    实例化）的普通异常都在此降级为“不可用 + 原因”，只记录日志、不向上抛出——
+    缺失可选依赖、配置文件损坏、可选搜索工具初始化失败都不允许影响主测量链路。
+    ``BaseException``（``KeyboardInterrupt``/``SystemExit``）不捕获。
     """
     try:
         from assistant.llm import LLMChat
-    except ImportError as error:  # 缺少可选依赖属于预期情况
-        return None, f"缺少可选依赖: {error}"
-    try:
+
         return LLMChat(paths=paths), None
-    except (OSError, ValueError) as error:
-        return None, f"助手配置读取失败: {error}"
+    except ImportError as error:  # 缺少可选依赖属于预期情况
+        logger.info("AI 助手未启用（缺少可选依赖）: %s", error)
+        return None, f"缺少可选依赖: {error}"
+    except Exception as error:  # noqa: BLE001 - 可选能力边界：任何初始化失败都必须降级
+        logger.warning("AI 助手初始化失败: %s", error)
+        return None, f"助手初始化失败: {error}"
 
 
 class ChatPanel(QWidget):
@@ -104,7 +109,12 @@ class ChatPanel(QWidget):
     # ---- 构造 ----
 
     def _build_assistant(self) -> Any:
-        assistant, reason = self.assistant_factory(self.paths)
+        # 注入的工厂同样属于可选能力边界：它的失败不能让面板/窗口构造失败。
+        try:
+            assistant, reason = self.assistant_factory(self.paths)
+        except Exception as error:  # noqa: BLE001 - 可选能力边界
+            logger.warning("AI 助手工厂异常: %s", error)
+            assistant, reason = None, f"助手初始化失败: {error}"
         if assistant is None:
             self.unavailable_reason = reason or "不可用"
             logger.warning("AI 助手未启用: %s", self.unavailable_reason)
@@ -290,18 +300,25 @@ class ChatPanel(QWidget):
         self.get_ai_response(message, self.get_test_context())
 
     def get_ai_response(self, message: str, context: str) -> None:
-        self.chat_worker = ChatWorker(self.llm_chat, message, context)
-        self.chat_worker.response_ready.connect(self.on_ai_response_ready)
-        self.chat_worker.error_occurred.connect(self.on_ai_error)
-        self.chat_worker.finished.connect(self.on_ai_finished)
+        worker = ChatWorker(self.llm_chat, message, context)
+        self.chat_worker = worker
+        worker.response_ready.connect(self.on_ai_response_ready)
+        worker.error_occurred.connect(self.on_ai_error)
+        # 用身份绑定的收尾回调：迟到的 finished 信号只能释放它自己的 worker，
+        # 不能把随后新建的回复线程当成本线程释放掉。
+        worker.finished.connect(lambda: self._on_worker_finished(worker))
         self._set_thinking(True)
-        self.chat_worker.start()
+        worker.start()
 
     def on_ai_finished(self) -> None:
+        """释放当前回复线程（未绑定身份的旧入口，测试与手动收尾使用）。"""
+        worker = self.chat_worker
+        if worker is not None:
+            self._on_worker_finished(worker)
+
+    def _on_worker_finished(self, worker: Any) -> None:
         self._set_thinking(False)
-        if self.chat_worker is not None:
-            self.chat_worker.deleteLater()
-            self.chat_worker = None
+        self._release_worker(worker)
 
     def on_ai_response_ready(self, response: str) -> None:
         self._set_thinking(False)
@@ -400,14 +417,43 @@ class ChatPanel(QWidget):
         if self.main_window is not None:
             self.main_window.toggle_chat_panel()
 
-    def closeEvent(self, event: Any) -> None:
+    # ---- 线程收尾 ----
+
+    def is_busy(self) -> bool:
+        """助手是否仍有回复线程在跑。"""
+        return self.chat_worker is not None and self.chat_worker.isRunning()
+
+    def shutdown(self, timeout_ms: int = 3000) -> bool:
+        """协作关闭助手线程，返回 ``True`` 表示可以安全销毁面板。
+
+        只做“请求中断 + 限时等待”：同步 HTTP 请求无法被可靠中断，因此超时后
+        **保持 worker 引用并返回 False**，由窗口决定是否继续等待——不强杀线程
+        （``terminate()`` 会让线程带着锁/半写状态退出）。助手是可选能力，超时
+        只影响助手面板，不改变测量端口与仪器安全清理的既有顺序。
+        """
         worker = self.chat_worker
-        if worker is not None and worker.isRunning():
-            worker.requestInterruption()
-            if not worker.wait(3000):
-                logger.warning("助手响应线程未在关闭期限内停止，强制终止")
-                worker.terminate()
-                worker.wait()
+        if worker is None:
+            return True
+        worker.requestInterruption()
+        if worker.isRunning() and not worker.wait(timeout_ms):
+            logger.warning(
+                "助手响应线程未在 %dms 内停止，保持引用以便重试关闭", timeout_ms
+            )
+            return False
+        self._release_worker(worker)
+        return True
+
+    def _release_worker(self, worker: Any) -> None:
+        """释放一个已停止的 worker；只清掉仍指向它的当前引用。"""
+        if self.chat_worker is worker:
+            self.chat_worker = None
+        worker.deleteLater()
+
+    def closeEvent(self, event: Any) -> None:
+        """面板自身关闭时也只做协作收尾；失败就保持打开。"""
+        if not self.shutdown():
+            event.ignore()
+            return
         super().closeEvent(event)
 
 

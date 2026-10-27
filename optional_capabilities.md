@@ -6,7 +6,8 @@
 
 - 实现位于 `assistant/llm.py` 和 `assistant/web_search_tools.py`。
 - 聊天历史和搜索配置的路径、JSON 读写由 `assistant/storage.py` 管理，GUI 不直接访问这些文件。
-- `presentation/qt/assistant/chat_panel.py` 是 `assistant.llm` 的唯一按需导入点：`create_assistant()` 只把“缺少可选依赖”和“助手配置不可读”转成不可用面板（原因写入日志并显示在聊天区），其他异常照常抛出；不可用时发送消息只提示原因，不启动 worker，主 GUI 与测量页面不受影响。
+- `presentation/qt/assistant/chat_panel.py` 是 `assistant.llm` 的唯一按需导入点：`create_assistant()` 把**整个构造过程**（按需导入 + 实例化）的普通异常降级为不可用面板（原因写入日志并显示在聊天区），只不捕获 `BaseException`；不可用时发送消息只提示原因，不启动 worker，主 GUI 与测量页面不受影响。
+- 助手回复线程是协作式收尾：`ChatPanel.shutdown(timeout_ms)` 先请求中断再限时等待，超时保持 worker 引用返回 `False`，由 `MainWindow.closeEvent` 在**仪器端口安全释放之后**决定是否继续等待；不调用 `QThread.terminate()`，也不会因为助手未就绪而跳过硬件收尾。
 - `chat_history*.json`、`chat_settings.json` 和 `search_api_config*.json` 只属于 assistant 配置，不写入测量快照。
 - 根目录 `llm.py`、`web_search_tools.py` 与 `enhanced_main_gui.py` 兼容入口已删除；正式实现分别位于 `assistant/llm.py`、`assistant/web_search_tools.py` 与 `presentation/qt/`。
 
@@ -15,6 +16,7 @@
 - `format_convert.csv_to_MDIF` 的独立入口是 `python -m format_convert.csv_to_MDIF INPUT OUTPUT`，导入不会读写文件。
 - `format_convert.svg_to_png_transparent` 只在函数调用时加载 Selenium/Pillow，并由调用者明确指定输入和输出路径。
 - 连接图生成逻辑位于 `presentation/qt/connection_diagrams.py`，由 GUI 的连接说明对话框按需导入，不进入测量服务初始化；根目录 `connection_diagrams.py` 兼容入口已删除。
+- 连接图不可用（可选依赖缺失、图工厂失败、未知图类型）时 `ConnectionDialog.build_diagram()` 返回空图加原因，对话框禁用“我已正确连接”，只允许取消：空图不得当作有效接线图用于现场确认。
 - 连接图的设备布局与标题集中在 `presentation.qt.connection_diagrams.DIAGRAM_DEVICES` / `DIAGRAM_TITLES`，回归测试直接断言这些数据。
 - 连接图的字体样式由 `presentation.qt.connection_diagrams.configure_diagram_style()` 在创建图形时按需应用；模块导入不改动全局 matplotlib 配置。
 - 格式转换产物、图片和临时文件必须写入调用者指定的输出目录；不得写入运行快照目录，除非未来建立显式报告导出协议。

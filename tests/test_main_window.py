@@ -66,7 +66,7 @@ class MainWindowCloseEventTests(unittest.TestCase):
 
     def _window(self, *, measurement_active=False, worker_running=False,
                 shutdown_ok=True, stop_ok=True, release_ok=True,
-                unreleased=False):
+                unreleased=False, assistant_stop_ok=True):
         from PySide6.QtWidgets import QMessageBox
 
         from presentation.qt.main_window import MainWindow
@@ -80,20 +80,29 @@ class MainWindowCloseEventTests(unittest.TestCase):
         coordinator.release_instrument_port.return_value = release_ok
         coordinator.has_unreleased_ports.return_value = unreleased
 
+        chat_panel = Mock()
+        chat_panel.shutdown.return_value = assistant_stop_ok
+
         tab_signal = Mock()
         pages = {"first": Mock(), "second": Mock()}
         window = SimpleNamespace(
             measurement_controller=controller,
             coordinator=coordinator,
+            chat_panel=chat_panel,
             tab_widget=SimpleNamespace(currentChanged=tab_signal),
             pages=pages,
             add_log_message=Mock(),
         )
+        window.ASSISTANT_SHUTDOWN_TIMEOUT_MS = MainWindow.ASSISTANT_SHUTDOWN_TIMEOUT_MS
         window._on_page_changed = Mock()
-        # 未通过 __init__ 构造的替身窗口需要显式绑定这两个确认方法。
+        # 未通过 __init__ 构造的替身窗口需要显式绑定这三个确认/收尾方法。
         window._confirm_exit = lambda: MainWindow._confirm_exit(window)
         window._confirm_exit_with_unreleased_ports = (
             lambda: MainWindow._confirm_exit_with_unreleased_ports(window)
+        )
+        window._shutdown_assistant = lambda: MainWindow._shutdown_assistant(window)
+        window._disconnect_page_signals = lambda: MainWindow._disconnect_page_signals(
+            window
         )
         event = Mock()
         self.Yes = QMessageBox.Yes
@@ -209,6 +218,50 @@ class MainWindowCloseEventTests(unittest.TestCase):
         event.accept.assert_called_once_with()
         for page in pages.values():
             page.close.assert_called_once_with()
+
+    def test_close_event_stops_the_assistant_before_closing_pages(self):
+        MainWindow, window, event, pages, _tab = self._window()
+
+        MainWindow.closeEvent(window, event)
+
+        window.chat_panel.shutdown.assert_called_once_with(
+            MainWindow.ASSISTANT_SHUTDOWN_TIMEOUT_MS
+        )
+        event.accept.assert_called_once_with()
+        for page in pages.values():
+            page.close.assert_called_once_with()
+
+    def test_close_event_keeps_window_open_when_the_assistant_will_not_stop(self):
+        MainWindow, window, event, pages, _tab = self._window(assistant_stop_ok=False)
+
+        MainWindow.closeEvent(window, event)
+
+        event.ignore.assert_called_once_with()
+        event.accept.assert_not_called()
+        for page in pages.values():
+            page.close.assert_not_called()
+        self.assertTrue(
+            any(
+                "助手回复仍在生成" in str(call.args[0])
+                for call in window.add_log_message.call_args_list
+            )
+        )
+
+    def test_assistant_shutdown_runs_after_the_instrument_port_is_released(self):
+        """助手收尾失败不得让仪器端口的安全释放被跳过。"""
+        MainWindow, window, event, _pages, _tab = self._window(assistant_stop_ok=False)
+        order = Mock()
+        order.attach_mock(window.coordinator.release_instrument_port, "release_port")
+        order.attach_mock(window.chat_panel.shutdown, "stop_assistant")
+
+        MainWindow.closeEvent(window, event)
+
+        names = [name for name, _args, _kwargs in order.mock_calls]
+        window.coordinator.release_instrument_port.assert_called_once_with()
+        window.chat_panel.shutdown.assert_called_once_with(
+            MainWindow.ASSISTANT_SHUTDOWN_TIMEOUT_MS
+        )
+        self.assertLess(names.index("release_port"), names.index("stop_assistant"))
 
 
 class MainWindowAssemblyBoundaryTests(unittest.TestCase):

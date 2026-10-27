@@ -182,6 +182,41 @@ class QtMigrationResidueTests(unittest.TestCase):
             "只有聊天面板可以按需导入 assistant.llm: " + ", ".join(importers),
         )
 
+    def test_production_qt_code_never_terminates_a_thread(self):
+        """超时必须保持引用让用户重试，``QThread.terminate()`` 会让线程带锁退出。"""
+        violations = []
+        for path in self._production_sources():
+            for node in ast.walk(_tree(path)):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "terminate"
+                ):
+                    violations.append(f"{path.relative_to(ROOT)}:{node.lineno}")
+        self.assertEqual(
+            violations,
+            [],
+            "生产 Qt 代码不得强杀线程: " + ", ".join(violations),
+        )
+
+    def test_main_window_closes_the_assistant_before_closing_pages(self):
+        """助手收尾必须接进窗口关闭流程，且排在硬件安全清理之后。"""
+        tree = _tree(MAIN_WINDOW)
+        close_event = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "closeEvent":
+                close_event = node
+                break
+        self.assertIsNotNone(close_event, "main_window.py 缺少 closeEvent")
+        source = ast.unparse(close_event)
+        self.assertIn("self._shutdown_assistant()", source)
+        self.assertIn("release_instrument_port", source)
+        self.assertLess(
+            source.index("release_instrument_port"),
+            source.index("self._shutdown_assistant()"),
+            "助手线程收尾不得早于仪器端口的安全释放",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -51,7 +51,11 @@ class UnavailableAssistant:
 
 
 class ChatWorker(QThread):
-    """在线程里调用一次 ``llm_chat.chat()``，用信号返回结果或错误。"""
+    """在线程里调用一次 ``llm_chat.chat()``，用信号返回结果或错误。
+
+    取消是协作式的：面板关闭时先 ``requestInterruption()``，线程在开始前和拿到结果后
+    检查中断标记，因此被中断的回复不会再把消息推给正在关闭的面板。
+    """
 
     response_ready = Signal(str)
     error_occurred = Signal(str)
@@ -63,12 +67,19 @@ class ChatWorker(QThread):
         self.context = context
 
     def run(self) -> None:
+        if self.isInterruptionRequested():
+            return
         # 线程边界：任何助手失败都转成 error 信号，由面板呈现，不静默丢弃。
         try:
-            self.response_ready.emit(self.llm_chat.chat(self.message, self.context))
+            response = self.llm_chat.chat(self.message, self.context)
         except Exception as error:  # noqa: BLE001 - 助手侧异常一律转成用户可见错误
             logger.warning("AI 回复失败: %s", error)
-            self.error_occurred.emit(str(error) or type(error).__name__)
+            if not self.isInterruptionRequested():
+                self.error_occurred.emit(str(error) or type(error).__name__)
+            return
+        if self.isInterruptionRequested():
+            return
+        self.response_ready.emit(response)
 
 
 __all__ = ["ChatWorker", "UnavailableAssistant"]

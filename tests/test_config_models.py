@@ -184,11 +184,11 @@ class ConfigModelTests(unittest.TestCase):
         result = validate_test_plan(config)
         self.assertIn("compression_point.type", {issue.path for issue in result.errors})
 
-    def test_driver_mode_requires_driver_channels(self):
+    def test_driver_mode_allows_external_power_without_local_channels(self):
         config = complete_plan()
         config["driver_mode"]["enabled"] = True
         result = validate_test_plan(config)
-        self.assertIn("driver_mode.power_channels", {issue.path for issue in result.errors})
+        self.assertNotIn("driver_mode.power_channels", {issue.path for issue in result.errors})
 
     def test_driver_mode_must_be_boolean(self):
         plan = complete_plan()

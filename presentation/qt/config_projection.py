@@ -34,6 +34,8 @@ DEFAULT_SIGNAL_SOURCE = {"start_power": -38.0, "stop_power": -16.0, "step": 1.0}
 DEFAULT_COMPRESSION_TYPE = "5dB"
 DEFAULT_ATTENUATOR_TYPE = "40dB"
 DEFAULT_DRIVER_MODE_ENABLED = True
+DRIVER_POWER_SOURCE_LABELS = {"dc_supply": "直流电源", "external_ac": "自带供电"}
+DRIVER_POWER_SOURCE_VALUES = tuple(DRIVER_POWER_SOURCE_LABELS.values())
 DEFAULT_MAX_INPUT_POWER = 33.5
 DEFAULT_PA_UNIT_COUNT = "2"
 DEFAULT_ENABLED_POWER_SUPPLIES = ("PS1", "PS2")
@@ -140,7 +142,9 @@ def reset_control_widgets(widgets: Any) -> None:
     widgets.power_step.setValue(DEFAULT_SIGNAL_SOURCE["step"])
     set_combo(widgets.compression_combo, DEFAULT_COMPRESSION_TYPE)
     set_combo(widgets.attenuator_combo, DEFAULT_ATTENUATOR_TYPE)
-    widgets.driver_mode_check.setChecked(DEFAULT_DRIVER_MODE_ENABLED)
+    widgets.test_mode_enabled = DEFAULT_DRIVER_MODE_ENABLED
+    if hasattr(widgets, "driver_power_source_combo"):
+        set_combo(widgets.driver_power_source_combo, "直流电源")
     widgets.max_input_power.setValue(DEFAULT_MAX_INPUT_POWER)
     set_combo(widgets.pa_unit_count_combo, DEFAULT_PA_UNIT_COUNT)
     _reset_power_supply_channels(widgets)
@@ -163,7 +167,8 @@ def _reset_power_assignment_widgets(widgets: Any) -> None:
     controls = getattr(widgets, "power_assignment_widgets", {})
     if not controls:
         return
-    controls["driver_enabled"].setChecked(False)
+    if "driver_source" in controls:
+        set_combo(controls["driver_source"], "直流电源")
     for key, default in DEFAULT_POWER_ASSIGNMENT.items():
         set_combo(controls[key], default)
 
@@ -219,9 +224,9 @@ def _apply_test_parameter_widgets(widgets: Any, config: Mapping[str, Any]) -> No
     set_combo(widgets.attenuator_combo, attenuator.get("type"))
     mode = config.get("driver_mode")
     mode = mode if isinstance(mode, dict) else {}
-    widgets.driver_mode_check.setChecked(
-        bool_or_default(mode.get("enabled"), DEFAULT_DRIVER_MODE_ENABLED)
-    )
+    widgets.test_mode_enabled = bool_or_default(mode.get("enabled"), DEFAULT_DRIVER_MODE_ENABLED)
+    if hasattr(widgets, "driver_power_source_combo"):
+        set_combo(widgets.driver_power_source_combo, {"dc_supply": "直流电源", "external_ac": "自带供电"}.get(mode.get("power_source"), "直流电源"))
     dut = config.get("dut_config")
     dut = dut if isinstance(dut, dict) else {}
     value = number_or_none(dut.get("max_input_power"))
@@ -284,7 +289,8 @@ def _apply_power_assignment_widgets(widgets: Any, assignment: Any) -> None:
     main = driver_supplies.get("main")
     main = main if isinstance(main, dict) else {}
     count = number_or_none(driver.get("power_supply_count"))
-    controls["driver_enabled"].setChecked(count is not None and count > 0)
+    if "driver_source" in controls:
+        set_combo(controls["driver_source"], "直流电源" if count is not None and count > 0 else "自带供电")
     set_combo(
         controls["driver_power"],
         text_or_empty(main.get("name")) or DEFAULT_POWER_ASSIGNMENT["driver_power"],
@@ -305,6 +311,8 @@ __all__ = [
     "DEFAULT_ATTENUATOR_TYPE",
     "DEFAULT_COMPRESSION_TYPE",
     "DEFAULT_DRIVER_MODE_ENABLED",
+    "DRIVER_POWER_SOURCE_LABELS",
+    "DRIVER_POWER_SOURCE_VALUES",
     "DEFAULT_ENABLED_POWER_SUPPLIES",
     "DEFAULT_MAX_INPUT_POWER",
     "DEFAULT_PA_UNIT_COUNT",

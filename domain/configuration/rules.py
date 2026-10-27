@@ -6,6 +6,7 @@ import re
 from typing import Any, Dict, List, Optional, Union
 
 from domain.configuration.types import ConfigIssue, ConfigValidationResult
+from domain.configuration.models import DRIVER_POWER_DC, DRIVER_POWER_EXTERNAL, DRIVER_POWER_SOURCES
 
 
 PathLike = Union[str, os.PathLike[str]]
@@ -96,9 +97,16 @@ def validate_config(config: Dict[str, Any]) -> ConfigValidationResult:
         _parse_db_value(require(attenuator, "type", "attenuator.type"), "attenuator.type", error, non_negative=True)
 
     driver_enabled = None
+    driver_power_source = None
     if "driver_mode" in present_sections:
         driver_mode = get_mapping(root.get("driver_mode"), "driver_mode")
         driver_enabled = require(driver_mode, "enabled", "driver_mode.enabled")
+        driver_power_source = driver_mode.get("power_source")
+        if driver_power_source not in (None, "") and driver_power_source not in DRIVER_POWER_SOURCES:
+            error(
+                "driver_mode.power_source",
+                "必须是 dc_supply（直流电源）或 external_ac（自带供电）",
+            )
     if not isinstance(driver_enabled, bool):
         if "driver_mode" in present_sections:
             error("driver_mode.enabled", "必须是布尔值")
@@ -123,14 +131,57 @@ def validate_config(config: Dict[str, Any]) -> ConfigValidationResult:
         driver_assignment = _validate_assignment(assignments, "driver_amplifier", power_supplies, error, warning)
         _validate_assignment(assignments, "dut_amplifier", power_supplies, error, warning)
     wiring = root.get("wiring") if isinstance(root.get("wiring"), dict) else {}
-    external_driver_confirmed = wiring.get("driver_amplifier_external_power_confirmed") is True
-    if driver_enabled is True and not driver_assignment and not external_driver_confirmed:
-        warning(
+    if driver_enabled is True:
+        _validate_driver_power_source(
+            driver_power_source,
+            driver_assignment,
+            "power_supply_assignment.driver_amplifier",
+            error,
+            warning,
+        )
+    elif driver_enabled is False and driver_assignment:
+        error(
             "power_supply_assignment.driver_amplifier.supplies",
-            "驱动模式已启用但未配置驱动功放供电分配；请确认驱动功放由外部供电，或配置本机供电分配。",
+            "驱放测试模式关闭时不能配置驱动功放供电分配",
         )
 
     return ConfigValidationResult(errors=errors, warnings=warnings)
+
+
+def _validate_driver_power_source(
+    source: Any,
+    driver_assignment: Dict[str, Any],
+    path: str,
+    error: Any,
+    warning: Any,
+) -> None:
+    """校验驱放测试模式下的供电方式与驱动功放供电分配是否一致。"""
+    if source == DRIVER_POWER_DC:
+        if not driver_assignment:
+            error(
+                f"{path}.supplies",
+                "驱放使用直流电源时必须选择驱动功放电源和通道",
+            )
+        return
+    if source == DRIVER_POWER_EXTERNAL:
+        if driver_assignment:
+            error(
+                f"{path}.supplies",
+                "驱放自带供电时不能配置本机直流电源分配",
+            )
+        return
+    # 旧配置没有声明供电方式：有分配按直流处理，没有分配按自带供电处理，
+    # 只提示用户重新保存以把它写成显式字段。
+    if not driver_assignment:
+        warning(
+            "driver_mode.power_source",
+            "驱放测试模式未声明供电方式，按自带供电处理；重新保存配置即可记录该选择",
+        )
+    else:
+        warning(
+            "driver_mode.power_source",
+            "驱放测试模式未声明供电方式，按直流电源处理；重新保存配置即可记录该选择",
+        )
 
 
 def _is_finite_number(value: Any) -> bool:

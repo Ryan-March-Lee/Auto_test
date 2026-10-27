@@ -110,9 +110,25 @@ class ConfigFormState:
             },
             "compression_point": {"type": self._current(w.compression_combo)},
             "attenuator": {"type": self._current(w.attenuator_combo)},
-            "driver_mode": {"enabled": self._checked(w.driver_mode_check)},
+            "driver_mode": self._read_driver_mode(w),
         })
         return result
+
+    def _read_driver_mode(self, w: Any) -> dict:
+        """读取驱放测试模式与供电方式。
+
+        供电方式只在驱放测试模式下有意义：关闭时写回不带 ``power_source`` 的
+        ``{"enabled": False}``，避免保存出“关闭却又声明供电方式”的配置。
+        """
+        enabled = bool(getattr(w, "test_mode_enabled", False))
+        if not enabled:
+            return {"enabled": False}
+        source_widget = getattr(w, "driver_power_source_combo", None)
+        label = self._current(source_widget) if source_widget is not None else "直流电源"
+        return {
+            "enabled": True,
+            "power_source": {"自带供电": "external_ac"}.get(label, "dc_supply"),
+        }
 
     def read_power_supply_config(self) -> dict:
         result = {}
@@ -159,7 +175,14 @@ class ConfigFormState:
         controls = getattr(w, "power_assignment_widgets", None)
         if not controls:
             return {}
-        driver_enabled = self._checked(controls["driver_enabled"])
+        source_control = controls.get("driver_source")
+        if source_control is not None:
+            source = self._current(source_control)
+        else:
+            legacy_control = controls.get("driver_enabled")
+            source = "直流电源" if legacy_control is not None and self._checked(legacy_control) else "自带供电"
+        # 无驱放测试不写驱动功放供电分配；有驱放但驱放自带供电时同样不占本机电源。
+        driver_enabled = source == "直流电源" and bool(getattr(w, "test_mode_enabled", True))
         driver = {"power_supply_count": 1 if driver_enabled else 0, "supplies": {}}
         if driver_enabled:
             driver["supplies"]["main"] = {"name": self._current(controls["driver_power"]), "channel": ["CH1", "CH2"]}

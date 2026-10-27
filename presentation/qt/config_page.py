@@ -7,6 +7,8 @@
 测量 controller 或硬件实现。
 """
 
+import copy
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QFormLayout, QGridLayout, QGroupBox,
@@ -19,6 +21,7 @@ from .config_projection import (
     DEFAULT_ATTENUATOR_TYPE,
     DEFAULT_COMPRESSION_TYPE,
     DEFAULT_DRIVER_MODE_ENABLED,
+    DRIVER_POWER_SOURCE_VALUES,
     DEFAULT_ENABLED_POWER_SUPPLIES,
     DEFAULT_MAX_INPUT_POWER,
     DEFAULT_PA_UNIT_COUNT,
@@ -46,6 +49,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
     connect_requested = Signal()
     create_run_requested = Signal()
     load_run_requested = Signal(str)
+    return_welcome_requested = Signal()
     validation_failed = Signal(str)
     driver_mode_changed = Signal(bool)
 
@@ -58,6 +62,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         self.update_pa_unit_ui()
         self.update_driver_power_ui()
         self.update_power_supply_options()
+        self._dirty_baseline = copy.deepcopy(self.config)
 
     def build_ui(self):
         """按页面协议构建并返回配置页根 widget。"""
@@ -141,9 +146,11 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         if not isinstance(attenuator, dict): attenuator = {}
         self.compression_combo = self._combo(("1dB", "3dB", "5dB"), compression.get("type", DEFAULT_COMPRESSION_TYPE))
         self.attenuator_combo = self._combo(("30dB", "40dB"), attenuator.get("type", DEFAULT_ATTENUATOR_TYPE))
-        self.driver_mode_check = QCheckBox("启用驱动功放模式")
         mode = self.config.get("driver_mode", {})
-        self.driver_mode_check.setChecked(mode.get("enabled", DEFAULT_DRIVER_MODE_ENABLED) if isinstance(mode, dict) else DEFAULT_DRIVER_MODE_ENABLED)
+        mode = mode if isinstance(mode, dict) else {}
+        self.test_mode_enabled = bool(mode.get("enabled", DEFAULT_DRIVER_MODE_ENABLED))
+        source = mode.get("power_source")
+        self.driver_power_source = {"dc_supply": "直流电源", "external_ac": "自带供电"}.get(source)
         dut = self.config.get("dut_config", {})
         if not isinstance(dut, dict): dut = {}
         self.max_input_power = self._spin(dut.get("max_input_power", DEFAULT_MAX_INPUT_POWER), 0, 50)
@@ -156,7 +163,6 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             row, column = divmod(index, 2)
             form.addWidget(QLabel(label), row, column * 2)
             form.addWidget(widget, row, column * 2 + 1)
-        form.addWidget(self.driver_mode_check, 4, 0, 1, 2)
         left_column.addWidget(params)
         self._build_power_widgets(right_column, supplies)
         # 运行入口紧随测试参数，保存按钮放在左栏底部。
@@ -217,13 +223,17 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         detail_layout.addWidget(tabs); layout.addWidget(detail)
 
         assignment = QGroupBox("电源分配设置"); form = QGridLayout(assignment)
+        self.power_assignment_group = assignment
         existing = self.config.get("power_supply_assignment", {})
         if not isinstance(existing, dict): existing = {}
         driver = existing.get("driver_amplifier", {}); dut = existing.get("dut_amplifier", {})
         if not isinstance(driver, dict): driver = {}
         if not isinstance(dut, dict): dut = {}
-        self.driver_power_enabled = QCheckBox("启用驱动功放电源")
-        self.driver_power_enabled.setChecked(driver.get("power_supply_count", 0) > 0)
+        inferred_source = "直流电源" if driver.get("power_supply_count", 0) > 0 else "自带供电"
+        self.driver_power_source_combo = self._combo(DRIVER_POWER_SOURCE_VALUES, self.driver_power_source or inferred_source)
+        self.driver_power_source_label = QLabel("驱放供电方式:")
+        self.driver_power_hint = QLabel("自带供电的驱放由外部供电设备供电，本系统不会控制其电源。")
+        self.driver_power_hint.setWordWrap(True)
         driver_supply = driver.get("supplies", {}); dut_supply = dut.get("supplies", {})
         if not isinstance(driver_supply, dict): driver_supply = {}
         if not isinstance(dut_supply, dict): dut_supply = {}
@@ -238,20 +248,24 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         self.pa_unit3_power_combo = self._combo(supplies_choices, peaking2.get("name", DEFAULT_POWER_ASSIGNMENT["pa_unit3_power"]))
         self.driver_power_label = QLabel("驱动功放电源:"); self.pa_unit2_label = QLabel("PA Unit2电源:"); self.pa_unit3_label = QLabel("PA Unit3电源:")
         # 两列布局（标签 + 下拉框），避免右栏过窄时撑出横向滚动条。
-        form.addWidget(self.driver_power_enabled, 0, 0, 1, 2)
-        form.addWidget(self.driver_power_label, 1, 0); form.addWidget(self.driver_power_combo, 1, 1)
-        form.addWidget(QLabel("PA Unit1电源:"), 2, 0); form.addWidget(self.pa_unit1_power_combo, 2, 1)
-        form.addWidget(self.pa_unit2_label, 3, 0); form.addWidget(self.pa_unit2_power_combo, 3, 1)
-        form.addWidget(self.pa_unit3_label, 4, 0); form.addWidget(self.pa_unit3_power_combo, 4, 1)
+        form.addWidget(self.driver_power_source_label, 0, 0)
+        form.addWidget(self.driver_power_source_combo, 0, 1)
+        form.addWidget(self.driver_power_hint, 1, 0, 1, 2)
+        form.addWidget(self.driver_power_label, 2, 0); form.addWidget(self.driver_power_combo, 2, 1)
+        form.addWidget(QLabel("PA Unit1电源:"), 3, 0); form.addWidget(self.pa_unit1_power_combo, 3, 1)
+        form.addWidget(self.pa_unit2_label, 4, 0); form.addWidget(self.pa_unit2_power_combo, 4, 1)
+        form.addWidget(self.pa_unit3_label, 5, 0); form.addWidget(self.pa_unit3_power_combo, 5, 1)
         form.setColumnStretch(1, 1)
         layout.addWidget(assignment)
-        self.power_assignment_widgets = {"driver_enabled": self.driver_power_enabled, "driver_power": self.driver_power_combo,
+        self.power_assignment_widgets = {"driver_source": self.driver_power_source_combo, "driver_power": self.driver_power_combo,
             "pa_unit1_power": self.pa_unit1_power_combo, "pa_unit2_power": self.pa_unit2_power_combo,
             "pa_unit2_label": self.pa_unit2_label, "pa_unit3_power": self.pa_unit3_power_combo, "pa_unit3_label": self.pa_unit3_label}
 
     def _build_run_widgets(self, layout):
         """保存按钮与运行入口；与电源配置解耦，便于放在左侧栏底部。"""
         self.save_config_btn = QPushButton("保存配置"); layout.addWidget(self.save_config_btn)
+        self.return_welcome_btn = QPushButton("返回欢迎页")
+        layout.addWidget(self.return_welcome_btn)
 
         # 配置阶段入口：校验并创建一次运行。运行创建后测量页面只消费该不可变快照。
         run_group = QGroupBox("运行")
@@ -274,9 +288,9 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         self.save_config_btn.clicked.connect(self.request_save)
         self.create_run_btn.clicked.connect(self.request_create_run)
         self.load_run_btn.clicked.connect(self.request_load_run)
+        self.return_welcome_btn.clicked.connect(self.return_welcome_requested.emit)
         self.pa_unit_count_combo.currentTextChanged.connect(self.on_pa_unit_count_changed)
-        self.driver_mode_check.toggled.connect(self.on_driver_mode_toggled)
-        self.driver_power_enabled.toggled.connect(self.on_driver_power_toggled)
+        self.driver_power_source_combo.currentTextChanged.connect(self.on_driver_power_toggled)
         for name in ("ps1", "ps2", "ps3", "ps4"):
             getattr(self, f"{name}_enabled").toggled.connect(self.on_instrument_enabled_changed)
 
@@ -313,14 +327,11 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             visible = count >= index
             self.power_assignment_widgets[f"pa_unit{index}_power"].setVisible(visible)
             self.power_assignment_widgets[f"pa_unit{index}_label"].setVisible(visible)
-    def on_driver_mode_toggled(self, checked):
-        self.update_driver_power_ui()
-        self.driver_mode_changed.emit(bool(checked))
-    def on_driver_power_toggled(self, _checked): self.update_driver_power_ui()
+    def on_driver_power_toggled(self, _value): self.update_driver_power_ui()
     def update_driver_power_ui(self):
-        enabled = self.driver_mode_check.isChecked() and self.driver_power_enabled.isChecked()
-        self.driver_power_enabled.setEnabled(self.driver_mode_check.isChecked())
+        enabled = self.test_mode_enabled and self.driver_power_source_combo.currentText() == "直流电源"
         self.driver_power_combo.setEnabled(enabled); self.driver_power_label.setEnabled(enabled)
+        self.driver_power_hint.setVisible(self.test_mode_enabled and not enabled)
         if not enabled: self.driver_power_combo.setCurrentIndex(-1)
     def on_instrument_enabled_changed(self, _checked=False): self.update_power_supply_options()
     def get_enabled_power_supplies(self):
@@ -340,9 +351,33 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         base_config = self.config if base is None else base
         return ConfigFormState(base_config, self).build_config()
 
+    def set_test_mode(self, enabled: bool) -> None:
+        """设置欢迎页选择的测试模式并同步供电选项。"""
+        self.test_mode_enabled = bool(enabled)
+        mode = self.config.get("driver_mode", {})
+        mode = dict(mode) if isinstance(mode, dict) else {}
+        source = mode.get("power_source")
+        if source not in ("dc_supply", "external_ac"):
+            assignment = self.config.get("power_supply_assignment", {})
+            driver = assignment.get("driver_amplifier", {}) if isinstance(assignment, dict) else {}
+            source = "dc_supply" if isinstance(driver, dict) and driver.get("power_supply_count", 0) else "external_ac"
+        self.driver_power_source_combo.setCurrentText(
+            {"dc_supply": "直流电源", "external_ac": "自带供电"}[source]
+        )
+        self.power_assignment_group.setVisible(self.test_mode_enabled)
+        self.update_driver_power_ui()
+        self._dirty_baseline = copy.deepcopy(self.build_config(self.config))
+        self.driver_mode_changed.emit(self.test_mode_enabled)
+
+    def is_dirty(self) -> bool:
+        return self.build_config(self.config) != self._dirty_baseline
+
+    def mark_clean(self) -> None:
+        self._dirty_baseline = copy.deepcopy(self.build_config(self.config))
+
     def driver_mode_requested(self) -> bool:
-        """返回“启用驱动功放模式”控件的当前选择；调用方不需要接触控件本身。"""
-        return self.driver_mode_check.isChecked()
+        """返回欢迎页选择的驱放测试模式。"""
+        return bool(self.test_mode_enabled)
 
     # -- 冻结运行配置回填 ---------------------------------------------------
     def apply_config(self, config) -> None:
@@ -365,3 +400,4 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         self.update_power_supply_options()
         # 全部投影成功后再提交文档副本（project_authoring_config 返回深拷贝）。
         self.config = projected
+        self._dirty_baseline = copy.deepcopy(self.build_config(self.config))

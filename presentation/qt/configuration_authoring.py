@@ -100,10 +100,9 @@ def _author_test_plan(document: Mapping[str, Any]) -> dict[str, Any]:
             "max_input_power": dut_config.get("max_input_power"),
             "power_roles": _author_dut_role_plans(document),
         },
-        # 驱动功放由外部供电时（没有本机供电分配）不进入本机驱动模式，与配置页
-        # “启用驱动功放电源”开关的含义一致；不根据旧配置推断。
         "driver_mode": {
-            "enabled": bool(driver_mode.get("enabled")) and bool(driver_channels),
+            "enabled": bool(driver_mode.get("enabled")),
+            "power_source": _driver_power_source(document, driver_channels),
             "power_roles": driver_channels,
         },
         "other_parameters": {},
@@ -148,8 +147,8 @@ def _author_run_mapping(document: Mapping[str, Any]) -> dict[str, Any]:
             },
         },
         "driver_mode": {
-            "enabled": bool(_mapping(document.get("driver_mode")).get("enabled"))
-            and bool(driver_channels),
+            "enabled": bool(_mapping(document.get("driver_mode")).get("enabled")),
+            "power_source": _driver_power_source(document, driver_channels),
             "power_channels": driver_channels,
         },
         "dut_power_channels": _author_dut_channel_mappings(document),
@@ -161,6 +160,17 @@ def _author_run_mapping(document: Mapping[str, Any]) -> dict[str, Any]:
         },
         "notes": None,
     }
+
+
+def _driver_power_source(document: Mapping[str, Any], driver_channels: Any) -> str | None:
+    """显式供电方式优先；旧配置按驱动通道是否存在推断。"""
+    mode = _mapping(document.get("driver_mode"))
+    if not mode.get("enabled"):
+        return None
+    source = mode.get("power_source")
+    if source in ("dc_supply", "external_ac"):
+        return source
+    return "dc_supply" if driver_channels else "external_ac"
 
 
 def _author_dut_role_plans(document: Mapping[str, Any]) -> dict[str, Any]:

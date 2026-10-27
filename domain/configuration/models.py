@@ -17,6 +17,18 @@ PathLike = Union[str, os.PathLike[str]]
 SUPPORTED_SCHEMA_VERSION = "1.0"
 SUPPORTED_COMPRESSION_POINTS = {"1dB", "3dB", "5dB"}
 PLACEHOLDER_VALUES = {"", "无", "待填写", "<channel_name>", "<gate_or_drain_or_other>"}
+# 驱动功放（驱放）的供电方式：由本机直流电源供电，或由驱放自带电源（市电）供电。
+# 两种情况都处于驱放测试模式，区别只在驱动功放通道是否由本系统控制。
+DRIVER_POWER_DC = "dc_supply"
+DRIVER_POWER_EXTERNAL = "external_ac"
+DRIVER_POWER_SOURCES = (DRIVER_POWER_DC, DRIVER_POWER_EXTERNAL)
+
+
+def resolve_driver_power_source(source: Any, *, driver_channels: Any) -> str:
+    """返回驱放供电方式；旧配置没有该字段时按是否配置驱动通道推断。"""
+    if source in DRIVER_POWER_SOURCES:
+        return str(source)
+    return DRIVER_POWER_DC if driver_channels else DRIVER_POWER_EXTERNAL
 
 
 @dataclass(frozen=True)
@@ -84,6 +96,7 @@ class TestPlan:
     max_input_power: Optional[float] = None
     dut_power_channels: Dict[str, PowerChannelPlan] = field(default_factory=dict)
     driver_enabled: bool = False
+    driver_power_source: Optional[str] = None
     driver_power_channels: Dict[str, PowerChannelPlan] = field(default_factory=dict)
     other_parameters: Dict[str, Any] = field(default_factory=dict)
     raw: Dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
@@ -114,6 +127,9 @@ class TestPlan:
                 _first_mapping(dut, "power_roles", "power_channels") if isinstance(dut, Mapping) else {}
             ),
             driver_enabled=driver.get("enabled", False) if isinstance(driver, Mapping) else False,
+            driver_power_source=(
+                driver.get("power_source") if isinstance(driver, Mapping) else None
+            ),
             driver_power_channels=_channel_plans(
                 _first_mapping(driver, "power_roles", "power_channels") if isinstance(driver, Mapping) else {}
             ),
@@ -141,6 +157,7 @@ class TestPlan:
             },
             "driver_mode": {
                 "enabled": self.driver_enabled,
+                "power_source": self.driver_power_source,
                 "power_roles": {name: channel.to_dict() for name, channel in self.driver_power_channels.items()},
             },
             "other_parameters": dict(self.other_parameters),
@@ -190,6 +207,7 @@ class RunResourceMapping:
     operator: Optional[str] = None
     instruments: Dict[str, InstrumentMapping] = field(default_factory=dict)
     driver_enabled: bool = False
+    driver_power_source: Optional[str] = None
     driver_power_channels: List[ChannelMapping] = field(default_factory=list)
     dut_power_channels: List[ChannelMapping] = field(default_factory=list)
     wiring_confirmed: bool = False
@@ -215,6 +233,9 @@ class RunResourceMapping:
                 for name, item in instruments.items()
             } if isinstance(instruments, Mapping) else {},
             driver_enabled=driver.get("enabled", False) if isinstance(driver, Mapping) else False,
+            driver_power_source=(
+                driver.get("power_source") if isinstance(driver, Mapping) else None
+            ),
             driver_power_channels=_channel_mappings(driver.get("power_channels", []) if isinstance(driver, Mapping) else []),
             dut_power_channels=_channel_mappings(value.get("dut_power_channels", [])),
             wiring_confirmed=wiring.get("confirmed", False) if isinstance(wiring, Mapping) else False,
@@ -235,6 +256,7 @@ class RunResourceMapping:
             "instruments": {name: item.to_dict() for name, item in self.instruments.items()},
             "driver_mode": {
                 "enabled": self.driver_enabled,
+                "power_source": self.driver_power_source,
                 "power_channels": [item.to_dict() for item in self.driver_power_channels],
             },
             "dut_power_channels": [item.to_dict() for item in self.dut_power_channels],
@@ -288,9 +310,10 @@ def validate_test_plan(plan: Union[TestPlan, Mapping[str, Any]]) -> ConfigValida
     if not plan.dut_power_channels:
         error("dut.power_channels", "必须至少配置一个 DUT 电源通道")
     _validate_channels(plan.dut_power_channels, "dut.power_channels", error)
-    if plan.driver_enabled and not plan.driver_power_channels:
-        error("driver_mode.power_channels", "驱动模式开启时必须配置驱动功放通道")
     _validate_channels(plan.driver_power_channels, "driver_mode.power_channels", error)
+    _validate_driver_mode(
+        plan.driver_enabled, plan.driver_power_source, plan.driver_power_channels, error
+    )
     return ConfigValidationResult(errors=errors, warnings=warnings)
 
 
@@ -323,10 +346,12 @@ def validate_run_mapping(mapping: Union[RunResourceMapping, Mapping[str, Any]]) 
     overlap = dut_channels & driver_channels
     if overlap:
         error("power_channels", f"DUT 和驱动功放不能重复使用通道: {', '.join(sorted(overlap))}")
-    if not mapping.driver_enabled and driver_channels:
-        error("driver_mode.power_channels", "驱动模式关闭时不能配置驱动功放通道")
-    if mapping.driver_enabled and not driver_channels:
-        error("driver_mode.power_channels", "驱动模式开启时必须配置驱动功放通道")
+    _validate_driver_mode(
+        mapping.driver_enabled,
+        mapping.driver_power_source,
+        mapping.driver_power_channels,
+        error,
+    )
     if not mapping.wiring_confirmed:
         error("wiring.confirmed", "连接或上电前必须确认现场接线")
     _required_text(mapping.connection_note, "wiring.connection_note", error)
@@ -523,6 +548,30 @@ def _validate_mappings(mappings: List[ChannelMapping], path: str, error: Any) ->
         seen.add(item.channel)
         _required_text(item.role, f"{item_path}.role", error)
         _required_text(item.connection, f"{item_path}.connection", error)
+
+
+def _validate_driver_mode(enabled: Any, source: Any, channels: Any, error: Any) -> None:
+    """校验驱放模式与供电方式是否一致。
+
+    驱放测试模式下，驱动功放既可以由本机直流电源供电（必须有驱动通道），也可以
+    自带电源/市电供电（不得占用本机电源通道）。旧配置没有 ``power_source`` 时按
+    “是否有驱动通道”推断，保持旧快照仍可读取。
+    """
+    if enabled is not True:
+        if channels:
+            error("driver_mode.power_channels", "驱放测试模式关闭时不能配置驱动功放通道")
+        if source not in (None, ""):
+            error("driver_mode.power_source", "驱放测试模式关闭时不能指定供电方式")
+        return
+    if source in (None, ""):
+        return
+    if source not in DRIVER_POWER_SOURCES:
+        error("driver_mode.power_source", "必须是 dc_supply（直流电源）或 external_ac（自带供电）")
+        return
+    if source == DRIVER_POWER_DC and not channels:
+        error("driver_mode.power_channels", "驱放使用直流电源时必须配置驱动功放通道")
+    if source == DRIVER_POWER_EXTERNAL and channels:
+        error("driver_mode.power_channels", "驱放自带供电时不能配置驱动功放通道")
 
 
 def _required_text(value: Any, path: str, error: Any) -> bool:

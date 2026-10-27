@@ -88,7 +88,7 @@ class ConfigPageStub:
         self.statuses.append(text)
 
     def driver_mode_requested(self):
-        return self.widgets.driver_mode_check.isChecked()
+        return bool(getattr(self.widgets, 'test_mode_enabled', False))
 
 
 def _coordinator(*, config=None, service=None, widgets=None, log=None, warn=None, error=None):
@@ -145,7 +145,8 @@ class ConfigFormStateReaderTests(unittest.TestCase):
         self.host.power_step = FakeValueWidget(1)
         self.host.compression_combo = FakeComboWidget('5dB')
         self.host.attenuator_combo = FakeComboWidget('30dB')
-        self.host.driver_mode_check = FakeCheckWidget(False)
+        self.host.test_mode_enabled = False
+        self.host.driver_power_source_combo = FakeComboWidget('自带供电')
         self.host.max_input_power = FakeValueWidget(29.5)
         self.host.pa_unit_count_combo = FakeComboWidget(pa_unit_count)
         self.host.power_config_widgets = {
@@ -157,7 +158,7 @@ class ConfigFormStateReaderTests(unittest.TestCase):
             }
         }
         self.host.power_assignment_widgets = {
-            'driver_enabled': FakeCheckWidget(driver_enabled),
+            'driver_source': FakeComboWidget('直流电源' if driver_enabled else '自带供电'),
             'driver_power': FakeComboWidget('PS4'),
             'pa_unit1_power': FakeComboWidget('PS1'),
             'pa_unit2_power': FakeComboWidget('PS2'),
@@ -183,7 +184,8 @@ class ConfigFormStateReaderTests(unittest.TestCase):
         self.host.power_step = FakeValueWidget(1)
         self.host.compression_combo = FakeComboWidget('5dB')
         self.host.attenuator_combo = FakeComboWidget('30dB')
-        self.host.driver_mode_check = FakeCheckWidget(False)
+        self.host.test_mode_enabled = False
+        self.host.driver_power_source_combo = FakeComboWidget('自带供电')
 
         result = self.reader.read_test_parameters()
 
@@ -264,7 +266,7 @@ class ConfigFormStateReaderTests(unittest.TestCase):
 
     def test_power_assignment_reader_preserves_legacy_roles_and_channels(self):
         self.host.power_assignment_widgets = {
-            'driver_enabled': FakeCheckWidget(True),
+            'driver_source': FakeComboWidget('直流电源'),
             'driver_power': FakeComboWidget('PS4'),
             'pa_unit1_power': FakeComboWidget('PS1'),
             'pa_unit2_power': FakeComboWidget('PS2'),
@@ -323,7 +325,8 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
         self.host.power_step = FakeValueWidget(1)
         self.host.compression_combo = FakeComboWidget('5dB')
         self.host.attenuator_combo = FakeComboWidget('30dB')
-        self.host.driver_mode_check = FakeCheckWidget(False)
+        self.host.test_mode_enabled = False
+        self.host.driver_power_source_combo = FakeComboWidget('自带供电')
         self.host.max_input_power = FakeValueWidget(29.5)
         self.host.pa_unit_count_combo = FakeComboWidget('2')
         self.host.power_config_widgets = {
@@ -334,8 +337,10 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
                 }
             }
         }
+        # 真实页面上“驱放供电方式”下拉既是测试参数来源，也是电源分配里的同一控件。
+        self.host.driver_power_source_combo = FakeComboWidget('自带供电')
         self.host.power_assignment_widgets = {
-            'driver_enabled': FakeCheckWidget(False),
+            'driver_source': self.host.driver_power_source_combo,
             'driver_power': FakeComboWidget('PS4'),
             'pa_unit1_power': FakeComboWidget('PS1'),
             'pa_unit2_power': FakeComboWidget('PS2'),
@@ -429,14 +434,28 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
         self.assertEqual(driver['power_supply_count'], 0)
         self.assertEqual(driver['supplies'], {})
 
+    def test_build_driver_enabled_with_external_power_keeps_the_mode(self):
+        """驱放自带供电：仍是有驱放测试，但不写本机驱动功放供电分配。"""
+        self.host.test_mode_enabled = True
+        self.host.driver_power_source_combo.value = '自带供电'
+        result = self.coordinator.build_configuration_from_ui()
+
+        self.assertTrue(result['driver_mode']['enabled'])
+        self.assertEqual(result['driver_mode']['power_source'], 'external_ac')
+        driver = result['power_supply_assignment']['driver_amplifier']
+        self.assertEqual(driver['power_supply_count'], 0)
+        self.assertEqual(driver['supplies'], {})
+
     def test_build_driver_enabled_with_main(self):
-        self.host.power_assignment_widgets['driver_enabled'] = FakeCheckWidget(True)
+        self.host.test_mode_enabled = True
+        self.host.driver_power_source_combo.value = '直流电源'
         result = self.coordinator.build_configuration_from_ui()
 
         driver = result['power_supply_assignment']['driver_amplifier']
         self.assertEqual(driver['power_supply_count'], 1)
         self.assertEqual(driver['supplies']['main']['name'], 'PS4')
         self.assertEqual(list(driver['supplies']['main']['channel']), ['CH1', 'CH2'])
+        self.assertEqual(result['driver_mode']['power_source'], 'dc_supply')
 
     def test_build_channel_order_is_ch1_then_ch2(self):
         result = self.coordinator.build_configuration_from_ui()

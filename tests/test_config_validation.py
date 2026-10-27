@@ -23,13 +23,13 @@ class ConfigValidationTests(unittest.TestCase):
     def test_current_config_is_readable_and_only_has_known_warning(self):
         result = validate_config(self.base_config)
         self.assertTrue(result.valid, result.errors)
-        self.assertTrue(any("驱动模式已启用" in issue.message for issue in result.warnings))
+        self.assertTrue(any("按自带供电处理" in issue.message for issue in result.warnings))
 
     def test_confirmed_external_driver_power_has_no_assignment_warning(self):
         config = copy.deepcopy(self.base_config)
-        config["wiring"] = {"driver_amplifier_external_power_confirmed": True}
+        config["driver_mode"] = {"enabled": True, "power_source": "external_ac"}
         result = validate_config(config)
-        self.assertFalse(any("驱动模式已启用" in issue.message for issue in result.warnings))
+        self.assertFalse(any(issue.path == "driver_mode.power_source" for issue in result.warnings))
 
     def test_missing_top_level_section_is_error(self):
         config = copy.deepcopy(self.base_config)

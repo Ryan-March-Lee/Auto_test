@@ -81,6 +81,49 @@ class ConfigurationAuthoringTests(unittest.TestCase):
         self.assertEqual(channels["CH1"]["role"], "drain")
         self.assertNotIn("role", channels["CH2"])
 
+    def test_externally_powered_driver_mode_keeps_the_driver_mapping(self):
+        """驱放自带供电：不占本机电源通道，但驱动映射照常生成并执行。"""
+        flat = _flat_config()
+        flat["driver_mode"] = {"enabled": True, "power_source": "external_ac"}
+        flat["power_supply_assignment"]["driver_amplifier"] = {
+            "power_supply_count": 0,
+            "supplies": {},
+        }
+        document = author_official_configuration(flat)
+
+        self.assertTrue(document["test_plan"]["driver_mode"]["enabled"])
+        self.assertEqual(
+            document["test_plan"]["driver_mode"]["power_source"], "external_ac"
+        )
+        self.assertTrue(document["run_mapping"]["driver_mode"]["enabled"])
+        self.assertEqual(
+            document["run_mapping"]["driver_mode"]["power_source"], "external_ac"
+        )
+        self.assertEqual(
+            document["run_mapping"]["driver_mode"]["power_channels"], []
+        )
+
+        from domain.configuration.models import RunConfiguration, RunResourceMapping, TestPlan
+
+        configuration = RunConfiguration(
+            TestPlan.from_dict(document["test_plan"]),
+            RunResourceMapping.from_dict(document["run_mapping"]),
+        )
+        self.assertTrue(validate_run_configuration(configuration).valid)
+
+    def test_driver_mode_without_a_power_source_is_inferred_from_the_channels(self):
+        flat = _flat_config()
+        flat["driver_mode"] = {"enabled": True}
+        flat["power_supply_assignment"]["driver_amplifier"] = {
+            "power_supply_count": 1,
+            "supplies": {"main": {"name": "PS1", "channel": ["CH1", "CH2"]}},
+        }
+        document = author_official_configuration(flat)
+
+        self.assertEqual(
+            document["test_plan"]["driver_mode"]["power_source"], "dc_supply"
+        )
+
     def test_authoring_does_not_mutate_the_input(self):
         flat = _flat_config()
         original = copy.deepcopy(flat)

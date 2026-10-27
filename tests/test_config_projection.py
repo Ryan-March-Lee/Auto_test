@@ -126,7 +126,8 @@ class FakeForm:
         self.compression_combo = _Combo(("1dB", "3dB", "5dB"))
         self.attenuator_combo = _Combo(("30dB", "40dB"))
         self.pa_unit_count_combo = _Combo(("1", "2", "3"))
-        self.driver_mode_check = _Check()
+        self.test_mode_enabled = False
+        self.driver_power_source_combo = _Combo(("直流电源", "自带供电"))
         self.power_config_widgets = {
             name: {
                 "channels": {
@@ -145,7 +146,7 @@ class FakeForm:
             for name in ("PS1", "PS2", "PS3", "PS4")
         }
         self.power_assignment_widgets = {
-            "driver_enabled": _Check(),
+            "driver_source": _Combo(("直流电源", "自带供电")),
             "driver_power": _Combo(("PS1", "PS2", "PS3", "PS4")),
             "pa_unit1_power": _Combo(("PS1", "PS2", "PS3", "PS4")),
             "pa_unit2_power": _Combo(("PS1", "PS2", "PS3", "PS4")),
@@ -203,7 +204,13 @@ class ConfigProjectionTests(unittest.TestCase):
         self.assertEqual(channel["role"].currentText(), "gate")
         self.assertEqual(channel["voltage"].value(), 3.3)
         self.assertEqual(channel["current"].value(), 0.5)
-        self.assertTrue(form.power_assignment_widgets["driver_enabled"].isChecked())
+        self.assertTrue(form.test_mode_enabled)
+        self.assertEqual(
+            form.driver_power_source_combo.currentText(), "直流电源"
+        )
+        self.assertEqual(
+            form.power_assignment_widgets["driver_source"].currentText(), "直流电源"
+        )
         self.assertEqual(
             form.power_assignment_widgets["driver_power"].currentText(), "PS2"
         )

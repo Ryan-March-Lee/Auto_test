@@ -88,6 +88,97 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         # 配置页被登记成协调器的窄接口，而不是控件宿主。
         self.assertIs(window.coordinator.config_page, window.config_page)
 
+    def test_startup_shows_welcome_and_selection_applies_mode(self):
+        self._silence_dialogs()
+        window = self._window()
+
+        self.assertIs(window.view_stack.currentWidget(), window.welcome_page)
+        window._enter_test_mode(True)
+        self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
+        self.assertTrue(window.config_page.driver_mode_requested())
+        self.assertTrue(window.config["driver_mode"]["enabled"])
+
+    def test_no_driver_mode_drops_a_saved_driver_assignment_and_still_creates_a_run(self):
+        self._silence_dialogs()
+        saved = _fully_valid_gui_config()
+        saved["driver_mode"] = {"enabled": True}
+        saved["power_supply_assignment"]["driver_amplifier"] = {
+            "power_supply_count": 1,
+            "supplies": {"main": {"name": "PS1", "channel": ["CH1", "CH2"]}},
+        }
+        self.config_path.write_text(json.dumps(saved), encoding="utf-8")
+
+        window = self._window()
+        window._enter_test_mode(False)
+
+        self.assertTrue(window.config_page.power_assignment_group.isHidden())
+        self.assertFalse(
+            window.config_page.build_config()["power_supply_assignment"][
+                "driver_amplifier"
+            ]["power_supply_count"]
+        )
+        with patch(
+            "presentation.qt.main_window.ConnectionDialog",
+            self._accepted_wiring_dialog(),
+        ):
+            prepared = window.coordinator.create_prepared_run()
+
+        self.assertIsNotNone(prepared)
+        self.assertFalse(prepared.configuration.test_plan.driver_enabled)
+
+    def test_driver_mode_shows_the_box_with_the_inferred_external_power(self):
+        self._silence_dialogs()
+        window = self._window()
+
+        window._enter_test_mode(True)
+
+        self.assertFalse(window.config_page.power_assignment_group.isHidden())
+        # 现场配置里没有本机驱动供电通道：按自带供电推断，不占用本机电源。
+        self.assertEqual(
+            window.config_page.driver_power_source_combo.currentText(), "自带供电"
+        )
+        self.assertFalse(window.config_page.driver_power_hint.isHidden())
+        self.assertIn(
+            "驱动功放", window.amplifier_page.instruction_text.toPlainText()
+        )
+
+    def test_return_to_welcome_confirms_only_when_configuration_is_dirty(self):
+        dialogs = self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+
+        window._return_to_welcome()
+        dialogs["question"].assert_not_called()
+        self.assertIs(window.view_stack.currentWidget(), window.welcome_page)
+
+        window._enter_test_mode(False)
+        window.config_page.freq_edit.setText("[9.0]")
+        window._return_to_welcome()
+        dialogs["question"].assert_called_once()
+        self.assertIs(window.view_stack.currentWidget(), window.welcome_page)
+
+    def test_no_driver_mode_hides_the_driver_mapping_tab(self):
+        self._silence_dialogs()
+        window = self._window()
+        index = window._driver_mapping_tab_index
+        visible_titles = lambda: [
+            window.tab_widget.tabText(position)
+            for position in range(window.tab_widget.count())
+            if window.tab_widget.isTabVisible(position)
+        ]
+
+        window._enter_test_mode(True)
+        self.assertTrue(window.tab_widget.isTabVisible(index))
+        self.assertIn("驱动映射", visible_titles())
+
+        window._enter_test_mode(False)
+        self.assertFalse(window.tab_widget.isTabVisible(index))
+        # 页面实例保留并继续绑定 controller，切回有驱放模式时不需要重建窗口。
+        self.assertIn("driver_mapping", window.pages)
+        self.assertNotIn("驱动映射", visible_titles())
+        self.assertIn("线损测量", visible_titles())
+        self.assertIn("功放测试", visible_titles())
+
     def test_config_page_save_signal_writes_the_official_configuration(self):
         self._silence_dialogs()
         window = self._window()

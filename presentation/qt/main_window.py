@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QSplitter,
+    QStackedWidget,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -35,6 +36,7 @@ from presentation.qt.pages import PageContext, build_pages
 from presentation.qt.realtime_plot import RealTimePlotWidget
 from presentation.qt.status_panel import StatusPanel
 from presentation.qt.visualization_page import VisualizationPage
+from presentation.qt.welcome_page import WelcomePage, apply_test_mode, confirm_leave_configuration
 
 logger = get_logger(__name__)
 
@@ -157,8 +159,6 @@ class MainWindow(QMainWindow):
     def prepared_run(self):
         return self.coordinator.prepared_run
 
-    # ---- 页面数据（聊天上下文只通过这些只读视图取数据，写入口属于页面） ----
-
     @property
     def loaded_data(self):
         return self.visualization_page.loaded_data
@@ -183,12 +183,15 @@ class MainWindow(QMainWindow):
     def rt_current_freq_index(self):
         return self.coordinator.realtime_buffer.current_index
 
-    # ---- 窗口组装 ----
-
     def init_ui(self):
         """初始化用户界面"""
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
+
+        self.view_stack = QStackedWidget()
+        self.welcome_page = WelcomePage()
+        self.welcome_page.mode_selected.connect(self._enter_test_mode)
+        self.view_stack.addWidget(self.welcome_page)
 
         main_splitter = QSplitter(Qt.Horizontal)
         left_widget = QWidget()
@@ -208,12 +211,39 @@ class MainWindow(QMainWindow):
         main_splitter.setStretchFactor(0, 3)
         main_splitter.setStretchFactor(1, 1)
 
+        self.workspace_page = QWidget()
+        workspace_layout = QVBoxLayout(self.workspace_page)
+        workspace_layout.setContentsMargins(0, 0, 0, 0)
+        workspace_layout.addWidget(main_splitter)
+        self.view_stack.addWidget(self.workspace_page)
+
         central_layout = QVBoxLayout(central_widget)
         central_layout.setContentsMargins(0, 0, 0, 0)
-        central_layout.addWidget(main_splitter)
+        central_layout.addWidget(self.view_stack)
 
         self.chat_panel.hide()
         self.chat_visible = False
+
+        self.view_stack.setCurrentWidget(self.welcome_page)
+
+    def _enter_test_mode(self, driver_enabled: bool) -> None:
+        config = apply_test_mode(dict(self.coordinator.load_configuration()), driver_enabled)
+        self.coordinator.config = config
+        self.config_page.apply_config(config)
+        self.config_page.set_test_mode(driver_enabled)
+        self._apply_driver_mode_to_pages(driver_enabled)
+        self.tab_widget.setCurrentIndex(0)
+        self.view_stack.setCurrentWidget(self.workspace_page)
+
+    def _apply_driver_mode_to_pages(self, driver_enabled: bool) -> None:
+        """无驱放测试没有驱动功放，只隐藏驱动映射标签页；页面实例与绑定保留。"""
+        index = getattr(self, "_driver_mapping_tab_index", -1)
+        if index >= 0:
+            self.tab_widget.setTabVisible(index, bool(driver_enabled))
+
+    def _return_to_welcome(self) -> None:
+        if confirm_leave_configuration(self, self.config_page.is_dirty()):
+            self.view_stack.setCurrentWidget(self.welcome_page)
 
     def _register_pages(self):
         """构造页面并登记 tab；测量页面通过共享 controller 连接。"""
@@ -250,6 +280,8 @@ class MainWindow(QMainWindow):
         self.cable_loss_page = self.pages["cable_loss"]
         self.driver_mapping_page = self.pages["driver_mapping"]
         self.amplifier_page = self.pages["amplifier"]
+        # 驱动映射页只属于有驱放测试；欢迎页选择模式后再决定是否显示。
+        self._driver_mapping_tab_index = self.tab_widget.indexOf(self.driver_mapping_page)
         self.cable_loss_page.load_result_requested.connect(self._load_cable_loss_result)
 
     def _on_page_changed(self, index):
@@ -271,6 +303,7 @@ class MainWindow(QMainWindow):
         tab.connect_requested.connect(self.connect_instruments)
         tab.create_run_requested.connect(self.coordinator.create_prepared_run)
         tab.load_run_requested.connect(self.coordinator.load_prepared_run)
+        tab.return_welcome_requested.connect(self._return_to_welcome)
         tab.validation_failed.connect(
             lambda message: self.add_log_message(f"配置校验失败: {message}")
         )
@@ -333,6 +366,9 @@ class MainWindow(QMainWindow):
             self.add_log_message(f"配置保存失败: {error}")
             QMessageBox.warning(self, "保存失败", f"配置保存失败: {error}")
             return
+        page = getattr(self, "config_page", None)
+        if page is not None:
+            page.mark_clean()
         self.add_log_message("配置已保存")
         if self.prepared_run is not None:
             self.add_log_message(
@@ -420,8 +456,6 @@ class MainWindow(QMainWindow):
         """测量线程结束后释放端口；端口所有权在协调器。"""
         self.coordinator.release_port_after_measurement()
 
-    # ---- 页面动作转发 ----
-
     def _load_cable_loss_result(self):
         """读取最新正式运行目录结果，仅供历史查看；不会成为任何运行的输入。
 
@@ -478,8 +512,6 @@ class MainWindow(QMainWindow):
         self.driver_mapping_page.clear_realtime_buffer()
         self.amplifier_page.clear_realtime_buffer()
         self.add_log_message("已清除实时测量历史数据")
-
-    # ---- 状态面板转发 ----
 
     def add_log_message(self, message: str):
         self.status_panel.add_log_message(message)

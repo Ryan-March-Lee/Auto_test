@@ -938,7 +938,7 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         page.apply_config(frozen)
 
         self.assertEqual(page.freq_edit.text(), "[2.4, 2.6]")
-        self.assertFalse(page.driver_mode_check.isChecked())
+        self.assertFalse(page.driver_mode_requested())
         self.assertEqual(page.sg_address.text(), "sim::sg")
         self.assertEqual(page.ps1_address.text(), "sim::ps1")
         self.assertEqual(page.pa_unit1_power_combo.currentText(), "PS1")
@@ -983,7 +983,7 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         # 先确认配置 A 确实写入了非基线值，避免测试空转。
         self.assertEqual(page.sg_address.text(), "sim::sg")
         self.assertEqual(page.start_power.value(), -10.0)
-        self.assertFalse(page.driver_mode_check.isChecked())
+        self.assertFalse(page.driver_mode_requested())
 
         # 配置 B 为空：所有受控控件必须回到空配置基线，不残留 A 的值。
         page.apply_config({})
@@ -996,7 +996,7 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         self.assertEqual(page.power_step.value(), 1.0)
         self.assertEqual(page.compression_combo.currentText(), "5dB")
         self.assertEqual(page.attenuator_combo.currentText(), "40dB")
-        self.assertTrue(page.driver_mode_check.isChecked())
+        self.assertTrue(page.driver_mode_requested())
         self.assertEqual(page.max_input_power.value(), 33.5)
         self.assertEqual(page.pa_unit_count_combo.currentText(), "2")
         self.assertTrue(page.ps1_enabled.isChecked())
@@ -1070,7 +1070,7 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         self.assertEqual(page.power_step.value(), 0.5)
         self.assertEqual(page.compression_combo.currentText(), "3dB")
         self.assertEqual(page.attenuator_combo.currentText(), "30dB")
-        self.assertTrue(page.driver_mode_check.isChecked())
+        self.assertTrue(page.driver_mode_requested())
         self.assertEqual(page.max_input_power.value(), 25.5)
         self.assertEqual(page.pa_unit_count_combo.currentText(), "3")
         self.assertEqual(page.sg_address.text(), "sim::sg2")
@@ -1087,7 +1087,7 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         self.assertEqual(channel["current"].value(), 0.5)
         self.assertEqual(channel["current_protection"].value(), 1.0)
         self.assertTrue(channel["current_protection_enabled"].isChecked())
-        self.assertTrue(page.driver_power_enabled.isChecked())
+        self.assertEqual(page.driver_power_source_combo.currentText(), "直流电源")
         self.assertEqual(page.driver_power_combo.currentText(), "PS1")
         self.assertEqual(page.pa_unit1_power_combo.currentText(), "PS2")
         self.assertEqual(page.pa_unit2_power_combo.currentText(), "PS3")
@@ -1110,7 +1110,7 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         self.assertEqual(
             page.pa_unit_count_combo.currentText(), rebuilt.pa_unit_count_combo.currentText()
         )
-        self.assertFalse(page.driver_mode_check.isChecked())
+        self.assertFalse(page.driver_mode_requested())
         self.assertEqual(page.sg_address.text(), rebuilt.sg_address.text())
         self.assertEqual(
             page.pa_unit1_power_combo.currentText(),
@@ -1169,7 +1169,7 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         self.assertTrue(page.sg_enabled.isChecked())
         self.assertEqual(page.ps1_address.text(), "")
         self.assertTrue(page.ps1_enabled.isChecked())
-        self.assertTrue(page.driver_mode_check.isChecked())
+        self.assertTrue(page.driver_mode_requested())
         self.assertEqual(page.freq_edit.text(), "[4.0, 4.4, 4.8, 5.2, 5.6, 5.8]")
         self.assertEqual(page.pa_unit_count_combo.currentText(), "2")
         self.assertEqual(page.max_input_power.value(), 33.5)

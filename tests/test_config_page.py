@@ -31,23 +31,89 @@ class ConfigPageTests(unittest.TestCase):
         page.pa_unit_count_combo.setCurrentText("3")
         self.assertTrue(page.pa_unit3_power_combo.isVisible())
 
-    def test_driver_controls_follow_mode_and_power_switches(self):
-        page = self.make_page()
-        page.driver_mode_check.setChecked(False)
-        self.assertFalse(page.driver_power_enabled.isEnabled())
-        self.assertFalse(page.driver_power_combo.isEnabled())
-        page.driver_mode_check.setChecked(True)
-        page.driver_power_enabled.setChecked(False)
-        self.assertFalse(page.driver_power_combo.isEnabled())
-        page.driver_power_enabled.setChecked(True)
+    def test_driver_power_channel_follows_the_power_source(self):
+        page = self.make_page(driver_mode={"enabled": True, "power_source": "dc_supply"})
+        page.set_test_mode(True)
+        self.assertEqual(page.driver_power_source_combo.currentText(), "直流电源")
         self.assertTrue(page.driver_power_combo.isEnabled())
+        self.assertTrue(page.driver_power_hint.isHidden())
+
+        page.driver_power_source_combo.setCurrentText("自带供电")
+        self.assertFalse(page.driver_power_combo.isEnabled())
+        self.assertTrue(page.driver_power_hint.isVisible())
+
+        page.driver_power_source_combo.setCurrentText("直流电源")
+        self.assertTrue(page.driver_power_combo.isEnabled())
+        self.assertTrue(page.driver_power_hint.isHidden())
+
+        page.set_test_mode(False)
+        self.assertFalse(page.driver_power_combo.isEnabled())
 
     def test_driver_mode_emits_change_signal(self):
         page = self.make_page()
         changes = []
         page.driver_mode_changed.connect(changes.append)
-        page.driver_mode_check.setChecked(False)
+        page.set_test_mode(False)
         self.assertEqual(changes[-1], False)
+        page.set_test_mode(True)
+        self.assertEqual(changes[-1], True)
+
+    def test_no_driver_mode_hides_the_power_assignment_box(self):
+        page = self.make_page(
+            driver_mode={"enabled": True},
+            power_supply_assignment={
+                "driver_amplifier": {
+                    "power_supply_count": 1,
+                    "supplies": {"main": {"name": "PS1", "channel": ["CH1", "CH2"]}},
+                },
+                "dut_amplifier": {
+                    "power_supply_count": 1,
+                    "supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}},
+                },
+            },
+        )
+
+        page.set_test_mode(False)
+
+        self.assertFalse(page.power_assignment_group.isVisible())
+        self.assertFalse(page.driver_mode_requested())
+        self.assertEqual(page.build_config()["driver_mode"], {"enabled": False})
+        assignment = page.build_config()["power_supply_assignment"]
+        self.assertEqual(assignment["driver_amplifier"]["power_supply_count"], 0)
+        self.assertEqual(assignment["driver_amplifier"]["supplies"], {})
+
+    def test_driver_mode_keeps_the_box_and_infers_the_legacy_power_source(self):
+        page = self.make_page(
+            power_supply_assignment={
+                "driver_amplifier": {
+                    "power_supply_count": 1,
+                    "supplies": {"main": {"name": "PS1", "channel": ["CH1", "CH2"]}},
+                }
+            }
+        )
+
+        page.set_test_mode(True)
+
+        self.assertTrue(page.power_assignment_group.isVisible())
+        self.assertTrue(page.driver_mode_requested())
+        # 旧配置没有 power_source，但有本机驱动通道，按直流电源推断并保留分配。
+        self.assertEqual(page.driver_power_source_combo.currentText(), "直流电源")
+        self.assertEqual(
+            page.build_config()["power_supply_assignment"]["driver_amplifier"][
+                "power_supply_count"
+            ],
+            1,
+        )
+        # 用户按现场情况改成自带供电后，不再占用本机驱动电源通道。
+        page.driver_power_source_combo.setCurrentText("自带供电")
+        self.assertEqual(
+            page.build_config()["power_supply_assignment"]["driver_amplifier"][
+                "power_supply_count"
+            ],
+            0,
+        )
+        self.assertEqual(page.build_config()["driver_mode"]["power_source"], "external_ac")
+
 
     def test_invalid_frequency_prevents_save_request(self):
         page = self.make_page()

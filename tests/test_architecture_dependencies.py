@@ -696,7 +696,7 @@ class ProductionDependencyTests(unittest.TestCase):
         source = COORDINATOR_SOURCE.read_text(encoding="utf-8-sig")
         tree = _tree(COORDINATOR_SOURCE)
         for widget in (
-            "driver_mode_check",
+            "driver_power_source_combo",
             "freq_edit",
             "sg_address",
             "power_config_widgets",

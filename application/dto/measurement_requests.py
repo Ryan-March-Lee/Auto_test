@@ -17,6 +17,7 @@ from domain.models import RunContext
 from domain.configuration.models import RunConfiguration
 from application.ports.result_repository import MeasurementResultRepository
 from application.ports.result_input_reader import ResultInputReader
+from application.ports.measurement_session import SafetyCleanupPort
 from .measurement_results import MeasurementType, freeze
 
 if TYPE_CHECKING:  # pragma: no cover - 仅用于类型标注，避免运行时循环导入
@@ -31,6 +32,7 @@ class MeasurementRequest:
     context: RunContext
     run_directory: Path
     measurement_port: Any
+    safety_cleanup: SafetyCleanupPort | None = None
     measurement_type: MeasurementType | str = "measurement"
     configuration_snapshot: Mapping[str, Any] | None = None
     frequency_range: tuple[float, ...] = ()

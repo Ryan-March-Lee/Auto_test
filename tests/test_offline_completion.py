@@ -15,6 +15,7 @@ from infrastructure.persistence.json_result_repository import load_json_result
 from infrastructure.persistence.json_result_repository import save_measurement_model
 from analysis.reporting import export_csv, render_html_report
 from release_manifest import build_manifest
+from tests.fakes import safety_cleanup_for
 
 
 class _Instrument:
@@ -139,7 +140,9 @@ class OfflineCompletionTests(unittest.TestCase):
         }
         service = AmplifierMeasurementService(
             config, instrument, {"cable_losses": {"1.0": {"cable1": 0, "cable2": 0, "cable4": 0}}},
-            run_id="run-amplifier", event_sink=events, sleep_fn=lambda _: None,
+            run_id="run-amplifier",
+            safety_cleanup=safety_cleanup_for(instrument),
+            event_sink=events, sleep_fn=lambda _: None,
         )
         service.perform_power_sweep(1.0)
         self.assertTrue(any(isinstance(event, StoppedEvent) for event in events.items))

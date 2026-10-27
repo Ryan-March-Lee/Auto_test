@@ -88,11 +88,14 @@
 | `application.ports.run_history` | `RunHistoryRepository`、`RunHistoryEntry`、`RunHistoryState`、`RunStageResultEntry` |
 | `application.ports.run_repository` | `RunRepositoryPort`、`RunLayout` |
 | `application.ports.result_input_reader` | `ResultInputReader` |
+| `application.ports.measurement_session` | `SafetyCleanupPort`、`MeasurementSessionPort`、`MeasurementSessionBinding`、`CleanupRecord`、`CleanupStepStatus`、`SafetyCleanupError` |
 | `application.ports.gui_data_service` | `GuiDataService`、`ResultFileDto`、`LoadedResultDto`、`ConfigurationPort`、`ResultQueryPort`、`ResultExportPort`、`ReportPort` |
 
 正式配置入口为 `domain.configuration` 和 `infrastructure.config`；正式结果仓储入口为
 `application.ports.result_repository` 及其基础设施实现 `infrastructure.persistence.result_repository`；
-正式测量入口为 `application.measurements` / `application.run_service`。
+正式测量入口为 `application.measurements` / `application.run_service`。安全清理端口
+`application.ports.measurement_session` 是 application 感知设备清理的唯一入口，具体
+`SafetyShutdownFlow` 由 `instrument.flow.cleanup.SafetyCleanupAdapter` 适配。
 
 ### 3.4 基础设施适配器
 
@@ -128,7 +131,7 @@
 | `instrument.ports` | `InstrumentSession`、`InstrumentState`、`PowerSupplyPort`、`SignalGeneratorPort`、`SpectrumAnalyzerPort`、`MeasurementInstrumentPort` |
 | `instrument.session` | `ManagedInstrumentSession`、`InstrumentSessionError` |
 | `instrument.flow.safety_shutdown_flow` | `SafetyShutdownFlow`、`SafetyShutdownError` |
-| `instrument.flow.cleanup` | `cleanup_measurement` |
+| `instrument.flow.cleanup` | `cleanup_measurement`、`SafetyCleanupAdapter` |
 
 ### 3.7 表现层
 
@@ -188,7 +191,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `infrastructure.persistence.json_result_repository` | 结果 JSON 实现细节 |
 | `infrastructure.persistence.run_directory` | 运行目录文件布局 |
 | `infrastructure.runtime.runtime_contract` | 运行时契约实现；公共入口是 `infrastructure.runtime` |
-| `instrument.flow` | 安全流程包；`application` 的引用属步骤 7 待移除的存量依赖 |
+| `instrument.flow` | 安全流程包；application 只通过 `application.ports.measurement_session` 依赖清理端口 |
 | `presentation.qt.assistant.chat_dialogs` | 助手对话对话框 |
 | `presentation.qt.assistant.chat_panel` | 助手聊天面板 |
 | `presentation.qt.assistant.chat_worker` | 助手后台 worker |
@@ -267,8 +270,9 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `instrument.measurement_factory` | `app/gui_runtime.py` |
 | `instrument.power_roles` | `instrument/legacy_control.py` |
 
-跨层依赖同样冻结：`application` 不得新增对 `instrument.flow` 具体实现的依赖，现存
-`application/measurements/services.py` 一处由步骤 7 清除。
+跨层依赖：`application` 对 `instrument.flow` 具体实现的依赖已在步骤 7 清零，
+`application` 只导入 `application.ports.measurement_session` 的安全清理协议；
+`SafetyCleanupAdapter` 位于设备安全层并实现该端口。
 
 无法静态判定模块名的动态导入默认禁止。唯一例外是 `launcher.py` 的 `check_packages`：它只按
 固定依赖表探测第三方包，不导入项目模块。白名单同样与代码严格一致，必须随代码同步调整，
@@ -289,7 +293,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 9. 范围内代码不使用 `from ... import *`。
 10. 范围内代码的动态导入使用字符串常量；无法静态判定的调用必须命中白名单。
 11. 旧模块引用与基线严格相等，新增引用立即失败。
-12. `application` 对 `instrument.flow` 的跨层依赖与冻结基线严格相等。
+12. `application` 不得导入 `instrument.flow` 具体实现，只能依赖安全清理端口。
 13. 门禁辅助函数自身有回归测试（静态导入、`from package import module`、动态导入别名、
     非常量动态导入、星号导入）。
 
@@ -302,14 +306,15 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 完整验证按重构计划 4.2 节执行全量 unittest、`launcher.py --check`、
 `launcher.py --validate-config` 和 `tools/compile_check.py`。
 
-## 8. 步骤 1 验收
+## 8. 步骤 1 验收与现行清单规模
 
-- 正式公共 API：48 个模块路径、161 个公开名称，已在本文与测试中固定（步骤 5 新增
-  `infrastructure.config.validation.validate_official_config`，用于校验已解析的正式配置文档）。
-- 正式内部模块：32 个路径已登记，公共与内部边界不重叠。
-- 旧模块：28 个条目（21 个根模块、7 个正式包内实现），状态与工作树一致。
-- 存量引用基线：4 个旧模块、6 处文件引用，只减不增。
-- 跨层依赖基线：`application` → `instrument.flow` 仅 1 处，步骤 7 清除。
+- 正式公共 API：46 个模块路径、174 个公开名称，已在本文与测试中固定（步骤 5 新增
+  `infrastructure.config.validation.validate_official_config`，用于校验已解析的正式配置文档；
+  步骤 6 收敛结果 DTO；步骤 7 新增 `application.ports.measurement_session`）。
+- 正式内部模块：34 个路径已登记，公共与内部边界不重叠。
+- 旧模块：31 个条目（21 个根模块、10 个正式包内实现），状态与工作树一致。
+- 存量引用基线：2 个旧模块、2 处文件引用，只减不增。
+- 跨层依赖基线：`application` → `instrument.flow` 已由步骤 7 清零（仅保留安全清理端口）。
 - 动态导入白名单：1 处（`launcher.py` 的 `check_packages` 依赖探测）。
 - 本步骤未删除或改写任何旧实现文件。
 - 全量 unittest、`launcher.py --check`、`launcher.py --validate-config` 和编译检查通过。

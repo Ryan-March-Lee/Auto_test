@@ -13,6 +13,7 @@ import domain.measurement.calculations as measurement_calculations
 from app.cancellation import CancellationToken, MeasurementCancelled
 from application.dto import AmplifierMeasurementRequest, AmplifierMeasurementResult, MeasurementResult
 from application.measurements.services import AmplifierMeasurementService
+from application.ports.measurement_session import CleanupRecord
 from domain.run.models import (
     AMPLIFIER_RESULT_PATH,
     STAGE_AMPLIFIER,
@@ -63,6 +64,9 @@ class AmplifierMeasurementUseCase:
         self.result_repository = request.result_repository
         if self.result_repository is None:
             raise ValueError("AmplifierMeasurementUseCase 必须注入 result_repository")
+        self.safety_cleanup = request.safety_cleanup
+        if self.safety_cleanup is None:
+            raise ValueError("AmplifierMeasurementUseCase 必须由应用组装层注入 safety_cleanup")
         self.input_reader = request.input_reader
         # 运行契约运行会注入阶段记录器：输入只从当前运行目录读取，结果写入当前
         # 运行的 results/ 并更新 manifest；旧兼容流程不注入，保持全局路径行为。
@@ -87,6 +91,7 @@ class AmplifierMeasurementUseCase:
             self.loss_data,
             self.driver_mapping,
             run_id=self.run_id,
+            safety_cleanup=self.safety_cleanup,
             event_sink=request.event_sink,
             cancellation_token=self._token,
             sleep_fn=self.sleep_fn,
@@ -95,6 +100,11 @@ class AmplifierMeasurementUseCase:
         )
         self.measurement_results: dict[str, Any] = {}
         self.last_result: MeasurementResult | None = None
+
+    @property
+    def last_cleanup_record(self) -> CleanupRecord | None:
+        """返回最近一次安全清理的结构化记录。"""
+        return self._service.last_cleanup_record
 
     def stop_measurement(self) -> None:
         self._token.request_stop(reason="用户停止")

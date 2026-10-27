@@ -139,6 +139,14 @@ FORMAL_API = {
     ),
     "application.ports.run_repository": ("RunRepositoryPort", "RunLayout"),
     "application.ports.result_input_reader": ("ResultInputReader",),
+    "application.ports.measurement_session": (
+        "CleanupRecord",
+        "CleanupStepStatus",
+        "MeasurementSessionBinding",
+        "MeasurementSessionPort",
+        "SafetyCleanupError",
+        "SafetyCleanupPort",
+    ),
     "application.ports.gui_data_service": (
         "GuiDataService",
         "ResultFileDto",
@@ -256,7 +264,7 @@ FORMAL_API = {
     ),
     "instrument.session": ("ManagedInstrumentSession", "InstrumentSessionError"),
     "instrument.flow.safety_shutdown_flow": ("SafetyShutdownFlow", "SafetyShutdownError"),
-    "instrument.flow.cleanup": ("cleanup_measurement",),
+    "instrument.flow.cleanup": ("SafetyCleanupAdapter", "cleanup_measurement"),
     # 表现层（页面经 controller/DTO 通信，不得直接组装硬件或存储）
     "presentation.qt.main_window": ("MainWindow",),
     "presentation.qt.pages": ("PageContext", "PageDefinition", "BasePage", "build_pages"),
@@ -284,7 +292,7 @@ INTERNAL_MODULES = {
     "infrastructure.persistence.json_result_repository": "结果 JSON 实现细节",
     "infrastructure.persistence.run_directory": "运行目录文件布局",
     "infrastructure.runtime.runtime_contract": "运行时契约实现；公共入口是 infrastructure.runtime",
-    "instrument.flow": "安全流程包；application 的引用属步骤 7 待移除的存量依赖",
+    "instrument.flow": "安全流程包；application 只通过 application.ports.measurement_session 依赖清理端口",
     "presentation.qt.assistant.chat_dialogs": "助手对话对话框",
     "presentation.qt.assistant.chat_panel": "助手聊天面板",
     "presentation.qt.assistant.chat_worker": "助手后台 worker",
@@ -444,11 +452,8 @@ LEGACY_IMPORT_BASELINE = {
 # 值是该（文件, 函数）允许出现的次数，防止在白名单函数内悄悄增加动态导入。
 DYNAMIC_IMPORT_ALLOWLIST = {("launcher.py", "check_packages"): 1}
 
-# 步骤 7 前冻结的跨层依赖：application 不得新增对 instrument.flow 的引用。
-# 步骤 7 删除该引用时，同步删除本条基线。
-APPLICATION_INSTRUMENT_FLOW_BASELINE = {
-    "application/measurements/services.py",
-}
+# 步骤 7 已清除 application 对 instrument.flow 具体实现的依赖：该集合必须保持为空。
+# 新增任何 application -> instrument.flow 的绝对导入都会让门禁失败。
 
 
 def _tree(path):
@@ -871,8 +876,8 @@ class ProductionImportBoundaryTests(unittest.TestCase):
             "动态导入白名单必须与代码严格一致：白名单只允许收缩或随代码同步调整",
         )
 
-    def test_application_has_no_new_instrument_flow_dependency(self):
-        """步骤 7 前冻结：application 不得新增对 instrument.flow 具体实现的依赖。"""
+    def test_application_has_no_instrument_flow_dependency(self):
+        """步骤 7 完成：application 不得依赖 instrument.flow 的具体实现。"""
         actual = set()
         for source in (ROOT / "application").rglob("*.py"):
             for module, _is_from in _absolute_imports(_tree(source)):
@@ -880,8 +885,8 @@ class ProductionImportBoundaryTests(unittest.TestCase):
                     actual.add(_relative(source))
         self.assertEqual(
             actual,
-            APPLICATION_INSTRUMENT_FLOW_BASELINE,
-            "application 对 instrument.flow 的依赖必须与基线严格一致；步骤 7 删除后同步删除基线",
+            set(),
+            "application 必须只依赖 application.ports.measurement_session 的安全清理端口",
         )
 
     def test_launcher_imports_only_formal_boundaries(self):

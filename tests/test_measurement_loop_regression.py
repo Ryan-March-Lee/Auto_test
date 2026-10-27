@@ -13,6 +13,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from application.measurements.services import AmplifierMeasurementService
+from tests.fakes import safety_cleanup_for
 
 
 class FakeMeasurementInstrument:
@@ -57,6 +58,7 @@ class FakeMeasurementInstrument:
 
 
 def make_service(max_input_power=float("inf")):
+    instrument = FakeMeasurementInstrument()
     config = {
         "compression_point": {"type": "5dB"},
         "attenuator": {"type": "0dB"},
@@ -82,10 +84,11 @@ def make_service(max_input_power=float("inf")):
     }
     return AmplifierMeasurementService(
         config,
-        FakeMeasurementInstrument(),
+        instrument,
         loss_data,
         None,
         run_id="run-amplifier",
+        safety_cleanup=safety_cleanup_for(instrument),
         sleep_fn=lambda _: None,
     )
 

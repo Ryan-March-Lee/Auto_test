@@ -26,6 +26,7 @@ from domain.run.models import (
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from infrastructure.persistence.run_repository import RunRepository
 from presentation.qt.configuration_authoring import author_official_configuration
+from tests.fakes import safety_cleanup_for
 
 
 RUN_ID = "20261022T153000Z_a1b2c3d4"
@@ -131,11 +132,13 @@ class CableLossRunStageTests(unittest.TestCase):
     def _request(self, run_id=RUN_ID, *, instrument=None, token=None):
         layout = self._create_run(run_id)
         recorder = RunStageRecorder(self.repository, run_id)
+        instrument = instrument or _Instrument()
         return CableLossMeasurementRequest(
             configuration={"test_frequencies": [1.0], "attenuator": {"type": "10dB"}},
             context=_Context(run_id),
             run_directory=layout.run_directory,
-            measurement_port=instrument or _Instrument(),
+            measurement_port=instrument,
+            safety_cleanup=safety_cleanup_for(instrument),
             result_repository=self.result_repository,
             stage_recorder=recorder,
             cancellation_token=token,
@@ -291,11 +294,13 @@ class CableLossRunStageTests(unittest.TestCase):
 
     def test_run_contract_never_touches_the_compatibility_copy_api(self):
         layout = self._create_run()
+        instrument = _Instrument()
         request = CableLossMeasurementRequest(
             configuration={"test_frequencies": [1.0], "attenuator": {"type": "10dB"}},
             context=_Context(RUN_ID),
             run_directory=layout.run_directory,
-            measurement_port=_Instrument(),
+            measurement_port=instrument,
+            safety_cleanup=safety_cleanup_for(instrument),
             result_repository=_UnwritableResultRepository(),
             stage_recorder=RunStageRecorder(self.repository, RUN_ID),
             safety_options={"owns_measurement_port": True},

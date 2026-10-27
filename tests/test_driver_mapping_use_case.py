@@ -6,6 +6,7 @@ from app.cancellation import CancellationToken, MeasurementCancelled
 from application.dto import DriverPowerMappingRequest
 from application.measurements import DriverPowerMappingUseCase
 from app.events import RealtimeDataEvent
+from tests.fakes import safety_cleanup_for
 
 
 class _Instrument:
@@ -82,6 +83,7 @@ def _request(
         context=SimpleNamespace(run_id="run-mapping"),
         run_directory=Path("run-directory"),
         measurement_port=instrument,
+        safety_cleanup=safety_cleanup_for(instrument),
         event_sink=events,
         cancellation_token=token,
         result_repository=repository or _Repository(),

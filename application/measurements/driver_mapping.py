@@ -15,6 +15,7 @@ from application.dto import (
     MeasurementResult,
 )
 from application.measurements.services import DriverPowerMappingService
+from application.ports.measurement_session import CleanupRecord
 from domain.run.models import STAGE_CABLE_LOSS, STAGE_DRIVER_MAPPING
 
 
@@ -51,6 +52,9 @@ class DriverPowerMappingUseCase:
         self.result_repository = request.result_repository
         if self.result_repository is None:
             raise ValueError("DriverPowerMappingUseCase 必须注入 result_repository")
+        self.safety_cleanup = request.safety_cleanup
+        if self.safety_cleanup is None:
+            raise ValueError("DriverPowerMappingUseCase 必须由应用组装层注入 safety_cleanup")
         self.input_reader = request.input_reader
         # 运行契约运行会注入阶段记录器：线损输入只从当前运行目录读取，映射结果写入
         # inputs/driver_mapping.json 并更新 manifest；未注入记录器的旧流程只写运行目录。
@@ -64,6 +68,7 @@ class DriverPowerMappingUseCase:
             self.inst_ctrl,
             self.loss_data,
             run_id=self.run_id,
+            safety_cleanup=self.safety_cleanup,
             event_sink=request.event_sink,
             cancellation_token=self._token,
             sleep_fn=self.sleep_fn,
@@ -72,6 +77,11 @@ class DriverPowerMappingUseCase:
         )
         self.power_mapping: dict[str, dict[str, float]] = {}
         self.last_result: MeasurementResult | None = None
+
+    @property
+    def last_cleanup_record(self) -> CleanupRecord | None:
+        """返回最近一次安全清理的结构化记录。"""
+        return self._service.last_cleanup_record
 
     def stop_measurement(self) -> None:
         """Request cancellation; the service owns the safety cleanup."""

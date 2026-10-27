@@ -16,6 +16,7 @@ from .run_context import (
     load_prepared_run,
 )
 from instrument.measurement_factory import create_measurement_port
+from instrument.flow.cleanup import SafetyCleanupAdapter
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from application.inputs import ResultInputReader
 from application.run_stages import RunStageRecorder
@@ -363,6 +364,8 @@ def _request_kwargs(prepared_run: PreparedRun, config_path: str, callbacks: dict
         "context": prepared_run.context,
         "run_directory": Path(prepared_run.run_directory),
         "measurement_port": port,
+        # 安全清理通过 application 端口注入：application 不导入具体设备 flow。
+        "safety_cleanup": callbacks.get("safety_cleanup") or SafetyCleanupAdapter(port),
         "event_sink": callbacks.get("event_sink"),
         "cancellation_token": callbacks.get("cancellation_token"),
         "result_repository": repository,

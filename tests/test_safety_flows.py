@@ -1,5 +1,10 @@
 import unittest
 
+from application.ports.measurement_session import (
+    CleanupRecord,
+    CleanupStepStatus,
+    SafetyCleanupError,
+)
 from instrument.action import PowerSupplyActions
 from instrument.flow import (
     PowerOffFlow,
@@ -7,6 +12,7 @@ from instrument.flow import (
     PowerOnFlow,
     PowerOnFlowError,
     PowerChannelSetup,
+    SafetyCleanupAdapter,
     SafetyShutdownError,
     SafetyShutdownFlow,
     cleanup_measurement,
@@ -182,6 +188,105 @@ class SafetyFlowTests(unittest.TestCase):
         with self.assertRaises(SafetyShutdownError):
             flow.run()
         self.assertEqual(events, ["rf_off", "power_off", ("close", False)])
+
+
+class _CleanupController:
+    """只实现安全清理所需能力，不构造任何 VISA 对象。"""
+
+    def __init__(self, *, has_signal_generator=True, rf_error=None, close_errors=()):
+        if has_signal_generator:
+            self.signal_gen = object()
+        self.rf_error = rf_error
+        self.close_errors = list(close_errors)
+        self.events = []
+
+    def rf_output_off(self):
+        self.events.append("rf_off")
+        if self.rf_error is not None:
+            raise self.rf_error
+
+    def close_all(self, *, close_rf):
+        self.events.append(("close", close_rf))
+        return list(self.close_errors)
+
+
+class SafetyCleanupAdapterTests(unittest.TestCase):
+    def test_cleanup_reports_each_step_in_rf_power_resource_order(self):
+        controller = _CleanupController()
+        record = SafetyCleanupAdapter(controller).cleanup(
+            power_cleanup=lambda: controller.events.append("power_off")
+        )
+
+        self.assertIsInstance(record, CleanupRecord)
+        self.assertTrue(record.succeeded)
+        self.assertEqual(record.rf_output, CleanupStepStatus.PERFORMED)
+        self.assertEqual(record.power_supplies, CleanupStepStatus.PERFORMED)
+        self.assertEqual(record.resources, CleanupStepStatus.PERFORMED)
+        self.assertEqual(controller.events, ["rf_off", "power_off", ("close", False)])
+
+    def test_power_failure_is_recorded_and_resource_release_continues(self):
+        controller = _CleanupController()
+
+        def power_off():
+            controller.events.append("power_off")
+            raise RuntimeError("power")
+
+        with self.assertRaises(SafetyCleanupError) as raised:
+            SafetyCleanupAdapter(controller).cleanup(power_cleanup=power_off)
+
+        record = raised.exception.record
+        self.assertFalse(record.succeeded)
+        self.assertEqual(record.rf_output, CleanupStepStatus.PERFORMED)
+        self.assertEqual(record.power_supplies, CleanupStepStatus.FAILED)
+        self.assertEqual(record.resources, CleanupStepStatus.PERFORMED)
+        self.assertEqual(record.errors, ("power",))
+        self.assertEqual(controller.events, ["rf_off", "power_off", ("close", False)])
+
+    def test_rf_failure_keeps_connection_open_and_marks_resource_skipped(self):
+        controller = _CleanupController(rf_error=RuntimeError("rf"))
+
+        with self.assertRaises(SafetyCleanupError) as raised:
+            SafetyCleanupAdapter(controller).cleanup()
+
+        record = raised.exception.record
+        self.assertEqual(record.rf_output, CleanupStepStatus.FAILED)
+        self.assertEqual(record.resources, CleanupStepStatus.SKIPPED)
+        self.assertIn("rf", record.errors)
+        self.assertEqual(controller.events, ["rf_off"])
+
+    def test_connection_errors_are_reported_as_failed_resources(self):
+        controller = _CleanupController(close_errors=[RuntimeError("close")])
+
+        with self.assertRaises(SafetyCleanupError) as raised:
+            SafetyCleanupAdapter(controller).cleanup()
+
+        record = raised.exception.record
+        self.assertEqual(record.resources, CleanupStepStatus.FAILED)
+        self.assertEqual(record.errors, ("close",))
+
+    def test_borrowed_resource_and_absent_devices_are_marked_skipped(self):
+        controller = _CleanupController(has_signal_generator=False)
+
+        record = SafetyCleanupAdapter(controller).cleanup(release_resources=False)
+
+        self.assertTrue(record.succeeded)
+        self.assertEqual(record.rf_output, CleanupStepStatus.SKIPPED)
+        self.assertEqual(record.power_supplies, CleanupStepStatus.SKIPPED)
+        self.assertEqual(record.resources, CleanupStepStatus.SKIPPED)
+        self.assertEqual(controller.events, [])
+
+    def test_record_document_is_plain_and_serializable(self):
+        record = SafetyCleanupAdapter(_CleanupController()).cleanup()
+        self.assertEqual(
+            record.to_dict(),
+            {
+                "rf_output": "performed",
+                "power_supplies": "skipped",
+                "resources": "performed",
+                "errors": [],
+                "succeeded": True,
+            },
+        )
 
 
 if __name__ == "__main__":

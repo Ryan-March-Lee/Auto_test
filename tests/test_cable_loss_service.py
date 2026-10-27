@@ -1,7 +1,10 @@
 import unittest
 
+from app.cancellation import CancellationToken, MeasurementCancelled
 from application.measurements.services import CableLossService
+from application.ports.measurement_session import CleanupStepStatus
 from app.events import CheckpointEvent, RealtimeDataEvent
+from tests.fakes import RecordingSafetyCleanup, safety_cleanup_for
 
 
 class _Instrument:
@@ -45,10 +48,12 @@ class _Events:
 class CableLossServiceTests(unittest.TestCase):
     def test_path2_confirmation_is_not_published_again_when_continuing(self):
         events = _Events()
+        instrument = _Instrument()
         service = CableLossService(
             {"test_frequencies": [1.0], "attenuator": {"type": "10dB"}},
-            _Instrument(),
+            instrument,
             run_id="run-cable-loss",
+            safety_cleanup=safety_cleanup_for(instrument),
             event_sink=events,
             sleep_fn=lambda _: None,
         )
@@ -106,6 +111,7 @@ class _CleanupObservableInstrument:
 
 
 def _make_service(instrument, **kwargs):
+    kwargs.setdefault("safety_cleanup", safety_cleanup_for(instrument))
     return CableLossService(
         {"test_frequencies": [1.0], "attenuator": {"type": "10dB"}},
         instrument,
@@ -113,6 +119,24 @@ def _make_service(instrument, **kwargs):
         sleep_fn=lambda _: None,
         **kwargs,
     )
+
+
+class _NormalInstrument(_Instrument):
+    """可正常测量、带信号源标记并记录清理动作的仪器替身。"""
+
+    signal_gen = object()
+
+    def __init__(self):
+        super().__init__()
+        self.rf_off_calls = 0
+        self.close_calls = 0
+
+    def rf_output_off(self):
+        self.rf_off_calls += 1
+
+    def close_all(self, close_rf=False):
+        self.close_calls += 1
+        return []
 
 
 class CableLossServiceCleanupFailureTests(unittest.TestCase):
@@ -137,6 +161,79 @@ class CableLossServiceCleanupFailureTests(unittest.TestCase):
             _make_service(instrument, owns_measurement_port=False).run()
         self.assertEqual(instrument.rf_off_calls, 1)
         self.assertEqual(instrument.close_calls, 0)
+
+
+class CableLossServiceCleanupRecordTests(unittest.TestCase):
+    """步骤 7：正常、取消、异常与紧急停止都产生结构化清理记录。"""
+
+    def test_normal_run_records_every_cleanup_step(self):
+        instrument = _NormalInstrument()
+        service = _make_service(instrument)
+
+        service.run()
+
+        record = service.last_cleanup_record
+        self.assertIsNotNone(record)
+        self.assertTrue(record.succeeded)
+        self.assertEqual(record.rf_output, CleanupStepStatus.PERFORMED)
+        self.assertEqual(record.resources, CleanupStepStatus.PERFORMED)
+
+    def test_measurement_error_still_produces_a_cleanup_record(self):
+        instrument = _CleanupObservableInstrument()
+        service = _make_service(instrument)
+
+        with self.assertRaisesRegex(ValueError, "measurement failed"):
+            service.run()
+
+        record = service.last_cleanup_record
+        self.assertIsNotNone(record)
+        self.assertTrue(record.succeeded)
+
+    def test_cleanup_failure_record_is_kept_on_the_service(self):
+        instrument = _CleanupObservableInstrument(close_error=RuntimeError("close"))
+        service = _make_service(instrument)
+
+        with self.assertRaisesRegex(RuntimeError, "测量安全清理存在失败"):
+            service.run()
+
+        record = service.last_cleanup_record
+        self.assertIsNotNone(record)
+        self.assertFalse(record.succeeded)
+        self.assertEqual(record.resources, CleanupStepStatus.FAILED)
+        self.assertIn("close", record.errors)
+
+    def test_cancelled_run_still_produces_a_cleanup_record(self):
+        instrument = _NormalInstrument()
+        token = CancellationToken()
+        token.request_cancel(reason="任务已取消")
+        service = _make_service(instrument, cancellation_token=token)
+
+        with self.assertRaises(MeasurementCancelled):
+            service.run()
+
+        record = service.last_cleanup_record
+        self.assertIsNotNone(record)
+        self.assertTrue(record.succeeded)
+
+    def test_borrowed_port_marks_resource_release_skipped(self):
+        instrument = _NormalInstrument()
+        service = _make_service(instrument, owns_measurement_port=False)
+
+        service.run()
+
+        record = service.last_cleanup_record
+        self.assertEqual(record.resources, CleanupStepStatus.SKIPPED)
+        self.assertEqual(instrument.close_calls, 0)
+
+    def test_service_stores_the_injected_cleanup_record_and_ownership_flag(self):
+        cleanup = RecordingSafetyCleanup()
+        service = _make_service(_Instrument(), safety_cleanup=cleanup)
+
+        service.run()
+
+        self.assertIs(service.last_cleanup_record, cleanup.records[0])
+        self.assertTrue(service.last_cleanup_record.succeeded)
+        self.assertEqual(cleanup.calls[0][1], True)
 
 
 if __name__ == "__main__":

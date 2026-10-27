@@ -8,10 +8,11 @@ adapters remain decoupled; UI code only translates events.
 The root ``measurement_services`` module is now a compatibility re-export of
 these symbols.
 
-过渡边界：安全清理直接依赖设备安全层的
-:func:`instrument.flow.cleanup.cleanup_measurement`（它本身组合
-``SafetyShutdownFlow``）。这是任务 3 迁移清理职责时的过渡边界；后续生命周期
-统一收敛时，应改为注入清理端口/适配器，避免 application 直接依赖具体 flow。
+安全清理边界：服务只保存注入的测量会话协议
+(:class:`application.ports.measurement_session.MeasurementSessionPort`)，由组装层
+把具体设备安全流程适配成 ``SafetyCleanupPort``。application 不导入
+``instrument.flow`` 的具体实现；每次清理都会产生结构化 ``CleanupRecord``，
+清理失败时以 ``SafetyCleanupError`` 携带记录抛出，作为明确的运行终态。
 """
 
 from __future__ import annotations
@@ -24,6 +25,12 @@ import numpy as np
 from app.cancellation import CancellationToken
 from app.events import CheckpointEvent, EventSink, MessageEvent, ProgressEvent, RealtimeDataEvent
 from app.events import StoppedEvent
+from application.ports.measurement_session import (
+    CleanupRecord,
+    MeasurementSessionBinding,
+    SafetyCleanupError,
+    SafetyCleanupPort,
+)
 from domain.measurement.calculations import (
     calculate_cable_losses,
     calculate_compression_result,
@@ -33,7 +40,6 @@ from domain.measurement.calculations import (
     compensate_amplifier_output_power,
     compensate_driver_output_power,
 )
-from instrument.flow import cleanup_measurement
 from instrument.ports import MeasurementInstrumentPort
 
 
@@ -62,13 +68,17 @@ class _Service:
     measurement_type = "measurement"
 
     def __init__(self, config: Mapping[str, Any], instrument: MeasurementInstrumentPort, *, run_id: str,
+                 safety_cleanup: SafetyCleanupPort,
                  event_sink: EventSink | None = None, cancellation_token: CancellationToken | None = None,
                  result_repository: ResultRepository | Callable[[Any], Any] | None = None,
                  sleep_fn: Callable[[float], None] | None = None,
                  settle_delay_s: float = 5.0,
                  owns_measurement_port: bool = True):
         self.config = config
-        self.inst_ctrl = instrument
+        self.session = MeasurementSessionBinding(
+            instrument=instrument, safety_cleanup=safety_cleanup
+        )
+        self.inst_ctrl = self.session.instrument
         self.run_id = run_id
         self.event_sink = event_sink
         self.cancellation_token = cancellation_token or CancellationToken()
@@ -76,6 +86,7 @@ class _Service:
         self.sleep_fn = sleep_fn or time.sleep
         self.settle_delay_s = settle_delay_s
         self.owns_measurement_port = owns_measurement_port
+        self.last_cleanup_record: CleanupRecord | None = None
 
     def _check_cancelled(self) -> None:
         token = getattr(self, "cancellation_token", None)
@@ -95,12 +106,18 @@ class _Service:
         saver = repository.save if hasattr(repository, "save") else repository
         return saver(result)
 
-    def _cleanup(self, power_cleanup: Callable[[], None] | None = None) -> None:
-        cleanup_measurement(
-            self.inst_ctrl,
-            power_cleanup=power_cleanup,
-            close_resource=getattr(self, "owns_measurement_port", True),
-        )
+    def _cleanup(self, power_cleanup: Callable[[], None] | None = None) -> CleanupRecord:
+        """执行安全清理并保存结构化记录；失败记录同样保留在服务上。"""
+        try:
+            record = self.session.cleanup(
+                power_cleanup=power_cleanup,
+                release_resources=self.owns_measurement_port,
+            )
+        except SafetyCleanupError as error:
+            self.last_cleanup_record = error.record
+            raise
+        self.last_cleanup_record = record
+        return record
 
 
 class CableLossService(_Service):
@@ -132,9 +149,9 @@ class CableLossService(_Service):
         """Return the path-1 measurements collected so far."""
         return dict(self._path1_losses)
 
-    def cleanup(self) -> None:
+    def cleanup(self) -> CleanupRecord:
         """Expose the common safety cleanup boundary to application callers."""
-        self._cleanup()
+        return self._cleanup()
 
     def run(self, *, path2_confirmed: bool = True) -> dict[str, Any]:
         frequencies = self.config["test_frequencies"]

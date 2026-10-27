@@ -5,7 +5,9 @@ from types import SimpleNamespace
 from app.cancellation import CancellationToken, MeasurementCancelled
 from application.dto import CableLossMeasurementRequest
 from application.measurements import CableLossUseCase
+from application.ports.measurement_session import SafetyCleanupError
 from app.events import CheckpointEvent
+from tests.fakes import safety_cleanup_for
 
 
 class _Instrument:
@@ -52,6 +54,7 @@ def _request(instrument, *, events=None, token=None, repository=None):
         context=SimpleNamespace(run_id="run-cable"),
         run_directory=Path("run-directory"),
         measurement_port=instrument,
+        safety_cleanup=safety_cleanup_for(instrument),
         event_sink=events,
         cancellation_token=token,
         result_repository=repository or _Repository(),
@@ -68,6 +71,7 @@ class CableLossUseCaseTests(unittest.TestCase):
             context=request.context,
             run_directory=request.run_directory,
             measurement_port=request.measurement_port,
+            safety_cleanup=request.safety_cleanup,
             result_repository=request.result_repository,
             safety_options={"owns_measurement_port": False},
         )
@@ -126,6 +130,36 @@ class CableLossUseCaseTests(unittest.TestCase):
 
         self.assertEqual(prompts, ["请连接路径2"])
 
+    def test_emergency_stop_while_waiting_produces_a_cleanup_record(self):
+        instrument = _Instrument()
+        use_case = CableLossUseCase(_request(instrument), sleep_fn=lambda _: None)
+        use_case.measure_all_frequencies()
+
+        use_case.emergency_stop()
+
+        record = use_case.last_cleanup_record
+        self.assertIsNotNone(record)
+        self.assertTrue(record.succeeded)
+        self.assertEqual(instrument.close_calls, 1)
+
+    def test_emergency_stop_cleanup_failure_is_an_explicit_terminal_error(self):
+        class _CloseFailingInstrument(_Instrument):
+            def close_all(self, close_rf=False):
+                self.close_calls += 1
+                raise RuntimeError("close")
+
+        instrument = _CloseFailingInstrument()
+        use_case = CableLossUseCase(_request(instrument), sleep_fn=lambda _: None)
+        use_case.measure_all_frequencies()
+
+        with self.assertRaisesRegex(SafetyCleanupError, "测量安全清理存在失败"):
+            use_case.emergency_stop()
+
+        record = use_case.last_cleanup_record
+        self.assertIsNotNone(record)
+        self.assertFalse(record.succeeded)
+        self.assertIn("close", record.errors)
+
     def test_repeated_start_and_continue_are_rejected(self):
         use_case = CableLossUseCase(_request(_Instrument()), sleep_fn=lambda _: None)
         use_case.measure_all_frequencies()
@@ -151,6 +185,7 @@ class CableLossUseCaseTests(unittest.TestCase):
             context=request.context,
             run_directory=request.run_directory,
             measurement_port=request.measurement_port,
+            safety_cleanup=request.safety_cleanup,
         )
         with self.assertRaisesRegex(ValueError, "result_repository"):
             CableLossUseCase(request)
@@ -162,8 +197,22 @@ class CableLossUseCaseTests(unittest.TestCase):
             context=request.context,
             run_directory=request.run_directory,
             measurement_port=None,
+            safety_cleanup=request.safety_cleanup,
         )
         with self.assertRaisesRegex(ValueError, "注入 measurement_port"):
+            CableLossUseCase(request)
+
+    def test_safety_cleanup_port_is_required(self):
+        request = _request(_Instrument())
+        request = CableLossMeasurementRequest(
+            configuration=request.configuration,
+            context=request.context,
+            run_directory=request.run_directory,
+            measurement_port=request.measurement_port,
+            safety_cleanup=None,
+            result_repository=request.result_repository,
+        )
+        with self.assertRaisesRegex(ValueError, "注入 safety_cleanup"):
             CableLossUseCase(request)
 
     def test_exception_is_cleaned_by_service_and_not_saved(self):

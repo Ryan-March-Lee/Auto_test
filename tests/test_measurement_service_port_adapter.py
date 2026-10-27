@@ -2,6 +2,7 @@ import unittest
 
 from instrument.measurement_adapter import PortMeasurementAdapter
 from application.measurements.services import DriverPowerMappingService
+from instrument.flow.cleanup import SafetyCleanupAdapter
 from instrument.simulation import (
     CommandRecorder,
     SafetyInstrumentSession,
@@ -60,6 +61,7 @@ class MeasurementServicePortAdapterTests(unittest.TestCase):
             adapter,
             {"cable_losses": {"1.0": {"cable2": 0.0}}},
             run_id="run-driver-mapping",
+            safety_cleanup=SafetyCleanupAdapter(adapter),
             sleep_fn=lambda _: None,
             settle_delay_s=0,
         ).run()
@@ -80,6 +82,7 @@ class MeasurementServicePortAdapterTests(unittest.TestCase):
                 adapter,
                 {"cable_losses": {"1.0": {"cable2": 0.0}}},
                 run_id="run-driver-mapping",
+                safety_cleanup=SafetyCleanupAdapter(adapter),
                 sleep_fn=lambda _: None,
                 settle_delay_s=0,
             ).run()

@@ -39,6 +39,7 @@ from domain.run.models import (
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from infrastructure.persistence.run_repository import RunRepository
 from presentation.qt.configuration_authoring import author_official_configuration
+from tests.fakes import safety_cleanup_for
 
 
 RUN_ID = "20261022T153000Z_a1b2c3d4"
@@ -166,6 +167,7 @@ class DriverMappingRunStageTests(unittest.TestCase):
         self, run_id=RUN_ID, *, instrument=None, token=None, repository=None, loss_data=None
     ):
         layout = self.repository.layout(run_id)
+        instrument = instrument or _Instrument()
         return DriverPowerMappingRequest(
             configuration={
                 "test_frequencies": [1.0],
@@ -174,7 +176,8 @@ class DriverMappingRunStageTests(unittest.TestCase):
             },
             context=_Context(run_id),
             run_directory=layout.run_directory,
-            measurement_port=instrument or _Instrument(),
+            measurement_port=instrument,
+            safety_cleanup=safety_cleanup_for(instrument),
             result_repository=repository or self.result_repository,
             input_reader=ResultInputReader(self.result_repository),
             stage_recorder=RunStageRecorder(self.repository, run_id),
@@ -561,6 +564,7 @@ class DriverMappingRunStageTests(unittest.TestCase):
     def test_legacy_flow_still_reads_explicit_loss_data_path(self):
         loss_path = self.base / "legacy_cable_loss.json"
         loss_path.write_text(json.dumps({"cable_losses": CABLE_LOSSES}), encoding="utf-8")
+        instrument = _Instrument()
         request = DriverPowerMappingRequest(
             configuration={
                 "test_frequencies": [1.0],
@@ -569,7 +573,8 @@ class DriverMappingRunStageTests(unittest.TestCase):
             },
             context=_Context("run-compat-snapshot"),
             run_directory=self.base,
-            measurement_port=_Instrument(),
+            measurement_port=instrument,
+            safety_cleanup=safety_cleanup_for(instrument),
             result_repository=self.result_repository,
             input_reader=ResultInputReader(self.result_repository),
             loss_data_path=loss_path,

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.gui_runtime import create_cable_loss_measurement
+from instrument.flow.cleanup import SafetyCleanupAdapter
 from application.dto import (
     CableLossMeasurementRequest,
     CableLossMeasurementResult,
@@ -100,6 +101,8 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
         request = measurement.call_args.args[0]
         self.assertIsInstance(request, CableLossMeasurementRequest)
         self.assertIs(request.measurement_port, port)
+        self.assertIsInstance(request.safety_cleanup, SafetyCleanupAdapter)
+        self.assertIs(request.safety_cleanup.instrument_control, port)
         self.assertEqual(request.run_id, "run-request")
         self.assertEqual(request.run_directory, Path("run-directory"))
         self.assertEqual(request.config_path, Path("config.json"))

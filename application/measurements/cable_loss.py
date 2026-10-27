@@ -11,6 +11,7 @@ from typing import Any, Callable
 from app.cancellation import CancellationToken, MeasurementCancelled
 from application.dto import CableLossMeasurementRequest, CableLossMeasurementResult, MeasurementResult
 from application.measurements.services import CableLossService
+from application.ports.measurement_session import CleanupRecord, SafetyCleanupError
 from domain.run.models import STAGE_CABLE_LOSS
 
 
@@ -45,6 +46,9 @@ class CableLossUseCase:
         self.result_repository = request.result_repository
         if self.result_repository is None:
             raise ValueError("CableLossUseCase 必须注入 result_repository")
+        self.safety_cleanup = request.safety_cleanup
+        if self.safety_cleanup is None:
+            raise ValueError("CableLossUseCase 必须由应用组装层注入 safety_cleanup")
         # 运行契约运行会注入阶段记录器：结果写入当前运行的 inputs/cable_loss.json
         # 并更新 manifest；未注入记录器的旧流程只写运行目录，不产生全局兼容副本。
         self.stage_recorder = request.stage_recorder
@@ -56,6 +60,7 @@ class CableLossUseCase:
             self.config,
             self.inst_ctrl,
             run_id=self.run_id,
+            safety_cleanup=self.safety_cleanup,
             event_sink=request.event_sink,
             cancellation_token=self._token,
             sleep_fn=self.sleep_fn,
@@ -73,6 +78,11 @@ class CableLossUseCase:
     def path1_losses(self) -> dict[Any, float]:
         """Return the path-1 measurements as an explicit result view."""
         return self._service.path1_losses
+
+    @property
+    def last_cleanup_record(self) -> CleanupRecord | None:
+        """Return the structured record of the latest safety cleanup."""
+        return self._service.last_cleanup_record
 
     @property
     def cable_losses(self) -> dict[float, dict[str, float]]:
@@ -164,13 +174,21 @@ class CableLossUseCase:
         self._abort_waiting("紧急停止")
 
     def _abort_waiting(self, reason: str) -> None:
-        """在等待路径2确认时停止：清理仪器并把阶段标记为已取消。"""
+        """在等待路径2确认时停止：清理仪器并把阶段标记为已取消。
+
+        清理失败是明确的运行终态：阶段记录为失败并抛出携带结构化记录的
+        ``SafetyCleanupError``，不降级为日志。
+        """
         if self._waiting_for_path2 and not self._cleaned_after_stop:
-            self._service.cleanup()
             self._waiting_for_path2 = False
             self._started = False
             self._terminal = True
             self._cleaned_after_stop = True
+            try:
+                self._service.cleanup()
+            except SafetyCleanupError as error:
+                self._record_failure(error)
+                raise
             self._record_cancel(reason)
 
     def _begin_stage(self) -> None:

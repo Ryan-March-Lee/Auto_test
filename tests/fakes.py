@@ -83,3 +83,61 @@ def _matches_failure_rule(rule: FailureRule, value: str) -> bool:
     if isinstance(rule, str):
         return rule == value
     return bool(rule(value))
+
+
+class NullSafetyCleanup:
+    """不触碰设备的清理端口替身，用于只验证早期校验的请求构造。"""
+
+    def __init__(self) -> None:
+        self.calls = []
+
+    def cleanup(self, *, power_cleanup=None, release_resources=True):
+        from application.ports.measurement_session import CleanupRecord, CleanupStepStatus
+
+        record = CleanupRecord(
+            rf_output=CleanupStepStatus.SKIPPED,
+            power_supplies=CleanupStepStatus.SKIPPED,
+            resources=CleanupStepStatus.SKIPPED,
+        )
+        self.calls.append(record)
+        return record
+
+
+class RecordingSafetyCleanup:
+    """记录清理调用并返回固定记录或抛出固定错误的安全清理端口替身。"""
+
+    def __init__(self, *, record=None, error=None) -> None:
+        self.record = record
+        self.error = error
+        self.calls = []
+        self.records = []
+
+    def cleanup(self, *, power_cleanup=None, release_resources=True):
+        from application.ports.measurement_session import CleanupRecord, CleanupStepStatus
+
+        self.calls.append((power_cleanup, release_resources))
+        if self.error is not None:
+            raise self.error
+        if self.record is not None:
+            self.records.append(self.record)
+            return self.record
+        record = CleanupRecord(
+            rf_output=CleanupStepStatus.PERFORMED,
+            power_supplies=CleanupStepStatus.PERFORMED,
+            resources=(
+                CleanupStepStatus.PERFORMED
+                if release_resources
+                else CleanupStepStatus.SKIPPED
+            ),
+        )
+        self.records.append(record)
+        return record
+
+
+def safety_cleanup_for(instrument):
+    """返回测量请求使用的清理端口：有设备时用真实适配器，否则用无动作替身。"""
+    from instrument.flow.cleanup import SafetyCleanupAdapter
+
+    if instrument is None:
+        return NullSafetyCleanup()
+    return SafetyCleanupAdapter(instrument)

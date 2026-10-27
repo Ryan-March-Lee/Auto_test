@@ -14,6 +14,7 @@ from domain.configuration.models import (
     RunResourceMapping,
     TestPlan,
 )
+from tests.fakes import safety_cleanup_for
 
 
 class _Instrument:
@@ -62,6 +63,7 @@ def _request(instrument, *, token=None, repository=None):
         context=SimpleNamespace(run_id="run-amplifier"),
         run_directory=Path("run-directory"),
         measurement_port=instrument,
+        safety_cleanup=safety_cleanup_for(instrument),
         cancellation_token=token,
         result_repository=repository or _Repository(),
         loss_data={
@@ -106,6 +108,7 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
             context=request.context,
             run_directory=request.run_directory,
             measurement_port=request.measurement_port,
+            safety_cleanup=request.safety_cleanup,
             result_repository=request.result_repository,
             loss_data=request.loss_data,
         )

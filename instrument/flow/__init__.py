@@ -7,7 +7,7 @@ driver 或测试 double，因此不会把安全策略绑定到 VISA 实现。
 from .power_on_flow import PowerOnFlow, PowerOnFlowError, PowerChannelSetup
 from .power_off_flow import PowerOffFlow, PowerOffFlowError
 from .safety_shutdown_flow import SafetyShutdownFlow, SafetyShutdownError
-from .cleanup import cleanup_measurement
+from .cleanup import SafetyCleanupAdapter, cleanup_measurement
 
 __all__ = [
     "PowerOnFlow",
@@ -15,6 +15,7 @@ __all__ = [
     "PowerChannelSetup",
     "PowerOffFlow",
     "PowerOffFlowError",
+    "SafetyCleanupAdapter",
     "SafetyShutdownFlow",
     "SafetyShutdownError",
     "cleanup_measurement",

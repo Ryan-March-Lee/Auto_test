@@ -348,7 +348,18 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             combo = self.power_assignment_widgets[key]; current = combo.currentText(); combo.clear(); combo.addItems(enabled)
             if current in enabled: combo.setCurrentText(current)
 
-    def build_config(self): return ConfigFormState(self.config, self).build_config()
+    def build_config(self, base=None):
+        """按当前控件值组装完整配置。
+
+        ``base`` 是组装基线（缺省为页面自己的配置副本）。运行协调器传入它持有的
+        权威配置，保证“页面只是视图、配置只有一个数据源”。
+        """
+        base_config = self.config if base is None else base
+        return ConfigFormState(base_config, self).build_config()
+
+    def driver_mode_requested(self) -> bool:
+        """返回“启用驱动功放模式”控件的当前选择；调用方不需要接触控件本身。"""
+        return self.driver_mode_check.isChecked()
 
     # -- 冻结运行配置回填 ---------------------------------------------------
     @staticmethod

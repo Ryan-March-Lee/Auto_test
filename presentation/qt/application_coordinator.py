@@ -1,14 +1,18 @@
 """GUI 运行协调器：持有配置状态、运行契约、仪器连接和测量 controller。
 
 主窗口只负责窗口生命周期、页面注册和信号连接；配置读写、运行创建/加载、仪器
-连接以及端口释放都在这里完成。协调器不接触具体页面控件，只通过注入的日志、
-告警、错误提示和接线确认回调与窗口交互。
+连接以及端口清理都在这里完成。
+
+协调器是 **Qt 表现层** 组件，但不接触任何具体控件：它只通过
+:class:`ConfigurationPagePort` 这个窄接口（校验、组装、回填、运行状态、驱动模式）
+与配置页交互，并通过注入的日志/告警/错误/接线确认回调与窗口交互。这样它既不需要
+知道控件名字，也可以用纯 Python 替身单独测试。
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable, Protocol, runtime_checkable
 
 from app.gui_runtime import load_prepared_run, prepare_configuration
 from application.gui_data_service import GuiDataService
@@ -16,7 +20,6 @@ from application.run_service import RunNotResumable
 from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService
 
 from .composition import build_gui_data_service
-from .config_form_state import ConfigFormState
 from .config_page import ConfigBackfillError
 from .configuration_authoring import author_official_configuration
 from .measurement_controller import MeasurementController
@@ -33,45 +36,117 @@ _MEASUREMENT_KINDS = frozenset(
     }
 )
 
+_CONFIG_PAGE_MEMBERS = (
+    "validate",
+    "build_config",
+    "apply_config",
+    "set_run_status",
+    "driver_mode_requested",
+)
 
-def _ignore(_message: str) -> None:
-    """默认的日志/提示回调：协调器不要求调用方一定提供 UI。"""
+
+@runtime_checkable
+class ConfigurationPagePort(Protocol):
+    """配置页必须向协调器提供的窄接口。
+
+    协调器只依赖这五个能力，不读取任何控件；页面内部如何布局、控件叫什么名字与
+    协调器无关。
+    """
+
+    def validate(self) -> bool:
+        """校验当前表单；返回是否可以通过。"""
+
+    def build_config(self, base: Any = None) -> dict[str, Any]:
+        """按当前控件值组装配置，``base`` 为组装基线。"""
+
+    def apply_config(self, config: dict[str, Any]) -> None:
+        """把冻结配置回填到控件；失败时抛出 ``ConfigBackfillError``。"""
+
+    def set_run_status(self, text: str) -> None:
+        """显示当前运行状态文本。"""
+
+    def driver_mode_requested(self) -> bool:
+        """返回用户当前选择的驱动功放模式。"""
 
 
-def close_instrument_port(port: Any) -> None:
-    """安全关闭仪器端口；端口不存在时不做事，关闭失败由调用方记录。"""
+def close_instrument_port(port: Any) -> tuple[BaseException, ...]:
+    """关闭仪器端口并返回**未能完成的清理错误**。
+
+    空元组表示已确认释放。设备适配器的 ``close_all()`` 会返回逐项错误而不是保证
+    抛出，因此只判断异常会把“RF 未确认关闭 / 电源仍在输出”当成成功，这里必须
+    把返回值一并收敛成错误元组；调用方据此决定是否保留端口引用以便重试。
+    """
     if port is None:
-        return
+        return ()
     close_all = getattr(port, "close_all", None)
     if close_all is not None:
-        close_all(close_rf=True)
-        return
+        try:
+            return _cleanup_errors(close_all(close_rf=True))
+        except Exception as failure:  # noqa: BLE001 - 清理异常必须进入记录，不能让界面崩溃
+            return (failure,)
     safe_shutdown = getattr(port, "safe_shutdown", None)
     if safe_shutdown is not None:
-        safe_shutdown()
+        try:
+            return _cleanup_errors(safe_shutdown())
+        except Exception as failure:  # noqa: BLE001 - 同上
+            return (failure,)
+    # 没有关闭入口：没有已知资源需要释放，但也如实返回“无需释放”。
+    return ()
+
+
+def _cleanup_errors(result: Any) -> tuple[BaseException, ...]:
+    """把 ``close_all()`` 的返回值收敛成错误元组（``None`` 视为无错误）。"""
+    if result is None:
+        return ()
+    if isinstance(result, BaseException):
+        return (result,)
+    try:
+        items = tuple(result)
+    except TypeError:
+        return (RuntimeError(f"端口关闭返回了无法判定的结果: {result!r}"),)
+    errors: list[BaseException] = []
+    for item in items:
+        if item is None:
+            continue
+        errors.append(item if isinstance(item, BaseException) else RuntimeError(str(item)))
+    return tuple(errors)
+
+
+def describe_cleanup_errors(errors: Iterable[BaseException]) -> str:
+    """把清理错误列表写成一行可读文本，供日志与界面提示使用。"""
+    parts = []
+    for error in errors:
+        detail = str(error)
+        parts.append(
+            f"{type(error).__name__}: {detail}" if detail else type(error).__name__
+        )
+    return "；".join(parts)
 
 
 class ApplicationCoordinator:
     """呈现层运行协调器：单一持有配置、运行契约和仪器端口。
 
-    ``log`` / ``warn`` / ``error`` 是窗口提供的用户可见反馈通道；协调器本身不弹
-    对话框、不读写控件，因此可以用纯 Python 替身单独测试。
+    ``log`` / ``warn`` / ``error`` 是窗口提供的用户可见反馈通道，必须显式注入：
+    协调器的失败路径不允许静默，缺少反馈通道时在构造阶段就失败，而不是在运行
+    失败时丢消息。
     """
 
     def __init__(
         self,
         *,
-        log: Callable[[str], Any] = _ignore,
-        warn: Callable[[str, str], Any] = _ignore,
-        error: Callable[[str], Any] = _ignore,
+        log: Callable[[str], Any],
+        warn: Callable[[str, str], Any],
+        error: Callable[[str], Any],
         paths: PathService | None = None,
         config_path: Any = None,
         gui_data_service: GuiDataService | None = None,
         controller: MeasurementController | None = None,
-        widget_host: Any = None,
         confirm_run_wiring: Callable[[dict[str, Any]], bool] | None = None,
         instrument_worker_factory: Callable[[str], Any] = InstrumentWorker,
     ) -> None:
+        for name, callback in (("log", log), ("warn", warn), ("error", error)):
+            if not callable(callback):
+                raise TypeError(f"{name} 必须是可调用对象")
         self.paths = paths or DEFAULT_PATHS
         self.config_path = Path(config_path or self.paths.config_file)
         self.gui_data_service: GuiDataService = gui_data_service or build_gui_data_service(
@@ -84,23 +159,36 @@ class ApplicationCoordinator:
         self._log = log
         self._warn = warn
         self._error = error
-        self._widget_host = widget_host
         self._confirm_run_wiring = confirm_run_wiring
         self._instrument_worker_factory = instrument_worker_factory
-        # 配置页由窗口在页面注册时绑定；未绑定前一律回退到窗口作为控件宿主。
-        self.config_page: Any = None
+        self.config_page: ConfigurationPagePort | None = None
         self.config: dict[str, Any] = {}
         self.prepared_run: Any = None
         self.instrument_ctrl: Any = None
         self.instrument_worker: Any = None
         self.last_save_error: Exception | None = None
+        # 清理失败的端口进入未决清单：绝不因为一次失败就丢掉引用，现场可重试。
+        self._unreleased_ports: list[Any] = []
 
-    # ---- 配置状态 ----
+    # ---- 配置页适配 ----
 
     def bind_config_page(self, page: Any) -> None:
-        """登记配置页：页面是配置控件与回填的唯一所有者。"""
+        """登记配置页；页面只需实现 :class:`ConfigurationPagePort` 的五个能力。"""
+        missing = [
+            name for name in _CONFIG_PAGE_MEMBERS if not callable(getattr(page, name, None))
+        ]
+        if missing:
+            raise TypeError("配置页缺少协调器所需能力: " + ", ".join(missing))
         self.config_page = page
         self.run_status_changed(self.run_status_text())
+
+    def _require_config_page(self) -> ConfigurationPagePort:
+        page = self.config_page
+        if page is None:
+            raise RuntimeError("未登记配置页，无法读写界面配置")
+        return page
+
+    # ---- 配置状态 ----
 
     def load_configuration(self) -> dict[str, Any]:
         """通过 GUI 数据服务读取正式配置；读取失败时给出提示并保持空配置。"""
@@ -112,25 +200,32 @@ class ApplicationCoordinator:
         return self.config
 
     def build_configuration_from_ui(self) -> dict[str, Any]:
-        """基于当前配置与控件状态组装完整配置字典，不修改自身状态。"""
-        widgets = self.config_page if self.config_page is not None else self._widget_host
-        if widgets is None:
-            raise RuntimeError("未绑定配置页，无法读取界面配置")
-        return ConfigFormState(self.config, widgets).build_config()
+        """按配置页当前控件值组装完整配置；自身配置是唯一组装基线。"""
+        page = self._require_config_page()
+        return page.build_config(self.config)
 
     def update_configuration_from_ui(self) -> dict[str, Any]:
-        """用当前控件值替换窗口持有的配置副本。"""
+        """用当前控件值替换协调器持有的配置副本。"""
         self.config = self.build_configuration_from_ui()
-        if self.config_page is not None:
-            self.config_page.config = self.config
+        self._push_config_to_page()
         return self.config
+
+    def _push_config_to_page(self) -> None:
+        """让配置页持有与协调器相同的配置副本。
+
+        ``config`` 不在 :class:`ConfigurationPagePort` 的能力清单里（它会让
+        ``runtime_checkable`` 协议退化为数据协议），但页面组装与保存都以它作为基线，
+        因此协调器写完配置后仍要同步这一份副本。
+        """
+        page = self.config_page
+        if page is not None:
+            page.config = self.config
 
     def save_configuration(self) -> bool:
         """把当前配置写为正式配置；失败时保留 :attr:`last_save_error`。"""
         try:
             self.config = author_official_configuration(self.config)
-            if self.config_page is not None:
-                self.config_page.config = self.config
+            self._push_config_to_page()
             self.gui_data_service.configuration.save(self.config)
         except Exception as failure:  # noqa: BLE001 - 界面需要原始原因，写入失败不得静默
             self.last_save_error = failure
@@ -208,7 +303,17 @@ class ApplicationCoordinator:
             self._log(f"创建运行失败: {failure}")
             self._warn("创建运行失败", str(failure))
             return None
-        self.release_instrument_for_new_run()
+        if not self.release_instrument_for_new_run():
+            # 旧端口未能安全释放：不得把界面切到新运行，否则现场会以为连接已收尾。
+            self._log(
+                f"运行 {prepared.run_id} 已冻结在 {prepared.run_directory}，"
+                "但上一次连接的仪器未能安全释放；当前运行保持不变"
+            )
+            self._warn(
+                "创建运行未生效",
+                "上一次连接的仪器未能完成安全清理；请在现场确认仪器已断开后重试",
+            )
+            return None
         self.prepared_run = prepared
         self.run_status_changed(self.run_status_text())
         self._log(
@@ -236,7 +341,16 @@ class ApplicationCoordinator:
                 "配置页回填失败，运行未切换；请检查运行快照后重试",
             )
             return None
-        self.release_instrument_for_new_run()
+        if not self.release_instrument_for_new_run():
+            self._log(
+                f"加载运行 {prepared.run_id} 未生效: 上一次连接的仪器未能安全释放；"
+                "当前运行保持不变"
+            )
+            self._warn(
+                "加载运行未生效",
+                "上一次连接的仪器未能完成安全清理；请在现场确认仪器已断开后重试",
+            )
+            return None
         self.prepared_run = prepared
         self.run_status_changed(self.run_status_text())
         self._log(
@@ -273,7 +387,7 @@ class ApplicationCoordinator:
         return "当前运行: 未创建" if run is None else f"当前运行: {run.run_id}"
 
     def run_status_changed(self, text: str) -> None:
-        """运行状态展示回调；窗口覆盖它把文本写进配置页。"""
+        """把运行状态写进配置页；窗口可覆盖此方法改变展示位置。"""
         page = self.config_page
         if page is not None:
             page.set_run_status(text)
@@ -288,7 +402,7 @@ class ApplicationCoordinator:
                 return bool(getattr(plan, "driver_enabled", False))
         page = self.config_page
         if page is not None:
-            return page.driver_mode_check.isChecked()
+            return bool(page.driver_mode_requested())
         return False
 
     def _confirm_wiring(self) -> bool:
@@ -330,62 +444,103 @@ class ApplicationCoordinator:
         worker.start()
         return True
 
-    def accept_instrument_controller(self, controller: Any) -> None:
-        """接管已连接的仪器端口，并把它注入 controller 供测量使用。"""
-        if self.instrument_ctrl is not None and self.instrument_ctrl is not controller:
-            self.release_instrument_port()
+    def accept_instrument_controller(self, controller: Any) -> bool:
+        """接管已连接的仪器端口并注入 controller。
+
+        返回是否完全干净地完成交接：旧端口清理失败时它进入未决清理清单（引用不丢），
+        新端口仍被接管，避免把一次可用的连接判成不可用。
+        """
+        released = self.release_instrument_port()
         self.instrument_ctrl = controller
         try:
             self.controller.set_measurement_port(controller)
         except RuntimeError as failure:
             self._log(f"注入测量端口失败: {failure}")
+            return False
+        return released
 
     def release_instrument_port(self) -> bool:
-        """关闭并清除当前端口；失败只记录，返回是否没有遗留端口。"""
+        """释放当前端口；失败时端口进入未决清理清单，返回 ``False``。"""
         port = self.instrument_ctrl
         if port is None:
             return True
-        try:
-            close_instrument_port(port)
-        except Exception as failure:  # noqa: BLE001 - 端口关闭失败要让用户看到，但窗口仍可继续
-            self._log(f"仪器清理失败: {failure}")
-            self.instrument_ctrl = None
-            return False
         self.instrument_ctrl = None
+        return self._close_and_record(port)
+
+    def release_instrument_for_new_run(self) -> bool:
+        """切换运行前释放已连接端口；失败时保留未决引用并返回 ``False``。"""
+        port = self.instrument_ctrl
+        if port is None:
+            return True
+        self.instrument_ctrl = None
+        if not self._close_and_record(port):
+            return False
+        self._log("已释放上一次连接的仪器端口；请重新连接仪器")
         return True
 
-    def release_instrument_for_new_run(self) -> None:
-        """切换运行前释放已连接端口，避免新运行复用旧配置的仪器资源。"""
-        if self.instrument_ctrl is None:
-            return
-        try:
-            close_instrument_port(self.instrument_ctrl)
-        except Exception as failure:  # noqa: BLE001 - 释放失败必须提示现场重新连接
-            self._log(f"切换运行前仪器清理失败: {failure}")
-        self.instrument_ctrl = None
-        self._log("已释放上一次连接的仪器端口；请重新连接仪器")
-
-    def release_port_after_measurement(self) -> None:
+    def release_port_after_measurement(self) -> bool:
         """测量线程结束后释放端口；非测量终态（如仅连接仪器）不释放。"""
         state = getattr(self.controller, "state", None)
         if getattr(state, "kind", None) not in _MEASUREMENT_KINDS:
-            return
-        self.release_instrument_port()
+            return True
+        return self.release_instrument_port()
+
+    def _close_and_record(self, port: Any) -> bool:
+        """关闭一个端口；失败时记录逐项错误并把它放进未决清理清单。"""
+        errors = close_instrument_port(port)
+        if not errors:
+            self._forget_unreleased_port(port)
+            return True
+        self._log(f"仪器清理失败: {describe_cleanup_errors(errors)}")
+        self._remember_unreleased_port(port)
+        return False
+
+    def _remember_unreleased_port(self, port: Any) -> None:
+        if not any(existing is port for existing in self._unreleased_ports):
+            self._unreleased_ports.append(port)
+
+    def _forget_unreleased_port(self, port: Any) -> None:
+        self._unreleased_ports = [
+            existing for existing in self._unreleased_ports if existing is not port
+        ]
+
+    def has_unreleased_ports(self) -> bool:
+        """是否存在清理未完成的端口（现场必须人工确认）。"""
+        return bool(self._unreleased_ports)
+
+    def unreleased_port_count(self) -> int:
+        return len(self._unreleased_ports)
+
+    def retry_unreleased_ports(self) -> bool:
+        """重试未决端口清理；返回是否已全部清理完成。"""
+        if not self._unreleased_ports:
+            return True
+        remaining = []
+        for port in list(self._unreleased_ports):
+            errors = close_instrument_port(port)
+            if errors:
+                remaining.append(port)
+                self._log(
+                    "未决仪器清理仍失败: " + describe_cleanup_errors(errors)
+                )
+        self._unreleased_ports = remaining
+        return not remaining
 
     def instrument_worker_running(self) -> bool:
         worker = self.instrument_worker
         return bool(worker is not None and worker.isRunning())
 
     def stop_instrument_worker(self, timeout_ms: int = 5000) -> bool:
-        """请求停止连接 worker 并在期限内等待；超时返回 ``False``。"""
+        """请求停止连接 worker 并在期限内等待；成功停止后清除引用。"""
         worker = self.instrument_worker
         if worker is None:
             return True
         worker.stop()
-        if worker.wait(timeout_ms):
-            return True
-        self._log("仪器连接线程未能在关闭期限内停止")
-        return False
+        if not worker.wait(timeout_ms):
+            self._log("仪器连接线程未能在关闭期限内停止")
+            return False
+        self.instrument_worker = None
+        return True
 
     # ---- 实时数据上下文 ----
 
@@ -399,4 +554,9 @@ class ApplicationCoordinator:
         self.realtime_buffer.clear()
 
 
-__all__ = ["ApplicationCoordinator", "close_instrument_port"]
+__all__ = [
+    "ApplicationCoordinator",
+    "ConfigurationPagePort",
+    "close_instrument_port",
+    "describe_cleanup_errors",
+]

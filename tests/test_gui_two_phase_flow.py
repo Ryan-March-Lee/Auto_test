@@ -104,6 +104,29 @@ def _resolvable_contract_run(path="frozen-hardware.json"):
     )()
 
 
+class _ClosedPort:
+    """可正常关闭的仪器端口替身：``close_all()`` 返回空错误列表。"""
+
+    def __init__(self):
+        self.close_calls = 0
+
+    def close_all(self, *, close_rf=False):
+        self.close_calls += 1
+        return []
+
+
+class _FailingPort:
+    """关闭必然失败的端口替身：``close_all()`` 返回逐项清理错误。"""
+
+    def __init__(self, message="RF 未确认关闭"):
+        self.errors = [RuntimeError(message)]
+        self.close_calls = 0
+
+    def close_all(self, *, close_rf=False):
+        self.close_calls += 1
+        return list(self.errors)
+
+
 class _CableService:
     def __init__(self):
         self.last_result = {"cable_losses": {"2.4": {"cable1": 1.0}}}
@@ -432,6 +455,9 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         from presentation.qt.application_coordinator import ApplicationCoordinator
 
         kwargs = {
+            "log": MagicMock(),
+            "warn": MagicMock(),
+            "error": MagicMock(),
             "gui_data_service": MagicMock(),
             "controller": MagicMock(),
             "config_path": Path("global-config.json"),
@@ -480,7 +506,6 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         warn = MagicMock()
         coordinator = self._coordinator(
             warn=warn,
-            widget_host=MagicMock(),
             confirm_run_wiring=MagicMock(return_value=True),
         )
         coordinator.config_page = page
@@ -509,7 +534,7 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
     def test_create_prepared_run_aborts_when_validation_fails(self):
         page = MagicMock()
         page.validate.return_value = False
-        coordinator = self._coordinator(widget_host=MagicMock())
+        coordinator = self._coordinator()
         coordinator.config_page = page
 
         with patch(
@@ -524,7 +549,7 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         page.validate.return_value = True
         log = MagicMock()
         coordinator = self._coordinator(
-            log=log, widget_host=MagicMock(), confirm_run_wiring=MagicMock(return_value=False)
+            log=log, confirm_run_wiring=MagicMock(return_value=False)
         )
         coordinator.config_page = page
         coordinator.update_configuration_from_ui = MagicMock()
@@ -541,11 +566,10 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         )
 
     def test_create_prepared_run_releases_previous_instrument_port(self):
-        port = MagicMock()
+        port = _ClosedPort()
         page = MagicMock()
         page.validate.return_value = True
         coordinator = self._coordinator(
-            widget_host=MagicMock(),
             confirm_run_wiring=MagicMock(return_value=True),
         )
         coordinator.config_page = page
@@ -563,19 +587,18 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
 
         # 创建新运行必须释放旧连接的仪器端口，避免新运行复用旧配置的资源。
         self.assertIs(result, prepared)
-        port.close_all.assert_called_once_with(close_rf=True)
+        self.assertEqual(port.close_calls, 1)
         self.assertIsNone(coordinator.instrument_ctrl)
         self.assertIs(coordinator.prepared_run, prepared)
 
     def test_create_prepared_run_failure_keeps_previous_run_and_port(self):
-        port = MagicMock()
+        port = _ClosedPort()
         previous_run = object()
         page = MagicMock()
         page.validate.return_value = True
         warn = MagicMock()
         coordinator = self._coordinator(
             warn=warn,
-            widget_host=MagicMock(),
             confirm_run_wiring=MagicMock(return_value=True),
         )
         coordinator.config_page = page
@@ -595,7 +618,7 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertIs(coordinator.prepared_run, previous_run)
         self.assertIs(coordinator.instrument_ctrl, port)
-        port.close_all.assert_not_called()
+        self.assertEqual(port.close_calls, 0)
         warn.assert_called_once()
 
     def test_measurement_config_path_prefers_frozen_run_config(self):
@@ -692,9 +715,9 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         )
 
     def test_load_run_releases_previous_instrument_port(self):
-        port = MagicMock()
+        port = _ClosedPort()
         page = MagicMock()
-        coordinator = self._coordinator(widget_host=MagicMock())
+        coordinator = self._coordinator()
         coordinator.config_page = page
         coordinator.instrument_ctrl = port
 
@@ -712,7 +735,7 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
 
         self.assertIs(result, prepared)
         page.apply_config.assert_called_once_with({"test_frequencies": [2.4]})
-        port.close_all.assert_called_once_with(close_rf=True)
+        self.assertEqual(port.close_calls, 1)
         self.assertIsNone(coordinator.instrument_ctrl)
         self.assertIs(coordinator.prepared_run, prepared)
         self.assertEqual(coordinator.config, {"test_frequencies": [2.4]})
@@ -720,13 +743,13 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
     def test_load_run_reports_backfill_failure_instead_of_success(self):
         from presentation.qt.config_page import ConfigBackfillError
 
-        current_port = MagicMock()
+        current_port = _ClosedPort()
         current_run = object()
         log = MagicMock()
         warn = MagicMock()
         page = MagicMock()
         page.apply_config.side_effect = ConfigBackfillError("坏配置")
-        coordinator = self._coordinator(log=log, warn=warn, widget_host=MagicMock())
+        coordinator = self._coordinator(log=log, warn=warn)
         coordinator.config_page = page
         coordinator.instrument_ctrl = current_port
         coordinator.prepared_run = current_run
@@ -749,7 +772,7 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         self.assertIs(coordinator.prepared_run, current_run)
         self.assertEqual(coordinator.config, {"sentinel": True})
         self.assertIs(coordinator.instrument_ctrl, current_port)
-        current_port.close_all.assert_not_called()
+        self.assertEqual(current_port.close_calls, 0)
         warn.assert_called_once()
         messages = [str(call.args[0]) for call in log.call_args_list if call.args]
         self.assertTrue(any("回填失败" in message for message in messages))
@@ -767,19 +790,19 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
     def test_measurement_completion_releases_port_only_for_measurement_kinds(self):
         coordinator = self._coordinator()
         coordinator.controller.state.kind = MeasurementKind.CABLE_LOSS
-        port = MagicMock()
+        port = _ClosedPort()
         coordinator.instrument_ctrl = port
 
-        coordinator.release_port_after_measurement()
+        self.assertTrue(coordinator.release_port_after_measurement())
 
-        port.close_all.assert_called_once_with(close_rf=True)
+        self.assertEqual(port.close_calls, 1)
         self.assertIsNone(coordinator.instrument_ctrl)
 
-        idle_port = MagicMock()
+        idle_port = _ClosedPort()
         coordinator.controller.state.kind = None
         coordinator.instrument_ctrl = idle_port
         coordinator.release_port_after_measurement()
-        idle_port.close_all.assert_not_called()
+        self.assertEqual(idle_port.close_calls, 0)
         self.assertIs(coordinator.instrument_ctrl, idle_port)
 
 

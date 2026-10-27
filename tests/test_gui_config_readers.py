@@ -60,18 +60,51 @@ def channel_widgets(voltage, voltage_protection, voltage_enabled, current, curre
     return controls
 
 
-def _coordinator(*, config=None, service=None, page=None, log=None):
-    kwargs = {"log": log} if log is not None else {}
+class ConfigPageStub:
+    """配置页替身：只实现协调器需要的窄接口。
+
+    控件读取仍交给 :class:`ConfigFormState`，与真实 ``ConfigPage.build_config()``
+    走同一条组装路径，因此协调器测试不复制配置组装逻辑。
+    """
+
+    def __init__(self, widgets, config=None):
+        self.widgets = widgets
+        self.config = config if isinstance(config, dict) else {}
+        self.statuses = []
+        self.applied = []
+
+    def validate(self):
+        return not ConfigFormState(self.config, self.widgets).validation_errors()
+
+    def build_config(self, base=None):
+        base_config = self.config if base is None else base
+        return ConfigFormState(base_config, self.widgets).build_config()
+
+    def apply_config(self, config):
+        self.applied.append(config)
+        self.config = dict(config)
+
+    def set_run_status(self, text):
+        self.statuses.append(text)
+
+    def driver_mode_requested(self):
+        return self.widgets.driver_mode_check.isChecked()
+
+
+def _coordinator(*, config=None, service=None, widgets=None, log=None, warn=None, error=None):
+    page = ConfigPageStub(widgets, config) if widgets is not None else None
     coordinator = ApplicationCoordinator(
+        log=log or (lambda _message: None),
+        warn=warn or (lambda _title, _message: None),
+        error=error or (lambda _message: None),
         gui_data_service=service or MagicMock(),
         controller=MagicMock(),
         config_path=Path("config.json"),
-        widget_host=page,
-        **kwargs,
     )
     if config is not None:
         coordinator.config = config
-    coordinator.config_page = page
+    if page is not None:
+        coordinator.bind_config_page(page)
     return coordinator
 
 
@@ -308,7 +341,7 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
             'pa_unit2_power': FakeComboWidget('PS2'),
             'pa_unit3_power': FakeComboWidget('PS3'),
         }
-        self.coordinator = _coordinator(config=self.config, page=self.host)
+        self.coordinator = _coordinator(config=self.config, widgets=self.host)
 
     def test_build_preserves_top_level_and_instrument_extra_fields(self):
         result = self.coordinator.build_configuration_from_ui()
@@ -443,7 +476,7 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
         self.assertEqual(self.coordinator.config['test_frequencies'], [1.0, 2.0])
         self.assertEqual(self.coordinator.config['dut_config']['power_supply_count'], 2)
         # 配置页持有的副本必须与协调器一致。
-        self.assertIs(self.host.config, self.coordinator.config)
+        self.assertIs(self.coordinator.config_page.config, self.coordinator.config)
 
     def test_build_top_level_keys_match_legacy(self):
         result = self.coordinator.build_configuration_from_ui()

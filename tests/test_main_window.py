@@ -60,55 +60,155 @@ class MainWindowTests(unittest.TestCase):
                 imported.append(node.module)
         self.assertNotIn("enhanced_main_gui", imported)
 
-    def test_close_event_disconnects_tabs_and_closes_pages(self):
+
+class MainWindowCloseEventTests(unittest.TestCase):
+    """关闭窗口：确认只做一次，之后的停止动作视为已提交。"""
+
+    def _window(self, *, measurement_active=False, worker_running=False,
+                shutdown_ok=True, stop_ok=True, release_ok=True,
+                unreleased=False):
+        from PySide6.QtWidgets import QMessageBox
+
         from presentation.qt.main_window import MainWindow
+
+        controller = Mock()
+        controller.state.is_active = measurement_active
+        controller.shutdown.return_value = shutdown_ok
+        coordinator = Mock()
+        coordinator.instrument_worker_running.return_value = worker_running
+        coordinator.stop_instrument_worker.return_value = stop_ok
+        coordinator.release_instrument_port.return_value = release_ok
+        coordinator.has_unreleased_ports.return_value = unreleased
 
         tab_signal = Mock()
         pages = {"first": Mock(), "second": Mock()}
-        controller = Mock()
-        controller.state.is_active = False
-        coordinator = Mock()
-        coordinator.instrument_worker_running.return_value = False
-        window = SimpleNamespace()
-        window.measurement_controller = controller
-        window.coordinator = coordinator
-        window.tab_widget = SimpleNamespace(currentChanged=tab_signal)
+        window = SimpleNamespace(
+            measurement_controller=controller,
+            coordinator=coordinator,
+            tab_widget=SimpleNamespace(currentChanged=tab_signal),
+            pages=pages,
+            add_log_message=Mock(),
+        )
         window._on_page_changed = Mock()
-        window.pages = pages
+        # 未通过 __init__ 构造的替身窗口需要显式绑定这两个确认方法。
+        window._confirm_exit = lambda: MainWindow._confirm_exit(window)
+        window._confirm_exit_with_unreleased_ports = (
+            lambda: MainWindow._confirm_exit_with_unreleased_ports(window)
+        )
         event = Mock()
+        self.Yes = QMessageBox.Yes
+        self.No = QMessageBox.No
+        return MainWindow, window, event, pages, tab_signal
+
+    def test_close_event_disconnects_tabs_and_closes_pages(self):
+        MainWindow, window, event, pages, tab_signal = self._window()
 
         MainWindow.closeEvent(window, event)
 
-        coordinator.release_instrument_port.assert_called_once_with()
+        window.coordinator.release_instrument_port.assert_called_once_with()
         tab_signal.disconnect.assert_called_once_with(window._on_page_changed)
         for page in pages.values():
             page.close.assert_called_once_with()
         event.accept.assert_called_once_with()
 
-    def test_close_event_keeps_window_open_when_instrument_worker_will_not_stop(self):
-        from presentation.qt.main_window import MainWindow
-
-        controller = Mock()
-        controller.state.is_active = False
-        coordinator = Mock()
-        coordinator.instrument_worker_running.return_value = True
-        coordinator.stop_instrument_worker.return_value = False
-        window = SimpleNamespace(
-            measurement_controller=controller, coordinator=coordinator
+    def test_close_event_asks_only_once_before_stopping_everything(self):
+        MainWindow, window, event, _pages, _tab = self._window(
+            measurement_active=True, worker_running=True
         )
-        event = Mock()
-
-        from PySide6.QtWidgets import QMessageBox
 
         with patch(
-            "presentation.qt.main_window.QMessageBox.question",
-            return_value=QMessageBox.Yes,
+            "presentation.qt.main_window.QMessageBox.question", return_value=self.Yes
+        ) as question:
+            MainWindow.closeEvent(window, event)
+
+        # 确认只在开头做一次：此前的实现会在停掉测量后再问一遍，
+        # 用户第二次拒绝就会留下“测量已停、窗口还在”的半提交状态。
+        self.assertEqual(question.call_count, 1)
+        window.measurement_controller.shutdown.assert_called_once_with(timeout_ms=5000)
+        window.coordinator.stop_instrument_worker.assert_called_once_with(5000)
+        event.accept.assert_called_once_with()
+
+    def test_close_event_cancelled_confirmation_changes_nothing(self):
+        MainWindow, window, event, pages, _tab = self._window(
+            measurement_active=True, worker_running=True
+        )
+
+        with patch(
+            "presentation.qt.main_window.QMessageBox.question", return_value=self.No
         ):
             MainWindow.closeEvent(window, event)
 
-        coordinator.stop_instrument_worker.assert_called_once_with(5000)
+        window.measurement_controller.shutdown.assert_not_called()
+        window.coordinator.stop_instrument_worker.assert_not_called()
+        window.coordinator.release_instrument_port.assert_not_called()
+        for page in pages.values():
+            page.close.assert_not_called()
         event.ignore.assert_called_once_with()
         event.accept.assert_not_called()
+
+    def test_close_event_keeps_window_open_when_measurement_will_not_stop(self):
+        MainWindow, window, event, _pages, _tab = self._window(
+            measurement_active=True, shutdown_ok=False
+        )
+
+        with patch(
+            "presentation.qt.main_window.QMessageBox.question", return_value=self.Yes
+        ):
+            MainWindow.closeEvent(window, event)
+
+        event.ignore.assert_called_once_with()
+        event.accept.assert_not_called()
+        self.assertTrue(
+            any(
+                "未能在关闭期限内停止" in str(call.args[0])
+                for call in window.add_log_message.call_args_list
+            )
+        )
+
+    def test_close_event_keeps_window_open_when_instrument_worker_will_not_stop(self):
+        MainWindow, window, event, _pages, _tab = self._window(
+            worker_running=True, stop_ok=False
+        )
+
+        with patch(
+            "presentation.qt.main_window.QMessageBox.question", return_value=self.Yes
+        ):
+            MainWindow.closeEvent(window, event)
+
+        window.coordinator.stop_instrument_worker.assert_called_once_with(5000)
+        event.ignore.assert_called_once_with()
+        event.accept.assert_not_called()
+
+    def test_close_event_asks_before_leaving_unreleased_ports(self):
+        MainWindow, window, event, pages, _tab = self._window(
+            release_ok=False, unreleased=True
+        )
+
+        with patch(
+            "presentation.qt.main_window.QMessageBox.question",
+            side_effect=[self.No],
+        ) as question:
+            MainWindow.closeEvent(window, event)
+
+        self.assertEqual(question.call_count, 1)
+        event.ignore.assert_called_once_with()
+        event.accept.assert_not_called()
+        for page in pages.values():
+            page.close.assert_not_called()
+
+    def test_close_event_leaves_unreleased_ports_only_with_explicit_confirmation(self):
+        MainWindow, window, event, pages, _tab = self._window(
+            release_ok=False, unreleased=True
+        )
+
+        with patch(
+            "presentation.qt.main_window.QMessageBox.question", return_value=self.Yes
+        ):
+            MainWindow.closeEvent(window, event)
+
+        event.accept.assert_called_once_with()
+        for page in pages.values():
+            page.close.assert_called_once_with()
 
 
 class MainWindowAssemblyBoundaryTests(unittest.TestCase):
@@ -153,14 +253,20 @@ class MainWindowAssemblyBoundaryTests(unittest.TestCase):
         )
 
     def test_main_window_uses_the_coordinator_for_gui_state(self):
-        source = self.source
         for literal in (
             "ApplicationCoordinator(",
             "run_provider=self.coordinator.resolve_measurement_run",
             "config_path_provider=self.coordinator.measurement_config_path",
             "driver_mode_provider=self.coordinator.amplifier_driver_mode",
         ):
-            self.assertIn(literal, source)
+            self.assertIn(literal, self.source)
+
+    def test_main_window_does_not_read_config_widgets(self):
+        for widget in ("driver_mode_check", "freq_edit", "sg_address", "power_config_widgets"):
+            self.assertNotIn(
+                widget, self.source,
+                f"主窗口不得直接读取配置控件 {widget}；应使用配置页的窄接口",
+            )
 
 
 if __name__ == "__main__":

@@ -157,5 +157,44 @@ class PageContractTests(unittest.TestCase):
         self.assertEqual(progress.slots, [])
 
 
+class PageProgressCallbackSharingTests(unittest.TestCase):
+    """多个页面共享同一个窗口进度回调时，各自的连接必须互相独立。"""
+
+    def test_forwarder_gives_each_page_its_own_connection(self):
+        from presentation.qt.pages import _page_forwarder
+
+        progress = _Signal()
+        controller = _Controller(progress=progress)
+        received = []
+
+        def shared(value):
+            received.append(value)
+
+        class _ForwardingPage(_Page):
+            def _connect_controller_signals(self, controller):
+                self._connect_signal(
+                    controller.progress, _page_forwarder(self.shared_callback)
+                )
+
+        first, second = _ForwardingPage(), _ForwardingPage()
+        for page in (first, second):
+            page.shared_callback = shared
+            page.bind_controller(controller)
+
+        self.assertEqual(len(progress.slots), 2)
+        self.assertIsNot(progress.slots[0], progress.slots[1])
+
+        # 关闭第一个页面只能摘掉它自己的连接，第二个页面仍然收到进度。
+        first.close()
+        self.assertEqual(len(progress.slots), 1)
+        progress.slots[0](55)
+        self.assertEqual(received, [55])
+
+    def test_forwarder_of_none_stays_none(self):
+        from presentation.qt.pages import _page_forwarder
+
+        self.assertIsNone(_page_forwarder(None))
+
+
 if __name__ == "__main__":
     unittest.main()

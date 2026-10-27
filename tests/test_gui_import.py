@@ -12,6 +12,9 @@ def _coordinator(controller=None):
     from presentation.qt.application_coordinator import ApplicationCoordinator
 
     return ApplicationCoordinator(
+        log=lambda _message: None,
+        warn=lambda _title, _message: None,
+        error=lambda _message: None,
         gui_data_service=MagicMock(),
         controller=controller or MagicMock(),
     )
@@ -35,10 +38,22 @@ class GuiImportSmokeTests(unittest.TestCase):
 
             def close_all(self, *, close_rf=False):
                 self.close_calls.append(close_rf)
+                return []
 
         port = _Port()
-        close_instrument_port(port)
+        self.assertEqual(close_instrument_port(port), ())
         self.assertEqual(port.close_calls, [True])
+
+    def test_gui_composition_reports_structured_cleanup_errors(self):
+        from presentation.qt.application_coordinator import close_instrument_port
+
+        failure = RuntimeError("RF 未确认关闭")
+
+        class _Port:
+            def close_all(self, *, close_rf=False):
+                return [failure]
+
+        self.assertEqual(close_instrument_port(_Port()), (failure,))
 
     def test_gui_composition_falls_back_to_safe_shutdown(self):
         from presentation.qt.application_coordinator import close_instrument_port
@@ -51,8 +66,39 @@ class GuiImportSmokeTests(unittest.TestCase):
                 self.shutdown_calls += 1
 
         port = _Port()
-        close_instrument_port(port)
+        self.assertEqual(close_instrument_port(port), ())
         self.assertEqual(port.shutdown_calls, 1)
+
+    def test_close_all_takes_precedence_over_safe_shutdown(self):
+        from presentation.qt.application_coordinator import close_instrument_port
+
+        class _Port:
+            def __init__(self):
+                self.close_calls = 0
+                self.shutdown_calls = 0
+
+            def close_all(self, *, close_rf=False):
+                self.close_calls += 1
+                return []
+
+            def safe_shutdown(self):
+                self.shutdown_calls += 1
+
+        port = _Port()
+        close_instrument_port(port)
+        self.assertEqual((port.close_calls, port.shutdown_calls), (1, 0))
+
+    def test_unverifiable_close_result_is_treated_as_failure(self):
+        from presentation.qt.application_coordinator import close_instrument_port
+
+        class _Port:
+            def close_all(self, *, close_rf=False):
+                return object()
+
+        # 无法判定是否真的释放了资源时必须失败，而不是默认成功。
+        errors = close_instrument_port(_Port())
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], RuntimeError)
 
     def test_measurement_thread_cleanup_releases_port_reference(self):
         from presentation.qt.measurement_state import MeasurementKind

@@ -754,6 +754,59 @@ class ProductionDependencyTests(unittest.TestCase):
             "MainWindow 不得直接调用 app.gui_runtime 测量组装函数: " + ", ".join(sorted(calls)),
         )
 
+    def test_run_coordinator_talks_to_the_config_page_through_a_narrow_port(self):
+        """步骤 10：协调器不读控件，只依赖配置页的五个窄接口。"""
+        source = COORDINATOR_SOURCE.read_text(encoding="utf-8-sig")
+        tree = _tree(COORDINATOR_SOURCE)
+        for widget in (
+            "driver_mode_check",
+            "freq_edit",
+            "sg_address",
+            "power_config_widgets",
+            "power_assignment_widgets",
+            "widget_host",
+        ):
+            self.assertNotIn(
+                widget,
+                source,
+                f"协调器不得引用控件 {widget}；配置页应通过 ConfigurationPagePort 交互",
+            )
+
+        protocol = _class_node(tree, "ConfigurationPagePort")
+        members = {
+            node.name for node in protocol.body if isinstance(node, ast.FunctionDef)
+        }
+        self.assertEqual(
+            members,
+            {"validate", "build_config", "apply_config", "set_run_status", "driver_mode_requested"},
+            "配置页端口能力集合变化时必须同步更新协调器与页面，而不是放开断言",
+        )
+        page = _class_node(_tree(ROOT / "presentation" / "qt" / "config_page.py"), "ConfigPage")
+        page_methods = {
+            node.name for node in page.body if isinstance(node, ast.FunctionDef)
+        }
+        self.assertEqual(
+            members - page_methods,
+            set(),
+            "ConfigPage 必须实现配置页端口的全部能力",
+        )
+
+    def test_run_coordinator_requires_explicit_user_feedback_callbacks(self):
+        """失败路径不允许静默：日志/告警/错误回调必须显式注入。"""
+        coordinator = _class_node(_tree(COORDINATOR_SOURCE), "ApplicationCoordinator")
+        init = next(
+            node
+            for node in coordinator.body
+            if isinstance(node, ast.FunctionDef) and node.name == "__init__"
+        )
+        defaults = dict(zip((arg.arg for arg in init.args.kwonlyargs), init.args.kw_defaults))
+        for name in ("log", "warn", "error"):
+            self.assertIn(name, defaults, f"协调器缺少 {name} 回调参数")
+            self.assertIsNone(
+                defaults[name],
+                f"{name} 必须由调用方注入，默认静默会让失败路径丢消息",
+            )
+
     def test_main_window_measurement_state_writes_stay_within_legacy_baseline(self):
         writes = _main_window_measurement_writes(_tree(MAIN_WINDOW_SOURCE))
         added_writes = writes - LEGACY_MAIN_WINDOW_MEASUREMENT_WRITES

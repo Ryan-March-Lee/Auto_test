@@ -178,6 +178,19 @@ class PageDefinition:
     builder: Callable[[Any], Any]
 
 
+def _page_forwarder(callback: Any) -> Any:
+    """把共享回调包成页面私有的转发器。
+
+    Qt 的 ``signal.disconnect(callable)`` 会移除该可调用对象的**全部**连接，之后重复
+    断开还会打印 ``Failed to disconnect`` 警告。三个测量页面共享同一个窗口进度回调时，
+    任意页面关闭都会顺带摘掉其他页面的进度连接。每个页面用自己的转发器连接，生命周期
+    互不影响。
+    """
+    if callback is None:
+        return None
+    return lambda *args, **kwargs: callback(*args, **kwargs)
+
+
 def _build_cable_loss_page(context: PageContext) -> Any:
     from .cable_loss_page import CableLossPage
 
@@ -187,7 +200,7 @@ def _build_cable_loss_page(context: PageContext) -> Any:
         confirm_wiring=context.confirm_cable_loss,
         connection_dialog_factory=context.connection_dialog_factory,
         log_callback=context.log_callback,
-        progress_callback=context.progress_callback,
+        progress_callback=_page_forwarder(context.progress_callback),
         error_callback=context.error_callback,
     )
     page.bind_controller(context.controller)
@@ -206,7 +219,7 @@ def _build_driver_mapping_page(context: PageContext) -> Any:
         realtime_data_callback=context.driver_realtime_data_callback,
         clear_realtime_callback=context.clear_realtime_callback,
         log_callback=context.log_callback,
-        progress_callback=context.progress_callback,
+        progress_callback=_page_forwarder(context.progress_callback),
         error_callback=context.error_callback,
     )
     page.bind_controller(context.controller)
@@ -226,7 +239,7 @@ def _build_amplifier_page(context: PageContext) -> Any:
         realtime_data_callback=context.amplifier_realtime_data_callback,
         clear_realtime_callback=context.clear_realtime_callback,
         log_callback=context.log_callback,
-        progress_callback=context.progress_callback,
+        progress_callback=_page_forwarder(context.progress_callback),
         error_callback=context.error_callback,
     )
     page.bind_controller(context.controller)
@@ -256,6 +269,7 @@ __all__ = [
     "PageControllerBindingMixin",
     "BasePage",
     "PageDefinition",
+    "_page_forwarder",
     "PageContext",
     "PAGE_DEFINITIONS",
     "build_pages",

@@ -118,7 +118,6 @@ class MainWindow(QMainWindow):
             error=self.on_measurement_error,
             paths=self.paths,
             config_path=config_path,
-            widget_host=self,
             confirm_run_wiring=self._confirm_create_run_wiring,
         )
         self.measurement_controller.signals.thread_finished.connect(
@@ -151,35 +150,19 @@ class MainWindow(QMainWindow):
     def prepared_run(self):
         return self.coordinator.prepared_run
 
-    # ---- 页面数据（聊天上下文只通过这些只读视图取数据） ----
+    # ---- 页面数据（聊天上下文只通过这些只读视图取数据，写入口属于页面） ----
 
     @property
     def loaded_data(self):
         return self.visualization_page.loaded_data
 
-    @loaded_data.setter
-    def loaded_data(self, value):
-        self.visualization_page.loaded_data = value
-
     @property
     def frequency_list(self):
         return self.visualization_page.frequency_list
 
-    @frequency_list.setter
-    def frequency_list(self, value):
-        self.visualization_page.frequency_list = value
-
     @property
     def current_freq_index(self):
         return self.visualization_page.current_freq_index
-
-    @current_freq_index.setter
-    def current_freq_index(self, value):
-        self.visualization_page.current_freq_index = value
-
-    @property
-    def loaded_filename(self):
-        return self.visualization_page.loaded_filename
 
     @property
     def real_time_data(self):
@@ -192,18 +175,6 @@ class MainWindow(QMainWindow):
     @property
     def rt_current_freq_index(self):
         return self.coordinator.realtime_buffer.current_index
-
-    @rt_current_freq_index.setter
-    def rt_current_freq_index(self, value):
-        self.coordinator.realtime_buffer.current_index = value
-
-    @property
-    def rt_user_browsing(self):
-        return self.coordinator.realtime_buffer.user_browsing
-
-    @rt_user_browsing.setter
-    def rt_user_browsing(self, value):
-        self.coordinator.realtime_buffer.user_browsing = value
 
     # ---- 窗口组装 ----
 
@@ -250,8 +221,7 @@ class MainWindow(QMainWindow):
             connection_dialog_factory=lambda kind, parent: ConnectionDialog(kind, parent),
             plot_widget_factory=lambda _parent: RealTimePlotWidget(show_nav_buttons=True),
             log_callback=self.add_log_message,
-            progress_callback=lambda value: getattr(self, "progress_bar", None)
-            and self.progress_bar.setValue(value),
+            progress_callback=self._set_progress,
             error_callback=lambda message: self.on_measurement_error(message),
             driver_realtime_data_callback=self.coordinator.store_realtime_data,
             amplifier_realtime_data_callback=self.coordinator.store_realtime_data,
@@ -366,7 +336,7 @@ class MainWindow(QMainWindow):
 
     def _confirm_create_run_wiring(self, config) -> bool:
         """创建运行前确认现场接线，并把确认固化到即将冻结的配置中。"""
-        driver_enabled = self.config_page.driver_mode_check.isChecked()
+        driver_enabled = self.config_page.driver_mode_requested()
         diagram = "amplifier_test" if driver_enabled else "amplifier_test_no_driver"
         if ConnectionDialog(diagram, self).exec() != QDialog.Accepted:
             return False
@@ -412,7 +382,10 @@ class MainWindow(QMainWindow):
 
     def on_instrument_controller_ready(self, controller):
         """端口交接：协调器保存端口并注入 controller。"""
-        self.coordinator.accept_instrument_controller(controller)
+        if not self.coordinator.accept_instrument_controller(controller):
+            self.add_log_message(
+                "上一次连接的仪器清理未完成，已登记为未决清理；请现场确认后重试"
+            )
 
     def on_instrument_connected(self):
         """仪器连接完成"""
@@ -491,7 +464,7 @@ class MainWindow(QMainWindow):
     def update_amplifier_instruction_text(self):
         """根据驱动模式更新功放测试连接说明"""
         page = getattr(self, "config_page", None)
-        driver_enabled = page.driver_mode_check.isChecked() if page is not None else False
+        driver_enabled = page.driver_mode_requested() if page is not None else False
         if driver_enabled:
             instruction_html = """
             <h3>主功放测试连接说明:</h3>
@@ -518,6 +491,12 @@ class MainWindow(QMainWindow):
     def add_log_message(self, message: str):
         self.status_panel.add_log_message(message)
 
+    def _set_progress(self, value: int) -> None:
+        """把测量进度写到状态面板进度条；控件可能尚未创建。"""
+        progress_bar = getattr(self, "progress_bar", None)
+        if progress_bar is not None:
+            progress_bar.setValue(value)
+
     def update_status(self):
         self.status_panel.update_status()
 
@@ -527,30 +506,28 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "错误", error_message)
 
     def closeEvent(self, event):
-        """窗口关闭事件：测量、连接线程和端口都必须在关闭前收尾。"""
-        if self.measurement_controller.state.is_active:
-            reply = QMessageBox.question(
-                self, "退出", "测试正在进行中，确定要退出吗？",
-                QMessageBox.Yes | QMessageBox.No,
-            )
-            if reply != QMessageBox.Yes:
-                event.ignore()
-                return
-            if not self.measurement_controller.shutdown(timeout_ms=5000):
-                event.ignore()
-                return
-        if self.coordinator.instrument_worker_running():
-            reply = QMessageBox.question(
-                self, "退出", "测试正在进行中，确定要退出吗？",
-                QMessageBox.Yes | QMessageBox.No,
-            )
-            if reply != QMessageBox.Yes:
-                event.ignore()
-                return
-            if not self.coordinator.stop_instrument_worker(5000):
-                event.ignore()
-                return
+        """窗口关闭：先完成全部确认，再提交不可逆的停止与清理动作。
+
+        确认只在开头做一次：一旦用户同意退出，停止测量与连接线程就是已提交的
+        动作，不会在后续步骤里再被“取消退出”打断（否则会出现“测量已停、窗口还在”
+        的半提交状态）。之后只剩两类明确的失败询问：停止超时与清理未完成。
+        """
+        measurement_active = self.measurement_controller.state.is_active
+        worker_running = self.coordinator.instrument_worker_running()
+        if (measurement_active or worker_running) and not self._confirm_exit():
+            event.ignore()
+            return
+        if measurement_active and not self.measurement_controller.shutdown(timeout_ms=5000):
+            self.add_log_message("测量线程未能在关闭期限内停止；窗口保持打开")
+            event.ignore()
+            return
+        if worker_running and not self.coordinator.stop_instrument_worker(5000):
+            event.ignore()
+            return
         self.coordinator.release_instrument_port()
+        if self.coordinator.has_unreleased_ports() and not self._confirm_exit_with_unreleased_ports():
+            event.ignore()
+            return
         if hasattr(self, "tab_widget"):
             try:
                 self.tab_widget.currentChanged.disconnect(self._on_page_changed)
@@ -559,6 +536,25 @@ class MainWindow(QMainWindow):
         for page in getattr(self, "pages", {}).values():
             page.close()
         event.accept()
+
+    def _confirm_exit(self) -> bool:
+        """退出前的唯一确认点；返回 True 表示后续停止动作已获授权。"""
+        reply = QMessageBox.question(
+            self, "退出", "测试正在进行中，确定要退出吗？",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        return reply == QMessageBox.Yes
+
+    def _confirm_exit_with_unreleased_ports(self) -> bool:
+        """清理未完成时的二次确认：明确告知可能仍有 RF/电源输出。"""
+        reply = QMessageBox.question(
+            self,
+            "退出",
+            "部分仪器未能完成安全清理，可能仍有 RF 或电源输出。\n"
+            "确定仍然退出吗？退出后请现场手动确认仪器状态。",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        return reply == QMessageBox.Yes
 
 
 def build_application(argv=None, *, paths: PathService | None = None):

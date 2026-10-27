@@ -27,7 +27,12 @@ if TYPE_CHECKING:  # pragma: no cover - 仅用于类型标注，避免运行时�
 
 @dataclass(frozen=True)
 class MeasurementRequest:
-    """Common, fully assembled input for one measurement execution."""
+    """Common, fully assembled input for one measurement execution.
+
+    ``measurement_port`` 只是 :class:`instrument.ports.MeasurementInstrumentPort`
+    的类型契约；运行时能力校验由测量服务在构造阶段完成，请求 DTO 不导入具体
+    设备实现，也不把类型标注当作运行时保证。
+    """
 
     configuration: RunConfiguration
     context: RunContext

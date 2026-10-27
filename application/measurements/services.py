@@ -22,7 +22,9 @@ these symbols.
 
 from __future__ import annotations
 
+import math
 import time
+from collections.abc import Mapping as MappingABC
 from typing import Any, Callable, Mapping, Protocol
 
 import numpy as np
@@ -56,6 +58,12 @@ from instrument.ports import (
 
 
 class ResultRepository(Protocol):
+    """可选的结果仓储注入。
+
+    ``None`` 表示调用方负责持久化，服务只返回原始负载；提供该对象时，服务在
+    构造阶段校验它可写入，并把保存动作固定在构造结果里。
+    """
+
     def save(self, result: Any) -> Any:
         """Persist a service result and return the repository-specific value."""
 
@@ -110,6 +118,15 @@ class _Service:
     设备依赖是显式的 :class:`instrument.ports.MeasurementInstrumentPort`：构造
     阶段按 ``required_capabilities`` 校验能力，缺失时抛
     ``InstrumentCapabilityError``；服务不再通过 ``getattr`` 猜测缺失的可选属性。
+
+    依赖边界：
+
+    - 安全清理端口在 :class:`MeasurementSessionBinding` 构造时校验 ``cleanup()``；
+    - 结果持久化由提交通路决定：正式用例负责写入运行目录/仓储，服务收到
+      ``result_repository=None`` 时只返回原始负载；提供仓储时保存动作在构造阶段
+      一次解析，测量中途不再猜测；
+    - 运行 ID、配置、事件输出、睡眠函数、取消令牌和稳定延时都在构造阶段校验，
+      无效依赖不会等到硬件动作之后才暴露。
     """
 
     measurement_type = "measurement"
@@ -123,8 +140,12 @@ class _Service:
                  owns_measurement_port: bool = True):
         if not isinstance(run_id, str) or not run_id.strip():
             raise ValueError("测量服务必须提供有效运行 ID")
-        if settle_delay_s < 0:
-            raise ValueError("settle_delay_s 不能为负")
+        if not isinstance(config, MappingABC):
+            raise TypeError("测量服务配置必须是 Mapping")
+        if isinstance(settle_delay_s, bool) or not isinstance(settle_delay_s, (int, float)):
+            raise TypeError("settle_delay_s 必须是数值")
+        if not math.isfinite(settle_delay_s) or settle_delay_s < 0:
+            raise ValueError("settle_delay_s 必须是有限非负数")
         if cancellation_token is not None and not callable(
             getattr(cancellation_token, "raise_if_cancelled", None)
         ):

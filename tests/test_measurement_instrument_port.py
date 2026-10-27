@@ -144,17 +144,26 @@ SERVICE_CASES = (
 )
 
 
+def _inst_ctrl_capability(node):
+    """``self.inst_ctrl.<capability>`` → ``<capability>``，否则返回 None。"""
+    if (
+        isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Attribute)
+        and node.value.attr == "inst_ctrl"
+        and isinstance(node.value.value, ast.Name)
+        and node.value.value.id == "self"
+    ):
+        return node.attr
+    return None
+
+
 class MeasurementInstrumentPortTests(unittest.TestCase):
     def test_protocol_covers_every_capability_the_services_call(self):
         tree = ast.parse(SERVICES_SOURCE.read_text(encoding="utf-8-sig"))
         used = {
-            node.attr
+            capability
             for node in ast.walk(tree)
-            if isinstance(node, ast.Attribute)
-            and isinstance(node.value, ast.Attribute)
-            and node.value.attr == "inst_ctrl"
-            and isinstance(node.value.value, ast.Name)
-            and node.value.value.id == "self"
+            if (capability := _inst_ctrl_capability(node)) is not None
         }
         declared = (
             set(SIGNAL_MEASUREMENT_CAPABILITIES)
@@ -167,6 +176,36 @@ class MeasurementInstrumentPortTests(unittest.TestCase):
 
         self.assertEqual(used, declared, "服务调用的设备方法与声明的能力集合不一致")
         self.assertEqual(declared - protocol, set(), "MeasurementInstrumentPort 缺少设备方法")
+
+    def test_power_cleanup_uses_only_declared_capabilities(self):
+        tree = ast.parse(SERVICES_SOURCE.read_text(encoding="utf-8-sig"))
+        declared_by_service = {
+            "DriverPowerMappingService": (
+                SIGNAL_MEASUREMENT_CAPABILITIES + DRIVER_POWER_CAPABILITIES
+            ),
+            "AmplifierMeasurementService": (
+                SIGNAL_MEASUREMENT_CAPABILITIES + DUT_POWER_CAPABILITIES
+            ),
+        }
+        checked = 0
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef) or node.name not in declared_by_service:
+                continue
+            for call in ast.walk(node):
+                if not isinstance(call, ast.Call):
+                    continue
+                for keyword in call.keywords:
+                    if keyword.arg != "power_cleanup":
+                        continue
+                    capability = _inst_ctrl_capability(keyword.value)
+                    self.assertIsNotNone(
+                        capability,
+                        f"{node.name} 的 power_cleanup 必须来自已声明的设备能力",
+                    )
+                    self.assertIn(capability, declared_by_service[node.name])
+                    checked += 1
+
+        self.assertEqual(checked, 2, "应校验两个服务的电源清理能力")
 
     def test_full_instrument_satisfies_the_runtime_checkable_protocol(self):
         self.assertIsInstance(_FullInstrument(), MeasurementInstrumentPort)
@@ -251,6 +290,33 @@ class ServiceCapabilityValidationTests(unittest.TestCase):
                         **{keyword: object()},
                     )
 
+    def test_service_rejects_cleanup_port_without_cleanup_method(self):
+        for service_type, config, _capabilities in SERVICE_CASES:
+            with self.subTest(service=service_type.__name__):
+                instrument = _FullInstrument()
+                with self.assertRaisesRegex(ValueError, "cleanup"):
+                    _build(service_type, instrument, config, safety_cleanup=object())
+                self.assertEqual(instrument.operations, [], "清理端口校验不得触达硬件")
+
+    def test_service_rejects_non_mapping_config(self):
+        for service_type, _config, _capabilities in SERVICE_CASES:
+            with self.subTest(service=service_type.__name__):
+                instrument = _FullInstrument()
+                with self.assertRaises(TypeError):
+                    _build(service_type, instrument, object())
+                self.assertEqual(instrument.operations, [], "配置校验不得触达硬件")
+
+    def test_service_rejects_invalid_settle_delay(self):
+        for value in (-1, float("nan"), float("inf"), "5", True):
+            with self.subTest(settle_delay_s=value):
+                with self.assertRaises((TypeError, ValueError)):
+                    _build(
+                        CableLossService,
+                        _FullInstrument(),
+                        CABLE_LOSS_CONFIG,
+                        settle_delay_s=value,
+                    )
+
 
 class ExplicitDependencyInjectionTests(unittest.TestCase):
     def test_service_keeps_injected_sleep_and_result_saver(self):
@@ -269,6 +335,29 @@ class ExplicitDependencyInjectionTests(unittest.TestCase):
 
         self.assertEqual(deltas, [1.5])
         self.assertEqual(saved, [{"ok": True}])
+
+    def test_result_repository_boundary_is_explicit(self):
+        class _Repository:
+            def __init__(self):
+                self.calls = []
+
+            def save(self, result):
+                self.calls.append(result)
+                return {"saved": result}
+
+        payload = {"cable_losses": {}}
+        caller_owned = _build(CableLossService, _FullInstrument(), CABLE_LOSS_CONFIG)
+        self.assertIs(caller_owned._save(payload), payload, "未注入仓储时服务不得自行持久化")
+
+        repository = _Repository()
+        service_owned = _build(
+            CableLossService,
+            _FullInstrument(),
+            CABLE_LOSS_CONFIG,
+            result_repository=repository,
+        )
+        self.assertEqual(service_owned._save(payload), {"saved": payload})
+        self.assertEqual(repository.calls, [payload])
 
     def test_service_uses_module_sleep_when_none_is_injected(self):
         service = _build(CableLossService, _FullInstrument(), CABLE_LOSS_CONFIG)

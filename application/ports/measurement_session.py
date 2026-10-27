@@ -113,7 +113,11 @@ class MeasurementSessionPort(Protocol):
 
 @dataclass(frozen=True)
 class MeasurementSessionBinding:
-    """把测量端口和安全清理端口绑定为一个测量会话。"""
+    """把测量端口和安全清理端口绑定为一个测量会话。
+
+    绑定在构造阶段校验两个端口：清理端口必须提供可调用的 ``cleanup()``，避免
+    测量动作执行后才在 ``finally`` 清理时才发现注入对象无效。
+    """
 
     instrument: MeasurementInstrumentPort
     safety_cleanup: SafetyCleanupPort
@@ -123,6 +127,8 @@ class MeasurementSessionBinding:
             raise ValueError("测量会话必须包含 instrument")
         if self.safety_cleanup is None:
             raise ValueError("测量会话必须包含 safety_cleanup")
+        if not callable(getattr(self.safety_cleanup, "cleanup", None)):
+            raise ValueError("测量会话的 safety_cleanup 必须提供 cleanup() 方法")
 
     def cleanup(
         self,

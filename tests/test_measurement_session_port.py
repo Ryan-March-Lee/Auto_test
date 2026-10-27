@@ -48,6 +48,12 @@ class MeasurementSessionBindingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "safety_cleanup"):
             MeasurementSessionBinding(instrument=_Instrument(), safety_cleanup=None)
 
+    def test_binding_requires_a_callable_cleanup_port(self):
+        # 清理是安全关键依赖：无 cleanup() 的对象必须在构造阶段被拒绝，
+        # 不能等到测量动作结束、进入 finally 清理时才失败。
+        with self.assertRaisesRegex(ValueError, "cleanup"):
+            MeasurementSessionBinding(instrument=_Instrument(), safety_cleanup=object())
+
     def test_binding_satisfies_the_session_port_and_delegates_cleanup(self):
         cleanup = NullSafetyCleanup()
         instrument = _Instrument()

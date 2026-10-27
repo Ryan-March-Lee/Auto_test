@@ -1,18 +1,14 @@
 """步骤 16 门禁：剩余死代码已退役，发布清单与文档同步收口。
 
-本文件取代此前按接口逐项冻结“兼容层删除条件”的旧门禁。兼容层已全部删除，因此这里只固定
-删除后的现行状态（[技术债分阶段重构计划](../docs/技术债分阶段重构计划.md) **步骤 16：删除
-剩余死代码和更新文档**）：
+兼容层已全部删除，因此这里只固定删除后的现行状态（技术债步骤 16：删除剩余死代码和更新文档）：
 
 - 五个根目录纯再导出模块不存在、无字节码残留、在任何进程都无法导入；
 - 生产可执行代码与测试都不再导入这些模块（静态导入与常量字符串动态导入一并检查）；
 - 旧兼容接口标识不再以名字或字符串属性访问的形式出现在生产代码中；
 - 发布清单不再登记 `rollback` / `compatibility` 文件列表；
-- 正式替代入口可导入且导出预期符号，README、正式 API 清单与发布说明与实际目录结构一致。
+- 正式替代入口可导入且导出预期符号，README 与正式 API 清单与实际目录结构一致。
 
-历史执行记录（步骤 A 至步骤 E 的现场证据）保留在
-[兼容层弃用与删除发布说明](../docs/兼容层弃用与删除发布说明.md)，但不作为运行时兼容机制：
-门禁只约束可执行代码，注释、docstring 与历史文档中保留的旧名称属于审计证据。
+门禁只约束可执行代码；注释、docstring 与 git 历史中保留的旧名称属于审计证据。
 """
 
 import ast
@@ -24,10 +20,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).parents[1]
-RELEASE_NOTES = ROOT / "docs" / "兼容层弃用与删除发布说明.md"
 INVENTORY_DOC = ROOT / "docs" / "正式API目录清单.md"
 README = ROOT / "README.md"
-GUIDE = ROOT / "docs" / "测试运行目录与配置结果解耦重构指南.md"
 RETIREMENT_STEP = "步骤 16"
 
 # 步骤 16 整文件退役的根目录纯再导出模块（相对路径，导入名同名）。
@@ -470,23 +464,6 @@ class DocumentationConsistencyTests(unittest.TestCase):
             row = f"| `{module}` | `{module}.py` | 已删除 | {RETIREMENT_STEP} |"
             with self.subTest(module=module):
                 self.assertIn(row, document)
-
-    def test_release_notes_record_the_step_16_retirement(self):
-        document = RELEASE_NOTES.read_text(encoding="utf-8")
-        for marker in (
-            "### 3.9 纯再导出模块（步骤 16 已退役）",
-            "步骤 16 执行记录",
-            "不再登记兼容/回滚文件列表",
-        ):
-            with self.subTest(marker=marker):
-                self.assertIn(marker, document)
-        for module in RETIRED_MODULE_NAMES:
-            with self.subTest(module=module):
-                self.assertIn(module, document)
-
-    def test_guide_records_step_16(self):
-        guide = GUIDE.read_text(encoding="utf-8")
-        self.assertIn("步骤 16 已整文件退役", guide)
 
 
 if __name__ == "__main__":

@@ -168,7 +168,8 @@ DUT 与驱动功放占用同一通道，都会在连接前报错。
 普通测试只执行离线和仿真路径，不会初始化真实设备。Hardware smoke 必须使用
 `run_hardware_smoke.ps1`，同时满足配置位于 `hardware/`、明确用户确认、空载确认、
 `HARDWARE_SMOKE_ENABLED=1` 和 `-ConfirmHardwareSmoke` 等独立安全门禁；它不属于普通
-测试发现范围，也不能用离线测试替代现场验收。
+测试发现范围，也不能用离线测试替代现场验收。真实 Hardware Smoke 与三类硬件测量的现场
+操作顺序与判定标准见[真实 Hardware Smoke 现场验收记录](docs/重构收尾与真实HardwareSmoke验收.md)。
 
 发布清单使用 `release_manifest.py` 生成。可通过 `AUTO_TEST_RUN_ID` 固定运行标识，
 使配置快照、结果快照、清理记录和现场报告能够关联到同一次运行。清单同时记录
@@ -286,8 +287,8 @@ pa_auto_test/
 
 正式公共 API、正式内部模块和旧模块清单记录在 `docs/正式API目录清单.md`；正式 production
 code 只能导入登记的模块路径，旧模块禁止新增引用，由 `tests/test_public_api_inventory.py`
-静态门禁固定。兼容层的弃用、删除条件、迁移方式与历史执行证据保留在
-`docs/兼容层弃用与删除发布说明.md`，仅作审计记录，不描述现行运行时机制。
+静态门禁固定。兼容层已全部删除；历史弃用与删除过程的审计证据见 git 提交历史，不描述现行
+运行时机制。
 
 现行架构要点：
 

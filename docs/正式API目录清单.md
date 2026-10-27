@@ -121,6 +121,7 @@
 | `domain.configuration.types` | `ConfigIssue`、`ConfigValidationResult` |
 | `domain.run.models` | `FileReference`、`RunManifest`、`RunStatus`、`StageRecord`、`StageStatus`、`default_manifest`、`generate_run_id`、`validate_run_id`、`utc_now_iso` |
 | `domain.measurement.calculations` | `calculate_cable_losses`、`compensate_amplifier_output_power`、`compensate_driver_output_power`、`interpolate_driver_output_power`、`calculate_dut_input_power`、`calculate_gain`、`calculate_efficiency`、`calculate_compression_result` |
+| `domain.measurement.values` | `MeasurementValueError`、`MeasurementUnitError`、`Frequency`、`Decibels`、`PowerDbm`、`PowerWatt`、`Percent`、`CableLossProfile`、`CableLossTable`、`DriverOutputTable`、`CompressionPoint`、`CompressionResult` |
 
 正式结果读取的唯一入口是 `application.dto.measurement_results`（见第 4 节）；领域层不再
 定义结果模型或结果读取模块。
@@ -315,13 +316,14 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 
 ## 8. 步骤 1 验收与现行清单规模
 
-- 正式公共 API：46 个模块路径、174 个公开名称，已在本文与测试中固定（步骤 5 新增
+- 正式公共 API：49 个模块路径、200 个公开名称，已在本文与测试中固定（步骤 5 新增
   `infrastructure.config.validation.validate_official_config`，用于校验已解析的正式配置文档；
-  步骤 6 收敛结果 DTO；步骤 7 新增 `application.ports.measurement_session`）。
-- 正式内部模块：35 个路径已登记，公共与内部边界不重叠（步骤 7 补登记
+  步骤 6 收敛结果 DTO；步骤 7 新增 `application.ports.measurement_session`；步骤 13 新增
+  `domain.measurement.values` 的测量值对象）。
+- 正式内部模块：40 个路径已登记，公共与内部边界不重叠（步骤 7 补登记
   `instrument.safety`：安全标记的显式签名判定是跨模块契约）。
-- 旧模块：31 个条目（21 个根模块、10 个正式包内实现），状态与工作树一致。
-- 存量引用基线：2 个旧模块、2 处文件引用，只减不增。
+- 旧模块：29 个条目（21 个根模块、8 个正式包内实现），状态与工作树一致。
+- 存量引用基线：空（步骤 4 与步骤 9 已把旧模块引用清零，新增引用直接失败）。
 - 跨层依赖基线：`application` → `instrument.flow` 已由步骤 7 清零（仅保留安全清理端口）。
 - 动态导入白名单：1 处（`launcher.py` 的 `check_packages` 依赖探测）。
 - 本步骤未删除或改写任何旧实现文件。

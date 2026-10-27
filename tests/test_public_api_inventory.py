@@ -234,6 +234,20 @@ FORMAL_API = {
         "calculate_efficiency",
         "calculate_compression_result",
     ),
+    "domain.measurement.values": (
+        "MeasurementValueError",
+        "MeasurementUnitError",
+        "Frequency",
+        "Decibels",
+        "PowerDbm",
+        "PowerWatt",
+        "Percent",
+        "CableLossProfile",
+        "CableLossTable",
+        "DriverOutputTable",
+        "CompressionPoint",
+        "CompressionResult",
+    ),
     # 结果读取的唯一正式入口是 application.dto.measurement_results（见 3.2 跨层 DTO）。
     # 基础设施适配器
     "infrastructure.config.json_io": ("load_json_object", "load_config_file"),

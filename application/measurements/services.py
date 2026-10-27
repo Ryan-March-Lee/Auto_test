@@ -18,6 +18,11 @@ these symbols.
 把具体设备安全流程适配成 ``SafetyCleanupPort``。application 不导入
 ``instrument.flow`` 的具体实现；每次清理都会产生结构化 ``CleanupRecord``，
 清理失败时以 ``SafetyCleanupError`` 携带记录抛出，作为明确的运行终态。
+
+单位边界：服务只把配置与输入文档当作**字符串/JSON 边界**，在构造或每次扫描前
+转换成 :mod:`domain.measurement.values` 的值对象（``Frequency`` / ``Decibels`` /
+``PowerDbm`` / ``PowerWatt`` / ``Percent``），计算完成后只把数值写回结果文档，
+不再向纯计算函数传递裸浮点数。
 """
 
 from __future__ import annotations
@@ -47,6 +52,15 @@ from domain.measurement.calculations import (
     calculate_gain,
     compensate_amplifier_output_power,
     compensate_driver_output_power,
+)
+from domain.measurement.values import (
+    CableLossTable,
+    Decibels,
+    DriverOutputTable,
+    Frequency,
+    Percent,
+    PowerDbm,
+    PowerWatt,
 )
 from instrument.ports import (
     DRIVER_POWER_CAPABILITIES,
@@ -107,6 +121,20 @@ def _require_result_saver(
     if callable(repository):
         return repository
     raise TypeError("result_repository 必须提供 save(result) 方法或本身可调用")
+
+
+def _loss_table(loss_data: Any) -> CableLossTable:
+    """把线损输入文档（``{"cable_losses": {频率键: {...}}}``）解析为值对象表。
+
+    解析发生在测量服务构造阶段：缺频率、未知线缆字段或非数值会在任何设备动作之前
+    失败，不再等到扫描中途查表才暴露。
+    """
+    if not isinstance(loss_data, MappingABC):
+        raise TypeError("线损输入必须是 Mapping")
+    cable_losses = loss_data.get("cable_losses")
+    if not isinstance(cable_losses, MappingABC):
+        raise TypeError("线损输入缺少 cable_losses 子对象")
+    return CableLossTable.from_mapping(cable_losses, source="线损输入")
 
 
 class _Service:
@@ -211,8 +239,8 @@ class CableLossService(_Service):
 
     def __init__(self, config: Mapping[str, Any], instrument: MeasurementInstrumentPort, **kwargs: Any):
         super().__init__(config, instrument, **kwargs)
-        self.attenuator_value = float(config["attenuator"]["type"].replace("dB", ""))
-        self._path1_losses: dict[Any, float] = {}
+        self.attenuator_value = Decibels.parse(config["attenuator"]["type"])
+        self._path1_losses: dict[float, float] = {}
 
     def measure_path_loss(self, frequency: float) -> float:
         self._check_cancelled()
@@ -229,7 +257,7 @@ class CableLossService(_Service):
             self.inst_ctrl.rf_output_off()
 
     @property
-    def path1_losses(self) -> dict[Any, float]:
+    def path1_losses(self) -> dict[float, float]:
         """Return the path-1 measurements collected so far."""
         return dict(self._path1_losses)
 
@@ -238,27 +266,32 @@ class CableLossService(_Service):
         return self._cleanup()
 
     def run(self, *, path2_confirmed: bool = True) -> dict[str, Any]:
-        frequencies = self.config["test_frequencies"]
-        path1: dict[Any, float] = dict(self._path1_losses)
-        path2: dict[Any, float] = {}
+        frequencies = tuple(
+            Frequency.from_ghz(value) for value in self.config["test_frequencies"]
+        )
+        path1: dict[float, float] = dict(self._path1_losses)
+        path2: dict[float, float] = {}
         waiting_for_path2 = False
         try:
             if not path1:
                 _publish(self.event_sink, CheckpointEvent(self.run_id, checkpoint="path1", prompt="请连接路径1"))
                 for index, frequency in enumerate(frequencies):
-                    path1[frequency] = self.measure_path_loss(frequency)
+                    path1[frequency.ghz] = self.measure_path_loss(frequency.ghz)
+                    profile = calculate_cable_losses(
+                        Decibels(path1[frequency.ghz]),
+                        Decibels(path1[frequency.ghz]),
+                        self.attenuator_value,
+                    )
                     _publish(
                         self.event_sink,
                         RealtimeDataEvent(
                             self.run_id,
                             measurement=self.measurement_type,
                             data={
-                                "frequency": frequency,
+                                "frequency": frequency.ghz,
                                 "path": 1,
-                                "path1_loss": path1[frequency],
-                                "cable_losses": calculate_cable_losses(
-                                    path1[frequency], path1[frequency], self.attenuator_value
-                                ),
+                                "path1_loss": path1[frequency.ghz],
+                                "cable_losses": profile.to_mapping(),
                             },
                         ),
                     )
@@ -272,28 +305,39 @@ class CableLossService(_Service):
             # 继续运行时不能再次发布检查点，否则GUI会把同一个确认事件
             # 当成新的弹窗请求，而路径2测量已经开始执行。
             for index, frequency in enumerate(frequencies):
-                path2[frequency] = self.measure_path_loss(frequency)
+                path2[frequency.ghz] = self.measure_path_loss(frequency.ghz)
+                profile = calculate_cable_losses(
+                    Decibels(path1[frequency.ghz]),
+                    Decibels(path2[frequency.ghz]),
+                    self.attenuator_value,
+                )
                 _publish(
                     self.event_sink,
                     RealtimeDataEvent(
                         self.run_id,
                         measurement=self.measurement_type,
                         data={
-                            "frequency": frequency,
+                            "frequency": frequency.ghz,
                             "path": 2,
-                            "path1_loss": path1[frequency],
-                            "path2_loss": path2[frequency],
-                            "cable_losses": calculate_cable_losses(
-                                path1[frequency], path2[frequency], self.attenuator_value
-                            ),
+                            "path1_loss": path1[frequency.ghz],
+                            "path2_loss": path2[frequency.ghz],
+                            "cable_losses": profile.to_mapping(),
                         },
                     ),
                 )
                 self._progress(0.5 + (index + 1) / (2 * len(frequencies)), "path2")
-            losses = {frequency: calculate_cable_losses(path1[frequency], path2[frequency], self.attenuator_value)
-                      for frequency in frequencies}
-            result = {"attenuator_value": self.attenuator_value,
-                      "cable_losses": {str(key): value for key, value in losses.items()}}
+            losses = CableLossTable(
+                {
+                    frequency: calculate_cable_losses(
+                        Decibels(path1[frequency.ghz]),
+                        Decibels(path2[frequency.ghz]),
+                        self.attenuator_value,
+                    )
+                    for frequency in frequencies
+                }
+            )
+            result = {"attenuator_value": self.attenuator_value.db,
+                      "cable_losses": losses.to_document()}
             self._save(result)
             self._progress(1.0, "complete")
             return result
@@ -311,7 +355,9 @@ class DriverPowerMappingService(_Service):
                  loss_data: Mapping[str, Any], **kwargs: Any):
         super().__init__(config, instrument, **kwargs)
         self.loss_data = loss_data
-        self.attenuator_value = float(config["attenuator"]["type"].replace("dB", ""))
+        # 输入文档在构造阶段收敛为值对象：缺失频率、未知字段或非数值在硬件动作前失败。
+        self.loss_table = _loss_table(loss_data)
+        self.attenuator_value = Decibels.parse(config["attenuator"]["type"])
 
     @classmethod
     def required_capabilities(cls, config: Mapping[str, Any]) -> tuple[str, ...]:
@@ -322,12 +368,14 @@ class DriverPowerMappingService(_Service):
         try:
             self.inst_ctrl.setup_driver_amplifier_power()
             self.inst_ctrl.power_on_driver()
-            frequencies = self.config["test_frequencies"]
+            frequencies = tuple(
+                Frequency.from_ghz(value) for value in self.config["test_frequencies"]
+            )
             for frequency_index, frequency in enumerate(frequencies):
                 self._check_cancelled()
                 self.inst_ctrl.set_power(-40)
-                self.inst_ctrl.set_frequency(frequency)
-                self.inst_ctrl.set_center_frequency(frequency)
+                self.inst_ctrl.set_frequency(frequency.ghz)
+                self.inst_ctrl.set_center_frequency(frequency.ghz)
                 self.inst_ctrl.set_span(10)
                 values: dict[str, float] = {}
                 points = np.arange(self.config["signal_source"]["start_power"],
@@ -340,7 +388,12 @@ class DriverPowerMappingService(_Service):
                         self.inst_ctrl.set_power(input_power)
                         self.sleep_fn(self.settle_delay_s)
                         raw = self.inst_ctrl.measure_power_with_average()
-                        actual = compensate_driver_output_power(raw, frequency, self.loss_data["cable_losses"], self.attenuator_value)
+                        actual = compensate_driver_output_power(
+                            PowerDbm(raw),
+                            frequency,
+                            self.loss_table,
+                            self.attenuator_value,
+                        ).dbm
                         values[str(input_power)] = actual
                         sweep_data = {
                             "input_power_sg": [float(key) for key in values],
@@ -348,12 +401,12 @@ class DriverPowerMappingService(_Service):
                             "gain": [output - float(key) for key, output in values.items()],
                         }
                         _publish(self.event_sink, RealtimeDataEvent(self.run_id, measurement=self.measurement_type,
-                            data={"frequency": frequency, "sweep_data": sweep_data,
+                            data={"frequency": frequency.ghz, "sweep_data": sweep_data,
                                   "current_point": {"input_power": input_power, "output_power": actual}}))
                         self._progress((frequency_index + (point_index + 1) / len(points)) / len(frequencies), "scan")
                 finally:
                     self.inst_ctrl.rf_output_off()
-                mapping[str(frequency)] = values
+                mapping[frequency.key] = values
             result = {"power_mapping": mapping}
             self._save(result)
             return result
@@ -372,6 +425,13 @@ class AmplifierMeasurementService(_Service):
         super().__init__(config, instrument, **kwargs)
         self.loss_data = loss_data
         self.driver_mapping = driver_mapping
+        # 校准输入在构造阶段收敛为值对象，缺字段或错误单位不会等到扫描中途才暴露。
+        self.loss_table = _loss_table(loss_data)
+        self.driver_table = (
+            DriverOutputTable.from_mapping(driver_mapping, source="驱动映射输入")
+            if driver_mapping
+            else None
+        )
 
     @classmethod
     def required_capabilities(cls, config: Mapping[str, Any]) -> tuple[str, ...]:
@@ -385,7 +445,9 @@ class AmplifierMeasurementService(_Service):
 
     def perform_power_sweep(self, frequency: float) -> dict[str, Any]:
         compression_type = self.config["compression_point"]["type"]
-        compression_value = float(compression_type.replace("dB", ""))
+        compression_value = Decibels.parse(compression_type)
+        attenuator_value = Decibels.parse(self.config["attenuator"]["type"])
+        frequency_value = Frequency.from_ghz(frequency)
         maximum = self.config.get("dut_config", {}).get("max_input_power", float("inf"))
         self.inst_ctrl.set_power(-40)
         self.inst_ctrl.set_frequency(frequency)
@@ -401,10 +463,15 @@ class AmplifierMeasurementService(_Service):
         try:
             for index, sg_power in enumerate(points):
                 self._check_cancelled()
-                dut_input = calculate_dut_input_power(sg_power, frequency, self.loss_data["cable_losses"], self.driver_mapping)
-                if dut_input > maximum:
+                dut_input = calculate_dut_input_power(
+                    PowerDbm(sg_power),
+                    frequency_value,
+                    self.loss_table,
+                    self.driver_table,
+                )
+                if dut_input.dbm > maximum:
                     self._message(
-                        f"DUT 输入保护触发: {frequency} GHz, {dut_input:.2f} dBm > {maximum:.2f} dBm"
+                        f"DUT 输入保护触发: {frequency} GHz, {dut_input.dbm:.2f} dBm > {maximum:.2f} dBm"
                     )
                     _publish(
                         self.event_sink,
@@ -414,8 +481,12 @@ class AmplifierMeasurementService(_Service):
                 self.inst_ctrl.set_power(sg_power)
                 self.sleep_fn(self.settle_delay_s)
                 raw = self.inst_ctrl.measure_power_with_average()
-                attenuator = float(self.config["attenuator"]["type"].replace("dB", ""))
-                output = compensate_amplifier_output_power(raw, frequency, self.loss_data["cable_losses"], attenuator)
+                output = compensate_amplifier_output_power(
+                    PowerDbm(raw),
+                    frequency_value,
+                    self.loss_table,
+                    attenuator_value,
+                )
                 voltage, current, dc_power = {}, {}, 0.0
                 for supply_name, info in supplies.items():
                     for channel in info["channel"]:
@@ -425,26 +496,39 @@ class AmplifierMeasurementService(_Service):
                         voltage[f"{supply_name}_{channel}"] = v
                         current[f"{supply_name}_{channel}"] = i
                 gain = calculate_gain(output, dut_input)
-                data["sg_power"].append(sg_power); data["input_power_dut"].append(dut_input)
-                data["output_power_dut"].append(output); data["gain"].append(gain)
+                efficiency = calculate_efficiency(output, PowerWatt(dc_power))
+                data["sg_power"].append(float(sg_power))
+                data["input_power_dut"].append(dut_input.dbm)
+                data["output_power_dut"].append(output.dbm)
+                data["gain"].append(gain.db)
                 data["voltages"].append(voltage); data["currents"].append(current)
-                data["dc_power"].append(dc_power); data["efficiency"].append(calculate_efficiency(output, dc_power))
+                data["dc_power"].append(dc_power); data["efficiency"].append(efficiency.percent)
                 _publish(self.event_sink, RealtimeDataEvent(self.run_id, measurement=self.measurement_type,
                     data={"frequency": frequency, "sweep_data": {key: list(value) for key, value in data.items()},
-                          "current_point": {"sg_power": sg_power, "dut_input_power": dut_input,
-                                            "output_power": output, "gain": gain,
+                          "current_point": {"sg_power": sg_power, "dut_input_power": dut_input.dbm,
+                                            "output_power": output.dbm, "gain": gain.db,
                                             "efficiency": data["efficiency"][-1],
                                             "dc_power": dc_power}}))
                 self._progress((index + 1) / max(len(points), 1), "scan")
-                if index >= 3 and calculate_gain(np.mean(data["gain"][:3]), gain) >= compression_value:
+                if index >= 3 and (
+                    Decibels(float(np.mean(data["gain"][:3]))) - gain
+                ).db >= compression_value.db:
                     break
         finally:
             self.inst_ctrl.rf_output_off()
-        result = calculate_compression_result(data["gain"], data["input_power_dut"], data["output_power_dut"],
-            data["efficiency"], data["sg_power"], compression_value, small_gain_points=3)
-        return {"compression_type": compression_type, "compression_point": result["compression_point"],
-                "small_signal_gain": result["small_signal_gain"], "sweep_data": data,
-                "compression_achieved": result["compression_achieved"]}
+        result = calculate_compression_result(
+            [Decibels(value) for value in data["gain"]],
+            [PowerDbm(value) for value in data["input_power_dut"]],
+            [PowerDbm(value) for value in data["output_power_dut"]],
+            [Percent(value) for value in data["efficiency"]],
+            [PowerDbm(value) for value in data["sg_power"]],
+            compression_value,
+            small_gain_points=3,
+        )
+        return {"compression_type": compression_type,
+                "compression_point": result.compression_point.to_mapping(),
+                "small_signal_gain": result.small_signal_gain.db, "sweep_data": data,
+                "compression_achieved": result.compression_achieved}
 
     def run(self) -> dict[str, Any]:
         results: dict[str, Any] = {}
@@ -456,7 +540,7 @@ class AmplifierMeasurementService(_Service):
             self.sleep_fn(2)
             for frequency in self.config["test_frequencies"]:
                 self._check_cancelled()
-                results[str(frequency)] = self.perform_power_sweep(frequency)
+                results[Frequency.from_ghz(frequency).key] = self.perform_power_sweep(frequency)
             result = {"results": results, "configuration_snapshot": self.config}
             self._save(result)
             return result

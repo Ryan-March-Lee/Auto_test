@@ -21,6 +21,7 @@ from pathlib import Path
 from application.inputs import ResultInputReader
 from application.run_stages import RunStageRecorder
 from application.ports.gui_data_service import RESULT_SOURCE_RUN
+from domain.measurement.values import Decibels
 from domain.run.models import CABLE_LOSS_INPUT_PATH, STAGE_CABLE_LOSS
 from infrastructure.filesystem.paths import PathService
 from infrastructure.gui_data_service import ResultQueryAdapter
@@ -125,7 +126,7 @@ class HistoryIsolationTests(unittest.TestCase):
 
         self.assertIsInstance(result, CableLossMeasurementResult)
         self.assertEqual(result.run_id, RUN_ID)
-        self.assertEqual(result.points[0].cable_losses["cable2"], 2.0)
+        self.assertEqual(result.points[0].cable_losses.cable2, Decibels(2.0))
 
     def test_run_manifest_input_path_stays_inside_the_current_run(self):
         """阶段输入路径始终归属于当前运行目录，不受更新的全局副本影响。

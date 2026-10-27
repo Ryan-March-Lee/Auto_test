@@ -951,6 +951,7 @@ class Step6RetirementTests(unittest.TestCase):
             DriverPowerMappingMeasurementResult,
             measurement_result_from_document,
         )
+        from domain.measurement.values import Decibels
 
         cable = CableLossMeasurementResult.from_service_payload(
             {
@@ -960,7 +961,8 @@ class Step6RetirementTests(unittest.TestCase):
             },
             run_id="run-cable",
         )
-        self.assertEqual(cable.points[0].cable_losses["cable1"], 1.5)
+        self.assertEqual(cable.points[0].cable_losses.cable1, Decibels(1.5))
+        self.assertEqual(cable.points[0].cable_losses.to_mapping()["total_path1"], 31.5)
         self.assertEqual(cable.status.value, "waiting_for_continue")
 
         driver = DriverPowerMappingMeasurementResult.from_service_payload(

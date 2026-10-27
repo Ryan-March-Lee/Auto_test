@@ -21,6 +21,7 @@ from application.dto import (
     MeasurementType,
     measurement_result_from_document,
 )
+from domain.measurement.values import Decibels
 
 
 def _cable_document(**overrides):
@@ -85,7 +86,7 @@ class FormalResultDocumentTests(unittest.TestCase):
         self.assertIs(result.status, MeasurementStatus.COMPLETED)
         self.assertEqual(len(result.points), 1)
         self.assertEqual(result.points[0].frequency_ghz, "1.0")
-        self.assertEqual(result.points[0].cable_losses["cable1"], 1.0)
+        self.assertEqual(result.points[0].cable_losses.cable1, Decibels(1.0))
         self.assertEqual(result.point_count, 1)
 
     def test_driver_mapping_document_becomes_typed_points(self):

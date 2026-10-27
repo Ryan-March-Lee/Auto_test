@@ -245,7 +245,10 @@ class CableLossPage(PageControllerBindingMixin, QWidget):
         elif isinstance(value, CableLossMeasurementResult):
             for row in value.points:
                 self.update_realtime(
-                    {"frequency": row.frequency_ghz, "cable_losses": row.cable_losses}
+                    {
+                        "frequency": row.frequency_ghz,
+                        "cable_losses": row.cable_losses.to_mapping(),
+                    }
                 )
         else:
             self._error_callback("线损测量结果不是正式结果模型，无法显示")

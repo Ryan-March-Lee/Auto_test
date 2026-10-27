@@ -14,6 +14,13 @@ from app.cancellation import CancellationToken, MeasurementCancelled
 from application.dto import AmplifierMeasurementRequest, AmplifierMeasurementResult, MeasurementResult
 from application.measurements.services import AmplifierMeasurementService
 from application.ports.measurement_session import CleanupRecord
+from domain.measurement.values import (
+    CableLossTable,
+    Decibels,
+    DriverOutputTable,
+    Frequency,
+    PowerDbm,
+)
 from domain.run.models import (
     AMPLIFIER_RESULT_PATH,
     STAGE_AMPLIFIER,
@@ -116,13 +123,18 @@ class AmplifierMeasurementUseCase:
         self._token.request_emergency_stop(reason="紧急停止")
 
     def calculate_actual_power(self, frequency: float, measured_power: float) -> float:
-        attenuator = float(self.config["attenuator"]["type"].replace("dB", ""))
-        return measurement_calculations.compensate_amplifier_output_power(
-            measured_power=measured_power,
-            frequency=frequency,
-            loss_data=self.loss_data["cable_losses"],
+        """按强类型值对象补偿 DUT 输出功率，对外仍返回 dBm 浮点数。"""
+        attenuator = Decibels.parse(self.config["attenuator"]["type"])
+        loss_table = CableLossTable.from_mapping(
+            self.loss_data["cable_losses"], source="线损输入"
+        )
+        actual = measurement_calculations.compensate_amplifier_output_power(
+            measured_power=PowerDbm(measured_power),
+            frequency=Frequency.from_ghz(frequency),
+            loss_table=loss_table,
             attenuator_value=attenuator,
         )
+        return actual.dbm
 
     def perform_power_sweep(self, frequency: float) -> dict[str, Any]:
         return self._service.perform_power_sweep(frequency)
@@ -335,6 +347,9 @@ def validate_amplifier_calibration_inputs(
     - 补偿 DUT 输出功率始终需要 ``cable2`` 与 ``cable4``；
     - 驱动模式启用时，每个测试频率必须有非空的驱动映射子对象。
 
+    文档在边界处收敛为 :class:`CableLossTable` / :class:`DriverOutputTable`，
+    字符串频率键与 ``cable1`` 等字段名不再由本函数解释。
+
     任一项缺失都抛出 :class:`AmplifierCalibrationError`，供组装层在连接仪器前和
     用例构造时统一拒绝无效输入。
     """
@@ -343,15 +358,21 @@ def validate_amplifier_calibration_inputs(
     cable_losses = loss_data.get("cable_losses")
     if not isinstance(cable_losses, Mapping):
         raise AmplifierCalibrationError("线损输入缺少 cable_losses 子对象")
+    try:
+        loss_table = CableLossTable.from_mapping(cable_losses, source="线损输入")
+    except (TypeError, ValueError) as error:
+        raise AmplifierCalibrationError(str(error)) from error
+
     required = ["cable2", "cable4"]
     if not driver_enabled:
         required.append("cable1")
-    for frequency in frequencies:
-        key = str(frequency)
-        entry = cable_losses.get(key)
-        if not isinstance(entry, Mapping):
+    frequency_values = [Frequency.from_ghz(value) for value in frequencies]
+    for frequency in frequency_values:
+        key = frequency.key
+        profile = loss_table.profiles.get(frequency)
+        if profile is None:
             raise AmplifierCalibrationError(f"线损输入缺少测试频率 {key} 的线损数据")
-        missing = [name for name in required if name not in entry]
+        missing = [name for name in required if getattr(profile, name) is None]
         if missing:
             raise AmplifierCalibrationError(
                 f"线损输入 {key} 缺少必需字段: {', '.join(missing)}"
@@ -360,10 +381,15 @@ def validate_amplifier_calibration_inputs(
         return
     if not isinstance(driver_mapping, Mapping):
         raise AmplifierCalibrationError("驱动模式启用时缺少有效的驱动映射输入")
-    for frequency in frequencies:
-        key = str(frequency)
-        bucket = driver_mapping.get(key)
-        if not isinstance(bucket, Mapping) or not bucket:
+    try:
+        driver_table = DriverOutputTable.from_mapping(
+            driver_mapping, source="驱动映射输入"
+        )
+    except (TypeError, ValueError) as error:
+        raise AmplifierCalibrationError(str(error)) from error
+    for frequency in frequency_values:
+        key = frequency.key
+        if not driver_table.points.get(frequency):
             raise AmplifierCalibrationError(
                 f"驱动映射缺少测试频率 {key} 的有效映射数据"
             )

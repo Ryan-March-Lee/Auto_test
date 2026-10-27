@@ -27,6 +27,8 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Any
 
+from domain.measurement.values import CableLossProfile
+
 
 class MeasurementType(str, Enum):
     CABLE_LOSS = "cable_loss"
@@ -115,18 +117,26 @@ def measurement_type_for_result_type(value: Any) -> MeasurementType | None:
 
 @dataclass(frozen=True)
 class CableLossRow:
-    """单个频点的线缆分摊损耗，键为 ``cable1`` 至 ``cable4`` 与两条路径总损耗。"""
+    """单个频点的线缆分摊损耗。
+
+    线损拓扑由 :class:`domain.measurement.values.CableLossProfile` 表达；``cable1``
+    等字符串字段名只存在于值对象里。构造时接受正式结果文档映射，并立即收敛为
+    值对象，未知字段、非数值或非有限数都会被拒绝。
+    """
 
     frequency_ghz: str
-    cable_losses: Mapping[str, float] = field(default_factory=dict)
+    cable_losses: CableLossProfile = field(default_factory=CableLossProfile)
 
     def __post_init__(self) -> None:
         object.__setattr__(
-            self, "frequency_ghz", _frequency_key(self.frequency_ghz, "线损结果")
+            self,
+            "frequency_ghz",
+            _frequency_key(self.frequency_ghz, "线损结果"),
         )
-        object.__setattr__(
-            self, "cable_losses", _float_mapping(self.cable_losses, "cable_losses")
-        )
+        losses = self.cable_losses
+        if not isinstance(losses, CableLossProfile):
+            losses = CableLossProfile.from_mapping(losses, source="cable_losses")
+        object.__setattr__(self, "cable_losses", losses)
 
 
 @dataclass(frozen=True)
@@ -402,14 +412,16 @@ class CableLossMeasurementResult(MeasurementResult):
         )
 
     def cable_losses(self) -> dict[str, Mapping[str, float]]:
-        """按频点分组的线缆损耗表，供报告与既有调用方读取。"""
-        return {row.frequency_ghz: row.cable_losses for row in self.points}
+        """按频点分组的线缆损耗表（结果文档形状），供报告与既有调用方读取。"""
+        return {
+            row.frequency_ghz: row.cable_losses.to_mapping() for row in self.points
+        }
 
     def result_document(self) -> dict[str, Any]:
         return {
             "attenuator_value": self.attenuator_value,
             "cable_losses": {
-                row.frequency_ghz: dict(row.cable_losses) for row in self.points
+                row.frequency_ghz: row.cable_losses.to_mapping() for row in self.points
             },
         }
 
@@ -417,7 +429,7 @@ class CableLossMeasurementResult(MeasurementResult):
         rows = []
         for row in self.points:
             entry: dict[str, Any] = {"frequency_ghz": row.frequency_ghz}
-            entry.update(row.cable_losses)
+            entry.update(row.cable_losses.to_mapping())
             rows.append(entry)
         return tuple(rows)
 

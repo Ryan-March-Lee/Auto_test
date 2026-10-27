@@ -14,6 +14,7 @@ from domain.configuration.models import (
     RunResourceMapping,
     TestPlan,
 )
+from domain.measurement.values import CableLossTable, Decibels, Frequency, PowerDbm
 from tests.fakes import safety_cleanup_for
 
 
@@ -131,16 +132,18 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
         with patch(
             "application.measurements.amplifier_test.measurement_calculations"
             ".compensate_amplifier_output_power",
-            return_value=123.4,
+            return_value=PowerDbm(123.4),
         ) as calculate:
             result = use_case.calculate_actual_power(1.0, -10.0)
 
         self.assertEqual(result, 123.4)
         calculate.assert_called_once_with(
-            measured_power=-10.0,
-            frequency=1.0,
-            loss_data=use_case.loss_data["cable_losses"],
-            attenuator_value=10.0,
+            measured_power=PowerDbm(-10.0),
+            frequency=Frequency.from_ghz(1.0),
+            loss_table=CableLossTable.from_mapping(
+                use_case.loss_data["cable_losses"], source="线损输入"
+            ),
+            attenuator_value=Decibels.parse("10dB"),
         )
 
     def test_completes_and_saves_structured_result(self):

@@ -276,7 +276,15 @@ FORMAL_API = {
         "ReportAdapter",
     ),
     "infrastructure.logging.app_logging": ("get_logger", "setup_logging"),
-    "infrastructure.runtime": ("current_runtime", "runtime_id", "configured_python"),
+    "infrastructure.runtime": (
+        "current_runtime",
+        "runtime_id",
+        "configured_python",
+        "python_version_requirement",
+        "python_version_supported",
+        "interpreter_command",
+        "verification_commands",
+    ),
     # 仪器层
     "instrument.ports": (
         "DRIVER_POWER_CAPABILITIES",
@@ -320,6 +328,7 @@ INTERNAL_MODULES = {
     "infrastructure.persistence.json_encoder": "JSON 编码器",
     "infrastructure.persistence.json_result_repository": "结果 JSON 实现细节",
     "infrastructure.persistence.run_directory": "运行目录文件布局",
+    "infrastructure.runtime.dependency_lock": "依赖锁定清单的严格解析与整份环境核对",
     "infrastructure.runtime.runtime_contract": "运行时契约实现；公共入口是 infrastructure.runtime",
     "instrument.flow": "安全流程包；application 只通过 application.ports.measurement_session 依赖清理端口",
     "instrument.measurement_adapter": "测量服务端口的显式适配器；设备方法显式定义，不按方法名转发",

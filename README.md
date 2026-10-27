@@ -75,42 +75,65 @@
 
 ### 环境要求
 ```bash
+conda create -n Auto_test python=3.11
 conda activate Auto_test
 ```
 
 已验证的项目运行环境：
 
 - Conda 环境：`Auto_test`
-- Python：3.11.15
+- Python：3.11（只支持 3.11.x，其他版本会被启动器和测试入口拒绝）
 - 环境路径：`D:\Anaconda\envs\Auto_test`
 
 `VISA_demo` 是历史文档中引用的环境名，当前机器上不存在。请使用 `Auto_test`，不要在 `base` 环境中安装或运行本项目依赖。
 
 ### 必需的Python包
-- PySide6 >= 6.6.0
-- matplotlib >= 3.10.0
-- numpy >= 1.26.4
-- pandas >= 2.3.1
-- seaborn >= 0.13.2
-- PyVISA >= 1.14.1
+
+主系统直接依赖固定在 `requirements.txt`，完整版本（含传递依赖）由
+`requirements.lock.txt` 锁定。先把新环境的 `python.exe` 写入项目根目录 `.env` 的
+`AUTO_TEST_PYTHON`（复制 `.env.example` 后填写），再用同一个解释器安装：
+
+```powershell
+& $env:AUTO_TEST_PYTHON -m pip install -r requirements.lock.txt
+& $env:AUTO_TEST_PYTHON tools/export_dependency_lock.py --check
+```
+
+- PySide6 == 6.11.2
+- matplotlib == 3.11.2
+- numpy == 2.4.6
+- pandas == 3.0.6
+- seaborn == 0.13.2
+- PyVISA == 1.16.2
+- Markdown == 3.10.3
+- requests == 2.34.2
+
+依赖变更后不要手工编辑锁文件，也不要用裸 `pip freeze` 覆盖：
+
+```powershell
+& $env:AUTO_TEST_PYTHON tools/export_dependency_lock.py
+```
+
+依赖、解释器和命令口径的完整约定见[依赖与运行时契约](docs/依赖与运行时契约.md)。
+`DPD_auto_test` 的可选依赖（TensorFlow、Jupyter 等）在 `requirements-dpd.txt`，
+与主系统隔离，主系统启动与三类测量都不需要安装它们。
 
 ### 启动方法
 
 项目只保留 `launcher.py` 作为应用启动器。请在 PyCharm 中将项目解释器设置为 `Auto_test`，并运行根目录下的 `launcher.py`；也可以在终端中执行：
-```bash
+```powershell
 # 先复制 .env.example 为 .env，并填写 Auto_test 环境的 python.exe
-python launcher.py --check
-python launcher.py --validate-config
-python launcher.py
+& $env:AUTO_TEST_PYTHON launcher.py --check
+& $env:AUTO_TEST_PYTHON launcher.py --validate-config
+& $env:AUTO_TEST_PYTHON launcher.py
 ```
 
 项目命令统一使用 `.env` 中的 `AUTO_TEST_PYTHON`，启动器、离线测试和 Hardware smoke
 都会验证当前解释器与该配置一致。不要用 `base` 环境或裸 `python` 替代项目解释器。
 
 #### 启动前检查
-```bash
-python launcher.py --check
-python launcher.py --validate-config
+```powershell
+& $env:AUTO_TEST_PYTHON launcher.py --check
+& $env:AUTO_TEST_PYTHON launcher.py --validate-config
 ```
 
 `--validate-config` 只读取并校验 `config.json`，不会连接 VISA 仪器，也不会改变射频或电源状态。发现错误时请先修正配置，再开始测量；只有警告时仍可继续启动，但应由操作者确认。
@@ -122,7 +145,9 @@ python launcher.py --validate-config
 `--validate-config` 或连接前失败。分配内跨电源重复角色、缺少 `gate` 或 `drain`、以及
 DUT 与驱动功放占用同一通道，都会在连接前报错。
 
-`--check` 检查当前 Python 环境是否具备启动 GUI 所需的依赖；`--validate-config` 只检查配置内容，不能替代依赖检查。两个命令不能同时使用。未知命令行参数会返回退出码 `2`。
+`--check` 检查当前 Python 环境是否具备启动 GUI 所需的依赖，并按 `requirements.lock.txt`
+核对全部已安装发行版（含传递依赖）；`--validate-config` 只检查配置内容，不能替代依赖检查。
+两个命令不能同时使用。未知命令行参数会返回退出码 `2`。
 
 项目启动器会拒绝非 `Auto_test` 环境。PyCharm 的运行配置应直接指向 `launcher.py`，测试仍使用 `run_tests.bat` 或 `run_tests.ps1`。不要再使用已经移除的 VS Code 包装器或 GUI 批处理入口。
 
@@ -130,6 +155,7 @@ DUT 与驱动功放占用同一通道，都会在连接前报错。
 
 ```powershell
 ./run_tests.ps1
+& $env:AUTO_TEST_PYTHON tools/export_dependency_lock.py --check
 & $env:AUTO_TEST_PYTHON launcher.py --check
 & $env:AUTO_TEST_PYTHON launcher.py --validate-config
 ```
@@ -140,7 +166,9 @@ DUT 与驱动功放占用同一通道，都会在连接前报错。
 测试发现范围，也不能用离线测试替代现场验收。
 
 发布清单使用 `release_manifest.py` 生成。可通过 `AUTO_TEST_RUN_ID` 固定运行标识，
-使配置快照、结果快照、清理记录和现场报告能够关联到同一次运行。现场设备身份、报告
+使配置快照、结果快照、清理记录和现场报告能够关联到同一次运行。清单同时记录
+`python_requirement`、`interpreter`、`dependencies.lock_sha256` 与统一后的
+`verification` 命令，保证发布验证使用同一解释器和同一份依赖锁定结果。现场设备身份、报告
 和回滚决定仅进入受控归档，不提交版本库；真实设备验收只有在证据完整后才能标记为
 `passed`。
 
@@ -149,6 +177,11 @@ DUT 与驱动功放占用同一通道，都会在连接前报错。
 ```
 pa_auto_test/
 ├── launcher.py                     # 唯一应用启动器
+├── release_manifest.py             # 发布/回滚清单（绑定解释器与依赖锁）
+├── requirements.txt                # 主系统直接依赖（精确版本）
+├── requirements.lock.txt           # 主系统完整依赖锁定（含传递依赖）
+├── requirements-dpd.txt            # DPD_auto_test 专用依赖（与主系统隔离）
+├── tools/export_dependency_lock.py # 锁定清单导出与核对（禁止裸 pip freeze 覆盖）
 ├── config.json                     # 配置文件
 ├── measurement_services.py         # 测量服务兼容入口（实现在 application/measurements/services.py）
 ├── measurement_lifecycle.py        # 测量清理兼容入口（实现在 instrument/flow/cleanup.py）
@@ -161,7 +194,7 @@ pa_auto_test/
 
 `measurement_services.py`、`measurement_lifecycle.py` 是尚未收口的兼容再导出入口，将在后续纯代码路径步骤统一退役；三类旧测量根入口（`cable_loss_measurement.py`、`driver_power_mapping.py`、`app/legacy_amplifier_measurement.py` 及转发 `amplifier_measurement.py`）已在技术债步骤 4 删除，测量只能通过 `app.gui_runtime.create_*_measurement()` 与正式 application 用例启动。
 
-生产环境请通过 `python launcher.py` 启动，不直接运行 GUI 模块。
+生产环境请通过 `& $env:AUTO_TEST_PYTHON launcher.py` 启动，不直接运行 GUI 模块。
 
 ## 使用流程
 

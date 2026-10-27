@@ -20,6 +20,11 @@ try {
     & $Python tools\compile_check.py $ProjectRoot
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+    # Dependencies must match the committed lock file; report drift immediately
+    # instead of failing deep inside the suite.
+    & $Python tools\export_dependency_lock.py --check
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
     $KnownLayers = @("Offline", "Unit", "Simulation")
     if ($Layer -notin $KnownLayers) {
         # Preserve the original positional form, for example:

@@ -1,4 +1,13 @@
-# Optional dependencies for DPD_auto_test only.
+# DPD_auto_test 专用可选依赖（与主系统隔离）
+#
+# 只在 DPD_auto_test 自己的 Conda 环境中安装；主系统（Auto_test 环境）安装
+# requirements.lock.txt 时不包含、也不需要以下任何 DPD 依赖：
+#     TensorFlow、Jupyter、SciPy、nptdms 等。
+# 主系统启动与三类测量不导入 DPD 代码，也不在运行时自动安装依赖。
+#
+# 固定版本：在 DPD 环境安装完成后导出该环境自己的锁文件
+#     & $env:AUTO_TEST_DPD_PYTHON -m pip freeze > requirements-dpd.lock.txt
+# 该锁文件只属于 DPD 环境，不得与本项目的 requirements.lock.txt 合并。
 numpy>=1.26
 matplotlib>=3.10
 scipy>=1.11

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import platform
 import subprocess
@@ -12,7 +13,16 @@ from pathlib import Path
 from typing import Iterable
 
 from infrastructure.filesystem.paths import DEFAULT_PATHS
-from infrastructure.runtime import current_runtime, runtime_id
+from infrastructure.runtime import (
+    DEPENDENCY_DIRECT_FILE,
+    DEPENDENCY_LOCK_FILE,
+    DPD_REQUIREMENTS_FILE,
+    current_runtime,
+    interpreter_path,
+    python_version_requirement,
+    runtime_id,
+    verification_commands,
+)
 
 
 RELEASE_FILES = (
@@ -59,6 +69,14 @@ def _existing(paths: Iterable[str], root: Path) -> list[str]:
     return [item for item in paths if (root / item).exists()]
 
 
+def _file_digest(root: Path, relative: str) -> str | None:
+    """锁定清单内容摘要：发布验证必须绑定同一份依赖锁定结果。"""
+    path = root / relative
+    if not path.is_file():
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def build_manifest(
     root: Path | None = None,
     *,
@@ -74,18 +92,22 @@ def build_manifest(
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "git_commit": _git_commit(root),
         "python": sys.version,
+        "python_requirement": python_version_requirement(),
+        "interpreter": str(interpreter_path()),
         "platform": platform.platform(),
         "runtime": current_runtime(),
         "run_id": runtime_id(),
         "release_files": _existing(RELEASE_FILES, root),
         "compatibility_files": _existing(COMPATIBILITY_FILES, root),
         "rollback_files": _existing(ROLLBACK_FILES, root),
-        "verification": {
-            "unit_tests": "python -m unittest discover -s tests -v",
-            "compile": "python -m compileall -q .",
-            "launcher_check": "python launcher.py --check",
-            "config_validation": "python launcher.py --validate-config",
+        "dependencies": {
+            "direct": DEPENDENCY_DIRECT_FILE,
+            "lock": DEPENDENCY_LOCK_FILE,
+            "lock_sha256": _file_digest(root, DEPENDENCY_LOCK_FILE),
+            "dpd_requirements": DPD_REQUIREMENTS_FILE,
+            "dpd_isolated": True,
         },
+        "verification": verification_commands(),
         "real_device_acceptance": real_device_acceptance,
         "evidence": {
             "required": ["config_snapshot", "result_snapshot", "cleanup_record", "现场报告"],

@@ -12,7 +12,21 @@ from typing import Dict
 from domain.configuration.types import ConfigValidationResult
 from infrastructure.config.validation import validate_config_file
 from infrastructure.logging.app_logging import setup_logging
-from infrastructure.runtime import validate_python_interpreter
+from infrastructure.runtime import (
+    DEPENDENCY_LOCK_FILE,
+    interpreter_command,
+    python_version_requirement,
+    python_version_supported,
+    validate_python_interpreter,
+    verification_commands,
+)
+from infrastructure.runtime.dependency_lock import (
+    DependencyLockError,
+    LockDrift,
+    installed_packages,
+    lock_drift,
+    read_lock_packages,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -111,10 +125,11 @@ def check_environment(silent: bool = False) -> bool:
         print("正在检查运行环境...")
     python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     if not silent:
-        print(f"   Python 版本: {python_version}")
-    if sys.version_info < (3, 7):
+        print(f"   Python 版本: {python_version}（要求 {python_version_requirement()}）")
+    python_ok, python_detail = python_version_supported()
+    if not python_ok:
         if not silent:
-            print("   需要 Python 3.7 或更高版本")
+            print(f"   {python_detail}")
         return False
     if not silent:
         print(f"   Conda 环境: {get_conda_environment_name()}")
@@ -143,6 +158,43 @@ def get_conda_environment_name() -> str:
         return configured_name
     prefix_name = Path(sys.prefix).name
     return prefix_name or "base"
+
+
+def locked_dependency_drift(lock_file=None, installed=None) -> LockDrift:
+    """按锁文件核对当前解释器的**全部**已安装发行版，包括传递依赖。
+
+    只比对启动器列出的 8 个模块无法证明“环境符合锁文件”，因此这里以锁文件
+    为基准逐项核对；锁外多装的包只作为提示返回。
+    """
+    lock_path = Path(lock_file) if lock_file is not None else PROJECT_ROOT / DEPENDENCY_LOCK_FILE
+    current = installed_packages() if installed is None else installed
+    return lock_drift(read_lock_packages(lock_path), current)
+
+
+def check_dependency_lock(silent: bool = False) -> LockDrift | None:
+    """核对锁文件与当前环境并打印结果；锁文件不可用时返回 ``None``。"""
+    try:
+        drift = locked_dependency_drift()
+    except DependencyLockError as error:
+        if not silent:
+            print(f"   依赖锁定清单不可用: {error}")
+        return None
+    if silent:
+        return drift
+    if drift.blocking:
+        print(f"   与 {DEPENDENCY_LOCK_FILE} 不一致:")
+        for item in drift.blocking_messages():
+            print(f"      {item}")
+    for item in drift.warning_messages():
+        print(f"   锁外多余包: {item}")
+    if not drift.blocking and not drift.unexpected:
+        print(f"   依赖版本与 {DEPENDENCY_LOCK_FILE} 一致（含传递依赖）")
+    return drift
+
+
+def dependency_lock_failed(drift: LockDrift | None) -> bool:
+    """锁文件不可用，或锁内依赖缺失/版本不符时为真。"""
+    return drift is None or drift.blocking
 
 
 def check_packages(silent: bool = False) -> Dict[str, Dict[str, object]]:
@@ -248,40 +300,53 @@ def launch_gui_version(version=None, packages=None, silent: bool = False) -> boo
 
 
 def show_installation_guide(packages: Dict[str, Dict[str, object]]) -> None:
-    """显示缺失依赖的安装建议。"""
+    """显示缺失依赖的安装建议（按锁定清单安装，不在运行时自动安装）。"""
     missing_required = [name for name, info in packages.items() if info["required"] and not info["installed"]]
     if not missing_required:
         return
     print("缺少必需依赖: " + ", ".join(missing_required))
-    print("安装命令: pip install " + " ".join(missing_required))
+    commands = verification_commands()
+    print(f"安装命令（{DEPENDENCY_LOCK_FILE} 已固定版本）:")
+    print(f"    {interpreter_command('-m', 'pip', 'install', '-r', DEPENDENCY_LOCK_FILE)}")
+    print("安装后核对锁定清单与解释器:")
+    print(f"    {commands['dependency_lock']}")
+    print(f"    {commands['launcher_check']}")
     print("推荐环境: conda activate Auto_test")
 
 
 def show_help() -> None:
     """显示帮助信息。"""
-    print(
-        """
-使用方法:
-    python launcher.py                       启动 GUI
-    python launcher.py --check               检查 Python 和依赖包
-    python launcher.py --validate-config     只读校验 config.json，不连接仪器
-    python launcher.py --list-runs            列出运行目录及状态
-    python launcher.py --run-id RUN_ID        离线查看运行 manifest 和结果文件
-    python launcher.py --verify-run RUN_ID    校验运行文件与配置快照
-    python launcher.py --resume-run RUN_ID    离线执行恢复前置检查，不启动测量
-    上述运行命令可附加 --runs-root PATH 指定离线运行根目录
-    python release_manifest.py                生成可回滚发布清单和运行标识
-    python launcher.py --help                显示本帮助
-
-退出码:
-    0  成功
-    2  配置校验失败
-    3  配置文件不存在或 JSON 无效
-    4  Python 运行环境不满足要求
-    5  缺少 GUI 必需依赖
-    6  GUI 启动失败
-""".strip()
+    rows = (
+        (interpreter_command("launcher.py"), "启动 GUI"),
+        (verification_commands()["launcher_check"], "检查 Python 和依赖包"),
+        (verification_commands()["dependency_lock"], "核对依赖锁定清单与当前环境"),
+        (verification_commands()["config_validation"], "只读校验 config.json，不连接仪器"),
+        (interpreter_command("launcher.py", "--list-runs"), "列出运行目录及状态"),
+        (interpreter_command("launcher.py", "--run-id", "RUN_ID"), "离线查看运行 manifest 和结果文件"),
+        (interpreter_command("launcher.py", "--verify-run", "RUN_ID"), "校验运行文件与配置快照"),
+        (interpreter_command("launcher.py", "--resume-run", "RUN_ID"), "离线执行恢复前置检查，不启动测量"),
+        (verification_commands()["release_manifest"], "生成可回滚发布清单和运行标识"),
+        (interpreter_command("launcher.py", "--help"), "显示本帮助"),
     )
+    width = max(len(command) for command, _ in rows)
+    print(
+        f"使用方法（解释器取自 .env 的 AUTO_TEST_PYTHON，要求 Python "
+        f"{python_version_requirement()}，不使用裸 python）:"
+    )
+    for command, description in rows:
+        print(f"    {command.ljust(width)}   {description}")
+    print("    上述运行命令可附加 --runs-root PATH 指定离线运行根目录")
+    print()
+    print("退出码:")
+    for line in (
+        "   0  成功",
+        "   2  配置校验失败",
+        "   3  配置文件不存在或 JSON 无效",
+        "   4  Python 运行环境不满足要求",
+        "   5  缺少 GUI 必需依赖",
+        "   6  GUI 启动失败",
+    ):
+        print(line)
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -320,8 +385,14 @@ def main(argv: object = None) -> int:
             if not silent_mode or parsed.check:
                 print(f"运行环境错误: {interpreter_detail}", file=sys.stderr)
             return EXIT_ENVIRONMENT_ERROR
+        version_ok, version_detail = python_version_supported()
+        if not version_ok:
+            # 连只读命令也不接受 3.11 之外的解释器，避免配置校验结论与运行环境脱节。
+            if not silent_mode or parsed.check:
+                print(f"运行环境错误: {version_detail}", file=sys.stderr)
+            return EXIT_ENVIRONMENT_ERROR
         if parsed.validate_config:
-            # 只读校验命令：保持无文件副作用，不初始化日志。
+            # 只读校验命令：保持无文件副作用，不初始化日志，也不检查依赖包。
             return validate_default_config()
         if parsed.run_id:
             return inspect_run(parsed.run_id, runs_root=parsed.runs_root)
@@ -336,9 +407,12 @@ def main(argv: object = None) -> int:
         if not check_environment(silent_mode):
             return EXIT_ENVIRONMENT_ERROR
         packages = check_packages(silent_mode)
+        drift = check_dependency_lock(silent_mode)
         if parsed.check:
             # 依赖检查命令：保持无文件副作用，不初始化日志。
             show_installation_guide(packages)
+            if dependency_lock_failed(drift):
+                return EXIT_DEPENDENCY_ERROR
             return EXIT_DEPENDENCY_ERROR if has_missing_required_packages(packages) else EXIT_SUCCESS
         if has_missing_required_packages(packages):
             if not silent_mode:

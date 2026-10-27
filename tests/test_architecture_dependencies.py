@@ -1027,7 +1027,7 @@ CABLE_FIELD_NAMES = frozenset(
 
 
 def _main_system_sources():
-    """主系统的生产源码；DPD 子系统按步骤 14 继续隔离，不参与主系统单位门禁。"""
+    """主系统的生产源码；DPD 子系统依赖与代码按步骤 14 隔离，不参与主系统单位门禁。"""
     return [
         path
         for path in _production_sources()

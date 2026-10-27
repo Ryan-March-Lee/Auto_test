@@ -13,7 +13,7 @@
 
 ## 格式转换与连接图
 
-- `format_convert.csv_to_MDIF` 的独立入口是 `python -m format_convert.csv_to_MDIF INPUT OUTPUT`，导入不会读写文件。
+- `format_convert.csv_to_MDIF` 的独立入口是 `& $env:AUTO_TEST_PYTHON -m format_convert.csv_to_MDIF INPUT OUTPUT`，导入不会读写文件。
 - `format_convert.svg_to_png_transparent` 只在函数调用时加载 Selenium/Pillow，并由调用者明确指定输入和输出路径。
 - 连接图生成逻辑位于 `presentation/qt/connection_diagrams.py`，由 GUI 的连接说明对话框按需导入，不进入测量服务初始化；根目录 `connection_diagrams.py` 兼容入口已删除。
 - 连接图不可用（可选依赖缺失、图工厂失败、未知图类型）时 `ConnectionDialog.build_diagram()` 返回空图加原因，对话框禁用“我已正确连接”，只允许取消：空图不得当作有效接线图用于现场确认。
@@ -23,7 +23,7 @@
 
 ## DPD
 
-DPD 的输入输出和依赖见 `DPD_auto_test/README.md` 与 `requirements-dpd.txt`。当前主系统没有导入者，禁止其隐式读取或修改主系统配置、结果和运行目录。
+DPD 的输入输出和依赖见 `DPD_auto_test/README.md` 与 `requirements-dpd.txt`。当前主系统没有导入者，禁止其隐式读取或修改主系统配置、结果和运行目录。DPD 依赖（TensorFlow、Jupyter、SciPy、nptdms 等）只在 DPD 自有环境安装，不进入 `requirements.txt` / `requirements.lock.txt`，详见[依赖与运行时契约](docs/依赖与运行时契约.md)。
 
 ## 当前调用者盘点
 

@@ -239,11 +239,11 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `config_validation` | `config_validation.py` | 已删除 | 步骤 5 |
 | `result_reading` | `result_reading.py` | 已删除 | 步骤 6 |
 | `result_storage` | `result_storage.py` | 已删除 | 步骤 3 |
-| `measurement_calculations` | `measurement_calculations.py` | 待删除 | 步骤 16 |
-| `measurement_lifecycle` | `measurement_lifecycle.py` | 待删除 | 步骤 16 |
-| `measurement_services` | `measurement_services.py` | 待删除 | 步骤 16 |
-| `app_logging` | `app_logging.py` | 待删除 | 步骤 16 |
-| `project_paths` | `project_paths.py` | 待删除 | 步骤 16 |
+| `measurement_calculations` | `measurement_calculations.py` | 已删除 | 步骤 16 |
+| `measurement_lifecycle` | `measurement_lifecycle.py` | 已删除 | 步骤 16 |
+| `measurement_services` | `measurement_services.py` | 已删除 | 步骤 16 |
+| `app_logging` | `app_logging.py` | 已删除 | 步骤 16 |
+| `project_paths` | `project_paths.py` | 已删除 | 步骤 16 |
 | `legacy_config_conversion` | `legacy_config_conversion.py` | 已删除 | 已删除 |
 | `enhanced_main_gui` | `enhanced_main_gui.py` | 已删除 | 已删除 |
 | `llm` | `llm.py` | 已删除 | 已删除 |
@@ -329,7 +329,10 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
   与失败项归一化 `normalize_failures`）。
 - 正式内部模块：41 个路径已登记，公共与内部边界不重叠（步骤 7 补登记
   `instrument.safety`：安全标记的显式签名判定是跨模块契约）。
-- 旧模块：29 个条目（21 个根模块、8 个正式包内实现），状态与工作树一致。
+- 旧模块：29 个条目（21 个根模块、8 个正式包内实现），状态与工作树一致。步骤 16
+  （2026-10-27）已把最后五个根目录纯再导出模块（`measurement_calculations` /
+  `measurement_lifecycle` / `measurement_services` / `app_logging` / `project_paths`）
+  整文件退役，登记表全部为“已删除”。
 - 存量引用基线：空（步骤 4 与步骤 9 已把旧模块引用清零，新增引用直接失败）。
 - 跨层依赖基线：`application` → `instrument.flow` 已由步骤 7 清零（仅保留安全清理端口）。
 - 动态导入白名单：1 处（`launcher.py` 的 `check_packages` 依赖探测）。
@@ -339,8 +342,8 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 ## 9. 后续步骤维护约定
 
 - 退役旧模块：整文件删除的把 `LEGACY_MODULES` 的 `present` 改为 `False`（或删除条目），
-  重写后保留的从登记表删除；同步删除本文对应行、引用基线条目和 `release_manifest.py`
-  登记，不要只放宽断言。
+  重写后保留的从登记表删除；同步删除本文对应行、引用基线条目和发布清单登记，不要只放宽
+  断言。步骤 16 之后发布清单只登记正式发布边界，不再维护兼容/回滚文件列表。
 - 删除存量引用：同步删除 `LEGACY_IMPORT_BASELINE` 的对应文件；基线必须与代码严格相等。
 - 新增公共模块或公开名称：先登记到本文和 `FORMAL_API`，再写调用方。
 - 新增内部模块并被跨模块导入：先登记到本文和 `INTERNAL_MODULES`。

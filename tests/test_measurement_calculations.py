@@ -17,6 +17,8 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+ROOT = Path(__file__).resolve().parents[1]
+
 from domain.measurement.calculations import (
     calculate_cable_losses,
     compensate_amplifier_output_power,
@@ -512,15 +514,11 @@ class CompensateDriverOutputPowerTests(unittest.TestCase):
         self.assertAlmostEqual(result.dbm, 30.0 + 1.625)
 
 
-class MeasurementEntryPointDelegationTests(unittest.TestCase):
-    """旧计算再导出模块仍指向正式纯函数；旧测量入口已停用。"""
+class MeasurementEntryPointDelegationTestsRemoved(unittest.TestCase):
+    """旧计算再导出模块已在技术债步骤 16 退役；正式函数只由领域层提供。"""
 
-    def test_legacy_module_reexports_canonical_functions(self):
-        import measurement_calculations as compatibility
-        import domain.measurement.calculations as canonical
-
-        for name in canonical.__all__:
-            self.assertIs(getattr(compatibility, name), getattr(canonical, name), name)
+    def test_legacy_reexport_module_is_gone(self):
+        self.assertFalse((ROOT / "measurement_calculations.py").exists())
 
 
 # ---------------------------------------------------------------------------

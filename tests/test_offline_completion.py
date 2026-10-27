@@ -192,40 +192,37 @@ class OfflineCompletionTests(unittest.TestCase):
             self.assertTrue(csv_path.exists())
             self.assertIn("report-run", html_path.read_text(encoding="utf-8"))
 
-    def test_release_manifest_contains_release_and_rollback_boundaries(self):
+    def test_release_manifest_contains_release_boundaries_only(self):
+        """步骤 16：兼容/回滚文件清单已删除，清单只登记正式发布边界。"""
         manifest = build_manifest(Path(__file__).resolve().parents[1])
         self.assertIn("launcher.py", manifest["release_files"])
         self.assertIn("domain/measurement", manifest["release_files"])
         self.assertIn("application", manifest["release_files"])
-        self.assertIn("measurement_calculations.py", manifest["compatibility_files"])
-        self.assertIn("measurement_services.py", manifest["compatibility_files"])
-        self.assertIn("measurement_lifecycle.py", manifest["compatibility_files"])
-        for removed in (
+        self.assertNotIn("compatibility_files", manifest)
+        self.assertNotIn("rollback_files", manifest)
+        for retired in (
+            "measurement_calculations.py",
+            "measurement_services.py",
+            "measurement_lifecycle.py",
+            "app_logging.py",
+            "project_paths.py",
+            "amplifier_measurement.py",
             "enhanced_main_gui.py",
-            "instrument_control.py",
-            "data_visualization.py",
-            "connection_diagrams.py",
-            "legacy_config_conversion.py",
-            "llm.py",
-            "web_search_tools.py",
         ):
-            self.assertNotIn(removed, manifest["compatibility_files"])
-            self.assertNotIn(removed, manifest["rollback_files"])
-        self.assertNotIn("amplifier_measurement.py", manifest["rollback_files"])
-        self.assertEqual(manifest["rollback_files"], [])
-        self.assertNotIn("enhanced_workers.py", manifest["rollback_files"])
+            self.assertNotIn(retired, manifest["release_files"])
         self.assertEqual(manifest["real_device_acceptance"], "pending")
+        self.assertEqual(
+            manifest["evidence"]["rollback_decision"], "pending"
+        )
 
     def test_release_manifest_constants_reference_existing_paths(self):
         import release_manifest
 
         project_root = Path(__file__).resolve().parents[1]
-        for entry in (
-            release_manifest.RELEASE_FILES
-            + release_manifest.ROLLBACK_FILES
-            + release_manifest.COMPATIBILITY_FILES
-        ):
+        for entry in release_manifest.RELEASE_FILES:
             self.assertTrue((project_root / entry).exists(), f"发布清单条目不存在: {entry}")
+        self.assertFalse(hasattr(release_manifest, "ROLLBACK_FILES"))
+        self.assertFalse(hasattr(release_manifest, "COMPATIBILITY_FILES"))
 
 
 if __name__ == "__main__":

@@ -11,8 +11,8 @@ import unittest
 from io import StringIO
 from pathlib import Path
 
-import app_logging
-from app_logging import ROOT_LOGGER_NAME
+import infrastructure.logging.app_logging as app_logging
+from infrastructure.logging.app_logging import ROOT_LOGGER_NAME
 
 
 class AppLoggingTests(unittest.TestCase):

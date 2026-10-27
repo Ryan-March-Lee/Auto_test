@@ -58,9 +58,14 @@ DELETED_ROOT_MODULES = {
     "app.legacy_amplifier_measurement",
     # 技术债步骤 6 已退役的旧结果解析转发入口。
     "result_reading",
+    # 技术债步骤 16 已退役的纯再导出兼容模块（日志、路径、计算、服务、生命周期）。
+    "app_logging",
+    "project_paths",
+    "measurement_calculations",
+    "measurement_services",
+    "measurement_lifecycle",
 }
 FORBIDDEN_CONTROLLER_IMPORT_ROOTS = FORBIDDEN_PAGE_IMPORT_ROOTS | {
-    "measurement_services",
     "cable_loss_measurement",
     "driver_power_mapping",
     "amplifier_measurement",
@@ -274,7 +279,6 @@ class ProductionDependencyTests(unittest.TestCase):
             "LOGS_DIR", "ASSETS_DIR", "ICONS_DIR", "IMAGES_DIR", "TEMP_DIR",
         }
         allowed = {
-            ROOT / "project_paths.py",
             ROOT / "infrastructure" / "filesystem" / "paths.py",
             ROOT / "infrastructure" / "config" / "json_io.py",
             ROOT / "infrastructure" / "persistence" / "json_result_repository.py",
@@ -323,10 +327,6 @@ class ProductionDependencyTests(unittest.TestCase):
             "infrastructure.persistence.json_config_repository",
         }
         compatibility = {
-            ROOT / "config_models.py",
-            ROOT / "config_io.py",
-            ROOT / "config_validation.py",
-            ROOT / "measurement_calculations.py",
             ROOT / "infrastructure" / "persistence" / "json_config_repository.py",
         }
         violations = []
@@ -346,62 +346,6 @@ class ProductionDependencyTests(unittest.TestCase):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
         }
         self.assertEqual(definitions, set())
-
-    def test_configuration_compatibility_modules_are_explicit_reexports(self):
-        modules = (
-            ROOT / "app_logging.py",
-            ROOT / "project_paths.py",
-        )
-        for source_path in modules:
-            tree = _tree(source_path)
-            definitions = [
-                node.name
-                for node in tree.body
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-            ]
-            self.assertEqual(definitions, [], str(source_path.relative_to(ROOT)))
-            self.assertTrue(
-                any(isinstance(node, ast.Assign) and any(
-                    isinstance(target, ast.Name) and target.id == "__all__"
-                    for target in node.targets
-                ) for node in tree.body),
-                str(source_path.relative_to(ROOT)) + " 必须显式声明 __all__",
-            )
-
-    def test_legacy_measurement_roots_are_explicit_reexports(self):
-        modules = (
-            ROOT / "measurement_services.py",
-            ROOT / "measurement_lifecycle.py",
-        )
-        for source_path in modules:
-            tree = _tree(source_path)
-            definitions = [
-                node.name
-                for node in tree.body
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-            ]
-            self.assertEqual(definitions, [], str(source_path.relative_to(ROOT)))
-            self.assertTrue(
-                any(
-                    isinstance(node, ast.Assign)
-                    and any(
-                        isinstance(target, ast.Name) and target.id == "__all__"
-                        for target in node.targets
-                    )
-                    for node in tree.body
-                ),
-                str(source_path.relative_to(ROOT)) + " 必须显式声明 __all__",
-            )
-
-    def test_configuration_compatibility_exports_match_canonical_objects(self):
-        import app_logging
-        import project_paths
-        import infrastructure.logging.app_logging as canonical_logging
-
-        self.assertIs(app_logging.get_logger, canonical_logging.get_logger)
-        self.assertIs(project_paths.resolve_path, __import__(
-            "infrastructure.filesystem.paths", fromlist=["resolve_path"]
-        ).resolve_path)
 
     def test_persistence_implementations_have_one_infrastructure_boundary(self):
         result_adapter_path = ROOT / "infrastructure" / "persistence" / "result_repository.py"
@@ -543,15 +487,6 @@ class ProductionDependencyTests(unittest.TestCase):
                 if module == "infrastructure" or module.startswith("infrastructure."):
                     violations.append(f"{source_path.relative_to(ROOT)} imports {module}")
         self.assertEqual(violations, [], "分析层不得依赖基础设施: " + "; ".join(violations))
-
-    def test_production_packages_do_not_import_legacy_measurement_roots(self):
-        violations = _package_root_import_violations(
-            ("app", "application", "presentation", "infrastructure"),
-            {"measurement_services", "measurement_lifecycle"},
-        )
-        self.assertEqual(
-            violations, [], "生产包不得依赖历史测量根入口: " + "; ".join(violations)
-        )
 
     def test_deleted_root_modules_are_absent_and_unimported(self):
         for module in DELETED_ROOT_MODULES:

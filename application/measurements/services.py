@@ -1,12 +1,10 @@
 """Qt-independent measurement services used by the application use cases.
 
-These services hold the measurement orchestration that was historically in the
-root ``measurement_services`` module.  Their device dependency is the explicit
+These services hold the measurement orchestration that historically lived in a
+root-level module. That root module has been retired in refactor step 16, so
+these symbols are only importable here. Their device dependency is the explicit
 :class:`instrument.ports.MeasurementInstrumentPort` protocol; the VISA adapters
 stay decoupled and UI code only translates events.
-
-The root ``measurement_services`` module is now a compatibility re-export of
-these symbols.
 
 设备能力边界：三个服务在构造阶段按各自实际使用的方法校验
 ``MeasurementInstrumentPort`` 能力（信号通路、驱动电源、DUT 电源），能力不足时

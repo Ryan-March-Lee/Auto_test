@@ -1,4 +1,4 @@
-"""Generate a deterministic release and rollback manifest."""
+"""Generate a deterministic release manifest and rollback decision summary."""
 
 from __future__ import annotations
 
@@ -38,20 +38,8 @@ RELEASE_FILES = (
     "analysis",
     "presentation",
 )
-# 技术债步骤 4（2026-10-26）已整文件退役全部旧测量根入口，回滚清单不再包含
-# ``cable_loss_measurement.py`` / ``driver_power_mapping.py`` /
-# ``amplifier_measurement.py`` / ``app/legacy_amplifier_measurement.py``。
-ROLLBACK_FILES = ()
-# 技术债步骤 6（2026-10-27）已退役旧结果解析转发 ``result_reading.py``、旧领域结果读取层
-# ``domain/result_reading.py``、旧结果 DTO 适配器与旧全局历史端口/仓储；剩余条目由步骤 16
-# 统一清理。
-COMPATIBILITY_FILES = (
-    "measurement_services.py",
-    "measurement_lifecycle.py",
-    "measurement_calculations.py",
-    "app_logging.py",
-    "project_paths.py",
-)
+# 技术债步骤 16（2026-10-27）已清除全部兼容/回滚文件清单：旧测量根入口在步骤 4 退役，
+# 五个纯再导出模块在步骤 16 退役，发布清单不再登记兼容面。
 REAL_DEVICE_ACCEPTANCE_STATES = frozenset({"pending", "passed"})
 
 
@@ -98,8 +86,6 @@ def build_manifest(
         "runtime": current_runtime(),
         "run_id": runtime_id(),
         "release_files": _existing(RELEASE_FILES, root),
-        "compatibility_files": _existing(COMPATIBILITY_FILES, root),
-        "rollback_files": _existing(ROLLBACK_FILES, root),
         "dependencies": {
             "direct": DEPENDENCY_DIRECT_FILE,
             "lock": DEPENDENCY_LOCK_FILE,

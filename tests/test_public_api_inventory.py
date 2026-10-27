@@ -445,21 +445,21 @@ LEGACY_MODULES = {
     "instrument.power_roles": LegacyModule(
         "旧电源角色自动推导", "已删除", "步骤 9", "instrument/power_roles.py", False
     ),
-    # 步骤 16：其余纯再导出兼容模块
+    # 步骤 16：其余纯再导出兼容模块（已整文件退役）
     "measurement_calculations": LegacyModule(
-        "旧测量计算转发", "待删除", "步骤 16", "measurement_calculations.py", True
+        "旧测量计算转发", "已删除", "步骤 16", "measurement_calculations.py", False
     ),
     "measurement_lifecycle": LegacyModule(
-        "旧测量生命周期转发", "待删除", "步骤 16", "measurement_lifecycle.py", True
+        "旧测量生命周期转发", "已删除", "步骤 16", "measurement_lifecycle.py", False
     ),
     "measurement_services": LegacyModule(
-        "旧测量服务转发", "待删除", "步骤 16", "measurement_services.py", True
+        "旧测量服务转发", "已删除", "步骤 16", "measurement_services.py", False
     ),
     "app_logging": LegacyModule(
-        "旧日志转发", "待删除", "步骤 16", "app_logging.py", True
+        "旧日志转发", "已删除", "步骤 16", "app_logging.py", False
     ),
     "project_paths": LegacyModule(
-        "旧全局路径常量与服务转发", "待删除", "步骤 16", "project_paths.py", True
+        "旧全局路径常量与服务转发", "已删除", "步骤 16", "project_paths.py", False
     ),
     # 已删除的历史入口（保留在门禁中防止重新引入）
     "legacy_config_conversion": LegacyModule(

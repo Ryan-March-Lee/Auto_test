@@ -182,14 +182,12 @@ DUT 与驱动功放占用同一通道，都会在连接前报错。
 ```
 pa_auto_test/
 ├── launcher.py                     # 唯一应用启动器
-├── release_manifest.py             # 发布/回滚清单（绑定解释器与依赖锁）
+├── release_manifest.py             # 发布清单（绑定解释器与依赖锁，含回滚决定摘要）
 ├── requirements.txt                # 主系统直接依赖（精确版本）
 ├── requirements.lock.txt           # 主系统完整依赖锁定（含传递依赖）
 ├── requirements-dpd.txt            # DPD_auto_test 专用依赖（与主系统隔离）
 ├── tools/export_dependency_lock.py # 锁定清单导出与核对（禁止裸 pip freeze 覆盖）
 ├── config.json                     # 配置文件
-├── measurement_services.py         # 测量服务兼容入口（实现在 application/measurements/services.py）
-├── measurement_lifecycle.py        # 测量清理兼容入口（实现在 instrument/flow/cleanup.py）
 ├── presentation/qt/                # GUI 页面、controller、主窗口、绘图与连接图
 ├── application/                    # 测量用例、端口与 DTO
 ├── infrastructure/                 # 配置、结果与路径实现
@@ -197,7 +195,13 @@ pa_auto_test/
 └── README.md                       # 本文档
 ```
 
-`measurement_services.py`、`measurement_lifecycle.py` 是尚未收口的兼容再导出入口，将在后续纯代码路径步骤统一退役；三类旧测量根入口（`cable_loss_measurement.py`、`driver_power_mapping.py`、`app/legacy_amplifier_measurement.py` 及转发 `amplifier_measurement.py`）已在技术债步骤 4 删除，测量只能通过 `app.gui_runtime.create_*_measurement()` 与正式 application 用例启动。
+根目录不再保留任何兼容再导出模块：日志、路径、测量计算、测量服务与测量清理只从正式模块
+（`infrastructure.logging.app_logging`、`infrastructure.filesystem.paths`、
+`domain.measurement.calculations`、`application.measurements.services`、
+`instrument.flow.cleanup`）导入。三类旧测量根入口（`cable_loss_measurement.py`、
+`driver_power_mapping.py`、`app/legacy_amplifier_measurement.py` 及转发
+`amplifier_measurement.py`）已在技术债步骤 4 删除，五个纯再导出模块在步骤 16 删除，测量只能
+通过 `app.gui_runtime.create_*_measurement()` 与正式 application 用例启动。
 
 生产环境请通过 `& $env:AUTO_TEST_PYTHON launcher.py` 启动，不直接运行 GUI 模块。
 
@@ -280,23 +284,25 @@ pa_auto_test/
 - 计划v1.1: 增加更多自定义配置选项
 - 计划v1.2: 支持更多仪器型号
 
-兼容层的弃用、删除条件、迁移方式和目标版本记录在 `docs/兼容层弃用与删除发布说明.md`。
 正式公共 API、正式内部模块和旧模块清单记录在 `docs/正式API目录清单.md`；正式 production
 code 只能导入登记的模块路径，旧模块禁止新增引用，由 `tests/test_public_api_inventory.py`
-静态门禁固定。
-旧 GUI 测量入口、`latest_path()` 兼容链与无路径映射读取已在重构步骤 A、B 删除（外部调用方
-已确认零调用方）；正式测量的全局结果兼容副本写入已在 `docs/技术债分阶段重构计划.md` 步骤 2
-停止，正式结果只写 `runs/<run_id>/`。步骤 3 已删除 `save_compatibility_copy()`、`legacy_path()`、
-`create_legacy_run_snapshot()`、`write_compatibility_copy()`、`write_legacy_run_snapshot()` 和
-`result_storage.py`；三个旧兼容测量根入口已停用并立即失败，文件本体随步骤 4 退役。
-步骤 5 已删除旧配置转换与根目录配置转发；步骤 6 已把三类测量结果收敛为唯一显式 DTO
-（`CableLossMeasurementResult` / `DriverPowerMappingMeasurementResult` /
-`AmplifierMeasurementResult`，定义在 `application/dto/measurement_results.py`），删除根
-`result_reading.py`、`domain/result_reading.py`、`application/dto/legacy_result_adapter.py`、
-旧全局历史端口/仓储，旧结果 JSON 形状和旧字段别名不再被解析；`domain.models` 不再定义结果
-模型，展示/导出只使用 DTO 的显式属性。写入端口只接受正式 DTO，结果文件与 canonical model
-属于同一次提交；历史列表只列出能解析为正式结果的文件（功放拆分明细只留在运行目录里，不再
-出现在历史列表），查询返回的已经是结果 DTO。
+静态门禁固定。兼容层的弃用、删除条件、迁移方式与历史执行证据保留在
+`docs/兼容层弃用与删除发布说明.md`，仅作审计记录，不描述现行运行时机制。
+
+现行架构要点：
+
+- 正式结果只写 `runs/<run_id>/`；历史查看与导出只读运行目录 manifest 登记的正式结果，不再
+  扫描全局结果目录。
+- 三类测量结果只有唯一显式 DTO（`CableLossMeasurementResult` /
+  `DriverPowerMappingMeasurementResult` / `AmplifierMeasurementResult`，定义在
+  `application/dto/measurement_results.py`）；写入端口只接受正式 DTO，结果文件与 canonical
+  model 属于同一次提交，历史列表只列出能解析为正式结果的文件，查询返回结果 DTO。
+- 配置页面保存时直接写出正式 `test_plan` / `run_mapping` 段，缺少正式段的文件在创建运行前
+  明确失败。
+- 仪器装配使用显式地址、角色与物理通道，不按运行时名字转发设备能力。
+- 根目录只保留 `launcher.py`、`release_manifest.py` 与脚本；兼容再导出模块与旧测量入口均已
+  删除，旧导入路径在任何进程中都会 `ModuleNotFoundError`。
+- 发布清单只登记正式发布边界与依赖锁，不再维护兼容/回滚文件列表。
 
 ### 技术支持
 如遇到问题，请检查：

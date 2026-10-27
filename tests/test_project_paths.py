@@ -2,8 +2,18 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from project_paths import CONFIG_FILE, CABLE_LOSS_FILE, ICONS_DIR, IMAGES_DIR, PROJECT_ROOT, TEMP_DIR, TEST_RESULTS_DIR, ensure_directory, resolve_path
-from infrastructure.filesystem.paths import PathService
+from infrastructure.filesystem.paths import (
+    CABLE_LOSS_FILE,
+    CONFIG_FILE,
+    ICONS_DIR,
+    IMAGES_DIR,
+    PROJECT_ROOT,
+    TEMP_DIR,
+    TEST_RESULTS_DIR,
+    PathService,
+    ensure_directory,
+    resolve_path,
+)
 
 
 class ProjectPathsTests(unittest.TestCase):

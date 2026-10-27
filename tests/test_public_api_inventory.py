@@ -298,6 +298,8 @@ INTERNAL_MODULES = {
     "infrastructure.persistence.run_directory": "运行目录文件布局",
     "infrastructure.runtime.runtime_contract": "运行时契约实现；公共入口是 infrastructure.runtime",
     "instrument.flow": "安全流程包；application 只通过 application.ports.measurement_session 依赖清理端口",
+    "instrument.measurement_adapter": "测量服务端口的显式适配器；设备方法显式定义，不按方法名转发",
+    "instrument.measurement_factory": "硬件/离线测量端口装配；地址、角色和通道在连接前校验",
     "instrument.safety": "设备安全动作与资源所有权边界；关闭回调安全标记契约的显式签名判定",
     "presentation.qt.assistant.chat_dialogs": "助手对话对话框",
     "presentation.qt.assistant.chat_panel": "助手聊天面板",
@@ -386,18 +388,13 @@ LEGACY_MODULES = {
     "result_storage": LegacyModule(
         "旧结果目录扫描与全局结果写入", "已删除", "步骤 3", "result_storage.py", False
     ),
-    # 步骤 9：旧动态仪器路由（按步骤重写或收敛，不保证整文件删除）
+    # 步骤 9：旧动态仪器路由（measurement_adapter / measurement_factory 已收敛为显式装配，
+    # 登记为内部模块；legacy_control 与 power_roles 整文件退役）
     "instrument.legacy_control": LegacyModule(
-        "旧仪器控制实现", "待清理", "步骤 9", "instrument/legacy_control.py", True
-    ),
-    "instrument.measurement_adapter": LegacyModule(
-        "旧动态仪器路由适配器", "待清理", "步骤 9", "instrument/measurement_adapter.py", True
-    ),
-    "instrument.measurement_factory": LegacyModule(
-        "旧动态仪器装配入口", "待清理", "步骤 9", "instrument/measurement_factory.py", True
+        "旧仪器控制实现", "已删除", "步骤 9", "instrument/legacy_control.py", False
     ),
     "instrument.power_roles": LegacyModule(
-        "旧电源角色自动推导", "待清理", "步骤 9", "instrument/power_roles.py", True
+        "旧电源角色自动推导", "已删除", "步骤 9", "instrument/power_roles.py", False
     ),
     # 步骤 16：其余纯再导出兼容模块
     "measurement_calculations": LegacyModule(
@@ -445,14 +442,9 @@ LEGACY_DOTTED_MODULES = frozenset(name for name in LEGACY_MODULES if "." in name
 
 # 步骤 1 冻结的存量旧模块引用：模块 -> 允许继续引用的文件。
 # 这是“只禁止新增”的精确基线；删除对应引用时必须同步删除条目，保持清单与代码一致。
-LEGACY_IMPORT_BASELINE = {
-    "instrument.measurement_factory": {
-        "app/gui_runtime.py",
-    },
-    "instrument.power_roles": {
-        "instrument/legacy_control.py",
-    },
-}
+# 步骤 9 已把 instrument.measurement_factory 收敛为内部模块、退役 instrument.power_roles，
+# 正式 production code 不再引用任何旧模块，基线因此为空。
+LEGACY_IMPORT_BASELINE = {}
 
 # 唯一允许的“无法静态判定模块名”的动态导入：launcher 只按固定依赖表探测第三方包。
 # 值是该（文件, 函数）允许出现的次数，防止在白名单函数内悄悄增加动态导入。

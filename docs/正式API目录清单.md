@@ -192,6 +192,8 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `infrastructure.persistence.run_directory` | 运行目录文件布局 |
 | `infrastructure.runtime.runtime_contract` | 运行时契约实现；公共入口是 `infrastructure.runtime` |
 | `instrument.flow` | 安全流程包；application 只通过 `application.ports.measurement_session` 依赖清理端口 |
+| `instrument.measurement_adapter` | 测量服务端口的显式适配器：设备方法显式定义，不按方法名转发，也不从注入对象推导路由 |
+| `instrument.measurement_factory` | 硬件/离线测量端口装配：地址重复、角色缺失/重复、通道不存在均在连接任何仪器前失败 |
 | `instrument.safety` | 设备安全动作与资源所有权边界；关闭回调的安全标记按显式签名判定调用形式 |
 | `presentation.qt.assistant.chat_dialogs` | 助手对话对话框 |
 | `presentation.qt.assistant.chat_panel` | 助手聊天面板 |
@@ -253,10 +255,8 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `domain.result_reading` | `domain/result_reading.py` | 已删除 | 步骤 6 |
 | `application.ports.result_history` | `application/ports/result_history.py` | 已删除 | 步骤 6 |
 | `infrastructure.persistence.result_history_repository` | `infrastructure/persistence/result_history_repository.py` | 已删除 | 步骤 6 |
-| `instrument.legacy_control` | `instrument/legacy_control.py` | 待清理 | 步骤 9 |
-| `instrument.measurement_adapter` | `instrument/measurement_adapter.py` | 待清理 | 步骤 9 |
-| `instrument.measurement_factory` | `instrument/measurement_factory.py` | 待清理 | 步骤 9 |
-| `instrument.power_roles` | `instrument/power_roles.py` | 待清理 | 步骤 9 |
+| `instrument.legacy_control` | `instrument/legacy_control.py` | 已删除 | 步骤 9 |
+| `instrument.power_roles` | `instrument/power_roles.py` | 已删除 | 步骤 9 |
 
 ### 6.3 存量引用基线
 
@@ -264,12 +264,13 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 同步删除基线条目，新增引用不得靠扩大基线通过。基线统计跨模块绝对导入；包内相对再导出
 （例如 `application/dto/__init__.py` 对旧适配器的再导出）随对应旧模块在步骤 6 一并删除。
 步骤 6 退役根目录结果解析转发、旧结果 DTO 适配器、旧领域结果读取层与旧全局历史端口/仓储；
-历史查看只读正式运行目录结果。
+历史查看只读正式运行目录结果。步骤 9 把 `instrument.measurement_adapter` /
+`instrument.measurement_factory` 收敛为内部模块，并退役 `instrument.legacy_control` 与
+`instrument.power_roles`，基线因此为空。
 
 | 旧模块 | 允许继续引用的文件 |
 | --- | --- |
-| `instrument.measurement_factory` | `app/gui_runtime.py` |
-| `instrument.power_roles` | `instrument/legacy_control.py` |
+| （无） | 步骤 9 之后正式 production code 不再引用任何旧模块；`instrument.measurement_factory` 已登记为内部模块，`instrument.power_roles` 已退役 |
 
 跨层依赖：`application` 对 `instrument.flow` 具体实现的依赖已在步骤 7 清零，
 `application` 只导入 `application.ports.measurement_session` 的安全清理协议；

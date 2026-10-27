@@ -42,6 +42,7 @@
                 "address": "TCPIP0::192.168.1.101::inst0::INSTR",
                 "channels": {
                     "CH1": {
+                        "role": "gate",
                         "voltage": {
                             "value": 2.8,
                             "protection": 1.0,
@@ -54,6 +55,7 @@
                         }
                     },
                     "CH2": {
+                        "role": "drain",
                         "voltage": {
                             "value": 28.0,
                             "protection": 30.0,
@@ -72,6 +74,7 @@
                 "address": "TCPIP0::192.168.1.103::inst0::INSTR",
                 "channels": {
                     "CH1": {
+                        "role": "gate",
                         "voltage": {
                             "value": 5.8,
                             "protection": 1.0,
@@ -84,6 +87,7 @@
                         }
                     },
                     "CH2": {
+                        "role": "drain",
                         "voltage": {
                             "value": 30.0,
                             "protection": 32.0,
@@ -102,6 +106,7 @@
                 "address": "TCPIP0::192.168.1.102::inst0::INSTR",
                 "channels": {
                     "CH1": {
+                        "role": "gate",
                         "voltage": {
                             "value": 5.3,
                             "protection": 0.1,
@@ -114,6 +119,7 @@
                         }
                     },
                     "CH2": {
+                        "role": "drain",
                         "voltage": {
                             "value": 30.0,
                             "protection": 32.0,
@@ -132,6 +138,7 @@
                 "address": "TCPIP0::192.168.1.108::inst0::INSTR",
                 "channels": {
                     "CH1": {
+                        "role": "gate",
                         "voltage": {
                             "value": 2.8,
                             "protection": 1.0,
@@ -144,6 +151,7 @@
                         }
                     },
                     "CH2": {
+                        "role": "drain",
                         "voltage": {
                             "value": 28.0,
                             "protection": 30.0,

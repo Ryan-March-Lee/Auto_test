@@ -115,6 +115,11 @@ python launcher.py --validate-config
 
 `--validate-config` 只读取并校验 `config.json`，不会连接 VISA 仪器，也不会改变射频或电源状态。发现错误时请先修正配置，再开始测量；只有警告时仍可继续启动，但应由操作者确认。
 
+生产装配只使用配置中显式声明的地址、角色和物理通道：被供电分配引用的每个电源通道必须声明
+`role: gate` 或 `role: drain`（`instruments.power_supplies.<name>.channels.<channel>.role`），
+不再按 `CH1`/`CH2` 自动推导。配置页面保存时会按现场固定接线写入角色；只在 `CH1`/`CH2`
+接线但未声明角色的旧硬件配置会在 `--validate-config` 或连接前失败。
+
 `--check` 检查当前 Python 环境是否具备启动 GUI 所需的依赖；`--validate-config` 只检查配置内容，不能替代依赖检查。两个命令不能同时使用。未知命令行参数会返回退出码 `2`。
 
 项目启动器会拒绝非 `Auto_test` 环境。PyCharm 的运行配置应直接指向 `launcher.py`，测试仍使用 `run_tests.bat` 或 `run_tests.ps1`。不要再使用已经移除的 VS Code 包装器或 GUI 批处理入口。

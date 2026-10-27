@@ -185,8 +185,8 @@ def _validate_power_supply(name: str, supply_config: Any, error: Any, warning: A
     enabled = supply_config.get("enabled", True)
     if not isinstance(enabled, bool):
         error(f"{path}.enabled", "必须是布尔值")
-    # Hardware mode discovers all idle DP832A supplies at run time. The
-    # address remains only as a legacy/template field for UI compatibility.
+    # 生产硬件装配只使用配置中显式声明的地址、角色和物理通道；地址与角色
+    # 的实际装配校验在 instrument.measurement_factory 中重复执行。
     channels = supply_config.get("channels")
     if not isinstance(channels, dict) or not channels:
         error(f"{path}.channels", "必须是非空对象")
@@ -273,7 +273,25 @@ def _validate_assignment(
             error(f"{role_path}.channel", "必须是非空通道列表")
             continue
         configured_channels = supply_config.get("channels", {})
+        resolved_roles: Dict[str, str] = {}
         for channel in channels:
-            if channel not in configured_channels:
+            channel_config = configured_channels.get(channel)
+            if not isinstance(channel_config, dict):
                 error(f"{role_path}.channel", f"通道 '{channel}' 不存在于电源 '{supply_name}'")
+                continue
+            role = channel_config.get("role")
+            if role not in ("gate", "drain"):
+                error(
+                    f"{role_path}.channel",
+                    f"通道 '{channel}' 必须显式声明 role 为 gate 或 drain，"
+                    "不再按 CH1/CH2 推导供电角色",
+                )
+            elif role in resolved_roles:
+                error(
+                    f"{role_path}.channel",
+                    f"供电角色重复配置: {role} 同时出现在 "
+                    f"'{resolved_roles[role]}' 和 '{channel}'",
+                )
+            else:
+                resolved_roles[role] = channel
     return supplies

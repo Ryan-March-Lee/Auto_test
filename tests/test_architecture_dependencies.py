@@ -254,7 +254,6 @@ class ProductionDependencyTests(unittest.TestCase):
             ROOT / "infrastructure" / "config" / "json_io.py",
             ROOT / "infrastructure" / "persistence" / "json_result_repository.py",
             ROOT / "infrastructure" / "logging" / "app_logging.py",
-            ROOT / "instrument" / "legacy_control.py",
             ROOT / "tests" / "test_project_paths.py",
             ROOT / "tests" / "test_config_io.py",
             ROOT / "tests" / "test_json_result_repository.py",

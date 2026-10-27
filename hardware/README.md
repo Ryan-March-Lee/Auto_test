@@ -22,9 +22,10 @@ are unloaded before starting. Each discovered supply is connected, included in
 the action/cleanup boundary, and verified off; the number and addresses may
 differ between tests. The application hardware factory is separate from this
 smoke behavior: it opens only configured power-supply addresses and routes each
-logical role to its configured supply and channel. Measurement assignments
-define the production topology; smoke discovery must not be used as that
-topology.
+logical role to its configured supply and channel; every assigned channel must
+declare `role: gate` or `role: drain` (there is no `CH1`/`CH2` fallback).
+Measurement assignments define the production topology; smoke discovery must
+not be used as that topology.
 Signal-generator and supply configurations must query output state before and
 after cleanup. Cleanup failures fail the smoke and remain in the local report.
 

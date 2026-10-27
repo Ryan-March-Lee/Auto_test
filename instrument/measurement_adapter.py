@@ -1,16 +1,22 @@
-"""Compatibility adapter from instrument drivers/session to measurement services."""
+"""Adapter from instrument drivers/session to the measurement service port."""
 
 from __future__ import annotations
 
-from typing import Mapping
+from typing import Iterable, Mapping, Sequence
 
 
 class PortMeasurementAdapter:
-    """Expose the service's historical instrument methods over new ports.
+    """Expose the measurement service port over explicit instrument ports.
 
     ``dut_power_channels`` and ``driver_power_channels`` map gate/drain roles
     to physical channel names. Driver power is optional because many driver
     amplifiers are externally powered.
+
+    ``qualified_power_channels`` marks channel names that must be routed as
+    ``<supply>/<channel>`` tokens (multi-supply hardware), and
+    ``emergency_channels`` fixes the exact channels a shutdown must switch off.
+    Both are explicit construction inputs; nothing is inferred from attributes
+    of the injected power supply.
     """
 
     def __init__(
@@ -20,6 +26,8 @@ class PortMeasurementAdapter:
         dut_power_channels: Mapping[str, str] | None = None,
         driver_power_channels: Mapping[str, str] | None = None,
         power_settings: Mapping[str, Mapping[str, float]] | None = None,
+        qualified_power_channels: bool = False,
+        emergency_channels: Iterable[tuple[int, str]] | None = None,
     ):
         self.session = session
         self.signal_gen = session.signal_generator
@@ -29,9 +37,16 @@ class PortMeasurementAdapter:
         self.dut_power_channels = dict(dut_power_channels or {})
         self.driver_power_channels = dict(driver_power_channels or {})
         self.power_settings = {key: dict(value) for key, value in (power_settings or {}).items()}
+        self.qualified_power_channels = bool(qualified_power_channels)
+        self.emergency_channels: Sequence[tuple[int, str]] = (
+            tuple(emergency_channels)
+            if emergency_channels is not None
+            else ((0, "CH2"), (0, "CH1"))
+        )
         self._validate_power_channels()
         self._session_cleaned = False
         self._active_power_groups: dict[str, dict[str, str]] = {}
+        self._last_emergency_power_off: list[tuple[int, str]] = []
 
     def _validate_power_channels(self) -> None:
         for label, channels in (
@@ -52,7 +67,7 @@ class PortMeasurementAdapter:
         self.spectrum_analyzer.configure_center_frequency_hz(frequency_hz, timeout_s=timeout_s)
 
     def set_power(self, power_dbm: float, *, timeout_s: float = 5.0) -> None:
-        was_enabled = bool(getattr(self.signal_generator, "rf_enabled", False))
+        was_enabled = bool(self.signal_generator.rf_enabled)
         if was_enabled:
             self.signal_generator.set_rf_enabled(False, timeout_s=timeout_s)
         try:
@@ -85,24 +100,10 @@ class PortMeasurementAdapter:
         self.session.start_measurement()
 
     def emergency_power_off_all(self, *, timeout_s: float = 5.0) -> list[BaseException]:
-        """Turn off both channels on every discovered supply before closing."""
+        """Switch off the explicitly configured channels before closing."""
         errors = []
-        self._last_emergency_power_off: list[tuple[int, str]] = []
-        supplies = getattr(self.power_supply, "supplies", None)
-        if isinstance(supplies, dict):
-            routed_channels = [
-                (index, f"{name}/{channel}")
-                for index, name in enumerate(supplies)
-                for channel in ("CH2", "CH1")
-            ]
-        else:
-            supply_list = supplies or [self.power_supply]
-            routed_channels = [
-                (index, channel)
-                for index, _supply in enumerate(supply_list)
-                for channel in ("CH2", "CH1")
-            ]
-        for index, channel in routed_channels:
+        self._last_emergency_power_off = []
+        for index, channel in self.emergency_channels:
             try:
                 self.power_supply.set_output_enabled(channel, False, timeout_s=timeout_s)
             except Exception as error:
@@ -111,28 +112,27 @@ class PortMeasurementAdapter:
                 self._last_emergency_power_off.append((index, channel))
         return errors
 
-    def set_voltage(self, _supply_name: str, channel: str, voltage: float) -> None:
-        setter = getattr(self.power_supply, "set_voltage_v", None)
-        (setter or self.power_supply.set_voltage)(self._physical_channel(_supply_name, channel), voltage)
+    def set_voltage(self, supply_name: str, channel: str, voltage: float) -> None:
+        self.power_supply.set_voltage_v(self._power_channel(supply_name, channel), voltage)
 
-    def set_current(self, _supply_name: str, channel: str, current: float) -> None:
-        setter = getattr(self.power_supply, "set_current_limit_a", None)
-        (setter or self.power_supply.set_current_limit)(self._physical_channel(_supply_name, channel), current)
+    def set_current(self, supply_name: str, channel: str, current: float) -> None:
+        self.power_supply.set_current_limit_a(
+            self._power_channel(supply_name, channel), current
+        )
 
-    def read_voltage(self, _supply_name: str, channel: str) -> float:
-        reader = getattr(self.power_supply, "read_voltage_v", None)
-        return (reader or self.power_supply.read_voltage)(self._physical_channel(_supply_name, channel))
+    def read_voltage(self, supply_name: str, channel: str) -> float:
+        return self.power_supply.read_voltage_v(self._power_channel(supply_name, channel))
 
-    def read_current(self, _supply_name: str, channel: str) -> float:
-        reader = getattr(self.power_supply, "read_current_a", None)
-        return (reader or self.power_supply.read_current)(self._physical_channel(_supply_name, channel))
+    def read_current(self, supply_name: str, channel: str) -> float:
+        return self.power_supply.read_current_a(self._power_channel(supply_name, channel))
 
-    def _physical_channel(self, supply_name: str, channel: str) -> str:
-        """Preserve the configured supply identity for multi-supply hardware."""
-        supplies = getattr(self.power_supply, "supplies", None)
-        if isinstance(supplies, dict):
-            return f"{supply_name}/{channel}"
-        return channel
+    def _power_channel(self, supply_name: str, channel: str) -> str:
+        """Return the explicit physical channel token for the power supply."""
+        if not self.qualified_power_channels:
+            return channel
+        if not isinstance(supply_name, str) or not supply_name.strip():
+            raise ValueError("限定电源通道必须提供电源名称")
+        return f"{supply_name}/{channel}"
 
     def _power_session(self, roles: Mapping[str, str]) -> None:
         if not roles:
@@ -151,11 +151,9 @@ class PortMeasurementAdapter:
         for role, channel in roles.items():
             settings = self.power_settings.get(role, {})
             if "voltage_v" in settings:
-                setter = getattr(self.power_supply, "set_voltage_v", None)
-                (setter or self.power_supply.set_voltage)(channel, settings["voltage_v"])
+                self.power_supply.set_voltage_v(channel, settings["voltage_v"])
             if "current_a" in settings:
-                setter = getattr(self.power_supply, "set_current_limit_a", None)
-                (setter or self.power_supply.set_current_limit)(channel, settings["current_a"])
+                self.power_supply.set_current_limit_a(channel, settings["current_a"])
 
     def power_on_driver(self) -> None:
         self._power_session(self.driver_power_channels)

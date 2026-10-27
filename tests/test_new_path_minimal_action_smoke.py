@@ -201,5 +201,31 @@ class NewPathMinimalActionTests(unittest.TestCase):
             self.run_smoke(FakePort(), config)
 
 
+class PowerDriverResolutionTests(unittest.TestCase):
+    """生产装配把电源放在显式 ``supply -> driver`` 映射里，smoke 必须取驱动值。"""
+
+    def test_configured_supply_mapping_resolves_to_drivers(self):
+        from hardware.new_path_minimal_action_smoke import _power_drivers
+
+        first, second = FakePowerDriver(), FakePowerDriver()
+        port = type(
+            "Port",
+            (),
+            {
+                "power_supply": type(
+                    "Power", (), {"supplies": {"PS1": first, "PS2": second}}
+                )()
+            },
+        )()
+        self.assertEqual(_power_drivers(port), [first, second])
+
+    def test_single_power_supply_without_supplies_attribute_is_used_directly(self):
+        from hardware.new_path_minimal_action_smoke import _power_drivers
+
+        supply = FakePowerDriver()
+        port = type("Port", (), {"power_supply": supply})()
+        self.assertEqual(_power_drivers(port), [supply])
+
+
 if __name__ == "__main__":
     unittest.main()

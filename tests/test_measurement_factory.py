@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from instrument.measurement_adapter import PortMeasurementAdapter
 from instrument.measurement_factory import create_measurement_port, _VisaSession
+from instrument.ports import PowerSupplyPort
 from instrument.simulation import SimulatedSignalGenerator, SimulatedSpectrumAnalyzer, SimulatedPowerSupply
 
 
@@ -57,8 +58,8 @@ class MeasurementFactoryTests(unittest.TestCase):
                     "PS1": {
                         "address": "PS", "enabled": True,
                         "channels": {
-                            "CH1": {"voltage": {"value": 2.8}, "current": {"value": 0.1}},
-                            "CH2": {"voltage": {"value": 28.0}, "current": {"value": 2.0}},
+                            "CH1": {"role": "gate", "voltage": {"value": 2.8}, "current": {"value": 0.1}},
+                            "CH2": {"role": "drain", "voltage": {"value": 28.0}, "current": {"value": 2.0}},
                         },
                     }
                 },
@@ -158,6 +159,115 @@ class MeasurementFactoryTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "不存在的通道"):
                     create_measurement_port(str(path), mode="hardware")
 
+    def test_hardware_mode_rejects_duplicate_instrument_addresses_before_opening(self):
+        config = _base_hardware_config()
+        config["instruments"]["power_supplies"]["PS2"] = {
+            "address": "PS",
+            "enabled": True,
+            "channels": {
+                "CH1": {"role": "gate", "voltage": {"value": 5.0}, "current": {"value": 0.2}},
+                "CH2": {"role": "drain", "voltage": {"value": 30.0}, "current": {"value": 1.0}},
+            },
+        }
+        config["power_supply_assignment"] = {
+            "dut_amplifier": {
+                "supplies": {
+                    "carrier": {"name": "PS1", "channel": ["CH1"]},
+                    "peaking": {"name": "PS2", "channel": ["CH2"]},
+                }
+            },
+            "driver_amplifier": {"supplies": {}},
+        }
+        manager = _FakeResourceManager()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps(config), encoding="utf-8")
+            with patch("instrument.measurement_factory.pyvisa.ResourceManager", return_value=manager):
+                with self.assertRaisesRegex(ValueError, "地址重复"):
+                    create_measurement_port(str(path), mode="hardware")
+        self.assertEqual(manager.opened_addresses, [])
+
+    def test_hardware_mode_requires_explicit_channel_role_before_opening(self):
+        config = _base_hardware_config()
+        del config["instruments"]["power_supplies"]["PS1"]["channels"]["CH1"]["role"]
+        config["power_supply_assignment"] = {
+            "dut_amplifier": {"supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}}},
+            "driver_amplifier": {"supplies": {}},
+        }
+        manager = _FakeResourceManager()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps(config), encoding="utf-8")
+            with patch("instrument.measurement_factory.pyvisa.ResourceManager", return_value=manager):
+                with self.assertRaisesRegex(ValueError, "显式 gate/drain 角色"):
+                    create_measurement_port(str(path), mode="hardware")
+        self.assertEqual(manager.opened_addresses, [])
+
+    def test_hardware_mode_rejects_duplicate_power_roles_before_opening(self):
+        config = _base_hardware_config()
+        config["instruments"]["power_supplies"]["PS1"]["channels"]["CH2"]["role"] = "gate"
+        config["power_supply_assignment"] = {
+            "dut_amplifier": {"supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}}},
+            "driver_amplifier": {"supplies": {}},
+        }
+        manager = _FakeResourceManager()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps(config), encoding="utf-8")
+            with patch("instrument.measurement_factory.pyvisa.ResourceManager", return_value=manager):
+                with self.assertRaisesRegex(ValueError, "供电角色重复配置"):
+                    create_measurement_port(str(path), mode="hardware")
+        self.assertEqual(manager.opened_addresses, [])
+
+    def test_hardware_mode_routes_explicit_supply_channel_tokens(self):
+        config = _base_hardware_config()
+        config["power_supply_assignment"] = {
+            "dut_amplifier": {"supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}}},
+            "driver_amplifier": {"supplies": {}},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps(config), encoding="utf-8")
+            manager = _FakeResourceManager()
+            with patch("instrument.measurement_factory.pyvisa.ResourceManager", return_value=manager):
+                port = create_measurement_port(str(path), mode="hardware")
+
+            port.set_voltage("PS1", "CH1", 2.8)
+            self.assertIsInstance(port.power_supply, PowerSupplyPort)
+            self.assertEqual(port.read_voltage("PS1", "CH1"), 2.8)
+            self.assertEqual(port.read_current("PS1", "CH2"), 1.0)
+            with self.assertRaisesRegex(ValueError, "未配置的生产电源通道"):
+                port.set_voltage("PS9", "CH1", 2.8)
+
+            resource = manager.resources[2]
+            self.assertIn(("write", ":SOURce1:VOLTage 2.8"), resource.commands)
+            self.assertIn(("query", ":MEASure:VOLTage? CH1"), resource.commands)
+            self.assertIn(("query", ":MEASure:CURRent? CH2"), resource.commands)
+            self.assertEqual(port.close_all(close_rf=True), [])
+
+    def test_hardware_mode_emergency_power_off_uses_configured_channels(self):
+        config = _base_hardware_config()
+        config["power_supply_assignment"] = {
+            "dut_amplifier": {"supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}}},
+            "driver_amplifier": {"supplies": {}},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps(config), encoding="utf-8")
+            manager = _FakeResourceManager()
+            with patch("instrument.measurement_factory.pyvisa.ResourceManager", return_value=manager):
+                port = create_measurement_port(str(path), mode="hardware")
+
+            self.assertEqual(port.emergency_power_off_all(), [])
+            self.assertEqual(
+                port._last_emergency_power_off,
+                [(0, "PS1/CH2"), (0, "PS1/CH1")],
+            )
+            commands = manager.resources[2].commands
+            self.assertIn(("write", ":OUTPut CH2,OFF"), commands)
+            self.assertIn(("write", ":OUTPut CH1,OFF"), commands)
+            self.assertEqual(port.close_all(close_rf=True), [])
+
 
 def _base_hardware_config():
     return {
@@ -168,8 +278,8 @@ def _base_hardware_config():
                 "PS1": {
                     "address": "PS", "enabled": True,
                     "channels": {
-                        "CH1": {"voltage": {"value": 2.8}, "current": {"value": 0.1}},
-                        "CH2": {"voltage": {"value": 28.0}, "current": {"value": 2.0}},
+                        "CH1": {"role": "gate", "voltage": {"value": 2.8}, "current": {"value": 0.1}},
+                        "CH2": {"role": "drain", "voltage": {"value": 28.0}, "current": {"value": 2.0}},
                     },
                 }
             },
@@ -193,6 +303,10 @@ class _FakeResource:
             return "RIGOL TECHNOLOGIES,DP832A,TEST,1.0"
         if command.startswith("OUTP?") and self.address == "PS":
             return "OFF"
+        if command == ":MEASure:VOLTage? CH1":
+            return "2.8"
+        if command == ":MEASure:CURRent? CH2":
+            return "1.0"
         return "-30.0"
 
     def close(self):

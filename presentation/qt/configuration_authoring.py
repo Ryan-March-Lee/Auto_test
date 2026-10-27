@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import copy
 import math
 import re
 from typing import Any, Mapping
@@ -57,11 +58,38 @@ def author_official_configuration(config: Mapping[str, Any] | None) -> dict[str,
     导致正式校验失败，不会抛出异常。唯一例外是正式 schema 无法表达的形态（多个本机
     供电电源同时被分配），此时抛出 :class:`ConfigurationAuthoringError`。
     """
-    document = dict(config) if isinstance(config, Mapping) else {}
+    document = copy.deepcopy(dict(config)) if isinstance(config, Mapping) else {}
     document["schema_version"] = OFFICIAL_SCHEMA_VERSION
     document["test_plan"] = _author_test_plan(document)
     document["run_mapping"] = _author_run_mapping(document)
+    if "instruments" in document:
+        document["instruments"] = _author_instrument_power_roles(document["instruments"])
     return document
+
+
+def _author_instrument_power_roles(instruments: Any) -> Any:
+    """给本机电源通道写入显式角色，供生产装配直接使用。
+
+    配置页固定按 ``CH1`` 栅极、``CH2`` 漏极接线；已有合法显式角色保持不变，
+    未知通道不猜测角色。返回值是独立副本，不修改调用方的配置对象。
+    """
+    if not isinstance(instruments, Mapping):
+        return instruments
+    result = copy.deepcopy(dict(instruments))
+    supplies = result.get("power_supplies")
+    if not isinstance(supplies, dict):
+        return result
+    for supply in supplies.values():
+        channels = supply.get("channels") if isinstance(supply, dict) else None
+        if not isinstance(channels, dict):
+            continue
+        for channel, channel_config in channels.items():
+            role = DUT_CHANNEL_ROLES.get(channel)
+            if role is None or not isinstance(channel_config, dict):
+                continue
+            if channel_config.get("role") not in ("gate", "drain"):
+                channel_config["role"] = role
+    return result
 
 
 def _author_test_plan(document: Mapping[str, Any]) -> dict[str, Any]:

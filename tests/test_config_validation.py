@@ -115,6 +115,26 @@ class ConfigValidationTests(unittest.TestCase):
         result = validate_config(config)
         self.assertTrue(any("CH99" in issue.message for issue in result.errors))
 
+    def test_assigned_channel_requires_explicit_role(self):
+        config = copy.deepcopy(self.base_config)
+        del config["instruments"]["power_supplies"]["PS4"]["channels"]["CH1"]["role"]
+        result = validate_config(config)
+        self.assertFalse(result.valid)
+        self.assertTrue(
+            any("显式声明 role" in issue.message for issue in result.errors),
+            [issue.message for issue in result.errors],
+        )
+
+    def test_duplicate_assigned_role_is_error(self):
+        config = copy.deepcopy(self.base_config)
+        config["instruments"]["power_supplies"]["PS4"]["channels"]["CH2"]["role"] = "gate"
+        result = validate_config(config)
+        self.assertFalse(result.valid)
+        self.assertTrue(
+            any("供电角色重复配置" in issue.message for issue in result.errors),
+            [issue.message for issue in result.errors],
+        )
+
     def test_file_loader_uses_explicit_path_without_hardware_access(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             config_path = Path(temporary_directory) / "config.json"

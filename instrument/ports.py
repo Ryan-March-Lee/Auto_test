@@ -42,6 +42,9 @@ class InstrumentState(str, Enum):
 class SignalGeneratorPort(Protocol):
     """信号源端口；创建后 RF 必须保持关闭。"""
 
+    rf_enabled: bool
+    """当前 RF 输出状态；由 :meth:`set_rf_enabled` 维护。"""
+
     def connect(self, *, timeout_s: float = 10.0) -> None:
         """连接设备；失败抛出异常，不改变 RF 开关状态。"""
 

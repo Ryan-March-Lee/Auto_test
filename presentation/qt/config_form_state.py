@@ -9,6 +9,8 @@ import copy
 import math
 from typing import Any, Mapping
 
+from presentation.qt.configuration_authoring import DUT_CHANNEL_ROLES
+
 
 def parse_frequency_text(value: str) -> list[float] | None:
     """安全解析频率列表；非法输入返回 ``None``，不会执行任意代码。"""
@@ -99,10 +101,30 @@ class ConfigFormState:
 
     def read_power_supply_config(self) -> dict:
         result = {}
+        configured = (
+            self.config.get("instruments", {})
+            if isinstance(self.config.get("instruments"), Mapping)
+            else {}
+        )
+        configured_supplies = (
+            configured.get("power_supplies", {})
+            if isinstance(configured.get("power_supplies"), Mapping)
+            else {}
+        )
         for name, supply in getattr(self.widgets, "power_config_widgets", {}).items():
+            existing_channels = _dict_copy(
+                _dict_copy(configured_supplies.get(name)).get("channels")
+            )
             channels = {}
             for channel, controls in supply.get("channels", {}).items():
+                existing_role = _dict_copy(existing_channels.get(channel)).get("role")
+                role = (
+                    existing_role
+                    if existing_role in ("gate", "drain")
+                    else DUT_CHANNEL_ROLES.get(channel)
+                )
                 channels[channel] = {
+                    "role": role,
                     "voltage": {"value": self._value(controls["voltage"]), "protection": self._value(controls["voltage_protection"]), "protection_enabled": self._checked(controls["voltage_protection_enabled"])},
                     "current": {"value": self._value(controls["current"]), "protection": self._value(controls["current_protection"]), "protection_enabled": self._checked(controls["current_protection_enabled"])},
                 }

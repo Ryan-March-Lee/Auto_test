@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import re
 import time
+from collections.abc import Mapping as MappingABC
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -45,7 +46,12 @@ def _identity(driver: Any, timeout_s: float | None = None) -> str:
 
 
 def _power_drivers(port: Any) -> list[Any]:
-    return list(getattr(port.power_supply, "supplies", ()))
+    supplies = getattr(port.power_supply, "supplies", None)
+    if isinstance(supplies, MappingABC):
+        return list(supplies.values())
+    if supplies:
+        return list(supplies)
+    return [port.power_supply]
 
 
 def _expected_match(response: Any, expected: Any) -> bool:

@@ -1,12 +1,17 @@
 """Qt-independent measurement services used by the application use cases.
 
 These services hold the measurement orchestration that was historically in the
-root ``measurement_services`` module.  They use the instrument capability names
-exposed by :class:`instrument.ports.MeasurementInstrumentPort` while the VISA
-adapters remain decoupled; UI code only translates events.
+root ``measurement_services`` module.  Their device dependency is the explicit
+:class:`instrument.ports.MeasurementInstrumentPort` protocol; the VISA adapters
+stay decoupled and UI code only translates events.
 
 The root ``measurement_services`` module is now a compatibility re-export of
 these symbols.
+
+设备能力边界：三个服务在构造阶段按各自实际使用的方法校验
+``MeasurementInstrumentPort`` 能力（信号通路、驱动电源、DUT 电源），能力不足时
+立刻抛 :class:`instrument.ports.InstrumentCapabilityError`，不接受未声明的动态
+设备对象，也不会在测量途中才发现缺失方法。
 
 安全清理边界：服务只保存注入的测量会话协议
 (:class:`application.ports.measurement_session.MeasurementSessionPort`)，由组装层
@@ -41,7 +46,13 @@ from domain.measurement.calculations import (
     compensate_amplifier_output_power,
     compensate_driver_output_power,
 )
-from instrument.ports import MeasurementInstrumentPort
+from instrument.ports import (
+    DRIVER_POWER_CAPABILITIES,
+    DUT_POWER_CAPABILITIES,
+    SIGNAL_MEASUREMENT_CAPABILITIES,
+    MeasurementInstrumentPort,
+    require_measurement_capabilities,
+)
 
 
 class ResultRepository(Protocol):
@@ -59,11 +70,46 @@ def _publish(sink: EventSink | None, event: Any) -> None:
         sink.publish(event)
 
 
+def _require_event_sink(sink: EventSink | None) -> EventSink | None:
+    """校验可选事件输出；缺陷在构造时暴露，而不是测量途中。"""
+    if sink is None:
+        return None
+    if not callable(getattr(sink, "publish", None)):
+        raise TypeError("event_sink 必须提供 publish(event) 方法")
+    return sink
+
+
+def _require_sleep_fn(sleep: Callable[[float], None] | None) -> Callable[[float], None]:
+    if sleep is None:
+        return time.sleep
+    if not callable(sleep):
+        raise TypeError("sleep_fn 必须是可调用对象")
+    return sleep
+
+
+def _require_result_saver(
+    repository: ResultRepository | Callable[[Any], Any] | None,
+) -> Callable[[Any], Any] | None:
+    """把显式注入的结果仓储解析为单一写入函数。"""
+    if repository is None:
+        return None
+    save = getattr(repository, "save", None)
+    if callable(save):
+        return save
+    if callable(repository):
+        return repository
+    raise TypeError("result_repository 必须提供 save(result) 方法或本身可调用")
+
+
 class _Service:
     """测量服务基类。
 
     ``run_id`` 是必需的运行标识：技术债步骤 4 已删除旧入口的默认运行 ID 兜底，
     测量事件与结果登记都必须携带真实运行 ID，不再有隐式兜底。
+
+    设备依赖是显式的 :class:`instrument.ports.MeasurementInstrumentPort`：构造
+    阶段按 ``required_capabilities`` 校验能力，缺失时抛
+    ``InstrumentCapabilityError``；服务不再通过 ``getattr`` 猜测缺失的可选属性。
     """
 
     measurement_type = "measurement"
@@ -75,39 +121,53 @@ class _Service:
                  sleep_fn: Callable[[float], None] | None = None,
                  settle_delay_s: float = 5.0,
                  owns_measurement_port: bool = True):
+        if not isinstance(run_id, str) or not run_id.strip():
+            raise ValueError("测量服务必须提供有效运行 ID")
+        if settle_delay_s < 0:
+            raise ValueError("settle_delay_s 不能为负")
+        if cancellation_token is not None and not callable(
+            getattr(cancellation_token, "raise_if_cancelled", None)
+        ):
+            raise TypeError("cancellation_token 必须提供 raise_if_cancelled() 方法")
         self.config = config
+        self.run_id = run_id
         # 服务只依赖测量会话协议：设备端口与安全清理端口在同一生命周期边界内，
         # 具体设备 flow 由组装层适配，application 不感知。
-        self.session: MeasurementSessionPort = MeasurementSessionBinding(
-            instrument=instrument, safety_cleanup=safety_cleanup
+        self.inst_ctrl: MeasurementInstrumentPort = require_measurement_capabilities(
+            instrument,
+            requirement=type(self).__name__,
+            capabilities=self.required_capabilities(config),
         )
-        self.inst_ctrl = self.session.instrument
-        self.run_id = run_id
-        self.event_sink = event_sink
+        self.session: MeasurementSessionPort = MeasurementSessionBinding(
+            instrument=self.inst_ctrl, safety_cleanup=safety_cleanup
+        )
+        self.event_sink = _require_event_sink(event_sink)
         self.cancellation_token = cancellation_token or CancellationToken()
         self.result_repository = result_repository
-        self.sleep_fn = sleep_fn or time.sleep
+        self._save_result = _require_result_saver(result_repository)
+        self.sleep_fn = _require_sleep_fn(sleep_fn)
         self.settle_delay_s = settle_delay_s
         self.owns_measurement_port = owns_measurement_port
         self.last_cleanup_record: CleanupRecord | None = None
 
+    @classmethod
+    def required_capabilities(cls, config: Mapping[str, Any]) -> tuple[str, ...]:
+        """返回本服务实际使用的设备能力；子类按测量类型追加。"""
+        return SIGNAL_MEASUREMENT_CAPABILITIES
+
     def _check_cancelled(self) -> None:
-        token = getattr(self, "cancellation_token", None)
-        if token is not None:
-            token.raise_if_cancelled()
+        self.cancellation_token.raise_if_cancelled()
 
     def _message(self, message: str) -> None:
-        _publish(getattr(self, "event_sink", None), MessageEvent(self.run_id, message=message))
+        _publish(self.event_sink, MessageEvent(self.run_id, message=message))
 
     def _progress(self, fraction: float, stage: str) -> None:
-        _publish(getattr(self, "event_sink", None), ProgressEvent(self.run_id, fraction=fraction, stage=stage))
+        _publish(self.event_sink, ProgressEvent(self.run_id, fraction=fraction, stage=stage))
 
     def _save(self, result: Any) -> Any:
-        repository = getattr(self, "result_repository", None)
-        if repository is None:
+        if self._save_result is None:
             return result
-        saver = repository.save if hasattr(repository, "save") else repository
-        return saver(result)
+        return self._save_result(result)
 
     def _cleanup(self, power_cleanup: Callable[[], None] | None = None) -> CleanupRecord:
         """执行安全清理并保存结构化记录；失败记录同样保留在服务上。"""
@@ -128,7 +188,7 @@ class CableLossService(_Service):
 
     measurement_type = "cable_loss"
 
-    def __init__(self, config: Mapping[str, Any], instrument: Any, **kwargs: Any):
+    def __init__(self, config: Mapping[str, Any], instrument: MeasurementInstrumentPort, **kwargs: Any):
         super().__init__(config, instrument, **kwargs)
         self.attenuator_value = float(config["attenuator"]["type"].replace("dB", ""))
         self._path1_losses: dict[Any, float] = {}
@@ -226,10 +286,15 @@ class DriverPowerMappingService(_Service):
 
     measurement_type = "driver_power_mapping"
 
-    def __init__(self, config: Mapping[str, Any], instrument: Any, loss_data: Mapping[str, Any], **kwargs: Any):
+    def __init__(self, config: Mapping[str, Any], instrument: MeasurementInstrumentPort,
+                 loss_data: Mapping[str, Any], **kwargs: Any):
         super().__init__(config, instrument, **kwargs)
         self.loss_data = loss_data
         self.attenuator_value = float(config["attenuator"]["type"].replace("dB", ""))
+
+    @classmethod
+    def required_capabilities(cls, config: Mapping[str, Any]) -> tuple[str, ...]:
+        return SIGNAL_MEASUREMENT_CAPABILITIES + DRIVER_POWER_CAPABILITIES
 
     def run(self) -> dict[str, Any]:
         mapping: dict[str, dict[str, float]] = {}
@@ -252,7 +317,7 @@ class DriverPowerMappingService(_Service):
                     for point_index, input_power in enumerate(points):
                         self._check_cancelled()
                         self.inst_ctrl.set_power(input_power)
-                        getattr(self, "sleep_fn", time.sleep)(self.settle_delay_s)
+                        self.sleep_fn(self.settle_delay_s)
                         raw = self.inst_ctrl.measure_power_with_average()
                         actual = compensate_driver_output_power(raw, frequency, self.loss_data["cable_losses"], self.attenuator_value)
                         values[str(input_power)] = actual
@@ -261,7 +326,7 @@ class DriverPowerMappingService(_Service):
                             "output_power_driver": list(values.values()),
                             "gain": [output - float(key) for key, output in values.items()],
                         }
-                        _publish(getattr(self, "event_sink", None), RealtimeDataEvent(self.run_id, measurement=self.measurement_type,
+                        _publish(self.event_sink, RealtimeDataEvent(self.run_id, measurement=self.measurement_type,
                             data={"frequency": frequency, "sweep_data": sweep_data,
                                   "current_point": {"input_power": input_power, "output_power": actual}}))
                         self._progress((frequency_index + (point_index + 1) / len(points)) / len(frequencies), "scan")
@@ -280,11 +345,22 @@ class AmplifierMeasurementService(_Service):
 
     measurement_type = "amplifier_measurement"
 
-    def __init__(self, config: Mapping[str, Any], instrument: Any, loss_data: Mapping[str, Any],
-                 driver_mapping: Mapping[str, Any] | None = None, **kwargs: Any):
+    def __init__(self, config: Mapping[str, Any], instrument: MeasurementInstrumentPort,
+                 loss_data: Mapping[str, Any], driver_mapping: Mapping[str, Any] | None = None,
+                 **kwargs: Any):
         super().__init__(config, instrument, **kwargs)
         self.loss_data = loss_data
         self.driver_mapping = driver_mapping
+
+    @classmethod
+    def required_capabilities(cls, config: Mapping[str, Any]) -> tuple[str, ...]:
+        """主功放扫描必用 DUT 电源能力；驱动模式开启时才要求驱动电源能力。"""
+        capabilities = SIGNAL_MEASUREMENT_CAPABILITIES + DUT_POWER_CAPABILITIES
+        driver_mode = config.get("driver_mode", {})
+        enabled = driver_mode.get("enabled") if isinstance(driver_mode, Mapping) else None
+        if enabled:
+            capabilities += DRIVER_POWER_CAPABILITIES
+        return capabilities
 
     def perform_power_sweep(self, frequency: float) -> dict[str, Any]:
         compression_type = self.config["compression_point"]["type"]
@@ -315,7 +391,7 @@ class AmplifierMeasurementService(_Service):
                     )
                     break
                 self.inst_ctrl.set_power(sg_power)
-                getattr(self, "sleep_fn", time.sleep)(self.settle_delay_s)
+                self.sleep_fn(self.settle_delay_s)
                 raw = self.inst_ctrl.measure_power_with_average()
                 attenuator = float(self.config["attenuator"]["type"].replace("dB", ""))
                 output = compensate_amplifier_output_power(raw, frequency, self.loss_data["cable_losses"], attenuator)
@@ -332,7 +408,7 @@ class AmplifierMeasurementService(_Service):
                 data["output_power_dut"].append(output); data["gain"].append(gain)
                 data["voltages"].append(voltage); data["currents"].append(current)
                 data["dc_power"].append(dc_power); data["efficiency"].append(calculate_efficiency(output, dc_power))
-                _publish(getattr(self, "event_sink", None), RealtimeDataEvent(self.run_id, measurement=self.measurement_type,
+                _publish(self.event_sink, RealtimeDataEvent(self.run_id, measurement=self.measurement_type,
                     data={"frequency": frequency, "sweep_data": {key: list(value) for key, value in data.items()},
                           "current_point": {"sg_power": sg_power, "dut_input_power": dut_input,
                                             "output_power": output, "gain": gain,

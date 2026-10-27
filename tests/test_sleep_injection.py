@@ -13,6 +13,49 @@ class _Repository:
         return SimpleNamespace(run_directory=Path("saved-run"))
 
 
+class _Instrument:
+    """满足主功放服务能力校验的最小设备替身（驱动模式关闭）。"""
+
+    def set_power(self, _power):
+        pass
+
+    def set_frequency(self, _frequency):
+        pass
+
+    def set_center_frequency(self, _frequency):
+        pass
+
+    def set_span(self, _span):
+        pass
+
+    def rf_output_on(self):
+        pass
+
+    def rf_output_off(self):
+        pass
+
+    def measure_power_with_average(self):
+        return -10.0
+
+    def setup_dut_power(self):
+        pass
+
+    def power_on_sequence(self):
+        pass
+
+    def power_off_sequence(self):
+        pass
+
+    def read_voltage(self, _name, _channel):
+        return 5.0
+
+    def read_current(self, _name, _channel):
+        return 1.0
+
+    def close_all(self, close_rf=False):
+        return []
+
+
 def _amplifier_request(measurement_port):
     return AmplifierMeasurementRequest(
         configuration={
@@ -33,14 +76,14 @@ class FormalMeasurementSleepInjectionTests(unittest.TestCase):
         injected_sleep = lambda _: None
 
         amplifier = AmplifierMeasurementUseCase(
-            _amplifier_request(object()), sleep_fn=injected_sleep
+            _amplifier_request(_Instrument()), sleep_fn=injected_sleep
         )
 
         self.assertIs(amplifier.sleep_fn, injected_sleep)
 
     def test_module_sleep_patch_is_used_when_no_sleep_function_is_injected(self):
         with patch("application.measurements.amplifier_test.time.sleep") as patched_sleep:
-            amplifier = AmplifierMeasurementUseCase(_amplifier_request(object()))
+            amplifier = AmplifierMeasurementUseCase(_amplifier_request(_Instrument()))
         self.assertIs(amplifier.sleep_fn, patched_sleep)
 
     def test_amplifier_use_case_rejects_missing_measurement_port(self):

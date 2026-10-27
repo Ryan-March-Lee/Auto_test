@@ -22,6 +22,7 @@ from .measurement_results import MeasurementType, freeze
 
 if TYPE_CHECKING:  # pragma: no cover - 仅用于类型标注，避免运行时循环导入
     from application.run_stages import RunStageRecorder
+    from instrument.ports import MeasurementInstrumentPort
 
 
 @dataclass(frozen=True)
@@ -31,7 +32,7 @@ class MeasurementRequest:
     configuration: RunConfiguration
     context: RunContext
     run_directory: Path
-    measurement_port: Any
+    measurement_port: MeasurementInstrumentPort
     safety_cleanup: SafetyCleanupPort | None = None
     measurement_type: MeasurementType | str = "measurement"
     configuration_snapshot: Mapping[str, Any] | None = None

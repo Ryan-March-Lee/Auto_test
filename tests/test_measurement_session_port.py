@@ -16,6 +16,24 @@ from tests.fakes import NullSafetyCleanup, safety_cleanup_for
 class _Instrument:
     signal_gen = object()
 
+    def set_frequency(self, _frequency):
+        pass
+
+    def set_power(self, _power):
+        pass
+
+    def set_center_frequency(self, _frequency):
+        pass
+
+    def set_span(self, _span):
+        pass
+
+    def rf_output_on(self):
+        pass
+
+    def measure_power_with_average(self):
+        return -10.0
+
     def rf_output_off(self):
         pass
 

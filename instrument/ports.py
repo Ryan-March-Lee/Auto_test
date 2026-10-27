@@ -9,7 +9,22 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Protocol, runtime_checkable
+from typing import Iterable, Protocol, cast, runtime_checkable
+
+
+__all__ = [
+    "DRIVER_POWER_CAPABILITIES",
+    "DUT_POWER_CAPABILITIES",
+    "SIGNAL_MEASUREMENT_CAPABILITIES",
+    "InstrumentCapabilityError",
+    "InstrumentSession",
+    "InstrumentState",
+    "MeasurementInstrumentPort",
+    "PowerSupplyPort",
+    "SignalGeneratorPort",
+    "SpectrumAnalyzerPort",
+    "require_measurement_capabilities",
+]
 
 
 class InstrumentState(str, Enum):
@@ -151,26 +166,128 @@ class InstrumentSession(Protocol):
 
 @runtime_checkable
 class MeasurementInstrumentPort(Protocol):
-    """Legacy-compatible measurement port used during the stage 3 migration.
+    """三类正式测量服务共同使用的设备控制能力。
 
-    The concrete VISA controller is adapted structurally to this port.  The
-    service layer therefore depends on capabilities, not on InstrumentControl
-    or a Qt/VISA implementation.
+    实现可以是 VISA 控制器、:class:`instrument.measurement_adapter.PortMeasurementAdapter`
+    或离线仿真端口；服务只依赖这里声明的方法，不再接受任意动态设备对象。
+    单位沿用历史测量契约（适配器负责换算到各设备端口单位）：
+
+    - ``set_frequency`` / ``set_center_frequency`` 接收 GHz；
+    - ``set_span`` 接收 MHz；
+    - ``set_power`` 接收 dBm，``measure_power_with_average`` 返回 dBm；
+    - ``read_voltage`` 返回 V，``read_current`` 返回 A。
+
+    实现必须在前置条件不满足、超时或设备拒绝命令时抛出异常；端口不规定自动
+    重试，调用者按测量步骤决定。服务在构造阶段用
+    :func:`require_measurement_capabilities` 校验所需能力，能力不足时抛出
+    :class:`InstrumentCapabilityError`，不会等到测量途中才发现缺失方法。
     """
 
-    def set_power(self, power: float) -> None: ...
-    def set_frequency(self, frequency: float) -> None: ...
-    def set_center_frequency(self, frequency: float) -> None: ...
-    def set_span(self, span: float) -> None: ...
-    def rf_output_on(self) -> None: ...
-    def rf_output_off(self) -> None: ...
-    def measure_power_with_average(self) -> float: ...
-    def setup_driver_amplifier_power(self) -> None: ...
-    def power_on_driver(self) -> None: ...
-    def power_off_driver(self) -> None: ...
-    def setup_dut_power(self) -> None: ...
-    def power_on_sequence(self) -> None: ...
-    def power_off_sequence(self) -> None: ...
-    def read_voltage(self, supply_name: str, channel: str) -> float: ...
-    def read_current(self, supply_name: str, channel: str) -> float: ...
-    def close_all(self, *, close_rf: bool = False) -> list[BaseException]: ...
+    def set_power(self, power: float) -> None:
+        """设置信号源输出功率，单位 dBm。"""
+
+    def set_frequency(self, frequency: float) -> None:
+        """设置信号源频率，单位 GHz。"""
+
+    def set_center_frequency(self, frequency: float) -> None:
+        """设置频谱仪中心频率，单位 GHz。"""
+
+    def set_span(self, span: float) -> None:
+        """设置频谱仪扫描跨度，单位 MHz。"""
+
+    def rf_output_on(self) -> None:
+        """打开 RF 输出；失败不得留下部分开启状态。"""
+
+    def rf_output_off(self) -> None:
+        """关闭 RF 输出；安全清理会尽力执行。"""
+
+    def measure_power_with_average(self) -> float:
+        """读取平均功率，单位 dBm。"""
+
+    def setup_driver_amplifier_power(self) -> None:
+        """按配置设置驱动放大器电源通道，保持输出关闭。"""
+
+    def power_on_driver(self) -> None:
+        """按上电顺序打开驱动放大器电源输出。"""
+
+    def power_off_driver(self) -> None:
+        """关闭驱动放大器电源输出；实现应幂等。"""
+
+    def setup_dut_power(self) -> None:
+        """按配置设置 DUT 电源通道，保持输出关闭。"""
+
+    def power_on_sequence(self) -> None:
+        """按上电顺序打开 DUT 电源输出。"""
+
+    def power_off_sequence(self) -> None:
+        """按下电顺序关闭 DUT 电源输出；实现应幂等。"""
+
+    def read_voltage(self, supply_name: str, channel: str) -> float:
+        """读取指定电源通道的电压，单位 V。"""
+
+    def read_current(self, supply_name: str, channel: str) -> float:
+        """读取指定电源通道的电流，单位 A。"""
+
+    def close_all(self, *, close_rf: bool = False) -> list[BaseException]:
+        """释放全部连接并返回未能完成的清理错误。"""
+
+
+class InstrumentCapabilityError(RuntimeError):
+    """设备对象缺少测量服务必需的端口能力。"""
+
+    def __init__(self, requirement: str, missing: Iterable[str]) -> None:
+        self.requirement = requirement
+        self.missing = tuple(missing)
+        details = ", ".join(self.missing)
+        super().__init__(
+            f"{requirement} 缺少设备能力: {details}" if details else f"{requirement} 缺少设备能力"
+        )
+
+
+# 三类测量共用的信号通路能力；其余能力按服务显式追加。
+SIGNAL_MEASUREMENT_CAPABILITIES: tuple[str, ...] = (
+    "set_frequency",
+    "set_power",
+    "set_center_frequency",
+    "set_span",
+    "rf_output_on",
+    "rf_output_off",
+    "measure_power_with_average",
+)
+
+# 驱动放大器电源能力：驱动功率映射必用，主功放仅在驱动模式开启时必用。
+DRIVER_POWER_CAPABILITIES: tuple[str, ...] = (
+    "setup_driver_amplifier_power",
+    "power_on_driver",
+    "power_off_driver",
+)
+
+# DUT 电源能力：主功放扫描读取电压、电流并按下电顺序关闭输出。
+DUT_POWER_CAPABILITIES: tuple[str, ...] = (
+    "setup_dut_power",
+    "power_on_sequence",
+    "power_off_sequence",
+    "read_voltage",
+    "read_current",
+)
+
+
+def require_measurement_capabilities(
+    instrument: object,
+    *,
+    requirement: str,
+    capabilities: tuple[str, ...] = SIGNAL_MEASUREMENT_CAPABILITIES,
+) -> MeasurementInstrumentPort:
+    """校验设备对象具备测量所需能力并返回同一对象。
+
+    能力缺失（含 ``None``）时抛出 :class:`InstrumentCapabilityError`，让服务在
+    构造阶段失败，而不是在硬件动作中途抛 ``AttributeError``。
+    """
+    if instrument is None:
+        raise InstrumentCapabilityError(requirement, capabilities)
+    missing = tuple(
+        name for name in capabilities if not callable(getattr(instrument, name, None))
+    )
+    if missing:
+        raise InstrumentCapabilityError(requirement, missing)
+    return cast(MeasurementInstrumentPort, instrument)

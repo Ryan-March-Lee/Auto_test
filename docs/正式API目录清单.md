@@ -128,7 +128,7 @@
 
 | 模块 | 正式公开名称 |
 | --- | --- |
-| `instrument.ports` | `InstrumentSession`、`InstrumentState`、`PowerSupplyPort`、`SignalGeneratorPort`、`SpectrumAnalyzerPort`、`MeasurementInstrumentPort` |
+| `instrument.ports` | `InstrumentSession`、`InstrumentState`、`PowerSupplyPort`、`SignalGeneratorPort`、`SpectrumAnalyzerPort`、`MeasurementInstrumentPort`、`SIGNAL_MEASUREMENT_CAPABILITIES`、`DRIVER_POWER_CAPABILITIES`、`DUT_POWER_CAPABILITIES`、`InstrumentCapabilityError`、`require_measurement_capabilities` |
 | `instrument.session` | `ManagedInstrumentSession`、`InstrumentSessionError` |
 | `instrument.flow.safety_shutdown_flow` | `SafetyShutdownFlow`、`SafetyShutdownError` |
 | `instrument.flow.cleanup` | `cleanup_measurement`、`SafetyCleanupAdapter` |

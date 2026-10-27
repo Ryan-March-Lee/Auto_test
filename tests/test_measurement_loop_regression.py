@@ -37,6 +37,15 @@ class FakeMeasurementInstrument:
     def set_span(self, span):
         self.operations.append(("set_span", span))
 
+    def setup_dut_power(self):
+        self.operations.append(("setup_dut_power",))
+
+    def power_on_sequence(self):
+        self.operations.append(("power_on_sequence",))
+
+    def power_off_sequence(self):
+        self.operations.append(("power_off_sequence",))
+
     def rf_output_on(self):
         self.operations.append(("rf_output_on",))
 

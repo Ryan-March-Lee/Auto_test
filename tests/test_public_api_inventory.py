@@ -255,12 +255,17 @@ FORMAL_API = {
     "infrastructure.runtime": ("current_runtime", "runtime_id", "configured_python"),
     # 仪器层
     "instrument.ports": (
+        "DRIVER_POWER_CAPABILITIES",
+        "DUT_POWER_CAPABILITIES",
+        "SIGNAL_MEASUREMENT_CAPABILITIES",
+        "InstrumentCapabilityError",
         "InstrumentSession",
         "InstrumentState",
+        "MeasurementInstrumentPort",
         "PowerSupplyPort",
         "SignalGeneratorPort",
         "SpectrumAnalyzerPort",
-        "MeasurementInstrumentPort",
+        "require_measurement_capabilities",
     ),
     "instrument.session": ("ManagedInstrumentSession", "InstrumentSessionError"),
     "instrument.flow.safety_shutdown_flow": ("SafetyShutdownFlow", "SafetyShutdownError"),

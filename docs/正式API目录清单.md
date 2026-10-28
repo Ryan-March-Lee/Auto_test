@@ -21,7 +21,7 @@
 
 ## 1. 设计前提
 
-本计划采用不考虑向后兼容的技术决策（见重构计划第 1 节）：
+本项目采用不考虑向后兼容的技术决策：
 
 - 不保留旧 Python 导入入口，不为外部旧脚本提供迁移适配层。
 - 调用方必须直接迁移到本文登记的正式 API。
@@ -331,7 +331,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 & "D:\Anaconda\envs\Auto_test\python.exe" -m unittest tests.test_public_api_inventory -v
 ```
 
-完整验证按重构计划 4.2 节执行全量 unittest、`launcher.py --check`、
+完整验证执行全量 unittest、`launcher.py --check`、
 `launcher.py --validate-config` 和 `tools/compile_check.py`。
 
 ## 8. 步骤 1 验收与现行清单规模
@@ -371,5 +371,4 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 - 删除存量引用：同步删除 `LEGACY_IMPORT_BASELINE` 的对应文件；基线必须与代码严格相等。
 - 新增公共模块或公开名称：先登记到本文和 `FORMAL_API`，再写调用方。
 - 新增内部模块并被跨模块导入：先登记到本文和 `INTERNAL_MODULES`。
-- 正式模块改名、删除公开名称或改变公共/内部层级：视同不兼容变更，按重构计划的阶段顺序
-  单独提交。
+- 正式模块改名、删除公开名称或改变公共/内部层级：视同不兼容变更，单独提交。

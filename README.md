@@ -173,7 +173,7 @@ DUT 与驱动功放占用同一通道，都会在连接前报错。
 `run_hardware_smoke.ps1`，同时满足配置位于 `hardware/`、明确用户确认、空载确认、
 `HARDWARE_SMOKE_ENABLED=1` 和 `-ConfirmHardwareSmoke` 等独立安全门禁；它不属于普通
 测试发现范围，也不能用离线测试替代现场验收。真实 Hardware Smoke 与三类硬件测量的现场
-操作顺序与判定标准见[真实 Hardware Smoke 现场验收记录](docs/重构收尾与真实HardwareSmoke验收.md)。
+现场操作顺序与判定标准由受控现场验收流程维护；现场报告、配置和回滚决定仅进入受控归档。
 
 发布清单使用 `release_manifest.py` 生成。可通过 `AUTO_TEST_RUN_ID` 固定运行标识，
 使配置快照、结果快照、清理记录和现场报告能够关联到同一次运行。清单同时记录

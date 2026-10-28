@@ -191,11 +191,14 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `application.lifecycle` | 测量生命周期包 |
 | `assistant.llm` | 可选助手 LLM 客户端 |
 | `assistant.storage` | 可选助手历史存储 |
+| `domain.instruments` | 设备表领域包 |
+| `domain.instruments.models` | 仪器身份解析（序列号唯一标识）、地址别名与在线状态模型 |
 | `domain.models` | 运行、测试方案与会话生命周期模型；测量结果契约在 `application.dto` |
 | `infrastructure.filesystem.atomic_json` | 原子 JSON 写入 |
 | `infrastructure.filesystem.paths` | 路径服务 |
 | `infrastructure.persistence` | 持久化适配器包 |
 | `infrastructure.persistence.artifact_generator` | 自动归档产物（CSV 与测试报告）生成适配器：只读 manifest 已登记并校验过的正式结果，产物的受控路径固定在运行目录 `artifacts/` 下；`ArchiveArtifactGenerator` 把两类实现组合成归档服务持有的唯一生成端口 |
+| `infrastructure.persistence.instrument_registry` | 设备表 JSON 仓储：序列号为唯一标识，IP 只是可漂移的地址别名 |
 | `infrastructure.persistence.json_encoder` | JSON 编码器 |
 | `infrastructure.persistence.json_result_repository` | 结果 JSON 实现细节 |
 | `infrastructure.persistence.run_directory` | 运行目录文件布局 |

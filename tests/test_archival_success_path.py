@@ -47,7 +47,7 @@ from domain.run.models import (
     RunStatus,
     StageStatus,
 )
-from infrastructure.persistence.artifact_generator import CsvArtifactGenerator
+from infrastructure.persistence.artifact_generator import ArchiveArtifactGenerator
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from infrastructure.persistence.run_repository import RunRepository
 from presentation.qt.configuration_authoring import author_official_configuration
@@ -57,6 +57,7 @@ from tests.fakes import safety_cleanup_for
 RUN_ID = "20261022T153000Z_a1b2c3d4"
 CREATED_AT = datetime(2026, 10, 22, 15, 30, tzinfo=timezone.utc)
 CSV_PATH = "artifacts/amplifier.csv"
+REPORT_PATH = "artifacts/amplifier_report.html"
 
 CABLE_LOSSES = {"1.0": {"cable1": 0.5, "cable2": 0.5, "cable3": 0.0, "cable4": 0.0}}
 
@@ -197,7 +198,7 @@ class SuccessPathArchivalTests(unittest.TestCase):
 
     def _archival_service(self) -> ResultArchivalService:
         return ResultArchivalService(
-            runs=self.repository, generator=CsvArtifactGenerator(self.repository)
+            runs=self.repository, generator=ArchiveArtifactGenerator(self.repository)
         )
 
     def _complete_cable_loss(self):
@@ -266,7 +267,10 @@ class SuccessPathArchivalTests(unittest.TestCase):
     def _csv_file(self) -> Path:
         return self._run_directory() / CSV_PATH
 
-    # -- 主功放：CSV 自动生成 ------------------------------------------------
+    def _report_file(self) -> Path:
+        return self._run_directory() / REPORT_PATH
+
+    # -- 主功放：CSV 与报告自动生成 -------------------------------------------
 
     def test_amplifier_success_path_generates_the_csv_artifact(self):
         self._create_run()
@@ -286,9 +290,11 @@ class SuccessPathArchivalTests(unittest.TestCase):
         csv_text = self._csv_file().read_text(encoding="utf-8-sig")
         self.assertIn(RUN_ID, csv_text)
         self.assertIn("amplifier", csv_text)
-        # 报告生成在计划步骤 5 接入：现在停在 pending，不伪造失败。
-        self.assertIs(outcome.report.status, ArtifactStatus.PENDING)
-        self.assertIs(outcome.archive_status, ArchivalStatus.PENDING)
+        # 完整成功同时产出测试报告（计划步骤 5）：所有适用产物完成后归档才算完成。
+        self.assertIs(outcome.report.status, ArtifactStatus.COMPLETED)
+        self.assertEqual(outcome.report.path, REPORT_PATH)
+        self.assertTrue(self._report_file().is_file())
+        self.assertIs(outcome.archive_status, ArchivalStatus.COMPLETED)
 
         manifest = self.repository.load_manifest(RUN_ID)
         record = manifest.find_artifact(
@@ -297,6 +303,12 @@ class SuccessPathArchivalTests(unittest.TestCase):
         self.assertIs(record.status, ArtifactStatus.COMPLETED)
         self.assertEqual(record.path, CSV_PATH)
         self.assertIsNotNone(record.sha256)
+        report_record = manifest.find_artifact(
+            ArtifactKind.REPORT, source_result=AMPLIFIER_RESULT_PATH
+        )
+        self.assertIs(report_record.status, ArtifactStatus.COMPLETED)
+        self.assertEqual(report_record.path, REPORT_PATH)
+        self.assertIsNotNone(report_record.sha256)
         self.repository.verify_artifact_files(RUN_ID)
         # 正式结果、阶段与运行状态不受归档影响。
         self.assertEqual(manifest.stage(STAGE_AMPLIFIER).status, StageStatus.COMPLETED)
@@ -317,6 +329,7 @@ class SuccessPathArchivalTests(unittest.TestCase):
 
         self.assertIsNone(use_case.last_archival_outcome)
         self.assertFalse(self._csv_file().exists())
+        self.assertFalse(self._report_file().exists())
         self.assertEqual(self.repository.load_manifest(RUN_ID).artifacts, ())
 
     def test_csv_write_failure_does_not_change_the_measurement_status(self):
@@ -333,6 +346,8 @@ class SuccessPathArchivalTests(unittest.TestCase):
         outcome = use_case.last_archival_outcome
         self.assertIs(outcome.csv.status, ArtifactStatus.FAILED)
         self.assertIn("CSV 写入失败", outcome.csv.reason)
+        # 单个产物失败不影响另一份产物：报告照常生成，归档维度仍是 partial。
+        self.assertIs(outcome.report.status, ArtifactStatus.COMPLETED)
         self.assertIs(outcome.archive_status, ArchivalStatus.PARTIAL)
         manifest = self.repository.load_manifest(RUN_ID)
         self.assertEqual(manifest.stage(STAGE_AMPLIFIER).status, StageStatus.COMPLETED)
@@ -523,13 +538,14 @@ class CompositionWiringTests(unittest.TestCase):
         self.assertIsInstance(amplifier_case.archival_service, ResultArchivalService)
         amplifier_case.measure_all_frequencies()
 
-        csv_file = Path(prepared.run_directory) / CSV_PATH
-        self.assertTrue(csv_file.is_file())
+        run_directory = Path(prepared.run_directory)
+        self.assertTrue((run_directory / CSV_PATH).is_file())
+        self.assertTrue((run_directory / REPORT_PATH).is_file())
         manifest = self.repository.load_manifest(RUN_ID)
-        record = manifest.find_artifact(
-            ArtifactKind.CSV, source_result=AMPLIFIER_RESULT_PATH
-        )
-        self.assertIs(record.status, ArtifactStatus.COMPLETED)
+        for kind, path in ((ArtifactKind.CSV, CSV_PATH), (ArtifactKind.REPORT, REPORT_PATH)):
+            record = manifest.find_artifact(kind, source_result=AMPLIFIER_RESULT_PATH)
+            self.assertIs(record.status, ArtifactStatus.COMPLETED)
+            self.assertEqual(record.path, path)
         self.repository.verify_artifact_files(RUN_ID)
 
     def test_legacy_composition_does_not_archive(self):

@@ -20,8 +20,11 @@
 
 当前实现状态：CSV 由
 :class:`infrastructure.persistence.artifact_generator.CsvArtifactGenerator` 在重构计划
-步骤 4 实现，并通过 ``supported_kinds`` 只声明 ``CSV``；报告生成在计划步骤 5 接入，
-在此之前报告产物保持 ``pending``。
+步骤 4 实现，报告由同模块的
+:class:`infrastructure.persistence.artifact_generator.ReportArtifactGenerator` 在步骤 5
+接入，组合根用 ``ArchiveArtifactGenerator`` 把两者合成**一个**生成端口，声明
+``supported_kinds = {CSV, REPORT}``；线损与驱动映射在归档服务里登记
+``not_applicable``，不会触达本端口。
 """
 
 from __future__ import annotations

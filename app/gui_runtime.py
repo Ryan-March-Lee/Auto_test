@@ -19,7 +19,7 @@ from .run_context import (
 from instrument.measurement_factory import create_measurement_port
 from instrument.flow.cleanup import SafetyCleanupAdapter
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
-from infrastructure.persistence.artifact_generator import CsvArtifactGenerator
+from infrastructure.persistence.artifact_generator import ArchiveArtifactGenerator
 from application.inputs import ResultInputReader
 from application.run_stages import RunStageRecorder
 from domain.run.models import STAGE_CABLE_LOSS, STAGE_DRIVER_MAPPING
@@ -361,12 +361,12 @@ def _request_kwargs(prepared_run: PreparedRun, config_path: str, callbacks: dict
         if run_repository is not None
         else None
     )
-    # 阶段成功提交后的自动归档（计划步骤 4）：只在运行契约运行中装配，CSV 落到
-    # 当前运行的 artifacts/ 下；旧兼容快照没有 manifest，不生成任何交付产物。
+    # 阶段成功提交后的自动归档（计划步骤 4/5）：只在运行契约运行中装配，CSV 与测试
+    # 报告都落到当前运行的 artifacts/ 下；旧兼容快照没有 manifest，不生成任何交付产物。
     archival_service = (
         ResultArchivalService(
             runs=run_repository,
-            generator=CsvArtifactGenerator(run_repository),
+            generator=ArchiveArtifactGenerator(run_repository),
         )
         if run_repository is not None
         else None

@@ -6,6 +6,12 @@
 [测试结果归档服务](测试结果归档服务.md)（步骤 3）冻结的路径、状态和幂等规则之上，
 不再重新定义契约。
 
+> 步骤 5 已把测试报告接入同一条成功路径：组合根现在装配
+> `ArchiveArtifactGenerator`（CSV + 报告），主功放完整成功的归档结果由
+> `csv=completed / report=pending` 收敛为两者都 `completed`。报告侧规则见
+> [测试结果归档：报告自动生成](测试结果归档报告自动生成.md)；本文其余内容仍描述
+> CSV 侧的契约，二者共用同一套输入、目标与失败边界。
+
 本步骤完成两件事：
 
 1. 基础设施实现自动产物生成端口，把**已登记的正式结果**渲染成运行目录 `artifacts/`
@@ -46,7 +52,7 @@ outcome = service.archive(ArchivalRequest(run_id, STAGE_AMPLIFIER))
 | 目标路径 | 只允许 `artifacts/` 下的受控相对路径；默认值由 `domain.run.models.default_artifact_path(stage, csv)` 给出（`artifacts/amplifier.csv`），适配器不自己拼文件名 |
 | 目标边界 | 除字符串前缀外，按**真实路径**复核：`artifacts/` 的真实位置必须在运行目录内，目标文件的真实位置必须在 `artifacts/` 内；POSIX 符号链接与 Windows junction 都被挡住 |
 | 目标阶段 | 只有 `amplifier` 有 CSV 交付产物；线损/驱动映射请求会被明确拒绝（它们应登记 `not_applicable`） |
-| 输入来源 | `RunRepositoryPort.read_run_json(run_id, source_result)`：缺登记、缺文件、SHA-256/大小不一致一律拒绝；解析只走 `measurement_result_from_document()` |
+| 输入来源 | `RunRepositoryPort.read_run_json(run_id, source_result)`：缺登记、缺文件、SHA-256/大小不一致一律拒绝；解析只走 `measurement_result_from_document()`，且解析出的 DTO `run_id` 必须等于归档请求的 `run_id`（内容自称属于另一个运行同样拒绝） |
 | 序列化 | 复用 `analysis.reporting.export_csv(result, destination)`，字段是结果行字段的并集（含 `frequency_ghz`、`measurement_type`、`run_id`） |
 | 写入方式 | 先写同目录临时文件（文件名带随机后缀，并发归档不会互相覆盖）再 `os.replace` 原子替换，失败时清理临时文件，不留下被 manifest 引用的半截产物 |
 | 校验值 | 写入后单次读取计算 SHA-256 与字节数，随 `GeneratedArtifact` 返回并由归档服务登记进 manifest |
@@ -65,7 +71,7 @@ outcome = service.archive(ArchivalRequest(run_id, STAGE_AMPLIFIER))
 | --- | --- | --- |
 | 线损 | `CableLossUseCase.continue_to_step2()` → `_save()` → `_save_to_run_directory()` | `partial`，CSV/报告 `not_applicable` |
 | 驱动映射 | `DriverPowerMappingUseCase.measure_all_frequencies()` → `_save()` → `_save_to_run_directory()` | `partial`，CSV/报告 `not_applicable` |
-| 主功放 | `AmplifierMeasurementUseCase.measure_all_frequencies()` → `_save()` → `_save_to_run_directory()` | 完整成功时 CSV `completed`；报告 `pending`（步骤 5） |
+| 主功放 | `AmplifierMeasurementUseCase.measure_all_frequencies()` → `_save()` → `_save_to_run_directory()` | 完整成功时 CSV 与报告都 `completed`（报告见步骤 5） |
 
 主功放的归档发生在 `complete()` 与 `complete_run()` **都成功之后**：`complete_run()` 失败时
 归档不会执行，运行仍停在 `running`，与步骤 1 盘点的状态语义一致。
@@ -97,9 +103,10 @@ manifest 的 `artifacts` 记录里、正式结果永不覆盖、异常分级不�
 - 未声明 `supported_kinds` 的端口（含只实现 `generate()` 的替身）按“支持全部交付产物”
   处理，步骤 3 的行为不变；声明了未登记类型则在构造归档服务时直接 `TypeError`。
 
-本步骤的适配器只声明 `frozenset({ArtifactKind.CSV})`，所以主功放完整成功的归档结果是
-`csv=completed / report=pending`、`archive_status=pending`——这是“报告生成能力尚未接入”的
-诚实表达，等计划步骤 5 实现报告后同一份运行会收敛为 `completed`。
+本步骤的适配器只声明 `frozenset({ArtifactKind.CSV})`，所以当时主功放完整成功的归档结果是
+`csv=completed / report=pending`、`archive_status=pending`——那是“报告生成能力尚未接入”的
+诚实表达。步骤 5 已补齐：组合根装配的 `ArchiveArtifactGenerator` 声明 CSV 与报告，同一份
+运行收敛为 `report=completed`、`archive_status=completed`。
 
 已完成产物的复用不是“相信 manifest 的一句话”：再次归档时归档服务对每条 `completed` 记录
 调用 `RunRepositoryPort.verify_artifact()` 复核文件，缺失、被改写或解析后越出 `artifacts/`
@@ -112,7 +119,8 @@ manifest 记录与正式结果都不被改写；重新生成留给计划步骤 7
 
 ## 5. 明确不属于本步骤
 
-- 不实现测试报告与图表生成（计划步骤 5）：报告产物停在 `pending`，不生成任何 HTML。
+- ~~不实现测试报告与图表生成（计划步骤 5）~~：报告已在步骤 5 接入，见
+  [测试结果归档：报告自动生成](测试结果归档报告自动生成.md)；图表仍不生成。
 - 不实现页面状态展示（步骤 6）与历史页重试入口（步骤 7/9）：`last_archival_outcome` 与
   `retry_failed` 目前只有应用层消费者。
 - 不改变 `ExportPage`、可视化页与 `ResultExportUseCase` 的手动导出语义。
@@ -129,11 +137,12 @@ manifest 记录与正式结果都不被改写；重新生成留给计划步骤 7
 & "D:\Anaconda\envs\Auto_test\python.exe" launcher.py --validate-config
 ```
 
-`tests/test_csv_artifact_generator.py`（24 项）覆盖：
+`tests/test_csv_artifact_generator.py`（25 项）覆盖：
 
 - 适配器：CSV 落在 `artifacts/amplifier.csv`、返回路径与摘要/大小与文件一致、内容含结果行；
-- 显式失败：空数据、未登记结果、被替换结果、非主功放阶段、尚未接入的报告、写入失败
-  （目标被同名目录占住）——都不产生半截产物，正式结果保持原样；
+- 显式失败：空数据、未登记结果、被替换结果、运行标识不一致（步骤 5 补充的共享输入校验）、
+  非主功放阶段、报告类型的请求（CSV 适配器只生成 CSV）、写入失败（目标被同名目录占住）
+  ——都不产生半截产物，正式结果保持原样；
 - 目标边界：真实路径守卫直接拒绝越出 `artifacts/` 的目标；`artifacts/` 或其子目录被重定向
   （符号链接 / Windows junction）到运行目录外时拒绝生成，目录外不留下任何文件；
 - 临时文件：每次写入使用带随机后缀的独立临时文件，写失败后不残留；
@@ -147,7 +156,8 @@ manifest 记录与正式结果都不被改写；重新生成留给计划步骤 7
 
 `tests/test_archival_success_path.py`（11 项）覆盖：
 
-- 主功放成功路径自动产出 CSV，`report` 停在 `pending`，阶段/运行状态与结果路径不受影响；
+- 主功放成功路径自动产出 CSV；报告生成在步骤 5 接入后同样是 `completed`，阶段/运行状态与
+  结果路径不受影响（见[报告自动生成](测试结果归档报告自动生成.md)）；
 - 未注入归档服务时不生成任何产物、manifest 无产物记录；
 - 线损与驱动映射成功路径登记两条 `not_applicable`，运行仍是 `running`；
 - CSV 写不进去时只有该产物 `failed`，测量仍成功、正式 JSON 仍在；
@@ -157,6 +167,7 @@ manifest 记录与正式结果都不被改写；重新生成留给计划步骤 7
 - 未预期端口缺陷向上抛出（正式结果仍已提交，状态不被改写）；
 - 组合根：运行契约运行装配归档服务并产出 CSV；旧兼容快照不装配。
 
-执行结果（2026-10-28）：上述两个文件 35 项通过；`tests/test_result_archival_service.py` 44 项
-通过；全量 `unittest discover -s tests` 1568 项通过（3 项跳过）；依赖锁、`launcher --check`、
+执行结果（2026-10-28，含步骤 5 的同步更新）：`tests/test_csv_artifact_generator.py` 25 项、
+`tests/test_archival_success_path.py` 11 项通过；`tests/test_result_archival_service.py` 44 项
+通过；全量 `unittest discover -s tests` 1600 项通过（3 项跳过）；依赖锁、`launcher --check`、
 `launcher --validate-config` 与 `tools/compile_check.py .` 均通过。

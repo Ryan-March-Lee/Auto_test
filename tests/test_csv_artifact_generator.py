@@ -210,7 +210,7 @@ class CsvArtifactGeneratorTests(RunDirectoryFixture):
         self.assertEqual(len(lines), 3)  # 表头 + 两个扫描点
         self.assertTrue(all(RUN_ID in line for line in lines[1:]))
 
-    def test_generator_declares_csv_only_until_reports_are_wired(self):
+    def test_csv_generator_declares_only_the_csv_kind(self):
         self.assertEqual(
             CsvArtifactGenerator.supported_kinds, frozenset({ArtifactKind.CSV})
         )
@@ -237,17 +237,20 @@ class CsvArtifactGeneratorTests(RunDirectoryFixture):
                 )
             )
 
-    def test_report_artifact_is_not_generated_in_this_step(self):
+    def test_csv_generator_rejects_the_report_kind(self):
+        """CSV 适配器只生成 CSV；报告由 ReportArtifactGenerator 负责（步骤 5）。"""
         self._complete_cable_loss()
         self._complete_amplifier()
 
-        with self.assertRaisesRegex(ArtifactGenerationError, "尚未接入"):
+        with self.assertRaisesRegex(ArtifactGenerationError, "只生成 CSV"):
             CsvArtifactGenerator(self.repository).generate(
                 _csv_request(
                     kind=ArtifactKind.REPORT,
                     target_path="artifacts/amplifier_report.html",
                 )
             )
+
+        self.assertFalse((self.run_directory / "artifacts" / "amplifier_report.html").exists())
 
     def test_unregistered_source_result_is_rejected(self):
         self._complete_cable_loss()
@@ -271,6 +274,20 @@ class CsvArtifactGeneratorTests(RunDirectoryFixture):
         )
 
         with self.assertRaises(ArtifactGenerationError):
+            CsvArtifactGenerator(self.repository).generate(_csv_request())
+
+        self.assertFalse(self._csv_file().exists())
+
+    def test_result_document_from_another_run_is_rejected(self):
+        """共享的输入边界：结果内容自称属于别的运行时不生成任何交付产物。"""
+        self._complete_cable_loss()
+        self._complete_amplifier(
+            payload={**_amplifier_payload(), "run_id": "20261028T010203Z_ffffffff"}
+        )
+
+        with self.assertRaisesRegex(
+            ArtifactGenerationError, "运行标识与本次归档运行不一致"
+        ):
             CsvArtifactGenerator(self.repository).generate(_csv_request())
 
         self.assertFalse(self._csv_file().exists())

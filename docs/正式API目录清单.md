@@ -195,7 +195,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `infrastructure.filesystem.atomic_json` | 原子 JSON 写入 |
 | `infrastructure.filesystem.paths` | 路径服务 |
 | `infrastructure.persistence` | 持久化适配器包 |
-| `infrastructure.persistence.artifact_generator` | 自动归档产物（CSV）生成适配器：只读 manifest 已登记并校验过的正式结果，产物的受控路径固定在运行目录 `artifacts/` 下 |
+| `infrastructure.persistence.artifact_generator` | 自动归档产物（CSV 与测试报告）生成适配器：只读 manifest 已登记并校验过的正式结果，产物的受控路径固定在运行目录 `artifacts/` 下；`ArchiveArtifactGenerator` 把两类实现组合成归档服务持有的唯一生成端口 |
 | `infrastructure.persistence.json_encoder` | JSON 编码器 |
 | `infrastructure.persistence.json_result_repository` | 结果 JSON 实现细节 |
 | `infrastructure.persistence.run_directory` | 运行目录文件布局 |
@@ -338,7 +338,8 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 - 正式内部模块：44 个路径已登记，公共与内部边界不重叠（步骤 7 补登记
   `instrument.safety`：安全标记的显式签名判定是跨模块契约；归档重构步骤 4 补登记
   `infrastructure.persistence.artifact_generator` 与 `analysis.reporting`：自动归档 CSV
-  产物的适配器及其复用的分析层写入能力）。
+  产物的适配器及其复用的分析层写入能力；步骤 5 在同一适配器模块内补上报告产物与组合端口，
+  报告复用 `analysis.reporting.render_html_report`，不新增模块路径）。
 - 旧模块：29 个条目（21 个根模块、8 个正式包内实现），状态与工作树一致。步骤 16
   （2026-10-27）已把最后五个根目录纯再导出模块（`measurement_calculations` /
   `measurement_lifecycle` / `measurement_services` / `app_logging` / `project_paths`）

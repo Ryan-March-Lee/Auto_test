@@ -23,6 +23,7 @@ from typing import Any, Mapping, Protocol
 from application.dto import MeasurementResult, normalize_frequency_key
 from application.dto.run_history import (
     RunArchiveState,
+    RunArtifactSummary,
     RunHistorySummary,
 )
 from application.ports.gui_data_service import (
@@ -227,18 +228,28 @@ def _stage_text(summary: RunHistorySummary) -> str:
 def _artifact_text(summary: RunHistorySummary) -> str:
     if not summary.artifacts:
         return "无交付产物"
-    return "、".join(
-        f"{artifact_kind_text(item.kind)} {artifact_status_text(item.status)}"
-        for item in summary.artifacts
-    )
+    return "、".join(_artifact_entry_text(item) for item in summary.artifacts)
+
+
+def _artifact_entry_text(item: RunArtifactSummary) -> str:
+    """单个产物的展示文本；登记为已生成但文件不在时如实追加“文件缺失”。"""
+    text = f"{artifact_kind_text(item.kind)} {artifact_status_text(item.status)}"
+    if item.missing:
+        text += "（文件缺失）"
+    return text
 
 
 def _problem_text(summary: RunHistorySummary) -> str:
-    """说明列：运行级阻塞原因 + 每个失败产物的原因。
+    """说明列：运行级阻塞原因 + 缺失/失败产物的原因。
 
-    失败原因来自 manifest 登记的错误文本，只作为纯文本展示；页面不据此判断文件状态。
+    失败原因来自 manifest 登记的错误文本，缺失来自适配器对运行目录的存在性诊断，
+    两者都只作为纯文本展示；页面不据此判断文件状态，也不提供原地重写。
     """
     parts = [summary.problem] if summary.problem else []
+    parts.extend(
+        f"{artifact_kind_text(item.kind)} 已生成但文件缺失，请用导出副本重新获取"
+        for item in summary.missing_artifacts
+    )
     parts.extend(
         f"{artifact_kind_text(item.kind)} 失败: {item.error or '未记录原因'}"
         for item in summary.failed_artifacts

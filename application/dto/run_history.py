@@ -91,6 +91,11 @@ class RunArtifactSummary:
 
     ``stage`` 是产生该产物的阶段名，由适配器按来源正式结果对应到 manifest 的阶段；
     无法对应时为 ``None``，这种产物不能作为“重新生成”的输入。
+
+    ``missing`` 只由适配器按运行目录的事实填写：``completed`` 产物登记的文件已经不在
+    运行目录里。它是**只读诊断**——不改变 manifest 登记的产物状态，也不代表可以原地
+    重新生成（``completed`` 仍是终态，见 :attr:`ArtifactStatus.COMPLETED`）。缺少文件时
+    用户应通过“导出副本”重新取得交付数据，或按运行目录修复。
     """
 
     kind: ArtifactKind
@@ -98,6 +103,7 @@ class RunArtifactSummary:
     source_result: str | None = None
     stage: str | None = None
     error: str | None = None
+    missing: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -114,6 +120,11 @@ class RunArtifactSummary:
             value = getattr(self, name)
             if value is not None and (not isinstance(value, str) or not value.strip()):
                 raise ValueError(f"{name} 必须是非空字符串")
+        if not isinstance(self.missing, bool):
+            raise ValueError("missing 必须是布尔值")
+        if self.missing and self.status is not ArtifactStatus.COMPLETED:
+            # pending/failed/not_applicable 本来就没有文件，谈不上“缺失”。
+            raise ValueError("只有 completed 产物才可能报告文件缺失")
 
 
 @dataclass(frozen=True)
@@ -188,6 +199,11 @@ class RunHistorySummary:
             for artifact in self.artifacts
             if artifact.status is ArtifactStatus.FAILED
         )
+
+    @property
+    def missing_artifacts(self) -> tuple[RunArtifactSummary, ...]:
+        """登记为 ``completed`` 但文件已不在运行目录里的产物（只读诊断）。"""
+        return tuple(artifact for artifact in self.artifacts if artifact.missing)
 
     @property
     def regeneration_stage(self) -> str | None:

@@ -160,7 +160,7 @@
 | `application.dto.measurement_requests` | `MeasurementRequest`、`CableLossMeasurementRequest`、`DriverPowerMappingRequest`、`AmplifierMeasurementRequest` | 测量请求 |
 | `application.dto.measurement_results` | `MeasurementResult`、`MeasurementStatus`、`MeasurementType`、`CableLossMeasurementResult`、`DriverPowerMappingMeasurementResult`、`AmplifierMeasurementResult`、`measurement_result_from_document`、`measurement_type_for_result_type`、`require_formal_result` | 三类正式测量结果、显式行视图、结果文档唯一解析入口与正式结果断言 |
 | `application.dto.archival` | `ArchivalRequest`、`ArchivalOutcome`、`ArchivalStatus`、`ArchivalTestStatus`、`ArchivedArtifact` | 自动归档 DTO：请求只带 `run_id` 与阶段；结果区分测试状态与产物状态，只携带运行内相对路径；不含 Qt、文件系统访问或页面文案 |
-| `application.dto.run_history` | `RunArchiveState`、`RunStageSummary`、`RunArtifactSummary`、`RunHistorySummary` | 历史运行只读视图：运行可用性（可用/结构不完整/不可用）、阶段状态与正式结果标识、交付产物状态；只带运行内相对路径，不读文件、不判断文件是否存在，不含页面文案 |
+| `application.dto.run_history` | `RunArchiveState`、`RunStageSummary`、`RunArtifactSummary`、`RunHistorySummary` | 历史运行只读视图：运行可用性（可用/结构不完整/不可用）、阶段状态与正式结果标识、交付产物状态；只带运行内相对路径，不读文件、不判断文件是否存在，不含页面文案；`RunArtifactSummary.missing` 只承载适配器填写的“已生成但文件不在”诊断 |
 
 测量结果的唯一正式模型是 `application.dto.measurement_results` 的三个 DTO；`domain.models`
 只保留运行、方案与会话模型，`domain.run.models` 保留运行 manifest。正式展示与导出只消费

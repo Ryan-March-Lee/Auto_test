@@ -3,14 +3,18 @@
 覆盖：
 
 - 历史运行 DTO：可用性三档、非法组合拒绝、``can_regenerate`` 只在“结构完整 + 有可定位
-  失败产物”时成立；
+  失败产物”时成立；``missing`` 只能出现在 ``completed`` 产物上，且是只读诊断；
 - ``RunHistoryService``：只接受历史列表中的运行标识，重新生成走归档服务的
   ``retry_failed=True``，未装配归档服务/没有失败产物/运行不可用都明确失败；
 - ``FileRunHistoryRepository.list_run_summaries``：从 manifest 读出运行/阶段/产物状态，
-  损坏运行只给可用性与原因；
-- ``HistoryViewModel``：运行摘要转成展示文本，选择清空规则；
+  损坏运行只给可用性与原因；已登记为 ``completed`` 的产物文件被删除时标记 ``missing``，
+  但 manifest 记录不被改写；
+- ``HistoryViewModel``：运行摘要转成展示文本，选择清空规则，产物文件缺失的文案；
 - ``ExportPage``：显示运行与产物状态、按失败产物启用“重新生成”、不可用运行禁止导出，
-  导出副本按**结果所属运行**判定可用性（两张表格各选一行时不会张冠李戴）。
+  导出副本按**结果所属运行**判定可用性（两张表格各选一行时不会张冠李戴）；
+- 步骤 9 补充的页面边界：无效运行不能重新生成、部分运行（进行中 / 未归档）与没有产物
+  记录的运行如实显示“无交付产物”、已完成产物文件缺失时提示“文件缺失”且正式结果仍可
+  导出副本。
 """
 
 import os
@@ -222,6 +226,30 @@ class RunHistoryDtoTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             RunArtifactSummary(ArtifactKind.CSV, ArtifactStatus.PENDING, stage="")
 
+    def test_missing_is_only_reported_for_completed_artifacts(self):
+        with self.assertRaises(ValueError):
+            RunArtifactSummary(ArtifactKind.CSV, ArtifactStatus.FAILED, missing=True)
+        with self.assertRaises(ValueError):
+            RunArtifactSummary(ArtifactKind.CSV, ArtifactStatus.PENDING, missing=True)
+        with self.assertRaises(ValueError):
+            RunArtifactSummary(
+                ArtifactKind.CSV, ArtifactStatus.COMPLETED, missing="yes"
+            )
+
+        missing = RunArtifactSummary(
+            ArtifactKind.CSV,
+            ArtifactStatus.COMPLETED,
+            source_result=AMPLIFIER_RESULT_PATH,
+            stage=STAGE_AMPLIFIER,
+            missing=True,
+        )
+        summary = _summary(artifacts=(missing,))
+
+        self.assertEqual([item.kind for item in summary.missing_artifacts], [ArtifactKind.CSV])
+        # 只读诊断不改变“能否重新生成”：completed 仍是终态。
+        self.assertFalse(summary.can_regenerate)
+        self.assertEqual(summary.failed_artifacts, ())
+
 
 # -- 应用用例 -------------------------------------------------------------
 
@@ -418,6 +446,43 @@ class RunSummaryRepositoryTests(RunSummaryFixture):
             [ArtifactStatus.COMPLETED, ArtifactStatus.COMPLETED],
         )
 
+    def test_missing_completed_artifact_is_reported_without_rewriting_the_manifest(self):
+        self._create_run()
+        self._archive(ArchiveArtifactGenerator(self.runs))
+        csv_path = self.runs.layout(RUN_ID).run_directory / "artifacts" / "amplifier.csv"
+        csv_path.unlink()
+
+        [summary] = self.history.list_run_summaries()
+
+        by_kind = {item.kind: item for item in summary.artifacts}
+        self.assertTrue(by_kind[ArtifactKind.CSV].missing)
+        self.assertFalse(by_kind[ArtifactKind.REPORT].missing)
+        # manifest 的产物状态不被只读诊断改写：completed 仍是终态。
+        self.assertIs(by_kind[ArtifactKind.CSV].status, ArtifactStatus.COMPLETED)
+        self.assertEqual([item.kind for item in summary.missing_artifacts], [ArtifactKind.CSV])
+        self.assertFalse(summary.can_regenerate)
+        stored = {
+            record.kind: record
+            for record in self.runs.load_manifest(RUN_ID).artifacts
+        }
+        self.assertIs(stored[ArtifactKind.CSV].status, ArtifactStatus.COMPLETED)
+        self.assertEqual(stored[ArtifactKind.CSV].path, "artifacts/amplifier.csv")
+        with self.assertRaises(FileNotFoundError):
+            self.runs.verify_artifact_files(RUN_ID)
+
+    def test_incomplete_run_with_intact_artifacts_is_not_marked_missing(self):
+        """结构不完整的运行仍按文件事实诊断，不因为缺配置快照就谎报产物缺失。"""
+        self._create_run()
+        self._archive(ArchiveArtifactGenerator(self.runs))
+        run_directory = self.runs.layout(RUN_ID).run_directory
+        (run_directory / "config.json").unlink()
+
+        [summary] = self.history.list_run_summaries()
+
+        self.assertEqual(summary.state, RunArchiveState.INCOMPLETE)
+        self.assertTrue(summary.artifacts)
+        self.assertFalse(any(item.missing for item in summary.artifacts))
+
     def test_damaged_run_is_listed_as_invalid_without_records(self):
         self._create_run()
         broken = self.runs.root / "20260101T000000Z_ffffffff"
@@ -497,6 +562,30 @@ class RunHistoryViewModelTests(unittest.TestCase):
         self.assertFalse(row.browsable)
         self.assertFalse(row.can_regenerate)
 
+    def test_missing_artifact_is_described_as_a_missing_file(self):
+        view_model = self._view_model(
+            [
+                _summary(
+                    artifacts=(
+                        RunArtifactSummary(
+                            ArtifactKind.CSV,
+                            ArtifactStatus.COMPLETED,
+                            source_result=AMPLIFIER_RESULT_PATH,
+                            stage=STAGE_AMPLIFIER,
+                            missing=True,
+                        ),
+                    )
+                )
+            ]
+        )
+
+        [row] = view_model.reload_runs()
+
+        self.assertEqual(row.artifact_text, "CSV 已生成（文件缺失）")
+        self.assertIn("CSV 已生成但文件缺失", row.problem_text)
+        self.assertIn("导出副本", row.problem_text)
+        self.assertFalse(row.can_regenerate)
+
     def test_selection_is_cleared_when_the_run_disappears(self):
         view_model = self._view_model([_summary()])
         view_model.reload_runs()
@@ -553,6 +642,16 @@ class ExportPageHistoryTests(unittest.TestCase):
             now=CREATED_AT,
         )
         recorder.complete_run(now=CREATED_AT)
+
+    def _complete_cable_loss_run(self, run_id=RUN_ID):
+        """只完成线损阶段：运行仍在进行中，且没有交付产物。"""
+        self.runs.create_run({"run_id": run_id}, run_id=run_id)
+        recorder = RunStageRecorder(self.runs, run_id)
+        recorder.complete(
+            STAGE_CABLE_LOSS,
+            {"run_id": run_id, "cable_losses": {"1.0": {"cable2": 1.0}}},
+            now=CREATED_AT,
+        )
 
     def _archive(self, generator):
         return ResultArchivalService(runs=self.runs, generator=generator).archive(
@@ -797,6 +896,111 @@ class ExportPageHistoryTests(unittest.TestCase):
         self.assertEqual(page.run_table.rowCount(), 0)
         self.assertFalse(page.regenerate_button.isEnabled())
         self.assertEqual(page.file_table.rowCount(), 1)
+
+
+    # -- 步骤 9：无效运行、部分运行与产物缺失 --------------------------------
+
+    def test_invalid_run_cannot_be_regenerated(self):
+        """无效运行不能被重新生成；同批次的有效运行仍可重试失败产物。"""
+        self._complete_amplifier_run()
+        self._archive_failing()
+        broken = self.runs.root / "20260101T000000Z_ffffffff"
+        broken.mkdir(parents=True)
+        (broken / "manifest.json").write_text("{not json", encoding="utf-8")
+        page = self._page()
+        invalid_row = next(
+            index
+            for index in range(page.run_table.rowCount())
+            if "不可用" in page.run_table.item(index, 2).text()
+        )
+
+        page.run_table.setCurrentCell(invalid_row, 0)
+
+        self.assertFalse(page.regenerate_button.isEnabled())
+        self.assertFalse(page.regenerate_failed_artifacts())
+        self.warning_dialog.assert_called_once()
+        self.assertIn(
+            "没有可重新生成的失败产物", self.warning_dialog.call_args.args[2]
+        )
+        self.assertIn("manifest", page.run_table.item(invalid_row, 6).text())
+
+        page.run_table.setCurrentCell(self._run_row_index(page, RUN_ID), 0)
+        self.assertTrue(page.regenerate_button.isEnabled())
+
+    def test_partial_run_is_listed_without_deliverables(self):
+        self._complete_cable_loss_run()
+
+        page = self._page()
+
+        self.assertEqual(page.run_table.rowCount(), 1)
+        self.assertEqual(page.run_table.item(0, 2).text(), "进行中")
+        self.assertEqual(page.run_table.item(0, 3).text(), "1/3 已完成")
+        self.assertEqual(page.run_table.item(0, 4).text(), "1 个正式结果")
+        self.assertEqual(page.run_table.item(0, 5).text(), "无交付产物")
+        page.run_table.setCurrentCell(0, 0)
+        self.assertFalse(page.regenerate_button.isEnabled())
+        self.assertFalse(page.regenerate_failed_artifacts())
+        self.warning_dialog.assert_called_once()
+
+    def test_partial_run_archives_deliverables_as_not_applicable(self):
+        self._complete_cable_loss_run()
+        ResultArchivalService(runs=self.runs).archive(
+            ArchivalRequest(run_id=RUN_ID, stage=STAGE_CABLE_LOSS)
+        )
+
+        page = self._page()
+
+        self.assertEqual(page.run_table.item(0, 2).text(), "进行中")
+        self.assertEqual(page.run_table.item(0, 5).text(), "CSV 不适用、报告 不适用")
+        page.run_table.setCurrentCell(0, 0)
+        self.assertFalse(page.regenerate_button.isEnabled())
+
+    def test_run_without_artifact_records_shows_no_deliverables(self):
+        """旧流程或归档未接入的运行：没有产物记录时页面不假装有产物。"""
+        self._complete_amplifier_run()
+
+        page = self._page()
+
+        self.assertEqual(page.run_table.item(0, 2).text(), "已完成")
+        self.assertEqual(page.run_table.item(0, 5).text(), "无交付产物")
+        page.run_table.setCurrentCell(0, 0)
+        self.assertFalse(page.regenerate_button.isEnabled())
+
+    def test_missing_completed_artifact_is_flagged_and_the_result_stays_exportable(self):
+        self._complete_amplifier_run()
+        self._archive(ArchiveArtifactGenerator(self.runs))
+        csv_path = (
+            self.runs.layout(RUN_ID).run_directory / "artifacts" / "amplifier.csv"
+        )
+        csv_path.unlink()
+
+        page = self._page()
+
+        self.assertIn("CSV 已生成（文件缺失）", page.run_table.item(0, 5).text())
+        self.assertIn("报告 已生成", page.run_table.item(0, 5).text())
+        self.assertIn("文件缺失", page.run_table.item(0, 6).text())
+        page.run_table.setCurrentCell(0, 0)
+        self.assertFalse(page.regenerate_button.isEnabled())
+        self.assertFalse(page.regenerate_failed_artifacts())
+        self.warning_dialog.assert_called_once()
+
+        # 只读诊断不改写 manifest：completed 仍是登记事实。
+        records = {
+            record.kind: record
+            for record in self.runs.load_manifest(RUN_ID).artifacts
+        }
+        self.assertIs(records[ArtifactKind.CSV].status, ArtifactStatus.COMPLETED)
+        self.assertEqual(records[ArtifactKind.CSV].path, "artifacts/amplifier.csv")
+
+        # 正式结果不受影响：仍可用“导出副本”重新取得数据。
+        page.file_table.setCurrentCell(0, 0)
+        target = self.root / "copy.json"
+        with patch(
+            "presentation.qt.export_page.QFileDialog.getSaveFileName",
+            return_value=(str(target), "JSON files (*.json)"),
+        ):
+            self.assertTrue(page.export_json())
+        self.assertTrue(target.is_file())
 
 
 class RegenerationMessageTests(unittest.TestCase):

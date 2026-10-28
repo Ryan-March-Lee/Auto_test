@@ -17,7 +17,9 @@
 - 归档语义由 manifest 推导（阶段状态 + 运行状态），调用方不能自称“完整成功”，
   部分完成、取消和异常路径不会被伪装成完整的成功运行。
 - 幂等：已完成产物默认复用；``failed`` 产物只有显式 ``retry_failed=True`` 才回到
-  ``pending`` 重新生成；已登记 ``not_applicable`` 的产物不会被悄悄改判。
+  ``pending`` 重新生成；已登记 ``not_applicable`` 的产物不会被悄悄改判。重试同样受
+  端口能力约束：当前端口没有声明的产物类型保持 ``failed`` 与原有失败原因，不会被
+  复位成 ``pending``（“没有实现”不等于“正在生成”）。
 - 复用已完成产物前用 ``RunRepositoryPort.verify_artifact()`` 复核文件仍存在且与
   manifest 登记值一致： ``completed`` 是终态，不能因为文件丢失就原地改判，只能拒绝
   本次归档并交由显式重新生成入口处理。
@@ -297,6 +299,16 @@ class ResultArchivalService:
                 and existing.status is ArtifactStatus.FAILED
                 and retry_failed
             ):
+                if kind not in self.supported_kinds:
+                    # 端口当前不生成该产物：重试只能保持 ``failed``。把记录复位成
+                    # ``pending`` 会让“没有实现”伪装成“正在生成”，并丢掉失败原因与
+                    # 历史状态里的重试线索（``pending`` 不算可重试的失败产物）。
+                    logger.info(
+                        "跳过产物重试：当前生成端口不支持该类型 run=%s kind=%s",
+                        manifest.run_id,
+                        kind.value,
+                    )
+                    continue
                 manifest = self._commit(
                     manifest.retry_artifact(
                         kind, source_result=source_result, now=now

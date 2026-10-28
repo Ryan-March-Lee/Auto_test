@@ -5,7 +5,9 @@
 - ``list_runs``：枚举运行根目录下的运行，读取 manifest 元数据并给出可用状态
   （可用 / 结构不完整 / 损坏 / 符号链接），不扫描全局结果目录。
 - ``list_run_summaries``：同一批运行的完整只读摘要（运行状态、阶段状态与交付产物
-  状态），历史管理页只需这一份结构化事实，不再各自读 manifest。
+  状态），历史管理页只需这一份结构化事实，不再各自读 manifest。已登记为 ``completed``
+  的产物在这里做一次**存在性**诊断，文件已被删除时标记 ``missing``，让历史页面不把
+  “manifest 说过已生成”当成“文件还在”；摘要本身不修改 manifest，也不提供原地重写。
 - ``list_results``：按 manifest 登记返回**阶段结果**元数据，只暴露结果标识和展示
   元数据，不返回文件系统路径；硬件配置等非阶段结果输入不会出现在历史结果里。
 - ``load`` / ``read_bytes``：按 ``run_id`` 与结果标识读取结果，先要求该标识是当前
@@ -45,6 +47,8 @@ from application.ports.run_history import (
 )
 from application.ports.run_repository import RunRepositoryPort
 from domain.run.models import (
+    ArtifactRecord,
+    ArtifactStatus,
     FileReference,
     RunManifest,
     StageStatus,
@@ -266,6 +270,9 @@ class FileRunHistoryRepository(RunHistoryRepository):
                     source_result=record.source_result,
                     stage=_stage_for_result(manifest, record.source_result),
                     error=record.error,
+                    missing=_artifact_file_missing(
+                        self.runs.layout(run_id).run_directory, record
+                    ),
                 )
                 for record in manifest.artifacts
             ),
@@ -408,6 +415,22 @@ class _RunInspection:
     status: str
     manifest: RunManifest | None = None
     problem: str | None = None
+
+
+def _artifact_file_missing(run_directory: Path, record: ArtifactRecord) -> bool:
+    """``completed`` 产物登记的文件是否已经不在运行目录里。
+
+    只做**存在性**判断，不重算摘要：历史刷新会遍历所有运行的产物，逐条计算 SHA-256
+    代价过高，完整性校验仍由 ``RunRepository.verify_artifact()`` 在归档复用与显式
+    校验时完成。符号链接不算普通文件，与历史读取的边界保持一致。
+    """
+    if record.status is not ArtifactStatus.COMPLETED or record.path is None:
+        return False
+    target = run_directory / Path(*record.path.split("/"))
+    try:
+        return not (target.is_file() and not target.is_symlink())
+    except OSError:
+        return True
 
 
 def _stage_for_result(manifest: RunManifest, source_result: str | None) -> str | None:

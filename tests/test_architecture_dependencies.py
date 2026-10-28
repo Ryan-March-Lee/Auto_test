@@ -415,7 +415,12 @@ class ProductionDependencyTests(unittest.TestCase):
         self.assertIn(
             "self.measurement_controller.signals.finished.connect(self.refresh_history)",
             source,
-            "MeasurementController finished 必须恢复导出文件列表刷新",
+            "MeasurementController finished 必须刷新历史运行与历史结果列表",
+        )
+        self.assertIn(
+            "else page.refresh()",
+            source,
+            "完成信号必须刷新页面两份列表，而不是只刷新结果表",
         )
 
     def test_main_window_separates_instrument_worker_callbacks(self):

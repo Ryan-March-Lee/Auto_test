@@ -721,6 +721,46 @@ class RunHistoryPageTests(unittest.TestCase):
         page.run_table.setCurrentCell(0, 0)
         self.assertTrue(page.regenerate_button.isEnabled())
 
+    def test_refresh_updates_the_run_and_result_tables_together(self):
+        """测量完成后调用一次 refresh()，两张表都要更新，不能只更新结果表。"""
+        self._complete_amplifier_run()
+        page = self._page()
+        self.assertEqual(page.run_table.rowCount(), 1)
+        self.assertEqual(page.result_table.rowCount(), 1)
+
+        self._complete_amplifier_run(OTHER_RUN_ID)
+        runs, results = page.refresh()
+
+        self.assertEqual(page.run_table.rowCount(), 2)
+        self.assertEqual(page.result_table.rowCount(), 2)
+        self.assertEqual({row.run_id for row in runs}, {RUN_ID, OTHER_RUN_ID})
+        self.assertEqual(len(results), 2)
+
+    def test_result_list_failure_is_logged_without_breaking_the_page(self):
+        """结果读取失败只清空结果表并记日志：完成信号里的刷新不能让页面报错。"""
+
+        class FailingQuery:
+            """结果列表读取必然失败的只读查询替身。"""
+
+            def list_results(self):
+                raise OSError("结果根目录不可读")
+
+        self._complete_amplifier_run()
+        messages = []
+        page = RunHistoryPage(
+            history=HistoryViewModel(FailingQuery(), runs=StaticStatusPort([_summary()])),
+            export_service=ResultExportUseCase(
+                history=self._query(), exports=ResultExportAdapter(self._query(), self.paths)
+            ),
+            log_callback=messages.append,
+        )
+
+        self.assertEqual(page.run_table.rowCount(), 1)
+        self.assertEqual(page.result_table.rowCount(), 0)
+        self.assertTrue(any("读取历史结果失败" in message for message in messages))
+        # 结果表被清空后不保留指向空表的选中行，导出入口仍按“未选择”处理。
+        self.assertIsNone(page.history.selected)
+
     def test_regenerate_button_is_disabled_for_completed_artifacts(self):
         self._complete_amplifier_run()
         self._archive(ArchiveArtifactGenerator(self.runs))

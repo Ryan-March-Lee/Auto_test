@@ -8,11 +8,13 @@
 - 页面路由 key 为 ``run_history``，用户可见标题仍是“历史运行”，不再保留 ``export`` key；
 - 主窗口只持有页面对象，不再把页面的表格与导出按钮复制成窗口状态；
 - 页面只保留 ``export(format)`` 一个导出入口，不再为每种格式额外写一份转发方法；
-- 界面文案不把“导出”描述成正常测试流程的必经页面；
+- 运行时文案（页面标题、窗口标题、提示、日志与生成的报告文本）不把“导出”描述成正常
+  测试流程的必经页面：扫描范围是全部运行时生产包，不是只有 ``presentation/qt``；
 - 应用层导出用例保留：历史重试与外部调用仍需要 ``ResultExportUseCase``。
 """
 
 import ast
+import re
 import unittest
 from pathlib import Path
 
@@ -22,10 +24,42 @@ QT_ROOT = ROOT / "presentation" / "qt"
 RUN_HISTORY_PAGE = QT_ROOT / "run_history_page.py"
 MAIN_WINDOW = QT_ROOT / "main_window.py"
 PAGES = QT_ROOT / "pages.py"
+# 运行时生产包：菜单/页面标题、窗口标题、提示、日志与生成的产物文案都只在这些包里出现。
+# 历史步骤文档（``docs/``）保留旧名称用于记录迁移过程，不属于运行时文案。
+PRODUCTION_PACKAGES = (
+    "analysis",
+    "app",
+    "application",
+    "domain",
+    "infrastructure",
+    "instrument",
+    "presentation",
+    "launcher.py",
+)
+# 把“导出”说成正常流程必经步骤的措辞；用户可见文案只能把导出描述为副本/重试。
+BANNED_EXPORT_FLOW_PHRASES = (
+    "请先导出",
+    "必须先导出",
+    "导出后再",
+    "打开导出页",
+    "数据导出",
+)
 
 
 def _source(path: Path) -> str:
     return path.read_text(encoding="utf-8-sig")
+
+
+def _production_sources() -> list[Path]:
+    """运行时生产包里的全部 Python 源文件。"""
+    sources: list[Path] = []
+    for package in PRODUCTION_PACKAGES:
+        path = ROOT / package
+        if path.is_dir():
+            sources.extend(sorted(path.rglob("*.py")))
+        elif path.is_file():
+            sources.append(path)
+    return sources
 
 
 def _method_names(path: Path) -> set[str]:
@@ -96,22 +130,41 @@ class ExportPageSemanticsRetirementTests(unittest.TestCase):
             )
 
     def test_ui_text_does_not_require_a_separate_export_page(self):
-        banned = (
-            "请先导出",
-            "必须先导出",
-            "导出后再",
-            "打开导出页",
-            "数据导出",
+        """运行时文案门禁覆盖全部生产包：提示、日志与生成的报告文本一起查。"""
+        sources = _production_sources()
+        scanned = {path.relative_to(ROOT).as_posix() for path in sources}
+        # 扫描范围自身要被验证：路径写错时门禁不能静默通过。
+        self.assertGreater(len(sources), 100, f"文案扫描范围异常：只有 {len(sources)} 个文件")
+        self.assertIn(
+            "presentation/qt/run_history_page.py", scanned, "历史页必须落在扫描范围内"
+        )
+        self.assertIn(
+            "analysis/visualization.py",
+            scanned,
+            "生成的报告文本也属于用户可见文案，必须被扫描",
         )
         offenders = []
-        for path in QT_ROOT.rglob("*.py"):
+        for path in sources:
             text = _source(path)
-            for phrase in banned:
+            for phrase in BANNED_EXPORT_FLOW_PHRASES:
                 if phrase in text:
                     offenders.append(f"{path.relative_to(ROOT)}: {phrase}")
-        self.assertEqual(offenders, [], "界面仍把导出描述成必经流程: " + "; ".join(offenders))
+        self.assertEqual(offenders, [], "运行时文案仍把导出描述成必经流程: " + "; ".join(offenders))
         # 正常流程的提示必须明确“已经自动归档，无需再手动导出”。
         self.assertIn("无需再手动导出", _source(QT_ROOT / "archival_status.py"))
+
+    def test_page_titles_and_window_title_do_not_name_an_export_page(self):
+        """菜单/标签页与窗口标题是用户最先看到的入口，不得出现“导出”这一功能页。"""
+        from presentation.qt.pages import PAGE_DEFINITIONS
+
+        titles = [definition.title for definition in PAGE_DEFINITIONS]
+        self.assertEqual(
+            [title for title in titles if "导出" in title], [], f"页面标题: {titles}"
+        )
+        window_source = _source(MAIN_WINDOW)
+        match = re.search(r'self\.setWindowTitle\("([^"]*)"\)', window_source)
+        self.assertIsNotNone(match, "窗口必须自己设置标题，标题文案由本门禁检查")
+        self.assertNotIn("导出", match.group(1))
 
     def test_application_export_use_case_is_retained(self):
         service = ROOT / "application" / "export_service.py"

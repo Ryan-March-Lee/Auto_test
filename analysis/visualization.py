@@ -342,7 +342,7 @@ class DataVisualization:
             plain_document(result.configuration_snapshot), indent=4, ensure_ascii=False
         )
         csv_section = (
-            f'<p>数据导出: <a href="{html.escape(csv_path.name, quote=True)}">'
+            f'<p>CSV 数据文件: <a href="{html.escape(csv_path.name, quote=True)}">'
             f'{html.escape(csv_path.name)}</a></p>'
             if csv_path
             else ''

@@ -61,6 +61,35 @@ class MainWindowTests(unittest.TestCase):
         self.assertNotIn("enhanced_main_gui", imported)
 
 
+class MeasurementCompletionRefreshTests(unittest.TestCase):
+    """测量完成信号必须把历史运行与历史结果两份列表一起刷新。"""
+
+    def _window(self, page):
+        from presentation.qt.main_window import MainWindow
+
+        window = SimpleNamespace(run_history_page=page, add_log_message=Mock())
+        window.refresh_history = lambda: MainWindow.refresh_history(window)
+        return window
+
+    def test_refresh_history_refreshes_both_history_lists(self):
+        """测量在别的页签完成时，运行状态/阶段/产物状态也必须更新。"""
+        page = Mock()
+
+        result = self._window(page).refresh_history()
+
+        page.refresh.assert_called_once_with()
+        self.assertIs(result, page.refresh.return_value)
+
+    def test_refresh_history_tolerates_the_page_not_being_built_yet(self):
+        """完成信号早于页面登记时什么也不做，不能让信号处理抛异常。"""
+        from presentation.qt.main_window import MainWindow
+
+        window = SimpleNamespace(add_log_message=Mock())
+
+        self.assertIsNone(MainWindow.refresh_history(window))
+        window.add_log_message.assert_not_called()
+
+
 class MainWindowCloseEventTests(unittest.TestCase):
     """关闭窗口：确认只做一次，之后的停止动作视为已提交。"""
 

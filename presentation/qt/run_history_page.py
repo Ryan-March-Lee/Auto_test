@@ -147,9 +147,21 @@ class RunHistoryPage(QWidget):
         self.refresh()
 
     def refresh(self):
-        """刷新历史运行与历史结果列表；没有运行摘要来源时只刷新结果列表。"""
+        """刷新历史运行与历史结果列表。
+
+        测量可能在别的页签完成，所以完成信号与页面激活都会走这里；两张表必须一起
+        更新，否则运行状态、阶段与交付产物状态会停在测量前的快照。读取失败只记日志
+        并把该表清空：刷新失败不能让完成信号或切换标签页抛异常，用户刷新后即可恢复。
+        """
         rows = self.refresh_run_list()
-        return rows, self.refresh_result_list()
+        try:
+            results = self.refresh_result_list()
+        except (OSError, ValueError, RuntimeError) as error:
+            self.result_table.setRowCount(0)
+            self.history.select(self.result_table.currentRow())
+            self.log_callback(f"读取历史结果失败: {error}")
+            results = ()
+        return rows, results
 
     # -- 列表 ---------------------------------------------------------------
 

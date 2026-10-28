@@ -478,8 +478,9 @@ class MainWindow(QMainWindow):
         self.cable_loss_page.show_loaded_result(reference)
 
     def refresh_history(self):
-        """测量结束后刷新历史结果列表（运行与产物状态由页面激活时刷新）。"""
-        return self.run_history_page.refresh_result_list()
+        """测量结束后刷新历史运行与结果列表：页面自己容忍读取失败。"""
+        page = getattr(self, "run_history_page", None)
+        return None if page is None else page.refresh()
 
     def toggle_chat_panel(self):
         """切换聊天面板显示/隐藏；欢迎语由面板自己负责。"""

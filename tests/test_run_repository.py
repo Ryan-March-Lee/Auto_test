@@ -11,6 +11,7 @@ from unittest.mock import patch
 from domain.run.models import (
     CABLE_LOSS_INPUT_PATH,
     MANIFEST_FILENAME,
+    MANIFEST_SCHEMA_VERSION,
     STAGE_AMPLIFIER,
     STAGE_CABLE_LOSS,
     FileReference,
@@ -54,6 +55,7 @@ class CreateRunTests(unittest.TestCase):
             self.assertEqual(layout.run_directory, repository.root / RUN_ID)
             self.assertTrue(layout.inputs_dir.is_dir())
             self.assertTrue(layout.results_dir.is_dir())
+            self.assertTrue(layout.artifacts_dir.is_dir())
             self.assertTrue(layout.manifest_path.is_file())
             self.assertTrue(layout.config_path.is_file())
             self.assertEqual(json.loads(layout.config_path.read_text(encoding="utf-8")), CONFIG)
@@ -78,7 +80,7 @@ class CreateRunTests(unittest.TestCase):
             self.assertEqual(repository.read_config(RUN_ID), CONFIG)
             payload = json.loads(layout.manifest_path.read_text(encoding="utf-8"))
             self.assertEqual(payload["config"]["path"], "config.json")
-            self.assertEqual(payload["schema_version"], 1)
+            self.assertEqual(payload["schema_version"], MANIFEST_SCHEMA_VERSION)
 
     def test_create_run_requires_a_config_mapping(self):
         with tempfile.TemporaryDirectory() as directory:

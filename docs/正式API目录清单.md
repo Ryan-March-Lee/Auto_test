@@ -120,7 +120,7 @@
 | `domain.configuration.models` | `TestPlan`、`InstrumentMapping`、`ChannelMapping`、`PowerChannelPlan`、`RunResourceMapping`、`RunConfiguration`、`validate_test_plan`、`validate_run_mapping`、`validate_run_configuration` |
 | `domain.configuration.rules` | `validate_config` |
 | `domain.configuration.types` | `ConfigIssue`、`ConfigValidationResult` |
-| `domain.run.models` | `FileReference`、`RunManifest`、`RunStatus`、`StageRecord`、`StageStatus`、`default_manifest`、`generate_run_id`、`validate_run_id`、`utc_now_iso` |
+| `domain.run.models` | `FileReference`、`RunManifest`、`RunStatus`、`StageRecord`、`StageStatus`、`ArtifactKind`、`ArtifactRecord`、`ArtifactStatus`、`default_manifest`、`default_artifact_path`、`normalize_artifact_path`、`generate_run_id`、`validate_run_id`、`utc_now_iso` |
 | `domain.measurement.calculations` | `calculate_cable_losses`、`compensate_amplifier_output_power`、`compensate_driver_output_power`、`interpolate_driver_output_power`、`calculate_dut_input_power`、`calculate_gain`、`calculate_efficiency`、`calculate_compression_result` |
 | `domain.measurement.values` | `MeasurementValueError`、`MeasurementUnitError`、`Frequency`、`Decibels`、`PowerDbm`、`PowerWatt`、`Percent`、`CableLossProfile`、`CableLossTable`、`DriverOutputTable`、`CompressionPoint`、`CompressionResult` |
 
@@ -156,6 +156,7 @@
 | `application.dto.export_requests` | `ExportFormat`、`ExportRequest`、`ExportOutcome` | 导出请求与结构化结果：格式为 JSON / CSV / 测试报告；JSON、CSV 必须带目标文件，报告位置由导出端口决定；`ExportOutcome` 只含 `result_id`、`format`、`filename`、`artifact_path`，不含界面文案 |
 | `application.dto.measurement_requests` | `MeasurementRequest`、`CableLossMeasurementRequest`、`DriverPowerMappingRequest`、`AmplifierMeasurementRequest` | 测量请求 |
 | `application.dto.measurement_results` | `MeasurementResult`、`MeasurementStatus`、`MeasurementType`、`CableLossMeasurementResult`、`DriverPowerMappingMeasurementResult`、`AmplifierMeasurementResult`、`measurement_result_from_document`、`measurement_type_for_result_type`、`require_formal_result` | 三类正式测量结果、显式行视图、结果文档唯一解析入口与正式结果断言 |
+| `application.dto.archival` | `ArchivalOutcome`、`ArchivalStatus`、`ArchivalTestStatus`、`ArchivedArtifact` | 自动归档结果 DTO：区分测试状态与产物状态，只携带运行内相对路径；不含 Qt、文件系统访问或页面文案 |
 
 测量结果的唯一正式模型是 `application.dto.measurement_results` 的三个 DTO；`domain.models`
 只保留运行、方案与会话模型，`domain.run.models` 保留运行 manifest。正式展示与导出只消费

@@ -11,6 +11,7 @@ from unittest.mock import patch
 from domain.run.models import (
     DEFAULT_STAGE_NAMES,
     MANIFEST_FILENAME,
+    MANIFEST_SCHEMA_VERSION,
     RunStatus,
     StageStatus,
     default_manifest,
@@ -44,10 +45,12 @@ class EmptyRunTests(unittest.TestCase):
             self.assertEqual(layout.run_directory, root / RUN_ID)
             self.assertTrue(layout.inputs_dir.is_dir())
             self.assertTrue(layout.results_dir.is_dir())
+            self.assertTrue(layout.artifacts_dir.is_dir())
             self.assertTrue(layout.manifest_path.is_file())
             self.assertFalse(layout.config_path.exists(), "空运行不应写入配置快照")
             self.assertEqual(list(layout.inputs_dir.iterdir()), [])
             self.assertEqual(list(layout.results_dir.iterdir()), [])
+            self.assertEqual(list(layout.artifacts_dir.iterdir()), [])
 
             self.assertEqual(manifest.run_id, RUN_ID)
             self.assertEqual(manifest.status, RunStatus.CREATED)
@@ -80,7 +83,7 @@ class EmptyRunTests(unittest.TestCase):
                 load_run_manifest_from_directory(layout.run_directory).to_dict(), manifest.to_dict()
             )
             payload = json.loads(layout.manifest_path.read_text(encoding="utf-8"))
-            self.assertEqual(payload["schema_version"], 1)
+            self.assertEqual(payload["schema_version"], MANIFEST_SCHEMA_VERSION)
             self.assertIn("cable_loss", payload["stages"])
 
     def test_creating_an_existing_run_never_overwrites_it(self):

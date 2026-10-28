@@ -211,6 +211,12 @@ FORMAL_API = {
         "measurement_type_for_result_type",
         "require_formal_result",
     ),
+    "application.dto.archival": (
+        "ArchivalOutcome",
+        "ArchivalStatus",
+        "ArchivalTestStatus",
+        "ArchivedArtifact",
+    ),
     # 领域层
     "domain.configuration.models": (
         "TestPlan",
@@ -226,13 +232,18 @@ FORMAL_API = {
     "domain.configuration.rules": ("validate_config",),
     "domain.configuration.types": ("ConfigIssue", "ConfigValidationResult"),
     "domain.run.models": (
+        "ArtifactKind",
+        "ArtifactRecord",
+        "ArtifactStatus",
         "FileReference",
         "RunManifest",
         "RunStatus",
         "StageRecord",
         "StageStatus",
+        "default_artifact_path",
         "default_manifest",
         "generate_run_id",
+        "normalize_artifact_path",
         "validate_run_id",
         "utc_now_iso",
     ),

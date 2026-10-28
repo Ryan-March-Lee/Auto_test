@@ -422,6 +422,7 @@ class RunRepository:
         try:
             layout.inputs_dir.mkdir(exist_ok=True)
             layout.results_dir.mkdir(exist_ok=True)
+            layout.artifacts_dir.mkdir(exist_ok=True)
             write_json_atomic(layout.config_path, config, encoder=NumpyJSONEncoder)
             config_reference = file_reference(
                 layout.config_path, layout=layout, description="运行配置快照"

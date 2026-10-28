@@ -1,4 +1,4 @@
-"""运行目录（Run）的数据契约：manifest、阶段状态和文件引用。
+"""运行目录（Run）的数据契约：manifest、阶段状态、文件引用和交付产物记录。
 
 本模块只定义纯数据模型和校验规则：
 
@@ -20,14 +20,20 @@ from typing import Any, Mapping
 from uuid import uuid4
 
 
-MANIFEST_SCHEMA_VERSION = 1
-SUPPORTED_MANIFEST_SCHEMA_VERSIONS = frozenset({MANIFEST_SCHEMA_VERSION})
+# manifest v2 新增可选 ``artifacts`` 集合；v1 运行仍必须可读取和浏览，
+# 缺少该集合时按空集合处理（见 :meth:`RunManifest.from_dict`）。
+MANIFEST_SCHEMA_VERSION = 2
+SUPPORTED_MANIFEST_SCHEMA_VERSIONS = frozenset({1, MANIFEST_SCHEMA_VERSION})
 
 MANIFEST_FILENAME = "manifest.json"
 CONFIG_FILENAME = "config.json"
 INPUTS_DIRNAME = "inputs"
 RESULTS_DIRNAME = "results"
 RUNS_DIRNAME = "runs"
+# 自动归档生成的交付产物（CSV、HTML 报告及其图表）统一放在运行目录的受控子目录内。
+# 正式测量结果仍只使用 ``inputs/`` 与 ``results/``。
+ARTIFACTS_DIRNAME = "artifacts"
+ARTIFACT_PATH_PREFIX = ARTIFACTS_DIRNAME + "/"
 
 RUN_ID_TIMESTAMP_FORMAT = "%Y%m%dT%H%M%SZ"
 # 兼容既有历史运行目录名（例如 ``20260821-120000-test``），同时禁止路径穿越字符。
@@ -147,6 +153,39 @@ def default_stage_result_path(stage_name: str) -> str | None:
     return STAGE_RESULT_PATHS.get(stage_name)
 
 
+def normalize_artifact_path(value: Any, *, field_name: str = "产物路径") -> str:
+    """校验并规范化运行目录 ``artifacts/`` 下的相对路径。
+
+    产物路径必须同时满足“运行目录内相对路径”和“位于 ``artifacts/`` 之下”，
+    防止交付产物被写到正式结果目录、运行目录外或通过 ``..`` 穿越。
+    """
+    normalized = normalize_relative_path(value, field_name=field_name)
+    if not normalized.startswith(ARTIFACT_PATH_PREFIX):
+        raise ValueError(
+            f"{field_name} 必须位于 {ARTIFACT_PATH_PREFIX} 下: {value!r}"
+        )
+    return normalized
+
+
+def default_artifact_path(stage_name: str, kind: ArtifactKind | str) -> str:
+    """返回自动归档的默认产物路径（运行目录内相对路径）。
+
+    路径规则集中在这里，避免应用服务和基础设施适配器各自拼接文件名。
+    线损与驱动映射没有交付产物，调用方应先判定 ``not_applicable`` 再取路径。
+    """
+    if stage_name not in DEFAULT_STAGE_NAMES:
+        raise ValueError(
+            "产物所属阶段必须是标准阶段: " + ", ".join(DEFAULT_STAGE_NAMES)
+        )
+    artifact_kind = coerce_status(kind, ArtifactKind, field_name="产物类型")
+    template = _DEFAULT_ARTIFACT_FILENAMES.get(artifact_kind)
+    if template is None:
+        raise ValueError(f"{artifact_kind.value} 产物没有固定默认路径")
+    return normalize_artifact_path(
+        template.format(stage=stage_name), field_name="默认产物路径"
+    )
+
+
 class RunStatus(str, Enum):
     """运行级状态。"""
 
@@ -182,6 +221,56 @@ TERMINAL_RUN_STATUSES = frozenset(
         RunStatus.COMPLETED,
         RunStatus.FAILED,
         RunStatus.CANCELLED,
+    }
+)
+
+
+class ArtifactKind(str, Enum):
+    """运行目录内交付产物的类型。
+
+    ``CSV`` 与 ``REPORT`` 是面向用户的交付产物。报告引用的图表文件与报告同目录，
+    属于报告产物的一部分，不单独登记，避免同一来源结果出现多条同类记录而破坏
+    ``(source_result, kind)`` 幂等键。
+    """
+
+    CSV = "csv"
+    REPORT = "report"
+
+
+class ArtifactStatus(str, Enum):
+    """单个交付产物的状态。
+
+    ``COMPLETED`` 与 ``NOT_APPLICABLE`` 是终态；``FAILED`` 只能通过显式重试回到
+    ``PENDING``，因此失败产物可重试而不会被静默当作成功。重新生成已完成的产物属于
+    新的一次归档尝试，不通过原地改写 ``COMPLETED`` 记录实现。
+    """
+
+    PENDING = "pending"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    NOT_APPLICABLE = "not_applicable"
+
+
+ARTIFACT_STATUS_TRANSITIONS: Mapping[ArtifactStatus, frozenset[ArtifactStatus]] = MappingProxyType(
+    {
+        ArtifactStatus.PENDING: frozenset(
+            {
+                ArtifactStatus.COMPLETED,
+                ArtifactStatus.FAILED,
+                ArtifactStatus.NOT_APPLICABLE,
+            }
+        ),
+        ArtifactStatus.FAILED: frozenset({ArtifactStatus.PENDING}),
+        ArtifactStatus.COMPLETED: frozenset(),
+        ArtifactStatus.NOT_APPLICABLE: frozenset(),
+    }
+)
+
+# 自动归档的默认文件名；路径规则集中在这里。
+_DEFAULT_ARTIFACT_FILENAMES: Mapping[ArtifactKind, str] = MappingProxyType(
+    {
+        ArtifactKind.CSV: ARTIFACT_PATH_PREFIX + "{stage}.csv",
+        ArtifactKind.REPORT: ARTIFACT_PATH_PREFIX + "{stage}_report.html",
     }
 )
 
@@ -332,6 +421,173 @@ class FileReference:
 
 
 @dataclass(frozen=True)
+class ArtifactRecord:
+    """manifest 中登记的一条交付产物记录。
+
+    产物记录是交付产物的唯一事实来源：
+
+    - ``path`` 必须是运行目录 ``artifacts/`` 下的 POSIX 相对路径，只在
+      ``completed`` 状态存在；
+    - ``completed`` 必须同时登记 ``sha256`` 与 ``size_bytes``，使 manifest 可以验证
+      产物没有被替换；
+    - ``failed`` 必须记录 ``error``，且不登记路径，避免把半截文件当作可用产物；
+    - ``pending`` 与 ``not_applicable`` 不登记路径、校验值或错误。
+
+    ``source_result`` 是产生该产物的正式结果在运行目录内的相对路径，与 ``kind``
+    一起构成幂等键：同一运行内同一来源结果的同类产物只有一条记录。``pending``、
+    ``completed`` 与 ``failed`` 必须登记来源结果，否则幂等键失效；只有
+    ``not_applicable`` 允许省略来源结果（该阶段没有交付产物）。
+    """
+
+    kind: ArtifactKind
+    status: ArtifactStatus
+    path: str | None = None
+    source_result: str | None = None
+    error: str | None = None
+    created_at: str | None = None
+    sha256: str | None = None
+    size_bytes: int | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "kind", coerce_status(self.kind, ArtifactKind, field_name="产物类型")
+        )
+        object.__setattr__(
+            self, "status", coerce_status(self.status, ArtifactStatus, field_name="产物状态")
+        )
+        if self.path is not None:
+            object.__setattr__(self, "path", normalize_artifact_path(self.path))
+        source = self.source_result
+        if source is not None:
+            normalized = normalize_relative_path(source, field_name="产物来源结果")
+            if not (
+                normalized.startswith(INPUTS_DIRNAME + "/")
+                or normalized.startswith(RESULTS_DIRNAME + "/")
+            ):
+                raise ValueError(
+                    "产物来源结果必须是运行目录 inputs/ 或 results/ 下的文件: "
+                    f"{source!r}"
+                )
+            object.__setattr__(self, "source_result", normalized)
+        for name in ("error", "created_at"):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, str):
+                raise ValueError(f"{name} 必须是字符串")
+        if self.sha256 is not None:
+            digest = str(self.sha256)
+            if not SHA256_PATTERN.fullmatch(digest):
+                raise ValueError(f"sha256 必须是 64 位小写十六进制: {self.sha256!r}")
+            object.__setattr__(self, "sha256", digest)
+        if self.size_bytes is not None:
+            if (
+                isinstance(self.size_bytes, bool)
+                or not isinstance(self.size_bytes, int)
+                or self.size_bytes < 0
+            ):
+                raise ValueError("size_bytes 必须是非负整数")
+        self._validate_status_contract()
+
+    def _validate_status_contract(self) -> None:
+        if self.status is not ArtifactStatus.NOT_APPLICABLE and self.source_result is None:
+            raise ValueError(
+                f"{self.status.value} 产物必须登记来源正式结果路径；"
+                "幂等键 (source_result, kind) 不允许空来源"
+            )
+        checksum_fields = (self.sha256, self.size_bytes)
+        if self.status is ArtifactStatus.COMPLETED:
+            if self.path is None:
+                raise ValueError("completed 产物必须登记运行目录内的路径")
+            if any(value is None for value in checksum_fields):
+                raise ValueError("completed 产物必须登记 sha256 与 size_bytes")
+            if self.error is not None:
+                raise ValueError("completed 产物不能登记错误信息")
+            return
+        if self.status is ArtifactStatus.FAILED:
+            if not isinstance(self.error, str) or not self.error.strip():
+                raise ValueError("failed 产物必须记录失败原因")
+            if self.path is not None:
+                raise ValueError("failed 产物不能登记路径")
+            if any(value is not None for value in checksum_fields):
+                raise ValueError("failed 产物不能登记校验值")
+            return
+        if self.path is not None:
+            raise ValueError(f"{self.status.value} 产物不能登记路径")
+        if self.error is not None:
+            raise ValueError(f"{self.status.value} 产物不能登记错误信息")
+        if any(value is not None for value in checksum_fields):
+            raise ValueError(f"{self.status.value} 产物不能登记校验值")
+
+    def transition_to(
+        self,
+        target: ArtifactStatus | str,
+        *,
+        path: Any = None,
+        error: Any = None,
+        sha256: Any = None,
+        size_bytes: Any = None,
+        now: datetime | None = None,
+    ) -> "ArtifactRecord":
+        """按产物状态转换规则返回新记录；非法转换直接拒绝。"""
+        target_status = coerce_status(target, ArtifactStatus, field_name="产物状态")
+        validate_transition(
+            self.status,
+            target_status,
+            transitions=ARTIFACT_STATUS_TRANSITIONS,
+            label=f"产物 {self.kind.value}",
+            enum_type=ArtifactStatus,
+        )
+        changes: dict[str, Any] = {"status": target_status}
+        if target_status is ArtifactStatus.COMPLETED:
+            if path is None or sha256 is None or size_bytes is None:
+                raise ValueError("completed 产物必须提供路径、sha256 与 size_bytes")
+            changes.update(
+                path=path,
+                sha256=sha256,
+                size_bytes=size_bytes,
+                error=None,
+                created_at=self.created_at or utc_now_iso(now),
+            )
+        elif target_status is ArtifactStatus.FAILED:
+            if not isinstance(error, str) or not error.strip():
+                raise ValueError("failed 产物必须提供失败原因")
+            changes.update(path=None, sha256=None, size_bytes=None, error=error)
+        else:
+            changes.update(path=None, sha256=None, size_bytes=None, error=None)
+        return replace(self, **changes)
+
+    def to_dict(self) -> dict[str, Any]:
+        value = {
+            "kind": self.kind.value,
+            "status": self.status.value,
+            "path": self.path,
+            "source_result": self.source_result,
+            "error": self.error,
+            "created_at": self.created_at,
+            "sha256": self.sha256,
+            "size_bytes": self.size_bytes,
+        }
+        return {key: item for key, item in value.items() if item is not None}
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ArtifactRecord":
+        if not isinstance(value, Mapping):
+            raise ValueError("产物记录必须是 JSON 对象")
+        for required in ("kind", "status"):
+            if value.get(required) in (None, ""):
+                raise ValueError(f"产物记录缺少必需字段: {required}")
+        return cls(
+            kind=value["kind"],
+            status=value["status"],
+            path=value.get("path"),
+            source_result=value.get("source_result"),
+            error=value.get("error"),
+            created_at=value.get("created_at"),
+            sha256=value.get("sha256"),
+            size_bytes=value.get("size_bytes"),
+        )
+
+
+@dataclass(frozen=True)
 class StageRecord:
     """运行目录内一个阶段的状态、结果引用和错误信息。"""
 
@@ -432,7 +688,8 @@ class StageRecord:
 class RunManifest:
     """运行目录的索引与状态来源。
 
-    ``stages``、``inputs``、``outputs`` 中的路径都是相对运行目录的 POSIX 路径。
+    ``stages``、``inputs``、``outputs`` 中的路径都是相对运行目录的 POSIX 路径；
+    ``artifacts`` 记录自动归档生成的交付产物（CSV、报告、图表），路径同样相对运行目录。
     """
 
     run_id: str
@@ -445,21 +702,16 @@ class RunManifest:
     stages: Mapping[str, StageRecord] = field(default_factory=dict)
     inputs: tuple[FileReference, ...] = ()
     outputs: tuple[FileReference, ...] = ()
+    artifacts: tuple[ArtifactRecord, ...] = ()
     error: str | None = None
     notes: str | None = None
     product_name: str | None = None
 
     def __post_init__(self) -> None:
         validate_run_id(self.run_id)
-        if (
-            isinstance(self.schema_version, bool)
-            or not isinstance(self.schema_version, int)
-            or self.schema_version not in SUPPORTED_MANIFEST_SCHEMA_VERSIONS
-        ):
-            supported = ", ".join(str(item) for item in sorted(SUPPORTED_MANIFEST_SCHEMA_VERSIONS))
-            raise ValueError(
-                f"不支持的 manifest schema_version: {self.schema_version!r}，支持: {supported}"
-            )
+        object.__setattr__(
+            self, "schema_version", _validated_schema_version(self.schema_version)
+        )
         if not isinstance(self.created_at, str) or not self.created_at.strip():
             raise ValueError("created_at 不能为空")
         if self.updated_at is not None and not isinstance(self.updated_at, str):
@@ -473,6 +725,12 @@ class RunManifest:
         object.__setattr__(self, "stages", stages)
         object.__setattr__(self, "inputs", _coerce_references(self.inputs, "inputs"))
         object.__setattr__(self, "outputs", _coerce_references(self.outputs, "outputs"))
+        object.__setattr__(self, "artifacts", _coerce_artifacts(self.artifacts))
+        if self.schema_version == 1 and self.artifacts:
+            raise ValueError(
+                "schema_version=1 的 manifest 不能包含 artifacts；"
+                f"请写入 schema_version={MANIFEST_SCHEMA_VERSION}"
+            )
 
     def stage(self, name: str) -> StageRecord:
         try:
@@ -487,6 +745,87 @@ class RunManifest:
         stages = dict(self.stages)
         stages[record.name] = record
         return replace(self, stages=stages, updated_at=utc_now_iso(now))
+
+    def find_artifact(
+        self, kind: ArtifactKind | str, *, source_result: str | None = None
+    ) -> ArtifactRecord | None:
+        """按 ``(kind, source_result)`` 查找产物记录；没有时返回 ``None``。"""
+        artifact_kind = coerce_status(kind, ArtifactKind, field_name="产物类型")
+        for record in self.artifacts:
+            if record.kind is artifact_kind and record.source_result == source_result:
+                return record
+        return None
+
+    def with_artifact(
+        self, record: ArtifactRecord, *, now: datetime | None = None
+    ) -> "RunManifest":
+        """按 ``(kind, source_result)`` 登记产物记录，并推进更新时间。
+
+        首次登记直接追加；已有同键记录时**必须**满足
+        :data:`ARTIFACT_STATUS_TRANSITIONS` 的状态转换规则，因此
+        ``completed -> pending``、``completed -> failed``、
+        ``not_applicable -> *`` 都会被拒绝，成功产物不会被静默改写。
+
+        ``failed -> pending`` 只允许通过 :meth:`retry_artifact` 显式重试，
+        以留在历史里留下“曾失败并重试”的痕迹。完全相同的记录重复登记是幂等的
+        no-op，重复归档不会累积互相矛盾的产物状态。
+        """
+        if not isinstance(record, ArtifactRecord):
+            raise ValueError("record 必须是 ArtifactRecord")
+        existing = self.find_artifact(record.kind, source_result=record.source_result)
+        if existing is None:
+            records = (*self.artifacts, record)
+        elif existing == record:
+            return self
+        elif (
+            existing.status is ArtifactStatus.FAILED
+            and record.status is ArtifactStatus.PENDING
+        ):
+            raise ValueError(
+                "failed 产物不能经 with_artifact() 回到 pending；"
+                "请使用 retry_artifact() 显式重试"
+            )
+        else:
+            validate_transition(
+                existing.status,
+                record.status,
+                transitions=ARTIFACT_STATUS_TRANSITIONS,
+                label=f"产物 {record.kind.value}",
+                enum_type=ArtifactStatus,
+            )
+            records = _replaced_artifact(self.artifacts, record)
+        return replace(
+            self,
+            artifacts=records,
+            updated_at=utc_now_iso(now),
+            schema_version=MANIFEST_SCHEMA_VERSION,
+        )
+
+    def retry_artifact(
+        self,
+        kind: ArtifactKind | str,
+        *,
+        source_result: str,
+        now: datetime | None = None,
+    ) -> "RunManifest":
+        """显式把 ``failed`` 产物重置为 ``pending``，其余状态一律拒绝。
+
+        重试必须基于已登记的 ``run_id`` 与 ``source_result``，不接受任意路径；
+        已完成的产物不能重试（重新生成属于新的归档尝试，不改写既有成功记录）。
+        """
+        artifact_kind = coerce_status(kind, ArtifactKind, field_name="产物类型")
+        existing = self.find_artifact(artifact_kind, source_result=source_result)
+        if existing is None:
+            raise KeyError(
+                f"manifest 没有可重试的产物记录: {artifact_kind.value} <- {source_result}"
+            )
+        retried = existing.transition_to(ArtifactStatus.PENDING, now=now)
+        return replace(
+            self,
+            artifacts=_replaced_artifact(self.artifacts, retried),
+            updated_at=utc_now_iso(now),
+            schema_version=MANIFEST_SCHEMA_VERSION,
+        )
 
     def with_status(
         self, target, *, error: Any = _UNCHANGED, now: datetime | None = None
@@ -522,7 +861,7 @@ class RunManifest:
         return self.with_stage(record, now=now)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "schema_version": self.schema_version,
             "run_id": self.run_id,
             "created_at": self.created_at,
@@ -537,19 +876,35 @@ class RunManifest:
             "notes": self.notes,
             "product_name": self.product_name,
         }
+        # v1 契约里没有 ``artifacts`` 集合；写成 v1 时不得凭空多出一个字段，
+        # 否则回读会被当作非法 v1 manifest 拒绝。
+        if self.schema_version > 1:
+            payload["artifacts"] = [item.to_dict() for item in self.artifacts]
+        return payload
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "RunManifest":
-        """从 JSON 结构还原 manifest，并拒绝非法状态、路径和 schema 版本。"""
+        """从 JSON 结构还原 manifest，并拒绝非法状态、路径和 schema 版本。
+
+        v1 manifest 没有 ``artifacts`` 集合，按空集合读取；读取后统一升级为当前
+        schema 版本，再次写回时即为 v2。旧运行因此仍可浏览、校验和继续使用。
+        """
         if not isinstance(value, Mapping):
             raise ValueError("manifest 必须是 JSON 对象")
         for required in ("run_id", "created_at"):
             if value.get(required) in (None, ""):
                 raise ValueError(f"manifest 缺少必需字段: {required}")
+        declared = value.get("schema_version", MANIFEST_SCHEMA_VERSION)
+        _validated_schema_version(declared)
+        if declared == 1 and "artifacts" in value:
+            raise ValueError(
+                "schema_version=1 的 manifest 不能包含 artifacts 字段（含空集合）；"
+                f"产物记录要求 schema_version={MANIFEST_SCHEMA_VERSION}"
+            )
         return cls(
             run_id=value["run_id"],
             created_at=value["created_at"],
-            schema_version=value.get("schema_version", MANIFEST_SCHEMA_VERSION),
+            schema_version=MANIFEST_SCHEMA_VERSION,
             updated_at=value.get("updated_at"),
             status=value.get("status", RunStatus.CREATED),
             software_version=value.get("software_version", "unknown"),
@@ -557,6 +912,7 @@ class RunManifest:
             stages=value.get("stages", {}),
             inputs=value.get("inputs", ()),
             outputs=value.get("outputs", ()),
+            artifacts=value.get("artifacts", ()),
             error=value.get("error"),
             notes=value.get("notes"),
             product_name=value.get("product_name"),
@@ -581,6 +937,60 @@ def default_manifest(
         config=config,
         stages={name: StageRecord(name=name) for name in DEFAULT_STAGE_NAMES},
     )
+
+
+def _validated_schema_version(value: Any) -> int:
+    """校验 manifest schema 版本；旧版本可读，但写入统一使用当前版本。"""
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value not in SUPPORTED_MANIFEST_SCHEMA_VERSIONS
+    ):
+        supported = ", ".join(str(item) for item in sorted(SUPPORTED_MANIFEST_SCHEMA_VERSIONS))
+        raise ValueError(f"不支持的 manifest schema_version: {value!r}，支持: {supported}")
+    return value
+
+
+def _coerce_artifacts(value: Any) -> tuple[ArtifactRecord, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple)):
+        raise ValueError("artifacts 必须是产物记录序列")
+    records: list[ArtifactRecord] = []
+    seen: set[tuple[ArtifactKind, str | None]] = set()
+    for item in value:
+        if isinstance(item, ArtifactRecord):
+            record = item
+        elif isinstance(item, Mapping):
+            record = ArtifactRecord.from_dict(item)
+        else:
+            raise ValueError("artifacts 中的每项必须是产物记录")
+        key = (record.kind, record.source_result)
+        if key in seen:
+            raise ValueError(
+                "artifacts 中同一来源结果的同类产物只能登记一次: "
+                f"{record.kind.value} <- {record.source_result}"
+            )
+        seen.add(key)
+        records.append(record)
+    return tuple(records)
+
+
+def _replaced_artifact(
+    records: tuple[ArtifactRecord, ...], record: ArtifactRecord
+) -> tuple[ArtifactRecord, ...]:
+    """按 ``(kind, source_result)`` 原地替换产物记录，保持登记顺序稳定。"""
+    replaced = False
+    updated: list[ArtifactRecord] = []
+    for item in records:
+        if item.kind is record.kind and item.source_result == record.source_result:
+            updated.append(record)
+            replaced = True
+        else:
+            updated.append(item)
+    if not replaced:
+        updated.append(record)
+    return tuple(updated)
 
 
 def _coerce_file_reference(value: Any, field_name: str) -> FileReference | None:
@@ -650,6 +1060,12 @@ def _coerce_references(value: Any, field_name: str) -> tuple[FileReference, ...]
 
 __all__ = [
     "AMPLIFIER_RESULT_PATH",
+    "ARTIFACTS_DIRNAME",
+    "ARTIFACT_PATH_PREFIX",
+    "ARTIFACT_STATUS_TRANSITIONS",
+    "ArtifactKind",
+    "ArtifactRecord",
+    "ArtifactStatus",
     "CABLE_LOSS_INPUT_PATH",
     "CONFIG_FILENAME",
     "DEFAULT_STAGE_NAMES",
@@ -679,10 +1095,12 @@ __all__ = [
     "TERMINAL_RUN_STATUSES",
     "TERMINAL_STAGE_STATUSES",
     "coerce_status",
+    "default_artifact_path",
     "default_manifest",
     "default_stage_result_path",
     "generate_run_id",
     "is_relative_path",
+    "normalize_artifact_path",
     "normalize_relative_path",
     "utc_now_iso",
     "validate_generated_run_id",

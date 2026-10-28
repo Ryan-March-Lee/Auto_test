@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Union
 
 from domain.run.models import (
+    ARTIFACTS_DIRNAME,
     CONFIG_FILENAME,
     INPUTS_DIRNAME,
     MANIFEST_FILENAME,
@@ -78,11 +79,17 @@ class RunDirectoryLayout:
     def results_dir(self) -> Path:
         return self.run_directory / RESULTS_DIRNAME
 
+    @property
+    def artifacts_dir(self) -> Path:
+        """自动归档交付产物的受控目录；旧运行可能没有该目录。"""
+        return self.run_directory / ARTIFACTS_DIRNAME
+
     def create_directories(self) -> "RunDirectoryLayout":
         """创建运行目录骨架；已存在的运行目录不会被覆盖。"""
         self.run_directory.mkdir(parents=True, exist_ok=False)
         self.inputs_dir.mkdir(exist_ok=True)
         self.results_dir.mkdir(exist_ok=True)
+        self.artifacts_dir.mkdir(exist_ok=True)
         return self
 
     def relative_path(self, path: PathLike) -> str:

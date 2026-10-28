@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from app.cancellation import CancellationToken, MeasurementCancelled
+from application.archival_service import ArchivalOutcome, archive_completed_stage
 from application.dto import (
     DriverPowerMappingMeasurementResult,
     DriverPowerMappingRequest,
@@ -60,6 +61,9 @@ class DriverPowerMappingUseCase:
         # inputs/driver_mapping.json 并更新 manifest；未注入记录器的旧流程只写运行目录。
         self.stage_recorder = request.stage_recorder
         self._stage_open = False
+        # 阶段成功提交后的自动归档入口；未注入时不登记任何交付产物状态。
+        self.archival_service = request.archival_service
+        self.last_archival_outcome: ArchivalOutcome | None = None
         self.loss_data = self._load_loss_data(request)
         self.sleep_fn = sleep_fn or time.sleep
         self._token = request.cancellation_token or CancellationToken()
@@ -215,9 +219,15 @@ class DriverPowerMappingUseCase:
         """运行契约运行：权威结果写入 ``inputs/driver_mapping.json``。
 
         运行目录结果是本次运行的权威来源：先原子提交并登记 manifest，返回值只暴露该
-        权威路径；不再同时写全局兼容副本。
+        权威路径；不再同时写全局兼容副本。正式结果提交后立即触发自动归档：驱动映射
+        没有 CSV/报告交付产物，因此按契约登记为 ``not_applicable``。
         """
         reference = self._record_complete(result)
+        self.last_archival_outcome = archive_completed_stage(
+            self.archival_service,
+            run_id=self.run_id,
+            stage=STAGE_DRIVER_MAPPING,
+        )
         archive_path = Path(self.run_directory) / reference.path
         return result.with_saved_result(archive_path=str(archive_path))
 

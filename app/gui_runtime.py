@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from application.configuration_service import load_for_run
+from application.archival_service import ResultArchivalService
 from application.ports.config_repository import ConfigurationRepository
 from infrastructure.logging.app_logging import get_logger
 from .run_context import (
@@ -18,6 +19,7 @@ from .run_context import (
 from instrument.measurement_factory import create_measurement_port
 from instrument.flow.cleanup import SafetyCleanupAdapter
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
+from infrastructure.persistence.artifact_generator import CsvArtifactGenerator
 from application.inputs import ResultInputReader
 from application.run_stages import RunStageRecorder
 from domain.run.models import STAGE_CABLE_LOSS, STAGE_DRIVER_MAPPING
@@ -359,6 +361,16 @@ def _request_kwargs(prepared_run: PreparedRun, config_path: str, callbacks: dict
         if run_repository is not None
         else None
     )
+    # 阶段成功提交后的自动归档（计划步骤 4）：只在运行契约运行中装配，CSV 落到
+    # 当前运行的 artifacts/ 下；旧兼容快照没有 manifest，不生成任何交付产物。
+    archival_service = (
+        ResultArchivalService(
+            runs=run_repository,
+            generator=CsvArtifactGenerator(run_repository),
+        )
+        if run_repository is not None
+        else None
+    )
     return {
         "configuration": prepared_run.configuration,
         "context": prepared_run.context,
@@ -372,6 +384,7 @@ def _request_kwargs(prepared_run: PreparedRun, config_path: str, callbacks: dict
         # 所有运行只接受显式输入路径；无路径兼容读取已在步骤 B3 删除。
         "input_reader": callbacks.get("input_reader") or _input_reader_for(repository),
         "stage_recorder": stage_recorder,
+        "archival_service": archival_service,
         "config_path": Path(config_path),
         "safety_options": {
             "owns_measurement_port": bool(callbacks.get("owns_measurement_port", False)),

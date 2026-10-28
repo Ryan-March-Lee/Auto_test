@@ -21,6 +21,7 @@ from application.ports.measurement_session import SafetyCleanupPort
 from .measurement_results import MeasurementType, freeze
 
 if TYPE_CHECKING:  # pragma: no cover - 仅用于类型标注，避免运行时循环导入
+    from application.archival_service import ResultArchivalService
     from application.run_stages import RunStageRecorder
     from instrument.ports import MeasurementInstrumentPort
 
@@ -51,6 +52,8 @@ class MeasurementRequest:
     config_path: Path | None = None
     # 运行目录阶段记录器；仅在运行契约运行中注入，旧兼容流程为 None。
     stage_recorder: "RunStageRecorder | None" = None
+    # 阶段成功提交后的自动归档服务；未注入时保持旧行为（不生成交付产物）。
+    archival_service: "ResultArchivalService | None" = None
     _expected_measurement_type: ClassVar[MeasurementType | None] = None
 
     @property

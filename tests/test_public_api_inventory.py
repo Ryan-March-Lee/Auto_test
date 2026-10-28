@@ -118,6 +118,7 @@ FORMAL_API = {
     "application.archival_service": (
         "ArchivalRequestError",
         "ResultArchivalService",
+        "archive_completed_stage",
     ),
     "application.errors": (
         "AutoTestError",
@@ -347,6 +348,7 @@ FORMAL_API = {
 # 正式内部模块：允许被正式代码导入，但不是公共 API 承诺，可随实现调整。
 # 内部模块同样按完整路径登记，新增内部模块并跨模块导入时必须先在这里登记。
 INTERNAL_MODULES = {
+    "analysis.reporting": "分析层 CSV/HTML 报告写入（只接受正式结果 DTO）",
     "analysis.result_source": "分析层只读结果协议与文档展平",
     "analysis.visualization": "分析层只读可视化与报告数据构建",
     "app": "装配包（__init__ 为空）；具体入口见 app.* 公共 API",
@@ -359,6 +361,7 @@ INTERNAL_MODULES = {
     "infrastructure.filesystem.atomic_json": "原子 JSON 写入",
     "infrastructure.filesystem.paths": "路径服务",
     "infrastructure.persistence": "持久化适配器包",
+    "infrastructure.persistence.artifact_generator": "自动归档产物（CSV）生成适配器",
     "infrastructure.persistence.json_encoder": "JSON 编码器",
     "infrastructure.persistence.json_result_repository": "结果 JSON 实现细节",
     "infrastructure.persistence.run_directory": "运行目录文件布局",

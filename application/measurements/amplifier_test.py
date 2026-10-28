@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 import domain.measurement.calculations as measurement_calculations
 from app.cancellation import CancellationToken, MeasurementCancelled
+from application.archival_service import ArchivalOutcome, archive_completed_stage
 from application.dto import AmplifierMeasurementRequest, AmplifierMeasurementResult, MeasurementResult
 from application.errors import ConfigurationError
 from application.measurements.services import AmplifierMeasurementService
@@ -80,6 +81,9 @@ class AmplifierMeasurementUseCase:
         # 运行的 results/ 并更新 manifest；旧兼容流程不注入，保持全局路径行为。
         self.stage_recorder = request.stage_recorder
         self._stage_open = False
+        # 阶段成功提交后的自动归档入口；未注入时不生成任何交付产物。
+        self.archival_service = request.archival_service
+        self.last_archival_outcome: ArchivalOutcome | None = None
         self.loss_data = self._load_loss_data(request)
         self.driver_mapping = self._load_driver_mapping(request)
         if self.stage_recorder is not None:
@@ -325,9 +329,16 @@ class AmplifierMeasurementUseCase:
         """运行契约运行：权威结果写入当前运行的 ``results/``。
 
         主功放结果及拆分文件先原子提交并登记 manifest，运行目录结果是本次运行的权威
-        来源；返回值只暴露该权威路径，不再同时写全局兼容副本。
+        来源；返回值只暴露该权威路径，不再同时写全局兼容副本。正式结果提交后立即触发
+        自动归档（计划步骤 4）：CSV 生成失败只把该产物登记为 ``failed``，不回滚正式
+        结果、不改变阶段或运行状态。
         """
         reference = self._record_complete(result)
+        self.last_archival_outcome = archive_completed_stage(
+            self.archival_service,
+            run_id=self.run_id,
+            stage=STAGE_AMPLIFIER,
+        )
         archive_path = Path(self.run_directory) / reference.path
         return result.with_saved_result(archive_path=str(archive_path))
 

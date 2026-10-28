@@ -22,9 +22,13 @@
   抛出，不静默成成功。
 - 端口返回值必须与请求的受控目标路径一致：生成到别的路径同样算该产物失败，避免
   manifest 登记一份调用方无法定位、也可能被下一次重试覆盖的“另一份”产物。
+- 端口可以用可选属性 ``supported_kinds`` 声明自己**当前能生成**的产物类型；未声明的
+  产物保持 ``pending``（等待实现方补齐能力），既不会被伪造成 ``failed``，也不会被当作
+  已完成。当前基础设施适配器只声明 CSV，报告在计划步骤 5 接入。
 
-本步骤只实现编排骨架：产物可以停在 ``pending``（真实 CSV/报告生成在计划步骤 5
-由基础设施适配器实现），不接入三类测量的完成路径（计划步骤 4）。
+本模块同时提供阶段完成边界的调用入口 :func:`archive_completed_stage`：它只把归档契约里
+可预期的失败（请求不合法、manifest 写回失败）降级为日志，绝不改变已经保存的正式结果，
+也不把测量失败与产物失败混为一谈。
 """
 
 from __future__ import annotations
@@ -65,6 +69,7 @@ logger = logging.getLogger(__name__)
 
 # 归档只汇总这两类交付产物；顺序固定，便于 manifest 与页面展示稳定。
 _DELIVERABLES = (ArtifactKind.CSV, ArtifactKind.REPORT)
+_DELIVERABLE_KINDS = frozenset(_DELIVERABLES)
 
 # 视为“运行整体可完成”的阶段状态：完成或有意跳过。
 _FINISHED_STAGE_STATUSES = frozenset({StageStatus.COMPLETED, StageStatus.SKIPPED})
@@ -90,6 +95,8 @@ class ResultArchivalService:
             raise TypeError("产物生成端口必须提供 generate()")
         self.runs = runs
         self.generator = generator
+        # 端口声明的生成能力；未声明的交付产物停在 pending，等实现方补齐。
+        self.supported_kinds = _declared_kinds(generator)
 
     # -- 入口 -------------------------------------------------------------
 
@@ -331,6 +338,9 @@ class ResultArchivalService:
             record = manifest.find_artifact(kind, source_result=source_result)
             if record is None or record.status is not ArtifactStatus.PENDING:
                 continue
+            if record.kind not in self.supported_kinds:
+                # 端口尚未提供该产物的生成能力：保持 pending，不报假失败、也不谎称完成。
+                continue
             updated = self._generate_one(
                 record,
                 stage=stage,
@@ -407,7 +417,70 @@ class ResultArchivalService:
         return self.runs.update_manifest(manifest.run_id, manifest, now=now)
 
 
+# -- 阶段完成边界的调用入口 -------------------------------------------------
+
+
+def archive_completed_stage(
+    service: ResultArchivalService | None,
+    *,
+    run_id: str,
+    stage: str,
+) -> ArchivalOutcome | None:
+    """在阶段成功提交后自动归档，返回结构化结果供上层展示。
+
+    这是应用层测量用例唯一的自动归档入口。归档是**测量之后**的动作：
+
+    - ``service`` 为 ``None``（旧兼容流程、无运行契约）时什么都不做，返回 ``None``；
+    - 产物级失败已经在服务内部登记进 manifest 并按结构化状态返回，不算归档失败；
+    - 只有归档契约里可预期的失败（:class:`ArchivalRequestError`、manifest 写回失败）
+      被降级为错误日志，正式结果、阶段状态和测量返回值都不受影响；
+    - 其它异常仍然上抛：端口或服务实现缺陷不能被静默成“归档成功”。
+    """
+    if service is None:
+        return None
+    try:
+        return service.archive(ArchivalRequest(run_id=run_id, stage=stage))
+    except (OSError, ValueError) as error:
+        # ArchivalRequestError 是 ValueError 子类，manifest 写回失败是 OSError。
+        logger.error(
+            "阶段完成后的自动归档失败: run=%s stage=%s error=%s",
+            run_id,
+            stage,
+            str(error) or type(error).__name__,
+        )
+        return None
+
+
 # -- 纯函数工具 -----------------------------------------------------------
+
+
+def _declared_kinds(
+    generator: ResultArtifactGeneratorPort | None,
+) -> frozenset[ArtifactKind]:
+    """读取端口可选声明的 ``supported_kinds``；未声明时视为支持全部交付产物。
+
+    未声明保持“全部支持”是为了让只实现 ``generate()`` 的端口（含测试替身）行为不变；
+    声明了未登记的产物类型直接拒绝，避免归档摘要与 manifest 记录出现未知类型。
+    """
+    if generator is None:
+        return frozenset()
+    declared = getattr(generator, "supported_kinds", None)
+    if declared is None:
+        return _DELIVERABLE_KINDS
+    if isinstance(declared, (str, bytes)) or not isinstance(
+        declared, (list, tuple, set, frozenset)
+    ):
+        raise TypeError("产物生成端口的 supported_kinds 必须是产物类型集合")
+    kinds = set()
+    for item in declared:
+        try:
+            kind = ArtifactKind(item)
+        except ValueError as error:
+            raise TypeError(f"产物生成端口声明了未知产物类型: {item!r}") from error
+        if kind not in _DELIVERABLE_KINDS:
+            raise TypeError(f"归档只汇总 CSV 与报告产物，端口声明了: {kind.value}")
+        kinds.add(kind)
+    return frozenset(kinds)
 
 
 def _stage_record(manifest: RunManifest, stage: str):
@@ -517,4 +590,8 @@ def _failure_text(error: BaseException) -> str:
     return message or type(error).__name__
 
 
-__all__ = ["ArchivalRequestError", "ResultArchivalService"]
+__all__ = [
+    "ArchivalRequestError",
+    "ResultArchivalService",
+    "archive_completed_stage",
+]

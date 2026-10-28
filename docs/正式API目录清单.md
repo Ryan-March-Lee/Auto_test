@@ -78,7 +78,7 @@
 | `application.gui_data_service` | `GuiDataService` | 只读历史/导出应用服务 |
 | `application.errors` | `AutoTestError`、`ErrorCategory`、`FailureRecord`、`ConfigurationError`、`DeviceConnectionError`、`ProtocolError`、`DeviceCapabilityError`、`MeasurementError`、`CleanupError`、`cause_of`、`normalize_failures` | 跨层异常分类：连接、协议、设备能力、测量、清理与配置；清理聚合异常逐项记录失败动作 |
 | `application.export_service` | `ExportRequestError`、`ResultExportUseCase` | 导出用例：执行 `ExportRequest`，只接受历史列表中的结果标识；报告端口必须返回真实产物位置 |
-| `application.archival_service` | `ArchivalRequestError`、`ResultArchivalService` | 自动归档用例：只接受 `ArchivalRequest`（`run_id` + 阶段），按 manifest 推导测试状态，按 `(source_result, kind)` 幂等登记产物；正式结果永不改写 |
+| `application.archival_service` | `ArchivalRequestError`、`ResultArchivalService`、`archive_completed_stage` | 自动归档用例：只接受 `ArchivalRequest`（`run_id` + 阶段），按 manifest 推导测试状态，按 `(source_result, kind)` 幂等登记产物；正式结果永不改写。`archive_completed_stage` 是阶段完成边界的调用入口：归档失败只写日志，不改变已保存的结果 |
 | `application.lifecycle.measurement_lifecycle` | `MeasurementLifecycle`、`StopIntent` | 测量生命周期 |
 | `application.lifecycle.measurement_runtime` | `MeasurementRuntimeCoordinator`、`RuntimeDecision` | 运行协调与决策 |
 
@@ -182,6 +182,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 
 | 模块 | 说明 |
 | --- | --- |
+| `analysis.reporting` | 分析层 CSV/HTML 报告写入适配器：只接受正式结果 DTO，不解析原始文档 |
 | `analysis.result_source` | 分析层只读结果协议与文档展平 |
 | `analysis.visualization` | 分析层只读可视化与报告数据构建 |
 | `app` | 装配包（`__init__` 为空）；具体入口见 `app.*` 公共 API |
@@ -194,6 +195,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `infrastructure.filesystem.atomic_json` | 原子 JSON 写入 |
 | `infrastructure.filesystem.paths` | 路径服务 |
 | `infrastructure.persistence` | 持久化适配器包 |
+| `infrastructure.persistence.artifact_generator` | 自动归档产物（CSV）生成适配器：只读 manifest 已登记并校验过的正式结果，产物的受控路径固定在运行目录 `artifacts/` 下 |
 | `infrastructure.persistence.json_encoder` | JSON 编码器 |
 | `infrastructure.persistence.json_result_repository` | 结果 JSON 实现细节 |
 | `infrastructure.persistence.run_directory` | 运行目录文件布局 |
@@ -326,13 +328,17 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 
 ## 8. 步骤 1 验收与现行清单规模
 
-- 正式公共 API：50 个模块路径、215 个公开名称，已在本文与测试中固定（步骤 5 新增
+- 正式公共 API：53 个模块路径、232 个公开名称，已在本文与测试中固定（步骤 5 新增
   `infrastructure.config.validation.validate_official_config`，用于校验已解析的正式配置文档；
   步骤 6 收敛结果 DTO；步骤 7 新增 `application.ports.measurement_session`；步骤 13 新增
   `domain.measurement.values` 的测量值对象；步骤 15 新增 `application.errors` 的跨层异常分类
-  与失败项归一化 `normalize_failures`）。
-- 正式内部模块：41 个路径已登记，公共与内部边界不重叠（步骤 7 补登记
-  `instrument.safety`：安全标记的显式签名判定是跨模块契约）。
+  与失败项归一化 `normalize_failures`；归档重构步骤 2/3 新增 `application.dto.archival`、
+  `application.archival_service` 与 `application.ports.result_artifacts`，步骤 4 新增
+  `application.archival_service.archive_completed_stage`）。
+- 正式内部模块：44 个路径已登记，公共与内部边界不重叠（步骤 7 补登记
+  `instrument.safety`：安全标记的显式签名判定是跨模块契约；归档重构步骤 4 补登记
+  `infrastructure.persistence.artifact_generator` 与 `analysis.reporting`：自动归档 CSV
+  产物的适配器及其复用的分析层写入能力）。
 - 旧模块：29 个条目（21 个根模块、8 个正式包内实现），状态与工作树一致。步骤 16
   （2026-10-27）已把最后五个根目录纯再导出模块（`measurement_calculations` /
   `measurement_lifecycle` / `measurement_services` / `app_logging` / `project_paths`）

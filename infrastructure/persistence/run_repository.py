@@ -7,6 +7,7 @@
 - ``load_manifest`` / ``update_manifest``：原子读取和更新 manifest。
 - ``register_file``：按 ``inputs/`` 与 ``results/`` 目录登记文件及其 SHA-256、字节数。
 - ``verify_file`` / ``verify_manifest_files``：校验登记文件是否仍与 manifest 一致。
+- ``verify_artifact_files``：校验 ``artifacts/`` 下已完成产物与 manifest 登记一致。
 - ``discard_file`` / ``discard_run``：撤销未提交的文件或整个半成品运行目录。
 - ``read_config`` / ``list_run_ids``：校验读取配置快照并枚举有效运行。
 
@@ -36,6 +37,7 @@ from domain.run.models import (
     INPUTS_DIRNAME,
     MANIFEST_FILENAME,
     RESULTS_DIRNAME,
+    ArtifactStatus,
     FileReference,
     RunManifest,
     default_manifest,
@@ -338,6 +340,30 @@ class RunRepository:
             references.extend(manifest.outputs)
         for reference in references:
             self.verify_file(run_id, reference)
+        return manifest
+
+    def verify_artifact_files(self, run_id: str) -> RunManifest:
+        """校验 manifest 登记的交付产物文件仍存在且与登记值一致。
+
+        只校验 ``completed`` 产物：``pending`` 尚未生成，``failed`` 按契约不登记路径，
+        ``not_applicable`` 本来就没有文件。文件缺失、路径越界、大小或 SHA-256 不一致都
+        直接失败，使“CSV 已生成”不能只靠 manifest 的一句声明成立。
+        """
+        manifest = self.load_manifest(run_id)
+        layout = self._require_existing_run(run_id)
+        for record in manifest.artifacts:
+            if record.status is not ArtifactStatus.COMPLETED:
+                continue
+            path = self._resolve_reference_path(layout, record.path)
+            if not path.is_file():
+                raise FileNotFoundError(
+                    f"登记产物不存在或不是普通文件: {record.path}"
+                )
+            digest, size = file_sha256_and_size(path)
+            if record.sha256 is not None and digest != record.sha256:
+                raise ValueError(f"产物 SHA-256 与 manifest 不一致: {record.path}")
+            if record.size_bytes is not None and size != record.size_bytes:
+                raise ValueError(f"产物大小与 manifest 不一致: {record.path}")
         return manifest
 
     def list_run_ids(self, *, include_invalid: bool = False) -> tuple[str, ...]:

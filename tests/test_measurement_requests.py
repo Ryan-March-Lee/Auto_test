@@ -61,8 +61,8 @@ class _VerifiedContractRepository:
     """组合层测试用的最小运行契约仓储替身：校验能力完整，返回固定快照内容。
 
     运行契约仓储必须具备 ``read_config`` / ``read_run_json`` / ``load_manifest`` /
-    ``verify_file``，否则组合层会拒绝继续。这里只用于验证组合层在快照可用时能正常
-    组装，因此直接返回已校验的内容而不触碰磁盘。
+    ``verify_file``，否则组合层会拒绝继续；归档服务还要求 ``update_manifest`` 可调用。
+    这里只用于验证组合层在快照可用时能正常组装，因此直接返回已校验的内容而不触碰磁盘。
     """
 
     def __init__(self, *, config_payload, hardware_payload):
@@ -79,6 +79,9 @@ class _VerifiedContractRepository:
 
     def load_manifest(self, run_id):
         raise AssertionError("该替身不通过 manifest 读取硬件快照")
+
+    def update_manifest(self, run_id, manifest, *, now=None):
+        raise AssertionError("该替身不写回 manifest；本测试只验证组装")
 
     def verify_file(self, run_id, reference):
         raise AssertionError("该替身不通过 manifest 校验文件")
@@ -196,6 +199,8 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
         recorder = measurement.call_args.args[0].stage_recorder
         self.assertIsNotNone(recorder)
         self.assertEqual(recorder.run_id, "run-contract")
+        # 运行契约运行同时装配自动归档服务，旧兼容流程不装配。
+        self.assertIsNotNone(measurement.call_args.args[0].archival_service)
         # 硬件快照通过统一入口按已登记 JSON 读取，而不是再次解析领域配置。
         self.assertEqual(repository.read_run_json_paths, [HARDWARE_CONFIG_INPUT_PATH])
 
@@ -211,6 +216,7 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
             create_cable_loss_measurement("config.json", prepared_run=prepared)
 
         self.assertIsNone(measurement.call_args.args[0].stage_recorder)
+        self.assertIsNone(measurement.call_args.args[0].archival_service)
 
     def test_request_exposes_common_runtime_shape(self):
         configuration = SimpleNamespace(

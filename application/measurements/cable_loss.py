@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from app.cancellation import CancellationToken, MeasurementCancelled
+from application.archival_service import ArchivalOutcome, archive_completed_stage
 from application.dto import CableLossMeasurementRequest, CableLossMeasurementResult, MeasurementResult
 from application.measurements.services import CableLossService
 from application.ports.measurement_session import CleanupRecord, SafetyCleanupError
@@ -54,6 +55,9 @@ class CableLossUseCase:
         self.stage_recorder = request.stage_recorder
         # 只有阶段已开始且尚未结束的阶段才允许写入 failed/cancelled。
         self._stage_open = False
+        # 阶段成功提交后的自动归档入口；未注入时不登记任何交付产物状态。
+        self.archival_service = request.archival_service
+        self.last_archival_outcome: ArchivalOutcome | None = None
         self.sleep_fn = sleep_fn or time.sleep
         self._token = request.cancellation_token or CancellationToken()
         self._service = CableLossService(
@@ -244,9 +248,15 @@ class CableLossUseCase:
         """运行契约运行：权威结果写入 ``inputs/cable_loss.json``。
 
         运行目录结果是本次运行的权威来源：先原子提交并登记 manifest，返回值只暴露该
-        权威路径；不再同时写全局兼容副本。
+        权威路径；不再同时写全局兼容副本。正式结果提交后立即触发自动归档：线损没有
+        CSV/报告交付产物，因此按契约登记为 ``not_applicable``。
         """
         reference = self._record_complete(result)
+        self.last_archival_outcome = archive_completed_stage(
+            self.archival_service,
+            run_id=self.run_id,
+            stage=STAGE_CABLE_LOSS,
+        )
         archive_path = Path(self.run_directory) / reference.path
         return result.with_saved_result(archive_path=str(archive_path))
 

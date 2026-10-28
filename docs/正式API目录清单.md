@@ -78,6 +78,7 @@
 | `application.gui_data_service` | `GuiDataService` | 只读历史/导出应用服务 |
 | `application.errors` | `AutoTestError`、`ErrorCategory`、`FailureRecord`、`ConfigurationError`、`DeviceConnectionError`、`ProtocolError`、`DeviceCapabilityError`、`MeasurementError`、`CleanupError`、`cause_of`、`normalize_failures` | 跨层异常分类：连接、协议、设备能力、测量、清理与配置；清理聚合异常逐项记录失败动作 |
 | `application.export_service` | `ExportRequestError`、`ResultExportUseCase` | 导出用例：执行 `ExportRequest`，只接受历史列表中的结果标识；报告端口必须返回真实产物位置 |
+| `application.archival_service` | `ArchivalRequestError`、`ResultArchivalService` | 自动归档用例：只接受 `ArchivalRequest`（`run_id` + 阶段），按 manifest 推导测试状态，按 `(source_result, kind)` 幂等登记产物；正式结果永不改写 |
 | `application.lifecycle.measurement_lifecycle` | `MeasurementLifecycle`、`StopIntent` | 测量生命周期 |
 | `application.lifecycle.measurement_runtime` | `MeasurementRuntimeCoordinator`、`RuntimeDecision` | 运行协调与决策 |
 
@@ -89,6 +90,7 @@
 | `application.ports.result_repository` | `MeasurementResultRepository`、`SavedMeasurementResult` |
 | `application.ports.run_history` | `RunHistoryRepository`、`RunHistoryEntry`、`RunHistoryState`、`RunStageResultEntry` |
 | `application.ports.run_repository` | `RunRepositoryPort`、`RunLayout` |
+| `application.ports.result_artifacts` | `ArtifactGenerationError`、`ArtifactGenerationRequest`、`GeneratedArtifact`、`ResultArtifactGeneratorPort` |
 | `application.ports.result_input_reader` | `ResultInputReader` |
 | `application.ports.measurement_session` | `SafetyCleanupPort`、`MeasurementSessionPort`、`MeasurementSessionBinding`、`CleanupRecord`、`CleanupStepStatus`、`SafetyCleanupError` |
 | `application.ports.gui_data_service` | `GuiDataService`、`ResultFileDto`、`LoadedResultDto`、`ConfigurationPort`、`ResultQueryPort`、`ResultExportPort`、`ResultExportServicePort`、`ReportPort` |
@@ -156,7 +158,7 @@
 | `application.dto.export_requests` | `ExportFormat`、`ExportRequest`、`ExportOutcome` | 导出请求与结构化结果：格式为 JSON / CSV / 测试报告；JSON、CSV 必须带目标文件，报告位置由导出端口决定；`ExportOutcome` 只含 `result_id`、`format`、`filename`、`artifact_path`，不含界面文案 |
 | `application.dto.measurement_requests` | `MeasurementRequest`、`CableLossMeasurementRequest`、`DriverPowerMappingRequest`、`AmplifierMeasurementRequest` | 测量请求 |
 | `application.dto.measurement_results` | `MeasurementResult`、`MeasurementStatus`、`MeasurementType`、`CableLossMeasurementResult`、`DriverPowerMappingMeasurementResult`、`AmplifierMeasurementResult`、`measurement_result_from_document`、`measurement_type_for_result_type`、`require_formal_result` | 三类正式测量结果、显式行视图、结果文档唯一解析入口与正式结果断言 |
-| `application.dto.archival` | `ArchivalOutcome`、`ArchivalStatus`、`ArchivalTestStatus`、`ArchivedArtifact` | 自动归档结果 DTO：区分测试状态与产物状态，只携带运行内相对路径；不含 Qt、文件系统访问或页面文案 |
+| `application.dto.archival` | `ArchivalRequest`、`ArchivalOutcome`、`ArchivalStatus`、`ArchivalTestStatus`、`ArchivedArtifact` | 自动归档 DTO：请求只带 `run_id` 与阶段；结果区分测试状态与产物状态，只携带运行内相对路径；不含 Qt、文件系统访问或页面文案 |
 
 测量结果的唯一正式模型是 `application.dto.measurement_results` 的三个 DTO；`domain.models`
 只保留运行、方案与会话模型，`domain.run.models` 保留运行 manifest。正式展示与导出只消费

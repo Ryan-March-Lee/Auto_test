@@ -2,6 +2,8 @@
 
 本模块把“测试成功”与“交付产物生成成功”表达为两个可区分的维度：
 
+- :class:`ArchivalRequest` 是归档入口的输入：只标识 ``run_id`` 与阶段，不携带页面
+  路径、测试状态或界面文案。
 - ``test_status`` 描述本次归档对应的测试边界走到了哪一步：完整成功、部分完成、
   取消或异常。部分完成只表示**本阶段**已完成而运行整体尚未完成，不代表缺陷。
 - 每个交付产物（CSV、测试报告）用 :class:`ArtifactStatus` 表达自己的状态；产物失败
@@ -43,6 +45,8 @@ from enum import Enum
 from domain.run.models import (
     AMPLIFIER_RESULT_PATH,
     DEFAULT_STAGE_NAMES,
+    INPUTS_DIRNAME,
+    RESULTS_DIRNAME,
     STAGE_AMPLIFIER,
     ArtifactKind,
     ArtifactStatus,
@@ -138,6 +142,45 @@ class ArchivedArtifact:
     @classmethod
     def not_applicable(cls, kind: ArtifactKind | str) -> "ArchivedArtifact":
         return cls(kind=kind, status=ArtifactStatus.NOT_APPLICABLE)
+
+
+@dataclass(frozen=True)
+class ArchivalRequest:
+    """一次自动归档请求：只标识运行与阶段，不携带用户路径。
+
+    ``source_result`` 是调用方声称要归档的正式结果相对路径，可以为 ``None``（以
+    manifest 登记的阶段结果为准）。给值时必须是 ``inputs/`` 或 ``results/`` 下的
+    相对路径，归档服务还会进一步要求它等于该阶段的固定结果路径，因此请求参数
+    无法把归档指向运行目录里的其它文件或运行目录之外的文件。
+
+    请求不携带测试状态：归档语义由归档服务按 manifest 的阶段/运行状态推导，调用方
+    不能自称“完整成功”，避免把部分运行伪装成完整运行。
+    """
+
+    run_id: str
+    stage: str
+    source_result: str | None = None
+
+    def __post_init__(self) -> None:
+        validate_run_id(self.run_id)
+        if self.stage not in DEFAULT_STAGE_NAMES:
+            raise ValueError(
+                "归档请求的阶段必须是标准阶段: " + ", ".join(DEFAULT_STAGE_NAMES)
+            )
+        if self.source_result is None:
+            return
+        normalized = normalize_relative_path(
+            self.source_result, field_name="正式结果路径"
+        )
+        if not (
+            normalized.startswith(INPUTS_DIRNAME + "/")
+            or normalized.startswith(RESULTS_DIRNAME + "/")
+        ):
+            raise ValueError(
+                "正式结果路径必须是运行目录 inputs/ 或 results/ 下的文件: "
+                f"{self.source_result!r}"
+            )
+        object.__setattr__(self, "source_result", normalized)
 
 
 @dataclass(frozen=True)
@@ -283,6 +326,7 @@ def _expected_result_path(stage: str) -> str:
 
 __all__ = [
     "ArchivalOutcome",
+    "ArchivalRequest",
     "ArchivalStatus",
     "ArchivalTestStatus",
     "ArchivedArtifact",

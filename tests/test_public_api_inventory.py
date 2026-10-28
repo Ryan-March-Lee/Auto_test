@@ -115,6 +115,10 @@ FORMAL_API = {
     ),
     "application.gui_data_service": ("GuiDataService",),
     "application.export_service": ("ExportRequestError", "ResultExportUseCase"),
+    "application.archival_service": (
+        "ArchivalRequestError",
+        "ResultArchivalService",
+    ),
     "application.errors": (
         "AutoTestError",
         "CleanupError",
@@ -151,6 +155,12 @@ FORMAL_API = {
         "RunStageResultEntry",
     ),
     "application.ports.run_repository": ("RunRepositoryPort", "RunLayout"),
+    "application.ports.result_artifacts": (
+        "ArtifactGenerationError",
+        "ArtifactGenerationRequest",
+        "GeneratedArtifact",
+        "ResultArtifactGeneratorPort",
+    ),
     "application.ports.result_input_reader": ("ResultInputReader",),
     "application.ports.measurement_session": (
         "CleanupRecord",
@@ -213,6 +223,7 @@ FORMAL_API = {
     ),
     "application.dto.archival": (
         "ArchivalOutcome",
+        "ArchivalRequest",
         "ArchivalStatus",
         "ArchivalTestStatus",
         "ArchivedArtifact",

@@ -13,6 +13,12 @@ from .measurement_session import (
     SafetyCleanupError,
     SafetyCleanupPort,
 )
+from .result_artifacts import (
+    ArtifactGenerationError,
+    ArtifactGenerationRequest,
+    GeneratedArtifact,
+    ResultArtifactGeneratorPort,
+)
 from .result_input_reader import ResultInputReader
 from .result_repository import MeasurementResultRepository, SavedMeasurementResult
 from .run_history import (
@@ -25,14 +31,18 @@ from .run_repository import RunLayout, RunRepositoryPort
 from .types import PathLike
 
 __all__ = [
+    "ArtifactGenerationError",
+    "ArtifactGenerationRequest",
     "CleanupRecord",
     "CleanupStepStatus",
     "ConfigurationLoadResult",
     "ConfigurationRepository",
+    "GeneratedArtifact",
     "MeasurementResultRepository",
     "MeasurementSessionBinding",
     "MeasurementSessionPort",
     "PathLike",
+    "ResultArtifactGeneratorPort",
     "ResultInputReader",
     "RunHistoryEntry",
     "RunHistoryRepository",

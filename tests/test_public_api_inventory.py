@@ -185,7 +185,6 @@ FORMAL_API = {
         "ResultExportServicePort",
         "RunArchiveStatusPort",
         "RunHistoryServicePort",
-        "ReportPort",
     ),
     # 跨层 DTO
     "application.dto": (
@@ -320,7 +319,6 @@ FORMAL_API = {
         "JsonConfigurationAdapter",
         "ResultQueryAdapter",
         "ResultExportAdapter",
-        "ReportAdapter",
     ),
     "infrastructure.logging.app_logging": ("get_logger", "setup_logging"),
     "infrastructure.runtime": (

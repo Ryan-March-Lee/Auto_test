@@ -3,6 +3,7 @@ import os
 import tempfile
 import time
 import unittest
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -14,9 +15,15 @@ from application.dto import (
     AmplifierMeasurementResult,
     DriverPowerMappingMeasurementResult,
     DriverPowerPoint,
+    MeasurementResult,
+    MeasurementType,
     measurement_result_from_document,
 )
-from application.ports.gui_data_service import RESULT_SOURCE_RUN, ResultFileDto
+from application.ports.gui_data_service import (
+    RESULT_SOURCE_RUN,
+    LoadedResultDto,
+    ResultFileDto,
+)
 from application.run_stages import RunStageRecorder
 from domain.run.models import (
     AMPLIFIER_RESULT_PATH,
@@ -541,50 +548,86 @@ class ExportPageRequestTests(unittest.TestCase):
         dialog.assert_not_called()
 
 
-class ReportAdapterContractTests(unittest.TestCase):
+class ResultExportReportContractTests(unittest.TestCase):
+    """步骤 8：报告副本只按归档结果契约渲染，不注入页面配置或生成时刻。"""
 
-    def test_report_adapter_applies_overrides_and_forwards_result(self):
+    @staticmethod
+    def _query(result):
+        class _Query:
+            def load(self, result_id):
+                return LoadedResultDto(result_id, "amplifier_measurement.json", result)
+
+            def read_bytes(self, result_id):  # pragma: no cover - 报告读取 DTO
+                raise AssertionError("报告导出不逐字节读取结果")
+
+        return _Query()
+
+    def test_report_renders_the_archived_result_without_overrides(self):
         import infrastructure.gui_data_service as gui_data
 
         captured = {}
 
         class FakeVisualizer:
             def __init__(self, *, output_dir):
-                captured.setdefault("dirs", []).append(Path(output_dir))
+                captured["dir"] = Path(output_dir)
 
             def create_summary_report(self, data, original_filename=None):
                 captured["data"] = data
                 captured["filename"] = original_filename
+                report = Path(captured["dir"]) / "test_report.html"
+                report.parent.mkdir(parents=True, exist_ok=True)
+                report.write_text("<html></html>", encoding="utf-8")
+                return report
 
+        result = replace(
+            _amplifier_result(),
+            configuration_snapshot={"freq": 4.8},
+            measurement_time="2026-01-01 00:00:00",
+        )
         with tempfile.TemporaryDirectory() as directory:
             paths = PathService(Path(directory))
-            adapter = gui_data.ReportAdapter(paths)
+            adapter = gui_data.ResultExportAdapter(query=self._query(result), paths=paths)
             with patch.object(gui_data, "DataVisualization", FakeVisualizer):
-                adapter.create_summary_report(
-                    _amplifier_result(),
-                    {"freq": 4.8},
-                    "amp.json",
-                )
+                report_path = adapter.export_report("run::viz-run::results/amp.json")
+            self.assertEqual(Path(report_path).name, "test_report.html")
+            self.assertEqual(
+                Path(report_path).parent.parent, paths.test_results_dir
+            )
 
-        result = captured["data"]
-        self.assertIsInstance(result, AmplifierMeasurementResult)
-        self.assertTrue(result.sweep_rows())
-        self.assertEqual(captured["filename"], "amp.json")
-        self.assertEqual(result.source_filename, "amp.json")
-        self.assertEqual(dict(result.configuration_snapshot), {"freq": 4.8})
-        self.assertTrue(result.measurement_time)
-        self.assertEqual(captured["dirs"][0].parent, paths.test_results_dir)
+        rendered = captured["data"]
+        # 归档结果里的配置快照与测量时间原样进入报告，适配器不接受“当前配置”。
+        self.assertEqual(dict(rendered.configuration_snapshot), {"freq": 4.8})
+        self.assertEqual(rendered.measurement_time, "2026-01-01 00:00:00")
+        self.assertEqual(rendered.source_filename, "amplifier_measurement.json")
+        self.assertEqual(captured["filename"], "amplifier_measurement.json")
 
-    def test_report_adapter_rejects_documents(self):
+    def test_report_rejects_results_that_are_not_formal_dtos(self):
         import infrastructure.gui_data_service as gui_data
 
         with tempfile.TemporaryDirectory() as directory:
             paths = PathService(Path(directory))
-            adapter = gui_data.ReportAdapter(paths)
+            adapter = gui_data.ResultExportAdapter(
+                query=self._query(
+                    MeasurementResult(
+                        measurement_type=MeasurementType.AMPLIFIER, run_id="report-run"
+                    )
+                ),
+                paths=paths,
+            )
             with self.assertRaises(ValueError):
-                adapter.create_summary_report(
-                    {"run_id": "report-run", "results": {}}, {}, "amp.json"
-                )
+                adapter.export_report("run::report-run::results/amp.json")
+
+    def test_report_rejects_results_without_plottable_rows(self):
+        import infrastructure.gui_data_service as gui_data
+
+        with tempfile.TemporaryDirectory() as directory:
+            paths = PathService(Path(directory))
+            adapter = gui_data.ResultExportAdapter(
+                query=self._query(AmplifierMeasurementResult(run_id="viz-run")),
+                paths=paths,
+            )
+            with self.assertRaises(ValueError):
+                adapter.export_report("run::viz-run::results/amp.json")
 
     def test_result_export_output_dirs_are_unique(self):
         import infrastructure.gui_data_service as gui_data

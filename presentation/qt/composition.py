@@ -8,7 +8,6 @@ from application.run_history_service import RunHistoryService
 from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService
 from infrastructure.gui_data_service import (
     JsonConfigurationAdapter,
-    ReportAdapter,
     ResultExportAdapter,
     ResultQueryAdapter,
 )
@@ -41,6 +40,5 @@ def build_gui_data_service(
         JsonConfigurationAdapter(config_path or paths),
         query,
         ResultExportAdapter(query, paths),
-        ReportAdapter(paths),
         run_history=RunHistoryService(statuses=run_history, archival=archival),
     )

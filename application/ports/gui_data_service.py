@@ -81,7 +81,7 @@ class ResultExportServicePort(Protocol):
     """导出用例入口：页面只构造 ``ExportRequest``，由应用层执行。"""
 
     def execute(self, request: ExportRequest) -> ExportOutcome:
-        """执行一次导出请求，返回带用户可见文案的结果。"""
+        """执行一次导出请求，返回结构化导出结果；用户文案由界面层生成。"""
 
 
 class RunArchiveStatusPort(Protocol):
@@ -113,19 +113,9 @@ class RunHistoryServicePort(Protocol):
         ...
 
 
-class ReportPort(Protocol):
-    def create_summary_report(
-        self,
-        result: MeasurementResult,
-        configuration: Mapping[str, Any],
-        filename: str,
-    ) -> None: ...
-
-
 class GuiDataService(Protocol):
     configuration: ConfigurationPort
     results: ResultQueryPort
     exports: ResultExportPort
-    reports: ReportPort
     export_requests: ResultExportServicePort
     run_history: RunHistoryServicePort

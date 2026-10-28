@@ -5,6 +5,10 @@
 在读取边界调用唯一解析入口 ``measurement_result_from_document()``，因此上层拿到的
 一律是正式结果 DTO；不再扫描 ``test_results/`` 下的旧全局结果文件，也不提供旧历史
 回退。
+
+报告只有一个适配器实现：:meth:`ResultExportAdapter.export_report`。它把归档结果交给
+``build_report_result()`` 后再渲染，因此不存在第二个“页面配置 + 生成时刻”的报告入口
+（重构计划步骤 8 删除的 ``ReportAdapter``）。
 """
 
 from __future__ import annotations
@@ -12,7 +16,6 @@ from __future__ import annotations
 import json
 import logging
 import shutil
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -276,35 +279,21 @@ class ResultExportAdapter:
         shutil.copy2(generated, Path(target))
 
     def export_report(self, result_id: str) -> str:
-        """生成测试汇总报告（HTML + 图表），返回实际报告位置。"""
+        """生成测试汇总报告（HTML + 图表），返回实际报告位置。
+
+        报告内容只来自**归档结果**：配置快照、测量时间与来源文件名都按结果契约读取。
+        适配器既不接收“当前配置”，也不写入生成时刻，因此历史结果的报告副本与自动归档
+        写回运行目录的报告使用同一份结果事实，可以追溯到明确的 ``run_id`` 与结果标识
+        （重构计划步骤 8）。
+        """
         loaded = self.query.load(result_id)
+        report_result = build_report_result(
+            loaded.result, original_filename=loaded.filename
+        )
         report_path = DataVisualization(
             output_dir=self._report_output_dir()
-        ).create_summary_report(loaded.result, loaded.filename)
+        ).create_summary_report(report_result, loaded.filename)
         return str(report_path)
 
     def _report_output_dir(self) -> Path:
         return self.paths.test_results_dir / unique_directory_name("report")
-
-
-class ReportAdapter:
-    def __init__(self, paths: PathService):
-        self.paths = paths
-
-    def create_summary_report(
-        self,
-        result: MeasurementResult,
-        configuration: Mapping[str, Any],
-        filename: str,
-    ) -> None:
-        # 报告只在正式结果 DTO 上叠加展示参数；分析层不接触原始文档。
-        report_result = build_report_result(
-            result,
-            configuration=configuration,
-            original_filename=filename,
-            measurement_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        )
-        output_dir = self.paths.test_results_dir / unique_directory_name("report")
-        DataVisualization(output_dir=output_dir).create_summary_report(
-            report_result, filename
-        )

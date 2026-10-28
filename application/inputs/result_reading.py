@@ -27,6 +27,10 @@ def build_report_result(
     ``measurement_result_from_document()`` 转换，报告层不再解析 ``Mapping``。
     显式传入的 ``configuration`` / ``original_filename`` / ``measurement_time``
     覆盖结果中的同名字段；没有可绘制的结果行时抛出 ``ValueError``。
+
+    ``configuration`` 与 ``measurement_time`` 只用于**同一运行内**的归档编排：历史
+    结果的报告副本不得用它们改写已归档的配置快照或测量时间，否则报告内容会随“现在
+    的页面配置/生成时刻”漂移，无法再追溯到当时的运行（重构计划步骤 8）。
     """
     result = require_formal_result(result)
     updates: dict[str, Any] = {}

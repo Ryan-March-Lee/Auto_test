@@ -890,6 +890,31 @@ class ProductionDependencyTests(unittest.TestCase):
                 "可视化页不得自己决定报告来源或复制报告生成规则",
             )
 
+    def test_report_copies_are_rendered_from_the_archived_result_only(self):
+        """步骤 8：报告副本只按归档结果契约渲染，不再有第二套报告适配器。"""
+        source = (ROOT / "infrastructure" / "gui_data_service.py").read_text(
+            encoding="utf-8-sig"
+        )
+        adapter = source[source.index("class ResultExportAdapter") :]
+        # 报告输入由应用层构造：配置快照、测量时间、来源文件名都来自归档结果本身。
+        self.assertIn("build_report_result(", adapter)
+        self.assertNotIn("datetime.now(", adapter)
+        self.assertNotIn("configuration=", adapter)
+        # 页面级报告适配器与门面槽位已删除，不得重新装配。
+        self.assertNotIn("class ReportAdapter", source)
+        self.assertNotIn(
+            "ReportPort",
+            (ROOT / "application" / "ports" / "gui_data_service.py").read_text(
+                encoding="utf-8-sig"
+            ),
+            "门面不得重新提供独立的报告端口",
+        )
+        composition = (ROOT / "presentation" / "qt" / "composition.py").read_text(
+            encoding="utf-8-sig"
+        )
+        self.assertNotIn("ReportAdapter", composition)
+        self.assertNotIn("reports=", composition)
+
     def test_export_use_case_lives_in_the_application_layer(self):
         source_path = ROOT / "application" / "export_service.py"
         self.assertTrue(source_path.is_file(), "缺少 application 导出用例")

@@ -94,7 +94,7 @@
 | `application.ports.result_artifacts` | `ArtifactGenerationError`、`ArtifactGenerationRequest`、`GeneratedArtifact`、`ResultArtifactGeneratorPort` |
 | `application.ports.result_input_reader` | `ResultInputReader` |
 | `application.ports.measurement_session` | `SafetyCleanupPort`、`MeasurementSessionPort`、`MeasurementSessionBinding`、`CleanupRecord`、`CleanupStepStatus`、`SafetyCleanupError` |
-| `application.ports.gui_data_service` | `GuiDataService`、`ResultFileDto`、`LoadedResultDto`、`ConfigurationPort`、`ResultQueryPort`、`ResultExportPort`、`ResultExportServicePort`、`RunArchiveStatusPort`、`RunHistoryServicePort`、`ReportPort` |
+| `application.ports.gui_data_service` | `GuiDataService`、`ResultFileDto`、`LoadedResultDto`、`ConfigurationPort`、`ResultQueryPort`、`ResultExportPort`、`ResultExportServicePort`、`RunArchiveStatusPort`、`RunHistoryServicePort` |
 
 正式配置入口为 `domain.configuration` 和 `infrastructure.config`；正式结果仓储入口为
 `application.ports.result_repository` 及其基础设施实现 `infrastructure.persistence.result_repository`；
@@ -112,7 +112,7 @@
 | `infrastructure.persistence.result_repository` | `FileMeasurementResultRepository` |
 | `infrastructure.persistence.run_repository` | `RunRepository` |
 | `infrastructure.persistence.run_history_repository` | `FileRunHistoryRepository` |
-| `infrastructure.gui_data_service` | `JsonConfigurationAdapter`、`ResultQueryAdapter`、`ResultExportAdapter`、`ReportAdapter` |
+| `infrastructure.gui_data_service` | `JsonConfigurationAdapter`、`ResultQueryAdapter`、`ResultExportAdapter` |
 | `infrastructure.logging.app_logging` | `get_logger`、`setup_logging` |
 | `infrastructure.runtime` | `current_runtime`、`runtime_id`、`configured_python`、`python_version_requirement`、`python_version_supported`、`interpreter_command`、`verification_commands` |
 

@@ -123,7 +123,9 @@ class VisualizationPage(QWidget):
         self.load_data_btn.clicked.connect(lambda _checked=False: self.load_test_data())
         file_layout.addWidget(self.load_data_btn)
         self.generate_report_btn = QPushButton("生成报告")
-        self.generate_report_btn.setToolTip("基于当前已加载的历史结果生成测试报告副本")
+        self.generate_report_btn.setToolTip(
+            "基于当前已加载的历史结果生成测试报告副本（使用该结果归档时的配置快照）"
+        )
         self.generate_report_btn.clicked.connect(self.generate_report)
         file_layout.addWidget(self.generate_report_btn)
         control_layout.addLayout(file_layout)
@@ -227,7 +229,8 @@ class VisualizationPage(QWidget):
 
         报告规则只在应用层：页面只描述“哪一条结果、哪种格式”，由导出用例核对结果是否
         在历史列表中、是否支持报告，并返回实际产物位置。未加载结果时不再回退到“最新
-        结果”，否则报告来源无法追溯到明确的运行与结果标识。
+        结果”，否则报告来源无法追溯到明确的运行与结果标识；页面也不再提供当前配置，
+        报告里的配置快照与测量时间都取自该结果的归档记录。
         """
         loaded = self.history.loaded
         if loaded is None:

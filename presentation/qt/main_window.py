@@ -29,7 +29,7 @@ from presentation.qt.application_coordinator import ApplicationCoordinator
 from presentation.qt.assistant.chat_panel import ChatPanel
 from presentation.qt.config_page import ConfigPage
 from presentation.qt.connection_dialog import ConnectionDialog
-from presentation.qt.export_page import ExportPage
+from presentation.qt.export_page import build_history_page
 from presentation.qt.history_view_model import HistoryViewModel
 from presentation.qt.measurement_state import MeasurementKind, MeasurementResultReference
 from presentation.qt.pages import PageContext, build_pages
@@ -334,10 +334,9 @@ class MainWindow(QMainWindow):
         return self.visualization_page
 
     def create_data_export_tab(self):
-        """创建数据导出选项卡"""
-        self.export_page = ExportPage(
-            history=HistoryViewModel(self.gui_data_service.results),
-            export_service=self.gui_data_service.export_requests,
+        """创建历史运行/结果管理选项卡（原“数据导出”）"""
+        self.export_page = build_history_page(
+            self.gui_data_service,
             log_callback=self.add_log_message,
             parent=self,
         )

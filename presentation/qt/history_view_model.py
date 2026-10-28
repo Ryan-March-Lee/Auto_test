@@ -3,6 +3,9 @@
 页面通过这里读取历史列表、选中项和已加载结果：
 
 - 行内只有**结果标识与展示文本**，不暴露文件系统路径；列表来自只读历史查询端口。
+- 历史运行摘要（运行/阶段/产物状态）同样在这里转成展示文本：页面不读 manifest、
+  不解析运行目录，也不自己推断“能否重新生成”。数据来自应用层的运行摘要端口
+  （``RunHistoryServicePort.list_runs()``）。
 - 已加载结果只接受历史查询返回的正式结果 DTO；绘图用的频率分组在这里一次性构建，
   页面不再把结果当成 ``Mapping[str, Any]`` 读取。
 - 视图模型不写文件、不解析路径、不缓存原始文档，因此历史查看、导出和配置编辑可以
@@ -15,15 +18,20 @@ import math
 from dataclasses import dataclass
 from datetime import datetime
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol
 
 from application.dto import MeasurementResult, normalize_frequency_key
+from application.dto.run_history import (
+    RunArchiveState,
+    RunHistorySummary,
+)
 from application.ports.gui_data_service import (
     RESULT_SOURCE_RUN,
     LoadedResultDto,
     ResultFileDto,
     ResultQueryPort,
 )
+from domain.run.models import ArtifactKind, ArtifactStatus, RunStatus
 
 # 报告兜底使用的正式结果类型（主功放测量结果）。
 AMPLIFIER_RESULT_TYPE = "amplifier_measurement"
@@ -115,6 +123,131 @@ class HistoryRow:
         return f"{stem}.{suffix.lstrip('.')}"
 
 
+# -- 历史运行摘要的展示文本 -------------------------------------------------
+
+_RUN_STATUS_LABELS = {
+    RunStatus.CREATED: "已创建",
+    RunStatus.RUNNING: "进行中",
+    RunStatus.COMPLETED: "已完成",
+    RunStatus.FAILED: "失败",
+    RunStatus.CANCELLED: "已取消",
+    RunStatus.INTERRUPTED: "已中断",
+}
+_RUN_STATE_LABELS = {
+    RunArchiveState.USABLE: "可用",
+    RunArchiveState.INCOMPLETE: "结构不完整",
+    RunArchiveState.INVALID: "不可用",
+}
+_ARTIFACT_KIND_LABELS = {ArtifactKind.CSV: "CSV", ArtifactKind.REPORT: "报告"}
+_ARTIFACT_STATUS_LABELS = {
+    ArtifactStatus.PENDING: "待生成",
+    ArtifactStatus.COMPLETED: "已生成",
+    ArtifactStatus.FAILED: "失败",
+    ArtifactStatus.NOT_APPLICABLE: "不适用",
+}
+UNKNOWN_RUN_STATUS_LABEL = "状态未知"
+
+
+def artifact_kind_text(kind: ArtifactKind) -> str:
+    """交付产物类型的中文名；页面与结果文案共用同一份映射。"""
+    return _ARTIFACT_KIND_LABELS.get(kind, kind.value)
+
+
+def artifact_status_text(status: ArtifactStatus) -> str:
+    """交付产物状态的中文名。"""
+    return _ARTIFACT_STATUS_LABELS.get(status, status.value)
+
+
+
+@dataclass(frozen=True)
+class RunHistoryRow:
+    """历史运行列表的一行：展示文本 + “能否重新生成”的结构化事实。
+
+    视图模型只把 DTO 转成文案，不读取 manifest、不判断文件是否存在：``can_regenerate``
+    直接来自 :class:`application.dto.run_history.RunHistorySummary`。
+    """
+
+    run_id: str
+    created_at: datetime
+    state: RunArchiveState
+    run_status_text: str
+    stage_text: str
+    result_text: str
+    artifact_text: str
+    problem_text: str = ""
+    can_regenerate: bool = False
+
+    @classmethod
+    def from_summary(cls, summary: RunHistorySummary) -> "RunHistoryRow":
+        """由应用层的运行摘要构造；非正式 DTO 会被明确拒绝。"""
+        if not isinstance(summary, RunHistorySummary):
+            raise TypeError("历史运行行必须来自 RunHistorySummary")
+        return cls(
+            run_id=summary.run_id,
+            created_at=summary.created_at,
+            state=summary.state,
+            run_status_text=_run_status_text(summary),
+            stage_text=_stage_text(summary),
+            result_text=f"{summary.result_count} 个正式结果",
+            artifact_text=_artifact_text(summary),
+            problem_text=_problem_text(summary),
+            can_regenerate=summary.can_regenerate,
+        )
+
+    @property
+    def created_text(self) -> str:
+        return self.created_at.strftime("%Y-%m-%d %H:%M:%S")
+
+    @property
+    def state_text(self) -> str:
+        return _RUN_STATE_LABELS[self.state]
+
+    @property
+    def status_text(self) -> str:
+        """运行状态；不可用时同时给出可用性，避免“已完成”看起来仍可浏览。"""
+        if self.state is RunArchiveState.USABLE:
+            return self.run_status_text
+        return f"{self.run_status_text}（{self.state_text}）"
+
+    @property
+    def browsable(self) -> bool:
+        return self.state.browsable
+
+
+def _run_status_text(summary: RunHistorySummary) -> str:
+    if summary.run_status is None:
+        return UNKNOWN_RUN_STATUS_LABEL
+    return _RUN_STATUS_LABELS.get(summary.run_status, summary.run_status.value)
+
+
+def _stage_text(summary: RunHistorySummary) -> str:
+    if not summary.stages:
+        return "—"
+    return f"{summary.finished_stages}/{summary.total_stages} 已完成"
+
+
+def _artifact_text(summary: RunHistorySummary) -> str:
+    if not summary.artifacts:
+        return "无交付产物"
+    return "、".join(
+        f"{artifact_kind_text(item.kind)} {artifact_status_text(item.status)}"
+        for item in summary.artifacts
+    )
+
+
+def _problem_text(summary: RunHistorySummary) -> str:
+    """说明列：运行级阻塞原因 + 每个失败产物的原因。
+
+    失败原因来自 manifest 登记的错误文本，只作为纯文本展示；页面不据此判断文件状态。
+    """
+    parts = [summary.problem] if summary.problem else []
+    parts.extend(
+        f"{artifact_kind_text(item.kind)} 失败: {item.error or '未记录原因'}"
+        for item in summary.failed_artifacts
+    )
+    return "；".join(parts)
+
+
 @dataclass(frozen=True)
 class LoadedHistoryResult:
     """一条已加载的历史结果：正式 DTO 加**不可变**绘图视图。
@@ -166,19 +299,35 @@ class LoadedHistoryResult:
         }
 
 
-class HistoryViewModel:
-    """只读历史视图模型：列表、选中项、已加载结果与频率浏览。
+class RunSummarySource(Protocol):
+    """历史运行摘要来源（由 ``application.run_history_service.RunHistoryService`` 提供）。"""
 
-    视图模型不持有 Qt 控件，也不接收路径：列表来自
-    ``ResultQueryPort.list_results()``，加载只经过 ``load()`` / ``latest_result()``。
+    def list_runs(self) -> tuple[RunHistorySummary, ...]: ...
+
+
+class HistoryViewModel:
+    """只读历史视图模型：结果列表、运行摘要、选中项、已加载结果与频率浏览。
+
+    视图模型不持有 Qt 控件，也不接收路径：结果列表来自
+    ``ResultQueryPort.list_results()``，运行摘要来自 ``RunSummarySource.list_runs()``，
+    加载只经过 ``load()`` / ``latest_result()``。
     """
 
-    def __init__(self, query: ResultQueryPort):
+    def __init__(
+        self,
+        query: ResultQueryPort,
+        *,
+        runs: RunSummarySource | None = None,
+    ):
         self.query = query
         self._rows: tuple[HistoryRow, ...] = ()
         self._selected_index: int | None = None
         self._loaded: LoadedHistoryResult | None = None
         self._frequency_index = 0
+        # 历史运行摘要来源是可选依赖：可视化页只需要结果列表，历史管理页两者都要。
+        self.run_source = runs
+        self._run_rows: tuple[RunHistoryRow, ...] = ()
+        self._selected_run_index: int | None = None
 
     # -- 列表 ---------------------------------------------------------------
 
@@ -216,6 +365,49 @@ class HistoryViewModel:
     @property
     def selected(self) -> HistoryRow | None:
         return self.row_at(self._selected_index)
+
+    # -- 运行摘要 -----------------------------------------------------------
+
+    @property
+    def run_rows(self) -> tuple[RunHistoryRow, ...]:
+        """当前历史运行列表（只读）。"""
+        return self._run_rows
+
+    def reload_runs(self) -> tuple[RunHistoryRow, ...]:
+        """重新读取历史运行摘要；选中运行已不存在时清空选择。"""
+        if self.run_source is None:
+            raise RuntimeError("未配置历史运行摘要来源，无法读取运行列表")
+        self._run_rows = tuple(
+            RunHistoryRow.from_summary(summary)
+            for summary in self.run_source.list_runs()
+        )
+        if (
+            self._selected_run_index is not None
+            and not self.run_at(self._selected_run_index)
+        ):
+            self._selected_run_index = None
+        return self._run_rows
+
+    def run_at(self, index: int | None) -> RunHistoryRow | None:
+        if not isinstance(index, int) or isinstance(index, bool):
+            return None
+        if 0 <= index < len(self._run_rows):
+            return self._run_rows[index]
+        return None
+
+    def select_run(self, index: int | None) -> RunHistoryRow | None:
+        """选中一个运行；非法或空行索引会清空选择。"""
+        row = self.run_at(index)
+        self._selected_run_index = None if row is None else index
+        return row
+
+    @property
+    def selected_run_index(self) -> int | None:
+        return self._selected_run_index
+
+    @property
+    def selected_run(self) -> RunHistoryRow | None:
+        return self.run_at(self._selected_run_index)
 
     # -- 加载 ---------------------------------------------------------------
 
@@ -307,6 +499,11 @@ __all__ = [
     "HistoryRow",
     "HistoryViewModel",
     "LoadedHistoryResult",
+    "RunHistoryRow",
+    "RunSummarySource",
+    "UNKNOWN_RUN_STATUS_LABEL",
+    "artifact_kind_text",
+    "artifact_status_text",
     "result_kind",
     "result_plot_series",
 ]

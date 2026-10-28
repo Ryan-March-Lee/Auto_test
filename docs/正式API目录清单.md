@@ -79,6 +79,7 @@
 | `application.errors` | `AutoTestError`、`ErrorCategory`、`FailureRecord`、`ConfigurationError`、`DeviceConnectionError`、`ProtocolError`、`DeviceCapabilityError`、`MeasurementError`、`CleanupError`、`cause_of`、`normalize_failures` | 跨层异常分类：连接、协议、设备能力、测量、清理与配置；清理聚合异常逐项记录失败动作 |
 | `application.export_service` | `ExportRequestError`、`ResultExportUseCase` | 导出用例：执行 `ExportRequest`，只接受历史列表中的结果标识；报告端口必须返回真实产物位置 |
 | `application.archival_service` | `ArchivalRequestError`、`ResultArchivalService`、`archive_completed_stage` | 自动归档用例：只接受 `ArchivalRequest`（`run_id` + 阶段），按 manifest 推导测试状态，按 `(source_result, kind)` 幂等登记产物；正式结果永不改写。`archive_completed_stage` 是阶段完成边界的调用入口：归档失败只写日志，不改变已保存的结果 |
+| `application.run_history_service` | `RunHistoryRequestError`、`RunHistoryService` | 历史运行用例：列出运行/阶段/产物状态（只读端口），并对**已登记**运行重新生成失败的交付产物（`retry_failed=True`，写回原运行目录）；不接受任意运行标识或路径 |
 | `application.lifecycle.measurement_lifecycle` | `MeasurementLifecycle`、`StopIntent` | 测量生命周期 |
 | `application.lifecycle.measurement_runtime` | `MeasurementRuntimeCoordinator`、`RuntimeDecision` | 运行协调与决策 |
 
@@ -93,7 +94,7 @@
 | `application.ports.result_artifacts` | `ArtifactGenerationError`、`ArtifactGenerationRequest`、`GeneratedArtifact`、`ResultArtifactGeneratorPort` |
 | `application.ports.result_input_reader` | `ResultInputReader` |
 | `application.ports.measurement_session` | `SafetyCleanupPort`、`MeasurementSessionPort`、`MeasurementSessionBinding`、`CleanupRecord`、`CleanupStepStatus`、`SafetyCleanupError` |
-| `application.ports.gui_data_service` | `GuiDataService`、`ResultFileDto`、`LoadedResultDto`、`ConfigurationPort`、`ResultQueryPort`、`ResultExportPort`、`ResultExportServicePort`、`ReportPort` |
+| `application.ports.gui_data_service` | `GuiDataService`、`ResultFileDto`、`LoadedResultDto`、`ConfigurationPort`、`ResultQueryPort`、`ResultExportPort`、`ResultExportServicePort`、`RunArchiveStatusPort`、`RunHistoryServicePort`、`ReportPort` |
 
 正式配置入口为 `domain.configuration` 和 `infrastructure.config`；正式结果仓储入口为
 `application.ports.result_repository` 及其基础设施实现 `infrastructure.persistence.result_repository`；
@@ -159,6 +160,7 @@
 | `application.dto.measurement_requests` | `MeasurementRequest`、`CableLossMeasurementRequest`、`DriverPowerMappingRequest`、`AmplifierMeasurementRequest` | 测量请求 |
 | `application.dto.measurement_results` | `MeasurementResult`、`MeasurementStatus`、`MeasurementType`、`CableLossMeasurementResult`、`DriverPowerMappingMeasurementResult`、`AmplifierMeasurementResult`、`measurement_result_from_document`、`measurement_type_for_result_type`、`require_formal_result` | 三类正式测量结果、显式行视图、结果文档唯一解析入口与正式结果断言 |
 | `application.dto.archival` | `ArchivalRequest`、`ArchivalOutcome`、`ArchivalStatus`、`ArchivalTestStatus`、`ArchivedArtifact` | 自动归档 DTO：请求只带 `run_id` 与阶段；结果区分测试状态与产物状态，只携带运行内相对路径；不含 Qt、文件系统访问或页面文案 |
+| `application.dto.run_history` | `RunArchiveState`、`RunStageSummary`、`RunArtifactSummary`、`RunHistorySummary` | 历史运行只读视图：运行可用性（可用/结构不完整/不可用）、阶段状态与正式结果标识、交付产物状态；只带运行内相对路径，不读文件、不判断文件是否存在，不含页面文案 |
 
 测量结果的唯一正式模型是 `application.dto.measurement_results` 的三个 DTO；`domain.models`
 只保留运行、方案与会话模型，`domain.run.models` 保留运行 manifest。正式展示与导出只消费
@@ -221,8 +223,8 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `presentation.qt.configuration_authoring` | 配置页保存时的正式运行配置编写 |
 | `presentation.qt.connection_diagrams` | 连接图渲染 |
 | `presentation.qt.connection_dialog` | 连接确认对话框：`build_diagram()` 按需渲染连接图；连接图不可用时在对话框内说明原因并禁用确认按钮 |
-| `presentation.qt.export_page` | 导出页面（只构造 `ExportRequest`，按 `ResultExportServicePort` 注入用例；导出由应用层执行，用户文案由页面生成） |
-| `presentation.qt.history_view_model` | 历史查看只读视图模型：列表、选中项、已加载结果与频率浏览（无 Qt、无路径） |
+| `presentation.qt.export_page` | 历史运行与结果管理页（只构造 `ExportRequest`，按 `ResultExportServicePort` 注入导出用例；运行/阶段/产物状态来自 `HistoryViewModel`，失败产物重新生成走 `RunHistoryServicePort`；用户文案由页面生成） |
+| `presentation.qt.history_view_model` | 历史查看只读视图模型：结果列表、运行摘要、选中项、已加载结果与频率浏览（无 Qt、无路径） |
 | `presentation.qt.input_controls` | 通用输入控件 |
 | `presentation.qt.measurement_state` | 测量状态对象 |
 | `presentation.qt.measurement_worker_factories` | 测量 worker 工厂 |
@@ -334,18 +336,22 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 
 ## 8. 步骤 1 验收与现行清单规模
 
-- 正式公共 API：53 个模块路径、232 个公开名称，已在本文与测试中固定（步骤 5 新增
+- 正式公共 API：55 个模块路径、240 个公开名称，已在本文与测试中固定（步骤 5 新增
   `infrastructure.config.validation.validate_official_config`，用于校验已解析的正式配置文档；
   步骤 6 收敛结果 DTO；步骤 7 新增 `application.ports.measurement_session`；步骤 13 新增
   `domain.measurement.values` 的测量值对象；步骤 15 新增 `application.errors` 的跨层异常分类
   与失败项归一化 `normalize_failures`；归档重构步骤 2/3 新增 `application.dto.archival`、
   `application.archival_service` 与 `application.ports.result_artifacts`，步骤 4 新增
-  `application.archival_service.archive_completed_stage`）。
-- 正式内部模块：44 个路径已登记，公共与内部边界不重叠（步骤 7 补登记
-  `instrument.safety`：安全标记的显式签名判定是跨模块契约；归档重构步骤 4 补登记
-  `infrastructure.persistence.artifact_generator` 与 `analysis.reporting`：自动归档 CSV
+  `application.archival_service.archive_completed_stage`；归档重构步骤 7 新增
+  `application.dto.run_history`、`application.run_history_service` 与
+  `application.ports.gui_data_service` 的 `RunArchiveStatusPort` / `RunHistoryServicePort`）。
+- 正式内部模块：50 个路径已登记（以测试中的 `INTERNAL_MODULES` 为准），公共与内部边界不重叠
+  （步骤 7 补登记 `instrument.safety`：安全标记的显式签名判定是跨模块契约；归档重构步骤 4
+  补登记 `infrastructure.persistence.artifact_generator` 与 `analysis.reporting`：自动归档 CSV
   产物的适配器及其复用的分析层写入能力；步骤 5 在同一适配器模块内补上报告产物与组合端口，
-  报告复用 `analysis.reporting.render_html_report`，不新增模块路径）。
+  报告复用 `analysis.reporting.render_html_report`，不新增模块路径；归档重构步骤 7 未新增
+  内部模块——历史管理页沿用已登记的 `presentation.qt.export_page` 与
+  `presentation.qt.history_view_model`）。
 - 旧模块：29 个条目（21 个根模块、8 个正式包内实现），状态与工作树一致。步骤 16
   （2026-10-27）已把最后五个根目录纯再导出模块（`measurement_calculations` /
   `measurement_lifecycle` / `measurement_services` / `app_logging` / `project_paths`）

@@ -6,8 +6,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Mapping, Protocol
 
+from application.dto.archival import ArchivalOutcome
 from application.dto.export_requests import ExportOutcome, ExportRequest
 from application.dto.measurement_results import MeasurementResult
+from application.dto.run_history import RunHistorySummary
 
 
 # 历史结果只来自正式运行目录；旧全局兼容副本已不再参与历史查看。
@@ -82,6 +84,35 @@ class ResultExportServicePort(Protocol):
         """执行一次导出请求，返回带用户可见文案的结果。"""
 
 
+class RunArchiveStatusPort(Protocol):
+    """历史运行状态的只读查询端口（运行、阶段与交付产物状态）。
+
+    实现只读 manifest 与运行目录：返回每次运行的可用性、阶段状态和产物状态，不返回
+    文件系统路径，也不写入任何结果或产物。``invalid`` 运行同样会被列出（供诊断），
+    但它不能被浏览、导出或重新生成。
+    """
+
+    def list_run_summaries(self) -> tuple[RunHistorySummary, ...]:
+        """返回运行根目录下全部运行的摘要，按创建时间从新到旧排序。"""
+        ...
+
+
+class RunHistoryServicePort(Protocol):
+    """历史运行管理的应用用例入口（查询 + 失败产物重新生成）。"""
+
+    def list_runs(self) -> tuple[RunHistorySummary, ...]:
+        """返回历史运行摘要列表。"""
+        ...
+
+    def regenerate_failed_artifacts(self, run_id: str) -> ArchivalOutcome:
+        """重新生成已登记运行中失败的交付产物，写回原运行目录。
+
+        只接受历史列表中的 ``run_id``；运行不可用、没有失败产物或归档失败时抛出
+        ``application.run_history_service.RunHistoryRequestError``。
+        """
+        ...
+
+
 class ReportPort(Protocol):
     def create_summary_report(
         self,
@@ -97,3 +128,4 @@ class GuiDataService(Protocol):
     exports: ResultExportPort
     reports: ReportPort
     export_requests: ResultExportServicePort
+    run_history: RunHistoryServicePort

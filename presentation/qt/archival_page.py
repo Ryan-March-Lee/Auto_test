@@ -211,7 +211,7 @@ class ArchivalPageMixin:
             reason = f"当前没有运行，已清除运行 {summary.run_id} 的归档结果显示"
         else:
             reason = f"当前运行已切换为 {current}，已清除运行 {summary.run_id} 的归档结果显示"
-        self._log_callback(f"{reason}；历史运行请在“数据导出”页查看")
+        self._log_callback(f"{reason}；历史运行请在“历史运行”页查看")
 
     # -- 内部 ---------------------------------------------------------------
 

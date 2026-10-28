@@ -159,7 +159,7 @@ def _summarize_completed(
         headline=f"{label}结果已保存，但部分交付产物生成失败",
         detail=(
             f"运行 {run_id}：{lines}。正式结果已保留；"
-            f"可在“数据导出”页按运行 {run_id} 重新生成失败的产物。"
+            f"可在“历史运行”页按运行 {run_id} 重新生成失败的产物。"
         ),
         tone=TONE_WARNING,
         run_id=run_id,
@@ -197,7 +197,7 @@ def summarize_archival_missing(
     else:
         detail = (
             f"运行 {run_id} 的交付产物状态未知；"
-            "请查看日志或“数据导出”页确认，正式结果仍以运行目录为准。"
+            "请查看日志或“历史运行”页确认，正式结果仍以运行目录为准。"
         )
     return ArchivalSummary(
         headline=f"{label}结果已保存，但未收到归档结果",

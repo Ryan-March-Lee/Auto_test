@@ -136,7 +136,7 @@ class ArchivalStatusView(QGroupBox):
         if not self._is_usable(summary):
             self._log_callback(
                 f"归档{label}属于运行 {summary.run_id}，已不是当前运行；"
-                "请在“数据导出”页查看历史运行"
+                "请在“历史运行”页查看历史运行"
             )
             return False
         provider = self._location_provider
@@ -150,7 +150,7 @@ class ArchivalStatusView(QGroupBox):
             return False
         if not isinstance(target, str) or not target.strip():
             self._log_callback(
-                f"归档{label}位置不可用，请在“数据导出”页查看运行 {summary.run_id}"
+                f"归档{label}位置不可用，请在“历史运行”页查看运行 {summary.run_id}"
             )
             return False
         if not QDesktopServices.openUrl(QUrl.fromLocalFile(target)):

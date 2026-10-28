@@ -259,7 +259,7 @@ PAGE_DEFINITIONS = (
     PageDefinition("driver_mapping", "驱动映射", _build_driver_mapping_page),
     PageDefinition("amplifier", "功放测试", _build_amplifier_page),
     PageDefinition("visualization", "数据可视化", lambda context: context.build_visualization()),
-    PageDefinition("export", "数据导出", lambda context: context.build_export()),
+    PageDefinition("export", "历史运行", lambda context: context.build_export()),
 )
 
 

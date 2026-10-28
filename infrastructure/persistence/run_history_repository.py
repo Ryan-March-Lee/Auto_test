@@ -4,6 +4,8 @@
 
 - ``list_runs``：枚举运行根目录下的运行，读取 manifest 元数据并给出可用状态
   （可用 / 结构不完整 / 损坏 / 符号链接），不扫描全局结果目录。
+- ``list_run_summaries``：同一批运行的完整只读摘要（运行状态、阶段状态与交付产物
+  状态），历史管理页只需这一份结构化事实，不再各自读 manifest。
 - ``list_results``：按 manifest 登记返回**阶段结果**元数据，只暴露结果标识和展示
   元数据，不返回文件系统路径；硬件配置等非阶段结果输入不会出现在历史结果里。
 - ``load`` / ``read_bytes``：按 ``run_id`` 与结果标识读取结果，先要求该标识是当前
@@ -23,10 +25,17 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from application.dto.run_history import (
+    RunArchiveState,
+    RunArtifactSummary,
+    RunHistorySummary,
+    RunStageSummary,
+)
 from application.ports.run_history import (
     RunHistoryEntry,
     RunHistoryRepository,
@@ -130,6 +139,20 @@ class FileRunHistoryRepository(RunHistoryRepository):
             )
         )
 
+    def list_run_summaries(self) -> tuple[RunHistorySummary, ...]:
+        """返回全部运行的只读摘要（运行/阶段/产物状态），按创建时间从新到旧。"""
+        summaries = [
+            self._summary(run_id)
+            for run_id in self.runs.list_run_ids(include_invalid=True)
+        ]
+        return tuple(
+            sorted(
+                summaries,
+                key=lambda item: (item.created_at, item.run_id),
+                reverse=True,
+            )
+        )
+
     def list_results(self, run_id: str) -> tuple[RunStageResultEntry, ...]:
         manifest = self._manifest(run_id)
         references = _reference_index(manifest)
@@ -183,62 +206,120 @@ class FileRunHistoryRepository(RunHistoryRepository):
         return load_run_manifest(directory / "manifest.json")
 
     def _describe(self, run_id: str) -> RunHistoryEntry:
+        inspection = self._inspect(run_id)
+        manifest = inspection.manifest
+        if inspection.state is RunArchiveState.INVALID or manifest is None:
+            return RunHistoryEntry(
+                run_id=run_id,
+                created_at=inspection.created_at,
+                status=inspection.status,
+                state=RunHistoryState.INVALID,
+                problem=inspection.problem,
+            )
+        return RunHistoryEntry(
+            run_id=run_id,
+            created_at=inspection.created_at,
+            status=inspection.status,
+            state=RunHistoryState(inspection.state.value),
+            total_stages=len(manifest.stages),
+            finished_stages=sum(
+                1
+                for record in manifest.stages.values()
+                if record.status in _FINISHED_STAGE_STATUSES
+            ),
+            result_count=len(_result_entries(manifest)),
+            problem=inspection.problem,
+        )
+
+    def _summary(self, run_id: str) -> RunHistorySummary:
+        """把 manifest 的事实映射成历史管理页需要的结构化摘要。
+
+        ``invalid`` 运行（目录越界、manifest 缺失/损坏、run_id 与目录名不一致）只给出
+        可用性与阻塞原因，不携带阶段或产物记录：损坏的 manifest 不能当作状态来源。
+        """
+        inspection = self._inspect(run_id)
+        manifest = inspection.manifest
+        if inspection.state is RunArchiveState.INVALID or manifest is None:
+            return RunHistorySummary(
+                run_id=run_id,
+                created_at=inspection.created_at,
+                state=RunArchiveState.INVALID,
+                problem=inspection.problem,
+            )
+        return RunHistorySummary(
+            run_id=run_id,
+            created_at=inspection.created_at,
+            state=inspection.state,
+            run_status=manifest.status,
+            stages=tuple(
+                RunStageSummary(
+                    name=record.name,
+                    status=record.status,
+                    result_id=record.result,
+                )
+                for record in manifest.stages.values()
+            ),
+            artifacts=tuple(
+                RunArtifactSummary(
+                    kind=record.kind,
+                    status=record.status,
+                    source_result=record.source_result,
+                    stage=_stage_for_result(manifest, record.source_result),
+                    error=record.error,
+                )
+                for record in manifest.artifacts
+            ),
+            problem=inspection.problem,
+        )
+
+    def _inspect(self, run_id: str) -> "_RunInspection":
+        """统一判定一次运行的可用性：目录边界、manifest 可读性与结构完整度。
+
+        ``list_runs`` 与 ``list_run_summaries`` 共用这一份判定，避免两种历史视图对
+        “这个运行能不能用”给出不同答案。
+        """
         directory = self.runs.layout(run_id).run_directory
         fallback = _directory_modified_at(directory)
         try:
             self._run_directory(run_id)
         except ValueError as error:
-            return RunHistoryEntry(
-                run_id=run_id,
+            return _RunInspection(
                 created_at=fallback,
+                state=RunArchiveState.INVALID,
                 status="invalid",
-                state=RunHistoryState.INVALID,
                 problem=str(error),
             )
         try:
             manifest = self._manifest(run_id)
         except (OSError, ValueError) as error:
-            return RunHistoryEntry(
-                run_id=run_id,
+            return _RunInspection(
                 created_at=fallback,
+                state=RunArchiveState.INVALID,
                 status="invalid",
-                state=RunHistoryState.INVALID,
                 problem=f"manifest 缺失或无法解析: {error}",
             )
         created_at = _parse_moment(manifest.created_at, fallback=fallback)
         if manifest.run_id != run_id:
-            return RunHistoryEntry(
-                run_id=run_id,
+            return _RunInspection(
                 created_at=created_at,
+                state=RunArchiveState.INVALID,
                 status=manifest.status.value,
-                state=RunHistoryState.INVALID,
+                manifest=manifest,
                 problem="manifest.run_id 与运行目录名不一致",
             )
-        finished = sum(
-            1
-            for record in manifest.stages.values()
-            if record.status in _FINISHED_STAGE_STATUSES
-        )
-        result_count = len(_result_entries(manifest))
         if not self.runs.run_exists(run_id):
-            return RunHistoryEntry(
-                run_id=run_id,
+            return _RunInspection(
                 created_at=created_at,
+                state=RunArchiveState.INCOMPLETE,
                 status=manifest.status.value,
-                state=RunHistoryState.INCOMPLETE,
-                total_stages=len(manifest.stages),
-                finished_stages=finished,
-                result_count=result_count,
+                manifest=manifest,
                 problem="运行目录结构不完整（缺少配置快照或 inputs/results 目录）",
             )
-        return RunHistoryEntry(
-            run_id=run_id,
+        return _RunInspection(
             created_at=created_at,
+            state=RunArchiveState.USABLE,
             status=manifest.status.value,
-            state=RunHistoryState.USABLE,
-            total_stages=len(manifest.stages),
-            finished_stages=finished,
-            result_count=result_count,
+            manifest=manifest,
         )
 
     def _entry(
@@ -312,6 +393,39 @@ def _reference_index(manifest: RunManifest) -> dict[str, FileReference]:
     for reference in (*manifest.inputs, *manifest.outputs):
         references.setdefault(reference.path, reference)
     return references
+
+
+@dataclass(frozen=True)
+class _RunInspection:
+    """一次运行的可用性判定结果：两种历史视图共用的中间事实。
+
+    ``manifest`` 只在 manifest 可解析时存在；``invalid`` 运行即使读到了 manifest
+    （``run_id`` 与目录名不一致）也不对外暴露阶段与产物。
+    """
+
+    created_at: datetime
+    state: RunArchiveState
+    status: str
+    manifest: RunManifest | None = None
+    problem: str | None = None
+
+
+def _stage_for_result(manifest: RunManifest, source_result: str | None) -> str | None:
+    """把产物来源正式结果对应到 manifest 中登记它的阶段。
+
+    交付产物只由归档服务按某个阶段的正式结果生成；这里只做事实对应，不做路径推断：
+    先看各阶段登记的 ``result``，再看登记了阶段名的 ``outputs``，都对不上就返回
+    ``None``（该产物不能作为“重新生成”的输入）。
+    """
+    if source_result is None:
+        return None
+    for name, record in manifest.stages.items():
+        if record.result == source_result:
+            return name
+    for reference in manifest.outputs:
+        if reference.path == source_result and reference.stage in manifest.stages:
+            return reference.stage
+    return None
 
 
 __all__ = ["FileRunHistoryRepository"]

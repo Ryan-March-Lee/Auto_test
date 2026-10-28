@@ -430,7 +430,7 @@ class ApplicationCoordinator:
         run = self.prepared_run
         if run is None or getattr(run, "run_id", None) != run_id:
             self._log(
-                f"归档结果属于运行 {run_id}，当前运行不是它；请在“数据导出”页查看"
+                f"归档结果属于运行 {run_id}，当前运行不是它；请在“历史运行”页查看"
             )
             return None
         directory = getattr(run, "run_directory", None)

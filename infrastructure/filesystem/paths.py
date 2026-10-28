@@ -35,6 +35,11 @@ class PathService:
         return self.root / "config.json"
 
     @property
+    def instruments_file(self) -> Path:
+        """设备表（仪器注册表）文件。"""
+        return self.root / "instruments.json"
+
+    @property
     def cable_loss_file(self) -> Path:
         return self.test_results_dir / "cable_loss_results.json"
 

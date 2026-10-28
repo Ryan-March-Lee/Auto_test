@@ -9,7 +9,8 @@
 - ``FileRunHistoryRepository.list_run_summaries``：从 manifest 读出运行/阶段/产物状态，
   损坏运行只给可用性与原因；
 - ``HistoryViewModel``：运行摘要转成展示文本，选择清空规则；
-- ``ExportPage``：显示运行与产物状态、按失败产物启用“重新生成”、不可用运行禁止导出。
+- ``ExportPage``：显示运行与产物状态、按失败产物启用“重新生成”、不可用运行禁止导出，
+  导出副本按**结果所属运行**判定可用性（两张表格各选一行时不会张冠李戴）。
 """
 
 import os
@@ -539,15 +540,15 @@ class ExportPageHistoryTests(unittest.TestCase):
             setattr(self, f"{name}_dialog", patcher.start())
             self.addCleanup(patcher.stop)
 
-    def _complete_amplifier_run(self):
-        self.runs.create_run({"run_id": RUN_ID}, run_id=RUN_ID)
-        recorder = RunStageRecorder(self.runs, RUN_ID)
+    def _complete_amplifier_run(self, run_id=RUN_ID):
+        self.runs.create_run({"run_id": run_id}, run_id=run_id)
+        recorder = RunStageRecorder(self.runs, run_id)
         recorder.skip(STAGE_CABLE_LOSS, now=CREATED_AT)
         recorder.skip(STAGE_DRIVER_MAPPING, now=CREATED_AT)
         recorder.start(STAGE_AMPLIFIER, now=CREATED_AT)
         recorder.complete(
             STAGE_AMPLIFIER,
-            _amplifier_payload(),
+            _amplifier_payload(run_id=run_id),
             result_path=AMPLIFIER_RESULT_PATH,
             now=CREATED_AT,
         )
@@ -584,6 +585,18 @@ class ExportPageHistoryTests(unittest.TestCase):
             ),
             run_service=service,
         )
+
+    def _run_row_index(self, page, run_id: str) -> int:
+        for index in range(page.run_table.rowCount()):
+            if page.run_table.item(index, 0).text() == run_id:
+                return index
+        raise AssertionError(f"运行表格里没有 {run_id}")
+
+    def _file_row_index(self, page, run_id: str) -> int:
+        for index in range(page.file_table.rowCount()):
+            if page.file_table.item(index, 2).text() == f"运行 {run_id}":
+                return index
+        raise AssertionError(f"结果表格里没有运行 {run_id} 的结果")
 
     def test_page_shows_run_and_artifact_state(self):
         self._complete_amplifier_run()
@@ -655,6 +668,106 @@ class ExportPageHistoryTests(unittest.TestCase):
 
         dialog.assert_not_called()
         self.warning_dialog.assert_called_once()
+        # 无效运行本身不产生历史结果行：结果列表里只有可用运行的结果。
+        self.assertEqual(page.file_table.rowCount(), 1)
+        self.assertIn("不可用", self.warning_dialog.call_args.args[2])
+
+    def test_export_refuses_a_result_that_belongs_to_another_run(self):
+        """两张表格可以各选一行；导出必须按结果所属运行判定，而不是按选中运行放行。"""
+        self._complete_amplifier_run()
+        self._complete_amplifier_run(OTHER_RUN_ID)
+        page = self._page()
+        page.run_table.setCurrentCell(self._run_row_index(page, RUN_ID), 0)
+        page.file_table.setCurrentCell(self._file_row_index(page, OTHER_RUN_ID), 0)
+
+        with patch(
+            "presentation.qt.export_page.QFileDialog.getSaveFileName"
+        ) as dialog:
+            self.assertFalse(page.export_json())
+
+        dialog.assert_not_called()
+        self.warning_dialog.assert_called_once()
+        self.assertIn("不是同一次运行", self.warning_dialog.call_args.args[2])
+
+    def test_export_refuses_a_result_whose_run_is_not_listed(self):
+        """运行摘要里查不到结果所属运行时不导出：不能凭结果行绕过运行级判定。"""
+        self._complete_amplifier_run()
+        query = self._query()
+        page = ExportPage(
+            history=HistoryViewModel(query, runs=StaticStatusPort([])),
+            export_service=ResultExportUseCase(
+                history=query, exports=ResultExportAdapter(query, self.paths)
+            ),
+        )
+        page.file_table.setCurrentCell(0, 0)
+
+        with patch(
+            "presentation.qt.export_page.QFileDialog.getSaveFileName"
+        ) as dialog:
+            self.assertFalse(page.export_json())
+
+        dialog.assert_not_called()
+        self.warning_dialog.assert_called_once()
+        self.assertIn("不在历史运行列表中", self.warning_dialog.call_args.args[2])
+
+    def test_export_without_a_run_selection_uses_the_result_owner(self):
+        """未选运行行时以结果所属运行的可用性为准，正常结果仍可导出副本。"""
+        self._complete_amplifier_run()
+        page = self._page()
+        page.file_table.setCurrentCell(0, 0)
+        target = self.root / "copy.json"
+
+        with patch(
+            "presentation.qt.export_page.QFileDialog.getSaveFileName",
+            return_value=(str(target), "JSON files (*.json)"),
+        ):
+            self.assertTrue(page.export_json())
+
+        self.assertTrue(target.is_file())
+
+    def test_incomplete_run_is_listed_and_its_verified_result_is_exportable(self):
+        """结构不完整的运行仍显示、仍可导出已校验的正式结果（不伪装成完整成功）。"""
+        self._complete_amplifier_run()
+        run_directory = self.runs.layout(RUN_ID).run_directory
+        (run_directory / "config.json").unlink()
+
+        page = self._page()
+
+        self.assertEqual(page.run_table.rowCount(), 1)
+        self.assertIn("结构不完整", page.run_table.item(0, 2).text())
+        self.assertIn("运行目录结构不完整", page.run_table.item(0, 6).text())
+        page.run_table.setCurrentCell(0, 0)
+        page.file_table.setCurrentCell(0, 0)
+        target = self.root / "copy.json"
+
+        with patch(
+            "presentation.qt.export_page.QFileDialog.getSaveFileName",
+            return_value=(str(target), "JSON files (*.json)"),
+        ):
+            self.assertTrue(page.export_json())
+
+        self.assertTrue(target.is_file())
+
+    def test_run_list_failure_keeps_the_page_usable(self):
+        """运行摘要读取失败不能让页面构造失败：清空运行表、写日志，结果列表仍可用。"""
+        self._complete_amplifier_run()
+        query = self._query()
+        messages = []
+        page = ExportPage(
+            history=HistoryViewModel(
+                query,
+                runs=StaticStatusPort([], failure=OSError("运行根目录不可读")),
+            ),
+            export_service=ResultExportUseCase(
+                history=query, exports=ResultExportAdapter(query, self.paths)
+            ),
+            log_callback=messages.append,
+        )
+
+        self.assertEqual(page.run_table.rowCount(), 0)
+        self.assertFalse(page.regenerate_button.isEnabled())
+        self.assertEqual(page.file_table.rowCount(), 1)
+        self.assertTrue(any("读取历史运行失败" in message for message in messages))
 
     def test_export_copy_still_works_for_browsable_runs(self):
         self._complete_amplifier_run()

@@ -14,7 +14,8 @@
   不读 manifest、不拼接运行目录路径，也不判断文件是否存在。
 - 重新生成走应用层的 ``RunHistoryServicePort``：页面只传“已列出的运行标识”，不传阶段、
   不传路径；应用层决定用哪个阶段重试，并把产物写回受控位置。
-- 导出走 ``ResultExportServicePort``：页面只构造 ``ExportRequest``。
+- 导出走 ``ResultExportServicePort``：页面只构造 ``ExportRequest``，并在导出前按
+  **结果所属的运行**核对可用性（不能只看运行表格的选中行）。
 - 用户可见文案属于本页面：应用层返回结构化结果（``ArchivalOutcome`` /
   ``ExportOutcome``），页面据此生成日志与对话框文本。
 """
@@ -153,12 +154,22 @@ class ExportPage(QWidget):
     # -- 列表 ---------------------------------------------------------------
 
     def refresh_run_list(self):
-        """重新读取历史运行摘要并刷新表格。"""
+        """重新读取历史运行摘要并刷新表格。
+
+        读取失败不能让页面构造或切换标签页失败：清空运行表格、禁用重新生成，并把
+        原因写进日志；结果列表仍可用，用户刷新后即可恢复。
+        """
         if self.history.run_source is None:
             self.run_table.setRowCount(0)
             self._on_run_selection_changed()
             return ()
-        rows = self.history.reload_runs()
+        try:
+            rows = self.history.reload_runs()
+        except (OSError, ValueError, RuntimeError) as error:
+            self.run_table.setRowCount(0)
+            self._on_run_selection_changed()
+            self.log_callback(f"读取历史运行失败: {error}")
+            return ()
         self.run_table.setRowCount(0)
         for index, row in enumerate(rows):
             self.run_table.insertRow(index)
@@ -257,10 +268,12 @@ class ExportPage(QWidget):
 
     def export(self, export_format: ExportFormat):
         """按格式导出当前选择的历史结果；页面只构造导出请求。"""
-        if not self._selected_run_allows_export():
-            return False
         row = self.selected_row()
         if row is None:
+            return False
+        blocker = self._export_blocker(row)
+        if blocker is not None:
+            QMessageBox.warning(self, "无法导出", blocker)
             return False
         target = None
         if export_format.needs_target:
@@ -286,17 +299,38 @@ class ExportPage(QWidget):
         QMessageBox.information(self, "导出成功", message)
         return True
 
-    def _selected_run_allows_export(self) -> bool:
-        """选中的历史运行不可用时拒绝导出；未选中运行时不额外拦截。"""
-        run_row = self.history.selected_run
-        if run_row is None or run_row.browsable:
-            return True
-        QMessageBox.warning(
-            self,
-            "无法导出",
-            f"运行 {run_row.run_id} {run_row.state_text}，不能导出其结果",
-        )
-        return False
+    def _export_blocker(self, row: HistoryRow) -> str | None:
+        """导出副本的运行级前置条件；返回 ``None`` 表示可以导出。
+
+        判定绑定**结果所属的运行**（``HistoryRow.run_id``），而不是只看运行表格的当前
+        选中行：两张表格可以各选一行，只看选中行会让“界面说运行不可用、实际导出另一
+        次运行的结果”成为可能。三种情况拒绝导出：
+
+        1. 运行表格里选中了不可用的运行：当前上下文本身就不可导出；
+        2. 结果所属运行不在历史运行列表里（含未登记运行的结果）：无法确认可用性；
+        3. 结果所属运行与选中运行不是同一次运行：避免用户以为自己导出了选中的那一次。
+
+        未装配运行摘要来源时（例如可视化页复用本页面的结果列表）只保留第 1 项的
+        基础判定，其余交给导出用例与历史查询端口。
+        """
+        selected = self.history.selected_run
+        if selected is not None and not selected.browsable:
+            return f"运行 {selected.run_id} {selected.state_text}，不能导出其结果"
+        if self.history.run_source is None:
+            return None
+        if row.run_id is None:
+            return "所选结果没有登记到运行目录，不能导出副本"
+        owner = self.history.run_row(row.run_id)
+        if owner is None:
+            return f"运行 {row.run_id} 不在历史运行列表中，请刷新后重试"
+        if not owner.browsable:
+            return f"运行 {owner.run_id} {owner.state_text}，不能导出其结果"
+        if selected is not None and selected.run_id != owner.run_id:
+            return (
+                f"所选结果属于运行 {owner.run_id}，与当前选中的运行 "
+                f"{selected.run_id} 不是同一次运行；请选择该运行自己的结果再导出"
+            )
+        return None
 
     @staticmethod
     def _success_message(outcome: ExportOutcome) -> str:

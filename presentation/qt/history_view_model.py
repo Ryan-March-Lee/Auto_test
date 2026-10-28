@@ -388,6 +388,20 @@ class HistoryViewModel:
             self._selected_run_index = None
         return self._run_rows
 
+    def run_row(self, run_id: str | None) -> RunHistoryRow | None:
+        """按运行标识查找当前列表中的运行摘要。
+
+        导出副本按“结果所属的运行”判定可用性，而不是按运行表格里的当前选中行：
+        两者可能指向不同运行。标识缺失或该运行不在列表里都返回 ``None``，由调用方
+        决定拒绝还是放行。
+        """
+        if not isinstance(run_id, str) or not run_id.strip():
+            return None
+        for row in self._run_rows:
+            if row.run_id == run_id:
+                return row
+        return None
+
     def run_at(self, index: int | None) -> RunHistoryRow | None:
         if not isinstance(index, int) or isinstance(index, bool):
             return None

@@ -336,6 +336,7 @@ class CableLossRunStageTests(unittest.TestCase):
             prepared_run=prepared,
             measurement_port=_Instrument(),
             result_repository=self.result_repository,
+            sleep_fn=lambda _: None,
         )
         use_case.measure_all_frequencies()
         use_case.continue_to_step2()

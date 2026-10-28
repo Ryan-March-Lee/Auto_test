@@ -1,0 +1,3 @@
+# Optional development/test dependencies for parallel pytest runs.
+pytest==8.4.2
+pytest-xdist==3.8.0

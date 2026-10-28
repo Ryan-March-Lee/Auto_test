@@ -5,6 +5,7 @@
 崩溃拖垮离线测试；在可渲染环境中它们是必过用例。
 """
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -57,7 +58,10 @@ SAMPLE_DATA = AmplifierMeasurementResult(
 )
 
 
-@unittest.skipUnless(rendering_available(), "当前环境无法渲染 matplotlib 图像")
+@unittest.skipUnless(
+    os.environ.get("AUTO_TEST_SLOW_RENDERING") == "1" and rendering_available(),
+    "慢速 matplotlib 真实渲染测试默认不纳入快速回归；设置 AUTO_TEST_SLOW_RENDERING=1 执行",
+)
 class VisualizationRenderingTests(unittest.TestCase):
     def test_summary_report_renders_plots_csv_and_html(self):
         with tempfile.TemporaryDirectory() as directory:

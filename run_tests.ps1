@@ -1,5 +1,7 @@
 param(
     [string]$Layer = "Offline",
+    [switch]$Parallel,
+    [int]$Workers = 0,
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$UnittestArgs
 )
@@ -25,10 +27,14 @@ try {
     & $Python tools\export_dependency_lock.py --check
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-    # Static quality gates (bare except, silent broad catch, production print,
-    # retired imports, dynamic device routing) fail the run before the suite.
-    & $Python -m unittest tests.test_static_quality_gate tests.test_exception_taxonomy -v
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    # The full Offline discovery already includes the static quality gates.
+    # Running them here as well duplicated their repository-wide AST scans.
+    # Keep the pre-check for narrower Unit/Simulation runs, which do not
+    # necessarily discover the gate modules.
+    if ($Layer -ne "Offline") {
+        & $Python -m unittest tests.test_static_quality_gate tests.test_exception_taxonomy -v
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
 
     $KnownLayers = @("Offline", "Unit", "Simulation")
     if ($Layer -notin $KnownLayers) {
@@ -46,7 +52,31 @@ try {
         $TestCommand = @("discover", "-s", "tests", "-v")
     }
 
-    & $Python -m unittest @TestCommand
+    if ($Parallel -and $Layer -eq "Offline" -and (-not $UnittestArgs)) {
+        $ParallelArgs = @("-m", "pytest", "-n")
+        if ($Workers -gt 0) {
+            $ParallelArgs += "$Workers"
+        } else {
+            # Cap at 4: more workers add memory pressure (Qt/matplotlib) faster
+            # than they save wall time on this suite.
+            $ParallelArgs += "$([Math]::Min(4, [Environment]::ProcessorCount))"
+        }
+        # Match unittest discover: hardware/ is exercised only by the
+        # dedicated hardware-smoke entry point.  The Qt two-phase flow and
+        # repository-wide static scan stay serial: Qt can terminate a worker
+        # process, and the scan is a global baseline check.
+        $ParallelArgs += @(
+            "--dist", "loadfile", "tests",
+            "--ignore", "tests\hardware",
+            "--ignore", "tests\test_gui_two_phase_flow.py",
+            "--ignore", "tests\test_static_quality_gate.py"
+        )
+        & $Python @ParallelArgs
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & $Python -m unittest tests.test_gui_two_phase_flow tests.test_static_quality_gate tests.test_exception_taxonomy -v
+    } else {
+        & $Python -m unittest @TestCommand
+    }
     exit $LASTEXITCODE
 }
 finally {

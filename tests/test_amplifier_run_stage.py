@@ -581,6 +581,7 @@ class AmplifierRunStageTests(unittest.TestCase):
             prepared_run=prepared,
             measurement_port=_Instrument(),
             result_repository=self.result_repository,
+            sleep_fn=lambda _: None,
         )
         cable_case.measure_all_frequencies()
         cable_case.continue_to_step2()
@@ -590,6 +591,7 @@ class AmplifierRunStageTests(unittest.TestCase):
             prepared_run=prepared,
             measurement_port=_Instrument(),
             result_repository=self.result_repository,
+            sleep_fn=lambda _: None,
         )
         amplifier_case.measure_all_frequencies()
 
@@ -657,6 +659,7 @@ class AmplifierRunStageTests(unittest.TestCase):
             prepared_run=prepared,
             measurement_port=_Instrument(),
             result_repository=self.result_repository,
+            sleep_fn=lambda _: None,
         )
         cable_case.measure_all_frequencies()
         cable_case.continue_to_step2()

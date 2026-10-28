@@ -65,6 +65,9 @@ from presentation.qt.history_view_model import HistoryViewModel, RunHistoryRow
 RUN_ID = "20261028T010203Z_abcdef12"
 OTHER_RUN_ID = "20261027T010203Z_abcdef12"
 CREATED_AT = datetime(2026, 10, 28, 1, 2, 3, tzinfo=timezone.utc)
+# 归档服务的日志挂在应用日志树（``pa_auto_test``）下，才进得了 ``setup_logging()``
+# 的文件；这里按契约名断言，不跟随实现里的 logger 变量。
+ARCHIVAL_LOGGER = "pa_auto_test.application.archival_service"
 
 
 def _amplifier_payload(*, run_id=RUN_ID) -> dict:
@@ -391,7 +394,7 @@ class RunSummaryFixture(unittest.TestCase):
 
     def _archive_failing(self):
         """用失败端口归档一次：产物登记为 failed，并断言失败被写入应用日志。"""
-        with self.assertLogs("application.archival_service", level="WARNING"):
+        with self.assertLogs(ARCHIVAL_LOGGER, level="WARNING"):
             return self._archive(FailingGenerator())
 
 
@@ -659,7 +662,7 @@ class ExportPageHistoryTests(unittest.TestCase):
         )
 
     def _archive_failing(self):
-        with self.assertLogs("application.archival_service", level="WARNING"):
+        with self.assertLogs(ARCHIVAL_LOGGER, level="WARNING"):
             return self._archive(FailingGenerator())
 
     def _query(self):

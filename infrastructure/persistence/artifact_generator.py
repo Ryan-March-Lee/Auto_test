@@ -35,7 +35,6 @@
 
 from __future__ import annotations
 
-import logging
 import os
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
@@ -60,10 +59,13 @@ from domain.run.models import (
     ArtifactKind,
     ArtifactStatus,
 )
+from infrastructure.logging.app_logging import get_logger
 from infrastructure.persistence.run_directory import file_sha256_and_size
 
 
-logger = logging.getLogger(__name__)
+# 生成适配器的告警必须进入应用日志文件：``setup_logging()`` 只给 ``pa_auto_test``
+# logger 树装配处理器，裸 ``logging.getLogger(__name__)`` 的记录只会落到 stderr。
+logger = get_logger(__name__)
 
 # 自动报告的标题只在这里定义一次，页面与报告不各写一套文案。
 _REPORT_TITLE = "PA 测量报告"

@@ -32,6 +32,10 @@
 - 端口可以用可选属性 ``supported_kinds`` 声明自己**当前能生成**的产物类型；未声明的
   产物保持 ``pending``（等待实现方补齐能力），既不会被伪造成 ``failed``，也不会被当作
   已完成。当前基础设施组合端口声明 CSV 与报告，主功放完整成功时两者都会生成。
+- 日志挂在 ``pa_auto_test`` logger 树下：产物生成失败（``WARNING``）、重试跳过
+  （``INFO``）与归档边界错误（``ERROR``）都进入 ``setup_logging()`` 的应用日志文件，
+  历史页显示的产物状态与日志可相互对照。端口实现缺陷（未预期异常）属于实现问题，不被
+  降级成产物失败，直接上抛给调用方。
 
 本模块同时提供阶段完成边界的调用入口 :func:`archive_completed_stage`：它只把归档契约里
 可预期的失败（请求不合法、manifest 写回失败）降级为日志，绝不改变已经保存的正式结果，
@@ -73,7 +77,12 @@ from domain.run.models import (
 )
 
 
-logger = logging.getLogger(__name__)
+# 挂到项目专用 ``pa_auto_test`` logger 树下（与 ``infrastructure.logging.get_logger``
+# 的命名规则一致）：``setup_logging()`` 只给该树装配文件处理器，直接用
+# ``logging.getLogger(__name__)`` 会让产物失败、重试跳过和归档边界错误只落到 stderr，
+# ``logs/pa_auto_test_*.log`` 里查不到——而“自动生成错误写入应用日志”是归档契约的一
+# 部分。这里不导入 infrastructure，保持应用层依赖边界。
+logger = logging.getLogger("pa_auto_test." + __name__)
 
 # 归档按运行串行化：manifest 是“读 manifest -> 改产物记录 -> 写回”的多步过程，两个
 # 线程同时归档同一运行会互相覆盖产物记录。锁只保证**本进程内**不并发，跨进程并发不在
@@ -427,7 +436,10 @@ class ResultArchivalService:
         ``OSError`` 与 ``ValueError``。其它异常（例如端口实现里的编程错误）不在这里
         兜底，会向上抛出并让该产物停在 ``pending``，由调用方或恢复流程重新检查；
         端口实现有责任把可预期的渲染/写入/空数据失败显式包成
-        :class:`ArtifactGenerationError`。
+        :class:`ArtifactGenerationError`。缺陷路径不在这里记日志：项目的宽泛捕获基线
+        禁止在运行时包里新增 ``except Exception``（见
+        ``docs/异常分类与静态质量门禁.md``），把缺陷降级成日志等于把它伪装成一次可
+        恢复的生成失败。
         """
         target_path = default_artifact_path(stage, record.kind)
         request = ArtifactGenerationRequest(

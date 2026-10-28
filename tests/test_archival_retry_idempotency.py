@@ -12,6 +12,9 @@
    状态。
 3. **归档边界与正式结果的关系**：任何产物失败、重试或取消都不改写正式结果 JSON、
    manifest 输入/输出登记与运行/阶段状态。
+4. **应用日志路由**：产物生成失败（``WARNING``）与重试跳过（``INFO``）必须挂在
+   ``pa_auto_test`` logger 树下，才能真正写进 ``setup_logging()`` 的日志文件（裸
+   ``logging.getLogger(__name__)`` 只会落到 stderr）。
 
 历史页面的无效运行、部分运行与产物缺失展示由 ``tests/test_run_history_page.py`` 覆盖；
 产物生成适配器自身的输入/输出边界由 ``tests/test_csv_artifact_generator.py`` 与
@@ -19,6 +22,7 @@
 """
 
 import hashlib
+import logging
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -47,6 +51,8 @@ from domain.run.models import (
     StageStatus,
     default_artifact_path,
 )
+from infrastructure.logging.app_logging import reset_logging, setup_logging
+from infrastructure.persistence import artifact_generator as artifact_generator_module
 from infrastructure.persistence.run_repository import RunRepository
 
 
@@ -55,6 +61,9 @@ CREATED_AT = datetime(2026, 10, 28, 1, 2, 3, tzinfo=timezone.utc)
 NOW = datetime(2026, 10, 28, 2, 3, 4, tzinfo=timezone.utc)
 CSV_PATH = "artifacts/amplifier.csv"
 REPORT_PATH = "artifacts/amplifier_report.html"
+# 应用日志树：``setup_logging()`` 只给这棵树装配文件处理器。
+APPLICATION_LOGGER_ROOT = "pa_auto_test"
+ARCHIVAL_LOGGER = "pa_auto_test.application.archival_service"
 
 
 class RecordingGenerator:
@@ -554,6 +563,99 @@ class PortReturnBoundaryTests(RunDirectoryFixture):
                         source_result=AMPLIFIER_RESULT_PATH,
                         target_path=target,
                     )
+
+
+# -- 应用日志路由 ---------------------------------------------------------
+
+
+class RecordingLogHandler(logging.Handler):
+    """抓取 ``pa_auto_test`` 树上的记录，但不替换已装配的文件处理器。
+
+    ``assertLogs()`` 会临时接管目标 logger 的处理器，块内记录因此写不进日志文件；这里
+    自己挂一个 handler，才能在同一个断言里同时验证“记录来自哪棵树”和“文件里查得到”。
+    """
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.INFO)
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+    def names_for(self, marker: str) -> list[str]:
+        return [
+            record.name for record in self.records if marker in record.getMessage()
+        ]
+
+
+class ApplicationLogRoutingTests(RunDirectoryFixture):
+    """自动生成的错误必须进应用日志文件，而不只是 stderr。
+
+    ``setup_logging()`` 只给 ``pa_auto_test`` logger 树装配文件处理器，并让 root 保持
+    原样；因此归档服务与产物生成适配器必须挂在该树下。这里同时断言“日志树里的记录”
+    和“真正写进日志文件的文本”，避免只满足前者却在文件里查不到。
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.log_path = setup_logging(self.base / "logs")
+        # 清理顺序为 LIFO：先摘掉记录器，再关闭文件处理器，最后删临时目录；否则
+        # Windows 上打开着的日志文件删不掉。
+        self.addCleanup(reset_logging)
+        self.captured = RecordingLogHandler()
+        logging.getLogger(APPLICATION_LOGGER_ROOT).addHandler(self.captured)
+        self.addCleanup(self._detach_capture)
+
+    def _detach_capture(self) -> None:
+        logging.getLogger(APPLICATION_LOGGER_ROOT).removeHandler(self.captured)
+        self.captured.close()
+
+    def _log_text(self) -> str:
+        return Path(self.log_path).read_text(encoding="utf-8")
+
+    def test_generation_failure_is_written_to_the_application_log_file(self):
+        self._complete_amplifier_run()
+        generator = RecordingGenerator(
+            self.layout,
+            failures={ArtifactKind.CSV: [ArtifactGenerationError("磁盘已满")]},
+        )
+
+        outcome = self._archive(generator)
+
+        self.assertIs(outcome.csv.status, ArtifactStatus.FAILED)
+        self.assertEqual(
+            self.captured.names_for("自动归档产物生成失败"), [ARCHIVAL_LOGGER]
+        )
+        content = self._log_text()
+        self.assertIn("自动归档产物生成失败", content)
+        self.assertIn("kind=csv", content)
+        self.assertIn("磁盘已满", content)
+
+    def test_retry_skip_is_written_to_the_application_log_file(self):
+        self._complete_amplifier_run()
+        # 先让 CSV 失败，再用一个不声明 CSV 的端口重试：跳过记录必须留下。
+        self._archive(
+            RecordingGenerator(
+                self.layout,
+                failures={ArtifactKind.CSV: [ArtifactGenerationError("磁盘已满")]},
+            )
+        )
+        narrow = RecordingGenerator(self.layout, kinds=(ArtifactKind.REPORT,))
+
+        outcome = self._archive(narrow, retry_failed=True)
+
+        self.assertIs(outcome.csv.status, ArtifactStatus.FAILED)
+        self.assertEqual(self.captured.names_for("跳过产物重试"), [ARCHIVAL_LOGGER])
+        self.assertIn("跳过产物重试", self._log_text())
+
+    def test_generation_adapter_logger_is_on_the_application_log_tree(self):
+        # 适配器的告警（例如报告省略 CSV 链接）同样要进日志文件。
+        self.assertTrue(
+            artifact_generator_module.logger.name.startswith(
+                APPLICATION_LOGGER_ROOT + "."
+            ),
+            "产物生成适配器的 logger 必须挂在 pa_auto_test 树下",
+        )
 
 
 if __name__ == "__main__":

@@ -58,6 +58,9 @@ RUN_ID = "20261022T153000Z_a1b2c3d4"
 CREATED_AT = datetime(2026, 10, 22, 15, 30, tzinfo=timezone.utc)
 CSV_PATH = "artifacts/amplifier.csv"
 REPORT_PATH = "artifacts/amplifier_report.html"
+# 归档服务的日志挂在应用日志树（``pa_auto_test``）下，才进得了 ``setup_logging()``
+# 的文件；这里按契约名断言，不跟随实现里的 logger 变量。
+ARCHIVAL_LOGGER = "pa_auto_test.application.archival_service"
 
 CABLE_LOSSES = {"1.0": {"cable1": 0.5, "cable2": 0.5, "cable3": 0.0, "cable4": 0.0}}
 
@@ -425,7 +428,7 @@ class SuccessPathArchivalTests(unittest.TestCase):
             sleep_fn=lambda _: None,
         )
 
-        with self.assertLogs("application.archival_service", level="ERROR") as logs:
+        with self.assertLogs(ARCHIVAL_LOGGER, level="ERROR") as logs:
             result = use_case.measure_all_frequencies()
 
         self.assertIsNone(use_case.last_archival_outcome)
@@ -447,7 +450,7 @@ class SuccessPathArchivalTests(unittest.TestCase):
             sleep_fn=lambda _: None,
         )
 
-        with self.assertLogs("application.archival_service", level="ERROR"):
+        with self.assertLogs(ARCHIVAL_LOGGER, level="ERROR"):
             use_case.measure_all_frequencies()
 
         manifest = self.repository.load_manifest(RUN_ID)
@@ -481,7 +484,7 @@ class SuccessPathArchivalTests(unittest.TestCase):
         ).measure_all_frequencies()
         self._csv_file().unlink()
 
-        with self.assertLogs("application.archival_service", level="ERROR") as logs:
+        with self.assertLogs(ARCHIVAL_LOGGER, level="ERROR") as logs:
             outcome = archive_completed_stage(
                 service, run_id=RUN_ID, stage=STAGE_AMPLIFIER
             )

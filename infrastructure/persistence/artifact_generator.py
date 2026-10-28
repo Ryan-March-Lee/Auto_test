@@ -8,9 +8,9 @@
   再用唯一解析入口 ``measurement_result_from_document()`` 转成正式结果 DTO；
 - 输出只能落在 ``runs/<run_id>/artifacts/`` 下的受控相对路径：默认路径由
   :func:`domain.run.models.default_artifact_path` 集中给出，适配器不自己拼文件名，
-  也拒绝任何不在 ``artifacts/`` 下的目标；
-- CSV 复用 :func:`analysis.reporting.export_csv`，先写同目录临时文件再原子替换，
-  因此失败不会留下被 manifest 引用的半截文件；
+  也拒绝任何不在 ``artifacts/`` 下、或经真实路径解析后越出该目录的目标（含符号链接）；
+- CSV 复用 :func:`analysis.reporting.export_csv`，先写同目录临时文件（文件名带随机
+  后缀，避免并发归档互相覆盖）再原子替换，因此失败不会留下被 manifest 引用的半截文件；
 - 可预期的失败（空数据、结果不可读、目标不可写、产物类型/阶段不支持）统一抛出
   :class:`ArtifactGenerationError`，由归档服务把该产物登记为 ``failed`` 并保留正式结果；
   其它异常不兜底，避免把编程缺陷伪装成“产物生成失败”。
@@ -24,6 +24,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from pathlib import Path
+from uuid import uuid4
 
 from analysis.reporting import export_csv
 from application.dto.measurement_results import (
@@ -105,8 +106,10 @@ class CsvArtifactGenerator:
                 f"产物目标必须位于 {ARTIFACT_PATH_PREFIX} 下: {relative_path}"
             )
         name = relative_path[len(ARTIFACT_PATH_PREFIX):]
-        target = Path(layout.run_directory) / ARTIFACTS_DIRNAME
-        return target.joinpath(*name.split("/"))
+        run_directory = Path(layout.run_directory)
+        target = (run_directory / ARTIFACTS_DIRNAME).joinpath(*name.split("/"))
+        _require_inside_artifacts(run_directory, target, relative_path)
+        return target
 
     def _result(self, request: ArtifactGenerationRequest) -> MeasurementResult:
         """读取已登记的正式结果并解析成正式结果 DTO。"""
@@ -146,14 +149,59 @@ class CsvArtifactGenerator:
 
     @staticmethod
     def _write(result: MeasurementResult, target: Path) -> None:
-        """渲染 CSV 到临时文件后原子替换目标，失败不留下半截产物。"""
-        temporary = target.with_name(target.name + ".tmp")
+        """渲染 CSV 到同目录临时文件后原子替换目标，失败不留下半截产物。
+
+        临时文件名带随机后缀：同一运行的并发或重复归档不会互相覆盖对方的临时文件，
+        也不会把别人正在写的半成品替换成正式产物。
+        """
+        temporary = target.with_name(f"{target.name}.{uuid4().hex}.tmp")
         try:
             export_csv(result, temporary)
             os.replace(temporary, target)
         except (OSError, ValueError) as error:
             _remove_quietly(temporary)
             raise ArtifactGenerationError(f"CSV 写入失败: {error}") from error
+
+
+def _require_inside_artifacts(
+    run_directory: Path, target: Path, relative_path: str
+) -> None:
+    """按真实路径确认产物目标仍在本次运行的 ``artifacts/`` 目录之内。
+
+    字符串前缀只能挡住 ``..`` 这类字面越界。目录被重定向（POSIX 符号链接、Windows
+    junction）后，同一个相对路径会写到运行目录别处甚至目录之外，因此这里比较解析后的
+    真实路径，并分两层校验：
+
+    1. ``artifacts/`` 的真实位置必须仍在运行目录之内；
+    2. 目标文件的真实位置必须在 ``artifacts/`` 的真实位置之内。
+    """
+    artifacts_dir = run_directory / ARTIFACTS_DIRNAME
+    if artifacts_dir.is_symlink():
+        raise ArtifactGenerationError(f"产物目录不能是符号链接: {artifacts_dir}")
+    try:
+        run_root = run_directory.resolve(strict=False)
+        artifacts_root = artifacts_dir.resolve(strict=False)
+        resolved = target.resolve(strict=False)
+    except (OSError, RuntimeError) as error:
+        # RuntimeError：目录链接成环；OSError：路径不可解析。
+        raise ArtifactGenerationError(
+            f"产物目标路径不可解析: {relative_path}（{error}）"
+        ) from error
+    if artifacts_root == run_root or not _is_within(run_root, artifacts_root):
+        raise ArtifactGenerationError(
+            f"产物目录解析后不在运行目录内: {artifacts_dir}"
+        )
+    if resolved == artifacts_root or not _is_within(artifacts_root, resolved):
+        raise ArtifactGenerationError(
+            f"产物目标解析后不在 {ARTIFACTS_DIRNAME}/ 目录内: {relative_path}"
+        )
+
+
+def _is_within(root: Path, resolved: Path) -> bool:
+    """按平台大小写规则判断 ``resolved`` 是否位于 ``root`` 之内（不含 root 自身）。"""
+    root_text = os.path.normcase(str(root))
+    target_text = os.path.normcase(str(resolved))
+    return target_text.startswith(root_text.rstrip(os.sep) + os.sep)
 
 
 def _remove_quietly(path: Path) -> None:

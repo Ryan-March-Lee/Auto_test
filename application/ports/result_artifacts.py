@@ -15,10 +15,13 @@
   其它异常会向上抛出并让该产物停在 ``pending``，因此可预期的生成失败必须包成
   :class:`ArtifactGenerationError`；
 - 端口只读写 ``artifacts/`` 下的产物文件，不写正式结果，因此正式 JSON 永远不会被
-  产物生成覆盖。
+  产物生成覆盖；同一目标可能被并发或重复归档触达，实现必须用带随机后缀的同目录临时
+  文件加原子替换，不得用固定临时文件名。
 
-本步骤（计划步骤 3）只冻结端口与编排契约，不做真实 CSV/报告生成；基础设施适配器
-在计划步骤 5 实现，并由应用服务按同一契约调用。
+当前实现状态：CSV 由
+:class:`infrastructure.persistence.artifact_generator.CsvArtifactGenerator` 在重构计划
+步骤 4 实现，并通过 ``supported_kinds`` 只声明 ``CSV``；报告生成在计划步骤 5 接入，
+在此之前报告产物保持 ``pending``。
 """
 
 from __future__ import annotations

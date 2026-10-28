@@ -18,6 +18,11 @@
   部分完成、取消和异常路径不会被伪装成完整的成功运行。
 - 幂等：已完成产物默认复用；``failed`` 产物只有显式 ``retry_failed=True`` 才回到
   ``pending`` 重新生成；已登记 ``not_applicable`` 的产物不会被悄悄改判。
+- 复用已完成产物前用 ``RunRepositoryPort.verify_artifact()`` 复核文件仍存在且与
+  manifest 登记值一致： ``completed`` 是终态，不能因为文件丢失就原地改判，只能拒绝
+  本次归档并交由显式重新生成入口处理。
+- 同一运行的归档在本进程内串行执行：manifest 是“读-改-写”，并发归档会互相覆盖
+  产物记录。
 - 产物生成失败只把该产物登记为 ``failed`` 并保留正式结果；manifest 写回失败直接
   抛出，不静默成成功。
 - 端口返回值必须与请求的受控目标路径一致：生成到别的路径同样算该产物失败，避免
@@ -34,6 +39,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import datetime
 
 from application.dto.archival import (
@@ -67,6 +73,12 @@ from domain.run.models import (
 
 logger = logging.getLogger(__name__)
 
+# 归档按运行串行化：manifest 是“读 manifest -> 改产物记录 -> 写回”的多步过程，两个
+# 线程同时归档同一运行会互相覆盖产物记录。锁只保证**本进程内**不并发，跨进程并发不在
+# 本服务范围内（一个运行目录只由一个实例负责，同一 run_id 的重复触发由本锁合并）。
+_LOCKS_GUARD = threading.Lock()
+_RUN_LOCKS: dict[str, threading.RLock] = {}
+
 # 归档只汇总这两类交付产物；顺序固定，便于 manifest 与页面展示稳定。
 _DELIVERABLES = (ArtifactKind.CSV, ArtifactKind.REPORT)
 _DELIVERABLE_KINDS = frozenset(_DELIVERABLES)
@@ -88,7 +100,8 @@ class ResultArchivalService:
         runs: RunRepositoryPort,
         generator: ResultArtifactGeneratorPort | None = None,
     ) -> None:
-        for name in ("load_manifest", "update_manifest"):
+        # verify_artifact 是必需能力：复用已完成产物前必须确认文件仍与登记一致。
+        for name in ("load_manifest", "update_manifest", "verify_artifact"):
             if not callable(getattr(runs, name, None)):
                 raise TypeError(f"归档服务需要运行仓储提供 {name}()")
         if generator is not None and not callable(getattr(generator, "generate", None)):
@@ -112,11 +125,25 @@ class ResultArchivalService:
         ``retry_failed=True`` 是唯一的“重新生成失败产物”入口；其余情况下失败产物
         保持 ``failed``，已完成与不适用的产物保持原状，重复调用不会产生第二份正式
         结果，也不会改写已经登记的产物状态。
+
+        同一运行的归档过程在本进程内串行执行：manifest 的“读-改-写”不是原子的，
+        并发调用会互相覆盖产物记录。
         """
         if not isinstance(request, ArchivalRequest):
             raise ArchivalRequestError("归档入口只接受 ArchivalRequest")
         if not isinstance(retry_failed, bool):
             raise ArchivalRequestError("retry_failed 必须是布尔值")
+        with _run_lock(request.run_id):
+            return self._archive_locked(request, retry_failed=retry_failed, now=now)
+
+    def _archive_locked(
+        self,
+        request: ArchivalRequest,
+        *,
+        retry_failed: bool,
+        now: datetime | None,
+    ) -> ArchivalOutcome:
+        """在已持有该运行归档锁的前提下执行一次归档。"""
         manifest = self._load(request.run_id)
         test_status = _derive_test_status(manifest, request.stage)
         formal_result = self._formal_result(manifest, request, test_status)
@@ -260,6 +287,11 @@ class ResultArchivalService:
                     f"产物 {kind.value} 已登记为不适用，不能在同一来源结果上改判为待生成: "
                     f"{source_result}"
                 )
+            if existing is not None and existing.status is ArtifactStatus.COMPLETED:
+                # 已完成是终态：复用前必须确认文件仍在且与登记一致，否则“已生成”只是
+                # manifest 里的一句声明。发现不一致时按归档请求失败上报，不改写记录。
+                self._verify_completed(existing, run_id=manifest.run_id)
+                continue
             if (
                 existing is not None
                 and existing.status is ArtifactStatus.FAILED
@@ -286,6 +318,21 @@ class ResultArchivalService:
                     now=now,
                 )
         return manifest
+
+    def _verify_completed(self, record: ArtifactRecord, *, run_id: str) -> None:
+        """复用已完成产物前确认文件仍存在且与 manifest 登记一致。
+
+        已完成是终态：文件被删除或被替换时不能把它原地改判成 ``failed``，也不能假装
+        复用成功。这里按归档请求失败上报，manifest 与正式结果都保持原样，重新生成要
+        走显式入口（计划步骤 7/9 的历史重试）。
+        """
+        try:
+            self.runs.verify_artifact(run_id, record)
+        except (OSError, ValueError) as error:
+            raise ArchivalRequestError(
+                f"已完成产物 {record.kind.value} 与 manifest 登记不一致，拒绝复用: "
+                f"{record.path}（{error}）"
+            ) from error
 
     def _record_not_applicable(
         self,
@@ -452,6 +499,16 @@ def archive_completed_stage(
 
 
 # -- 纯函数工具 -----------------------------------------------------------
+
+
+def _run_lock(run_id: str) -> threading.RLock:
+    """取得某个运行的进程内可重入归档锁。"""
+    with _LOCKS_GUARD:
+        lock = _RUN_LOCKS.get(run_id)
+        if lock is None:
+            lock = threading.RLock()
+            _RUN_LOCKS[run_id] = lock
+        return lock
 
 
 def _declared_kinds(

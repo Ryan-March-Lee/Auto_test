@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Protocol
 
-from domain.run.models import FileReference, RunManifest
+from domain.run.models import ArtifactRecord, FileReference, RunManifest
 
 
 class RunLayout(Protocol):
@@ -108,6 +108,14 @@ class RunRepositoryPort(Protocol):
 
         返回已校验文件的绝对路径；文件缺失或校验值不一致时直接失败，
         供后续阶段在消费前确认前置输入没有被替换。
+        """
+
+    def verify_artifact(self, run_id: str, artifact: ArtifactRecord) -> Path:
+        """校验一条 ``completed`` 交付产物仍存在且与 manifest 登记值一致。
+
+        交付产物是终态记录，归档服务在复用已完成产物前必须调用本方法：文件缺失、
+        解析后越出 ``artifacts/``、大小或 SHA-256 不一致都要直接失败，避免把被删除或
+        被替换的产物继续当作“已生成”。返回已校验文件的绝对路径。
         """
 
     def run_exists(self, run_id: str) -> bool:

@@ -67,12 +67,18 @@ REPORT_PATH = "artifacts/amplifier_report.html"
 
 
 class InMemoryRunRepository:
-    """只实现归档服务需要的 manifest 读写；写正式结果视为违约。"""
+    """只实现归档服务需要的 manifest 读写；写正式结果视为违约。
+
+    内存替身没有真实文件，因此 ``verify_artifact()`` 只记录调用并默认视为一致；
+    需要验证“已完成产物被损坏”的场景时设置 ``fail_verify``。
+    """
 
     def __init__(self, manifest: RunManifest) -> None:
         self.manifest = manifest
         self.updates = []
         self.write_calls = []
+        self.verified = []
+        self.fail_verify = None
         self.fail_update = None
 
     def load_manifest(self, run_id):
@@ -88,6 +94,14 @@ class InMemoryRunRepository:
         self.updates.append(manifest)
         self.manifest = manifest
         return manifest
+
+    def verify_artifact(self, run_id, artifact):
+        if self.fail_verify is not None:
+            raise self.fail_verify
+        if run_id != self.manifest.run_id:
+            raise FileNotFoundError(f"运行不存在: {run_id}")
+        self.verified.append((artifact.kind, artifact.path))
+        return Path(self.manifest.run_id) / artifact.path
 
     def write_run_json(self, *args, **kwargs):
         self.write_calls.append((args, kwargs))
@@ -323,6 +337,19 @@ class ArchiveRequestRejectionTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             ResultArchivalService(runs=self.repository, generator=object())
 
+    def test_service_requires_artifact_verification_capability(self):
+        """复用已完成产物前要复核文件，因此仓储缺少 verify_artifact() 时直接拒绝。"""
+
+        class _ManifestOnlyRepository:
+            def load_manifest(self, run_id):  # pragma: no cover - 构造阶段即失败
+                raise AssertionError
+
+            def update_manifest(self, run_id, manifest, *, now=None):
+                raise AssertionError  # pragma: no cover - 构造阶段即失败
+
+        with self.assertRaisesRegex(TypeError, "verify_artifact"):
+            ResultArchivalService(runs=_ManifestOnlyRepository())
+
     def test_archive_rejects_foreign_request_types(self):
         with self.assertRaises(ArchivalRequestError):
             self.service.archive(("run", STAGE_CABLE_LOSS))
@@ -532,6 +559,39 @@ class AmplifierArchiveTests(unittest.TestCase):
         self.assertEqual(len(generator.calls), calls_after_first)
         self.assertEqual(outcome.archive_status, ArchivalStatus.COMPLETED)
         self.assertEqual(len(self.repository.manifest.artifacts), 2)
+
+    def test_reused_completed_artifacts_are_verified_against_the_manifest(self):
+        """复用已完成产物前必须复核文件：归档结果不能只靠 manifest 的一句声明。"""
+        service = self._service(generator=RecordingGenerator())
+        first = service.archive(ArchivalRequest(RUN_ID, STAGE_AMPLIFIER), now=NOW)
+        second = service.archive(ArchivalRequest(RUN_ID, STAGE_AMPLIFIER), now=NOW)
+
+        self.assertEqual(second.csv.status, first.csv.status)
+        self.assertEqual(
+            self.repository.verified,
+            [
+                (ArtifactKind.CSV, CSV_PATH),
+                (ArtifactKind.REPORT, REPORT_PATH),
+            ],
+        )
+
+    def test_damaged_completed_artifact_is_rejected_instead_of_reused(self):
+        """文件被删除的已完成产物按归档请求失败上报，manifest 记录不被改写。"""
+        service = self._service(generator=RecordingGenerator())
+        service.archive(ArchivalRequest(RUN_ID, STAGE_AMPLIFIER), now=NOW)
+        before = self.repository.manifest.artifacts
+        updates_before = len(self.repository.updates)
+        self.repository.fail_verify = FileNotFoundError("产物文件已被删除")
+
+        with self.assertRaisesRegex(ArchivalRequestError, "拒绝复用"):
+            service.archive(ArchivalRequest(RUN_ID, STAGE_AMPLIFIER), now=NOW)
+
+        self.assertEqual(self.repository.manifest.artifacts, before)
+        self.assertEqual(len(self.repository.updates), updates_before)
+        self.assertEqual(
+            [record.status for record in self.repository.manifest.artifacts],
+            [ArtifactStatus.COMPLETED, ArtifactStatus.COMPLETED],
+        )
 
     def test_failed_artifact_is_not_regenerated_without_explicit_retry(self):
         generator = RecordingGenerator(

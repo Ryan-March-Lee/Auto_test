@@ -17,7 +17,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
-from application.archival_service import ArchivalRequestError, ResultArchivalService
+from application.archival_service import (
+    ArchivalRequestError,
+    ResultArchivalService,
+    archive_completed_stage,
+)
 from application.dto import (
     AmplifierMeasurementRequest,
     CableLossMeasurementRequest,
@@ -447,6 +451,28 @@ class SuccessPathArchivalTests(unittest.TestCase):
             use_case.measure_all_frequencies()
 
         # 正式结果已提交，阶段与运行状态不受归档缺陷影响（缺陷本身必须暴露）。
+        manifest = self.repository.load_manifest(RUN_ID)
+        self.assertEqual(manifest.stage(STAGE_AMPLIFIER).status, StageStatus.COMPLETED)
+        self.assertEqual(manifest.status, RunStatus.COMPLETED)
+        self.assertTrue((self._run_directory() / AMPLIFIER_RESULT_PATH).is_file())
+
+    def test_damaged_completed_artifact_only_logs_on_the_next_boundary(self):
+        """已完成 CSV 被删除后再次触发归档：只写错误日志，测量结果与状态不变。"""
+        self._create_run()
+        self._complete_cable_loss()
+        service = self._archival_service()
+        AmplifierMeasurementUseCase(
+            self._amplifier_request(service), sleep_fn=lambda _: None
+        ).measure_all_frequencies()
+        self._csv_file().unlink()
+
+        with self.assertLogs("application.archival_service", level="ERROR") as logs:
+            outcome = archive_completed_stage(
+                service, run_id=RUN_ID, stage=STAGE_AMPLIFIER
+            )
+
+        self.assertIsNone(outcome)
+        self.assertTrue(any("拒绝复用" in line for line in logs.output))
         manifest = self.repository.load_manifest(RUN_ID)
         self.assertEqual(manifest.stage(STAGE_AMPLIFIER).status, StageStatus.COMPLETED)
         self.assertEqual(manifest.status, RunStatus.COMPLETED)

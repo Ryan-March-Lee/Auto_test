@@ -12,12 +12,17 @@
 
 import hashlib
 import json
+import os
+import shutil
+import subprocess
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
-from application.archival_service import ResultArchivalService
+from application.archival_service import ArchivalRequestError, ResultArchivalService
 from application.dto.archival import ArchivalRequest, ArchivalStatus
 from application.ports.result_artifacts import (
     ArtifactGenerationError,
@@ -33,6 +38,7 @@ from domain.run.models import (
     ArtifactKind,
     ArtifactStatus,
 )
+from infrastructure.persistence import artifact_generator
 from infrastructure.persistence.artifact_generator import CsvArtifactGenerator
 from infrastructure.persistence.run_history_repository import FileRunHistoryRepository
 from infrastructure.persistence.run_repository import RunRepository
@@ -44,6 +50,28 @@ NOW = datetime(2026, 10, 28, 2, 3, 4, tzinfo=timezone.utc)
 CSV_PATH = "artifacts/amplifier.csv"
 
 CABLE_LOSSES = {"1.0": {"cable1": 0.5, "cable2": 0.5, "cable3": 0.0, "cable4": 0.0}}
+
+
+def _make_directory_link(case: unittest.TestCase, target: Path, link: Path) -> None:
+    """把 ``link`` 造成指向 ``target`` 的目录重定向。
+
+    优先用符号链接；Windows 默认没有创建符号链接的权限，退化为不需要特权的
+    junction（同样是目录重定向，必须被真实路径校验挡住）。两者都不可用时跳过用例。
+    """
+    try:
+        os.symlink(target, link, target_is_directory=True)
+        return
+    except (OSError, NotImplementedError) as symlink_error:
+        if os.name != "nt":  # pragma: no cover - 平台相关
+            case.skipTest(f"当前环境无法创建符号链接: {symlink_error}")
+    completed = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode == 0 and link.exists():
+        return
+    case.skipTest(f"当前环境无法创建目录链接: {completed.stderr.strip()}")
 
 
 def _amplifier_payload(*, results=None) -> dict:
@@ -138,6 +166,11 @@ class RunDirectoryFixture(unittest.TestCase):
     def _csv_file(self) -> Path:
         return self.run_directory / CSV_PATH
 
+    def _temporary_files(self) -> list[Path]:
+        """列出 ``artifacts/`` 下遗留的产物临时文件（文件名带随机后缀）。"""
+        artifacts = self.run_directory / "artifacts"
+        return sorted(artifacts.glob("*.tmp")) if artifacts.is_dir() else []
+
     def _service(self, generator=None):
         return ResultArchivalService(
             runs=self.repository,
@@ -190,7 +223,7 @@ class CsvArtifactGeneratorTests(RunDirectoryFixture):
             CsvArtifactGenerator(self.repository).generate(_csv_request())
 
         self.assertFalse(self._csv_file().exists())
-        self.assertFalse(self._csv_file().with_name("amplifier.csv.tmp").exists())
+        self.assertEqual(self._temporary_files(), [])
 
     def test_non_amplifier_stage_is_rejected(self):
         self._complete_cable_loss()
@@ -252,9 +285,75 @@ class CsvArtifactGeneratorTests(RunDirectoryFixture):
             CsvArtifactGenerator(self.repository).generate(_csv_request())
 
         self.assertTrue((self.run_directory / CSV_PATH).is_dir())
-        self.assertFalse((self.run_directory / "artifacts" / "amplifier.csv.tmp").exists())
+        self.assertEqual(self._temporary_files(), [])
         # 正式结果没有被产物失败影响。
         self.assertTrue((self.run_directory / AMPLIFIER_RESULT_PATH).is_file())
+
+    def test_real_path_guard_rejects_targets_outside_the_artifacts_directory(self):
+        """无链接权限也能验证的确定性分支：目标解析后不在 artifacts/ 内即拒绝。"""
+        artifacts = self.run_directory / "artifacts"
+        outside = self.run_directory / "results" / "amplifier.csv"
+
+        with self.assertRaisesRegex(ArtifactGenerationError, "artifacts"):
+            artifact_generator._require_inside_artifacts(
+                self.run_directory, outside, "../results/amplifier.csv"
+            )
+        # 目录自身不能当作产物目标。
+        with self.assertRaisesRegex(ArtifactGenerationError, "artifacts"):
+            artifact_generator._require_inside_artifacts(
+                self.run_directory, artifacts, "artifacts/"
+            )
+
+    def test_redirected_artifacts_directory_is_rejected(self):
+        """``artifacts/`` 被重定向到运行目录外时，CSV 不能写到链接目标。"""
+        self._complete_cable_loss()
+        self._complete_amplifier()
+        outside = self.base / "outside"
+        outside.mkdir()
+        artifacts = self.run_directory / "artifacts"
+        shutil.rmtree(artifacts)
+        _make_directory_link(self, outside, artifacts)
+
+        with self.assertRaisesRegex(ArtifactGenerationError, "产物目录"):
+            CsvArtifactGenerator(self.repository).generate(_csv_request())
+
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_redirected_subdirectory_outside_artifacts_is_rejected(self):
+        """``artifacts/`` 内的子目录被重定向到目录外时，目标真实路径越界必须拒绝。"""
+        self._complete_cable_loss()
+        self._complete_amplifier()
+        outside = self.base / "outside"
+        outside.mkdir()
+        _make_directory_link(self, outside, self.run_directory / "artifacts" / "nested")
+
+        with self.assertRaisesRegex(ArtifactGenerationError, "artifacts"):
+            CsvArtifactGenerator(self.repository).generate(
+                _csv_request(target_path="artifacts/nested/amplifier.csv")
+            )
+
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_write_uses_a_unique_temporary_name_per_call(self):
+        """临时文件名带随机后缀：并发归档不会互相覆盖对方的半成品。"""
+        self._complete_cable_loss()
+        self._complete_amplifier()
+        generator = CsvArtifactGenerator(self.repository)
+        written: list[str] = []
+        real_export = artifact_generator.export_csv
+
+        def _recording_export(result, destination):
+            written.append(Path(destination).name)
+            return real_export(result, destination)
+
+        with patch.object(artifact_generator, "export_csv", _recording_export):
+            generator.generate(_csv_request())
+            generator.generate(_csv_request())
+
+        self.assertEqual(len(written), 2)
+        self.assertNotEqual(written[0], written[1])
+        self.assertTrue(all(name.startswith("amplifier.csv.") for name in written))
+        self.assertEqual(self._temporary_files(), [])
 
 
 # -- 归档服务 + CSV 生成 --------------------------------------------------
@@ -316,6 +415,83 @@ class ArchivalCsvIntegrationTests(RunDirectoryFixture):
             ),
             1,
         )
+
+    def test_damaged_completed_csv_blocks_reuse(self):
+        """已完成产物是终态：文件消失后再次归档必须拒绝，不能假装复用成功。"""
+        self._complete_cable_loss()
+        self._complete_amplifier()
+        service = self._service()
+        service.archive(ArchivalRequest(RUN_ID, STAGE_AMPLIFIER), now=NOW)
+        self._csv_file().unlink()
+
+        with self.assertRaisesRegex(ArchivalRequestError, "拒绝复用"):
+            service.archive(ArchivalRequest(RUN_ID, STAGE_AMPLIFIER), now=NOW)
+
+        record = self.repository.load_manifest(RUN_ID).find_artifact(
+            ArtifactKind.CSV, source_result=AMPLIFIER_RESULT_PATH
+        )
+        self.assertIs(record.status, ArtifactStatus.COMPLETED)
+        self.assertTrue((self.run_directory / AMPLIFIER_RESULT_PATH).is_file())
+        with self.assertRaises(FileNotFoundError):
+            self.repository.verify_artifact_files(RUN_ID)
+
+    def test_tampered_completed_csv_blocks_reuse(self):
+        """文件被改写后同样拒绝复用，且 manifest 记录不会被就地改判。"""
+        self._complete_cable_loss()
+        self._complete_amplifier()
+        service = self._service()
+        service.archive(ArchivalRequest(RUN_ID, STAGE_AMPLIFIER), now=NOW)
+        self._csv_file().write_text("篡改", encoding="utf-8")
+
+        with self.assertRaisesRegex(ArchivalRequestError, "拒绝复用"):
+            service.archive(ArchivalRequest(RUN_ID, STAGE_AMPLIFIER), now=NOW)
+
+        record = self.repository.load_manifest(RUN_ID).find_artifact(
+            ArtifactKind.CSV, source_result=AMPLIFIER_RESULT_PATH
+        )
+        self.assertIs(record.status, ArtifactStatus.COMPLETED)
+        self.assertIsNotNone(record.sha256)
+
+    def test_concurrent_archival_keeps_a_single_consistent_artifact(self):
+        """并发归档同一运行：只有一条产物记录，摘要与文件一致，无残留临时文件。"""
+        self._complete_cable_loss()
+        self._complete_amplifier()
+        service = self._service()
+        outcomes: list[object] = []
+        errors: list[Exception] = []
+        start = threading.Barrier(4)
+
+        def _archive() -> None:
+            start.wait()
+            try:
+                outcomes.append(
+                    service.archive(ArchivalRequest(RUN_ID, STAGE_AMPLIFIER), now=NOW)
+                )
+            except Exception as error:  # 记录线程内异常，交主线程断言
+                errors.append(error)
+
+        threads = [
+            threading.Thread(target=_archive, name=f"archive-{index}")
+            for index in range(4)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        self.assertEqual(errors, [])
+        self.assertEqual(len(outcomes), 4)
+        records = [
+            record
+            for record in self.repository.load_manifest(RUN_ID).artifacts
+            if record.kind is ArtifactKind.CSV
+        ]
+        self.assertEqual(len(records), 1)
+        self.assertIs(records[0].status, ArtifactStatus.COMPLETED)
+        payload = self._csv_file().read_bytes()
+        self.assertEqual(records[0].sha256, hashlib.sha256(payload).hexdigest())
+        self.assertEqual(self._temporary_files(), [])
+        self.repository.verify_artifact_files(RUN_ID)
 
     def test_csv_write_failure_only_marks_that_artifact(self):
         self._complete_cable_loss()

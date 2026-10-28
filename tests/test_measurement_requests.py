@@ -61,8 +61,9 @@ class _VerifiedContractRepository:
     """组合层测试用的最小运行契约仓储替身：校验能力完整，返回固定快照内容。
 
     运行契约仓储必须具备 ``read_config`` / ``read_run_json`` / ``load_manifest`` /
-    ``verify_file``，否则组合层会拒绝继续；归档服务还要求 ``update_manifest`` 可调用。
-    这里只用于验证组合层在快照可用时能正常组装，因此直接返回已校验的内容而不触碰磁盘。
+    ``verify_file``，否则组合层会拒绝继续；归档服务还要求 ``update_manifest`` 与
+    ``verify_artifact`` 可调用。这里只用于验证组合层在快照可用时能正常组装，因此直接
+    返回已校验的内容而不触碰磁盘。
     """
 
     def __init__(self, *, config_payload, hardware_payload):
@@ -85,6 +86,9 @@ class _VerifiedContractRepository:
 
     def verify_file(self, run_id, reference):
         raise AssertionError("该替身不通过 manifest 校验文件")
+
+    def verify_artifact(self, run_id, artifact):
+        raise AssertionError("该替身不校验交付产物；本测试只验证组装")
 
 
 

@@ -7,7 +7,8 @@
 - ``load_manifest`` / ``update_manifest``：原子读取和更新 manifest。
 - ``register_file``：按 ``inputs/`` 与 ``results/`` 目录登记文件及其 SHA-256、字节数。
 - ``verify_file`` / ``verify_manifest_files``：校验登记文件是否仍与 manifest 一致。
-- ``verify_artifact_files``：校验 ``artifacts/`` 下已完成产物与 manifest 登记一致。
+- ``verify_artifact`` / ``verify_artifact_files``：校验 ``artifacts/`` 下已完成交付产物
+  与 manifest 登记一致。
 - ``discard_file`` / ``discard_run``：撤销未提交的文件或整个半成品运行目录。
 - ``read_config`` / ``list_run_ids``：校验读取配置快照并枚举有效运行。
 
@@ -33,10 +34,12 @@ from pathlib import Path
 from typing import Any, Mapping, Union
 
 from domain.run.models import (
+    ARTIFACT_PATH_PREFIX,
     CONFIG_FILENAME,
     INPUTS_DIRNAME,
     MANIFEST_FILENAME,
     RESULTS_DIRNAME,
+    ArtifactRecord,
     ArtifactStatus,
     FileReference,
     RunManifest,
@@ -342,28 +345,46 @@ class RunRepository:
             self.verify_file(run_id, reference)
         return manifest
 
+    def verify_artifact(self, run_id: str, artifact: ArtifactRecord) -> Path:
+        """校验单条已登记交付产物仍存在且与 manifest 登记值一致。
+
+        只有 ``completed`` 产物才有文件可校验。文件缺失、路径越界（含 ``artifacts/``
+        被替换成指向别处的符号链接）、大小或 SHA-256 不一致都直接失败，使“产物已生成”
+        不能只靠 manifest 的一句声明成立；调用方据此拒绝复用被损坏的产物。
+        """
+        if not isinstance(artifact, ArtifactRecord):
+            raise TypeError("artifact 必须是 ArtifactRecord")
+        if artifact.status is not ArtifactStatus.COMPLETED:
+            raise ValueError(
+                f"只有 completed 产物有可校验文件，实际: {artifact.status.value}"
+            )
+        if artifact.path is None:
+            raise ValueError("completed 产物必须登记路径")
+        layout = self._require_existing_run(run_id)
+        path = self._resolve_artifact_path(layout, artifact.path)
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"登记产物不存在或不是普通文件: {artifact.path}"
+            )
+        digest, size = file_sha256_and_size(path)
+        if artifact.sha256 is not None and digest != artifact.sha256:
+            raise ValueError(f"产物 SHA-256 与 manifest 不一致: {artifact.path}")
+        if artifact.size_bytes is not None and size != artifact.size_bytes:
+            raise ValueError(f"产物大小与 manifest 不一致: {artifact.path}")
+        return path
+
     def verify_artifact_files(self, run_id: str) -> RunManifest:
-        """校验 manifest 登记的交付产物文件仍存在且与登记值一致。
+        """校验 manifest 登记的全部交付产物文件仍存在且与登记值一致。
 
         只校验 ``completed`` 产物：``pending`` 尚未生成，``failed`` 按契约不登记路径，
-        ``not_applicable`` 本来就没有文件。文件缺失、路径越界、大小或 SHA-256 不一致都
-        直接失败，使“CSV 已生成”不能只靠 manifest 的一句声明成立。
+        ``not_applicable`` 本来就没有文件。逐条委托 :meth:`verify_artifact`，因此缺失、
+        越界或校验值不一致的产物都会被独立发现。
         """
         manifest = self.load_manifest(run_id)
-        layout = self._require_existing_run(run_id)
         for record in manifest.artifacts:
             if record.status is not ArtifactStatus.COMPLETED:
                 continue
-            path = self._resolve_reference_path(layout, record.path)
-            if not path.is_file():
-                raise FileNotFoundError(
-                    f"登记产物不存在或不是普通文件: {record.path}"
-                )
-            digest, size = file_sha256_and_size(path)
-            if record.sha256 is not None and digest != record.sha256:
-                raise ValueError(f"产物 SHA-256 与 manifest 不一致: {record.path}")
-            if record.size_bytes is not None and size != record.size_bytes:
-                raise ValueError(f"产物大小与 manifest 不一致: {record.path}")
+            self.verify_artifact(run_id, record)
         return manifest
 
     def list_run_ids(self, *, include_invalid: bool = False) -> tuple[str, ...]:
@@ -428,6 +449,23 @@ class RunRepository:
         path = layout.run_directory / Path(*relative_path.split("/"))
         layout.relative_path(path)
         return path
+
+    def _resolve_artifact_path(
+        self, layout: RunDirectoryLayout, relative_path: str
+    ) -> Path:
+        """把 manifest 登记的产物路径解析到 ``artifacts/`` 内，并拒绝越界引用。
+
+        只校验“运行目录内”还不够：``artifacts/`` 被替换成指向运行目录其它位置或目录外
+        的符号链接时，同一个相对路径会解析到别的地方。因此这里按真实路径（含符号链接）
+        重新计算相对路径，并要求它仍然以 ``artifacts/`` 开头。
+        """
+        path = self._resolve_reference_path(layout, relative_path)
+        resolved_relative = layout.relative_path(path)
+        if not resolved_relative.startswith(ARTIFACT_PATH_PREFIX):
+            raise ValueError(
+                f"产物路径解析后不在 {ARTIFACT_PATH_PREFIX} 下: {relative_path}"
+            )
+        return layout.run_directory / Path(*resolved_relative.split("/"))
 
     def _create_run(
         self,

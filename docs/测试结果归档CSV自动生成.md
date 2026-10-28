@@ -23,7 +23,8 @@
 | `application.archival_service` | `archive_completed_stage()` | 阶段完成边界的归档入口：可预期失败只写错误日志，不改变已保存的结果 |
 | `application.archival_service` | `ResultArchivalService.supported_kinds` | 按端口声明的能力决定真正生成哪些产物；未声明的保持 `pending` |
 | `application.dto.measurement_requests` | `MeasurementRequest.archival_service` | 组装层注入的归档服务；未注入（旧兼容流程）时不做任何归档 |
-| `infrastructure.persistence.run_repository` | `RunRepository.verify_artifact_files()` | 独立校验已完成产物文件仍存在且与 manifest 登记一致 |
+| `application.ports.run_repository` | `RunRepositoryPort.verify_artifact()` | 复用已完成产物前复核文件仍存在且与 manifest 登记一致（缺失、越界、摘要/大小不一致都失败） |
+| `infrastructure.persistence.run_repository` | `RunRepository.verify_artifact()`、`verify_artifact_files()` | 单条产物校验与整份 manifest 的产物校验；后者逐条委托前者 |
 
 调用形状：
 
@@ -43,13 +44,14 @@ outcome = service.archive(ArchivalRequest(run_id, STAGE_AMPLIFIER))
 | 维度 | 规则 |
 | --- | --- |
 | 目标路径 | 只允许 `artifacts/` 下的受控相对路径；默认值由 `domain.run.models.default_artifact_path(stage, csv)` 给出（`artifacts/amplifier.csv`），适配器不自己拼文件名 |
+| 目标边界 | 除字符串前缀外，按**真实路径**复核：`artifacts/` 的真实位置必须在运行目录内，目标文件的真实位置必须在 `artifacts/` 内；POSIX 符号链接与 Windows junction 都被挡住 |
 | 目标阶段 | 只有 `amplifier` 有 CSV 交付产物；线损/驱动映射请求会被明确拒绝（它们应登记 `not_applicable`） |
 | 输入来源 | `RunRepositoryPort.read_run_json(run_id, source_result)`：缺登记、缺文件、SHA-256/大小不一致一律拒绝；解析只走 `measurement_result_from_document()` |
 | 序列化 | 复用 `analysis.reporting.export_csv(result, destination)`，字段是结果行字段的并集（含 `frequency_ghz`、`measurement_type`、`run_id`） |
-| 写入方式 | 先写同目录临时文件再 `os.replace` 原子替换，失败时清理临时文件，不留下被 manifest 引用的半截产物 |
+| 写入方式 | 先写同目录临时文件（文件名带随机后缀，并发归档不会互相覆盖）再 `os.replace` 原子替换，失败时清理临时文件，不留下被 manifest 引用的半截产物 |
 | 校验值 | 写入后单次读取计算 SHA-256 与字节数，随 `GeneratedArtifact` 返回并由归档服务登记进 manifest |
 | 空数据 | 结果没有可导出行时抛 `ArtifactGenerationError`（显式失败），不写空文件 |
-| 文件缺失 | `RunRepository.verify_artifact_files()` 对 `completed` 产物重新计算摘要/大小，缺失或不一致直接失败 |
+| 文件缺失 | `RunRepository.verify_artifact()` / `verify_artifact_files()` 对 `completed` 产物重新计算摘要/大小，缺失或不一致直接失败 |
 
 失败语义与步骤 3 一致：适配器把所有**可预期**失败包成 `ArtifactGenerationError`，归档服务
 只把该产物登记为 `failed` 并保留正式结果；其它异常上抛，不伪装成“产物生成失败”。
@@ -79,6 +81,7 @@ outcome = service.archive(ArchivalRequest(run_id, STAGE_AMPLIFIER))
 | --- | --- |
 | 未注入归档服务（旧兼容流程） | 直接返回 `None`，不产生任何产物 |
 | 请求不合法（`ArchivalRequestError`）、manifest 写回失败（`OSError`） | 记录 `ERROR` 日志并返回 `None`；正式结果、阶段状态、运行状态、测量返回值都不变 |
+| 已完成产物复核失败（文件缺失/被替换，`ArchivalRequestError`） | 同上：只写错误日志并返回 `None`，manifest 的 `completed` 记录不被就地改判 |
 | 产物生成失败（空数据、写入失败、结果不可读等） | 由服务登记为 `failed` 并返回结构化 `ArchivalOutcome`，测量照常成功 |
 | 端口/服务实现的未预期异常 | 不兜底、向上抛出：正式结果已提交且状态不受影响，但缺陷必须暴露，不能被日志吞掉 |
 
@@ -97,6 +100,15 @@ manifest 的 `artifacts` 记录里、正式结果永不覆盖、异常分级不�
 本步骤的适配器只声明 `frozenset({ArtifactKind.CSV})`，所以主功放完整成功的归档结果是
 `csv=completed / report=pending`、`archive_status=pending`——这是“报告生成能力尚未接入”的
 诚实表达，等计划步骤 5 实现报告后同一份运行会收敛为 `completed`。
+
+已完成产物的复用不是“相信 manifest 的一句话”：再次归档时归档服务对每条 `completed` 记录
+调用 `RunRepositoryPort.verify_artifact()` 复核文件，缺失、被改写或解析后越出 `artifacts/`
+都按 `ArchivalRequestError` 拒绝本次归档（`archive_completed_stage()` 只写错误日志），
+manifest 记录与正式结果都不被改写；重新生成留给计划步骤 7/9 的显式重试入口。
+
+同一运行的归档在本进程内串行执行（按 `run_id` 的互斥锁）：manifest 是“读 manifest -> 改
+产物记录 -> 写回”，并发调用会互相覆盖产物记录。跨进程并发不在保证范围内——一个运行目录
+只由一个实例负责，同一 `run_id` 的重复触发由该锁合并。
 
 ## 5. 明确不属于本步骤
 
@@ -117,27 +129,34 @@ manifest 的 `artifacts` 记录里、正式结果永不覆盖、异常分级不�
 & "D:\Anaconda\envs\Auto_test\python.exe" launcher.py --validate-config
 ```
 
-`tests/test_csv_artifact_generator.py`（17 项）覆盖：
+`tests/test_csv_artifact_generator.py`（24 项）覆盖：
 
 - 适配器：CSV 落在 `artifacts/amplifier.csv`、返回路径与摘要/大小与文件一致、内容含结果行；
 - 显式失败：空数据、未登记结果、被替换结果、非主功放阶段、尚未接入的报告、写入失败
   （目标被同名目录占住）——都不产生半截产物，正式结果保持原样；
+- 目标边界：真实路径守卫直接拒绝越出 `artifacts/` 的目标；`artifacts/` 或其子目录被重定向
+  （符号链接 / Windows junction）到运行目录外时拒绝生成，目录外不留下任何文件；
+- 临时文件：每次写入使用带随机后缀的独立临时文件，写失败后不残留；
 - 服务集成：`completed` 产物登记真实 SHA-256/大小、`verify_artifact_files()` 通过、历史
-  (`read_run_json`) 仍可读取正式结果；重复归档只生成一次且文件不被重写；
+  (`read_run_json`) 仍可读取正式结果；重复归档只生成一次且文件不被重写；已完成 CSV 被删除
+  或改写后再次归档按 `ArchivalRequestError` 拒绝复用，manifest 记录不被就地改判；
+- 并发：4 个线程同时归档同一运行只留下一条 CSV 记录，摘要与文件一致、无残留临时文件；
 - 历史视图：产物登记后运行仍可浏览，阶段结果仍是 CSV 报告之外的正式结果；
 - 产物文件缺失/被篡改时 `verify_artifact_files()` 分别报 `FileNotFoundError` / `ValueError`；
 - 端口声明：未知产物类型在构造服务时被拒绝；未声明时按“全部交付产物”处理。
 
-`tests/test_archival_success_path.py`（10 项）覆盖：
+`tests/test_archival_success_path.py`（11 项）覆盖：
 
 - 主功放成功路径自动产出 CSV，`report` 停在 `pending`，阶段/运行状态与结果路径不受影响；
 - 未注入归档服务时不生成任何产物、manifest 无产物记录；
 - 线损与驱动映射成功路径登记两条 `not_applicable`，运行仍是 `running`；
 - CSV 写不进去时只有该产物 `failed`，测量仍成功、正式 JSON 仍在；
 - `ArchivalRequestError` / manifest 写回失败只写错误日志，测量结果与状态不变；
+- 已完成 CSV 被删除后再次触发归档只写错误日志（`archive_completed_stage()` 返回 `None`），
+  阶段与运行状态、正式结果都不变；
 - 未预期端口缺陷向上抛出（正式结果仍已提交，状态不被改写）；
 - 组合根：运行契约运行装配归档服务并产出 CSV；旧兼容快照不装配。
 
-执行结果（2026-10-28）：上述两个文件 27 项通过；全量 `unittest discover -s tests` 1557 项
-通过（3 项跳过）；依赖锁、`launcher --check`、`launcher --validate-config` 与
-`tools/compile_check.py .` 均通过。
+执行结果（2026-10-28）：上述两个文件 35 项通过；`tests/test_result_archival_service.py` 44 项
+通过；全量 `unittest discover -s tests` 1568 项通过（3 项跳过）；依赖锁、`launcher --check`、
+`launcher --validate-config` 与 `tools/compile_check.py .` 均通过。

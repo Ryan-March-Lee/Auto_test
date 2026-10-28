@@ -336,6 +336,43 @@ class ConfigPageDiscoveryIntegrationTests(unittest.TestCase):
         self.assertIsInstance(page.discovery_panel, DeviceDiscoveryPanel)
         self.assertTrue(hasattr(page, "apply_discovered_devices"))
 
+    def test_scan_subnet_defaults_to_the_bound_device_address(self):
+        page = ConfigPage(
+            {
+                "test_frequencies": [1.0],
+                "instruments": {
+                    "power_supplies": {},
+                    "signal_generator": {
+                        "address": "TCPIP0::192.168.1.201::inst0::INSTR",
+                        "enabled": True,
+                    },
+                },
+                "device_bindings": {
+                    "signal_generator": {
+                        "visa_address": "TCPIP0::10.2.3.201::inst0::INSTR",
+                        "device_key": "rohde&schwarz:105462",
+                    }
+                },
+            },
+            scanner_factory=_scanner_factory,
+        )
+        page.show()
+        self.app.processEvents()
+        self.addCleanup(page.close)
+
+        self.assertEqual(page.discovery_panel.subnet_edit.text(), "10.2.3.0/24")
+
+    def test_connection_box_has_no_manual_address_widgets(self):
+        """仪器连接只有“扫描后勾选”一套逻辑：不再逐台填写地址或勾选启用。"""
+        page = self.make_page()
+
+        self.assertEqual(page.discovery_panel.title(), "仪器连接配置")
+        for widget in (
+            "sg_address", "sg_enabled", "sa_address", "sa_enabled",
+            "ps1_address", "ps1_enabled", "ps4_address", "ps4_enabled",
+        ):
+            self.assertFalse(hasattr(page, widget), f"不应再存在手工地址控件 {widget}")
+
     def test_applied_device_writes_address_and_identity_into_config(self):
         page = self.make_page()
 
@@ -356,18 +393,19 @@ class ConfigPageDiscoveryIntegrationTests(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(page.sa_address.text(), "TCPIP0::192.168.1.202::inst0::INSTR")
-        self.assertTrue(page.sa_enabled.isChecked())
         config = page.build_config()
         self.assertEqual(
             config["instruments"]["spectrum_analyzer"]["address"],
             "TCPIP0::192.168.1.202::inst0::INSTR",
         )
+        self.assertTrue(config["instruments"]["spectrum_analyzer"]["enabled"])
         binding = config["device_bindings"]["spectrum_analyzer"]
         self.assertEqual(binding["serial"], "QZNI000866")
         self.assertEqual(binding["device_key"], "ceyear technologies:qzni000866")
         self.assertEqual(binding["last_ip"], "192.168.1.202")
         self.assertEqual(binding["source"], "scan")
+        # 当前配置直接显示在连接框里，不必先重新扫描。
+        self.assertIn("4082F-1", page.discovery_panel.bindings_label.text())
 
     def test_simulated_device_binding_is_marked_as_demo_data(self):
         page = self.make_page()
@@ -409,8 +447,13 @@ class ConfigPageDiscoveryIntegrationTests(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(page.ps2_address.text(), "TCPIP0::192.168.1.150::inst0::INSTR")
-        self.assertTrue(page.ps2_enabled.isChecked())
+        self.assertEqual(
+            page.build_config()["instruments"]["power_supplies"]["PS2"]["address"],
+            "TCPIP0::192.168.1.150::inst0::INSTR",
+        )
+        self.assertTrue(
+            page.build_config()["instruments"]["power_supplies"]["PS2"]["enabled"]
+        )
         # 未知设备也能被用户明确使用，但绑定记录里标记为未登记。
         self.assertFalse(page.device_bindings["PS2"]["known"])
 
@@ -432,7 +475,7 @@ class ConfigPageDiscoveryIntegrationTests(unittest.TestCase):
         page.apply_discovered_devices([{"role": "signal_generator", "address": "  "}])
 
         self.assertIn("发现地址为空", messages[-1])
-        self.assertEqual(page.sg_address.text(), "")
+        self.assertNotIn("address", page.build_config()["instruments"]["signal_generator"])
 
     def test_invalid_entry_rejects_the_whole_batch(self):
         page = self.make_page()
@@ -447,8 +490,8 @@ class ConfigPageDiscoveryIntegrationTests(unittest.TestCase):
         )
 
         self.assertIn("未知的测试角色", messages[-1])
-        # 先校验后写入：第一项也不能被写进控件或绑定记录。
-        self.assertEqual(page.sg_address.text(), "")
+        # 先校验后写入：第一项也不能被写进连接配置或绑定记录。
+        self.assertNotIn("address", page.build_config()["instruments"]["signal_generator"])
         self.assertEqual(page.device_bindings, {})
 
     def test_duplicate_roles_in_one_batch_are_rejected(self):
@@ -472,7 +515,7 @@ class ConfigPageDiscoveryIntegrationTests(unittest.TestCase):
         )
 
         self.assertIn("重复指定", messages[-1])
-        self.assertEqual(page.sg_address.text(), "")
+        self.assertNotIn("address", page.build_config()["instruments"]["signal_generator"])
         self.assertEqual(page.device_bindings, {})
 
     def test_missing_serial_is_rejected(self):
@@ -485,7 +528,7 @@ class ConfigPageDiscoveryIntegrationTests(unittest.TestCase):
         )
 
         self.assertIn("缺少设备身份", messages[-1])
-        self.assertEqual(page.sg_address.text(), "")
+        self.assertNotIn("address", page.build_config()["instruments"]["signal_generator"])
 
     def test_identity_disagreeing_with_serial_is_rejected(self):
         page = self.make_page()
@@ -507,7 +550,7 @@ class ConfigPageDiscoveryIntegrationTests(unittest.TestCase):
         self.assertIn("设备身份与序列号不一致", messages[-1])
         self.assertEqual(page.device_bindings, {})
 
-    def test_clear_button_removes_bindings_from_the_saved_config(self):
+    def test_clear_button_removes_bindings_and_invalidates_the_connection(self):
         page = self.make_page()
         page.apply_discovered_devices(
             [
@@ -522,13 +565,121 @@ class ConfigPageDiscoveryIntegrationTests(unittest.TestCase):
                 }
             ]
         )
+        # 相当于连接前已经保存过一次：地址已随配置落盘。
+        page.apply_config(page.build_config())
 
         page.discovery_panel.request_clear()
 
         self.assertEqual(page.device_bindings, {})
-        self.assertNotIn("device_bindings", page.build_config())
-        # 地址不被清除：绑定与地址是两件事，用户自己决定是否保留地址。
-        self.assertEqual(page.sg_address.text(), "TCPIP0::192.168.1.201::inst0::INSTR")
+        config = page.build_config()
+        self.assertNotIn("device_bindings", config)
+        # 绑定是唯一连接来源：清除后地址与启用状态一起失效，不会打到旧设备。
+        self.assertNotIn("address", config["instruments"]["signal_generator"])
+        self.assertFalse(config["instruments"]["signal_generator"]["enabled"])
+
+    def test_applying_a_subset_replaces_the_previous_bindings(self):
+        page = self.make_page()
+        page.apply_discovered_devices(
+            [
+                {
+                    "role": "signal_generator",
+                    "address": "TCPIP0::192.168.1.201::inst0::INSTR",
+                    "serial": "105462",
+                    "device_key": "rohde&schwarz:105462",
+                    "ip": "192.168.1.201",
+                    "port": 5025,
+                    "known": True,
+                },
+                {
+                    "role": "PS1",
+                    "address": "TCPIP0::192.168.1.101::inst0::INSTR",
+                    "serial": "PS1SN",
+                    "device_key": "keysight technologies:ps1sn",
+                    "ip": "192.168.1.101",
+                    "port": 5025,
+                    "known": True,
+                },
+            ]
+        )
+
+        page.apply_discovered_devices(
+            [
+                {
+                    "role": "signal_generator",
+                    "address": "TCPIP0::192.168.1.211::inst0::INSTR",
+                    "serial": "105462",
+                    "device_key": "rohde&schwarz:105462",
+                    "ip": "192.168.1.211",
+                    "port": 5025,
+                    "known": True,
+                }
+            ]
+        )
+
+        # 整批替换：没勾选的 PS1 被移除，地址与启用状态一起失效。
+        self.assertEqual(set(page.device_bindings), {"signal_generator"})
+        config = page.build_config()
+        self.assertEqual(
+            config["instruments"]["signal_generator"]["address"],
+            "TCPIP0::192.168.1.211::inst0::INSTR",
+        )
+        self.assertNotIn("address", config["instruments"]["power_supplies"]["PS1"])
+        self.assertFalse(config["instruments"]["power_supplies"]["PS1"]["enabled"])
+        self.assertEqual(page.get_enabled_power_supplies(), [])
+        self.assertIn("已移除", page.discovery_panel.status_label.text())
+
+    def test_empty_batch_is_rejected_without_touching_existing_bindings(self):
+        page = self.make_page()
+        page.apply_discovered_devices(
+            [
+                {
+                    "role": "signal_generator",
+                    "address": "TCPIP0::192.168.1.201::inst0::INSTR",
+                    "serial": "105462",
+                    "device_key": "rohde&schwarz:105462",
+                    "ip": "192.168.1.201",
+                    "port": 5025,
+                    "known": True,
+                }
+            ]
+        )
+        messages = []
+        page.validation_failed.connect(messages.append)
+
+        page.apply_discovered_devices([])
+
+        self.assertIn("请先在发现结果中勾选设备", messages[-1])
+        self.assertIn("signal_generator", page.device_bindings)
+
+    def test_legacy_config_address_is_migrated_as_an_unconfirmed_binding(self):
+        """只有地址的旧配置：加载后仍可连接，但在面板上标明“未扫描确认”。"""
+        page = ConfigPage(
+            {
+                "test_frequencies": [1.0],
+                "instruments": {
+                    "signal_generator": {
+                        "address": "TCPIP0::192.168.1.201::inst0::INSTR",
+                        "enabled": True,
+                    },
+                    "power_supplies": {},
+                },
+            },
+            scanner_factory=_scanner_factory,
+        )
+        page.show()
+        self.app.processEvents()
+        self.addCleanup(page.close)
+
+        self.assertEqual(
+            page.device_bindings["signal_generator"]["source"], "legacy_config"
+        )
+        self.assertEqual(
+            page.build_config()["instruments"]["signal_generator"]["address"],
+            "TCPIP0::192.168.1.201::inst0::INSTR",
+        )
+        self.assertIn("未扫描确认", page.discovery_panel.bindings_label.text())
+        # 扫描框初值取自已保存的地址网段。
+        self.assertEqual(page.discovery_panel.subnet_edit.text(), "192.168.1.0/24")
 
     def test_rejected_batch_is_also_reported_in_the_panel_status(self):
         """整批拒绝的原因要同时出现在面板状态里，不能只写日志。"""

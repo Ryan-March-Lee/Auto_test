@@ -875,11 +875,26 @@ class ConfigPageRunEntryTests(unittest.TestCase):
     def test_create_run_signal_is_emitted_after_validation(self):
         from presentation.qt.config_page import ConfigPage
 
-        page = ConfigPage({})
+        page = ConfigPage(_fully_valid_gui_config())
         requested = []
         page.create_run_requested.connect(lambda: requested.append(True))
         page.create_run_btn.click()
         self.assertEqual(requested, [True])
+
+    def test_create_run_is_blocked_when_no_device_is_bound(self):
+        """没有任何已应用设备时电源分配无法成立，创建运行必须明确失败。"""
+        from presentation.qt.config_page import ConfigPage
+
+        page = ConfigPage({})
+        failures = []
+        requested = []
+        page.validation_failed.connect(failures.append)
+        page.create_run_requested.connect(lambda: requested.append(True))
+
+        page.create_run_btn.click()
+
+        self.assertEqual(requested, [])
+        self.assertIn("未选择电源", failures[0])
 
     def test_load_run_signal_carries_the_run_id(self):
         from presentation.qt.config_page import ConfigPage
@@ -939,8 +954,9 @@ class ConfigPageRunEntryTests(unittest.TestCase):
 
         self.assertEqual(page.freq_edit.text(), "[2.4, 2.6]")
         self.assertFalse(page.driver_mode_requested())
-        self.assertEqual(page.sg_address.text(), "sim::sg")
-        self.assertEqual(page.ps1_address.text(), "sim::ps1")
+        built = page.build_config()["instruments"]
+        self.assertEqual(built["signal_generator"]["address"], "sim::sg")
+        self.assertEqual(built["power_supplies"]["PS1"]["address"], "sim::ps1")
         self.assertEqual(page.pa_unit1_power_combo.currentText(), "PS1")
         self.assertEqual(page.power_config_widgets["PS1"]["channels"]["CH2"]["voltage"].value(), 28.0)
 
@@ -981,15 +997,18 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         page = ConfigPage({})
         page.apply_config(_fully_valid_gui_config())
         # 先确认配置 A 确实写入了非基线值，避免测试空转。
-        self.assertEqual(page.sg_address.text(), "sim::sg")
+        built = page.build_config()["instruments"]
+        self.assertEqual(built["signal_generator"]["address"], "sim::sg")
         self.assertEqual(page.start_power.value(), -10.0)
         self.assertFalse(page.driver_mode_requested())
 
         # 配置 B 为空：所有受控控件必须回到空配置基线，不残留 A 的值。
         page.apply_config({})
 
-        self.assertEqual(page.sg_address.text(), "")
-        self.assertEqual(page.ps1_address.text(), "")
+        built = page.build_config()["instruments"]
+        self.assertEqual(built["signal_generator"], {"enabled": False})
+        self.assertNotIn("address", built["power_supplies"]["PS1"])
+        self.assertFalse(built["power_supplies"]["PS1"]["enabled"])
         self.assertEqual(page.freq_edit.text(), "[4.0, 4.4, 4.8, 5.2, 5.6, 5.8]")
         self.assertEqual(page.start_power.value(), -38.0)
         self.assertEqual(page.stop_power.value(), -16.0)
@@ -999,8 +1018,9 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         self.assertTrue(page.driver_mode_requested())
         self.assertEqual(page.max_input_power.value(), 33.5)
         self.assertEqual(page.pa_unit_count_combo.currentText(), "2")
-        self.assertTrue(page.ps1_enabled.isChecked())
-        self.assertFalse(page.ps3_enabled.isChecked())
+        # 没有任何已绑定/已保存的电源：电源分配不再提供可选项（旧界面默认的 PS1/PS2
+        # 来自已被移除的“启用”勾选框，不再是连接来源）。
+        self.assertEqual(page.get_enabled_power_supplies(), [])
         self.assertEqual(
             page.power_config_widgets["PS1"]["channels"]["CH2"]["voltage"].value(), 0.0
         )
@@ -1073,13 +1093,15 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         self.assertTrue(page.driver_mode_requested())
         self.assertEqual(page.max_input_power.value(), 25.5)
         self.assertEqual(page.pa_unit_count_combo.currentText(), "3")
-        self.assertEqual(page.sg_address.text(), "sim::sg2")
-        self.assertFalse(page.sg_enabled.isChecked())
-        self.assertEqual(page.sa_address.text(), "sim::sa2")
-        self.assertTrue(page.sa_enabled.isChecked())
-        self.assertEqual(page.ps1_address.text(), "sim::ps1")
-        self.assertTrue(page.ps3_enabled.isChecked())
-        self.assertFalse(page.ps4_enabled.isChecked())
+        built = page.build_config()["instruments"]
+        # 设备未启用（enabled False）时没有绑定，地址不会留在配置里。
+        self.assertNotIn("address", built["signal_generator"])
+        self.assertFalse(built["signal_generator"]["enabled"])
+        self.assertEqual(built["spectrum_analyzer"]["address"], "sim::sa2")
+        self.assertTrue(built["spectrum_analyzer"]["enabled"])
+        self.assertEqual(built["power_supplies"]["PS1"]["address"], "sim::ps1")
+        self.assertIn("PS3", page.get_enabled_power_supplies())
+        self.assertNotIn("PS4", page.get_enabled_power_supplies())
         channel = page.power_config_widgets["PS1"]["channels"]["CH1"]
         self.assertEqual(channel["voltage"].value(), 3.3)
         self.assertEqual(channel["voltage_protection"].value(), 5.0)
@@ -1111,7 +1133,8 @@ class ConfigPageRunEntryTests(unittest.TestCase):
             page.pa_unit_count_combo.currentText(), rebuilt.pa_unit_count_combo.currentText()
         )
         self.assertFalse(page.driver_mode_requested())
-        self.assertEqual(page.sg_address.text(), rebuilt.sg_address.text())
+        # 回填结果必须与直接用同一份文档构造的页面完全一致（含仪器连接信息）。
+        self.assertEqual(page.build_config(), rebuilt.build_config())
         self.assertEqual(
             page.pa_unit1_power_combo.currentText(),
             rebuilt.pa_unit1_power_combo.currentText(),
@@ -1130,14 +1153,6 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         from presentation.qt.config_page import ConfigPage
 
         page = ConfigPage({})
-        # 先写入与默认相反的非默认值，确认非法类型确实被规范化而不是残留。
-        initial = _fully_valid_gui_config()
-        initial["instruments"]["signal_generator"]["enabled"] = False
-        initial["instruments"]["power_supplies"]["PS1"]["enabled"] = False
-        page.apply_config(initial)
-        self.assertFalse(page.sg_enabled.isChecked())
-        self.assertFalse(page.ps1_enabled.isChecked())
-
         page.apply_config(
             {
                 "test_frequencies": ["invalid"],
@@ -1164,11 +1179,8 @@ class ConfigPageRunEntryTests(unittest.TestCase):
             }
         )
 
-        # 字符串不是合法文本值：地址回落到空串，布尔回落默认，数字回落基线。
-        self.assertEqual(page.sg_address.text(), "")
-        self.assertTrue(page.sg_enabled.isChecked())
-        self.assertEqual(page.ps1_address.text(), "")
-        self.assertTrue(page.ps1_enabled.isChecked())
+        # 字符串不是合法文本值：布尔回落默认，数字回落基线。仪器连接信息不由控件
+        # 编辑，也不在这里做类型容错，留给正式校验在连接前明确报告。
         self.assertTrue(page.driver_mode_requested())
         self.assertEqual(page.freq_edit.text(), "[4.0, 4.4, 4.8, 5.2, 5.6, 5.8]")
         self.assertEqual(page.pa_unit_count_combo.currentText(), "2")

@@ -18,20 +18,23 @@ from PySide6.QtWidgets import (
 
 from domain.instruments.models import make_device_key
 
-from .config_form_state import ConfigFormState
+from .config_form_state import (
+    ConfigFormState,
+    POWER_SUPPLY_NAMES,
+    bound_power_supplies,
+    binding_address,
+    effective_device_bindings,
+)
 from .config_projection import (
     DEFAULT_ATTENUATOR_TYPE,
     DEFAULT_COMPRESSION_TYPE,
     DEFAULT_DRIVER_MODE_ENABLED,
     DRIVER_POWER_SOURCE_VALUES,
-    DEFAULT_ENABLED_POWER_SUPPLIES,
     DEFAULT_MAX_INPUT_POWER,
     DEFAULT_PA_UNIT_COUNT,
     DEFAULT_POWER_ASSIGNMENT,
-    DEFAULT_POWER_SUPPLY_NAMES,
     DEFAULT_SIGNAL_SOURCE,
     DEFAULT_TEST_FREQUENCIES,
-    INSTRUMENT_ENTRIES,
     POWER_SUPPLY_ROLES,
     ConfigBackfillError,
     project_authoring_config,
@@ -63,17 +66,18 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         self.config = config if isinstance(config, dict) else {}
         # 设备身份绑定：角色（信号源/频谱仪/PS1..PS4）-> 发现到的设备身份。
         # 只记录用户明确应用过的设备；IP 变化时按序列号重新识别，不靠地址记忆。
-        self.device_bindings = {}
+        # 绑定是仪器连接的唯一来源；构建界面之前就要就位，扫描框初值才能取到已绑定
+        # 设备的网段，电源分配的可选项也由它决定。
+        self.device_bindings = effective_device_bindings(self.config)
         self._scanner_factory = scanner_factory
         self.build_ui()
         self._connect_signals()
         self.update_pa_unit_ui()
         self.update_driver_power_ui()
         self.update_power_supply_options()
-        self._dirty_baseline = copy.deepcopy(self.config)
-        bindings = self.config.get("device_bindings")
-        if isinstance(bindings, dict):
-            self.device_bindings = copy.deepcopy(bindings)
+        # 基线用组装结果而不是原始文档：旧配置迁移、绑定写入的启用状态都属于页面自身的
+        # 规范化结果，刚打开的页面不应显示为“已修改”。
+        self._dirty_baseline = copy.deepcopy(self.build_config(self.config))
         panel = getattr(self, "discovery_panel", None)
         if panel is not None:
             panel.set_device_bindings(self.device_bindings)
@@ -107,44 +111,16 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         root.addWidget(scroll)
         scroll.setWidget(content)
 
-        instruments = self.config.get("instruments", {})
-        if not isinstance(instruments, dict):
-            instruments = {}
-        supplies = instruments.get("power_supplies", {})
-        if not isinstance(supplies, dict):
-            supplies = {}
+        instruments = self.config.get("instruments")
+        instruments = instruments if isinstance(instruments, dict) else {}
+        supplies = instruments.get("power_supplies")
+        supplies = supplies if isinstance(supplies, dict) else {}
 
-        connection = QGroupBox("仪器连接配置")
-        grid = QGridLayout(connection)
-        grid.setColumnStretch(1, 1)
-        for row, (key, label, source, default) in enumerate(INSTRUMENT_ENTRIES):
-            item = instruments.get(source, {})
-            if not isinstance(item, dict): item = {}
-            address = QLineEdit(str(item.get("address", "")))
-            address.setMaximumWidth(260)
-            enabled = QCheckBox("启用")
-            enabled.setChecked(item.get("enabled", default))
-            setattr(self, f"{key}_address", address)
-            setattr(self, f"{key}_enabled", enabled)
-            grid.addWidget(QLabel(f"{label}地址:"), row, 0)
-            grid.addWidget(address, row, 1)
-            grid.addWidget(enabled, row, 2)
-        for row, name in enumerate(DEFAULT_POWER_SUPPLY_NAMES, 2):
-            item = supplies.get(name, {})
-            if not isinstance(item, dict): item = {}
-            address = QLineEdit(str(item.get("address", "")))
-            address.setMaximumWidth(260)
-            enabled = QCheckBox("启用")
-            enabled.setChecked(item.get("enabled", name in DEFAULT_ENABLED_POWER_SUPPLIES))
-            setattr(self, f"{name.lower()}_address", address)
-            setattr(self, f"{name.lower()}_enabled", enabled)
-            grid.addWidget(QLabel(f"{name}地址:"), row, 0)
-            grid.addWidget(address, row, 1)
-            grid.addWidget(enabled, row, 2)
-        self.connect_btn = QPushButton("连接仪器")
-        grid.addWidget(self.connect_btn, 6, 0, 1, 2)
-        left_column.addWidget(connection)
+        # 仪器连接配置只有一个入口：扫描设备后勾选。页面不再提供手工填写地址的控件，
+        # 连接地址只来自用户明确应用过的扫描结果。
         self._build_discovery_widget(left_column)
+        self.connect_btn = QPushButton("连接仪器")
+        left_column.addWidget(self.connect_btn)
 
         params = QGroupBox("测试参数配置")
         form = QGridLayout(params)
@@ -186,27 +162,22 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         right_column.addStretch(1)
 
     def _build_discovery_widget(self, layout):
-        """设备发现面板：扫描网段，勾选本次测试所需设备并写入地址控件。
+        """仪器连接配置：扫描网段，勾选本次测试所需设备并写入连接配置。
 
-        面板不改配置、不连接仪器；只有用户点击“应用所选设备到配置”时，本页才把发现到
-        的当前地址写入对应角色的地址框，并把设备身份（序列号）记进 :attr:`device_bindings`，
-        保存时随配置一起落盘，作为下次按身份重新识别设备的依据。
+        这是配置页上唯一的仪器连接入口，页面不再提供逐台填写地址的控件。面板不改配置、
+        不连接仪器；只有用户点击“应用所选设备到配置”时，本页才把发现到的当前地址与设备
+        身份（序列号）记进 :attr:`device_bindings`，保存时随配置一起落盘，作为下次按身份
+        重新识别设备的依据。
         """
         factory = self._scanner_factory
         if factory is None:
             from .composition import build_device_scanner_factory
 
             factory = build_device_scanner_factory()
-        default_subnet = None
-        for widget_name in ("sg_address", "sa_address"):
-            candidate = getattr(self, widget_name, None)
-            if candidate is not None:
-                default_subnet = subnet_from_address(candidate.text())
-                if default_subnet:
-                    break
         self.discovery_panel = DeviceDiscoveryPanel(
             scanner_factory=factory,
-            default_subnet=default_subnet,
+            default_subnet=self._default_scan_subnet(),
+            title="仪器连接配置",
             parent=self,
         )
         self.discovery_panel.apply_requested.connect(self.apply_discovered_devices)
@@ -214,19 +185,39 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         self.discovery_panel.log_message.connect(self.discovery_message.emit)
         layout.addWidget(self.discovery_panel)
 
+    def _default_scan_subnet(self):
+        """扫描框初值：优先已绑定设备的地址，其次配置里已有的仪器地址。"""
+        for record in self.device_bindings.values():
+            if not isinstance(record, dict):
+                continue
+            subnet = subnet_from_address(binding_address(record) or record.get("last_ip"))
+            if subnet:
+                return subnet
+        instruments = self.config.get("instruments")
+        instruments = instruments if isinstance(instruments, dict) else {}
+        supplies = instruments.get("power_supplies")
+        supplies = supplies if isinstance(supplies, dict) else {}
+        entries = [instruments.get("signal_generator"), instruments.get("spectrum_analyzer")]
+        entries.extend(supplies.values())
+        for item in entries:
+            if isinstance(item, dict):
+                subnet = subnet_from_address(item.get("address"))
+                if subnet:
+                    return subnet
+        return None
+
     def apply_discovered_devices(self, assignments):
-        """把面板勾选的设备写入地址控件与身份记录。
+        """把面板勾选的设备写成配置里的连接信息与身份记录。
 
         这是写入的最终边界，因此它自己的校验必须完整，不能只依赖面板的勾选校验：
         角色未知、角色重复、地址为空、缺少设备身份、身份与序列号不一致，任何一项都
         整批拒绝，不留下“一半已应用”的配置。
+
+        应用是**整批替换**：本次勾选结果就是完整的设备绑定，没勾选的旧角色会被移除并
+        随地址一起失效。这样“更换设备”不会残留上一台设备的连接，电源分配也不会再
+        指向一台本次没有选中的电源。
         """
-        role_widgets = {
-            "signal_generator": ("sg_address", "sg_enabled"),
-            "spectrum_analyzer": ("sa_address", "sa_enabled"),
-        }
-        for name in DEFAULT_POWER_SUPPLY_NAMES:
-            role_widgets[name] = (f"{name.lower()}_address", f"{name.lower()}_enabled")
+        valid_roles = {"signal_generator", "spectrum_analyzer", *POWER_SUPPLY_NAMES}
         entries = list(assignments or ())
         panel = getattr(self, "discovery_panel", None)
 
@@ -236,12 +227,16 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
                 panel.show_message(message)
             self.validation_failed.emit(message)
 
+        if not entries:
+            reject("请先在发现结果中勾选设备并指定测试角色")
+            return
+
         # 第一遍只看角色：未知角色与重复角色是“这一批要做什么”的问题，
         # 先报出来，避免用户看到的是地址/序列号之类更细节的错。
         used_roles: dict[str, str] = {}
         for item in entries:
             role = item.get("role")
-            if role not in role_widgets:
+            if role not in valid_roles:
                 reject(f"未知的测试角色: {role}")
                 return
             if role in used_roles:
@@ -251,7 +246,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
                 )
                 return
             used_roles[role] = str(item.get("ip") or "")
-        # 第二遍校验每条记录的地址与身份，全部通过后才写控件。
+        # 第二遍校验每条记录的地址与身份，全部通过后才写绑定记录。
         for item in entries:
             role = item["role"]
             address = item.get("address")
@@ -275,14 +270,11 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
                         f"{role} 的设备身份与序列号不一致（{device_key} ≠ {expected}），未应用"
                     )
                     return
+        bindings = {}
         applied = []
         for item in entries:
             role = item["role"]
-            address_widget = getattr(self, role_widgets[role][0])
-            enabled_widget = getattr(self, role_widgets[role][1])
-            address_widget.setText(item["address"].strip())
-            enabled_widget.setChecked(True)
-            self.device_bindings[role] = {
+            bindings[role] = {
                 "name": item.get("name"),
                 "vendor": item.get("vendor"),
                 "model": item.get("model"),
@@ -297,10 +289,14 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
                 "source": "simulated" if item.get("simulated") else "scan",
             }
             applied.append(f"{role}<-{item.get('name') or item.get('ip')}")
+        removed = sorted(set(self.device_bindings) - set(bindings))
+        self.device_bindings = bindings
         self.update_power_supply_options()
         if panel is not None:
             panel.set_device_bindings(self.device_bindings)
-        message = "已应用发现设备: " + "，".join(applied) if applied else "未应用任何发现设备"
+        message = "已应用发现设备: " + "，".join(applied)
+        if removed:
+            message += "；已移除本次未勾选的旧绑定: " + "、".join(removed)
         if any(item.get("simulated") for item in entries):
             message += "（模拟数据，仅用于离线演示，不能用于真实测量）"
         if panel is not None:
@@ -308,12 +304,17 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         self.discovery_message.emit(message)
 
     def clear_device_bindings(self):
-        """清除角色与设备身份的绑定；地址控件不动，由用户自己决定是否保留。"""
+        """清除全部设备绑定，并让这些角色的连接信息同时失效。
+
+        绑定是唯一的连接来源，所以清除后对应仪器在保存的配置里变成“未启用、无地址”。
+        若只删绑定记录、把旧地址留在配置里，界面看起来已经断开，连接却仍会打到旧设备。
+        """
         self.device_bindings = {}
         panel = getattr(self, "discovery_panel", None)
         if panel is not None:
             panel.set_device_bindings({})
-            panel.show_message("已清除设备绑定记录；地址保持不变")
+            panel.show_message("已清除设备绑定；相关仪器地址与启用状态一并失效，请重新扫描应用")
+        self.update_power_supply_options()
         self.discovery_message.emit("已清除设备绑定记录")
 
     @staticmethod
@@ -332,7 +333,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         detail = QGroupBox("电源详细配置")
         detail_layout = QVBoxLayout(detail)
         tabs = QTabWidget(); self.power_config_widgets = {}
-        for name in DEFAULT_POWER_SUPPLY_NAMES:
+        for name in POWER_SUPPLY_NAMES:
             page = QWidget(); page_layout = QVBoxLayout(page)
             source = supplies.get(name, {})
             if not isinstance(source, dict): source = {}
@@ -387,7 +388,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         carrier = dut_supply.get("carrier", {}) if isinstance(dut_supply.get("carrier", {}), dict) else {}
         peaking = dut_supply.get("peaking", {}) if isinstance(dut_supply.get("peaking", {}), dict) else {}
         peaking2 = dut_supply.get("peaking2", {}) if isinstance(dut_supply.get("peaking2", {}), dict) else {}
-        supplies_choices = DEFAULT_POWER_SUPPLY_NAMES
+        supplies_choices = POWER_SUPPLY_NAMES
         self.driver_power_combo = self._combo(supplies_choices, main.get("name", DEFAULT_POWER_ASSIGNMENT["driver_power"]))
         self.pa_unit1_power_combo = self._combo(supplies_choices, carrier.get("name", DEFAULT_POWER_ASSIGNMENT["pa_unit1_power"]))
         self.pa_unit2_power_combo = self._combo(supplies_choices, peaking.get("name", DEFAULT_POWER_ASSIGNMENT["pa_unit2_power"]))
@@ -437,8 +438,6 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         self.return_welcome_btn.clicked.connect(self.return_welcome_requested.emit)
         self.pa_unit_count_combo.currentTextChanged.connect(self.on_pa_unit_count_changed)
         self.driver_power_source_combo.currentTextChanged.connect(self.on_driver_power_toggled)
-        for name in ("ps1", "ps2", "ps3", "ps4"):
-            getattr(self, f"{name}_enabled").toggled.connect(self.on_instrument_enabled_changed)
 
     def request_save(self):
         if self.validate(): self.save_requested.emit()
@@ -486,9 +485,14 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         self.driver_power_combo.setEnabled(enabled); self.driver_power_label.setEnabled(enabled)
         self.driver_power_hint.setVisible(self.test_mode_enabled and not enabled)
         if not enabled: self.driver_power_combo.setCurrentIndex(-1)
-    def on_instrument_enabled_changed(self, _checked=False): self.update_power_supply_options()
     def get_enabled_power_supplies(self):
-        return [name for name in DEFAULT_POWER_SUPPLY_NAMES if getattr(self, f"{name.lower()}_enabled").isChecked()]
+        """电源分配里可选的电源：只来自当前已应用的设备绑定。
+
+        “启用”不再由界面上的勾选框决定：``instruments.power_supplies.<name>.enabled``
+        由绑定写入，因此可选项与保存出的配置使用同一个来源，不存在“界面能选、配置里
+        却未启用”的错位。
+        """
+        return bound_power_supplies(self.device_bindings)
     def update_power_supply_options(self):
         enabled = self.get_enabled_power_supplies()
         for key in ("driver_power", "pa_unit1_power", "pa_unit2_power", "pa_unit3_power"):
@@ -503,8 +507,8 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         """
         base_config = self.config if base is None else base
         config = ConfigFormState(base_config, self).build_config()
-        # 设备身份绑定随配置一起保存：角色 -> 序列号等稳定标识。地址仍写在各仪器
-        # 的 address 字段里（当前测量链路按地址连接），身份用于下次扫描时按序列号
+        # 设备身份绑定随配置一起保存：角色 -> 序列号等稳定标识。各仪器的 address 由
+        # 绑定里的当前地址写入（当前测量链路按地址连接），身份用于下次扫描时按序列号
         # 重新识别同一台设备，而不是依赖可能变化的 IP。
         if self.device_bindings:
             config["device_bindings"] = copy.deepcopy(self.device_bindings)
@@ -556,16 +560,19 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         :func:`presentation.qt.configuration_authoring.author_official_configuration`
         生成，本页面不读取也不解释它们。
         """
-        projected = project_authoring_config(self, config)
-        self.update_pa_unit_ui()
-        self.update_driver_power_ui()
-        self.update_power_supply_options()
-        # 全部投影成功后再提交文档副本（project_authoring_config 返回深拷贝）。
+        # 先算绑定，再用它决定电源分配的可选项：投影不允许把配置引用的电源临时塞进
+        # 下拉框，否则一份指向“没有绑定设备”的电源配置会被静默保存下来。
+        bindings = effective_device_bindings(config)
+        projected = project_authoring_config(
+            self, config, supplies=bound_power_supplies(bindings)
+        )
         self.config = projected
-        bindings = projected.get("device_bindings")
-        self.device_bindings = copy.deepcopy(bindings) if isinstance(bindings, dict) else {}
+        self.device_bindings = bindings
         panel = getattr(self, "discovery_panel", None)
         if panel is not None:
             panel.set_device_bindings(self.device_bindings)
             panel.clear_results()
+        self.update_pa_unit_ui()
+        self.update_driver_power_ui()
+        self.update_power_supply_options()
         self._dirty_baseline = copy.deepcopy(self.build_config(self.config))

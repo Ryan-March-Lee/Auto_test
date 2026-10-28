@@ -935,7 +935,8 @@ class ProductionDependencyTests(unittest.TestCase):
         page_source = (ROOT / "presentation" / "qt" / "config_page.py").read_text(
             encoding="utf-8-sig"
         )
-        self.assertIn("project_authoring_config(self, config)", page_source)
+        self.assertIn("project_authoring_config(", page_source)
+        self.assertIn("supplies=bound_power_supplies(", page_source)
         tree = _tree(ROOT / "presentation" / "qt" / "config_page.py")
         page = _class_node(tree, "ConfigPage")
         page_methods = {

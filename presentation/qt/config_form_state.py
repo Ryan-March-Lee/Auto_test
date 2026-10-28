@@ -1,13 +1,22 @@
 """纯 Python 配置表单状态适配器。
 
 该模块只依赖控件的最小读取协议（``text``、``value``、``isChecked`` 和
-``currentText``），因此可以在没有 QApplication 的情况下测试配置组装。
+``currentText``），以及页面持有的 ``device_bindings``（仪器连接的唯一来源），
+因此可以在没有 QApplication 的情况下测试配置组装。
 """
 
 import ast
 import copy
 import math
 from typing import Any, Mapping
+
+# 仪器连接只由设备发现结果决定：角色由用户在发现结果表里显式指定，地址来自该设备的
+# 当前 VISA 地址。下表是配置文档里的角色键，不是界面控件名。
+INSTRUMENT_ROLES = ("signal_generator", "spectrum_analyzer")
+POWER_SUPPLY_NAMES = ("PS1", "PS2", "PS3", "PS4")
+# 旧配置只有 ``instruments.<角色>.address``、没有绑定记录。迁移时用这个来源标记，
+# 表示“地址来自已保存的配置，尚未经过设备发现确认”，与 ``scan`` / ``simulated`` 分开。
+LEGACY_BINDING_SOURCE = "legacy_config"
 
 
 def parse_frequency_text(value: str) -> list[float] | None:
@@ -31,6 +40,97 @@ def parse_frequency_text(value: str) -> list[float] | None:
 
 def _dict_copy(value: Any) -> dict:
     return copy.deepcopy(value) if isinstance(value, dict) else {}
+
+
+def binding_address(binding: Any) -> str:
+    """返回绑定记录里的连接地址；记录缺失或地址不是文本时返回空串。"""
+    if not isinstance(binding, Mapping):
+        return ""
+    address = binding.get("visa_address")
+    return address.strip() if isinstance(address, str) else ""
+
+
+def _binding_records(bindings: Any) -> dict[str, dict]:
+    if not isinstance(bindings, Mapping):
+        return {}
+    return {
+        str(role): copy.deepcopy(dict(record))
+        for role, record in bindings.items()
+        if isinstance(record, Mapping)
+    }
+
+
+def _legacy_device_bindings(instruments: Mapping[str, Any]) -> dict[str, dict]:
+    """把只有地址的旧配置迁移成绑定记录。
+
+    只迁移“启用且地址非空”的仪器：禁用项不会被迁移动作重新启用。迁移记录没有序列号
+    与 ``device_key``，因此下一次扫描不会按身份预选，面板会把它显示为“沿用已保存的
+    地址，未扫描确认”。
+    """
+    supplies = instruments.get("power_supplies")
+    supplies = supplies if isinstance(supplies, Mapping) else {}
+    entries = [(role, instruments.get(role)) for role in INSTRUMENT_ROLES]
+    entries.extend(supplies.items())
+    bindings: dict[str, dict] = {}
+    for role, item in entries:
+        if not isinstance(item, Mapping):
+            continue
+        address = item.get("address")
+        if not isinstance(address, str) or not address.strip():
+            continue
+        if item.get("enabled") is False:
+            continue
+        bindings[str(role)] = {
+            "name": None,
+            "vendor": None,
+            "model": item.get("model"),
+            "serial": None,
+            "device_key": None,
+            "visa_address": address.strip(),
+            "last_ip": None,
+            "last_port": None,
+            "known": False,
+            "source": LEGACY_BINDING_SOURCE,
+        }
+    return bindings
+
+
+def effective_device_bindings(config: Any) -> dict[str, dict]:
+    """返回一份配置里的有效设备绑定，作为仪器连接的唯一来源。
+
+    配置带 ``device_bindings`` 时以它为准（即使为空——用户清除过绑定）；缺少该键的旧
+    配置才按 ``instruments.<角色>.address`` 做一次性迁移。迁移只发生在这里，之后保存
+    的配置都带显式绑定记录，不会因为“地址还在”而重新变回可连接状态。
+    """
+    if not isinstance(config, Mapping):
+        return {}
+    bindings = config.get("device_bindings")
+    if isinstance(bindings, Mapping):
+        return _binding_records(bindings)
+    instruments = config.get("instruments")
+    instruments = instruments if isinstance(instruments, Mapping) else {}
+    return _legacy_device_bindings(instruments)
+
+
+def bound_power_supplies(bindings: Any) -> list[str]:
+    """返回已绑定设备的电源名称，按 PS1..PS4 的稳定顺序。"""
+    records = _binding_records(bindings)
+    return [name for name in POWER_SUPPLY_NAMES if binding_address(records.get(name))]
+
+
+def _apply_device_binding(item: dict, binding: Any) -> None:
+    """按绑定记录写出配置项的连接状态。
+
+    绑定是唯一连接来源：没有可用地址时清空地址并显式禁用，用户清除绑定后旧地址不会
+    继续留在配置里冒充可连接设备；通道、模型、扩展字段等非连接字段保持不变。
+    显式禁用也是正式校验的要求——``instruments.signal_generator`` 缺省为“启用”，只清
+    地址不置 ``enabled: false`` 会让一份未连接设备的配置无法通过校验。
+    """
+    item.pop("address", None)
+    address = binding_address(binding)
+    item["enabled"] = bool(address)
+    if address:
+        item["address"] = address
 
 
 class ConfigFormState:
@@ -61,6 +161,50 @@ class ConfigFormState:
         if parse_frequency_text(self._text(self.widgets.freq_edit)) is None:
             errors.append("测试频率必须是非空数字列表")
         errors.extend(self._power_role_errors())
+        errors.extend(self._power_assignment_errors())
+        return errors
+
+    def _power_assignment_errors(self) -> list[str]:
+        """电源分配只能引用已应用设备的电源；未绑定的引用必须显式失败。
+
+        电源是否可用不再看界面上的“启用”勾选框，而看设备绑定——与保存出的
+        ``instruments.power_supplies.<name>.enabled`` 完全同源。因此这里能提前拦住
+        “分配指向一台已经不存在的电源”的配置，而不是等保存/连接时才失败。
+        """
+        controls = getattr(self.widgets, "power_assignment_widgets", None)
+        if not controls:
+            return []
+        bindings = getattr(self.widgets, "device_bindings", None)
+        bindings = bindings if isinstance(bindings, Mapping) else {}
+        fragment = self.read_power_assignment()
+        assignment = fragment.get("power_supply_assignment")
+        assignment = assignment if isinstance(assignment, Mapping) else {}
+        unselected: list[str] = []
+        unbound: list[str] = []
+        for group, label in (
+            ("driver_amplifier", "驱动功放"),
+            ("dut_amplifier", "DUT"),
+        ):
+            group_entry = assignment.get(group)
+            group_entry = group_entry if isinstance(group_entry, Mapping) else {}
+            supplies = group_entry.get("supplies")
+            supplies = supplies if isinstance(supplies, Mapping) else {}
+            for role, item in supplies.items():
+                name = item.get("name") if isinstance(item, Mapping) else ""
+                name = name.strip() if isinstance(name, str) else ""
+                if not name:
+                    unselected.append(f"{label}({role})")
+                elif not binding_address(bindings.get(name)):
+                    unbound.append(f"{label}({role}) → {name}")
+        errors = []
+        if unselected:
+            errors.append(
+                f"{'、'.join(unselected)} 未选择电源：请先在“仪器连接配置”中应用电源设备"
+            )
+        if unbound:
+            errors.append(
+                f"{'、'.join(unbound)} 引用的电源没有已应用的设备，不能保存或运行"
+            )
         return errors
 
     def _power_role_errors(self) -> list[str]:
@@ -80,18 +224,24 @@ class ConfigFormState:
         return errors
 
     def read_instrument_config(self) -> dict:
-        w = self.widgets
+        """按设备发现结果写出仪器连接信息。
+
+        连接配置的唯一来源是 :attr:`widgets.device_bindings`（角色 -> 已应用设备）：
+        绑定了设备的角色写入该设备的当前地址并标记启用；没有绑定的角色一律清空地址
+        并标记为未启用，不再沿用配置里遗留的地址——否则“清除绑定”只是隐藏了入口，
+        旧设备仍会被连接。
+        """
         instruments = _dict_copy(self.config.get("instruments"))
         supplies = _dict_copy(instruments.get("power_supplies"))
-        for name in ("PS1", "PS2", "PS3", "PS4"):
+        bindings = getattr(self.widgets, "device_bindings", None)
+        bindings = bindings if isinstance(bindings, Mapping) else {}
+        for name in POWER_SUPPLY_NAMES:
             item = _dict_copy(supplies.get(name))
-            item["address"] = self._text(getattr(w, f"{name.lower()}_address"))
-            item["enabled"] = self._checked(getattr(w, f"{name.lower()}_enabled"))
+            _apply_device_binding(item, bindings.get(name))
             supplies[name] = item
-        for name in ("signal_generator", "spectrum_analyzer"):
+        for name in INSTRUMENT_ROLES:
             item = _dict_copy(instruments.get(name))
-            item["address"] = self._text(getattr(w, "sg_address" if name == "signal_generator" else "sa_address"))
-            item["enabled"] = self._checked(getattr(w, "sg_enabled" if name == "signal_generator" else "sa_enabled"))
+            _apply_device_binding(item, bindings.get(name))
             instruments[name] = item
         instruments["power_supplies"] = supplies
         return {"instruments": instruments}

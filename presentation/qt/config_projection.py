@@ -11,6 +11,10 @@
 
 - 配置页不再持有逐字段的类型容错/回填逻辑，只负责控件接线与用户意图转发；
 - 投影只认识配置编写文档的字段名，不读取任何旧字段别名，也不做旧格式推断；
+- ``instruments`` 不由控件编辑（仪器连接只来自设备发现结果），因此投影只携带它，
+  不把它写到控件上；
+- 电源分配的可选项由调用方按设备绑定传入（``supplies``）：配置引用了未绑定的电源时
+  选择保持为空，由校验报告，绝不为未知电源临时补一个下拉选项；
 - 失败必须可识别：非 JSON 对象输入抛出 :class:`ConfigBackfillError`，不会被静默当作
   回填成功；缺失或类型不正确的字段落到明确默认值，绝不残留上一次运行的显示状态。
 
@@ -38,13 +42,6 @@ DRIVER_POWER_SOURCE_LABELS = {"dc_supply": "直流电源", "external_ac": "自�
 DRIVER_POWER_SOURCE_VALUES = tuple(DRIVER_POWER_SOURCE_LABELS.values())
 DEFAULT_MAX_INPUT_POWER = 33.5
 DEFAULT_PA_UNIT_COUNT = "2"
-DEFAULT_ENABLED_POWER_SUPPLIES = ("PS1", "PS2")
-DEFAULT_POWER_SUPPLY_NAMES = ("PS1", "PS2", "PS3", "PS4")
-# (控件前缀, 中文标签, 配置键, 默认启用) —— 同时供页面构建与投影使用。
-INSTRUMENT_ENTRIES = (
-    ("sg", "信号发生器", "signal_generator", True),
-    ("sa", "频谱分析仪", "spectrum_analyzer", True),
-)
 # 电源分配组合框的默认映射，重置时逐项恢复。
 DEFAULT_POWER_ASSIGNMENT = {
     "driver_power": "PS1",
@@ -97,7 +94,58 @@ def set_combo(combo, value) -> None:
         combo.setCurrentText(text)
 
 
-def project_authoring_config(widgets: Any, config: Any) -> dict[str, Any]:
+def _supply_options(supplies) -> list[str] | None:
+    """规范化电源可选项；``None`` 表示“调用方没有给出绑定信息”，不要改动选项。"""
+    if supplies is None:
+        return None
+    options: list[str] = []
+    for name in supplies:
+        text = str(name or "").strip()
+        if text and text not in options:
+            options.append(text)
+    return options
+
+
+def _set_combo_items(combo, items) -> None:
+    """按给定选项重建组合框。
+
+    电源分配的可选项来自设备绑定，重建可以清掉上一次投影留下的、已经不再绑定的电源；
+    组合框里不应存在用户看不见来源的选项。
+    """
+    combo.clear()
+    combo.addItems(list(items))
+
+
+def _default_supply(key: str, options: list[str] | None) -> str:
+    """默认电源：优先沿用表单默认值，其次第一个可选电源。"""
+    default = DEFAULT_POWER_ASSIGNMENT[key]
+    if options is None:
+        return default
+    if not options:
+        return ""
+    return default if default in options else options[0]
+
+
+def _assign_supply(combo, name, key: str, options: list[str] | None) -> None:
+    """把一条电源分配写到组合框。
+
+    配置里显式写出的电源必须真实存在于可选项里；不存在时清空选择，由校验明确报告，
+    而不是临时把未知电源补进下拉框、让一份连不上硬件的配置看起来合法。
+    """
+    explicit = text_or_empty(name).strip()
+    if explicit:
+        target = explicit if options is None or explicit in options else ""
+    else:
+        target = _default_supply(key, options)
+    if target:
+        set_combo(combo, target)
+    else:
+        combo.setCurrentIndex(-1)
+
+
+def project_authoring_config(
+    widgets: Any, config: Any, *, supplies: Any = None
+) -> dict[str, Any]:
     """把一份已冻结的配置编写文档确定性地投影到控件，返回文档副本。
 
     执行顺序固定：先把所有受控控件重置到空配置基线，再逐字段投影文档内容。缺失或
@@ -107,35 +155,28 @@ def project_authoring_config(widgets: Any, config: Any) -> dict[str, Any]:
 
     只更新控件显示，不写文件、不保存、不连接仪器；调用方负责在投影成功后刷新派生
     界面状态（单元/驱动模式可见性、电源选项）并提交自己的文档副本。
+
+    仪器连接（``instruments``）不由控件编辑，也就不在这里投影：它由设备发现结果
+    （``device_bindings``）决定写入地址，页面只负责把绑定记录交给发现面板。
+
+    ``supplies`` 是当前已绑定设备的电源名称（``None`` 表示调用方不做约束）。给了它，
+    电源分配组合框的可选项就被限制在这份列表里，配置引用了未绑定的电源时选择保持为空。
     """
     if not isinstance(config, dict):
         raise ConfigBackfillError(
             "冻结配置必须是 JSON 对象（dict），无法确定性地回填配置页"
         )
-    reset_control_widgets(widgets)
-    _apply_instrument_widgets(widgets, config.get("instruments"))
+    reset_control_widgets(widgets, supplies=supplies)
     _apply_test_parameter_widgets(widgets, config)
     _apply_power_supply_widgets(widgets, config.get("instruments"))
-    _apply_power_assignment_widgets(widgets, config.get("power_supply_assignment"))
+    _apply_power_assignment_widgets(
+        widgets, config.get("power_supply_assignment"), supplies=supplies
+    )
     return copy.deepcopy(config)
 
 
-def reset_control_widgets(widgets: Any) -> None:
+def reset_control_widgets(widgets: Any, *, supplies: Any = None) -> None:
     """把所有受控控件重置到空配置基线，消除上一次运行的残留值。"""
-    for name, _label, _source, default_enabled in INSTRUMENT_ENTRIES:
-        address = getattr(widgets, f"{name}_address", None)
-        if address is not None:
-            address.setText("")
-        enabled = getattr(widgets, f"{name}_enabled", None)
-        if enabled is not None:
-            enabled.setChecked(bool(default_enabled))
-    for name in DEFAULT_POWER_SUPPLY_NAMES:
-        address = getattr(widgets, f"{name.lower()}_address", None)
-        if address is not None:
-            address.setText("")
-        enabled = getattr(widgets, f"{name.lower()}_enabled", None)
-        if enabled is not None:
-            enabled.setChecked(name in DEFAULT_ENABLED_POWER_SUPPLIES)
     widgets.freq_edit.setText(str(list(DEFAULT_TEST_FREQUENCIES)))
     widgets.start_power.setValue(DEFAULT_SIGNAL_SOURCE["start_power"])
     widgets.stop_power.setValue(DEFAULT_SIGNAL_SOURCE["stop_power"])
@@ -148,7 +189,7 @@ def reset_control_widgets(widgets: Any) -> None:
     widgets.max_input_power.setValue(DEFAULT_MAX_INPUT_POWER)
     set_combo(widgets.pa_unit_count_combo, DEFAULT_PA_UNIT_COUNT)
     _reset_power_supply_channels(widgets)
-    _reset_power_assignment_widgets(widgets)
+    _reset_power_assignment_widgets(widgets, supplies=supplies)
 
 
 def _reset_power_supply_channels(widgets: Any) -> None:
@@ -163,42 +204,24 @@ def _reset_power_supply_channels(widgets: Any) -> None:
             )
 
 
-def _reset_power_assignment_widgets(widgets: Any) -> None:
+def _reset_power_assignment_widgets(widgets: Any, *, supplies: Any = None) -> None:
     controls = getattr(widgets, "power_assignment_widgets", {})
     if not controls:
         return
     if "driver_source" in controls:
         set_combo(controls["driver_source"], "直流电源")
-    for key, default in DEFAULT_POWER_ASSIGNMENT.items():
-        set_combo(controls[key], default)
-
-
-def _apply_instrument_widgets(widgets: Any, instruments: Any) -> None:
-    instruments = instruments if isinstance(instruments, dict) else {}
-    supplies = instruments.get("power_supplies")
-    supplies = supplies if isinstance(supplies, dict) else {}
-    for name, _label, source, default_enabled in INSTRUMENT_ENTRIES:
-        item = instruments.get(source)
-        item = item if isinstance(item, dict) else {}
-        address = getattr(widgets, f"{name}_address", None)
-        if address is not None:
-            address.setText(text_or_empty(item.get("address")))
-        enabled = getattr(widgets, f"{name}_enabled", None)
-        if enabled is not None:
-            enabled.setChecked(
-                bool_or_default(item.get("enabled"), bool(default_enabled))
-            )
-    for name in DEFAULT_POWER_SUPPLY_NAMES:
-        item = supplies.get(name)
-        item = item if isinstance(item, dict) else {}
-        address = getattr(widgets, f"{name.lower()}_address", None)
-        if address is not None:
-            address.setText(text_or_empty(item.get("address")))
-        enabled = getattr(widgets, f"{name.lower()}_enabled", None)
-        if enabled is not None:
-            enabled.setChecked(
-                bool_or_default(item.get("enabled"), name in DEFAULT_ENABLED_POWER_SUPPLIES)
-            )
+    options = _supply_options(supplies)
+    for key in DEFAULT_POWER_ASSIGNMENT:
+        combo = controls.get(key)
+        if combo is None:
+            continue
+        if options is not None:
+            _set_combo_items(combo, options)
+        target = _default_supply(key, options)
+        if target:
+            set_combo(combo, target)
+        else:
+            combo.setCurrentIndex(-1)
 
 
 def _apply_test_parameter_widgets(widgets: Any, config: Mapping[str, Any]) -> None:
@@ -275,7 +298,9 @@ def _apply_channel_widgets(controls: Mapping[str, Any], values: Mapping[str, Any
         controls[key].setChecked(bool_or_default(value, False))
 
 
-def _apply_power_assignment_widgets(widgets: Any, assignment: Any) -> None:
+def _apply_power_assignment_widgets(
+    widgets: Any, assignment: Any, *, supplies: Any = None
+) -> None:
     assignment = assignment if isinstance(assignment, dict) else {}
     driver = assignment.get("driver_amplifier")
     driver = driver if isinstance(driver, dict) else {}
@@ -284,6 +309,7 @@ def _apply_power_assignment_widgets(widgets: Any, assignment: Any) -> None:
     controls = getattr(widgets, "power_assignment_widgets", {})
     if not controls:
         return
+    options = _supply_options(supplies)
     driver_supplies = driver.get("supplies")
     driver_supplies = driver_supplies if isinstance(driver_supplies, dict) else {}
     main = driver_supplies.get("main")
@@ -291,19 +317,13 @@ def _apply_power_assignment_widgets(widgets: Any, assignment: Any) -> None:
     count = number_or_none(driver.get("power_supply_count"))
     if "driver_source" in controls:
         set_combo(controls["driver_source"], "直流电源" if count is not None and count > 0 else "自带供电")
-    set_combo(
-        controls["driver_power"],
-        text_or_empty(main.get("name")) or DEFAULT_POWER_ASSIGNMENT["driver_power"],
-    )
+    _assign_supply(controls["driver_power"], main.get("name"), "driver_power", options)
     dut_supplies = dut.get("supplies")
     dut_supplies = dut_supplies if isinstance(dut_supplies, dict) else {}
     for role, key in _ASSIGNMENT_ROLE_KEYS:
         item = dut_supplies.get(role)
         item = item if isinstance(item, dict) else {}
-        set_combo(
-            controls[key],
-            text_or_empty(item.get("name")) or DEFAULT_POWER_ASSIGNMENT[key],
-        )
+        _assign_supply(controls[key], item.get("name"), key, options)
 
 
 __all__ = [
@@ -313,14 +333,11 @@ __all__ = [
     "DEFAULT_DRIVER_MODE_ENABLED",
     "DRIVER_POWER_SOURCE_LABELS",
     "DRIVER_POWER_SOURCE_VALUES",
-    "DEFAULT_ENABLED_POWER_SUPPLIES",
     "DEFAULT_MAX_INPUT_POWER",
     "DEFAULT_PA_UNIT_COUNT",
     "DEFAULT_POWER_ASSIGNMENT",
-    "DEFAULT_POWER_SUPPLY_NAMES",
     "DEFAULT_SIGNAL_SOURCE",
     "DEFAULT_TEST_FREQUENCIES",
-    "INSTRUMENT_ENTRIES",
     "POWER_SUPPLY_ROLES",
     "project_authoring_config",
     "reset_control_widgets",

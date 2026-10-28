@@ -103,6 +103,21 @@ class _Combo:
     def findText(self, text):
         return self.items.index(text) if text in self.items else -1
 
+    def addItem(self, text):
+        if text not in self.items:
+            self.items.append(text)
+
+    def addItems(self, items):
+        for item in items:
+            self.addItem(item)
+
+    def clear(self):
+        self.items.clear()
+        self.current = None
+
+    def setCurrentIndex(self, index):
+        self.current = self.items[index] if 0 <= index < len(self.items) else None
+
     def setCurrentText(self, text):
         if self.findText(text) >= 0:
             self.current = text
@@ -115,9 +130,6 @@ class FakeForm:
     """配置页控件的最小读取/写入协议替身。"""
 
     def __init__(self):
-        for name in ("sg", "sa", "ps1", "ps2", "ps3", "ps4"):
-            setattr(self, f"{name}_address", _Text())
-            setattr(self, f"{name}_enabled", _Check())
         self.freq_edit = _Text()
         self.start_power = _Value()
         self.stop_power = _Value()
@@ -197,9 +209,6 @@ class ConfigProjectionTests(unittest.TestCase):
         self.assertEqual(form.start_power.value(), -30.0)
         self.assertEqual(form.compression_combo.currentText(), "3dB")
         self.assertEqual(form.pa_unit_count_combo.currentText(), "3")
-        self.assertEqual(form.sg_address.text(), "sim::sg2")
-        self.assertFalse(form.sg_enabled.isChecked())
-        self.assertEqual(form.ps1_address.text(), "sim::ps1")
         channel = form.power_config_widgets["PS1"]["channels"]["CH1"]
         self.assertEqual(channel["role"].currentText(), "gate")
         self.assertEqual(channel["voltage"].value(), 3.3)
@@ -217,9 +226,65 @@ class ConfigProjectionTests(unittest.TestCase):
         self.assertEqual(
             form.power_assignment_widgets["pa_unit1_power"].currentText(), "PS3"
         )
+        # 仪器连接不由控件编辑：投影只把文档原样带回，交给页面与发现面板处理。
+        self.assertEqual(
+            projected["instruments"]["signal_generator"]["address"], "sim::sg2"
+        )
         # 返回值是独立副本：调用方持有自己的文档，不与控件或入参共享结构。
         projected["test_frequencies"].append(9.9)
         self.assertEqual(form.freq_edit.text(), "[2.4, 2.6]")
+
+    def test_projection_restricts_power_options_to_bound_supplies(self):
+        """可选项来自设备绑定：未绑定的电源既不会被选中，也不会被补进下拉框。"""
+        form = FakeForm()
+
+        project_authoring_config(
+            form,
+            {
+                "test_frequencies": [2.4],
+                "dut_config": {"power_supply_count": 2},
+                "power_supply_assignment": {
+                    "driver_amplifier": {
+                        "power_supply_count": 1,
+                        "supplies": {"main": {"name": "PS2"}},
+                    },
+                    "dut_amplifier": {
+                        "supplies": {
+                            "carrier": {"name": "PS1"},
+                            "peaking": {"name": "PS3"},
+                        }
+                    },
+                },
+            },
+            supplies=["PS1"],
+        )
+
+        controls = form.power_assignment_widgets
+        self.assertEqual(controls["driver_power"].items, ["PS1"])
+        self.assertEqual(controls["pa_unit1_power"].currentText(), "PS1")
+        # 显式引用未绑定的 PS2/PS3：保持空选择，交给校验报告，而不是临时补选项。
+        self.assertIsNone(controls["driver_power"].currentText())
+        self.assertIsNone(controls["pa_unit2_power"].currentText())
+
+    def test_projection_uses_the_first_bound_supply_when_assignment_is_missing(self):
+        form = FakeForm()
+
+        project_authoring_config(
+            form, {"test_frequencies": [2.4]}, supplies=["PS3", "PS4"]
+        )
+
+        controls = form.power_assignment_widgets
+        self.assertEqual(controls["pa_unit1_power"].items, ["PS3", "PS4"])
+        self.assertEqual(controls["pa_unit1_power"].currentText(), "PS3")
+
+    def test_projection_without_bindings_leaves_power_assignment_empty(self):
+        form = FakeForm()
+
+        project_authoring_config(form, {"test_frequencies": [2.4]}, supplies=[])
+
+        controls = form.power_assignment_widgets
+        self.assertEqual(controls["driver_power"].items, [])
+        self.assertIsNone(controls["driver_power"].currentText())
 
     def test_projection_resets_before_applying(self):
         form = FakeForm()
@@ -242,8 +307,6 @@ class ConfigProjectionTests(unittest.TestCase):
         self.assertEqual(form.attenuator_combo.currentText(), DEFAULT_ATTENUATOR_TYPE)
         self.assertEqual(form.pa_unit_count_combo.currentText(), DEFAULT_PA_UNIT_COUNT)
         self.assertEqual(form.max_input_power.value(), DEFAULT_MAX_INPUT_POWER)
-        self.assertEqual(form.sg_address.text(), "")
-        self.assertTrue(form.sg_enabled.isChecked())
 
     def test_legacy_field_names_are_ignored(self):
         """投影只认识编写文档字段：旧字段别名不会被当成配置来源。"""
@@ -290,7 +353,8 @@ class ConfigPageOwnershipTests(unittest.TestCase):
     def test_config_page_delegates_apply_config_to_the_projection(self):
         source = PAGE_SOURCE.read_text(encoding="utf-8")
 
-        self.assertIn("project_authoring_config(self, config)", source)
+        self.assertIn("project_authoring_config(", source)
+        self.assertIn("self, config, supplies=", source)
         self.assertIn("from .config_projection import", source)
 
     def test_config_page_and_projection_do_not_interpret_the_formal_schema(self):

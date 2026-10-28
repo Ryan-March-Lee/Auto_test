@@ -222,7 +222,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `presentation.qt.assistant.chat_worker` | 助手后台 worker：线程边界把助手异常转成 `error_occurred` 信号 |
 | `presentation.qt.config_form_state` | 配置表单状态 |
 | `presentation.qt.config_page` | 配置页面（编辑配置编写文档；向协调器提供 `ConfigurationPagePort` 窄接口） |
-| `presentation.qt.device_discovery_panel` | 设备发现面板：扫描网段、展示已登记/未登记/无法识别三类结果、按测试角色勾选并应用、清除设备绑定；扫描线程只读探测，不改配置也不连接仪器 |
+| `presentation.qt.device_discovery_panel` | 仪器连接配置框（设备发现）：扫描网段、展示已登记/未登记/无法识别三类结果、按测试角色勾选并应用、显示当前已绑定设备、清除设备绑定；扫描线程只读探测，不改配置也不连接仪器 |
 | `presentation.qt.config_projection` | 配置编写文档（authoring document）到配置页控件的确定性投影：重置、逐字段投影、非法类型回落；正式 `test_plan` / `run_mapping` 只由 `configuration_authoring` 生成 |
 | `presentation.qt.configuration_authoring` | 配置页保存时的正式运行配置编写 |
 | `presentation.qt.connection_diagrams` | 连接图渲染 |

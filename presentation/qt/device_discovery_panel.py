@@ -5,7 +5,7 @@
 - 面板只负责界面与扫描线程生命周期；扫描实现由 ``scanner_factory(mode)`` 注入，
   因此离线测试与现场扫描共用同一套界面逻辑。
 - 面板不改配置、不连接仪器：用户确认“应用到配置”后，只把所选设备交给配置页，
-  由配置页写入地址控件与身份记录。
+  由配置页写成仪器连接配置（地址来自本次发现的设备）与设备身份记录。
 - 发现结果**包含未知设备**：未在设备表中登记的序列号同样列在表里并标记为未登记；
   身份完全读不出来的地址也留在表里，但标记为“无法识别”，不允许被应用成测试角色。
 """
@@ -31,6 +31,7 @@ from infrastructure.discovery.instrument_discovery import (
 )
 from infrastructure.discovery.simulated_network import DEMO_SUBNET
 
+from .config_form_state import LEGACY_BINDING_SOURCE, binding_address
 from .input_controls import WheelSafeComboBox
 
 # 角色选项是“本次测试语义”，与设备身份（序列号）分开：设备可以换 IP，角色不会变。
@@ -149,9 +150,10 @@ class DeviceDiscoveryPanel(QGroupBox):
         *,
         scanner_factory: Callable[[str], Any],
         default_subnet: str | None = None,
+        title: str = "设备发现",
         parent: Any = None,
     ) -> None:
-        super().__init__("设备发现", parent)
+        super().__init__(title, parent)
         # 结果表高度固定，面板不参与纵向拉伸：否则两栏布局会被挤到页面很下方。
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         self.scanner_factory = scanner_factory
@@ -171,6 +173,29 @@ class DeviceDiscoveryPanel(QGroupBox):
             for role, record in (bindings or {}).items()
             if isinstance(record, dict)
         }
+        self._refresh_bindings_summary()
+
+    def _refresh_bindings_summary(self) -> None:
+        """在面板上显示当前配置了哪些设备：连接信息不靠一张空白结果表来猜。"""
+        parts = []
+        for role, label in ROLE_CHOICES:
+            record = self.device_bindings.get(role) if role else None
+            if not isinstance(record, dict):
+                continue
+            name = str(
+                record.get("name") or record.get("model") or record.get("serial") or "未命名设备"
+            )
+            address = binding_address(record) or str(record.get("last_ip") or "").strip()
+            detail = f"{name} @ {address}" if address else name
+            if record.get("source") == "simulated":
+                detail += "（模拟数据）"
+            elif record.get("source") == LEGACY_BINDING_SOURCE:
+                detail += "（沿用已保存的地址，未扫描确认）"
+            parts.append(f"{label} ← {detail}")
+        self.bindings_label.setText(
+            "当前配置："
+            + ("；".join(parts) if parts else "尚未绑定设备；请扫描后勾选本次测试所用的设备")
+        )
 
     def clear_results(self) -> None:
         """清空上一次扫描结果；切换/重新加载配置时调用，避免旧结果看起来像当前配置。"""
@@ -234,12 +259,16 @@ class DeviceDiscoveryPanel(QGroupBox):
         actions.addWidget(self.apply_btn, 2)
         actions.addWidget(self.clear_btn, 1)
         layout.addLayout(actions)
+        self.bindings_label = QLabel("")
+        self.bindings_label.setWordWrap(True)
+        layout.addWidget(self.bindings_label)
         layout.addWidget(self.status_label)
 
         self.scan_btn.clicked.connect(self.request_scan)
         self.apply_btn.clicked.connect(self.request_apply)
         self.clear_btn.clicked.connect(self.request_clear)
         self._update_mode_hint()
+        self._refresh_bindings_summary()
 
     # ---------- 扫描 ----------
 

@@ -1,0 +1,595 @@
+"""配置页设备发现面板（MVP）界面测试。
+
+覆盖点击“获取设备”后的可见行为：
+
+1. 扫描结果出现在表格里，已登记设备显示资产名，未登记设备标记为未登记，
+   身份读不出来的地址标记为无法识别且不能绑定角色；
+2. 勾选设备并指定测试角色后，地址写入对应角色的地址框，身份（序列号）进入配置；
+3. 未选择角色、角色重复、空扫描网段、身份缺失都给出明确提示，不静默写入配置。
+"""
+
+import os
+import unittest
+from unittest.mock import patch
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication
+
+from domain.instruments.models import DeviceStatus, InstrumentIdentity
+from infrastructure.discovery.instrument_discovery import (
+    SCAN_MODE_NETWORK,
+    SCAN_MODE_SIMULATED,
+    DiscoveredDevice,
+    InstrumentDiscoveryError,
+    ScanResult,
+    build_scanner,
+)
+from infrastructure.discovery.simulated_network import demo_idn_responses
+from infrastructure.persistence.instrument_registry import InstrumentRegistry
+from presentation.qt.config_page import ConfigPage
+from presentation.qt.device_discovery_panel import (
+    DeviceDiscoveryPanel,
+    binding_device_key,
+    subnet_from_address,
+)
+
+SMW_IDN = "Rohde&Schwarz,SMW200A,1412.0000K02/105462,5.20.043.47"
+DP832A_IDN = "RIGOL TECHNOLOGIES,DP832A,DP8B214901519,00.01.16"
+CEYEAR_IDN = "Ceyear Technologies,4082F,QZNI000866,1.12.04"
+
+
+def _registry():
+    registry = InstrumentRegistry()
+    for idn in (SMW_IDN, DP832A_IDN, CEYEAR_IDN):
+        registry.upsert(InstrumentIdentity.from_idn(idn))
+    return registry
+
+
+def _scanner_factory(mode):
+    if mode == SCAN_MODE_NETWORK:
+        raise AssertionError("测试不得发起真实网络扫描")
+    return build_scanner(
+        registry=_registry(),
+        mode=SCAN_MODE_SIMULATED,
+        responses=demo_idn_responses(),
+        timeout_s=0.02,
+    )
+
+
+class SubnetSuggestionTests(unittest.TestCase):
+    def test_visa_address_suggests_its_24_bit_subnet(self):
+        self.assertEqual(
+            subnet_from_address("TCPIP0::192.168.1.201::inst0::INSTR"), "192.168.1.0/24"
+        )
+
+    def test_missing_or_invalid_address_falls_back_to_none(self):
+        for value in ("", None, "ASRL1::INSTR", 42, "TCPIP0::999.1.1.1::INSTR"):
+            with self.subTest(value=value):
+                self.assertIsNone(subnet_from_address(value))
+
+
+class BindingKeyTests(unittest.TestCase):
+    """身份键只由厂商 + 序列号决定；只有序列号时不做猜测。"""
+
+    def test_device_key_is_used_when_present(self):
+        self.assertEqual(
+            binding_device_key({"device_key": "Rohde&Schwarz:105462"}),
+            "rohde&schwarz:105462",
+        )
+
+    def test_vendor_and_serial_are_combined_when_key_is_missing(self):
+        self.assertEqual(
+            binding_device_key({"vendor": "Rohde&Schwarz", "serial": "105462"}),
+            "rohde&schwarz:105462",
+        )
+
+    def test_serial_alone_or_malformed_input_yields_none(self):
+        for record in ({"serial": "105462"}, {}, None, "not-a-record", {"device_key": "  "}):
+            with self.subTest(record=record):
+                self.assertIsNone(binding_device_key(record))
+
+
+class DiscoveryPanelTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def make_panel(self):
+        panel = DeviceDiscoveryPanel(scanner_factory=_scanner_factory)
+        panel.show()
+        self.app.processEvents()
+        return panel
+
+    def run_scan(self, panel):
+        panel.request_scan()
+        self.assertTrue(panel.worker is not None)
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.assertIsNone(panel.worker)
+
+    def test_scan_lists_known_and_unknown_devices(self):
+        panel = self.make_panel()
+
+        self.run_scan(panel)
+
+        self.assertEqual(panel.table.rowCount(), 4)
+        names = {panel.table.item(row, 2).text() for row in range(panel.table.rowCount())}
+        statuses = {
+            panel.table.item(row, 5).text() for row in range(panel.table.rowCount())
+        }
+        self.assertIn("SMW200A-1", names)
+        self.assertIn("未知设备 (N9020A)", names)
+        self.assertIn("已登记", statuses)
+        self.assertIn("未登记", statuses)
+        self.assertTrue(panel.apply_btn.isEnabled())
+        text = panel.status_label.text()
+        self.assertIn("已登记 3 台", text)
+        self.assertIn("未登记 1 台", text)
+
+    def test_unknown_device_keeps_its_serial_visible(self):
+        panel = self.make_panel()
+
+        self.run_scan(panel)
+
+        rows = {
+            panel.table.item(row, 2).text(): row
+            for row in range(panel.table.rowCount())
+        }
+        unknown_row = rows["未知设备 (N9020A)"]
+        self.assertEqual(panel.table.item(unknown_row, 3).text(), "MY51234567")
+        # 型号与厂商在悬浮提示里，避免窄栏挤压名称列。
+        self.assertIn("N9020A / Keysight Technologies", panel.table.item(unknown_row, 2).toolTip())
+        self.assertIn("MY51234567", panel.table.item(unknown_row, 2).toolTip())
+
+    def test_apply_requires_role_selection(self):
+        panel = self.make_panel()
+        self.run_scan(panel)
+        panel.table.item(0, 0).setCheckState(Qt.Checked)
+        applied = []
+        panel.apply_requested.connect(applied.append)
+
+        panel.request_apply()
+
+        self.assertEqual(applied, [])
+        self.assertIn("未选择测试角色", panel.status_label.text())
+
+    def test_duplicate_roles_are_rejected(self):
+        panel = self.make_panel()
+        self.run_scan(panel)
+        for row in range(2):
+            panel.table.item(row, 0).setCheckState(Qt.Checked)
+            panel.table.cellWidget(row, 1).setCurrentIndex(1)  # 信号发生器
+        applied = []
+        panel.apply_requested.connect(applied.append)
+
+        panel.request_apply()
+
+        self.assertEqual(applied, [])
+        self.assertIn("重复选择", panel.status_label.text())
+
+    def test_apply_reports_selected_role_and_identity(self):
+        panel = self.make_panel()
+        self.run_scan(panel)
+        rows = {
+            panel.table.item(row, 2).text(): row
+            for row in range(panel.table.rowCount())
+        }
+        signal_row = rows["SMW200A-1"]
+        panel.table.item(signal_row, 0).setCheckState(Qt.Checked)
+        panel.table.cellWidget(signal_row, 1).setCurrentIndex(1)
+        applied = []
+        panel.apply_requested.connect(applied.append)
+
+        panel.request_apply()
+
+        assignment = applied[0][0]
+        self.assertEqual(assignment["role"], "signal_generator")
+        self.assertEqual(assignment["serial"], "105462")
+        self.assertEqual(assignment["address"], "TCPIP0::192.168.1.201::inst0::INSTR")
+        self.assertTrue(assignment["known"])
+
+    def test_invalid_subnet_reports_failure_without_crashing(self):
+        panel = self.make_panel()
+        panel.subnet_edit.setText("not-a-subnet")
+
+        panel.request_scan()
+        panel.worker.wait(5000)
+        self.app.processEvents()
+
+        self.assertIn("扫描失败", panel.status_label.text())
+        self.assertEqual(panel.table.rowCount(), 0)
+        self.assertFalse(panel.apply_btn.isEnabled())
+
+    def test_shutdown_without_running_scan_is_ok(self):
+        panel = self.make_panel()
+        self.assertTrue(panel.shutdown())
+
+    def test_scan_preselects_devices_bound_in_configuration(self):
+        panel = self.make_panel()
+        panel.set_device_bindings(
+            {"signal_generator": {"serial": "105462", "device_key": "rohde&schwarz:105462"}}
+        )
+
+        self.run_scan(panel)
+
+        rows = {
+            panel.table.item(row, 2).text(): row
+            for row in range(panel.table.rowCount())
+        }
+        signal_row = rows["SMW200A-1"]
+        self.assertEqual(panel.table.item(signal_row, 0).checkState(), Qt.Checked)
+        self.assertEqual(panel.table.cellWidget(signal_row, 1).currentText(), "信号发生器")
+        self.assertIn("预选", panel.status_label.text())
+        # 其他行不因预选被勾上：用户仍可自由改。
+        self.assertEqual(
+            panel.table.item(rows["DP832A-1"], 0).checkState(), Qt.Unchecked
+        )
+
+    def test_preselection_matches_by_device_key_even_when_ip_changes(self):
+        panel = self.make_panel()
+        panel.set_device_bindings(
+            {"spectrum_analyzer": {"device_key": "ceyear technologies:qzni000866"}}
+        )
+        # 换一个网段再扫描，设备 IP 变化但身份不变。
+        panel.subnet_edit.setText("192.168.1.0/24")
+
+        self.run_scan(panel)
+
+        rows = {
+            panel.table.item(row, 2).text(): row
+            for row in range(panel.table.rowCount())
+        }
+        spectrum_row = rows["4082F-1"]
+        self.assertEqual(panel.table.item(spectrum_row, 0).checkState(), Qt.Checked)
+        self.assertEqual(panel.table.cellWidget(spectrum_row, 1).currentText(), "频谱分析仪")
+
+    def test_preselection_uses_vendor_and_serial_when_key_is_missing(self):
+        """旧配置只有厂商+序列号时重新拼出同一个身份键，仍然认得出设备。"""
+        panel = self.make_panel()
+        panel.set_device_bindings(
+            {"signal_generator": {"vendor": "Rohde&Schwarz", "serial": "105462"}}
+        )
+
+        self.run_scan(panel)
+
+        rows = {
+            panel.table.item(row, 2).text(): row
+            for row in range(panel.table.rowCount())
+        }
+        self.assertEqual(panel.table.item(rows["SMW200A-1"], 0).checkState(), Qt.Checked)
+
+    def test_preselection_never_matches_on_serial_alone(self):
+        """只有序列号时不做猜测：不同厂商可能有相同序列号。"""
+        panel = self.make_panel()
+        panel.set_device_bindings({"signal_generator": {"serial": "105462"}})
+
+        self.run_scan(panel)
+
+        for row in range(panel.table.rowCount()):
+            self.assertEqual(panel.table.item(row, 0).checkState(), Qt.Unchecked)
+        self.assertNotIn("预选", panel.status_label.text())
+
+    def test_unidentified_address_is_listed_but_cannot_be_applied(self):
+        def factory(_mode):
+            return build_scanner(
+                registry=_registry(),
+                mode=SCAN_MODE_SIMULATED,
+                responses={("192.168.1.150", 5025): "GARBAGE"},
+                timeout_s=0.02,
+            )
+
+        panel = DeviceDiscoveryPanel(scanner_factory=factory)
+        panel.show()
+        self.app.processEvents()
+        self.run_scan(panel)
+
+        self.assertEqual(panel.table.rowCount(), 1)
+        self.assertEqual(panel.table.item(0, 5).text(), "无法识别")
+        # 身份读不出来就不能绑定角色：勾选框不可勾选。
+        self.assertFalse(panel.table.item(0, 0).flags() & Qt.ItemIsUserCheckable)
+        self.assertFalse(panel.table.cellWidget(0, 1).isEnabled())
+        self.assertIn("无法识别 1 个地址", panel.status_label.text())
+
+    def test_scan_failure_restores_the_button_and_shows_the_reason(self):
+        def factory(_mode):
+            raise InstrumentDiscoveryError("设备表损坏")
+
+        panel = DeviceDiscoveryPanel(scanner_factory=factory)
+        panel.show()
+        self.app.processEvents()
+
+        self.run_scan(panel)
+
+        self.assertIn("无法开始扫描", panel.status_label.text())
+        self.assertIn("设备表损坏", panel.status_label.text())
+        self.assertTrue(panel.scan_btn.isEnabled())
+        self.assertFalse(panel.apply_btn.isEnabled())
+
+    def test_shutdown_during_scan_cancels_and_leaves_no_worker(self):
+        panel = self.make_panel()
+        panel.request_scan()
+
+        self.assertTrue(panel.shutdown())
+
+        self.assertIsNone(panel.worker)
+        self.assertFalse(panel.is_scanning())
+
+
+class ConfigPageDiscoveryIntegrationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def make_page(self):
+        page = ConfigPage(
+            {"test_frequencies": [1.0], "instruments": {"power_supplies": {}}},
+            scanner_factory=_scanner_factory,
+        )
+        page.show()
+        self.app.processEvents()
+        return page
+
+    def test_page_builds_the_discovery_panel(self):
+        page = self.make_page()
+        self.assertIsInstance(page.discovery_panel, DeviceDiscoveryPanel)
+        self.assertTrue(hasattr(page, "apply_discovered_devices"))
+
+    def test_applied_device_writes_address_and_identity_into_config(self):
+        page = self.make_page()
+
+        page.apply_discovered_devices(
+            [
+                {
+                    "role": "spectrum_analyzer",
+                    "address": "TCPIP0::192.168.1.202::inst0::INSTR",
+                    "name": "4082F-1",
+                    "vendor": "Ceyear Technologies",
+                    "model": "4082F",
+                    "serial": "QZNI000866",
+                    "device_key": "ceyear technologies:qzni000866",
+                    "ip": "192.168.1.202",
+                    "port": 5025,
+                    "known": True,
+                }
+            ]
+        )
+
+        self.assertEqual(page.sa_address.text(), "TCPIP0::192.168.1.202::inst0::INSTR")
+        self.assertTrue(page.sa_enabled.isChecked())
+        config = page.build_config()
+        self.assertEqual(
+            config["instruments"]["spectrum_analyzer"]["address"],
+            "TCPIP0::192.168.1.202::inst0::INSTR",
+        )
+        binding = config["device_bindings"]["spectrum_analyzer"]
+        self.assertEqual(binding["serial"], "QZNI000866")
+        self.assertEqual(binding["device_key"], "ceyear technologies:qzni000866")
+        self.assertEqual(binding["last_ip"], "192.168.1.202")
+        self.assertEqual(binding["source"], "scan")
+
+    def test_simulated_device_binding_is_marked_as_demo_data(self):
+        page = self.make_page()
+
+        page.apply_discovered_devices(
+            [
+                {
+                    "role": "signal_generator",
+                    "address": "TCPIP0::192.168.1.201::inst0::INSTR",
+                    "serial": "105462",
+                    "device_key": "rohde&schwarz:105462",
+                    "ip": "192.168.1.201",
+                    "port": 5025,
+                    "known": True,
+                    "simulated": True,
+                }
+            ]
+        )
+
+        self.assertEqual(page.device_bindings["signal_generator"]["source"], "simulated")
+
+    def test_power_supply_role_is_written_to_the_matching_supply(self):
+        page = self.make_page()
+
+        page.apply_discovered_devices(
+            [
+                {
+                    "role": "PS2",
+                    "address": "TCPIP0::192.168.1.150::inst0::INSTR",
+                    "name": None,
+                    "vendor": "Keysight Technologies",
+                    "model": "N9020A",
+                    "serial": "MY51234567",
+                    "device_key": "keysight technologies:my51234567",
+                    "ip": "192.168.1.150",
+                    "port": 5025,
+                    "known": False,
+                }
+            ]
+        )
+
+        self.assertEqual(page.ps2_address.text(), "TCPIP0::192.168.1.150::inst0::INSTR")
+        self.assertTrue(page.ps2_enabled.isChecked())
+        # 未知设备也能被用户明确使用，但绑定记录里标记为未登记。
+        self.assertFalse(page.device_bindings["PS2"]["known"])
+
+    def test_unknown_role_is_rejected(self):
+        page = self.make_page()
+        messages = []
+        page.validation_failed.connect(messages.append)
+
+        page.apply_discovered_devices([{"role": "nope", "address": "TCPIP0::1.2.3.4::inst0::INSTR"}])
+
+        self.assertIn("未知的测试角色", messages[-1])
+        self.assertEqual(page.device_bindings, {})
+
+    def test_empty_address_is_rejected(self):
+        page = self.make_page()
+        messages = []
+        page.validation_failed.connect(messages.append)
+
+        page.apply_discovered_devices([{"role": "signal_generator", "address": "  "}])
+
+        self.assertIn("发现地址为空", messages[-1])
+        self.assertEqual(page.sg_address.text(), "")
+
+    def test_invalid_entry_rejects_the_whole_batch(self):
+        page = self.make_page()
+        messages = []
+        page.validation_failed.connect(messages.append)
+
+        page.apply_discovered_devices(
+            [
+                {"role": "signal_generator", "address": "TCPIP0::192.168.1.201::inst0::INSTR"},
+                {"role": "nope", "address": "TCPIP0::192.168.1.202::inst0::INSTR"},
+            ]
+        )
+
+        self.assertIn("未知的测试角色", messages[-1])
+        # 先校验后写入：第一项也不能被写进控件或绑定记录。
+        self.assertEqual(page.sg_address.text(), "")
+        self.assertEqual(page.device_bindings, {})
+
+    def test_duplicate_roles_in_one_batch_are_rejected(self):
+        page = self.make_page()
+        messages = []
+        page.validation_failed.connect(messages.append)
+
+        page.apply_discovered_devices(
+            [
+                {
+                    "role": "signal_generator",
+                    "address": "TCPIP0::192.168.1.201::inst0::INSTR",
+                    "serial": "105462",
+                },
+                {
+                    "role": "signal_generator",
+                    "address": "TCPIP0::192.168.1.202::inst0::INSTR",
+                    "serial": "QZNI000866",
+                },
+            ]
+        )
+
+        self.assertIn("重复指定", messages[-1])
+        self.assertEqual(page.sg_address.text(), "")
+        self.assertEqual(page.device_bindings, {})
+
+    def test_missing_serial_is_rejected(self):
+        page = self.make_page()
+        messages = []
+        page.validation_failed.connect(messages.append)
+
+        page.apply_discovered_devices(
+            [{"role": "signal_generator", "address": "TCPIP0::192.168.1.201::inst0::INSTR"}]
+        )
+
+        self.assertIn("缺少设备身份", messages[-1])
+        self.assertEqual(page.sg_address.text(), "")
+
+    def test_identity_disagreeing_with_serial_is_rejected(self):
+        page = self.make_page()
+        messages = []
+        page.validation_failed.connect(messages.append)
+
+        page.apply_discovered_devices(
+            [
+                {
+                    "role": "signal_generator",
+                    "address": "TCPIP0::192.168.1.201::inst0::INSTR",
+                    "vendor": "Rohde&Schwarz",
+                    "serial": "105462",
+                    "device_key": "keysight technologies:105462",
+                }
+            ]
+        )
+
+        self.assertIn("设备身份与序列号不一致", messages[-1])
+        self.assertEqual(page.device_bindings, {})
+
+    def test_clear_button_removes_bindings_from_the_saved_config(self):
+        page = self.make_page()
+        page.apply_discovered_devices(
+            [
+                {
+                    "role": "signal_generator",
+                    "address": "TCPIP0::192.168.1.201::inst0::INSTR",
+                    "serial": "105462",
+                    "device_key": "rohde&schwarz:105462",
+                    "ip": "192.168.1.201",
+                    "port": 5025,
+                    "known": True,
+                }
+            ]
+        )
+
+        page.discovery_panel.request_clear()
+
+        self.assertEqual(page.device_bindings, {})
+        self.assertNotIn("device_bindings", page.build_config())
+        # 地址不被清除：绑定与地址是两件事，用户自己决定是否保留地址。
+        self.assertEqual(page.sg_address.text(), "TCPIP0::192.168.1.201::inst0::INSTR")
+
+    def test_rejected_batch_is_also_reported_in_the_panel_status(self):
+        """整批拒绝的原因要同时出现在面板状态里，不能只写日志。"""
+        page = self.make_page()
+
+        page.apply_discovered_devices(
+            [{"role": "signal_generator", "address": "TCPIP0::192.168.1.201::inst0::INSTR"}]
+        )
+
+        self.assertIn("缺少设备身份", page.discovery_panel.status_label.text())
+
+    def test_loading_a_config_restores_device_bindings(self):
+        page = self.make_page()
+        config = page.build_config()
+        config["device_bindings"] = {
+            "signal_generator": {"serial": "105462", "device_key": "rohde&schwarz:105462"}
+        }
+
+        page.apply_config(config)
+
+        self.assertEqual(page.device_bindings["signal_generator"]["serial"], "105462")
+        self.assertEqual(
+            page.build_config()["device_bindings"]["signal_generator"]["serial"], "105462"
+        )
+
+    def test_clearing_bindings_drops_them_from_the_saved_config(self):
+        page = self.make_page()
+        page.apply_discovered_devices(
+            [
+                {
+                    "role": "signal_generator",
+                    "address": "TCPIP0::192.168.1.201::inst0::INSTR",
+                    "serial": "105462",
+                    "device_key": "rohde&schwarz:105462",
+                    "ip": "192.168.1.201",
+                    "port": 5025,
+                    "known": True,
+                }
+            ]
+        )
+        page.clear_device_bindings()
+
+        self.assertNotIn("device_bindings", page.build_config())
+
+
+class DiscoveryEnabledOfflineDefaultsTests(unittest.TestCase):
+    """没有设备网络的开发机上，默认扫描器必须是模拟数据，绝不偷偷发真实连接。"""
+
+    def test_composition_factory_simulates_by_default_mode(self):
+        from presentation.qt.composition import build_device_scanner_factory
+
+        with patch(
+            "infrastructure.discovery.instrument_discovery.TcpIdnProbe.query_idn",
+            side_effect=AssertionError("模拟模式不得打开真实连接"),
+        ):
+            scanner = build_device_scanner_factory()(SCAN_MODE_SIMULATED)
+            result = scanner.scan("192.168.1.200/30")
+
+        # /30 的两个可用地址都有演示响应：SMW200A 与 4082F。
+        self.assertEqual(len(result.devices), 2)
+
+
+if __name__ == "__main__":
+    unittest.main()

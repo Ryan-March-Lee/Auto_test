@@ -121,7 +121,7 @@
 | 模块 | 正式公开名称 |
 | --- | --- |
 | `domain.configuration.models` | `TestPlan`、`InstrumentMapping`、`ChannelMapping`、`PowerChannelPlan`、`RunResourceMapping`、`RunConfiguration`、`validate_test_plan`、`validate_run_mapping`、`validate_run_configuration` |
-| `domain.configuration.rules` | `validate_config` |
+| `domain.configuration.rules` | `validate_config`、`simulated_binding_issues` |
 | `domain.configuration.types` | `ConfigIssue`、`ConfigValidationResult` |
 | `domain.run.models` | `FileReference`、`RunManifest`、`RunStatus`、`StageRecord`、`StageStatus`、`ArtifactKind`、`ArtifactRecord`、`ArtifactStatus`、`default_manifest`、`default_artifact_path`、`normalize_artifact_path`、`generate_run_id`、`validate_run_id`、`utc_now_iso` |
 | `domain.measurement.calculations` | `calculate_cable_losses`、`compensate_amplifier_output_power`、`compensate_driver_output_power`、`interpolate_driver_output_power`、`calculate_dut_input_power`、`calculate_gain`、`calculate_efficiency`、`calculate_compression_result` |
@@ -198,6 +198,9 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `domain.models` | 运行、测试方案与会话生命周期模型；测量结果契约在 `application.dto` |
 | `infrastructure.filesystem.atomic_json` | 原子 JSON 写入 |
 | `infrastructure.filesystem.paths` | 路径服务 |
+| `infrastructure.discovery` | 仪器发现包 |
+| `infrastructure.discovery.instrument_discovery` | 网段扫描与 `*IDN?` 身份解析：序列号匹配设备表，未知设备同样上报 |
+| `infrastructure.discovery.simulated_network` | 离线演示用的设备网络响应（仅模拟扫描模式，不会被当成现场结果） |
 | `infrastructure.persistence` | 持久化适配器包 |
 | `infrastructure.persistence.artifact_generator` | 自动归档产物（CSV 与测试报告）生成适配器：只读 manifest 已登记并校验过的正式结果，产物的受控路径固定在运行目录 `artifacts/` 下；`ArchiveArtifactGenerator` 把两类实现组合成归档服务持有的唯一生成端口 |
 | `infrastructure.persistence.instrument_registry` | 设备表 JSON 仓储：序列号为唯一标识，IP 只是可漂移的地址别名 |
@@ -219,6 +222,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `presentation.qt.assistant.chat_worker` | 助手后台 worker：线程边界把助手异常转成 `error_occurred` 信号 |
 | `presentation.qt.config_form_state` | 配置表单状态 |
 | `presentation.qt.config_page` | 配置页面（编辑配置编写文档；向协调器提供 `ConfigurationPagePort` 窄接口） |
+| `presentation.qt.device_discovery_panel` | 设备发现面板：扫描网段、展示已登记/未登记/无法识别三类结果、按测试角色勾选并应用、清除设备绑定；扫描线程只读探测，不改配置也不连接仪器 |
 | `presentation.qt.config_projection` | 配置编写文档（authoring document）到配置页控件的确定性投影：重置、逐字段投影、非法类型回落；正式 `test_plan` / `run_mapping` 只由 `configuration_authoring` 生成 |
 | `presentation.qt.configuration_authoring` | 配置页保存时的正式运行配置编写 |
 | `presentation.qt.connection_diagrams` | 连接图渲染 |

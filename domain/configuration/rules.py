@@ -11,6 +11,8 @@ from domain.configuration.models import DRIVER_POWER_DC, DRIVER_POWER_EXTERNAL, 
 
 PathLike = Union[str, os.PathLike[str]]
 DB_VALUE_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*dB\s*$", re.IGNORECASE)
+# 设备发现写入的绑定来源：真实网络扫描为 ``scan``，离线演示为 ``simulated``。
+SIMULATED_BINDING_SOURCE = "simulated"
 
 
 def validate_config(config: Dict[str, Any]) -> ConfigValidationResult:
@@ -145,7 +147,42 @@ def validate_config(config: Dict[str, Any]) -> ConfigValidationResult:
             "驱放测试模式关闭时不能配置驱动功放供电分配",
         )
 
+    errors.extend(simulated_binding_issues(root))
+
     return ConfigValidationResult(errors=errors, warnings=warnings)
+
+
+def simulated_binding_issues(document: Any) -> List[ConfigIssue]:
+    """返回“模拟扫描写入的设备绑定”问题列表。
+
+    模拟扫描只用于没有设备网络的开发机；它产生的地址与序列号不是现场事实。这样的
+    绑定可以被保存用于演示，但绝不能进入真实运行：否则一次演示点击就会让测量对着
+    演示地址（或干脆连不上）跑出看似有效的结果。
+
+    这里只判断绑定记录的来源标记，不猜地址是否真实存在——真实性无法离线判断，
+    而来源标记是写入时的事实。
+    """
+    if not isinstance(document, dict):
+        return []
+    bindings = document.get("device_bindings")
+    if not isinstance(bindings, dict):
+        return []
+    issues: List[ConfigIssue] = []
+    for role, record in bindings.items():
+        if not isinstance(record, dict):
+            continue
+        source = str(record.get("source") or "").strip().casefold()
+        if source != SIMULATED_BINDING_SOURCE:
+            continue
+        issues.append(
+            ConfigIssue(
+                "error",
+                f"device_bindings.{role}.source",
+                "该设备绑定来自模拟扫描，只能用于离线演示：请用“真实网络扫描”重新获取设备"
+                "并应用，或清除设备绑定后再创建运行",
+            )
+        )
+    return issues
 
 
 def _validate_driver_power_source(

@@ -242,6 +242,58 @@ class OfficialConfigFileValidationTests(unittest.TestCase):
         self.assertEqual(len(keys), len(set(keys)))
 
 
+class SimulatedDeviceBindingValidationTests(unittest.TestCase):
+    """模拟扫描写入的设备绑定可以保存，但绝不能通过真实运行校验。"""
+
+    @classmethod
+    def setUpClass(cls):
+        with FIXTURE_PATH.open("r", encoding="utf-8") as config_file:
+            cls.base_config = json.load(config_file)
+
+    def test_simulated_binding_is_rejected_with_a_pointed_message(self):
+        config = copy.deepcopy(self.base_config)
+        config["device_bindings"] = {
+            "signal_generator": {
+                "serial": "105462",
+                "device_key": "rohde&schwarz:105462",
+                "source": "simulated",
+            }
+        }
+
+        result = validate_config(config)
+
+        paths = {issue.path for issue in result.errors}
+        self.assertIn("device_bindings.signal_generator.source", paths)
+        self.assertIn("模拟扫描", result.errors[-1].message)
+
+    def test_real_scan_binding_is_accepted(self):
+        config = copy.deepcopy(self.base_config)
+        config["device_bindings"] = {
+            "signal_generator": {
+                "serial": "105462",
+                "device_key": "rohde&schwarz:105462",
+                "source": "scan",
+            }
+        }
+
+        result = validate_config(config)
+
+        self.assertFalse(
+            any(issue.path.startswith("device_bindings") for issue in result.errors)
+        )
+
+    def test_missing_or_malformed_bindings_are_ignored_by_this_rule(self):
+        for bindings in (None, [], "text", {"signal_generator": "not-a-record"}):
+            with self.subTest(bindings=bindings):
+                config = copy.deepcopy(self.base_config)
+                if bindings is not None:
+                    config["device_bindings"] = bindings
+                result = validate_config(config)
+                self.assertFalse(
+                    any(issue.path.startswith("device_bindings") for issue in result.errors)
+                )
+
+
 class ShippedConfigValidationTests(unittest.TestCase):
     """仓库默认生产配置必须通过启动器使用的同一套文件级校验。"""
 

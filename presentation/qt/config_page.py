@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from domain.instruments.models import make_device_key
+
 from .config_form_state import ConfigFormState
 from .config_projection import (
     DEFAULT_ATTENUATOR_TYPE,
@@ -35,6 +37,7 @@ from .config_projection import (
     project_authoring_config,
 )
 from .configuration_authoring import DUT_CHANNEL_ROLES
+from .device_discovery_panel import DeviceDiscoveryPanel, subnet_from_address
 from .input_controls import KeyboardOnlyDoubleSpinBox, WheelSafeComboBox
 from .pages import PageControllerBindingMixin
 
@@ -52,17 +55,28 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
     return_welcome_requested = Signal()
     validation_failed = Signal(str)
     driver_mode_changed = Signal(bool)
+    discovery_message = Signal(str)
 
-    def __init__(self, config=None, parent=None):
+    def __init__(self, config=None, parent=None, scanner_factory=None):
         PageControllerBindingMixin.__init__(self)
         QWidget.__init__(self, parent)
         self.config = config if isinstance(config, dict) else {}
+        # 设备身份绑定：角色（信号源/频谱仪/PS1..PS4）-> 发现到的设备身份。
+        # 只记录用户明确应用过的设备；IP 变化时按序列号重新识别，不靠地址记忆。
+        self.device_bindings = {}
+        self._scanner_factory = scanner_factory
         self.build_ui()
         self._connect_signals()
         self.update_pa_unit_ui()
         self.update_driver_power_ui()
         self.update_power_supply_options()
         self._dirty_baseline = copy.deepcopy(self.config)
+        bindings = self.config.get("device_bindings")
+        if isinstance(bindings, dict):
+            self.device_bindings = copy.deepcopy(bindings)
+        panel = getattr(self, "discovery_panel", None)
+        if panel is not None:
+            panel.set_device_bindings(self.device_bindings)
 
     def build_ui(self):
         """按页面协议构建并返回配置页根 widget。"""
@@ -130,6 +144,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         self.connect_btn = QPushButton("连接仪器")
         grid.addWidget(self.connect_btn, 6, 0, 1, 2)
         left_column.addWidget(connection)
+        self._build_discovery_widget(left_column)
 
         params = QGroupBox("测试参数配置")
         form = QGridLayout(params)
@@ -169,6 +184,137 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         self._build_run_widgets(left_column)
         left_column.addStretch(1)
         right_column.addStretch(1)
+
+    def _build_discovery_widget(self, layout):
+        """设备发现面板：扫描网段，勾选本次测试所需设备并写入地址控件。
+
+        面板不改配置、不连接仪器；只有用户点击“应用所选设备到配置”时，本页才把发现到
+        的当前地址写入对应角色的地址框，并把设备身份（序列号）记进 :attr:`device_bindings`，
+        保存时随配置一起落盘，作为下次按身份重新识别设备的依据。
+        """
+        factory = self._scanner_factory
+        if factory is None:
+            from .composition import build_device_scanner_factory
+
+            factory = build_device_scanner_factory()
+        default_subnet = None
+        for widget_name in ("sg_address", "sa_address"):
+            candidate = getattr(self, widget_name, None)
+            if candidate is not None:
+                default_subnet = subnet_from_address(candidate.text())
+                if default_subnet:
+                    break
+        self.discovery_panel = DeviceDiscoveryPanel(
+            scanner_factory=factory,
+            default_subnet=default_subnet,
+            parent=self,
+        )
+        self.discovery_panel.apply_requested.connect(self.apply_discovered_devices)
+        self.discovery_panel.clear_requested.connect(self.clear_device_bindings)
+        self.discovery_panel.log_message.connect(self.discovery_message.emit)
+        layout.addWidget(self.discovery_panel)
+
+    def apply_discovered_devices(self, assignments):
+        """把面板勾选的设备写入地址控件与身份记录。
+
+        这是写入的最终边界，因此它自己的校验必须完整，不能只依赖面板的勾选校验：
+        角色未知、角色重复、地址为空、缺少设备身份、身份与序列号不一致，任何一项都
+        整批拒绝，不留下“一半已应用”的配置。
+        """
+        role_widgets = {
+            "signal_generator": ("sg_address", "sg_enabled"),
+            "spectrum_analyzer": ("sa_address", "sa_enabled"),
+        }
+        for name in DEFAULT_POWER_SUPPLY_NAMES:
+            role_widgets[name] = (f"{name.lower()}_address", f"{name.lower()}_enabled")
+        entries = list(assignments or ())
+        panel = getattr(self, "discovery_panel", None)
+
+        def reject(message: str) -> None:
+            """拒绝整批：日志与面板状态都要看到原因，不能只留在日志里。"""
+            if panel is not None:
+                panel.show_message(message)
+            self.validation_failed.emit(message)
+
+        # 第一遍只看角色：未知角色与重复角色是“这一批要做什么”的问题，
+        # 先报出来，避免用户看到的是地址/序列号之类更细节的错。
+        used_roles: dict[str, str] = {}
+        for item in entries:
+            role = item.get("role")
+            if role not in role_widgets:
+                reject(f"未知的测试角色: {role}")
+                return
+            if role in used_roles:
+                reject(
+                    f"角色 {role} 在本次应用中被重复指定（{used_roles[role]} 与 "
+                    f"{item.get('ip')}）；请只保留一台设备"
+                )
+                return
+            used_roles[role] = str(item.get("ip") or "")
+        # 第二遍校验每条记录的地址与身份，全部通过后才写控件。
+        for item in entries:
+            role = item["role"]
+            address = item.get("address")
+            if not isinstance(address, str) or not address.strip():
+                reject(f"{role} 的发现地址为空，未应用")
+                return
+            serial = str(item.get("serial") or "").strip()
+            vendor = str(item.get("vendor") or "").strip()
+            if not serial:
+                reject(f"{role} 缺少设备身份（序列号），未应用")
+                return
+            device_key = str(item.get("device_key") or "").strip()
+            if device_key and vendor:
+                try:
+                    expected = make_device_key(vendor, serial)
+                except ValueError as error:
+                    reject(f"{role} 的设备身份无法解析: {error}")
+                    return
+                if device_key.casefold() != expected:
+                    reject(
+                        f"{role} 的设备身份与序列号不一致（{device_key} ≠ {expected}），未应用"
+                    )
+                    return
+        applied = []
+        for item in entries:
+            role = item["role"]
+            address_widget = getattr(self, role_widgets[role][0])
+            enabled_widget = getattr(self, role_widgets[role][1])
+            address_widget.setText(item["address"].strip())
+            enabled_widget.setChecked(True)
+            self.device_bindings[role] = {
+                "name": item.get("name"),
+                "vendor": item.get("vendor"),
+                "model": item.get("model"),
+                "serial": item.get("serial"),
+                "device_key": item.get("device_key"),
+                "visa_address": item["address"].strip(),
+                "last_ip": item.get("ip"),
+                # 探测端口只是“这台设备在本网段怎么被读出身份”的记录，不参与拼接连接地址。
+                "last_port": item.get("port"),
+                "known": bool(item.get("known")),
+                # 模拟扫描写入的绑定带来源标记，避免演示数据被当成现场设备记录。
+                "source": "simulated" if item.get("simulated") else "scan",
+            }
+            applied.append(f"{role}<-{item.get('name') or item.get('ip')}")
+        self.update_power_supply_options()
+        if panel is not None:
+            panel.set_device_bindings(self.device_bindings)
+        message = "已应用发现设备: " + "，".join(applied) if applied else "未应用任何发现设备"
+        if any(item.get("simulated") for item in entries):
+            message += "（模拟数据，仅用于离线演示，不能用于真实测量）"
+        if panel is not None:
+            panel.show_message(message)
+        self.discovery_message.emit(message)
+
+    def clear_device_bindings(self):
+        """清除角色与设备身份的绑定；地址控件不动，由用户自己决定是否保留。"""
+        self.device_bindings = {}
+        panel = getattr(self, "discovery_panel", None)
+        if panel is not None:
+            panel.set_device_bindings({})
+            panel.show_message("已清除设备绑定记录；地址保持不变")
+        self.discovery_message.emit("已清除设备绑定记录")
 
     @staticmethod
     def _spin(value, minimum, maximum):
@@ -314,6 +460,13 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         """显示当前运行状态；由窗口在创建/加载运行后更新。"""
         self.run_status_label.setText(text)
 
+    def close(self) -> None:
+        """关闭页面时先协作停止设备扫描，再解除 controller 连接。"""
+        panel = getattr(self, "discovery_panel", None)
+        if panel is not None and not panel.shutdown():
+            self.discovery_message.emit("设备扫描线程未能在关闭期限内停止")
+        super().close()
+
     def validate(self):
         errors = ConfigFormState(self.config, self).validation_errors()
         if errors:
@@ -349,7 +502,16 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         权威配置，保证“页面只是视图、配置只有一个数据源”。
         """
         base_config = self.config if base is None else base
-        return ConfigFormState(base_config, self).build_config()
+        config = ConfigFormState(base_config, self).build_config()
+        # 设备身份绑定随配置一起保存：角色 -> 序列号等稳定标识。地址仍写在各仪器
+        # 的 address 字段里（当前测量链路按地址连接），身份用于下次扫描时按序列号
+        # 重新识别同一台设备，而不是依赖可能变化的 IP。
+        if self.device_bindings:
+            config["device_bindings"] = copy.deepcopy(self.device_bindings)
+        else:
+            # 页面没有绑定时清掉基线里的旧绑定，避免保存出“地址已换、身份还是上一台”的配置。
+            config.pop("device_bindings", None)
+        return config
 
     def set_test_mode(self, enabled: bool) -> None:
         """设置欢迎页选择的测试模式并同步供电选项。"""
@@ -400,4 +562,10 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         self.update_power_supply_options()
         # 全部投影成功后再提交文档副本（project_authoring_config 返回深拷贝）。
         self.config = projected
+        bindings = projected.get("device_bindings")
+        self.device_bindings = copy.deepcopy(bindings) if isinstance(bindings, dict) else {}
+        panel = getattr(self, "discovery_panel", None)
+        if panel is not None:
+            panel.set_device_bindings(self.device_bindings)
+            panel.clear_results()
         self._dirty_baseline = copy.deepcopy(self.build_config(self.config))

@@ -8,7 +8,9 @@ from typing import Any
 
 from application.configuration_service import load_for_run
 from application.archival_service import ResultArchivalService
+from application.errors import ConfigurationError
 from application.ports.config_repository import ConfigurationRepository
+from domain.configuration.rules import simulated_binding_issues
 from infrastructure.logging.app_logging import get_logger
 from .run_context import (
     PreparedRun,
@@ -128,6 +130,9 @@ def prepare_configuration(
     loaded = load_for_run(repository, config_path)
     if hardware_config is None:
         hardware_config = _load_hardware_config(config_path)
+    # 模拟扫描的设备绑定可以保存用于演示，但绝不能进入真实运行：在创建任何运行目录
+    # 之前拒绝，避免冻结一份“看起来可运行、其实对着演示地址”的运行快照。
+    _reject_simulated_bindings(hardware_config)
     return create_prepared_run(
         loaded,
         run_id=run_id,
@@ -147,6 +152,15 @@ def _load_hardware_config(config_path: str) -> dict[str, Any]:
     if not isinstance(config, dict):
         raise ValueError("硬件配置根节点必须是对象")
     return config
+
+
+def _reject_simulated_bindings(hardware_config: Mapping[str, Any]) -> None:
+    """模拟扫描留下的设备绑定不能用于真实运行。"""
+    issues = simulated_binding_issues(hardware_config)
+    if not issues:
+        return
+    details = "; ".join(f"{issue.path}: {issue.message}" for issue in issues)
+    raise ConfigurationError(f"配置中的设备绑定来自模拟扫描，不能创建真实运行: {details}")
 
 
 def _hardware_config_path(prepared_run: PreparedRun, config_path: str) -> str:

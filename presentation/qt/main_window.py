@@ -27,6 +27,7 @@ from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService
 from infrastructure.logging.app_logging import get_logger, setup_logging
 from presentation.qt.application_coordinator import ApplicationCoordinator
 from presentation.qt.assistant.chat_panel import ChatPanel
+from presentation.qt.composition import build_device_scanner_factory
 from presentation.qt.config_page import ConfigPage
 from presentation.qt.connection_dialog import ConnectionDialog
 from presentation.qt.run_history_page import build_run_history_page
@@ -300,7 +301,7 @@ class MainWindow(QMainWindow):
 
     def create_config_tab(self):
         """创建仪器配置选项卡；配置页与协调器在这里互相登记。"""
-        tab = ConfigPage(self.config, self)
+        tab = ConfigPage(self.config, self, scanner_factory=build_device_scanner_factory(self.paths))
         tab.save_requested.connect(self.save_config)
         tab.connect_requested.connect(self.connect_instruments)
         tab.create_run_requested.connect(self.coordinator.create_prepared_run)
@@ -310,6 +311,7 @@ class MainWindow(QMainWindow):
             lambda message: self.add_log_message(f"配置校验失败: {message}")
         )
         tab.driver_mode_changed.connect(self._refresh_amplifier_instruction_text)
+        tab.discovery_message.connect(self.add_log_message)
         self.config_page = tab
         self.coordinator.bind_config_page(tab)
         return tab

@@ -12,12 +12,14 @@ from app.gui_runtime import (
     prepare_configuration,
 )
 from application.dto import AmplifierMeasurementRequest
+from application.errors import ConfigurationError
 from application.inputs import ResultInputReader
 from application.measurements import (
     AmplifierMeasurementUseCase,
     CableLossUseCase,
 )
 from application.run_service import RunNotResumable
+from infrastructure.persistence.run_repository import RunRepository
 from presentation.qt.configuration_authoring import author_official_configuration
 
 
@@ -430,6 +432,54 @@ class GuiRuntimePreparationTests(unittest.TestCase):
                 )
             # 校验失败不得留下任何运行目录。
             self.assertFalse(runs_root.exists() and any(runs_root.iterdir()))
+        finally:
+            directory.cleanup()
+
+    def test_preparation_rejects_simulated_device_bindings(self):
+        """模拟扫描的绑定不能冻结成真实运行：一次演示点击不该产生可运行的快照。"""
+        directory, path = self._write_fully_valid_config()
+        try:
+            config = json.loads(path.read_text(encoding="utf-8"))
+            config["device_bindings"] = {
+                "signal_generator": {
+                    "serial": "105462",
+                    "device_key": "rohde&schwarz:105462",
+                    "source": "simulated",
+                }
+            }
+            path.write_text(json.dumps(config), encoding="utf-8")
+            runs_root = Path(directory.name) / "runs"
+
+            with self.assertRaisesRegex(
+                ConfigurationError, "模拟扫描"
+            ):
+                prepare_configuration(
+                    str(path), run_repository=RunRepository(runs_root)
+                )
+            # 拒绝必须发生在创建运行目录之前。
+            self.assertFalse(runs_root.exists() and any(runs_root.iterdir()))
+        finally:
+            directory.cleanup()
+
+    def test_preparation_accepts_real_scan_bindings(self):
+        directory, path = self._write_fully_valid_config()
+        try:
+            config = json.loads(path.read_text(encoding="utf-8"))
+            config["device_bindings"] = {
+                "signal_generator": {
+                    "serial": "105462",
+                    "device_key": "rohde&schwarz:105462",
+                    "source": "scan",
+                }
+            }
+            path.write_text(json.dumps(config), encoding="utf-8")
+            prepared = SimpleNamespace(
+                configuration=object(), context=object(), run_directory=Path("runs") / "x"
+            )
+            with patch(
+                "app.gui_runtime.create_prepared_run", return_value=prepared
+            ):
+                self.assertIs(prepare_configuration(str(path)), prepared)
         finally:
             directory.cleanup()
 

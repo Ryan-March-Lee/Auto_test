@@ -137,6 +137,7 @@ class MeasurementControllerSignals(Protocol):
     message: ControllerSignal  # (text: str)
     data_update: ControllerSignal  # (data: Mapping[str, Any])
     result: ControllerSignal  # (reference: MeasurementResultReference)
+    archival: ControllerSignal  # (outcome: application.dto.archival.ArchivalOutcome)
     finished: ControllerSignal  # ()
     stopped: ControllerSignal  # (reason: str)
     error: ControllerSignal  # (text: str)

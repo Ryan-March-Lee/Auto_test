@@ -209,6 +209,8 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `instrument.measurement_factory` | 硬件/离线测量端口装配：地址重复、角色缺失/重复、通道不存在均在连接任何仪器前失败 |
 | `instrument.safety` | 设备安全动作与资源所有权边界；关闭回调的安全标记按显式签名判定调用形式 |
 | `presentation.qt.application_coordinator` | GUI 运行协调器：配置、运行契约与仪器端口所有者（经 `ConfigurationPagePort` 与配置页交互） |
+| `presentation.qt.archival_status` | 归档结果到页面文案与按钮状态的映射：无 Qt、不读文件、不判断路径存在，四类状态各有独立提示 |
+| `presentation.qt.archival_view` | 归档结果分组控件：显示标题/说明并按提示启用“打开结果目录/测试报告”；位置由窗口注入 |
 | `presentation.qt.assistant.chat_dialogs` | 助手对话与设置对话框：失败经对话框/日志呈现，`requests` 为可选依赖 |
 | `presentation.qt.assistant.chat_panel` | 助手聊天面板；`create_assistant()` 是 `assistant.llm` 的唯一按需导入点，整个构造过程的普通异常都降级为不可用面板；`shutdown()` 协作关闭回复线程（不强杀、超时保持引用） |
 | `presentation.qt.assistant.chat_worker` | 助手后台 worker：线程边界把助手异常转成 `error_occurred` 信号 |

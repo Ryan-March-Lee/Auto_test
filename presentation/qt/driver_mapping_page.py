@@ -18,6 +18,16 @@ from PySide6.QtWidgets import (
 
 from .measurement_controller_contract import MeasurementCommand
 from application.dto import DriverPowerMappingMeasurementResult
+from .archival_status import (
+    ArchivalSummary,
+    summarize_archival,
+    summarize_archival_missing,
+    summarize_archival_running,
+    summarize_archival_saving,
+    summarize_test_cancelled,
+    summarize_test_failure,
+)
+from .archival_view import ArchivalStatusView
 from .measurement_state import (
     DriverMappingPageResultState,
     MeasurementKind,
@@ -45,6 +55,7 @@ class DriverMappingPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         log_callback: Callable[[str], Any] | None = None,
         progress_callback: Callable[[int], Any] | None = None,
         error_callback: Callable[[str], Any] | None = None,
+        archival_location_provider: Callable[[str, str | None], str | None] | None = None,
     ) -> None:
         PageControllerBindingMixin.__init__(self)
         QWidget.__init__(self)
@@ -58,6 +69,9 @@ class DriverMappingPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         self._log_callback = log_callback or (lambda _message: None)
         self._progress_callback = progress_callback or (lambda _value: None)
         self._error_callback = error_callback or self._show_error
+        self._archival_location_provider = archival_location_provider
+        self._archival_pending = False
+        self._archival_saving = False
         self.realtime_buffer = RealtimeMeasurementBuffer()
         self.root = self.build_ui()
 
@@ -114,6 +128,12 @@ class DriverMappingPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
             control_layout.addWidget(button)
         control_layout.addStretch(1)
         left_layout.addWidget(control_group)
+
+        self.archival_view = ArchivalStatusView(
+            location_provider=self._archival_location_provider,
+            log_callback=self._log_callback,
+        )
+        left_layout.addWidget(self.archival_view)
         left_layout.addStretch(1)
         self.control_panel = left_panel
         layout.addWidget(left_panel)
@@ -132,8 +152,10 @@ class DriverMappingPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
     def _connect_controller_signals(self, controller: Any) -> None:
         signals = controller.signals
         self._connect_signal(signals.progress, self._progress_callback)
+        self._connect_signal(signals.progress, self._on_progress_archival)
         self._connect_signal(signals.data_update, self.update_realtime)
         self._connect_signal(signals.result, self.show_result)
+        self._connect_signal(signals.archival, self.show_archival)
         self._connect_signal(signals.state_changed, self._on_state_changed)
         self._connect_signal(signals.error, self._on_error)
         self._connect_signal(signals.stopped, self._on_stopped)
@@ -155,6 +177,11 @@ class DriverMappingPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         if dialog.exec() != QDialog.Accepted or not self._confirm_wiring():
             return
         self.reset_realtime_data()
+        self._archival_pending = True
+        self._archival_saving = False
+        self._show_archival_summary(
+            summarize_archival_running(MeasurementKind.DRIVER_MAPPING)
+        )
         self._log_callback("开始驱动功放映射...")
         controller.start_driver_mapping(
             MeasurementCommand(self._config_path_provider(), prepared_run=run)
@@ -258,6 +285,10 @@ class DriverMappingPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         self.driver_stop_btn.setEnabled(False)
         self.driver_emergency_stop_btn.setEnabled(False)
         self.driver_cancel_btn.setEnabled(False)
+        self._archival_pending = False
+        self._show_archival_summary(
+            summarize_test_failure(MeasurementKind.DRIVER_MAPPING, message)
+        )
         self._error_callback(message)
 
     def _on_stopped(self, reason: str) -> None:
@@ -270,6 +301,10 @@ class DriverMappingPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         self.driver_stop_btn.setEnabled(False)
         self.driver_emergency_stop_btn.setEnabled(False)
         self.driver_cancel_btn.setEnabled(False)
+        self._archival_pending = False
+        self._show_archival_summary(
+            summarize_test_cancelled(MeasurementKind.DRIVER_MAPPING, reason)
+        )
         self._log_callback(f"测量已停止: {reason}")
         self._progress_callback(0)
 
@@ -283,7 +318,58 @@ class DriverMappingPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         self.driver_stop_btn.setEnabled(False)
         self.driver_emergency_stop_btn.setEnabled(False)
         self._progress_callback(100)
+        if self._archival_pending:
+            self._archival_pending = False
+            self._show_archival_summary(
+                summarize_archival_missing(
+                    MeasurementKind.DRIVER_MAPPING, self._current_run_id()
+                )
+            )
         self._log_callback("测量完成！")
+
+    def _on_progress_archival(self, value: int) -> None:
+        """进度到 100% 表示扫描结束，随后是保存结果与生成产物：明确告知用户。"""
+        if not self._archival_pending or self._archival_saving:
+            return
+        if self.controller is None or self.controller.state.kind is not MeasurementKind.DRIVER_MAPPING:
+            return
+        try:
+            progress = int(value)
+        except (TypeError, ValueError):
+            return
+        if progress < 100:
+            return
+        self._archival_saving = True
+        self._show_archival_summary(
+            summarize_archival_saving(MeasurementKind.DRIVER_MAPPING)
+        )
+
+    def show_archival(self, outcome: Any) -> None:
+        """显示自动归档结果：只渲染状态，不读取文件、不拼接导出规则。"""
+        if getattr(outcome, "stage", None) != MeasurementKind.DRIVER_MAPPING.value:
+            return
+        self._archival_pending = False
+        try:
+            summary = summarize_archival(outcome)
+        except (TypeError, ValueError) as error:
+            self._show_archival_summary(
+                summarize_archival_missing(
+                    MeasurementKind.DRIVER_MAPPING, self._current_run_id()
+                )
+            )
+            self._log_callback(f"归档结果无法显示: {error}")
+            return
+        self._show_archival_summary(summary)
+
+    def _show_archival_summary(self, summary: ArchivalSummary) -> None:
+        """把一条归档提示写到页面控件和日志里。"""
+        self.archival_view.show_summary(summary)
+        self._log_callback(f"{summary.headline}：{summary.detail}")
+
+    def _current_run_id(self) -> str | None:
+        """当前运行 ID，仅用于状态文案；不可用时返回 ``None``。"""
+        run_id = getattr(self._run_provider(), "run_id", None)
+        return run_id if isinstance(run_id, str) and run_id.strip() else None
 
     def _show_error(self, message: str) -> None:
         QMessageBox.critical(self, "错误", message)

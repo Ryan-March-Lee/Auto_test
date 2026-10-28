@@ -35,6 +35,7 @@ class Signals:
         for name in (
             "progress", "message", "data_update", "result", "finished",
             "stopped", "error", "step_pause", "rejected", "state_changed",
+            "archival",
         ):
             setattr(self, name, Signal())
 

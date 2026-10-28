@@ -20,6 +20,16 @@ from PySide6.QtWidgets import (
 
 from .measurement_controller_contract import MeasurementCommand
 from application.dto import AmplifierMeasurementResult
+from .archival_status import (
+    ArchivalSummary,
+    summarize_archival,
+    summarize_archival_missing,
+    summarize_archival_running,
+    summarize_archival_saving,
+    summarize_test_cancelled,
+    summarize_test_failure,
+)
+from .archival_view import ArchivalStatusView
 from .measurement_state import AmplifierPageResultState, MeasurementKind
 from .pages import PageControllerBindingMixin
 from .run_contract import is_valid_prepared_run
@@ -44,6 +54,7 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         log_callback: Callable[[str], Any] | None = None,
         progress_callback: Callable[[int], Any] | None = None,
         error_callback: Callable[[str], Any] | None = None,
+        archival_location_provider: Callable[[str, str | None], str | None] | None = None,
     ) -> None:
         PageControllerBindingMixin.__init__(self)
         QWidget.__init__(self)
@@ -58,6 +69,11 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         self._log_callback = log_callback or (lambda _message: None)
         self._progress_callback = progress_callback or (lambda _value: None)
         self._error_callback = error_callback or self._show_error
+        self._archival_location_provider = archival_location_provider
+        # 本次测量是否还在等待自动归档结果；用于提示“状态未知”而不是假装完成。
+        self._archival_pending = False
+        # 是否已经提示“正在保存/生成”，避免每次进度刷新都重复写日志。
+        self._archival_saving = False
         self.realtime_buffer = RealtimeMeasurementBuffer()
         self.root = self.build_ui()
 
@@ -108,6 +124,13 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         control_layout.addStretch(1)
         left_layout.addWidget(control_group)
 
+        # 归档结果紧跟测量控制：测试结束后用户在当前页面即可确认结果是否已保存。
+        self.archival_view = ArchivalStatusView(
+            location_provider=self._archival_location_provider,
+            log_callback=self._log_callback,
+        )
+        left_layout.addWidget(self.archival_view)
+
         result_group = QGroupBox("测量结果")
         result_layout = QVBoxLayout(result_group)
         self.result_table = QTableWidget()
@@ -132,8 +155,10 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
     def _connect_controller_signals(self, controller: Any) -> None:
         signals = controller.signals
         self._connect_signal(signals.progress, self._progress_callback)
+        self._connect_signal(signals.progress, self._on_progress_archival)
         self._connect_signal(signals.data_update, self.update_realtime)
         self._connect_signal(signals.result, self.show_result)
+        self._connect_signal(signals.archival, self.show_archival)
         self._connect_signal(signals.state_changed, self._on_state_changed)
         self._connect_signal(signals.error, self._on_error)
         self._connect_signal(signals.stopped, self._on_stopped)
@@ -174,6 +199,12 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
             return
         self.reset_realtime_data()
         self.result_table.setRowCount(0)
+        # 归档进行中的状态：让用户知道结束后还要保存结果、生成产物。
+        self._archival_pending = True
+        self._archival_saving = False
+        self._show_archival_summary(
+            summarize_archival_running(MeasurementKind.AMPLIFIER)
+        )
         self._log_callback("开始主功放测试...")
         controller.start_amplifier(
             MeasurementCommand(self._config_path_provider(), prepared_run=run)
@@ -221,6 +252,50 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
                 self.update_realtime({"frequency": row_data.get("frequency", ""), "sweep_data": dict(sweep)})
         self.result_table.resizeColumnsToContents()
 
+    def _on_progress_archival(self, value: int) -> None:
+        """进度到 100% 表示扫描结束，随后是保存结果与生成产物：明确告知用户。"""
+        if not self._archival_pending or self._archival_saving:
+            return
+        if self.controller is None or self.controller.state.kind is not MeasurementKind.AMPLIFIER:
+            return
+        try:
+            progress = int(value)
+        except (TypeError, ValueError):
+            return
+        if progress < 100:
+            return
+        self._archival_saving = True
+        self._show_archival_summary(
+            summarize_archival_saving(MeasurementKind.AMPLIFIER)
+        )
+
+    def show_archival(self, outcome: Any) -> None:
+        """显示自动归档结果：只渲染状态，不读取文件、不拼接导出规则。"""
+        if getattr(outcome, "stage", None) != MeasurementKind.AMPLIFIER.value:
+            return
+        self._archival_pending = False
+        try:
+            summary = summarize_archival(outcome)
+        except (TypeError, ValueError) as error:
+            self._show_archival_summary(
+                summarize_archival_missing(
+                    MeasurementKind.AMPLIFIER, self._current_run_id()
+                )
+            )
+            self._log_callback(f"归档结果无法显示: {error}")
+            return
+        self._show_archival_summary(summary)
+
+    def _show_archival_summary(self, summary: ArchivalSummary) -> None:
+        """把一条归档提示写到页面控件和日志里。"""
+        self.archival_view.show_summary(summary)
+        self._log_callback(f"{summary.headline}：{summary.detail}")
+
+    def _current_run_id(self) -> str | None:
+        """当前运行 ID，仅用于状态文案；不可用时返回 ``None``。"""
+        run_id = getattr(self._run_provider(), "run_id", None)
+        return run_id if isinstance(run_id, str) and run_id.strip() else None
+
     def _update_plot(self, data: Mapping[str, Any]) -> None:
         update_plot = getattr(self.amplifier_plot_widget, "update_plot", None)
         if update_plot is not None:
@@ -241,6 +316,10 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         self.amplifier_test_btn.setEnabled(True)
         self.emergency_stop_btn.setEnabled(False)
         self.cancel_btn.setEnabled(False)
+        self._archival_pending = False
+        self._show_archival_summary(
+            summarize_test_failure(MeasurementKind.AMPLIFIER, message)
+        )
         self._error_callback(message)
 
     def _on_stopped(self, reason: str) -> None:
@@ -253,6 +332,10 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         self.emergency_stop_btn.setEnabled(False)
         self.cancel_btn.setEnabled(False)
         self._progress_callback(0)
+        self._archival_pending = False
+        self._show_archival_summary(
+            summarize_test_cancelled(MeasurementKind.AMPLIFIER, reason)
+        )
         self._log_callback(f"测量已停止: {reason}")
 
     def _on_finished(self) -> None:
@@ -264,6 +347,14 @@ class AmplifierPage(RealtimePageMixin, PageControllerBindingMixin, QWidget):
         self.amplifier_test_btn.setEnabled(True)
         self.emergency_stop_btn.setEnabled(False)
         self._progress_callback(100)
+        if self._archival_pending:
+            # 测试确实完成了，但没有收到归档结果：如实提示状态未知。
+            self._archival_pending = False
+            self._show_archival_summary(
+                summarize_archival_missing(
+                    MeasurementKind.AMPLIFIER, self._current_run_id()
+                )
+            )
         self._log_callback("测量完成！")
 
     def _show_error(self, message: str) -> None:

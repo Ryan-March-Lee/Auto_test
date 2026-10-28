@@ -35,7 +35,7 @@ class Signals:
     def __init__(self):
         for name in (
             "progress", "message", "data_update", "result", "finished",
-            "stopped", "error", "rejected", "state_changed",
+            "stopped", "error", "rejected", "state_changed", "archival",
         ):
             setattr(self, name, Signal())
 
@@ -265,7 +265,7 @@ class DriverMappingPageTests(unittest.TestCase):
         page.show()
         self.app.processEvents()
         titles = [box.title() for box in page.control_panel.findChildren(QGroupBox)]
-        self.assertEqual(titles, ["连接说明", "测量控制"])
+        self.assertEqual(titles, ["连接说明", "测量控制", "归档结果"])
         self.assertLessEqual(page.control_panel.width(), 430)
         self.assertLess(
             page.control_panel.x() + page.control_panel.width(),

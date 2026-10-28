@@ -1,0 +1,132 @@
+"""归档结果分组控件：把 ``ArchivalSummary`` 显示成文案和“打开”按钮。
+
+控件只负责呈现与系统打开动作：位置由窗口注入的 ``location_provider`` 提供，
+本控件不判断文件是否存在，也不拼接导出规则。
+"""
+
+from __future__ import annotations
+
+from typing import Callable
+
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QDesktopServices
+from PySide6.QtWidgets import (
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+from .archival_status import (
+    TONE_ERROR,
+    TONE_INFO,
+    TONE_SUCCESS,
+    TONE_WARNING,
+    ArchivalSummary,
+)
+
+
+_TONE_STYLES = {
+    TONE_INFO: "color: #1f5fa8; font-weight: bold;",
+    TONE_SUCCESS: "color: #1b7f3a; font-weight: bold;",
+    TONE_WARNING: "color: #a15c00; font-weight: bold;",
+    TONE_ERROR: "color: #b00020; font-weight: bold;",
+}
+
+_IDLE_SUMMARY = ArchivalSummary(
+    headline="尚未执行归档",
+    detail="测量结束后会自动保存正式结果并生成交付产物。",
+    tone=TONE_INFO,
+)
+
+LocationProvider = Callable[[str, str | None], str | None]
+
+
+class ArchivalStatusView(QGroupBox):
+    """一次归档结果的标题、说明与“打开结果目录/测试报告”快捷动作。"""
+
+    def __init__(
+        self,
+        *,
+        location_provider: LocationProvider | None = None,
+        log_callback: Callable[[str], object] | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__("归档结果", parent)
+        self._location_provider = location_provider
+        self._log_callback = log_callback or (lambda _message: None)
+        self.summary: ArchivalSummary | None = None
+        layout = QVBoxLayout(self)
+        layout.setSpacing(4)
+        self.headline_label = QLabel()
+        self.headline_label.setWordWrap(True)
+        self.detail_label = QLabel()
+        self.detail_label.setWordWrap(True)
+        layout.addWidget(self.headline_label)
+        layout.addWidget(self.detail_label)
+        buttons = QHBoxLayout()
+        self.open_location_btn = QPushButton("打开结果目录")
+        self.open_location_btn.clicked.connect(self.open_location)
+        self.open_report_btn = QPushButton("打开测试报告")
+        self.open_report_btn.clicked.connect(self.open_report)
+        buttons.addWidget(self.open_location_btn)
+        buttons.addWidget(self.open_report_btn)
+        buttons.addStretch(1)
+        layout.addLayout(buttons)
+        self.show_summary(_IDLE_SUMMARY)
+
+    def show_summary(self, summary: ArchivalSummary) -> None:
+        """显示一个归档提示；按钮状态完全由提示本身决定。"""
+        if not isinstance(summary, ArchivalSummary):
+            raise TypeError("归档展示只接受 ArchivalSummary")
+        self.summary = summary
+        self.headline_label.setText(summary.headline)
+        self.headline_label.setStyleSheet(_TONE_STYLES.get(summary.tone, ""))
+        self.detail_label.setText(summary.detail)
+        has_provider = self._location_provider is not None
+        self.open_location_btn.setEnabled(has_provider and summary.can_open_location)
+        self.open_report_btn.setEnabled(has_provider and summary.can_open_report)
+
+    def clear(self) -> None:
+        """回到“尚未执行归档”的中性状态。"""
+        self.show_summary(_IDLE_SUMMARY)
+
+    def open_location(self) -> bool:
+        """打开当前运行的归档目录。"""
+        return self._open(None, "结果目录")
+
+    def open_report(self) -> bool:
+        """打开当前归档结果已生成的测试报告。"""
+        summary = self.summary
+        report_path = summary.report_path if summary is not None else None
+        return self._open(report_path, "测试报告")
+
+    def _open(self, relative_path: str | None, label: str) -> bool:
+        summary = self.summary
+        if summary is None or not summary.can_open_location:
+            self._log_callback(f"当前没有可打开的归档{label}")
+            return False
+        provider = self._location_provider
+        if provider is None:
+            self._log_callback(f"未接入归档{label}位置入口，无法打开")
+            return False
+        try:
+            target = provider(summary.run_id, relative_path)
+        except (OSError, ValueError) as error:
+            self._log_callback(f"无法定位归档{label}: {error}")
+            return False
+        if not isinstance(target, str) or not target.strip():
+            self._log_callback(
+                f"归档{label}位置不可用，请在“数据导出”页查看运行 {summary.run_id}"
+            )
+            return False
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(target)):
+            self._log_callback(f"系统无法打开归档{label}: {target}")
+            return False
+        self._log_callback(f"已打开归档{label}: {target}")
+        return True
+
+
+__all__ = ["ArchivalStatusView"]

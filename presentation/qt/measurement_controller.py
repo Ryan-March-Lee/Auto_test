@@ -30,6 +30,7 @@ class _ControllerSignals(QObject):
     message = Signal(str)
     data_update = Signal(object)
     result = Signal(object)
+    archival = Signal(object)
     finished = Signal()
     stopped = Signal(str)
     error = Signal(str)
@@ -77,6 +78,7 @@ class MeasurementController:
                 "message": self._on_message,
                 "data_update": self.signals.data_update.emit,
                 "result": self._on_result,
+                "archival": self._on_archival,
                 "finished": self._on_finished,
                 "stopped": self._on_stopped,
                 "error": self._on_error,
@@ -179,6 +181,17 @@ class MeasurementController:
         reference = MeasurementResultReference(str(uuid4()), kind, value)
         self._update_view(result=reference)
         self.signals.result.emit(reference)
+
+    def _on_archival(self, outcome: Any) -> None:
+        """转发自动归档结果；只转发与当前测量类型对应的阶段。
+
+        页面据此生成用户文案和按钮状态，controller 不解释产物含义，也不读取文件。
+        """
+        stage = getattr(outcome, "stage", None)
+        kind = self._state.kind
+        if kind is None or stage != kind.value:
+            return
+        self.signals.archival.emit(outcome)
 
     def _on_step_pause(self, message: str) -> None:
         if self._state.kind is MeasurementKind.CABLE_LOSS and self._state.status is MeasurementStatus.RUNNING:

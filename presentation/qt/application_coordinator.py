@@ -17,6 +17,7 @@ from typing import Any, Callable, Iterable, Protocol, runtime_checkable
 from app.gui_runtime import load_prepared_run, prepare_configuration
 from application.gui_data_service import GuiDataService
 from application.run_service import RunNotResumable
+from domain.run.models import normalize_artifact_path
 from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService
 
 from .composition import build_gui_data_service
@@ -404,6 +405,37 @@ class ApplicationCoordinator:
         if page is not None:
             return bool(page.driver_mode_requested())
         return False
+
+    # ---- 自动归档结果的定位（供页面“打开结果目录/报告”） ----
+
+    def archival_location(
+        self, run_id: str, relative_path: str | None = None
+    ) -> str | None:
+        """返回归档结果的本地位置：默认运行目录，给定产物相对路径时返回该文件。
+
+        只服务“打开结果目录/测试报告”这类展示动作：运行必须与当前运行一致，
+        相对路径必须是归档契约里的运行目录内产物路径。本方法不读取文件内容、
+        不判断产物是否可用；产物状态由归档服务与 manifest 决定。
+        """
+        run = self.prepared_run
+        if run is None or getattr(run, "run_id", None) != run_id:
+            self._log(
+                f"归档结果属于运行 {run_id}，当前运行不是它；请在“数据导出”页查看"
+            )
+            return None
+        directory = getattr(run, "run_directory", None)
+        if directory is None or not str(directory).strip():
+            self._log(f"运行 {run_id} 没有可定位的运行目录")
+            return None
+        base = Path(str(directory))
+        if relative_path is None:
+            return str(base)
+        try:
+            normalized = normalize_artifact_path(relative_path)
+        except ValueError as error:
+            self._log(f"归档产物路径不合法: {error}")
+            return None
+        return str(base.joinpath(*normalized.split("/")))
 
     def _confirm_wiring(self) -> bool:
         config = self.config

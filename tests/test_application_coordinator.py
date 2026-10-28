@@ -381,5 +381,62 @@ class FeedbackCallbackTests(unittest.TestCase):
             )
 
 
+class ArchivalLocationTests(unittest.TestCase):
+    """归档位置只服务“打开结果目录/报告”：必须属于当前运行且在运行目录内。"""
+
+    def _coordinator(self, run_directory="D:/runs/current"):
+        coordinator = _coordinator()
+        coordinator.prepared_run = SimpleNamespace(
+            run_id=RUN_ID,
+            run_directory=Path(run_directory) if run_directory else None,
+        )
+        return coordinator
+
+    def test_current_run_directory_is_returned(self):
+        coordinator = self._coordinator()
+
+        self.assertEqual(
+            coordinator.archival_location(RUN_ID), str(Path("D:/runs/current"))
+        )
+
+    def test_artifact_path_is_resolved_inside_the_run_directory(self):
+        coordinator = self._coordinator()
+
+        location = coordinator.archival_location(
+            RUN_ID, "artifacts/amplifier_report.html"
+        )
+
+        self.assertEqual(
+            location,
+            str(Path("D:/runs/current") / "artifacts" / "amplifier_report.html"),
+        )
+
+    def test_other_runs_are_refused(self):
+        coordinator = self._coordinator()
+
+        self.assertIsNone(coordinator.archival_location("20261027T101500Z_0ther0id"))
+        self.assertTrue(
+            any("当前运行不是它" in message for message in coordinator.messages)
+        )
+
+    def test_artifact_paths_outside_artifacts_are_refused(self):
+        coordinator = self._coordinator()
+
+        self.assertIsNone(
+            coordinator.archival_location(RUN_ID, "results/amplifier_measurement.json")
+        )
+        self.assertTrue(
+            any("路径不合法" in message for message in coordinator.messages)
+        )
+
+    def test_without_a_current_run_nothing_is_located(self):
+        coordinator = _coordinator()
+
+        self.assertIsNone(coordinator.archival_location(RUN_ID))
+        self.assertTrue(
+            any("当前运行不是它" in message for message in coordinator.messages)
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

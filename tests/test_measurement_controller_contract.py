@@ -41,6 +41,7 @@ class _Signals:
             "step_pause",
             "rejected",
             "state_changed",
+            "archival",
         ):
             setattr(self, name, _Signal())
 

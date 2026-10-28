@@ -22,6 +22,8 @@ class WorkerSignals(QObject):
     error = Signal(str)
     stopped = Signal(str)
     result = Signal(object)
+    # 结构化归档结果（application.dto.archival.ArchivalOutcome）；未启用自动归档时不发。
+    archival = Signal(object)
     progress = Signal(int)
     message = Signal(str)
     data_update = Signal(dict)
@@ -104,6 +106,15 @@ class BaseWorker(QThread):
 
     def emit_message(self, message: str) -> None:
         self.signals.message.emit(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
+
+    def _emit_archival(self) -> None:
+        """把应用层自动归档结果转发给页面；未启用归档时不发事件。
+
+        worker 只转发结构化 DTO，不解释产物含义；文案与按钮状态由页面生成。
+        """
+        outcome = getattr(self._service, "last_archival_outcome", None)
+        if outcome is not None:
+            self.signals.archival.emit(outcome)
 
     def _failed(self, label: str, error: Exception) -> None:
         if isinstance(error, MeasurementCancelled):
@@ -217,6 +228,7 @@ class CableLossWorker(BaseWorker):
             if result is None:
                 raise RuntimeError("线损测量完成但未提供结构化结果")
             self.signals.result.emit(result)
+            self._emit_archival()
             self.emit_message("线损测量完成！")
             self.signals.finished.emit()
         except Exception as error:
@@ -285,6 +297,7 @@ class DriverMappingWorker(BaseWorker):
             if result is None:
                 raise RuntimeError(f"{label}完成但未提供结构化结果")
             self.signals.result.emit(result)
+            self._emit_archival()
             self.emit_message(f"{label}完成！")
             self.signals.finished.emit()
         except Exception as error:
@@ -331,6 +344,7 @@ class AmplifierWorker(BaseWorker):
             if result is None:
                 raise RuntimeError("主功放测量完成但未提供结构化结果")
             self.signals.result.emit(result)
+            self._emit_archival()
             self.emit_message("主功放测量完成！")
             self.signals.finished.emit()
         except Exception as error:

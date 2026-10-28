@@ -260,6 +260,7 @@ class MainWindow(QMainWindow):
             log_callback=self.add_log_message,
             progress_callback=self._set_progress,
             error_callback=lambda message: self.on_measurement_error(message),
+            archival_location_provider=self.coordinator.archival_location,
             driver_realtime_data_callback=self.coordinator.store_realtime_data,
             amplifier_realtime_data_callback=self.coordinator.store_realtime_data,
             clear_realtime_callback=self.clear_real_time_data,

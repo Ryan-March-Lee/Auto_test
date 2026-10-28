@@ -21,22 +21,13 @@ from PySide6.QtWidgets import (
 
 from .measurement_controller_contract import MeasurementCommand
 from application.dto import CableLossMeasurementResult
-from .archival_status import (
-    ArchivalSummary,
-    summarize_archival,
-    summarize_archival_missing,
-    summarize_archival_running,
-    summarize_archival_saving,
-    summarize_test_cancelled,
-    summarize_test_failure,
-)
-from .archival_view import ArchivalStatusView
+from .archival_page import ArchivalPageMixin
 from .measurement_state import CableLossPageResultState, MeasurementKind, MeasurementStatus
 from .pages import PageControllerBindingMixin
 from .run_contract import is_valid_prepared_run
 
 
-class CableLossPage(PageControllerBindingMixin, QWidget):
+class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
     """线损测量输入、接线确认与结果展示。"""
 
     load_result_requested = Signal()
@@ -52,6 +43,7 @@ class CableLossPage(PageControllerBindingMixin, QWidget):
         progress_callback: Callable[[int], Any] | None = None,
         error_callback: Callable[[str], Any] | None = None,
         archival_location_provider: Callable[[str, str | None], str | None] | None = None,
+        archival_run_id_provider: Callable[[], str | None] | None = None,
     ) -> None:
         PageControllerBindingMixin.__init__(self)
         QWidget.__init__(self)
@@ -62,9 +54,12 @@ class CableLossPage(PageControllerBindingMixin, QWidget):
         self._log_callback = log_callback or (lambda _message: None)
         self._progress_callback = progress_callback or (lambda _value: None)
         self._error_callback = error_callback or self._show_error
-        self._archival_location_provider = archival_location_provider
-        self._archival_pending = False
-        self._archival_saving = False
+        self._setup_archival(
+            MeasurementKind.CABLE_LOSS,
+            location_provider=archival_location_provider,
+            run_id_provider=archival_run_id_provider,
+            run_provider=run_provider,
+        )
         self.root = self.build_ui()
 
     def build_ui(self) -> QWidget:
@@ -118,10 +113,7 @@ class CableLossPage(PageControllerBindingMixin, QWidget):
         control_layout.addWidget(self.continue_cable_loss_btn)
         layout.addWidget(control_group)
 
-        self.archival_view = ArchivalStatusView(
-            location_provider=self._archival_location_provider,
-            log_callback=self._log_callback,
-        )
+        self.archival_view = self._create_archival_view()
         layout.addWidget(self.archival_view)
 
         result_group = QGroupBox("测量结果")
@@ -138,10 +130,9 @@ class CableLossPage(PageControllerBindingMixin, QWidget):
     def _connect_controller_signals(self, controller: Any) -> None:
         signals = controller.signals
         self._connect_signal(signals.progress, self._progress_callback)
-        self._connect_signal(signals.progress, self._on_progress_archival)
+        self._connect_archival_signals(controller)
         self._connect_signal(signals.data_update, self.update_realtime)
         self._connect_signal(signals.result, self.show_result)
-        self._connect_signal(signals.archival, self.show_archival)
         self._connect_signal(signals.step_pause, self._on_step_pause)
         self._connect_signal(signals.state_changed, self._on_state_changed)
         self._connect_signal(signals.error, self._on_error)
@@ -151,6 +142,11 @@ class CableLossPage(PageControllerBindingMixin, QWidget):
     def start_measurement(self) -> None:
         controller = self.controller
         if controller is None:
+            return
+        # 已有测量运行时不得进入“等待归档”外观：线损页面此前缺少这道保护，
+        # 启动被拒绝后归档分组会一直停留在“结束后将自动归档”。
+        if getattr(controller.state, "is_active", False):
+            self._log_callback("已有测量正在运行")
             return
         # 只接受配置阶段创建（或按 run_id 重新打开）的当前运行契约；不再在开始前
         # 重新保存 GUI 配置，因此已冻结快照不会被覆盖。
@@ -164,14 +160,12 @@ class CableLossPage(PageControllerBindingMixin, QWidget):
         if not self._confirm_wiring():
             return
         self.clear_results()
-        self._archival_pending = True
-        self._archival_saving = False
-        self._show_archival_summary(
-            summarize_archival_running(MeasurementKind.CABLE_LOSS)
-        )
         self._log_callback("开始线损测量...")
-        controller.start_cable_loss(
-            MeasurementCommand(self._config_path_provider(), prepared_run=run)
+        self._archival_try_start(
+            lambda: controller.start_cable_loss(
+                MeasurementCommand(self._config_path_provider(), prepared_run=run)
+            ),
+            "线损测量未能启动，未开始测量",
         )
 
     def stop_measurement(self) -> None:
@@ -211,97 +205,34 @@ class CableLossPage(PageControllerBindingMixin, QWidget):
         )
 
     def _on_error(self, message: str) -> None:
-        if self.controller is None or (
-            self.controller.state.kind is not None
-            and self.controller.state.kind is not MeasurementKind.CABLE_LOSS
-        ):
+        if not self._archival_is_for_this_page():
             return
         self.cable_loss_btn.setEnabled(True)
         self.stop_cable_loss_btn.setEnabled(False)
         self.cancel_cable_loss_btn.setEnabled(False)
         self.continue_cable_loss_btn.setEnabled(False)
-        self._archival_pending = False
-        self._show_archival_summary(
-            summarize_test_failure(MeasurementKind.CABLE_LOSS, message)
-        )
+        self._archival_test_failed(message)
         self._error_callback(message)
 
     def _on_stopped(self, reason: str) -> None:
-        if self.controller is None or (
-            self.controller.state.kind is not None
-            and self.controller.state.kind is not MeasurementKind.CABLE_LOSS
-        ):
+        if not self._archival_is_for_this_page():
             return
-        self._archival_pending = False
-        self._show_archival_summary(
-            summarize_test_cancelled(MeasurementKind.CABLE_LOSS, reason)
-        )
+        self._archival_test_stopped(reason)
         self._log_callback(f"测量已停止: {reason}")
         self._progress_callback(0)
 
     def _on_finished(self) -> None:
-        if self.controller is None or (
-            self.controller.state.kind is not None
-            and self.controller.state.kind is not MeasurementKind.CABLE_LOSS
-        ):
+        if not self._archival_is_for_this_page():
             return
         self._progress_callback(100)
-        if self._archival_pending:
-            self._archival_pending = False
-            self._show_archival_summary(
-                summarize_archival_missing(
-                    MeasurementKind.CABLE_LOSS, self._current_run_id()
-                )
-            )
+        self._archival_test_finished()
         self._log_callback("测量完成！")
-
-    def _on_progress_archival(self, value: int) -> None:
-        """进度到 100% 表示扫描结束，随后是保存结果与生成产物：明确告知用户。"""
-        if not self._archival_pending or self._archival_saving:
-            return
-        if self.controller is None or self.controller.state.kind is not MeasurementKind.CABLE_LOSS:
-            return
-        try:
-            progress = int(value)
-        except (TypeError, ValueError):
-            return
-        if progress < 100:
-            return
-        self._archival_saving = True
-        self._show_archival_summary(
-            summarize_archival_saving(MeasurementKind.CABLE_LOSS)
-        )
-
-    def show_archival(self, outcome: Any) -> None:
-        """显示自动归档结果：只渲染状态，不读取文件、不拼接导出规则。"""
-        if getattr(outcome, "stage", None) != MeasurementKind.CABLE_LOSS.value:
-            return
-        self._archival_pending = False
-        try:
-            summary = summarize_archival(outcome)
-        except (TypeError, ValueError) as error:
-            self._show_archival_summary(
-                summarize_archival_missing(
-                    MeasurementKind.CABLE_LOSS, self._current_run_id()
-                )
-            )
-            self._log_callback(f"归档结果无法显示: {error}")
-            return
-        self._show_archival_summary(summary)
-
-    def _show_archival_summary(self, summary: ArchivalSummary) -> None:
-        """把一条归档提示写到页面控件和日志里。"""
-        self.archival_view.show_summary(summary)
-        self._log_callback(f"{summary.headline}：{summary.detail}")
-
-    def _current_run_id(self) -> str | None:
-        """当前运行 ID，仅用于状态文案；不可用时返回 ``None``。"""
-        run_id = getattr(self._run_provider(), "run_id", None)
-        return run_id if isinstance(run_id, str) and run_id.strip() else None
 
     def clear_results(self) -> None:
         self.cable_loss_table.setRowCount(0)
         self.archival_view.clear()
+        self._archival_pending = False
+        self._archival_saving = False
         self._log_callback("已清空上一次线损测量结果")
 
     def show_loaded_result(self, reference: Any) -> None:

@@ -437,6 +437,17 @@ class ArchivalLocationTests(unittest.TestCase):
             any("当前运行不是它" in message for message in coordinator.messages)
         )
 
+    def test_current_run_id_is_a_silent_query(self):
+        coordinator = self._coordinator()
+
+        self.assertEqual(coordinator.current_run_id(), RUN_ID)
+        self.assertEqual(coordinator.errors, [])
+
+        coordinator.prepared_run = None
+        self.assertIsNone(coordinator.current_run_id())
+        self.assertEqual(coordinator.errors, [])
+        self.assertEqual(coordinator.messages, [])
+
 
 if __name__ == "__main__":
     unittest.main()

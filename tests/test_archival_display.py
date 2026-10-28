@@ -57,13 +57,18 @@ class Controller:
     def __init__(self):
         self.signals = Signals()
         self.calls = []
+        self.start_result = True
+        self.start_error = None
         self.state = type(
             "State", (), {"kind": None, "status": MeasurementStatus.IDLE, "is_active": False}
         )()
 
     def _record(self, *call):
         self.calls.append(call)
-        return True
+        if self.start_error is not None:
+            self.signals.error.emit(self.start_error)
+            return False
+        return self.start_result
 
     def start_amplifier(self, command):
         return self._record("start_amplifier", command)
@@ -212,6 +217,40 @@ class ArchivalStatusViewTests(unittest.TestCase):
         self.assertEqual(len(logs), 1)
         self.assertIn(RUN_ID, logs[0])
 
+    def test_dynamic_text_is_never_rendered_as_rich_text(self):
+        from PySide6.QtCore import Qt
+
+        from presentation.qt.archival_status import summarize_test_failure
+
+        view = ArchivalStatusView(location_provider=lambda _run_id, _path=None: "/tmp")
+        summary = summarize_test_failure(MeasurementKind.AMPLIFIER, "<b>仪器</b> & 无响应")
+
+        view.show_summary(summary)
+
+        self.assertEqual(view.headline_label.textFormat(), Qt.TextFormat.PlainText)
+        self.assertEqual(view.detail_label.textFormat(), Qt.TextFormat.PlainText)
+        self.assertIn("<b>仪器</b> & 无响应", view.detail_label.text())
+
+    def test_actions_of_another_run_are_not_offered(self):
+        locations = []
+        view = ArchivalStatusView(
+            location_provider=_location_provider(locations),
+            current_run_id_provider=lambda: "20260102T000000Z_0ther0id",
+        )
+        from presentation.qt.archival_status import summarize_archival
+
+        view.show_summary(summarize_archival(_amplifier_outcome()))
+
+        self.assertFalse(view.open_location_btn.isEnabled())
+        self.assertFalse(view.open_report_btn.isEnabled())
+        with patch(
+            "presentation.qt.archival_view.QDesktopServices.openUrl"
+        ) as open_url:
+            self.assertFalse(view.open_location())
+
+        open_url.assert_not_called()
+        self.assertEqual(locations, [])
+
 
 class AmplifierPageArchivalTests(unittest.TestCase):
     @classmethod
@@ -221,9 +260,10 @@ class AmplifierPageArchivalTests(unittest.TestCase):
     def setUp(self):
         self.controller = Controller()
         self.locations = []
+        self.run = _run()
         self.page = AmplifierPage(
             config_path_provider=lambda: "config.json",
-            run_provider=lambda: _run(),
+            run_provider=lambda: self.run,
             confirm_wiring=lambda: True,
             driver_mode_provider=lambda: True,
             connection_dialog_factory=lambda *_: Dialog(),
@@ -330,6 +370,47 @@ class AmplifierPageArchivalTests(unittest.TestCase):
         self.assertIn("未收到归档结果", self.state.headline())
         self.assertTrue(any("归档结果无法显示" in line for line in logs))
 
+    def test_start_rejected_by_controller_leaves_no_waiting_appearance(self):
+        self.controller.start_result = False
+
+        self.page.start_measurement()
+
+        # controller 拒绝启动时不能显示“结束后将自动归档”。
+        self.assertIn("尚未执行归档", self.state.headline())
+        self.assertFalse(self.page._archival_pending)
+        self.assertFalse(self.state.view.open_location_btn.isEnabled())
+
+    def test_start_failure_reported_by_controller_is_not_overwritten(self):
+        self.controller.start_error = "用例构造失败: 缺少驱动映射输入"
+
+        self.page.start_measurement()
+
+        # controller 先发出 error 再返回 False：拒绝启动的中性提示不能覆盖失败原因。
+        self.assertIn("测试异常", self.state.headline())
+        self.assertIn("用例构造失败", self.state.detail())
+        self.assertFalse(self.page._archival_pending)
+
+    def test_rejected_start_keeps_the_previous_result_visible(self):
+        self.controller.signals.archival.emit(_amplifier_outcome())
+        self.controller.start_result = False
+
+        self.page.start_measurement()
+
+        # 上一次测量的归档结果仍然成立，不能被一次被拒绝的启动清零。
+        self.assertIn("已自动归档", self.state.headline())
+        self.assertFalse(self.page._archival_pending)
+
+    def test_switching_run_drops_the_summary_of_the_previous_run(self):
+        self.page.start_measurement()
+        self.controller.signals.archival.emit(_amplifier_outcome())
+        self.assertIn("已自动归档", self.state.headline())
+
+        self.run = _run("20260102T000000Z_0ther0id")
+        self.page.on_activated()
+
+        self.assertIn("尚未执行归档", self.state.headline())
+        self.assertFalse(self.state.view.open_location_btn.isEnabled())
+
 
 class CableLossPageArchivalTests(unittest.TestCase):
     @classmethod
@@ -378,6 +459,28 @@ class CableLossPageArchivalTests(unittest.TestCase):
 
         self.assertIn("尚未执行归档", self.state.headline())
 
+    def test_start_while_another_measurement_runs_keeps_the_panel_neutral(self):
+        self.controller.state = type(
+            "State",
+            (),
+            {"kind": MeasurementKind.AMPLIFIER, "status": MeasurementStatus.RUNNING, "is_active": True},
+        )()
+
+        self.page.start_measurement()
+
+        self.assertEqual(self.controller.calls, [])
+        self.assertIn("尚未执行归档", self.state.headline())
+        self.assertIn("已有测量正在运行", self.logs)
+
+    def test_rejected_start_does_not_leave_a_waiting_appearance(self):
+        self.controller.start_result = False
+
+        self.page.start_measurement()
+
+        self.assertIn("尚未执行归档", self.state.headline())
+        self.assertFalse(self.page._archival_pending)
+        self.assertIn("线损测量未能启动，未开始测量", self.logs)
+
 
 class DriverMappingPageArchivalTests(unittest.TestCase):
     @classmethod
@@ -416,6 +519,18 @@ class DriverMappingPageArchivalTests(unittest.TestCase):
         self.controller.signals.error.emit("扫描失败")
         self.assertIn("测试异常", self.state.headline())
         self.assertIn("扫描失败", self.state.detail())
+
+    def test_progress_100_announces_saving_until_the_outcome_arrives(self):
+        self.page.start_measurement()
+        self.controller.state = type(
+            "State",
+            (),
+            {"kind": MeasurementKind.DRIVER_MAPPING, "status": MeasurementStatus.RUNNING, "is_active": True},
+        )()
+
+        self.controller.signals.progress.emit(100)
+        self.assertIn("正在保存结果", self.state.headline())
+        self.assertFalse(self.state.view.open_location_btn.isEnabled())
 
 
 class WorkerArchivalForwardingTests(unittest.TestCase):

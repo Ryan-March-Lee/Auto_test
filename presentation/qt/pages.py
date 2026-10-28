@@ -163,6 +163,7 @@ class PageContext:
     progress_callback: Callable[[int], Any]
     error_callback: Callable[[str], Any]
     archival_location_provider: Callable[[str, str | None], str | None]
+    archival_run_id_provider: Callable[[], str | None]
     driver_realtime_data_callback: Callable[[Any], Any]
     amplifier_realtime_data_callback: Callable[[Any], Any]
     clear_realtime_callback: Callable[[], Any]
@@ -203,6 +204,7 @@ def _build_cable_loss_page(context: PageContext) -> Any:
         progress_callback=_page_forwarder(context.progress_callback),
         error_callback=context.error_callback,
         archival_location_provider=context.archival_location_provider,
+        archival_run_id_provider=context.archival_run_id_provider,
     )
     page.bind_controller(context.controller)
     return page
@@ -223,6 +225,7 @@ def _build_driver_mapping_page(context: PageContext) -> Any:
         progress_callback=_page_forwarder(context.progress_callback),
         error_callback=context.error_callback,
         archival_location_provider=context.archival_location_provider,
+        archival_run_id_provider=context.archival_run_id_provider,
     )
     page.bind_controller(context.controller)
     return page
@@ -244,6 +247,7 @@ def _build_amplifier_page(context: PageContext) -> Any:
         progress_callback=_page_forwarder(context.progress_callback),
         error_callback=context.error_callback,
         archival_location_provider=context.archival_location_provider,
+        archival_run_id_provider=context.archival_run_id_provider,
     )
     page.bind_controller(context.controller)
     return page

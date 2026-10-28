@@ -408,6 +408,16 @@ class ApplicationCoordinator:
 
     # ---- 自动归档结果的定位（供页面“打开结果目录/报告”） ----
 
+    def current_run_id(self) -> str | None:
+        """当前运行 ID；纯查询，不检查仪器连接、不弹窗。
+
+        归档展示只做“属于哪个运行”的文案与按钮判断，因此不能复用
+        :meth:`resolve_measurement_run`——它会因为未连接仪器而弹错误对话框。
+        """
+        run = self.prepared_run
+        run_id = getattr(run, "run_id", None)
+        return run_id if isinstance(run_id, str) and run_id.strip() else None
+
     def archival_location(
         self, run_id: str, relative_path: str | None = None
     ) -> str | None:

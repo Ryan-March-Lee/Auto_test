@@ -10,7 +10,7 @@
   损坏运行只给可用性与原因；已登记为 ``completed`` 的产物文件被删除时标记 ``missing``，
   但 manifest 记录不被改写；
 - ``HistoryViewModel``：运行摘要转成展示文本，选择清空规则，产物文件缺失的文案；
-- ``ExportPage``：显示运行与产物状态、按失败产物启用“重新生成”、不可用运行禁止导出，
+- ``RunHistoryPage``：显示运行与产物状态、按失败产物启用“重新生成”、不可用运行禁止导出，
   导出副本按**结果所属运行**判定可用性（两张表格各选一行时不会张冠李戴）；
 - 步骤 9 补充的页面边界：无效运行不能重新生成、部分运行（进行中 / 未归档）与没有产物
   记录的运行如实显示“无交付产物”、已完成产物文件缺失时提示“文件缺失”且正式结果仍可
@@ -33,6 +33,7 @@ from application.dto.archival import (
     ArchivalTestStatus,
     ArchivedArtifact,
 )
+from application.dto.export_requests import ExportFormat
 from application.dto.run_history import (
     RunArchiveState,
     RunArtifactSummary,
@@ -58,7 +59,7 @@ from infrastructure.gui_data_service import ResultExportAdapter, ResultQueryAdap
 from infrastructure.persistence.artifact_generator import ArchiveArtifactGenerator
 from infrastructure.persistence.run_history_repository import FileRunHistoryRepository
 from infrastructure.persistence.run_repository import RunRepository
-from presentation.qt.export_page import ExportPage
+from presentation.qt.run_history_page import RunHistoryPage
 from presentation.qt.history_view_model import HistoryViewModel, RunHistoryRow
 
 
@@ -615,7 +616,7 @@ class RunHistoryViewModelTests(unittest.TestCase):
 # -- 页面 -----------------------------------------------------------------
 
 
-class ExportPageHistoryTests(unittest.TestCase):
+class RunHistoryPageTests(unittest.TestCase):
     def setUp(self):
         from PySide6.QtWidgets import QApplication
 
@@ -628,7 +629,7 @@ class ExportPageHistoryTests(unittest.TestCase):
         self.history = FileRunHistoryRepository(runs=self.runs)
         # 离屏环境里任何模态对话框都会永久阻塞：统一替身并记录调用。
         for name in ("warning", "information", "critical"):
-            patcher = patch(f"presentation.qt.export_page.QMessageBox.{name}")
+            patcher = patch(f"presentation.qt.run_history_page.QMessageBox.{name}")
             setattr(self, f"{name}_dialog", patcher.start())
             self.addCleanup(patcher.stop)
 
@@ -680,7 +681,7 @@ class ExportPageHistoryTests(unittest.TestCase):
                 runs=self.runs, generator=ArchiveArtifactGenerator(self.runs)
             ),
         )
-        return ExportPage(
+        return RunHistoryPage(
             history=HistoryViewModel(query, runs=service),
             export_service=ResultExportUseCase(
                 history=query, exports=ResultExportAdapter(query, self.paths)
@@ -695,8 +696,8 @@ class ExportPageHistoryTests(unittest.TestCase):
         raise AssertionError(f"运行表格里没有 {run_id}")
 
     def _file_row_index(self, page, run_id: str) -> int:
-        for index in range(page.file_table.rowCount()):
-            if page.file_table.item(index, 2).text() == f"运行 {run_id}":
+        for index in range(page.result_table.rowCount()):
+            if page.result_table.item(index, 2).text() == f"运行 {run_id}":
                 return index
         raise AssertionError(f"结果表格里没有运行 {run_id} 的结果")
 
@@ -761,17 +762,17 @@ class ExportPageHistoryTests(unittest.TestCase):
             if "不可用" in page.run_table.item(index, 2).text()
         )
         page.run_table.setCurrentCell(invalid_row, 0)
-        page.file_table.setCurrentCell(0, 0)
+        page.result_table.setCurrentCell(0, 0)
 
         with patch(
-            "presentation.qt.export_page.QFileDialog.getSaveFileName"
+            "presentation.qt.run_history_page.QFileDialog.getSaveFileName"
         ) as dialog:
-            self.assertFalse(page.export_json())
+            self.assertFalse(page.export(ExportFormat.JSON))
 
         dialog.assert_not_called()
         self.warning_dialog.assert_called_once()
         # 无效运行本身不产生历史结果行：结果列表里只有可用运行的结果。
-        self.assertEqual(page.file_table.rowCount(), 1)
+        self.assertEqual(page.result_table.rowCount(), 1)
         self.assertIn("不可用", self.warning_dialog.call_args.args[2])
 
     def test_export_refuses_a_result_that_belongs_to_another_run(self):
@@ -780,12 +781,12 @@ class ExportPageHistoryTests(unittest.TestCase):
         self._complete_amplifier_run(OTHER_RUN_ID)
         page = self._page()
         page.run_table.setCurrentCell(self._run_row_index(page, RUN_ID), 0)
-        page.file_table.setCurrentCell(self._file_row_index(page, OTHER_RUN_ID), 0)
+        page.result_table.setCurrentCell(self._file_row_index(page, OTHER_RUN_ID), 0)
 
         with patch(
-            "presentation.qt.export_page.QFileDialog.getSaveFileName"
+            "presentation.qt.run_history_page.QFileDialog.getSaveFileName"
         ) as dialog:
-            self.assertFalse(page.export_json())
+            self.assertFalse(page.export(ExportFormat.JSON))
 
         dialog.assert_not_called()
         self.warning_dialog.assert_called_once()
@@ -795,18 +796,18 @@ class ExportPageHistoryTests(unittest.TestCase):
         """运行摘要里查不到结果所属运行时不导出：不能凭结果行绕过运行级判定。"""
         self._complete_amplifier_run()
         query = self._query()
-        page = ExportPage(
+        page = RunHistoryPage(
             history=HistoryViewModel(query, runs=StaticStatusPort([])),
             export_service=ResultExportUseCase(
                 history=query, exports=ResultExportAdapter(query, self.paths)
             ),
         )
-        page.file_table.setCurrentCell(0, 0)
+        page.result_table.setCurrentCell(0, 0)
 
         with patch(
-            "presentation.qt.export_page.QFileDialog.getSaveFileName"
+            "presentation.qt.run_history_page.QFileDialog.getSaveFileName"
         ) as dialog:
-            self.assertFalse(page.export_json())
+            self.assertFalse(page.export(ExportFormat.JSON))
 
         dialog.assert_not_called()
         self.warning_dialog.assert_called_once()
@@ -816,14 +817,14 @@ class ExportPageHistoryTests(unittest.TestCase):
         """未选运行行时以结果所属运行的可用性为准，正常结果仍可导出副本。"""
         self._complete_amplifier_run()
         page = self._page()
-        page.file_table.setCurrentCell(0, 0)
+        page.result_table.setCurrentCell(0, 0)
         target = self.root / "copy.json"
 
         with patch(
-            "presentation.qt.export_page.QFileDialog.getSaveFileName",
+            "presentation.qt.run_history_page.QFileDialog.getSaveFileName",
             return_value=(str(target), "JSON files (*.json)"),
         ):
-            self.assertTrue(page.export_json())
+            self.assertTrue(page.export(ExportFormat.JSON))
 
         self.assertTrue(target.is_file())
 
@@ -839,14 +840,14 @@ class ExportPageHistoryTests(unittest.TestCase):
         self.assertIn("结构不完整", page.run_table.item(0, 2).text())
         self.assertIn("运行目录结构不完整", page.run_table.item(0, 6).text())
         page.run_table.setCurrentCell(0, 0)
-        page.file_table.setCurrentCell(0, 0)
+        page.result_table.setCurrentCell(0, 0)
         target = self.root / "copy.json"
 
         with patch(
-            "presentation.qt.export_page.QFileDialog.getSaveFileName",
+            "presentation.qt.run_history_page.QFileDialog.getSaveFileName",
             return_value=(str(target), "JSON files (*.json)"),
         ):
-            self.assertTrue(page.export_json())
+            self.assertTrue(page.export(ExportFormat.JSON))
 
         self.assertTrue(target.is_file())
 
@@ -855,7 +856,7 @@ class ExportPageHistoryTests(unittest.TestCase):
         self._complete_amplifier_run()
         query = self._query()
         messages = []
-        page = ExportPage(
+        page = RunHistoryPage(
             history=HistoryViewModel(
                 query,
                 runs=StaticStatusPort([], failure=OSError("运行根目录不可读")),
@@ -868,28 +869,28 @@ class ExportPageHistoryTests(unittest.TestCase):
 
         self.assertEqual(page.run_table.rowCount(), 0)
         self.assertFalse(page.regenerate_button.isEnabled())
-        self.assertEqual(page.file_table.rowCount(), 1)
+        self.assertEqual(page.result_table.rowCount(), 1)
         self.assertTrue(any("读取历史运行失败" in message for message in messages))
 
     def test_export_copy_still_works_for_browsable_runs(self):
         self._complete_amplifier_run()
         page = self._page()
         page.run_table.setCurrentCell(0, 0)
-        page.file_table.setCurrentCell(0, 0)
+        page.result_table.setCurrentCell(0, 0)
         target = self.root / "copy.json"
 
         with patch(
-            "presentation.qt.export_page.QFileDialog.getSaveFileName",
+            "presentation.qt.run_history_page.QFileDialog.getSaveFileName",
             return_value=(str(target), "JSON files (*.json)"),
         ):
-            self.assertTrue(page.export_json())
+            self.assertTrue(page.export(ExportFormat.JSON))
 
         self.assertTrue(target.is_file())
 
     def test_page_without_run_service_only_lists_results(self):
         self._complete_amplifier_run()
         query = self._query()
-        page = ExportPage(
+        page = RunHistoryPage(
             history=HistoryViewModel(query),
             export_service=ResultExportUseCase(
                 history=query, exports=ResultExportAdapter(query, self.paths)
@@ -898,7 +899,7 @@ class ExportPageHistoryTests(unittest.TestCase):
 
         self.assertEqual(page.run_table.rowCount(), 0)
         self.assertFalse(page.regenerate_button.isEnabled())
-        self.assertEqual(page.file_table.rowCount(), 1)
+        self.assertEqual(page.result_table.rowCount(), 1)
 
 
     # -- 步骤 9：无效运行、部分运行与产物缺失 --------------------------------
@@ -996,13 +997,13 @@ class ExportPageHistoryTests(unittest.TestCase):
         self.assertEqual(records[ArtifactKind.CSV].path, "artifacts/amplifier.csv")
 
         # 正式结果不受影响：仍可用“导出副本”重新取得数据。
-        page.file_table.setCurrentCell(0, 0)
+        page.result_table.setCurrentCell(0, 0)
         target = self.root / "copy.json"
         with patch(
-            "presentation.qt.export_page.QFileDialog.getSaveFileName",
+            "presentation.qt.run_history_page.QFileDialog.getSaveFileName",
             return_value=(str(target), "JSON files (*.json)"),
         ):
-            self.assertTrue(page.export_json())
+            self.assertTrue(page.export(ExportFormat.JSON))
         self.assertTrue(target.is_file())
 
 
@@ -1021,14 +1022,14 @@ class RegenerationMessageTests(unittest.TestCase):
             ),
         )
 
-        message = ExportPage._regeneration_message(outcome)
+        message = RunHistoryPage._regeneration_message(outcome)
 
         self.assertIn("CSV 已生成: artifacts/amplifier.csv", message)
         self.assertIn("报告 未生成: 模板缺失", message)
 
     def test_message_rejects_non_dto_outcomes(self):
         with self.assertRaises(TypeError):
-            ExportPage._regeneration_message(object())
+            RunHistoryPage._regeneration_message(object())
 
 
 class CompositionWiringTests(unittest.TestCase):
@@ -1041,11 +1042,11 @@ class CompositionWiringTests(unittest.TestCase):
 
     def test_facade_exposes_the_history_service_and_builds_the_page(self):
         from presentation.qt.composition import build_gui_data_service
-        from presentation.qt.export_page import build_history_page
+        from presentation.qt.run_history_page import build_run_history_page
 
         with tempfile.TemporaryDirectory() as directory:
             service = build_gui_data_service(PathService(Path(directory)))
-            page = build_history_page(service, log_callback=lambda _message: None)
+            page = build_run_history_page(service, log_callback=lambda _message: None)
 
         self.assertIsInstance(service.run_history, RunHistoryService)
         self.assertEqual(service.run_history.list_runs(), ())

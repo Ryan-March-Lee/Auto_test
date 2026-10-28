@@ -332,7 +332,7 @@ class HistoryViewModelBoundaryTests(unittest.TestCase):
     def test_measurement_pages_do_not_call_legacy_payload(self):
         for relative in (
             "presentation/qt/visualization_page.py",
-            "presentation/qt/export_page.py",
+            "presentation/qt/run_history_page.py",
             "presentation/qt/history_view_model.py",
         ):
             called = {

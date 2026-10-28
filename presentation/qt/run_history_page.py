@@ -1,10 +1,10 @@
-"""历史运行与结果管理页面（重构计划步骤 7）。
+"""历史运行与结果管理页面（重构计划步骤 7、步骤 10 收口）。
 
-本页面接替原来的“数据导出”语义：正常测试流程已经自动归档结果，用户不再需要先来
-这里选择文件再手动导出。页面现在只承担**历史管理**：
+正常测试流程已经自动归档结果，用户不需要先来这里选择文件再手动导出。本页面只承担
+**历史管理**，页面类名、路由与模块名都不再沿用“导出页”语义：
 
 - 上半部分列出历史运行，并显示每次运行的阶段进度、正式结果数与交付产物状态；
-- 下半部分保留历史结果列表，作为“导出副本”的数据来源；
+- 下半部分列出历史结果，作为“导出副本”的数据来源；
 - 辅助动作只保留两类：对失败产物执行“重新生成”（写回原运行目录），以及对单个结果
   执行“导出副本”（由用户选择目标路径）。
 
@@ -60,16 +60,17 @@ _EXPORT_FILTERS = {
     ExportFormat.JSON: "JSON files (*.json)",
     ExportFormat.CSV: "CSV files (*.csv)",
 }
-_BUTTONS = (
-    ("export_json_btn", "导出JSON副本", ExportFormat.JSON),
-    ("export_csv_btn", "导出CSV副本", ExportFormat.CSV),
-    ("export_report_btn", "导出测试报告副本", ExportFormat.REPORT),
+# 导出副本按钮：文本与格式一一对应，按钮只提交导出意图。
+_EXPORT_BUTTONS = (
+    ("导出JSON副本", ExportFormat.JSON),
+    ("导出CSV副本", ExportFormat.CSV),
+    ("导出测试报告副本", ExportFormat.REPORT),
 )
 # 历史运行表格的列顺序；页面只按视图模型给出的文本填表。
 _RUN_COLUMNS = ("运行", "创建时间", "状态", "阶段", "正式结果", "交付产物", "说明")
 
 
-class ExportPage(QWidget):
+class RunHistoryPage(QWidget):
     """历史运行/结果管理页：运行与产物状态、失败产物重新生成、结果导出副本。"""
 
     def __init__(
@@ -113,17 +114,17 @@ class ExportPage(QWidget):
         run_layout.addWidget(run_refresh_button)
         layout.addWidget(run_group)
 
-        file_group = QGroupBox("历史结果")
-        file_layout = QVBoxLayout(file_group)
-        self.file_table = QTableWidget()
-        self.file_table.setColumnCount(4)
-        self.file_table.setHorizontalHeaderLabels(["文件名", "类型", "来源", "修改时间"])
-        _fit_columns(self.file_table, stretch_column=0)
-        file_layout.addWidget(self.file_table)
-        refresh_button = QPushButton("刷新结果列表")
-        refresh_button.clicked.connect(self.refresh_file_list)
-        file_layout.addWidget(refresh_button)
-        layout.addWidget(file_group)
+        result_group = QGroupBox("历史结果")
+        result_layout = QVBoxLayout(result_group)
+        self.result_table = QTableWidget()
+        self.result_table.setColumnCount(4)
+        self.result_table.setHorizontalHeaderLabels(["文件名", "类型", "来源", "修改时间"])
+        _fit_columns(self.result_table, stretch_column=0)
+        result_layout.addWidget(self.result_table)
+        result_refresh_button = QPushButton("刷新结果列表")
+        result_refresh_button.clicked.connect(self.refresh_result_list)
+        result_layout.addWidget(result_refresh_button)
+        layout.addWidget(result_group)
 
         action_group = QGroupBox("历史操作")
         action_layout = QHBoxLayout(action_group)
@@ -131,12 +132,11 @@ class ExportPage(QWidget):
         self.regenerate_button.setEnabled(False)
         self.regenerate_button.clicked.connect(self.regenerate_failed_artifacts)
         action_layout.addWidget(self.regenerate_button)
-        for attribute, text, export_format in _BUTTONS:
+        for text, export_format in _EXPORT_BUTTONS:
             button = QPushButton(text)
             button.clicked.connect(
                 lambda _checked=False, value=export_format: self.export(value)
             )
-            setattr(self, attribute, button)
             action_layout.addWidget(button)
         layout.addWidget(action_group)
 
@@ -149,7 +149,7 @@ class ExportPage(QWidget):
     def refresh(self):
         """刷新历史运行与历史结果列表；没有运行摘要来源时只刷新结果列表。"""
         rows = self.refresh_run_list()
-        return rows, self.refresh_file_list()
+        return rows, self.refresh_result_list()
 
     # -- 列表 ---------------------------------------------------------------
 
@@ -178,16 +178,16 @@ class ExportPage(QWidget):
         self._on_run_selection_changed()
         return rows
 
-    def refresh_file_list(self):
-        """重新读取只读历史列表并刷新表格。"""
+    def refresh_result_list(self):
+        """重新读取只读历史结果列表并刷新表格。"""
         rows = self.history.reload()
-        self.file_table.setRowCount(0)
+        self.result_table.setRowCount(0)
         for index, row in enumerate(rows):
-            self.file_table.insertRow(index)
-            _set_cell(self.file_table, index, 0, row.filename)
-            _set_cell(self.file_table, index, 1, row.file_type)
-            _set_cell(self.file_table, index, 2, row.source_label)
-            _set_cell(self.file_table, index, 3, row.modified_text)
+            self.result_table.insertRow(index)
+            _set_cell(self.result_table, index, 0, row.filename)
+            _set_cell(self.result_table, index, 1, row.file_type)
+            _set_cell(self.result_table, index, 2, row.source_label)
+            _set_cell(self.result_table, index, 3, row.modified_text)
         return rows
 
     def _on_run_selection_changed(self):
@@ -203,8 +203,8 @@ class ExportPage(QWidget):
         return row
 
     def selected_row(self) -> HistoryRow | None:
-        """把表格选中行交给视图模型；未选中时提示并返回 ``None``。"""
-        row = self.history.select(self.file_table.currentRow())
+        """把结果表格选中行交给视图模型；未选中时提示并返回 ``None``。"""
+        row = self.history.select(self.result_table.currentRow())
         if row is None:
             QMessageBox.warning(self, "导出副本", "请先选择要导出的结果")
         return row
@@ -256,15 +256,6 @@ class ExportPage(QWidget):
         return f"运行 {outcome.run_id} 的交付产物：" + "；".join(parts)
 
     # -- 导出副本 -----------------------------------------------------------
-
-    def export_json(self):
-        return self.export(ExportFormat.JSON)
-
-    def export_csv(self):
-        return self.export(ExportFormat.CSV)
-
-    def export_report(self):
-        return self.export(ExportFormat.REPORT)
 
     def export(self, export_format: ExportFormat):
         """按格式导出当前选择的历史结果；页面只构造导出请求。"""
@@ -369,19 +360,19 @@ def _run_row_texts(row: RunHistoryRow) -> tuple[str, ...]:
     )
 
 
-def build_history_page(
+def build_run_history_page(
     gui_data_service: GuiDataService,
     *,
     log_callback: Callable[[str], Any] | None = None,
     parent=None,
-) -> ExportPage:
+) -> RunHistoryPage:
     """按 GUI 数据门面装配历史管理页。
 
     窗口只做装配：页面需要的三份依赖（结果查询、导出用例、运行摘要/重新生成）都来自
     同一个门面，页面自己持有视图模型，窗口不再逐项拼装页面内部结构。
     """
     run_service = gui_data_service.run_history
-    return ExportPage(
+    return RunHistoryPage(
         history=HistoryViewModel(gui_data_service.results, runs=run_service),
         export_service=gui_data_service.export_requests,
         run_service=run_service,
@@ -390,4 +381,4 @@ def build_history_page(
     )
 
 
-__all__ = ["ExportPage", "build_history_page"]
+__all__ = ["RunHistoryPage", "build_run_history_page"]

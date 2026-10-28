@@ -223,7 +223,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `presentation.qt.configuration_authoring` | 配置页保存时的正式运行配置编写 |
 | `presentation.qt.connection_diagrams` | 连接图渲染 |
 | `presentation.qt.connection_dialog` | 连接确认对话框：`build_diagram()` 按需渲染连接图；连接图不可用时在对话框内说明原因并禁用确认按钮 |
-| `presentation.qt.export_page` | 历史运行与结果管理页（只构造 `ExportRequest`，按 `ResultExportServicePort` 注入导出用例；运行/阶段/产物状态来自 `HistoryViewModel`，失败产物重新生成走 `RunHistoryServicePort`；用户文案由页面生成） |
+| `presentation.qt.run_history_page` | 历史运行与结果管理页（只构造 `ExportRequest`，按 `ResultExportServicePort` 注入导出用例；运行/阶段/产物状态来自 `HistoryViewModel`，失败产物重新生成走 `RunHistoryServicePort`；用户文案由页面生成） |
 | `presentation.qt.history_view_model` | 历史查看只读视图模型：结果列表、运行摘要、选中项、已加载结果与频率浏览（无 Qt、无路径） |
 | `presentation.qt.input_controls` | 通用输入控件 |
 | `presentation.qt.measurement_state` | 测量状态对象 |
@@ -350,8 +350,9 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
   补登记 `infrastructure.persistence.artifact_generator` 与 `analysis.reporting`：自动归档 CSV
   产物的适配器及其复用的分析层写入能力；步骤 5 在同一适配器模块内补上报告产物与组合端口，
   报告复用 `analysis.reporting.render_html_report`，不新增模块路径；归档重构步骤 7 未新增
-  内部模块——历史管理页沿用已登记的 `presentation.qt.export_page` 与
-  `presentation.qt.history_view_model`）。
+  内部模块——历史管理页沿用已登记的 `presentation.qt.history_view_model`；归档重构步骤 10
+  把页面模块与类名收口为 `presentation.qt.run_history_page` / `RunHistoryPage`，路由 key 改为
+  `run_history`，用户可见标题仍为“历史运行”）。
 - 旧模块：29 个条目（21 个根模块、8 个正式包内实现），状态与工作树一致。步骤 16
   （2026-10-27）已把最后五个根目录纯再导出模块（`measurement_calculations` /
   `measurement_lifecycle` / `measurement_services` / `app_logging` / `project_paths`）

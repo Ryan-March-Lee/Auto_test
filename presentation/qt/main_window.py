@@ -29,7 +29,7 @@ from presentation.qt.application_coordinator import ApplicationCoordinator
 from presentation.qt.assistant.chat_panel import ChatPanel
 from presentation.qt.config_page import ConfigPage
 from presentation.qt.connection_dialog import ConnectionDialog
-from presentation.qt.export_page import build_history_page
+from presentation.qt.run_history_page import build_run_history_page
 from presentation.qt.history_view_model import HistoryViewModel
 from presentation.qt.measurement_state import MeasurementKind, MeasurementResultReference
 from presentation.qt.pages import PageContext, build_pages
@@ -132,7 +132,7 @@ class MainWindow(QMainWindow):
         self.measurement_controller.signals.thread_finished.connect(
             self._on_measurement_controller_thread_finished
         )
-        self.measurement_controller.signals.finished.connect(self.refresh_file_list)
+        self.measurement_controller.signals.finished.connect(self.refresh_history)
         self.measurement_controller.signals.message.connect(self.add_log_message)
         self.measurement_controller.signals.rejected.connect(self.add_log_message)
         self.coordinator.load_configuration()
@@ -267,7 +267,7 @@ class MainWindow(QMainWindow):
             clear_realtime_callback=self.clear_real_time_data,
             build_configuration=self.create_config_tab,
             build_visualization=self.create_visualization_tab,
-            build_export=self.create_data_export_tab,
+            build_run_history=self.create_run_history_tab,
         )
         self.pages = {}
         for definition, page in build_pages(context):
@@ -333,18 +333,14 @@ class MainWindow(QMainWindow):
         self.data_plot_widget = self.visualization_page.data_plot_widget
         return self.visualization_page
 
-    def create_data_export_tab(self):
-        """创建历史运行/结果管理选项卡（原“数据导出”）"""
-        self.export_page = build_history_page(
+    def create_run_history_tab(self):
+        """创建历史运行/结果管理选项卡；页面内部状态由页面自己持有。"""
+        self.run_history_page = build_run_history_page(
             self.gui_data_service,
             log_callback=self.add_log_message,
             parent=self,
         )
-        self.file_table = self.export_page.file_table
-        self.export_json_btn = self.export_page.export_json_btn
-        self.export_csv_btn = self.export_page.export_csv_btn
-        self.export_report_btn = self.export_page.export_report_btn
-        return self.export_page
+        return self.run_history_page
 
     def create_status_panel(self, main_layout):
         """创建状态面板"""
@@ -481,9 +477,9 @@ class MainWindow(QMainWindow):
             return
         self.cable_loss_page.show_loaded_result(reference)
 
-    def refresh_file_list(self):
-        """刷新文件列表"""
-        return self.export_page.refresh_file_list()
+    def refresh_history(self):
+        """测量结束后刷新历史结果列表（运行与产物状态由页面激活时刷新）。"""
+        return self.run_history_page.refresh_result_list()
 
     def toggle_chat_panel(self):
         """切换聊天面板显示/隐藏；欢迎语由面板自己负责。"""

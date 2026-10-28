@@ -306,8 +306,10 @@ class ExportLayeringTests(unittest.TestCase):
                 offenders, [], f"应用层不得拼接界面文案（{wording}）: {offenders}"
             )
 
-    def test_export_page_owns_the_user_wording(self):
-        runtime = self._runtime_strings(ROOT / "presentation" / "qt" / "export_page.py")
+    def test_run_history_page_owns_the_user_wording(self):
+        runtime = self._runtime_strings(
+            ROOT / "presentation" / "qt" / "run_history_page.py"
+        )
 
         self.assertTrue(
             any("导出到" in text for text in runtime),

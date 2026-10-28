@@ -193,8 +193,8 @@ BROAD_CATCH_BASELINE = {
     "presentation/qt/assistant/chat_worker.py": (
         "ChatWorker.run#1",
     ),
-    "presentation/qt/export_page.py": (
-        "ExportPage.export#1",
+    "presentation/qt/run_history_page.py": (
+        "RunHistoryPage.export#1",
     ),
     "presentation/qt/measurement_controller.py": (
         "MeasurementController._start#1",

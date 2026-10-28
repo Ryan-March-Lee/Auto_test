@@ -397,7 +397,7 @@ INTERNAL_MODULES = {
     "presentation.qt.configuration_authoring": "配置页保存时的正式运行配置编写",
     "presentation.qt.connection_diagrams": "连接图渲染",
     "presentation.qt.connection_dialog": "连接确认对话框",
-    "presentation.qt.export_page": "历史运行与结果管理页（运行/阶段/产物状态、失败产物重新生成、导出副本）",
+    "presentation.qt.run_history_page": "历史运行与结果管理页（运行/阶段/产物状态、失败产物重新生成、导出副本）",
     "presentation.qt.history_view_model": "历史查看只读视图模型（结果列表、运行摘要、选中项、频率浏览）",
     "presentation.qt.input_controls": "通用输入控件",
     "presentation.qt.measurement_state": "测量状态对象",

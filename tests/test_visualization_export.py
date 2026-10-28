@@ -24,6 +24,7 @@ from application.ports.gui_data_service import (
     LoadedResultDto,
     ResultFileDto,
 )
+from application.dto.export_requests import ExportFormat
 from application.run_stages import RunStageRecorder
 from domain.run.models import (
     AMPLIFIER_RESULT_PATH,
@@ -35,7 +36,7 @@ from infrastructure.filesystem.paths import PathService
 from infrastructure.gui_data_service import ResultExportAdapter, ResultQueryAdapter
 from infrastructure.persistence.run_history_repository import FileRunHistoryRepository
 from infrastructure.persistence.run_repository import RunRepository
-from presentation.qt.export_page import ExportPage
+from presentation.qt.run_history_page import RunHistoryPage
 from presentation.qt.visualization_page import result_plot_series
 
 
@@ -392,7 +393,7 @@ class RunHistoryOnlyTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     adapter.choose_and_load()
 
-    def test_export_page_shows_the_source_of_each_result(self):
+    def test_run_history_page_shows_the_source_of_each_result(self):
         with tempfile.TemporaryDirectory() as directory:
             paths, runs, adapter = self._setup(directory)
             self._complete_cable_loss(runs, losses={"1.0": {"cable1": 1.0}})
@@ -404,23 +405,23 @@ class RunHistoryOnlyTests(unittest.TestCase):
             from presentation.qt.history_view_model import HistoryViewModel
 
             app = QApplication.instance() or QApplication([])
-            page = ExportPage(
+            page = RunHistoryPage(
                 history=HistoryViewModel(adapter),
                 export_service=ResultExportUseCase(
                     history=adapter, exports=ResultExportAdapter(adapter, paths)
                 ),
             )
             labels = [
-                page.file_table.item(row, 2).text()
-                for row in range(page.file_table.rowCount())
+                page.result_table.item(row, 2).text()
+                for row in range(page.result_table.rowCount())
             ]
 
         self.assertTrue(labels)
         self.assertTrue(all(label.startswith("运行 ") for label in labels))
 
 
-class ExportPageRequestTests(unittest.TestCase):
-    """步骤 11：导出页面只构造 ExportRequest，导出由应用用例执行。"""
+class RunHistoryPageRequestTests(unittest.TestCase):
+    """步骤 11：历史管理页只构造 ExportRequest，导出由应用用例执行。"""
 
     RUN_ID = RunHistoryOnlyTests.RUN_ID
 
@@ -434,7 +435,7 @@ class ExportPageRequestTests(unittest.TestCase):
         self.root = Path(self._temporary.name)
         # 离屏环境里任何模态对话框都会永久阻塞：统一替身并记录调用。
         for name in ("warning", "information", "critical"):
-            patcher = patch(f"presentation.qt.export_page.QMessageBox.{name}")
+            patcher = patch(f"presentation.qt.run_history_page.QMessageBox.{name}")
             setattr(self, f"{name}_dialog", patcher.start())
             self.addCleanup(patcher.stop)
 
@@ -481,13 +482,13 @@ class ExportPageRequestTests(unittest.TestCase):
                     "cable_losses": {"1.0": {"cable1": 1.0}},
                 },
             )
-        page = ExportPage(
+        page = RunHistoryPage(
             history=HistoryViewModel(query),
             export_service=ResultExportUseCase(
                 history=query, exports=ResultExportAdapter(query, paths)
             ),
         )
-        page.file_table.setCurrentCell(0, 0)
+        page.result_table.setCurrentCell(0, 0)
         return page
 
     def test_json_export_writes_the_selected_history_result(self):
@@ -495,10 +496,10 @@ class ExportPageRequestTests(unittest.TestCase):
         target = self.root / "exported.json"
 
         with patch(
-            "presentation.qt.export_page.QFileDialog.getSaveFileName",
+            "presentation.qt.run_history_page.QFileDialog.getSaveFileName",
             return_value=(str(target), "JSON files (*.json)"),
         ):
-            self.assertTrue(page.export_json())
+            self.assertTrue(page.export(ExportFormat.JSON))
 
         self.assertTrue(target.is_file())
         self.information_dialog.assert_called_once()
@@ -510,10 +511,10 @@ class ExportPageRequestTests(unittest.TestCase):
         target = self.root / "exported.csv"
 
         with patch(
-            "presentation.qt.export_page.QFileDialog.getSaveFileName",
+            "presentation.qt.run_history_page.QFileDialog.getSaveFileName",
             return_value=(str(target), "CSV files (*.csv)"),
         ):
-            self.assertFalse(page.export_csv())
+            self.assertFalse(page.export(ExportFormat.CSV))
 
         self.assertFalse(target.is_file())
         self.warning_dialog.assert_called_once()
@@ -521,7 +522,7 @@ class ExportPageRequestTests(unittest.TestCase):
     def test_report_export_shows_the_generated_location(self):
         page = self._page()
 
-        self.assertTrue(page.export_report())
+        self.assertTrue(page.export(ExportFormat.REPORT))
 
         message = self.information_dialog.call_args.args[2]
         self.assertIn("test_report.html", message)
@@ -530,19 +531,19 @@ class ExportPageRequestTests(unittest.TestCase):
     def test_report_export_requires_an_amplifier_result(self):
         page = self._page(amplifier=False)
 
-        self.assertFalse(page.export_report())
+        self.assertFalse(page.export(ExportFormat.REPORT))
 
         self.warning_dialog.assert_called_once()
         self.information_dialog.assert_not_called()
 
     def test_export_without_a_selection_warns_and_does_nothing(self):
         page = self._page()
-        page.file_table.setCurrentCell(-1, -1)
+        page.result_table.setCurrentCell(-1, -1)
 
         with patch(
-            "presentation.qt.export_page.QFileDialog.getSaveFileName"
+            "presentation.qt.run_history_page.QFileDialog.getSaveFileName"
         ) as dialog:
-            self.assertFalse(page.export_json())
+            self.assertFalse(page.export(ExportFormat.JSON))
 
         self.warning_dialog.assert_called_once()
         dialog.assert_not_called()

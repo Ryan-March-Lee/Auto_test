@@ -407,13 +407,13 @@ class ProductionDependencyTests(unittest.TestCase):
         self.assertNotIn("on_measurement_finished", source)
         self.assertIn("build_configuration=self.create_config_tab", source)
         self.assertIn("build_visualization=self.create_visualization_tab", source)
-        self.assertIn("build_export=self.create_data_export_tab", source)
+        self.assertIn("build_run_history=self.create_run_history_tab", source)
         self.assertIn("self.tab_widget.addTab(page, definition.title)", source)
 
     def test_main_window_keeps_measurement_completion_refresh(self):
         source = MAIN_WINDOW_SOURCE.read_text(encoding="utf-8-sig")
         self.assertIn(
-            "self.measurement_controller.signals.finished.connect(self.refresh_file_list)",
+            "self.measurement_controller.signals.finished.connect(self.refresh_history)",
             source,
             "MeasurementController finished 必须恢复导出文件列表刷新",
         )
@@ -526,7 +526,7 @@ class ProductionDependencyTests(unittest.TestCase):
             ROOT / "presentation" / "qt" / "config_projection.py",
             ROOT / "presentation" / "qt" / "history_view_model.py",
             ROOT / "presentation" / "qt" / "visualization_page.py",
-            ROOT / "presentation" / "qt" / "export_page.py",
+            ROOT / "presentation" / "qt" / "run_history_page.py",
         )
         forbidden_imports = ("infrastructure", "result_storage", "json_result_repository")
         forbidden_calls = {"open", "glob", "stat", "unlink", "copy2", "mkdir"}
@@ -814,7 +814,7 @@ class ProductionDependencyTests(unittest.TestCase):
             },
         )
 
-    def test_history_and_export_pages_use_the_read_only_view_model(self):
+    def test_history_pages_use_the_read_only_view_model(self):
         """步骤 11：历史列表/选中/已加载状态只在只读视图模型里。"""
         view_model_source = (
             ROOT / "presentation" / "qt" / "history_view_model.py"
@@ -829,7 +829,7 @@ class ProductionDependencyTests(unittest.TestCase):
             "self.current_freq_index =",
             "self.frequency_list =",
         )
-        for name in ("export_page.py", "visualization_page.py"):
+        for name in ("run_history_page.py", "visualization_page.py"):
             source = (ROOT / "presentation" / "qt" / name).read_text(
                 encoding="utf-8-sig"
             )
@@ -843,9 +843,9 @@ class ProductionDependencyTests(unittest.TestCase):
                     )
                 self.assertNotIn("legacy_payload", source)
 
-    def test_export_page_only_builds_export_requests(self):
+    def test_run_history_page_only_builds_export_requests(self):
         """步骤 11：导出由 application 用例执行，页面只描述意图并生成文案。"""
-        source = (ROOT / "presentation" / "qt" / "export_page.py").read_text(
+        source = (ROOT / "presentation" / "qt" / "run_history_page.py").read_text(
             encoding="utf-8-sig"
         )
         self.assertIn("ExportRequest(", source)

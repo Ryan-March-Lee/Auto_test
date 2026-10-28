@@ -73,12 +73,10 @@ def _row(name: str, *, run_id: str | None = RUN_ID) -> ResultFileDto:
 class _FakeQuery:
     """只读历史查询替身：只返回正式 DTO，记录调用。"""
 
-    def __init__(self, rows, results=None, latest=None):
+    def __init__(self, rows, results=None):
         self._rows = list(rows)
         self._results = dict(results or {})
-        self._latest = latest
         self.loaded_ids: list[str] = []
-        self.latest_types: list[str] = []
 
     def list_results(self):
         return list(self._rows)
@@ -96,11 +94,8 @@ class _FakeQuery:
     def choose_and_load(self):  # pragma: no cover - 文件选择属于基础设施
         raise AssertionError("视图模型不得打开文件对话框")
 
-    def latest_result(self, result_type):
-        self.latest_types.append(result_type)
-        if self._latest is None:
-            raise FileNotFoundError(result_type)
-        return self._latest
+    def latest_result(self, result_type):  # pragma: no cover - 步骤 8 已移除隐式来源
+        raise AssertionError("视图模型不得按“最新结果”加载")
 
 
 class HistoryRowTests(unittest.TestCase):
@@ -138,8 +133,8 @@ class HistoryRowTests(unittest.TestCase):
 
 
 class HistoryViewModelTests(unittest.TestCase):
-    def _view_model(self, rows=None, results=None, latest=None):
-        query = _FakeQuery(rows if rows is not None else [_row("a.json")], results, latest)
+    def _view_model(self, rows=None, results=None):
+        query = _FakeQuery(rows if rows is not None else [_row("a.json")], results)
         return HistoryViewModel(query), query
 
     def test_reload_builds_read_only_rows(self):
@@ -256,21 +251,21 @@ class HistoryViewModelTests(unittest.TestCase):
         self.assertEqual(query.loaded_ids, [_row("a.json").result_id])
         self.assertEqual(loaded.label, "驱动映射")
 
-    def test_load_latest_forwards_the_result_type(self):
-        view_model, query = self._view_model(
-            latest=LoadedResultDto("run::r::a.json", "a.json", _amplifier_result())
+    def test_loaded_result_keeps_the_history_identifier(self):
+        """步骤 8：已加载结果必须带历史标识，动作不再靠“最新结果”找回来源。"""
+        view_model, _query = self._view_model()
+        loaded = view_model.show(
+            LoadedResultDto("run::r::a.json", "a.json", _amplifier_result())
         )
 
-        loaded = view_model.load_latest()
+        self.assertEqual(loaded.result_id, "run::r::a.json")
+        self.assertEqual(view_model.loaded.result_id, "run::r::a.json")
 
-        self.assertEqual(query.latest_types, ["amplifier_measurement"])
-        self.assertEqual(loaded.filename, "a.json")
-
-    def test_load_latest_propagates_missing_results(self):
+    def test_view_model_has_no_implicit_latest_result_entry(self):
+        """步骤 8：视图模型不提供“最新结果”入口，来源只能由调用方显式给出。"""
         view_model, _query = self._view_model()
 
-        with self.assertRaises(FileNotFoundError):
-            view_model.load_latest("amplifier_measurement")
+        self.assertFalse(hasattr(view_model, "load_latest"))
 
     def test_frequency_navigation_stops_at_the_boundaries(self):
         view_model, _query = self._view_model()

@@ -33,8 +33,6 @@ from application.ports.gui_data_service import (
 )
 from domain.run.models import ArtifactKind, ArtifactStatus, RunStatus
 
-# 报告兜底使用的正式结果类型（主功放测量结果）。
-AMPLIFIER_RESULT_TYPE = "amplifier_measurement"
 UNREGISTERED_SOURCE_LABEL = "未登记来源"
 
 
@@ -250,13 +248,17 @@ def _problem_text(summary: RunHistorySummary) -> str:
 
 @dataclass(frozen=True)
 class LoadedHistoryResult:
-    """一条已加载的历史结果：正式 DTO 加**不可变**绘图视图。
+    """一条已加载的历史结果：结果标识、正式 DTO 与**不可变**绘图视图。
+
+    ``result_id`` 保留历史查询返回的结果标识，页面因此不需要“最新结果”这类隐式来源：
+    任何基于已加载结果的动作都能追溯到明确的运行与结果（报告副本即按它执行）。
 
     ``series`` 是冻结结构（映射代理 + 元组），调用方无法通过它改动视图模型缓存；
     需要可变副本（绘图控件、聊天上下文）时使用 :meth:`series_snapshot` 或
     :meth:`sweep_data_at`，它们每次返回新的列表副本。
     """
 
+    result_id: str
     filename: str
     result: MeasurementResult
     series: Mapping[str, Mapping[str, tuple[Any, ...]]]
@@ -310,7 +312,7 @@ class HistoryViewModel:
 
     视图模型不持有 Qt 控件，也不接收路径：结果列表来自
     ``ResultQueryPort.list_results()``，运行摘要来自 ``RunSummarySource.list_runs()``，
-    加载只经过 ``load()`` / ``latest_result()``。
+    加载只经过 ``load()``。
     """
 
     def __init__(
@@ -433,6 +435,7 @@ class HistoryViewModel:
         if not frequencies:
             raise ValueError("未找到有效的频率数据")
         self._loaded = LoadedHistoryResult(
+            result_id=loaded.result_id,
             filename=loaded.filename,
             result=loaded.result,
             series=_freeze_series(series),
@@ -447,10 +450,6 @@ class HistoryViewModel:
         if row is None:
             raise ValueError("请先在历史列表中选择一条结果")
         return self.show(self.query.load(row.result_id))
-
-    def load_latest(self, result_type: str = AMPLIFIER_RESULT_TYPE) -> LoadedHistoryResult:
-        """读取最新可校验结果；没有可用结果时抛出 ``FileNotFoundError``。"""
-        return self.show(self.query.latest_result(result_type))
 
     def clear(self) -> None:
         """清空已加载结果，回到“未加载数据”状态。"""
@@ -509,7 +508,6 @@ class HistoryViewModel:
 
 
 __all__ = [
-    "AMPLIFIER_RESULT_TYPE",
     "HistoryRow",
     "HistoryViewModel",
     "LoadedHistoryResult",

@@ -315,13 +315,13 @@ class MainWindow(QMainWindow):
         return tab
 
     def create_visualization_tab(self):
-        """创建数据可视化选项卡"""
+        """创建数据可视化选项卡（浏览历史结果与生成报告副本）"""
         self.visualization_page = VisualizationPage(
             # 历史查看状态归只读视图模型：列表、选中项、已加载结果与频率浏览。
             history=HistoryViewModel(self.gui_data_service.results),
             chooser=self.gui_data_service.results.choose_and_load,
-            config_provider=lambda: self.config,
-            report_service=self.gui_data_service.reports.create_summary_report,
+            # 报告只有一个应用层实现：页面只提交“对哪条结果生成报告”的导出请求。
+            export_service=self.gui_data_service.export_requests,
             log_callback=self.add_log_message,
             parent=self,
         )

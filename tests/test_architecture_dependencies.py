@@ -866,6 +866,30 @@ class ProductionDependencyTests(unittest.TestCase):
                 "导出页面不得直接调用导出端口；必须构造 ExportRequest",
             )
 
+    def test_visualization_page_only_requests_reports_through_the_export_use_case(self):
+        """步骤 8：报告只有一个应用层实现，可视化页不再自己生成报告。"""
+        source = (ROOT / "presentation" / "qt" / "visualization_page.py").read_text(
+            encoding="utf-8-sig"
+        )
+        self.assertIn("ExportRequest(", source)
+        self.assertIn("ExportFormat.REPORT", source)
+        self.assertIn("self.export_service.execute(", source)
+        self.assertIn("ResultExportServicePort", source)
+        self.assertIn("loaded.result_id", source)
+        # “最新结果”与页面级报告服务都是步骤 8 删除的重复入口，不得重新引入。
+        for removed_entry in (
+            "latest_result",
+            "load_latest",
+            "report_service",
+            "create_summary_report",
+            "build_report_result",
+        ):
+            self.assertNotIn(
+                removed_entry,
+                source,
+                "可视化页不得自己决定报告来源或复制报告生成规则",
+            )
+
     def test_export_use_case_lives_in_the_application_layer(self):
         source_path = ROOT / "application" / "export_service.py"
         self.assertTrue(source_path.is_file(), "缺少 application 导出用例")

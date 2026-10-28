@@ -1,13 +1,18 @@
-"""历史结果加载、频率浏览和报告入口。
+"""历史结果加载、频率浏览和报告副本入口。
 
-页面只渲染控件并把用户动作转发给 :class:`HistoryViewModel`：历史列表、选中项、
-已加载结果和频率浏览都在只读视图模型里，页面不解析结果文档、不访问文件路径。
-绘图数据由视图模型一次性从正式结果 DTO 的显式属性构建。
+页面只渲染控件并把用户动作转发出去：
+
+- 历史列表、选中项、已加载结果和频率浏览都在只读视图模型里，页面不解析结果文档、
+  不访问文件路径；
+- 绘图数据由视图模型一次性从正式结果 DTO 的显式属性构建；
+- 报告只有一个应用层实现（重构计划步骤 8）：页面把**当前已加载结果**的结果标识交给
+  ``ResultExportServicePort`` 执行 ``ExportRequest(format=REPORT)``，不再自己调用报告
+  服务，也不再在未加载结果时回退到“最新结果”。
 """
 
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping
+from typing import Any, Callable
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -21,8 +26,13 @@ from PySide6.QtWidgets import (
 )
 
 from application.dto import MeasurementResult
+from application.dto.export_requests import (
+    ExportFormat,
+    ExportOutcome,
+    ExportRequest,
+)
+from application.ports.gui_data_service import ResultExportServicePort
 from .history_view_model import (
-    AMPLIFIER_RESULT_TYPE,
     HistoryViewModel,
     result_kind,
     result_plot_series,
@@ -44,16 +54,20 @@ class VisualizationPage(QWidget):
         *,
         history: HistoryViewModel,
         chooser: Callable[[], Any] | None = None,
-        config_provider: Callable[[], dict[str, Any]] | None = None,
-        report_service: Callable[[MeasurementResult, Mapping[str, Any], str], Any] | None = None,
+        export_service: ResultExportServicePort | None = None,
         log_callback: Callable[[str], Any] | None = None,
         parent=None,
     ):
+        if not isinstance(history, HistoryViewModel):
+            raise TypeError("可视化页必须使用只读 HistoryViewModel")
+        if export_service is not None and not callable(
+            getattr(export_service, "execute", None)
+        ):
+            raise TypeError("报告生成必须走导出用例的 execute(request)")
         super().__init__(parent)
         self.history = history
         self.chooser = chooser
-        self.config_provider = config_provider or (lambda: {})
-        self.report_service = report_service
+        self.export_service = export_service
         self.log_callback = log_callback or (lambda _message: None)
         self._build_ui()
 
@@ -63,6 +77,15 @@ class VisualizationPage(QWidget):
     def loaded_result(self) -> MeasurementResult | None:
         loaded = self.history.loaded
         return None if loaded is None else loaded.result
+
+    @property
+    def loaded_result_id(self) -> str | None:
+        """当前已加载结果在历史查询里的标识；未加载时为 ``None``。
+
+        报告只针对这个标识执行，页面不持有路径，也不猜“最新结果”。
+        """
+        loaded = self.history.loaded
+        return None if loaded is None else loaded.result_id
 
     @property
     def loaded_data(self) -> dict[str, dict[str, Any]] | None:
@@ -100,9 +123,17 @@ class VisualizationPage(QWidget):
         self.load_data_btn.clicked.connect(lambda _checked=False: self.load_test_data())
         file_layout.addWidget(self.load_data_btn)
         self.generate_report_btn = QPushButton("生成报告")
+        self.generate_report_btn.setToolTip("基于当前已加载的历史结果生成测试报告副本")
         self.generate_report_btn.clicked.connect(self.generate_report)
         file_layout.addWidget(self.generate_report_btn)
         control_layout.addLayout(file_layout)
+
+        self.hint_label = QLabel(
+            "结果与报告在测试完成时自动归档；这里只浏览历史结果，"
+            "“生成报告”仅针对当前已加载结果生成报告副本。"
+        )
+        self.hint_label.setWordWrap(True)
+        control_layout.addWidget(self.hint_label)
 
         frequency_layout = QHBoxLayout()
         frequency_layout.addWidget(QLabel("频率切换:"))
@@ -149,7 +180,9 @@ class VisualizationPage(QWidget):
             view = self.history.show(loaded)
             self.update_frequency_display()
             self.display_current_frequency_data()
-            self._log(f"已加载{view.label}数据: {view.filename}")
+            self._log(
+                f"已加载{view.label}数据: {view.filename}（结果 {view.result_id}）"
+            )
             return True
         except Exception as error:
             self._log(f"数据加载失败: {error}")
@@ -190,37 +223,41 @@ class VisualizationPage(QWidget):
             self.display_current_frequency_data()
 
     def generate_report(self):
+        """对**当前已加载**的历史结果生成测试报告副本。
+
+        报告规则只在应用层：页面只描述“哪一条结果、哪种格式”，由导出用例核对结果是否
+        在历史列表中、是否支持报告，并返回实际产物位置。未加载结果时不再回退到“最新
+        结果”，否则报告来源无法追溯到明确的运行与结果标识。
+        """
         loaded = self.history.loaded
-        if loaded is not None and not loaded.result.is_amplifier:
-            QMessageBox.warning(self, "报告生成", "驱动映射数据不支持功放测试报告")
+        if loaded is None:
+            QMessageBox.warning(
+                self, "报告生成", "请先加载要生成报告的历史结果，再生成报告"
+            )
+            return False
+        if self.export_service is None:
+            QMessageBox.warning(self, "报告生成", "未配置报告生成服务")
             return False
         try:
-            if self.report_service is None:
-                raise RuntimeError("未配置报告生成服务")
-            if loaded is not None:
-                if not loaded.result.point_count:
-                    raise ValueError("结果中没有可生成报告的扫描点")
-                self.report_service(
-                    loaded.result, self.config_provider(), loaded.filename
+            outcome = self.export_service.execute(
+                ExportRequest(
+                    result_id=loaded.result_id, format=ExportFormat.REPORT
                 )
-                self._log("基于已加载数据生成测试报告")
-            else:
-                try:
-                    latest = self.history.load_latest(AMPLIFIER_RESULT_TYPE)
-                except FileNotFoundError:
-                    QMessageBox.warning(
-                        self, "报告生成", "未找到测试数据文件，请先加载数据或进行测试"
-                    )
-                    return False
-                self.update_frequency_display()
-                self.display_current_frequency_data()
-                self.report_service(
-                    latest.result, self.config_provider(), latest.filename
-                )
-                self._log(f"基于文件 {latest.filename} 生成测试报告")
-            QMessageBox.information(self, "报告生成", "测试报告已生成完成")
-            return True
-        except Exception as error:
+            )
+            message = self._report_message(outcome)
+        except Exception as error:  # noqa: BLE001 - 生成失败必须让用户看到原因
             self._log(f"报告生成失败: {error}")
             QMessageBox.warning(self, "报告生成", f"报告生成失败: {error}")
             return False
+        self._log(message)
+        QMessageBox.information(self, "报告生成", message)
+        return True
+
+    @staticmethod
+    def _report_message(outcome: ExportOutcome) -> str:
+        """把结构化导出结果写成用户可见文案。"""
+        if not isinstance(outcome, ExportOutcome):
+            raise TypeError("报告生成必须返回 ExportOutcome")
+        if outcome.format is not ExportFormat.REPORT:
+            raise TypeError(f"报告生成返回了 {outcome.format.label} 结果")
+        return f"测试报告已生成副本: {outcome.artifact_path}"

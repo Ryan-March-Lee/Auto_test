@@ -38,9 +38,12 @@
 - 设备唯一标识由 ``厂商 + 序列号`` 派生（``device_key``），不落盘，避免两处不一致。
 - ``current_ip`` 只是当前连接地址；IP 变化时旧地址进 ``known_ips`` 并保留最近若干条。
 - 资产名和同型号序号一经分配不再改动；退役设备保留记录与序号，新设备取最大序号 + 1。
-- ``role`` 是这台设备在测试链路里的固定角色（``signal_generator`` / ``spectrum_analyzer`` /
-  ``PS1``..``PS4``）。现场每台仪器只承担一种角色，因此角色随设备登记一次，界面不再让
-  用户逐台选择；空值与未知角色都视为“未分配角色”，不允许绑定。
+- ``role`` 是这台设备在测试链路里的类别（``signal_generator`` / ``spectrum_analyzer`` /
+  ``power_supply``）。旧注册表里的槽位编号 ``PS1``..``PS4`` 只在读取时被识别；规范化入口是
+  ``domain.instruments.models.canonical_role``，但**本模块的保存路径还没有接上它**（属于后续
+  迁移步骤）：现在读出来是什么字面量就存什么，不改写角色、也不生成 ``label``。类别不含
+  “第几台”，多台电源靠各自的短标签区分。现场每台仪器只承担一种类别，因此角色随设备登记
+  一次，界面不再让用户逐台选择；空值与未知角色都视为“未分配角色”，不允许绑定。
 - 写入使用 :func:`write_json_atomic`（临时文件 + 原子替换），中断不会留下半截文件。
 - 本模块不发起网络探测，只负责读写设备表；扫描逻辑属于后续的发现模块。
 """
@@ -133,6 +136,10 @@ def _to_instrument(entry: Mapping[str, Any]) -> Instrument:
         first_seen_at=normalize_text(entry.get("first_seen_at")) or None,
         last_seen_at=normalize_text(entry.get("last_seen_at")) or None,
         notes=normalize_text(entry.get("notes")) or None,
+        # 短标签只从注册表读取，不在这里生成：标签由登记动作写入并冻结（后续迁移步骤）。
+        label=normalize_text(entry.get("label")) or None,
+        # 旧槽位 ``PS1``..``PS4`` 原样读出，谁要写回谁负责用 ``canonical_role`` 折叠；
+        # 读取侧不折叠，否则按旧角色找到设备的既有调用会全部失配。
         role=normalize_role(entry.get("role")),
         endpoints=endpoints,
     )

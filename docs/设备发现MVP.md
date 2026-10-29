@@ -129,7 +129,7 @@
 | --- | --- |
 | `infrastructure/discovery/instrument_discovery.py` | 网段解析、并发探测、`*IDN?` 解析、身份匹配、去重与取消 |
 | `infrastructure/discovery/simulated_network.py` | 离线演示响应 |
-| `domain/instruments/models.py` | 设备身份与固定测试角色取值（`TEST_ROLES`）、`role` 归一化 |
+| `domain/instruments/models.py` | 设备身份、设备类别取值（`DEVICE_ROLES`，含 `power_supply`；旧槽位 `PS1..PS4` 只读兼容）、`role` 归一化与短标签字段 `label` |
 | `infrastructure/persistence/instrument_registry.py` | 设备表读写：`role` 的登记、校验与 `set_role` |
 | `presentation/qt/device_discovery_panel.py` | 面板、扫描线程、结果表（“设备名（角色）”，不显示地址）、应用/清除校验 |
 | `presentation/qt/config_page.py` | 把选中设备写成仪器连接配置与 `device_bindings`（整批校验的最终边界） |

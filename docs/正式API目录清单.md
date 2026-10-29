@@ -193,7 +193,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `application.lifecycle` | 测量生命周期包 |
 | `domain.instruments` | 设备表领域包 |
 | `domain.instruments.labels` | 电源短标签生成：序列号归一化复用、前缀提取、末四位与冲突扩展（纯计算，不写注册表；标签不含通道分隔符） |
-| `domain.instruments.models` | 仪器身份解析（序列号唯一标识）、地址别名与在线状态模型 |
+| `domain.instruments.models` | 仪器身份解析（序列号唯一标识）、设备类别与短标签字段、地址别名与在线状态模型 |
 | `domain.models` | 运行、测试方案与会话生命周期模型；测量结果契约在 `application.dto` |
 | `infrastructure.filesystem.atomic_json` | 原子 JSON 写入 |
 | `infrastructure.filesystem.paths` | 路径服务 |

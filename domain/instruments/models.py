@@ -9,6 +9,13 @@
 - IP 属于 :class:`InstrumentEndpoint`，一台设备可以有多条历史地址，其中至多一条 ``is_current``。
 - 序列号解析兼容 ``订单号/序列号`` 形式（如 R&S 的 ``1412.0000K02/105462``），
   订单号单独存放，不参与唯一标识。
+- ``role`` 只表示设备类别（``signal_generator`` / ``spectrum_analyzer`` / ``power_supply``），
+  不含“第几台”；多台电源共用 :data:`POWER_SUPPLY_ROLE`，靠各自的短标签区分。
+  旧的槽位编号 ``PS1``..``PS4`` 只在读取旧设备表时被识别，读出的字面量原样保留给读取方；
+  写回时由 :func:`canonical_role` 折叠成 ``power_supply``——注册表保存接入这一折叠属于后续
+  迁移步骤，本模块只提供入口，不改动任何既有读写行为。
+- ``label`` 是序列号派生的现场短标签（= 配置里的 ``supply_id``），首次生成后冻结；
+  现场显示优先用它，``name`` 仍是软件资产名。
 """
 
 from __future__ import annotations
@@ -74,20 +81,53 @@ def normalize_serial(value: Any) -> str:
     return current
 
 
-# 测试角色登记在设备表里：现场每台仪器只承担一种角色，界面不再让用户逐台选择。
+# 角色登记在设备表里：现场每台仪器只承担一种类别，界面不再让用户逐台选择。
+# ``role`` 只回答“这是哪一类设备”，不回答“第几台”：多台电源都是 ``power_supply``，
+# 靠各自的短标签（:attr:`Instrument.label`）区分，不再需要固定槽位常量。
 INSTRUMENT_ROLES = ("signal_generator", "spectrum_analyzer")
+POWER_SUPPLY_ROLE = "power_supply"
+# 可登记（可写回）的角色取值：新配置与新注册表只允许这些值。
+DEVICE_ROLES = INSTRUMENT_ROLES + (POWER_SUPPLY_ROLE,)
+# 旧电源槽位编号：只在读取旧设备表时被识别，写回时由 :func:`canonical_role` 折叠成
+# ``POWER_SUPPLY_ROLE``。常量保留下来供迁移识别与旧数据兼容，**不再作为新角色集合使用**。
 POWER_SUPPLY_SLOTS = ("PS1", "PS2", "PS3", "PS4")
-TEST_ROLES = INSTRUMENT_ROLES + POWER_SUPPLY_SLOTS
+LEGACY_ROLES = POWER_SUPPLY_SLOTS
+# 归一化可以接受的取值：新类别 + 旧槽位（兼容分支）。
+TEST_ROLES = DEVICE_ROLES + LEGACY_ROLES
 
 
 def normalize_role(value: Any) -> str | None:
     """把设备表的 ``role`` 归一化为 :data:`TEST_ROLES` 之一；空值或未知角色返回 ``None``。
 
+    新类别（:data:`DEVICE_ROLES`）原样通过；旧槽位编号 ``PS1``..``PS4`` 走兼容分支
+    也原样返回，好让读取方还能按旧角色找到对应设备。**这里不做折叠**：写回时要用的
+    规范取值由 :func:`canonical_role` 提供，两者分开才能既能读旧表又不写回旧值。
+
     未知角色不在这里猜成某个默认角色：角色决定地址往哪一路写，猜错会把电源接到
     错误的通道上。
     """
     text = normalize_text(value)
-    return text if text in TEST_ROLES else None
+    if text in DEVICE_ROLES:
+        return text
+    if text in LEGACY_ROLES:
+        return text
+    return None
+
+
+def canonical_role(value: Any) -> str | None:
+    """把可识别的角色折叠为 :data:`DEVICE_ROLES` 之一，供新配置与新注册表写回。
+
+    旧槽位 ``PS1``..``PS4`` 折叠成 :data:`POWER_SUPPLY_ROLE`；``signal_generator`` /
+    ``spectrum_analyzer`` / ``power_supply`` 原样返回；空值与未知角色返回 ``None``
+    （不猜成电源）。
+
+    本函数是**写回**的唯一折叠入口，纯计算、不落盘：注册表的保存路径接上它属于后续
+    迁移步骤，在那之前注册表仍按 :func:`normalize_role` 原样保存旧字面量。
+    """
+    role = normalize_role(value)
+    if role is not None and role in LEGACY_ROLES:
+        return POWER_SUPPLY_ROLE
+    return role
 
 
 def make_device_key(vendor: Any, serial: Any) -> str:
@@ -207,10 +247,23 @@ class Instrument:
     first_seen_at: str | None = None
     last_seen_at: str | None = None
     notes: str | None = None
-    # 这台设备在测试链路里的固定角色（``signal_generator`` / ``spectrum_analyzer`` /
-    # ``PS1``..``PS4``）；``None`` 表示尚未登记角色，不能用于绑定。
+    # 这台设备在测试链路里的类别（``signal_generator`` / ``spectrum_analyzer`` /
+    # ``power_supply``）；旧注册表里的 ``PS1``..``PS4`` 走兼容分支原样保留，写回时由调用方
+    # 用 :func:`canonical_role` 折叠成 ``power_supply``。``None`` 表示尚未登记角色，不能用于绑定。
     role: str | None = None
     endpoints: tuple[InstrumentEndpoint, ...] = field(default_factory=tuple)
+    # 现场短标签（= 配置与运行映射里的 ``supply_id``）：由序列号派生，首次登记时写入
+    # 注册表并冻结，不因 IP、型号序号或重新扫描而重算；``None`` 表示这台设备还没有标签，
+    # 未登记角色的设备也可以是 ``None``。
+    #
+    # 只能追加在既有字段之后：``Instrument`` 是公开领域模型，位置参数顺序一旦改变，
+    # 外部按位置传入 ``role`` / ``endpoints`` 的调用会被静默改写成别的字段。
+    label: str | None = None
+
+    @property
+    def display_name(self) -> str:
+        """现场显示名：有短标签时用短标签，否则退回软件资产名。"""
+        return self.label or self.name
 
     @property
     def current_endpoint(self) -> InstrumentEndpoint | None:
@@ -238,6 +291,7 @@ class Instrument:
             "model_index": self.model_index,
             "serial": self.serial,
             "device_key": self.device_key,
+            "label": self.label,
             "order_no": self.order_no,
             "firmware": self.firmware,
             "options": list(self.options),
@@ -252,14 +306,18 @@ class Instrument:
 
 
 __all__ = [
+    "DEVICE_ROLES",
     "DeviceStatus",
     "INSTRUMENT_ROLES",
     "Instrument",
     "InstrumentEndpoint",
     "InstrumentIdentity",
+    "LEGACY_ROLES",
+    "POWER_SUPPLY_ROLE",
     "POWER_SUPPLY_SLOTS",
     "TEST_ROLES",
     "build_instrument_name",
+    "canonical_role",
     "make_device_key",
     "normalize_model",
     "normalize_role",

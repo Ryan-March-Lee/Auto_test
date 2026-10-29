@@ -722,10 +722,21 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         """
         return bound_power_supplies(self.device_bindings)
     def update_power_supply_options(self):
+        """刷新电源分配下拉框：只保留当前绑定的电源，失效引用保持空选择。
+
+        配置引用的电源不再绑定时不能被静默换成列表里的第一台——那会把一次设备更换变成
+        一次看不见的分配改动。空选择交给校验明确报告，由操作员重新选择。
+        """
         enabled = self.get_enabled_power_supplies()
         for key in ("driver_power", "pa_unit1_power", "pa_unit2_power", "pa_unit3_power"):
-            combo = self.power_assignment_widgets[key]; current = combo.currentText(); combo.clear(); combo.addItems(enabled)
-            if current in enabled: combo.setCurrentText(current)
+            combo = self.power_assignment_widgets[key]
+            current = combo.currentText()
+            combo.clear()
+            combo.addItems(enabled)
+            if current in enabled:
+                combo.setCurrentText(current)
+            else:
+                combo.setCurrentIndex(-1)
 
     def build_config(self, base=None):
         """按当前控件值组装完整配置。

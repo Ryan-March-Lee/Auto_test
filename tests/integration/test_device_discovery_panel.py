@@ -1028,6 +1028,33 @@ class ConfigPageDiscoveryIntegrationTests(unittest.TestCase):
             sorted(page.get_enabled_power_supplies()), ["DP8B0885", "DP8B1519"]
         )
 
+    def test_replacing_the_power_supply_leaves_the_assignment_empty_instead_of_repointing(self):
+        """旧引用失效时保持空选择：更换电源不能让分配静默指向另一台。"""
+        page = self.make_page()
+        first = {
+            "role": "power_supply",
+            "supply_id": "DP8B1519",
+            "address": "TCPIP0::192.168.1.102::inst0::INSTR",
+            "serial": "DP8B214901519",
+            "vendor": "RIGOL TECHNOLOGIES",
+            "device_key": "rigol technologies:dp8b214901519",
+        }
+        second = {
+            "role": "power_supply",
+            "supply_id": "DP8B0885",
+            "address": "TCPIP0::192.168.1.108::inst0::INSTR",
+            "serial": "DP8B174400885",
+            "vendor": "RIGOL TECHNOLOGIES",
+            "device_key": "rigol technologies:dp8b174400885",
+        }
+        page.apply_discovered_devices([first, second])
+        page.pa_unit1_power_combo.setCurrentText("DP8B1519")
+
+        page.apply_discovered_devices([second])
+
+        self.assertEqual(page.pa_unit1_power_combo.currentText(), "")
+        self.assertEqual(page.pa_unit1_power_combo.currentIndex(), -1)
+
     def test_power_supply_without_a_label_is_rejected_with_the_reason(self):
         """没有短标签就没有电源引用：配置页明确拒绝，不把地址写进别的电源。"""
         page = self.make_page()

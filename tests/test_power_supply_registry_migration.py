@@ -9,10 +9,13 @@
    却缺标签的设备按序列号补生成 ``label``，``schema_version`` 升到 3；现场注册表迁移后的期望
    结果就是步骤 1 的 ``registry_migrated_v3.json``；
 3. **迁移只改 ``role`` 与 ``label``**：资产名、序列号、地址、人工补充的字段逐字节保留；
+   已有标签原样冻结（不裁剪空白、不改大小写），只有 ``null`` / 空串 / 纯空白才算“还没有标签”；
 4. **未登记角色不猜成电源**，也就不生成标签；要使用它必须显式登记，那时才得到标签
    （``registry_migrated_v3_all_registered.json``）；
-5. **冲突阻止保存**：标签重复、标签不能当 ``supply_id``、序列号派不出可用标签、文件版本高于
-   本程序，都明确报错并指出设备，绝不覆盖旧标签、也不留下半截文件。
+5. **冲突阻止保存**：标签重复、标签不能当 ``supply_id``（含空白、``/`` 或非字符串）、序列号
+   派不出可用标签、文件版本高于本程序，都明确报错并指出设备，绝不覆盖旧标签、也不留下半截
+   文件；
+6. **保存是一次事务**：迁移、校验、写盘任何一步失败，实例状态与原文件都不变。
 """
 
 import json
@@ -20,7 +23,9 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+import infrastructure.persistence.instrument_registry as registry_module
 from domain.instruments.models import POWER_SUPPLY_ROLE, make_device_key, normalize_serial
 from infrastructure.persistence.instrument_registry import (
     LEGACY_SCHEMA_VERSIONS,
@@ -256,6 +261,37 @@ class MigrationTests(RegistryFileTestCase):
 
         self.assertEqual(_load(self.path)["instruments"][0]["label"], "RACK-B-1")
 
+    def test_existing_label_text_is_frozen_verbatim(self):
+        """迁移只填空缺：大小写与字面值都必须原样保留，不做规范化。"""
+        self.write(_document([
+            _entry("DP832A-1", "DP8B214901519", model="DP832A", model_index=1,
+                   role=POWER_SUPPLY_ROLE, label="rack-b-1"),
+        ]))
+
+        InstrumentRegistry.load(self.path).save()
+
+        self.assertEqual(
+            _load(self.path)["instruments"][0]["label"], "rack-b-1",
+            "已有标签不得被裁剪空白、改写大小写或重新生成",
+        )
+
+    def test_blank_label_counts_as_missing(self):
+        """空串与纯空白不算标签：电源按规则补生成，其余设备写 ``null``。"""
+        document = _document([
+            _entry("DP832A-1", "DP8B214901519", model="DP832A", model_index=1,
+                   role=POWER_SUPPLY_ROLE, label="   "),
+            _entry("SMW200A-1", "105462", model="SMW200A", model_index=1,
+                   role="signal_generator", label=""),
+        ])
+        document["instruments"][1]["vendor"] = "Rohde&Schwarz"
+        self.write(document)
+
+        InstrumentRegistry.load(self.path).save()
+
+        records = _load(self.path)["instruments"]
+        self.assertEqual(records[0]["label"], "DP8B1519", "空白标签视为缺标签，电源照常补生成")
+        self.assertIsNone(records[1]["label"], "非电源设备没有标签时写 null")
+
 
 class RegistrationTests(RegistryFileTestCase):
     """显式登记为电源才得到标签：未登记角色不会被猜成电源。"""
@@ -324,6 +360,29 @@ class ConflictGateTests(RegistryFileTestCase):
                     InstrumentRegistry.load(self.path)
                 self.assertIn("supply_id", str(raised.exception))
 
+    def test_surrounding_whitespace_is_reported_not_trimmed(self):
+        """写错的标签必须报错：迁移不许悄悄裁剪成“看起来合法”的值。"""
+        self.write(_document([
+            _entry("DP832A-1", "DP8B214901519", model="DP832A", model_index=1,
+                   role=POWER_SUPPLY_ROLE, label=" DP8B1519 "),
+        ]))
+
+        with self.assertRaises(InstrumentRegistryError) as raised:
+            InstrumentRegistry.load(self.path)
+
+        self.assertIn("首尾空白", str(raised.exception))
+
+    def test_non_string_label_is_rejected(self):
+        self.write(_document([
+            _entry("DP832A-1", "DP8B214901519", model="DP832A", model_index=1,
+                   role=POWER_SUPPLY_ROLE, label=1234),
+        ]))
+
+        with self.assertRaises(InstrumentRegistryError) as raised:
+            InstrumentRegistry.load(self.path)
+
+        self.assertIn("字符串", str(raised.exception))
+
     def test_exhausted_label_candidates_block_the_save_and_keep_the_file(self):
         self.write(_document([
             _entry("FAKE-1", "B0001", model="FAKE", model_index=1,
@@ -333,6 +392,7 @@ class ConflictGateTests(RegistryFileTestCase):
         ]))
         before = self.path.read_bytes()
         registry = InstrumentRegistry.load(self.path)
+        before_document = registry.raw
 
         with self.assertRaises(InstrumentRegistryError) as raised:
             registry.save()
@@ -341,6 +401,7 @@ class ConflictGateTests(RegistryFileTestCase):
         self.assertIn("DP832A-1", message)
         self.assertIn("A5462", message)
         self.assertEqual(self.path.read_bytes(), before, "保存失败不得改写原文件")
+        self.assertEqual(registry.raw, before_document, "保存失败不得提交半个迁移结果")
         self.assertIsNone(
             registry.get_by_name("DP832A-1").label, "保存失败不得在内存里留下半个迁移结果"
         )
@@ -352,6 +413,48 @@ class ConflictGateTests(RegistryFileTestCase):
             InstrumentRegistry.load(self.path)
 
         self.assertIn("schema_version", str(raised.exception))
+
+
+class SaveTransactionTests(RegistryFileTestCase):
+    """保存是一次事务：迁移、校验、写盘任何一步失败都不改动实例状态与文件。
+
+    顺序固定为“副本迁移 → 副本校验 → 补版本与时间戳 → 原子写入 → 提交回对象”，
+    这里把“提交回对象”放在最后一步的不变量钉住。
+    """
+
+    def test_write_failure_keeps_the_document_and_file_unchanged(self):
+        self.copy_fixture(LEGACY_REGISTRY)
+        registry = InstrumentRegistry.load(self.path)
+        before_document = registry.raw
+        before_bytes = self.path.read_bytes()
+
+        with mock.patch.object(
+            registry_module, "write_json_atomic", side_effect=OSError("磁盘已满")
+        ):
+            with self.assertRaises(OSError):
+                registry.save()
+
+        self.assertEqual(registry.raw, before_document, "写盘失败不得提交迁移结果")
+        self.assertEqual(self.path.read_bytes(), before_bytes, "写盘失败不得改写原文件")
+        # 实例仍按迁移前的旧字面量工作，调用方可以改完再重试。
+        self.assertEqual(registry.get_by_name("DP832A-1").role, "PS3")
+
+    def test_validation_failure_keeps_the_document_and_file_unchanged(self):
+        self.copy_fixture(LEGACY_REGISTRY)
+        registry = InstrumentRegistry.load(self.path)
+        before_document = registry.raw
+        before_bytes = self.path.read_bytes()
+
+        with mock.patch.object(
+            registry_module,
+            "_validate_document",
+            side_effect=InstrumentRegistryError("模拟校验失败"),
+        ):
+            with self.assertRaises(InstrumentRegistryError):
+                registry.save()
+
+        self.assertEqual(registry.raw, before_document, "校验失败不得提交迁移结果")
+        self.assertEqual(self.path.read_bytes(), before_bytes, "校验失败不得改写原文件")
 
 
 if __name__ == "__main__":

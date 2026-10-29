@@ -274,11 +274,11 @@ class LegacyRegistryReadTests(unittest.TestCase):
 
 
 class WriteBackBoundaryTests(unittest.TestCase):
-    """折叠入口已就绪，但注册表保存路径尚未接上它（属于后续迁移步骤）。
+    """写回边界：注册表里存下来、再读出来的角色必须折叠成 ``power_supply``。
 
-    这里不断言“保存后一定被改写成 ``power_supply``”，也不断言“标签一定不变”：两者都是迁移
-    步骤要改的行为。只固定真正的不变量——注册表里存下来、再读出来的角色，经过
-    :func:`canonical_role` 必须落在 ``power_supply``。这样迁移前后都成立。
+    ``set_role`` 仍接受旧槽位字面量（兼容旧调用），真正折叠发生在 ``save()`` 的迁移里；
+    这里固定跨 API 的不变量——存进文件再读出来，经过 :func:`canonical_role` 必须落在
+    ``power_supply``，不为折叠发生在哪一层写死实现。
     """
 
     def test_saved_role_is_canonicalisable_to_power_supply(self):
@@ -294,7 +294,7 @@ class WriteBackBoundaryTests(unittest.TestCase):
 
             reloaded = InstrumentRegistry.load(path).get_by_name("DP832A-1")
 
-        self.assertIsNotNone(reloaded.role)
+        self.assertEqual(reloaded.role, POWER_SUPPLY_ROLE)
         self.assertEqual(canonical_role(reloaded.role), POWER_SUPPLY_ROLE)
 
 

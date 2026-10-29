@@ -12,8 +12,7 @@
 - ``role`` 只表示设备类别（``signal_generator`` / ``spectrum_analyzer`` / ``power_supply``），
   不含“第几台”；多台电源共用 :data:`POWER_SUPPLY_ROLE`，靠各自的短标签区分。
   旧的槽位编号 ``PS1``..``PS4`` 只在读取旧设备表时被识别，读出的字面量原样保留给读取方；
-  写回时由 :func:`canonical_role` 折叠成 ``power_supply``——注册表保存接入这一折叠属于后续
-  迁移步骤，本模块只提供入口，不改动任何既有读写行为。
+  写回时由 :func:`canonical_role` 折叠成 ``power_supply``，注册表的保存路径已经接上这一折叠。
 - ``label`` 是序列号派生的现场短标签（= 配置里的 ``supply_id``），首次生成后冻结；
   现场显示优先用它，``name`` 仍是软件资产名。
 """
@@ -121,8 +120,8 @@ def canonical_role(value: Any) -> str | None:
     ``spectrum_analyzer`` / ``power_supply`` 原样返回；空值与未知角色返回 ``None``
     （不猜成电源）。
 
-    本函数是**写回**的唯一折叠入口，纯计算、不落盘：注册表的保存路径接上它属于后续
-    迁移步骤，在那之前注册表仍按 :func:`normalize_role` 原样保存旧字面量。
+    本函数是**写回**的唯一折叠入口，纯计算、不落盘：``InstrumentRegistry.save`` 在写盘前调用
+    它，把内存里可能还带旧槽位的文档迁移成新字段。
     """
     role = normalize_role(value)
     if role is not None and role in LEGACY_ROLES:

@@ -26,8 +26,6 @@ from domain.instruments.models import (
 from .config_form_state import (
     POWER_SUPPLY_BINDINGS,
     ConfigFormState,
-    assignment_declared,
-    assignment_supply_id,
     binding_address,
     binding_records,
     bound_power_supplies,
@@ -47,6 +45,8 @@ from .config_projection import (
     DEFAULT_TEST_FREQUENCIES,
     POWER_SUPPLY_ROLES,
     ConfigBackfillError,
+    apply_power_choice,
+    driver_power_source_label,
     project_authoring_config,
 )
 from .configuration_authoring import DUT_CHANNEL_ROLES
@@ -194,8 +194,12 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         mode = self.config.get("driver_mode", {})
         mode = mode if isinstance(mode, dict) else {}
         self.test_mode_enabled = bool(mode.get("enabled", DEFAULT_DRIVER_MODE_ENABLED))
-        source = mode.get("power_source")
-        self.driver_power_source = {"dc_supply": "直流电源", "external_ac": "自带供电"}.get(source)
+        assignment = self.config.get("power_supply_assignment", {})
+        driver = assignment.get("driver_amplifier") if isinstance(assignment, dict) else {}
+        driver = driver if isinstance(driver, dict) else {}
+        self.driver_power_source = driver_power_source_label(
+            mode.get("power_source"), driver.get("power_supply_count")
+        )
         dut = self.config.get("dut_config", {})
         if not isinstance(dut, dict): dut = {}
         self.max_input_power = self._spin(dut.get("max_input_power", DEFAULT_MAX_INPUT_POWER), 0, 50)
@@ -537,19 +541,15 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         那会把“这台电源已经不在”显示成“换成了另一台电源”。
 
         两种状态严格分开（见 :func:`config_form_state.assignment_declared`）：配置里
-        **没有**这条分配时沿用表单默认（有可用电源就选第一台）；配置里**有**这条分配
-        但引用为空（``supply_id: null``）时保持空选择，不能按缺省规则补一台。
+        **没有**这条分配时落到第一台可用电源；配置里**有**这条分配但引用为空
+        （``supply_id: null``）时保持空选择，不能按缺省规则补一台。判定与整份配置回填
+        共用 :func:`presentation.qt.config_projection.apply_power_choice`，所有槽位
+        （含驱动功放）用同一条缺省规则；驱动功放是否启用由 :meth:`update_driver_power_ui`
+        按驱放模式与供电方式决定。
         """
         combo = WheelSafeComboBox()
         combo.addItems(list(choices))
-        if not assignment_declared(entry):
-            combo.setCurrentIndex(0 if choices else -1)
-            return combo
-        reference = assignment_supply_id(entry)
-        if reference is not None and reference in choices:
-            combo.setCurrentText(reference)
-        else:
-            combo.setCurrentIndex(-1)
+        apply_power_choice(combo, entry, list(choices))
         return combo
 
     def _build_power_widgets(self, layout, supplies):
@@ -579,8 +579,9 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         driver = existing.get("driver_amplifier", {}); dut = existing.get("dut_amplifier", {})
         if not isinstance(driver, dict): driver = {}
         if not isinstance(dut, dict): dut = {}
-        inferred_source = "直流电源" if driver.get("power_supply_count", 0) > 0 else "自带供电"
-        self.driver_power_source_combo = self._combo(DRIVER_POWER_SOURCE_VALUES, self.driver_power_source or inferred_source)
+        self.driver_power_source_combo = self._combo(
+            DRIVER_POWER_SOURCE_VALUES, str(self.driver_power_source)
+        )
         self.driver_power_source_label = QLabel("驱放供电方式:")
         self.driver_power_hint = QLabel("自带供电的驱放由外部供电设备供电，本系统不会控制其电源。")
         self.driver_power_hint.setWordWrap(True)
@@ -594,6 +595,8 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         peaking = dut_supply.get("peaking")
         peaking2 = dut_supply.get("peaking2")
         supplies_choices = bound_power_supplies(self.device_bindings)
+        # 所有槽位（含驱动功放）用同一条缺省规则：已有引用优先，否则第一台可用电源。
+        # 驱动功放是否真的启用由 update_driver_power_ui() 按驱放模式与供电方式处理。
         self.driver_power_combo = self._power_choice_combo(supplies_choices, main)
         self.pa_unit1_power_combo = self._power_choice_combo(supplies_choices, carrier)
         self.pa_unit2_power_combo = self._power_choice_combo(supplies_choices, peaking)
@@ -846,14 +849,14 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         self.test_mode_enabled = bool(enabled)
         mode = self.config.get("driver_mode", {})
         mode = dict(mode) if isinstance(mode, dict) else {}
-        source = mode.get("power_source")
-        if source not in ("dc_supply", "external_ac"):
-            assignment = self.config.get("power_supply_assignment", {})
-            driver = assignment.get("driver_amplifier", {}) if isinstance(assignment, dict) else {}
-            source = "dc_supply" if isinstance(driver, dict) and driver.get("power_supply_count", 0) else "external_ac"
-        self.driver_power_source_combo.setCurrentText(
-            {"dc_supply": "直流电源", "external_ac": "自带供电"}[source]
+        assignment = self.config.get("power_supply_assignment", {})
+        driver = assignment.get("driver_amplifier", {}) if isinstance(assignment, dict) else {}
+        driver = driver if isinstance(driver, dict) else {}
+        # 与建页、回填同一个推断：``power_source`` 缺失时看驱动功放分配。
+        self.driver_power_source = driver_power_source_label(
+            mode.get("power_source"), driver.get("power_supply_count")
         )
+        self.driver_power_source_combo.setCurrentText(self.driver_power_source)
         self.power_assignment_group.setVisible(self.test_mode_enabled)
         self.update_driver_power_ui()
         self._dirty_baseline = copy.deepcopy(self.build_config(self.config))
@@ -896,7 +899,18 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         supplies = supplies if isinstance(supplies, dict) else {}
         previous_bindings = self.device_bindings
         previous_problems = self.binding_problems
+        previous_driver_source = self.driver_power_source
         self.device_bindings = bindings
+        # 供电方式必须先按新配置算好：投影不另立一套推断，它读的就是这个页面状态。
+        mode = config.get("driver_mode") if isinstance(config, dict) else None
+        mode = mode if isinstance(mode, dict) else {}
+        assignment = config.get("power_supply_assignment") if isinstance(config, dict) else None
+        assignment = assignment if isinstance(assignment, dict) else {}
+        driver = assignment.get("driver_amplifier")
+        driver = driver if isinstance(driver, dict) else {}
+        self.driver_power_source = driver_power_source_label(
+            mode.get("power_source"), driver.get("power_supply_count")
+        )
         try:
             self._rebuild_power_tabs(
                 sources=self._power_supply_sources(supplies),
@@ -908,6 +922,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         except ConfigBackfillError:
             self.device_bindings = previous_bindings
             self.binding_problems = previous_problems
+            self.driver_power_source = previous_driver_source
             self._rebuild_power_tabs(sources=self._power_supply_sources(), preserve=False)
             raise
         self.config = projected

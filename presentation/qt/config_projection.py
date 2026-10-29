@@ -17,7 +17,8 @@
 - ``instruments`` 不由控件编辑（仪器连接只来自设备发现结果），因此投影只携带它，
   不把它写到控件上；
 - 电源分配的可选项由调用方按设备绑定传入（``supplies``）：配置引用了未绑定的电源时
-  选择保持为空，由校验报告，绝不为未知电源临时补一个下拉选项；
+  选择保持为空，由校验报告，绝不为未知电源临时补一个下拉选项；缺少分配时的缺省选择
+  也只从这份绑定集合里取（第一台可用电源），不存在“第几号电源”的固定默认值；
 - 失败必须可识别：非 JSON 对象输入抛出 :class:`ConfigBackfillError`，不会被静默当作
   回填成功；缺失或类型不正确的字段落到明确默认值，绝不残留上一次运行的显示状态。
 
@@ -45,13 +46,15 @@ DRIVER_POWER_SOURCE_LABELS = {"dc_supply": "直流电源", "external_ac": "自�
 DRIVER_POWER_SOURCE_VALUES = tuple(DRIVER_POWER_SOURCE_LABELS.values())
 DEFAULT_MAX_INPUT_POWER = 33.5
 DEFAULT_PA_UNIT_COUNT = "2"
-# 电源分配组合框的默认映射，重置时逐项恢复。
-DEFAULT_POWER_ASSIGNMENT = {
-    "driver_power": "PS1",
-    "pa_unit1_power": "PS2",
-    "pa_unit2_power": "PS3",
-    "pa_unit3_power": "PS4",
-}
+# 电源分配组合框的槽位（驱动功放 + 三个 PA 单元）。槽位是界面上的接线位置，不是电源
+# 编号：每个槽位选哪台电源只来自配置引用或设备绑定，没有固定的 ``PS1``..``PS4`` 默认值。
+# 重置时按这份槽位列表逐项恢复，因此槽位数量不会因为电源设备的增减而变化。
+POWER_ASSIGNMENT_SLOTS = (
+    "driver_power",
+    "pa_unit1_power",
+    "pa_unit2_power",
+    "pa_unit3_power",
+)
 # 供电角色是接线事实，由用户在配置页显式选择；``DUT_CHANNEL_ROLES`` 只提供本机台架
 # 固定接线的控件初值（CH1 栅极、CH2 漏极），装配层不再按通道名推导角色。
 POWER_SUPPLY_ROLES = ("gate", "drain")
@@ -114,17 +117,21 @@ def _set_combo_items(combo, items) -> None:
     combo.addItems(list(items))
 
 
-def _default_supply(key: str, options: list[str] | None) -> str:
-    """默认电源：优先沿用表单默认值，其次第一个可选电源。"""
-    default = DEFAULT_POWER_ASSIGNMENT[key]
-    if options is None:
-        return default
+def _default_supply(options: list[str] | None) -> str:
+    """缺省电源：第一台可用电源；没有可用电源时保持空选择。
+
+    缺省值只从当前绑定集合里取。固定槽位（``PS1``..``PS4``）既不保证仍被绑定，也不是
+    配置里真实存在的引用，用它当缺省只会回填出一个查无此机的值；也不按设备顺序把新
+    设备静默填进已有角色——``options`` 的顺序就是绑定顺序，缺省只取第一台，已有引用
+    由 :func:`_assign_supply` 优先处理（“已有引用”指当前配置文档里的引用，不是上一次
+    控件里的残留选择）。
+    """
     if not options:
         return ""
-    return default if default in options else options[0]
+    return options[0]
 
 
-def _assign_supply(combo, entry, key: str, options: list[str] | None) -> None:
+def _assign_supply(combo, entry, options: list[str] | None) -> None:
     """把一条电源分配写到组合框。
 
     引用由 :func:`config_form_state.assignment_supply_id` 解析（``supply_id`` 为准，
@@ -132,11 +139,11 @@ def _assign_supply(combo, entry, key: str, options: list[str] | None) -> None:
     电源必须真实存在于可选项里，不存在时清空选择，由校验明确报告，而不是临时把未知
     电源补进下拉框、让一份连不上硬件的配置看起来合法。
 
-    ``entry`` 不是对象表示配置里**没有**这条分配：按缺省规则落到第一个可用电源。
+    ``entry`` 不是对象表示配置里**没有**这条分配：按缺省规则落到第一台可用电源。
     是对象但引用为空（``supply_id: null``）表示**声明了未绑定**：保持空选择，不补。
     """
     if not assignment_declared(entry):
-        target = _default_supply(key, options)
+        target = _default_supply(options)
     else:
         explicit = assignment_supply_id(entry) or ""
         target = explicit if options is None or explicit in options else ""
@@ -208,19 +215,25 @@ def _reset_power_supply_channels(widgets: Any) -> None:
 
 
 def _reset_power_assignment_widgets(widgets: Any, *, supplies: Any = None) -> None:
+    """把电源分配槽位重置为空配置基线：重建选项，缺省落到第一台可用电源。
+
+    重置必须是无状态、确定性的：只读 ``supplies``（当前设备绑定），不读控件上一次的
+    选择。否则投影结果会依赖上一次运行的残留值，而“已有引用优先”指的只是当前配置
+    文档里的引用（见 :func:`_assign_supply`），不该由重置阶段替它挑选。
+    """
     controls = getattr(widgets, "power_assignment_widgets", {})
     if not controls:
         return
     if "driver_source" in controls:
         set_combo(controls["driver_source"], "直流电源")
     options = _supply_options(supplies)
-    for key in DEFAULT_POWER_ASSIGNMENT:
+    target = _default_supply(options)
+    for key in POWER_ASSIGNMENT_SLOTS:
         combo = controls.get(key)
         if combo is None:
             continue
         if options is not None:
             _set_combo_items(combo, options)
-        target = _default_supply(key, options)
         if target:
             set_combo(combo, target)
         else:
@@ -301,9 +314,31 @@ def _apply_channel_widgets(controls: Mapping[str, Any], values: Mapping[str, Any
         controls[key].setChecked(bool_or_default(value, False))
 
 
+def driver_power_source_label(
+    power_source: Any = None, assignment_count: Any = None
+) -> str:
+    """驱放的供电方式（界面文本）：``driver_mode.power_source`` 优先，缺失时看分配。
+
+    配置页初次建页、``apply_config`` 回填与 ``set_test_mode`` 共用这一个推断，避免同一
+    份配置在两条路径上得到不同的供电方式——它连带决定驱动功放槽位是否可用，也会被写回
+    ``driver_mode``。
+    """
+    if power_source in DRIVER_POWER_SOURCE_LABELS:
+        return DRIVER_POWER_SOURCE_LABELS[power_source]
+    count = number_or_none(assignment_count)
+    if count is not None and count > 0:
+        return DRIVER_POWER_SOURCE_LABELS["dc_supply"]
+    return DRIVER_POWER_SOURCE_LABELS["external_ac"]
+
+
 def _apply_power_assignment_widgets(
     widgets: Any, assignment: Any, *, supplies: Any = None
 ) -> None:
+    """投影供电分配：每个槽位“已有引用优先，否则第一台可用电源，否则空选择”。
+
+    已有引用指**本次投影的文档里**这条分配的真实 ``supply_id``；它仍被绑定时保持不动，
+    文档缺这条分配或引用失效时才按缺省规则处理，并且绝不把某台新设备静默填进已有角色。
+    """
     assignment = assignment if isinstance(assignment, dict) else {}
     driver = assignment.get("driver_amplifier")
     driver = driver if isinstance(driver, dict) else {}
@@ -315,14 +350,52 @@ def _apply_power_assignment_widgets(
     options = _supply_options(supplies)
     driver_supplies = driver.get("supplies")
     driver_supplies = driver_supplies if isinstance(driver_supplies, dict) else {}
-    count = number_or_none(driver.get("power_supply_count"))
     if "driver_source" in controls:
-        set_combo(controls["driver_source"], "直流电源" if count is not None and count > 0 else "自带供电")
-    _assign_supply(controls["driver_power"], driver_supplies.get("main"), "driver_power", options)
+        # 供电方式由调用方按 :func:`driver_power_source_label` 算好后放在页面状态里
+        # （``driver_power_source``），投影只把它写到控件上，不另立一套推断。
+        set_combo(
+            controls["driver_source"],
+            getattr(widgets, "driver_power_source", None),
+        )
+    _assign_supply(controls["driver_power"], driver_supplies.get("main"), options)
     dut_supplies = dut.get("supplies")
     dut_supplies = dut_supplies if isinstance(dut_supplies, dict) else {}
     for role, key in _ASSIGNMENT_ROLE_KEYS:
-        _assign_supply(controls[key], dut_supplies.get(role), key, options)
+        _assign_supply(controls[key], dut_supplies.get(role), options)
+
+
+def _first_available_supply(supplies: Any = None) -> str:
+    """第一台可用电源（当前绑定集合里的第一个）；没有绑定时返回空串。
+
+    配置页初次建页与 :func:`_apply_power_assignment_widgets` 共用这一条缺省规则，
+    页面不再自带第二套“第几号电源”的默认值。
+    """
+    return _default_supply(_supply_options(supplies))
+
+
+def apply_power_choice(combo, entry, supplies: Any) -> None:
+    """把一条电源分配回填到配置页的下拉框（配置页初次建页使用）。
+
+    ``supplies`` 是本次绑定的电源集合（``None`` 表示调用方不约束可选项）。规则与
+    :func:`_assign_supply` 完全一致，因此建页与整份回填不会对同一份配置给出不同选择：
+
+    - 配置里有这条分配且引用仍在可选项里：选中该引用；
+    - 配置里有这条分配但引用为空或已失效：保持空选择，交给校验报告；
+    - 配置里没有这条分配：落到第一台可用电源，没有可用电源时保持空选择。
+
+    所有槽位（含驱动功放）都用同一条缺省规则；驱动功放是否真的启用由页面根据驱放
+    模式与供电方式决定，不在回填阶段另行发明第几号默认值。
+    """
+    options = _supply_options(supplies)
+    if not assignment_declared(entry):
+        target = _default_supply(options)
+    else:
+        explicit = assignment_supply_id(entry) or ""
+        target = explicit if options is None or explicit in options else ""
+    if target:
+        set_combo(combo, target)
+    else:
+        combo.setCurrentIndex(-1)
 
 
 __all__ = [
@@ -334,10 +407,12 @@ __all__ = [
     "DRIVER_POWER_SOURCE_VALUES",
     "DEFAULT_MAX_INPUT_POWER",
     "DEFAULT_PA_UNIT_COUNT",
-    "DEFAULT_POWER_ASSIGNMENT",
     "DEFAULT_SIGNAL_SOURCE",
     "DEFAULT_TEST_FREQUENCIES",
+    "POWER_ASSIGNMENT_SLOTS",
     "POWER_SUPPLY_ROLES",
+    "apply_power_choice",
+    "driver_power_source_label",
     "project_authoring_config",
     "reset_control_widgets",
 ]

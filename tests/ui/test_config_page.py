@@ -500,6 +500,87 @@ class ConfigPageTests(unittest.TestCase):
         # 反过来：supply_id 指向未绑定的电源时保持空选择，不被 name 改指另一台。
         self.assertEqual(applied({"supply_id": "DP8B9999", "name": "DP8B1519"}), "")
 
+    def _assignment_selections(self, page):
+        """读出四个电源分配槽位的当前选择，用于两条回填路径的一致性比对。"""
+        return {
+            key: page.power_assignment_widgets[key].currentText()
+            for key in (
+                "driver_power",
+                "pa_unit1_power",
+                "pa_unit2_power",
+                "pa_unit3_power",
+            )
+        }
+
+    def test_missing_driver_assignment_uses_the_same_default_on_both_paths(self):
+        """驱动功放与 PA 单元共用缺省规则：初次建页与 apply_config 结果必须一致。"""
+        config = {
+            "test_frequencies": [1.0],
+            "instruments": {"power_supplies": {}},
+            "device_bindings": self.power_supply_bindings("DP8B0885", "DP8B0950"),
+            "driver_mode": {"enabled": True, "power_source": "dc_supply"},
+            "dut_config": {"power_supply_count": 1},
+        }
+
+        built = self._assignment_selections(self.make_page(**config))
+        page = self.make_page()
+        page.apply_config(config)
+
+        self.assertEqual(built["driver_power"], "DP8B0885")
+        self.assertEqual(self._assignment_selections(page), built)
+
+    def test_applied_config_does_not_reuse_the_previous_selection(self):
+        """投影不受上一次控件残留值影响：只按当前绑定集合取第一台。"""
+        page = self.make_page()
+
+        page.apply_config(
+            {
+                "test_frequencies": [1.0],
+                "instruments": {"power_supplies": {}},
+                "device_bindings": self.power_supply_bindings("DP8B1519", "DP8B0885"),
+                "dut_config": {"power_supply_count": 1},
+                "power_supply_assignment": {
+                    "dut_amplifier": {
+                        "power_supply_count": 1,
+                        "supplies": {"carrier": {"supply_id": "DP8B0885"}},
+                    }
+                },
+            }
+        )
+        self.assertEqual(page.pa_unit1_power_combo.currentText(), "DP8B0885")
+        # 用户手动换过选择，随后载入一份没有这条分配的配置：不能沿用 DP8B0885。
+        page.pa_unit1_power_combo.setCurrentText("DP8B1519")
+
+        page.apply_config(
+            {
+                "test_frequencies": [1.0],
+                "instruments": {"power_supplies": {}},
+                "device_bindings": self.power_supply_bindings("DP8B0950", "DP8B0885"),
+                "dut_config": {"power_supply_count": 1},
+            }
+        )
+
+        self.assertEqual(page.pa_unit1_power_combo.currentText(), "DP8B0950")
+
+    def test_external_driver_power_still_clears_the_driver_slot(self):
+        """统一缺省规则不改变页面状态：外部供电时驱动功放槽位仍被清空并禁用。"""
+        config = {
+            "test_frequencies": [1.0],
+            "instruments": {"power_supplies": {}},
+            "device_bindings": self.power_supply_bindings("DP8B0885"),
+            "driver_mode": {"enabled": True, "power_source": "external_ac"},
+            "dut_config": {"power_supply_count": 1},
+        }
+
+        page = self.make_page(**config)
+        page.set_test_mode(True)
+
+        self.assertEqual(page.driver_power_source_combo.currentText(), "自带供电")
+        self.assertEqual(page.driver_power_combo.currentIndex(), -1)
+        self.assertFalse(page.driver_power_combo.isEnabled())
+        # PA 单元不受驱放供电方式影响。
+        self.assertEqual(page.pa_unit1_power_combo.currentText(), "DP8B0885")
+
 
 if __name__ == "__main__":
     unittest.main()

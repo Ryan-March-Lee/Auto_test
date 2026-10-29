@@ -936,7 +936,9 @@ class ProductionDependencyTests(unittest.TestCase):
             encoding="utf-8-sig"
         )
         self.assertIn("project_authoring_config(", page_source)
-        self.assertIn("supplies=bound_power_supplies(", page_source)
+        # 电源分配的可选项由页面按当前绑定算好再交给投影（步骤 9：显示文本带型号，
+        # 业务值在 itemData 里）；投影自己不从绑定记录拼显示文本。
+        self.assertIn("supplies=self._power_supply_choices(", page_source)
         tree = _tree(ROOT / "presentation" / "qt" / "config_page.py")
         page = _class_node(tree, "ConfigPage")
         page_methods = {
@@ -953,6 +955,8 @@ class ProductionDependencyTests(unittest.TestCase):
             "_bool_or_default",
             "_number_or_none",
             "_set_combo",
+            "_select_supply",
+            "_supply_options",
         ):
             self.assertNotIn(
                 helper,

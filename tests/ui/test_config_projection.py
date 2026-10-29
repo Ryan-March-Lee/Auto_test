@@ -100,16 +100,23 @@ class _Value:
 
 
 class _Combo:
+    """``QComboBox`` 的最小替身：显示文本与 ``itemData`` 分开保存（与真实控件一致）。"""
+
     def __init__(self, items):
         self.items = list(items)
+        self.data = [None] * len(self.items)
         self.current = None
 
     def findText(self, text):
         return self.items.index(text) if text in self.items else -1
 
+    def findData(self, data):
+        return self.data.index(data) if data in self.data else -1
+
     def addItem(self, text, data=None):
         if text not in self.items:
             self.items.append(text)
+            self.data.append(data)
 
     def addItems(self, items):
         for item in items:
@@ -117,6 +124,7 @@ class _Combo:
 
     def clear(self):
         self.items.clear()
+        self.data.clear()
         self.current = None
 
     def count(self):
@@ -124,6 +132,9 @@ class _Combo:
 
     def itemText(self, index):
         return self.items[index] if 0 <= index < len(self.items) else ""
+
+    def itemData(self, index):
+        return self.data[index] if 0 <= index < len(self.data) else None
 
     def currentIndex(self):
         return self.items.index(self.current) if self.current in self.items else -1
@@ -135,8 +146,17 @@ class _Combo:
         if self.findText(text) >= 0:
             self.current = text
 
+    def setCurrentData(self, data):
+        """按业务值选中（真实控件用 ``findData`` + ``setCurrentIndex``）。"""
+        index = self.findData(data)
+        self.setCurrentIndex(index)
+
     def currentText(self):
         return self.current or ""
+
+    def currentData(self):
+        index = self.currentIndex()
+        return self.data[index] if index >= 0 else None
 
 
 class FakeForm:
@@ -182,7 +202,6 @@ class FakeForm:
 class ConfigProjectionTests(unittest.TestCase):
     def test_projection_applies_authoring_fields(self):
         form = FakeForm(("DP8B1519", "DP8B0885", "DP8B0950"))
-
         projected = project_authoring_config(
             form,
             {
@@ -218,6 +237,7 @@ class ConfigProjectionTests(unittest.TestCase):
                     },
                 },
             },
+            supplies=["DP8B1519", "DP8B0885", "DP8B0950"],
         )
 
         self.assertEqual(form.freq_edit.text(), "[2.4, 2.6]")
@@ -236,10 +256,10 @@ class ConfigProjectionTests(unittest.TestCase):
             form.power_assignment_widgets["driver_source"].currentText(), "直流电源"
         )
         self.assertEqual(
-            form.power_assignment_widgets["driver_power"].currentText(), "DP8B0885"
+            form.power_assignment_widgets["driver_power"].currentData(), "DP8B0885"
         )
         self.assertEqual(
-            form.power_assignment_widgets["pa_unit1_power"].currentText(), "DP8B0950"
+            form.power_assignment_widgets["pa_unit1_power"].currentData(), "DP8B0950"
         )
         # 仪器连接不由控件编辑：投影只把文档原样带回，交给页面与发现面板处理。
         self.assertEqual(
@@ -386,23 +406,69 @@ class ConfigProjectionTests(unittest.TestCase):
             form.power_assignment_widgets["pa_unit1_power"].currentText(), "DP8B0885"
         )
 
+    def test_power_options_show_the_label_with_model_and_keep_supply_id_as_data(self):
+        """步骤 9：显示文本是 ``短标签（型号）``，业务值是 ``itemData`` 里的 ``supply_id``。"""
+        form = FakeForm()
+        supplies = {
+            "DP8B1519": {"model": "DP832A"},
+            "DP8B0885": {"model": "DP832A"},
+            "DP8B0950": {},
+        }
+
+        project_authoring_config(
+            form,
+            {
+                "power_supply_assignment": {
+                    "dut_amplifier": {"supplies": {"carrier": {"supply_id": "DP8B0885"}}}
+                }
+            },
+            supplies=supplies,
+        )
+
+        combo = form.power_assignment_widgets["pa_unit1_power"]
+        self.assertEqual(
+            [combo.itemText(index) for index in range(combo.count())],
+            ["DP8B1519（DP832A）", "DP8B0885（DP832A）", "DP8B0950"],
+        )
+        self.assertEqual(
+            [combo.itemData(index) for index in range(combo.count())],
+            ["DP8B1519", "DP8B0885", "DP8B0950"],
+        )
+        # 两台型号相同：选中靠 itemData，不会因为显示文本相同而落到第一台。
+        self.assertEqual(combo.currentData(), "DP8B0885")
+        self.assertEqual(combo.currentText(), "DP8B0885（DP832A）")
+
+    def test_identical_models_do_not_make_two_supplies_the_same_option(self):
+        """型号重复时显示文本可能完全相同，按文本选中会选错设备；必须按数据选中。"""
+        form = FakeForm(("DP8B1519", "DP8B0885"))
+
+        project_authoring_config(
+            form, {}, supplies={"DP8B1519": {"model": "DP832A"}, "DP8B0885": {"model": "DP832A"}}
+        )
+
+        for key in POWER_ASSIGNMENT_SLOTS:
+            with self.subTest(slot=key):
+                combo = form.power_assignment_widgets[key]
+                self.assertEqual(combo.count(), 2)
+                self.assertEqual(combo.currentData(), "DP8B1519")
+
     def test_projection_ignores_a_previous_control_selection(self):
         """重置是无状态的：上一次的控件选择不参与缺省决策，只按当前绑定取第一台。"""
         form = FakeForm()
-        form.power_assignment_widgets["pa_unit1_power"].setCurrentText("DP8B0885")
+        form.power_assignment_widgets["pa_unit1_power"].setCurrentData("DP8B0885")
 
         reset_control_widgets(form, supplies=["DP8B1519", "DP8B0885"])
 
         for key in POWER_ASSIGNMENT_SLOTS:
             with self.subTest(slot=key):
                 self.assertEqual(
-                    form.power_assignment_widgets[key].currentText(), "DP8B1519"
+                    form.power_assignment_widgets[key].currentData(), "DP8B1519"
                 )
 
     def test_projection_keeps_an_existing_reference_from_the_document(self):
         """“已有引用优先”指配置文档里的引用，而不是控件残留值。"""
         form = FakeForm()
-        form.power_assignment_widgets["pa_unit1_power"].setCurrentText("DP8B1519")
+        form.power_assignment_widgets["pa_unit1_power"].setCurrentData("DP8B1519")
 
         project_authoring_config(
             form,
@@ -417,11 +483,11 @@ class ConfigProjectionTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            form.power_assignment_widgets["pa_unit1_power"].currentText(), "DP8B0885"
+            form.power_assignment_widgets["pa_unit1_power"].currentData(), "DP8B0885"
         )
         # 文档里没有的分配仍取第一台可用电源，不受上面那条引用的影响。
         self.assertEqual(
-            form.power_assignment_widgets["pa_unit2_power"].currentText(), "DP8B1519"
+            form.power_assignment_widgets["pa_unit2_power"].currentData(), "DP8B1519"
         )
 
     def test_driver_source_uses_the_page_inference_without_its_own_guess(self):

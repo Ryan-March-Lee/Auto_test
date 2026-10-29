@@ -24,7 +24,20 @@ class _Text:
 
 
 def _combo(value):
-    return type("C", (), {"currentText": lambda self: value})()
+    """电源分配下拉框的替身：可见文本与真实控件一样，业务值放在 ``itemData``。
+
+    真实控件显示 ``短标签（型号）``，``itemData`` 才是 ``supply_id``；替身省略显示标签，
+    但同样只通过 ``itemData`` 读出业务值（只给 ``currentText`` 的替身按未选择处理）。
+    """
+    return type(
+        "C",
+        (),
+        {
+            "currentText": lambda self: value or "",
+            "currentIndex": lambda self: 0 if value else -1,
+            "itemData": lambda self, index: value if value else None,
+        },
+    )()
 
 
 def bound_supplies(*supply_ids):
@@ -275,9 +288,9 @@ class ConfigFormStateTests(unittest.TestCase):
         widgets.pa_unit_count_combo = type("C", (), {"currentText": lambda self: "2"})()
         widgets.power_assignment_widgets = {
             "driver_source": type("C", (), {"currentText": lambda self: "自带供电"})(),
-            "driver_power": type("C", (), {"currentText": lambda self: ""})(),
-            "pa_unit1_power": type("C", (), {"currentText": lambda self: "DP8B1519"})(),
-            "pa_unit2_power": type("C", (), {"currentText": lambda self: "PS3"})(),
+            "driver_power": _combo(""),
+            "pa_unit1_power": _combo("DP8B1519"),
+            "pa_unit2_power": _combo("PS3"),
         }
 
         errors = ConfigFormState({}, widgets).validation_errors()
@@ -285,6 +298,34 @@ class ConfigFormStateTests(unittest.TestCase):
         joined = "；".join(errors)
         self.assertIn("PS3", joined)
         self.assertIn("没有已应用的设备", joined)
+
+    def test_a_combo_without_item_data_is_reported_as_unselected(self):
+        """只有可见文本（没有 ``itemData``）的控件不能被当成已选电源。
+
+        显示文本可能是 ``DP8B1519（DP832A）``，把它原样写成 ``supply_id`` 就等于从显示
+        字符串反解析业务值；这里要求按“未选择电源”报告，交给操作员重新选择。
+        """
+        widgets = type("Widgets", (), {})()
+        widgets.freq_edit = _Text("[1.0]")
+        widgets.device_bindings = bound_supplies("DP8B1519")
+        widgets.power_config_widgets = {}
+        widgets.pa_unit_count_combo = _combo("1")
+        widgets.power_assignment_widgets = {
+            "driver_source": type("C", (), {"currentText": lambda self: "自带供电"})(),
+            "pa_unit1_power": type(
+                "C", (), {"currentText": lambda self: "DP8B1519（DP832A）"}
+            )(),
+        }
+
+        state = ConfigFormState({}, widgets)
+        errors = state.validation_errors()
+        written = state.read_power_assignment()["power_supply_assignment"][
+            "dut_amplifier"
+        ]["supplies"]["carrier"]
+
+        self.assertIn("未选择电源", "；".join(errors))
+        self.assertIsNone(written["supply_id"])
+        self.assertNotIn("name", written)
 
     def test_power_assignment_without_any_supply_is_reported(self):
         widgets = type("Widgets", (), {})()

@@ -1,8 +1,9 @@
 """纯 Python 配置表单状态适配器。
 
-该模块只依赖控件的最小读取协议（``text``、``value``、``isChecked`` 和
-``currentText``），以及页面持有的 ``device_bindings``（仪器连接的唯一来源），
-因此可以在没有 QApplication 的情况下测试配置组装。
+该模块只依赖控件的最小读取协议（``text``、``value``、``isChecked`` 和 ``currentText``；
+电源分配下拉框另外要求 ``currentIndex`` + ``itemData``，业务值只从那里读），以及页面
+持有的 ``device_bindings``（仪器连接的唯一来源），因此可以在没有 QApplication 的情况下
+测试配置组装。
 """
 
 import ast
@@ -368,6 +369,19 @@ def bound_power_supplies(bindings: Any) -> list[str]:
     ]
 
 
+def bound_power_supply_entries(bindings: Any) -> dict[str, dict]:
+    """返回 ``supply_id -> 绑定记录``，只保留已绑定且有地址的电源（与可用集合同序）。
+
+    界面的可选项用它补显示文本（短标签 + 型号）：型号是绑定记录里**真实设备**的型号，
+    不是配置里可能残留的旧型号，也不是从显示字符串反解析出来的。
+    """
+    return {
+        supply_id: record
+        for supply_id, record in power_supply_bindings(bindings).items()
+        if binding_address(record)
+    }
+
+
 def assignment_supply_id(entry: Any) -> str | None:
     """返回一条供电分配记录引用的电源 ``supply_id``；未绑定或无法识别时返回 ``None``。
 
@@ -405,7 +419,10 @@ def assignment_declared(entry: Any) -> bool:
 def _assignment_entry(combo: Any) -> dict:
     """从分配下拉框读出一条供电分配记录。
 
-    引用值取自控件的可见文本（当前控件就用它保存引用，尚未改到 ``itemData``），
+    引用值取自控件的 ``itemData``（即选中项的 ``supply_id``）：下拉框的显示文本是
+    ``DP8B1519（DP832A）`` 这类给人看的标签，业务值绝不能从显示字符串反解析。控件为空
+    或选中项没有数据时按“引用未绑定”处理，不会把显示文本当成 ``supply_id``。
+
     写回时**主字段是 ``supply_id``**；过渡期同时写同名 ``name``，让尚未迁移到
     ``supply_id`` 的读取方（正式运行映射、硬件装配）仍能工作。两者取值必须相同——
     不存在第二套编号。
@@ -413,12 +430,31 @@ def _assignment_entry(combo: Any) -> dict:
     控件为空表示“引用未绑定”：写成 ``supply_id: null`` 且不写 ``name``，由校验明确
     报错，绝不在这里挑一台可用电源补上。
     """
-    text = combo.currentText() if combo is not None else ""
-    supply_id = text if isinstance(text, str) and text.strip() else None
+    supply_id = _combo_supply_id(combo)
     entry: dict = {"supply_id": supply_id, "channel": ["CH1", "CH2"]}
     if supply_id:
         entry["name"] = supply_id
     return entry
+
+
+def _combo_supply_id(combo: Any) -> str | None:
+    """下拉框当前选中的电源 ``supply_id``；空选择或选中项没有数据时返回 ``None``。
+
+    只读 ``itemData``：显示文本带型号（``DP8B1519（DP832A）``），也可能因型号相同而
+    只是互相接近，回落到文本就等于“从显示字符串反解析身份”，会把标签原样写成
+    ``supply_id``。没有 ``itemData`` 能力的控件因此被视为空选择，由校验明确报错。
+    """
+    if combo is None:
+        return None
+    index_of = getattr(combo, "currentIndex", None)
+    index = index_of() if callable(index_of) else -1
+    if not isinstance(index, int) or index < 0:
+        return None
+    item_data = getattr(combo, "itemData", None)
+    data = item_data(index) if callable(item_data) else None
+    if isinstance(data, str) and data.strip():
+        return data
+    return None
 
 
 def _apply_device_binding(item: dict, binding: Any) -> None:
@@ -646,9 +682,9 @@ class ConfigFormState:
     def read_power_assignment(self) -> dict:
         """按当前下拉框写出供电分配，引用主字段是 ``supply_id``。
 
-        值只来自控件的可见文本（就是 ``supply_id``），不从显示字符串反解析；过渡期
-        同时写同名 ``name``（见 :func:`_assignment_entry`）。可选项本身只来自设备绑定，
-        因此这里写出的每个引用都对应一台本次已应用的电源。
+        值只来自控件的选中项（``itemData`` 里的 ``supply_id``，见 :func:`_combo_supply_id`），
+        不从显示字符串反解析；过渡期同时写同名 ``name``（见 :func:`_assignment_entry`）。
+        可选项本身只来自设备绑定，因此这里写出的每个引用都对应一台本次已应用的电源。
         """
         w = self.widgets
         controls = getattr(w, "power_assignment_widgets", None)

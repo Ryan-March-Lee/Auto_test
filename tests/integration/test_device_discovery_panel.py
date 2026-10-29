@@ -1048,7 +1048,9 @@ class ConfigPageDiscoveryIntegrationTests(unittest.TestCase):
             "device_key": "rigol technologies:dp8b174400885",
         }
         page.apply_discovered_devices([first, second])
-        page.pa_unit1_power_combo.setCurrentText("DP8B1519")
+        page.pa_unit1_power_combo.setCurrentIndex(
+            page.pa_unit1_power_combo.findData("DP8B1519")
+        )
 
         page.apply_discovered_devices([second])
 

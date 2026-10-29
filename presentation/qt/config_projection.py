@@ -19,6 +19,9 @@
 - 电源分配的可选项由调用方按设备绑定传入（``supplies``）：配置引用了未绑定的电源时
   选择保持为空，由校验报告，绝不为未知电源临时补一个下拉选项；缺少分配时的缺省选择
   也只从这份绑定集合里取（第一台可用电源），不存在“第几号电源”的固定默认值；
+- 下拉框的**显示文本与业务值分离**：显示 ``DP8B1519（DP832A）`` 这类可读标签，业务值
+  （``supply_id``）放在 ``itemData`` 里，选中与读取都只认 ``itemData``，绝不从显示字符串
+  反解析设备身份；
 - 失败必须可识别：非 JSON 对象输入抛出 :class:`ConfigBackfillError`，不会被静默当作
   回填成功；缺失或类型不正确的字段落到明确默认值，绝不残留上一次运行的显示状态。
 
@@ -95,29 +98,76 @@ def set_combo(combo, value) -> None:
         combo.setCurrentText(text)
 
 
-def _supply_options(supplies) -> list[str] | None:
-    """规范化电源可选项；``None`` 表示“调用方没有给出绑定信息”，不要改动选项。"""
+def supply_option_label(supply_id: str, model: Any = None) -> str:
+    """电源在分配下拉框里的显示文本：``DP8B1519（DP832A）``。
+
+    括号里是型号（人读的补充信息），没有型号时只显示短标签。显示文本是给人看的，
+    业务值始终是 ``supply_id``，见 :func:`_supply_options`：两者分离之后，型号重复、
+    型号与标签相似或型号缺失都不会让两个选项在控件里变成同一个值。
+    """
+    text = str(supply_id or "").strip()
+    model_text = str(model or "").strip()
+    if model_text and model_text != text:
+        return f"{text}（{model_text}）"
+    return text
+
+
+def _supply_options(supplies) -> list[tuple[str, str]] | None:
+    """规范化电源可选项为 ``(supply_id, 显示文本)``；``None`` 表示调用方没有给出绑定信息。
+
+    ``supplies`` 是“当前绑定电源”的有序集合：元素可以是 ``supply_id`` 字符串，也可以是
+    ``{supply_id: {...,"model": ...}}`` 形式的映射（带型号时显示文本里补上型号）。重复的
+    ``supply_id`` 只保留第一项；显示文本与业务值分开保存，选中比较始终用 ``supply_id``。
+    """
     if supplies is None:
         return None
-    options: list[str] = []
-    for name in supplies:
+    if isinstance(supplies, Mapping):
+        entries = list(supplies.items())
+    else:
+        entries = [(name, None) for name in supplies]
+    options: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for name, record in entries:
         text = str(name or "").strip()
-        if text and text not in options:
-            options.append(text)
+        if not text or text in seen:
+            continue
+        model = record.get("model") if isinstance(record, Mapping) else None
+        seen.add(text)
+        options.append((text, supply_option_label(text, model)))
     return options
 
 
-def _set_combo_items(combo, items) -> None:
-    """按给定选项重建组合框。
+def _supply_ids(options: list[tuple[str, str]] | None) -> list[str]:
+    """可选项的业务值列表（``itemData``），用于判断某条引用是否仍被绑定。"""
+    return [supply_id for supply_id, _text in options or ()]
+
+
+def _set_combo_items(combo, options: list[tuple[str, str]]) -> None:
+    """按给定选项重建组合框：显示文本与 ``itemData``（``supply_id``）一起写入。
 
     电源分配的可选项来自设备绑定，重建可以清掉上一次投影留下的、已经不再绑定的电源；
-    组合框里不应存在用户看不见来源的选项。
+    组合框里不应存在用户看不见来源的选项。业务值放在 ``itemData``，读取方只看它。
     """
     combo.clear()
-    combo.addItems(list(items))
+    for supply_id, text in options:
+        combo.addItem(text, supply_id)
 
 
-def _default_supply(options: list[str] | None) -> str:
+def _select_supply(combo, supply_id: str) -> bool:
+    """按下拉框 ``itemData`` 选中一台电源；找不到时保持空选择并返回 ``False``。
+
+    选中依据必须是 ``itemData`` 里的 ``supply_id``：显示文本带型号、型号还可能重复，
+    用文本匹配会出现“选中的是另一台”的情况。
+    """
+    index = combo.findData(supply_id) if supply_id else -1
+    if index >= 0:
+        combo.setCurrentIndex(index)
+        return True
+    combo.setCurrentIndex(-1)
+    return False
+
+
+def _default_supply(options: list[tuple[str, str]] | None) -> str:
     """缺省电源：第一台可用电源；没有可用电源时保持空选择。
 
     缺省值只从当前绑定集合里取。固定槽位（``PS1``..``PS4``）既不保证仍被绑定，也不是
@@ -126,12 +176,25 @@ def _default_supply(options: list[str] | None) -> str:
     由 :func:`_assign_supply` 优先处理（“已有引用”指当前配置文档里的引用，不是上一次
     控件里的残留选择）。
     """
-    if not options:
-        return ""
-    return options[0]
+    ids = _supply_ids(options)
+    return ids[0] if ids else ""
 
 
-def _assign_supply(combo, entry, options: list[str] | None) -> None:
+def _assignment_target(entry, options: list[tuple[str, str]] | None) -> str:
+    """一条电源分配应该选中的 ``supply_id``（空串表示空选择）。
+
+    配置里没有这条分配时按缺省规则落到第一台可用电源；有这条分配时只认它声明的引用，
+    引用为空或已不在可选项里就保持空选择，交给校验报告，绝不静默改指另一台设备。
+    """
+    if not assignment_declared(entry):
+        return _default_supply(options)
+    explicit = assignment_supply_id(entry) or ""
+    if options is None:
+        return explicit
+    return explicit if explicit in _supply_ids(options) else ""
+
+
+def _assign_supply(combo, entry, options: list[tuple[str, str]] | None) -> None:
     """把一条电源分配写到组合框。
 
     引用由 :func:`config_form_state.assignment_supply_id` 解析（``supply_id`` 为准，
@@ -142,15 +205,7 @@ def _assign_supply(combo, entry, options: list[str] | None) -> None:
     ``entry`` 不是对象表示配置里**没有**这条分配：按缺省规则落到第一台可用电源。
     是对象但引用为空（``supply_id: null``）表示**声明了未绑定**：保持空选择，不补。
     """
-    if not assignment_declared(entry):
-        target = _default_supply(options)
-    else:
-        explicit = assignment_supply_id(entry) or ""
-        target = explicit if options is None or explicit in options else ""
-    if target:
-        set_combo(combo, target)
-    else:
-        combo.setCurrentIndex(-1)
+    _select_supply(combo, _assignment_target(entry, options))
 
 
 def project_authoring_config(
@@ -234,10 +289,7 @@ def _reset_power_assignment_widgets(widgets: Any, *, supplies: Any = None) -> No
             continue
         if options is not None:
             _set_combo_items(combo, options)
-        if target:
-            set_combo(combo, target)
-        else:
-            combo.setCurrentIndex(-1)
+        _select_supply(combo, target)
 
 
 def _apply_test_parameter_widgets(widgets: Any, config: Mapping[str, Any]) -> None:
@@ -379,7 +431,7 @@ def apply_power_choice(combo, entry, supplies: Any) -> None:
     ``supplies`` 是本次绑定的电源集合（``None`` 表示调用方不约束可选项）。规则与
     :func:`_assign_supply` 完全一致，因此建页与整份回填不会对同一份配置给出不同选择：
 
-    - 配置里有这条分配且引用仍在可选项里：选中该引用；
+    - 配置里有这条分配且引用仍在可选项里：选中该引用（按 ``itemData``，不看显示文本）；
     - 配置里有这条分配但引用为空或已失效：保持空选择，交给校验报告；
     - 配置里没有这条分配：落到第一台可用电源，没有可用电源时保持空选择。
 
@@ -387,15 +439,9 @@ def apply_power_choice(combo, entry, supplies: Any) -> None:
     模式与供电方式决定，不在回填阶段另行发明第几号默认值。
     """
     options = _supply_options(supplies)
-    if not assignment_declared(entry):
-        target = _default_supply(options)
-    else:
-        explicit = assignment_supply_id(entry) or ""
-        target = explicit if options is None or explicit in options else ""
-    if target:
-        set_combo(combo, target)
-    else:
-        combo.setCurrentIndex(-1)
+    if options is not None:
+        _set_combo_items(combo, options)
+    _select_supply(combo, _assignment_target(entry, options))
 
 
 __all__ = [
@@ -415,4 +461,5 @@ __all__ = [
     "driver_power_source_label",
     "project_authoring_config",
     "reset_control_widgets",
+    "supply_option_label",
 ]

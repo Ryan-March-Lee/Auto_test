@@ -28,6 +28,7 @@ from .config_form_state import (
     ConfigFormState,
     binding_address,
     binding_records,
+    bound_power_supply_entries,
     bound_power_supplies,
     effective_device_bindings,
     power_supply_binding_problems,
@@ -43,11 +44,13 @@ from .config_projection import (
     DEFAULT_PA_UNIT_COUNT,
     DEFAULT_SIGNAL_SOURCE,
     DEFAULT_TEST_FREQUENCIES,
+    POWER_ASSIGNMENT_SLOTS,
     POWER_SUPPLY_ROLES,
     ConfigBackfillError,
     apply_power_choice,
     driver_power_source_label,
     project_authoring_config,
+    supply_option_label,
 )
 from .configuration_authoring import DUT_CHANNEL_ROLES
 from .device_discovery_panel import DeviceDiscoveryPanel, role_label, subnet_from_address
@@ -60,6 +63,10 @@ __all__ = [
     "ConfigPage",
 ]
 
+# 电源分配下拉框的控件键。界面上的接线位置，与电源设备数量无关：这里只决定刷新时
+# 遍历哪些下拉框，选哪台电源完全来自配置引用与当前绑定集合。
+POWER_ASSIGNMENT_COMBO_KEYS = POWER_ASSIGNMENT_SLOTS
+
 
 def _spin_value(value) -> float:
     """通道数值只接受非 bool 的有限数字；其它类型（字符串/布尔/NaN）按 0 处理。
@@ -71,6 +78,37 @@ def _spin_value(value) -> float:
         return 0.0
     number = float(value)
     return number if math.isfinite(number) else 0.0
+
+
+def _entry_channels(entry) -> dict:
+    """取出一个电源条目的 ``通道 -> 参数`` 映射；不是对象或没有映射时返回空字典。
+
+    条目本身是一份完整电源配置（``{model, channels: {...}}``）。
+    """
+    channels = entry.get("channels") if isinstance(entry, dict) else None
+    return channels if isinstance(channels, dict) else {}
+
+
+def _channel_map(source, preserved):
+    """取出一个电源条目的 ``通道 -> 参数`` 映射，供重建标签页时建控件。
+
+    ``source`` 是这次要显示的配置条目，``preserved`` 是重建前从控件读到的同类条目
+    （``preserve=False`` 时为空）。两者合并的优先级是“**控件里刚填的 > 配置里的**”：
+
+    - 重建发生在保存之前（应用绑定、清除绑定、再次回填），操作者刚在控件里改过的参数
+      必须保留，否则刷新会把它悄悄改回旧配置值；``preserve=True`` 的整个目的就是这个。
+    - 配置里已有、但这次没有对应控件的通道仍从配置取（例如新绑定电源的缺省参数）。
+
+    因此 ``preserve=False`` 时 ``preserved`` 为空，结果就是配置本身；``preserve=True``
+    时控件快照优先。判定按 ``supply_id`` + 通道键，与标签页位置无关。
+    """
+    channels = dict(_entry_channels(source))
+    for channel, value in _entry_channels(preserved).items():
+        if isinstance(value, dict):
+            merged = dict(channels.get(channel) or {})
+            merged.update(value)
+            channels[channel] = merged
+    return channels
 
 
 class ConfigPage(PageControllerBindingMixin, QWidget):
@@ -537,8 +575,11 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         引用按 ``supply_id`` 读取（旧配置只有 ``name`` 时读一次，见
         :func:`config_form_state.assignment_supply_id`），并且必须**出现在本次绑定的
         可选项里**才会被选中。配置写了引用、但那台电源本次没有绑定（含还没迁移的旧槽位
-        ``PS1``）时保持空选择，交给校验报告——``QComboBox`` 找不到文本会停在第一项，
-        那会把“这台电源已经不在”显示成“换成了另一台电源”。
+        ``PS1``）时保持空选择，交给校验报告——静默停在第一项会把“这台电源已经不在”
+        显示成“换成了另一台电源”。
+
+        显示文本是 ``DP8B1519（DP832A）`` 这样的短标签加型号，业务值放在 ``itemData``
+        （``supply_id``）；选中与读取都只看数据，不从显示字符串反解析身份。
 
         两种状态严格分开（见 :func:`config_form_state.assignment_declared`）：配置里
         **没有**这条分配时落到第一台可用电源；配置里**有**这条分配但引用为空
@@ -548,8 +589,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         按驱放模式与供电方式决定。
         """
         combo = WheelSafeComboBox()
-        combo.addItems(list(choices))
-        apply_power_choice(combo, entry, list(choices))
+        apply_power_choice(combo, entry, choices)
         return combo
 
     def _build_power_widgets(self, layout, supplies):
@@ -557,7 +597,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
 
         电源数量与身份都由设备绑定决定，不再有 ``PS1``..``PS4`` 四个固定页：配置里原有
         的条目（含尚未迁移的旧槽位）各占一页，本次绑定的每台电源各占一页，标签页标题用
-        设备表的短标签。
+        短标签加型号（``DP8B1519（DP832A）``）。
         """
         detail = QGroupBox("电源详细配置")
         detail_layout = QVBoxLayout(detail)
@@ -594,7 +634,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         carrier = dut_supply.get("carrier")
         peaking = dut_supply.get("peaking")
         peaking2 = dut_supply.get("peaking2")
-        supplies_choices = bound_power_supplies(self.device_bindings)
+        supplies_choices = self._power_supply_choices()
         # 所有槽位（含驱动功放）用同一条缺省规则：已有引用优先，否则第一台可用电源。
         # 驱动功放是否真的启用由 update_driver_power_ui() 按驱放模式与供电方式处理。
         self.driver_power_combo = self._power_choice_combo(supplies_choices, main)
@@ -621,7 +661,8 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
 
         配置条目保留各自未知字段与通道参数；绑定记录只补身份字段（短标签、型号、序列
         号、设备键），不覆盖配置里已有的值。这样“更换电源”不会沿用上一台的身份，而
-        “重装页面”也不会因为配置里已有同名字段而丢掉绑定来源。
+        “重装页面”也不会因为配置里已有同名字段而丢掉绑定来源。绑定记录的型号比配置里
+        的旧值更可信（它是这台设备本次扫描读到的型号），因此标签页标题优先用它。
         """
         if supplies is None:
             instruments = self.config.get("instruments")
@@ -631,12 +672,12 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         if isinstance(supplies, dict):
             for key, item in supplies.items():
                 if isinstance(item, dict):
-                    sources[str(key)] = item
+                    sources[str(key)] = dict(item)
         for supply_id, record in power_supply_bindings(self.device_bindings).items():
             entry = dict(sources.get(supply_id) or {})
             for field in ("label", "model", "serial", "device_key"):
                 value = record.get(field)
-                if value and not entry.get(field):
+                if isinstance(value, str) and value.strip():
                     entry[field] = value
             entry.setdefault("label", supply_id)
             sources[supply_id] = entry
@@ -653,7 +694,10 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         """按电源键重建标签页；``preserve`` 时保留当前控件里的通道参数。
 
         电源数量变化（应用/清除绑定、加载另一份配置）后重建，避免按位置把某一台设备的
-        参数写到另一台上。
+        参数写到另一台上。通道参数按**配置键**取回（不是按标签页位置），当前选中的标签页
+        也按**电源键**恢复：某台电源被移除或新增时，操作者仍然停在原来那台设备上。
+        ``preserve=True`` 时控件里刚填的通道值优先于配置里的旧值（见 :func:`_channel_map`）；
+        ``preserve=False`` 是回填路径，以新配置为准，不沿用重建前的残留值。
         """
         tabs = getattr(self, "power_tabs", None)
         if tabs is None:
@@ -661,25 +705,36 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         if sources is None:
             sources = self._power_supply_sources()
         existing = self._power_channel_values() if preserve else {}
-        current = tabs.currentIndex()
+        current_key = self._current_power_tab_key()
         tabs.clear()
         self.power_config_widgets = {}
         for key, source in sources.items():
             source = source if isinstance(source, dict) else {}
-            channels = existing.get(key)
-            if not isinstance(channels, dict):
-                channels = source.get("channels")
-            if not isinstance(channels, dict):
-                channels = {}
+            channels = _channel_map(source, existing.get(key))
             self._add_power_tab(key, source, channels)
-        if tabs.count() and current >= 0:
-            tabs.setCurrentIndex(min(current, tabs.count() - 1))
+        if current_key in self.power_config_widgets:
+            tabs.setCurrentIndex(tabs.indexOf(self.power_config_widgets[current_key]["page"]))
+
+    def _current_power_tab_key(self) -> str | None:
+        """当前选中电源标签页的电源键；没有标签页时返回 ``None``。"""
+        tabs = getattr(self, "power_tabs", None)
+        if tabs is None or not tabs.count():
+            return None
+        index = tabs.currentIndex()
+        for key, record in getattr(self, "power_config_widgets", {}).items():
+            if record.get("page") is tabs.widget(index):
+                return key
+        return None
 
     def _add_power_tab(self, key, source, channels) -> None:
-        """为一条电源配置建一个标签页；标题优先用短标签与型号。"""
+        """为一条电源配置建一个标签页；标题是短标签加型号（``DP8B1519（DP832A）``）。
+
+        标签页按配置键（``supply_id``）建，标题只用于显示：设备数量与身份都来自配置与
+        当前绑定，没有固定的四个槽位页。
+        """
         page = QWidget(); page_layout = QVBoxLayout(page)
         page_layout.setSpacing(10)
-        record = {"channels": {}}
+        record = {"channels": {}, "page": page}
         for channel in ("CH1", "CH2"):
             value = channels.get(channel, {})
             if not isinstance(value, dict): value = {}
@@ -708,10 +763,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             form.addRow("电压保护", controls["voltage_protection_enabled"]); form.addRow("电流 (A)", controls["current"])
             form.addRow("保护电流 (A)", controls["current_protection"]); form.addRow("电流保护", controls["current_protection_enabled"])
             page_layout.addWidget(box); record["channels"][channel] = controls
-        title = str(source.get("label") or key)
-        model = source.get("model")
-        if model and str(model) != title:
-            title = f"{title}（{model}）"
+        title = supply_option_label(source.get("label") or key, source.get("model"))
         self.power_tabs.addTab(page, title)
         self.power_config_widgets[key] = record
 
@@ -808,23 +860,39 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         由绑定写入，因此可选项与保存出的配置使用同一个来源，不存在“界面能选、配置里
         却未启用”的错位。
         """
-        return bound_power_supplies(self.device_bindings)
+        return list(self._power_supply_choices())
     def update_power_supply_options(self):
         """刷新电源分配下拉框：只保留当前绑定的电源，失效引用保持空选择。
 
-        配置引用的电源不再绑定时不能被静默换成列表里的第一台——那会把一次设备更换变成
-        一次看不见的分配改动。空选择交给校验明确报告，由操作员重新选择。
+        选项按 ``supply_id`` 重建，显示文本是短标签加型号（``DP8B1519（DP832A）``），
+        业务值放在 ``itemData``。刷新按**数据值**恢复上一次的选择，不按位置、不按可见
+        文本：``QComboBox.clear()`` 会把当前项重置到第一项，按位置保存就会把“这台电源
+        已经不在”变成一次看不见的分配改动。
+
+        配置引用的电源不再绑定时不能被静默换成列表里的第一台——空选择交给校验明确报告，
+        由操作员重新选择。
         """
-        enabled = self.get_enabled_power_supplies()
-        for key in ("driver_power", "pa_unit1_power", "pa_unit2_power", "pa_unit3_power"):
+        options = self._power_supply_choices()
+        for key in POWER_ASSIGNMENT_COMBO_KEYS:
             combo = self.power_assignment_widgets[key]
-            current = combo.currentText()
-            combo.clear()
-            combo.addItems(enabled)
-            if current in enabled:
-                combo.setCurrentText(current)
-            else:
-                combo.setCurrentIndex(-1)
+            current = self._combo_supply_id(combo)
+            apply_power_choice(combo, {"supply_id": current}, options)
+
+    @staticmethod
+    def _combo_supply_id(combo) -> str:
+        """下拉框当前选中项的 ``supply_id``（``itemData``）；空选择时返回空串。"""
+        if combo is None:
+            return ""
+        find_data = getattr(combo, "findData", None)
+        if not callable(find_data):
+            return ""
+        index = combo.currentIndex()
+        data = combo.itemData(index) if isinstance(index, int) and index >= 0 else None
+        return data.strip() if isinstance(data, str) and data.strip() else ""
+
+    def _power_supply_choices(self) -> dict[str, dict]:
+        """电源分配下拉框的可选项：当前绑定的电源，带真实设备的型号用于显示。"""
+        return bound_power_supply_entries(self.device_bindings)
 
     def build_config(self, base=None):
         """按当前控件值组装完整配置。
@@ -917,7 +985,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
                 preserve=False,
             )
             projected = project_authoring_config(
-                self, config, supplies=bound_power_supplies(bindings)
+                self, config, supplies=self._power_supply_choices()
             )
         except ConfigBackfillError:
             self.device_bindings = previous_bindings

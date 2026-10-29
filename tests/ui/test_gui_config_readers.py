@@ -41,6 +41,16 @@ class FakeComboWidget:
         return self.value
 
 
+class FakeSupplyCombo(FakeComboWidget):
+    """电源分配下拉框的替身：业务值放在 ``itemData``（真实控件显示 ``短标签（型号）``）。"""
+
+    def currentIndex(self):
+        return 0 if self.value else -1
+
+    def itemData(self, index):
+        return self.value if index >= 0 else None
+
+
 class _WidgetHost:
     """控件宿主替身：ConfigFormState 只按属性名读取控件。"""
 
@@ -173,10 +183,10 @@ class ConfigFormStateReaderTests(unittest.TestCase):
         }
         self.host.power_assignment_widgets = {
             'driver_source': FakeComboWidget('直流电源' if driver_enabled else '自带供电'),
-            'driver_power': FakeComboWidget('PS4'),
-            'pa_unit1_power': FakeComboWidget('PS1'),
-            'pa_unit2_power': FakeComboWidget('PS2'),
-            'pa_unit3_power': FakeComboWidget('PS3'),
+            'driver_power': FakeSupplyCombo('PS4'),
+            'pa_unit1_power': FakeSupplyCombo('PS1'),
+            'pa_unit2_power': FakeSupplyCombo('PS2'),
+            'pa_unit3_power': FakeSupplyCombo('PS3'),
         }
 
     def test_instrument_reader_wraps_instruments_and_preserves_existing_fields(self):
@@ -303,10 +313,10 @@ class ConfigFormStateReaderTests(unittest.TestCase):
     def test_power_assignment_reader_preserves_legacy_roles_and_channels(self):
         self.host.power_assignment_widgets = {
             'driver_source': FakeComboWidget('直流电源'),
-            'driver_power': FakeComboWidget('PS4'),
-            'pa_unit1_power': FakeComboWidget('PS1'),
-            'pa_unit2_power': FakeComboWidget('PS2'),
-            'pa_unit3_power': FakeComboWidget('PS3'),
+            'driver_power': FakeSupplyCombo('PS4'),
+            'pa_unit1_power': FakeSupplyCombo('PS1'),
+            'pa_unit2_power': FakeSupplyCombo('PS2'),
+            'pa_unit3_power': FakeSupplyCombo('PS3'),
         }
         self.host.pa_unit_count_combo = FakeComboWidget('3')
 
@@ -390,10 +400,10 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
         self.host.driver_power_source_combo = FakeComboWidget('自带供电')
         self.host.power_assignment_widgets = {
             'driver_source': self.host.driver_power_source_combo,
-            'driver_power': FakeComboWidget('PS4'),
-            'pa_unit1_power': FakeComboWidget('PS1'),
-            'pa_unit2_power': FakeComboWidget('PS2'),
-            'pa_unit3_power': FakeComboWidget('PS3'),
+            'driver_power': FakeSupplyCombo('PS4'),
+            'pa_unit1_power': FakeSupplyCombo('PS1'),
+            'pa_unit2_power': FakeSupplyCombo('PS2'),
+            'pa_unit3_power': FakeSupplyCombo('PS3'),
         }
         self.coordinator = _coordinator(config=self.config, widgets=self.host)
 

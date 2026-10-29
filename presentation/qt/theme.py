@@ -736,6 +736,10 @@ QTableWidget, QTableView {
     gridline-color: $table_grid;
     selection-background-color: $primary_soft;
     selection-color: $primary_pressed;
+    /* 点击单元格（含勾选框旁边的空白）会把该格设为“当前格”，Qt 随后在这格上再画一个
+       圆角焦点框；与选中底色重复，看起来像一个多余的方框。选中状态已由底色表达，
+       这里关掉焦点框，不再让它出现在表格里。 */
+    outline: none;
 }
 QTableWidget::item, QTableView::item {
     border: none;

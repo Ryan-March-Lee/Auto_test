@@ -34,6 +34,7 @@ from presentation.qt.device_discovery_panel import (
     binding_device_key,
     subnet_from_address,
 )
+from presentation.qt.theme import apply_theme
 
 SMW_IDN = "Rohde&Schwarz,SMW200A,1412.0000K02/105462,5.20.043.47"
 DP832A_IDN = "RIGOL TECHNOLOGIES,DP832A,DP8B214901519,00.01.16"
@@ -426,6 +427,53 @@ class DiscoveryPanelTests(unittest.TestCase):
 
         self.assertIsNone(panel.worker)
         self.assertFalse(panel.is_scanning())
+
+
+class TableFocusFrameTests(unittest.TestCase):
+    """点击表格后不再多画一个圆角焦点框。
+
+    设备发现表是勾选列表，不是可编辑网格：普通 ``QTableView`` 在点击后会把单元格设为
+    “当前格”，再叠一个焦点框，勾选框旁边就多出一个方框。表格规则关掉 ``outline`` 后，
+    “有当前格”与“没有当前格”的渲染必须完全一致。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        # 主题是全局样式表：用完必须还原，避免影响同进程里的其他界面测试。
+        self._previous_stylesheet = self.app.styleSheet()
+        apply_theme(self.app)
+
+    def tearDown(self):
+        self.app.setStyleSheet(self._previous_stylesheet)
+
+    def test_current_cell_paints_no_extra_frame(self):
+        panel = DeviceDiscoveryPanel(scanner_factory=_scanner_factory)
+        panel.show()
+        self.app.processEvents()
+        try:
+            panel.request_scan()
+            self.assertTrue(panel.worker is not None)
+            panel.worker.wait(5000)
+            self.app.processEvents()
+
+            table = panel.table
+            self.assertGreater(table.rowCount(), 0)
+            table.setCurrentCell(-1, -1)
+            table.clearFocus()
+            self.app.processEvents()
+            without_current_cell = table.viewport().grab().toImage()
+
+            table.setFocus()
+            table.setCurrentCell(0, 0)
+            self.app.processEvents()
+            with_current_cell = table.viewport().grab().toImage()
+
+            self.assertEqual(without_current_cell, with_current_cell)
+        finally:
+            panel.shutdown()
 
 
 class ConfigPageDiscoveryIntegrationTests(unittest.TestCase):

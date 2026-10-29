@@ -1478,6 +1478,118 @@ class ConfigPageDiscoveryIntegrationTests(unittest.TestCase):
         self.assertNotIn("device_bindings", page.build_config())
 
 
+    def test_power_supply_id_with_a_channel_separator_is_rejected(self):
+        """引用会拼成 ``supply_id/CHx``：含分隔符的标签整批拒绝，不写进配置。"""
+        page = self.make_page()
+        messages = []
+        page.validation_failed.connect(messages.append)
+
+        page.apply_discovered_devices(
+            [
+                {
+                    "role": "power_supply",
+                    "supply_id": "DP8B/1519",
+                    "address": "TCPIP0::192.168.1.102::inst0::INSTR",
+                    "vendor": "RIGOL TECHNOLOGIES",
+                    "serial": "DP8B214901519",
+                    "device_key": "rigol technologies:dp8b214901519",
+                }
+            ]
+        )
+
+        self.assertIn("不能作为配置引用", messages[-1])
+        self.assertIn("DP8B/1519", messages[-1])
+        self.assertEqual(page.device_bindings, {})
+        self.assertEqual(page.build_config()["instruments"]["power_supplies"], {})
+
+    def test_power_supply_without_an_identity_is_rejected_at_the_write_boundary(self):
+        """没有 ``device_key`` 也没有厂商的电源不能写绑定：下一次扫描找不回它。"""
+        page = self.make_page()
+        messages = []
+        page.validation_failed.connect(messages.append)
+
+        page.apply_discovered_devices(
+            [
+                {
+                    "role": "power_supply",
+                    "supply_id": "DP8B1519",
+                    "address": "TCPIP0::192.168.1.102::inst0::INSTR",
+                    "serial": "DP8B214901519",
+                }
+            ]
+        )
+
+        self.assertIn("缺少可用于绑定的设备身份", messages[-1])
+        self.assertEqual(page.device_bindings, {})
+
+    def test_invalid_power_binding_is_reported_and_blocks_save(self):
+        """读入时的坏绑定不能静默消失：校验失败并说明原因，而不是悄悄清掉地址。"""
+        config = {
+            "test_frequencies": [1.0],
+            "instruments": {
+                "power_supplies": {
+                    "DP8B1519": {
+                        "address": "TCPIP0::192.168.1.102::inst0::INSTR",
+                        "enabled": True,
+                        "channels": {"CH1": {"role": "gate"}},
+                    }
+                }
+            },
+            "device_bindings": {
+                "power_supplies": {
+                    "DP8B1519": {"visa_address": "TCPIP0::192.168.1.102::inst0::INSTR"}
+                }
+            },
+        }
+        page = ConfigPage(config, scanner_factory=_scanner_factory)
+        page.show()
+        self.app.processEvents()
+        self.addCleanup(page.close)
+        messages = []
+        page.validation_failed.connect(messages.append)
+
+        # 坏绑定不进入可用电源，也不会被当成已连接设备。
+        self.assertEqual(page.get_enabled_power_supplies(), [])
+        self.assertEqual(page.device_bindings, {})
+        self.assertIn("缺少设备身份", "；".join(page.binding_problems))
+        self.assertIn("缺少设备身份", page.discovery_panel.status_label.text())
+        self.assertFalse(page.validate())
+        self.assertIn("设备绑定不可用", messages[-1])
+
+    def test_applying_valid_devices_clears_a_recorded_binding_problem(self):
+        """重新扫描并应用正确设备后，读入时记录的问题随之清除。"""
+        config = {
+            "test_frequencies": [1.0],
+            "instruments": {"power_supplies": {}},
+            "device_bindings": {
+                "power_supplies": {
+                    "DP8B1519": {"visa_address": "TCPIP0::192.168.1.102::inst0::INSTR"}
+                }
+            },
+        }
+        page = ConfigPage(config, scanner_factory=_scanner_factory)
+        page.show()
+        self.app.processEvents()
+        self.addCleanup(page.close)
+        self.assertTrue(page.binding_problems)
+
+        page.apply_discovered_devices(
+            [
+                {
+                    "role": "power_supply",
+                    "supply_id": "DP8B1519",
+                    "address": "TCPIP0::192.168.1.102::inst0::INSTR",
+                    "vendor": "RIGOL TECHNOLOGIES",
+                    "model": "DP832A",
+                    "serial": "DP8B214901519",
+                    "device_key": "rigol technologies:dp8b214901519",
+                }
+            ]
+        )
+
+        self.assertEqual(page.binding_problems, [])
+
+
 class DiscoveryEnabledOfflineDefaultsTests(unittest.TestCase):
     """没有设备网络的开发机上，默认扫描器必须是模拟数据，绝不偷偷发真实连接。"""
 

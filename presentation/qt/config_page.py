@@ -17,7 +17,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from domain.instruments.models import POWER_SUPPLY_ROLE, make_device_key
+from domain.instruments.models import (
+    POWER_SUPPLY_ROLE,
+    make_device_key,
+    normalize_serial,
+)
 
 from .config_form_state import (
     POWER_SUPPLY_BINDINGS,
@@ -26,7 +30,9 @@ from .config_form_state import (
     binding_records,
     bound_power_supplies,
     effective_device_bindings,
+    power_supply_binding_problems,
     power_supply_bindings,
+    supply_id_problem,
 )
 from .config_projection import (
     DEFAULT_ATTENUATOR_TYPE,
@@ -85,6 +91,9 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         # 不靠地址记忆。绑定是仪器连接的唯一来源；构建界面之前就要就位，扫描框初值才能
         # 取到已绑定设备的网段，电源分配的可选项也由它决定。
         self.device_bindings = effective_device_bindings(self.config)
+        # 配置里原本就不可用的电源绑定：读入时会从可用集合里剔除，但必须在这里留下记录，
+        # 由界面提示并在保存/运行校验时明确报错——否则它们会表现为“电源莫名消失”。
+        self.binding_problems = self._binding_problems_of(self.config)
         self._scanner_factory = scanner_factory
         self.build_ui()
         self._connect_signals()
@@ -97,6 +106,20 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         panel = getattr(self, "discovery_panel", None)
         if panel is not None:
             panel.set_device_bindings(self.device_bindings)
+            if self.binding_problems:
+                panel.show_message(
+                    "；".join(self.binding_problems)
+                    + "；请重新扫描并应用这些电源，或修正配置后再保存"
+                )
+
+    @staticmethod
+    def _binding_problems_of(config) -> list[str]:
+        """列出一份配置里不可用的电源绑定（读入边界与加载路径共用）。"""
+        devices = config.get("device_bindings") if isinstance(config, dict) else None
+        return [
+            f"设备绑定不可用：{problem}"
+            for problem in power_supply_binding_problems(devices)
+        ]
 
     def build_ui(self):
         """按页面协议构建并返回配置页根 widget。"""
@@ -265,8 +288,9 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         角色不是用户选的：它来自设备表 ``instruments.json`` 登记的 ``role``（旧槽位
         ``PS1``..``PS4`` 由面板折叠成 ``power_supply``），面板按它交付。这是写入的最终
         边界，因此它自己的校验必须完整，不能只依赖面板的勾选校验：角色未知、唯一角色
-        重复、地址为空、缺少设备身份、身份与序列号不一致、电源缺少 ``supply_id``、同一
-        台设备被重复绑定，任何一项都整批拒绝，不留下“一半已应用”的配置。
+        重复、地址为空、缺少设备身份、身份与序列号不一致、电源缺少 ``supply_id`` 或
+        ``supply_id`` 不能作为配置引用、同一台设备被重复绑定，任何一项都整批拒绝，
+        不留下“一半已应用”的配置。
 
         绑定结构：信号源与频谱仪用角色键（暂时保持单设备），**电源用
         ``device_bindings.power_supplies[<supply_id>]``**——电源是同一类别下的多台设备，
@@ -310,6 +334,15 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
                         "补上标签，再重新扫描"
                     )
                     return
+                reason = supply_id_problem(supply_id)
+                if reason:
+                    # 引用会拼成 ``supply_id/CHx``：含空白或 ``/`` 的标签写进配置后
+                    # 路由会截断，宁可整批拒绝并指出要修的标签，也不悄悄改名。
+                    reject(
+                        f"电源短标签 {supply_id!r} 不能作为配置引用（{reason}）；"
+                        "请先在设备表里修正该标签并保存，再重新扫描"
+                    )
+                    return
                 if supply_id in supply_ids:
                     reject(
                         f"本次应用有两行发现结果都指向电源 {supply_id}"
@@ -351,11 +384,28 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
                     )
                     return
             identity = device_key.casefold()
+            if device_key and not vendor:
+                # 只有 ``device_key`` 时至少要求它携带的序列号与本次读到的序列号一致，
+                # 否则地址会被写到一个身份自相矛盾的名字下。
+                tail = device_key.rsplit(":", 1)[-1].strip().casefold()
+                if tail != normalize_serial(serial).casefold():
+                    reject(
+                        f"{role} 的设备身份与序列号不一致（{device_key} ≠ {serial}），未应用"
+                    )
+                    return
             if not identity and vendor:
                 try:
                     identity = make_device_key(vendor, serial)
                 except ValueError:
                     identity = ""
+            if role == POWER_SUPPLY_ROLE and not identity:
+                # 电源绑定的身份是唯一匹配依据：没有它，下一次扫描找不回这台设备，
+                # 配置读取也会把这条记录判为不可用，等于写了一条坏绑定。
+                reject(
+                    f"电源 {self._supply_id_of(item)} 缺少可用于绑定的设备身份"
+                    "（device_key，或厂商 + 序列号），未应用"
+                )
+                return
             checked.append((item, identity))
 
         # 第三遍：同一个 device_key 不能出现在两条电源绑定里（同一台设备不能接两次）。
@@ -409,6 +459,8 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         current = self._binding_labels(bindings)
         removed = [label for label in previous if label not in set(current)]
         self.device_bindings = bindings
+        # 这一批记录刚刚通过全部校验：之前读入时的坏绑定要么被替换、要么已被移除。
+        self.binding_problems = []
         self._rebuild_power_tabs()
         self.update_power_supply_options()
         if panel is not None:
@@ -452,6 +504,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         若只删绑定记录、把旧地址留在配置里，界面看起来已经断开，连接却仍会打到旧设备。
         """
         self.device_bindings = {}
+        self.binding_problems = []
         panel = getattr(self, "discovery_panel", None)
         if panel is not None:
             panel.set_device_bindings({})
@@ -695,7 +748,10 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         super().close()
 
     def validate(self):
-        errors = ConfigFormState(self.config, self).validation_errors()
+        # 读入时判定为不可用的设备绑定先报出来：它们已经从可用电源里剔除，若不在这里
+        # 明确失败，保存就会把对应条目的地址清空，看起来像“电源无故消失”。
+        errors = list(getattr(self, "binding_problems", []))
+        errors.extend(ConfigFormState(self.config, self).validation_errors())
         if errors:
             self.validation_failed.emit("；".join(errors)); return False
         return True
@@ -810,6 +866,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         supplies = instruments.get("power_supplies")
         supplies = supplies if isinstance(supplies, dict) else {}
         previous_bindings = self.device_bindings
+        previous_problems = self.binding_problems
         self.device_bindings = bindings
         try:
             self._rebuild_power_tabs(
@@ -821,13 +878,17 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             )
         except ConfigBackfillError:
             self.device_bindings = previous_bindings
+            self.binding_problems = previous_problems
             self._rebuild_power_tabs(sources=self._power_supply_sources(), preserve=False)
             raise
         self.config = projected
+        self.binding_problems = self._binding_problems_of(config)
         panel = getattr(self, "discovery_panel", None)
         if panel is not None:
             panel.set_device_bindings(self.device_bindings)
             panel.clear_results()
+        if self.binding_problems:
+            self.discovery_message.emit("；".join(self.binding_problems))
         self.update_pa_unit_ui()
         self.update_driver_power_ui()
         self.update_power_supply_options()

@@ -10,7 +10,12 @@ import copy
 import math
 from typing import Any, Mapping
 
-from domain.instruments.models import POWER_SUPPLY_ROLE, canonical_role, make_device_key
+from domain.instruments.models import (
+    POWER_SUPPLY_ROLE,
+    canonical_role,
+    make_device_key,
+    normalize_serial,
+)
 
 # 仪器连接只由设备发现结果决定：角色由设备表（instruments.json）登记，界面不再让用户
 # 选择；地址来自该设备本次发现的 VISA 地址。下表是配置文档里的角色键，不是界面控件名。
@@ -21,6 +26,9 @@ POWER_SUPPLY_BINDINGS = "power_supplies"
 # 旧配置只有 ``instruments.<角色>.address``、没有绑定记录。迁移时用这个来源标记，
 # 表示“地址来自已保存的配置，尚未经过设备发现确认”，与 ``scan`` / ``simulated`` 分开。
 LEGACY_BINDING_SOURCE = "legacy_config"
+# 电源引用会拼成 ``supply_id/CHx`` 交给 ``instrument.measurement_factory`` 路由，因此
+# ``supply_id`` 与注册表里的 ``label`` 受同一套约束：不能含空白和通道分隔符。
+SUPPLY_ID_SEPARATOR = "/"
 
 
 def parse_frequency_text(value: str) -> list[float] | None:
@@ -90,42 +98,78 @@ def _legacy_supply_id(record: Mapping[str, Any]) -> str | None:
     return None
 
 
-def power_supply_bindings(bindings: Any) -> dict[str, dict]:
-    """返回 ``supply_id -> 绑定记录`` 的电源绑定集合。
+def supply_id_problem(value: Any) -> str | None:
+    """返回一个不能当 ``supply_id`` 使用的具体原因；可用时返回 ``None``。
 
-    新结构是 ``device_bindings.power_supplies[<supply_id>]``（集合的键就是引用 ID，
-    记录内部不再重复写 ``supply_id`` / ``label`` / ``role``）。读取时兼容步骤 5 的过渡
-    结构：记录按旧槽位 ``PS1``..``PS4`` 落键、记录内带短标签与设备身份。旧记录只有在
-    **身份可确认**（``厂商:序列号``）且带短标签时才会迁移——只有地址的旧绑定不是身份，
-    按契约必须重新扫描，这里不猜成某台电源。
-
-    同一台设备只能出现在一条电源绑定里；手改文件造出的重复身份只保留第一条，不静默
-    让同一台设备被连接两次。
+    规则与注册表里的 ``label`` 同源（见数据契约 §4.1）：引用会拼成 ``supply_id/CHx``，
+    所以不能为空、不能含空白、不能含通道分隔符 ``/``。这里只判断、不做清洗——写错的
+    标签必须报错，不能在校验时被悄悄改成“看起来合法”的值。
     """
-    if not isinstance(bindings, Mapping):
-        return {}
-    supplies: dict[str, dict] = {}
-    seen: dict[str, str] = {}
+    if not isinstance(value, str):
+        return "引用必须是字符串"
+    if not value.strip():
+        return "引用为空"
+    if value != value.strip():
+        return "引用含首尾空白"
+    if SUPPLY_ID_SEPARATOR in value:
+        return f"不得含通道分隔符 {SUPPLY_ID_SEPARATOR!r}"
+    if any(char.isspace() for char in value):
+        return "不得含空白"
+    return None
 
-    def add(supply_id: str, record: dict) -> None:
-        if not supply_id or supply_id in supplies:
-            return
-        identity = binding_device_key(record)
-        if identity is not None:
-            if identity in seen:
-                return
-            seen[identity] = supply_id
-        record.pop("role", None)
-        record.pop("label", None)
-        record.pop("supply_id", None)
-        supplies[supply_id] = record
 
+def _binding_identity_problem(record: Mapping[str, Any]) -> str | None:
+    """返回一条绑定记录身份不自洽的原因；身份完整时返回 ``None``。
+
+    身份就是 ``device_key``（``厂商:序列号``）：记录必须能给出它，且它必须与记录里的
+    厂商/序列号一致。手改文件、旧版本写出的“地址 + 矛盾身份”不能进入可用绑定集合，
+    否则配置会连接到一台身份说不清（或身份与地址错配）的设备。
+    """
+    identity = binding_device_key(record)
+    if identity is None:
+        return "缺少设备身份（device_key，或厂商 + 序列号）"
+    device_key = str(record.get("device_key") or "").strip()
+    if not device_key:
+        return None
+    vendor = str(record.get("vendor") or "").strip()
+    serial = str(record.get("serial") or "").strip()
+    if vendor and serial:
+        try:
+            expected = make_device_key(vendor, serial)
+        except ValueError:
+            return f"设备身份无法解析（{vendor!r} / {serial!r}）"
+        if device_key.casefold() != expected:
+            return f"设备身份与厂商/序列号不一致（{device_key} ≠ {expected}）"
+        return None
+    if serial and ":" in device_key:
+        # 没有厂商时至少要求 ``device_key`` 携带的序列号与本次记录一致。
+        tail = device_key.rsplit(":", 1)[1].strip().casefold()
+        stable = normalize_serial(serial).casefold()
+        if tail and stable and tail != stable:
+            return f"设备身份与序列号不一致（{device_key} ≠ …{normalize_serial(serial)}）"
+    return None
+
+
+def _iter_power_binding_entries(
+    bindings: Mapping[str, Any],
+) -> list[tuple[str, str | None, dict | None]]:
+    """逐条列出电源绑定候选：``(来源说明, supply_id, 记录)``。
+
+    新结构 ``power_supplies[<supply_id>]`` 里每一条都是一次绑定声明，必须可用；记录
+    不是对象时也返回一条（``记录`` 为 ``None``），让校验路径能明确报告，而不是静默丢失。
+    集合键按**原字面值**参与校验：首尾空白同样是不合法的引用，不在这里悄悄裁剪。
+
+    旧槽位的过渡记录只有带上身份标记（短标签或 ``device_key``）才算“一次绑定尝试”；
+    **只有地址的旧绑定**按契约直接丢弃并要求重新扫描——地址不是身份，报成错误只会
+    让一份本来就需要重扫的旧配置无法保存。过渡记录里的短标签允许去掉首尾空白：那是
+    步骤 5 写出的历史字段，不属于任何配置键。
+    """
+    entries: list[tuple[str, str | None, dict | None]] = []
     nested = bindings.get(POWER_SUPPLY_BINDINGS)
     if isinstance(nested, Mapping):
         for key, value in nested.items():
-            record = _record_copy(value)
-            if record is not None:
-                add(str(key or "").strip(), record)
+            supply_id = key if isinstance(key, str) else str(key)
+            entries.append((f"电源绑定 {key}", supply_id, _record_copy(value)))
     for key, value in bindings.items():
         if key in INSTRUMENT_ROLES or key == POWER_SUPPLY_BINDINGS:
             continue
@@ -135,10 +179,91 @@ def power_supply_bindings(bindings: Any) -> dict[str, dict]:
         if record is None:
             continue
         supply_id = _legacy_supply_id(record)
-        if supply_id is None or binding_device_key(record) is None:
+        if supply_id is None and binding_device_key(record) is None:
+            # 只有地址的旧绑定：契约要求重新扫描，不是一条可诊断的错误记录。
             continue
-        add(supply_id, record)
+        entries.append((f"旧槽位绑定 {key}", supply_id, record))
+    return entries
+
+
+def power_supply_bindings(bindings: Any) -> dict[str, dict]:
+    """返回 ``supply_id -> 绑定记录`` 的电源绑定集合。
+
+    新结构是 ``device_bindings.power_supplies[<supply_id>]``（集合的键就是引用 ID，
+    记录内部不再重复写 ``supply_id`` / ``label`` / ``role``）。读取时兼容步骤 5 的过渡
+    结构：记录按旧槽位 ``PS1``..``PS4`` 落键、记录内带短标签与设备身份。旧记录只有在
+    **身份可确认**（``厂商:序列号``）且带短标签时才会迁移——只有地址的旧绑定不是身份，
+    按契约必须重新扫描，这里不猜成某台电源。
+
+    每条记录都要过同一套校验（见 :func:`power_supply_binding_problems`）：引用能否当
+    ``supply_id``、身份是否完整自洽。不合格的记录**不进入**集合，因此不会出现在电源
+    分配下拉框里，也不会被写地址；问题本身由校验路径明确报告，而不是静默消失。
+
+    同一台设备只能出现在一条电源绑定里；手改文件造出的重复身份只保留第一条，不静默
+    让同一台设备被连接两次（重复同样计入问题列表）。
+    """
+    if not isinstance(bindings, Mapping):
+        return {}
+    supplies: dict[str, dict] = {}
+    seen: dict[str, str] = {}
+    for _where, supply_id, record in _iter_power_binding_entries(bindings):
+        if record is None or not supply_id or supply_id in supplies:
+            continue
+        if supply_id_problem(supply_id) or _binding_identity_problem(record):
+            continue
+        identity = binding_device_key(record)
+        if identity is None or identity in seen:
+            continue
+        seen[identity] = supply_id
+        record.pop("role", None)
+        record.pop("label", None)
+        record.pop("supply_id", None)
+        supplies[supply_id] = record
     return supplies
+
+
+def power_supply_binding_problems(bindings: Any) -> list[str]:
+    """列出电源绑定里每条不可用的记录（面向操作员的句子）；可用绑定不产生条目。
+
+    存在的意义是“不要静默丢弃”：不合格的记录不会成为可选项，但必须能让操作员看到
+    是哪一条、为什么不能用——否则一次手改或旧版本写出的坏绑定会表现为“电源莫名
+    消失”，而配置里的地址在保存时被清空也无人知晓。
+    """
+    if not isinstance(bindings, Mapping):
+        return []
+    problems: list[str] = []
+    claimed: dict[str, str] = {}
+    devices: dict[str, str] = {}
+    for where, supply_id, record in _iter_power_binding_entries(bindings):
+        display = f"{where}（{supply_id}）" if supply_id else where
+        if record is None:
+            problems.append(f"{where} 不是一条绑定记录")
+            continue
+        if not supply_id:
+            problems.append(f"{where} 没有可用的电源引用（supply_id）")
+            continue
+        reason = supply_id_problem(supply_id)
+        if reason:
+            problems.append(f"{display} 的引用不能作为 supply_id：{reason}")
+            continue
+        reason = _binding_identity_problem(record)
+        if reason:
+            problems.append(f"{display} {reason}")
+            continue
+        if supply_id in claimed:
+            problems.append(f"{display} 与 {claimed[supply_id]} 使用了同一个电源引用")
+            continue
+        claimed[supply_id] = where
+        identity = binding_device_key(record)
+        if identity is not None and identity in devices:
+            problems.append(
+                f"{display} 与 {devices[identity]} 是同一台设备 {identity}，"
+                "同一台设备只能有一条电源绑定"
+            )
+            continue
+        if identity is not None:
+            devices[identity] = display
+    return problems
 
 
 def binding_records(bindings: Any) -> list[tuple[str, dict]]:
@@ -353,6 +478,9 @@ class ConfigFormState:
 
         旧槽位键（``PS1``..``PS4``）同样是“未绑定”的配置项：通道参数原样保留，地址与
         启用状态随绑定一起失效，等迁移器把参数改挂到真正的 ``supply_id`` 上。
+
+        身份字段（``device_key`` / ``serial`` / ``model``）只认绑定记录：记录里没有的
+        字段不能沿用配置里的旧值，否则会出现“地址来自这台、身份还是上一台”的条目。
         """
         instruments = _dict_copy(self.config.get("instruments"))
         supplies = _dict_copy(instruments.get("power_supplies"))
@@ -367,12 +495,15 @@ class ConfigFormState:
             item = _dict_copy(supplies.get(supply_id))
             _apply_device_binding(item, record)
             # 集合的键就是引用 ID，条目里保留同名 ``label`` 便于人读与旧读取方兼容；
-            # 身份字段只写绑定记录里真实存在的值，不从键名反推。
+            # 身份字段只认绑定记录——记录里没有的字段要把配置里的旧值删掉，否则会出现
+            # “地址来自这台、身份还是上一台”的条目（绑定是连接身份的唯一权威来源）。
             item["label"] = supply_id
             for field in ("device_key", "serial", "model"):
                 value = record.get(field)
-                if value:
+                if isinstance(value, str) and value.strip():
                     item[field] = value
+                else:
+                    item.pop(field, None)
             supplies[supply_id] = item
         for name in INSTRUMENT_ROLES:
             item = _dict_copy(instruments.get(name))

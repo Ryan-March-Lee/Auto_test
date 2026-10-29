@@ -7,7 +7,9 @@ from presentation.qt.config_form_state import (
     bound_power_supplies,
     effective_device_bindings,
     parse_frequency_text,
+    power_supply_binding_problems,
     power_supply_bindings,
+    supply_id_problem,
 )
 
 
@@ -244,7 +246,10 @@ class ConfigFormStateTests(unittest.TestCase):
         widgets.freq_edit = _Text("[1.0]")
         widgets.device_bindings = {
             POWER_SUPPLY_BINDINGS: {
-                "DP8B1519": {"visa_address": "TCPIP0::192.168.1.102::inst0::INSTR"}
+                "DP8B1519": {
+                    "device_key": "rigol technologies:dp8b214901519",
+                    "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
+                }
             }
         }
         widgets.power_config_widgets = {}
@@ -277,6 +282,134 @@ class ConfigFormStateTests(unittest.TestCase):
         errors = ConfigFormState({}, widgets).validation_errors()
 
         self.assertIn("未选择电源", "；".join(errors))
+
+    def test_power_binding_without_identity_is_not_a_bound_supply(self):
+        """新结构里的记录也必须带身份：只有地址的记录不能成为可分配电源。"""
+        bindings = {
+            POWER_SUPPLY_BINDINGS: {
+                "DP8B1519": {"visa_address": "TCPIP0::192.168.1.102::inst0::INSTR"}
+            }
+        }
+
+        self.assertEqual(power_supply_bindings(bindings), {})
+        self.assertEqual(bound_power_supplies(bindings), [])
+        problems = power_supply_binding_problems(bindings)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("DP8B1519", problems[0])
+        self.assertIn("缺少设备身份", problems[0])
+
+    def test_power_binding_identity_must_match_vendor_and_serial(self):
+        """``device_key`` 与厂商/序列号矛盾时不得成为可用电源。"""
+        bindings = {
+            POWER_SUPPLY_BINDINGS: {
+                "DP8B1519": {
+                    "device_key": "rigol technologies:dp8b174400885",
+                    "vendor": "RIGOL TECHNOLOGIES",
+                    "serial": "DP8B214901519",
+                    "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
+                }
+            }
+        }
+
+        self.assertEqual(power_supply_bindings(bindings), {})
+        problems = power_supply_binding_problems(bindings)
+        self.assertIn("设备身份与厂商/序列号不一致", "；".join(problems))
+
+    def test_power_binding_key_must_be_a_usable_supply_id(self):
+        """含空白或通道分隔符的键不能当引用：它会被 ``supply_id/CHx`` 路由截断。"""
+        bindings = {
+            POWER_SUPPLY_BINDINGS: {
+                "DP8B 1519": {
+                    "device_key": "rigol technologies:dp8b214901519",
+                    "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
+                },
+                "DP8B/1519": {
+                    "device_key": "rigol technologies:dp8b174400885",
+                    "visa_address": "TCPIP0::192.168.1.108::inst0::INSTR",
+                },
+            }
+        }
+
+        self.assertEqual(power_supply_bindings(bindings), {})
+        problems = "；".join(power_supply_binding_problems(bindings))
+        self.assertIn("不得含空白", problems)
+        self.assertIn("不得含通道分隔符", problems)
+        self.assertEqual(supply_id_problem("DP8B1519"), None)
+        self.assertIn("不得含空白", supply_id_problem("DP8B 1519"))
+        # 首尾空白不裁剪：写错的引用必须报出来，不能被“洗干净”后当成另一台设备。
+        self.assertIn("首尾空白", supply_id_problem(" DP8B1519"))
+        self.assertEqual(
+            power_supply_bindings(
+                {
+                    POWER_SUPPLY_BINDINGS: {
+                        " DP8B1519": {
+                            "device_key": "rigol technologies:dp8b214901519",
+                            "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
+                        }
+                    }
+                }
+            ),
+            {},
+        )
+
+    def test_duplicate_power_binding_is_reported_not_only_dropped(self):
+        """重复身份仍然只保留第一条，但必须能说出被丢掉的是哪一条。"""
+        bindings = {
+            POWER_SUPPLY_BINDINGS: {
+                "DP8B1519": {
+                    "device_key": "rigol technologies:dp8b214901519",
+                    "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
+                },
+                "DP8B1519-COPY": {
+                    "device_key": "rigol technologies:dp8b214901519",
+                    "visa_address": "TCPIP0::192.168.1.109::inst0::INSTR",
+                },
+            }
+        }
+
+        self.assertEqual(list(power_supply_bindings(bindings)), ["DP8B1519"])
+        problems = "；".join(power_supply_binding_problems(bindings))
+        self.assertIn("同一台设备只能有一条电源绑定", problems)
+        self.assertIn("DP8B1519-COPY", problems)
+
+    def test_bound_supply_identity_comes_from_the_binding_not_the_config(self):
+        """绑定是身份的权威来源：记录里没有的字段不能沿用配置里的旧值。"""
+        widgets = type("Widgets", (), {})()
+        widgets.device_bindings = {
+            POWER_SUPPLY_BINDINGS: {
+                "DP8B1519": {
+                    "device_key": "rigol technologies:dp8b214901519",
+                    "serial": "DP8B214901519",
+                    "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
+                }
+            }
+        }
+        config = {
+            "instruments": {
+                "power_supplies": {
+                    "DP8B1519": {
+                        "address": "TCPIP0::192.168.1.101::inst0::INSTR",
+                        "enabled": True,
+                        "device_key": "rigol technologies:dp8b174400885",
+                        "serial": "DP8B174400885",
+                        "model": "OLD-MODEL",
+                        "channels": {"CH1": {"role": "gate"}},
+                    }
+                }
+            }
+        }
+
+        supply = ConfigFormState(config, widgets).read_instrument_config()["instruments"][
+            "power_supplies"
+        ]["DP8B1519"]
+
+        self.assertEqual(supply["device_key"], "rigol technologies:dp8b214901519")
+        self.assertEqual(supply["serial"], "DP8B214901519")
+        self.assertEqual(supply["address"], "TCPIP0::192.168.1.102::inst0::INSTR")
+        # 绑定记录没有 model：配置里的旧型号不得冒充当前绑定的型号。
+        self.assertNotIn("model", supply)
+        # 通道参数不属于身份，原样保留。
+        self.assertEqual(supply["channels"], {"CH1": {"role": "gate"}})
 
 
 if __name__ == "__main__":

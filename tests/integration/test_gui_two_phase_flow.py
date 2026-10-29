@@ -1052,9 +1052,21 @@ class ConfigPageRunEntryTests(unittest.TestCase):
             "device_bindings": {
                 "spectrum_analyzer": {"visa_address": "sim::sa2", "source": "scan"},
                 "power_supplies": {
-                    "DP8B1519": {"visa_address": "sim::ps1", "source": "scan"},
-                    "DP8B0885": {"visa_address": "sim::ps2", "source": "scan"},
-                    "DP8B1191": {"visa_address": "sim::ps3", "source": "scan"},
+                    "DP8B1519": {
+                        "device_key": "rigol technologies:dp8b214901519",
+                        "visa_address": "sim::ps1",
+                        "source": "scan",
+                    },
+                    "DP8B0885": {
+                        "device_key": "rigol technologies:dp8b174400885",
+                        "visa_address": "sim::ps2",
+                        "source": "scan",
+                    },
+                    "DP8B1191": {
+                        "device_key": "rigol technologies:dp8b234501191",
+                        "visa_address": "sim::ps3",
+                        "source": "scan",
+                    },
                 },
             },
             "power_supply_assignment": {

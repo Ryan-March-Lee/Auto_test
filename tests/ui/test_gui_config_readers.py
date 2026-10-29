@@ -358,8 +358,14 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
             'signal_generator': {'visa_address': 'sg-new'},
             'spectrum_analyzer': {'visa_address': 'sa-new'},
             'power_supplies': {
-                'DP8B1519': {'visa_address': 'ps1-new'},
-                'DP8B0885': {'visa_address': 'ps4-new'},
+                'DP8B1519': {
+                    'device_key': 'rigol technologies:dp8b214901519',
+                    'visa_address': 'ps1-new',
+                },
+                'DP8B0885': {
+                    'device_key': 'rigol technologies:dp8b174400885',
+                    'visa_address': 'ps4-new',
+                },
             },
         }
         self.host.freq_edit = FakeTextWidget('[1.0, 2.0]')

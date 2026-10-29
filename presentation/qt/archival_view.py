@@ -27,13 +27,15 @@ from .archival_status import (
     TONE_WARNING,
     ArchivalSummary,
 )
+from .theme import TOKENS, set_button_variant
 
 
+# 状态文字只取主题令牌，色调与全局一致（信息/成功/警告/错误）。
 _TONE_STYLES = {
-    TONE_INFO: "color: #1f5fa8; font-weight: bold;",
-    TONE_SUCCESS: "color: #1b7f3a; font-weight: bold;",
-    TONE_WARNING: "color: #a15c00; font-weight: bold;",
-    TONE_ERROR: "color: #b00020; font-weight: bold;",
+    TONE_INFO: f"color: {TOKENS['primary_pressed']}; font-weight: 600;",
+    TONE_SUCCESS: f"color: {TOKENS['success']}; font-weight: 600;",
+    TONE_WARNING: f"color: {TOKENS['warning']}; font-weight: 600;",
+    TONE_ERROR: f"color: {TOKENS['danger']}; font-weight: 600;",
 }
 
 _IDLE_SUMMARY = ArchivalSummary(
@@ -67,20 +69,24 @@ class ArchivalStatusView(QGroupBox):
         self._current_run_id_provider = current_run_id_provider
         self.summary: ArchivalSummary | None = None
         layout = QVBoxLayout(self)
-        layout.setSpacing(4)
+        layout.setSpacing(6)
         self.headline_label = QLabel()
         self.headline_label.setWordWrap(True)
         # 错误原因、产物原因与路径都是运行期文本，不能交给 Qt 当富文本解析。
         self.headline_label.setTextFormat(Qt.PlainText)
         self.detail_label = QLabel()
         self.detail_label.setWordWrap(True)
+        self.detail_label.setProperty("role", "hint")
         self.detail_label.setTextFormat(Qt.PlainText)
         layout.addWidget(self.headline_label)
         layout.addWidget(self.detail_label)
         buttons = QHBoxLayout()
+        buttons.setSpacing(10)
         self.open_location_btn = QPushButton("打开结果目录")
+        set_button_variant(self.open_location_btn, "secondary")
         self.open_location_btn.clicked.connect(self.open_location)
         self.open_report_btn = QPushButton("打开测试报告")
+        set_button_variant(self.open_report_btn, "secondary")
         self.open_report_btn.clicked.connect(self.open_report)
         buttons.addWidget(self.open_location_btn)
         buttons.addWidget(self.open_report_btn)

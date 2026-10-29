@@ -14,6 +14,8 @@ from matplotlib.figure import Figure
 
 from infrastructure.logging.app_logging import get_logger
 
+from .theme import set_button_variant
+
 logger = get_logger(__name__)
 
 
@@ -57,23 +59,30 @@ class ConnectionDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("连接说明")
         self.setModal(True)
-        self.resize(800, 600)
+        self.resize(880, 640)
         self.figure, self.unavailable_reason = build_diagram(diagram_type)
         layout = QVBoxLayout(self)
-        layout.addWidget(FigureCanvas(self.figure))
+        layout.setContentsMargins(16, 16, 16, 14)
+        layout.setSpacing(12)
+        layout.addWidget(FigureCanvas(self.figure), 1)
         if self.unavailable_reason:
-            layout.addWidget(
-                QLabel(
-                    f"{self.unavailable_reason}\n"
-                    "连接图不可用时不能确认接线，请先修复后重新打开该对话框。"
-                )
+            reason_label = QLabel(
+                f"{self.unavailable_reason}\n"
+                "连接图不可用时不能确认接线，请先修复后重新打开该对话框。"
             )
+            reason_label.setWordWrap(True)
+            reason_label.setProperty("tone", "danger")
+            layout.addWidget(reason_label)
         buttons = QHBoxLayout()
+        buttons.setSpacing(10)
         self.cancel_btn = QPushButton("取消")
+        set_button_variant(self.cancel_btn, "secondary")
         self.ok_btn = QPushButton("我已正确连接")
+        set_button_variant(self.ok_btn, "primary")
         self.cancel_btn.clicked.connect(self.reject)
         self.ok_btn.clicked.connect(self.accept)
         self.ok_btn.setEnabled(self.unavailable_reason is None)
+        buttons.addStretch(1)
         buttons.addWidget(self.cancel_btn)
         buttons.addWidget(self.ok_btn)
         layout.addLayout(buttons)

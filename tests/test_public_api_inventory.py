@@ -409,6 +409,7 @@ INTERNAL_MODULES = {
     "presentation.qt.realtime_buffer": "实时数据缓冲",
     "presentation.qt.realtime_plot": "实时绘图控件",
     "presentation.qt.status_panel": "状态/日志面板",
+    "presentation.qt.theme": "统一主题：设计令牌、调色板与全局样式表",
     "presentation.qt.visualization_page": "历史可视化页面",
     "presentation.qt.welcome_page": "启动欢迎页与测试模式选择",
     "presentation.qt.workers": "测量 worker 实现",

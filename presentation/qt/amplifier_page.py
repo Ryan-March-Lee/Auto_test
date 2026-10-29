@@ -5,10 +5,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Callable
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
+    QLabel,
     QMessageBox,
     QPushButton,
     QTableWidget,
@@ -26,6 +29,7 @@ from .pages import PageControllerBindingMixin
 from .run_contract import is_valid_prepared_run
 from .realtime_buffer import RealtimeMeasurementBuffer
 from .realtime_page import RealtimePageMixin
+from .theme import set_button_variant
 
 
 class AmplifierPage(
@@ -74,8 +78,8 @@ class AmplifierPage(
 
     def build_ui(self) -> QWidget:
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(8)
+        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setSpacing(12)
 
         # 左侧窄栏：连接说明、测量控制、测量结果；右侧整块留给四张图。
         left_panel = QWidget()
@@ -83,30 +87,34 @@ class AmplifierPage(
         left_panel.setMaximumWidth(520)
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(6)
+        left_layout.setSpacing(12)
 
         instruction_group = QGroupBox("连接说明")
         instruction_layout = QVBoxLayout(instruction_group)
+        instruction_layout.setSpacing(10)
         self.instruction_text = QTextEdit()
-        self.instruction_text.setMaximumHeight(120)
+        self.instruction_text.setMaximumHeight(112)
+        self.instruction_text.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.instruction_text.setReadOnly(True)
         instruction_layout.addWidget(self.instruction_text)
         self.show_amp_diagram_btn = QPushButton("查看连接图")
+        set_button_variant(self.show_amp_diagram_btn, "secondary")
         self.show_amp_diagram_btn.clicked.connect(self.show_connection_diagram)
         instruction_layout.addWidget(self.show_amp_diagram_btn)
         left_layout.addWidget(instruction_group)
 
         control_group = QGroupBox("测量控制")
         control_layout = QHBoxLayout(control_group)
+        control_layout.setSpacing(8)
         self.amplifier_test_btn = QPushButton("开始功放测试")
+        set_button_variant(self.amplifier_test_btn, "primary")
         self.amplifier_test_btn.clicked.connect(self.start_measurement)
         self.cancel_btn = QPushButton("取消")
+        set_button_variant(self.cancel_btn, "secondary")
         self.cancel_btn.setEnabled(False)
         self.cancel_btn.clicked.connect(self.cancel_measurement)
         self.emergency_stop_btn = QPushButton("紧急停止")
-        self.emergency_stop_btn.setStyleSheet(
-            "QPushButton { background-color: red; color: white; font-weight: bold; }"
-        )
+        set_button_variant(self.emergency_stop_btn, "danger")
         self.emergency_stop_btn.setEnabled(False)
         self.emergency_stop_btn.clicked.connect(self.emergency_stop_measurement)
         # 测量控制按钮横向排列在同一行，减少纵向占用面积。
@@ -116,7 +124,6 @@ class AmplifierPage(
             self.emergency_stop_btn,
         ):
             control_layout.addWidget(button)
-        control_layout.addStretch(1)
         left_layout.addWidget(control_group)
 
         # 归档结果紧跟测量控制：测试结束后用户在当前页面即可确认结果是否已保存。
@@ -128,7 +135,16 @@ class AmplifierPage(
         self.result_table = QTableWidget()
         self.result_table.setColumnCount(4)
         self.result_table.setHorizontalHeaderLabels(["频率(GHz)", "压缩点", "小信号增益(dB)", "是否达到压缩"])
+        self.result_table.verticalHeader().setVisible(False)
+        self.result_table.setAlternatingRowColors(True)
+        header = self.result_table.horizontalHeader()
+        for column in range(3):
+            header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.Stretch)
         result_layout.addWidget(self.result_table)
+        self.result_empty_hint = QLabel("尚无测量结果：开始测试后每个频点的压缩点与增益会在此列出。")
+        self.result_empty_hint.setObjectName("emptyHint")
+        result_layout.addWidget(self.result_empty_hint)
         # 结果表占据左栏剩余高度，但不再横向铺满整个页面。
         left_layout.addWidget(result_group, 1)
         self.control_panel = left_panel
@@ -164,9 +180,15 @@ class AmplifierPage(
         if driver_enabled is None:
             driver_enabled = self._driver_mode_provider()
         if driver_enabled:
-            text = "<h3>主功放测试连接说明:</h3><p>信号源 → 线缆① → 驱动功放 → 线缆③ → 主功放 → 线缆④ → 衰减器 → 线缆② → 频谱仪</p>"
+            text = (
+                "<p><b>主功放测试连接说明</b></p>"
+                "<p>信号源 → 线缆① → 驱动功放 → 线缆③ → 主功放 → 线缆④ → 衰减器 → 线缆② → 频谱仪</p>"
+            )
         else:
-            text = "<h3>主功放测试连接说明（无驱动模式）:</h3><p>信号源 → 线缆① → 主功放 → 线缆④ → 衰减器 → 线缆② → 频谱仪</p>"
+            text = (
+                "<p><b>主功放测试连接说明（无驱动模式）</b></p>"
+                "<p>信号源 → 线缆① → 主功放 → 线缆④ → 衰减器 → 线缆② → 频谱仪</p>"
+            )
         self.instruction_text.setHtml(text)
 
     def start_measurement(self) -> None:
@@ -190,6 +212,7 @@ class AmplifierPage(
             return
         self.reset_realtime_data()
         self.result_table.setRowCount(0)
+        self._sync_empty_hint()
         self._log_callback("开始主功放测试...")
         # “等待归档”只在 controller 接受启动之后出现。
         self._archival_try_start(
@@ -240,6 +263,13 @@ class AmplifierPage(
             if isinstance(sweep, Mapping):
                 self.update_realtime({"frequency": row_data.get("frequency", ""), "sweep_data": dict(sweep)})
         self.result_table.resizeColumnsToContents()
+        self._sync_empty_hint()
+
+    def _sync_empty_hint(self) -> None:
+        """空表时给出说明，避免用户把空白表格当成“数据没显示出来”。"""
+        hint = getattr(self, "result_empty_hint", None)
+        if hint is not None:
+            hint.setVisible(self.result_table.rowCount() == 0)
 
     def _update_plot(self, data: Mapping[str, Any]) -> None:
         update_plot = getattr(self.amplifier_plot_widget, "update_plot", None)

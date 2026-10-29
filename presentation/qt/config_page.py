@@ -11,7 +11,7 @@ import copy
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QFormLayout, QGridLayout, QGroupBox,
+    QCheckBox, QFormLayout, QFrame, QGridLayout, QGroupBox,
     QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QTabWidget,
     QVBoxLayout, QWidget,
 )
@@ -43,6 +43,7 @@ from .configuration_authoring import DUT_CHANNEL_ROLES
 from .device_discovery_panel import DeviceDiscoveryPanel, subnet_from_address
 from .input_controls import KeyboardOnlyDoubleSpinBox, WheelSafeComboBox
 from .pages import PageControllerBindingMixin
+from .theme import set_button_variant
 
 __all__ = [
     "ConfigBackfillError",
@@ -89,26 +90,27 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
 
     def _build_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(8, 8, 8, 8)
-        root.setSpacing(6)
+        root.setContentsMargins(0, 4, 0, 0)
+        root.setSpacing(10)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
         scroll.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
         content = QWidget()
-        # 限制内容最大宽度：窗口过宽时不再把分组框横向拉伸成很长的灰色边框。
-        content.setMaximumWidth(1200)
-        # 两栏布局：左侧仪器连接/测试参数/运行，右侧电源配置。避免单个分组框
+        # 限制内容最大宽度：窗口过宽时不再把卡片横向拉伸成很长的边框。
+        content.setMaximumWidth(1180)
+        # 两栏布局：左侧仪器连接/测试参数/运行，右侧电源配置。避免单个卡片
         # 随视口无限横向拉伸，同时降低页面总高度。
         columns = QHBoxLayout(content)
-        columns.setContentsMargins(6, 6, 6, 6)
-        columns.setSpacing(8)
+        columns.setContentsMargins(0, 0, 4, 0)
+        columns.setSpacing(12)
         left_column = QVBoxLayout()
-        left_column.setSpacing(6)
+        left_column.setSpacing(12)
         right_column = QVBoxLayout()
-        right_column.setSpacing(6)
+        right_column.setSpacing(12)
         columns.addLayout(left_column, 3)
         columns.addLayout(right_column, 2)
-        root.addWidget(scroll)
+        root.addWidget(scroll, 1)
         scroll.setWidget(content)
 
         instruments = self.config.get("instruments")
@@ -119,15 +121,28 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         # 仪器连接配置只有一个入口：扫描设备后勾选。页面不再提供手工填写地址的控件，
         # 连接地址只来自用户明确应用过的扫描结果。
         self._build_discovery_widget(left_column)
+        connect_row = QHBoxLayout()
+        connect_row.setSpacing(10)
+        connect_hint = QLabel("应用设备后在此连接本次测试使用的仪器。")
+        connect_hint.setProperty("role", "hint")
+        connect_row.addWidget(connect_hint, 1)
         self.connect_btn = QPushButton("连接仪器")
-        left_column.addWidget(self.connect_btn)
+        set_button_variant(self.connect_btn, "primary")
+        connect_row.addWidget(self.connect_btn)
+        left_column.addLayout(connect_row)
 
         params = QGroupBox("测试参数配置")
         form = QGridLayout(params)
+        form.setHorizontalSpacing(10)
+        form.setVerticalSpacing(8)
+        # 标签列定宽、输入列吃满剩余宽度：两列表单的标签才会上下对齐。
+        form.setColumnMinimumWidth(0, 118)
+        form.setColumnMinimumWidth(2, 118)
+        form.setColumnStretch(1, 1)
+        form.setColumnStretch(3, 1)
         test = self.config.get("signal_source", {})
         if not isinstance(test, dict): test = {}
         self.freq_edit = QLineEdit(str(self.config.get("test_frequencies", DEFAULT_TEST_FREQUENCIES)))
-        self.freq_edit.setMaximumWidth(320)
         self.start_power = self._spin(test.get("start_power", DEFAULT_SIGNAL_SOURCE["start_power"]), -50, 20)
         self.stop_power = self._spin(test.get("stop_power", DEFAULT_SIGNAL_SOURCE["stop_power"]), -50, 20)
         self.power_step = self._spin(test.get("step", DEFAULT_SIGNAL_SOURCE["step"]), 0.1, 5)
@@ -152,14 +167,38 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
                           ("DUT最大输入功率 (dBm)", self.max_input_power), ("PA单元数量", self.pa_unit_count_combo))
         for index, (label, widget) in enumerate(parameter_rows):
             row, column = divmod(index, 2)
-            form.addWidget(QLabel(label), row, column * 2)
+            field_label = QLabel(label)
+            field_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            form.addWidget(field_label, row, column * 2)
             form.addWidget(widget, row, column * 2 + 1)
+        freq_hint = QLabel("测试频率以 GHz 为单位，用逗号分隔多个频点。")
+        freq_hint.setProperty("role", "hint")
+        form.addWidget(freq_hint, 4, 0, 1, 4)
         left_column.addWidget(params)
         self._build_power_widgets(right_column, supplies)
-        # 运行入口紧随测试参数，保存按钮放在左栏底部。
+        # 运行入口紧随测试参数，保存与返回放在页面底部固定操作栏。
         self._build_run_widgets(left_column)
         left_column.addStretch(1)
         right_column.addStretch(1)
+        root.addWidget(self._build_action_bar())
+
+    def _build_action_bar(self):
+        """页面底部固定操作栏：保存当前配置或返回欢迎页。"""
+        bar = QWidget()
+        bar.setObjectName("pageActionBar")
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(0, 0, 4, 0)
+        row.setSpacing(10)
+        dirty_hint = QLabel("修改参数后请保存配置，运行时使用已保存并冻结的配置。")
+        dirty_hint.setProperty("role", "hint")
+        row.addWidget(dirty_hint, 1)
+        self.save_config_btn = QPushButton("保存配置")
+        set_button_variant(self.save_config_btn, "primary")
+        self.return_welcome_btn = QPushButton("返回欢迎页")
+        set_button_variant(self.return_welcome_btn, "secondary")
+        row.addWidget(self.return_welcome_btn)
+        row.addWidget(self.save_config_btn)
+        return bar
 
     def _build_discovery_widget(self, layout):
         """仪器连接配置：扫描网段，勾选本次测试所需设备并写入连接配置。
@@ -322,7 +361,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         widget = KeyboardOnlyDoubleSpinBox()
         widget.setRange(minimum, maximum)
         widget.setValue(float(value))
-        widget.setMaximumWidth(120)
+        widget.setMaximumWidth(140)
         return widget
 
     @staticmethod
@@ -332,9 +371,11 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
     def _build_power_widgets(self, layout, supplies):
         detail = QGroupBox("电源详细配置")
         detail_layout = QVBoxLayout(detail)
-        tabs = QTabWidget(); self.power_config_widgets = {}
+        detail_layout.setContentsMargins(0, 0, 0, 0)
+        tabs = QTabWidget(); tabs.setObjectName("subTabs"); self.power_config_widgets = {}
         for name in POWER_SUPPLY_NAMES:
             page = QWidget(); page_layout = QVBoxLayout(page)
+            page_layout.setSpacing(10)
             source = supplies.get(name, {})
             if not isinstance(source, dict): source = {}
             channels = source.get("channels", {})
@@ -347,6 +388,8 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
                 if not isinstance(voltage, dict): voltage = {}
                 if not isinstance(current, dict): current = {}
                 box = QGroupBox(f"通道 {channel}"); form = QFormLayout(box)
+                form.setHorizontalSpacing(10); form.setVerticalSpacing(6)
+                form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                 role = value.get("role")
                 if role not in POWER_SUPPLY_ROLES:
                     role = DUT_CHANNEL_ROLES.get(channel, POWER_SUPPLY_ROLES[0])
@@ -367,9 +410,12 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
                 form.addRow("保护电流 (A)", controls["current_protection"]); form.addRow("电流保护", controls["current_protection_enabled"])
                 page_layout.addWidget(box); record["channels"][channel] = controls
             tabs.addTab(page, name); self.power_config_widgets[name] = record
-        detail_layout.addWidget(tabs); layout.addWidget(detail)
+        detail_layout.addWidget(tabs)
+        layout.addWidget(detail)
 
         assignment = QGroupBox("电源分配设置"); form = QGridLayout(assignment)
+        form.setHorizontalSpacing(10); form.setVerticalSpacing(8)
+        form.setColumnMinimumWidth(0, 118)
         self.power_assignment_group = assignment
         existing = self.config.get("power_supply_assignment", {})
         if not isinstance(existing, dict): existing = {}
@@ -409,25 +455,31 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             "pa_unit2_label": self.pa_unit2_label, "pa_unit3_power": self.pa_unit3_power_combo, "pa_unit3_label": self.pa_unit3_label}
 
     def _build_run_widgets(self, layout):
-        """保存按钮与运行入口；与电源配置解耦，便于放在左侧栏底部。"""
-        self.save_config_btn = QPushButton("保存配置"); layout.addWidget(self.save_config_btn)
-        self.return_welcome_btn = QPushButton("返回欢迎页")
-        layout.addWidget(self.return_welcome_btn)
+        """运行入口：校验并创建一次运行，或按 run_id 重新打开已有运行。
 
+        保存配置与返回欢迎页放在页面底部固定操作栏（``_build_action_bar``），
+        运行入口留在左栏，便于“改参数 → 创建运行”就近操作。
+        """
         # 配置阶段入口：校验并创建一次运行。运行创建后测量页面只消费该不可变快照。
         run_group = QGroupBox("运行")
-        run_form = QFormLayout(run_group)
+        run_layout = QVBoxLayout(run_group)
+        run_layout.setSpacing(8)
         self.create_run_btn = QPushButton("校验并创建运行")
+        set_button_variant(self.create_run_btn, "primary")
         self.run_status_label = QLabel("当前运行: 未创建")
         self.run_status_label.setWordWrap(True)
+        self.run_status_label.setProperty("tone", "muted")
         self.load_run_id_edit = QLineEdit()
-        self.load_run_id_edit.setMaximumWidth(320)
         self.load_run_id_edit.setPlaceholderText("输入 run_id 以重新打开已有运行")
         self.load_run_btn = QPushButton("加载运行")
-        run_form.addRow(self.create_run_btn)
-        run_form.addRow(self.run_status_label)
-        run_form.addRow("run_id:", self.load_run_id_edit)
-        run_form.addRow(self.load_run_btn)
+        set_button_variant(self.load_run_btn, "secondary")
+        load_row = QHBoxLayout()
+        load_row.setSpacing(8)
+        load_row.addWidget(self.load_run_id_edit, 1)
+        load_row.addWidget(self.load_run_btn)
+        run_layout.addWidget(self.create_run_btn)
+        run_layout.addWidget(self.run_status_label)
+        run_layout.addLayout(load_row)
         layout.addWidget(run_group)
 
     def _connect_signals(self):

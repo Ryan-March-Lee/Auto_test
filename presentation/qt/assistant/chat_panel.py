@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 
 from infrastructure.logging.app_logging import get_logger
 
+from ..theme import set_button_variant
 from .chat_dialogs import ChatHistoryDialog, ChatSettingsDialog
 from .chat_worker import ChatWorker, UnavailableAssistant
 
@@ -123,14 +124,26 @@ class ChatPanel(QWidget):
         return assistant
 
     def _build_ui(self) -> None:
+        self.setObjectName("chatPanel")
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
         header = QHBoxLayout()
-        header.addWidget(QLabel("CHAT"))
-        header.addStretch()
+        header.setSpacing(6)
+        header_title = QLabel("CHAT")
+        header_title.setProperty("role", "section")
+        header.addWidget(header_title)
+        header.addStretch(1)
         self.new_chat_btn = QPushButton("+")
+        set_button_variant(self.new_chat_btn, "secondary")
+        self.new_chat_btn.setFixedWidth(34)
+        self.new_chat_btn.setToolTip("开始新对话")
         self.history_btn = QPushButton("历史")
+        set_button_variant(self.history_btn, "secondary")
         self.settings_btn = QPushButton("设置")
+        set_button_variant(self.settings_btn, "secondary")
         self.close_btn = QPushButton("关闭")
+        set_button_variant(self.close_btn, "ghost")
         self.new_chat_btn.clicked.connect(self.start_new_conversation)
         self.history_btn.clicked.connect(self.show_history_dialog)
         self.settings_btn.clicked.connect(self.show_settings_dialog)
@@ -144,33 +157,45 @@ class ChatPanel(QWidget):
         layout.addWidget(self.web_search_checkbox)
 
         self.chat_display = QTextEdit()
+        self.chat_display.setObjectName("chatView")
         self.chat_display.setReadOnly(True)
-        layout.addWidget(self.chat_display)
+        self.chat_display.setMinimumHeight(160)
+        layout.addWidget(self.chat_display, 1)
 
         shortcuts = QHBoxLayout()
+        shortcuts.setSpacing(8)
         self.analyze_test_btn = QPushButton("分析测试数据")
+        set_button_variant(self.analyze_test_btn, "secondary")
         self.troubleshoot_btn = QPushButton("故障诊断")
+        set_button_variant(self.troubleshoot_btn, "secondary")
         self.clear_btn = QPushButton("清除历史")
+        set_button_variant(self.clear_btn, "ghost")
         self.analyze_test_btn.clicked.connect(self.analyze_test_data)
         self.troubleshoot_btn.clicked.connect(self.troubleshoot_issues)
         self.clear_btn.clicked.connect(self.clear_chat_history)
         for button in (self.analyze_test_btn, self.troubleshoot_btn, self.clear_btn):
             shortcuts.addWidget(button)
+        shortcuts.addStretch(1)
         layout.addLayout(shortcuts)
 
         # 思考状态用独立标签表达：不再向聊天记录里追加一条永远删不掉的占位消息。
         self.thinking_label = QLabel("🤔 AI 正在思考...")
+        self.thinking_label.setProperty("role", "hint")
         self.thinking_label.hide()
         layout.addWidget(self.thinking_label)
 
         self.message_input = QTextEdit()
-        self.message_input.setMaximumHeight(80)
+        self.message_input.setMaximumHeight(84)
+        self.message_input.setPlaceholderText("输入问题，Ctrl+Enter 发送")
         self.message_input.installEventFilter(self)
-        layout.addWidget(self.message_input)
-
         self.send_btn = QPushButton("发送 (Ctrl+Enter)")
+        set_button_variant(self.send_btn, "primary")
         self.send_btn.clicked.connect(self.send_message)
-        layout.addWidget(self.send_btn)
+        composer = QVBoxLayout()
+        composer.setSpacing(8)
+        composer.addWidget(self.message_input)
+        composer.addWidget(self.send_btn)
+        layout.addLayout(composer)
 
         self.web_search_checkbox.setChecked(bool(self.llm_chat.enable_web_search))
 

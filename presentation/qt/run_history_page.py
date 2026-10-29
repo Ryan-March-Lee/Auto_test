@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
+    QLabel,
     QMessageBox,
     QPushButton,
     QTableWidget,
@@ -55,6 +56,7 @@ from .history_view_model import (
     RunHistoryRow,
     artifact_kind_text,
 )
+from .theme import set_button_variant
 
 _EXPORT_FILTERS = {
     ExportFormat.JSON: "JSON files (*.json)",
@@ -100,44 +102,79 @@ class RunHistoryPage(QWidget):
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setSpacing(12)
 
         run_group = QGroupBox("历史运行")
         run_layout = QVBoxLayout(run_group)
+        run_layout.setSpacing(8)
         self.run_table = QTableWidget()
         self.run_table.setColumnCount(len(_RUN_COLUMNS))
         self.run_table.setHorizontalHeaderLabels(list(_RUN_COLUMNS))
+        self.run_table.verticalHeader().setVisible(False)
+        self.run_table.setAlternatingRowColors(True)
+        self.run_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.run_table.setMinimumHeight(140)
         _fit_columns(self.run_table, stretch_column=len(_RUN_COLUMNS) - 1)
         self.run_table.itemSelectionChanged.connect(self._on_run_selection_changed)
-        run_layout.addWidget(self.run_table)
+        run_layout.addWidget(self.run_table, 1)
+        self.run_empty_hint = QLabel("尚无历史运行：完成一次测量后运行记录会出现在这里。")
+        self.run_empty_hint.setObjectName("emptyHint")
+        run_layout.addWidget(self.run_empty_hint)
+        run_actions = QHBoxLayout()
+        run_actions.addStretch(1)
         run_refresh_button = QPushButton("刷新历史运行")
+        set_button_variant(run_refresh_button, "secondary")
         run_refresh_button.clicked.connect(self.refresh_run_list)
-        run_layout.addWidget(run_refresh_button)
-        layout.addWidget(run_group)
+        run_actions.addWidget(run_refresh_button)
+        run_layout.addLayout(run_actions)
+        layout.addWidget(run_group, 1)
 
         result_group = QGroupBox("历史结果")
         result_layout = QVBoxLayout(result_group)
+        result_layout.setSpacing(8)
         self.result_table = QTableWidget()
         self.result_table.setColumnCount(4)
         self.result_table.setHorizontalHeaderLabels(["文件名", "类型", "来源", "修改时间"])
-        _fit_columns(self.result_table, stretch_column=0)
-        result_layout.addWidget(self.result_table)
+        self.result_table.verticalHeader().setVisible(False)
+        self.result_table.setAlternatingRowColors(True)
+        self.result_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.result_table.setMinimumHeight(140)
+        result_header = self.result_table.horizontalHeader()
+        result_header.setSectionResizeMode(0, QHeaderView.Stretch)
+        # 类型/来源/修改时间按固定宽度显示，文件名吃掉剩余宽度。
+        for column, width in ((1, 110), (2, 110), (3, 170)):
+            result_header.setSectionResizeMode(column, QHeaderView.Fixed)
+            self.result_table.setColumnWidth(column, width)
+        result_layout.addWidget(self.result_table, 1)
+        self.result_empty_hint = QLabel("尚无历史结果：测量完成归档后结果会出现在这里。")
+        self.result_empty_hint.setObjectName("emptyHint")
+        result_layout.addWidget(self.result_empty_hint)
+        result_actions = QHBoxLayout()
+        result_actions.addStretch(1)
         result_refresh_button = QPushButton("刷新结果列表")
+        set_button_variant(result_refresh_button, "secondary")
         result_refresh_button.clicked.connect(self.refresh_result_list)
-        result_layout.addWidget(result_refresh_button)
-        layout.addWidget(result_group)
+        result_actions.addWidget(result_refresh_button)
+        result_layout.addLayout(result_actions)
+        layout.addWidget(result_group, 1)
 
         action_group = QGroupBox("历史操作")
         action_layout = QHBoxLayout(action_group)
+        action_layout.setSpacing(10)
         self.regenerate_button = QPushButton("重新生成失败的产物")
         self.regenerate_button.setEnabled(False)
+        set_button_variant(self.regenerate_button, "primary")
         self.regenerate_button.clicked.connect(self.regenerate_failed_artifacts)
         action_layout.addWidget(self.regenerate_button)
         for text, export_format in _EXPORT_BUTTONS:
             button = QPushButton(text)
+            set_button_variant(button, "secondary")
             button.clicked.connect(
                 lambda _checked=False, value=export_format: self.export(value)
             )
             action_layout.addWidget(button)
+        action_layout.addStretch(1)
         layout.addWidget(action_group)
 
     # -- 生命周期 -----------------------------------------------------------
@@ -161,7 +198,18 @@ class RunHistoryPage(QWidget):
             self.history.select(self.result_table.currentRow())
             self.log_callback(f"读取历史结果失败: {error}")
             results = ()
+        self._sync_empty_hints()
         return rows, results
+
+    def _sync_empty_hints(self) -> None:
+        """表格为空时给出说明，避免用户把空白表格当成“数据没显示出来”。"""
+        for hint_name, table in (
+            ("run_empty_hint", self.run_table),
+            ("result_empty_hint", self.result_table),
+        ):
+            hint = getattr(self, hint_name, None)
+            if hint is not None:
+                hint.setVisible(table.rowCount() == 0)
 
     # -- 列表 ---------------------------------------------------------------
 
@@ -174,6 +222,7 @@ class RunHistoryPage(QWidget):
         if self.history.run_source is None:
             self.run_table.setRowCount(0)
             self._on_run_selection_changed()
+            self._sync_empty_hints()
             return ()
         try:
             rows = self.history.reload_runs()
@@ -181,6 +230,7 @@ class RunHistoryPage(QWidget):
             self.run_table.setRowCount(0)
             self._on_run_selection_changed()
             self.log_callback(f"读取历史运行失败: {error}")
+            self._sync_empty_hints()
             return ()
         self.run_table.setRowCount(0)
         for index, row in enumerate(rows):
@@ -188,6 +238,7 @@ class RunHistoryPage(QWidget):
             for column, text in enumerate(_run_row_texts(row)):
                 _set_cell(self.run_table, index, column, text)
         self._on_run_selection_changed()
+        self._sync_empty_hints()
         return rows
 
     def refresh_result_list(self):
@@ -200,6 +251,7 @@ class RunHistoryPage(QWidget):
             _set_cell(self.result_table, index, 1, row.file_type)
             _set_cell(self.result_table, index, 2, row.source_label)
             _set_cell(self.result_table, index, 3, row.modified_text)
+        self._sync_empty_hints()
         return rows
 
     def _on_run_selection_changed(self):

@@ -38,6 +38,7 @@ from .history_view_model import (
     result_plot_series,
 )
 from .realtime_plot import RealTimePlotWidget
+from .theme import set_button_variant
 
 __all__ = [
     "VisualizationPage",
@@ -116,46 +117,55 @@ class VisualizationPage(QWidget):
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setSpacing(12)
+
         controls = QGroupBox("可视化控制")
         control_layout = QVBoxLayout(controls)
-        file_layout = QHBoxLayout()
+        control_layout.setSpacing(10)
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(10)
         self.load_data_btn = QPushButton("加载测试数据")
+        set_button_variant(self.load_data_btn, "primary")
         self.load_data_btn.clicked.connect(lambda _checked=False: self.load_test_data())
-        file_layout.addWidget(self.load_data_btn)
+        toolbar.addWidget(self.load_data_btn)
         self.generate_report_btn = QPushButton("生成报告")
+        set_button_variant(self.generate_report_btn, "secondary")
         self.generate_report_btn.setToolTip(
             "基于当前已加载的历史结果生成测试报告副本（使用该结果归档时的配置快照）"
         )
         self.generate_report_btn.clicked.connect(self.generate_report)
-        file_layout.addWidget(self.generate_report_btn)
-        control_layout.addLayout(file_layout)
+        toolbar.addWidget(self.generate_report_btn)
+        toolbar.addStretch(1)
+
+        self.freq_prev_btn = QPushButton("◀ 上一个")
+        set_button_variant(self.freq_prev_btn, "secondary")
+        self.freq_prev_btn.setEnabled(False)
+        self.freq_prev_btn.clicked.connect(self.prev_frequency)
+        self.freq_label = QLabel("未加载数据")
+        self.freq_label.setObjectName("freqBadge")
+        self.freq_label.setAlignment(Qt.AlignCenter)
+        self.freq_label.setMinimumWidth(140)
+        self.freq_next_btn = QPushButton("下一个 ▶")
+        set_button_variant(self.freq_next_btn, "secondary")
+        self.freq_next_btn.setEnabled(False)
+        self.freq_next_btn.clicked.connect(self.next_frequency)
+        toolbar.addWidget(self.freq_prev_btn)
+        toolbar.addWidget(self.freq_label)
+        toolbar.addWidget(self.freq_next_btn)
+        control_layout.addLayout(toolbar)
 
         self.hint_label = QLabel(
             "结果与报告在测试完成时自动归档；这里只浏览历史结果，"
             "“生成报告”仅针对当前已加载结果生成报告副本。"
         )
+        self.hint_label.setProperty("role", "hint")
         self.hint_label.setWordWrap(True)
         control_layout.addWidget(self.hint_label)
-
-        frequency_layout = QHBoxLayout()
-        frequency_layout.addWidget(QLabel("频率切换:"))
-        self.freq_prev_btn = QPushButton("◀ 上一个")
-        self.freq_prev_btn.setEnabled(False)
-        self.freq_prev_btn.clicked.connect(self.prev_frequency)
-        frequency_layout.addWidget(self.freq_prev_btn)
-        self.freq_label = QLabel("未加载数据")
-        self.freq_label.setAlignment(Qt.AlignCenter)
-        frequency_layout.addWidget(self.freq_label)
-        self.freq_next_btn = QPushButton("下一个 ▶")
-        self.freq_next_btn.setEnabled(False)
-        self.freq_next_btn.clicked.connect(self.next_frequency)
-        frequency_layout.addWidget(self.freq_next_btn)
-        frequency_layout.addStretch()
-        control_layout.addLayout(frequency_layout)
         layout.addWidget(controls)
 
         self.data_plot_widget = RealTimePlotWidget()
-        layout.addWidget(self.data_plot_widget)
+        layout.addWidget(self.data_plot_widget, 1)
 
     def _log(self, message: str):
         self.log_callback(message)

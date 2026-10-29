@@ -2,8 +2,16 @@
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
 )
+
+from .theme import set_button_variant
 
 
 def apply_test_mode(config: dict, driver_enabled: bool) -> dict:
@@ -36,29 +44,55 @@ class WelcomePage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(32, 32, 32, 32)
+        layout.setContentsMargins(48, 40, 48, 40)
+        layout.setSpacing(0)
         layout.addStretch(2)
 
+        card = QFrame()
+        card.setObjectName("welcomeCard")
+        card.setMinimumWidth(620)
+        card.setMaximumWidth(720)
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(40, 36, 40, 36)
+        card_layout.setSpacing(10)
+
         title = QLabel("欢迎使用 PA 自动测试系统")
+        title.setObjectName("welcomeTitle")
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("font-size: 30px; font-weight: bold; color: #202020;")
-        layout.addWidget(title)
-        layout.addSpacing(48)
+        card_layout.addWidget(title)
+
+        subtitle = QLabel(
+            "功放测试、驱动映射、线损测量与结果归档的统一入口\n"
+            "请先选择本次测试的驱动方式"
+        )
+        subtitle.setObjectName("welcomeSubtitle")
+        subtitle.setAlignment(Qt.AlignCenter)
+        card_layout.addWidget(subtitle)
+        card_layout.addSpacing(24)
 
         buttons = QHBoxLayout()
-        buttons.setSpacing(24)
+        buttons.setSpacing(16)
         no_driver = QPushButton("无驱放测试")
         with_driver = QPushButton("有驱放测试")
+        set_button_variant(no_driver, "secondary")
+        set_button_variant(with_driver, "primary")
         for button in (no_driver, with_driver):
-            button.setMinimumSize(220, 64)
-            button.setStyleSheet("font-size: 18px; padding: 12px 24px;")
+            button.setMinimumSize(200, 56)
         no_driver.clicked.connect(lambda: self.mode_selected.emit(False))
         with_driver.clicked.connect(lambda: self.mode_selected.emit(True))
         buttons.addStretch(1)
         buttons.addWidget(no_driver)
         buttons.addWidget(with_driver)
         buttons.addStretch(1)
-        layout.addLayout(buttons)
+        card_layout.addLayout(buttons)
+        card_layout.addSpacing(16)
+
+        hint = QLabel("选择后可先在“仪器配置”页扫描设备、保存配置并创建运行。")
+        hint.setObjectName("welcomeSubtitle")
+        hint.setAlignment(Qt.AlignCenter)
+        card_layout.addWidget(hint)
+
+        layout.addWidget(card, 0, Qt.AlignHCenter)
         layout.addStretch(3)
 
 

@@ -235,6 +235,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `presentation.qt.realtime_buffer` | 实时数据缓冲 |
 | `presentation.qt.realtime_plot` | 实时绘图控件 |
 | `presentation.qt.status_panel` | 状态/日志面板 |
+| `presentation.qt.theme` | 统一主题：设计令牌、调色板与全局样式表（按钮层级与文字语义色的唯一来源） |
 | `presentation.qt.visualization_page` | 历史可视化页面（只渲染控件并把动作转发给 `history_view_model`） |
 | `presentation.qt.welcome_page` | 启动欢迎页与测试模式选择 |
 | `presentation.qt.workers` | 测量 worker 实现 |

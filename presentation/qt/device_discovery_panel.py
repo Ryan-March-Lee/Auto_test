@@ -33,6 +33,7 @@ from infrastructure.discovery.simulated_network import DEMO_SUBNET
 
 from .config_form_state import LEGACY_BINDING_SOURCE, binding_address
 from .input_controls import WheelSafeComboBox
+from .theme import set_button_variant, set_tone
 
 # 角色选项是“本次测试语义”，与设备身份（序列号）分开：设备可以换 IP，角色不会变。
 ROLE_CHOICES: tuple[tuple[str, str], ...] = (
@@ -208,7 +209,10 @@ class DeviceDiscoveryPanel(QGroupBox):
 
     def _build_ui(self, default_subnet: str) -> None:
         layout = QVBoxLayout(self)
+        layout.setSpacing(8)
         controls = QGridLayout()
+        controls.setHorizontalSpacing(10)
+        controls.setVerticalSpacing(8)
         self.subnet_edit = QLineEdit(str(default_subnet))
         self.subnet_edit.setMaximumWidth(200)
         self.subnet_edit.setToolTip("扫描范围，例如 192.168.1.0/24；单个地址按 /24 处理")
@@ -216,10 +220,13 @@ class DeviceDiscoveryPanel(QGroupBox):
         self.mode_combo.addItems([label for _value, label in SCAN_MODE_CHOICES])
         self.scan_btn = QPushButton("获取设备")
         self.scan_btn.setToolTip("扫描网段并读取每台设备的 *IDN?；不会改变任何仪器状态")
+        set_button_variant(self.scan_btn, "secondary")
         self.status_label = QLabel("尚未扫描")
         self.status_label.setWordWrap(True)
+        self.status_label.setProperty("role", "hint")
         self.mode_hint = QLabel("")
         self.mode_hint.setWordWrap(True)
+        self.mode_hint.setProperty("role", "hint")
         controls.addWidget(QLabel("扫描网段:"), 0, 0)
         controls.addWidget(self.subnet_edit, 0, 1)
         controls.addWidget(QLabel("扫描方式:"), 0, 2)
@@ -233,6 +240,7 @@ class DeviceDiscoveryPanel(QGroupBox):
         self.table = QTableWidget(0, len(_TABLE_HEADERS))
         self.table.setHorizontalHeaderLabels(list(_TABLE_HEADERS))
         self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
         self.table.setSelectionMode(QTableWidget.NoSelection)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setTextElideMode(Qt.ElideRight)
@@ -251,16 +259,21 @@ class DeviceDiscoveryPanel(QGroupBox):
         layout.addWidget(self.table)
 
         actions = QHBoxLayout()
+        actions.setSpacing(10)
         self.apply_btn = QPushButton("应用所选设备到配置")
         self.apply_btn.setEnabled(False)
         self.apply_btn.setToolTip("把勾选设备的当前地址与身份（序列号）写入仪器连接配置")
+        set_button_variant(self.apply_btn, "primary")
         self.clear_btn = QPushButton("清除设备绑定")
         self.clear_btn.setToolTip("删除配置中记录的角色与设备身份对应关系，不改动地址")
-        actions.addWidget(self.apply_btn, 2)
-        actions.addWidget(self.clear_btn, 1)
+        set_button_variant(self.clear_btn, "ghost")
+        actions.addWidget(self.apply_btn)
+        actions.addWidget(self.clear_btn)
+        actions.addStretch(1)
         layout.addLayout(actions)
         self.bindings_label = QLabel("")
         self.bindings_label.setWordWrap(True)
+        self.bindings_label.setProperty("role", "hint")
         layout.addWidget(self.bindings_label)
         layout.addWidget(self.status_label)
 
@@ -284,6 +297,7 @@ class DeviceDiscoveryPanel(QGroupBox):
             if simulated
             else "将向网段内每个地址发送一条 *IDN? 只读查询；不会改变仪器状态。"
         )
+        set_tone(self.mode_hint, "warning" if simulated else "muted")
 
     def request_scan(self) -> None:
         """启动后台扫描；同一时刻只允许一个扫描线程。"""

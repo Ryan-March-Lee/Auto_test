@@ -5,11 +5,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Callable
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QDialog,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
+    QLabel,
     QMessageBox,
     QPushButton,
     QTableWidget,
@@ -25,6 +28,7 @@ from .archival_page import ArchivalPageMixin
 from .measurement_state import CableLossPageResultState, MeasurementKind, MeasurementStatus
 from .pages import PageControllerBindingMixin
 from .run_contract import is_valid_prepared_run
+from .theme import set_button_variant
 
 
 class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
@@ -63,58 +67,81 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         self.root = self.build_ui()
 
     def build_ui(self) -> QWidget:
-        layout = QVBoxLayout(self)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setSpacing(12)
+
+        # 左侧窄栏：连接说明、测量控制、归档结果；右侧整块留给结果表。
+        left_panel = QWidget()
+        left_panel.setMinimumWidth(420)
+        left_panel.setMaximumWidth(520)
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(12)
 
         instruction_group = QGroupBox("连接说明")
         instruction_layout = QVBoxLayout(instruction_group)
+        instruction_layout.setSpacing(10)
         instruction_text = QTextEdit()
-        instruction_text.setMaximumHeight(200)
+        instruction_text.setMaximumHeight(158)
+        instruction_text.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         instruction_text.setReadOnly(True)
         instruction_text.setHtml("""
-        <h3>线损测量连接说明:</h3>
-        <p><b>步骤1 - 路径1测量:</b></p>
-        <p>信号源 → 线缆① → 衰减器 → 线缆② → 频谱仪</p>
-        <br>
-        <p><b>步骤2 - 路径2测量:</b></p>
-        <p>信号源 → 线缆① → 线缆③ → 线缆④ → 衰减器 → 线缆② → 频谱仪</p>
-        <br>
-        <p style="color: red;"><b>注意:</b> 每个步骤会提示您重新连接线缆，请按提示操作</p>
+        <p><b>线损测量连接说明</b></p>
+        <p><b>步骤1 · 路径1测量</b><br>信号源 → 线缆① → 衰减器 → 线缆② → 频谱仪</p>
+        <p><b>步骤2 · 路径2测量</b><br>信号源 → 线缆① → 线缆③ → 线缆④ → 衰减器 → 线缆② → 频谱仪</p>
+        <p style="color: #B91C1C;"><b>注意：</b>每个步骤会提示您重新连接线缆，请按提示操作</p>
         """)
         instruction_layout.addWidget(instruction_text)
         diagram_layout = QHBoxLayout()
+        diagram_layout.setSpacing(10)
         self.show_path1_btn = QPushButton("查看路径1连接图")
         self.show_path2_btn = QPushButton("查看路径2连接图")
+        set_button_variant(self.show_path1_btn, "secondary")
+        set_button_variant(self.show_path2_btn, "secondary")
         self.show_path1_btn.clicked.connect(lambda: self._show_diagram("cable_loss_path1"))
         self.show_path2_btn.clicked.connect(lambda: self._show_diagram("cable_loss_path2"))
         diagram_layout.addWidget(self.show_path1_btn)
         diagram_layout.addWidget(self.show_path2_btn)
+        diagram_layout.addStretch(1)
         instruction_layout.addLayout(diagram_layout)
-        layout.addWidget(instruction_group)
+        left_layout.addWidget(instruction_group)
 
         control_group = QGroupBox("测量控制")
-        control_layout = QHBoxLayout(control_group)
+        control_layout = QGridLayout(control_group)
+        control_layout.setHorizontalSpacing(10)
+        control_layout.setVerticalSpacing(8)
         self.cable_loss_btn = QPushButton("开始线损测量")
         self.load_cable_results_btn = QPushButton("加载测量结果")
         self.stop_cable_loss_btn = QPushButton("停止测量")
         self.continue_cable_loss_btn = QPushButton("继续第二步测量")
+        set_button_variant(self.cable_loss_btn, "primary")
+        set_button_variant(self.continue_cable_loss_btn, "primary")
+        set_button_variant(self.stop_cable_loss_btn, "secondary")
+        set_button_variant(self.load_cable_results_btn, "secondary")
         self.stop_cable_loss_btn.setEnabled(False)
         self.continue_cable_loss_btn.setEnabled(False)
         self.cable_loss_btn.clicked.connect(self.start_measurement)
         self.load_cable_results_btn.clicked.connect(self.load_result_requested.emit)
         self.stop_cable_loss_btn.clicked.connect(self.stop_measurement)
         self.cancel_cable_loss_btn = QPushButton("取消")
+        set_button_variant(self.cancel_cable_loss_btn, "secondary")
         self.cancel_cable_loss_btn.setEnabled(False)
         self.cancel_cable_loss_btn.clicked.connect(self.cancel_measurement)
         self.continue_cable_loss_btn.clicked.connect(self.continue_measurement)
-        control_layout.addWidget(self.cable_loss_btn)
-        control_layout.addWidget(self.load_cable_results_btn)
-        control_layout.addWidget(self.stop_cable_loss_btn)
-        control_layout.addWidget(self.cancel_cable_loss_btn)
-        control_layout.addWidget(self.continue_cable_loss_btn)
-        layout.addWidget(control_group)
+        control_layout.addWidget(self.cable_loss_btn, 0, 0)
+        control_layout.addWidget(self.stop_cable_loss_btn, 0, 1)
+        control_layout.addWidget(self.continue_cable_loss_btn, 1, 0)
+        control_layout.addWidget(self.cancel_cable_loss_btn, 1, 1)
+        control_layout.addWidget(self.load_cable_results_btn, 2, 0, 1, 2)
+        control_layout.setColumnStretch(0, 1)
+        control_layout.setColumnStretch(1, 1)
+        left_layout.addWidget(control_group)
 
         self.archival_view = self._create_archival_view()
-        layout.addWidget(self.archival_view)
+        left_layout.addWidget(self.archival_view)
+        left_layout.addStretch(1)
+        layout.addWidget(left_panel)
 
         result_group = QGroupBox("测量结果")
         result_layout = QVBoxLayout(result_group)
@@ -123,8 +150,16 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         self.cable_loss_table.setHorizontalHeaderLabels(
             ["频率(GHz)", "线缆1(dB)", "线缆2(dB)", "线缆3(dB)", "线缆4(dB)"]
         )
-        result_layout.addWidget(self.cable_loss_table)
-        layout.addWidget(result_group)
+        self.cable_loss_table.verticalHeader().setVisible(False)
+        self.cable_loss_table.setAlternatingRowColors(True)
+        header = self.cable_loss_table.horizontalHeader()
+        for column in range(5):
+            header.setSectionResizeMode(column, QHeaderView.Stretch)
+        self.cable_loss_empty_hint = QLabel("尚无测量结果：完成测量后每个频点会在此列出线缆损耗。")
+        self.cable_loss_empty_hint.setObjectName("emptyHint")
+        result_layout.addWidget(self.cable_loss_table, 1)
+        result_layout.addWidget(self.cable_loss_empty_hint)
+        layout.addWidget(result_group, 1)
         return self
 
     def _connect_controller_signals(self, controller: Any) -> None:
@@ -233,7 +268,14 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         self.archival_view.clear()
         self._archival_pending = False
         self._archival_saving = False
+        self._sync_empty_hint()
         self._log_callback("已清空上一次线损测量结果")
+
+    def _sync_empty_hint(self) -> None:
+        """空表时给出说明，避免用户把空白表格当成“数据没显示出来”。"""
+        hint = getattr(self, "cable_loss_empty_hint", None)
+        if hint is not None:
+            hint.setVisible(self.cable_loss_table.rowCount() == 0)
 
     def show_loaded_result(self, reference: Any) -> None:
         """显示由窗口/结果服务提供的结构化结果，不读取文件。"""
@@ -252,6 +294,7 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
             if value is not None:
                 self.cable_loss_table.setItem(row, column, QTableWidgetItem(f"{value:.3f}"))
         self.cable_loss_table.resizeColumnsToContents()
+        self._sync_empty_hint()
 
     def show_result(self, reference: Any) -> None:
         if getattr(reference, "kind", None) is not MeasurementKind.CABLE_LOSS:

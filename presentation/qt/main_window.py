@@ -10,10 +10,11 @@ import sys
 from datetime import datetime, timezone
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
+    QHBoxLayout,
+    QLabel,
     QMainWindow,
     QMessageBox,
     QSplitter,
@@ -36,63 +37,14 @@ from presentation.qt.measurement_state import MeasurementKind, MeasurementResult
 from presentation.qt.pages import PageContext, build_pages
 from presentation.qt.realtime_plot import RealTimePlotWidget
 from presentation.qt.status_panel import StatusPanel
+from presentation.qt.theme import apply_theme, build_stylesheet
 from presentation.qt.visualization_page import VisualizationPage
 from presentation.qt.welcome_page import WelcomePage, apply_test_mode, confirm_leave_configuration
 
 logger = get_logger(__name__)
 
-APPLICATION_STYLE = """
-QMainWindow { background-color: white; }
-QDialog { background-color: white; }
-QTabWidget::pane { border: 1px solid #c0c0c0; background-color: white; }
-QTabBar::tab { background-color: #e0e0e0; color: black; padding: 8px 16px; margin-right: 2px; }
-QTabBar::tab:selected { background-color: white; color: black; border-bottom: 2px solid #0078d4; }
-QTabBar::tab:hover { background-color: #f5f5f5; color: black; }
-QGroupBox { background-color: white; color: black; font-weight: bold; border: 2px solid #c0c0c0; border-radius: 5px; margin-top: 1ex; padding-top: 10px; }
-QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px 0 5px; color: black; }
-QLabel { background-color: transparent; color: black; }
-QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox { background-color: white; color: black; border: 1px solid #ccc; padding: 4px; border-radius: 3px; }
-QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus { border: 1px solid #0078d4; }
-QComboBox QAbstractItemView { background-color: white; color: black; selection-background-color: #0078d4; selection-color: white; border: 1px solid #ccc; }
-QCheckBox { background-color: transparent; color: black; }
-QTextEdit, QPlainTextEdit { background-color: white; color: black; border: 1px solid #ccc; border-radius: 3px; }
-QTextEdit:focus, QPlainTextEdit:focus { border: 1px solid #0078d4; }
-QProgressBar { background-color: #f0f0f0; border: 1px solid #ccc; border-radius: 3px; text-align: center; color: black; height: 20px; }
-QProgressBar::chunk { background-color: #0078d4; border-radius: 2px; }
-QTableWidget { background-color: white; color: black; gridline-color: #e0e0e0; border: 1px solid #ccc; }
-QTableWidget::item { color: black; padding: 4px; }
-QTableWidget::item:selected { background-color: #0078d4; color: white; }
-QHeaderView::section { background-color: #f5f5f5; color: black; border: 1px solid #d0d0d0; padding: 4px; }
-QScrollArea { background-color: white; border: none; }
-QPushButton { background-color: #0078d4; color: white; border: none; padding: 8px 16px; border-radius: 4px; font-weight: bold; }
-QPushButton:hover { background-color: #106ebe; }
-QPushButton:pressed { background-color: #005a9e; }
-QPushButton:disabled { background-color: #cccccc; color: #666666; }
-"""
-
-
-def _light_palette() -> QPalette:
-    """与样式表一致的浅色调色板。"""
-    palette = QPalette()
-    white = QColor("#ffffff")
-    black = QColor("#000000")
-    palette.setColor(QPalette.Window, white)
-    palette.setColor(QPalette.WindowText, black)
-    palette.setColor(QPalette.Base, white)
-    palette.setColor(QPalette.AlternateBase, QColor("#f5f5f5"))
-    palette.setColor(QPalette.Text, black)
-    palette.setColor(QPalette.Button, QColor("#f0f0f0"))
-    palette.setColor(QPalette.ButtonText, black)
-    palette.setColor(QPalette.BrightText, white)
-    palette.setColor(QPalette.Highlight, QColor("#0078d4"))
-    palette.setColor(QPalette.HighlightedText, white)
-    palette.setColor(QPalette.ToolTipBase, white)
-    palette.setColor(QPalette.ToolTipText, black)
-    palette.setColor(QPalette.PlaceholderText, QColor("#777777"))
-    palette.setColor(QPalette.Link, QColor("#0078d4"))
-    for role in (QPalette.WindowText, QPalette.Text, QPalette.ButtonText):
-        palette.setColor(QPalette.Disabled, role, QColor("#9a9a9a"))
-    return palette
+# 全局样式表来自统一主题层：颜色、字号与控件外观只在 presentation.qt.theme 定义一次。
+APPLICATION_STYLE = build_stylesheet()
 
 
 def apply_light_theme(app: QApplication) -> None:
@@ -100,15 +52,10 @@ def apply_light_theme(app: QApplication) -> None:
 
     Windows 处于深色模式时，Qt 6 会给出深色调色板；而样式表只覆盖了部分控件，
     未被覆盖的容器（滚动区内容、分组框边距、QFrame 边框、布局间隙）会露出深色
-    底，界面上表现为大量“黑框”。这里在安装样式表之前强制浅色配色与浅色调色板，
-    保证未单独设置样式的区域也是白底黑字。
+    底，界面上表现为大量“黑框”。这里在安装样式表之前强制浅色配色、浅色调色板与
+    基准字体，保证未单独设置样式的区域也是浅底深字。
     """
-    hints = app.styleHints()
-    set_color_scheme = getattr(hints, "setColorScheme", None)
-    if set_color_scheme is not None:  # Qt >= 6.8 才能主动指定配色方案
-        set_color_scheme(Qt.ColorScheme.Light)
-    if app.palette().color(QPalette.Window).lightness() < 128:
-        app.setPalette(_light_palette())
+    apply_theme(app)
 
 
 class MainWindow(QMainWindow):
@@ -185,7 +132,7 @@ class MainWindow(QMainWindow):
         return self.coordinator.realtime_buffer.current_index
 
     def init_ui(self):
-        """初始化用户界面"""
+        """初始化用户界面：顶部应用栏 + 欢迎页/工作区堆栈 + 全宽状态控制台。"""
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
@@ -195,12 +142,16 @@ class MainWindow(QMainWindow):
         self.view_stack.addWidget(self.welcome_page)
 
         main_splitter = QSplitter(Qt.Horizontal)
+        main_splitter.setChildrenCollapsible(False)
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(16, 12, 12, 12)
+        left_layout.setSpacing(8)
         self.tab_widget = QTabWidget()
+        self.tab_widget.setObjectName("mainTabs")
+        self.tab_widget.setDocumentMode(True)
         left_layout.addWidget(self.tab_widget)
         self._register_pages()
-        self.create_status_panel(left_layout)
         main_splitter.addWidget(left_widget)
 
         self.chat_panel = ChatPanel(self, paths=self.paths)
@@ -215,11 +166,15 @@ class MainWindow(QMainWindow):
         self.workspace_page = QWidget()
         workspace_layout = QVBoxLayout(self.workspace_page)
         workspace_layout.setContentsMargins(0, 0, 0, 0)
-        workspace_layout.addWidget(main_splitter)
+        workspace_layout.setSpacing(0)
+        workspace_layout.addWidget(main_splitter, 1)
+        self.create_status_panel(workspace_layout)
         self.view_stack.addWidget(self.workspace_page)
 
         central_layout = QVBoxLayout(central_widget)
         central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        central_layout.addWidget(self._build_app_header())
         central_layout.addWidget(self.view_stack)
 
         self.chat_panel.hide()
@@ -227,12 +182,35 @@ class MainWindow(QMainWindow):
 
         self.view_stack.setCurrentWidget(self.welcome_page)
 
+    def _build_app_header(self):
+        """顶部应用栏：系统名、当前测试模式徽标与版本号（只读展示）。"""
+        header = QWidget()
+        header.setObjectName("appHeader")
+        layout = QHBoxLayout(header)
+        layout.setContentsMargins(16, 10, 16, 10)
+        layout.setSpacing(10)
+        title = QLabel("PA 自动测试系统")
+        title.setObjectName("appTitle")
+        layout.addWidget(title)
+        subtitle = QLabel("功放自动化测试与数据归档")
+        subtitle.setObjectName("appSubtitle")
+        layout.addWidget(subtitle)
+        layout.addStretch(1)
+        self.mode_badge = QLabel("未选择测试模式")
+        self.mode_badge.setObjectName("appModeBadge")
+        layout.addWidget(self.mode_badge)
+        version = QLabel("v1.0")
+        version.setObjectName("appSubtitle")
+        layout.addWidget(version)
+        return header
+
     def _enter_test_mode(self, driver_enabled: bool) -> None:
         config = apply_test_mode(dict(self.coordinator.load_configuration()), driver_enabled)
         self.coordinator.config = config
         self.config_page.apply_config(config)
         self.config_page.set_test_mode(driver_enabled)
         self._apply_driver_mode_to_pages(driver_enabled)
+        self.mode_badge.setText("有驱放测试" if driver_enabled else "无驱放测试")
         self.tab_widget.setCurrentIndex(0)
         self.view_stack.setCurrentWidget(self.workspace_page)
 
@@ -244,6 +222,7 @@ class MainWindow(QMainWindow):
 
     def _return_to_welcome(self) -> None:
         if confirm_leave_configuration(self, self.config_page.is_dirty()):
+            self.mode_badge.setText("未选择测试模式")
             self.view_stack.setCurrentWidget(self.welcome_page)
 
     def _register_pages(self):
@@ -278,7 +257,9 @@ class MainWindow(QMainWindow):
         self.tab_widget.currentChanged.connect(self._on_page_changed)
         self._page_signals_connected = True
         pages = list(self.pages.values())
-        if 0 <= self._active_page_index < len(pages):
+        if 0 <= self._active_page_index < len(pages) and hasattr(
+            pages[self._active_page_index], "on_activated"
+        ):
             pages[self._active_page_index].on_activated()
         self.cable_loss_page = self.pages["cable_loss"]
         self.driver_mapping_page = self.pages["driver_mapping"]
@@ -288,14 +269,18 @@ class MainWindow(QMainWindow):
         self.cable_loss_page.load_result_requested.connect(self._load_cable_loss_result)
 
     def _on_page_changed(self, index):
-        """Keep page activation hooks aligned with the visible tab."""
+        """Keep page activation hooks aligned with the visible tab.
+
+        并不是每个页面都实现激活钩子（例如只读的可视化页）；缺少钩子时直接跳过，
+        而不是让每次切换标签页都抛 ``AttributeError``。
+        """
         previous = getattr(self, "_active_page_index", -1)
         if previous == index:
             return
         pages = list(getattr(self, "pages", {}).values())
-        if 0 <= previous < len(pages):
+        if 0 <= previous < len(pages) and hasattr(pages[previous], "on_deactivated"):
             pages[previous].on_deactivated()
-        if 0 <= index < len(pages):
+        if 0 <= index < len(pages) and hasattr(pages[index], "on_activated"):
             pages[index].on_activated()
         self._active_page_index = index
 

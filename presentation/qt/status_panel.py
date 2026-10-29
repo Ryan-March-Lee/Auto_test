@@ -1,14 +1,17 @@
-"""状态面板及日志滚动行为。"""
+"""状态面板及日志滚动行为。
+
+面板是全局唯一的进度与日志区域：一眼看到“测量到哪一步”和“刚刚发生了什么”。
+它只消费主题层的语义属性（按钮层级由 ``variant`` 声明），不在本地写死颜色。
+"""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
 
-from PySide6.QtGui import QFont, QTextCursor
+from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QFrame,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QProgressBar,
@@ -17,6 +20,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from .theme import set_button_variant
 
 
 class StatusPanel(QFrame):
@@ -29,44 +34,57 @@ class StatusPanel(QFrame):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        self.setObjectName("statusPanel")
         self.log_user_scrolling = False
-        self.setFrameStyle(QFrame.StyledPanel)
         status_layout = QVBoxLayout(self)
+        status_layout.setContentsMargins(16, 10, 16, 12)
+        status_layout.setSpacing(8)
 
         progress_layout = QHBoxLayout()
+        progress_layout.setSpacing(10)
         progress_label = QLabel("测量进度:")
-        progress_label.setStyleSheet("color: black; font-weight: bold;")
+        progress_label.setObjectName("statusCaption")
         progress_layout.addWidget(progress_label)
         self.progress_bar = QProgressBar()
+        self.progress_bar.setFixedWidth(380)
+        self.progress_bar.setTextVisible(False)
         progress_layout.addWidget(self.progress_bar)
+        self.progress_value_label = QLabel("0%")
+        self.progress_value_label.setObjectName("statusCaption")
+        self.progress_value_label.setMinimumWidth(46)
+        progress_layout.addWidget(self.progress_value_label)
+        progress_layout.addStretch(1)
+        self.progress_bar.valueChanged.connect(self._on_progress_value_changed)
         status_layout.addLayout(progress_layout)
 
-        log_group = QGroupBox("实时日志")
-        log_group.setStyleSheet("QGroupBox { color: black; font-weight: bold; }")
-        log_layout = QVBoxLayout(log_group)
-        self.log_text = QTextEdit()
-        self.log_text.setMaximumHeight(180)
-        self.log_text.setFont(QFont("Consolas", 9))
-        self.log_text.verticalScrollBar().valueChanged.connect(self.on_log_scroll_changed)
-        log_layout.addWidget(self.log_text)
-
-        buttons = QHBoxLayout()
+        log_header = QHBoxLayout()
+        log_header.setSpacing(8)
+        log_title = QLabel("实时日志")
+        log_title.setObjectName("statusCaption")
+        log_header.addWidget(log_title)
+        log_header.addStretch(1)
         clear_button = QPushButton("清除日志")
+        set_button_variant(clear_button, "secondary")
         clear_button.clicked.connect(self.clear_log)
-        buttons.addWidget(clear_button)
+        log_header.addWidget(clear_button)
         self.ai_assistant_btn = QPushButton("💬 CHAT")
         self.ai_assistant_btn.setCheckable(True)
-        self.ai_assistant_btn.setStyleSheet(
-            "QPushButton { background-color: #28a745; color: white; border: none; "
-            "border-radius: 5px; padding: 8px 16px; font-weight: bold; }"
-            "QPushButton:hover { background-color: #218838; }"
-            "QPushButton:checked { background-color: #1e7e34; }"
-        )
+        set_button_variant(self.ai_assistant_btn, "success")
         if chat_toggle_callback is not None:
             self.ai_assistant_btn.clicked.connect(chat_toggle_callback)
-        buttons.addWidget(self.ai_assistant_btn)
-        log_layout.addLayout(buttons)
-        status_layout.addWidget(log_group)
+        log_header.addWidget(self.ai_assistant_btn)
+        status_layout.addLayout(log_header)
+
+        self.log_text = QTextEdit()
+        self.log_text.setObjectName("logView")
+        self.log_text.setMaximumHeight(120)
+        self.log_text.setToolTip("实时日志：测量进度、仪器连接与归档结果")
+        self.log_text.verticalScrollBar().valueChanged.connect(self.on_log_scroll_changed)
+        status_layout.addWidget(self.log_text)
+
+    def _on_progress_value_changed(self, value: int) -> None:
+        """进度条旁的百分比文字：只做展示，不改变进度语义。"""
+        self.progress_value_label.setText(f"{int(value)}%")
 
     def add_log_message(self, message: str) -> None:
         self.log_text.append(str(message))

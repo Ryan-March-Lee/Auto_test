@@ -152,29 +152,36 @@ DUT 与驱动功放占用同一通道，都会在连接前报错。
 核对全部已安装发行版（含传递依赖）；`--validate-config` 只检查配置内容，不能替代依赖检查。
 两个命令不能同时使用。未知命令行参数会返回退出码 `2`。
 
-项目启动器会拒绝非 `Auto_test` 环境。PyCharm 的运行配置应直接指向 `launcher.py`，测试仍使用 `run_tests.bat` 或 `run_tests.ps1`。不要再使用已经移除的 VS Code 包装器或 GUI 批处理入口。
+项目启动器会拒绝非 `Auto_test` 环境。PyCharm 的运行配置应直接指向 `launcher.py`，测试使用 `tools/run_tests.py`。不要再使用已经移除的 VS Code 包装器或 GUI 批处理入口。
 
 ### 离线测试与现场交付
 
 ```powershell
-./run_tests.ps1
+& $env:AUTO_TEST_PYTHON tools/run_tests.py
 & $env:AUTO_TEST_PYTHON tools/export_dependency_lock.py --check
 & $env:AUTO_TEST_PYTHON -m unittest tests.test_static_quality_gate tests.test_exception_taxonomy -v
 & $env:AUTO_TEST_PYTHON launcher.py --check
 & $env:AUTO_TEST_PYTHON launcher.py --validate-config
 ```
 
+`tools/run_tests.py` 取代了原先的 `run_tests.ps1` / `run_tests.bat`：先校验 `.env` 中的解释器、
+把 conda 的原生依赖目录前置到 `PATH`（否则未 activate 时 Qt/matplotlib 会延迟加载崩溃），
+再执行内存编译检查、依赖核对，最后按改动面跑测试；任一步失败即终止。
+
 静态质量门禁（裸 `except`、静默宽泛捕获、生产 `print`、已退役模块导入、动态设备路由）
-与异常分类契约在 `run_tests.ps1` 里先于窄范围测试执行，失败即终止本次验证，细节见
+与异常分类契约在窄范围运行中先于测试执行，失败即终止本次验证，细节见
 [异常分类与静态质量门禁](docs/异常分类与静态质量门禁.md)。
 
-`tests/` 按改动面分层：纯界面改动只需 `./run_tests.ps1 -Layer Ui`（表现层测试 + 全部门禁，
-约 45 秒），涉及真实窗口与后端接线用 `-Layer Integration`；全量离线测试仍是交付前的
+`tests/` 按改动面分层：纯界面改动只需 `tools/run_tests.py --layer ui`（表现层测试 + 全部门禁，
+约 45 秒），涉及真实窗口与后端接线用 `--layer integration`；全量离线测试仍是交付前的
 唯一完整验证。选择规则见 `AGENTS.md`。
 
 普通测试只执行离线和仿真路径，不会初始化真实设备。Hardware smoke 必须使用
-`run_hardware_smoke.ps1`，同时满足配置位于 `hardware/`、明确用户确认、空载确认、
-`HARDWARE_SMOKE_ENABLED=1` 和 `-ConfirmHardwareSmoke` 等独立安全门禁；它不属于普通
+`tools/run_tests.py --layer hardware --config hardware/smoke_config.local.json --confirm-hardware-smoke`，
+并由 `hardware/smoke_gate.py` 在打开任何 VISA 资源之前检查：配置位于 `hardware/` 且不是示例、
+`environment` 为 `hardware_smoke`、明确要求用户确认与空载确认、不含占位符地址、
+`HARDWARE_SMOKE_ENABLED=1`、不在 CI 中、操作者显式确认。门禁随测试执行，不依赖某一个入口脚本，
+因此也不能用直接跑 unittest 的方式绕过；它不属于普通
 测试发现范围，也不能用离线测试替代现场验收。真实 Hardware Smoke 与三类硬件测量的现场
 现场操作顺序与判定标准由受控现场验收流程维护；现场报告、配置和回滚决定仅进入受控归档。
 

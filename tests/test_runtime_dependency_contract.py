@@ -134,10 +134,11 @@ class PythonVersionContractTests(unittest.TestCase):
             self.assertEqual(launcher.main(["--validate-config"]), launcher.EXIT_ENVIRONMENT_ERROR)
         self.assertIn("3.11.x", error.getvalue())
 
-    def test_powershell_entry_scripts_check_the_same_series(self):
-        helper = (ROOT / "tools" / "runtime_environment.ps1").read_text(encoding="utf-8-sig")
-        self.assertIn('"3.11"', helper)
-        self.assertIn("Python 3.11.x is required", helper)
+    def test_test_runner_checks_the_same_series(self):
+        runner = (ROOT / "tools" / "run_tests.py").read_text(encoding="utf-8")
+        self.assertIn("python_version_supported", runner)
+        # 版本系列只在 infrastructure.runtime 里定义一次，入口不再各自写死。
+        self.assertNotIn('"3.11"', runner)
 
 
 class DependencyLockTests(unittest.TestCase):

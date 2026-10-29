@@ -1,19 +1,17 @@
-import json
-import os
 import unittest
 from pathlib import Path
 
 import pyvisa
 
 from hardware.safe_prepare_smoke import execute_and_write_safe_prepare_report
+from hardware.smoke_gate import load_gated_smoke_config
 
 
 class HardwareSafePrepareTests(unittest.TestCase):
     """Real-device preparation smoke; this module is outside ordinary discovery."""
 
     def test_prepare_devices_without_enabling_outputs(self):
-        config_path = Path(os.environ["HARDWARE_SMOKE_CONFIG"])
-        config = json.loads(config_path.read_text(encoding="utf-8"))
+        config_path, config = load_gated_smoke_config()
         if config.get("smoke_mode") != "safe_prepare":
             self.skipTest("configured smoke mode is not safe_prepare")
         report = execute_and_write_safe_prepare_report(

@@ -9,11 +9,15 @@ The only recommended entry point is:
 
 ```powershell
 $env:HARDWARE_SMOKE_ENABLED = "1"
-./run_hardware_smoke.ps1 -ConfigPath "hardware/smoke_config.local.json" -ConfirmHardwareSmoke
+& $env:AUTO_TEST_PYTHON tools/run_tests.py --layer hardware `
+    --config hardware/smoke_config.local.json --confirm-hardware-smoke
 ```
 
-The entry point requires the interpreter from `.env`, a non-example
-`hardware_smoke` configuration, explicit confirmation, and a non-CI process.
+The gate itself lives in `hardware/smoke_gate.py` and runs inside the tests, not
+in the entry point, so starting `tests/hardware` any other way fails the same
+checks: a non-example `hardware_smoke` configuration under `hardware/` without
+placeholder addresses, explicit confirmation, `HARDWARE_SMOKE_ENABLED=1`, and a
+non-CI process.
 The preparation runner requires exactly one signal generator and spectrum
 analyzer. The power-supply section may use `discover: true` without an
 address: it enumerates VISA resources, queries `*IDN?` and both output states,

@@ -38,20 +38,20 @@ conda activate Auto_test
 ## 文件说明
 
 - `launcher.py`：唯一的应用启动器；GUI 主窗口位于 `presentation/qt/main_window.py`。
-- `run_tests.ps1` / `run_tests.bat`：测试工具，不是应用启动器。
+- `tools/run_tests.py`：唯一的测试入口（解释器校验 + 编译检查 + 依赖核对 + 分层测试），不是应用启动器。
 - `requirements.lock.txt`：主系统完整依赖锁定；`requirements-dpd.txt` 只服务 `DPD_auto_test`。
 - `tools/export_dependency_lock.py`：锁定清单的唯一导出与核对入口；改了依赖就在 `Auto_test` 环境重新运行，不要手工编辑或裸 `pip freeze` 覆盖。
 
 ## 自动化测试
 
-不要直接使用未激活环境的 `python -m unittest`。请使用项目测试入口：
+不要直接使用未激活环境的 `python -m unittest`。请使用项目测试入口：它先校验 `.env` 里的
+解释器并把 conda 的原生依赖目录前置到 `PATH`，再执行编译检查、依赖核对和所选测试范围。
 
 ```powershell
-./run_tests.ps1
+& $env:AUTO_TEST_PYTHON tools/run_tests.py
 ```
 
-或：
-
-```powershell
-./run_tests.bat
-```
+纯界面改动用 `tools/run_tests.py --layer ui`，涉及真实后端接线用 `--layer integration`，
+改动面与测试范围的对应规则见 `AGENTS.md`。真实设备冒烟只能走
+`tools/run_tests.py --layer hardware --config hardware/smoke_config.local.json --confirm-hardware-smoke`，
+安全门禁由 `hardware/smoke_gate.py` 在测试内部复核，绕过入口脚本也绕不过去。

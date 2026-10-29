@@ -14,17 +14,13 @@ The interpreter must be the Python 3.11.x series. Dependencies come from `requir
 
 ## Commands
 
-Run tests with:
+Run tests through the repository runner:
 
 ```powershell
-& "D:\Anaconda\envs\Auto_test\python.exe" -m unittest discover -s tests -v
+& "D:\Anaconda\envs\Auto_test\python.exe" tools/run_tests.py
 ```
 
-Or use the repository wrapper:
-
-```powershell
-./run_tests.bat
-```
+The runner resolves the interpreter from `.env`, puts the Conda runtime directories on `PATH` (Qt and matplotlib DLLs load lazily), runs the in-memory compile check and the dependency-lock check, then the selected scope. The first failing step stops the run. A raw `-m unittest discover -s tests -v` skips the compile and dependency-lock checks, so prefer the runner unless you deliberately need a single module.
 
 ### Pick the test scope from the change surface
 
@@ -32,17 +28,29 @@ Or use the repository wrapper:
 
 | Change surface | Command | What runs |
 | --- | --- | --- |
-| Only `presentation/qt` (widgets, layout, theme, page interaction) and no DTO/port signature change | `.\run_tests.ps1 -Layer Ui` | `tests/ui` (pure presentation) + all repository gates, ~40 s |
-| `presentation` plus real wiring (new page bound to application services) | `.\run_tests.ps1 -Layer Integration` | `tests/ui` + `tests/integration` (real windows/pages with real backend) + gates, ~60 s |
-| `application`, `domain`, `infrastructure`, `instrument`, `app`, `launcher.py`, `tools/` | `.\run_tests.bat` (full offline) | ~100 s |
+| Only `presentation/qt` (widgets, layout, theme, page interaction) and no DTO/port signature change | `tools/run_tests.py --layer ui` | `tests/ui` (pure presentation) + all repository gates, ~40 s |
+| `presentation` plus real wiring (new page bound to application services) | `tools/run_tests.py --layer integration` | `tests/ui` + `tests/integration` (real windows/pages with real backend) + gates, ~60 s |
+| `application`, `domain`, `infrastructure`, `instrument`, `app`, `launcher.py`, `tools/` | `tools/run_tests.py` (full offline) | ~100 s |
 | Dependencies, release, or anything before handing off | full suite + `launcher.py --check` + `launcher.py --validate-config` | — |
 
 Rules:
 
-- A pure UI task must **not** run the full suite; `.\run_tests.ps1 -Layer Ui` is the expected verification.
-- Every scope still runs the repository gates (`tests/test_architecture_dependencies.py`, `test_presentation_boundaries.py`, `test_public_api_inventory.py`, `test_exception_taxonomy.py`, `test_static_quality_gate.py`, `test_runtime_dependency_contract.py`); `-Layer Ui`/`Integration` include them.
+- A pure UI task must **not** run the full suite; `tools/run_tests.py --layer ui` is the expected verification.
+- Every scope still runs the repository gates (`tests/test_architecture_dependencies.py`, `test_presentation_boundaries.py`, `test_public_api_inventory.py`, `test_exception_taxonomy.py`, `test_static_quality_gate.py`, `test_runtime_dependency_contract.py`); `--layer ui`/`integration` run them before their tests, and `tests/test_test_runner_contract.py` keeps that order.
 - `tests/ui` may import only `presentation`, `application` DTO/ports and Qt; importing `app`/`infrastructure`/hardware fails `test_presentation_boundaries`. Real-backend UI scenarios belong in `tests/integration`.
-- If the boundary is unclear, or a DTO/port signature changed, run the full suite. `.\run_tests.ps1 -Parallel` runs the full suite with pytest-xdist (~1 min).
+- If the boundary is unclear, or a DTO/port signature changed, run the full suite. `tools/run_tests.py --parallel` runs the full suite with pytest-xdist (~1 min).
+
+### Real-device smoke
+
+`tests/hardware` drives real instruments; do not run it on a hunch and do not add it to ordinary discovery. Every module there calls `hardware/smoke_gate.py` before opening a VISA resource, and the gate refuses to start unless: the config is a local file under `hardware/` and not an example/template, it declares `environment: hardware_smoke` with `require_user_confirmation` and `require_empty_setup` both `true`, it contains no `REPLACE_WITH_` placeholder, `HARDWARE_SMOKE_ENABLED=1` is set, the process is not CI, and the operator confirmed the setup is unloaded:
+
+```powershell
+$env:HARDWARE_SMOKE_ENABLED = "1"
+& "D:\Anaconda\envs\Auto_test\python.exe" tools/run_tests.py --layer hardware `
+    --config hardware/smoke_config.local.json --confirm-hardware-smoke
+```
+
+Never set `HARDWARE_SMOKE_CONFIRM=1` yourself to make a run pass: that switch states the equipment is unloaded and the run is authorized.
 
 Verify dependencies and the application with:
 

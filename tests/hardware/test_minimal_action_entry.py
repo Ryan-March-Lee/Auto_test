@@ -1,17 +1,15 @@
-import json
-import os
 import unittest
 from pathlib import Path
 
 from hardware.minimal_action_smoke import execute_and_write_minimal_action_report
+from hardware.smoke_gate import load_gated_smoke_config
 
 
 class HardwareMinimalActionTests(unittest.TestCase):
     """Real-device one-action smoke; this module is outside ordinary discovery."""
 
     def test_one_bounded_action_and_safe_shutdown(self):
-        config_path = Path(os.environ["HARDWARE_SMOKE_CONFIG"])
-        config = json.loads(config_path.read_text(encoding="utf-8"))
+        config_path, config = load_gated_smoke_config()
         if config.get("assembly_path") == "new_application":
             self.skipTest("configured smoke path is new_application")
         if config.get("smoke_mode") != "minimal_action":

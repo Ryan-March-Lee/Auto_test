@@ -1,4 +1,3 @@
-import os
 import unittest
 from pathlib import Path
 
@@ -7,16 +6,14 @@ import pyvisa
 from hardware.read_only_smoke import (
     execute_and_write_report,
 )
+from hardware.smoke_gate import load_gated_smoke_config
 
 
 class HardwareSmokeReadOnlyTests(unittest.TestCase):
     """Read-only hardware smoke: queries only, with deterministic cleanup."""
 
     def test_device_identity_and_safe_read_only_access(self):
-        import json
-
-        config_path = Path(os.environ["HARDWARE_SMOKE_CONFIG"])
-        config = json.loads(config_path.read_text(encoding="utf-8"))
+        config_path, config = load_gated_smoke_config()
         if config.get("smoke_mode", "read_only") != "read_only":
             self.skipTest("configured smoke mode is not read_only")
         hardware_root = Path(__file__).resolve().parents[2] / "hardware"

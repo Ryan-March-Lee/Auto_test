@@ -101,7 +101,7 @@ def verification_commands() -> dict[str, str]:
     裸 ``python`` 命令而产生解释器漂移。
     """
     return {
-        "unit_tests": interpreter_command("-m", "unittest", "discover", "-s", "tests", "-v"),
+        "unit_tests": interpreter_command("tools/run_tests.py"),
         "compile": interpreter_command("tools/compile_check.py", "."),
         "dependency_lock": interpreter_command("tools/export_dependency_lock.py", "--check"),
         "static_quality": interpreter_command(

@@ -390,7 +390,7 @@ INTERNAL_MODULES = {
     "presentation.qt.archival_view": "归档结果分组控件：文案与“打开结果目录/报告”动作",
     "presentation.qt.config_form_state": "配置表单状态",
     "presentation.qt.config_page": "配置页面",
-    "presentation.qt.device_discovery_panel": "设备发现面板：扫描网段、按角色勾选本次测试设备（含未知设备标记）",
+    "presentation.qt.device_discovery_panel": "设备发现面板：扫描网段、按设备表登记的角色勾选并应用设备（含未知设备标记）",
     "presentation.qt.config_projection": "正式配置到配置页控件的确定性投影",
     "presentation.qt.configuration_authoring": "配置页保存时的正式运行配置编写",
     "presentation.qt.connection_diagrams": "连接图渲染",

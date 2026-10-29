@@ -40,7 +40,7 @@ from .config_projection import (
     project_authoring_config,
 )
 from .configuration_authoring import DUT_CHANNEL_ROLES
-from .device_discovery_panel import DeviceDiscoveryPanel, subnet_from_address
+from .device_discovery_panel import DeviceDiscoveryPanel, role_label, subnet_from_address
 from .input_controls import KeyboardOnlyDoubleSpinBox, WheelSafeComboBox
 from .pages import PageControllerBindingMixin
 from .theme import set_button_variant
@@ -203,10 +203,11 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
     def _build_discovery_widget(self, layout):
         """仪器连接配置：扫描网段，勾选本次测试所需设备并写入连接配置。
 
-        这是配置页上唯一的仪器连接入口，页面不再提供逐台填写地址的控件。面板不改配置、
-        不连接仪器；只有用户点击“应用所选设备到配置”时，本页才把发现到的当前地址与设备
-        身份（序列号）记进 :attr:`device_bindings`，保存时随配置一起落盘，作为下次按身份
-        重新识别设备的依据。
+        这是配置页上唯一的仪器连接入口，页面不再提供逐台填写地址或选择角色的控件：
+        测试角色由设备表 ``instruments.json`` 登记的 ``role`` 决定，界面只显示
+        “设备名（角色）”。面板不改配置、不连接仪器；只有用户点击“应用所选设备到配置”
+        时，本页才把发现到的当前地址与设备身份（序列号）记进 :attr:`device_bindings`，
+        保存时随配置一起落盘，作为下次按身份重新识别设备的依据。
         """
         factory = self._scanner_factory
         if factory is None:
@@ -248,9 +249,10 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
     def apply_discovered_devices(self, assignments):
         """把面板勾选的设备写成配置里的连接信息与身份记录。
 
-        这是写入的最终边界，因此它自己的校验必须完整，不能只依赖面板的勾选校验：
-        角色未知、角色重复、地址为空、缺少设备身份、身份与序列号不一致，任何一项都
-        整批拒绝，不留下“一半已应用”的配置。
+        角色不是用户选的：它来自设备表 ``instruments.json`` 登记的 ``role``，面板按它
+        写入``device_bindings``。这是写入的最终边界，因此它自己的校验必须完整，不能只
+        依赖面板的勾选校验：角色未知、角色重复、地址为空、缺少设备身份、身份与序列号
+        不一致，任何一项都整批拒绝，不留下“一半已应用”的配置。
 
         应用是**整批替换**：本次勾选结果就是完整的设备绑定，没勾选的旧角色会被移除并
         随地址一起失效。这样“更换设备”不会残留上一台设备的连接，电源分配也不会再
@@ -267,7 +269,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             self.validation_failed.emit(message)
 
         if not entries:
-            reject("请先在发现结果中勾选设备并指定测试角色")
+            reject("请先在发现结果中勾选本次测试所需设备")
             return
 
         # 第一遍只看角色：未知角色与重复角色是“这一批要做什么”的问题，
@@ -327,7 +329,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
                 # 模拟扫描写入的绑定带来源标记，避免演示数据被当成现场设备记录。
                 "source": "simulated" if item.get("simulated") else "scan",
             }
-            applied.append(f"{role}<-{item.get('name') or item.get('ip')}")
+            applied.append(f"{role_label(role) or role}<-{item.get('name') or item.get('ip')}")
         removed = sorted(set(self.device_bindings) - set(bindings))
         self.device_bindings = bindings
         self.update_power_supply_options()
@@ -335,7 +337,9 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             panel.set_device_bindings(self.device_bindings)
         message = "已应用发现设备: " + "，".join(applied)
         if removed:
-            message += "；已移除本次未勾选的旧绑定: " + "、".join(removed)
+            message += "；已移除本次未勾选的旧绑定: " + "、".join(
+                role_label(role) or role for role in removed
+            )
         if any(item.get("simulated") for item in entries):
             message += "（模拟数据，仅用于离线演示，不能用于真实测量）"
         if panel is not None:

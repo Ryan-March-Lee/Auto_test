@@ -34,12 +34,18 @@ from infrastructure.persistence.instrument_registry import InstrumentRegistry
 
 SMW_IDN = "Rohde&Schwarz,SMW200A,1412.0000K02/105462,5.20.043.47"
 DP832A_IDN = "RIGOL TECHNOLOGIES,DP832A,DP8B214901519,00.01.16"
+_ROLE_BY_MODEL = {
+    "SMW200A": "signal_generator",
+    "DP832A": "PS3",
+    "4082F": "spectrum_analyzer",
+}
 
 
 def _registry_with(*idns):
     registry = InstrumentRegistry()
     for idn in idns:
-        registry.upsert(InstrumentIdentity.from_idn(idn))
+        identity = InstrumentIdentity.from_idn(idn)
+        registry.upsert(identity, role=_ROLE_BY_MODEL.get(identity.model))
     return registry
 
 
@@ -101,7 +107,9 @@ class SimulatedScanTests(unittest.TestCase):
             set(by_ip), {"192.168.1.201", "192.168.1.202", "192.168.1.102", "192.168.1.150"}
         )
         self.assertEqual(by_ip["192.168.1.201"].known_name, "SMW200A-1")
+        self.assertEqual(by_ip["192.168.1.201"].known_role, "signal_generator")
         self.assertEqual(by_ip["192.168.1.102"].known_name, "DP832A-1")
+        self.assertEqual(by_ip["192.168.1.102"].known_role, "PS3")
         # 演示响应里的 4082F 不在本次测试用的小设备表里，按未知设备出现。
         self.assertFalse(by_ip["192.168.1.202"].is_known)
         unknown = by_ip["192.168.1.150"]
@@ -138,6 +146,7 @@ class SimulatedScanTests(unittest.TestCase):
         device = result.devices[0]
         payload = device.to_dict()
         self.assertEqual(payload["known_name"], "SMW200A-1")
+        self.assertEqual(payload["role"], "signal_generator")
         self.assertEqual(payload["device_key"], "rohde&schwarz:105462")
         self.assertEqual(payload["visa_address"], "TCPIP0::192.168.1.201::inst0::INSTR")
         self.assertEqual(payload["status"], DeviceStatus.ONLINE.value)

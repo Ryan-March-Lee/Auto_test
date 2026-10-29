@@ -2,10 +2,10 @@
 
 覆盖点击“获取设备”后的可见行为：
 
-1. 扫描结果出现在表格里，已登记设备显示资产名，未登记设备标记为未登记，
-   身份读不出来的地址标记为无法识别且不能绑定角色；
-2. 勾选设备并指定测试角色后，地址写入对应角色的地址框，身份（序列号）进入配置；
-3. 未选择角色、角色重复、空扫描网段、身份缺失都给出明确提示，不静默写入配置。
+1. 扫描结果出现在表格里，已登记设备显示“设备名（测试角色）”，未登记设备标记为
+   未登记，身份读不出来的地址标记为无法识别且不能勾选；地址列不再显示。
+2. 测试角色来自设备表登记的 ``role``：勾选设备即可应用，不需要用户选择角色。
+3. 角色重复、空扫描网段、身份缺失、设备未登记角色都给出明确提示，不静默写入配置。
 """
 
 import os
@@ -39,11 +39,18 @@ SMW_IDN = "Rohde&Schwarz,SMW200A,1412.0000K02/105462,5.20.043.47"
 DP832A_IDN = "RIGOL TECHNOLOGIES,DP832A,DP8B214901519,00.01.16"
 CEYEAR_IDN = "Ceyear Technologies,4082F,QZNI000866,1.12.04"
 
+# 设备表里登记的固定角色：界面不再让用户选择，发现结果直接按它显示与写入。
+DEVICE_ROLES = {
+    SMW_IDN: "signal_generator",
+    DP832A_IDN: "PS3",
+    CEYEAR_IDN: "spectrum_analyzer",
+}
 
-def _registry():
+
+def _registry(roles=None):
     registry = InstrumentRegistry()
     for idn in (SMW_IDN, DP832A_IDN, CEYEAR_IDN):
-        registry.upsert(InstrumentIdentity.from_idn(idn))
+        registry.upsert(InstrumentIdentity.from_idn(idn), role=(roles or DEVICE_ROLES)[idn])
     return registry
 
 
@@ -115,18 +122,52 @@ class DiscoveryPanelTests(unittest.TestCase):
         self.run_scan(panel)
 
         self.assertEqual(panel.table.rowCount(), 4)
-        names = {panel.table.item(row, 2).text() for row in range(panel.table.rowCount())}
+        names = {panel.table.item(row, 1).text() for row in range(panel.table.rowCount())}
         statuses = {
-            panel.table.item(row, 5).text() for row in range(panel.table.rowCount())
+            panel.table.item(row, 3).text() for row in range(panel.table.rowCount())
         }
-        self.assertIn("SMW200A-1", names)
+        # 角色和设备名写在同一个单元格里，不再单独占一列。
+        self.assertIn("SMW200A-1（信号发生器）", names)
+        self.assertIn("DP832A-1（电源 PS3）", names)
         self.assertIn("未知设备 (N9020A)", names)
         self.assertIn("已登记", statuses)
         self.assertIn("未登记", statuses)
         self.assertTrue(panel.apply_btn.isEnabled())
         text = panel.status_label.text()
         self.assertIn("已登记 3 台", text)
+        self.assertIn("其中可应用 3 台", text)
         self.assertIn("未登记 1 台", text)
+
+    def test_table_does_not_show_addresses(self):
+        """IP 只是本次可达的地址，不是用户需要关心的信息：界面不展示。"""
+        panel = self.make_panel()
+
+        self.run_scan(panel)
+
+        for row in range(panel.table.rowCount()):
+            for column in range(panel.table.columnCount()):
+                self.assertNotIn("192.168.1.", panel.table.item(row, column).text())
+        headers = [
+            panel.table.horizontalHeaderItem(column).text()
+            for column in range(panel.table.columnCount())
+        ]
+        self.assertNotIn("地址", headers)
+        self.assertNotIn("测试角色", headers)
+
+    def test_table_width_follows_column_content(self):
+        """设备列不再被拉伸吃掉整行宽度：表格宽度贴着列内容。"""
+        panel = self.make_panel()
+
+        self.run_scan(panel)
+        self.app.processEvents()
+
+        self.assertLess(panel.table.width(), panel.width())
+        self.assertLessEqual(panel.table.width(), panel.table.maximumWidth())
+        # 设备列按内容取宽，不会占满剩下的横向空间。
+        self.assertLess(
+            panel.table.columnWidth(1),
+            panel.table.width() - panel.table.columnWidth(0),
+        )
 
     def test_unknown_device_keeps_its_serial_visible(self):
         panel = self.make_panel()
@@ -134,33 +175,85 @@ class DiscoveryPanelTests(unittest.TestCase):
         self.run_scan(panel)
 
         rows = {
-            panel.table.item(row, 2).text(): row
+            panel.table.item(row, 1).text(): row
             for row in range(panel.table.rowCount())
         }
         unknown_row = rows["未知设备 (N9020A)"]
-        self.assertEqual(panel.table.item(unknown_row, 3).text(), "MY51234567")
-        # 型号与厂商在悬浮提示里，避免窄栏挤压名称列。
-        self.assertIn("N9020A / Keysight Technologies", panel.table.item(unknown_row, 2).toolTip())
-        self.assertIn("MY51234567", panel.table.item(unknown_row, 2).toolTip())
+        self.assertEqual(panel.table.item(unknown_row, 2).text(), "MY51234567")
+        # 型号与厂商在悬浮提示里，避免窄栏挤压设备列。
+        self.assertIn("N9020A / Keysight Technologies", panel.table.item(unknown_row, 1).toolTip())
+        self.assertIn("MY51234567", panel.table.item(unknown_row, 1).toolTip())
+        # 未登记设备没有登记角色，不能勾选应用。
+        self.assertFalse(
+            panel.table.item(unknown_row, 0).flags() & Qt.ItemIsUserCheckable
+        )
+        self.assertEqual(panel.table.item(unknown_row, 3).text(), "未登记")
 
-    def test_apply_requires_role_selection(self):
+    def test_registered_device_without_role_cannot_be_checked(self):
+        """设备表没登记角色的设备：能看到，但不能勾选，也不能被应用。"""
+        def factory(_mode):
+            registry = InstrumentRegistry()
+            registry.upsert(InstrumentIdentity.from_idn(SMW_IDN), role=None)
+            return build_scanner(
+                registry=registry,
+                mode=SCAN_MODE_SIMULATED,
+                responses={("192.168.1.201", 5025): SMW_IDN},
+                timeout_s=0.02,
+            )
+
+        panel = DeviceDiscoveryPanel(scanner_factory=factory)
+        panel.show()
+        self.app.processEvents()
+        self.run_scan(panel)
+
+        self.assertEqual(panel.table.rowCount(), 1)
+        self.assertEqual(panel.table.item(0, 1).text(), "SMW200A-1")
+        self.assertEqual(panel.table.item(0, 3).text(), "未分配角色")
+        self.assertFalse(panel.table.item(0, 0).flags() & Qt.ItemIsUserCheckable)
+        self.assertFalse(panel.apply_btn.isEnabled())
+        self.assertIn("未分配角色 1 台", panel.status_label.text())
+
+    def test_checking_a_device_is_enough_without_choosing_a_role(self):
+        """角色来自设备表：勾选后直接应用，不会出现“未选择测试角色”。"""
         panel = self.make_panel()
         self.run_scan(panel)
-        panel.table.item(0, 0).setCheckState(Qt.Checked)
+        rows = {
+            panel.table.item(row, 1).text(): row
+            for row in range(panel.table.rowCount())
+        }
+        panel.table.item(rows["SMW200A-1（信号发生器）"], 0).setCheckState(Qt.Checked)
         applied = []
         panel.apply_requested.connect(applied.append)
 
         panel.request_apply()
 
-        self.assertEqual(applied, [])
-        self.assertIn("未选择测试角色", panel.status_label.text())
+        self.assertEqual(len(applied), 1)
+        self.assertEqual(applied[0][0]["role"], "signal_generator")
 
     def test_duplicate_roles_are_rejected(self):
-        panel = self.make_panel()
+        """两台设备在设备表里登记成同一角色时整批拒绝，而不是静默覆盖。"""
+        second_smw = "Rohde&Schwarz,SMW200A,1412.0000K02/200001,5.20.043.47"
+
+        def factory(_mode):
+            registry = InstrumentRegistry()
+            registry.upsert(InstrumentIdentity.from_idn(SMW_IDN), role="signal_generator")
+            registry.upsert(InstrumentIdentity.from_idn(second_smw), role="signal_generator")
+            return build_scanner(
+                registry=registry,
+                mode=SCAN_MODE_SIMULATED,
+                responses={
+                    ("192.168.1.201", 5025): SMW_IDN,
+                    ("192.168.1.203", 5025): second_smw,
+                },
+                timeout_s=0.02,
+            )
+
+        panel = DeviceDiscoveryPanel(scanner_factory=factory)
+        panel.show()
+        self.app.processEvents()
         self.run_scan(panel)
-        for row in range(2):
+        for row in range(panel.table.rowCount()):
             panel.table.item(row, 0).setCheckState(Qt.Checked)
-            panel.table.cellWidget(row, 1).setCurrentIndex(1)  # 信号发生器
         applied = []
         panel.apply_requested.connect(applied.append)
 
@@ -173,12 +266,11 @@ class DiscoveryPanelTests(unittest.TestCase):
         panel = self.make_panel()
         self.run_scan(panel)
         rows = {
-            panel.table.item(row, 2).text(): row
+            panel.table.item(row, 1).text(): row
             for row in range(panel.table.rowCount())
         }
-        signal_row = rows["SMW200A-1"]
+        signal_row = rows["SMW200A-1（信号发生器）"]
         panel.table.item(signal_row, 0).setCheckState(Qt.Checked)
-        panel.table.cellWidget(signal_row, 1).setCurrentIndex(1)
         applied = []
         panel.apply_requested.connect(applied.append)
 
@@ -215,16 +307,15 @@ class DiscoveryPanelTests(unittest.TestCase):
         self.run_scan(panel)
 
         rows = {
-            panel.table.item(row, 2).text(): row
+            panel.table.item(row, 1).text(): row
             for row in range(panel.table.rowCount())
         }
-        signal_row = rows["SMW200A-1"]
+        signal_row = rows["SMW200A-1（信号发生器）"]
         self.assertEqual(panel.table.item(signal_row, 0).checkState(), Qt.Checked)
-        self.assertEqual(panel.table.cellWidget(signal_row, 1).currentText(), "信号发生器")
         self.assertIn("预选", panel.status_label.text())
         # 其他行不因预选被勾上：用户仍可自由改。
         self.assertEqual(
-            panel.table.item(rows["DP832A-1"], 0).checkState(), Qt.Unchecked
+            panel.table.item(rows["DP832A-1（电源 PS3）"], 0).checkState(), Qt.Unchecked
         )
 
     def test_preselection_matches_by_device_key_even_when_ip_changes(self):
@@ -238,12 +329,31 @@ class DiscoveryPanelTests(unittest.TestCase):
         self.run_scan(panel)
 
         rows = {
-            panel.table.item(row, 2).text(): row
+            panel.table.item(row, 1).text(): row
             for row in range(panel.table.rowCount())
         }
-        spectrum_row = rows["4082F-1"]
+        spectrum_row = rows["4082F-1（频谱分析仪）"]
         self.assertEqual(panel.table.item(spectrum_row, 0).checkState(), Qt.Checked)
-        self.assertEqual(panel.table.cellWidget(spectrum_row, 1).currentText(), "频谱分析仪")
+        self.assertNotIn("配置里是", panel.status_label.text())
+
+    def test_preselection_reports_a_role_change_instead_of_silently_moving_the_device(self):
+        """配置里的旧角色与设备表不一致时说明清楚：角色以设备表为准。"""
+        panel = self.make_panel()
+        panel.set_device_bindings(
+            {"PS1": {"device_key": "rigol technologies:dp8b214901519"}}
+        )
+
+        self.run_scan(panel)
+
+        rows = {
+            panel.table.item(row, 1).text(): row
+            for row in range(panel.table.rowCount())
+        }
+        row = rows["DP832A-1（电源 PS3）"]
+        self.assertEqual(panel.table.item(row, 0).checkState(), Qt.Checked)
+        text = panel.status_label.text()
+        self.assertIn("角色以设备表为准", text)
+        self.assertIn("配置里是 电源 PS1", text)
 
     def test_preselection_uses_vendor_and_serial_when_key_is_missing(self):
         """旧配置只有厂商+序列号时重新拼出同一个身份键，仍然认得出设备。"""
@@ -255,10 +365,12 @@ class DiscoveryPanelTests(unittest.TestCase):
         self.run_scan(panel)
 
         rows = {
-            panel.table.item(row, 2).text(): row
+            panel.table.item(row, 1).text(): row
             for row in range(panel.table.rowCount())
         }
-        self.assertEqual(panel.table.item(rows["SMW200A-1"], 0).checkState(), Qt.Checked)
+        self.assertEqual(
+            panel.table.item(rows["SMW200A-1（信号发生器）"], 0).checkState(), Qt.Checked
+        )
 
     def test_preselection_never_matches_on_serial_alone(self):
         """只有序列号时不做猜测：不同厂商可能有相同序列号。"""
@@ -286,10 +398,9 @@ class DiscoveryPanelTests(unittest.TestCase):
         self.run_scan(panel)
 
         self.assertEqual(panel.table.rowCount(), 1)
-        self.assertEqual(panel.table.item(0, 5).text(), "无法识别")
-        # 身份读不出来就不能绑定角色：勾选框不可勾选。
+        self.assertEqual(panel.table.item(0, 3).text(), "无法识别")
+        # 身份读不出来就不能应用：勾选框不可勾选。
         self.assertFalse(panel.table.item(0, 0).flags() & Qt.ItemIsUserCheckable)
-        self.assertFalse(panel.table.cellWidget(0, 1).isEnabled())
         self.assertIn("无法识别 1 个地址", panel.status_label.text())
 
     def test_scan_failure_restores_the_button_and_shows_the_reason(self):
@@ -648,7 +759,7 @@ class ConfigPageDiscoveryIntegrationTests(unittest.TestCase):
 
         page.apply_discovered_devices([])
 
-        self.assertIn("请先在发现结果中勾选设备", messages[-1])
+        self.assertIn("请先在发现结果中勾选", messages[-1])
         self.assertIn("signal_generator", page.device_bindings)
 
     def test_legacy_config_address_is_migrated_as_an_unconfirmed_binding(self):

@@ -1,4 +1,4 @@
-"""设备发现面板：扫描网段、展示发现结果并按角色勾选本次测试所需设备。
+"""设备发现面板：扫描网段、展示发现结果并勾选本次测试所需设备。
 
 边界：
 
@@ -6,6 +6,8 @@
   因此离线测试与现场扫描共用同一套界面逻辑。
 - 面板不改配置、不连接仪器：用户确认“应用到配置”后，只把所选设备交给配置页，
   由配置页写成仪器连接配置（地址来自本次发现的设备）与设备身份记录。
+- **测试角色由设备表登记，界面不让用户选**：现场每台仪器只承担一种角色，设备名与
+  角色一起显示（如 ``SMW200A-1（信号发生器）``）。没登记角色的设备不能勾选应用。
 - 发现结果**包含未知设备**：未在设备表中登记的序列号同样列在表里并标记为未登记；
   身份完全读不出来的地址也留在表里，但标记为“无法识别”，不允许被应用成测试角色。
 """
@@ -31,26 +33,37 @@ from infrastructure.discovery.instrument_discovery import (
 )
 from infrastructure.discovery.simulated_network import DEMO_SUBNET
 
-from .config_form_state import LEGACY_BINDING_SOURCE, binding_address
+from .config_form_state import LEGACY_BINDING_SOURCE
 from .input_controls import WheelSafeComboBox
 from .theme import set_button_variant, set_tone
 
-# 角色选项是“本次测试语义”，与设备身份（序列号）分开：设备可以换 IP，角色不会变。
-ROLE_CHOICES: tuple[tuple[str, str], ...] = (
-    ("", "不指定"),
-    ("signal_generator", "信号发生器"),
-    ("spectrum_analyzer", "频谱分析仪"),
-    ("PS1", "电源 PS1"),
-    ("PS2", "电源 PS2"),
-    ("PS3", "电源 PS3"),
-    ("PS4", "电源 PS4"),
-)
+# 角色标签是“本次测试语义”，与设备身份（序列号）分开：设备可以换 IP，角色不会变。
+# 角色值来自设备表 ``instruments.json`` 的 ``role`` 字段，这里只负责显示。
+ROLE_LABELS: dict[str, str] = {
+    "signal_generator": "信号发生器",
+    "spectrum_analyzer": "频谱分析仪",
+    "PS1": "电源 PS1",
+    "PS2": "电源 PS2",
+    "PS3": "电源 PS3",
+    "PS4": "电源 PS4",
+}
 SCAN_MODE_CHOICES: tuple[tuple[str, str], ...] = (
     (SCAN_MODE_SIMULATED, "模拟设备（离线演示）"),
     (SCAN_MODE_NETWORK, "真实网络扫描"),
 )
-_TABLE_HEADERS = ("使用", "测试角色", "设备名称", "序列号", "地址", "状态")
+# 各列宽度按内容计算；表格本身也只占内容宽度，不再被横向拉成长条。
+_TABLE_HEADERS = ("使用", "设备（测试角色）", "序列号", "状态")
 _IP_PATTERN = re.compile(r"(\d{1,3}(?:\.\d{1,3}){3})")
+
+
+def role_label(role: Any) -> str:
+    """返回角色的界面标签；未登记或未知角色返回空串。"""
+    return ROLE_LABELS.get(str(role or ""), "")
+
+
+def device_applicable(device: Any) -> bool:
+    """这台设备能否被应用：身份可解析，且设备表登记了固定测试角色。"""
+    return bool(device.has_identity and device.known_role)
 
 
 def subnet_from_address(address: Any) -> str | None:
@@ -177,22 +190,27 @@ class DeviceDiscoveryPanel(QGroupBox):
         self._refresh_bindings_summary()
 
     def _refresh_bindings_summary(self) -> None:
-        """在面板上显示当前配置了哪些设备：连接信息不靠一张空白结果表来猜。"""
+        """在面板上显示当前配置了哪些设备：连接信息不靠一张空白结果表来猜。
+
+        只显示角色与设备名，不显示地址：IP 只是本次可达的地址，不是用户需要
+        关心的连接信息。
+        """
         parts = []
-        for role, label in ROLE_CHOICES:
-            record = self.device_bindings.get(role) if role else None
+        ordered = [role for role in ROLE_LABELS if role in self.device_bindings]
+        ordered += [role for role in self.device_bindings if role not in ROLE_LABELS]
+        for role in ordered:
+            record = self.device_bindings.get(role)
             if not isinstance(record, dict):
                 continue
             name = str(
                 record.get("name") or record.get("model") or record.get("serial") or "未命名设备"
             )
-            address = binding_address(record) or str(record.get("last_ip") or "").strip()
-            detail = f"{name} @ {address}" if address else name
+            detail = name
             if record.get("source") == "simulated":
                 detail += "（模拟数据）"
             elif record.get("source") == LEGACY_BINDING_SOURCE:
-                detail += "（沿用已保存的地址，未扫描确认）"
-            parts.append(f"{label} ← {detail}")
+                detail += "（沿用已保存的配置，未扫描确认）"
+            parts.append(f"{role_label(role) or role} ← {detail}")
         self.bindings_label.setText(
             "当前配置："
             + ("；".join(parts) if parts else "尚未绑定设备；请扫描后勾选本次测试所用的设备")
@@ -245,24 +263,22 @@ class DeviceDiscoveryPanel(QGroupBox):
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setTextElideMode(Qt.ElideRight)
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.Stretch)
-        # 序列号/地址/状态按内容定宽会挤掉设备名：固定列宽，让名称列拿到剩余宽度。
-        header.setSectionResizeMode(3, QHeaderView.Fixed)
-        header.setSectionResizeMode(4, QHeaderView.Fixed)
-        header.setSectionResizeMode(5, QHeaderView.Fixed)
-        self.table.setColumnWidth(3, 125)
-        self.table.setColumnWidth(4, 125)
-        self.table.setColumnWidth(5, 105)
+        # 各列按内容取宽：设备名长短不一，拉伸某一列只会留下大片空白。
+        header.setMinimumSectionSize(44)
+        for column in range(len(_TABLE_HEADERS)):
+            header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
         self._fit_table_height(0)
+        self._fit_table_width()
         layout.addWidget(self.table)
 
         actions = QHBoxLayout()
         actions.setSpacing(10)
         self.apply_btn = QPushButton("应用所选设备到配置")
         self.apply_btn.setEnabled(False)
-        self.apply_btn.setToolTip("把勾选设备的当前地址与身份（序列号）写入仪器连接配置")
+        self.apply_btn.setToolTip(
+            "把勾选设备的当前地址与身份（序列号）写入仪器连接配置；"
+            "测试角色取自设备表登记的 role"
+        )
         set_button_variant(self.apply_btn, "primary")
         self.clear_btn = QPushButton("清除设备绑定")
         self.clear_btn.setToolTip("删除配置中记录的角色与设备身份对应关系，不改动地址")
@@ -338,9 +354,13 @@ class DeviceDiscoveryPanel(QGroupBox):
         self.last_mode = getattr(result, "mode", self.current_mode())
         self._fill_table(devices)
         known = sum(1 for device in devices if device.is_known)
+        usable = sum(1 for device in devices if device_applicable(device))
+        no_role = sum(1 for device in devices if device.is_known and not device.has_role)
         unregistered = sum(1 for device in devices if device.is_unknown_identity)
         unidentified = sum(1 for device in devices if device.is_unidentified)
-        text = f"发现 {len(devices)} 台设备：已登记 {known} 台"
+        text = f"发现 {len(devices)} 台设备：已登记 {known} 台，其中可应用 {usable} 台"
+        if no_role:
+            text += f"，未分配角色 {no_role} 台"
         if unregistered:
             text += f"，未登记 {unregistered} 台"
         if unidentified:
@@ -355,7 +375,7 @@ class DeviceDiscoveryPanel(QGroupBox):
             text += "（模拟数据，仅用于离线演示；不能用于真实测量）"
         self.status_label.setText(text)
         self._preselect_bound_devices()
-        self.apply_btn.setEnabled(bool(devices))
+        self.apply_btn.setEnabled(any(device_applicable(device) for device in devices))
         self.log_message.emit(f"设备扫描完成: {self.status_label.text()}")
 
     def _on_failed(self, message: str) -> None:
@@ -405,6 +425,7 @@ class DeviceDiscoveryPanel(QGroupBox):
     def _clear_table(self) -> None:
         self.table.setRowCount(0)
         self._fit_table_height(0)
+        self._fit_table_width()
         self._rows = []
 
     def _fit_table_height(self, rows: int) -> None:
@@ -414,11 +435,30 @@ class DeviceDiscoveryPanel(QGroupBox):
         visible_rows = max(1, min(rows, 8))
         self.table.setFixedHeight(header + row_height * visible_rows + 4)
 
+    def _fit_table_width(self) -> None:
+        """表格宽度贴着列内容，不再横向撑满卡片。
+
+        设备名长短差别很大，让某一列吃掉剩余宽度只会留下大片空白（设备列尤其明显）。
+        这里按内容取列宽，再把表格本身收窄到这些列的总宽；行多到出现纵向滚动条时把
+        滚动条宽度也算进去，避免最后一列被挤掉。
+        """
+        header = self.table.horizontalHeader()
+        total = 0
+        for column in range(self.table.columnCount()):
+            self.table.resizeColumnToContents(column)
+            total += header.sectionSize(column)
+        total += 2 * self.table.frameWidth()
+        if self.table.rowCount() > 8:
+            total += self.table.verticalScrollBar().sizeHint().width()
+        self.table.setMaximumWidth(total)
+
     @staticmethod
     def _status_text(device: Any) -> str:
-        if device.is_known:
-            return "已登记"
-        return "未登记" if device.is_unknown_identity else "无法识别"
+        if device.is_unidentified:
+            return "无法识别"
+        if not device.is_known:
+            return "未登记"
+        return "已登记" if device.has_role else "未分配角色"
 
     def _fill_table(self, devices: Sequence[Any]) -> None:
         self._clear_table()
@@ -426,37 +466,44 @@ class DeviceDiscoveryPanel(QGroupBox):
         self._fit_table_height(len(devices))
         for row, device in enumerate(devices):
             identity = device.identity
+            applicable = device_applicable(device)
             check = QTableWidgetItem("")
             check.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
             check.setCheckState(Qt.Unchecked)
-            if device.is_unidentified:
-                # 身份读不出来就不能绑定角色：勾选框直接禁用，避免“应用了一半”。
+            if not applicable:
+                # 身份读不出来或设备表没登记角色：勾选框禁用，避免“应用了一半”。
                 check.setFlags(Qt.ItemIsEnabled)
             self.table.setItem(row, 0, check)
-            role_combo = WheelSafeComboBox()
-            role_combo.addItems([label for _value, label in ROLE_CHOICES])
-            role_combo.setEnabled(not device.is_unidentified)
-            self.table.setCellWidget(row, 1, role_combo)
-            name_item = QTableWidgetItem(str(device.display_name))
+            # 角色和设备名写在同一个单元格：每台设备只有一种角色，不需要用户再选。
+            label = role_label(device.known_role)
+            display = f"{device.display_name}（{label}）" if label else str(device.display_name)
+            name_item = QTableWidgetItem(display)
             if identity is not None:
                 name_item.setToolTip(f"{identity.model} / {identity.vendor}\n{device.idn}")
             else:
                 name_item.setToolTip(device.error or "")
-            self.table.setItem(row, 2, name_item)
-            self.table.setItem(row, 3, QTableWidgetItem(identity.serial if identity else "-"))
-            self.table.setItem(row, 4, QTableWidgetItem(f"{device.ip}:{device.port}"))
+            self.table.setItem(row, 1, name_item)
+            self.table.setItem(row, 2, QTableWidgetItem(identity.serial if identity else "-"))
             status_item = QTableWidgetItem(self._status_text(device))
             if device.is_unidentified:
                 status_item.setToolTip(device.error or "端口有应答但 *IDN? 无法解析")
             elif device.is_unknown_identity:
-                status_item.setToolTip("未在设备表 instruments.json 中登记；仍可勾选使用")
-            self.table.setItem(row, 5, status_item)
-            self._rows.append({"device": device, "check": check, "role": role_combo})
+                status_item.setToolTip(
+                    "未在设备表 instruments.json 中登记，无法确定测试角色；请先登记设备"
+                )
+            elif not device.has_role:
+                status_item.setToolTip(
+                    "设备表没有登记这台设备的测试角色（role）；补上后才能应用"
+                )
+            self.table.setItem(row, 3, status_item)
+            self._rows.append({"device": device, "check": check})
+        self._fit_table_width()
 
     def _preselect_bound_devices(self) -> None:
-        """按配置里保存的身份预选：IP 变了也能找回同一台设备，用户仍可改。
+        """按配置里保存的身份预选：IP 变了也能找回同一台设备。
 
-        只按 ``厂商:序列号`` 匹配，不做“仅按序列号”的猜测。
+        只按 ``厂商:序列号`` 匹配，不做“仅按序列号”的猜测。角色以设备表登记为准，
+        配置里的旧角色与设备表不一致时在状态栏说明，不再让用户手动改。
         """
         if not self.device_bindings:
             return
@@ -468,25 +515,31 @@ class DeviceDiscoveryPanel(QGroupBox):
         if not bound:
             return
         matched = 0
-        role_index = {value: index for index, (value, _label) in enumerate(ROLE_CHOICES)}
+        moved: list[str] = []
         for row in self._rows:
             device = row["device"]
             key = device.device_key
             if key is None or key not in bound:
                 continue
-            role = bound[key]
+            if not device_applicable(device):
+                # 设备表没登记角色时不能预选：应用后只会写进一个猜出来的角色。
+                continue
             row["check"].setCheckState(Qt.Checked)
-            index = role_index.get(role)
-            if index is not None:
-                row["role"].setCurrentIndex(index)
             matched += 1
+            bound_role = bound[key]
+            if bound_role != device.known_role:
+                moved.append(
+                    f"{device.display_name} 配置里是 {role_label(bound_role) or bound_role}，"
+                    f"设备表登记为 {role_label(device.known_role)}"
+                )
         if matched:
-            self.status_label.setText(
-                f"{self.status_label.text()}；已按配置中的设备身份预选 {matched} 台"
-            )
+            text = f"{self.status_label.text()}；已按配置中的设备身份预选 {matched} 台"
+            if moved:
+                text += "；角色以设备表为准（" + "；".join(moved) + "）"
+            self.status_label.setText(text)
 
     def selected_assignments(self) -> tuple[list[dict[str, Any]], list[str]]:
-        """返回 ``(要应用的设备, 问题说明)``；角色未选、重复或身份缺失都算问题。"""
+        """返回 ``(要应用的设备, 问题说明)``；角色重复或身份/角色缺失都算问题。"""
         assignments: list[dict[str, Any]] = []
         problems: list[str] = []
         used_roles: dict[str, str] = {}
@@ -499,14 +552,19 @@ class DeviceDiscoveryPanel(QGroupBox):
                     f"{device.ip}:{device.port} 无法识别身份，不能应用；请检查设备响应后重试"
                 )
                 continue
-            role_value = ROLE_CHOICES[row["role"].currentIndex()][0]
+            role_value = device.known_role
             if not role_value:
-                problems.append(f"{device.display_name} @ {device.ip} 未选择测试角色")
+                problems.append(
+                    f"{device.display_name} 在设备表中没有登记测试角色，不能应用"
+                )
                 continue
             if role_value in used_roles:
-                problems.append(f"角色 {role_value} 被重复选择：{used_roles[role_value]} 与 {device.ip}")
+                problems.append(
+                    f"角色 {role_label(role_value)} 被重复选择："
+                    f"{used_roles[role_value]} 与 {device.display_name}"
+                )
                 continue
-            used_roles[role_value] = device.ip
+            used_roles[role_value] = device.display_name
             identity = device.identity
             assignments.append(
                 {
@@ -531,7 +589,9 @@ class DeviceDiscoveryPanel(QGroupBox):
             self.status_label.setText("；".join(problems))
             return
         if not assignments:
-            self.status_label.setText("请先勾选本次测试所需的设备，并为每台设备选择测试角色")
+            self.status_label.setText(
+                "请先勾选本次测试所需的设备（测试角色来自设备表登记，不需要选择）"
+            )
             return
         self.apply_requested.emit(assignments)
 
@@ -550,8 +610,10 @@ class DeviceDiscoveryPanel(QGroupBox):
 __all__ = [
     "DeviceDiscoveryPanel",
     "DiscoveryWorker",
-    "ROLE_CHOICES",
+    "ROLE_LABELS",
     "SCAN_MODE_CHOICES",
     "binding_device_key",
+    "device_applicable",
+    "role_label",
     "subnet_from_address",
 ]

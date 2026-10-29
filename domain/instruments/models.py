@@ -52,6 +52,22 @@ def normalize_serial(value: Any) -> str:
     return text.upper()
 
 
+# 测试角色登记在设备表里：现场每台仪器只承担一种角色，界面不再让用户逐台选择。
+INSTRUMENT_ROLES = ("signal_generator", "spectrum_analyzer")
+POWER_SUPPLY_SLOTS = ("PS1", "PS2", "PS3", "PS4")
+TEST_ROLES = INSTRUMENT_ROLES + POWER_SUPPLY_SLOTS
+
+
+def normalize_role(value: Any) -> str | None:
+    """把设备表的 ``role`` 归一化为 :data:`TEST_ROLES` 之一；空值或未知角色返回 ``None``。
+
+    未知角色不在这里猜成某个默认角色：角色决定地址往哪一路写，猜错会把电源接到
+    错误的通道上。
+    """
+    text = normalize_text(value)
+    return text if text in TEST_ROLES else None
+
+
 def make_device_key(vendor: Any, serial: Any) -> str:
     """生成设备唯一键 ``厂商:序列号``（小写归一化）。
 
@@ -169,6 +185,9 @@ class Instrument:
     first_seen_at: str | None = None
     last_seen_at: str | None = None
     notes: str | None = None
+    # 这台设备在测试链路里的固定角色（``signal_generator`` / ``spectrum_analyzer`` /
+    # ``PS1``..``PS4``）；``None`` 表示尚未登记角色，不能用于绑定。
+    role: str | None = None
     endpoints: tuple[InstrumentEndpoint, ...] = field(default_factory=tuple)
 
     @property
@@ -204,6 +223,7 @@ class Instrument:
             "first_seen_at": self.first_seen_at,
             "last_seen_at": self.last_seen_at,
             "notes": self.notes,
+            "role": self.role,
             "current_ip": self.current_ip,
             "endpoints": [endpoint.to_dict() for endpoint in self.endpoints],
         }
@@ -211,12 +231,16 @@ class Instrument:
 
 __all__ = [
     "DeviceStatus",
+    "INSTRUMENT_ROLES",
     "Instrument",
     "InstrumentEndpoint",
     "InstrumentIdentity",
+    "POWER_SUPPLY_SLOTS",
+    "TEST_ROLES",
     "build_instrument_name",
     "make_device_key",
     "normalize_model",
+    "normalize_role",
     "normalize_serial",
     "normalize_text",
     "normalize_vendor",

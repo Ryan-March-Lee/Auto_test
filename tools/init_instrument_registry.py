@@ -27,6 +27,8 @@ from infrastructure.persistence.instrument_registry import (  # noqa: E402
 
 # 2026-10-28 现场扫描结果（信号源 1 台、频谱仪 1 台、直流电源 3 台）。
 # idn_port 是实际能读到 *IDN? 的端口：R&S / Ceyear 用 SCPI Raw 5025，RIGOL DP832A 用 5555。
+# role 是这台设备固定的测试角色（界面不再让用户选择）；电源按现场已确认的接线登记，
+# 没有确认过角色的设备留 None，界面显示“未分配角色”且不能应用。
 SCANNED_DEVICES = [
     {
         "ip": "192.168.1.201",
@@ -35,6 +37,7 @@ SCANNED_DEVICES = [
         "idn_port": 5025,
         "scpi_port": 5025,
         "firmware": "5.20.043.47",
+        "role": "signal_generator",
         "options": [
             "SMW-B9", "SMW-B13XT", "SMW-B140", "SMW-K17", "SMW-K144",
             "SMW-K255", "SMW-K262", "SMW-K300", "SMW-K526",
@@ -47,6 +50,7 @@ SCANNED_DEVICES = [
         "idn_port": 5025,
         "scpi_port": 5025,
         "firmware": "1.12.04",
+        "role": "spectrum_analyzer",
         "options": [],
     },
     {
@@ -56,6 +60,7 @@ SCANNED_DEVICES = [
         "idn_port": 5555,
         "scpi_port": 5555,
         "firmware": "00.01.16.00.02",
+        "role": "PS3",
         "options": [],
     },
     {
@@ -65,6 +70,7 @@ SCANNED_DEVICES = [
         "idn_port": 5555,
         "scpi_port": 5555,
         "firmware": "00.01.14.00.03",
+        "role": None,
         "options": [],
     },
     {
@@ -74,6 +80,7 @@ SCANNED_DEVICES = [
         "idn_port": 5555,
         "scpi_port": 5555,
         "firmware": "00.01.14.00.03",
+        "role": "PS4",
         "options": [],
     },
 ]
@@ -88,6 +95,7 @@ def seed(registry: InstrumentRegistry, devices) -> int:
             firmware=device.get("firmware"),
             options=device.get("options", ()),
             status=DeviceStatus.ONLINE,
+            role=device.get("role"),
         )
         registry.record_endpoint(
             instrument,
@@ -105,12 +113,12 @@ def seed(registry: InstrumentRegistry, devices) -> int:
 
 def print_table(registry: InstrumentRegistry) -> None:
     instruments = registry.list()
-    print(f"{'资产名':<12}{'型号':<10}{'序列号':<16}{'当前IP':<16}{'MAC':<20}{'状态':<12}{'固件'}")
-    print("-" * 100)
+    print(f"{'资产名':<12}{'型号':<10}{'角色':<18}{'序列号':<16}{'当前IP':<16}{'MAC':<20}{'状态':<12}{'固件'}")
+    print("-" * 120)
     for item in instruments:
         endpoint = item.current_endpoint
         print(
-            f"{item.name:<12}{item.model:<10}{item.serial:<16}"
+            f"{item.name:<12}{item.model:<10}{(item.role or '未分配'):<18}{item.serial:<16}"
             f"{(endpoint.ip if endpoint else '-'):<16}"
             f"{(endpoint.mac if endpoint else '-'):<20}"
             f"{item.status.value:<12}{item.firmware or '-'}"

@@ -75,7 +75,10 @@ class DiscoveredDevice:
     """一次扫描发现的设备（含未知设备）。
 
     ``known_name`` 是设备表中已登记资产的名称（``型号-序号``）；未登记设备为
-    ``None``，界面据此显示“未知设备”。``identity`` 为空表示端口有应答但身份读不出。
+    ``None``，界面据此显示“未知设备”。``known_role`` 是设备表登记的固定测试角色
+    （``signal_generator`` / ``spectrum_analyzer`` / ``PS1``..``PS4``）：现场每台仪器
+    只承担一种角色，界面不再让用户选；未登记角色或未登记设备时为 ``None``。
+    ``identity`` 为空表示端口有应答但身份读不出。
     """
 
     ip: str
@@ -85,6 +88,7 @@ class DiscoveredDevice:
     known_name: str | None
     status: DeviceStatus
     error: str | None = None
+    known_role: str | None = None
 
     @property
     def device_key(self) -> str | None:
@@ -94,6 +98,11 @@ class DiscoveredDevice:
     def has_identity(self) -> bool:
         """是否解析出了设备身份（序列号）。这是能否绑定到角色的前提。"""
         return self.identity is not None
+
+    @property
+    def has_role(self) -> bool:
+        """设备表是否登记了固定测试角色；没有角色的设备不能被应用。"""
+        return self.known_role is not None
 
     @property
     def is_known(self) -> bool:
@@ -144,6 +153,7 @@ class DiscoveredDevice:
             "serial": identity.serial if identity else None,
             "device_key": self.device_key,
             "known_name": self.known_name,
+            "role": self.known_role,
             "status": self.status.value,
             "discovery_status": self.discovery_status.value,
             "error": self.error,
@@ -504,23 +514,23 @@ class InstrumentScanner:
                 status=DeviceStatus.UNREACHABLE,
                 error=str(error),
             )
-        known_name = self._known_name(identity)
+        known = self._known_instrument(identity)
         return DiscoveredDevice(
             ip=host,
             port=port,
             idn=text,
             identity=identity,
-            known_name=known_name,
+            known_name=known.name if known is not None else None,
             # 未登记设备的资产状态是“未知”，不是“在线”：在线与否要等登记并确认。
-            status=DeviceStatus.ONLINE if known_name else DeviceStatus.UNKNOWN,
+            status=DeviceStatus.ONLINE if known is not None else DeviceStatus.UNKNOWN,
+            known_role=known.role if known is not None else None,
         )
 
-    def _known_name(self, identity: InstrumentIdentity) -> str | None:
-        """在只读设备表里查设备名；没有设备表或未登记时返回 ``None``。"""
+    def _known_instrument(self, identity: InstrumentIdentity) -> Any:
+        """在只读设备表里查设备记录；没有设备表或未登记时返回 ``None``。"""
         if self.registry is None:
             return None
-        instrument = self.registry.get_by_device_key(identity.device_key)
-        return instrument.name if instrument is not None else None
+        return self.registry.get_by_device_key(identity.device_key)
 
 
 def build_scanner(

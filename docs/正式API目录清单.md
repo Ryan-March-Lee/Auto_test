@@ -200,7 +200,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `infrastructure.discovery.simulated_network` | 离线演示用的设备网络响应（仅模拟扫描模式，不会被当成现场结果） |
 | `infrastructure.persistence` | 持久化适配器包 |
 | `infrastructure.persistence.artifact_generator` | 自动归档产物（CSV 与测试报告）生成适配器：只读 manifest 已登记并校验过的正式结果，产物的受控路径固定在运行目录 `artifacts/` 下；`ArchiveArtifactGenerator` 把两类实现组合成归档服务持有的唯一生成端口 |
-| `infrastructure.persistence.instrument_registry` | 设备表 JSON 仓储：序列号为唯一标识，IP 只是可漂移的地址别名 |
+| `infrastructure.persistence.instrument_registry` | 设备表 JSON 仓储：序列号为唯一标识，IP 只是可漂移的地址别名，固定测试角色随设备登记 |
 | `infrastructure.persistence.json_encoder` | JSON 编码器 |
 | `infrastructure.persistence.json_result_repository` | 结果 JSON 实现细节 |
 | `infrastructure.persistence.run_directory` | 运行目录文件布局 |
@@ -216,7 +216,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `presentation.qt.archival_view` | 归档结果分组控件：显示标题/说明并按提示启用“打开结果目录/测试报告”；位置由窗口注入；动态文案按纯文本渲染 |
 | `presentation.qt.config_form_state` | 配置表单状态 |
 | `presentation.qt.config_page` | 配置页面（编辑配置编写文档；向协调器提供 `ConfigurationPagePort` 窄接口） |
-| `presentation.qt.device_discovery_panel` | 仪器连接配置框（设备发现）：扫描网段、展示已登记/未登记/无法识别三类结果、按测试角色勾选并应用、显示当前已绑定设备、清除设备绑定；扫描线程只读探测，不改配置也不连接仪器 |
+| `presentation.qt.device_discovery_panel` | 仪器连接配置框（设备发现）：扫描网段、展示已登记/未分配角色/未登记/无法识别结果、勾选即应用（角色取自设备表）、显示当前已绑定设备、清除设备绑定；扫描线程只读探测，不改配置也不连接仪器 |
 | `presentation.qt.config_projection` | 配置编写文档（authoring document）到配置页控件的确定性投影：重置、逐字段投影、非法类型回落；正式 `test_plan` / `run_mapping` 只由 `configuration_authoring` 生成 |
 | `presentation.qt.configuration_authoring` | 配置页保存时的正式运行配置编写 |
 | `presentation.qt.connection_diagrams` | 连接图渲染 |

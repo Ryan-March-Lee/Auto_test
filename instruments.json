@@ -1,5 +1,5 @@
 {
-    "schema_version": 1,
+    "schema_version": 2,
     "updated_at": "2026-10-28T14:48:20+08:00",
     "instruments": [
         {
@@ -24,6 +24,7 @@
             "status": "online",
             "current_ip": "192.168.1.201",
             "notes": null,
+            "role": "signal_generator",
             "first_seen_at": "2026-10-28T14:47:20+08:00",
             "last_seen_at": "2026-10-28T14:48:20+08:00",
             "known_ips": [
@@ -50,6 +51,7 @@
             "status": "online",
             "current_ip": "192.168.1.202",
             "notes": null,
+            "role": "spectrum_analyzer",
             "first_seen_at": "2026-10-28T14:47:20+08:00",
             "last_seen_at": "2026-10-28T14:48:20+08:00",
             "known_ips": [
@@ -76,6 +78,7 @@
             "status": "online",
             "current_ip": "192.168.1.102",
             "notes": null,
+            "role": "PS3",
             "first_seen_at": "2026-10-28T14:47:20+08:00",
             "last_seen_at": "2026-10-28T14:48:20+08:00",
             "known_ips": [
@@ -102,6 +105,7 @@
             "status": "online",
             "current_ip": "192.168.1.106",
             "notes": null,
+            "role": null,
             "first_seen_at": "2026-10-28T14:47:20+08:00",
             "last_seen_at": "2026-10-28T14:48:20+08:00",
             "known_ips": [
@@ -128,6 +132,7 @@
             "status": "online",
             "current_ip": "192.168.1.108",
             "notes": null,
+            "role": "PS4",
             "first_seen_at": "2026-10-28T14:47:20+08:00",
             "last_seen_at": "2026-10-28T14:48:20+08:00",
             "known_ips": [

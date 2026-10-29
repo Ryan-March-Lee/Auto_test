@@ -10,8 +10,8 @@ import copy
 import math
 from typing import Any, Mapping
 
-# 仪器连接只由设备发现结果决定：角色由用户在发现结果表里显式指定，地址来自该设备的
-# 当前 VISA 地址。下表是配置文档里的角色键，不是界面控件名。
+# 仪器连接只由设备发现结果决定：角色由设备表（instruments.json）登记，界面不再让用户
+# 选择；地址来自该设备本次发现的 VISA 地址。下表是配置文档里的角色键，不是界面控件名。
 INSTRUMENT_ROLES = ("signal_generator", "spectrum_analyzer")
 POWER_SUPPLY_NAMES = ("PS1", "PS2", "PS3", "PS4")
 # 旧配置只有 ``instruments.<角色>.address``、没有绑定记录。迁移时用这个来源标记，

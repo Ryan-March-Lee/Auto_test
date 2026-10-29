@@ -137,6 +137,47 @@ class RegistryUpsertTests(unittest.TestCase):
         self.assertEqual(instrument.name, "SMW200A-1")
         self.assertEqual(instrument.model_index, 1)
 
+    def test_fixed_role_is_stored_and_survives_a_reload(self):
+        """测试角色随设备登记：界面直接读它，不再让用户选择。"""
+        self.registry.upsert(InstrumentIdentity.from_idn(SMW_IDN), role="signal_generator")
+        self.registry.save()
+
+        reloaded = InstrumentRegistry.load(self.path)
+
+        self.assertEqual(reloaded.get_by_name("SMW200A-1").role, "signal_generator")
+
+    def test_scan_without_role_keeps_the_registered_role(self):
+        """扫描不读角色，只是更新状态：不能把已登记的角色清空。"""
+        identity = InstrumentIdentity.from_idn(SMW_IDN)
+        self.registry.upsert(identity, role="signal_generator")
+
+        instrument, _ = self.registry.upsert(identity, status=DeviceStatus.ONLINE)
+
+        self.assertEqual(instrument.role, "signal_generator")
+
+    def test_unknown_role_is_rejected(self):
+        identity = InstrumentIdentity.from_idn(SMW_IDN)
+        with self.assertRaises(InstrumentRegistryError):
+            self.registry.upsert(identity, role="amplifier")
+
+    def test_set_role_can_assign_and_clear_a_role(self):
+        instrument, _ = self.registry.upsert(InstrumentIdentity.from_idn(DP832A_IDN))
+        self.assertIsNone(instrument.role)
+
+        assigned = self.registry.set_role(instrument, "PS3")
+        self.assertEqual(assigned.role, "PS3")
+
+        cleared = self.registry.set_role("DP832A-1", None)
+        self.assertIsNone(cleared.role)
+
+    def test_manually_written_invalid_role_fails_validation(self):
+        payload = _document([_entry(role="not-a-role")])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "instruments.json"
+            path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            with self.assertRaises(InstrumentRegistryError):
+                InstrumentRegistry.load(path)
+
     def test_same_model_gets_next_index_and_never_reuses_a_retired_one(self):
         first, _ = self.registry.upsert(InstrumentIdentity.from_idn(DP832A_IDN))
         second, _ = self.registry.upsert(

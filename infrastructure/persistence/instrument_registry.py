@@ -20,6 +20,7 @@
           "order_no": "1412.0000K02",
           "firmware": "5.20.043.47",
           "options": ["SMW-B9", "SMW-K526"],
+          "role": "signal_generator",   # 固定测试角色，界面直接按它写入连接配置
           "status": "online",
           "current_ip": "192.168.1.201",
           "notes": null,
@@ -37,6 +38,9 @@
 - 设备唯一标识由 ``厂商 + 序列号`` 派生（``device_key``），不落盘，避免两处不一致。
 - ``current_ip`` 只是当前连接地址；IP 变化时旧地址进 ``known_ips`` 并保留最近若干条。
 - 资产名和同型号序号一经分配不再改动；退役设备保留记录与序号，新设备取最大序号 + 1。
+- ``role`` 是这台设备在测试链路里的固定角色（``signal_generator`` / ``spectrum_analyzer`` /
+  ``PS1``..``PS4``）。现场每台仪器只承担一种角色，因此角色随设备登记一次，界面不再让
+  用户逐台选择；空值与未知角色都视为“未分配角色”，不允许绑定。
 - 写入使用 :func:`write_json_atomic`（临时文件 + 原子替换），中断不会留下半截文件。
 - 本模块不发起网络探测，只负责读写设备表；扫描逻辑属于后续的发现模块。
 """
@@ -50,6 +54,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from domain.instruments.models import (
+    TEST_ROLES,
     DeviceStatus,
     Instrument,
     InstrumentEndpoint,
@@ -57,6 +62,7 @@ from domain.instruments.models import (
     build_instrument_name,
     make_device_key,
     normalize_model,
+    normalize_role,
     normalize_serial,
     normalize_text,
     normalize_vendor,
@@ -64,7 +70,7 @@ from domain.instruments.models import (
 from infrastructure.filesystem.atomic_json import read_json, write_json_atomic
 from infrastructure.filesystem.paths import DEFAULT_PATHS, PathLike
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEFAULT_REGISTRY_FILENAME = "instruments.json"
 MAX_KNOWN_IPS = 3
 
@@ -127,6 +133,7 @@ def _to_instrument(entry: Mapping[str, Any]) -> Instrument:
         first_seen_at=normalize_text(entry.get("first_seen_at")) or None,
         last_seen_at=normalize_text(entry.get("last_seen_at")) or None,
         notes=normalize_text(entry.get("notes")) or None,
+        role=normalize_role(entry.get("role")),
         endpoints=endpoints,
     )
 
@@ -213,6 +220,11 @@ class InstrumentRegistry:
             if status not in _VALID_STATUSES:
                 raise InstrumentRegistryError(
                     f"{where}.status 必须是 {sorted(_VALID_STATUSES)} 之一，实际 {status!r}"
+                )
+            raw_role = entry.get("role")
+            if raw_role not in (None, "") and normalize_role(raw_role) is None:
+                raise InstrumentRegistryError(
+                    f"{where}.role 必须是 {list(TEST_ROLES)} 之一，实际 {raw_role!r}"
                 )
             known_ips = entry.get("known_ips") or []
             if not isinstance(known_ips, list):
@@ -308,17 +320,23 @@ class InstrumentRegistry:
         status: DeviceStatus = DeviceStatus.ONLINE,
         seen_at: str | None = None,
         notes: str | None = None,
+        role: str | None = None,
     ) -> tuple[Instrument, bool]:
         """按 ``(厂商, 序列号)`` 写入或更新设备，返回 ``(设备, 是否新建)``。
 
         命中已有设备时只刷新可变属性，**不改动资产名与同型号序号**，保证它们永久稳定。
 
-        ``options`` / ``firmware`` / ``order_no`` 采用“有值才覆盖”的语义：
-        传 ``None`` 或不传表示本次没读到、保留原值，避免一次读不到 ``*OPT?`` 的扫描
-        把已登记的选件和固件清空。要清空选件请显式传空序列。
+        ``options`` / ``firmware`` / ``order_no`` / ``role`` 采用“有值才覆盖”的语义：
+        传 ``None`` 或不传表示本次没有新的值、保留原值，避免一次扫描把已登记的角色清空。
+        需要显式清除角色时用 :meth:`set_role` 传 ``None``。
         """
         timestamp = seen_at or utc_now_iso()
         device_key = identity.device_key
+        role_value = None if role is None else normalize_role(role)
+        if role is not None and role_value is None:
+            raise InstrumentRegistryError(
+                f"未知的测试角色 {role!r}；必须是 {list(TEST_ROLES)} 之一"
+            )
         option_list = (
             None
             if options is None
@@ -340,6 +358,7 @@ class InstrumentRegistry:
                     "order_no": identity.order_no,
                     "firmware": firmware_text,
                     "options": option_list or [],
+                    "role": role_value,
                     "status": status.value,
                     "current_ip": "",
                     "notes": normalize_text(notes) or None,
@@ -357,6 +376,8 @@ class InstrumentRegistry:
                 entry["firmware"] = firmware_text
             if option_list is not None:
                 entry["options"] = option_list
+            if role_value is not None:
+                entry["role"] = role_value
             entry["status"] = status.value
             entry["last_seen_at"] = timestamp
             if normalize_text(notes):
@@ -420,6 +441,30 @@ class InstrumentRegistry:
         if entry is None:
             raise InstrumentRegistryError(f"设备表中没有资产 {name!r}")
         entry["status"] = status.value
+        self._validate()
+        updated = self.get_by_name(name)
+        assert updated is not None
+        return updated
+
+    def set_role(self, instrument: Instrument | str, role: str | None) -> Instrument:
+        """登记或清除一台设备的固定测试角色。
+
+        角色只由设备表决定：扫描结果、面板与配置写入都读这一个字段，不再有第二处
+        “用户选择”的角色来源。``role=None`` 表示这台设备暂时不承担任何测试角色。
+        """
+        name = instrument if isinstance(instrument, str) else instrument.name
+        entry = self._find_entry(lambda item: normalize_text(item.get("name")) == normalize_text(name))
+        if entry is None:
+            raise InstrumentRegistryError(f"设备表中没有资产 {name!r}")
+        if role is None:
+            entry.pop("role", None)
+        else:
+            role_value = normalize_role(role)
+            if role_value is None:
+                raise InstrumentRegistryError(
+                    f"未知的测试角色 {role!r}；必须是 {list(TEST_ROLES)} 之一"
+                )
+            entry["role"] = role_value
         self._validate()
         updated = self.get_by_name(name)
         assert updated is not None

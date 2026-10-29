@@ -60,14 +60,6 @@ class WelcomePage(QWidget):
         title.setObjectName("welcomeTitle")
         title.setAlignment(Qt.AlignCenter)
         card_layout.addWidget(title)
-
-        subtitle = QLabel(
-            "功放测试、驱动映射、线损测量与结果归档的统一入口\n"
-            "请先选择本次测试的驱动方式"
-        )
-        subtitle.setObjectName("welcomeSubtitle")
-        subtitle.setAlignment(Qt.AlignCenter)
-        card_layout.addWidget(subtitle)
         card_layout.addSpacing(24)
 
         buttons = QHBoxLayout()
@@ -85,12 +77,6 @@ class WelcomePage(QWidget):
         buttons.addWidget(with_driver)
         buttons.addStretch(1)
         card_layout.addLayout(buttons)
-        card_layout.addSpacing(16)
-
-        hint = QLabel("选择后可先在“仪器配置”页扫描设备、保存配置并创建运行。")
-        hint.setObjectName("welcomeSubtitle")
-        hint.setAlignment(Qt.AlignCenter)
-        card_layout.addWidget(hint)
 
         layout.addWidget(card, 0, Qt.AlignHCenter)
         layout.addStretch(3)

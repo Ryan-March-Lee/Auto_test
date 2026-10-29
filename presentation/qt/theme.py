@@ -279,10 +279,6 @@ QLabel#welcomeTitle {
     font-size: 22pt;
     font-weight: 700;
 }
-QLabel#welcomeSubtitle {
-    color: $text_secondary;
-    font-size: $font_body;
-}
 
 /* ===== 主标签栏（分段选择器） ===== */
 QTabWidget#mainTabs::pane {

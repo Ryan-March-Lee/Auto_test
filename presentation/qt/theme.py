@@ -77,13 +77,13 @@ TOKENS = {
     "button_face_top": "#FFFFFF",
     "button_face_bottom": "#F2F5FA",
     "button_shadow": "#BFCBDA",
-    # 禁用与控制台
+    # 禁用与悬浮提示（工具提示保留深色，与浅色界面区分开）
     "disabled_bg": "#F1F5F9",
     "disabled_text": "#94A3B8",
     "scroll": "#CBD5E1",
-    "console_bg": "#0F172A",
-    "console_text": "#CBD5E1",
-    "console_line": "#1E293B",
+    "tooltip_bg": "#0F172A",
+    "tooltip_text": "#CBD5E1",
+    "tooltip_border": "#1E293B",
     # 字号
     "font_title": "15pt",
     "font_section": "10.5pt",
@@ -126,8 +126,8 @@ def build_palette() -> QPalette:
     palette.setColor(QPalette.Dark, QColor(TOKENS["text_muted"]))
     palette.setColor(QPalette.Highlight, QColor(TOKENS["primary"]))
     palette.setColor(QPalette.HighlightedText, QColor("#FFFFFF"))
-    palette.setColor(QPalette.ToolTipBase, QColor(TOKENS["console_bg"]))
-    palette.setColor(QPalette.ToolTipText, QColor(TOKENS["console_text"]))
+    palette.setColor(QPalette.ToolTipBase, QColor(TOKENS["tooltip_bg"]))
+    palette.setColor(QPalette.ToolTipText, QColor(TOKENS["tooltip_text"]))
     palette.setColor(QPalette.PlaceholderText, QColor(TOKENS["text_muted"]))
     palette.setColor(QPalette.Link, QColor(TOKENS["primary"]))
     for role in (QPalette.WindowText, QPalette.Text, QPalette.ButtonText):
@@ -216,9 +216,9 @@ QStackedWidget {
     background: transparent;
 }
 QToolTip {
-    background-color: $console_bg;
-    color: $console_text;
-    border: 1px solid $console_line;
+    background-color: $tooltip_bg;
+    color: $tooltip_text;
+    border: 1px solid $tooltip_border;
     border-radius: 4px;
     padding: 4px 8px;
     font-size: $font_small;
@@ -589,14 +589,21 @@ QTextEdit, QPlainTextEdit {
 QTextEdit:focus, QPlainTextEdit:focus {
     border-color: $primary;
 }
+/* 实时日志：与卡片同一套浅色表面（浅灰底 + 细边 + 深色字），保留等宽字体让
+   时间戳与数值对齐；它是一块“凹进去”的阅读区，不再使用深色终端配色。 */
 QTextEdit#logView {
-    background-color: $console_bg;
-    border: 1px solid $console_line;
+    background-color: $surface_sunken;
+    border: 1px solid $border;
     border-radius: 6px;
-    color: $console_text;
+    color: $text;
     font-family: "$font_mono";
     font-size: $font_small;
-    padding: 6px 8px;
+    padding: 8px 10px;
+    selection-background-color: $primary;
+    selection-color: #FFFFFF;
+}
+QTextEdit#logView:focus {
+    border-color: $primary;
 }
 /* ===== 按钮：凸起的“操作元件”，层级由 variant 声明 =====
    默认（次要）按钮是白色面 + 极轻竖向渐变 + 稍深的下边，看上去被托起一格；
@@ -812,7 +819,14 @@ QScrollBar::add-page, QScrollBar::sub-page {
 /* ===== 状态区 ===== */
 QFrame#statusPanel {
     background-color: $surface;
-    border-top: 1px solid $border;
+    border-left: 1px solid $border;
+}
+/* 工作区分隔条：本身不可见，边界由状态面板的左边线给出。 */
+QSplitter#workspaceSplitter {
+    background: transparent;
+}
+QSplitter#workspaceSplitter::handle {
+    background: transparent;
 }
 QWidget#plotPanel {
     background-color: $surface;

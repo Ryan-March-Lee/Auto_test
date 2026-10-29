@@ -9,7 +9,7 @@ import logging
 import sys
 from datetime import datetime, timezone
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
+    QSplitter,
     QStackedWidget,
     QTabWidget,
     QVBoxLayout,
@@ -127,7 +128,7 @@ class MainWindow(QMainWindow):
         return self.coordinator.realtime_buffer.current_index
 
     def init_ui(self):
-        """初始化用户界面：顶部应用栏 + 欢迎页/工作区堆栈 + 全宽状态控制台。"""
+        """初始化用户界面：顶部应用栏 + 欢迎页/工作区堆栈 + 右侧纵向状态面板。"""
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
@@ -150,8 +151,18 @@ class MainWindow(QMainWindow):
         workspace_layout = QVBoxLayout(self.workspace_page)
         workspace_layout.setContentsMargins(0, 0, 0, 0)
         workspace_layout.setSpacing(0)
-        workspace_layout.addWidget(left_widget, 1)
-        self.create_status_panel(workspace_layout)
+        # 左右分栏：左侧标签页占满剩余宽度，右侧状态面板纵向铺满并保持自身宽度。
+        # 分隔条让用户可以按需拉宽日志栏；子控件不可折叠，避免拖出隐藏区域。
+        self.workspace_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.workspace_splitter.setObjectName("workspaceSplitter")
+        self.workspace_splitter.setHandleWidth(6)
+        self.workspace_splitter.setChildrenCollapsible(False)
+        self.workspace_splitter.addWidget(left_widget)
+        self.create_status_panel(self.workspace_splitter)
+        self.workspace_splitter.setStretchFactor(0, 1)
+        self.workspace_splitter.setStretchFactor(1, 0)
+        self.workspace_splitter.setSizes([1180, 420])
+        workspace_layout.addWidget(self.workspace_splitter, 1)
         self.view_stack.addWidget(self.workspace_page)
 
         central_layout = QVBoxLayout(central_widget)
@@ -310,7 +321,7 @@ class MainWindow(QMainWindow):
         return self.run_history_page
 
     def create_status_panel(self, main_layout):
-        """创建状态面板"""
+        """创建右侧状态面板（纵向铺满），并暴露进度条与日志控件。"""
         self.status_panel = StatusPanel(parent=self)
         self.progress_bar = self.status_panel.progress_bar
         self.log_text = self.status_panel.log_text

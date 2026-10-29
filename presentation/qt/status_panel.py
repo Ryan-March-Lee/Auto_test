@@ -1,11 +1,13 @@
 """状态面板及日志滚动行为。
 
-面板是全局唯一的进度与日志区域：一眼看到“测量到哪一步”和“刚刚发生了什么”。
-它只消费主题层的语义属性（按钮层级由 ``variant`` 声明），不在本地写死颜色。
+面板是全局唯一的进度与日志区域，停在工作区右侧并纵向铺满：一眼看到“测量到哪一步”
+和“刚刚发生了什么”，长日志也不需要挤在底部窄条里翻。它只消费主题层的语义属性
+（按钮层级由 ``variant`` 声明），不在本地写死颜色。
 """
 
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QFrame,
@@ -24,30 +26,38 @@ from .theme import set_button_variant
 class StatusPanel(QFrame):
     """拥有全局进度和日志 UI，窗口只消费其公开控件。"""
 
+    #: 侧栏最小宽度：再窄进度条与“清除日志”按钮就挤在一起了。
+    MINIMUM_WIDTH = 300
+
     def __init__(self, *, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("statusPanel")
+        self.setMinimumWidth(self.MINIMUM_WIDTH)
         self.log_user_scrolling = False
         status_layout = QVBoxLayout(self)
-        status_layout.setContentsMargins(16, 10, 16, 12)
+        status_layout.setContentsMargins(14, 14, 14, 14)
         status_layout.setSpacing(8)
 
         progress_layout = QHBoxLayout()
-        progress_layout.setSpacing(10)
-        progress_label = QLabel("测量进度:")
+        progress_layout.setSpacing(8)
+        progress_label = QLabel("测量进度")
         progress_label.setObjectName("statusCaption")
         progress_layout.addWidget(progress_label)
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setFixedWidth(380)
-        self.progress_bar.setTextVisible(False)
-        progress_layout.addWidget(self.progress_bar)
+        progress_layout.addStretch(1)
         self.progress_value_label = QLabel("0%")
         self.progress_value_label.setObjectName("statusCaption")
-        self.progress_value_label.setMinimumWidth(46)
+        self.progress_value_label.setMinimumWidth(40)
+        self.progress_value_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         progress_layout.addWidget(self.progress_value_label)
-        progress_layout.addStretch(1)
-        self.progress_bar.valueChanged.connect(self._on_progress_value_changed)
         status_layout.addLayout(progress_layout)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setMinimumWidth(0)
+        self.progress_bar.valueChanged.connect(self._on_progress_value_changed)
+        status_layout.addWidget(self.progress_bar)
 
         log_header = QHBoxLayout()
         log_header.setSpacing(8)
@@ -56,17 +66,18 @@ class StatusPanel(QFrame):
         log_header.addWidget(log_title)
         log_header.addStretch(1)
         clear_button = QPushButton("清除日志")
-        set_button_variant(clear_button, "secondary")
+        set_button_variant(clear_button, "ghost")
         clear_button.clicked.connect(self.clear_log)
         log_header.addWidget(clear_button)
         status_layout.addLayout(log_header)
 
         self.log_text = QTextEdit()
         self.log_text.setObjectName("logView")
-        self.log_text.setMaximumHeight(120)
+        self.log_text.setReadOnly(True)
+        self.log_text.setMinimumHeight(180)
         self.log_text.setToolTip("实时日志：测量进度、仪器连接与归档结果")
         self.log_text.verticalScrollBar().valueChanged.connect(self.on_log_scroll_changed)
-        status_layout.addWidget(self.log_text)
+        status_layout.addWidget(self.log_text, 1)
 
     def _on_progress_value_changed(self, value: int) -> None:
         """进度条旁的百分比文字：只做展示，不改变进度语义。"""

@@ -1,0 +1,51 @@
+{
+    "schema_version": "1.0",
+    "template": false,
+    "run_id": "20261029-100500-two-supplies",
+    "run_datetime": "2026-10-29T10:05:00+08:00",
+    "operator": "fixture",
+    "instruments": {
+        "signal_generator": {
+            "model": "R&S SMW200A",
+            "visa_address": "TCPIP0::192.168.1.201::inst0::INSTR"
+        },
+        "spectrum_analyzer": {
+            "model": "Ceyear 4082F",
+            "visa_address": "TCPIP0::192.168.1.202::inst0::INSTR"
+        },
+        "power_supplies": {
+            "DP8B1519": {
+                "label": "DP8B1519",
+                "model": "DP832A",
+                "serial": "DP8B214901519",
+                "device_key": "rigol technologies:dp8b214901519",
+                "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR"
+            },
+            "DP8B0885": {
+                "label": "DP8B0885",
+                "model": "DP832A",
+                "serial": "DP8B174400885",
+                "device_key": "rigol technologies:dp8b174400885",
+                "visa_address": "TCPIP0::192.168.1.108::inst0::INSTR"
+            }
+        }
+    },
+    "driver_mode": {
+        "enabled": true,
+        "power_source": "external_ac",
+        "power_channels": []
+    },
+    "dut_power_channels": [
+        {
+            "channel": "DP8B1519/CH1",
+            "role": "gate",
+            "connection": "DP8B1519/CH1 -> DUT 栅极"
+        },
+        {
+            "channel": "DP8B0885/CH2",
+            "role": "drain",
+            "connection": "DP8B0885/CH2 -> DUT 漏极"
+        }
+    ],
+    "notes": "多电源快照：gate 与 drain 来自不同电源，快照自带标签、序列号、型号和地址"
+}

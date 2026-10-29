@@ -1,0 +1,184 @@
+{
+    "schema_version": 1,
+    "source": {
+        "registry": "registry_legacy_v2.json",
+        "config": "config_slots_legacy.json",
+        "migrated_config": "config_slots_migrated_partial.json"
+    },
+    "generated_at": "2026-10-29T10:10:00+08:00",
+    "entries": [
+        {
+            "old_key": "PS1",
+            "legacy_address": "TCPIP0::192.168.1.101::inst0::INSTR",
+            "legacy_enabled": true,
+            "status": "needs_rescan",
+            "new_key": null,
+            "device_key": null,
+            "serial": null,
+            "label": null,
+            "address_hint": null,
+            "reason": "旧条目只有地址，没有序列号；192.168.1.101 不是任何已登记设备的地址，不能推断是哪一台电源，必须重新扫描确认后再绑定",
+            "assignments": [
+                {
+                    "group": "dut_amplifier",
+                    "role_key": "carrier",
+                    "channels": [
+                        "CH1",
+                        "CH2"
+                    ]
+                }
+            ],
+            "channels": {
+                "CH1": {
+                    "role": "gate",
+                    "voltage": {
+                        "value": 2.8,
+                        "protection": 1.0,
+                        "protection_enabled": false
+                    },
+                    "current": {
+                        "value": 0.1,
+                        "protection": 0.0,
+                        "protection_enabled": false
+                    }
+                },
+                "CH2": {
+                    "role": "drain",
+                    "voltage": {
+                        "value": 28.0,
+                        "protection": 30.0,
+                        "protection_enabled": true
+                    },
+                    "current": {
+                        "value": 2.0,
+                        "protection": 2.5,
+                        "protection_enabled": true
+                    }
+                }
+            }
+        },
+        {
+            "old_key": "PS2",
+            "legacy_address": null,
+            "legacy_enabled": false,
+            "status": "unidentifiable",
+            "new_key": null,
+            "device_key": null,
+            "serial": null,
+            "label": null,
+            "address_hint": null,
+            "reason": "旧条目既没有地址也没有序列号，无法识别是哪台设备；DP832A-2 当前未登记角色，也不能凭型号猜测它是电源",
+            "assignments": [],
+            "channels": {
+                "CH1": {
+                    "role": "gate",
+                    "voltage": {
+                        "value": 5.8,
+                        "protection": 1.0,
+                        "protection_enabled": false
+                    },
+                    "current": {
+                        "value": 0.1,
+                        "protection": 1.0,
+                        "protection_enabled": false
+                    }
+                },
+                "CH2": {
+                    "role": "drain",
+                    "voltage": {
+                        "value": 30.0,
+                        "protection": 32.0,
+                        "protection_enabled": true
+                    },
+                    "current": {
+                        "value": 1.0,
+                        "protection": 1.1,
+                        "protection_enabled": true
+                    }
+                }
+            }
+        },
+        {
+            "old_key": "PS3",
+            "legacy_address": null,
+            "legacy_enabled": false,
+            "status": "migrated",
+            "new_key": "DP8B1519",
+            "device_key": "rigol technologies:dp8b214901519",
+            "serial": "DP8B214901519",
+            "label": "DP8B1519",
+            "address_hint": null,
+            "reason": "旧槽位按注册表 role=PS3 命中唯一设备 DP832A-1（序列号 DP8B214901519）；迁移后保持未绑定未启用，需在配置页选中该设备",
+            "assignments": [],
+            "channels": {
+                "CH1": {
+                    "role": "gate",
+                    "voltage": {
+                        "value": 5.3,
+                        "protection": 0.1,
+                        "protection_enabled": false
+                    },
+                    "current": {
+                        "value": 0.1,
+                        "protection": 1.0,
+                        "protection_enabled": false
+                    }
+                },
+                "CH2": {
+                    "role": "drain",
+                    "voltage": {
+                        "value": 30.0,
+                        "protection": 32.0,
+                        "protection_enabled": true
+                    },
+                    "current": {
+                        "value": 1.0,
+                        "protection": 1.1,
+                        "protection_enabled": true
+                    }
+                }
+            }
+        },
+        {
+            "old_key": "PS4",
+            "legacy_address": null,
+            "legacy_enabled": false,
+            "status": "migrated",
+            "new_key": "DP8B0885",
+            "device_key": "rigol technologies:dp8b174400885",
+            "serial": "DP8B174400885",
+            "label": "DP8B0885",
+            "address_hint": null,
+            "reason": "旧槽位按注册表 role=PS4 命中唯一设备 DP832A-3（序列号 DP8B174400885）；迁移后保持未绑定未启用，需在配置页选中该设备",
+            "assignments": [],
+            "channels": {
+                "CH1": {
+                    "role": "gate",
+                    "voltage": {
+                        "value": 2.8,
+                        "protection": 1.0,
+                        "protection_enabled": false
+                    },
+                    "current": {
+                        "value": 0.1,
+                        "protection": 1.0,
+                        "protection_enabled": false
+                    }
+                },
+                "CH2": {
+                    "role": "drain",
+                    "voltage": {
+                        "value": 28.0,
+                        "protection": 30.0,
+                        "protection_enabled": true
+                    },
+                    "current": {
+                        "value": 1.0,
+                        "protection": 1.1,
+                        "protection_enabled": true
+                    }
+                }
+            }
+        }
+    ]
+}

@@ -1,0 +1,229 @@
+{
+    "test_frequencies": [
+        2.4,
+        2.5
+    ],
+    "signal_source": {
+        "start_power": -40.0,
+        "stop_power": -28.0,
+        "step": 0.5
+    },
+    "compression_point": {
+        "type": "5dB"
+    },
+    "driver_mode": {
+        "enabled": true,
+        "power_source": "external_ac"
+    },
+    "attenuator": {
+        "type": "40dB"
+    },
+    "dut_config": {
+        "max_input_power": 31.0,
+        "power_supply_count": 1
+    },
+    "instruments": {
+        "signal_generator": {
+            "model": "R&S SMW200A",
+            "enabled": true,
+            "address": "TCPIP0::192.168.1.201::inst0::INSTR"
+        },
+        "spectrum_analyzer": {
+            "model": "Ceyear 4082F",
+            "enabled": true,
+            "address": "TCPIP0::192.168.1.202::inst0::INSTR"
+        },
+        "power_supplies": {
+            "DP8B1519": {
+                "label": "DP8B1519",
+                "device_key": "rigol technologies:dp8b214901519",
+                "serial": "DP8B214901519",
+                "model": "DP832A",
+                "address": "TCPIP0::192.168.1.102::inst0::INSTR",
+                "enabled": true,
+                "channels": {
+                    "CH1": {
+                        "role": "gate",
+                        "voltage": {
+                            "value": 2.8,
+                            "protection": 1.0,
+                            "protection_enabled": false
+                        },
+                        "current": {
+                            "value": 0.1,
+                            "protection": 0.0,
+                            "protection_enabled": false
+                        }
+                    },
+                    "CH2": {
+                        "role": "drain",
+                        "voltage": {
+                            "value": 28.0,
+                            "protection": 30.0,
+                            "protection_enabled": true
+                        },
+                        "current": {
+                            "value": 2.0,
+                            "protection": 2.5,
+                            "protection_enabled": true
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "power_supply_assignment": {
+        "driver_amplifier": {
+            "power_supply_count": 0,
+            "supplies": {}
+        },
+        "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+                "carrier": {
+                    "supply_id": "DP8B1519",
+                    "name": "DP8B1519",
+                    "channel": [
+                        "CH1",
+                        "CH2"
+                    ]
+                }
+            }
+        }
+    },
+    "schema_version": "1.0",
+    "test_plan": {
+        "schema_version": "1.0",
+        "template": false,
+        "plan_id": "gui-configuration",
+        "frequencies": {
+            "values": [
+                2.4,
+                2.5
+            ],
+            "unit": "GHz"
+        },
+        "signal_source": {
+            "start_power": -40.0,
+            "stop_power": -28.0,
+            "step": 0.5,
+            "unit": "dBm"
+        },
+        "compression_point": {
+            "type": "5dB"
+        },
+        "attenuator": {
+            "value": 40.0,
+            "unit": "dB"
+        },
+        "dut": {
+            "max_input_power": 31.0,
+            "power_roles": {
+                "gate": {
+                    "role": "gate",
+                    "voltage": 2.8,
+                    "current": 0.1,
+                    "voltage_protection": 1.0,
+                    "current_protection": 0.0
+                },
+                "drain": {
+                    "role": "drain",
+                    "voltage": 28.0,
+                    "current": 2.0,
+                    "voltage_protection": 30.0,
+                    "current_protection": 2.5
+                }
+            }
+        },
+        "driver_mode": {
+            "enabled": true,
+            "power_source": "external_ac",
+            "power_roles": {}
+        },
+        "other_parameters": {}
+    },
+    "run_mapping": {
+        "schema_version": "1.0",
+        "template": false,
+        "run_id": null,
+        "run_datetime": null,
+        "operator": null,
+        "instruments": {
+            "signal_generator": {
+                "model": "R&S SMW200A",
+                "visa_address": "TCPIP0::192.168.1.201::inst0::INSTR"
+            },
+            "spectrum_analyzer": {
+                "model": "Ceyear 4082F",
+                "visa_address": "TCPIP0::192.168.1.202::inst0::INSTR"
+            },
+            "power_supplies": {
+                "DP8B1519": {
+                    "label": "DP8B1519",
+                    "model": "DP832A",
+                    "serial": "DP8B214901519",
+                    "device_key": "rigol technologies:dp8b214901519",
+                    "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR"
+                }
+            }
+        },
+        "driver_mode": {
+            "enabled": true,
+            "power_source": "external_ac",
+            "power_channels": []
+        },
+        "dut_power_channels": [
+            {
+                "channel": "DP8B1519/CH1",
+                "role": "gate",
+                "connection": "DP8B1519/CH1 -> DUT 栅极"
+            },
+            {
+                "channel": "DP8B1519/CH2",
+                "role": "drain",
+                "connection": "DP8B1519/CH2 -> DUT 漏极"
+            }
+        ],
+        "notes": null
+    },
+    "device_bindings": {
+        "signal_generator": {
+            "name": "SMW200A-1",
+            "vendor": "Rohde&Schwarz",
+            "model": "SMW200A",
+            "serial": "105462",
+            "device_key": "rohde&schwarz:105462",
+            "visa_address": "TCPIP0::192.168.1.201::inst0::INSTR",
+            "last_ip": "192.168.1.201",
+            "last_port": 5025,
+            "known": true,
+            "source": "scan"
+        },
+        "spectrum_analyzer": {
+            "name": "4082F-1",
+            "vendor": "Ceyear Technologies",
+            "model": "4082F",
+            "serial": "QZNI000866",
+            "device_key": "ceyear technologies:qzni000866",
+            "visa_address": "TCPIP0::192.168.1.202::inst0::INSTR",
+            "last_ip": "192.168.1.202",
+            "last_port": 5025,
+            "known": true,
+            "source": "scan"
+        },
+        "power_supplies": {
+            "DP8B1519": {
+                "name": "DP832A-1",
+                "vendor": "RIGOL TECHNOLOGIES",
+                "model": "DP832A",
+                "serial": "DP8B214901519",
+                "device_key": "rigol technologies:dp8b214901519",
+                "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
+                "last_ip": "192.168.1.102",
+                "last_port": 5555,
+                "known": true,
+                "source": "scan"
+            }
+        }
+    }
+}

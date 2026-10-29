@@ -164,8 +164,13 @@ class DiscoveredDevice:
 
     @property
     def has_role(self) -> bool:
-        """设备表是否登记了固定测试角色；没有角色的设备不能被应用。"""
-        return self.known_role is not None
+        """设备表是否登记了**可用**的测试角色（旧槽位折叠成类别后判断）。
+
+        判据必须和界面“能不能勾选”（``device_applicable``）、配置页“接受哪些角色”用
+        同一个规范取值：登记成未知字面量（例如手改出 ``PS9``）的设备既没有可写入的类别，
+        也不该在结果里被算成“已登记角色”，否则状态列说“已登记”、勾选框却是灰的。
+        """
+        return self.role is not None
 
     @property
     def is_known(self) -> bool:

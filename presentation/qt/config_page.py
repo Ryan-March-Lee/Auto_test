@@ -259,6 +259,9 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         ``PS1``..``PS4`` 为键，地址只能写回设备表登记的那个槽位，所以本步要求电源
         带 ``config_slot``；多台电源的绑定集合（``device_bindings.power_supplies``）
         属于步骤 6，当前一次只接受一台电源并明确拒绝更多，避免“只应用了最后一台”。
+        落键是槽位，所以电源绑定记录里额外写上 ``role`` / ``label`` / ``supply_id``：
+        面板因此显示短标签而不是资产名，绑定键改成 ``supply_id`` 时也只剩这里能说明
+        “这个槽位上现在是哪台电源”。
 
         应用是**整批替换**：本次勾选结果就是完整的设备绑定，没勾选的旧角色会被移除并
         随地址一起失效。这样“更换设备”不会残留上一台设备的连接，电源分配也不会再
@@ -344,8 +347,9 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         for item in entries:
             role = item["role"]
             # 电源暂时仍按旧槽位落键，槽位已在上面校验过；其他角色按角色键。
-            binding_key = supply_slot if role == POWER_SUPPLY_ROLE else role
-            bindings[binding_key] = {
+            is_power_supply = role == POWER_SUPPLY_ROLE
+            binding_key = supply_slot if is_power_supply else role
+            record = {
                 "name": item.get("name"),
                 "vendor": item.get("vendor"),
                 "model": item.get("model"),
@@ -359,8 +363,17 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
                 # 模拟扫描写入的绑定带来源标记，避免演示数据被当成现场设备记录。
                 "source": "simulated" if item.get("simulated") else "scan",
             }
+            if is_power_supply:
+                # 电源是类别不是编号：记录里同时留下类别与短标签（= ``supply_id``）。
+                # 面板据此显示短标签而不是资产名；绑定键从旧槽位迁到 ``supply_id`` 时
+                # （后续步骤），键本身不再说明是哪台电源，这两项是唯一来源。
+                record["role"] = POWER_SUPPLY_ROLE
+                record["label"] = item.get("label")
+                record["supply_id"] = item.get("supply_id")
+            bindings[binding_key] = record
             applied.append(
-                f"{role_label(role) or role}<-"
+                # 消息写实际落键：电源是槽位，三台电源时也必须看得出地址写进了哪一路配置。
+                f"{role_label(binding_key) or binding_key}<-"
                 f"{item.get('supply_id') or item.get('label') or item.get('name') or item.get('ip')}"
             )
         removed = sorted(set(self.device_bindings) - set(bindings))

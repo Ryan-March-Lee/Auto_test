@@ -530,12 +530,22 @@ class DeviceDiscoveryPanel(QGroupBox):
                 status_item.setToolTip(
                     "设备表没有登记这台设备的测试角色（role）；补上后才能应用"
                 )
-            elif device.is_power_supply and not device.config_slot:
-                # 过渡期提示：电源集合仍按旧槽位写入，见 config_page.apply_discovered_devices。
-                status_item.setToolTip(
-                    "这台电源在设备表里没有旧槽位（PS1..PS4）：当前配置只能把地址写回旧槽位，"
-                    "多电源/动态电源绑定属于后续步骤"
-                )
+            elif device.is_power_supply:
+                # 过渡期提示：没有短标签时结果里显示的是资产名，没有旧槽位时地址无处可写。
+                # 电源集合仍按旧槽位写入，见 config_page.apply_discovered_devices。
+                hints = []
+                if not device.label:
+                    hints.append(
+                        "设备表里还没有这台电源的短标签（label），当前显示的是资产名；"
+                        "保存一次设备表后会自动补上"
+                    )
+                if not device.config_slot:
+                    hints.append(
+                        "这台电源在设备表里没有旧槽位（PS1..PS4）：当前配置只能把地址写回旧槽位，"
+                        "多电源/动态电源绑定属于后续步骤"
+                    )
+                if hints:
+                    status_item.setToolTip("；".join(hints))
             self.table.setItem(row, 3, status_item)
             self._rows.append({"device": device, "check": check})
         self._fit_table_width()

@@ -446,6 +446,33 @@ class PowerSupplyIdentityTests(unittest.TestCase):
         # 迁移后的记录没有旧槽位：地址怎么写回配置由后续步骤决定。
         self.assertIsNone(device.config_slot)
 
+    def test_has_role_follows_the_folded_category(self):
+        """“有没有角色”必须和界面可勾选、配置页接受的角色同源。
+
+        旧槽位（``PS3``）折叠成 ``power_supply``，算有角色；登记成未知字面量（手改出
+        ``PS9``）没有可写入的类别，不能算成“已登记角色”，否则状态列说“已登记”、
+        勾选框却是灰的，扫描摘要还会把它算进“可应用”。
+        """
+        legacy = self._scan(
+            self.LEGACY_REGISTRY, {("10.8.8.1", 5555): DP832A_IDN}
+        ).devices[0]
+        self.assertTrue(legacy.has_role)
+
+        unknown = DiscoveredDevice(
+            ip=legacy.ip,
+            port=legacy.port,
+            idn=legacy.idn,
+            identity=legacy.identity,
+            known_name=legacy.known_name,
+            status=legacy.status,
+            known_role="PS9",
+        )
+        self.assertIsNone(unknown.role)
+        self.assertFalse(unknown.has_role)
+        # 原字面量仍留在诊断序列化里，便于发现设备表被手改错。
+        self.assertEqual(unknown.to_dict()["registry_role"], "PS9")
+        self.assertIsNone(unknown.to_dict()["role"])
+
     def test_two_supplies_are_reported_independently(self):
         result = self._scan(
             self.MIGRATED_REGISTRY,

@@ -270,6 +270,26 @@ class DiscoveryPanelTests(unittest.TestCase):
         self.assertFalse(panel.apply_btn.isEnabled())
         self.assertIn("未分配角色 1 台", panel.status_label.text())
 
+    def test_power_supply_without_a_label_says_why_the_asset_name_is_shown(self):
+        """旧设备表还没有短标签：结果里显示资产名，状态列说明原因。
+
+        这台电源有旧槽位，所以不该同时出现“地址无处可写”的过渡提示——两件事分开写，
+        用户才知道该做什么。
+        """
+        panel = self.make_panel()
+
+        self.run_scan(panel)
+
+        rows = {
+            panel.table.item(row, 1).text(): row
+            for row in range(panel.table.rowCount())
+        }
+        row = rows["DP832A-1（DP832A，电源）"]
+        tip = panel.table.item(row, 3).toolTip()
+        self.assertIn("短标签", tip)
+        self.assertIn("资产名", tip)
+        self.assertNotIn("没有旧槽位", tip)
+
     def test_checking_a_device_is_enough_without_choosing_a_role(self):
         """角色来自设备表：勾选后直接应用，不会出现“未选择测试角色”。"""
         panel = self.make_panel()
@@ -570,6 +590,18 @@ class PowerSupplyDiscoveryTests(unittest.TestCase):
         for row in rows.values():
             self.assertTrue(panel.table.item(row, 0).flags() & Qt.ItemIsUserCheckable)
         self.assertTrue(panel.apply_btn.isEnabled())
+
+    def test_migrated_supply_explains_that_its_address_has_nowhere_to_go(self):
+        """迁移后的设备表没有旧槽位：状态列说明“地址无处可写”，不再提示缺短标签。"""
+        panel = self.make_panel()
+
+        self.run_scan(panel)
+
+        rows = self.rows(panel)
+        row = rows["DP8B1519（DP832A，电源）"]
+        tip = panel.table.item(row, 3).toolTip()
+        self.assertIn("没有旧槽位", tip)
+        self.assertNotIn("短标签", tip)
 
     def test_two_supplies_are_applied_independently_without_a_duplicate_role_error(self):
         panel = self.make_panel()
@@ -911,6 +943,41 @@ class ConfigPageDiscoveryIntegrationTests(unittest.TestCase):
         self.assertEqual(binding["device_key"], "rigol technologies:dp8b214901519")
         self.assertEqual(binding["visa_address"], "TCPIP0::192.168.1.102::inst0::INSTR")
         self.assertEqual(page.get_enabled_power_supplies(), ["PS3"])
+
+    def test_power_supply_binding_keeps_the_short_label_and_names_its_slot(self):
+        """键还是旧槽位，所以记录自己要说明是哪台电源：短标签、supply_id 与类别都留下。"""
+        page = self.make_page()
+
+        page.apply_discovered_devices(
+            [
+                {
+                    "role": "power_supply",
+                    "label": "DP8B1519",
+                    "supply_id": "DP8B1519",
+                    "config_slot": "PS3",
+                    "address": "TCPIP0::192.168.1.102::inst0::INSTR",
+                    "name": "DP832A-1",
+                    "vendor": "RIGOL TECHNOLOGIES",
+                    "model": "DP832A",
+                    "serial": "DP8B214901519",
+                    "device_key": "rigol technologies:dp8b214901519",
+                    "ip": "192.168.1.102",
+                    "port": 5555,
+                    "known": True,
+                }
+            ]
+        )
+
+        binding = page.device_bindings["PS3"]
+        self.assertEqual(binding["role"], "power_supply")
+        self.assertEqual(binding["label"], "DP8B1519")
+        self.assertEqual(binding["supply_id"], "DP8B1519")
+        # “当前配置”显示短标签而不是资产名，与结果表一致。
+        summary = page.discovery_panel.bindings_label.text()
+        self.assertIn("电源 PS3 ← DP8B1519", summary)
+        self.assertNotIn("DP832A-1", summary)
+        # 消息写实际落键：三台电源时也要看得出地址写进了哪一路配置。
+        self.assertIn("电源 PS3<-DP8B1519", page.discovery_panel.status_label.text())
 
     def test_two_power_supplies_in_one_batch_are_rejected_instead_of_collapsing(self):
         """多电源绑定集合属于步骤 6：当前明确拒绝，不能只应用最后一台。"""

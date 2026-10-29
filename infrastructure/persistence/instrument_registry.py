@@ -8,26 +8,27 @@
 文件结构（``instruments.json``）::
 
     {
-      "schema_version": 1,
+      "schema_version": 3,
       "updated_at": "2026-10-28T14:39:46+08:00",
       "instruments": [
         {
-          "name": "SMW200A-1",          # 资产名 = 型号-同型号序号，永久稳定
-          "vendor": "Rohde&Schwarz",
-          "model": "SMW200A",
+          "name": "DP832A-1",           # 资产名 = 型号-同型号序号，永久稳定
+          "vendor": "RIGOL TECHNOLOGIES",
+          "model": "DP832A",
           "model_index": 1,
-          "serial": "105462",           # 唯一身份，永不参与匹配的只有 IP 和名称
-          "order_no": "1412.0000K02",
-          "firmware": "5.20.043.47",
-          "options": ["SMW-B9", "SMW-K526"],
-          "role": "signal_generator",   # 固定测试角色，界面直接按它写入连接配置
+          "serial": "DP8B214901519",    # 唯一身份，永不参与匹配的只有 IP 和名称
+          "label": "DP8B1519",          # 现场短标签 = 配置里的 supply_id，首次生成后冻结
+          "order_no": null,
+          "firmware": "00.01.16.00.02",
+          "options": [],
+          "role": "power_supply",       # 设备类别（不含“第几台”），多台电源靠 label 区分
           "status": "online",
-          "current_ip": "192.168.1.201",
+          "current_ip": "192.168.1.102",
           "notes": null,
           "first_seen_at": "...",
           "last_seen_at": "...",
           "known_ips": [               # 历史地址，最近在前，最多 MAX_KNOWN_IPS 条
-            {"ip": "...", "mac": "...", "idn_port": 5025, "visa_address": "...", "last_seen": "..."}
+            {"ip": "...", "mac": "...", "idn_port": 5555, "visa_address": "...", "last_seen": "..."}
           ]
         }
       ]
@@ -39,13 +40,21 @@
 - ``current_ip`` 只是当前连接地址；IP 变化时旧地址进 ``known_ips`` 并保留最近若干条。
 - 资产名和同型号序号一经分配不再改动；退役设备保留记录与序号，新设备取最大序号 + 1。
 - ``role`` 是这台设备在测试链路里的类别（``signal_generator`` / ``spectrum_analyzer`` /
-  ``power_supply``）。旧注册表里的槽位编号 ``PS1``..``PS4`` 只在读取时被识别；规范化入口是
-  ``domain.instruments.models.canonical_role``，但**本模块的保存路径还没有接上它**（属于后续
-  迁移步骤）：现在读出来是什么字面量就存什么，不改写角色、也不生成 ``label``。类别不含
-  “第几台”，多台电源靠各自的短标签区分。现场每台仪器只承担一种类别，因此角色随设备登记
-  一次，界面不再让用户逐台选择；空值与未知角色都视为“未分配角色”，不允许绑定。
-- 写入使用 :func:`write_json_atomic`（临时文件 + 原子替换），中断不会留下半截文件。
-- 本模块不发起网络探测，只负责读写设备表；扫描逻辑属于后续的发现模块。
+  ``power_supply``），不含“第几台”：多台电源共用 ``power_supply``，靠各自的短标签
+  （``label``）区分。现场每台仪器只承担一种类别，因此角色随设备登记一次，界面不再让用户
+  逐台选择；空值与未知角色都视为“未分配角色”，不允许绑定。
+- 读写分工：**读取兼容旧 schema**（``schema_version`` 1/2、``role: "PS1".."PS4"``、没有
+  ``label``），读出来仍是旧字面量，好让按旧槽位工作的调用方（设备发现面板、配置页，属于
+  步骤 5、6）继续可用；**保存统一写新字段**，写盘前由 :func:`_canonical_document` 迁移：
+  旧槽位经 ``domain.instruments.models.canonical_role`` 折叠成 ``power_supply``，登记为
+  ``power_supply`` 却没有标签的设备按序列号补生成 ``label``（规则见
+  :mod:`domain.instruments.labels`）。未登记角色的设备不生成标签、也不猜成电源。
+- 迁移只改 ``role`` 与 ``label``：资产名、序列号、地址和人工补充的字段逐字节保留。
+- 标签冲突阻止保存并报出冲突的两台设备，绝不覆盖、也不静默改名；无法从序列号派生标签时
+  同样阻止保存并指出是哪台设备。
+- 写入使用 :func:`write_json_atomic`（临时文件 + 原子替换），中断不会留下半截文件；迁移在
+  内存副本上完成，失败时内存文档与原文件都保持迁移前的样子。
+- 本模块不发起网络探测，只负责读写设备表；扫描逻辑属于发现模块。
 """
 
 from __future__ import annotations
@@ -56,13 +65,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from domain.instruments.labels import PowerSupplyLabelError, generate_supply_label
 from domain.instruments.models import (
+    POWER_SUPPLY_ROLE,
     TEST_ROLES,
     DeviceStatus,
     Instrument,
     InstrumentEndpoint,
     InstrumentIdentity,
     build_instrument_name,
+    canonical_role,
     make_device_key,
     normalize_model,
     normalize_role,
@@ -73,9 +85,15 @@ from domain.instruments.models import (
 from infrastructure.filesystem.atomic_json import read_json, write_json_atomic
 from infrastructure.filesystem.paths import DEFAULT_PATHS, PathLike
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+# 读得动的旧版本：两者都缺 ``label``、电源用槽位编号 ``PS1``..``PS4``。读取时按旧字面量返回，
+# 保存时由 :func:`_canonical_document` 迁移；比当前版本更新的文件直接报错，避免降级覆盖。
+LEGACY_SCHEMA_VERSIONS = (1, 2)
 DEFAULT_REGISTRY_FILENAME = "instruments.json"
 MAX_KNOWN_IPS = 3
+
+# 标签同时是 ``supply_id``，会被拼成 ``supply_id/CHx``；含空白或 ``/`` 的标签会在路由处被截断。
+_LABEL_SEPARATOR = "/"
 
 _VALID_STATUSES = {status.value for status in DeviceStatus}
 
@@ -99,6 +117,73 @@ def _empty_document() -> dict[str, Any]:
 
 def _entry_device_key(entry: Mapping[str, Any]) -> str:
     return make_device_key(entry.get("vendor"), entry.get("serial"))
+
+
+def _declared_entry_role(entry: Mapping[str, Any]) -> str | None:
+    """设备表条目写回时的 ``role`` 取值。
+
+    旧槽位 ``PS1``..``PS4`` 经 :func:`canonical_role` 折叠成 ``power_supply``；未登记角色写
+    ``None``；**认不出来的角色原样返回**，交给 :meth:`InstrumentRegistry._validate` 报错——
+    迁移不能顺手把写错的角色丢掉，否则手改 JSON 的错误会静默消失。
+    """
+    raw = entry.get("role")
+    role = canonical_role(raw)
+    if role is not None:
+        return role
+    return None if not normalize_text(raw) else raw
+
+
+def _canonical_document(document: Mapping[str, Any]) -> dict[str, Any]:
+    """返回迁移到当前 schema 的设备表副本：折叠旧角色、为电源补生成短标签。
+
+    只改 ``role`` 与 ``label`` 两个字段，其余内容（资产名、序列号、地址、人工补充的字段）
+    原样保留。规则：
+
+    1. ``role``：旧槽位折叠成 ``power_supply``，未登记角色写 ``null``，未知角色原样留下
+       等校验报错；
+    2. ``label``：每条记录都写这个字段（没有标签写 ``null``）；登记为 ``power_supply`` 却没有
+       标签的设备，按序列号生成一个短标签；已有标签（含退役设备）只读不写，冲突按
+       :mod:`domain.instruments.labels` 依次加宽，全部候选都被占用时抛
+       :class:`InstrumentRegistryError`。未登记角色的设备不生成标签。
+
+    纯函数：不改入参，也不写盘；由 :meth:`InstrumentRegistry.save` 在内存副本上调用。
+    """
+    migrated = copy.deepcopy(dict(document))
+    entries = migrated.get("instruments")
+    if not isinstance(entries, list):
+        # 结构错误由 _validate 报“instruments 字段必须是数组”，这里不重复判定。
+        return migrated
+    for entry in entries:
+        if isinstance(entry, dict):
+            entry["role"] = _declared_entry_role(entry)
+            # 每条记录都写 ``label``（没有标签就是 ``null``），文件自身就能说明“这台还没有标签”。
+            entry["label"] = normalize_text(entry.get("label")) or None
+    # 已有标签一律冻结：迁移只填空缺，不改写、不回收。
+    taken = [
+        normalize_text(entry.get("label"))
+        for entry in entries
+        if isinstance(entry, Mapping)
+    ]
+    for entry in entries:
+        if not isinstance(entry, dict) or entry.get("role") != POWER_SUPPLY_ROLE:
+            continue
+        if normalize_text(entry.get("label")):
+            continue
+        serial = normalize_serial(entry.get("serial"))
+        if not serial:
+            # 缺序列号的记录由 _validate 报错；没有身份就没有派生标签的依据。
+            continue
+        name = normalize_text(entry.get("name")) or "(未命名记录)"
+        try:
+            label = generate_supply_label(serial, taken)
+        except PowerSupplyLabelError as error:
+            raise InstrumentRegistryError(
+                f"设备 {name}（序列号 {serial}）无法生成电源短标签：{error}"
+            ) from error
+        entry["label"] = label
+        taken.append(label)
+    return migrated
+
 
 
 def _to_endpoint(entry: Mapping[str, Any], current_ip: str | None) -> InstrumentEndpoint:
@@ -136,10 +221,10 @@ def _to_instrument(entry: Mapping[str, Any]) -> Instrument:
         first_seen_at=normalize_text(entry.get("first_seen_at")) or None,
         last_seen_at=normalize_text(entry.get("last_seen_at")) or None,
         notes=normalize_text(entry.get("notes")) or None,
-        # 短标签只从注册表读取，不在这里生成：标签由登记动作写入并冻结（后续迁移步骤）。
+        # 短标签只从注册表读取，不在这里生成：标签由登记/迁移动作写入并冻结。
         label=normalize_text(entry.get("label")) or None,
         # 旧槽位 ``PS1``..``PS4`` 原样读出，谁要写回谁负责用 ``canonical_role`` 折叠；
-        # 读取侧不折叠，否则按旧角色找到设备的既有调用会全部失配。
+        # 读取侧不折叠，否则按旧角色找到设备的既有调用（发现面板、配置页）会全部失配。
         role=normalize_role(entry.get("role")),
         endpoints=endpoints,
     )
@@ -167,6 +252,14 @@ class InstrumentRegistry:
         return cls(path=target, document=payload)
 
     def save(self) -> Path:
+        """迁移为当前 schema 后写入设备表。
+
+        迁移在内存副本上完成（见 :func:`_canonical_document`）：旧槽位角色折叠成
+        ``power_supply``、登记为电源却缺标签的设备补生成 ``label``。只有迁移成功才替换内存
+        文档，所以标签冲突、序列号无法派生标签或结构不合法时，内存文档与原文件都保持迁移前
+        的样子，原子写入再保证磁盘上不会出现半截文件。
+        """
+        self._document = _canonical_document(self._document)
         self._validate()
         self._document["schema_version"] = SCHEMA_VERSION
         self._document["updated_at"] = utc_now_iso()
@@ -193,12 +286,28 @@ class InstrumentRegistry:
     # ---------- 校验 ----------
 
     def _validate(self) -> None:
+        declared_version = self._document.get("schema_version")
+        if declared_version is not None:
+            if (
+                not isinstance(declared_version, int)
+                or isinstance(declared_version, bool)
+                or declared_version < 1
+            ):
+                raise InstrumentRegistryError(
+                    f"设备表 schema_version 必须是正整数，实际 {declared_version!r}"
+                )
+            if declared_version > SCHEMA_VERSION:
+                raise InstrumentRegistryError(
+                    f"设备表 schema_version={declared_version} 高于本版本支持的 "
+                    f"{SCHEMA_VERSION}；请升级程序后再读取"
+                )
         entries = self._document.get("instruments")
         if not isinstance(entries, list):
             raise InstrumentRegistryError("设备表的 instruments 字段必须是数组")
         seen_names: dict[str, int] = {}
         seen_keys: dict[str, int] = {}
         seen_slots: dict[tuple[str, int], str] = {}
+        seen_labels: dict[str, str] = {}
         for index, entry in enumerate(entries):
             where = f"instruments[{index}]"
             if not isinstance(entry, dict):
@@ -228,6 +337,22 @@ class InstrumentRegistry:
                 raise InstrumentRegistryError(
                     f"{where}.status 必须是 {sorted(_VALID_STATUSES)} 之一，实际 {status!r}"
                 )
+            # 标签就是 ``supply_id``：含空白或 ``/`` 会把 ``supply_id/CHx`` 路由截断。
+            # 标签冲突必须阻止保存并报出两台设备，绝不覆盖、也不静默改名。
+            label = normalize_text(entry.get("label"))
+            if label:
+                if _LABEL_SEPARATOR in label or any(char.isspace() for char in label):
+                    raise InstrumentRegistryError(
+                        f"{where}.label={label!r} 不能作为 supply_id：不得含空白"
+                        f"或 {_LABEL_SEPARATOR!r}"
+                    )
+                label_key = label.upper()
+                if label_key in seen_labels:
+                    raise InstrumentRegistryError(
+                        f"标签冲突: {label!r} 同时属于 {seen_labels[label_key]} 与 {name}；"
+                        "电源短标签必须唯一，请人工改名后重试"
+                    )
+                seen_labels[label_key] = name
             raw_role = entry.get("role")
             if raw_role not in (None, "") and normalize_role(raw_role) is None:
                 raise InstrumentRegistryError(
@@ -336,6 +461,9 @@ class InstrumentRegistry:
         ``options`` / ``firmware`` / ``order_no`` / ``role`` 采用“有值才覆盖”的语义：
         传 ``None`` 或不传表示本次没有新的值、保留原值，避免一次扫描把已登记的角色清空。
         需要显式清除角色时用 :meth:`set_role` 传 ``None``。
+
+        这里写入的 ``role`` 仍是读取侧认识的取值（旧槽位原样保留，面板还按它工作）；折叠成
+        ``power_supply`` 发生在 :meth:`save` 的迁移里，与读取侧共用同一个 ``canonical_role``。
         """
         timestamp = seen_at or utc_now_iso()
         device_key = identity.device_key
@@ -362,6 +490,7 @@ class InstrumentRegistry:
                     "model": model,
                     "model_index": model_index,
                     "serial": normalize_serial(identity.serial),
+                    "label": None,
                     "order_no": identity.order_no,
                     "firmware": firmware_text,
                     "options": option_list or [],
@@ -458,6 +587,9 @@ class InstrumentRegistry:
 
         角色只由设备表决定：扫描结果、面板与配置写入都读这一个字段，不再有第二处
         “用户选择”的角色来源。``role=None`` 表示这台设备暂时不承担任何测试角色。
+
+        旧槽位 ``PS1``..``PS4`` 仍可作为输入（兼容旧调用），字面量先原样写入内存；
+        :meth:`save` 时统一折叠成 ``power_supply``，并为该设备补生成短标签。
         """
         name = instrument if isinstance(instrument, str) else instrument.name
         entry = self._find_entry(lambda item: normalize_text(item.get("name")) == normalize_text(name))
@@ -482,6 +614,7 @@ __all__ = [
     "DEFAULT_REGISTRY_FILENAME",
     "InstrumentRegistry",
     "InstrumentRegistryError",
+    "LEGACY_SCHEMA_VERSIONS",
     "MAX_KNOWN_IPS",
     "SCHEMA_VERSION",
     "default_registry_path",

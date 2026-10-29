@@ -598,13 +598,6 @@ QTextEdit#logView {
     font-size: $font_small;
     padding: 6px 8px;
 }
-QTextEdit#chatView {
-    background-color: $surface;
-    border: 1px solid $border;
-    border-radius: 8px;
-    padding: 8px 10px;
-}
-
 /* ===== 按钮：凸起的“操作元件”，层级由 variant 声明 =====
    默认（次要）按钮是白色面 + 极轻竖向渐变 + 稍深的下边，看上去被托起一格；
    悬停转主色描边与主色文字，按下填充浅主色并下沉。与输入框的差别因此来自表面
@@ -816,27 +809,10 @@ QScrollBar::add-page, QScrollBar::sub-page {
     background: transparent;
 }
 
-/* ===== 分割条与状态区 ===== */
-QSplitter::handle {
-    background: transparent;
-}
-QSplitter::handle:horizontal {
-    width: 8px;
-}
-QSplitter::handle:vertical {
-    height: 8px;
-}
-QSplitter::handle:hover {
-    background-color: $primary_soft;
-}
+/* ===== 状态区 ===== */
 QFrame#statusPanel {
     background-color: $surface;
     border-top: 1px solid $border;
-}
-QWidget#chatPanel {
-    background-color: $surface;
-    border: 1px solid $border;
-    border-radius: 10px;
 }
 QWidget#plotPanel {
     background-color: $surface;

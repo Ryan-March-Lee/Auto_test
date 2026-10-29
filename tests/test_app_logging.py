@@ -90,7 +90,7 @@ class AppLoggingTests(unittest.TestCase):
 
     def test_authorization_bearer_token_is_redacted(self):
         log_path = app_logging.setup_logging(self.directory)
-        app_logging.get_logger("assistant").warning(
+        app_logging.get_logger("http_client").warning(
             "请求失败 Authorization: Bearer SECRET-BEARER-123")
         self._flush()
         content = log_path.read_text(encoding="utf-8")
@@ -113,7 +113,7 @@ class AppLoggingTests(unittest.TestCase):
 
     def test_secrets_are_redacted(self):
         log_path = app_logging.setup_logging(self.directory)
-        app_logging.get_logger("assistant").error(
+        app_logging.get_logger("http_client").error(
             "请求失败 api_key=abc123deadbeef token: xyz789")
         self._flush()
         content = log_path.read_text(encoding="utf-8")
@@ -123,7 +123,7 @@ class AppLoggingTests(unittest.TestCase):
 
     def test_url_credentials_are_redacted(self):
         log_path = app_logging.setup_logging(self.directory)
-        app_logging.get_logger("assistant").warning(
+        app_logging.get_logger("http_client").warning(
             "连接 http://user:secret@192.168.1.5:11434 失败")
         self._flush()
         content = log_path.read_text(encoding="utf-8")

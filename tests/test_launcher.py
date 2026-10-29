@@ -202,7 +202,7 @@ class LauncherTests(unittest.TestCase):
         with patch.object(launcher, "check_packages") as check_packages:
             check_packages.side_effect = original_packages
             packages = launcher.check_packages(silent=True)
-        self.assertTrue(packages["requests"]["installed"])
+        self.assertTrue(packages["numpy"]["installed"])
 
     def test_environment_name_uses_python_prefix_when_conda_variable_is_missing(self):
         with patch.dict("os.environ", {}, clear=True), patch.object(sys, "prefix", r"C:\envs\Auto_test"):

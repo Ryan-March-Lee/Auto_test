@@ -272,30 +272,9 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         )
 
 
-class _StalledAssistantWorker:
-    """永不自己结束的助手线程替身：用于固定“超时保持窗口打开、引用不丢”。"""
-
-    def __init__(self):
-        self.running = True
-        self.interruption_requested = False
-        self.deleted = False
-
-    def isRunning(self):
-        return self.running
-
-    def requestInterruption(self):
-        self.interruption_requested = True
-
-    def wait(self, timeout_ms=None):
-        return not self.running
-
-    def deleteLater(self):
-        self.deleted = True
-
-
 @unittest.skipUnless(gui_dependencies_available(), "当前环境缺少完整 GUI 依赖")
 class MainWindowMigrationResidueFlowTests(unittest.TestCase):
-    """步骤 12：驱动模式说明刷新与助手面板在真实窗口里的行为。"""
+    """步骤 12：驱动模式说明刷新在真实窗口里的行为。"""
 
     @classmethod
     def setUpClass(cls):
@@ -340,42 +319,6 @@ class MainWindowMigrationResidueFlowTests(unittest.TestCase):
 
         window.config_page.driver_mode_changed.emit(False)
         self.assertNotIn("驱动功放", window.amplifier_page.instruction_text.toPlainText())
-
-    def test_chat_panel_toggle_greets_once_and_keeps_the_window_state(self):
-        window = self._window()
-
-        window.toggle_chat_panel()
-        first = window.chat_panel.chat_display.toPlainText()
-        self.assertTrue(window.chat_visible)
-        self.assertIn("AI助手", first)
-
-        window.toggle_chat_panel()
-        self.assertFalse(window.chat_visible)
-        self.assertEqual(window.chat_panel.chat_display.toPlainText(), first)
-
-        # 再次打开不会重复堆叠同一段欢迎语。
-        window.toggle_chat_panel()
-        self.assertEqual(window.chat_panel.chat_display.toPlainText(), first)
-
-    def test_close_shuts_the_assistant_thread_down(self):
-        window = self._window()
-
-        self.assertTrue(window.close())
-        self.assertFalse(window.chat_panel.is_busy())
-
-    def test_close_keeps_the_window_open_while_the_assistant_is_replying(self):
-        window = self._window()
-        worker = _StalledAssistantWorker()
-        window.chat_panel.chat_worker = worker
-
-        self.assertFalse(window.close())
-        self.assertIs(window.chat_panel.chat_worker, worker)
-        self.assertTrue(worker.interruption_requested)
-
-        # 线程自己结束后再次关闭即可通过，引用不丢。
-        worker.running = False
-        self.assertTrue(window.close())
-        self.assertIsNone(window.chat_panel.chat_worker)
 
 
 if __name__ == "__main__":

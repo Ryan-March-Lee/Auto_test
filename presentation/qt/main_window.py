@@ -9,7 +9,7 @@ import logging
 import sys
 from datetime import datetime, timezone
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
-    QSplitter,
     QStackedWidget,
     QTabWidget,
     QVBoxLayout,
@@ -27,7 +26,6 @@ from PySide6.QtWidgets import (
 from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService
 from infrastructure.logging.app_logging import get_logger, setup_logging
 from presentation.qt.application_coordinator import ApplicationCoordinator
-from presentation.qt.assistant.chat_panel import ChatPanel
 from presentation.qt.composition import build_device_scanner_factory
 from presentation.qt.config_page import ConfigPage
 from presentation.qt.connection_dialog import ConnectionDialog
@@ -60,9 +58,6 @@ def apply_light_theme(app: QApplication) -> None:
 
 class MainWindow(QMainWindow):
     """主窗口：只组装 Qt 界面、注册页面并连接信号。"""
-
-    # 助手线程关闭的等待上限：助手是可选能力，等不到就保持窗口打开让用户重试。
-    ASSISTANT_SHUTDOWN_TIMEOUT_MS = 3000
 
     def __init__(self, config_path=None, *, paths: PathService | None = None):
         super().__init__()
@@ -141,8 +136,6 @@ class MainWindow(QMainWindow):
         self.welcome_page.mode_selected.connect(self._enter_test_mode)
         self.view_stack.addWidget(self.welcome_page)
 
-        main_splitter = QSplitter(Qt.Horizontal)
-        main_splitter.setChildrenCollapsible(False)
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         left_layout.setContentsMargins(16, 12, 12, 12)
@@ -152,22 +145,12 @@ class MainWindow(QMainWindow):
         self.tab_widget.setDocumentMode(True)
         left_layout.addWidget(self.tab_widget)
         self._register_pages()
-        main_splitter.addWidget(left_widget)
-
-        self.chat_panel = ChatPanel(self, paths=self.paths)
-        self.chat_panel.setMinimumWidth(350)
-        self.chat_panel.setMaximumWidth(600)
-        main_splitter.addWidget(self.chat_panel)
-
-        main_splitter.setSizes([900, 350])
-        main_splitter.setStretchFactor(0, 3)
-        main_splitter.setStretchFactor(1, 1)
 
         self.workspace_page = QWidget()
         workspace_layout = QVBoxLayout(self.workspace_page)
         workspace_layout.setContentsMargins(0, 0, 0, 0)
         workspace_layout.setSpacing(0)
-        workspace_layout.addWidget(main_splitter, 1)
+        workspace_layout.addWidget(left_widget, 1)
         self.create_status_panel(workspace_layout)
         self.view_stack.addWidget(self.workspace_page)
 
@@ -176,9 +159,6 @@ class MainWindow(QMainWindow):
         central_layout.setSpacing(0)
         central_layout.addWidget(self._build_app_header())
         central_layout.addWidget(self.view_stack)
-
-        self.chat_panel.hide()
-        self.chat_visible = False
 
         self.view_stack.setCurrentWidget(self.welcome_page)
 
@@ -331,13 +311,9 @@ class MainWindow(QMainWindow):
 
     def create_status_panel(self, main_layout):
         """创建状态面板"""
-        self.status_panel = StatusPanel(
-            chat_toggle_callback=self.toggle_chat_panel,
-            parent=self,
-        )
+        self.status_panel = StatusPanel(parent=self)
         self.progress_bar = self.status_panel.progress_bar
         self.log_text = self.status_panel.log_text
-        self.ai_assistant_btn = self.status_panel.ai_assistant_btn
         main_layout.addWidget(self.status_panel)
 
     # ---- 配置与运行入口（逻辑在协调器，窗口只转发） ----
@@ -469,18 +445,6 @@ class MainWindow(QMainWindow):
         page = getattr(self, "run_history_page", None)
         return None if page is None else page.refresh()
 
-    def toggle_chat_panel(self):
-        """切换聊天面板显示/隐藏；欢迎语由面板自己负责。"""
-        visible = not self.chat_visible
-        if visible:
-            self.chat_panel.show()
-            self.chat_panel.show_welcome_message()
-        else:
-            self.chat_panel.hide()
-        self.ai_assistant_btn.setChecked(visible)
-        self.ai_assistant_btn.setText("💬 隐藏CHAT" if visible else "💬 CHAT")
-        self.chat_visible = visible
-
     def _refresh_amplifier_instruction_text(self, driver_enabled):
         """驱动模式变化后刷新功放页连接说明。
 
@@ -520,12 +484,10 @@ class MainWindow(QMainWindow):
 
         确认只在开头做一次：一旦用户同意退出，停止测量与连接线程就是已提交的
         动作，不会在后续步骤里再被“取消退出”打断（否则会出现“测量已停、窗口还在”
-        的半提交状态）。之后只剩三类明确的失败询问：停止超时、清理未完成与助手
-        线程仍在生成回复。
+        的半提交状态）。之后只剩两类明确的失败询问：停止超时与清理未完成。
 
-        顺序固定为“硬件安全清理 → 助手线程收尾 → 关闭页面 → 接受关闭”：助手是
-        可选能力，它的收尾失败绝不能让仪器端口的安全释放被跳过，但也不能在助手
-        线程仍在运行时销毁窗口（Qt 会带着运行中的 QThread 一起析构）。
+        顺序固定为“硬件安全清理 → 关闭页面 → 接受关闭”，仪器端口的安全释放
+        绝不能因为后续步骤失败而被跳过。
         """
         measurement_active = self.measurement_controller.state.is_active
         worker_running = self.coordinator.instrument_worker_running()
@@ -541,9 +503,6 @@ class MainWindow(QMainWindow):
             return
         self.coordinator.release_instrument_port()
         if self.coordinator.has_unreleased_ports() and not self._confirm_exit_with_unreleased_ports():
-            event.ignore()
-            return
-        if not self._shutdown_assistant():
             event.ignore()
             return
         self._disconnect_page_signals()
@@ -562,16 +521,6 @@ class MainWindow(QMainWindow):
             self.tab_widget.currentChanged.disconnect(self._on_page_changed)
         except (RuntimeError, TypeError):
             pass
-
-    def _shutdown_assistant(self) -> bool:
-        """协作关闭助手回复线程；失败时保持窗口打开以便重试。"""
-        if self.chat_panel.shutdown(self.ASSISTANT_SHUTDOWN_TIMEOUT_MS):
-            return True
-        self.add_log_message(
-            "助手回复仍在生成，未能在关闭期限内停止；窗口保持打开。"
-            "请等当前回复结束后重试关闭（单次请求最长约 60 秒）。"
-        )
-        return False
 
     def _confirm_exit(self) -> bool:
         """退出前的唯一确认点；返回 True 表示后续停止动作已获授权。"""

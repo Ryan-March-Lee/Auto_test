@@ -33,7 +33,7 @@ MODEL_PATTERNS = {
     "amplifier_measurement_model": "amplifier_measurement_model.json",
 }
 REPORT_PATTERNS = ("*.html", "*.pdf", "*.csv")
-PACKAGE_NAMES = ("PySide6", "matplotlib", "numpy", "pandas", "seaborn", "pyvisa", "markdown", "requests")
+PACKAGE_NAMES = ("PySide6", "matplotlib", "numpy", "pandas", "seaborn", "pyvisa")
 
 
 def _latest(paths: Iterable[Path]) -> Optional[Path]:

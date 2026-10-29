@@ -55,7 +55,6 @@ FORMAL_IMPORT_ROOTS = {
     "presentation": "Qt 表现层",
     "app": "应用装配：运行上下文、事件、取消与 GUI 运行时",
     "analysis": "只读分析与导出计算",
-    "assistant": "可选助手能力，只允许表现层使用，不得进入正式测量链路",
 }
 
 # 正式公共 API：模块路径 -> 对调用方承诺的公开名称。
@@ -365,8 +364,6 @@ INTERNAL_MODULES = {
     "application.inputs": "结果输入读取包",
     "application.inputs.result_reading": "报告模型构建（内部实现）",
     "application.lifecycle": "测量生命周期包",
-    "assistant.llm": "可选助手 LLM 客户端",
-    "assistant.storage": "可选助手历史存储",
     "domain.instruments": "设备表领域包",
     "domain.instruments.models": "仪器身份解析（序列号唯一标识）、地址别名与在线状态模型",
     "domain.models": "运行、测试方案与会话生命周期模型；测量结果契约在 application.dto",
@@ -391,9 +388,6 @@ INTERNAL_MODULES = {
     "presentation.qt.archival_page": "测量页面共享的归档状态生命周期（等待/保存中/结果/终止/运行切换）",
     "presentation.qt.archival_status": "归档结果到页面文案与按钮状态的映射（无 Qt、无路径判断）",
     "presentation.qt.archival_view": "归档结果分组控件：文案与“打开结果目录/报告”动作",
-    "presentation.qt.assistant.chat_dialogs": "助手对话对话框",
-    "presentation.qt.assistant.chat_panel": "助手聊天面板",
-    "presentation.qt.assistant.chat_worker": "助手后台 worker",
     "presentation.qt.config_form_state": "配置表单状态",
     "presentation.qt.config_page": "配置页面",
     "presentation.qt.device_discovery_panel": "设备发现面板：扫描网段、按角色勾选本次测试设备（含未知设备标记）",

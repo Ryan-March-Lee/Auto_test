@@ -8,13 +8,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class OptionalCapabilityBoundaryTests(unittest.TestCase):
-    def test_assistant_is_a_separate_import_boundary(self):
-        assistant = importlib.import_module("assistant")
-        self.assertEqual(assistant.__all__, [])
-
-        llm = importlib.import_module("assistant.llm")
-        self.assertTrue(hasattr(llm, "LLMChat"))
-
     def test_csv_converter_has_no_import_time_file_access(self):
         with patch("pathlib.Path.open", side_effect=AssertionError("import accessed a file")):
             module = importlib.import_module("format_convert.csv_to_MDIF")

@@ -41,7 +41,6 @@
 | `presentation` | Qt 表现层 | 只消费 DTO、controller 和只读端口；不组装硬件或存储 |
 | `app` | 应用装配：运行上下文、事件、取消、GUI 运行时 | 允许装配，不承载业务规则 |
 | `analysis` | 只读分析与导出计算 | 不依赖基础设施 |
-| `assistant` | 可选助手能力 | 仅表现层可用，不得进入正式测量链路 |
 
 导入约束分三层执行：
 
@@ -191,8 +190,6 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `application.inputs` | 结果输入读取包 |
 | `application.inputs.result_reading` | 报告参数叠加（内部实现；输入必须是正式结果 DTO） |
 | `application.lifecycle` | 测量生命周期包 |
-| `assistant.llm` | 可选助手 LLM 客户端 |
-| `assistant.storage` | 可选助手历史存储 |
 | `domain.instruments` | 设备表领域包 |
 | `domain.instruments.models` | 仪器身份解析（序列号唯一标识）、地址别名与在线状态模型 |
 | `domain.models` | 运行、测试方案与会话生命周期模型；测量结果契约在 `application.dto` |
@@ -217,9 +214,6 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `presentation.qt.archival_page` | 测量页面共享的归档状态生命周期：等待归档、保存中、结果展示、终止事件与运行切换后的旧摘要清理；不读文件、不判断产物可用性 |
 | `presentation.qt.archival_status` | 归档结果到页面文案与按钮状态的映射：无 Qt、不读文件、不判断路径存在，四类状态各有独立提示 |
 | `presentation.qt.archival_view` | 归档结果分组控件：显示标题/说明并按提示启用“打开结果目录/测试报告”；位置由窗口注入；动态文案按纯文本渲染 |
-| `presentation.qt.assistant.chat_dialogs` | 助手对话与设置对话框：失败经对话框/日志呈现，`requests` 为可选依赖 |
-| `presentation.qt.assistant.chat_panel` | 助手聊天面板；`create_assistant()` 是 `assistant.llm` 的唯一按需导入点，整个构造过程的普通异常都降级为不可用面板；`shutdown()` 协作关闭回复线程（不强杀、超时保持引用） |
-| `presentation.qt.assistant.chat_worker` | 助手后台 worker：线程边界把助手异常转成 `error_occurred` 信号 |
 | `presentation.qt.config_form_state` | 配置表单状态 |
 | `presentation.qt.config_page` | 配置页面（编辑配置编写文档；向协调器提供 `ConfigurationPagePort` 窄接口） |
 | `presentation.qt.device_discovery_panel` | 仪器连接配置框（设备发现）：扫描网段、展示已登记/未登记/无法识别三类结果、按测试角色勾选并应用、显示当前已绑定设备、清除设备绑定；扫描线程只读探测，不改配置也不连接仪器 |

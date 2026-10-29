@@ -164,24 +164,6 @@ class QtMigrationResidueTests(unittest.TestCase):
         private = [name for name in pages.__all__ if name.startswith("_")]
         self.assertEqual(private, [], "pages.__all__ 不得导出私有名字: " + ", ".join(private))
 
-    def test_assistant_llm_is_imported_only_behind_the_panel_boundary(self):
-        """助手是可选能力：``assistant.llm`` 只在聊天面板里按需导入。"""
-        importers = []
-        for path in self._production_sources():
-            for node in ast.walk(_tree(path)):
-                module = None
-                if isinstance(node, ast.ImportFrom) and node.module:
-                    module = node.module
-                elif isinstance(node, ast.Import):
-                    module = ",".join(alias.name for alias in node.names)
-                if module and "assistant.llm" in module:
-                    importers.append(path.relative_to(ROOT).as_posix())
-        self.assertEqual(
-            importers,
-            ["presentation/qt/assistant/chat_panel.py"],
-            "只有聊天面板可以按需导入 assistant.llm: " + ", ".join(importers),
-        )
-
     def test_production_qt_code_never_terminates_a_thread(self):
         """超时必须保持引用让用户重试，``QThread.terminate()`` 会让线程带锁退出。"""
         violations = []
@@ -198,25 +180,6 @@ class QtMigrationResidueTests(unittest.TestCase):
             [],
             "生产 Qt 代码不得强杀线程: " + ", ".join(violations),
         )
-
-    def test_main_window_closes_the_assistant_before_closing_pages(self):
-        """助手收尾必须接进窗口关闭流程，且排在硬件安全清理之后。"""
-        tree = _tree(MAIN_WINDOW)
-        close_event = None
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and node.name == "closeEvent":
-                close_event = node
-                break
-        self.assertIsNotNone(close_event, "main_window.py 缺少 closeEvent")
-        source = ast.unparse(close_event)
-        self.assertIn("self._shutdown_assistant()", source)
-        self.assertIn("release_instrument_port", source)
-        self.assertLess(
-            source.index("release_instrument_port"),
-            source.index("self._shutdown_assistant()"),
-            "助手线程收尾不得早于仪器端口的安全释放",
-        )
-
 
 if __name__ == "__main__":
     unittest.main()

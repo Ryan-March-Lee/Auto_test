@@ -37,7 +37,7 @@ RUNTIME_PACKAGES = (
     "instrument",
     "presentation",
 )
-# 额外的第一方包：只参与异常写法/导入检查（分析层可打印报告，助手是可选能力）。
+# 额外的第一方包：只参与异常写法/导入检查（分析层可打印报告）。
 EXTRA_PACKAGES = ("analysis",)
 # 根目录正式入口脚本：CLI 输出用 print 是它的接口，因此不参与 print 门禁。
 ROOT_MODULES = ("launcher.py", "release_manifest.py")
@@ -53,7 +53,7 @@ ROOT_MODULES = ("launcher.py", "release_manifest.py")
 #   - 清理聚合：无论设备抛出什么异常都要继续执行后续安全动作，最后一次性上报；
 #   - 边界翻译：把第三方库异常翻译成本项目的分类异常，并保留原始异常链；
 #   - 尽力记录：失败进入日志/阶段状态/事件，不改变原始返回值或异常。
-# DPD_auto_test、hardware/、format_convert/、assistant/ 与 tools/ 不属于正式测量链路。
+# DPD_auto_test、hardware/、format_convert/ 与 tools/ 不属于正式测量链路。
 BROAD_CATCH_BASELINE = {
     # 边界翻译 / 尽力记录（装配与运行记录）
     "app/gui_runtime.py": (
@@ -185,13 +185,6 @@ BROAD_CATCH_BASELINE = {
         "ApplicationCoordinator.create_prepared_run#1",
         "ApplicationCoordinator.load_prepared_run#1",
         "ApplicationCoordinator.apply_run_configuration#1",
-    ),
-    "presentation/qt/assistant/chat_panel.py": (
-        "create_assistant#1",
-        "ChatPanel._build_assistant#1",
-    ),
-    "presentation/qt/assistant/chat_worker.py": (
-        "ChatWorker.run#1",
     ),
     "presentation/qt/run_history_page.py": (
         "RunHistoryPage.export#1",

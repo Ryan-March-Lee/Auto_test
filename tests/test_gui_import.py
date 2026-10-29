@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 
 def gui_dependencies_available():
-    dependencies = ("PySide6", "matplotlib", "numpy", "pandas", "seaborn", "markdown", "requests", "pyvisa")
+    dependencies = ("PySide6", "matplotlib", "numpy", "pandas", "seaborn", "pyvisa")
     return all(importlib.util.find_spec(name) is not None for name in dependencies)
 
 
@@ -126,7 +126,7 @@ class GuiImportSmokeTests(unittest.TestCase):
             self.assertIsNone(coordinator.instrument_ctrl)
             self.assertEqual(port.close_calls, [True])
 
-    def test_driver_mapping_realtime_bridge_updates_chat_context(self):
+    def test_driver_mapping_realtime_bridge_updates_realtime_buffer(self):
         coordinator = _coordinator()
 
         self.assertTrue(
@@ -139,7 +139,7 @@ class GuiImportSmokeTests(unittest.TestCase):
         self.assertEqual(coordinator.realtime_buffer.frequencies, [2.4])
         self.assertEqual(coordinator.realtime_buffer.current_index, 0)
 
-    def test_amplifier_realtime_bridge_updates_chat_context(self):
+    def test_amplifier_realtime_bridge_updates_realtime_buffer(self):
         coordinator = _coordinator()
 
         self.assertTrue(

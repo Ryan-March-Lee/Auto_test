@@ -109,8 +109,6 @@ conda activate Auto_test
 - pandas == 3.0.6
 - seaborn == 0.13.2
 - PyVISA == 1.16.2
-- Markdown == 3.10.3
-- requests == 2.34.2
 
 依赖变更后不要手工编辑锁文件，也不要用裸 `pip freeze` 覆盖：
 

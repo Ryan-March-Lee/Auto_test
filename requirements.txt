@@ -12,5 +12,3 @@ numpy==2.4.6
 pandas==3.0.6
 seaborn==0.13.2
 PyVISA==1.16.2
-Markdown==3.10.3
-requests==2.34.2

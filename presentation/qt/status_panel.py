@@ -6,9 +6,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any
-
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QFrame,
@@ -25,14 +22,9 @@ from .theme import set_button_variant
 
 
 class StatusPanel(QFrame):
-    """拥有全局进度和日志 UI，窗口只消费其公开控件和回调。"""
+    """拥有全局进度和日志 UI，窗口只消费其公开控件。"""
 
-    def __init__(
-        self,
-        *,
-        chat_toggle_callback: Callable[[], Any] | None = None,
-        parent: QWidget | None = None,
-    ) -> None:
+    def __init__(self, *, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("statusPanel")
         self.log_user_scrolling = False
@@ -67,12 +59,6 @@ class StatusPanel(QFrame):
         set_button_variant(clear_button, "secondary")
         clear_button.clicked.connect(self.clear_log)
         log_header.addWidget(clear_button)
-        self.ai_assistant_btn = QPushButton("💬 CHAT")
-        self.ai_assistant_btn.setCheckable(True)
-        set_button_variant(self.ai_assistant_btn, "success")
-        if chat_toggle_callback is not None:
-            self.ai_assistant_btn.clicked.connect(chat_toggle_callback)
-        log_header.addWidget(self.ai_assistant_btn)
         status_layout.addLayout(log_header)
 
         self.log_text = QTextEdit()

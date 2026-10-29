@@ -44,18 +44,6 @@ class PathService:
         return self.test_results_dir / "cable_loss_results.json"
 
     @property
-    def chat_history_file(self) -> Path:
-        return self.root / "chat_history.json"
-
-    @property
-    def chat_settings_file(self) -> Path:
-        return self.root / "chat_settings.json"
-
-    @property
-    def search_api_config_file(self) -> Path:
-        return self.root / "search_api_config.json"
-
-    @property
     def assets_dir(self) -> Path:
         return self.root / "assets"
 
@@ -83,9 +71,6 @@ PROJECT_ROOT = DEFAULT_PATHS.project_root
 TEST_RESULTS_DIR = DEFAULT_PATHS.test_results_dir
 CONFIG_FILE = DEFAULT_PATHS.config_file
 CABLE_LOSS_FILE = DEFAULT_PATHS.cable_loss_file
-CHAT_HISTORY_FILE = DEFAULT_PATHS.chat_history_file
-CHAT_SETTINGS_FILE = DEFAULT_PATHS.chat_settings_file
-SEARCH_API_CONFIG_FILE = DEFAULT_PATHS.search_api_config_file
 ASSETS_DIR = DEFAULT_PATHS.assets_dir
 ICONS_DIR = DEFAULT_PATHS.icons_dir
 IMAGES_DIR = DEFAULT_PATHS.images_dir
@@ -115,9 +100,9 @@ def unique_directory_name(prefix: str) -> str:
 
 
 __all__ = [
-    "ASSETS_DIR", "CABLE_LOSS_FILE", "CHAT_HISTORY_FILE", "CHAT_SETTINGS_FILE",
+    "ASSETS_DIR", "CABLE_LOSS_FILE",
     "CONFIG_FILE", "ICONS_DIR", "IMAGES_DIR", "LOGS_DIR", "PathLike",
-    "DEFAULT_PATHS", "PathService", "PROJECT_ROOT", "SEARCH_API_CONFIG_FILE",
+    "DEFAULT_PATHS", "PathService", "PROJECT_ROOT",
     "TEMP_DIR", "TEST_RESULTS_DIR",
     "ensure_directory", "resolve_path", "unique_directory_name",
 ]

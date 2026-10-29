@@ -12,9 +12,6 @@ __pycache__/
 *.swo
 
 # Local application state
-chat_history.json
-chat_history_*.json
-chat_settings.json
 temp_loaded_data.json
 
 # Generated reports and temporary files
@@ -34,7 +31,6 @@ power_data.mdf
 .env
 .env.*
 !.env.example
-search_api_config.local.json
 hardware/smoke_config.local.json
 hardware/smoke_result*.json
 hardware/smoke_*_result.local.json

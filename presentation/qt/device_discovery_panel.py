@@ -6,8 +6,12 @@
   因此离线测试与现场扫描共用同一套界面逻辑。
 - 面板不改配置、不连接仪器：用户确认“应用到配置”后，只把所选设备交给配置页，
   由配置页写成仪器连接配置（地址来自本次发现的设备）与设备身份记录。
-- **测试角色由设备表登记，界面不让用户选**：现场每台仪器只承担一种角色，设备名与
-  角色一起显示（如 ``SMW200A-1（信号发生器）``）。没登记角色的设备不能勾选应用。
+- **测试角色由设备表登记，界面不让用户选**：现场每台仪器只承担一种角色。信号源与
+  频谱仪显示“设备名（角色）”，电源显示“短标签（型号，电源）”（如
+  ``DP8B1519（DP832A，电源）``）：电源是同一个类别下的多台设备，靠短标签区分，不再
+  用“电源 PS3”这类槽位编号。没登记角色的设备不能勾选应用。
+- **多台电源各自独立**：电源不再按角色键互相覆盖，勾选几台就传递几台；只有信号源与
+  频谱仪保持“一个角色一台设备”的唯一性。
 - 发现结果**包含未知设备**：未在设备表中登记的序列号同样列在表里并标记为未登记；
   身份完全读不出来的地址也留在表里，但标记为“无法识别”，不允许被应用成测试角色。
 """
@@ -31,17 +35,23 @@ from application.ports.device_discovery import (
     SCAN_MODE_SIMULATED,
     DeviceDiscoveryError,
 )
-from domain.instruments.models import make_device_key
+from domain.instruments.models import (
+    POWER_SUPPLY_ROLE,
+    canonical_role,
+    make_device_key,
+)
 
 from .config_form_state import LEGACY_BINDING_SOURCE
 from .input_controls import WheelSafeComboBox
 from .theme import set_button_variant, set_tone
 
 # 角色标签是“本次测试语义”，与设备身份（序列号）分开：设备可以换 IP，角色不会变。
-# 角色值来自设备表 ``instruments.json`` 的 ``role`` 字段，这里只负责显示。
+# 角色值来自设备表 ``instruments.json`` 的 ``role`` 字段，这里只负责显示。电源的类别是
+# ``power_supply``（多台共用），``PS1``..``PS4`` 只用于显示旧绑定记录，不再作为新角色。
 ROLE_LABELS: dict[str, str] = {
     "signal_generator": "信号发生器",
     "spectrum_analyzer": "频谱分析仪",
+    POWER_SUPPLY_ROLE: "电源",
     "PS1": "电源 PS1",
     "PS2": "电源 PS2",
     "PS3": "电源 PS3",
@@ -52,7 +62,7 @@ SCAN_MODE_CHOICES: tuple[tuple[str, str], ...] = (
     (SCAN_MODE_NETWORK, "真实网络扫描"),
 )
 # 各列宽度按内容计算；表格本身也只占内容宽度，不再被横向拉成长条。
-_TABLE_HEADERS = ("使用", "设备（测试角色）", "序列号", "状态")
+_TABLE_HEADERS = ("使用", "设备（型号，角色）", "序列号", "状态")
 _IP_PATTERN = re.compile(r"(\d{1,3}(?:\.\d{1,3}){3})")
 
 
@@ -61,9 +71,26 @@ def role_label(role: Any) -> str:
     return ROLE_LABELS.get(str(role or ""), "")
 
 
+def device_heading(device: Any) -> str:
+    """结果表里的一行设备描述。
+
+    电源按“短标签（型号，电源）”显示：现场核对实物靠短标签，而不是“电源 PS3”这种槽位
+    编号。短标签只来自设备表（发现过程不生成标签），还没有标签的电源退回资产名。
+    其他角色沿用“设备名（角色）”，未登记设备显示“未知设备（型号）”。
+    """
+    role = canonical_role(getattr(device, "known_role", None))
+    heading = str(device.display_name)
+    label = role_label(role)
+    if role == POWER_SUPPLY_ROLE:
+        identity = getattr(device, "identity", None)
+        model = getattr(identity, "model", "") or ""
+        return f"{heading}（{model}，{label}）" if model else f"{heading}（{label}）"
+    return f"{heading}（{label}）" if label else heading
+
+
 def device_applicable(device: Any) -> bool:
     """这台设备能否被应用：身份可解析，且设备表登记了固定测试角色。"""
-    return bool(device.has_identity and device.known_role)
+    return bool(device.has_identity and canonical_role(device.known_role))
 
 
 def subnet_from_address(address: Any) -> str | None:
@@ -193,7 +220,7 @@ class DeviceDiscoveryPanel(QGroupBox):
         """在面板上显示当前配置了哪些设备：连接信息不靠一张空白结果表来猜。
 
         只显示角色与设备名，不显示地址：IP 只是本次可达的地址，不是用户需要
-        关心的连接信息。
+        关心的连接信息。电源优先显示短标签（``supply_id``），与结果表一致。
         """
         parts = []
         ordered = [role for role in ROLE_LABELS if role in self.device_bindings]
@@ -203,7 +230,12 @@ class DeviceDiscoveryPanel(QGroupBox):
             if not isinstance(record, dict):
                 continue
             name = str(
-                record.get("name") or record.get("model") or record.get("serial") or "未命名设备"
+                record.get("supply_id")
+                or record.get("label")
+                or record.get("name")
+                or record.get("model")
+                or record.get("serial")
+                or "未命名设备"
             )
             detail = name
             if record.get("source") == "simulated":
@@ -474,12 +506,15 @@ class DeviceDiscoveryPanel(QGroupBox):
                 # 身份读不出来或设备表没登记角色：勾选框禁用，避免“应用了一半”。
                 check.setFlags(Qt.ItemIsEnabled)
             self.table.setItem(row, 0, check)
-            # 角色和设备名写在同一个单元格：每台设备只有一种角色，不需要用户再选。
-            label = role_label(device.known_role)
-            display = f"{device.display_name}（{label}）" if label else str(device.display_name)
-            name_item = QTableWidgetItem(display)
+            # 角色和显示名写在同一个单元格：每台设备只有一种角色，不需要用户再选。
+            # 电源显示“短标签（型号，电源）”，信号源与频谱仪沿用“设备名（角色）”。
+            name_item = QTableWidgetItem(device_heading(device))
             if identity is not None:
-                name_item.setToolTip(f"{identity.model} / {identity.vendor}\n{device.idn}")
+                details = [f"{identity.model} / {identity.vendor}"]
+                if device.label:
+                    details.append(f"短标签 {device.label}")
+                details.append(str(device.idn or ""))
+                name_item.setToolTip("\n".join(item for item in details if item))
             else:
                 name_item.setToolTip(device.error or "")
             self.table.setItem(row, 1, name_item)
@@ -495,6 +530,12 @@ class DeviceDiscoveryPanel(QGroupBox):
                 status_item.setToolTip(
                     "设备表没有登记这台设备的测试角色（role）；补上后才能应用"
                 )
+            elif device.is_power_supply and not device.config_slot:
+                # 过渡期提示：电源集合仍按旧槽位写入，见 config_page.apply_discovered_devices。
+                status_item.setToolTip(
+                    "这台电源在设备表里没有旧槽位（PS1..PS4）：当前配置只能把地址写回旧槽位，"
+                    "多电源/动态电源绑定属于后续步骤"
+                )
             self.table.setItem(row, 3, status_item)
             self._rows.append({"device": device, "check": check})
         self._fit_table_width()
@@ -502,8 +543,9 @@ class DeviceDiscoveryPanel(QGroupBox):
     def _preselect_bound_devices(self) -> None:
         """按配置里保存的身份预选：IP 变了也能找回同一台设备。
 
-        只按 ``厂商:序列号`` 匹配，不做“仅按序列号”的猜测。角色以设备表登记为准，
-        配置里的旧角色与设备表不一致时在状态栏说明，不再让用户手动改。
+        只按 ``厂商:序列号`` 匹配，不做“仅按序列号”或“按短标签”的猜测。角色以设备表
+        登记为准；旧绑定里的槽位（``PS3``）先折叠成 ``power_supply`` 再比较，因此旧配置
+        不会因为“PS3 → 电源”被误报成角色变化。
         """
         if not self.device_bindings:
             return
@@ -526,11 +568,19 @@ class DeviceDiscoveryPanel(QGroupBox):
                 continue
             row["check"].setCheckState(Qt.Checked)
             matched += 1
-            bound_role = bound[key]
-            if bound_role != device.known_role:
+            bound_key = bound[key]
+            # 绑定键可能是类别（``power_supply``）、旧槽位（``PS3``）或短标签
+            # （``DP8B1519``）：前两者折叠成类别比较，短标签按设备的标签比对。
+            bound_role = canonical_role(bound_key) or bound_key
+            same_category = bound_role == device.role
+            same_supply = device.is_power_supply and bound_key in {
+                device.label,
+                device.supply_id,
+            }
+            if not (same_category or same_supply):
                 moved.append(
                     f"{device.display_name} 配置里是 {role_label(bound_role) or bound_role}，"
-                    f"设备表登记为 {role_label(device.known_role)}"
+                    f"设备表登记为 {role_label(device.role)}"
                 )
         if matched:
             text = f"{self.status_label.text()}；已按配置中的设备身份预选 {matched} 台"
@@ -539,7 +589,13 @@ class DeviceDiscoveryPanel(QGroupBox):
             self.status_label.setText(text)
 
     def selected_assignments(self) -> tuple[list[dict[str, Any]], list[str]]:
-        """返回 ``(要应用的设备, 问题说明)``；角色重复或身份/角色缺失都算问题。"""
+        """返回 ``(要应用的设备, 问题说明)``；身份/角色缺失、唯一角色重复都算问题。
+
+        电源是同一个类别下的多台设备：勾选几台就返回几条，不再按角色键互相判定
+        “重复”；只有信号源与频谱仪保持“一个角色一台设备”。每条记录都带短标签
+        （``label`` / ``supply_id``）与身份（``serial`` / ``device_key``），配置页不需要
+        从显示文本反解析。
+        """
         assignments: list[dict[str, Any]] = []
         problems: list[str] = []
         used_roles: dict[str, str] = {}
@@ -552,23 +608,30 @@ class DeviceDiscoveryPanel(QGroupBox):
                     f"{device.ip}:{device.port} 无法识别身份，不能应用；请检查设备响应后重试"
                 )
                 continue
-            role_value = device.known_role
+            role_value = device.role
             if not role_value:
                 problems.append(
                     f"{device.display_name} 在设备表中没有登记测试角色，不能应用"
                 )
                 continue
-            if role_value in used_roles:
-                problems.append(
-                    f"角色 {role_label(role_value)} 被重复选择："
-                    f"{used_roles[role_value]} 与 {device.display_name}"
-                )
-                continue
-            used_roles[role_value] = device.display_name
+            if role_value != POWER_SUPPLY_ROLE:
+                # 信号源与频谱仪是“一个角色一台设备”：同一角色被勾选两次就整批拒绝。
+                # 电源不参与这里——多台电源各自独立传递，不按角色键互相覆盖。
+                if role_value in used_roles:
+                    problems.append(
+                        f"角色 {role_label(role_value)} 被重复选择："
+                        f"{used_roles[role_value]} 与 {device.display_name}"
+                    )
+                    continue
+                used_roles[role_value] = device.display_name
             identity = device.identity
             assignments.append(
                 {
                     "role": role_value,
+                    "label": device.label,
+                    "supply_id": device.supply_id,
+                    # 过渡期：配置里的电源集合仍按旧槽位（PS1..PS4）存放地址。
+                    "config_slot": device.config_slot,
                     "address": device.visa_address,
                     "name": device.known_name,
                     "vendor": identity.vendor,
@@ -614,6 +677,7 @@ __all__ = [
     "SCAN_MODE_CHOICES",
     "binding_device_key",
     "device_applicable",
+    "device_heading",
     "role_label",
     "subnet_from_address",
 ]

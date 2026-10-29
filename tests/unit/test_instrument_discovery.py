@@ -364,6 +364,156 @@ class VisaAddressTests(unittest.TestCase):
         self.assertEqual(addresses, {"TCPIP0::10.0.0.9::inst0::INSTR"})
 
 
+class PowerSupplyIdentityTests(unittest.TestCase):
+    """电源的发现结果：短标签只读注册表、身份只认 ``device_key``、多台各自独立。"""
+
+    LEGACY_REGISTRY = {
+        "schema_version": 2,
+        "instruments": [
+            {
+                "name": "DP832A-1",
+                "vendor": "RIGOL TECHNOLOGIES",
+                "model": "DP832A",
+                "model_index": 1,
+                "serial": "DP8B214901519",
+                "role": "PS3",
+                "status": "online",
+                "known_ips": [],
+            }
+        ],
+    }
+    MIGRATED_REGISTRY = {
+        "schema_version": 3,
+        "instruments": [
+            {
+                "name": "DP832A-1",
+                "vendor": "RIGOL TECHNOLOGIES",
+                "model": "DP832A",
+                "model_index": 1,
+                "serial": "DP8B214901519",
+                "label": "DP8B1519",
+                "role": "power_supply",
+                "status": "online",
+                "known_ips": [],
+            },
+            {
+                "name": "DP832A-3",
+                "vendor": "RIGOL TECHNOLOGIES",
+                "model": "DP832A",
+                "model_index": 3,
+                "serial": "DP8B174400885",
+                "label": "DP8B0885",
+                "role": "power_supply",
+                "status": "online",
+                "known_ips": [],
+            },
+        ],
+    }
+
+    def _scan(self, document, responses, subnet="10.8.8.0/29"):
+        return InstrumentScanner(
+            registry=InstrumentRegistry(document=document),
+            probe=SimulatedIdnProbe(responses),
+            ports=(5555,),
+            timeout_s=0.05,
+        ).scan(subnet)
+
+    def test_legacy_slot_is_reported_as_power_supply_without_a_label(self):
+        device = self._scan(
+            self.LEGACY_REGISTRY, {("10.8.8.1", 5555): DP832A_IDN}
+        ).devices[0]
+
+        # 旧字面量原样保留给排查，类别折叠成 ``power_supply``。
+        self.assertEqual(device.known_role, "PS3")
+        self.assertEqual(device.role, "power_supply")
+        self.assertEqual(device.config_slot, "PS3")
+        # 旧设备表没有标签：发现过程不生成标签，也就没有 ``supply_id``。
+        self.assertIsNone(device.label)
+        self.assertIsNone(device.supply_id)
+        self.assertEqual(device.display_name, "DP832A-1")
+        self.assertEqual(device.serial, "DP8B214901519")
+        self.assertEqual(device.device_key, "rigol technologies:dp8b214901519")
+
+    def test_frozen_label_is_used_for_display_and_as_supply_id(self):
+        device = self._scan(
+            self.MIGRATED_REGISTRY, {("10.8.8.1", 5555): DP832A_IDN}
+        ).devices[0]
+
+        self.assertEqual(device.role, "power_supply")
+        self.assertEqual(device.label, "DP8B1519")
+        self.assertEqual(device.supply_id, "DP8B1519")
+        self.assertEqual(device.display_name, "DP8B1519")
+        # 迁移后的记录没有旧槽位：地址怎么写回配置由后续步骤决定。
+        self.assertIsNone(device.config_slot)
+
+    def test_two_supplies_are_reported_independently(self):
+        result = self._scan(
+            self.MIGRATED_REGISTRY,
+            {
+                ("10.8.8.1", 5555): DP832A_IDN,
+                ("10.8.8.2", 5555): "RIGOL TECHNOLOGIES,DP832A,DP8B174400885,00.01.16",
+            },
+        )
+
+        by_supply_id = {device.supply_id: device for device in result.devices}
+        self.assertEqual(set(by_supply_id), {"DP8B1519", "DP8B0885"})
+        self.assertEqual(
+            {device.device_key for device in result.devices},
+            {
+                "rigol technologies:dp8b214901519",
+                "rigol technologies:dp8b174400885",
+            },
+        )
+        self.assertTrue(all(device.is_power_supply for device in result.devices))
+
+    def test_identity_and_label_survive_an_ip_change(self):
+        """标签跟着设备身份走：换网段重扫，同一台电源仍是同一个 ``supply_id``。"""
+        first = self._scan(
+            self.MIGRATED_REGISTRY, {("10.8.8.1", 5555): DP832A_IDN}, "10.8.8.0/29"
+        ).devices[0]
+        second = self._scan(
+            self.MIGRATED_REGISTRY, {("10.9.9.5", 5555): DP832A_IDN}, "10.9.9.0/29"
+        ).devices[0]
+
+        self.assertNotEqual(first.visa_address, second.visa_address)
+        self.assertEqual(first.device_key, second.device_key)
+        self.assertEqual(first.supply_id, second.supply_id)
+
+    def test_result_dict_carries_label_supply_id_and_both_role_forms(self):
+        payload = self._scan(
+            self.MIGRATED_REGISTRY, {("10.8.8.1", 5555): DP832A_IDN}
+        ).devices[0].to_dict()
+
+        self.assertEqual(payload["label"], "DP8B1519")
+        self.assertEqual(payload["supply_id"], "DP8B1519")
+        self.assertEqual(payload["role"], "power_supply")
+        self.assertEqual(payload["registry_role"], "power_supply")
+        self.assertEqual(payload["serial"], "DP8B214901519")
+        self.assertEqual(payload["device_key"], "rigol technologies:dp8b214901519")
+
+    def test_non_power_supply_devices_have_no_supply_id(self):
+        device = self._scan(
+            {**self.LEGACY_REGISTRY, "instruments": [
+                {
+                    "name": "SMW200A-1",
+                    "vendor": "Rohde&Schwarz",
+                    "model": "SMW200A",
+                    "model_index": 1,
+                    "serial": "105462",
+                    "role": "signal_generator",
+                    "status": "online",
+                    "known_ips": [],
+                }
+            ]},
+            {("10.8.8.1", 5555): SMW_IDN},
+        ).devices[0]
+
+        self.assertEqual(device.role, "signal_generator")
+        self.assertIsNone(device.label)
+        self.assertIsNone(device.supply_id)
+        self.assertIsNone(device.config_slot)
+
+
 class CancellationTests(unittest.TestCase):
     """取消必须真正停止扫描，而不是等所有排队探测跑完。"""
 

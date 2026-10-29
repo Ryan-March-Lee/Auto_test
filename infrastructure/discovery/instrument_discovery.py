@@ -11,6 +11,11 @@
   建档，也不改写设备表。
 - 扫描是只读探测：只建立 TCP 连接、发一条 ``*IDN?`` 并关闭，不发送任何会改变仪器
   状态的命令。设备表写入由调用方在用户确认后单独完成。
+- **电源按短标签展示，但识别仍只认身份**：已登记为电源（``power_supply``，旧设备表里
+  的 ``PS1``..``PS4`` 折叠过来）的设备优先显示注册表里冻结的短标签（= 配置里的
+  ``supply_id``），例如 ``DP8B1519``；标签只来自注册表或登记动作，发现过程绝不生成
+  标签，也不靠标签匹配设备。多台电源是同一个类别下的多台设备，结果里各自独立，不按
+  角色键互相覆盖。
 - 网络实现与模拟实现共用 :class:`IdnProbe` 协议，因此离线测试与现场扫描走同一条
   解析、匹配与结果汇总路径，不需要第二套“假扫描”。
 
@@ -37,8 +42,11 @@ from application.ports.device_discovery import (
     DeviceDiscoveryError,
 )
 from domain.instruments.models import (
+    LEGACY_ROLES,
+    POWER_SUPPLY_ROLE,
     DeviceStatus,
     InstrumentIdentity,
+    canonical_role,
     normalize_text,
 )
 from infrastructure.logging.app_logging import get_logger
@@ -79,8 +87,15 @@ class DiscoveredDevice:
 
     ``known_name`` 是设备表中已登记资产的名称（``型号-序号``）；未登记设备为
     ``None``，界面据此显示“未知设备”。``known_role`` 是设备表登记的固定测试角色
-    （``signal_generator`` / ``spectrum_analyzer`` / ``PS1``..``PS4``）：现场每台仪器
-    只承担一种角色，界面不再让用户选；未登记角色或未登记设备时为 ``None``。
+    **原字面量**（``signal_generator`` / ``spectrum_analyzer``，旧设备表里还有
+    ``PS1``..``PS4``）：现场每台仪器只承担一种角色，界面不再让用户选；未登记角色或未
+    登记设备时为 ``None``。要“这是哪一类设备”的规范取值请用 :attr:`role`，它把旧槽位
+    折叠成 ``power_supply``。
+
+    ``known_label`` 是设备表里冻结的现场短标签（= 配置里的 ``supply_id``）；
+    **发现过程绝不生成标签**，标签只来自注册表或注册动作，所以没有登记标签的设备
+    （含旧设备表的全部电源）这里是 ``None``。
+
     ``identity`` 为空表示端口有应答但身份读不出。
     """
 
@@ -92,10 +107,55 @@ class DiscoveredDevice:
     status: DeviceStatus
     error: str | None = None
     known_role: str | None = None
+    known_label: str | None = None
 
     @property
     def device_key(self) -> str | None:
         return self.identity.device_key if self.identity else None
+
+    @property
+    def serial(self) -> str | None:
+        return self.identity.serial if self.identity else None
+
+    @property
+    def role(self) -> str | None:
+        """设备类别（规范取值）：旧槽位 ``PS3`` 也返回 ``power_supply``。
+
+        与 :attr:`known_role` 分开：``known_role`` 保留设备表里的原字面量，``role`` 是
+        界面显示与配置写回使用的类别。两者分开才能既读得懂旧设备表，又不把“第几台”
+        当成角色——多台电源共用 ``power_supply``。
+        """
+        return canonical_role(self.known_role)
+
+    @property
+    def config_slot(self) -> str | None:
+        """旧配置里的电源槽位（``PS1``..``PS4``）；设备表登记的不是旧槽位时为 ``None``。
+
+        过渡期专用：电源集合仍是 ``instruments.power_supplies.<槽位>``，应用设备时需要把
+        地址写回它原本的槽位。步骤 6 把电源绑定改成 ``supply_id`` 集合后，这个属性随
+        旧槽位一起删除。
+        """
+        slot = normalize_text(self.known_role)
+        return slot if slot in LEGACY_ROLES else None
+
+    @property
+    def label(self) -> str | None:
+        """设备表登记的现场短标签；没有标签时为 ``None``（发现过程不生成标签）。"""
+        return self.known_label
+
+    @property
+    def supply_id(self) -> str | None:
+        """电源引用 ID（等于短标签）；非电源或还没有标签时为 ``None``。
+
+        标签不能单独用来识别设备：身份匹配始终只看 :attr:`device_key`。
+        """
+        if self.role != POWER_SUPPLY_ROLE:
+            return None
+        return self.known_label or None
+
+    @property
+    def is_power_supply(self) -> bool:
+        return self.role == POWER_SUPPLY_ROLE
 
     @property
     def has_identity(self) -> bool:
@@ -138,6 +198,9 @@ class DiscoveredDevice:
 
     @property
     def display_name(self) -> str:
+        """现场显示名：有短标签时用短标签，否则退回设备表里的资产名。"""
+        if self.known_label:
+            return self.known_label
         if self.known_name:
             return self.known_name
         if self.identity is not None:
@@ -153,10 +216,15 @@ class DiscoveredDevice:
             "idn": self.idn,
             "vendor": identity.vendor if identity else None,
             "model": identity.model if identity else None,
-            "serial": identity.serial if identity else None,
+            "serial": self.serial,
             "device_key": self.device_key,
             "known_name": self.known_name,
-            "role": self.known_role,
+            "label": self.known_label,
+            "supply_id": self.supply_id,
+            # ``role`` 是折叠后的类别（旧槽位 ``PS3`` 也写 ``power_supply``），
+            # ``registry_role`` 保留设备表里的原字面量，便于排查旧数据。
+            "role": self.role,
+            "registry_role": self.known_role,
             "status": self.status.value,
             "discovery_status": self.discovery_status.value,
             "error": self.error,
@@ -352,9 +420,9 @@ def _resolve_devices(
 class InstrumentScanner:
     """按网段并发的 SCPI 发现器。
 
-    ``registry`` 只做只读查询：已登记设备按 ``厂商:序列号`` 匹配资产名，未匹配的设备
-    以未知身份返回。扫描不会写设备表、不会打开 VISA 会话，也不会发送除 ``*IDN?``
-    之外的任何命令。
+    ``registry`` 只做只读查询：已登记设备按 ``厂商:序列号`` 匹配资产名、角色与已冻结的
+    短标签，未匹配的设备以未知身份返回。扫描不会写设备表（因此也不会分配标签）、不会
+    打开 VISA 会话，也不会发送除 ``*IDN?`` 之外的任何命令。
 
     取消通过 :meth:`request_cancel` 发起，可从任意线程调用；扫描会在下一个结果边界
     停止、丢弃排队中的探测，只等待已启动的少数探测按自身超时结束。取消状态在扫描
@@ -527,6 +595,8 @@ class InstrumentScanner:
             # 未登记设备的资产状态是“未知”，不是“在线”：在线与否要等登记并确认。
             status=DeviceStatus.ONLINE if known is not None else DeviceStatus.UNKNOWN,
             known_role=known.role if known is not None else None,
+            # 短标签只读设备表里已冻结的值：发现过程不生成标签，也不改写设备表。
+            known_label=known.label if known is not None else None,
         )
 
     def _known_instrument(self, identity: InstrumentIdentity) -> Any:

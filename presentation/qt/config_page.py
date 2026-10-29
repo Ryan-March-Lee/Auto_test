@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from domain.instruments.models import make_device_key
+from domain.instruments.models import POWER_SUPPLY_ROLE, make_device_key
 
 from .config_form_state import (
     ConfigFormState,
@@ -65,8 +65,8 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         PageControllerBindingMixin.__init__(self)
         QWidget.__init__(self, parent)
         self.config = config if isinstance(config, dict) else {}
-        # 设备身份绑定：角色（信号源/频谱仪/PS1..PS4）-> 发现到的设备身份。
-        # 只记录用户明确应用过的设备；IP 变化时按序列号重新识别，不靠地址记忆。
+        # 设备身份绑定：角色（信号源/频谱仪）或电源槽位（过渡期仍是 PS1..PS4）-> 发现到的
+        # 设备身份。只记录用户明确应用过的设备；IP 变化时按序列号重新识别，不靠地址记忆。
         # 绑定是仪器连接的唯一来源；构建界面之前就要就位，扫描框初值才能取到已绑定
         # 设备的网段，电源分配的可选项也由它决定。
         self.device_bindings = effective_device_bindings(self.config)
@@ -249,16 +249,22 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
     def apply_discovered_devices(self, assignments):
         """把面板勾选的设备写成配置里的连接信息与身份记录。
 
-        角色不是用户选的：它来自设备表 ``instruments.json`` 登记的 ``role``，面板按它
-        写入``device_bindings``。这是写入的最终边界，因此它自己的校验必须完整，不能只
-        依赖面板的勾选校验：角色未知、角色重复、地址为空、缺少设备身份、身份与序列号
-        不一致，任何一项都整批拒绝，不留下“一半已应用”的配置。
+        角色不是用户选的：它来自设备表 ``instruments.json`` 登记的 ``role``（旧槽位
+        ``PS1``..``PS4`` 由面板折叠成 ``power_supply``），面板按它写入
+        ``device_bindings``。这是写入的最终边界，因此它自己的校验必须完整，不能只
+        依赖面板的勾选校验：角色未知、唯一角色重复、地址为空、缺少设备身份、身份与
+        序列号不一致，任何一项都整批拒绝，不留下“一半已应用”的配置。
+
+        **电源是过渡期特例**：``instruments.power_supplies`` 仍以旧槽位
+        ``PS1``..``PS4`` 为键，地址只能写回设备表登记的那个槽位，所以本步要求电源
+        带 ``config_slot``；多台电源的绑定集合（``device_bindings.power_supplies``）
+        属于步骤 6，当前一次只接受一台电源并明确拒绝更多，避免“只应用了最后一台”。
 
         应用是**整批替换**：本次勾选结果就是完整的设备绑定，没勾选的旧角色会被移除并
         随地址一起失效。这样“更换设备”不会残留上一台设备的连接，电源分配也不会再
         指向一台本次没有选中的电源。
         """
-        valid_roles = {"signal_generator", "spectrum_analyzer", *POWER_SUPPLY_NAMES}
+        valid_roles = {"signal_generator", "spectrum_analyzer", POWER_SUPPLY_ROLE}
         entries = list(assignments or ())
         panel = getattr(self, "discovery_panel", None)
 
@@ -272,14 +278,19 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             reject("请先在发现结果中勾选本次测试所需设备")
             return
 
-        # 第一遍只看角色：未知角色与重复角色是“这一批要做什么”的问题，
+        # 第一遍只看角色：未知角色与唯一角色重复是“这一批要做什么”的问题，
         # 先报出来，避免用户看到的是地址/序列号之类更细节的错。
         used_roles: dict[str, str] = {}
+        power_supplies: list[dict] = []
         for item in entries:
             role = item.get("role")
             if role not in valid_roles:
                 reject(f"未知的测试角色: {role}")
                 return
+            if role == POWER_SUPPLY_ROLE:
+                # 电源是类别不是编号：多台各自独立，这里只统计，不判定“角色重复”。
+                power_supplies.append(item)
+                continue
             if role in used_roles:
                 reject(
                     f"角色 {role} 在本次应用中被重复指定（{used_roles[role]} 与 "
@@ -287,6 +298,23 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
                 )
                 return
             used_roles[role] = str(item.get("ip") or "")
+        supply_slot = None
+        if len(power_supplies) > 1:
+            reject(
+                f"本次应用包含 {len(power_supplies)} 台电源；一次只能写入一台电源的地址"
+                "（多电源绑定集合属于后续步骤），请先只保留一台电源后再应用"
+            )
+            return
+        if power_supplies:
+            item = power_supplies[0]
+            supply_slot = item.get("config_slot")
+            if supply_slot not in POWER_SUPPLY_NAMES:
+                reject(
+                    f"电源 {item.get('supply_id') or item.get('label') or item.get('ip')} "
+                    "在设备表里没有旧槽位（PS1..PS4），当前配置无法写入它的地址；"
+                    "动态电源绑定属于后续步骤"
+                )
+                return
         # 第二遍校验每条记录的地址与身份，全部通过后才写绑定记录。
         for item in entries:
             role = item["role"]
@@ -315,7 +343,9 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         applied = []
         for item in entries:
             role = item["role"]
-            bindings[role] = {
+            # 电源暂时仍按旧槽位落键，槽位已在上面校验过；其他角色按角色键。
+            binding_key = supply_slot if role == POWER_SUPPLY_ROLE else role
+            bindings[binding_key] = {
                 "name": item.get("name"),
                 "vendor": item.get("vendor"),
                 "model": item.get("model"),
@@ -329,7 +359,10 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
                 # 模拟扫描写入的绑定带来源标记，避免演示数据被当成现场设备记录。
                 "source": "simulated" if item.get("simulated") else "scan",
             }
-            applied.append(f"{role_label(role) or role}<-{item.get('name') or item.get('ip')}")
+            applied.append(
+                f"{role_label(role) or role}<-"
+                f"{item.get('supply_id') or item.get('label') or item.get('name') or item.get('ip')}"
+            )
         removed = sorted(set(self.device_bindings) - set(bindings))
         self.device_bindings = bindings
         self.update_power_supply_options()

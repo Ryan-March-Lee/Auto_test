@@ -355,12 +355,56 @@ def effective_device_bindings(config: Any) -> dict[str, dict]:
 
 
 def bound_power_supplies(bindings: Any) -> list[str]:
-    """返回已绑定且有地址的电源 ``supply_id``，按绑定记录顺序。"""
+    """返回已绑定且有地址的电源 ``supply_id``，按绑定记录顺序。
+
+    这是电源分配唯一的可用来源：集合的大小与成员完全由本次设备绑定决定，1 台、2 台或
+    5 台都只是同一份集合的不同长度，不再有固定的 ``PS1``..``PS4`` 顺序或数量。没有
+    地址的绑定不算可用（连接需要地址），未绑定的配置引用也不会因此获得新候选。
+    """
     return [
         supply_id
         for supply_id, record in power_supply_bindings(bindings).items()
         if binding_address(record)
     ]
+
+
+def assignment_supply_id(entry: Any) -> str | None:
+    """返回一条供电分配记录引用的电源 ``supply_id``；未绑定或无法识别时返回 ``None``。
+
+    新配置只认 ``supply_id``（见数据契约 §6.2）。旧配置的同一份引用写在 ``name`` 里，
+    这里在**读入边界适配一次**：只要记录里出现 ``supply_id`` 就以它为准（``null`` 表示
+    引用未绑定），只有完全没有该字段的旧记录才回落去读 ``name``。``name`` 是过渡别名，
+    不是第二个可用性来源，也不参与“猜一台电源”。
+
+    返回值只做“是不是非空字符串”的判断，不裁剪、不改写：写错的引用要留给校验报告，
+    不能在校验前被悄悄修成看起来合法的值。
+    """
+    if not isinstance(entry, Mapping):
+        return None
+    field = "supply_id" if "supply_id" in entry else "name"
+    value = entry.get(field)
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value
+
+
+def _assignment_entry(combo: Any) -> dict:
+    """从分配下拉框读出一条供电分配记录。
+
+    引用值取自控件的可见文本（当前控件就用它保存引用，尚未改到 ``itemData``），
+    写回时**主字段是 ``supply_id``**；过渡期同时写同名 ``name``，让尚未迁移到
+    ``supply_id`` 的读取方（正式运行映射、硬件装配）仍能工作。两者取值必须相同——
+    不存在第二套编号。
+
+    控件为空表示“引用未绑定”：写成 ``supply_id: null`` 且不写 ``name``，由校验明确
+    报错，绝不在这里挑一台可用电源补上。
+    """
+    text = combo.currentText() if combo is not None else ""
+    supply_id = text if isinstance(text, str) and text.strip() else None
+    entry: dict = {"supply_id": supply_id, "channel": ["CH1", "CH2"]}
+    if supply_id:
+        entry["name"] = supply_id
+    return entry
 
 
 def _apply_device_binding(item: dict, binding: Any) -> None:
@@ -435,12 +479,11 @@ class ConfigFormState:
             supplies = group_entry.get("supplies")
             supplies = supplies if isinstance(supplies, Mapping) else {}
             for role, item in supplies.items():
-                name = item.get("name") if isinstance(item, Mapping) else ""
-                name = name.strip() if isinstance(name, str) else ""
-                if not name:
+                supply_id = assignment_supply_id(item)
+                if not supply_id:
                     unselected.append(f"{label}({role})")
-                elif not binding_address(records.get(name)):
-                    unbound.append(f"{label}({role}) → {name}")
+                elif not binding_address(records.get(supply_id)):
+                    unbound.append(f"{label}({role}) → {supply_id}")
         errors = []
         if unselected:
             errors.append(
@@ -587,6 +630,12 @@ class ConfigFormState:
         return existing if existing in ("gate", "drain") else None
 
     def read_power_assignment(self) -> dict:
+        """按当前下拉框写出供电分配，引用主字段是 ``supply_id``。
+
+        值只来自控件的可见文本（就是 ``supply_id``），不从显示字符串反解析；过渡期
+        同时写同名 ``name``（见 :func:`_assignment_entry`）。可选项本身只来自设备绑定，
+        因此这里写出的每个引用都对应一台本次已应用的电源。
+        """
         w = self.widgets
         controls = getattr(w, "power_assignment_widgets", None)
         if not controls:
@@ -601,13 +650,13 @@ class ConfigFormState:
         driver_enabled = source == "直流电源" and bool(getattr(w, "test_mode_enabled", True))
         driver = {"power_supply_count": 1 if driver_enabled else 0, "supplies": {}}
         if driver_enabled:
-            driver["supplies"]["main"] = {"name": self._current(controls["driver_power"]), "channel": ["CH1", "CH2"]}
+            driver["supplies"]["main"] = _assignment_entry(controls.get("driver_power"))
         count = int(self._current(w.pa_unit_count_combo))
         roles = (("carrier", "pa_unit1_power"), ("peaking", "pa_unit2_power"), ("peaking2", "pa_unit3_power"))
         supplies = {}
         for index, (role, control) in enumerate(roles, 1):
             if index <= count:
-                supplies[role] = {"name": self._current(controls[control]), "channel": ["CH1", "CH2"]}
+                supplies[role] = _assignment_entry(controls.get(control))
         return {"power_supply_assignment": {"driver_amplifier": driver, "dut_amplifier": {"power_supply_count": count, "supplies": supplies}}}
 
     def build_config(self) -> dict:

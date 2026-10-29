@@ -339,6 +339,80 @@ class ConfigPageTests(unittest.TestCase):
         # 两栏布局：仪器/参数在左，电源配置在右，而不是单列纵向堆叠。
         self.assertLess(connection.x() + connection.width(), power_detail.x())
 
+    @staticmethod
+    def power_supply_bindings(*supply_ids):
+        """按给定短标签造一份电源绑定集合（每台各带地址与身份）。"""
+        return {
+            "power_supplies": {
+                supply_id: {
+                    "device_key": f"rigol technologies:{supply_id.casefold()}",
+                    "visa_address": f"TCPIP0::192.168.1.{index}::inst0::INSTR",
+                }
+                for index, supply_id in enumerate(supply_ids, 1)
+            }
+        }
+
+    def test_unbound_power_reference_does_not_select_another_supply(self):
+        """载入配置时旧引用失效就保持空选择，不能停在下拉框第一项。"""
+        page = self.make_page(
+            device_bindings=self.power_supply_bindings("DP8B0885"),
+            dut_config={"power_supply_count": 1},
+            power_supply_assignment={
+                "dut_amplifier": {
+                    "power_supply_count": 1,
+                    "supplies": {"carrier": {"name": "DP8B1519", "channel": ["CH1", "CH2"]}},
+                }
+            },
+        )
+
+        self.assertEqual(page.pa_unit1_power_combo.currentText(), "")
+        self.assertEqual(page.pa_unit1_power_combo.currentIndex(), -1)
+        # 保存的是“引用未绑定”，不是另一台电源。
+        entry = page.build_config()["power_supply_assignment"]["dut_amplifier"][
+            "supplies"
+        ]["carrier"]
+        self.assertIsNone(entry["supply_id"])
+
+    def test_power_assignment_reference_is_read_from_supply_id(self):
+        """读配置时 ``supply_id`` 优先，旧字段 ``name`` 不参与选择。"""
+        page = self.make_page(
+            device_bindings=self.power_supply_bindings("DP8B1519", "DP8B0885"),
+            dut_config={"power_supply_count": 1},
+            power_supply_assignment={
+                "dut_amplifier": {
+                    "power_supply_count": 1,
+                    "supplies": {
+                        "carrier": {
+                            "supply_id": "DP8B0885",
+                            "name": "DP8B1519",
+                            "channel": ["CH1", "CH2"],
+                        }
+                    },
+                }
+            },
+        )
+
+        self.assertEqual(page.pa_unit1_power_combo.currentText(), "DP8B0885")
+
+    def test_power_assignment_options_are_the_bound_supplies(self):
+        """下拉框只列本次绑定的电源：1 台、2 台、5 台都只是集合长度不同。"""
+        for supply_ids in (
+            ("DP8B1519",),
+            ("DP8B1519", "DP8B0885"),
+            ("DP8B1519", "DP8B0885", "DP8B0950", "DP8B1191", "DP8B1216"),
+        ):
+            with self.subTest(count=len(supply_ids)):
+                page = self.make_page(
+                    device_bindings=self.power_supply_bindings(*supply_ids),
+                    dut_config={"power_supply_count": 1},
+                )
+                options = [
+                    page.pa_unit1_power_combo.itemText(index)
+                    for index in range(page.pa_unit1_power_combo.count())
+                ]
+                self.assertEqual(options, list(supply_ids))
+                self.assertEqual(page.get_enabled_power_supplies(), list(supply_ids))
+
 
 if __name__ == "__main__":
     unittest.main()

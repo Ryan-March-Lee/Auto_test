@@ -26,6 +26,7 @@ from domain.instruments.models import (
 from .config_form_state import (
     POWER_SUPPLY_BINDINGS,
     ConfigFormState,
+    assignment_supply_id,
     binding_address,
     binding_records,
     bound_power_supplies,
@@ -41,7 +42,6 @@ from .config_projection import (
     DRIVER_POWER_SOURCE_VALUES,
     DEFAULT_MAX_INPUT_POWER,
     DEFAULT_PA_UNIT_COUNT,
-    DEFAULT_POWER_ASSIGNMENT,
     DEFAULT_SIGNAL_SOURCE,
     DEFAULT_TEST_FREQUENCIES,
     POWER_SUPPLY_ROLES,
@@ -525,6 +525,29 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
     def _combo(items, current):
         widget = WheelSafeComboBox(); widget.addItems(list(items)); widget.setCurrentText(str(current)); return widget
 
+    @staticmethod
+    def _power_choice_combo(choices, entry):
+        """电源分配下拉框：只把配置里的真实引用回填到当前可选项。
+
+        引用按 ``supply_id`` 读取（旧配置只有 ``name`` 时读一次，见
+        :func:`config_form_state.assignment_supply_id`），并且必须**出现在本次绑定的
+        可选项里**才会被选中。配置写了引用、但那台电源本次没有绑定（含还没迁移的旧槽位
+        ``PS1``）时保持空选择，交给校验报告——``QComboBox`` 找不到文本会停在第一项，
+        那会把“这台电源已经不在”显示成“换成了另一台电源”。
+
+        配置里根本没有这条分配时沿用表单默认（有可用电源就选第一台）。
+        """
+        combo = WheelSafeComboBox()
+        combo.addItems(list(choices))
+        reference = assignment_supply_id(entry)
+        if reference is None:
+            combo.setCurrentIndex(0 if choices else -1)
+        elif reference in choices:
+            combo.setCurrentText(reference)
+        else:
+            combo.setCurrentIndex(-1)
+        return combo
+
     def _build_power_widgets(self, layout, supplies):
         """电源详细配置：按配置里的电源键与本次绑定动态创建标签页。
 
@@ -565,10 +588,10 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         peaking = dut_supply.get("peaking", {}) if isinstance(dut_supply.get("peaking", {}), dict) else {}
         peaking2 = dut_supply.get("peaking2", {}) if isinstance(dut_supply.get("peaking2", {}), dict) else {}
         supplies_choices = bound_power_supplies(self.device_bindings)
-        self.driver_power_combo = self._combo(supplies_choices, main.get("name", DEFAULT_POWER_ASSIGNMENT["driver_power"]))
-        self.pa_unit1_power_combo = self._combo(supplies_choices, carrier.get("name", DEFAULT_POWER_ASSIGNMENT["pa_unit1_power"]))
-        self.pa_unit2_power_combo = self._combo(supplies_choices, peaking.get("name", DEFAULT_POWER_ASSIGNMENT["pa_unit2_power"]))
-        self.pa_unit3_power_combo = self._combo(supplies_choices, peaking2.get("name", DEFAULT_POWER_ASSIGNMENT["pa_unit3_power"]))
+        self.driver_power_combo = self._power_choice_combo(supplies_choices, main)
+        self.pa_unit1_power_combo = self._power_choice_combo(supplies_choices, carrier)
+        self.pa_unit2_power_combo = self._power_choice_combo(supplies_choices, peaking)
+        self.pa_unit3_power_combo = self._power_choice_combo(supplies_choices, peaking2)
         self.driver_power_label = QLabel("驱动功放电源:"); self.pa_unit2_label = QLabel("PA Unit2电源:"); self.pa_unit3_label = QLabel("PA Unit3电源:")
         # 两列布局（标签 + 下拉框），避免右栏过窄时撑出横向滚动条。
         form.addWidget(self.driver_power_source_label, 0, 0)

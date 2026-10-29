@@ -8,10 +8,10 @@
 2. 测试角色来自设备表登记的 ``role``：勾选设备即可应用，不需要用户选择角色。电源的旧
    槽位（``PS3``）折叠成 ``power_supply``，结果里带 ``label`` / ``supply_id`` /
    ``serial`` / ``device_key``，多台电源各自独立、互不覆盖。
-3. 角色重复（仅信号源/频谱仪）、空扫描网段、身份缺失、设备未登记角色都给出明确提示，
-   不静默写入配置。
-4. 过渡期边界：配置里的电源集合仍按旧槽位写地址，因此配置页只接受带旧槽位的一台电源；
-   多电源绑定集合属于步骤 6，当前明确拒绝而不是丢弃其中一台。
+3. 角色重复（仅信号源/频谱仪）、空扫描网段、身份缺失、设备未登记角色、电源缺少短标签、
+   同一台设备被重复绑定都给出明确提示，不静默写入配置。
+4. 电源绑定结构：``device_bindings.power_supplies[<supply_id>]``，每条记录带
+   ``device_key``；一次应用多台电源得到多条独立绑定，清除后地址与启用状态一起失效。
 """
 
 import os
@@ -362,8 +362,8 @@ class DiscoveryPanelTests(unittest.TestCase):
         self.assertIsNone(assignment["label"])
         self.assertIsNone(assignment["supply_id"])
 
-    def test_power_supply_assignment_carries_identity_and_slot(self):
-        """电源记录带 ``label`` / ``supply_id`` / ``serial`` / ``device_key`` 与过渡期槽位。"""
+    def test_power_supply_without_a_label_cannot_be_applied(self):
+        """旧设备表还没有短标签：电源没有可写的配置引用，面板明确拒绝。"""
         panel = self.make_panel()
         self.run_scan(panel)
         rows = {
@@ -376,14 +376,8 @@ class DiscoveryPanelTests(unittest.TestCase):
 
         panel.request_apply()
 
-        assignment = applied[0][0]
-        self.assertEqual(assignment["role"], "power_supply")
-        self.assertIsNone(assignment["label"], "旧设备表还没有短标签，发现过程不生成标签")
-        self.assertIsNone(assignment["supply_id"])
-        self.assertEqual(assignment["serial"], "DP8B214901519")
-        self.assertEqual(assignment["device_key"], "rigol technologies:dp8b214901519")
-        # 过渡期：电源地址仍写回设备表登记的旧槽位。
-        self.assertEqual(assignment["config_slot"], "PS3")
+        self.assertEqual(applied, [])
+        self.assertIn("短标签", panel.status_label.text())
 
     def test_invalid_subnet_reports_failure_without_crashing(self):
         panel = self.make_panel()
@@ -459,10 +453,18 @@ class DiscoveryPanelTests(unittest.TestCase):
         self.assertIn("配置里是 频谱分析仪", text)
 
     def test_legacy_slot_binding_preselects_a_power_supply_without_a_role_change(self):
-        """旧绑定按 ``PS1`` 落键时不算“角色变了”：``PS1`` 只是旧槽位，类别是电源。"""
+        """旧绑定按 ``PS1`` 落键时不算“角色变了”：记录里的短标签折叠成同一台电源。"""
         panel = self.make_panel()
         panel.set_device_bindings(
-            {"PS1": {"device_key": "rigol technologies:dp8b214901519"}}
+            {
+                "PS1": {
+                    "device_key": "rigol technologies:dp8b214901519",
+                    "serial": "DP8B214901519",
+                    "label": "DP8B1519",
+                    "supply_id": "DP8B1519",
+                    "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
+                }
+            }
         )
 
         self.run_scan(panel)
@@ -591,17 +593,17 @@ class PowerSupplyDiscoveryTests(unittest.TestCase):
             self.assertTrue(panel.table.item(row, 0).flags() & Qt.ItemIsUserCheckable)
         self.assertTrue(panel.apply_btn.isEnabled())
 
-    def test_migrated_supply_explains_that_its_address_has_nowhere_to_go(self):
-        """迁移后的设备表没有旧槽位：状态列说明“地址无处可写”，不再提示缺短标签。"""
+    def test_migrated_supply_shows_its_short_label_without_a_slot_hint(self):
+        """迁移后的设备表只说明类别与短标签：状态列不再提示“没有旧槽位”。"""
         panel = self.make_panel()
 
         self.run_scan(panel)
 
         rows = self.rows(panel)
         row = rows["DP8B1519（DP832A，电源）"]
-        tip = panel.table.item(row, 3).toolTip()
-        self.assertIn("没有旧槽位", tip)
-        self.assertNotIn("短标签", tip)
+        status = panel.table.item(row, 3)
+        self.assertEqual(status.text(), "已登记")
+        self.assertEqual(status.toolTip(), "")
 
     def test_two_supplies_are_applied_independently_without_a_duplicate_role_error(self):
         panel = self.make_panel()
@@ -629,8 +631,8 @@ class PowerSupplyDiscoveryTests(unittest.TestCase):
         )
         self.assertNotIn("重复选择", panel.status_label.text())
 
-    def test_power_supply_without_a_legacy_slot_still_hands_over_its_identity(self):
-        """迁移后的设备表没有旧槽位：面板仍把身份与短标签交给配置页决定怎么落地址。"""
+    def test_power_supply_hands_over_its_supply_id(self):
+        """迁移后的设备表：面板交付短标签与身份，配置页按 ``supply_id`` 落地址。"""
         panel = self.make_panel()
         self.run_scan(panel)
         panel.table.item(0, 0).setCheckState(Qt.Checked)
@@ -641,13 +643,18 @@ class PowerSupplyDiscoveryTests(unittest.TestCase):
 
         self.assertEqual(len(applied), 1)
         assignment = applied[0][0]
-        self.assertIsNone(assignment["config_slot"])
+        self.assertNotIn("config_slot", assignment)
         self.assertIn(assignment["supply_id"], {"DP8B1519", "DP8B0885"})
 
     def test_two_supplies_are_preselected_by_identity_after_an_ip_change(self):
         panel = self.make_panel(
             bindings={
-                "DP8B0885": {"device_key": "rigol technologies:dp8b174400885"},
+                "power_supplies": {
+                    "DP8B0885": {
+                        "device_key": "rigol technologies:dp8b174400885",
+                        "visa_address": "TCPIP0::192.168.9.108::inst0::INSTR",
+                    }
+                }
             }
         )
         # 换一个网段再扫描：地址变了，身份（序列号）没变。
@@ -682,7 +689,7 @@ class DeviceHeadingTests(unittest.TestCase):
 
         self.assertEqual(device_heading(device), "DP8B1519（DP832A，电源）")
         self.assertEqual(device.supply_id, "DP8B1519")
-        self.assertIsNone(device.config_slot)
+        self.assertFalse(hasattr(device, "config_slot"), "旧槽位已从发现结果里删除")
 
     def test_legacy_slot_is_folded_into_the_power_supply_category(self):
         device = DiscoveredDevice(
@@ -696,7 +703,7 @@ class DeviceHeadingTests(unittest.TestCase):
         )
 
         self.assertEqual(device.role, "power_supply")
-        self.assertEqual(device.config_slot, "PS3")
+        self.assertFalse(hasattr(device, "config_slot"))
         self.assertIsNone(device.supply_id, "没有标签就没有 supply_id，发现过程不生成标签")
         self.assertEqual(device_heading(device), "DP832A-1（DP832A，电源）")
 
@@ -880,7 +887,7 @@ class ConfigPageDiscoveryIntegrationTests(unittest.TestCase):
 
         self.assertEqual(page.device_bindings["signal_generator"]["source"], "simulated")
 
-    def test_power_supply_role_is_written_to_the_matching_supply(self):
+    def test_power_supply_is_written_under_its_supply_id(self):
         page = self.make_page()
 
         page.apply_discovered_devices(
@@ -889,7 +896,6 @@ class ConfigPageDiscoveryIntegrationTests(unittest.TestCase):
                     "role": "power_supply",
                     "label": "DP8B1519",
                     "supply_id": "DP8B1519",
-                    "config_slot": "PS2",
                     "address": "TCPIP0::192.168.1.150::inst0::INSTR",
                     "name": None,
                     "vendor": "Keysight Technologies",
@@ -903,26 +909,25 @@ class ConfigPageDiscoveryIntegrationTests(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(
-            page.build_config()["instruments"]["power_supplies"]["PS2"]["address"],
-            "TCPIP0::192.168.1.150::inst0::INSTR",
-        )
-        self.assertTrue(
-            page.build_config()["instruments"]["power_supplies"]["PS2"]["enabled"]
-        )
-        # 过渡期绑定仍按旧槽位落键，身份（序列号/设备键）随记录保存。
-        self.assertFalse(page.device_bindings["PS2"]["known"])
-        self.assertIn("DP8B1519", page.discovery_panel.status_label.text())
+        supply = page.build_config()["instruments"]["power_supplies"]["DP8B1519"]
+        self.assertEqual(supply["address"], "TCPIP0::192.168.1.150::inst0::INSTR")
+        self.assertTrue(supply["enabled"])
+        self.assertEqual(supply["label"], "DP8B1519")
+        self.assertEqual(supply["device_key"], "keysight technologies:my51234567")
+        # 绑定集合的键就是引用 ID，记录内保留身份（序列号/设备键）。
+        binding = page.device_bindings["power_supplies"]["DP8B1519"]
+        self.assertFalse(binding["known"])
+        self.assertEqual(binding["serial"], "MY51234567")
+        self.assertIn("电源 DP8B1519", page.discovery_panel.status_label.text())
 
-    def test_single_power_supply_lands_on_its_legacy_slot(self):
-        """一台电源：地址写回设备表登记的槽位，短标签只用于显示与交接。"""
+    def test_single_power_supply_binding_uses_its_supply_id(self):
+        """一台电源：绑定键是短标签，地址写进同名的配置条目。"""
         page = self.make_page()
 
         page.apply_discovered_devices(
             [
                 {
                     "role": "power_supply",
-                    "config_slot": "PS3",
                     "address": "TCPIP0::192.168.1.102::inst0::INSTR",
                     "name": "DP832A-1",
                     "vendor": "RIGOL TECHNOLOGIES",
@@ -937,15 +942,20 @@ class ConfigPageDiscoveryIntegrationTests(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(set(page.device_bindings), {"PS3"})
-        binding = page.device_bindings["PS3"]
+        self.assertEqual(set(page.device_bindings), {"power_supplies"})
+        binding = page.device_bindings["power_supplies"]["DP8B1519"]
         self.assertEqual(binding["serial"], "DP8B214901519")
         self.assertEqual(binding["device_key"], "rigol technologies:dp8b214901519")
         self.assertEqual(binding["visa_address"], "TCPIP0::192.168.1.102::inst0::INSTR")
-        self.assertEqual(page.get_enabled_power_supplies(), ["PS3"])
+        self.assertEqual(page.get_enabled_power_supplies(), ["DP8B1519"])
+        self.assertIn("DP8B1519", page.power_config_widgets, "新绑定的电源要有自己的参数页")
+        self.assertEqual(
+            page.build_config()["instruments"]["power_supplies"]["DP8B1519"]["address"],
+            "TCPIP0::192.168.1.102::inst0::INSTR",
+        )
 
-    def test_power_supply_binding_keeps_the_short_label_and_names_its_slot(self):
-        """键还是旧槽位，所以记录自己要说明是哪台电源：短标签、supply_id 与类别都留下。"""
+    def test_power_supply_binding_summary_shows_the_short_label(self):
+        """“当前配置”按 supply_id 显示每台电源，记录里不再重复写类别与标签。"""
         page = self.make_page()
 
         page.apply_discovered_devices(
@@ -954,7 +964,6 @@ class ConfigPageDiscoveryIntegrationTests(unittest.TestCase):
                     "role": "power_supply",
                     "label": "DP8B1519",
                     "supply_id": "DP8B1519",
-                    "config_slot": "PS3",
                     "address": "TCPIP0::192.168.1.102::inst0::INSTR",
                     "name": "DP832A-1",
                     "vendor": "RIGOL TECHNOLOGIES",
@@ -968,52 +977,59 @@ class ConfigPageDiscoveryIntegrationTests(unittest.TestCase):
             ]
         )
 
-        binding = page.device_bindings["PS3"]
-        self.assertEqual(binding["role"], "power_supply")
-        self.assertEqual(binding["label"], "DP8B1519")
-        self.assertEqual(binding["supply_id"], "DP8B1519")
-        # “当前配置”显示短标签而不是资产名，与结果表一致。
+        binding = page.device_bindings["power_supplies"]["DP8B1519"]
+        for field in ("role", "label", "supply_id"):
+            self.assertNotIn(field, binding, "集合的键就是引用 ID，记录里不再重复")
         summary = page.discovery_panel.bindings_label.text()
-        self.assertIn("电源 PS3 ← DP8B1519", summary)
+        self.assertIn("电源 ← DP8B1519", summary)
         self.assertNotIn("DP832A-1", summary)
-        # 消息写实际落键：三台电源时也要看得出地址写进了哪一路配置。
-        self.assertIn("电源 PS3<-DP8B1519", page.discovery_panel.status_label.text())
+        self.assertIn("电源 DP8B1519", page.discovery_panel.status_label.text())
 
-    def test_two_power_supplies_in_one_batch_are_rejected_instead_of_collapsing(self):
-        """多电源绑定集合属于步骤 6：当前明确拒绝，不能只应用最后一台。"""
+    def test_two_power_supplies_become_two_independent_bindings_in_one_batch(self):
+        """绑定两台电源后一次应用即得到两条独立绑定与两条独立地址。"""
         page = self.make_page()
         messages = []
         page.validation_failed.connect(messages.append)
         first = {
             "role": "power_supply",
-            "config_slot": "PS3",
             "address": "TCPIP0::192.168.1.102::inst0::INSTR",
             "serial": "DP8B214901519",
+            "name": "DP832A-1",
             "vendor": "RIGOL TECHNOLOGIES",
+            "model": "DP832A",
             "device_key": "rigol technologies:dp8b214901519",
             "supply_id": "DP8B1519",
         }
         second = {
             "role": "power_supply",
-            "config_slot": "PS4",
             "address": "TCPIP0::192.168.1.108::inst0::INSTR",
             "serial": "DP8B174400885",
+            "name": "DP832A-3",
             "vendor": "RIGOL TECHNOLOGIES",
+            "model": "DP832A",
             "device_key": "rigol technologies:dp8b174400885",
             "supply_id": "DP8B0885",
         }
 
         page.apply_discovered_devices([first, second])
 
-        self.assertIn("2 台电源", messages[-1])
-        self.assertIn("多电源绑定集合", messages[-1])
-        self.assertEqual(page.device_bindings, {})
-        self.assertNotIn(
-            "address", page.build_config()["instruments"]["power_supplies"]["PS3"]
+        self.assertEqual(messages, [])
+        self.assertEqual(
+            set(page.device_bindings["power_supplies"]), {"DP8B1519", "DP8B0885"}
+        )
+        supplies = page.build_config()["instruments"]["power_supplies"]
+        self.assertEqual(supplies["DP8B1519"]["address"], "TCPIP0::192.168.1.102::inst0::INSTR")
+        self.assertEqual(supplies["DP8B0885"]["address"], "TCPIP0::192.168.1.108::inst0::INSTR")
+        self.assertTrue(supplies["DP8B1519"]["enabled"])
+        self.assertTrue(supplies["DP8B0885"]["enabled"])
+        # 每台电源各有独立的通道参数页，不按位置互相覆盖。
+        self.assertEqual(set(page.power_config_widgets), {"DP8B1519", "DP8B0885"})
+        self.assertEqual(
+            sorted(page.get_enabled_power_supplies()), ["DP8B0885", "DP8B1519"]
         )
 
-    def test_power_supply_without_a_legacy_slot_is_rejected_with_the_reason(self):
-        """迁移后的设备表没有旧槽位：配置页不能把地址悄悄写进别的电源。"""
+    def test_power_supply_without_a_label_is_rejected_with_the_reason(self):
+        """没有短标签就没有电源引用：配置页明确拒绝，不把地址写进别的电源。"""
         page = self.make_page()
         messages = []
         page.validation_failed.connect(messages.append)
@@ -1022,18 +1038,35 @@ class ConfigPageDiscoveryIntegrationTests(unittest.TestCase):
             [
                 {
                     "role": "power_supply",
-                    "config_slot": None,
                     "address": "TCPIP0::192.168.1.102::inst0::INSTR",
                     "serial": "DP8B214901519",
                     "vendor": "RIGOL TECHNOLOGIES",
                     "device_key": "rigol technologies:dp8b214901519",
-                    "supply_id": "DP8B1519",
                 }
             ]
         )
 
-        self.assertIn("没有旧槽位", messages[-1])
-        self.assertIn("DP8B1519", messages[-1])
+        self.assertIn("还没有短标签", messages[-1])
+        self.assertEqual(page.device_bindings, {})
+
+    def test_the_same_device_cannot_be_bound_twice_as_a_power_supply(self):
+        """同一台设备（device_key）不能出现在两条电源绑定里。"""
+        page = self.make_page()
+        messages = []
+        page.validation_failed.connect(messages.append)
+        entry = {
+            "role": "power_supply",
+            "address": "TCPIP0::192.168.1.102::inst0::INSTR",
+            "serial": "DP8B214901519",
+            "vendor": "RIGOL TECHNOLOGIES",
+            "device_key": "rigol technologies:dp8b214901519",
+        }
+
+        page.apply_discovered_devices(
+            [dict(entry, supply_id="DP8B1519"), dict(entry, supply_id="DP8B1519-B")]
+        )
+
+        self.assertIn("同一台设备不能重复绑定", messages[-1])
         self.assertEqual(page.device_bindings, {})
 
     def test_unknown_role_is_rejected(self):
@@ -1171,16 +1204,20 @@ class ConfigPageDiscoveryIntegrationTests(unittest.TestCase):
                 },
                 {
                     "role": "power_supply",
-                    "config_slot": "PS1",
-                    "address": "TCPIP0::192.168.1.101::inst0::INSTR",
-                    "serial": "PS1SN",
-                    "device_key": "keysight technologies:ps1sn",
-                    "ip": "192.168.1.101",
-                    "port": 5025,
+                    "supply_id": "DP8B1519",
+                    "address": "TCPIP0::192.168.1.102::inst0::INSTR",
+                    "serial": "DP8B214901519",
+                    "vendor": "RIGOL TECHNOLOGIES",
+                    "device_key": "rigol technologies:dp8b214901519",
+                    "ip": "192.168.1.102",
+                    "port": 5555,
                     "known": True,
                 },
             ]
         )
+        # 相当于保存过一次：两条绑定与地址已经写进配置。
+        page.apply_config(page.build_config())
+        self.assertEqual(set(page.device_bindings["power_supplies"]), {"DP8B1519"})
 
         page.apply_discovered_devices(
             [
@@ -1196,17 +1233,126 @@ class ConfigPageDiscoveryIntegrationTests(unittest.TestCase):
             ]
         )
 
-        # 整批替换：没勾选的 PS1 被移除，地址与启用状态一起失效。
+        # 整批替换：没勾选的电源被移除，地址与启用状态一起失效，不残留旧电源。
         self.assertEqual(set(page.device_bindings), {"signal_generator"})
         config = page.build_config()
         self.assertEqual(
             config["instruments"]["signal_generator"]["address"],
             "TCPIP0::192.168.1.211::inst0::INSTR",
         )
-        self.assertNotIn("address", config["instruments"]["power_supplies"]["PS1"])
-        self.assertFalse(config["instruments"]["power_supplies"]["PS1"]["enabled"])
+        supply = config["instruments"]["power_supplies"]["DP8B1519"]
+        self.assertNotIn("address", supply)
+        self.assertFalse(supply["enabled"])
         self.assertEqual(page.get_enabled_power_supplies(), [])
         self.assertIn("已移除", page.discovery_panel.status_label.text())
+
+    def test_clearing_bindings_invalidates_every_bound_power_supply(self):
+        """清除绑定后所有对应电源地址和启用状态同时失效。"""
+        page = self.make_page()
+        page.apply_discovered_devices(
+            [
+                {
+                    "role": "power_supply",
+                    "supply_id": "DP8B1519",
+                    "address": "TCPIP0::192.168.1.102::inst0::INSTR",
+                    "serial": "DP8B214901519",
+                    "vendor": "RIGOL TECHNOLOGIES",
+                    "device_key": "rigol technologies:dp8b214901519",
+                },
+                {
+                    "role": "power_supply",
+                    "supply_id": "DP8B0885",
+                    "address": "TCPIP0::192.168.1.108::inst0::INSTR",
+                    "serial": "DP8B174400885",
+                    "vendor": "RIGOL TECHNOLOGIES",
+                    "device_key": "rigol technologies:dp8b174400885",
+                },
+            ]
+        )
+        page.apply_config(page.build_config())
+
+        page.clear_device_bindings()
+
+        config = page.build_config()
+        self.assertNotIn("device_bindings", config)
+        for supply_id in ("DP8B1519", "DP8B0885"):
+            supply = config["instruments"]["power_supplies"][supply_id]
+            self.assertNotIn("address", supply)
+            self.assertFalse(supply["enabled"])
+        self.assertEqual(page.get_enabled_power_supplies(), [])
+
+    def test_legacy_slot_binding_is_migrated_to_its_supply_id(self):
+        """旧绑定按序列号迁移：地址写进 ``supply_id`` 条目，旧槽位条目随之失效。"""
+        page = ConfigPage(
+            {
+                "test_frequencies": [1.0],
+                "instruments": {
+                    "power_supplies": {
+                        "PS3": {
+                            "address": "TCPIP0::192.168.1.102::inst0::INSTR",
+                            "enabled": True,
+                            "channels": {"CH1": {"role": "gate"}, "CH2": {"role": "drain"}},
+                        }
+                    }
+                },
+                "device_bindings": {
+                    "PS3": {
+                        "role": "power_supply",
+                        "label": "DP8B1519",
+                        "supply_id": "DP8B1519",
+                        "serial": "DP8B214901519",
+                        "device_key": "rigol technologies:dp8b214901519",
+                        "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
+                        "source": "scan",
+                    }
+                },
+            },
+            scanner_factory=_scanner_factory,
+        )
+        page.show()
+        self.app.processEvents()
+        self.addCleanup(page.close)
+
+        self.assertEqual(set(page.device_bindings["power_supplies"]), {"DP8B1519"})
+        supplies = page.build_config()["instruments"]["power_supplies"]
+        self.assertEqual(supplies["DP8B1519"]["address"], "TCPIP0::192.168.1.102::inst0::INSTR")
+        self.assertTrue(supplies["DP8B1519"]["enabled"])
+        self.assertNotIn("address", supplies["PS3"])
+        self.assertFalse(supplies["PS3"]["enabled"])
+        self.assertEqual(page.get_enabled_power_supplies(), ["DP8B1519"])
+
+    def test_legacy_power_binding_with_only_an_address_requires_a_rescan(self):
+        """只有地址的旧绑定不是身份：不迁移，地址与启用状态一起失效。"""
+        page = ConfigPage(
+            {
+                "test_frequencies": [1.0],
+                "instruments": {
+                    "power_supplies": {
+                        "PS1": {
+                            "address": "TCPIP0::192.168.1.101::inst0::INSTR",
+                            "enabled": True,
+                            "channels": {"CH1": {"role": "gate"}, "CH2": {"role": "drain"}},
+                        }
+                    }
+                },
+                "device_bindings": {
+                    "PS1": {
+                        "visa_address": "TCPIP0::192.168.1.101::inst0::INSTR",
+                        "source": "legacy_config",
+                    }
+                },
+            },
+            scanner_factory=_scanner_factory,
+        )
+        page.show()
+        self.app.processEvents()
+        self.addCleanup(page.close)
+
+        self.assertEqual(page.device_bindings, {})
+        supply = page.build_config()["instruments"]["power_supplies"]["PS1"]
+        self.assertNotIn("address", supply)
+        self.assertFalse(supply["enabled"])
+        self.assertEqual(page.get_enabled_power_supplies(), [])
 
     def test_empty_batch_is_rejected_without_touching_existing_bindings(self):
         page = self.make_page()

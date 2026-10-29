@@ -115,12 +115,18 @@ class ConfigFormStateReaderTests(unittest.TestCase):
             'instruments': {
                 'existing_instrument_field': 'preserved',
                 'power_supplies': {
-                    'PS1': {
-                        'address': 'old-ps1',
+                    'DP8B1519': {
+                        'address': 'old-dp8b1519',
                         'enabled': False,
                         'channels': {'CH1': {'legacy': True}},
                         'unknown': 'preserved',
-                    }
+                    },
+                    # 旧槽位条目：还没有迁移到短标签，地址与启用状态随绑定失效。
+                    'PS1': {
+                        'address': 'old-ps1',
+                        'enabled': True,
+                        'channels': {'CH1': {'legacy': True}},
+                    },
                 }
             },
             'test_frequencies': [1.0],
@@ -128,12 +134,20 @@ class ConfigFormStateReaderTests(unittest.TestCase):
         }
         self.host = _WidgetHost()
         # 仪器连接只来自设备发现结果（device_bindings），界面没有地址/启用控件。
+        # 电源按 supply_id 集合存放，不再用 PS1..PS4 这类槽位键。
         self.host.device_bindings = {
             'signal_generator': {'visa_address': 'sg-new'},
             'spectrum_analyzer': {'visa_address': 'sa-new'},
-            'PS1': {'visa_address': 'ps1-new'},
-            'PS3': {'visa_address': 'ps3-new'},
-            'PS4': {'visa_address': 'ps4-new'},
+            'power_supplies': {
+                'DP8B1519': {
+                    'device_key': 'rigol technologies:dp8b214901519',
+                    'visa_address': 'ps1-new',
+                },
+                'DP8B0885': {
+                    'device_key': 'rigol technologies:dp8b174400885',
+                    'visa_address': 'ps4-new',
+                },
+            },
         }
         self.reader = ConfigFormState(self.config, self.host)
 
@@ -174,23 +188,30 @@ class ConfigFormStateReaderTests(unittest.TestCase):
         self.assertEqual(instruments['signal_generator']['address'], 'sg-new')
         self.assertTrue(instruments['signal_generator']['enabled'])
         self.assertEqual(instruments['spectrum_analyzer']['address'], 'sa-new')
-        # 绑定记录覆盖配置里已有的地址，并把该角色标记为启用。
-        self.assertEqual(instruments['power_supplies']['PS1']['address'], 'ps1-new')
-        self.assertTrue(instruments['power_supplies']['PS1']['enabled'])
-        self.assertEqual(instruments['power_supplies']['PS1']['channels'], {'CH1': {'legacy': True}})
-        self.assertEqual(instruments['power_supplies']['PS1']['unknown'], 'preserved')
-        self.assertEqual(set(instruments['power_supplies']), {'PS1', 'PS2', 'PS3', 'PS4'})
+        # 绑定记录覆盖配置里已有的地址，并把该电源标记为启用；集合键同时写成 label。
+        supply = instruments['power_supplies']['DP8B1519']
+        self.assertEqual(supply['address'], 'ps1-new')
+        self.assertTrue(supply['enabled'])
+        self.assertEqual(supply['label'], 'DP8B1519')
+        self.assertEqual(supply['device_key'], 'rigol technologies:dp8b214901519')
+        self.assertEqual(supply['channels'], {'CH1': {'legacy': True}})
+        self.assertEqual(supply['unknown'], 'preserved')
+        # 未绑定的电源（含旧槽位条目）都保留，只是没有可连接的地址。
+        self.assertEqual(
+            set(instruments['power_supplies']),
+            {'DP8B1519', 'DP8B0885', 'PS1'},
+        )
 
     def test_unbound_role_is_written_as_disabled_without_address(self):
         """没有本次发现的绑定记录：不臆造地址，也不保留存量的连接状态。
 
-        绑定是唯一连接来源，所以未绑定的角色必须显式写成“未启用、无地址”，否则清除
+        绑定是唯一连接来源，所以未绑定的电源必须显式写成“未启用、无地址”，否则清除
         绑定后旧地址仍会被当成可连接设备。
         """
         instruments = self.reader.read_instrument_config()['instruments']
 
-        self.assertNotIn('address', instruments['power_supplies']['PS2'])
-        self.assertFalse(instruments['power_supplies']['PS2']['enabled'])
+        self.assertNotIn('address', instruments['power_supplies']['PS1'])
+        self.assertFalse(instruments['power_supplies']['PS1']['enabled'])
 
     def test_test_parameter_reader_keeps_invalid_frequency_out_of_fragment(self):
         self.host.freq_edit = FakeTextWidget('not-a-list')
@@ -307,11 +328,17 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
         self.config = {
             'instruments': {
                 'power_supplies': {
+                    'DP8B1519': {
+                        'address': 'old-dp8b1519',
+                        'enabled': False,
+                        'channels': {'CH1': {'legacy': True}},
+                        'unknown': 'preserved',
+                    },
+                    # 旧槽位条目：参数保留，但不是本次绑定的电源。
                     'PS1': {
                         'address': 'old-ps1',
                         'enabled': False,
                         'channels': {'CH1': {'legacy': True}},
-                        'unknown': 'preserved',
                     },
                     'PS2': {
                         'address': 'old-ps2',
@@ -330,8 +357,10 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
         self.host.device_bindings = {
             'signal_generator': {'visa_address': 'sg-new'},
             'spectrum_analyzer': {'visa_address': 'sa-new'},
-            'PS1': {'visa_address': 'ps1-new'},
-            'PS4': {'visa_address': 'ps4-new'},
+            'power_supplies': {
+                'DP8B1519': {'visa_address': 'ps1-new'},
+                'DP8B0885': {'visa_address': 'ps4-new'},
+            },
         }
         self.host.freq_edit = FakeTextWidget('[1.0, 2.0]')
         self.host.start_power = FakeValueWidget(-10)
@@ -344,7 +373,7 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
         self.host.max_input_power = FakeValueWidget(29.5)
         self.host.pa_unit_count_combo = FakeComboWidget('2')
         self.host.power_config_widgets = {
-            'PS1': {
+            'DP8B1519': {
                 'channels': {
                     'CH1': channel_widgets(2.8, 3.0, True, 0.1, 0.2, False),
                     'CH2': channel_widgets(28.0, 30.0, True, 1.0, 2.0, True),
@@ -367,7 +396,9 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
 
         self.assertEqual(result['top_level_extra'], 'preserved')
         self.assertEqual(result['instruments']['extra_instrument'], 'keep')
-        self.assertEqual(result['instruments']['power_supplies']['PS1']['unknown'], 'preserved')
+        self.assertEqual(
+            result['instruments']['power_supplies']['DP8B1519']['unknown'], 'preserved'
+        )
         self.assertEqual(result['dut_config']['extra'], 'keep')
 
     def test_build_writes_instrument_addresses_and_enabled(self):
@@ -378,17 +409,19 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
         self.assertTrue(instruments['signal_generator']['enabled'])
         self.assertEqual(instruments['spectrum_analyzer']['address'], 'sa-new')
         self.assertTrue(instruments['spectrum_analyzer']['enabled'])
-        self.assertEqual(instruments['power_supplies']['PS1']['address'], 'ps1-new')
-        self.assertTrue(instruments['power_supplies']['PS1']['enabled'])
-        self.assertEqual(instruments['power_supplies']['PS4']['address'], 'ps4-new')
-        # 未绑定设备的电源被显式置为未启用、且不再保留旧地址：连接只来自绑定。
-        self.assertNotIn('address', instruments['power_supplies']['PS2'])
-        self.assertFalse(instruments['power_supplies']['PS2']['enabled'])
+        self.assertEqual(instruments['power_supplies']['DP8B1519']['address'], 'ps1-new')
+        self.assertTrue(instruments['power_supplies']['DP8B1519']['enabled'])
+        self.assertEqual(instruments['power_supplies']['DP8B0885']['address'], 'ps4-new')
+        # 未绑定设备的电源（含旧槽位条目）被显式置为未启用、且不再保留旧地址：
+        # 连接只来自绑定。
+        for key in ('PS1', 'PS2'):
+            self.assertNotIn('address', instruments['power_supplies'][key])
+            self.assertFalse(instruments['power_supplies'][key]['enabled'])
 
     def test_build_replaces_channels_but_preserves_address_and_enabled(self):
         result = self.coordinator.build_configuration_from_ui()
 
-        ps1 = result['instruments']['power_supplies']['PS1']
+        ps1 = result['instruments']['power_supplies']['DP8B1519']
         self.assertEqual(ps1['address'], 'ps1-new')
         self.assertTrue(ps1['enabled'])
         self.assertEqual(ps1['unknown'], 'preserved')

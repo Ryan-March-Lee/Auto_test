@@ -8,6 +8,7 @@
 """
 
 import copy
+import math
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -19,11 +20,13 @@ from PySide6.QtWidgets import (
 from domain.instruments.models import POWER_SUPPLY_ROLE, make_device_key
 
 from .config_form_state import (
+    POWER_SUPPLY_BINDINGS,
     ConfigFormState,
-    POWER_SUPPLY_NAMES,
-    bound_power_supplies,
     binding_address,
+    binding_records,
+    bound_power_supplies,
     effective_device_bindings,
+    power_supply_bindings,
 )
 from .config_projection import (
     DEFAULT_ATTENUATOR_TYPE,
@@ -51,6 +54,18 @@ __all__ = [
 ]
 
 
+def _spin_value(value) -> float:
+    """通道数值只接受非 bool 的有限数字；其它类型（字符串/布尔/NaN）按 0 处理。
+
+    配置页也用于回填冻结配置：类型不正确的字段不应让重建标签页崩溃，而应落到与投影
+    一致的默认值，交给正式校验报告。
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    number = float(value)
+    return number if math.isfinite(number) else 0.0
+
+
 class ConfigPage(PageControllerBindingMixin, QWidget):
     save_requested = Signal()
     connect_requested = Signal()
@@ -65,10 +80,10 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         PageControllerBindingMixin.__init__(self)
         QWidget.__init__(self, parent)
         self.config = config if isinstance(config, dict) else {}
-        # 设备身份绑定：角色（信号源/频谱仪）或电源槽位（过渡期仍是 PS1..PS4）-> 发现到的
-        # 设备身份。只记录用户明确应用过的设备；IP 变化时按序列号重新识别，不靠地址记忆。
-        # 绑定是仪器连接的唯一来源；构建界面之前就要就位，扫描框初值才能取到已绑定
-        # 设备的网段，电源分配的可选项也由它决定。
+        # 设备身份绑定：信号源/频谱仪各一条（角色键），电源按 ``supply_id`` 多条
+        # （``power_supplies``）。只记录用户明确应用过的设备；IP 变化时按序列号重新识别，
+        # 不靠地址记忆。绑定是仪器连接的唯一来源；构建界面之前就要就位，扫描框初值才能
+        # 取到已绑定设备的网段，电源分配的可选项也由它决定。
         self.device_bindings = effective_device_bindings(self.config)
         self._scanner_factory = scanner_factory
         self.build_ui()
@@ -227,9 +242,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
 
     def _default_scan_subnet(self):
         """扫描框初值：优先已绑定设备的地址，其次配置里已有的仪器地址。"""
-        for record in self.device_bindings.values():
-            if not isinstance(record, dict):
-                continue
+        for _key, record in binding_records(self.device_bindings):
             subnet = subnet_from_address(binding_address(record) or record.get("last_ip"))
             if subnet:
                 return subnet
@@ -250,22 +263,19 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         """把面板勾选的设备写成配置里的连接信息与身份记录。
 
         角色不是用户选的：它来自设备表 ``instruments.json`` 登记的 ``role``（旧槽位
-        ``PS1``..``PS4`` 由面板折叠成 ``power_supply``），面板按它写入
-        ``device_bindings``。这是写入的最终边界，因此它自己的校验必须完整，不能只
-        依赖面板的勾选校验：角色未知、唯一角色重复、地址为空、缺少设备身份、身份与
-        序列号不一致，任何一项都整批拒绝，不留下“一半已应用”的配置。
+        ``PS1``..``PS4`` 由面板折叠成 ``power_supply``），面板按它交付。这是写入的最终
+        边界，因此它自己的校验必须完整，不能只依赖面板的勾选校验：角色未知、唯一角色
+        重复、地址为空、缺少设备身份、身份与序列号不一致、电源缺少 ``supply_id``、同一
+        台设备被重复绑定，任何一项都整批拒绝，不留下“一半已应用”的配置。
 
-        **电源是过渡期特例**：``instruments.power_supplies`` 仍以旧槽位
-        ``PS1``..``PS4`` 为键，地址只能写回设备表登记的那个槽位，所以本步要求电源
-        带 ``config_slot``；多台电源的绑定集合（``device_bindings.power_supplies``）
-        属于步骤 6，当前一次只接受一台电源并明确拒绝更多，避免“只应用了最后一台”。
-        落键是槽位，所以电源绑定记录里额外写上 ``role`` / ``label`` / ``supply_id``：
-        面板因此显示短标签而不是资产名，绑定键改成 ``supply_id`` 时也只剩这里能说明
-        “这个槽位上现在是哪台电源”。
+        绑定结构：信号源与频谱仪用角色键（暂时保持单设备），**电源用
+        ``device_bindings.power_supplies[<supply_id>]``**——电源是同一类别下的多台设备，
+        一个角色键放不下第二台，每条记录必须带 ``device_key``，同一个 ``device_key``
+        不能出现在两条电源绑定里。
 
-        应用是**整批替换**：本次勾选结果就是完整的设备绑定，没勾选的旧角色会被移除并
-        随地址一起失效。这样“更换设备”不会残留上一台设备的连接，电源分配也不会再
-        指向一台本次没有选中的电源。
+        应用是**整批替换**：本次勾选结果就是完整的设备绑定，没勾选的旧角色与旧电源会
+        被移除并随地址一起失效。这样“更换设备”不会残留上一台设备的连接，电源分配也
+        不会再指向一台本次没有选中的电源。
         """
         valid_roles = {"signal_generator", "spectrum_analyzer", POWER_SUPPLY_ROLE}
         entries = list(assignments or ())
@@ -281,18 +291,32 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             reject("请先在发现结果中勾选本次测试所需设备")
             return
 
-        # 第一遍只看角色：未知角色与唯一角色重复是“这一批要做什么”的问题，
-        # 先报出来，避免用户看到的是地址/序列号之类更细节的错。
+        # 第一遍只看角色与电源引用：未知角色、唯一角色重复、电源没有可用的引用 ID 是
+        # “这一批要做什么”的问题，先报出来，避免用户看到的是地址/序列号之类更细节的错。
         used_roles: dict[str, str] = {}
-        power_supplies: list[dict] = []
+        supply_ids: dict[str, str] = {}
         for item in entries:
             role = item.get("role")
             if role not in valid_roles:
                 reject(f"未知的测试角色: {role}")
                 return
             if role == POWER_SUPPLY_ROLE:
-                # 电源是类别不是编号：多台各自独立，这里只统计，不判定“角色重复”。
-                power_supplies.append(item)
+                # 电源是类别不是编号：多台各自独立，这里只判定引用 ID 可用且唯一。
+                supply_id = self._supply_id_of(item)
+                if not supply_id:
+                    reject(
+                        f"电源 {item.get('name') or item.get('ip')} 还没有短标签"
+                        "（supply_id），没有可写的配置引用；请先在设备表里保存一次为它"
+                        "补上标签，再重新扫描"
+                    )
+                    return
+                if supply_id in supply_ids:
+                    reject(
+                        f"本次应用有两行发现结果都指向电源 {supply_id}"
+                        f"（{supply_ids[supply_id]} 与 {item.get('ip')}）；请只保留一台"
+                    )
+                    return
+                supply_ids[supply_id] = str(item.get("ip") or "")
                 continue
             if role in used_roles:
                 reject(
@@ -301,24 +325,8 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
                 )
                 return
             used_roles[role] = str(item.get("ip") or "")
-        supply_slot = None
-        if len(power_supplies) > 1:
-            reject(
-                f"本次应用包含 {len(power_supplies)} 台电源；一次只能写入一台电源的地址"
-                "（多电源绑定集合属于后续步骤），请先只保留一台电源后再应用"
-            )
-            return
-        if power_supplies:
-            item = power_supplies[0]
-            supply_slot = item.get("config_slot")
-            if supply_slot not in POWER_SUPPLY_NAMES:
-                reject(
-                    f"电源 {item.get('supply_id') or item.get('label') or item.get('ip')} "
-                    "在设备表里没有旧槽位（PS1..PS4），当前配置无法写入它的地址；"
-                    "动态电源绑定属于后续步骤"
-                )
-                return
         # 第二遍校验每条记录的地址与身份，全部通过后才写绑定记录。
+        checked: list[tuple[dict, str]] = []
         for item in entries:
             role = item["role"]
             address = item.get("address")
@@ -342,19 +350,41 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
                         f"{role} 的设备身份与序列号不一致（{device_key} ≠ {expected}），未应用"
                     )
                     return
-        bindings = {}
+            identity = device_key.casefold()
+            if not identity and vendor:
+                try:
+                    identity = make_device_key(vendor, serial)
+                except ValueError:
+                    identity = ""
+            checked.append((item, identity))
+
+        # 第三遍：同一个 device_key 不能出现在两条电源绑定里（同一台设备不能接两次）。
+        bound_keys: dict[str, str] = {}
+        for item, identity in checked:
+            if item["role"] != POWER_SUPPLY_ROLE or not identity:
+                continue
+            supply_id = self._supply_id_of(item)
+            if identity in bound_keys:
+                reject(
+                    f"电源 {supply_id} 与 {bound_keys[identity]} 是同一台设备"
+                    f"（{identity}），同一台设备不能重复绑定；请只保留一台"
+                )
+                return
+            bound_keys[identity] = supply_id
+
+        bindings: dict[str, object] = {}
+        supplies: dict[str, dict] = {}
         applied = []
-        for item in entries:
+        for item, identity in checked:
             role = item["role"]
-            # 电源暂时仍按旧槽位落键，槽位已在上面校验过；其他角色按角色键。
-            is_power_supply = role == POWER_SUPPLY_ROLE
-            binding_key = supply_slot if is_power_supply else role
             record = {
                 "name": item.get("name"),
                 "vendor": item.get("vendor"),
                 "model": item.get("model"),
                 "serial": item.get("serial"),
-                "device_key": item.get("device_key"),
+                # 身份统一写成 ``厂商:序列号`` 的小写形式；记录必须带身份，才能在下一次
+                # 扫描时按身份找回同一台设备。
+                "device_key": identity or item.get("device_key"),
                 "visa_address": item["address"].strip(),
                 "last_ip": item.get("ip"),
                 # 探测端口只是“这台设备在本网段怎么被读出身份”的记录，不参与拼接连接地址。
@@ -363,34 +393,57 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
                 # 模拟扫描写入的绑定带来源标记，避免演示数据被当成现场设备记录。
                 "source": "simulated" if item.get("simulated") else "scan",
             }
-            if is_power_supply:
-                # 电源是类别不是编号：记录里同时留下类别与短标签（= ``supply_id``）。
-                # 面板据此显示短标签而不是资产名；绑定键从旧槽位迁到 ``supply_id`` 时
-                # （后续步骤），键本身不再说明是哪台电源，这两项是唯一来源。
-                record["role"] = POWER_SUPPLY_ROLE
-                record["label"] = item.get("label")
-                record["supply_id"] = item.get("supply_id")
-            bindings[binding_key] = record
-            applied.append(
-                # 消息写实际落键：电源是槽位，三台电源时也必须看得出地址写进了哪一路配置。
-                f"{role_label(binding_key) or binding_key}<-"
-                f"{item.get('supply_id') or item.get('label') or item.get('name') or item.get('ip')}"
-            )
-        removed = sorted(set(self.device_bindings) - set(bindings))
+            if role == POWER_SUPPLY_ROLE:
+                # 集合的键就是引用 ID：记录里不再重复写 role/label/supply_id。
+                supplies[self._supply_id_of(item)] = record
+                applied.append(f"电源 {self._supply_id_of(item)}")
+            else:
+                bindings[role] = record
+                applied.append(
+                    f"{role_label(role) or role} "
+                    f"{item.get('name') or item.get('model') or item.get('ip')}"
+                )
+        if supplies:
+            bindings[POWER_SUPPLY_BINDINGS] = supplies
+        previous = self._binding_labels(self.device_bindings)
+        current = self._binding_labels(bindings)
+        removed = [label for label in previous if label not in set(current)]
         self.device_bindings = bindings
+        self._rebuild_power_tabs()
         self.update_power_supply_options()
         if panel is not None:
             panel.set_device_bindings(self.device_bindings)
         message = "已应用发现设备: " + "，".join(applied)
         if removed:
-            message += "；已移除本次未勾选的旧绑定: " + "、".join(
-                role_label(role) or role for role in removed
-            )
+            message += "；已移除本次未勾选的旧绑定: " + "、".join(removed)
         if any(item.get("simulated") for item in entries):
             message += "（模拟数据，仅用于离线演示，不能用于真实测量）"
         if panel is not None:
             panel.show_message(message)
         self.discovery_message.emit(message)
+
+    @staticmethod
+    def _supply_id_of(item) -> str:
+        """一条电源发现结果对应的配置引用 ID（= 设备表里的短标签）。"""
+        if not isinstance(item, dict):
+            return ""
+        for field in ("supply_id", "label"):
+            value = item.get(field)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
+
+    @staticmethod
+    def _binding_labels(bindings) -> list[str]:
+        """把绑定结构显示成“信号发生器 SMW200A-1 / 电源 DP8B1519”这类可读标签。"""
+        labels: list[str] = []
+        for key, record in binding_records(bindings):
+            name = record.get("name") or record.get("model") or record.get("serial") or ""
+            if key in ("signal_generator", "spectrum_analyzer"):
+                labels.append(f"{role_label(key) or key} {name}".strip())
+            else:
+                labels.append(f"电源 {key}")
+        return labels
 
     def clear_device_bindings(self):
         """清除全部设备绑定，并让这些角色的连接信息同时失效。
@@ -403,6 +456,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         if panel is not None:
             panel.set_device_bindings({})
             panel.show_message("已清除设备绑定；相关仪器地址与启用状态一并失效，请重新扫描应用")
+        self._rebuild_power_tabs()
         self.update_power_supply_options()
         self.discovery_message.emit("已清除设备绑定记录")
 
@@ -419,48 +473,21 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         widget = WheelSafeComboBox(); widget.addItems(list(items)); widget.setCurrentText(str(current)); return widget
 
     def _build_power_widgets(self, layout, supplies):
+        """电源详细配置：按配置里的电源键与本次绑定动态创建标签页。
+
+        电源数量与身份都由设备绑定决定，不再有 ``PS1``..``PS4`` 四个固定页：配置里原有
+        的条目（含尚未迁移的旧槽位）各占一页，本次绑定的每台电源各占一页，标签页标题用
+        设备表的短标签。
+        """
         detail = QGroupBox("电源详细配置")
         detail_layout = QVBoxLayout(detail)
         detail_layout.setContentsMargins(0, 0, 0, 0)
-        tabs = QTabWidget(); tabs.setObjectName("subTabs"); self.power_config_widgets = {}
-        for name in POWER_SUPPLY_NAMES:
-            page = QWidget(); page_layout = QVBoxLayout(page)
-            page_layout.setSpacing(10)
-            source = supplies.get(name, {})
-            if not isinstance(source, dict): source = {}
-            channels = source.get("channels", {})
-            if not isinstance(channels, dict): channels = {}
-            record = {"channels": {}}
-            for channel in ("CH1", "CH2"):
-                value = channels.get(channel, {})
-                if not isinstance(value, dict): value = {}
-                voltage = value.get("voltage", {}); current = value.get("current", {})
-                if not isinstance(voltage, dict): voltage = {}
-                if not isinstance(current, dict): current = {}
-                box = QGroupBox(f"通道 {channel}"); form = QFormLayout(box)
-                form.setHorizontalSpacing(10); form.setVerticalSpacing(6)
-                form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-                role = value.get("role")
-                if role not in POWER_SUPPLY_ROLES:
-                    role = DUT_CHANNEL_ROLES.get(channel, POWER_SUPPLY_ROLES[0])
-                controls = {
-                    "role": self._combo(POWER_SUPPLY_ROLES, role),
-                    "voltage": self._spin(voltage.get("value", 0), 0, 50),
-                    "voltage_protection": self._spin(voltage.get("protection", 0), 0, 50),
-                    "voltage_protection_enabled": QCheckBox("启用"),
-                    "current": self._spin(current.get("value", 0), 0, 10),
-                    "current_protection": self._spin(current.get("protection", 0), 0, 10),
-                    "current_protection_enabled": QCheckBox("启用"),
-                }
-                controls["voltage_protection_enabled"].setChecked(voltage.get("protection_enabled", False))
-                controls["current_protection_enabled"].setChecked(current.get("protection_enabled", False))
-                form.addRow("供电角色", controls["role"])
-                form.addRow("电压 (V)", controls["voltage"]); form.addRow("保护电压 (V)", controls["voltage_protection"])
-                form.addRow("电压保护", controls["voltage_protection_enabled"]); form.addRow("电流 (A)", controls["current"])
-                form.addRow("保护电流 (A)", controls["current_protection"]); form.addRow("电流保护", controls["current_protection_enabled"])
-                page_layout.addWidget(box); record["channels"][channel] = controls
-            tabs.addTab(page, name); self.power_config_widgets[name] = record
-        detail_layout.addWidget(tabs)
+        self.power_tabs = QTabWidget(); self.power_tabs.setObjectName("subTabs")
+        self.power_config_widgets = {}
+        self._rebuild_power_tabs(
+            sources=self._power_supply_sources(supplies), preserve=False
+        )
+        detail_layout.addWidget(self.power_tabs)
         layout.addWidget(detail)
 
         assignment = QGroupBox("电源分配设置"); form = QGridLayout(assignment)
@@ -484,7 +511,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         carrier = dut_supply.get("carrier", {}) if isinstance(dut_supply.get("carrier", {}), dict) else {}
         peaking = dut_supply.get("peaking", {}) if isinstance(dut_supply.get("peaking", {}), dict) else {}
         peaking2 = dut_supply.get("peaking2", {}) if isinstance(dut_supply.get("peaking2", {}), dict) else {}
-        supplies_choices = POWER_SUPPLY_NAMES
+        supplies_choices = bound_power_supplies(self.device_bindings)
         self.driver_power_combo = self._combo(supplies_choices, main.get("name", DEFAULT_POWER_ASSIGNMENT["driver_power"]))
         self.pa_unit1_power_combo = self._combo(supplies_choices, carrier.get("name", DEFAULT_POWER_ASSIGNMENT["pa_unit1_power"]))
         self.pa_unit2_power_combo = self._combo(supplies_choices, peaking.get("name", DEFAULT_POWER_ASSIGNMENT["pa_unit2_power"]))
@@ -503,6 +530,105 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         self.power_assignment_widgets = {"driver_source": self.driver_power_source_combo, "driver_power": self.driver_power_combo,
             "pa_unit1_power": self.pa_unit1_power_combo, "pa_unit2_power": self.pa_unit2_power_combo,
             "pa_unit2_label": self.pa_unit2_label, "pa_unit3_power": self.pa_unit3_power_combo, "pa_unit3_label": self.pa_unit3_label}
+
+    def _power_supply_sources(self, supplies=None) -> dict[str, dict]:
+        """电源标签页要显示的条目：配置里已有的键 + 本次已绑定的 ``supply_id``。
+
+        配置条目保留各自未知字段与通道参数；绑定记录只补身份字段（短标签、型号、序列
+        号、设备键），不覆盖配置里已有的值。这样“更换电源”不会沿用上一台的身份，而
+        “重装页面”也不会因为配置里已有同名字段而丢掉绑定来源。
+        """
+        if supplies is None:
+            instruments = self.config.get("instruments")
+            instruments = instruments if isinstance(instruments, dict) else {}
+            supplies = instruments.get("power_supplies")
+        sources: dict[str, dict] = {}
+        if isinstance(supplies, dict):
+            for key, item in supplies.items():
+                if isinstance(item, dict):
+                    sources[str(key)] = item
+        for supply_id, record in power_supply_bindings(self.device_bindings).items():
+            entry = dict(sources.get(supply_id) or {})
+            for field in ("label", "model", "serial", "device_key"):
+                value = record.get(field)
+                if value and not entry.get(field):
+                    entry[field] = value
+            entry.setdefault("label", supply_id)
+            sources[supply_id] = entry
+        return sources
+
+    def _power_channel_values(self) -> dict[str, dict]:
+        """读取当前电源标签页里的通道值，重建标签页时用它保留用户已填的参数。"""
+        if not getattr(self, "power_config_widgets", None):
+            return {}
+        fragment = ConfigFormState(self.config, self).read_power_supply_config()
+        return fragment.get("instruments", {}).get("power_supplies", {}) or {}
+
+    def _rebuild_power_tabs(self, *, sources=None, preserve=True) -> None:
+        """按电源键重建标签页；``preserve`` 时保留当前控件里的通道参数。
+
+        电源数量变化（应用/清除绑定、加载另一份配置）后重建，避免按位置把某一台设备的
+        参数写到另一台上。
+        """
+        tabs = getattr(self, "power_tabs", None)
+        if tabs is None:
+            return
+        if sources is None:
+            sources = self._power_supply_sources()
+        existing = self._power_channel_values() if preserve else {}
+        current = tabs.currentIndex()
+        tabs.clear()
+        self.power_config_widgets = {}
+        for key, source in sources.items():
+            source = source if isinstance(source, dict) else {}
+            channels = existing.get(key)
+            if not isinstance(channels, dict):
+                channels = source.get("channels")
+            if not isinstance(channels, dict):
+                channels = {}
+            self._add_power_tab(key, source, channels)
+        if tabs.count() and current >= 0:
+            tabs.setCurrentIndex(min(current, tabs.count() - 1))
+
+    def _add_power_tab(self, key, source, channels) -> None:
+        """为一条电源配置建一个标签页；标题优先用短标签与型号。"""
+        page = QWidget(); page_layout = QVBoxLayout(page)
+        page_layout.setSpacing(10)
+        record = {"channels": {}}
+        for channel in ("CH1", "CH2"):
+            value = channels.get(channel, {})
+            if not isinstance(value, dict): value = {}
+            voltage = value.get("voltage", {}); current = value.get("current", {})
+            if not isinstance(voltage, dict): voltage = {}
+            if not isinstance(current, dict): current = {}
+            box = QGroupBox(f"通道 {channel}"); form = QFormLayout(box)
+            form.setHorizontalSpacing(10); form.setVerticalSpacing(6)
+            form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            role = value.get("role")
+            if role not in POWER_SUPPLY_ROLES:
+                role = DUT_CHANNEL_ROLES.get(channel, POWER_SUPPLY_ROLES[0])
+            controls = {
+                "role": self._combo(POWER_SUPPLY_ROLES, role),
+                "voltage": self._spin(_spin_value(voltage.get("value")), 0, 50),
+                "voltage_protection": self._spin(_spin_value(voltage.get("protection")), 0, 50),
+                "voltage_protection_enabled": QCheckBox("启用"),
+                "current": self._spin(_spin_value(current.get("value")), 0, 10),
+                "current_protection": self._spin(_spin_value(current.get("protection")), 0, 10),
+                "current_protection_enabled": QCheckBox("启用"),
+            }
+            controls["voltage_protection_enabled"].setChecked(voltage.get("protection_enabled") is True)
+            controls["current_protection_enabled"].setChecked(current.get("protection_enabled") is True)
+            form.addRow("供电角色", controls["role"])
+            form.addRow("电压 (V)", controls["voltage"]); form.addRow("保护电压 (V)", controls["voltage_protection"])
+            form.addRow("电压保护", controls["voltage_protection_enabled"]); form.addRow("电流 (A)", controls["current"])
+            form.addRow("保护电流 (A)", controls["current_protection"]); form.addRow("电流保护", controls["current_protection_enabled"])
+            page_layout.addWidget(box); record["channels"][channel] = controls
+        title = str(source.get("label") or key)
+        model = source.get("model")
+        if model and str(model) != title:
+            title = f"{title}（{model}）"
+        self.power_tabs.addTab(page, title)
+        self.power_config_widgets[key] = record
 
     def _build_run_widgets(self, layout):
         """运行入口：校验并创建一次运行，或按 run_id 重新打开已有运行。
@@ -662,14 +788,31 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         :func:`presentation.qt.configuration_authoring.author_official_configuration`
         生成，本页面不读取也不解释它们。
         """
-        # 先算绑定，再用它决定电源分配的可选项：投影不允许把配置引用的电源临时塞进
-        # 下拉框，否则一份指向“没有绑定设备”的电源配置会被静默保存下来。
+        # 先算绑定，再用它决定电源分配的可选项与电源标签页：投影不允许把配置引用的
+        # 电源临时塞进下拉框，否则一份指向“没有绑定设备”的电源配置会被静默保存下来；
+        # 标签页也按新配置的电源键与绑定重建，投影才有对应控件可写。
+        # 重建属于“回填动作”：投影失败时把绑定与标签页恢复原样，页面不留在半新半旧的
+        # 状态（``self.config`` 本来就只在投影成功后才更新）。
         bindings = effective_device_bindings(config)
-        projected = project_authoring_config(
-            self, config, supplies=bound_power_supplies(bindings)
-        )
-        self.config = projected
+        instruments = config.get("instruments") if isinstance(config, dict) else {}
+        instruments = instruments if isinstance(instruments, dict) else {}
+        supplies = instruments.get("power_supplies")
+        supplies = supplies if isinstance(supplies, dict) else {}
+        previous_bindings = self.device_bindings
         self.device_bindings = bindings
+        try:
+            self._rebuild_power_tabs(
+                sources=self._power_supply_sources(supplies),
+                preserve=False,
+            )
+            projected = project_authoring_config(
+                self, config, supplies=bound_power_supplies(bindings)
+            )
+        except ConfigBackfillError:
+            self.device_bindings = previous_bindings
+            self._rebuild_power_tabs(sources=self._power_supply_sources(), preserve=False)
+            raise
+        self.config = projected
         panel = getattr(self, "discovery_panel", None)
         if panel is not None:
             panel.set_device_bindings(self.device_bindings)

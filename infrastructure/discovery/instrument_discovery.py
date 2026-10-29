@@ -42,7 +42,6 @@ from application.ports.device_discovery import (
     DeviceDiscoveryError,
 )
 from domain.instruments.models import (
-    LEGACY_ROLES,
     POWER_SUPPLY_ROLE,
     DeviceStatus,
     InstrumentIdentity,
@@ -126,17 +125,6 @@ class DiscoveredDevice:
         当成角色——多台电源共用 ``power_supply``。
         """
         return canonical_role(self.known_role)
-
-    @property
-    def config_slot(self) -> str | None:
-        """旧配置里的电源槽位（``PS1``..``PS4``）；设备表登记的不是旧槽位时为 ``None``。
-
-        过渡期专用：电源集合仍是 ``instruments.power_supplies.<槽位>``，应用设备时需要把
-        地址写回它原本的槽位。步骤 6 把电源绑定改成 ``supply_id`` 集合后，这个属性随
-        旧槽位一起删除。
-        """
-        slot = normalize_text(self.known_role)
-        return slot if slot in LEGACY_ROLES else None
 
     @property
     def label(self) -> str | None:

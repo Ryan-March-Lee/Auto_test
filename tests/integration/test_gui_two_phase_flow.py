@@ -47,7 +47,11 @@ def _fully_valid_gui_config() -> dict:
             "signal_generator": {"address": "sim::sg", "model": "SG", "enabled": True},
             "spectrum_analyzer": {"address": "sim::sa", "model": "SA", "enabled": True},
             "power_supplies": {
-                "PS1": {
+                "DP8B1519": {
+                    "label": "DP8B1519",
+                    "device_key": "rigol technologies:dp8b214901519",
+                    "serial": "DP8B214901519",
+                    "model": "DP832A",
                     "address": "sim::ps1",
                     "enabled": True,
                     "channels": {
@@ -57,11 +61,24 @@ def _fully_valid_gui_config() -> dict:
                 }
             },
         },
+        # 电源连接只来自设备绑定：按 supply_id 记录设备身份与本次地址。
+        "device_bindings": {
+            "signal_generator": {"visa_address": "sim::sg", "source": "scan"},
+            "spectrum_analyzer": {"visa_address": "sim::sa", "source": "scan"},
+            "power_supplies": {
+                "DP8B1519": {
+                    "device_key": "rigol technologies:dp8b214901519",
+                    "serial": "DP8B214901519",
+                    "visa_address": "sim::ps1",
+                    "source": "scan",
+                }
+            }
+        },
         "power_supply_assignment": {
             "driver_amplifier": {"power_supply_count": 0, "supplies": {}},
             "dut_amplifier": {
                 "power_supply_count": 1,
-                "supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}},
+                "supplies": {"carrier": {"name": "DP8B1519", "channel": ["CH1", "CH2"]}},
             },
         },
     })
@@ -878,9 +895,9 @@ class ConfigPageRunEntryTests(unittest.TestCase):
     def test_validate_blocks_duplicate_power_channel_roles(self):
         from presentation.qt.config_page import ConfigPage
 
-        page = ConfigPage({})
-        page.power_config_widgets["PS1"]["channels"]["CH1"]["role"].setCurrentText("gate")
-        page.power_config_widgets["PS1"]["channels"]["CH2"]["role"].setCurrentText("gate")
+        page = ConfigPage({"instruments": {"power_supplies": {"DP8B1519": {}}}})
+        page.power_config_widgets["DP8B1519"]["channels"]["CH1"]["role"].setCurrentText("gate")
+        page.power_config_widgets["DP8B1519"]["channels"]["CH2"]["role"].setCurrentText("gate")
         failures = []
         requested = []
         page.validation_failed.connect(failures.append)
@@ -925,9 +942,9 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         self.assertFalse(page.driver_mode_requested())
         built = page.build_config()["instruments"]
         self.assertEqual(built["signal_generator"]["address"], "sim::sg")
-        self.assertEqual(built["power_supplies"]["PS1"]["address"], "sim::ps1")
-        self.assertEqual(page.pa_unit1_power_combo.currentText(), "PS1")
-        self.assertEqual(page.power_config_widgets["PS1"]["channels"]["CH2"]["voltage"].value(), 28.0)
+        self.assertEqual(built["power_supplies"]["DP8B1519"]["address"], "sim::ps1")
+        self.assertEqual(page.pa_unit1_power_combo.currentText(), "DP8B1519")
+        self.assertEqual(page.power_config_widgets["DP8B1519"]["channels"]["CH2"]["voltage"].value(), 28.0)
 
     def test_config_page_makes_power_channel_roles_explicit(self):
         """保存配置页时按控件当前选择写入显式角色，不再由装配层推导。"""
@@ -938,7 +955,7 @@ class ConfigPageRunEntryTests(unittest.TestCase):
 
         built = page.build_config()
 
-        channels = built["instruments"]["power_supplies"]["PS1"]["channels"]
+        channels = built["instruments"]["power_supplies"]["DP8B1519"]["channels"]
         self.assertEqual(channels["CH1"]["role"], "gate")
         self.assertEqual(channels["CH2"]["role"], "drain")
 
@@ -946,17 +963,17 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         from presentation.qt.config_page import ConfigPage
 
         config = _fully_valid_gui_config()
-        config["instruments"]["power_supplies"]["PS1"]["channels"]["CH1"]["role"] = "drain"
-        config["instruments"]["power_supplies"]["PS1"]["channels"]["CH2"]["role"] = "gate"
+        config["instruments"]["power_supplies"]["DP8B1519"]["channels"]["CH1"]["role"] = "drain"
+        config["instruments"]["power_supplies"]["DP8B1519"]["channels"]["CH2"]["role"] = "gate"
         page = ConfigPage({})
         page.apply_config(config)
 
         self.assertEqual(
-            page.power_config_widgets["PS1"]["channels"]["CH1"]["role"].currentText(),
+            page.power_config_widgets["DP8B1519"]["channels"]["CH1"]["role"].currentText(),
             "drain",
         )
         built = page.build_config()
-        channels = built["instruments"]["power_supplies"]["PS1"]["channels"]
+        channels = built["instruments"]["power_supplies"]["DP8B1519"]["channels"]
         self.assertEqual(channels["CH1"]["role"], "drain")
         self.assertEqual(channels["CH2"]["role"], "gate")
 
@@ -976,8 +993,9 @@ class ConfigPageRunEntryTests(unittest.TestCase):
 
         built = page.build_config()["instruments"]
         self.assertEqual(built["signal_generator"], {"enabled": False})
-        self.assertNotIn("address", built["power_supplies"]["PS1"])
-        self.assertFalse(built["power_supplies"]["PS1"]["enabled"])
+        # 空配置既没有可连接的电源，也没有电源条目或标签页留下上一份配置的参数。
+        self.assertEqual(built["power_supplies"], {})
+        self.assertEqual(page.power_config_widgets, {})
         self.assertEqual(page.freq_edit.text(), "[4.0, 4.4, 4.8, 5.2, 5.6, 5.8]")
         self.assertEqual(page.start_power.value(), -38.0)
         self.assertEqual(page.stop_power.value(), -16.0)
@@ -990,9 +1008,6 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         # 没有任何已绑定/已保存的电源：电源分配不再提供可选项（旧界面默认的 PS1/PS2
         # 来自已被移除的“启用”勾选框，不再是连接来源）。
         self.assertEqual(page.get_enabled_power_supplies(), [])
-        self.assertEqual(
-            page.power_config_widgets["PS1"]["channels"]["CH2"]["voltage"].value(), 0.0
-        )
 
     def test_apply_config_projects_all_supported_fields(self):
         from presentation.qt.config_page import ConfigPage
@@ -1008,7 +1023,7 @@ class ConfigPageRunEntryTests(unittest.TestCase):
                 "signal_generator": {"address": "sim::sg2", "enabled": False},
                 "spectrum_analyzer": {"address": "sim::sa2", "enabled": True},
                 "power_supplies": {
-                    "PS1": {
+                    "DP8B1519": {
                         "address": "sim::ps1",
                         "enabled": True,
                         "channels": {
@@ -1030,21 +1045,29 @@ class ConfigPageRunEntryTests(unittest.TestCase):
                             },
                         },
                     },
-                    "PS2": {"address": "sim::ps2", "enabled": True},
-                    "PS3": {"address": "sim::ps3", "enabled": True},
+                    "DP8B0885": {"address": "sim::ps2", "enabled": True},
+                    "DP8B1191": {"address": "sim::ps3", "enabled": True},
+                },
+            },
+            "device_bindings": {
+                "spectrum_analyzer": {"visa_address": "sim::sa2", "source": "scan"},
+                "power_supplies": {
+                    "DP8B1519": {"visa_address": "sim::ps1", "source": "scan"},
+                    "DP8B0885": {"visa_address": "sim::ps2", "source": "scan"},
+                    "DP8B1191": {"visa_address": "sim::ps3", "source": "scan"},
                 },
             },
             "power_supply_assignment": {
                 "driver_amplifier": {
                     "power_supply_count": 1,
-                    "supplies": {"main": {"name": "PS1", "channel": ["CH1"]}},
+                    "supplies": {"main": {"name": "DP8B1519", "channel": ["CH1"]}},
                 },
                 "dut_amplifier": {
                     "power_supply_count": 3,
                     "supplies": {
-                        "carrier": {"name": "PS2"},
-                        "peaking": {"name": "PS3"},
-                        "peaking2": {"name": "PS1"},
+                        "carrier": {"name": "DP8B0885"},
+                        "peaking": {"name": "DP8B1191"},
+                        "peaking2": {"name": "DP8B1519"},
                     },
                 },
             },
@@ -1068,10 +1091,12 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         self.assertFalse(built["signal_generator"]["enabled"])
         self.assertEqual(built["spectrum_analyzer"]["address"], "sim::sa2")
         self.assertTrue(built["spectrum_analyzer"]["enabled"])
-        self.assertEqual(built["power_supplies"]["PS1"]["address"], "sim::ps1")
-        self.assertIn("PS3", page.get_enabled_power_supplies())
-        self.assertNotIn("PS4", page.get_enabled_power_supplies())
-        channel = page.power_config_widgets["PS1"]["channels"]["CH1"]
+        self.assertEqual(built["power_supplies"]["DP8B1519"]["address"], "sim::ps1")
+        self.assertEqual(
+            set(page.get_enabled_power_supplies()),
+            {"DP8B1519", "DP8B0885", "DP8B1191"},
+        )
+        channel = page.power_config_widgets["DP8B1519"]["channels"]["CH1"]
         self.assertEqual(channel["voltage"].value(), 3.3)
         self.assertEqual(channel["voltage_protection"].value(), 5.0)
         self.assertTrue(channel["voltage_protection_enabled"].isChecked())
@@ -1079,10 +1104,10 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         self.assertEqual(channel["current_protection"].value(), 1.0)
         self.assertTrue(channel["current_protection_enabled"].isChecked())
         self.assertEqual(page.driver_power_source_combo.currentText(), "直流电源")
-        self.assertEqual(page.driver_power_combo.currentText(), "PS1")
-        self.assertEqual(page.pa_unit1_power_combo.currentText(), "PS2")
-        self.assertEqual(page.pa_unit2_power_combo.currentText(), "PS3")
-        self.assertEqual(page.pa_unit3_power_combo.currentText(), "PS1")
+        self.assertEqual(page.driver_power_combo.currentText(), "DP8B1519")
+        self.assertEqual(page.pa_unit1_power_combo.currentText(), "DP8B0885")
+        self.assertEqual(page.pa_unit2_power_combo.currentText(), "DP8B1191")
+        self.assertEqual(page.pa_unit3_power_combo.currentText(), "DP8B1519")
 
     def test_apply_config_matches_a_freshly_built_page(self):
         from presentation.qt.config_page import ConfigPage

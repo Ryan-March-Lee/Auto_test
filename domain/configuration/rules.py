@@ -3,7 +3,7 @@
 import math
 import os
 import re
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from domain.configuration.types import ConfigIssue, ConfigValidationResult
 from domain.configuration.models import DRIVER_POWER_DC, DRIVER_POWER_EXTERNAL, DRIVER_POWER_SOURCES
@@ -158,6 +158,9 @@ def simulated_binding_issues(document: Any) -> List[ConfigIssue]:
     绑定可以被保存用于演示，但绝不能进入真实运行：否则一次演示点击就会让测量对着
     演示地址（或干脆连不上）跑出看似有效的结果。
 
+    绑定结构是“信号源 / 频谱仪各一条 + ``power_supplies`` 里按 ``supply_id`` 的多条”，
+    两类都要检查：只查顶层键会让电源绑定绕过这条门禁。
+
     这里只判断绑定记录的来源标记，不猜地址是否真实存在——真实性无法离线判断，
     而来源标记是写入时的事实。
     """
@@ -167,7 +170,7 @@ def simulated_binding_issues(document: Any) -> List[ConfigIssue]:
     if not isinstance(bindings, dict):
         return []
     issues: List[ConfigIssue] = []
-    for role, record in bindings.items():
+    for path, record in _binding_entries(bindings):
         if not isinstance(record, dict):
             continue
         source = str(record.get("source") or "").strip().casefold()
@@ -176,12 +179,28 @@ def simulated_binding_issues(document: Any) -> List[ConfigIssue]:
         issues.append(
             ConfigIssue(
                 "error",
-                f"device_bindings.{role}.source",
+                f"{path}.source",
                 "该设备绑定来自模拟扫描，只能用于离线演示：请用“真实网络扫描”重新获取设备"
                 "并应用，或清除设备绑定后再创建运行",
             )
         )
     return issues
+
+
+def _binding_entries(bindings: dict) -> List[Tuple[str, Any]]:
+    """展开 ``device_bindings``：顶层角色键 + ``power_supplies`` 里的每台电源。
+
+    电源是同一类别下的多台设备，集合的键是 ``supply_id``；逐条展开才能让每条电源
+    绑定都受同一条门禁约束，而不是被当成一个“记录”整体跳过。
+    """
+    entries: List[Tuple[str, Any]] = []
+    for role, record in bindings.items():
+        if role == "power_supplies" and isinstance(record, dict):
+            for supply_id, supply_record in record.items():
+                entries.append((f"device_bindings.power_supplies.{supply_id}", supply_record))
+            continue
+        entries.append((f"device_bindings.{role}", record))
+    return entries
 
 
 def _validate_driver_power_source(

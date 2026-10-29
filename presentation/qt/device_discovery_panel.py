@@ -38,24 +38,24 @@ from application.ports.device_discovery import (
 from domain.instruments.models import (
     POWER_SUPPLY_ROLE,
     canonical_role,
-    make_device_key,
 )
 
-from .config_form_state import LEGACY_BINDING_SOURCE
+from .config_form_state import (
+    LEGACY_BINDING_SOURCE,
+    binding_device_key,
+    binding_records,
+    power_supply_bindings,
+)
 from .input_controls import WheelSafeComboBox
 from .theme import set_button_variant, set_tone
 
 # 角色标签是“本次测试语义”，与设备身份（序列号）分开：设备可以换 IP，角色不会变。
 # 角色值来自设备表 ``instruments.json`` 的 ``role`` 字段，这里只负责显示。电源的类别是
-# ``power_supply``（多台共用），``PS1``..``PS4`` 只用于显示旧绑定记录，不再作为新角色。
+# ``power_supply``（多台共用，按短标签区分），不再有 ``PS1``..``PS4`` 这类槽位编号。
 ROLE_LABELS: dict[str, str] = {
     "signal_generator": "信号发生器",
     "spectrum_analyzer": "频谱分析仪",
     POWER_SUPPLY_ROLE: "电源",
-    "PS1": "电源 PS1",
-    "PS2": "电源 PS2",
-    "PS3": "电源 PS3",
-    "PS4": "电源 PS4",
 }
 SCAN_MODE_CHOICES: tuple[tuple[str, str], ...] = (
     (SCAN_MODE_SIMULATED, "模拟设备（离线演示）"),
@@ -102,28 +102,6 @@ def subnet_from_address(address: Any) -> str | None:
         return None
     try:
         return str(ipaddress.IPv4Network(f"{match.group(1)}/24", strict=False))
-    except ValueError:
-        return None
-
-
-def binding_device_key(record: Any) -> str | None:
-    """返回一条设备绑定记录的身份键；无法确定身份时返回 ``None``。
-
-    身份是 ``厂商:序列号``。旧配置只有厂商与序列号两段时在这里重新拼出同一个键；
-    只有序列号没有厂商时无法确定身份，返回 ``None``（不做“仅按序列号”的猜测匹配，
-    否则两个厂商的同号设备会被混为一谈）。
-    """
-    if not isinstance(record, dict):
-        return None
-    key = str(record.get("device_key") or "").strip().casefold()
-    if key:
-        return key
-    vendor = str(record.get("vendor") or "").strip()
-    serial = str(record.get("serial") or "").strip()
-    if not vendor or not serial:
-        return None
-    try:
-        return make_device_key(vendor, serial)
     except ValueError:
         return None
 
@@ -219,30 +197,28 @@ class DeviceDiscoveryPanel(QGroupBox):
     def _refresh_bindings_summary(self) -> None:
         """在面板上显示当前配置了哪些设备：连接信息不靠一张空白结果表来猜。
 
-        只显示角色与设备名，不显示地址：IP 只是本次可达的地址，不是用户需要
-        关心的连接信息。电源优先显示短标签（``supply_id``），与结果表一致。
+        只显示设备与短标签，不显示地址：IP 只是本次可达的地址，不是用户需要关心的
+        连接信息。电源按 ``supply_id`` 逐台列出，与结果表一致。
         """
         parts = []
-        ordered = [role for role in ROLE_LABELS if role in self.device_bindings]
-        ordered += [role for role in self.device_bindings if role not in ROLE_LABELS]
-        for role in ordered:
-            record = self.device_bindings.get(role)
-            if not isinstance(record, dict):
-                continue
-            name = str(
-                record.get("supply_id")
-                or record.get("label")
-                or record.get("name")
-                or record.get("model")
-                or record.get("serial")
-                or "未命名设备"
-            )
-            detail = name
+        for key, record in binding_records(self.device_bindings):
+            is_power_supply = key not in ("signal_generator", "spectrum_analyzer")
+            if is_power_supply:
+                detail = key
+                prefix = "电源"
+            else:
+                detail = str(
+                    record.get("name")
+                    or record.get("model")
+                    or record.get("serial")
+                    or "未命名设备"
+                )
+                prefix = role_label(key) or key
             if record.get("source") == "simulated":
                 detail += "（模拟数据）"
             elif record.get("source") == LEGACY_BINDING_SOURCE:
                 detail += "（沿用已保存的配置，未扫描确认）"
-            parts.append(f"{role_label(role) or role} ← {detail}")
+            parts.append(f"{prefix} ← {detail}")
         self.bindings_label.setText(
             "当前配置："
             + ("；".join(parts) if parts else "尚未绑定设备；请扫描后勾选本次测试所用的设备")
@@ -531,21 +507,12 @@ class DeviceDiscoveryPanel(QGroupBox):
                     "设备表没有登记这台设备的测试角色（role）；补上后才能应用"
                 )
             elif device.is_power_supply:
-                # 过渡期提示：没有短标签时结果里显示的是资产名，没有旧槽位时地址无处可写。
-                # 电源集合仍按旧槽位写入，见 config_page.apply_discovered_devices。
-                hints = []
+                # 电源按短标签分配：没有短标签就没有可写的配置引用。
                 if not device.label:
-                    hints.append(
-                        "设备表里还没有这台电源的短标签（label），当前显示的是资产名；"
-                        "保存一次设备表后会自动补上"
+                    status_item.setToolTip(
+                        "设备表里还没有这台电源的短标签（label），当前显示的是资产名，"
+                        "也无法写入配置引用；保存一次设备表后会自动补上"
                     )
-                if not device.config_slot:
-                    hints.append(
-                        "这台电源在设备表里没有旧槽位（PS1..PS4）：当前配置只能把地址写回旧槽位，"
-                        "多电源/动态电源绑定属于后续步骤"
-                    )
-                if hints:
-                    status_item.setToolTip("；".join(hints))
             self.table.setItem(row, 3, status_item)
             self._rows.append({"device": device, "check": check})
         self._fit_table_width()
@@ -554,18 +521,19 @@ class DeviceDiscoveryPanel(QGroupBox):
         """按配置里保存的身份预选：IP 变了也能找回同一台设备。
 
         只按 ``厂商:序列号`` 匹配，不做“仅按序列号”或“按短标签”的猜测。角色以设备表
-        登记为准；旧绑定里的槽位（``PS3``）先折叠成 ``power_supply`` 再比较，因此旧配置
-        不会因为“PS3 → 电源”被误报成角色变化。
+        登记为准；电源按 ``supply_id`` 逐台比对，旧槽位（``PS3``）只是一段兼容输入，
+        折叠后仍是电源类别，不会因为“PS3 → 电源”被误报成角色变化。
         """
         if not self.device_bindings:
             return
         bound = {
-            binding_device_key(record): role
-            for role, record in self.device_bindings.items()
+            binding_device_key(record): key
+            for key, record in binding_records(self.device_bindings)
             if binding_device_key(record) is not None
         }
         if not bound:
             return
+        power_keys = set(power_supply_bindings(self.device_bindings))
         matched = 0
         moved: list[str] = []
         for row in self._rows:
@@ -579,14 +547,11 @@ class DeviceDiscoveryPanel(QGroupBox):
             row["check"].setCheckState(Qt.Checked)
             matched += 1
             bound_key = bound[key]
-            # 绑定键可能是类别（``power_supply``）、旧槽位（``PS3``）或短标签
-            # （``DP8B1519``）：前两者折叠成类别比较，短标签按设备的标签比对。
+            # 绑定键可能是类别（``power_supply``）或短标签（``DP8B1519``）：类别折叠后
+            # 比较，短标签只在双方都是电源时按“是不是这台电源”比对。
             bound_role = canonical_role(bound_key) or bound_key
             same_category = bound_role == device.role
-            same_supply = device.is_power_supply and bound_key in {
-                device.label,
-                device.supply_id,
-            }
+            same_supply = device.is_power_supply and bound_key in power_keys
             if not (same_category or same_supply):
                 moved.append(
                     f"{device.display_name} 配置里是 {role_label(bound_role) or bound_role}，"
@@ -634,14 +599,19 @@ class DeviceDiscoveryPanel(QGroupBox):
                     )
                     continue
                 used_roles[role_value] = device.display_name
+            elif not device.supply_id:
+                # 电源引用是短标签（= supply_id）：没有标签就没有可写的配置引用。
+                problems.append(
+                    f"{device.display_name} 在设备表里还没有短标签（supply_id），"
+                    "没有可写的电源引用；请先保存一次设备表补上标签后重新扫描"
+                )
+                continue
             identity = device.identity
             assignments.append(
                 {
                     "role": role_value,
                     "label": device.label,
                     "supply_id": device.supply_id,
-                    # 过渡期：配置里的电源集合仍按旧槽位（PS1..PS4）存放地址。
-                    "config_slot": device.config_slot,
                     "address": device.visa_address,
                     "name": device.known_name,
                     "vendor": identity.vendor,

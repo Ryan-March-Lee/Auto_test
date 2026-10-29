@@ -10,10 +10,14 @@ import copy
 import math
 from typing import Any, Mapping
 
+from domain.instruments.models import POWER_SUPPLY_ROLE, canonical_role, make_device_key
+
 # 仪器连接只由设备发现结果决定：角色由设备表（instruments.json）登记，界面不再让用户
 # 选择；地址来自该设备本次发现的 VISA 地址。下表是配置文档里的角色键，不是界面控件名。
 INSTRUMENT_ROLES = ("signal_generator", "spectrum_analyzer")
-POWER_SUPPLY_NAMES = ("PS1", "PS2", "PS3", "PS4")
+# ``device_bindings`` 里的电源集合：键是 ``supply_id``（= 设备短标签），值是绑定记录。
+# 电源是同一类别下的多台设备，不能像信号源那样用角色键存放——否则第二台会覆盖第一台。
+POWER_SUPPLY_BINDINGS = "power_supplies"
 # 旧配置只有 ``instruments.<角色>.address``、没有绑定记录。迁移时用这个来源标记，
 # 表示“地址来自已保存的配置，尚未经过设备发现确认”，与 ``scan`` / ``simulated`` 分开。
 LEGACY_BINDING_SOURCE = "legacy_config"
@@ -42,6 +46,11 @@ def _dict_copy(value: Any) -> dict:
     return copy.deepcopy(value) if isinstance(value, dict) else {}
 
 
+def _record_copy(value: Any) -> dict | None:
+    """复制一条绑定记录；不是对象时返回 ``None``（无法解释的条目按缺失处理）。"""
+    return copy.deepcopy(dict(value)) if isinstance(value, Mapping) else None
+
+
 def binding_address(binding: Any) -> str:
     """返回绑定记录里的连接地址；记录缺失或地址不是文本时返回空串。"""
     if not isinstance(binding, Mapping):
@@ -50,29 +59,132 @@ def binding_address(binding: Any) -> str:
     return address.strip() if isinstance(address, str) else ""
 
 
-def _binding_records(bindings: Any) -> dict[str, dict]:
+def binding_device_key(record: Any) -> str | None:
+    """返回一条设备绑定记录的身份键 ``厂商:序列号``；无法确定身份时返回 ``None``。
+
+    身份是 ``device_key``。旧记录只有厂商与序列号两段时在这里重新拼出同一个键；
+    只有序列号没有厂商时无法确定身份，返回 ``None``（不做“仅按序列号”的猜测匹配，
+    否则两个厂商的同号设备会被混为一谈）。
+    """
+    if not isinstance(record, Mapping):
+        return None
+    key = str(record.get("device_key") or "").strip().casefold()
+    if key:
+        return key
+    vendor = str(record.get("vendor") or "").strip()
+    serial = str(record.get("serial") or "").strip()
+    if not vendor or not serial:
+        return None
+    try:
+        return make_device_key(vendor, serial)
+    except ValueError:
+        return None
+
+
+def _legacy_supply_id(record: Mapping[str, Any]) -> str | None:
+    """旧槽位绑定里的短标签；记录没有标签就没有可用的 ``supply_id``。"""
+    for field in ("supply_id", "label"):
+        value = record.get(field)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def power_supply_bindings(bindings: Any) -> dict[str, dict]:
+    """返回 ``supply_id -> 绑定记录`` 的电源绑定集合。
+
+    新结构是 ``device_bindings.power_supplies[<supply_id>]``（集合的键就是引用 ID，
+    记录内部不再重复写 ``supply_id`` / ``label`` / ``role``）。读取时兼容步骤 5 的过渡
+    结构：记录按旧槽位 ``PS1``..``PS4`` 落键、记录内带短标签与设备身份。旧记录只有在
+    **身份可确认**（``厂商:序列号``）且带短标签时才会迁移——只有地址的旧绑定不是身份，
+    按契约必须重新扫描，这里不猜成某台电源。
+
+    同一台设备只能出现在一条电源绑定里；手改文件造出的重复身份只保留第一条，不静默
+    让同一台设备被连接两次。
+    """
     if not isinstance(bindings, Mapping):
         return {}
-    return {
-        str(role): copy.deepcopy(dict(record))
-        for role, record in bindings.items()
-        if isinstance(record, Mapping)
-    }
+    supplies: dict[str, dict] = {}
+    seen: dict[str, str] = {}
+
+    def add(supply_id: str, record: dict) -> None:
+        if not supply_id or supply_id in supplies:
+            return
+        identity = binding_device_key(record)
+        if identity is not None:
+            if identity in seen:
+                return
+            seen[identity] = supply_id
+        record.pop("role", None)
+        record.pop("label", None)
+        record.pop("supply_id", None)
+        supplies[supply_id] = record
+
+    nested = bindings.get(POWER_SUPPLY_BINDINGS)
+    if isinstance(nested, Mapping):
+        for key, value in nested.items():
+            record = _record_copy(value)
+            if record is not None:
+                add(str(key or "").strip(), record)
+    for key, value in bindings.items():
+        if key in INSTRUMENT_ROLES or key == POWER_SUPPLY_BINDINGS:
+            continue
+        if canonical_role(key) != POWER_SUPPLY_ROLE:
+            continue
+        record = _record_copy(value)
+        if record is None:
+            continue
+        supply_id = _legacy_supply_id(record)
+        if supply_id is None or binding_device_key(record) is None:
+            continue
+        add(supply_id, record)
+    return supplies
+
+
+def binding_records(bindings: Any) -> list[tuple[str, dict]]:
+    """扁平展开绑定记录，返回 ``(键, 记录)``。
+
+    信号源与频谱仪用角色键，电源用 ``supply_id``。这里只用于遍历、显示与生成消息，
+    不作为写回结构：电源写回时必须回到 ``power_supplies.<supply_id>``。
+    """
+    records: list[tuple[str, dict]] = []
+    if not isinstance(bindings, Mapping):
+        return records
+    for role in INSTRUMENT_ROLES:
+        record = _record_copy(bindings.get(role))
+        if record is not None:
+            records.append((role, record))
+    records.extend(power_supply_bindings(bindings).items())
+    return records
+
+
+def _normalized_bindings(bindings: Mapping[str, Any]) -> dict[str, Any]:
+    """把一份 ``device_bindings`` 规范成“角色键 + 电源集合”的结构。"""
+    normalized: dict[str, Any] = {}
+    for role in INSTRUMENT_ROLES:
+        record = _record_copy(bindings.get(role))
+        if record is not None:
+            normalized[role] = record
+    supplies = power_supply_bindings(bindings)
+    if supplies:
+        normalized[POWER_SUPPLY_BINDINGS] = supplies
+    return normalized
 
 
 def _legacy_device_bindings(instruments: Mapping[str, Any]) -> dict[str, dict]:
-    """把只有地址的旧配置迁移成绑定记录。
+    """把只有地址的旧配置迁移成信号源/频谱仪的绑定记录。
 
     只迁移“启用且地址非空”的仪器：禁用项不会被迁移动作重新启用。迁移记录没有序列号
     与 ``device_key``，因此下一次扫描不会按身份预选，面板会把它显示为“沿用已保存的
     地址，未扫描确认”。
+
+    **电源不在迁移范围内**：配置里的一个地址既不是设备身份，也不能说明是哪一台电源。
+    旧的 ``instruments.power_supplies.<槽位>.address`` 只是“以前连过这个地址”，按契约
+    必须重新扫描设备表并应用，才能得到带 ``device_key`` 的电源绑定。
     """
-    supplies = instruments.get("power_supplies")
-    supplies = supplies if isinstance(supplies, Mapping) else {}
-    entries = [(role, instruments.get(role)) for role in INSTRUMENT_ROLES]
-    entries.extend(supplies.items())
     bindings: dict[str, dict] = {}
-    for role, item in entries:
+    for role in INSTRUMENT_ROLES:
+        item = instruments.get(role)
         if not isinstance(item, Mapping):
             continue
         address = item.get("address")
@@ -80,7 +192,7 @@ def _legacy_device_bindings(instruments: Mapping[str, Any]) -> dict[str, dict]:
             continue
         if item.get("enabled") is False:
             continue
-        bindings[str(role)] = {
+        bindings[role] = {
             "name": None,
             "vendor": None,
             "model": item.get("model"),
@@ -98,24 +210,32 @@ def _legacy_device_bindings(instruments: Mapping[str, Any]) -> dict[str, dict]:
 def effective_device_bindings(config: Any) -> dict[str, dict]:
     """返回一份配置里的有效设备绑定，作为仪器连接的唯一来源。
 
+    结构是“信号源 / 频谱仪各一条 + ``power_supplies`` 里按 ``supply_id`` 的多条”。
     配置带 ``device_bindings`` 时以它为准（即使为空——用户清除过绑定）；缺少该键的旧
-    配置才按 ``instruments.<角色>.address`` 做一次性迁移。迁移只发生在这里，之后保存
-    的配置都带显式绑定记录，不会因为“地址还在”而重新变回可连接状态。
+    配置才按 ``instruments.<角色>.address`` 做一次性迁移（只含信号源与频谱仪）。迁移只
+    发生在这里，之后保存的配置都带显式绑定记录，不会因为“地址还在”而重新变回可连接
+    状态。
+
+    旧字段只在读入边界被识别：步骤 5 的电源绑定按旧槽位落键，记录里带短标签与身份，
+    这里折叠成 ``power_supplies[<supply_id>]``；只有地址的电源绑定不具备身份，不迁移。
     """
     if not isinstance(config, Mapping):
         return {}
     bindings = config.get("device_bindings")
     if isinstance(bindings, Mapping):
-        return _binding_records(bindings)
+        return _normalized_bindings(bindings)
     instruments = config.get("instruments")
     instruments = instruments if isinstance(instruments, Mapping) else {}
     return _legacy_device_bindings(instruments)
 
 
 def bound_power_supplies(bindings: Any) -> list[str]:
-    """返回已绑定设备的电源名称，按 PS1..PS4 的稳定顺序。"""
-    records = _binding_records(bindings)
-    return [name for name in POWER_SUPPLY_NAMES if binding_address(records.get(name))]
+    """返回已绑定且有地址的电源 ``supply_id``，按绑定记录顺序。"""
+    return [
+        supply_id
+        for supply_id, record in power_supply_bindings(bindings).items()
+        if binding_address(record)
+    ]
 
 
 def _apply_device_binding(item: dict, binding: Any) -> None:
@@ -175,7 +295,7 @@ class ConfigFormState:
         if not controls:
             return []
         bindings = getattr(self.widgets, "device_bindings", None)
-        bindings = bindings if isinstance(bindings, Mapping) else {}
+        records = power_supply_bindings(bindings)
         fragment = self.read_power_assignment()
         assignment = fragment.get("power_supply_assignment")
         assignment = assignment if isinstance(assignment, Mapping) else {}
@@ -194,7 +314,7 @@ class ConfigFormState:
                 name = name.strip() if isinstance(name, str) else ""
                 if not name:
                     unselected.append(f"{label}({role})")
-                elif not binding_address(bindings.get(name)):
+                elif not binding_address(records.get(name)):
                     unbound.append(f"{label}({role}) → {name}")
         errors = []
         if unselected:
@@ -226,19 +346,34 @@ class ConfigFormState:
     def read_instrument_config(self) -> dict:
         """按设备发现结果写出仪器连接信息。
 
-        连接配置的唯一来源是 :attr:`widgets.device_bindings`（角色 -> 已应用设备）：
-        绑定了设备的角色写入该设备的当前地址并标记启用；没有绑定的角色一律清空地址
-        并标记为未启用，不再沿用配置里遗留的地址——否则“清除绑定”只是隐藏了入口，
-        旧设备仍会被连接。
+        连接配置的唯一来源是 :attr:`widgets.device_bindings`：信号源与频谱仪各一条
+        （角色键），电源是 ``power_supplies`` 里按 ``supply_id`` 的多条。绑定了设备的
+        项写入该设备的当前地址并标记启用；没有绑定的项一律清空地址并标记为未启用，
+        不再沿用配置里遗留的地址——否则“清除绑定”只是隐藏了入口，旧设备仍会被连接。
+
+        旧槽位键（``PS1``..``PS4``）同样是“未绑定”的配置项：通道参数原样保留，地址与
+        启用状态随绑定一起失效，等迁移器把参数改挂到真正的 ``supply_id`` 上。
         """
         instruments = _dict_copy(self.config.get("instruments"))
         supplies = _dict_copy(instruments.get("power_supplies"))
         bindings = getattr(self.widgets, "device_bindings", None)
         bindings = bindings if isinstance(bindings, Mapping) else {}
-        for name in POWER_SUPPLY_NAMES:
+        power_records = power_supply_bindings(bindings)
+        for name in list(supplies):
             item = _dict_copy(supplies.get(name))
-            _apply_device_binding(item, bindings.get(name))
+            _apply_device_binding(item, power_records.get(name))
             supplies[name] = item
+        for supply_id, record in power_records.items():
+            item = _dict_copy(supplies.get(supply_id))
+            _apply_device_binding(item, record)
+            # 集合的键就是引用 ID，条目里保留同名 ``label`` 便于人读与旧读取方兼容；
+            # 身份字段只写绑定记录里真实存在的值，不从键名反推。
+            item["label"] = supply_id
+            for field in ("device_key", "serial", "model"):
+                value = record.get(field)
+                if value:
+                    item[field] = value
+            supplies[supply_id] = item
         for name in INSTRUMENT_ROLES:
             item = _dict_copy(instruments.get(name))
             _apply_device_binding(item, bindings.get(name))

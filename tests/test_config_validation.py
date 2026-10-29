@@ -266,6 +266,24 @@ class SimulatedDeviceBindingValidationTests(unittest.TestCase):
         self.assertIn("device_bindings.signal_generator.source", paths)
         self.assertIn("模拟扫描", result.errors[-1].message)
 
+    def test_simulated_power_supply_binding_is_rejected_too(self):
+        """电源在 ``power_supplies`` 集合里逐台检查，不能因为嵌套结构绕过门禁。"""
+        config = copy.deepcopy(self.base_config)
+        config["device_bindings"] = {
+            "power_supplies": {
+                "DP8B1519": {
+                    "device_key": "rigol technologies:dp8b214901519",
+                    "source": "simulated",
+                }
+            }
+        }
+
+        result = validate_config(config)
+
+        paths = {issue.path for issue in result.errors}
+        self.assertIn("device_bindings.power_supplies.DP8B1519.source", paths)
+        self.assertIn("模拟扫描", result.errors[-1].message)
+
     def test_real_scan_binding_is_accepted(self):
         config = copy.deepcopy(self.base_config)
         config["device_bindings"] = {

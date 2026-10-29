@@ -426,7 +426,7 @@ class PowerSupplyIdentityTests(unittest.TestCase):
         # 旧字面量原样保留给排查，类别折叠成 ``power_supply``。
         self.assertEqual(device.known_role, "PS3")
         self.assertEqual(device.role, "power_supply")
-        self.assertEqual(device.config_slot, "PS3")
+        self.assertFalse(hasattr(device, "config_slot"), "旧槽位不再出现在发现结果里")
         # 旧设备表没有标签：发现过程不生成标签，也就没有 ``supply_id``。
         self.assertIsNone(device.label)
         self.assertIsNone(device.supply_id)
@@ -443,8 +443,8 @@ class PowerSupplyIdentityTests(unittest.TestCase):
         self.assertEqual(device.label, "DP8B1519")
         self.assertEqual(device.supply_id, "DP8B1519")
         self.assertEqual(device.display_name, "DP8B1519")
-        # 迁移后的记录没有旧槽位：地址怎么写回配置由后续步骤决定。
-        self.assertIsNone(device.config_slot)
+        # 迁移后的记录只有类别与短标签：地址怎么写回配置由配置页按绑定决定。
+        self.assertFalse(hasattr(device, "config_slot"))
 
     def test_has_role_follows_the_folded_category(self):
         """“有没有角色”必须和界面可勾选、配置页接受的角色同源。
@@ -538,7 +538,7 @@ class PowerSupplyIdentityTests(unittest.TestCase):
         self.assertEqual(device.role, "signal_generator")
         self.assertIsNone(device.label)
         self.assertIsNone(device.supply_id)
-        self.assertIsNone(device.config_slot)
+        self.assertFalse(hasattr(device, "config_slot"))
 
 
 class CancellationTests(unittest.TestCase):

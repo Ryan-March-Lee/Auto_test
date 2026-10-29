@@ -130,7 +130,6 @@ class OfflineCompletionTests(unittest.TestCase):
             },
             "dut_power_channels": [{"channel": "A", "role": "gate", "connection": "gate"}],
             "driver_mode": {"enabled": False, "power_channels": []},
-            "wiring": {"confirmed": True, "connection_note": "offline simulation"},
         }
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

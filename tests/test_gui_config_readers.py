@@ -520,11 +520,12 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
         expected_keys = {
             'instruments', 'test_frequencies', 'signal_source',
             'compression_point', 'attenuator', 'driver_mode',
-            'dut_config', 'power_supply_assignment', 'top_level_extra', 'wiring',
+            'dut_config', 'power_supply_assignment', 'top_level_extra',
         }
         self.assertEqual(set(result.keys()), expected_keys)
 
-    def test_build_invalidates_previous_wiring_confirmation(self):
+    def test_build_drops_legacy_wiring_block(self):
+        """接线由各阶段测量前的连接图对话框确认，不再写回配置。"""
         self.coordinator.config['wiring'] = {
             'confirmed': True,
             'connection_note': 'previous',
@@ -532,9 +533,7 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
             'confirmation_source': 'old',
         }
         result = self.coordinator.build_configuration_from_ui()
-        self.assertFalse(result['wiring']['confirmed'])
-        self.assertIsNone(result['wiring']['connection_note'])
-        self.assertIsNone(result['wiring']['confirmed_at'])
+        self.assertNotIn('wiring', result)
 
 
 class CoordinatorConfigSaveTests(unittest.TestCase):
@@ -594,7 +593,6 @@ class CoordinatorConfigSaveTests(unittest.TestCase):
                     "supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}},
                 },
             },
-            "wiring": {"confirmed": True, "connection_note": "现场接线已确认"},
         }
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
@@ -644,7 +642,6 @@ class CoordinatorConfigSaveTests(unittest.TestCase):
                 "dut_amplifier": {"supplies": {"carrier": {"name": "PS1", "channel": ["CH1"]}}},
                 "driver_amplifier": {"supplies": {"driver": {"name": "PS2", "channel": ["CH1"]}}},
             },
-            "wiring": {"confirmed": True, "connection_note": "现场接线已确认"},
         }
 
         result = self.coordinator.save_configuration()

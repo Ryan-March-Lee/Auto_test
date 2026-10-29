@@ -85,7 +85,6 @@ def _fully_valid_gui_config(*, driver_enabled=False) -> dict:
                 "supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}},
             },
         },
-        "wiring": {"confirmed": True, "connection_note": "现场接线已确认"},
     })
 
 

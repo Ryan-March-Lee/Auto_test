@@ -85,7 +85,6 @@ class CableLossPageTests(unittest.TestCase):
         self.page = CableLossPage(
             config_path_provider=lambda: "config.json",
             run_provider=lambda: self.run,
-            confirm_wiring=lambda: True,
             connection_dialog_factory=lambda *_: Dialog(self.dialog_results.pop(0)),
             log_callback=self.logs.append,
             error_callback=self.errors.append,

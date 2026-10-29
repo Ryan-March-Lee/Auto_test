@@ -116,7 +116,6 @@ def _author_run_mapping(document: Mapping[str, Any]) -> dict[str, Any]:
     supplies = _mapping(instruments.get("power_supplies"))
     selected_supply = _selected_supply(document)
     selected_config = _mapping(supplies.get(selected_supply)) if selected_supply else {}
-    wiring = _mapping(document.get("wiring"))
     driver_channels = _author_driver_channel_mappings(document)
     return {
         "schema_version": OFFICIAL_SCHEMA_VERSION,
@@ -152,12 +151,6 @@ def _author_run_mapping(document: Mapping[str, Any]) -> dict[str, Any]:
             "power_channels": driver_channels,
         },
         "dut_power_channels": _author_dut_channel_mappings(document),
-        "wiring": {
-            "confirmed": wiring.get("confirmed") is True,
-            "connection_note": wiring.get("connection_note"),
-            "confirmed_at": wiring.get("confirmed_at"),
-            "confirmation_source": wiring.get("confirmation_source"),
-        },
         "notes": None,
     }
 

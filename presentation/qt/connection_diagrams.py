@@ -14,11 +14,6 @@ import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 
-from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService, ensure_directory
-from infrastructure.logging.app_logging import get_logger
-
-logger = get_logger(__name__)
-
 _DIAGRAM_STYLE_CONFIGURED = False
 
 
@@ -344,22 +339,3 @@ class ConnectionDiagram:
         buffer.close()
         plt.close(fig)
         return img_base64
-
-
-def create_all_diagrams(*, paths: PathService | None = None):
-    """创建所有连接示意图并保存"""
-    diagrams = {
-        'cable_loss_path1': ConnectionDiagram.create_cable_loss_path1(),
-        'cable_loss_path2': ConnectionDiagram.create_cable_loss_path2(),
-        'driver_mapping': ConnectionDiagram.create_driver_mapping(),
-        'amplifier_test': ConnectionDiagram.create_amplifier_test()
-    }
-    
-    # 保存为图片文件
-    images_dir = (paths or DEFAULT_PATHS).images_dir
-    ensure_directory(images_dir)
-    for name, fig in diagrams.items():
-        fig.savefig(images_dir / f'{name}_diagram.png', dpi=150, bbox_inches='tight')
-        plt.close(fig)
-    
-    logger.info("所有连接示意图已保存完成: %s", images_dir)

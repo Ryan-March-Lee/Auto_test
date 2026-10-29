@@ -42,7 +42,6 @@ class AmplifierPage(
         *,
         config_path_provider: Callable[[], str],
         run_provider: Callable[[], Any],
-        confirm_wiring: Callable[[], bool],
         driver_mode_provider: Callable[[], bool],
         connection_dialog_factory: Callable[[str, QWidget], Any],
         plot_widget_factory: Callable[[QWidget], QWidget],
@@ -58,7 +57,6 @@ class AmplifierPage(
         QWidget.__init__(self)
         self._config_path_provider = config_path_provider
         self._run_provider = run_provider
-        self._confirm_wiring = confirm_wiring
         self._driver_mode_provider = driver_mode_provider
         self._connection_dialog_factory = connection_dialog_factory
         self._plot_widget_factory = plot_widget_factory
@@ -208,8 +206,7 @@ class AmplifierPage(
         diagram = "amplifier_test" if self._driver_mode_provider() else "amplifier_test_no_driver"
         if self._connection_dialog_factory(diagram, self).exec() != QDialog.Accepted:
             return
-        if not self._confirm_wiring():
-            return
+        self._log_callback("主功放现场接线已确认")
         self.reset_realtime_data()
         self.result_table.setRowCount(0)
         self._sync_empty_hint()

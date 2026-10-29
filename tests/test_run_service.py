@@ -62,8 +62,6 @@ def _valid_configuration(*, start_power: float = -10.0) -> RunConfiguration:
             "power_supply": InstrumentMapping("PS", "sim::ps"),
         },
         dut_power_channels=[ChannelMapping(channel="CH1", role="gate", connection="gate")],
-        wiring_confirmed=True,
-        connection_note="测试接线已确认",
     )
     return RunConfiguration(test_plan=plan, run_mapping=mapping)
 
@@ -102,7 +100,6 @@ def _gui_config(*, start_power: float = -10.0) -> dict:
                 "supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}},
             },
         },
-        "wiring": {"confirmed": True, "connection_note": "现场接线已确认"},
     })
 
 
@@ -147,18 +144,19 @@ class CreateRunSnapshotTests(unittest.TestCase):
         self.assertEqual(payload["run_id"], RUN_ID)
         self.assertEqual(payload["created_at"], "2026-10-22T15:30:00Z")
         self.assertEqual(payload["test_plan"]["frequencies"]["values"], [2.2, 2.4])
-        self.assertEqual(payload["run_mapping"]["wiring"]["confirmed"], True)
+        # 现场接线不再是配置字段：快照里只冻结参数与仪器映射。
+        self.assertNotIn("wiring", payload["run_mapping"])
 
     def test_invalid_configuration_cannot_create_a_runnable_snapshot(self):
         invalid = ConfigurationLoadResult(
             _valid_configuration(),
             ConfigValidationResult(
-                errors=[ConfigIssue("error", "wiring.confirmed", "运行前必须确认现场接线")],
+                errors=[ConfigIssue("error", "frequencies.values", "必须是非空列表")],
                 warnings=[],
             ),
         )
 
-        with self.assertRaisesRegex(ValueError, "wiring.confirmed"):
+        with self.assertRaisesRegex(ValueError, "frequencies.values"):
             create_run_snapshot(
                 invalid,
                 run_repository=self.repository,
@@ -172,7 +170,7 @@ class CreateRunSnapshotTests(unittest.TestCase):
 
     def test_stage_valid_but_incomplete_run_is_rejected(self):
         # 阶段专用校验通过（loaded.valid 为真），但完整运行配置不合法：
-        # 缺少频率、DUT 通道、仪器映射和接线确认。
+        # 缺少频率、DUT 通道和仪器映射。
         stage_only = ConfigurationLoadResult(
             RunConfiguration(TestPlan(), RunResourceMapping()),
             ConfigValidationResult(errors=[], warnings=[]),
@@ -231,7 +229,10 @@ class CreateRunSnapshotTests(unittest.TestCase):
         self.assertTrue(restored.valid, restored.validation.errors)
         self.assertEqual(restored.configuration.test_plan.frequencies, [2.2, 2.4])
         self.assertEqual(restored.configuration.test_plan.start_power, -10.0)
-        self.assertTrue(restored.configuration.run_mapping.wiring_confirmed)
+        self.assertEqual(
+            restored.configuration.run_mapping.instruments["signal_generator"].visa_address,
+            "sim::sg",
+        )
         self.assertEqual(
             restored.configuration.run_mapping.dut_power_channels[0].connection, "gate"
         )

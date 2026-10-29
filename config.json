@@ -17,7 +17,8 @@
         "type": "5dB"
     },
     "driver_mode": {
-        "enabled": true
+        "enabled": true,
+        "power_source": "external_ac"
     },
     "attenuator": {
         "type": "40dB"
@@ -28,18 +29,17 @@
     },
     "instruments": {
         "signal_generator": {
-            "address": "TCPIP0::192.168.1.201::inst0::INSTR",
             "model": "R&S SMW200A",
-            "enabled": true
+            "enabled": true,
+            "address": "TCPIP0::192.168.1.201::inst0::INSTR"
         },
         "spectrum_analyzer": {
-            "address": "TCPIP0::192.168.1.202::inst0::INSTR",
             "model": "Ceyear 4082F",
-            "enabled": true
+            "enabled": true,
+            "address": "TCPIP0::192.168.1.202::inst0::INSTR"
         },
         "power_supplies": {
             "PS1": {
-                "address": "TCPIP0::192.168.1.101::inst0::INSTR",
                 "channels": {
                     "CH1": {
                         "role": "gate",
@@ -68,10 +68,10 @@
                         }
                     }
                 },
-                "enabled": true
+                "enabled": true,
+                "address": "TCPIP0::192.168.1.101::inst0::INSTR"
             },
             "PS2": {
-                "address": "TCPIP0::192.168.1.103::inst0::INSTR",
                 "channels": {
                     "CH1": {
                         "role": "gate",
@@ -103,7 +103,6 @@
                 "enabled": false
             },
             "PS3": {
-                "address": "TCPIP0::192.168.1.102::inst0::INSTR",
                 "channels": {
                     "CH1": {
                         "role": "gate",
@@ -135,7 +134,6 @@
                 "enabled": false
             },
             "PS4": {
-                "address": "TCPIP0::192.168.1.108::inst0::INSTR",
                 "channels": {
                     "CH1": {
                         "role": "gate",
@@ -185,13 +183,6 @@
                 }
             }
         }
-    },
-    "wiring": {
-        "confirmed": true,
-        "driver_amplifier_external_power_confirmed": true,
-        "connection_note": "现场已确认最终 DUT 测试链路连接完成；驱动功放采用外部独立供电，不由本系统电源配置提供。",
-        "confirmed_at": "2026-09-28T19:03:26+08:00",
-        "confirmation_source": "用户现场确认"
     },
     "schema_version": "1.0",
     "test_plan": {
@@ -243,7 +234,8 @@
             }
         },
         "driver_mode": {
-            "enabled": false,
+            "enabled": true,
+            "power_source": "external_ac",
             "power_roles": {}
         },
         "other_parameters": {}
@@ -269,7 +261,8 @@
             }
         },
         "driver_mode": {
-            "enabled": false,
+            "enabled": true,
+            "power_source": "external_ac",
             "power_channels": []
         },
         "dut_power_channels": [
@@ -284,12 +277,44 @@
                 "connection": "PS1-CH2 -> DUT 漏极"
             }
         ],
-        "wiring": {
-            "confirmed": true,
-            "connection_note": "现场已确认最终 DUT 测试链路连接完成；驱动功放采用外部独立供电，不由本系统电源配置提供。",
-            "confirmed_at": "2026-09-28T19:03:26+08:00",
-            "confirmation_source": "用户现场确认"
-        },
         "notes": null
+    },
+    "device_bindings": {
+        "signal_generator": {
+            "name": null,
+            "vendor": null,
+            "model": "R&S SMW200A",
+            "serial": null,
+            "device_key": null,
+            "visa_address": "TCPIP0::192.168.1.201::inst0::INSTR",
+            "last_ip": null,
+            "last_port": null,
+            "known": false,
+            "source": "legacy_config"
+        },
+        "spectrum_analyzer": {
+            "name": null,
+            "vendor": null,
+            "model": "Ceyear 4082F",
+            "serial": null,
+            "device_key": null,
+            "visa_address": "TCPIP0::192.168.1.202::inst0::INSTR",
+            "last_ip": null,
+            "last_port": null,
+            "known": false,
+            "source": "legacy_config"
+        },
+        "PS1": {
+            "name": null,
+            "vendor": null,
+            "model": null,
+            "serial": null,
+            "device_key": null,
+            "visa_address": "TCPIP0::192.168.1.101::inst0::INSTR",
+            "last_ip": null,
+            "last_port": null,
+            "known": false,
+            "source": "legacy_config"
+        }
     }
 }

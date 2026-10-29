@@ -131,7 +131,7 @@ class ConfigPageTests(unittest.TestCase):
         )
         result = page.build_config()
         self.assertIsInstance(result["instruments"]["power_supplies"], dict)
-        self.assertIn("wiring", result)
+        self.assertNotIn("wiring", result)
 
     def test_numeric_spin_boxes_ignore_mouse_wheel(self):
         from PySide6.QtCore import QPoint, Qt

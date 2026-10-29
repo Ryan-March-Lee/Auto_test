@@ -363,5 +363,7 @@ class ConfigFormState:
         assignment = self.read_power_assignment()
         if assignment:
             config["power_supply_assignment"] = assignment["power_supply_assignment"]
-        config["wiring"] = {"confirmed": False, "connection_note": None, "confirmed_at": None, "confirmation_source": None}
+        # 现场接线不再属于配置：接线由各阶段开始前的连接图对话框确认，旧文件里的
+        # ``wiring`` 块不随表单继续写回，避免留下永远为空的“已确认”字段。
+        config.pop("wiring", None)
         return config

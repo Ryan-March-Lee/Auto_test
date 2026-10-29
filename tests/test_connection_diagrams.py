@@ -1,21 +1,19 @@
 """连接示意图生成逻辑归属与内容/输出回归（不渲染图像）。
 
 生成逻辑归属 presentation 层（GUI “连接说明”对话框）。用例直接断言模块公开的
-设备布局与标题数据来固定图内容，并通过替换图形对象验证 Base64 输出与批量保存路径。
+设备布局与标题数据来固定图内容，并通过替换图形对象验证 Base64 输出。
 
 当前环境的 matplotlib/numpy 在构建图元与保存图像时可能原生崩溃，因此本文件不做真实
 渲染；真实渲染由 ``tests/test_connection_diagrams_rendering.py`` 在可用环境中验证。
 """
 
 import base64
-import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from infrastructure.filesystem.paths import PathService
 from presentation.qt import connection_diagrams as diagrams
-from presentation.qt.connection_diagrams import ConnectionDiagram, create_all_diagrams
+from presentation.qt.connection_diagrams import ConnectionDiagram
 
 
 # 每张图从左到右的接线链；同时定义了设备的插入顺序。
@@ -112,35 +110,6 @@ class ConnectionDiagramOutputTests(unittest.TestCase):
         self.assertEqual(len(recorded), 1)
         self.assertTrue(payload.startswith("iVBOR"))
         self.assertTrue(base64.b64decode(payload).startswith(b"\x89PNG"))
-
-    def test_create_all_diagrams_writes_each_diagram(self):
-        recorded = []
-
-        def _fake_factory():
-            return _FakeFigure(recorded)
-
-        with tempfile.TemporaryDirectory() as directory:
-            paths = PathService(Path(directory))
-            with patch.object(diagrams.plt, "close", lambda *_args, **_kwargs: None), patch.object(
-                ConnectionDiagram, "create_cable_loss_path1", staticmethod(_fake_factory)
-            ), patch.object(
-                ConnectionDiagram, "create_cable_loss_path2", staticmethod(_fake_factory)
-            ), patch.object(
-                ConnectionDiagram, "create_driver_mapping", staticmethod(_fake_factory)
-            ), patch.object(
-                ConnectionDiagram, "create_amplifier_test", staticmethod(_fake_factory)
-            ):
-                create_all_diagrams(paths=paths)
-            self.assertTrue(paths.images_dir.is_dir())
-        self.assertEqual(
-            {Path(target).name for target in recorded},
-            {
-                "cable_loss_path1_diagram.png",
-                "cable_loss_path2_diagram.png",
-                "driver_mapping_diagram.png",
-                "amplifier_test_diagram.png",
-            },
-        )
 
 
 if __name__ == "__main__":

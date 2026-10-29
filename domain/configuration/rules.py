@@ -132,7 +132,6 @@ def validate_config(config: Dict[str, Any]) -> ConfigValidationResult:
         assignments = get_mapping(root.get("power_supply_assignment"), "power_supply_assignment")
         driver_assignment = _validate_assignment(assignments, "driver_amplifier", power_supplies, error, warning)
         _validate_assignment(assignments, "dut_amplifier", power_supplies, error, warning)
-    wiring = root.get("wiring") if isinstance(root.get("wiring"), dict) else {}
     if driver_enabled is True:
         _validate_driver_power_source(
             driver_power_source,

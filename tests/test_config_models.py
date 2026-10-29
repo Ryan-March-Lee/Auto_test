@@ -73,7 +73,6 @@ def complete_mapping():
             {"channel": "CH_A", "role": "gate", "connection": "DUT 栅极"},
             {"channel": "CH_B", "role": "drain", "connection": "DUT 漏极"},
         ],
-        "wiring": {"confirmed": True, "connection_note": "已按现场记录确认"},
     }
 
 
@@ -85,22 +84,20 @@ class ConfigModelTests(unittest.TestCase):
         mapping = complete_mapping()
         mapping["dut_power_channels"] = []
         mapping["driver_mode"] = {"enabled": True, "power_channels": []}
-        mapping["wiring"] = {"confirmed": True, "connection_note": "已确认线损路径"}
         result = validate_cable_loss_configuration(
             RunConfiguration(TestPlan.from_dict(plan), RunResourceMapping.from_dict(mapping))
         )
         self.assertTrue(result.valid, result.errors)
 
-    def test_cable_loss_requires_saved_wiring_confirmation(self):
+    def test_cable_loss_requires_no_wiring_confirmation(self):
+        """接线由测量前的连接图对话框确认，不再是配置字段。"""
         plan = complete_plan()
         mapping = complete_mapping()
-        mapping["wiring"] = {"confirmed": False, "connection_note": None}
         result = validate_cable_loss_configuration(
             RunConfiguration(TestPlan.from_dict(plan), RunResourceMapping.from_dict(mapping))
         )
-        paths = {issue.path for issue in result.errors}
-        self.assertIn("wiring.confirmed", paths)
-        self.assertIn("wiring.connection_note", paths)
+        self.assertTrue(result.valid, result.errors)
+        self.assertNotIn("wiring", RunResourceMapping.from_dict(mapping).to_dict())
 
     def test_driver_mapping_does_not_require_any_power_channel_assignment(self):
         plan = complete_plan()
@@ -109,24 +106,19 @@ class ConfigModelTests(unittest.TestCase):
         mapping = complete_mapping()
         mapping["dut_power_channels"] = []
         mapping["driver_mode"] = {"enabled": True, "power_channels": []}
-        mapping["wiring"] = {"confirmed": True, "connection_note": "已确认驱动映射接线"}
         result = validate_driver_mapping_configuration(
             RunConfiguration(TestPlan.from_dict(plan), RunResourceMapping.from_dict(mapping))
         )
         self.assertTrue(result.valid, result.errors)
 
-    def test_wiring_confirmation_metadata_round_trips(self):
+    def test_legacy_wiring_block_is_ignored(self):
+        """旧配置里的 wiring 块不再进入映射契约，也不会影响校验。"""
         mapping = complete_mapping()
-        mapping["wiring"].update({
-            "confirmed_at": "2026-09-28T12:00:00+00:00",
-            "confirmation_source": "cable_loss_path1_dialog",
-        })
+        mapping["wiring"] = {"confirmed": False, "connection_note": None}
         parsed = RunResourceMapping.from_dict(mapping)
-        self.assertEqual(parsed.to_dict()["wiring"]["confirmed_at"], mapping["wiring"]["confirmed_at"])
-        self.assertEqual(
-            parsed.to_dict()["wiring"]["confirmation_source"],
-            mapping["wiring"]["confirmation_source"],
-        )
+        self.assertNotIn("wiring", parsed.to_dict())
+        result = validate_run_mapping(parsed)
+        self.assertTrue(result.valid, result.errors)
 
     def test_templates_load_but_do_not_pass_formal_validation(self):
         plan = load_test_plan(PROJECT_ROOT / "baseline" / "test_plan.json")
@@ -198,14 +190,12 @@ class ConfigModelTests(unittest.TestCase):
         self.assertIn("driver_mode.enabled", {issue.path for issue in validate_test_plan(plan).errors})
         self.assertIn("driver_mode.enabled", {issue.path for issue in validate_run_mapping(mapping).errors})
 
-    def test_missing_mapping_address_and_wiring_confirmation_are_invalid(self):
+    def test_missing_mapping_address_is_invalid(self):
         config = complete_mapping()
         config["instruments"]["power_supply"]["visa_address"] = None
-        config["wiring"]["confirmed"] = False
         result = validate_run_mapping(config)
         paths = {issue.path for issue in result.errors}
         self.assertIn("instruments.power_supply.visa_address", paths)
-        self.assertIn("wiring.confirmed", paths)
 
     def test_driver_and_dut_cannot_share_a_channel(self):
         config = complete_mapping()

@@ -41,7 +41,6 @@ class DriverMappingPage(
         *,
         config_path_provider: Callable[[], str],
         run_provider: Callable[[], Any],
-        confirm_wiring: Callable[[], bool],
         connection_dialog_factory: Callable[[str, QWidget], Any],
         plot_widget_factory: Callable[[QWidget], QWidget],
         realtime_data_callback: Callable[[Mapping[str, Any]], Any] | None = None,
@@ -56,7 +55,6 @@ class DriverMappingPage(
         QWidget.__init__(self)
         self._config_path_provider = config_path_provider
         self._run_provider = run_provider
-        self._confirm_wiring = confirm_wiring
         self._connection_dialog_factory = connection_dialog_factory
         self._plot_widget_factory = plot_widget_factory
         self._realtime_data_callback = realtime_data_callback or (lambda _data: None)
@@ -173,8 +171,9 @@ class DriverMappingPage(
             self._error_callback("正式驱动映射测量必须先创建或按 run_id 重新加载运行")
             return
         dialog = self._connection_dialog_factory("driver_mapping", self)
-        if dialog.exec() != QDialog.Accepted or not self._confirm_wiring():
+        if dialog.exec() != QDialog.Accepted:
             return
+        self._log_callback("驱动映射现场接线已确认")
         self.reset_realtime_data()
         self._log_callback("开始驱动功放映射...")
         self._archival_try_start(

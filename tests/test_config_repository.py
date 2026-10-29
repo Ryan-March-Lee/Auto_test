@@ -37,7 +37,6 @@ def _complete_combined_config() -> dict:
                     "supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}},
                 },
             },
-            "wiring": {"confirmed": True, "connection_note": "现场接线已确认"},
         }
     )
 
@@ -52,7 +51,10 @@ class ConfigurationRepositoryTests(unittest.TestCase):
 
         self.assertTrue(result.valid, result.validation.errors)
         self.assertEqual(result.configuration.test_plan.frequencies, [2.4])
-        self.assertTrue(result.configuration.run_mapping.wiring_confirmed)
+        self.assertEqual(
+            result.configuration.run_mapping.instruments["power_supply"].visa_address,
+            "sim::ps1",
+        )
 
     def test_flat_legacy_config_is_rejected_instead_of_converted(self):
         with tempfile.TemporaryDirectory() as directory:

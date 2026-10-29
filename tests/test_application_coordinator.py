@@ -245,7 +245,7 @@ class RunSwitchRequiresCleanReleaseTests(unittest.TestCase):
 
     def test_create_run_is_not_adopted_when_the_old_port_cannot_be_released(self):
         page = self._page()
-        coordinator = _coordinator(page=page, confirm_run_wiring=lambda _config: True)
+        coordinator = _coordinator(page=page)
         previous_run = object()
         coordinator.prepared_run = previous_run
         coordinator.instrument_ctrl = _FailingPort()

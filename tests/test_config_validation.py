@@ -214,13 +214,13 @@ class OfficialConfigFileValidationTests(unittest.TestCase):
         self.assertFalse(result.valid)
         self.assertTrue(any(issue.path == "schema_version" for issue in result.errors))
 
-    def test_unconfirmed_wiring_blocks_the_file_level_check(self):
+    def test_legacy_wiring_block_no_longer_blocks_the_file_level_check(self):
+        """接线不再是配置字段：旧文件残留的 wiring 块既不校验也不阻塞。"""
         config = copy.deepcopy(self.base_config)
         config["run_mapping"]["wiring"]["confirmed"] = False
         with tempfile.TemporaryDirectory() as directory:
             result = validate_config_file(self._write(directory, config))
-        self.assertFalse(result.valid)
-        self.assertTrue(any(issue.path == "wiring.confirmed" for issue in result.errors))
+        self.assertFalse(any(issue.path.startswith("wiring") for issue in result.errors))
 
     def test_hardware_section_errors_are_reported_alongside_formal_schema(self):
         config = copy.deepcopy(self.base_config)
@@ -235,7 +235,7 @@ class OfficialConfigFileValidationTests(unittest.TestCase):
     def test_identical_issues_are_reported_once(self):
         """正式段与硬件段对同一字段的错误不重复堆叠。"""
         config = copy.deepcopy(self.base_config)
-        config["run_mapping"]["wiring"]["confirmed"] = False
+        config["test_plan"]["frequencies"]["values"] = []
         with tempfile.TemporaryDirectory() as directory:
             result = validate_config_file(self._write(directory, config))
         keys = [(issue.level, issue.path, issue.message) for issue in result.errors]

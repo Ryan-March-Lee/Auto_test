@@ -64,7 +64,6 @@ def _fully_valid_gui_config() -> dict:
                 "supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}},
             },
         },
-        "wiring": {"confirmed": True, "connection_note": "现场接线已确认"},
     })
 
 
@@ -506,7 +505,6 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         warn = MagicMock()
         coordinator = self._coordinator(
             warn=warn,
-            confirm_run_wiring=MagicMock(return_value=True),
         )
         coordinator.config_page = page
         coordinator.config = {}
@@ -544,34 +542,27 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
 
         create.assert_not_called()
 
-    def test_create_prepared_run_aborts_without_wiring_confirmation(self):
+    def test_create_prepared_run_needs_only_parameter_validation(self):
+        """创建运行不再询问现场接线：校验通过就直接冻结运行。"""
         page = MagicMock()
         page.validate.return_value = True
-        log = MagicMock()
-        coordinator = self._coordinator(
-            log=log, confirm_run_wiring=MagicMock(return_value=False)
-        )
+        coordinator = self._coordinator()
         coordinator.config_page = page
         coordinator.update_configuration_from_ui = MagicMock()
         coordinator.save_configuration = MagicMock(return_value=True)
 
+        prepared = SimpleNamespace(run_id=RUN_ID, run_directory=Path("runs") / RUN_ID)
         with patch(
-            "presentation.qt.application_coordinator.prepare_configuration"
-        ) as create:
-            self.assertIsNone(coordinator.create_prepared_run())
-
-        create.assert_not_called()
-        self.assertTrue(
-            any("现场接线未确认" in str(call.args[0]) for call in log.call_args_list)
-        )
+            "presentation.qt.application_coordinator.prepare_configuration",
+            return_value=prepared,
+        ):
+            self.assertIs(coordinator.create_prepared_run(), prepared)
 
     def test_create_prepared_run_releases_previous_instrument_port(self):
         port = _ClosedPort()
         page = MagicMock()
         page.validate.return_value = True
-        coordinator = self._coordinator(
-            confirm_run_wiring=MagicMock(return_value=True),
-        )
+        coordinator = self._coordinator()
         coordinator.config_page = page
         coordinator.config = {}
         coordinator.instrument_ctrl = port
@@ -599,7 +590,6 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         warn = MagicMock()
         coordinator = self._coordinator(
             warn=warn,
-            confirm_run_wiring=MagicMock(return_value=True),
         )
         coordinator.config_page = page
         coordinator.config = {}
@@ -807,28 +797,7 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
 
 
 class MainWindowCompositionTests(unittest.TestCase):
-    """窗口只剩组装职责：接线确认回调不得改写已冻结的配置。"""
-
-    def test_confirm_wiring_does_not_rewrite_frozen_config(self):
-        from presentation.qt.main_window import MainWindow
-
-        window = MainWindow.__new__(MainWindow)
-        window.coordinator = SimpleNamespace(
-            config={"wiring": {"confirmed": True, "connection_note": "frozen"}},
-            controller=MagicMock(),
-        )
-        window.add_log_message = MagicMock()
-
-        self.assertTrue(MainWindow._confirm_cable_loss_wiring(window))
-        self.assertTrue(MainWindow._confirm_driver_mapping_wiring(window))
-        self.assertTrue(MainWindow._confirm_amplifier_wiring(window))
-
-        self.assertEqual(
-            window.config["wiring"],
-            {"confirmed": True, "connection_note": "frozen"},
-        )
-        # 端口注入已从接线确认回调移到连接成功后的交接点。
-        window.measurement_controller.set_measurement_port.assert_not_called()
+    """窗口只剩组装职责：连接与测量入口必须委托给协调器。"""
 
     def test_connect_instruments_restores_button_when_start_fails(self):
         from presentation.qt.main_window import MainWindow

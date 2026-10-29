@@ -23,26 +23,24 @@ class InMemoryConfigurationRepository:
 
 
 class ConfigurationServiceTests(unittest.TestCase):
-    def test_load_for_run_uses_port_and_applies_wiring_gate(self):
-        mapping = RunResourceMapping(wiring_confirmed=False)
-        configuration = RunConfiguration(TestPlan(), mapping)
+    def test_load_for_run_delegates_to_the_repository(self):
+        """创建运行只做参数校验：加载入口不再附加接线门禁。"""
+        configuration = RunConfiguration(TestPlan(), RunResourceMapping())
         repository = InMemoryConfigurationRepository(configuration)
 
         result = load_for_run(repository, "memory://config")
 
-        self.assertFalse(result.valid)
-        self.assertIn("wiring.confirmed", {issue.path for issue in result.validation.errors})
+        self.assertIs(result.configuration, configuration)
+        self.assertTrue(result.valid)
         self.assertEqual(repository.calls, [("memory://config", None)])
 
-    def test_load_for_run_preserves_valid_confirmed_configuration(self):
-        mapping = RunResourceMapping(wiring_confirmed=True)
-        configuration = RunConfiguration(TestPlan(), mapping)
+    def test_load_for_run_passes_the_mapping_path_through(self):
+        configuration = RunConfiguration(TestPlan(), RunResourceMapping())
         repository = InMemoryConfigurationRepository(configuration)
 
         result = load_for_run(repository, "memory://config", "memory://mapping")
 
         self.assertIs(result.configuration, configuration)
-        self.assertTrue(result.valid)
         self.assertEqual(repository.calls, [("memory://config", "memory://mapping")])
 
 

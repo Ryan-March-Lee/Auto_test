@@ -23,7 +23,7 @@ class ConfigFormStateTests(unittest.TestCase):
         self.assertIsNone(parse_frequency_text("__import__('os').system('x')"))
         self.assertIsNone(parse_frequency_text("[1, 'bad']"))
 
-    def test_build_preserves_unknown_fields_and_invalidates_wiring(self):
+    def test_build_preserves_unknown_fields_and_drops_legacy_wiring(self):
         widgets = type("Widgets", (), {})()
         widgets.freq_edit = _Text("[1, 2]")
         widgets.start_power = type("V", (), {"value": lambda self: -10})()
@@ -52,7 +52,7 @@ class ConfigFormStateTests(unittest.TestCase):
         result = ConfigFormState(original, widgets).build_config()
         self.assertEqual(result["top"], "keep")
         self.assertEqual(result["dut_config"]["extra"], 1)
-        self.assertFalse(result["wiring"]["confirmed"])
+        self.assertNotIn("wiring", result)
         instruments = result["instruments"]
         self.assertEqual(
             instruments["signal_generator"]["address"],

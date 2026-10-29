@@ -87,7 +87,6 @@ class DriverMappingPageTests(unittest.TestCase):
         self.controller = Controller()
         self.dialog = Dialog()
         self.prepared = []
-        self.confirmed = []
         self.logs = []
         self.errors = []
         self.realtime = []
@@ -100,7 +99,6 @@ class DriverMappingPageTests(unittest.TestCase):
         self.page = DriverMappingPage(
             config_path_provider=lambda: "config.json",
             run_provider=lambda: self.prepared.append(True) or self.run,
-            confirm_wiring=lambda: self.confirmed.append(True) or True,
             connection_dialog_factory=lambda *_: self.dialog,
             plot_widget_factory=lambda parent: Plot(parent),
             realtime_data_callback=self.realtime.append,
@@ -120,7 +118,6 @@ class DriverMappingPageTests(unittest.TestCase):
     def test_start_forwards_explicit_command_after_preparation(self):
         self.page.start_measurement()
         self.assertEqual(self.prepared, [True])
-        self.assertEqual(self.confirmed, [True])
         self.assertEqual(self.controller.calls[0][0], "start")
         self.assertIsInstance(self.controller.calls[0][1], MeasurementCommand)
         command = self.controller.calls[0][1]
@@ -128,7 +125,7 @@ class DriverMappingPageTests(unittest.TestCase):
         self.assertIs(command.prepared_run, self.run)
         self.assertEqual(self.clears, [True])
 
-    def test_missing_input_or_rejected_wiring_does_not_start(self):
+    def test_missing_input_or_rejected_dialog_does_not_start(self):
         self.page._run_provider = lambda: None
         self.page.start_measurement()
         self.assertEqual(self.controller.calls, [])

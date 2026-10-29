@@ -1,11 +1,8 @@
-"""应用层配置加载与运行前预检服务。"""
+"""应用层配置加载服务。"""
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 from application.ports.config_repository import ConfigurationLoadResult, ConfigurationRepository, PathLike
-from domain.configuration.types import ConfigIssue, ConfigValidationResult
 
 
 def load_for_run(
@@ -13,22 +10,13 @@ def load_for_run(
     path: PathLike,
     mapping_path: PathLike | None = None,
 ) -> ConfigurationLoadResult:
-    """通过仓储加载正式配置，并执行运行前接线确认门禁。
+    """通过仓储加载正式配置，供“校验并创建运行”消费。
 
-    文件格式由仓储负责；``wiring.confirmed`` 是运行策略，因此在应用层统一执行。
+    这里不再附加任何运行策略门禁：创建运行只做**参数校验**（完整运行校验由
+    :func:`application.run_service.create_run_snapshot` 执行）。现场接线改由各测量
+    阶段开始前的连接图对话框确认，不再作为配置字段在创建运行前预置。
     """
-    loaded = repository.load(path, mapping_path)
-    if not loaded.valid or loaded.configuration.run_mapping.wiring_confirmed:
-        return loaded
-
-    issue = ConfigIssue("error", "wiring.confirmed", "运行前必须确认现场接线")
-    return replace(
-        loaded,
-        validation=ConfigValidationResult(
-            errors=loaded.validation.errors + [issue],
-            warnings=loaded.validation.warnings,
-        ),
-    )
+    return repository.load(path, mapping_path)
 
 
 __all__ = ["load_for_run"]

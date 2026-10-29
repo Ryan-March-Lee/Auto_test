@@ -264,7 +264,6 @@ class AmplifierPageArchivalTests(unittest.TestCase):
         self.page = AmplifierPage(
             config_path_provider=lambda: "config.json",
             run_provider=lambda: self.run,
-            confirm_wiring=lambda: True,
             driver_mode_provider=lambda: True,
             connection_dialog_factory=lambda *_: Dialog(),
             plot_widget_factory=lambda parent: Plot(parent),
@@ -424,7 +423,6 @@ class CableLossPageArchivalTests(unittest.TestCase):
         self.page = CableLossPage(
             config_path_provider=lambda: "config.json",
             run_provider=lambda: _run(),
-            confirm_wiring=lambda: True,
             connection_dialog_factory=lambda *_: Dialog(),
             log_callback=self.logs.append,
             error_callback=lambda _message: None,
@@ -493,7 +491,6 @@ class DriverMappingPageArchivalTests(unittest.TestCase):
         self.page = DriverMappingPage(
             config_path_provider=lambda: "config.json",
             run_provider=lambda: _run(),
-            confirm_wiring=lambda: True,
             connection_dialog_factory=lambda *_: Dialog(),
             plot_widget_factory=lambda parent: Plot(parent),
             error_callback=lambda _message: None,

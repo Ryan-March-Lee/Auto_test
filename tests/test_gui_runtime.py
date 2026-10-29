@@ -54,7 +54,6 @@ FULLY_VALID_CONFIG = author_official_configuration({
             "supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}},
         },
     },
-    "wiring": {"confirmed": True, "connection_note": "现场接线已确认"},
 })
 
 
@@ -351,12 +350,8 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
         self.assertEqual(owned_port.close_calls, [True])
 
 class GuiRuntimePreparationTests(unittest.TestCase):
-    def _write_config(self, *, confirmed=True):
+    def _write_config(self):
         config = json.loads(FIXTURE.read_text(encoding="utf-8"))
-        config["wiring"] = {
-            "confirmed": confirmed,
-            "connection_note": "confirmed" if confirmed else None,
-        }
         config = author_official_configuration(config)
         directory = tempfile.TemporaryDirectory()
         path = Path(directory.name) / "config.json"
@@ -483,10 +478,14 @@ class GuiRuntimePreparationTests(unittest.TestCase):
         finally:
             directory.cleanup()
 
-    def test_preparation_rejects_missing_wiring_confirmation(self):
-        directory, path = self._write_config(confirmed=False)
+    def test_preparation_rejects_invalid_parameters(self):
+        """创建运行只做参数校验：参数不合法时在建运行目录前失败。"""
+        directory, path = self._write_config()
         try:
-            with self.assertRaisesRegex(ValueError, "wiring.confirmed"):
+            config = json.loads(path.read_text(encoding="utf-8"))
+            config["test_plan"]["frequencies"]["values"] = []
+            path.write_text(json.dumps(config), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "frequencies.values"):
                 prepare_configuration(str(path))
         finally:
             directory.cleanup()

@@ -51,8 +51,6 @@ def _valid_domain_snapshot(run_id: str) -> dict:
         dut_power_channels=[
             ChannelMapping(channel="CH1", role="gate", connection="gate")
         ],
-        wiring_confirmed=True,
-        connection_note="测试接线已确认",
     )
     return configuration_snapshot(RunConfiguration(plan, mapping), run_id=run_id)
 

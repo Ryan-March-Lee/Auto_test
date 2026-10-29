@@ -12,7 +12,6 @@ from datetime import datetime, timezone
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication,
-    QDialog,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -71,7 +70,6 @@ class MainWindow(QMainWindow):
             error=self.on_measurement_error,
             paths=self.paths,
             config_path=config_path,
-            confirm_run_wiring=self._confirm_create_run_wiring,
         )
         self.measurement_controller.signals.thread_finished.connect(
             self._on_measurement_controller_thread_finished
@@ -222,9 +220,6 @@ class MainWindow(QMainWindow):
             controller=self.measurement_controller,
             config_path_provider=self.coordinator.measurement_config_path,
             run_provider=self.coordinator.resolve_measurement_run,
-            confirm_cable_loss=self._confirm_cable_loss_wiring,
-            confirm_driver_mapping=self._confirm_driver_mapping_wiring,
-            confirm_amplifier=self._confirm_amplifier_wiring,
             driver_mode_provider=self.coordinator.amplifier_driver_mode,
             connection_dialog_factory=lambda kind, parent: ConnectionDialog(kind, parent),
             plot_widget_factory=lambda _parent: RealTimePlotWidget(show_nav_buttons=True),
@@ -347,36 +342,6 @@ class MainWindow(QMainWindow):
                 "若要使用本次修改，请重新“校验并创建运行”"
             )
         QMessageBox.information(self, "保存成功", "配置文件已保存")
-
-    def _confirm_create_run_wiring(self, config) -> bool:
-        """创建运行前确认现场接线，并把确认固化到即将冻结的配置中。"""
-        driver_enabled = self.config_page.driver_mode_requested()
-        diagram = "amplifier_test" if driver_enabled else "amplifier_test_no_driver"
-        if ConnectionDialog(diagram, self).exec() != QDialog.Accepted:
-            return False
-        config.setdefault("wiring", {}).update({
-            "confirmed": True,
-            "connection_note": "已通过创建运行连接确认对话框确认现场接线",
-            "confirmed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "confirmation_source": "create_run_dialog",
-        })
-        self.config_page.config = config
-        return True
-
-    def _confirm_cable_loss_wiring(self):
-        """线损测量前的现场接线确认；运行已冻结，不再改写配置。"""
-        self.add_log_message("线损路径1现场接线已确认")
-        return True
-
-    def _confirm_driver_mapping_wiring(self):
-        """驱动映射测量前的现场接线确认；运行已冻结，不再改写配置。"""
-        self.add_log_message("驱动映射现场接线已确认")
-        return True
-
-    def _confirm_amplifier_wiring(self):
-        """主功放测量前的现场接线确认；运行已冻结，不再改写配置。"""
-        self.add_log_message("主功放现场接线已确认")
-        return True
 
     # ---- 仪器连接（端口与 worker 归协调器，窗口只连接信号） ----
 

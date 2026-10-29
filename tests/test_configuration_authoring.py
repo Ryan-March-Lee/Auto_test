@@ -38,7 +38,6 @@ def _flat_config() -> dict:
                 "supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}},
             },
         },
-        "wiring": {"confirmed": True, "connection_note": "现场接线已确认"},
     }
 
 

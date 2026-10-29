@@ -90,7 +90,6 @@ class AmplifierPageTests(unittest.TestCase):
         self.page = AmplifierPage(
             config_path_provider=lambda: "config.json",
             run_provider=lambda: self.run,
-            confirm_wiring=lambda: True,
             driver_mode_provider=lambda: True,
             connection_dialog_factory=lambda *_: Dialog(),
             plot_widget_factory=lambda parent: Plot(parent),

@@ -5,7 +5,7 @@
 
 协调器是 **Qt 表现层** 组件，但不接触任何具体控件：它只通过
 :class:`ConfigurationPagePort` 这个窄接口（校验、组装、回填、运行状态、驱动模式）
-与配置页交互，并通过注入的日志/告警/错误/接线确认回调与窗口交互。这样它既不需要
+与配置页交互，并通过注入的日志/告警/错误回调与窗口交互。这样它既不需要
 知道控件名字，也可以用纯 Python 替身单独测试。
 """
 
@@ -142,7 +142,6 @@ class ApplicationCoordinator:
         config_path: Any = None,
         gui_data_service: GuiDataService | None = None,
         controller: MeasurementController | None = None,
-        confirm_run_wiring: Callable[[dict[str, Any]], bool] | None = None,
         instrument_worker_factory: Callable[[str], Any] = InstrumentWorker,
     ) -> None:
         for name, callback in (("log", log), ("warn", warn), ("error", error)):
@@ -160,7 +159,6 @@ class ApplicationCoordinator:
         self._log = log
         self._warn = warn
         self._error = error
-        self._confirm_run_wiring = confirm_run_wiring
         self._instrument_worker_factory = instrument_worker_factory
         self.config_page: ConfigurationPagePort | None = None
         self.config: dict[str, Any] = {}
@@ -282,14 +280,15 @@ class ApplicationCoordinator:
         return self.prepared_run
 
     def create_prepared_run(self):
-        """配置阶段：校验配置、确认接线并冻结为不可变的运行目录快照。"""
+        """配置阶段：校验配置并冻结为不可变的运行目录快照。
+
+        创建运行只做参数校验：配置页校验 + 完整运行配置校验，通过后冻结快照。
+        现场接线由各测量页开始前的连接图对话框确认，不在创建运行时预置。
+        """
         page = self.config_page
         if page is None or not page.validate():
             return None
         self.update_configuration_from_ui()
-        if not self._confirm_wiring():
-            self._log("已取消创建运行：现场接线未确认")
-            return None
         if not self.save_configuration():
             self._log(f"配置保存失败: {self.last_save_error}")
             self._warn("创建运行失败", f"配置保存失败: {self.last_save_error}")
@@ -446,16 +445,6 @@ class ApplicationCoordinator:
             self._log(f"归档产物路径不合法: {error}")
             return None
         return str(base.joinpath(*normalized.split("/")))
-
-    def _confirm_wiring(self) -> bool:
-        config = self.config
-        confirmer = self._confirm_run_wiring
-        if confirmer is None:
-            self._log("未配置创建运行接线确认入口")
-            return False
-        confirmed = bool(confirmer(config))
-        self.config = config
-        return confirmed
 
     # ---- 仪器连接与端口生命周期 ----
 

@@ -41,7 +41,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         *,
         config_path_provider: Callable[[], str],
         run_provider: Callable[[], Any],
-        confirm_wiring: Callable[[], bool],
         connection_dialog_factory: Callable[[str, QWidget], Any],
         log_callback: Callable[[str], Any] | None = None,
         progress_callback: Callable[[int], Any] | None = None,
@@ -53,7 +52,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         QWidget.__init__(self)
         self._config_path_provider = config_path_provider
         self._run_provider = run_provider
-        self._confirm_wiring = confirm_wiring
         self._connection_dialog_factory = connection_dialog_factory
         self._log_callback = log_callback or (lambda _message: None)
         self._progress_callback = progress_callback or (lambda _value: None)
@@ -192,8 +190,7 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         dialog = self._connection_dialog_factory("cable_loss_path1", self)
         if dialog.exec() != QDialog.Accepted:
             return
-        if not self._confirm_wiring():
-            return
+        self._log_callback("线损路径1现场接线已确认")
         self.clear_results()
         self._log_callback("开始线损测量...")
         self._archival_try_start(

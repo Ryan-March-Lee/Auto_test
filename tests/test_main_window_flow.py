@@ -61,19 +61,6 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.addCleanup(window.close)
         return window
 
-    @staticmethod
-    def _accepted_wiring_dialog():
-        from PySide6.QtWidgets import QDialog
-
-        class _AcceptedDialog:
-            def __init__(self, *_args, **_kwargs):
-                pass
-
-            def exec(self):
-                return QDialog.Accepted
-
-        return _AcceptedDialog
-
     def test_window_exposes_the_coordinator_state_and_initial_run_status(self):
         self._silence_dialogs()
         window = self._window()
@@ -117,11 +104,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
                 "driver_amplifier"
             ]["power_supply_count"]
         )
-        with patch(
-            "presentation.qt.main_window.ConnectionDialog",
-            self._accepted_wiring_dialog(),
-        ):
-            prepared = window.coordinator.create_prepared_run()
+        prepared = window.coordinator.create_prepared_run()
 
         self.assertIsNotNone(prepared)
         self.assertFalse(prepared.configuration.test_plan.driver_enabled)
@@ -195,11 +178,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self._silence_dialogs()
         window = self._window()
 
-        with patch(
-            "presentation.qt.main_window.ConnectionDialog",
-            self._accepted_wiring_dialog(),
-        ):
-            prepared = window.coordinator.create_prepared_run()
+        prepared = window.coordinator.create_prepared_run()
 
         self.assertIsNotNone(prepared)
         self.assertIs(window.prepared_run, prepared)
@@ -207,11 +186,10 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertEqual(
             window.config_page.run_status_label.text(), f"当前运行: {prepared.run_id}"
         )
-        # 接线确认已固化到冻结配置里，且窗口与协调器共享同一份配置。
-        self.assertTrue(window.config["wiring"]["confirmed"])
-        self.assertEqual(
-            window.config["wiring"]["confirmation_source"], "create_run_dialog"
-        )
+        # 创建运行只冻结参数：接线不再是配置字段，冻结快照与保存的配置里都没有它。
+        frozen = json.loads(prepared.config_path.read_text(encoding="utf-8"))
+        self.assertNotIn("wiring", frozen["run_mapping"])
+        self.assertNotIn("wiring", window.config)
 
     def test_run_switch_keeps_the_current_run_when_the_old_port_cannot_be_released(self):
         dialogs = self._silence_dialogs()
@@ -228,11 +206,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         port = _FailingPort()
         window.coordinator.instrument_ctrl = port
 
-        with patch(
-            "presentation.qt.main_window.ConnectionDialog",
-            self._accepted_wiring_dialog(),
-        ):
-            prepared = window.coordinator.create_prepared_run()
+        prepared = window.coordinator.create_prepared_run()
 
         self.assertIsNone(prepared)
         self.assertIsNone(window.prepared_run)
@@ -256,11 +230,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
             def close_all(self, *, close_rf=False):
                 return []
 
-        with patch(
-            "presentation.qt.main_window.ConnectionDialog",
-            self._accepted_wiring_dialog(),
-        ):
-            window.coordinator.create_prepared_run()
+        window.coordinator.create_prepared_run()
 
         self.assertIsNotNone(window.prepared_run)
         # 已创建运行但还没有接管端口：仍然拒绝开始测量。

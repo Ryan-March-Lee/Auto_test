@@ -153,9 +153,6 @@ class PageContext:
     controller: Any
     config_path_provider: Callable[[], str]
     run_provider: Callable[[], Any]
-    confirm_cable_loss: Callable[[], bool]
-    confirm_driver_mapping: Callable[[], bool]
-    confirm_amplifier: Callable[[], bool]
     driver_mode_provider: Callable[[], bool]
     connection_dialog_factory: Callable[[str, Any], Any]
     plot_widget_factory: Callable[[Any], Any]
@@ -198,7 +195,6 @@ def _build_cable_loss_page(context: PageContext) -> Any:
     page = CableLossPage(
         config_path_provider=context.config_path_provider,
         run_provider=context.run_provider,
-        confirm_wiring=context.confirm_cable_loss,
         connection_dialog_factory=context.connection_dialog_factory,
         log_callback=context.log_callback,
         progress_callback=_page_forwarder(context.progress_callback),
@@ -216,7 +212,6 @@ def _build_driver_mapping_page(context: PageContext) -> Any:
     page = DriverMappingPage(
         config_path_provider=context.config_path_provider,
         run_provider=context.run_provider,
-        confirm_wiring=context.confirm_driver_mapping,
         connection_dialog_factory=context.connection_dialog_factory,
         plot_widget_factory=context.plot_widget_factory,
         realtime_data_callback=context.driver_realtime_data_callback,
@@ -237,7 +232,6 @@ def _build_amplifier_page(context: PageContext) -> Any:
     page = AmplifierPage(
         config_path_provider=context.config_path_provider,
         run_provider=context.run_provider,
-        confirm_wiring=context.confirm_amplifier,
         driver_mode_provider=context.driver_mode_provider,
         connection_dialog_factory=context.connection_dialog_factory,
         plot_widget_factory=context.plot_widget_factory,

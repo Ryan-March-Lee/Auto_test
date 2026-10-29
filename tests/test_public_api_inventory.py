@@ -185,6 +185,12 @@ FORMAL_API = {
         "RunArchiveStatusPort",
         "RunHistoryServicePort",
     ),
+    "application.ports.device_discovery": (
+        "DEMO_SUBNET",
+        "DeviceDiscoveryError",
+        "SCAN_MODE_NETWORK",
+        "SCAN_MODE_SIMULATED",
+    ),
     # 跨层 DTO
     "application.dto": (
         "MeasurementRequest",

@@ -863,8 +863,15 @@ def build_stylesheet() -> str:
     return _QSS.substitute(_VALUES)
 
 
+# 主题只装一次：``setStyleSheet`` 会让 Qt 给当前存活的每个控件重新 polish，
+# 重复调用等于把整段已经建好的界面重算一遍（离屏测试里尤其明显）。
+_THEME_APPLIED_PROPERTY = "_paThemeApplied"
+
+
 def apply_theme(app: Any) -> None:
     """把主题装到应用上：固定浅色方案、基准字体、调色板与全局样式表。"""
+    if app.property(_THEME_APPLIED_PROPERTY):
+        return
     hints = app.styleHints()
     set_color_scheme = getattr(hints, "setColorScheme", None)
     if set_color_scheme is not None:  # Qt >= 6.8 才能主动指定配色方案
@@ -872,3 +879,4 @@ def apply_theme(app: Any) -> None:
     app.setFont(base_font())
     app.setPalette(build_palette())
     app.setStyleSheet(build_stylesheet())
+    app.setProperty(_THEME_APPLIED_PROPERTY, True)

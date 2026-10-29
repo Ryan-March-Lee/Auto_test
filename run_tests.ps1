@@ -29,14 +29,25 @@ try {
 
     # The full Offline discovery already includes the static quality gates.
     # Running them here as well duplicated their repository-wide AST scans.
-    # Keep the pre-check for narrower Unit/Simulation runs, which do not
-    # necessarily discover the gate modules.
-    if ($Layer -ne "Offline") {
+    # Ui/Integration run every gate explicitly below; Unit/Simulation keep
+    # the static pre-check because they do not discover the gate modules.
+    if ($Layer -eq "Unit" -or $Layer -eq "Simulation") {
         & $Python -m unittest tests.test_static_quality_gate tests.test_exception_taxonomy -v
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
 
-    $KnownLayers = @("Offline", "Unit", "Simulation")
+    # Repository gates: every change surface must pass them.  The Ui and
+    # Integration layers run them before their own tests.
+    $GateModules = @(
+        "tests.test_architecture_dependencies",
+        "tests.test_presentation_boundaries",
+        "tests.test_public_api_inventory",
+        "tests.test_exception_taxonomy",
+        "tests.test_static_quality_gate",
+        "tests.test_runtime_dependency_contract"
+    )
+
+    $KnownLayers = @("Offline", "Unit", "Simulation", "Ui", "Integration")
     if ($Layer -notin $KnownLayers) {
         # Preserve the original positional form, for example:
         # run_tests.ps1 discover -s tests -v
@@ -47,6 +58,18 @@ try {
         $TestCommand = @("discover", "-s", "tests\unit", "-p", "test_*.py", "-v")
     } elseif ($Layer -eq "Simulation") {
         $TestCommand = @("discover", "-s", "tests\simulation", "-p", "test_*.py", "-v")
+    } elseif ($Layer -eq "Ui") {
+        & $Python -m unittest @GateModules -v
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & $Python -m unittest discover -s tests\ui -t . -p "test_*.py" -v
+        exit $LASTEXITCODE
+    } elseif ($Layer -eq "Integration") {
+        & $Python -m unittest @GateModules -v
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & $Python -m unittest discover -s tests\ui -t . -p "test_*.py" -v
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & $Python -m unittest discover -s tests\integration -t . -p "test_*.py" -v
+        exit $LASTEXITCODE
     } else {
         # Hardware tests live outside tests/ and are never part of discovery.
         $TestCommand = @("discover", "-s", "tests", "-v")
@@ -68,12 +91,12 @@ try {
         $ParallelArgs += @(
             "--dist", "loadfile", "tests",
             "--ignore", "tests\hardware",
-            "--ignore", "tests\test_gui_two_phase_flow.py",
+            "--ignore", "tests\integration\test_gui_two_phase_flow.py",
             "--ignore", "tests\test_static_quality_gate.py"
         )
         & $Python @ParallelArgs
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        & $Python -m unittest tests.test_gui_two_phase_flow tests.test_static_quality_gate tests.test_exception_taxonomy -v
+        & $Python -m unittest tests.integration.test_gui_two_phase_flow tests.test_static_quality_gate tests.test_exception_taxonomy -v
     } else {
         & $Python -m unittest @TestCommand
     }

@@ -8,6 +8,7 @@
 import logging
 import sys
 from datetime import datetime, timezone
+from typing import Any
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
@@ -23,10 +24,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService
 from infrastructure.logging.app_logging import get_logger, setup_logging
 from presentation.qt.application_coordinator import ApplicationCoordinator
-from presentation.qt.composition import build_device_scanner_factory
+from presentation.qt.composition import build_device_scanner_factory, default_paths
 from presentation.qt.config_page import ConfigPage
 from presentation.qt.connection_dialog import ConnectionDialog
 from presentation.qt.run_history_page import build_run_history_page
@@ -59,9 +59,9 @@ def apply_light_theme(app: QApplication) -> None:
 class MainWindow(QMainWindow):
     """主窗口：只组装 Qt 界面、注册页面并连接信号。"""
 
-    def __init__(self, config_path=None, *, paths: PathService | None = None):
+    def __init__(self, config_path=None, *, paths: Any | None = None):
         super().__init__()
-        self.paths = paths or DEFAULT_PATHS
+        self.paths = paths or default_paths()
         self.setWindowTitle("PA自动测试系统 v1.0")
         self.setGeometry(100, 100, 1600, 1000)
         self.coordinator = ApplicationCoordinator(
@@ -518,13 +518,13 @@ class MainWindow(QMainWindow):
         return reply == QMessageBox.Yes
 
 
-def build_application(argv=None, *, paths: PathService | None = None):
+def build_application(argv=None, *, paths: Any | None = None):
     """创建配置完成的 Qt 应用，不创建窗口或连接仪器。"""
     app = QApplication.instance()
     if app is None:
         app = QApplication(sys.argv if argv is None else argv)
     try:
-        setup_logging(paths=paths or DEFAULT_PATHS)
+        setup_logging(paths=paths or default_paths())
     except OSError as logging_error:
         # 日志目录不可写时仍要启动界面。这里不能用 ``get_logger``：正式日志尚未初始化，
         # 那条链路上的 NullHandler 会把消息吞掉；标准 logger 至少能落到 stderr。
@@ -534,8 +534,9 @@ def build_application(argv=None, *, paths: PathService | None = None):
     app.setApplicationName("PA自动测试系统")
     app.setApplicationVersion("1.0")
     app.setOrganizationName("PA Test Lab")
+    # apply_light_theme 已经安装 build_stylesheet() 的结果（与 APPLICATION_STYLE 同源），
+    # 这里不再重复 setStyleSheet：第二次应用会让 Qt 把所有存活控件再 polish 一遍。
     apply_light_theme(app)
-    app.setStyleSheet(APPLICATION_STYLE)
     return app
 
 

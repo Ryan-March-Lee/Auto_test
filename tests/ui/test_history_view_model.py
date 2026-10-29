@@ -28,7 +28,7 @@ from presentation.qt.history_view_model import (
     result_plot_series,
 )
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 VIEW_MODEL_SOURCE = ROOT / "presentation" / "qt" / "history_view_model.py"
 RUN_ID = "20261027T010203Z_abcdef12"
 

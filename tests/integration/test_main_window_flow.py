@@ -13,8 +13,31 @@ from pathlib import Path
 from unittest.mock import patch
 
 from infrastructure.filesystem.paths import PathService
-from tests.test_gui_import import gui_dependencies_available
-from tests.test_gui_two_phase_flow import _fully_valid_gui_config
+from tests.integration.test_gui_two_phase_flow import _fully_valid_gui_config
+from tests.ui.test_gui_import import gui_dependencies_available
+
+
+_APPLICATION = None
+
+
+def _shared_application():
+    """整个模块共用一个 QApplication。
+
+    重建应用会再次 ``setStyleSheet``，而 Qt 会给当时存活的每个控件重新 polish；
+    多个测试类各建一次应用时，第二类要为上一类留下的窗口付出整段重样式开销。
+    """
+    global _APPLICATION
+    if _APPLICATION is not None:
+        return _APPLICATION
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        from presentation.qt.main_window import build_application
+
+        app = build_application([])
+    _APPLICATION = app
+    return app
 
 
 @unittest.skipUnless(gui_dependencies_available(), "当前环境缺少完整 GUI 依赖")
@@ -22,9 +45,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        from presentation.qt.main_window import build_application
-
-        cls.app = build_application([])
+        cls.app = _shared_application()
 
     def setUp(self):
         self._temporary = tempfile.TemporaryDirectory()
@@ -249,9 +270,7 @@ class MainWindowMigrationResidueFlowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        from presentation.qt.main_window import build_application
-
-        cls.app = build_application([])
+        cls.app = _shared_application()
 
     def setUp(self):
         self._temporary = tempfile.TemporaryDirectory()

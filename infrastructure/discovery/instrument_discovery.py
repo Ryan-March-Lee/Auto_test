@@ -31,6 +31,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Iterable, Mapping, Protocol, Sequence
 
+from application.ports.device_discovery import (
+    SCAN_MODE_NETWORK,
+    SCAN_MODE_SIMULATED,
+    DeviceDiscoveryError,
+)
 from domain.instruments.models import (
     DeviceStatus,
     InstrumentIdentity,
@@ -40,8 +45,6 @@ from infrastructure.logging.app_logging import get_logger
 
 logger = get_logger(__name__)
 
-SCAN_MODE_NETWORK = "network"
-SCAN_MODE_SIMULATED = "simulated"
 # 现场已知可读到 *IDN? 的 SCPI Raw 端口：R&S / Ceyear 用 5025，RIGOL DP832A 用 5555。
 DEFAULT_IDN_PORTS: tuple[int, ...] = (5025, 5555)
 DEFAULT_TIMEOUT_S = 0.6
@@ -53,7 +56,7 @@ MAX_PROGRESS_UPDATES = 100
 _IDN_COMMAND = b"*IDN?\n"
 
 
-class InstrumentDiscoveryError(RuntimeError):
+class InstrumentDiscoveryError(DeviceDiscoveryError):
     """扫描参数非法或扫描无法开始（地址、端口或线程池不可用）。"""
 
 

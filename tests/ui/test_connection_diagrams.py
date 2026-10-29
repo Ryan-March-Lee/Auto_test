@@ -92,7 +92,7 @@ class ConnectionDiagramStyleTests(unittest.TestCase):
 
     def test_module_has_no_import_time_global_style_side_effects(self):
         source = (
-            Path(__file__).resolve().parents[1]
+            Path(__file__).resolve().parents[2]
             / "presentation" / "qt" / "connection_diagrams.py"
         ).read_text(encoding="utf-8-sig")
         self.assertNotIn("_get_font", source)

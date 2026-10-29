@@ -25,6 +25,14 @@ from infrastructure.persistence.run_history_repository import FileRunHistoryRepo
 from infrastructure.persistence.run_repository import RunRepository
 
 
+def default_paths() -> PathService:
+    """Qt 进程的默认路径服务。
+
+    表现层其它模块只透传这个对象，不 import 基础设施；路径规则变化只影响本模块。
+    """
+    return DEFAULT_PATHS
+
+
 def build_gui_data_service(
     paths: PathService | None = None, *, config_path: Path | None = None
 ) -> GuiDataService:

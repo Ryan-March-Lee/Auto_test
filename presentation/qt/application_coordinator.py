@@ -18,9 +18,8 @@ from app.gui_runtime import load_prepared_run, prepare_configuration
 from application.gui_data_service import GuiDataService
 from application.run_service import RunNotResumable
 from domain.run.models import normalize_artifact_path
-from infrastructure.filesystem.paths import DEFAULT_PATHS, PathService
 
-from .composition import build_gui_data_service
+from .composition import build_gui_data_service, default_paths
 from .config_projection import ConfigBackfillError
 from .configuration_authoring import author_official_configuration
 from .measurement_controller import MeasurementController
@@ -138,7 +137,7 @@ class ApplicationCoordinator:
         log: Callable[[str], Any],
         warn: Callable[[str, str], Any],
         error: Callable[[str], Any],
-        paths: PathService | None = None,
+        paths: Any | None = None,
         config_path: Any = None,
         gui_data_service: GuiDataService | None = None,
         controller: MeasurementController | None = None,
@@ -147,7 +146,7 @@ class ApplicationCoordinator:
         for name, callback in (("log", log), ("warn", warn), ("error", error)):
             if not callable(callback):
                 raise TypeError(f"{name} 必须是可调用对象")
-        self.paths = paths or DEFAULT_PATHS
+        self.paths = paths or default_paths()
         self.config_path = Path(config_path or self.paths.config_file)
         self.gui_data_service: GuiDataService = gui_data_service or build_gui_data_service(
             self.paths, config_path=self.config_path

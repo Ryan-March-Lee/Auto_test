@@ -25,13 +25,13 @@ from PySide6.QtWidgets import (
     QPushButton, QSizePolicy, QTableWidget, QTableWidgetItem, QVBoxLayout,
 )
 
-from domain.instruments.models import make_device_key
-from infrastructure.discovery.instrument_discovery import (
+from application.ports.device_discovery import (
+    DEMO_SUBNET,
     SCAN_MODE_NETWORK,
     SCAN_MODE_SIMULATED,
-    InstrumentDiscoveryError,
+    DeviceDiscoveryError,
 )
-from infrastructure.discovery.simulated_network import DEMO_SUBNET
+from domain.instruments.models import make_device_key
 
 from .config_form_state import LEGACY_BINDING_SOURCE
 from .input_controls import WheelSafeComboBox
@@ -127,7 +127,7 @@ class DiscoveryWorker(QThread):
     def run(self) -> None:
         try:
             scanner = self.scanner_factory(self.mode)
-        except (InstrumentDiscoveryError, OSError, ValueError) as error:
+        except (DeviceDiscoveryError, OSError, ValueError) as error:
             self.failed.emit(f"无法开始扫描: {error}")
             return
         scanner.set_cancel_event(self.cancel_event)
@@ -139,7 +139,7 @@ class DiscoveryWorker(QThread):
                 self.subnet,
                 progress=lambda done, total: self.progress.emit(int(done), int(total)),
             )
-        except InstrumentDiscoveryError as error:
+        except DeviceDiscoveryError as error:
             self.failed.emit(str(error))
             return
         except (OSError, ValueError, RuntimeError) as error:

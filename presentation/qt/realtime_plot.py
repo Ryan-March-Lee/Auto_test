@@ -116,7 +116,9 @@ class RealTimePlotWidget(QWidget):
     def setup_empty_plots(self):
         for axis, (title, xlabel, ylabel, _color) in zip(self.figure.axes, _PLOT_PANELS):
             self._style_axis(axis, title, xlabel, ylabel)
-        self.canvas.draw()
+        # 空白图延后到控件第一次上屏时再渲染：构造窗口不必同步绘制三张空图，
+        # 启动与离屏测试都不再为看不见的画面付出 constrained layout 的绘制开销。
+        self.canvas.draw_idle()
 
     def update_plot(self, data: Dict[str, Any]):
         try:

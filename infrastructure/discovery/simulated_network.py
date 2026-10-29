@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-DEMO_SUBNET = "192.168.1.0/24"
+from application.ports.device_discovery import DEMO_SUBNET
 
 # (host, port) -> *IDN? 响应。端口与现场一致：R&S / Ceyear 5025，RIGOL DP832A 5555。
 DEMO_IDN_RESPONSES: dict[tuple[str, int], str] = {

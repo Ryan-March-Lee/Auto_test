@@ -19,7 +19,7 @@ from presentation.qt.config_projection import (
     project_authoring_config,
 )
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 PROJECTION_SOURCE = ROOT / "presentation" / "qt" / "config_projection.py"
 PAGE_SOURCE = ROOT / "presentation" / "qt" / "config_page.py"
 AUTHORING_SOURCE = ROOT / "presentation" / "qt" / "configuration_authoring.py"

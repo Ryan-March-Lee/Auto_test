@@ -94,6 +94,7 @@
 | `application.ports.result_input_reader` | `ResultInputReader` |
 | `application.ports.measurement_session` | `SafetyCleanupPort`、`MeasurementSessionPort`、`MeasurementSessionBinding`、`CleanupRecord`、`CleanupStepStatus`、`SafetyCleanupError` |
 | `application.ports.gui_data_service` | `GuiDataService`、`ResultFileDto`、`LoadedResultDto`、`ConfigurationPort`、`ResultQueryPort`、`ResultExportPort`、`ResultExportServicePort`、`RunArchiveStatusPort`、`RunHistoryServicePort` |
+| `application.ports.device_discovery` | `DEMO_SUBNET`、`DeviceDiscoveryError`、`SCAN_MODE_NETWORK`、`SCAN_MODE_SIMULATED` |
 
 正式配置入口为 `domain.configuration` 和 `infrastructure.config`；正式结果仓储入口为
 `application.ports.result_repository` 及其基础设施实现 `infrastructure.persistence.result_repository`；

@@ -8,6 +8,7 @@ from tests.test_architecture_dependencies import _worker_construction_violations
 ROOT = Path(__file__).resolve().parents[1]
 MAIN_WINDOW = ROOT / "presentation" / "qt" / "main_window.py"
 QT_ROOT = ROOT / "presentation" / "qt"
+UI_TESTS = ROOT / "tests" / "ui"
 FORBIDDEN_REVERSE_IMPORTS = {"enhanced_main_gui", "enhanced_workers"}
 HARDWARE_ROOTS = {
     "instrument",
@@ -17,10 +18,26 @@ HARDWARE_ROOTS = {
     "scpi",
     "hardware",
 }
+# 表现层只允许装配根连接基础设施；日志是各层共用的横切工具，不参与业务耦合。
+COMPOSITION_ROOT = "composition.py"
+CROSS_CUTTING_INFRASTRUCTURE = "infrastructure.logging"
+# UI 测试只覆盖表现层与 DTO/端口，装配真实后端的场景属于 tests/integration。
+BACKEND_IMPLEMENTATION_ROOTS = HARDWARE_ROOTS | {"app", "infrastructure"}
 
 
 def _tree(path):
     return ast.parse(path.read_text(encoding="utf-8-sig"), str(path))
+
+
+def _imported_modules(tree):
+    """收集模块级与函数级的绝对导入模块名，用于静态边界判定。"""
+    modules = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            modules.add(node.module)
+    return modules
 
 
 def _imported_roots(tree):
@@ -88,6 +105,60 @@ class PresentationBoundaryTests(unittest.TestCase):
             if hardware:
                 violations.append(f"{path.relative_to(ROOT)}: {sorted(hardware)}")
         self.assertEqual(violations, [])
+
+    def test_presentation_reaches_infrastructure_only_through_the_composition_root(self):
+        """表现层不装配基础设施：路径、存储与扫描器都由 composition/app 注入。
+
+        例外只有两处：``composition.py`` 是 Qt 进程的装配根，负责把应用服务与
+        基础设施实现接在一起；``infrastructure.logging`` 是各层共用的日志工具。
+        """
+        violations = []
+        for path in QT_ROOT.rglob("*.py"):
+            modules = _imported_modules(_tree(path))
+            infrastructure = {
+                module
+                for module in modules
+                if module.split(".")[0] == "infrastructure"
+            }
+            if not infrastructure or path.name == COMPOSITION_ROOT:
+                continue
+            unexpected = {
+                module
+                for module in infrastructure
+                if module != CROSS_CUTTING_INFRASTRUCTURE
+                and not module.startswith(f"{CROSS_CUTTING_INFRASTRUCTURE}.")
+            }
+            if unexpected:
+                violations.append(
+                    f"{path.relative_to(ROOT)}: {sorted(unexpected)}"
+                )
+        self.assertEqual(
+            violations,
+            [],
+            "表现层只能通过 composition.py 或 application 端口触碰基础设施: "
+            + ", ".join(violations),
+        )
+
+    def test_ui_tests_do_not_import_backend_implementations(self):
+        """``tests/ui`` 是纯表现层测试：装配真实后端的场景必须放在 tests/integration。"""
+        violations = []
+        for path in sorted(UI_TESTS.rglob("test_*.py")):
+            modules = _imported_modules(_tree(path))
+            backend = {
+                module
+                for module in modules
+                if module.split(".")[0] in BACKEND_IMPLEMENTATION_ROOTS
+            }
+            if backend:
+                violations.append(
+                    f"{path.relative_to(ROOT)}: {sorted(backend)}"
+                )
+        self.assertEqual(
+            violations,
+            [],
+            "UI 测试不得导入后端实现（app/infrastructure/硬件）: "
+            + ", ".join(violations),
+        )
 
 
 class QtMigrationResidueTests(unittest.TestCase):

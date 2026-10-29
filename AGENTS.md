@@ -26,6 +26,24 @@ Or use the repository wrapper:
 ./run_tests.bat
 ```
 
+### Pick the test scope from the change surface
+
+`tests/` is split so a pure UI change does not need the full suite. Choose by what you touched:
+
+| Change surface | Command | What runs |
+| --- | --- | --- |
+| Only `presentation/qt` (widgets, layout, theme, page interaction) and no DTO/port signature change | `.\run_tests.ps1 -Layer Ui` | `tests/ui` (pure presentation) + all repository gates, ~40 s |
+| `presentation` plus real wiring (new page bound to application services) | `.\run_tests.ps1 -Layer Integration` | `tests/ui` + `tests/integration` (real windows/pages with real backend) + gates, ~60 s |
+| `application`, `domain`, `infrastructure`, `instrument`, `app`, `launcher.py`, `tools/` | `.\run_tests.bat` (full offline) | ~100 s |
+| Dependencies, release, or anything before handing off | full suite + `launcher.py --check` + `launcher.py --validate-config` | — |
+
+Rules:
+
+- A pure UI task must **not** run the full suite; `.\run_tests.ps1 -Layer Ui` is the expected verification.
+- Every scope still runs the repository gates (`tests/test_architecture_dependencies.py`, `test_presentation_boundaries.py`, `test_public_api_inventory.py`, `test_exception_taxonomy.py`, `test_static_quality_gate.py`, `test_runtime_dependency_contract.py`); `-Layer Ui`/`Integration` include them.
+- `tests/ui` may import only `presentation`, `application` DTO/ports and Qt; importing `app`/`infrastructure`/hardware fails `test_presentation_boundaries`. Real-backend UI scenarios belong in `tests/integration`.
+- If the boundary is unclear, or a DTO/port signature changed, run the full suite. `.\run_tests.ps1 -Parallel` runs the full suite with pytest-xdist (~1 min).
+
 Verify dependencies and the application with:
 
 ```powershell

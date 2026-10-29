@@ -4,6 +4,7 @@ from presentation.qt.config_form_state import (
     POWER_SUPPLY_BINDINGS,
     LEGACY_BINDING_SOURCE,
     ConfigFormState,
+    assignment_declared,
     assignment_supply_id,
     bound_power_supplies,
     effective_device_bindings,
@@ -527,6 +528,20 @@ class ConfigFormStateTests(unittest.TestCase):
             assignment["dut_amplifier"]["supplies"]["carrier"]["supply_id"]
         )
         self.assertIn("未选择电源", "；".join(state.validation_errors()))
+
+    def test_assignment_declared_separates_missing_from_unbound(self):
+        """“没有这条分配”与“声明了但未绑定”必须能分开，否则回填会补一台电源。"""
+        # 键缺失或不是对象：配置里没有这条分配，缺省规则适用。
+        self.assertFalse(assignment_declared(None))
+        self.assertFalse(assignment_declared("PS1"))
+        self.assertFalse(assignment_declared(["PS1"]))
+        # 记录存在就是声明过：即使引用为空，也不是“配置缺失”。
+        self.assertTrue(assignment_declared({}))
+        self.assertTrue(assignment_declared({"supply_id": None}))
+        self.assertTrue(assignment_declared({"name": "PS1"}))
+        # 两种状态都会让引用读成 None，只有 assignment_declared 能区分。
+        self.assertIsNone(assignment_supply_id({"supply_id": None}))
+        self.assertIsNone(assignment_supply_id(None))
 
 
 if __name__ == "__main__":

@@ -413,6 +413,93 @@ class ConfigPageTests(unittest.TestCase):
                 self.assertEqual(options, list(supply_ids))
                 self.assertEqual(page.get_enabled_power_supplies(), list(supply_ids))
 
+    def test_explicitly_unbound_reference_stays_empty(self):
+        """配置明确写 ``supply_id: null`` 时不能按缺省规则补上第一台可用电源。"""
+        page = self.make_page(
+            device_bindings=self.power_supply_bindings("DP8B0885"),
+            dut_config={"power_supply_count": 1},
+            power_supply_assignment={
+                "dut_amplifier": {
+                    "power_supply_count": 1,
+                    "supplies": {
+                        "carrier": {"supply_id": None, "channel": ["CH1", "CH2"]}
+                    },
+                }
+            },
+        )
+
+        self.assertEqual(page.pa_unit1_power_combo.currentIndex(), -1)
+        self.assertEqual(page.pa_unit1_power_combo.currentText(), "")
+        entry = page.build_config()["power_supply_assignment"]["dut_amplifier"][
+            "supplies"
+        ]["carrier"]
+        self.assertIsNone(entry["supply_id"])
+        self.assertNotIn("name", entry)
+
+    def test_missing_assignment_defaults_to_the_first_bound_supply(self):
+        """配置里没有这条分配时按缺省规则选第一台可用电源（缺失 ≠ 未绑定）。"""
+        page = self.make_page(
+            device_bindings=self.power_supply_bindings("DP8B1519", "DP8B0885"),
+            dut_config={"power_supply_count": 1},
+        )
+
+        self.assertEqual(page.pa_unit1_power_combo.currentText(), "DP8B1519")
+
+    def test_applied_config_keeps_an_explicitly_unbound_reference_empty(self):
+        """回填路径（apply_config）与初次建页共用同一判定：显式 null 仍是空选择。"""
+        page = self.make_page()
+
+        page.apply_config(
+            {
+                "test_frequencies": [1.0],
+                "instruments": {"power_supplies": {}},
+                "device_bindings": self.power_supply_bindings("DP8B0885"),
+                "driver_mode": {"enabled": True, "power_source": "dc_supply"},
+                "dut_config": {"power_supply_count": 1},
+                "power_supply_assignment": {
+                    "driver_amplifier": {
+                        "power_supply_count": 1,
+                        "supplies": {"main": {"supply_id": None}},
+                    },
+                    "dut_amplifier": {
+                        "power_supply_count": 1,
+                        "supplies": {"carrier": {"supply_id": None}},
+                    },
+                },
+            }
+        )
+
+        self.assertEqual(page.pa_unit1_power_combo.currentIndex(), -1)
+        self.assertEqual(page.driver_power_combo.currentIndex(), -1)
+
+    def test_applied_config_reference_follows_supply_id_not_name(self):
+        """回填时 ``supply_id`` 为准：与之冲突的旧字段 ``name`` 不参与选择。"""
+        page = self.make_page()
+
+        def applied(carrier):
+            page.apply_config(
+                {
+                    "test_frequencies": [1.0],
+                    "instruments": {"power_supplies": {}},
+                    "device_bindings": self.power_supply_bindings(
+                        "DP8B1519", "DP8B0885"
+                    ),
+                    "dut_config": {"power_supply_count": 1},
+                    "power_supply_assignment": {
+                        "dut_amplifier": {
+                            "power_supply_count": 1,
+                            "supplies": {"carrier": carrier},
+                        }
+                    },
+                }
+            )
+            return page.pa_unit1_power_combo.currentText()
+
+        # supply_id 指向已绑定电源：即使 name 是另一台，也选 supply_id 指定的那台。
+        self.assertEqual(applied({"supply_id": "DP8B0885", "name": "DP8B1519"}), "DP8B0885")
+        # 反过来：supply_id 指向未绑定的电源时保持空选择，不被 name 改指另一台。
+        self.assertEqual(applied({"supply_id": "DP8B9999", "name": "DP8B1519"}), "")
+
 
 if __name__ == "__main__":
     unittest.main()

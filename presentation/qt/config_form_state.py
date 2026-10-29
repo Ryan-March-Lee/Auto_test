@@ -378,6 +378,9 @@ def assignment_supply_id(entry: Any) -> str | None:
 
     返回值只做“是不是非空字符串”的判断，不裁剪、不改写：写错的引用要留给校验报告，
     不能在校验前被悄悄修成看起来合法的值。
+
+    返回 ``None`` 有两层含义（“没有这条分配”与“声明了但未绑定”），回填控件时必须用
+    :func:`assignment_declared` 区分，否则显式未绑定会被当成配置缺失而补上第一台电源。
     """
     if not isinstance(entry, Mapping):
         return None
@@ -386,6 +389,17 @@ def assignment_supply_id(entry: Any) -> str | None:
     if not isinstance(value, str) or not value.strip():
         return None
     return value
+
+
+def assignment_declared(entry: Any) -> bool:
+    """配置里是否存在这条供电分配（与它是否指向一台已绑定电源无关）。
+
+    回填控件必须分开两种状态：**没有这条分配**（键缺失/不是对象）按缺省规则选第一台
+    可用电源；**声明了但未绑定**（``supply_id: null``、空白引用，或记录里根本没有引用
+    字段）必须保持空选择并交给校验报告。把后者当成前者，会在载入一份“等人工补全”的
+    配置时静默选上一台电源，保存后就把“这台电源已不在”写成了一次看不见的分配改动。
+    """
+    return isinstance(entry, Mapping)
 
 
 def _assignment_entry(combo: Any) -> dict:

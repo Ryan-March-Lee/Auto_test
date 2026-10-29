@@ -10,7 +10,10 @@
 空配置基线。规则集中在这里，因此：
 
 - 配置页不再持有逐字段的类型容错/回填逻辑，只负责控件接线与用户意图转发；
-- 投影只认识配置编写文档的字段名，不读取任何旧字段别名，也不做旧格式推断；
+- 投影只认识配置编写文档的字段名，不读取旧字段别名，也不做旧格式推断；唯一例外是
+  供电分配引用，它统一走 :func:`presentation.qt.config_form_state.assignment_supply_id`
+  （``supply_id`` 为准，只有完全没有该字段的旧记录才回落读一次 ``name``），与配置页
+  初次建页使用同一判定；
 - ``instruments`` 不由控件编辑（仪器连接只来自设备发现结果），因此投影只携带它，
   不把它写到控件上；
 - 电源分配的可选项由调用方按设备绑定传入（``supplies``）：配置引用了未绑定的电源时
@@ -28,7 +31,7 @@ from typing import Any, Mapping
 
 from application.errors import ConfigurationError
 
-from .config_form_state import parse_frequency_text
+from .config_form_state import assignment_declared, assignment_supply_id, parse_frequency_text
 from .configuration_authoring import DUT_CHANNEL_ROLES
 
 # 配置页受控控件的空配置基线。``project_authoring_config()`` 先把控件重置到这些默认值，
@@ -66,11 +69,6 @@ class ConfigBackfillError(ConfigurationError):
     回填失败必须可识别：调用方要么收到该异常，要么据此明确报告“未回填成功”，
     不得把它静默当作加载成功。
     """
-
-
-def text_or_empty(value: Any) -> str:
-    """只接受字符串文本（如仪器地址）；其它类型一律视为缺失，返回空串。"""
-    return value if isinstance(value, str) else ""
 
 
 def bool_or_default(value: Any, default: bool) -> bool:
@@ -126,17 +124,22 @@ def _default_supply(key: str, options: list[str] | None) -> str:
     return default if default in options else options[0]
 
 
-def _assign_supply(combo, name, key: str, options: list[str] | None) -> None:
+def _assign_supply(combo, entry, key: str, options: list[str] | None) -> None:
     """把一条电源分配写到组合框。
 
-    配置里显式写出的电源必须真实存在于可选项里；不存在时清空选择，由校验明确报告，
-    而不是临时把未知电源补进下拉框、让一份连不上硬件的配置看起来合法。
+    引用由 :func:`config_form_state.assignment_supply_id` 解析（``supply_id`` 为准，
+    旧记录只回落读一次 ``name``），与配置页初次建页共用同一判定；配置里显式写出的
+    电源必须真实存在于可选项里，不存在时清空选择，由校验明确报告，而不是临时把未知
+    电源补进下拉框、让一份连不上硬件的配置看起来合法。
+
+    ``entry`` 不是对象表示配置里**没有**这条分配：按缺省规则落到第一个可用电源。
+    是对象但引用为空（``supply_id: null``）表示**声明了未绑定**：保持空选择，不补。
     """
-    explicit = text_or_empty(name).strip()
-    if explicit:
-        target = explicit if options is None or explicit in options else ""
-    else:
+    if not assignment_declared(entry):
         target = _default_supply(key, options)
+    else:
+        explicit = assignment_supply_id(entry) or ""
+        target = explicit if options is None or explicit in options else ""
     if target:
         set_combo(combo, target)
     else:
@@ -312,18 +315,14 @@ def _apply_power_assignment_widgets(
     options = _supply_options(supplies)
     driver_supplies = driver.get("supplies")
     driver_supplies = driver_supplies if isinstance(driver_supplies, dict) else {}
-    main = driver_supplies.get("main")
-    main = main if isinstance(main, dict) else {}
     count = number_or_none(driver.get("power_supply_count"))
     if "driver_source" in controls:
         set_combo(controls["driver_source"], "直流电源" if count is not None and count > 0 else "自带供电")
-    _assign_supply(controls["driver_power"], main.get("name"), "driver_power", options)
+    _assign_supply(controls["driver_power"], driver_supplies.get("main"), "driver_power", options)
     dut_supplies = dut.get("supplies")
     dut_supplies = dut_supplies if isinstance(dut_supplies, dict) else {}
     for role, key in _ASSIGNMENT_ROLE_KEYS:
-        item = dut_supplies.get(role)
-        item = item if isinstance(item, dict) else {}
-        _assign_supply(controls[key], item.get("name"), key, options)
+        _assign_supply(controls[key], dut_supplies.get(role), key, options)
 
 
 __all__ = [

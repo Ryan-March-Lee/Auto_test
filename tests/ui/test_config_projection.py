@@ -286,6 +286,70 @@ class ConfigProjectionTests(unittest.TestCase):
         self.assertEqual(controls["driver_power"].items, [])
         self.assertIsNone(controls["driver_power"].currentText())
 
+    def test_projection_reads_the_reference_from_supply_id(self):
+        """``supply_id`` 是主字段：与之冲突的旧别名 ``name`` 不参与选择。"""
+        form = FakeForm()
+
+        project_authoring_config(
+            form,
+            {
+                "power_supply_assignment": {
+                    "dut_amplifier": {
+                        "supplies": {
+                            "carrier": {"supply_id": "PS3", "name": "PS1"},
+                            "peaking": {"supply_id": "PS9", "name": "PS1"},
+                        }
+                    }
+                }
+            },
+            supplies=["PS1", "PS2", "PS3"],
+        )
+
+        controls = form.power_assignment_widgets
+        self.assertEqual(controls["pa_unit1_power"].currentText(), "PS3")
+        # supply_id 指向未绑定电源时保持空选择，不被 name 改指另一台。
+        self.assertIsNone(controls["pa_unit2_power"].currentText())
+
+    def test_projection_keeps_an_explicitly_unbound_reference_empty(self):
+        """``supply_id: null`` 是“声明了未绑定”，不能按缺省规则补第一台可用电源。"""
+        form = FakeForm()
+
+        project_authoring_config(
+            form,
+            {
+                "power_supply_assignment": {
+                    "dut_amplifier": {
+                        "supplies": {
+                            "carrier": {"supply_id": None, "channel": ["CH1", "CH2"]}
+                        }
+                    }
+                }
+            },
+            supplies=["PS1"],
+        )
+
+        controls = form.power_assignment_widgets
+        self.assertEqual(controls["pa_unit1_power"].items, ["PS1"])
+        self.assertIsNone(controls["pa_unit1_power"].currentText())
+
+    def test_projection_reads_a_legacy_reference_once(self):
+        """只有 ``name`` 的旧记录仍能回填；它只被读一次，不是第二个可用性来源。"""
+        form = FakeForm()
+
+        project_authoring_config(
+            form,
+            {
+                "power_supply_assignment": {
+                    "dut_amplifier": {"supplies": {"carrier": {"name": "PS2"}}}
+                }
+            },
+            supplies=["PS1", "PS2"],
+        )
+
+        self.assertEqual(
+            form.power_assignment_widgets["pa_unit1_power"].currentText(), "PS2"
+        )
+
     def test_projection_resets_before_applying(self):
         form = FakeForm()
         project_authoring_config(

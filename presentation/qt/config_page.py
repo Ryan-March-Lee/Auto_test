@@ -26,6 +26,7 @@ from domain.instruments.models import (
 from .config_form_state import (
     POWER_SUPPLY_BINDINGS,
     ConfigFormState,
+    assignment_declared,
     assignment_supply_id,
     binding_address,
     binding_records,
@@ -535,14 +536,17 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         ``PS1``）时保持空选择，交给校验报告——``QComboBox`` 找不到文本会停在第一项，
         那会把“这台电源已经不在”显示成“换成了另一台电源”。
 
-        配置里根本没有这条分配时沿用表单默认（有可用电源就选第一台）。
+        两种状态严格分开（见 :func:`config_form_state.assignment_declared`）：配置里
+        **没有**这条分配时沿用表单默认（有可用电源就选第一台）；配置里**有**这条分配
+        但引用为空（``supply_id: null``）时保持空选择，不能按缺省规则补一台。
         """
         combo = WheelSafeComboBox()
         combo.addItems(list(choices))
-        reference = assignment_supply_id(entry)
-        if reference is None:
+        if not assignment_declared(entry):
             combo.setCurrentIndex(0 if choices else -1)
-        elif reference in choices:
+            return combo
+        reference = assignment_supply_id(entry)
+        if reference is not None and reference in choices:
             combo.setCurrentText(reference)
         else:
             combo.setCurrentIndex(-1)
@@ -583,10 +587,12 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         driver_supply = driver.get("supplies", {}); dut_supply = dut.get("supplies", {})
         if not isinstance(driver_supply, dict): driver_supply = {}
         if not isinstance(dut_supply, dict): dut_supply = {}
-        main = driver_supply.get("main", {}) if isinstance(driver_supply.get("main", {}), dict) else {}
-        carrier = dut_supply.get("carrier", {}) if isinstance(dut_supply.get("carrier", {}), dict) else {}
-        peaking = dut_supply.get("peaking", {}) if isinstance(dut_supply.get("peaking", {}), dict) else {}
-        peaking2 = dut_supply.get("peaking2", {}) if isinstance(dut_supply.get("peaking2", {}), dict) else {}
+        # 条目缺失（键不存在/不是对象）与“声明了但未绑定”在回填时是两回事：
+        # 前者按缺省规则选第一台可用电源，后者保持空选择，因此这里保留 ``None``。
+        main = driver_supply.get("main")
+        carrier = dut_supply.get("carrier")
+        peaking = dut_supply.get("peaking")
+        peaking2 = dut_supply.get("peaking2")
         supplies_choices = bound_power_supplies(self.device_bindings)
         self.driver_power_combo = self._power_choice_combo(supplies_choices, main)
         self.pa_unit1_power_combo = self._power_choice_combo(supplies_choices, carrier)

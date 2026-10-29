@@ -17,6 +17,7 @@ from domain.instruments.models import (
     InstrumentIdentity,
     build_instrument_name,
     make_device_key,
+    normalize_serial,
 )
 from infrastructure.filesystem.paths import PathService
 from infrastructure.persistence.instrument_registry import (
@@ -92,6 +93,20 @@ class InstrumentIdentityTests(unittest.TestCase):
         identity = InstrumentIdentity.from_idn('Rigol,dp832a, "dp8b214901519" ,00.01.16')
         self.assertEqual(identity.model, "DP832A")
         self.assertEqual(identity.serial, "DP8B214901519")
+
+    def test_serial_normalization_is_idempotent(self):
+        # 引号与空白并存时一轮剥不完；模型自己循环到稳定，保证 serial、device_key
+        # 与电源短标签用的是同一个值。
+        cases = {
+            ' " dp8b214901519 " ': "DP8B214901519",
+            '"105462"': "105462",
+            "  105462  ": "105462",
+            "DP8B 214901519": "DP8B 214901519",
+        }
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw):
+                self.assertEqual(normalize_serial(raw), expected)
+                self.assertEqual(normalize_serial(expected), expected)
 
     def test_incomplete_identity_is_rejected(self):
         for raw in ("", "   ", "Rohde&Schwarz,SMW200A", "Rohde&Schwarz,SMW200A,,1.0"):

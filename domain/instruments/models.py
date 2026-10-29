@@ -15,7 +15,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Final
+
+# 序列号归一化最多应用的轮数：剥引号、折叠空白各占一轮，实测两轮收敛，留两轮余量。
+_SERIAL_NORMALIZE_PASSES: Final = 4
 
 
 class DeviceStatus(str, Enum):
@@ -46,10 +49,29 @@ def normalize_model(value: Any) -> str:
     return normalize_text(value).upper()
 
 
-def normalize_serial(value: Any) -> str:
-    """序列号归一化：去除引号与空白并统一大写，避免大小写差异造成重复建档。"""
+def _normalize_serial_once(value: Any) -> str:
+    """单轮序列号归一化：折叠空白、去掉一层成对引号并统一大写。"""
     text = normalize_text(value).strip().strip('"').strip("'")
     return text.upper()
+
+
+def normalize_serial(value: Any) -> str:
+    """序列号归一化：反复应用单轮归一化直到结果不再变化，避免大小写差异造成重复建档。
+
+    ``*IDN?`` 分段可能同时带引号与空白（``' " dp8b214901519 " '``），单轮只剥掉一层引号，
+    所以这里循环到稳定。**这一层是唯一的稳定值来源**：``serial``、``device_key`` 与短标签
+    都必须用它，否则同一台设备会得到互不相认的身份与标签。
+
+    内部空白（``DP8B 2149 01519``）是设备身份的一部分，保留不动；短标签生成器据此拒绝
+    这类序列号，见 :mod:`domain.instruments.labels`。
+    """
+    current = _normalize_serial_once(value)
+    for _ in range(_SERIAL_NORMALIZE_PASSES - 1):
+        following = _normalize_serial_once(current)
+        if following == current:
+            break
+        current = following
+    return current
 
 
 # 测试角色登记在设备表里：现场每台仪器只承担一种角色，界面不再让用户逐台选择。

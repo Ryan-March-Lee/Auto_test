@@ -21,6 +21,7 @@ from domain.instruments.labels import (
     supply_label_candidates,
     supply_label_prefix,
 )
+from domain.instruments.models import InstrumentIdentity, make_device_key, normalize_serial
 
 
 ROOT = Path(__file__).parents[1]
@@ -52,8 +53,24 @@ class NormalizeTests(unittest.TestCase):
             normalize_supply_serial("DP8B  214901519")
 
     def test_quotes_and_spaces_need_two_rounds(self):
-        # 契约第 3.1 节：单次 normalize_serial 只剥掉一层引号。
+        # 契约第 3.1 节：两层引号加空白一轮剥不完，所以归一化必须循环到稳定。
         self.assertEqual(normalize_supply_serial(' " dp8b214901519 " '), "DP8B214901519")
+        self.assertEqual(normalize_serial(' " dp8b214901519 " '), "DP8B214901519")
+
+    def test_normalization_is_a_single_stable_source(self):
+        # 标签、serial 与 device_key 必须来自同一个稳定值，否则同一台设备会有两个身份。
+        raw = ' " dp8b214901519 " '
+        stable = normalize_supply_serial(raw)
+        self.assertEqual(normalize_serial(raw), stable)
+        self.assertEqual(
+            make_device_key("RIGOL TECHNOLOGIES", raw),
+            make_device_key("RIGOL TECHNOLOGIES", stable),
+        )
+        identity = InstrumentIdentity.from_idn(
+            'RIGOL TECHNOLOGIES,DP832A, "dp8b214901519" ,00.01.16'
+        )
+        self.assertEqual(identity.serial, stable)
+        self.assertEqual(generate_supply_label(identity.serial), "DP8B1519")
 
     def test_internal_whitespace_is_rejected_instead_of_silently_removed(self):
         with self.assertRaises(PowerSupplyLabelError) as raised:
@@ -110,6 +127,22 @@ class CandidateTests(unittest.TestCase):
         # 前缀占满主体时，末四位会吞掉前缀（``ABCDBCD1``），候选只保留完整序列号。
         self.assertEqual(supply_label_candidates("ABCD1"), ("ABCD1",))
 
+    def test_serial_that_is_only_prefix_never_repeats_itself(self):
+        # 没有可加宽的尾部时不能把前缀拼两遍（回归：曾生成 ``ABCDEABCDE``）。
+        self.assertEqual(supply_label_candidates("ABCDE"), ("ABCDE",))
+        self.assertEqual(supply_label_candidates("ABCDEFG"), ("ABCDEFG",))
+
+    def test_widening_stops_before_the_supply_id_separator(self):
+        # 标签会拼成 ``supply_id/CHx``，含 ``/`` 的候选一律不可用，加宽到此为止。
+        candidates = supply_label_candidates("1412.0000K02/105462")
+        self.assertEqual(candidates, ("5462", "05462", "105462"))
+        self.assertFalse([candidate for candidate in candidates if "/" in candidate])
+
+    def test_serial_without_any_usable_candidate_is_rejected(self):
+        with self.assertRaises(PowerSupplyLabelError) as raised:
+            supply_label_candidates("AB/CD1")
+        self.assertIn("supply_id", str(raised.exception))
+
     def test_default_tail_width_is_four(self):
         self.assertEqual(LABEL_TAIL_WIDTH, 4)
 
@@ -141,6 +174,13 @@ class GenerateTests(unittest.TestCase):
 
     def test_prefix_may_be_empty_when_serial_starts_with_a_digit_run(self):
         self.assertEqual(generate_supply_label("1412.0000K02/105462"), "5462")
+
+    def test_labels_never_contain_the_supply_id_separator(self):
+        self.assertEqual(generate_supply_label("1412.0000K02/105462"), "5462")
+        with self.assertRaises(PowerSupplyLabelError):
+            generate_supply_label(
+                "1412.0000K02/105462", existing_labels=["5462", "05462", "105462"]
+            )
 
     def test_collision_extends_to_five_then_six_digits_then_full_serial(self):
         cases = (

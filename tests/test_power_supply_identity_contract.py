@@ -103,14 +103,11 @@ def _used_supply_ids(config: dict) -> set:
 
 
 def _stable_serial(value: str) -> str:
-    """契约第 3.1 节：反复归一化到不再变化（引号与空白并存时需要两轮）。"""
-    current = normalize_serial(value)
-    for _ in range(4):
-        following = normalize_serial(current)
-        if following == current:
-            return current
-        current = following
-    raise AssertionError(f"序列号归一化不收敛: {value!r}")
+    """契约第 3.1 节：归一化到稳定值。``normalize_serial`` 自己已循环到稳定，这里只验证。"""
+    stable = normalize_serial(value)
+    if normalize_serial(stable) != stable:
+        raise AssertionError(f"序列号归一化不稳定: {value!r} -> {stable!r}")
+    return stable
 
 
 def _fixture_serials():

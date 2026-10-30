@@ -87,6 +87,7 @@ TOKENS = {
     "tooltip_border": "#1E293B",
     # 字号
     "font_title": "15pt",
+    "font_page_title": "28pt",
     "font_section": "10.5pt",
     "font_body": "9.5pt",
     "font_base": "9.5pt",
@@ -388,7 +389,25 @@ QGroupBox QGroupBox::title {
     top: 8px;
 }
 
-/* ===== 设备卡片（仪器连接配置的发现结果） =====
+/* ===== 整屏页面标题 =====
+   整屏步骤页（如“仪表配置”）只有一个大字号标题，居中放在页面偏上位置；
+   它不参与卡片标题的层级，因此单独一条属性。 */
+QLabel[role="pageTitle"] {
+    color: $text;
+    font-size: $font_page_title;
+    font-weight: 700;
+}
+
+/* ===== 设备发现结果框（“仪表配置”页） =====
+   扫描行留在框外，框只包住发现结果：一块圆角矩形，空着时是一块明确的落点，
+   有卡片时卡片在框内换行。 */
+QFrame#discoveryResultsBox {
+    background-color: $surface;
+    border: 1px solid $border;
+    border-radius: 12px;
+}
+
+/* ===== 设备卡片（“仪表配置”页的发现结果） =====
    一台仪器一张卡片：上方浅色图片区，下方设备名与缩减版设备码。卡片可点击选中：
    选中时整块描主色并铺一层极浅的主色底，与“只悬停”区分得开；不可应用的卡片整块
    降低对比度，并在卡片里写明原因。 */

@@ -219,7 +219,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `presentation.qt.archival_view` | 归档结果分组控件：显示标题/说明并按提示启用“打开结果目录/测试报告”；位置由窗口注入；动态文案按纯文本渲染 |
 | `presentation.qt.config_form_state` | 配置表单状态 |
 | `presentation.qt.config_page` | 配置页面（编辑配置编写文档；向协调器提供 `ConfigurationPagePort` 窄接口） |
-| `presentation.qt.connection_page` | 仪器连接配置页：欢迎页选定测试模式后的整屏页面（不登记进标签栏），扫描网段、勾选并应用本次测试所需的设备，应用后由“下一步”进入仪器配置页；设备绑定的写入与派生界面（电源标签页、电源分配可选项）仍归 config_page |
+| `presentation.qt.connection_page` | 仪表配置页：欢迎页选定测试模式后的整屏页面（不登记进标签栏），大字号页标题、扫描网段、勾选并应用本次测试所需的设备、框外右下的“连接仪器”，应用后由“下一步”进入仪器配置页；设备绑定的写入与派生界面（电源标签页、电源分配可选项）仍归 config_page |
 | `presentation.qt.device_cards` | 设备发现的仪器展示卡片：上方仪器图片（等比缩放到同一视觉体积），下方设备名、型号与角色、缩减版身份码（电源用注册表短标签 `DP8B1519`，其它仪器 `角色/型号/序列号`）；圆角矩形，点击卡片即选中 |
 | `presentation.qt.device_discovery_panel` | 仪器连接配置框（设备发现）：扫描网段、以卡片展示已登记/未分配角色/未登记/无法识别结果、点击卡片即选中并应用（角色取自设备表）、显示当前已绑定设备、清除设备绑定；扫描线程只读探测，不改配置也不连接仪器 |
 | `presentation.qt.config_projection` | 配置编写文档（authoring document）到配置页控件的确定性投影：重置、逐字段投影、非法类型回落；正式 `test_plan` / `run_mapping` 只由 `configuration_authoring` 生成 |

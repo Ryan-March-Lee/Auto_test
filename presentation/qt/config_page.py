@@ -6,10 +6,11 @@
 :mod:`presentation.qt.config_form_state`。页面不持有逐字段回填逻辑，也不依赖窗口、
 测量 controller 或硬件实现。
 
-仪器连接配置（扫描、勾选设备、设备身份绑定）已独立成
-:mod:`presentation.qt.connection_page`：本页不再创建发现面板，只在
-:meth:`ConfigPage.attach_discovery_panel` 里登记那一页交出的事件面板，并保留写绑定的
-边界（整批校验 + 写地址/身份）与派生界面更新。
+仪表配置（扫描、勾选设备、设备身份绑定、连接仪器）已独立成
+:mod:`presentation.qt.connection_page`：本页不再创建发现面板，也不再提供连接入口，
+只在 :meth:`ConfigPage.attach_discovery_panel` 里登记那一页交出的事件面板，并保留写
+绑定的边界（整批校验 + 写地址/身份）与派生界面更新。连接请求仍由
+:meth:`ConfigPage.request_connect` 校验后经 ``connect_requested`` 交给窗口。
 """
 
 import copy
@@ -139,7 +140,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         # 配置里原本就不可用的电源绑定：读入时会从可用集合里剔除，但必须在这里留下记录，
         # 由界面提示并在保存/运行校验时明确报错——否则它们会表现为“电源莫名消失”。
         self.binding_problems = self._binding_problems_of(self.config)
-        # 「仪器连接配置」页交出的事件面板：写绑定之后由本页回写它的状态文本。
+        # 「仪表配置」页交出的事件面板：写绑定之后由本页回写它的状态文本。
         # 未登记面板时（纯配置页场景）所有回写都跳过。
         self.discovery_panel = None
         self.build_ui()
@@ -195,18 +196,9 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         supplies = instruments.get("power_supplies")
         supplies = supplies if isinstance(supplies, dict) else {}
 
-        # 仪器连接配置在独立页面（欢迎页之后的第一步）：本页只保留“连接仪器”入口，
-        # 设备地址与身份来自那一页写入的设备绑定，页面不再提供手工填写地址的控件。
-        connect_row = QHBoxLayout()
-        connect_row.setSpacing(10)
-        connect_hint = QLabel("在“仪器连接配置”页应用设备后，在此连接本次测试使用的仪器。")
-        connect_hint.setProperty("role", "hint")
-        connect_row.addWidget(connect_hint, 1)
-        self.connect_btn = QPushButton("连接仪器")
-        set_button_variant(self.connect_btn, "primary")
-        connect_row.addWidget(self.connect_btn)
-        left_column.addLayout(connect_row)
-
+        # 设备发现与“连接仪器”都在“仪表配置”页（欢迎页之后的第一步）：本页只配置测试
+        # 参数与运行，设备地址与身份来自那一页写入的设备绑定，页面不再提供手工填写地址
+        # 的控件，也不再有连接入口。
         params = QGroupBox("测试参数配置")
         form = QGridLayout(params)
         form.setHorizontalSpacing(10)
@@ -263,7 +255,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         root.addWidget(self._build_action_bar())
 
     def _build_action_bar(self):
-        """页面底部固定操作栏：回到仪器连接配置、保存当前配置或返回欢迎页。"""
+        """页面底部固定操作栏：回到仪表配置、保存当前配置或返回欢迎页。"""
         bar = QWidget()
         bar.setObjectName("pageActionBar")
         row = QHBoxLayout(bar)
@@ -273,8 +265,8 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         dirty_hint.setProperty("role", "hint")
         row.addWidget(dirty_hint, 1)
         # 上一步只切换页面：设备绑定与参数都还在内存里，回来时两者都保留。
-        self.previous_step_btn = QPushButton("上一步：仪器连接")
-        self.previous_step_btn.setToolTip("回到“仪器连接配置”页，重新扫描并应用本次测试使用的设备")
+        self.previous_step_btn = QPushButton("上一步：仪表配置")
+        self.previous_step_btn.setToolTip("回到“仪表配置”页，重新扫描并应用本次测试使用的设备")
         set_button_variant(self.previous_step_btn, "secondary")
         self.save_config_btn = QPushButton("保存配置")
         set_button_variant(self.save_config_btn, "primary")
@@ -286,7 +278,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         return bar
 
     def attach_discovery_panel(self, panel):
-        """登记「仪器连接配置」页上的设备发现面板，并接上应用/清除意图。
+        """登记「仪表配置」页上的设备发现面板，并接上应用/清除意图。
 
         面板归独立页面（:mod:`presentation.qt.connection_page`）所有：它只管扫描与
         勾选，不改配置、不连接仪器。用户点“应用所选设备到配置”时，面板把所选设备交给
@@ -793,7 +785,6 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         layout.addWidget(run_group)
 
     def _connect_signals(self):
-        self.connect_btn.clicked.connect(self.request_connect)
         self.save_config_btn.clicked.connect(self.request_save)
         self.create_run_btn.clicked.connect(self.request_create_run)
         self.load_run_btn.clicked.connect(self.request_load_run)
@@ -806,6 +797,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         if self.validate(): self.save_requested.emit()
 
     def request_connect(self):
+        """连接入口（按钮在“仪表配置”页）：校验通过后由窗口连仪器。"""
         if self.validate(): self.connect_requested.emit()
 
     def request_create_run(self):

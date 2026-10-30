@@ -176,7 +176,7 @@ class MainWindow(QMainWindow):
         workspace_layout.addWidget(self.workspace_splitter, 1)
         self.view_stack.addWidget(self.workspace_page)
 
-        # 仪器连接配置是欢迎页之后的整屏页面，不登记进标签栏：先选设备，再配测试参数。
+        # 仪表配置是欢迎页之后的整屏页面，不登记进标签栏：先选设备、连接，再配测试参数。
         # 它只把设备绑定写进配置页，页面切换由本窗口负责。
         self.connection_page = ConnectionPage(
             self.config_page,
@@ -216,7 +216,7 @@ class MainWindow(QMainWindow):
         self._sync_status_panel_visibility()
 
     def _open_configuration_page(self) -> None:
-        """仪器连接配置完成：进入工作区，当前页面仍是“仪器配置”。
+        """仪表配置完成：进入工作区，当前页面仍是“仪器配置”。
 
         “下一步”只做页面切换，不写配置：设备绑定已经记在配置页上，保存与创建运行
         时随配置一起落盘/冻结，因此中途返回欢迎页也不会留下半保存的配置。
@@ -402,11 +402,22 @@ class MainWindow(QMainWindow):
 
     # ---- 仪器连接（端口与 worker 归协调器，窗口只连接信号） ----
 
+    def _set_connect_enabled(self, enabled: bool) -> None:
+        """连接期间禁用/恢复唯一那个连接入口。
+
+        连接按钮在“仪表配置”页（欢迎页之后的第一步），不在标签页里；窗口只负责
+        它在连接过程中的可用状态，不自己持有按钮。
+        """
+        page = getattr(self, "connection_page", None)
+        button = getattr(page, "connect_btn", None)
+        if button is not None:
+            button.setEnabled(enabled)
+
     def connect_instruments(self):
         """连接仪器；连接成功前按钮保持禁用。"""
-        self.connect_btn.setEnabled(False)
+        self._set_connect_enabled(False)
         if not self.coordinator.connect_instruments(self._bind_instrument_worker_signals):
-            self.connect_btn.setEnabled(True)
+            self._set_connect_enabled(True)
 
     def _bind_instrument_worker_signals(self, worker):
         worker.signals.finished.connect(self.on_instrument_connected)
@@ -425,7 +436,7 @@ class MainWindow(QMainWindow):
 
     def on_instrument_connected(self):
         """仪器连接完成"""
-        self.connect_btn.setEnabled(True)
+        self._set_connect_enabled(True)
         self.progress_bar.setValue(0)
         self.add_log_message("所有仪器连接成功！")
 
@@ -434,14 +445,14 @@ class MainWindow(QMainWindow):
         self.add_log_message(f"错误: {error_message}")
         QMessageBox.critical(self, "错误", error_message)
         # 连接 worker 失败时只恢复连接控件；测量页面由 controller 状态驱动。
-        self.connect_btn.setEnabled(True)
+        self._set_connect_enabled(True)
         self.progress_bar.setValue(0)
         self.coordinator.release_instrument_port()
 
     def on_instrument_stopped(self, reason):
         """处理仪器连接 worker 的停止。"""
         self.add_log_message(f"仪器连接线程已停止: {reason}")
-        self.connect_btn.setEnabled(True)
+        self._set_connect_enabled(True)
         self.progress_bar.setValue(0)
         self.coordinator.release_instrument_port()
 

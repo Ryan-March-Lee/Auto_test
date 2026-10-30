@@ -328,7 +328,7 @@ class ConfigPageTests(unittest.TestCase):
         self.assertLessEqual(max(widths), 900)
 
     def test_instrument_connection_is_its_own_page(self):
-        """仪器连接配置已独立成整屏页面：配置页只留“上一步”与“连接仪器”入口。"""
+        """仪表配置已独立成整屏页面：配置页只留“上一步”入口，不再有连接按钮。"""
         page = self.make_page()
         # 面板由连接页创建后交给配置页登记；配置页自己不再建面板。
         self.assertIsNone(page.discovery_panel)
@@ -339,6 +339,8 @@ class ConfigPageTests(unittest.TestCase):
 
         self.assertEqual(steps, [True])
         self.assertFalse(hasattr(page, "sg_address"))
+        # 连接入口只有一个，在“仪表配置”页的框外右下角。
+        self.assertFalse(hasattr(page, "connect_btn"))
 
     def test_config_sections_use_two_columns(self):
         from PySide6.QtWidgets import QGroupBox

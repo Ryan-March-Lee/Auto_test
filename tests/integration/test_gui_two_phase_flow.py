@@ -828,20 +828,22 @@ class MainWindowCompositionTests(unittest.TestCase):
         from presentation.qt.main_window import MainWindow
 
         window = MainWindow.__new__(MainWindow)
-        window.connect_btn = MagicMock()
+        # 连接入口只有一个，在“仪表配置”页上：窗口通过连接页拿到那个按钮。
+        window.connection_page = MagicMock()
         window.coordinator = MagicMock()
         window.coordinator.connect_instruments.return_value = False
 
         MainWindow.connect_instruments(window)
 
-        window.connect_btn.setEnabled.assert_any_call(False)
-        window.connect_btn.setEnabled.assert_called_with(True)
+        button = window.connection_page.connect_btn
+        button.setEnabled.assert_any_call(False)
+        button.setEnabled.assert_called_with(True)
 
     def test_instrument_worker_callbacks_delegate_to_the_coordinator(self):
         from presentation.qt.main_window import MainWindow
 
         window = MainWindow.__new__(MainWindow)
-        window.connect_btn = MagicMock()
+        window.connection_page = MagicMock()
         window.progress_bar = MagicMock()
         window.add_log_message = MagicMock()
         window.coordinator = MagicMock()
@@ -911,7 +913,8 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         page.validation_failed.connect(failures.append)
         page.connect_requested.connect(lambda: requested.append(True))
 
-        page.connect_btn.click()
+        # 连接入口的按钮在“仪表配置”页：配置页只留校验通过的请求入口。
+        page.request_connect()
 
         self.assertEqual(requested, [])
         self.assertEqual(len(failures), 1)

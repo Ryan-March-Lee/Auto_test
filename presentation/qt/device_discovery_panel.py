@@ -27,7 +27,7 @@ from typing import Any, Callable, Sequence
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
-    QFrame, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
@@ -44,7 +44,6 @@ from domain.instruments.models import (
 )
 
 from .config_form_state import (
-    LEGACY_BINDING_SOURCE,
     binding_device_key,
     binding_records,
     power_supply_bindings,
@@ -78,11 +77,8 @@ _CARDS_MIN_WIDTH = _CARD_WIDTH + _CARDS_SPACING
 #: 没有结果时卡片区保留的高度（约一张卡片的图片区 + 文字区）。
 _CARD_MIN_AREA_HEIGHT = 190
 _EMPTY_CARD_HEIGHT = 176
-#: 收起状态的一行提示，同时也是卡片区打开前的占位文字。
-_CLOSED_HINT = (
-    "点击“查找设备”扫描网段，发现的仪器会以卡片列出；"
-    "点击卡片即可选中本次测试使用的设备。"
-)
+#: 结果框（圆角矩形）的最小高度：没有结果时它也是一块明确的落点，而不是一条缝。
+_RESULTS_BOX_MIN_HEIGHT = 220
 _IP_PATTERN = re.compile(r"(\d{1,3}(?:\.\d{1,3}){3})")
 
 
@@ -222,8 +218,12 @@ class DiscoveryWorker(QThread):
         self.completed.emit(result)
 
 
-class DeviceDiscoveryPanel(QGroupBox):
-    """扫描 + 结果卡片控件；通过 :attr:`apply_requested` 交付用户选中的设备。"""
+class DeviceDiscoveryPanel(QWidget):
+    """扫描 + 结果框控件；通过 :attr:`apply_requested` 交付用户选中的设备。
+
+    版式分两段：扫描行（扫描网段、扫描方式、“查找设备”）在上面，不进结果框；
+    发现结果放在一块圆角矩形框（:attr:`results_box`）里，空着时是一块明确的落点。
+    """
 
     apply_requested = Signal(object)
     clear_requested = Signal()
@@ -234,10 +234,9 @@ class DeviceDiscoveryPanel(QGroupBox):
         *,
         scanner_factory: Callable[[str], Any],
         default_subnet: str | None = None,
-        title: str = "设备发现",
         parent: Any = None,
     ) -> None:
-        super().__init__(title, parent)
+        super().__init__(parent)
         # 面板高度贴着内容：卡片区一变，面板跟着长高；面板不参与纵向拉伸，多出来的
         # 高度留给页面里的弹性空白。用 Minimum（而不是 Maximum）：Maximum 会让布局把它
         # 压到 0，卡片区就被裁掉一半并与按钮重叠。
@@ -261,18 +260,16 @@ class DeviceDiscoveryPanel(QGroupBox):
             for role, record in (bindings or {}).items()
             if isinstance(record, dict)
         }
-        self._refresh_bindings_summary()
 
     # ---------- 展开/收起 ----------
     #
-    # 设备发现是一条会打开/收起的抽屉：收起时只留“查找设备”按钮与一行提示，展开后
-    # 才是卡片网格。这样配置页在没扫描时不会被结果区占掉一大块高度。
+    # 设备发现是一条会打开/收起的抽屉：收起时框里不放卡片，展开后才是卡片网格。
 
     def is_open(self) -> bool:
         return bool(self.property("open"))
 
     def set_open(self, open_: bool) -> None:
-        """展开/收起结果卡片：展开后显示卡片与操作按钮，收起后只留一行提示。
+        """展开/收起结果卡片：展开后显示卡片与操作按钮，收起后只剩空框。
 
         面板宽度由配置页分栏决定，展开只改变高度：卡片区声明“不要求宽度”（横向
         ``Ignored``），所以卡片再多也不会把左栏撑宽。
@@ -282,7 +279,6 @@ class DeviceDiscoveryPanel(QGroupBox):
             return
         self.setProperty("open", open_)
         self.cards_area.setVisible(open_)
-        self.result_hint.setVisible(not open_)
         self._show_actions(open_)
         self.reopen_btn.setVisible(not open_ and bool(self._rows))
         style = self.style()
@@ -290,62 +286,59 @@ class DeviceDiscoveryPanel(QGroupBox):
             style.unpolish(self)
             style.polish(self)
         self._refresh_cards_geometry()
-        self.updateGeometry()
+        self._refresh_results_box_height()
+        self._notify_ancestors()
+
+    def _refresh_results_box_height(self) -> None:
+        """把结果框的高度钉在它自己的内容高度上。
+
+        框里装了卡片区、框内底部按钮与状态行：这些控件的高度一变，框必须当场长高或
+        收回。框的布局嵌在面板布局里，只靠 ``updateGeometry()`` 传上去会慢一拍（框里
+        的按钮先压在卡片上，下一轮事件才让开），因此这里直接按内容算好高度钉住：
+        收起时是一块足够大的落点，展开时是“卡片区 + 框内按钮 + 状态行”。
+        """
+        layout = self.results_box.layout()
+        if layout is None:
+            return
+        layout.invalidate()
+        height = layout.sizeHint().height()
+        if not self.is_open():
+            height = max(height, _RESULTS_BOX_MIN_HEIGHT)
+        self.results_box.setFixedHeight(height)
+
+    def _sync_results_height(self) -> None:
+        """框里的文字变了（多一行或少一行）同样改变框的高度：重钉一次再对外上报。"""
+        self._refresh_results_box_height()
+        self._notify_ancestors()
 
     def _show_actions(self, visible: bool) -> None:
         """操作按钮只属于“展开”状态：收起时不显示用不上的按钮。"""
         for widget in (self.apply_btn, self.clear_btn, self.collapse_btn):
             widget.setVisible(visible)
 
-    def _refresh_bindings_summary(self) -> None:
-        """在面板上显示当前配置了哪些设备：连接信息不靠一张空白的结果区来猜。
+    def _set_status(self, text: str) -> None:
+        """框内的状态行：只有真的有话要说时占位（结果统计、失败原因、应用问题）。
 
-        只显示设备与短标签，不显示地址：IP 只是本次可达的地址，不是用户需要关心的
-        连接信息。电源按 ``supply_id`` 逐台列出，与结果卡片一致。
+        空框里不写“尚未扫描”这类常驻提示，所以没有内容时整行隐藏。
         """
-        parts = []
-        for key, record in binding_records(self.device_bindings):
-            is_power_supply = key not in ("signal_generator", "spectrum_analyzer")
-            if is_power_supply:
-                detail = key
-                prefix = "电源"
-            else:
-                detail = str(
-                    record.get("name")
-                    or record.get("model")
-                    or record.get("serial")
-                    or "未命名设备"
-                )
-                prefix = role_label(key) or key
-            if record.get("source") == "simulated":
-                detail += "（模拟数据）"
-            elif record.get("source") == LEGACY_BINDING_SOURCE:
-                detail += "（沿用已保存的配置，未扫描确认）"
-            parts.append(f"{prefix} ← {detail}")
-        self.bindings_label.setText(
-            "当前配置："
-            + ("；".join(parts) if parts else "尚未绑定设备；请扫描后点选本次测试所用的设备")
-        )
-        # 没有绑定记录时不占一行：收起状态的提示已经说明了下一步。
-        self.bindings_label.setVisible(bool(parts))
+        self.status_label.setText(text)
+        self.status_label.setVisible(bool(text))
+        self._sync_results_height()
 
     def clear_results(self) -> None:
         """清空上一次扫描结果；切换/重新加载配置时调用，避免旧结果看起来像当前配置。"""
         self.devices = []
         self._clear_cards()
         self.apply_btn.setEnabled(False)
-        self.status_label.setText("尚未扫描")
-        self.result_hint.setText(_CLOSED_HINT)
+        self._set_status("")
         self.reopen_btn.setVisible(False)
 
     # ---------- 界面 ----------
 
     def _build_ui(self, default_subnet: str) -> None:
         layout = QVBoxLayout(self)
-        layout.setSpacing(8)
-        controls = QGridLayout()
-        controls.setHorizontalSpacing(10)
-        controls.setVerticalSpacing(8)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
         self.subnet_edit = QLineEdit(str(default_subnet))
         self.subnet_edit.setMaximumWidth(200)
         self.subnet_edit.setToolTip("扫描范围，例如 192.168.1.0/24；单个地址按 /24 处理")
@@ -359,31 +352,42 @@ class DeviceDiscoveryPanel(QGroupBox):
         self.reopen_btn.setToolTip("展开上一次扫描得到的设备卡片")
         set_button_variant(self.reopen_btn, "ghost")
         self.reopen_btn.setVisible(False)
-        # 收起状态的一行提示：有结果时说明如何展开，没有结果时说明卡片从哪来。
-        self.result_hint = QLabel(_CLOSED_HINT)
-        self.result_hint.setWordWrap(True)
-        self.result_hint.setProperty("role", "hint")
         self.status_label = QLabel("")
         self.status_label.setWordWrap(True)
         self.status_label.setProperty("role", "hint")
+        self.status_label.setVisible(False)
         self.mode_hint = QLabel("")
         self.mode_hint.setWordWrap(True)
         self.mode_hint.setProperty("role", "hint")
-        controls.addWidget(QLabel("扫描网段:"), 0, 0)
-        controls.addWidget(self.subnet_edit, 0, 1)
-        controls.addWidget(QLabel("扫描方式:"), 0, 2)
-        controls.addWidget(self.mode_combo, 0, 3)
-        controls.addWidget(self.scan_btn, 0, 4)
-        controls.addWidget(self.reopen_btn, 0, 5)
-        controls.addWidget(self.mode_hint, 1, 0, 1, 6)
-        controls.setColumnStretch(1, 1)
+        # 扫描行留在结果框外面：标签紧挨着自己的输入框，多余宽度只留在行尾，
+        # 不会把“扫描方式:”推到很远的地方。
+        controls = QVBoxLayout()
+        controls.setSpacing(8)
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        row.addWidget(QLabel("扫描网段:"))
+        row.addWidget(self.subnet_edit)
+        row.addSpacing(16)
+        row.addWidget(QLabel("扫描方式:"))
+        row.addWidget(self.mode_combo)
+        row.addSpacing(16)
+        row.addWidget(self.scan_btn)
+        row.addWidget(self.reopen_btn)
+        row.addStretch(1)
+        controls.addLayout(row)
+        controls.addWidget(self.mode_hint)
         layout.addLayout(controls)
-        layout.addWidget(self.result_hint)
         self.mode_combo.currentIndexChanged.connect(self._update_mode_hint)
 
-        # 结果区：一台仪器一张卡片，按面板宽度自动换行。卡片区放在可伸缩的滚动区里，
-        # 结果多时只滚动卡片区，不把操作按钮与状态说明推出可视范围。
-        self.cards_area = QScrollArea(self)
+        # 结果框：一台仪器一张卡片，按框宽自动换行。卡片区放在可伸缩的滚动区里，
+        # 结果多时只滚动卡片区，不把框内的操作按钮推出可视范围。
+        self.results_box = QFrame()
+        self.results_box.setObjectName("discoveryResultsBox")
+        self.results_box.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+        box = QVBoxLayout(self.results_box)
+        box.setContentsMargins(12, 12, 12, 12)
+        box.setSpacing(8)
+        self.cards_area = QScrollArea(self.results_box)
         self.cards_area.setObjectName("instrumentCardArea")
         self.cards_area.setWidgetResizable(True)
         self.cards_area.setFrameShape(QFrame.NoFrame)
@@ -396,7 +400,7 @@ class DeviceDiscoveryPanel(QGroupBox):
         self.cards_layout = _CardGridLayout(self.cards_host)
         self.cards_area.setWidget(self.cards_host)
         self.cards_area.setVisible(False)
-        layout.addWidget(self.cards_area)
+        box.addWidget(self.cards_area)
 
         actions = QHBoxLayout()
         actions.setSpacing(10)
@@ -418,12 +422,10 @@ class DeviceDiscoveryPanel(QGroupBox):
         actions.addWidget(self.clear_btn)
         actions.addWidget(self.collapse_btn)
         actions.addStretch(1)
-        layout.addLayout(actions)
-        self.bindings_label = QLabel("")
-        self.bindings_label.setWordWrap(True)
-        self.bindings_label.setProperty("role", "hint")
-        layout.addWidget(self.bindings_label)
-        layout.addWidget(self.status_label)
+        # 应用/清除只对框里的结果有效，因此留在框内的底部。
+        box.addLayout(actions)
+        box.addWidget(self.status_label)
+        layout.addWidget(self.results_box)
 
         self.scan_btn.clicked.connect(self.request_scan)
         self.reopen_btn.clicked.connect(lambda: self.set_open(True))
@@ -431,11 +433,11 @@ class DeviceDiscoveryPanel(QGroupBox):
         self.clear_btn.clicked.connect(self.request_clear)
         self.collapse_btn.clicked.connect(lambda: self.set_open(False))
         self._update_mode_hint()
-        self._refresh_bindings_summary()
-        # 收起状态：只留扫描行与一行提示，卡片区不参与布局。
+        # 收起状态：只留扫描行，卡片区不参与布局。
         self.setProperty("open", False)
         self._show_actions(False)
         self._refresh_cards_geometry()
+        self._refresh_results_box_height()
 
     # ---------- 扫描 ----------
 
@@ -456,7 +458,7 @@ class DeviceDiscoveryPanel(QGroupBox):
     def request_scan(self) -> None:
         """启动后台扫描；同一时刻只允许一个扫描线程。"""
         if self.is_scanning():
-            self.status_label.setText("扫描正在进行，请等待完成")
+            self._set_status("扫描正在进行，请等待完成")
             return
         subnet = self.subnet_edit.text().strip()
         self.devices = []
@@ -464,8 +466,7 @@ class DeviceDiscoveryPanel(QGroupBox):
         self.apply_btn.setEnabled(False)
         self._set_controls_enabled(False)
         self.set_open(True)
-        self.result_hint.setText(f"正在扫描 {subnet or '(空)'} …")
-        self.status_label.setText(f"正在扫描 {subnet or '(空)'} …")
+        self._set_status(f"正在扫描 {subnet or '(空)'} …")
         worker = DiscoveryWorker(self.scanner_factory, subnet, self.current_mode(), self)
         worker.progress.connect(self._on_progress)
         worker.completed.connect(self._on_completed)
@@ -485,6 +486,7 @@ class DeviceDiscoveryPanel(QGroupBox):
         if self._closed:
             return
         self.status_label.setText(f"正在扫描 … {done}/{total}")
+        self.status_label.setVisible(True)
 
     def _on_completed(self, result: Any) -> None:
         if self._closed:
@@ -514,30 +516,26 @@ class DeviceDiscoveryPanel(QGroupBox):
         if self.last_mode == SCAN_MODE_SIMULATED:
             text += "（模拟数据，仅用于离线演示；不能用于真实测量）"
         self.status_label.setText(text)
-        # 收起状态下也要能一眼看到结果：一行摘要 + “查看结果”（详细统计在状态行）。
-        self.result_hint.setText(
-            f"已发现 {len(devices)} 台设备，其中可应用 {usable} 台"
-            + ("（模拟数据）" if self.last_mode == SCAN_MODE_SIMULATED else "")
-            + "；点“查看结果”展开设备卡片。"
-        )
+        self.status_label.setVisible(True)
         self.reopen_btn.setVisible(not self.is_open() and bool(self._rows))
+        # 预选说明会追加在扫描统计后面，因此先写统计再预选。
         self._preselect_bound_devices()
         self.apply_btn.setEnabled(any(device_applicable(device) for device in devices))
+        self._sync_results_height()
         self.log_message.emit(f"设备扫描完成: {self.status_label.text()}")
 
     def _on_failed(self, message: str) -> None:
         if self._closed:
             return
-        self.status_label.setText(f"扫描失败: {message}")
-        self.result_hint.setText(f"扫描失败：{message}")
         self.reopen_btn.setVisible(False)
+        self._set_status(f"扫描失败: {message}")
         self.log_message.emit(f"设备扫描失败: {message}")
 
     def _on_cancelled(self) -> None:
         if self._closed:
             return
-        self.status_label.setText("扫描已取消，结果未更新")
         self.apply_btn.setEnabled(False)
+        self._set_status("扫描已取消，结果未更新")
         self.log_message.emit("设备扫描已取消")
 
     def _on_worker_finished(self) -> None:
@@ -799,6 +797,7 @@ class DeviceDiscoveryPanel(QGroupBox):
                 rows * _EMPTY_CARD_HEIGHT + (rows - 1) * _CARDS_SPACING + 4
             )
             self.cards_host.setMinimumHeight(rows * _EMPTY_CARD_HEIGHT)
+            self._refresh_results_box_height()
             return
         # 先按面板宽度定列数（窗口刚显示时滚动区视口还没布局，宽度可能是 0）。
         columns = self._column_count_for(self._panel_cards_width())
@@ -840,13 +839,23 @@ class DeviceDiscoveryPanel(QGroupBox):
         # 这里直接激活一次，宽度变化时卡片立即按新列数就位。
         self.cards_layout.activate()
         self.cards_host.updateGeometry()
+        self._refresh_results_box_height()
         self._notify_ancestors()
 
     def _notify_ancestors(self) -> None:
-        """把“高度变了”一路上报：面板在配置页的分栏里，外层滚动区需要重新计算内容高度。"""
+        """把“高度变了”一路上报，并让外层布局当场重排。
+
+        结果框把卡片区、框内按钮与状态行包在一起，高度变化要跨一层布局才传上来：只
+        调用 ``updateGeometry()`` 时外层布局要等下一轮事件才收缩/伸开，框会短暂比内容
+        矮、框内按钮压在卡片上。这里逐层失效并重新激活一遍布局，让高度变化当场生效。
+        """
         self.updateGeometry()
         parent = self.parentWidget()
         while parent is not None:
+            layout = parent.layout()
+            if layout is not None:
+                layout.invalidate()
+                layout.activate()
             parent.updateGeometry()
             parent = parent.parentWidget()
 
@@ -920,25 +929,23 @@ class DeviceDiscoveryPanel(QGroupBox):
     def request_apply(self) -> None:
         assignments, problems = self.selected_assignments()
         if problems:
-            self.status_label.setText("；".join(problems))
+            self._set_status("；".join(problems))
             return
         if not assignments:
-            self.status_label.setText(
-                "请先勾选本次测试所需的设备（测试角色来自设备表登记，不需要选择）"
-            )
+            self._set_status("请先勾选本次测试所需的设备（测试角色来自设备表登记，不需要选择）")
             return
         self.apply_requested.emit(assignments)
 
     def request_clear(self) -> None:
         if not self.device_bindings:
-            self.status_label.setText("配置中没有设备绑定记录")
+            self._set_status("配置中没有设备绑定记录")
             return
         self.clear_requested.emit()
 
     def show_message(self, message: str) -> None:
         """显示一次应用/清除操作的结果（由配置页回写，避免面板自己猜结果）。"""
         if not self._closed:
-            self.status_label.setText(message)
+            self._set_status(message)
 
 
 __all__ = [

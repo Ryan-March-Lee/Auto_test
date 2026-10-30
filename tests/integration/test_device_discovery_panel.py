@@ -765,7 +765,8 @@ class CardPresentationTests(unittest.TestCase):
 
         self.assertFalse(panel.is_open())
         self.assertFalse(panel.cards_area.isVisible())
-        self.assertTrue(panel.result_hint.isVisible())
+        # 空框里不写常驻提示：没有扫描就没有话要说。
+        self.assertFalse(panel.status_label.isVisible())
         self.assertFalse(panel.apply_btn.isVisible())
         self.assertFalse(panel.reopen_btn.isVisible())
 
@@ -787,7 +788,8 @@ class CardPresentationTests(unittest.TestCase):
         self.assertFalse(panel.cards_area.isVisible())
         self.assertFalse(panel.apply_btn.isVisible())
         self.assertTrue(panel.reopen_btn.isVisible())
-        self.assertIn("已发现 4 台设备", panel.result_hint.text())
+        # 收起后统计仍在状态行里，只是卡片不占位置。
+        self.assertIn("发现 4 台设备", panel.status_label.text())
 
         QTest.mouseClick(panel.reopen_btn, Qt.LeftButton)
         self.app.processEvents()
@@ -970,7 +972,7 @@ class DeviceCardContentTests(unittest.TestCase):
 
 
 class ConnectionPageDiscoveryIntegrationTests(unittest.TestCase):
-    """仪器连接配置页（整屏、独立于标签栏）与配置页之间的绑定写入契约。
+    """仪表配置页（整屏、独立于标签栏）与配置页之间的绑定写入契约。
 
     设备勾选与扫描在连接页的面板上完成，绑定写入与其派生界面（电源标签页、电源分配
     可选项）在配置页完成，因此每条用例同时持有两块页面：``page`` 是配置页，
@@ -1006,16 +1008,16 @@ class ConnectionPageDiscoveryIntegrationTests(unittest.TestCase):
         self.assertTrue(hasattr(page, "apply_discovered_devices"))
 
     def test_the_connection_page_is_a_full_screen_step_before_the_configuration(self):
-        """连接页是“下一步”之前的一整屏页面：有自己的标题、返回与下一步。"""
+        """仪表配置页是“下一步”之前的一整屏页面：有自己的大标题、返回与下一步。"""
         page = self.make_page()
         self.addCleanup(page.close)
 
         titles = [
             label.text()
             for label in self.connection.findChildren(QLabel)
-            if label.property("role") == "section"
+            if label.property("role") == "pageTitle"
         ]
-        self.assertEqual(titles, ["仪器连接配置"])
+        self.assertEqual(titles, ["仪表配置"])
         self.assertEqual(self.connection.next_btn.text(), "下一步")
         self.assertEqual(self.connection.return_welcome_btn.text(), "返回欢迎页")
 
@@ -1036,7 +1038,9 @@ class ConnectionPageDiscoveryIntegrationTests(unittest.TestCase):
         self.connection.enter()
 
         self.assertEqual(panel.card_headings(), [])
-        self.assertEqual(panel.status_label.text(), "尚未扫描")
+        # 状态行回到“没有说话”的状态：不再常驻“尚未扫描”。
+        self.assertEqual(panel.status_label.text(), "")
+        self.assertFalse(panel.status_label.isVisible())
 
     def test_the_panel_is_never_squeezed_below_its_card_grid(self):
         """卡片展开后面板必须拿到足够高度：否则卡片区被裁掉并与按钮重叠。"""
@@ -1081,13 +1085,37 @@ class ConnectionPageDiscoveryIntegrationTests(unittest.TestCase):
         """仪器连接只有“扫描后勾选”一套逻辑：不再逐台填写地址或勾选启用。"""
         page = self.make_page()
 
-        # 面板本身是设备发现列表，页面标题才是“仪器连接配置”。
-        self.assertEqual(self.connection.discovery_panel.title(), "本次测试使用的仪器")
+        # 发现结果落在一块圆角矩形框里，框外的扫描行才是输入入口。
+        self.assertEqual(
+            self.connection.discovery_panel.results_box.objectName(),
+            "discoveryResultsBox",
+        )
         for widget in (
             "sg_address", "sg_enabled", "sa_address", "sa_enabled",
             "ps1_address", "ps1_enabled", "ps4_address", "ps4_enabled",
         ):
             self.assertFalse(hasattr(page, widget), f"不应再存在手工地址控件 {widget}")
+
+    def test_connect_button_sits_outside_the_results_box(self):
+        """“连接仪器”在结果框外面（右下角）：点它先走配置页的连接入口。"""
+        page = self.make_page()
+        failures = []
+        requested = []
+        page.validation_failed.connect(failures.append)
+        page.connect_requested.connect(lambda: requested.append(True))
+
+        button = self.connection.connect_btn
+        self.assertEqual(button.text(), "连接仪器")
+        self.assertFalse(
+            self.connection.discovery_panel.results_box.isAncestorOf(button),
+            "连接仪器应放在结果框外面",
+        )
+
+        button.click()
+
+        # 当前配置没有可用电源：校验挡住连接，说明点击确实到了配置页的连接入口。
+        self.assertEqual(requested, [])
+        self.assertTrue(failures)
 
     def test_applied_device_writes_address_and_identity_into_config(self):
         page = self.make_page()
@@ -1120,8 +1148,10 @@ class ConnectionPageDiscoveryIntegrationTests(unittest.TestCase):
         self.assertEqual(binding["device_key"], "ceyear technologies:qzni000866")
         self.assertEqual(binding["last_ip"], "192.168.1.202")
         self.assertEqual(binding["source"], "scan")
-        # 当前配置直接显示在连接框里，不必先重新扫描。
-        self.assertIn("4082F-1", self.connection.discovery_panel.bindings_label.text())
+        # 绑定已经写进配置页：再次进入本页时按身份预选同一台设备。
+        self.assertIn(
+            "spectrum_analyzer", self.connection.discovery_panel.device_bindings
+        )
 
     def test_simulated_device_binding_is_marked_as_demo_data(self):
         page = self.make_page()
@@ -1210,8 +1240,8 @@ class ConnectionPageDiscoveryIntegrationTests(unittest.TestCase):
             "TCPIP0::192.168.1.102::inst0::INSTR",
         )
 
-    def test_power_supply_binding_summary_shows_the_short_label(self):
-        """“当前配置”按 supply_id 显示每台电源，记录里不再重复写类别与标签。"""
+    def test_power_supply_binding_record_uses_the_short_label_as_key(self):
+        """电源绑定按 supply_id 存一条记录，记录里不再重复写类别与标签。"""
         page = self.make_page()
 
         page.apply_discovered_devices(
@@ -1236,9 +1266,7 @@ class ConnectionPageDiscoveryIntegrationTests(unittest.TestCase):
         binding = page.device_bindings["power_supplies"]["DP8B1519"]
         for field in ("role", "label", "supply_id"):
             self.assertNotIn(field, binding, "集合的键就是引用 ID，记录里不再重复")
-        summary = self.connection.discovery_panel.bindings_label.text()
-        self.assertIn("电源 ← DP8B1519", summary)
-        self.assertNotIn("DP832A-1", summary)
+        self.assertEqual(binding["device_key"], "rigol technologies:dp8b214901519")
         self.assertIn("电源 DP8B1519", self.connection.discovery_panel.status_label.text())
 
     def test_two_power_supplies_become_two_independent_bindings_in_one_batch(self):
@@ -1655,7 +1683,7 @@ class ConnectionPageDiscoveryIntegrationTests(unittest.TestCase):
         self.assertIn("signal_generator", page.device_bindings)
 
     def test_legacy_config_address_is_migrated_as_an_unconfirmed_binding(self):
-        """只有地址的旧配置：加载后仍可连接，但在面板上标明“未扫描确认”。"""
+        """只有地址的旧配置：加载后仍可连接，并明确记一条“未扫描确认”的日志。"""
         page = self.make_page(
             {
                 "test_frequencies": [1.0],
@@ -1676,7 +1704,11 @@ class ConnectionPageDiscoveryIntegrationTests(unittest.TestCase):
             page.build_config()["instruments"]["signal_generator"]["address"],
             "TCPIP0::192.168.1.201::inst0::INSTR",
         )
-        self.assertIn("未扫描确认", self.connection.discovery_panel.bindings_label.text())
+        # 框里只放扫描到的设备：旧绑定改为一条日志，说明它没有被本次扫描确认。
+        logs = []
+        self.connection.log_message.connect(logs.append)
+        self.connection.enter()
+        self.assertTrue(any("未扫描确认" in line for line in logs))
         # 扫描框初值取自已保存的地址网段。
         self.assertEqual(self.connection.discovery_panel.subnet_edit.text(), "192.168.1.0/24")
 

@@ -577,7 +577,7 @@ class ConfigFormState:
         errors = []
         if unselected:
             errors.append(
-                f"{'、'.join(unselected)} 未选择电源：请先在“仪器连接配置”中应用电源设备"
+                f"{'、'.join(unselected)} 未选择电源：请先在“仪表配置”页应用电源设备"
             )
         if unbound:
             errors.append(

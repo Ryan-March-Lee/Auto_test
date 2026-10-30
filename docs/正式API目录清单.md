@@ -233,7 +233,8 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `presentation.qt.archival_page` | 测量页面共享的归档状态生命周期：等待归档、保存中、结果展示、终止事件与运行切换后的旧摘要清理；不读文件、不判断产物可用性 |
 | `presentation.qt.archival_status` | 归档结果到页面文案与按钮状态的映射：无 Qt、不读文件、不判断路径存在，四类状态各有独立提示 |
 | `presentation.qt.archival_view` | 归档结果分组控件：显示标题/说明并按提示启用“打开结果目录/测试报告”；位置由窗口注入；动态文案按纯文本渲染 |
-| `presentation.qt.config_form_state` | 配置表单状态 |
+| `presentation.qt.config_form_bindings` | 设备绑定的读取与规范化：`device_bindings` 到 `supply_id` 集合、步骤 5 过渡结构与只有地址的旧配置折叠、不可用记录的问题清单（纯数据：不读控件、不写配置、不碰 Qt） |
+| `presentation.qt.config_form_state` | 配置表单状态：按控件最小读取协议读出配置片段、合并为配置、给出页面自己的校验说明（设备绑定的读取与规范化在 `config_form_bindings`；正式 schema 由 `configuration_authoring` 构造） |
 | `presentation.qt.config_page` | 配置页面（编辑配置编写文档；向协调器提供 `ConfigurationPagePort` 窄接口） |
 | `presentation.qt.config_page_widgets` | 配置页面控件构建辅助（固定操作栏布局 + 页面共用的数值框/下拉框工厂；控件仍登记在页面上） |
 | `presentation.qt.config_power_section` | 配置页电源分区的控件构建：按电源键分页的通道参数标签页与电源分配设置表单，控件仍登记在页面上（页面负责信号连接、派生界面状态与配置读写；条目、可选项与分配引用以显式声明的类型传入，不从控件或文件里取状态） |
@@ -368,7 +369,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
   `application.archival_service.archive_completed_stage`；归档重构步骤 7 新增
   `application.dto.run_history`、`application.run_history_service` 与
   `application.ports.gui_data_service` 的 `RunArchiveStatusPort` / `RunHistoryServicePort`）。
-- 正式内部模块：57 个路径已登记（以测试中的 `INTERNAL_MODULES` 为准），公共与内部边界不重叠
+- 正式内部模块：58 个路径已登记（以测试中的 `INTERNAL_MODULES` 为准），公共与内部边界不重叠
   （步骤 7 补登记 `instrument.safety`：安全标记的显式签名判定是跨模块契约；归档重构步骤 4
   补登记 `infrastructure.persistence.artifact_generator` 与 `analysis.reporting`：自动归档 CSV
   产物的适配器及其复用的分析层写入能力；步骤 5 在同一适配器模块内补上报告产物与组合端口，
@@ -378,7 +379,9 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
   `run_history`，用户可见标题仍为“历史运行”；技术债计划步骤 13 把配置页的控件构建拆成
   `presentation.qt.config_page_widgets`（固定操作栏与页面共用的数值框/下拉框工厂）与
   `presentation.qt.config_power_section`（电源分区的通道参数标签页与分配表单），页面只负责
-  组合与交互协调）。
+  组合与交互协调；技术债计划步骤 14 把配置表单状态的绑定读取与规范化拆到
+  `presentation.qt.config_form_bindings`（`device_bindings` 到 `supply_id` 集合、旧结构
+  折叠与问题清单），`config_form_state` 只保留控件读数和配置合并）。
 - 旧模块：29 个条目（21 个根模块、8 个正式包内实现），状态与工作树一致。步骤 16
   （2026-10-27）已把最后五个根目录纯再导出模块（`measurement_calculations` /
   `measurement_lifecycle` / `measurement_services` / `app_logging` / `project_paths`）

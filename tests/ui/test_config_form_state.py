@@ -1,18 +1,17 @@
+"""配置表单状态适配器的测试：控件读数、配置合并与页面自己的校验说明。
+
+设备绑定记录本身的读取与规范化（``supply_id`` 集合、旧结构折叠、不可用记录的问题
+清单）在 ``test_config_form_bindings`` 里单独测试，不需要这里任何控件的 Qt 状态。
+"""
+
 import unittest
 
-from presentation.qt import config_form_state
+from presentation.qt.config_form_bindings import POWER_SUPPLY_BINDINGS
 from presentation.qt.config_form_state import (
-    POWER_SUPPLY_BINDINGS,
-    LEGACY_BINDING_SOURCE,
     ConfigFormState,
     assignment_declared,
     assignment_supply_id,
-    bound_power_supplies,
-    effective_device_bindings,
     parse_frequency_text,
-    power_supply_binding_problems,
-    power_supply_bindings,
-    supply_id_problem,
 )
 
 
@@ -207,94 +206,6 @@ class ConfigFormStateTests(unittest.TestCase):
         self.assertNotIn("address", supply)
         self.assertFalse(supply["enabled"])
 
-    def test_legacy_config_addresses_become_unconfirmed_bindings_for_single_devices(self):
-        """只有地址的旧配置迁移成信号源/频谱仪绑定；电源地址不是身份，要求重新扫描。"""
-        config = {
-            "instruments": {
-                "signal_generator": {"address": "TCPIP0::192.168.1.201::inst0::INSTR"},
-                "spectrum_analyzer": {
-                    "address": "TCPIP0::192.168.1.202::inst0::INSTR",
-                    "enabled": False,
-                },
-                "power_supplies": {
-                    "PS1": {"address": "TCPIP0::192.168.1.101::inst0::INSTR", "enabled": True},
-                    "PS2": {"address": "TCPIP0::192.168.1.102::inst0::INSTR", "enabled": False},
-                },
-            }
-        }
-
-        bindings = effective_device_bindings(config)
-
-        # 启用且地址非空的项被迁移；禁用项不会被迁移动作重新启用。
-        self.assertEqual(
-            bindings["signal_generator"]["visa_address"], "TCPIP0::192.168.1.201::inst0::INSTR"
-        )
-        self.assertEqual(bindings["signal_generator"]["source"], LEGACY_BINDING_SOURCE)
-        self.assertNotIn("spectrum_analyzer", bindings)
-        self.assertNotIn(POWER_SUPPLY_BINDINGS, bindings)
-        self.assertEqual(bound_power_supplies(bindings), [])
-
-    def test_legacy_power_bindings_migrate_by_identity_and_label(self):
-        """步骤 5 的过渡绑定（按旧槽位落键、记录内带短标签与身份）折叠成 supply_id 集合。"""
-        bindings = effective_device_bindings(
-            {
-                "device_bindings": {
-                    "PS3": {
-                        "role": "power_supply",
-                        "label": "DP8B1519",
-                        "supply_id": "DP8B1519",
-                        "serial": "DP8B214901519",
-                        "device_key": "rigol technologies:dp8b214901519",
-                        "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
-                        "source": "scan",
-                    },
-                    "PS1": {
-                        # 只有地址的旧绑定：没有序列号也没有短标签，不迁移。
-                        "visa_address": "TCPIP0::192.168.1.101::inst0::INSTR",
-                        "source": LEGACY_BINDING_SOURCE,
-                    },
-                }
-            }
-        )
-
-        self.assertEqual(list(bindings[POWER_SUPPLY_BINDINGS]), ["DP8B1519"])
-        record = bindings[POWER_SUPPLY_BINDINGS]["DP8B1519"]
-        self.assertEqual(record["device_key"], "rigol technologies:dp8b214901519")
-        # 集合的键就是引用 ID：记录里不再重复写 role/label/supply_id。
-        for field in ("role", "label", "supply_id"):
-            self.assertNotIn(field, record)
-        self.assertEqual(bound_power_supplies(bindings), ["DP8B1519"])
-
-    def test_explicit_empty_bindings_do_not_resurrect_legacy_addresses(self):
-        """配置里已有（空的）device_bindings 时，旧地址不得再被当成绑定。"""
-        config = {
-            "device_bindings": {},
-            "instruments": {
-                "signal_generator": {"address": "TCPIP0::192.168.1.201::inst0::INSTR"}
-            },
-        }
-
-        self.assertEqual(effective_device_bindings(config), {})
-
-    def test_duplicate_power_bindings_for_one_device_keep_the_first(self):
-        """同一台设备不能出现两次：手改文件造出的重复身份只保留第一条。"""
-        supplies = power_supply_bindings(
-            {
-                POWER_SUPPLY_BINDINGS: {
-                    "DP8B1519": {
-                        "device_key": "rigol technologies:dp8b214901519",
-                        "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
-                    },
-                    "DP8B1519-COPY": {
-                        "device_key": "RIGOL TECHNOLOGIES:DP8B214901519",
-                        "visa_address": "TCPIP0::192.168.1.109::inst0::INSTR",
-                    },
-                }
-            }
-        )
-
-        self.assertEqual(list(supplies), ["DP8B1519"])
-
     def test_power_assignment_must_reference_a_bound_supply(self):
         widgets = _form_widgets(
             device_bindings={
@@ -365,95 +276,6 @@ class ConfigFormStateTests(unittest.TestCase):
 
         self.assertIn("未选择电源", "；".join(errors))
 
-    def test_power_binding_without_identity_is_not_a_bound_supply(self):
-        """新结构里的记录也必须带身份：只有地址的记录不能成为可分配电源。"""
-        bindings = {
-            POWER_SUPPLY_BINDINGS: {
-                "DP8B1519": {"visa_address": "TCPIP0::192.168.1.102::inst0::INSTR"}
-            }
-        }
-
-        self.assertEqual(power_supply_bindings(bindings), {})
-        self.assertEqual(bound_power_supplies(bindings), [])
-        problems = power_supply_binding_problems(bindings)
-        self.assertEqual(len(problems), 1)
-        self.assertIn("DP8B1519", problems[0])
-        self.assertIn("缺少设备身份", problems[0])
-
-    def test_power_binding_identity_must_match_vendor_and_serial(self):
-        """``device_key`` 与厂商/序列号矛盾时不得成为可用电源。"""
-        bindings = {
-            POWER_SUPPLY_BINDINGS: {
-                "DP8B1519": {
-                    "device_key": "rigol technologies:dp8b174400885",
-                    "vendor": "RIGOL TECHNOLOGIES",
-                    "serial": "DP8B214901519",
-                    "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
-                }
-            }
-        }
-
-        self.assertEqual(power_supply_bindings(bindings), {})
-        problems = power_supply_binding_problems(bindings)
-        self.assertIn("设备身份与厂商/序列号不一致", "；".join(problems))
-
-    def test_power_binding_key_must_be_a_usable_supply_id(self):
-        """含空白或通道分隔符的键不能当引用：它会被 ``supply_id/CHx`` 路由截断。"""
-        bindings = {
-            POWER_SUPPLY_BINDINGS: {
-                "DP8B 1519": {
-                    "device_key": "rigol technologies:dp8b214901519",
-                    "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
-                },
-                "DP8B/1519": {
-                    "device_key": "rigol technologies:dp8b174400885",
-                    "visa_address": "TCPIP0::192.168.1.108::inst0::INSTR",
-                },
-            }
-        }
-
-        self.assertEqual(power_supply_bindings(bindings), {})
-        problems = "；".join(power_supply_binding_problems(bindings))
-        self.assertIn("不得含空白", problems)
-        self.assertIn("不得含通道分隔符", problems)
-        self.assertEqual(supply_id_problem("DP8B1519"), None)
-        self.assertIn("不得含空白", supply_id_problem("DP8B 1519"))
-        # 首尾空白不裁剪：写错的引用必须报出来，不能被“洗干净”后当成另一台设备。
-        self.assertIn("首尾空白", supply_id_problem(" DP8B1519"))
-        self.assertEqual(
-            power_supply_bindings(
-                {
-                    POWER_SUPPLY_BINDINGS: {
-                        " DP8B1519": {
-                            "device_key": "rigol technologies:dp8b214901519",
-                            "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
-                        }
-                    }
-                }
-            ),
-            {},
-        )
-
-    def test_duplicate_power_binding_is_reported_not_only_dropped(self):
-        """重复身份仍然只保留第一条，但必须能说出被丢掉的是哪一条。"""
-        bindings = {
-            POWER_SUPPLY_BINDINGS: {
-                "DP8B1519": {
-                    "device_key": "rigol technologies:dp8b214901519",
-                    "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
-                },
-                "DP8B1519-COPY": {
-                    "device_key": "rigol technologies:dp8b214901519",
-                    "visa_address": "TCPIP0::192.168.1.109::inst0::INSTR",
-                },
-            }
-        }
-
-        self.assertEqual(list(power_supply_bindings(bindings)), ["DP8B1519"])
-        problems = "；".join(power_supply_binding_problems(bindings))
-        self.assertIn("同一台设备只能有一条电源绑定", problems)
-        self.assertIn("DP8B1519-COPY", problems)
-
     def test_bound_supply_identity_comes_from_the_binding_not_the_config(self):
         """绑定是身份的权威来源：记录里没有的字段不能沿用配置里的旧值。"""
         widgets = type("Widgets", (), {})()
@@ -493,20 +315,6 @@ class ConfigFormStateTests(unittest.TestCase):
         self.assertEqual(supply["model"], "OLD-MODEL")
         # 通道参数不属于身份，原样保留。
         self.assertEqual(supply["channels"], {"CH1": {"role": "gate"}})
-
-    def test_bound_power_supplies_follow_the_bound_collection_size(self):
-        """绑定 1、2、5 台电源时，可用集合就是这 1、2、5 个 ``supply_id``。"""
-        self.assertEqual(bound_power_supplies(bound_supplies("DP8B1519")), ["DP8B1519"])
-        self.assertEqual(
-            bound_power_supplies(bound_supplies("DP8B1519", "DP8B0885")),
-            ["DP8B1519", "DP8B0885"],
-        )
-        five = ("DP8B1519", "DP8B0885", "DP8B0950", "DP8B1191", "DP8B1216")
-        self.assertEqual(bound_power_supplies(bound_supplies(*five)), list(five))
-        # 没有地址的绑定连不上，也不算可用电源；集合大小仍由绑定决定，不看静态启用标志。
-        bindings = bound_supplies("DP8B1519", "DP8B0885")
-        bindings[POWER_SUPPLY_BINDINGS]["DP8B0885"].pop("visa_address")
-        self.assertEqual(bound_power_supplies(bindings), ["DP8B1519"])
 
     def test_replaced_power_supply_leaves_the_old_reference_unbound(self):
         """换电源后旧 ID 只是“没有绑定”，不会被解释成新绑定的那台设备。"""

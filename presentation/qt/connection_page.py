@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
 
 from application.ports.device_discovery import DEMO_SUBNET
 
-from .config_form_state import LEGACY_BINDING_SOURCE, binding_address, binding_records
+from .config_form_bindings import LEGACY_BINDING_SOURCE, binding_address, binding_records
 from .device_discovery_panel import DeviceDiscoveryPanel, subnet_from_address
 from .theme import set_button_variant
 

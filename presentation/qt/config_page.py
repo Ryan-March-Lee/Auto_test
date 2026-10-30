@@ -31,9 +31,8 @@ from domain.instruments.models import (
     normalize_serial,
 )
 
-from .config_form_state import (
+from .config_form_bindings import (
     POWER_SUPPLY_BINDINGS,
-    ConfigFormState,
     binding_records,
     bound_power_supply_entries,
     bound_power_supplies,
@@ -42,6 +41,7 @@ from .config_form_state import (
     power_supply_bindings,
     supply_id_problem,
 )
+from .config_form_state import ConfigFormState
 from .config_projection import (
     DEFAULT_ATTENUATOR_TYPE,
     DEFAULT_COMPRESSION_TYPE,

@@ -49,7 +49,7 @@ from domain.instruments.models import (
     canonical_role,
 )
 
-from .config_form_state import (
+from .config_form_bindings import (
     binding_device_key,
     binding_records,
     power_supply_bindings,

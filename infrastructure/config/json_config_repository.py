@@ -2,7 +2,9 @@
 
 配置对象由 ``domain.configuration`` 定义；本模块是**应用配置 JSON 的唯一持久化入口**：
 
-- 读取：单文件组合配置（根节点包含 ``schema_version``（``"1.0"``）、``test_plan`` 和
+- 读取：文档读取原语只有 ``infrastructure.config.json_io`` 一处（``load_json_object`` /
+  ``load_config_file``），本模块的 ``load()`` 只在其上解析正式 schema，不自己打开文件。
+  支持单文件组合配置（根节点包含 ``schema_version``（``"1.0"``）、``test_plan`` 和
   ``run_mapping``，与配置页面保存出的文件一致），或拆分配置（一个正式测试方案文件加
   一个正式运行映射文件）；
 - 写入：只有 :meth:`JsonConfigurationRepository.save_document`。配置页面保存、旧电源
@@ -11,6 +13,10 @@
 
 边界分工（刻意不合并）：
 
+- **读取与写入各自只有一处实现**：配置文件文档的读取走
+  ``infrastructure.config.json_io``（GUI 适配器、启动器校验和本模块的 ``load()`` 共用），
+  写入走 :meth:`JsonConfigurationRepository.save_document`；本模块不提供第二个文档读取
+  入口，也不在 ``load()`` 之外解析正式 schema。
 - **校验与持久化分开**：本模块只解析和落盘，正式 schema 的编写/校验由
   ``presentation.qt.configuration_authoring``（配置页保存）与
   ``infrastructure.config.validation``（文件级校验）负责，写入口不做“顺手修好”。
@@ -108,13 +114,9 @@ class JsonRunMappingRepository:
 
 
 class JsonConfigurationRepository(ConfigurationRepositoryPort):
-    """正式配置的读写仓储：读取组合/拆分配置，写入只经 :meth:`save_document`。"""
+    """正式配置仓储：在共享读取边界上解析组合/拆分配置，写入只经 :meth:`save_document`。"""
 
-    # -- 文档级读写 ---------------------------------------------------------
-
-    def load_document(self, path: PathLike) -> dict:
-        """读取配置文件里的原始正式文档（解析为领域模型前的 JSON 对象）。"""
-        return load_json_object(path)
+    # -- 持久化（唯一写入口）------------------------------------------------
 
     def save_document(self, path: PathLike, document: Mapping[str, Any]) -> Path:
         """写入正式用户配置文件。
@@ -128,6 +130,10 @@ class JsonConfigurationRepository(ConfigurationRepositoryPort):
         本方法只负责持久化：它不解释配置 schema，也不做任何修复或降级；写入内容必须
         是调用方已经编写/校验过的正式文档，否则原样写入并由读取边界报错。非映射载荷
         由原子写入原语拒绝（``ValueError``），不会产生半份文件。
+
+        读取不在本方法的作用范围内：配置文件文档的读取统一走
+        ``infrastructure.config.json_io``（``load_json_object`` / ``load_config_file``），
+        本仓储因此不再提供第二套文档读取入口。
         """
         return write_json_atomic(Path(path), document, indent=4, ensure_ascii=False)
 
@@ -135,11 +141,11 @@ class JsonConfigurationRepository(ConfigurationRepositoryPort):
 
     def load(self, plan_path: PathLike, mapping_path: PathLike | None = None) -> ConfigurationLoadResult:
         if mapping_path is None:
-            return load_combined_configuration(self.load_document(plan_path))
+            return load_combined_configuration(load_json_object(plan_path))
 
         configuration = RunConfiguration(
-            TestPlan.from_dict(self.load_document(plan_path)),
-            RunResourceMapping.from_dict(self.load_document(mapping_path)),
+            TestPlan.from_dict(load_json_object(plan_path)),
+            RunResourceMapping.from_dict(load_json_object(mapping_path)),
         )
         return ConfigurationLoadResult(
             configuration=configuration,

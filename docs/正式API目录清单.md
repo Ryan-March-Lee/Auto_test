@@ -110,13 +110,21 @@
 `runs/<run_id>/config.json` 与 manifest 是独立用途的快照，仍由
 `infrastructure.persistence.run_repository` / `run_directory` 写入，不经过配置仓储。
 
+正式用户配置的读取同样只有一条路径：`ConfigurationPort.load` ->
+`infrastructure.gui_data_service.JsonConfigurationAdapter` ->
+`infrastructure.config.json_io.load_config_file` -> `load_json_object`；启动器校验
+（`infrastructure.config.validation`）与 `JsonConfigurationRepository.load()` 复用同一个
+`load_json_object` 读取边界，配置仓储因此只有 `save_document` 一个持久化方法。写入链路与
+读取链路的边界由 [`tests/test_config_write_boundary.py`](../tests/test_config_write_boundary.py)
+静态钉死。
+
 ### 3.4 基础设施适配器
 
 | 模块 | 正式公开名称 |
 | --- | --- |
 | `infrastructure.config.json_io` | `load_json_object`、`load_config_file` |
 | `infrastructure.config.validation` | `load_config`、`validate_config_file`、`validate_official_config` |
-| `infrastructure.config.json_config_repository` | `JsonConfigurationRepository`（`save_document` 是正式用户配置的唯一写入口，`load_document` 是同一仓储的文档读取入口）、`JsonTestPlanRepository`、`JsonRunMappingRepository`、`load_json`、`load_test_plan`、`load_run_mapping`、`load_run_configuration`、`load_combined_configuration` |
+| `infrastructure.config.json_config_repository` | `JsonConfigurationRepository`（`save_document` 是正式用户配置的唯一写入口，也是本仓储唯一的持久化方法；正式配置文档的读取统一走 `infrastructure.config.json_io`）、`JsonTestPlanRepository`、`JsonRunMappingRepository`、`load_json`、`load_test_plan`、`load_run_mapping`、`load_run_configuration`、`load_combined_configuration` |
 | `infrastructure.persistence.result_repository` | `FileMeasurementResultRepository` |
 | `infrastructure.persistence.run_repository` | `RunRepository` |
 | `infrastructure.persistence.run_history_repository` | `FileRunHistoryRepository` |

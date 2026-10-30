@@ -16,7 +16,15 @@
 - 适配器与迁移器都不再自己序列化或打开文件，只要委托链断掉就失败；
 - 正式配置的序列化格式（``indent=4`` + 非 ASCII 原样）只由配置仓储声明一次；
 - 导入原子写入原语的模块是一张带用途说明的固定清单，新增写入点必须先改清单；
+- 生产代码里**每一处 JSON 文档写入调用点**都登记了用途与类别，其中“用户配置”类别只有
+  ``save_document`` 一项；
+- 正式配置路径（``config_file`` / ``CONFIG_FILE``）只被登记过的少量作用域引用，且这些
+  作用域自己都不直接写文件（写入只能经 ``save_document``）；
 - ``ConfigurationPort`` 不出现第二个保存入口。
+
+门禁的边界：它是**调用点与路径引用的静态登记**。它不能证明任意动态路径写入不可能，
+但任何新增的 JSON 写入点、新增的配置路径引用或新增的保存入口都会让本文件失败，评审时
+必须先解释用途才能继续。
 
 验证方式：
 
@@ -43,7 +51,9 @@ from tests.config_fixtures import complete_combined_config
 
 
 ROOT = Path(__file__).parents[1]
-RUNTIME_PACKAGES = ("app", "application", "domain", "infrastructure", "instrument", "presentation")
+# ``analysis`` 虽然不写配置文件，但属于正式导入根：把配置写到分析层同样是违规的，因此
+# 一并纳入扫描。``hardware/`` 与 ``tools/`` 是受控 smoke/工具脚本，不在正式导入面上。
+RUNTIME_PACKAGES = ("analysis", "app", "application", "domain", "infrastructure", "instrument", "presentation")
 SCOPE_FILES = ("launcher.py", "release_manifest.py", "collect_baseline.py")
 ADAPTER_SOURCE = ROOT / "infrastructure" / "gui_data_service.py"
 REPOSITORY_SOURCE = ROOT / "infrastructure" / "config" / "json_config_repository.py"
@@ -88,6 +98,92 @@ FILE_WRITE_TRACES = {
     "ensure_directory",
 }
 
+# 写入类 API：一旦出现在生产代码里，就说明某处正在落盘。``write_text``/``write_bytes``
+# 只在载荷来自 ``json.dumps`` 时才算 JSON 写入点，其余（CSV/HTML/报告）不在本步骤范围。
+FILE_WRITE_APIS = {
+    "write_text",
+    "write_bytes",
+    "write_json_atomic",
+    "to_csv",
+    "FileHandler",
+    "RotatingFileHandler",
+    "NamedTemporaryFile",
+    "mkstemp",
+}
+QUALIFIED_FILE_WRITE_APIS = {
+    "json.dump",
+    "shutil.copy",
+    "shutil.copy2",
+    "shutil.copyfile",
+    "shutil.move",
+    "os.replace",
+    "os.rename",
+}
+
+CATEGORY_USER_CONFIGURATION = "user-configuration"
+CATEGORY_RUN_SNAPSHOT = "run-snapshot"
+CATEGORY_OTHER_JSON = "other-json"
+
+# 生产代码里全部 JSON 文档写入调用点 -> (用途说明, 类别)。这三类用途刻意不合并：
+# 用户配置只能有一处，运行快照留在运行持久化里，其余 JSON 文档各归各的仓储。
+JSON_WRITE_SITES = {
+    OFFICIAL_CONFIGURATION_FORMAT_SITE: (
+        "正式用户配置 config.json（唯一用户配置写入点）",
+        CATEGORY_USER_CONFIGURATION,
+    ),
+    ("infrastructure/config/legacy_power_supply_migration.py", "save_migration_summary"): (
+        "旧电源配置迁移摘要（不是配置文件）",
+        CATEGORY_OTHER_JSON,
+    ),
+    ("infrastructure/filesystem/atomic_json.py", "write_json_atomic"): (
+        "原子 JSON 写入原语自身的 json.dump",
+        CATEGORY_OTHER_JSON,
+    ),
+    ("infrastructure/persistence/instrument_registry.py", "InstrumentRegistry.save"): (
+        "设备表 instruments.json",
+        CATEGORY_OTHER_JSON,
+    ),
+    ("infrastructure/persistence/json_result_repository.py", "save_json_result"): (
+        "测量结果明细 JSON",
+        CATEGORY_OTHER_JSON,
+    ),
+    ("infrastructure/persistence/run_directory.py", "save_run_manifest"): (
+        "运行 manifest",
+        CATEGORY_RUN_SNAPSHOT,
+    ),
+    ("infrastructure/persistence/run_repository.py", "RunRepository._create_run"): (
+        "运行目录 config.json 冻结快照",
+        CATEGORY_RUN_SNAPSHOT,
+    ),
+    ("infrastructure/persistence/run_repository.py", "RunRepository.write_run_json"): (
+        "运行阶段结果 JSON",
+        CATEGORY_OTHER_JSON,
+    ),
+    ("collect_baseline.py", "collect_baseline"): ("基线收集清单", CATEGORY_OTHER_JSON),
+    ("collect_baseline.py", "collect_batch_baseline"): ("基线批量收集清单", CATEGORY_OTHER_JSON),
+    ("release_manifest.py", "main"): ("发布清单", CATEGORY_OTHER_JSON),
+}
+
+RUN_SNAPSHOT_MODULES = {
+    "infrastructure/persistence/run_directory.py",
+    "infrastructure/persistence/run_repository.py",
+}
+
+# 引用正式配置路径（``.config_file`` / ``CONFIG_FILE``）的生产作用域 -> 用途。这些作用域
+# 自己都不直接写文件：写入只能经配置仓储的 ``save_document``。
+CONFIG_PATH_REFERENCE_SITES = {
+    ("infrastructure/filesystem/paths.py", ""): "定义默认配置路径（只读常量）",
+    ("infrastructure/config/json_io.py", "load_config_file"): "读取默认配置路径",
+    (
+        "infrastructure/gui_data_service.py",
+        "JsonConfigurationAdapter.__init__",
+    ): "把配置路径绑定到配置仓储（写入只委托 save_document）",
+    (
+        "presentation/qt/application_coordinator.py",
+        "ApplicationCoordinator.__init__",
+    ): "组装界面数据服务与测量配置路径",
+}
+
 
 def _tree(path):
     return ast.parse(path.read_text(encoding="utf-8-sig"), str(path))
@@ -120,6 +216,26 @@ def _method_names(class_node):
     }
 
 
+def _method_node(class_node, name):
+    for node in class_node.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+            return node
+    raise AssertionError(f"{class_node.name} 中未找到方法 {name}")
+
+
+def _statements(function_node):
+    """返回函数体语句，跳过开头的文档字符串。"""
+    body = list(function_node.body)
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        body = body[1:]
+    return body
+
+
 def _called_name(node):
     if isinstance(node, ast.Name):
         return node.id
@@ -128,21 +244,36 @@ def _called_name(node):
     return None
 
 
-def _enclosing_scopes(tree):
-    """返回 调用节点 -> 最近外层的 ``类.函数`` / 函数名（模块级为空串）。"""
+def _call_name(node):
+    """返回调用的完整名字（``os.replace``、``self.repository.save_document``）。"""
+    try:
+        return ast.unparse(node.func)
+    except Exception:  # noqa: BLE001 - 无法反解析时按“非写入调用”处理
+        return ""
+
+
+def _scopes(tree):
+    """返回 ``id(节点) -> 最近外层的 类.函数 / 函数名``（模块级为空串）。
+
+    以 ``id()`` 为键，因此任意节点（调用、属性访问、名字）都能查到所属作用域；
+    ``ast.walk`` 复用同一批对象，键可直接查询。
+    """
     owners = {}
 
     def walk(node, scope):
         for child in ast.iter_child_nodes(node):
+            owners[id(child)] = scope
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 walk(child, f"{scope}.{child.name}" if scope else child.name)
                 continue
-            if isinstance(child, ast.Call):
-                owners[child] = scope
             walk(child, scope)
 
     walk(tree, "")
     return owners
+
+
+def _scope_of(owners, node):
+    return owners.get(id(node), "")
 
 
 def _imported_modules(tree):
@@ -185,7 +316,7 @@ def _official_format_writers():
     writers = set()
     for source in _production_sources():
         tree = _tree(source)
-        owners = _enclosing_scopes(tree)
+        owners = _scopes(tree)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
@@ -199,8 +330,90 @@ def _official_format_writers():
                 and keywords[name].value == value
                 for name, value in OFFICIAL_FORMAT_KWARGS.items()
             ):
-                writers.add((_relative(source), owners.get(node, "")))
+                writers.add((_relative(source), _scope_of(owners, node)))
     return writers
+
+
+def _opened_for_writing(node):
+    """``open(...)`` / ``path.open(...)`` 是否以写模式打开。"""
+    name = _call_name(node)
+    positional = 1 if name in {"open", "io.open"} else 0
+    mode = node.args[positional] if len(node.args) > positional else None
+    for keyword in node.keywords:
+        if keyword.arg == "mode":
+            mode = keyword.value
+    return (
+        isinstance(mode, ast.Constant)
+        and isinstance(mode.value, str)
+        and any(flag in mode.value for flag in "wax")
+    )
+
+
+def _write_api(node):
+    """返回该调用使用的落盘 API 名；不落盘时返回 ``None``。"""
+    name = _call_name(node)
+    if not name:
+        return None
+    tail = name.rsplit(".", 1)[-1]
+    if tail in FILE_WRITE_APIS:
+        return name
+    if name in QUALIFIED_FILE_WRITE_APIS:
+        return name
+    if tail == "open" and _opened_for_writing(node):
+        return name
+    return None
+
+
+def _is_json_write(node):
+    """是否是写入 JSON 文档的调用（``json.dump`` / 原子原语 / ``json.dumps`` 落盘）。
+
+    ``write_text`` / ``write_bytes`` 只在载荷来自 ``*.dumps(...)`` 时才算 JSON 写入点；
+    ``import json as j`` 这类别名无法静态还原，因此按调用名后缀判断（略偏保守）。
+    """
+    name = _call_name(node)
+    if name in {"json.dump", "write_json_atomic"}:
+        return True
+    if name.rsplit(".", 1)[-1] in {"write_text", "write_bytes"}:
+        return any(
+            isinstance(argument, ast.Call)
+            and _call_name(argument).rsplit(".", 1)[-1] == "dumps"
+            for argument in node.args
+        )
+    return False
+
+
+def _call_sites(predicate):
+    """返回生产代码里满足 ``predicate`` 的调用点 ``(模块, 作用域)`` 集合。"""
+    sites = set()
+    for source in _production_sources():
+        tree = _tree(source)
+        owners = _scopes(tree)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and predicate(node):
+                sites.add((_relative(source), _scope_of(owners, node)))
+    return sites
+
+
+def _file_write_sites():
+    return _call_sites(lambda node: _write_api(node) is not None)
+
+
+def _json_write_sites():
+    return _call_sites(_is_json_write)
+
+
+def _config_path_reference_sites():
+    """引用正式配置路径（``.config_file`` / ``CONFIG_FILE``）的 ``(模块, 作用域)``。"""
+    sites = set()
+    for source in _production_sources():
+        tree = _tree(source)
+        owners = _scopes(tree)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr == "config_file":
+                sites.add((_relative(source), _scope_of(owners, node)))
+            elif isinstance(node, ast.Name) and node.id == "CONFIG_FILE":
+                sites.add((_relative(source), _scope_of(owners, node)))
+    return sites
 
 
 class ConfigurationWriteEntranceTests(unittest.TestCase):
@@ -282,6 +495,30 @@ class ConfigurationWriteSourceBoundaryTests(unittest.TestCase):
             _imported_modules(_tree(ADAPTER_SOURCE)),
             "适配器不得直接依赖原子写入原语；写入细节归配置仓储",
         )
+        adapter_writes = sorted(
+            site
+            for site in _file_write_sites()
+            if site[0] == _relative(ADAPTER_SOURCE)
+            and site[1].startswith("JsonConfigurationAdapter")
+        )
+        self.assertEqual(
+            adapter_writes,
+            [],
+            "适配器的方法体内不得出现任何落盘 API：写入只能经配置仓储的 save_document",
+        )
+
+    def test_repository_exposes_only_one_persistence_method(self):
+        repository = _class_node(REPOSITORY_SOURCE, "JsonConfigurationRepository")
+        persistence_methods = {
+            name
+            for name in _method_names(repository)
+            if not name.startswith("_") and name not in {"load", "load_for_run"}
+        }
+        self.assertEqual(
+            persistence_methods,
+            {"save_document"},
+            "配置仓储只允许一个持久化方法；第二个读写入口会让落盘/读取路径重新分叉",
+        )
 
     def test_official_configuration_format_is_declared_once(self):
         self.assertEqual(
@@ -335,6 +572,75 @@ class ConfigurationWriteSourceBoundaryTests(unittest.TestCase):
             "运行目录内的 config.json 快照仍由运行仓储写入，且只有一处",
         )
 
+    def test_every_json_write_site_is_registered_with_a_purpose(self):
+        self.assertEqual(
+            _json_write_sites(),
+            set(JSON_WRITE_SITES),
+            "生产代码里每一处 JSON 文档写入都必须登记用途与类别；新增写入点先确认它"
+            "不是第二条用户配置写入路径",
+        )
+
+    def test_only_the_configuration_repository_writes_the_user_configuration(self):
+        user_configuration_sites = {
+            site
+            for site, (_purpose, category) in JSON_WRITE_SITES.items()
+            if category == CATEGORY_USER_CONFIGURATION
+        }
+        self.assertEqual(
+            user_configuration_sites,
+            {OFFICIAL_CONFIGURATION_FORMAT_SITE},
+            "正式用户配置只允许一处 JSON 写入点，且必须是配置仓储的 save_document",
+        )
+
+    def test_run_snapshot_writes_are_registered_only_to_run_persistence(self):
+        snapshot_modules = {
+            site[0]
+            for site, (_purpose, category) in JSON_WRITE_SITES.items()
+            if category == CATEGORY_RUN_SNAPSHOT
+        }
+        self.assertEqual(
+            snapshot_modules,
+            RUN_SNAPSHOT_MODULES,
+            "运行快照/清单写入只属于运行仓储与运行目录布局，不能出现在配置写入路径上",
+        )
+        self.assertTrue(
+            snapshot_modules <= set(ATOMIC_WRITE_IMPORTERS),
+            "运行快照写入模块必须在原子写入用途清单里登记",
+        )
+
+    def test_the_user_configuration_path_is_referenced_only_by_registered_roles(self):
+        self.assertEqual(
+            _config_path_reference_sites(),
+            set(CONFIG_PATH_REFERENCE_SITES),
+            "正式配置路径只允许被登记过的少量作用域引用；新增引用必须先说明它是读、写还是"
+            "只做路径绑定",
+        )
+
+    def test_no_scope_that_touches_the_configuration_path_writes_files(self):
+        offenders = sorted(_file_write_sites() & set(CONFIG_PATH_REFERENCE_SITES))
+        self.assertEqual(
+            offenders,
+            [],
+            "引用正式配置路径的作用域不得自己落盘：写入只能经配置仓储的 save_document",
+        )
+
+    def test_adapter_save_is_a_single_delegation_to_the_repository(self):
+        adapter = _class_node(ADAPTER_SOURCE, "JsonConfigurationAdapter")
+        body = _statements(_method_node(adapter, "save"))
+        self.assertEqual(len(body), 1, "适配器的 save 只允许一条委托语句")
+        call = body[0].value if isinstance(body[0], ast.Expr) else None
+        self.assertIsInstance(call, ast.Call, "适配器的 save 只允许一次调用")
+        self.assertEqual(_call_name(call), "self.repository.save_document")
+        self.assertEqual(len(call.args), 2, "委托必须显式传入配置文件路径与配置文档")
+
+    def test_migration_module_writes_only_its_summary_document(self):
+        module = "infrastructure/config/legacy_power_supply_migration.py"
+        self.assertEqual(
+            {scope for path, scope in _file_write_sites() if path == module},
+            {"save_migration_summary"},
+            "迁移器写回配置必须委托 save_document，自己只写迁移摘要文件",
+        )
+
 
 class BoundaryDetectorTests(unittest.TestCase):
     """门禁辅助函数自身的回归：换一种写法也必须被识别。"""
@@ -346,9 +652,9 @@ class BoundaryDetectorTests(unittest.TestCase):
             "    write_json_atomic(path, doc, indent=2, ensure_ascii=False)\n"
             "    write_json_atomic(path, doc)\n"
         )
-        owners = _enclosing_scopes(tree)
+        owners = _scopes(tree)
         calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
-        self.assertEqual([owners.get(node) for node in calls], ["save"] * 3)
+        self.assertEqual([_scope_of(owners, node) for node in calls], ["save"] * 3)
         formatted = [
             node
             for node in calls
@@ -359,9 +665,54 @@ class BoundaryDetectorTests(unittest.TestCase):
 
     def test_scope_owner_tracks_class_and_method(self):
         tree = ast.parse("class Repo:\n    def save(self):\n        write_json_atomic(p, d)\n")
-        owners = _enclosing_scopes(tree)
+        owners = _scopes(tree)
         calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
-        self.assertEqual([owners.get(node) for node in calls], ["Repo.save"])
+        self.assertEqual([_scope_of(owners, node) for node in calls], ["Repo.save"])
+
+    def test_json_write_detector_requires_json_payload_not_plain_text(self):
+        tree = ast.parse(
+            "def save():\n"
+            "    path.write_text(json.dumps(document), encoding='utf-8')\n"
+            "    path.write_text('纯文本报告', encoding='utf-8')\n"
+            "    json.dump(document, handle)\n"
+            "    write_json_atomic(path, document)\n"
+        )
+        sites = {_scope_of(_scopes(tree), node) for node in ast.walk(tree) if isinstance(node, ast.Call)}
+        writes = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and _is_json_write(node)
+        ]
+        self.assertEqual(len(writes), 3, "写 JSON 的三条调用应被识别，纯文本写入不算")
+        self.assertEqual(sites, {"save"})
+
+    def test_write_api_detector_covers_text_json_and_write_modes(self):
+        tree = ast.parse(
+            "def save():\n"
+            "    path.write_text('x')\n"
+            "    json.dump({}, handle)\n"
+            "    destination.open('w')\n"
+            "    os.replace(temporary, target)\n"
+            "    shutil.copy2(source, target)\n"
+            "    with Path(p).open('r') as handle:\n"
+            "        handle.read()\n"
+        )
+        detected = sorted(
+            _write_api(node)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and _write_api(node) is not None
+        )
+        self.assertEqual(
+            detected,
+            ["destination.open", "json.dump", "os.replace", "path.write_text", "shutil.copy2"],
+            "写入类 API 必须被识别；只读 open 不得计入",
+        )
+
+    def test_statements_skips_the_docstring(self):
+        tree = ast.parse('def save(self):\n    """doc"""\n    return 1\n')
+        function = tree.body[0]
+        self.assertEqual(len(_statements(function)), 1)
+        self.assertIsInstance(_statements(function)[0], ast.Return)
 
 
 if __name__ == "__main__":

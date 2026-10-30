@@ -62,6 +62,7 @@ from .configuration_authoring import DUT_CHANNEL_ROLES
 from .device_discovery_panel import role_label
 from .input_controls import KeyboardOnlyDoubleSpinBox, WheelSafeComboBox
 from .pages import PageControllerBindingMixin
+from .config_page_widgets import build_action_bar
 from .theme import set_button_variant
 
 __all__ = [
@@ -256,26 +257,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
 
     def _build_action_bar(self):
         """页面底部固定操作栏：回到仪表配置、保存当前配置或返回欢迎页。"""
-        bar = QWidget()
-        bar.setObjectName("pageActionBar")
-        row = QHBoxLayout(bar)
-        row.setContentsMargins(0, 0, 4, 0)
-        row.setSpacing(10)
-        dirty_hint = QLabel("修改参数后请保存配置，运行时使用已保存并冻结的配置。")
-        dirty_hint.setProperty("role", "hint")
-        row.addWidget(dirty_hint, 1)
-        # 上一步只切换页面：设备绑定与参数都还在内存里，回来时两者都保留。
-        self.previous_step_btn = QPushButton("上一步：仪表配置")
-        self.previous_step_btn.setToolTip("回到“仪表配置”页，重新扫描并应用本次测试使用的设备")
-        set_button_variant(self.previous_step_btn, "secondary")
-        self.save_config_btn = QPushButton("保存配置")
-        set_button_variant(self.save_config_btn, "primary")
-        self.return_welcome_btn = QPushButton("返回欢迎页")
-        set_button_variant(self.return_welcome_btn, "secondary")
-        row.addWidget(self.previous_step_btn)
-        row.addWidget(self.return_welcome_btn)
-        row.addWidget(self.save_config_btn)
-        return bar
+        return build_action_bar(self)
 
     def attach_discovery_panel(self, panel):
         """登记「仪表配置」页上的设备发现面板，并接上应用/清除意图。

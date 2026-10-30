@@ -1,0 +1,304 @@
+"""面板外观：卡片的排版与结果框的状态（浅灰底、框心按钮、收起与展开）。
+
+这些用例走真实的模拟扫描器把结果填进面板，因此放在接线测试里；只依赖表现层端口与
+DTO 的纯控件行为仍在 ``tests/ui``。
+"""
+
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
+
+from infrastructure.discovery.instrument_discovery import SCAN_MODE_SIMULATED, build_scanner
+from presentation.qt.device_cards import InstrumentCard, instrument_picture_path
+from presentation.qt.device_discovery_panel import (
+    BOX_STATE_BUSY,
+    BOX_STATE_IDLE,
+    BOX_STATE_RESULTS,
+)
+from presentation.qt.theme import apply_theme, build_stylesheet
+
+from .support import DiscoveryPanelTestCase, registry
+
+
+class CardPresentationTests(DiscoveryPanelTestCase):
+    """卡片外观：圆角、名字在上、图片其次、加粗设备码在下，并随面板宽度换行。"""
+
+    def setUp(self):
+        self._previous_stylesheet = self.app.styleSheet()
+        apply_theme(self.app)
+
+    def tearDown(self):
+        self.app.setStyleSheet(self._previous_stylesheet)
+
+    def test_cards_are_rounded_and_ordered_name_picture_code(self):
+        panel = self.make_panel(size=(760, 560))
+        self.run_scan(panel)
+
+        card = panel.card_for("SMW200A-1")
+        self.assertEqual(card.objectName(), "instrumentCard")
+        self.assertIn("border-radius: 12px;", self.app.styleSheet())
+        # 自上而下：仪器名第一行、图片第二行、设备码在最下面。
+        layout = card.layout()
+        rows = [layout.itemAt(index).widget() for index in range(layout.count())]
+        self.assertIs(rows[0], card.name_label)
+        self.assertLess(rows.index(card.name_label), rows.index(card.image))
+        self.assertGreater(rows.index(card.code_label), rows.index(card.image))
+        self.assertEqual(rows[-1], card.code_label, "设备码缩写放在卡片最下面")
+        # 仪器名居中放大。
+        self.assertTrue(card.name_label.alignment() & Qt.AlignHCenter)
+        for element in panel.cards():
+            self.assertEqual(element.width(), card.width(), "卡片同宽同列")
+            self.assertEqual(element.height(), card.height(), "同一行卡片高度一致")
+
+    def test_cards_wrap_into_columns_instead_of_a_long_strip(self):
+        panel = self.make_panel(size=(520, 700))
+        self.run_scan(panel)
+
+        narrow = len({card.geometry().left() for card in panel.cards()})
+        panel.resize(1200, 700)
+        self.app.processEvents()
+        self.app.processEvents()
+        wide = len({card.geometry().left() for card in panel.cards()})
+
+        # 卡片按可用宽度换行：窄面板换行排两列，宽面板排满四列，不排成一条长带子。
+        self.assertGreaterEqual(narrow, 2, "窄面板要换行，不能挤成一列长条")
+        self.assertEqual(wide, min(4, panel.card_count()))
+
+    def test_shipped_pictures_draw_the_instruments_at_a_similar_size(self):
+        """自带的三张仪器图留白各不相同，仪器在卡片上的视觉大小仍要接近。"""
+        areas = {}
+        for role, model in (
+            ("power_supply", "DP832A"),
+            ("signal_generator", "SMW200A"),
+            ("spectrum_analyzer", "FPL1000"),
+        ):
+            card = InstrumentCard(
+                "型号", "CODE", picture=instrument_picture_path(role, model)
+            )
+            card.show()
+            self.addCleanup(card.close)
+            self.app.processEvents()
+            drawn = card.image.picture_rect()
+            self.assertFalse(drawn.isEmpty(), f"{role} 的图片没有画出来")
+            areas[role] = drawn.width() * drawn.height()
+
+        largest = max(areas.values())
+        smallest = min(areas.values())
+        self.assertLess(
+            largest / smallest,
+            1.25,
+            f"仪器主体在卡片上的视觉面积相差太大（{areas}）",
+        )
+
+    def test_selected_card_has_the_checked_property(self):
+        panel = self.make_panel()
+        self.run_scan(panel)
+        card = panel.card_for("4082F-1")
+
+        self.assertFalse(card.property("checked"))
+        QTest.mouseClick(card, Qt.LeftButton)
+        self.app.processEvents()
+        self.assertTrue(card.property("checked"))
+
+    def test_cards_leave_room_while_there_are_no_results(self):
+        panel = self.make_panel()
+
+        self.assertEqual(panel.card_count(), 0)
+        self.assertGreater(panel.cards_area.height(), 0)
+
+    def test_results_stay_collapsed_until_a_scan_starts(self):
+        panel = self.make_panel()
+
+        self.assertFalse(panel.is_open())
+        self.assertFalse(panel.cards_area.isVisible())
+        # 空框里不写常驻提示：没有扫描就没有话要说。
+        self.assertFalse(panel.status_label.isVisible())
+        self.assertFalse(panel.apply_btn.isVisible())
+        self.assertFalse(panel.reopen_btn.isVisible())
+
+    def test_collapsing_keeps_the_results_reachable_through_reopen(self):
+        panel = self.make_panel(size=(1200, 760))
+        self.run_scan(panel)
+
+        self.assertTrue(panel.is_open())
+        self.assertTrue(panel.cards_area.isVisible())
+        self.assertFalse(panel.reopen_btn.isVisible())
+
+        panel.set_open(False)
+        self.app.processEvents()
+        self.app.processEvents()
+
+        self.assertFalse(panel.cards_area.isVisible())
+        self.assertFalse(panel.apply_btn.isVisible())
+        self.assertTrue(panel.reopen_btn.isVisible())
+        # 收起后统计仍在状态行里，只是卡片不占位置。
+        self.assertIn("发现 4 台设备", panel.status_label.text())
+
+        QTest.mouseClick(panel.reopen_btn, Qt.LeftButton)
+        self.app.processEvents()
+        self.app.processEvents()
+        self.assertTrue(panel.cards_area.isVisible())
+        self.assertEqual(panel.card_count(), 4)
+
+
+class ResultsBoxStateTests(DiscoveryPanelTestCase):
+    """结果框的状态：还没查找时是浅灰底 + 框中央的“查找设备”，点下去之后两者一起收走。"""
+
+    panel_size = (760, 560)
+
+    def setUp(self):
+        # 主题只装一次（``apply_theme`` 幂等），这里直接取整份样式表：无论哪个用例先跑，
+        # 结果框的“浅灰底”规则都在。
+        self._previous_stylesheet = self.app.styleSheet()
+        self.app.setStyleSheet(build_stylesheet())
+
+    def tearDown(self):
+        self.app.setStyleSheet(self._previous_stylesheet)
+
+    def test_the_scan_button_starts_centred_in_a_light_grey_box(self):
+        panel = self.make_panel()
+        box = panel.results_box
+
+        # “查找设备”不在扫描行里，而是结果框正中的落点。
+        self.assertTrue(box.isAncestorOf(panel.scan_btn), "查找设备要落在结果框里")
+        self.assertEqual(panel.box_state(), BOX_STATE_IDLE)
+        self.assertTrue(box.property("filled"), "还没查找时框内铺浅灰底")
+        self.assertIn(
+            'QFrame#discoveryResultsBox[filled="true"]', self.app.styleSheet()
+        )
+        self.assertTrue(panel.scan_btn.isVisible())
+        self.assertFalse(panel.cards_area.isVisible())
+
+        # 水平、竖直都在框的正中（框里此时只有这一个按钮）。
+        centre = panel.scan_btn.mapTo(box, panel.scan_btn.rect().center())
+        box_centre = box.rect().center()
+        self.assertAlmostEqual(centre.x(), box_centre.x(), delta=2)
+        self.assertAlmostEqual(centre.y(), box_centre.y(), delta=2)
+
+    def test_scanning_takes_the_button_and_the_grey_fill_away(self):
+        panel = self.make_panel()
+        self.assertTrue(panel.results_box.property("filled"))
+
+        panel.request_scan()
+        self.app.processEvents()
+
+        # 点下去就开始加载设备：按钮与灰底一起消失，框中央换成进度说明。
+        self.assertEqual(panel.box_state(), BOX_STATE_BUSY)
+        self.assertFalse(panel.results_box.property("filled"), "灰底只在点之前出现")
+        self.assertFalse(panel.scan_btn.isVisible())
+        self.assertTrue(panel.loading_label.isVisible())
+        self.assertIn("正在扫描", panel.status_label.text())
+
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+
+        self.assertEqual(panel.box_state(), BOX_STATE_RESULTS)
+        self.assertFalse(panel.scan_btn.isVisible())
+        self.assertFalse(panel.loading_label.isVisible())
+        self.assertTrue(panel.cards_area.isVisible())
+        self.assertGreater(panel.card_count(), 0)
+
+    def test_a_scan_that_finds_nothing_leaves_the_button_in_the_box_again(self):
+        def factory(_mode):
+            return build_scanner(
+                registry=registry(), mode=SCAN_MODE_SIMULATED, responses={}, timeout_s=0.02
+            )
+
+        panel = self.make_panel(factory)
+        panel.request_scan()
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+
+        # 一台都没读到：框里放不出卡片，中央的“查找设备”回来好让用户再试一次。
+        self.assertEqual(panel.card_count(), 0)
+        self.assertEqual(panel.box_state(), BOX_STATE_IDLE)
+        self.assertTrue(panel.scan_btn.isVisible())
+        self.assertFalse(panel.results_box.property("filled"))
+
+    def test_collapsing_hands_the_box_centre_over_to_the_results_actions(self):
+        panel = self.make_panel()
+        panel.request_scan()
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+        self.assertTrue(panel.cards_area.isVisible())
+        self.assertFalse(panel.centre_area.isVisible(), "卡片看得见时框心让位给卡片")
+
+        panel.set_open(False)
+        self.app.processEvents()
+
+        # 收起后框心给出两个动作：“查找设备”（再查一次）与“查看结果”（把卡片放回来）；
+        # 扫描行仍然只有网段与扫描方式。
+        self.assertTrue(panel.results_box.isAncestorOf(panel.reopen_btn))
+        self.assertTrue(panel.reopen_btn.isVisible())
+        self.assertTrue(panel.scan_btn.isVisible(), "收起后还要能重新查找")
+        self.assertTrue(panel.centre_area.isVisible())
+        self.assertEqual(panel.box_state(), BOX_STATE_RESULTS)
+        self.assertFalse(panel.results_box.property("filled"))
+
+        # 两个按钮并排落在框的正中。
+        box = panel.results_box
+        left = panel.scan_btn.mapTo(box, panel.scan_btn.rect().topLeft()).x()
+        right = panel.reopen_btn.mapTo(box, panel.reopen_btn.rect().topRight()).x()
+        self.assertAlmostEqual((left + right) / 2, box.rect().center().x(), delta=2)
+
+        QTest.mouseClick(panel.reopen_btn, Qt.LeftButton)
+        self.app.processEvents()
+        self.assertTrue(panel.cards_area.isVisible())
+        self.assertFalse(panel.centre_area.isVisible())
+
+    def test_the_box_keeps_its_size_through_the_whole_scan(self):
+        """点“查找设备”前后框一样大：状态与结果数量都不改变框的大小。"""
+        panel = self.make_panel()
+        panel.resize(900, 720)
+        self.app.processEvents()
+        box = panel.results_box
+        idle = (box.width(), box.height())
+
+        panel.request_scan()
+        self.app.processEvents()
+        busy = (box.width(), box.height())
+
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+        results = (box.width(), box.height())
+
+        panel.set_open(False)
+        self.app.processEvents()
+        collapsed = (box.width(), box.height())
+
+        self.assertGreater(idle[1], 0)
+        self.assertEqual(busy, idle, "扫描中框不能变")
+        self.assertEqual(results, idle, "结果回来后框不能变")
+        self.assertEqual(collapsed, idle, "收起后框不能变")
+
+    def test_the_box_has_room_for_two_rows_of_cards(self):
+        """框的固定高度按“两行卡片 + 框内按钮与状态行”算：场地上的 5 台设备不用滚动。"""
+        panel = self.make_panel()
+        panel.request_scan()
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+
+        card = panel.cards()[0]
+        self.assertGreaterEqual(
+            panel.cards_area.height(), 2 * card.height(), "框里至少放得下两行卡片"
+        )
+
+    def test_clearing_the_results_puts_the_grey_fill_back(self):
+        panel = self.make_panel()
+        panel.request_scan()
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+
+        panel.clear_results()
+        self.app.processEvents()
+
+        # 重新进入页面时回到“还没查找过”的样子：灰底与框中央的按钮都回来。
+        self.assertEqual(panel.box_state(), BOX_STATE_IDLE)
+        self.assertTrue(panel.results_box.property("filled"))
+        self.assertTrue(panel.scan_btn.isVisible())
+        self.assertFalse(panel.cards_area.isVisible())

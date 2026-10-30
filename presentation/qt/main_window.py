@@ -28,6 +28,7 @@ from presentation.qt.application_coordinator import ApplicationCoordinator
 from presentation.qt.composition import build_device_scanner_factory, default_paths
 from presentation.qt.config_page import ConfigPage
 from presentation.qt.connection_dialog import ConnectionDialog
+from presentation.qt.connection_page import ConnectionPage
 from presentation.qt.run_history_page import build_run_history_page
 from presentation.qt.history_view_model import HistoryViewModel
 from presentation.qt.measurement_state import MeasurementKind, MeasurementResultReference
@@ -175,6 +176,17 @@ class MainWindow(QMainWindow):
         workspace_layout.addWidget(self.workspace_splitter, 1)
         self.view_stack.addWidget(self.workspace_page)
 
+        # 仪器连接配置是欢迎页之后的整屏页面，不登记进标签栏：先选设备，再配测试参数。
+        # 它只把设备绑定写进配置页，页面切换由本窗口负责。
+        self.connection_page = ConnectionPage(
+            self.config_page,
+            scanner_factory=build_device_scanner_factory(self.paths),
+        )
+        self.connection_page.next_requested.connect(self._open_configuration_page)
+        self.connection_page.return_welcome_requested.connect(self._return_to_welcome)
+        self.connection_page.log_message.connect(self.add_log_message)
+        self.view_stack.insertWidget(1, self.connection_page)
+
         central_layout = QVBoxLayout(central_widget)
         central_layout.setContentsMargins(0, 0, 0, 0)
         central_layout.setSpacing(0)
@@ -198,7 +210,25 @@ class MainWindow(QMainWindow):
         self._apply_driver_mode_to_pages(driver_enabled)
         self.mode_badge.setText("有驱放测试" if driver_enabled else "无驱放测试")
         self.tab_widget.setCurrentIndex(0)
+        # 选好测试模式后先配置仪器连接：应用设备后由“下一步”进入仪器配置页。
+        self.connection_page.enter()
+        self.view_stack.setCurrentWidget(self.connection_page)
+        self._sync_status_panel_visibility()
+
+    def _open_configuration_page(self) -> None:
+        """仪器连接配置完成：进入工作区，当前页面仍是“仪器配置”。
+
+        “下一步”只做页面切换，不写配置：设备绑定已经记在配置页上，保存与创建运行
+        时随配置一起落盘/冻结，因此中途返回欢迎页也不会留下半保存的配置。
+        """
+        self.tab_widget.setCurrentIndex(0)
         self.view_stack.setCurrentWidget(self.workspace_page)
+        self._sync_status_panel_visibility()
+
+    def _return_to_connection_page(self) -> None:
+        """回上一步：重新扫描/更换设备；已填的测试参数留在内存里，回来时仍在。"""
+        self.connection_page.enter()
+        self.view_stack.setCurrentWidget(self.connection_page)
         self._sync_status_panel_visibility()
 
     def _apply_driver_mode_to_pages(self, driver_enabled: bool) -> None:
@@ -299,17 +329,17 @@ class MainWindow(QMainWindow):
 
     def create_config_tab(self):
         """创建仪器配置选项卡；配置页与协调器在这里互相登记。"""
-        tab = ConfigPage(self.config, self, scanner_factory=build_device_scanner_factory(self.paths))
+        tab = ConfigPage(self.config, self)
         tab.save_requested.connect(self.save_config)
         tab.connect_requested.connect(self.connect_instruments)
         tab.create_run_requested.connect(self.coordinator.create_prepared_run)
         tab.load_run_requested.connect(self.coordinator.load_prepared_run)
         tab.return_welcome_requested.connect(self._return_to_welcome)
+        tab.connection_step_requested.connect(self._return_to_connection_page)
         tab.validation_failed.connect(
             lambda message: self.add_log_message(f"配置校验失败: {message}")
         )
         tab.driver_mode_changed.connect(self._refresh_amplifier_instruction_text)
-        tab.discovery_message.connect(self.add_log_message)
         self.config_page = tab
         self.coordinator.bind_config_page(tab)
         return tab
@@ -511,6 +541,9 @@ class MainWindow(QMainWindow):
         self._disconnect_page_signals()
         for page in getattr(self, "pages", {}).values():
             page.close()
+        connection_page = getattr(self, "connection_page", None)
+        if connection_page is not None:
+            connection_page.close()
         event.accept()
 
     def _disconnect_page_signals(self) -> None:

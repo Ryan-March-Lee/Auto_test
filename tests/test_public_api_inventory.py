@@ -399,6 +399,7 @@ INTERNAL_MODULES = {
     "presentation.qt.archival_view": "归档结果分组控件：文案与“打开结果目录/报告”动作",
     "presentation.qt.config_form_state": "配置表单状态",
     "presentation.qt.config_page": "配置页面",
+    "presentation.qt.connection_page": "仪器连接配置页：欢迎页选定测试模式后的整屏页面，扫描并应用本次测试所需设备（绑定写入与派生界面归配置页），完成后进入仪器配置页",
     "presentation.qt.device_cards": "设备发现的仪器展示卡片：仪器图片、设备名、型号与角色、缩减版设备码与选中状态；点击卡片即选中",
     "presentation.qt.device_discovery_panel": "设备发现面板：扫描网段、以卡片展示按设备表登记的角色可应用的设备（含未知设备标记）",
     "presentation.qt.config_projection": "正式配置到配置页控件的确定性投影",

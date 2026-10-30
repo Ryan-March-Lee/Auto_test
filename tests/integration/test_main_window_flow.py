@@ -102,9 +102,41 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
 
         self.assertIs(window.view_stack.currentWidget(), window.welcome_page)
         window._enter_test_mode(True)
-        self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
+        # 选好测试模式后先进“仪器连接配置”页（整屏，不占标签），再进仪器配置页。
+        self.assertIs(window.view_stack.currentWidget(), window.connection_page)
         self.assertTrue(window.config_page.driver_mode_requested())
         self.assertTrue(window.config["driver_mode"]["enabled"])
+
+        window.connection_page.next_btn.click()
+        self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
+        self.assertIs(window.tab_widget.currentWidget(), window.config_page)
+
+    def test_connection_page_is_not_a_tab_and_hides_the_status_panel(self):
+        """仪器连接配置页占满整个界面：既不在标签栏里，也不显示进度与日志。"""
+        self._silence_dialogs()
+        window = self._window()
+
+        window._enter_test_mode(False)
+
+        pages = [window.tab_widget.widget(index) for index in range(window.tab_widget.count())]
+        self.assertNotIn(window.connection_page, pages)
+        self.assertTrue(window.status_panel.isHidden())
+
+    def test_previous_step_returns_to_the_connection_page(self):
+        """仪器配置页的“上一步”回到仪器连接配置页，“下一步”再回来。"""
+        self._silence_dialogs()
+        window = self._window()
+
+        window._enter_test_mode(True)
+        window.connection_page.next_btn.click()
+        self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
+
+        window.config_page.previous_step_btn.click()
+        self.assertIs(window.view_stack.currentWidget(), window.connection_page)
+
+        window.connection_page.next_btn.click()
+        self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
+        self.assertIs(window.tab_widget.currentWidget(), window.config_page)
 
     def test_two_supplies_in_one_run_are_both_frozen_with_their_identity(self):
         """步骤 10：DUT 与驱动功放各用一台电源时，两台都进运行快照（各带身份）。

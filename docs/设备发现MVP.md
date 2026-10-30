@@ -1,7 +1,8 @@
 # 设备发现（MVP）
 
-配置页的“仪器连接配置”框：按网段探测 SCPI 端口、读取 `*IDN?`，把发现到的设备以**卡片**
-列出来，用户点选本次测试所需的设备后，一键写入仪器连接配置。
+“仪器连接配置”页（欢迎页选定测试模式后的整屏页面，不占标签栏）里的设备发现面板：
+按网段探测 SCPI 端口、读取 `*IDN?`，把发现到的设备以**卡片**列出来，用户点选本次测试
+所需的设备后，一键写入仪器连接配置；点“下一步”进入“仪器配置”页配置测试参数。
 
 **测试角色由设备表登记，界面不让用户选**：现场每台仪器只承担一种角色，`instruments.json`
 里的 `role` 字段就是唯一来源；卡片正面写设备名与型号/角色（如 `SMW200A-1`、`SMW200A ·
@@ -159,7 +160,8 @@
 | `infrastructure/persistence/instrument_registry.py` | 设备表读写：`role` 的登记、校验与 `set_role` |
 | `presentation/qt/device_cards.py` | 结果卡片：仪器图片（按角色/型号在 `assets/instrument_pic/` 里选图、等比缩放）、设备名、型号与角色、缩减版设备码、查看/选中状态 |
 | `presentation/qt/device_discovery_panel.py` | 面板、扫描线程、卡片网格（按宽度换行）、展开/收起、按身份预选、应用/清除校验 |
-| `presentation/qt/config_page.py` | 把选中设备写成仪器连接配置与 `device_bindings`（整批校验的最终边界） |
+| `presentation/qt/connection_page.py` | “仪器连接配置”整屏页面：发现面板、扫描框初值、“下一步/返回欢迎页”，把面板交给配置页登记 |
+| `presentation/qt/config_page.py` | 把选中设备写成仪器连接配置与 `device_bindings`（整批校验的最终边界；面板只是这里的展示端） |
 | `presentation/qt/config_form_state.py` | 绑定 -> 仪器连接/启用状态的唯一写入点，旧配置迁移，电源分配校验 |
 | `presentation/qt/composition.py` | 扫描器工厂：每轮扫描重新读取设备表 |
 | `domain/configuration/rules.py` | `simulated_binding_issues`：模拟绑定不能通过真实运行校验 |

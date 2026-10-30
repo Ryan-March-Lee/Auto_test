@@ -327,6 +327,19 @@ class ConfigPageTests(unittest.TestCase):
         # 分组框不应随窗口宽度无限拉伸，避免出现很长的灰色边框。
         self.assertLessEqual(max(widths), 900)
 
+    def test_instrument_connection_is_its_own_page(self):
+        """仪器连接配置已独立成整屏页面：配置页只留“上一步”与“连接仪器”入口。"""
+        page = self.make_page()
+        # 面板由连接页创建后交给配置页登记；配置页自己不再建面板。
+        self.assertIsNone(page.discovery_panel)
+        steps = []
+        page.connection_step_requested.connect(lambda: steps.append(True))
+
+        page.previous_step_btn.click()
+
+        self.assertEqual(steps, [True])
+        self.assertFalse(hasattr(page, "sg_address"))
+
     def test_config_sections_use_two_columns(self):
         from PySide6.QtWidgets import QGroupBox
 
@@ -334,10 +347,11 @@ class ConfigPageTests(unittest.TestCase):
         page.resize(1400, 900)
         self.app.processEvents()
         titles = {box.title(): box for box in page.findChildren(QGroupBox) if box.isVisible()}
-        connection = titles["仪器连接配置"]
+        params = titles["测试参数配置"]
         power_detail = titles["电源详细配置"]
-        # 两栏布局：仪器/参数在左，电源配置在右，而不是单列纵向堆叠。
-        self.assertLess(connection.x() + connection.width(), power_detail.x())
+        # 两栏布局：测试参数/运行在左，电源配置在右，而不是单列纵向堆叠。
+        # 仪器连接配置已独立成欢迎页之后的整屏页面，本页不再包含它。
+        self.assertLess(params.x() + params.width(), power_detail.x())
 
     @staticmethod
     def power_supply_bindings(*supply_ids):

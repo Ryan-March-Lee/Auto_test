@@ -5,6 +5,11 @@
 在 :mod:`presentation.qt.config_projection`，读取控件值组装配置的规则在
 :mod:`presentation.qt.config_form_state`。页面不持有逐字段回填逻辑，也不依赖窗口、
 测量 controller 或硬件实现。
+
+仪器连接配置（扫描、勾选设备、设备身份绑定）已独立成
+:mod:`presentation.qt.connection_page`：本页不再创建发现面板，只在
+:meth:`ConfigPage.attach_discovery_panel` 里登记那一页交出的事件面板，并保留写绑定的
+边界（整批校验 + 写地址/身份）与派生界面更新。
 """
 
 import copy
@@ -27,7 +32,6 @@ from domain.instruments.models import (
 from .config_form_state import (
     POWER_SUPPLY_BINDINGS,
     ConfigFormState,
-    binding_address,
     binding_records,
     bound_power_supply_entries,
     bound_power_supplies,
@@ -54,7 +58,7 @@ from .config_projection import (
     supply_option_label,
 )
 from .configuration_authoring import DUT_CHANNEL_ROLES
-from .device_discovery_panel import DeviceDiscoveryPanel, role_label, subnet_from_address
+from .device_discovery_panel import role_label
 from .input_controls import KeyboardOnlyDoubleSpinBox, WheelSafeComboBox
 from .pages import PageControllerBindingMixin
 from .theme import set_button_variant
@@ -118,23 +122,26 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
     create_run_requested = Signal()
     load_run_requested = Signal(str)
     return_welcome_requested = Signal()
+    connection_step_requested = Signal()
     validation_failed = Signal(str)
     driver_mode_changed = Signal(bool)
     discovery_message = Signal(str)
 
-    def __init__(self, config=None, parent=None, scanner_factory=None):
+    def __init__(self, config=None, parent=None):
         PageControllerBindingMixin.__init__(self)
         QWidget.__init__(self, parent)
         self.config = config if isinstance(config, dict) else {}
         # 设备身份绑定：信号源/频谱仪各一条（角色键），电源按 ``supply_id`` 多条
         # （``power_supplies``）。只记录用户明确应用过的设备；IP 变化时按序列号重新识别，
-        # 不靠地址记忆。绑定是仪器连接的唯一来源；构建界面之前就要就位，扫描框初值才能
-        # 取到已绑定设备的网段，电源分配的可选项也由它决定。
+        # 不靠地址记忆。绑定是仪器连接的唯一来源；构建界面之前就要就位，电源标签页的
+        # 条目与电源分配的可选项都由它决定。
         self.device_bindings = effective_device_bindings(self.config)
         # 配置里原本就不可用的电源绑定：读入时会从可用集合里剔除，但必须在这里留下记录，
         # 由界面提示并在保存/运行校验时明确报错——否则它们会表现为“电源莫名消失”。
         self.binding_problems = self._binding_problems_of(self.config)
-        self._scanner_factory = scanner_factory
+        # 「仪器连接配置」页交出的事件面板：写绑定之后由本页回写它的状态文本。
+        # 未登记面板时（纯配置页场景）所有回写都跳过。
+        self.discovery_panel = None
         self.build_ui()
         self._connect_signals()
         self.update_pa_unit_ui()
@@ -143,14 +150,6 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         # 基线用组装结果而不是原始文档：旧配置迁移、绑定写入的启用状态都属于页面自身的
         # 规范化结果，刚打开的页面不应显示为“已修改”。
         self._dirty_baseline = copy.deepcopy(self.build_config(self.config))
-        panel = getattr(self, "discovery_panel", None)
-        if panel is not None:
-            panel.set_device_bindings(self.device_bindings)
-            if self.binding_problems:
-                panel.show_message(
-                    "；".join(self.binding_problems)
-                    + "；请重新扫描并应用这些电源，或修正配置后再保存"
-                )
 
     @staticmethod
     def _binding_problems_of(config) -> list[str]:
@@ -196,12 +195,11 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         supplies = instruments.get("power_supplies")
         supplies = supplies if isinstance(supplies, dict) else {}
 
-        # 仪器连接配置只有一个入口：扫描设备后勾选。页面不再提供手工填写地址的控件，
-        # 连接地址只来自用户明确应用过的扫描结果。
-        self._build_discovery_widget(left_column)
+        # 仪器连接配置在独立页面（欢迎页之后的第一步）：本页只保留“连接仪器”入口，
+        # 设备地址与身份来自那一页写入的设备绑定，页面不再提供手工填写地址的控件。
         connect_row = QHBoxLayout()
         connect_row.setSpacing(10)
-        connect_hint = QLabel("应用设备后在此连接本次测试使用的仪器。")
+        connect_hint = QLabel("在“仪器连接配置”页应用设备后，在此连接本次测试使用的仪器。")
         connect_hint.setProperty("role", "hint")
         connect_row.addWidget(connect_hint, 1)
         self.connect_btn = QPushButton("连接仪器")
@@ -265,7 +263,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         root.addWidget(self._build_action_bar())
 
     def _build_action_bar(self):
-        """页面底部固定操作栏：保存当前配置或返回欢迎页。"""
+        """页面底部固定操作栏：回到仪器连接配置、保存当前配置或返回欢迎页。"""
         bar = QWidget()
         bar.setObjectName("pageActionBar")
         row = QHBoxLayout(bar)
@@ -274,57 +272,40 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         dirty_hint = QLabel("修改参数后请保存配置，运行时使用已保存并冻结的配置。")
         dirty_hint.setProperty("role", "hint")
         row.addWidget(dirty_hint, 1)
+        # 上一步只切换页面：设备绑定与参数都还在内存里，回来时两者都保留。
+        self.previous_step_btn = QPushButton("上一步：仪器连接")
+        self.previous_step_btn.setToolTip("回到“仪器连接配置”页，重新扫描并应用本次测试使用的设备")
+        set_button_variant(self.previous_step_btn, "secondary")
         self.save_config_btn = QPushButton("保存配置")
         set_button_variant(self.save_config_btn, "primary")
         self.return_welcome_btn = QPushButton("返回欢迎页")
         set_button_variant(self.return_welcome_btn, "secondary")
+        row.addWidget(self.previous_step_btn)
         row.addWidget(self.return_welcome_btn)
         row.addWidget(self.save_config_btn)
         return bar
 
-    def _build_discovery_widget(self, layout):
-        """仪器连接配置：扫描网段，勾选本次测试所需设备并写入连接配置。
+    def attach_discovery_panel(self, panel):
+        """登记「仪器连接配置」页上的设备发现面板，并接上应用/清除意图。
 
-        这是配置页上唯一的仪器连接入口，页面不再提供逐台填写地址或选择角色的控件：
-        测试角色由设备表 ``instruments.json`` 登记的 ``role`` 决定，界面只显示
-        “设备名（角色）”。面板不改配置、不连接仪器；只有用户点击“应用所选设备到配置”
-        时，本页才把发现到的当前地址与设备身份（序列号）记进 :attr:`device_bindings`，
-        保存时随配置一起落盘，作为下次按身份重新识别设备的依据。
+        面板归独立页面（:mod:`presentation.qt.connection_page`）所有：它只管扫描与
+        勾选，不改配置、不连接仪器。用户点“应用所选设备到配置”时，面板把所选设备交给
+        本页，本页整批校验后把当前地址与设备身份（序列号）记进 :attr:`device_bindings`，
+        保存时随配置一起落盘，作为下次按身份重新识别设备的依据；面板只负责显示结果。
+
+        “应用/清除”写的是配置页状态，因此信号连在本页；面板的日志经
+        :attr:`discovery_message` 转给窗口统一呈现。
         """
-        factory = self._scanner_factory
-        if factory is None:
-            from .composition import build_device_scanner_factory
-
-            factory = build_device_scanner_factory()
-        self.discovery_panel = DeviceDiscoveryPanel(
-            scanner_factory=factory,
-            default_subnet=self._default_scan_subnet(),
-            title="仪器连接配置",
-            parent=self,
-        )
-        self.discovery_panel.apply_requested.connect(self.apply_discovered_devices)
-        self.discovery_panel.clear_requested.connect(self.clear_device_bindings)
-        self.discovery_panel.log_message.connect(self.discovery_message.emit)
-        layout.addWidget(self.discovery_panel)
-
-    def _default_scan_subnet(self):
-        """扫描框初值：优先已绑定设备的地址，其次配置里已有的仪器地址。"""
-        for _key, record in binding_records(self.device_bindings):
-            subnet = subnet_from_address(binding_address(record) or record.get("last_ip"))
-            if subnet:
-                return subnet
-        instruments = self.config.get("instruments")
-        instruments = instruments if isinstance(instruments, dict) else {}
-        supplies = instruments.get("power_supplies")
-        supplies = supplies if isinstance(supplies, dict) else {}
-        entries = [instruments.get("signal_generator"), instruments.get("spectrum_analyzer")]
-        entries.extend(supplies.values())
-        for item in entries:
-            if isinstance(item, dict):
-                subnet = subnet_from_address(item.get("address"))
-                if subnet:
-                    return subnet
-        return None
+        self.discovery_panel = panel
+        panel.apply_requested.connect(self.apply_discovered_devices)
+        panel.clear_requested.connect(self.clear_device_bindings)
+        panel.log_message.connect(self.discovery_message.emit)
+        panel.set_device_bindings(self.device_bindings)
+        if self.binding_problems:
+            panel.show_message(
+                "；".join(self.binding_problems)
+                + "；请重新扫描并应用这些电源，或修正配置后再保存"
+            )
 
     def apply_discovered_devices(self, assignments):
         """把面板勾选的设备写成配置里的连接信息与身份记录。
@@ -817,6 +798,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         self.create_run_btn.clicked.connect(self.request_create_run)
         self.load_run_btn.clicked.connect(self.request_load_run)
         self.return_welcome_btn.clicked.connect(self.return_welcome_requested.emit)
+        self.previous_step_btn.clicked.connect(self.connection_step_requested.emit)
         self.pa_unit_count_combo.currentTextChanged.connect(self.on_pa_unit_count_changed)
         self.driver_power_source_combo.currentTextChanged.connect(self.on_driver_power_toggled)
 
@@ -839,13 +821,6 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
     def set_run_status(self, text: str) -> None:
         """显示当前运行状态；由窗口在创建/加载运行后更新。"""
         self.run_status_label.setText(text)
-
-    def close(self) -> None:
-        """关闭页面时先协作停止设备扫描，再解除 controller 连接。"""
-        panel = getattr(self, "discovery_panel", None)
-        if panel is not None and not panel.shutdown():
-            self.discovery_message.emit("设备扫描线程未能在关闭期限内停止")
-        super().close()
 
     def validate(self):
         # 读入时判定为不可用的设备绑定先报出来：它们已经从可用电源里剔除，若不在这里

@@ -23,6 +23,7 @@ from PySide6.QtGui import QColor, QFont, QPalette
 __all__ = [
     "TOKENS",
     "FONT_FAMILIES",
+    "WELCOME_BACKGROUND_FILE",
     "BUTTON_VARIANTS",
     "TONE_NAMES",
     "button_variant",
@@ -100,6 +101,13 @@ BUTTON_VARIANTS = ("primary", "secondary", "danger", "ghost", "success")
 
 #: 允许的语义文字色，用于状态标签（归档结果、扫描提示等）。
 TONE_NAMES = ("info", "success", "warning", "danger", "muted")
+
+
+#: 欢迎页背景图，放在项目根目录的 ``assets/``：它是一张场景图而不是界面字形，
+#: 因此与图标分开存放；样式表按绝对路径引用，打包位置变化时只需改这一处。
+WELCOME_BACKGROUND_FILE = (
+    Path(__file__).resolve().parents[2] / "assets" / "init_background.png"
+)
 
 
 # ---- 调色板与字体 -----------------------------------------------------------
@@ -268,16 +276,48 @@ QLabel#appModeBadge {
     padding: 3px 10px;
 }
 
-/* ===== 欢迎页 ===== */
-QFrame#welcomeCard {
-    background-color: $surface;
-    border: 1px solid $border;
-    border-radius: 12px;
-}
+/* ===== 欢迎页 =====
+   整页是一张场景图（蓝色实验室），标题与按钮直接压在图上，不再套白色卡片；
+   标题用白色粗体，落在图中偏亮的天空区域；按钮白底深字，悬停整块转主色蓝、文字转白，
+   未悬停与悬停的差别一眼可见。
+   背景图不写在这里：页面里的按钮与拉伸空白会让 Qt 只在局部画出这层背景，图片改由
+   ``welcome_page.WelcomePage.paintEvent`` 铺满整页，这里只负责文字与按钮。 */
 QLabel#welcomeTitle {
-    color: $text;
-    font-size: 22pt;
+    background: transparent;
+    color: #FFFFFF;
+    font-size: 44pt;
     font-weight: 700;
+    padding: 4px 18px;
+}
+QLabel#welcomeSubtitle {
+    background: transparent;
+    color: #E8F1FF;
+    font-size: 13pt;
+    padding: 0 18px;
+}
+/* 按钮只包住文字：字号大、内边距小、圆角收窄，避免大白块里空荡荡。 */
+QPushButton#welcomeChoice {
+    background-color: #FFFFFF;
+    border: 1px solid #FFFFFF;
+    border-bottom: 2px solid $primary_soft_border;
+    border-radius: 6px;
+    color: $primary_pressed;
+    font-size: 13pt;
+    font-weight: 600;
+    min-height: 40px;
+    padding: 4px 16px 3px 16px;
+}
+QPushButton#welcomeChoice:hover {
+    background-color: $primary;
+    border-color: $primary;
+    border-bottom-color: $primary_pressed;
+    color: #FFFFFF;
+}
+QPushButton#welcomeChoice:pressed {
+    background-color: $primary_pressed;
+    border-color: $primary_pressed;
+    border-bottom-color: $primary_soft_border;
+    color: #FFFFFF;
 }
 
 /* ===== 主标签栏（分段选择器） ===== */

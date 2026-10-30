@@ -55,8 +55,16 @@ def _fully_valid_gui_config() -> dict:
                     "address": "sim::ps1",
                     "enabled": True,
                     "channels": {
-                        "CH1": {"voltage": {"value": 2.8}, "current": {"value": 0.1}},
-                        "CH2": {"voltage": {"value": 28.0}, "current": {"value": 2.0}},
+                        "CH1": {
+                            "role": "gate",
+                            "voltage": {"value": 2.8},
+                            "current": {"value": 0.1},
+                        },
+                        "CH2": {
+                            "role": "drain",
+                            "voltage": {"value": 28.0},
+                            "current": {"value": 2.0},
+                        },
                     },
                 }
             },

@@ -20,7 +20,9 @@
   不会进快照。集合大小由分配与绑定共同决定，1 台和多台走同一条路径，不再有“只能登记
   一个本机电源”的限制。
 - 通道连接统一写成 ``supply_id/CHx``（与 ``instrument.measurement_factory`` 的
-  ``supply/channel`` 路由一致），因此 DUT 的 gate 与 drain 可以来自不同电源。
+  ``supply/channel`` 路由一致），因此 DUT 的 gate 与 drain 可以来自不同电源。同一条
+  物理通道被分配两次时**不在这里去重**：重复条目原样写进映射，由正式校验
+  （``通道重复分配`` / ``供电角色重复分配``）在连接前失败，而不是悄悄只留一条。
 - 身份字段（``label`` / ``serial`` / ``device_key``）只从该电源自己的配置条目读取；
   条目缺少身份时写空并在正式校验中报错，不按地址或型号去猜设备。
 """
@@ -33,6 +35,7 @@ import re
 from typing import Any, Mapping
 
 from application.errors import ConfigurationError
+from domain.configuration.rules import assignment_supply_id
 
 OFFICIAL_SCHEMA_VERSION = "1.0"
 # 现场固定接线的编辑约定：DUT 的 CH1 是栅极、CH2 是漏极。未知通道不猜测角色。
@@ -191,14 +194,10 @@ def _author_driver_role_plans(document: Mapping[str, Any]) -> dict[str, Any]:
 
 def _author_dut_channel_mappings(document: Mapping[str, Any]) -> list[dict[str, Any]]:
     mappings: list[dict[str, Any]] = []
-    seen: set[str] = set()
     for assignment in _assignment_supplies(document, "dut_amplifier").values():
         supply_name = _assigned_supply_id(assignment)
         for channel in _channel_list(assignment.get("channel")):
             token = _channel_token(supply_name, channel)
-            if token in seen:
-                continue
-            seen.add(token)
             role = DUT_CHANNEL_ROLES.get(channel)
             connection = token
             if role:
@@ -211,14 +210,10 @@ def _author_dut_channel_mappings(document: Mapping[str, Any]) -> list[dict[str, 
 
 def _author_driver_channel_mappings(document: Mapping[str, Any]) -> list[dict[str, Any]]:
     mappings: list[dict[str, Any]] = []
-    seen: set[str] = set()
     for assignment in _assignment_supplies(document, "driver_amplifier").values():
         supply_name = _assigned_supply_id(assignment)
         for channel in _channel_list(assignment.get("channel")):
             token = _channel_token(supply_name, channel)
-            if token in seen:
-                continue
-            seen.add(token)
             mappings.append(
                 {
                     "channel": token,
@@ -277,11 +272,10 @@ def _used_supply_ids(document: Mapping[str, Any]) -> list[str]:
 def _assigned_supply_id(assignment: Mapping[str, Any]) -> str | None:
     """分配条目引用的电源 ``supply_id``。
 
-    读引用规则与配置读取共用一处（:func:`config_form_state.assignment_supply_id`）：
-    ``supply_id`` 优先，只有完全没有该字段的旧记录才回落读一次 ``name``。
+    读引用规则只有一处实现（:func:`domain.configuration.rules.assignment_supply_id`）：
+    ``supply_id`` 优先，只有完全没有该字段的旧记录才回落读一次 ``name``。配置页、正式
+    运行映射与文件级校验都用它，不存在第二套编号。
     """
-    from presentation.qt.config_form_state import assignment_supply_id
-
     return assignment_supply_id(assignment)
 
 

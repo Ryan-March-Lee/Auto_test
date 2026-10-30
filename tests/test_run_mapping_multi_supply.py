@@ -187,6 +187,70 @@ class MultiSupplyMappingTests(unittest.TestCase):
 
         self.assertIn("dut_power_channels[0].channel", paths)
 
+    def test_same_physical_channel_assigned_twice_is_rejected(self):
+        """同一个 ``supply_id/CHx`` 出现两次：一条物理通道不可能同时供两个角色。"""
+        data = two_supply_mapping()
+        data["dut_power_channels"][1]["channel"] = "DP8B1519/CH1"
+
+        paths = {issue.path for issue in validate_run_mapping(data).errors}
+
+        self.assertIn("dut_power_channels[1].channel", paths)
+
+    def test_duplicate_supply_role_is_rejected(self):
+        """两台电源都声称 ``gate``：按角色寻址时没有唯一答案，必须在连接前失败。"""
+        data = two_supply_mapping()
+        data["dut_power_channels"][1]["role"] = "gate"
+
+        paths = {issue.path for issue in validate_run_mapping(data).errors}
+
+        self.assertIn("dut_power_channels[1].role", paths)
+
+    def test_one_supply_may_feed_both_roles_of_the_dut(self):
+        """两台电源不是前提：同一台的两条通道分别供 gate 与 drain 仍然合法。"""
+        data = two_supply_mapping()
+        data["instruments"]["power_supplies"].pop("DP8B0885")
+        data["dut_power_channels"] = [
+            {"channel": "DP8B1519/CH1", "role": "gate", "connection": "DP8B1519/CH1 -> DUT 栅极"},
+            {"channel": "DP8B1519/CH2", "role": "drain", "connection": "DP8B1519/CH2 -> DUT 漏极"},
+        ]
+
+        result = validate_run_mapping(data)
+
+        self.assertTrue(result.valid, result.errors)
+
+    def test_driver_and_dut_cannot_use_the_same_supply_channel(self):
+        """同一物理通道不能既接 DUT 又接驱动功放。"""
+        data = two_supply_mapping()
+        data["driver_mode"] = {
+            "enabled": True,
+            "power_source": "dc_supply",
+            "power_channels": [
+                {"channel": "DP8B0885/CH2", "role": "driver", "connection": "驱动功放"}
+            ],
+        }
+
+        result = validate_run_mapping(data)
+
+        self.assertTrue(
+            any("不能重复使用通道" in issue.message for issue in result.errors),
+            [issue.message for issue in result.errors],
+        )
+
+    def test_driver_may_use_another_channel_of_an_assigned_supply(self):
+        """驱动功放与 DUT 共用一台电源但通道不同是合法的（1 台 / 2 台同一路径）。"""
+        data = two_supply_mapping()
+        data["driver_mode"] = {
+            "enabled": True,
+            "power_source": "dc_supply",
+            "power_channels": [
+                {"channel": "DP8B0885/CH1", "role": "driver", "connection": "驱动功放"}
+            ],
+        }
+
+        result = validate_run_mapping(data)
+
+        self.assertTrue(result.valid, result.errors)
+
     def test_both_structures_at_once_are_rejected(self):
         data = two_supply_mapping()
         data["instruments"]["power_supply"] = {"model": "PS1", "visa_address": "sim::ps9"}

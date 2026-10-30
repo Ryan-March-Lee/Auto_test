@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from domain.configuration.models import RunConfiguration
+from domain.configuration.rules import validate_hardware_connections
 from domain.models import RunContext
 from domain.run.models import generate_run_id
 from application.ports.config_repository import ConfigurationLoadResult
@@ -205,6 +206,7 @@ def create_prepared_run(
             "运行契约必须包含硬件配置快照：create_prepared_run 的 "
             "hardware_config 不能为 None，缺少硬件配置的运行无法恢复"
         )
+    _require_connectable_hardware(hardware_config)
     repository = run_repository if run_repository is not None else RunRepository(paths=paths)
     snapshot: RunSnapshot = create_run_snapshot(
         loaded,
@@ -228,6 +230,26 @@ def create_prepared_run(
         snapshot.hardware_config_path,
         hardware_config,
     )
+
+
+def _require_connectable_hardware(hardware_config: Mapping[str, Any]) -> None:
+    """创建运行目录之前拒绝存在供电连接冲突的硬件配置。
+
+    正式运行映射的校验只看 ``run_mapping``；硬件装配读的是 ``instruments`` /
+    ``power_supply_assignment``，其中的连接冲突（两台会被连接的电源共用同一个 VISA
+    地址、同一物理通道同时供 DUT 与驱动功放、分配引用了未绑定的电源）只在这一段可见。
+    这些冲突在装配阶段（``instrument.measurement_factory``）同样会失败，但那时运行目录
+    与冻结快照已经写好，留下一份“建好了却连不上”的运行。这里放在唯一创建运行的入口，
+    规则本身仍只有 :func:`domain.configuration.rules.validate_hardware_connections`
+    一份，消息里点名具体字段（步骤 11）。
+
+    只拦连接冲突，不重复字段完整性校验：通道保护值缺失之类由配置页保存与
+    ``launcher --validate-config`` 负责。
+    """
+    result = validate_hardware_connections(dict(hardware_config))
+    if not result.valid:
+        details = "; ".join(f"{issue.path}: {issue.message}" for issue in result.errors)
+        raise ValueError(f"硬件配置的供电连接存在冲突，不能创建运行: {details}")
 
 
 def load_prepared_run(

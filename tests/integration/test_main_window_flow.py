@@ -161,11 +161,10 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
     def test_no_driver_mode_drops_a_saved_driver_assignment_and_still_creates_a_run(self):
         self._silence_dialogs()
         saved = _fully_valid_gui_config()
-        saved["driver_mode"] = {"enabled": True}
+        saved["driver_mode"] = {"enabled": True, "power_source": "dc_supply"}
         saved["power_supply_assignment"]["driver_amplifier"] = {
             "power_supply_count": 1,
-            # 驱动功放走另一台电源（DP8B0885/CH2），DUT 继续用 DP8B1519。
-            "supplies": {"driver": {"supply_id": "DP8B0885", "channel": ["CH2"]}},
+            "supplies": {"driver": {"supply_id": "DP8B1519", "channel": ["CH1"]}},
         }
         self.config_path.write_text(json.dumps(saved), encoding="utf-8")
 

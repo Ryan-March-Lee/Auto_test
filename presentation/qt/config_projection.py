@@ -11,9 +11,9 @@
 
 - 配置页不再持有逐字段的类型容错/回填逻辑，只负责控件接线与用户意图转发；
 - 投影只认识配置编写文档的字段名，不读取旧字段别名，也不做旧格式推断；唯一例外是
-  供电分配引用，它统一走 :func:`presentation.qt.config_form_state.assignment_supply_id`
-  （``supply_id`` 为准，只有完全没有该字段的旧记录才回落读一次 ``name``），与配置页
-  初次建页使用同一判定；
+  供电分配引用，它统一走 :func:`domain.configuration.rules.assignment_supply_id`（由
+  :mod:`presentation.qt.config_form_state` 再导出；``supply_id`` 为准，只有完全没有该字段
+  的旧记录才回落读一次 ``name``），与配置页初次建页、文件级校验使用同一判定；
 - ``instruments`` 不由控件编辑（仪器连接只来自设备发现结果），因此投影只携带它，
   不把它写到控件上；
 - 电源分配的可选项由调用方按设备绑定传入（``supplies``）：配置引用了未绑定的电源时

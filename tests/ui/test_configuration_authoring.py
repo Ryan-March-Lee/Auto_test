@@ -285,6 +285,51 @@ class ConfigurationAuthoringTests(unittest.TestCase):
         paths = {issue.path for issue in validate_run_configuration(configuration).errors}
         self.assertIn("dut_power_channels[0].channel", paths)
 
+    def test_a_channel_used_twice_is_written_and_reported(self):
+        """同一条物理通道被分配两次：原样写进映射，由正式校验报错而不是静默去重。"""
+        flat = _flat_config()
+        flat["power_supply_assignment"]["dut_amplifier"]["supplies"]["peaking"] = {
+            "supply_id": "DP8B1519",
+            "channel": ["CH1"],
+        }
+        document = author_official_configuration(flat)
+
+        self.assertEqual(
+            [item["channel"] for item in document["run_mapping"]["dut_power_channels"]],
+            ["DP8B1519/CH1", "DP8B1519/CH2", "DP8B1519/CH1"],
+        )
+        from domain.configuration.models import RunConfiguration, RunResourceMapping, TestPlan
+
+        configuration = RunConfiguration(
+            TestPlan.from_dict(document["test_plan"]),
+            RunResourceMapping.from_dict(document["run_mapping"]),
+        )
+        paths = {issue.path for issue in validate_run_configuration(configuration).errors}
+        self.assertIn("dut_power_channels[2].channel", paths)
+
+    def test_two_supplies_claiming_the_same_role_are_rejected(self):
+        """两台电源都声称 gate：通道不同但角色重复，必须在连接前失败。"""
+        flat = _flat_config()
+        flat["instruments"]["power_supplies"]["DP8B0885"] = _second_supply()
+        flat["power_supply_assignment"]["dut_amplifier"]["supplies"] = {
+            "gate": {"supply_id": "DP8B1519", "channel": ["CH1"]},
+            "drain": {"supply_id": "DP8B0885", "channel": ["CH1"]},
+        }
+        document = author_official_configuration(flat)
+
+        self.assertEqual(
+            [(item["channel"], item["role"]) for item in document["run_mapping"]["dut_power_channels"]],
+            [("DP8B1519/CH1", "gate"), ("DP8B0885/CH1", "gate")],
+        )
+        from domain.configuration.models import RunConfiguration, RunResourceMapping, TestPlan
+
+        configuration = RunConfiguration(
+            TestPlan.from_dict(document["test_plan"]),
+            RunResourceMapping.from_dict(document["run_mapping"]),
+        )
+        paths = {issue.path for issue in validate_run_configuration(configuration).errors}
+        self.assertIn("dut_power_channels[1].role", paths)
+
     def test_parse_db_value(self):
         self.assertEqual(parse_db_value("30dB"), 30.0)
         self.assertEqual(parse_db_value(" 5 dB "), 5.0)

@@ -438,6 +438,7 @@ def validate_run_mapping(mapping: Union[RunResourceMapping, Mapping[str, Any]]) 
     _validate_power_supplies(mapping, error)
     _validate_mappings(mapping.dut_power_channels, "dut_power_channels", error)
     _validate_mappings(mapping.driver_power_channels, "driver_mode.power_channels", error)
+    _validate_role_uniqueness(mapping.dut_power_channels, "dut_power_channels", error)
     dut_channels = {item.channel for item in mapping.dut_power_channels}
     driver_channels = {item.channel for item in mapping.driver_power_channels}
     if not dut_channels:
@@ -762,6 +763,33 @@ def _validate_mappings(mappings: List[ChannelMapping], path: str, error: Any) ->
         seen.add(item.channel)
         _required_text(item.role, f"{item_path}.role", error)
         _required_text(item.connection, f"{item_path}.connection", error)
+
+
+def _validate_role_uniqueness(
+    mappings: List[ChannelMapping], path: str, error: Any
+) -> None:
+    """同一个供电角色只能由一个通道提供。
+
+    DUT 的 ``gate`` / ``drain`` 在装配时按**角色**寻址：两个通道都声称 ``gate`` 时，
+    “哪一台给栅极”没有唯一答案，连接前必须失败。多电源让角色冲突不再等于通道重复——
+    ``DP8B1519/CH1`` 供 ``gate``、``DP8B0885/CH1`` 也供 ``gate`` 是两条不同的通道，
+    只有角色是重复的，因此不能只靠 :func:`_validate_mappings` 的通道去重发现。
+
+    驱动功放通道不在此列：它们都是同一个 ``driver`` 角色，多通道按物理路由区分。
+    """
+    seen: Dict[str, int] = {}
+    for index, item in enumerate(mappings):
+        role = item.role
+        if not isinstance(role, str) or not role.strip():
+            continue
+        role = role.strip()
+        if role in seen:
+            error(
+                f"{path}[{index}].role",
+                f"供电角色重复分配: {role}（另见 {path}[{seen[role]}]）",
+            )
+            continue
+        seen[role] = index
 
 
 def _validate_driver_mode(enabled: Any, source: Any, channels: Any, error: Any) -> None:

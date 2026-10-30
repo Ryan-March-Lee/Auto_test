@@ -26,5 +26,9 @@ class ConfigValidationResult:
     def valid(self) -> bool:
         return not self.errors
 
+    def messages(self) -> List[str]:
+        """按 ``“<path>: <message>”`` 列出全部问题，供界面与日志逐条显示。"""
+        return [f"{issue.path}: {issue.message}" for issue in (*self.errors, *self.warnings)]
+
 
 __all__ = ["ConfigIssue", "ConfigValidationResult"]

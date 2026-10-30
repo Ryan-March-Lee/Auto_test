@@ -11,6 +11,12 @@ import copy
 import math
 from typing import Any, Mapping
 
+# 供电分配引用（``supply_id`` 为准、旧记录回落读一次 ``name``）只有一处实现：
+# ``domain.configuration.rules.assignment_supply_id``，这里再导出给配置页与投影使用，
+# 判据不在这层重写（数据契约 §6.2）。
+from application.errors import ConfigurationError
+from domain.configuration.models import validate_run_configuration
+from domain.configuration.rules import assignment_supply_id
 from domain.instruments.models import (
     POWER_SUPPLY_ROLE,
     canonical_role,
@@ -382,29 +388,6 @@ def bound_power_supply_entries(bindings: Any) -> dict[str, dict]:
     }
 
 
-def assignment_supply_id(entry: Any) -> str | None:
-    """返回一条供电分配记录引用的电源 ``supply_id``；未绑定或无法识别时返回 ``None``。
-
-    新配置只认 ``supply_id``（见数据契约 §6.2）。旧配置的同一份引用写在 ``name`` 里，
-    这里在**读入边界适配一次**：只要记录里出现 ``supply_id`` 就以它为准（``null`` 表示
-    引用未绑定），只有完全没有该字段的旧记录才回落去读 ``name``。``name`` 是过渡别名，
-    不是第二个可用性来源，也不参与“猜一台电源”。
-
-    返回值只做“是不是非空字符串”的判断，不裁剪、不改写：写错的引用要留给校验报告，
-    不能在校验前被悄悄修成看起来合法的值。
-
-    返回 ``None`` 有两层含义（“没有这条分配”与“声明了但未绑定”），回填控件时必须用
-    :func:`assignment_declared` 区分，否则显式未绑定会被当成配置缺失而补上第一台电源。
-    """
-    if not isinstance(entry, Mapping):
-        return None
-    field = "supply_id" if "supply_id" in entry else "name"
-    value = entry.get(field)
-    if not isinstance(value, str) or not value.strip():
-        return None
-    return value
-
-
 def assignment_declared(entry: Any) -> bool:
     """配置里是否存在这条供电分配（与它是否指向一台已绑定电源无关）。
 
@@ -414,6 +397,22 @@ def assignment_declared(entry: Any) -> bool:
     配置时静默选上一台电源，保存后就把“这台电源已不在”写成了一次看不见的分配改动。
     """
     return isinstance(entry, Mapping)
+
+
+def _clear_driver_power_assignment(document):
+    """关闭驱放测试模式时清掉文档里遗留的驱动功放供电分配。
+
+    页面在关闭驱放后不再提交驱动分配（不占本机电源），但协调器持有的配置副本仍带着上一次
+    保存的 ``driver_amplifier.supplies``；两份副本因此不一致。正式校验会按“驱放模式关闭时
+    不能配置驱动功放通道”拒绝它，于是页面刚做的正确选择反而让运行创建失败（步骤 11）。
+    这里只清这一段供电分配，电源通道参数与 DUT 分配原样保留。
+    """
+    assignment = _dict_copy(document.get("power_supply_assignment"))
+    if not assignment or assignment.get("driver_amplifier") in (None, {}):
+        return False
+    assignment["driver_amplifier"] = {"power_supply_count": 0, "supplies": {}}
+    document["power_supply_assignment"] = assignment
+    return True
 
 
 def _assignment_entry(combo: Any) -> dict:
@@ -501,6 +500,47 @@ class ConfigFormState:
             errors.append("测试频率必须是非空数字列表")
         errors.extend(self._power_role_errors())
         errors.extend(self._power_assignment_errors())
+        errors.extend(self._formal_run_errors())
+        return errors
+
+    def _formal_run_errors(self) -> list[str]:
+        """按当前控件组装出的正式配置必须能通过正式运行校验。
+
+        界面自己的检查只看“选了没有、绑定了没有”；真正决定能否连接仪器的是正式
+        ``test_plan`` / ``run_mapping``（多电源的地址重复、同一物理通道重复、供电角色
+        冲突等规则都在那里，见步骤 11）。这里用同一套配置作者与正式校验，让这些失败在
+        点击“开始”之前、并出现在创建运行的那一条提示里。
+
+        校验对象是页面此刻的读数（:meth:`build_config`）：协调器持有的配置副本可能还带着
+        页面已经放弃的旧段（例如关闭驱放前保存的驱动分配），按它报错会让刚做对的界面无法
+        开始。绑定写出的地址也在这份读数里，所以“两台电源抢同一个地址”同样在这里被拦住。
+
+        只把 :class:`ConfigurationError` 转成页面错误：那是配置作者对当前读数的判断。
+        其它异常是程序缺陷，不能被改写成“配置有问题”的提示而掩盖掉，让它照常抛给上层。
+        """
+        # 延迟导入：``configuration_authoring`` 反向依赖本模块的 ``assignment_supply_id``，
+        # 在模块级互相导入会形成环。
+        from domain.configuration.models import RunConfiguration, RunResourceMapping, TestPlan
+        from domain.configuration.rules import validate_hardware_connections
+        from presentation.qt.configuration_authoring import author_official_configuration
+
+        errors: list[str] = []
+        try:
+            document = author_official_configuration(self.build_config())
+        except ConfigurationError as failure:
+            # 配置作者对“现在的配置写不成正式映射”给出的判断（未绑定的分配、缺少身份字段
+            # 等），是用户要改的内容，转成页面错误。
+            return [f"无法按当前配置生成正式运行映射: {failure}"]
+        result = validate_run_configuration(
+            RunConfiguration(
+                TestPlan.from_dict(document.get("test_plan") or {}),
+                RunResourceMapping.from_dict(document.get("run_mapping") or {}),
+            )
+        )
+        errors = [issue.message for issue in result.errors]
+        # 正式段之外还有硬件装配段（``instruments`` / ``power_supply_assignment``）：
+        # 两台电源抢同一个地址、同一物理通道同时供 DUT 与驱动功放都只在这一段可见。
+        errors += [issue.message for issue in validate_hardware_connections(document).errors]
         return errors
 
     def _power_assignment_errors(self) -> list[str]:
@@ -733,6 +773,8 @@ class ConfigFormState:
         assignment = self.read_power_assignment()
         if assignment:
             config["power_supply_assignment"] = assignment["power_supply_assignment"]
+        elif not _dict_copy(config.get("driver_mode")).get("enabled"):
+            _clear_driver_power_assignment(config)
         # 现场接线不再属于配置：接线由各阶段开始前的连接图对话框确认，旧文件里的
         # ``wiring`` 块不随表单继续写回，避免留下永远为空的“已确认”字段。
         config.pop("wiring", None)

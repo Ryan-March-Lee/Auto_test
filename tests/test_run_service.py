@@ -91,8 +91,16 @@ def _gui_config(*, start_power: float = -10.0) -> dict:
                     "address": "sim::ps1",
                     "enabled": True,
                     "channels": {
-                        "CH1": {"voltage": {"value": 2.8}, "current": {"value": 0.1}},
-                        "CH2": {"voltage": {"value": 28.0}, "current": {"value": 2.0}},
+                        "CH1": {
+                            "role": "gate",
+                            "voltage": {"value": 2.8},
+                            "current": {"value": 0.1},
+                        },
+                        "CH2": {
+                            "role": "drain",
+                            "voltage": {"value": 28.0},
+                            "current": {"value": 2.0},
+                        },
                     },
                 }
             },
@@ -765,6 +773,47 @@ class CreatePreparedRunTests(unittest.TestCase):
             )
             self.assertFalse((prepared.run_directory / "test_plan_snapshot.json").exists())
             self.assertFalse((prepared.run_directory / "run_mapping_snapshot.json").exists())
+
+    def test_create_prepared_run_rejects_power_connection_conflicts(self):
+        """供电连接冲突（步骤 11）必须发生在写任何运行目录之前。"""
+        conflicting = _gui_config()
+        # 两台会被连接的电源抢同一个 VISA 地址：正式 run_mapping 只看冻结快照里的条目，
+        # 但硬件装配读的是这一段，因此必须在创建运行前失败。
+        conflicting["instruments"]["power_supplies"]["DP8B0885"] = {
+            "label": "DP8B0885",
+            "model": "DP832A",
+            "serial": "DP8B174400885",
+            "device_key": "rigol technologies:dp8b174400885",
+            "address": "sim::ps1",
+            "enabled": True,
+            "channels": {"CH1": {"voltage": {"value": 5.0}, "current": {"value": 0.5}}},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            repository = RunRepository(Path(directory) / "runs")
+            with self.assertRaisesRegex(ValueError, "共用同一 VISA 地址"):
+                create_prepared_run(
+                    _loaded(_valid_configuration()),
+                    run_id=RUN_ID,
+                    run_repository=repository,
+                    hardware_config=conflicting,
+                )
+            self.assertEqual(repository.list_run_ids(), ())
+
+    def test_create_prepared_run_does_not_treat_missing_field_roles_as_a_conflict(self):
+        """门禁只拦连接冲突：通道没声明供电角色时不得被拒成“连接冲突”。"""
+        incomplete = _gui_config()
+        for supply in incomplete["instruments"]["power_supplies"].values():
+            for channel in supply.get("channels", {}).values():
+                channel.pop("role", None)
+        with tempfile.TemporaryDirectory() as directory:
+            repository = RunRepository(Path(directory) / "runs")
+            prepared = create_prepared_run(
+                _loaded(_valid_configuration()),
+                run_id=RUN_ID,
+                run_repository=repository,
+                hardware_config=incomplete,
+            )
+            self.assertTrue((prepared.run_directory / "config.json").is_file())
 
     def test_create_prepared_run_requires_hardware_config(self):
         # 运行契约入口同样拒绝缺少硬件配置的创建请求，且不产生运行目录。

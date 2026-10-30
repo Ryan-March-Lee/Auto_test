@@ -3,6 +3,8 @@
 import math
 import os
 import re
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from domain.configuration.types import ConfigIssue, ConfigValidationResult
@@ -13,6 +15,93 @@ PathLike = Union[str, os.PathLike[str]]
 DB_VALUE_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*dB\s*$", re.IGNORECASE)
 # 设备发现写入的绑定来源：真实网络扫描为 ``scan``，离线演示为 ``simulated``。
 SIMULATED_BINDING_SOURCE = "simulated"
+# 供电分配的两个组：电源引用按组各自校验，物理通道在两组之间统一比对。
+ASSIGNMENT_GROUPS = ("driver_amplifier", "dut_amplifier")
+
+
+def assignment_supply_id(entry: Any) -> Optional[str]:
+    """返回一条供电分配记录引用的电源 ``supply_id``；未绑定或无法识别时返回 ``None``。
+
+    这是“分配怎样指向一台电源”的唯一实现（数据契约 §6.2）：配置页读取
+    （``presentation.qt.config_form_state``）与正式运行映射的编写都调用这里，不各写一套。
+
+    新配置只认 ``supply_id``：记录里出现该字段就以它为准（``null`` / 空白表示“引用
+    未绑定”），只有完全没有该字段的旧记录才回落读一次过渡别名 ``name``。``name`` 不是
+    第二个可用性来源，也不参与“猜一台电源”。
+
+    返回值只判断“是不是非空字符串”，不裁剪、不改写：写错的引用要留给校验报告，不能在
+    校验前被悄悄修成看起来合法的值。
+    """
+    if not isinstance(entry, Mapping):
+        return None
+    field = "supply_id" if "supply_id" in entry else "name"
+    value = entry.get(field)
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value
+
+
+def validate_hardware_connections(config: Dict[str, Any]) -> ConfigValidationResult:
+    """只校验硬件装配段的**连接冲突**（字段完整性由 :func:`validate_config` 负责）。
+
+    这里回答的是“照这份配置去连，会不会连错设备、抢同一个资源”，因此只保留满足
+    “两台设备会被同时连接”前提的规则，并且只看启用的条目：
+
+    - 启用的电源之间、电源与信号源/频谱仪之间不能共用同一个 VISA 地址：地址决定物理
+      资源，重复地址意味着一次连接可能落到另一台设备上（:func:`_validate_supply_addresses`）；
+    - 供电分配引用必须指向配置里存在且已启用的电源，过渡别名 ``name`` 必须与
+      ``supply_id`` 同值（:func:`_collect_assignment_channels` 的引用检查，与
+      :func:`_validate_assignment` 共用同一段实现）；
+    - 同一个物理通道 ``supply_id/CHx`` 不能同时供 DUT 与驱动功放
+      （:func:`_validate_cross_group_channels`）。
+
+    **不**在这里重复字段完整性（通道保护值、``power_supply_count``、通道是否声明
+    ``role``、gate/drain 是否齐全）：这些配置根本连不上，但那是配置作者要修的内容，
+    由 :func:`validate_config` 报；若在这里也报，运行创建会在写下运行目录之前以“连接
+    冲突”拒绝一份结构缺失的配置，消息会把用户引向错误的方向。
+
+    调用方：``app.run_context.create_prepared_run``（写运行目录前）与配置页的正式校验。
+    """
+    errors: List[ConfigIssue] = []
+
+    def error(path: str, message: str) -> None:
+        errors.append(ConfigIssue("error", path, message))
+
+    if not isinstance(config, Mapping):
+        return ConfigValidationResult(errors=[], warnings=[])
+    instruments = config.get("instruments")
+    instruments = instruments if isinstance(instruments, Mapping) else {}
+    supplies_value = instruments.get("power_supplies")
+    power_supplies = (
+        {str(name): value for name, value in supplies_value.items()}
+        if isinstance(supplies_value, Mapping)
+        else {}
+    )
+    assignments_value = config.get("power_supply_assignment")
+    assignments = (
+        {str(name): value for name, value in assignments_value.items()}
+        if isinstance(assignments_value, Mapping)
+        else {}
+    )
+    _validate_supply_addresses(
+        {str(name): value for name, value in instruments.items()}, power_supplies, error
+    )
+    # 引用规则只由 ``_collect_assignment_channels`` 实现一份；它顺带给出跨组比对要用的
+    # 通道表，组内重复与角色缺失交给正式校验。
+    _validate_cross_group_channels(assignments, power_supplies, error)
+    return ConfigValidationResult(errors=_unique_issues(errors), warnings=[])
+
+
+def _unique_issues(issues: List[ConfigIssue]) -> List[ConfigIssue]:
+    seen = set()
+    result: List[ConfigIssue] = []
+    for issue in issues:
+        key = (issue.path, issue.message)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(issue)
+    return result
 
 
 def validate_config(config: Dict[str, Any]) -> ConfigValidationResult:
@@ -126,12 +215,14 @@ def validate_config(config: Dict[str, Any]) -> ConfigValidationResult:
             power_supplies = get_mapping(instruments["power_supplies"], "instruments.power_supplies")
             for supply_name, supply_config in power_supplies.items():
                 _validate_power_supply(supply_name, supply_config, error, warning)
+            _validate_supply_addresses(instruments, power_supplies, error)
 
     driver_assignment: Dict[str, Any] = {}
     if "power_supply_assignment" in present_sections:
         assignments = get_mapping(root.get("power_supply_assignment"), "power_supply_assignment")
         driver_assignment = _validate_assignment(assignments, "driver_amplifier", power_supplies, error, warning)
         _validate_assignment(assignments, "dut_amplifier", power_supplies, error, warning)
+        _validate_cross_group_channels(assignments, power_supplies, error)
     if driver_enabled is True:
         _validate_driver_power_source(
             driver_power_source,
@@ -359,50 +450,43 @@ def _validate_assignment(
         error(f"{path}.power_supply_count", "必须是非负整数")
     elif configured_count != len(supplies):
         warning(f"{path}.power_supply_count", f"配置值为 {configured_count}，实际分配数量为 {len(supplies)}")
+    for role, supply_assignment in supplies.items():
+        if not isinstance(supply_assignment, dict):
+            error(f"{path}.supplies.{role}", "必须是对象")
+            continue
+        channels = supply_assignment.get("channel")
+        if not isinstance(channels, list) or not channels:
+            # 结构问题必须由这里报出：下面的通道解析会跳过它，不会产生任何通道。
+            error(f"{path}.supplies.{role}.channel", "必须是非空通道列表")
     # 角色唯一性作用于整个 assignment：不同电源分别提供 gate 也是重复配置，
     # 生产装配只按角色寻址，无法把两个 gate 分派出去。
     resolved_roles: Dict[str, str] = {}
-    for role, supply_assignment in supplies.items():
-        role_path = f"{path}.supplies.{role}"
-        if not isinstance(supply_assignment, dict):
-            error(role_path, "必须是对象")
+    # 引用与通道解析只在这里做一次；下面的角色规则叠加在同一个通道表上。
+    channels = _collect_assignment_channels(
+        assignments, power_supplies, error, group=assignment_name
+    )
+    # 未声明角色的通道按分配归组：每个分配只报一条，逐通道重复同一条说明只是噪声。
+    undecided: Dict[str, List[str]] = {}
+    for item in channels:
+        if item.role is None:
+            undecided.setdefault(item.role_owner, []).append(item.name)
+    for role_owner, names in undecided.items():
+        error(
+            f"{path}.supplies.{role_owner}.channel",
+            f"通道 {', '.join(names)} 必须显式声明 role 为 gate 或 drain，"
+            "不再按 CH1/CH2 推导供电角色",
+        )
+    for item in channels:
+        if item.role is None:
             continue
-        supply_name = supply_assignment.get("name")
-        if not isinstance(supply_name, str) or not supply_name.strip():
-            error(f"{role_path}.name", "必须是非空电源名称")
-            continue
-        supply_config = power_supplies.get(supply_name)
-        if not isinstance(supply_config, dict):
-            error(f"{role_path}.name", f"引用了不存在的电源 '{supply_name}'")
-            continue
-        if supply_config.get("enabled", True) is not True:
-            error(f"{role_path}.name", f"引用的电源 '{supply_name}' 未启用")
-        channels = supply_assignment.get("channel")
-        if not isinstance(channels, list) or not channels:
-            error(f"{role_path}.channel", "必须是非空通道列表")
-            continue
-        configured_channels = supply_config.get("channels", {})
-        for channel in channels:
-            channel_config = configured_channels.get(channel)
-            if not isinstance(channel_config, dict):
-                error(f"{role_path}.channel", f"通道 '{channel}' 不存在于电源 '{supply_name}'")
-                continue
-            channel_role = channel_config.get("role")
-            token = f"{supply_name}/{channel}"
-            if channel_role not in ("gate", "drain"):
-                error(
-                    f"{role_path}.channel",
-                    f"通道 '{channel}' 必须显式声明 role 为 gate 或 drain，"
-                    "不再按 CH1/CH2 推导供电角色",
-                )
-            elif channel_role in resolved_roles:
-                error(
-                    f"{role_path}.channel",
-                    f"供电角色重复配置: {channel_role} 同时出现在 "
-                    f"'{resolved_roles[channel_role]}' 和 '{token}'",
-                )
-            else:
-                resolved_roles[channel_role] = token
+        if item.role in resolved_roles:
+            error(
+                f"{path}.supplies.{item.role_owner}.channel",
+                f"供电角色重复配置: {item.role} 同时出现在 "
+                f"'{resolved_roles[item.role]}' 和 '{item.token}'",
+            )
+        else:
+            resolved_roles[item.role] = item.token
     if resolved_roles and set(resolved_roles) != {"gate", "drain"}:
         missing = sorted({"gate", "drain"} - set(resolved_roles))
         error(
@@ -410,3 +494,196 @@ def _validate_assignment(
             "供电分配必须同时提供 gate 和 drain 通道，缺少: " + "、".join(missing),
         )
     return supplies
+
+
+@dataclass(frozen=True)
+class _AssignedChannel:
+    """一条供电分配里给出的一个物理通道，以及它在配置里的位置。"""
+
+    group: str
+    role_owner: str
+    name: str
+    supply_id: str
+    token: str
+    # 通道在电源自己的 ``channels`` 里声明的供电角色；未声明或名称不合法时为 ``None``。
+    role: Optional[str]
+
+    @property
+    def path(self) -> str:
+        return f"power_supply_assignment.{self.group}.supplies.{self.role_owner}.channel"
+
+
+def _collect_assignment_channels(
+    assignments: Dict[str, Any],
+    power_supplies: Dict[str, Any],
+    error: Any,
+    *,
+    check_roles: bool = True,
+    group: Optional[str] = None,
+) -> List[_AssignedChannel]:
+    """把供电分配解析成物理通道列表，并报告引用层面的问题。
+
+    这是“分配指向哪台电源、哪些物理通道”的唯一实现：完整校验
+    （:func:`_validate_assignment`）在它之上再叠加角色与数量规则，连接冲突校验
+    （:func:`validate_hardware_connections`）只取通道表与引用错误。
+
+    报告的错误都关于**引用**，且都会让连接无法成立：引用缺失、引用了不存在的电源、
+    引用了未启用的电源、通道不在该电源上、过渡别名 ``name`` 与 ``supply_id`` 不一致。
+    “通道列表为空”与“通道没有声明 role”是字段完整性问题，仅在 ``check_roles``
+    为真时由 :func:`_validate_assignment` 报（它拿到的是同一个列表）。
+
+    ``group`` 不为空时只解析这一组，其余组忽略。``check_roles`` 为假时通道表只保留
+    连接判据（``token`` / ``path``），``role`` 一律为空——连接冲突与供电角色无关，
+    角色缺失不该让连接校验跟着失败。
+    """
+    collected: List[_AssignedChannel] = []
+    for group_name in ASSIGNMENT_GROUPS:
+        if group is not None and group_name != group:
+            continue
+        assignment = assignments.get(group_name)
+        if not isinstance(assignment, Mapping):
+            continue
+        supplies = assignment.get("supplies")
+        if not isinstance(supplies, Mapping):
+            continue
+        for role_owner, supply_assignment in supplies.items():
+            if not isinstance(supply_assignment, Mapping):
+                # 结构问题：交给完整校验报“必须是对象”。
+                continue
+            owner = str(role_owner)
+            role_path = f"power_supply_assignment.{group_name}.supplies.{owner}"
+            reference_path = (
+                f"{role_path}.supply_id"
+                if "supply_id" in supply_assignment
+                else f"{role_path}.name"
+            )
+            _require_reference_alias(supply_assignment, role_path, error)
+            supply_id = assignment_supply_id(supply_assignment)
+            if supply_id is None:
+                error(reference_path, "必须填写已绑定的电源引用 supply_id")
+                continue
+            supply_config = power_supplies.get(supply_id)
+            if not isinstance(supply_config, Mapping):
+                error(reference_path, f"引用了不存在的电源 '{supply_id}'")
+                continue
+            if supply_config.get("enabled", True) is not True:
+                error(reference_path, f"引用的电源 '{supply_id}' 未启用")
+            configured_channels = supply_config.get("channels")
+            configured_channels = (
+                configured_channels if isinstance(configured_channels, Mapping) else {}
+            )
+            value = supply_assignment.get("channel")
+            if not isinstance(value, list) or not value:
+                # 结构问题（“必须是非空通道列表”）：交给完整校验，连接无从谈起。
+                # 注意字符串（``"CH1"``）也是“不是列表”，不能按字符逐个解析成通道。
+                continue
+            for channel in value:
+                channel_config = configured_channels.get(channel)
+                if not isinstance(channel_config, Mapping):
+                    error(
+                        f"{role_path}.channel",
+                        f"通道 '{channel}' 不存在于电源 '{supply_id}'",
+                    )
+                    continue
+                role = channel_config.get("role")
+                collected.append(
+                    _AssignedChannel(
+                        group=group_name,
+                        role_owner=owner,
+                        name=str(channel),
+                        supply_id=supply_id,
+                        token=f"{supply_id}/{channel}",
+                        role=role if check_roles and role in ("gate", "drain") else None,
+                    )
+                )
+    return collected
+
+
+def _require_reference_alias(entry: Dict[str, Any], path: str, error: Any) -> None:
+    """过渡别名 ``name`` 若同时出现，必须与主字段 ``supply_id`` 同值。
+
+    保存时两个字段写同值、读取时只认 ``supply_id``；一旦被手工改成两个值，回填的与
+    运行用的就不是同一台电源——那就是“第二套编号”，必须在连接前报错。
+    """
+    if "supply_id" not in entry or "name" not in entry:
+        return
+    primary = entry.get("supply_id")
+    alias = entry.get("name")
+    if not isinstance(primary, str) or not primary.strip():
+        return
+    if not isinstance(alias, str) or not alias.strip():
+        return
+    if primary != alias:
+        error(f"{path}.name", f"过渡字段 name 必须与 supply_id 同值: {alias!r} != {primary!r}")
+
+
+def _validate_supply_addresses(
+    instruments: Dict[str, Any],
+    power_supplies: Dict[str, Any],
+    error: Any,
+) -> None:
+    """启用的仪器之间不能共用同一个 VISA 地址。
+
+    地址重复意味着“以为连的是这台、实际打开的是那台”。装配阶段
+    （``instrument.measurement_factory``）会拒绝这种配置，这里用同一判据在连接前报出
+    具体是两个字段在抢同一个地址，而不是等界面点了“开始”才失败。比对忽略大小写与
+    首尾空白：VISA 资源名不区分大小写，只差大小写仍是同一个物理资源。
+
+    只有启用的条目参与比对：未启用的电源不会连接（未绑定设备的电源地址为空或已失效），
+    它的历史地址不是连接冲突。
+    """
+    seen: Dict[str, str] = {}
+    for name in ("signal_generator", "spectrum_analyzer"):
+        instrument = instruments.get(name)
+        if not isinstance(instrument, dict) or instrument.get("enabled", True) is not True:
+            continue
+        address = instrument.get("address")
+        if isinstance(address, str) and address.strip():
+            seen.setdefault(_address_key(address), f"instruments.{name}.address")
+    for supply_name, supply_config in power_supplies.items():
+        if not isinstance(supply_config, dict) or supply_config.get("enabled", True) is not True:
+            continue
+        address = supply_config.get("address")
+        if not isinstance(address, str) or not address.strip():
+            continue
+        path = f"instruments.power_supplies.{supply_name}.address"
+        key = _address_key(address)
+        if key in seen:
+            error(path, f"多台仪器共用同一 VISA 地址: {address.strip()}（另见 {seen[key]}）")
+            continue
+        seen[key] = path
+
+
+def _address_key(address: str) -> str:
+    return " ".join(address.split()).casefold()
+
+
+def _validate_cross_group_channels(
+    assignments: Dict[str, Any],
+    power_supplies: Dict[str, Any],
+    error: Any,
+) -> None:
+    """同一个物理通道不能同时供 DUT 与驱动功放。
+
+    通道是 ``supply_id/CHx``：一台电源的一个通道只有一个物理输出，“既接 DUT 栅极、
+    又接驱动功放”不可能同时成立。两条记录各自看都合法，只有放在一起才矛盾，因此必须
+    按“物理通道”跨组统一比对（组内重复由 :func:`_validate_assignment` 的供电角色
+    唯一性报出）。
+
+    “分配里写了哪些物理通道”只在 :func:`_collect_assignment_channels` 解析一次；这里
+    不重复解释引用（引用问题已由同一次调用报出），只比较 token。token 与正式运行映射里
+    ``DUT 和驱动功放不能重复使用通道`` 用的 ``supply_id/CHx`` 同一写法。
+    """
+    uses: Dict[str, Tuple[str, str]] = {}
+    for item in _collect_assignment_channels(
+        assignments, power_supplies, error, check_roles=False
+    ):
+        previous = uses.get(item.token)
+        if previous is None:
+            uses[item.token] = (item.group, item.path)
+        elif previous[0] != item.group:
+            error(
+                item.path,
+                f"同一物理通道不能同时用于 DUT 与驱动功放: {item.token}"
+                f"（另见 {previous[1]}）",
+            )

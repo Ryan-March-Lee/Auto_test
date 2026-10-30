@@ -1,5 +1,6 @@
 import unittest
 
+from presentation.qt import config_form_state
 from presentation.qt.config_form_state import (
     POWER_SUPPLY_BINDINGS,
     LEGACY_BINDING_SOURCE,
@@ -38,6 +39,27 @@ def _combo(value):
             "itemData": lambda self, index: value if value else None,
         },
     )()
+
+
+def _form_widgets(**attributes):
+    """电源相关字段之外的一组合法读数控件。
+
+    ``validation_errors`` 会按整张表单写出正式配置，因此只关心电源的测试也必须提供
+    测试参数、压缩点、衰减器等读数；缺一项就是替身不完整，会让页面校验抛
+    ``AttributeError``（不是要被吞掉的配置错误）。
+    """
+    widgets = type("Widgets", (), {})()
+    widgets.freq_edit = _Text("[1.0]")
+    widgets.start_power = type("V", (), {"value": lambda self: -10.0})()
+    widgets.stop_power = type("V", (), {"value": lambda self: 0.0})()
+    widgets.power_step = type("V", (), {"value": lambda self: 1.0})()
+    widgets.max_input_power = type("V", (), {"value": lambda self: 30.0})()
+    widgets.compression_combo = type("C", (), {"currentText": lambda self: "5dB"})()
+    widgets.attenuator_combo = type("C", (), {"currentText": lambda self: "30dB"})()
+    widgets.test_mode_enabled = False
+    for name, value in attributes.items():
+        setattr(widgets, name, value)
+    return widgets
 
 
 def bound_supplies(*supply_ids):
@@ -274,24 +296,24 @@ class ConfigFormStateTests(unittest.TestCase):
         self.assertEqual(list(supplies), ["DP8B1519"])
 
     def test_power_assignment_must_reference_a_bound_supply(self):
-        widgets = type("Widgets", (), {})()
-        widgets.freq_edit = _Text("[1.0]")
-        widgets.device_bindings = {
-            POWER_SUPPLY_BINDINGS: {
-                "DP8B1519": {
-                    "device_key": "rigol technologies:dp8b214901519",
-                    "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
+        widgets = _form_widgets(
+            device_bindings={
+                POWER_SUPPLY_BINDINGS: {
+                    "DP8B1519": {
+                        "device_key": "rigol technologies:dp8b214901519",
+                        "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
+                    }
                 }
-            }
-        }
-        widgets.power_config_widgets = {}
-        widgets.pa_unit_count_combo = type("C", (), {"currentText": lambda self: "2"})()
-        widgets.power_assignment_widgets = {
-            "driver_source": type("C", (), {"currentText": lambda self: "自带供电"})(),
-            "driver_power": _combo(""),
-            "pa_unit1_power": _combo("DP8B1519"),
-            "pa_unit2_power": _combo("PS3"),
-        }
+            },
+            power_config_widgets={},
+            pa_unit_count_combo=type("C", (), {"currentText": lambda self: "2"})(),
+            power_assignment_widgets={
+                "driver_source": type("C", (), {"currentText": lambda self: "自带供电"})(),
+                "driver_power": _combo(""),
+                "pa_unit1_power": _combo("DP8B1519"),
+                "pa_unit2_power": _combo("PS3"),
+            },
+        )
 
         errors = ConfigFormState({}, widgets).validation_errors()
 
@@ -305,17 +327,17 @@ class ConfigFormStateTests(unittest.TestCase):
         显示文本可能是 ``DP8B1519（DP832A）``，把它原样写成 ``supply_id`` 就等于从显示
         字符串反解析业务值；这里要求按“未选择电源”报告，交给操作员重新选择。
         """
-        widgets = type("Widgets", (), {})()
-        widgets.freq_edit = _Text("[1.0]")
-        widgets.device_bindings = bound_supplies("DP8B1519")
-        widgets.power_config_widgets = {}
-        widgets.pa_unit_count_combo = _combo("1")
-        widgets.power_assignment_widgets = {
-            "driver_source": type("C", (), {"currentText": lambda self: "自带供电"})(),
-            "pa_unit1_power": type(
-                "C", (), {"currentText": lambda self: "DP8B1519（DP832A）"}
-            )(),
-        }
+        widgets = _form_widgets(
+            device_bindings=bound_supplies("DP8B1519"),
+            power_config_widgets={},
+            pa_unit_count_combo=_combo("1"),
+            power_assignment_widgets={
+                "driver_source": type("C", (), {"currentText": lambda self: "自带供电"})(),
+                "pa_unit1_power": type(
+                    "C", (), {"currentText": lambda self: "DP8B1519（DP832A）"}
+                )(),
+            },
+        )
 
         state = ConfigFormState({}, widgets)
         errors = state.validation_errors()
@@ -328,16 +350,16 @@ class ConfigFormStateTests(unittest.TestCase):
         self.assertNotIn("name", written)
 
     def test_power_assignment_without_any_supply_is_reported(self):
-        widgets = type("Widgets", (), {})()
-        widgets.freq_edit = _Text("[1.0]")
-        widgets.device_bindings = {}
-        widgets.power_config_widgets = {}
-        widgets.pa_unit_count_combo = type("C", (), {"currentText": lambda self: "1"})()
-        widgets.power_assignment_widgets = {
-            "driver_source": type("C", (), {"currentText": lambda self: "自带供电"})(),
-            "driver_power": type("C", (), {"currentText": lambda self: ""})(),
-            "pa_unit1_power": type("C", (), {"currentText": lambda self: ""})(),
-        }
+        widgets = _form_widgets(
+            device_bindings={},
+            power_config_widgets={},
+            pa_unit_count_combo=type("C", (), {"currentText": lambda self: "1"})(),
+            power_assignment_widgets={
+                "driver_source": type("C", (), {"currentText": lambda self: "自带供电"})(),
+                "driver_power": type("C", (), {"currentText": lambda self: ""})(),
+                "pa_unit1_power": type("C", (), {"currentText": lambda self: ""})(),
+            },
+        )
 
         errors = ConfigFormState({}, widgets).validation_errors()
 
@@ -488,16 +510,15 @@ class ConfigFormStateTests(unittest.TestCase):
 
     def test_replaced_power_supply_leaves_the_old_reference_unbound(self):
         """换电源后旧 ID 只是“没有绑定”，不会被解释成新绑定的那台设备。"""
-        widgets = type("Widgets", (), {})()
-        widgets.freq_edit = _Text("[1.0]")
-        widgets.device_bindings = bound_supplies("DP8B0885")
-        widgets.power_config_widgets = {}
-        widgets.test_mode_enabled = False
-        widgets.pa_unit_count_combo = _combo("1")
-        widgets.power_assignment_widgets = {
-            "driver_source": _combo("自带供电"),
-            "pa_unit1_power": _combo("DP8B1519"),
-        }
+        widgets = _form_widgets(
+            device_bindings=bound_supplies("DP8B0885"),
+            power_config_widgets={},
+            pa_unit_count_combo=_combo("1"),
+            power_assignment_widgets={
+                "driver_source": _combo("自带供电"),
+                "pa_unit1_power": _combo("DP8B1519"),
+            },
+        )
 
         message = "；".join(ConfigFormState({}, widgets).validation_errors())
 
@@ -548,17 +569,17 @@ class ConfigFormStateTests(unittest.TestCase):
 
     def test_unbound_power_assignment_is_written_as_a_null_reference(self):
         """没有选到电源时写 ``supply_id: null``，不写 name，也不临时挑一台可用电源。"""
-        widgets = type("Widgets", (), {})()
-        widgets.freq_edit = _Text("[1.0]")
-        widgets.device_bindings = bound_supplies("DP8B1519")
-        widgets.power_config_widgets = {}
-        widgets.test_mode_enabled = True
-        widgets.pa_unit_count_combo = _combo("1")
-        widgets.power_assignment_widgets = {
-            "driver_source": _combo("直流电源"),
-            "driver_power": _combo(""),
-            "pa_unit1_power": _combo(""),
-        }
+        widgets = _form_widgets(
+            device_bindings=bound_supplies("DP8B1519"),
+            power_config_widgets={},
+            test_mode_enabled=True,
+            pa_unit_count_combo=_combo("1"),
+            power_assignment_widgets={
+                "driver_source": _combo("直流电源"),
+                "driver_power": _combo(""),
+                "pa_unit1_power": _combo(""),
+            },
+        )
 
         state = ConfigFormState({}, widgets)
         assignment = state.read_power_assignment()["power_supply_assignment"]
@@ -584,6 +605,174 @@ class ConfigFormStateTests(unittest.TestCase):
         # 两种状态都会让引用读成 None，只有 assignment_declared 能区分。
         self.assertIsNone(assignment_supply_id({"supply_id": None}))
         self.assertIsNone(assignment_supply_id(None))
+
+    def test_assignment_reference_rule_lives_in_the_domain(self):
+        """读引用的唯一实现是 ``domain.configuration.rules.assignment_supply_id``。
+
+        配置页、正式运行映射与文件级校验都用它；这层只再导出，不重写判据。
+        """
+        from domain.configuration import rules
+
+        self.assertIs(assignment_supply_id, rules.assignment_supply_id)
+
+
+class _FormWidgets:
+    """页面控件替身：一个 DUT 电源下拉框，其余输入控件给合法的最小值。
+
+    正式运行校验会检查测试方案与运行映射，因此这里给的是“只有被测电源相关的字段不同”
+    的一份合法表单：电源条目带 ``CH1`` 供 gate、``CH2`` 供 drain，下拉框把业务值放在
+    ``itemData``（与真实控件一致）。
+    """
+
+    def __init__(self, *, test_mode_enabled, supply_id, bindings, driver_supply_id=None):
+        self.freq_edit = _Text("[2.4]")
+        self.start_power = type("V", (), {"value": lambda self: -10.0})()
+        self.stop_power = type("V", (), {"value": lambda self: 0.0})()
+        self.power_step = type("V", (), {"value": lambda self: 1.0})()
+        self.max_input_power = type("V", (), {"value": lambda self: 30.0})()
+        self.compression_combo = type("C", (), {"currentText": lambda self: "5dB"})()
+        self.attenuator_combo = type("C", (), {"currentText": lambda self: "30dB"})()
+        self.pa_unit_count_combo = _combo("1")
+        self.test_mode_enabled = test_mode_enabled
+        source = "直流电源" if driver_supply_id else "自带供电"
+        self.driver_power_source_combo = type("C", (), {"currentText": lambda self: source})()
+        self.device_bindings = bindings
+        self.power_config_widgets = {
+            supply_id: {
+                "channels": {
+                    "CH1": _channel_controls("gate"),
+                    "CH2": _channel_controls("drain"),
+                }
+            }
+        }
+        self.power_assignment_widgets = {
+            "driver_source": type("C", (), {"currentText": lambda self: source})(),
+            "driver_power": _combo(driver_supply_id or ""),
+            "pa_unit1_power": _combo(supply_id),
+        }
+
+
+def _channel_controls(role):
+    """一条通道的控件替身；供电角色是接线事实，由下拉框显式选择。"""
+    return {
+        "role": type("C", (), {"currentText": lambda self: role})(),
+        "voltage": type("V", (), {"value": lambda self: 5.0})(),
+        "voltage_protection": type("V", (), {"value": lambda self: 6.0})(),
+        "voltage_protection_enabled": type("B", (), {"isChecked": lambda self: True})(),
+        "current": type("V", (), {"value": lambda self: 1.0})(),
+        "current_protection": type("V", (), {"value": lambda self: 1.2})(),
+        "current_protection_enabled": type("B", (), {"isChecked": lambda self: True})(),
+    }
+
+
+def _bound(device_key, serial, model, address):
+    return {
+        "device_key": device_key,
+        "serial": serial,
+        "model": model,
+        "visa_address": address,
+        "source": "scan",
+    }
+
+
+class PowerSupplyConnectionTests(unittest.TestCase):
+    """步骤 11：页面的正式校验必须报出供电连接冲突。"""
+
+    SG = "TCPIP0::192.168.1.201::inst0::INSTR"
+    SA = "TCPIP0::192.168.1.202::inst0::INSTR"
+    PS1 = "TCPIP0::192.168.1.102::inst0::INSTR"
+
+    def _bindings(self, *, second_address=PS1):
+        """信号源、频谱仪各一台，外加两台已绑定电源（默认第二台与第一台同地址）。"""
+        return {
+            "signal_generator": {"visa_address": self.SG, "source": "scan"},
+            "spectrum_analyzer": {"visa_address": self.SA, "source": "scan"},
+            POWER_SUPPLY_BINDINGS: {
+                "DP8B1519": _bound(
+                    "rigol technologies:dp8b214901519", "DP8B214901519", "DP832A", self.PS1
+                ),
+                "DP8B0885": _bound(
+                    "rigol technologies:dp8b174400885", "DP8B174400885", "DP832A", second_address
+                ),
+            },
+        }
+
+    def test_reusing_the_same_physical_channel_is_reported_before_start(self):
+        """同一物理通道同时排给 DUT 与驱动功放，页面校验必须失败。"""
+        widgets = _FormWidgets(
+            test_mode_enabled=True,
+            supply_id="DP8B1519",
+            bindings=self._bindings(second_address="TCPIP0::192.168.1.108::inst0::INSTR"),
+            driver_supply_id="DP8B1519",
+        )
+
+        errors = ConfigFormState({}, widgets).validation_errors()
+
+        self.assertTrue(
+            any("同一物理通道不能同时用于 DUT 与驱动功放" in error for error in errors),
+            errors,
+        )
+
+    def test_two_bound_supplies_sharing_an_address_are_reported(self):
+        """两台启用的电源共用同一个 VISA 地址：正式映射本身合法，硬件装配不合法。"""
+        widgets = _FormWidgets(
+            test_mode_enabled=False, supply_id="DP8B1519", bindings=self._bindings()
+        )
+
+        errors = ConfigFormState({}, widgets).validation_errors()
+
+        self.assertTrue(any("共用同一 VISA 地址" in error for error in errors), errors)
+
+    def test_configuration_error_from_the_author_becomes_a_page_error(self):
+        """配置作者判定“写不成正式映射”时，页面把它作为一条校验说明。"""
+        from unittest import mock
+
+        from application.errors import ConfigurationError
+
+        widgets = _FormWidgets(
+            test_mode_enabled=False,
+            supply_id="DP8B1519",
+            bindings=self._bindings(second_address="TCPIP0::192.168.1.108::inst0::INSTR"),
+        )
+        from presentation.qt import configuration_authoring
+
+        with mock.patch.object(
+            configuration_authoring,
+            "author_official_configuration",
+            side_effect=ConfigurationError("缺少电源身份"),
+        ):
+            errors = ConfigFormState({}, widgets).validation_errors()
+
+        self.assertIn("缺少电源身份", "；".join(errors))
+
+    def test_unexpected_failure_is_not_disguised_as_a_configuration_error(self):
+        """程序缺陷不能被改写成“配置有问题”：否则页面会把 bug 报成用户的错。"""
+        from unittest import mock
+
+        widgets = _FormWidgets(
+            test_mode_enabled=False,
+            supply_id="DP8B1519",
+            bindings=self._bindings(second_address="TCPIP0::192.168.1.108::inst0::INSTR"),
+        )
+        state = ConfigFormState({}, widgets)
+        with mock.patch.object(
+            state, "build_config", side_effect=AttributeError("start_power")
+        ):
+            with self.assertRaises(AttributeError):
+                state.validation_errors()
+
+    def test_distinct_addresses_have_no_connection_error(self):
+        widgets = _FormWidgets(
+            test_mode_enabled=False,
+            supply_id="DP8B1519",
+            bindings=self._bindings(second_address="TCPIP0::192.168.1.108::inst0::INSTR"),
+        )
+
+        errors = ConfigFormState({}, widgets).validation_errors()
+
+        self.assertFalse(
+            [error for error in errors if "地址" in error or "通道" in error], errors
+        )
 
 
 if __name__ == "__main__":

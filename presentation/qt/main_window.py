@@ -38,6 +38,7 @@ from presentation.qt.status_panel import StatusPanel
 from presentation.qt.theme import apply_theme, build_stylesheet
 from presentation.qt.visualization_page import VisualizationPage
 from presentation.qt.welcome_page import WelcomePage, apply_test_mode, confirm_leave_configuration
+from presentation.qt.window_geometry import fit_window_to_screen
 
 logger = get_logger(__name__)
 
@@ -63,7 +64,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.paths = paths or default_paths()
         self.setWindowTitle("PA自动测试系统 v1.0")
-        self.setGeometry(100, 100, 1600, 1000)
+        # 初始几何按屏幕可用区域计算（居中、避开任务栏），不再写死 100,100,1600,1000
+        # 而落到屏幕右下角、被边缘和任务栏切掉一部分；包体尺寸见 window_geometry。
+        fit_window_to_screen(self)
         self.coordinator = ApplicationCoordinator(
             log=self.add_log_message,
             warn=lambda title, message: QMessageBox.warning(self, title, message),
@@ -545,6 +548,9 @@ def run_application(argv=None, window_factory=MainWindow):
     app = build_application(argv)
     window = window_factory()
     window.show()
+    # 显示后再定位一次：此时已能拿到真实屏幕（多屏环境的窗口所在屏），
+    # 保证窗口完整落在可用区域内、不被任务栏遮挡。
+    fit_window_to_screen(window)
     return app.exec()
 
 
@@ -554,5 +560,5 @@ def main():
 
 __all__ = [
     "MainWindow", "build_application", "run_application", "main",
-    "APPLICATION_STYLE", "apply_light_theme",
+    "APPLICATION_STYLE", "apply_light_theme", "fit_window_to_screen",
 ]

@@ -414,6 +414,7 @@ INTERNAL_MODULES = {
     "presentation.qt.theme": "统一主题：设计令牌、调色板与全局样式表",
     "presentation.qt.visualization_page": "历史可视化页面",
     "presentation.qt.welcome_page": "启动欢迎页与测试模式选择",
+    "presentation.qt.window_geometry": "主窗口初始几何：按屏幕可用区域收缩并居中，避开任务栏与屏幕边缘",
     "presentation.qt.workers": "测量 worker 实现",
 }
 

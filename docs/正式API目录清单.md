@@ -359,7 +359,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 
 ## 8. 步骤 1 验收与现行清单规模
 
-- 正式公共 API：55 个模块路径、240 个公开名称，已在本文与测试中固定（步骤 5 新增
+- 正式公共 API：56 个模块路径、244 个公开名称，已在本文与测试中固定（步骤 5 新增
   `infrastructure.config.validation.validate_official_config`，用于校验已解析的正式配置文档；
   步骤 6 收敛结果 DTO；步骤 7 新增 `application.ports.measurement_session`；步骤 13 新增
   `domain.measurement.values` 的测量值对象；步骤 15 新增 `application.errors` 的跨层异常分类
@@ -368,14 +368,17 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
   `application.archival_service.archive_completed_stage`；归档重构步骤 7 新增
   `application.dto.run_history`、`application.run_history_service` 与
   `application.ports.gui_data_service` 的 `RunArchiveStatusPort` / `RunHistoryServicePort`）。
-- 正式内部模块：50 个路径已登记（以测试中的 `INTERNAL_MODULES` 为准），公共与内部边界不重叠
+- 正式内部模块：57 个路径已登记（以测试中的 `INTERNAL_MODULES` 为准），公共与内部边界不重叠
   （步骤 7 补登记 `instrument.safety`：安全标记的显式签名判定是跨模块契约；归档重构步骤 4
   补登记 `infrastructure.persistence.artifact_generator` 与 `analysis.reporting`：自动归档 CSV
   产物的适配器及其复用的分析层写入能力；步骤 5 在同一适配器模块内补上报告产物与组合端口，
   报告复用 `analysis.reporting.render_html_report`，不新增模块路径；归档重构步骤 7 未新增
   内部模块——历史管理页沿用已登记的 `presentation.qt.history_view_model`；归档重构步骤 10
   把页面模块与类名收口为 `presentation.qt.run_history_page` / `RunHistoryPage`，路由 key 改为
-  `run_history`，用户可见标题仍为“历史运行”）。
+  `run_history`，用户可见标题仍为“历史运行”；技术债计划步骤 13 把配置页的控件构建拆成
+  `presentation.qt.config_page_widgets`（固定操作栏与页面共用的数值框/下拉框工厂）与
+  `presentation.qt.config_power_section`（电源分区的通道参数标签页与分配表单），页面只负责
+  组合与交互协调）。
 - 旧模块：29 个条目（21 个根模块、8 个正式包内实现），状态与工作树一致。步骤 16
   （2026-10-27）已把最后五个根目录纯再导出模块（`measurement_calculations` /
   `measurement_lifecycle` / `measurement_services` / `app_logging` / `project_paths`）

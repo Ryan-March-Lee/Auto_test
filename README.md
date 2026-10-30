@@ -323,6 +323,10 @@ code 只能导入登记的模块路径，旧模块禁止新增引用，由 `test
 
 现行架构要点：
 
+- 运行契约是测量唯一入口：每次测量绑定同一个 `runs/<run_id>/` 运行目录（`config.json`、
+  `manifest.json`、`inputs/hardware_config.json`），硬件连接只从冻结快照取配置。仍存在的无契约
+  分支按[无运行契约调用方清单](docs/无运行契约调用方清单.md)逐项登记，由
+  `tests/test_run_contract_inventory.py` 冻结（只减不增）。
 - 正式结果只写 `runs/<run_id>/`；历史查看与导出只读运行目录 manifest 登记的正式结果，不再
   扫描全局结果目录。
 - 三类测量结果只有唯一显式 DTO（`CableLossMeasurementResult` /

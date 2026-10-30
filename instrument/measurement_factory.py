@@ -7,6 +7,14 @@ roles and physical channels: every assigned power channel must declare its
 discovery stays in the hardware-smoke entry points
 (:mod:`hardware.power_supply_discovery`) and is never used for production
 assembly.
+
+Power supplies are a **dynamic set**: ``instruments.power_supplies`` is keyed by
+``supply_id`` (the field short label, e.g. ``DP8B1519``) and every physical
+route is the explicit ``supply_id/CHx`` token.  A routed supply is connected,
+identity-checked and initial-output-checked on its own, so 1, 2 or 5 supplies
+need no code change.  ``test_instrument_routing`` forbids ``CH1``/``CH2`` as
+assembly constants, so the power driver model and the channel query form live
+in the constants below, not in the per-supply loop.
 """
 
 from __future__ import annotations
@@ -23,6 +31,7 @@ from application.errors import (
     ProtocolError,
     cause_of,
 )
+from domain.configuration.rules import assignment_supply_id
 from infrastructure.logging.app_logging import get_logger
 
 from .drivers import ScpiPowerSupplyDriver, ScpiSignalGeneratorDriver, ScpiSpectrumAnalyzerDriver
@@ -37,6 +46,12 @@ from .simulation import (
 
 # 生产供电只接受配置中显式声明的角色；不再按 CH1/CH2 推导。
 POWER_ROLES = ("gate", "drain")
+# 本项目生产供电只使用 DP832A；身份不符仍属于能力问题，不是连接问题。
+POWER_SUPPLY_MODEL = "DP832A"
+# 初始输出检查逐通道查询：每台电源只查自己已配置的通道（不是固定 CH1/CH2）。
+POWER_OUTPUT_QUERY = "OUTP? {channel}"
+# 通道状态既能回 "ON"/"OFF"，也可能回 1/0：只有这些值表示输出已关闭。
+POWER_OUTPUT_OFF_STATES = frozenset({"0", "OFF"})
 
 logger = get_logger(__name__)
 
@@ -112,15 +127,34 @@ class _ConfiguredPowerSupply:
     Every method mirrors :class:`instrument.ports.PowerSupplyPort`; there is
     no attribute forwarding, so an unknown operation or channel fails at the
     call boundary instead of being routed by method name.
+
+    The mapping key is the ``supply_id`` and is the only routing identity: a
+    token physically routes by that key and never by the display label.
+    ``supply_labels`` gives the field short label of each routed supply for logs
+    and failure records (``DP8B1519``); it defaults to the routing key.
     """
 
-    def __init__(self, supplies: Mapping[str, Any]):
+    def __init__(
+        self,
+        supplies: Mapping[str, Any],
+        *,
+        supply_labels: Mapping[str, str] | None = None,
+    ):
         if not supplies:
             raise ValueError("生产电源路由至少需要一个已配置电源")
         self.supplies = dict(supplies)
+        labels = dict(supply_labels or {})
+        self.supply_labels = {
+            name: _short_label(labels.get(name), name) for name in self.supplies
+        }
+
+    def label(self, supply_name: str) -> str:
+        """返回已配置电源的短标签；未配置的电源返回原值，供错误消息使用。"""
+        return self.supply_labels.get(supply_name) or _short_label(None, supply_name)
 
     def connect(self, *, timeout_s: float = 10.0) -> None:
-        for supply in self.supplies.values():
+        for name, supply in self.supplies.items():
+            logger.info("连接生产电源 %s", self.label(name))
             supply.connect(timeout_s=timeout_s)
 
     def close(self, *, timeout_s: float = 5.0) -> None:
@@ -129,7 +163,8 @@ class _ConfiguredPowerSupply:
             try:
                 supply.close(timeout_s=timeout_s)
             except Exception as error:  # 单个电源关闭失败不阻止释放其余电源
-                failures.append(FailureRecord(str(name), error))
+                logger.warning("生产电源 %s 关闭失败: %s", self.label(name), error)
+                failures.append(FailureRecord(self.label(name), error))
         if failures:
             raise CleanupError("power supply close failed", failures) from cause_of(failures)
 
@@ -196,9 +231,12 @@ class _ConfiguredPowerSupply:
     def _route(self, channel: str):
         try:
             supply_name, physical_channel = str(channel).split("/", 1)
-            return self.supplies[supply_name], physical_channel
-        except (KeyError, ValueError) as error:
+        except ValueError as error:
             raise ValueError(f"未配置的生产电源通道: {channel}") from error
+        supply = self.supplies.get(supply_name)
+        if supply is None:
+            raise ValueError(f"未配置的生产电源通道: {channel}")
+        return supply, physical_channel
 
 
 def _open_resource_manager() -> Any:
@@ -250,20 +288,37 @@ def _create_hardware_measurement_port(config_path: str, *, recorder=None):
         configured_supplies = {}
         for power_name in plan["supply_names"]:
             power_config = plan["power_configs"][power_name]
-            label = f"生产电源 {power_name}"
+            label = f"生产电源 {plan['supply_labels'][power_name]}"
             resource = _open_device(manager, power_config["address"], label)
             resources.append(resource)
             identity = _query(resource, "*IDN?", label)
-            if "DP832A" not in identity.upper():
+            if POWER_SUPPLY_MODEL not in identity.upper():
                 # 型号不符时设备仍然可用，但不能用于本项目的供电动作：
                 # 这是能力/前提问题，不是连接问题。
-                raise DeviceCapabilityError(f"{label} 设备身份不是 DP832A: {identity}")
-            states = [
-                _query(resource, f"OUTP? {channel}", label).upper()
+                raise DeviceCapabilityError(
+                    f"{label} 设备身份不是 {POWER_SUPPLY_MODEL}: {identity}"
+                )
+            # 初始输出检查覆盖这台电源配置的全部通道：输出开着就禁止进入测量，
+            # 无论该通道这次有没有被分配。错误与日志都带 ``short-label/CHx``。
+            supply_label = plan["supply_labels"][power_name]
+            checked = ", ".join(
+                f"{supply_label}/{channel}"
                 for channel in _configured_channels(power_config, power_name)
-            ]
-            if any(state not in {"0", "OFF"} for state in states):
-                raise DeviceCapabilityError(f"{label} 初始输出未关闭，禁止上电测量")
+            )
+            states = []
+            for channel in _configured_channels(power_config, power_name):
+                states.append(
+                    _query(
+                        resource,
+                        POWER_OUTPUT_QUERY.format(channel=channel),
+                        f"{supply_label}/{channel}",
+                    )
+                )
+            if any(state.upper() not in POWER_OUTPUT_OFF_STATES for state in states):
+                raise DeviceCapabilityError(
+                    f"{label} 初始输出未关闭，禁止上电测量（检查通道: {checked}）"
+                )
+            logger.info("生产电源 %s 连接成功，检查通道: %s", supply_label, checked)
             configured_supplies[power_name] = ScpiPowerSupplyDriver(
                 VisaScpiTransport(resource, recorder=recorder)
             )
@@ -279,7 +334,10 @@ def _create_hardware_measurement_port(config_path: str, *, recorder=None):
         spectrum = ScpiSpectrumAnalyzerDriver(
             VisaScpiTransport(spectrum_resource, recorder=recorder)
         )
-        power = _ConfiguredPowerSupply(configured_supplies)
+        # 路由键是 ``supply_id``；标签只用于日志、关闭失败记录与错误消息。
+        power = _ConfiguredPowerSupply(
+            configured_supplies, supply_labels=plan["supply_labels"]
+        )
         session = _VisaSession(
             manager,
             signal,
@@ -350,49 +408,77 @@ def _hardware_assembly_plan(config: Mapping[str, Any]) -> dict[str, Any]:
         for supply in _supply_assignments(group).values():
             if not isinstance(supply, Mapping):
                 raise ValueError("供电分配条目必须是对象")
-            name = supply.get("name")
+            # 分配引用与配置页、文件校验共用同一个判据：``supply_id`` 为准，只有
+            # 完全没有该字段的旧记录才回落读一次 ``name``。返回值原样保留，供步骤 13
+            # 的迁移器区分“旧槽位名”和“未迁移的引用”。
+            name = _assigned_supply_name(supply)
             if name is None:
                 continue
-            if not isinstance(name, str) or not name.strip():
-                raise ValueError("供电分配的电源名称必须是非空字符串")
             assigned_names.add(name)
-    if any(name not in enabled_names for name in assigned_names):
-        raise ValueError("供电分配引用了未启用或不存在的电源模板")
-    if not enabled_names:
+    if not enabled_names and not assigned_names:
         raise ValueError("硬件测量路径至少需要一个电源模板配置")
     if not assigned_names:
         raise ValueError("生产硬件路径必须显式配置电源角色和通道")
 
+    # 分组时按 ``supply_id`` 匹配 ``power_supplies`` 的键；同时接受该电源自己的
+    # ``label`` 和旧文件残留的 ``visual`` 槽位（``PS1`` 等）。两个来源都必须是
+    # 唯一的一台电源且身份一致，绝不按顺序或长度猜。解析在“已启用”检查之前：
+    # 别名先落到一台确定的设备上，再判断它有没有被启用。短标签只用于显示，
+    # 不参与路由。
+    visual_names = _supply_visual_names(power_configs)
+    supply_keys = {}
+    supply_labels = {}
+    for reference in sorted(assigned_names):
+        supply_key = _resolve_supply_key(reference, enabled_names, power_configs, visual_names)
+        supply_keys[reference] = supply_key
+        supply_labels[supply_key] = _short_label(
+            power_configs[supply_key].get("label"), supply_key
+        )
+    duplicate_labels = _duplicate_labels(supply_labels)
+    if duplicate_labels:
+        # 同一个显示名对应两台电源时，日志与错误会指向错误的设备编号，而路由
+        # 本身仍然正确。这里直接拒绝，而不是冒险让操作者认错电源。
+        raise ValueError(
+            "生产电源短标签重复: " + ", ".join(sorted(duplicate_labels))
+        )
+
     supply_addresses = {}
-    for power_name in sorted(assigned_names):
-        address = _required_address(power_configs[power_name], f"生产电源 {power_name}")
+    for reference in sorted(assigned_names):
+        power_name = supply_keys[reference]
+        power_label = supply_labels[power_name]
+        power_config = power_configs[power_name]
+        address = _required_address(power_config, f"生产电源 {power_label}")
         if address == signal_address:
-            raise ValueError(f"生产电源 {power_name} 与信号源地址重复: {address}")
+            raise ValueError(f"生产电源 {power_label} 与信号源地址重复: {address}")
         if address == spectrum_address:
-            raise ValueError(f"生产电源 {power_name} 与频谱仪地址重复: {address}")
+            raise ValueError(f"生产电源 {power_label} 与频谱仪地址重复: {address}")
         for other_name, other_address in supply_addresses.items():
             if address == other_address:
                 raise ValueError(
-                    f"生产电源 {power_name} 与生产电源 {other_name} 地址重复: {address}"
+                    f"生产电源 {power_label} 与"
+                    f"生产电源 {supply_labels[other_name]} 地址重复: {address}"
                 )
         supply_addresses[power_name] = address
 
-    dut_channels, dut_settings = _assigned_channels(dut_assignment, power_configs, "DUT")
+    dut_channels, dut_settings = _assigned_channels(
+        dut_assignment, power_configs, supply_keys, supply_labels, "DUT"
+    )
     driver_channels, driver_settings = _assigned_channels(
-        driver_assignment, power_configs, "驱动"
+        driver_assignment, power_configs, supply_keys, supply_labels, "驱动"
     )
     overlap = set(dut_channels.values()) & set(driver_channels.values())
     if overlap:
         raise ValueError(
             "DUT 与驱动功放占用了同一个电源通道: " + ", ".join(sorted(overlap))
         )
-    supply_names = sorted(assigned_names)
+    supply_names = sorted(supply_labels)
     return {
         "signal_config": signal_config,
         "signal_address": signal_address,
         "spectrum_address": spectrum_address,
         "power_configs": power_configs,
         "supply_names": supply_names,
+        "supply_labels": supply_labels,
         "dut_channels": dut_channels,
         "driver_channels": driver_channels,
         "power_settings": {**driver_settings, **dut_settings},
@@ -439,23 +525,32 @@ def _required_address(instrument_config: Mapping[str, Any], label: str) -> str:
 def _assigned_channels(
     assignment: Mapping[str, Any],
     power_configs: Mapping[str, Any],
+    supply_keys: Mapping[str, str],
+    supply_labels: Mapping[str, str],
     label: str,
 ) -> tuple[dict[str, str], dict[str, dict[str, float]]]:
-    """Resolve assigned logical roles to explicit ``supply/channel`` tokens."""
+    """Resolve assigned logical roles to explicit ``supply_id/channel`` tokens.
+
+    ``supply_keys`` 把分配里的引用（``supply_id`` / ``label`` / 旧槽位）解析成
+    ``power_supplies`` 的集合键。物理路由的 token 只由集合键拼成：短标签是显示
+    文本，可能被改动或与键不同，绝不能出现在被路由的通道值里。错误消息用短标签。
+    """
     channels = {}
     settings = {}
     for supply in _supply_assignments(assignment).values():
         if not isinstance(supply, Mapping):
             raise ValueError(f"{label} 供电分配条目必须是对象")
-        power_name = supply.get("name")
+        reference = _assigned_supply_name(supply)
+        power_name = supply_keys.get(reference)
         power_config = power_configs.get(power_name)
         if not isinstance(power_config, Mapping):
-            raise ValueError(f"供电分配引用了不存在的电源: {power_name}")
+            raise ValueError(f"供电分配引用了不存在的电源: {reference}")
+        power_label = supply_labels.get(power_name, str(power_name))
         configured_channels = _configured_channels(power_config, power_name)
-        for channel in _channel_list(supply, str(power_name)):
+        for channel in _channel_list(supply, power_label):
             channel_config = configured_channels.get(channel)
             if not isinstance(channel_config, Mapping):
-                raise ValueError(f"供电分配引用了不存在的通道: {power_name}/{channel}")
+                raise ValueError(f"供电分配引用了不存在的通道: {power_label}/{channel}")
             token = f"{power_name}/{channel}"
             role = _explicit_role(channel_config, token)
             if role in channels and channels[role] != token:
@@ -469,13 +564,119 @@ def _assigned_channels(
     return channels, settings
 
 
-def _channel_list(supply: Mapping[str, Any], power_name: str) -> list[str]:
+def _assigned_supply_name(supply: Mapping[str, Any]) -> str | None:
+    """供电分配引用的电源名，原样返回（不裁剪、不猜测）。
+
+    ``domain.configuration.rules.assignment_supply_id`` 是引用判据的唯一实现，
+    这里只把它返回值再次收紧成“非空字符串”，避免非字符串进入集合键。
+    """
+    name = assignment_supply_id(supply)
+    if not isinstance(name, str) or not name.strip():
+        return None
+    return name
+
+
+def _resolve_supply_key(
+    reference: str,
+    enabled_names: Sequence[str],
+    power_configs: Mapping[str, Any],
+    visual_names: Mapping[str, list[str]],
+) -> str:
+    """把分配里的电源引用解析成 ``power_supplies`` 的集合键。
+
+    ``supply_id`` 就是集合键，直接命中。旧文件仍可能写 ``label``（迁移前的显示名）
+    或 ``visual`` 槽位（``PS1`` 等）：它们必须唯一指向一台电源，且这台电源必须已
+    启用、身份自洽。任何歧义都明确失败——按位置或按数量取一台，等于把电接到
+    不知道哪台设备上。
+
+    歧义判定不只看“已启用的候选”：一个名字既是某台的集合键、又是另一台的
+    ``label`` 时，两台都没启用也不能悄悄挑一台。因此命中集合键时仍要求名字类
+    别名不再指向**其它**电源。
+    """
+    if reference in power_configs:
+        aliases = [
+            name
+            for name in _alias_supply_keys(reference, power_configs, visual_names)
+            if name != reference
+        ]
+        if aliases:
+            raise ValueError(
+                f"供电分配引用的电源名 {reference} 同时是另一台电源的 label/visual: "
+                + ", ".join(
+                    _short_label(power_configs[name].get("label"), name) for name in aliases
+                )
+                + f"；请改写成 supply_id {reference} 之外的唯一写法"
+            )
+        key = reference
+    else:
+        candidates = _alias_supply_keys(reference, power_configs, visual_names)
+        if not candidates:
+            raise ValueError(f"供电分配引用了不存在的电源: {reference}")
+        if len(candidates) > 1:
+            raise ValueError(
+                f"供电分配引用的电源名 {reference} 对应多台电源: "
+                + ", ".join(sorted(candidates))
+                + "；请改写成各自的 supply_id"
+            )
+        key = candidates[0]
+    if key not in enabled_names:
+        raise ValueError(f"供电分配引用了未启用的电源: {reference}")
+    return key
+
+
+def _alias_supply_keys(
+    reference: str,
+    power_configs: Mapping[str, Any],
+    visual_names: Mapping[str, list[str]],
+) -> list[str]:
+    """按 ``label`` 与旧 ``visual`` 槽位找出引用可能指向的电源键。"""
+    matched = [
+        name
+        for name, config in power_configs.items()
+        if isinstance(config, Mapping)
+        and _short_label(config.get("label"), name) == reference
+    ]
+    matched.extend(visual_names.get(reference, ()))
+    return list(dict.fromkeys(matched))
+
+
+def _supply_visual_names(power_configs: Mapping[str, Any]) -> dict[str, list[str]]:
+    """旧文件里残留的 ``visual`` 槽位名到电源键的索引（只用于引用解析）。"""
+    index: dict[str, list[str]] = {}
+    for name, config in power_configs.items():
+        if not isinstance(config, Mapping):
+            continue
+        visual = config.get("visual")
+        if isinstance(visual, str) and visual.strip():
+            index.setdefault(visual.strip(), []).append(name)
+    return index
+
+
+def _duplicate_labels(supply_labels: Mapping[str, str]) -> set[str]:
+    """出现不止一次的短标签：显示名重复时日志无法唯一指向一台电源。"""
+    seen: set[str] = set()
+    duplicated: set[str] = set()
+    for label in supply_labels.values():
+        if label in seen:
+            duplicated.add(label)
+        seen.add(label)
+    return duplicated
+
+
+def _short_label(label: Any, fallback: Any) -> str:
+    """电源的现场短标签：配置里的 ``label`` 优先，没有时才用集合键。"""
+    if isinstance(label, str) and label.strip():
+        return label.strip()
+    return str(fallback)
+
+
+def _channel_list(supply: Mapping[str, Any], power_label: str) -> list[str]:
     channels = supply.get("channel")
     if not isinstance(channels, list) or not channels:
-        raise ValueError(f"供电分配必须提供非空通道列表: {power_name}")
+        raise ValueError(f"供电分配必须提供非空通道列表: {power_label}")
     names = [channel for channel in channels if isinstance(channel, str)]
     if len(names) != len(channels):
-        raise ValueError(f"供电分配的通道必须是字符串: {power_name}")
+        raise ValueError(f"供电分配的通道必须是字符串: {power_label}")
     return names
 
 

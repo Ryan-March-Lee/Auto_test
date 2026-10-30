@@ -387,9 +387,9 @@ class _FakeResource:
 
     def query(self, command):
         self.commands.append(("query", command))
-        if command == "*IDN?" and self.address == "PS":
+        if command == "*IDN?" and self.address.startswith("PS"):
             return "RIGOL TECHNOLOGIES,DP832A,TEST,1.0"
-        if command.startswith("OUTP?") and self.address == "PS":
+        if command.startswith("OUTP?") and self.address.startswith("PS"):
             return "OFF"
         if command == ":MEASure:VOLTage? CH1":
             return "2.8"

@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import Iterable, Mapping, Sequence
 
+from infrastructure.logging.app_logging import get_logger
+
+logger = get_logger(__name__)
+
 
 class PortMeasurementAdapter:
     """Expose the measurement service port over explicit instrument ports.
@@ -107,15 +111,22 @@ class PortMeasurementAdapter:
         self.session.start_measurement()
 
     def emergency_power_off_all(self, *, timeout_s: float = 5.0) -> list[BaseException]:
-        """Switch off the explicitly configured channels before closing."""
+        """Switch off the explicitly configured channels before closing.
+
+        ``emergency_channels`` already carry the explicit ``supply_id/CHx`` token
+        of each declared role, so the log names the supply short label and the
+        channel the operator has to confirm on the front panel.
+        """
         errors = []
         self._last_emergency_power_off = []
         for index, channel in self.emergency_channels:
             try:
                 self.power_supply.set_output_enabled(channel, False, timeout_s=timeout_s)
             except Exception as error:
+                logger.error("紧急关闭电源通道失败 %s: %s", channel, error)
                 errors.append(error)
             else:
+                logger.info("紧急关闭电源通道 %s", channel)
                 self._last_emergency_power_off.append((index, channel))
         return errors
 

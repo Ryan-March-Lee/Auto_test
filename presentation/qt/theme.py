@@ -399,6 +399,9 @@ QFrame#discoveryResultsBox {
 QFrame#discoveryResultsBox[filled="true"] {
     background-color: $surface_dropzone;
 }
+/* 框中央的“查找设备”在这里没有规则：它是一张自绘的深色卡片按钮
+   （``scan_card.ScanPromptCard``），正中的渐变标题、柔光、光带与粒子都画在它自己的
+   画布上——伪元素与 ``transition`` 不在 QSS 的能力里，整块画下来才做得出来。 */
 
 /* ===== 设备卡片（“仪表配置”页的发现结果） =====
    一台仪器一张卡片，自上而下读：居中放大的仪器名、仪器图、最下面的加粗设备码缩写。

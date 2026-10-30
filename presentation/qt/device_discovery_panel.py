@@ -19,9 +19,14 @@
   按面板宽度自动换行，不再是一张横向表格。
 
 版式：扫描行（扫描网段 / 扫描方式）在标题正下方居中，结果框在它下面；框里在还没点过
-“查找设备”时铺一层浅灰底、把按钮放在正中，点下去之后按钮与灰底一起收走，框中央换成
-“正在查找设备”，结果回来后再换成卡片。**结果框的高度是固定的**（两行卡片 + 框内的按钮
+“查找设备”时铺一层浅灰底、把那张卡片按钮放在正中，点下去之后按钮与灰底一起收走，框中央
+换成“正在查找设备”，结果回来后再换成卡片。**结果框的高度是固定的**（两行卡片 + 框内的按钮
 与状态行）：查找前后、结果多少都不改变框的大小，卡片超出时只在框内滚动。
+
+“查找设备”不是普通按钮而是一张自绘的深色卡片（:mod:`presentation.qt.scan_card`）：卡片
+一直亮着，正中的渐变标题就是“查找设备”，四周有柔光、光带与粒子自己在动；鼠标悬浮不再
+改变它。那张卡片只负责外观与动效，点击行为仍由本面板的
+:meth:`DeviceDiscoveryPanel.request_scan` 接手。
 """
 
 from __future__ import annotations
@@ -63,6 +68,7 @@ from .device_cards import (
     instrument_picture_path,
 )
 from .input_controls import WheelSafeComboBox
+from .scan_card import ScanPromptCard
 from .theme import set_button_variant, set_tone
 
 # 角色标签是“本次测试语义”，与设备身份（序列号）分开：设备可以换 IP，角色不会变。
@@ -378,9 +384,10 @@ class DeviceDiscoveryPanel(QWidget):
         self.subnet_edit.setToolTip("扫描范围，例如 192.168.1.0/24；单个地址按 /24 处理")
         self.mode_combo = WheelSafeComboBox()
         self.mode_combo.addItems([label for _value, label in SCAN_MODE_CHOICES])
-        self.scan_btn = QPushButton("查找设备")
+        self.scan_btn = ScanPromptCard("查找设备")
         self.scan_btn.setToolTip("扫描网段并读取每台设备的 *IDN?；不会改变任何仪器状态")
-        set_button_variant(self.scan_btn, "secondary")
+        # 外观不取自样式表：它是一张自绘的深色卡片按钮（悬停动效见
+        # ``presentation.qt.scan_card``），尺寸由那张卡片自己给出。
         # 扫描期间的框中央说明：按钮收走后，这里写明正在读取设备。
         self.loading_label = QLabel(LOADING_TEXT)
         self.loading_label.setAlignment(Qt.AlignHCenter)

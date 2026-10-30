@@ -24,6 +24,7 @@ class ManagedInstrumentSession:
 
     def __init__(self, signal_generator, spectrum_analyzer, power_supply,
                  power_channels: Mapping[str, str] | None = None, *,
+                 power_channel_labels: Mapping[str, str] | None = None,
                  owns_signal_generator: bool = True,
                  owns_spectrum_analyzer: bool = True,
                  owns_power_supply: bool = True,
@@ -35,6 +36,8 @@ class ManagedInstrumentSession:
         self.spectrum_analyzer = spectrum_analyzer
         self.power_supply = power_supply
         self.power_channels = dict(power_channels or {})
+        # 路由 token -> 日志写法（``短标签/CHx``）：只影响日志与失败记录，不参与路由。
+        self.power_channel_labels = dict(power_channel_labels or {})
         self.owns_signal_generator = owns_signal_generator
         self.owns_spectrum_analyzer = owns_spectrum_analyzer
         self.owns_power_supply = owns_power_supply
@@ -47,6 +50,7 @@ class ManagedInstrumentSession:
             power_supply, self.power_channels, sleep_fn=sleep_fn,
             gate_settle_time_s=gate_settle_time_s,
             drain_settle_time_s=drain_settle_time_s,
+            channel_labels=self.power_channel_labels,
         )
 
     def validate(self, *, timeout_s: float = 10.0) -> None:
@@ -110,7 +114,8 @@ class ManagedInstrumentSession:
         selected = {role: channels[role] for role in roles if role in channels}
         controller = PowerController(self.power_supply, selected, sleep_fn=self._power.sleep_fn,
                                      gate_settle_time_s=self._power.gate_settle_time_s,
-                                     drain_settle_time_s=self._power.drain_settle_time_s)
+                                     drain_settle_time_s=self._power.drain_settle_time_s,
+                                     channel_labels=self.power_channel_labels)
         try:
             controller.power_on(timeout_s=timeout_s)
             self.state = InstrumentState.POWERED
@@ -130,7 +135,8 @@ class ManagedInstrumentSession:
         selected = {role: channels[role] for role in roles if role in channels}
         PowerController(self.power_supply, selected, sleep_fn=self._power.sleep_fn,
                         gate_settle_time_s=self._power.gate_settle_time_s,
-                        drain_settle_time_s=self._power.drain_settle_time_s).power_off(timeout_s=timeout_s)
+                        drain_settle_time_s=self._power.drain_settle_time_s,
+                        channel_labels=self.power_channel_labels).power_off(timeout_s=timeout_s)
 
     def start_measurement(self) -> None:
         if self.state not in (InstrumentState.PREPARED, InstrumentState.POWERED):

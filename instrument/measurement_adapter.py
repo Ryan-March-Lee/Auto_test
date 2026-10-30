@@ -23,6 +23,10 @@ class PortMeasurementAdapter:
     of the injected power supply.  When ``emergency_channels`` is omitted the
     adapter switches off the declared driver/DUT roles, drain before gate —
     never a channel name guessed from a numbering convention.
+
+    ``power_channel_labels`` maps each routing token to its log text
+    (``短标签/CHx``).  Routing and logging stay separate: the token is what the
+    device receives, the label is what the operator reads.
     """
 
     def __init__(
@@ -34,6 +38,7 @@ class PortMeasurementAdapter:
         power_settings: Mapping[str, Mapping[str, float]] | None = None,
         qualified_power_channels: bool = False,
         emergency_channels: Iterable[tuple[int, str]] | None = None,
+        power_channel_labels: Mapping[str, str] | None = None,
     ):
         self.session = session
         self.signal_gen = session.signal_generator
@@ -44,6 +49,11 @@ class PortMeasurementAdapter:
         self.driver_power_channels = dict(driver_power_channels or {})
         self.power_settings = {key: dict(value) for key, value in (power_settings or {}).items()}
         self.qualified_power_channels = bool(qualified_power_channels)
+        # token -> 日志写法：只用于日志，``emergency_channels`` / ``_last_emergency_power_off``
+        # 仍保存路由 token，安全记录必须能被程序再对一次。
+        self.power_channel_labels = {
+            str(token): str(text) for token, text in (power_channel_labels or {}).items()
+        }
         self.emergency_channels: Sequence[tuple[int, str]] = (
             tuple(emergency_channels)
             if emergency_channels is not None
@@ -114,7 +124,7 @@ class PortMeasurementAdapter:
         """Switch off the explicitly configured channels before closing.
 
         ``emergency_channels`` already carry the explicit ``supply_id/CHx`` token
-        of each declared role, so the log names the supply short label and the
+        of each declared role; the log shows the supply short label and the
         channel the operator has to confirm on the front panel.
         """
         errors = []
@@ -123,12 +133,19 @@ class PortMeasurementAdapter:
             try:
                 self.power_supply.set_output_enabled(channel, False, timeout_s=timeout_s)
             except Exception as error:
-                logger.error("紧急关闭电源通道失败 %s: %s", channel, error)
+                logger.error(
+                    "紧急关闭电源通道失败 %s: %s", self._channel_display(channel), error
+                )
                 errors.append(error)
             else:
-                logger.info("紧急关闭电源通道 %s", channel)
+                logger.info("紧急关闭电源通道 %s", self._channel_display(channel))
                 self._last_emergency_power_off.append((index, channel))
         return errors
+
+    def _channel_display(self, channel) -> str:
+        """日志里的通道名：``短标签/CHx``；没有登记时退回路由 token。"""
+        token = str(channel)
+        return self.power_channel_labels.get(token) or token
 
     def set_voltage(self, supply_name: str, channel: str, voltage: float) -> None:
         self.power_supply.set_voltage_v(self._power_channel(supply_name, channel), voltage)

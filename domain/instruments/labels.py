@@ -1,4 +1,4 @@
-"""电源短标签生成：把设备序列号派生成现场可读、可长期引用的短标签。
+"""电源短标签生成与显示文本：把设备序列号派生成现场可读、可长期引用的短标签。
 
 规则见[电源设备身份与配置数据契约](../../docs/电源设备身份与配置数据契约.md)第 3 节：
 
@@ -15,6 +15,12 @@
 
 本模块是纯计算：不读注册表、不写文件、不依赖 Qt 与网络。标签第一次生成后由调用方显式保存，
 之后不因 IP 变化、型号序号变化或重新扫描而重算。
+
+除了“生成标签”，本模块也定义**标签怎么显示**（:func:`supply_display_label`）、
+**详情/审计怎么写**（:func:`supply_identity_text`）、**日志里的通道名怎么写**
+（:func:`supply_channel_text`）以及**身份核对的结论怎么写**
+（:func:`supply_identity_verdict`）：日志、标签页标题、下拉框和悬浮提示都从这里取文本，
+不各自拼一套（契约第 13 节）。
 """
 
 from __future__ import annotations
@@ -22,7 +28,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Final
 
-from domain.instruments.models import normalize_serial, normalize_text
+from domain.instruments.models import InstrumentIdentity, normalize_serial, normalize_text
 
 # 默认取序列号末四位；冲突时依次加宽到末五位、末六位……
 LABEL_TAIL_WIDTH: Final = 4
@@ -138,6 +144,125 @@ def generate_supply_labels(
     return labels
 
 
+# ---- 显示与审计文本 ---------------------------------------------------------
+
+#: 身份文本里各字段之间的分隔符：详情、悬浮提示与身份核对日志共用同一份。
+DISPLAY_SEPARATOR: Final = " · "
+
+
+def supply_display_label(label: object, model: object = None) -> str:
+    """电源在列表、标签页标题和下拉框上的显示文本：``DP8B1519（DP832A）``。
+
+    三条规则（契约第 13 节）：
+
+    1. 短标签是唯一识别项，型号只是补充信息：型号缺失，或型号与标签相同（旧配置把槽位名
+       填进 ``model``）时只显示标签，不会出现 ``PS1（PS1）`` 这种重复；
+    2. **不推导标签**：标签缺失时原样显示型号/序列号，旧槽位条目就是 ``PS1``，绝不从型号
+       或序列号造一个看起来像短标签的字符串——那是第二套编号；
+    3. 显示文本只给人读：业务值始终是 ``supply_id``，任何读取方都不得从它反解析身份
+       （见 ``presentation.qt.config_form_state._combo_supply_id``）。
+    """
+    text = _display_text(label)
+    model_text = _display_text(model)
+    if not text:
+        return model_text
+    if model_text and model_text != text:
+        return f"{text}（{model_text}）"
+    return text
+
+
+def supply_identity_text(
+    label: object,
+    model: object = None,
+    serial: object = None,
+    device_key: object = None,
+) -> str:
+    """详情与审计用的完整身份文本：``DP8B1519 · DP832A · 序列号 DP8B214901519``。
+
+    只列出**已知**字段：旧条目没有序列号时不会凭空出现“序列号”一段，也不会为了凑格式
+    去查注册表。``device_key`` 放在最后——它是系统匹配用的身份（``厂商:序列号``，小写），
+    现场读不出来，只在审计与排查时需要。标签缺失时按型号/序列号显示，仍然不推导标签。
+    """
+    parts = [supply_display_label(label, model)]
+    serial_text = _display_text(serial)
+    if serial_text:
+        parts.append(f"序列号 {serial_text}")
+    key_text = _display_text(device_key)
+    if key_text:
+        parts.append(f"设备键 {key_text}")
+    return DISPLAY_SEPARATOR.join(part for part in parts if part)
+
+
+def supply_channel_text(supply_id: object, channel: object, label: object = None) -> str:
+    """日志与错误里的通道名：``短标签/CHx``（短标签缺失时退回 ``supply_id/CHx``）。
+
+    通道的**业务值**始终是显式路由 ``supply_id/CHx``，物理路由只认它；日志要写现场短标签。
+    两者在装配计划里同时可得，所以这里只做拼接，**不从已经拼好的 token 反解析**：把
+    ``supply_id/CHx`` 拆出设备身份，等于让显示文本承担身份，改一次标签就会读错设备。
+    """
+    supply_text = _display_text(label) or _display_text(supply_id)
+    channel_text = _display_text(channel)
+    if not supply_text:
+        return channel_text
+    if not channel_text:
+        return supply_text
+    return f"{supply_text}/{channel_text}"
+
+
+# 身份核对的三种结论：日志、测试与文档共用这几个词，不再逐处手写措辞。
+IDENTITY_MATCHED: Final = "一致"
+IDENTITY_MISMATCHED: Final = "不一致"
+IDENTITY_UNCOMPARABLE: Final = "无法比较"
+
+
+def supply_identity_verdict(serial: object, idn_reply: object) -> tuple[str, str]:
+    """核对配置里的序列号与设备自己应答的 ``*IDN?``，返回 ``(结论, 可写进日志的说明)``。
+
+    结论只会是 :data:`IDENTITY_MATCHED` / :data:`IDENTITY_MISMATCHED` /
+    :data:`IDENTITY_UNCOMPARABLE` 之一（契约第 13 节）：
+
+    - ``一致``：两边都解析出序列号且归一化后相同；
+    - ``不一致``：两边都解析出序列号但不同——配置与实物已经不是同一台，必须能被看见；
+    - ``无法比较``：配置没有序列号（旧条目），或 ``*IDN?`` 读不出三段身份。
+
+    只有两边都能解析时才可能判“不一致”：把“读不出来”说成“不一致”，会让一次会话占用
+    或重启抖动看起来像接错了设备。核对只用于审计与提示，**不改写**地址、配置或路由：
+    物理连接由地址决定，身份结论不能替操作者改接线。
+    """
+    configured = normalize_serial(serial) if _display_text(serial) else ""
+    try:
+        device = InstrumentIdentity.from_idn(idn_reply)
+    except ValueError:
+        return (
+            IDENTITY_UNCOMPARABLE,
+            f"{IDENTITY_UNCOMPARABLE}（*IDN? 应答读不出设备身份）",
+        )
+    if not configured:
+        return (
+            IDENTITY_UNCOMPARABLE,
+            f"{IDENTITY_UNCOMPARABLE}（配置没有序列号，设备序列号 {device.serial}）",
+        )
+    if configured != device.serial:
+        return (
+            IDENTITY_MISMATCHED,
+            f"{IDENTITY_MISMATCHED}（配置 {configured}，设备序列号 {device.serial}）",
+        )
+    return IDENTITY_MATCHED, IDENTITY_MATCHED
+
+
+def _display_text(value: object) -> str:
+    """显示用文本：字符串只折叠首尾空白，其余非字符串值按“没有该字段”处理。
+
+    身份字段在注册表里是字符串；数字序列号（手写配置）也能显示，但空值、布尔值与
+    结构体一律当作缺失——显示层不能把 ``{'model': ...}`` 直接拼进标签。
+    """
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    return ""
+
+
 def _prefix_of(stable: str) -> str:
     """在已归一化的序列号上取前缀（调用方保证输入非空、无内部空白）。"""
     end = 0
@@ -191,11 +316,19 @@ def _label_keys(labels: Iterable[str | None]) -> set[str]:
 
 
 __all__ = [
+    "DISPLAY_SEPARATOR",
+    "IDENTITY_MATCHED",
+    "IDENTITY_MISMATCHED",
+    "IDENTITY_UNCOMPARABLE",
     "LABEL_TAIL_WIDTH",
     "PowerSupplyLabelError",
     "generate_supply_label",
     "generate_supply_labels",
     "normalize_supply_serial",
+    "supply_channel_text",
+    "supply_display_label",
+    "supply_identity_text",
+    "supply_identity_verdict",
     "supply_label_candidates",
     "supply_label_prefix",
 ]

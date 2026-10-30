@@ -10,6 +10,10 @@ from instrument.simulation import (
     SimulatedSignalGenerator,
     SimulatedSpectrumAnalyzer,
 )
+from infrastructure.logging import app_logging
+
+# 模块 logger 挂在专用 ``pa_auto_test`` 下：assertLogs 必须点名同一个 logger。
+ADAPTER_LOGGER = app_logging.get_logger("instrument.measurement_adapter").name
 
 
 class MeasurementServicePortAdapterTests(unittest.TestCase):
@@ -116,6 +120,37 @@ class MeasurementServicePortAdapterTests(unittest.TestCase):
         self.assertEqual(
             [item[2] for item in recorder.commands if item[:2] == ("power_supply", "output_off")],
             ["D", "B", "C", "A"],
+        )
+
+    def test_emergency_log_names_the_short_label_and_keeps_the_routing_token(self):
+        """急停日志写 ``短标签/CHx``；安全记录仍存路由 token，供程序再对一次。"""
+        recorder = CommandRecorder()
+        session = SafetyInstrumentSession(
+            SimulatedSignalGenerator(recorder),
+            SimulatedSpectrumAnalyzer(recorder=recorder),
+            SimulatedPowerSupply(recorder),
+            {"gate": "DP8B1519/CH1", "drain": "DP8B1519/CH2"},
+        )
+        session.validate()
+        session.connect()
+        session.prepare()
+        adapter = PortMeasurementAdapter(
+            session,
+            dut_power_channels={"gate": "DP8B1519/CH1", "drain": "DP8B1519/CH2"},
+            power_channel_labels={
+                "DP8B1519/CH1": "现场 A 电源/CH1",
+                "DP8B1519/CH2": "现场 A 电源/CH2",
+            },
+        )
+
+        with self.assertLogs(ADAPTER_LOGGER, level="INFO") as captured:
+            self.assertEqual(adapter.emergency_power_off_all(), [])
+
+        self.assertIn("紧急关闭电源通道 现场 A 电源/CH2", captured.output[0])
+        self.assertNotIn("DP8B1519/CH2", "\n".join(captured.output))
+        self.assertEqual(
+            adapter._last_emergency_power_off,
+            [(0, "DP8B1519/CH2"), (0, "DP8B1519/CH1")],
         )
 
     def test_driver_and_dut_power_channels_must_not_overlap(self):

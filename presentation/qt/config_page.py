@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from domain.instruments.labels import supply_identity_text
 from domain.instruments.models import (
     POWER_SUPPLY_ROLE,
     make_device_key,
@@ -731,6 +732,11 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
 
         标签页按配置键（``supply_id``）建，标题只用于显示：设备数量与身份都来自配置与
         当前绑定，没有固定的四个槽位页。
+
+        标签页的悬浮提示给**详情与审计**：短标签、型号、完整序列号与设备键（见
+        :func:`domain.instruments.labels.supply_identity_text`）。卡面上只放标签与型号，
+        因为标题栏很窄；追溯时把指针停在标签页上就能读到完整序列号。旧槽位条目没有序列号，
+        提示里就只有它的旧键（``PS1``），不推导一个不存在的标签。
         """
         page = QWidget(); page_layout = QVBoxLayout(page)
         page_layout.setSpacing(10)
@@ -764,7 +770,17 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             form.addRow("保护电流 (A)", controls["current_protection"]); form.addRow("电流保护", controls["current_protection_enabled"])
             page_layout.addWidget(box); record["channels"][channel] = controls
         title = supply_option_label(source.get("label") or key, source.get("model"))
-        self.power_tabs.addTab(page, title)
+        index = self.power_tabs.addTab(page, title)
+        # 详情/审计文本与标题同源：标签 + 型号 + 完整序列号 + 设备键，缺哪个就少哪段。
+        self.power_tabs.setTabToolTip(
+            index,
+            supply_identity_text(
+                source.get("label") or key,
+                source.get("model"),
+                source.get("serial"),
+                source.get("device_key"),
+            ),
+        )
         self.power_config_widgets[key] = record
 
     def _build_run_widgets(self, layout):

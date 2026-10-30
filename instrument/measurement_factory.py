@@ -15,6 +15,13 @@ identity-checked and initial-output-checked on its own, so 1, 2 or 5 supplies
 need no code change.  ``test_instrument_routing`` forbids ``CH1``/``CH2`` as
 assembly constants, so the power driver model and the channel query form live
 in the constants below, not in the per-supply loop.
+
+Logs always name a supply by its field short label: channel actions carry the
+routing token (``DP8B1519/CH1``) and are printed as the short label plus channel
+(``supply_channel_text``), and every connection writes one audit line with the
+short label, model, full serial and device key plus the raw ``*IDN?`` reply and
+the identity verdict, so a log entry maps to the physical label, can be traced
+to the exact device and says out loud whether the two identities agree.
 """
 
 from __future__ import annotations
@@ -32,6 +39,12 @@ from application.errors import (
     cause_of,
 )
 from domain.configuration.rules import assignment_supply_id
+from domain.instruments.labels import (
+    IDENTITY_MISMATCHED,
+    supply_channel_text,
+    supply_identity_text,
+    supply_identity_verdict,
+)
 from infrastructure.logging.app_logging import get_logger
 
 from .drivers import ScpiPowerSupplyDriver, ScpiSignalGeneratorDriver, ScpiSpectrumAnalyzerDriver
@@ -292,6 +305,21 @@ def _create_hardware_measurement_port(config_path: str, *, recorder=None):
             resource = _open_device(manager, power_config["address"], label)
             resources.append(resource)
             identity = _query(resource, "*IDN?", label)
+            # 审计用的一行：这台电源在配置里的完整身份（短标签 · 型号 · 完整序列号 ·
+            # 设备键）、设备自己应答的 *IDN? 原文，以及两边的核对结论。日志里短标签负责
+            # 快速对应实物，完整序列号与结论负责最终追溯（步骤 14）。
+            verdict_status, verdict = supply_identity_verdict(
+                power_config.get("serial"), identity
+            )
+            log_identity = (
+                logger.warning if verdict_status == IDENTITY_MISMATCHED else logger.info
+            )
+            log_identity(
+                "生产电源身份核对: %s；设备应答 *IDN? %s；核对结果 %s",
+                plan["supply_details"][power_name],
+                identity,
+                verdict,
+            )
             if POWER_SUPPLY_MODEL not in identity.upper():
                 # 型号不符时设备仍然可用，但不能用于本项目的供电动作：
                 # 这是能力/前提问题，不是连接问题。
@@ -344,6 +372,8 @@ def _create_hardware_measurement_port(config_path: str, *, recorder=None):
             spectrum,
             power,
             plan["all_channels"],
+            # 通道动作日志用 ``短标签/CHx``；物理路由仍是上面的 token。
+            power_channel_labels=plan["channel_labels"],
         )
         session.validate()
         try:
@@ -359,6 +389,7 @@ def _create_hardware_measurement_port(config_path: str, *, recorder=None):
             power_settings=plan["power_settings"],
             qualified_power_channels=True,
             emergency_channels=plan["emergency_channels"],
+            power_channel_labels=plan["channel_labels"],
         )
     except Exception:  # 装配失败必须释放已打开的 VISA 资源后原样抛出
         for resource in reversed(resources):
@@ -378,6 +409,12 @@ def _hardware_assembly_plan(config: Mapping[str, Any]) -> dict[str, Any]:
 
     该函数只读取配置，不创建 VISA 资源；地址重复、角色缺失/重复、通道不存在
     都在连接任何仪器之前失败。
+
+    返回的 ``supply_labels`` 是路由键（``supply_id``）到现场短标签的映射，只用于显示与
+    错误消息；``supply_details`` 是同一台电源的详情/审计文本（短标签 · 型号 · 完整序列号 ·
+    设备键），逐台电源的身份核对日志直接用它，不再从配置里各挑各的字段；
+    ``channel_labels`` 把每个路由 token（``supply_id/CHx``）映射到日志用的
+    ``短标签/CHx``，通道动作日志因此说人话，而路由仍只认 token。
     """
     instruments = _mapping_section(config, "instruments")
     signal_config = _mapping_section(instruments, "signal_generator", "instruments")
@@ -442,6 +479,18 @@ def _hardware_assembly_plan(config: Mapping[str, Any]) -> dict[str, Any]:
             "生产电源短标签重复: " + ", ".join(sorted(duplicate_labels))
         )
 
+    # 身份核对日志用的详情文本（短标签 · 型号 · 完整序列号 · 设备键）：在装配计划里算一次，
+    # 逐台电源的日志与错误因此共用同一份事实，不各自从配置里挑字段（步骤 14）。
+    supply_details = {
+        name: supply_identity_text(
+            supply_labels[name],
+            power_configs[name].get("model"),
+            power_configs[name].get("serial"),
+            power_configs[name].get("device_key"),
+        )
+        for name in supply_labels
+    }
+
     supply_addresses = {}
     for reference in sorted(assigned_names):
         power_name = supply_keys[reference]
@@ -460,10 +509,10 @@ def _hardware_assembly_plan(config: Mapping[str, Any]) -> dict[str, Any]:
                 )
         supply_addresses[power_name] = address
 
-    dut_channels, dut_settings = _assigned_channels(
+    dut_channels, dut_settings, dut_channel_labels = _assigned_channels(
         dut_assignment, power_configs, supply_keys, supply_labels, "DUT"
     )
-    driver_channels, driver_settings = _assigned_channels(
+    driver_channels, driver_settings, driver_channel_labels = _assigned_channels(
         driver_assignment, power_configs, supply_keys, supply_labels, "驱动"
     )
     overlap = set(dut_channels.values()) & set(driver_channels.values())
@@ -479,10 +528,13 @@ def _hardware_assembly_plan(config: Mapping[str, Any]) -> dict[str, Any]:
         "power_configs": power_configs,
         "supply_names": supply_names,
         "supply_labels": supply_labels,
+        "supply_details": supply_details,
         "dut_channels": dut_channels,
         "driver_channels": driver_channels,
         "power_settings": {**driver_settings, **dut_settings},
         "all_channels": {**driver_channels, **dut_channels},
+        # 路由 token -> 日志里的 ``短标签/CHx``：路由值不变，只是给日志与错误一份可读写法。
+        "channel_labels": {**driver_channel_labels, **dut_channel_labels},
         "emergency_channels": _emergency_channels(
             supply_names, driver_channels, dut_channels
         ),
@@ -528,15 +580,19 @@ def _assigned_channels(
     supply_keys: Mapping[str, str],
     supply_labels: Mapping[str, str],
     label: str,
-) -> tuple[dict[str, str], dict[str, dict[str, float]]]:
+) -> tuple[dict[str, str], dict[str, dict[str, float]], dict[str, str]]:
     """Resolve assigned logical roles to explicit ``supply_id/channel`` tokens.
 
     ``supply_keys`` 把分配里的引用（``supply_id`` / ``label`` / 旧槽位）解析成
     ``power_supplies`` 的集合键。物理路由的 token 只由集合键拼成：短标签是显示
     文本，可能被改动或与键不同，绝不能出现在被路由的通道值里。错误消息用短标签。
+
+    第三个返回值是同一批 token 的**日志写法**（``短标签/CHx``）。它在拼 token 的同一处
+    生成，因为这里同时握着集合键与短标签两个来源；调用方不必、也不许从 token 反解析。
     """
     channels = {}
     settings = {}
+    channel_labels = {}
     for supply in _supply_assignments(assignment).values():
         if not isinstance(supply, Mapping):
             raise ValueError(f"{label} 供电分配条目必须是对象")
@@ -552,6 +608,7 @@ def _assigned_channels(
             if not isinstance(channel_config, Mapping):
                 raise ValueError(f"供电分配引用了不存在的通道: {power_label}/{channel}")
             token = f"{power_name}/{channel}"
+            channel_labels[token] = supply_channel_text(power_name, channel, power_label)
             role = _explicit_role(channel_config, token)
             if role in channels and channels[role] != token:
                 raise ValueError(
@@ -561,7 +618,7 @@ def _assigned_channels(
             settings[role] = _channel_settings(channel_config, token)
     if channels and set(channels) != {"gate", "drain"}:
         raise ValueError(f"{label} 电源必须同时配置 gate 和 drain 通道")
-    return channels, settings
+    return channels, settings, channel_labels
 
 
 def _assigned_supply_name(supply: Mapping[str, Any]) -> str | None:

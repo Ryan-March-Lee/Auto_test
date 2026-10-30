@@ -34,6 +34,7 @@ import copy
 from typing import Any, Mapping
 
 from application.errors import ConfigurationError
+from domain.instruments.labels import supply_display_label
 
 from .config_form_state import assignment_declared, assignment_supply_id, parse_frequency_text
 from .configuration_authoring import DUT_CHANNEL_ROLES
@@ -104,12 +105,12 @@ def supply_option_label(supply_id: str, model: Any = None) -> str:
     括号里是型号（人读的补充信息），没有型号时只显示短标签。显示文本是给人看的，
     业务值始终是 ``supply_id``，见 :func:`_supply_options`：两者分离之后，型号重复、
     型号与标签相似或型号缺失都不会让两个选项在控件里变成同一个值。
+
+    显示规则只有一份实现（:func:`domain.instruments.labels.supply_display_label`）：电源
+    标签页标题、日志与身份文本都用它，不在这里另写一套格式；标签缺失时也不会从型号或
+    序列号推导出一个看起来像 ``supply_id`` 的字符串。
     """
-    text = str(supply_id or "").strip()
-    model_text = str(model or "").strip()
-    if model_text and model_text != text:
-        return f"{text}（{model_text}）"
-    return text
+    return supply_display_label(supply_id, model)
 
 
 def _supply_options(supplies) -> list[tuple[str, str]] | None:

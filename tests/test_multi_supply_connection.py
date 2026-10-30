@@ -8,8 +8,11 @@
   旧文件残留的 ``visual`` 槽位；三者都唯一解析到同一台电源，含混时在连接前失败；
 - 物理路由统一是 ``supply_id/CHx``，急停只关闭实际声明的通道，且先漏后栅；
 - 任意异常路径（身份不符 / 初始输出未关闭 / 第二台连接失败 / 准备失败）都关闭
-  所有已打开的电源资源，并把 ResourceManager 一起释放；
-- 日志中出现 ``DP8B1519/CH1`` 形式的短标签与通道。
+  所有已打开的资源，并把 ResourceManager 一起释放；
+- 日志中出现 ``DP8B1519/CH1`` 形式的短标签与通道；集合键与 ``label`` 不同时，通道动作
+  日志写 ``现场短标签/CHx``，路由仍发给 token；
+- 每台电源连接前打印一行身份核对，含完整身份、``*IDN?`` 原文与核对结论
+  （一致 / 不一致 / 无法比较）。
 
 验证方式：
 
@@ -423,6 +426,107 @@ class MultiSupplyConnectionTests(unittest.TestCase):
         self.assertIn("DP8B1519/CH1", text)
         self.assertIn("DP8B0950/CH2", text)
         self.assertIn("DP8B1519", text)
+
+    def test_connection_writes_one_identity_line_per_supply(self):
+        """审计：每台电源一行身份核对，含短标签、型号、完整序列号与核对结论。"""
+        config = _two_supply_config()
+        config["instruments"]["power_supplies"]["DP8B1519"].update(
+            {
+                "model": "DP832A",
+                "serial": "DP8B214901519",
+                "device_key": "rigol technologies:dp8b214901519",
+            }
+        )
+        # 设备自己应答的序列号与配置一致：结论必须是“一致”。
+        manager = _FakeResourceManager(
+            resource_factory=lambda address: _FakeResource(
+                address,
+                identity=(
+                    "RIGOL TECHNOLOGIES,DP832A,DP8B214901519,00.01.16"
+                    if address == SUPPLY_A
+                    else "RIGOL TECHNOLOGIES,DP832A,DP8B174700950,00.01.14"
+                ),
+            )
+        )
+        capture = _LogCapture(
+            app_logging.get_logger("instrument.measurement_factory")
+        )
+        try:
+            with _ConfigFile(config) as path, _PatchedManager(manager):
+                create_measurement_port(path, mode="hardware")
+        finally:
+            capture.close()
+
+        text = capture.text()
+        # 现场短标签在前，完整序列号与设备键在后：日志能直接对应实物，也能追溯到设备。
+        self.assertIn(
+            "生产电源身份核对: DP8B1519（DP832A） · 序列号 DP8B214901519"
+            " · 设备键 rigol technologies:dp8b214901519",
+            text,
+        )
+        # 设备自己应答的 ``*IDN?`` 原文同样在日志里，不只看配置里写的那份身份。
+        self.assertIn(
+            "设备应答 *IDN? RIGOL TECHNOLOGIES,DP832A,DP8B214901519,00.01.16", text
+        )
+        self.assertIn("核对结果 一致", text)
+        # 没有型号/序列号的电源只显示短标签，也没有可比对的序列号。
+        self.assertIn("生产电源身份核对: DP8B0950；", text)
+        self.assertIn("核对结果 无法比较（配置没有序列号，设备序列号 DP8B174700950）", text)
+
+    def test_identity_mismatch_is_reported_with_both_serials(self):
+        """配置与实物不是同一台时必须能在日志里看出来，而不是两份身份并排放着。"""
+        config = _two_supply_config()
+        config["instruments"]["power_supplies"]["DP8B1519"]["serial"] = "DP8B214901519"
+        # 地址上应答的是另一台 DP832A（序列号不同）。
+        manager = _FakeResourceManager(
+            resource_factory=lambda address: _FakeResource(
+                address,
+                identity=(
+                    "RIGOL TECHNOLOGIES,DP832A,DP8B174400885,00.01.14"
+                    if address == SUPPLY_A
+                    else None
+                ),
+            )
+        )
+        capture = _LogCapture(app_logging.get_logger("instrument.measurement_factory"))
+        try:
+            with _ConfigFile(config) as path, _PatchedManager(manager):
+                create_measurement_port(path, mode="hardware")
+        finally:
+            capture.close()
+
+        text = capture.text()
+        self.assertIn(
+            "核对结果 不一致（配置 DP8B214901519，设备序列号 DP8B174400885）", text
+        )
+
+    def test_channel_actions_log_the_short_label_not_the_routing_key(self):
+        """通道动作（上电/掉电/急停）日志写现场短标签；路由仍发给 ``supply_id/CHx``。"""
+        config = _two_supply_config()
+        config["instruments"]["power_supplies"]["DP8B1519"]["label"] = "现场 A 电源"
+        manager = _FakeResourceManager()
+        capture = _LogCapture(
+            app_logging.get_logger("instrument.power_control"),
+            app_logging.get_logger("instrument.measurement_adapter"),
+        )
+        try:
+            with _ConfigFile(config) as path, _PatchedManager(manager):
+                port = create_measurement_port(path, mode="hardware")
+                port.power_on_sequence()
+                self.assertEqual(port.emergency_power_off_all(), [])
+                self.assertEqual(port.close_all(close_rf=True), [])
+        finally:
+            capture.close()
+
+        text = capture.text()
+        self.assertIn("打开电源通道 现场 A 电源/CH1（gate）", text)
+        self.assertIn("紧急关闭电源通道 现场 A 电源/CH2", text)
+        # 日志不能把集合键当成设备名。
+        self.assertNotIn("打开电源通道 DP8B1519/CH1", text)
+        # 设备实际收到的仍是路由 token。
+        resource = manager.resource(SUPPLY_A)
+        self.assertIn(("write", ":OUTPut CH1,ON"), resource.commands)
+        self.assertIn(("write", ":OUTPut CH2,OFF"), resource.commands)
 
     def test_route_uses_the_supply_id_when_the_label_differs(self):
         """短标签只用于显示：标签与集合键不同时，物理路由仍按 ``supply_id/CHx``。"""

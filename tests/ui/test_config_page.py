@@ -597,6 +597,45 @@ class ConfigPageTests(unittest.TestCase):
         self.assertEqual(titles, ["DP8B1519（DP832A）", "DP8B0885（DP832A）"])
         self.assertEqual(set(page.power_config_widgets), {"DP8B1519", "DP8B0885"})
 
+    def test_power_tab_tooltips_carry_the_full_identity_for_audit(self):
+        """标签页悬浮提示给详情与审计：短标签 · 型号 · 完整序列号 · 设备键。
+
+        卡面标题只有 ``短标签（型号）``（标题栏很窄），追溯时把指针停在标签页上就能读到
+        这台设备的完整序列号；两处文本同源（``domain.instruments.labels``），不会各说一套。
+        """
+        bindings = self.power_supply_bindings("DP8B1519")
+        bindings["power_supplies"]["DP8B1519"].update(
+            {
+                "model": "DP832A",
+                "vendor": "Rigol Technologies",
+                "serial": "DP8B214901519",
+                "device_key": "rigol technologies:dp8b214901519",
+            }
+        )
+        page = self.make_page(
+            device_bindings=bindings,
+            instruments={"power_supplies": {}},
+            dut_config={"power_supply_count": 1},
+        )
+
+        self.assertEqual(page.power_tabs.tabText(0), "DP8B1519（DP832A）")
+        self.assertEqual(
+            page.power_tabs.tabToolTip(0),
+            "DP8B1519（DP832A） · 序列号 DP8B214901519"
+            " · 设备键 rigol technologies:dp8b214901519",
+        )
+
+    def test_old_slot_entry_tooltip_does_not_invent_a_label(self):
+        """旧槽位条目按旧字段显示：标题与提示都只有 ``PS1``，没有序列号也没有新标签。"""
+        page = self.make_page(
+            instruments={"power_supplies": {"PS1": {"model": "PS1", "channels": {}}}},
+            dut_config={"power_supply_count": 1},
+        )
+
+        self.assertEqual(page.power_tabs.tabText(0), "PS1")
+        self.assertEqual(page.power_tabs.tabToolTip(0), "PS1")
+        self.assertNotIn("序列号", page.power_tabs.tabToolTip(0))
+
     def test_power_tabs_follow_the_bound_supply_count(self):
         """电源数量变化时页面动态增减标签页：1、2、5 台都不需要改常量。"""
         for supply_ids in (

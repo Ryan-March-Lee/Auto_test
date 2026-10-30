@@ -4,8 +4,10 @@
 
 - 仪器名（如 ``DP832A``、``SMW200A``）：第一行，居中放大——卡片里最先读到的就是
   “这是哪台型号”；
-- 图片区：仪器实拍图直接摆在本色卡片上（不加底板、不描边），按整块图片区等比缩放
-  （不裁切），几张图的“视觉体积”因此不受各自照片留白多少影响；
+- 图片区：仪器实拍图直接摆在本色卡片上（不加底板、不描边）。照片的留白各不相同
+  （有的图仪器几乎顶到边，有的只占六成），所以缩放的对象是**仪器主体的包围盒**而不是
+  整张画布：先找出主体边界，再把这一块等比放进图片区（不裁切仪器），几张图的“视觉
+  体积”因此对齐；
 - 设备码缩写：最下面一行，加粗放大的等宽字（``SG/SMW200A/105462``；电源用注册表短标签
   ``DP8B1519``，见 :func:`device_code`），现场对机时一眼看清。
 
@@ -17,11 +19,12 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QPainter, QPalette, QPixmap
+from PySide6.QtGui import QImage, QPainter, QPalette, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
     QLabel,
@@ -161,40 +164,132 @@ def device_code(device: Any, visitor_index: int = 0) -> tuple[str, str]:
     return code, "\n".join(detail)
 
 
-# ---- 图片解码缓存 -----------------------------------------------------------
+# ---- 图片解码与“视觉大小”归一化 -------------------------------------------------
+
+#: 找仪器主体边界用的缩略图边长：在缩略图上逐像素找边界，再折回原图坐标。
+#: 原图最大 3207×2293，逐像素扫描不值得；这个尺寸上的边界误差约 1%，肉眼看不出来。
+_PROBE_SIZE = 128
+#: 与背景色的差异阈值（逐通道取最大差）：不超过它的像素算作照片留白。
+_BACKGROUND_TOLERANCE = 14
+
+
+def _content_rect(image: QImage) -> QRectF:
+    """返回仪器主体在原图中的包围盒（原图像素坐标）。
+
+    主体 = 与四角背景色都不相同的像素；透明留白因此也算背景。照片本来没有留白、
+    或者整张图都判成背景时退回整张图——宁可显示原样，也不裁掉看不清的仪器。
+    """
+    width = float(image.width())
+    height = float(image.height())
+    full = QRectF(0.0, 0.0, width, height)
+    if width <= 0.0 or height <= 0.0:
+        return full
+    probe = image.scaled(
+        _PROBE_SIZE, _PROBE_SIZE, Qt.KeepAspectRatio, Qt.SmoothTransformation
+    ).convertToFormat(QImage.Format_RGBA8888)
+    probe_width = probe.width()
+    probe_height = probe.height()
+    if probe_width <= 1 or probe_height <= 1:
+        return full
+    stride = probe.bytesPerLine()
+    raw = bytes(probe.constBits())
+
+    def pixel(x: int, y: int) -> tuple[int, int, int, int]:
+        start = y * stride + 4 * x
+        red, green, blue, alpha = raw[start : start + 4]
+        return red, green, blue, alpha
+
+    # 照片背景不一定均匀（甚至可能带渐变），所以四角各记一个背景色，命中任一即为留白。
+    corners = (
+        pixel(0, 0),
+        pixel(probe_width - 1, 0),
+        pixel(0, probe_height - 1),
+        pixel(probe_width - 1, probe_height - 1),
+    )
+
+    def is_content(color: tuple[int, int, int, int]) -> bool:
+        return all(
+            max(abs(color[channel] - corner[channel]) for channel in range(4))
+            > _BACKGROUND_TOLERANCE
+            for corner in corners
+        )
+
+    def row_has_content(y: int) -> bool:
+        return any(is_content(pixel(x, y)) for x in range(probe_width))
+
+    def column_has_content(x: int) -> bool:
+        return any(is_content(pixel(x, y)) for y in range(probe_height))
+
+    # 从四边往里找第一条有主体的行列：留白只可能连着画布边缘，这样比全图扫描快得多。
+    top = next((y for y in range(probe_height) if row_has_content(y)), None)
+    if top is None:
+        return full
+    bottom = next(
+        y for y in range(probe_height - 1, top - 1, -1) if row_has_content(y)
+    )
+    left = next((x for x in range(probe_width) if column_has_content(x)), None)
+    if left is None:
+        return full
+    right = next(
+        x for x in range(probe_width - 1, left - 1, -1) if column_has_content(x)
+    )
+    scale_x = width / probe_width
+    scale_y = height / probe_height
+    x0 = left * scale_x
+    y0 = top * scale_y
+    x1 = min(width, (right + 1) * scale_x)
+    y1 = min(height, (bottom + 1) * scale_y)
+    if x1 <= x0 or y1 <= y0:
+        return full
+    return QRectF(x0, y0, x1 - x0, y1 - y0)
+
+
+@dataclass(frozen=True)
+class _Picture:
+    """一张已解码的仪器图，以及它的仪器主体在图中占的位置（原图像素坐标）。"""
+
+    pixmap: QPixmap
+    content: QRectF
+
+    def is_empty(self) -> bool:
+        return self.pixmap.isNull()
 
 
 class _PictureCache:
-    """按文件路径缓存已解码的原图；键是 ``(路径, 文件大小, 修改时间)``。"""
+    """按文件路径缓存已解码的原图与它的主体边界；键是 ``(路径, 文件大小, 修改时间)``。"""
 
     def __init__(self) -> None:
-        self._items: dict[tuple[str, int, int], QPixmap] = {}
+        self._items: dict[tuple[str, int, int], _Picture] = {}
 
-    def picture(self, path: Path | None) -> QPixmap:
+    def picture(self, path: Path | None) -> _Picture:
         if path is None:
-            return QPixmap()
+            return _Picture(QPixmap(), QRectF())
         try:
             stat = path.stat()
         except OSError:
-            return QPixmap()
+            return _Picture(QPixmap(), QRectF())
         key = (str(path), int(stat.st_size), int(stat.st_mtime))
         cached = self._items.get(key)
         if cached is not None:
             return cached
         picture = QPixmap(str(path))
-        self._items[key] = picture
-        return picture
+        picture_entry = _Picture(picture, _content_rect(picture.toImage()))
+        self._items[key] = picture_entry
+        return picture_entry
 
 
 _PICTURES = _PictureCache()
 
 
 class InstrumentImage(QWidget):
-    """图片区：仪器图等比放入卡片，不裁切、不留出参差的边距，也不垫底板描边。"""
+    """图片区：按仪器主体等比放入卡片，不裁切仪器，也不垫底板描边。
+
+    缩放的是主体包围盒而不是整张照片：留白多少不再影响仪器在卡片上的视觉大小。
+    """
 
     def __init__(self, parent: Any = None) -> None:
         super().__init__(parent)
-        self._picture = QPixmap()
+        self._picture = _Picture(QPixmap(), QRectF())
         self.setFixedHeight(_PICTURE_HEIGHT)
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -204,39 +299,57 @@ class InstrumentImage(QWidget):
         self.update()
 
     def has_picture(self) -> bool:
-        return not self._picture.isNull()
+        return not self._picture.is_empty()
 
     def sizeHint(self) -> QSize:
         return QSize(_CARD_WIDTH, _PICTURE_HEIGHT)
+
+    def source_rect(self) -> QRectF:
+        """要从原图里取的那一块（原图像素坐标）：仪器主体，没有图片时为空。"""
+        if self._picture.is_empty():
+            return QRectF()
+        content = self._picture.content
+        if content.isEmpty():
+            return QRectF(self._picture.pixmap.rect())
+        return content
+
+    def picture_rect(self) -> QRectF:
+        """仪器图实际画出的矩形（图片区坐标）：只由主体决定，与照片留白无关。"""
+        source = self.source_rect()
+        if source.isEmpty():
+            return QRectF()
+        target = QRectF(self.rect()).adjusted(
+            _PICTURE_MARGIN, _PICTURE_MARGIN, -_PICTURE_MARGIN, -_PICTURE_MARGIN
+        )
+        if target.width() <= 0.0 or target.height() <= 0.0:
+            return QRectF()
+        scale = min(target.width() / source.width(), target.height() / source.height())
+        width = source.width() * scale
+        height = source.height() * scale
+        return QRectF(
+            target.center().x() - width / 2.0,
+            target.center().y() - height / 2.0,
+            width,
+            height,
+        )
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
         # 图片直接画在卡片本色上：底板与描边都由样式表关掉，这里只画仪器图；
-        # 图片按整块区域等比缩放并居中。
-        if self._picture.isNull():
+        # 只画主体那一块，等比缩放并居中。
+        picture = self._picture.pixmap
+        if picture.isNull():
             # 没有对应图片时不画任何图形，只留一行淡字，避免看起来像加载失败。
             painter.setPen(self.palette().color(QPalette.PlaceholderText))
             painter.drawText(self.rect(), Qt.AlignCenter, "暂无图片")
             return
-        target = QRectF(self.rect()).adjusted(
-            _PICTURE_MARGIN, _PICTURE_MARGIN, -_PICTURE_MARGIN, -_PICTURE_MARGIN
-        )
-        source_width = float(self._picture.width())
-        source_height = float(self._picture.height())
-        if source_width <= 0 or source_height <= 0:
+        destination = self.picture_rect()
+        source = self.source_rect()
+        if destination.isEmpty() or source.isEmpty():
             return
-        scale = min(target.width() / source_width, target.height() / source_height)
-        width = source_width * scale
-        height = source_height * scale
-        destination = QRectF(
-            target.center().x() - width / 2.0,
-            target.center().y() - height / 2.0,
-            width,
-            height,
-        )
-        painter.drawPixmap(destination, self._picture, QRectF(self._picture.rect()))
+        painter.drawPixmap(destination, picture, source)
 
 
 class _ElidedLabel(QLabel):

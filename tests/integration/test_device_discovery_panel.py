@@ -37,7 +37,11 @@ from infrastructure.discovery.simulated_network import demo_idn_responses
 from infrastructure.persistence.instrument_registry import InstrumentRegistry
 from presentation.qt.config_page import ConfigPage
 from presentation.qt.connection_page import ConnectionPage
-from presentation.qt.device_cards import device_code, instrument_picture_path
+from presentation.qt.device_cards import (
+    InstrumentCard,
+    device_code,
+    instrument_picture_path,
+)
 from presentation.qt.device_discovery_panel import (
     BOX_STATE_BUSY,
     BOX_STATE_IDLE,
@@ -748,6 +752,32 @@ class CardPresentationTests(unittest.TestCase):
         # 卡片按可用宽度换行：窄面板换行排两列，宽面板排满四列，不排成一条长带子。
         self.assertGreaterEqual(narrow, 2, "窄面板要换行，不能挤成一列长条")
         self.assertEqual(wide, min(4, panel.card_count()))
+
+    def test_shipped_pictures_draw_the_instruments_at_a_similar_size(self):
+        """自带的三张仪器图留白各不相同，仪器在卡片上的视觉大小仍要接近。"""
+        areas = {}
+        for role, model in (
+            ("power_supply", "DP832A"),
+            ("signal_generator", "SMW200A"),
+            ("spectrum_analyzer", "FPL1000"),
+        ):
+            card = InstrumentCard(
+                "型号", "CODE", picture=instrument_picture_path(role, model)
+            )
+            card.show()
+            self.addCleanup(card.close)
+            self.app.processEvents()
+            drawn = card.image.picture_rect()
+            self.assertFalse(drawn.isEmpty(), f"{role} 的图片没有画出来")
+            areas[role] = drawn.width() * drawn.height()
+
+        largest = max(areas.values())
+        smallest = min(areas.values())
+        self.assertLess(
+            largest / smallest,
+            1.25,
+            f"仪器主体在卡片上的视觉面积相差太大（{areas}）",
+        )
 
     def test_selected_card_has_the_checked_property(self):
         panel = DeviceDiscoveryPanel(scanner_factory=_scanner_factory)

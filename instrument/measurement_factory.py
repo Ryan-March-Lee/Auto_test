@@ -27,6 +27,10 @@ split: everything opened here is closed here.  When assembly fails, the resource
 opened so far are released in reverse order, then the ResourceManager, and the
 original assembly error is the one that reaches the caller — a failed cleanup is
 only logged.
+
+硬件模式的配置权威是**当前运行目录内冻结的硬件配置快照**：路径由
+:func:`app.gui_runtime.connect_instruments` 从运行契约解析并通过 manifest
+校验后传入，本模块不会接受其它来源的全局配置。
 """
 
 from __future__ import annotations
@@ -68,7 +72,7 @@ logger = get_logger(__name__)
 
 
 def create_measurement_port(
-    config_path: str | None = None,
+    hardware_config_path: str | None = None,
     *,
     mode: str = "hardware",
     power_channels: Mapping[str, str] | None = None,
@@ -78,14 +82,23 @@ def create_measurement_port(
 ):
     """Create a service port for hardware or offline simulation mode.
 
+    ``hardware_config_path`` 是**运行目录内冻结的硬件配置快照**
+    （``runs/<run_id>/inputs/hardware_config.json``）的路径，由唯一装配入口
+    :func:`app.gui_runtime.connect_instruments` 从当前运行契约解析并校验后传入；
+    本模块不接受“随手一份全局配置”作为硬件装配来源。仿真模式不打开任何 VISA
+    资源，因此不需要该路径。
+
     Hardware construction owns the VISA manager and all resources through the
     returned session.  Validation of addresses, roles and channels happens
     before any VISA resource is opened (see :mod:`instrument.assembly_plan`).
     """
     if mode == "hardware":
-        if config_path is None:
-            raise ValueError("hardware 模式必须提供 config_path")
-        return _create_hardware_measurement_port(config_path, recorder=recorder)
+        if hardware_config_path is None:
+            raise ValueError(
+                "hardware 模式必须提供运行快照的硬件配置路径（hardware_config_path）；"
+                "请先创建或重新加载运行"
+            )
+        return _create_hardware_measurement_port(hardware_config_path, recorder=recorder)
     if mode != "simulation":
         raise ValueError(f"不支持的测量端口模式: {mode}")
 
@@ -282,10 +295,10 @@ def _query(resource: Any, command: str, label: str) -> str:
         raise ProtocolError(f"{label} 查询失败 ({command}): {error}") from error
 
 
-def _create_hardware_measurement_port(config_path: str, *, recorder=None):
+def _create_hardware_measurement_port(hardware_config_path: str, *, recorder=None):
     from infrastructure.config.json_io import load_config_file
 
-    config = load_config_file(config_path)
+    config = load_config_file(hardware_config_path)
     # 装配校验（地址、角色、通道）必须在创建任何 VISA 资源之前完成；计划是只读的，
     # 下面只按计划取事实，不再回读配置。
     plan = hardware_assembly_plan(config)

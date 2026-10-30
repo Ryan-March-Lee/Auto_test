@@ -21,6 +21,7 @@ from application.run_service import (
     ensure_run_repository_supports_run_contract,
     ensure_run_resumable,
     find_run_hardware_config,
+    has_run_contract,
     load_hardware_config,
     load_run_configuration,
 )
@@ -61,8 +62,13 @@ class PreparedRun:
 
     @property
     def has_run_contract(self) -> bool:
-        """是否携带 ``runs/<run_id>/`` 运行目录契约（可用于阶段结果记录）。"""
-        return self.run_repository is not None
+        """是否携带 ``runs/<run_id>/`` 运行目录契约（可用于阶段结果记录）。
+
+        判定实现只有一份：:func:`application.run_service.has_run_contract`。它要求
+        运行标识、运行目录、运行仓储与冻结快照解析入口齐备，与 GUI 边界判据
+        :func:`presentation.qt.run_contract.is_valid_prepared_run` 完全一致。
+        """
+        return has_run_contract(self)
 
     @property
     def frozen_config_path(self) -> Path | None:

@@ -98,6 +98,7 @@ FORMAL_API = {
         "load_hardware_config",
         "find_run_hardware_config",
         "ensure_run_resumable",
+        "has_run_contract",
     ),
     "application.run_stages": ("RunStageRecorder", "StageInputUnavailable"),
     "application.measurements": (

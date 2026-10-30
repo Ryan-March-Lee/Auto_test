@@ -104,6 +104,7 @@ def _broken_contract_run(hardware_config_path=None):
         (),
         {
             "run_id": RUN_ID,
+            "run_directory": Path("runs") / RUN_ID,
             "run_repository": object(),
             "config_path": Path("global-config.json"),
             "has_run_contract": PreparedRun.has_run_contract,
@@ -362,8 +363,12 @@ class MeasurementCommandRunContractTests(unittest.TestCase):
         self.assertIs(command.prepared_run, run)
         self.assertEqual(command.config_path, "config.json")
 
-    def test_command_defaults_to_legacy_for_migration_adapters(self):
-        self.assertIsNone(MeasurementCommand("config.json").prepared_run)
+    def test_command_requires_a_run_contract_at_construction(self):
+        # 构造即满足契约（D1）：缺少运行对象的命令在构造期就被拒绝。
+        with self.assertRaises(ValueError):
+            MeasurementCommand("config.json", None)
+        with self.assertRaises(TypeError):
+            MeasurementCommand("config.json")
 
 
 class ControllerRunContractTests(unittest.TestCase):
@@ -647,11 +652,12 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
 
         self.assertEqual(coordinator.measurement_config_path(), str(frozen))
 
-        # 未创建运行时才回退到全局配置。
+        # 未创建运行不再回退全局配置：没有运行就没有本次运行的仪器地址。
         coordinator.prepared_run = None
-        self.assertEqual(
-            coordinator.measurement_config_path(), str(Path("global-config.json"))
-        )
+        with self.assertRaises(RunNotResumable) as raised:
+            coordinator.measurement_config_path()
+        self.assertIn("尚未创建运行", str(raised.exception))
+        self.assertNotIn("global-config.json", str(raised.exception))
 
     def test_measurement_config_path_does_not_fallback_for_contract_run(self):
         cases = {
@@ -709,24 +715,26 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
                     any("无法连接仪器" in str(call.args[0]) for call in log.call_args_list)
                 )
 
-    def test_legacy_flow_still_uses_global_config(self):
-        from app.run_context import PreparedRun
+    def test_connecting_without_a_run_fails_instead_of_saving_global_config(self):
+        """没有运行就没有仪器连接：不保存全局配置、不构造 worker、不打开设备。"""
+        log = MagicMock()
+        warn = MagicMock()
+        coordinator = self._coordinator(log=log, warn=warn)
+        coordinator.update_and_save_configuration = MagicMock()
 
-        coordinator = self._coordinator()
-        coordinator.prepared_run = None
-        self.assertEqual(
-            coordinator.measurement_config_path(), str(Path("global-config.json"))
-        )
+        with patch(
+            "presentation.qt.application_coordinator.InstrumentWorker"
+        ) as worker:
+            started = coordinator.connect_instruments()
 
-        # 旧兼容快照不带运行契约，仍使用创建时的源配置路径。
-        coordinator.prepared_run = PreparedRun(
-            configuration=None,
-            context=None,
-            run_directory=Path("legacy-run"),
-            config_path=Path("legacy-config.json"),
-        )
-        self.assertEqual(
-            coordinator.measurement_config_path(), str(Path("legacy-config.json"))
+        self.assertFalse(started)
+        coordinator.update_and_save_configuration.assert_not_called()
+        worker.assert_not_called()
+        self.assertIsNone(coordinator.instrument_worker)
+        warn.assert_called_once()
+        self.assertIn("尚未创建运行", str(warn.call_args.args[1]))
+        self.assertTrue(
+            any("无法连接仪器" in str(call.args[0]) for call in log.call_args_list)
         )
 
     def test_load_run_releases_previous_instrument_port(self):
@@ -1279,7 +1287,10 @@ class FrozenSnapshotValidationBoundaryTests(unittest.TestCase):
         self.assertEqual(reopened.hardware_connection_path(), frozen)
 
         connect = self._assemble_cable_loss(reopened)
-        connect.assert_called_once_with(str(frozen))
+        connect.assert_called_once()
+        self.assertEqual(
+            Path(reopened.hardware_connection_path()), frozen
+        )
 
     def test_non_object_hardware_snapshot_is_rejected(self):
         # 已登记、SHA-256 一致但根节点不是 JSON 对象的硬件快照必须被拒绝。
@@ -1341,7 +1352,13 @@ class FrozenSnapshotValidationBoundaryTests(unittest.TestCase):
         self.config_path.write_text(json.dumps(changed), encoding="utf-8")
 
         connect = self._assemble_cable_loss(prepared)
-        connect.assert_called_once_with(str(prepared.hardware_config_path))
+        connect.assert_called_once()
+        # 装配入口拿到的是运行对象本身，硬件配置文件仍是本次运行的冻结快照。
+        self.assertIs(connect.call_args.args[0], prepared)
+        self.assertEqual(
+            Path(prepared.hardware_connection_path()),
+            Path(prepared.hardware_config_path),
+        )
 
 
 class ContractRepositoryCapabilityTests(unittest.TestCase):
@@ -1413,6 +1430,7 @@ class ContractRepositoryCapabilityTests(unittest.TestCase):
             (),
             {
                 "run_id": RUN_ID,
+                "run_directory": Path("runs") / RUN_ID,
                 "run_repository": object(),
                 "has_run_contract": PreparedRun.has_run_contract,
                 "hardware_config_path": Path(__file__),

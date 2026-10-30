@@ -163,8 +163,17 @@ class NewPathMinimalActionTests(unittest.TestCase):
     def run_smoke(self, port, config=None):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            with patch("hardware.new_path_minimal_action_smoke.connect_instruments", return_value=port):
-                return run_new_path_minimal_action(config or smoke_config(), self.app_config(root))
+            with patch(
+                "hardware.new_path_minimal_action_smoke.create_measurement_port",
+                return_value=port,
+            ) as assemble:
+                report = run_new_path_minimal_action(
+                    config or smoke_config(), self.app_config(root)
+                )
+            # 受控例外：冒烟脚本显式用本地冒烟配置装配硬件模式，不经运行契约。
+            assemble.assert_called_once()
+            self.assertEqual(assemble.call_args.kwargs["mode"], "hardware")
+            return report
 
     def test_success_records_one_action_and_real_cleanup(self):
         port = FakePort()

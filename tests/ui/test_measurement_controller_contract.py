@@ -13,6 +13,10 @@ from presentation.qt.measurement_state import (
 )
 
 
+# 测量命令必须携带运行契约（D1）；契约深度校验由 GUI 边界与 worker 负责。
+_PREPARED_RUN = object()
+
+
 class _Signal:
     def __init__(self):
         self.slots = []
@@ -127,7 +131,7 @@ class MeasurementControllerContractTests(unittest.TestCase):
 
     def test_start_entries_are_stable_and_reject_concurrent_start(self):
         controller = _FakeController()
-        command = MeasurementCommand("config.json", options={"frequencies": [1, 2]})
+        command = MeasurementCommand("config.json", _PREPARED_RUN, options={"frequencies": [1, 2]})
 
         self.assertTrue(controller.start_cable_loss(command))
         for kind, method_name in START_METHODS.items():
@@ -140,7 +144,7 @@ class MeasurementControllerContractTests(unittest.TestCase):
 
     def test_normal_and_emergency_stop_are_distinct_worker_operations(self):
         controller = _FakeController()
-        controller.start_amplifier(MeasurementCommand("config.json"))
+        controller.start_amplifier(MeasurementCommand("config.json", _PREPARED_RUN))
         worker = controller.workers[-1][1]
 
         self.assertTrue(controller.stop())
@@ -176,8 +180,8 @@ class MeasurementControllerContractTests(unittest.TestCase):
 
     def test_command_requires_non_empty_path_and_freezes_nested_options(self):
         with self.assertRaises(ValueError):
-            MeasurementCommand(" ")
-        command = MeasurementCommand("config.json", {"nested": {"items": [1]}})
+            MeasurementCommand(" ", _PREPARED_RUN)
+        command = MeasurementCommand("config.json", _PREPARED_RUN, options={"nested": {"items": [1]}})
         with self.assertRaises((TypeError, AttributeError)):
             command.options["nested"]["items"].append(2)
 

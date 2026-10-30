@@ -64,9 +64,22 @@ class _CallbackEventSink:
             self.callbacks["data_callback"](dict(event.data))
 
 
-def connect_instruments(config_path: str, *, recorder: Any = None) -> Any:
-    """Create the configured hardware port through the composition root."""
-    return create_measurement_port(config_path, mode="hardware", recorder=recorder)
+def connect_instruments(
+    prepared_run: PreparedRun, *, config_path: str | None = None, recorder: Any = None
+) -> Any:
+    """Create the configured hardware port from the run's frozen hardware snapshot.
+
+    ``prepared_run`` 是唯一的硬件装配输入：硬件配置路径经
+    :meth:`PreparedRun.hardware_connection_path` 解析，并在打开任何 VISA 资源前
+    按 manifest 校验 SHA-256/大小，因此“连的是本次运行的仪器”可以被证明。
+    ``config_path`` 只服务不带运行契约的旧兼容快照（步骤 6 删除），契约运行永远
+    不会使用它。
+    """
+    return create_measurement_port(
+        _hardware_config_path(prepared_run, config_path),
+        mode="hardware",
+        recorder=recorder,
+    )
 
 
 def _close_owned_measurement_port(port: Any) -> None:
@@ -163,7 +176,7 @@ def _reject_simulated_bindings(hardware_config: Mapping[str, Any]) -> None:
     raise ConfigurationError(f"配置中的设备绑定来自模拟扫描，不能创建真实运行: {details}")
 
 
-def _hardware_config_path(prepared_run: PreparedRun, config_path: str) -> str:
+def _hardware_config_path(prepared_run: PreparedRun, config_path: str | None) -> str:
     """返回硬件连接与测量应使用的配置路径。
 
     运行契约运行固定使用运行目录内冻结的 ``inputs/hardware_config.json``，并统一走
@@ -181,6 +194,11 @@ def _hardware_config_path(prepared_run: PreparedRun, config_path: str) -> str:
     if run_repository is not None:
         raise RunNotResumable(
             "运行契约缺少有效的硬件配置快照，拒绝使用全局配置连接仪器；"
+            "请重新创建或重新加载运行"
+        )
+    if config_path is None:
+        raise RunNotResumable(
+            "运行没有可用的硬件配置路径，拒绝使用全局配置连接仪器；"
             "请重新创建或重新加载运行"
         )
     return config_path
@@ -409,8 +427,13 @@ def _request_kwargs(prepared_run: PreparedRun, config_path: str, callbacks: dict
 
 
 def create_cable_loss_measurement(
-    config_path: str, *, prepared_run: PreparedRun, **callbacks: Any
+    config_path: str | None, *, prepared_run: PreparedRun, **callbacks: Any
 ) -> Any:
+    """装配线损测量用例：运行契约是唯一权威，`config_path` 只做旧快照来源。
+
+    首个位置参数不再是硬件配置权威：契约运行的硬件配置一律来自
+    ``prepared_run`` 的冻结快照（步骤 6 会删除彻底失效的旧兼容来源）。
+    """
     callbacks.update(
         run_id=prepared_run.context.run_id,
         run_directory=prepared_run.run_directory,
@@ -423,7 +446,9 @@ def create_cable_loss_measurement(
         # 硬件两套职责校验冻结快照，避免用被篡改或损坏的快照打开仪器。
         _ensure_run_snapshots_are_intact(prepared_run)
         if owned_port:
-            callbacks["measurement_port"] = connect_instruments(effective_config_path)
+            callbacks["measurement_port"] = connect_instruments(
+                prepared_run, config_path=config_path
+            )
         callbacks["owns_measurement_port"] = owned_port
         callbacks.setdefault("result_repository", FileMeasurementResultRepository(paths=callbacks.get("paths") or DEFAULT_PATHS))
         callbacks.setdefault("event_sink", _CallbackEventSink(callbacks))
@@ -438,8 +463,9 @@ def create_cable_loss_measurement(
 
 
 def create_driver_mapping_measurement(
-    config_path: str, *, prepared_run: PreparedRun, **callbacks: Any
+    config_path: str | None, *, prepared_run: PreparedRun, **callbacks: Any
 ) -> Any:
+    """装配驱动映射测量用例：运行契约是唯一权威，`config_path` 只做旧快照来源。"""
     callbacks.update(
         run_id=prepared_run.context.run_id,
         run_directory=prepared_run.run_directory,
@@ -457,7 +483,9 @@ def create_driver_mapping_measurement(
         )
         _ensure_run_snapshots_are_intact(prepared_run)
         if owned_port:
-            callbacks["measurement_port"] = connect_instruments(effective_config_path)
+            callbacks["measurement_port"] = connect_instruments(
+                prepared_run, config_path=config_path
+            )
         callbacks["owns_measurement_port"] = owned_port
         callbacks.setdefault("result_repository", FileMeasurementResultRepository(paths=callbacks.get("paths") or DEFAULT_PATHS))
         callbacks.setdefault("event_sink", _CallbackEventSink(callbacks))
@@ -475,8 +503,9 @@ def create_driver_mapping_measurement(
 
 
 def create_amplifier_measurement(
-    config_path: str, *, prepared_run: PreparedRun, **callbacks: Any
+    config_path: str | None, *, prepared_run: PreparedRun, **callbacks: Any
 ) -> Any:
+    """装配主功放测量用例：运行契约是唯一权威，`config_path` 只做旧快照来源。"""
     callbacks.update(
         run_id=prepared_run.context.run_id,
         run_directory=prepared_run.run_directory,
@@ -503,7 +532,9 @@ def create_amplifier_measurement(
         )
         _ensure_run_snapshots_are_intact(prepared_run)
         if owned_port:
-            callbacks["measurement_port"] = connect_instruments(effective_config_path)
+            callbacks["measurement_port"] = connect_instruments(
+                prepared_run, config_path=config_path
+            )
         callbacks["owns_measurement_port"] = owned_port
         callbacks["result_repository"] = repository
         callbacks["input_reader"] = input_reader

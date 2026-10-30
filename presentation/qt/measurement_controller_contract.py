@@ -39,17 +39,21 @@ class MeasurementCommand:
 
     ``prepared_run`` 是配置阶段创建（或按 run_id 重新打开）的运行契约
     :class:`app.run_context.PreparedRun`；测量页面只携带它，不能携带运行期间可变
-    的 GUI 配置状态。正式页面会在提交前校验运行契约；迁移期间底层命令仍允许
-    ``None``，供历史/测试适配器使用。
+    的 GUI 配置状态。它是**必填**字段：构造命令就已经满足“测量绑定同一个运行”的
+    契约，缺少运行对象的命令在构造期被拒绝，而不是留到底层再猜。
     """
 
     config_path: str
+    prepared_run: Any
     options: Mapping[str, Any] = field(default_factory=dict)
-    prepared_run: Any = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.config_path, str) or not self.config_path.strip():
             raise ValueError("config_path 不能为空")
+        if self.prepared_run is None:
+            raise ValueError(
+                "测量命令必须携带运行契约 prepared_run；请先创建或重新加载运行"
+            )
         object.__setattr__(self, "options", _freeze(self.options))
 
 

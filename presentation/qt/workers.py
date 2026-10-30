@@ -133,8 +133,24 @@ class BaseWorker(QThread):
 
 
 class InstrumentWorker(BaseWorker):
-    def __init__(self, config_path: str, sleep_fn=None, measurement_port=None, connect_factory=None):
+    """按运行契约连接仪器；没有运行对象时不得打开任何设备。
+
+    ``prepared_run`` 是连接的唯一输入：硬件配置由运行契约的冻结快照解析，因此
+    “连的是本次运行的仪器”可以被证明。``config_path`` 只服务不带运行契约的旧兼容
+    快照（步骤 6 删除），不能替代运行对象。
+    """
+
+    def __init__(
+        self,
+        prepared_run,
+        *,
+        config_path: str | None = None,
+        sleep_fn=None,
+        measurement_port=None,
+        connect_factory=None,
+    ):
         super().__init__()
+        self.prepared_run = prepared_run
         self.config_path = config_path
         self.sleep_fn = sleep_fn or time.sleep
         self.measurement_port = measurement_port
@@ -146,8 +162,10 @@ class InstrumentWorker(BaseWorker):
         try:
             self.emit_message("正在初始化仪器控制...")
             self.signals.progress.emit(25)
+            # 缺少运行契约时明确失败：连接仪器必须绑定本次运行，绝不使用全局配置。
+            prepared = require_prepared_run(self.prepared_run, "仪器连接")
             connect_instruments = self.connect_factory or self._default_factory("connect_instruments")
-            controller = connect_instruments(self.config_path)
+            controller = connect_instruments(prepared, config_path=self.config_path)
             self.measurement_port = controller
             if self._stop_requested:
                 close = getattr(controller, "close_all", None)
@@ -195,7 +213,7 @@ class CableLossWorker(BaseWorker):
             try:
                 create_measurement = self.measurement_factory or self._default_factory("create_cable_loss_measurement")
                 # 缺少运行契约时明确失败，绝不在 worker 内隐式创建运行。
-                prepared = require_prepared_run(self.prepared_run, "线损")
+                prepared = require_prepared_run(self.prepared_run, "线损测量")
                 # 校验通过后、装配测量用例前再次检查停止意图：应用组装层可能连接仪器，
                 # 因此停止请求必须在这里拦下，而不是等到组装完成。
                 if self._stop_requested:
@@ -277,7 +295,7 @@ class DriverMappingWorker(BaseWorker):
             try:
                 create_measurement = self.measurement_factory or self._default_factory(factory_name)
                 # 缺少运行契约时明确失败，绝不在 worker 内隐式创建运行。
-                prepared = require_prepared_run(self.prepared_run, "驱动映射")
+                prepared = require_prepared_run(self.prepared_run, "驱动映射测量")
                 if self._stop_requested:
                     self.signals.stopped.emit(self.stop_reason)
                     return
@@ -324,7 +342,7 @@ class AmplifierWorker(BaseWorker):
             try:
                 create_measurement = self.measurement_factory or self._default_factory("create_amplifier_measurement")
                 # 缺少运行契约时明确失败，绝不在 worker 内隐式创建运行。
-                prepared = require_prepared_run(self.prepared_run, "主功放")
+                prepared = require_prepared_run(self.prepared_run, "主功放测量")
                 if self._stop_requested:
                     self.signals.stopped.emit(self.stop_reason)
                     return

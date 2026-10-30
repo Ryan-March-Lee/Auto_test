@@ -13,8 +13,10 @@ r"""门禁：《技术债分阶段重构计划》步骤 4 的无运行契约调�
 4. **生产调用点**：测量链路只能携带正式运行契约进入硬件装配；测量工厂的 ``prepared_run``
    必须是必填关键字参数；调用点必须先经 ``require_prepared_run()`` 校验并把它校验过的对象
    传给装配入口，且监测符号不得经 ``import ... as`` 别名或动态 ``getattr`` 绕过检查；
-5. **契约判据单源**：``has_run_contract`` / ``is_valid_prepared_run`` / ``require_prepared_run``
-   各只允许有一个生产定义，且对契约运行绝无“回退到调用方全局配置”的出口（失败断言）；
+5. **契约判据单源**：``has_run_contract`` 只有一处实现（``application.run_service``），
+   ``PreparedRun.has_run_contract`` 与 ``is_valid_prepared_run`` 只做委托；正式判据要求运行
+   标识、运行目录、运行仓储与可调用的冻结快照解析入口，且对契约运行绝无“回退到调用方
+   全局配置”的出口（失败断言）；
 6. **仅测试调用点**：仍然依赖无契约回退的测试用例按文件、按“无 recorder 的请求构造次数”冻结，
    迁移后必须下降并同步基线。
 
@@ -73,17 +75,19 @@ MEASUREMENT_PORT_CALLS = {COMPOSITION_ROOT: 2}
 MEASUREMENT_PORT_MODES = {"hardware": 1, "simulation": 1}
 MEASUREMENT_PORT_DEFINITION = ("instrument/measurement_factory.py", "create_measurement_port")
 
-# 契约判据必须单源：各判据只允许在这一个生产模块里定义一次。
+# 契约判据必须单源：唯一的判定实现 + 只做委托的正式入口。
+CONTRACT_PREDICATE_DEFINITION = ("application/run_service.py", "has_run_contract")
+# 判据实现必须覆盖的四项要求（与清单第 8 节 D8 一致）。
+CONTRACT_REQUIREMENTS = ("run_id", "run_directory", "run_repository", "hardware_connection_path")
+# 委托入口：``PreparedRun.has_run_contract``（对象属性）与 GUI 边界判据。
+CONTRACT_PREDICATE_DELEGATES = {
+    "app/run_context.py": "PreparedRun.has_run_contract",
+    "presentation/qt/run_contract.py": "is_valid_prepared_run",
+}
+# 其余契约相关判据同样只允许有一个生产定义。
 CONTRACT_PREDICATES = {
-    "has_run_contract": "app/run_context.py",
-    "is_valid_prepared_run": "presentation/qt/run_contract.py",
     "require_prepared_run": "presentation/qt/run_contract.py",
 }
-# 硬性判据 ``has_run_contract`` 当前只承认 run_repository：改成更严格的定义属于步骤 5
-# 的契约收紧，必须同时改本基线与清单第 8 节 D8。
-HAS_RUN_CONTRACT_ATTRIBUTE = "run_repository"
-# GUI 边界判据必须同时要求运行标识、运行目录与冻结快照解析入口。
-GUI_CONTRACT_REQUIREMENTS = ("has_run_contract", "run_id", "run_directory", "hardware_connection_path")
 
 # 受监测符号：生产代码不得用 import 别名或动态 getattr 让它们绕过上面的检查。
 MONITORED_SYMBOLS = frozenset(
@@ -149,31 +153,7 @@ NO_CONTRACT_SITES = (
     ),
     ("B9", "app/gui_runtime.py", "_test_frequencies", ("isinstance(configuration, Mapping)",)),
     ("B10", "app/gui_runtime.py", "_request_kwargs", ("if run_repository is not None",)),
-    (
-        "B11",
-        "app/gui_runtime.py",
-        "connect_instruments",
-        ('create_measurement_port(config_path, mode="hardware"',),
-    ),
-    ("B12", "instrument/measurement_factory.py", "create_measurement_port", ("config_path is None",)),
-    (
-        "B13",
-        "presentation/qt/workers.py",
-        "InstrumentWorker",
-        ("connect_instruments(self.config_path)",),
-    ),
-    (
-        "B14",
-        "presentation/qt/application_coordinator.py",
-        "ApplicationCoordinator.measurement_config_path",
-        ("return str(self.config_path)",),
-    ),
-    (
-        "B15",
-        "presentation/qt/application_coordinator.py",
-        "ApplicationCoordinator.connect_instruments",
-        ("if self.prepared_run is None:",),
-    ),
+    ("B12", "instrument/measurement_factory.py", "create_measurement_port", ("hardware_config_path is None",)),
     (
         "B16",
         "application/measurements/cable_loss.py",
@@ -199,12 +179,6 @@ NO_CONTRACT_SITES = (
         ('stage_recorder: "RunStageRecorder | None" = None',),
     ),
     (
-        "B20",
-        "presentation/qt/measurement_controller_contract.py",
-        "MeasurementCommand",
-        ("prepared_run: Any = None",),
-    ),
-    (
         # 共享的“None 表示旧兼容流程”开关：run_context / gui_runtime / run_service
         # 四处调用都靠它决定是否跳过快照完整性校验，是步骤 6 必须拆除的中枢分支。
         "B21",
@@ -213,28 +187,13 @@ NO_CONTRACT_SITES = (
         ("if run_repository is None:",),
     ),
 )
-# 归属步骤：步骤 5 只收敛装配入口（B11–B15 的连接与路径回退），其余留给步骤 6 删除。
-STEP_FIVE_SITES = ("B11", "B12", "B13", "B14", "B15")
+# 归属步骤：步骤 5 已完成（装配入口、仪器连接、配置路径回退、测量命令契约都已收敛），
+# 因此本表剩余条目全部属于步骤 6；再出现“步骤 5”条目说明收敛被回退。
+STEP_FIVE_SITES = ()
 
 # 第 2.2 节：缺少运行契约的生产调用点（符号存在性 + 归属步骤 + 文档登记）。
 NO_CONTRACT_CALL_SITES = (
     ("X1", "app/run_context.py", "prepare_run", "步骤 6"),
-    ("X2", "app/gui_runtime.py", "connect_instruments", "步骤 5"),
-    ("X3", "instrument/measurement_factory.py", "create_measurement_port", "步骤 5"),
-    ("X4", "presentation/qt/workers.py", "InstrumentWorker", "步骤 5"),
-    (
-        "X5",
-        "presentation/qt/application_coordinator.py",
-        "ApplicationCoordinator.connect_instruments",
-        "步骤 5",
-    ),
-    (
-        "X6",
-        "presentation/qt/application_coordinator.py",
-        "ApplicationCoordinator.measurement_config_path",
-        "步骤 5",
-    ),
-    ("X7", "presentation/qt/measurement_controller_contract.py", "MeasurementCommand", "步骤 5"),
 )
 
 # 语义计数：受监测的“无契约判据”变量与函数。只有这些名字进基线，其余同形判据不在
@@ -256,7 +215,7 @@ NO_CONTRACT_GUARD_BASELINE = {
     },
     "app/run_context.py": {
         "none:hardware_config_path:is_not": 1,
-        "none:run_repository:is_not": 3,
+        "none:run_repository:is_not": 2,
     },
     "application/measurements/amplifier_test.py": {
         "none:stage_recorder:is": 4,
@@ -274,13 +233,18 @@ NO_CONTRACT_GUARD_BASELINE = {
         "none:hardware_config_path:is": 1,
         "none:run_repository:is": 1,
     },
-    "presentation/qt/application_coordinator.py": {"none:prepared_run:is": 2},
+    # 硬件装配入口只接受运行快照路径：缺路径即失败，不再有“调用方配置路径”来源。
+    "instrument/measurement_factory.py": {"none:hardware_config_path:is": 1},
+    # 连接仪器必须先有运行（无运行即失败），因此这里的 prepared_run 判据只剩一处。
+    "presentation/qt/application_coordinator.py": {"none:prepared_run:is": 1},
     # 非回退点，登记在案以免将来被误当成无契约路径或悄悄消失：
     # main_window 只用来提示“配置已冻结”，不是测量入口。
     "presentation/qt/main_window.py": {
         "none:prepared_run:is_not": 1,
         "call:connect_instruments": 1,
     },
+    # 测量命令在构造期就拒绝缺少运行契约的命令（D1），因此只保留这一处显式判空。
+    "presentation/qt/measurement_controller_contract.py": {"none:prepared_run:is": 1},
     "presentation/qt/workers.py": {"call:connect_instruments": 1, "call:create_measurement": 3},
 }
 
@@ -301,10 +265,6 @@ TEST_ONLY_FILE_PROBES = {
         ("call", "prepare_run", 1),
     ),
     "tests/test_offline_completion.py": (("call", "prepare_run", 1),),
-    "tests/integration/test_gui_two_phase_flow.py": (
-        ("def", "test_legacy_flow_still_uses_global_config", 1),
-        ("def", "test_measurement_config_path_prefers_frozen_run_config", 1),
-    ),
     "tests/test_measurement_requests.py": (
         ("def", "test_legacy_prepared_run_has_no_stage_recorder", 1),
     ),
@@ -336,18 +296,6 @@ TEST_ONLY_CALL_SITES = (
         "test_legacy_prepare_run_remains_non_contract_compatible",
     ),
     ("T5", "步骤 6", ("tests/test_offline_completion.py",), "prepare_run("),
-    (
-        "T6",
-        "步骤 5/6",
-        ("tests/integration/test_gui_two_phase_flow.py",),
-        "test_legacy_flow_still_uses_global_config",
-    ),
-    (
-        "T7",
-        "步骤 5/6",
-        ("tests/integration/test_gui_two_phase_flow.py",),
-        "test_measurement_config_path_prefers_frozen_run_config",
-    ),
     (
         "T8",
         "步骤 6",
@@ -809,41 +757,52 @@ class ContractPredicateTests(unittest.TestCase):
                     "新增第二套判据会让不同入口对“是否有运行契约”给出不同答案",
                 )
 
-    def test_has_run_contract_is_exactly_the_run_repository_test(self):
-        text, _tree_node = _tree(ROOT / CONTRACT_PREDICATES["has_run_contract"])
-        node = _find_symbol(text, "PreparedRun.has_run_contract")
-        self.assertIsNotNone(node, "app/run_context.py 缺少 PreparedRun.has_run_contract")
-        body = [statement for statement in node.body if not isinstance(statement, ast.Expr)]
-        self.assertEqual(len(body), 1, "has_run_contract 只应有一条 return 语句")
-        value = body[0].value
-        self.assertIsInstance(value, ast.Compare, "has_run_contract 必须直接比较运行仓储")
-        self.assertIsInstance(value.left, ast.Attribute)
-        self.assertEqual(getattr(value.left.value, "id", None), "self")
-        self.assertEqual(_side_name(value.left), HAS_RUN_CONTRACT_ATTRIBUTE)
-        self.assertTrue(any(isinstance(op, ast.IsNot) for op in value.ops))
-        self.assertTrue(
-            all(
-                isinstance(comparator, ast.Constant) and comparator.value is None
-                for comparator in value.comparators
-            )
+    def test_has_run_contract_has_one_implementation_and_two_delegates(self):
+        """判据单源（D8）：唯一实现在 application.run_service，其余入口只做委托。"""
+        module, symbol = CONTRACT_PREDICATE_DEFINITION
+        same_name_delegates = [
+            relative
+            for relative, dotted in CONTRACT_PREDICATE_DELEGATES.items()
+            if dotted.split(".")[-1] == symbol
+        ]
+        self.assertEqual(
+            sorted(self._definitions(symbol)),
+            sorted([module, *same_name_delegates]),
+            "运行契约判据只能有一处实现 + 同名的委托入口；"
+            "新增实现会让不同入口对“是否有运行契约”给出不同答案",
         )
-
-    def test_gui_contract_predicate_requires_the_frozen_snapshot_resolver(self):
-        text, tree = _tree(ROOT / CONTRACT_PREDICATES["is_valid_prepared_run"])
-        node = _find_symbol(text, "is_valid_prepared_run")
-        self.assertIsNotNone(node, "presentation/qt/run_contract.py 缺少 is_valid_prepared_run")
-        referenced = set()
-        for child in ast.walk(node):
-            if isinstance(child, ast.Attribute):
-                referenced.add(child.attr)
-            elif isinstance(child, ast.Constant) and isinstance(child.value, str):
-                referenced.add(child.value)
-        for requirement in GUI_CONTRACT_REQUIREMENTS:
+        # 唯一实现必须真的检查四项要求（运行标识、运行目录、运行仓储、快照解析入口）。
+        text, _tree_node = _tree(ROOT / module)
+        node = _find_symbol(text, symbol)
+        self.assertIsNotNone(node, f"{module} 缺少 {symbol}")
+        segment = ast.get_source_segment(text, node) or ""
+        for requirement in CONTRACT_REQUIREMENTS:
             with self.subTest(requirement=requirement):
                 self.assertIn(
                     requirement,
-                    referenced,
-                    f"GUI 判据必须要求 {requirement}：只查 has_run_contract 会让残缺替身通过",
+                    segment,
+                    f"契约判据必须要求 {requirement}：缺少它会让残缺替身通过",
+                )
+        # 委托入口只允许一条 return，返回同一个判据的结果。
+        for relative, dotted in CONTRACT_PREDICATE_DELEGATES.items():
+            with self.subTest(delegate=relative):
+                delegate_text, _delegate_tree = _tree(ROOT / relative)
+                delegate = _find_symbol(delegate_text, dotted)
+                self.assertIsNotNone(delegate, f"{relative} 缺少 {dotted}")
+                body = [
+                    statement
+                    for statement in delegate.body
+                    if not isinstance(statement, ast.Expr)
+                ]
+                self.assertEqual(
+                    len(body),
+                    1,
+                    f"{dotted} 必须只委托一次，不允许自带第二套检查",
+                )
+                self.assertEqual(
+                    _called_name(body[0].value),
+                    symbol,
+                    f"{dotted} 必须调用唯一实现 {symbol}",
                 )
 
     def test_a_contract_run_never_falls_back_to_the_caller_config_path(self):
@@ -957,16 +916,37 @@ class ProductionContractTests(unittest.TestCase):
             "仿真模式不连设备且不得冒充生产测量入口",
         )
 
-    def test_measurement_port_definition_still_takes_a_config_path(self):
+    def test_measurement_port_takes_the_run_snapshot_not_a_caller_config_path(self):
+        """步骤 5：硬件装配的输入是运行快照路径，不再是调用方的 config_path。"""
         relative, symbol = MEASUREMENT_PORT_DEFINITION
         text, _tree_node = _tree(ROOT / relative)
         node = _find_symbol(text, symbol)
         self.assertIsNotNone(node, f"{relative} 缺少装配入口 {symbol}")
         self.assertIsInstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        arguments = [
+            argument.arg
+            for argument in (*node.args.posonlyargs, *node.args.args)
+        ]
+        self.assertEqual(
+            arguments[:1],
+            ["hardware_config_path"],
+            f"{symbol} 的首个参数必须是运行快照的硬件配置路径（步骤 5 已收敛）",
+        )
+        self.assertNotIn(
+            "config_path",
+            arguments,
+            f"{symbol} 不得再把调用方的 config_path 当作硬件装配来源",
+        )
+
+    def test_connect_instruments_is_bound_to_the_prepared_run(self):
+        """步骤 5：连接入口只接受运行对象，硬件路径由运行契约的冻结快照解析。"""
+        text, _tree_node = _tree(ROOT / COMPOSITION_ROOT)
+        node = _find_symbol(text, "connect_instruments")
+        self.assertIsNotNone(node, "app/gui_runtime.py 缺少 connect_instruments")
         self.assertEqual(
             [argument.arg for argument in node.args.args][:1],
-            ["config_path"],
-            f"{symbol} 仍以 config_path 为第一参数：步骤 5 需把硬件模式收敛为 PreparedRun",
+            ["prepared_run"],
+            "connect_instruments 的首个参数必须是运行契约，不能是配置路径",
         )
 
     def test_measurement_factories_require_a_prepared_run(self):

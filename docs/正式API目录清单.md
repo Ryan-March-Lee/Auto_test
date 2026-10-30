@@ -61,7 +61,7 @@
 | --- | --- | --- |
 | `launcher` | `main`、`inspect_run`、`list_runs` | CLI 启动、运行目录检查与列表 |
 | `app.run_context` | `PreparedRun`、`create_prepared_run`、`load_prepared_run` | 运行契约对象与创建/重载入口；`prepare_run` 属旧兼容路径，不在正式清单内 |
-| `app.gui_runtime` | `prepare_configuration`、`connect_instruments`、`create_offline_measurement_port`、`create_cable_loss_measurement`、`create_driver_mapping_measurement`、`create_amplifier_measurement` | GUI 侧装配入口；页面不得直接调用测量组装函数 |
+| `app.gui_runtime` | `prepare_configuration`、`connect_instruments`、`create_offline_measurement_port`、`create_cable_loss_measurement`、`create_driver_mapping_measurement`、`create_amplifier_measurement` | GUI 侧装配入口；页面不得直接调用测量组装函数。`connect_instruments` 只接受运行契约对象，硬件配置取自运行目录冻结的 `inputs/hardware_config.json`；三个测量工厂的 `prepared_run` 是必填关键字参数 |
 | `app.events` | `EventSink`、`MeasurementEvent`、`ProgressEvent`、`MessageEvent`、`RealtimeDataEvent`、`CheckpointEvent`、`CompletedEvent`、`StoppedEvent`、`FailedEvent` | 测量事件与事件接收端口 |
 | `app.cancellation` | `CancellationMode`、`MeasurementCancelled`、`CancellationToken` | 取消语义 |
 
@@ -70,7 +70,7 @@
 | 模块 | 正式公开名称 | 说明 |
 | --- | --- | --- |
 | `application.configuration_service` | `load_for_run` | 正式配置加载入口 |
-| `application.run_service` | `RunSnapshot`、`create_run_snapshot`、`load_run_configuration`、`inspect_run`、`load_hardware_config`、`find_run_hardware_config`、`ensure_run_resumable` | 运行创建、快照校验与可恢复性判断；正式测量必须绑定 `run_id` |
+| `application.run_service` | `RunSnapshot`、`create_run_snapshot`、`load_run_configuration`、`inspect_run`、`load_hardware_config`、`find_run_hardware_config`、`ensure_run_resumable`、`has_run_contract` | 运行创建、快照校验与可恢复性判断；正式测量必须绑定 `run_id`。`has_run_contract` 是运行契约的唯一判据（运行标识 + 运行目录 + 运行仓储 + 冻结快照解析入口），`PreparedRun.has_run_contract` 与 GUI 边界判据都委托它 |
 | `application.run_stages` | `RunStageRecorder`、`StageInputUnavailable` | 阶段输入/结果登记 |
 | `application.measurements` | `CableLossUseCase`、`DriverPowerMappingUseCase`、`AmplifierMeasurementUseCase`、`AmplifierCalibrationError`、`validate_amplifier_calibration_inputs` | 三类正式测量用例入口 |
 | `application.measurements.services` | `CableLossService`、`DriverPowerMappingService`、`AmplifierMeasurementService` | 测量服务（依赖注入端口，不导入具体仪器 flow） |
@@ -240,9 +240,9 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `presentation.qt.config_page` | 配置页面（编辑配置编写文档；向协调器提供 `ConfigurationPagePort` 窄接口） |
 | `presentation.qt.config_page_widgets` | 配置页面控件构建辅助（固定操作栏布局 + 页面共用的数值框/下拉框工厂；控件仍登记在页面上） |
 | `presentation.qt.config_power_section` | 配置页电源分区的控件构建：按电源键分页的通道参数标签页与电源分配设置表单，控件仍登记在页面上（页面负责信号连接、派生界面状态与配置读写；条目、可选项与分配引用以显式声明的类型传入，不从控件或文件里取状态） |
-| `presentation.qt.connection_page` | 仪表配置页：欢迎页选定测试模式后的整屏页面（不登记进标签栏），大字号页标题、标题下居中的扫描网段与扫描方式、勾选并应用本次测试所需的设备（“查找设备”是结果框正中的落点）、框外右下的“连接仪器”，应用后由“下一步”进入仪器配置页；设备绑定的写入与派生界面（电源标签页、电源分配可选项）仍归 config_page |
+| `presentation.qt.connection_page` | 仪表配置页：欢迎页选定测试模式后的整屏页面（不登记进标签栏），大字号页标题、标题下居中的扫描网段与扫描方式、勾选并应用本次测试所需的设备（“查找设备”是结果区正中的落点，结果区不画外框）、结果区右下的“连接仪器”，应用后由“下一步”进入仪器配置页；设备绑定的写入与派生界面（电源标签页、电源分配可选项）仍归 config_page |
 | `presentation.qt.device_cards` | 设备发现的仪器展示卡片：第一行居中放大的仪器名（型号，如 `DP832A`、`SMW200A`），第二行仪器图片（不加底板、不描边，等比缩放到同一视觉体积），最下面是加粗放大的设备码缩写（电源用注册表短标签 `DP8B1519`，其它仪器 `角色缩写/型号/序列号`）；圆角矩形，点击卡片即选中 |
-| `presentation.qt.device_discovery_panel` | 仪器连接配置框（设备发现）：扫描网段、结果框（未查找时浅灰底 + 框中央的“查找设备”卡片按钮，点下去后按钮与灰底收走、开始加载设备）、以卡片展示已登记/未分配角色/未登记/无法识别结果、点击卡片即选中并应用（角色取自设备表）、显示当前已绑定设备、清除设备绑定；扫描线程只读探测，不改配置也不连接仪器 |
+| `presentation.qt.device_discovery_panel` | 仪器连接配置（设备发现）：扫描网段、结果区（不画外框：无边框、无底色，未查找时“查找设备”卡片按钮浮在正中，点下去后按钮收走、开始加载设备）、以卡片展示已登记/未分配角色/未登记/无法识别结果、点击卡片即选中并应用（角色取自设备表）、显示当前已绑定设备、清除设备绑定；扫描线程只读探测，不改配置也不连接仪器 |
 | `presentation.qt.scan_card` | “查找设备”的卡片按钮：自绘的 190×254 深色卡片（渐变卡面、四角角标、靛蓝柔光），正中的渐变标题写着“查找设备”，卡片内部有横向光带、扫描线与外飘粒子在动；悬停时卡片底下那张紫→蓝渐变底卡转出去（0.6s，``rotate(-90deg) scaleX(1.34) scaleY(0.77)``）、霓虹光斑的模糊同时加厚，点击行为仍由设备发现面板接手 |
 | `presentation.qt.config_projection` | 配置编写文档（authoring document）到配置页控件的确定性投影：重置、逐字段投影、非法类型回落；正式 `test_plan` / `run_mapping` 只由 `configuration_authoring` 生成 |
 | `presentation.qt.configuration_authoring` | 配置页保存时的正式运行配置编写 |

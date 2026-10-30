@@ -141,7 +141,7 @@ class ApplicationCoordinator:
         config_path: Any = None,
         gui_data_service: GuiDataService | None = None,
         controller: MeasurementController | None = None,
-        instrument_worker_factory: Callable[[str], Any] = InstrumentWorker,
+        instrument_worker_factory: Callable[[Any], Any] = InstrumentWorker,
     ) -> None:
         for name, callback in (("log", log), ("warn", warn), ("error", error)):
             if not callable(callback):
@@ -238,7 +238,11 @@ class ApplicationCoordinator:
         return True
 
     def update_and_save_configuration(self) -> bool:
-        """连接仪器前的“读取界面并保存”；结果写进日志，由调用方决定是否继续。"""
+        """读取界面并保存正式配置；结果写进日志，由调用方决定是否继续。
+
+        连接仪器不再经过这里：仪器连接必须绑定已创建的运行契约，不能靠“保存全局
+        配置后直接连线”绕过运行目录。
+        """
         self.update_configuration_from_ui()
         if self.save_configuration():
             self._log("配置已更新并保存")
@@ -252,16 +256,18 @@ class ApplicationCoordinator:
         """返回硬件连接与测量应使用的配置路径。
 
         运行契约运行固定返回运行目录内冻结的 ``inputs/hardware_config.json``，并在
-        返回前校验该快照仍然可用（存在、未被删除或篡改）；只有尚未创建运行
-        （``prepared_run is None``）时才回退到全局配置。
+        返回前校验该快照仍然可用（存在、未被删除或篡改）。**尚未创建运行时明确失败**：
+        没有运行就没有本次运行的仪器地址，回退到全局可变配置会让界面用与当前运行无关
+        的地址连接硬件。
 
-        运行契约不可用（快照缺失、被删除、校验失败，或对象没有校验入口）时直接抛出
-        :class:`RunNotResumable`：已创建运行必须使用自己的快照，否则会用与该运行无关的
-        仪器地址连接硬件。
+        运行契约不可用（未创建运行、快照缺失、被删除、校验失败，或对象没有校验入口）
+        时直接抛出 :class:`RunNotResumable`。
         """
         run = self.prepared_run
         if run is None:
-            return str(self.config_path)
+            raise RunNotResumable(
+                "尚未创建运行，不能连接仪器；请先在“仪器配置”页点击“校验并创建运行”"
+            )
         resolver = getattr(run, "hardware_connection_path", None)
         if resolver is None:
             raise RunNotResumable(
@@ -458,22 +464,28 @@ class ApplicationCoordinator:
     ) -> bool:
         """启动仪器连接 worker；返回是否已启动。
 
-        ``bind_signals`` 由窗口提供，在 worker 启动前连接窗口自身的 Qt 槽，
-        保证第一个事件不会在连接建立前发出。
+        连接必须绑定当前运行：没有运行（或运行快照不可用）时不保存全局配置、也不
+        打开任何设备，而是明确失败。``bind_signals`` 由窗口提供，在 worker 启动前连接
+        窗口自身的 Qt 槽，保证第一个事件不会在连接建立前发出。
         """
         self._log("开始连接仪器...")
-        if self.prepared_run is None:
-            if not self.update_and_save_configuration():
-                return False
-        else:
-            self._log(f"使用已冻结的运行配置连接仪器: {self.prepared_run.run_id}")
+        run = self.prepared_run
+        if run is None:
+            self._log(
+                "无法连接仪器: 尚未创建运行；请先在“仪器配置”页点击“校验并创建运行”"
+            )
+            self._warn(
+                "仪器连接失败", "尚未创建运行：请先在“仪器配置”页校验并创建运行"
+            )
+            return False
+        self._log(f"使用已冻结的运行配置连接仪器: {run.run_id}")
         try:
-            config_path = self.measurement_config_path()
+            self.measurement_config_path()
         except RunNotResumable as failure:
             self._log(f"无法连接仪器: {failure}")
             self._warn("仪器连接失败", str(failure))
             return False
-        worker = self._instrument_worker_factory(config_path)
+        worker = self._instrument_worker_factory(run)
         if bind_signals is not None:
             bind_signals(worker)
         self.instrument_worker = worker

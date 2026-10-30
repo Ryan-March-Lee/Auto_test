@@ -62,21 +62,21 @@ class _AmplifierService:
 class _StopDuringValidation:
     """在 worker 校验运行契约时触发停止请求的替身运行契约。
 
-    worker 必须在校验通过后、创建测量用例前再次检查停止意图：这里让
-    ``has_run_contract`` 的读取触发 ``worker.stop()``，从而精确覆盖该分支，
-    证明停止后不再装配测量对象（也就不会有任何硬件动作）。
+    worker 必须在校验通过后、创建测量用例前再次检查停止意图：唯一判据
+    :func:`application.run_service.has_run_contract` 会读取 ``run_id``，这里让该读取
+    触发 ``worker.stop()``，从而精确覆盖该分支，证明停止后不再装配测量对象（也就不会
+    有任何硬件动作）。
     """
 
     def __init__(self, worker):
         self._worker = worker
 
     @property
-    def has_run_contract(self):
+    def run_id(self):
         self._worker.stop()
-        return True
+        return "run-worker"
 
     run_repository = object()
-    run_id = "run-worker"
     run_directory = "runs/run-worker"
 
     def hardware_connection_path(self):
@@ -425,11 +425,27 @@ class GuiWorkerTests(unittest.TestCase):
                 self.close_calls.append(close_rf)
 
         port = _Port()
-        worker = InstrumentWorker("config.json", sleep_fn=lambda _seconds: (_ for _ in ()).throw(OSError("handoff failed")))
+        worker = InstrumentWorker(
+            self._contract_run(),
+            config_path="config.json",
+            sleep_fn=lambda _seconds: (_ for _ in ()).throw(OSError("handoff failed")),
+        )
         with patch("app.gui_runtime.connect_instruments", return_value=port):
             worker.run()
         self.assertEqual(port.close_calls, [True])
         self.assertIsNone(worker.measurement_port)
+
+    def test_instrument_worker_without_a_run_never_connects(self):
+        """连接仪器必须绑定运行契约：没有运行对象时不打开任何设备。"""
+        worker = InstrumentWorker("config.json", sleep_fn=lambda _seconds: None)
+        errors = []
+        worker.signals.error.connect(errors.append)
+        with patch("app.gui_runtime.connect_instruments") as connect:
+            worker.run()
+        connect.assert_not_called()
+        self.assertIsNone(worker.measurement_port)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("必须携带有效 PreparedRun", errors[0])
 
     def test_instrument_worker_accepts_explicit_connect_factory(self):
         class _Port:
@@ -438,10 +454,18 @@ class GuiWorkerTests(unittest.TestCase):
 
         port = _Port()
         results = []
+        run = self._contract_run()
+
+        def connect_factory(prepared, *, config_path=None):
+            self.assertIs(prepared, run)
+            self.assertEqual(config_path, "config.json")
+            return port
+
         worker = InstrumentWorker(
-            "config.json",
+            run,
+            config_path="config.json",
             sleep_fn=lambda _seconds: None,
-            connect_factory=lambda path: (self.assertEqual(path, "config.json"), port)[1],
+            connect_factory=connect_factory,
         )
         worker.signals.result.connect(results.append)
         worker.run()
@@ -458,7 +482,9 @@ class GuiWorkerTests(unittest.TestCase):
                 self.close_calls.append(close_rf)
 
         port = _Port()
-        worker = InstrumentWorker("config.json", sleep_fn=lambda _seconds: None)
+        worker = InstrumentWorker(
+            self._contract_run(), config_path="config.json", sleep_fn=lambda _seconds: None
+        )
         worker.stop()
         stopped = []
         worker.signals.stopped.connect(stopped.append)

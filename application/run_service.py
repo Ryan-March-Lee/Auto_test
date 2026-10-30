@@ -367,6 +367,31 @@ def ensure_run_resumable(manifest: RunManifest) -> None:
         )
 
 
+def has_run_contract(value: Any) -> bool:
+    """运行契约的唯一判据：``PreparedRun`` 与 GUI 边界共用这一处实现。
+
+    运行契约要求四项同时成立：运行标识（非空字符串）、运行目录、运行仓储与可调用
+    的冻结快照解析入口（``hardware_connection_path()``）。任何一项缺失都视为“没有
+    运行契约”，调用方必须明确失败，绝不退回全局可变配置。
+
+    判据只读取属性、不要求具体类型，因此对真实
+    :class:`app.run_context.PreparedRun` 与测试契约替身给出同一个答案；
+    :attr:`app.run_context.PreparedRun.has_run_contract` 与
+    :func:`presentation.qt.run_contract.is_valid_prepared_run` 都委托到这里，
+    不允许再出现第二套判据。
+    """
+    if value is None:
+        return False
+    run_id = getattr(value, "run_id", None)
+    if not isinstance(run_id, str) or not run_id.strip():
+        return False
+    if getattr(value, "run_directory", None) is None:
+        return False
+    if getattr(value, "run_repository", None) is None:
+        return False
+    return callable(getattr(value, "hardware_connection_path", None))
+
+
 # 运行契约完整性校验所需的最小仓储能力：
 #
 # - ``read_config`` / ``read_run_json``：分别读取领域配置快照和任意已登记 JSON 输入；
@@ -474,6 +499,7 @@ __all__ = [
     "ensure_run_repository_supports_run_contract",
     "ensure_run_resumable",
     "find_run_hardware_config",
+    "has_run_contract",
     "inspect_run",
     "load_hardware_config",
     "load_run_configuration",

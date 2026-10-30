@@ -5,6 +5,11 @@ from presentation.qt.measurement_controller_contract import MeasurementCommand
 from presentation.qt.measurement_state import MeasurementKind, MeasurementStatus
 
 
+# 测量命令必须携带运行契约（D1）；controller 相关断言只关心命令与 worker 的转发，
+# 运行契约的深度校验由 worker 与 GUI 边界负责，因此这里用最小替身。
+_PREPARED_RUN = object()
+
+
 class Signal:
     def __init__(self):
         self.slots = []
@@ -95,7 +100,7 @@ class MeasurementControllerTests(unittest.TestCase):
         return factory
 
     def test_each_measurement_entry_uses_matching_factory(self):
-        command = MeasurementCommand("page-config.json")
+        command = MeasurementCommand("page-config.json", _PREPARED_RUN)
 
         for kind, start in (
             (MeasurementKind.CABLE_LOSS, self.controller.start_cable_loss),
@@ -111,7 +116,7 @@ class MeasurementControllerTests(unittest.TestCase):
             worker.signals.finished.emit()
 
     def test_selects_factory_and_cleans_worker_after_finished(self):
-        command = MeasurementCommand("page-config.json")
+        command = MeasurementCommand("page-config.json", _PREPARED_RUN)
         self.assertTrue(self.controller.start_cable_loss(command))
         worker = self.workers[-1]
         self.assertEqual(worker.command.config_path, "runtime-config.json")
@@ -126,7 +131,7 @@ class MeasurementControllerTests(unittest.TestCase):
         self.assertTrue(self.controller.start_amplifier(command))
 
     def test_controller_does_not_close_external_measurement_port(self):
-        command = MeasurementCommand("config.json")
+        command = MeasurementCommand("config.json", _PREPARED_RUN)
         self.assertTrue(self.controller.start_amplifier(command))
         worker = self.workers[-1]
 
@@ -158,18 +163,18 @@ class MeasurementControllerTests(unittest.TestCase):
         self.assertEqual(self.port.close_calls, 0)
 
     def test_runtime_config_provider_is_the_worker_config_authority(self):
-        self.assertTrue(self.controller.start_amplifier(MeasurementCommand("stale.json")))
+        self.assertTrue(self.controller.start_amplifier(MeasurementCommand("stale.json", _PREPARED_RUN)))
         self.assertEqual(self.workers[-1].command.config_path, "runtime-config.json")
 
     def test_rejects_concurrent_start(self):
-        command = MeasurementCommand("config.json")
+        command = MeasurementCommand("config.json", _PREPARED_RUN)
         self.assertTrue(self.controller.start_driver_mapping(command))
         self.assertFalse(self.controller.start_amplifier(command))
         self.assertEqual(self.rejections, ["已有测量正在运行"])
         self.assertEqual(len(self.workers), 1)
 
     def test_error_cleans_worker_and_is_restartable(self):
-        command = MeasurementCommand("config.json")
+        command = MeasurementCommand("config.json", _PREPARED_RUN)
         self.assertTrue(self.controller.start_amplifier(command))
         self.workers[-1].signals.error.emit("测量失败")
         self.assertEqual(self.controller.state.status, MeasurementStatus.FAILED)
@@ -178,7 +183,7 @@ class MeasurementControllerTests(unittest.TestCase):
         self.assertTrue(self.controller.start_cable_loss(command))
 
     def test_cable_loss_pause_and_continue_are_controller_operations(self):
-        command = MeasurementCommand("config.json")
+        command = MeasurementCommand("config.json", _PREPARED_RUN)
         self.assertTrue(self.controller.start_cable_loss(command))
         worker = self.workers[-1]
         worker.signals.step_pause.emit("请接线")
@@ -188,7 +193,7 @@ class MeasurementControllerTests(unittest.TestCase):
         self.assertEqual(self.controller.state.status, MeasurementStatus.RUNNING)
 
     def test_stop_and_emergency_stop_remain_distinct(self):
-        command = MeasurementCommand("config.json")
+        command = MeasurementCommand("config.json", _PREPARED_RUN)
         self.assertTrue(self.controller.start_amplifier(command))
         worker = self.workers[-1]
         self.assertTrue(self.controller.stop())
@@ -209,7 +214,7 @@ class MeasurementControllerTests(unittest.TestCase):
         self.assertEqual(self.controller.state.status, MeasurementStatus.EMERGENCY_STOPPED)
 
     def test_cancel_is_distinct_from_stop_and_emergency_stop(self):
-        command = MeasurementCommand("config.json")
+        command = MeasurementCommand("config.json", _PREPARED_RUN)
         self.assertTrue(self.controller.start_amplifier(command))
         worker = self.workers[-1]
         self.assertTrue(self.controller.cancel())
@@ -222,7 +227,7 @@ class MeasurementControllerTests(unittest.TestCase):
 
     def test_stop_intent_wins_over_late_worker_finished_event(self):
         for request, expected_reason in ((self.controller.stop, "用户停止"), (self.controller.cancel, "任务已取消")):
-            self.assertTrue(self.controller.start_amplifier(MeasurementCommand("config.json")))
+            self.assertTrue(self.controller.start_amplifier(MeasurementCommand("config.json", _PREPARED_RUN)))
             worker = self.workers[-1]
             self.assertTrue(request())
             worker.signals.result.emit({"value": 1})
@@ -234,7 +239,7 @@ class MeasurementControllerTests(unittest.TestCase):
         events = []
         self.controller.signals.finished.connect(lambda: events.append("finished"))
         self.controller.signals.stopped.connect(lambda reason: events.append(("stopped", reason)))
-        self.assertTrue(self.controller.start_amplifier(MeasurementCommand("config.json")))
+        self.assertTrue(self.controller.start_amplifier(MeasurementCommand("config.json", _PREPARED_RUN)))
         worker = self.workers[-1]
         self.controller.stop()
         worker.signals.finished.emit()
@@ -243,7 +248,7 @@ class MeasurementControllerTests(unittest.TestCase):
     def test_emergency_reason_wins_over_late_worker_stop_reason(self):
         stopped = []
         self.controller.signals.stopped.connect(stopped.append)
-        self.assertTrue(self.controller.start_amplifier(MeasurementCommand("config.json")))
+        self.assertTrue(self.controller.start_amplifier(MeasurementCommand("config.json", _PREPARED_RUN)))
         worker = self.workers[-1]
         self.controller.emergency_stop()
         worker.signals.stopped.emit("用户停止")
@@ -252,7 +257,7 @@ class MeasurementControllerTests(unittest.TestCase):
         self.assertEqual(stopped, ["紧急停止"])
 
     def test_emergency_stop_wins_over_worker_finished_event(self):
-        self.assertTrue(self.controller.start_amplifier(MeasurementCommand("config.json")))
+        self.assertTrue(self.controller.start_amplifier(MeasurementCommand("config.json", _PREPARED_RUN)))
         worker = self.workers[-1]
         self.controller.emergency_stop()
         worker.signals.result.emit({"gain": 1.0})
@@ -260,7 +265,7 @@ class MeasurementControllerTests(unittest.TestCase):
         self.assertEqual(self.controller.state.status, MeasurementStatus.EMERGENCY_STOPPED)
 
     def test_shutdown_stops_worker_with_timeout_and_cleans_reference(self):
-        command = MeasurementCommand("config.json")
+        command = MeasurementCommand("config.json", _PREPARED_RUN)
         self.assertTrue(self.controller.start_amplifier(command))
         worker = self.workers[-1]
 
@@ -270,7 +275,7 @@ class MeasurementControllerTests(unittest.TestCase):
         self.assertEqual(self.controller.state.status, MeasurementStatus.CANCELLED)
 
     def test_shutdown_timeout_keeps_worker_for_retry(self):
-        command = MeasurementCommand("config.json")
+        command = MeasurementCommand("config.json", _PREPARED_RUN)
         self.assertTrue(self.controller.start_amplifier(command))
         worker = self.workers[-1]
         worker.wait_result = False
@@ -287,7 +292,7 @@ class MeasurementControllerTests(unittest.TestCase):
             {MeasurementKind.AMPLIFIER: broken_factory}, lambda: "config.json"
         )
         controller.signals.error.connect(self.errors.append)
-        self.assertFalse(controller.start_amplifier(MeasurementCommand("config.json")))
+        self.assertFalse(controller.start_amplifier(MeasurementCommand("config.json", _PREPARED_RUN)))
         self.assertEqual(controller.state.status, MeasurementStatus.FAILED)
         self.assertEqual(self.errors, ["构造失败"])
         self.assertIsNone(controller.current_worker)
@@ -308,7 +313,7 @@ class MeasurementControllerTests(unittest.TestCase):
         )
         errors = []
         controller.signals.error.connect(errors.append)
-        command = MeasurementCommand("config.json")
+        command = MeasurementCommand("config.json", _PREPARED_RUN)
 
         self.assertFalse(controller.start_amplifier(command))
         self.assertEqual(controller.state.status, MeasurementStatus.FAILED)
@@ -318,7 +323,7 @@ class MeasurementControllerTests(unittest.TestCase):
         self.assertTrue(controller.start_amplifier(command))
 
     def test_cancel_signal_cleans_worker_and_allows_restart(self):
-        command = MeasurementCommand("config.json")
+        command = MeasurementCommand("config.json", _PREPARED_RUN)
         self.assertTrue(self.controller.start_driver_mapping(command))
         self.workers[-1].signals.stopped.emit("任务已取消")
 
@@ -329,7 +334,7 @@ class MeasurementControllerTests(unittest.TestCase):
 
     def test_waiting_cable_loss_can_be_stopped(self):
         self.assertTrue(
-            self.controller.start_cable_loss(MeasurementCommand("config.json"))
+            self.controller.start_cable_loss(MeasurementCommand("config.json", _PREPARED_RUN))
         )
         worker = self.workers[-1]
         stopped = []
@@ -356,20 +361,20 @@ class MeasurementControllerTests(unittest.TestCase):
         )
         errors = []
         controller.signals.error.connect(errors.append)
-        self.assertTrue(controller.start_amplifier(MeasurementCommand("config.json")))
+        self.assertTrue(controller.start_amplifier(MeasurementCommand("config.json", _PREPARED_RUN)))
         self.assertFalse(controller.stop())
         self.assertEqual(errors, ["停止失败"])
         self.assertEqual(controller.state.status, MeasurementStatus.FAILED)
         self.assertIsNone(controller.current_worker)
 
     def test_finished_without_result_is_a_failure(self):
-        self.assertTrue(self.controller.start_amplifier(MeasurementCommand("config.json")))
+        self.assertTrue(self.controller.start_amplifier(MeasurementCommand("config.json", _PREPARED_RUN)))
         self.workers[-1].signals.finished.emit()
         self.assertEqual(self.controller.state.status, MeasurementStatus.FAILED)
         self.assertEqual(self.errors, ["worker 完成但未提供测量结果"])
 
     def test_finished_does_not_read_worker_service_as_result_fallback(self):
-        self.assertTrue(self.controller.start_amplifier(MeasurementCommand("config.json")))
+        self.assertTrue(self.controller.start_amplifier(MeasurementCommand("config.json", _PREPARED_RUN)))
         worker = self.workers[-1]
         worker.service = type("Service", (), {"last_result": {"unexpected": True}})()
         worker.signals.finished.emit()
@@ -381,7 +386,7 @@ class MeasurementControllerTests(unittest.TestCase):
         self.controller.signals.thread_finished.connect(
             lambda: events.append(self.controller.current_worker)
         )
-        self.assertTrue(self.controller.start_amplifier(MeasurementCommand("config.json")))
+        self.assertTrue(self.controller.start_amplifier(MeasurementCommand("config.json", _PREPARED_RUN)))
         worker = self.workers[-1]
         worker.signals.result.emit({"value": 1})
         worker.signals.finished.emit()

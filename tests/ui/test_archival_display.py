@@ -28,6 +28,9 @@ RUN_ID = "20260101T000000Z_deadbeef"
 CSV_PATH = "artifacts/amplifier.csv"
 REPORT_PATH = "artifacts/amplifier_report.html"
 
+# 测量命令必须携带运行契约（D1）；本文件只验证归档展示，运行契约用最小替身。
+_PREPARED_RUN = object()
+
 
 class Signal:
     def __init__(self):
@@ -617,7 +620,7 @@ class ControllerArchivalForwardingTests(unittest.TestCase):
 
     def test_matching_stage_is_forwarded_and_other_stages_are_dropped(self):
         self.assertTrue(
-            self.controller.start_amplifier(MeasurementCommand("config.json"))
+            self.controller.start_amplifier(MeasurementCommand("config.json", _PREPARED_RUN))
         )
         amplifier_outcome = _amplifier_outcome()
         self.workers[-1].signals.archival.emit(amplifier_outcome)

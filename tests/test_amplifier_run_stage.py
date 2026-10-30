@@ -685,7 +685,13 @@ class AmplifierRunStageTests(unittest.TestCase):
         ):
             create_amplifier_measurement(str(config_path), prepared_run=prepared)
 
-        connect.assert_called_once_with(str(prepared.hardware_config_path))
+        connect.assert_called_once()
+        # 连接绑定的是本次运行对象本身；全局配置的修改不会改变它解析出的硬件快照。
+        self.assertIs(connect.call_args.args[0], prepared)
+        self.assertEqual(
+            Path(prepared.hardware_connection_path()),
+            Path(prepared.hardware_config_path),
+        )
 
     def test_composition_requires_mapping_before_hardware_when_driver_enabled(self):
         layout = self._create_run()

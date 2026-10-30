@@ -133,7 +133,9 @@ class MeasurementController:
             if not isinstance(config_path, str) or not config_path.strip():
                 raise ValueError("配置路径提供者返回了空路径")
             effective_command = MeasurementCommand(
-                config_path, command.options, command.prepared_run
+                config_path,
+                command.prepared_run,
+                options=command.options,
             )
             worker = factory(effective_command, measurement_port=self._measurement_port)
             self._worker = worker

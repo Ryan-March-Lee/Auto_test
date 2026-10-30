@@ -127,7 +127,9 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
                         loss_data_path=_LEGACY_LOSS_PATH,
                     )
                 self.assertIs(result, expected)
-                connect.assert_called_once_with("config.json")
+                connect.assert_called_once()
+                self.assertEqual(connect.call_args.args[0].context.run_id, "run-assembly-test")
+                self.assertEqual(connect.call_args.kwargs["config_path"], "config.json")
                 request = measurement.call_args.args[0]
                 self.assertIs(request.measurement_port, port)
                 self.assertEqual(request.run_id, "run-assembly-test")
@@ -279,7 +281,10 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
             "app.gui_runtime.CableLossUseCase", return_value=object()
         ):
             create_cable_loss_measurement("config.json", prepared_run=prepared)
-        connect.assert_called_once_with("config.json")
+        connect.assert_called_once()
+        # 硬件装配绑定的是运行对象本身；旧快照的调用方路径只作为来源参数带上。
+        self.assertIs(connect.call_args.args[0], prepared)
+        self.assertEqual(connect.call_args.kwargs["config_path"], "config.json")
 
     def test_explicit_driver_mapping_path_is_carried_into_request(self):
         port = _Port()

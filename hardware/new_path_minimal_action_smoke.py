@@ -9,9 +9,9 @@ from collections.abc import Mapping as MappingABC
 from pathlib import Path
 from typing import Any, Mapping
 
-from app.gui_runtime import connect_instruments
-from infrastructure.config.json_io import load_config_file
 from hardware.read_only_smoke import SmokeExecutionError, resolve_report_path, write_report
+from infrastructure.config.json_io import load_config_file
+from instrument.measurement_factory import create_measurement_port
 
 
 def _number(config: Mapping[str, Any], key: str) -> float:
@@ -142,7 +142,11 @@ def run_new_path_minimal_action(
         report["operations"].append(item)
 
     try:
-        port = connect_instruments(str(application_config_path), recorder=record)
+        # 受控真机 smoke 没有运行目录（见清单第 5 节的例外），因此显式使用本地
+        # 冒烟配置装配硬件，而不是走需要运行契约的生产装配入口。
+        port = create_measurement_port(
+            str(application_config_path), mode="hardware", recorder=record
+        )
         power_drivers = _power_drivers(port)
         identities = {
             "signal_generator": _identity(port.signal_generator, _remaining(deadline, action_timeout, clock)),
@@ -176,7 +180,7 @@ def run_new_path_minimal_action(
                 "spectrum_analyzer", port.spectrum_analyzer, analyzer_checks,
                 _remaining(deadline, action_timeout, clock),
             )
-        report["events"].append({"type": "assembled", "path": "app.gui_runtime.connect_instruments"})
+        report["events"].append({"type": "assembled", "path": "instrument.measurement_factory.create_measurement_port"})
 
         operation_timeout = _remaining(deadline, action_timeout, clock)
         port.set_frequency(float(params["frequency_hz"]) / 1e9, timeout_s=operation_timeout)

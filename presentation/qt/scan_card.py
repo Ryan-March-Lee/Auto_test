@@ -409,8 +409,8 @@ class ScanPromptCard(QPushButton):
         """把卡片的尺寸钉死在设计尺寸上。
 
         样式表里的 ``QPushButton`` 规则（内边距与 ``min-height``）会给每个按钮补一条最小
-        高度：卡片按钮与别的按钮并排（收起结果后的那一行）时会被压扁成一行高。样式每次
-        重新落一遍都会改回来，因此在 :meth:`changeEvent` 里再钉一次。
+        高度：卡片按钮落在别的控件（结果框里的按钮行、提示行）旁边时会被压扁成一行高。
+        样式每次重新落一遍都会改回来，因此在 :meth:`changeEvent` 里再钉一次。
         """
         self.setFixedSize(self.sizeHint())
 

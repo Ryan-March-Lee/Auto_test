@@ -1,4 +1,4 @@
-"""面板外观：卡片的排版与结果框的状态（浅灰底、框心按钮、收起与展开）。
+"""面板外观：卡片的排版与结果框的状态（浅灰底、框心按钮、返回上一步）。
 
 这些用例走真实的模拟扫描器把结果填进面板，因此放在接线测试里；只依赖表现层端口与
 DTO 的纯控件行为仍在 ``tests/ui``。
@@ -105,39 +105,24 @@ class CardPresentationTests(DiscoveryPanelTestCase):
         self.assertEqual(panel.card_count(), 0)
         self.assertGreater(panel.cards_area.height(), 0)
 
-    def test_results_stay_collapsed_until_a_scan_starts(self):
+    def test_results_stay_hidden_until_a_scan_starts(self):
         panel = self.make_panel()
 
-        self.assertFalse(panel.is_open())
         self.assertFalse(panel.cards_area.isVisible())
         # 空框里不写常驻提示：没有扫描就没有话要说。
         self.assertFalse(panel.status_label.isVisible())
         self.assertFalse(panel.apply_btn.isVisible())
-        self.assertFalse(panel.reopen_btn.isVisible())
+        self.assertFalse(panel.back_btn.isVisible())
 
-    def test_collapsing_keeps_the_results_reachable_through_reopen(self):
+    def test_results_stay_in_the_box_without_a_collapse_control(self):
+        """结果框不是抽屉：结果回来就留在框里，没有“收起结果 / 查看结果”那一套。"""
         panel = self.make_panel(size=(1200, 760))
         self.run_scan(panel)
 
-        self.assertTrue(panel.is_open())
         self.assertTrue(panel.cards_area.isVisible())
-        self.assertFalse(panel.reopen_btn.isVisible())
-
-        panel.set_open(False)
-        self.app.processEvents()
-        self.app.processEvents()
-
-        self.assertFalse(panel.cards_area.isVisible())
-        self.assertFalse(panel.apply_btn.isVisible())
-        self.assertTrue(panel.reopen_btn.isVisible())
-        # 收起后统计仍在状态行里，只是卡片不占位置。
-        self.assertIn("发现 4 台设备", panel.status_label.text())
-
-        QTest.mouseClick(panel.reopen_btn, Qt.LeftButton)
-        self.app.processEvents()
-        self.app.processEvents()
-        self.assertTrue(panel.cards_area.isVisible())
-        self.assertEqual(panel.card_count(), 4)
+        self.assertEqual(panel.back_btn.text(), "返回")
+        self.assertFalse(hasattr(panel, "collapse_btn"))
+        self.assertFalse(hasattr(panel, "reopen_btn"))
 
 
 class ResultsBoxStateTests(DiscoveryPanelTestCase):
@@ -216,37 +201,49 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         self.assertTrue(panel.scan_btn.isVisible())
         self.assertFalse(panel.results_box.property("filled"))
 
-    def test_collapsing_hands_the_box_centre_over_to_the_results_actions(self):
+    def test_the_results_take_the_box_over_from_the_centre(self):
         panel = self.make_panel()
         panel.request_scan()
         panel.worker.wait(5000)
         self.app.processEvents()
         self.app.processEvents()
+
+        self.assertEqual(panel.box_state(), BOX_STATE_RESULTS)
         self.assertTrue(panel.cards_area.isVisible())
         self.assertFalse(panel.centre_area.isVisible(), "卡片看得见时框心让位给卡片")
-
-        panel.set_open(False)
-        self.app.processEvents()
-
-        # 收起后框心给出两个动作：“查找设备”（再查一次）与“查看结果”（把卡片放回来）；
-        # 扫描行仍然只有网段与扫描方式。
-        self.assertTrue(panel.results_box.isAncestorOf(panel.reopen_btn))
-        self.assertTrue(panel.reopen_btn.isVisible())
-        self.assertTrue(panel.scan_btn.isVisible(), "收起后还要能重新查找")
-        self.assertTrue(panel.centre_area.isVisible())
-        self.assertEqual(panel.box_state(), BOX_STATE_RESULTS)
+        self.assertFalse(panel.scan_btn.isVisible())
         self.assertFalse(panel.results_box.property("filled"))
 
-        # 两个按钮并排落在框的正中。
-        box = panel.results_box
-        left = panel.scan_btn.mapTo(box, panel.scan_btn.rect().topLeft()).x()
-        right = panel.reopen_btn.mapTo(box, panel.reopen_btn.rect().topRight()).x()
-        self.assertAlmostEqual((left + right) / 2, box.rect().center().x(), delta=2)
+        # 框内的动作只属于有结果的这一次查找：应用 / 清除 / 返回。
+        for button in (panel.apply_btn, panel.clear_btn, panel.back_btn):
+            self.assertTrue(panel.results_box.isAncestorOf(button))
+            self.assertTrue(button.isVisible())
+        self.assertEqual(panel.back_btn.text(), "返回")
 
-        QTest.mouseClick(panel.reopen_btn, Qt.LeftButton)
+    def test_back_clears_this_search_and_returns_to_the_scan_button(self):
+        panel = self.make_panel()
+        panel.request_scan()
+        panel.worker.wait(5000)
         self.app.processEvents()
-        self.assertTrue(panel.cards_area.isVisible())
-        self.assertFalse(panel.centre_area.isVisible())
+        self.app.processEvents()
+        panel.set_card_checked(panel.card_headings()[0], True)
+        self.assertTrue(panel.devices)
+
+        QTest.mouseClick(panel.back_btn, Qt.LeftButton)
+        self.app.processEvents()
+        self.app.processEvents()
+
+        # 回到上一步：本次结果与勾选一起清掉，框中央重新是浅灰落点上的“查找设备”。
+        self.assertEqual(panel.box_state(), BOX_STATE_IDLE)
+        self.assertEqual(panel.card_count(), 0)
+        self.assertEqual(panel.devices, [])
+        self.assertFalse(panel.cards_area.isVisible())
+        self.assertTrue(panel.centre_area.isVisible())
+        self.assertTrue(panel.scan_btn.isVisible())
+        self.assertTrue(panel.results_box.property("filled"))
+        self.assertEqual(panel.status_label.text(), "")
+        self.assertFalse(panel.apply_btn.isVisible())
+        self.assertFalse(panel.apply_btn.isEnabled())
 
     def test_the_box_keeps_its_size_through_the_whole_scan(self):
         """点“查找设备”前后框一样大：状态与结果数量都不改变框的大小。"""
@@ -265,14 +262,14 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         self.app.processEvents()
         results = (box.width(), box.height())
 
-        panel.set_open(False)
+        panel.request_back()
         self.app.processEvents()
-        collapsed = (box.width(), box.height())
+        returned = (box.width(), box.height())
 
         self.assertGreater(idle[1], 0)
         self.assertEqual(busy, idle, "扫描中框不能变")
         self.assertEqual(results, idle, "结果回来后框不能变")
-        self.assertEqual(collapsed, idle, "收起后框不能变")
+        self.assertEqual(returned, idle, "返回后框不能变")
 
     def test_the_box_has_room_for_two_rows_of_cards(self):
         """框的固定高度按“两行卡片 + 框内按钮与状态行”算：场地上的 5 台设备不用滚动。"""

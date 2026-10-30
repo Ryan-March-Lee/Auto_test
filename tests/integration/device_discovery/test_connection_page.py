@@ -57,7 +57,7 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
         self.assertFalse(panel.status_label.isVisible())
 
     def test_the_panel_is_never_squeezed_below_its_card_grid(self):
-        """卡片展开后面板必须拿到足够高度：否则卡片区被裁掉并与按钮重叠。"""
+        """卡片出现在框里后面板必须拿到足够高度：否则卡片区被裁掉并与按钮重叠。"""
         self.make_page()
         panel = self.connection.discovery_panel
 
@@ -66,7 +66,7 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
         self.app.processEvents()
         self.app.processEvents()
 
-        self.assertTrue(panel.is_open())
+        self.assertTrue(panel.cards_area.isVisible())
         self.assertGreaterEqual(panel.height(), panel.minimumSizeHint().height())
         self.assertGreaterEqual(
             panel.cards_area.height(),
@@ -152,15 +152,15 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
             self._scan_row_centre(panel), panel.width() / 2, delta=3, msg="整行居中"
         )
 
-        # 有结果、收起之后也一样：动作按钮都在框里，不挤这一行。
+        # 有结果、按“返回”回到查找落点之后也一样：动作按钮都在框里，不挤这一行。
         panel.request_scan()
         panel.worker.wait(5000)
         self.app.processEvents()
         self.app.processEvents()
-        panel.set_open(False)
+        panel.request_back()
         self.app.processEvents()
         self.assertAlmostEqual(
-            self._scan_row_centre(panel), panel.width() / 2, delta=3, msg="收起后仍然居中"
+            self._scan_row_centre(panel), panel.width() / 2, delta=3, msg="返回后仍然居中"
         )
 
     def test_the_scan_button_sits_in_the_centre_of_the_results_box(self):
@@ -193,13 +193,13 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
         self.app.processEvents()
         results = snapshot()
 
-        panel.set_open(False)
+        panel.request_back()
         self.app.processEvents()
-        collapsed = snapshot()
+        returned = snapshot()
 
         self.assertEqual(scanning, before, "扫描中框不能移动或变形")
         self.assertEqual(results, before, "结果回来后框不能移动或变形")
-        self.assertEqual(collapsed, before, "收起后框不能移动或变形")
+        self.assertEqual(returned, before, "返回后框不能移动或变形")
 
     def test_connect_button_sits_outside_the_results_box(self):
         """“连接仪器”在结果框外面（右下角）：点它先走配置页的连接入口。"""

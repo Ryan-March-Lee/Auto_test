@@ -7,9 +7,10 @@
 - 面板不改配置、不连接仪器：用户确认“应用到配置”后，只把所选设备交给配置页，
   由配置页写成仪器连接配置（地址来自本次发现的设备）与设备身份记录。
 - **测试角色由设备表登记，界面不让用户选**：现场每台仪器只承担一种角色。卡片正面
-  写设备名、型号与角色徽标，下面一行缩减版身份码（信号源与频谱仪是``角色/型号/序列号``，
-  电源就是它的短标签 ``DP8B1519``）；电源是同一个类别下的多台设备，靠短标签区分，
-  不再用“电源 PS3”这类槽位编号。没登记角色的设备不能选中应用。
+  第一行是居中放大的仪器名（型号，如 ``SMW200A``），最下面一行是设备码缩写（信号源与
+  频谱仪是``角色缩写/型号/序列号``，电源就是它的短标签 ``DP8B1519``）；电源是同一个
+  类别下的多台设备，靠短标签区分，不再用“电源 PS3”这类槽位编号。角色与完整身份写在
+  悬浮提示里。没登记角色的设备不能选中应用。
 - **多台电源各自独立**：电源不再按角色键互相覆盖，勾选几台就传递几台；只有信号源与
   频谱仪保持“一个角色一台设备”的唯一性。
 - 发现结果**包含未知设备**：未在设备表中登记的序列号同样显示一张卡片并标记为未登记；
@@ -160,22 +161,6 @@ def card_model(device: Any) -> str:
     """卡片上的型号；读不出身份时为空串（角色徽标单独显示状态）。"""
     identity = getattr(device, "identity", None)
     return str(getattr(identity, "model", "") or "").strip() if identity is not None else ""
-
-
-def card_meta_model(device: Any) -> str:
-    """卡片副行要写的型号：标题里已经写了型号时留空，避免同一行信息写两遍。
-
-    只有“型号（短标签）”这种标题会把型号写进标题（电源标题是短标签、退回资产名的兜底标题
-    是 ``SMW200A-1`` / ``未知设备 (N9020A)``），所以只在那一种情况下让副行省掉型号。
-    图片挑选仍按 :func:`card_model`，与这条显示规则无关。
-    """
-    model = card_model(device)
-    if not model:
-        return ""
-    label = str(getattr(device, "label", "") or "").strip()
-    role = canonical_role(getattr(device, "known_role", None))
-    composed = bool(label) and role != POWER_SUPPLY_ROLE
-    return "" if composed else model
 
 
 def card_status_text(device: Any) -> str:
@@ -836,14 +821,13 @@ class DeviceDiscoveryPanel(QWidget):
                 visitor_index = self._visitor_index(device)
             heading = card_heading(device, visitor_index)
             model = card_model(device)
-            meta_model = card_meta_model(device)
             role = canonical_role(getattr(device, "known_role", None))
             picture_role = role or ("power_supply" if device.is_power_supply else "")
             code, code_detail = device_code(device, visitor_index)
             card = InstrumentCard(
-                heading,
-                meta_model,
-                role_label(role),
+                # 卡片第一行只写仪器名（型号）；读不出型号时退回卡片标题的兜底文本
+                # （``未识别设备 #n``），卡片上仍留有“这是哪台”的说法。
+                model or heading,
                 code,
                 status_text=card_status_text(device),
                 tooltip=self._card_tooltip(device, code_detail),
@@ -1109,7 +1093,6 @@ __all__ = [
     "SCAN_MODE_CHOICES",
     "binding_device_key",
     "card_heading",
-    "card_meta_model",
     "card_model",
     "card_status_text",
     "device_applicable",

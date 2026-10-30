@@ -171,7 +171,7 @@
 | `infrastructure/discovery/simulated_network.py` | 离线演示响应 |
 | `domain/instruments/models.py` | 设备身份、设备类别取值（`DEVICE_ROLES`，含 `power_supply`；旧槽位 `PS1..PS4` 只读兼容）、`role` 归一化与短标签字段 `label` |
 | `infrastructure/persistence/instrument_registry.py` | 设备表读写：`role` 的登记、校验与 `set_role` |
-| `presentation/qt/device_cards.py` | 结果卡片：仪器图片（按角色/型号在 `assets/instrument_pic/` 里选图、等比缩放）、设备名、型号与角色、缩减版设备码、查看/选中状态 |
+| `presentation/qt/device_cards.py` | 结果卡片：第一行居中放大的仪器名（型号）、第二行仪器图片（按角色/型号在 `assets/instrument_pic/` 里选图、等比缩放、不垫底板不描边）、最下面一行的设备码缩写、查看/选中状态 |
 | `presentation/qt/device_discovery_panel.py` | 面板、扫描线程、卡片网格（按宽度换行）、展开/收起、按身份预选、应用/清除校验；结果框的三种状态（未查找的浅灰落点 + 居中“查找设备”、扫描进行中、有结果） |
 | `presentation/qt/connection_page.py` | “仪表配置”整屏页面：大字号标题、标题下居中的扫描行、发现面板（圆角结果框，框中央是“查找设备”）、框外的“连接仪器”、“下一步/返回欢迎页”，把面板交给配置页登记 |
 | `presentation/qt/config_page.py` | 把选中设备写成仪器连接配置与 `device_bindings`（整批校验的最终边界；面板只是这里的展示端） |

@@ -2,15 +2,16 @@
 
 卡片结构（自上而下）：
 
-- 图片区：仪器实拍图放在浅色底板中央，按整块图片区等比缩放（不裁切），几张图的
-  “视觉体积”因此不受各自照片留白多少影响；
-- 文字区：设备名（如 ``SMW200A-1``）、型号与角色（如 ``SMW200A · 信号发生器``）、
-  缩减版身份码（``SG/SMW200A/105462``；电源用注册表短标签 ``DP8B1519``，见
-  :func:`device_code`）。
+- 仪器名（如 ``DP832A``、``SMW200A``）：第一行，居中放大——卡片里最先读到的就是
+  “这是哪台型号”；
+- 图片区：仪器实拍图直接摆在本色卡片上（不加底板、不描边），按整块图片区等比缩放
+  （不裁切），几张图的“视觉体积”因此不受各自照片留白多少影响；
+- 设备码缩写：最下面一行，加粗放大的等宽字（``SG/SMW200A/105462``；电源用注册表短标签
+  ``DP8B1519``，见 :func:`device_code`），现场对机时一眼看清。
 
 卡片只负责显示与选中状态，不知道扫描结果的数据结构：选择、应用与校验仍由
 :class:`presentation.qt.device_discovery_panel.DeviceDiscoveryPanel` 负责。
-图片按“角色 / 型号关键字”在 ``assets/instrument_pic/`` 里查找，找不到时留空底板；
+图片按“角色 / 型号关键字”在 ``assets/instrument_pic/`` 里查找，找不到时留空；
 图片只解码一次并缓存（照片单张最大 4.7 MB，重复解码会明显拖慢一次扫描后的刷新）。
 """
 
@@ -45,12 +46,14 @@ INSTRUMENT_PICTURE_DIR = (
 )
 
 # 卡片尺寸：所有卡片同宽等高，成行排列时不会参差。
-_CARD_WIDTH = 178
-_CARD_HEIGHT = 212
-_PICTURE_HEIGHT = 96
-_PICTURE_MARGIN = 8
-#: 设备码标签固定两行高度：等宽字体下长序列号会折行，卡片高度因此保持不变。
-_CODE_LABEL_HEIGHT = 34
+_CARD_WIDTH = 190
+#: 卡片高度按三行内容算：放大的仪器名 + 图片 + 两行设备码，另留一行状态说明的位置。
+_CARD_HEIGHT = 214
+_PICTURE_HEIGHT = 104
+#: 图片不描边、不垫底板，只留一点内缩，让照片不贴到卡片边上。
+_PICTURE_MARGIN = 4
+#: 设备码标签固定两行高度：加粗放大的等宽字下长序列号会折行，卡片高度因此保持不变。
+_CODE_LABEL_HEIGHT = 40
 #: 卡片网格的最大列数：卡片区再宽也不排成一条长带子。
 _MAX_COLUMNS = 4
 
@@ -187,7 +190,7 @@ _PICTURES = _PictureCache()
 
 
 class InstrumentImage(QWidget):
-    """图片区：浅色底板中央等比放入仪器图，不裁切、不留出参差的边距。"""
+    """图片区：仪器图等比放入卡片，不裁切、不留出参差的边距，也不垫底板描边。"""
 
     def __init__(self, parent: Any = None) -> None:
         super().__init__(parent)
@@ -210,7 +213,8 @@ class InstrumentImage(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        # 底板由样式表画出（带圆角），这里只画仪器图；图片按整块区域等比缩放并居中。
+        # 图片直接画在卡片本色上：底板与描边都由样式表关掉，这里只画仪器图；
+        # 图片按整块区域等比缩放并居中。
         if self._picture.isNull():
             # 没有对应图片时不画任何图形，只留一行淡字，避免看起来像加载失败。
             painter.setPen(self.palette().color(QPalette.PlaceholderText))
@@ -257,7 +261,7 @@ class _ElidedLabel(QLabel):
 
 
 class InstrumentCard(QFrame):
-    """一张设备卡片：上方图片，下方设备名、型号角色徽标与缩减版设备码。
+    """一张设备卡片：居中放大的仪器名在上，图片其次，最下面是加粗的设备码缩写。
 
     卡片是可选控件：可以勾选的选择显示为“点击切换选中”的整块卡片（``checkable=True``），
     不能应用的设备（无法识别、未登记、未分配角色）只显示带警示色的状态说明，不可选中。
@@ -267,9 +271,7 @@ class InstrumentCard(QFrame):
 
     def __init__(
         self,
-        heading: str,
-        model: str,
-        role_text: str,
+        name: str,
         code: str,
         *,
         status_text: str = "",
@@ -301,30 +303,20 @@ class InstrumentCard(QFrame):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(4)
 
+        # 第一行：仪器名（型号），居中放大——“这是哪台”比照片先被读到。
+        self.name_label = _ElidedLabel(name, self)
+        self.name_label.setObjectName("instrumentCardName")
+        self.name_label.setAlignment(Qt.AlignCenter)
+        self.name_label.setTextInteractionFlags(Qt.NoTextInteraction)
+        layout.addWidget(self.name_label)
+
+        # 第二行：仪器图，直接贴在卡片本色上。
         self.image = InstrumentImage(self)
         self.image.setObjectName("instrumentCardImage")
         self.image.set_picture(picture)
         layout.addWidget(self.image)
-        layout.addSpacing(2)
 
-        self.title_label = _ElidedLabel(heading, self)
-        self.title_label.setObjectName("instrumentCardTitle")
-        self.title_label.setTextInteractionFlags(Qt.NoTextInteraction)
-        layout.addWidget(self.title_label)
-
-        self.meta_label = _ElidedLabel(self._meta_text(model, role_text), self)
-        self.meta_label.setObjectName("instrumentCardMeta")
-        layout.addWidget(self.meta_label)
-
-        self.code_label = QLabel(code, self)
-        self.code_label.setObjectName("instrumentCardCode")
-        self.code_label.setMargin(2)
-        # 设备码整段都要能读到：允许折成两行，而不是截断。
-        self.code_label.setWordWrap(True)
-        self.code_label.setFixedHeight(_CODE_LABEL_HEIGHT)
-        layout.addWidget(self.code_label)
-
-        layout.addStretch(1)
+        # 状态说明（不能应用的原因）紧跟在图片下：最下面一行留给设备码。
         # 状态说明始终存在（可应用的卡片文字为空）：卡片等高，状态出现/消失不会跳动。
         self.status_label = QLabel(status_text, self)
         self.status_label.setObjectName("instrumentCardStatus")
@@ -332,19 +324,26 @@ class InstrumentCard(QFrame):
         self.status_label.setVisible(bool(status_text))
         set_tone(self.status_label, "warning")
         layout.addWidget(self.status_label)
+
+        layout.addStretch(1)
+
+        # 最下面一行：设备码缩写——加粗放大，现场对机时一眼看清。
+        self.code_label = QLabel(code, self)
+        self.code_label.setObjectName("instrumentCardCode")
+        self.code_label.setMargin(2)
+        # 设备码整段都要能读到：允许折成两行，而不是截断；单行时在两行高度里居中。
+        self.code_label.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
+        self.code_label.setWordWrap(True)
+        self.code_label.setFixedHeight(_CODE_LABEL_HEIGHT)
+        layout.addWidget(self.code_label)
         self._bind_tooltips()
         self._apply_check_state()
 
     # ---------- 内容 ----------
 
-    @staticmethod
-    def _meta_text(model: str, role_text: str) -> str:
-        parts = [part for part in (model.strip(), role_text.strip()) if part]
-        return " · ".join(parts)
-
     def _bind_tooltips(self) -> None:
         base = self.toolTip()
-        for label in (self.title_label, self.meta_label, self.code_label, self.status_label):
+        for label in (self.name_label, self.code_label, self.status_label):
             label.setToolTip(base)
 
     # ---------- 选中状态 ----------

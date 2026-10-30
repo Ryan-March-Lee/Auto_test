@@ -45,7 +45,6 @@ from presentation.qt.device_discovery_panel import (
     DeviceDiscoveryPanel,
     binding_device_key,
     card_heading,
-    card_meta_model,
     card_model,
     card_status_text,
     device_heading,
@@ -209,7 +208,7 @@ class DiscoveryPanelTests(unittest.TestCase):
         self.run_scan(panel)
 
         for card in panel.cards():
-            for label in (card.title_label, card.meta_label, card.code_label):
+            for label in (card.name_label, card.code_label):
                 self.assertNotIn("192.168.1.", label.text())
 
     def test_unknown_device_card_keeps_its_identity_in_the_code_and_tooltip(self):
@@ -219,9 +218,9 @@ class DiscoveryPanelTests(unittest.TestCase):
 
         heading = "未知设备 (N9020A)"
         card = panel.card_for(heading)
-        # 缩减版设备码：角色缩写 / 型号 / 序列号。
+        # 缩减版设备码：角色缩写 / 型号 / 序列号；第一行只写仪器名（型号）。
         self.assertEqual(card.code_label.text(), "NA/N9020A/MY51234567")
-        self.assertEqual(card.meta_label.text(), "N9020A")
+        self.assertEqual(card.name_label.text(), "N9020A")
         tip = panel.card_tooltip(heading)
         self.assertIn("N9020A / Keysight Technologies", tip)
         self.assertIn("MY51234567", tip)
@@ -280,8 +279,8 @@ class DiscoveryPanelTests(unittest.TestCase):
 
         card = panel.card_for("SMW200A-1")
         self.assertTrue(card.image.has_picture(), "信号源卡片应显示仪器图片")
-        self.assertEqual(card.title_label.text(), "SMW200A-1")
-        self.assertEqual(card.meta_label.text(), "SMW200A · 信号发生器")
+        # 第一行只写仪器名（型号），不再带资产名里的 ``-1``。
+        self.assertEqual(card.name_label.text(), "SMW200A")
         self.assertEqual(card.code_label.text(), "SG/SMW200A/105462")
 
     def test_selecting_a_card_is_enough_without_choosing_a_role(self):
@@ -330,7 +329,7 @@ class DiscoveryPanelTests(unittest.TestCase):
         self.run_scan(panel)
         card = panel.card_for("4082F-1")
 
-        for target in (card.title_label, card.image, card.code_label):
+        for target in (card.name_label, card.image, card.code_label):
             with self.subTest(target=type(target).__name__):
                 card.set_checked(False, emit=False)
                 QTest.mouseClick(target, Qt.LeftButton)
@@ -360,8 +359,8 @@ class DiscoveryPanelTests(unittest.TestCase):
         self.app.processEvents()
         self.addCleanup(panel.shutdown)
         self.run_scan(panel)
-        for card in panel.cards():
-            panel.set_card_checked(card.title_label.text(), True)
+        for heading in panel.card_headings():
+            panel.set_card_checked(heading, True)
         applied = []
         panel.apply_requested.connect(applied.append)
 
@@ -596,11 +595,12 @@ class PowerSupplyDiscoveryTests(unittest.TestCase):
         self.run_scan(panel)
 
         self.assertEqual(set(panel.card_headings()), {"DP8B1519", "DP8B0885"})
-        for card in panel.cards():
+        for heading, card in zip(panel.card_headings(), panel.cards()):
             self.assertTrue(card.checkable)
-            self.assertEqual(card.meta_label.text(), "DP832A · 电源")
+            # 第一行只写仪器名（型号），最下面一行是短标签。
+            self.assertEqual(card.name_label.text(), "DP832A")
             # 卡片正面的身份码就是短标签：不再拼 ``PS/型号/序列号``，电源没有“第几台”。
-            self.assertEqual(card.code_label.text(), card.title_label.text())
+            self.assertEqual(card.code_label.text(), heading)
             self.assertFalse(card.code_label.text().startswith("PS/"))
         self.assertTrue(panel.apply_btn.isEnabled())
 
@@ -629,8 +629,8 @@ class PowerSupplyDiscoveryTests(unittest.TestCase):
     def test_two_supplies_are_applied_independently_without_a_duplicate_role_error(self):
         panel = self.make_panel()
         self.run_scan(panel)
-        for card in panel.cards():
-            panel.set_card_checked(card.title_label.text(), True)
+        for heading in panel.card_headings():
+            panel.set_card_checked(heading, True)
         applied = []
         panel.apply_requested.connect(applied.append)
 
@@ -656,7 +656,7 @@ class PowerSupplyDiscoveryTests(unittest.TestCase):
         """迁移后的设备表：面板交付短标签与身份，配置页按 ``supply_id`` 落地址。"""
         panel = self.make_panel()
         self.run_scan(panel)
-        panel.set_card_checked(panel.cards()[0].title_label.text(), True)
+        panel.set_card_checked(panel.card_headings()[0], True)
         applied = []
         panel.apply_requested.connect(applied.append)
 
@@ -689,7 +689,7 @@ class PowerSupplyDiscoveryTests(unittest.TestCase):
 
 
 class CardPresentationTests(unittest.TestCase):
-    """卡片外观：圆角、图片在上、名字与缩减设备码在下，并随面板宽度换行。"""
+    """卡片外观：圆角、名字在上、图片其次、加粗设备码在下，并随面板宽度换行。"""
 
     @classmethod
     def setUpClass(cls):
@@ -709,7 +709,7 @@ class CardPresentationTests(unittest.TestCase):
         self.app.processEvents()
         self.addCleanup(panel.shutdown)
 
-    def test_cards_are_rounded_and_ordered_picture_name_code(self):
+    def test_cards_are_rounded_and_ordered_name_picture_code(self):
         panel = DeviceDiscoveryPanel(scanner_factory=_scanner_factory)
         panel.resize(760, 560)
         panel.show()
@@ -719,12 +719,15 @@ class CardPresentationTests(unittest.TestCase):
         card = panel.card_for("SMW200A-1")
         self.assertEqual(card.objectName(), "instrumentCard")
         self.assertIn("border-radius: 12px;", self.app.styleSheet())
-        # 自上而下：图片区在设备名之上，设备码在设备名之下。
+        # 自上而下：仪器名第一行、图片第二行、设备码在最下面。
         layout = card.layout()
         rows = [layout.itemAt(index).widget() for index in range(layout.count())]
-        self.assertIs(rows[0], card.image)
-        self.assertLess(rows.index(card.image), rows.index(card.title_label))
-        self.assertGreater(rows.index(card.code_label), rows.index(card.title_label))
+        self.assertIs(rows[0], card.name_label)
+        self.assertLess(rows.index(card.name_label), rows.index(card.image))
+        self.assertGreater(rows.index(card.code_label), rows.index(card.image))
+        self.assertEqual(rows[-1], card.code_label, "设备码缩写放在卡片最下面")
+        # 仪器名居中放大。
+        self.assertTrue(card.name_label.alignment() & Qt.AlignHCenter)
         for element in panel.cards():
             self.assertEqual(element.width(), card.width(), "卡片同宽同列")
             self.assertEqual(element.height(), card.height(), "同一行卡片高度一致")
@@ -1052,8 +1055,7 @@ class DeviceHeadingTests(unittest.TestCase):
 
         self.assertEqual(device_heading(signal), "SMW200A（5462，信号发生器）")
         self.assertEqual(card_heading(signal), "SMW200A（5462）")
-        # 型号已经写在标题里，副行不再重复；图片挑选仍能拿到型号。
-        self.assertEqual(card_meta_model(signal), "")
+        # 卡片第一行只写仪器名（型号），图片挑选也按型号来。
         self.assertEqual(card_model(signal), "SMW200A")
 
 

@@ -97,6 +97,10 @@ TOKENS = {
     "font_body": "9.5pt",
     "font_base": "9.5pt",
     "font_small": "8.5pt",
+    # 设备卡片第一行的仪器名：居中放大，“仪表配置”页一眼看到型号。
+    "font_card_name": "14pt",
+    # 设备码：加粗放大的等宽字，现场对机时一眼认得出。
+    "font_code": "12.5pt",
     "font_mono": "Consolas",
 }
 
@@ -397,9 +401,10 @@ QFrame#discoveryResultsBox[filled="true"] {
 }
 
 /* ===== 设备卡片（“仪表配置”页的发现结果） =====
-   一台仪器一张卡片：上方浅色图片区，下方设备名与缩减版设备码。卡片可点击选中：
-   选中时整块描主色并铺一层极浅的主色底，与“只悬停”区分得开；不可应用的卡片整块
-   降低对比度，并在卡片里写明原因。 */
+   一台仪器一张卡片，自上而下读：居中放大的仪器名、仪器图、最下面的加粗设备码缩写。
+   图片直接贴在卡片本色上，不垫底板也不描边。卡片可点击选中：选中时整块描主色并
+   铺一层极浅的主色底，与“只悬停”区分得开；不可应用的卡片整块降低对比度，并在
+   卡片里写明原因。 */
 QFrame#instrumentCard {
     background-color: $surface;
     border: 1px solid $border;
@@ -417,33 +422,27 @@ QFrame#instrumentCard[enabled-state="false"] {
     border-color: $border;
 }
 QWidget#instrumentCardImage {
-    background-color: $surface_sunken;
-    border: 1px solid $border;
-    border-radius: 8px;
+    background: transparent;
+    border: none;
 }
-QLabel#instrumentCardTitle {
+QLabel#instrumentCardName {
     color: $text;
-    font-size: $font_body;
-    font-weight: 600;
-}
-QLabel#instrumentCardMeta {
-    color: $text_secondary;
-    font-size: $font_small;
+    font-size: $font_card_name;
+    font-weight: 700;
 }
 QLabel#instrumentCardCode {
-    background-color: $surface_sunken;
-    border: 1px solid $border;
-    border-radius: 4px;
-    color: $header_text;
+    background: transparent;
+    border: none;
+    color: $text;
     font-family: "$font_mono";
-    font-size: $font_small;
-    padding: 2px 6px;
+    font-size: $font_code;
+    font-weight: 700;
 }
 QLabel#instrumentCardStatus {
     color: $warning;
     font-size: $font_small;
 }
-QFrame#instrumentCard[enabled-state="false"] QLabel#instrumentCardTitle {
+QFrame#instrumentCard[enabled-state="false"] QLabel#instrumentCardName {
     color: $text_secondary;
 }
 QScrollArea#instrumentCardArea {

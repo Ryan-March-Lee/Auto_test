@@ -225,9 +225,10 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `infrastructure.persistence.run_directory` | 运行目录文件布局 |
 | `infrastructure.runtime.dependency_lock` | 锁定清单的严格解析、整份环境核对与漂移分类；公共入口是 `infrastructure.runtime` |
 | `infrastructure.runtime.runtime_contract` | 运行时契约实现；公共入口是 `infrastructure.runtime` |
+| `instrument.assembly_plan` | 硬件装配计划：把配置解析成显式的构造计划（信号源/频谱仪地址、`gate`/`drain` 角色、`supply_id/CHx` 路由 token、短标签与审计/日志文本、急停顺序），只读配置不接触 VISA，地址重复/角色缺失或重复/通道不存在都在连接任何仪器之前失败 |
 | `instrument.flow` | 安全流程包；application 只通过 `application.ports.measurement_session` 依赖清理端口 |
 | `instrument.measurement_adapter` | 测量服务端口的显式适配器：设备方法显式定义，不按方法名转发，也不从注入对象推导路由 |
-| `instrument.measurement_factory` | 硬件/离线测量端口装配：地址重复、角色缺失/重复、通道不存在均在连接任何仪器前失败 |
+| `instrument.measurement_factory` | 硬件/离线测量端口装配：按装配计划打开 VISA 资源、构造驱动与会话（电源身份与初始输出检查在这里），装配失败时逆序释放已打开资源再抛原始异常；配置解释在 `instrument.assembly_plan` |
 | `instrument.safety` | 设备安全动作与资源所有权边界；关闭回调的安全标记按显式签名判定调用形式 |
 | `presentation.qt.application_coordinator` | GUI 运行协调器：配置、运行契约与仪器端口所有者（经 `ConfigurationPagePort` 与配置页交互） |
 | `presentation.qt.archival_page` | 测量页面共享的归档状态生命周期：等待归档、保存中、结果展示、终止事件与运行切换后的旧摘要清理；不读文件、不判断产物可用性 |
@@ -369,7 +370,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
   `application.archival_service.archive_completed_stage`；归档重构步骤 7 新增
   `application.dto.run_history`、`application.run_history_service` 与
   `application.ports.gui_data_service` 的 `RunArchiveStatusPort` / `RunHistoryServicePort`）。
-- 正式内部模块：58 个路径已登记（以测试中的 `INTERNAL_MODULES` 为准），公共与内部边界不重叠
+- 正式内部模块：59 个路径已登记（以测试中的 `INTERNAL_MODULES` 为准），公共与内部边界不重叠
   （步骤 7 补登记 `instrument.safety`：安全标记的显式签名判定是跨模块契约；归档重构步骤 4
   补登记 `infrastructure.persistence.artifact_generator` 与 `analysis.reporting`：自动归档 CSV
   产物的适配器及其复用的分析层写入能力；步骤 5 在同一适配器模块内补上报告产物与组合端口，
@@ -381,7 +382,10 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
   `presentation.qt.config_power_section`（电源分区的通道参数标签页与分配表单），页面只负责
   组合与交互协调；技术债计划步骤 14 把配置表单状态的绑定读取与规范化拆到
   `presentation.qt.config_form_bindings`（`device_bindings` 到 `supply_id` 集合、旧结构
-  折叠与问题清单），`config_form_state` 只保留控件读数和配置合并）。
+  折叠与问题清单），`config_form_state` 只保留控件读数和配置合并；技术债计划步骤 15 把
+  `instrument.measurement_factory` 的配置解析职责拆到
+  `instrument.assembly_plan`（地址、角色、`supply_id/CHx` 路由与日志文本的纯解析，
+  不接触 VISA），工厂只负责按计划打开资源、构造驱动与会话，并在装配失败时释放已打开资源）。
 - 旧模块：29 个条目（21 个根模块、8 个正式包内实现），状态与工作树一致。步骤 16
   （2026-10-27）已把最后五个根目录纯再导出模块（`measurement_calculations` /
   `measurement_lifecycle` / `measurement_services` / `app_logging` / `project_paths`）

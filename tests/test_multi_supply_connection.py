@@ -30,10 +30,10 @@ from unittest.mock import patch
 from pyvisa import constants, errors
 
 from application.errors import CleanupError, DeviceCapabilityError, DeviceConnectionError
+from instrument.assembly_plan import hardware_assembly_plan
 from instrument.measurement_adapter import PortMeasurementAdapter
 from instrument.measurement_factory import (
     _ConfiguredPowerSupply,
-    _hardware_assembly_plan,
     _VisaSession,
     create_measurement_port,
 )
@@ -578,7 +578,7 @@ class AssignmentReferenceTests(unittest.TestCase):
         assignment["supply_id"] = reference
         config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"] = assignment
         config["power_supply_assignment"]["driver_amplifier"]["supplies"] = {}
-        return _hardware_assembly_plan(config)
+        return hardware_assembly_plan(config)
 
     def test_supply_id_and_label_resolve_to_the_same_supply(self):
         for reference, supply_id in (("DP8B1519", "DP8B1519"), ("DP8B0950", "DP8B0950")):
@@ -647,7 +647,7 @@ class AssignmentReferenceTests(unittest.TestCase):
             _assignment("DP8B0885", ["CH1", "CH2"])
         )
         with self.assertRaisesRegex(ValueError, "短标签重复"):
-            _hardware_assembly_plan(config)
+            hardware_assembly_plan(config)
 
 
 class ConfiguredPowerSupplyRoutingTests(unittest.TestCase):

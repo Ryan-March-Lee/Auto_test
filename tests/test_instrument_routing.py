@@ -2,8 +2,8 @@
 
 本文件固定仪器路由的静态边界：
 
-- 生产装配（``instrument.measurement_adapter`` / ``instrument.measurement_factory``）
-  不定义 ``__getattr__``，也不按方法名转发设备调用；
+- 生产装配（``instrument.measurement_adapter`` / ``instrument.assembly_plan`` /
+  ``instrument.measurement_factory``）不定义 ``__getattr__``，也不按方法名转发设备调用；
 - 旧动态路由实现（``instrument.legacy_control`` / ``instrument.power_roles``）已整文件退役；
 - 自动发现只保留在硬件 smoke 入口，生产装配不调用 ``list_resources()``；
 - 电源、信号源、频谱仪的方法在适配器上显式定义；
@@ -24,8 +24,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 ADAPTER_SOURCE = ROOT / "instrument" / "measurement_adapter.py"
+PLAN_SOURCE = ROOT / "instrument" / "assembly_plan.py"
 FACTORY_SOURCE = ROOT / "instrument" / "measurement_factory.py"
-ASSEMBLY_SOURCES = (ADAPTER_SOURCE, FACTORY_SOURCE)
+ASSEMBLY_SOURCES = (ADAPTER_SOURCE, PLAN_SOURCE, FACTORY_SOURCE)
 PRODUCTION_PACKAGES = (
     "analysis",
     "app",
@@ -149,11 +150,13 @@ class DynamicInstrumentRoutingTests(unittest.TestCase):
     def test_production_assembly_does_not_discover_power_supplies(self):
         discovery = ROOT / "hardware" / "power_supply_discovery.py"
         self.assertTrue(discovery.is_file(), "硬件 smoke 的受控发现逻辑必须保留")
-        factory = FACTORY_SOURCE.read_text(encoding="utf-8-sig")
-        self.assertNotIn("list_resources", factory, "生产装配不得枚举 VISA 资源")
-        self.assertNotIn("_DiscoveredPowerSupply", factory)
-        self.assertNotIn("from hardware", factory, "生产装配不得依赖硬件 smoke 包")
-        self.assertNotIn("import hardware", factory, "生产装配不得依赖硬件 smoke 包")
+        for path in ASSEMBLY_SOURCES:
+            with self.subTest(path=path.name):
+                source = path.read_text(encoding="utf-8-sig")
+                self.assertNotIn("list_resources", source, "生产装配不得枚举 VISA 资源")
+                self.assertNotIn("_DiscoveredPowerSupply", source)
+                self.assertNotIn("from hardware", source, "生产装配不得依赖硬件 smoke 包")
+                self.assertNotIn("import hardware", source, "生产装配不得依赖硬件 smoke 包")
 
 
 if __name__ == "__main__":

@@ -8,7 +8,8 @@
 - 旧快照（单数电源条目、裸通道名）仍能解析、仍能通过校验——历史运行不能因为换了结构打不开；
 - 新结构的冲突（地址重复、身份重复、路由指向不存在的电源、新旧写法混用）在连接前失败。
 
-数据契约见 ``docs/电源设备身份与配置数据契约.md`` 第 7 节。
+数据契约见 ``domain/configuration/models.py`` 的 ``PowerSupplyMapping`` 与
+``tests/fixtures/power_supply_identity/`` 里的样例。
 """
 
 import json

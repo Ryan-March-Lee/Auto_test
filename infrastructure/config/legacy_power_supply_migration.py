@@ -6,9 +6,9 @@
 - 身份判据只有 ``device_key``（``厂商:序列号``）与注册表里冻结的短标签 ``label``；
 - 旧地址 ``TCPIP0::…`` 只作重新扫描的线索（``address_hint``），**不参与**身份判定；
 - 认不出是哪一台的旧条目不会凭空得到身份，它的通道参数与仍引用它的分配写进迁移摘要，
-  由操作员按摘要重新扫描后重填（数据契约 §8.2、§8.3、§9）。
+  由操作员按摘要重新扫描后重填（摘要把每个旧条目的判定、身份与参数逐行写清）。
 
-判定顺序（数据契约 §8.1）::
+判定顺序::
 
     1. 旧条目自带 ``device_key`` / ``serial``，注册表唯一命中    -> migrated
     2. 旧键是 ``PSn``，注册表正好有一条 ``role == PSn``          -> migrated
@@ -67,7 +67,7 @@ PathLike = Any
 # 迁移摘要的版本号；摘要结构变化时递增。
 SUMMARY_SCHEMA_VERSION = 1
 
-# 迁移判定结果（数据契约 §9）：只有这四种。
+# 迁移判定结果：只有这四种。
 STATUS_MIGRATED = "migrated"
 STATUS_NEEDS_RESCAN = "needs_rescan"
 STATUS_UNIDENTIFIABLE = "unidentifiable"
@@ -98,7 +98,7 @@ class LegacyConfigMigrationError(ValueError):
 
 @dataclass(frozen=True)
 class LegacyMigrationEntry:
-    """一个旧电源条目的迁移判定，对应数据契约 §9 的一行。
+    """一个旧电源条目的迁移判定，对应迁移摘要里的一行。
 
     字段顺序与摘要 JSON 一致；``channels`` / ``assignments`` 原样取自旧配置，
     不因“未绑定”而丢参数，也是操作员重新扫描后重填的依据。
@@ -116,7 +116,7 @@ class LegacyMigrationEntry:
     reason: str
     assignments: Tuple[Dict[str, Any], ...] = ()
     channels: Dict[str, Any] = field(default_factory=dict)
-    # 设备表里的型号，只用于写目标配置的电源条目；摘要按契约 §9 的字段输出，不含它。
+    # 设备表里的型号，只用于写目标配置的电源条目；摘要只输出判定字段，不含它。
     model: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -183,7 +183,7 @@ class LegacyMigrationResult:
         migrated_config_source: Optional[str] = None,
         generated_at: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """面向操作员的摘要；``source`` 段与契约样例结构相同，只为追溯用。"""
+        """面向操作员的摘要；``source`` 段与旧配置结构相同，只为追溯用。"""
         return {
             "schema_version": SUMMARY_SCHEMA_VERSION,
             "source": {
@@ -285,7 +285,7 @@ class _IdentityEvidence:
 def _match_identity(
     registry: Mapping[str, Any], old_key: str, entry: Mapping[str, Any]
 ) -> _IdentityEvidence:
-    """按数据契约 §8.1 找出旧条目对应的设备记录（只按身份与旧角色，不看地址）。
+    """按旧的电源条目找出对应的设备记录（只按身份与旧角色，不看地址）。
 
     ``registry`` 必须是**原样**设备表：旧槽位 ``PS3`` 记录的 ``role`` 在补标签时会被折叠成
     ``power_supply``，那之后就回答不了“哪个旧键对应哪台设备”了。
@@ -690,7 +690,7 @@ def save_migration_summary(
 
     摘要是“认不出的旧条目”唯一的参数留存处：既然这些参数不允许写进 ``config.json``，
     操作员的补全依据就必须能离开进程、跨重启还在。文件内容与
-    :meth:`LegacyMigrationResult.summary` 逐字段相同（数据契约 §9）。
+    :meth:`LegacyMigrationResult.summary` 逐字段相同。
     """
     summary = result.summary(
         registry_source=registry_source,
@@ -801,7 +801,7 @@ def _apply_trusted_bindings(
     唯一的连接来源是该电源的绑定记录（``visa_address``）。这与配置页的
     ``_apply_device_binding`` 是同一条规则：有地址就启用、没地址就禁用。没有绑定的旧条目
     （只有地址）不获得地址也不启用——地址不是身份，没确认过就不该成为连接目标，这类电源
-    等操作员重新扫描应用（数据契约 §8.3）。
+    等操作员重新扫描应用。
 
     已经迁移过的条目（``old_key == new_key``）同样按绑定校正一次：配置里写着启用、绑定却
     早已被清除时，迁移不能把那个状态当成事实保留下来。

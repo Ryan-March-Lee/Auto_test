@@ -307,12 +307,11 @@ code 只能导入登记的模块路径，旧模块禁止新增引用，由 `test
 静态门禁固定。兼容层已全部删除；历史弃用与删除过程的审计证据见 git 提交历史，不描述现行
 运行时机制。
 
-电源设备身份（`厂商:序列号`）与动态电源配置的重构计划和字段契约见
-`docs/电源设备身份与动态配置重构计划.md` 与 `docs/电源设备身份与配置数据契约.md`。新配置的
-电源键是 `supply_id`（= 序列号派生的短标签），1 台、2 台、5 台都只是同一个集合的大小不同；
-旧槽位 `PS1..PS4` 只在读取旧配置/旧运行快照与迁移器里有效，生产代码不再引用槽位编号，由
-`tests/test_power_supply_identity_contract.py` 静态守住。样例数据在
-`tests/fixtures/power_supply_identity/`。
+电源设备身份（`厂商:序列号`）与动态电源配置的现行数据契约：
+新配置的电源键是 `supply_id`（= 序列号派生的短标签），1 台、2 台、5 台都只是同一个集合的大小
+不同；旧槽位 `PS1..PS4` 只在读取旧配置/旧运行快照与迁移器里有效，生产代码不再引用槽位编号，由
+`tests/test_power_supply_identity_contract.py` 静态守住，样例数据在
+`tests/fixtures/power_supply_identity/`（见该目录 README）。
 
 现行架构要点：
 

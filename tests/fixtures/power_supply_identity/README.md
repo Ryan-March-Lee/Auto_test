@@ -1,8 +1,9 @@
 # 电源设备身份 fixture
 
-本目录是[电源设备身份与配置数据契约](../../../docs/电源设备身份与配置数据契约.md)的样例数据，
-对应重构计划步骤 1。fixture 只描述目标字段与旧新对应关系，**不驱动任何运行时行为**：里面没有
-被测代码，也没有测试替身。
+本目录是电源设备身份与动态配置数据契约（`厂商:序列号` 身份、短标签 `label`、动态电源集合
+`supply_id`）的样例数据，对应重构计划步骤 1。fixture 只描述目标字段与旧新对应关系，**不驱动
+任何运行时行为**：里面没有被测代码，也没有测试替身。字段名与期望值以本目录样例为准，
+`tests/test_power_supply_identity_contract.py` 是它的可执行版本。
 
 ## 真实数据来源
 
@@ -31,8 +32,8 @@
 | `run_mapping_snapshot_two_supplies.json` | 新运行快照：`instruments.power_supplies` 集合、通道写 `DP8B1519/CH1`、条目自带标签/序列号/型号/地址 | 多电源快照与历史追溯 |
 
 `config_slots_migrated_partial.json` 只是**期望值**，不是“可以写回现场的配置”：`PS1`/`PS2` 认不出身份，
-迁移器因此拒绝写盘（见数据契约 §8.2），它们的通道参数只留在 `migration_summary_legacy.json` 里，
-按 §8.3 重扫补全后才得到 `config_one_supply.json` 那样的完整配置。
+迁移器因此拒绝写盘，它们的通道参数只留在 `migration_summary_legacy.json` 里，
+重扫补全后才得到 `config_one_supply.json` 那样的完整配置。
 
 ## 样例设备
 
@@ -44,8 +45,8 @@
 
 `tests/test_power_supply_identity_contract.py` 读取本目录，检查：
 
-- 每份文件都是可解析的 JSON，字段名只用契约里固定的那几个；
-- 注册表里的 `label` 与契约给出的期望标签一致，`device_key` 等于 `vendor:serial` 归一化；
+- 每份文件都是可解析的 JSON，字段名只用样例里固定的那几个；
+- 注册表里的 `label` 与短标签规则给出的期望标签一致，`device_key` 等于 `vendor:serial` 归一化；
 - 配置里的电源键、条目内 `label` 与分配引用的 `supply_id` 三者一致，且分配不引用不存在的电源；
 - 1 台 / 2 台 / 5 台三种规模都成立，运行快照只包含实际使用的电源；
 - 迁移摘要覆盖每一个旧槽位，无法迁移条目的通道参数与旧配置逐字段相等，且不会变成目标配置里的电源条目；

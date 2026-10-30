@@ -22,7 +22,7 @@ ASSIGNMENT_GROUPS = ("driver_amplifier", "dut_amplifier")
 def assignment_supply_id(entry: Any) -> Optional[str]:
     """返回一条供电分配记录引用的电源 ``supply_id``；未绑定或无法识别时返回 ``None``。
 
-    这是“分配怎样指向一台电源”的唯一实现（数据契约 §6.2）：配置页读取
+    这是“分配怎样指向一台电源”的唯一实现：配置页读取
     （``presentation.qt.config_form_state``）与正式运行映射的编写都调用这里，不各写一套。
 
     新配置只认 ``supply_id``：记录里出现该字段就以它为准（``null`` / 空白表示“引用

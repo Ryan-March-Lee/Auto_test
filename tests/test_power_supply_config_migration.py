@@ -132,7 +132,7 @@ class MigrationFixtureTests(unittest.TestCase):
         """摘要与契约样例只差“原因”的措辞与时间戳：判定、身份、参数与分配逐字段一致。
 
         原因文本是给操作员看的说明，模板措辞会随实现调整（样例里写的是 IP，迁移器给出
-        完整 VISA 资源名）；门禁比较的是数据契约第 9 节规定的字段，而不是这句话的措辞。
+        完整 VISA 资源名）；门禁比较的是摘要的判定与参数字段，而不是这句话的措辞。
         """
         summary = self.result.summary(
             registry_source=LEGACY_REGISTRY.name,

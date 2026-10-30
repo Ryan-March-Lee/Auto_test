@@ -13,7 +13,7 @@ from typing import Any, Mapping
 
 # 供电分配引用（``supply_id`` 为准、旧记录回落读一次 ``name``）只有一处实现：
 # ``domain.configuration.rules.assignment_supply_id``，这里再导出给配置页与投影使用，
-# 判据不在这层重写（数据契约 §6.2）。
+# 判据不在这层重写：``supply_id`` 为准、旧记录回落读一次 ``name`` 的规则只有一个实现。
 from application.errors import ConfigurationError
 from domain.configuration.models import validate_run_configuration
 from domain.configuration.rules import assignment_supply_id
@@ -108,7 +108,7 @@ def _legacy_supply_id(record: Mapping[str, Any]) -> str | None:
 def supply_id_problem(value: Any) -> str | None:
     """返回一个不能当 ``supply_id`` 使用的具体原因；可用时返回 ``None``。
 
-    规则与注册表里的 ``label`` 同源（见数据契约 §4.1）：引用会拼成 ``supply_id/CHx``，
+    规则与注册表里的 ``label`` 同源：引用会拼成 ``supply_id/CHx``，
     所以不能为空、不能含空白、不能含通道分隔符 ``/``。这里只判断、不做清洗——写错的
     标签必须报错，不能在校验时被悄悄改成“看起来合法”的值。
     """
@@ -167,7 +167,7 @@ def _iter_power_binding_entries(
     集合键按**原字面值**参与校验：首尾空白同样是不合法的引用，不在这里悄悄裁剪。
 
     旧槽位的过渡记录只有带上身份标记（短标签或 ``device_key``）才算“一次绑定尝试”；
-    **只有地址的旧绑定**按契约直接丢弃并要求重新扫描——地址不是身份，报成错误只会
+    **只有地址的旧绑定**按既定规则直接丢弃并要求重新扫描——地址不是身份，报成错误只会
     让一份本来就需要重扫的旧配置无法保存。过渡记录里的短标签允许去掉首尾空白：那是
     步骤 5 写出的历史字段，不属于任何配置键。
     """
@@ -187,7 +187,7 @@ def _iter_power_binding_entries(
             continue
         supply_id = _legacy_supply_id(record)
         if supply_id is None and binding_device_key(record) is None:
-            # 只有地址的旧绑定：契约要求重新扫描，不是一条可诊断的错误记录。
+            # 只有地址的旧绑定：既定规则是重新扫描，不是一条可诊断的错误记录。
             continue
         entries.append((f"旧槽位绑定 {key}", supply_id, record))
     return entries
@@ -200,7 +200,7 @@ def power_supply_bindings(bindings: Any) -> dict[str, dict]:
     记录内部不再重复写 ``supply_id`` / ``label`` / ``role``）。读取时兼容步骤 5 的过渡
     结构：记录按旧槽位 ``PS1``..``PS4`` 落键、记录内带短标签与设备身份。旧记录只有在
     **身份可确认**（``厂商:序列号``）且带短标签时才会迁移——只有地址的旧绑定不是身份，
-    按契约必须重新扫描，这里不猜成某台电源。
+    按既定规则必须重新扫描，这里不猜成某台电源。
 
     每条记录都要过同一套校验（见 :func:`power_supply_binding_problems`）：引用能否当
     ``supply_id``、身份是否完整自洽。不合格的记录**不进入**集合，因此不会出现在电源
@@ -311,7 +311,7 @@ def _legacy_device_bindings(instruments: Mapping[str, Any]) -> dict[str, dict]:
     地址，未扫描确认”。
 
     **电源不在迁移范围内**：配置里的一个地址既不是设备身份，也不能说明是哪一台电源。
-    旧的 ``instruments.power_supplies.<槽位>.address`` 只是“以前连过这个地址”，按契约
+    旧的 ``instruments.power_supplies.<槽位>.address`` 只是“以前连过这个地址”，按既定规则
     必须重新扫描设备表并应用，才能得到带 ``device_key`` 的电源绑定。
     """
     bindings: dict[str, dict] = {}

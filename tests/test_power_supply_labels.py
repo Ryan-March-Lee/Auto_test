@@ -1,6 +1,6 @@
 """单元测试：电源设备短标签生成器（重构计划步骤 2）。
 
-规则来源是[电源设备身份与配置数据契约](../docs/电源设备身份与配置数据契约.md)第 3 节：
+规则来源是短标签规则（``domain.instruments.labels`` 的模块文档）：
 归一化、前缀提取、末四位与冲突扩展。覆盖验收要求——当前三台设备的期望结果、前导零、
 大小写、空白、碰撞、纯数字序列号，以及无法生成时的可识别领域异常。
 
@@ -28,7 +28,7 @@ ROOT = Path(__file__).parents[1]
 FIXTURE_DIR = ROOT / "tests" / "fixtures" / "power_supply_identity"
 LABELS_SOURCE = ROOT / "domain" / "instruments" / "labels.py"
 
-# 契约第 3.2 节：现场三台 DP832A 与两台样例设备的期望标签。
+# 短标签规则：现场三台 DP832A 与两台样例设备的期望标签。
 FIELD_DEVICES = {
     "DP8B214901519": "DP8B1519",
     "DP8B174700950": "DP8B0950",
@@ -53,7 +53,7 @@ class NormalizeTests(unittest.TestCase):
             normalize_supply_serial("DP8B  214901519")
 
     def test_quotes_and_spaces_need_two_rounds(self):
-        # 契约第 3.1 节：两层引号加空白一轮剥不完，所以归一化必须循环到稳定。
+        # 两层引号加空白一轮剥不完，所以归一化必须循环到稳定。
         self.assertEqual(normalize_supply_serial(' " dp8b214901519 " '), "DP8B214901519")
         self.assertEqual(normalize_serial(' " dp8b214901519 " '), "DP8B214901519")
 
@@ -97,7 +97,7 @@ class PrefixTests(unittest.TestCase):
         self.assertEqual(supply_label_prefix("105462"), "")
 
     def test_non_alphanumeric_terminates_prefix(self):
-        # 契约第 3.3 节：点与斜杠终止前缀，前缀为空。
+        # 点与斜杠终止前缀，前缀为空。
         self.assertEqual(supply_label_prefix("1412.0000K02/105462"), "")
 
     def test_prefix_stops_at_a_digit_run(self):
@@ -152,7 +152,7 @@ class CandidateTests(unittest.TestCase):
 
 
 class GenerateTests(unittest.TestCase):
-    """标签生成：现场期望结果与契约第 3.3 节的边界情形。"""
+    """标签生成：现场期望结果与短标签规则的边界情形。"""
 
     def test_current_field_devices_get_expected_labels(self):
         for serial, expected in FIELD_DEVICES.items():

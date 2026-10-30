@@ -1,13 +1,14 @@
 """门禁：电源设备身份与配置数据契约（重构计划步骤 1）。
 
-本文件与[电源设备身份与配置数据契约](../docs/电源设备身份与配置数据契约.md)一一对应。它校验
-契约数据和 `tests/fixtures/power_supply_identity/` 里的样例是否自洽，并守住两条边界：样例与
-生产代码都不许重新依赖固定槽位（`PS1..PS4` 只允许出现在读取与迁移边界）。
+本文件是这份数据契约的可执行版本，与 `tests/fixtures/power_supply_identity/` 里的样例一一
+对应。它校验样例数据是否自洽，并守住两条边界：样例与生产代码都不许重新依赖固定槽位
+（`PS1..PS4` 只允许出现在读取与迁移边界）。
 
 覆盖：
 
-- 每份 fixture 都是可解析的 JSON，仓库里的契约文档确实登记了每一个 fixture；
-- 注册表的 `label` 与契约第 3 节给出的期望标签逐步一致，`device_key` 由 `厂商:序列号` 生成；
+- 每份 fixture 都是可解析的 JSON，登记的样例都确实存在；
+- 注册表的 `label` 与短标签规则（前缀 + 末四位，冲突加宽）给出的期望标签逐步一致，
+  `device_key` 由 `厂商:序列号` 生成；
 - 注册表迁移只改 `role` 与 `label`：资产名、序列号、地址都不动，未登记角色的设备不会被猜成电源；
 - 配置里的电源键、条目内 `label` 与分配引用的 `supply_id` 是同一个字符串，且分配不引用不存在的电源；
 - 1 台 / 2 台 / 5 台三种规模都能表达，旧槽位只出现在迁移输入与旧运行快照里；
@@ -36,9 +37,8 @@ from domain.instruments.models import (
 
 ROOT = Path(__file__).parents[1]
 FIXTURE_DIR = ROOT / "tests" / "fixtures" / "power_supply_identity"
-CONTRACT_DOC = ROOT / "docs" / "电源设备身份与配置数据契约.md"
 
-# 契约第 3 节：现场三台 DP832A 与两台样例设备的期望标签（前缀 + 末四位）。
+# 短标签规则（前缀 + 末四位，冲突时加宽）：现场三台 DP832A 与两台样例设备的期望标签。
 EXPECTED_LABELS = {
     "DP8B214901519": "DP8B1519",
     "DP8B174700950": "DP8B0950",
@@ -73,7 +73,7 @@ MIGRATED_REGISTRIES = (
 LEGACY_CONFIG = "config_slots_legacy.json"
 MIGRATED_CONFIG = "config_slots_migrated_partial.json"
 SUMMARY_FIXTURE = "migration_summary_legacy.json"
-# 契约第 9 节：迁移判定只有这四种结果。
+# 迁移摘要的判定：只有这四种结果。
 SUMMARY_STATUSES = ("migrated", "needs_rescan", "unidentifiable", "conflict")
 
 # 生产代码范围：正式包、分析层、脚本与硬件/持久化目录都要守住“不再依赖固定槽位”。
@@ -271,7 +271,7 @@ def _used_supply_ids(config: dict) -> set:
 
 
 def _stable_serial(value: str) -> str:
-    """契约第 3.1 节：归一化到稳定值。``normalize_serial`` 自己已循环到稳定，这里只验证。"""
+    """归一化到稳定值。``normalize_serial`` 自己已循环到稳定，这里只验证。"""
     stable = normalize_serial(value)
     if normalize_serial(stable) != stable:
         raise AssertionError(f"序列号归一化不稳定: {value!r} -> {stable!r}")
@@ -307,7 +307,7 @@ class FixtureInventoryTests(unittest.TestCase):
 
     def test_every_fixture_parses_as_json(self):
         files = sorted(FIXTURE_DIR.glob("*.json"))
-        self.assertGreaterEqual(len(files), 10, "fixture 数量少于契约登记的数量")
+        self.assertGreaterEqual(len(files), 10, "fixture 数量少于登记的样例数量")
         for path in files:
             with self.subTest(fixture=path.name):
                 document = json.loads(path.read_text(encoding="utf-8"))
@@ -316,13 +316,7 @@ class FixtureInventoryTests(unittest.TestCase):
     def test_documented_fixtures_all_exist(self):
         for name in REGISTRY_FIXTURES + DYNAMIC_CONFIGS:
             with self.subTest(fixture=name):
-                self.assertTrue((FIXTURE_DIR / name).is_file(), f"契约登记的 fixture 不存在: {name}")
-
-    def test_contract_document_names_every_fixture(self):
-        text = CONTRACT_DOC.read_text(encoding="utf-8")
-        for path in sorted(FIXTURE_DIR.glob("*.json")):
-            with self.subTest(fixture=path.name):
-                self.assertIn(path.name, text, "契约文档没有登记这个 fixture，改名时也没有同步")
+                self.assertTrue((FIXTURE_DIR / name).is_file(), f"登记的 fixture 不存在: {name}")
 
 
 class RegistryContractTests(unittest.TestCase):
@@ -343,7 +337,7 @@ class RegistryContractTests(unittest.TestCase):
                     self.assertIn(
                         serial,
                         EXPECTED_LABELS,
-                        "出现未收录期望标签的序列号：先更新契约第 3 节和本表",
+                        "出现未收录期望标签的序列号：先更新短标签规则与 EXPECTED_LABELS",
                     )
                     self.assertEqual(label, EXPECTED_LABELS[serial])
 
@@ -430,7 +424,7 @@ class ConfigContractTests(unittest.TestCase):
                     self.assertIn(
                         entry.get("serial"),
                         EXPECTED_LABELS,
-                        "出现未收录期望标签的序列号：先更新契约第 3 节",
+                        "出现未收录期望标签的序列号：先更新 EXPECTED_LABELS",
                     )
                     self.assertEqual(supply_id, EXPECTED_LABELS[entry["serial"]])
                     self.assertEqual(entry.get("model"), "DP832A")
@@ -509,7 +503,7 @@ class ConfigContractTests(unittest.TestCase):
 
 
 class MigrationSummaryContractTests(unittest.TestCase):
-    """迁移摘要（契约第 9 节）：判定齐全，无法迁移的参数只留在摘要里。"""
+    """迁移摘要：判定齐全，无法迁移的参数只留在摘要里。"""
 
     def test_summary_covers_every_legacy_slot_exactly_once(self):
         keys = [entry["old_key"] for entry in _load(SUMMARY_FIXTURE)["entries"]]
@@ -645,7 +639,7 @@ class RunSnapshotContractTests(unittest.TestCase):
 class NoFixedSlotDependencyTests(unittest.TestCase):
     """门禁：生产代码不再依赖固定槽位（重构计划步骤 15）。
 
-    旧字段只允许存在于读取与迁移边界（契约 §6.4“旧字段允许出现的位置”）。``PS1..PS4`` 的
+    旧字段只允许存在于读取与迁移边界（只有读取旧设备表/旧配置与迁移器认得它们）。``PS1..PS4`` 的
     字面量只登记在 :data:`domain.instruments.models.POWER_SUPPLY_SLOTS`，由
     ``normalize_role`` / ``canonical_role`` 的读取分支使用。其它生产模块——包括初始化脚本与
     配置页——都不得再写槽位名，也不得拿序号拼电源键：新增第 5 台电源不需要改任何常量。

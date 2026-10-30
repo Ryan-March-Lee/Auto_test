@@ -1,6 +1,6 @@
 """电源短标签生成与显示文本：把设备序列号派生成现场可读、可长期引用的短标签。
 
-规则见[电源设备身份与配置数据契约](../../docs/电源设备身份与配置数据契约.md)第 3 节：
+短标签规则（样例数据见 ``tests/fixtures/power_supply_identity/``）：
 
 - 归一化直接调用 :func:`domain.instruments.models.normalize_serial`：该函数自己反复应用
   直到稳定（引号与空白并存时需要两轮），本模块不再另写一套；归一化后仍有内部空白或结果
@@ -20,7 +20,7 @@
 **详情/审计怎么写**（:func:`supply_identity_text`）、**日志里的通道名怎么写**
 （:func:`supply_channel_text`）以及**身份核对的结论怎么写**
 （:func:`supply_identity_verdict`）：日志、标签页标题、下拉框和悬浮提示都从这里取文本，
-不各自拼一套（契约第 13 节）。
+不各自拼一套。
 """
 
 from __future__ import annotations
@@ -153,7 +153,7 @@ DISPLAY_SEPARATOR: Final = " · "
 def supply_display_label(label: object, model: object = None) -> str:
     """电源在列表、标签页标题和下拉框上的显示文本：``DP8B1519（DP832A）``。
 
-    三条规则（契约第 13 节）：
+    三条规则：
 
     1. 短标签是唯一识别项，型号只是补充信息：型号缺失，或型号与标签相同（旧配置把槽位名
        填进 ``model``）时只显示标签，不会出现 ``PS1（PS1）`` 这种重复；
@@ -219,7 +219,7 @@ def supply_identity_verdict(serial: object, idn_reply: object) -> tuple[str, str
     """核对配置里的序列号与设备自己应答的 ``*IDN?``，返回 ``(结论, 可写进日志的说明)``。
 
     结论只会是 :data:`IDENTITY_MATCHED` / :data:`IDENTITY_MISMATCHED` /
-    :data:`IDENTITY_UNCOMPARABLE` 之一（契约第 13 节）：
+    :data:`IDENTITY_UNCOMPARABLE` 之一：
 
     - ``一致``：两边都解析出序列号且归一化后相同；
     - ``不一致``：两边都解析出序列号但不同——配置与实物已经不是同一台，必须能被看见；

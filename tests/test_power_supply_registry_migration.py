@@ -40,7 +40,7 @@ LEGACY_REGISTRY = FIXTURE_DIR / "registry_legacy_v2.json"
 MIGRATED_REGISTRY = FIXTURE_DIR / "registry_migrated_v3.json"
 ALL_REGISTERED_REGISTRY = FIXTURE_DIR / "registry_migrated_v3_all_registered.json"
 
-# 契约第 3 节：现场三台 DP832A 的期望短标签。
+# 短标签规则：现场三台 DP832A 的期望短标签。
 EXPECTED_LABELS = {
     "DP8B214901519": "DP8B1519",
     "DP8B174700950": "DP8B0950",

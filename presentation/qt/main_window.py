@@ -169,6 +169,9 @@ class MainWindow(QMainWindow):
         self.workspace_splitter.setStretchFactor(0, 1)
         self.workspace_splitter.setStretchFactor(1, 0)
         self.workspace_splitter.setSizes([1180, 420])
+        # 面板分栏宽度：默认 1180/420，用户拖动后由下一次隐藏更新。窗口还没布局时
+        # ``sizes()`` 只是按当时可用宽度缩放的结果，不能拿它当恢复值。
+        self._status_panel_sizes = [1180, 420]
         workspace_layout.addWidget(self.workspace_splitter, 1)
         self.view_stack.addWidget(self.workspace_page)
 
@@ -178,6 +181,8 @@ class MainWindow(QMainWindow):
         central_layout.addWidget(self.view_stack)
 
         self.view_stack.setCurrentWidget(self.welcome_page)
+        # 初始标签页就是“仪器配置”：进入工作区后右侧不应出现进度与日志。
+        self._sync_status_panel_visibility()
 
     def _build_mode_badge(self):
         """当前测试模式徽标（只读展示），显示在标签栏最右侧。"""
@@ -194,6 +199,7 @@ class MainWindow(QMainWindow):
         self.mode_badge.setText("有驱放测试" if driver_enabled else "无驱放测试")
         self.tab_widget.setCurrentIndex(0)
         self.view_stack.setCurrentWidget(self.workspace_page)
+        self._sync_status_panel_visibility()
 
     def _apply_driver_mode_to_pages(self, driver_enabled: bool) -> None:
         """无驱放测试没有驱动功放，只隐藏驱动映射标签页；页面实例与绑定保留。"""
@@ -261,6 +267,35 @@ class MainWindow(QMainWindow):
         if 0 <= index < len(pages) and hasattr(pages[index], "on_activated"):
             pages[index].on_activated()
         self._active_page_index = index
+        self._sync_status_panel_visibility()
+
+    def _sync_status_panel_visibility(self) -> None:
+        """按当前页面决定右侧状态面板是否出现。
+
+        “仪器配置”页只做配置与连接，不需要盯测量进度与实时日志，右侧面板在该页
+        隐藏、把宽度让给表单；面板本身仍是全局唯一的进度与日志接收方，日志照常
+        入队，切回测量/结果页时按上次的分栏宽度原样恢复。
+        """
+        panel = getattr(self, "status_panel", None)
+        splitter = getattr(self, "workspace_splitter", None)
+        if panel is None or splitter is None:
+            return
+        config_page = getattr(self, "config_page", None)
+        current = self.tab_widget.currentWidget()
+        should_hide = config_page is not None and current is config_page
+        if should_hide == panel.isHidden():
+            return
+        if should_hide:
+            # 只有布局完成的可见分栏才记录真实宽度：初始化阶段的 sizes() 是按当时
+            # 可用宽度缩放出来的，记下来会让面板第一次出现时被压到最小宽度。
+            if splitter.isVisible():
+                self._status_panel_sizes = splitter.sizes()
+            panel.hide()
+            return
+        panel.show()
+        sizes = getattr(self, "_status_panel_sizes", None)
+        if sizes:
+            splitter.setSizes(sizes)
 
     def create_config_tab(self):
         """创建仪器配置选项卡；配置页与协调器在这里互相登记。"""

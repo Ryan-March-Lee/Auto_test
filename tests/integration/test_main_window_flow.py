@@ -235,6 +235,27 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIn("线损测量", visible_titles())
         self.assertIn("功放测试", visible_titles())
 
+    def test_configuration_page_hides_progress_and_log_panel(self):
+        """仪器配置页只做配置与连接：右侧进度与实时日志不出现，切页后再回来。"""
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(True)
+
+        self.assertIs(window.tab_widget.currentWidget(), window.config_page)
+        self.assertTrue(window.status_panel.isHidden())
+
+        # 面板隐藏期间仍是全部日志的接收方：配置页的日志不会因为看不见而丢。
+        window.add_log_message("配置页日志")
+        self.assertIn("配置页日志", window.log_text.toPlainText())
+
+        window.tab_widget.setCurrentIndex(
+            window.tab_widget.indexOf(window.pages["cable_loss"])
+        )
+        self.assertFalse(window.status_panel.isHidden())
+
+        window.tab_widget.setCurrentIndex(window.tab_widget.indexOf(window.config_page))
+        self.assertTrue(window.status_panel.isHidden())
+
     def test_config_page_save_signal_writes_the_official_configuration(self):
         self._silence_dialogs()
         window = self._window()

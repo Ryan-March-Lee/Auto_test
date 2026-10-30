@@ -242,6 +242,76 @@ class MainWindowCloseEventTests(unittest.TestCase):
         for page in pages.values():
             page.close.assert_called_once_with()
 
+class _FakeStatusPanel:
+    """状态面板替身：只记录显隐调用，可见性语义与真实 ``StatusPanel`` 一致。"""
+
+    def __init__(self):
+        self.hidden = False
+        self.hide = Mock(side_effect=self._mark_hidden)
+        self.show = Mock(side_effect=self._mark_shown)
+
+    def _mark_hidden(self):
+        self.hidden = True
+
+    def _mark_shown(self):
+        self.hidden = False
+
+    def isHidden(self):
+        return self.hidden
+
+
+class StatusPanelVisibilityTests(unittest.TestCase):
+    """仪器配置页不显示测量进度与实时日志，其余页面按上次分栏宽度恢复。"""
+
+    def _window(self, current_page, *, panel=None, sizes=None):
+        from presentation.qt.main_window import MainWindow
+
+        panel = panel or _FakeStatusPanel()
+        splitter = Mock()
+        splitter.sizes.return_value = [1200, 400]
+        window = SimpleNamespace(
+            status_panel=panel,
+            workspace_splitter=splitter,
+            tab_widget=SimpleNamespace(currentWidget=lambda: current_page),
+            config_page=SimpleNamespace(),
+            _status_panel_sizes=sizes,
+        )
+        window._sync_status_panel_visibility = (
+            lambda: MainWindow._sync_status_panel_visibility(window)
+        )
+        return window, panel, splitter
+
+    def test_configuration_page_hides_the_panel_and_remembers_the_width(self):
+        window, panel, _splitter = self._window(None)
+        window.tab_widget = SimpleNamespace(currentWidget=lambda: window.config_page)
+
+        window._sync_status_panel_visibility()
+
+        self.assertTrue(panel.isHidden())
+        self.assertEqual(window._status_panel_sizes, [1200, 400])
+
+    def test_measurement_page_shows_the_panel_with_the_last_width(self):
+        panel = _FakeStatusPanel()
+        panel.hide()
+        window, panel, splitter = self._window(object(), panel=panel, sizes=[1180, 420])
+
+        window._sync_status_panel_visibility()
+
+        self.assertFalse(panel.isHidden())
+        splitter.setSizes.assert_called_once_with([1180, 420])
+
+    def test_syncing_the_same_page_again_does_not_touch_the_splitter(self):
+        panel = _FakeStatusPanel()
+        panel.hide()
+        window, _panel, splitter = self._window(None, panel=panel, sizes=[1180, 420])
+        window.tab_widget = SimpleNamespace(currentWidget=lambda: window.config_page)
+
+        window._sync_status_panel_visibility()
+
+        splitter.setSizes.assert_not_called()
+        self.assertTrue(panel.isHidden())
+
+
 class MainWindowAssemblyBoundaryTests(unittest.TestCase):
     """步骤 10：主窗口只做组装，配置、运行和硬件入口都在协调器。"""
 

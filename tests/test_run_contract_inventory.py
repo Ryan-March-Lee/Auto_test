@@ -1,14 +1,22 @@
 r"""门禁：《技术债分阶段重构计划》步骤 4 的无运行契约调用方清单。
 
-本文件与[无运行契约调用方清单](../docs/无运行契约调用方清单.md)一一对应，冻结四类事实：
+本文件与[无运行契约调用方清单](../docs/无运行契约调用方清单.md)一一对应，冻结六类事实：
 
-1. **双向一致**：清单第 2.2、3.1、4 节的编号集合与下面的基线集合完全相等（既不允许
-   “清单删了代码还在”，也不允许“清单新增了基线没登记”），且编号不得重复；
-2. **生产调用点**：测量链路只能携带正式运行契约进入硬件装配；测量工厂的 ``prepared_run``
-   必须是必填关键字参数，调用点必须先经 ``require_prepared_run()`` 校验；
-3. **仅测试调用点**：仍然依赖无契约回退的测试用例按文件、按“无 recorder 的请求构造次数”冻结；
-4. **底层无契约分支**：为无契约对象保留的分支与默认值以“符号 + 标记 + 出现次数”冻结
-   （只减不增；减少时必须同步更新清单与本基线）。
+1. **双向一致且分节严格**：清单第 2.2、3.1、4 节的编号集合与下面的基线集合完全相等
+   （既不允许“清单删了代码还在”，也不允许“清单新增了基线没登记”），编号不得重复；
+   编号也只能出现在属于它的那一节里，出现在别处同样是清单损坏；
+2. **条目身份**：每条无契约分支按“文件 + 符号 + 标记”核对，标记必须是该符号源码里的原文，
+   同一符号的多个无契约出口都要列进标记列表，避免“登记了一个出口、漏了另一个”；
+3. **语义计数**：底层为无契约对象保留的判据按 **AST 语义** 冻结（``x is None`` /
+   ``x is not None`` / ``isinstance(..., Mapping)`` / 指定函数调用），不按文本出现次数，
+   因此注释、docstring、字符串拼接不会误伤，新增等价分支也无法藏起来；
+4. **生产调用点**：测量链路只能携带正式运行契约进入硬件装配；测量工厂的 ``prepared_run``
+   必须是必填关键字参数；调用点必须先经 ``require_prepared_run()`` 校验并把它校验过的对象
+   传给装配入口，且监测符号不得经 ``import ... as`` 别名或动态 ``getattr`` 绕过检查；
+5. **契约判据单源**：``has_run_contract`` / ``is_valid_prepared_run`` / ``require_prepared_run``
+   各只允许有一个生产定义，且对契约运行绝无“回退到调用方全局配置”的出口（失败断言）；
+6. **仅测试调用点**：仍然依赖无契约回退的测试用例按文件、按“无 recorder 的请求构造次数”冻结，
+   迁移后必须下降并同步基线。
 
 唯一生产契约是“每次测量绑定同一个 ``runs/<run_id>/`` 运行目录（``config.json`` +
 ``manifest.json`` + ``inputs/hardware_config.json``）”。``prepare_run()`` 是旧兼容前置校验入口，
@@ -23,6 +31,7 @@ r"""门禁：《技术债分阶段重构计划》步骤 4 的无运行契约调�
 """
 
 import ast
+import re
 import unittest
 from pathlib import Path
 
@@ -50,10 +59,12 @@ MEASUREMENT_FACTORIES = (
     "create_amplifier_measurement",
 )
 # 生产代码里唯一允许的工厂分发形态（worker 注入 + 动态取工厂名，且带 prepared_run）。
-WORKER_DISPATCH_MARKER = "create_measurement(self.config_path, prepared_run=prepared"
-WORKER_DISPATCH_BASELINE = {"presentation/qt/workers.py": 3}
 WORKER_DISPATCH_MODULE = "presentation/qt/workers.py"
+WORKER_DISPATCH_MARKER = "create_measurement(self.config_path, prepared_run=prepared"
+WORKER_DISPATCH_BASELINE = {WORKER_DISPATCH_MODULE: 3}
 WORKER_CONTRACT_CHECK = "require_prepared_run"
+# 动态分发只在 _default_factory 里取名字，因此每个工厂名必须是恰好一处字符串字面量。
+WORKER_FACTORY_LITERALS = {name: 1 for name in MEASUREMENT_FACTORIES}
 
 # 生产组合根：唯一的装配模块。断言的是“只有一个模块”，不是“只有一次调用”。
 COMPOSITION_ROOT = "app/gui_runtime.py"
@@ -62,87 +73,144 @@ MEASUREMENT_PORT_CALLS = {COMPOSITION_ROOT: 2}
 MEASUREMENT_PORT_MODES = {"hardware": 1, "simulation": 1}
 MEASUREMENT_PORT_DEFINITION = ("instrument/measurement_factory.py", "create_measurement_port")
 
-# 第 4 节：底层无契约分支/默认值。条目身份是 (清单编号, 文件, 符号, 标记)。
+# 契约判据必须单源：各判据只允许在这一个生产模块里定义一次。
+CONTRACT_PREDICATES = {
+    "has_run_contract": "app/run_context.py",
+    "is_valid_prepared_run": "presentation/qt/run_contract.py",
+    "require_prepared_run": "presentation/qt/run_contract.py",
+}
+# 硬性判据 ``has_run_contract`` 当前只承认 run_repository：改成更严格的定义属于步骤 5
+# 的契约收紧，必须同时改本基线与清单第 8 节 D8。
+HAS_RUN_CONTRACT_ATTRIBUTE = "run_repository"
+# GUI 边界判据必须同时要求运行标识、运行目录与冻结快照解析入口。
+GUI_CONTRACT_REQUIREMENTS = ("has_run_contract", "run_id", "run_directory", "hardware_connection_path")
+
+# 受监测符号：生产代码不得用 import 别名或动态 getattr 让它们绕过上面的检查。
+MONITORED_SYMBOLS = frozenset(
+    MEASUREMENT_FACTORIES
+    + (
+        "connect_instruments",
+        "create_measurement_port",
+        "prepare_run",
+        "require_prepared_run",
+        "is_valid_prepared_run",
+        "create_measurement",
+    )
+)
+# 动态符号查找（getattr(模块, 变量)）只允许出现在 worker 的分发辅助函数里。
+# 只有“从装配模块动态取名字”属于绕过检查的路径；getattr(对象, 字段名) 之类的
+# 通用写法与装配无关，不进入本基线。
+MONITORED_DISPATCH_MODULES = ("gui_runtime", "run_context", "measurement_factory")
+DYNAMIC_LOOKUP_BASELINE = {WORKER_DISPATCH_MODULE: 1}
+
+# 第 4 节：底层无契约分支/默认值。身份是 (清单编号, 文件, 符号, 标记元组)：
+# 标记必须全部出现在该符号源码里，一个符号存在多个无契约出口时全部列出。
 NO_CONTRACT_SITES = (
-    ("B1", "app/run_context.py", "prepare_run", "write_run_snapshot("),
+    ("B1", "app/run_context.py", "prepare_run", ("write_run_snapshot(",)),
     (
         "B2",
         "app/run_context.py",
         "PreparedRun.hardware_connection_path",
-        "return Path(self.config_path)",
+        ("return Path(self.config_path)",),
     ),
-    ("B3", "app/gui_runtime.py", "_hardware_config_path", "return config_path"),
-    ("B4", "app/gui_runtime.py", "_require_stage_inputs", "if run_repository is None:"),
-    ("B5", "app/gui_runtime.py", "_preflight_amplifier_inputs", "if run_repository is None:"),
+    (
+        "B3",
+        "app/gui_runtime.py",
+        "_hardware_config_path",
+        # 两个出口：调用方路径回退，以及“有 hardware_config_path 但没有校验入口”时
+        # 直接返回未校验快照。后者同样绕过了 hardware_connection_path() 的 manifest 校验。
+        ("return config_path", "return str(frozen)"),
+    ),
+    ("B4", "app/gui_runtime.py", "_require_stage_inputs", ("if run_repository is None:",)),
+    (
+        "B5",
+        "app/gui_runtime.py",
+        "_preflight_amplifier_inputs",
+        ("if run_repository is None:",),
+    ),
     (
         "B6",
         "app/gui_runtime.py",
         "_ensure_run_snapshots_are_intact",
-        "if run_repository is None:",
+        ("if run_repository is None:",),
     ),
     (
         "B7",
         "app/gui_runtime.py",
         "_require_legacy_explicit_inputs",
-        "_LEGACY_LOSS_INPUT_REQUIRED",
+        ("_LEGACY_LOSS_INPUT_REQUIRED", "_LEGACY_DRIVER_MAPPING_REQUIRED"),
     ),
-    ("B8", "app/gui_runtime.py", "_driver_mode_enabled", "isinstance(configuration, Mapping)"),
-    ("B9", "app/gui_runtime.py", "_test_frequencies", "isinstance(configuration, Mapping)"),
-    ("B10", "app/gui_runtime.py", "_request_kwargs", "if run_repository is not None"),
+    (
+        "B8",
+        "app/gui_runtime.py",
+        "_driver_mode_enabled",
+        # 外层判 configuration、内层判 mode：只登记外层会漏掉内层探测。
+        ("isinstance(configuration, Mapping)", "isinstance(mode, Mapping)"),
+    ),
+    ("B9", "app/gui_runtime.py", "_test_frequencies", ("isinstance(configuration, Mapping)",)),
+    ("B10", "app/gui_runtime.py", "_request_kwargs", ("if run_repository is not None",)),
     (
         "B11",
         "app/gui_runtime.py",
         "connect_instruments",
-        'create_measurement_port(config_path, mode="hardware"',
+        ('create_measurement_port(config_path, mode="hardware"',),
     ),
-    ("B12", "instrument/measurement_factory.py", "create_measurement_port", "config_path is None"),
+    ("B12", "instrument/measurement_factory.py", "create_measurement_port", ("config_path is None",)),
     (
         "B13",
         "presentation/qt/workers.py",
         "InstrumentWorker",
-        "connect_instruments(self.config_path)",
+        ("connect_instruments(self.config_path)",),
     ),
     (
         "B14",
         "presentation/qt/application_coordinator.py",
         "ApplicationCoordinator.measurement_config_path",
-        "return str(self.config_path)",
+        ("return str(self.config_path)",),
     ),
     (
         "B15",
         "presentation/qt/application_coordinator.py",
         "ApplicationCoordinator.connect_instruments",
-        "if self.prepared_run is None:",
+        ("if self.prepared_run is None:",),
     ),
     (
         "B16",
         "application/measurements/cable_loss.py",
         "CableLossUseCase",
-        "if self.stage_recorder is None:",
+        ("if self.stage_recorder is None:",),
     ),
     (
         "B17",
         "application/measurements/driver_mapping.py",
         "DriverPowerMappingUseCase",
-        "if self.stage_recorder is None:",
+        ("if self.stage_recorder is None:",),
     ),
     (
         "B18",
         "application/measurements/amplifier_test.py",
         "AmplifierMeasurementUseCase",
-        "if self.stage_recorder is None:",
+        ("if self.stage_recorder is None:",),
     ),
     (
         "B19",
         "application/dto/measurement_requests.py",
         "MeasurementRequest",
-        'stage_recorder: "RunStageRecorder | None" = None',
+        ('stage_recorder: "RunStageRecorder | None" = None',),
     ),
     (
         "B20",
         "presentation/qt/measurement_controller_contract.py",
         "MeasurementCommand",
-        "prepared_run: Any = None",
+        ("prepared_run: Any = None",),
+    ),
+    (
+        # 共享的“None 表示旧兼容流程”开关：run_context / gui_runtime / run_service
+        # 四处调用都靠它决定是否跳过快照完整性校验，是步骤 6 必须拆除的中枢分支。
+        "B21",
+        "application/run_service.py",
+        "ensure_run_repository_supports_run_contract",
+        ("if run_repository is None:",),
     ),
 )
 # 归属步骤：步骤 5 只收敛装配入口（B11–B15 的连接与路径回退），其余留给步骤 6 删除。
@@ -169,44 +237,81 @@ NO_CONTRACT_CALL_SITES = (
     ("X7", "presentation/qt/measurement_controller_contract.py", "MeasurementCommand", "步骤 5"),
 )
 
-# 无契约标记只减不增：按文件固定当前出现次数（注释/docstring 里的说法不计入契约，但计数按原文）。
-NO_CONTRACT_MARKER_COUNTS = {
+# 语义计数：受监测的“无契约判据”变量与函数。只有这些名字进基线，其余同形判据不在
+# 本步骤范围内（例如局部的 config_path 判空），改本基线即可扩展覆盖面。
+MONITORED_GUARD_NAMES = ("run_repository", "prepared_run", "stage_recorder", "hardware_config_path")
+MONITORED_GUARD_CALLS = ("create_measurement_port", "connect_instruments", "prepare_run", "create_measurement")
+# ``isinstance(..., Mapping)`` 探测只在组合根里代表“兼容旧组合配置映射”，因此只在该文件计数；
+# 其它包的 Mapping 判断是普通类型收窄，与无契约无关（B8/B9 另有符号级标记冻结）。
+MAPPING_PROBE_FILES = (COMPOSITION_ROOT,)
+
+# 按文件冻结的语义计数（只减不增；删除分支时必须同步本基线与清单第 4 节）。
+NO_CONTRACT_GUARD_BASELINE = {
     "app/gui_runtime.py": {
-        "if run_repository is None:": 3,
-        "if run_repository is not None": 4,
-        "isinstance(configuration, Mapping)": 2,
-        "create_measurement_port(": 2,
-        "connect_instruments(": 4,
+        "none:run_repository:is": 3,
+        "none:run_repository:is_not": 4,
+        "mapping": 3,
+        "call:create_measurement_port": 2,
+        "call:connect_instruments": 3,
     },
-    "app/run_context.py": {"if run_repository is not None": 2},
-    "presentation/qt/application_coordinator.py": {"if self.prepared_run is None:": 2},
-    "application/measurements/cable_loss.py": {"if self.stage_recorder is None:": 2},
-    "application/measurements/driver_mapping.py": {"if self.stage_recorder is None:": 2},
-    "application/measurements/amplifier_test.py": {"if self.stage_recorder is None:": 2},
+    "app/run_context.py": {
+        "none:hardware_config_path:is_not": 1,
+        "none:run_repository:is_not": 3,
+    },
+    "application/measurements/amplifier_test.py": {
+        "none:stage_recorder:is": 4,
+        "none:stage_recorder:is_not": 4,
+    },
+    "application/measurements/cable_loss.py": {
+        "none:stage_recorder:is": 4,
+        "none:stage_recorder:is_not": 1,
+    },
+    "application/measurements/driver_mapping.py": {
+        "none:stage_recorder:is": 4,
+        "none:stage_recorder:is_not": 2,
+    },
+    "application/run_service.py": {
+        "none:hardware_config_path:is": 1,
+        "none:run_repository:is": 1,
+    },
+    "presentation/qt/application_coordinator.py": {"none:prepared_run:is": 2},
+    # 非回退点，登记在案以免将来被误当成无契约路径或悄悄消失：
+    # main_window 只用来提示“配置已冻结”，不是测量入口。
+    "presentation/qt/main_window.py": {
+        "none:prepared_run:is_not": 1,
+        "call:connect_instruments": 1,
+    },
+    "presentation/qt/workers.py": {"call:connect_instruments": 1, "call:create_measurement": 3},
 }
 
-# 第 3.1 节：依赖无契约回退的测试调用点（文件 -> ((标记, 期望次数), ...)）。
-TEST_ONLY_FILE_MARKERS = {
+# 第 3.1 节：依赖无契约回退的测试调用点。
+# 探针身份是 (种类, 名字, 期望次数)，种类为 def（定义）/ call（调用）/ load（读取）；
+# 用 AST 计数而不是子串计数，避免 "AmplifierMeasurementRequest(" 被
+# "MeasurementRequest(" 之类的短名字误命中。
+TEST_ONLY_FILE_PROBES = {
     "tests/test_gui_runtime.py": (
-        ("def _prepared_run(", 1),
-        ("_prepared_run()", 9),
-        ("_LEGACY_LOSS_PATH", 9),
-        ("test_legacy_assembly_still_uses_the_caller_config_path", 1),
+        ("def", "_prepared_run", 1),
+        ("call", "_prepared_run", 8),
+        ("load", "_LEGACY_LOSS_PATH", 8),
+        ("def", "test_legacy_assembly_still_uses_the_caller_config_path", 1),
+        ("def", "test_all_measurement_factories_inject_the_same_external_port", 1),
     ),
     "tests/test_run_service.py": (
-        ("test_legacy_prepare_run_remains_non_contract_compatible", 1),
-        ("prepare_run(", 1),
+        ("def", "test_legacy_prepare_run_remains_non_contract_compatible", 1),
+        ("call", "prepare_run", 1),
     ),
-    "tests/test_offline_completion.py": (("prepare_run(", 1),),
+    "tests/test_offline_completion.py": (("call", "prepare_run", 1),),
     "tests/integration/test_gui_two_phase_flow.py": (
-        ("test_legacy_flow_still_uses_global_config", 1),
-        ("test_measurement_config_path_prefers_frozen_run_config", 1),
+        ("def", "test_legacy_flow_still_uses_global_config", 1),
+        ("def", "test_measurement_config_path_prefers_frozen_run_config", 1),
     ),
-    "tests/test_measurement_requests.py": (("test_legacy_prepared_run_has_no_stage_recorder", 1),),
-    "tests/test_cable_loss_use_case.py": (("CableLossMeasurementRequest(", 5),),
-    "tests/test_driver_mapping_use_case.py": (("DriverPowerMappingRequest(", 1),),
-    "tests/test_amplifier_use_case.py": (("AmplifierMeasurementRequest(", 2),),
-    "tests/test_sleep_injection.py": (("MeasurementRequest(", 1),),
+    "tests/test_measurement_requests.py": (
+        ("def", "test_legacy_prepared_run_has_no_stage_recorder", 1),
+    ),
+    "tests/test_cable_loss_use_case.py": (("call", "CableLossMeasurementRequest", 5),),
+    "tests/test_driver_mapping_use_case.py": (("call", "DriverPowerMappingRequest", 1),),
+    "tests/test_amplifier_use_case.py": (("call", "AmplifierMeasurementRequest", 2),),
+    "tests/test_sleep_injection.py": (("call", "AmplifierMeasurementRequest", 1),),
 }
 
 # 第 3.1 节条目身份：(清单编号, 归属步骤, 对应文件, 该条目在文件里的代表标记)。
@@ -265,6 +370,15 @@ NO_CONTRACT_REQUEST_BASELINE = {
     "tests/test_amplifier_use_case.py": 2,
     "tests/test_sleep_injection.py": 1,
 }
+
+# 清单分节：编号只能出现在本节里，越界说明清单被写坏了。
+SECTION_HEADINGS = {
+    "X": "2.2",
+    "T": "3.1",
+    "B": "4.",
+}
+_HEADING_RE = re.compile(r"^(#{1,4})\s+(.*)$")
+_ROW_RE = re.compile(r"^\|\s*([XBT])(\d+)\s*\|")
 
 _SOURCE_CACHE: dict[Path, str] = {}
 _TREE_CACHE: dict[Path, ast.AST] = {}
@@ -325,23 +439,135 @@ def _find_symbol(text: str, dotted: str):
 
 
 def _called_name(node: ast.AST) -> str | None:
-    if isinstance(node.func, ast.Name):
-        return node.func.id
-    if isinstance(node.func, ast.Attribute):
-        return node.func.attr
+    if isinstance(node, ast.Call):
+        func = node.func
+        if isinstance(func, ast.Name):
+            return func.id
+        if isinstance(func, ast.Attribute):
+            return func.attr
     return None
 
 
-def _doc_rows(document: str, prefix: str) -> list[tuple[str, str]]:
-    """收集清单里以 ``| <prefix><数字> |`` 开头的表格行，返回 (编号, 原始行)。"""
+def _alias_map(tree: ast.AST) -> dict[str, str]:
+    """收集 ``import x as y`` / ``from m import f as g`` 的别名，防止改个名字就绕过检查。"""
+    mapping: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.asname:
+                    mapping[alias.asname] = alias.name
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname:
+                    mapping[alias.asname] = alias.name.split(".")[-1]
+    return mapping
+
+
+def _resolved_call_name(node: ast.AST, aliases: dict[str, str]) -> str | None:
+    name = _called_name(node)
+    if name is None:
+        return None
+    return aliases.get(name, name)
+
+
+def _side_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    if isinstance(node, ast.Name):
+        return node.id
+    return None
+
+
+def _guard_counts(path: Path) -> dict[str, int]:
+    """按 AST 统计“无契约判据”的语义出现次数（注释与字符串不计入）。"""
+    _text, tree = _tree(path)
+    aliases = _alias_map(tree)
+    relative = _relative(path)
+    counts: dict[str, int] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Compare):
+            subject = _side_name(node.left)
+            if subject not in MONITORED_GUARD_NAMES:
+                continue
+            for operator, comparator in zip(node.ops, node.comparators):
+                if not (isinstance(comparator, ast.Constant) and comparator.value is None):
+                    continue
+                if isinstance(operator, ast.Is):
+                    key = f"none:{subject}:is"
+                elif isinstance(operator, ast.IsNot):
+                    key = f"none:{subject}:is_not"
+                else:
+                    continue
+                counts[key] = counts.get(key, 0) + 1
+        elif isinstance(node, ast.Call):
+            name = _resolved_call_name(node, aliases)
+            if (
+                name == "isinstance"
+                and len(node.args) == 2
+                and relative in MAPPING_PROBE_FILES
+                and isinstance(node.args[1], ast.Name)
+                and node.args[1].id == "Mapping"
+            ):
+                counts["mapping"] = counts.get("mapping", 0) + 1
+            if name in MONITORED_GUARD_CALLS:
+                key = f"call:{name}"
+                counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _scope_calls(function: ast.AST) -> list[ast.Call]:
+    """收集直接属于该函数体的调用，不下钻到嵌套函数/类定义（避免误判顺序）。"""
+    calls: list[ast.Call] = []
+    stack = list(getattr(function, "body", []))
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        if isinstance(node, ast.Call):
+            calls.append(node)
+        stack.extend(ast.iter_child_nodes(node))
+    return calls
+
+
+def _sections(document: str) -> list[dict[str, object]]:
+    """把文档切成标题区块：层级、标题、起止行号。"""
+    lines = document.splitlines()
+    headings: list[tuple[int, int, str]] = []
+    for index, line in enumerate(lines):
+        match = _HEADING_RE.match(line)
+        if match:
+            headings.append((len(match.group(1)), index, match.group(2).strip()))
+    sections = []
+    for position, (level, start, title) in enumerate(headings):
+        end = len(lines)
+        for next_level, next_start, _next_title in headings[position + 1 :]:
+            if next_level <= level:
+                end = next_start
+                break
+        sections.append(
+            {"level": level, "title": title, "start": start, "end": end, "lines": lines[start:end]}
+        )
+    return sections
+
+
+def _section(document: str, prefix: str) -> dict[str, object]:
+    for section in _sections(document):
+        title = str(section["title"])
+        if title.startswith(prefix):
+            return section
+    raise AssertionError(f"清单缺少标题以 {prefix!r} 开头的小节")
+
+
+def _doc_rows(section: dict[str, object], prefix: str) -> list[tuple[str, str]]:
+    """收集某一节里以 ``| <prefix><数字> |`` 开头的表格行，返回 (编号, 原始行)。"""
     rows = []
-    for line in document.splitlines():
+    for line in section["lines"]:
         stripped = line.strip()
         marker = f"| {prefix}"
         if not stripped.startswith(marker):
             continue
-        identifier = stripped[len("| "):].split("|")[0].strip()
-        if not identifier.startswith(prefix) or not identifier[len(prefix):].isdigit():
+        identifier = stripped[len("| ") :].split("|")[0].strip()
+        if not identifier.startswith(prefix) or not identifier[len(prefix) :].isdigit():
             continue
         rows.append((identifier, stripped))
     return rows
@@ -362,14 +588,38 @@ def _requests_without_stage_recorder(path: Path) -> int:
     return count
 
 
+def _probe_count(tree: ast.AST, kind: str, value: str) -> int:
+    """按种类统计 AST 事实：定义 / 调用 / 读取。"""
+    count = 0
+    for node in ast.walk(tree):
+        if kind == "def":
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                if node.name == value:
+                    count += 1
+        elif kind == "call":
+            if isinstance(node, ast.Call) and _called_name(node) == value:
+                count += 1
+        elif kind == "load":
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                if node.id == value:
+                    count += 1
+            elif isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
+                if node.attr == value:
+                    count += 1
+        else:  # pragma: no cover - 常量写错时明确失败
+            raise AssertionError(f"未知的探针种类: {kind}")
+    return count
+
+
 class InventoryParityTests(unittest.TestCase):
-    """清单与基线双向一致：编号集合相等、无重复、文件/符号/归属步骤可核对。"""
+    """清单与基线双向一致：编号集合相等、无重复、分节严格、文件/符号/归属步骤可核对。"""
 
     def setUp(self):
         self.document = _source(INVENTORY_DOC)
 
     def _assert_parity(self, prefix: str, expected_ids, label: str):
-        rows = _doc_rows(self.document, prefix)
+        section = _section(self.document, SECTION_HEADINGS[prefix])
+        rows = _doc_rows(section, prefix)
         ids = [identifier for identifier, _raw in rows]
         duplicated = sorted({identifier for identifier in ids if ids.count(identifier) > 1})
         self.assertEqual(
@@ -405,7 +655,7 @@ class InventoryParityTests(unittest.TestCase):
             [],
             "步骤 5 条目已不在清单里，请同步 STEP_FIVE_SITES",
         )
-        for site_id, relative, symbol, _marker in NO_CONTRACT_SITES:
+        for site_id, relative, symbol, _markers in NO_CONTRACT_SITES:
             with self.subTest(site=site_id):
                 raw = rows[site_id]
                 self.assertIn(f"`{relative}`", raw)
@@ -426,17 +676,50 @@ class InventoryParityTests(unittest.TestCase):
                     self.assertIn(relative, raw)
                     self.assertIn(
                         relative,
-                        TEST_ONLY_FILE_MARKERS,
+                        TEST_ONLY_FILE_PROBES,
                         f"{site_id} 登记的文件 {relative} 没有对应的文件基线",
                     )
 
+    def test_inventory_ids_do_not_escape_their_own_section(self):
+        """编号写错小节同样算清单损坏：X/B/T 行只能各自出现在本节。"""
+        escaped = []
+        allowed = {}
+        for prefix, heading in SECTION_HEADINGS.items():
+            section = _section(self.document, heading)
+            allowed[prefix] = (int(section["start"]), int(section["end"]))
+        for index, line in enumerate(self.document.splitlines()):
+            match = _ROW_RE.match(line.strip())
+            if not match:
+                continue
+            prefix = match.group(1)
+            start, end = allowed[prefix]
+            if not start <= index < end:
+                escaped.append(f"{prefix}{match.group(2)} 出现在第 {index + 1} 行（不属于本节）")
+        self.assertEqual(
+            escaped,
+            [],
+            "清单编号必须写在对应小节内（X→2.2、T→3.1、B→第 4 节）: " + "; ".join(escaped),
+        )
+
+    def test_section_2_1_ids_are_unique_and_contiguous(self):
+        section = _section(self.document, "2.1")
+        rows = _doc_rows(section, "P")
+        ids = [identifier for identifier, _raw in rows]
+        self.assertEqual(sorted(ids), sorted(set(ids)), f"清单第 2.1 节存在重复编号: {ids}")
+        numbers = sorted(int(identifier[1:]) for identifier in ids)
+        self.assertEqual(
+            numbers,
+            list(range(1, len(numbers) + 1)),
+            "清单第 2.1 节的 P 编号必须连续，缺号说明条目被删但编号没重排",
+        )
+
 
 class NoContractSiteTests(unittest.TestCase):
-    """第 4 节的无契约分支必须以“符号 + 标记”的身份继续存在。"""
+    """第 4 节的无契约分支必须以“符号 + 全部标记”的身份继续存在。"""
 
     def test_documented_no_contract_sites_still_exist(self):
         missing = []
-        for site_id, relative, symbol, marker in NO_CONTRACT_SITES:
+        for site_id, relative, symbol, markers in NO_CONTRACT_SITES:
             with self.subTest(site=site_id):
                 path = ROOT / relative
                 if not path.is_file():
@@ -448,8 +731,9 @@ class NoContractSiteTests(unittest.TestCase):
                     missing.append(f"{site_id}: {relative}::{symbol} 已不存在")
                     continue
                 segment = ast.get_source_segment(text, node) or ""
-                if marker not in segment:
-                    missing.append(f"{site_id}: {relative}::{symbol} 缺少标记 {marker!r}")
+                for marker in markers:
+                    if marker not in segment:
+                        missing.append(f"{site_id}: {relative}::{symbol} 缺少标记 {marker!r}")
         self.assertEqual(
             missing,
             [],
@@ -469,20 +753,144 @@ class NoContractSiteTests(unittest.TestCase):
             "无契约调用点已迁移，请同步更新清单第 2.2 节与本基线: " + "; ".join(missing),
         )
 
-    def test_no_contract_marker_counts_do_not_grow(self):
+    def test_no_contract_guard_counts_stay_on_the_baseline(self):
+        """语义计数：新增等价分支、少删一处、或新增文件都要同步基线。"""
+        actual = {}
+        for path in _production_sources():
+            counts = _guard_counts(path)
+            if counts:
+                actual[_relative(path)] = counts
+        self.assertEqual(
+            actual,
+            NO_CONTRACT_GUARD_BASELINE,
+            "无契约判据的语义计数与基线不一致："
+            f"基线缺失 {sorted(set(actual) - set(NO_CONTRACT_GUARD_BASELINE))}，"
+            f"基线多余 {sorted(set(NO_CONTRACT_GUARD_BASELINE) - set(actual))}；"
+            "同一文件的差异见下方逐项核对。迁移或删除分支后请同步清单第 4 节与本基线",
+        )
         drifted = []
-        for relative, markers in NO_CONTRACT_MARKER_COUNTS.items():
-            text = _source(ROOT / relative)
+        for relative, markers in NO_CONTRACT_GUARD_BASELINE.items():
+            counts = actual.get(relative, {})
             for marker, expected in markers.items():
-                actual = text.count(marker)
-                if actual != expected:
-                    drifted.append(f"{relative}: {marker!r} 期望 {expected} 处，实际 {actual} 处")
+                if counts.get(marker, 0) != expected:
+                    drifted.append(
+                        f"{relative}: {marker!r} 期望 {expected} 处，实际 {counts.get(marker, 0)} 处"
+                    )
         self.assertEqual(
             drifted,
             [],
-            "无契约分支的出现次数必须与清单一致（只减不增）；"
+            "无契约判据出现次数必须与基线一致（只减不增）；"
             "迁移或删除后请同步更新清单第 4 节与本基线: " + "; ".join(drifted),
         )
+
+
+class ContractPredicateTests(unittest.TestCase):
+    """契约判据单源，且契约运行绝无“回退到全局配置”的出口。"""
+
+    def _definitions(self, name: str) -> list[str]:
+        found = []
+        for path in _production_sources():
+            _text, tree = _tree(path)
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if node.name == name:
+                        found.append(_relative(path))
+                elif isinstance(node, ast.ClassDef):
+                    continue
+        return found
+
+    def test_contract_predicates_are_defined_exactly_once(self):
+        for name, expected_module in CONTRACT_PREDICATES.items():
+            with self.subTest(predicate=name):
+                self.assertEqual(
+                    self._definitions(name),
+                    [expected_module],
+                    f"契约判据 {name} 必须只在 {expected_module} 定义一次；"
+                    "新增第二套判据会让不同入口对“是否有运行契约”给出不同答案",
+                )
+
+    def test_has_run_contract_is_exactly_the_run_repository_test(self):
+        text, _tree_node = _tree(ROOT / CONTRACT_PREDICATES["has_run_contract"])
+        node = _find_symbol(text, "PreparedRun.has_run_contract")
+        self.assertIsNotNone(node, "app/run_context.py 缺少 PreparedRun.has_run_contract")
+        body = [statement for statement in node.body if not isinstance(statement, ast.Expr)]
+        self.assertEqual(len(body), 1, "has_run_contract 只应有一条 return 语句")
+        value = body[0].value
+        self.assertIsInstance(value, ast.Compare, "has_run_contract 必须直接比较运行仓储")
+        self.assertIsInstance(value.left, ast.Attribute)
+        self.assertEqual(getattr(value.left.value, "id", None), "self")
+        self.assertEqual(_side_name(value.left), HAS_RUN_CONTRACT_ATTRIBUTE)
+        self.assertTrue(any(isinstance(op, ast.IsNot) for op in value.ops))
+        self.assertTrue(
+            all(
+                isinstance(comparator, ast.Constant) and comparator.value is None
+                for comparator in value.comparators
+            )
+        )
+
+    def test_gui_contract_predicate_requires_the_frozen_snapshot_resolver(self):
+        text, tree = _tree(ROOT / CONTRACT_PREDICATES["is_valid_prepared_run"])
+        node = _find_symbol(text, "is_valid_prepared_run")
+        self.assertIsNotNone(node, "presentation/qt/run_contract.py 缺少 is_valid_prepared_run")
+        referenced = set()
+        for child in ast.walk(node):
+            if isinstance(child, ast.Attribute):
+                referenced.add(child.attr)
+            elif isinstance(child, ast.Constant) and isinstance(child.value, str):
+                referenced.add(child.value)
+        for requirement in GUI_CONTRACT_REQUIREMENTS:
+            with self.subTest(requirement=requirement):
+                self.assertIn(
+                    requirement,
+                    referenced,
+                    f"GUI 判据必须要求 {requirement}：只查 has_run_contract 会让残缺替身通过",
+                )
+
+    def test_a_contract_run_never_falls_back_to_the_caller_config_path(self):
+        """契约运行缺少可用快照时必须失败，而不是换成调用方的全局配置。"""
+        from app import gui_runtime
+        from application.run_service import RunNotResumable
+
+        class _RepositorySpy:
+            pass
+
+        class _ResolvedRun:
+            run_repository = _RepositorySpy()
+
+            def hardware_connection_path(self):
+                return Path("frozen/hardware_config.json")
+
+        class _BrokenSnapshotRun:
+            run_repository = _RepositorySpy()
+
+            def hardware_connection_path(self):
+                raise RunNotResumable("快照已被删除")
+
+        class _NoResolverRun:
+            run_repository = _RepositorySpy()
+
+        caller_path = str(ROOT / "config.json")
+
+        resolved = gui_runtime._hardware_config_path(_ResolvedRun(), caller_path)
+        self.assertEqual(
+            Path(resolved),
+            Path("frozen/hardware_config.json"),
+            "契约运行必须使用冻结快照，不能使用调用方传入的全局配置",
+        )
+        self.assertNotEqual(str(resolved), caller_path)
+        for label, prepared in (
+            ("快照校验失败", _BrokenSnapshotRun()),
+            ("缺少快照解析入口", _NoResolverRun()),
+        ):
+            with self.subTest(case=label):
+                with self.assertRaises(RunNotResumable):
+                    gui_runtime._hardware_config_path(prepared, caller_path)
+
+    def test_create_prepared_run_requires_a_hardware_snapshot(self):
+        from app.run_context import create_prepared_run
+
+        with self.assertRaises(ValueError):
+            create_prepared_run(None, hardware_config=None)
 
 
 class ProductionContractTests(unittest.TestCase):
@@ -492,8 +900,9 @@ class ProductionContractTests(unittest.TestCase):
         offenders = []
         for path in _production_sources():
             text, tree = _tree(path)
+            aliases = _alias_map(tree)
             for node in ast.walk(tree):
-                if isinstance(node, ast.Call) and _called_name(node) == "prepare_run":
+                if isinstance(node, ast.Call) and _resolved_call_name(node, aliases) == "prepare_run":
                     offenders.append(f"{_relative(path)}:{node.lineno} 调用了 prepare_run")
                 elif isinstance(node, ast.ImportFrom) and any(
                     alias.name == "prepare_run" for alias in node.names
@@ -522,10 +931,11 @@ class ProductionContractTests(unittest.TestCase):
         modes = {"hardware": 0, "simulation": 0}
         for path in _production_sources():
             _text, tree = _tree(path)
+            aliases = _alias_map(tree)
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call):
                     continue
-                if _called_name(node) != "create_measurement_port":
+                if _resolved_call_name(node, aliases) != "create_measurement_port":
                     continue
                 calls[_relative(path)] = calls.get(_relative(path), 0) + 1
                 for keyword in node.keywords:
@@ -583,14 +993,16 @@ class ProductionContractTests(unittest.TestCase):
                     f"{name} 的 prepared_run 不得有默认值：无契约调用必须在调用点就失败",
                 )
 
-    def test_measurement_factories_are_only_dispatched_with_a_prepared_run(self):
+    def test_measurement_factories_are_dispatched_with_a_prepared_run(self):
+        """工厂经动态表分发，因此既要查直接调用点，也要查分发表的字面量。"""
         offenders = []
         for path in _production_sources():
             _text, tree = _tree(path)
+            aliases = _alias_map(tree)
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call):
                     continue
-                if _called_name(node) not in MEASUREMENT_FACTORIES:
+                if _resolved_call_name(node, aliases) not in MEASUREMENT_FACTORIES:
                     continue
                 keywords = {keyword.arg for keyword in node.keywords}
                 if "prepared_run" not in keywords:
@@ -600,40 +1012,127 @@ class ProductionContractTests(unittest.TestCase):
             [],
             "生产代码调用测量装配入口必须显式携带 prepared_run: " + "; ".join(offenders),
         )
+        workers_text = _source(ROOT / WORKER_DISPATCH_MODULE)
+        for name, expected in WORKER_FACTORY_LITERALS.items():
+            with self.subTest(factory=name):
+                self.assertEqual(
+                    workers_text.count(f'"{name}"'),
+                    expected,
+                    f"{WORKER_DISPATCH_MODULE} 里 {name} 的分发字面量数量变化，"
+                    "请同步清单第 2.1 节 P7 与本基线",
+                )
         for relative, expected in WORKER_DISPATCH_BASELINE.items():
             with self.subTest(file=relative):
                 self.assertEqual(_source(ROOT / relative).count(WORKER_DISPATCH_MARKER), expected)
 
     def test_dispatch_is_preceded_by_the_run_contract_check(self):
-        """worker 必须先经 require_prepared_run 校验，再装配测量用例。"""
+        """worker 必须先经 require_prepared_run 校验，并把校验过的对象交给装配入口。"""
         _text, tree = _tree(ROOT / WORKER_DISPATCH_MODULE)
         offenders = []
         checked = 0
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
-            dispatch = [
-                child.lineno
-                for child in ast.walk(node)
-                if isinstance(child, ast.Call) and _called_name(child) == "create_measurement"
-            ]
+            calls = _scope_calls(node)
+            dispatch = [call for call in calls if _called_name(call) == "create_measurement"]
             if not dispatch:
                 continue
             checked += 1
-            checks = [
-                child.lineno
-                for child in ast.walk(node)
-                if isinstance(child, ast.Call) and _called_name(child) == WORKER_CONTRACT_CHECK
-            ]
+            checks = [call for call in calls if _called_name(call) == WORKER_CONTRACT_CHECK]
             if not checks:
                 offenders.append(f"{node.name} 没有调用 {WORKER_CONTRACT_CHECK}")
-            elif min(checks) > min(dispatch):
+                continue
+            if min(call.lineno for call in checks) > min(call.lineno for call in dispatch):
                 offenders.append(f"{node.name} 在运行契约校验前就装配了测量用例")
+                continue
+            validated = set()
+            for statement in ast.walk(node):
+                if not isinstance(statement, ast.Assign):
+                    continue
+                if len(statement.targets) != 1:
+                    continue
+                target = statement.targets[0]
+                if not isinstance(target, ast.Name):
+                    continue
+                if isinstance(statement.value, ast.Call) and _called_name(
+                    statement.value
+                ) == WORKER_CONTRACT_CHECK:
+                    validated.add(target.id)
+            for call in dispatch:
+                keyword = next(
+                    (item for item in call.keywords if item.arg == "prepared_run"), None
+                )
+                if keyword is None:
+                    offenders.append(f"{node.name} 装配时没有传 prepared_run")
+                elif not isinstance(keyword.value, ast.Name) or keyword.value.id not in validated:
+                    offenders.append(
+                        f"{node.name} 传的 prepared_run 不是 {WORKER_CONTRACT_CHECK} 的返回值"
+                    )
         self.assertEqual(checked, 3, "worker 分发点数量变化，请同步更新清单第 2.1 节")
         self.assertEqual(
             offenders,
             [],
-            "测量 worker 必须先校验运行契约再装配用例: " + "; ".join(offenders),
+            "测量 worker 必须先校验运行契约再把校验结果交给装配入口: " + "; ".join(offenders),
+        )
+
+    def test_monitored_symbols_cannot_be_reached_through_aliases(self):
+        offenders = []
+        for path in _production_sources():
+            _text, tree = _tree(path)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    for alias in node.names:
+                        if alias.name in MONITORED_SYMBOLS and alias.asname:
+                            offenders.append(
+                                f"{_relative(path)}:{node.lineno} 用别名 {alias.asname} 导入 {alias.name}"
+                            )
+                elif isinstance(node, ast.Import):
+                    for alias in node.names:
+                        short = alias.name.split(".")[-1]
+                        if short in MONITORED_SYMBOLS and alias.asname:
+                            offenders.append(
+                                f"{_relative(path)}:{node.lineno} 用别名 {alias.asname} 导入 {alias.name}"
+                            )
+        self.assertEqual(
+            offenders,
+            [],
+            "受监测符号不得以别名导入：改名会绕过装配入口检查: " + "; ".join(offenders),
+        )
+
+    def test_dynamic_symbol_lookup_is_confined_to_the_dispatch_helper(self):
+        offenders = []
+        found = {}
+        for path in _production_sources():
+            _text, tree = _tree(path)
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                if _called_name(node) != "getattr":
+                    continue
+                if len(node.args) < 2:
+                    continue
+                holder, target = node.args[0], node.args[1]
+                if isinstance(target, ast.Constant) and target.value in MONITORED_SYMBOLS:
+                    offenders.append(
+                        f"{_relative(path)}:{node.lineno} 用 getattr 取 {target.value}"
+                    )
+                    continue
+                if not isinstance(target, ast.Name):
+                    continue
+                holder_name = getattr(holder, "id", None) or getattr(holder, "attr", None)
+                if holder_name not in MONITORED_DISPATCH_MODULES:
+                    continue
+                found[_relative(path)] = found.get(_relative(path), 0) + 1
+        self.assertEqual(
+            found,
+            DYNAMIC_LOOKUP_BASELINE,
+            "从装配模块动态取函数名只允许出现在 worker 的分发辅助函数里；新增处要显式登记: "
+            f"{found}",
+        )
+        self.assertEqual(
+            offenders,
+            [],
+            "受监测符号不得用 getattr 动态取用: " + "; ".join(offenders),
         )
 
 
@@ -642,16 +1141,18 @@ class TestOnlyCallSiteTests(unittest.TestCase):
 
     def test_test_only_no_contract_sites_are_frozen(self):
         drifted = []
-        for relative, markers in TEST_ONLY_FILE_MARKERS.items():
+        for relative, probes in TEST_ONLY_FILE_PROBES.items():
             path = ROOT / relative
             if not path.is_file():
                 drifted.append(f"{relative} 不存在")
                 continue
-            text = _source(path)
-            for marker, expected in markers:
-                actual = text.count(marker)
+            _text, tree = _tree(path)
+            for kind, value, expected in probes:
+                actual = _probe_count(tree, kind, value)
                 if actual != expected:
-                    drifted.append(f"{relative}: {marker!r} 期望 {expected} 处，实际 {actual} 处")
+                    drifted.append(
+                        f"{relative}: {kind} {value!r} 期望 {expected} 处，实际 {actual} 处"
+                    )
         self.assertEqual(
             drifted,
             [],
@@ -730,6 +1231,11 @@ class InventoryDocumentationTests(unittest.TestCase):
             "D2",
             "D3",
             "D4",
+            "D5",
+            "D6",
+            "D7",
+            "D8",
+            "D9",
             "构造即满足契约",
             "MeasurementCommand",
             "MeasurementRequest",
@@ -752,6 +1258,12 @@ class InventoryDocumentationTests(unittest.TestCase):
         document = _source(INVENTORY_DOC)
         self.assertIn("tests/test_run_contract_inventory.py", document)
         self.assertIn(INVENTORY_GATE, document)
+
+    def test_inventory_doc_describes_the_semantic_gate(self):
+        document = _source(INVENTORY_DOC)
+        for keyword in ("语义计数", "别名", "契约判据单源", "章节"):
+            with self.subTest(keyword=keyword):
+                self.assertIn(keyword, document)
 
 
 if __name__ == "__main__":

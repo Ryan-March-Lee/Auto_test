@@ -2,12 +2,12 @@
 
 覆盖点击“获取设备”后的可见行为：
 
-1. 扫描结果出现在表格里，信号源/频谱仪显示“设备名（角色）”，电源显示“短标签（型号，
-   电源）”，未登记设备标记为未登记，身份读不出来的地址标记为无法识别且不能勾选；地址列
-   不再显示。
-2. 测试角色来自设备表登记的 ``role``：勾选设备即可应用，不需要用户选择角色。电源的旧
-   槽位（``PS3``）折叠成 ``power_supply``，结果里带 ``label`` / ``supply_id`` /
-   ``serial`` / ``device_key``，多台电源各自独立、互不覆盖。
+1. 扫描结果以卡片出现在面板里：一台设备一张圆角卡片，上方仪器图片，下方设备名、型号与
+   角色徽标、缩减版设备码（``角色/型号/序列号``）。未登记设备标记为未登记，身份读不出来的
+   地址标记为无法识别且不能选中；IP 地址不在卡片正面显示，只在悬浮提示里。
+2. 测试角色来自设备表登记的 ``role``：点击卡片即选中，不需要用户选择角色。电源的旧槽位
+   （``PS3``）折叠成 ``power_supply``，结果里带 ``label`` / ``supply_id`` / ``serial`` /
+   ``device_key``，多台电源各自独立、互不覆盖。
 3. 角色重复（仅信号源/频谱仪）、空扫描网段、身份缺失、设备未登记角色、电源缺少短标签、
    同一台设备被重复绑定都给出明确提示，不静默写入配置。
 4. 电源绑定结构：``device_bindings.power_supplies[<supply_id>]``，每条记录带
@@ -21,6 +21,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from domain.instruments.models import DeviceStatus, InstrumentIdentity
@@ -35,9 +36,13 @@ from infrastructure.discovery.instrument_discovery import (
 from infrastructure.discovery.simulated_network import demo_idn_responses
 from infrastructure.persistence.instrument_registry import InstrumentRegistry
 from presentation.qt.config_page import ConfigPage
+from presentation.qt.device_cards import device_code, instrument_picture_path
 from presentation.qt.device_discovery_panel import (
     DeviceDiscoveryPanel,
     binding_device_key,
+    card_heading,
+    card_model,
+    card_status_text,
     device_heading,
     subnet_from_address,
 )
@@ -162,6 +167,7 @@ class DiscoveryPanelTests(unittest.TestCase):
         panel = DeviceDiscoveryPanel(scanner_factory=_scanner_factory)
         panel.show()
         self.app.processEvents()
+        self.addCleanup(panel.shutdown)
         return panel
 
     def run_scan(self, panel):
@@ -169,85 +175,58 @@ class DiscoveryPanelTests(unittest.TestCase):
         self.assertTrue(panel.worker is not None)
         panel.worker.wait(5000)
         self.app.processEvents()
+        self.app.processEvents()
         self.assertIsNone(panel.worker)
 
-    def test_scan_lists_known_and_unknown_devices(self):
+    def test_scan_shows_one_card_per_device(self):
         panel = self.make_panel()
 
         self.run_scan(panel)
 
-        self.assertEqual(panel.table.rowCount(), 4)
-        names = {panel.table.item(row, 1).text() for row in range(panel.table.rowCount())}
-        statuses = {
-            panel.table.item(row, 3).text() for row in range(panel.table.rowCount())
-        }
-        # 角色和设备名写在同一个单元格里，不再单独占一列。
-        self.assertIn("SMW200A-1（信号发生器）", names)
-        # 电源显示“短标签（型号，电源）”：还没有短标签时退回资产名，但仍然是类别“电源”，
-        # 不再是“电源 PS3”这种槽位编号。
-        self.assertIn("DP832A-1（DP832A，电源）", names)
+        self.assertEqual(panel.card_count(), 4)
+        self.assertEqual(len(panel.cards()), 4)
+        names = set(panel.card_headings())
+        # 卡片正面只写设备名：角色在型号旁边，未登记的设备显示兜底名。
+        self.assertIn("SMW200A-1", names)
+        # 电源还没有短标签时退回资产名，但仍然是类别“电源”，不是“电源 PS3”这种槽位编号。
+        self.assertIn("DP832A-1", names)
         self.assertIn("未知设备 (N9020A)", names)
-        self.assertIn("已登记", statuses)
-        self.assertIn("未登记", statuses)
         self.assertTrue(panel.apply_btn.isEnabled())
         text = panel.status_label.text()
         self.assertIn("已登记 3 台", text)
         self.assertIn("其中可应用 3 台", text)
         self.assertIn("未登记 1 台", text)
 
-    def test_table_does_not_show_addresses(self):
-        """IP 只是本次可达的地址，不是用户需要关心的信息：界面不展示。"""
+    def test_cards_do_not_show_addresses(self):
+        """IP 只是本次可达的地址，不是用户需要关心的信息：卡片正面不展示。"""
         panel = self.make_panel()
 
         self.run_scan(panel)
 
-        for row in range(panel.table.rowCount()):
-            for column in range(panel.table.columnCount()):
-                self.assertNotIn("192.168.1.", panel.table.item(row, column).text())
-        headers = [
-            panel.table.horizontalHeaderItem(column).text()
-            for column in range(panel.table.columnCount())
-        ]
-        self.assertNotIn("地址", headers)
-        self.assertNotIn("测试角色", headers)
+        for card in panel.cards():
+            for label in (card.title_label, card.meta_label, card.code_label):
+                self.assertNotIn("192.168.1.", label.text())
 
-    def test_table_width_follows_column_content(self):
-        """设备列不再被拉伸吃掉整行宽度：表格宽度贴着列内容。"""
-        panel = self.make_panel()
-
-        self.run_scan(panel)
-        self.app.processEvents()
-
-        self.assertLess(panel.table.width(), panel.width())
-        self.assertLessEqual(panel.table.width(), panel.table.maximumWidth())
-        # 设备列按内容取宽，不会占满剩下的横向空间。
-        self.assertLess(
-            panel.table.columnWidth(1),
-            panel.table.width() - panel.table.columnWidth(0),
-        )
-
-    def test_unknown_device_keeps_its_serial_visible(self):
+    def test_unknown_device_card_keeps_its_identity_in_the_code_and_tooltip(self):
         panel = self.make_panel()
 
         self.run_scan(panel)
 
-        rows = {
-            panel.table.item(row, 1).text(): row
-            for row in range(panel.table.rowCount())
-        }
-        unknown_row = rows["未知设备 (N9020A)"]
-        self.assertEqual(panel.table.item(unknown_row, 2).text(), "MY51234567")
-        # 型号与厂商在悬浮提示里，避免窄栏挤压设备列。
-        self.assertIn("N9020A / Keysight Technologies", panel.table.item(unknown_row, 1).toolTip())
-        self.assertIn("MY51234567", panel.table.item(unknown_row, 1).toolTip())
-        # 未登记设备没有登记角色，不能勾选应用。
-        self.assertFalse(
-            panel.table.item(unknown_row, 0).flags() & Qt.ItemIsUserCheckable
-        )
-        self.assertEqual(panel.table.item(unknown_row, 3).text(), "未登记")
+        heading = "未知设备 (N9020A)"
+        card = panel.card_for(heading)
+        # 缩减版设备码：角色缩写 / 型号 / 序列号。
+        self.assertEqual(card.code_label.text(), "NA/N9020A/MY51234567")
+        self.assertEqual(card.meta_label.text(), "N9020A")
+        tip = panel.card_tooltip(heading)
+        self.assertIn("N9020A / Keysight Technologies", tip)
+        self.assertIn("MY51234567", tip)
+        self.assertIn("192.168.1.150", tip)
+        # 未登记设备没有登记角色，不能选中应用。
+        self.assertFalse(card.checkable)
+        self.assertEqual(panel.card_status(heading), "未登记 · 不能应用")
 
-    def test_registered_device_without_role_cannot_be_checked(self):
-        """设备表没登记角色的设备：能看到，但不能勾选，也不能被应用。"""
+    def test_registered_device_without_role_cannot_be_selected(self):
+        """设备表没登记角色的设备：能看到一张卡片，但不能选中，也不能被应用。"""
         def factory(_mode):
             registry = InstrumentRegistry()
             registry.upsert(InstrumentIdentity.from_idn(SMW_IDN), role=None)
@@ -261,17 +240,21 @@ class DiscoveryPanelTests(unittest.TestCase):
         panel = DeviceDiscoveryPanel(scanner_factory=factory)
         panel.show()
         self.app.processEvents()
+        self.addCleanup(panel.shutdown)
         self.run_scan(panel)
 
-        self.assertEqual(panel.table.rowCount(), 1)
-        self.assertEqual(panel.table.item(0, 1).text(), "SMW200A-1")
-        self.assertEqual(panel.table.item(0, 3).text(), "未分配角色")
-        self.assertFalse(panel.table.item(0, 0).flags() & Qt.ItemIsUserCheckable)
+        self.assertEqual(panel.card_count(), 1)
+        card = panel.card_for("SMW200A-1")
+        self.assertEqual(card.code_label.text(), "NA/SMW200A/105462")
+        self.assertEqual(panel.card_status("SMW200A-1"), "未分配角色 · 不能应用")
+        self.assertFalse(card.checkable)
+        panel.set_card_checked("SMW200A-1", True)
+        self.assertFalse(panel.card_checked("SMW200A-1"))
         self.assertFalse(panel.apply_btn.isEnabled())
         self.assertIn("未分配角色 1 台", panel.status_label.text())
 
     def test_power_supply_without_a_label_says_why_the_asset_name_is_shown(self):
-        """旧设备表还没有短标签：结果里显示资产名，状态列说明原因。
+        """旧设备表还没有短标签：卡片显示资产名，提示里说明原因。
 
         这台电源有旧槽位，所以不该同时出现“地址无处可写”的过渡提示——两件事分开写，
         用户才知道该做什么。
@@ -280,32 +263,74 @@ class DiscoveryPanelTests(unittest.TestCase):
 
         self.run_scan(panel)
 
-        rows = {
-            panel.table.item(row, 1).text(): row
-            for row in range(panel.table.rowCount())
-        }
-        row = rows["DP832A-1（DP832A，电源）"]
-        tip = panel.table.item(row, 3).toolTip()
+        tip = panel.card_tooltip("DP832A-1")
         self.assertIn("短标签", tip)
         self.assertIn("资产名", tip)
         self.assertNotIn("没有旧槽位", tip)
 
-    def test_checking_a_device_is_enough_without_choosing_a_role(self):
-        """角色来自设备表：勾选后直接应用，不会出现“未选择测试角色”。"""
+    def test_device_card_carries_picture_name_and_device_code(self):
+        panel = self.make_panel()
+
+        self.run_scan(panel)
+
+        card = panel.card_for("SMW200A-1")
+        self.assertTrue(card.image.has_picture(), "信号源卡片应显示仪器图片")
+        self.assertEqual(card.title_label.text(), "SMW200A-1")
+        self.assertEqual(card.meta_label.text(), "SMW200A · 信号发生器")
+        self.assertEqual(card.code_label.text(), "SG/SMW200A/105462")
+
+    def test_selecting_a_card_is_enough_without_choosing_a_role(self):
+        """角色来自设备表：点击卡片即选中并应用，不会出现“未选择测试角色”。"""
         panel = self.make_panel()
         self.run_scan(panel)
-        rows = {
-            panel.table.item(row, 1).text(): row
-            for row in range(panel.table.rowCount())
-        }
-        panel.table.item(rows["SMW200A-1（信号发生器）"], 0).setCheckState(Qt.Checked)
         applied = []
         panel.apply_requested.connect(applied.append)
 
+        panel.set_card_checked("SMW200A-1", True)
         panel.request_apply()
 
         self.assertEqual(len(applied), 1)
         self.assertEqual(applied[0][0]["role"], "signal_generator")
+
+    def test_clicking_a_card_toggles_its_selection(self):
+        panel = self.make_panel()
+        self.run_scan(panel)
+        card = panel.card_for("4082F-1")
+
+        QTest.mouseClick(card, Qt.LeftButton)
+        self.app.processEvents()
+        self.assertTrue(card.is_checked())
+        self.assertEqual(
+            [item.is_checked() for item in panel.cards()],
+            [False, False, True, False],
+        )
+
+        QTest.mouseClick(card, Qt.LeftButton)
+        self.app.processEvents()
+        self.assertFalse(card.is_checked())
+
+    def test_clicking_a_card_that_cannot_be_applied_does_nothing(self):
+        panel = self.make_panel()
+        self.run_scan(panel)
+        card = panel.card_for("未知设备 (N9020A)")
+
+        QTest.mouseClick(card, Qt.LeftButton)
+        self.app.processEvents()
+
+        self.assertFalse(card.is_checked())
+
+    def test_clicking_the_picture_or_the_text_also_selects_the_card(self):
+        """卡片上的文字和图片不吞点击：点到名字、图片或设备码同样算选中。"""
+        panel = self.make_panel()
+        self.run_scan(panel)
+        card = panel.card_for("4082F-1")
+
+        for target in (card.title_label, card.image, card.code_label):
+            with self.subTest(target=type(target).__name__):
+                card.set_checked(False, emit=False)
+                QTest.mouseClick(target, Qt.LeftButton)
+                self.app.processEvents()
+                self.assertTrue(card.is_checked())
 
     def test_duplicate_roles_are_rejected(self):
         """两台设备在设备表里登记成同一角色时整批拒绝，而不是静默覆盖。"""
@@ -328,9 +353,10 @@ class DiscoveryPanelTests(unittest.TestCase):
         panel = DeviceDiscoveryPanel(scanner_factory=factory)
         panel.show()
         self.app.processEvents()
+        self.addCleanup(panel.shutdown)
         self.run_scan(panel)
-        for row in range(panel.table.rowCount()):
-            panel.table.item(row, 0).setCheckState(Qt.Checked)
+        for card in panel.cards():
+            panel.set_card_checked(card.title_label.text(), True)
         applied = []
         panel.apply_requested.connect(applied.append)
 
@@ -342,15 +368,10 @@ class DiscoveryPanelTests(unittest.TestCase):
     def test_apply_reports_selected_role_and_identity(self):
         panel = self.make_panel()
         self.run_scan(panel)
-        rows = {
-            panel.table.item(row, 1).text(): row
-            for row in range(panel.table.rowCount())
-        }
-        signal_row = rows["SMW200A-1（信号发生器）"]
-        panel.table.item(signal_row, 0).setCheckState(Qt.Checked)
         applied = []
         panel.apply_requested.connect(applied.append)
 
+        panel.set_card_checked("SMW200A-1", True)
         panel.request_apply()
 
         assignment = applied[0][0]
@@ -366,14 +387,10 @@ class DiscoveryPanelTests(unittest.TestCase):
         """旧设备表还没有短标签：电源没有可写的配置引用，面板明确拒绝。"""
         panel = self.make_panel()
         self.run_scan(panel)
-        rows = {
-            panel.table.item(row, 1).text(): row
-            for row in range(panel.table.rowCount())
-        }
-        panel.table.item(rows["DP832A-1（DP832A，电源）"], 0).setCheckState(Qt.Checked)
         applied = []
         panel.apply_requested.connect(applied.append)
 
+        panel.set_card_checked("DP832A-1", True)
         panel.request_apply()
 
         self.assertEqual(applied, [])
@@ -388,7 +405,7 @@ class DiscoveryPanelTests(unittest.TestCase):
         self.app.processEvents()
 
         self.assertIn("扫描失败", panel.status_label.text())
-        self.assertEqual(panel.table.rowCount(), 0)
+        self.assertEqual(panel.card_count(), 0)
         self.assertFalse(panel.apply_btn.isEnabled())
 
     def test_shutdown_without_running_scan_is_ok(self):
@@ -403,17 +420,24 @@ class DiscoveryPanelTests(unittest.TestCase):
 
         self.run_scan(panel)
 
-        rows = {
-            panel.table.item(row, 1).text(): row
-            for row in range(panel.table.rowCount())
-        }
-        signal_row = rows["SMW200A-1（信号发生器）"]
-        self.assertEqual(panel.table.item(signal_row, 0).checkState(), Qt.Checked)
+        self.assertTrue(panel.card_checked("SMW200A-1"))
         self.assertIn("预选", panel.status_label.text())
-        # 其他行不因预选被勾上：用户仍可自由改。
-        self.assertEqual(
-            panel.table.item(rows["DP832A-1（DP832A，电源）"], 0).checkState(), Qt.Unchecked
+        self.assertIn("已按配置预选", panel.card_status("SMW200A-1"))
+        # 其他卡片不因预选被选上：用户仍可自由改。
+        self.assertFalse(panel.card_checked("DP832A-1"))
+
+    def test_a_card_unchecked_by_the_user_is_not_preselected_again(self):
+        """用户取消勾选后，刷新卡片不能把配置里的预选重新加回来。"""
+        panel = self.make_panel()
+        panel.set_device_bindings(
+            {"signal_generator": {"serial": "105462", "device_key": "rohde&schwarz:105462"}}
         )
+        self.run_scan(panel)
+        self.assertTrue(panel.card_checked("SMW200A-1"))
+
+        panel.set_card_checked("SMW200A-1", False)
+
+        self.assertFalse(panel.card_checked("SMW200A-1"))
 
     def test_preselection_matches_by_device_key_even_when_ip_changes(self):
         panel = self.make_panel()
@@ -425,12 +449,7 @@ class DiscoveryPanelTests(unittest.TestCase):
 
         self.run_scan(panel)
 
-        rows = {
-            panel.table.item(row, 1).text(): row
-            for row in range(panel.table.rowCount())
-        }
-        spectrum_row = rows["4082F-1（频谱分析仪）"]
-        self.assertEqual(panel.table.item(spectrum_row, 0).checkState(), Qt.Checked)
+        self.assertTrue(panel.card_checked("4082F-1"))
         self.assertNotIn("配置里是", panel.status_label.text())
 
     def test_preselection_reports_a_role_change_instead_of_silently_moving_the_device(self):
@@ -442,12 +461,7 @@ class DiscoveryPanelTests(unittest.TestCase):
 
         self.run_scan(panel)
 
-        rows = {
-            panel.table.item(row, 1).text(): row
-            for row in range(panel.table.rowCount())
-        }
-        row = rows["SMW200A-1（信号发生器）"]
-        self.assertEqual(panel.table.item(row, 0).checkState(), Qt.Checked)
+        self.assertTrue(panel.card_checked("SMW200A-1"))
         text = panel.status_label.text()
         self.assertIn("角色以设备表为准", text)
         self.assertIn("配置里是 频谱分析仪", text)
@@ -469,12 +483,7 @@ class DiscoveryPanelTests(unittest.TestCase):
 
         self.run_scan(panel)
 
-        rows = {
-            panel.table.item(row, 1).text(): row
-            for row in range(panel.table.rowCount())
-        }
-        row = rows["DP832A-1（DP832A，电源）"]
-        self.assertEqual(panel.table.item(row, 0).checkState(), Qt.Checked)
+        self.assertTrue(panel.card_checked("DP832A-1"))
         self.assertIn("预选", panel.status_label.text())
         self.assertNotIn("配置里是", panel.status_label.text())
 
@@ -487,13 +496,7 @@ class DiscoveryPanelTests(unittest.TestCase):
 
         self.run_scan(panel)
 
-        rows = {
-            panel.table.item(row, 1).text(): row
-            for row in range(panel.table.rowCount())
-        }
-        self.assertEqual(
-            panel.table.item(rows["SMW200A-1（信号发生器）"], 0).checkState(), Qt.Checked
-        )
+        self.assertTrue(panel.card_checked("SMW200A-1"))
 
     def test_preselection_never_matches_on_serial_alone(self):
         """只有序列号时不做猜测：不同厂商可能有相同序列号。"""
@@ -502,8 +505,8 @@ class DiscoveryPanelTests(unittest.TestCase):
 
         self.run_scan(panel)
 
-        for row in range(panel.table.rowCount()):
-            self.assertEqual(panel.table.item(row, 0).checkState(), Qt.Unchecked)
+        for card in panel.cards():
+            self.assertFalse(card.is_checked())
         self.assertNotIn("预选", panel.status_label.text())
 
     def test_unidentified_address_is_listed_but_cannot_be_applied(self):
@@ -518,12 +521,14 @@ class DiscoveryPanelTests(unittest.TestCase):
         panel = DeviceDiscoveryPanel(scanner_factory=factory)
         panel.show()
         self.app.processEvents()
+        self.addCleanup(panel.shutdown)
         self.run_scan(panel)
 
-        self.assertEqual(panel.table.rowCount(), 1)
-        self.assertEqual(panel.table.item(0, 3).text(), "无法识别")
-        # 身份读不出来就不能应用：勾选框不可勾选。
-        self.assertFalse(panel.table.item(0, 0).flags() & Qt.ItemIsUserCheckable)
+        self.assertEqual(panel.card_count(), 1)
+        self.assertEqual(panel.card_status("未识别设备 #1"), "无法识别")
+        card = panel.card_for("未识别设备 #1")
+        self.assertEqual(card.code_label.text(), "未识别 #1")
+        self.assertFalse(card.checkable)
         self.assertIn("无法识别 1 个地址", panel.status_label.text())
 
     def test_scan_failure_restores_the_button_and_shows_the_reason(self):
@@ -533,6 +538,7 @@ class DiscoveryPanelTests(unittest.TestCase):
         panel = DeviceDiscoveryPanel(scanner_factory=factory)
         panel.show()
         self.app.processEvents()
+        self.addCleanup(panel.shutdown)
 
         self.run_scan(panel)
 
@@ -552,7 +558,7 @@ class DiscoveryPanelTests(unittest.TestCase):
 
 
 class PowerSupplyDiscoveryTests(unittest.TestCase):
-    """多台电源：显示短标签、各自独立勾选与传递，身份仍只按 ``device_key`` 匹配。"""
+    """多台电源：卡片显示短标签、各自独立选中与传递，身份仍只按 ``device_key`` 匹配。"""
 
     @classmethod
     def setUpClass(cls):
@@ -572,44 +578,35 @@ class PowerSupplyDiscoveryTests(unittest.TestCase):
         self.assertTrue(panel.worker is not None)
         panel.worker.wait(5000)
         self.app.processEvents()
+        self.app.processEvents()
         self.assertIsNone(panel.worker)
 
-    def rows(self, panel):
-        return {
-            panel.table.item(row, 1).text(): row
-            for row in range(panel.table.rowCount())
-        }
-
-    def test_two_supplies_are_listed_with_their_frozen_short_labels(self):
+    def test_two_supplies_are_shown_with_their_frozen_short_labels(self):
         panel = self.make_panel()
 
         self.run_scan(panel)
 
-        rows = self.rows(panel)
-        self.assertEqual(
-            set(rows), {"DP8B1519（DP832A，电源）", "DP8B0885（DP832A，电源）"}
-        )
-        for row in rows.values():
-            self.assertTrue(panel.table.item(row, 0).flags() & Qt.ItemIsUserCheckable)
+        self.assertEqual(set(panel.card_headings()), {"DP8B1519", "DP8B0885"})
+        for card in panel.cards():
+            self.assertTrue(card.checkable)
+            self.assertEqual(card.meta_label.text(), "DP832A · 电源")
+            self.assertTrue(card.code_label.text().startswith("PS/DP832A/"))
         self.assertTrue(panel.apply_btn.isEnabled())
 
-    def test_migrated_supply_shows_its_short_label_without_a_slot_hint(self):
-        """迁移后的设备表只说明类别与短标签：状态列不再提示“没有旧槽位”。"""
+    def test_power_supply_card_with_a_label_has_no_extra_status(self):
+        """迁移后的设备表只说明类别与短标签：卡片不再提示“没有旧槽位”。"""
         panel = self.make_panel()
 
         self.run_scan(panel)
 
-        rows = self.rows(panel)
-        row = rows["DP8B1519（DP832A，电源）"]
-        status = panel.table.item(row, 3)
-        self.assertEqual(status.text(), "已登记")
-        self.assertEqual(status.toolTip(), "")
+        self.assertEqual(panel.card_status("DP8B1519"), "")
+        self.assertNotIn("没有短标签", panel.card_tooltip("DP8B0885"))
 
     def test_two_supplies_are_applied_independently_without_a_duplicate_role_error(self):
         panel = self.make_panel()
         self.run_scan(panel)
-        for row in range(panel.table.rowCount()):
-            panel.table.item(row, 0).setCheckState(Qt.Checked)
+        for card in panel.cards():
+            panel.set_card_checked(card.title_label.text(), True)
         applied = []
         panel.apply_requested.connect(applied.append)
 
@@ -635,7 +632,7 @@ class PowerSupplyDiscoveryTests(unittest.TestCase):
         """迁移后的设备表：面板交付短标签与身份，配置页按 ``supply_id`` 落地址。"""
         panel = self.make_panel()
         self.run_scan(panel)
-        panel.table.item(0, 0).setCheckState(Qt.Checked)
+        panel.set_card_checked(panel.cards()[0].title_label.text(), True)
         applied = []
         panel.apply_requested.connect(applied.append)
 
@@ -662,14 +659,125 @@ class PowerSupplyDiscoveryTests(unittest.TestCase):
 
         self.run_scan(panel)
 
-        rows = self.rows(panel)
-        self.assertEqual(
-            panel.table.item(rows["DP8B0885（DP832A，电源）"], 0).checkState(), Qt.Checked
-        )
-        self.assertEqual(
-            panel.table.item(rows["DP8B1519（DP832A，电源）"], 0).checkState(), Qt.Unchecked
-        )
+        self.assertTrue(panel.card_checked("DP8B0885"))
+        self.assertFalse(panel.card_checked("DP8B1519"))
         self.assertIn("预选 1 台", panel.status_label.text())
+
+
+class CardPresentationTests(unittest.TestCase):
+    """卡片外观：圆角、图片在上、名字与缩减设备码在下，并随面板宽度换行。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self._previous_stylesheet = self.app.styleSheet()
+        apply_theme(self.app)
+
+    def tearDown(self):
+        self.app.setStyleSheet(self._previous_stylesheet)
+
+    def scan(self, panel):
+        panel.request_scan()
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+        self.addCleanup(panel.shutdown)
+
+    def test_cards_are_rounded_and_ordered_picture_name_code(self):
+        panel = DeviceDiscoveryPanel(scanner_factory=_scanner_factory)
+        panel.resize(760, 560)
+        panel.show()
+        self.app.processEvents()
+        self.scan(panel)
+
+        card = panel.card_for("SMW200A-1")
+        self.assertEqual(card.objectName(), "instrumentCard")
+        self.assertIn("border-radius: 12px;", self.app.styleSheet())
+        # 自上而下：图片区在设备名之上，设备码在设备名之下。
+        layout = card.layout()
+        rows = [layout.itemAt(index).widget() for index in range(layout.count())]
+        self.assertIs(rows[0], card.image)
+        self.assertLess(rows.index(card.image), rows.index(card.title_label))
+        self.assertGreater(rows.index(card.code_label), rows.index(card.title_label))
+        for element in panel.cards():
+            self.assertEqual(element.width(), card.width(), "卡片同宽同列")
+            self.assertEqual(element.height(), card.height(), "同一行卡片高度一致")
+
+    def test_cards_wrap_into_columns_instead_of_a_long_strip(self):
+        panel = DeviceDiscoveryPanel(scanner_factory=_scanner_factory)
+        panel.resize(520, 700)
+        panel.show()
+        self.app.processEvents()
+        self.scan(panel)
+
+        narrow = len({card.geometry().left() for card in panel.cards()})
+        panel.resize(1200, 700)
+        self.app.processEvents()
+        self.app.processEvents()
+        wide = len({card.geometry().left() for card in panel.cards()})
+
+        # 卡片按可用宽度换行：窄面板换行排两列，宽面板排满四列，不排成一条长带子。
+        self.assertGreaterEqual(narrow, 2, "窄面板要换行，不能挤成一列长条")
+        self.assertEqual(wide, min(4, panel.card_count()))
+
+    def test_selected_card_has_the_checked_property(self):
+        panel = DeviceDiscoveryPanel(scanner_factory=_scanner_factory)
+        panel.show()
+        self.app.processEvents()
+        self.scan(panel)
+        card = panel.card_for("4082F-1")
+
+        self.assertFalse(card.property("checked"))
+        QTest.mouseClick(card, Qt.LeftButton)
+        self.app.processEvents()
+        self.assertTrue(card.property("checked"))
+
+    def test_cards_leave_room_while_there_are_no_results(self):
+        panel = DeviceDiscoveryPanel(scanner_factory=_scanner_factory)
+        panel.show()
+        self.app.processEvents()
+
+        self.assertEqual(panel.card_count(), 0)
+        self.assertGreater(panel.cards_area.height(), 0)
+
+    def test_results_stay_collapsed_until_a_scan_starts(self):
+        panel = DeviceDiscoveryPanel(scanner_factory=_scanner_factory)
+        panel.show()
+        self.app.processEvents()
+
+        self.assertFalse(panel.is_open())
+        self.assertFalse(panel.cards_area.isVisible())
+        self.assertTrue(panel.result_hint.isVisible())
+        self.assertFalse(panel.apply_btn.isVisible())
+        self.assertFalse(panel.reopen_btn.isVisible())
+
+    def test_collapsing_keeps_the_results_reachable_through_reopen(self):
+        panel = DeviceDiscoveryPanel(scanner_factory=_scanner_factory)
+        panel.resize(1200, 760)
+        panel.show()
+        self.app.processEvents()
+        self.scan(panel)
+
+        self.assertTrue(panel.is_open())
+        self.assertTrue(panel.cards_area.isVisible())
+        self.assertFalse(panel.reopen_btn.isVisible())
+
+        panel.set_open(False)
+        self.app.processEvents()
+        self.app.processEvents()
+
+        self.assertFalse(panel.cards_area.isVisible())
+        self.assertFalse(panel.apply_btn.isVisible())
+        self.assertTrue(panel.reopen_btn.isVisible())
+        self.assertIn("已发现 4 台设备", panel.result_hint.text())
+
+        QTest.mouseClick(panel.reopen_btn, Qt.LeftButton)
+        self.app.processEvents()
+        self.app.processEvents()
+        self.assertTrue(panel.cards_area.isVisible())
+        self.assertEqual(panel.card_count(), 4)
 
 
 class DeviceHeadingTests(unittest.TestCase):
@@ -730,51 +838,101 @@ class DeviceHeadingTests(unittest.TestCase):
         self.assertEqual(device_heading(unknown), "未知设备 (4082F)")
 
 
-class TableFocusFrameTests(unittest.TestCase):
-    """点击表格后不再多画一个圆角焦点框。
+class DeviceCardContentTests(unittest.TestCase):
+    """卡片上的文字：设备名、型号与缩减版设备码都由发现结果直接生成。"""
 
-    设备发现表是勾选列表，不是可编辑网格：普通 ``QTableView`` 在点击后会把单元格设为
-    “当前格”，再叠一个焦点框，勾选框旁边就多出一个方框。表格规则关掉 ``outline`` 后，
-    “有当前格”与“没有当前格”的渲染必须完全一致。
-    """
+    @staticmethod
+    def device(**overrides):
+        values = {
+            "ip": "10.0.0.2",
+            "port": 5025,
+            "idn": SMW_IDN,
+            "identity": InstrumentIdentity.from_idn(SMW_IDN),
+            "known_name": "SMW200A-1",
+            "status": DeviceStatus.ONLINE,
+            "known_role": "signal_generator",
+        }
+        values.update(overrides)
+        return DiscoveredDevice(**values)
 
-    @classmethod
-    def setUpClass(cls):
-        cls.app = QApplication.instance() or QApplication([])
+    def test_device_code_uses_role_model_and_serial(self):
+        code, detail = device_code(self.device())
 
-    def setUp(self):
-        # 主题是全局样式表：用完必须还原，避免影响同进程里的其他界面测试。
-        self._previous_stylesheet = self.app.styleSheet()
-        apply_theme(self.app)
+        self.assertEqual(code, "SG/SMW200A/105462")
+        self.assertIn("SG/SMW200A/105462", detail)
+        self.assertIn("TCPIP0::10.0.0.2::inst0::INSTR", detail)
 
-    def tearDown(self):
-        self.app.setStyleSheet(self._previous_stylesheet)
+    def test_power_supply_and_spectrum_analyzer_have_their_own_prefixes(self):
+        supply = self.device(
+            identity=InstrumentIdentity.from_idn(DP832A_IDN),
+            idn=DP832A_IDN,
+            known_role="power_supply",
+            known_name="DP832A-1",
+        )
+        spectrum = self.device(
+            identity=InstrumentIdentity.from_idn(CEYEAR_IDN),
+            idn=CEYEAR_IDN,
+            known_role="spectrum_analyzer",
+            known_name="4082F-1",
+        )
 
-    def test_current_cell_paints_no_extra_frame(self):
-        panel = DeviceDiscoveryPanel(scanner_factory=_scanner_factory)
-        panel.show()
-        self.app.processEvents()
-        try:
-            panel.request_scan()
-            self.assertTrue(panel.worker is not None)
-            panel.worker.wait(5000)
-            self.app.processEvents()
+        self.assertEqual(device_code(supply)[0], "PS/DP832A/DP8B214901519")
+        self.assertEqual(device_code(spectrum)[0], "SA/4082F/QZNI000866")
 
-            table = panel.table
-            self.assertGreater(table.rowCount(), 0)
-            table.setCurrentCell(-1, -1)
-            table.clearFocus()
-            self.app.processEvents()
-            without_current_cell = table.viewport().grab().toImage()
+    def test_unregistered_device_falls_back_to_the_unknown_role_code(self):
+        device = self.device(known_name=None, known_role=None)
 
-            table.setFocus()
-            table.setCurrentCell(0, 0)
-            self.app.processEvents()
-            with_current_cell = table.viewport().grab().toImage()
+        self.assertEqual(device_code(device)[0], "NA/SMW200A/105462")
 
-            self.assertEqual(without_current_cell, with_current_cell)
-        finally:
-            panel.shutdown()
+    def test_unidentified_address_gets_a_visitor_number_instead_of_a_code(self):
+        device = self.device(
+            idn=None,
+            identity=None,
+            known_name=None,
+            known_role=None,
+            status=DeviceStatus.UNKNOWN,
+            error="GARBAGE",
+        )
+
+        code, detail = device_code(device, visitor_index=3)
+
+        self.assertEqual(code, "未识别 #3")
+        self.assertIn("GARBAGE", detail)
+        self.assertEqual(card_heading(device, visitor_index=3), "未识别设备 #3")
+
+    def test_card_heading_and_model_follow_the_device(self):
+        device = self.device(
+            identity=InstrumentIdentity.from_idn(DP832A_IDN),
+            idn=DP832A_IDN,
+            known_role="power_supply",
+            known_name="DP832A-1",
+            known_label="DP8B1519",
+        )
+
+        self.assertEqual(card_heading(device), "DP8B1519")
+        self.assertEqual(card_model(device), "DP832A")
+        self.assertEqual(card_status_text(device), "")
+
+    def test_cards_explain_why_a_device_cannot_be_used(self):
+        unregistered = self.device(known_name=None, known_role=None)
+        no_role = self.device(known_role=None)
+
+        self.assertEqual(card_status_text(unregistered), "未登记 · 不能应用")
+        self.assertEqual(card_status_text(no_role), "未分配角色 · 不能应用")
+
+    def test_pictures_are_chosen_by_role_then_by_model(self):
+        self.assertEqual(
+            instrument_picture_path("signal_generator", "").name, "signal_source.png"
+        )
+        self.assertEqual(
+            instrument_picture_path("spectrum_analyzer", "").name, "spectrum_analyzer.png"
+        )
+        self.assertEqual(
+            instrument_picture_path("power_supply", "").name, "DC_source.png"
+        )
+        # 未登记角色的设备只能按型号猜图；两个条件都不满足时没有图片（卡片留空底板）。
+        self.assertEqual(instrument_picture_path("", "N9020A"), None)
+        self.assertEqual(instrument_picture_path("", "DP832A").name, "DC_source.png")
 
 
 class ConfigPageDiscoveryIntegrationTests(unittest.TestCase):
@@ -795,6 +953,23 @@ class ConfigPageDiscoveryIntegrationTests(unittest.TestCase):
         page = self.make_page()
         self.assertIsInstance(page.discovery_panel, DeviceDiscoveryPanel)
         self.assertTrue(hasattr(page, "apply_discovered_devices"))
+
+    def test_the_panel_is_never_squeezed_below_its_card_grid(self):
+        """卡片展开后面板必须拿到足够高度：否则卡片区被裁掉并与按钮重叠。"""
+        page = self.make_page()
+        panel = page.discovery_panel
+
+        panel.request_scan()
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+
+        self.assertTrue(panel.is_open())
+        self.assertGreaterEqual(panel.height(), panel.minimumSizeHint().height())
+        self.assertGreaterEqual(
+            panel.cards_area.height(),
+            panel.cards_area.minimumHeight(),
+        )
 
     def test_scan_subnet_defaults_to_the_bound_device_address(self):
         page = ConfigPage(

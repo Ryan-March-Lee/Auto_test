@@ -401,6 +401,64 @@ QGroupBox QGroupBox::title {
     top: 8px;
 }
 
+/* ===== 设备卡片（仪器连接配置的发现结果） =====
+   一台仪器一张卡片：上方浅色图片区，下方设备名与缩减版设备码。卡片可点击选中：
+   选中时整块描主色并铺一层极浅的主色底，与“只悬停”区分得开；不可应用的卡片整块
+   降低对比度，并在卡片里写明原因。 */
+QFrame#instrumentCard {
+    background-color: $surface;
+    border: 1px solid $border;
+    border-radius: 12px;
+}
+QFrame#instrumentCard:hover {
+    border-color: $border_strong;
+}
+QFrame#instrumentCard[checked="true"] {
+    background-color: $primary_soft;
+    border: 2px solid $primary;
+}
+QFrame#instrumentCard[enabled-state="false"] {
+    background-color: $surface_alt;
+    border-color: $border;
+}
+QWidget#instrumentCardImage {
+    background-color: $surface_sunken;
+    border: 1px solid $border;
+    border-radius: 8px;
+}
+QLabel#instrumentCardTitle {
+    color: $text;
+    font-size: $font_body;
+    font-weight: 600;
+}
+QLabel#instrumentCardMeta {
+    color: $text_secondary;
+    font-size: $font_small;
+}
+QLabel#instrumentCardCode {
+    background-color: $surface_sunken;
+    border: 1px solid $border;
+    border-radius: 4px;
+    color: $header_text;
+    font-family: "$font_mono";
+    font-size: $font_small;
+    padding: 2px 6px;
+}
+QLabel#instrumentCardStatus {
+    color: $warning;
+    font-size: $font_small;
+}
+QFrame#instrumentCard[enabled-state="false"] QLabel#instrumentCardTitle {
+    color: $text_secondary;
+}
+QScrollArea#instrumentCardArea {
+    background: transparent;
+    border: none;
+}
+QWidget#instrumentCardHost {
+    background: transparent;
+}
+
 /* ===== 文字 ===== */
 QLabel {
     background: transparent;

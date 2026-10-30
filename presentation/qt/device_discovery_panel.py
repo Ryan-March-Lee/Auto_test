@@ -16,6 +16,11 @@
   身份完全读不出来的地址也留一张卡片，但标记为“无法识别”，不允许被应用成测试角色。
 - 结果以卡片呈现（:mod:`presentation.qt.device_cards`）：点击卡片切换选中，卡片区
   按面板宽度自动换行，不再是一张横向表格。
+
+版式：扫描行（扫描网段 / 扫描方式）在标题正下方居中，结果框在它下面；框里在还没点过
+“查找设备”时铺一层浅灰底、把按钮放在正中，点下去之后按钮与灰底一起收走，框中央换成
+“正在查找设备”，结果回来后再换成卡片。**结果框的高度是固定的**（两行卡片 + 框内的按钮
+与状态行）：查找前后、结果多少都不改变框的大小，卡片超出时只在框内滚动。
 """
 
 from __future__ import annotations
@@ -74,11 +79,20 @@ SCAN_MODE_CHOICES: tuple[tuple[str, str], ...] = (
 # 卡片网格的间距：列间留白由网格自己算，卡片本身不设外边距。
 _CARDS_SPACING = 10
 _CARDS_MIN_WIDTH = _CARD_WIDTH + _CARDS_SPACING
-#: 没有结果时卡片区保留的高度（约一张卡片的图片区 + 文字区）。
+#: 卡片区的最小高度：结果框再矮也要露出一行卡片的位置（约图片区 + 文字区）。
 _CARD_MIN_AREA_HEIGHT = 190
-_EMPTY_CARD_HEIGHT = 176
-#: 结果框（圆角矩形）的最小高度：没有结果时它也是一块明确的落点，而不是一条缝。
-_RESULTS_BOX_MIN_HEIGHT = 220
+#: 结果框（圆角矩形）的高度固定：按“两行卡片 + 框内的按钮与状态行”算出来（
+#: :meth:`DeviceDiscoveryPanel._results_box_height`）。高度不随状态变化（未查找 /
+#: 正在查找 / 有结果都一样大），所以点一次“查找设备”不会让页面跳动；卡片的行数超过
+#: 这个高度时只在框内滚动。两行正好放下场地上的 5 台仪器（最多 4 列）。
+_RESULTS_BOX_ROWS = 2
+#: 结果框的三种状态：还没查找（灰底 + 中央按钮）、正在查找（中央进度）、有结果（卡片）。
+BOX_STATE_IDLE = "idle"
+BOX_STATE_BUSY = "busy"
+BOX_STATE_RESULTS = "results"
+BOX_STATES: tuple[str, ...] = (BOX_STATE_IDLE, BOX_STATE_BUSY, BOX_STATE_RESULTS)
+#: 扫描期间写在框中央的话：按钮与灰底收走后，这里说明正在读取设备。
+LOADING_TEXT = "正在查找设备 …"
 _IP_PATTERN = re.compile(r"(\d{1,3}(?:\.\d{1,3}){3})")
 
 
@@ -221,8 +235,9 @@ class DiscoveryWorker(QThread):
 class DeviceDiscoveryPanel(QWidget):
     """扫描 + 结果框控件；通过 :attr:`apply_requested` 交付用户选中的设备。
 
-    版式分两段：扫描行（扫描网段、扫描方式、“查找设备”）在上面，不进结果框；
-    发现结果放在一块圆角矩形框（:attr:`results_box`）里，空着时是一块明确的落点。
+    版式分两段：扫描行（扫描网段、扫描方式）居中放在标题下面，不进结果框；“查找设备”
+    是结果框正中的落点。还没点它时框里铺一层浅灰底，点下去之后按钮与灰底一起收走，
+    框中央换成扫描进度，结果回来后再换成卡片。
     """
 
     apply_requested = Signal(object)
@@ -237,9 +252,10 @@ class DeviceDiscoveryPanel(QWidget):
         parent: Any = None,
     ) -> None:
         super().__init__(parent)
-        # 面板高度贴着内容：卡片区一变，面板跟着长高；面板不参与纵向拉伸，多出来的
-        # 高度留给页面里的弹性空白。用 Minimum（而不是 Maximum）：Maximum 会让布局把它
-        # 压到 0，卡片区就被裁掉一半并与按钮重叠。
+        # 面板高度贴着内容：结果框的高度是固定的（见 ``_results_box_height``），面板因此不
+        # 会随着扫描状态或结果数量改变大小；多出来的高度留给页面里的弹性空白。用
+        # Minimum（而不是 Maximum）：Maximum 会让布局把它压到 0，卡片区就被裁掉一半
+        # 并与按钮重叠。
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
         self.scanner_factory = scanner_factory
         self.worker: DiscoveryWorker | None = None
@@ -249,6 +265,8 @@ class DeviceDiscoveryPanel(QWidget):
         # 读不出身份的地址按“访客”编号（1、2、…），同一台设备两次刷新拿到同一个号。
         self._visitor_numbers: dict[tuple[str, int], int] = {}
         self._closed = False
+        # 是否点过“查找设备”：浅灰底只属于点之前的那一次空框。
+        self._scanned = False
         # 配置里保存的设备身份（角色 -> 序列号/device_key），用于扫描后按身份预选。
         self.device_bindings: dict[str, dict[str, Any]] = {}
         self._build_ui(default_subnet or DEMO_SUBNET)
@@ -269,10 +287,10 @@ class DeviceDiscoveryPanel(QWidget):
         return bool(self.property("open"))
 
     def set_open(self, open_: bool) -> None:
-        """展开/收起结果卡片：展开后显示卡片与操作按钮，收起后只剩空框。
+        """展开/收起结果卡片：展开后显示卡片与操作按钮，收起后框中央换回“查看结果”。
 
-        面板宽度由配置页分栏决定，展开只改变高度：卡片区声明“不要求宽度”（横向
-        ``Ignored``），所以卡片再多也不会把左栏撑宽。
+        面板宽度由配置页分栏决定，展开/收起都不改变框的大小（框高固定，卡片多了在框内
+        滚动）：卡片区声明“不要求宽度”（横向 ``Ignored``），所以卡片再多也不会把左栏撑宽。
         """
         open_ = bool(open_)
         if open_ == self.is_open():
@@ -280,7 +298,7 @@ class DeviceDiscoveryPanel(QWidget):
         self.setProperty("open", open_)
         self.cards_area.setVisible(open_)
         self._show_actions(open_)
-        self.reopen_btn.setVisible(not open_ and bool(self._rows))
+        self._sync_box_centre()
         style = self.style()
         if style is not None:
             style.unpolish(self)
@@ -290,26 +308,19 @@ class DeviceDiscoveryPanel(QWidget):
         self._notify_ancestors()
 
     def _refresh_results_box_height(self) -> None:
-        """把结果框的高度钉在它自己的内容高度上。
+        """让外层布局当场重排一次。
 
-        框里装了卡片区、框内底部按钮与状态行：这些控件的高度一变，框必须当场长高或
-        收回。框的布局嵌在面板布局里，只靠 ``updateGeometry()`` 传上去会慢一拍（框里
-        的按钮先压在卡片上，下一轮事件才让开），因此这里直接按内容算好高度钉住：
-        收起时是一块足够大的落点，展开时是“卡片区 + 框内按钮 + 状态行”。
+        结果框的高度是固定的（见 :meth:`_results_box_height`），不随内容变化；这里只负责
+        把“框里的东西变了”立刻告诉外层布局，框内的按钮才不会慢一拍压在卡片上。
         """
         layout = self.results_box.layout()
-        if layout is None:
-            return
-        layout.invalidate()
-        height = layout.sizeHint().height()
-        if not self.is_open():
-            height = max(height, _RESULTS_BOX_MIN_HEIGHT)
-        self.results_box.setFixedHeight(height)
+        if layout is not None:
+            layout.invalidate()
+        self._notify_ancestors()
 
     def _sync_results_height(self) -> None:
-        """框里的文字变了（多一行或少一行）同样改变框的高度：重钉一次再对外上报。"""
+        """框里的文字变了（多一行或少一行）同样让外层重排一次。"""
         self._refresh_results_box_height()
-        self._notify_ancestors()
 
     def _show_actions(self, visible: bool) -> None:
         """操作按钮只属于“展开”状态：收起时不显示用不上的按钮。"""
@@ -326,12 +337,18 @@ class DeviceDiscoveryPanel(QWidget):
         self._sync_results_height()
 
     def clear_results(self) -> None:
-        """清空上一次扫描结果；切换/重新加载配置时调用，避免旧结果看起来像当前配置。"""
+        """清空上一次扫描结果；切换/重新加载配置时调用，避免旧结果看起来像当前配置。
+
+        清空后回到“还没查找过”的样子：框中央重新出现“查找设备”，空框重新铺浅灰底。
+        """
         self.devices = []
         self._clear_cards()
         self.apply_btn.setEnabled(False)
         self._set_status("")
         self.reopen_btn.setVisible(False)
+        self._scanned = False
+        self.set_open(False)
+        self._set_box_state(BOX_STATE_IDLE)
 
     # ---------- 界面 ----------
 
@@ -347,6 +364,11 @@ class DeviceDiscoveryPanel(QWidget):
         self.scan_btn = QPushButton("查找设备")
         self.scan_btn.setToolTip("扫描网段并读取每台设备的 *IDN?；不会改变任何仪器状态")
         set_button_variant(self.scan_btn, "secondary")
+        # 扫描期间的框中央说明：按钮收走后，这里写明正在读取设备。
+        self.loading_label = QLabel(LOADING_TEXT)
+        self.loading_label.setAlignment(Qt.AlignHCenter)
+        self.loading_label.setProperty("role", "hint")
+        self.loading_label.setVisible(False)
         # 收起后仍要能回到结果：一个明确的“查看结果”，不靠再扫一次。
         self.reopen_btn = QPushButton("查看结果")
         self.reopen_btn.setToolTip("展开上一次扫描得到的设备卡片")
@@ -358,21 +380,21 @@ class DeviceDiscoveryPanel(QWidget):
         self.status_label.setVisible(False)
         self.mode_hint = QLabel("")
         self.mode_hint.setWordWrap(True)
+        self.mode_hint.setAlignment(Qt.AlignHCenter)
         self.mode_hint.setProperty("role", "hint")
-        # 扫描行留在结果框外面：标签紧挨着自己的输入框，多余宽度只留在行尾，
-        # 不会把“扫描方式:”推到很远的地方。
+        # 扫描行留在结果框外面：整行按页面中线居中，跟着“仪表配置”标题走；行里只有
+        # 扫描网段与扫描方式两项，动作按钮都落在结果框里（见下面的 centre_area），
+        # 所以这一行永远是对称的。
         controls = QVBoxLayout()
         controls.setSpacing(8)
         row = QHBoxLayout()
         row.setSpacing(8)
+        row.addStretch(1)
         row.addWidget(QLabel("扫描网段:"))
         row.addWidget(self.subnet_edit)
         row.addSpacing(16)
         row.addWidget(QLabel("扫描方式:"))
         row.addWidget(self.mode_combo)
-        row.addSpacing(16)
-        row.addWidget(self.scan_btn)
-        row.addWidget(self.reopen_btn)
         row.addStretch(1)
         controls.addLayout(row)
         controls.addWidget(self.mode_hint)
@@ -383,10 +405,34 @@ class DeviceDiscoveryPanel(QWidget):
         # 结果多时只滚动卡片区，不把框内的操作按钮推出可视范围。
         self.results_box = QFrame()
         self.results_box.setObjectName("discoveryResultsBox")
+        # 高度在 _build_ui 末尾一次钉死（见 _results_box_height）：状态与结果数量都不改变
+        # 框的大小，点一次“查找设备”不会让框变大或变小。
         self.results_box.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
         box = QVBoxLayout(self.results_box)
         box.setContentsMargins(12, 12, 12, 12)
         box.setSpacing(8)
+        # 框中央的落点：还没点过“查找设备”时，框内铺浅灰底、按钮放在正中；点下去之后
+        # 按钮与灰底一起消失，同一块中央换成扫描进度；收起结果后它又变成“查看结果”。
+        self.centre_area = QWidget(self.results_box)
+        self.centre_area.setObjectName("discoveryCentreArea")
+        # 没有卡片时它占满整块框，内部的弹性留白把按钮压在框心。
+        self.centre_area.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        centre = QVBoxLayout(self.centre_area)
+        centre.setContentsMargins(0, 0, 0, 0)
+        centre.setSpacing(8)
+        centre.addStretch(1)
+        # 中间这一行自己按可见项居中：空框里只有一个“查找设备”，收起后两个按钮并排。
+        centre_row = QHBoxLayout()
+        centre_row.setSpacing(10)
+        centre_row.addStretch(1)
+        centre_row.addWidget(self.scan_btn)
+        centre_row.addWidget(self.reopen_btn)
+        centre_row.addStretch(1)
+        centre.addLayout(centre_row)
+        # 扫描期间的说明单独一行：它只在 busy 时出现，不挤上面那一行的居中。
+        centre.addWidget(self.loading_label, 0, Qt.AlignHCenter)
+        centre.addStretch(1)
+        box.addWidget(self.centre_area)
         self.cards_area = QScrollArea(self.results_box)
         self.cards_area.setObjectName("instrumentCardArea")
         self.cards_area.setWidgetResizable(True)
@@ -394,7 +440,8 @@ class DeviceDiscoveryPanel(QWidget):
         self.cards_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.cards_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.cards_area.setMinimumHeight(_CARD_MIN_AREA_HEIGHT)
-        self.cards_area.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        # 结果多时它自己滚动（卡片网格在滚动区里向上排），结果少时把多余高度留在框里。
+        self.cards_area.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
         self.cards_host = QWidget()
         self.cards_host.setObjectName("instrumentCardHost")
         self.cards_layout = _CardGridLayout(self.cards_host)
@@ -415,7 +462,7 @@ class DeviceDiscoveryPanel(QWidget):
         self.clear_btn.setToolTip("删除配置中记录的角色与设备身份对应关系，不改动地址")
         set_button_variant(self.clear_btn, "ghost")
         self.collapse_btn = QPushButton("收起结果")
-        self.collapse_btn.setToolTip("收起设备卡片，回到“查找设备”")
+        self.collapse_btn.setToolTip("收起设备卡片，框中央换回“查看结果”")
         set_button_variant(self.collapse_btn, "ghost")
         self.collapse_btn.setVisible(False)
         actions.addWidget(self.apply_btn)
@@ -433,11 +480,76 @@ class DeviceDiscoveryPanel(QWidget):
         self.clear_btn.clicked.connect(self.request_clear)
         self.collapse_btn.clicked.connect(lambda: self.set_open(False))
         self._update_mode_hint()
-        # 收起状态：只留扫描行，卡片区不参与布局。
+        # 收起状态：只留扫描行与框中央的“查找设备”，卡片区不参与布局。
         self.setProperty("open", False)
         self._show_actions(False)
         self._refresh_cards_geometry()
+        # 框的高度在这里一次钉死：此后无论查找前后还是结果多少，框都是同一个大小。
+        self.results_box.setFixedHeight(self._results_box_height())
+        self._set_box_state(BOX_STATE_IDLE)
+
+    # ---------- 结果框状态 ----------
+
+    def _results_box_height(self, rows: int = _RESULTS_BOX_ROWS) -> int:
+        """结果框的固定高度：``rows`` 行卡片 + 框内的按钮行与状态行。
+
+        高度只由卡片尺寸与框内控件算出来，跟状态（未查找 / 正在查找 / 有结果）和结果
+        数量都无关：点一次“查找设备”不会让框变大或变小，页面也就不会跟着跳一下。
+        设备多到超过这个高度时，卡片区在框内滚动。
+        """
+        layout = self.results_box.layout()
+        if layout is None:
+            return 0
+        margins = layout.contentsMargins()
+        chrome = (
+            margins.top()
+            + margins.bottom()
+            + self.apply_btn.sizeHint().height()
+            + self.status_label.sizeHint().height()
+            + 2 * layout.spacing()
+        )
+        return chrome + rows * _CARD_HEIGHT + (rows - 1) * _CARDS_SPACING
+
+    def box_state(self) -> str:
+        """结果框当前状态：``idle``（还没查找）/ ``busy``（正在查找）/ ``results``（有结果）。"""
+        return str(self.results_box.property("boxState") or BOX_STATE_IDLE)
+
+    def _set_box_state(self, state: str) -> None:
+        """切换结果框状态：中央的按钮/进度与浅灰底随状态收放。
+
+        浅灰底只属于“还没点过查找设备”的空框：``_scanned`` 一旦置位（点过按钮），
+        灰底就不再回来，失败或取消后重新出现的只是中央的按钮。
+        """
+        if state not in BOX_STATES:
+            raise ValueError(f"未知的结果框状态: {state}")
+        self.results_box.setProperty("boxState", state)
+        self.results_box.setProperty(
+            "filled", state == BOX_STATE_IDLE and not self._scanned
+        )
+        self._sync_box_centre()
+        style = self.results_box.style()
+        if style is not None:
+            style.unpolish(self.results_box)
+            style.polish(self.results_box)
+        self.results_box.update()
         self._refresh_results_box_height()
+        self._notify_ancestors()
+
+    def _sync_box_centre(self) -> None:
+        """框中央那一块只装“当前该做的那一下”：查找 / 正在查找 / 查看结果。
+
+        卡片看得见时它整块让位；看不见时它占住框心——空框里是“查找设备”，扫描期间是
+        进度说明，收起结果后是“查找设备 + 查看结果”（收起后仍能再查一次）。因此框里
+        任何时候都只有明确的几个动作，扫描行始终只有网段与扫描方式两项、可以稳稳居中。
+        """
+        state = self.box_state()
+        idle = state == BOX_STATE_IDLE
+        collapsed_results = state == BOX_STATE_RESULTS and not self.is_open()
+        self.centre_area.setVisible(idle or state == BOX_STATE_BUSY or collapsed_results)
+        # 还没查找时“查找设备”就是这一块的主按钮；收起结果后它退成“再查一次”的入口。
+        self.scan_btn.setVisible(idle or collapsed_results)
+        self.loading_label.setVisible(state == BOX_STATE_BUSY)
+        self.reopen_btn.setVisible(collapsed_results and bool(self._rows))
 
     # ---------- 扫描 ----------
 
@@ -456,7 +568,11 @@ class DeviceDiscoveryPanel(QWidget):
         set_tone(self.mode_hint, "warning" if simulated else "muted")
 
     def request_scan(self) -> None:
-        """启动后台扫描；同一时刻只允许一个扫描线程。"""
+        """启动后台扫描；同一时刻只允许一个扫描线程。
+
+        点下去就是“开始加载设备”：结果框中央的按钮与浅灰底一起收走，换成扫描进度；
+        卡片区等结果回来再展开，扫描期间框里不出现用不上的操作按钮。
+        """
         if self.is_scanning():
             self._set_status("扫描正在进行，请等待完成")
             return
@@ -465,7 +581,9 @@ class DeviceDiscoveryPanel(QWidget):
         self._clear_cards()
         self.apply_btn.setEnabled(False)
         self._set_controls_enabled(False)
-        self.set_open(True)
+        self._scanned = True
+        self.set_open(False)
+        self._set_box_state(BOX_STATE_BUSY)
         self._set_status(f"正在扫描 {subnet or '(空)'} …")
         worker = DiscoveryWorker(self.scanner_factory, subnet, self.current_mode(), self)
         worker.progress.connect(self._on_progress)
@@ -494,6 +612,10 @@ class DeviceDiscoveryPanel(QWidget):
         devices = list(result.devices)
         self.devices = devices
         self.last_mode = getattr(result, "mode", self.current_mode())
+        # 有设备就展开卡片；一台都没读到就回到空框中央的“查找设备”，用户可以改网段再试
+        # （已经点过一次，浅灰底不再回来）。
+        self.set_open(bool(devices))
+        self._set_box_state(BOX_STATE_RESULTS if devices else BOX_STATE_IDLE)
         self._fill_cards(devices)
         known = sum(1 for device in devices if device.is_known)
         usable = sum(1 for device in devices if device_applicable(device))
@@ -528,6 +650,8 @@ class DeviceDiscoveryPanel(QWidget):
         if self._closed:
             return
         self.reopen_btn.setVisible(False)
+        # 失败后框里没有结果：中央重新出现“查找设备”，用户改网段或换扫描方式再试。
+        self._set_box_state(BOX_STATE_IDLE)
         self._set_status(f"扫描失败: {message}")
         self.log_message.emit(f"设备扫描失败: {message}")
 
@@ -535,6 +659,7 @@ class DeviceDiscoveryPanel(QWidget):
         if self._closed:
             return
         self.apply_btn.setEnabled(False)
+        self._set_box_state(BOX_STATE_IDLE)
         self._set_status("扫描已取消，结果未更新")
         self.log_message.emit("设备扫描已取消")
 
@@ -613,7 +738,7 @@ class DeviceDiscoveryPanel(QWidget):
             row["card"].setParent(None)
             row["card"].deleteLater()
         self._rows = []
-        self._apply_cards_layout(empty_rows=1)
+        self._apply_cards_layout()
 
     def _visitor_index(self, device: Any) -> int:
         """读不出身份的地址的“访客序号”：同一地址重复出现时编号不变。"""
@@ -782,21 +907,17 @@ class DeviceDiscoveryPanel(QWidget):
                 break
         self._sync_card_checks()
 
-    def _apply_cards_layout(self, empty_rows: int | None = None) -> None:
-        """把卡片按面板宽度排成网格，并把卡片区高度收到内容高度。
+    def _apply_cards_layout(self) -> None:
+        """把卡片按面板宽度排成网格。
 
-        ``empty_rows`` 用于“没有结果”时留一行位置（清空后卡片区不塌成一条缝）。
+        卡片区的高度由结果框分配（结果少时多余空间留在框里，结果多时框内滚动），
+        所以这里不再按内容钉高，只负责把卡片摆进网格。
         """
         layout = self.cards_layout
         for card in self.cards():
             layout.removeWidget(card)
-        count = len(self._rows)
-        if count == 0:
-            rows = max(1, int(empty_rows or 1))
-            self.cards_area.setFixedHeight(
-                rows * _EMPTY_CARD_HEIGHT + (rows - 1) * _CARDS_SPACING + 4
-            )
-            self.cards_host.setMinimumHeight(rows * _EMPTY_CARD_HEIGHT)
+        if not self._rows:
+            self.cards_host.setMinimumHeight(0)
             self._refresh_results_box_height()
             return
         # 先按面板宽度定列数（窗口刚显示时滚动区视口还没布局，宽度可能是 0）。
@@ -804,7 +925,6 @@ class DeviceDiscoveryPanel(QWidget):
         for index, card in enumerate(self.cards()):
             row, column = divmod(index, columns)
             layout.addWidget(card, row, column)
-        self.cards_host.setMinimumHeight(0)
         self._refresh_cards_geometry()
 
     def _panel_cards_width(self) -> int:
@@ -819,10 +939,10 @@ class DeviceDiscoveryPanel(QWidget):
         return max(1, min(int(fits), _MAX_COLUMNS))
 
     def _refresh_cards_geometry(self) -> None:
-        """按当前宽度决定列数，并把卡片区高度收到“行数 × 卡片高度”。
+        """按当前宽度决定列数，并把卡片按新列数就位。
 
-        卡片区自己决定高度而不是由布局拉伸：结果少时不占满整屏，结果多时卡片区内部
-        滚动，操作按钮与状态说明始终留在面板底部。
+        框的高度是固定的：结果少时卡片在框内靠上排、下面留白，结果多时卡片区内部滚动，
+        框的大小始终不变。
         """
         if not self._rows:
             return
@@ -832,22 +952,18 @@ class DeviceDiscoveryPanel(QWidget):
             row, column = divmod(index, columns)
             layout.removeWidget(card)
             layout.addWidget(card, row, column)
-        rows = (len(self._rows) + columns - 1) // columns
-        height = rows * _CARD_HEIGHT + (rows - 1) * _CARDS_SPACING + 4
-        self.cards_area.setFixedHeight(height)
         # 卡片区刚从收起变为展开时布局还没激活，卡片位置会全是 (0, 0)；
         # 这里直接激活一次，宽度变化时卡片立即按新列数就位。
         self.cards_layout.activate()
         self.cards_host.updateGeometry()
         self._refresh_results_box_height()
-        self._notify_ancestors()
 
     def _notify_ancestors(self) -> None:
-        """把“高度变了”一路上报，并让外层布局当场重排。
+        """把“内容变了”一路上报，并让外层布局当场重排。
 
-        结果框把卡片区、框内按钮与状态行包在一起，高度变化要跨一层布局才传上来：只
-        调用 ``updateGeometry()`` 时外层布局要等下一轮事件才收缩/伸开，框会短暂比内容
-        矮、框内按钮压在卡片上。这里逐层失效并重新激活一遍布局，让高度变化当场生效。
+        框里的东西变了（卡片区显隐、状态行多一行、卡片换列）要跨好几层布局才生效：只
+        调用 ``updateGeometry()`` 时外层布局要等下一轮事件才重排，框内按钮会短暂压在卡片
+        上。这里逐层失效并重新激活一遍布局，让变化当场生效。
         """
         self.updateGeometry()
         parent = self.parentWidget()
@@ -949,8 +1065,13 @@ class DeviceDiscoveryPanel(QWidget):
 
 
 __all__ = [
+    "BOX_STATES",
+    "BOX_STATE_BUSY",
+    "BOX_STATE_IDLE",
+    "BOX_STATE_RESULTS",
     "DeviceDiscoveryPanel",
     "DiscoveryWorker",
+    "LOADING_TEXT",
     "ROLE_LABELS",
     "SCAN_MODE_CHOICES",
     "binding_device_key",

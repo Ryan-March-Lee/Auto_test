@@ -39,6 +39,9 @@ from presentation.qt.config_page import ConfigPage
 from presentation.qt.connection_page import ConnectionPage
 from presentation.qt.device_cards import device_code, instrument_picture_path
 from presentation.qt.device_discovery_panel import (
+    BOX_STATE_BUSY,
+    BOX_STATE_IDLE,
+    BOX_STATE_RESULTS,
     DeviceDiscoveryPanel,
     binding_device_key,
     card_heading,
@@ -47,7 +50,7 @@ from presentation.qt.device_discovery_panel import (
     device_heading,
     subnet_from_address,
 )
-from presentation.qt.theme import apply_theme
+from presentation.qt.theme import apply_theme, build_stylesheet
 
 SMW_IDN = "Rohde&Schwarz,SMW200A,1412.0000K02/105462,5.20.043.47"
 DP832A_IDN = "RIGOL TECHNOLOGIES,DP832A,DP8B214901519,00.01.16"
@@ -546,6 +549,10 @@ class DiscoveryPanelTests(unittest.TestCase):
         self.assertIn("无法开始扫描", panel.status_label.text())
         self.assertIn("设备表损坏", panel.status_label.text())
         self.assertTrue(panel.scan_btn.isEnabled())
+        # 失败后框里仍然没有结果：中央的“查找设备”回来，但浅灰底不再出现（已经点过一次）。
+        self.assertTrue(panel.scan_btn.isVisible())
+        self.assertEqual(panel.box_state(), BOX_STATE_IDLE)
+        self.assertFalse(panel.results_box.property("filled"))
         self.assertFalse(panel.apply_btn.isEnabled())
 
     def test_shutdown_during_scan_cancels_and_leaves_no_worker(self):
@@ -796,6 +803,180 @@ class CardPresentationTests(unittest.TestCase):
         self.app.processEvents()
         self.assertTrue(panel.cards_area.isVisible())
         self.assertEqual(panel.card_count(), 4)
+
+
+class ResultsBoxStateTests(unittest.TestCase):
+    """结果框的状态：还没查找时是浅灰底 + 框中央的“查找设备”，点下去之后两者一起收走。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        # 主题只装一次（``apply_theme`` 幂等），这里直接取整份样式表：无论哪个用例先跑，
+        # 结果框的“浅灰底”规则都在。
+        self._previous_stylesheet = self.app.styleSheet()
+        self.app.setStyleSheet(build_stylesheet())
+
+    def tearDown(self):
+        self.app.setStyleSheet(self._previous_stylesheet)
+
+    def make_panel(self, factory=None):
+        panel = DeviceDiscoveryPanel(scanner_factory=factory or _scanner_factory)
+        panel.resize(760, 560)
+        panel.show()
+        self.app.processEvents()
+        self.addCleanup(panel.shutdown)
+        return panel
+
+    def test_the_scan_button_starts_centred_in_a_light_grey_box(self):
+        panel = self.make_panel()
+        box = panel.results_box
+
+        # “查找设备”不在扫描行里，而是结果框正中的落点。
+        self.assertTrue(box.isAncestorOf(panel.scan_btn), "查找设备要落在结果框里")
+        self.assertEqual(panel.box_state(), BOX_STATE_IDLE)
+        self.assertTrue(box.property("filled"), "还没查找时框内铺浅灰底")
+        self.assertIn(
+            'QFrame#discoveryResultsBox[filled="true"]', self.app.styleSheet()
+        )
+        self.assertTrue(panel.scan_btn.isVisible())
+        self.assertFalse(panel.cards_area.isVisible())
+
+        # 水平、竖直都在框的正中（框里此时只有这一个按钮）。
+        centre = panel.scan_btn.mapTo(box, panel.scan_btn.rect().center())
+        box_centre = box.rect().center()
+        self.assertAlmostEqual(centre.x(), box_centre.x(), delta=2)
+        self.assertAlmostEqual(centre.y(), box_centre.y(), delta=2)
+
+    def test_scanning_takes_the_button_and_the_grey_fill_away(self):
+        panel = self.make_panel()
+        self.assertTrue(panel.results_box.property("filled"))
+
+        panel.request_scan()
+        self.app.processEvents()
+
+        # 点下去就开始加载设备：按钮与灰底一起消失，框中央换成进度说明。
+        self.assertEqual(panel.box_state(), BOX_STATE_BUSY)
+        self.assertFalse(panel.results_box.property("filled"), "灰底只在点之前出现")
+        self.assertFalse(panel.scan_btn.isVisible())
+        self.assertTrue(panel.loading_label.isVisible())
+        self.assertIn("正在扫描", panel.status_label.text())
+
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+
+        self.assertEqual(panel.box_state(), BOX_STATE_RESULTS)
+        self.assertFalse(panel.scan_btn.isVisible())
+        self.assertFalse(panel.loading_label.isVisible())
+        self.assertTrue(panel.cards_area.isVisible())
+        self.assertGreater(panel.card_count(), 0)
+
+    def test_a_scan_that_finds_nothing_leaves_the_button_in_the_box_again(self):
+        def factory(_mode):
+            return build_scanner(
+                registry=_registry(), mode=SCAN_MODE_SIMULATED, responses={}, timeout_s=0.02
+            )
+
+        panel = self.make_panel(factory)
+        panel.request_scan()
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+
+        # 一台都没读到：框里放不出卡片，中央的“查找设备”回来好让用户再试一次。
+        self.assertEqual(panel.card_count(), 0)
+        self.assertEqual(panel.box_state(), BOX_STATE_IDLE)
+        self.assertTrue(panel.scan_btn.isVisible())
+        self.assertFalse(panel.results_box.property("filled"))
+
+    def test_collapsing_hands_the_box_centre_over_to_the_results_actions(self):
+        panel = self.make_panel()
+        panel.request_scan()
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+        self.assertTrue(panel.cards_area.isVisible())
+        self.assertFalse(panel.centre_area.isVisible(), "卡片看得见时框心让位给卡片")
+
+        panel.set_open(False)
+        self.app.processEvents()
+
+        # 收起后框心给出两个动作：“查找设备”（再查一次）与“查看结果”（把卡片放回来）；
+        # 扫描行仍然只有网段与扫描方式。
+        self.assertTrue(panel.results_box.isAncestorOf(panel.reopen_btn))
+        self.assertTrue(panel.reopen_btn.isVisible())
+        self.assertTrue(panel.scan_btn.isVisible(), "收起后还要能重新查找")
+        self.assertTrue(panel.centre_area.isVisible())
+        self.assertEqual(panel.box_state(), BOX_STATE_RESULTS)
+        self.assertFalse(panel.results_box.property("filled"))
+
+        # 两个按钮并排落在框的正中。
+        box = panel.results_box
+        left = panel.scan_btn.mapTo(box, panel.scan_btn.rect().topLeft()).x()
+        right = panel.reopen_btn.mapTo(box, panel.reopen_btn.rect().topRight()).x()
+        self.assertAlmostEqual((left + right) / 2, box.rect().center().x(), delta=2)
+
+        QTest.mouseClick(panel.reopen_btn, Qt.LeftButton)
+        self.app.processEvents()
+        self.assertTrue(panel.cards_area.isVisible())
+        self.assertFalse(panel.centre_area.isVisible())
+
+    def test_the_box_keeps_its_size_through_the_whole_scan(self):
+        """点“查找设备”前后框一样大：状态与结果数量都不改变框的大小。"""
+        panel = self.make_panel()
+        panel.resize(900, 720)
+        self.app.processEvents()
+        box = panel.results_box
+        idle = (box.width(), box.height())
+
+        panel.request_scan()
+        self.app.processEvents()
+        busy = (box.width(), box.height())
+
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+        results = (box.width(), box.height())
+
+        panel.set_open(False)
+        self.app.processEvents()
+        collapsed = (box.width(), box.height())
+
+        self.assertGreater(idle[1], 0)
+        self.assertEqual(busy, idle, "扫描中框不能变")
+        self.assertEqual(results, idle, "结果回来后框不能变")
+        self.assertEqual(collapsed, idle, "收起后框不能变")
+
+    def test_the_box_has_room_for_two_rows_of_cards(self):
+        """框的固定高度按“两行卡片 + 框内按钮与状态行”算：场地上的 5 台设备不用滚动。"""
+        panel = self.make_panel()
+        panel.request_scan()
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+
+        card = panel.cards()[0]
+        self.assertGreaterEqual(
+            panel.cards_area.height(), 2 * card.height(), "框里至少放得下两行卡片"
+        )
+
+    def test_clearing_the_results_puts_the_grey_fill_back(self):
+        panel = self.make_panel()
+        panel.request_scan()
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+
+        panel.clear_results()
+        self.app.processEvents()
+
+        # 重新进入页面时回到“还没查找过”的样子：灰底与框中央的按钮都回来。
+        self.assertEqual(panel.box_state(), BOX_STATE_IDLE)
+        self.assertTrue(panel.results_box.property("filled"))
+        self.assertTrue(panel.scan_btn.isVisible())
+        self.assertFalse(panel.cards_area.isVisible())
 
 
 class DeviceHeadingTests(unittest.TestCase):
@@ -1095,6 +1276,97 @@ class ConnectionPageDiscoveryIntegrationTests(unittest.TestCase):
             "ps1_address", "ps1_enabled", "ps4_address", "ps4_enabled",
         ):
             self.assertFalse(hasattr(page, widget), f"不应再存在手工地址控件 {widget}")
+
+    @staticmethod
+    def _scan_row(panel):
+        """面板布局里的扫描行（第一层是控制区，控制区的第一行才是扫描行）。"""
+        return panel.layout().itemAt(0).layout().itemAt(0).layout()
+
+    def _scan_row_centre(self, panel):
+        """扫描行里所有可见控件的整体中线（面板坐标）。"""
+        row = self._scan_row(panel)
+        spans = []
+        for index in range(row.count()):
+            widget = row.itemAt(index).widget()
+            if widget is None or not widget.isVisible():
+                continue
+            left = widget.mapTo(panel, widget.rect().topLeft()).x()
+            right = widget.mapTo(panel, widget.rect().topRight()).x()
+            spans.append((min(left, right), max(left, right)))
+        left = min(item[0] for item in spans)
+        right = max(item[1] for item in spans)
+        return (left + right) / 2
+
+    def test_scan_row_sits_centred_under_the_title(self):
+        """扫描网段与扫描方式居中排在“仪表配置”标题下面，与标题同一中线。"""
+        self.make_page()
+        panel = self.connection.discovery_panel
+        title = self.connection.title_label
+
+        title_centre = title.mapTo(
+            self.connection, title.rect().center()
+        ).x()
+        panel_centre = panel.mapTo(
+            self.connection, panel.rect().center()
+        ).x()
+        self.assertAlmostEqual(title_centre, panel_centre, delta=2, msg="标题与扫描行同一条中线")
+
+        # 扫描行的两端由两个等大的弹性留白顶住：中间那组控件整体落在面板中线上。
+        row = self._scan_row(panel)
+        self.assertIsNotNone(row.itemAt(0).spacerItem(), "行首的留白把控件推到中线")
+        self.assertIsNotNone(row.itemAt(row.count() - 1).spacerItem(), "行尾的留白同样大")
+        self.assertAlmostEqual(
+            self._scan_row_centre(panel), panel.width() / 2, delta=3, msg="整行居中"
+        )
+
+        # 有结果、收起之后也一样：动作按钮都在框里，不挤这一行。
+        panel.request_scan()
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+        panel.set_open(False)
+        self.app.processEvents()
+        self.assertAlmostEqual(
+            self._scan_row_centre(panel), panel.width() / 2, delta=3, msg="收起后仍然居中"
+        )
+
+    def test_the_scan_button_sits_in_the_centre_of_the_results_box(self):
+        """“查找设备”是结果框正中的落点，不在上面的扫描行里。"""
+        self.make_page()
+        panel = self.connection.discovery_panel
+
+        self.assertTrue(panel.results_box.isAncestorOf(panel.scan_btn))
+        self.assertTrue(panel.results_box.property("filled"))
+        self.assertEqual(panel.box_state(), BOX_STATE_IDLE)
+
+    def test_scanning_does_not_move_or_resize_the_results_box(self):
+        """点“查找设备”前后，结果框的位置与大小都不变：页面不会跳一下。"""
+        self.make_page()
+        panel = self.connection.discovery_panel
+        box = panel.results_box
+
+        def snapshot():
+            top_left = box.mapTo(self.connection, box.rect().topLeft())
+            return (top_left.x(), top_left.y(), box.width(), box.height())
+
+        before = snapshot()
+
+        panel.request_scan()
+        self.app.processEvents()
+        scanning = snapshot()
+
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+        results = snapshot()
+
+        panel.set_open(False)
+        self.app.processEvents()
+        collapsed = snapshot()
+
+        self.assertEqual(scanning, before, "扫描中框不能移动或变形")
+        self.assertEqual(results, before, "结果回来后框不能移动或变形")
+        self.assertEqual(collapsed, before, "收起后框不能移动或变形")
 
     def test_connect_button_sits_outside_the_results_box(self):
         """“连接仪器”在结果框外面（右下角）：点它先走配置页的连接入口。"""

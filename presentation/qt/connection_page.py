@@ -8,8 +8,9 @@
 它只从配置页读当前绑定与已保存地址，用来填“当前配置”与扫描框初值；点“连接仪器”
 只是把请求交给配置页去校验。
 
-版式只有三块：页面偏上的大字号标题、扫描行（扫描网段 / 扫描方式 / 查找设备），
-以及下面一块显示发现结果的圆角矩形框；“连接仪器”放在框外右下角，点它仍然走
+版式只有三块：页面偏上的大字号标题、居中放在标题下面的扫描行（扫描网段 / 扫描方式），
+以及下面一块显示发现结果的圆角矩形框；“查找设备”是框正中的落点，还没点它时框内铺一层
+浅灰底，点下去之后按钮与灰底一起收走、开始加载设备。“连接仪器”放在框外右下角，点它仍然走
 配置页的连接入口（:meth:`presentation.qt.config_page.ConfigPage.request_connect`
 校验后发 ``connect_requested``，由窗口连仪器）。
 
@@ -97,7 +98,8 @@ class ConnectionPage(QWidget):
         column.addWidget(self.title_label)
         column.addSpacing(12)
 
-        # 面板自带扫描行与结果框：扫描行在上面，发现结果落在下面的圆角矩形框里。
+        # 扫描行（扫描网段 / 扫描方式）就排在这个标题下面、和标题一起居中；
+        # 面板的结果框里才放“查找设备”，点下去就开始加载设备。
         self.discovery_panel = DeviceDiscoveryPanel(
             scanner_factory=self._scanner_factory or self._default_scanner_factory(),
             default_subnet=self._default_scan_subnet(),

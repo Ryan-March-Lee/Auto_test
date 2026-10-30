@@ -43,6 +43,8 @@ TOKENS = {
     "surface": "#FFFFFF",
     "surface_sunken": "#F8FAFC",
     "surface_alt": "#FAFBFC",
+    # 空落点的浅灰底：“仪表配置”页里还没点“查找设备”时的结果框填充色。
+    "surface_dropzone": "#F1F5F9",
     "border": "#E2E8F0",
     "border_strong": "#CBD5E1",
     "table_grid": "#F1F5F9",
@@ -382,11 +384,15 @@ QLabel[role="pageTitle"] {
 
 /* ===== 设备发现结果框（“仪表配置”页） =====
    扫描行留在框外，框只包住发现结果：一块圆角矩形，空着时是一块明确的落点，
-   有卡片时卡片在框内换行。 */
+   有卡片时卡片在框内换行。还没点过“查找设备”时框内铺浅灰底（按钮在正中）：
+   点下去之后灰底与按钮一起收走，框回到白的、只装进度与结果。 */
 QFrame#discoveryResultsBox {
     background-color: $surface;
     border: 1px solid $border;
     border-radius: 12px;
+}
+QFrame#discoveryResultsBox[filled="true"] {
+    background-color: $surface_dropzone;
 }
 
 /* ===== 设备卡片（“仪表配置”页的发现结果） =====

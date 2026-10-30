@@ -85,6 +85,7 @@ BROAD_CATCH_BASELINE = {
         "RunStageRecorder._discard_quietly#1",
     ),
     "infrastructure/filesystem/atomic_json.py": (
+        "_discard_temporary_file#1",
         "write_json_atomic#1",
     ),
     "infrastructure/persistence/json_result_repository.py": (

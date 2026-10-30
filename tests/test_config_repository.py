@@ -4,58 +4,14 @@ import unittest
 from pathlib import Path
 
 from infrastructure.config.json_config_repository import ConfigurationRepository
-from presentation.qt.configuration_authoring import author_official_configuration
-
-
-def _complete_combined_config() -> dict:
-    return author_official_configuration(
-        {
-            "test_frequencies": [2.4],
-            "signal_source": {"start_power": -10.0, "stop_power": 0.0, "step": 1.0},
-            "compression_point": {"type": "5dB"},
-            "driver_mode": {"enabled": False},
-            "attenuator": {"type": "30dB"},
-            "dut_config": {"max_input_power": 30.0, "power_supply_count": 1},
-            "instruments": {
-                "signal_generator": {"address": "sim::sg", "model": "SG", "enabled": True},
-                "spectrum_analyzer": {"address": "sim::sa", "model": "SA", "enabled": True},
-                "power_supplies": {
-                    "DP8B1519": {
-                        "label": "DP8B1519",
-                        "model": "DP832A",
-                        "serial": "DP8B214901519",
-                        "device_key": "rigol technologies:dp8b214901519",
-                        "address": "sim::ps1",
-                        "enabled": True,
-                        "channels": {
-                            "CH1": {"voltage": {"value": 2.8}, "current": {"value": 0.1}},
-                            "CH2": {"voltage": {"value": 28.0}, "current": {"value": 2.0}},
-                        },
-                    }
-                },
-            },
-            "power_supply_assignment": {
-                "driver_amplifier": {"power_supply_count": 0, "supplies": {}},
-                "dut_amplifier": {
-                    "power_supply_count": 1,
-                    "supplies": {
-                        "carrier": {
-                            "supply_id": "DP8B1519",
-                            "name": "DP8B1519",
-                            "channel": ["CH1", "CH2"],
-                        }
-                    },
-                },
-            },
-        }
-    )
+from tests.config_fixtures import complete_combined_config
 
 
 class ConfigurationRepositoryTests(unittest.TestCase):
     def test_loads_combined_official_config_without_conversion(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
-            path.write_text(json.dumps(_complete_combined_config()), encoding="utf-8")
+            path.write_text(json.dumps(complete_combined_config()), encoding="utf-8")
 
             result = ConfigurationRepository().load(path)
 
@@ -105,7 +61,7 @@ class ConfigurationRepositoryTests(unittest.TestCase):
         """配置页面保存出的组合配置无需任何旧格式转换即可被正式仓储读取。"""
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
-            path.write_text(json.dumps(_complete_combined_config()), encoding="utf-8")
+            path.write_text(json.dumps(complete_combined_config()), encoding="utf-8")
 
             result = ConfigurationRepository().load(path)
 

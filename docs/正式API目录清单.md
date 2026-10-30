@@ -208,7 +208,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `application.inputs.result_reading` | 报告参数叠加（内部实现；输入必须是正式结果 DTO） |
 | `application.lifecycle` | 测量生命周期包 |
 | `domain.instruments` | 设备表领域包 |
-| `domain.instruments.labels` | 电源短标签生成与显示文本：序列号归一化复用、前缀提取、末四位与冲突扩展（纯计算，不写注册表；标签不含通道分隔符），以及标签页/下拉框/设备卡片的显示文本、详情与审计用的身份文本、日志里的通道名（短标签/CHx）与身份核对结论（日志、页面与发现卡片共用同一份） |
+| `domain.instruments.labels` | 设备短标签生成与显示文本：序列号归一化复用、前缀提取、末四位与冲突扩展（纯计算，不写注册表；标签不含通道分隔符），标签对所有登记设备生效（电源的标签同时是 `supply_id`），以及电源与其它仪器各自的显示文本、详情与审计用的身份文本、日志里的通道名（短标签/CHx）与身份核对结论（日志、页面与发现卡片共用同一份） |
 | `domain.instruments.models` | 仪器身份解析（序列号唯一标识）、设备类别与短标签字段、旧槽位识别（`is_legacy_power_supply_slot`，只读兼容，不得用于生成电源键）、地址别名与在线状态模型 |
 | `domain.models` | 运行、测试方案与会话生命周期模型；测量结果契约在 `application.dto` |
 | `infrastructure.filesystem.atomic_json` | 原子 JSON 写入 |

@@ -12,12 +12,12 @@
       "updated_at": "2026-10-28T14:39:46+08:00",
       "instruments": [
         {
-          "name": "DP832A-1",           # 资产名 = 型号-同型号序号，永久稳定
+          "name": "DP832A-1",           # 资产名 = 型号-同型号序号，永久稳定，但不进界面
           "vendor": "RIGOL TECHNOLOGIES",
           "model": "DP832A",
           "model_index": 1,
           "serial": "DP8B214901519",    # 唯一身份，永不参与匹配的只有 IP 和名称
-          "label": "DP8B1519",          # 现场短标签 = 配置里的 supply_id，首次生成后冻结
+          "label": "DP8B1519",          # 现场短标签（见下）＝电源的 supply_id，首次生成后冻结
           "order_no": null,
           "firmware": "00.01.16.00.02",
           "options": [],
@@ -46,16 +46,22 @@
 - 读写分工：**读取兼容旧 schema**（``schema_version`` 1/2、``role: "PS1".."PS4"``、没有
   ``label``），读出来仍是旧字面量，好让按旧槽位工作的调用方（设备发现面板、配置页，属于
   步骤 5、6）继续可用；**保存统一写新字段**，写盘前由 :func:`_canonical_document` 迁移：
-  旧槽位经 ``domain.instruments.models.canonical_role`` 折叠成 ``power_supply``，登记为
-  ``power_supply`` 却没有标签的设备按序列号补生成 ``label``（规则见
-  :mod:`domain.instruments.labels`）。未登记角色的设备不生成标签、也不猜成电源。
+  旧槽位经 ``domain.instruments.models.canonical_role`` 折叠成 ``power_supply``，没有标签
+  的设备按序列号补生成 ``label``（规则见 :mod:`domain.instruments.labels`）。
+- **标签对所有登记设备生效**：它只由序列号派生，与角色无关，因此换角色、换 IP、改同型号
+  序号都不会换标签。界面上凡是显示这台设备，用的都是标签（电源是 ``DP8B1519（DP832A）``，
+  其它仪器是 ``SMW200A（5462）``），资产名 ``型号-同型号序号`` 只作文件里的软件资产名，
+  不进界面——同型号两台靠标签区分，不靠后缀数字。
+- 补生成标签的失败处理分两档：**电源**没有标签就没有 ``supply_id``，配置与路由会失配，
+  因此派生失败一律阻止保存并指出是哪台设备；**其它角色与未登记角色的设备**标签只用于
+  展示，派生失败时留空（显示退回资产名），不阻断保存。
 - 迁移只改 ``role`` 与 ``label``：资产名、序列号、地址和人工补充的字段逐字节保留。
 - **已有标签原样保留**：迁移只填空缺，不规范化、不裁剪空白、不改大小写；标签必须能当
   ``supply_id`` 用（非空字符串、不含空白与 ``/``），否则读取/保存直接报错，交给操作员
   改正——迁移不许把写错的标签悄悄“洗干净”。``null``、空串与纯空白都表示“还没有标签”，
   保存时统一写 ``null``。
-- 标签冲突阻止保存并报出冲突的两台设备，绝不覆盖、也不静默改名；无法从序列号派生标签时
-  同样阻止保存并指出是哪台设备。
+- 标签冲突阻止保存并报出冲突的两台设备，绝不覆盖、也不静默改名；电源无法从序列号派生标签
+  时同样阻止保存并指出是哪台设备。
 - 写入使用 :func:`write_json_atomic`（临时文件 + 原子替换），中断不会留下半截文件；
   迁移、校验、``schema_version`` 与 ``updated_at`` 的更新都在内存副本上完成，写盘成功后才
   提交回对象，因此失败时内存文档与原文件都保持迁移前的样子。
@@ -70,7 +76,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from domain.instruments.labels import PowerSupplyLabelError, generate_supply_label
+from domain.instruments.labels import InstrumentLabelError, generate_instrument_label
 from domain.instruments.models import (
     POWER_SUPPLY_ROLE,
     TEST_ROLES,
@@ -155,7 +161,7 @@ def _existing_label(entry: Mapping[str, Any]) -> Any:
 
 
 def _canonical_document(document: Mapping[str, Any]) -> dict[str, Any]:
-    """返回迁移到当前 schema 的设备表副本：折叠旧角色、为电源补生成短标签。
+    """返回迁移到当前 schema 的设备表副本：折叠旧角色、为登记设备补生成短标签。
 
     只改 ``role`` 与 ``label`` 两个字段，其余内容（资产名、序列号、地址、人工补充的字段）
     原样保留。规则：
@@ -163,9 +169,13 @@ def _canonical_document(document: Mapping[str, Any]) -> dict[str, Any]:
     1. ``role``：旧槽位折叠成 ``power_supply``，未登记角色写 ``null``，未知角色原样留下
        等校验报错；
     2. ``label``：每条记录都写这个字段（没有标签写 ``null``）；已有标签原样保留，不裁剪、
-       不改大小写；登记为 ``power_supply`` 却没有标签的设备，按序列号生成一个短标签；冲突按
-       :mod:`domain.instruments.labels` 依次加宽，全部候选都被占用时抛
-       :class:`InstrumentRegistryError`。未登记角色的设备不生成标签。
+       不改大小写；**有序列号却没有标签的设备按序列号补生成一个**（不分角色——标签只由
+       序列号派生，见 :mod:`domain.instruments.labels`），冲突按同一模块的规则依次加宽，
+       全部候选都被占用时抛 :class:`InstrumentRegistryError`。补生成的顺序是电源优先，
+       其余按文件顺序：电源的标签就是 ``supply_id``，先挑就先占住首选候选；
+    3. 补生成失败分两档：电源没有标签就没有 ``supply_id``，配置与路由会失配，因此一律抛
+       :class:`InstrumentRegistryError`；其它角色与未登记角色的设备标签只用于展示，派生
+       失败时留 ``null``，显示退回资产名，不阻断保存。
 
     纯函数：不改入参，也不写盘；由 :meth:`InstrumentRegistry.save` 在内存副本上调用。
     """
@@ -186,19 +196,35 @@ def _canonical_document(document: Mapping[str, Any]) -> dict[str, Any]:
         for entry in entries
         if isinstance(entry, Mapping)
     ]
-    for entry in entries:
-        if not isinstance(entry, dict) or entry.get("role") != POWER_SUPPLY_ROLE:
-            continue
-        if normalize_text(entry.get("label")):
-            continue
+
+    def _missing_label_entries():
+        """还没有标签、且有序列号可派生的条目：**电源先**，其余按文件顺序。
+
+        电源的标签就是 ``supply_id``，先挑就先占住首选候选，不会被别的设备挤到加宽的形态；
+        非电源设备只在必要时让路，它们的标签只用于展示。
+        """
+        pending = [
+            entry
+            for entry in entries
+            if isinstance(entry, dict) and not normalize_text(entry.get("label"))
+        ]
+        supplies = [entry for entry in pending if entry.get("role") == POWER_SUPPLY_ROLE]
+        others = [entry for entry in pending if entry.get("role") != POWER_SUPPLY_ROLE]
+        return [*supplies, *others]
+
+    for entry in _missing_label_entries():
         serial = normalize_serial(entry.get("serial"))
         if not serial:
             # 缺序列号的记录由 _validate_document 报错；没有身份就没有派生标签的依据。
             continue
         name = normalize_text(entry.get("name")) or "(未命名记录)"
+        is_power_supply = entry.get("role") == POWER_SUPPLY_ROLE
         try:
-            label = generate_supply_label(serial, taken)
-        except PowerSupplyLabelError as error:
+            label = generate_instrument_label(serial, taken)
+        except InstrumentLabelError as error:
+            if not is_power_supply:
+                # 非电源的标签只用于展示：派生失败留空，显示退回资产名，不挡住整份保存。
+                continue
             raise InstrumentRegistryError(
                 f"设备 {name}（序列号 {serial}）无法生成电源短标签：{error}"
             ) from error

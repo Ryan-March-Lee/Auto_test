@@ -45,6 +45,7 @@ from presentation.qt.device_discovery_panel import (
     DeviceDiscoveryPanel,
     binding_device_key,
     card_heading,
+    card_meta_model,
     card_model,
     card_status_text,
     device_heading,
@@ -1035,6 +1036,25 @@ class DeviceHeadingTests(unittest.TestCase):
 
         self.assertEqual(device_heading(signal), "SMW200A-1（信号发生器）")
         self.assertEqual(device_heading(unknown), "未知设备 (4082F)")
+
+    def test_signal_generator_with_a_label_shows_model_then_label(self):
+        """设备表保存过后信号源也有短标签：标题写“型号（短标签，角色）”，不再有 ``-1``。"""
+        signal = DiscoveredDevice(
+            ip="10.0.0.2",
+            port=5025,
+            idn=SMW_IDN,
+            identity=InstrumentIdentity.from_idn(SMW_IDN),
+            known_name="SMW200A-1",
+            known_label="5462",
+            status=DeviceStatus.ONLINE,
+            known_role="signal_generator",
+        )
+
+        self.assertEqual(device_heading(signal), "SMW200A（5462，信号发生器）")
+        self.assertEqual(card_heading(signal), "SMW200A（5462）")
+        # 型号已经写在标题里，副行不再重复；图片挑选仍能拿到型号。
+        self.assertEqual(card_meta_model(signal), "")
+        self.assertEqual(card_model(signal), "SMW200A")
 
 
 class DeviceCardContentTests(unittest.TestCase):

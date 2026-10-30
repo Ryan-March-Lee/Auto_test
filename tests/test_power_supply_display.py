@@ -5,6 +5,9 @@
 - **显示文本只有一份实现**（:func:`domain.instruments.labels.supply_display_label`）：
   电源标签页标题、分配下拉框与日志都用它；型号缺失、型号与标签相同（旧配置把槽位名填进
   ``model``）时只显示标签；
+- **其它仪器只有一份实现**（:func:`domain.instruments.labels.instrument_display_label`）：
+  显示成 ``型号（短标签）``（如 ``SMW200A（5462）``），型号在前——短标签只用来区分同型号的
+  另一台，不再靠资产名后缀 ``-1`` / ``-2``；
 - **详情/审计文本**（:func:`domain.instruments.labels.supply_identity_text`）按已知字段拼装：
   短标签 · 型号 · 完整序列号 · 设备键，缺哪个字段就少哪一段，**绝不凭空造标签**；
 - **旧记录按旧字段显示**：旧槽位条目（``PS1``、没有序列号）就显示 ``PS1``，不为它推导一个
@@ -27,6 +30,7 @@ from domain.instruments.labels import (
     IDENTITY_MATCHED,
     IDENTITY_MISMATCHED,
     IDENTITY_UNCOMPARABLE,
+    instrument_display_label,
     supply_channel_text,
     supply_display_label,
     supply_identity_text,
@@ -145,6 +149,40 @@ class DisplayLabelTests(unittest.TestCase):
                 self.assertEqual(
                     supply_option_label(label, model), supply_display_label(label, model)
                 )
+
+
+class InstrumentDisplayLabelTests(unittest.TestCase):
+    """其它仪器的 ``型号（短标签）``：型号在前，短标签只在括号里区分同型号的另一台。"""
+
+    def test_model_comes_first(self):
+        self.assertEqual(
+            instrument_display_label("5462", "SMW200A"), "SMW200A（5462）"
+        )
+        self.assertEqual(
+            instrument_display_label("QZNI0866", "4082F"), "4082F（QZNI0866）"
+        )
+
+    def test_role_text_joins_the_same_parentheses(self):
+        # 结果表的一行是“型号（短标签，角色）”，不写成两层括号。
+        self.assertEqual(
+            instrument_display_label("5462", "SMW200A", "信号发生器"),
+            "SMW200A（5462，信号发生器）",
+        )
+        self.assertEqual(
+            instrument_display_label("5462", "", "信号发生器"), "5462，信号发生器"
+        )
+        self.assertEqual(instrument_display_label("5462", "SMW200A", ""), "SMW200A（5462）")
+
+    def test_missing_pieces_are_dropped_instead_of_invented(self):
+        self.assertEqual(instrument_display_label(None, "SMW200A"), "SMW200A")
+        self.assertEqual(instrument_display_label("", "SMW200A"), "SMW200A")
+        self.assertEqual(instrument_display_label("5462"), "5462")
+        self.assertEqual(instrument_display_label(None, None, "信号发生器"), "信号发生器")
+        self.assertEqual(instrument_display_label(None, None), "")
+
+    def test_non_string_values_are_treated_as_missing(self):
+        self.assertEqual(instrument_display_label({"label": "5462"}, "SMW200A"), "SMW200A")
+        self.assertEqual(instrument_display_label(5462, "SMW200A"), "SMW200A（5462）")
 
 
 class IdentityTextTests(unittest.TestCase):

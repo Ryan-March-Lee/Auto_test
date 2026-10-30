@@ -681,7 +681,8 @@ class SavingTests(unittest.TestCase):
         by_serial = {item.serial: item for item in saved.list()}
         self.assertEqual(by_serial["DP8B214901519"].label, LABEL_ONE)
         self.assertEqual(by_serial["DP8B174400885"].label, LABEL_THREE)
-        self.assertIsNone(by_serial["DP8B174700950"].label)
+        # 短标签由序列号派生、与角色无关：未登记角色的那台也会拿到标签，只是 role 仍是 null。
+        self.assertEqual(by_serial["DP8B174700950"].label, "DP8B0950")
         self.assertIsNone(by_serial["DP8B174700950"].role)
 
 

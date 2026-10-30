@@ -42,7 +42,7 @@ from application.ports.device_discovery import (
     SCAN_MODE_SIMULATED,
     DeviceDiscoveryError,
 )
-from domain.instruments.labels import supply_identity_text
+from domain.instruments.labels import instrument_display_label, supply_identity_text
 from domain.instruments.models import (
     POWER_SUPPLY_ROLE,
     canonical_role,
@@ -104,9 +104,15 @@ def role_label(role: Any) -> str:
 def device_heading(device: Any) -> str:
     """结果表里的一行设备描述。
 
-    电源按“短标签（型号，电源）”显示：现场核对实物靠短标签，而不是“电源 PS3”这种槽位
-    编号。短标签只来自设备表（发现过程不生成标签），还没有标签的电源退回资产名。
-    其他角色沿用“设备名（角色）”，未登记设备显示“未知设备（型号）”。
+    每类设备都写“身份在前、类别在后”，具体格式由 ``domain.instruments.labels`` 提供，
+    界面不各自拼括号：
+
+    - 电源：``DP8B1519（DP832A，电源）``——短标签就是 ``supply_id``，是业务主键，排在最前；
+    - 信号源 / 频谱仪：``SMW200A（5462，信号发生器）``——型号在前，短标签用来区分同型号的
+      另一台；没有标签时退回资产名 ``SMW200A-1（信号发生器）``（旧设备表还没保存过）；
+    - 未登记设备：``未知设备（型号）``。
+
+    资产名里的 ``-1`` 只是文件里的软件资产名，只要设备表保存过就有短标签，界面上不会出现。
     """
     role = canonical_role(getattr(device, "known_role", None))
     heading = str(device.display_name)
@@ -115,6 +121,11 @@ def device_heading(device: Any) -> str:
         identity = getattr(device, "identity", None)
         model = getattr(identity, "model", "") or ""
         return f"{heading}（{model}，{label}）" if model else f"{heading}（{label}）"
+    identity = getattr(device, "identity", None)
+    short_label = str(getattr(device, "label", "") or "").strip()
+    model = str(getattr(identity, "model", "") or "").strip()
+    if short_label and model:
+        return instrument_display_label(short_label, model, label)
     return f"{heading}（{label}）" if label else heading
 
 
@@ -124,16 +135,21 @@ def device_applicable(device: Any) -> bool:
 
 
 def card_heading(device: Any, visitor_index: int = 0) -> str:
-    """卡片上的设备名：电源用短标签，其他角色用资产名；读不出身份时用兜底显示名。
+    """卡片上的设备名：电源用短标签，其它登记设备用“型号（短标签）”；读不出身份时用兜底显示名。
 
-    电源的短标签是现场核对实物用的名字（如 ``DP8B1519``），没有标签时退回资产名
-    ``DP832A-1``；“未知设备 (型号)”这类兜底文本原样显示。身份完全读不出来的地址改称
-    ``未识别设备 #n``（``visitor_index`` 由面板分配）：它有卡片、有访客编号，但没有可写的身份。
+    电源的短标签是现场核对实物用的名字（如 ``DP8B1519``），也是配置里的 ``supply_id``，
+    所以单独显示；信号源与频谱仪用 ``SMW200A（5462）``——型号在前，括号里的短标签区分同型号
+    的另一台。没有标签时（旧设备表还没保存过）才退回资产名 ``SMW200A-1``；“未知设备 (型号)”
+    这类兜底文本原样显示。身份完全读不出来的地址改称 ``未识别设备 #n``（``visitor_index``
+    由面板分配）：它有卡片、有访客编号，但没有可写的身份。
     """
-    if canonical_role(getattr(device, "known_role", None)) == POWER_SUPPLY_ROLE:
-        label = str(getattr(device, "label", "") or "").strip()
-        if label:
-            return label
+    role = canonical_role(getattr(device, "known_role", None))
+    label = str(getattr(device, "label", "") or "").strip()
+    model = card_model(device)
+    if role == POWER_SUPPLY_ROLE and label:
+        return label
+    if label and model:
+        return instrument_display_label(label, model)
     name = str(getattr(device, "display_name", "") or "").strip()
     if getattr(device, "is_unidentified", False):
         return f"未识别设备 #{max(1, int(visitor_index or 0))}"
@@ -144,6 +160,22 @@ def card_model(device: Any) -> str:
     """卡片上的型号；读不出身份时为空串（角色徽标单独显示状态）。"""
     identity = getattr(device, "identity", None)
     return str(getattr(identity, "model", "") or "").strip() if identity is not None else ""
+
+
+def card_meta_model(device: Any) -> str:
+    """卡片副行要写的型号：标题里已经写了型号时留空，避免同一行信息写两遍。
+
+    只有“型号（短标签）”这种标题会把型号写进标题（电源标题是短标签、退回资产名的兜底标题
+    是 ``SMW200A-1`` / ``未知设备 (N9020A)``），所以只在那一种情况下让副行省掉型号。
+    图片挑选仍按 :func:`card_model`，与这条显示规则无关。
+    """
+    model = card_model(device)
+    if not model:
+        return ""
+    label = str(getattr(device, "label", "") or "").strip()
+    role = canonical_role(getattr(device, "known_role", None))
+    composed = bool(label) and role != POWER_SUPPLY_ROLE
+    return "" if composed else model
 
 
 def card_status_text(device: Any) -> str:
@@ -804,12 +836,13 @@ class DeviceDiscoveryPanel(QWidget):
                 visitor_index = self._visitor_index(device)
             heading = card_heading(device, visitor_index)
             model = card_model(device)
+            meta_model = card_meta_model(device)
             role = canonical_role(getattr(device, "known_role", None))
             picture_role = role or ("power_supply" if device.is_power_supply else "")
             code, code_detail = device_code(device, visitor_index)
             card = InstrumentCard(
                 heading,
-                model,
+                meta_model,
                 role_label(role),
                 code,
                 status_text=card_status_text(device),
@@ -1076,6 +1109,7 @@ __all__ = [
     "SCAN_MODE_CHOICES",
     "binding_device_key",
     "card_heading",
+    "card_meta_model",
     "card_model",
     "card_status_text",
     "device_applicable",

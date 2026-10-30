@@ -1,4 +1,9 @@
-"""电源短标签生成与显示文本：把设备序列号派生成现场可读、可长期引用的短标签。
+"""设备短标签生成与显示文本：把设备序列号派生成现场可读、可长期引用的短标签。
+
+短标签对**所有登记设备**生效，不只电源：它只由序列号派生，与角色无关，因此同一台设备
+换角色、换 IP、改同型号序号都不会换标签，也不会因为“后来才登记角色”而改变。电源把标签
+当 ``supply_id`` 用（硬要求：路由与配置引用只认它）；其它仪器只用它做展示名，派生失败时
+留空、显示退回软件资产名，不阻断设备表保存。
 
 短标签规则（样例数据见 ``tests/fixtures/power_supply_identity/``）：
 
@@ -11,16 +16,16 @@
 - 与已有标签冲突时依次扩展到末五位、末六位，最后退回完整归一化序列号，扩展同样保留前缀；
   加宽不会把前缀拼两遍，也不会越过通道分隔符 ``/``（标签要当 ``supply_id`` 用）；
 - 冲突绝不覆盖已有标签：调用方传入的集合只读，全部候选都被占用时抛
-  :class:`PowerSupplyLabelError`，由调用方决定报错还是重新扫描。
+  :class:`InstrumentLabelError`，由调用方决定报错还是重新扫描。
 
 本模块是纯计算：不读注册表、不写文件、不依赖 Qt 与网络。标签第一次生成后由调用方显式保存，
 之后不因 IP 变化、型号序号变化或重新扫描而重算。
 
-除了“生成标签”，本模块也定义**标签怎么显示**（:func:`supply_display_label`）、
-**详情/审计怎么写**（:func:`supply_identity_text`）、**日志里的通道名怎么写**
-（:func:`supply_channel_text`）以及**身份核对的结论怎么写**
-（:func:`supply_identity_verdict`）：日志、标签页标题、下拉框和悬浮提示都从这里取文本，
-不各自拼一套。
+除了“生成标签”，本模块也定义**标签怎么显示**——电源是 :func:`supply_display_label`，
+其它仪器是 :func:`instrument_display_label`——以及**详情/审计怎么写**
+（:func:`supply_identity_text`）、**日志里的通道名怎么写**（:func:`supply_channel_text`）
+和**身份核对的结论怎么写**（:func:`supply_identity_verdict`）：日志、标签页标题、下拉框、
+设备卡片与悬浮提示都从这里取文本，不各自拼一套。
 """
 
 from __future__ import annotations
@@ -37,45 +42,47 @@ LABEL_TAIL_WIDTH: Final = 4
 _LABEL_SEPARATOR: Final = "/"
 
 
-class PowerSupplyLabelError(ValueError):
+class InstrumentLabelError(ValueError):
     """序列号无法派生成合法短标签。
 
     覆盖四种情形：空序列号、归一化后仍有内部空白、候选含通道分隔符 ``/``（无法当
-    ``supply_id`` 用）、候选全部被占用，以及批量输入里重复的序列号。
+    ``supply_id`` 用）以及批量输入里重复的序列号。候选全部被占用也抛这个错误，见
+    :func:`generate_instrument_label`。
 
     领域层异常，与 ``domain.measurement.values`` 的数值错误同一层：不进入
-    ``application.errors`` 的跨层分类，由调用方在边界处决定报错方式。
+    ``application.errors`` 的跨层分类，由调用方在边界处决定报错方式——电源必须报错
+    （没有标签就没有 ``supply_id``），其它设备的标签只用于展示，可以留空。
     """
 
 
-def normalize_supply_serial(value: object) -> str:
+def normalize_label_serial(value: object) -> str:
     """归一化序列号并确认它可以派生成标签。
 
     :func:`domain.instruments.models.normalize_serial` 本身已经反复应用直到稳定，这里只补
     领域校验：归一化后为空，或仍有内部空白（``DP8B 2149 01519``），抛
-    :class:`PowerSupplyLabelError`。内部空白属于解析异常，静默删除会让标签与设备身份不同源；
+    :class:`InstrumentLabelError`。内部空白属于解析异常，静默删除会让标签与设备身份不同源；
     身份层保留原样，由操作员修正序列号后重新扫描。
     """
     stable = normalize_serial(value)
     if not stable:
-        raise PowerSupplyLabelError(f"序列号为空，无法生成电源短标签: {value!r}")
+        raise InstrumentLabelError(f"序列号为空，无法生成设备短标签: {value!r}")
     if any(char.isspace() for char in stable):
-        raise PowerSupplyLabelError(
-            f"序列号含内部空白，无法生成电源短标签: {stable!r}；请修正序列号或重新扫描"
+        raise InstrumentLabelError(
+            f"序列号含内部空白，无法生成设备短标签: {stable!r}；请修正序列号或重新扫描"
         )
     return stable
 
 
-def supply_label_prefix(serial: object) -> str:
+def label_prefix(serial: object) -> str:
     """取序列号的系列前缀；输入可以是原始序列号，内部先归一化。
 
     ``DP8B214901519 -> 'DP8B'``（数字 ``8`` 后面紧跟字母 ``B``）、``105462 -> ''``、
     ``1412.0000K02/105462 -> ''``（第一个字符就是连续数字段）。
     """
-    return _prefix_of(normalize_supply_serial(serial))
+    return _prefix_of(normalize_label_serial(serial))
 
 
-def supply_label_candidates(serial: object) -> tuple[str, ...]:
+def label_candidates(serial: object) -> tuple[str, ...]:
     """返回按冲突优先级排列的全部候选标签，第一个就是首选标签。
 
     顺序是前缀 + 末四位、末五位、……，最后是完整归一化序列号。三条边界在这里固定：
@@ -86,9 +93,9 @@ def supply_label_candidates(serial: object) -> tuple[str, ...]:
        （如 ``A12``），候选只有完整归一化序列号，不会拼成 ``ABCDEABCDE`` / ``AA12``；
     3. 标签要当 ``supply_id`` 用，会拼成 ``supply_id/CHx``，所以尾段一旦出现 ``/`` 就停止
        加宽，完整序列号含 ``/`` 时也不算候选；一个可用候选都没有时抛
-       :class:`PowerSupplyLabelError`，交回操作员修正序列号。
+       :class:`InstrumentLabelError`，交回操作员修正序列号。
     """
-    stable = normalize_supply_serial(serial)
+    stable = normalize_label_serial(serial)
     prefix = _prefix_of(stable)
     body = len(stable) - len(prefix)
     if len(stable) <= LABEL_TAIL_WIDTH or body == 0:
@@ -107,37 +114,39 @@ def supply_label_candidates(serial: object) -> tuple[str, ...]:
     if stable not in seen and _is_usable_label(stable):
         candidates.append(stable)
     if not candidates:
-        raise PowerSupplyLabelError(
+        raise InstrumentLabelError(
             f"序列号 {stable!r} 无法生成可用短标签：每个候选都含通道分隔符 "
             f"{_LABEL_SEPARATOR!r}，不能作为 supply_id 使用；请修正序列号或重新扫描"
         )
     return tuple(candidates)
 
 
-def generate_supply_label(serial: object, existing_labels: Iterable[str | None] = ()) -> str:
+def generate_instrument_label(
+    serial: object, existing_labels: Iterable[str | None] = ()
+) -> str:
     """为序列号挑选一个不与 ``existing_labels`` 冲突的稳定短标签。
 
     ``existing_labels`` 是注册表里已经冻结的标签（含退役设备）；比较时忽略首尾空白与大小写，
-    但既不修改也不覆盖它们。候选全部被占用时抛 :class:`PowerSupplyLabelError`，
-    报告序列号和全部候选，交回操作员处理。
+    但既不修改也不覆盖它们。候选全部被占用时抛 :class:`InstrumentLabelError`，报告序列号和
+    全部候选，交回操作员处理。
     """
-    return _first_free_label(normalize_supply_serial(serial), _label_keys(existing_labels))
+    return _first_free_label(normalize_label_serial(serial), _label_keys(existing_labels))
 
 
-def generate_supply_labels(
+def generate_instrument_labels(
     serials: Iterable[object], existing_labels: Iterable[str | None] = ()
 ) -> dict[str, str]:
     """按输入顺序为多个序列号生成互相不冲突的标签：``归一化序列号 -> 标签``。
 
     同一批设备也会互相避开：先处理的设备占住标签，后面的设备按冲突规则扩展。返回的字典
-    按输入顺序排列；重复出现同一序列号说明是同一台设备，抛 :class:`PowerSupplyLabelError`。
+    按输入顺序排列；重复出现同一序列号说明是同一台设备，抛 :class:`InstrumentLabelError`。
     """
     taken = _label_keys(existing_labels)
     labels: dict[str, str] = {}
     for serial in serials:
-        stable = normalize_supply_serial(serial)
+        stable = normalize_label_serial(serial)
         if stable in labels:
-            raise PowerSupplyLabelError(f"同一序列号重复参与标签生成: {stable!r}")
+            raise InstrumentLabelError(f"同一序列号重复参与标签生成: {stable!r}")
         label = _first_free_label(stable, taken)
         taken.add(_label_key(label))
         labels[stable] = label
@@ -169,6 +178,29 @@ def supply_display_label(label: object, model: object = None) -> str:
     if model_text and model_text != text:
         return f"{text}（{model_text}）"
     return text
+
+
+def instrument_display_label(
+    label: object, model: object = None, detail: object = None
+) -> str:
+    """非电源仪器的显示文本：``SMW200A（5462，信号发生器）``。
+
+    型号放在最前面（现场先认型号，再看是哪一台），短标签在括号里起区分作用；型号与短标签
+    缺失时只剩有的那一段，两段都缺时退回 ``detail``，全缺时返回空串——不凭空补字。
+
+    与 :func:`supply_display_label` 的差别只在顺序：电源的短标签就是 ``supply_id``，是业务
+    主键，所以标签在前；其它仪器的标签只做区分，型号在前更贴近现场读法。两处都是**唯一的
+    实现**，界面不再各自拼括号。
+    """
+    model_text = _display_text(model)
+    label_text = _display_text(label)
+    detail_text = _display_text(detail)
+    parts = [part for part in (label_text, detail_text) if part]
+    if not model_text:
+        return "，".join(parts)
+    if not parts:
+        return model_text
+    return f"{model_text}（{'，'.join(parts)}）"
 
 
 def supply_identity_text(
@@ -287,7 +319,7 @@ def _is_usable_label(candidate: str) -> bool:
 
 def _require_usable_label(candidate: str, stable: str) -> str:
     if not _is_usable_label(candidate):
-        raise PowerSupplyLabelError(
+        raise InstrumentLabelError(
             f"序列号 {stable!r} 无法生成可用短标签：{candidate!r} 含通道分隔符 "
             f"{_LABEL_SEPARATOR!r}，不能作为 supply_id 使用；请修正序列号或重新扫描"
         )
@@ -295,11 +327,11 @@ def _require_usable_label(candidate: str, stable: str) -> str:
 
 
 def _first_free_label(stable: str, taken: set[str]) -> str:
-    candidates = supply_label_candidates(stable)
+    candidates = label_candidates(stable)
     for candidate in candidates:
         if _label_key(candidate) not in taken:
             return candidate
-    raise PowerSupplyLabelError(
+    raise InstrumentLabelError(
         f"序列号 {stable!r} 的候选标签全部被占用，无法生成新标签: {list(candidates)}"
     )
 
@@ -320,15 +352,16 @@ __all__ = [
     "IDENTITY_MATCHED",
     "IDENTITY_MISMATCHED",
     "IDENTITY_UNCOMPARABLE",
+    "InstrumentLabelError",
     "LABEL_TAIL_WIDTH",
-    "PowerSupplyLabelError",
-    "generate_supply_label",
-    "generate_supply_labels",
-    "normalize_supply_serial",
+    "generate_instrument_label",
+    "generate_instrument_labels",
+    "instrument_display_label",
+    "label_candidates",
+    "label_prefix",
+    "normalize_label_serial",
     "supply_channel_text",
     "supply_display_label",
     "supply_identity_text",
     "supply_identity_verdict",
-    "supply_label_candidates",
-    "supply_label_prefix",
 ]

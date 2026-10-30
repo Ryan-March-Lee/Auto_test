@@ -20,7 +20,7 @@
 | 文件 | 内容 | 用途 |
 | --- | --- | --- |
 | `registry_legacy_v2.json` | 设备表 `schema_version: 2`，三台 DP832A 的真实记录，`role` 为 `PS3` / `null` / `PS4` | 注册表迁移的输入 |
-| `registry_migrated_v3.json` | 同一份设备表迁移后：`schema_version: 3`，已登记角色的两台得到 `label` 与 `role: power_supply`，未登记角色的那台保持 `role: null`、`label: null` | 自动迁移的期望结果（不含任何人工登记） |
+| `registry_migrated_v3.json` | 同一份设备表迁移后：`schema_version: 3`，三台都按序列号得到 `label`（短标签与角色无关），已登记角色的两台 `role: power_supply`，未登记角色的那台保持 `role: null` | 自动迁移的期望结果（不含任何人工登记） |
 | `registry_migrated_v3_all_registered.json` | 在上一份基础上由操作员显式把 `DP832A-2` 登记为 `power_supply`，得到 `DP8B0950` | 多电源配置样例假设的设备表状态 |
 | `config_slots_legacy.json` | `config.json` 逐字节副本：`PS1`..`PS4` 四个槽位、单数 `run_mapping.instruments.power_supply`、`device_bindings.PS1` | 迁移输入（同上，不要手改） |
 | `config_slots_migrated_partial.json` | 上述旧配置的迁移结果：`PS3`→`DP8B1519`、`PS4`→`DP8B0885` 自动成型并保持未启用未绑定；`PS1`/`PS2` 无法识别，DUT 分配写成 `supply_id: null`，运行映射的电源段为空 | “自动能迁移什么、之后必须人工补什么” |

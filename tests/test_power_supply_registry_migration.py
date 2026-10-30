@@ -5,16 +5,17 @@
 1. **读取兼容旧 schema**：``schema_version`` 2、``role: "PS1".."PS4"``、没有 ``label`` 的旧文件
    仍可读取，读出来还是旧字面量——设备发现面板与配置页还按旧槽位工作（步骤 5、6 才改），
    读取侧折叠会让它们找不到电源；
-2. **保存统一写新字段**：写盘前把旧槽位折叠成 ``power_supply``，为登记为 ``power_supply``
-   却缺标签的设备按序列号补生成 ``label``，``schema_version`` 升到 3；现场注册表迁移后的期望
-   结果就是步骤 1 的 ``registry_migrated_v3.json``；
+2. **保存统一写新字段**：写盘前把旧槽位折叠成 ``power_supply``，为缺标签的设备按序列号
+   补生成 ``label``，``schema_version`` 升到 3；现场注册表迁移后的期望结果就是步骤 1 的
+   ``registry_migrated_v3.json``；
 3. **迁移只改 ``role`` 与 ``label``**：资产名、序列号、地址、人工补充的字段逐字节保留；
    已有标签原样冻结（不裁剪空白、不改大小写），只有 ``null`` / 空串 / 纯空白才算“还没有标签”；
-4. **未登记角色不猜成电源**，也就不生成标签；要使用它必须显式登记，那时才得到标签
+4. **标签由序列号派生、与角色无关**：未登记角色的设备也会拿到标签（显示用），但 ``role``
+   仍是 ``null``，不会被猜成电源；登记角色后标签不再变化
    （``registry_migrated_v3_all_registered.json``）；
-5. **冲突阻止保存**：标签重复、标签不能当 ``supply_id``（含空白、``/`` 或非字符串）、序列号
-   派不出可用标签、文件版本高于本程序，都明确报错并指出设备，绝不覆盖旧标签、也不留下半截
-   文件；
+5. **冲突阻止保存**：标签重复、标签不能当 ``supply_id``（含空白、``/`` 或非字符串）、电源的
+   序列号派不出可用标签、文件版本高于本程序，都明确报错并指出设备，绝不覆盖旧标签、也不留下
+   半截文件；非电源设备派不出标签时留 ``null``，不阻断保存（标签只用于展示）；
 6. **保存是一次事务**：迁移、校验、写盘任何一步失败，实例状态与原文件都不变。
 """
 
@@ -152,7 +153,7 @@ class MigrationTests(RegistryFileTestCase):
         self.assertEqual(_stable(saved), _stable(expected), "迁移结果必须与契约样例逐字段一致")
 
     def test_registered_power_supplies_get_labels_and_unregistered_stays_alone(self):
-        """迁移后已登记的两台电源各有短标签；未登记角色的那台不猜成电源、也不发标签。"""
+        """迁移后三台设备都有短标签；未登记角色的那台只拿标签，``role`` 仍是 ``null``。"""
         self.copy_fixture(LEGACY_REGISTRY)
 
         InstrumentRegistry.load(self.path).save()
@@ -162,10 +163,10 @@ class MigrationTests(RegistryFileTestCase):
             {serial: record["label"] for serial, record in records.items()},
             {
                 "DP8B214901519": "DP8B1519",
-                "DP8B174700950": None,
+                "DP8B174700950": "DP8B0950",
                 "DP8B174400885": "DP8B0885",
             },
-            "未登记角色的设备由操作员显式登记后才得到标签（第三条标签见登记用例）",
+            "标签由序列号派生、与角色无关，未登记角色的设备同样有标签",
         )
         self.assertEqual(
             {serial: record["role"] for serial, record in records.items()},
@@ -276,7 +277,7 @@ class MigrationTests(RegistryFileTestCase):
         )
 
     def test_blank_label_counts_as_missing(self):
-        """空串与纯空白不算标签：电源按规则补生成，其余设备写 ``null``。"""
+        """空串与纯空白不算标签：所有设备都按规则补生成，与角色无关。"""
         document = _document([
             _entry("DP832A-1", "DP8B214901519", model="DP832A", model_index=1,
                    role=POWER_SUPPLY_ROLE, label="   "),
@@ -290,7 +291,7 @@ class MigrationTests(RegistryFileTestCase):
 
         records = _load(self.path)["instruments"]
         self.assertEqual(records[0]["label"], "DP8B1519", "空白标签视为缺标签，电源照常补生成")
-        self.assertIsNone(records[1]["label"], "非电源设备没有标签时写 null")
+        self.assertEqual(records[1]["label"], "5462", "非电源设备同样按序列号补生成标签")
 
 
 class RegistrationTests(RegistryFileTestCase):

@@ -8,7 +8,8 @@
 
 - 每份 fixture 都是可解析的 JSON，登记的样例都确实存在；
 - 注册表的 `label` 与短标签规则（前缀 + 末四位，冲突加宽）给出的期望标签逐步一致，
-  `device_key` 由 `厂商:序列号` 生成；
+  `device_key` 由 `厂商:序列号` 生成；标签由序列号派生、对所有登记设备生效（电源的标签
+  同时是 `supply_id`），未登记角色的设备同样有标签，但不会被猜成电源；
 - 注册表迁移只改 `role` 与 `label`：资产名、序列号、地址都不动，未登记角色的设备不会被猜成电源；
 - 配置里的电源键、条目内 `label` 与分配引用的 `supply_id` 是同一个字符串，且分配不引用不存在的电源；
 - 1 台 / 2 台 / 5 台三种规模都能表达，旧槽位只出现在迁移输入与旧运行快照里；
@@ -330,8 +331,8 @@ class RegistryContractTests(unittest.TestCase):
                 with self.subTest(fixture=name, serial=serial):
                     if label is None:
                         self.assertIsNone(
-                            record.get("role"),
-                            "只有未登记角色的设备才允许没有标签",
+                            serial,
+                            "只有缺序列号的设备才允许没有标签：标签由序列号派生，与角色无关",
                         )
                         continue
                     self.assertIn(
@@ -391,7 +392,11 @@ class RegistryContractTests(unittest.TestCase):
                 else:
                     self.assertIsNone(old.get("role"))
                     self.assertIsNone(new.get("role"), "未登记角色不能被猜成电源")
-                    self.assertIsNone(new.get("label"))
+                    self.assertEqual(
+                        new.get("label"),
+                        EXPECTED_LABELS[serial],
+                        "标签由序列号派生、与角色无关：未登记角色的设备同样补生成标签",
+                    )
 
     def test_registering_a_device_explicitly_adds_its_label(self):
         records = {

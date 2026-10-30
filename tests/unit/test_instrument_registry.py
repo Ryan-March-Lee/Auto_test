@@ -5,6 +5,9 @@
 1. 身份只认 ``厂商 + 序列号``，IP 变化不影响归属；
 2. 资产名 ``型号-序号`` 与同型号序号一经分配不再变化，且序号只增不复用；
 3. 手改 JSON 写错（重复序列号、名称与序号不符、current_ip 与 known_ips 不一致）必须报错。
+
+另外守住短标签的适用范围：它由序列号派生、与角色无关，保存后每台登记设备都有；界面上
+显示的是标签，资产名里带 ``-1`` 的序号不进界面。
 """
 
 import json
@@ -169,6 +172,47 @@ class RegistryUpsertTests(unittest.TestCase):
         instrument, _ = self.registry.upsert(identity, status=DeviceStatus.ONLINE)
 
         self.assertEqual(instrument.role, "signal_generator")
+
+    def test_saving_gives_every_device_a_label_not_just_power_supplies(self):
+        """短标签由序列号派生、与角色无关：信号源、频谱仪与未登记角色的设备同样有标签。"""
+        self.registry.upsert(InstrumentIdentity.from_idn(SMW_IDN), role="signal_generator")
+        self.registry.upsert(InstrumentIdentity.from_idn(CEYEAR_IDN), role="spectrum_analyzer")
+        unregistered, _ = self.registry.upsert(InstrumentIdentity.from_idn(DP832A_IDN))
+        self.assertIsNone(unregistered.role)
+
+        self.registry.save()
+
+        saved = InstrumentRegistry.load(self.path)
+        self.assertEqual(
+            {item.model: item.label for item in saved.list()},
+            {"SMW200A": "5462", "4082F": "QZNI0866", "DP832A": "DP8B1519"},
+        )
+        # 显示名一律用标签：界面上不再出现 ``型号-序号``。
+        self.assertEqual(
+            [item.display_name for item in saved.list()],
+            ["QZNI0866", "DP8B1519", "5462"],
+        )
+        self.assertEqual(
+            [item.name for item in saved.list()],
+            ["4082F-1", "DP832A-1", "SMW200A-1"],
+            "资产名与序号保留，只是不进界面",
+        )
+
+    def test_unusable_serial_only_blocks_the_save_for_power_supplies(self):
+        """非电源的标签只用于展示：序列号含内部空白时留空，不阻断整份保存。"""
+        self.registry.upsert(InstrumentIdentity.from_idn(SMW_IDN), role="signal_generator")
+        self.registry.save()
+        document = self.registry.raw
+        document["instruments"][0]["serial"] = "105 462"
+        document["instruments"][0]["label"] = None
+        self.path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+
+        reloaded = InstrumentRegistry.load(self.path)
+        reloaded.save()
+
+        saved = InstrumentRegistry.load(self.path).list()[0]
+        self.assertIsNone(saved.label, "非电源派不出标签时留空，显示退回资产名")
+        self.assertEqual(saved.display_name, "SMW200A-1")
 
     def test_unknown_role_is_rejected(self):
         identity = InstrumentIdentity.from_idn(SMW_IDN)

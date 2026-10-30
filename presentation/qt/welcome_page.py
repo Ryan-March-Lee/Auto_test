@@ -64,9 +64,25 @@ def confirm_leave_configuration(parent, is_dirty: bool) -> bool:
     return reply == QMessageBox.Yes
 
 
+# ---- 随窗口缩放的版式基准 ----------------------------------------------------
+
+#: 欢迎页按这个窗口尺寸设计排版，是 :data:`TITLE_POINT_SIZE` 等字号的基准：
+#: 与主窗口的期望尺寸一致，大屏上全屏/最大化时正好是这个版面。
+REFERENCE_SIZE = QSize(1600, 1000)
+#: 缩放上下限：窗口化后字号不能小到读不清，超大屏上也不能把版心撑出画面。
+SCALE_MIN = 0.6
+SCALE_MAX = 1.5
+
+#: 基准字号（缩放为 1 时的 pt 值）；实际字号 = 基准字号 × 当前缩放。
+TITLE_POINT_SIZE = 56.0
+SUBTITLE_POINT_SIZE = 13.0
+MODE_BUTTON_POINT_SIZE = 13.0
+
+
 # ---- 模式按钮（自绘 + 悬停动效） --------------------------------------------
 
-#: 胶囊本体尺寸与内容间距；阴影另占用控件四边留白，见 :data:`SHADOW_MARGIN`。
+#: 胶囊本体尺寸与内容间距；这些都是缩放为 1 时的值，绘制时乘以控件的当前缩放。
+#: 阴影另占用控件四边留白，见 :data:`SHADOW_MARGIN`（留白固定，阴影不随字号变）。
 PILL_HEIGHT = 52
 PILL_PADDING_X = 26
 CONTENT_GAP = 12
@@ -110,16 +126,16 @@ def _with_alpha(color: QColor, ratio: float) -> QColor:
     return faded
 
 
-@lru_cache(maxsize=1)
-def _mode_button_font() -> QFont:
-    """模式按钮的文字字体：13pt 半粗。
+@lru_cache(maxsize=8)
+def _mode_button_font(point_size: float = MODE_BUTTON_POINT_SIZE) -> QFont:
+    """模式按钮的文字字体：半粗，字号随窗口缩放（基准 13pt）。
 
     样式表给全局文字定的是 9.5pt，而这两个按钮是整页唯一的操作入口；字体在这里显式
     给出（并用于绘制与量宽），不再依赖样式表，于是按钮无论被谁 polish 都保持同一尺寸。
     """
     font = QFont()
     font.setFamilies(list(FONT_FAMILIES))
-    font.setPointSizeF(13.0)
+    font.setPointSizeF(point_size)
     font.setWeight(QFont.DemiBold)
     return font
 
@@ -150,6 +166,9 @@ class ModeChoiceButton(QPushButton):
     QSS 表达不了这段效果（伪元素、``transition`` 与 ``transform`` 都不在样式表能力里），
     所以按钮整块自绘：``paintEvent`` 依次画投影、胶囊底、圆形色块、白描边、文字与箭头，
     数值由 ``QVariantAnimation`` 推进。颜色仍取自 :data:`theme.TOKENS`，与全局主题同源。
+
+    胶囊与字号按 :meth:`set_scale` 给出的比例整体缩放（由 :class:`WelcomePage` 按窗口
+    尺寸算出），于是窗口化与全屏下按钮和标题的相对大小一致；四周画阴影的留白固定不变。
     """
 
     def __init__(self, text: str, parent: QWidget | None = None) -> None:
@@ -158,6 +177,10 @@ class ModeChoiceButton(QPushButton):
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
+        #: 当前缩放：1 表示按设计基准尺寸绘制。
+        self._scale = 1.0
+        self._font = _mode_button_font(MODE_BUTTON_POINT_SIZE)
 
         #: 色块扫入进度与前景（文字/箭头）进度，各自一条时间轴。
         self._fill = 0.0
@@ -185,10 +208,26 @@ class ModeChoiceButton(QPushButton):
 
     # ---- 尺寸 ---------------------------------------------------------------
 
+    def set_scale(self, scale: float) -> None:
+        """按窗口尺寸等比缩放胶囊与字号；留白固定，投影轮廓下次布局时重建。"""
+        scale = max(0.1, float(scale))
+        if abs(scale - self._scale) < 1e-3:
+            return
+        self._scale = scale
+        self._font = _mode_button_font(MODE_BUTTON_POINT_SIZE * scale)
+        self.updateGeometry()
+        self.update()
+
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt 覆盖方法
-        content = PILL_PADDING_X * 2 + self._text_width() + CONTENT_GAP + ARROW_SIZE
+        content = (
+            2.0 * PILL_PADDING_X * self._scale
+            + self._text_width()
+            + CONTENT_GAP * self._scale
+            + ARROW_SIZE * self._scale
+        )
         return QSize(
-            int(content) + 2 * SHADOW_MARGIN, PILL_HEIGHT + 2 * SHADOW_MARGIN
+            int(content) + 2 * SHADOW_MARGIN,
+            int(PILL_HEIGHT * self._scale) + 2 * SHADOW_MARGIN,
         )
 
     def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt 覆盖方法
@@ -196,7 +235,7 @@ class ModeChoiceButton(QPushButton):
 
     def _text_width(self) -> float:
         """文字宽度：按按钮自己的字体量，不取样式表覆盖过的控件字体。"""
-        return QFontMetricsF(_mode_button_font(), self).horizontalAdvance(self.text())
+        return QFontMetricsF(self._font, self).horizontalAdvance(self.text())
 
     def _pill_rect(self) -> QRectF:
         """胶囊本体在控件里的矩形：四边留出画投影的余地。"""
@@ -317,7 +356,7 @@ class ModeChoiceButton(QPushButton):
             painter.drawPath(self._sweep_circle(pill))
             painter.restore()
 
-        painter.setPen(QPen(_PILL_BORDER, 2.0))
+        painter.setPen(QPen(_PILL_BORDER, 2.0 * self._scale))
         painter.setBrush(Qt.NoBrush)
         painter.drawPath(capsule)
 
@@ -348,12 +387,14 @@ class ModeChoiceButton(QPushButton):
     ) -> None:
         """文字与箭头整组水平居中，按 ``gap`` 分开，与原效果的 ``justify-center gap-2`` 一致。"""
         text_width = self._text_width()
-        left = pill.center().x() - (text_width + CONTENT_GAP + ARROW_SIZE) / 2.0
+        gap = CONTENT_GAP * self._scale
+        arrow_size = ARROW_SIZE * self._scale
+        left = pill.center().x() - (text_width + gap + arrow_size) / 2.0
         # 量宽只给排版用，画字时右侧留一点余量，避免末字的右边距被矩形裁掉。
         text_rect = QRectF(left, pill.top(), text_width + 4.0, pill.height())
         flags = int(Qt.AlignLeft | Qt.AlignVCenter)
 
-        painter.setFont(_mode_button_font())
+        painter.setFont(self._font)
         painter.setPen(_TEXT_REST)
         painter.drawText(text_rect, flags, self.text())
         if self._fill > 0.0:
@@ -367,10 +408,10 @@ class ModeChoiceButton(QPushButton):
             painter.restore()
 
         arrow = QRectF(
-            left + text_width + CONTENT_GAP,
-            pill.center().y() - ARROW_SIZE / 2.0,
-            float(ARROW_SIZE),
-            float(ARROW_SIZE),
+            left + text_width + gap,
+            pill.center().y() - arrow_size / 2.0,
+            arrow_size,
+            arrow_size,
         )
         self._paint_arrow(painter, arrow)
 
@@ -382,14 +423,16 @@ class ModeChoiceButton(QPushButton):
             painter.setBrush(_with_alpha(_ARROW_FACE, progress))
             painter.drawEllipse(arrow)
         if progress < 1.0:
-            painter.setPen(QPen(_with_alpha(_ARROW_BORDER, 1.0 - progress), 1.0))
+            painter.setPen(
+                QPen(_with_alpha(_ARROW_BORDER, 1.0 - progress), max(1.0, self._scale))
+            )
             painter.setBrush(Qt.NoBrush)
             painter.drawEllipse(arrow.adjusted(0.5, 0.5, -0.5, -0.5))
 
         painter.save()
         painter.translate(arrow.center())
         painter.rotate(45.0 + 45.0 * progress)
-        scale = ARROW_GLYPH_HEIGHT / 19.0
+        scale = ARROW_GLYPH_HEIGHT * self._scale / 19.0
         painter.scale(scale, scale)
         painter.translate(-8.0, -9.5)
         pen = QPen(_ARROW_GLYPH, 2.0)
@@ -408,6 +451,10 @@ class WelcomePage(QWidget):
     偏上的天空区域，避免压住下方的仪器场景；图上再叠一层自上而下变淡的黑色蒙版，
     让白字在明暗不定的照片底上依然醒目。两个按钮的悬停动效见
     :class:`ModeChoiceButton`。
+
+    版式按 :data:`REFERENCE_SIZE` 设计，文字与按钮随窗口尺寸整体缩放（见
+    :meth:`_layout_scale`）：全屏与窗口化都保持同一版面比例，窗口变小时字不会显得
+    顶破画面，变大时也不会缩成一小团。
     """
 
     mode_selected = Signal(bool)
@@ -415,6 +462,8 @@ class WelcomePage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("welcomePage")
+        #: 当前缩放，由 :meth:`_apply_scale` 按窗口尺寸维护。
+        self._scale = 0.0
         layout = QVBoxLayout(self)
         layout.setContentsMargins(48, 32, 48, 40)
         layout.setSpacing(0)
@@ -446,6 +495,49 @@ class WelcomePage(QWidget):
         layout.addLayout(buttons)
 
         layout.addStretch(5)
+
+        self._title = title
+        self._subtitle = subtitle
+        self._buttons = (no_driver, with_driver)
+        # 构造时窗口还没有实际尺寸，先按缩放 1 落一遍字号，避免露出样式表的通用字号。
+        self._apply_scale(force=True)
+
+    # ---- 随窗口缩放 ---------------------------------------------------------
+
+    def _layout_scale(self) -> float:
+        """当前窗口相对设计基准的缩放：取宽高两个比例中较小的一个，再夹到上下限内。"""
+        if self.width() <= 0 or self.height() <= 0:
+            return 1.0
+        ratio = min(
+            self.width() / max(1, REFERENCE_SIZE.width()),
+            self.height() / max(1, REFERENCE_SIZE.height()),
+        )
+        return max(SCALE_MIN, min(SCALE_MAX, ratio))
+
+    def _apply_scale(self, force: bool = False) -> None:
+        """按当前窗口尺寸更新标题、副标题与模式按钮的字号（及按钮胶囊）。"""
+        scale = self._layout_scale()
+        if not force and abs(scale - self._scale) < 0.005:
+            return
+        self._scale = scale
+        self._apply_font_size(self._title, TITLE_POINT_SIZE * scale)
+        self._apply_font_size(self._subtitle, SUBTITLE_POINT_SIZE * scale)
+        for button in self._buttons:
+            button.set_scale(scale)
+
+    @staticmethod
+    def _apply_font_size(label: QLabel, point_size: float) -> None:
+        """把字号写进控件自己的样式表。
+
+        全局样式表里的 ``QWidget { font-size }`` 会盖掉 ``setFont``，而控件自己的
+        样式表优先于应用样式表，因此这里是唯一能让字号随窗口变化、又不失其他规则的
+        写法；``QLabel#welcomeTitle`` 里的颜色、字重与内边距仍然照旧生效。
+        """
+        label.setStyleSheet(f"font-size: {point_size:.1f}pt;")
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_scale()
 
     def paintEvent(self, event):
         """背景图 + 覆盖其上的黑色渐变蒙版。

@@ -274,18 +274,19 @@ QLabel#appModeBadge {
    标题用白色粗体，落在图中偏亮的天空区域；按钮白底深字，悬停整块转主色蓝、文字转白，
    未悬停与悬停的差别一眼可见。
    背景图不写在这里：页面里的按钮与拉伸空白会让 Qt 只在局部画出这层背景，图片改由
-   ``welcome_page.WelcomePage.paintEvent`` 铺满整页，这里只负责文字与按钮。 */
+   ``welcome_page.WelcomePage.paintEvent`` 铺满整页，这里只负责文字与按钮。
+   字号也不写在这里：它随窗口尺寸缩放（``welcome_page.TITLE_POINT_SIZE`` 等），由
+   ``WelcomePage`` 在尺寸变化时写进控件自己的样式表；应用样式表里写死一个字号会被
+   窗口化/全屏切换后的版面比例顶开。这里只留与尺寸无关的颜色、字重与内边距。 */
 QLabel#welcomeTitle {
     background: transparent;
     color: #FFFFFF;
-    font-size: 44pt;
     font-weight: 700;
     padding: 4px 18px;
 }
 QLabel#welcomeSubtitle {
     background: transparent;
     color: #E8F1FF;
-    font-size: 13pt;
     padding: 0 18px;
 }
 /* 模式按钮（#welcomeChoice）在这里没有规则：它由 ``welcome_page.ModeChoiceButton``

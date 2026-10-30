@@ -121,6 +121,14 @@ conda activate Auto_test
 `DPD_auto_test` 的可选依赖（TensorFlow、Jupyter 等）在 `requirements-dpd.txt`，
 与主系统隔离，主系统启动与三类测量都不需要安装它们。
 
+### 可选能力边界
+
+- `format_convert.csv_to_MDIF` 是独立命令行工具，输入和输出路径由调用者明确指定。
+- `format_convert.svg_to_png_transparent` 仅在调用时加载可选依赖，产物写入调用者指定的目录。
+- 连接图由 `presentation/qt/connection_diagrams.py` 按需生成；不可用时界面会说明原因，不能将空图当作有效接线图确认。
+- `DPD_auto_test` 是独立子系统，不读取或修改主系统的配置、结果和运行目录；跨系统交换数据必须显式传入脱敏文件路径。
+- DPD 依赖只安装在其独立环境中，不进入主系统的 `requirements.txt` 或 `requirements.lock.txt`。
+
 ### 启动方法
 
 项目只保留 `launcher.py` 作为应用启动器。请在 PyCharm 中将项目解释器设置为 `Auto_test`，并运行根目录下的 `launcher.py`；也可以在终端中执行：

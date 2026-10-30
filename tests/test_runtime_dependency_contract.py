@@ -559,7 +559,7 @@ class RuntimeContractDocumentationTests(unittest.TestCase):
         self.assertNotIn("python launcher.py", readme)
 
     def test_startup_guide_uses_the_project_interpreter(self):
-        guide = (ROOT / "README_启动说明.md").read_text(encoding="utf-8-sig")
+        guide = (ROOT / "README.md").read_text(encoding="utf-8-sig")
         self.assertIn("AUTO_TEST_PYTHON", guide)
         self.assertNotIn("\npython launcher.py", guide)
 

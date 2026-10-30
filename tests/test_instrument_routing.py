@@ -3,7 +3,8 @@
 本文件固定仪器路由的静态边界：
 
 - 生产装配（``instrument.measurement_adapter`` / ``instrument.assembly_plan`` /
-  ``instrument.measurement_factory``）不定义 ``__getattr__``，也不按方法名转发设备调用；
+  ``instrument.power_routing`` / ``instrument.measurement_factory``）不定义
+  ``__getattr__``，也不按方法名转发设备调用；
 - 旧动态路由实现（``instrument.legacy_control`` / ``instrument.power_roles``）已整文件退役；
 - 自动发现只保留在硬件 smoke 入口，生产装配不调用 ``list_resources()``；
 - 电源、信号源、频谱仪的方法在适配器上显式定义；
@@ -25,8 +26,9 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 ADAPTER_SOURCE = ROOT / "instrument" / "measurement_adapter.py"
 PLAN_SOURCE = ROOT / "instrument" / "assembly_plan.py"
+ROUTING_SOURCE = ROOT / "instrument" / "power_routing.py"
 FACTORY_SOURCE = ROOT / "instrument" / "measurement_factory.py"
-ASSEMBLY_SOURCES = (ADAPTER_SOURCE, PLAN_SOURCE, FACTORY_SOURCE)
+ASSEMBLY_SOURCES = (ADAPTER_SOURCE, PLAN_SOURCE, ROUTING_SOURCE, FACTORY_SOURCE)
 PRODUCTION_PACKAGES = (
     "analysis",
     "app",
@@ -65,6 +67,17 @@ EXPLICIT_ADAPTER_METHODS = {
 
 def _tree(path):
     return ast.parse(path.read_text(encoding="utf-8-sig"), str(path))
+
+
+def _imported_modules(tree):
+    """文件里以绝对路径导入的模块名（相对导入由本包自己解析，不算外部依赖）。"""
+    modules = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            modules.add(node.module)
+    return modules
 
 
 def _production_sources():
@@ -155,8 +168,17 @@ class DynamicInstrumentRoutingTests(unittest.TestCase):
                 source = path.read_text(encoding="utf-8-sig")
                 self.assertNotIn("list_resources", source, "生产装配不得枚举 VISA 资源")
                 self.assertNotIn("_DiscoveredPowerSupply", source)
-                self.assertNotIn("from hardware", source, "生产装配不得依赖硬件 smoke 包")
-                self.assertNotIn("import hardware", source, "生产装配不得依赖硬件 smoke 包")
+                # 依赖按导入的模块名判定：``hardware_assembly_plan`` 这样的名字不是
+                # ``hardware`` 包，也不能靠改名绕过。
+                self.assertEqual(
+                    {
+                        module
+                        for module in _imported_modules(_tree(path))
+                        if module == "hardware" or module.startswith("hardware.")
+                    },
+                    set(),
+                    f"{path.name} 不得依赖硬件 smoke 包",
+                )
 
 
 if __name__ == "__main__":

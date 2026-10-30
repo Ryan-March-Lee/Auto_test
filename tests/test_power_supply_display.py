@@ -43,6 +43,7 @@ ROOT = Path(__file__).parents[1]
 PROJECTION_SOURCE = ROOT / "presentation" / "qt" / "config_projection.py"
 POWER_SECTION_SOURCE = ROOT / "presentation" / "qt" / "config_power_section.py"
 PLAN_SOURCE = ROOT / "instrument" / "assembly_plan.py"
+ROUTING_SOURCE = ROOT / "instrument" / "power_routing.py"
 FACTORY_SOURCE = ROOT / "instrument" / "measurement_factory.py"
 POWER_CONTROL_SOURCE = ROOT / "instrument" / "power_control.py"
 ADAPTER_SOURCE = ROOT / "instrument" / "measurement_adapter.py"
@@ -298,8 +299,9 @@ class AuditPlanTests(unittest.TestCase):
 
     def test_plan_carries_the_identity_text_of_every_routed_supply(self):
         plan = hardware_assembly_plan(_two_supply_config())
+        identity = {supply.supply_id: supply.identity_text for supply in plan.supplies}
         self.assertEqual(
-            plan["supply_details"]["DP8B1519"],
+            identity["DP8B1519"],
             supply_identity_text(
                 "DP8B1519",
                 "DP832A",
@@ -308,20 +310,20 @@ class AuditPlanTests(unittest.TestCase):
             ),
         )
         # 只有集合键的电源：details 就只有它的键，不推导型号/序列号。
-        self.assertEqual(plan["supply_details"]["DP8B0950"], "DP8B0950")
-        self.assertEqual(set(plan["supply_details"]), set(plan["supply_labels"]))
+        self.assertEqual(identity["DP8B0950"], "DP8B0950")
+        self.assertEqual(set(identity), set(plan.supply_labels))
 
     def test_plan_details_do_not_change_the_routing_tokens(self):
         # 显示与审计文本不参与路由：通道仍然是显式的 ``supply_id/CHx``。
         plan = hardware_assembly_plan(_two_supply_config())
         self.assertEqual(
-            plan["all_channels"],
+            plan.all_channels,
             {
                 "gate": "DP8B1519/CH1",
                 "drain": "DP8B1519/CH2",
             },
         )
-        self.assertEqual(plan["power_settings"]["gate"]["voltage_v"], 2.8)
+        self.assertEqual(plan.power_settings["gate"]["voltage_v"], 2.8)
 
     def test_plan_maps_every_routing_token_to_its_log_text(self):
         """通道动作日志的显示文本与路由 token 一一对应，且在拼 token 的地方生成。"""
@@ -332,7 +334,7 @@ class AuditPlanTests(unittest.TestCase):
         self.assertEqual(
             {
                 token: text
-                for token, text in plan["channel_labels"].items()
+                for token, text in plan.channel_labels.items()
                 if token.startswith("DP8B1519/")
             },
             {
@@ -341,12 +343,12 @@ class AuditPlanTests(unittest.TestCase):
             },
         )
         # 没有标签的电源：显示文本就等于路由 token，不凭空补一个标签。
-        self.assertEqual(plan["channel_labels"]["DP8B0950/CH1"], "DP8B0950/CH1")
+        self.assertEqual(plan.channel_labels["DP8B0950/CH1"], "DP8B0950/CH1")
         # 路由值不受显示文本影响。
-        self.assertEqual(plan["all_channels"]["gate"], "DP8B1519/CH1")
+        self.assertEqual(plan.all_channels["gate"], "DP8B1519/CH1")
         # 每个被分配的通道（DUT 与驱动功放）都有日志写法，键就是路由 token。
-        assigned = set(plan["dut_channels"].values()) | set(plan["driver_channels"].values())
-        self.assertEqual(set(plan["channel_labels"]), assigned)
+        assigned = set(plan.dut_channels.values()) | set(plan.driver_channels.values())
+        self.assertEqual(set(plan.channel_labels), assigned)
 
 
 class SharedImplementationTests(unittest.TestCase):
@@ -366,9 +368,9 @@ class SharedImplementationTests(unittest.TestCase):
 
     def test_measurement_factory_logs_the_identity_line(self):
         # 计划侧（步骤 15 拆出 ``instrument.assembly_plan``）：详情文本只算一次，
-        # 原样交给构造方，不再各自从配置里挑字段。
+        # 以 ``SupplyPlan.identity_text`` 交给构造方，不再各自从配置里挑字段。
         plan = PLAN_SOURCE.read_text(encoding="utf-8")
-        self.assertIn('"supply_details": supply_details', plan)
+        self.assertIn("identity_text=supply_identity_text(", plan)
         # 构造侧：连接每台电源时写一行身份核对，并给出核对结论。
         source = FACTORY_SOURCE.read_text(encoding="utf-8")
         self.assertIn("生产电源身份核对", source)
@@ -376,7 +378,7 @@ class SharedImplementationTests(unittest.TestCase):
         # 身份核对必须给出结论，不能只把两份身份并排打印。
         self.assertIn("supply_identity_verdict(", source)
         self.assertIn("核对结果", source)
-        self.assertIn('plan["supply_details"][power_name]', source)
+        self.assertIn("supply.identity_text", source)
 
     def test_channel_logs_use_the_shared_channel_text(self):
         # 通道动作日志（供电控制与急停）用同一份 ``短标签/CHx`` 写法，不各自拼。
@@ -385,10 +387,10 @@ class SharedImplementationTests(unittest.TestCase):
                 source = source_path.read_text(encoding="utf-8")
                 self.assertIn("channel_labels", source)
                 self.assertIn("channel_display", source)
-        # 日志写法在拼路由 token 的同一处生成（步骤 15 之后在装配计划模块里）。
-        plan = PLAN_SOURCE.read_text(encoding="utf-8")
-        self.assertIn('"channel_labels": {**driver_channel_labels, **dut_channel_labels}', plan)
-        self.assertIn("supply_channel_text(", plan)
+        # 日志写法在拼路由 token 的同一处生成（步骤 15 之后在供电分配解析模块里）。
+        routing = ROUTING_SOURCE.read_text(encoding="utf-8")
+        self.assertIn('{**driver_channel_labels, **dut_channel_labels}', routing)
+        self.assertIn("supply_channel_text(", routing)
 
 
 class ConnectionDiagramTests(unittest.TestCase):

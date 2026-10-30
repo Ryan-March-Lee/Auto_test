@@ -584,21 +584,21 @@ class AssignmentReferenceTests(unittest.TestCase):
         for reference, supply_id in (("DP8B1519", "DP8B1519"), ("DP8B0950", "DP8B0950")):
             with self.subTest(reference=reference):
                 plan = self._plan(_two_supply_config(), reference)
-                self.assertEqual(plan["supply_names"], [supply_id])
-                self.assertEqual(plan["all_channels"]["gate"], f"{supply_id}/CH1")
+                self.assertEqual([supply.supply_id for supply in plan.supplies], [supply_id])
+                self.assertEqual(plan.all_channels["gate"], f"{supply_id}/CH1")
 
     def test_visual_slot_resolves_to_the_supply_actually_named_by_the_config(self):
         # 旧文件里 ``visual: PS3`` 指向 DP8B0885；这里按身份解析，不按槽位序号。
         config = _two_supply_config()
         config["instruments"]["power_supplies"]["DP8B0885"]["enabled"] = True
         plan = self._plan(config, "PS3")
-        self.assertEqual(plan["supply_names"], ["DP8B0885"])
-        self.assertEqual(plan["supply_labels"]["DP8B0885"], "DP8B0885")
-        self.assertEqual(plan["all_channels"]["gate"], "DP8B0885/CH1")
+        self.assertEqual([supply.supply_id for supply in plan.supplies], ["DP8B0885"])
+        self.assertEqual(plan.supply_labels["DP8B0885"], "DP8B0885")
+        self.assertEqual(plan.all_channels["gate"], "DP8B0885/CH1")
 
     def test_supply_without_a_label_uses_its_supply_id(self):
         plan = self._plan(_two_supply_config(), "DP8B1519")
-        self.assertEqual(plan["supply_labels"]["DP8B1519"], "DP8B1519")
+        self.assertEqual(plan.supply_labels["DP8B1519"], "DP8B1519")
 
     def test_unknown_reference_fails_before_opening_anything(self):
         manager = _FakeResourceManager()

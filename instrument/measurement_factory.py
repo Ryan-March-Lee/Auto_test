@@ -3,10 +3,11 @@
 The factory keeps hardware construction out of measurement services.  It owns
 exactly two things: opening the VISA resources named by a hardware assembly plan
 and building the instrument session around them, and building an offline
-simulated session.  Configuration interpretation — addresses, power roles,
-explicit ``supply_id/CHx`` routes, reserved/duplicate channels — belongs to
-:mod:`instrument.assembly_plan` and happens before this module touches a device,
-so a broken configuration never opens a VISA resource.
+simulated session.  Every configuration fact it needs — addresses, capability
+ranges, power-supply identity fields, the channels each supply declares, the
+explicit ``supply_id/CHx`` routes, log texts and the shutdown order — arrives in
+:class:`instrument.assembly_plan.HardwareAssemblyPlan`, so this module never
+reads a configuration key and a broken configuration never opens a VISA resource.
 
 Power supplies are a **dynamic set**: the plan may route to one, two or five
 supplies without a code change here.  A routed supply is connected,
@@ -17,9 +18,9 @@ the routing key is the ``supply_id``, never the display label.
 Logs always name a supply by its field short label: channel actions carry the
 routing token (``DP8B1519/CH1``) and are printed as the short label plus channel
 (``supply_channel_text``), and every connection writes one audit line with the
-short label, model, full serial and device key plus the raw ``*IDN?`` reply and
-the identity verdict, so a log entry maps to the physical label, can be traced
-to the exact device and says out loud whether the two identities agree.
+plan's identity text, the raw ``*IDN?`` reply and the identity verdict, so a log
+entry maps to the physical label, can be traced to the exact device and says out
+loud whether the two identities agree.
 
 Resource ownership is explicit and the release order does not depend on this
 split: everything opened here is closed here.  When assembly fails, the resources
@@ -45,7 +46,7 @@ from application.errors import (
 from domain.instruments.labels import IDENTITY_MISMATCHED, supply_identity_verdict
 from infrastructure.logging.app_logging import get_logger
 
-from .assembly_plan import configured_channels, hardware_assembly_plan, supply_short_label
+from .assembly_plan import hardware_assembly_plan
 from .drivers import ScpiPowerSupplyDriver, ScpiSignalGeneratorDriver, ScpiSpectrumAnalyzerDriver
 from .measurement_adapter import PortMeasurementAdapter
 from .session import ManagedInstrumentSession
@@ -141,7 +142,9 @@ class _ConfiguredPowerSupply:
     The mapping key is the ``supply_id`` and is the only routing identity: a
     token physically routes by that key and never by the display label.
     ``supply_labels`` gives the field short label of each routed supply for logs
-    and failure records (``DP8B1519``); it defaults to the routing key.
+    and failure records (``DP8B1519``); the assembly plan already applied the
+    configuration's naming rule, so this port only falls back to the routing key
+    when a caller passes no label at all.
     """
 
     def __init__(
@@ -154,13 +157,11 @@ class _ConfiguredPowerSupply:
             raise ValueError("生产电源路由至少需要一个已配置电源")
         self.supplies = dict(supplies)
         labels = dict(supply_labels or {})
-        self.supply_labels = {
-            name: supply_short_label(labels.get(name), name) for name in self.supplies
-        }
+        self.supply_labels = {name: str(labels.get(name) or name) for name in self.supplies}
 
     def label(self, supply_name: str) -> str:
         """返回已配置电源的短标签；未配置的电源返回原值，供错误消息使用。"""
-        return self.supply_labels.get(supply_name) or supply_short_label(None, supply_name)
+        return self.supply_labels.get(supply_name) or str(supply_name)
 
     def connect(self, *, timeout_s: float = 10.0) -> None:
         for name, supply in self.supplies.items():
@@ -285,35 +286,35 @@ def _create_hardware_measurement_port(config_path: str, *, recorder=None):
     from infrastructure.config.json_io import load_config_file
 
     config = load_config_file(config_path)
-    # 装配校验（地址、角色、通道）必须在创建任何 VISA 资源之前完成。
+    # 装配校验（地址、角色、通道）必须在创建任何 VISA 资源之前完成；计划是只读的，
+    # 下面只按计划取事实，不再回读配置。
     plan = hardware_assembly_plan(config)
     manager = _open_resource_manager()
     resources = []
     try:
-        signal_resource = _open_device(manager, plan["signal_address"], "信号源")
+        signal_resource = _open_device(manager, plan.signal.address, "信号源")
         resources.append(signal_resource)
-        spectrum_resource = _open_device(manager, plan["spectrum_address"], "频谱仪")
+        spectrum_resource = _open_device(manager, plan.spectrum.address, "频谱仪")
         resources.append(spectrum_resource)
 
         configured_supplies = {}
-        for power_name in plan["supply_names"]:
-            power_config = plan["power_configs"][power_name]
-            label = f"生产电源 {plan['supply_labels'][power_name]}"
-            resource = _open_device(manager, power_config["address"], label)
+        # 顺序就是计划里 ``supplies`` 的顺序（按 ``supply_id`` 排序），急停顺序里的
+        # 电源下标以同一顺序为准。
+        for supply in plan.supplies:
+            label = f"生产电源 {supply.label}"
+            resource = _open_device(manager, supply.address, label)
             resources.append(resource)
             identity = _query(resource, "*IDN?", label)
             # 审计用的一行：这台电源在配置里的完整身份（短标签 · 型号 · 完整序列号 ·
             # 设备键）、设备自己应答的 *IDN? 原文，以及两边的核对结论。日志里短标签负责
             # 快速对应实物，完整序列号与结论负责最终追溯（步骤 14）。
-            verdict_status, verdict = supply_identity_verdict(
-                power_config.get("serial"), identity
-            )
+            verdict_status, verdict = supply_identity_verdict(supply.serial, identity)
             log_identity = (
                 logger.warning if verdict_status == IDENTITY_MISMATCHED else logger.info
             )
             log_identity(
                 "生产电源身份核对: %s；设备应答 *IDN? %s；核对结果 %s",
-                plan["supply_details"][power_name],
+                supply.identity_text,
                 identity,
                 verdict,
             )
@@ -323,54 +324,51 @@ def _create_hardware_measurement_port(config_path: str, *, recorder=None):
                 raise DeviceCapabilityError(
                     f"{label} 设备身份不是 {POWER_SUPPLY_MODEL}: {identity}"
                 )
-            # 初始输出检查覆盖这台电源配置的全部通道：输出开着就禁止进入测量，
+            # 初始输出检查覆盖这台电源声明的全部通道：输出开着就禁止进入测量，
             # 无论该通道这次有没有被分配。错误与日志都带 ``short-label/CHx``。
-            supply_label = plan["supply_labels"][power_name]
-            declared_channels = configured_channels(power_config, power_name)
             checked = ", ".join(
-                f"{supply_label}/{channel}" for channel in declared_channels
+                f"{supply.label}/{channel}" for channel in supply.declared_channels
             )
             states = []
-            for channel in declared_channels:
+            for channel in supply.declared_channels:
                 states.append(
                     _query(
                         resource,
                         POWER_OUTPUT_QUERY.format(channel=channel),
-                        f"{supply_label}/{channel}",
+                        f"{supply.label}/{channel}",
                     )
                 )
             if any(state.upper() not in POWER_OUTPUT_OFF_STATES for state in states):
                 raise DeviceCapabilityError(
                     f"{label} 初始输出未关闭，禁止上电测量（检查通道: {checked}）"
                 )
-            logger.info("生产电源 %s 连接成功，检查通道: %s", supply_label, checked)
-            configured_supplies[power_name] = ScpiPowerSupplyDriver(
+            logger.info("生产电源 %s 连接成功，检查通道: %s", supply.label, checked)
+            configured_supplies[supply.supply_id] = ScpiPowerSupplyDriver(
                 VisaScpiTransport(resource, recorder=recorder)
             )
 
-        signal_config = plan["signal_config"]
         signal = ScpiSignalGeneratorDriver(
             VisaScpiTransport(signal_resource, recorder=recorder),
-            min_frequency_hz=signal_config.get("min_frequency_hz"),
-            max_frequency_hz=signal_config.get("max_frequency_hz"),
-            min_power_dbm=signal_config.get("min_power_dbm"),
-            max_power_dbm=signal_config.get("max_power_dbm"),
+            min_frequency_hz=plan.signal.min_frequency_hz,
+            max_frequency_hz=plan.signal.max_frequency_hz,
+            min_power_dbm=plan.signal.min_power_dbm,
+            max_power_dbm=plan.signal.max_power_dbm,
         )
         spectrum = ScpiSpectrumAnalyzerDriver(
             VisaScpiTransport(spectrum_resource, recorder=recorder)
         )
         # 路由键是 ``supply_id``；标签只用于日志、关闭失败记录与错误消息。
         power = _ConfiguredPowerSupply(
-            configured_supplies, supply_labels=plan["supply_labels"]
+            configured_supplies, supply_labels=plan.supply_labels
         )
         session = _VisaSession(
             manager,
             signal,
             spectrum,
             power,
-            plan["all_channels"],
+            plan.all_channels,
             # 通道动作日志用 ``短标签/CHx``；物理路由仍是上面的 token。
-            power_channel_labels=plan["channel_labels"],
+            power_channel_labels=plan.channel_labels,
         )
         session.validate()
         try:
@@ -381,12 +379,12 @@ def _create_hardware_measurement_port(config_path: str, *, recorder=None):
         session.prepare()
         return PortMeasurementAdapter(
             session,
-            dut_power_channels=plan["dut_channels"],
-            driver_power_channels=plan["driver_channels"],
-            power_settings=plan["power_settings"],
+            dut_power_channels=plan.dut_channels,
+            driver_power_channels=plan.driver_channels,
+            power_settings=plan.power_settings,
             qualified_power_channels=True,
-            emergency_channels=plan["emergency_channels"],
-            power_channel_labels=plan["channel_labels"],
+            emergency_channels=plan.emergency_channels,
+            power_channel_labels=plan.channel_labels,
         )
     except Exception:  # 装配失败必须释放已打开的 VISA 资源后原样抛出
         for resource in reversed(resources):

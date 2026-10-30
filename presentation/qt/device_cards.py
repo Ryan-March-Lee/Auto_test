@@ -5,7 +5,8 @@
 - 图片区：仪器实拍图放在浅色底板中央，按整块图片区等比缩放（不裁切），几张图的
   “视觉体积”因此不受各自照片留白多少影响；
 - 文字区：设备名（如 ``SMW200A-1``）、型号与角色（如 ``SMW200A · 信号发生器``）、
-  缩减版设备码（``SG/SMW200A/105462``）。
+  缩减版身份码（``SG/SMW200A/105462``；电源用注册表短标签 ``DP8B1519``，见
+  :func:`device_code`）。
 
 卡片只负责显示与选中状态，不知道扫描结果的数据结构：选择、应用与校验仍由
 :class:`presentation.qt.device_discovery_panel.DeviceDiscoveryPanel` 负责。
@@ -116,24 +117,34 @@ def _falls_back_to_device_name(device: Any) -> bool:
 
 
 def device_code(device: Any, visitor_index: int = 0) -> tuple[str, str]:
-    """返回 ``(缩减版设备码, 悬浮提示全文)``。
+    """返回 ``(卡片正面的身份码, 悬浮提示里的连接附注)``。
 
-    设备码由“角色缩写 / 型号 / 序列号”组成（如 ``SG/SMW200A/105462``），读不出身份时用
-    ``未识别 #n``（``visitor_index`` 由面板分配）：同一台设备两次刷新拿到同一个号。提示里
-    给出完整的设备码与地址，IP 只作为本次可达的连接细节，不占卡片正面的文字行。
+    身份码按设备类别取：
+
+    - **电源**：注册表冻结的短标签（``DP8B1519``，同时是配置里的 ``supply_id``）。短标签就是
+      现场核对实物用的名字，因此不再拼 ``PS/型号/序列号``——那个写法看起来像槽位编号，而
+      电源没有“第几台”。旧设备表还没有标签时退回 ``PS/型号/序列号`` 的旧写法，不生成标签；
+    - **其它仪器**：``角色缩写/型号/序列号``（如 ``SG/SMW200A/105462``）；
+    - **读不出身份**：``未识别 #n``（``visitor_index`` 由面板分配，同一台设备两次刷新拿到
+      同一个号）。
+
+    附注只写连接细节（地址、探测端口），不重复身份码：身份由卡片标题与悬浮提示里的身份文本
+    表达，IP 只是本次可达的连接信息，不占卡片正面的文字行。
     """
     identity = getattr(device, "identity", None)
     role = str(getattr(device, "known_role", "") or "")
     if identity is None:
-        code = f"未识别 #{max(1, int(visitor_index or 0))}"
-        reason = str(getattr(device, "error", "") or "端口有应答但 *IDN? 无法解析")
-        return code, reason
+        return f"未识别 #{max(1, int(visitor_index or 0))}", ""
     model = str(getattr(identity, "model", "") or "").strip()
     serial = str(getattr(identity, "serial", "") or "").strip()
     is_supply = bool(getattr(device, "is_power_supply", False))
-    parts = [part for part in (model, serial) if part]
-    code = "/".join([_device_code_role(role, is_supply), *parts])
-    detail = [code]
+    label = str(getattr(device, "label", "") or "").strip()
+    if is_supply and label:
+        code = label
+    else:
+        parts = [part for part in (model, serial) if part]
+        code = "/".join([_device_code_role(role, is_supply), *parts])
+    detail: list[str] = []
     address = str(getattr(device, "visa_address", "") or "").strip()
     if not address:
         last_ip = str(getattr(device, "ip", "") or "").strip()

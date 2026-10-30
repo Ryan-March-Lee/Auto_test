@@ -7,9 +7,9 @@
 - 面板不改配置、不连接仪器：用户确认“应用到配置”后，只把所选设备交给配置页，
   由配置页写成仪器连接配置（地址来自本次发现的设备）与设备身份记录。
 - **测试角色由设备表登记，界面不让用户选**：现场每台仪器只承担一种角色。卡片正面
-  写设备名、型号与角色徽标，下面一行缩减版设备码（``角色/型号/序列号``）；电源是同一个
-  类别下的多台设备，靠短标签区分，不再用“电源 PS3”这类槽位编号。没登记角色的设备不能
-  选中应用。
+  写设备名、型号与角色徽标，下面一行缩减版身份码（信号源与频谱仪是``角色/型号/序列号``，
+  电源就是它的短标签 ``DP8B1519``）；电源是同一个类别下的多台设备，靠短标签区分，
+  不再用“电源 PS3”这类槽位编号。没登记角色的设备不能选中应用。
 - **多台电源各自独立**：电源不再按角色键互相覆盖，勾选几台就传递几台；只有信号源与
   频谱仪保持“一个角色一台设备”的唯一性。
 - 发现结果**包含未知设备**：未在设备表中登记的序列号同样显示一张卡片并标记为未登记；
@@ -37,6 +37,7 @@ from application.ports.device_discovery import (
     SCAN_MODE_SIMULATED,
     DeviceDiscoveryError,
 )
+from domain.instruments.labels import supply_identity_text
 from domain.instruments.models import (
     POWER_SUPPLY_ROLE,
     canonical_role,
@@ -626,10 +627,24 @@ class DeviceDiscoveryPanel(QGroupBox):
         return number
 
     def _card_tooltip(self, device: Any, code_detail: str) -> str:
-        """卡片的悬浮提示：身份详情、角色变化与无法应用的原因都写在这里。"""
+        """卡片的悬浮提示：身份详情、角色变化与无法应用的原因都写在这里。
+
+        电源的身份文本只有一份实现（:func:`domain.instruments.labels.supply_identity_text`）：
+        短标签、型号、完整序列号与设备键按已知字段拼好，卡片提示不另写一套。其它仪器仍按
+        “型号 / 厂商”给身份，未改登记方式的旧数据不会因为这条规则变样。地址作为连接信息
+        单独一行，不从身份码反解析。
+        """
         identity = device.identity
         lines: list[str] = [device_heading(device)]
-        if identity is not None:
+        if identity is not None and device.is_power_supply:
+            lines.append(
+                supply_identity_text(
+                    device.label, identity.model, identity.serial, identity.device_key
+                )
+            )
+            if device.idn:
+                lines.append(str(device.idn))
+        elif identity is not None:
             lines.append(f"{identity.model} / {identity.vendor}")
             if device.label:
                 lines.append(f"短标签 {device.label}")

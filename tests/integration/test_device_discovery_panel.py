@@ -590,8 +590,23 @@ class PowerSupplyDiscoveryTests(unittest.TestCase):
         for card in panel.cards():
             self.assertTrue(card.checkable)
             self.assertEqual(card.meta_label.text(), "DP832A · 电源")
-            self.assertTrue(card.code_label.text().startswith("PS/DP832A/"))
+            # 卡片正面的身份码就是短标签：不再拼 ``PS/型号/序列号``，电源没有“第几台”。
+            self.assertEqual(card.code_label.text(), card.title_label.text())
+            self.assertFalse(card.code_label.text().startswith("PS/"))
         self.assertTrue(panel.apply_btn.isEnabled())
+
+    def test_power_supply_tooltip_uses_the_domain_identity_text(self):
+        """电源悬浮提示与标签页、日志共用领域层的身份文本，不另拼一套。"""
+        panel = self.make_panel()
+
+        self.run_scan(panel)
+
+        tip = panel.card_tooltip("DP8B1519")
+        self.assertIn("DP8B1519（DP832A）", tip)
+        self.assertIn("序列号 DP8B214901519", tip)
+        self.assertIn("设备键 rigol technologies:dp8b214901519", tip)
+        # 地址只作为连接信息单独一行，不参与身份判定。
+        self.assertIn("地址 TCPIP0::192.168.1.102::inst0::INSTR", tip)
 
     def test_power_supply_card_with_a_label_has_no_extra_status(self):
         """迁移后的设备表只说明类别与短标签：卡片不再提示“没有旧槽位”。"""
@@ -859,7 +874,22 @@ class DeviceCardContentTests(unittest.TestCase):
         code, detail = device_code(self.device())
 
         self.assertEqual(code, "SG/SMW200A/105462")
-        self.assertIn("SG/SMW200A/105462", detail)
+        # 附注只写连接细节：身份码在卡片正面，不在提示里重复。
+        self.assertEqual(detail, "地址 TCPIP0::10.0.0.2::inst0::INSTR")
+
+    def test_power_supply_code_is_its_short_label(self):
+        """电源的身份码就是注册表短标签（= ``supply_id``），不是 ``PS/型号/序列号``。"""
+        supply = self.device(
+            identity=InstrumentIdentity.from_idn(DP832A_IDN),
+            idn=DP832A_IDN,
+            known_role="power_supply",
+            known_name="DP832A-1",
+            known_label="DP8B1519",
+        )
+
+        code, detail = device_code(supply)
+
+        self.assertEqual(code, "DP8B1519")
         self.assertIn("TCPIP0::10.0.0.2::inst0::INSTR", detail)
 
     def test_power_supply_and_spectrum_analyzer_have_their_own_prefixes(self):
@@ -878,6 +908,8 @@ class DeviceCardContentTests(unittest.TestCase):
 
         self.assertEqual(device_code(supply)[0], "PS/DP832A/DP8B214901519")
         self.assertEqual(device_code(spectrum)[0], "SA/4082F/QZNI000866")
+        # 旧设备表还没有标签：退回旧写法，绝不凭空造一个像短标签的字符串。
+        self.assertIsNone(supply.label)
 
     def test_unregistered_device_falls_back_to_the_unknown_role_code(self):
         device = self.device(known_name=None, known_role=None)
@@ -897,7 +929,8 @@ class DeviceCardContentTests(unittest.TestCase):
         code, detail = device_code(device, visitor_index=3)
 
         self.assertEqual(code, "未识别 #3")
-        self.assertIn("GARBAGE", detail)
+        # 读不出身份时也没有地址可写：失败原因由面板提示给出，附注为空。
+        self.assertEqual(detail, "")
         self.assertEqual(card_heading(device, visitor_index=3), "未识别设备 #3")
 
     def test_card_heading_and_model_follow_the_device(self):

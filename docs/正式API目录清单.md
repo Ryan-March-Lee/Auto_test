@@ -192,7 +192,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `application.inputs.result_reading` | 报告参数叠加（内部实现；输入必须是正式结果 DTO） |
 | `application.lifecycle` | 测量生命周期包 |
 | `domain.instruments` | 设备表领域包 |
-| `domain.instruments.labels` | 电源短标签生成与显示文本：序列号归一化复用、前缀提取、末四位与冲突扩展（纯计算，不写注册表；标签不含通道分隔符），以及标签页/下拉框的显示文本、详情与审计用的身份文本、日志里的通道名（短标签/CHx）与身份核对结论（日志与页面共用同一份） |
+| `domain.instruments.labels` | 电源短标签生成与显示文本：序列号归一化复用、前缀提取、末四位与冲突扩展（纯计算，不写注册表；标签不含通道分隔符），以及标签页/下拉框/设备卡片的显示文本、详情与审计用的身份文本、日志里的通道名（短标签/CHx）与身份核对结论（日志、页面与发现卡片共用同一份） |
 | `domain.instruments.models` | 仪器身份解析（序列号唯一标识）、设备类别与短标签字段、旧槽位识别（`is_legacy_power_supply_slot`，只读兼容，不得用于生成电源键）、地址别名与在线状态模型 |
 | `domain.models` | 运行、测试方案与会话生命周期模型；测量结果契约在 `application.dto` |
 | `infrastructure.filesystem.atomic_json` | 原子 JSON 写入 |
@@ -219,7 +219,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `presentation.qt.archival_view` | 归档结果分组控件：显示标题/说明并按提示启用“打开结果目录/测试报告”；位置由窗口注入；动态文案按纯文本渲染 |
 | `presentation.qt.config_form_state` | 配置表单状态 |
 | `presentation.qt.config_page` | 配置页面（编辑配置编写文档；向协调器提供 `ConfigurationPagePort` 窄接口） |
-| `presentation.qt.device_cards` | 设备发现的仪器展示卡片：上方仪器图片（等比缩放到同一视觉体积），下方设备名、型号与角色、缩减版设备码（`角色/型号/序列号`）；圆角矩形，点击卡片即选中 |
+| `presentation.qt.device_cards` | 设备发现的仪器展示卡片：上方仪器图片（等比缩放到同一视觉体积），下方设备名、型号与角色、缩减版身份码（电源用注册表短标签 `DP8B1519`，其它仪器 `角色/型号/序列号`）；圆角矩形，点击卡片即选中 |
 | `presentation.qt.device_discovery_panel` | 仪器连接配置框（设备发现）：扫描网段、以卡片展示已登记/未分配角色/未登记/无法识别结果、点击卡片即选中并应用（角色取自设备表）、显示当前已绑定设备、清除设备绑定；扫描线程只读探测，不改配置也不连接仪器 |
 | `presentation.qt.config_projection` | 配置编写文档（authoring document）到配置页控件的确定性投影：重置、逐字段投影、非法类型回落；正式 `test_plan` / `run_mapping` 只由 `configuration_authoring` 生成 |
 | `presentation.qt.configuration_authoring` | 配置页保存时的正式运行配置编写 |

@@ -233,7 +233,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `presentation.qt.archival_page` | 测量页面共享的归档状态生命周期：等待归档、保存中、结果展示、终止事件与运行切换后的旧摘要清理；不读文件、不判断产物可用性 |
 | `presentation.qt.archival_status` | 归档结果到页面文案与按钮状态的映射：无 Qt、不读文件、不判断路径存在，四类状态各有独立提示 |
 | `presentation.qt.archival_view` | 归档结果分组控件：显示标题/说明并按提示启用“打开结果目录/测试报告”；位置由窗口注入；动态文案按纯文本渲染 |
-| `presentation.qt.config_form_bindings` | 设备绑定的读取与规范化：`device_bindings` 到 `supply_id` 集合、步骤 5 过渡结构与只有地址的旧配置折叠、不可用记录的问题清单（纯数据：不读控件、不写配置、不碰 Qt） |
+| `presentation.qt.config_form_bindings` | 设备绑定的读取与规范化：`device_bindings` 到 `supply_id` 集合、步骤 5 过渡结构与只有地址的旧配置折叠、不可用记录的问题清单（记录里声明出的厂商/序列号都必须是 `device_key` 的一部分，任一片段对不上即不可用；纯数据：不读控件、不写配置、不碰 Qt） |
 | `presentation.qt.config_form_state` | 配置表单状态：按控件最小读取协议读出配置片段、合并为配置、给出页面自己的校验说明（设备绑定的读取与规范化在 `config_form_bindings`；正式 schema 由 `configuration_authoring` 构造） |
 | `presentation.qt.config_page` | 配置页面（编辑配置编写文档；向协调器提供 `ConfigurationPagePort` 窄接口） |
 | `presentation.qt.config_page_widgets` | 配置页面控件构建辅助（固定操作栏布局 + 页面共用的数值框/下拉框工厂；控件仍登记在页面上） |

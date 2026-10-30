@@ -21,6 +21,7 @@ from domain.instruments.models import (
     canonical_role,
     make_device_key,
     normalize_serial,
+    normalize_vendor,
 )
 
 # ``device_bindings`` 里的电源集合：键是 ``supply_id``（= 设备短标签），值是绑定记录。
@@ -98,21 +99,45 @@ def supply_id_problem(value: Any) -> str | None:
     return None
 
 
+def _identity_parts(device_key: str) -> tuple[str, str] | None:
+    """把 ``device_key`` 拆成 ``(厂商, 序列号)``（小写归一化）；不是该形式时返回 ``None``。
+
+    键由 :func:`domain.instruments.models.make_device_key` 拼成 ``厂商:序列号``，所以按
+    **最后**一个分隔符拆分：厂商标识本身带冒号时，序列号仍是最后一段。
+    """
+    if ":" not in device_key:
+        return None
+    vendor, serial = device_key.rsplit(":", 1)
+    return vendor.strip().casefold(), serial.strip().casefold()
+
+
 def _binding_identity_problem(record: Mapping[str, Any]) -> str | None:
     """返回一条绑定记录身份不自洽的原因；身份完整时返回 ``None``。
 
-    身份就是 ``device_key``（``厂商:序列号``）：记录必须能给出它，且它必须与记录里的
-    厂商/序列号一致。手改文件、旧版本写出的“地址 + 矛盾身份”不能进入可用绑定集合，
-    否则配置会连接到一台身份说不清（或身份与地址错配）的设备。
+    身份就是 ``device_key``（``厂商:序列号``）：记录必须能给出它，且记录里**每一个**
+    声明出来的身份片段（厂商、序列号）都必须与 ``device_key`` 的对应部分一致。只声明其中
+    一个时同样要核对——只看“两个都在”会放过“厂商写着 A、键指向 B”的记录；而声明了厂商
+    或序列号却给不出 ``厂商:序列号`` 形式的键时，身份无法核对，也算不自洽。
+
+    手改文件、旧版本写出的“地址 + 矛盾身份”不能进入可用绑定集合，否则配置会连接到一台
+    身份说不清（或身份与地址错配）的设备。只写 ``device_key``、不带厂商/序列号的记录仍然
+    可用：那时键是唯一身份，没有第二份取值需要核对。
     """
     identity = binding_device_key(record)
     if identity is None:
         return "缺少设备身份（device_key，或厂商 + 序列号）"
     device_key = str(record.get("device_key") or "").strip()
     if not device_key:
+        # 身份由厂商 + 序列号拼出（:func:`make_device_key`）：不存在第二份取值可核对。
         return None
-    vendor = str(record.get("vendor") or "").strip()
-    serial = str(record.get("serial") or "").strip()
+    vendor = normalize_vendor(record.get("vendor"))
+    serial = normalize_serial(record.get("serial"))
+    if not vendor and not serial:
+        return None
+    parts = _identity_parts(device_key)
+    if parts is None:
+        return f"设备身份不是 厂商:序列号 形式（{device_key}）"
+    key_vendor, key_serial = parts
     if vendor and serial:
         try:
             expected = make_device_key(vendor, serial)
@@ -121,12 +146,10 @@ def _binding_identity_problem(record: Mapping[str, Any]) -> str | None:
         if device_key.casefold() != expected:
             return f"设备身份与厂商/序列号不一致（{device_key} ≠ {expected}）"
         return None
-    if serial and ":" in device_key:
-        # 没有厂商时至少要求 ``device_key`` 携带的序列号与本次记录一致。
-        tail = device_key.rsplit(":", 1)[1].strip().casefold()
-        stable = normalize_serial(serial).casefold()
-        if tail and stable and tail != stable:
-            return f"设备身份与序列号不一致（{device_key} ≠ …{normalize_serial(serial)}）"
+    if vendor and vendor.casefold() != key_vendor:
+        return f"设备身份与厂商不一致（{device_key} ≠ {vendor.casefold()}:…）"
+    if serial and serial.casefold() != key_serial:
+        return f"设备身份与序列号不一致（{device_key} ≠ …{serial}）"
     return None
 
 

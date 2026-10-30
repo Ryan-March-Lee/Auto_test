@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from domain.instruments.labels import supply_identity_text
 
+from .config_page_widgets import combo_box, spin_box
 from .config_projection import (
     DRIVER_POWER_SOURCE_VALUES,
     POWER_SUPPLY_ROLES,
@@ -31,10 +32,19 @@ from .config_projection import (
     supply_option_label,
 )
 from .configuration_authoring import DUT_CHANNEL_ROLES
-from .input_controls import combo_box, spin_box
 
 # 每台电源固定两个通道：通道名既是配置里的键，也是标签页内通道分组框的标题。
 POWER_SUPPLY_CHANNELS = ("CH1", "CH2")
+
+__all__ = [
+    "POWER_SUPPLY_CHANNELS",
+    "build_power_section",
+    "channel_map",
+    "current_power_tab_key",
+    "power_choice_combo",
+    "rebuild_power_tabs",
+    "spin_value",
+]
 
 
 def spin_value(value) -> float:
@@ -49,7 +59,7 @@ def spin_value(value) -> float:
     return number if math.isfinite(number) else 0.0
 
 
-def entry_channels(entry) -> dict:
+def _entry_channels(entry) -> dict:
     """取出一个电源条目的 ``通道 -> 参数`` 映射；不是对象或没有映射时返回空字典。
 
     条目本身是一份完整电源配置（``{model, channels: {...}}``）。
@@ -71,8 +81,8 @@ def channel_map(source, preserved) -> dict:
     因此 ``preserve=False`` 时 ``preserved`` 为空，结果就是配置本身；``preserve=True``
     时控件快照优先。判定按 ``supply_id`` + 通道键，与标签页位置无关。
     """
-    channels = dict(entry_channels(source))
-    for channel, value in entry_channels(preserved).items():
+    channels = dict(_entry_channels(source))
+    for channel, value in _entry_channels(preserved).items():
         if isinstance(value, dict):
             merged = dict(channels.get(channel) or {})
             merged.update(value)
@@ -193,33 +203,34 @@ def rebuild_power_tabs(page, *, sources, preserved) -> None:
     参数写到另一台上。通道参数按**配置键**取回（不是按标签页位置），当前选中的标签页
     也按**电源键**恢复：某台电源被移除或新增时，操作者仍然停在原来那台设备上。
     ``preserved`` 为空是回填路径，以新配置为准，不沿用重建前的残留值。
+
+    页面入口已经确认电源分区存在（``ConfigPage._rebuild_power_tabs``），因此这里直接
+    使用 ``page.power_tabs``：分区不存在属于调用方的编程错误，不静默返回。
     """
-    tabs = getattr(page, "power_tabs", None)
-    if tabs is None:
-        return
+    tabs = page.power_tabs
     current_key = current_power_tab_key(page)
     tabs.clear()
     page.power_config_widgets = {}
     for key, source in sources.items():
         source = source if isinstance(source, dict) else {}
-        add_power_tab(page, key, source, channel_map(source, preserved.get(key)))
+        _add_power_tab(page, key, source, channel_map(source, preserved.get(key)))
     if current_key in page.power_config_widgets:
         tabs.setCurrentIndex(tabs.indexOf(page.power_config_widgets[current_key]["page"]))
 
 
 def current_power_tab_key(page) -> str | None:
     """当前选中电源标签页的电源键；没有标签页时返回 ``None``。"""
-    tabs = getattr(page, "power_tabs", None)
-    if tabs is None or not tabs.count():
+    tabs = page.power_tabs
+    if not tabs.count():
         return None
     index = tabs.currentIndex()
-    for key, record in getattr(page, "power_config_widgets", {}).items():
+    for key, record in page.power_config_widgets.items():
         if record.get("page") is tabs.widget(index):
             return key
     return None
 
 
-def add_power_tab(page, key, source, channels) -> None:
+def _add_power_tab(page, key, source, channels) -> None:
     """为一条电源配置建一个标签页；标题是短标签加型号（``DP8B1519（DP832A）``）。
 
     标签页按配置键（``supply_id``）建，标题只用于显示：设备数量与身份都来自配置与

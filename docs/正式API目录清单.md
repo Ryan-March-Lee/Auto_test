@@ -235,7 +235,8 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `presentation.qt.archival_view` | 归档结果分组控件：显示标题/说明并按提示启用“打开结果目录/测试报告”；位置由窗口注入；动态文案按纯文本渲染 |
 | `presentation.qt.config_form_state` | 配置表单状态 |
 | `presentation.qt.config_page` | 配置页面（编辑配置编写文档；向协调器提供 `ConfigurationPagePort` 窄接口） |
-| `presentation.qt.config_page_widgets` | 配置页面控件构建辅助（仅负责固定操作栏布局） |
+| `presentation.qt.config_page_widgets` | 配置页面控件构建辅助（固定操作栏布局 + 页面共用的数值框/下拉框工厂；控件仍登记在页面上） |
+| `presentation.qt.config_power_section` | 配置页电源分区的控件构建：按电源键分页的通道参数标签页与电源分配设置表单，控件仍登记在页面上（页面负责信号连接、派生界面状态与配置读写） |
 | `presentation.qt.connection_page` | 仪表配置页：欢迎页选定测试模式后的整屏页面（不登记进标签栏），大字号页标题、标题下居中的扫描网段与扫描方式、勾选并应用本次测试所需的设备（“查找设备”是结果框正中的落点）、框外右下的“连接仪器”，应用后由“下一步”进入仪器配置页；设备绑定的写入与派生界面（电源标签页、电源分配可选项）仍归 config_page |
 | `presentation.qt.device_cards` | 设备发现的仪器展示卡片：第一行居中放大的仪器名（型号，如 `DP832A`、`SMW200A`），第二行仪器图片（不加底板、不描边，等比缩放到同一视觉体积），最下面是加粗放大的设备码缩写（电源用注册表短标签 `DP8B1519`，其它仪器 `角色缩写/型号/序列号`）；圆角矩形，点击卡片即选中 |
 | `presentation.qt.device_discovery_panel` | 仪器连接配置框（设备发现）：扫描网段、结果框（未查找时浅灰底 + 框中央的“查找设备”，点下去后按钮与灰底收走、开始加载设备）、以卡片展示已登记/未分配角色/未登记/无法识别结果、点击卡片即选中并应用（角色取自设备表）、显示当前已绑定设备、清除设备绑定；扫描线程只读探测，不改配置也不连接仪器 |
@@ -245,7 +246,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `presentation.qt.connection_dialog` | 连接确认对话框：`build_diagram()` 按需渲染连接图；连接图不可用时在对话框内说明原因并禁用确认按钮 |
 | `presentation.qt.run_history_page` | 历史运行与结果管理页（只构造 `ExportRequest`，按 `ResultExportServicePort` 注入导出用例；运行/阶段/产物状态来自 `HistoryViewModel`，失败产物重新生成走 `RunHistoryServicePort`；用户文案由页面生成） |
 | `presentation.qt.history_view_model` | 历史查看只读视图模型：结果列表、运行摘要、选中项、已加载结果与频率浏览（无 Qt、无路径） |
-| `presentation.qt.input_controls` | 通用输入控件 |
+| `presentation.qt.input_controls` | 通用输入控件类（只提供输入行为；页面共用的构建工厂在 `config_page_widgets`） |
 | `presentation.qt.measurement_state` | 测量状态对象 |
 | `presentation.qt.measurement_worker_factories` | 测量 worker 工厂 |
 | `presentation.qt.realtime_buffer` | 实时数据缓冲 |

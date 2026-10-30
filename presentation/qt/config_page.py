@@ -61,10 +61,9 @@ from .config_power_section import (
     current_power_tab_key,
     rebuild_power_tabs,
 )
+from .config_page_widgets import build_action_bar, combo_box, spin_box
 from .device_discovery_panel import role_label
-from .input_controls import combo_box, spin_box
 from .pages import PageControllerBindingMixin
-from .config_page_widgets import build_action_bar
 from .theme import set_button_variant
 
 __all__ = [

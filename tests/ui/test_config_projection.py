@@ -14,6 +14,7 @@ from presentation.qt.config_projection import (
     DEFAULT_COMPRESSION_TYPE,
     DEFAULT_MAX_INPUT_POWER,
     DEFAULT_PA_UNIT_COUNT,
+    DEFAULT_POWER_CHANNEL_VALUE,
     DEFAULT_SIGNAL_SOURCE,
     DEFAULT_TEST_FREQUENCIES,
     POWER_ASSIGNMENT_SLOTS,
@@ -451,6 +452,21 @@ class ConfigProjectionTests(unittest.TestCase):
                 combo = form.power_assignment_widgets[key]
                 self.assertEqual(combo.count(), 2)
                 self.assertEqual(combo.currentData(), "DP8B1519")
+
+    def test_reset_uses_the_shared_channel_baseline(self):
+        """通道数值重置到空配置基线的值，与构建模块的非法值回落同源。"""
+        form = FakeForm()
+        for record in form.power_config_widgets.values():
+            for controls in record["channels"].values():
+                controls["voltage"].setValue(9.5)
+                controls["current_protection"].setValue(4.0)
+
+        reset_control_widgets(form, supplies=["DP8B1519"])
+
+        channel = form.power_config_widgets["DP8B1519"]["channels"]["CH1"]
+        for key in ("voltage", "current_protection"):
+            with self.subTest(control=key):
+                self.assertEqual(channel[key].value(), DEFAULT_POWER_CHANNEL_VALUE)
 
     def test_projection_ignores_a_previous_control_selection(self):
         """重置是无状态的：上一次的控件选择不参与缺省决策，只按当前绑定取第一台。"""

@@ -36,7 +36,7 @@ The runner resolves the interpreter from `.env`, puts the Conda runtime director
 Rules:
 
 - A pure UI task must **not** run the full suite; `tools/run_tests.py --layer ui` is the expected verification.
-- Every scope still runs the repository gates (`tests/test_architecture_dependencies.py`, `test_presentation_boundaries.py`, `test_public_api_inventory.py`, `test_exception_taxonomy.py`, `test_static_quality_gate.py`, `test_runtime_dependency_contract.py`); `--layer ui`/`integration` run them before their tests, and `tests/test_test_runner_contract.py` keeps that order.
+- Every scope still runs the repository gates (`tests/test_architecture_dependencies.py`, `test_presentation_boundaries.py`, `test_public_api_inventory.py`, `test_run_contract_inventory.py`, `test_exception_taxonomy.py`, `test_static_quality_gate.py`, `test_runtime_dependency_contract.py`); `--layer ui`/`integration` run them before their tests, and `tests/test_test_runner_contract.py` keeps that order.
 - `tests/ui` may import only `presentation`, `application` DTO/ports and Qt; importing `app`/`infrastructure`/hardware fails `test_presentation_boundaries`. Real-backend UI scenarios belong in `tests/integration`.
 - If the boundary is unclear, or a DTO/port signature changed, run the full suite. `tools/run_tests.py --parallel` runs the full suite with pytest-xdist (~1 min).
 

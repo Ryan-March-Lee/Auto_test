@@ -61,6 +61,15 @@ class TestRunnerPlanTests(unittest.TestCase):
         self.assertIn("tests/ui", plan[3].arguments)
         self.assertNotIn("tests/integration", _flatten(plan))
 
+    def test_the_run_contract_inventory_is_a_repository_gate(self):
+        """无运行契约调用方清单是架构冻结，UI/集成改动不得绕过它。"""
+        self.assertIn("tests.test_run_contract_inventory", GATE_MODULES)
+        for layer in ("ui", "integration"):
+            with self.subTest(layer=layer):
+                plan = build_plan(layer=layer)
+                gate_step = next(step for step in plan if step.label == "仓库门禁")
+                self.assertIn("tests.test_run_contract_inventory", gate_step.arguments)
+
     def test_an_integration_change_adds_the_wiring_tests(self):
         plan = build_plan(layer="integration")
         self.assertEqual(

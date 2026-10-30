@@ -54,6 +54,7 @@ GATE_MODULES = (
     "tests.test_architecture_dependencies",
     "tests.test_presentation_boundaries",
     "tests.test_public_api_inventory",
+    "tests.test_run_contract_inventory",
     "tests.test_exception_taxonomy",
     "tests.test_static_quality_gate",
     "tests.test_runtime_dependency_contract",

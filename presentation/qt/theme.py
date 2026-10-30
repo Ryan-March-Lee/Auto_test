@@ -57,6 +57,9 @@ TOKENS = {
     "primary_pressed": "#1E40AF",
     "primary_soft": "#EFF6FF",
     "primary_soft_border": "#DBEAFE",
+    # 强调填充色：欢迎页模式按钮悬停时从左侧涌入的圆形色块（emerald-500）。
+    "accent": "#10B981",
+    "accent_pressed": "#047857",
     # 语义色
     "success": "#16A34A",
     "success_hover": "#15803D",
@@ -283,30 +286,9 @@ QLabel#welcomeSubtitle {
     font-size: 13pt;
     padding: 0 18px;
 }
-/* 按钮只包住文字：字号大、内边距小、圆角收窄，避免大白块里空荡荡。 */
-QPushButton#welcomeChoice {
-    background-color: #FFFFFF;
-    border: 1px solid #FFFFFF;
-    border-bottom: 2px solid $primary_soft_border;
-    border-radius: 6px;
-    color: $primary_pressed;
-    font-size: 13pt;
-    font-weight: 600;
-    min-height: 40px;
-    padding: 4px 16px 3px 16px;
-}
-QPushButton#welcomeChoice:hover {
-    background-color: $primary;
-    border-color: $primary;
-    border-bottom-color: $primary_pressed;
-    color: #FFFFFF;
-}
-QPushButton#welcomeChoice:pressed {
-    background-color: $primary_pressed;
-    border-color: $primary_pressed;
-    border-bottom-color: $primary_soft_border;
-    color: #FFFFFF;
-}
+/* 模式按钮（#welcomeChoice）在这里没有规则：它由 ``welcome_page.ModeChoiceButton``
+   自绘，悬停时一块圆形色块从左侧涌入并放大、箭头同时旋转。伪元素、``transition`` 与
+   ``transform`` 都不在 QSS 的能力里，整块画下来才做得出来；用到的颜色仍取自 TOKENS。 */
 
 /* ===== 主标签栏（分段选择器） ===== */
 QTabWidget#mainTabs::pane {

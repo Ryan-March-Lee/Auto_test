@@ -13,7 +13,6 @@ from typing import Any
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication,
-    QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -129,7 +128,7 @@ class MainWindow(QMainWindow):
         return self.coordinator.realtime_buffer.current_index
 
     def init_ui(self):
-        """初始化用户界面：顶部应用栏 + 欢迎页/工作区堆栈 + 右侧纵向状态面板。"""
+        """初始化用户界面：欢迎页/工作区堆栈 + 右侧纵向状态面板（标签栏承载模式徽标）。"""
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
@@ -147,6 +146,13 @@ class MainWindow(QMainWindow):
         self.tab_widget.setDocumentMode(True)
         left_layout.addWidget(self.tab_widget)
         self._register_pages()
+        # 测试模式徽标并入标签栏右侧：系统名与版本号已由窗口标题栏显示，不再重复一行。
+        self.tab_widget.setCornerWidget(
+            self._build_mode_badge(), Qt.Corner.TopRightCorner
+        )
+        # 分段选择器样式的标签栏不要底边基线：Qt 会在标签栏矩形上描一圈 1px 浅灰框，
+        # 标签栏铺满整行时看不出来，宽度变化后就会露出一个空的长灰框。
+        self.tab_widget.tabBar().setDrawBase(False)
 
         self.workspace_page = QWidget()
         workspace_layout = QVBoxLayout(self.workspace_page)
@@ -169,32 +175,15 @@ class MainWindow(QMainWindow):
         central_layout = QVBoxLayout(central_widget)
         central_layout.setContentsMargins(0, 0, 0, 0)
         central_layout.setSpacing(0)
-        central_layout.addWidget(self._build_app_header())
         central_layout.addWidget(self.view_stack)
 
         self.view_stack.setCurrentWidget(self.welcome_page)
 
-    def _build_app_header(self):
-        """顶部应用栏：系统名、当前测试模式徽标与版本号（只读展示）。"""
-        header = QWidget()
-        header.setObjectName("appHeader")
-        layout = QHBoxLayout(header)
-        layout.setContentsMargins(16, 10, 16, 10)
-        layout.setSpacing(10)
-        title = QLabel("PA 自动测试系统")
-        title.setObjectName("appTitle")
-        layout.addWidget(title)
-        subtitle = QLabel("功放自动化测试与数据归档")
-        subtitle.setObjectName("appSubtitle")
-        layout.addWidget(subtitle)
-        layout.addStretch(1)
+    def _build_mode_badge(self):
+        """当前测试模式徽标（只读展示），显示在标签栏最右侧。"""
         self.mode_badge = QLabel("未选择测试模式")
         self.mode_badge.setObjectName("appModeBadge")
-        layout.addWidget(self.mode_badge)
-        version = QLabel("v1.0")
-        version.setObjectName("appSubtitle")
-        layout.addWidget(version)
-        return header
+        return self.mode_badge
 
     def _enter_test_mode(self, driver_enabled: bool) -> None:
         config = apply_test_mode(dict(self.coordinator.load_configuration()), driver_enabled)

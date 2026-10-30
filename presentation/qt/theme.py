@@ -252,20 +252,7 @@ QMenu::separator {
     margin: 4px 8px;
 }
 
-/* ===== 顶部应用栏 ===== */
-QWidget#appHeader {
-    background-color: $surface;
-    border-bottom: 1px solid $border;
-}
-QLabel#appTitle {
-    font-size: $font_title;
-    font-weight: 700;
-    color: $text;
-}
-QLabel#appSubtitle {
-    font-size: $font_small;
-    color: $text_secondary;
-}
+/* ===== 测试模式徽标（标签栏右侧） ===== */
 QLabel#appModeBadge {
     background-color: $primary_soft;
     border: 1px solid $primary_soft_border;

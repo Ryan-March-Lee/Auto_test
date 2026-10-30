@@ -5,16 +5,24 @@
 （:mod:`presentation.qt.config_page`）读出后传入，控件仍登记在页面上——页面负责信号
 连接、派生界面状态（PA 单元可见性、驱放供电方式）和配置读写。
 
-这里只按配置条目的**字段位置**读出要显示的数值，并把不正确的类型回落到与投影一致的
-缺省值（见 :func:`spin_value` 与通道角色回退）：那是显示口径，不是校验。本模块不校验
-配置、不迁移旧字段、不写配置、也不读文件，更不持有页面状态；字段的校验与编写仍归
-:mod:`presentation.qt.config_projection` 与
-:mod:`presentation.qt.configuration_authoring`，「槽位 -> 配置路径」的映射留在页面
-（``ConfigPage._assignment_entries``）。重建标签页时「保留操作者刚填的参数」用到的合并
-规则也在这里（见 :func:`channel_map`），它只合并控件快照与配置条目，不判断字段语义。
+页面传进来的输入都是显式声明的结构（见 :data:`PowerSupplySources`、
+:data:`PowerSupplyChoices` 与 :data:`PowerAssignmentEntries`）：键是电源键或槽位名，
+值是配置条目里本模块要显示的字段，本模块不从控件或文件里另外取状态。这里只按字段位置
+读出要显示的数值，并把不正确的类型回落到与投影一致的缺省值（见 :func:`spin_value` 与
+通道角色回退）：那是显示口径，不是校验。本模块不校验配置、不迁移旧字段、不写配置、也
+不读文件；字段的回填仍归 :mod:`presentation.qt.config_projection`，编写归
+:mod:`presentation.qt.configuration_authoring`，正式校验在
+:mod:`domain.configuration.rules` 与 :mod:`infrastructure.config.validation`；
+「槽位 -> 配置路径」的映射留在页面（``ConfigPage._assignment_entries``）。
+
+通道数值框的上下界（``_VOLTAGE_LIMITS`` / ``_CURRENT_LIMITS``）只约束输入框能填到
+哪里，比正式校验更严：界外的值由控件夹到界内，这里不报错也不改配置。重建标签页时
+「保留操作者刚填的参数」用到的合并规则也在这里（见 :func:`channel_map`），它只合并
+控件快照与配置条目，不判断字段语义。
 """
 
 import math
+from typing import Any, Mapping, TypedDict
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -26,6 +34,7 @@ from domain.instruments.labels import supply_identity_text
 
 from .config_page_widgets import combo_box, spin_box
 from .config_projection import (
+    DEFAULT_POWER_CHANNEL_VALUE,
     DRIVER_POWER_SOURCE_VALUES,
     POWER_SUPPLY_ROLES,
     apply_power_choice,
@@ -36,8 +45,54 @@ from .configuration_authoring import DUT_CHANNEL_ROLES
 # 每台电源固定两个通道：通道名既是配置里的键，也是标签页内通道分组框的标题。
 POWER_SUPPLY_CHANNELS = ("CH1", "CH2")
 
+# 通道数值框的显示上下界：只约束输入框能填到哪里。正式校验的合法范围在
+# domain.configuration.rules（只要求有限数值），因此界外的配置值在控件里被夹到界内，
+# 本模块不因此报错，也不改写配置。
+_VOLTAGE_LIMITS = (0.0, 50.0)
+_CURRENT_LIMITS = (0.0, 10.0)
+
+
+class ChannelDisplayFields(TypedDict, total=False):
+    """一个电源通道里本模块要显示的字段。
+
+    值原样取自配置条目，取值时的类型回落由 :func:`spin_value` 与通道角色回退负责；
+    它不是校验清单：缺字段或类型不对只会显示成缺省值。
+    """
+
+    role: Any
+    voltage: Mapping[str, Any]
+    current: Mapping[str, Any]
+
+
+class PowerSupplyEntry(TypedDict, total=False):
+    """一个电源标签页要显示的一条条目：身份字段 + 通道参数。
+
+    身份字段只用于显示（标签、型号，提示里的序列号与设备键），缺哪个就少显示哪段。
+    """
+
+    label: Any
+    model: Any
+    serial: Any
+    device_key: Any
+    channels: Mapping[str, ChannelDisplayFields]
+
+
+# 页面交给构建模块的三份输入（都是显式结构，不从控件或文件里再读）：
+# - ``sources``：电源键 -> 显示条目，键就是配置里的电源键（旧槽位是 ``PS1`` 这类旧键）。
+PowerSupplySources = Mapping[str, PowerSupplyEntry]
+# - ``choices``：电源分配下拉框的可选项，``supply_id -> 显示条目``，只来自本次绑定。
+PowerSupplyChoices = Mapping[str, Mapping[str, Any]]
+# - ``assignment_entries``：槽位 -> 配置里该槽位已有的引用条目；配置没写这条分配时
+#   没有这个键（读出来是 ``None``），“声明了但引用为空”则是另一种值。
+PowerAssignmentEntries = Mapping[str, Any]
+
 __all__ = [
+    "ChannelDisplayFields",
     "POWER_SUPPLY_CHANNELS",
+    "PowerAssignmentEntries",
+    "PowerSupplyChoices",
+    "PowerSupplyEntry",
+    "PowerSupplySources",
     "build_power_section",
     "channel_map",
     "current_power_tab_key",
@@ -47,19 +102,21 @@ __all__ = [
 ]
 
 
-def spin_value(value) -> float:
-    """通道数值只接受非 bool 的有限数字；其它类型（字符串/布尔/NaN）按 0 处理。
+def spin_value(value: Any) -> float:
+    """通道数值只接受非 bool 的有限数字；其它类型（字符串/布尔/NaN）按缺省值处理。
 
     配置页也用于回填冻结配置：类型不正确的字段不应让重建标签页崩溃，而应落到与投影
-    一致的默认值，交给正式校验报告。
+    一致的默认值，交给正式校验报告。缺省值取自
+    :data:`presentation.qt.config_projection.DEFAULT_POWER_CHANNEL_VALUE`——投影重置
+    控件到空配置基线时用的也是这个数，因此“非法字段”与“配置没写这个字段”显示成同一个值。
     """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return 0.0
+        return DEFAULT_POWER_CHANNEL_VALUE
     number = float(value)
-    return number if math.isfinite(number) else 0.0
+    return number if math.isfinite(number) else DEFAULT_POWER_CHANNEL_VALUE
 
 
-def _entry_channels(entry) -> dict:
+def _entry_channels(entry: Any) -> Mapping[str, Any]:
     """取出一个电源条目的 ``通道 -> 参数`` 映射；不是对象或没有映射时返回空字典。
 
     条目本身是一份完整电源配置（``{model, channels: {...}}``）。
@@ -68,7 +125,7 @@ def _entry_channels(entry) -> dict:
     return channels if isinstance(channels, dict) else {}
 
 
-def channel_map(source, preserved) -> dict:
+def channel_map(source: Any, preserved: Any) -> dict:
     """合并配置条目与重建前控件快照的通道参数，供重建标签页时建控件。
 
     ``source`` 是这次要显示的配置条目，``preserved`` 是重建前从控件读到的同类条目
@@ -90,11 +147,12 @@ def channel_map(source, preserved) -> dict:
     return channels
 
 
-def power_choice_combo(choices, entry):
+def power_choice_combo(choices: PowerSupplyChoices, entry: Any):
     """电源分配下拉框：只把配置里的真实引用回填到当前可选项。
 
-    引用按 ``supply_id`` 读取（旧配置只有 ``name`` 时读一次，见
-    :func:`config_form_state.assignment_supply_id`），并且必须**出现在本次绑定的
+    引用按 ``supply_id`` 读取（旧配置只有 ``name`` 时读一次，规则只有一处实现：
+    :func:`domain.configuration.rules.assignment_supply_id`，由
+    :mod:`presentation.qt.config_form_state` 再导出），并且必须**出现在本次绑定的
     可选项里**才会被选中。配置写了引用、但那台电源本次没有绑定（含还没迁移的旧槽位
     ``PS1``）时保持空选择，交给校验报告——静默停在第一项会把“这台电源已经不在”
     显示成“换成了另一台电源”。
@@ -102,8 +160,8 @@ def power_choice_combo(choices, entry):
     显示文本是 ``DP8B1519（DP832A）`` 这样的短标签加型号，业务值放在 ``itemData``
     （``supply_id``）；选中与读取都只看数据，不从显示字符串反解析身份。
 
-    两种状态严格分开（见 :func:`config_form_state.assignment_declared`）：配置里
-    **没有**这条分配时落到第一台可用电源；配置里**有**这条分配但引用为空
+    两种状态严格分开（见 :func:`presentation.qt.config_form_state.assignment_declared`）：
+    配置里**没有**这条分配时落到第一台可用电源；配置里**有**这条分配但引用为空
     （``supply_id: null``）时保持空选择，不能按缺省规则补一台。判定与整份配置回填
     共用 :func:`presentation.qt.config_projection.apply_power_choice`，所有槽位
     （含驱动功放）用同一条缺省规则；驱动功放是否启用由
@@ -115,13 +173,13 @@ def power_choice_combo(choices, entry):
 
 
 def build_power_section(
-    page,
-    layout,
+    page: Any,
+    layout: Any,
     *,
-    sources,
-    choices,
-    assignment_entries,
-    driver_power_source,
+    sources: PowerSupplySources,
+    choices: PowerSupplyChoices,
+    assignment_entries: PowerAssignmentEntries,
+    driver_power_source: Any,
 ) -> None:
     """构建电源详细配置与电源分配设置，并把页面要读写的控件登记到 ``page``。
 
@@ -196,7 +254,9 @@ def build_power_section(
     }
 
 
-def rebuild_power_tabs(page, *, sources, preserved) -> None:
+def rebuild_power_tabs(
+    page: Any, *, sources: PowerSupplySources, preserved: Mapping[str, Any]
+) -> None:
     """按电源键重建标签页，并用 ``preserved`` 保留操作者刚填的通道参数。
 
     电源数量变化（应用/清除绑定、加载另一份配置）后重建，避免按位置把某一台设备的
@@ -218,7 +278,7 @@ def rebuild_power_tabs(page, *, sources, preserved) -> None:
         tabs.setCurrentIndex(tabs.indexOf(page.power_config_widgets[current_key]["page"]))
 
 
-def current_power_tab_key(page) -> str | None:
+def current_power_tab_key(page: Any) -> str | None:
     """当前选中电源标签页的电源键；没有标签页时返回 ``None``。"""
     tabs = page.power_tabs
     if not tabs.count():
@@ -230,7 +290,12 @@ def current_power_tab_key(page) -> str | None:
     return None
 
 
-def _add_power_tab(page, key, source, channels) -> None:
+def _add_power_tab(
+    page: Any,
+    key: str,
+    source: Mapping[str, Any],
+    channels: Mapping[str, Any],
+) -> None:
     """为一条电源配置建一个标签页；标题是短标签加型号（``DP8B1519（DP832A）``）。
 
     标签页按配置键（``supply_id``）建，标题只用于显示：设备数量与身份都来自配置与
@@ -265,11 +330,15 @@ def _add_power_tab(page, key, source, channels) -> None:
             role = DUT_CHANNEL_ROLES.get(channel, POWER_SUPPLY_ROLES[0])
         controls = {
             "role": combo_box(POWER_SUPPLY_ROLES, role),
-            "voltage": spin_box(spin_value(voltage.get("value")), 0, 50),
-            "voltage_protection": spin_box(spin_value(voltage.get("protection")), 0, 50),
+            "voltage": spin_box(spin_value(voltage.get("value")), *_VOLTAGE_LIMITS),
+            "voltage_protection": spin_box(
+                spin_value(voltage.get("protection")), *_VOLTAGE_LIMITS
+            ),
             "voltage_protection_enabled": QCheckBox("启用"),
-            "current": spin_box(spin_value(current.get("value")), 0, 10),
-            "current_protection": spin_box(spin_value(current.get("protection")), 0, 10),
+            "current": spin_box(spin_value(current.get("value")), *_CURRENT_LIMITS),
+            "current_protection": spin_box(
+                spin_value(current.get("protection")), *_CURRENT_LIMITS
+            ),
             "current_protection_enabled": QCheckBox("启用"),
         }
         controls["voltage_protection_enabled"].setChecked(

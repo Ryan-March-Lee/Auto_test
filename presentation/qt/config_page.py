@@ -57,6 +57,9 @@ from .config_projection import (
     project_authoring_config,
 )
 from .config_power_section import (
+    PowerAssignmentEntries,
+    PowerSupplyChoices,
+    PowerSupplySources,
     build_power_section,
     current_power_tab_key,
     rebuild_power_tabs,
@@ -485,7 +488,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             driver_power_source=self.driver_power_source,
         )
 
-    def _assignment_entries(self) -> dict:
+    def _assignment_entries(self) -> PowerAssignmentEntries:
         """电源分配各槽位在配置里的引用条目；``None`` 表示配置没有写这条分配。
 
         “条目缺失”与“声明了但引用为空”在回填时是两回事：前者按缺省规则选第一台可用
@@ -510,7 +513,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             "pa_unit3_power": dut_supply.get("peaking2"),
         }
 
-    def _power_supply_sources(self, supplies=None) -> dict[str, dict]:
+    def _power_supply_sources(self, supplies=None) -> PowerSupplySources:
         """电源标签页要显示的条目：配置里已有的键 + 本次已绑定的 ``supply_id``。
 
         配置条目保留各自未知字段与通道参数；绑定记录只补身份字段（短标签、型号、序列
@@ -682,7 +685,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         data = combo.itemData(index) if isinstance(index, int) and index >= 0 else None
         return data.strip() if isinstance(data, str) and data.strip() else ""
 
-    def _power_supply_choices(self) -> dict[str, dict]:
+    def _power_supply_choices(self) -> PowerSupplyChoices:
         """电源分配下拉框的可选项：当前绑定的电源，带真实设备的型号用于显示。"""
         return bound_power_supply_entries(self.device_bindings)
 

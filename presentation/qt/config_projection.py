@@ -50,6 +50,10 @@ DRIVER_POWER_SOURCE_LABELS = {"dc_supply": "直流电源", "external_ac": "自�
 DRIVER_POWER_SOURCE_VALUES = tuple(DRIVER_POWER_SOURCE_LABELS.values())
 DEFAULT_MAX_INPUT_POWER = 33.5
 DEFAULT_PA_UNIT_COUNT = "2"
+# 电源通道的空配置基线：重置时把工作值/保护值填成它，构建模块把非法或缺失的字段也显示
+# 成它（见 :func:`presentation.qt.config_power_section.spin_value`），因此“没写这个字段”
+# 与“字段类型不对”在页面上是同一个显示值，规则只有一处。
+DEFAULT_POWER_CHANNEL_VALUE = 0.0
 # 电源分配组合框的槽位（驱动功放 + 三个 PA 单元）。槽位是界面上的接线位置，不是电源
 # 编号：每个槽位选哪台电源只来自配置引用或设备绑定，没有固定的 ``PS1``..``PS4`` 默认值。
 # 重置时按这份槽位列表逐项恢复，因此槽位数量不会因为电源设备的增减而变化。
@@ -262,7 +266,7 @@ def _reset_power_supply_channels(widgets: Any) -> None:
     for record in getattr(widgets, "power_config_widgets", {}).values():
         for channel, controls in record.get("channels", {}).items():
             for key in ("voltage", "voltage_protection", "current", "current_protection"):
-                controls[key].setValue(0.0)
+                controls[key].setValue(DEFAULT_POWER_CHANNEL_VALUE)
             for key in ("voltage_protection_enabled", "current_protection_enabled"):
                 controls[key].setChecked(False)
             controls["role"].setCurrentText(
@@ -454,6 +458,7 @@ __all__ = [
     "DRIVER_POWER_SOURCE_VALUES",
     "DEFAULT_MAX_INPUT_POWER",
     "DEFAULT_PA_UNIT_COUNT",
+    "DEFAULT_POWER_CHANNEL_VALUE",
     "DEFAULT_SIGNAL_SOURCE",
     "DEFAULT_TEST_FREQUENCIES",
     "POWER_ASSIGNMENT_SLOTS",

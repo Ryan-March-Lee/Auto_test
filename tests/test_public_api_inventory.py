@@ -407,7 +407,7 @@ INTERNAL_MODULES = {
     "presentation.qt.connection_page": "仪器连接配置页：欢迎页选定测试模式后的整屏页面，扫描并应用本次测试所需设备（绑定写入与派生界面归配置页），完成后进入仪器配置页",
     "presentation.qt.device_cards": "设备发现的仪器展示卡片：第一行居中放大的仪器名（型号）、第二行仪器图片（不垫底板不描边）、最下面加粗放大的设备码缩写；点击卡片即选中",
     "presentation.qt.device_discovery_panel": "设备发现面板：扫描网段、以卡片展示按设备表登记的角色可应用的设备（含未知设备标记）",
-    "presentation.qt.scan_card": "“查找设备”的卡片按钮：自绘的深色卡片，正中的渐变标题写着“查找设备”，内部有光带、扫描线与粒子在动；鼠标悬浮不改变外观，点击行为由设备发现面板接手",
+    "presentation.qt.scan_card": "“查找设备”的卡片按钮：自绘的深色卡片，正中的渐变标题写着“查找设备”，内部有光带、扫描线与粒子在动；悬停时卡片底下的渐变底卡转出去、霓虹光斑加厚，点击行为由设备发现面板接手",
     "presentation.qt.config_projection": "正式配置到配置页控件的确定性投影",
     "presentation.qt.configuration_authoring": "配置页保存时的正式运行配置编写",
     "presentation.qt.connection_diagrams": "连接图渲染",

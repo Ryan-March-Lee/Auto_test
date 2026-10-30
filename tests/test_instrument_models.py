@@ -33,6 +33,7 @@ from domain.instruments.models import (
     InstrumentEndpoint,
     InstrumentIdentity,
     canonical_role,
+    is_legacy_power_supply_slot,
     make_device_key,
     normalize_role,
 )
@@ -125,6 +126,18 @@ class RoleTaxonomyTests(unittest.TestCase):
         for value in (None, "", "amplifier", "PS5"):
             with self.subTest(value=value):
                 self.assertIsNone(canonical_role(value))
+
+    def test_legacy_slot_predicate_only_recognises_old_slot_names(self):
+        for slot in POWER_SUPPLY_SLOTS:
+            with self.subTest(slot=slot):
+                self.assertTrue(is_legacy_power_supply_slot(slot))
+                self.assertTrue(is_legacy_power_supply_slot(f"  {slot}  "))
+        for value in (None, 7, "", "   ", "PS", "PS5", "DP8B1519", POWER_SUPPLY_ROLE):
+            with self.subTest(value=value):
+                self.assertFalse(
+                    is_legacy_power_supply_slot(value),
+                    "短标签、类别与未登记编号都不是旧槽位名，不能拿来当电源键",
+                )
 
     def test_multiple_power_supplies_share_one_role(self):
         first = replace(_instrument(), role=POWER_SUPPLY_ROLE, label="DP8B1519")

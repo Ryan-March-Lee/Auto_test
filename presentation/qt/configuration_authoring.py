@@ -36,6 +36,7 @@ from typing import Any, Mapping
 
 from application.errors import ConfigurationError
 from domain.configuration.rules import assignment_supply_id
+from domain.instruments.models import is_legacy_power_supply_slot
 
 OFFICIAL_SCHEMA_VERSION = "1.0"
 # 现场固定接线的编辑约定：DUT 的 CH1 是栅极、CH2 是漏极。未知通道不猜测角色。
@@ -292,22 +293,16 @@ def _author_power_supply_entries(document: Mapping[str, Any]) -> dict[str, Any]:
         entries[supply_id] = {
             "label": supply.get("label"),
             # 旧槽位条目的 ``model`` 里存的是槽位名（``PS1``），那不是型号；旧写法没有
-            # 型号信息，宁可留空让正式校验报告，也不把编号当型号写进快照。
-            "model": None if _is_slot_name(supply.get("model")) else supply.get("model"),
+            # 型号信息，宁可留空让正式校验报告，也不把编号当型号写进快照。槽位名的识别
+            # 只有领域层一处实现（``is_legacy_power_supply_slot``），页面不再自带槽位清单。
+            "model": None
+            if is_legacy_power_supply_slot(supply.get("model"))
+            else supply.get("model"),
             "serial": supply.get("serial"),
             "device_key": supply.get("device_key"),
             "visa_address": supply.get("address"),
         }
     return entries
-
-
-def _is_slot_name(value: Any) -> bool:
-    """``model`` 字段里填的其实是旧槽位名（``PS1``..``PS4``）。"""
-    if not isinstance(value, str):
-        return False
-    from domain.instruments.models import POWER_SUPPLY_SLOTS
-
-    return value.strip() in POWER_SUPPLY_SLOTS
 
 
 def _channel_token(supply_id: str | None, channel: str) -> str:

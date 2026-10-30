@@ -89,6 +89,8 @@ POWER_SUPPLY_ROLE = "power_supply"
 DEVICE_ROLES = INSTRUMENT_ROLES + (POWER_SUPPLY_ROLE,)
 # 旧电源槽位编号：只在读取旧设备表时被识别，写回时由 :func:`canonical_role` 折叠成
 # ``POWER_SUPPLY_ROLE``。常量保留下来供迁移识别与旧数据兼容，**不再作为新角色集合使用**。
+# 这里是固定槽位字面量的**唯一**登记处（读取边界）：其它生产模块不得再写槽位名，
+# 也不得用它批量生成电源键——新增电源只按 ``supply_id``（= 短标签）落键，不需要改常量。
 POWER_SUPPLY_SLOTS = ("PS1", "PS2", "PS3", "PS4")
 LEGACY_ROLES = POWER_SUPPLY_SLOTS
 # 归一化可以接受的取值：新类别 + 旧槽位（兼容分支）。
@@ -127,6 +129,17 @@ def canonical_role(value: Any) -> str | None:
     if role is not None and role in LEGACY_ROLES:
         return POWER_SUPPLY_ROLE
     return role
+
+
+def is_legacy_power_supply_slot(value: Any) -> bool:
+    """``value`` 是否是旧电源槽位编号（``PS1``..``PS4``）。
+
+    只回答“这段文本是旧槽位名”，**绝不**用来生成新的电源键：新配置的电源键是
+    ``supply_id``（= 短标签），与槽位序号无关。需要它的场合都在读取边界上，例如判断旧
+    配置条目把槽位名填进了 ``model``（那不是型号），好让写回的运行快照留空而不是把编号
+    当型号。
+    """
+    return normalize_text(value) in LEGACY_ROLES
 
 
 def make_device_key(vendor: Any, serial: Any) -> str:
@@ -317,6 +330,7 @@ __all__ = [
     "TEST_ROLES",
     "build_instrument_name",
     "canonical_role",
+    "is_legacy_power_supply_slot",
     "make_device_key",
     "normalize_model",
     "normalize_role",

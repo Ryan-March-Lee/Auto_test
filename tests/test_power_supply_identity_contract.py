@@ -1,8 +1,8 @@
 """门禁：电源设备身份与配置数据契约（重构计划步骤 1）。
 
-本文件与[电源设备身份与配置数据契约](../docs/电源设备身份与配置数据契约.md)一一对应。它只校验
-契约数据和 `tests/fixtures/power_supply_identity/` 里的样例是否自洽，不实现标签生成器、注册表迁移、
-配置页面或运行映射——那些属于后续步骤。
+本文件与[电源设备身份与配置数据契约](../docs/电源设备身份与配置数据契约.md)一一对应。它校验
+契约数据和 `tests/fixtures/power_supply_identity/` 里的样例是否自洽，并守住两条边界：样例与
+生产代码都不许重新依赖固定槽位（`PS1..PS4` 只允许出现在读取与迁移边界）。
 
 覆盖：
 
@@ -12,15 +12,22 @@
 - 配置里的电源键、条目内 `label` 与分配引用的 `supply_id` 是同一个字符串，且分配不引用不存在的电源；
 - 1 台 / 2 台 / 5 台三种规模都能表达，旧槽位只出现在迁移输入与旧运行快照里；
 - 运行快照只冻结实际使用的电源，通道一律写 `supply_id/CHx`；
-- 迁移摘要覆盖每个旧槽位：无法迁移条目的旧通道参数与分配记录不丢失，且不会变成目标配置里的电源条目。
+- 迁移摘要覆盖每个旧槽位：无法迁移条目的旧通道参数与分配记录不丢失，且不会变成目标配置里的电源条目；
+- 生产代码（含 `tools/` 脚本）不再硬编码槽位编号，也不从序号拼电源键；旧槽位常量只有读取
+  边界能引用，初始化脚本登记的是规范类别 `power_supply`。
 """
 
+import ast
 import json
+import re
+import sys
 import unittest
 from pathlib import Path
 
 from domain.instruments.models import (
     POWER_SUPPLY_SLOTS,
+    canonical_role,
+    is_legacy_power_supply_slot,
     make_device_key,
     normalize_serial,
 )
@@ -67,6 +74,87 @@ MIGRATED_CONFIG = "config_slots_migrated_partial.json"
 SUMMARY_FIXTURE = "migration_summary_legacy.json"
 # 契约第 9 节：迁移判定只有这四种结果。
 SUMMARY_STATUSES = ("migrated", "needs_rescan", "unidentifiable", "conflict")
+
+# 生产代码范围：正式包、分析层、脚本与硬件/持久化目录都要守住“不再依赖固定槽位”。
+PRODUCTION_PACKAGES = (
+    "app",
+    "application",
+    "domain",
+    "infrastructure",
+    "instrument",
+    "presentation",
+    "analysis",
+    "tools",
+    "hardware",
+    "persistence",
+    "format_convert",
+)
+PRODUCTION_ROOT_FILES = ("launcher.py", "release_manifest.py", "collect_baseline.py")
+
+# 旧槽位字面量只允许出现在读取边界：``domain.instruments.models`` 登记常量并折叠角色，
+# 迁移器按旧槽位名判定输入。新增文件若确实要读旧槽位，必须同时更新这份清单与契约文档。
+SLOT_LITERAL_ALLOWLIST = (
+    "domain/instruments/models.py",
+    "infrastructure/config/legacy_power_supply_migration.py",
+)
+# 旧槽位/旧角色常量只允许这两个边界引用：注册表读写按旧字面量兼容也要走它们。
+SLOT_CONSTANT_ALLOWLIST = (
+    "domain/instruments/models.py",
+    "domain/instruments/__init__.py",
+    "infrastructure/config/legacy_power_supply_migration.py",
+    "infrastructure/persistence/instrument_registry.py",
+)
+
+_SLOT_NAME = re.compile(r"^PS\d+$")
+
+
+def _production_modules():
+    """生产代码里的每一个 ``.py``：正式包、脚本目录与根目录入口脚本。"""
+    for package in PRODUCTION_PACKAGES:
+        directory = ROOT / package
+        if not directory.is_dir():
+            continue
+        for path in sorted(directory.rglob("*.py")):
+            yield path
+    for name in PRODUCTION_ROOT_FILES:
+        path = ROOT / name
+        if path.is_file():
+            yield path
+
+
+def _code_string_constants(tree):
+    """遍历字符串字面量，跳过文档字符串（说明文字不是依赖，注释也不在 AST 里）。"""
+    docstrings = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        body = node.body
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            docstrings.add(id(body[0].value))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if id(node) not in docstrings:
+                yield node
+
+
+def _generated_slot_names(tree):
+    """按序号拼槽位名的写法（``f"PS{index}"``、``"PS" + str(index)``）也算固定槽位依赖。"""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.JoinedStr) and node.values:
+            first = node.values[0]
+            if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                if first.value.strip().upper() == "PS":
+                    yield node
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            for operand in (node.left, node.right):
+                if isinstance(operand, ast.Constant) and isinstance(operand.value, str):
+                    if operand.value.strip().upper() == "PS":
+                        yield node
 
 
 def _load(name: str) -> dict:
@@ -472,6 +560,79 @@ class RunSnapshotContractTests(unittest.TestCase):
             "gate 与 drain 必须能来自不同电源",
         )
         self.assertTrue(mapping["run_id"], "正式快照要有 run_id 才能被历史页找到")
+
+
+class NoFixedSlotDependencyTests(unittest.TestCase):
+    """门禁：生产代码不再依赖固定槽位（重构计划步骤 15）。
+
+    旧字段只允许存在于读取与迁移边界（契约 §11“旧字段允许出现的位置”）。``PS1..PS4`` 的
+    字面量只登记在 :data:`domain.instruments.models.POWER_SUPPLY_SLOTS`，由
+    ``normalize_role`` / ``canonical_role`` 的读取分支使用，迁移器按旧槽位名判定输入。
+    其它生产模块——包括初始化脚本与配置页——都不得再写槽位名，也不得拿序号拼电源键：
+    新增第 5 台电源不需要改任何常量。
+    """
+
+    def test_production_code_does_not_hard_code_power_supply_slots(self):
+        violations = []
+        for path in _production_modules():
+            relative = path.relative_to(ROOT).as_posix()
+            if relative in SLOT_LITERAL_ALLOWLIST:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
+            for node in _code_string_constants(tree):
+                if _SLOT_NAME.match(node.value.strip()):
+                    violations.append(f"{relative}:{node.lineno} {node.value!r}")
+            for node in _generated_slot_names(tree):
+                violations.append(f"{relative}:{node.lineno} 由序号拼槽位名")
+        self.assertEqual(
+            violations,
+            [],
+            "生产代码不得硬编码电源槽位编号（旧槽位只允许在读取与迁移边界出现）",
+        )
+
+    def test_slot_constants_are_only_referenced_by_the_read_boundary(self):
+        violations = []
+        for path in _production_modules():
+            relative = path.relative_to(ROOT).as_posix()
+            if relative in SLOT_CONSTANT_ALLOWLIST:
+                continue
+            for line in path.read_text(encoding="utf-8").splitlines():
+                code = line.split("#", 1)[0]
+                if "POWER_SUPPLY_SLOTS" in code or "LEGACY_ROLES" in code:
+                    violations.append(f"{relative}: {code.strip()}")
+        self.assertEqual(
+            violations,
+            [],
+            "旧槽位常量只允许读取边界与迁移器引用，其它模块按 supply_id 工作",
+        )
+
+    def test_power_supply_keys_are_never_built_from_a_slot_number(self):
+        for slot in POWER_SUPPLY_SLOTS:
+            with self.subTest(slot=slot):
+                self.assertTrue(is_legacy_power_supply_slot(slot))
+                self.assertEqual(
+                    canonical_role(slot),
+                    "power_supply",
+                    "旧槽位只是读取输入，写回一律折叠成电源类别",
+                )
+        for value in ("DP8B1519", "power_supply", "", None, "PS"):
+            with self.subTest(value=value):
+                self.assertFalse(is_legacy_power_supply_slot(value))
+
+    def test_init_script_registers_canonical_device_roles(self):
+        if str(ROOT) not in sys.path:
+            sys.path.insert(0, str(ROOT))
+        from tools.init_instrument_registry import SCANNED_DEVICES
+
+        self.assertTrue(SCANNED_DEVICES, "初始化脚本必须有现场扫描结果")
+        for device in SCANNED_DEVICES:
+            role = device.get("role")
+            with self.subTest(idn=device.get("idn")):
+                self.assertEqual(
+                    canonical_role(role),
+                    role,
+                    "初始化脚本只能登记规范类别（power_supply 等），不能写回旧槽位编号",
+                )
 
 
 if __name__ == "__main__":

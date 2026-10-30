@@ -30,6 +30,10 @@
 | `run_mapping_legacy_single.json` | 旧运行快照：`instruments.power_supply` 单数、通道写 `CH1`、连接写 `PS1-CH1` | 证明历史运行目录仍按旧结构读取 |
 | `run_mapping_snapshot_two_supplies.json` | 新运行快照：`instruments.power_supplies` 集合、通道写 `DP8B1519/CH1`、条目自带标签/序列号/型号/地址 | 多电源快照与历史追溯 |
 
+`config_slots_migrated_partial.json` 只是**期望值**，不是“可以写回现场的配置”：`PS1`/`PS2` 认不出身份，
+迁移器因此拒绝写盘（见数据契约 §8.2），它们的通道参数只留在 `migration_summary_legacy.json` 里，
+按 §8.3 重扫补全后才得到 `config_one_supply.json` 那样的完整配置。
+
 ## 样例设备
 
 `config_five_supplies.json` 里的 `DP8B1191`（序列号 `DP8B234501191`）和 `DP8B1216`

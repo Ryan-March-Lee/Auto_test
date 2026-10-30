@@ -197,6 +197,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `domain.models` | 运行、测试方案与会话生命周期模型；测量结果契约在 `application.dto` |
 | `infrastructure.filesystem.atomic_json` | 原子 JSON 写入 |
 | `infrastructure.filesystem.paths` | 路径服务 |
+| `infrastructure.config.legacy_power_supply_migration` | 旧 `PS1..PS4` 配置迁移器：按设备表登记的身份把它们改写成 `supply_id`（电源集合、分配引用、设备绑定与运行映射），输出逐条迁移摘要；只有每条都能识别且引用都落地时才写盘（写前必须过文件级校验），未决项用 `save_migration_summary` 的摘要文件留存 |
 | `infrastructure.discovery` | 仪器发现包 |
 | `infrastructure.discovery.instrument_discovery` | 网段扫描与 `*IDN?` 身份解析：序列号匹配设备表，未知设备同样上报 |
 | `infrastructure.discovery.simulated_network` | 离线演示用的设备网络响应（仅模拟扫描模式，不会被当成现场结果） |

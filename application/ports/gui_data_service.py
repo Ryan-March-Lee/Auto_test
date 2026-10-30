@@ -41,6 +41,13 @@ class LoadedResultDto:
 
 
 class ConfigurationPort(Protocol):
+    """正式用户配置的读写契约：配置编辑的唯一保存入口。
+
+    ``save()`` 只接受调用方已经编写好（authoring）的正式配置文档：校验发生在保存之前，
+    持久化只负责原样落盘，因此实现既不解释 schema，也不修补内容。运行快照不属于本端口：
+    ``runs/<run_id>/`` 下的冻结配置由运行仓储创建，不经过这里。
+    """
+
     def load(self) -> Mapping[str, Any]: ...
     def save(self, configuration: Mapping[str, Any]) -> None: ...
 

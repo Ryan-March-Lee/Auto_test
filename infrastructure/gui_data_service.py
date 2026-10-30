@@ -1,7 +1,8 @@
 """File-backed adapters used by the GUI composition root.
 
-应用配置的写入走原子 JSON 原语（:class:`JsonConfigurationAdapter`）：保存失败时原
-配置文件保持不变，写入失败原因原样上抛，清理临时文件失败也不会顶替该原因。
+应用配置的写入只有一个入口：:class:`JsonConfigurationAdapter` 把保存委托给配置仓储
+（``JsonConfigurationRepository.save_document``），由它统一套用原子 JSON 原语。保存失败
+时原配置文件保持不变，写入失败原因原样上抛，清理临时文件失败也不会顶替该原因。
 
 历史查看、导出和报告只读取**正式运行目录结果**：每条结果都由运行 manifest 登记并
 通过完整性校验，``result_id`` 使用内部 ``run::<run_id>::<相对路径>`` 编码。适配器
@@ -35,8 +36,8 @@ from application.ports.gui_data_service import (
 )
 from application.ports.run_history import RunHistoryRepository
 from analysis.visualization import DataVisualization
+from infrastructure.config.json_config_repository import JsonConfigurationRepository
 from infrastructure.config.json_io import load_config_file
-from infrastructure.filesystem.atomic_json import write_json_atomic
 from infrastructure.filesystem.paths import (
     PathService,
     unique_directory_name,
@@ -66,24 +67,34 @@ def _decode_run_result_id(result_id: str) -> tuple[str, str] | None:
 
 
 class JsonConfigurationAdapter:
-    """应用配置文件的读写适配器。
+    """应用配置文件的读写适配器（配置保存的唯一对外入口）。
 
-    写入只经由 :func:`infrastructure.filesystem.atomic_json.write_json_atomic`：
-    “同目录唯一临时文件 -> flush/fsync -> 原子替换”。因此序列化失败、fsync 失败或
-    替换失败时，磁盘上仍是上一次成功保存的完整配置，既不会被截断成半份 JSON，也不会
-    出现半份新配置；清理临时文件失败只写日志，**不会**顶替真正的写入失败原因，调用方
-    拿到的始终是可直接呈现给用户的原始异常。
+    适配器只把“当前配置文件路径”绑定到配置仓储上，本身不掌握文件打开模式、序列化
+    格式或临时文件策略：
+
+    - 读取委托 :func:`infrastructure.config.json_io.load_config_file`（与启动器、校验
+      入口同一个读取边界）；
+    - 写入委托
+      :meth:`infrastructure.config.json_config_repository.JsonConfigurationRepository.save_document`，
+      即“同目录唯一临时文件 -> flush/fsync -> 原子替换”的唯一正式写入口。因此序列化
+      失败、fsync 失败或替换失败时，磁盘上仍是上一次成功保存的完整配置，既不会被截断
+      成半份 JSON，也不会出现半份新配置；清理临时文件失败只写日志，**不会**顶替真正的
+      写入失败原因，调用方拿到的始终是可直接呈现给用户的原始异常。
+
+    这里刻意不合并用途不同的 JSON 持久化：运行目录快照（``runs/<run_id>/config.json``
+    与 manifest）由运行仓储负责，适配器不写任何运行目录，也不从运行目录读取配置。
     """
 
     def __init__(self, path: PathService | Path):
         self.path = path.config_file if isinstance(path, PathService) else Path(path)
+        self.repository = JsonConfigurationRepository()
 
     def load(self):
         return load_config_file(self.path)
 
     def save(self, configuration: Mapping[str, Any]) -> None:
-        """原子写入正式配置，保持既有缩进/UTF-8/非 ASCII 字符格式。"""
-        write_json_atomic(self.path, configuration, indent=4, ensure_ascii=False)
+        """保存正式配置：只做委托，写入格式与失败语义由配置仓储决定。"""
+        self.repository.save_document(self.path, configuration)
 
 
 class ResultQueryAdapter:

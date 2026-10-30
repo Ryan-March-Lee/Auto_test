@@ -53,6 +53,7 @@ from domain.instruments.models import (
     normalize_serial,
     normalize_text,
 )
+from infrastructure.config.json_config_repository import JsonConfigurationRepository
 from infrastructure.config.json_io import load_json_object
 from infrastructure.config.validation import validate_official_config
 from infrastructure.filesystem.atomic_json import read_json, write_json_atomic
@@ -674,7 +675,9 @@ def save_migrated_configuration(
             "迁移结果未通过文件级校验，未写入任何文件（原配置保持不变）: "
             + "; ".join(errors)
         )
-    return write_json_atomic(Path(path), result.config)
+    # 写盘同样只走正式配置的唯一写入口：迁移不另起一套序列化/替换实现，格式与失败
+    # 语义（原文件不变、异常原样上抛）与配置页面保存完全一致。
+    return JsonConfigurationRepository().save_document(path, result.config)
 
 
 def save_migration_summary(

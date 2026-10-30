@@ -220,7 +220,13 @@ class ApplicationCoordinator:
             page.config = self.config
 
     def save_configuration(self) -> bool:
-        """把当前配置写为正式配置；失败时保留 :attr:`last_save_error`。"""
+        """把当前配置写为正式配置；失败时保留 :attr:`last_save_error`。
+
+        这是一次完整的“编写 + 保存”：先在应用边界用
+        :func:`presentation.qt.configuration_authoring.author_official_configuration`
+        生成正式文档（校验失败就不会写盘），再经 ``ConfigurationPort.save`` 交给配置
+        仓储的原子写入。界面不接触文件、序列化格式或临时文件，运行快照也不走这里。
+        """
         try:
             self.config = author_official_configuration(self.config)
             self._push_config_to_page()

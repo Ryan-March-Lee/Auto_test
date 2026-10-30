@@ -102,17 +102,25 @@
 `application.ports.measurement_session` 是 application 感知设备清理的唯一入口，具体
 `SafetyShutdownFlow` 由 `instrument.flow.cleanup.SafetyCleanupAdapter` 适配。
 
+正式用户配置只有一个写入路径：`ConfigurationPort.save` ->
+`infrastructure.gui_data_service.JsonConfigurationAdapter` ->
+`JsonConfigurationRepository.save_document`。序列化格式（`indent=4`、UTF-8、非 ASCII 原样）
+与“临时文件 + fsync + 原子替换”的失败语义只在这一个方法里定义，GUI 适配器不打开文件、
+不管理临时文件；旧电源配置迁移器写同样的配置文件时也委托它。运行目录内的
+`runs/<run_id>/config.json` 与 manifest 是独立用途的快照，仍由
+`infrastructure.persistence.run_repository` / `run_directory` 写入，不经过配置仓储。
+
 ### 3.4 基础设施适配器
 
 | 模块 | 正式公开名称 |
 | --- | --- |
 | `infrastructure.config.json_io` | `load_json_object`、`load_config_file` |
 | `infrastructure.config.validation` | `load_config`、`validate_config_file`、`validate_official_config` |
-| `infrastructure.config.json_config_repository` | `JsonConfigurationRepository`、`JsonTestPlanRepository`、`JsonRunMappingRepository`、`load_json`、`load_test_plan`、`load_run_mapping`、`load_run_configuration`、`load_combined_configuration` |
+| `infrastructure.config.json_config_repository` | `JsonConfigurationRepository`（`save_document` 是正式用户配置的唯一写入口，`load_document` 是同一仓储的文档读取入口）、`JsonTestPlanRepository`、`JsonRunMappingRepository`、`load_json`、`load_test_plan`、`load_run_mapping`、`load_run_configuration`、`load_combined_configuration` |
 | `infrastructure.persistence.result_repository` | `FileMeasurementResultRepository` |
 | `infrastructure.persistence.run_repository` | `RunRepository` |
 | `infrastructure.persistence.run_history_repository` | `FileRunHistoryRepository` |
-| `infrastructure.gui_data_service` | `JsonConfigurationAdapter`、`ResultQueryAdapter`、`ResultExportAdapter` |
+| `infrastructure.gui_data_service` | `JsonConfigurationAdapter`（只把配置文件路径绑定到配置仓储：读取走 `json_io`，写入只委托 `save_document`，不打开文件、不掌握格式）、`ResultQueryAdapter`、`ResultExportAdapter` |
 | `infrastructure.logging.app_logging` | `get_logger`、`setup_logging` |
 | `infrastructure.runtime` | `current_runtime`、`runtime_id`、`configured_python`、`python_version_requirement`、`python_version_supported`、`interpreter_command`、`verification_commands` |
 
@@ -197,7 +205,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `domain.models` | 运行、测试方案与会话生命周期模型；测量结果契约在 `application.dto` |
 | `infrastructure.filesystem.atomic_json` | 原子 JSON 写入 |
 | `infrastructure.filesystem.paths` | 路径服务 |
-| `infrastructure.config.legacy_power_supply_migration` | 旧 `PS1..PS4` 配置迁移器：按设备表登记的身份把它们改写成 `supply_id`（电源集合、分配引用、设备绑定与运行映射），输出逐条迁移摘要；只有每条都能识别且引用都落地时才写盘（写前必须过文件级校验），未决项用 `save_migration_summary` 的摘要文件留存 |
+| `infrastructure.config.legacy_power_supply_migration` | 旧 `PS1..PS4` 配置迁移器：按设备表登记的身份把它们改写成 `supply_id`（电源集合、分配引用、设备绑定与运行映射），输出逐条迁移摘要；只有每条都能识别且引用都落地时才写盘（写前必须过文件级校验），写盘委托配置仓储的 `save_document`，未决项用 `save_migration_summary` 的摘要文件留存 |
 | `infrastructure.discovery` | 仪器发现包 |
 | `infrastructure.discovery.instrument_discovery` | 网段扫描与 `*IDN?` 身份解析：序列号匹配设备表，未知设备同样上报 |
 | `infrastructure.discovery.simulated_network` | 离线演示用的设备网络响应（仅模拟扫描模式，不会被当成现场结果） |

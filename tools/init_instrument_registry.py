@@ -28,8 +28,8 @@ from infrastructure.persistence.instrument_registry import (  # noqa: E402
 # 2026-10-28 现场扫描结果（信号源 1 台、频谱仪 1 台、直流电源 3 台）。
 # idn_port 是实际能读到 *IDN? 的端口：R&S / Ceyear 用 SCPI Raw 5025，RIGOL DP832A 用 5555。
 # role 是这台设备的设备类别（界面不再让用户选择，也不再有“第几台电源”的槽位编号）：
-# 三台直流电源都登记 ``power_supply``，靠序列号派生的短标签区分；没有确认过类别的设备
-# 留 None，界面显示“未分配角色”且不能应用。
+# 两台已确认的直流电源登记 ``power_supply``，靠序列号派生的短标签区分；DP8B174700950
+# 现场未确认类别，留 None（界面显示“未分配角色”且不能应用），由操作员显式登记后才有标签。
 SCANNED_DEVICES = [
     {
         "ip": "192.168.1.201",

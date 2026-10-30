@@ -14,7 +14,8 @@
 - 运行快照只冻结实际使用的电源，通道一律写 `supply_id/CHx`；
 - 迁移摘要覆盖每个旧槽位：无法迁移条目的旧通道参数与分配记录不丢失，且不会变成目标配置里的电源条目；
 - 生产代码（含 `tools/` 脚本）不再硬编码槽位编号，也不从序号拼电源键；旧槽位常量只有读取
-  边界能引用，初始化脚本登记的是规范类别 `power_supply`。
+  边界能引用，初始化脚本登记的是规范类别 `power_supply`（未确认类别的设备仍留 `null`，
+  不猜成电源）。
 """
 
 import ast
@@ -91,13 +92,13 @@ PRODUCTION_PACKAGES = (
 )
 PRODUCTION_ROOT_FILES = ("launcher.py", "release_manifest.py", "collect_baseline.py")
 
-# 旧槽位字面量只允许出现在读取边界：``domain.instruments.models`` 登记常量并折叠角色，
-# 迁移器按旧槽位名判定输入。新增文件若确实要读旧槽位，必须同时更新这份清单与契约文档。
-SLOT_LITERAL_ALLOWLIST = (
-    "domain/instruments/models.py",
-    "infrastructure/config/legacy_power_supply_migration.py",
-)
-# 旧槽位/旧角色常量只允许这两个边界引用：注册表读写按旧字面量兼容也要走它们。
+# 旧槽位字面量的**唯一**登记处：``POWER_SUPPLY_SLOTS`` 这个元组定义里的元素。门禁不按文件
+# 豁免，只放过这个元组里的字面量节点——同一个文件里再写别的 ``PSn`` 一样失败，所以“把豁免
+# 扩成整份文件”这种回退走不通。
+SLOT_REGISTRY_FILE = "domain/instruments/models.py"
+SLOT_REGISTRY_CONSTANT = "POWER_SUPPLY_SLOTS"
+# 旧槽位/旧角色常量只允许这几个读取边界引用：注册表读写按旧字面量兼容也要走它们，迁移器按
+# 旧角色判定输入；其它模块一律按 ``supply_id`` 工作。
 SLOT_CONSTANT_ALLOWLIST = (
     "domain/instruments/models.py",
     "domain/instruments/__init__.py",
@@ -105,7 +106,14 @@ SLOT_CONSTANT_ALLOWLIST = (
     "infrastructure/persistence/instrument_registry.py",
 )
 
+# 槽位名本体（``PS1``、``PS5``……）。``PS`` 单独一段不是槽位编号（设备码徽标就是 ``PS``）。
 _SLOT_NAME = re.compile(r"^PS\d+$")
+# 引用即依赖的旧槽位常量。
+_SLOT_CONSTANTS = ("POWER_SUPPLY_SLOTS", "LEGACY_ROLES")
+# 拿来拼槽位名的模板（``PS``、``PS1``、``PS%s``、``PS{}``……）：本身不一定是槽位名，但按序号
+# 填进去就变成了固定槽位依赖。单独的 ``PS`` 只有在这种“拼”的上下文里才算，因为设备码徽标
+# （``presentation/qt/device_cards.py`` 返回的 ``"PS"``）是普通字符串常量，不参与拼接。
+_SLOT_TEMPLATE = re.compile(r"^PS(?:\d*|[{:%.].*)$", re.IGNORECASE | re.DOTALL)
 
 
 def _production_modules():
@@ -143,18 +151,90 @@ def _code_string_constants(tree):
 
 
 def _generated_slot_names(tree):
-    """按序号拼槽位名的写法（``f"PS{index}"``、``"PS" + str(index)``）也算固定槽位依赖。"""
+    """按序号拼槽位名的写法也算固定槽位依赖。
+
+    覆盖门禁声称的范围：``f"PS{index}"``（含 ``f"PS1{index}"``）、``"PS" + str(index)``、
+    ``"PS%s" % index``、``"PS{}".format(index)``。更绕的构造（例如先拼出 ``"P"``、``"S"``
+    再相加）在 AST 上无法与普通字符串运算区分，这里不声称覆盖，靠“新键来自短标签”的
+    契约与代码评审兜底。
+    """
     for node in ast.walk(tree):
         if isinstance(node, ast.JoinedStr) and node.values:
             first = node.values[0]
             if isinstance(first, ast.Constant) and isinstance(first.value, str):
-                if first.value.strip().upper() == "PS":
+                if _SLOT_TEMPLATE.match(first.value.strip()):
                     yield node
-        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        elif isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mod)):
             for operand in (node.left, node.right):
                 if isinstance(operand, ast.Constant) and isinstance(operand.value, str):
-                    if operand.value.strip().upper() == "PS":
+                    if _SLOT_TEMPLATE.match(operand.value.strip()):
                         yield node
+        elif isinstance(node, ast.Call):
+            formatted = getattr(node.func, "attr", None)
+            receiver = getattr(node.func, "value", None)
+            if formatted == "format" and isinstance(receiver, ast.Constant):
+                if isinstance(receiver.value, str) and _SLOT_TEMPLATE.match(receiver.value.strip()):
+                    yield node
+
+
+def _slot_registry_literals(tree):
+    """``POWER_SUPPLY_SLOTS`` 元组定义里的字面量节点：门禁唯一放过的位置。
+
+    返回节点 id 集合。豁免精确到“这一处元组的元素”，而不是整份文件，因此在同一个文件里
+    新增别的 ``PSn`` 字面量一样会被判为回退。
+    """
+    allowed = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            targets, values = node.targets, [node.value]
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets, values = [node.target], [node.value]
+        else:
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == SLOT_REGISTRY_CONSTANT
+            for target in targets
+        ):
+            continue
+        for value in values:
+            if not isinstance(value, (ast.Tuple, ast.List, ast.Set)):
+                continue
+            for element in value.elts:
+                if isinstance(element, ast.Constant) and isinstance(element.value, str):
+                    allowed.add(id(element))
+    return allowed
+
+
+def _slot_constant_references(tree):
+    """引用旧槽位常量的位置：导入、读取与属性访问都算；注释与字符串不算。
+
+    逐行查文本会被 ``"``.`` 里的引号、导入别名和属性访问（``models.LEGACY_ROLES``）
+    骗过去，所以这里走 AST。
+    """
+    references = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id in _SLOT_CONSTANTS:
+            references.add((node.lineno, node.id))
+        elif isinstance(node, ast.Attribute) and node.attr in _SLOT_CONSTANTS:
+            references.add((node.lineno, node.attr))
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                if alias.name in _SLOT_CONSTANTS or alias.asname in _SLOT_CONSTANTS:
+                    references.add((node.lineno, alias.name))
+    return sorted(references)
+
+
+def _slot_literal_violations(tree, allowed_ids=frozenset()):
+    """一段源码里的槽位依赖：写死的槽位名与按序号拼接的槽位名。"""
+    violations = []
+    for node in _code_string_constants(tree):
+        if id(node) in allowed_ids:
+            continue
+        if _SLOT_NAME.match(node.value.strip()):
+            violations.append(f"第 {node.lineno} 行硬编码槽位名 {node.value!r}")
+    for node in _generated_slot_names(tree):
+        violations.append(f"第 {node.lineno} 行按序号拼槽位名")
+    return violations
 
 
 def _load(name: str) -> dict:
@@ -565,30 +645,77 @@ class RunSnapshotContractTests(unittest.TestCase):
 class NoFixedSlotDependencyTests(unittest.TestCase):
     """门禁：生产代码不再依赖固定槽位（重构计划步骤 15）。
 
-    旧字段只允许存在于读取与迁移边界（契约 §11“旧字段允许出现的位置”）。``PS1..PS4`` 的
+    旧字段只允许存在于读取与迁移边界（契约 §6.4“旧字段允许出现的位置”）。``PS1..PS4`` 的
     字面量只登记在 :data:`domain.instruments.models.POWER_SUPPLY_SLOTS`，由
-    ``normalize_role`` / ``canonical_role`` 的读取分支使用，迁移器按旧槽位名判定输入。
-    其它生产模块——包括初始化脚本与配置页——都不得再写槽位名，也不得拿序号拼电源键：
-    新增第 5 台电源不需要改任何常量。
+    ``normalize_role`` / ``canonical_role`` 的读取分支使用。其它生产模块——包括初始化脚本与
+    配置页——都不得再写槽位名，也不得拿序号拼电源键：新增第 5 台电源不需要改任何常量。
+
+    豁免精确到“``POWER_SUPPLY_SLOTS`` 元组里的那几个字面量”，不是整份文件；门禁自己的
+    覆盖范围也有用例固定（哪些写法算依赖、说明文字与设备码不算）。
     """
 
     def test_production_code_does_not_hard_code_power_supply_slots(self):
         violations = []
         for path in _production_modules():
             relative = path.relative_to(ROOT).as_posix()
-            if relative in SLOT_LITERAL_ALLOWLIST:
-                continue
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
-            for node in _code_string_constants(tree):
-                if _SLOT_NAME.match(node.value.strip()):
-                    violations.append(f"{relative}:{node.lineno} {node.value!r}")
-            for node in _generated_slot_names(tree):
-                violations.append(f"{relative}:{node.lineno} 由序号拼槽位名")
+            allowed = _slot_registry_literals(tree) if relative == SLOT_REGISTRY_FILE else set()
+            for violation in _slot_literal_violations(tree, allowed):
+                violations.append(f"{relative}: {violation}")
         self.assertEqual(
             violations,
             [],
             "生产代码不得硬编码电源槽位编号（旧槽位只允许在读取与迁移边界出现）",
         )
+
+    def test_the_only_slot_literal_exception_is_the_registry_constant(self):
+        """豁免必须精确：只有 ``POWER_SUPPLY_SLOTS`` 那组元素被放过。"""
+        tree = ast.parse((ROOT / SLOT_REGISTRY_FILE).read_text(encoding="utf-8"))
+        allowed = _slot_registry_literals(tree)
+        registered = {
+            node.value for node in _code_string_constants(tree) if id(node) in allowed
+        }
+        self.assertEqual(
+            registered,
+            set(POWER_SUPPLY_SLOTS),
+            "读取边界只登记 POWER_SUPPLY_SLOTS 这一组字面量，别的槽位名不得搭便车",
+        )
+        sneaky = ast.parse('slots = ("PS1", "PS2")\nother = "PS9"\n')
+        self.assertEqual(
+            _slot_registry_literals(sneaky),
+            set(),
+            "不是 POWER_SUPPLY_SLOTS 的元组不能获得豁免",
+        )
+        self.assertEqual(
+            len(_slot_literal_violations(sneaky)),
+            3,
+            "定义处之外的槽位名（含换个名字的元组，本段共 3 个字面量）必须全部报出来",
+        )
+
+    def test_slot_gate_catches_the_generation_patterns_it_claims(self):
+        """门禁的覆盖范围是可验证的：列出的写法都会被抓住，说明文字与设备码不会。"""
+        flagged = (
+            'slot = f"PS{index}"',
+            'slot = f"PS1{index}"',
+            'slot = "PS" + str(index)',
+            'slot = "PS%s" % index',
+            'slot = "PS{}".format(index)',
+            'slot = "PS5"',
+        )
+        for source in flagged:
+            with self.subTest(source=source):
+                self.assertTrue(
+                    _slot_literal_violations(ast.parse(source)),
+                    f"这种写法要按固定槽位依赖处理: {source}",
+                )
+        allowed = (
+            'code = "PS"',
+            'role = canonical_role(value)',
+            'def f():\n    """说明里的 PS1 不是依赖，注释里的 PS3 也不是。"""\n    return "power_supply"',
+        )
+        for source in allowed:
+            with self.subTest(source=source):
+                self.assertEqual(_slot_literal_violations(ast.parse(source)), [])
 
     def test_slot_constants_are_only_referenced_by_the_read_boundary(self):
         violations = []
@@ -596,15 +723,28 @@ class NoFixedSlotDependencyTests(unittest.TestCase):
             relative = path.relative_to(ROOT).as_posix()
             if relative in SLOT_CONSTANT_ALLOWLIST:
                 continue
-            for line in path.read_text(encoding="utf-8").splitlines():
-                code = line.split("#", 1)[0]
-                if "POWER_SUPPLY_SLOTS" in code or "LEGACY_ROLES" in code:
-                    violations.append(f"{relative}: {code.strip()}")
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
+            for lineno, name in _slot_constant_references(tree):
+                violations.append(f"{relative}:{lineno} {name}")
         self.assertEqual(
             violations,
             [],
             "旧槽位常量只允许读取边界与迁移器引用，其它模块按 supply_id 工作",
         )
+
+    def test_slot_constant_scan_ignores_prose_and_sees_imports(self):
+        """常量扫描不能被注释/字符串骗过，也不能漏掉导入别名与属性访问。"""
+        prose = ast.parse(
+            'x = "LEGACY_ROLES 只是文档里的名字"\n# POWER_SUPPLY_SLOTS 在注释里不算引用\n'
+        )
+        self.assertEqual(_slot_constant_references(prose), [])
+        for source in (
+            "from domain.instruments.models import POWER_SUPPLY_SLOTS",
+            "from domain.instruments import models\nmodels.LEGACY_ROLES",
+            "for slot in LEGACY_ROLES:\n    pass",
+        ):
+            with self.subTest(source=source):
+                self.assertTrue(_slot_constant_references(ast.parse(source)))
 
     def test_power_supply_keys_are_never_built_from_a_slot_number(self):
         for slot in POWER_SUPPLY_SLOTS:

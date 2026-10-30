@@ -65,6 +65,7 @@ class RunContext:
     signal_generator: Mapping[str, str] = field(default_factory=dict)
     spectrum_analyzer: Mapping[str, str] = field(default_factory=dict)
     power_supply: Mapping[str, str] = field(default_factory=dict)
+    power_supplies: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
     power_channel_mapping: Mapping[str, str] = field(default_factory=dict)
     wiring_confirmed: bool = False
     notes: str | None = None
@@ -81,6 +82,16 @@ class RunContext:
         ):
             value = getattr(self, name)
             object.__setattr__(self, name, MappingProxyType(dict(value)))
+        object.__setattr__(
+            self,
+            "power_supplies",
+            MappingProxyType(
+                {
+                    str(supply_id): MappingProxyType(dict(record))
+                    for supply_id, record in dict(self.power_supplies).items()
+                }
+            ),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -90,6 +101,9 @@ class RunContext:
             "signal_generator": dict(self.signal_generator),
             "spectrum_analyzer": dict(self.spectrum_analyzer),
             "power_supply": dict(self.power_supply),
+            "power_supplies": {
+                supply_id: dict(record) for supply_id, record in self.power_supplies.items()
+            },
             "power_channel_mapping": dict(self.power_channel_mapping),
             "wiring_confirmed": self.wiring_confirmed,
             "notes": self.notes,
@@ -114,6 +128,7 @@ class RunContext:
         instruments = instruments if isinstance(instruments, Mapping) else {}
         power_supply = instruments.get("power_supply", {})
         power_supply = power_supply if isinstance(power_supply, Mapping) else {}
+        supplies = _power_supplies(mapping, power_supply)
         channels = {}
         for section in ("dut_power_channels", "driver_mode"):
             values = mapping.get(section, [])
@@ -135,7 +150,9 @@ class RunContext:
             software_version=software_version,
             signal_generator=_instrument_snapshot(instruments.get("signal_generator")),
             spectrum_analyzer=_instrument_snapshot(instruments.get("spectrum_analyzer")),
-            power_supply=_instrument_snapshot(power_supply),
+            # 旧字段保留：多电源之下它是“唯一那台”，没有唯一答案时为空。
+            power_supply=_legacy_power_supply(supplies),
+            power_supplies=supplies,
             power_channel_mapping=channels,
             wiring_confirmed=bool(wiring.get("confirmed", False)),
             notes=mapping.get("notes") or wiring.get("connection_note"),
@@ -151,6 +168,50 @@ def _instrument_snapshot(value: Any) -> dict[str, str]:
         if item is not None:
             result[key] = str(item)
     return result
+
+
+def _power_supplies(
+    mapping: Mapping[str, Any], legacy_power_supply: Mapping[str, Any]
+) -> dict[str, dict[str, str]]:
+    """把运行映射里的电源集合转成 ``supply_id -> {label, model, serial, device_key, visa_address}``。
+
+    新快照直接读 ``instruments.power_supplies``；仍然只有单数 ``instruments.power_supply``
+    的旧映射按该条目的 ``model``（旧槽位名）读成一个条目，让历史运行的上下文保持可读。
+    """
+    instruments = mapping.get("instruments", {})
+    instruments = instruments if isinstance(instruments, Mapping) else {}
+    supplies = instruments.get("power_supplies")
+    result: dict[str, dict[str, str]] = {}
+    if isinstance(supplies, Mapping):
+        for supply_id, record in supplies.items():
+            if isinstance(record, Mapping):
+                result[str(supply_id)] = _supply_snapshot(record)
+        return result
+    if legacy_power_supply:
+        model = legacy_power_supply.get("model")
+        if isinstance(model, str) and model.strip():
+            record = dict(legacy_power_supply)
+            record.setdefault("label", model)
+            record.setdefault("device_key", model)
+            result[model] = _supply_snapshot(record)
+    return result
+
+
+def _supply_snapshot(value: Mapping[str, Any]) -> dict[str, str]:
+    result = {}
+    for key in ("label", "model", "serial", "device_key", "visa_address"):
+        item = value.get(key)
+        if item is not None:
+            result[key] = str(item)
+    return result
+
+
+def _legacy_power_supply(supplies: Mapping[str, Mapping[str, str]]) -> dict[str, str]:
+    """旧的单数 ``power_supply`` 视图：恰好一台电源时给出它的型号与地址，否则为空。"""
+    if len(supplies) != 1:
+        return {}
+    record = next(iter(supplies.values()))
+    return _instrument_snapshot(record)
 
 
 class MeasurementState(str, Enum):

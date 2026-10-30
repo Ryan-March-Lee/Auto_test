@@ -10,6 +10,11 @@ from presentation.qt.configuration_authoring import (
 
 
 def _flat_config() -> dict:
+    """一份最小的表单配置：一台电源、一条 DUT 分配。
+
+    电源条目带身份字段（``label`` / ``serial`` / ``device_key``）：正式运行映射的快照
+    条目必须自带身份。只有地址的条目仍会被写进映射，但正式校验会报缺少身份。
+    """
     return {
         "test_frequencies": [2.4],
         "signal_source": {"start_power": -10.0, "stop_power": 0.0, "step": 1.0},
@@ -21,7 +26,11 @@ def _flat_config() -> dict:
             "signal_generator": {"address": "sim::sg", "model": "SG", "enabled": True},
             "spectrum_analyzer": {"address": "sim::sa", "model": "SA", "enabled": True},
             "power_supplies": {
-                "PS1": {
+                "DP8B1519": {
+                    "label": "DP8B1519",
+                    "model": "DP832A",
+                    "serial": "DP8B214901519",
+                    "device_key": "rigol technologies:dp8b214901519",
                     "address": "sim::ps1",
                     "enabled": True,
                     "channels": {
@@ -35,8 +44,29 @@ def _flat_config() -> dict:
             "driver_amplifier": {"power_supply_count": 0, "supplies": {}},
             "dut_amplifier": {
                 "power_supply_count": 1,
-                "supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}},
+                "supplies": {
+                    "carrier": {
+                        "supply_id": "DP8B1519",
+                        "name": "DP8B1519",
+                        "channel": ["CH1", "CH2"],
+                    }
+                },
             },
+        },
+    }
+
+
+def _second_supply() -> dict:
+    return {
+        "label": "DP8B0885",
+        "model": "DP832A",
+        "serial": "DP8B174400885",
+        "device_key": "rigol technologies:dp8b174400885",
+        "address": "sim::ps2",
+        "enabled": True,
+        "channels": {
+            "CH1": {"voltage": {"value": 5.0}, "current": {"value": 0.5}},
+            "CH2": {"voltage": {"value": 28.0}, "current": {"value": 1.0}},
         },
     }
 
@@ -73,10 +103,10 @@ class ConfigurationAuthoringTests(unittest.TestCase):
     def test_instrument_power_channel_roles_are_not_invented(self):
         """仪器侧供电角色由配置页控件显式选择，authoring 不按 CH1/CH2 补默认值。"""
         flat = _flat_config()
-        flat["instruments"]["power_supplies"]["PS1"]["channels"]["CH1"]["role"] = "drain"
+        flat["instruments"]["power_supplies"]["DP8B1519"]["channels"]["CH1"]["role"] = "drain"
         document = author_official_configuration(flat)
 
-        channels = document["instruments"]["power_supplies"]["PS1"]["channels"]
+        channels = document["instruments"]["power_supplies"]["DP8B1519"]["channels"]
         self.assertEqual(channels["CH1"]["role"], "drain")
         self.assertNotIn("role", channels["CH2"])
 
@@ -115,7 +145,9 @@ class ConfigurationAuthoringTests(unittest.TestCase):
         flat["driver_mode"] = {"enabled": True}
         flat["power_supply_assignment"]["driver_amplifier"] = {
             "power_supply_count": 1,
-            "supplies": {"main": {"name": "PS1", "channel": ["CH1", "CH2"]}},
+            "supplies": {
+                "main": {"supply_id": "DP8B1519", "name": "DP8B1519", "channel": ["CH1", "CH2"]}
+            },
         }
         document = author_official_configuration(flat)
 
@@ -138,41 +170,120 @@ class ConfigurationAuthoringTests(unittest.TestCase):
             "channels": {"CH1": {"voltage": {"value": 5.0}, "current": {"value": 0.5}}},
         }
         document = author_official_configuration(flat)
-        self.assertEqual(document["run_mapping"]["instruments"]["power_supply"]["model"], "PS1")
+        power_supplies = document["run_mapping"]["instruments"]["power_supplies"]
+        self.assertEqual(sorted(power_supplies), ["DP8B1519"])
+        self.assertEqual(power_supplies["DP8B1519"]["visa_address"], "sim::ps1")
+
+    def test_run_mapping_carries_the_supply_identity_not_just_its_name(self):
+        """快照条目必须自带 label / 型号 / 序列号 / 设备键，历史重现不回查注册表。"""
+        document = author_official_configuration(_flat_config())
+        entry = document["run_mapping"]["instruments"]["power_supplies"]["DP8B1519"]
         self.assertEqual(
-            document["run_mapping"]["instruments"]["power_supply"]["visa_address"], "sim::ps1"
+            entry,
+            {
+                "label": "DP8B1519",
+                "model": "DP832A",
+                "serial": "DP8B214901519",
+                "device_key": "rigol technologies:dp8b214901519",
+                "visa_address": "sim::ps1",
+            },
         )
+        self.assertNotIn("power_supply", document["run_mapping"]["instruments"])
+
+    def test_channels_are_written_as_supply_id_slash_channel(self):
+        """通道统一写 supply_id/CHx；DUT 的 gate 与 drain 可以来自不同电源。"""
+        flat = _flat_config()
+        flat["instruments"]["power_supplies"]["DP8B0885"] = _second_supply()
+        flat["power_supply_assignment"]["dut_amplifier"]["supplies"] = {
+            "gate": {"supply_id": "DP8B1519", "channel": ["CH1"]},
+            "drain": {"supply_id": "DP8B0885", "channel": ["CH2"]},
+        }
+        document = author_official_configuration(flat)
+
+        self.assertEqual(
+            [(item["channel"], item["role"]) for item in document["run_mapping"]["dut_power_channels"]],
+            [("DP8B1519/CH1", "gate"), ("DP8B0885/CH2", "drain")],
+        )
+        self.assertEqual(
+            sorted(document["run_mapping"]["instruments"]["power_supplies"]),
+            ["DP8B0885", "DP8B1519"],
+        )
+
+        from domain.configuration.models import RunConfiguration, RunResourceMapping, TestPlan
+
+        configuration = RunConfiguration(
+            TestPlan.from_dict(document["test_plan"]),
+            RunResourceMapping.from_dict(document["run_mapping"]),
+        )
+        self.assertTrue(validate_run_configuration(configuration).valid)
+
+    def test_two_supplies_assigned_to_two_groups_are_both_registered(self):
+        """步骤 10：多电源指派不再被拒绝，DUT 与驱动功放各登记一台独立电源。"""
+        flat = _flat_config()
+        flat["driver_mode"] = {"enabled": True, "power_source": "dc_supply"}
+        flat["instruments"]["power_supplies"]["DP8B0885"] = _second_supply()
+        flat["power_supply_assignment"]["driver_amplifier"] = {
+            "power_supply_count": 1,
+            "supplies": {
+                "driver": {"supply_id": "DP8B0885", "name": "DP8B0885", "channel": ["CH1"]}
+            },
+        }
+        document = author_official_configuration(flat)
+
+        power_supplies = document["run_mapping"]["instruments"]["power_supplies"]
+        self.assertEqual(sorted(power_supplies), ["DP8B0885", "DP8B1519"])
+        self.assertEqual(power_supplies["DP8B0885"]["visa_address"], "sim::ps2")
+        self.assertEqual(
+            [item["channel"] for item in document["run_mapping"]["driver_mode"]["power_channels"]],
+            ["DP8B0885/CH1"],
+        )
+
+        from domain.configuration.models import RunConfiguration, RunResourceMapping, TestPlan
+
+        configuration = RunConfiguration(
+            TestPlan.from_dict(document["test_plan"]),
+            RunResourceMapping.from_dict(document["run_mapping"]),
+        )
+        self.assertTrue(validate_run_configuration(configuration).valid)
 
     def test_unassigned_supplies_are_not_registered_as_the_run_supply(self):
         flat = _flat_config()
         flat["power_supply_assignment"]["dut_amplifier"]["supplies"] = {}
         document = author_official_configuration(flat)
-        self.assertIsNone(document["run_mapping"]["instruments"]["power_supply"]["model"])
-        self.assertIsNone(
-            document["run_mapping"]["instruments"]["power_supply"]["visa_address"]
-        )
+        self.assertEqual(document["run_mapping"]["instruments"]["power_supplies"], {})
 
-    def test_multiple_assigned_supplies_are_rejected_instead_of_guessed(self):
-        """正式 schema 只能登记一个本机电源：多电源指派必须显式失败。"""
+        from domain.configuration.models import RunConfiguration, RunResourceMapping, TestPlan
+
+        configuration = RunConfiguration(
+            TestPlan.from_dict(document["test_plan"]),
+            RunResourceMapping.from_dict(document["run_mapping"]),
+        )
+        paths = {issue.path for issue in validate_run_configuration(configuration).errors}
+        self.assertIn("instruments.power_supplies", paths)
+
+    def test_unbound_reference_never_becomes_a_power_supply(self):
+        """``supply_id: null`` 表示“引用了未绑定的电源”，不能凭空写进快照。"""
         flat = _flat_config()
-        flat["driver_mode"] = {"enabled": True}
-        flat["instruments"]["power_supplies"]["PS2"] = {
-            "address": "sim::ps2",
-            "enabled": True,
-            "channels": {
-                "CH1": {"voltage": {"value": 5.0}, "current": {"value": 0.5}},
-                "CH2": {"voltage": {"value": 28.0}, "current": {"value": 1.0}},
-            },
+        flat["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"] = {
+            "supply_id": None,
+            "channel": ["CH1"],
         }
-        flat["power_supply_assignment"]["driver_amplifier"] = {
-            "power_supply_count": 1,
-            "supplies": {"driver": {"name": "PS2", "channel": ["CH1", "CH2"]}},
-        }
-        with self.assertRaises(ConfigurationAuthoringError) as raised:
-            author_official_configuration(flat)
-        message = str(raised.exception)
-        self.assertIn("PS1", message)
-        self.assertIn("PS2", message)
+        document = author_official_configuration(flat)
+
+        self.assertEqual(document["run_mapping"]["instruments"]["power_supplies"], {})
+        # 未选择电源时只写通道名，没有前缀就不能被当成某台电源的路由。
+        self.assertEqual(
+            [item["channel"] for item in document["run_mapping"]["dut_power_channels"]],
+            ["CH1"],
+        )
+        from domain.configuration.models import RunConfiguration, RunResourceMapping, TestPlan
+
+        configuration = RunConfiguration(
+            TestPlan.from_dict(document["test_plan"]),
+            RunResourceMapping.from_dict(document["run_mapping"]),
+        )
+        paths = {issue.path for issue in validate_run_configuration(configuration).errors}
+        self.assertIn("dut_power_channels[0].channel", paths)
 
     def test_parse_db_value(self):
         self.assertEqual(parse_db_value("30dB"), 30.0)

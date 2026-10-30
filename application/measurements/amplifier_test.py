@@ -493,20 +493,37 @@ def _run_configuration_to_service_config(configuration: Any) -> dict[str, Any]:
 
 
 def _assignment_supplies(mapping: Any, field: str) -> dict[str, dict[str, Any]]:
+    """把通道映射还原成 ``supply_id -> {name, channel}``。
+
+    新快照的通道值是显式路由 ``supply_id/CHx``，按前缀分组，因此 DUT 的 gate 与
+    drain 来自不同电源时各自成一条；旧快照的裸通道名（``CH1``）没有前缀，归到
+    唯一那台电源，由 ``legacy_power_supply()`` 给出。
+    """
     channels = getattr(mapping, field, ())
+    legacy_name = _legacy_supply_name(mapping)
     grouped: dict[str, list[str]] = {}
-    supply_name = _selected_supply_name(mapping)
     for item in channels:
-        channel = getattr(item, "channel", None)
-        if channel:
-            grouped.setdefault(supply_name, []).append(channel)
+        token = getattr(item, "channel", None)
+        if not token:
+            continue
+        supply_name, channel = _split_channel_token(token, legacy_name)
+        grouped.setdefault(supply_name, []).append(channel)
     return {
         name: {"name": name, "channel": channel_names}
         for name, channel_names in grouped.items()
     }
 
 
-def _selected_supply_name(mapping: Any) -> str:
-    instruments = getattr(mapping, "instruments", {})
-    power_supply = instruments.get("power_supply") if isinstance(instruments, Mapping) else None
-    return getattr(power_supply, "model", None) or "power_supply"
+def _split_channel_token(token: str, legacy_name: str | None) -> tuple[str, str]:
+    supply_name, separator, channel = str(token).partition("/")
+    if separator and supply_name:
+        return supply_name, channel
+    # 裸通道名是旧快照的写法：它属于唯一那台电源；没有唯一电源时保留原样，
+    # 让装配阶段按“引用了不存在的电源”明确失败，而不是猜一台。
+    return legacy_name or "power_supply", str(token)
+
+
+def _legacy_supply_name(mapping: Any) -> str | None:
+    reader = getattr(mapping, "legacy_power_supply", None)
+    legacy = reader() if callable(reader) else None
+    return getattr(legacy, "model", None) or None

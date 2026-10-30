@@ -241,6 +241,46 @@ class OfficialConfigFileValidationTests(unittest.TestCase):
         keys = [(issue.level, issue.path, issue.message) for issue in result.errors]
         self.assertEqual(len(keys), len(set(keys)))
 
+    def test_legacy_single_supply_run_mapping_is_readable(self):
+        """步骤 10：旧运行映射（单数 ``instruments.power_supply``、裸通道名）仍可读取。
+
+        现场 ``config.json`` 就是这种形态，字段级校验必须继续通过，由迁移器改写。
+        """
+        shipped = json.loads((PROJECT_ROOT / "config.json").read_text(encoding="utf-8-sig"))
+        config = copy.deepcopy(self.base_config)
+        config["run_mapping"] = copy.deepcopy(shipped["run_mapping"])
+        config["run_mapping"]["instruments"].pop("power_supplies", None)
+        with tempfile.TemporaryDirectory() as directory:
+            result = validate_config_file(self._write(directory, config))
+        self.assertTrue(
+            result.valid, [f"{issue.path}: {issue.message}" for issue in result.errors]
+        )
+
+    def test_single_supply_entry_cannot_mix_with_the_collection(self):
+        """电源只有一个来源：新旧两种写法同时出现必须报错，而不是二选一。"""
+        config = copy.deepcopy(self.base_config)
+        config["run_mapping"]["instruments"]["power_supplies"] = {
+            "DP8B1519": {
+                "label": "DP8B1519",
+                "model": "DP832A",
+                "serial": "DP8B214901519",
+                "device_key": "rigol technologies:dp8b214901519",
+                "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
+            }
+        }
+        config["run_mapping"]["dut_power_channels"] = [
+            {"channel": "DP8B1519/CH1", "role": "gate", "connection": "DP8B1519/CH1 -> DUT 栅极"},
+            {"channel": "DP8B1519/CH2", "role": "drain", "connection": "DP8B1519/CH2 -> DUT 漏极"},
+        ]
+        config["run_mapping"]["instruments"]["power_supply"] = {
+            "model": "PS1",
+            "visa_address": "TCPIP0::192.168.1.101::inst0::INSTR",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            result = validate_config_file(self._write(directory, config))
+        paths = {issue.path for issue in result.errors}
+        self.assertIn("instruments.power_supply", paths)
+
 
 class SimulatedDeviceBindingValidationTests(unittest.TestCase):
     """模拟扫描写入的设备绑定可以保存，但绝不能通过真实运行校验。"""

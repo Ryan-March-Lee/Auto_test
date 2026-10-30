@@ -14,10 +14,15 @@
   通道的角色。
 - ``instruments.power_supplies.<name>.channels.<channel>.role`` 属于接线事实，由配置页
   控件显式选择后随表单写入；本模块不改写它，也不为缺失角色补默认值。
-- 正式 ``run_mapping`` 只登记**一个**本机供电电源，因此表单里被供电分配引用的电源必须
-  唯一。多电源指派无法用当前正式 schema 如实表达，此时抛出
-  :class:`ConfigurationAuthoringError` 明确拒绝，而不是写出一份看不出问题、却永远
-  无法创建运行的半成品配置。
+- 正式 ``run_mapping`` 的电源段是**集合** ``instruments.power_supplies.<supply_id>``：
+  每台被供电分配实际引用的电源各占一条，条目自带 ``label`` / ``model`` / ``serial`` /
+  ``device_key`` / ``visa_address``。快照只登记实际使用的电源，绑定了但没被分配的电源
+  不会进快照。集合大小由分配与绑定共同决定，1 台和多台走同一条路径，不再有“只能登记
+  一个本机电源”的限制。
+- 通道连接统一写成 ``supply_id/CHx``（与 ``instrument.measurement_factory`` 的
+  ``supply/channel`` 路由一致），因此 DUT 的 gate 与 drain 可以来自不同电源。
+- 身份字段（``label`` / ``serial`` / ``device_key``）只从该电源自己的配置条目读取；
+  条目缺少身份时写空并在正式校验中报错，不按地址或型号去猜设备。
 """
 
 from __future__ import annotations
@@ -60,8 +65,8 @@ def author_official_configuration(config: Mapping[str, Any] | None) -> dict[str,
     """返回带正式 ``test_plan`` / ``run_mapping`` 段的配置文档副本。
 
     函数不修改调用方对象；输入可以是任意（含不完整）的表单配置，缺失或非法字段只会
-    导致正式校验失败，不会抛出异常。唯一例外是正式 schema 无法表达的形态（多个本机
-    供电电源同时被分配），此时抛出 :class:`ConfigurationAuthoringError`。
+    导致正式校验失败，不会抛出异常。电源数量不再受“只能有一台”限制：分配引用了两台
+    就生成两条电源条目。
     """
     document = copy.deepcopy(dict(config)) if isinstance(config, Mapping) else {}
     document["schema_version"] = OFFICIAL_SCHEMA_VERSION
@@ -113,9 +118,6 @@ def _author_run_mapping(document: Mapping[str, Any]) -> dict[str, Any]:
     instruments = _mapping(document.get("instruments"))
     signal_generator = _mapping(instruments.get("signal_generator"))
     spectrum_analyzer = _mapping(instruments.get("spectrum_analyzer"))
-    supplies = _mapping(instruments.get("power_supplies"))
-    selected_supply = _selected_supply(document)
-    selected_config = _mapping(supplies.get(selected_supply)) if selected_supply else {}
     driver_channels = _author_driver_channel_mappings(document)
     return {
         "schema_version": OFFICIAL_SCHEMA_VERSION,
@@ -140,10 +142,7 @@ def _author_run_mapping(document: Mapping[str, Any]) -> dict[str, Any]:
                     else None
                 ),
             },
-            "power_supply": {
-                "model": selected_supply,
-                "visa_address": selected_config.get("address"),
-            },
+            "power_supplies": _author_power_supply_entries(document),
         },
         "driver_mode": {
             "enabled": bool(_mapping(document.get("driver_mode")).get("enabled")),
@@ -169,7 +168,7 @@ def _driver_power_source(document: Mapping[str, Any], driver_channels: Any) -> s
 def _author_dut_role_plans(document: Mapping[str, Any]) -> dict[str, Any]:
     plans: dict[str, Any] = {}
     for assignment in _assignment_supplies(document, "dut_amplifier").values():
-        supply_name = assignment.get("name")
+        supply_name = _assigned_supply_id(assignment)
         channels = _supply_channels(document, supply_name)
         for channel in _channel_list(assignment.get("channel")):
             role = DUT_CHANNEL_ROLES.get(channel)
@@ -180,7 +179,7 @@ def _author_dut_role_plans(document: Mapping[str, Any]) -> dict[str, Any]:
 def _author_driver_role_plans(document: Mapping[str, Any]) -> dict[str, Any]:
     plans: dict[str, Any] = {}
     for assignment in _assignment_supplies(document, "driver_amplifier").values():
-        supply_name = assignment.get("name")
+        supply_name = _assigned_supply_id(assignment)
         channels = _supply_channels(document, supply_name)
         for channel in _channel_list(assignment.get("channel")):
             plans.setdefault(
@@ -194,17 +193,18 @@ def _author_dut_channel_mappings(document: Mapping[str, Any]) -> list[dict[str, 
     mappings: list[dict[str, Any]] = []
     seen: set[str] = set()
     for assignment in _assignment_supplies(document, "dut_amplifier").values():
-        supply_name = assignment.get("name")
+        supply_name = _assigned_supply_id(assignment)
         for channel in _channel_list(assignment.get("channel")):
-            if channel in seen:
+            token = _channel_token(supply_name, channel)
+            if token in seen:
                 continue
-            seen.add(channel)
+            seen.add(token)
             role = DUT_CHANNEL_ROLES.get(channel)
-            connection = f"{supply_name or 'power-supply'}-{channel}"
+            connection = token
             if role:
                 connection = f"{connection} -> DUT {'栅极' if role == 'gate' else '漏极'}"
             mappings.append(
-                {"channel": channel, "role": role, "connection": connection}
+                {"channel": token, "role": role, "connection": connection}
             )
     return mappings
 
@@ -213,16 +213,17 @@ def _author_driver_channel_mappings(document: Mapping[str, Any]) -> list[dict[st
     mappings: list[dict[str, Any]] = []
     seen: set[str] = set()
     for assignment in _assignment_supplies(document, "driver_amplifier").values():
-        supply_name = assignment.get("name")
+        supply_name = _assigned_supply_id(assignment)
         for channel in _channel_list(assignment.get("channel")):
-            if channel in seen:
+            token = _channel_token(supply_name, channel)
+            if token in seen:
                 continue
-            seen.add(channel)
+            seen.add(token)
             mappings.append(
                 {
-                    "channel": channel,
+                    "channel": token,
                     "role": DRIVER_CHANNEL_ROLE,
-                    "connection": f"{supply_name or 'power-supply'}-{channel} -> 驱动功放",
+                    "connection": f"{token} -> 驱动功放",
                 }
             )
     return mappings
@@ -255,27 +256,73 @@ def _supply_channels(document: Mapping[str, Any], supply_name: Any) -> Mapping[s
     return _mapping(_mapping(supplies.get(supply_name)).get("channels"))
 
 
-def _selected_supply(document: Mapping[str, Any]) -> str | None:
-    """返回正式 ``run_mapping`` 要登记的本机供电电源名。
+def _used_supply_ids(document: Mapping[str, Any]) -> list[str]:
+    """按出现顺序返回供电分配实际引用的 ``supply_id``（去重）。
 
-    依据是**供电分配**（``power_supply_assignment``）实际引用的电源，而不是“恰好只有
-    一个电源被启用”这类隐式条件；分配为空时返回 ``None``，由正式校验报告缺少电源，
-    不做任何推断。被多个电源同时引用时无法如实表达，直接拒绝。
+    只认 ``supply_id``：它才是电源引用。旧记录没有该字段时回落读一次同名
+    ``name``（过渡期两者同值），完全未绑定的引用（``supply_id: null``）不计入——
+    它交给正式校验报告，不能被当成一台电源写进快照。
     """
     names: list[str] = []
     for group in _ASSIGNMENT_GROUPS:
         for assignment in _assignment_supplies(document, group).values():
-            name = assignment.get("name")
-            if isinstance(name, str) and name.strip() and name not in names:
+            name = _assigned_supply_id(assignment)
+            # 没有引用（``supply_id: null``、空白）的分配不算一台电源：它交给正式校验
+            # 报告，不能被当成某台设备写进快照。
+            if name is not None and name not in names:
                 names.append(name)
-    if len(names) > 1:
-        raise ConfigurationAuthoringError(
-            "配置把供电分配给了多个本机电源（"
-            + "、".join(names)
-            + "），但正式 run_mapping 只登记一个本机供电电源："
-            "请只保留一组电源分配，或把驱动功放改为外部供电（取消其本机供电分配）后再保存。"
-        )
-    return names[0] if names else None
+    return names
+
+
+def _assigned_supply_id(assignment: Mapping[str, Any]) -> str | None:
+    """分配条目引用的电源 ``supply_id``。
+
+    读引用规则与配置读取共用一处（:func:`config_form_state.assignment_supply_id`）：
+    ``supply_id`` 优先，只有完全没有该字段的旧记录才回落读一次 ``name``。
+    """
+    from presentation.qt.config_form_state import assignment_supply_id
+
+    return assignment_supply_id(assignment)
+
+
+def _author_power_supply_entries(document: Mapping[str, Any]) -> dict[str, Any]:
+    """生成正式 ``run_mapping.instruments.power_supplies``：每台**实际使用**的电源一条。
+
+    条目自带身份（``label`` / ``model`` / ``serial`` / ``device_key``）和地址，历史查看
+    与重现不再回查设备注册表。身份只从该电源自己的配置条目读取，不按地址或型号推断。
+    """
+    supplies = _mapping(_mapping(document.get("instruments")).get("power_supplies"))
+    entries: dict[str, Any] = {}
+    for supply_id in _used_supply_ids(document):
+        supply = _mapping(supplies.get(supply_id))
+        entries[supply_id] = {
+            "label": supply.get("label"),
+            # 旧槽位条目的 ``model`` 里存的是槽位名（``PS1``），那不是型号；旧写法没有
+            # 型号信息，宁可留空让正式校验报告，也不把编号当型号写进快照。
+            "model": None if _is_slot_name(supply.get("model")) else supply.get("model"),
+            "serial": supply.get("serial"),
+            "device_key": supply.get("device_key"),
+            "visa_address": supply.get("address"),
+        }
+    return entries
+
+
+def _is_slot_name(value: Any) -> bool:
+    """``model`` 字段里填的其实是旧槽位名（``PS1``..``PS4``）。"""
+    if not isinstance(value, str):
+        return False
+    from domain.instruments.models import POWER_SUPPLY_SLOTS
+
+    return value.strip() in POWER_SUPPLY_SLOTS
+
+
+def _channel_token(supply_id: str | None, channel: str) -> str:
+    """通道的显式路由：``supply_id/CHx``。
+
+    未选择电源时只写通道名，由正式校验报“通道路由指向快照里没有的电源”，
+    而不是凭通道名猜一台电源。
+    """
+    return f"{supply_id}/{channel}" if supply_id else channel
 
 
 def _channel_list(value: Any) -> list[str]:

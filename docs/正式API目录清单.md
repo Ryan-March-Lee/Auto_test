@@ -120,7 +120,7 @@
 
 | 模块 | 正式公开名称 |
 | --- | --- |
-| `domain.configuration.models` | `TestPlan`、`InstrumentMapping`、`ChannelMapping`、`PowerChannelPlan`、`RunResourceMapping`、`RunConfiguration`、`validate_test_plan`、`validate_run_mapping`、`validate_run_configuration` |
+| `domain.configuration.models` | `TestPlan`、`InstrumentMapping`、`PowerSupplyMapping`、`ChannelMapping`、`PowerChannelPlan`、`RunResourceMapping`、`RunConfiguration`、`validate_test_plan`、`validate_run_mapping`、`validate_run_configuration` |
 | `domain.configuration.rules` | `validate_config`、`simulated_binding_issues` |
 | `domain.configuration.types` | `ConfigIssue`、`ConfigValidationResult` |
 | `domain.run.models` | `FileReference`、`RunManifest`、`RunStatus`、`StageRecord`、`StageStatus`、`ArtifactKind`、`ArtifactRecord`、`ArtifactStatus`、`default_manifest`、`default_artifact_path`、`normalize_artifact_path`、`generate_run_id`、`validate_run_id`、`utc_now_iso` |

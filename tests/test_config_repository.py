@@ -20,7 +20,11 @@ def _complete_combined_config() -> dict:
                 "signal_generator": {"address": "sim::sg", "model": "SG", "enabled": True},
                 "spectrum_analyzer": {"address": "sim::sa", "model": "SA", "enabled": True},
                 "power_supplies": {
-                    "PS1": {
+                    "DP8B1519": {
+                        "label": "DP8B1519",
+                        "model": "DP832A",
+                        "serial": "DP8B214901519",
+                        "device_key": "rigol technologies:dp8b214901519",
                         "address": "sim::ps1",
                         "enabled": True,
                         "channels": {
@@ -34,7 +38,13 @@ def _complete_combined_config() -> dict:
                 "driver_amplifier": {"power_supply_count": 0, "supplies": {}},
                 "dut_amplifier": {
                     "power_supply_count": 1,
-                    "supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}},
+                    "supplies": {
+                        "carrier": {
+                            "supply_id": "DP8B1519",
+                            "name": "DP8B1519",
+                            "channel": ["CH1", "CH2"],
+                        }
+                    },
                 },
             },
         }
@@ -52,9 +62,11 @@ class ConfigurationRepositoryTests(unittest.TestCase):
         self.assertTrue(result.valid, result.validation.errors)
         self.assertEqual(result.configuration.test_plan.frequencies, [2.4])
         self.assertEqual(
-            result.configuration.run_mapping.instruments["power_supply"].visa_address,
+            result.configuration.run_mapping.power_supplies["DP8B1519"].visa_address,
             "sim::ps1",
         )
+        # 单数电源条目只读兼容：新配置不再写它。
+        self.assertNotIn("power_supply", result.configuration.run_mapping.instruments)
 
     def test_flat_legacy_config_is_rejected_instead_of_converted(self):
         with tempfile.TemporaryDirectory() as directory:

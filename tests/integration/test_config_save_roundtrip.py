@@ -44,6 +44,10 @@ class ConfigurationSaveRoundTripTests(unittest.TestCase):
                 "power_supplies": {
                     "PS1": {
                         "address": "sim::ps1",
+                        "label": "PS1",
+                        "model": "DP832A",
+                        "serial": "SIM1519",
+                        "device_key": "rigol technologies:ps1",
                         "enabled": True,
                         "channels": {
                             "CH1": {"voltage": {"value": 2.8}, "current": {"value": 0.1}},

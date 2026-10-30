@@ -249,6 +249,7 @@ FORMAL_API = {
     "domain.configuration.models": (
         "TestPlan",
         "InstrumentMapping",
+        "PowerSupplyMapping",
         "ChannelMapping",
         "PowerChannelPlan",
         "RunResourceMapping",

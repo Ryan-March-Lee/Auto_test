@@ -22,6 +22,10 @@ PLACEHOLDER_VALUES = {"", "无", "待填写", "<channel_name>", "<gate_or_drain_
 DRIVER_POWER_DC = "dc_supply"
 DRIVER_POWER_EXTERNAL = "external_ac"
 DRIVER_POWER_SOURCES = (DRIVER_POWER_DC, DRIVER_POWER_EXTERNAL)
+# 旧运行快照里单数电源条目的键；新快照只写 ``instruments.power_supplies``。
+LEGACY_POWER_SUPPLY_KEY = "power_supply"
+# 运行映射里电源集合的键。电源只有一个来源：写它就不能再写旧单数条目。
+POWER_SUPPLIES_KEY = "power_supplies"
 
 
 def resolve_driver_power_source(source: Any, *, driver_channels: Any) -> str:
@@ -179,6 +183,64 @@ class InstrumentMapping:
 
 
 @dataclass(frozen=True)
+class PowerSupplyMapping:
+    """运行快照里的一台本机供电电源，自带身份而不是只有名称。
+
+    集合键（``RunResourceMapping.power_supplies``）是 ``supply_id``，即现场短标签；
+    ``device_key`` / ``serial`` 用于追溯，``visa_address`` 用于连接。快照冻结后不再
+    回查设备注册表，历史查看与重现都以这条记录为准。
+    """
+
+    label: Optional[str] = None
+    model: Optional[str] = None
+    serial: Optional[str] = None
+    device_key: Optional[str] = None
+    visa_address: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, value: Any) -> "PowerSupplyMapping":
+        value = value if isinstance(value, Mapping) else {}
+        return cls(
+            label=value.get("label"),
+            model=value.get("model"),
+            serial=value.get("serial"),
+            device_key=value.get("device_key"),
+            visa_address=value.get("visa_address"),
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "label": self.label,
+            "model": self.model,
+            "serial": self.serial,
+            "device_key": self.device_key,
+            "visa_address": self.visa_address,
+        }
+
+    @classmethod
+    def from_instrument_slot(
+        cls, value: Any, *, address: Optional[str] = None
+    ) -> "PowerSupplyMapping":
+        """把旧的单数 ``instruments.power_supply`` 读成一个条目。
+
+        旧条目只有 ``model`` / ``visa_address``；``model`` 当时存的是电源槽位名
+        （``PS1`` 等），因此按槽位名回填 ``label``/``device_key``，让旧快照在
+        ``power_supplies`` 里也能被唯一指到。``address`` 用于取回条目里的真实地址：
+        旧运行上下文把单数条目改写成 ``power_supply: {model, visa_address}``。
+        """
+        slot = value if isinstance(value, Mapping) else {}
+        instrument = InstrumentMapping.from_dict(slot)
+        label = instrument.model or None
+        return cls(
+            label=label,
+            model=label,
+            serial=None,
+            device_key=label,
+            visa_address=address if address is not None else instrument.visa_address,
+        )
+
+
+@dataclass(frozen=True)
 class ChannelMapping:
     channel: str
     role: Optional[str] = None
@@ -206,6 +268,12 @@ class RunResourceMapping:
     run_datetime: Optional[str] = None
     operator: Optional[str] = None
     instruments: Dict[str, InstrumentMapping] = field(default_factory=dict)
+    power_supplies: Dict[str, PowerSupplyMapping] = field(default_factory=dict)
+    # 来源文档是否显式写了 ``instruments.power_supplies``（哪怕集合是空的）。
+    # 判断“写的是新结构还是旧结构”必须看这个键在不在，不能看集合是不是非空：
+    # 否则 ``power_supplies: {}`` 加上旧单数条目会被当成纯旧快照悄悄放行，序列化
+    # 时也会在两种结构之间来回变形状。它只描述文档形状，不参与相等比较。
+    power_supplies_declared: bool = field(default=False, compare=False, repr=False)
     driver_enabled: bool = False
     driver_power_source: Optional[str] = None
     driver_power_channels: List[ChannelMapping] = field(default_factory=list)
@@ -216,6 +284,8 @@ class RunResourceMapping:
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "RunResourceMapping":
         instruments = value.get("instruments", {})
+        instruments = instruments if isinstance(instruments, Mapping) else {}
+        power_supplies = instruments.get(POWER_SUPPLIES_KEY)
         driver = value.get("driver_mode", {})
         return cls(
             schema_version=value.get("schema_version", ""),
@@ -223,10 +293,15 @@ class RunResourceMapping:
             run_id=value.get("run_id"),
             run_datetime=value.get("run_datetime"),
             operator=value.get("operator"),
+            # 电源集合有自己的一层结构，不进 ``instruments`` 的逐台仪器表，否则
+            # ``instruments`` 里会多出一条空仪器记录。
             instruments={
                 name: InstrumentMapping.from_dict(item)
                 for name, item in instruments.items()
-            } if isinstance(instruments, Mapping) else {},
+                if name != POWER_SUPPLIES_KEY
+            },
+            power_supplies=_power_supply_mappings(power_supplies),
+            power_supplies_declared=POWER_SUPPLIES_KEY in instruments,
             driver_enabled=driver.get("enabled", False) if isinstance(driver, Mapping) else False,
             driver_power_source=(
                 driver.get("power_source") if isinstance(driver, Mapping) else None
@@ -238,13 +313,26 @@ class RunResourceMapping:
         )
 
     def to_dict(self) -> Dict[str, Any]:
+        """按来源的形状写回电源段：新结构只写集合，旧快照只写单数条目。
+
+        电源只有一个来源，所以两种形状互斥。旧快照（只有 ``instruments.power_supply``、
+        没有集合）读入后再写回仍是旧形状，不会被补一个空集合变成“新旧混写”的文档；
+        新结构则丢掉旧单数条目，只写 ``instruments.power_supplies``。
+        """
+        instruments = {name: item.to_dict() for name, item in self.instruments.items()}
+        if self.declares_power_supplies():
+            # 电源只有一个来源：写集合时不再保留旧单数条目。
+            instruments.pop(LEGACY_POWER_SUPPLY_KEY, None)
+            instruments[POWER_SUPPLIES_KEY] = {
+                supply_id: item.to_dict() for supply_id, item in self.power_supplies.items()
+            }
         return {
             "schema_version": self.schema_version,
             "template": self.template,
             "run_id": self.run_id,
             "run_datetime": self.run_datetime,
             "operator": self.operator,
-            "instruments": {name: item.to_dict() for name, item in self.instruments.items()},
+            "instruments": instruments,
             "driver_mode": {
                 "enabled": self.driver_enabled,
                 "power_source": self.driver_power_source,
@@ -253,6 +341,30 @@ class RunResourceMapping:
             "dut_power_channels": [item.to_dict() for item in self.dut_power_channels],
             "notes": self.notes,
         }
+
+    def declares_power_supplies(self) -> bool:
+        """这份映射的电源段是否按新结构写。
+
+        有集合条目，或来源文档显式写了集合键（即使集合是空的），都算新结构；程序里
+        直接构造出 ``power_supplies={...}`` 的映射同样算。旧单数条目只有在“没有集合”
+        时才是这个问题的唯一答案。
+        """
+        return bool(self.power_supplies) or self.power_supplies_declared
+
+    def legacy_power_supply(self) -> Optional[InstrumentMapping]:
+        """旧单数 ``instruments.power_supply`` 的读取兼容。
+
+        新快照不再写这个键；历史运行的字段查看仍可以按旧名字取到“唯一那台”电源。
+        恰好一台电源时用它的型号和地址回填，多台时返回 ``None``——多台电源之下
+        “那台电源”没有唯一答案，调用方应改用 :attr:`power_supplies`。
+        """
+        instrument = self.instruments.get(LEGACY_POWER_SUPPLY_KEY)
+        if instrument is not None:
+            return instrument
+        if len(self.power_supplies) != 1:
+            return None
+        item = next(iter(self.power_supplies.values()))
+        return InstrumentMapping(model=item.model, visa_address=item.visa_address)
 
 
 @dataclass(frozen=True)
@@ -315,13 +427,15 @@ def validate_run_mapping(mapping: Union[RunResourceMapping, Mapping[str, Any]]) 
         error("template", "模板不能直接作为正式运行映射")
     if not isinstance(mapping.driver_enabled, bool):
         error("driver_mode.enabled", "必须是布尔值")
-    for name in ("signal_generator", "spectrum_analyzer", "power_supply"):
+    # 电源是集合：不再要求单数 ``instruments.power_supply``，改为校验电源集合本身。
+    for name in ("signal_generator", "spectrum_analyzer"):
         instrument = mapping.instruments.get(name)
         if instrument is None:
             error(f"instruments.{name}", "缺少仪器配置")
             continue
         _required_text(instrument.model, f"instruments.{name}.model", error)
         _required_text(instrument.visa_address, f"instruments.{name}.visa_address", error)
+    _validate_power_supplies(mapping, error)
     _validate_mappings(mapping.dut_power_channels, "dut_power_channels", error)
     _validate_mappings(mapping.driver_power_channels, "driver_mode.power_channels", error)
     dut_channels = {item.channel for item in mapping.dut_power_channels}
@@ -331,6 +445,7 @@ def validate_run_mapping(mapping: Union[RunResourceMapping, Mapping[str, Any]]) 
     overlap = dut_channels & driver_channels
     if overlap:
         error("power_channels", f"DUT 和驱动功放不能重复使用通道: {', '.join(sorted(overlap))}")
+    _validate_channel_routing(mapping, error)
     _validate_driver_mode(
         mapping.driver_enabled,
         mapping.driver_power_source,
@@ -463,6 +578,16 @@ def _channel_mappings(value: Any) -> List[ChannelMapping]:
     ]
 
 
+def _power_supply_mappings(value: Any) -> Dict[str, PowerSupplyMapping]:
+    """读取 ``instruments.power_supplies``；非映射或空值时是空集合。"""
+    if not isinstance(value, Mapping):
+        return {}
+    return {
+        str(supply_id): PowerSupplyMapping.from_dict(item)
+        for supply_id, item in value.items()
+    }
+
+
 def _validate_version(value: Any, path: str, error: Any) -> None:
     if value != SUPPORTED_SCHEMA_VERSION:
         error(path, f"当前只支持 schema_version={SUPPORTED_SCHEMA_VERSION}")
@@ -511,6 +636,119 @@ def _validate_channels(channels: Mapping[str, PowerChannelPlan], path: str, erro
         _optional_number(channel.current, f"{channel_path}.current", error, non_negative=True)
         _optional_number(channel.voltage_protection, f"{channel_path}.voltage_protection", error)
         _optional_number(channel.current_protection, f"{channel_path}.current_protection", error, non_negative=True)
+
+
+def _validate_power_supplies(mapping: RunResourceMapping, error: Any) -> None:
+    """校验运行映射里的电源段。
+
+    - 没有电源时无法运行：DUT 通道必须由某台本机电源供电，报告落在
+      ``instruments.power_supplies`` 上（新结构的“缺集合”）；
+    - 新快照不得同时写旧单数条目，电源只有一个来源。判据是集合**键**在不在，不是
+      集合非不非空——``power_supplies: {}`` 加旧条目同样是混写；
+    - 旧快照的单数条目仍在时，按旧规则检查它自己的 ``model`` / ``visa_address``，
+      缺字段报在旧键上，历史运行不会因为换了结构而“读得进、校验不过”；
+    - 每条必须带身份：``label``、``model``、``serial``、``device_key``、``visa_address``；
+    - 集合键必须是该条目的 ``label``（它同时是 ``supply_id/CHx`` 的路由前缀）；
+    - 地址不能与其它仪器或另一台电源重复，``device_key`` 不能重复——同一台设备
+      在快照里出现两次只能意味着写错了身份。
+    """
+    supplies = mapping.power_supplies
+    instruments = mapping.instruments
+    seen_keys: Dict[str, str] = {}
+    seen_addresses: Dict[str, str] = {}
+    for name in ("signal_generator", "spectrum_analyzer"):
+        instrument = instruments.get(name)
+        if instrument is not None and isinstance(instrument.visa_address, str):
+            seen_addresses.setdefault(instrument.visa_address.strip(), f"instruments.{name}")
+    legacy = instruments.get(LEGACY_POWER_SUPPLY_KEY)
+    legacy_entry = legacy if isinstance(legacy, InstrumentMapping) else None
+    if legacy_entry is not None and mapping.declares_power_supplies():
+        error(
+            f"instruments.{LEGACY_POWER_SUPPLY_KEY}",
+            "新运行映射只写 instruments.power_supplies，不能同时写旧的单数电源条目",
+        )
+    if legacy_entry is not None:
+        _required_text(
+            legacy_entry.model, f"instruments.{LEGACY_POWER_SUPPLY_KEY}.model", error
+        )
+        _required_text(
+            legacy_entry.visa_address,
+            f"instruments.{LEGACY_POWER_SUPPLY_KEY}.visa_address",
+            error,
+        )
+    if not supplies:
+        if legacy_entry is None:
+            error(f"instruments.{POWER_SUPPLIES_KEY}", "必须至少登记一台本机供电电源")
+        return
+    for supply_id, supply in supplies.items():
+        path = f"instruments.{POWER_SUPPLIES_KEY}.{supply_id}"
+        if not _required_text(supply_id, path, error):
+            continue
+        if supply_id != supply.label:
+            error(path, f"集合键必须是该电源的 label: {supply_id!r} != {supply.label!r}")
+        for field in ("label", "model", "serial", "device_key", "visa_address"):
+            _required_text(getattr(supply, field), f"{path}.{field}", error)
+        if isinstance(supply.device_key, str) and supply.device_key.strip():
+            key = supply.device_key.strip()
+            if key in seen_keys:
+                error(
+                    f"{path}.device_key",
+                    f"同一设备不能登记为两台电源: {key}（另见 {seen_keys[key]}）",
+                )
+            else:
+                seen_keys[key] = path
+        if isinstance(supply.visa_address, str) and supply.visa_address.strip():
+            address = supply.visa_address.strip()
+            if address in seen_addresses:
+                error(
+                    f"{path}.visa_address",
+                    f"多台仪器共用同一 VISA 地址: {address}（另见 {seen_addresses[address]}）",
+                )
+            else:
+                seen_addresses[address] = path
+
+
+def _validate_channel_routing(mapping: RunResourceMapping, error: Any) -> None:
+    """通道必须写成 ``supply_id/CHx``，且前缀指向快照里的电源。
+
+    新快照的每个通道值都是显式路由（与 ``measurement_factory`` 的 ``supply/channel``
+    一致）。唯一的例外是已冻结的历史快照：它本来就写成裸通道名 ``CH1``，用旧的单数
+    电源条目指代唯一电源，硬性要求加上路由会让历史运行再也打不开。因此只在旧快照
+    （不带 ``instruments.power_supplies``）下放行裸通道名。
+    """
+    legacy_snapshot = _is_legacy_power_snapshot(mapping)
+    for field in ("dut_power_channels", "driver_mode.power_channels"):
+        channels = (
+            mapping.dut_power_channels
+            if field == "dut_power_channels"
+            else mapping.driver_power_channels
+        )
+        for index, item in enumerate(channels):
+            token = item.channel
+            if not isinstance(token, str) or not token:
+                continue
+            if "/" not in token:
+                if not legacy_snapshot:
+                    error(
+                        f"{field}[{index}].channel",
+                        f"电源通道必须写成 supply_id/CHx: {token!r}",
+                    )
+                continue
+            supply_id, _, channel = token.partition("/")
+            if supply_id not in mapping.power_supplies:
+                error(
+                    f"{field}[{index}].channel",
+                    f"通道路由指向快照里没有的电源: {supply_id!r}",
+                )
+            elif not channel.strip():
+                error(f"{field}[{index}].channel", f"通道路由缺少通道名: {token!r}")
+
+
+def _is_legacy_power_snapshot(mapping: RunResourceMapping) -> bool:
+    """快照只带旧的单数 ``instruments.power_supply``，没有电源集合（连空集合都没有）。"""
+    if mapping.declares_power_supplies():
+        return False
+    return isinstance(mapping.instruments.get(LEGACY_POWER_SUPPLY_KEY), InstrumentMapping)
 
 
 def _validate_mappings(mappings: List[ChannelMapping], path: str, error: Any) -> None:

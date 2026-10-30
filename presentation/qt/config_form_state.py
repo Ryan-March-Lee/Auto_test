@@ -591,7 +591,12 @@ class ConfigFormState:
             # 身份字段只认绑定记录——记录里没有的字段要把配置里的旧值删掉，否则会出现
             # “地址来自这台、身份还是上一台”的条目（绑定是连接身份的唯一权威来源）。
             item["label"] = supply_id
+            # 身份字段以绑定记录为准，但记录里**没有**某字段（发现结果不总是带型号）时
+            # 不能把配置里同一台的型号删掉：那是这台电源自己的既有事实，不是上一台的
+            # 残留。只有记录里出现的字段才覆盖旧值，保证“身份始终来自当前绑定”。
             for field in ("device_key", "serial", "model"):
+                if field not in record:
+                    continue
                 value = record.get(field)
                 if isinstance(value, str) and value.strip():
                     item[field] = value

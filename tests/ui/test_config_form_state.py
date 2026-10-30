@@ -466,8 +466,9 @@ class ConfigFormStateTests(unittest.TestCase):
         self.assertEqual(supply["device_key"], "rigol technologies:dp8b214901519")
         self.assertEqual(supply["serial"], "DP8B214901519")
         self.assertEqual(supply["address"], "TCPIP0::192.168.1.102::inst0::INSTR")
-        # 绑定记录没有 model：配置里的旧型号不得冒充当前绑定的型号。
-        self.assertNotIn("model", supply)
+        # device_key/serial 已由绑定改写，model 缺失时保留同一台电源配置里的型号：
+        # 正式运行映射要求型号是快照身份的一部分（步骤 10）。
+        self.assertEqual(supply["model"], "OLD-MODEL")
         # 通道参数不属于身份，原样保留。
         self.assertEqual(supply["channels"], {"CH1": {"role": "gate"}})
 

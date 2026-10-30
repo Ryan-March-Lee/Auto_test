@@ -106,13 +106,66 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertTrue(window.config_page.driver_mode_requested())
         self.assertTrue(window.config["driver_mode"]["enabled"])
 
+    def test_two_supplies_in_one_run_are_both_frozen_with_their_identity(self):
+        """步骤 10：DUT 与驱动功放各用一台电源时，两台都进运行快照（各带身份）。
+
+        分配下拉框只选电源（步骤 9 的页面形状），通道是这台电源的固定 CH1/CH2；
+        因此这里让驱动功放走``DP8B0885``、DUT 走 ``DP8B1519``，快照里两条独立条目。
+        """
+        self._silence_dialogs()
+        saved = _fully_valid_gui_config()
+        saved["driver_mode"] = {"enabled": True, "power_source": "dc_supply"}
+        saved["instruments"]["power_supplies"]["DP8B0885"] = {
+            "label": "DP8B0885",
+            "model": "DP832A",
+            "serial": "DP8B174400885",
+            "device_key": "rigol technologies:dp8b174400885",
+            "address": "sim::ps2",
+            "enabled": True,
+            "channels": {"CH1": {"voltage": {"value": 5.0}, "current": {"value": 0.5}}},
+        }
+        saved["device_bindings"]["power_supplies"]["DP8B0885"] = {
+            "device_key": "rigol technologies:dp8b174400885",
+            "serial": "DP8B174400885",
+            "model": "DP832A",
+            "visa_address": "sim::ps2",
+            "source": "scan",
+        }
+        # 页面的连接只来自设备绑定：把 DUT 那台的地址落到绑定里，两台都能写进快照。
+        saved["device_bindings"]["power_supplies"]["DP8B1519"]["visa_address"] = "sim::ps1"
+        saved["device_bindings"]["power_supplies"]["DP8B1519"]["model"] = "DP832A"
+        saved["power_supply_assignment"]["driver_amplifier"] = {
+            "power_supply_count": 1,
+            "supplies": {"driver": {"supply_id": "DP8B0885", "channel": ["CH1", "CH2"]}},
+        }
+        self.config_path.write_text(json.dumps(saved), encoding="utf-8")
+
+        window = self._window()
+        # 创建运行需要驱放模式打开（页面只在驱放模式下提交驱动功放分配）。
+        window._enter_test_mode(True)
+        # 分配下拉框是用户操作面：按数据（``itemData``）选中另一台电源给驱动功放。
+        driver_combo = window.config_page.driver_power_combo
+        driver_combo.setCurrentIndex(driver_combo.findData("DP8B0885"))
+        prepared = window.coordinator.create_prepared_run()
+
+        self.assertIsNotNone(prepared)
+        mapping = prepared.configuration.run_mapping
+        self.assertEqual(sorted(mapping.power_supplies), ["DP8B0885", "DP8B1519"])
+        self.assertEqual(mapping.power_supplies["DP8B0885"].serial, "DP8B174400885")
+        self.assertEqual(mapping.power_supplies["DP8B0885"].visa_address, "sim::ps2")
+        self.assertEqual(
+            [(item.channel, item.role) for item in mapping.dut_power_channels],
+            [("DP8B1519/CH1", "gate"), ("DP8B1519/CH2", "drain")],
+        )
+
     def test_no_driver_mode_drops_a_saved_driver_assignment_and_still_creates_a_run(self):
         self._silence_dialogs()
         saved = _fully_valid_gui_config()
         saved["driver_mode"] = {"enabled": True}
         saved["power_supply_assignment"]["driver_amplifier"] = {
             "power_supply_count": 1,
-            "supplies": {"main": {"name": "PS1", "channel": ["CH1", "CH2"]}},
+            # 驱动功放走另一台电源（DP8B0885/CH2），DUT 继续用 DP8B1519。
+            "supplies": {"driver": {"supply_id": "DP8B0885", "channel": ["CH2"]}},
         }
         self.config_path.write_text(json.dumps(saved), encoding="utf-8")
 

@@ -41,7 +41,7 @@ from presentation.qt.config_projection import supply_option_label
 
 ROOT = Path(__file__).parents[1]
 PROJECTION_SOURCE = ROOT / "presentation" / "qt" / "config_projection.py"
-CONFIG_PAGE_SOURCE = ROOT / "presentation" / "qt" / "config_page.py"
+POWER_SECTION_SOURCE = ROOT / "presentation" / "qt" / "config_power_section.py"
 FACTORY_SOURCE = ROOT / "instrument" / "measurement_factory.py"
 POWER_CONTROL_SOURCE = ROOT / "instrument" / "power_control.py"
 ADAPTER_SOURCE = ROOT / "instrument" / "measurement_adapter.py"
@@ -356,10 +356,12 @@ class SharedImplementationTests(unittest.TestCase):
         self.assertIn("from domain.instruments.labels import supply_display_label", source)
         self.assertIn("return supply_display_label(supply_id, model)", source)
 
-    def test_config_page_uses_the_shared_identity_text_on_power_tabs(self):
-        source = CONFIG_PAGE_SOURCE.read_text(encoding="utf-8")
+    def test_power_tabs_use_the_shared_identity_text(self):
+        # 电源标签页的标题与提示由 ``config_power_section`` 构建（步骤 13 拆出），因此
+        # 门禁盯的是那个模块：身份文本仍然只有 ``supply_identity_text`` 一份实现。
+        source = POWER_SECTION_SOURCE.read_text(encoding="utf-8")
         self.assertIn("from domain.instruments.labels import supply_identity_text", source)
-        self.assertIn("self.power_tabs.setTabToolTip(", source)
+        self.assertIn("page.power_tabs.setTabToolTip(", source)
 
     def test_measurement_factory_logs_the_identity_line(self):
         source = FACTORY_SOURCE.read_text(encoding="utf-8")

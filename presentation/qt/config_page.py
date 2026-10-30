@@ -1,10 +1,13 @@
 """配置页面及其控件联动。
 
-页面拥有配置控件，窗口只通过信号协调保存和连接。该模块只负责控件构建、用户意图
-转发和派生界面状态（单元可见性、驱动模式、电源选项）；把冻结配置投影到控件的规则
-在 :mod:`presentation.qt.config_projection`，读取控件值组装配置的规则在
-:mod:`presentation.qt.config_form_state`。页面不持有逐字段回填逻辑，也不依赖窗口、
-测量 controller 或硬件实现。
+页面拥有配置控件，窗口只通过信号协调保存和连接。该模块只负责控件组合、用户意图
+转发和派生界面状态（单元可见性、驱动模式、电源选项）；电源分区的控件构建与标签页
+重建在 :mod:`presentation.qt.config_power_section`，把冻结配置投影到控件的规则在
+:mod:`presentation.qt.config_projection`，读取控件值组装配置的规则在
+:mod:`presentation.qt.config_form_state`。页面把电源分区要显示的条目、可选项与
+「槽位 -> 配置路径」的映射（``driver_amplifier.supplies.main`` 等，见
+:meth:`ConfigPage._assignment_entries`）读出来交给构建模块，构建模块不判断这些路径。
+页面不持有逐字段回填逻辑，也不依赖窗口、测量 controller 或硬件实现。
 
 仪表配置（扫描、勾选设备、设备身份绑定、连接仪器）已独立成
 :mod:`presentation.qt.connection_page`：本页不再创建发现面板，也不再提供连接入口，
@@ -14,16 +17,14 @@
 """
 
 import copy
-import math
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QFormLayout, QFrame, QGridLayout, QGroupBox,
-    QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QTabWidget,
+    QFrame, QGridLayout, QGroupBox,
+    QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea,
     QVBoxLayout, QWidget,
 )
 
-from domain.instruments.labels import supply_identity_text
 from domain.instruments.models import (
     POWER_SUPPLY_ROLE,
     make_device_key,
@@ -45,22 +46,23 @@ from .config_projection import (
     DEFAULT_ATTENUATOR_TYPE,
     DEFAULT_COMPRESSION_TYPE,
     DEFAULT_DRIVER_MODE_ENABLED,
-    DRIVER_POWER_SOURCE_VALUES,
     DEFAULT_MAX_INPUT_POWER,
     DEFAULT_PA_UNIT_COUNT,
     DEFAULT_SIGNAL_SOURCE,
     DEFAULT_TEST_FREQUENCIES,
     POWER_ASSIGNMENT_SLOTS,
-    POWER_SUPPLY_ROLES,
     ConfigBackfillError,
     apply_power_choice,
     driver_power_source_label,
     project_authoring_config,
-    supply_option_label,
 )
-from .configuration_authoring import DUT_CHANNEL_ROLES
+from .config_power_section import (
+    build_power_section,
+    current_power_tab_key,
+    rebuild_power_tabs,
+)
 from .device_discovery_panel import role_label
-from .input_controls import KeyboardOnlyDoubleSpinBox, WheelSafeComboBox
+from .input_controls import combo_box, spin_box
 from .pages import PageControllerBindingMixin
 from .config_page_widgets import build_action_bar
 from .theme import set_button_variant
@@ -73,49 +75,6 @@ __all__ = [
 # 电源分配下拉框的控件键。界面上的接线位置，与电源设备数量无关：这里只决定刷新时
 # 遍历哪些下拉框，选哪台电源完全来自配置引用与当前绑定集合。
 POWER_ASSIGNMENT_COMBO_KEYS = POWER_ASSIGNMENT_SLOTS
-
-
-def _spin_value(value) -> float:
-    """通道数值只接受非 bool 的有限数字；其它类型（字符串/布尔/NaN）按 0 处理。
-
-    配置页也用于回填冻结配置：类型不正确的字段不应让重建标签页崩溃，而应落到与投影
-    一致的默认值，交给正式校验报告。
-    """
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return 0.0
-    number = float(value)
-    return number if math.isfinite(number) else 0.0
-
-
-def _entry_channels(entry) -> dict:
-    """取出一个电源条目的 ``通道 -> 参数`` 映射；不是对象或没有映射时返回空字典。
-
-    条目本身是一份完整电源配置（``{model, channels: {...}}``）。
-    """
-    channels = entry.get("channels") if isinstance(entry, dict) else None
-    return channels if isinstance(channels, dict) else {}
-
-
-def _channel_map(source, preserved):
-    """取出一个电源条目的 ``通道 -> 参数`` 映射，供重建标签页时建控件。
-
-    ``source`` 是这次要显示的配置条目，``preserved`` 是重建前从控件读到的同类条目
-    （``preserve=False`` 时为空）。两者合并的优先级是“**控件里刚填的 > 配置里的**”：
-
-    - 重建发生在保存之前（应用绑定、清除绑定、再次回填），操作者刚在控件里改过的参数
-      必须保留，否则刷新会把它悄悄改回旧配置值；``preserve=True`` 的整个目的就是这个。
-    - 配置里已有、但这次没有对应控件的通道仍从配置取（例如新绑定电源的缺省参数）。
-
-    因此 ``preserve=False`` 时 ``preserved`` 为空，结果就是配置本身；``preserve=True``
-    时控件快照优先。判定按 ``supply_id`` + 通道键，与标签页位置无关。
-    """
-    channels = dict(_entry_channels(source))
-    for channel, value in _entry_channels(preserved).items():
-        if isinstance(value, dict):
-            merged = dict(channels.get(channel) or {})
-            merged.update(value)
-            channels[channel] = merged
-    return channels
 
 
 class ConfigPage(PageControllerBindingMixin, QWidget):
@@ -212,15 +171,15 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         test = self.config.get("signal_source", {})
         if not isinstance(test, dict): test = {}
         self.freq_edit = QLineEdit(str(self.config.get("test_frequencies", DEFAULT_TEST_FREQUENCIES)))
-        self.start_power = self._spin(test.get("start_power", DEFAULT_SIGNAL_SOURCE["start_power"]), -50, 20)
-        self.stop_power = self._spin(test.get("stop_power", DEFAULT_SIGNAL_SOURCE["stop_power"]), -50, 20)
-        self.power_step = self._spin(test.get("step", DEFAULT_SIGNAL_SOURCE["step"]), 0.1, 5)
+        self.start_power = spin_box(test.get("start_power", DEFAULT_SIGNAL_SOURCE["start_power"]), -50, 20)
+        self.stop_power = spin_box(test.get("stop_power", DEFAULT_SIGNAL_SOURCE["stop_power"]), -50, 20)
+        self.power_step = spin_box(test.get("step", DEFAULT_SIGNAL_SOURCE["step"]), 0.1, 5)
         compression = self.config.get("compression_point", {})
         attenuator = self.config.get("attenuator", {})
         if not isinstance(compression, dict): compression = {}
         if not isinstance(attenuator, dict): attenuator = {}
-        self.compression_combo = self._combo(("1dB", "3dB", "5dB"), compression.get("type", DEFAULT_COMPRESSION_TYPE))
-        self.attenuator_combo = self._combo(("30dB", "40dB"), attenuator.get("type", DEFAULT_ATTENUATOR_TYPE))
+        self.compression_combo = combo_box(("1dB", "3dB", "5dB"), compression.get("type", DEFAULT_COMPRESSION_TYPE))
+        self.attenuator_combo = combo_box(("30dB", "40dB"), attenuator.get("type", DEFAULT_ATTENUATOR_TYPE))
         mode = self.config.get("driver_mode", {})
         mode = mode if isinstance(mode, dict) else {}
         self.test_mode_enabled = bool(mode.get("enabled", DEFAULT_DRIVER_MODE_ENABLED))
@@ -232,8 +191,8 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         )
         dut = self.config.get("dut_config", {})
         if not isinstance(dut, dict): dut = {}
-        self.max_input_power = self._spin(dut.get("max_input_power", DEFAULT_MAX_INPUT_POWER), 0, 50)
-        self.pa_unit_count_combo = self._combo(("1", "2", "3"), str(dut.get("power_supply_count", DEFAULT_PA_UNIT_COUNT)))
+        self.max_input_power = spin_box(dut.get("max_input_power", DEFAULT_MAX_INPUT_POWER), 0, 50)
+        self.pa_unit_count_combo = combo_box(("1", "2", "3"), str(dut.get("power_supply_count", DEFAULT_PA_UNIT_COUNT)))
         parameter_rows = (("测试频率 (GHz)", self.freq_edit), ("起始功率 (dBm)", self.start_power),
                           ("结束功率 (dBm)", self.stop_power), ("功率步长 (dB)", self.power_step),
                           ("压缩点", self.compression_combo), ("衰减器", self.attenuator_combo),
@@ -512,105 +471,45 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         self.update_power_supply_options()
         self.discovery_message.emit("已清除设备绑定记录")
 
-    @staticmethod
-    def _spin(value, minimum, maximum):
-        widget = KeyboardOnlyDoubleSpinBox()
-        widget.setRange(minimum, maximum)
-        widget.setValue(float(value))
-        widget.setMaximumWidth(140)
-        return widget
-
-    @staticmethod
-    def _combo(items, current):
-        widget = WheelSafeComboBox(); widget.addItems(list(items)); widget.setCurrentText(str(current)); return widget
-
-    @staticmethod
-    def _power_choice_combo(choices, entry):
-        """电源分配下拉框：只把配置里的真实引用回填到当前可选项。
-
-        引用按 ``supply_id`` 读取（旧配置只有 ``name`` 时读一次，见
-        :func:`config_form_state.assignment_supply_id`），并且必须**出现在本次绑定的
-        可选项里**才会被选中。配置写了引用、但那台电源本次没有绑定（含还没迁移的旧槽位
-        ``PS1``）时保持空选择，交给校验报告——静默停在第一项会把“这台电源已经不在”
-        显示成“换成了另一台电源”。
-
-        显示文本是 ``DP8B1519（DP832A）`` 这样的短标签加型号，业务值放在 ``itemData``
-        （``supply_id``）；选中与读取都只看数据，不从显示字符串反解析身份。
-
-        两种状态严格分开（见 :func:`config_form_state.assignment_declared`）：配置里
-        **没有**这条分配时落到第一台可用电源；配置里**有**这条分配但引用为空
-        （``supply_id: null``）时保持空选择，不能按缺省规则补一台。判定与整份配置回填
-        共用 :func:`presentation.qt.config_projection.apply_power_choice`，所有槽位
-        （含驱动功放）用同一条缺省规则；驱动功放是否启用由 :meth:`update_driver_power_ui`
-        按驱放模式与供电方式决定。
-        """
-        combo = WheelSafeComboBox()
-        apply_power_choice(combo, entry, choices)
-        return combo
-
     def _build_power_widgets(self, layout, supplies):
-        """电源详细配置：按配置里的电源键与本次绑定动态创建标签页。
+        """建电源分区：把页面状态（条目、分配引用、可选项、供电方式）交给构建模块。
 
-        电源数量与身份都由设备绑定决定，不再有 ``PS1``..``PS4`` 四个固定页：配置里原有
-        的条目（含尚未迁移的旧槽位）各占一页，本次绑定的每台电源各占一页，标签页标题用
-        短标签加型号（``DP8B1519（DP832A）``）。
+        电源数量与身份都由设备绑定决定，不再有 ``PS1``..``PS4`` 固定页；标签页标题、
+        通道控件与分配表单的布局见 :mod:`presentation.qt.config_power_section`。
         """
-        detail = QGroupBox("电源详细配置")
-        detail_layout = QVBoxLayout(detail)
-        detail_layout.setContentsMargins(0, 0, 0, 0)
-        self.power_tabs = QTabWidget(); self.power_tabs.setObjectName("subTabs")
-        self.power_config_widgets = {}
-        self._rebuild_power_tabs(
-            sources=self._power_supply_sources(supplies), preserve=False
+        build_power_section(
+            self,
+            layout,
+            sources=self._power_supply_sources(supplies),
+            choices=self._power_supply_choices(),
+            assignment_entries=self._assignment_entries(),
+            driver_power_source=self.driver_power_source,
         )
-        detail_layout.addWidget(self.power_tabs)
-        layout.addWidget(detail)
 
-        assignment = QGroupBox("电源分配设置"); form = QGridLayout(assignment)
-        form.setHorizontalSpacing(10); form.setVerticalSpacing(8)
-        form.setColumnMinimumWidth(0, 118)
-        self.power_assignment_group = assignment
+    def _assignment_entries(self) -> dict:
+        """电源分配各槽位在配置里的引用条目；``None`` 表示配置没有写这条分配。
+
+        “条目缺失”与“声明了但引用为空”在回填时是两回事：前者按缺省规则选第一台可用
+        电源，后者保持空选择，因此这里不把 ``None`` 换成空字典。
+
+        「槽位 -> 配置路径」（``driver_amplifier.supplies.main``、
+        ``dut_amplifier.supplies.carrier/peaking/peaking2``）只在这里：构建模块拿到的是
+        已经取好的引用，不再读这些路径。
+        """
         existing = self.config.get("power_supply_assignment", {})
         if not isinstance(existing, dict): existing = {}
         driver = existing.get("driver_amplifier", {}); dut = existing.get("dut_amplifier", {})
         if not isinstance(driver, dict): driver = {}
         if not isinstance(dut, dict): dut = {}
-        self.driver_power_source_combo = self._combo(
-            DRIVER_POWER_SOURCE_VALUES, str(self.driver_power_source)
-        )
-        self.driver_power_source_label = QLabel("驱放供电方式:")
-        self.driver_power_hint = QLabel("自带供电的驱放由外部供电设备供电，本系统不会控制其电源。")
-        self.driver_power_hint.setWordWrap(True)
         driver_supply = driver.get("supplies", {}); dut_supply = dut.get("supplies", {})
         if not isinstance(driver_supply, dict): driver_supply = {}
         if not isinstance(dut_supply, dict): dut_supply = {}
-        # 条目缺失（键不存在/不是对象）与“声明了但未绑定”在回填时是两回事：
-        # 前者按缺省规则选第一台可用电源，后者保持空选择，因此这里保留 ``None``。
-        main = driver_supply.get("main")
-        carrier = dut_supply.get("carrier")
-        peaking = dut_supply.get("peaking")
-        peaking2 = dut_supply.get("peaking2")
-        supplies_choices = self._power_supply_choices()
-        # 所有槽位（含驱动功放）用同一条缺省规则：已有引用优先，否则第一台可用电源。
-        # 驱动功放是否真的启用由 update_driver_power_ui() 按驱放模式与供电方式处理。
-        self.driver_power_combo = self._power_choice_combo(supplies_choices, main)
-        self.pa_unit1_power_combo = self._power_choice_combo(supplies_choices, carrier)
-        self.pa_unit2_power_combo = self._power_choice_combo(supplies_choices, peaking)
-        self.pa_unit3_power_combo = self._power_choice_combo(supplies_choices, peaking2)
-        self.driver_power_label = QLabel("驱动功放电源:"); self.pa_unit2_label = QLabel("PA Unit2电源:"); self.pa_unit3_label = QLabel("PA Unit3电源:")
-        # 两列布局（标签 + 下拉框），避免右栏过窄时撑出横向滚动条。
-        form.addWidget(self.driver_power_source_label, 0, 0)
-        form.addWidget(self.driver_power_source_combo, 0, 1)
-        form.addWidget(self.driver_power_hint, 1, 0, 1, 2)
-        form.addWidget(self.driver_power_label, 2, 0); form.addWidget(self.driver_power_combo, 2, 1)
-        form.addWidget(QLabel("PA Unit1电源:"), 3, 0); form.addWidget(self.pa_unit1_power_combo, 3, 1)
-        form.addWidget(self.pa_unit2_label, 4, 0); form.addWidget(self.pa_unit2_power_combo, 4, 1)
-        form.addWidget(self.pa_unit3_label, 5, 0); form.addWidget(self.pa_unit3_power_combo, 5, 1)
-        form.setColumnStretch(1, 1)
-        layout.addWidget(assignment)
-        self.power_assignment_widgets = {"driver_source": self.driver_power_source_combo, "driver_power": self.driver_power_combo,
-            "pa_unit1_power": self.pa_unit1_power_combo, "pa_unit2_power": self.pa_unit2_power_combo,
-            "pa_unit2_label": self.pa_unit2_label, "pa_unit3_power": self.pa_unit3_power_combo, "pa_unit3_label": self.pa_unit3_label}
+        return {
+            "driver_power": driver_supply.get("main"),
+            "pa_unit1_power": dut_supply.get("carrier"),
+            "pa_unit2_power": dut_supply.get("peaking"),
+            "pa_unit3_power": dut_supply.get("peaking2"),
+        }
 
     def _power_supply_sources(self, supplies=None) -> dict[str, dict]:
         """电源标签页要显示的条目：配置里已有的键 + 本次已绑定的 ``supply_id``。
@@ -647,96 +546,25 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         return fragment.get("instruments", {}).get("power_supplies", {}) or {}
 
     def _rebuild_power_tabs(self, *, sources=None, preserve=True) -> None:
-        """按电源键重建标签页；``preserve`` 时保留当前控件里的通道参数。
+        """把重建标签页要用的页面状态读出来，交给构建模块。
 
-        电源数量变化（应用/清除绑定、加载另一份配置）后重建，避免按位置把某一台设备的
-        参数写到另一台上。通道参数按**配置键**取回（不是按标签页位置），当前选中的标签页
-        也按**电源键**恢复：某台电源被移除或新增时，操作者仍然停在原来那台设备上。
-        ``preserve=True`` 时控件里刚填的通道值优先于配置里的旧值（见 :func:`_channel_map`）；
-        ``preserve=False`` 是回填路径，以新配置为准，不沿用重建前的残留值。
+        条目来源（配置键 + 本次绑定）与控件里的通道参数都是页面状态，所以在这里取；
+        合并规则、按电源键恢复选中页与逐页控件构建都在
+        :mod:`presentation.qt.config_power_section`。``preserve=False`` 是回填路径，以
+        新配置为准，不沿用重建前的残留值。本方法是同名保留的委托壳：
+        ``tests/ui/test_config_page.py`` 直接调用它。
         """
-        tabs = getattr(self, "power_tabs", None)
-        if tabs is None:
+        if getattr(self, "power_tabs", None) is None:
             return
-        if sources is None:
-            sources = self._power_supply_sources()
-        existing = self._power_channel_values() if preserve else {}
-        current_key = self._current_power_tab_key()
-        tabs.clear()
-        self.power_config_widgets = {}
-        for key, source in sources.items():
-            source = source if isinstance(source, dict) else {}
-            channels = _channel_map(source, existing.get(key))
-            self._add_power_tab(key, source, channels)
-        if current_key in self.power_config_widgets:
-            tabs.setCurrentIndex(tabs.indexOf(self.power_config_widgets[current_key]["page"]))
+        rebuild_power_tabs(
+            self,
+            sources=self._power_supply_sources() if sources is None else sources,
+            preserved=self._power_channel_values() if preserve else {},
+        )
 
     def _current_power_tab_key(self) -> str | None:
-        """当前选中电源标签页的电源键；没有标签页时返回 ``None``。"""
-        tabs = getattr(self, "power_tabs", None)
-        if tabs is None or not tabs.count():
-            return None
-        index = tabs.currentIndex()
-        for key, record in getattr(self, "power_config_widgets", {}).items():
-            if record.get("page") is tabs.widget(index):
-                return key
-        return None
-
-    def _add_power_tab(self, key, source, channels) -> None:
-        """为一条电源配置建一个标签页；标题是短标签加型号（``DP8B1519（DP832A）``）。
-
-        标签页按配置键（``supply_id``）建，标题只用于显示：设备数量与身份都来自配置与
-        当前绑定，没有固定的四个槽位页。
-
-        标签页的悬浮提示给**详情与审计**：短标签、型号、完整序列号与设备键（见
-        :func:`domain.instruments.labels.supply_identity_text`）。卡面上只放标签与型号，
-        因为标题栏很窄；追溯时把指针停在标签页上就能读到完整序列号。旧槽位条目没有序列号，
-        提示里就只有它的旧键（``PS1``），不推导一个不存在的标签。
-        """
-        page = QWidget(); page_layout = QVBoxLayout(page)
-        page_layout.setSpacing(10)
-        record = {"channels": {}, "page": page}
-        for channel in ("CH1", "CH2"):
-            value = channels.get(channel, {})
-            if not isinstance(value, dict): value = {}
-            voltage = value.get("voltage", {}); current = value.get("current", {})
-            if not isinstance(voltage, dict): voltage = {}
-            if not isinstance(current, dict): current = {}
-            box = QGroupBox(f"通道 {channel}"); form = QFormLayout(box)
-            form.setHorizontalSpacing(10); form.setVerticalSpacing(6)
-            form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            role = value.get("role")
-            if role not in POWER_SUPPLY_ROLES:
-                role = DUT_CHANNEL_ROLES.get(channel, POWER_SUPPLY_ROLES[0])
-            controls = {
-                "role": self._combo(POWER_SUPPLY_ROLES, role),
-                "voltage": self._spin(_spin_value(voltage.get("value")), 0, 50),
-                "voltage_protection": self._spin(_spin_value(voltage.get("protection")), 0, 50),
-                "voltage_protection_enabled": QCheckBox("启用"),
-                "current": self._spin(_spin_value(current.get("value")), 0, 10),
-                "current_protection": self._spin(_spin_value(current.get("protection")), 0, 10),
-                "current_protection_enabled": QCheckBox("启用"),
-            }
-            controls["voltage_protection_enabled"].setChecked(voltage.get("protection_enabled") is True)
-            controls["current_protection_enabled"].setChecked(current.get("protection_enabled") is True)
-            form.addRow("供电角色", controls["role"])
-            form.addRow("电压 (V)", controls["voltage"]); form.addRow("保护电压 (V)", controls["voltage_protection"])
-            form.addRow("电压保护", controls["voltage_protection_enabled"]); form.addRow("电流 (A)", controls["current"])
-            form.addRow("保护电流 (A)", controls["current_protection"]); form.addRow("电流保护", controls["current_protection_enabled"])
-            page_layout.addWidget(box); record["channels"][channel] = controls
-        title = supply_option_label(source.get("label") or key, source.get("model"))
-        index = self.power_tabs.addTab(page, title)
-        # 详情/审计文本与标题同源：标签 + 型号 + 完整序列号 + 设备键，缺哪个就少哪段。
-        self.power_tabs.setTabToolTip(
-            index,
-            supply_identity_text(
-                source.get("label") or key,
-                source.get("model"),
-                source.get("serial"),
-                source.get("device_key"),
-            ),
-        )
-        self.power_config_widgets[key] = record
+        """当前选中电源标签页的电源键；同名委托壳（测试直接调用）。"""
+        return current_power_tab_key(self)
 
     def _build_run_widgets(self, layout):
         """运行入口：校验并创建一次运行，或按 run_id 重新打开已有运行。

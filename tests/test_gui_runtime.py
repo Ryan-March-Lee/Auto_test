@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.gui_runtime import (
+    connect_instruments,
     create_amplifier_measurement,
     create_cable_loss_measurement,
     create_driver_mapping_measurement,
@@ -129,7 +130,11 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
                 self.assertIs(result, expected)
                 connect.assert_called_once()
                 self.assertEqual(connect.call_args.args[0].context.run_id, "run-assembly-test")
-                self.assertEqual(connect.call_args.kwargs["config_path"], "config.json")
+                # 旧兼容快照：解析结果就是调用方路径，工厂把它作为“已解析值”传下去。
+                self.assertEqual(
+                    connect.call_args.kwargs["resolved_config_path"], "config.json"
+                )
+                self.assertNotIn("config_path", connect.call_args.kwargs)
                 request = measurement.call_args.args[0]
                 self.assertIs(request.measurement_port, port)
                 self.assertEqual(request.run_id, "run-assembly-test")
@@ -282,17 +287,23 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
         ):
             create_cable_loss_measurement("config.json", prepared_run=prepared)
         connect.assert_called_once()
-        # 硬件装配绑定的是运行对象本身；旧快照的调用方路径只作为来源参数带上。
+        # 硬件装配绑定的是运行对象本身；旧快照的调用方路径作为已解析值传下去。
         self.assertIs(connect.call_args.args[0], prepared)
-        self.assertEqual(connect.call_args.kwargs["config_path"], "config.json")
+        self.assertEqual(connect.call_args.kwargs["resolved_config_path"], "config.json")
 
     def test_port_and_request_share_one_resolved_snapshot_path(self):
         """一个装配函数只解析一次硬件配置：端口与请求用的是同一个冻结快照值。
 
-        契约运行的解析以运行快照为唯一权威；如果这里把调用方传入的原始路径再交给
+        契约运行的解析以运行快照为唯一权威；如果工厂把调用方传入的原始路径再交给
         连接入口，同一个函数里就会同时存在“调用方路径”和“快照路径”两个变量。
         """
         snapshot = Path("runs") / "run-contract" / "inputs" / "hardware_config.json"
+        resolutions = []
+
+        def resolver(self=None):
+            resolutions.append(snapshot)
+            return snapshot
+
         prepared = type(
             "ContractRun",
             (),
@@ -302,7 +313,7 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
                 "configuration": object(),
                 "run_directory": Path("runs") / "run-contract",
                 "run_repository": object(),
-                "hardware_connection_path": lambda self: snapshot,
+                "hardware_connection_path": resolver,
             },
         )()
         with patch("app.gui_runtime._ensure_run_snapshots_are_intact"), patch(
@@ -312,9 +323,103 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
         ) as connect, patch("app.gui_runtime.CableLossUseCase") as use_case:
             create_cable_loss_measurement("caller-config.json", prepared_run=prepared)
 
+        self.assertEqual(len(resolutions), 1, "硬件配置快照在装配过程中只解析一次")
         connect.assert_called_once()
-        self.assertEqual(Path(connect.call_args.kwargs["config_path"]), snapshot)
+        self.assertEqual(Path(connect.call_args.kwargs["resolved_config_path"]), snapshot)
         self.assertEqual(use_case.call_args.args[0].config_path, snapshot)
+
+    def test_measurement_factories_open_the_port_at_the_snapshot_they_put_in_the_request(self):
+        """端口按“已解析”的路径打开：连接入口不再二次解析（D12）。
+
+        这里放行真实的 :func:`app.gui_runtime.connect_instruments`，只把最底层的
+        ``create_measurement_port`` 换成替身，因此断言的是生产路径的实际行为：
+        ``hardware_connection_path()`` 每次装配只被调用一次，端口与测量请求拿到的是
+        同一个值。
+        """
+        snapshot = Path("runs") / "run-contract" / "inputs" / "hardware_config.json"
+        cases = (
+            (create_cable_loss_measurement, "CableLossUseCase"),
+            (create_driver_mapping_measurement, "DriverPowerMappingUseCase"),
+            (create_amplifier_measurement, "AmplifierMeasurementUseCase"),
+        )
+        for factory, use_case_name in cases:
+            with self.subTest(factory=factory.__name__):
+                resolutions = []
+
+                def resolver(self=None):
+                    resolutions.append(snapshot)
+                    return snapshot
+
+                prepared = type(
+                    "ContractRun",
+                    (),
+                    {
+                        "run_id": "run-contract",
+                        "context": SimpleNamespace(run_id="run-contract"),
+                        "configuration": object(),
+                        "run_directory": Path("runs") / "run-contract",
+                        "run_repository": object(),
+                        "hardware_connection_path": resolver,
+                    },
+                )()
+                port = _Port()
+                with patch("app.gui_runtime._ensure_run_snapshots_are_intact"), patch(
+                    "app.gui_runtime._require_stage_inputs"
+                ), patch("app.gui_runtime._preflight_amplifier_inputs"), patch(
+                    "app.gui_runtime.ArchiveArtifactGenerator"
+                ), patch("app.gui_runtime.ResultArchivalService"), patch(
+                    "app.gui_runtime.create_measurement_port", return_value=port
+                ) as port_factory, patch(
+                    f"app.gui_runtime.{use_case_name}"
+                ) as use_case:
+                    factory("caller-config.json", prepared_run=prepared)
+
+                self.assertEqual(
+                    len(resolutions), 1, "一次装配只解析一次硬件配置路径"
+                )
+                self.assertEqual(Path(port_factory.call_args.args[0]), snapshot)
+                self.assertEqual(port_factory.call_args.kwargs["mode"], "hardware")
+                self.assertEqual(use_case.call_args.args[0].config_path, snapshot)
+
+    def test_connect_instruments_resolves_once_unless_the_caller_already_did(self):
+        """连接入口两种形态：自己解析时只解析一次；收到已解析值时一次都不解析。"""
+        snapshot = Path("runs") / "run-contract" / "inputs" / "hardware_config.json"
+        resolutions = []
+
+        def resolver(self=None):
+            resolutions.append(snapshot)
+            return snapshot
+
+        prepared = type(
+            "ContractRun",
+            (),
+            {
+                "run_id": "run-contract",
+                "context": SimpleNamespace(run_id="run-contract"),
+                "run_directory": Path("runs") / "run-contract",
+                "run_repository": object(),
+                "hardware_connection_path": resolver,
+            },
+        )()
+        port = _Port()
+        with patch("app.gui_runtime.create_measurement_port", return_value=port) as factory:
+            self.assertIs(connect_instruments(prepared), port)
+
+        self.assertEqual(len(resolutions), 1)
+        self.assertEqual(Path(factory.call_args.args[0]), snapshot)
+
+        resolutions.clear()
+        with patch("app.gui_runtime.create_measurement_port", return_value=port) as factory:
+            self.assertIs(
+                connect_instruments(prepared, resolved_config_path=str(snapshot)), port
+            )
+
+        self.assertEqual(
+            resolutions,
+            [],
+            "调用方已经把解析结果交进来时，不得再调用 hardware_connection_path()",
+        )
+        self.assertEqual(Path(factory.call_args.args[0]), snapshot)
 
     def test_explicit_driver_mapping_path_is_carried_into_request(self):
         port = _Port()

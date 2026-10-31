@@ -65,22 +65,34 @@ class _CallbackEventSink:
 
 
 def connect_instruments(
-    prepared_run: PreparedRun, *, config_path: str | None = None, recorder: Any = None
+    prepared_run: PreparedRun,
+    *,
+    config_path: str | None = None,
+    resolved_config_path: str | None = None,
+    recorder: Any = None,
 ) -> Any:
     """Create the configured hardware port from the run's frozen hardware snapshot.
 
     ``prepared_run`` 是唯一的硬件装配输入：硬件配置路径经
     :meth:`PreparedRun.hardware_connection_path` 解析，并在打开任何 VISA 资源前
     按 manifest 校验 SHA-256/大小，因此“连的是本次运行的仪器”可以被证明。
+
+    解析只做一次（D12）。测量工厂需要同一个值既开端口又填测量请求，因此由工厂先
+    :func:`_hardware_config_path` 解析一次，再把**同一个结果**作为
+    ``resolved_config_path`` 交进来；此时端口直接使用它，不再二次调用
+    ``hardware_connection_path()``，端口与请求因此永远指向同一份快照，也不会为同一份
+    快照做两遍 manifest 校验。``resolved_config_path`` 是同一解析结果的传递，不是第二个
+    配置来源：它必须来自 :func:`_hardware_config_path`。
+
     ``config_path`` 只服务不带运行契约的旧兼容快照（步骤 6 删除），契约运行永远
-    不会使用它；调用方应传入**已解析**的路径（:func:`_hardware_config_path` 的结果），
-    这样端口与测量请求用的是同一个值，函数里不会出现两个同名不同值的路径变量。
+    不会使用它。
     """
-    return create_measurement_port(
-        _hardware_config_path(prepared_run, config_path),
-        mode="hardware",
-        recorder=recorder,
+    path = (
+        str(resolved_config_path)
+        if resolved_config_path is not None
+        else _hardware_config_path(prepared_run, config_path)
     )
+    return create_measurement_port(path, mode="hardware", recorder=recorder)
 
 
 def _close_owned_measurement_port(port: Any) -> None:
@@ -433,7 +445,8 @@ def create_cable_loss_measurement(
     """装配线损测量用例：运行契约是唯一权威，`config_path` 只做旧快照来源。
 
     首个位置参数不再是硬件配置权威：契约运行的硬件配置一律来自
-    ``prepared_run`` 的冻结快照（步骤 6 会删除彻底失效的旧兼容来源）。
+    ``prepared_run`` 的冻结快照（步骤 6 会删除彻底失效的旧兼容来源）。硬件配置
+    路径在本函数解析**一次**，同一个值既用于打开端口也写进测量请求（D12）。
     """
     callbacks.update(
         run_id=prepared_run.context.run_id,
@@ -448,7 +461,7 @@ def create_cable_loss_measurement(
         _ensure_run_snapshots_are_intact(prepared_run)
         if owned_port:
             callbacks["measurement_port"] = connect_instruments(
-                prepared_run, config_path=effective_config_path
+                prepared_run, resolved_config_path=effective_config_path
             )
         callbacks["owns_measurement_port"] = owned_port
         callbacks.setdefault("result_repository", FileMeasurementResultRepository(paths=callbacks.get("paths") or DEFAULT_PATHS))
@@ -485,7 +498,7 @@ def create_driver_mapping_measurement(
         _ensure_run_snapshots_are_intact(prepared_run)
         if owned_port:
             callbacks["measurement_port"] = connect_instruments(
-                prepared_run, config_path=effective_config_path
+                prepared_run, resolved_config_path=effective_config_path
             )
         callbacks["owns_measurement_port"] = owned_port
         callbacks.setdefault("result_repository", FileMeasurementResultRepository(paths=callbacks.get("paths") or DEFAULT_PATHS))
@@ -534,7 +547,7 @@ def create_amplifier_measurement(
         _ensure_run_snapshots_are_intact(prepared_run)
         if owned_port:
             callbacks["measurement_port"] = connect_instruments(
-                prepared_run, config_path=effective_config_path
+                prepared_run, resolved_config_path=effective_config_path
             )
         callbacks["owns_measurement_port"] = owned_port
         callbacks["result_repository"] = repository

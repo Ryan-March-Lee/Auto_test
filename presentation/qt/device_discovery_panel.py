@@ -20,12 +20,13 @@
 
 版式：扫描行（扫描网段 / 扫描方式）在标题正下方居中，结果区在它下面。结果区**不画外框**
 （没有边框、没有底色），所以仪器卡片直接落在页面背景上；还没点过“查找设备”时，那张
-卡片按钮就浮在结果区正中，点下去之后换成“正在查找设备”，结果回来后再换成卡片。
+卡片按钮就落在结果区顶部、紧跟在扫描行下面（不在整块结果区里居中，免得和扫描行之间隔
+一大段空白），点下去之后换成“正在查找设备”，结果回来后再换成卡片。
 **结果区的高度是固定的**（两行卡片 + 按钮与状态行）：查找前后、结果多少都不改变它的
 大小，卡片超出时只在结果区里滚动。
 
 结果区**不是抽屉**：结果回来就留在那里，没有“收起 / 查看结果”的来回切换。要重新查找时
-按“返回”（:meth:`DeviceDiscoveryPanel.request_back`）：清空本次结果与勾选，中央
+按“返回”（:meth:`DeviceDiscoveryPanel.request_back`）：清空本次结果与勾选，结果区顶部
 重新出现“查找设备”，也就是回到上一页那一步。
 
 “查找设备”不是普通按钮而是一张自绘的深色卡片（:mod:`presentation.qt.scan_card`）：卡片
@@ -99,12 +100,12 @@ _CARD_MIN_AREA_HEIGHT = 190
 #: 正在查找 / 有结果都一样大），所以点一次“查找设备”不会让页面跳动；卡片的行数超过
 #: 这个高度时只在结果区里滚动。两行正好放下场地上的 5 台仪器（最多 4 列）。
 _RESULTS_BOX_ROWS = 2
-#: 结果区的三种状态：还没查找（中央按钮）、正在查找（中央进度）、有结果（卡片）。
+#: 结果区的三种状态：还没查找（顶部按钮）、正在查找（进度）、有结果（卡片）。
 BOX_STATE_IDLE = "idle"
 BOX_STATE_BUSY = "busy"
 BOX_STATE_RESULTS = "results"
 BOX_STATES: tuple[str, ...] = (BOX_STATE_IDLE, BOX_STATE_BUSY, BOX_STATE_RESULTS)
-#: 扫描期间写在结果区中央的话：按钮收走后，这里说明正在读取设备。
+#: 扫描期间写在结果区里的话：按钮收走后，这里说明正在读取设备。
 LOADING_TEXT = "正在查找设备 …"
 _IP_PATTERN = re.compile(r"(\d{1,3}(?:\.\d{1,3}){3})")
 
@@ -265,8 +266,8 @@ class DeviceDiscoveryPanel(QWidget):
     """扫描 + 结果区控件；通过 :attr:`apply_requested` 交付用户选中的设备。
 
     版式分两段：扫描行（扫描网段、扫描方式）居中放在标题下面，不进结果区；“查找设备”
-    是结果区正中的那张卡片按钮。结果区不画外框（无边框、无底色），卡片直接落在页面
-    背景上；点下去之后按钮收走，中央换成扫描进度，结果回来后再换成卡片。
+    是结果区顶部的那张卡片按钮，紧跟在扫描行下面。结果区不画外框（无边框、无底色），
+    卡片直接落在页面背景上；点下去之后按钮收走，换成扫描进度，结果回来后再换成卡片。
     """
 
     apply_requested = Signal(object)
@@ -281,6 +282,7 @@ class DeviceDiscoveryPanel(QWidget):
         parent: Any = None,
     ) -> None:
         super().__init__(parent)
+        self.setObjectName("deviceDiscoveryPanel")
         # 面板高度贴着内容：结果区的高度是固定的（见 ``_results_box_height``），面板因此不
         # 会随着扫描状态或结果数量改变大小；多出来的高度留给页面里的弹性空白。用
         # Minimum（而不是 Maximum）：Maximum 会让布局把它压到 0，卡片区就被裁掉一半
@@ -308,14 +310,14 @@ class DeviceDiscoveryPanel(QWidget):
 
     # ---------- 返回 ----------
     #
-    # 结果区不是抽屉：有结果就把卡片留在那里；要重新查找就按“返回”，回到中央的
+    # 结果区不是抽屉：有结果就把卡片留在那里；要重新查找就按“返回”，回到扫描行下面的
     # “查找设备”，不在“收起 / 查看结果”之间来回切。
 
     def request_back(self) -> None:
-        """返回上一步：清空本次扫描结果与勾选，中央重新出现“查找设备”。
+        """返回上一步：清空本次扫描结果与勾选，结果区顶部重新出现“查找设备”。
 
         本次的发现结果、卡片勾选与状态行都属于这一次查找，返回后整块回到还没查找过的
-        样子（正中那张“查找设备”卡片），用户改网段或换扫描方式再查一次。
+        样子（扫描行下面那张“查找设备”卡片），用户改网段或换扫描方式再查一次。
         配置里已经应用的设备绑定不归面板管，所以返回不动它们；要删绑定仍用
         “清除设备绑定”。
         """
@@ -351,7 +353,7 @@ class DeviceDiscoveryPanel(QWidget):
     def clear_results(self) -> None:
         """清空上一次扫描结果；切换/重新加载配置或按“返回”时调用。
 
-        清空后回到“还没查找过”的样子：结果区中央重新出现“查找设备”。
+        清空后回到“还没查找过”的样子：结果区顶部重新出现“查找设备”。
         """
         self.devices = []
         self._clear_cards()
@@ -374,7 +376,7 @@ class DeviceDiscoveryPanel(QWidget):
         self.scan_btn.setToolTip("扫描网段并读取每台设备的 *IDN?；不会改变任何仪器状态")
         # 外观不取自样式表：它是一张自绘的深色卡片按钮（悬停动效见
         # ``presentation.qt.scan_card``），按钮的大小就是那张卡片，尺寸由卡片自己给出。
-        # 扫描期间的结果区中央说明：按钮收走后，这里写明正在读取设备。
+        # 扫描期间的结果区说明：按钮收走后，这里写明正在读取设备。
         self.loading_label = QLabel(LOADING_TEXT)
         self.loading_label.setAlignment(Qt.AlignHCenter)
         self.loading_label.setProperty("role", "hint")
@@ -386,7 +388,7 @@ class DeviceDiscoveryPanel(QWidget):
         self.mode_hint = QLabel("")
         self.mode_hint.setWordWrap(True)
         self.mode_hint.setAlignment(Qt.AlignHCenter)
-        self.mode_hint.setProperty("role", "hint")
+        self.mode_hint.setProperty("role", "note")
         # 扫描行留在结果区外面：整行按页面中线居中，跟着“仪表配置”标题走；行里只有
         # 扫描网段与扫描方式两项，动作按钮都落在结果区里（见下面的 centre_area），
         # 所以这一行永远是对称的。
@@ -395,10 +397,14 @@ class DeviceDiscoveryPanel(QWidget):
         row = QHBoxLayout()
         row.setSpacing(8)
         row.addStretch(1)
-        row.addWidget(QLabel("扫描网段:"))
+        self.subnet_label = QLabel("扫描网段:")
+        self.subnet_label.setProperty("role", "fieldLabel")
+        self.mode_label = QLabel("扫描方式:")
+        self.mode_label.setProperty("role", "fieldLabel")
+        row.addWidget(self.subnet_label)
         row.addWidget(self.subnet_edit)
         row.addSpacing(16)
-        row.addWidget(QLabel("扫描方式:"))
+        row.addWidget(self.mode_label)
         row.addWidget(self.mode_combo)
         row.addStretch(1)
         controls.addLayout(row)
@@ -417,15 +423,17 @@ class DeviceDiscoveryPanel(QWidget):
         box = QVBoxLayout(self.results_box)
         box.setContentsMargins(12, 12, 12, 12)
         box.setSpacing(8)
-        # 结果区中央：还没点过“查找设备”时按钮放在正中；点下去之后同一块中央换成扫描进度。
+        # 结果区里：还没点过“查找设备”时按钮紧跟在扫描行下面；点下去之后同一块换成
+        # 扫描进度。
         self.centre_area = QWidget(self.results_box)
         self.centre_area.setObjectName("discoveryCentreArea")
-        # 没有卡片时它占满整块结果区，内部的弹性留白把按钮压在正中。
+        # 没有卡片时它占满整块结果区，卡片贴着扫描行往下排（不在整块里居中：那样会在
+        # 扫描行和卡片之间留下一大段空白），多出来的高度留在卡片下面。
         self.centre_area.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         centre = QVBoxLayout(self.centre_area)
         centre.setContentsMargins(0, 0, 0, 0)
         centre.setSpacing(8)
-        centre.addStretch(1)
+        centre.addSpacing(4)
         # 中间这一行自己按可见项居中：没有卡片时只有一张“查找设备”卡片。
         centre_row = QHBoxLayout()
         centre_row.setSpacing(10)
@@ -466,7 +474,7 @@ class DeviceDiscoveryPanel(QWidget):
         self.clear_btn.setToolTip("删除配置中记录的角色与设备身份对应关系，不改动地址")
         set_button_variant(self.clear_btn, "ghost")
         self.back_btn = QPushButton("返回")
-        self.back_btn.setToolTip("清空本次查找的结果与勾选，回到正中的“查找设备”")
+        self.back_btn.setToolTip("清空本次查找的结果与勾选，回到扫描行下面的“查找设备”")
         set_button_variant(self.back_btn, "ghost")
         self.back_btn.setVisible(False)
         actions.addWidget(self.apply_btn)
@@ -515,7 +523,7 @@ class DeviceDiscoveryPanel(QWidget):
         return str(self.results_box.property("boxState") or BOX_STATE_IDLE)
 
     def _set_box_state(self, state: str) -> None:
-        """切换结果区状态：中央的按钮/进度、卡片区与操作按钮随状态收放。
+        """切换结果区状态：顶部的按钮/进度、卡片区与操作按钮随状态收放。
 
         结果区不画外框（无边框、无底色），所以状态切换只影响它里面的内容，不改变外观
         底色：卡片直接落在页面背景上。
@@ -535,8 +543,8 @@ class DeviceDiscoveryPanel(QWidget):
     def _sync_box_content(self) -> None:
         """结果区里只放当前状态该有的东西：查找 / 正在查找 / 卡片与操作按钮。
 
-        还没查找时中央是“查找设备”，扫描期间是进度说明，结果回来才换成一格卡片；
-        卡片看得见时中央整块让位——任何时刻都只有明确的那几样东西，扫描行始终
+        还没查找时结果区顶部是“查找设备”，扫描期间是进度说明，结果回来才换成一格卡片；
+        卡片看得见时这一块整块让位——任何时刻都只有明确的那几样东西，扫描行始终
         只有网段与扫描方式两项、可以稳稳居中。
         """
         state = self.box_state()
@@ -570,7 +578,7 @@ class DeviceDiscoveryPanel(QWidget):
     def request_scan(self) -> None:
         """启动后台扫描；同一时刻只允许一个扫描线程。
 
-        点下去就是“开始加载设备”：结果区中央的按钮收走，换成扫描进度；卡片区等结果
+        点下去就是“开始加载设备”：结果区顶部的按钮收走，换成扫描进度；卡片区等结果
         回来再出现，扫描期间不出现用不上的操作按钮。
         """
         if self.is_scanning():
@@ -610,7 +618,7 @@ class DeviceDiscoveryPanel(QWidget):
         devices = list(result.devices)
         self.devices = devices
         self.last_mode = getattr(result, "mode", self.current_mode())
-        # 有设备就把卡片放进结果区；一台都没读到就回到中央的“查找设备”，用户可以改
+        # 有设备就把卡片放进结果区；一台都没读到就回到顶部的“查找设备”，用户可以改
         # 网段再试。
         self._set_box_state(BOX_STATE_RESULTS if devices else BOX_STATE_IDLE)
         self._fill_cards(devices)
@@ -645,7 +653,7 @@ class DeviceDiscoveryPanel(QWidget):
     def _on_failed(self, message: str) -> None:
         if self._closed:
             return
-        # 失败后没有结果：中央重新出现“查找设备”，用户改网段或换扫描方式再试。
+        # 失败后没有结果：结果区顶部重新出现“查找设备”，用户改网段或换扫描方式再试。
         self._set_box_state(BOX_STATE_IDLE)
         self._set_status(f"扫描失败: {message}")
         self.log_message.emit(f"设备扫描失败: {message}")

@@ -163,8 +163,8 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
             self._scan_row_centre(panel), panel.width() / 2, delta=3, msg="返回后仍然居中"
         )
 
-    def test_the_scan_button_sits_in_the_centre_of_the_results_area(self):
-        """“查找设备”是结果区正中的落点，不在上面的扫描行里。"""
+    def test_the_scan_button_sits_in_the_results_area(self):
+        """“查找设备”是结果区顶部的落点，不在上面的扫描行里。"""
         self.make_page()
         panel = self.connection.discovery_panel
 

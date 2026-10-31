@@ -95,6 +95,8 @@ TOKENS = {
     "font_body": "9.5pt",
     "font_base": "9.5pt",
     "font_small": "8.5pt",
+    # 扫描行（“仪表配置”页的网段 / 扫描方式）比正文大一号：它是这一页唯一的输入入口。
+    "font_field": "12pt",
     # 设备卡片第一行的仪器名：居中放大，“仪表配置”页一眼看到型号。
     "font_card_name": "14pt",
     # 设备码：加粗放大的等宽字，现场对机时一眼认得出。
@@ -394,7 +396,7 @@ QFrame#discoveryResultsBox {
     background: transparent;
     border: none;
 }
-/* 结果区中央的“查找设备”在这里没有规则：它是一张自绘的深色卡片按钮
+/* 结果区顶部的“查找设备”在这里没有规则：它是一张自绘的深色卡片按钮
    （``scan_card.ScanPromptCard``），正中的渐变标题、柔光、光带与粒子都画在它自己的
    画布上；悬停时淡出的文字与从卡片背后旋出去的底卡也一样——伪元素与 ``transition``
    不在 QSS 的能力里，整块画下来才做得出来。按钮本身只有那张卡片那么大，投影、光斑与
@@ -480,6 +482,21 @@ QLabel[role="section"] {
 QLabel[role="hint"] {
     color: $text_secondary;
     font-size: $font_small;
+}
+/* 扫描行：“仪表配置”页唯一的输入入口，标签与输入框都比正文大一号。 */
+QLabel[role="fieldLabel"] {
+    color: $text;
+    font-size: $font_field;
+    font-weight: 600;
+}
+/* 提示行只放大字号，颜色仍由 tone 决定（模拟模式的警示色保留）。 */
+QLabel[role="note"] {
+    font-size: $font_body;
+}
+QWidget#deviceDiscoveryPanel QLineEdit,
+QWidget#deviceDiscoveryPanel QComboBox {
+    font-size: $font_field;
+    min-height: 24px;
 }
 
 /* ===== 输入框 / 数值框：凹陷的“填写区” =====

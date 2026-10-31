@@ -1,4 +1,4 @@
-"""面板外观：卡片的排版与结果区的状态（不画外框、中央按钮、返回上一步）。
+"""面板外观：卡片的排版与结果区的状态（不画外框、顶部按钮、返回上一步）。
 
 这些用例走真实的模拟扫描器把结果填进面板，因此放在接线测试里；只依赖表现层端口与
 DTO 的纯控件行为仍在 ``tests/ui``。
@@ -126,8 +126,45 @@ class CardPresentationTests(DiscoveryPanelTestCase):
         self.assertFalse(hasattr(panel, "reopen_btn"))
 
 
+class ScanRowPresentationTests(DiscoveryPanelTestCase):
+    """扫描行：标签与输入框比正文大一号，提示行随字号放大但仍留在次要层级。"""
+
+    def setUp(self):
+        # 与结果区用例相同：主题只装一次，这里直接取整份样式表，避免别的用例先把样式表
+        # 复原成空串（``apply_theme`` 幂等，不会替这里重新装一次）。
+        self._previous_stylesheet = self.app.styleSheet()
+        self.app.setStyleSheet(build_stylesheet())
+
+    def tearDown(self):
+        self.app.setStyleSheet(self._previous_stylesheet)
+
+    def test_labels_and_inputs_are_larger_than_the_note(self):
+        panel = self.make_panel(size=(760, 560))
+
+        self.assertEqual(panel.subnet_label.property("role"), "fieldLabel")
+        self.assertEqual(panel.mode_label.property("role"), "fieldLabel")
+        self.assertEqual(panel.mode_hint.property("role"), "note")
+        for widget in (
+            panel.subnet_label,
+            panel.mode_label,
+            panel.subnet_edit,
+            panel.mode_combo,
+        ):
+            self.assertGreaterEqual(
+                widget.font().pointSizeF(),
+                12.0,
+                f"{type(widget).__name__} 要放大",
+            )
+        self.assertGreater(panel.mode_hint.font().pointSizeF(), 8.5, "提示行也要比原来的小字大")
+        self.assertLess(
+            panel.mode_hint.font().pointSizeF(),
+            panel.subnet_label.font().pointSizeF(),
+            "提示仍是次要文字，不能盖过扫描行的标签",
+        )
+
+
 class ResultsBoxStateTests(DiscoveryPanelTestCase):
-    """结果区的状态：它不画外框（无边框、无底色），中央的“查找设备”随状态收放。"""
+    """结果区的状态：它不画外框（无边框、无底色），顶部的“查找设备”随状态收放。"""
 
     panel_size = (760, 560)
 
@@ -150,11 +187,11 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         box.render(image)
         return image.pixelColor(box.width() // 2, box.height() - 6).name()
 
-    def test_the_scan_button_starts_centred_in_a_frameless_results_area(self):
+    def test_the_scan_button_sits_under_the_scan_row_in_a_frameless_results_area(self):
         panel = self.make_panel()
         box = panel.results_box
 
-        # “查找设备”不在扫描行里，而是结果区正中的落点。
+        # “查找设备”不在扫描行里，而是结果区顶部的落点，紧跟在扫描行下面。
         self.assertTrue(box.isAncestorOf(panel.scan_btn), "查找设备要落在结果区里")
         self.assertEqual(panel.box_state(), BOX_STATE_IDLE)
         # 结果区不画外框：没有边框、没有底色，“查找设备”直接浮在页面背景上。
@@ -167,11 +204,15 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         self.assertTrue(panel.scan_btn.isVisible())
         self.assertFalse(panel.cards_area.isVisible())
 
-        # 水平、竖直都在结果区的正中（此时里面只有这一个按钮）。
+        # 水平在结果区正中；竖直贴着结果区顶部，和上面的扫描行之间不留一大段空白。
         centre = panel.scan_btn.mapTo(box, panel.scan_btn.rect().center())
-        box_centre = box.rect().center()
-        self.assertAlmostEqual(centre.x(), box_centre.x(), delta=2)
-        self.assertAlmostEqual(centre.y(), box_centre.y(), delta=2)
+        self.assertAlmostEqual(centre.x(), box.rect().center().x(), delta=2)
+        button_top = panel.scan_btn.mapTo(panel, panel.scan_btn.rect().topLeft()).y()
+        hint_bottom = panel.mode_hint.mapTo(panel, panel.mode_hint.rect().bottomLeft()).y()
+        self.assertGreaterEqual(button_top, hint_bottom)
+        self.assertLessEqual(
+            button_top - hint_bottom, 40, "查找设备要紧跟在扫描行下面，不能隔着一大段空白"
+        )
 
     def test_scanning_takes_the_button_away(self):
         panel = self.make_panel()
@@ -179,7 +220,7 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         panel.request_scan()
         self.app.processEvents()
 
-        # 点下去就开始加载设备：按钮收走，结果区中央换成进度说明。
+        # 点下去就开始加载设备：按钮收走，结果区顶部换成进度说明。
         self.assertEqual(panel.box_state(), BOX_STATE_BUSY)
         self.assertFalse(panel.scan_btn.isVisible())
         self.assertTrue(panel.loading_label.isVisible())
@@ -209,7 +250,7 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         self.app.processEvents()
         self.app.processEvents()
 
-        # 一台都没读到：结果区里放不出卡片，中央的“查找设备”回来好让用户再试一次。
+        # 一台都没读到：结果区里放不出卡片，顶部的“查找设备”回来好让用户再试一次。
         self.assertEqual(panel.card_count(), 0)
         self.assertEqual(panel.box_state(), BOX_STATE_IDLE)
         self.assertTrue(panel.scan_btn.isVisible())
@@ -223,7 +264,7 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
 
         self.assertEqual(panel.box_state(), BOX_STATE_RESULTS)
         self.assertTrue(panel.cards_area.isVisible())
-        self.assertFalse(panel.centre_area.isVisible(), "卡片看得见时中央让位给卡片")
+        self.assertFalse(panel.centre_area.isVisible(), "卡片看得见时顶部按钮让位给卡片")
         self.assertFalse(panel.scan_btn.isVisible())
 
         # 结果区里的动作只属于有结果的这一次查找：应用 / 清除 / 返回。
@@ -245,7 +286,7 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         self.app.processEvents()
         self.app.processEvents()
 
-        # 回到上一步：本次结果与勾选一起清掉，中央重新是“查找设备”。
+        # 回到上一步：本次结果与勾选一起清掉，顶部重新是“查找设备”。
         self.assertEqual(panel.box_state(), BOX_STATE_IDLE)
         self.assertEqual(panel.card_count(), 0)
         self.assertEqual(panel.devices, [])
@@ -305,7 +346,7 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         panel.clear_results()
         self.app.processEvents()
 
-        # 重新进入页面时回到“还没查找过”的样子：中央的按钮回来了，外框依旧不画。
+        # 重新进入页面时回到“还没查找过”的样子：顶部的按钮回来了，外框依旧不画。
         self.assertEqual(panel.box_state(), BOX_STATE_IDLE)
         self.assertTrue(panel.scan_btn.isVisible())
         self.assertFalse(panel.cards_area.isVisible())

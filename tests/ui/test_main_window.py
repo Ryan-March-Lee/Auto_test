@@ -40,11 +40,7 @@ class MainWindowTests(unittest.TestCase):
         fake_module.main = Mock()
         with patch.dict(sys.modules, {"presentation.qt.main_window": fake_module}):
             with patch.object(launcher, "PROJECT_ROOT", ROOT):
-                self.assertTrue(
-                    launcher.launch_gui_version(
-                        "enhanced", {"PySide6": {"installed": True}}, True
-                    )
-                )
+                self.assertTrue(launcher.launch_gui(silent=True))
         fake_module.main.assert_called_once_with()
 
     def test_new_main_window_has_no_reverse_compatibility_import(self):

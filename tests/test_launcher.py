@@ -1,3 +1,4 @@
+import inspect
 import io
 import json
 import sys
@@ -163,17 +164,54 @@ class LauncherTests(unittest.TestCase):
         with patch.object(launcher, "check_environment", return_value=True), patch.object(
             launcher, "check_packages", return_value=packages
         ), patch.object(launcher, "validate_default_config", side_effect=AssertionError("不应校验配置")), patch.object(
-            launcher, "launch_gui_version", side_effect=AssertionError("不应启动 GUI")
+            launcher, "launch_gui", side_effect=AssertionError("不应启动 GUI")
         ):
             with redirect_stdout(io.StringIO()):
                 self.assertEqual(launcher.main(["--silent"]), launcher.EXIT_DEPENDENCY_ERROR)
 
-    def test_legacy_gui_launcher_signature_remains_available(self):
+    def test_gui_entry_has_no_version_or_package_selection(self):
+        """技术债步骤 11：启动器只有无版本选择的单一 GUI 入口。"""
+        self.assertFalse(hasattr(launcher, "get_gui_version"))
+        self.assertFalse(hasattr(launcher, "launch_gui_version"))
+        parameters = inspect.signature(launcher.launch_gui).parameters
+        self.assertEqual(list(parameters), ["silent"])
+        self.assertIs(parameters["silent"].default, False)
+
+    def test_gui_entry_starts_the_main_window_module(self):
         fake_gui = types.ModuleType("presentation.qt.main_window")
         fake_gui.main = Mock()
         with patch.dict(sys.modules, {"presentation.qt.main_window": fake_gui}):
-            self.assertTrue(launcher.launch_gui_version("enhanced", {"PySide6": {"installed": True}}, False))
-        fake_gui.main.assert_called_once()
+            self.assertTrue(launcher.launch_gui(silent=True))
+        fake_gui.main.assert_called_once_with()
+
+    def test_gui_entry_reports_a_missing_main_window_module(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            launcher, "PROJECT_ROOT", Path(directory)
+        ):
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertFalse(launcher.launch_gui())
+        self.assertIn("GUI 启动失败: presentation/qt/main_window.py 文件不存在", output.getvalue())
+
+    def test_gui_entry_reports_start_failure(self):
+        fake_gui = types.ModuleType("presentation.qt.main_window")
+        fake_gui.main = Mock(side_effect=RuntimeError("boom"))
+        output = io.StringIO()
+        with patch.dict(sys.modules, {"presentation.qt.main_window": fake_gui}), redirect_stdout(
+            output
+        ), redirect_stderr(io.StringIO()):
+            self.assertFalse(launcher.launch_gui())
+        self.assertIn("GUI 启动失败: boom", output.getvalue())
+
+    def test_gui_entry_keeps_silent_mode_quiet(self):
+        fake_gui = types.ModuleType("presentation.qt.main_window")
+        fake_gui.main = Mock(side_effect=RuntimeError("boom"))
+        output = io.StringIO()
+        with patch.dict(sys.modules, {"presentation.qt.main_window": fake_gui}), redirect_stdout(
+            output
+        ), redirect_stderr(io.StringIO()):
+            self.assertFalse(launcher.launch_gui(silent=True))
+        self.assertEqual(output.getvalue(), "")
 
     def test_silent_config_error_is_written_to_standard_error(self):
         from domain.configuration.types import ConfigIssue
@@ -248,7 +286,7 @@ class LauncherTests(unittest.TestCase):
         ), patch.object(
             launcher, "setup_logging", side_effect=lambda: calls.append("log")
         ), patch.object(
-            launcher, "launch_gui_version", side_effect=lambda **kw: calls.append("gui") or True
+            launcher, "launch_gui", side_effect=lambda **kw: calls.append("gui") or True
         ):
             with redirect_stdout(io.StringIO()):
                 self.assertEqual(launcher.main([]), launcher.EXIT_SUCCESS)
@@ -262,10 +300,23 @@ class LauncherTests(unittest.TestCase):
         ), patch.object(
             launcher, "setup_logging", side_effect=OSError("磁盘不可写")
         ), patch.object(
-            launcher, "launch_gui_version", return_value=True
+            launcher, "launch_gui", return_value=True
         ):
             with redirect_stdout(io.StringIO()):
                 self.assertEqual(launcher.main([]), launcher.EXIT_SUCCESS)
+
+    def test_gui_start_failure_keeps_the_gui_error_exit_code(self):
+        with patch.object(launcher, "check_environment", return_value=True), patch.object(
+            launcher, "check_packages", return_value={}
+        ), patch.object(
+            launcher, "validate_default_config", return_value=launcher.EXIT_SUCCESS
+        ), patch.object(
+            launcher, "setup_logging"
+        ), patch.object(
+            launcher, "launch_gui", return_value=False
+        ):
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(launcher.main([]), launcher.EXIT_GUI_ERROR)
 
     def test_main_does_not_reference_silent_mode_before_initialization(self):
         with patch.object(launcher, "check_environment", side_effect=RuntimeError("boom")):

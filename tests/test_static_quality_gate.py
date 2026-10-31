@@ -221,7 +221,7 @@ BROAD_CATCH_BASELINE = {
     "launcher.py": (
         "list_runs#1",
         "check_packages#1",
-        "launch_gui_version#1",
+        "launch_gui#1",
         "main#1",
         "main#2",
     ),

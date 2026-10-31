@@ -264,25 +264,15 @@ def validate_default_config() -> int:
     return EXIT_SUCCESS if result.valid else EXIT_CONFIG_ERROR
 
 
-def get_gui_version(packages: Dict[str, Dict[str, object]]) -> str:
-    """保留旧版启动器接口，当前始终使用增强版 GUI。"""
-    return "enhanced" if packages.get("PySide6", {}).get("installed") else "none"
-
-
-def launch_gui_version(version=None, packages=None, silent: bool = False) -> bool:
-    """启动当前唯一支持的 GUI 版本。"""
-    # 兼容旧调用：launch_gui_version(version, packages, silent=False)。
-    if isinstance(version, bool) and packages is None:
-        silent = version
-    elif version == "none":
-        return False
+def launch_gui(silent: bool = False) -> bool:
+    """启动唯一的 GUI 入口；GUI 版本检测不属于启动策略。"""
     gui_file = PROJECT_ROOT / "presentation" / "qt" / "main_window.py"
     if not gui_file.exists():
         if not silent:
             print("GUI 启动失败: presentation/qt/main_window.py 文件不存在")
         return False
     if not silent:
-        print("正在启动增强版 GUI...")
+        print("正在启动 GUI...")
     try:
         from presentation.qt.main_window import main
 
@@ -425,7 +415,7 @@ def main(argv: object = None) -> int:
         except Exception as logging_error:
             if not silent_mode:
                 print(f"日志初始化失败（忽略）: {logging_error}")
-        return EXIT_SUCCESS if launch_gui_version(silent=silent_mode) else EXIT_GUI_ERROR
+        return EXIT_SUCCESS if launch_gui(silent=silent_mode) else EXIT_GUI_ERROR
     except KeyboardInterrupt:
         if not silent_mode:
             print("\n用户中断程序")

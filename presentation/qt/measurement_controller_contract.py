@@ -2,6 +2,10 @@
 
 The contract separates page commands from runtime-owned resources. It has no
 Qt, worker implementation, persistence, VISA, or SCPI dependency.
+
+``MeasurementCommand`` 的运行契约判据不在这里实现：它经
+:func:`presentation.qt.run_contract.is_valid_prepared_run` 委托到唯一判据
+(:func:`application.run_service.has_run_contract`)，因此本模块只消费判据、不复刻判据。
 """
 
 from __future__ import annotations

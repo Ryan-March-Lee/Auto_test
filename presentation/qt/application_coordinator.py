@@ -451,16 +451,13 @@ class ApplicationCoordinator:
 
         连接仪器一律使用当前运行的冻结快照（步骤 5），因此界面上的改动不会生效。
         这里不做阻断：是否需要先重建运行由用户按现场情况决定，但“改动被忽略”必须
-        在日志里说出来，不能静默。
+        在日志里说出来，不能静默。``is_dirty()`` 只是控件值与基线的比较，不吞异常：
+        它抛错说明配置页状态已坏，应当在连接前暴露，而不是被这条提示掩盖。
         """
         checker = getattr(self.config_page, "is_dirty", None)
         if not callable(checker):
             return False
-        try:
-            return checker() is True
-        except Exception as failure:  # noqa: BLE001 - 提示失败不得影响连接
-            self._log(f"无法判断配置页是否有未冻结修改: {failure}")
-            return False
+        return checker() is True
 
     def connect_instruments(
         self, bind_signals: Callable[[Any], None] | None = None

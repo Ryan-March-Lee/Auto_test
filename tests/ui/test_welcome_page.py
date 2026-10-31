@@ -135,6 +135,16 @@ class WelcomePageModeButtonTests(unittest.TestCase):
             buttons[0]._font.pointSizeF(), page._subtitle.font().pointSizeF()
         )
 
+    def test_welcome_background_is_loadable(self):
+        """背景图按压缩规则换成 JPEG 后，欢迎页仍能用 QPixmap 解码绘制。"""
+        from presentation.qt.welcome_page import _welcome_background
+
+        pixmap = _welcome_background()
+
+        self.assertFalse(pixmap.isNull(), "欢迎页背景必须能被 Qt 解码")
+        self.assertGreater(pixmap.width(), 0)
+        self.assertGreater(pixmap.height(), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

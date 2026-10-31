@@ -27,6 +27,8 @@ from infrastructure.runtime import (
 
 RELEASE_FILES = (
     "launcher.py",
+    # 界面运行必需的图片资源：压缩规则与预算见 docs/静态资源与Notebook版本管理.md。
+    "assets",
     "domain/measurement",
     "domain/configuration",
     "infrastructure/config",

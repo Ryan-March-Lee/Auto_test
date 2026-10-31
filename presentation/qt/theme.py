@@ -115,8 +115,10 @@ TONE_NAMES = ("info", "success", "warning", "danger", "muted")
 
 #: 欢迎页背景图，放在项目根目录的 ``assets/``：它是一张场景图而不是界面字形，
 #: 因此与图标分开存放；样式表按绝对路径引用，打包位置变化时只需改这一处。
+#: 背景是照片且不需要透明通道，按“适度压缩”存为 JPEG（规则见
+#: ``docs/静态资源与Notebook版本管理.md``）。
 WELCOME_BACKGROUND_FILE = (
-    Path(__file__).resolve().parents[2] / "assets" / "init_background.png"
+    Path(__file__).resolve().parents[2] / "assets" / "init_background.jpg"
 )
 
 

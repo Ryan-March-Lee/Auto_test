@@ -22,6 +22,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from presentation.qt.device_cards import (  # noqa: E402
     InstrumentImage,
     _content_rect,
+    instrument_picture_path,
 )
 
 #: 缩略图扫描的取整误差：每个缩略图像素最多代表原图 ``max(边长)/128``。
@@ -143,6 +144,33 @@ class PictureRectTests(unittest.TestCase):
 
         self.assertFalse(widget.has_picture())
         self.assertTrue(widget.picture_rect().isEmpty())
+
+
+class RuntimePictureTests(unittest.TestCase):
+    """仓库里随发布交付的仪器图仍能放进卡片：压缩后尺寸和透明留白不得破坏显示。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.application = QApplication.instance() or QApplication([])
+
+    def test_every_role_picture_is_drawn_inside_the_picture_area(self):
+        for role in ("signal_generator", "spectrum_analyzer", "power_supply"):
+            with self.subTest(role=role):
+                path = instrument_picture_path(role)
+                self.assertIsNotNone(path, f"{role} 没有可用的仪器图")
+                widget = InstrumentImage()
+                widget.resize(172, 104)
+                widget.set_picture(path)
+
+                self.assertTrue(widget.has_picture())
+                source = widget.source_rect()
+                self.assertFalse(source.isEmpty())
+                rect = widget.picture_rect()
+                self.assertFalse(rect.isEmpty())
+                self.assertGreaterEqual(rect.left(), float(widget.rect().left()))
+                self.assertGreaterEqual(rect.top(), float(widget.rect().top()))
+                self.assertLessEqual(rect.right(), float(widget.rect().right()))
+                self.assertLessEqual(rect.bottom(), float(widget.rect().bottom()))
 
 
 if __name__ == "__main__":

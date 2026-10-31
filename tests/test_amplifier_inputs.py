@@ -379,7 +379,7 @@ class RunConfigurationInputTests(unittest.TestCase):
         with self.assertRaises(AmplifierInputError):
             AmplifierMeasurementInputs.from_run_configuration(configuration)
 
-    def test_legacy_bare_channel_uses_the_unique_legacy_supply(self):
+    def test_bare_channel_is_rejected_even_with_a_legacy_supply(self):
         from dataclasses import replace
 
         from domain.configuration.models import (
@@ -398,13 +398,11 @@ class RunConfigurationInputTests(unittest.TestCase):
             ),
         )
 
-        inputs = AmplifierMeasurementInputs.from_run_configuration(configuration)
+        with self.assertRaises(AmplifierInputError):
+            AmplifierMeasurementInputs.from_run_configuration(configuration)
 
-        self.assertEqual(inputs.dut_power_channels[0].supply_id, "PS1")
-        self.assertEqual(inputs.dut_power_channels[0].channel, "CH1")
-
-    def test_bare_channel_without_a_unique_legacy_supply_is_rejected(self):
-        """无法唯一确定旧电源时不得编造供电标识，必须在转换边界失败。"""
+    def test_bare_channel_without_supply_identity_is_rejected(self):
+        """缺少电源身份的裸通道必须在正式输入转换边界失败。"""
         configuration = self._configuration()
         configuration.run_mapping.dut_power_channels[0] = type(
             "Channel", (), {"channel": "CH1"}

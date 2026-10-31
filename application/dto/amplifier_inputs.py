@@ -27,9 +27,7 @@
 
 ``SupplyChannel`` 只接受显式路由（``supply_id + channel`` 或
 ``"<supply_id>/<channel>"``）：裸通道名（旧快照的 ``CH1``）不在这里被猜测成“唯一那台
-电源”。唯一例外是 :meth:`AmplifierMeasurementInputs.from_run_configuration` 这一过渡
-边界：已冻结的旧快照没有路由，只能用旧的单数电源条目指代唯一电源；无法唯一确定电源
-时转换直接抛 :class:`AmplifierInputError`，不编造电源标识。该兼容在计划步骤 10 收敛。
+电源”。运行配置转换也只接受显式路由，不按单电源假设猜测设备。
 """
 
 from __future__ import annotations
@@ -223,9 +221,7 @@ class AmplifierMeasurementInputs:
         输入限制与驱动模式，运行映射提供本机实际接线的 DUT 供电通道。
 
         非法或缺失字段统一收敛为 :class:`AmplifierInputError`，因此调用方可以在连接
-        任何仪器之前失败。旧快照的裸通道名（``CH2``）在这一过渡边界按“唯一那台电源”
-        解释，且只在旧的单数电源条目能唯一确定时成立；否则转换直接失败，不编造电源
-        标识。新快照只接受显式 ``supply_id/CHx`` 路由。
+        任何仪器之前失败。运行映射只接受显式 ``supply_id/CHx`` 路由。
         """
         plan = getattr(configuration, "test_plan", None)
         mapping = getattr(configuration, "run_mapping", None)
@@ -308,34 +304,10 @@ class AmplifierMeasurementInputs:
 
 
 def _dut_power_channels(mapping: Any) -> tuple[SupplyChannel, ...]:
-    """把运行映射的 DUT 通道解析为显式路由。
-
-    新快照的通道值是 ``supply_id/CHx``。唯一的过渡例外是已冻结的历史快照：它写成
-    裸通道名并用旧的单数电源条目指代唯一电源，此时按单电源假设解释；旧电源无法唯一
-    确定时不猜一台，而是让转换在应用边界明确失败（计划步骤 10 收敛）。
-    """
-    legacy_id = _legacy_supply_id(mapping)
-    channels: list[SupplyChannel] = []
-    for item in getattr(mapping, "dut_power_channels", ()) or ():
-        token = getattr(item, "channel", None)
-        if not isinstance(token, str) or not token.strip():
-            raise AmplifierInputError(
-                "运行映射的 DUT 供电通道缺少通道名：主功放正式输入不能使用空通道"
-            )
-        if "/" in token:
-            channels.append(SupplyChannel.from_routing(token))
-            continue
-        if legacy_id is None:
-            raise AmplifierInputError(
-                "运行映射的 DUT 供电通道必须写成 supply_id/通道名；"
-                f"裸通道名 {token!r} 只在旧的单数电源条目能唯一确定时兼容"
-            )
-        channels.append(SupplyChannel(supply_id=legacy_id, channel=token))
-    return tuple(channels)
+    """把运行映射中的显式路由解析为供电通道。"""
+    return tuple(
+        SupplyChannel.from_routing(getattr(item, "channel", None))
+        for item in (getattr(mapping, "dut_power_channels", ()) or ())
+    )
 
 
-def _legacy_supply_id(mapping: Any) -> str | None:
-    """旧快照里唯一那台电源的标识；新快照或无法唯一确定时返回 ``None``。"""
-    reader = getattr(mapping, "legacy_power_supply", None)
-    legacy = reader() if callable(reader) else None
-    return getattr(legacy, "model", None) or None

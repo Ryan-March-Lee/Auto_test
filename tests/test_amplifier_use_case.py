@@ -105,7 +105,7 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
                 instruments={
                     "power_supply": InstrumentMapping(model="PS1")
                 },
-                dut_power_channels=[ChannelMapping(channel="CH2", role="drain")],
+                dut_power_channels=[ChannelMapping(channel="PS1/CH2", role="drain")],
             ),
         )
         request = _request(_Instrument())

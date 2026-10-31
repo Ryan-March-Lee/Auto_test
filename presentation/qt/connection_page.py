@@ -8,8 +8,10 @@
 它只从配置页读当前绑定与已保存地址，用来填“当前配置”与扫描框初值；点“连接仪器”
 只是把请求交给配置页去校验。
 
-版式只有三块：页面偏上的大字号标题、居中放在标题下面的扫描行（扫描网段 / 扫描方式），
-以及下面一块显示发现结果的区域。这块区域不画外框（没有边框、没有底色），仪器卡片直接
+版式只有三块：大字号标题、居中放在标题下面的扫描行（扫描网段 / 扫描方式），
+以及下面一块显示发现结果的区域。这一组内容不贴视口顶端：多出来的高度上下分配时
+上留白多留一些（见 :meth:`ConnectionPage._build_ui`），整组因此落在页面中线略偏下。
+这块区域不画外框（没有边框、没有底色），仪器卡片直接
 落在页面背景上；“查找设备”是一张落在结果区顶部、紧跟在扫描行下面的卡片按钮，点下去
 之后按钮收走、开始加载设备。“连接仪器”放在区域右下方，点它仍然走
 配置页的连接入口（:meth:`presentation.qt.config_page.ConfigPage.request_connect`
@@ -40,7 +42,7 @@ from .config_form_bindings import LEGACY_BINDING_SOURCE, binding_address, bindin
 from .device_discovery_panel import DeviceDiscoveryPanel, subnet_from_address
 from .theme import set_button_variant
 
-#: 页面标题：整屏步骤页只有这一行大字号标题，居中放在页面偏上的位置。
+#: 页面标题：整屏步骤页只有这一行大字号标题，跟着下面的一整组内容落在页面中线略偏下。
 PAGE_TITLE = "仪表配置"
 #: 操作栏提示：说明“下一步”不会丢弃已应用的设备绑定。
 ACTION_HINT = "已应用的设备会随配置一起保存；点“下一步”继续配置测试参数与运行。"
@@ -89,9 +91,10 @@ class ConnectionPage(QWidget):
         column.setContentsMargins(16, 0, 16, 0)
         column.setSpacing(12)
 
-        # 整页只有标题、扫描行、结果区与“连接仪器”四块：上下留白对半分，
-        # 让这一组控件落在页面中间（竖直方向大致居中）。
-        column.addStretch(1)
+        # 整页只有标题、扫描行、结果区与“连接仪器”四块。多出来的高度按 2:1 分给
+        # 上下留白（不是对半分）：这一组控件因此落在页面中线略偏下的位置，标题不贴
+        # 视口上沿。窗口变矮时只会压缩这两段留白，不会多出滚动条。
+        column.addStretch(2)
         self.title_label = QLabel(PAGE_TITLE)
         self.title_label.setObjectName("connectionPageTitle")
         self.title_label.setProperty("role", "pageTitle")

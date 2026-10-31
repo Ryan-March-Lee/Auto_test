@@ -70,6 +70,8 @@ WORKER_FACTORY_LITERALS = {name: 1 for name in MEASUREMENT_FACTORIES}
 
 # 生产组合根：唯一的装配模块。断言的是“只有一个模块”，不是“只有一次调用”。
 COMPOSITION_ROOT = "app/gui_runtime.py"
+# 受控例外（清单第 5 节）：真机冒烟脚本直接调用仪器工厂，不经需要运行契约的连接入口。
+CONTROLLED_EXCEPTION_SCRIPT = "hardware/new_path_minimal_action_smoke.py"
 MEASUREMENT_PORT_CALLS = {COMPOSITION_ROOT: 2}
 # 两种装配模式的调用次数：硬件模式连真机，仿真模式不连设备。
 MEASUREMENT_PORT_MODES = {"hardware": 1, "simulation": 1}
@@ -154,6 +156,21 @@ NO_CONTRACT_SITES = (
     ("B9", "app/gui_runtime.py", "_test_frequencies", ("isinstance(configuration, Mapping)",)),
     ("B10", "app/gui_runtime.py", "_request_kwargs", ("if run_repository is not None",)),
     ("B12", "instrument/measurement_factory.py", "create_measurement_port", ("hardware_config_path is None",)),
+    (
+        # 连接入口仍接受旧兼容来源：契约运行绝不用它（B3 的调用方形态），但参数还在。
+        # 这是步骤 5 的**既有遗留**，本次只是补登，不是新增回退。
+        "B22",
+        "app/gui_runtime.py",
+        "connect_instruments",
+        ("config_path: str | None = None",),
+    ),
+    (
+        # 仪器连接 worker 同理：prepared_run 是唯一输入，config_path 只服务旧快照。
+        "B23",
+        "presentation/qt/workers.py",
+        "InstrumentWorker",
+        ("config_path: str | None = None",),
+    ),
     (
         "B16",
         "application/measurements/cable_loss.py",
@@ -845,6 +862,19 @@ class ContractPredicateTests(unittest.TestCase):
                 with self.assertRaises(RunNotResumable):
                     gui_runtime._hardware_config_path(prepared, caller_path)
 
+    def test_a_run_without_any_hardware_source_fails_before_connecting(self):
+        """既没有运行契约、也没有调用方路径时，连接入口必须明确失败（兜底出口）。"""
+
+        class _BareRun:
+            """既无运行仓储，也没有快照解析入口的最小对象。"""
+
+        from app import gui_runtime
+        from application.run_service import RunNotResumable
+
+        with self.assertRaises(RunNotResumable) as raised:
+            gui_runtime._hardware_config_path(_BareRun(), None)
+        self.assertIn("没有可用的硬件配置路径", str(raised.exception))
+
     def test_create_prepared_run_requires_a_hardware_snapshot(self):
         from app.run_context import create_prepared_run
 
@@ -936,6 +966,57 @@ class ProductionContractTests(unittest.TestCase):
             "config_path",
             arguments,
             f"{symbol} 不得再把调用方的 config_path 当作硬件装配来源",
+        )
+
+    def test_controlled_exception_script_stays_on_the_instrument_factory(self):
+        """清单第 5 节的受控例外必须有可执行形状：只用工厂，不经生产连接入口。"""
+        relative = CONTROLLED_EXCEPTION_SCRIPT
+        text, tree = _tree(ROOT / relative)
+        aliases = _alias_map(tree)
+        port_calls = []
+        connect_calls = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = _resolved_call_name(node, aliases)
+            if name == "create_measurement_port":
+                port_calls.append(node)
+            elif name == "connect_instruments":
+                connect_calls.append(node.lineno)
+        self.assertEqual(
+            len(port_calls),
+            1,
+            f"{relative} 的受控例外只允许一处硬件装配调用；增减都要同步清单第 5 节",
+        )
+        modes = [
+            keyword.value.value
+            for node in port_calls
+            for keyword in node.keywords
+            if keyword.arg == "mode" and isinstance(keyword.value, ast.Constant)
+        ]
+        self.assertEqual(
+            modes, ["hardware"], f"{relative} 是受控真机冒烟，只允许装配硬件模式"
+        )
+        self.assertEqual(
+            connect_calls,
+            [],
+            f"{relative} 不得调用生产连接入口 connect_instruments：它要求运行契约",
+        )
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module)
+            elif isinstance(node, ast.Import):
+                imported.update(alias.name for alias in node.names)
+        self.assertNotIn(
+            "app.gui_runtime",
+            imported,
+            f"{relative} 属受控例外，不得依赖生产组合根",
+        )
+        self.assertIn(
+            "instrument.measurement_factory",
+            imported,
+            f"{relative} 应显式使用仪器工厂，声明它不经运行契约",
         )
 
     def test_connect_instruments_is_bound_to_the_prepared_run(self):

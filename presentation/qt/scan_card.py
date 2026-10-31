@@ -1,4 +1,4 @@
-"""“查找设备”的卡片按钮：一张深色卡片，正中一行渐变标题；悬停时卡片底下那张底卡转出去。
+"""“查找设备”的卡片按钮：按钮本体就是那张 190×254 的深色卡片，正中一行渐变标题。
 
 卡面来自一段 HTML/CSS 的 Uiverse 卡片（190×254 深色卡片）。这里用 Qt 的技术栈复刻它的
 **悬停动效**，与原 CSS 一一对应：
@@ -8,21 +8,31 @@
   霓虹色块，模糊 20px，成为卡片四周的柔光。
 - 悬停时底卡在 0.6s 里转到 -90°、横向拉长、纵向压扁（``rotate(-90deg) scaleX(1.34)
   scaleY(0.77)``，缓动 ``cubic-bezier(0.175, 0.885, 0.32, 1.275)``：冲过终点再弹回来），
-  看起来就是一张卡片从卡片背后旋出来；同时柔光的模糊从 20px 加到 30px。
-- 鼠标移开后同一条时间轴倒放回去。原 CSS 只给 ``::before`` 写了 ``transition``，
-  ``::after`` 的模糊是瞬间切换的，这里也照着来（这一跳很轻，但仍是“无过渡”）。
+  看起来就是一张卡片从卡片背后旋出来；同时柔光的模糊从 20px 加到 30px，卡面上的两行字在
+  同一个 0.6s 里淡到看不见。
+- 鼠标移开后同一条时间轴倒放回去（文字一起淡回来）。原 CSS 只给 ``::before`` 写了
+  ``transition``，``::after`` 的模糊是瞬间切换的，这里也照着来（这一跳很轻，但仍是
+  “无过渡”）。
+
+**按钮的大小就是卡片的大小**：控件固定为 :data:`CARD_WIDTH` × :data:`CARD_HEIGHT`
+（190×254，与结果区里的仪器卡片同宽），所以布局里的占位、可点区域与悬停触发范围都只有
+那张卡片，四周没有一圈既是空地又吃悬停的留白。投影、霓虹光斑与悬停时旋出去的底卡本来要
+画到卡片外面去，而 Qt 会把画到控件矩形外的像素裁掉：这三层因此画在同级的一张透明覆盖层
+上（:class:`_CardBackdrop`），它不进布局、不吃鼠标，只跟着卡片的位置走，悬停进度也由卡片喂给
+它。
 
 卡面本身一直停在“亮起”的状态：卡面提亮、青绿柔光、三团光晕、六个外飘的粒子、斜向高光、
 四角角标都亮着；“查找设备”四个字以青绿→天蓝的渐变标题落在**卡片正中**，下面一行副标题
 留在底边。卡面内部的环境动效照旧：四条横向光带（3s 一轮，各自错开）、自上而下扫过的扫描线
 （2s 一轮）与粒子的外飘（2s 一轮）。
 
-实现：**整块自绘**（``paintEvent`` 依次画底卡、柔光、卡面、光带/扫描线/粒子、标题与副标题、
-高光），不随时间变化的那些层（投影、卡面、柔光、角标）预算成一张位图，模糊过的柔光另外
-预算成一张（模糊很贵，只在模糊度变化时重建）；悬停进度由一条 ``QVariantAnimation`` 推进，
-环境动效由一个 30fps 的计时器推进。样式表表达不了伪元素、``transition`` 与 ``transform``，
-因此本控件不着样式表：颜色、字号与尺寸都在本模块给出（深色卡面 + 青绿/靛蓝/紫青配色是
-这段效果的一部分，不并入浅色主题的令牌；焦点框仍取 :data:`theme.TOKENS` 的主色）。
+实现：**整块自绘**（``paintEvent`` 依次画卡面、光带/扫描线/粒子、标题与副标题、高光），
+覆盖层自己画底卡、柔光与投影。不随时间变化的那些层（卡面、柔光、角标）预算成一张位图，
+覆盖层上模糊过的光斑另外预算成一张（模糊很贵，只在模糊度变化时重建）；悬停进度由一条
+``QVariantAnimation`` 推进，环境动效由一个 30fps 的计时器推进。样式表表达不了伪元素、
+``transition`` 与 ``transform``，因此本控件不着样式表：颜色、字号与尺寸都在本模块给出
+（深色卡面 + 青绿/靛蓝/紫青配色是这段效果的一部分，不并入浅色主题的令牌；焦点框仍取
+:data:`theme.TOKENS` 的主色）。
 
 它仍是 ``QPushButton`` 的子类：``clicked``、``setEnabled``、``setToolTip``、键盘
 空格/回车与悬浮提示照旧，调用方不必知道它是自绘的。
@@ -70,13 +80,13 @@ __all__ = [
     "ScanPromptCard",
     "CARD_HEIGHT",
     "CARD_WIDTH",
-    "GLOW_MARGIN_X",
-    "GLOW_MARGIN_Y",
+    "BACKDROP_MARGIN_X",
+    "BACKDROP_MARGIN_Y",
 ]
 
 # ---- 尺寸（原效果的 px 值） --------------------------------------------------
 
-#: 卡片本体尺寸：原效果是 190×254 的竖卡。
+#: 卡片本体尺寸：原效果是 190×254 的竖卡。按钮的大小与它一致（右下角那张装饰层不算在内）。
 CARD_WIDTH = 190
 CARD_HEIGHT = 254
 CARD_RADIUS = 20.0
@@ -86,11 +96,13 @@ UNDERLAY_GROW = 5.0
 UNDERLAY_WIDTH = CARD_WIDTH + 2 * UNDERLAY_GROW
 UNDERLAY_HEIGHT = CARD_HEIGHT + 2 * UNDERLAY_GROW
 UNDERLAY_RADIUS = 10.0
-#: 四周留白：Qt 会把画到控件矩形外的像素裁掉，投影、悬停时旋出去的底卡与模糊光斑都必须
-#: 画在控件里面。底卡转到 45° 时最宽，每侧比卡片多出约 71px；柔光那一圈按 2.6σ 算（悬停
-#: 时 σ=30px，约 78px），再往里就淡到看不见了。两边取大者，于是横向 80、纵向 78。
-GLOW_MARGIN_X = 80
-GLOW_MARGIN_Y = 78
+#: 卡片背后那张装饰层（:class:`_CardBackdrop`）比卡片四边各大多少：Qt 会把画到控件矩形外的
+#: 像素裁掉，而投影、悬停时旋出去的底卡与模糊光斑都必须画在卡片外面。底卡转到 45° 时最宽，
+#: 每侧比卡片多出约 71px；柔光那一圈按 2.6σ 算（悬停时 σ=30px，约 78px），再往里就淡到
+#: 看不见了。两边取大者，于是横向 80、纵向 78。这层不是按钮的一部分：它不占版面、不吃
+#: 鼠标，只跟着卡片的位置走。
+BACKDROP_MARGIN_X = 80
+BACKDROP_MARGIN_Y = 78
 
 #: 卡片上的文案：正中是渐变大字，底边一行副标题（高亮词单独上渐变）。
 CARD_TEXT = "查找设备"
@@ -314,8 +326,8 @@ def _render_glow(size: QSize, card: QRectF, ratio: float, radius: float) -> QPix
     """``::after``：卡片位置上一层缩到 0.95 的霓虹色块，模糊成一个光斑。
 
     ``::after`` 在 CSS 里没有圆角，是 ``inset: 0`` 的矩形再缩到 0.95；模糊之后四角本来就
-    散开了，所以这里也照原样画矩形。整张图按控件大小出，模糊溢出的那一圈正好落在控件
-    的留白里。
+    散开了，所以这里也照原样画矩形。整张图按装饰层（:class:`_CardBackdrop`）的大小出，
+    模糊溢出的那一圈正好落在它比卡片多出来的留白里。
     """
     source = QPixmap(
         QSize(max(1, round(size.width() * ratio)), max(1, round(size.height() * ratio)))
@@ -338,8 +350,129 @@ def _render_glow(size: QSize, card: QRectF, ratio: float, radius: float) -> QPix
     return glow
 
 
+class _CardBackdrop(QWidget):
+    """卡片背后那一层装饰：投影、霓虹光斑与旋出去的底卡。
+
+    按钮本体只有卡片那么大（:data:`CARD_WIDTH` × :data:`CARD_HEIGHT`），而这三层本来就要
+    露在卡片外面，Qt 却会把画到控件矩形外的像素裁掉；于是把它们放到这张**同级的透明
+    覆盖层**上：它比卡片四边各大 :data:`BACKDROP_MARGIN_X` / :data:`BACKDROP_MARGIN_Y`，
+    不进任何布局、不吃鼠标（``WA_TransparentForMouseEvents``），位置与可见性由卡片在
+    :meth:`ScanPromptCard._sync_backdrop` 里钉住（并用 ``stackUnder`` 压在卡片下面），
+    悬停进度与启用状态也从卡片上读。因此它只是卡片的一层画布：用户点不到它，悬停也不会
+    因为落在它上面而触发，页面里其他控件的层级也不因它而变。
+
+    坐标与卡片共用父控件的坐标系，卡片在这张覆盖层里的矩形由 :meth:`_card_rect` 现算；
+    卡面的圆角、底卡的角度与缩放都从卡片上读同一份悬停进度。
+    """
+
+    def __init__(self, card: "ScanPromptCard", parent: QWidget) -> None:
+        super().__init__(parent)
+        self._card = card
+        self.setObjectName("scanCardBackdrop")
+        # 它只是画布：点击、悬停与键盘焦点一概不要，全都留给卡片本体。
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setFocusPolicy(Qt.NoFocus)
+        #: ``::after`` 那张模糊光斑的预渲染图：只在尺寸/屏幕像素比/模糊度变化时重建。
+        self._glow = QPixmap()
+        self._glow_key: tuple[int, int, float, float] | None = None
+
+    # ---- 坐标 ---------------------------------------------------------------
+
+    def _card_rect(self) -> QRectF:
+        """卡片本体在这张覆盖层里的矩形（两者共用一个父控件，坐标只差一层留白）。"""
+        card = self._card
+        offset = card.pos() - self.pos()
+        return QRectF(
+            float(offset.x()),
+            float(offset.y()),
+            float(card.width()),
+            float(card.height()),
+        )
+
+    # ---- 缓存 ---------------------------------------------------------------
+
+    def reset_glow(self) -> None:
+        """丢掉模糊光斑那张位图：悬停状态（模糊度）换了，下次重画时重做一张。"""
+        self._glow_key = None
+
+    def _glow_pixmap(self, card: QRectF) -> QPixmap:
+        """光斑的预渲染图：尺寸、屏幕像素比或悬停状态（模糊度）变了才重做。
+
+        模糊是这条绘制链里最贵的一步（一整张覆盖层大小的位图过一次高斯），但它只跟这四样
+        东西有关，缓存住之后每次重画就只是一次贴图。
+        """
+        ratio = float(self.devicePixelRatioF())
+        radius = GLOW_BLUR_HOVER if self._card.hovered else GLOW_BLUR
+        key = (self.width(), self.height(), round(ratio, 3), round(radius, 1))
+        if self._glow_key != key:
+            self._glow = _render_glow(self.size(), card, ratio, radius)
+            self._glow_key = key
+        return self._glow
+
+    # ---- 绘制 ---------------------------------------------------------------
+
+    def paintEvent(self, event):  # noqa: N802 - Qt 覆盖方法
+        """底卡 → 霓虹光斑 → 投影：三层都压在卡片底下，只有露在卡片外面的部分看得见。"""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        if not self._card.isEnabled():
+            painter.setOpacity(_DISABLED_OPACITY)
+        card = self._card_rect()
+        if card.isEmpty():
+            return
+        silhouette = QPainterPath()
+        silhouette.addRoundedRect(card, CARD_RADIUS, CARD_RADIUS)
+
+        # CSS 里那两个负 z-index 的伪元素（底卡 ``::before``、模糊光斑 ``::after``），
+        # 投影压在它们上面：三者都只从卡面边缘露出来。
+        self._paint_underlay(painter, card)
+        painter.drawPixmap(QPointF(0.0, 0.0), self._glow_pixmap(card))
+        self._paint_outer_shadow(painter, silhouette)
+
+    def _paint_underlay(self, painter: QPainter, card: QRectF) -> None:
+        """``::before``：卡片下面那张紫→蓝渐变底卡，悬停时转出去。
+
+        底卡比卡片四边各大 5px（原效果的 200×264）。原 CSS 的
+        ``transform: rotate(-90deg) scaleX(1.34) scaleY(0.77)`` 对着元素中心作用：缩放先
+        作用在底卡自己的坐标里，再整体转 -90°。这里同样以底卡中心为原点，平移之后先缩放再
+        旋转（``QPainter`` 的变换按调用顺序逐层套进坐标系，因此最后调的那一层作用在最外层），
+        渐变的坐标留在底卡自己的坐标系里，转起来就跟着一起转。
+        """
+        center = card.center()
+        rect = QRectF(
+            center.x() - UNDERLAY_WIDTH / 2.0,
+            center.y() - UNDERLAY_HEIGHT / 2.0,
+            UNDERLAY_WIDTH,
+            UNDERLAY_HEIGHT,
+        )
+        value = self._card.hover_progress
+        painter.save()
+        painter.translate(rect.center())
+        painter.rotate(HOVER_ROTATION * value)
+        painter.scale(
+            1.0 + (HOVER_SCALE_X - 1.0) * value,
+            1.0 + (HOVER_SCALE_Y - 1.0) * value,
+        )
+        local = rect.translated(-rect.center())
+        gradient = _counter_diagonal_gradient(local)
+        gradient.setColorAt(0.0, _UNDERLAY_START)
+        gradient.setColorAt(1.0, _UNDERLAY_END)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(gradient)
+        painter.drawRoundedRect(local, UNDERLAY_RADIUS, UNDERLAY_RADIUS)
+        painter.restore()
+
+    def _paint_outer_shadow(self, painter: QPainter, silhouette: QPainterPath) -> None:
+        """``box-shadow: 0 0 20px rgba(0, 0, 0, 0.3)``：几层由外向内收窄的深色描边。"""
+        painter.setBrush(Qt.NoBrush)
+        for step in range(_SHADOW_LAYERS):
+            width = 2.0 + step * 3.0
+            painter.setPen(QPen(_alpha(_BLACK, (26 - step * 5) / 255.0), width))
+            painter.drawPath(silhouette)
+
+
 class ScanPromptCard(QPushButton):
-    """“查找设备”按钮：一张一直亮着的深色卡片，正中是渐变标题；悬停时底卡转出去。
+    """“查找设备”按钮：一张一直亮着的深色卡片，正中是渐变标题；悬停时文字淡出、底卡转出去。
 
     卡片自上而下读：正中一行 28px 的青绿→天蓝渐变标题（带一层青绿光晕），底边一行小字
     副标题，四角是靛蓝角标。卡片内部一直有动效：四条横向光带缓慢长出又收回、一条扫描带
@@ -348,11 +481,14 @@ class ScanPromptCard(QPushButton):
     **悬停动效**来自原 CSS 的两个伪元素：卡片底下压着一张比卡片大一圈的紫→蓝渐变底卡
     （只在卡片外露出窄窄一圈），再往下是一层模糊的粉→青霓虹光斑。鼠标进来时底卡在
     0.6s 里转到 -90° 并横向拉长、纵向压扁，像一张卡片从卡片背后旋出来；光斑的模糊同时
-    从 20px 加到 30px。鼠标移开时同一条时间轴倒放回去。
+    从 20px 加到 30px；卡面上的两行字在同一个 0.6s 里淡到看不见（鼠标移开时一起淡回来）。
+    鼠标移开时同一条时间轴倒放回去。
 
-    尺寸固定在 :data:`CARD_WIDTH` × :data:`CARD_HEIGHT`（四周另有 :data:`GLOW_MARGIN_X` /
-    :data:`GLOW_MARGIN_Y` 的留白用来画投影、旋出去的底卡与光斑），由 :meth:`sizeHint`
-    交给布局，因此页面里它的占位与一张设备卡片相当；动效不会改变版面。
+    **尺寸就是卡片本身**：控件固定为 :data:`CARD_WIDTH` × :data:`CARD_HEIGHT`（190×254），
+    由 :meth:`sizeHint` 交给布局，因此它在页面里的占位、可点区域与悬停触发范围都只有那张
+    卡片，四周再没有一圈吃版面又吃悬停的空地。要露在卡片外面的那三层（投影、霓虹光斑、
+    旋出去的底卡）画在同级的透明覆盖层上（:class:`_CardBackdrop`），它不进布局、不吃鼠标，
+    只跟着卡片的位置走；动效因此也不会改变版面。
     """
 
     def __init__(self, text: str = CARD_TEXT, parent: QWidget | None = None) -> None:
@@ -372,15 +508,14 @@ class ScanPromptCard(QPushButton):
         self._hovered = False
         #: 焦点框只在键盘走到这里时画：鼠标点出来的焦点不该在卡片外留一圈线。
         self._focus_visible = False
-        #: 不随时间变化的那些层（投影、卡面、柔光、角标）的预渲染图。
+        #: 不随时间变化的那些层（卡面、柔光、角标）的预渲染图。
         self._face = QPixmap()
         self._face_key: tuple[int, int, float] | None = None
         #: 标题光晕的预渲染图（按文字与屏幕像素比缓存）。
         self._halo = QPixmap()
         self._halo_key: tuple[str, float] | None = None
-        #: ``::after`` 那张模糊光斑的预渲染图：只在尺寸/屏幕像素比/模糊度变化时重建。
-        self._glow = QPixmap()
-        self._glow_key: tuple[int, int, float, float] | None = None
+        #: 卡片背后那层装饰（投影、光斑、底卡）：有父控件时才有，跟着卡片的位置走。
+        self._backdrop: _CardBackdrop | None = None
         self._clock = QElapsedTimer()
         self._clock.start()
         self._last_tick = 0
@@ -398,9 +533,8 @@ class ScanPromptCard(QPushButton):
     # ---- 尺寸 ---------------------------------------------------------------
 
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt 覆盖方法
-        return QSize(
-            int(CARD_WIDTH + 2 * GLOW_MARGIN_X), int(CARD_HEIGHT + 2 * GLOW_MARGIN_Y)
-        )
+        """按钮的大小就是卡片的大小：布局里占的就是那 190×254。"""
+        return QSize(int(CARD_WIDTH), int(CARD_HEIGHT))
 
     def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt 覆盖方法
         return self.sizeHint()
@@ -417,27 +551,91 @@ class ScanPromptCard(QPushButton):
     def changeEvent(self, event):  # noqa: N802 - Qt 覆盖方法
         if event.type() == QEvent.Type.StyleChange:
             self._apply_fixed_size()
+            self._sync_backdrop()
+        elif event.type() == QEvent.Type.EnabledChange:
+            # 灰掉的卡片不该还停在悬停那一格：Qt 不给被禁用的控件送鼠标进出事件，
+            # 鼠标正好停在上面时禁用它就收不到 ``leaveEvent``，这里替它回到静止。
+            if not self.isEnabled():
+                self._hover_animation.stop()
+                self._hovered = False
+                self._hover = 0.0
+            # 整块的明暗换了：背后那层装饰跟着一起淡（模糊度也可能换了档）。
+            self._refresh_backdrop()
+            self.update()
         super().changeEvent(event)
 
     def _card_rect(self) -> QRectF:
-        """卡片本体在控件里的矩形：四边留出画投影、旋出去的底卡与光斑的余地。"""
-        return QRectF(self.rect()).adjusted(
-            GLOW_MARGIN_X, GLOW_MARGIN_Y, -GLOW_MARGIN_X, -GLOW_MARGIN_Y
-        )
+        """卡片本体在控件里的矩形：按钮就是卡片，所以是整块控件矩形。"""
+        return QRectF(self.rect())
 
-    def _underlay_rect(self) -> QRectF:
-        """底卡（``::before``）的矩形：比卡片四边各大 5px，即原效果的 200×264。"""
-        card = self._card_rect()
-        return QRectF(
-            card.center().x() - UNDERLAY_WIDTH / 2.0,
-            card.center().y() - UNDERLAY_HEIGHT / 2.0,
-            UNDERLAY_WIDTH,
-            UNDERLAY_HEIGHT,
-        )
+    # ---- 卡片背后的装饰层 ---------------------------------------------------
 
-    def hitButton(self, position) -> bool:  # noqa: N802 - Qt 覆盖方法
-        """只有点在卡片本体上才算点中：四周留白只是给投影与动效的。"""
-        return self._card_rect().contains(QPointF(position))
+    def _sync_backdrop(self) -> None:
+        """让背后那层装饰跟着卡片：换父控件时重建，随后把位置、大小与可见性钉住。
+
+        装饰层与卡片同级（在同一个父控件里），所以两者的坐标系只差一层留白；卡片在布局里
+        挪动或父控件重排（:meth:`moveEvent` / :meth:`resizeEvent`）时都要再对一次。
+        """
+        parent = self.parentWidget()
+        if parent is None:
+            self._drop_backdrop()
+            return
+        backdrop = self._backdrop
+        if backdrop is None or backdrop.parentWidget() is not parent:
+            self._drop_backdrop()
+            backdrop = _CardBackdrop(self, parent)
+            self._backdrop = backdrop
+        backdrop.setGeometry(
+            self.geometry().adjusted(
+                -BACKDROP_MARGIN_X, -BACKDROP_MARGIN_Y, BACKDROP_MARGIN_X, BACKDROP_MARGIN_Y
+            )
+        )
+        backdrop.setVisible(self.isVisible())
+        # 装饰层压在卡片底下：两个同级控件谁在上面，靠这一句定下来。这里只把装饰层按下去，
+        # 卡片自己不越到任何同级控件上面（``raise_()`` 会把卡片顶到后来出现的同级控件
+        # 之上，装饰层的位置本来不该改变页面的层级）。
+        backdrop.stackUnder(self)
+
+    def _drop_backdrop(self) -> None:
+        """扔掉背后那层装饰（换父控件、控件还没进界面时）。"""
+        backdrop = self._backdrop
+        if backdrop is None:
+            return
+        self._backdrop = None
+        backdrop.hide()
+        backdrop.deleteLater()
+
+    def _refresh_backdrop(self) -> None:
+        """装饰层重画：悬停状态（模糊度）或整块的明暗变了。"""
+        backdrop = self._backdrop
+        if backdrop is None:
+            return
+        backdrop.reset_glow()
+        backdrop.update()
+
+    def moveEvent(self, event):  # noqa: N802 - Qt 覆盖方法
+        self._sync_backdrop()
+        super().moveEvent(event)
+
+    def resizeEvent(self, event):  # noqa: N802 - Qt 覆盖方法
+        self._sync_backdrop()
+        super().resizeEvent(event)
+
+    def event(self, event):  # noqa: N802 - Qt 覆盖方法
+        if event.type() == QEvent.Type.ParentChange:
+            # 换了父控件：装饰层要跟着搬过去（真正的几何在下一轮 move/resize 里对）。
+            self._sync_backdrop()
+        return super().event(event)
+
+    @property
+    def hover_progress(self) -> float:
+        """悬停进度（0 静止、1 完全悬停）：背后那层装饰按它算底卡的角度与缩放。"""
+        return self._hover
+
+    @property
+    def hovered(self) -> bool:
+        """鼠标是否停在卡片上：``::after`` 的模糊度只跟它走，与过渡进度无关。"""
+        return self._hovered
 
     # ---- 动画 ---------------------------------------------------------------
 
@@ -451,9 +649,15 @@ class ScanPromptCard(QPushButton):
         self.update()
 
     def _set_hover(self, value: float) -> None:
-        """悬停进度（0..1，缓动过的值）变了：重画即可，底卡的角度与缩放都从这里读。"""
+        """悬停进度（0..1，缓动过的值）变了：卡片与背后那层装饰一起重画。
+
+        卡面上的两行字也读这份进度（淡出），底卡的角度与缩放同样从这里读。
+        """
         self._hover = float(value)
         self.update()
+        backdrop = self._backdrop
+        if backdrop is not None:
+            backdrop.update()
 
     def _animate_hover(self, target: float) -> None:
         """让悬停进度走到 ``target``：整个过渡 0.6s，中途折返也重走满 0.6s（与 CSS 一致）。"""
@@ -467,13 +671,13 @@ class ScanPromptCard(QPushButton):
         animation.start()
 
     def enterEvent(self, event):  # noqa: N802 - Qt 覆盖方法
-        """鼠标进来：底卡旋出去，柔光的模糊同时加厚（模糊那一档是瞬间切的）。"""
+        """鼠标进来：底卡旋出去、文字淡出，柔光的模糊同时加厚（模糊那一档是瞬间切的）。"""
         self._set_hovered(True)
         self._animate_hover(1.0)
         super().enterEvent(event)
 
     def leaveEvent(self, event):  # noqa: N802 - Qt 覆盖方法
-        """鼠标移开：同一条时间轴倒放回去。"""
+        """鼠标移开：同一条时间轴倒放回去，文字一起淡回来。"""
         self._set_hovered(False)
         self._animate_hover(0.0)
         super().leaveEvent(event)
@@ -483,7 +687,7 @@ class ScanPromptCard(QPushButton):
             return
         self._hovered = hovered
         # 模糊度换档：光斑那张预渲染图要重做一次。
-        self._glow_key = None
+        self._refresh_backdrop()
         self.update()
 
     def showEvent(self, event):  # noqa: N802 - Qt 覆盖方法
@@ -491,6 +695,7 @@ class ScanPromptCard(QPushButton):
         self._apply_fixed_size()
         self._last_tick = self._clock.elapsed()
         self._frame_timer.start()
+        self._sync_backdrop()
         super().showEvent(event)
 
     def hideEvent(self, event):  # noqa: N802 - Qt 覆盖方法
@@ -499,7 +704,9 @@ class ScanPromptCard(QPushButton):
         self._hover_animation.stop()
         self._hovered = False
         self._hover = 0.0
-        self._glow_key = None
+        # 背后那层装饰跟着收起来，模糊度也回到静止那一档。
+        self._sync_backdrop()
+        self._refresh_backdrop()
         super().hideEvent(event)
 
     def focusInEvent(self, event):  # noqa: N802 - Qt 覆盖方法
@@ -521,7 +728,11 @@ class ScanPromptCard(QPushButton):
     # ---- 绘制 ---------------------------------------------------------------
 
     def paintEvent(self, event):  # noqa: N802 - Qt 覆盖方法
-        """底卡与柔光 → 预渲染的卡面 → 光带/扫描线/粒子 → 标题与副标题 → 高光 → 描边。"""
+        """预渲染的卡面 → 光带/扫描线/粒子 → 标题与副标题 → 高光 → 描边。
+
+        底卡、霓虹光斑与投影要露在卡片外面，画在同级的装饰层上（:class:`_CardBackdrop`），
+        不在这里：按钮本体只有卡片那么大。
+        """
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         if not self.isEnabled():
@@ -532,12 +743,7 @@ class ScanPromptCard(QPushButton):
         silhouette = QPainterPath()
         silhouette.addRoundedRect(card, CARD_RADIUS, CARD_RADIUS)
 
-        # CSS 里那两个负 z-index 的伪元素：底卡在卡片下面（::before），模糊光斑夹在中间
-        # （::after）；两者都只从卡面边缘露出来。
-        self._paint_underlay(painter)
-        self._paint_glow(painter)
-
-        # 投影、卡面、柔光与角标不随时间变化：预渲染成一张位图，逐帧只贴一次。
+        # 卡面、柔光与角标不随时间变化：预渲染成一张位图，逐帧只贴一次。
         painter.drawPixmap(QPointF(0.0, 0.0), self._card_face())
 
         painter.save()
@@ -546,8 +752,7 @@ class ScanPromptCard(QPushButton):
         self._paint_cyber_lines(painter, card)
         self._paint_scan_line(painter, card)
         self._paint_particles(painter, card)
-        self._paint_title(painter, card)
-        self._paint_subtitle(painter, card)
+        self._paint_text(painter, card)
         self._paint_glare(painter, card)
         painter.restore()
 
@@ -556,54 +761,11 @@ class ScanPromptCard(QPushButton):
         painter.drawPath(silhouette)
 
         if self._focus_visible:
-            ring = card.adjusted(-3.0, -3.0, 3.0, 3.0)
+            # 焦点框画在卡片里侧：按钮就是卡片，没有外面那一圈可以落笔。
+            ring = card.adjusted(1.5, 1.5, -1.5, -1.5)
             painter.setPen(QPen(QColor(TOKENS["primary"]), 2.0))
             painter.setBrush(Qt.NoBrush)
-            painter.drawRoundedRect(ring, CARD_RADIUS + 3.0, CARD_RADIUS + 3.0)
-
-    def _paint_underlay(self, painter: QPainter) -> None:
-        """``::before``：卡片下面那张紫→蓝渐变底卡，悬停时转出去。
-
-        原 CSS 的 ``transform: rotate(-90deg) scaleX(1.34) scaleY(0.77)`` 对着元素中心
-        作用：缩放先作用在底卡自己的坐标里，再整体转 -90°。这里同样以底卡中心为原点，
-        平移之后先缩放再旋转（``QPainter`` 的变换按调用顺序逐层套进坐标系，因此最后调的
-        那一层作用在最外层），渐变的坐标留在底卡自己的坐标系里，转起来就跟着一起转。
-        """
-        rect = self._underlay_rect()
-        value = self._hover
-        painter.save()
-        painter.translate(rect.center())
-        painter.rotate(HOVER_ROTATION * value)
-        painter.scale(
-            1.0 + (HOVER_SCALE_X - 1.0) * value,
-            1.0 + (HOVER_SCALE_Y - 1.0) * value,
-        )
-        local = rect.translated(-rect.center())
-        gradient = _counter_diagonal_gradient(local)
-        gradient.setColorAt(0.0, _UNDERLAY_START)
-        gradient.setColorAt(1.0, _UNDERLAY_END)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(gradient)
-        painter.drawRoundedRect(local, UNDERLAY_RADIUS, UNDERLAY_RADIUS)
-        painter.restore()
-
-    def _paint_glow(self, painter: QPainter) -> None:
-        """``::after``：贴在卡面下面的一层模糊霓虹光斑（预渲染图，逐帧只贴一次）。"""
-        painter.drawPixmap(QPointF(0.0, 0.0), self._glow_pixmap())
-
-    def _glow_pixmap(self) -> QPixmap:
-        """光斑的预渲染图：尺寸、屏幕像素比或悬停状态（模糊度）变了才重做。
-
-        模糊是这条绘制链里最贵的一步（一张整控件大小的位图过一次高斯），但它只跟这四样
-        东西有关，缓存住之后每帧就只是一次贴图。
-        """
-        ratio = float(self.devicePixelRatioF())
-        radius = GLOW_BLUR_HOVER if self._hovered else GLOW_BLUR
-        key = (self.width(), self.height(), round(ratio, 3), round(radius, 1))
-        if self._glow_key != key:
-            self._glow = _render_glow(self.size(), self._card_rect(), ratio, radius)
-            self._glow_key = key
-        return self._glow
+            painter.drawRoundedRect(ring, CARD_RADIUS - 1.5, CARD_RADIUS - 1.5)
 
     def _card_face(self) -> QPixmap:
         """卡面那一叠的预渲染图：只在尺寸或屏幕像素比变化时重建。"""
@@ -615,7 +777,7 @@ class ScanPromptCard(QPushButton):
         return self._face
 
     def _render_face(self, ratio: float) -> QPixmap:
-        """投影、渐变卡面、提亮、柔光与四角角标：都不动，画进位图。"""
+        """渐变卡面、提亮、柔光与四角角标：都不动，画进位图（投影在装饰层上）。"""
         size = QSize(
             max(1, round(self.width() * ratio)), max(1, round(self.height() * ratio))
         )
@@ -628,7 +790,6 @@ class ScanPromptCard(QPushButton):
         card = self._card_rect()
         silhouette = QPainterPath()
         silhouette.addRoundedRect(card, CARD_RADIUS, CARD_RADIUS)
-        self._paint_outer_shadow(painter, silhouette)
         painter.setClipPath(silhouette)
         self._paint_face(painter, card)
         self._paint_card_glow(painter, card)
@@ -637,13 +798,25 @@ class ScanPromptCard(QPushButton):
         painter.end()
         return pixmap
 
-    def _paint_outer_shadow(self, painter: QPainter, silhouette: QPainterPath) -> None:
-        """``box-shadow: 0 0 20px rgba(0, 0, 0, 0.3)``：几层由外向内收窄的深色描边。"""
-        painter.setBrush(Qt.NoBrush)
-        for step in range(_SHADOW_LAYERS):
-            width = 2.0 + step * 3.0
-            painter.setPen(QPen(_alpha(_BLACK, (26 - step * 5) / 255.0), width))
-            painter.drawPath(silhouette)
+    def _text_fade(self) -> float:
+        """悬停时两行字淡到看不见的程度：0 是完全不透明，1 是完全看不见。
+
+        悬停那 0.6s 的缓动会冲过终点（``cubic-bezier(…, 1.275)``），因此进度先夹到 0..1
+        再算淡出，字不会反着亮回来。
+        """
+        return max(0.0, min(1.0, self._hover))
+
+    def _paint_text(self, painter: QPainter, card: QRectF) -> None:
+        """卡片上的两行字：悬停时随底卡转出去一起淡出（鼠标移开再一起淡回来）。"""
+        # 灰掉的卡片整块已经淡过一档，这里只在当前不透明度上再乘一次淡出。
+        opacity = painter.opacity() * (1.0 - self._text_fade())
+        if opacity <= 0.0:
+            return
+        painter.save()
+        painter.setOpacity(opacity)
+        self._paint_title(painter, card)
+        self._paint_subtitle(painter, card)
+        painter.restore()
 
     def _paint_face(self, painter: QPainter, card: QRectF) -> None:
         """45° 的近黑渐变卡面 + 四边内阴影 + 一层提亮（``filter: brightness(1.1)``）。"""

@@ -29,8 +29,9 @@
 重新出现“查找设备”，也就是回到上一页那一步。
 
 “查找设备”不是普通按钮而是一张自绘的深色卡片（:mod:`presentation.qt.scan_card`）：卡片
-正中是渐变标题，四周有柔光、光带与粒子自己在动；鼠标进来时卡片底下的渐变底卡会转出去
-（0.6s，见那个模块的说明）。那张卡片只负责外观与动效，点击行为仍由本面板的
+正中是渐变标题，四周有柔光、光带与粒子自己在动；鼠标进来时卡面上的字淡到看不见、卡片底下
+的渐变底卡转出去（0.6s，见那个模块的说明）。那张按钮的大小就是卡片本身（190×254），
+版面里的占位、可点区域与悬停范围都只有卡片。它只负责外观与动效，点击行为仍由本面板的
 :meth:`DeviceDiscoveryPanel.request_scan` 接手。
 """
 
@@ -372,7 +373,7 @@ class DeviceDiscoveryPanel(QWidget):
         self.scan_btn = ScanPromptCard("查找设备")
         self.scan_btn.setToolTip("扫描网段并读取每台设备的 *IDN?；不会改变任何仪器状态")
         # 外观不取自样式表：它是一张自绘的深色卡片按钮（悬停动效见
-        # ``presentation.qt.scan_card``），尺寸由那张卡片自己给出。
+        # ``presentation.qt.scan_card``），按钮的大小就是那张卡片，尺寸由卡片自己给出。
         # 扫描期间的结果区中央说明：按钮收走后，这里写明正在读取设备。
         self.loading_label = QLabel(LOADING_TEXT)
         self.loading_label.setAlignment(Qt.AlignHCenter)

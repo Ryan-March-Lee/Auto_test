@@ -1,10 +1,11 @@
-"""面板外观：卡片的排版与结果框的状态（浅灰底、框心按钮、返回上一步）。
+"""面板外观：卡片的排版与结果区的状态（不画外框、中央按钮、返回上一步）。
 
 这些用例走真实的模拟扫描器把结果填进面板，因此放在接线测试里；只依赖表现层端口与
 DTO 的纯控件行为仍在 ``tests/ui``。
 """
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QImage
 from PySide6.QtTest import QTest
 
 from infrastructure.discovery.instrument_discovery import SCAN_MODE_SIMULATED, build_scanner
@@ -14,7 +15,7 @@ from presentation.qt.device_discovery_panel import (
     BOX_STATE_IDLE,
     BOX_STATE_RESULTS,
 )
-from presentation.qt.theme import apply_theme, build_stylesheet
+from presentation.qt.theme import TOKENS, apply_theme, build_stylesheet
 
 from .support import DiscoveryPanelTestCase, registry
 
@@ -109,13 +110,13 @@ class CardPresentationTests(DiscoveryPanelTestCase):
         panel = self.make_panel()
 
         self.assertFalse(panel.cards_area.isVisible())
-        # 空框里不写常驻提示：没有扫描就没有话要说。
+        # 结果区里不写常驻提示：没有扫描就没有话要说。
         self.assertFalse(panel.status_label.isVisible())
         self.assertFalse(panel.apply_btn.isVisible())
         self.assertFalse(panel.back_btn.isVisible())
 
-    def test_results_stay_in_the_box_without_a_collapse_control(self):
-        """结果框不是抽屉：结果回来就留在框里，没有“收起结果 / 查看结果”那一套。"""
+    def test_results_stay_in_place_without_a_collapse_control(self):
+        """结果区不是抽屉：结果回来就留在那里，没有“收起结果 / 查看结果”那一套。"""
         panel = self.make_panel(size=(1200, 760))
         self.run_scan(panel)
 
@@ -126,49 +127,60 @@ class CardPresentationTests(DiscoveryPanelTestCase):
 
 
 class ResultsBoxStateTests(DiscoveryPanelTestCase):
-    """结果框的状态：还没查找时是浅灰底 + 框中央的“查找设备”，点下去之后两者一起收走。"""
+    """结果区的状态：它不画外框（无边框、无底色），中央的“查找设备”随状态收放。"""
 
     panel_size = (760, 560)
 
     def setUp(self):
         # 主题只装一次（``apply_theme`` 幂等），这里直接取整份样式表：无论哪个用例先跑，
-        # 结果框的“浅灰底”规则都在。
+        # 结果区的“不画外框”规则都在。
         self._previous_stylesheet = self.app.styleSheet()
         self.app.setStyleSheet(build_stylesheet())
 
     def tearDown(self):
         self.app.setStyleSheet(self._previous_stylesheet)
 
-    def test_the_scan_button_starts_centred_in_a_light_grey_box(self):
+    def _painted_background(self, box) -> str:
+        """结果区自己画出来的底色：把它画在一块画布底色的图上，取内边距处的那一点。
+
+        结果区没有边框也没有底色，因此这一点应当仍是画布色——无论框里是空白还是卡片。
+        """
+        image = QImage(box.size(), QImage.Format_ARGB32)
+        image.fill(QColor(TOKENS["canvas"]))
+        box.render(image)
+        return image.pixelColor(box.width() // 2, box.height() - 6).name()
+
+    def test_the_scan_button_starts_centred_in_a_frameless_results_area(self):
         panel = self.make_panel()
         box = panel.results_box
 
-        # “查找设备”不在扫描行里，而是结果框正中的落点。
-        self.assertTrue(box.isAncestorOf(panel.scan_btn), "查找设备要落在结果框里")
+        # “查找设备”不在扫描行里，而是结果区正中的落点。
+        self.assertTrue(box.isAncestorOf(panel.scan_btn), "查找设备要落在结果区里")
         self.assertEqual(panel.box_state(), BOX_STATE_IDLE)
-        self.assertTrue(box.property("filled"), "还没查找时框内铺浅灰底")
-        self.assertIn(
-            'QFrame#discoveryResultsBox[filled="true"]', self.app.styleSheet()
+        # 结果区不画外框：没有边框、没有底色，“查找设备”直接浮在页面背景上。
+        self.assertNotIn(
+            'QFrame#discoveryResultsBox[filled="true"]',
+            self.app.styleSheet(),
+            "结果区不应再有浅灰底的落点状态",
         )
+        self.assertEqual(self._painted_background(box), TOKENS["canvas"].lower())
         self.assertTrue(panel.scan_btn.isVisible())
         self.assertFalse(panel.cards_area.isVisible())
 
-        # 水平、竖直都在框的正中（框里此时只有这一个按钮）。
+        # 水平、竖直都在结果区的正中（此时里面只有这一个按钮）。
         centre = panel.scan_btn.mapTo(box, panel.scan_btn.rect().center())
         box_centre = box.rect().center()
         self.assertAlmostEqual(centre.x(), box_centre.x(), delta=2)
         self.assertAlmostEqual(centre.y(), box_centre.y(), delta=2)
 
-    def test_scanning_takes_the_button_and_the_grey_fill_away(self):
+    def test_scanning_takes_the_button_away(self):
         panel = self.make_panel()
-        self.assertTrue(panel.results_box.property("filled"))
 
         panel.request_scan()
         self.app.processEvents()
 
-        # 点下去就开始加载设备：按钮与灰底一起消失，框中央换成进度说明。
+        # 点下去就开始加载设备：按钮收走，结果区中央换成进度说明。
         self.assertEqual(panel.box_state(), BOX_STATE_BUSY)
-        self.assertFalse(panel.results_box.property("filled"), "灰底只在点之前出现")
         self.assertFalse(panel.scan_btn.isVisible())
         self.assertTrue(panel.loading_label.isVisible())
         self.assertIn("正在扫描", panel.status_label.text())
@@ -182,6 +194,8 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         self.assertFalse(panel.loading_label.isVisible())
         self.assertTrue(panel.cards_area.isVisible())
         self.assertGreater(panel.card_count(), 0)
+        # 卡片装进结果区之后，它依然没有边框与底色。
+        self.assertEqual(self._painted_background(panel.results_box), TOKENS["canvas"].lower())
 
     def test_a_scan_that_finds_nothing_leaves_the_button_in_the_box_again(self):
         def factory(_mode):
@@ -195,11 +209,10 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         self.app.processEvents()
         self.app.processEvents()
 
-        # 一台都没读到：框里放不出卡片，中央的“查找设备”回来好让用户再试一次。
+        # 一台都没读到：结果区里放不出卡片，中央的“查找设备”回来好让用户再试一次。
         self.assertEqual(panel.card_count(), 0)
         self.assertEqual(panel.box_state(), BOX_STATE_IDLE)
         self.assertTrue(panel.scan_btn.isVisible())
-        self.assertFalse(panel.results_box.property("filled"))
 
     def test_the_results_take_the_box_over_from_the_centre(self):
         panel = self.make_panel()
@@ -210,11 +223,10 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
 
         self.assertEqual(panel.box_state(), BOX_STATE_RESULTS)
         self.assertTrue(panel.cards_area.isVisible())
-        self.assertFalse(panel.centre_area.isVisible(), "卡片看得见时框心让位给卡片")
+        self.assertFalse(panel.centre_area.isVisible(), "卡片看得见时中央让位给卡片")
         self.assertFalse(panel.scan_btn.isVisible())
-        self.assertFalse(panel.results_box.property("filled"))
 
-        # 框内的动作只属于有结果的这一次查找：应用 / 清除 / 返回。
+        # 结果区里的动作只属于有结果的这一次查找：应用 / 清除 / 返回。
         for button in (panel.apply_btn, panel.clear_btn, panel.back_btn):
             self.assertTrue(panel.results_box.isAncestorOf(button))
             self.assertTrue(button.isVisible())
@@ -233,14 +245,13 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         self.app.processEvents()
         self.app.processEvents()
 
-        # 回到上一步：本次结果与勾选一起清掉，框中央重新是浅灰落点上的“查找设备”。
+        # 回到上一步：本次结果与勾选一起清掉，中央重新是“查找设备”。
         self.assertEqual(panel.box_state(), BOX_STATE_IDLE)
         self.assertEqual(panel.card_count(), 0)
         self.assertEqual(panel.devices, [])
         self.assertFalse(panel.cards_area.isVisible())
         self.assertTrue(panel.centre_area.isVisible())
         self.assertTrue(panel.scan_btn.isVisible())
-        self.assertTrue(panel.results_box.property("filled"))
         self.assertEqual(panel.status_label.text(), "")
         self.assertFalse(panel.apply_btn.isVisible())
         self.assertFalse(panel.apply_btn.isEnabled())
@@ -267,12 +278,12 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         returned = (box.width(), box.height())
 
         self.assertGreater(idle[1], 0)
-        self.assertEqual(busy, idle, "扫描中框不能变")
-        self.assertEqual(results, idle, "结果回来后框不能变")
-        self.assertEqual(returned, idle, "返回后框不能变")
+        self.assertEqual(busy, idle, "扫描中结果区不能变")
+        self.assertEqual(results, idle, "结果回来后结果区不能变")
+        self.assertEqual(returned, idle, "返回后结果区不能变")
 
     def test_the_box_has_room_for_two_rows_of_cards(self):
-        """框的固定高度按“两行卡片 + 框内按钮与状态行”算：场地上的 5 台设备不用滚动。"""
+        """结果区的固定高度按“两行卡片 + 里面的按钮与状态行”算：场地上 5 台设备不用滚动。"""
         panel = self.make_panel()
         panel.request_scan()
         panel.worker.wait(5000)
@@ -281,10 +292,10 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
 
         card = panel.cards()[0]
         self.assertGreaterEqual(
-            panel.cards_area.height(), 2 * card.height(), "框里至少放得下两行卡片"
+            panel.cards_area.height(), 2 * card.height(), "结果区里至少放得下两行卡片"
         )
 
-    def test_clearing_the_results_puts_the_grey_fill_back(self):
+    def test_clearing_the_results_puts_the_scan_button_back(self):
         panel = self.make_panel()
         panel.request_scan()
         panel.worker.wait(5000)
@@ -294,8 +305,10 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         panel.clear_results()
         self.app.processEvents()
 
-        # 重新进入页面时回到“还没查找过”的样子：灰底与框中央的按钮都回来。
+        # 重新进入页面时回到“还没查找过”的样子：中央的按钮回来了，外框依旧不画。
         self.assertEqual(panel.box_state(), BOX_STATE_IDLE)
-        self.assertTrue(panel.results_box.property("filled"))
         self.assertTrue(panel.scan_btn.isVisible())
         self.assertFalse(panel.cards_area.isVisible())
+        self.assertEqual(
+            self._painted_background(panel.results_box), TOKENS["canvas"].lower()
+        )

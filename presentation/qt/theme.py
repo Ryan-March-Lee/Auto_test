@@ -43,8 +43,6 @@ TOKENS = {
     "surface": "#FFFFFF",
     "surface_sunken": "#F8FAFC",
     "surface_alt": "#FAFBFC",
-    # 空落点的浅灰底：“仪表配置”页里还没点“查找设备”时的结果框填充色。
-    "surface_dropzone": "#F1F5F9",
     "border": "#E2E8F0",
     "border_strong": "#CBD5E1",
     "table_grid": "#F1F5F9",
@@ -387,19 +385,16 @@ QLabel[role="pageTitle"] {
     font-weight: 700;
 }
 
-/* ===== 设备发现结果框（“仪表配置”页） =====
-   扫描行留在框外，框只包住发现结果：一块圆角矩形，空着时是一块明确的落点，
-   有卡片时卡片在框内换行。还没点过“查找设备”时框内铺浅灰底（按钮在正中）：
-   点下去之后灰底与按钮一起收走，框回到白的、只装进度与结果。 */
+/* ===== 设备发现结果区（“仪表配置”页） =====
+   扫描行留在结果区外面；结果区**不画外框**：没有边框、没有底色，仪器卡片直接落在
+   页面背景上，“查找设备”也是浮在页面上的一张卡片按钮。结果区仍然占一个固定高度
+   （见 ``device_discovery_panel.DeviceDiscoveryPanel._results_box_height``），
+   因此点一次“查找设备”不会让页面跳动。 */
 QFrame#discoveryResultsBox {
-    background-color: $surface;
-    border: 1px solid $border;
-    border-radius: 12px;
+    background: transparent;
+    border: none;
 }
-QFrame#discoveryResultsBox[filled="true"] {
-    background-color: $surface_dropzone;
-}
-/* 框中央的“查找设备”在这里没有规则：它是一张自绘的深色卡片按钮
+/* 结果区中央的“查找设备”在这里没有规则：它是一张自绘的深色卡片按钮
    （``scan_card.ScanPromptCard``），正中的渐变标题、柔光、光带与粒子都画在它自己的
    画布上，悬停时从卡片背后旋出去的底卡也一样——伪元素与 ``transition`` 不在 QSS
    的能力里，整块画下来才做得出来。 */

@@ -381,10 +381,9 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
         self.assertIn("无法开始扫描", panel.status_label.text())
         self.assertIn("设备表损坏", panel.status_label.text())
         self.assertTrue(panel.scan_btn.isEnabled())
-        # 失败后框里仍然没有结果：中央的“查找设备”回来，但浅灰底不再出现（已经点过一次）。
+        # 失败后结果区里仍然没有结果：中央的“查找设备”回来。
         self.assertTrue(panel.scan_btn.isVisible())
         self.assertEqual(panel.box_state(), BOX_STATE_IDLE)
-        self.assertFalse(panel.results_box.property("filled"))
         self.assertFalse(panel.apply_btn.isEnabled())
 
     def test_shutdown_during_scan_cancels_and_leaves_no_worker(self):

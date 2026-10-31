@@ -107,7 +107,7 @@ class DiscoveryPanelTestCase(unittest.TestCase):
 
     # 需要别的设备表/扫描方式的类只改这一项。
     default_factory = staticmethod(scanner_factory)
-    # 只有要按具体尺寸验证布局的用例才设置：卡片换行与结果框尺寸都依赖真实宽度。
+    # 只有要按具体尺寸验证布局的用例才设置：卡片换行与结果区尺寸都依赖真实宽度。
     panel_size = None
 
     @classmethod

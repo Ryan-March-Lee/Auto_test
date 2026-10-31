@@ -9,8 +9,9 @@
 只是把请求交给配置页去校验。
 
 版式只有三块：页面偏上的大字号标题、居中放在标题下面的扫描行（扫描网段 / 扫描方式），
-以及下面一块显示发现结果的圆角矩形框；“查找设备”是框正中的落点，还没点它时框内铺一层
-浅灰底，点下去之后按钮与灰底一起收走、开始加载设备。“连接仪器”放在框外右下角，点它仍然走
+以及下面一块显示发现结果的区域。这块区域不画外框（没有边框、没有底色），仪器卡片直接
+落在页面背景上；“查找设备”是一张浮在区域正中的卡片按钮，点下去之后按钮收走、开始加载
+设备。“连接仪器”放在区域右下方，点它仍然走
 配置页的连接入口（:meth:`presentation.qt.config_page.ConfigPage.request_connect`
 校验后发 ``connect_requested``，由窗口连仪器）。
 
@@ -48,7 +49,7 @@ ACTION_HINT = "已应用的设备会随配置一起保存；点“下一步”�
 class ConnectionPage(QWidget):
     """仪表配置页：整屏页面，不登记进标签栏。
 
-    页面持有大字号标题、设备发现面板、框外右下的“连接仪器”，以及两个页面级动作
+    页面持有大字号标题、设备发现面板、右下方的“连接仪器”，以及两个页面级动作
     （返回欢迎页、下一步）；设备绑定的写入与派生界面状态由配置页负责，本页把它当成
     窄接口使用。
     """
@@ -88,7 +89,7 @@ class ConnectionPage(QWidget):
         column.setContentsMargins(16, 0, 16, 0)
         column.setSpacing(12)
 
-        # 整页只有标题、扫描行、结果框与“连接仪器”四块：上下留白对半分，
+        # 整页只有标题、扫描行、结果区与“连接仪器”四块：上下留白对半分，
         # 让这一组控件落在页面中间（竖直方向大致居中）。
         column.addStretch(1)
         self.title_label = QLabel(PAGE_TITLE)
@@ -99,14 +100,14 @@ class ConnectionPage(QWidget):
         column.addSpacing(12)
 
         # 扫描行（扫描网段 / 扫描方式）就排在这个标题下面、和标题一起居中；
-        # 面板的结果框里才放“查找设备”，点下去就开始加载设备。
+        # 面板的结果区里才放“查找设备”，点下去就开始加载设备。
         self.discovery_panel = DeviceDiscoveryPanel(
             scanner_factory=self._scanner_factory or self._default_scanner_factory(),
             default_subnet=self._default_scan_subnet(),
             parent=self,
         )
         column.addWidget(self.discovery_panel)
-        # 结果框外面只剩一个动作：连接仪器放在框的右下角。
+        # 结果区外面只剩一个动作：连接仪器放在它的右下方。
         column.addWidget(self._build_connect_row())
         column.addStretch(1)
         scroll.setWidget(content)
@@ -114,7 +115,7 @@ class ConnectionPage(QWidget):
         root.addWidget(self._build_action_bar())
 
     def _build_connect_row(self) -> QWidget:
-        """结果框外的一行：只放“连接仪器”，右对齐在框下面。"""
+        """结果区外的一行：只放“连接仪器”，右对齐在结果区下面。"""
         row = QWidget()
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -164,7 +165,7 @@ class ConnectionPage(QWidget):
 
         上次会话的扫描结果不能留下来冒充本次的发现结果：清空卡片与状态行；扫描框初值
         按当前配置（含刚选定的测试模式）重新取，落在这批设备所在的网段上。只有地址、
-        没被本次扫描确认过的旧绑定不再画在框里，改为写一条日志，说明它们“未扫描确认”。
+        没被本次扫描确认过的旧绑定不再画在结果区里，改为写一条日志，说明它们“未扫描确认”。
         """
         panel = self.discovery_panel
         panel.set_device_bindings(self.config_page.device_bindings)

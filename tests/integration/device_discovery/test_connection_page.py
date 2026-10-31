@@ -1,4 +1,4 @@
-"""连接页与发现面板的版面接线：整屏步骤、扫描行居中和结果框不跳动。"""
+"""连接页与发现面板的版面接线：整屏步骤、扫描行居中和结果区不跳动。"""
 
 from PySide6.QtWidgets import QLabel
 
@@ -8,7 +8,7 @@ from .support import ConnectionPageTestCase
 
 
 class ConnectionPageLayoutTests(ConnectionPageTestCase):
-    """连接页是“下一步”之前的整屏步骤：版面、居中、结果框位置与页面切换。
+    """连接页是“下一步”之前的整屏步骤：版面、居中、结果区位置与页面切换。
 
     绑定写入与派生界面（电源标签页、电源分配可选项）的契约在
     ``test_binding_writes.py`` / ``test_binding_rejections.py``；这里只检查两块页面接起来
@@ -99,7 +99,7 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
         """仪器连接只有“扫描后勾选”一套逻辑：不再逐台填写地址或勾选启用。"""
         page = self.make_page()
 
-        # 发现结果落在一块圆角矩形框里，框外的扫描行才是输入入口。
+        # 发现结果落在结果区里（不画外框），框外的扫描行才是输入入口。
         self.assertEqual(
             self.connection.discovery_panel.results_box.objectName(),
             "discoveryResultsBox",
@@ -152,7 +152,7 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
             self._scan_row_centre(panel), panel.width() / 2, delta=3, msg="整行居中"
         )
 
-        # 有结果、按“返回”回到查找落点之后也一样：动作按钮都在框里，不挤这一行。
+        # 有结果、按“返回”回到查找按钮之后也一样：动作按钮都在结果区里，不挤这一行。
         panel.request_scan()
         panel.worker.wait(5000)
         self.app.processEvents()
@@ -163,17 +163,16 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
             self._scan_row_centre(panel), panel.width() / 2, delta=3, msg="返回后仍然居中"
         )
 
-    def test_the_scan_button_sits_in_the_centre_of_the_results_box(self):
-        """“查找设备”是结果框正中的落点，不在上面的扫描行里。"""
+    def test_the_scan_button_sits_in_the_centre_of_the_results_area(self):
+        """“查找设备”是结果区正中的落点，不在上面的扫描行里。"""
         self.make_page()
         panel = self.connection.discovery_panel
 
         self.assertTrue(panel.results_box.isAncestorOf(panel.scan_btn))
-        self.assertTrue(panel.results_box.property("filled"))
         self.assertEqual(panel.box_state(), BOX_STATE_IDLE)
 
-    def test_scanning_does_not_move_or_resize_the_results_box(self):
-        """点“查找设备”前后，结果框的位置与大小都不变：页面不会跳一下。"""
+    def test_scanning_does_not_move_or_resize_the_results_area(self):
+        """点“查找设备”前后，结果区的位置与大小都不变：页面不会跳一下。"""
         self.make_page()
         panel = self.connection.discovery_panel
         box = panel.results_box
@@ -197,12 +196,12 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
         self.app.processEvents()
         returned = snapshot()
 
-        self.assertEqual(scanning, before, "扫描中框不能移动或变形")
-        self.assertEqual(results, before, "结果回来后框不能移动或变形")
-        self.assertEqual(returned, before, "返回后框不能移动或变形")
+        self.assertEqual(scanning, before, "扫描中结果区不能移动或变形")
+        self.assertEqual(results, before, "结果回来后结果区不能移动或变形")
+        self.assertEqual(returned, before, "返回后结果区不能移动或变形")
 
-    def test_connect_button_sits_outside_the_results_box(self):
-        """“连接仪器”在结果框外面（右下角）：点它先走配置页的连接入口。"""
+    def test_connect_button_sits_outside_the_results_area(self):
+        """“连接仪器”在结果区外面（右下方）：点它先走配置页的连接入口。"""
         page = self.make_page()
         failures = []
         requested = []
@@ -213,7 +212,7 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
         self.assertEqual(button.text(), "连接仪器")
         self.assertFalse(
             self.connection.discovery_panel.results_box.isAncestorOf(button),
-            "连接仪器应放在结果框外面",
+            "连接仪器应放在结果区外面",
         )
 
         button.click()

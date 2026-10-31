@@ -13,6 +13,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from application.measurements.services import AmplifierMeasurementService
+from tests.contract_doubles import amplifier_inputs
 from tests.fakes import safety_cleanup_for
 
 
@@ -66,21 +67,17 @@ class FakeMeasurementInstrument:
         return 2.0
 
 
-def make_service(max_input_power=float("inf")):
+def make_service(max_input_power=1000.0):
     instrument = FakeMeasurementInstrument()
-    config = {
-        "compression_point": {"type": "5dB"},
-        "attenuator": {"type": "0dB"},
-        "dut_config": {"max_input_power": max_input_power},
-        "signal_source": {"start_power": -3.0, "stop_power": 0.0, "step": 1.0},
-        "power_supply_assignment": {
-            "dut_amplifier": {
-                "supplies": {
-                    "main": {"name": "PS1", "channel": ["CH1"]},
-                },
-            },
-        },
-    }
+    inputs = amplifier_inputs(
+        start_power_dbm=-3.0,
+        stop_power_dbm=0.0,
+        step_db=1.0,
+        compression_db=5.0,
+        attenuator_db=0.0,
+        max_input_power_dbm=max_input_power,
+        supplies=(("PS1", "CH1"),),
+    )
     loss_data = {
         "cable_losses": {
             "1.0": {
@@ -92,7 +89,7 @@ def make_service(max_input_power=float("inf")):
         },
     }
     return AmplifierMeasurementService(
-        config,
+        inputs,
         instrument,
         loss_data,
         None,
@@ -103,7 +100,7 @@ def make_service(max_input_power=float("inf")):
 
 
 class MeasurementLoopRegressionTests(unittest.TestCase):
-    def run_sweep(self, max_input_power=float("inf")):
+    def run_sweep(self, max_input_power=1000.0):
         service = make_service(max_input_power)
         result = service.perform_power_sweep(1.0)
         return service, result

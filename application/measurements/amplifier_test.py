@@ -12,7 +12,12 @@ from typing import Any, Callable
 import domain.measurement.calculations as measurement_calculations
 from app.cancellation import CancellationToken, MeasurementCancelled
 from application.archival_service import ArchivalOutcome, archive_completed_stage
-from application.dto import AmplifierMeasurementRequest, AmplifierMeasurementResult, MeasurementResult
+from application.dto import (
+    AmplifierMeasurementInputs,
+    AmplifierMeasurementRequest,
+    AmplifierMeasurementResult,
+    MeasurementResult,
+)
 from application.errors import ConfigurationError
 from application.measurements.services import AmplifierMeasurementService
 from application.ports.measurement_session import CleanupRecord
@@ -61,7 +66,10 @@ class AmplifierMeasurementUseCase:
         self.request = request
         if request.measurement_port is None:
             raise ValueError("AmplifierMeasurementUseCase 必须由应用组装层注入 measurement_port")
-        self.config = _service_config(request.configuration)
+        # 正式输入模型是主功放唯一的输入表示（技术债步骤 8）：用例不再把运行配置
+        # 重建成历史测量字典，频率/扫描/压缩目标/衰减器/DUT 限制/驱动模式/供电通道
+        # 全部来自同一个类型化对象。
+        self.inputs: AmplifierMeasurementInputs = request.inputs
         self.inst_ctrl = request.measurement_port
         self.owns_measurement_port = bool(
             request.safety_options.get("owns_measurement_port", False)
@@ -89,13 +97,13 @@ class AmplifierMeasurementUseCase:
         validate_amplifier_calibration_inputs(
             self.loss_data,
             self.driver_mapping,
-            frequencies=self.config.get("test_frequencies", ()),
-            driver_enabled=self._driver_mode_enabled(),
+            frequencies=tuple(item.ghz for item in self.inputs.frequencies),
+            driver_enabled=self.inputs.driver_enabled,
         )
         self.sleep_fn = sleep_fn or time.sleep
         self._token = request.cancellation_token or CancellationToken()
         self._service = AmplifierMeasurementService(
-            self.config,
+            self.inputs,
             self.inst_ctrl,
             self.loss_data,
             self.driver_mapping,
@@ -106,6 +114,7 @@ class AmplifierMeasurementUseCase:
             sleep_fn=self.sleep_fn,
             settle_delay_s=3.0,
             owns_measurement_port=self.owns_measurement_port,
+            configuration_snapshot=request.configuration_snapshot,
         )
         self.measurement_results: dict[str, Any] = {}
         self.last_result: MeasurementResult | None = None
@@ -165,8 +174,7 @@ class AmplifierMeasurementUseCase:
     # -- 运行契约：校准输入 ------------------------------------------------
 
     def _driver_mode_enabled(self) -> bool:
-        mode = self.config.get("driver_mode", {})
-        return bool(mode.get("enabled")) if isinstance(mode, Mapping) else False
+        return self.inputs.driver_enabled
 
     def _load_loss_data(self) -> Mapping[str, Any]:
         """解析本次运行实际消费的线损输入。
@@ -357,91 +365,3 @@ def _safe_token(value: Any) -> str:
     """把频率等值转成文件名安全片段，避免路径穿越或非法字符。"""
     token = _UNSAFE_FILENAME.sub("_", str(value)).strip("._")
     return token or "unknown"
-
-
-def _service_config(configuration: Any) -> Mapping[str, Any]:
-    if isinstance(configuration, Mapping):
-        return configuration
-    if hasattr(configuration, "test_plan") and hasattr(configuration, "run_mapping"):
-        return _run_configuration_to_service_config(configuration)
-    raise TypeError("无法将运行配置转换为主功放测量配置")
-
-
-def _run_configuration_to_service_config(configuration: Any) -> dict[str, Any]:
-    """Convert the split configuration model to the legacy service contract.
-
-    ``AmplifierMeasurementService`` still consumes the historical measurement
-    shape.  Legacy runs retain that exact payload in ``TestPlan.raw``; modern
-    split runs are rebuilt from the plan and resource mapping at this boundary.
-    """
-    plan = configuration.test_plan
-    raw = getattr(plan, "raw", {})
-    required = {
-        "test_frequencies",
-        "signal_source",
-        "compression_point",
-        "driver_mode",
-        "attenuator",
-        "dut_config",
-        "power_supply_assignment",
-    }
-    if isinstance(raw, Mapping) and required.issubset(raw):
-        return dict(raw)
-
-    mapping = configuration.run_mapping
-    supplies = _assignment_supplies(mapping, "dut_power_channels")
-    driver_supplies = _assignment_supplies(mapping, "driver_power_channels")
-    supply_assignment = {
-        "dut_amplifier": {"supplies": supplies},
-        "driver_amplifier": {"supplies": driver_supplies},
-    }
-    return {
-        "test_frequencies": list(plan.frequencies),
-        "signal_source": {
-            "start_power": plan.start_power,
-            "stop_power": plan.stop_power,
-            "step": plan.power_step,
-        },
-        "compression_point": {"type": plan.compression_point},
-        "driver_mode": {"enabled": bool(plan.driver_enabled)},
-        "attenuator": {"type": f"{plan.attenuator_value}dB"},
-        "dut_config": {"max_input_power": plan.max_input_power},
-        "power_supply_assignment": supply_assignment,
-    }
-
-
-def _assignment_supplies(mapping: Any, field: str) -> dict[str, dict[str, Any]]:
-    """把通道映射还原成 ``supply_id -> {name, channel}``。
-
-    新快照的通道值是显式路由 ``supply_id/CHx``，按前缀分组，因此 DUT 的 gate 与
-    drain 来自不同电源时各自成一条；旧快照的裸通道名（``CH1``）没有前缀，归到
-    唯一那台电源，由 ``legacy_power_supply()`` 给出。
-    """
-    channels = getattr(mapping, field, ())
-    legacy_name = _legacy_supply_name(mapping)
-    grouped: dict[str, list[str]] = {}
-    for item in channels:
-        token = getattr(item, "channel", None)
-        if not token:
-            continue
-        supply_name, channel = _split_channel_token(token, legacy_name)
-        grouped.setdefault(supply_name, []).append(channel)
-    return {
-        name: {"name": name, "channel": channel_names}
-        for name, channel_names in grouped.items()
-    }
-
-
-def _split_channel_token(token: str, legacy_name: str | None) -> tuple[str, str]:
-    supply_name, separator, channel = str(token).partition("/")
-    if separator and supply_name:
-        return supply_name, channel
-    # 裸通道名是旧快照的写法：它属于唯一那台电源；没有唯一电源时保留原样，
-    # 让装配阶段按“引用了不存在的电源”明确失败，而不是猜一台。
-    return legacy_name or "power_supply", str(token)
-
-
-def _legacy_supply_name(mapping: Any) -> str | None:
-    reader = getattr(mapping, "legacy_power_supply", None)
-    legacy = reader() if callable(reader) else None
-    return getattr(legacy, "model", None) or None

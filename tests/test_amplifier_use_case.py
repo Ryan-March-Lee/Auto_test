@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.cancellation import CancellationToken, MeasurementCancelled
-from application.dto import AmplifierMeasurementRequest
+from application.dto import AmplifierMeasurementInputs, AmplifierMeasurementRequest
 from application.measurements import AmplifierMeasurementUseCase
 from application.measurements.amplifier_test import AMPLIFIER_RESULT_PATH
 from domain.configuration.models import (
@@ -17,7 +17,11 @@ from domain.configuration.models import (
 )
 from domain.measurement.values import CableLossTable, Decibels, Frequency, PowerDbm
 from domain.run.models import STAGE_AMPLIFIER
-from tests.contract_doubles import MappingInputReader, RecordingStageRecorder
+from tests.contract_doubles import (
+    MappingInputReader,
+    RecordingStageRecorder,
+    amplifier_inputs,
+)
 from tests.fakes import safety_cleanup_for
 
 
@@ -72,6 +76,7 @@ def _request(instrument, *, token=None, repository=None, recorder=None, reader=N
         context=SimpleNamespace(run_id="run-amplifier"),
         run_directory=Path("run-directory"),
         measurement_port=instrument,
+        inputs=amplifier_inputs(),
         stage_recorder=recorder or RecordingStageRecorder("run-amplifier"),
         safety_cleanup=safety_cleanup_for(instrument),
         cancellation_token=token,
@@ -82,7 +87,7 @@ def _request(instrument, *, token=None, repository=None, recorder=None, reader=N
 
 
 class AmplifierMeasurementUseCaseTests(unittest.TestCase):
-    def test_split_run_configuration_is_converted_to_service_contract(self):
+    def test_split_run_configuration_is_converted_to_formal_inputs(self):
         configuration = RunConfiguration(
             test_plan=TestPlan(
                 frequencies=[1.0],
@@ -109,6 +114,7 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
             context=request.context,
             run_directory=request.run_directory,
             measurement_port=request.measurement_port,
+            inputs=AmplifierMeasurementInputs.from_run_configuration(configuration),
             stage_recorder=request.stage_recorder,
             safety_cleanup=request.safety_cleanup,
             result_repository=request.result_repository,
@@ -117,11 +123,15 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
 
         use_case = AmplifierMeasurementUseCase(request, sleep_fn=lambda _: None)
 
-        self.assertEqual(use_case.config["test_frequencies"], [1.0])
-        self.assertEqual(use_case.config["attenuator"], {"type": "10dB"})
         self.assertEqual(
-            use_case.config["power_supply_assignment"]["dut_amplifier"]["supplies"]["PS1"],
-            {"name": "PS1", "channel": ["CH2"]},
+            [item.ghz for item in use_case.inputs.frequencies], [1.0]
+        )
+        self.assertEqual(use_case.inputs.attenuator, Decibels.parse("10dB"))
+        self.assertEqual(use_case.inputs.sweep.start, PowerDbm(-20))
+        self.assertEqual(use_case.inputs.sweep.stop, PowerDbm(-20))
+        self.assertEqual(use_case.inputs.sweep.step, Decibels(1))
+        self.assertEqual(
+            use_case.inputs.dut_supplies(), {"PS1": ("CH2",)}
         )
 
     def test_calculate_actual_power_delegates_to_pure_function(self):

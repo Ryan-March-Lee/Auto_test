@@ -44,6 +44,7 @@ from domain.run.models import (
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from infrastructure.persistence.run_repository import RunRepository
 from presentation.qt.configuration_authoring import author_official_configuration
+from tests.contract_doubles import amplifier_inputs
 from tests.fakes import safety_cleanup_for
 
 
@@ -239,6 +240,7 @@ class AmplifierRunStageTests(unittest.TestCase):
             context=_Context(run_id),
             run_directory=layout.run_directory,
             measurement_port=instrument,
+            inputs=amplifier_inputs(driver_enabled=driver_enabled),
             safety_cleanup=safety_cleanup_for(instrument),
             result_repository=repository or self.result_repository,
             input_reader=ResultInputReader(self.result_repository),

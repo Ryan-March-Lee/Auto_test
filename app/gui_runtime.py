@@ -40,6 +40,7 @@ from application.run_service import (
 )
 from app.events import MessageEvent, ProgressEvent, RealtimeDataEvent
 from application.dto import (
+    AmplifierMeasurementInputs,
     AmplifierMeasurementRequest,
     CableLossMeasurementRequest,
     DriverPowerMappingRequest,
@@ -446,13 +447,20 @@ def create_amplifier_measurement(*, prepared_run: PreparedRun, **callbacks: Any)
         # 两套职责分别校验冻结快照。
         _preflight_amplifier_inputs(prepared_run, input_reader)
         _ensure_run_snapshots_are_intact(prepared_run)
+        # 正式输入模型在应用边界构造（技术债步骤 8）：非法配置在打开任何仪器之前
+        # 收敛为 AmplifierInputError；用例与服务只消费这一个类型化对象。
+        inputs = AmplifierMeasurementInputs.from_run_configuration(
+            prepared_run.configuration
+        )
         if owned_port:
             callbacks["measurement_port"] = connect_instruments(prepared_run)
         callbacks["owns_measurement_port"] = owned_port
         callbacks["result_repository"] = repository
         callbacks["input_reader"] = input_reader
         callbacks.setdefault("event_sink", _CallbackEventSink(callbacks))
-        request = AmplifierMeasurementRequest(**_request_kwargs(prepared_run, callbacks))
+        request = AmplifierMeasurementRequest(
+            **_request_kwargs(prepared_run, callbacks), inputs=inputs
+        )
         return AmplifierMeasurementUseCase(request, sleep_fn=callbacks.get("sleep_fn"))
     except Exception:
         if owned_port and callbacks.get("measurement_port") is not None:

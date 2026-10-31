@@ -11,6 +11,7 @@
 import ast
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from application.dto.measurement_requests import MeasurementRequest
@@ -26,6 +27,7 @@ from instrument.ports import (
     InstrumentCapabilityError,
     MeasurementInstrumentPort,
 )
+from tests.contract_doubles import amplifier_inputs
 from tests.fakes import RecordingSafetyCleanup
 
 SERVICES_SOURCE = (
@@ -38,14 +40,9 @@ DRIVER_MAPPING_CONFIG = {
     "attenuator": {"type": "0dB"},
     "signal_source": {"start_power": -20, "stop_power": -20, "step": 1},
 }
-AMPLIFIER_CONFIG = {
-    "test_frequencies": [1.0],
-    "attenuator": {"type": "0dB"},
-    "signal_source": {"start_power": -20, "stop_power": -20, "step": 1},
-    "compression_point": {"type": "1dB"},
-    "power_supply_assignment": {"dut_amplifier": {"supplies": {}}},
-    "driver_mode": {"enabled": False},
-}
+AMPLIFIER_CONFIG = amplifier_inputs(
+    attenuator_db=0.0, supplies=(("PS1", "CH1"),)
+)
 
 
 class _FullInstrument:
@@ -274,10 +271,21 @@ class ServiceCapabilityValidationTests(unittest.TestCase):
 
         _build(AmplifierMeasurementService, hidden, AMPLIFIER_CONFIG)
 
-        enabled_config = dict(AMPLIFIER_CONFIG, driver_mode={"enabled": True})
+        enabled_config = replace(AMPLIFIER_CONFIG, driver_enabled=True)
         with self.assertRaises(InstrumentCapabilityError) as raised:
             _build(AmplifierMeasurementService, hidden, enabled_config)
         self.assertEqual(raised.exception.missing, DRIVER_POWER_CAPABILITIES)
+
+    def test_amplifier_capability_query_requires_the_formal_inputs(self):
+        """能力查询与构造器共用输入契约，不能因类型不符而静默少报驱动能力。"""
+        with self.assertRaisesRegex(TypeError, "AmplifierMeasurementInputs"):
+            AmplifierMeasurementService.required_capabilities(object())
+
+        enabled = replace(AMPLIFIER_CONFIG, driver_enabled=True)
+        self.assertIn(
+            DRIVER_POWER_CAPABILITIES[0],
+            AmplifierMeasurementService.required_capabilities(enabled),
+        )
 
     def test_service_rejects_invalid_optional_injections_at_construction(self):
         for keyword in ("event_sink", "sleep_fn", "result_repository", "cancellation_token"):

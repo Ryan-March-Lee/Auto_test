@@ -20,6 +20,7 @@ from application.measurements import (
     CableLossUseCase,
 )
 from application.run_service import RunNotResumable
+from domain.configuration.models import RunConfiguration, RunResourceMapping, TestPlan
 from infrastructure.persistence.run_repository import RunRepository
 from presentation.qt.configuration_authoring import author_official_configuration
 
@@ -73,6 +74,14 @@ class _Port:
 SNAPSHOT = Path("runs") / "run-assembly-test" / "inputs" / "hardware_config.json"
 
 
+def _run_configuration() -> RunConfiguration:
+    """由完整 GUI 文档构造运行配置，供主功放正式输入转换使用。"""
+    return RunConfiguration(
+        test_plan=TestPlan.from_dict(FULLY_VALID_CONFIG["test_plan"]),
+        run_mapping=RunResourceMapping.from_dict(FULLY_VALID_CONFIG["run_mapping"]),
+    )
+
+
 def _prepared_run():
     """运行契约替身：冻结快照解析为固定路径，用于断言装配行为。
 
@@ -86,7 +95,7 @@ def _prepared_run():
         {
             "run_id": "run-assembly-test",
             "context": SimpleNamespace(run_id="run-assembly-test"),
-            "configuration": object(),
+            "configuration": _run_configuration(),
             "run_directory": Path("runs") / "run-assembly-test",
             "run_repository": object(),
             "hardware_connection_path": lambda self=None: SNAPSHOT,
@@ -113,6 +122,7 @@ def _contract_run_stub(*, hardware_config_path, run_repository=None):
         {
             "run_id": "run-contract",
             "context": SimpleNamespace(run_id="run-contract"),
+            "configuration": _run_configuration(),
             "run_directory": Path("runs") / "run-contract",
             "run_repository": run_repository if run_repository is not None else object(),
             "has_run_contract": PreparedRun.has_run_contract,
@@ -334,7 +344,7 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
                     {
                         "run_id": "run-contract",
                         "context": SimpleNamespace(run_id="run-contract"),
-                        "configuration": object(),
+                        "configuration": _run_configuration(),
                         "run_directory": Path("runs") / "run-contract",
                         "run_repository": object(),
                         "hardware_connection_path": resolver,

@@ -143,6 +143,44 @@ class RecordingStageRecorder:
         return {stage: details["result_path"] for stage, _payload, details in self.completed}
 
 
+def amplifier_inputs(
+    *,
+    frequency_ghz: float = 1.0,
+    start_power_dbm: float = -20.0,
+    stop_power_dbm: float = -20.0,
+    step_db: float = 1.0,
+    compression_db: float = 1.0,
+    attenuator_db: float = 10.0,
+    max_input_power_dbm: float = 100.0,
+    driver_enabled: bool = False,
+    supplies: tuple[tuple[str, str], ...] = (("PS1", "CH2"),),
+):
+    """构造主功放正式输入替身。
+
+    技术债步骤 8 起，主功放用例只消费 :class:`AmplifierMeasurementInputs`；测试不再
+    拼历史配置字典。默认值对应“1 GHz、-20 dBm 单点扫描、1 dB 压缩、驱动关闭”。
+    """
+    from application.dto import AmplifierMeasurementInputs, PowerSweep, SupplyChannel
+    from domain.measurement.values import Decibels, Frequency, PowerDbm
+
+    return AmplifierMeasurementInputs(
+        frequencies=(Frequency.from_ghz(frequency_ghz),),
+        sweep=PowerSweep(
+            start=PowerDbm(start_power_dbm),
+            stop=PowerDbm(stop_power_dbm),
+            step=Decibels(step_db),
+        ),
+        compression_target=Decibels(compression_db),
+        attenuator=Decibels(attenuator_db),
+        max_dut_input_power=PowerDbm(max_input_power_dbm),
+        driver_enabled=driver_enabled,
+        dut_power_channels=tuple(
+            SupplyChannel(supply_id=supply_id, channel=channel)
+            for supply_id, channel in supplies
+        ),
+    )
+
+
 class MappingInputReader:
     """测量输入读取器替身：按阶段返回固定文档，并记下被读取的路径。"""
 
@@ -177,6 +215,7 @@ class MappingInputReader:
 
 __all__ = [
     "DEFAULT_RUN_ID",
+    "amplifier_inputs",
     "contract_run",
     "RecordingStageRecorder",
     "MappingInputReader",

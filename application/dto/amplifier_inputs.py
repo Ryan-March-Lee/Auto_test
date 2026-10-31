@@ -27,7 +27,9 @@
 
 ``SupplyChannel`` 只接受显式路由（``supply_id + channel`` 或
 ``"<supply_id>/<channel>"``）：裸通道名（旧快照的 ``CH1``）不在这里被猜测成“唯一那台
-电源”，按单电源假设的历史兼容在步骤 10 单独收敛。
+电源”。唯一例外是 :meth:`AmplifierMeasurementInputs.from_run_configuration` 这一过渡
+边界：已冻结的旧快照没有路由，只能用旧的单数电源条目指代唯一电源；无法唯一确定电源
+时转换直接抛 :class:`AmplifierInputError`，不编造电源标识。该兼容在计划步骤 10 收敛。
 """
 
 from __future__ import annotations
@@ -212,6 +214,48 @@ class AmplifierMeasurementInputs:
             self, "dut_power_channels", self._routed_channels(self.dut_power_channels)
         )
 
+    @classmethod
+    def from_run_configuration(cls, configuration: Any) -> "AmplifierMeasurementInputs":
+        """从已冻结的运行配置构造正式输入（应用边界唯一转换入口）。
+
+        只读取领域运行配置的**类型化字段**（``TestPlan`` / ``RunResourceMapping``），
+        不读取历史测量字典的键名：测试方案提供频率、扫描、压缩目标、衰减器、DUT
+        输入限制与驱动模式，运行映射提供本机实际接线的 DUT 供电通道。
+
+        非法或缺失字段统一收敛为 :class:`AmplifierInputError`，因此调用方可以在连接
+        任何仪器之前失败。旧快照的裸通道名（``CH2``）在这一过渡边界按“唯一那台电源”
+        解释，且只在旧的单数电源条目能唯一确定时成立；否则转换直接失败，不编造电源
+        标识。新快照只接受显式 ``supply_id/CHx`` 路由。
+        """
+        plan = getattr(configuration, "test_plan", None)
+        mapping = getattr(configuration, "run_mapping", None)
+        if plan is None or mapping is None:
+            raise AmplifierInputError(
+                "主功放正式输入必须来自运行配置：缺少 test_plan 或 run_mapping"
+            )
+        try:
+            return cls(
+                frequencies=tuple(
+                    Frequency.from_ghz(value) for value in plan.frequencies
+                ),
+                sweep=PowerSweep(
+                    start=PowerDbm(plan.start_power),
+                    stop=PowerDbm(plan.stop_power),
+                    step=Decibels(plan.power_step),
+                ),
+                compression_target=Decibels.parse(plan.compression_point),
+                attenuator=Decibels(plan.attenuator_value),
+                max_dut_input_power=PowerDbm(plan.max_input_power),
+                driver_enabled=plan.driver_enabled,
+                dut_power_channels=_dut_power_channels(mapping),
+            )
+        except AmplifierInputError:
+            raise
+        except (AttributeError, TypeError, ValueError) as error:
+            raise AmplifierInputError(
+                f"主功放运行配置无法转换为正式输入: {error}"
+            ) from error
+
     @staticmethod
     def _frequencies(values: Any) -> tuple[Frequency, ...]:
         if not isinstance(values, Iterable) or isinstance(values, (str, bytes, Mapping)):
@@ -261,3 +305,37 @@ class AmplifierMeasurementInputs:
         for item in self.dut_power_channels:
             grouped.setdefault(item.supply_id, []).append(item.channel)
         return MappingProxyType({name: tuple(channels) for name, channels in grouped.items()})
+
+
+def _dut_power_channels(mapping: Any) -> tuple[SupplyChannel, ...]:
+    """把运行映射的 DUT 通道解析为显式路由。
+
+    新快照的通道值是 ``supply_id/CHx``。唯一的过渡例外是已冻结的历史快照：它写成
+    裸通道名并用旧的单数电源条目指代唯一电源，此时按单电源假设解释；旧电源无法唯一
+    确定时不猜一台，而是让转换在应用边界明确失败（计划步骤 10 收敛）。
+    """
+    legacy_id = _legacy_supply_id(mapping)
+    channels: list[SupplyChannel] = []
+    for item in getattr(mapping, "dut_power_channels", ()) or ():
+        token = getattr(item, "channel", None)
+        if not isinstance(token, str) or not token.strip():
+            raise AmplifierInputError(
+                "运行映射的 DUT 供电通道缺少通道名：主功放正式输入不能使用空通道"
+            )
+        if "/" in token:
+            channels.append(SupplyChannel.from_routing(token))
+            continue
+        if legacy_id is None:
+            raise AmplifierInputError(
+                "运行映射的 DUT 供电通道必须写成 supply_id/通道名；"
+                f"裸通道名 {token!r} 只在旧的单数电源条目能唯一确定时兼容"
+            )
+        channels.append(SupplyChannel(supply_id=legacy_id, channel=token))
+    return tuple(channels)
+
+
+def _legacy_supply_id(mapping: Any) -> str | None:
+    """旧快照里唯一那台电源的标识；新快照或无法唯一确定时返回 ``None``。"""
+    reader = getattr(mapping, "legacy_power_supply", None)
+    legacy = reader() if callable(reader) else None
+    return getattr(legacy, "model", None) or None

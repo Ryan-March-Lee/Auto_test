@@ -204,13 +204,19 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
   布尔）与 `dut_power_channels`（`SupplyChannel` 序列，非空且不重复）。
 - 单位只由值对象表达：不接受裸数值、“30dBm”这类文本，也不接受把步进当成绝对功率。
 - `PowerSweep.points()` 将 `stop` 定义为扫描上限：步进不能整除区间时只返回不超过
-  上限的网格点，不生成越过终点的点；应用服务迁移到该模型后必须使用此语义。
+  上限的网格点，不生成越过终点的点；主功放测量服务（技术债步骤 8）直接使用该语义。
+- `AmplifierMeasurementInputs.from_run_configuration()` 是运行配置到正式输入的唯一转换
+  入口（技术债步骤 8/9）：只读取 `TestPlan` / `RunResourceMapping` 的类型化字段，非法或
+  缺失字段统一收敛为 `AmplifierInputError`。旧快照的裸通道名是临时兼容边界：只有旧的
+  单数电源条目能唯一确定电源时才转换为显式 `SupplyChannel`，否则转换直接失败，不编造
+  供电标识；计划步骤 10 收敛。
 - 配置文件边界目前只接受 `frequencies.unit=GHz`、`signal_source.unit=dBm` 和
   `attenuator.unit=dB`；不支持的单位在配置校验阶段拒绝，不作静默换算。供电 `supply_id`
   是否存在于本次运行资源映射由运行配置/应用边界校验，DTO 本身不携带设备地址或设备对象。
 - `SupplyChannel` 只接受显式路由（`supply_id` + `channel`，或经 `from_routing()` 解析
-  `"<supply_id>/<channel>"`）；裸通道名 `CH1` 不被猜成“唯一那台电源”，按单电源假设的
-  历史兼容留给步骤 10 单独收敛。`dut_supplies()` 提供按电源分组的只读投影。
+  `"<supply_id>/<channel>"`）；裸通道名 `CH1` 不被猜成“唯一那台电源”。旧快照的转换兼容
+  只在上一条的 `from_run_configuration()` 边界发生，计划步骤 10 删除。`dut_supplies()`
+  提供按电源分组的只读投影。
 - 非法输入统一抛 `AmplifierInputError`（`ConfigurationError` 子类，配置失败），在打开任何
   设备之前失败；模型不做文件读取、不接触仪器、不生成结果文档，仪器地址与传输对象仍由
   instrument 端口/运行上下文提供。

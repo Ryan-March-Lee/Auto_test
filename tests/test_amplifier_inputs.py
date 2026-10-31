@@ -1,4 +1,4 @@
-"""步骤 7 测试：主功放正式输入模型的字段、单位、必填性与非法值处理。
+"""步骤 7/8 测试：主功放正式输入模型的字段、单位、必填性、非法值处理与运行配置转换。
 
 覆盖四类契约：
 
@@ -310,6 +310,117 @@ class AmplifierMeasurementInputsTests(unittest.TestCase):
 
         with self.assertRaises(AmplifierInputError):
             _inputs(max_dut_input_power="30dBm")
+
+
+class RunConfigurationInputTests(unittest.TestCase):
+    def _configuration(self):
+        from domain.configuration.models import (
+            ChannelMapping,
+            InstrumentMapping,
+            PowerChannelPlan,
+            RunConfiguration,
+            RunResourceMapping,
+            TestPlan,
+        )
+
+        return RunConfiguration(
+            test_plan=TestPlan(
+                frequencies=[1.0, 2.4],
+                start_power=-20.0,
+                stop_power=0.0,
+                power_step=1.0,
+                compression_point="3dB",
+                attenuator_value=30,
+                max_input_power=30.0,
+                driver_enabled=True,
+                dut_power_channels={
+                    "gate": PowerChannelPlan(role="gate", voltage=2.8),
+                    "drain": PowerChannelPlan(role="drain", voltage=28.0),
+                },
+            ),
+            run_mapping=RunResourceMapping(
+                instruments={},
+                power_supplies={},
+                dut_power_channels=[
+                    ChannelMapping(channel="PS1/CH1", role="gate"),
+                    ChannelMapping(channel="PS1/CH2", role="drain"),
+                ],
+            ),
+        )
+
+    def test_typed_configuration_is_converted_to_formal_inputs(self):
+        inputs = AmplifierMeasurementInputs.from_run_configuration(self._configuration())
+
+        self.assertEqual([item.ghz for item in inputs.frequencies], [1.0, 2.4])
+        self.assertEqual(inputs.sweep.start, PowerDbm(-20.0))
+        self.assertEqual(inputs.sweep.stop, PowerDbm(0.0))
+        self.assertEqual(inputs.sweep.step, Decibels(1.0))
+        self.assertEqual(inputs.compression_target, Decibels(3.0))
+        self.assertEqual(inputs.attenuator, Decibels(30.0))
+        self.assertEqual(inputs.max_dut_input_power, PowerDbm(30.0))
+        self.assertTrue(inputs.driver_enabled)
+        self.assertEqual(inputs.dut_supplies(), {"PS1": ("CH1", "CH2")})
+
+    def test_missing_run_configuration_fails_before_any_device_action(self):
+        for value in (object(), None):
+            with self.subTest(value=value):
+                with self.assertRaises(AmplifierInputError):
+                    AmplifierMeasurementInputs.from_run_configuration(value)
+
+    def test_invalid_typed_configuration_is_reported_as_input_error(self):
+        from dataclasses import replace
+
+        configuration = self._configuration()
+        configuration = replace(
+            configuration,
+            test_plan=replace(configuration.test_plan, compression_point="2dB"),
+        )
+
+        with self.assertRaises(AmplifierInputError):
+            AmplifierMeasurementInputs.from_run_configuration(configuration)
+
+    def test_legacy_bare_channel_uses_the_unique_legacy_supply(self):
+        from dataclasses import replace
+
+        from domain.configuration.models import (
+            ChannelMapping,
+            InstrumentMapping,
+            RunResourceMapping,
+        )
+
+        configuration = self._configuration()
+        configuration = replace(
+            configuration,
+            run_mapping=RunResourceMapping(
+                instruments={"power_supply": InstrumentMapping(model="PS1")},
+                power_supplies={},
+                dut_power_channels=[ChannelMapping(channel="CH1", role="gate")],
+            ),
+        )
+
+        inputs = AmplifierMeasurementInputs.from_run_configuration(configuration)
+
+        self.assertEqual(inputs.dut_power_channels[0].supply_id, "PS1")
+        self.assertEqual(inputs.dut_power_channels[0].channel, "CH1")
+
+    def test_bare_channel_without_a_unique_legacy_supply_is_rejected(self):
+        """无法唯一确定旧电源时不得编造供电标识，必须在转换边界失败。"""
+        configuration = self._configuration()
+        configuration.run_mapping.dut_power_channels[0] = type(
+            "Channel", (), {"channel": "CH1"}
+        )()
+
+        with self.assertRaises(AmplifierInputError):
+            AmplifierMeasurementInputs.from_run_configuration(configuration)
+
+    def test_channel_without_a_name_is_rejected(self):
+        configuration = self._configuration()
+        configuration.run_mapping.dut_power_channels[0] = type(
+            "Channel", (), {"channel": "  "}
+        )()
+
+        with self.assertRaises(AmplifierInputError):
+            AmplifierMeasurementInputs.from_run_configuration(configuration)
 
 
 class AmplifierInputErrorTaxonomyTests(unittest.TestCase):

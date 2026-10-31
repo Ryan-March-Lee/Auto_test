@@ -10,6 +10,7 @@ from infrastructure.persistence.json_result_repository import load_json_result
 from infrastructure.persistence.json_result_repository import save_measurement_model
 from analysis.reporting import export_csv, render_html_report
 from release_manifest import build_manifest
+from tests.contract_doubles import amplifier_inputs
 from tests.fakes import safety_cleanup_for
 
 
@@ -111,14 +112,17 @@ class OfflineCompletionTests(unittest.TestCase):
     def test_dut_protection_publishes_stop_and_does_not_raise_power(self):
         events = _Events()
         instrument = _Instrument()
-        config = {
-            "compression_point": {"type": "3dB"}, "attenuator": {"type": "0dB"},
-            "dut_config": {"max_input_power": -2},
-            "signal_source": {"start_power": -3, "stop_power": 1, "step": 1},
-            "power_supply_assignment": {"dut_amplifier": {"supplies": {"main": {"name": "PS", "channel": ["A"]}}}},
-        }
+        inputs = amplifier_inputs(
+            start_power_dbm=-3.0,
+            stop_power_dbm=1.0,
+            step_db=1.0,
+            compression_db=3.0,
+            attenuator_db=0.0,
+            max_input_power_dbm=-2.0,
+            supplies=(("PS", "A"),),
+        )
         service = AmplifierMeasurementService(
-            config, instrument, {"cable_losses": {"1.0": {"cable1": 0, "cable2": 0, "cable4": 0}}},
+            inputs, instrument, {"cable_losses": {"1.0": {"cable1": 0, "cable2": 0, "cable4": 0}}},
             run_id="run-amplifier",
             safety_cleanup=safety_cleanup_for(instrument),
             event_sink=events, sleep_fn=lambda _: None,

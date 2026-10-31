@@ -19,6 +19,7 @@ from application.ports.result_repository import MeasurementResultRepository
 from application.ports.result_input_reader import ResultInputReader
 from application.ports.measurement_session import SafetyCleanupPort
 from .measurement_results import MeasurementType, freeze
+from .amplifier_inputs import AmplifierMeasurementInputs
 
 if TYPE_CHECKING:  # pragma: no cover - 仅用于类型标注，避免运行时循环导入
     from application.archival_service import ResultArchivalService
@@ -145,7 +146,21 @@ class DriverPowerMappingRequest(MeasurementRequest):
 
 @dataclass(frozen=True)
 class AmplifierMeasurementRequest(MeasurementRequest):
-    """Inputs for amplifier measurement; its calibration inputs come from the run."""
+    """Inputs for amplifier measurement; its calibration inputs come from the run.
+
+    ``inputs`` 是主功放唯一的正式输入表示（技术债步骤 7/8）：频率、功率扫描、压缩
+    目标、衰减器、DUT 输入限制、驱动模式与 DUT 供电通道都在这里类型化表达，用例不再
+    读取历史配置字典。构造期即拒绝缺失或类型不符的输入。
+    """
 
     measurement_type: MeasurementType | str = MeasurementType.AMPLIFIER
     _expected_measurement_type: ClassVar[MeasurementType] = MeasurementType.AMPLIFIER
+    inputs: AmplifierMeasurementInputs = field(kw_only=True)
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if not isinstance(self.inputs, AmplifierMeasurementInputs):
+            raise ValueError(
+                "AmplifierMeasurementRequest.inputs 必须是 "
+                f"AmplifierMeasurementInputs，收到 {type(self.inputs).__name__}"
+            )

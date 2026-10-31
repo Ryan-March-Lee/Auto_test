@@ -51,6 +51,7 @@ from infrastructure.persistence.artifact_generator import ArchiveArtifactGenerat
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from infrastructure.persistence.run_repository import RunRepository
 from presentation.qt.configuration_authoring import author_official_configuration
+from tests.contract_doubles import amplifier_inputs
 from tests.fakes import safety_cleanup_for
 
 
@@ -270,6 +271,7 @@ class SuccessPathArchivalTests(unittest.TestCase):
             context=SimpleNamespace(run_id=RUN_ID),
             run_directory=layout.run_directory,
             measurement_port=instrument,
+            inputs=amplifier_inputs(),
             safety_cleanup=safety_cleanup_for(instrument),
             result_repository=self.result_repository,
             input_reader=ResultInputReader(self.result_repository),

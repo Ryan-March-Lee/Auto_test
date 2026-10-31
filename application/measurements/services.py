@@ -42,6 +42,7 @@ from application.ports.measurement_session import (
     SafetyCleanupError,
     SafetyCleanupPort,
 )
+from application.dto.amplifier_inputs import AmplifierMeasurementInputs
 from domain.measurement.calculations import (
     calculate_cable_losses,
     calculate_compression_result,
@@ -135,6 +136,13 @@ def _loss_table(loss_data: Any) -> CableLossTable:
     return CableLossTable.from_mapping(cable_losses, source="线损输入")
 
 
+def _mapping_config(config: Any) -> Mapping[str, Any]:
+    """历史配置形状的服务（线损/驱动映射）仍以映射为输入契约。"""
+    if not isinstance(config, MappingABC):
+        raise TypeError("测量服务配置必须是 Mapping")
+    return config
+
+
 class _Service:
     """测量服务基类。
 
@@ -153,11 +161,14 @@ class _Service:
       一次解析，测量中途不再猜测；
     - 运行 ID、配置、事件输出、睡眠函数、取消令牌和稳定延时都在构造阶段校验，
       无效依赖不会等到硬件动作之后才暴露。
+
+    ``config`` 由各服务按自己的输入契约解释：线损/驱动映射仍是历史映射，主功放
+    使用正式输入模型 :class:`AmplifierMeasurementInputs`（技术债步骤 8）。
     """
 
     measurement_type = "measurement"
 
-    def __init__(self, config: Mapping[str, Any], instrument: MeasurementInstrumentPort, *, run_id: str,
+    def __init__(self, config: Any, instrument: MeasurementInstrumentPort, *, run_id: str,
                  safety_cleanup: SafetyCleanupPort,
                  event_sink: EventSink | None = None, cancellation_token: CancellationToken | None = None,
                  result_repository: ResultRepository | Callable[[Any], Any] | None = None,
@@ -166,8 +177,6 @@ class _Service:
                  owns_measurement_port: bool = True):
         if not isinstance(run_id, str) or not run_id.strip():
             raise ValueError("测量服务必须提供有效运行 ID")
-        if not isinstance(config, MappingABC):
-            raise TypeError("测量服务配置必须是 Mapping")
         if isinstance(settle_delay_s, bool) or not isinstance(settle_delay_s, (int, float)):
             raise TypeError("settle_delay_s 必须是数值")
         if not math.isfinite(settle_delay_s) or settle_delay_s < 0:
@@ -198,7 +207,7 @@ class _Service:
         self.last_cleanup_record: CleanupRecord | None = None
 
     @classmethod
-    def required_capabilities(cls, config: Mapping[str, Any]) -> tuple[str, ...]:
+    def required_capabilities(cls, config: Any) -> tuple[str, ...]:
         """返回本服务实际使用的设备能力；子类按测量类型追加。"""
         return SIGNAL_MEASUREMENT_CAPABILITIES
 
@@ -236,7 +245,7 @@ class CableLossService(_Service):
     measurement_type = "cable_loss"
 
     def __init__(self, config: Mapping[str, Any], instrument: MeasurementInstrumentPort, **kwargs: Any):
-        super().__init__(config, instrument, **kwargs)
+        super().__init__(_mapping_config(config), instrument, **kwargs)
         self.attenuator_value = Decibels.parse(config["attenuator"]["type"])
         self._path1_losses: dict[float, float] = {}
 
@@ -351,7 +360,7 @@ class DriverPowerMappingService(_Service):
 
     def __init__(self, config: Mapping[str, Any], instrument: MeasurementInstrumentPort,
                  loss_data: Mapping[str, Any], **kwargs: Any):
-        super().__init__(config, instrument, **kwargs)
+        super().__init__(_mapping_config(config), instrument, **kwargs)
         # 输入文档在构造阶段收敛为值对象：缺失频率、未知字段或非数值在硬件动作前失败。
         # 服务只保留解析后的表，不再同时持有原始文档副本。
         self.loss_table = _loss_table(loss_data)
@@ -413,14 +422,25 @@ class DriverPowerMappingService(_Service):
 
 
 class AmplifierMeasurementService(_Service):
-    """Run the main amplifier sweep, including protection and compression logic."""
+    """Run the main amplifier sweep, including protection and compression logic.
+
+    输入是技术债步骤 7 定义的正式模型 :class:`AmplifierMeasurementInputs`：服务不再
+    读取历史配置字典，频率、扫描点、压缩目标、衰减器、DUT 输入限制、驱动模式与供电
+    通道全部来自同一对象的类型化字段。
+    """
 
     measurement_type = "amplifier_measurement"
 
-    def __init__(self, config: Mapping[str, Any], instrument: MeasurementInstrumentPort,
+    def __init__(self, inputs: AmplifierMeasurementInputs, instrument: MeasurementInstrumentPort,
                  loss_data: Mapping[str, Any], driver_mapping: Mapping[str, Any] | None = None,
-                 **kwargs: Any):
-        super().__init__(config, instrument, **kwargs)
+                 *, configuration_snapshot: Mapping[str, Any] | None = None, **kwargs: Any):
+        if not isinstance(inputs, AmplifierMeasurementInputs):
+            raise TypeError(
+                "AmplifierMeasurementService 输入必须是 AmplifierMeasurementInputs，"
+                f"收到 {type(inputs).__name__}"
+            )
+        self.inputs = inputs
+        super().__init__(inputs, instrument, **kwargs)
         # 校准输入在构造阶段收敛为值对象，缺字段或错误单位不会等到扫描中途才暴露；
         # 服务只保留解析后的表，不再同时持有原始文档副本。
         self.loss_table = _loss_table(loss_data)
@@ -429,40 +449,47 @@ class AmplifierMeasurementService(_Service):
             if driver_mapping
             else None
         )
-        self.attenuator_value = Decibels.parse(config["attenuator"]["type"])
+        self.attenuator_value = inputs.attenuator
+        self.compression_value = inputs.compression_target
+        self.configuration_snapshot = dict(configuration_snapshot or {})
 
     @classmethod
-    def required_capabilities(cls, config: Mapping[str, Any]) -> tuple[str, ...]:
-        """主功放扫描必用 DUT 电源能力；驱动模式开启时才要求驱动电源能力。"""
+    def required_capabilities(cls, inputs: Any) -> tuple[str, ...]:
+        """主功放扫描必用 DUT 电源能力；驱动模式开启时才要求驱动电源能力。
+
+        输入契约与构造器一致：独立调用本方法（例如装配层查询能力）也必须传入正式
+        输入模型，不能因为类型不符而静默少报驱动电源能力。
+        """
+        if not isinstance(inputs, AmplifierMeasurementInputs):
+            raise TypeError(
+                "AmplifierMeasurementService.required_capabilities 的输入必须是 "
+                f"AmplifierMeasurementInputs，收到 {type(inputs).__name__}"
+            )
         capabilities = SIGNAL_MEASUREMENT_CAPABILITIES + DUT_POWER_CAPABILITIES
-        driver_mode = config.get("driver_mode", {})
-        enabled = driver_mode.get("enabled") if isinstance(driver_mode, Mapping) else None
-        if enabled:
+        if inputs.driver_enabled:
             capabilities += DRIVER_POWER_CAPABILITIES
         return capabilities
 
     def perform_power_sweep(self, frequency: float) -> dict[str, Any]:
-        compression_type = self.config["compression_point"]["type"]
-        compression_value = Decibels.parse(compression_type)
+        compression_value = self.compression_value
         attenuator_value = self.attenuator_value
         frequency_value = Frequency.from_ghz(frequency)
-        maximum = self.config.get("dut_config", {}).get("max_input_power", float("inf"))
+        maximum = self.inputs.max_dut_input_power.dbm
         self.inst_ctrl.set_power(-40)
         self.inst_ctrl.set_frequency(frequency)
         self.inst_ctrl.set_center_frequency(frequency)
         self.inst_ctrl.set_span(10)
-        supplies = self.config["power_supply_assignment"]["dut_amplifier"]["supplies"]
+        supplies = self.inputs.dut_supplies()
         data = {"input_power_dut": [], "output_power_dut": [], "gain": [], "sg_power": [],
                 "voltages": [], "currents": [], "dc_power": [], "efficiency": []}
-        points = np.arange(self.config["signal_source"]["start_power"],
-                           self.config["signal_source"]["stop_power"] + self.config["signal_source"]["step"],
-                           self.config["signal_source"]["step"])
+        # ``PowerSweep.points()``：stop 是扫描上限，非整步时不生成越过终点的点。
+        points = self.inputs.sweep.points()
         self.inst_ctrl.rf_output_on()
         try:
             for index, sg_power in enumerate(points):
                 self._check_cancelled()
                 dut_input = calculate_dut_input_power(
-                    PowerDbm(sg_power),
+                    sg_power,
                     frequency_value,
                     self.loss_table,
                     self.driver_table,
@@ -476,7 +503,7 @@ class AmplifierMeasurementService(_Service):
                         StoppedEvent(self.run_id, reason="DUT 输入功率保护", emergency=True),
                     )
                     break
-                self.inst_ctrl.set_power(sg_power)
+                self.inst_ctrl.set_power(sg_power.dbm)
                 self.sleep_fn(self.settle_delay_s)
                 raw = self.inst_ctrl.measure_power_with_average()
                 output = compensate_amplifier_output_power(
@@ -486,16 +513,16 @@ class AmplifierMeasurementService(_Service):
                     attenuator_value,
                 )
                 voltage, current, dc_power = {}, {}, 0.0
-                for supply_name, info in supplies.items():
-                    for channel in info["channel"]:
-                        v = self.inst_ctrl.read_voltage(info["name"], channel)
-                        i = self.inst_ctrl.read_current(info["name"], channel)
+                for supply_id, channels in supplies.items():
+                    for channel in channels:
+                        v = self.inst_ctrl.read_voltage(supply_id, channel)
+                        i = self.inst_ctrl.read_current(supply_id, channel)
                         dc_power += v * i
-                        voltage[f"{supply_name}_{channel}"] = v
-                        current[f"{supply_name}_{channel}"] = i
+                        voltage[f"{supply_id}_{channel}"] = v
+                        current[f"{supply_id}_{channel}"] = i
                 gain = calculate_gain(output, dut_input)
                 efficiency = calculate_efficiency(output, PowerWatt(dc_power))
-                data["sg_power"].append(float(sg_power))
+                data["sg_power"].append(sg_power.dbm)
                 data["input_power_dut"].append(dut_input.dbm)
                 data["output_power_dut"].append(output.dbm)
                 data["gain"].append(gain.db)
@@ -503,7 +530,7 @@ class AmplifierMeasurementService(_Service):
                 data["dc_power"].append(dc_power); data["efficiency"].append(efficiency.percent)
                 _publish(self.event_sink, RealtimeDataEvent(self.run_id, measurement=self.measurement_type,
                     data={"frequency": frequency, "sweep_data": {key: list(value) for key, value in data.items()},
-                          "current_point": {"sg_power": sg_power, "dut_input_power": dut_input.dbm,
+                          "current_point": {"sg_power": sg_power.dbm, "dut_input_power": dut_input.dbm,
                                             "output_power": output.dbm, "gain": gain.db,
                                             "efficiency": data["efficiency"][-1],
                                             "dc_power": dc_power}}))
@@ -523,7 +550,7 @@ class AmplifierMeasurementService(_Service):
             compression_value,
             small_gain_points=3,
         )
-        return {"compression_type": compression_type,
+        return {"compression_type": f"{compression_value.db:g}dB",
                 "compression_point": result.compression_point.to_mapping(),
                 "small_signal_gain": result.small_signal_gain.db, "sweep_data": data,
                 "compression_achieved": result.compression_achieved}
@@ -531,15 +558,15 @@ class AmplifierMeasurementService(_Service):
     def run(self) -> dict[str, Any]:
         results: dict[str, Any] = {}
         try:
-            if self.config["driver_mode"]["enabled"]:
+            if self.inputs.driver_enabled:
                 self.inst_ctrl.setup_driver_amplifier_power()
             self.inst_ctrl.setup_dut_power()
             self.inst_ctrl.power_on_sequence()
             self.sleep_fn(2)
-            for frequency in self.config["test_frequencies"]:
+            for frequency in self.inputs.frequencies:
                 self._check_cancelled()
-                results[Frequency.from_ghz(frequency).key] = self.perform_power_sweep(frequency)
-            result = {"results": results, "configuration_snapshot": self.config}
+                results[frequency.key] = self.perform_power_sweep(frequency.ghz)
+            result = {"results": results, "configuration_snapshot": self.configuration_snapshot}
             self._save(result)
             return result
         finally:

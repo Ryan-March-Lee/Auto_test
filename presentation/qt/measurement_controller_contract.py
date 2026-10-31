@@ -16,6 +16,7 @@ from .measurement_state import (
     MeasurementStatus,
     MeasurementViewState,
 )
+from .run_contract import is_valid_prepared_run
 
 
 def _freeze(value: Any) -> Any:
@@ -39,8 +40,10 @@ class MeasurementCommand:
 
     ``prepared_run`` 是配置阶段创建（或按 run_id 重新打开）的运行契约
     :class:`app.run_context.PreparedRun`；测量页面只携带它，不能携带运行期间可变
-    的 GUI 配置状态。它是**必填**字段：构造命令就已经满足“测量绑定同一个运行”的
-    契约，缺少运行对象的命令在构造期被拒绝，而不是留到底层再猜。
+    的 GUI 配置状态。它是**必填**且**必须在构造期就满足契约**：判据只有一份
+    （:func:`presentation.qt.run_contract.is_valid_prepared_run` → 承载四项要求的
+    ``has_run_contract``），缺少运行对象或运行对象不满足契约的命令都在构造期被拒绝，
+    而不是留到底层再猜，也不接受“非空但不带契约”的替身。
     """
 
     config_path: str
@@ -54,11 +57,12 @@ class MeasurementCommand:
             raise ValueError(
                 "测量命令必须携带运行契约 prepared_run；请先创建或重新加载运行"
             )
+        if not is_valid_prepared_run(self.prepared_run):
+            raise ValueError(
+                "测量命令携带的运行对象不满足运行契约（需要 run_id、run_directory、"
+                "运行仓储与 hardware_connection_path()）；请先创建或重新加载运行"
+            )
         object.__setattr__(self, "options", _freeze(self.options))
-
-
-# 迁移期间保留旧名称，新的页面代码应使用 MeasurementCommand。
-MeasurementRequest = MeasurementCommand
 
 
 @dataclass(frozen=True)
@@ -195,7 +199,6 @@ START_METHODS: Mapping[MeasurementKind, str] = MappingProxyType(
 
 __all__ = [
     "MeasurementCommand",
-    "MeasurementRequest",
     "ControllerState",
     "ControllerSignal",
     "MeasurementWorker",

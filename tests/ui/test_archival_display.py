@@ -23,13 +23,15 @@ from presentation.qt.measurement_controller import MeasurementController
 from presentation.qt.measurement_controller_contract import MeasurementCommand
 from presentation.qt.measurement_state import MeasurementKind, MeasurementStatus
 
+from tests.contract_doubles import contract_run
+
 
 RUN_ID = "20260101T000000Z_deadbeef"
 CSV_PATH = "artifacts/amplifier.csv"
 REPORT_PATH = "artifacts/amplifier_report.html"
 
-# 测量命令必须携带运行契约（D1）；本文件只验证归档展示，运行契约用最小替身。
-_PREPARED_RUN = object()
+# 测量命令在构造期就要求有效运行契约（D1/D10）；本文件只验证归档展示，替身只提供契约。
+_PREPARED_RUN = contract_run(RUN_ID)
 
 
 class Signal:
@@ -114,7 +116,7 @@ class Plot(QWidget):
 def _run(run_id=RUN_ID):
     return type("PreparedRun", (), {
         "run_id": run_id, "run_repository": object(),
-        "has_run_contract": True, "run_directory": f"runs/{run_id}",
+        "run_directory": f"runs/{run_id}",
         "hardware_connection_path": lambda self: None,
     })()
 

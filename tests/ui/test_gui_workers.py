@@ -63,9 +63,9 @@ class _StopDuringValidation:
     """在 worker 校验运行契约时触发停止请求的替身运行契约。
 
     worker 必须在校验通过后、创建测量用例前再次检查停止意图：唯一判据
-    :func:`application.run_service.has_run_contract` 会读取 ``run_id``，这里让该读取
-    触发 ``worker.stop()``，从而精确覆盖该分支，证明停止后不再装配测量对象（也就不会
-    有任何硬件动作）。
+    :func:`application.run_service.has_run_contract` 先读 ``run_id``（读取顺序是判据
+    实现的一部分，见该函数 docstring），这里让该读取触发 ``worker.stop()``，从而精确
+    覆盖该分支，证明停止后不再装配测量对象（也就不会有任何硬件动作）。
     """
 
     def __init__(self, worker):
@@ -87,7 +87,6 @@ class GuiWorkerTests(unittest.TestCase):
     @staticmethod
     def _contract_run():
         return type("PreparedRun", (), {
-            "has_run_contract": True,
             "run_repository": object(),
             "run_id": "run-worker",
             "run_directory": "runs/run-worker",
@@ -153,7 +152,7 @@ class GuiWorkerTests(unittest.TestCase):
         self.assertIsNone(worker.service)
         self.assertEqual(
             errors,
-            ["应用用例构造失败: 正式线损测量必须携带有效 PreparedRun；请先创建或重新加载运行"],
+            ["应用用例构造失败: 线损测量必须携带有效运行契约（PreparedRun）；请先创建或重新加载运行"],
         )
 
     def test_workers_do_not_implicitly_prepare_a_legacy_run(self):
@@ -172,7 +171,7 @@ class GuiWorkerTests(unittest.TestCase):
                 prepare.assert_not_called()
                 factory.assert_not_called()
                 self.assertEqual(len(errors), 1)
-                self.assertIn("必须携带有效 PreparedRun", errors[0])
+                self.assertIn("必须携带有效运行契约（PreparedRun）", errors[0])
 
     def test_workers_reject_non_contract_run_objects(self):
         """传入的不是运行契约对象时同样在创建测量前失败。"""
@@ -191,7 +190,7 @@ class GuiWorkerTests(unittest.TestCase):
                 self.assertIsNone(worker.service)
                 self.assertEqual(
                     errors,
-                    [f"应用用例构造失败: 正式{label}测量必须携带有效 PreparedRun；请先创建或重新加载运行"],
+                    [f"应用用例构造失败: {label}测量必须携带有效运行契约（PreparedRun）；请先创建或重新加载运行"],
                 )
 
     def test_cable_loss_stop_during_run_contract_validation_skips_measurement(self):
@@ -437,6 +436,17 @@ class GuiWorkerTests(unittest.TestCase):
 
     def test_instrument_worker_without_a_run_never_connects(self):
         """连接仪器必须绑定运行契约：没有运行对象时不打开任何设备。"""
+        worker = InstrumentWorker(None, sleep_fn=lambda _seconds: None)
+        errors = []
+        worker.signals.error.connect(errors.append)
+        with patch("app.gui_runtime.connect_instruments") as connect:
+            worker.run()
+        connect.assert_not_called()
+        self.assertIsNone(worker.measurement_port)
+        self.assertEqual(errors, ["仪器连接失败: 仪器连接必须携带有效运行契约（PreparedRun）；请先创建或重新加载运行"])
+
+    def test_instrument_worker_rejects_the_legacy_positional_config_path(self):
+        """旧调用形态（位置上传配置路径）不得冒充运行契约：必须明确失败。"""
         worker = InstrumentWorker("config.json", sleep_fn=lambda _seconds: None)
         errors = []
         worker.signals.error.connect(errors.append)
@@ -444,8 +454,7 @@ class GuiWorkerTests(unittest.TestCase):
             worker.run()
         connect.assert_not_called()
         self.assertIsNone(worker.measurement_port)
-        self.assertEqual(len(errors), 1)
-        self.assertIn("必须携带有效 PreparedRun", errors[0])
+        self.assertIn("必须携带有效运行契约（PreparedRun）", errors[0])
 
     def test_instrument_worker_accepts_explicit_connect_factory(self):
         class _Port:

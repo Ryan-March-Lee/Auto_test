@@ -93,7 +93,7 @@ class DriverMappingPageTests(unittest.TestCase):
         self.clears = []
         self.run = type("PreparedRun", (), {
             "run_id": "run-driver", "run_repository": object(),
-            "has_run_contract": True, "run_directory": "runs/run-driver",
+            "run_directory": "runs/run-driver",
             "hardware_connection_path": lambda self: None,
         })()
         self.page = DriverMappingPage(

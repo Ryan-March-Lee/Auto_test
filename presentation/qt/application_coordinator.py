@@ -237,19 +237,6 @@ class ApplicationCoordinator:
         self.last_save_error = None
         return True
 
-    def update_and_save_configuration(self) -> bool:
-        """读取界面并保存正式配置；结果写进日志，由调用方决定是否继续。
-
-        连接仪器不再经过这里：仪器连接必须绑定已创建的运行契约，不能靠“保存全局
-        配置后直接连线”绕过运行目录。
-        """
-        self.update_configuration_from_ui()
-        if self.save_configuration():
-            self._log("配置已更新并保存")
-            return True
-        self._log(f"配置保存失败: {self.last_save_error}")
-        return False
-
     # ---- 运行契约 ----
 
     def measurement_config_path(self) -> str:
@@ -459,6 +446,22 @@ class ApplicationCoordinator:
 
     # ---- 仪器连接与端口生命周期 ----
 
+    def _configuration_page_is_dirty(self) -> bool:
+        """配置页是否有尚未冻结为运行的修改；只用于给用户一条日志提示。
+
+        连接仪器一律使用当前运行的冻结快照（步骤 5），因此界面上的改动不会生效。
+        这里不做阻断：是否需要先重建运行由用户按现场情况决定，但“改动被忽略”必须
+        在日志里说出来，不能静默。
+        """
+        checker = getattr(self.config_page, "is_dirty", None)
+        if not callable(checker):
+            return False
+        try:
+            return checker() is True
+        except Exception as failure:  # noqa: BLE001 - 提示失败不得影响连接
+            self._log(f"无法判断配置页是否有未冻结修改: {failure}")
+            return False
+
     def connect_instruments(
         self, bind_signals: Callable[[Any], None] | None = None
     ) -> bool:
@@ -479,7 +482,14 @@ class ApplicationCoordinator:
             )
             return False
         self._log(f"使用已冻结的运行配置连接仪器: {run.run_id}")
+        if self._configuration_page_is_dirty():
+            self._log(
+                "注意：仪器配置页存在尚未创建运行的修改；本次连接仍使用运行 "
+                f"{run.run_id} 的冻结快照，若要应用修改请重新“校验并创建运行”"
+            )
         try:
+            # 只做前置校验：拿不到可用快照就在启动 worker 前失败；端口本身由
+            # connect_instruments() 装配，并按同一份快照再校验一次（幂等）。
             self.measurement_config_path()
         except RunNotResumable as failure:
             self._log(f"无法连接仪器: {failure}")

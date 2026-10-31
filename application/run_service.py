@@ -379,6 +379,11 @@ def has_run_contract(value: Any) -> bool:
     :attr:`app.run_context.PreparedRun.has_run_contract` 与
     :func:`presentation.qt.run_contract.is_valid_prepared_run` 都委托到这里，
     不允许再出现第二套判据。
+
+    读取顺序（``run_id`` → ``run_directory`` → ``run_repository`` →
+    ``hardware_connection_path``）是判据的一部分：按“最便宜的检查优先”短路，且
+    ``tests/ui/test_gui_workers.py::_StopDuringValidation`` 依赖先读 ``run_id`` 来
+    精确覆盖“校验期间收到停止请求”的分支。调整顺序请同时检查该测试。
     """
     if value is None:
         return False

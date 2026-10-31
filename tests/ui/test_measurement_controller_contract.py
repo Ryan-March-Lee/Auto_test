@@ -12,9 +12,11 @@ from presentation.qt.measurement_state import (
     MeasurementViewState,
 )
 
+from tests.contract_doubles import contract_run
 
-# 测量命令必须携带运行契约（D1）；契约深度校验由 GUI 边界与 worker 负责。
-_PREPARED_RUN = object()
+
+# 测量命令在构造期就要求有效运行契约（D1/D10）：空替身不再够用。
+_PREPARED_RUN = contract_run()
 
 
 class _Signal:

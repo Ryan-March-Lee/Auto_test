@@ -73,7 +73,8 @@ def connect_instruments(
     :meth:`PreparedRun.hardware_connection_path` 解析，并在打开任何 VISA 资源前
     按 manifest 校验 SHA-256/大小，因此“连的是本次运行的仪器”可以被证明。
     ``config_path`` 只服务不带运行契约的旧兼容快照（步骤 6 删除），契约运行永远
-    不会使用它。
+    不会使用它；调用方应传入**已解析**的路径（:func:`_hardware_config_path` 的结果），
+    这样端口与测量请求用的是同一个值，函数里不会出现两个同名不同值的路径变量。
     """
     return create_measurement_port(
         _hardware_config_path(prepared_run, config_path),
@@ -447,7 +448,7 @@ def create_cable_loss_measurement(
         _ensure_run_snapshots_are_intact(prepared_run)
         if owned_port:
             callbacks["measurement_port"] = connect_instruments(
-                prepared_run, config_path=config_path
+                prepared_run, config_path=effective_config_path
             )
         callbacks["owns_measurement_port"] = owned_port
         callbacks.setdefault("result_repository", FileMeasurementResultRepository(paths=callbacks.get("paths") or DEFAULT_PATHS))
@@ -484,7 +485,7 @@ def create_driver_mapping_measurement(
         _ensure_run_snapshots_are_intact(prepared_run)
         if owned_port:
             callbacks["measurement_port"] = connect_instruments(
-                prepared_run, config_path=config_path
+                prepared_run, config_path=effective_config_path
             )
         callbacks["owns_measurement_port"] = owned_port
         callbacks.setdefault("result_repository", FileMeasurementResultRepository(paths=callbacks.get("paths") or DEFAULT_PATHS))
@@ -533,7 +534,7 @@ def create_amplifier_measurement(
         _ensure_run_snapshots_are_intact(prepared_run)
         if owned_port:
             callbacks["measurement_port"] = connect_instruments(
-                prepared_run, config_path=config_path
+                prepared_run, config_path=effective_config_path
             )
         callbacks["owns_measurement_port"] = owned_port
         callbacks["result_repository"] = repository

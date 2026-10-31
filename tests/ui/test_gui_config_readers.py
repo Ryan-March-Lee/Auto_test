@@ -684,24 +684,6 @@ class CoordinatorConfigSaveTests(unittest.TestCase):
         )
         self.assertTrue(validate_run_configuration(configuration).valid)
 
-    def test_update_and_save_configuration_success(self):
-        self.coordinator.update_configuration_from_ui = MagicMock()
-
-        result = self.coordinator.update_and_save_configuration()
-
-        self.assertTrue(result)
-        self.coordinator.update_configuration_from_ui.assert_called_once_with()
-        self.assertIn('配置已更新并保存', self.messages)
-
-    def test_update_and_save_configuration_failure(self):
-        self.coordinator.update_configuration_from_ui = MagicMock()
-        self.service.configuration.save.side_effect = OSError("test write failure")
-
-        result = self.coordinator.update_and_save_configuration()
-
-        self.assertFalse(result)
-        self.assertTrue(any('配置保存失败' in message for message in self.messages))
-
 
 class MainWindowSaveConfigDialogTests(unittest.TestCase):
     """窗口只负责保存配置的用户可见反馈。"""

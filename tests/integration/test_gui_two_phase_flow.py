@@ -30,6 +30,8 @@ from presentation.qt.measurement_controller_contract import MeasurementCommand
 from presentation.qt.measurement_state import MeasurementKind
 from presentation.qt.workers import AmplifierWorker, CableLossWorker, DriverMappingWorker
 
+from tests.contract_doubles import contract_run
+
 
 RUN_ID = "20261022T153000Z_a1b2c3d4"
 
@@ -357,24 +359,38 @@ class RunContractReopenTests(unittest.TestCase):
 
 
 class MeasurementCommandRunContractTests(unittest.TestCase):
-    def test_command_carries_an_opaque_run_contract(self):
-        run = object()
+    def test_command_carries_the_current_run_contract(self):
+        run = contract_run()
         command = MeasurementCommand("config.json", prepared_run=run)
         self.assertIs(command.prepared_run, run)
         self.assertEqual(command.config_path, "config.json")
 
     def test_command_requires_a_run_contract_at_construction(self):
-        # 构造即满足契约（D1）：缺少运行对象的命令在构造期就被拒绝。
+        # 构造即满足契约（D1/D10）：缺少运行对象、或运行对象不带契约，都在构造期失败。
         with self.assertRaises(ValueError):
             MeasurementCommand("config.json", None)
         with self.assertRaises(TypeError):
             MeasurementCommand("config.json")
 
+    def test_command_rejects_a_run_object_without_the_contract(self):
+        # 非空但不满足契约的替身不得进入测量链路（清单 3.0 第 3 条：空替身不算契约）。
+        incomplete_runs = {
+            "缺少运行目录": contract_run(run_directory=None),
+            "缺少运行仓储": contract_run(run_repository=None),
+            "缺少快照解析入口": contract_run(hardware_connection_path=None),
+            "缺少运行标识": contract_run(run_id=""),
+        }
+        for label, run in incomplete_runs.items():
+            with self.subTest(case=label):
+                with self.assertRaises(ValueError) as raised:
+                    MeasurementCommand("config.json", prepared_run=run)
+                self.assertIn("不满足运行契约", str(raised.exception))
+
 
 class ControllerRunContractTests(unittest.TestCase):
     def test_controller_forwards_prepared_run_to_worker_factory(self):
         captured = {}
-        run = object()
+        run = contract_run()
 
         def factory(command, *, measurement_port=None):
             captured["command"] = command
@@ -399,7 +415,6 @@ class WorkerReusesPreparedRunTests(unittest.TestCase):
     @staticmethod
     def _contract_run():
         return SimpleNamespace(
-            has_run_contract=True,
             run_repository=object(),
             run_id=RUN_ID,
             run_directory=Path("runs") / RUN_ID,
@@ -719,22 +734,61 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         """没有运行就没有仪器连接：不保存全局配置、不构造 worker、不打开设备。"""
         log = MagicMock()
         warn = MagicMock()
-        coordinator = self._coordinator(log=log, warn=warn)
-        coordinator.update_and_save_configuration = MagicMock()
+        worker_factory = MagicMock()
+        coordinator = self._coordinator(
+            log=log, warn=warn, instrument_worker_factory=worker_factory
+        )
+        coordinator.save_configuration = MagicMock()
 
-        with patch(
-            "presentation.qt.application_coordinator.InstrumentWorker"
-        ) as worker:
-            started = coordinator.connect_instruments()
+        started = coordinator.connect_instruments()
 
         self.assertFalse(started)
-        coordinator.update_and_save_configuration.assert_not_called()
-        worker.assert_not_called()
+        coordinator.save_configuration.assert_not_called()
+        worker_factory.assert_not_called()
         self.assertIsNone(coordinator.instrument_worker)
         warn.assert_called_once()
         self.assertIn("尚未创建运行", str(warn.call_args.args[1]))
         self.assertTrue(
             any("无法连接仪器" in str(call.args[0]) for call in log.call_args_list)
+        )
+
+    def test_connecting_logs_unfrozen_page_changes_instead_of_ignoring_them(self):
+        """连接一律使用冻结快照：界面上的未冻结修改必须被说出来，不能静默忽略。"""
+        log = MagicMock()
+        worker_factory = MagicMock()
+        coordinator = self._coordinator(
+            log=log, warn=MagicMock(), instrument_worker_factory=worker_factory
+        )
+        coordinator.prepared_run = _resolvable_contract_run()
+        coordinator.config_page = MagicMock()
+        coordinator.config_page.is_dirty.return_value = True
+
+        self.assertTrue(coordinator.connect_instruments())
+
+        worker_factory.assert_called_once()
+        self.assertTrue(
+            any(
+                "尚未创建运行的修改" in str(call.args[0])
+                for call in log.call_args_list
+            )
+        )
+
+    def test_connecting_stays_quiet_when_the_config_page_is_clean(self):
+        log = MagicMock()
+        coordinator = self._coordinator(
+            log=log, warn=MagicMock(), instrument_worker_factory=MagicMock()
+        )
+        coordinator.prepared_run = _resolvable_contract_run()
+        coordinator.config_page = MagicMock()
+        coordinator.config_page.is_dirty.return_value = False
+
+        self.assertTrue(coordinator.connect_instruments())
+
+        self.assertFalse(
+            any(
+                "尚未创建运行的修改" in str(call.args[0])
+                for call in log.call_args_list
+            )
         )
 
     def test_load_run_releases_previous_instrument_port(self):

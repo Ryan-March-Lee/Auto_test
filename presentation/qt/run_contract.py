@@ -18,9 +18,14 @@ def is_valid_prepared_run(value: Any) -> bool:
 
 
 def require_prepared_run(value: Any, label: str) -> Any:
-    """Raise a user-facing validation error for a non-contract run object."""
+    """Raise a user-facing validation error for a non-contract run object.
+
+    ``label`` 是调用方场景名（``线损测量`` / ``驱动映射测量`` / ``主功放测量`` /
+    ``仪器连接``）；模板不再自带“正式”前缀，因为该前缀只在测量场景里读得通，
+    连接仪器时会拼出“正式仪器连接”这种病句。
+    """
     if not has_run_contract(value):
-        raise ValueError(f"正式{label}必须携带有效 PreparedRun；请先创建或重新加载运行")
+        raise ValueError(f"{label}必须携带有效运行契约（PreparedRun）；请先创建或重新加载运行")
     return value
 
 

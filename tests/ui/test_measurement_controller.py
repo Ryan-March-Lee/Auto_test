@@ -4,10 +4,12 @@ from presentation.qt.measurement_controller import MeasurementController
 from presentation.qt.measurement_controller_contract import MeasurementCommand
 from presentation.qt.measurement_state import MeasurementKind, MeasurementStatus
 
+from tests.contract_doubles import contract_run
 
-# 测量命令必须携带运行契约（D1）；controller 相关断言只关心命令与 worker 的转发，
-# 运行契约的深度校验由 worker 与 GUI 边界负责，因此这里用最小替身。
-_PREPARED_RUN = object()
+
+# 测量命令在构造期就要求有效运行契约（D1/D10），因此空替身不再够用：
+# 这里用共享的契约替身，controller 断言只关心命令与 worker 的转发。
+_PREPARED_RUN = contract_run()
 
 
 class Signal:

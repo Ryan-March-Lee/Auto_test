@@ -286,6 +286,36 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
         self.assertIs(connect.call_args.args[0], prepared)
         self.assertEqual(connect.call_args.kwargs["config_path"], "config.json")
 
+    def test_port_and_request_share_one_resolved_snapshot_path(self):
+        """一个装配函数只解析一次硬件配置：端口与请求用的是同一个冻结快照值。
+
+        契约运行的解析以运行快照为唯一权威；如果这里把调用方传入的原始路径再交给
+        连接入口，同一个函数里就会同时存在“调用方路径”和“快照路径”两个变量。
+        """
+        snapshot = Path("runs") / "run-contract" / "inputs" / "hardware_config.json"
+        prepared = type(
+            "ContractRun",
+            (),
+            {
+                "run_id": "run-contract",
+                "context": SimpleNamespace(run_id="run-contract"),
+                "configuration": object(),
+                "run_directory": Path("runs") / "run-contract",
+                "run_repository": object(),
+                "hardware_connection_path": lambda self: snapshot,
+            },
+        )()
+        with patch("app.gui_runtime._ensure_run_snapshots_are_intact"), patch(
+            "app.gui_runtime.ArchiveArtifactGenerator"
+        ), patch("app.gui_runtime.ResultArchivalService"), patch(
+            "app.gui_runtime.connect_instruments"
+        ) as connect, patch("app.gui_runtime.CableLossUseCase") as use_case:
+            create_cable_loss_measurement("caller-config.json", prepared_run=prepared)
+
+        connect.assert_called_once()
+        self.assertEqual(Path(connect.call_args.kwargs["config_path"]), snapshot)
+        self.assertEqual(use_case.call_args.args[0].config_path, snapshot)
+
     def test_explicit_driver_mapping_path_is_carried_into_request(self):
         port = _Port()
         explicit_path = Path("provided") / "mapping.json"

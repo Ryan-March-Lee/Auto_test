@@ -84,7 +84,7 @@ class AmplifierPageTests(unittest.TestCase):
         self.controller = Controller()
         self.run = type("PreparedRun", (), {
             "run_id": "run-amplifier", "run_repository": object(),
-            "has_run_contract": True, "run_directory": "runs/run-amplifier",
+            "run_directory": "runs/run-amplifier",
             "hardware_connection_path": lambda self: None,
         })()
         self.page = AmplifierPage(

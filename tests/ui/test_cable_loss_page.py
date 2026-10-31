@@ -79,7 +79,7 @@ class CableLossPageTests(unittest.TestCase):
         self.errors = []
         self.run = type("PreparedRun", (), {
             "run_id": "run-cable-loss", "run_repository": object(),
-            "has_run_contract": True, "run_directory": "runs/run-cable-loss",
+            "run_directory": "runs/run-cable-loss",
             "hardware_connection_path": lambda self: None,
         })()
         self.page = CableLossPage(

@@ -19,6 +19,8 @@ test_results/**
 !test_results/.gitkeep
 # Generated baseline samples (see baseline/README.md; local-only artifacts, never force-add)
 baseline/collected/**
+# Local archive of the site baseline samples (see baseline/README.md; never force-add)
+archive/
 temp/
 /temp
 *.log

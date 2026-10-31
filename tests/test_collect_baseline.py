@@ -1,11 +1,58 @@
 """阶段 0.1 基线整理脚本测试。"""
 
 import json
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
 from collect_baseline import collect_baseline, collect_batch_baseline
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class BaselineRepositoryHygieneTests(unittest.TestCase):
+    """生成型基线数据只留在本地，仓库里只保留小型模板夹具。"""
+
+    def _git(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", *args],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+
+    def _require_git_checkout(self) -> None:
+        if shutil.which("git") is None or not (ROOT / ".git").exists():
+            self.skipTest("需要 git 工作区才能校验版本控制状态")
+
+    def test_collected_baseline_artifacts_are_not_tracked(self):
+        self._require_git_checkout()
+        completed = self._git("ls-files", "--", "baseline/collected")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(
+            [line for line in completed.stdout.splitlines() if line.strip()],
+            [],
+            "baseline/collected 是生成型运行产物，只能本地保留或归档，不能进入版本控制",
+        )
+
+    def test_new_collected_baseline_output_stays_out_of_version_control(self):
+        self._require_git_checkout()
+        completed = self._git(
+            "check-ignore", "--no-index", "-q",
+            "baseline/collected/example/baseline_manifest.json",
+        )
+        self.assertEqual(completed.returncode, 0, ".gitignore 必须忽略 baseline/collected 下的新产物")
+
+    def test_retained_baseline_fixtures_are_templates(self):
+        for name in ("test_plan.json", "run_mapping.json"):
+            payload = json.loads((ROOT / "baseline" / name).read_text(encoding="utf-8"))
+            self.assertIs(payload.get("template"), True, f"baseline/{name} 必须保持脱敏模板")
 
 
 class CollectBaselineTests(unittest.TestCase):

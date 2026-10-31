@@ -2,6 +2,8 @@
 
 用法：测试完成后在项目根目录执行 ``python collect_baseline.py``。
 脚本只读取已有结果并创建新的基线目录，不会修改或覆盖测试结果。
+产物固定写到 ``baseline/collected/<baseline_id>/``，该目录由 ``.gitignore`` 忽略，
+只作本地/归档数据保存，不纳入版本控制；目录约定见 ``baseline/README.md``。
 """
 
 from __future__ import annotations

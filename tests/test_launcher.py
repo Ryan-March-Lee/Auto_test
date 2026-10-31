@@ -148,6 +148,27 @@ class LauncherTests(unittest.TestCase):
         with redirect_stderr(io.StringIO()):
             self.assertEqual(launcher.main(["--unknown-option"]), 2)
 
+    def test_retired_gui_argument_is_rejected_as_argument_error(self):
+        """技术债步骤 12：--gui 已退役，未知参数按 argparse 标准错误退出。"""
+        standard_error = io.StringIO()
+        with redirect_stderr(standard_error):
+            self.assertEqual(launcher.main(["--gui"]), 2)
+        self.assertIn("--gui", standard_error.getvalue())
+
+    def test_argument_parser_has_no_retired_gui_flag(self):
+        parser = launcher.build_argument_parser()
+        with redirect_stdout(io.StringIO()):
+            parsed = parser.parse_args([])
+        self.assertFalse(hasattr(parsed, "gui"))
+        self.assertNotIn("--gui", parser.format_help())
+        self.assertIn("--silent", parser.format_help())
+
+    def test_help_does_not_advertise_retired_arguments(self):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(launcher.main(["--help"]), launcher.EXIT_SUCCESS)
+        self.assertNotIn("--gui", output.getvalue())
+
     def test_check_and_validate_config_are_mutually_exclusive(self):
         with redirect_stderr(io.StringIO()):
             self.assertEqual(launcher.main(["--check", "--validate-config"]), 2)

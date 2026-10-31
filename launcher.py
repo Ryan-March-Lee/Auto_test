@@ -348,7 +348,6 @@ def build_argument_parser() -> argparse.ArgumentParser:
     command_group.add_argument("--list-runs", action="store_true", help="列出运行及状态")
     parser.add_argument("--runs-root", metavar="PATH", help="指定 runs 目录（离线归档或迁移目录）")
     parser.add_argument("--silent", action="store_true", help="隐藏常规启动输出")
-    parser.add_argument("--gui", action="store_true", help="兼容旧版静默 GUI 参数")
     return parser
 
 
@@ -360,7 +359,7 @@ def main(argv: object = None) -> int:
         parsed = parser.parse_args(arguments)
     except SystemExit as error:
         return int(error.code)
-    silent_mode = parsed.silent or parsed.gui
+    silent_mode = parsed.silent
     try:
         for stream in (sys.stdout, sys.stderr):
             if hasattr(stream, "reconfigure"):

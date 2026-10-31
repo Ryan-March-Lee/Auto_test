@@ -4,25 +4,28 @@ r"""门禁：《技术债分阶段重构计划》步骤 4 的无运行契约调�
 
 1. **双向一致且分节严格**：清单第 2.2、3.1、4 节的编号集合与下面的基线集合完全相等
    （既不允许“清单删了代码还在”，也不允许“清单新增了基线没登记”），编号不得重复；
-   编号也只能出现在属于它的那一节里，出现在别处同样是清单损坏；
+   编号也只能出现在属于它的那一节里，出现在别处同样是清单损坏。步骤 6 之后三节都必须
+   为空：任何新的无契约分支都无处登记；
 2. **条目身份**：每条无契约分支按“文件 + 符号 + 标记”核对，标记必须是该符号源码里的原文，
    同一符号的多个无契约出口都要列进标记列表，避免“登记了一个出口、漏了另一个”；
 3. **语义计数**：底层为无契约对象保留的判据按 **AST 语义** 冻结（``x is None`` /
    ``x is not None`` / ``isinstance(..., Mapping)`` / 指定函数调用），不按文本出现次数，
    因此注释、docstring、字符串拼接不会误伤，新增等价分支也无法藏起来；
 4. **生产调用点**：测量链路只能携带正式运行契约进入硬件装配；测量工厂的 ``prepared_run``
-   必须是必填关键字参数；调用点必须先经 ``require_prepared_run()`` 校验并把它校验过的对象
-   传给装配入口，且监测符号不得经 ``import ... as`` 别名或动态 ``getattr`` 绕过检查；
+   必须是必填关键字参数（且没有位置参数可供传入配置路径）；连接入口 ``connect_instruments``
+   只接受运行对象、没有任何配置路径参数（含“已解析路径”透传），硬件配置路径只在它内部解析
+   一次；调用点必须先经 ``require_prepared_run()`` 校验并把它校验过的对象传给装配入口，
+   且监测符号不得经 ``import ... as`` 别名或动态 ``getattr`` 绕过检查；
 5. **契约判据单源**：``has_run_contract`` 只有一处实现（``application.run_service``），
    ``PreparedRun.has_run_contract`` 与 ``is_valid_prepared_run`` 只做委托；正式判据要求运行
    标识、运行目录、运行仓储与可调用的冻结快照解析入口，且对契约运行绝无“回退到调用方
    全局配置”的出口（失败断言）；
-6. **仅测试调用点**：仍然依赖无契约回退的测试用例按文件、按“无 recorder 的请求构造次数”冻结，
-   迁移后必须下降并同步基线。
+6. **仅测试调用点**：曾经依赖无契约回退的测试调用点已全部迁移为契约替身或真实运行，
+   基线为空：新的“无 recorder 请求”“无运行替身”同样无处藏身。
 
 唯一生产契约是“每次测量绑定同一个 ``runs/<run_id>/`` 运行目录（``config.json`` +
-``manifest.json`` + ``inputs/hardware_config.json``）”。``prepare_run()`` 是旧兼容前置校验入口，
-没有任何生产调用方；硬件/仿真装配只允许经 ``app.gui_runtime`` 这一个生产组合根进入
+``manifest.json`` + ``inputs/hardware_config.json``）”。旧的 ``prepare_run()`` 兼容前置
+校验入口已随步骤 6 删除，硬件/仿真装配只允许经 ``app.gui_runtime`` 这一个生产组合根进入
 ``instrument.measurement_factory``。
 
 验证方式：
@@ -62,7 +65,7 @@ MEASUREMENT_FACTORIES = (
 )
 # 生产代码里唯一允许的工厂分发形态（worker 注入 + 动态取工厂名，且带 prepared_run）。
 WORKER_DISPATCH_MODULE = "presentation/qt/workers.py"
-WORKER_DISPATCH_MARKER = "create_measurement(self.config_path, prepared_run=prepared"
+WORKER_DISPATCH_MARKER = "create_measurement(prepared_run=prepared,"
 WORKER_DISPATCH_BASELINE = {WORKER_DISPATCH_MODULE: 3}
 WORKER_CONTRACT_CHECK = "require_prepared_run"
 # 动态分发只在 _default_factory 里取名字，因此每个工厂名必须是恰好一处字符串字面量。
@@ -111,113 +114,22 @@ DYNAMIC_LOOKUP_BASELINE = {WORKER_DISPATCH_MODULE: 1}
 
 # 第 4 节：底层无契约分支/默认值。身份是 (清单编号, 文件, 符号, 标记元组)：
 # 标记必须全部出现在该符号源码里，一个符号存在多个无契约出口时全部列出。
-NO_CONTRACT_SITES = (
-    ("B1", "app/run_context.py", "prepare_run", ("write_run_snapshot(",)),
-    (
-        "B2",
-        "app/run_context.py",
-        "PreparedRun.hardware_connection_path",
-        ("return Path(self.config_path)",),
-    ),
-    (
-        "B3",
-        "app/gui_runtime.py",
-        "_hardware_config_path",
-        # 两个出口：调用方路径回退，以及“有 hardware_config_path 但没有校验入口”时
-        # 直接返回未校验快照。后者同样绕过了 hardware_connection_path() 的 manifest 校验。
-        ("return config_path", "return str(frozen)"),
-    ),
-    ("B4", "app/gui_runtime.py", "_require_stage_inputs", ("if run_repository is None:",)),
-    (
-        "B5",
-        "app/gui_runtime.py",
-        "_preflight_amplifier_inputs",
-        ("if run_repository is None:",),
-    ),
-    (
-        "B6",
-        "app/gui_runtime.py",
-        "_ensure_run_snapshots_are_intact",
-        ("if run_repository is None:",),
-    ),
-    (
-        "B7",
-        "app/gui_runtime.py",
-        "_require_legacy_explicit_inputs",
-        ("_LEGACY_LOSS_INPUT_REQUIRED", "_LEGACY_DRIVER_MAPPING_REQUIRED"),
-    ),
-    (
-        "B8",
-        "app/gui_runtime.py",
-        "_driver_mode_enabled",
-        # 外层判 configuration、内层判 mode：只登记外层会漏掉内层探测。
-        ("isinstance(configuration, Mapping)", "isinstance(mode, Mapping)"),
-    ),
-    ("B9", "app/gui_runtime.py", "_test_frequencies", ("isinstance(configuration, Mapping)",)),
-    ("B10", "app/gui_runtime.py", "_request_kwargs", ("if run_repository is not None",)),
-    ("B12", "instrument/measurement_factory.py", "create_measurement_port", ("hardware_config_path is None",)),
-    (
-        # 连接入口仍接受旧兼容来源：契约运行绝不用它（B3 的调用方形态），但参数还在。
-        # 这是步骤 5 的**既有遗留**，本次只是补登，不是新增回退。
-        "B22",
-        "app/gui_runtime.py",
-        "connect_instruments",
-        ("config_path: str | None = None",),
-    ),
-    (
-        "B16",
-        "application/measurements/cable_loss.py",
-        "CableLossUseCase",
-        ("if self.stage_recorder is None:",),
-    ),
-    (
-        "B17",
-        "application/measurements/driver_mapping.py",
-        "DriverPowerMappingUseCase",
-        ("if self.stage_recorder is None:",),
-    ),
-    (
-        "B18",
-        "application/measurements/amplifier_test.py",
-        "AmplifierMeasurementUseCase",
-        ("if self.stage_recorder is None:",),
-    ),
-    (
-        "B19",
-        "application/dto/measurement_requests.py",
-        "MeasurementRequest",
-        ('stage_recorder: "RunStageRecorder | None" = None',),
-    ),
-    (
-        # 共享的“None 表示旧兼容流程”开关：run_context / gui_runtime / run_service
-        # 四处调用都靠它决定是否跳过快照完整性校验，是步骤 6 必须拆除的中枢分支。
-        "B21",
-        "application/run_service.py",
-        "ensure_run_repository_supports_run_contract",
-        ("if run_repository is None:",),
-    ),
-)
-# 归属步骤：步骤 5 已完成（装配入口、仪器连接、配置路径回退、测量命令契约都已收敛），
-# 因此本表剩余条目全部属于步骤 6；再出现“步骤 5”条目说明收敛被回退。
-STEP_FIVE_SITES = ()
+#
+# 步骤 6 已把清单登记的无契约分支全部删除：`prepare_run()` 兼容前置校验入口、
+# `run_repository is None` 的跳过逻辑、旧配置路径回退、旧输入显式性检查、结构探测、
+# `stage_recorder is None` 的旧路径及其 DTO 默认值、`connect_instruments` 与
+# `InstrumentWorker` 上的遗留 `config_path`。此后本表必须保持为空：任何新的无契约
+# 分支都无处登记，语义计数基线也会立刻失败。
+NO_CONTRACT_SITES = ()
+# 归属步骤：步骤 6 已完成，没有剩余条目；再出现“步骤 6 待删除”条目说明清理被回退。
+STEP_SIX_PENDING_SITES = ()
 
-# 第 4.1 节：随 B22 一起删除的遗留**签名参数**。它们不构成无契约回退，因此不进上面的
-# 统计，但仍按“符号 + 标记”冻结：删掉参数必须同步本节，避免悄悄消失。
-# 判定依据是行为而不是签名形状——`InstrumentWorker` 在调用连接入口前就
-# `require_prepared_run()` 拒绝了无契约运行，所以它的 `config_path` 传不进任何旧快照装配。
-LEGACY_SIGNATURE_SITES = (
-    (
-        "B23",
-        "presentation/qt/workers.py",
-        "InstrumentWorker",
-        ("config_path: str | None = None",),
-    ),
-)
+# 第 4.1 节：随 `connect_instruments` 一起删除的遗留**签名参数**（原 B23）。步骤 6
+# 已删除，因此同样必须保持为空。
+LEGACY_SIGNATURE_SITES = ()
 
 # 第 2.2 节：缺少运行契约的生产调用点（符号存在性 + 归属步骤 + 文档登记）。
-NO_CONTRACT_CALL_SITES = (
-    ("X1", "app/run_context.py", "prepare_run", "步骤 6"),
-)
+NO_CONTRACT_CALL_SITES = ()
 
 # 语义计数：受监测的“无契约判据”变量与函数。只有这些名字进基线，其余同形判据不在
 # 本步骤范围内（例如局部的 config_path 判空），改本基线即可扩展覆盖面。
@@ -227,35 +139,25 @@ MONITORED_GUARD_CALLS = ("create_measurement_port", "connect_instruments", "prep
 # 其它包的 Mapping 判断是普通类型收窄，与无契约无关（B8/B9 另有符号级标记冻结）。
 MAPPING_PROBE_FILES = (COMPOSITION_ROOT,)
 
-# 按文件冻结的语义计数（只减不增；删除分支时必须同步本基线与清单第 4 节）。
+# 按文件冻结的语义计数（只减不增；新增等价分支必须同步本基线）。
+# 步骤 6 之后这里只剩“正面失败断言”（缺契约/缺快照/缺记录器必须失败）和不可绕过的
+# 装配入口调用次数：不再有“判据为 None 就跳过校验/回退到调用方配置”的出口。
 NO_CONTRACT_GUARD_BASELINE = {
+    # 唯一的组合根：一处硬件模式 + 三处测量工厂的端口装配，全部只接受运行契约。
     "app/gui_runtime.py": {
-        "none:run_repository:is": 3,
-        "none:run_repository:is_not": 4,
-        "mapping": 3,
         "call:create_measurement_port": 2,
         "call:connect_instruments": 3,
     },
+    # 非回退点：缺冻结快照必须失败；`run_repository is not None` 只是可选注入
+    # （create/load_prepared_run 允许测试传入仓储），不构成回退。
     "app/run_context.py": {
-        "none:hardware_config_path:is_not": 1,
+        "none:hardware_config_path:is": 1,
         "none:run_repository:is_not": 2,
     },
-    "application/measurements/amplifier_test.py": {
-        "none:stage_recorder:is": 4,
-        "none:stage_recorder:is_not": 4,
-    },
-    "application/measurements/cable_loss.py": {
-        "none:stage_recorder:is": 4,
-        "none:stage_recorder:is_not": 1,
-    },
-    "application/measurements/driver_mapping.py": {
-        "none:stage_recorder:is": 4,
-        "none:stage_recorder:is_not": 2,
-    },
-    "application/run_service.py": {
-        "none:hardware_config_path:is": 1,
-        "none:run_repository:is": 1,
-    },
+    # 非回退点：请求构造期就拒绝缺少运行记录器的测量（D1）。
+    "application/dto/measurement_requests.py": {"none:stage_recorder:is": 1},
+    # 非回退点：RunSnapshot.hardware_config_path 为空直接失败（D3 第 3 条）。
+    "application/run_service.py": {"none:hardware_config_path:is": 1},
     # 硬件装配入口的装配依据只有 hardware_config_path：缺路径即失败。工厂只按给定路径
     # 装配、不校验来源（D15）；"只能用运行快照"由组合根与门禁保证。
     "instrument/measurement_factory.py": {"none:hardware_config_path:is": 1},
@@ -269,79 +171,15 @@ NO_CONTRACT_GUARD_BASELINE = {
     },
     # 测量命令在构造期就拒绝缺少运行契约的命令（D1），因此只保留这一处显式判空。
     "presentation/qt/measurement_controller_contract.py": {"none:prepared_run:is": 1},
+    # worker 只把校验过的运行契约交给装配入口，并先经 require_prepared_run() 校验。
     "presentation/qt/workers.py": {"call:connect_instruments": 1, "call:create_measurement": 3},
 }
 
-# 第 3.1 节：依赖无契约回退的测试调用点。
-# 探针身份是 (种类, 名字, 期望次数)，种类为 def（定义）/ call（调用）/ load（读取）；
-# 用 AST 计数而不是子串计数，避免 "AmplifierMeasurementRequest(" 被
-# "MeasurementRequest(" 之类的短名字误命中。
-TEST_ONLY_FILE_PROBES = {
-    "tests/test_gui_runtime.py": (
-        ("def", "_prepared_run", 1),
-        ("call", "_prepared_run", 8),
-        ("load", "_LEGACY_LOSS_PATH", 8),
-        ("def", "test_legacy_assembly_still_uses_the_caller_config_path", 1),
-        ("def", "test_all_measurement_factories_inject_the_same_external_port", 1),
-    ),
-    "tests/test_run_service.py": (
-        ("def", "test_legacy_prepare_run_remains_non_contract_compatible", 1),
-        ("call", "prepare_run", 1),
-    ),
-    "tests/test_offline_completion.py": (("call", "prepare_run", 1),),
-    "tests/test_measurement_requests.py": (
-        ("def", "test_legacy_prepared_run_has_no_stage_recorder", 1),
-    ),
-    "tests/test_cable_loss_use_case.py": (("call", "CableLossMeasurementRequest", 5),),
-    "tests/test_driver_mapping_use_case.py": (("call", "DriverPowerMappingRequest", 1),),
-    "tests/test_amplifier_use_case.py": (("call", "AmplifierMeasurementRequest", 2),),
-    "tests/test_sleep_injection.py": (("call", "AmplifierMeasurementRequest", 1),),
-}
-
-# 第 3.1 节条目身份：(清单编号, 归属步骤, 对应文件, 该条目在文件里的代表标记)。
-TEST_ONLY_CALL_SITES = (
-    ("T1", "步骤 6", ("tests/test_gui_runtime.py",), "_prepared_run()"),
-    (
-        "T2",
-        "步骤 6",
-        ("tests/test_gui_runtime.py",),
-        "test_legacy_assembly_still_uses_the_caller_config_path",
-    ),
-    (
-        "T3",
-        "步骤 6",
-        ("tests/test_gui_runtime.py",),
-        "test_all_measurement_factories_inject_the_same_external_port",
-    ),
-    (
-        "T4",
-        "步骤 6",
-        ("tests/test_run_service.py",),
-        "test_legacy_prepare_run_remains_non_contract_compatible",
-    ),
-    ("T5", "步骤 6", ("tests/test_offline_completion.py",), "prepare_run("),
-    (
-        "T8",
-        "步骤 6",
-        (
-            "tests/test_measurement_requests.py",
-            "tests/test_cable_loss_use_case.py",
-            "tests/test_driver_mapping_use_case.py",
-            "tests/test_amplifier_use_case.py",
-            "tests/test_sleep_injection.py",
-        ),
-        "stage_recorder",
-    ),
-)
-
-# T8 的可执行形式：仍在不注入 stage_recorder 的情况下构造测量请求的次数（迁移后必须下降并同步基线）。
-NO_CONTRACT_REQUEST_BASELINE = {
-    "tests/test_measurement_requests.py": 2,
-    "tests/test_cable_loss_use_case.py": 5,
-    "tests/test_driver_mapping_use_case.py": 1,
-    "tests/test_amplifier_use_case.py": 2,
-    "tests/test_sleep_injection.py": 1,
-}
+# 第 3.1 节：依赖无契约回退的测试调用点。步骤 6 已把全部调用点迁移为契约替身或真实
+# 运行，因此这两份基线保持为空：新增“无 recorder 请求”“无运行替身”都无处登记。
+TEST_ONLY_FILE_PROBES: dict[str, tuple[tuple[str, str, int], ...]] = {}
+TEST_ONLY_CALL_SITES = ()
+NO_CONTRACT_REQUEST_BASELINE: dict[str, int] = {}
 
 # 清单分节：编号只能出现在本节里，越界说明清单被写坏了。
 SECTION_HEADINGS = {
@@ -625,9 +463,9 @@ class InventoryParityTests(unittest.TestCase):
         rows = self._assert_parity("B", branches + signatures, "第 4 节")
         site_ids = {site[0] for site in NO_CONTRACT_SITES}
         self.assertEqual(
-            sorted(set(STEP_FIVE_SITES) - site_ids),
+            sorted(STEP_SIX_PENDING_SITES),
             [],
-            "步骤 5 条目已不在清单里，请同步 STEP_FIVE_SITES",
+            "步骤 6 已完成：清单不得再登记待删除的无契约分支",
         )
         self.assertEqual(
             sorted(site_ids & set(signatures)),
@@ -639,8 +477,7 @@ class InventoryParityTests(unittest.TestCase):
                 raw = rows[site_id]
                 self.assertIn(f"`{relative}`", raw)
                 self.assertIn(f"`{symbol}`", raw)
-                expected_step = "步骤 5" if site_id in STEP_FIVE_SITES else "步骤 6"
-                self.assertIn(expected_step, raw)
+                self.assertIn("步骤 6", raw)
         for site_id, relative, symbol, _markers in LEGACY_SIGNATURE_SITES:
             with self.subTest(site=site_id):
                 raw = rows[site_id]
@@ -654,7 +491,7 @@ class InventoryParityTests(unittest.TestCase):
                 )
 
     def test_section_4_statistics_count_only_real_fallbacks(self):
-        """统计只数真正的回退：遗留签名参数单列，不参与无契约计数。"""
+        """统计只数真正的回退：非回退点与遗留签名都不并入无契约计数。"""
         section = _section(self.document, SECTION_HEADINGS["B"])
         # 去掉强调标记与所有空白，避免“**17 处**”或换行把数字和单位拆开导致假失败。
         text = re.sub(r"\s+", "", "\n".join(section["lines"])).replace("**", "")
@@ -668,12 +505,13 @@ class InventoryParityTests(unittest.TestCase):
         self.assertIn(
             f"{signatures}处遗留签名参数",
             text,
-            f"清单第 4 节必须单列 {signatures} 处随 B22 删除的遗留签名参数",
+            f"清单第 4 节必须单列 {signatures} 处遗留签名参数",
         )
-        self.assertNotIn(
-            f"{counted + signatures}处无契约分支/默认值",
+        # 非回退点的判据仍登记在语义计数里，但不得被当成回退统计。
+        self.assertIn(
+            "非回退点",
             text,
-            "遗留签名参数不是回退，不得并入无契约统计",
+            "清单第 4 节必须写明哪些判据是“缺失即失败”的非回退点",
         )
 
     def test_section_3_1_lists_exactly_the_frozen_test_call_sites(self):
@@ -728,10 +566,15 @@ class InventoryParityTests(unittest.TestCase):
 
 
 class NoContractSiteTests(unittest.TestCase):
-    """第 4 节的无契约分支必须以“符号 + 全部标记”的身份继续存在。"""
+    """第 4 节的无契约分支：步骤 6 之后必须为空，且语义计数保持冻结。"""
 
     def test_documented_no_contract_sites_still_exist(self):
         missing = []
+        self.assertEqual(
+            (*NO_CONTRACT_SITES, *LEGACY_SIGNATURE_SITES),
+            (),
+            "步骤 6 已删除全部无契约分支与遗留签名参数；本表必须保持为空",
+        )
         for site_id, relative, symbol, markers in (
             *NO_CONTRACT_SITES,
             *LEGACY_SIGNATURE_SITES,
@@ -759,6 +602,11 @@ class NoContractSiteTests(unittest.TestCase):
 
     def test_no_contract_call_sites_are_still_the_documented_ones(self):
         missing = []
+        self.assertEqual(
+            NO_CONTRACT_CALL_SITES,
+            (),
+            "步骤 6 已删除唯一的无契约生产调用点（prepare_run）；本表必须保持为空",
+        )
         for site_id, relative, symbol, _step in NO_CONTRACT_CALL_SITES:
             text, _tree_node = _tree(ROOT / relative)
             if _find_symbol(text, symbol) is None:
@@ -877,54 +725,48 @@ class ContractPredicateTests(unittest.TestCase):
         """契约运行缺少可用快照时必须失败，而不是换成调用方的全局配置。"""
         from app import gui_runtime
         from application.run_service import RunNotResumable
+        from tests.contract_doubles import contract_run
 
         class _RepositorySpy:
             pass
 
-        class _ResolvedRun:
-            run_repository = _RepositorySpy()
+        snapshot = Path("frozen") / "hardware_config.json"
+        resolved_run = contract_run(
+            hardware_connection_path=lambda self=None: snapshot
+        )
+        broken_run = contract_run(
+            hardware_connection_path=lambda self=None: (_ for _ in ()).throw(
+                RunNotResumable("快照已被删除")
+            )
+        )
+        no_resolver_run = contract_run(hardware_connection_path=None)
 
-            def hardware_connection_path(self):
-                return Path("frozen/hardware_config.json")
-
-        class _BrokenSnapshotRun:
-            run_repository = _RepositorySpy()
-
-            def hardware_connection_path(self):
-                raise RunNotResumable("快照已被删除")
-
-        class _NoResolverRun:
-            run_repository = _RepositorySpy()
-
-        caller_path = str(ROOT / "config.json")
-
-        resolved = gui_runtime._hardware_config_path(_ResolvedRun(), caller_path)
+        resolved = gui_runtime._hardware_config_path(resolved_run)
         self.assertEqual(
             Path(resolved),
-            Path("frozen/hardware_config.json"),
+            snapshot,
             "契约运行必须使用冻结快照，不能使用调用方传入的全局配置",
         )
-        self.assertNotEqual(str(resolved), caller_path)
         for label, prepared in (
-            ("快照校验失败", _BrokenSnapshotRun()),
-            ("缺少快照解析入口", _NoResolverRun()),
+            ("快照校验失败", broken_run),
+            ("缺少快照解析入口", no_resolver_run),
         ):
             with self.subTest(case=label):
                 with self.assertRaises(RunNotResumable):
-                    gui_runtime._hardware_config_path(prepared, caller_path)
+                    gui_runtime._hardware_config_path(prepared)
 
-    def test_a_run_without_any_hardware_source_fails_before_connecting(self):
-        """既没有运行契约、也没有调用方路径时，连接入口必须明确失败（兜底出口）。"""
+    def test_a_run_without_a_contract_fails_before_connecting(self):
+        """没有任何运行契约时，连接入口必须明确失败（不存在调用方路径兜底）。"""
 
         class _BareRun:
-            """既无运行仓储，也没有快照解析入口的最小对象。"""
+            """既无运行标识、也没有快照解析入口的最小对象。"""
 
         from app import gui_runtime
         from application.run_service import RunNotResumable
 
         with self.assertRaises(RunNotResumable) as raised:
-            gui_runtime._hardware_config_path(_BareRun(), None)
-        self.assertIn("没有可用的硬件配置路径", str(raised.exception))
+            gui_runtime._hardware_config_path(_BareRun())
+        self.assertIn("运行契约缺失", str(raised.exception))
 
     def test_create_prepared_run_requires_a_hardware_snapshot(self):
         from app.run_context import create_prepared_run
@@ -936,7 +778,8 @@ class ContractPredicateTests(unittest.TestCase):
 class ProductionContractTests(unittest.TestCase):
     """生产测量链路只能通过正式运行契约进入硬件装配。"""
 
-    def test_legacy_preflight_entry_has_no_production_caller(self):
+    def test_legacy_preflight_entry_is_gone_from_production_code(self):
+        """``prepare_run()`` 已随步骤 6 删除：生产代码既不定义也不引用它。"""
         offenders = []
         for path in _production_sources():
             text, tree = _tree(path)
@@ -950,21 +793,28 @@ class ProductionContractTests(unittest.TestCase):
                     offenders.append(f"{_relative(path)}:{node.lineno} 导入了 prepare_run")
                 elif isinstance(node, ast.Attribute) and node.attr == "prepare_run":
                     offenders.append(f"{_relative(path)}:{node.lineno} 引用了 prepare_run")
+                elif (
+                    isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and node.name == "prepare_run"
+                ):
+                    offenders.append(f"{_relative(path)}:{node.lineno} 定义了 prepare_run")
         self.assertEqual(
             offenders,
             [],
-            "prepare_run 是无契约前置校验入口，生产代码不得使用: " + "; ".join(offenders),
+            "prepare_run 是已删除的无契约前置校验入口，不得以定义或引用形式回流: "
+            + "; ".join(offenders),
         )
-        definitions = [
+        # 唯一创建运行的模块级入口仍然存在：协调器上的同名方法只是委托给它。
+        creators = [
             _relative(path)
             for path in _production_sources()
             if any(
                 isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and node.name == "prepare_run"
-                for node in ast.walk(_tree(path)[1])
+                and node.name == "create_prepared_run"
+                for node in _tree(path)[1].body
             )
         ]
-        self.assertEqual(definitions, ["app/run_context.py"])
+        self.assertEqual(creators, ["app/run_context.py"])
 
     def test_measurement_port_is_only_assembled_by_the_composition_root(self):
         calls = {}
@@ -1070,54 +920,81 @@ class ProductionContractTests(unittest.TestCase):
             f"{relative} 应显式使用仪器工厂，声明它不经运行契约",
         )
 
-    def test_only_the_composition_root_supplies_a_resolved_hardware_path(self):
-        """`resolved_config_path` 是解析结果的传递，不是第二个配置来源（D12）。
+    def test_hardware_assembly_accepts_no_config_path_override(self):
+        """连接入口与测量工厂都不接受配置路径（D12/D17）。
 
-        生产代码里只允许组合根的三个测量工厂传它，而且传的必须是本模块
-        :func:`_hardware_config_path` 刚解析出来的那个值（`effective_config_path`）；
-        其它模块一旦出现，就说明有人想绕过运行契约解析直接指定硬件配置。
+        硬件配置路径只能由组合根的 :func:`_hardware_config_path` 按运行快照解析：
+        装配入口一旦出现 ``config_path`` / ``resolved_config_path`` /
+        ``hardware_config_path`` 之类的关键字，就说明有人想把外部路径塞进硬件装配。
         """
-        found = {}
+        forbidden = ("config_path", "resolved_config_path", "hardware_config_path")
+        assembly_calls = (
+            "connect_instruments",
+            "create_measurement_port",
+            *MEASUREMENT_FACTORIES,
+        )
+        offenders = []
         for path in _production_sources():
             _text, tree = _tree(path)
-            keywords = [
-                keyword
+            aliases = _alias_map(tree)
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                if _resolved_call_name(node, aliases) not in assembly_calls:
+                    continue
+                for keyword in node.keywords:
+                    if keyword.arg in forbidden:
+                        offenders.append(
+                            f"{_relative(path)}:{node.lineno} 传入 {keyword.arg}="
+                        )
+        self.assertEqual(
+            offenders,
+            [],
+            "硬件装配入口不得接受配置路径参数：路径只能在组合根内部由运行快照解析",
+        )
+        # 解析只发生一次，而且只发生在这唯一的连接入口里。
+        resolvers = {}
+        for path in _production_sources():
+            _text, tree = _tree(path)
+            aliases = _alias_map(tree)
+            count = sum(
+                1
                 for node in ast.walk(tree)
                 if isinstance(node, ast.Call)
-                for keyword in node.keywords
-                if keyword.arg == "resolved_config_path"
-            ]
-            if not keywords:
-                continue
-            found[_relative(path)] = len(keywords)
-            for keyword in keywords:
-                value = keyword.value
-                self.assertIsInstance(
-                    value,
-                    ast.Name,
-                    "resolved_config_path 必须直接传本次解析结果，不能就地另算一份",
-                )
-                self.assertEqual(
-                    value.id,
-                    "effective_config_path",
-                    "resolved_config_path 只接受 _hardware_config_path() 的解析结果",
-                )
+                and _resolved_call_name(node, aliases) == "_hardware_config_path"
+            )
+            if count:
+                resolvers[_relative(path)] = count
         self.assertEqual(
-            found,
-            {COMPOSITION_ROOT: len(MEASUREMENT_FACTORIES)},
-            "硬件配置路径只允许由组合根解析后传给连接入口；其它模块出现该参数即为绕过运行契约",
+            resolvers,
+            {COMPOSITION_ROOT: 1},
+            "硬件配置路径只允许在组合根的 connect_instruments 里解析一次；"
+            "其它模块解析、或同一模块多处解析，都是绕过运行契约",
         )
 
     def test_connect_instruments_is_bound_to_the_prepared_run(self):
-        """步骤 5：连接入口只接受运行对象，硬件路径由运行契约的冻结快照解析。"""
+        """步骤 5/6：连接入口只接受运行对象，没有任何配置路径参数（D17）。"""
         text, _tree_node = _tree(ROOT / COMPOSITION_ROOT)
         node = _find_symbol(text, "connect_instruments")
         self.assertIsNotNone(node, "app/gui_runtime.py 缺少 connect_instruments")
+        positional = [argument.arg for argument in (*node.args.posonlyargs, *node.args.args)]
+        keyword_only = [argument.arg for argument in node.args.kwonlyargs]
         self.assertEqual(
-            [argument.arg for argument in node.args.args][:1],
+            positional,
             ["prepared_run"],
-            "connect_instruments 的首个参数必须是运行契约，不能是配置路径",
+            "connect_instruments 的第一个也是唯一的参数必须是运行契约，不能是配置路径",
         )
+        self.assertEqual(
+            keyword_only,
+            ["recorder"],
+            "connect_instruments 只允许附加 recorder：配置路径没有第二条入口",
+        )
+        for name in ("config_path", "resolved_config_path", "hardware_config_path"):
+            self.assertNotIn(
+                name,
+                positional + keyword_only,
+                f"connect_instruments 不得接受 {name}：运行快照是唯一的硬件来源",
+            )
 
     def test_measurement_factories_require_a_prepared_run(self):
         for name in MEASUREMENT_FACTORIES:
@@ -1126,10 +1003,20 @@ class ProductionContractTests(unittest.TestCase):
                 node = _find_symbol(text, name)
                 self.assertIsNotNone(node, f"app/gui_runtime.py 缺少 {name}")
                 self.assertIsInstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                arguments = [
+                    argument.arg
+                    for argument in (*node.args.posonlyargs, *node.args.args)
+                ]
                 self.assertEqual(
-                    [argument.arg for argument in node.args.args][:1],
-                    ["config_path"],
-                    f"{name} 的首个位置参数仍应是 config_path（步骤 5 收敛硬件来源）",
+                    arguments,
+                    [],
+                    f"{name} 不得再有位置参数：运行契约是唯一输入，配置路径不是来源",
+                )
+                self.assertNotIn(
+                    "config_path",
+                    [argument.arg for argument in node.args.kwonlyargs]
+                    + [argument.arg for argument in node.args.args],
+                    f"{name} 不得再接收调用方配置路径（步骤 6 已删除旧快照来源）",
                 )
                 keyword_only = [argument.arg for argument in node.args.kwonlyargs]
                 self.assertIn(

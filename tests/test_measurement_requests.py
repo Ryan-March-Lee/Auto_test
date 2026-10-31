@@ -25,6 +25,7 @@ from domain.configuration.models import (
     TestPlan,
 )
 from domain.run.models import HARDWARE_CONFIG_INPUT_PATH
+from tests.contract_doubles import RecordingStageRecorder
 
 
 def _valid_domain_snapshot(run_id: str) -> dict:
@@ -90,18 +91,48 @@ class _VerifiedContractRepository:
 
 
 
+def _contract_run(run_id="run-request"):
+    """运行契约替身：冻结快照解析为固定路径，用于断言请求装配。
+
+    三个前置校验（快照完整性、阶段输入、主功放校准输入）在本文件里被替换成空动作，
+    它们各自有专门用例（tests/test_*_run_stage.py 与门禁）。
+    """
+    snapshot = Path("runs") / run_id / "inputs" / "hardware_config.json"
+    return type(
+        "ContractRunStub",
+        (),
+        {
+            "run_id": run_id,
+            "context": SimpleNamespace(run_id=run_id),
+            "configuration": object(),
+            "run_directory": Path("runs") / run_id,
+            "run_repository": object(),
+            "hardware_connection_path": lambda self=None: snapshot,
+        },
+    )()
+
+
+ASSEMBLY_CHECKS = (
+    "app.gui_runtime._ensure_run_snapshots_are_intact",
+    "app.gui_runtime._require_stage_inputs",
+    "app.gui_runtime._preflight_amplifier_inputs",
+    "app.gui_runtime.ArchiveArtifactGenerator",
+    "app.gui_runtime.ResultArchivalService",
+)
+
+
 class MeasurementRequestAssemblyTests(unittest.TestCase):
+    def setUp(self):
+        for target in ASSEMBLY_CHECKS:
+            self.enterContext(patch(target))
+
     def test_runtime_factory_assembles_explicit_request(self):
         port = object()
-        prepared = SimpleNamespace(
-            configuration=object(),
-            context=SimpleNamespace(run_id="run-request"),
-            run_directory=Path("run-directory"),
-        )
+        prepared = _contract_run()
         with patch("app.gui_runtime.connect_instruments", return_value=port), patch(
             "app.gui_runtime.CableLossUseCase", return_value=object()
         ) as measurement:
-            create_cable_loss_measurement("config.json", prepared_run=prepared)
+            create_cable_loss_measurement(prepared_run=prepared)
 
         request = measurement.call_args.args[0]
         self.assertIsInstance(request, CableLossMeasurementRequest)
@@ -109,47 +140,35 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
         self.assertIsInstance(request.safety_cleanup, SafetyCleanupAdapter)
         self.assertIs(request.safety_cleanup.instrument_control, port)
         self.assertEqual(request.run_id, "run-request")
-        self.assertEqual(request.run_directory, Path("run-directory"))
-        self.assertEqual(request.config_path, Path("config.json"))
+        self.assertEqual(request.run_directory, Path("runs") / "run-request")
+        self.assertIsNotNone(request.stage_recorder)
+        self.assertEqual(request.stage_recorder.run_id, "run-request")
         self.assertIsInstance(request.input_reader, ResultInputReader)
 
     def test_runtime_factory_creates_port_when_call_does_not_inject_one(self):
-        prepared = SimpleNamespace(
-            configuration=object(),
-            context=SimpleNamespace(run_id="run-request"),
-            run_directory=Path("run-directory"),
-        )
+        prepared = _contract_run()
         with patch("app.gui_runtime.connect_instruments", return_value=object()), patch(
             "app.gui_runtime.CableLossUseCase", return_value=object()
         ) as measurement:
-            create_cable_loss_measurement("config.json", prepared_run=prepared)
+            create_cable_loss_measurement(prepared_run=prepared)
         self.assertIsNotNone(measurement.call_args.args[0].measurement_port)
 
     def test_port_factory_failure_preserves_original_exception(self):
-        prepared = SimpleNamespace(
-            configuration=object(),
-            context=SimpleNamespace(run_id="run-request"),
-            run_directory=Path("run-directory"),
-        )
+        prepared = _contract_run()
         with patch("app.gui_runtime.connect_instruments", side_effect=OSError("连接失败")):
             with self.assertRaisesRegex(OSError, "连接失败"):
-                create_cable_loss_measurement("config.json", prepared_run=prepared)
+                create_cable_loss_measurement(prepared_run=prepared)
 
     def test_request_carries_injected_runtime_dependencies(self):
         port = object()
         token = CancellationToken()
         sink = object()
         repository = object()
-        prepared = SimpleNamespace(
-            configuration=object(),
-            context=SimpleNamespace(run_id="run-request"),
-            run_directory=Path("run-directory"),
-        )
+        prepared = _contract_run()
         with patch("app.gui_runtime.connect_instruments", return_value=port), patch(
             "app.gui_runtime.CableLossUseCase", return_value=object()
         ) as measurement:
             create_cable_loss_measurement(
-                "config.json",
                 prepared_run=prepared,
                 cancellation_token=token,
                 event_sink=sink,
@@ -163,16 +182,11 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
     def test_explicit_input_reader_is_injected_only_into_request(self):
         port = object()
         reader = object()
-        prepared = SimpleNamespace(
-            configuration=object(),
-            context=SimpleNamespace(run_id="run-request"),
-            run_directory=Path("run-directory"),
-        )
+        prepared = _contract_run()
         with patch("app.gui_runtime.connect_instruments", return_value=port), patch(
             "app.gui_runtime.CableLossUseCase", return_value=object()
         ) as measurement:
             create_cable_loss_measurement(
-                "config.json",
                 prepared_run=prepared,
                 input_reader=reader,
             )
@@ -189,36 +203,33 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
         prepared = SimpleNamespace(
             configuration=object(),
             context=SimpleNamespace(run_id="run-contract"),
+            run_id="run-contract",
             run_directory=Path("runs") / "run-contract",
             run_repository=repository,
             hardware_config_path=Path("runs") / "run-contract" / "inputs" / "hardware_config.json",
+            hardware_connection_path=lambda self=None: Path("runs") / "run-contract" / "inputs" / "hardware_config.json",
         )
         with patch("app.gui_runtime.connect_instruments", return_value=object()), patch(
             "app.gui_runtime.CableLossUseCase", return_value=object()
         ) as measurement:
-            create_cable_loss_measurement("config.json", prepared_run=prepared)
+            create_cable_loss_measurement(prepared_run=prepared)
 
         recorder = measurement.call_args.args[0].stage_recorder
         self.assertIsNotNone(recorder)
         self.assertEqual(recorder.run_id, "run-contract")
-        # 运行契约运行同时装配自动归档服务，旧兼容流程不装配。
+        # 运行契约运行同时装配自动归档服务。
         self.assertIsNotNone(measurement.call_args.args[0].archival_service)
-        # 硬件快照通过统一入口按已登记 JSON 读取，而不是再次解析领域配置。
-        self.assertEqual(repository.read_run_json_paths, [HARDWARE_CONFIG_INPUT_PATH])
 
-    def test_legacy_prepared_run_has_no_stage_recorder(self):
-        prepared = SimpleNamespace(
-            configuration=object(),
-            context=SimpleNamespace(run_id="run-compat-snapshot"),
-            run_directory=Path("run-directory"),
-        )
-        with patch("app.gui_runtime.connect_instruments", return_value=object()), patch(
-            "app.gui_runtime.CableLossUseCase", return_value=object()
-        ) as measurement:
-            create_cable_loss_measurement("config.json", prepared_run=prepared)
-
-        self.assertIsNone(measurement.call_args.args[0].stage_recorder)
-        self.assertIsNone(measurement.call_args.args[0].archival_service)
+    def test_request_without_a_stage_recorder_is_rejected(self):
+        """D1：请求构造即要求运行记录器，没有记录器的测量不属于正式链路。"""
+        with self.assertRaisesRegex(ValueError, "stage_recorder"):
+            CableLossMeasurementRequest(
+                configuration={},
+                context=SimpleNamespace(run_id="run-request"),
+                run_directory=Path("run-directory"),
+                measurement_port=object(),
+                stage_recorder=None,
+            )
 
     def test_request_exposes_common_runtime_shape(self):
         configuration = SimpleNamespace(
@@ -234,6 +245,7 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
             context=SimpleNamespace(run_id="run-request"),
             run_directory=Path("run-directory"),
             measurement_port=object(),
+            stage_recorder=RecordingStageRecorder("run-request"),
         )
         self.assertEqual(request.measurement_type, "cable_loss")
         self.assertEqual(request.frequency_range, (900.0, 1800.0))
@@ -243,15 +255,11 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
             request.safety_options["close_rf_on_cleanup"] = False
 
     def test_runtime_factory_records_owned_port_in_safety_options(self):
-        prepared = SimpleNamespace(
-            configuration=object(),
-            context=SimpleNamespace(run_id="run-request"),
-            run_directory=Path("run-directory"),
-        )
+        prepared = _contract_run()
         with patch("app.gui_runtime.connect_instruments", return_value=object()), patch(
             "app.gui_runtime.CableLossUseCase", return_value=object()
         ) as measurement:
-            create_cable_loss_measurement("config.json", prepared_run=prepared)
+            create_cable_loss_measurement(prepared_run=prepared)
         self.assertTrue(measurement.call_args.args[0].safety_options["owns_measurement_port"])
 
     def test_result_dto_has_explicit_fields_without_mapping_view(self):
@@ -338,8 +346,37 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
                 context=SimpleNamespace(run_id="run-request"),
                 run_directory=Path("run-directory"),
                 measurement_port=object(),
+                stage_recorder=RecordingStageRecorder("run-request"),
                 measurement_type="amplifier",
             )
+
+
+class RunContractSnapshotCheckTests(unittest.TestCase):
+    """连接仪器前按登记的硬件快照读取：这里不替换任何前置校验。"""
+
+    def test_registered_hardware_snapshot_is_read_from_the_run_repository(self):
+        repository = _VerifiedContractRepository(
+            config_payload=_valid_domain_snapshot("run-contract"),
+            hardware_payload={"instruments": {}},
+        )
+        prepared = SimpleNamespace(
+            configuration=object(),
+            context=SimpleNamespace(run_id="run-contract"),
+            run_id="run-contract",
+            run_directory=Path("runs") / "run-contract",
+            run_repository=repository,
+            hardware_config_path=Path("runs") / "run-contract" / "inputs" / "hardware_config.json",
+            hardware_connection_path=lambda self=None: Path("runs") / "run-contract" / "inputs" / "hardware_config.json",
+        )
+        with patch("app.gui_runtime.connect_instruments", return_value=object()), patch(
+            "app.gui_runtime.CableLossUseCase", return_value=object()
+        ), patch("app.gui_runtime.ArchiveArtifactGenerator"), patch(
+            "app.gui_runtime.ResultArchivalService"
+        ):
+            create_cable_loss_measurement(prepared_run=prepared)
+
+        # 硬件快照通过统一入口按已登记 JSON 读取，而不是再次解析领域配置。
+        self.assertEqual(repository.read_run_json_paths, [HARDWARE_CONFIG_INPUT_PATH])
 
 
 if __name__ == "__main__":

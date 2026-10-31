@@ -45,13 +45,11 @@ class AmplifierCalibrationError(ConfigurationError):
 class AmplifierMeasurementUseCase:
     """Coordinate the amplifier sweep and its calibration inputs.
 
-    运行契约运行（注入 ``stage_recorder``）只消费**当前运行**显式登记的输入：
-    线损来自 ``inputs/cable_loss.json``，驱动映射启用时来自
-    ``inputs/driver_mapping.json``；主功放所有结果写入当前运行的 ``results/``，
-    完成后把主功放阶段和运行级状态更新为 ``completed``。驱动模式关闭时不要求
-    映射文件存在。旧兼容流程不注入 ``stage_recorder``，必须显式提供
-    ``loss_data`` / ``driver_mapping`` 或其路径；缺少显式输入时在硬件动作前失败，
-    不再回退到按时间扫描的“最新结果”读取。
+    只消费**当前运行**显式登记的输入：线损来自 ``inputs/cable_loss.json``，驱动映射
+    启用时来自 ``inputs/driver_mapping.json``；主功放所有结果写入当前运行的
+    ``results/``，完成后把主功放阶段和运行级状态更新为 ``completed``。驱动模式关闭
+    时不要求映射文件存在。运行目录是唯一输入来源，绝不回退到按时间扫描的“最新结果”
+    读取。
     """
 
     def __init__(
@@ -77,24 +75,23 @@ class AmplifierMeasurementUseCase:
         if self.safety_cleanup is None:
             raise ValueError("AmplifierMeasurementUseCase 必须由应用组装层注入 safety_cleanup")
         self.input_reader = request.input_reader
-        # 运行契约运行会注入阶段记录器：输入只从当前运行目录读取，结果写入当前
-        # 运行的 results/ 并更新 manifest；旧兼容流程不注入，保持全局路径行为。
+        # 阶段记录器是请求契约的一部分（D1）：输入只从当前运行目录读取，结果写入当前
+        # 运行的 results/ 并更新 manifest。
         self.stage_recorder = request.stage_recorder
         self._stage_open = False
-        # 阶段成功提交后的自动归档入口；未注入时不生成任何交付产物。
+        # 阶段成功提交后的自动归档入口；组装层总是注入。
         self.archival_service = request.archival_service
         self.last_archival_outcome: ArchivalOutcome | None = None
-        self.loss_data = self._load_loss_data(request)
-        self.driver_mapping = self._load_driver_mapping(request)
-        if self.stage_recorder is not None:
-            # 运行契约运行在构造阶段就拒绝结构无效的校准输入，避免先连接仪器或
-            # 执行 RF 动作后才在扫描计算中暴露缺字段问题。
-            validate_amplifier_calibration_inputs(
-                self.loss_data,
-                self.driver_mapping,
-                frequencies=self.config.get("test_frequencies", ()),
-                driver_enabled=self._driver_mode_enabled(),
-            )
+        self.loss_data = self._load_loss_data()
+        self.driver_mapping = self._load_driver_mapping()
+        # 构造阶段就拒绝结构无效的校准输入，避免先连接仪器或执行 RF 动作后才在扫描
+        # 计算中暴露缺字段问题。
+        validate_amplifier_calibration_inputs(
+            self.loss_data,
+            self.driver_mapping,
+            frequencies=self.config.get("test_frequencies", ()),
+            driver_enabled=self._driver_mode_enabled(),
+        )
         self.sleep_fn = sleep_fn or time.sleep
         self._token = request.cancellation_token or CancellationToken()
         self._service = AmplifierMeasurementService(
@@ -171,82 +168,24 @@ class AmplifierMeasurementUseCase:
         mode = self.config.get("driver_mode", {})
         return bool(mode.get("enabled")) if isinstance(mode, Mapping) else False
 
-    def _load_loss_data(self, request: AmplifierMeasurementRequest) -> Mapping[str, Any]:
+    def _load_loss_data(self) -> Mapping[str, Any]:
         """解析本次运行实际消费的线损输入。
 
-        运行契约运行以当前运行目录为唯一输入来源：强制校验
-        ``inputs/cable_loss.json`` 已完成且校验值一致，显式 ``loss_data`` /
-        ``loss_data_path`` 只记录告警、不参与解析；旧兼容流程必须显式提供
-        ``loss_data`` 或 ``loss_data_path``，缺少显式输入时在硬件动作前立即失败，
-        绝不回退到按时间扫描的“最新结果”读取。
+        当前运行目录是唯一输入来源：通过
+        :meth:`RunStageRecorder.verified_result_path` 强制校验
+        ``inputs/cable_loss.json`` 已完成且校验值一致，绝不回退到全局兼容结果或
+        按时间扫描的“最新结果”读取。
         """
-        if self.stage_recorder is not None:
-            if request.loss_data is not None or request.loss_data_path is not None:
-                logger.warning(
-                    "运行契约运行 %s 忽略显式 loss_data/loss_data_path，只消费当前运行输入",
-                    self.run_id,
-                )
-            return self._read_run_cable_loss()
-        if request.loss_data is not None:
-            return request.loss_data
-        if self.input_reader is None:
-            raise ValueError("AmplifierMeasurementUseCase 必须注入 input_reader 或 loss_data")
-        if request.loss_data_path is not None:
-            return self.input_reader.read_cable_loss(request.loss_data_path)
-        raise ValueError(
-            "旧兼容流程必须显式提供 loss_data_path（或改用当前运行 manifest 的显式输入）；"
-            "不再自动查找最新线损结果"
-        )
-
-    def _load_driver_mapping(
-        self, request: AmplifierMeasurementRequest
-    ) -> Mapping[str, Any] | None:
-        """解析本次运行实际消费的驱动映射输入。
-
-        驱动模式关闭时不要求映射文件存在，直接返回 ``None``。运行契约运行在驱动
-        模式启用时强制校验 ``inputs/driver_mapping.json`` 已完成且校验值一致，显式
-        ``driver_mapping`` / ``driver_mapping_path`` 只记录告警；旧兼容流程在驱动
-        模式下必须显式提供 ``driver_mapping`` 或 ``driver_mapping_path``，缺少显式
-        输入时在硬件动作前立即失败。
-        """
-        if self.stage_recorder is not None:
-            if not self._driver_mode_enabled():
-                if request.driver_mapping is not None or request.driver_mapping_path is not None:
-                    logger.warning(
-                        "运行契约运行 %s 未启用驱动模式，忽略显式驱动映射输入",
-                        self.run_id,
-                    )
-                return None
-            if request.driver_mapping is not None or request.driver_mapping_path is not None:
-                logger.warning(
-                    "运行契约运行 %s 忽略显式 driver_mapping/driver_mapping_path，"
-                    "只消费当前运行输入",
-                    self.run_id,
-                )
-            return self._read_run_driver_mapping()
-        driver_mapping = request.driver_mapping
-        if self._driver_mode_enabled() and driver_mapping is None:
-            if self.input_reader is None:
-                raise ValueError(
-                    "AmplifierMeasurementUseCase 必须注入 input_reader 或 driver_mapping"
-                )
-            if request.driver_mapping_path is None:
-                raise ValueError(
-                    "旧兼容流程在驱动模式下必须显式提供 driver_mapping_path"
-                    "（或改用当前运行 manifest 的显式输入）；"
-                    "不再自动查找最新驱动映射结果"
-                )
-            driver_mapping = self.input_reader.read_driver_mapping(
-                request.driver_mapping_path
-            )
-        return driver_mapping
-
-    def _read_run_cable_loss(self) -> Mapping[str, Any]:
-        """只从当前运行目录读取已校验的线损输入，缺失时在硬件动作前失败。"""
         return self._read_run_input(STAGE_CABLE_LOSS)
 
-    def _read_run_driver_mapping(self) -> Mapping[str, Any]:
-        """只从当前运行目录读取已校验的驱动映射输入，缺失时在硬件动作前失败。"""
+    def _load_driver_mapping(self) -> Mapping[str, Any] | None:
+        """解析本次运行实际消费的驱动映射输入。
+
+        驱动模式关闭时不要求映射文件存在，直接返回 ``None``；启用时强制校验
+        ``inputs/driver_mapping.json`` 已完成且校验值一致。
+        """
+        if not self._driver_mode_enabled():
+            return None
         return self._read_run_input(STAGE_DRIVER_MAPPING)
 
     def _read_run_input(self, stage: str) -> Mapping[str, Any]:
@@ -260,9 +199,7 @@ class AmplifierMeasurementUseCase:
     # -- 运行契约：阶段生命周期 --------------------------------------------
 
     def _begin_stage(self) -> None:
-        """开始当前运行的主功放阶段；未注入记录器时保持旧流程行为。"""
-        if self.stage_recorder is None:
-            return
+        """开始当前运行的主功放阶段。"""
         if not self._driver_mode_enabled():
             # 未启用驱动模式时，映射阶段不属于本次运行，标记为 skipped，
             # 主功放阶段因此不要求映射文件存在。
@@ -272,8 +209,6 @@ class AmplifierMeasurementUseCase:
 
     def _record_complete(self, result: MeasurementResult) -> Any:
         """把完成的主功放结果写入当前运行，登记阶段完成并收敛运行状态。"""
-        if self.stage_recorder is None:
-            return None
         payload = result.to_dict()
         reference = self.stage_recorder.complete(
             STAGE_AMPLIFIER,
@@ -288,7 +223,7 @@ class AmplifierMeasurementUseCase:
         return reference
 
     def _record_failure(self, error: Exception) -> None:
-        if self.stage_recorder is None or not self._stage_open:
+        if not self._stage_open:
             return
         self._stage_open = False
         self._try_record(
@@ -298,7 +233,7 @@ class AmplifierMeasurementUseCase:
         )
 
     def _record_cancel(self, reason: str) -> None:
-        if self.stage_recorder is None or not self._stage_open:
+        if not self._stage_open:
             return
         self._stage_open = False
         self._try_record(lambda: self.stage_recorder.cancel(STAGE_AMPLIFIER, reason))
@@ -314,18 +249,6 @@ class AmplifierMeasurementUseCase:
     # -- 运行契约：结果持久化 ----------------------------------------------
 
     def _save(self, result: MeasurementResult) -> MeasurementResult:
-        if self.stage_recorder is not None:
-            return self._save_to_run_directory(result)
-        saved = self.result_repository.save(
-            result,
-            result_type="amplifier_measurement",
-            run_id=self.run_id,
-            run_directory=self.run_directory,
-        )
-        self.run_directory = saved.run_directory
-        return result.with_saved_result(archive_path=_saved_path(saved, "archive_path"))
-
-    def _save_to_run_directory(self, result: MeasurementResult) -> MeasurementResult:
         """运行契约运行：权威结果写入当前运行的 ``results/``。
 
         主功放结果及拆分文件先原子提交并登记 manifest，运行目录结果是本次运行的权威
@@ -442,11 +365,6 @@ def _service_config(configuration: Any) -> Mapping[str, Any]:
     if hasattr(configuration, "test_plan") and hasattr(configuration, "run_mapping"):
         return _run_configuration_to_service_config(configuration)
     raise TypeError("无法将运行配置转换为主功放测量配置")
-
-
-def _saved_path(saved: Any, name: str) -> str | None:
-    value = getattr(saved, name, None)
-    return str(value) if value is not None else None
 
 
 def _run_configuration_to_service_config(configuration: Any) -> dict[str, Any]:

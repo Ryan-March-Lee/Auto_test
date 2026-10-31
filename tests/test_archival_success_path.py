@@ -535,7 +535,6 @@ class CompositionWiringTests(unittest.TestCase):
             str(self.config_path), run_id=RUN_ID, run_repository=self.repository
         )
         cable_case = create_cable_loss_measurement(
-            str(self.config_path),
             prepared_run=prepared,
             measurement_port=_Instrument(),
             result_repository=self.result_repository,
@@ -545,7 +544,6 @@ class CompositionWiringTests(unittest.TestCase):
         cable_case.continue_to_step2()
 
         amplifier_case = create_amplifier_measurement(
-            str(self.config_path),
             prepared_run=prepared,
             measurement_port=_Instrument(),
             result_repository=self.result_repository,
@@ -564,8 +562,10 @@ class CompositionWiringTests(unittest.TestCase):
             self.assertEqual(record.path, path)
         self.repository.verify_artifact_files(RUN_ID)
 
-    def test_legacy_composition_does_not_archive(self):
+    def test_run_without_contract_is_rejected_before_assembly(self):
+        """没有运行契约就没有运行目录：装配入口必须明确失败，而不是降级。"""
         from app.gui_runtime import create_cable_loss_measurement
+        from application.run_service import RunNotResumable
 
         prepared = SimpleNamespace(
             configuration={"test_frequencies": [1.0], "attenuator": {"type": "10dB"}},
@@ -573,15 +573,12 @@ class CompositionWiringTests(unittest.TestCase):
             run_directory=self.base,
             hardware_config_path=self.base / "inputs" / "hardware_config.json",
         )
-        instrument = _Instrument()
-        case = create_cable_loss_measurement(
-            str(self.config_path),
-            prepared_run=prepared,
-            measurement_port=instrument,
-            result_repository=self.result_repository,
-        )
-
-        self.assertIsNone(case.archival_service)
+        with self.assertRaises(RunNotResumable):
+            create_cable_loss_measurement(
+                prepared_run=prepared,
+                measurement_port=_Instrument(),
+                result_repository=self.result_repository,
+            )
 
 
 if __name__ == "__main__":

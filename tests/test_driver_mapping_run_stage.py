@@ -175,7 +175,7 @@ class DriverMappingRunStageTests(unittest.TestCase):
         return recorder
 
     def _request(
-        self, run_id=RUN_ID, *, instrument=None, token=None, repository=None, loss_data=None
+        self, run_id=RUN_ID, *, instrument=None, token=None, repository=None
     ):
         layout = self.repository.layout(run_id)
         instrument = instrument or _Instrument()
@@ -193,8 +193,25 @@ class DriverMappingRunStageTests(unittest.TestCase):
             input_reader=ResultInputReader(self.result_repository),
             stage_recorder=RunStageRecorder(self.repository, run_id),
             cancellation_token=token,
-            loss_data=loss_data,
             safety_options={"owns_measurement_port": True},
+        )
+
+    def _contract_prepared(self, layout, *, run_id=RUN_ID):
+        """运行契约替身：冻结快照解析为运行目录内的固定路径。
+
+        组合入口测试只验证“在连接仪器前失败”，因此替身直接给出运行目录内的硬件
+        快照路径，不触发 manifest 校验（那部分由 test_run_service 与门禁覆盖）。
+        """
+        return SimpleNamespace(
+            configuration=object(),
+            context=SimpleNamespace(run_id=run_id),
+            run_id=run_id,
+            run_directory=layout.run_directory,
+            run_repository=self.repository,
+            hardware_config_path=layout.run_directory / HARDWARE_CONFIG_INPUT_PATH,
+            hardware_connection_path=(
+                lambda self=None: layout.run_directory / HARDWARE_CONFIG_INPUT_PATH
+            ),
         )
 
     # -- 结果归属当前运行 --------------------------------------------------
@@ -336,7 +353,7 @@ class DriverMappingRunStageTests(unittest.TestCase):
 
         with self.assertRaises(StageInputUnavailable):
             DriverPowerMappingUseCase(
-                self._request(instrument=instrument, loss_data={"cable_losses": CABLE_LOSSES}),
+                self._request(instrument=instrument),
                 sleep_fn=lambda _: None,
             )
 
@@ -345,20 +362,6 @@ class DriverMappingRunStageTests(unittest.TestCase):
             self.repository.load_manifest(RUN_ID).stage(STAGE_DRIVER_MAPPING).status,
             StageStatus.PENDING,
         )
-
-    def test_current_run_input_takes_precedence_over_explicit_loss_data(self):
-        self._create_run()
-        self._complete_cable_loss()
-        # 显式 loss_data 缺少 cable2：若被错误地优先使用，补偿计算会失败。
-        incomplete = {"cable_losses": {"1.0": {}}}
-        use_case = DriverPowerMappingUseCase(
-            self._request(loss_data=incomplete), sleep_fn=lambda _: None
-        )
-
-        use_case.measure_all_frequencies()
-
-        manifest = self.repository.load_manifest(RUN_ID)
-        self.assertEqual(manifest.stage(STAGE_DRIVER_MAPPING).status, StageStatus.COMPLETED)
 
     def test_other_run_cable_loss_is_not_used(self):
         self._create_run(RUN_ID)
@@ -509,7 +512,6 @@ class DriverMappingRunStageTests(unittest.TestCase):
         self.assertEqual(prepared.run_id, RUN_ID)
 
         cable_case = create_cable_loss_measurement(
-            str(config_path),
             prepared_run=prepared,
             measurement_port=_Instrument(),
             result_repository=self.result_repository,
@@ -519,7 +521,6 @@ class DriverMappingRunStageTests(unittest.TestCase):
         cable_case.continue_to_step2()
 
         mapping_case = create_driver_mapping_measurement(
-            str(config_path),
             prepared_run=prepared,
             measurement_port=_Instrument(),
             result_repository=self.result_repository,
@@ -541,63 +542,13 @@ class DriverMappingRunStageTests(unittest.TestCase):
 
     def test_composition_checks_input_before_connecting_instruments(self):
         layout = self._create_run()
-        prepared = SimpleNamespace(
-            configuration=object(),
-            context=SimpleNamespace(run_id=RUN_ID),
-            run_directory=layout.run_directory,
-            run_repository=self.repository,
-            hardware_config_path=layout.run_directory / HARDWARE_CONFIG_INPUT_PATH,
-        )
+        prepared = self._contract_prepared(layout)
 
         with patch("app.gui_runtime.connect_instruments") as connect:
             with self.assertRaises(StageInputUnavailable):
-                create_driver_mapping_measurement("config.json", prepared_run=prepared)
+                create_driver_mapping_measurement(prepared_run=prepared)
 
         connect.assert_not_called()
-
-    def test_legacy_composition_requires_loss_path_before_connecting(self):
-        """B1：旧兼容流程缺少显式线损路径时，在连接仪器前失败。"""
-        prepared = SimpleNamespace(
-            configuration={
-                "test_frequencies": [1.0],
-                "attenuator": {"type": "10dB"},
-                "signal_source": {"start_power": -20, "stop_power": -20, "step": 1},
-            },
-            context=SimpleNamespace(run_id="run-compat-snapshot"),
-            run_directory=self.base,
-            hardware_config_path=self.base / HARDWARE_CONFIG_INPUT_PATH,
-        )
-
-        with patch("app.gui_runtime.connect_instruments") as connect:
-            with self.assertRaisesRegex(ValueError, "必须显式提供 loss_data_path"):
-                create_driver_mapping_measurement("config.json", prepared_run=prepared)
-
-        connect.assert_not_called()
-
-    def test_legacy_flow_still_reads_explicit_loss_data_path(self):
-        loss_path = self.base / "legacy_cable_loss.json"
-        loss_path.write_text(json.dumps({"cable_losses": CABLE_LOSSES}), encoding="utf-8")
-        instrument = _Instrument()
-        request = DriverPowerMappingRequest(
-            configuration={
-                "test_frequencies": [1.0],
-                "attenuator": {"type": "10dB"},
-                "signal_source": {"start_power": -20, "stop_power": -20, "step": 1},
-            },
-            context=_Context("run-compat-snapshot"),
-            run_directory=self.base,
-            measurement_port=instrument,
-            safety_cleanup=safety_cleanup_for(instrument),
-            result_repository=self.result_repository,
-            input_reader=ResultInputReader(self.result_repository),
-            loss_data_path=loss_path,
-            safety_options={"owns_measurement_port": True},
-        )
-
-        use_case = DriverPowerMappingUseCase(request, sleep_fn=lambda _: None)
-
-        self.assertIsNone(use_case.stage_recorder)
-        self.assertEqual(use_case.loss_data, {"cable_losses": CABLE_LOSSES})
 
     def test_legacy_compatibility_copy_is_marked_not_authoritative(self):
         self._create_run()

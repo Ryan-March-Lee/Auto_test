@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 DEFAULT_RUN_ID = "20260101T000000Z_contract"
@@ -64,4 +65,119 @@ def contract_run(
     return type("ContractRun", (), attributes)()
 
 
-__all__ = ["DEFAULT_RUN_ID", "contract_run"]
+class RecordingStageRecorder:
+    """阶段记录器替身：满足用例所需接口，记录调用而不触碰磁盘。
+
+    正式测量链路的结果只能落在运行目录，因此用例测试必须注入一个记录器；本替身
+    提供与 :class:`application.run_stages.RunStageRecorder` 相同的方法签名，并把
+    每次调用记在 ``started`` / ``completed`` / ``failed`` / ``cancelled`` /
+    ``skipped`` / ``verified`` 里，便于断言“结果只写当前运行”。
+
+    ``missing_stages`` 指定的阶段在 :meth:`verified_result_path` 上抛出
+    :class:`application.run_stages.StageInputUnavailable`，用于“前置输入缺失必须
+    失败”的失败断言（清单第 3.0 节第 3 条）。
+    """
+
+    def __init__(
+        self,
+        run_id: str = DEFAULT_RUN_ID,
+        *,
+        inputs: dict[str, str] | None = None,
+        missing_stages: tuple[str, ...] = (),
+    ) -> None:
+        self.run_id = run_id
+        self.inputs = dict(inputs or {})
+        self.missing_stages = tuple(missing_stages)
+        self.started: list[str] = []
+        self.completed: list[tuple[str, Any, dict[str, Any]]] = []
+        self.failed: list[tuple[str, str]] = []
+        self.cancelled: list[tuple[str, str | None]] = []
+        self.skipped: list[tuple[str, str | None]] = []
+        self.verified: list[str] = []
+        self.completed_runs = 0
+
+    def start(self, stage: str, *, now: Any = None) -> None:
+        self.started.append(stage)
+
+    def complete(
+        self,
+        stage: str,
+        payload: Any,
+        *,
+        result_path: str | None = None,
+        extra_files: Any = None,
+        description: str | None = None,
+        now: Any = None,
+    ) -> Any:
+        path = result_path or f"inputs/{stage}.json"
+        self.completed.append(
+            (stage, payload, {"result_path": path, "extra_files": dict(extra_files or {})})
+        )
+        return SimpleNamespace(path=path)
+
+    def fail(self, stage: str, error: str, *, now: Any = None) -> None:
+        self.failed.append((stage, error))
+
+    def cancel(self, stage: str, reason: str | None = None, *, now: Any = None) -> None:
+        self.cancelled.append((stage, reason))
+
+    def skip(self, stage: str, *, note: str | None = None, now: Any = None) -> None:
+        self.skipped.append((stage, note))
+
+    def complete_run(self, *, now: Any = None) -> None:
+        self.completed_runs += 1
+
+    def verified_result_path(self, stage: str) -> Path:
+        from application.run_stages import StageInputUnavailable
+
+        if stage in self.missing_stages:
+            raise StageInputUnavailable(
+                f"当前运行 {self.run_id} 的阶段 {stage} 尚未完成，不能作为后续阶段的输入"
+            )
+        self.verified.append(stage)
+        relative = self.inputs.get(stage, f"inputs/{stage}.json")
+        return Path("runs") / self.run_id / relative
+
+    def result_paths(self) -> dict[str, str]:
+        """返回本次测试写入的阶段结果路径（阶段 → 相对路径）。"""
+        return {stage: details["result_path"] for stage, _payload, details in self.completed}
+
+
+class MappingInputReader:
+    """测量输入读取器替身：按阶段返回固定文档，并记下被读取的路径。"""
+
+    def __init__(
+        self,
+        *,
+        cable_loss: Any = None,
+        driver_mapping: Any = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.cable_loss = cable_loss
+        self.driver_mapping = driver_mapping
+        self.error = error
+        self.paths: list[Path] = []
+
+    def read_cable_loss(self, path: Any) -> Any:
+        self.paths.append(Path(path))
+        if self.error is not None:
+            raise self.error
+        if self.cable_loss is None:
+            raise FileNotFoundError(f"线损输入不存在: {path}")
+        return self.cable_loss
+
+    def read_driver_mapping(self, path: Any) -> Any:
+        self.paths.append(Path(path))
+        if self.error is not None:
+            raise self.error
+        if self.driver_mapping is None:
+            raise FileNotFoundError(f"驱动映射输入不存在: {path}")
+        return self.driver_mapping
+
+
+__all__ = [
+    "DEFAULT_RUN_ID",
+    "contract_run",
+    "RecordingStageRecorder",
+    "MappingInputReader",
+]

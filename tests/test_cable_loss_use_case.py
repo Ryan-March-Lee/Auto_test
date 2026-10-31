@@ -7,6 +7,8 @@ from application.dto import CableLossMeasurementRequest
 from application.measurements import CableLossUseCase
 from application.ports.measurement_session import SafetyCleanupError
 from app.events import CheckpointEvent
+from domain.run.models import STAGE_CABLE_LOSS
+from tests.contract_doubles import RecordingStageRecorder
 from tests.fakes import safety_cleanup_for
 
 
@@ -47,13 +49,14 @@ class _Repository:
         return SimpleNamespace(run_directory=Path("saved-run"))
 
 
-def _request(instrument, *, events=None, token=None, repository=None):
+def _request(instrument, *, events=None, token=None, repository=None, recorder=None):
     configuration = {"test_frequencies": [1.0], "attenuator": {"type": "10dB"}}
     return CableLossMeasurementRequest(
         configuration=configuration,
         context=SimpleNamespace(run_id="run-cable"),
         run_directory=Path("run-directory"),
         measurement_port=instrument,
+        stage_recorder=recorder or RecordingStageRecorder("run-cable"),
         safety_cleanup=safety_cleanup_for(instrument),
         event_sink=events,
         cancellation_token=token,
@@ -71,6 +74,7 @@ class CableLossUseCaseTests(unittest.TestCase):
             context=request.context,
             run_directory=request.run_directory,
             measurement_port=request.measurement_port,
+            stage_recorder=request.stage_recorder,
             safety_cleanup=request.safety_cleanup,
             result_repository=request.result_repository,
             safety_options={"owns_measurement_port": False},
@@ -83,26 +87,32 @@ class CableLossUseCaseTests(unittest.TestCase):
     def test_waits_then_continues_and_saves_only_completed_result(self):
         instrument = _Instrument()
         events = _Events()
-        repository = _Repository()
-        use_case = CableLossUseCase(_request(instrument, events=events, repository=repository), sleep_fn=lambda _: None)
+        recorder = RecordingStageRecorder("run-cable")
+        use_case = CableLossUseCase(
+            _request(instrument, events=events, recorder=recorder), sleep_fn=lambda _: None
+        )
 
         waiting = use_case.measure_all_frequencies()
         self.assertEqual(waiting.status.value, "waiting_for_continue")
         self.assertEqual(waiting.points, ())
         self.assertEqual(instrument.measured, 1)
-        self.assertEqual(repository.calls, [])
+        self.assertEqual(recorder.completed, [])
+        self.assertEqual(recorder.started, [STAGE_CABLE_LOSS])
 
         result = use_case.continue_to_step2()
         self.assertIn("cable_losses", result.to_dict())
         self.assertTrue(result.points)
         self.assertEqual(instrument.measured, 2)
-        self.assertEqual(repository.calls[0][1], {
-            "result_type": "cable_loss",
-            "run_id": "run-cable",
-            "run_directory": Path("run-directory"),
-        })
+        # 结果只写当前运行：阶段提交到记录器，路径指向本次运行目录。
+        self.assertEqual(
+            recorder.result_paths(), {STAGE_CABLE_LOSS: f"inputs/{STAGE_CABLE_LOSS}.json"}
+        )
+        self.assertEqual(
+            result.result_reference["archive_path"],
+            str(Path("run-directory") / "inputs" / f"{STAGE_CABLE_LOSS}.json"),
+        )
         self.assertEqual(instrument.close_calls, 1)
-        self.assertEqual(use_case.run_directory, Path("saved-run"))
+        self.assertEqual(use_case.run_directory, Path("run-directory"))
         self.assertEqual(
             [event.checkpoint for event in events.events if isinstance(event, CheckpointEvent)],
             ["path1", "path2"],
@@ -185,6 +195,7 @@ class CableLossUseCaseTests(unittest.TestCase):
             context=request.context,
             run_directory=request.run_directory,
             measurement_port=request.measurement_port,
+            stage_recorder=request.stage_recorder,
             safety_cleanup=request.safety_cleanup,
         )
         with self.assertRaisesRegex(ValueError, "result_repository"):
@@ -197,6 +208,7 @@ class CableLossUseCaseTests(unittest.TestCase):
             context=request.context,
             run_directory=request.run_directory,
             measurement_port=None,
+            stage_recorder=request.stage_recorder,
             safety_cleanup=request.safety_cleanup,
         )
         with self.assertRaisesRegex(ValueError, "注入 measurement_port"):
@@ -209,11 +221,25 @@ class CableLossUseCaseTests(unittest.TestCase):
             context=request.context,
             run_directory=request.run_directory,
             measurement_port=request.measurement_port,
+            stage_recorder=request.stage_recorder,
             safety_cleanup=None,
             result_repository=request.result_repository,
         )
         with self.assertRaisesRegex(ValueError, "注入 safety_cleanup"):
             CableLossUseCase(request)
+
+    def test_request_without_a_stage_recorder_is_rejected(self):
+        """D1：结果只能落在运行目录，缺少阶段记录器的请求在构造期就失败。"""
+        instrument = _Instrument()
+        with self.assertRaisesRegex(ValueError, "stage_recorder"):
+            CableLossMeasurementRequest(
+                configuration={"test_frequencies": [1.0], "attenuator": {"type": "10dB"}},
+                context=SimpleNamespace(run_id="run-cable"),
+                run_directory=Path("run-directory"),
+                measurement_port=instrument,
+                stage_recorder=None,
+                safety_cleanup=safety_cleanup_for(instrument),
+            )
 
     def test_exception_is_cleaned_by_service_and_not_saved(self):
         instrument = _Instrument(fail=True)

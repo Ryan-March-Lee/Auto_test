@@ -24,8 +24,12 @@ class CableLossUseCase:
 
     The first call to :meth:`measure_all_frequencies` measures path 1 and
     returns a waiting result.  :meth:`continue_to_step2` resumes the same
-    service, measures path 2, and persists the completed result through the
-    injected repository.
+    service, measures path 2, and persists the completed result into the
+    current ``runs/<run_id>/`` run directory.
+
+    结果写入由注入的阶段记录器完成：线损结果落在当前运行的
+    ``inputs/cable_loss.json`` 并登记到 manifest，因此不存在“只写运行目录、不登记”
+    的旁路（D1）。
     """
 
     def __init__(
@@ -50,12 +54,12 @@ class CableLossUseCase:
         self.safety_cleanup = request.safety_cleanup
         if self.safety_cleanup is None:
             raise ValueError("CableLossUseCase 必须由应用组装层注入 safety_cleanup")
-        # 运行契约运行会注入阶段记录器：结果写入当前运行的 inputs/cable_loss.json
-        # 并更新 manifest；未注入记录器的旧流程只写运行目录，不产生全局兼容副本。
+        # 阶段记录器是请求契约的一部分（D1）：结果写入当前运行的 inputs/cable_loss.json
+        # 并更新 manifest。
         self.stage_recorder = request.stage_recorder
         # 只有阶段已开始且尚未结束的阶段才允许写入 failed/cancelled。
         self._stage_open = False
-        # 阶段成功提交后的自动归档入口；未注入时不登记任何交付产物状态。
+        # 阶段成功提交后的自动归档入口；组装层总是注入。
         self.archival_service = request.archival_service
         self.last_archival_outcome: ArchivalOutcome | None = None
         self.sleep_fn = sleep_fn or time.sleep
@@ -196,22 +200,18 @@ class CableLossUseCase:
             self._record_cancel(reason)
 
     def _begin_stage(self) -> None:
-        """开始当前运行的线损阶段；未注入记录器时保持旧流程行为。"""
-        if self.stage_recorder is None:
-            return
+        """开始当前运行的线损阶段。"""
         self.stage_recorder.start(STAGE_CABLE_LOSS)
         self._stage_open = True
 
     def _record_complete(self, result: MeasurementResult) -> Any:
         """把完成的线损结果写入当前运行并登记为 ``completed``。"""
-        if self.stage_recorder is None:
-            return None
         reference = self.stage_recorder.complete(STAGE_CABLE_LOSS, result.to_dict())
         self._stage_open = False
         return reference
 
     def _record_failure(self, error: Exception) -> None:
-        if self.stage_recorder is None or not self._stage_open:
+        if not self._stage_open:
             return
         self._stage_open = False
         self._try_record(
@@ -219,7 +219,7 @@ class CableLossUseCase:
         )
 
     def _record_cancel(self, reason: str) -> None:
-        if self.stage_recorder is None or not self._stage_open:
+        if not self._stage_open:
             return
         self._stage_open = False
         self._try_record(lambda: self.stage_recorder.cancel(STAGE_CABLE_LOSS, reason))
@@ -233,18 +233,6 @@ class CableLossUseCase:
             logger.exception("线损阶段状态记录失败")
 
     def _save(self, result: MeasurementResult) -> MeasurementResult:
-        if self.stage_recorder is not None:
-            return self._save_to_run_directory(result)
-        saved = self.result_repository.save(
-            result,
-            result_type="cable_loss",
-            run_id=self.run_id,
-            run_directory=self.run_directory,
-        )
-        self.run_directory = saved.run_directory
-        return result.with_saved_result(archive_path=_saved_path(saved, "archive_path"))
-
-    def _save_to_run_directory(self, result: MeasurementResult) -> MeasurementResult:
         """运行契约运行：权威结果写入 ``inputs/cable_loss.json``。
 
         运行目录结果是本次运行的权威来源：先原子提交并登记 manifest，返回值只暴露该
@@ -271,8 +259,3 @@ def _service_config(configuration: Any) -> Mapping[str, Any]:
         "test_frequencies": list(plan.frequencies),
         "attenuator": {"type": f"{attenuator}dB"},
     }
-
-
-def _saved_path(saved: Any, name: str) -> str | None:
-    value = getattr(saved, name, None)
-    return str(value) if value is not None else None

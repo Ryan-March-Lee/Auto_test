@@ -555,7 +555,6 @@ class WorkerArchivalForwardingTests(unittest.TestCase):
     def _run_worker(self, worker_type, factory_name, outcome):
         service = self._Service(outcome)
         worker = worker_type(
-            "config.json",
             sleep_fn=lambda _seconds: None,
             prepared_run=_run(),
             measurement_factory=lambda *_args, **_kwargs: service,

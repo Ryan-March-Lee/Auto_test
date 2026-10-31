@@ -429,7 +429,6 @@ class WorkerReusesPreparedRunTests(unittest.TestCase):
         service = _CableService()
         run = self._contract_run()
         worker = CableLossWorker(
-            "config.json",
             sleep_fn=lambda _: None,
             prepared_run=run,
             measurement_factory=lambda *args, **kwargs: service,
@@ -457,7 +456,6 @@ class WorkerReusesPreparedRunTests(unittest.TestCase):
             return service
 
         worker = DriverMappingWorker(
-            "config.json",
             sleep_fn=lambda _: None,
             prepared_run=run,
             measurement_factory=factory,
@@ -479,7 +477,6 @@ class WorkerReusesPreparedRunTests(unittest.TestCase):
             return service
 
         worker = AmplifierWorker(
-            "config.json",
             sleep_fn=lambda _: None,
             prepared_run=run,
             measurement_factory=factory,
@@ -1315,9 +1312,7 @@ class FrozenSnapshotValidationBoundaryTests(unittest.TestCase):
         with patch(
             "app.gui_runtime.connect_instruments", return_value=object()
         ) as connect, patch("app.gui_runtime.CableLossUseCase", return_value=object()):
-            create_cable_loss_measurement(
-                str(self.config_path), prepared_run=prepared
-            )
+            create_cable_loss_measurement(prepared_run=prepared)
         return connect
 
     def test_independent_schema_hardware_config_is_loadable_and_connectable(self):
@@ -1357,9 +1352,7 @@ class FrozenSnapshotValidationBoundaryTests(unittest.TestCase):
 
         with patch("app.gui_runtime.connect_instruments") as connect:
             with self.assertRaises(RunNotResumable) as raised:
-                create_cable_loss_measurement(
-                    str(self.config_path), prepared_run=prepared
-                )
+                create_cable_loss_measurement(prepared_run=prepared)
 
         connect.assert_not_called()
         self.assertIn("硬件配置快照", str(raised.exception))
@@ -1375,9 +1368,7 @@ class FrozenSnapshotValidationBoundaryTests(unittest.TestCase):
 
         with patch("app.gui_runtime.connect_instruments") as connect:
             with self.assertRaises(RunNotResumable) as raised:
-                create_cable_loss_measurement(
-                    str(self.config_path), prepared_run=prepared
-                )
+                create_cable_loss_measurement(prepared_run=prepared)
 
         connect.assert_not_called()
         self.assertIn("硬件配置快照", str(raised.exception))
@@ -1392,9 +1383,7 @@ class FrozenSnapshotValidationBoundaryTests(unittest.TestCase):
 
         with patch("app.gui_runtime.connect_instruments") as connect:
             with self.assertRaises(ValueError) as raised:
-                create_cable_loss_measurement(
-                    str(self.config_path), prepared_run=prepared
-                )
+                create_cable_loss_measurement(prepared_run=prepared)
 
         connect.assert_not_called()
         self.assertIn("配置快照", str(raised.exception))
@@ -1430,21 +1419,34 @@ class ContractRepositoryCapabilityTests(unittest.TestCase):
             json.dumps(_fully_valid_gui_config()), encoding="utf-8"
         )
 
+    def _incomplete_contract_run(self, *, run_repository):
+        """构造“判据成立但仓储能力不完整”的运行对象。
+
+        判据（运行标识、运行目录、运行仓储、解析入口）与生产一致，仓储能力由传入的
+        替身决定，因此失败点落在仓储能力校验上。
+        """
+        return type(
+            "IncompleteContractRun",
+            (),
+            {
+                "run_id": RUN_ID,
+                "context": SimpleNamespace(run_id=RUN_ID),
+                "run_directory": self.base / "runs" / RUN_ID,
+                "run_repository": run_repository,
+                "has_run_contract": PreparedRun.has_run_contract,
+                "hardware_config_path": Path(__file__),
+                "hardware_connection_path": PreparedRun.hardware_connection_path,
+                "_verified_hardware_snapshot": PreparedRun._verified_hardware_snapshot,
+            },
+        )()
+
     def test_contract_run_with_incomplete_repository_is_rejected(self):
         # 契约对象指向一个存在的普通文件，但仓储缺少全部校验能力。
-        prepared = SimpleNamespace(
-            configuration=object(),
-            context=SimpleNamespace(run_id=RUN_ID),
-            run_directory=self.base / "runs" / RUN_ID,
-            run_repository=object(),
-            hardware_config_path=Path(__file__),
-        )
+        prepared = self._incomplete_contract_run(run_repository=object())
 
         with patch("app.gui_runtime.connect_instruments") as connect:
             with self.assertRaisesRegex(RunNotResumable, "仓储不完整"):
-                create_cable_loss_measurement(
-                    str(self.config_path), prepared_run=prepared
-                )
+                create_cable_loss_measurement(prepared_run=prepared)
 
         connect.assert_not_called()
 
@@ -1461,19 +1463,11 @@ class ContractRepositoryCapabilityTests(unittest.TestCase):
             def verify_file(self, run_id, reference):
                 raise AssertionError("不应校验登记文件")
 
-        prepared = SimpleNamespace(
-            configuration=object(),
-            context=SimpleNamespace(run_id=RUN_ID),
-            run_directory=self.base / "runs" / RUN_ID,
-            run_repository=_PartialRepository(),
-            hardware_config_path=Path(__file__),
-        )
+        prepared = self._incomplete_contract_run(run_repository=_PartialRepository())
 
         with patch("app.gui_runtime.connect_instruments") as connect:
             with self.assertRaisesRegex(RunNotResumable, "read_run_json"):
-                create_cable_loss_measurement(
-                    str(self.config_path), prepared_run=prepared
-                )
+                create_cable_loss_measurement(prepared_run=prepared)
 
         connect.assert_not_called()
 

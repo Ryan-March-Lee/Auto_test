@@ -231,8 +231,6 @@ class AmplifierRunStageTests(unittest.TestCase):
         token=None,
         repository=None,
         driver_enabled=False,
-        loss_data=None,
-        driver_mapping=None,
     ):
         layout = self.repository.layout(run_id)
         instrument = instrument or _Instrument()
@@ -246,13 +244,29 @@ class AmplifierRunStageTests(unittest.TestCase):
             input_reader=ResultInputReader(self.result_repository),
             stage_recorder=RunStageRecorder(self.repository, run_id),
             cancellation_token=token,
-            loss_data=loss_data,
-            driver_mapping=driver_mapping,
             safety_options={"owns_measurement_port": True},
         )
 
     def _run_directory(self, run_id=RUN_ID):
         return self.repository.layout(run_id).run_directory
+
+    def _contract_prepared(self, layout, *, configuration=None, run_id=RUN_ID):
+        """运行契约替身：冻结快照解析为运行目录内的固定路径。
+
+        组合入口测试只验证“在连接仪器前失败”，因此替身直接给出运行目录内的硬件
+        快照路径，不触发 manifest 校验（那部分由 test_run_service 与门禁覆盖）。
+        """
+        return SimpleNamespace(
+            configuration=configuration if configuration is not None else object(),
+            context=SimpleNamespace(run_id=run_id),
+            run_id=run_id,
+            run_directory=layout.run_directory,
+            run_repository=self.repository,
+            hardware_config_path=layout.run_directory / HARDWARE_CONFIG_INPUT_PATH,
+            hardware_connection_path=(
+                lambda self=None: layout.run_directory / HARDWARE_CONFIG_INPUT_PATH
+            ),
+        )
 
     # -- 结果归属当前运行 --------------------------------------------------
 
@@ -411,31 +425,11 @@ class AmplifierRunStageTests(unittest.TestCase):
 
         with self.assertRaises(StageInputUnavailable):
             AmplifierMeasurementUseCase(
-                self._request(
-                    instrument=instrument,
-                    loss_data={"cable_losses": CABLE_LOSSES},
-                    driver_mapping=POWER_MAPPING,
-                ),
+                self._request(instrument=instrument),
                 sleep_fn=lambda _: None,
             )
 
         self.assertEqual(instrument.measured, 0)
-
-    def test_current_run_cable_loss_takes_precedence_over_explicit_loss_data(self):
-        self._create_run()
-        self._complete_cable_loss()
-        # 显式 loss_data 缺少 cable1：若被错误地优先使用，补偿计算会失败。
-        incomplete = {"cable_losses": {"1.0": {}}}
-        use_case = AmplifierMeasurementUseCase(
-            self._request(loss_data=incomplete), sleep_fn=lambda _: None
-        )
-
-        use_case.measure_all_frequencies()
-
-        self.assertEqual(
-            self.repository.load_manifest(RUN_ID).stage(STAGE_AMPLIFIER).status,
-            StageStatus.COMPLETED,
-        )
 
     def test_other_run_cable_loss_is_not_used(self):
         self._create_run(RUN_ID)
@@ -588,7 +582,6 @@ class AmplifierRunStageTests(unittest.TestCase):
         )
 
         cable_case = create_cable_loss_measurement(
-            str(config_path),
             prepared_run=prepared,
             measurement_port=_Instrument(),
             result_repository=self.result_repository,
@@ -598,7 +591,6 @@ class AmplifierRunStageTests(unittest.TestCase):
         cable_case.continue_to_step2()
 
         amplifier_case = create_amplifier_measurement(
-            str(config_path),
             prepared_run=prepared,
             measurement_port=_Instrument(),
             result_repository=self.result_repository,
@@ -618,17 +610,11 @@ class AmplifierRunStageTests(unittest.TestCase):
 
     def test_composition_checks_input_before_connecting_instruments(self):
         layout = self._create_run()
-        prepared = SimpleNamespace(
-            configuration=object(),
-            context=SimpleNamespace(run_id=RUN_ID),
-            run_directory=layout.run_directory,
-            run_repository=self.repository,
-            hardware_config_path=layout.run_directory / HARDWARE_CONFIG_INPUT_PATH,
-        )
+        prepared = self._contract_prepared(layout)
 
         with patch("app.gui_runtime.connect_instruments") as connect:
             with self.assertRaises(StageInputUnavailable):
-                create_amplifier_measurement("config.json", prepared_run=prepared)
+                create_amplifier_measurement(prepared_run=prepared)
 
         connect.assert_not_called()
 
@@ -641,19 +627,16 @@ class AmplifierRunStageTests(unittest.TestCase):
             {"run_id": RUN_ID, "cable_losses": {"1.0": {"cable2": 0.0}}},
             now=CREATED_AT,
         )
-        prepared = SimpleNamespace(
+        prepared = self._contract_prepared(
+            layout,
             configuration=SimpleNamespace(
                 test_plan=SimpleNamespace(driver_enabled=False, frequencies=[1.0])
             ),
-            context=SimpleNamespace(run_id=RUN_ID),
-            run_directory=layout.run_directory,
-            run_repository=self.repository,
-            hardware_config_path=layout.run_directory / HARDWARE_CONFIG_INPUT_PATH,
         )
 
         with patch("app.gui_runtime.connect_instruments") as connect:
             with self.assertRaises(AmplifierCalibrationError):
-                create_amplifier_measurement("config.json", prepared_run=prepared)
+                create_amplifier_measurement(prepared_run=prepared)
 
         connect.assert_not_called()
 
@@ -666,7 +649,6 @@ class AmplifierRunStageTests(unittest.TestCase):
             run_repository=self.repository,
         )
         cable_case = create_cable_loss_measurement(
-            str(config_path),
             prepared_run=prepared,
             measurement_port=_Instrument(),
             result_repository=self.result_repository,
@@ -683,7 +665,7 @@ class AmplifierRunStageTests(unittest.TestCase):
         with patch("app.gui_runtime.connect_instruments", return_value=_Instrument()) as connect, patch(
             "app.gui_runtime.AmplifierMeasurementUseCase", return_value=object()
         ):
-            create_amplifier_measurement(str(config_path), prepared_run=prepared)
+            create_amplifier_measurement(prepared_run=prepared)
 
         connect.assert_called_once()
         # 连接绑定的是本次运行对象本身；全局配置的修改不会改变它解析出的硬件快照。
@@ -696,124 +678,18 @@ class AmplifierRunStageTests(unittest.TestCase):
     def test_composition_requires_mapping_before_hardware_when_driver_enabled(self):
         layout = self._create_run()
         self._complete_cable_loss()
-        prepared = SimpleNamespace(
+        prepared = self._contract_prepared(
+            layout,
             configuration=SimpleNamespace(
                 test_plan=SimpleNamespace(driver_enabled=True)
             ),
-            context=SimpleNamespace(run_id=RUN_ID),
-            run_directory=layout.run_directory,
-            run_repository=self.repository,
-            hardware_config_path=layout.run_directory / HARDWARE_CONFIG_INPUT_PATH,
         )
 
         with patch("app.gui_runtime.connect_instruments") as connect:
             with self.assertRaises(StageInputUnavailable):
-                create_amplifier_measurement("config.json", prepared_run=prepared)
+                create_amplifier_measurement(prepared_run=prepared)
 
         connect.assert_not_called()
-
-    # -- 旧兼容流程 --------------------------------------------------------
-
-    def test_legacy_composition_requires_loss_input_before_connecting(self):
-        """B2：旧兼容流程缺少显式线损输入时，在连接仪器前失败。"""
-        prepared = SimpleNamespace(
-            configuration=_amplifier_config(driver_enabled=False),
-            context=SimpleNamespace(run_id="run-compat-snapshot"),
-            run_directory=self.base,
-            hardware_config_path=self.base / HARDWARE_CONFIG_INPUT_PATH,
-        )
-
-        with patch("app.gui_runtime.connect_instruments") as connect:
-            with self.assertRaisesRegex(ValueError, "必须显式提供 loss_data_path"):
-                create_amplifier_measurement("config.json", prepared_run=prepared)
-
-        connect.assert_not_called()
-
-    def test_legacy_composition_requires_mapping_before_connecting(self):
-        """B2：旧兼容流程驱动模式缺少映射路径时，在连接仪器前失败。"""
-        prepared = SimpleNamespace(
-            configuration=_amplifier_config(driver_enabled=True),
-            context=SimpleNamespace(run_id="run-compat-snapshot"),
-            run_directory=self.base,
-            hardware_config_path=self.base / HARDWARE_CONFIG_INPUT_PATH,
-        )
-
-        with patch("app.gui_runtime.connect_instruments") as connect:
-            with self.assertRaisesRegex(ValueError, "必须显式提供 driver_mapping_path"):
-                create_amplifier_measurement(
-                    "config.json",
-                    prepared_run=prepared,
-                    loss_data_path=self.base / "legacy_cable_loss.json",
-                )
-
-        connect.assert_not_called()
-
-    def test_legacy_flow_still_reads_explicit_loss_data(self):
-        instrument = _Instrument()
-        request = AmplifierMeasurementRequest(
-            configuration=_amplifier_config(driver_enabled=False),
-            context=_Context("run-compat-snapshot"),
-            run_directory=self.base,
-            measurement_port=instrument,
-            safety_cleanup=safety_cleanup_for(instrument),
-            result_repository=self.result_repository,
-            input_reader=ResultInputReader(self.result_repository),
-            loss_data={"cable_losses": CABLE_LOSSES},
-            safety_options={"owns_measurement_port": True},
-        )
-
-        use_case = AmplifierMeasurementUseCase(request, sleep_fn=lambda _: None)
-
-        self.assertIsNone(use_case.stage_recorder)
-        self.assertEqual(use_case.loss_data, {"cable_losses": CABLE_LOSSES})
-        self.assertIsNone(use_case.driver_mapping)
-
-    def test_legacy_driver_mode_requires_explicit_mapping_path(self):
-        """无路径兼容读取已删除：驱动模式缺映射输入在硬件动作前失败。"""
-        instrument = _Instrument()
-        request = AmplifierMeasurementRequest(
-            configuration=_amplifier_config(driver_enabled=True),
-            context=_Context("run-compat-snapshot"),
-            run_directory=self.base,
-            measurement_port=instrument,
-            safety_cleanup=safety_cleanup_for(instrument),
-            result_repository=self.result_repository,
-            input_reader=ResultInputReader(self.result_repository),
-            loss_data={"cable_losses": CABLE_LOSSES},
-            safety_options={"owns_measurement_port": True},
-        )
-
-        with self.assertRaisesRegex(ValueError, "必须显式提供 driver_mapping_path"):
-            AmplifierMeasurementUseCase(request, sleep_fn=lambda _: None)
-
-    def test_legacy_flow_saves_through_result_repository(self):
-        calls = []
-
-        class _Recorder:
-            def save(self, result, **kwargs):
-                calls.append((result, kwargs))
-                return SimpleNamespace(
-                    run_directory=Path("saved-run"),
-                    archive_path=Path("saved-run") / "amplifier_measurement.json",
-                )
-
-        instrument = _Instrument()
-        request = AmplifierMeasurementRequest(
-            configuration=_amplifier_config(driver_enabled=False),
-            context=_Context("run-compat-snapshot"),
-            run_directory=self.base / "legacy-run",
-            measurement_port=instrument,
-            safety_cleanup=safety_cleanup_for(instrument),
-            result_repository=_Recorder(),
-            loss_data={"cable_losses": CABLE_LOSSES},
-            safety_options={"owns_measurement_port": True},
-        )
-
-        AmplifierMeasurementUseCase(request, sleep_fn=lambda _: None).measure_all_frequencies()
-
-        self.assertEqual(calls[0][1]["result_type"], "amplifier_measurement")
-        self.assertEqual(calls[0][1]["run_id"], "run-compat-snapshot")
-        self.assertNotIn("stage_recorder", calls[0][1])
 
 
 if __name__ == "__main__":

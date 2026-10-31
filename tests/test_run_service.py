@@ -6,7 +6,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app.run_context import create_prepared_run, load_prepared_run, prepare_run
+from app.run_context import create_prepared_run, load_prepared_run
 from application.ports.config_repository import ConfigurationLoadResult
 from application.run_service import (
     RunNotResumable,
@@ -520,29 +520,6 @@ class CreateRunSnapshotTests(unittest.TestCase):
                 manifest=manifest,
                 hardware_config_path=None,
             )
-
-    def test_legacy_prepare_run_remains_non_contract_compatible(self):
-        # 旧版 prepare_run 保留为兼容快照：它写兼容目录、不冻结硬件配置，
-        # 也不属于可恢复运行契约，load_prepared_run 无法按 run_id 打开它。
-        run_id = "20261022T153000Z_legacy0"
-        prepared = prepare_run(
-            self.loaded,
-            run_id=run_id,
-            software_version="test-runner",
-            config_path=self.root / "config.json",
-            paths=PathService(self.root),
-        )
-
-        self.assertFalse(prepared.has_run_contract)
-        self.assertIsNone(prepared.run_repository)
-        self.assertIsNone(prepared.hardware_config_path)
-        # 旧兼容快照的硬件连接回退到创建时的源配置路径。
-        self.assertEqual(
-            prepared.hardware_connection_path(), self.root / "config.json"
-        )
-        # 它没有创建 runs/<run_id>/ 运行契约目录，因此不能重新加载。
-        with self.assertRaises(FileNotFoundError):
-            load_prepared_run(run_id, run_repository=self.repository)
 
 
 SECOND_RUN_ID = "20261022T160000Z_b2c3d4e5"

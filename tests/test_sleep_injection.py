@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from application.dto import AmplifierMeasurementRequest
 from application.measurements import AmplifierMeasurementUseCase
+from tests.contract_doubles import MappingInputReader, RecordingStageRecorder
 from tests.fakes import safety_cleanup_for
 
 
@@ -65,9 +66,10 @@ def _amplifier_request(measurement_port):
         context=SimpleNamespace(run_id="run-amplifier"),
         run_directory=Path("run-directory"),
         measurement_port=measurement_port,
+        stage_recorder=RecordingStageRecorder("run-amplifier"),
         safety_cleanup=safety_cleanup_for(measurement_port),
         result_repository=_Repository(),
-        loss_data={"cable_losses": {}},
+        input_reader=MappingInputReader(cable_loss={"cable_losses": {}}),
     )
 
 

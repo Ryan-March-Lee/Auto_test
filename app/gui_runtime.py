@@ -34,6 +34,7 @@ from application.measurements import (
 from application.run_service import (
     RunNotResumable,
     ensure_run_repository_supports_run_contract,
+    has_run_contract,
     load_hardware_config,
     load_run_configuration,
 )
@@ -64,35 +65,25 @@ class _CallbackEventSink:
             self.callbacks["data_callback"](dict(event.data))
 
 
-def connect_instruments(
-    prepared_run: PreparedRun,
-    *,
-    config_path: str | None = None,
-    resolved_config_path: str | None = None,
-    recorder: Any = None,
-) -> Any:
+def connect_instruments(prepared_run: PreparedRun, *, recorder: Any = None) -> Any:
     """Create the configured hardware port from the run's frozen hardware snapshot.
 
-    ``prepared_run`` 是唯一的硬件装配输入：硬件配置路径经
-    :meth:`PreparedRun.hardware_connection_path` 解析，并在打开任何 VISA 资源前
-    按 manifest 校验 SHA-256/大小，因此“连的是本次运行的仪器”可以被证明。
+    ``prepared_run`` 是**唯一**的硬件装配输入：硬件配置路径在这里经
+    :func:`_hardware_config_path` → :meth:`PreparedRun.hardware_connection_path` 解析，
+    并在打开任何 VISA 资源前按 manifest 校验 SHA-256/大小，因此“连的是本次运行的
+    仪器”可以被证明。
 
-    解析只做一次（D12）。测量工厂需要同一个值既开端口又填测量请求，因此由工厂先
-    :func:`_hardware_config_path` 解析一次，再把**同一个结果**作为
-    ``resolved_config_path`` 交进来；此时端口直接使用它，不再二次调用
-    ``hardware_connection_path()``，端口与请求因此永远指向同一份快照，也不会为同一份
-    快照做两遍 manifest 校验。``resolved_config_path`` 是同一解析结果的传递，不是第二个
-    配置来源：它必须来自 :func:`_hardware_config_path`。
+    路径**不接受**任何形式的覆盖：函数没有配置路径参数，调用方无法把任意路径塞进
+    硬件装配（D12/D17）。测量工厂同样不解析、也不转发路径，它们只把运行对象交给这个
+    入口，因此一次装配里 ``hardware_connection_path()`` 恰好被调用一次，不存在为同一份
+    快照做两遍 manifest 校验的写法。
 
-    ``config_path`` 只服务不带运行契约的旧兼容快照（步骤 6 删除），契约运行永远
-    不会使用它。
+    没有运行契约的运行对象在这里明确失败（:class:`RunNotResumable`）：连接仪器只
+    接受运行目录内冻结的硬件配置，不存在“用调用方配置路径装配”的旁路。
     """
-    path = (
-        str(resolved_config_path)
-        if resolved_config_path is not None
-        else _hardware_config_path(prepared_run, config_path)
+    return create_measurement_port(
+        _hardware_config_path(prepared_run), mode="hardware", recorder=recorder
     )
-    return create_measurement_port(path, mode="hardware", recorder=recorder)
 
 
 def _close_owned_measurement_port(port: Any) -> None:
@@ -189,127 +180,67 @@ def _reject_simulated_bindings(hardware_config: Mapping[str, Any]) -> None:
     raise ConfigurationError(f"配置中的设备绑定来自模拟扫描，不能创建真实运行: {details}")
 
 
-def _hardware_config_path(prepared_run: PreparedRun, config_path: str | None) -> str:
-    """返回硬件连接与测量应使用的配置路径。
+def _hardware_config_path(prepared_run: PreparedRun) -> str:
+    """返回硬件连接与测量应使用的配置路径（运行契约是唯一来源）。
 
-    运行契约运行固定使用运行目录内冻结的 ``inputs/hardware_config.json``，并统一走
-    :meth:`PreparedRun.hardware_connection_path` 的校验入口：路径缺失、快照被删除或
-    manifest/SHA-256 不一致时抛出 :class:`RunNotResumable`，绝不回退到调用方传入的
-    全局可变配置。只有不带运行契约的旧兼容快照（以及最小替身对象）才使用调用方路径。
+    统一走 :meth:`PreparedRun.hardware_connection_path` 的校验入口：路径缺失、快照被
+    删除或 manifest/SHA-256 不一致时抛出 :class:`RunNotResumable`；不带运行契约的对象
+    同样明确失败，绝不回退到调用方传入的全局可变配置。
     """
-    run_repository = getattr(prepared_run, "run_repository", None)
-    resolver = getattr(prepared_run, "hardware_connection_path", None)
-    if run_repository is not None and resolver is not None:
-        return str(resolver())
-    frozen = getattr(prepared_run, "hardware_config_path", None)
-    if frozen is not None:
-        return str(frozen)
-    if run_repository is not None:
+    return str(require_run_contract(prepared_run).hardware_connection_path())
+
+
+def require_run_contract(prepared_run: PreparedRun) -> PreparedRun:
+    """确认传入对象满足运行契约并返回它；不满足时明确失败。
+
+    “运行契约缺失视为调用错误”：这里不做降级、不猜测输入，也不允许后续步骤在没有
+    运行目录的情况下连接硬件。判据只复用唯一实现
+    :func:`application.run_service.has_run_contract`，不新写一套检查。
+    """
+    if not has_run_contract(prepared_run):
         raise RunNotResumable(
-            "运行契约缺少有效的硬件配置快照，拒绝使用全局配置连接仪器；"
-            "请重新创建或重新加载运行"
+            "运行契约缺失：硬件装配与测量必须绑定 runs/<run_id>/ 运行目录"
+            "（运行标识、运行目录、运行仓储与冻结快照解析入口）；"
+            "请先创建或重新加载运行"
         )
-    if config_path is None:
-        raise RunNotResumable(
-            "运行没有可用的硬件配置路径，拒绝使用全局配置连接仪器；"
-            "请重新创建或重新加载运行"
-        )
-    return config_path
+    return prepared_run
+
+
+def _stage_recorder(prepared_run: PreparedRun) -> RunStageRecorder:
+    """当前运行的阶段记录器；运行契约已校验，运行仓储是唯一写入目标。"""
+    return RunStageRecorder(prepared_run.run_repository, prepared_run.context.run_id)
 
 
 def _require_stage_inputs(prepared_run: PreparedRun, *stages: str) -> None:
-    """在连接仪器前校验运行契约运行的前置阶段输入已就绪。
+    """在连接仪器前校验运行的前置阶段输入已就绪。
 
-    只有携带运行仓储的运行契约运行才需要校验；旧兼容快照没有阶段契约，保持原行为。
     校验失败会抛出 :class:`StageInputUnavailable`，从而在打开仪器或执行任何硬件
     动作前终止，避免为无效输入付出连接代价或产生硬件副作用。
     """
-    run_repository = getattr(prepared_run, "run_repository", None)
-    if run_repository is None:
-        return
-    recorder = RunStageRecorder(run_repository, prepared_run.context.run_id)
+    recorder = _stage_recorder(prepared_run)
     for stage in stages:
         recorder.verified_result_path(stage)
 
 
 def _driver_mode_enabled(prepared_run: PreparedRun) -> bool:
-    """判断当前运行配置是否启用驱动模式，用于决定是否需要驱动映射输入。
-
-    兼容旧版组合配置映射和现代拆分配置模型；无法识别时按未启用处理，避免对
-    旧兼容快照或多注入的替身对象错误地强制要求映射文件。
-    """
-    configuration = getattr(prepared_run, "configuration", None)
-    plan = getattr(configuration, "test_plan", None)
-    if plan is not None:
-        return bool(getattr(plan, "driver_enabled", False))
-    if isinstance(configuration, Mapping):
-        mode = configuration.get("driver_mode", {})
-        return bool(mode.get("enabled")) if isinstance(mode, Mapping) else False
-    return False
+    """判断当前运行配置是否启用驱动模式，用于决定是否需要驱动映射输入。"""
+    plan = getattr(prepared_run.configuration, "test_plan", None)
+    return bool(getattr(plan, "driver_enabled", False))
 
 
 def _test_frequencies(prepared_run: PreparedRun) -> tuple[Any, ...]:
-    """从已冻结配置中读取测试频率，供运行前输入结构校验使用。"""
-    configuration = getattr(prepared_run, "configuration", None)
-    plan = getattr(configuration, "test_plan", None)
-    if plan is not None:
-        return tuple(getattr(plan, "frequencies", ()) or ())
-    if isinstance(configuration, Mapping):
-        return tuple(configuration.get("test_frequencies", ()) or ())
-    return ()
+    """从已冻结运行配置中读取测试频率，供运行前输入结构校验使用。"""
+    plan = getattr(prepared_run.configuration, "test_plan", None)
+    return tuple(getattr(plan, "frequencies", ()) or ())
 
 
-_LEGACY_LOSS_INPUT_REQUIRED = (
-    "旧兼容流程必须显式提供 loss_data_path（或改用当前运行 manifest 的显式输入）；"
-    "不再自动查找最新线损结果"
-)
-
-_LEGACY_DRIVER_MAPPING_REQUIRED = (
-    "旧兼容流程在驱动模式下必须显式提供 driver_mapping_path"
-    "（或改用当前运行 manifest 的显式输入）；不再自动查找最新驱动映射结果"
-)
-
-
-def _require_legacy_explicit_inputs(
-    prepared_run: PreparedRun,
-    *,
-    loss_data: Any = None,
-    loss_data_path: Any = None,
-    driver_mapping: Any = None,
-    driver_mapping_path: Any = None,
-) -> None:
-    """旧兼容快照（无运行契约）在连接仪器前校验必需输入已显式提供。
-
-    运行契约运行的输入由 :func:`_preflight_amplifier_inputs` /
-    :func:`_require_stage_inputs` 从当前运行目录读取并校验；旧兼容快照没有阶段
-    契约，必须在这里提前拒绝缺少显式输入的情况，避免先付出仪器连接代价，再在
-    测量用例构造期抛出同样的错误。
-    """
-    if getattr(prepared_run, "run_repository", None) is not None:
-        return
-    if loss_data is None and loss_data_path is None:
-        raise ValueError(_LEGACY_LOSS_INPUT_REQUIRED)
-    if (
-        _driver_mode_enabled(prepared_run)
-        and driver_mapping is None
-        and driver_mapping_path is None
-    ):
-        raise ValueError(_LEGACY_DRIVER_MAPPING_REQUIRED)
-
-
-def _preflight_amplifier_inputs(
-    prepared_run: PreparedRun, repository: Any, input_reader: Any
-) -> None:
+def _preflight_amplifier_inputs(prepared_run: PreparedRun, input_reader: Any) -> None:
     """在连接仪器前读取并校验主功放的当前运行校准输入。
 
-    运行契约运行先从当前运行目录读取已校验的线损与（按需）驱动映射，再做结构
-    校验，因此结构无效的输入会在打开仪器或执行任何 RF 动作前失败。旧兼容快照
-    没有阶段契约，由 :func:`_require_legacy_explicit_inputs` 在此之外校验显式输入。
+    只从当前运行目录读取已校验的线损与（按需）驱动映射，再做结构校验，因此结构
+    无效的输入会在打开仪器或执行任何 RF 动作前失败。
     """
-    run_repository = getattr(prepared_run, "run_repository", None)
-    if run_repository is None:
-        return
-    recorder = RunStageRecorder(run_repository, prepared_run.context.run_id)
+    recorder = _stage_recorder(prepared_run)
     loss_data = input_reader.read_cable_loss(recorder.verified_result_path(STAGE_CABLE_LOSS))
     driver_enabled = _driver_mode_enabled(prepared_run)
     driver_mapping = None
@@ -371,13 +302,10 @@ def _ensure_run_snapshots_are_intact(prepared_run: PreparedRun) -> None:
       校验。
 
     两种快照拥有独立、清晰的校验边界，任何一方被替换或损坏都在连接仪器前失败。
-    ``run_repository`` 非空即代表运行契约运行：仓储必须提供完整的校验能力，缺少
-    任一能力都明确失败，绝不静默跳过后继续连接仪器。只有不带运行目录契约的旧兼容
-    快照（``run_repository is None``）才保持原行为、不做该校验。
+    调用方已按运行契约校验过运行对象，因此运行仓储必然存在：仓储必须提供完整的
+    校验能力，缺少任一能力都明确失败，绝不静默跳过后继续连接仪器。
     """
-    run_repository = getattr(prepared_run, "run_repository", None)
-    if run_repository is None:
-        return
+    run_repository = prepared_run.run_repository
     ensure_run_repository_supports_run_contract(run_repository)
     run_id = prepared_run.context.run_id
     _ensure_domain_snapshot_is_intact(run_repository, run_id)
@@ -387,34 +315,28 @@ def _ensure_run_snapshots_are_intact(prepared_run: PreparedRun) -> None:
 def _input_reader_for(repository: Any) -> Any:
     """构建只接受显式路径的测量输入读取器。
 
-    无路径兼容读取已在重构步骤 B3 删除：所有运行（含旧兼容快照）都必须显式提供
-    路径，输入读取不再回退到按时间扫描的“最新结果”。
+    无路径兼容读取已在重构步骤 B3 删除：所有运行都必须显式提供路径，输入读取
+    不再回退到按时间扫描的“最新结果”。
     """
     return ResultInputReader(repository)
 
 
-def _request_kwargs(prepared_run: PreparedRun, config_path: str, callbacks: dict[str, Any]) -> dict[str, Any]:
-    """Build the shared request inputs at the application composition boundary."""
+def _request_kwargs(prepared_run: PreparedRun, callbacks: dict[str, Any]) -> dict[str, Any]:
+    """Build the shared request inputs at the application composition boundary.
+
+    阶段记录器与自动归档是运行契约的组成部分：运行契约已校验，因此这里**无条件**
+    装配，不再有“没有运行就没有阶段记录/交付产物”的分支。
+    """
     port = callbacks.get("measurement_port")
     if port is None:
         raise ValueError("应用测量请求必须显式包含 measurement_port")
     paths = callbacks.get("paths") or DEFAULT_PATHS
     repository = callbacks.get("result_repository") or FileMeasurementResultRepository(paths=paths)
-    run_repository = getattr(prepared_run, "run_repository", None)
-    stage_recorder = (
-        RunStageRecorder(run_repository, prepared_run.context.run_id)
-        if run_repository is not None
-        else None
-    )
-    # 阶段成功提交后的自动归档（计划步骤 4/5）：只在运行契约运行中装配，CSV 与测试
-    # 报告都落到当前运行的 artifacts/ 下；旧兼容快照没有 manifest，不生成任何交付产物。
-    archival_service = (
-        ResultArchivalService(
-            runs=run_repository,
-            generator=ArchiveArtifactGenerator(run_repository),
-        )
-        if run_repository is not None
-        else None
+    run_repository = prepared_run.run_repository
+    # CSV 与测试报告都落到当前运行的 artifacts/ 下。
+    archival_service = ResultArchivalService(
+        runs=run_repository,
+        generator=ArchiveArtifactGenerator(run_repository),
     )
     return {
         "configuration": prepared_run.configuration,
@@ -428,9 +350,8 @@ def _request_kwargs(prepared_run: PreparedRun, config_path: str, callbacks: dict
         "result_repository": repository,
         # 所有运行只接受显式输入路径；无路径兼容读取已在步骤 B3 删除。
         "input_reader": callbacks.get("input_reader") or _input_reader_for(repository),
-        "stage_recorder": stage_recorder,
+        "stage_recorder": _stage_recorder(prepared_run),
         "archival_service": archival_service,
-        "config_path": Path(config_path),
         "safety_options": {
             "owns_measurement_port": bool(callbacks.get("owns_measurement_port", False)),
             "close_rf_on_cleanup": True,
@@ -439,36 +360,29 @@ def _request_kwargs(prepared_run: PreparedRun, config_path: str, callbacks: dict
     }
 
 
-def create_cable_loss_measurement(
-    config_path: str | None, *, prepared_run: PreparedRun, **callbacks: Any
-) -> Any:
-    """装配线损测量用例：运行契约是唯一权威，`config_path` 只做旧快照来源。
+def create_cable_loss_measurement(*, prepared_run: PreparedRun, **callbacks: Any) -> Any:
+    """装配线损测量用例：运行契约是唯一权威。
 
-    首个位置参数不再是硬件配置权威：契约运行的硬件配置一律来自
-    ``prepared_run`` 的冻结快照（步骤 6 会删除彻底失效的旧兼容来源）。硬件配置
-    路径在本函数解析**一次**，同一个值既用于打开端口也写进测量请求（D12）。
+    硬件配置一律来自 ``prepared_run`` 的冻结快照，没有第二个配置来源：本函数不解析、
+    也不接收硬件配置路径，端口由 :func:`connect_instruments` 按运行快照装配（D12）。
     """
+    prepared_run = require_run_contract(prepared_run)
     callbacks.update(
         run_id=prepared_run.context.run_id,
         run_directory=prepared_run.run_directory,
         paths=callbacks.get("paths"),
     )
     owned_port = callbacks.get("measurement_port") is None
-    effective_config_path = _hardware_config_path(prepared_run, config_path)
     try:
-        # 运行契约运行固定使用运行目录内冻结的硬件配置；连接仪器前分别按领域和
-        # 硬件两套职责校验冻结快照，避免用被篡改或损坏的快照打开仪器。
+        # 运行固定使用运行目录内冻结的硬件配置；连接仪器前分别按领域和硬件两套
+        # 职责校验冻结快照，避免用被篡改或损坏的快照打开仪器。
         _ensure_run_snapshots_are_intact(prepared_run)
         if owned_port:
-            callbacks["measurement_port"] = connect_instruments(
-                prepared_run, resolved_config_path=effective_config_path
-            )
+            callbacks["measurement_port"] = connect_instruments(prepared_run)
         callbacks["owns_measurement_port"] = owned_port
         callbacks.setdefault("result_repository", FileMeasurementResultRepository(paths=callbacks.get("paths") or DEFAULT_PATHS))
         callbacks.setdefault("event_sink", _CallbackEventSink(callbacks))
-        request = CableLossMeasurementRequest(
-            **_request_kwargs(prepared_run, effective_config_path, callbacks)
-        )
+        request = CableLossMeasurementRequest(**_request_kwargs(prepared_run, callbacks))
         return CableLossUseCase(request, sleep_fn=callbacks.get("sleep_fn"))
     except Exception:
         if owned_port and callbacks.get("measurement_port") is not None:
@@ -476,37 +390,30 @@ def create_cable_loss_measurement(
         raise
 
 
-def create_driver_mapping_measurement(
-    config_path: str | None, *, prepared_run: PreparedRun, **callbacks: Any
-) -> Any:
-    """装配驱动映射测量用例：运行契约是唯一权威，`config_path` 只做旧快照来源。"""
+def create_driver_mapping_measurement(*, prepared_run: PreparedRun, **callbacks: Any) -> Any:
+    """装配驱动映射测量用例：运行契约是唯一权威。
+
+    与其它测量工厂一样，本函数不解析、也不接收硬件配置路径，端口由
+    :func:`connect_instruments` 按运行快照装配（D12）。
+    """
+    prepared_run = require_run_contract(prepared_run)
     callbacks.update(
         run_id=prepared_run.context.run_id,
         run_directory=prepared_run.run_directory,
         paths=callbacks.get("paths"),
     )
     owned_port = callbacks.get("measurement_port") is None
-    effective_config_path = _hardware_config_path(prepared_run, config_path)
     try:
-        # 连接仪器前校验本次运行实际需要的线损输入：运行契约运行从当前运行目录读取，
-        # 旧兼容快照要求显式 loss_data_path。缺失时不做任何仪器连接或硬件动作；
-        # 随后按领域/硬件两套职责分别校验冻结快照。
+        # 连接仪器前校验本次运行实际需要的线损输入：只从当前运行目录读取，缺失时不做
+        # 任何仪器连接或硬件动作；随后按领域/硬件两套职责分别校验冻结快照。
         _require_stage_inputs(prepared_run, STAGE_CABLE_LOSS)
-        _require_legacy_explicit_inputs(
-            prepared_run, loss_data_path=callbacks.get("loss_data_path")
-        )
         _ensure_run_snapshots_are_intact(prepared_run)
         if owned_port:
-            callbacks["measurement_port"] = connect_instruments(
-                prepared_run, resolved_config_path=effective_config_path
-            )
+            callbacks["measurement_port"] = connect_instruments(prepared_run)
         callbacks["owns_measurement_port"] = owned_port
         callbacks.setdefault("result_repository", FileMeasurementResultRepository(paths=callbacks.get("paths") or DEFAULT_PATHS))
         callbacks.setdefault("event_sink", _CallbackEventSink(callbacks))
-        request = DriverPowerMappingRequest(
-            **_request_kwargs(prepared_run, effective_config_path, callbacks),
-            loss_data_path=(Path(callbacks["loss_data_path"]) if callbacks.get("loss_data_path") else None),
-        )
+        request = DriverPowerMappingRequest(**_request_kwargs(prepared_run, callbacks))
         return DriverPowerMappingUseCase(request, sleep_fn=callbacks.get("sleep_fn"))
     except Exception:
         if owned_port:
@@ -516,53 +423,36 @@ def create_driver_mapping_measurement(
         raise
 
 
-def create_amplifier_measurement(
-    config_path: str | None, *, prepared_run: PreparedRun, **callbacks: Any
-) -> Any:
-    """装配主功放测量用例：运行契约是唯一权威，`config_path` 只做旧快照来源。"""
+def create_amplifier_measurement(*, prepared_run: PreparedRun, **callbacks: Any) -> Any:
+    """装配主功放测量用例：运行契约是唯一权威。
+
+    与其它测量工厂一样，本函数不解析、也不接收硬件配置路径，端口由
+    :func:`connect_instruments` 按运行快照装配（D12）。
+    """
+    prepared_run = require_run_contract(prepared_run)
     callbacks.update(
         run_id=prepared_run.context.run_id,
         run_directory=prepared_run.run_directory,
         paths=callbacks.get("paths"),
     )
     owned_port = callbacks.get("measurement_port") is None
-    effective_config_path = _hardware_config_path(prepared_run, config_path)
     try:
         paths = callbacks.get("paths") or DEFAULT_PATHS
         repository = callbacks.get("result_repository") or FileMeasurementResultRepository(paths=paths)
         input_reader = callbacks.get("input_reader") or _input_reader_for(repository)
         # 在连接仪器前校验本次运行实际需要的校准输入：主功放始终需要线损，仅在
-        # 驱动模式启用时才需要驱动映射。运行契约运行从当前运行目录读取并做结构
-        # 校验；旧兼容快照要求显式 loss_data_path / driver_mapping_path。结构无效、
-        # 配置漂移或缺少显式输入都在打开仪器或执行任何 RF 动作前失败。随后按领域/
-        # 硬件两套职责分别校验冻结快照。
-        _preflight_amplifier_inputs(prepared_run, repository, input_reader)
-        _require_legacy_explicit_inputs(
-            prepared_run,
-            loss_data=callbacks.get("loss_data"),
-            loss_data_path=callbacks.get("loss_data_path"),
-            driver_mapping=callbacks.get("driver_mapping"),
-            driver_mapping_path=callbacks.get("driver_mapping_path"),
-        )
+        # 驱动模式启用时才需要驱动映射。输入只从当前运行目录读取并做结构校验，因此
+        # 结构无效或配置漂移都在打开仪器或执行任何 RF 动作前失败。随后按领域/硬件
+        # 两套职责分别校验冻结快照。
+        _preflight_amplifier_inputs(prepared_run, input_reader)
         _ensure_run_snapshots_are_intact(prepared_run)
         if owned_port:
-            callbacks["measurement_port"] = connect_instruments(
-                prepared_run, resolved_config_path=effective_config_path
-            )
+            callbacks["measurement_port"] = connect_instruments(prepared_run)
         callbacks["owns_measurement_port"] = owned_port
         callbacks["result_repository"] = repository
         callbacks["input_reader"] = input_reader
         callbacks.setdefault("event_sink", _CallbackEventSink(callbacks))
-        request = AmplifierMeasurementRequest(
-            **_request_kwargs(prepared_run, effective_config_path, callbacks),
-            loss_data_path=(Path(callbacks["loss_data_path"]) if callbacks.get("loss_data_path") else None),
-            driver_mapping_path=(
-                Path(callbacks["driver_mapping_path"])
-                if callbacks.get("driver_mapping_path") else None
-            ),
-            loss_data=callbacks.get("loss_data"),
-            driver_mapping=callbacks.get("driver_mapping"),
-        )
+        request = AmplifierMeasurementRequest(**_request_kwargs(prepared_run, callbacks))
         return AmplifierMeasurementUseCase(request, sleep_fn=callbacks.get("sleep_fn"))
     except Exception:
         if owned_port and callbacks.get("measurement_port") is not None:

@@ -5,8 +5,14 @@ from types import SimpleNamespace
 from app.cancellation import CancellationToken, MeasurementCancelled
 from application.dto import DriverPowerMappingRequest
 from application.measurements import DriverPowerMappingUseCase
+from application.run_stages import StageInputUnavailable
 from app.events import RealtimeDataEvent
+from domain.run.models import STAGE_CABLE_LOSS, STAGE_DRIVER_MAPPING
+from tests.contract_doubles import MappingInputReader, RecordingStageRecorder
 from tests.fakes import safety_cleanup_for
+
+
+CABLE_LOSS = {"cable_losses": {"1.0": {"cable2": 2.0}}}
 
 
 class _Instrument:
@@ -42,20 +48,6 @@ class _Events:
     def publish(self, event): self.events.append(event)
 
 
-class _Reader:
-    """只实现正式显式读取的最小替身；不再暴露无路径兼容读取。"""
-
-    def __init__(self, loss_data=None):
-        self.loss_data = loss_data
-        self.explicit_paths = []
-
-    def read_cable_loss(self, path):
-        self.explicit_paths.append(path)
-        if self.loss_data is None:
-            raise FileNotFoundError("missing cable loss")
-        return self.loss_data
-
-
 class _Repository:
     def __init__(self): self.calls = []
     def save(self, result, **kwargs):
@@ -66,9 +58,8 @@ class _Repository:
 def _request(
     instrument,
     *,
-    loss_data=None,
-    loss_data_path=None,
     reader=None,
+    recorder=None,
     events=None,
     token=None,
     repository=None,
@@ -83,29 +74,23 @@ def _request(
         context=SimpleNamespace(run_id="run-mapping"),
         run_directory=Path("run-directory"),
         measurement_port=instrument,
+        stage_recorder=recorder or RecordingStageRecorder("run-mapping"),
         safety_cleanup=safety_cleanup_for(instrument),
         event_sink=events,
         cancellation_token=token,
         result_repository=repository or _Repository(),
-        input_reader=reader,
-        loss_data=loss_data,
-        loss_data_path=loss_data_path,
+        input_reader=reader or MappingInputReader(cable_loss=CABLE_LOSS),
         safety_options={"owns_measurement_port": True},
     )
 
 
 class DriverPowerMappingUseCaseTests(unittest.TestCase):
-    def test_explicit_loss_data_completes_and_saves_result(self):
+    def test_current_run_loss_input_completes_and_saves_result(self):
         instrument = _Instrument()
         events = _Events()
-        repository = _Repository()
+        recorder = RecordingStageRecorder("run-mapping")
         use_case = DriverPowerMappingUseCase(
-            _request(
-                instrument,
-                loss_data={"cable_losses": {"1.0": {"cable2": 2.0}}},
-                events=events,
-                repository=repository,
-            ),
+            _request(instrument, recorder=recorder, events=events),
             sleep_fn=lambda _: None,
         )
 
@@ -113,45 +98,61 @@ class DriverPowerMappingUseCaseTests(unittest.TestCase):
 
         self.assertEqual(result, use_case.last_result)
         self.assertIn("1.0", use_case.power_mapping)
-        self.assertEqual(repository.calls[0][1]["result_type"], "driver_power_mapping")
-        self.assertEqual(use_case.run_directory, Path("saved-run"))
+        # 结果只写当前运行：阶段提交到记录器，路径指向本次运行目录。
+        self.assertEqual(
+            recorder.result_paths(),
+            {STAGE_DRIVER_MAPPING: f"inputs/{STAGE_DRIVER_MAPPING}.json"},
+        )
+        self.assertEqual(
+            result.result_reference["archive_path"],
+            str(Path("run-directory") / "inputs" / f"{STAGE_DRIVER_MAPPING}.json"),
+        )
+        self.assertEqual(use_case.run_directory, Path("run-directory"))
         self.assertTrue(any(isinstance(event, RealtimeDataEvent) for event in events.events))
         self.assertEqual(instrument.rf_off_calls, 1)
         self.assertEqual(instrument.driver_off_calls, 1)
 
-    def test_missing_loss_input_is_rejected_before_hardware_action(self):
-        """无路径兼容读取已删除：缺少显式输入必须在硬件动作前失败。"""
+    def test_unfinished_cable_loss_stage_is_rejected_before_hardware_action(self):
+        """前置阶段没有完成时，映射测量必须在任何硬件动作前失败。"""
         instrument = _Instrument()
-        with self.assertRaisesRegex(ValueError, "必须显式提供"):
+        recorder = RecordingStageRecorder("run-mapping", missing_stages=(STAGE_CABLE_LOSS,))
+        with self.assertRaises(StageInputUnavailable):
             DriverPowerMappingUseCase(
-                _request(instrument, reader=_Reader()), sleep_fn=lambda _: None
+                _request(instrument, recorder=recorder), sleep_fn=lambda _: None
             )
         self.assertEqual(instrument.measured, 0)
 
     def test_measurement_port_is_required_before_input_loading(self):
-        request = _request(
-            None,
-            loss_data={"cable_losses": {"1.0": {"cable2": 2.0}}},
-        )
+        request = _request(None)
         with self.assertRaisesRegex(ValueError, "注入 measurement_port"):
             DriverPowerMappingUseCase(request)
 
-    def test_reader_is_used_for_explicit_path_input(self):
-        reader = _Reader({"cable_losses": {"1.0": {"cable2": 2.0}}})
-        loss_path = Path("provided/cable_loss.json")
+    def test_reader_reads_the_current_run_input_path(self):
+        reader = MappingInputReader(cable_loss=CABLE_LOSS)
         use_case = DriverPowerMappingUseCase(
-            _request(_Instrument(), reader=reader, loss_data_path=loss_path),
-            sleep_fn=lambda _: None,
+            _request(_Instrument(), reader=reader), sleep_fn=lambda _: None
         )
-        self.assertEqual(use_case.loss_data, {"cable_losses": {"1.0": {"cable2": 2.0}}})
-        self.assertEqual(reader.explicit_paths, [loss_path])
+        self.assertEqual(use_case.loss_data, CABLE_LOSS)
+        self.assertEqual(
+            reader.paths,
+            [Path("runs") / "run-mapping" / "inputs" / f"{STAGE_CABLE_LOSS}.json"],
+        )
+
+    def test_missing_run_input_file_fails_before_hardware_action(self):
+        """运行目录里的输入读不到时，映射测量必须在任何硬件动作前失败。"""
+        instrument = _Instrument()
+        with self.assertRaises(FileNotFoundError):
+            DriverPowerMappingUseCase(
+                _request(instrument, reader=MappingInputReader()), sleep_fn=lambda _: None
+            )
+        self.assertEqual(instrument.measured, 0)
 
     def test_cancelled_request_stops_before_measurement_and_cleans_up(self):
         instrument = _Instrument()
         token = CancellationToken()
         token.request_emergency_stop(reason="test")
         use_case = DriverPowerMappingUseCase(
-            _request(instrument, loss_data={"cable_losses": {"1.0": {"cable2": 2.0}}}, token=token),
+            _request(instrument, token=token),
             sleep_fn=lambda _: None,
         )
 

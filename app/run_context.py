@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import platform
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -26,7 +25,6 @@ from application.run_service import (
     load_run_configuration,
 )
 from infrastructure.filesystem.paths import PathService
-from infrastructure.persistence.json_result_repository import write_run_snapshot
 from infrastructure.persistence.run_repository import RunRepository
 
 
@@ -40,17 +38,17 @@ class PreparedRun:
       硬件连接或测量阶段的输入来源。
     - ``hardware_config_path``：运行目录内冻结的硬件装配配置，硬件连接与测量
       阶段必须使用它。
-    - ``run_repository``：运行契约仓储；旧兼容快照为 ``None``。
+    - ``run_repository``：运行契约仓储；它与运行标识、运行目录和冻结快照解析入口
+      一起构成运行契约（:func:`application.run_service.has_run_contract`）。
     """
 
     configuration: RunConfiguration
     context: RunContext
     run_directory: Path
     config_path: Path | None = None
-    # 运行契约运行会携带创建它的仓储；旧兼容快照为 None，表示还没有 manifest 契约。
+    # 运行契约运行会携带创建它的仓储；它参与运行契约判据，缺它即不是运行契约对象。
     run_repository: RunRepositoryPort | None = None
-    # 运行目录内冻结的硬件装配配置（``inputs/hardware_config.json``）。旧兼容
-    # 快照没有该文件，因此为 None。
+    # 运行目录内冻结的硬件装配配置（``inputs/hardware_config.json``）。
     hardware_config_path: Path | None = None
     # 上述硬件装配配置的内容副本，供 GUI 展示运行配置；不连接硬件、不参与测量。
     hardware_config: Mapping[str, Any] | None = None
@@ -72,7 +70,7 @@ class PreparedRun:
 
     @property
     def frozen_config_path(self) -> Path | None:
-        """运行目录内的领域配置快照 ``config.json``；旧兼容快照为 ``None``。"""
+        """运行目录内的领域配置快照 ``config.json``；没有运行契约时为 ``None``。"""
         if not self.has_run_contract:
             return None
         return Path(self.run_directory) / "config.json"
@@ -83,24 +81,20 @@ class PreparedRun:
         运行契约运行固定使用运行目录内冻结的硬件配置，并在返回前确认该快照仍然
         可用：路径缺失、文件被删除或指向目录、manifest 登记项与 SHA-256 不一致时
         都抛出 :class:`RunNotResumable`。**绝不**回退到全局可变配置，避免用与本次
-        运行无关的仪器地址连接硬件。只有不带运行目录契约的旧兼容快照才回退到创建
-        时的源配置路径。
+        运行无关的仪器地址连接硬件；不带运行契约的对象同样明确失败，而不是退回
+        调用方传入的路径。
         """
-        if self.hardware_config_path is not None:
-            frozen = Path(self.hardware_config_path)
-            if not self.has_run_contract:
-                return frozen
-            return self._verified_hardware_snapshot(frozen)
-        if self.has_run_contract:
+        if not self.has_run_contract:
+            raise RunNotResumable(
+                "运行缺少运行契约（运行标识、运行目录、运行仓储与冻结快照解析入口），"
+                "不能连接仪器；请重新创建或重新加载运行"
+            )
+        if self.hardware_config_path is None:
             raise RunNotResumable(
                 f"运行 {self.run_id} 缺少有效的硬件配置快照，不能连接仪器；"
                 "请重新创建或重新加载运行"
             )
-        if self.config_path is None:
-            raise RunNotResumable(
-                "运行没有可用的硬件配置路径，不能连接仪器；请重新创建运行"
-            )
-        return Path(self.config_path)
+        return self._verified_hardware_snapshot(Path(self.hardware_config_path))
 
     def _verified_hardware_snapshot(self, frozen: Path) -> Path:
         """确认契约运行的冻结硬件快照仍可用，返回可用的快照路径。
@@ -121,14 +115,9 @@ class PreparedRun:
                 f"运行 {self.run_id} 缺少有效的硬件配置快照"
                 f"（{frozen} 不存在或不是普通文件）；请重新创建或重新加载运行"
             )
-        repository = getattr(self, "run_repository", None)
-        # 能进入本方法说明该对象被视为运行契约运行；仓储缺失或能力不完整都必须
-        # 明确失败，避免未做完整性校验的硬件快照被用于连接仪器。
-        if repository is None:
-            raise RunNotResumable(
-                f"运行 {self.run_id} 缺少运行契约仓储，无法校验硬件配置快照；"
-                "请重新创建或重新加载运行"
-            )
+        repository = self.run_repository
+        # 能进入本方法说明该对象被视为运行契约运行；仓储能力不完整必须明确失败，
+        # 避免未做完整性校验的硬件快照被用于连接仪器。
         ensure_run_repository_supports_run_contract(repository)
         try:
             # 以 manifest 登记项为准校验：硬件快照被单独替换或删除都会在这里失败。
@@ -139,51 +128,6 @@ class PreparedRun:
             raise RunNotResumable(
                 f"运行 {self.run_id} 的硬件配置快照校验失败: {error}"
             ) from error
-
-
-def prepare_run(
-    loaded: ConfigurationLoadResult,
-    *,
-    run_id: str,
-    software_version: str = "unknown",
-    git_commit: str | None = None,
-    config_path: Path | None = None,
-    paths: PathService | None = None,
-) -> PreparedRun:
-    """Validate and snapshot a run without importing or opening an instrument.
-
-    This is the legacy **compatibility** preflight boundary: it writes the
-    compatibility snapshot (``test_plan_snapshot.json`` /
-    ``run_mapping_snapshot.json`` / ``run_metadata.json``) so the existing
-    measurement result paths stay unchanged.  It does **not** create the
-    ``runs/<run_id>/`` run contract and therefore does not freeze the
-    hardware configuration; such a snapshot is **not** reopenable via
-    :func:`load_prepared_run`.
-
-    New callers that need a resumable ``runs/<run_id>/`` run must use
-    :func:`create_prepared_run` with an explicit ``hardware_config`` instead.
-    """
-    if not loaded.valid:
-        details = "; ".join(f"{issue.path}: {issue.message}" for issue in loaded.validation.errors)
-        raise ValueError(f"运行配置校验失败: {details}")
-    configuration = loaded.configuration
-    context = RunContext.from_resource_mapping(
-        configuration.run_mapping.to_dict(),
-        run_id=run_id,
-        software_version=software_version,
-    )
-    run_directory = write_run_snapshot(
-        run_id,
-        configuration.test_plan.to_dict(),
-        {**configuration.run_mapping.to_dict(), **context.to_dict()},
-        software_version=software_version,
-        git_commit=git_commit,
-        start_time=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        status="created",
-        error=None,
-        paths=paths,
-    )
-    return PreparedRun(configuration, context, Path(run_directory), config_path)
 
 
 def create_prepared_run(

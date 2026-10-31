@@ -136,22 +136,20 @@ class InstrumentWorker(BaseWorker):
     """按运行契约连接仪器；没有运行对象时不得打开任何设备。
 
     ``prepared_run`` 是连接的唯一输入：硬件配置由运行契约的冻结快照解析，因此
-    “连的是本次运行的仪器”可以被证明。``config_path`` 只服务不带运行契约的旧兼容
-    快照（步骤 6 删除），不能替代运行对象。
+    “连的是本次运行的仪器”可以被证明。worker 不再接收配置路径参数——连接入口
+    只接受运行对象，配置来源没有第二条通道。
     """
 
     def __init__(
         self,
         prepared_run,
         *,
-        config_path: str | None = None,
         sleep_fn=None,
         measurement_port=None,
         connect_factory=None,
     ):
         super().__init__()
         self.prepared_run = prepared_run
-        self.config_path = config_path
         self.sleep_fn = sleep_fn or time.sleep
         self.measurement_port = measurement_port
         self.connect_factory = connect_factory
@@ -165,7 +163,7 @@ class InstrumentWorker(BaseWorker):
             # 缺少运行契约时明确失败：连接仪器必须绑定本次运行，绝不使用全局配置。
             prepared = require_prepared_run(self.prepared_run, "仪器连接")
             connect_instruments = self.connect_factory or self._default_factory("connect_instruments")
-            controller = connect_instruments(prepared, config_path=self.config_path)
+            controller = connect_instruments(prepared)
             self.measurement_port = controller
             if self._stop_requested:
                 close = getattr(controller, "close_all", None)
@@ -196,9 +194,17 @@ class InstrumentWorker(BaseWorker):
 
 
 class CableLossWorker(BaseWorker):
-    def __init__(self, config_path: str, sleep_fn=None, measurement_port=None, measurement_factory=None, prepared_run=None):
+    """装配并驱动线损测量用例；运行契约是唯一输入。"""
+
+    def __init__(
+        self,
+        *,
+        prepared_run,
+        sleep_fn=None,
+        measurement_port=None,
+        measurement_factory=None,
+    ):
         super().__init__()
-        self.config_path = config_path
         self.sleep_fn = sleep_fn
         self.measurement_port = measurement_port
         self.measurement_factory = measurement_factory
@@ -219,7 +225,7 @@ class CableLossWorker(BaseWorker):
                 if self._stop_requested:
                     self.signals.stopped.emit(self.stop_reason)
                     return
-                self._service = create_measurement(self.config_path, prepared_run=prepared,
+                self._service = create_measurement(prepared_run=prepared,
                     progress_callback=self.signals.progress.emit, message_callback=self.signals.message.emit,
                     data_callback=self.signals.data_update.emit, sleep_fn=self.sleep_fn,
                     measurement_port=self.measurement_port)
@@ -275,9 +281,17 @@ class CableLossWorker(BaseWorker):
 
 
 class DriverMappingWorker(BaseWorker):
-    def __init__(self, config_path: str, sleep_fn=None, measurement_port=None, measurement_factory=None, prepared_run=None):
+    """装配并驱动驱动映射测量用例；运行契约是唯一输入。"""
+
+    def __init__(
+        self,
+        *,
+        prepared_run,
+        sleep_fn=None,
+        measurement_port=None,
+        measurement_factory=None,
+    ):
         super().__init__()
-        self.config_path = config_path
         self.sleep_fn = sleep_fn
         self.measurement_port = measurement_port
         self.measurement_factory = measurement_factory
@@ -299,7 +313,7 @@ class DriverMappingWorker(BaseWorker):
                 if self._stop_requested:
                     self.signals.stopped.emit(self.stop_reason)
                     return
-                self._service = create_measurement(self.config_path, prepared_run=prepared,
+                self._service = create_measurement(prepared_run=prepared,
                     progress_callback=self.signals.progress.emit, message_callback=self.signals.message.emit,
                     data_callback=self.signals.data_update.emit, sleep_fn=self.sleep_fn,
                     measurement_port=self.measurement_port)
@@ -325,9 +339,17 @@ class DriverMappingWorker(BaseWorker):
 
 
 class AmplifierWorker(BaseWorker):
-    def __init__(self, config_path: str, sleep_fn=None, measurement_port=None, measurement_factory=None, prepared_run=None):
+    """装配并驱动主功放测量用例；运行契约是唯一输入。"""
+
+    def __init__(
+        self,
+        *,
+        prepared_run,
+        sleep_fn=None,
+        measurement_port=None,
+        measurement_factory=None,
+    ):
         super().__init__()
-        self.config_path = config_path
         self.sleep_fn = sleep_fn
         self.measurement_port = measurement_port
         self.measurement_factory = measurement_factory
@@ -346,7 +368,7 @@ class AmplifierWorker(BaseWorker):
                 if self._stop_requested:
                     self.signals.stopped.emit(self.stop_reason)
                     return
-                self._service = create_measurement(self.config_path, prepared_run=prepared,
+                self._service = create_measurement(prepared_run=prepared,
                     progress_callback=self.signals.progress.emit, message_callback=self.signals.message.emit,
                     data_callback=self.signals.data_update.emit, sleep_fn=self.sleep_fn,
                     measurement_port=self.measurement_port)

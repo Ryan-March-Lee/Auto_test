@@ -6,6 +6,7 @@ from unittest.mock import patch
 from app.cancellation import CancellationToken, MeasurementCancelled
 from application.dto import AmplifierMeasurementRequest
 from application.measurements import AmplifierMeasurementUseCase
+from application.measurements.amplifier_test import AMPLIFIER_RESULT_PATH
 from domain.configuration.models import (
     ChannelMapping,
     InstrumentMapping,
@@ -15,6 +16,8 @@ from domain.configuration.models import (
     TestPlan,
 )
 from domain.measurement.values import CableLossTable, Decibels, Frequency, PowerDbm
+from domain.run.models import STAGE_AMPLIFIER
+from tests.contract_doubles import MappingInputReader, RecordingStageRecorder
 from tests.fakes import safety_cleanup_for
 
 
@@ -49,7 +52,12 @@ class _Repository:
         return SimpleNamespace(run_directory=Path("saved-run"))
 
 
-def _request(instrument, *, token=None, repository=None):
+CABLE_LOSSES = {
+    "1.0": {"cable1": 0.0, "cable2": 0.0, "cable3": 0.0, "cable4": 0.0}
+}
+
+
+def _request(instrument, *, token=None, repository=None, recorder=None, reader=None):
     configuration = {
         "test_frequencies": [1.0],
         "attenuator": {"type": "10dB"},
@@ -64,19 +72,11 @@ def _request(instrument, *, token=None, repository=None):
         context=SimpleNamespace(run_id="run-amplifier"),
         run_directory=Path("run-directory"),
         measurement_port=instrument,
+        stage_recorder=recorder or RecordingStageRecorder("run-amplifier"),
         safety_cleanup=safety_cleanup_for(instrument),
         cancellation_token=token,
         result_repository=repository or _Repository(),
-        loss_data={
-            "cable_losses": {
-                "1.0": {
-                    "cable1": 0.0,
-                    "cable2": 0.0,
-                    "cable3": 0.0,
-                    "cable4": 0.0,
-                }
-            }
-        },
+        input_reader=reader or MappingInputReader(cable_loss={"cable_losses": CABLE_LOSSES}),
         safety_options={"owns_measurement_port": True},
     )
 
@@ -109,9 +109,10 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
             context=request.context,
             run_directory=request.run_directory,
             measurement_port=request.measurement_port,
+            stage_recorder=request.stage_recorder,
             safety_cleanup=request.safety_cleanup,
             result_repository=request.result_repository,
-            loss_data=request.loss_data,
+            input_reader=request.input_reader,
         )
 
         use_case = AmplifierMeasurementUseCase(request, sleep_fn=lambda _: None)
@@ -148,9 +149,9 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
 
     def test_completes_and_saves_structured_result(self):
         instrument = _Instrument()
-        repository = _Repository()
+        recorder = RecordingStageRecorder("run-amplifier")
         use_case = AmplifierMeasurementUseCase(
-            _request(instrument, repository=repository), sleep_fn=lambda _: None
+            _request(instrument, recorder=recorder), sleep_fn=lambda _: None
         )
 
         result = use_case.measure_all_frequencies()
@@ -160,8 +161,16 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
             use_case.measurement_results,
             {item.frequency_ghz: item for item in result.frequencies},
         )
-        self.assertEqual(repository.calls[0][1]["result_type"], "amplifier_measurement")
-        self.assertEqual(use_case.run_directory, Path("saved-run"))
+        # 结果只写当前运行：阶段提交到记录器，路径指向本次运行目录。
+        self.assertEqual(
+            recorder.result_paths(), {STAGE_AMPLIFIER: AMPLIFIER_RESULT_PATH}
+        )
+        self.assertEqual(recorder.completed_runs, 1)
+        self.assertEqual(
+            result.result_reference["archive_path"],
+            str(Path("run-directory") / AMPLIFIER_RESULT_PATH),
+        )
+        self.assertEqual(use_case.run_directory, Path("run-directory"))
         self.assertEqual(instrument.close_calls, 1)
 
     def test_measurement_port_is_required_before_input_loading(self):

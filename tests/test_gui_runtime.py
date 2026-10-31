@@ -70,14 +70,35 @@ class _Port:
         self.close_calls.append(close_rf)
 
 
-# 旧兼容快照（无运行契约）必须显式提供输入路径；组装测试用它满足连接前校验。
-_LEGACY_LOSS_PATH = Path("legacy_cable_loss.json")
+SNAPSHOT = Path("runs") / "run-assembly-test" / "inputs" / "hardware_config.json"
 
 
 def _prepared_run():
+    """运行契约替身：冻结快照解析为固定路径，用于断言装配行为。
+
+    判据与生产一致（运行标识、运行目录、运行仓储、解析入口四项齐备），只有
+    ``hardware_connection_path()`` 换成固定值，避免装配测试依赖真实运行目录的
+    manifest 校验（那部分由 tests/test_run_service.py 与门禁覆盖）。
+    """
+    return type(
+        "ContractRunStub",
+        (),
+        {
+            "run_id": "run-assembly-test",
+            "context": SimpleNamespace(run_id="run-assembly-test"),
+            "configuration": object(),
+            "run_directory": Path("runs") / "run-assembly-test",
+            "run_repository": object(),
+            "hardware_connection_path": lambda self=None: SNAPSHOT,
+        },
+    )()
+
+
+def _bare_run():
+    """既没有运行仓储、也没有冻结快照解析入口的对象（不满足运行契约）。"""
     return SimpleNamespace(
         configuration=object(),
-        context=SimpleNamespace(run_id="run-assembly-test"),
+        context=SimpleNamespace(run_id="run-without-contract"),
         run_directory=Path("run-directory"),
     )
 
@@ -103,6 +124,19 @@ def _contract_run_stub(*, hardware_config_path, run_repository=None):
 
 
 class GuiRuntimeAssemblyTests(unittest.TestCase):
+    """组合根装配：运行契约是唯一的硬件配置来源。"""
+
+    def setUp(self):
+        # 三处前置校验各有专门用例（tests/test_*_run_stage.py 与门禁覆盖），装配测试
+        # 只断言“端口与请求拿到同一份快照”，因此把它们替换成空动作。
+        self.enterContext(patch("app.gui_runtime._ensure_run_snapshots_are_intact"))
+        self.enterContext(patch("app.gui_runtime._require_stage_inputs"))
+        self.enterContext(patch("app.gui_runtime._preflight_amplifier_inputs"))
+        # 自动归档服务要求仓储具备 read_run_json 等能力；装配测试用的替身仓储没有
+        # 这些能力，也不在本用例的验证范围内。
+        self.enterContext(patch("app.gui_runtime.ArchiveArtifactGenerator"))
+        self.enterContext(patch("app.gui_runtime.ResultArchivalService"))
+
     def test_application_assembly_does_not_import_legacy_workers(self):
         runtime_source = Path(__file__).parents[1] / "app" / "gui_runtime.py"
         source = runtime_source.read_text(encoding="utf-8")
@@ -120,25 +154,23 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
             with self.subTest(factory=factory.__name__):
                 port = _Port()
                 expected = object()
+                prepared = _prepared_run()
                 with patch("app.gui_runtime.connect_instruments", return_value=port) as connect, \
                         patch(f"app.gui_runtime.{measurement_name}", return_value=expected) as measurement:
-                    result = factory(
-                        "config.json",
-                        prepared_run=_prepared_run(),
-                        loss_data_path=_LEGACY_LOSS_PATH,
-                    )
+                    result = factory(prepared_run=prepared)
                 self.assertIs(result, expected)
                 connect.assert_called_once()
-                self.assertEqual(connect.call_args.args[0].context.run_id, "run-assembly-test")
-                # 旧兼容快照：解析结果就是调用方路径，工厂把它作为“已解析值”传下去。
+                self.assertIs(connect.call_args.args[0], prepared)
+                # 连接入口只拿运行对象：没有配置路径关键字可传（步骤 6，D17）。
                 self.assertEqual(
-                    connect.call_args.kwargs["resolved_config_path"], "config.json"
+                    connect.call_args.kwargs,
+                    {},
+                    "测量工厂调用连接入口时不得附加任何配置路径",
                 )
-                self.assertNotIn("config_path", connect.call_args.kwargs)
                 request = measurement.call_args.args[0]
                 self.assertIs(request.measurement_port, port)
                 self.assertEqual(request.run_id, "run-assembly-test")
-                self.assertEqual(request.run_directory, Path("run-directory"))
+                self.assertEqual(request.run_directory, Path("runs") / "run-assembly-test")
                 self.assertTrue(request.safety_options["owns_measurement_port"])
                 self.assertEqual(port.close_calls, [])
 
@@ -155,11 +187,7 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
                 with patch("app.gui_runtime.connect_instruments", return_value=port), patch(
                     f"app.gui_runtime.{use_case_name}", return_value=service
                 ) as use_case:
-                    result = factory(
-                        "config.json",
-                        prepared_run=_prepared_run(),
-                        loss_data_path=_LEGACY_LOSS_PATH,
-                    )
+                    result = factory(prepared_run=_prepared_run())
 
                 self.assertIs(result, service)
                 self.assertIs(use_case.call_args.args[0].measurement_port, port)
@@ -182,11 +210,7 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
                     side_effect=OSError("use case construction failed"),
                 ):
                     with self.assertRaisesRegex(OSError, "use case construction failed"):
-                        factory(
-                            "config.json",
-                            prepared_run=_prepared_run(),
-                            loss_data_path=_LEGACY_LOSS_PATH,
-                        )
+                        factory(prepared_run=_prepared_run())
                 self.assertEqual(port.close_calls, [True])
 
     def test_default_factory_does_not_close_injected_port_on_construction_failure(self):
@@ -203,12 +227,7 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
                     side_effect=OSError("use case construction failed"),
                 ):
                     with self.assertRaisesRegex(OSError, "use case construction failed"):
-                        factory(
-                            "config.json",
-                            prepared_run=_prepared_run(),
-                            loss_data_path=_LEGACY_LOSS_PATH,
-                            measurement_port=port,
-                        )
+                        factory(prepared_run=_prepared_run(), measurement_port=port)
                 connect.assert_not_called()
                 self.assertEqual(port.close_calls, [])
 
@@ -226,9 +245,7 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
                     f"app.gui_runtime.{measurement_name}", return_value=expected
                 ) as measurement:
                     result = factory(
-                        "config.json",
                         prepared_run=_prepared_run(),
-                        loss_data_path=_LEGACY_LOSS_PATH,
                         measurement_port=port,
                     )
 
@@ -238,19 +255,34 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
                 self.assertFalse(measurement.call_args.args[0].safety_options["owns_measurement_port"])
                 self.assertEqual(port.close_calls, [])
 
+    def test_run_without_a_contract_is_rejected_before_connecting(self):
+        """T2/B3：不带运行契约的对象没有硬件配置来源，必须在连接前失败。"""
+        prepared = _bare_run()
+        cases = (
+            ("create_cable_loss_measurement", create_cable_loss_measurement, "CableLossUseCase"),
+            (
+                "create_driver_mapping_measurement",
+                create_driver_mapping_measurement,
+                "DriverPowerMappingUseCase",
+            ),
+            ("create_amplifier_measurement", create_amplifier_measurement, "AmplifierMeasurementUseCase"),
+        )
+        for label, factory, use_case_name in cases:
+            with self.subTest(factory=label):
+                with patch("app.gui_runtime.connect_instruments") as connect, patch(
+                    f"app.gui_runtime.{use_case_name}", return_value=object()
+                ):
+                    with self.assertRaisesRegex(RunNotResumable, "运行契约"):
+                        factory(prepared_run=prepared)
+                connect.assert_not_called()
+
     def test_contract_run_without_hardware_snapshot_is_rejected_before_connecting(self):
         # 运行契约存在却没有冻结硬件路径：组合层必须明确失败，绝不回退全局配置。
-        prepared = SimpleNamespace(
-            configuration=object(),
-            context=SimpleNamespace(run_id="run-contract"),
-            run_directory=Path("runs") / "run-contract",
-            run_repository=object(),
-            hardware_config_path=None,
-        )
-        with patch("app.gui_runtime.connect_instruments") as connect:
+        prepared = _contract_run_stub(hardware_config_path=None)
+        with patch("app.gui_runtime.create_measurement_port") as port_factory:
             with self.assertRaisesRegex(RunNotResumable, "硬件配置快照"):
-                create_cable_loss_measurement("config.json", prepared_run=prepared)
-        connect.assert_not_called()
+                create_cable_loss_measurement(prepared_run=prepared)
+        port_factory.assert_not_called()
 
     def test_unusable_contract_snapshot_blocks_every_measurement_factory(self):
         cases = (
@@ -267,66 +299,12 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
             for label, snapshot in snapshots.items():
                 with self.subTest(factory=factory.__name__, case=label):
                     prepared = _contract_run_stub(hardware_config_path=snapshot)
-                    with patch("app.gui_runtime.connect_instruments") as connect, patch(
+                    with patch("app.gui_runtime.create_measurement_port") as port_factory, patch(
                         f"app.gui_runtime.{use_case_name}", return_value=object()
                     ):
                         with self.assertRaisesRegex(RunNotResumable, "硬件配置快照"):
-                            factory("config.json", prepared_run=prepared)
-                    connect.assert_not_called()
-
-    def test_legacy_assembly_still_uses_the_caller_config_path(self):
-        # 不带运行契约的旧兼容快照继续使用调用方传入的全局配置路径。
-        prepared = SimpleNamespace(
-            configuration=object(),
-            context=SimpleNamespace(run_id="run-compat-snapshot"),
-            run_directory=Path("run-directory"),
-        )
-        port = _Port()
-        with patch("app.gui_runtime.connect_instruments", return_value=port) as connect, patch(
-            "app.gui_runtime.CableLossUseCase", return_value=object()
-        ):
-            create_cable_loss_measurement("config.json", prepared_run=prepared)
-        connect.assert_called_once()
-        # 硬件装配绑定的是运行对象本身；旧快照的调用方路径作为已解析值传下去。
-        self.assertIs(connect.call_args.args[0], prepared)
-        self.assertEqual(connect.call_args.kwargs["resolved_config_path"], "config.json")
-
-    def test_port_and_request_share_one_resolved_snapshot_path(self):
-        """一个装配函数只解析一次硬件配置：端口与请求用的是同一个冻结快照值。
-
-        契约运行的解析以运行快照为唯一权威；如果工厂把调用方传入的原始路径再交给
-        连接入口，同一个函数里就会同时存在“调用方路径”和“快照路径”两个变量。
-        """
-        snapshot = Path("runs") / "run-contract" / "inputs" / "hardware_config.json"
-        resolutions = []
-
-        def resolver(self=None):
-            resolutions.append(snapshot)
-            return snapshot
-
-        prepared = type(
-            "ContractRun",
-            (),
-            {
-                "run_id": "run-contract",
-                "context": SimpleNamespace(run_id="run-contract"),
-                "configuration": object(),
-                "run_directory": Path("runs") / "run-contract",
-                "run_repository": object(),
-                "hardware_connection_path": resolver,
-            },
-        )()
-        with patch("app.gui_runtime._ensure_run_snapshots_are_intact"), patch(
-            "app.gui_runtime.ArchiveArtifactGenerator"
-        ), patch("app.gui_runtime.ResultArchivalService"), patch(
-            "app.gui_runtime.connect_instruments"
-        ) as connect, patch("app.gui_runtime.CableLossUseCase") as use_case:
-            create_cable_loss_measurement("caller-config.json", prepared_run=prepared)
-
-        self.assertEqual(len(resolutions), 1, "硬件配置快照在装配过程中只解析一次")
-        connect.assert_called_once()
-        self.assertEqual(Path(connect.call_args.kwargs["resolved_config_path"]), snapshot)
-        self.assertEqual(use_case.call_args.args[0].config_path, snapshot)
+                            factory(prepared_run=prepared)
+                    port_factory.assert_not_called()
 
     def test_measurement_factories_open_the_port_at_the_snapshot_they_put_in_the_request(self):
         """端口按“已解析”的路径打开：连接入口不再二次解析（D12）。
@@ -363,26 +341,23 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
                     },
                 )()
                 port = _Port()
-                with patch("app.gui_runtime._ensure_run_snapshots_are_intact"), patch(
-                    "app.gui_runtime._require_stage_inputs"
-                ), patch("app.gui_runtime._preflight_amplifier_inputs"), patch(
-                    "app.gui_runtime.ArchiveArtifactGenerator"
-                ), patch("app.gui_runtime.ResultArchivalService"), patch(
+                with patch("app.gui_runtime.ArchiveArtifactGenerator"), patch(
+                    "app.gui_runtime.ResultArchivalService"
+                ), patch(
                     "app.gui_runtime.create_measurement_port", return_value=port
                 ) as port_factory, patch(
                     f"app.gui_runtime.{use_case_name}"
-                ) as use_case:
-                    factory("caller-config.json", prepared_run=prepared)
+                ):
+                    factory(prepared_run=prepared)
 
                 self.assertEqual(
                     len(resolutions), 1, "一次装配只解析一次硬件配置路径"
                 )
                 self.assertEqual(Path(port_factory.call_args.args[0]), snapshot)
                 self.assertEqual(port_factory.call_args.kwargs["mode"], "hardware")
-                self.assertEqual(use_case.call_args.args[0].config_path, snapshot)
 
-    def test_connect_instruments_resolves_once_unless_the_caller_already_did(self):
-        """连接入口两种形态：自己解析时只解析一次；收到已解析值时一次都不解析。"""
+    def test_connect_instruments_resolves_the_snapshot_and_accepts_no_path(self):
+        """连接入口自己解析一次，且不接受任何配置路径覆盖（步骤 6，D17）。"""
         snapshot = Path("runs") / "run-contract" / "inputs" / "hardware_config.json"
         resolutions = []
 
@@ -405,77 +380,22 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
         with patch("app.gui_runtime.create_measurement_port", return_value=port) as factory:
             self.assertIs(connect_instruments(prepared), port)
 
-        self.assertEqual(len(resolutions), 1)
+        self.assertEqual(len(resolutions), 1, "连接入口只解析一次运行快照")
         self.assertEqual(Path(factory.call_args.args[0]), snapshot)
+        self.assertEqual(factory.call_args.kwargs["mode"], "hardware")
 
-        resolutions.clear()
-        with patch("app.gui_runtime.create_measurement_port", return_value=port) as factory:
-            self.assertIs(
-                connect_instruments(prepared, resolved_config_path=str(snapshot)), port
-            )
+        # 没有“调用方已解析好的路径”这种入口：想连硬件只能交运行对象。
+        for keyword in ("resolved_config_path", "config_path", "hardware_config_path"):
+            with self.subTest(keyword=keyword):
+                with self.assertRaises(TypeError):
+                    connect_instruments(prepared, **{keyword: str(snapshot)})
 
-        self.assertEqual(
-            resolutions,
-            [],
-            "调用方已经把解析结果交进来时，不得再调用 hardware_connection_path()",
-        )
-        self.assertEqual(Path(factory.call_args.args[0]), snapshot)
-
-    def test_explicit_driver_mapping_path_is_carried_into_request(self):
-        port = _Port()
-        explicit_path = Path("provided") / "mapping.json"
-        with patch("app.gui_runtime.connect_instruments") as connect, patch(
-            "app.gui_runtime.AmplifierMeasurementUseCase", return_value=object()
-        ) as measurement:
-            create_amplifier_measurement(
-                "config.json",
-                prepared_run=_prepared_run(),
-                loss_data_path=_LEGACY_LOSS_PATH,
-                measurement_port=port,
-                driver_mapping_path=explicit_path,
-            )
-
-        request = measurement.call_args.args[0]
-        self.assertIsInstance(request, AmplifierMeasurementRequest)
-        self.assertEqual(request.config_path, Path("config.json"))
-        self.assertEqual(request.driver_mapping_path, explicit_path)
-        self.assertNotIn("driver_mapping_path", measurement.call_args.kwargs)
-        connect.assert_not_called()
-        self.assertEqual(port.close_calls, [])
-
-    def test_assembled_explicit_driver_mapping_is_read_without_latest_scan(self):
-        port = _Port()
-        explicit_path = Path("provided") / "mapping.json"
-        repository = SimpleNamespace(
-            load=lambda path: {"power_mapping": {"1.0": 2.0}},
-        )
-        reader = ResultInputReader(repository)
-        observed = {}
-
-        def construct_measurement(request, **_legacy_kwargs):
-            observed["mapping"] = request.input_reader.read_driver_mapping(
-                request.driver_mapping_path
-            )
-            return request
-
-        with patch("app.gui_runtime.connect_instruments") as connect, patch(
-            "app.gui_runtime.AmplifierMeasurementUseCase",
-            side_effect=construct_measurement,
-        ):
-            result = create_amplifier_measurement(
-                "config.json",
-                prepared_run=_prepared_run(),
-                loss_data_path=_LEGACY_LOSS_PATH,
-                measurement_port=port,
-                input_reader=reader,
-                driver_mapping_path=explicit_path,
-            )
-
-        self.assertEqual(observed["mapping"], {"1.0": 2.0})
-        self.assertIs(result.input_reader, reader)
-        self.assertEqual(result.driver_mapping_path, explicit_path)
-        connect.assert_not_called()
-        self.assertEqual(port.close_calls, [])
+    def test_connect_instruments_rejects_an_object_without_contract(self):
+        """没有运行契约的对象连一次解析都到不了（不存在回退到配置文件的出口）。"""
+        with patch("app.gui_runtime.create_measurement_port") as factory:
+            with self.assertRaisesRegex(RunNotResumable, "运行契约"):
+                connect_instruments(_bare_run())
+        factory.assert_not_called()
 
     def test_assembly_error_from_request_creation_closes_only_owned_port(self):
         owned_port = _Port()
@@ -486,12 +406,9 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
             side_effect=RuntimeError("request assembly failed"),
         ):
             with self.assertRaisesRegex(RuntimeError, "request assembly failed"):
-                create_driver_mapping_measurement(
-                    "config.json",
-                    prepared_run=_prepared_run(),
-                    loss_data_path=_LEGACY_LOSS_PATH,
-                )
+                create_driver_mapping_measurement(prepared_run=_prepared_run())
         self.assertEqual(owned_port.close_calls, [True])
+
 
 class GuiRuntimePreparationTests(unittest.TestCase):
     def _write_config(self):

@@ -343,7 +343,6 @@ class CableLossRunStageTests(unittest.TestCase):
         self.assertTrue((prepared.run_directory / "manifest.json").is_file())
 
         use_case = create_cable_loss_measurement(
-            str(config_path),
             prepared_run=prepared,
             measurement_port=_Instrument(),
             result_repository=self.result_repository,

@@ -33,12 +33,17 @@ class MeasurementRequest:
     ``measurement_port`` 只是 :class:`instrument.ports.MeasurementInstrumentPort`
     的类型契约；运行时能力校验由测量服务在构造阶段完成，请求 DTO 不导入具体
     设备实现，也不把类型标注当作运行时保证。
+
+    ``stage_recorder`` 是**必填关键字字段**：正式测量只允许在 ``runs/<run_id>/``
+    运行目录内产生结果，没有阶段记录器的请求在构造期就被拒绝（D1）。
     """
 
     configuration: RunConfiguration
     context: RunContext
     run_directory: Path
     measurement_port: MeasurementInstrumentPort
+    # 运行目录阶段记录器：结果写入当前运行并更新 manifest，因此不可省略。
+    stage_recorder: "RunStageRecorder" = field(kw_only=True)
     safety_cleanup: SafetyCleanupPort | None = None
     measurement_type: MeasurementType | str = "measurement"
     configuration_snapshot: Mapping[str, Any] | None = None
@@ -49,10 +54,7 @@ class MeasurementRequest:
     cancellation_token: CancellationToken | None = None
     result_repository: MeasurementResultRepository | None = None
     input_reader: ResultInputReader | None = None
-    config_path: Path | None = None
-    # 运行目录阶段记录器；仅在运行契约运行中注入，旧兼容流程为 None。
-    stage_recorder: "RunStageRecorder | None" = None
-    # 阶段成功提交后的自动归档服务；未注入时保持旧行为（不生成交付产物）。
+    # 阶段成功提交后的自动归档服务；组装层总是注入，省略时只是不生成交付产物。
     archival_service: "ResultArchivalService | None" = None
     _expected_measurement_type: ClassVar[MeasurementType | None] = None
 
@@ -61,6 +63,11 @@ class MeasurementRequest:
         return self.context.run_id
 
     def __post_init__(self) -> None:
+        if self.stage_recorder is None:
+            raise ValueError(
+                "测量请求必须注入运行阶段记录器 stage_recorder："
+                "没有运行目录契约的测量不属于正式测量链路"
+            )
         if not str(self.measurement_type).strip():
             raise ValueError("measurement_type 不能为空")
         if not isinstance(self.measurement_type, MeasurementType):
@@ -130,21 +137,15 @@ class CableLossMeasurementRequest(MeasurementRequest):
 
 @dataclass(frozen=True)
 class DriverPowerMappingRequest(MeasurementRequest):
-    """Inputs for driver-power mapping, including its cable-loss input."""
+    """Inputs for driver-power mapping; its cable-loss input comes from the run."""
 
-    loss_data_path: Path | None = None
-    loss_data: Mapping[str, Any] | None = None
     measurement_type: MeasurementType | str = MeasurementType.DRIVER_POWER_MAPPING
     _expected_measurement_type: ClassVar[MeasurementType] = MeasurementType.DRIVER_POWER_MAPPING
 
 
 @dataclass(frozen=True)
 class AmplifierMeasurementRequest(MeasurementRequest):
-    """Inputs for amplifier measurement and its calibration data."""
+    """Inputs for amplifier measurement; its calibration inputs come from the run."""
 
-    loss_data_path: Path | None = None
-    loss_data: Mapping[str, Any] | None = None
-    driver_mapping_path: Path | None = None
-    driver_mapping: Mapping[str, Any] | None = None
     measurement_type: MeasurementType | str = MeasurementType.AMPLIFIER
     _expected_measurement_type: ClassVar[MeasurementType] = MeasurementType.AMPLIFIER

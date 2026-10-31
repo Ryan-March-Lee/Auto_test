@@ -60,8 +60,8 @@
 | 模块 | 正式公开名称 | 说明 |
 | --- | --- | --- |
 | `launcher` | `main`、`inspect_run`、`list_runs` | CLI 启动、运行目录检查与列表 |
-| `app.run_context` | `PreparedRun`、`create_prepared_run`、`load_prepared_run` | 运行契约对象与创建/重载入口；`prepare_run` 属旧兼容路径，不在正式清单内 |
-| `app.gui_runtime` | `prepare_configuration`、`connect_instruments`、`create_offline_measurement_port`、`create_cable_loss_measurement`、`create_driver_mapping_measurement`、`create_amplifier_measurement` | GUI 侧装配入口；页面不得直接调用测量组装函数。`connect_instruments` 只接受运行契约对象，硬件配置取自运行目录冻结的 `inputs/hardware_config.json`（`config_path` 仅为旧兼容快照保留，见清单 B22，步骤 6 删除）；三个测量工厂的 `prepared_run` 是必填关键字参数，首个位置参数只服务旧兼容快照 |
+| `app.run_context` | `PreparedRun`、`create_prepared_run`、`load_prepared_run` | 运行契约对象与创建/重载入口；旧的 `prepare_run` 兼容前置校验入口已在技术债步骤 6 删除 |
+| `app.gui_runtime` | `prepare_configuration`、`connect_instruments`、`create_offline_measurement_port`、`create_cable_loss_measurement`、`create_driver_mapping_measurement`、`create_amplifier_measurement` | GUI 侧装配入口；页面不得直接调用测量组装函数。`connect_instruments(prepared_run, *, recorder=None)` 只接受运行契约对象，硬件配置取自运行目录冻结的 `inputs/hardware_config.json`，路径在该入口内解析一次，**不接受任何配置路径参数**（技术债步骤 6 已删除 `config_path` 与 `resolved_config_path` 透传）；三个测量工厂没有位置参数，`prepared_run` 是必填关键字参数，也不解析或转发硬件配置路径 |
 | `app.events` | `EventSink`、`MeasurementEvent`、`ProgressEvent`、`MessageEvent`、`RealtimeDataEvent`、`CheckpointEvent`、`CompletedEvent`、`StoppedEvent`、`FailedEvent` | 测量事件与事件接收端口 |
 | `app.cancellation` | `CancellationMode`、`MeasurementCancelled`、`CancellationToken` | 取消语义 |
 

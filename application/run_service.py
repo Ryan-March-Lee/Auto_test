@@ -158,7 +158,7 @@ class RunSnapshot:
     """一次已创建运行的标识、目录和初始配置快照引用。
 
     运行契约快照必须同时冻结硬件配置，因此 ``hardware_config_path`` 是必需
-    字段且不允许为空；旧版兼容快照请使用 ``app.run_context.prepare_run``。
+    字段且不允许为空；没有运行目录与硬件配置快照就没有可恢复的运行。
     """
 
     run_id: str
@@ -228,8 +228,7 @@ def create_run_snapshot(
     manifest，使运行目录自包含；硬件连接和测量阶段只消费该快照，而不是全局
     可变配置。缺少该参数、显式传入 ``None`` 或传入非映射对象时，都在创建任何
     运行目录之前立即失败，保证任何成功创建的运行都可以按当前恢复规则（
-    ``load_prepared_run``）重新加载。不携带硬件配置的兼容快照请改用
-    ``app.run_context.prepare_run``，它不属于可恢复运行契约。
+    ``load_prepared_run``）重新加载。
 
     硬件快照写入、登记或 manifest 更新失败时，会调用仓储的 ``discard_run``
     撤销刚创建的整个运行目录，不遗留看似有效的半成品运行；原始异常仍向
@@ -415,12 +414,10 @@ REQUIRED_RUN_REPOSITORY_METHODS: tuple[str, ...] = (
 def ensure_run_repository_supports_run_contract(run_repository: Any) -> None:
     """确认运行契约仓储具备快照完整性校验所需的全部能力。
 
-    ``None`` 表示旧兼容流程，直接返回。运行契约仓储缺少必需方法时抛出
-    :class:`RunNotResumable`：装配不完整（错误注入、旧替身或未实现的适配器）
-    不允许被当成“无需校验”，否则会绕过冻结快照的完整性检查。
+    运行契约仓储缺少必需方法（``None``、错误注入、旧替身或未实现的适配器）时抛出
+    :class:`RunNotResumable`：装配不完整不允许被当成“无需校验”，否则会绕过冻结快照
+    的完整性检查。这里没有“没有仓储即无需校验”的早退——运行契约缺失属于调用错误。
     """
-    if run_repository is None:
-        return
     missing = [
         name
         for name in REQUIRED_RUN_REPOSITORY_METHODS

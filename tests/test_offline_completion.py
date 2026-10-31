@@ -1,15 +1,10 @@
-import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 from app.events import StoppedEvent
-from app.run_context import prepare_run
-from domain.configuration.models import RunConfiguration
 from application.dto import AmplifierFrequencyResult, AmplifierMeasurementResult
 from application.measurements.services import AmplifierMeasurementService
-from infrastructure.config.json_config_repository import ConfigurationRepository
 from application.dto import measurement_result_from_document
 from infrastructure.persistence.json_result_repository import load_json_result
 from infrastructure.persistence.json_result_repository import save_measurement_model
@@ -112,38 +107,6 @@ class OfflineCompletionTests(unittest.TestCase):
             if isinstance(node, ast.ImportFrom)
         }
         self.assertEqual(coordinator_imports["workers"], {"InstrumentWorker"})
-
-    def test_prepare_run_writes_context_before_hardware_factory(self):
-        plan = {
-            "schema_version": "1.0", "template": False, "frequencies": {"values": [1.0], "unit": "GHz"},
-            "signal_source": {"start_power": -10, "stop_power": 0, "step": 1, "unit": "dBm"},
-            "compression_point": {"type": "3dB"}, "attenuator": {"value": 0, "unit": "dB"},
-            "dut": {"max_input_power": 30, "power_roles": {"gate": {"role": "gate", "voltage": 2, "current": 1}}},
-            "driver_mode": {"enabled": False, "power_roles": {}},
-        }
-        mapping = {
-            "schema_version": "1.0", "template": False,
-            "instruments": {
-                "signal_generator": {"model": "SG", "visa_address": "sim::sg"},
-                "spectrum_analyzer": {"model": "SA", "visa_address": "sim::sa"},
-                "power_supply": {"model": "PS", "visa_address": "sim::ps"},
-            },
-            "dut_power_channels": [{"channel": "A", "role": "gate", "connection": "gate"}],
-            "driver_mode": {"enabled": False, "power_channels": []},
-        }
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            plan_path = root / "plan.json"
-            mapping_path = root / "mapping.json"
-            plan_path.write_text(json.dumps(plan), encoding="utf-8")
-            mapping_path.write_text(json.dumps(mapping), encoding="utf-8")
-            loaded = ConfigurationRepository().load_for_run(plan_path, mapping_path)
-            self.assertTrue(loaded.valid)
-            with patch("infrastructure.persistence.json_result_repository.TEST_RESULTS_DIR", root / "results"):
-                prepared = prepare_run(loaded, run_id="offline-run", software_version="test")
-            self.assertEqual(prepared.context.run_id, "offline-run")
-            self.assertEqual(prepared.context.power_channel_mapping["gate"], "gate")
-            self.assertTrue((prepared.run_directory / "run_mapping_snapshot.json").exists())
 
     def test_dut_protection_publishes_stop_and_does_not_raise_power(self):
         events = _Events()

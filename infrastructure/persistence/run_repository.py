@@ -22,7 +22,8 @@
 本实现是 ``application.ports.run_repository`` 协议端口的基础设施适配器：
 应用层的 ``application.run_service.create_run_snapshot`` 与
 ``app.run_context.create_prepared_run`` 通过该端口创建运行快照和读取配置。
-测量流程迁移到新运行目录属于后续步骤，当前 ``prepare_run`` 仍写兼容快照。
+测量链路只走 ``runs/<run_id>/`` 运行目录；旧的兼容快照写入入口（``prepare_run``）已在
+技术债步骤 6 删除。
 """
 
 from __future__ import annotations

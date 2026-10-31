@@ -28,9 +28,11 @@ opened so far are released in reverse order, then the ResourceManager, and the
 original assembly error is the one that reaches the caller — a failed cleanup is
 only logged.
 
-硬件模式的配置权威是**当前运行目录内冻结的硬件配置快照**：路径由
-:func:`app.gui_runtime.connect_instruments` 从运行契约解析并通过 manifest
-校验后传入，本模块不会接受其它来源的全局配置。
+硬件模式的配置权威是**当前运行目录内冻结的硬件配置快照**：生产调用只经
+:func:`app.gui_runtime.connect_instruments` 从运行契约解析并通过 manifest 校验后传入
+``hardware_config_path``。本模块**不做来源校验**：它只是接受一个配置路径的工厂，
+`instrument` 层纯装配单测与受控真机冒烟可以显式传入配置路径（见《无运行契约调用方清单》
+第 3.0 节第 2 条与第 5 节）；“只能用运行快照”这条约束由生产组合根与门禁保证，不由本模块保证。
 """
 
 from __future__ import annotations
@@ -82,10 +84,11 @@ def create_measurement_port(
 ):
     """Create a service port for hardware or offline simulation mode.
 
-    ``hardware_config_path`` 是**运行目录内冻结的硬件配置快照**
-    （``runs/<run_id>/inputs/hardware_config.json``）的路径，由唯一装配入口
-    :func:`app.gui_runtime.connect_instruments` 从当前运行契约解析并校验后传入；
-    本模块不接受“随手一份全局配置”作为硬件装配来源。仿真模式不打开任何 VISA
+    ``hardware_config_path`` 是硬件装配配置的路径：**生产调用**传入的是运行目录内冻结的
+    硬件配置快照（``runs/<run_id>/inputs/hardware_config.json``），由唯一装配入口
+    :func:`app.gui_runtime.connect_instruments` 从当前运行契约解析并校验后给出；
+    `instrument` 层纯装配单测与受控真机冒烟可以直接传入配置文件路径（清单第 3.0 节第 2 条
+    与第 5 节）。本模块不做来源校验，来源约束由组合根与门禁保证。仿真模式不打开任何 VISA
     资源，因此不需要该路径。
 
     Hardware construction owns the VISA manager and all resources through the

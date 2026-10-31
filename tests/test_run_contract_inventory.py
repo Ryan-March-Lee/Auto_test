@@ -165,13 +165,6 @@ NO_CONTRACT_SITES = (
         ("config_path: str | None = None",),
     ),
     (
-        # 仪器连接 worker 同理：prepared_run 是唯一输入，config_path 只服务旧快照。
-        "B23",
-        "presentation/qt/workers.py",
-        "InstrumentWorker",
-        ("config_path: str | None = None",),
-    ),
-    (
         "B16",
         "application/measurements/cable_loss.py",
         "CableLossUseCase",
@@ -207,6 +200,19 @@ NO_CONTRACT_SITES = (
 # 归属步骤：步骤 5 已完成（装配入口、仪器连接、配置路径回退、测量命令契约都已收敛），
 # 因此本表剩余条目全部属于步骤 6；再出现“步骤 5”条目说明收敛被回退。
 STEP_FIVE_SITES = ()
+
+# 第 4.1 节：随 B22 一起删除的遗留**签名参数**。它们不构成无契约回退，因此不进上面的
+# 统计，但仍按“符号 + 标记”冻结：删掉参数必须同步本节，避免悄悄消失。
+# 判定依据是行为而不是签名形状——`InstrumentWorker` 在调用连接入口前就
+# `require_prepared_run()` 拒绝了无契约运行，所以它的 `config_path` 传不进任何旧快照装配。
+LEGACY_SIGNATURE_SITES = (
+    (
+        "B23",
+        "presentation/qt/workers.py",
+        "InstrumentWorker",
+        ("config_path: str | None = None",),
+    ),
+)
 
 # 第 2.2 节：缺少运行契约的生产调用点（符号存在性 + 归属步骤 + 文档登记）。
 NO_CONTRACT_CALL_SITES = (
@@ -250,7 +256,8 @@ NO_CONTRACT_GUARD_BASELINE = {
         "none:hardware_config_path:is": 1,
         "none:run_repository:is": 1,
     },
-    # 硬件装配入口只接受运行快照路径：缺路径即失败，不再有“调用方配置路径”来源。
+    # 硬件装配入口的装配依据只有 hardware_config_path：缺路径即失败。工厂只按给定路径
+    # 装配、不校验来源（D15）；"只能用运行快照"由组合根与门禁保证。
     "instrument/measurement_factory.py": {"none:hardware_config_path:is": 1},
     # 连接仪器必须先有运行（无运行即失败），因此这里的 prepared_run 判据只剩一处。
     "presentation/qt/application_coordinator.py": {"none:prepared_run:is": 1},
@@ -613,12 +620,19 @@ class InventoryParityTests(unittest.TestCase):
                 self.assertIn(step, raw)
 
     def test_section_4_lists_exactly_the_frozen_branches(self):
-        rows = self._assert_parity("B", [site[0] for site in NO_CONTRACT_SITES], "第 4 节")
+        branches = [site[0] for site in NO_CONTRACT_SITES]
+        signatures = [site[0] for site in LEGACY_SIGNATURE_SITES]
+        rows = self._assert_parity("B", branches + signatures, "第 4 节")
         site_ids = {site[0] for site in NO_CONTRACT_SITES}
         self.assertEqual(
             sorted(set(STEP_FIVE_SITES) - site_ids),
             [],
             "步骤 5 条目已不在清单里，请同步 STEP_FIVE_SITES",
+        )
+        self.assertEqual(
+            sorted(site_ids & set(signatures)),
+            [],
+            "遗留签名参数不是无契约回退，不能同时登记进第 4 节的回退表",
         )
         for site_id, relative, symbol, _markers in NO_CONTRACT_SITES:
             with self.subTest(site=site_id):
@@ -627,6 +641,40 @@ class InventoryParityTests(unittest.TestCase):
                 self.assertIn(f"`{symbol}`", raw)
                 expected_step = "步骤 5" if site_id in STEP_FIVE_SITES else "步骤 6"
                 self.assertIn(expected_step, raw)
+        for site_id, relative, symbol, _markers in LEGACY_SIGNATURE_SITES:
+            with self.subTest(site=site_id):
+                raw = rows[site_id]
+                self.assertIn(f"`{relative}`", raw)
+                self.assertIn(f"`{symbol}`", raw)
+                self.assertIn("步骤 6", raw)
+                self.assertIn(
+                    "遗留签名",
+                    raw,
+                    f"{site_id} 不构成无契约回退，清单必须写明它是遗留签名参数",
+                )
+
+    def test_section_4_statistics_count_only_real_fallbacks(self):
+        """统计只数真正的回退：遗留签名参数单列，不参与无契约计数。"""
+        section = _section(self.document, SECTION_HEADINGS["B"])
+        # 去掉强调标记与所有空白，避免“**17 处**”或换行把数字和单位拆开导致假失败。
+        text = re.sub(r"\s+", "", "\n".join(section["lines"])).replace("**", "")
+        counted = len(NO_CONTRACT_SITES)
+        signatures = len(LEGACY_SIGNATURE_SITES)
+        self.assertIn(
+            f"{counted}处无契约分支/默认值",
+            text,
+            f"清单第 4 节的统计必须写清只有 {counted} 处真正的无契约回退",
+        )
+        self.assertIn(
+            f"{signatures}处遗留签名参数",
+            text,
+            f"清单第 4 节必须单列 {signatures} 处随 B22 删除的遗留签名参数",
+        )
+        self.assertNotIn(
+            f"{counted + signatures}处无契约分支/默认值",
+            text,
+            "遗留签名参数不是回退，不得并入无契约统计",
+        )
 
     def test_section_3_1_lists_exactly_the_frozen_test_call_sites(self):
         rows = self._assert_parity(
@@ -684,7 +732,10 @@ class NoContractSiteTests(unittest.TestCase):
 
     def test_documented_no_contract_sites_still_exist(self):
         missing = []
-        for site_id, relative, symbol, markers in NO_CONTRACT_SITES:
+        for site_id, relative, symbol, markers in (
+            *NO_CONTRACT_SITES,
+            *LEGACY_SIGNATURE_SITES,
+        ):
             with self.subTest(site=site_id):
                 path = ROOT / relative
                 if not path.is_file():
@@ -1017,6 +1068,44 @@ class ProductionContractTests(unittest.TestCase):
             "instrument.measurement_factory",
             imported,
             f"{relative} 应显式使用仪器工厂，声明它不经运行契约",
+        )
+
+    def test_only_the_composition_root_supplies_a_resolved_hardware_path(self):
+        """`resolved_config_path` 是解析结果的传递，不是第二个配置来源（D12）。
+
+        生产代码里只允许组合根的三个测量工厂传它，而且传的必须是本模块
+        :func:`_hardware_config_path` 刚解析出来的那个值（`effective_config_path`）；
+        其它模块一旦出现，就说明有人想绕过运行契约解析直接指定硬件配置。
+        """
+        found = {}
+        for path in _production_sources():
+            _text, tree = _tree(path)
+            keywords = [
+                keyword
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                for keyword in node.keywords
+                if keyword.arg == "resolved_config_path"
+            ]
+            if not keywords:
+                continue
+            found[_relative(path)] = len(keywords)
+            for keyword in keywords:
+                value = keyword.value
+                self.assertIsInstance(
+                    value,
+                    ast.Name,
+                    "resolved_config_path 必须直接传本次解析结果，不能就地另算一份",
+                )
+                self.assertEqual(
+                    value.id,
+                    "effective_config_path",
+                    "resolved_config_path 只接受 _hardware_config_path() 的解析结果",
+                )
+        self.assertEqual(
+            found,
+            {COMPOSITION_ROOT: len(MEASUREMENT_FACTORIES)},
+            "硬件配置路径只允许由组合根解析后传给连接入口；其它模块出现该参数即为绕过运行契约",
         )
 
     def test_connect_instruments_is_bound_to_the_prepared_run(self):

@@ -1,5 +1,12 @@
 """Data transfer objects crossing the application measurement boundary."""
 
+from .amplifier_inputs import (
+    AMPLIFIER_COMPRESSION_TARGETS_DB,
+    AmplifierInputError,
+    AmplifierMeasurementInputs,
+    PowerSweep,
+    SupplyChannel,
+)
 from .measurement_requests import (
     AmplifierMeasurementRequest,
     CableLossMeasurementRequest,
@@ -29,6 +36,11 @@ __all__ = [
     "CableLossMeasurementRequest",
     "DriverPowerMappingRequest",
     "AmplifierMeasurementRequest",
+    "AMPLIFIER_COMPRESSION_TARGETS_DB",
+    "AmplifierInputError",
+    "AmplifierMeasurementInputs",
+    "PowerSweep",
+    "SupplyChannel",
     "ExportFormat",
     "ExportOutcome",
     "ExportRequest",

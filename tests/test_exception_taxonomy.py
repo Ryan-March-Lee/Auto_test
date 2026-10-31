@@ -30,6 +30,7 @@ from application.errors import (
     cause_of,
 )
 from application.export_service import ExportRequestError
+from application.dto import AmplifierInputError
 from application.measurements import AmplifierCalibrationError
 from application.ports.measurement_session import (
     CleanupRecord,
@@ -113,6 +114,7 @@ class ExistingErrorClassificationTests(unittest.TestCase):
     def test_application_and_presentation_errors_are_classified(self):
         for error_type in (
             AmplifierCalibrationError,
+            AmplifierInputError,
             StageInputUnavailable,
             RunNotResumable,
             ConfigurationAuthoringError,

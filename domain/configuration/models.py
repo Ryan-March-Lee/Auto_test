@@ -380,6 +380,13 @@ def validate_test_plan(plan: Union[TestPlan, Mapping[str, Any]]) -> ConfigValida
     error = lambda path, message: errors.append(ConfigIssue("error", path, message))
 
     _validate_version(plan.schema_version, "schema_version", error)
+    for field_name, value, expected in (
+        ("frequencies.unit", plan.frequency_unit, "GHz"),
+        ("signal_source.unit", plan.power_unit, "dBm"),
+        ("attenuator.unit", plan.attenuator_unit, "dB"),
+    ):
+        if value != expected:
+            error(field_name, f"当前仅支持 {expected}，收到 {value!r}")
     if not isinstance(plan.template, bool):
         error("template", "必须是布尔值")
     if plan.template:

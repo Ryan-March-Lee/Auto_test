@@ -171,7 +171,8 @@
 
 | 模块 | 正式公开名称 | 说明 |
 | --- | --- | --- |
-| `application.dto` | `MeasurementRequest`、`CableLossMeasurementRequest`、`DriverPowerMappingRequest`、`AmplifierMeasurementRequest`、`ExportFormat`、`ExportOutcome`、`ExportRequest`、`MeasurementResult`、`MeasurementStatus`、`MeasurementType`、`CableLossMeasurementResult`、`DriverPowerMappingMeasurementResult`、`AmplifierMeasurementResult`、`CableLossRow`、`DriverPowerPoint`、`AmplifierCompressionPoint`、`AmplifierFrequencyResult`、`measurement_result_from_document`、`measurement_type_for_result_type`、`require_formal_result`、`normalize_frequency_key` | DTO 汇总再导出路径；旧兼容导出已在步骤 6 删除 |
+| `application.dto` | `MeasurementRequest`、`CableLossMeasurementRequest`、`DriverPowerMappingRequest`、`AmplifierMeasurementRequest`、`AMPLIFIER_COMPRESSION_TARGETS_DB`、`AmplifierInputError`、`AmplifierMeasurementInputs`、`PowerSweep`、`SupplyChannel`、`ExportFormat`、`ExportOutcome`、`ExportRequest`、`MeasurementResult`、`MeasurementStatus`、`MeasurementType`、`CableLossMeasurementResult`、`DriverPowerMappingMeasurementResult`、`AmplifierMeasurementResult`、`CableLossRow`、`DriverPowerPoint`、`AmplifierCompressionPoint`、`AmplifierFrequencyResult`、`measurement_result_from_document`、`measurement_type_for_result_type`、`require_formal_result`、`normalize_frequency_key` | DTO 汇总再导出路径；旧兼容导出已在步骤 6 删除 |
+| `application.dto.amplifier_inputs` | `AMPLIFIER_COMPRESSION_TARGETS_DB`、`AmplifierInputError`、`AmplifierMeasurementInputs`、`PowerSweep`、`SupplyChannel` | 主功放用例的正式输入模型（技术债步骤 7）：频率、功率扫描、压缩目标、衰减器、DUT 输入限制、驱动模式与 DUT 供电通道；字段均为显式值对象（GHz/dB/dBm 由类型表达），构造即校验，非法输入抛 `AmplifierInputError`（配置失败）；不复刻旧配置字典键名，不含仪器地址、运行标识或校准输入 |
 | `application.dto.export_requests` | `ExportFormat`、`ExportRequest`、`ExportOutcome` | 导出请求与结构化结果：格式为 JSON / CSV / 测试报告；JSON、CSV 必须带目标文件，报告位置由导出端口决定；`ExportOutcome` 只含 `result_id`、`format`、`filename`、`artifact_path`，不含界面文案 |
 | `application.dto.measurement_requests` | `MeasurementRequest`、`CableLossMeasurementRequest`、`DriverPowerMappingRequest`、`AmplifierMeasurementRequest` | 测量请求 |
 | `application.dto.measurement_results` | `MeasurementResult`、`MeasurementStatus`、`MeasurementType`、`CableLossMeasurementResult`、`DriverPowerMappingMeasurementResult`、`AmplifierMeasurementResult`、`measurement_result_from_document`、`measurement_type_for_result_type`、`require_formal_result` | 三类正式测量结果、显式行视图、结果文档唯一解析入口与正式结果断言 |
@@ -192,6 +193,27 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
   已经是正式结果 DTO；原始 JSON 只通过 `read_bytes()` 逐字节导出。
 - 实时事件的 `RealtimeDataEvent.data` / `controller` 的 `data_update` 是界面刷新用的临时
   事件载荷，不是结果模型：它们不进 manifest、不落盘，也不参与历史查看或报告生成。
+
+主功放测量的**正式输入**是 `application.dto.amplifier_inputs`（技术债步骤 7）：
+
+- `AmplifierMeasurementInputs` 只有七个必填字段：`frequencies`（`Frequency`，内部 GHz）、
+  `sweep`（`PowerSweep`：起始/终止 `PowerDbm` + 步进 `Decibels`）、`compression_target`
+  （`Decibels`，只接受 `AMPLIFIER_COMPRESSION_TARGETS_DB`，其值由测试方案 schema 的
+  `SUPPORTED_COMPRESSION_POINTS` 同源解析）、`attenuator`（`Decibels`，非负）、
+  `max_dut_input_power`（`PowerDbm`，必填，不再默认“不限制”）、`driver_enabled`（严格
+  布尔）与 `dut_power_channels`（`SupplyChannel` 序列，非空且不重复）。
+- 单位只由值对象表达：不接受裸数值、“30dBm”这类文本，也不接受把步进当成绝对功率。
+- `PowerSweep.points()` 将 `stop` 定义为扫描上限：步进不能整除区间时只返回不超过
+  上限的网格点，不生成越过终点的点；应用服务迁移到该模型后必须使用此语义。
+- 配置文件边界目前只接受 `frequencies.unit=GHz`、`signal_source.unit=dBm` 和
+  `attenuator.unit=dB`；不支持的单位在配置校验阶段拒绝，不作静默换算。供电 `supply_id`
+  是否存在于本次运行资源映射由运行配置/应用边界校验，DTO 本身不携带设备地址或设备对象。
+- `SupplyChannel` 只接受显式路由（`supply_id` + `channel`，或经 `from_routing()` 解析
+  `"<supply_id>/<channel>"`）；裸通道名 `CH1` 不被猜成“唯一那台电源”，按单电源假设的
+  历史兼容留给步骤 10 单独收敛。`dut_supplies()` 提供按电源分组的只读投影。
+- 非法输入统一抛 `AmplifierInputError`（`ConfigurationError` 子类，配置失败），在打开任何
+  设备之前失败；模型不做文件读取、不接触仪器、不生成结果文档，仪器地址与传输对象仍由
+  instrument 端口/运行上下文提供。
 
 ## 5. 正式内部模块
 

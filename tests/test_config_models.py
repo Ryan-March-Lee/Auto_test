@@ -134,6 +134,14 @@ class ConfigModelTests(unittest.TestCase):
         self.assertTrue(result.valid, result.errors)
         self.assertNotEqual(plan.dut_power_channels["gate"].voltage, plan.dut_power_channels["drain"].voltage)
 
+    def test_plan_rejects_unsupported_units_instead_of_assuming_canonical_units(self):
+        for section, unit in (("frequencies", "MHz"), ("signal_source", "W"), ("attenuator", "dBm")):
+            with self.subTest(section=section, unit=unit):
+                plan = complete_plan()
+                plan[section]["unit"] = unit
+                result = validate_test_plan(plan)
+                self.assertIn(section + ".unit", {issue.path for issue in result.errors})
+
     def test_empty_frequency_list_is_invalid(self):
         config = complete_plan()
         config["frequencies"]["values"] = []

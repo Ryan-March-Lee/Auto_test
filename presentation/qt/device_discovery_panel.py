@@ -24,8 +24,9 @@
 一大段空白），点下去之后换成“正在查找设备”，结果回来后再换成卡片。
 **结果区的高度是固定的**（两行卡片 + 按钮与状态行）：查找前后、结果多少都不改变它的
 大小，卡片超出时只在结果区里滚动。卡片区本身只占实际行数（最多两行）那么高，
-统计/失败说明紧跟在卡片下面并横向居中，“返回”再排在它下面；固定高度多出来的
-那一截留在按钮下方，不会把状态行顶到离卡片很远的地方。
+统计/失败说明紧跟在卡片下面并横向居中，动作行再排在它下面（“返回”在左，页面级动作
+如“连接仪器”在右，由页面通过 :meth:`DeviceDiscoveryPanel.add_action_widget` 加进同一行）；
+固定高度多出来的那一截留在动作行下方，不会把状态行顶到离卡片很远的地方。
 
 结果区**不是抽屉**：结果回来就留在那里，没有“收起 / 查看结果”的来回切换。要重新查找时
 按“返回”（:meth:`DeviceDiscoveryPanel.request_back`）：清空本次结果与勾选，结果区顶部
@@ -474,12 +475,16 @@ class DeviceDiscoveryPanel(QWidget):
         self.cards_area.setWidget(self.cards_host)
         self.cards_area.setVisible(False)
         box.addWidget(self.cards_area)
-        # 结果统计 / 失败原因紧跟在卡片下面，横向居中；“返回”留在它下面。
+        # 结果统计 / 失败原因紧跟在卡片下面，横向居中；动作行留在它下面：
+        # “返回”在左，页面级动作（如“连接仪器”）由页面加进这一行的右端。
         # 结果区高度固定（按两行卡片算），卡片只有一行时多出来的高度落到最下面，
         # 不再把这句话和按钮顶到结果区底部、离卡片很远。
         box.addWidget(self.status_label)
 
-        actions = QHBoxLayout()
+        self.actions_row = QWidget(self.results_box)
+        self.actions_row.setObjectName("discoveryActionsRow")
+        actions = QHBoxLayout(self.actions_row)
+        actions.setContentsMargins(0, 0, 0, 0)
         actions.setSpacing(10)
         self.back_btn = QPushButton("返回")
         self.back_btn.setToolTip("清空本次查找的结果与勾选，回到扫描行下面的“查找设备”")
@@ -487,8 +492,11 @@ class DeviceDiscoveryPanel(QWidget):
         self.back_btn.setVisible(False)
         actions.addWidget(self.back_btn)
         actions.addStretch(1)
+        # 页面之后追加的动作按顺序落在右端；高度计算要把它们一并算进去。
+        self.action_layout = actions
+        self._action_widgets: list[QWidget] = [self.back_btn]
         # 返回只对结果有效，跟在状态行下面。
-        box.addLayout(actions)
+        box.addWidget(self.actions_row)
         # 固定高度里多出来的那一截留在按钮下面：卡片、状态行与按钮整组贴着结果区上沿，
         # 中间不再出现一大段空白。
         box.addStretch(1)
@@ -505,24 +513,39 @@ class DeviceDiscoveryPanel(QWidget):
     # ---------- 结果区状态 ----------
 
     def _results_box_height(self, rows: int = _RESULTS_BOX_ROWS) -> int:
-        """结果区的固定高度：``rows`` 行卡片 + 里面的按钮行与状态行。
+        """结果区的固定高度：``rows`` 行卡片 + 里面的动作行与状态行。
 
         高度只由卡片尺寸与内部控件算出来，跟状态（未查找 / 正在查找 / 有结果）和结果
         数量都无关：点一次“查找设备”不会让它变大或变小，页面也就不会跟着跳一下。
-        设备多到超过这个高度时，卡片区在里面滚动。
+        设备多到超过这个高度时，卡片区在里面滚动。动作行按其中最高的按钮计算，所以
+        页面把“连接仪器”加进同一行时不会把它挤出结果区。
         """
         layout = self.results_box.layout()
         if layout is None:
             return 0
         margins = layout.contentsMargins()
+        action_row_height = max(
+            (widget.sizeHint().height() for widget in self._action_widgets),
+            default=0,
+        )
         chrome = (
             margins.top()
             + margins.bottom()
-            + self.back_btn.sizeHint().height()
+            + action_row_height
             + self.status_label.sizeHint().height()
             + 2 * layout.spacing()
         )
         return chrome + rows * CARD_HEIGHT + (rows - 1) * _CARDS_SPACING
+
+    def add_action_widget(self, widget: QWidget) -> None:
+        """把一个页面级动作放到“返回”同一行的右端，并重算结果区固定高度。
+
+        面板只提供版面：动作由页面创建与接线（例如连接页的“连接仪器”），面板不认识
+        它的语义，也不替它发信号。
+        """
+        self.action_layout.addWidget(widget)
+        self._action_widgets.append(widget)
+        self.results_box.setFixedHeight(self._results_box_height())
 
     def box_state(self) -> str:
         """结果区当前状态：``idle``（还没查找）/ ``busy``（正在查找）/ ``results``（有结果）。"""
@@ -584,7 +607,7 @@ class DeviceDiscoveryPanel(QWidget):
 
         Qt 在焦点控件被隐藏时会把焦点交给下一个可聚焦控件，外层滚动区（仪表配置页
         的滚动区）再滚过去让人看见它：点一次“查找设备”，卡片一收走，焦点就落到
-        结果区下面的“连接仪器”，整页向上滚一截，扫描行（扫描网段 / 扫描方式）也就
+        结果区动作行里的“连接仪器”，整页向上滚一截，扫描行（扫描网段 / 扫描方式）也就
         不在点之前的位置了。面板自己就在原处，先把焦点交给它，滚动区不必移动，
         扫描行因此始终留在原处。键盘用户之后照常按 Tab 继续走。
         """

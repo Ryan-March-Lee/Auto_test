@@ -12,8 +12,8 @@
 上留白多留一些（见 :meth:`ConnectionPage._build_ui`），整组因此落在页面中线略偏下。
 这块区域不画外框（没有边框、没有底色），仪器卡片直接
 落在页面背景上；“查找设备”是一张落在结果区顶部、紧跟在扫描行下面的卡片按钮，点下去
-之后按钮收走、开始加载设备。“连接仪器”放在区域右下方，点它仍然走
-配置页的连接入口（:meth:`presentation.qt.config_page.ConfigPage.request_connect`
+之后按钮收走、开始加载设备。“连接仪器”和结果区左下角的“返回”同一行，落在这一行的
+右端，点它仍然走配置页的连接入口（:meth:`presentation.qt.config_page.ConfigPage.request_connect`
 校验后发 ``connect_requested``，由窗口连仪器）。
 
 “下一步”先把本次勾选的设备写入配置（整批替换），再切到仪器配置页；配置文件仍随
@@ -54,7 +54,7 @@ ACTION_HINT = "点“下一步”会把本次勾选的设备写入配置，并�
 class ConnectionPage(QWidget):
     """仪表配置页：整屏页面，不登记进标签栏。
 
-    页面持有大字号标题、设备发现面板、右下方的“连接仪器”，以及两个页面级动作
+    页面持有大字号标题、设备发现面板、结果区动作行里的“连接仪器”，以及两个页面级动作
     （返回欢迎页、下一步）；设备绑定的写入与派生界面状态由配置页负责，本页把它当成
     窄接口使用。
     """
@@ -94,9 +94,10 @@ class ConnectionPage(QWidget):
         column.setContentsMargins(16, 0, 16, 0)
         column.setSpacing(12)
 
-        # 整页只有标题、扫描行、结果区与“连接仪器”四块。多出来的高度按 2:1 分给
-        # 上下留白（不是对半分）：这一组控件因此落在页面中线略偏下的位置，标题不贴
-        # 视口上沿。窗口变矮时只会压缩这两段留白，不会多出滚动条。
+        # 整页只有标题、扫描行与结果区三块：“连接仪器”加进结果区动作行，和“返回”
+        # 同一行。多出来的高度按 2:1 分给上下留白（不是对半分）：这一组控件因此落在
+        # 页面中线略偏下的位置，标题不贴视口上沿。窗口变矮时只会压缩这两段留白，
+        # 不会多出滚动条。
         column.addStretch(2)
         self.title_label = QLabel(PAGE_TITLE)
         self.title_label.setObjectName("connectionPageTitle")
@@ -113,25 +114,19 @@ class ConnectionPage(QWidget):
             parent=self,
         )
         column.addWidget(self.discovery_panel)
-        # 结果区外面只剩一个动作：连接仪器放在它的右下方。
-        column.addWidget(self._build_connect_row())
+        # “连接仪器”放进结果区动作行，和“返回”同一行、落在行的右端。
+        self.discovery_panel.add_action_widget(self._build_connect_button())
         column.addStretch(1)
         scroll.setWidget(content)
         root.addWidget(scroll, 1)
         root.addWidget(self._build_action_bar())
 
-    def _build_connect_row(self) -> QWidget:
-        """结果区外的一行：只放“连接仪器”，右对齐在结果区下面。"""
-        row = QWidget()
-        layout = QHBoxLayout(row)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
-        layout.addStretch(1)
+    def _build_connect_button(self) -> QPushButton:
+        """结果区动作行右端的“连接仪器”：与“返回”同一行。"""
         self.connect_btn = QPushButton("连接仪器")
         self.connect_btn.setToolTip("连接本次运行冻结的仪器（地址与身份来自创建运行时的设备绑定）")
         set_button_variant(self.connect_btn, "primary")
-        layout.addWidget(self.connect_btn)
-        return row
+        return self.connect_btn
 
     def _build_action_bar(self) -> QWidget:
         """页面底部固定操作栏：返回欢迎页，或进入测试参数配置。"""

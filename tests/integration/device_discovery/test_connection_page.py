@@ -206,7 +206,7 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
         """窗口矮到页面可以滚动时，点“查找设备”也不能把扫描行推走。
 
         Qt 会在焦点控件被禁用或隐藏时把焦点交给下一个可聚焦控件，外层滚动区再滚到
-        它那里：卡片一收走，焦点落到结果区下面的“连接仪器”，整页向上滚，扫描行
+        它那里：卡片一收走，焦点落到结果区动作行里的“连接仪器”，整页向上滚，扫描行
         （扫描网段 / 扫描方式）就离开了点之前的位置。以点击之前的位置为准。
         """
         self.make_page()
@@ -235,8 +235,8 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
         self.assertEqual(row_position(), before, "结果回来后扫描行仍在原处")
         self.assertEqual(bar.value(), 0, "结果回来不能滚动页面")
 
-    def test_connect_button_sits_outside_the_results_area(self):
-        """“连接仪器”在结果区外面（右下方）：点它先走配置页的连接入口。"""
+    def test_connect_button_shares_the_back_row(self):
+        """“连接仪器”和“返回”同一行、落在右端：点它先走配置页的连接入口。"""
         page = self.make_page()
         failures = []
         requested = []
@@ -244,10 +244,30 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
         page.connect_requested.connect(lambda: requested.append(True))
 
         button = self.connection.connect_btn
+        panel = self.connection.discovery_panel
         self.assertEqual(button.text(), "连接仪器")
-        self.assertFalse(
-            self.connection.discovery_panel.results_box.isAncestorOf(button),
-            "连接仪器应放在结果区外面",
+        self.assertIs(
+            button.parentWidget(),
+            panel.back_btn.parentWidget(),
+            "连接仪器要与返回放在同一行",
+        )
+        # 有结果时“返回”才可见，两个按钮的几何位置也才有意义。
+        panel.request_scan()
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+        self.assertTrue(panel.back_btn.isVisible())
+        connect_centre = button.mapTo(
+            self.connection, button.rect().center()
+        )
+        back_centre = panel.back_btn.mapTo(
+            self.connection, panel.back_btn.rect().center()
+        )
+        self.assertAlmostEqual(
+            connect_centre.y(), back_centre.y(), delta=2, msg="两个按钮同一条水平线"
+        )
+        self.assertGreater(
+            connect_centre.x(), back_centre.x(), "连接仪器落在这一行的右端"
         )
 
         button.click()

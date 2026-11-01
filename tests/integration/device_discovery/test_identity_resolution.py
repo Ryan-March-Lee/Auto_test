@@ -127,7 +127,7 @@ class DeviceHeadingTests(unittest.TestCase):
 
         self.assertEqual(device_heading(signal), "SMW200A（5462，信号发生器）")
         self.assertEqual(card_heading(signal), "SMW200A（5462）")
-        # 卡片第一行只写仪器名（型号），图片挑选也按型号来。
+        # 卡片最下面一行写仪器型号，图片挑选也按型号来。
         self.assertEqual(card_model(signal), "SMW200A")
 
 
@@ -148,15 +148,25 @@ class DeviceCardContentTests(unittest.TestCase):
         values.update(overrides)
         return DiscoveredDevice(**values)
 
-    def test_device_code_uses_role_model_and_full_code(self):
+    def test_device_code_writes_the_frozen_short_code_only(self):
+        """设备表登记过缩写码：卡片第一行就是它，不拼型号、不加角色前缀。"""
+        device = self.device(known_label="5462")
+
+        code, detail = device_code(device)
+
+        self.assertEqual(code, "5462")
+        # 附注只写连接细节：缩写码在卡片正面，不在提示里重复。
+        self.assertEqual(detail, "地址 TCPIP0::10.0.0.2::inst0::INSTR")
+
+    def test_device_code_falls_back_to_the_full_code_without_a_label(self):
+        """还没有缩写码：退回完整设备码，不凭空造缩写码，也不拼型号。"""
         code, detail = device_code(self.device())
 
-        self.assertEqual(code, "SG/SMW200A/105462")
-        # 附注只写连接细节：身份码在卡片正面，不在提示里重复。
+        self.assertEqual(code, "105462")
         self.assertEqual(detail, "地址 TCPIP0::10.0.0.2::inst0::INSTR")
 
     def test_power_supply_code_is_its_short_code(self):
-        """电源的身份码就是注册表缩写设备码（= ``supply_id``），不是 ``PS/型号/完整设备码``。"""
+        """电源的缩写码就是注册表冻结的那一个（= ``supply_id``），不是 ``PS/型号/完整设备码``。"""
         supply = self.device(
             identity=InstrumentIdentity.from_idn(DP832A_IDN),
             idn=DP832A_IDN,
@@ -170,7 +180,7 @@ class DeviceCardContentTests(unittest.TestCase):
         self.assertEqual(code, "DP8B1519")
         self.assertIn("TCPIP0::10.0.0.2::inst0::INSTR", detail)
 
-    def test_power_supply_and_spectrum_analyzer_have_their_own_prefixes(self):
+    def test_without_a_label_every_kind_falls_back_to_its_full_code(self):
         supply = self.device(
             identity=InstrumentIdentity.from_idn(DP832A_IDN),
             idn=DP832A_IDN,
@@ -184,15 +194,15 @@ class DeviceCardContentTests(unittest.TestCase):
             registered=True,
         )
 
-        self.assertEqual(device_code(supply)[0], "PS/DP832A/DP8B214901519")
-        self.assertEqual(device_code(spectrum)[0], "SA/4082F/QZNI000866")
-        # 旧设备表还没有标签：退回旧写法，绝不凭空造一个像短标签的字符串。
+        self.assertEqual(device_code(supply)[0], "DP8B214901519")
+        self.assertEqual(device_code(spectrum)[0], "QZNI000866")
+        # 旧设备表还没有标签：退回完整设备码，绝不凭空造一个像短标签的字符串。
         self.assertIsNone(supply.label)
 
-    def test_unregistered_device_falls_back_to_the_unknown_role_code(self):
+    def test_unregistered_device_falls_back_to_its_full_code(self):
         device = self.device(registered=False, known_role=None)
 
-        self.assertEqual(device_code(device)[0], "NA/SMW200A/105462")
+        self.assertEqual(device_code(device)[0], "105462")
 
     def test_unidentified_address_gets_a_visitor_number_instead_of_a_code(self):
         device = self.device(

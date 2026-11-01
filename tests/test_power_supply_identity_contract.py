@@ -112,8 +112,8 @@ _SLOT_NAME = re.compile(r"^PS\d+$")
 # 引用即依赖的旧槽位常量。
 _SLOT_CONSTANTS = ("POWER_SUPPLY_SLOTS", "LEGACY_ROLES")
 # 拿来拼槽位名的模板（``PS``、``PS1``、``PS%s``、``PS{}``……）：本身不一定是槽位名，但按序号
-# 填进去就变成了固定槽位依赖。单独的 ``PS`` 只有在这种“拼”的上下文里才算，因为设备码徽标
-# （``presentation/qt/device_cards.py`` 返回的 ``"PS"``）是普通字符串常量，不参与拼接。
+# 填进去就变成了固定槽位依赖。单独的 ``PS`` 只有在这种“拼”的上下文里才算：它本身只是类别
+# 缩写，不是“第几台”。
 _SLOT_TEMPLATE = re.compile(r"^PS(?:\d*|[{:%.].*)$", re.IGNORECASE | re.DOTALL)
 
 

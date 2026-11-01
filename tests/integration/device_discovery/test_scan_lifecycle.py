@@ -62,8 +62,8 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
 
         heading = "未知设备 (N9020A)"
         card = panel.card_for(heading)
-        # 缩减版设备码：角色缩写 / 型号 / 序列号；第一行只写仪器名（型号）。
-        self.assertEqual(card.code_label.text(), "NA/N9020A/MY51234567")
+        # 第一行只写缩写码：未登记设备没有缩写码，退回完整设备码；最下面一行写仪器型号。
+        self.assertEqual(card.code_label.text(), "MY51234567")
         self.assertEqual(card.name_label.text(), "N9020A")
         tip = panel.card_tooltip(heading)
         self.assertIn("N9020A / Keysight Technologies", tip)
@@ -90,7 +90,7 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
 
         self.assertEqual(panel.card_count(), 1)
         card = panel.card_for("SMW200A（105462）")
-        self.assertEqual(card.code_label.text(), "NA/SMW200A/105462")
+        self.assertEqual(card.code_label.text(), "105462")
         self.assertEqual(panel.card_status("SMW200A（105462）"), "未分配角色 · 不能应用")
         self.assertFalse(card.checkable)
         panel.set_card_checked("SMW200A（105462）", True)
@@ -120,9 +120,9 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
 
         card = panel.card_for("SMW200A（105462）")
         self.assertTrue(card.image.has_picture(), "信号源卡片应显示仪器图片")
-        # 第一行只写仪器名（型号），不再带资产名里的 ``-1``。
+        # 第一行只写缩写码：设备表还没有缩写码，退回完整设备码；最下面一行写型号。
         self.assertEqual(card.name_label.text(), "SMW200A")
-        self.assertEqual(card.code_label.text(), "SG/SMW200A/105462")
+        self.assertEqual(card.code_label.text(), "105462")
 
     def test_selecting_a_card_is_enough_without_choosing_a_role(self):
         """角色来自设备表：点击卡片即选中并应用，不会出现“未选择测试角色”。"""

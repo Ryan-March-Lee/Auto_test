@@ -2,14 +2,14 @@
 
 卡片结构（自上而下）：
 
-- 仪器名（如 ``DP832A``、``SMW200A``）：第一行，居中放大——卡片里最先读到的就是
-  “这是哪台型号”；
+- 设备码缩写：第一行，加粗放大的等宽字，只写缩写设备码本身（如 ``DP8B1519``、
+  ``5462``；设备表还没有缩写码时退回完整设备码，见 :func:`device_code`），现场对机时
+  一眼看清——卡片里最先读到的是“这是哪一台”；
 - 图片区：仪器实拍图直接摆在本色卡片上（不加底板、不描边）。照片的留白各不相同
   （有的图仪器几乎顶到边，有的只占六成），所以缩放的对象是**仪器主体的包围盒**而不是
   整张画布：先找出主体边界，再把这一块等比放进图片区（不裁切仪器），几张图的“视觉
   体积”因此对齐；
-- 设备码缩写：最下面一行，加粗放大的等宽字（``SG/SMW200A/105462``；电源用注册表短标签
-  ``DP8B1519``，见 :func:`device_code`），现场对机时一眼看清。
+- 仪器型号（如 ``DP832A``、``SMW200A``）：最下面一行，作为卡片底部的型号说明。
 
 卡片只负责显示与选中状态，不知道扫描结果的数据结构：选择、应用与校验仍由
 :class:`presentation.qt.device_discovery_panel.DeviceDiscoveryPanel` 负责。
@@ -57,8 +57,8 @@ INSTRUMENT_PICTURE_DIR = (
 # （:mod:`presentation.qt.scan_card`）也取这一份尺寸，所以按钮始终和仪器卡片一样大；
 # 要改卡片大小只改这里。
 CARD_WIDTH = 190
-#: 卡片高度按三行内容算：放大的仪器名 + 图片 + 两行设备码，另留一行状态说明的位置。
-CARD_HEIGHT = 214
+#: 卡片高度按“设备码 + 图片 + 型号”三行内容算，另留状态说明与行间留白的位置。
+CARD_HEIGHT = 240
 _PICTURE_HEIGHT = 104
 #: 图片不描边、不垫底板，只留一点内缩，让照片不贴到卡片边上。
 _PICTURE_MARGIN = 4
@@ -111,16 +111,6 @@ def instrument_picture_path(role: str = "", model: str = "") -> Path | None:
     return None
 
 
-def _device_code_role(role: str, is_power_supply: bool) -> str:
-    if is_power_supply or role == "power_supply":
-        return "PS"
-    if role == "signal_generator":
-        return "SG"
-    if role == "spectrum_analyzer":
-        return "SA"
-    return "NA"
-
-
 def _falls_back_to_device_name(device: Any) -> bool:
     """显示名是不是“读不出身份”时的兜底文本（``未知设备 (型号)`` / ``<ip>:<port>``）。"""
     name = str(getattr(device, "display_name", "") or "")
@@ -130,33 +120,30 @@ def _falls_back_to_device_name(device: Any) -> bool:
 
 
 def device_code(device: Any, visitor_index: int = 0) -> tuple[str, str]:
-    """返回 ``(卡片正面的身份码, 悬浮提示里的连接附注)``。
+    """返回 ``(卡片第一行的缩写码, 悬浮提示里的连接附注)``。
 
-    身份码按设备类别取：
+    第一行只写缩写设备码——现场核对实物的那一个字符串，不拼型号、也不加角色前缀：
 
-    - **电源**：注册表冻结的缩写设备码（``DP8B1519``，同时是配置里的 ``supply_id``）。缩写码
-      就是现场核对实物用的名字，因此不再拼 ``PS/型号/完整设备码``——那个写法看起来像槽位
-      编号，而电源没有“第几台”。旧设备表还没有缩写码时退回完整设备码的旧写法，不生成缩写码；
-    - **其它仪器**：``角色缩写/型号/完整设备码``（如 ``SG/SMW200A/105462``）；
+    - **设备表登记过缩写码**：原样写 ``DP8B1519``（电源的缩写码同时是配置里的
+      ``supply_id``）、``5462``；
+    - **还没有缩写码**（旧设备表还没保存过、未登记设备）：退回完整设备码
+      （``DP8B214901519`` / ``MY51234567``）。发现过程绝不生成缩写码——凭空造一个看起来
+      像缩写字、却和配置里的引用对不上的字符串，比显示完整设备码更糟；
     - **读不出身份**：``未识别 #n``（``visitor_index`` 由面板分配，同一台设备两次刷新拿到
       同一个号）。
 
-    附注只写连接细节（地址、探测端口），不重复身份码：身份由卡片标题与悬浮提示里的身份文本
-    表达，IP 只是本次可达的连接信息，不占卡片正面的文字行。
+    型号写在卡片最下面一行（由调用方单独传入），因此缩写码里不再重复型号。
+
+    附注只写连接细节（地址、探测端口），不重复缩写码：身份由悬浮提示里的身份文本表达，
+    IP 只是本次可达的连接信息，不占卡片正面的文字行。
     """
     identity = getattr(device, "identity", None)
-    role = str(getattr(device, "known_role", "") or "")
     if identity is None:
         return f"未识别 #{max(1, int(visitor_index or 0))}", ""
     model = str(getattr(identity, "model", "") or "").strip()
     full_code = str(getattr(identity, "full_code", "") or "").strip()
-    is_supply = bool(getattr(device, "is_power_supply", False))
     label = str(getattr(device, "label", "") or "").strip()
-    if is_supply and label:
-        code = label
-    else:
-        parts = [part for part in (model, full_code) if part]
-        code = "/".join([_device_code_role(role, is_supply), *parts])
+    code = label or full_code or model
     detail: list[str] = []
     address = str(getattr(device, "visa_address", "") or "").strip()
     if not address:
@@ -362,7 +349,7 @@ class InstrumentImage(QWidget):
 class _ElidedLabel(QLabel):
     """单行标签：放不下时右侧省略，``text()`` 仍返回完整文字。
 
-    卡片只有 178px 宽，``未知设备 (N9020A)`` 这类名字放不下时直接裁掉看起来像排版错误；
+    卡片只有 170px 宽，``未知设备 (N9020A)`` 这类名字放不下时直接裁掉看起来像排版错误；
     省略号既保持卡片整齐，又不丢信息（完整内容见悬浮提示）。
     """
 
@@ -381,7 +368,7 @@ class _ElidedLabel(QLabel):
 
 
 class InstrumentCard(QFrame):
-    """一张设备卡片：居中放大的仪器名在上，图片其次，最下面是加粗的设备码缩写。
+    """一张设备卡片：第一行是加粗的设备码缩写，图片其次，最下面是居中的仪器型号。
 
     卡片是可选控件：可以勾选的选择显示为“点击切换选中”的整块卡片（``checkable=True``），
     不能应用的设备（无法识别、未登记、未分配角色）只显示带警示色的状态说明，不可选中。
@@ -420,15 +407,19 @@ class InstrumentCard(QFrame):
             self.setToolTip(tooltip)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(4)
+        # 上下留白比左右多一点：第一行设备码不贴卡片上沿，卡片上部因此不显得挤。
+        layout.setContentsMargins(10, 12, 10, 10)
+        layout.setSpacing(8)
 
-        # 第一行：仪器名（型号），居中放大——“这是哪台”比照片先被读到。
-        self.name_label = _ElidedLabel(name, self)
-        self.name_label.setObjectName("instrumentCardName")
-        self.name_label.setAlignment(Qt.AlignCenter)
-        self.name_label.setTextInteractionFlags(Qt.NoTextInteraction)
-        layout.addWidget(self.name_label)
+        # 第一行：缩写设备码——只写码本身（型号在最下面一行），现场对机时一眼看清。
+        self.code_label = QLabel(code, self)
+        self.code_label.setObjectName("instrumentCardCode")
+        self.code_label.setMargin(2)
+        # 设备码整段都要能读到：允许折成两行，而不是截断；单行时在两行高度里居中。
+        self.code_label.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
+        self.code_label.setWordWrap(True)
+        self.code_label.setFixedHeight(_CODE_LABEL_HEIGHT)
+        layout.addWidget(self.code_label)
 
         # 第二行：仪器图，直接贴在卡片本色上。
         self.image = InstrumentImage(self)
@@ -436,7 +427,7 @@ class InstrumentCard(QFrame):
         self.image.set_picture(picture)
         layout.addWidget(self.image)
 
-        # 状态说明（不能应用的原因）紧跟在图片下：最下面一行留给设备码。
+        # 状态说明（不能应用的原因）紧跟在图片下：最下面一行留给型号。
         # 状态说明始终存在（可应用的卡片文字为空）：卡片等高，状态出现/消失不会跳动。
         self.status_label = QLabel(status_text, self)
         self.status_label.setObjectName("instrumentCardStatus")
@@ -447,15 +438,12 @@ class InstrumentCard(QFrame):
 
         layout.addStretch(1)
 
-        # 最下面一行：设备码缩写——加粗放大，现场对机时一眼看清。
-        self.code_label = QLabel(code, self)
-        self.code_label.setObjectName("instrumentCardCode")
-        self.code_label.setMargin(2)
-        # 设备码整段都要能读到：允许折成两行，而不是截断；单行时在两行高度里居中。
-        self.code_label.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
-        self.code_label.setWordWrap(True)
-        self.code_label.setFixedHeight(_CODE_LABEL_HEIGHT)
-        layout.addWidget(self.code_label)
+        # 最下面一行：仪器型号，居中放大——卡片底部照样读得到“这是哪台型号”。
+        self.name_label = _ElidedLabel(name, self)
+        self.name_label.setObjectName("instrumentCardName")
+        self.name_label.setAlignment(Qt.AlignCenter)
+        self.name_label.setTextInteractionFlags(Qt.NoTextInteraction)
+        layout.addWidget(self.name_label)
         self._bind_tooltips()
         self._apply_check_state()
 

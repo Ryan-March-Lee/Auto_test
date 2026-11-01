@@ -418,7 +418,7 @@ INTERNAL_MODULES = {
     "presentation.qt.config_page_widgets": "配置页面控件构建辅助：固定操作栏布局，以及页面共用的数值框/下拉框工厂（控件仍登记在页面上）",
     "presentation.qt.config_power_section": "配置页电源分区的控件构建：按电源键分页的通道参数标签页与电源分配设置表单，控件登记在页面上",
     "presentation.qt.connection_page": "仪器连接配置页：欢迎页选定测试模式后的整屏页面，扫描并应用本次测试所需设备（绑定写入与派生界面归配置页），完成后进入仪器配置页",
-    "presentation.qt.device_cards": "设备发现的仪器展示卡片：第一行居中放大的仪器名（型号）、第二行仪器图片（不垫底板不描边）、最下面加粗放大的设备码（电源用缩写设备码，其它仪器为角色缩写/型号/完整设备码）；点击卡片即选中",
+    "presentation.qt.device_cards": "设备发现的仪器展示卡片：第一行只写加粗放大的缩写设备码（设备表登记过就用它，电源的缩写码同时是 supply_id；还没有缩写码时退回完整设备码，不凭空生成）、第二行仪器图片（不垫底板不描边）、最下面居中放大的仪器型号；点击卡片即选中",
     "presentation.qt.device_discovery_panel": "设备发现面板：扫描网段、以卡片展示按设备表登记的角色可应用的设备（含未知设备标记）",
     "presentation.qt.scan_card": "“查找设备”的卡片按钮：按钮本体是与仪器卡片同大的自绘深色卡片（尺寸取自 `presentation.qt.device_cards` 的 `CARD_WIDTH`/`CARD_HEIGHT`），正中的渐变标题写着“查找设备”，内部有光带、扫描线与粒子在动；悬停时两行字淡到看不见（原 CSS 的 `::after` 霓虹光斑与 `::before` 紫→蓝底卡都不保留，卡片外面只有一层投影），投影画在同级、不进布局、不吃鼠标的透明覆盖层上，点击行为由设备发现面板接手",
     "presentation.qt.config_projection": "正式配置到配置页控件的确定性投影",

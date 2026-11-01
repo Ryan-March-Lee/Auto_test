@@ -235,7 +235,7 @@ class ScanPromptCardTests(unittest.TestCase):
             (INSTRUMENT_CARD_WIDTH, INSTRUMENT_CARD_HEIGHT),
             "查找设备按钮的尺寸应直接取仪器卡片的尺寸",
         )
-        instrument = InstrumentCard("DP832A", "PS/DP832A/DP8B1519")
+        instrument = InstrumentCard("DP832A", "DP8B1519")
         button = ScanPromptCard("查找设备")
         self.assertEqual(button.size(), instrument.size(), "按钮要与仪器卡片一样大")
 

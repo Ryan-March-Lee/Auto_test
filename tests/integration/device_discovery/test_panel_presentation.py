@@ -21,7 +21,7 @@ from .support import DiscoveryPanelTestCase, registry
 
 
 class CardPresentationTests(DiscoveryPanelTestCase):
-    """卡片外观：圆角、名字在上、图片其次、加粗设备码在下，并随面板宽度换行。"""
+    """卡片外观：圆角、设备码在上、图片其次、型号在下，并随面板宽度换行。"""
 
     def setUp(self):
         # ``apply_theme`` 是幂等的（主题只装一次）；别的用例可能已经把它复原成空串，
@@ -32,21 +32,22 @@ class CardPresentationTests(DiscoveryPanelTestCase):
     def tearDown(self):
         self.app.setStyleSheet(self._previous_stylesheet)
 
-    def test_cards_are_rounded_and_ordered_name_picture_code(self):
+    def test_cards_are_rounded_and_ordered_code_picture_model(self):
         panel = self.make_panel(size=(760, 560))
         self.run_scan(panel)
 
         card = panel.card_for("SMW200A（105462）")
         self.assertEqual(card.objectName(), "instrumentCard")
         self.assertIn("border-radius: 12px;", self.app.styleSheet())
-        # 自上而下：仪器名第一行、图片第二行、设备码在最下面。
+        # 自上而下：设备码第一行、图片第二行、型号在最下面。
         layout = card.layout()
         rows = [layout.itemAt(index).widget() for index in range(layout.count())]
-        self.assertIs(rows[0], card.name_label)
-        self.assertLess(rows.index(card.name_label), rows.index(card.image))
-        self.assertGreater(rows.index(card.code_label), rows.index(card.image))
-        self.assertEqual(rows[-1], card.code_label, "设备码缩写放在卡片最下面")
-        # 仪器名居中放大。
+        self.assertIs(rows[0], card.code_label, "设备码缩写放在卡片第一行")
+        self.assertLess(rows.index(card.code_label), rows.index(card.image))
+        self.assertGreater(rows.index(card.name_label), rows.index(card.image))
+        self.assertEqual(rows[-1], card.name_label, "仪器型号放在卡片最下面")
+        # 设备码第一行也要居中，型号同样居中。
+        self.assertTrue(card.code_label.alignment() & Qt.AlignHCenter)
         self.assertTrue(card.name_label.alignment() & Qt.AlignHCenter)
         for element in panel.cards():
             self.assertEqual(element.width(), card.width(), "卡片同宽同列")

@@ -50,7 +50,7 @@ from domain.run.models import (
 from infrastructure.persistence.artifact_generator import ArchiveArtifactGenerator
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from infrastructure.persistence.run_repository import RunRepository
-from presentation.qt.configuration_authoring import author_official_configuration
+from application.configuration_authoring import author_official_configuration
 from tests.contract_doubles import amplifier_inputs
 from tests.fakes import safety_cleanup_for
 

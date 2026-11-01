@@ -27,7 +27,7 @@ from presentation.qt.config_projection import (
 ROOT = Path(__file__).resolve().parents[2]
 PROJECTION_SOURCE = ROOT / "presentation" / "qt" / "config_projection.py"
 PAGE_SOURCE = ROOT / "presentation" / "qt" / "config_page.py"
-AUTHORING_SOURCE = ROOT / "presentation" / "qt" / "configuration_authoring.py"
+AUTHORING_SOURCE = ROOT / "application" / "configuration_authoring.py"
 BACKFILL_HELPERS = (
     "_reset_control_widgets",
     "_apply_instrument_widgets",
@@ -635,8 +635,8 @@ class ConfigPageOwnershipTests(unittest.TestCase):
                 )
 
         authoring = AUTHORING_SOURCE.read_text(encoding="utf-8")
-        self.assertIn('document["test_plan"]', authoring)
-        self.assertIn('document["run_mapping"]', authoring)
+        self.assertIn('values["test_plan"]', authoring)
+        self.assertIn('values["run_mapping"]', authoring)
 
     def test_projection_has_no_fixed_power_slot_defaults(self):
         """步骤 8：投影不得再用 ``PS1``..``PS4`` 当电源分配的默认值。"""

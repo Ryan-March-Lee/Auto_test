@@ -728,7 +728,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
 
         只更新控件显示，不写文件、不保存、不连接仪器；运行期间的测量输入仍来自
         运行目录内的冻结快照。正式 ``test_plan`` / ``run_mapping`` 由
-        :func:`presentation.qt.configuration_authoring.author_official_configuration`
+        :class:`application.configuration_authoring.ConfigurationAuthoringService`
         生成，本页面不读取也不解释它们。
         """
         # 先算绑定，再用它决定电源分配的可选项与电源标签页：投影不允许把配置引用的

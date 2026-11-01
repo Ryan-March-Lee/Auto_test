@@ -18,7 +18,7 @@
   写入走 :meth:`JsonConfigurationRepository.save_document`；本模块不提供第二个文档读取
   入口，也不在 ``load()`` 之外解析正式 schema。
 - **校验与持久化分开**：本模块只解析和落盘，正式 schema 的编写/校验由
-  ``presentation.qt.configuration_authoring``（配置页保存）与
+  ``application.configuration_authoring``（配置页保存）与
   ``infrastructure.config.validation``（文件级校验）负责，写入口不做“顺手修好”。
 - **运行快照不属于本模块**：``runs/<run_id>/config.json`` 等冻结快照由运行仓储
   （``infrastructure.persistence.run_repository``）创建并登记 manifest，配置仓储不写

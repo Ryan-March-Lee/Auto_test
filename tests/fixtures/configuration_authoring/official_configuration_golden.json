@@ -1,0 +1,3614 @@
+{
+  "description": "正式配置编写的迁移基线：输入取自配置页真实形状，expected 由迁移前的 presentation/qt/configuration_authoring.py（commit 7310fa2）生成。新实现必须逐字节重现 expected，测试不得通过调用被测实现来生成期望值。",
+  "source": "git show 7310fa2:presentation/qt/configuration_authoring.py",
+  "cases": [
+    {
+      "name": "flat_minimal",
+      "input": {
+        "test_frequencies": [
+          2.4
+        ],
+        "signal_source": {
+          "start_power": -10.0,
+          "stop_power": 0.0,
+          "step": 1.0
+        },
+        "compression_point": {
+          "type": "5dB"
+        },
+        "driver_mode": {
+          "enabled": false
+        },
+        "attenuator": {
+          "type": "30dB"
+        },
+        "dut_config": {
+          "max_input_power": 30.0,
+          "power_supply_count": 1
+        },
+        "instruments": {
+          "signal_generator": {
+            "address": "sim::sg",
+            "model": "SG",
+            "enabled": true
+          },
+          "spectrum_analyzer": {
+            "address": "sim::sa",
+            "model": "SA",
+            "enabled": true
+          },
+          "power_supplies": {
+            "DP8B1519": {
+              "label": "DP8B1519",
+              "model": "DP832A",
+              "full_code": "DP8B214901519",
+              "device_key": "rigol technologies:dp8b214901519",
+              "address": "sim::ps1",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 2.8
+                  },
+                  "current": {
+                    "value": 0.1
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 2.0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "power_supply_assignment": {
+          "driver_amplifier": {
+            "power_supply_count": 0,
+            "supplies": {}
+          },
+          "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "carrier": {
+                "supply_id": "DP8B1519",
+                "name": "DP8B1519",
+                "channel": [
+                  "CH1",
+                  "CH2"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "expected": {
+        "test_frequencies": [
+          2.4
+        ],
+        "signal_source": {
+          "start_power": -10.0,
+          "stop_power": 0.0,
+          "step": 1.0
+        },
+        "compression_point": {
+          "type": "5dB"
+        },
+        "driver_mode": {
+          "enabled": false
+        },
+        "attenuator": {
+          "type": "30dB"
+        },
+        "dut_config": {
+          "max_input_power": 30.0,
+          "power_supply_count": 1
+        },
+        "instruments": {
+          "signal_generator": {
+            "address": "sim::sg",
+            "model": "SG",
+            "enabled": true
+          },
+          "spectrum_analyzer": {
+            "address": "sim::sa",
+            "model": "SA",
+            "enabled": true
+          },
+          "power_supplies": {
+            "DP8B1519": {
+              "label": "DP8B1519",
+              "model": "DP832A",
+              "full_code": "DP8B214901519",
+              "device_key": "rigol technologies:dp8b214901519",
+              "address": "sim::ps1",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 2.8
+                  },
+                  "current": {
+                    "value": 0.1
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 2.0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "power_supply_assignment": {
+          "driver_amplifier": {
+            "power_supply_count": 0,
+            "supplies": {}
+          },
+          "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "carrier": {
+                "supply_id": "DP8B1519",
+                "name": "DP8B1519",
+                "channel": [
+                  "CH1",
+                  "CH2"
+                ]
+              }
+            }
+          }
+        },
+        "schema_version": "1.0",
+        "test_plan": {
+          "schema_version": "1.0",
+          "template": false,
+          "plan_id": "gui-configuration",
+          "frequencies": {
+            "values": [
+              2.4
+            ],
+            "unit": "GHz"
+          },
+          "signal_source": {
+            "start_power": -10.0,
+            "stop_power": 0.0,
+            "step": 1.0,
+            "unit": "dBm"
+          },
+          "compression_point": {
+            "type": "5dB"
+          },
+          "attenuator": {
+            "value": 30.0,
+            "unit": "dB"
+          },
+          "dut": {
+            "max_input_power": 30.0,
+            "power_roles": {
+              "gate": {
+                "role": "gate",
+                "voltage": 2.8,
+                "current": 0.1,
+                "voltage_protection": null,
+                "current_protection": null
+              },
+              "drain": {
+                "role": "drain",
+                "voltage": 28.0,
+                "current": 2.0,
+                "voltage_protection": null,
+                "current_protection": null
+              }
+            }
+          },
+          "driver_mode": {
+            "enabled": false,
+            "power_source": null,
+            "power_roles": {}
+          },
+          "other_parameters": {}
+        },
+        "run_mapping": {
+          "schema_version": "1.0",
+          "template": false,
+          "run_id": null,
+          "run_datetime": null,
+          "operator": null,
+          "instruments": {
+            "signal_generator": {
+              "label": null,
+              "model": "SG",
+              "full_code": null,
+              "device_key": null,
+              "visa_address": "sim::sg"
+            },
+            "spectrum_analyzer": {
+              "label": null,
+              "model": "SA",
+              "full_code": null,
+              "device_key": null,
+              "visa_address": "sim::sa"
+            },
+            "power_supplies": {
+              "DP8B1519": {
+                "label": "DP8B1519",
+                "model": "DP832A",
+                "full_code": "DP8B214901519",
+                "device_key": "rigol technologies:dp8b214901519",
+                "visa_address": "sim::ps1"
+              }
+            }
+          },
+          "driver_mode": {
+            "enabled": false,
+            "power_source": null,
+            "power_channels": []
+          },
+          "dut_power_channels": [
+            {
+              "channel": "DP8B1519/CH1",
+              "role": "gate",
+              "connection": "DP8B1519/CH1 -> DUT 栅极"
+            },
+            {
+              "channel": "DP8B1519/CH2",
+              "role": "drain",
+              "connection": "DP8B1519/CH2 -> DUT 漏极"
+            }
+          ],
+          "notes": null
+        }
+      }
+    },
+    {
+      "name": "two_supplies_split_gate_drain",
+      "input": {
+        "test_frequencies": [
+          2.4
+        ],
+        "signal_source": {
+          "start_power": -10.0,
+          "stop_power": 0.0,
+          "step": 1.0
+        },
+        "compression_point": {
+          "type": "5dB"
+        },
+        "driver_mode": {
+          "enabled": false
+        },
+        "attenuator": {
+          "type": "30dB"
+        },
+        "dut_config": {
+          "max_input_power": 30.0,
+          "power_supply_count": 1
+        },
+        "instruments": {
+          "signal_generator": {
+            "address": "sim::sg",
+            "model": "SG",
+            "enabled": true
+          },
+          "spectrum_analyzer": {
+            "address": "sim::sa",
+            "model": "SA",
+            "enabled": true
+          },
+          "power_supplies": {
+            "DP8B1519": {
+              "label": "DP8B1519",
+              "model": "DP832A",
+              "full_code": "DP8B214901519",
+              "device_key": "rigol technologies:dp8b214901519",
+              "address": "sim::ps1",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 2.8
+                  },
+                  "current": {
+                    "value": 0.1
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 2.0
+                  }
+                }
+              }
+            },
+            "DP8B0885": {
+              "label": "DP8B0885",
+              "model": "DP832A",
+              "full_code": "DP8B174400885",
+              "device_key": "rigol technologies:dp8b174400885",
+              "address": "sim::ps2",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 5.0
+                  },
+                  "current": {
+                    "value": 0.5
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 1.0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "power_supply_assignment": {
+          "driver_amplifier": {
+            "power_supply_count": 0,
+            "supplies": {}
+          },
+          "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "gate": {
+                "supply_id": "DP8B1519",
+                "channel": [
+                  "CH1"
+                ]
+              },
+              "drain": {
+                "supply_id": "DP8B0885",
+                "channel": [
+                  "CH2"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "expected": {
+        "test_frequencies": [
+          2.4
+        ],
+        "signal_source": {
+          "start_power": -10.0,
+          "stop_power": 0.0,
+          "step": 1.0
+        },
+        "compression_point": {
+          "type": "5dB"
+        },
+        "driver_mode": {
+          "enabled": false
+        },
+        "attenuator": {
+          "type": "30dB"
+        },
+        "dut_config": {
+          "max_input_power": 30.0,
+          "power_supply_count": 1
+        },
+        "instruments": {
+          "signal_generator": {
+            "address": "sim::sg",
+            "model": "SG",
+            "enabled": true
+          },
+          "spectrum_analyzer": {
+            "address": "sim::sa",
+            "model": "SA",
+            "enabled": true
+          },
+          "power_supplies": {
+            "DP8B1519": {
+              "label": "DP8B1519",
+              "model": "DP832A",
+              "full_code": "DP8B214901519",
+              "device_key": "rigol technologies:dp8b214901519",
+              "address": "sim::ps1",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 2.8
+                  },
+                  "current": {
+                    "value": 0.1
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 2.0
+                  }
+                }
+              }
+            },
+            "DP8B0885": {
+              "label": "DP8B0885",
+              "model": "DP832A",
+              "full_code": "DP8B174400885",
+              "device_key": "rigol technologies:dp8b174400885",
+              "address": "sim::ps2",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 5.0
+                  },
+                  "current": {
+                    "value": 0.5
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 1.0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "power_supply_assignment": {
+          "driver_amplifier": {
+            "power_supply_count": 0,
+            "supplies": {}
+          },
+          "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "gate": {
+                "supply_id": "DP8B1519",
+                "channel": [
+                  "CH1"
+                ]
+              },
+              "drain": {
+                "supply_id": "DP8B0885",
+                "channel": [
+                  "CH2"
+                ]
+              }
+            }
+          }
+        },
+        "schema_version": "1.0",
+        "test_plan": {
+          "schema_version": "1.0",
+          "template": false,
+          "plan_id": "gui-configuration",
+          "frequencies": {
+            "values": [
+              2.4
+            ],
+            "unit": "GHz"
+          },
+          "signal_source": {
+            "start_power": -10.0,
+            "stop_power": 0.0,
+            "step": 1.0,
+            "unit": "dBm"
+          },
+          "compression_point": {
+            "type": "5dB"
+          },
+          "attenuator": {
+            "value": 30.0,
+            "unit": "dB"
+          },
+          "dut": {
+            "max_input_power": 30.0,
+            "power_roles": {
+              "gate": {
+                "role": "gate",
+                "voltage": 2.8,
+                "current": 0.1,
+                "voltage_protection": null,
+                "current_protection": null
+              },
+              "drain": {
+                "role": "drain",
+                "voltage": 28.0,
+                "current": 1.0,
+                "voltage_protection": null,
+                "current_protection": null
+              }
+            }
+          },
+          "driver_mode": {
+            "enabled": false,
+            "power_source": null,
+            "power_roles": {}
+          },
+          "other_parameters": {}
+        },
+        "run_mapping": {
+          "schema_version": "1.0",
+          "template": false,
+          "run_id": null,
+          "run_datetime": null,
+          "operator": null,
+          "instruments": {
+            "signal_generator": {
+              "label": null,
+              "model": "SG",
+              "full_code": null,
+              "device_key": null,
+              "visa_address": "sim::sg"
+            },
+            "spectrum_analyzer": {
+              "label": null,
+              "model": "SA",
+              "full_code": null,
+              "device_key": null,
+              "visa_address": "sim::sa"
+            },
+            "power_supplies": {
+              "DP8B1519": {
+                "label": "DP8B1519",
+                "model": "DP832A",
+                "full_code": "DP8B214901519",
+                "device_key": "rigol technologies:dp8b214901519",
+                "visa_address": "sim::ps1"
+              },
+              "DP8B0885": {
+                "label": "DP8B0885",
+                "model": "DP832A",
+                "full_code": "DP8B174400885",
+                "device_key": "rigol technologies:dp8b174400885",
+                "visa_address": "sim::ps2"
+              }
+            }
+          },
+          "driver_mode": {
+            "enabled": false,
+            "power_source": null,
+            "power_channels": []
+          },
+          "dut_power_channels": [
+            {
+              "channel": "DP8B1519/CH1",
+              "role": "gate",
+              "connection": "DP8B1519/CH1 -> DUT 栅极"
+            },
+            {
+              "channel": "DP8B0885/CH2",
+              "role": "drain",
+              "connection": "DP8B0885/CH2 -> DUT 漏极"
+            }
+          ],
+          "notes": null
+        }
+      }
+    },
+    {
+      "name": "driver_and_dut_supplies",
+      "input": {
+        "test_frequencies": [
+          2.4
+        ],
+        "signal_source": {
+          "start_power": -10.0,
+          "stop_power": 0.0,
+          "step": 1.0
+        },
+        "compression_point": {
+          "type": "5dB"
+        },
+        "driver_mode": {
+          "enabled": true,
+          "power_source": "dc_supply"
+        },
+        "attenuator": {
+          "type": "30dB"
+        },
+        "dut_config": {
+          "max_input_power": 30.0,
+          "power_supply_count": 1
+        },
+        "instruments": {
+          "signal_generator": {
+            "address": "sim::sg",
+            "model": "SG",
+            "enabled": true
+          },
+          "spectrum_analyzer": {
+            "address": "sim::sa",
+            "model": "SA",
+            "enabled": true
+          },
+          "power_supplies": {
+            "DP8B1519": {
+              "label": "DP8B1519",
+              "model": "DP832A",
+              "full_code": "DP8B214901519",
+              "device_key": "rigol technologies:dp8b214901519",
+              "address": "sim::ps1",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 2.8
+                  },
+                  "current": {
+                    "value": 0.1
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 2.0
+                  }
+                }
+              }
+            },
+            "DP8B0885": {
+              "label": "DP8B0885",
+              "model": "DP832A",
+              "full_code": "DP8B174400885",
+              "device_key": "rigol technologies:dp8b174400885",
+              "address": "sim::ps2",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 5.0
+                  },
+                  "current": {
+                    "value": 0.5
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 1.0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "power_supply_assignment": {
+          "driver_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "driver": {
+                "supply_id": "DP8B0885",
+                "name": "DP8B0885",
+                "channel": [
+                  "CH1"
+                ]
+              }
+            }
+          },
+          "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "carrier": {
+                "supply_id": "DP8B1519",
+                "name": "DP8B1519",
+                "channel": [
+                  "CH1",
+                  "CH2"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "expected": {
+        "test_frequencies": [
+          2.4
+        ],
+        "signal_source": {
+          "start_power": -10.0,
+          "stop_power": 0.0,
+          "step": 1.0
+        },
+        "compression_point": {
+          "type": "5dB"
+        },
+        "driver_mode": {
+          "enabled": true,
+          "power_source": "dc_supply"
+        },
+        "attenuator": {
+          "type": "30dB"
+        },
+        "dut_config": {
+          "max_input_power": 30.0,
+          "power_supply_count": 1
+        },
+        "instruments": {
+          "signal_generator": {
+            "address": "sim::sg",
+            "model": "SG",
+            "enabled": true
+          },
+          "spectrum_analyzer": {
+            "address": "sim::sa",
+            "model": "SA",
+            "enabled": true
+          },
+          "power_supplies": {
+            "DP8B1519": {
+              "label": "DP8B1519",
+              "model": "DP832A",
+              "full_code": "DP8B214901519",
+              "device_key": "rigol technologies:dp8b214901519",
+              "address": "sim::ps1",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 2.8
+                  },
+                  "current": {
+                    "value": 0.1
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 2.0
+                  }
+                }
+              }
+            },
+            "DP8B0885": {
+              "label": "DP8B0885",
+              "model": "DP832A",
+              "full_code": "DP8B174400885",
+              "device_key": "rigol technologies:dp8b174400885",
+              "address": "sim::ps2",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 5.0
+                  },
+                  "current": {
+                    "value": 0.5
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 1.0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "power_supply_assignment": {
+          "driver_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "driver": {
+                "supply_id": "DP8B0885",
+                "name": "DP8B0885",
+                "channel": [
+                  "CH1"
+                ]
+              }
+            }
+          },
+          "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "carrier": {
+                "supply_id": "DP8B1519",
+                "name": "DP8B1519",
+                "channel": [
+                  "CH1",
+                  "CH2"
+                ]
+              }
+            }
+          }
+        },
+        "schema_version": "1.0",
+        "test_plan": {
+          "schema_version": "1.0",
+          "template": false,
+          "plan_id": "gui-configuration",
+          "frequencies": {
+            "values": [
+              2.4
+            ],
+            "unit": "GHz"
+          },
+          "signal_source": {
+            "start_power": -10.0,
+            "stop_power": 0.0,
+            "step": 1.0,
+            "unit": "dBm"
+          },
+          "compression_point": {
+            "type": "5dB"
+          },
+          "attenuator": {
+            "value": 30.0,
+            "unit": "dB"
+          },
+          "dut": {
+            "max_input_power": 30.0,
+            "power_roles": {
+              "gate": {
+                "role": "gate",
+                "voltage": 2.8,
+                "current": 0.1,
+                "voltage_protection": null,
+                "current_protection": null
+              },
+              "drain": {
+                "role": "drain",
+                "voltage": 28.0,
+                "current": 2.0,
+                "voltage_protection": null,
+                "current_protection": null
+              }
+            }
+          },
+          "driver_mode": {
+            "enabled": true,
+            "power_source": "dc_supply",
+            "power_roles": {
+              "driver": {
+                "role": "driver",
+                "voltage": 5.0,
+                "current": 0.5,
+                "voltage_protection": null,
+                "current_protection": null
+              }
+            }
+          },
+          "other_parameters": {}
+        },
+        "run_mapping": {
+          "schema_version": "1.0",
+          "template": false,
+          "run_id": null,
+          "run_datetime": null,
+          "operator": null,
+          "instruments": {
+            "signal_generator": {
+              "label": null,
+              "model": "SG",
+              "full_code": null,
+              "device_key": null,
+              "visa_address": "sim::sg"
+            },
+            "spectrum_analyzer": {
+              "label": null,
+              "model": "SA",
+              "full_code": null,
+              "device_key": null,
+              "visa_address": "sim::sa"
+            },
+            "power_supplies": {
+              "DP8B1519": {
+                "label": "DP8B1519",
+                "model": "DP832A",
+                "full_code": "DP8B214901519",
+                "device_key": "rigol technologies:dp8b214901519",
+                "visa_address": "sim::ps1"
+              },
+              "DP8B0885": {
+                "label": "DP8B0885",
+                "model": "DP832A",
+                "full_code": "DP8B174400885",
+                "device_key": "rigol technologies:dp8b174400885",
+                "visa_address": "sim::ps2"
+              }
+            }
+          },
+          "driver_mode": {
+            "enabled": true,
+            "power_source": "dc_supply",
+            "power_channels": [
+              {
+                "channel": "DP8B0885/CH1",
+                "role": "driver",
+                "connection": "DP8B0885/CH1 -> 驱动功放"
+              }
+            ]
+          },
+          "dut_power_channels": [
+            {
+              "channel": "DP8B1519/CH1",
+              "role": "gate",
+              "connection": "DP8B1519/CH1 -> DUT 栅极"
+            },
+            {
+              "channel": "DP8B1519/CH2",
+              "role": "drain",
+              "connection": "DP8B1519/CH2 -> DUT 漏极"
+            }
+          ],
+          "notes": null
+        }
+      }
+    },
+    {
+      "name": "driver_external_ac",
+      "input": {
+        "test_frequencies": [
+          2.4
+        ],
+        "signal_source": {
+          "start_power": -10.0,
+          "stop_power": 0.0,
+          "step": 1.0
+        },
+        "compression_point": {
+          "type": "5dB"
+        },
+        "driver_mode": {
+          "enabled": true,
+          "power_source": "external_ac"
+        },
+        "attenuator": {
+          "type": "30dB"
+        },
+        "dut_config": {
+          "max_input_power": 30.0,
+          "power_supply_count": 1
+        },
+        "instruments": {
+          "signal_generator": {
+            "address": "sim::sg",
+            "model": "SG",
+            "enabled": true
+          },
+          "spectrum_analyzer": {
+            "address": "sim::sa",
+            "model": "SA",
+            "enabled": true
+          },
+          "power_supplies": {
+            "DP8B1519": {
+              "label": "DP8B1519",
+              "model": "DP832A",
+              "full_code": "DP8B214901519",
+              "device_key": "rigol technologies:dp8b214901519",
+              "address": "sim::ps1",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 2.8
+                  },
+                  "current": {
+                    "value": 0.1
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 2.0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "power_supply_assignment": {
+          "driver_amplifier": {
+            "power_supply_count": 0,
+            "supplies": {}
+          },
+          "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "carrier": {
+                "supply_id": "DP8B1519",
+                "name": "DP8B1519",
+                "channel": [
+                  "CH1",
+                  "CH2"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "expected": {
+        "test_frequencies": [
+          2.4
+        ],
+        "signal_source": {
+          "start_power": -10.0,
+          "stop_power": 0.0,
+          "step": 1.0
+        },
+        "compression_point": {
+          "type": "5dB"
+        },
+        "driver_mode": {
+          "enabled": true,
+          "power_source": "external_ac"
+        },
+        "attenuator": {
+          "type": "30dB"
+        },
+        "dut_config": {
+          "max_input_power": 30.0,
+          "power_supply_count": 1
+        },
+        "instruments": {
+          "signal_generator": {
+            "address": "sim::sg",
+            "model": "SG",
+            "enabled": true
+          },
+          "spectrum_analyzer": {
+            "address": "sim::sa",
+            "model": "SA",
+            "enabled": true
+          },
+          "power_supplies": {
+            "DP8B1519": {
+              "label": "DP8B1519",
+              "model": "DP832A",
+              "full_code": "DP8B214901519",
+              "device_key": "rigol technologies:dp8b214901519",
+              "address": "sim::ps1",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 2.8
+                  },
+                  "current": {
+                    "value": 0.1
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 2.0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "power_supply_assignment": {
+          "driver_amplifier": {
+            "power_supply_count": 0,
+            "supplies": {}
+          },
+          "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "carrier": {
+                "supply_id": "DP8B1519",
+                "name": "DP8B1519",
+                "channel": [
+                  "CH1",
+                  "CH2"
+                ]
+              }
+            }
+          }
+        },
+        "schema_version": "1.0",
+        "test_plan": {
+          "schema_version": "1.0",
+          "template": false,
+          "plan_id": "gui-configuration",
+          "frequencies": {
+            "values": [
+              2.4
+            ],
+            "unit": "GHz"
+          },
+          "signal_source": {
+            "start_power": -10.0,
+            "stop_power": 0.0,
+            "step": 1.0,
+            "unit": "dBm"
+          },
+          "compression_point": {
+            "type": "5dB"
+          },
+          "attenuator": {
+            "value": 30.0,
+            "unit": "dB"
+          },
+          "dut": {
+            "max_input_power": 30.0,
+            "power_roles": {
+              "gate": {
+                "role": "gate",
+                "voltage": 2.8,
+                "current": 0.1,
+                "voltage_protection": null,
+                "current_protection": null
+              },
+              "drain": {
+                "role": "drain",
+                "voltage": 28.0,
+                "current": 2.0,
+                "voltage_protection": null,
+                "current_protection": null
+              }
+            }
+          },
+          "driver_mode": {
+            "enabled": true,
+            "power_source": "external_ac",
+            "power_roles": {}
+          },
+          "other_parameters": {}
+        },
+        "run_mapping": {
+          "schema_version": "1.0",
+          "template": false,
+          "run_id": null,
+          "run_datetime": null,
+          "operator": null,
+          "instruments": {
+            "signal_generator": {
+              "label": null,
+              "model": "SG",
+              "full_code": null,
+              "device_key": null,
+              "visa_address": "sim::sg"
+            },
+            "spectrum_analyzer": {
+              "label": null,
+              "model": "SA",
+              "full_code": null,
+              "device_key": null,
+              "visa_address": "sim::sa"
+            },
+            "power_supplies": {
+              "DP8B1519": {
+                "label": "DP8B1519",
+                "model": "DP832A",
+                "full_code": "DP8B214901519",
+                "device_key": "rigol technologies:dp8b214901519",
+                "visa_address": "sim::ps1"
+              }
+            }
+          },
+          "driver_mode": {
+            "enabled": true,
+            "power_source": "external_ac",
+            "power_channels": []
+          },
+          "dut_power_channels": [
+            {
+              "channel": "DP8B1519/CH1",
+              "role": "gate",
+              "connection": "DP8B1519/CH1 -> DUT 栅极"
+            },
+            {
+              "channel": "DP8B1519/CH2",
+              "role": "drain",
+              "connection": "DP8B1519/CH2 -> DUT 漏极"
+            }
+          ],
+          "notes": null
+        }
+      }
+    },
+    {
+      "name": "driver_source_inferred_from_channels",
+      "input": {
+        "test_frequencies": [
+          2.4
+        ],
+        "signal_source": {
+          "start_power": -10.0,
+          "stop_power": 0.0,
+          "step": 1.0
+        },
+        "compression_point": {
+          "type": "5dB"
+        },
+        "driver_mode": {
+          "enabled": true
+        },
+        "attenuator": {
+          "type": "30dB"
+        },
+        "dut_config": {
+          "max_input_power": 30.0,
+          "power_supply_count": 1
+        },
+        "instruments": {
+          "signal_generator": {
+            "address": "sim::sg",
+            "model": "SG",
+            "enabled": true
+          },
+          "spectrum_analyzer": {
+            "address": "sim::sa",
+            "model": "SA",
+            "enabled": true
+          },
+          "power_supplies": {
+            "DP8B1519": {
+              "label": "DP8B1519",
+              "model": "DP832A",
+              "full_code": "DP8B214901519",
+              "device_key": "rigol technologies:dp8b214901519",
+              "address": "sim::ps1",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 2.8
+                  },
+                  "current": {
+                    "value": 0.1
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 2.0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "power_supply_assignment": {
+          "driver_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "main": {
+                "supply_id": "DP8B1519",
+                "name": "DP8B1519",
+                "channel": [
+                  "CH1",
+                  "CH2"
+                ]
+              }
+            }
+          },
+          "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "carrier": {
+                "supply_id": "DP8B1519",
+                "name": "DP8B1519",
+                "channel": [
+                  "CH1",
+                  "CH2"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "expected": {
+        "test_frequencies": [
+          2.4
+        ],
+        "signal_source": {
+          "start_power": -10.0,
+          "stop_power": 0.0,
+          "step": 1.0
+        },
+        "compression_point": {
+          "type": "5dB"
+        },
+        "driver_mode": {
+          "enabled": true
+        },
+        "attenuator": {
+          "type": "30dB"
+        },
+        "dut_config": {
+          "max_input_power": 30.0,
+          "power_supply_count": 1
+        },
+        "instruments": {
+          "signal_generator": {
+            "address": "sim::sg",
+            "model": "SG",
+            "enabled": true
+          },
+          "spectrum_analyzer": {
+            "address": "sim::sa",
+            "model": "SA",
+            "enabled": true
+          },
+          "power_supplies": {
+            "DP8B1519": {
+              "label": "DP8B1519",
+              "model": "DP832A",
+              "full_code": "DP8B214901519",
+              "device_key": "rigol technologies:dp8b214901519",
+              "address": "sim::ps1",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 2.8
+                  },
+                  "current": {
+                    "value": 0.1
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 2.0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "power_supply_assignment": {
+          "driver_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "main": {
+                "supply_id": "DP8B1519",
+                "name": "DP8B1519",
+                "channel": [
+                  "CH1",
+                  "CH2"
+                ]
+              }
+            }
+          },
+          "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "carrier": {
+                "supply_id": "DP8B1519",
+                "name": "DP8B1519",
+                "channel": [
+                  "CH1",
+                  "CH2"
+                ]
+              }
+            }
+          }
+        },
+        "schema_version": "1.0",
+        "test_plan": {
+          "schema_version": "1.0",
+          "template": false,
+          "plan_id": "gui-configuration",
+          "frequencies": {
+            "values": [
+              2.4
+            ],
+            "unit": "GHz"
+          },
+          "signal_source": {
+            "start_power": -10.0,
+            "stop_power": 0.0,
+            "step": 1.0,
+            "unit": "dBm"
+          },
+          "compression_point": {
+            "type": "5dB"
+          },
+          "attenuator": {
+            "value": 30.0,
+            "unit": "dB"
+          },
+          "dut": {
+            "max_input_power": 30.0,
+            "power_roles": {
+              "gate": {
+                "role": "gate",
+                "voltage": 2.8,
+                "current": 0.1,
+                "voltage_protection": null,
+                "current_protection": null
+              },
+              "drain": {
+                "role": "drain",
+                "voltage": 28.0,
+                "current": 2.0,
+                "voltage_protection": null,
+                "current_protection": null
+              }
+            }
+          },
+          "driver_mode": {
+            "enabled": true,
+            "power_source": "dc_supply",
+            "power_roles": {
+              "driver": {
+                "role": "driver",
+                "voltage": 2.8,
+                "current": 0.1,
+                "voltage_protection": null,
+                "current_protection": null
+              }
+            }
+          },
+          "other_parameters": {}
+        },
+        "run_mapping": {
+          "schema_version": "1.0",
+          "template": false,
+          "run_id": null,
+          "run_datetime": null,
+          "operator": null,
+          "instruments": {
+            "signal_generator": {
+              "label": null,
+              "model": "SG",
+              "full_code": null,
+              "device_key": null,
+              "visa_address": "sim::sg"
+            },
+            "spectrum_analyzer": {
+              "label": null,
+              "model": "SA",
+              "full_code": null,
+              "device_key": null,
+              "visa_address": "sim::sa"
+            },
+            "power_supplies": {
+              "DP8B1519": {
+                "label": "DP8B1519",
+                "model": "DP832A",
+                "full_code": "DP8B214901519",
+                "device_key": "rigol technologies:dp8b214901519",
+                "visa_address": "sim::ps1"
+              }
+            }
+          },
+          "driver_mode": {
+            "enabled": true,
+            "power_source": "dc_supply",
+            "power_channels": [
+              {
+                "channel": "DP8B1519/CH1",
+                "role": "driver",
+                "connection": "DP8B1519/CH1 -> 驱动功放"
+              },
+              {
+                "channel": "DP8B1519/CH2",
+                "role": "driver",
+                "connection": "DP8B1519/CH2 -> 驱动功放"
+              }
+            ]
+          },
+          "dut_power_channels": [
+            {
+              "channel": "DP8B1519/CH1",
+              "role": "gate",
+              "connection": "DP8B1519/CH1 -> DUT 栅极"
+            },
+            {
+              "channel": "DP8B1519/CH2",
+              "role": "drain",
+              "connection": "DP8B1519/CH2 -> DUT 漏极"
+            }
+          ],
+          "notes": null
+        }
+      }
+    },
+    {
+      "name": "unbound_supply_reference",
+      "input": {
+        "test_frequencies": [
+          2.4
+        ],
+        "signal_source": {
+          "start_power": -10.0,
+          "stop_power": 0.0,
+          "step": 1.0
+        },
+        "compression_point": {
+          "type": "5dB"
+        },
+        "driver_mode": {
+          "enabled": false
+        },
+        "attenuator": {
+          "type": "30dB"
+        },
+        "dut_config": {
+          "max_input_power": 30.0,
+          "power_supply_count": 1
+        },
+        "instruments": {
+          "signal_generator": {
+            "address": "sim::sg",
+            "model": "SG",
+            "enabled": true
+          },
+          "spectrum_analyzer": {
+            "address": "sim::sa",
+            "model": "SA",
+            "enabled": true
+          },
+          "power_supplies": {
+            "DP8B1519": {
+              "label": "DP8B1519",
+              "model": "DP832A",
+              "full_code": "DP8B214901519",
+              "device_key": "rigol technologies:dp8b214901519",
+              "address": "sim::ps1",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 2.8
+                  },
+                  "current": {
+                    "value": 0.1
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 2.0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "power_supply_assignment": {
+          "driver_amplifier": {
+            "power_supply_count": 0,
+            "supplies": {}
+          },
+          "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "carrier": {
+                "supply_id": null,
+                "channel": [
+                  "CH1"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "expected": {
+        "test_frequencies": [
+          2.4
+        ],
+        "signal_source": {
+          "start_power": -10.0,
+          "stop_power": 0.0,
+          "step": 1.0
+        },
+        "compression_point": {
+          "type": "5dB"
+        },
+        "driver_mode": {
+          "enabled": false
+        },
+        "attenuator": {
+          "type": "30dB"
+        },
+        "dut_config": {
+          "max_input_power": 30.0,
+          "power_supply_count": 1
+        },
+        "instruments": {
+          "signal_generator": {
+            "address": "sim::sg",
+            "model": "SG",
+            "enabled": true
+          },
+          "spectrum_analyzer": {
+            "address": "sim::sa",
+            "model": "SA",
+            "enabled": true
+          },
+          "power_supplies": {
+            "DP8B1519": {
+              "label": "DP8B1519",
+              "model": "DP832A",
+              "full_code": "DP8B214901519",
+              "device_key": "rigol technologies:dp8b214901519",
+              "address": "sim::ps1",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 2.8
+                  },
+                  "current": {
+                    "value": 0.1
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 2.0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "power_supply_assignment": {
+          "driver_amplifier": {
+            "power_supply_count": 0,
+            "supplies": {}
+          },
+          "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "carrier": {
+                "supply_id": null,
+                "channel": [
+                  "CH1"
+                ]
+              }
+            }
+          }
+        },
+        "schema_version": "1.0",
+        "test_plan": {
+          "schema_version": "1.0",
+          "template": false,
+          "plan_id": "gui-configuration",
+          "frequencies": {
+            "values": [
+              2.4
+            ],
+            "unit": "GHz"
+          },
+          "signal_source": {
+            "start_power": -10.0,
+            "stop_power": 0.0,
+            "step": 1.0,
+            "unit": "dBm"
+          },
+          "compression_point": {
+            "type": "5dB"
+          },
+          "attenuator": {
+            "value": 30.0,
+            "unit": "dB"
+          },
+          "dut": {
+            "max_input_power": 30.0,
+            "power_roles": {
+              "gate": {
+                "role": "gate",
+                "voltage": null,
+                "current": null,
+                "voltage_protection": null,
+                "current_protection": null
+              }
+            }
+          },
+          "driver_mode": {
+            "enabled": false,
+            "power_source": null,
+            "power_roles": {}
+          },
+          "other_parameters": {}
+        },
+        "run_mapping": {
+          "schema_version": "1.0",
+          "template": false,
+          "run_id": null,
+          "run_datetime": null,
+          "operator": null,
+          "instruments": {
+            "signal_generator": {
+              "label": null,
+              "model": "SG",
+              "full_code": null,
+              "device_key": null,
+              "visa_address": "sim::sg"
+            },
+            "spectrum_analyzer": {
+              "label": null,
+              "model": "SA",
+              "full_code": null,
+              "device_key": null,
+              "visa_address": "sim::sa"
+            },
+            "power_supplies": {}
+          },
+          "driver_mode": {
+            "enabled": false,
+            "power_source": null,
+            "power_channels": []
+          },
+          "dut_power_channels": [
+            {
+              "channel": "CH1",
+              "role": "gate",
+              "connection": "CH1 -> DUT 栅极"
+            }
+          ],
+          "notes": null
+        }
+      }
+    },
+    {
+      "name": "duplicate_physical_channel",
+      "input": {
+        "test_frequencies": [
+          2.4
+        ],
+        "signal_source": {
+          "start_power": -10.0,
+          "stop_power": 0.0,
+          "step": 1.0
+        },
+        "compression_point": {
+          "type": "5dB"
+        },
+        "driver_mode": {
+          "enabled": false
+        },
+        "attenuator": {
+          "type": "30dB"
+        },
+        "dut_config": {
+          "max_input_power": 30.0,
+          "power_supply_count": 1
+        },
+        "instruments": {
+          "signal_generator": {
+            "address": "sim::sg",
+            "model": "SG",
+            "enabled": true
+          },
+          "spectrum_analyzer": {
+            "address": "sim::sa",
+            "model": "SA",
+            "enabled": true
+          },
+          "power_supplies": {
+            "DP8B1519": {
+              "label": "DP8B1519",
+              "model": "DP832A",
+              "full_code": "DP8B214901519",
+              "device_key": "rigol technologies:dp8b214901519",
+              "address": "sim::ps1",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 2.8
+                  },
+                  "current": {
+                    "value": 0.1
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 2.0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "power_supply_assignment": {
+          "driver_amplifier": {
+            "power_supply_count": 0,
+            "supplies": {}
+          },
+          "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "carrier": {
+                "supply_id": "DP8B1519",
+                "name": "DP8B1519",
+                "channel": [
+                  "CH1",
+                  "CH2"
+                ]
+              },
+              "peaking": {
+                "supply_id": "DP8B1519",
+                "channel": [
+                  "CH1"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "expected": {
+        "test_frequencies": [
+          2.4
+        ],
+        "signal_source": {
+          "start_power": -10.0,
+          "stop_power": 0.0,
+          "step": 1.0
+        },
+        "compression_point": {
+          "type": "5dB"
+        },
+        "driver_mode": {
+          "enabled": false
+        },
+        "attenuator": {
+          "type": "30dB"
+        },
+        "dut_config": {
+          "max_input_power": 30.0,
+          "power_supply_count": 1
+        },
+        "instruments": {
+          "signal_generator": {
+            "address": "sim::sg",
+            "model": "SG",
+            "enabled": true
+          },
+          "spectrum_analyzer": {
+            "address": "sim::sa",
+            "model": "SA",
+            "enabled": true
+          },
+          "power_supplies": {
+            "DP8B1519": {
+              "label": "DP8B1519",
+              "model": "DP832A",
+              "full_code": "DP8B214901519",
+              "device_key": "rigol technologies:dp8b214901519",
+              "address": "sim::ps1",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 2.8
+                  },
+                  "current": {
+                    "value": 0.1
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 2.0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "power_supply_assignment": {
+          "driver_amplifier": {
+            "power_supply_count": 0,
+            "supplies": {}
+          },
+          "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "carrier": {
+                "supply_id": "DP8B1519",
+                "name": "DP8B1519",
+                "channel": [
+                  "CH1",
+                  "CH2"
+                ]
+              },
+              "peaking": {
+                "supply_id": "DP8B1519",
+                "channel": [
+                  "CH1"
+                ]
+              }
+            }
+          }
+        },
+        "schema_version": "1.0",
+        "test_plan": {
+          "schema_version": "1.0",
+          "template": false,
+          "plan_id": "gui-configuration",
+          "frequencies": {
+            "values": [
+              2.4
+            ],
+            "unit": "GHz"
+          },
+          "signal_source": {
+            "start_power": -10.0,
+            "stop_power": 0.0,
+            "step": 1.0,
+            "unit": "dBm"
+          },
+          "compression_point": {
+            "type": "5dB"
+          },
+          "attenuator": {
+            "value": 30.0,
+            "unit": "dB"
+          },
+          "dut": {
+            "max_input_power": 30.0,
+            "power_roles": {
+              "gate": {
+                "role": "gate",
+                "voltage": 2.8,
+                "current": 0.1,
+                "voltage_protection": null,
+                "current_protection": null
+              },
+              "drain": {
+                "role": "drain",
+                "voltage": 28.0,
+                "current": 2.0,
+                "voltage_protection": null,
+                "current_protection": null
+              }
+            }
+          },
+          "driver_mode": {
+            "enabled": false,
+            "power_source": null,
+            "power_roles": {}
+          },
+          "other_parameters": {}
+        },
+        "run_mapping": {
+          "schema_version": "1.0",
+          "template": false,
+          "run_id": null,
+          "run_datetime": null,
+          "operator": null,
+          "instruments": {
+            "signal_generator": {
+              "label": null,
+              "model": "SG",
+              "full_code": null,
+              "device_key": null,
+              "visa_address": "sim::sg"
+            },
+            "spectrum_analyzer": {
+              "label": null,
+              "model": "SA",
+              "full_code": null,
+              "device_key": null,
+              "visa_address": "sim::sa"
+            },
+            "power_supplies": {
+              "DP8B1519": {
+                "label": "DP8B1519",
+                "model": "DP832A",
+                "full_code": "DP8B214901519",
+                "device_key": "rigol technologies:dp8b214901519",
+                "visa_address": "sim::ps1"
+              }
+            }
+          },
+          "driver_mode": {
+            "enabled": false,
+            "power_source": null,
+            "power_channels": []
+          },
+          "dut_power_channels": [
+            {
+              "channel": "DP8B1519/CH1",
+              "role": "gate",
+              "connection": "DP8B1519/CH1 -> DUT 栅极"
+            },
+            {
+              "channel": "DP8B1519/CH2",
+              "role": "drain",
+              "connection": "DP8B1519/CH2 -> DUT 漏极"
+            },
+            {
+              "channel": "DP8B1519/CH1",
+              "role": "gate",
+              "connection": "DP8B1519/CH1 -> DUT 栅极"
+            }
+          ],
+          "notes": null
+        }
+      }
+    },
+    {
+      "name": "unknown_channel_role",
+      "input": {
+        "test_frequencies": [
+          2.4
+        ],
+        "signal_source": {
+          "start_power": -10.0,
+          "stop_power": 0.0,
+          "step": 1.0
+        },
+        "compression_point": {
+          "type": "5dB"
+        },
+        "driver_mode": {
+          "enabled": false
+        },
+        "attenuator": {
+          "type": "30dB"
+        },
+        "dut_config": {
+          "max_input_power": 30.0,
+          "power_supply_count": 1
+        },
+        "instruments": {
+          "signal_generator": {
+            "address": "sim::sg",
+            "model": "SG",
+            "enabled": true
+          },
+          "spectrum_analyzer": {
+            "address": "sim::sa",
+            "model": "SA",
+            "enabled": true
+          },
+          "power_supplies": {
+            "DP8B1519": {
+              "label": "DP8B1519",
+              "model": "DP832A",
+              "full_code": "DP8B214901519",
+              "device_key": "rigol technologies:dp8b214901519",
+              "address": "sim::ps1",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 2.8
+                  },
+                  "current": {
+                    "value": 0.1
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 2.0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "power_supply_assignment": {
+          "driver_amplifier": {
+            "power_supply_count": 0,
+            "supplies": {}
+          },
+          "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "carrier": {
+                "supply_id": "DP8B1519",
+                "name": "DP8B1519",
+                "channel": [
+                  "CH99"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "expected": {
+        "test_frequencies": [
+          2.4
+        ],
+        "signal_source": {
+          "start_power": -10.0,
+          "stop_power": 0.0,
+          "step": 1.0
+        },
+        "compression_point": {
+          "type": "5dB"
+        },
+        "driver_mode": {
+          "enabled": false
+        },
+        "attenuator": {
+          "type": "30dB"
+        },
+        "dut_config": {
+          "max_input_power": 30.0,
+          "power_supply_count": 1
+        },
+        "instruments": {
+          "signal_generator": {
+            "address": "sim::sg",
+            "model": "SG",
+            "enabled": true
+          },
+          "spectrum_analyzer": {
+            "address": "sim::sa",
+            "model": "SA",
+            "enabled": true
+          },
+          "power_supplies": {
+            "DP8B1519": {
+              "label": "DP8B1519",
+              "model": "DP832A",
+              "full_code": "DP8B214901519",
+              "device_key": "rigol technologies:dp8b214901519",
+              "address": "sim::ps1",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 2.8
+                  },
+                  "current": {
+                    "value": 0.1
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 2.0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "power_supply_assignment": {
+          "driver_amplifier": {
+            "power_supply_count": 0,
+            "supplies": {}
+          },
+          "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "carrier": {
+                "supply_id": "DP8B1519",
+                "name": "DP8B1519",
+                "channel": [
+                  "CH99"
+                ]
+              }
+            }
+          }
+        },
+        "schema_version": "1.0",
+        "test_plan": {
+          "schema_version": "1.0",
+          "template": false,
+          "plan_id": "gui-configuration",
+          "frequencies": {
+            "values": [
+              2.4
+            ],
+            "unit": "GHz"
+          },
+          "signal_source": {
+            "start_power": -10.0,
+            "stop_power": 0.0,
+            "step": 1.0,
+            "unit": "dBm"
+          },
+          "compression_point": {
+            "type": "5dB"
+          },
+          "attenuator": {
+            "value": 30.0,
+            "unit": "dB"
+          },
+          "dut": {
+            "max_input_power": 30.0,
+            "power_roles": {
+              "CH99": {
+                "role": null,
+                "voltage": null,
+                "current": null,
+                "voltage_protection": null,
+                "current_protection": null
+              }
+            }
+          },
+          "driver_mode": {
+            "enabled": false,
+            "power_source": null,
+            "power_roles": {}
+          },
+          "other_parameters": {}
+        },
+        "run_mapping": {
+          "schema_version": "1.0",
+          "template": false,
+          "run_id": null,
+          "run_datetime": null,
+          "operator": null,
+          "instruments": {
+            "signal_generator": {
+              "label": null,
+              "model": "SG",
+              "full_code": null,
+              "device_key": null,
+              "visa_address": "sim::sg"
+            },
+            "spectrum_analyzer": {
+              "label": null,
+              "model": "SA",
+              "full_code": null,
+              "device_key": null,
+              "visa_address": "sim::sa"
+            },
+            "power_supplies": {
+              "DP8B1519": {
+                "label": "DP8B1519",
+                "model": "DP832A",
+                "full_code": "DP8B214901519",
+                "device_key": "rigol technologies:dp8b214901519",
+                "visa_address": "sim::ps1"
+              }
+            }
+          },
+          "driver_mode": {
+            "enabled": false,
+            "power_source": null,
+            "power_channels": []
+          },
+          "dut_power_channels": [
+            {
+              "channel": "DP8B1519/CH99",
+              "role": null,
+              "connection": "DP8B1519/CH99"
+            }
+          ],
+          "notes": null
+        }
+      }
+    },
+    {
+      "name": "missing_and_disabled_instrument_identity",
+      "input": {
+        "test_frequencies": [
+          2.4
+        ],
+        "signal_source": {
+          "start_power": -10.0,
+          "stop_power": 0.0,
+          "step": 1.0
+        },
+        "compression_point": {
+          "type": "5dB"
+        },
+        "driver_mode": {
+          "enabled": false
+        },
+        "attenuator": {
+          "type": "30dB"
+        },
+        "dut_config": {
+          "max_input_power": 30.0,
+          "power_supply_count": 1
+        },
+        "instruments": {
+          "signal_generator": {
+            "address": "sim::sg",
+            "model": "SG",
+            "enabled": true
+          },
+          "spectrum_analyzer": {
+            "address": "sim::sa",
+            "model": "SA",
+            "enabled": false
+          },
+          "power_supplies": {
+            "DP8B1519": {
+              "label": "DP8B1519",
+              "model": "DP832A",
+              "full_code": "DP8B214901519",
+              "device_key": "rigol technologies:dp8b214901519",
+              "address": "sim::ps1",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 2.8
+                  },
+                  "current": {
+                    "value": 0.1
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 2.0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "power_supply_assignment": {
+          "driver_amplifier": {
+            "power_supply_count": 0,
+            "supplies": {}
+          },
+          "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "carrier": {
+                "supply_id": "DP8B1519",
+                "name": "DP8B1519",
+                "channel": [
+                  "CH1",
+                  "CH2"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "expected": {
+        "test_frequencies": [
+          2.4
+        ],
+        "signal_source": {
+          "start_power": -10.0,
+          "stop_power": 0.0,
+          "step": 1.0
+        },
+        "compression_point": {
+          "type": "5dB"
+        },
+        "driver_mode": {
+          "enabled": false
+        },
+        "attenuator": {
+          "type": "30dB"
+        },
+        "dut_config": {
+          "max_input_power": 30.0,
+          "power_supply_count": 1
+        },
+        "instruments": {
+          "signal_generator": {
+            "address": "sim::sg",
+            "model": "SG",
+            "enabled": true
+          },
+          "spectrum_analyzer": {
+            "address": "sim::sa",
+            "model": "SA",
+            "enabled": false
+          },
+          "power_supplies": {
+            "DP8B1519": {
+              "label": "DP8B1519",
+              "model": "DP832A",
+              "full_code": "DP8B214901519",
+              "device_key": "rigol technologies:dp8b214901519",
+              "address": "sim::ps1",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 2.8
+                  },
+                  "current": {
+                    "value": 0.1
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 2.0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "power_supply_assignment": {
+          "driver_amplifier": {
+            "power_supply_count": 0,
+            "supplies": {}
+          },
+          "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "carrier": {
+                "supply_id": "DP8B1519",
+                "name": "DP8B1519",
+                "channel": [
+                  "CH1",
+                  "CH2"
+                ]
+              }
+            }
+          }
+        },
+        "schema_version": "1.0",
+        "test_plan": {
+          "schema_version": "1.0",
+          "template": false,
+          "plan_id": "gui-configuration",
+          "frequencies": {
+            "values": [
+              2.4
+            ],
+            "unit": "GHz"
+          },
+          "signal_source": {
+            "start_power": -10.0,
+            "stop_power": 0.0,
+            "step": 1.0,
+            "unit": "dBm"
+          },
+          "compression_point": {
+            "type": "5dB"
+          },
+          "attenuator": {
+            "value": 30.0,
+            "unit": "dB"
+          },
+          "dut": {
+            "max_input_power": 30.0,
+            "power_roles": {
+              "gate": {
+                "role": "gate",
+                "voltage": 2.8,
+                "current": 0.1,
+                "voltage_protection": null,
+                "current_protection": null
+              },
+              "drain": {
+                "role": "drain",
+                "voltage": 28.0,
+                "current": 2.0,
+                "voltage_protection": null,
+                "current_protection": null
+              }
+            }
+          },
+          "driver_mode": {
+            "enabled": false,
+            "power_source": null,
+            "power_roles": {}
+          },
+          "other_parameters": {}
+        },
+        "run_mapping": {
+          "schema_version": "1.0",
+          "template": false,
+          "run_id": null,
+          "run_datetime": null,
+          "operator": null,
+          "instruments": {
+            "signal_generator": {
+              "label": null,
+              "model": "SG",
+              "full_code": null,
+              "device_key": null,
+              "visa_address": "sim::sg"
+            },
+            "spectrum_analyzer": {
+              "label": null,
+              "model": "SA",
+              "full_code": null,
+              "device_key": null,
+              "visa_address": null
+            },
+            "power_supplies": {
+              "DP8B1519": {
+                "label": "DP8B1519",
+                "model": "DP832A",
+                "full_code": "DP8B214901519",
+                "device_key": "rigol technologies:dp8b214901519",
+                "visa_address": "sim::ps1"
+              }
+            }
+          },
+          "driver_mode": {
+            "enabled": false,
+            "power_source": null,
+            "power_channels": []
+          },
+          "dut_power_channels": [
+            {
+              "channel": "DP8B1519/CH1",
+              "role": "gate",
+              "connection": "DP8B1519/CH1 -> DUT 栅极"
+            },
+            {
+              "channel": "DP8B1519/CH2",
+              "role": "drain",
+              "connection": "DP8B1519/CH2 -> DUT 漏极"
+            }
+          ],
+          "notes": null
+        }
+      }
+    },
+    {
+      "name": "legacy_slot_name_without_supply_id",
+      "input": {
+        "test_frequencies": [
+          2.4
+        ],
+        "signal_source": {
+          "start_power": -10.0,
+          "stop_power": 0.0,
+          "step": 1.0
+        },
+        "compression_point": {
+          "type": "5dB"
+        },
+        "driver_mode": {
+          "enabled": false
+        },
+        "attenuator": {
+          "type": "30dB"
+        },
+        "dut_config": {
+          "max_input_power": 30.0,
+          "power_supply_count": 1
+        },
+        "instruments": {
+          "signal_generator": {
+            "address": "sim::sg",
+            "model": "SG",
+            "enabled": true
+          },
+          "spectrum_analyzer": {
+            "address": "sim::sa",
+            "model": "SA",
+            "enabled": true
+          },
+          "power_supplies": {
+            "DP8B1519": {
+              "label": "DP8B1519",
+              "model": "DP832A",
+              "full_code": "DP8B214901519",
+              "device_key": "rigol technologies:dp8b214901519",
+              "address": "sim::ps1",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 2.8
+                  },
+                  "current": {
+                    "value": 0.1
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 2.0
+                  }
+                }
+              }
+            },
+            "PS1": {
+              "label": "PS1",
+              "model": "PS1",
+              "address": "sim::legacy",
+              "enabled": true,
+              "channels": {}
+            }
+          }
+        },
+        "power_supply_assignment": {
+          "driver_amplifier": {
+            "power_supply_count": 0,
+            "supplies": {}
+          },
+          "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "carrier": {
+                "name": "PS1",
+                "channel": [
+                  "CH1"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "expected": {
+        "test_frequencies": [
+          2.4
+        ],
+        "signal_source": {
+          "start_power": -10.0,
+          "stop_power": 0.0,
+          "step": 1.0
+        },
+        "compression_point": {
+          "type": "5dB"
+        },
+        "driver_mode": {
+          "enabled": false
+        },
+        "attenuator": {
+          "type": "30dB"
+        },
+        "dut_config": {
+          "max_input_power": 30.0,
+          "power_supply_count": 1
+        },
+        "instruments": {
+          "signal_generator": {
+            "address": "sim::sg",
+            "model": "SG",
+            "enabled": true
+          },
+          "spectrum_analyzer": {
+            "address": "sim::sa",
+            "model": "SA",
+            "enabled": true
+          },
+          "power_supplies": {
+            "DP8B1519": {
+              "label": "DP8B1519",
+              "model": "DP832A",
+              "full_code": "DP8B214901519",
+              "device_key": "rigol technologies:dp8b214901519",
+              "address": "sim::ps1",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 2.8
+                  },
+                  "current": {
+                    "value": 0.1
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 2.0
+                  }
+                }
+              }
+            },
+            "PS1": {
+              "label": "PS1",
+              "model": "PS1",
+              "address": "sim::legacy",
+              "enabled": true,
+              "channels": {}
+            }
+          }
+        },
+        "power_supply_assignment": {
+          "driver_amplifier": {
+            "power_supply_count": 0,
+            "supplies": {}
+          },
+          "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "carrier": {
+                "name": "PS1",
+                "channel": [
+                  "CH1"
+                ]
+              }
+            }
+          }
+        },
+        "schema_version": "1.0",
+        "test_plan": {
+          "schema_version": "1.0",
+          "template": false,
+          "plan_id": "gui-configuration",
+          "frequencies": {
+            "values": [
+              2.4
+            ],
+            "unit": "GHz"
+          },
+          "signal_source": {
+            "start_power": -10.0,
+            "stop_power": 0.0,
+            "step": 1.0,
+            "unit": "dBm"
+          },
+          "compression_point": {
+            "type": "5dB"
+          },
+          "attenuator": {
+            "value": 30.0,
+            "unit": "dB"
+          },
+          "dut": {
+            "max_input_power": 30.0,
+            "power_roles": {
+              "gate": {
+                "role": "gate",
+                "voltage": null,
+                "current": null,
+                "voltage_protection": null,
+                "current_protection": null
+              }
+            }
+          },
+          "driver_mode": {
+            "enabled": false,
+            "power_source": null,
+            "power_roles": {}
+          },
+          "other_parameters": {}
+        },
+        "run_mapping": {
+          "schema_version": "1.0",
+          "template": false,
+          "run_id": null,
+          "run_datetime": null,
+          "operator": null,
+          "instruments": {
+            "signal_generator": {
+              "label": null,
+              "model": "SG",
+              "full_code": null,
+              "device_key": null,
+              "visa_address": "sim::sg"
+            },
+            "spectrum_analyzer": {
+              "label": null,
+              "model": "SA",
+              "full_code": null,
+              "device_key": null,
+              "visa_address": "sim::sa"
+            },
+            "power_supplies": {
+              "PS1": {
+                "label": "PS1",
+                "model": null,
+                "full_code": null,
+                "device_key": null,
+                "visa_address": "sim::legacy"
+              }
+            }
+          },
+          "driver_mode": {
+            "enabled": false,
+            "power_source": null,
+            "power_channels": []
+          },
+          "dut_power_channels": [
+            {
+              "channel": "PS1/CH1",
+              "role": "gate",
+              "connection": "PS1/CH1 -> DUT 栅极"
+            }
+          ],
+          "notes": null
+        }
+      }
+    },
+    {
+      "name": "channel_settings_are_filtered",
+      "input": {
+        "test_frequencies": [
+          2.4
+        ],
+        "signal_source": {
+          "start_power": -10.0,
+          "stop_power": 0.0,
+          "step": 1.0
+        },
+        "compression_point": {
+          "type": "5dB"
+        },
+        "driver_mode": {
+          "enabled": false
+        },
+        "attenuator": {
+          "type": "30dB"
+        },
+        "dut_config": {
+          "max_input_power": 30.0,
+          "power_supply_count": 1
+        },
+        "instruments": {
+          "signal_generator": {
+            "address": "sim::sg",
+            "model": "SG",
+            "enabled": true
+          },
+          "spectrum_analyzer": {
+            "address": "sim::sa",
+            "model": "SA",
+            "enabled": true
+          },
+          "power_supplies": {
+            "DP8B1519": {
+              "label": "DP8B1519",
+              "model": "DP832A",
+              "full_code": "DP8B214901519",
+              "device_key": "rigol technologies:dp8b214901519",
+              "address": "sim::ps1",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": "2.8",
+                    "protection": true
+                  },
+                  "current": {
+                    "value": 0.1,
+                    "protection": 0.2
+                  }
+                },
+                "CH2": {
+                  "role": "drain",
+                  "voltage": {
+                    "value": 28.0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "power_supply_assignment": {
+          "driver_amplifier": {
+            "power_supply_count": 0,
+            "supplies": {}
+          },
+          "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "carrier": {
+                "supply_id": "DP8B1519",
+                "name": "DP8B1519",
+                "channel": [
+                  "CH1",
+                  "CH2"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "expected": {
+        "test_frequencies": [
+          2.4
+        ],
+        "signal_source": {
+          "start_power": -10.0,
+          "stop_power": 0.0,
+          "step": 1.0
+        },
+        "compression_point": {
+          "type": "5dB"
+        },
+        "driver_mode": {
+          "enabled": false
+        },
+        "attenuator": {
+          "type": "30dB"
+        },
+        "dut_config": {
+          "max_input_power": 30.0,
+          "power_supply_count": 1
+        },
+        "instruments": {
+          "signal_generator": {
+            "address": "sim::sg",
+            "model": "SG",
+            "enabled": true
+          },
+          "spectrum_analyzer": {
+            "address": "sim::sa",
+            "model": "SA",
+            "enabled": true
+          },
+          "power_supplies": {
+            "DP8B1519": {
+              "label": "DP8B1519",
+              "model": "DP832A",
+              "full_code": "DP8B214901519",
+              "device_key": "rigol technologies:dp8b214901519",
+              "address": "sim::ps1",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": "2.8",
+                    "protection": true
+                  },
+                  "current": {
+                    "value": 0.1,
+                    "protection": 0.2
+                  }
+                },
+                "CH2": {
+                  "role": "drain",
+                  "voltage": {
+                    "value": 28.0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "power_supply_assignment": {
+          "driver_amplifier": {
+            "power_supply_count": 0,
+            "supplies": {}
+          },
+          "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "carrier": {
+                "supply_id": "DP8B1519",
+                "name": "DP8B1519",
+                "channel": [
+                  "CH1",
+                  "CH2"
+                ]
+              }
+            }
+          }
+        },
+        "schema_version": "1.0",
+        "test_plan": {
+          "schema_version": "1.0",
+          "template": false,
+          "plan_id": "gui-configuration",
+          "frequencies": {
+            "values": [
+              2.4
+            ],
+            "unit": "GHz"
+          },
+          "signal_source": {
+            "start_power": -10.0,
+            "stop_power": 0.0,
+            "step": 1.0,
+            "unit": "dBm"
+          },
+          "compression_point": {
+            "type": "5dB"
+          },
+          "attenuator": {
+            "value": 30.0,
+            "unit": "dB"
+          },
+          "dut": {
+            "max_input_power": 30.0,
+            "power_roles": {
+              "gate": {
+                "role": "gate",
+                "voltage": null,
+                "current": 0.1,
+                "voltage_protection": null,
+                "current_protection": 0.2
+              },
+              "drain": {
+                "role": "drain",
+                "voltage": 28.0,
+                "current": null,
+                "voltage_protection": null,
+                "current_protection": null
+              }
+            }
+          },
+          "driver_mode": {
+            "enabled": false,
+            "power_source": null,
+            "power_roles": {}
+          },
+          "other_parameters": {}
+        },
+        "run_mapping": {
+          "schema_version": "1.0",
+          "template": false,
+          "run_id": null,
+          "run_datetime": null,
+          "operator": null,
+          "instruments": {
+            "signal_generator": {
+              "label": null,
+              "model": "SG",
+              "full_code": null,
+              "device_key": null,
+              "visa_address": "sim::sg"
+            },
+            "spectrum_analyzer": {
+              "label": null,
+              "model": "SA",
+              "full_code": null,
+              "device_key": null,
+              "visa_address": "sim::sa"
+            },
+            "power_supplies": {
+              "DP8B1519": {
+                "label": "DP8B1519",
+                "model": "DP832A",
+                "full_code": "DP8B214901519",
+                "device_key": "rigol technologies:dp8b214901519",
+                "visa_address": "sim::ps1"
+              }
+            }
+          },
+          "driver_mode": {
+            "enabled": false,
+            "power_source": null,
+            "power_channels": []
+          },
+          "dut_power_channels": [
+            {
+              "channel": "DP8B1519/CH1",
+              "role": "gate",
+              "connection": "DP8B1519/CH1 -> DUT 栅极"
+            },
+            {
+              "channel": "DP8B1519/CH2",
+              "role": "drain",
+              "connection": "DP8B1519/CH2 -> DUT 漏极"
+            }
+          ],
+          "notes": null
+        }
+      }
+    },
+    {
+      "name": "unknown_blocks_pass_through",
+      "input": {
+        "test_frequencies": [
+          2.4
+        ],
+        "signal_source": {
+          "start_power": -10.0,
+          "stop_power": 0.0,
+          "step": 1.0
+        },
+        "compression_point": {
+          "type": "5dB"
+        },
+        "driver_mode": {
+          "enabled": false
+        },
+        "attenuator": {
+          "type": "30dB"
+        },
+        "dut_config": {
+          "max_input_power": 30.0,
+          "power_supply_count": 1
+        },
+        "instruments": {
+          "signal_generator": {
+            "address": "sim::sg",
+            "model": "SG",
+            "enabled": true
+          },
+          "spectrum_analyzer": {
+            "address": "sim::sa",
+            "model": "SA",
+            "enabled": true
+          },
+          "power_supplies": {
+            "DP8B1519": {
+              "label": "DP8B1519",
+              "model": "DP832A",
+              "full_code": "DP8B214901519",
+              "device_key": "rigol technologies:dp8b214901519",
+              "address": "sim::ps1",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 2.8
+                  },
+                  "current": {
+                    "value": 0.1
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 2.0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "power_supply_assignment": {
+          "driver_amplifier": {
+            "power_supply_count": 0,
+            "supplies": {}
+          },
+          "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "carrier": {
+                "supply_id": "DP8B1519",
+                "name": "DP8B1519",
+                "channel": [
+                  "CH1",
+                  "CH2"
+                ]
+              }
+            }
+          }
+        },
+        "unknown_block": {
+          "nested": [
+            1,
+            {
+              "a": null
+            }
+          ]
+        },
+        "schema_version": "9.9"
+      },
+      "expected": {
+        "test_frequencies": [
+          2.4
+        ],
+        "signal_source": {
+          "start_power": -10.0,
+          "stop_power": 0.0,
+          "step": 1.0
+        },
+        "compression_point": {
+          "type": "5dB"
+        },
+        "driver_mode": {
+          "enabled": false
+        },
+        "attenuator": {
+          "type": "30dB"
+        },
+        "dut_config": {
+          "max_input_power": 30.0,
+          "power_supply_count": 1
+        },
+        "instruments": {
+          "signal_generator": {
+            "address": "sim::sg",
+            "model": "SG",
+            "enabled": true
+          },
+          "spectrum_analyzer": {
+            "address": "sim::sa",
+            "model": "SA",
+            "enabled": true
+          },
+          "power_supplies": {
+            "DP8B1519": {
+              "label": "DP8B1519",
+              "model": "DP832A",
+              "full_code": "DP8B214901519",
+              "device_key": "rigol technologies:dp8b214901519",
+              "address": "sim::ps1",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 2.8
+                  },
+                  "current": {
+                    "value": 0.1
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 2.0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "power_supply_assignment": {
+          "driver_amplifier": {
+            "power_supply_count": 0,
+            "supplies": {}
+          },
+          "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "carrier": {
+                "supply_id": "DP8B1519",
+                "name": "DP8B1519",
+                "channel": [
+                  "CH1",
+                  "CH2"
+                ]
+              }
+            }
+          }
+        },
+        "unknown_block": {
+          "nested": [
+            1,
+            {
+              "a": null
+            }
+          ]
+        },
+        "schema_version": "1.0",
+        "test_plan": {
+          "schema_version": "1.0",
+          "template": false,
+          "plan_id": "gui-configuration",
+          "frequencies": {
+            "values": [
+              2.4
+            ],
+            "unit": "GHz"
+          },
+          "signal_source": {
+            "start_power": -10.0,
+            "stop_power": 0.0,
+            "step": 1.0,
+            "unit": "dBm"
+          },
+          "compression_point": {
+            "type": "5dB"
+          },
+          "attenuator": {
+            "value": 30.0,
+            "unit": "dB"
+          },
+          "dut": {
+            "max_input_power": 30.0,
+            "power_roles": {
+              "gate": {
+                "role": "gate",
+                "voltage": 2.8,
+                "current": 0.1,
+                "voltage_protection": null,
+                "current_protection": null
+              },
+              "drain": {
+                "role": "drain",
+                "voltage": 28.0,
+                "current": 2.0,
+                "voltage_protection": null,
+                "current_protection": null
+              }
+            }
+          },
+          "driver_mode": {
+            "enabled": false,
+            "power_source": null,
+            "power_roles": {}
+          },
+          "other_parameters": {}
+        },
+        "run_mapping": {
+          "schema_version": "1.0",
+          "template": false,
+          "run_id": null,
+          "run_datetime": null,
+          "operator": null,
+          "instruments": {
+            "signal_generator": {
+              "label": null,
+              "model": "SG",
+              "full_code": null,
+              "device_key": null,
+              "visa_address": "sim::sg"
+            },
+            "spectrum_analyzer": {
+              "label": null,
+              "model": "SA",
+              "full_code": null,
+              "device_key": null,
+              "visa_address": "sim::sa"
+            },
+            "power_supplies": {
+              "DP8B1519": {
+                "label": "DP8B1519",
+                "model": "DP832A",
+                "full_code": "DP8B214901519",
+                "device_key": "rigol technologies:dp8b214901519",
+                "visa_address": "sim::ps1"
+              }
+            }
+          },
+          "driver_mode": {
+            "enabled": false,
+            "power_source": null,
+            "power_channels": []
+          },
+          "dut_power_channels": [
+            {
+              "channel": "DP8B1519/CH1",
+              "role": "gate",
+              "connection": "DP8B1519/CH1 -> DUT 栅极"
+            },
+            {
+              "channel": "DP8B1519/CH2",
+              "role": "drain",
+              "connection": "DP8B1519/CH2 -> DUT 漏极"
+            }
+          ],
+          "notes": null
+        }
+      }
+    },
+    {
+      "name": "empty_document",
+      "input": {},
+      "expected": {
+        "schema_version": "1.0",
+        "test_plan": {
+          "schema_version": "1.0",
+          "template": false,
+          "plan_id": "gui-configuration",
+          "frequencies": {
+            "values": [],
+            "unit": "GHz"
+          },
+          "signal_source": {
+            "start_power": null,
+            "stop_power": null,
+            "step": null,
+            "unit": "dBm"
+          },
+          "compression_point": {
+            "type": null
+          },
+          "attenuator": {
+            "value": null,
+            "unit": "dB"
+          },
+          "dut": {
+            "max_input_power": null,
+            "power_roles": {}
+          },
+          "driver_mode": {
+            "enabled": false,
+            "power_source": null,
+            "power_roles": {}
+          },
+          "other_parameters": {}
+        },
+        "run_mapping": {
+          "schema_version": "1.0",
+          "template": false,
+          "run_id": null,
+          "run_datetime": null,
+          "operator": null,
+          "instruments": {
+            "signal_generator": {
+              "label": null,
+              "model": null,
+              "full_code": null,
+              "device_key": null,
+              "visa_address": null
+            },
+            "spectrum_analyzer": {
+              "label": null,
+              "model": null,
+              "full_code": null,
+              "device_key": null,
+              "visa_address": null
+            },
+            "power_supplies": {}
+          },
+          "driver_mode": {
+            "enabled": false,
+            "power_source": null,
+            "power_channels": []
+          },
+          "dut_power_channels": [],
+          "notes": null
+        }
+      }
+    },
+    {
+      "name": "non_mapping_null",
+      "input": null,
+      "expected": {
+        "schema_version": "1.0",
+        "test_plan": {
+          "schema_version": "1.0",
+          "template": false,
+          "plan_id": "gui-configuration",
+          "frequencies": {
+            "values": [],
+            "unit": "GHz"
+          },
+          "signal_source": {
+            "start_power": null,
+            "stop_power": null,
+            "step": null,
+            "unit": "dBm"
+          },
+          "compression_point": {
+            "type": null
+          },
+          "attenuator": {
+            "value": null,
+            "unit": "dB"
+          },
+          "dut": {
+            "max_input_power": null,
+            "power_roles": {}
+          },
+          "driver_mode": {
+            "enabled": false,
+            "power_source": null,
+            "power_roles": {}
+          },
+          "other_parameters": {}
+        },
+        "run_mapping": {
+          "schema_version": "1.0",
+          "template": false,
+          "run_id": null,
+          "run_datetime": null,
+          "operator": null,
+          "instruments": {
+            "signal_generator": {
+              "label": null,
+              "model": null,
+              "full_code": null,
+              "device_key": null,
+              "visa_address": null
+            },
+            "spectrum_analyzer": {
+              "label": null,
+              "model": null,
+              "full_code": null,
+              "device_key": null,
+              "visa_address": null
+            },
+            "power_supplies": {}
+          },
+          "driver_mode": {
+            "enabled": false,
+            "power_source": null,
+            "power_channels": []
+          },
+          "dut_power_channels": [],
+          "notes": null
+        }
+      }
+    },
+    {
+      "name": "non_mapping_list",
+      "input": [
+        1,
+        "two"
+      ],
+      "expected": {
+        "schema_version": "1.0",
+        "test_plan": {
+          "schema_version": "1.0",
+          "template": false,
+          "plan_id": "gui-configuration",
+          "frequencies": {
+            "values": [],
+            "unit": "GHz"
+          },
+          "signal_source": {
+            "start_power": null,
+            "stop_power": null,
+            "step": null,
+            "unit": "dBm"
+          },
+          "compression_point": {
+            "type": null
+          },
+          "attenuator": {
+            "value": null,
+            "unit": "dB"
+          },
+          "dut": {
+            "max_input_power": null,
+            "power_roles": {}
+          },
+          "driver_mode": {
+            "enabled": false,
+            "power_source": null,
+            "power_roles": {}
+          },
+          "other_parameters": {}
+        },
+        "run_mapping": {
+          "schema_version": "1.0",
+          "template": false,
+          "run_id": null,
+          "run_datetime": null,
+          "operator": null,
+          "instruments": {
+            "signal_generator": {
+              "label": null,
+              "model": null,
+              "full_code": null,
+              "device_key": null,
+              "visa_address": null
+            },
+            "spectrum_analyzer": {
+              "label": null,
+              "model": null,
+              "full_code": null,
+              "device_key": null,
+              "visa_address": null
+            },
+            "power_supplies": {}
+          },
+          "driver_mode": {
+            "enabled": false,
+            "power_source": null,
+            "power_channels": []
+          },
+          "dut_power_channels": [],
+          "notes": null
+        }
+      }
+    }
+  ]
+}

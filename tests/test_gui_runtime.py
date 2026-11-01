@@ -22,7 +22,7 @@ from application.measurements import (
 from application.run_service import RunNotResumable
 from domain.configuration.models import RunConfiguration, RunResourceMapping, TestPlan
 from infrastructure.persistence.run_repository import RunRepository
-from presentation.qt.configuration_authoring import author_official_configuration
+from application.configuration_authoring import author_official_configuration
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "config_driver_enabled_no_assignment.json"

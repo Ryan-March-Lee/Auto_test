@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from presentation.qt.configuration_authoring import author_official_configuration
+from application.configuration_authoring import author_official_configuration
 
 
 def complete_combined_config() -> dict:

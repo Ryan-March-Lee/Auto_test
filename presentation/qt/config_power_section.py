@@ -10,8 +10,8 @@
 值是配置条目里本模块要显示的字段，本模块不从控件或文件里另外取状态。这里只按字段位置
 读出要显示的数值，并把不正确的类型回落到与投影一致的缺省值（见 :func:`spin_value` 与
 通道角色回退）：那是显示口径，不是校验。本模块不校验配置、不迁移旧字段、不写配置、也
-不读文件；字段的回填仍归 :mod:`presentation.qt.config_projection`，编写归
-:mod:`presentation.qt.configuration_authoring`，正式校验在
+不读文件；字段的回填仍归 :mod:`presentation.qt.config_projection`，正式配置编写归
+:mod:`application.configuration_authoring`，正式校验在
 :mod:`domain.configuration.rules` 与 :mod:`infrastructure.config.validation`；
 「槽位 -> 配置路径」的映射留在页面（``ConfigPage._assignment_entries``）。
 
@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from application.configuration_authoring import DUT_CHANNEL_ROLES
 from domain.instruments.labels import supply_identity_text
 
 from .config_page_widgets import combo_box, spin_box
@@ -40,7 +41,6 @@ from .config_projection import (
     apply_power_choice,
     supply_option_label,
 )
-from .configuration_authoring import DUT_CHANNEL_ROLES
 
 # 每台电源固定两个通道：通道名既是配置里的键，也是标签页内通道分组框的标题。
 POWER_SUPPLY_CHANNELS = ("CH1", "CH2")

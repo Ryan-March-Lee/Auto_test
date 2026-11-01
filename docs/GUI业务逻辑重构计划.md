@@ -214,6 +214,34 @@ ViewModel 不导入 PySide6，不直接读写文件，不创建仪器，不弹 Q
 
 **工作范围控制**：先只移动 authoring，不同时移动所有表单控件读取逻辑。
 
+**完成状态**：✅ 已完成。正式配置编写规则整体搬到
+`application.configuration_authoring`：
+
+- `ConfigurationAuthoringService.author(ConfigurationDraft)` 是后续
+  ViewModel/页面适配器使用的正式入口，`author_document(ConfigurationEditingDocument)`
+  接受明确的配置编辑 DTO；两者走同一套规则，模块级 `author_official_configuration()`
+  保留为迁移期文档入口；
+- `ConfigurationAuthoringService.validate_document(ConfigurationEditingDocument)` 在同一个
+  应用边界编排现有 domain 校验（`validate_run_configuration` +
+  `validate_hardware_connections`），把结果转成 `ValidationResult`（路径 + 来源错误码 +
+  严重级别）。`ConfigFormState._formal_run_errors` 只把当前读数包成 DTO 并展示消息，
+  `presentation.qt` 不再导入 `domain.configuration.models` 或直接调用硬件连接校验；
+- `ConfigurationEditingDocument` 把“页面读出的编辑段文档”收敛为显式 DTO（非对象输入按
+  空文档处理，与旧入口一致），构造时深拷贝输入做快照、输出再返回副本，调用方之后改写
+  原字典或嵌套集合不会改变待处理内容；服务不再接受任意对象；
+- `presentation.qt.configuration_authoring` 变成纯转发壳（只再导出服务、错误、常量与
+  文档入口，不定义任何函数或规则）；`ApplicationCoordinator`、`ConfigFormState`、
+  `config_projection`、`config_power_section` 都改走 application 入口；
+- 测试从 `tests/ui/test_configuration_authoring.py` 迁到
+  `tests/test_configuration_authoring.py`（纯 application 测试，不启动 `QApplication`），
+  新增“草稿入口与文档入口生成同一份正式段”“转发壳不含规则”“页面不导入 domain 正式
+  模型”等用例；并新增迁移前基线
+  `tests/fixtures/configuration_authoring/official_configuration_golden.json`，由迁移前
+  实现（commit `7310fa2`）生成、覆盖 15 组输入，整份输出逐字节比较，证明搬迁没有改变
+  字段、键序或透传行为；
+- 正式 API 清单、领域词汇与模块归属、行为基线同步更新。未改变字段含义、保存格式或
+  页面文案。
+
 ### 步骤 5：抽取 `DeviceBindingService`
 
 **目的**：把设备选择、角色唯一性、身份一致性和整批替换规则从 `ConfigPage.apply_discovered_devices()` 移出。

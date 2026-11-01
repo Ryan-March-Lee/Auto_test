@@ -24,7 +24,7 @@ from app.gui_runtime import create_cable_loss_measurement, prepare_configuration
 from application.run_service import RunNotResumable
 from domain.run.models import HARDWARE_CONFIG_INPUT_PATH, RunStatus
 from infrastructure.persistence.run_repository import RunRepository
-from presentation.qt.configuration_authoring import author_official_configuration
+from application.configuration_authoring import author_official_configuration
 from presentation.qt.measurement_controller import MeasurementController
 from presentation.qt.measurement_controller_contract import MeasurementCommand
 from presentation.qt.measurement_state import MeasurementKind

@@ -10,9 +10,9 @@
 
 归属（见 `docs/配置领域词汇与模块归属.md`）：presentation controller。它持有呈现层配置状态并
 编排 application 用例（配置保存、运行创建/加载、仪器端口生命周期），不读控件、不定义业务规则；
-规则来源仍是 :mod:`application.run_service` 与 :mod:`domain.configuration.rules`。目前直接调用
-:func:`presentation.qt.configuration_authoring.author_official_configuration`，步骤 4 改走
-application 的配置编写服务。
+规则来源仍是 :mod:`application.run_service` 与 :mod:`domain.configuration.rules`；
+正式配置文档由 :class:`application.configuration_authoring.ConfigurationAuthoringService`
+生成（GUI 重构步骤 4），协调器只负责调用与保存。
 """
 
 from __future__ import annotations
@@ -21,13 +21,16 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Protocol, runtime_checkable
 
 from app.gui_runtime import load_prepared_run, prepare_configuration
+from application.configuration_authoring import (
+    ConfigurationAuthoringService,
+    ConfigurationEditingDocument,
+)
 from application.gui_data_service import GuiDataService
 from application.run_service import RunNotResumable
 from domain.run.models import normalize_artifact_path
 
 from .composition import build_gui_data_service, default_paths
 from .config_projection import ConfigBackfillError
-from .configuration_authoring import author_official_configuration
 from .measurement_controller import MeasurementController
 from .measurement_state import MeasurementKind
 from .measurement_worker_factories import build_measurement_worker_factories
@@ -229,12 +232,14 @@ class ApplicationCoordinator:
         """把当前配置写为正式配置；失败时保留 :attr:`last_save_error`。
 
         这是一次完整的“编写 + 保存”：先在应用边界用
-        :func:`presentation.qt.configuration_authoring.author_official_configuration`
+        :class:`application.configuration_authoring.ConfigurationAuthoringService`
         生成正式文档（校验失败就不会写盘），再经 ``ConfigurationPort.save`` 交给配置
         仓储的原子写入。界面不接触文件、序列化格式或临时文件，运行快照也不走这里。
         """
         try:
-            self.config = author_official_configuration(self.config)
+            self.config = ConfigurationAuthoringService().author_document(
+                ConfigurationEditingDocument.from_mapping(self.config)
+            )
             self._push_config_to_page()
             self.gui_data_service.configuration.save(self.config)
         except Exception as failure:  # noqa: BLE001 - 界面需要原始原因，写入失败不得静默

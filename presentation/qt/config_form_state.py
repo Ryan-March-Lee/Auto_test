@@ -10,9 +10,10 @@
 在 :mod:`presentation.qt.config_form_bindings`，这里只消费它给出的结果。
 
 归属（见 `docs/配置领域词汇与模块归属.md`）：presentation adapter。读数后的合法性判据属于
-`domain` 配置规则；`_power_role_errors`、`_power_assignment_errors` 以及 `_formal_run_errors`
-提前执行的正式校验都是迁移期副本（步骤 7、13 收敛到 Adapter 展示结构化校验结果），不在这里
-新增第二套规则。
+`domain` 配置规则；正式运行校验与正式配置编写都委托
+`application.configuration_authoring`，本模块只把当前的读数包成配置编辑 DTO 并展示
+返回的消息。`_power_role_errors`、`_power_assignment_errors` 是迁移期副本（步骤 7、13
+收敛到 Adapter 展示结构化校验结果），不在这里新增第二套规则。
 """
 
 import ast
@@ -24,7 +25,6 @@ from typing import Any, Mapping
 # ``domain.configuration.rules.assignment_supply_id``，这里再导出给配置页与投影使用，
 # 判据不在这层重写：``supply_id`` 为准、旧记录回落读一次 ``name`` 的规则只有一个实现。
 from application.errors import ConfigurationError
-from domain.configuration.models import validate_run_configuration
 from domain.configuration.rules import assignment_supply_id
 from domain.instruments.models import INSTRUMENT_ROLES
 
@@ -193,8 +193,8 @@ class ConfigFormState:
 
         界面自己的检查只看“选了没有、绑定了没有”；真正决定能否连接仪器的是正式
         ``test_plan`` / ``run_mapping``（多电源的地址重复、同一物理通道重复、供电角色
-        冲突等规则都在那里，见步骤 11）。这里用同一套配置作者与正式校验，让这些失败在
-        点击“开始”之前、并出现在创建运行的那一条提示里。
+        冲突等规则都在那里，见步骤 11）。这里调用应用边界的同一套编写与校验，让这些失败
+        在点击“开始”之前、并出现在创建运行的那一条提示里。
 
         校验对象是页面此刻的读数（:meth:`build_config`）：协调器持有的配置副本可能还带着
         页面已经放弃的旧段（例如关闭驱放前保存的驱动分配），按它报错会让刚做对的界面无法
@@ -203,30 +203,22 @@ class ConfigFormState:
         只把 :class:`ConfigurationError` 转成页面错误：那是配置作者对当前读数的判断。
         其它异常是程序缺陷，不能被改写成“配置有问题”的提示而掩盖掉，让它照常抛给上层。
         """
-        # 延迟导入：``configuration_authoring`` 反向依赖本模块的 ``assignment_supply_id``，
-        # 在模块级互相导入会形成环。
-        from domain.configuration.models import RunConfiguration, RunResourceMapping, TestPlan
-        from domain.configuration.rules import validate_hardware_connections
-        from presentation.qt.configuration_authoring import author_official_configuration
+        # 编写与正式校验都在 application 边界完成（GUI 重构步骤 4）：页面只把当前读数
+        # 包成配置编辑 DTO 并展示消息，不导入 domain 的正式模型或校验函数。
+        from application.configuration_authoring import (
+            ConfigurationAuthoringService,
+            ConfigurationEditingDocument,
+        )
 
-        errors: list[str] = []
         try:
-            document = author_official_configuration(self.build_config())
+            result = ConfigurationAuthoringService().validate_document(
+                ConfigurationEditingDocument.from_mapping(self.build_config())
+            )
         except ConfigurationError as failure:
             # 配置作者对“现在的配置写不成正式映射”给出的判断（未绑定的分配、缺少身份字段
             # 等），是用户要改的内容，转成页面错误。
             return [f"无法按当前配置生成正式运行映射: {failure}"]
-        result = validate_run_configuration(
-            RunConfiguration(
-                TestPlan.from_dict(document.get("test_plan") or {}),
-                RunResourceMapping.from_dict(document.get("run_mapping") or {}),
-            )
-        )
-        errors = [issue.message for issue in result.errors]
-        # 正式段之外还有硬件装配段（``instruments`` / ``power_supply_assignment``）：
-        # 两台电源抢同一个地址、同一物理通道同时供 DUT 与驱动功放都只在这一段可见。
-        errors += [issue.message for issue in validate_hardware_connections(document).errors]
-        return errors
+        return [issue.message for issue in result.errors]
 
     def _power_assignment_errors(self) -> list[str]:
         """电源分配只能引用已应用设备的电源；未绑定的引用必须显式失败。

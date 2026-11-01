@@ -7,7 +7,7 @@
 单独测试，也不需要另一块表单的控件状态。
 
 控件读数与配置合并属于 :mod:`presentation.qt.config_form_state`；正式运行映射的编写在
-:mod:`presentation.qt.configuration_authoring`，正式校验在
+:mod:`application.configuration_authoring`，正式校验在
 :mod:`domain.configuration.rules` 与 :mod:`infrastructure.config.validation`。这里既不
 构造正式 schema，也不决定设备身份（身份只来自设备发现结果与设备表）。
 

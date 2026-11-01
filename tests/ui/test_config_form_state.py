@@ -588,11 +588,11 @@ class PowerSupplyConnectionTests(unittest.TestCase):
             supply_id="DP8B1519",
             bindings=self._bindings(second_address="TCPIP0::192.168.1.108::inst0::INSTR"),
         )
-        from presentation.qt import configuration_authoring
+        from application.configuration_authoring import ConfigurationAuthoringService
 
         with mock.patch.object(
-            configuration_authoring,
-            "author_official_configuration",
+            ConfigurationAuthoringService,
+            "author_document",
             side_effect=ConfigurationError("缺少电源身份"),
         ):
             errors = ConfigFormState({}, widgets).validation_errors()

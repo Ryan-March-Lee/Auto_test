@@ -69,6 +69,7 @@
 | `application.configuration_service` | `load_for_run` | 正式配置加载入口 |
 | `application.configuration_draft` | `ConfigurationDraft`、`ConfigurationDraftResult`、`DeviceBindingDraft`、`DeviceBindingsDraft`、`PowerAssignmentDraft`、`PowerChannelDraft`、`PowerSupplyDraft` | 配置编辑草稿（GUI 重构步骤 3）：测试频率、功率扫描、压缩点、衰减器、DUT 输入限制、驱放模式、DUT/驱动供电分配、电源通道参数与设备绑定。频率/功率/衰减与 DUT 输入使用 domain 值对象，集合字段为 `tuple`，电源绑定为受控键值对；`from_document` 返回草稿 + 结构化转换问题，`to_document` 只输出配置编辑段（不生成 `test_plan` / `run_mapping`，不写 `schema_version`）。缺失/非法类型/空引用保留为 `None`/空集合，不自动挑选默认设备；不含 Qt、文件路径、仪器对象或运行标识 |
 | `application.configuration_editing` | `ValidationIssue`、`ValidationResult` | 配置编辑的结构化问题与结果（GUI 重构步骤 3）：问题至少包含路径、稳定错误码和用户文案，结果区分错误/警告且没有错误即有效；用户可修正的配置问题用它返回，不用异常控制正常流程；不含 Qt、文件路径或仪器对象 |
+| `application.configuration_authoring` | `ConfigurationAuthoringError`、`ConfigurationAuthoringService`、`ConfigurationEditingDocument`、`DUT_CHANNEL_ROLES`、`OFFICIAL_SCHEMA_VERSION`、`author_official_configuration`、`parse_db_value` | 正式配置文档的唯一生成服务（GUI 重构步骤 4）：`author(draft)` 接受 `ConfigurationDraft`，`author_document(ConfigurationEditingDocument)` 接受明确的配置编辑 DTO；两者走同一套规则，补齐 `schema_version` 并生成正式 `test_plan` / `run_mapping`。`validate_document(ConfigurationEditingDocument)` 在同一编排里调用 domain 的 `validate_run_configuration` 与 `validate_hardware_connections`，把问题转成带路径、来源错误码和严重级别的 `ValidationResult`，表现层只展示结果。只做结构与字段的忠实转换，不读控件、不碰文件、不创建仪器；缺失或非法字段保持原样，由 domain 的正式校验在连接前报告。`presentation.qt.configuration_authoring` 只保留了转发壳 |
 | `application.run_service` | `RunSnapshot`、`create_run_snapshot`、`load_run_configuration`、`inspect_run`、`load_hardware_config`、`find_run_hardware_config`、`ensure_run_resumable`、`has_run_contract` | 运行创建、快照校验与可恢复性判断；正式测量必须绑定 `run_id`。`has_run_contract` 是运行契约的唯一判据（运行标识 + 运行目录 + 运行仓储 + 冻结快照解析入口），`PreparedRun.has_run_contract` 与 GUI 边界判据都委托它 |
 | `application.run_stages` | `RunStageRecorder`、`StageInputUnavailable` | 阶段输入/结果登记 |
 | `application.measurements` | `CableLossUseCase`、`DriverPowerMappingUseCase`、`AmplifierMeasurementUseCase`、`AmplifierCalibrationError`、`validate_amplifier_calibration_inputs` | 三类正式测量用例入口 |
@@ -264,12 +265,12 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `instrument.measurement_factory` | 硬件/离线测量端口装配：按装配计划打开 VISA 资源、构造驱动与会话（电源身份与初始输出检查在这里），装配失败时逆序释放已打开资源再抛原始异常；不解释任何配置键，配置解释在 `instrument.assembly_plan` |
 | `instrument.power_routing` | 供电分配解析：把分配里的电源引用（`supply_id`、旧 `label`、残留 `visual` 槽位）解析成唯一的已启用电源键，并把被分配的通道解析成 `gate`/`drain` 角色 token、电压电流设置、日志写法（`缩写设备码/CHx`）与急停顺序；纯计算：不看仪器地址、不接触 VISA |
 | `instrument.safety` | 设备安全动作与资源所有权边界；关闭回调的安全标记按显式签名判定调用形式 |
-| `presentation.qt.application_coordinator` | GUI 运行协调器：配置、运行契约与仪器端口所有者（经 `ConfigurationPagePort` 与配置页交互）。属于 presentation controller：持有呈现层配置状态并编排配置保存、运行创建/加载与端口生命周期，不读控件、不定义业务规则；正式配置编写在步骤 4 改走 `application` 服务 |
+| `presentation.qt.application_coordinator` | GUI 运行协调器：配置、运行契约与仪器端口所有者（经 `ConfigurationPagePort` 与配置页交互）。属于 presentation controller：持有呈现层配置状态并编排配置保存、运行创建/加载与端口生命周期，不读控件、不定义业务规则；正式配置编写委托 `application.configuration_authoring`（步骤 4） |
 | `presentation.qt.archival_page` | 测量页面共享的归档状态生命周期：等待归档、保存中、结果展示、终止事件与运行切换后的旧摘要清理；不读文件、不判断产物可用性 |
 | `presentation.qt.archival_status` | 归档结果到页面文案与按钮状态的映射：无 Qt、不读文件、不判断路径存在，四类状态各有独立提示 |
 | `presentation.qt.archival_view` | 归档结果分组控件：显示标题/说明并按提示启用“打开结果目录/测试报告”；位置由窗口注入；动态文案按纯文本渲染 |
 | `presentation.qt.config_form_bindings` | 设备绑定的读取与规范化：`device_bindings` 到 `supply_id` 集合、早期绑定结构与只有地址的旧配置折叠、不可用记录的问题清单（记录里声明出的厂商/完整设备码都必须是 `device_key` 的一部分，任一片段对不上即不可用；旧 `serial` 只在读取边界投影为 `full_code`；纯数据：不读控件、不写配置、不碰 Qt）。属于 presentation adapter；`domain.instruments` 只定义身份语义（`device_key` 与归一化），**记录级**身份一致性判定与整批替换、唯一性规则的目标归属都是 `application`（步骤 5） |
-| `presentation.qt.config_form_state` | 配置表单状态：按控件最小读取协议读出配置片段、合并为配置、给出页面自己的校验说明（设备绑定的读取与规范化在 `config_form_bindings`；正式 schema 由 `configuration_authoring` 构造）。属于 presentation adapter：把控件值转成文档片段，读数后的合法性判据由 `domain` 判定；页面侧的供电角色/分配提示与 `_formal_run_errors` 提前执行的正式校验都是迁移期副本（步骤 7、13 收敛） |
+| `presentation.qt.config_form_state` | 配置表单状态：按控件最小读取协议读出配置片段、合并为配置、给出页面自己的校验说明（设备绑定的读取与规范化在 `config_form_bindings`；正式 schema 由 `application.configuration_authoring` 构造）。属于 presentation adapter：把控件值转成文档片段，读数后的合法性判据由 `domain` 判定；页面侧的供电角色/分配提示仍是迁移期副本（步骤 7、13 收敛），但正式运行校验已改走 `ConfigurationAuthoringService.validate_document`，本模块不再导入 `domain.configuration.models` 或直接调用 `validate_hardware_connections` |
 | `presentation.qt.config_page` | 配置页面（编辑配置编写文档；向协调器提供 `ConfigurationPagePort` 窄接口）。属于 Qt 视图：控件、信号与派生界面状态；`apply_discovered_devices` 的绑定校验是迁移期业务逻辑，步骤 5 迁到 `application` |
 | `presentation.qt.config_page_widgets` | 配置页面控件构建辅助（固定操作栏布局 + 页面共用的数值框/下拉框工厂；控件仍登记在页面上） |
 | `presentation.qt.config_power_section` | 配置页电源分区的控件构建：按电源键分页的通道参数标签页与电源分配设置表单，控件仍登记在页面上（页面负责信号连接、派生界面状态与配置读写；条目、可选项与分配引用以显式声明的类型传入，不从控件或文件里取状态） |
@@ -277,8 +278,8 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `presentation.qt.device_cards` | 设备发现的仪器展示卡片：第一行只写加粗放大的缩写设备码（设备表登记过就用它，电源的缩写码同时是 `supply_id`，如 `DP8B1519`、`5462`；还没有缩写码时退回完整设备码，绝不凭空生成），第二行仪器图片（不加底板、不描边，等比缩放到同一视觉体积），最下面一行居中放大的仪器型号（如 `DP832A`、`SMW200A`）；圆角矩形，点击卡片即选中；卡片尺寸 `CARD_WIDTH` × `CARD_HEIGHT` 是唯一来源，“查找设备”按钮也按它取大小 |
 | `presentation.qt.device_discovery_panel` | 仪器连接配置（设备发现）：扫描网段、结果区（不画外框：无边框、无底色，未查找时“查找设备”卡片按钮紧跟在扫描行下面，点下去后按钮收走、开始加载设备）、以卡片展示已登记/未分配角色/未登记/无法识别结果、点击卡片即选中（角色取自设备表）、按配置身份预选；扫描线程只读探测，不改配置也不连接仪器 |
 | `presentation.qt.scan_card` | “查找设备”的卡片按钮：按钮本体是与仪器卡片同大的自绘深色卡片（尺寸取自 `presentation.qt.device_cards` 的 `CARD_WIDTH` × `CARD_HEIGHT`，渐变卡面、四角角标、卡面内发光），正中的渐变标题写着“查找设备”，卡片内部有横向光带、扫描线与外飘粒子在动；悬停时卡面上的两行字在 0.6s 里淡到看不见（原 CSS 的 `::after` 霓虹光斑与 `::before` 紫→蓝底卡都不保留，卡片外面只有一层投影）；要露在卡片外面的投影画在同级、不进布局、不吃鼠标的透明覆盖层上，按钮因此与卡片一样大，点击行为仍由设备发现面板接手 |
-| `presentation.qt.config_projection` | 配置编写文档（authoring document）到配置页控件的确定性投影：重置、逐字段投影、非法类型回落；正式 `test_plan` / `run_mapping` 只由 `configuration_authoring` 生成。属于 presentation adapter（无 Qt 依赖）：缺省电源选择与通道初值是显示策略（第 5.3 节），不是业务规则，也不进正式文档 |
-| `presentation.qt.configuration_authoring` | 配置页保存时的正式运行配置编写。属于 presentation adapter（**迁移期**）：正式配置文档只允许由 `application` 的配置编写服务生成，步骤 4 迁移后此模块只保留转发壳 |
+| `presentation.qt.config_projection` | 配置编写文档（authoring document）到配置页控件的确定性投影：重置、逐字段投影、非法类型回落；正式 `test_plan` / `run_mapping` 只由 `application.configuration_authoring` 生成。属于 presentation adapter（无 Qt 依赖）：缺省电源选择与通道初值是显示策略（第 5.3 节），不是业务规则，也不进正式文档 |
+| `presentation.qt.configuration_authoring` | 配置页保存的兼容转发壳（GUI 重构步骤 4）：只再导出 `application.configuration_authoring` 的服务、错误、常量与文档入口，不含任何编写规则；迁移期结束后删除 |
 | `presentation.qt.connection_diagrams` | 连接图渲染 |
 | `presentation.qt.connection_dialog` | 连接确认对话框：`build_diagram()` 按需渲染连接图；连接图不可用时在对话框内说明原因并禁用确认按钮 |
 | `presentation.qt.run_history_page` | 历史运行与结果管理页（只构造 `ExportRequest`，按 `ResultExportServicePort` 注入导出用例；运行/阶段/产物状态来自 `HistoryViewModel`，失败产物重新生成走 `RunHistoryServicePort`；用户文案由页面生成） |

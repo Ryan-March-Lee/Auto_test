@@ -36,7 +36,7 @@ from domain.run.models import (
 from infrastructure.config.json_config_repository import ConfigurationRepository
 from infrastructure.filesystem.paths import PathService
 from infrastructure.persistence.run_repository import RunRepository
-from presentation.qt.configuration_authoring import author_official_configuration
+from application.configuration_authoring import author_official_configuration
 
 
 CREATED_AT = datetime(2026, 10, 22, 15, 30, tzinfo=timezone.utc)

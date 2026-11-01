@@ -1,11 +1,36 @@
-import copy
-import unittest
+"""正式配置编写的应用层测试（GUI 重构步骤 4，不需要 Qt）。
 
-from domain.configuration.models import validate_run_configuration
-from presentation.qt.configuration_authoring import (
+覆盖：正式 ``test_plan`` / ``run_mapping`` 的生成规则、快照身份冻结、空引用与重复通道的
+处理，以及“旧文档入口与 ``ConfigurationDraft`` 入口生成同一份正式文档”。旧入口
+``presentation.qt.configuration_authoring`` 只保留转发壳，这里同时验证它不含规则。
+"""
+
+import ast
+import copy
+import json
+import unittest
+from pathlib import Path
+
+from application.configuration_authoring import (
     ConfigurationAuthoringError,
+    ConfigurationAuthoringService,
+    ConfigurationEditingDocument,
+    DUT_CHANNEL_ROLES,
+    OFFICIAL_SCHEMA_VERSION,
     author_official_configuration,
     parse_db_value,
+)
+from application.configuration_draft import (
+    ConfigurationDraft,
+    DeviceBindingDraft,
+    DeviceBindingsDraft,
+)
+from domain.configuration.models import validate_run_configuration
+
+ROOT = Path(__file__).resolve().parents[1]
+GOLDEN_FIXTURE = (
+    ROOT / "tests" / "fixtures" / "configuration_authoring"
+    / "official_configuration_golden.json"
 )
 
 
@@ -69,6 +94,35 @@ def _second_supply() -> dict:
             "CH2": {"voltage": {"value": 28.0}, "current": {"value": 1.0}},
         },
     }
+
+
+def _bindings_for(document) -> DeviceBindingsDraft:
+    """按配置里的仪器条目构造一份等价绑定，供草稿入口使用。
+
+    草稿的 ``to_document()`` 从绑定重建 ``instruments``；这里模拟已经应用过设备的页面
+    （绑定与配置条目同源），这样草稿入口与文档入口才是在比较同一份编辑数据。
+    """
+    instruments = document["instruments"]
+
+    def binding(entry):
+        return DeviceBindingDraft(
+            vendor=None,
+            model=entry.get("model"),
+            label=entry.get("label"),
+            full_code=entry.get("full_code"),
+            device_key=entry.get("device_key"),
+            visa_address=entry.get("address"),
+            known=True,
+        )
+
+    return DeviceBindingsDraft(
+        signal_generator=binding(instruments["signal_generator"]),
+        spectrum_analyzer=binding(instruments["spectrum_analyzer"]),
+        power_supply_bindings=tuple(
+            (supply_id, binding(entry))
+            for supply_id, entry in instruments["power_supplies"].items()
+        ),
+    )
 
 
 class ConfigurationAuthoringTests(unittest.TestCase):
@@ -367,6 +421,220 @@ class ConfigurationAuthoringTests(unittest.TestCase):
         self.assertEqual(parse_db_value(" 5 dB "), 5.0)
         self.assertIsNone(parse_db_value("attenuator"))
         self.assertIsNone(parse_db_value(None))
+
+
+class ConfigurationAuthoringServiceTests(unittest.TestCase):
+    """服务边界：草稿入口、显式文档 DTO 与旧转发入口生成同一份正式文档。"""
+
+    def test_source_module_owns_the_official_schema(self):
+        source_path = (
+            Path(__file__).resolve().parents[1]
+            / "application"
+            / "configuration_authoring.py"
+        )
+        source = source_path.read_text(encoding="utf-8")
+        self.assertIn('values["test_plan"]', source)
+        self.assertIn('values["run_mapping"]', source)
+        self.assertEqual(OFFICIAL_SCHEMA_VERSION, "1.0")
+
+    def test_editing_document_accepts_only_objects(self):
+        document = ConfigurationEditingDocument({"test_frequencies": [1.0]})
+        self.assertEqual(document.to_mapping(), {"test_frequencies": [1.0]})
+        self.assertEqual(
+            ConfigurationEditingDocument.from_mapping(None).to_mapping(), {}
+        )
+        self.assertEqual(
+            ConfigurationEditingDocument.from_mapping(["not", "an", "object"]).to_mapping(),
+            {},
+        )
+        with self.assertRaises(TypeError):
+            ConfigurationEditingDocument(values=["not", "an", "object"])
+        with self.assertRaises(TypeError):
+            ConfigurationAuthoringService().author_document(_flat_config())
+
+    def test_editing_document_is_copied_on_output(self):
+        document = ConfigurationEditingDocument({"test_frequencies": [1.0]})
+        output = document.to_mapping()
+        output["test_frequencies"] = [9.9]
+        self.assertEqual(document.to_mapping(), {"test_frequencies": [1.0]})
+
+    def test_editing_document_snapshots_the_input(self):
+        """构造之后改写原字典或其中的嵌套集合，都不能改变 DTO 的内容。"""
+        source = {
+            "test_frequencies": [1.0],
+            "instruments": {"signal_generator": {"address": "sim::sg"}},
+        }
+        document = ConfigurationEditingDocument.from_mapping(source)
+        source["test_frequencies"].append(9.9)
+        source["instruments"]["signal_generator"]["address"] = "sim::other"
+
+        self.assertEqual(document.to_mapping()["test_frequencies"], [1.0])
+        self.assertEqual(
+            document.to_mapping()["instruments"]["signal_generator"]["address"],
+            "sim::sg",
+        )
+
+    def test_editing_document_constructor_snapshots_the_input(self):
+        source = {"test_frequencies": [1.0]}
+        document = ConfigurationEditingDocument(values=source)
+        source["test_frequencies"].append(2.0)
+
+        self.assertEqual(document.to_mapping(), {"test_frequencies": [1.0]})
+
+    def test_draft_entry_matches_the_document_entry(self):
+        """同一份编辑数据经草稿或文档入口，正式段必须完全一致。
+
+        草稿入口的 ``to_document()`` 会按绑定重建 ``instruments``（键序与缺省字段都会
+        规范化），因此这里比较的是正式 ``test_plan`` / ``run_mapping`` 与其版本号，而不是
+        整份编辑文档；整份文档的逐字节回归由 :class:`GoldenConfigurationTests` 负责。
+        """
+        flat = _flat_config()
+        draft = ConfigurationDraft.from_document(
+            flat, bindings=_bindings_for(flat)
+        ).draft
+
+        by_draft = ConfigurationAuthoringService().author(draft)
+        by_document = author_official_configuration(flat)
+
+        self.assertEqual(by_draft["schema_version"], OFFICIAL_SCHEMA_VERSION)
+        self.assertEqual(by_draft["schema_version"], by_document["schema_version"])
+        self.assertEqual(by_draft["test_plan"], by_document["test_plan"])
+        self.assertEqual(by_draft["run_mapping"], by_document["run_mapping"])
+
+    def test_draft_entry_does_not_mutate_the_draft(self):
+        flat = _flat_config()
+        draft = ConfigurationDraft.from_document(
+            flat, bindings=_bindings_for(flat)
+        ).draft
+        original = copy.deepcopy(draft)
+        ConfigurationAuthoringService().author(draft)
+        self.assertEqual(draft, original)
+
+    def test_draft_entry_rejects_non_drafts(self):
+        with self.assertRaises(TypeError):
+            ConfigurationAuthoringService().author(_flat_config())
+
+    def test_validate_document_returns_no_errors_for_a_complete_configuration(self):
+        result = ConfigurationAuthoringService().validate_document(
+            ConfigurationEditingDocument.from_mapping(_flat_config())
+        )
+
+        self.assertTrue(result.valid, result.messages())
+
+    def test_validate_document_reports_run_and_connection_issues(self):
+        """正式运行校验与硬件连接校验都在应用边界执行，问题带来源错误码。"""
+        flat = _flat_config()
+        flat["test_frequencies"] = []
+        flat["instruments"]["power_supplies"]["DP8B0885"] = _second_supply()
+        flat["instruments"]["power_supplies"]["DP8B0885"]["address"] = "sim::ps1"
+
+        result = ConfigurationAuthoringService().validate_document(
+            ConfigurationEditingDocument.from_mapping(flat)
+        )
+
+        paths = {issue.path for issue in result.errors}
+        self.assertIn("frequencies.values", paths)
+        self.assertIn("instruments.power_supplies.DP8B0885.address", paths)
+        self.assertEqual(
+            {issue.code for issue in result.errors},
+            {"configuration.run_validation", "configuration.hardware_connections"},
+        )
+
+    def test_validate_document_does_not_touch_the_callers_document(self):
+        flat = _flat_config()
+        original = copy.deepcopy(flat)
+        document = ConfigurationEditingDocument.from_mapping(flat)
+
+        ConfigurationAuthoringService().validate_document(document)
+
+        self.assertEqual(flat, original)
+        self.assertEqual(document.to_mapping(), original)
+
+    def test_validate_document_rejects_non_documents(self):
+        with self.assertRaises(TypeError):
+            ConfigurationAuthoringService().validate_document(_flat_config())
+
+    def test_dut_channel_roles_are_the_edit_convention(self):
+        self.assertEqual(DUT_CHANNEL_ROLES, {"CH1": "gate", "CH2": "drain"})
+        self.assertTrue(issubclass(ConfigurationAuthoringError, Exception))
+
+
+class GoldenConfigurationTests(unittest.TestCase):
+    """迁移前的正式文档基线：整个输出逐字节比较。
+
+    期望值由迁移前的 ``presentation.qt.configuration_authoring``（commit ``7310fa2``）
+    生成，见 ``tests/fixtures/configuration_authoring/README.md``。它独立于当前实现，
+    因此能证明搬迁没有改变任何字段、键序或透传行为。
+    """
+
+    def test_migrated_entry_reproduces_the_pre_migration_document(self):
+        fixture = json.loads(GOLDEN_FIXTURE.read_text(encoding="utf-8"))
+
+        self.assertTrue(fixture["cases"], "迁移基线不能为空")
+        for case in fixture["cases"]:
+            with self.subTest(case=case["name"]):
+                self.assertEqual(
+                    author_official_configuration(case["input"]), case["expected"]
+                )
+
+    def test_fixture_records_the_implementation_it_came_from(self):
+        fixture = json.loads(GOLDEN_FIXTURE.read_text(encoding="utf-8"))
+
+        self.assertIn("7310fa2", fixture["source"])
+
+
+class PresentationFormalValidationBoundaryTests(unittest.TestCase):
+    """页面只展示应用边界给出的正式校验结果，不自己导入 domain 正式模型。"""
+
+    def test_form_state_delegates_formal_validation_to_the_application_service(self):
+        source_path = ROOT / "presentation" / "qt" / "config_form_state.py"
+        source = source_path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        imported_names = {
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+        }
+
+        self.assertFalse(
+            imported_names
+            & {
+                "RunConfiguration",
+                "RunResourceMapping",
+                "TestPlan",
+                "validate_run_configuration",
+                "validate_hardware_connections",
+            },
+            "页面不得绕过应用边界做正式运行校验",
+        )
+        self.assertIn("validate_document", source)
+
+
+class CompatibilityShellTests(unittest.TestCase):
+    """旧模块只转发，不再持有编写规则。"""
+
+    def test_shell_reexports_the_application_entry(self):
+        from presentation.qt import configuration_authoring as shell
+
+        self.assertIs(shell.author_official_configuration, author_official_configuration)
+        self.assertIs(shell.parse_db_value, parse_db_value)
+        self.assertIs(shell.DUT_CHANNEL_ROLES, DUT_CHANNEL_ROLES)
+
+    def test_shell_has_no_authoring_helpers(self):
+        source_path = (
+            Path(__file__).resolve().parents[1]
+            / "presentation"
+            / "qt"
+            / "configuration_authoring.py"
+        )
+        tree = ast.parse(source_path.read_text(encoding="utf-8"))
+        functions = {
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        self.assertEqual(functions, set(), "兼容壳不得再定义编写规则")
 
 
 if __name__ == "__main__":

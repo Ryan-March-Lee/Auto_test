@@ -3,7 +3,7 @@
 配置页编辑的是**配置编写文档**：一份面向现场硬件的扁平文档（``test_frequencies``、
 ``signal_source``、``instruments``、``power_supply_assignment`` 等）。正式配置 schema
 （``schema_version`` + ``test_plan`` / ``run_mapping``）只由
-:func:`presentation.qt.configuration_authoring.author_official_configuration` 生成，
+:class:`application.configuration_authoring.ConfigurationAuthoringService` 生成，
 配置页与投影模块都不读取、不解释 ``test_plan`` / ``run_mapping``。
 
 本模块负责把已冻结的配置编写文档确定性地投射到控件，并在投射前把全部受控控件重置到
@@ -37,11 +37,11 @@ from __future__ import annotations
 import copy
 from typing import Any, Mapping
 
+from application.configuration_authoring import DUT_CHANNEL_ROLES
 from application.errors import ConfigurationError
 from domain.instruments.labels import supply_display_label
 
 from .config_form_state import assignment_declared, assignment_supply_id, parse_frequency_text
-from .configuration_authoring import DUT_CHANNEL_ROLES
 
 # 配置页受控控件的空配置基线。``project_authoring_config()`` 先把控件重置到这些默认值，
 # 再逐字段投影配置编写文档，从而保证投影结果与直接用同一份文档构造页面的结果一致。

@@ -86,7 +86,7 @@ STATUSES_REQUIRING_ACTION = (STATUS_NEEDS_RESCAN, STATUS_UNIDENTIFIABLE, STATUS_
 _IDENTITY_FIELDS = ("label", "device_key", "full_code", "serial", "model")
 _SEPARATOR = "/"
 _IPV4 = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
-# 供电角色与连接说明的措辞与配置作者（``presentation.qt.configuration_authoring``）一致：
+# 供电角色与连接说明的措辞与配置作者（``application.configuration_authoring``）一致：
 # 迁移生成的运行快照必须和配置页保存出来的那份长得一样，否则同一份映射会有两种文本。
 _DUT_GATE = "gate"
 _DUT_DRAIN = "drain"

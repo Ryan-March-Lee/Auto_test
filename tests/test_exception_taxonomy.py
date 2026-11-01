@@ -62,7 +62,7 @@ from instrument.simulation import (
 from instrument.safety import InstrumentSafetyError, shutdown_instruments
 from instrument.transport.scpi_transport import ScpiTransportError, ScpiTransportTimeoutError
 from presentation.qt.config_projection import ConfigBackfillError
-from presentation.qt.configuration_authoring import ConfigurationAuthoringError
+from application.configuration_authoring import ConfigurationAuthoringError
 
 
 class ErrorCategoryTests(unittest.TestCase):

@@ -102,10 +102,24 @@ class RuntimePictureBudgetTests(unittest.TestCase):
                 self.assertIsNotNone(resolved, f"角色 {role} 解析不到图片")
                 self.assertEqual(resolved.name, name)
 
-    def test_release_manifest_ships_the_assets_directory(self):
+    def test_release_manifest_registers_the_runtime_assets(self):
+        """发布清单把界面资源登记进发布边界；清单只核对路径存在，不承担打包。"""
         self.assertIn("assets", RELEASE_FILES)
         manifest = build_manifest(ROOT)
         self.assertIn("assets", manifest["release_files"])
+        runtime_files = [WELCOME_BACKGROUND_FILE] + [
+            INSTRUMENT_PICTURES / name for name in ROLE_PICTURES.values()
+        ]
+        for path in runtime_files:
+            relative = path.relative_to(ROOT).as_posix()
+            with self.subTest(asset=relative):
+                self.assertTrue(
+                    any(
+                        relative == entry or relative.startswith(f"{entry}/")
+                        for entry in manifest["release_files"]
+                    ),
+                    f"{relative} 不在发布清单登记的边界内",
+                )
 
 
 class NotebookRepositoryTests(unittest.TestCase):

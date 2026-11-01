@@ -325,8 +325,10 @@ class ScanPromptCardTests(unittest.TestCase):
     def test_hovering_turns_the_bottom_card_out(self):
         """悬停到一半时，底卡转成斜的、从卡片侧面探出很远（原 CSS 的 rotate(-90deg)）。"""
         host, card = _scene()
-        rest = _outside_left(host, _frame(host, card, 0.0), card, 40.0)
-        turned = _outside_left(host, _frame(host, card, 0.5), card, 40.0)
+        # 探出宽度随卡片高度变化：采样点取底卡中段仍能盖到的 30px（静止时只有 5px 外扩，
+        # 那里是页面底色），不贴着转动后的边缘取点，避免不同屏幕像素比下落到抗锯齿边缘。
+        rest = _outside_left(host, _frame(host, card, 0.0), card, 30.0)
+        turned = _outside_left(host, _frame(host, card, 0.5), card, 30.0)
 
         self.assertNotEqual(rest, turned, "悬停后卡片侧面应被转出来的底卡盖住")
         saturation = max(turned.red(), turned.green(), turned.blue()) - min(

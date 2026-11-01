@@ -87,7 +87,11 @@ __all__ = [
 #: 卡片完全一致（右下角那张装饰层不算在内）。这里不再单独给一套尺寸，改仪器卡片的大小
 #: 就等于改按钮的大小。
 CARD_RADIUS = 20.0
-CARD_BORDER = 2.0
+#: 卡片外沿那道描边的宽度：深色卡面压在浅色页面背景上，原来是 2px，线太细、轮廓几乎看不出来，
+#: 这里加粗到 3px（颜色不变，仍是那层很淡的白）。
+CARD_EDGE_WIDTH = 3.0
+#: 四角角标的笔画宽度（原效果的 ``.corner`` 是 2px）。
+CORNER_STROKE = 2.0
 #: 卡片上方要留的一圈空白（结果区的上沿会把画到外面的像素裁掉）。投影伸出卡片约 7px，
 #: 必须整段落在这圈空白里；12px 让投影四边都落得下，结果区上沿不会把它裁成一条硬边。
 SCAN_CARD_HEADROOM = 12
@@ -113,7 +117,7 @@ HIGHLIGHT_GAP = 5.0
 
 _FACE_START = QColor("#1A1A1A")
 _FACE_END = QColor("#262626")
-#: 2px ``rgba(255, 255, 255, 0.1)`` 的卡面描边。
+#: ``rgba(255, 255, 255, 0.1)`` 的卡面描边（宽度见 :data:`CARD_EDGE_WIDTH`）。
 _EDGE = QColor(255, 255, 255, 26)
 #: ``rgba(255, 255, 255, 0.6)`` 的副标题。
 _SUBTITLE_COLOR = QColor(255, 255, 255, 153)
@@ -581,7 +585,7 @@ class ScanPromptCard(QPushButton):
         self._paint_glare(painter, card)
         painter.restore()
 
-        painter.setPen(QPen(_EDGE, CARD_BORDER))
+        painter.setPen(QPen(_EDGE, CARD_EDGE_WIDTH))
         painter.setBrush(Qt.NoBrush)
         painter.drawPath(silhouette)
 
@@ -726,7 +730,7 @@ class ScanPromptCard(QPushButton):
         painter.setPen(glow)
         for start, end in strokes:
             painter.drawLine(QPointF(*start), QPointF(*end))
-        solid = _glow_pen(color, CARD_BORDER)
+        solid = _glow_pen(color, CORNER_STROKE)
         solid.setCapStyle(Qt.FlatCap)
         painter.setPen(solid)
         for start, end in strokes:

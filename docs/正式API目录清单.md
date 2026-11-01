@@ -67,6 +67,8 @@
 | 模块 | 正式公开名称 | 说明 |
 | --- | --- | --- |
 | `application.configuration_service` | `load_for_run` | 正式配置加载入口 |
+| `application.configuration_draft` | `ConfigurationDraft`、`ConfigurationDraftResult`、`DeviceBindingDraft`、`DeviceBindingsDraft`、`PowerAssignmentDraft`、`PowerChannelDraft`、`PowerSupplyDraft` | 配置编辑草稿（GUI 重构步骤 3）：测试频率、功率扫描、压缩点、衰减器、DUT 输入限制、驱放模式、DUT/驱动供电分配、电源通道参数与设备绑定。频率/功率/衰减与 DUT 输入使用 domain 值对象，集合字段为 `tuple`，电源绑定为受控键值对；`from_document` 返回草稿 + 结构化转换问题，`to_document` 只输出配置编辑段（不生成 `test_plan` / `run_mapping`，不写 `schema_version`）。缺失/非法类型/空引用保留为 `None`/空集合，不自动挑选默认设备；不含 Qt、文件路径、仪器对象或运行标识 |
+| `application.configuration_editing` | `ValidationIssue`、`ValidationResult` | 配置编辑的结构化问题与结果（GUI 重构步骤 3）：问题至少包含路径、稳定错误码和用户文案，结果区分错误/警告且没有错误即有效；用户可修正的配置问题用它返回，不用异常控制正常流程；不含 Qt、文件路径或仪器对象 |
 | `application.run_service` | `RunSnapshot`、`create_run_snapshot`、`load_run_configuration`、`inspect_run`、`load_hardware_config`、`find_run_hardware_config`、`ensure_run_resumable`、`has_run_contract` | 运行创建、快照校验与可恢复性判断；正式测量必须绑定 `run_id`。`has_run_contract` 是运行契约的唯一判据（运行标识 + 运行目录 + 运行仓储 + 冻结快照解析入口），`PreparedRun.has_run_contract` 与 GUI 边界判据都委托它 |
 | `application.run_stages` | `RunStageRecorder`、`StageInputUnavailable` | 阶段输入/结果登记 |
 | `application.measurements` | `CableLossUseCase`、`DriverPowerMappingUseCase`、`AmplifierMeasurementUseCase`、`AmplifierCalibrationError`、`validate_amplifier_calibration_inputs` | 三类正式测量用例入口 |

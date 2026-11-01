@@ -90,6 +90,16 @@ FORMAL_API = {
     "app.cancellation": ("CancellationMode", "MeasurementCancelled", "CancellationToken"),
     # 应用用例与运行服务
     "application.configuration_service": ("load_for_run",),
+    "application.configuration_draft": (
+        "ConfigurationDraft",
+        "ConfigurationDraftResult",
+        "DeviceBindingDraft",
+        "DeviceBindingsDraft",
+        "PowerAssignmentDraft",
+        "PowerChannelDraft",
+        "PowerSupplyDraft",
+    ),
+    "application.configuration_editing": ("ValidationIssue", "ValidationResult"),
     "application.run_service": (
         "RunSnapshot",
         "create_run_snapshot",

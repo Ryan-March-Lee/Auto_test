@@ -173,6 +173,21 @@ ViewModel 不导入 PySide6，不直接读写文件，不创建仪器，不弹 Q
 
 **工作范围控制**：新增 1～3 个纯 Python 文件，不修改 Qt 页面。
 
+**完成状态**：✅ 已完成。新增两个纯 Python 模块：
+
+- `application.configuration_editing`：`ValidationIssue` / `ValidationResult`，问题包含路径、稳定错误码和用户文案；
+- `application.configuration_draft`：`ConfigurationDraft`、`ConfigurationDraftResult`，以及
+  `PowerSupplyDraft`、`PowerChannelDraft`、`PowerAssignmentDraft`、`DeviceBindingDraft`、
+  `DeviceBindingsDraft`。
+
+草稿只覆盖配置编辑阶段：频率/扫描/压缩点/衰减器/DUT 输入限制复用 domain 值对象，集合为
+`tuple`，电源绑定为受控键值对；`from_document()` 返回草稿和结构化问题，`to_document()`
+只输出编辑段，不生成正式 `test_plan` / `run_mapping`，也不写 `schema_version`。缺失字段
+（含 `driver_mode.enabled` 与通道保护开关）保持 `None`，空引用保持 `None`；非法类型、
+非整数数量、非字符串电源引用与非有限数值都返回结构化问题（直接构造时为构造错误），
+旧槽位绑定返回警告而不是猜设备。新增测试 `tests/test_configuration_draft.py`
+不启动 `QApplication`；未修改 Qt 页面、未改变运行行为。
+
 ### 步骤 4：抽取 `ConfigurationAuthoringService`
 
 **目的**：把正式配置编写从 `presentation.qt.configuration_authoring` 移到 application 边界。

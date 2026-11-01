@@ -1,0 +1,1275 @@
+"""配置编辑阶段的唯一数据模型（GUI 重构步骤 3）。
+
+本模块定义“用户正在编辑的配置” :class:`ConfigurationDraft`。它既不是正式的
+``RunConfiguration``（``test_plan`` + ``run_mapping``），也不是冻结运行对象
+``PreparedRun``：草稿只存在于内存，不含 Qt 控件、文件路径、仪器对象或运行标识。
+
+设计约束（见 `docs/配置领域词汇与模块归属.md`）：
+
+- 频率、功率扫描、压缩点、衰减器与 DUT 输入限制优先复用 domain 值对象
+  （``Frequency`` / ``PowerSweep`` / ``Decibels`` / ``PowerDbm``），单位由类型表达；
+- 集合字段使用 ``tuple``，设备绑定按“角色 + 名称到记录的键值对”保存受控副本，
+  外部不能通过属性随意改写内部状态；
+- 缺失值用 ``None`` / 空元组明确表示，非法类型与无法解析的文本由
+  :class:`ConfigurationDraftResult` 的结构化问题报告；布尔开关也是三态
+  （``None`` 未填写 / ``True`` / ``False``），读取时不补默认值，模型不会替用户挑一台
+  默认设备，也不会把空引用补成某台电源；
+- :meth:`ConfigurationDraft.from_document` / :meth:`ConfigurationDraft.to_document`
+  只转换配置编辑段（测试参数、供电分配、电源通道参数与设备绑定），不生成正式
+  ``test_plan`` / ``run_mapping``——那属于配置编写服务（步骤 4）。``schema_version``
+  同样由配置编写服务补齐，草稿不持有文件元数据。
+
+设备绑定的读取边界：本模块只读取当前结构 ``device_bindings.{signal_generator,
+spectrum_analyzer,power_supplies}``。旧槽位绑定（``PS1`` 等）会留下警告，只有地址的
+旧配置不会被当作可连接设备；两者的迁移都归设备绑定服务（步骤 5），这里不猜成某台设备。
+"""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import Any
+
+from application.configuration_editing import ValidationIssue, ValidationResult
+from application.dto.amplifier_inputs import PowerSweep, SupplyChannel
+from domain.configuration.rules import assignment_supply_id
+from domain.instruments.models import INSTRUMENT_ROLES
+from domain.measurement.values import Decibels, Frequency, PowerDbm
+
+__all__ = [
+    "ConfigurationDraft",
+    "ConfigurationDraftResult",
+    "DeviceBindingDraft",
+    "DeviceBindingsDraft",
+    "PowerAssignmentDraft",
+    "PowerChannelDraft",
+    "PowerSupplyDraft",
+]
+
+# 文档转换问题的稳定错误码。文案可以改，错误码不随文案变化。
+_CODE_INVALID_DOCUMENT = "configuration.invalid_document"
+_CODE_INVALID_TYPE = "configuration.invalid_type"
+_CODE_INVALID_NUMBER = "configuration.invalid_number"
+_CODE_INVALID_FREQUENCY = "configuration.invalid_frequency"
+_CODE_INVALID_SWEEP = "configuration.invalid_sweep"
+_CODE_INVALID_DECIBELS = "configuration.invalid_decibels"
+_CODE_INVALID_DUT_SUPPLY_COUNT = "configuration.invalid_dut_supply_count"
+_CODE_INVALID_BINDING = "configuration.invalid_binding"
+_CODE_LEGACY_BINDING = "configuration.legacy_binding"
+_CODE_INVALID_ASSIGNMENT = "configuration.invalid_assignment"
+
+_POWER_ASSIGNMENT_GROUPS = ("dut_amplifier", "driver_amplifier")
+
+
+def _text(value: Any, label: str) -> str:
+    """要求字段是文本；不裁剪、不改写，空文本由校验报告而不是这里悄悄修正。"""
+    if not isinstance(value, str):
+        raise TypeError(f"{label} 必须是字符串，收到 {type(value).__name__}")
+    return value
+
+
+def _optional_text(value: Any, label: str) -> str | None:
+    if value is None:
+        return None
+    return _text(value, label)
+
+
+def _optional_number(value: Any, label: str) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(
+            f"{label} 必须是数值或 None，收到 {type(value).__name__}"
+        )
+    number = float(value)
+    # 直接构造与文档读取对数值有效性的要求必须一致：NaN/Infinity 不能进草稿，
+    # 否则它们会一路流到测量参数里，直到别的层才被发现。
+    if not math.isfinite(number):
+        raise ValueError(f"{label} 必须是有限数值，收到 {number!r}")
+    return number
+
+
+def _optional_bool(value: Any, label: str) -> bool | None:
+    """可空布尔：``None`` 表示“还没填”，不折叠成 False。"""
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise TypeError(
+            f"{label} 必须是布尔值或 None，收到 {type(value).__name__}"
+        )
+    return value
+
+
+def _optional_int(value: Any, label: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(
+            f"{label} 必须是整数或 None，收到 {type(value).__name__}"
+        )
+    return value
+
+
+def _tuple_of(values: Any, expected: type, label: str) -> tuple[Any, ...]:
+    """把可迭代读数收敛为受控 tuple，并逐项检查元素类型。"""
+    if isinstance(values, (str, bytes, Mapping)) or not isinstance(values, Iterable):
+        raise TypeError(
+            f"{label} 必须是 {expected.__name__} 序列，收到 {type(values).__name__}"
+        )
+    items = tuple(values)
+    for index, item in enumerate(items):
+        if not isinstance(item, expected):
+            raise TypeError(
+                f"{label}[{index}] 必须是 {expected.__name__}，"
+                f"收到 {type(item).__name__}"
+            )
+    return items
+
+
+def _text_tuple(values: Any, label: str) -> tuple[str, ...]:
+    if isinstance(values, (str, bytes, Mapping)) or not isinstance(values, Iterable):
+        raise TypeError(f"{label} 必须是字符串序列，收到 {type(values).__name__}")
+    items = tuple(values)
+    for index, item in enumerate(items):
+        if not isinstance(item, str):
+            raise TypeError(
+                f"{label}[{index}] 必须是字符串，收到 {type(item).__name__}"
+            )
+    return items
+
+
+def _require_optional(value: Any, expected: type, label: str) -> None:
+    if value is not None and not isinstance(value, expected):
+        raise TypeError(
+            f"{label} 必须是 {expected.__name__} 或 None，"
+            f"收到 {type(value).__name__}"
+        )
+
+
+def _require_unique(values: Iterable[str], label: str) -> None:
+    seen: set[str] = set()
+    for value in values:
+        if value in seen:
+            raise ValueError(f"{label} 不能重复：{value!r}")
+        seen.add(value)
+
+
+def _binding_pairs(
+    values: Any,
+) -> tuple[tuple[str, "DeviceBindingDraft"], ...]:
+    """把映射或二元组序列收敛成有序、去重后的绑定键值对。"""
+    if isinstance(values, Mapping):
+        items = tuple(values.items())
+    elif isinstance(values, (str, bytes)) or not isinstance(values, Iterable):
+        raise TypeError(
+            f"电源绑定必须是映射或 (supply_id, 记录) 序列，"
+            f"收到 {type(values).__name__}"
+        )
+    else:
+        items = tuple(values)
+    result: list[tuple[str, DeviceBindingDraft]] = []
+    seen: set[str] = set()
+    for index, item in enumerate(items):
+        if not isinstance(item, (tuple, list)) or len(item) != 2:
+            raise TypeError(
+                f"电源绑定[{index}] 必须是 (supply_id, 记录) 二元组，"
+                f"收到 {type(item).__name__}"
+            )
+        supply_id, record = item
+        if not isinstance(supply_id, str):
+            raise TypeError(
+                f"电源绑定[{index}] 的 supply_id 必须是字符串，"
+                f"收到 {type(supply_id).__name__}"
+            )
+        if not isinstance(record, DeviceBindingDraft):
+            raise TypeError(
+                f"电源绑定[{index}] 的记录必须是 DeviceBindingDraft，"
+                f"收到 {type(record).__name__}"
+            )
+        if supply_id in seen:
+            raise ValueError(f"电源绑定不能重复：{supply_id!r}")
+        seen.add(supply_id)
+        result.append((supply_id, record))
+    return tuple(result)
+
+
+@dataclass(frozen=True)
+class DeviceBindingDraft:
+    """一条设备绑定记录（当前 ``device_bindings`` 结构里的记录本身）。
+
+    身份是 ``device_key``（``厂商:完整设备码``）；``visa_address`` 只是连接地址，
+    不是身份。字段全部可选，缺失写成 ``None``，不在读取时按型号或地址猜设备。
+    ``supply_id`` 不在记录内重复：电源绑定的键就是 ``supply_id``。
+    """
+
+    vendor: str | None = None
+    model: str | None = None
+    label: str | None = None
+    full_code: str | None = None
+    device_key: str | None = None
+    visa_address: str | None = None
+    last_ip: str | None = None
+    last_port: int | str | None = None
+    known: bool = False
+    source: str | None = None
+
+    def __post_init__(self) -> None:
+        for name in (
+            "vendor",
+            "model",
+            "label",
+            "full_code",
+            "device_key",
+            "visa_address",
+            "last_ip",
+        ):
+            object.__setattr__(self, name, _optional_text(getattr(self, name), name))
+        port = self.last_port
+        if port is not None and (
+            isinstance(port, bool) or not isinstance(port, (int, str))
+        ):
+            raise TypeError(
+                f"last_port 必须是整数、字符串或 None，收到 {type(port).__name__}"
+            )
+        if not isinstance(self.known, bool):
+            raise TypeError(
+                f"known 必须是布尔值，收到 {type(self.known).__name__}"
+            )
+        object.__setattr__(self, "source", _optional_text(self.source, "source"))
+
+    def to_mapping(self) -> dict[str, Any]:
+        """输出当前绑定记录形状；缺失字段保留为 ``None``，不删除键。"""
+        return {
+            "vendor": self.vendor,
+            "model": self.model,
+            "label": self.label,
+            "full_code": self.full_code,
+            "device_key": self.device_key,
+            "visa_address": self.visa_address,
+            "last_ip": self.last_ip,
+            "last_port": self.last_port,
+            "known": self.known,
+            "source": self.source,
+        }
+
+
+@dataclass(frozen=True)
+class DeviceBindingsDraft:
+    """配置编辑阶段的一组设备绑定：两个唯一角色 + 按 ``supply_id`` 的电源集合。"""
+
+    signal_generator: DeviceBindingDraft | None = None
+    spectrum_analyzer: DeviceBindingDraft | None = None
+    power_supply_bindings: tuple[tuple[str, DeviceBindingDraft], ...] = field(
+        default_factory=tuple
+    )
+
+    def __post_init__(self) -> None:
+        for name in ("signal_generator", "spectrum_analyzer"):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, DeviceBindingDraft):
+                raise TypeError(
+                    f"{name} 必须是 DeviceBindingDraft 或 None，"
+                    f"收到 {type(value).__name__}"
+                )
+        object.__setattr__(
+            self, "power_supply_bindings", _binding_pairs(self.power_supply_bindings)
+        )
+
+    @property
+    def power_supplies(self) -> Mapping[str, DeviceBindingDraft]:
+        """``supply_id -> 绑定记录`` 的只读投影；每次返回新的只读视图。"""
+        return MappingProxyType(dict(self.power_supply_bindings))
+
+    def power_supply(self, supply_id: str) -> DeviceBindingDraft | None:
+        for key, record in self.power_supply_bindings:
+            if key == supply_id:
+                return record
+        return None
+
+    def is_empty(self) -> bool:
+        return (
+            self.signal_generator is None
+            and self.spectrum_analyzer is None
+            and not self.power_supply_bindings
+        )
+
+    def to_mapping(self) -> dict[str, Any]:
+        """输出当前 ``device_bindings`` 结构；没有电源绑定时不写空集合。"""
+        result: dict[str, Any] = {}
+        if self.signal_generator is not None:
+            result["signal_generator"] = self.signal_generator.to_mapping()
+        if self.spectrum_analyzer is not None:
+            result["spectrum_analyzer"] = self.spectrum_analyzer.to_mapping()
+        if self.power_supply_bindings:
+            result["power_supplies"] = {
+                supply_id: record.to_mapping()
+                for supply_id, record in self.power_supply_bindings
+            }
+        return result
+
+
+@dataclass(frozen=True)
+class PowerChannelDraft:
+    """一台电源的单个通道参数。
+
+    供电角色（``gate`` / ``drain``）是接线事实，缺失时保持 ``None``，不按通道名推断。
+    电压/电流的工作值与保护值缺失时保持 ``None``，不填入显示初值。保护开关同样区分
+    “未填写”（``None``）与“明确关闭”（``False``），不在读取时补默认值。
+    """
+
+    channel: str
+    role: str | None = None
+    voltage: float | None = None
+    voltage_protection: float | None = None
+    voltage_protection_enabled: bool | None = None
+    current: float | None = None
+    current_protection: float | None = None
+    current_protection_enabled: bool | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "channel", _text(self.channel, "通道名"))
+        object.__setattr__(self, "role", _optional_text(self.role, "供电角色"))
+        for name in (
+            "voltage",
+            "voltage_protection",
+            "current",
+            "current_protection",
+        ):
+            object.__setattr__(self, name, _optional_number(getattr(self, name), name))
+        for name in ("voltage_protection_enabled", "current_protection_enabled"):
+            object.__setattr__(
+                self, name, _optional_bool(getattr(self, name), name)
+            )
+
+
+@dataclass(frozen=True)
+class PowerSupplyDraft:
+    """一台电源在草稿里的参数集合；连接地址与身份来自设备绑定，不在这里重复。"""
+
+    supply_id: str
+    channels: tuple[PowerChannelDraft, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "supply_id", _text(self.supply_id, "电源引用"))
+        object.__setattr__(
+            self, "channels", _tuple_of(self.channels, PowerChannelDraft, "电源通道")
+        )
+        _require_unique(
+            (channel.channel for channel in self.channels), "电源的通道名"
+        )
+
+    def channel(self, name: str) -> PowerChannelDraft | None:
+        for channel in self.channels:
+            if channel.channel == name:
+                return channel
+        return None
+
+
+@dataclass(frozen=True)
+class PowerAssignmentDraft:
+    """一条供电分配：界面槽位（``carrier`` / ``peak`` / ``main`` 等）指向的电源与通道。
+
+    ``supply_id=None`` 表示**空引用**：用户还没有选择电源，或配置里本来就没有指向任何
+    设备。它不会被替换成某台可用电源；校验与保存都按“未选择”处理。
+    """
+
+    slot: str
+    supply_id: str | None = None
+    channels: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "slot", _text(self.slot, "供电分配槽位"))
+        object.__setattr__(
+            self, "supply_id", _optional_text(self.supply_id, "供电分配的电源引用")
+        )
+        object.__setattr__(
+            self, "channels", _text_tuple(self.channels, "供电分配的通道")
+        )
+
+    @property
+    def routed_channels(self) -> tuple[SupplyChannel, ...]:
+        """可写成显式路由的通道；空引用或无法表达的通道保留在分配记录里，不猜测。"""
+        if not isinstance(self.supply_id, str) or not self.supply_id.strip():
+            return ()
+        if "/" in self.supply_id:
+            return ()
+        result: list[SupplyChannel] = []
+        for channel in self.channels:
+            if not channel.strip() or "/" in channel:
+                continue
+            try:
+                result.append(SupplyChannel(self.supply_id, channel))
+            except ValueError:
+                # 占位值等不可表达为正式路由的写法仍保留在 assignments 中，由校验报告。
+                continue
+        return tuple(result)
+
+
+@dataclass(frozen=True)
+class ConfigurationDraft:
+    """用户正在编辑的配置；配置页状态的唯一业务数据模型。"""
+
+    frequencies: tuple[Frequency, ...] = ()
+    sweep: PowerSweep | None = None
+    compression_target: Decibels | None = None
+    attenuator: Decibels | None = None
+    max_dut_input_power: PowerDbm | None = None
+    driver_enabled: bool | None = None
+    driver_power_source: str | None = None
+    dut_supply_count: int | None = None
+    dut_assignments: tuple[PowerAssignmentDraft, ...] = ()
+    driver_assignments: tuple[PowerAssignmentDraft, ...] = ()
+    power_supplies: tuple[PowerSupplyDraft, ...] = ()
+    bindings: DeviceBindingsDraft = field(default_factory=DeviceBindingsDraft)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "frequencies", _tuple_of(self.frequencies, Frequency, "测试频率")
+        )
+        _require_optional(self.sweep, PowerSweep, "功率扫描参数")
+        _require_optional(self.compression_target, Decibels, "压缩点")
+        _require_optional(self.attenuator, Decibels, "衰减器")
+        _require_optional(self.max_dut_input_power, PowerDbm, "DUT 最大输入功率")
+        object.__setattr__(
+            self, "driver_enabled", _optional_bool(self.driver_enabled, "驱放模式开关")
+        )
+        object.__setattr__(
+            self,
+            "driver_power_source",
+            _optional_text(self.driver_power_source, "驱放供电方式"),
+        )
+        # 数量只做结构校验：页面提供 1–3 的下拉框，但旧配置可能记录更多电源，
+        # 草稿不在这里复制范围规则，也不把旧值改写成页面默认值。
+        object.__setattr__(
+            self,
+            "dut_supply_count",
+            _optional_int(self.dut_supply_count, "PA 单元数量"),
+        )
+        object.__setattr__(
+            self,
+            "dut_assignments",
+            _tuple_of(self.dut_assignments, PowerAssignmentDraft, "DUT 供电分配"),
+        )
+        object.__setattr__(
+            self,
+            "driver_assignments",
+            _tuple_of(
+                self.driver_assignments, PowerAssignmentDraft, "驱动功放供电分配"
+            ),
+        )
+        object.__setattr__(
+            self,
+            "power_supplies",
+            _tuple_of(self.power_supplies, PowerSupplyDraft, "电源参数"),
+        )
+        _require_unique(
+            (assignment.slot for assignment in self.dut_assignments),
+            "DUT 供电分配的槽位",
+        )
+        _require_unique(
+            (assignment.slot for assignment in self.driver_assignments),
+            "驱动功放供电分配的槽位",
+        )
+        _require_unique(
+            (supply.supply_id for supply in self.power_supplies),
+            "电源引用",
+        )
+        if not isinstance(self.bindings, DeviceBindingsDraft):
+            raise TypeError(
+                f"bindings 必须是 DeviceBindingsDraft，"
+                f"收到 {type(self.bindings).__name__}"
+            )
+
+    @property
+    def dut_channels(self) -> tuple[SupplyChannel, ...]:
+        """DUT 已绑定通道的只读投影；空引用不会变成任何默认电源。"""
+        return tuple(
+            channel
+            for assignment in self.dut_assignments
+            for channel in assignment.routed_channels
+        )
+
+    @property
+    def driver_channels(self) -> tuple[SupplyChannel, ...]:
+        """驱动功放已绑定通道的只读投影。"""
+        return tuple(
+            channel
+            for assignment in self.driver_assignments
+            for channel in assignment.routed_channels
+        )
+
+    @classmethod
+    def from_document(
+        cls,
+        document: Mapping[str, Any] | None,
+        *,
+        bindings: DeviceBindingsDraft | Mapping[str, Any] | None = None,
+    ) -> "ConfigurationDraftResult":
+        """把配置编写文档转换成草稿，并用结构化问题报告无法表达的内容。
+
+        ``bindings`` 允许调用方传入**已经规范化**的设备绑定（例如 presentation 适配器
+        从 ``effective_device_bindings`` 得到的结构）。不传时只读取文档里当前的
+        ``device_bindings`` 结构；旧槽位折叠与只有地址的旧绑定由设备绑定服务负责
+        （步骤 5），这里不会猜成某台设备。
+
+        缺失字段返回 ``None`` / 空元组，不产生问题；**出现但类型或语法非法**的字段
+        产生错误级别的问题，正文仍保持缺失状态，方便页面展示并让用户修正。布尔字段
+        （``driver_mode.enabled``、通道的 ``protection_enabled``）缺失时同样是 ``None``，
+        不会折叠成“明确关闭”。
+        """
+        issues: list[ValidationIssue] = []
+        if document is None:
+            document = {}
+        if not isinstance(document, Mapping):
+            issues.append(
+                _issue("$", _CODE_INVALID_DOCUMENT, "配置文档必须是对象")
+            )
+            document = {}
+
+        frequencies = _read_frequencies(document.get("test_frequencies"), issues)
+        sweep = _read_sweep(document.get("signal_source"), issues)
+        compression_target = _read_decibels(
+            document.get("compression_point"), "compression_point.type", issues
+        )
+        attenuator = _read_decibels(
+            document.get("attenuator"), "attenuator.type", issues
+        )
+        max_dut_input_power = _read_max_input_power(document.get("dut_config"), issues)
+        dut_supply_count = _read_dut_supply_count(document.get("dut_config"), issues)
+        driver_enabled, driver_power_source = _read_driver_mode(
+            document.get("driver_mode"), issues
+        )
+        power_supplies = _read_power_supplies(document.get("instruments"), issues)
+        dut_assignments, driver_assignments = _read_assignments(
+            document.get("power_supply_assignment"), issues
+        )
+        device_bindings = _read_device_bindings(document, bindings, issues)
+        unique_issues = _unique_issues(issues)
+
+        draft = cls(
+            frequencies=frequencies,
+            sweep=sweep,
+            compression_target=compression_target,
+            attenuator=attenuator,
+            max_dut_input_power=max_dut_input_power,
+            driver_enabled=driver_enabled,
+            driver_power_source=driver_power_source,
+            dut_supply_count=dut_supply_count,
+            dut_assignments=dut_assignments,
+            driver_assignments=driver_assignments,
+            power_supplies=power_supplies,
+            bindings=device_bindings,
+        )
+        return ConfigurationDraftResult(
+            draft=draft, validation=ValidationResult(issues=unique_issues)
+        )
+
+    def to_document(self) -> dict[str, Any]:
+        """输出配置编辑段的编写文档，键形状与当前配置格式一致。
+
+        不写 ``schema_version``、``test_plan``、``run_mapping`` 与 ``wiring``：前者和
+        正式段由配置编写服务补齐，现场接线由阶段开始前的连接确认负责。缺失值写成
+        ``None`` / 空集合，让后续校验明确报告，而不是在这里补默认值。
+        """
+        count = (
+            self.dut_supply_count
+            if self.dut_supply_count is not None
+            else len(self.dut_assignments)
+        )
+        return {
+            "test_frequencies": [frequency.ghz for frequency in self.frequencies],
+            "signal_source": _sweep_document(self.sweep),
+            "compression_point": {
+                "type": _decibels_text(self.compression_target)
+            },
+            "attenuator": {"type": _decibels_text(self.attenuator)},
+            "driver_mode": _driver_mode_document(self),
+            "dut_config": {
+                "max_input_power": (
+                    self.max_dut_input_power.dbm
+                    if self.max_dut_input_power is not None
+                    else None
+                ),
+                "power_supply_count": count,
+            },
+            "instruments": self._instrument_document(),
+            "power_supply_assignment": self._assignment_document(),
+            "device_bindings": self.bindings.to_mapping(),
+        }
+
+    def _instrument_document(self) -> dict[str, Any]:
+        supply_ids: list[str] = []
+        for supply in self.power_supplies:
+            if supply.supply_id not in supply_ids:
+                supply_ids.append(supply.supply_id)
+        for supply_id, _record in self.bindings.power_supply_bindings:
+            if supply_id not in supply_ids:
+                supply_ids.append(supply_id)
+        supplies_by_id = {supply.supply_id: supply for supply in self.power_supplies}
+        return {
+            "signal_generator": _instrument_entry(self.bindings.signal_generator),
+            "spectrum_analyzer": _instrument_entry(self.bindings.spectrum_analyzer),
+            "power_supplies": {
+                supply_id: _power_supply_entry(
+                    supply_id,
+                    self.bindings.power_supply(supply_id),
+                    supplies_by_id.get(supply_id),
+                )
+                for supply_id in supply_ids
+            },
+        }
+
+    def _assignment_document(self) -> dict[str, Any]:
+        return {
+            "driver_amplifier": {
+                "power_supply_count": len(self.driver_assignments),
+                "supplies": {
+                    assignment.slot: _assignment_entry(assignment)
+                    for assignment in self.driver_assignments
+                },
+            },
+            "dut_amplifier": {
+                "power_supply_count": len(self.dut_assignments),
+                "supplies": {
+                    assignment.slot: _assignment_entry(assignment)
+                    for assignment in self.dut_assignments
+                },
+            },
+        }
+
+
+@dataclass(frozen=True)
+class ConfigurationDraftResult:
+    """草稿转换结果：草稿本身 + 转换阶段发现的结构化问题。
+
+    ``valid`` 只表示**转换**没有错误（例如没有非法类型），不代表配置已完整或可以运行；
+    频率重复、供电角色冲突等业务校验由后续的配置编写/校验服务负责。
+    """
+
+    draft: ConfigurationDraft
+    validation: ValidationResult = field(default_factory=ValidationResult)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.draft, ConfigurationDraft):
+            raise TypeError(
+                f"draft 必须是 ConfigurationDraft，收到 {type(self.draft).__name__}"
+            )
+        if not isinstance(self.validation, ValidationResult):
+            raise TypeError(
+                f"validation 必须是 ValidationResult，"
+                f"收到 {type(self.validation).__name__}"
+            )
+
+    @property
+    def valid(self) -> bool:
+        """转换阶段没有错误；警告不改变结果。"""
+        return self.validation.valid
+
+    @property
+    def issues(self) -> tuple[ValidationIssue, ...]:
+        return self.validation.issues
+
+    @property
+    def errors(self) -> tuple[ValidationIssue, ...]:
+        return self.validation.errors
+
+    @property
+    def warnings(self) -> tuple[ValidationIssue, ...]:
+        return self.validation.warnings
+
+    def messages(self) -> tuple[str, ...]:
+        return self.validation.messages()
+
+
+def _issue(
+    path: str,
+    code: str,
+    message: str,
+    severity: str = "error",
+) -> ValidationIssue:
+    return ValidationIssue(
+        path=path, code=code, message=message, severity=severity
+    )
+
+
+def _unique_issues(
+    issues: Iterable[ValidationIssue],
+) -> tuple[ValidationIssue, ...]:
+    """按出现顺序去重：同一字段被多个读取分支检查时不重复展示同一句话。"""
+    result: list[ValidationIssue] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for issue in issues:
+        key = (issue.path, issue.code, issue.message, issue.severity)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(issue)
+    return tuple(result)
+
+
+def _mapping(value: Any, path: str, issues: list[ValidationIssue]) -> Mapping[str, Any]:
+    if isinstance(value, Mapping):
+        return value
+    if value is not None:
+        issues.append(_issue(path, _CODE_INVALID_TYPE, "必须是对象"))
+    return {}
+
+
+def _finite_number(
+    value: Any, path: str, issues: list[ValidationIssue]
+) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        issues.append(_issue(path, _CODE_INVALID_NUMBER, "必须是有限数值"))
+        return None
+    number = float(value)
+    if not math.isfinite(number):
+        issues.append(_issue(path, _CODE_INVALID_NUMBER, "必须是有限数值"))
+        return None
+    return number
+
+
+def _optional_text_field(
+    value: Any, path: str, issues: list[ValidationIssue]
+) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        issues.append(_issue(path, _CODE_INVALID_TYPE, "必须是字符串"))
+        return None
+    return value
+
+
+def _optional_bool_field(
+    value: Any, path: str, issues: list[ValidationIssue], *, default: bool | None = None
+) -> bool | None:
+    """读取可空布尔；``None`` 表示文档没有给出，非布尔值报问题并保持缺失。"""
+    if value is None:
+        return default
+    if not isinstance(value, bool):
+        issues.append(_issue(path, _CODE_INVALID_TYPE, "必须是布尔值"))
+        return default
+    return value
+
+
+def _read_frequencies(
+    value: Any, issues: list[ValidationIssue]
+) -> tuple[Frequency, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, (list, tuple)):
+        issues.append(
+            _issue("test_frequencies", _CODE_INVALID_TYPE, "必须是频率列表")
+        )
+        return ()
+    frequencies: list[Frequency] = []
+    for index, item in enumerate(value):
+        path = f"test_frequencies[{index}]"
+        if isinstance(item, bool) or not isinstance(item, (int, float)):
+            issues.append(
+                _issue(path, _CODE_INVALID_FREQUENCY, "必须是有限数值（GHz）")
+            )
+            continue
+        number = float(item)
+        if not math.isfinite(number):
+            issues.append(
+                _issue(path, _CODE_INVALID_FREQUENCY, "必须是有限数值（GHz）")
+            )
+            continue
+        try:
+            frequencies.append(Frequency.from_ghz(number))
+        except (TypeError, ValueError) as error:
+            issues.append(
+                _issue(path, _CODE_INVALID_FREQUENCY, f"无法解析频率：{error}")
+            )
+    return tuple(frequencies)
+
+
+def _read_sweep(
+    value: Any, issues: list[ValidationIssue]
+) -> PowerSweep | None:
+    if value is None:
+        return None
+    section = _mapping(value, "signal_source", issues)
+    if not section:
+        return None
+    start = _finite_number(section.get("start_power"), "signal_source.start_power", issues)
+    stop = _finite_number(section.get("stop_power"), "signal_source.stop_power", issues)
+    step = _finite_number(section.get("step"), "signal_source.step", issues)
+    if start is None or stop is None or step is None:
+        return None
+    try:
+        return PowerSweep(
+            start=PowerDbm(start), stop=PowerDbm(stop), step=Decibels(step)
+        )
+    except (TypeError, ValueError) as error:
+        issues.append(_issue("signal_source", _CODE_INVALID_SWEEP, str(error)))
+        return None
+
+
+def _read_decibels(
+    value: Any, path: str, issues: list[ValidationIssue]
+) -> Decibels | None:
+    if value is None:
+        return None
+    section = _mapping(value, path.rsplit(".", 1)[0], issues)
+    raw = section.get("type")
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        issues.append(_issue(path, _CODE_INVALID_TYPE, "必须是带 dB 单位的字符串"))
+        return None
+    try:
+        return Decibels.parse(raw)
+    except ValueError as error:
+        issues.append(_issue(path, _CODE_INVALID_DECIBELS, str(error)))
+        return None
+
+
+def _read_max_input_power(
+    value: Any, issues: list[ValidationIssue]
+) -> PowerDbm | None:
+    if value is None:
+        return None
+    section = _mapping(value, "dut_config", issues)
+    if not section:
+        return None
+    number = _finite_number(
+        section.get("max_input_power"), "dut_config.max_input_power", issues
+    )
+    if number is None:
+        return None
+    try:
+        return PowerDbm(number)
+    except (TypeError, ValueError) as error:
+        issues.append(
+            _issue("dut_config.max_input_power", _CODE_INVALID_NUMBER, str(error))
+        )
+        return None
+
+
+def _read_dut_supply_count(
+    value: Any, issues: list[ValidationIssue]
+) -> int | None:
+    if value is None:
+        return None
+    section = _mapping(value, "dut_config", issues)
+    if not section:
+        return None
+    raw = section.get("power_supply_count")
+    if raw is None:
+        return None
+    # 只接受整数：``5.0`` 或 ``"5"`` 说明写入方的类型已经错了，草稿不能顺手把它
+    # 修成看起来合法的值。范围规则（页面的 1–3）仍归正式校验，不在这里复制。
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        issues.append(
+            _issue(
+                "dut_config.power_supply_count",
+                _CODE_INVALID_DUT_SUPPLY_COUNT,
+                "PA 单元数量必须是整数",
+            )
+        )
+        return None
+    return raw
+
+
+def _read_driver_mode(
+    value: Any, issues: list[ValidationIssue]
+) -> tuple[bool | None, str | None]:
+    if value is None:
+        return None, None
+    section = _mapping(value, "driver_mode", issues)
+    if not section:
+        return None, None
+    enabled = _optional_bool_field(
+        section.get("enabled"), "driver_mode.enabled", issues
+    )
+    source = _optional_text_field(
+        section.get("power_source"), "driver_mode.power_source", issues
+    )
+    return enabled, source
+
+
+def _read_power_supplies(
+    value: Any, issues: list[ValidationIssue]
+) -> tuple[PowerSupplyDraft, ...]:
+    if value is None:
+        return ()
+    instruments = _mapping(value, "instruments", issues)
+    raw_supplies = instruments.get("power_supplies")
+    if raw_supplies is None:
+        return ()
+    if not isinstance(raw_supplies, Mapping):
+        issues.append(
+            _issue("instruments.power_supplies", _CODE_INVALID_TYPE, "必须是对象")
+        )
+        return ()
+    supplies: list[PowerSupplyDraft] = []
+    for supply_id, entry in raw_supplies.items():
+        path = f"instruments.power_supplies.{supply_id}"
+        if not isinstance(supply_id, str):
+            issues.append(
+                _issue(path, _CODE_INVALID_TYPE, "电源引用必须是字符串")
+            )
+            continue
+        supply = _mapping(entry, path, issues)
+        channels = _read_channels(supply.get("channels"), f"{path}.channels", issues)
+        supplies.append(PowerSupplyDraft(supply_id=supply_id, channels=channels))
+    return tuple(supplies)
+
+
+def _read_channels(
+    value: Any, path: str, issues: list[ValidationIssue]
+) -> tuple[PowerChannelDraft, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, Mapping):
+        issues.append(_issue(path, _CODE_INVALID_TYPE, "必须是对象"))
+        return ()
+    channels: list[PowerChannelDraft] = []
+    for name, entry in value.items():
+        channel_path = f"{path}.{name}"
+        if not isinstance(name, str):
+            issues.append(
+                _issue(channel_path, _CODE_INVALID_TYPE, "通道名必须是字符串")
+            )
+            continue
+        channel = _mapping(entry, channel_path, issues)
+        role = _optional_text_field(
+            channel.get("role"), f"{channel_path}.role", issues
+        )
+        voltage_value, voltage_protection, voltage_enabled = _read_channel_setting(
+            channel.get("voltage"), f"{channel_path}.voltage", issues
+        )
+        current_value, current_protection, current_enabled = _read_channel_setting(
+            channel.get("current"), f"{channel_path}.current", issues
+        )
+        channels.append(
+            PowerChannelDraft(
+                channel=name,
+                role=role,
+                voltage=voltage_value,
+                voltage_protection=voltage_protection,
+                voltage_protection_enabled=voltage_enabled,
+                current=current_value,
+                current_protection=current_protection,
+                current_protection_enabled=current_enabled,
+            )
+        )
+    return tuple(channels)
+
+
+def _read_channel_setting(
+    value: Any, path: str, issues: list[ValidationIssue]
+) -> tuple[float | None, float | None, bool | None]:
+    if value is None:
+        return None, None, None
+    section = _mapping(value, path, issues)
+    if not section:
+        return None, None, None
+    work = _finite_number(section.get("value"), f"{path}.value", issues)
+    protection = _finite_number(
+        section.get("protection"), f"{path}.protection", issues
+    )
+    enabled = _optional_bool_field(
+        section.get("protection_enabled"), f"{path}.protection_enabled", issues
+    )
+    return work, protection, enabled
+
+
+def _read_assignments(
+    value: Any, issues: list[ValidationIssue]
+) -> tuple[
+    tuple[PowerAssignmentDraft, ...], tuple[PowerAssignmentDraft, ...]
+]:
+    if value is None:
+        return (), ()
+    assignment = _mapping(value, "power_supply_assignment", issues)
+    dut: list[PowerAssignmentDraft] = []
+    driver: list[PowerAssignmentDraft] = []
+    for group in _POWER_ASSIGNMENT_GROUPS:
+        target = dut if group == "dut_amplifier" else driver
+        group_path = f"power_supply_assignment.{group}"
+        section = _mapping(assignment.get(group), group_path, issues)
+        supplies = section.get("supplies")
+        if supplies is None:
+            continue
+        if not isinstance(supplies, Mapping):
+            issues.append(_issue(f"{group_path}.supplies", _CODE_INVALID_TYPE, "必须是对象"))
+            continue
+        for slot, entry in supplies.items():
+            slot_path = f"{group_path}.supplies.{slot}"
+            if not isinstance(slot, str):
+                issues.append(
+                    _issue(slot_path, _CODE_INVALID_ASSIGNMENT, "分配槽位必须是字符串")
+                )
+                continue
+            item = _mapping(entry, slot_path, issues)
+            supply_id = _read_assignment_reference(item, slot_path, issues)
+            channels = _read_assignment_channels(
+                item.get("channel"), f"{slot_path}.channel", issues
+            )
+            target.append(
+                PowerAssignmentDraft(
+                    slot=slot, supply_id=supply_id, channels=channels
+                )
+            )
+    return tuple(dut), tuple(driver)
+
+
+def _read_assignment_reference(
+    entry: Mapping[str, Any], path: str, issues: list[ValidationIssue]
+) -> str | None:
+    """读取一条分配的电源引用：空引用是合法状态，非法类型必须报问题。
+
+    ``assignment_supply_id`` 只回答“指向哪台电源”，非字符串输入在那里统一返回
+    ``None``；草稿必须区分“用户还没选”和“文档写错了类型”，所以先在这里判类型。
+    """
+    field = "supply_id" if "supply_id" in entry else "name"
+    raw = entry.get(field)
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        issues.append(
+            _issue(
+                f"{path}.{field}",
+                _CODE_INVALID_ASSIGNMENT,
+                "电源引用必须是字符串或 null",
+            )
+        )
+        return None
+    return assignment_supply_id(entry)
+
+
+def _read_assignment_channels(
+    value: Any, path: str, issues: list[ValidationIssue]
+) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, (list, tuple)):
+        issues.append(
+            _issue(path, _CODE_INVALID_ASSIGNMENT, "通道必须是非空字符串列表")
+        )
+        return ()
+    channels: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            issues.append(
+                _issue(
+                    f"{path}[{index}]",
+                    _CODE_INVALID_ASSIGNMENT,
+                    "通道名必须是字符串",
+                )
+            )
+            continue
+        channels.append(item)
+    return tuple(channels)
+
+
+def _read_device_bindings(
+    document: Mapping[str, Any],
+    bindings: DeviceBindingsDraft | Mapping[str, Any] | None,
+    issues: list[ValidationIssue],
+) -> DeviceBindingsDraft:
+    if bindings is not None:
+        if isinstance(bindings, DeviceBindingsDraft):
+            return bindings
+        if isinstance(bindings, Mapping):
+            return _bindings_from_mapping(bindings, "device_bindings", issues)
+        issues.append(
+            _issue(
+                "device_bindings",
+                _CODE_INVALID_TYPE,
+                "设备绑定必须是 DeviceBindingsDraft 或对象",
+            )
+        )
+        return DeviceBindingsDraft()
+    value = document.get("device_bindings")
+    if value is None:
+        return DeviceBindingsDraft()
+    if not isinstance(value, Mapping):
+        issues.append(_issue("device_bindings", _CODE_INVALID_TYPE, "必须是对象"))
+        return DeviceBindingsDraft()
+    return _bindings_from_mapping(value, "device_bindings", issues)
+
+
+def _bindings_from_mapping(
+    value: Mapping[str, Any], path: str, issues: list[ValidationIssue]
+) -> DeviceBindingsDraft:
+    signal_generator = _read_binding(
+        value.get("signal_generator"), f"{path}.signal_generator", issues
+    )
+    spectrum_analyzer = _read_binding(
+        value.get("spectrum_analyzer"), f"{path}.spectrum_analyzer", issues
+    )
+    power_pairs: list[tuple[str, DeviceBindingDraft]] = []
+    raw_power = value.get("power_supplies")
+    if raw_power is not None:
+        if not isinstance(raw_power, Mapping):
+            issues.append(
+                _issue(f"{path}.power_supplies", _CODE_INVALID_TYPE, "必须是对象")
+            )
+        else:
+            for supply_id, record in raw_power.items():
+                record_path = f"{path}.power_supplies.{supply_id}"
+                if not isinstance(supply_id, str):
+                    issues.append(
+                        _issue(
+                            record_path,
+                            _CODE_INVALID_BINDING,
+                            "电源绑定键必须是字符串",
+                        )
+                    )
+                    continue
+                parsed = _read_binding(record, record_path, issues)
+                if parsed is not None:
+                    power_pairs.append((supply_id, parsed))
+    for key in value:
+        if key in INSTRUMENT_ROLES or key == "power_supplies":
+            continue
+        issues.append(
+            _issue(
+                f"{path}.{key}",
+                _CODE_LEGACY_BINDING,
+                "草稿只读取当前设备绑定结构；旧槽位绑定需由设备绑定服务迁移",
+                severity="warning",
+            )
+        )
+    return DeviceBindingsDraft(
+        signal_generator=signal_generator,
+        spectrum_analyzer=spectrum_analyzer,
+        power_supply_bindings=tuple(power_pairs),
+    )
+
+
+def _read_binding(
+    value: Any, path: str, issues: list[ValidationIssue]
+) -> DeviceBindingDraft | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        issues.append(_issue(path, _CODE_INVALID_BINDING, "必须是绑定记录对象"))
+        return None
+    fields = {
+        name: _optional_text_field(value.get(name), f"{path}.{name}", issues)
+        for name in (
+            "vendor",
+            "model",
+            "label",
+            "full_code",
+            "device_key",
+            "visa_address",
+            "last_ip",
+        )
+    }
+    port = value.get("last_port")
+    if port is not None and (
+        isinstance(port, bool) or not isinstance(port, (int, str))
+    ):
+        issues.append(
+            _issue(f"{path}.last_port", _CODE_INVALID_TYPE, "必须是整数或字符串")
+        )
+        port = None
+    known = _optional_bool_field(
+        value.get("known"), f"{path}.known", issues, default=False
+    )
+    source = _optional_text_field(value.get("source"), f"{path}.source", issues)
+    return DeviceBindingDraft(
+        vendor=fields["vendor"],
+        model=fields["model"],
+        label=fields["label"],
+        full_code=fields["full_code"],
+        device_key=fields["device_key"],
+        visa_address=fields["visa_address"],
+        last_ip=fields["last_ip"],
+        last_port=port,
+        known=known,
+        source=source,
+    )
+
+
+def _decibels_text(value: Decibels | None) -> str | None:
+    if value is None:
+        return None
+    return f"{value.db:g}dB"
+
+
+def _sweep_document(value: PowerSweep | None) -> dict[str, Any]:
+    if value is None:
+        return {"start_power": None, "stop_power": None, "step": None}
+    return {
+        "start_power": value.start.dbm,
+        "stop_power": value.stop.dbm,
+        "step": value.step.db,
+    }
+
+
+def _driver_mode_document(draft: ConfigurationDraft) -> dict[str, Any]:
+    document: dict[str, Any] = {"enabled": draft.driver_enabled}
+    if draft.driver_power_source is not None:
+        document["power_source"] = draft.driver_power_source
+    return document
+
+
+def _instrument_entry(binding: DeviceBindingDraft | None) -> dict[str, Any]:
+    if binding is None:
+        return {"enabled": False}
+    address = (
+        binding.visa_address.strip()
+        if isinstance(binding.visa_address, str)
+        else ""
+    )
+    entry: dict[str, Any] = {
+        "enabled": bool(address),
+        "label": binding.label,
+        "model": binding.model,
+        "full_code": binding.full_code,
+        "device_key": binding.device_key,
+    }
+    if address:
+        entry["address"] = binding.visa_address
+    return entry
+
+
+def _channel_document(channel: PowerChannelDraft) -> dict[str, Any]:
+    return {
+        "role": channel.role,
+        "voltage": {
+            "value": channel.voltage,
+            "protection": channel.voltage_protection,
+            "protection_enabled": channel.voltage_protection_enabled,
+        },
+        "current": {
+            "value": channel.current,
+            "protection": channel.current_protection,
+            "protection_enabled": channel.current_protection_enabled,
+        },
+    }
+
+
+def _power_supply_entry(
+    supply_id: str,
+    binding: DeviceBindingDraft | None,
+    supply: PowerSupplyDraft | None,
+) -> dict[str, Any]:
+    entry = _instrument_entry(binding)
+    entry["label"] = supply_id
+    channels = supply.channels if supply is not None else ()
+    entry["channels"] = {
+        channel.channel: _channel_document(channel) for channel in channels
+    }
+    return entry
+
+
+def _assignment_entry(assignment: PowerAssignmentDraft) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "supply_id": assignment.supply_id,
+        "channel": list(assignment.channels),
+    }
+    if assignment.supply_id:
+        # 过渡期同时写同名 ``name``：旧读取方仍可用，两者必须同值。
+        entry["name"] = assignment.supply_id
+    return entry

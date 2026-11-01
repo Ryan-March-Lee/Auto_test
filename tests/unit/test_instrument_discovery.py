@@ -106,16 +106,16 @@ class SimulatedScanTests(unittest.TestCase):
         self.assertEqual(
             set(by_ip), {"192.168.1.201", "192.168.1.202", "192.168.1.102", "192.168.1.150"}
         )
-        self.assertEqual(by_ip["192.168.1.201"].known_name, "SMW200A-1")
+        self.assertTrue(by_ip["192.168.1.201"].registered)
         self.assertEqual(by_ip["192.168.1.201"].known_role, "signal_generator")
-        self.assertEqual(by_ip["192.168.1.102"].known_name, "DP832A-1")
+        self.assertTrue(by_ip["192.168.1.102"].registered)
         self.assertEqual(by_ip["192.168.1.102"].known_role, "PS3")
         # 演示响应里的 4082F 不在本次测试用的小设备表里，按未知设备出现。
         self.assertFalse(by_ip["192.168.1.202"].is_known)
         unknown = by_ip["192.168.1.150"]
         self.assertFalse(unknown.is_known)
-        self.assertIsNone(unknown.known_name)
-        self.assertEqual(unknown.identity.serial, "MY51234567")
+        self.assertFalse(unknown.registered)
+        self.assertEqual(unknown.identity.full_code, "MY51234567")
         self.assertEqual(unknown.display_name, "未知设备 (N9020A)")
         self.assertEqual(
             sorted(device.ip for device in result.unknown), ["192.168.1.150", "192.168.1.202"]
@@ -124,8 +124,8 @@ class SimulatedScanTests(unittest.TestCase):
         self.assertEqual(result.mode, SCAN_MODE_SIMULATED)
         self.assertEqual(result.failures, ())
 
-    def test_known_match_is_by_serial_not_by_ip(self):
-        """同一台设备换 IP 后仍匹配到原资产名：身份不依赖地址。"""
+    def test_known_match_is_by_device_key_not_by_ip(self):
+        """同一台设备换 IP 后仍匹配到已登记设备：身份不依赖地址。"""
         responses = {("192.168.9.4", 5025): SMW_IDN}
         scanner = build_scanner(
             registry=self.registry,
@@ -138,14 +138,15 @@ class SimulatedScanTests(unittest.TestCase):
 
         self.assertEqual(len(result.devices), 1)
         device = result.devices[0]
-        self.assertEqual(device.known_name, "SMW200A-1")
-        self.assertEqual(device.identity.serial, "105462")
+        self.assertTrue(device.registered)
+        self.assertEqual(device.identity.full_code, "105462")
 
     def test_result_dict_carries_identity_and_address(self):
         result = self.scanner.scan("192.168.1.200/30")
         device = result.devices[0]
         payload = device.to_dict()
-        self.assertEqual(payload["known_name"], "SMW200A-1")
+        self.assertTrue(payload["registered"])
+        self.assertEqual(payload["full_code"], "105462")
         self.assertEqual(payload["role"], "signal_generator")
         self.assertEqual(payload["device_key"], "rohde&schwarz:105462")
         self.assertEqual(payload["visa_address"], "TCPIP0::192.168.1.201::inst0::INSTR")
@@ -180,7 +181,7 @@ class SimulatedScanTests(unittest.TestCase):
         result = scanner.scan("192.168.1.0/24")
         self.assertEqual(result.known, ())
         self.assertEqual(len(result.unknown), len(result.devices))
-        self.assertTrue(all(device.known_name is None for device in result.devices))
+        self.assertTrue(all(not device.registered for device in result.devices))
 
 
 class ProbeResultTests(unittest.TestCase):
@@ -205,7 +206,7 @@ class ProbeResultTests(unittest.TestCase):
         result = self._scanner_with({("127.0.0.1", 5025): "GARBAGE"}).scan("127.0.0.0/30")
         device = result.devices[0]
         self.assertEqual(device.status, DeviceStatus.UNREACHABLE)
-        self.assertIsNone(device.known_name)
+        self.assertFalse(device.registered)
         self.assertIn("GARBAGE", device.idn)
 
     def test_visa_address_and_display_name_defaults(self):
@@ -214,7 +215,7 @@ class ProbeResultTests(unittest.TestCase):
             port=5025,
             idn=None,
             identity=None,
-            known_name=None,
+            registered=False,
             status=DeviceStatus.UNREACHABLE,
         )
         self.assertEqual(device.visa_address, "TCPIP0::10.0.0.5::inst0::INSTR")
@@ -263,7 +264,7 @@ class ProbeResultTests(unittest.TestCase):
 
         self.assertEqual(len(result.devices), 1)
         self.assertEqual(result.devices[0].port, 5555)
-        self.assertEqual(result.devices[0].identity.serial, "105462")
+        self.assertEqual(result.devices[0].identity.full_code, "105462")
 
     def test_same_device_on_two_addresses_is_listed_once(self):
         scanner = InstrumentScanner(
@@ -357,7 +358,7 @@ class VisaAddressTests(unittest.TestCase):
 
     def test_address_does_not_depend_on_probe_port(self):
         addresses = {
-            DiscoveredDevice("10.0.0.9", port, SMW_IDN, None, None, DeviceStatus.UNKNOWN)
+            DiscoveredDevice("10.0.0.9", port, SMW_IDN, None, False, DeviceStatus.UNKNOWN)
             .visa_address
             for port in (5025, 5555, 1024)
         }
@@ -375,7 +376,7 @@ class PowerSupplyIdentityTests(unittest.TestCase):
                 "vendor": "RIGOL TECHNOLOGIES",
                 "model": "DP832A",
                 "model_index": 1,
-                "serial": "DP8B214901519",
+                "full_code": "DP8B214901519",
                 "role": "PS3",
                 "status": "online",
                 "known_ips": [],
@@ -383,25 +384,21 @@ class PowerSupplyIdentityTests(unittest.TestCase):
         ],
     }
     MIGRATED_REGISTRY = {
-        "schema_version": 3,
+        "schema_version": 4,
         "instruments": [
             {
-                "name": "DP832A-1",
                 "vendor": "RIGOL TECHNOLOGIES",
                 "model": "DP832A",
-                "model_index": 1,
-                "serial": "DP8B214901519",
+                "full_code": "DP8B214901519",
                 "label": "DP8B1519",
                 "role": "power_supply",
                 "status": "online",
                 "known_ips": [],
             },
             {
-                "name": "DP832A-3",
                 "vendor": "RIGOL TECHNOLOGIES",
                 "model": "DP832A",
-                "model_index": 3,
-                "serial": "DP8B174400885",
+                "full_code": "DP8B174400885",
                 "label": "DP8B0885",
                 "role": "power_supply",
                 "status": "online",
@@ -430,8 +427,8 @@ class PowerSupplyIdentityTests(unittest.TestCase):
         # 旧设备表没有标签：发现过程不生成标签，也就没有 ``supply_id``。
         self.assertIsNone(device.label)
         self.assertIsNone(device.supply_id)
-        self.assertEqual(device.display_name, "DP832A-1")
-        self.assertEqual(device.serial, "DP8B214901519")
+        self.assertEqual(device.display_name, "DP832A")
+        self.assertEqual(device.full_code, "DP8B214901519")
         self.assertEqual(device.device_key, "rigol technologies:dp8b214901519")
 
     def test_frozen_label_is_used_for_display_and_as_supply_id(self):
@@ -463,7 +460,7 @@ class PowerSupplyIdentityTests(unittest.TestCase):
             port=legacy.port,
             idn=legacy.idn,
             identity=legacy.identity,
-            known_name=legacy.known_name,
+            registered=legacy.registered,
             status=legacy.status,
             known_role="PS9",
         )
@@ -515,7 +512,7 @@ class PowerSupplyIdentityTests(unittest.TestCase):
         self.assertEqual(payload["supply_id"], "DP8B1519")
         self.assertEqual(payload["role"], "power_supply")
         self.assertEqual(payload["registry_role"], "power_supply")
-        self.assertEqual(payload["serial"], "DP8B214901519")
+        self.assertEqual(payload["full_code"], "DP8B214901519")
         self.assertEqual(payload["device_key"], "rigol technologies:dp8b214901519")
 
     def test_non_power_supply_devices_have_no_supply_id(self):
@@ -526,7 +523,7 @@ class PowerSupplyIdentityTests(unittest.TestCase):
                     "vendor": "Rohde&Schwarz",
                     "model": "SMW200A",
                     "model_index": 1,
-                    "serial": "105462",
+                    "full_code": "105462",
                     "role": "signal_generator",
                     "status": "online",
                     "known_ips": [],

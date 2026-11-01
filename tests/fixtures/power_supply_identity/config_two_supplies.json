@@ -24,20 +24,25 @@
     },
     "instruments": {
         "signal_generator": {
-            "model": "R&S SMW200A",
+            "model": "SMW200A",
             "enabled": true,
-            "address": "TCPIP0::192.168.1.201::inst0::INSTR"
+            "address": "TCPIP0::192.168.1.201::inst0::INSTR",
+            "label": "5462",
+            "full_code": "105462",
+            "device_key": "rohde&schwarz:105462"
         },
         "spectrum_analyzer": {
-            "model": "Ceyear 4082F",
+            "model": "4082F",
             "enabled": true,
-            "address": "TCPIP0::192.168.1.202::inst0::INSTR"
+            "address": "TCPIP0::192.168.1.202::inst0::INSTR",
+            "label": "QZNI0866",
+            "full_code": "QZNI000866",
+            "device_key": "ceyear technologies:qzni000866"
         },
         "power_supplies": {
             "DP8B1519": {
                 "label": "DP8B1519",
                 "device_key": "rigol technologies:dp8b214901519",
-                "serial": "DP8B214901519",
                 "model": "DP832A",
                 "address": "TCPIP0::192.168.1.102::inst0::INSTR",
                 "enabled": true,
@@ -55,12 +60,12 @@
                             "protection_enabled": false
                         }
                     }
-                }
+                },
+                "full_code": "DP8B214901519"
             },
             "DP8B0885": {
                 "label": "DP8B0885",
                 "device_key": "rigol technologies:dp8b174400885",
-                "serial": "DP8B174400885",
                 "model": "DP832A",
                 "address": "TCPIP0::192.168.1.108::inst0::INSTR",
                 "enabled": true,
@@ -78,7 +83,8 @@
                             "protection_enabled": true
                         }
                     }
-                }
+                },
+                "full_code": "DP8B174400885"
             }
         }
     },
@@ -166,25 +172,31 @@
         "operator": null,
         "instruments": {
             "signal_generator": {
-                "model": "R&S SMW200A",
+                "label": "5462",
+                "model": "SMW200A",
+                "full_code": "105462",
+                "device_key": "rohde&schwarz:105462",
                 "visa_address": "TCPIP0::192.168.1.201::inst0::INSTR"
             },
             "spectrum_analyzer": {
-                "model": "Ceyear 4082F",
+                "label": "QZNI0866",
+                "model": "4082F",
+                "full_code": "QZNI000866",
+                "device_key": "ceyear technologies:qzni000866",
                 "visa_address": "TCPIP0::192.168.1.202::inst0::INSTR"
             },
             "power_supplies": {
                 "DP8B1519": {
                     "label": "DP8B1519",
                     "model": "DP832A",
-                    "serial": "DP8B214901519",
+                    "full_code": "DP8B214901519",
                     "device_key": "rigol technologies:dp8b214901519",
                     "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR"
                 },
                 "DP8B0885": {
                     "label": "DP8B0885",
                     "model": "DP832A",
-                    "serial": "DP8B174400885",
+                    "full_code": "DP8B174400885",
                     "device_key": "rigol technologies:dp8b174400885",
                     "visa_address": "TCPIP0::192.168.1.108::inst0::INSTR"
                 }
@@ -211,53 +223,51 @@
     },
     "device_bindings": {
         "signal_generator": {
-            "name": "SMW200A-1",
             "vendor": "Rohde&Schwarz",
             "model": "SMW200A",
-            "serial": "105462",
             "device_key": "rohde&schwarz:105462",
             "visa_address": "TCPIP0::192.168.1.201::inst0::INSTR",
             "last_ip": "192.168.1.201",
             "last_port": 5025,
             "known": true,
-            "source": "scan"
+            "source": "scan",
+            "full_code": "105462",
+            "label": "5462"
         },
         "spectrum_analyzer": {
-            "name": "4082F-1",
             "vendor": "Ceyear Technologies",
             "model": "4082F",
-            "serial": "QZNI000866",
             "device_key": "ceyear technologies:qzni000866",
             "visa_address": "TCPIP0::192.168.1.202::inst0::INSTR",
             "last_ip": "192.168.1.202",
             "last_port": 5025,
             "known": true,
-            "source": "scan"
+            "source": "scan",
+            "full_code": "QZNI000866",
+            "label": "QZNI0866"
         },
         "power_supplies": {
             "DP8B1519": {
-                "name": "DP832A-1",
                 "vendor": "RIGOL TECHNOLOGIES",
                 "model": "DP832A",
-                "serial": "DP8B214901519",
                 "device_key": "rigol technologies:dp8b214901519",
                 "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
                 "last_ip": "192.168.1.102",
                 "last_port": 5555,
                 "known": true,
-                "source": "scan"
+                "source": "scan",
+                "full_code": "DP8B214901519"
             },
             "DP8B0885": {
-                "name": "DP832A-3",
                 "vendor": "RIGOL TECHNOLOGIES",
                 "model": "DP832A",
-                "serial": "DP8B174400885",
                 "device_key": "rigol technologies:dp8b174400885",
                 "visa_address": "TCPIP0::192.168.1.108::inst0::INSTR",
                 "last_ip": "192.168.1.108",
                 "last_port": 5555,
                 "known": true,
-                "source": "scan"
+                "source": "scan",
+                "full_code": "DP8B174400885"
             }
         }
     }

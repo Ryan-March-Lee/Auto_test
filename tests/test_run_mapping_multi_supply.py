@@ -3,7 +3,7 @@
 步骤 10 把 ``RunResourceMapping`` 的电源段从单数 ``instruments.power_supply`` 扩展为集合
 ``instruments.power_supplies``，并保留旧单数结构的读取兼容。本文件固定三件事：
 
-- 新结构能表达多台电源，快照条目自带 ``label`` / ``model`` / ``serial`` / ``device_key`` /
+- 新结构能表达多台电源，快照条目自带 ``label`` / ``model`` / ``full_code`` / ``device_key`` /
   ``visa_address``，通道写成 ``supply_id/CHx``；
 - 旧快照（单数电源条目、裸通道名）仍能解析、仍能通过校验——历史运行不能因为换了结构打不开；
 - 新结构的冲突（地址重复、身份重复、路由指向不存在的电源、新旧写法混用）在连接前失败。
@@ -61,20 +61,32 @@ def two_supply_mapping() -> dict:
         "schema_version": "1.0",
         "template": False,
         "instruments": {
-            "signal_generator": {"model": "SG", "visa_address": "sim::sg"},
-            "spectrum_analyzer": {"model": "SA", "visa_address": "sim::sa"},
+            "signal_generator": {
+                "label": "5462",
+                "model": "SG",
+                "full_code": "105462",
+                "device_key": "rohde&schwarz:105462",
+                "visa_address": "sim::sg",
+            },
+            "spectrum_analyzer": {
+                "label": "QZNI0866",
+                "model": "SA",
+                "full_code": "QZNI000866",
+                "device_key": "ceyear technologies:qzni000866",
+                "visa_address": "sim::sa",
+            },
             "power_supplies": {
                 "DP8B1519": {
                     "label": "DP8B1519",
                     "model": "DP832A",
-                    "serial": "DP8B214901519",
+                    "full_code": "DP8B214901519",
                     "device_key": "rigol technologies:dp8b214901519",
                     "visa_address": "sim::ps1",
                 },
                 "DP8B0885": {
                     "label": "DP8B0885",
                     "model": "DP832A",
-                    "serial": "DP8B174400885",
+                    "full_code": "DP8B174400885",
                     "device_key": "rigol technologies:dp8b174400885",
                     "visa_address": "sim::ps2",
                 },
@@ -91,11 +103,23 @@ def two_supply_mapping() -> dict:
 class MultiSupplyMappingTests(unittest.TestCase):
     """新结构：多电源、自带身份、显式路由。"""
 
+    def test_reserialized_mapping_writes_only_full_code(self):
+        """重新序列化的映射只有 ``full_code``：冲突只可能来自来源文档的键。"""
+        data = two_supply_mapping()
+        entry = data["instruments"]["signal_generator"]
+        entry["serial"] = entry.pop("full_code")
+
+        payload = RunResourceMapping.from_dict(data).to_dict()
+
+        self.assertNotIn("serial", payload["instruments"]["signal_generator"])
+        self.assertEqual(payload["instruments"]["signal_generator"]["full_code"], "105462")
+        self.assertTrue(validate_run_mapping(payload).valid)
+
     def test_two_supplies_round_trip_with_identity(self):
         mapping = RunResourceMapping.from_dict(two_supply_mapping())
 
         self.assertEqual(sorted(mapping.power_supplies), ["DP8B0885", "DP8B1519"])
-        self.assertEqual(mapping.power_supplies["DP8B0885"].serial, "DP8B174400885")
+        self.assertEqual(mapping.power_supplies["DP8B0885"].full_code, "DP8B174400885")
         self.assertEqual(
             mapping.power_supplies["DP8B0885"].device_key, "rigol technologies:dp8b174400885"
         )
@@ -162,14 +186,31 @@ class MultiSupplyMappingTests(unittest.TestCase):
 
         self.assertIn("instruments.power_supplies.DP8B1519", paths)
 
+    def test_snapshot_may_not_carry_serial_and_full_code_together(self):
+        """完整设备码只有一个字段：同时出现 ``serial`` 与 ``full_code`` 无法判断身份。"""
+        data = two_supply_mapping()
+        data["instruments"]["signal_generator"]["serial"] = "105462"
+
+        paths = {issue.path for issue in validate_run_mapping(data).errors}
+
+        self.assertIn("instruments.signal_generator", paths)
+
+    def test_supply_snapshot_may_not_carry_serial_and_full_code_together(self):
+        data = two_supply_mapping()
+        data["instruments"]["power_supplies"]["DP8B1519"]["serial"] = "DP8B214901519"
+
+        paths = {issue.path for issue in validate_run_mapping(data).errors}
+
+        self.assertIn("instruments.power_supplies.DP8B1519", paths)
+
     def test_every_supply_must_carry_its_identity(self):
         data = two_supply_mapping()
-        for field in ("label", "model", "serial", "device_key", "visa_address"):
+        for field in ("label", "model", "full_code", "device_key", "visa_address"):
             data["instruments"]["power_supplies"]["DP8B0885"][field] = None
 
         paths = {issue.path for issue in validate_run_mapping(data).errors}
 
-        for field in ("label", "model", "serial", "device_key", "visa_address"):
+        for field in ("label", "model", "full_code", "device_key", "visa_address"):
             self.assertIn(f"instruments.power_supplies.DP8B0885.{field}", paths)
 
     def test_channel_route_must_point_at_a_registered_supply(self):
@@ -370,7 +411,7 @@ class RunContextSupplyTests(unittest.TestCase):
         context = RunContext.from_resource_mapping(two_supply_mapping(), run_id="run-1")
 
         self.assertEqual(sorted(context.power_supplies), ["DP8B0885", "DP8B1519"])
-        self.assertEqual(context.power_supplies["DP8B1519"]["serial"], "DP8B214901519")
+        self.assertEqual(context.power_supplies["DP8B1519"]["full_code"], "DP8B214901519")
         # 多台电源时旧单数视图为空：它没有唯一答案。
         self.assertEqual(dict(context.power_supply), {})
         self.assertEqual(
@@ -388,6 +429,74 @@ class RunContextSupplyTests(unittest.TestCase):
         )
         # 旧映射只有一个条目：按槽位名读成一台电源，历史上下文仍能指到它。
         self.assertEqual(sorted(context.power_supplies), ["PS1"])
+
+    def test_context_freezes_instrument_identity(self):
+        """信号源与频谱仪的运行快照自带身份，运行期间不回查注册表。"""
+        context = RunContext.from_resource_mapping(two_supply_mapping(), run_id="run-1")
+
+        self.assertEqual(
+            dict(context.signal_generator),
+            {
+                "label": "5462",
+                "model": "SG",
+                "full_code": "105462",
+                "device_key": "rohde&schwarz:105462",
+                "visa_address": "sim::sg",
+            },
+        )
+
+    def test_context_projects_legacy_serial_into_full_code(self):
+        """旧快照把完整设备码写在 ``serial`` 里：读入后只保留 ``full_code``。
+
+        这里覆盖三类条目——信号源、频谱仪与电源集合——因为同一份旧文档必须在校验/追溯
+        （``RunResourceMapping``）与运行（``RunContext``）两条路径上得到同一台设备。
+        """
+        data = two_supply_mapping()
+        for name in ("signal_generator", "spectrum_analyzer"):
+            entry = data["instruments"][name]
+            entry["serial"] = entry.pop("full_code")
+        for record in data["instruments"]["power_supplies"].values():
+            record["serial"] = record.pop("full_code")
+
+        mapping = RunResourceMapping.from_dict(data)
+        context = RunContext.from_resource_mapping(data, run_id="run-legacy")
+        payload = context.to_dict()
+
+        snapshots = {
+            "signal_generator": dict(context.signal_generator),
+            "spectrum_analyzer": dict(context.spectrum_analyzer),
+            **payload["power_supplies"],
+        }
+        for name, snapshot in snapshots.items():
+            with self.subTest(entry=name):
+                self.assertNotIn("serial", snapshot, "读入后只保留 full_code")
+                self.assertTrue(snapshot.get("full_code"), "旧 serial 必须投影为 full_code")
+        self.assertEqual(
+            snapshots["signal_generator"]["full_code"],
+            mapping.instruments["signal_generator"].full_code,
+            "运行上下文与运行映射必须给出同一份完整设备码",
+        )
+        self.assertEqual(
+            snapshots["DP8B0885"]["full_code"],
+            mapping.power_supplies["DP8B0885"].full_code,
+        )
+        self.assertEqual(
+            payload["signal_generator"]["full_code"],
+            data["instruments"]["signal_generator"]["serial"],
+        )
+
+    def test_new_snapshot_never_writes_two_full_code_fields(self):
+        """写出的快照只有 ``full_code``：旧键不会被回写，也不会出现双份身份。"""
+        payload = RunContext.from_resource_mapping(
+            two_supply_mapping(), run_id="run-1"
+        ).to_dict()
+
+        for name in ("signal_generator", "spectrum_analyzer"):
+            with self.subTest(entry=name):
+                self.assertNotIn("serial", payload[name])
+        for supply_id, record in payload["power_supplies"].items():
+            with self.subTest(supply_id=supply_id):
+                self.assertNotIn("serial", record)
 
     def test_context_dict_round_trips_the_supply_collection(self):
         context = RunContext.from_resource_mapping(two_supply_mapping(), run_id="run-1")

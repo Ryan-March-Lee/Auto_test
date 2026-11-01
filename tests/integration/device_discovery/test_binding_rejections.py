@@ -7,7 +7,7 @@ class DeviceBindingRejectionTests(ConnectionPageTestCase):
     """不合法或有歧义的勾选结果必须整批拒绝，且不留下半份绑定。"""
 
     def test_power_supply_without_a_label_is_rejected_with_the_reason(self):
-        """没有短标签就没有电源引用：配置页明确拒绝，不把地址写进别的电源。"""
+        """没有缩写设备码就没有电源引用：配置页明确拒绝，不把地址写进别的电源。"""
         page = self.make_page()
         messages = []
         page.validation_failed.connect(messages.append)
@@ -17,14 +17,14 @@ class DeviceBindingRejectionTests(ConnectionPageTestCase):
                 {
                     "role": "power_supply",
                     "address": "TCPIP0::192.168.1.102::inst0::INSTR",
-                    "serial": "DP8B214901519",
+                    "full_code": "DP8B214901519",
                     "vendor": "RIGOL TECHNOLOGIES",
                     "device_key": "rigol technologies:dp8b214901519",
                 }
             ]
         )
 
-        self.assertIn("还没有短标签", messages[-1])
+        self.assertIn("还没有缩写设备码", messages[-1])
         self.assertEqual(page.device_bindings, {})
 
     def test_the_same_device_cannot_be_bound_twice_as_a_power_supply(self):
@@ -35,7 +35,7 @@ class DeviceBindingRejectionTests(ConnectionPageTestCase):
         entry = {
             "role": "power_supply",
             "address": "TCPIP0::192.168.1.102::inst0::INSTR",
-            "serial": "DP8B214901519",
+            "full_code": "DP8B214901519",
             "vendor": "RIGOL TECHNOLOGIES",
             "device_key": "rigol technologies:dp8b214901519",
         }
@@ -94,12 +94,12 @@ class DeviceBindingRejectionTests(ConnectionPageTestCase):
                 {
                     "role": "signal_generator",
                     "address": "TCPIP0::192.168.1.201::inst0::INSTR",
-                    "serial": "105462",
+                    "full_code": "105462",
                 },
                 {
                     "role": "signal_generator",
                     "address": "TCPIP0::192.168.1.202::inst0::INSTR",
-                    "serial": "QZNI000866",
+                    "full_code": "QZNI000866",
                 },
             ]
         )
@@ -120,7 +120,7 @@ class DeviceBindingRejectionTests(ConnectionPageTestCase):
         self.assertIn("缺少设备身份", messages[-1])
         self.assertNotIn("address", page.build_config()["instruments"]["signal_generator"])
 
-    def test_identity_disagreeing_with_serial_is_rejected(self):
+    def test_identity_disagreeing_with_full_code_is_rejected(self):
         page = self.make_page()
         messages = []
         page.validation_failed.connect(messages.append)
@@ -131,13 +131,13 @@ class DeviceBindingRejectionTests(ConnectionPageTestCase):
                     "role": "signal_generator",
                     "address": "TCPIP0::192.168.1.201::inst0::INSTR",
                     "vendor": "Rohde&Schwarz",
-                    "serial": "105462",
+                    "full_code": "105462",
                     "device_key": "keysight technologies:105462",
                 }
             ]
         )
 
-        self.assertIn("设备身份与序列号不一致", messages[-1])
+        self.assertIn("设备身份与完整设备码不一致", messages[-1])
         self.assertEqual(page.device_bindings, {})
 
     def test_empty_batch_is_rejected_without_touching_existing_bindings(self):
@@ -147,7 +147,7 @@ class DeviceBindingRejectionTests(ConnectionPageTestCase):
                 {
                     "role": "signal_generator",
                     "address": "TCPIP0::192.168.1.201::inst0::INSTR",
-                    "serial": "105462",
+                    "full_code": "105462",
                     "device_key": "rohde&schwarz:105462",
                     "ip": "192.168.1.201",
                     "port": 5025,
@@ -186,7 +186,7 @@ class DeviceBindingRejectionTests(ConnectionPageTestCase):
                     "supply_id": "DP8B/1519",
                     "address": "TCPIP0::192.168.1.102::inst0::INSTR",
                     "vendor": "RIGOL TECHNOLOGIES",
-                    "serial": "DP8B214901519",
+                    "full_code": "DP8B214901519",
                     "device_key": "rigol technologies:dp8b214901519",
                 }
             ]
@@ -209,7 +209,7 @@ class DeviceBindingRejectionTests(ConnectionPageTestCase):
                     "role": "power_supply",
                     "supply_id": "DP8B1519",
                     "address": "TCPIP0::192.168.1.102::inst0::INSTR",
-                    "serial": "DP8B214901519",
+                    "full_code": "DP8B214901519",
                 }
             ]
         )

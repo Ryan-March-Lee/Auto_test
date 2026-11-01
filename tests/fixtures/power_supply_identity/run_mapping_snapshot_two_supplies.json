@@ -6,27 +6,33 @@
     "operator": "fixture",
     "instruments": {
         "signal_generator": {
+            "label": "5462",
             "model": "R&S SMW200A",
+            "full_code": "105462",
+            "device_key": "rohde&schwarz:105462",
             "visa_address": "TCPIP0::192.168.1.201::inst0::INSTR"
         },
         "spectrum_analyzer": {
+            "label": "QZNI0866",
             "model": "Ceyear 4082F",
+            "full_code": "QZNI000866",
+            "device_key": "ceyear technologies:qzni000866",
             "visa_address": "TCPIP0::192.168.1.202::inst0::INSTR"
         },
         "power_supplies": {
             "DP8B1519": {
                 "label": "DP8B1519",
                 "model": "DP832A",
-                "serial": "DP8B214901519",
                 "device_key": "rigol technologies:dp8b214901519",
-                "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR"
+                "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
+                "full_code": "DP8B214901519"
             },
             "DP8B0885": {
                 "label": "DP8B0885",
                 "model": "DP832A",
-                "serial": "DP8B174400885",
                 "device_key": "rigol technologies:dp8b174400885",
-                "visa_address": "TCPIP0::192.168.1.108::inst0::INSTR"
+                "visa_address": "TCPIP0::192.168.1.108::inst0::INSTR",
+                "full_code": "DP8B174400885"
             }
         }
     },
@@ -47,5 +53,5 @@
             "connection": "DP8B0885/CH2 -> DUT 漏极"
         }
     ],
-    "notes": "多电源快照：gate 与 drain 来自不同电源，快照自带标签、序列号、型号和地址"
+    "notes": "多电源快照：gate 与 drain 来自不同电源，快照自带缩写设备码、型号、完整设备码、设备键和地址"
 }

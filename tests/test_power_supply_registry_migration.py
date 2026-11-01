@@ -5,17 +5,18 @@
 1. **读取兼容旧 schema**：``schema_version`` 2、``role: "PS1".."PS4"``、没有 ``label`` 的旧文件
    仍可读取，读出来还是旧字面量——设备发现面板与配置页还按旧槽位工作（步骤 5、6 才改），
    读取侧折叠会让它们找不到电源；
-2. **保存统一写新字段**：写盘前把旧槽位折叠成 ``power_supply``，为缺标签的设备按序列号
-   补生成 ``label``，``schema_version`` 升到 3；现场注册表迁移后的期望结果就是步骤 1 的
-   ``registry_migrated_v3.json``；
-3. **迁移只改 ``role`` 与 ``label``**：资产名、序列号、地址、人工补充的字段逐字节保留；
-   已有标签原样冻结（不裁剪空白、不改大小写），只有 ``null`` / 空串 / 纯空白才算“还没有标签”；
-4. **标签由序列号派生、与角色无关**：未登记角色的设备也会拿到标签（显示用），但 ``role``
-   仍是 ``null``，不会被猜成电源；登记角色后标签不再变化
-   （``registry_migrated_v3_all_registered.json``）；
-5. **冲突阻止保存**：标签重复、标签不能当 ``supply_id``（含空白、``/`` 或非字符串）、电源的
-   序列号派不出可用标签、文件版本高于本程序，都明确报错并指出设备，绝不覆盖旧标签、也不留下
-   半截文件；非电源设备派不出标签时留 ``null``，不阻断保存（标签只用于展示）；
+2. **保存统一写新字段**：写盘前把旧槽位折叠成 ``power_supply``，为缺缩写设备码的设备按完整
+   设备码补生成 ``label``，``schema_version`` 升到 4；现场注册表迁移后的期望结果就是步骤 1 的
+   ``registry_migrated_v4.json``；
+3. **迁移投影旧身份字段**：``serial`` 写入 ``full_code``，``name`` / ``model_index`` 删除；
+   地址、人工补充的字段逐字节保留；已有缩写码原样冻结（不裁剪空白、不改大小写），只有
+   ``null`` / 空串 / 纯空白才算“还没有缩写码”；
+4. **缩写码由完整设备码派生、与角色无关**：未登记角色的设备也会拿到缩写码（显示用），但
+   ``role`` 仍是 ``null``，不会被猜成电源；登记角色后缩写码不再变化
+   （``registry_migrated_v4_all_registered.json``）；
+5. **冲突阻止保存**：缩写码重复、缩写码不能当 ``supply_id``（含空白、``/`` 或非字符串）、
+   电源的完整设备码派不出可用缩写码、文件版本高于本程序，都明确报错并指出设备，绝不覆盖旧
+   缩写码、也不留下半截文件；非电源设备派不出缩写码时留 ``null``，不阻断保存（只用于展示）；
 6. **保存是一次事务**：迁移、校验、写盘任何一步失败，实例状态与原文件都不变。
 """
 
@@ -27,7 +28,7 @@ from pathlib import Path
 from unittest import mock
 
 import infrastructure.persistence.instrument_registry as registry_module
-from domain.instruments.models import POWER_SUPPLY_ROLE, make_device_key, normalize_serial
+from domain.instruments.models import POWER_SUPPLY_ROLE, make_device_key, normalize_full_code
 from infrastructure.persistence.instrument_registry import (
     LEGACY_SCHEMA_VERSIONS,
     SCHEMA_VERSION,
@@ -38,8 +39,8 @@ from infrastructure.persistence.instrument_registry import (
 ROOT = Path(__file__).parents[1]
 FIXTURE_DIR = ROOT / "tests" / "fixtures" / "power_supply_identity"
 LEGACY_REGISTRY = FIXTURE_DIR / "registry_legacy_v2.json"
-MIGRATED_REGISTRY = FIXTURE_DIR / "registry_migrated_v3.json"
-ALL_REGISTERED_REGISTRY = FIXTURE_DIR / "registry_migrated_v3_all_registered.json"
+MIGRATED_REGISTRY = FIXTURE_DIR / "registry_migrated_v4.json"
+ALL_REGISTERED_REGISTRY = FIXTURE_DIR / "registry_migrated_v4_all_registered.json"
 
 # 短标签规则：现场三台 DP832A 的期望短标签。
 EXPECTED_LABELS = {
@@ -49,6 +50,8 @@ EXPECTED_LABELS = {
 }
 # 每次保存都会刷新，不参与“迁移结果与样例一致”的比对。
 VOLATILE_FIELDS = ("updated_at",)
+LEGACY_FIRST_KEY = make_device_key("RIGOL TECHNOLOGIES", "DP8B214901519")
+LEGACY_UNASSIGNED_KEY = make_device_key("RIGOL TECHNOLOGIES", "DP8B174700950")
 
 
 def _load(path):
@@ -59,8 +62,11 @@ def _stable(document):
     return {key: value for key, value in document.items() if key not in VOLATILE_FIELDS}
 
 
-def _by_serial(document):
-    return {record["serial"]: record for record in document["instruments"]}
+def _by_code(document):
+    return {
+        (record.get("full_code") or record.get("serial")): record
+        for record in document["instruments"]
+    }
 
 
 def _entry(name, serial, *, model, model_index, role=None, label=None):
@@ -69,7 +75,7 @@ def _entry(name, serial, *, model, model_index, role=None, label=None):
         "vendor": "RIGOL TECHNOLOGIES",
         "model": model,
         "model_index": model_index,
-        "serial": serial,
+        "full_code": serial,
         "order_no": None,
         "firmware": None,
         "options": [],
@@ -118,16 +124,13 @@ class LegacyReadTests(RegistryFileTestCase):
 
         self.assertEqual(registry.schema_version, 2)
         self.assertIn(2, LEGACY_SCHEMA_VERSIONS)
-        self.assertEqual(
-            [item.role for item in registry.list()],
-            ["PS3", None, "PS4"],
-        )
-        self.assertEqual([item.label for item in registry.list()], [None, None, None])
-        # 没有标签时现场显示退回软件资产名，不会因为缺少新字段而报错。
-        self.assertEqual(
-            [item.display_name for item in registry.list()],
-            ["DP832A-1", "DP832A-2", "DP832A-3"],
-        )
+        by_code = {item.full_code: item for item in registry.list()}
+        self.assertEqual(by_code["DP8B214901519"].role, "PS3")
+        self.assertIsNone(by_code["DP8B174700950"].role)
+        self.assertEqual(by_code["DP8B174400885"].role, "PS4")
+        self.assertEqual({item.label for item in registry.list()}, {None})
+        # 没有缩写设备码时现场显示退回型号，不会因为缺少新字段而报错。
+        self.assertEqual({item.display_name for item in registry.list()}, {"DP832A"})
 
     def test_legacy_file_is_not_rewritten_by_reading_it(self):
         self.copy_fixture(LEGACY_REGISTRY)
@@ -158,7 +161,7 @@ class MigrationTests(RegistryFileTestCase):
 
         InstrumentRegistry.load(self.path).save()
 
-        records = _by_serial(_load(self.path))
+        records = _by_code(_load(self.path))
         self.assertEqual(
             {serial: record["label"] for serial, record in records.items()},
             {
@@ -178,32 +181,36 @@ class MigrationTests(RegistryFileTestCase):
             "未登记角色的设备不能被猜成电源",
         )
 
-    def test_migration_only_changes_role_and_label(self):
+    def test_migration_changes_identity_fields_but_not_addresses(self):
         self.copy_fixture(LEGACY_REGISTRY)
-        before = _by_serial(_load(self.path))
+        before = _by_code(_load(self.path))
 
         InstrumentRegistry.load(self.path).save()
 
-        after = _by_serial(_load(self.path))
+        after = _by_code(_load(self.path))
         self.assertEqual(sorted(before), sorted(after), "迁移不能增删设备记录")
         for serial, old in before.items():
-            with self.subTest(serial=serial):
+            with self.subTest(full_code=serial):
                 new = after[serial]
                 for field in (
-                    "name",
                     "vendor",
                     "model",
-                    "model_index",
                     "current_ip",
                     "known_ips",
                     "first_seen_at",
                     "last_seen_at",
                 ):
                     self.assertEqual(new.get(field), old.get(field), f"迁移改动了 {field}")
+                for retired in ("name", "model_index", "serial"):
+                    self.assertNotIn(retired, new, f"迁移后不得再写旧字段 {retired}")
                 self.assertEqual(
-                    make_device_key(new["vendor"], new["serial"]),
-                    make_device_key(old["vendor"], old["serial"]),
-                    "设备键只由厂商与序列号派生，迁移不能改变身份",
+                    make_device_key(
+                        new["vendor"], new.get("full_code") or new.get("serial")
+                    ),
+                    make_device_key(
+                        old["vendor"], old.get("full_code") or old.get("serial")
+                    ),
+                    "设备键只由厂商与完整设备码派生，迁移不能改变身份",
                 )
 
     def test_manual_fields_survive_the_migration(self):
@@ -227,27 +234,27 @@ class MigrationTests(RegistryFileTestCase):
 
         self.assertEqual(registry.schema_version, SCHEMA_VERSION)
         self.assertEqual(
-            [(item.label, item.serial, item.device_key) for item in power_supplies],
-            [
+            {(item.label, item.full_code, item.device_key) for item in power_supplies},
+            {
                 ("DP8B1519", "DP8B214901519", make_device_key("RIGOL TECHNOLOGIES", "DP8B214901519")),
                 ("DP8B0885", "DP8B174400885", make_device_key("RIGOL TECHNOLOGIES", "DP8B174400885")),
-            ],
+            },
         )
         self.assertEqual(
-            [item.display_name for item in power_supplies], ["DP8B1519", "DP8B0885"]
+            {item.display_name for item in power_supplies}, {"DP8B1519", "DP8B0885"}
         )
         for item in power_supplies:
-            self.assertEqual(item.serial, normalize_serial(item.serial))
+            self.assertEqual(item.full_code, normalize_full_code(item.full_code))
 
     def test_saving_twice_does_not_move_a_frozen_label(self):
         self.copy_fixture(LEGACY_REGISTRY)
         InstrumentRegistry.load(self.path).save()
-        first = {serial: record["label"] for serial, record in _by_serial(_load(self.path)).items()}
+        first = {serial: record["label"] for serial, record in _by_code(_load(self.path)).items()}
 
         InstrumentRegistry.load(self.path).save()
 
         self.assertEqual(
-            {serial: record["label"] for serial, record in _by_serial(_load(self.path)).items()},
+            {serial: record["label"] for serial, record in _by_code(_load(self.path)).items()},
             first,
             "标签生成一次后冻结，重复保存不得重算",
         )
@@ -300,11 +307,11 @@ class RegistrationTests(RegistryFileTestCase):
     def test_registering_the_unassigned_device_adds_its_label(self):
         self.copy_fixture(LEGACY_REGISTRY)
         registry = InstrumentRegistry.load(self.path)
-        registry.set_role("DP832A-2", POWER_SUPPLY_ROLE)
+        registry.set_role(LEGACY_UNASSIGNED_KEY, POWER_SUPPLY_ROLE)
         registry.save()
 
         saved = _load(self.path)
-        records = _by_serial(saved)
+        records = _by_code(saved)
         self.assertEqual(
             {serial: record["label"] for serial, record in records.items()}, EXPECTED_LABELS
         )
@@ -313,20 +320,20 @@ class RegistrationTests(RegistryFileTestCase):
         )
 
         # 与步骤 1 的“全部登记”样例对照：除人工补充的 notes 外必须一致。
-        expected = _by_serial(_load(ALL_REGISTERED_REGISTRY))
+        expected = _by_code(_load(ALL_REGISTERED_REGISTRY))
         for serial, record in records.items():
-            with self.subTest(serial=serial):
-                for field in ("name", "vendor", "model", "model_index", "serial", "label",
+            with self.subTest(full_code=serial):
+                for field in ("vendor", "model", "full_code", "label",
                               "role", "current_ip", "known_ips"):
                     self.assertEqual(record.get(field), expected[serial].get(field))
 
     def test_legacy_slot_role_input_is_written_back_canonical(self):
         self.copy_fixture(LEGACY_REGISTRY)
         registry = InstrumentRegistry.load(self.path)
-        registry.set_role("DP832A-2", "PS2")
+        registry.set_role(LEGACY_UNASSIGNED_KEY, "PS2")
         registry.save()
 
-        record = _by_serial(_load(self.path))["DP8B174700950"]
+        record = _by_code(_load(self.path))["DP8B174700950"]
         self.assertEqual(record["role"], POWER_SUPPLY_ROLE, "旧槽位写回时折叠成 power_supply")
         self.assertEqual(record["label"], "DP8B0950")
 
@@ -346,9 +353,9 @@ class ConflictGateTests(RegistryFileTestCase):
             InstrumentRegistry.load(self.path)
 
         message = str(raised.exception)
-        self.assertIn("标签冲突", message)
-        self.assertIn("FAKE-1", message)
-        self.assertIn("DP832A-1", message)
+        self.assertIn("缩写设备码冲突", message)
+        self.assertIn("FAKE", message)
+        self.assertIn("DP832A", message)
 
     def test_label_must_be_usable_as_a_supply_id(self):
         for label in ("DP8B/1519", "DP8B 1519"):
@@ -399,12 +406,15 @@ class ConflictGateTests(RegistryFileTestCase):
             registry.save()
 
         message = str(raised.exception)
-        self.assertIn("DP832A-1", message)
+        self.assertIn("DP832A", message)
         self.assertIn("A5462", message)
         self.assertEqual(self.path.read_bytes(), before, "保存失败不得改写原文件")
         self.assertEqual(registry.raw, before_document, "保存失败不得提交半个迁移结果")
         self.assertIsNone(
-            registry.get_by_name("DP832A-1").label, "保存失败不得在内存里留下半个迁移结果"
+            registry.get_by_device_key(
+                make_device_key("RIGOL TECHNOLOGIES", "A5462")
+            ).label,
+            "保存失败不得在内存里留下半个迁移结果",
         )
 
     def test_newer_schema_version_is_rejected_instead_of_downgraded(self):
@@ -438,7 +448,7 @@ class SaveTransactionTests(RegistryFileTestCase):
         self.assertEqual(registry.raw, before_document, "写盘失败不得提交迁移结果")
         self.assertEqual(self.path.read_bytes(), before_bytes, "写盘失败不得改写原文件")
         # 实例仍按迁移前的旧字面量工作，调用方可以改完再重试。
-        self.assertEqual(registry.get_by_name("DP832A-1").role, "PS3")
+        self.assertEqual(registry.get_by_device_key(LEGACY_FIRST_KEY).role, "PS3")
 
     def test_validation_failure_keeps_the_document_and_file_unchanged(self):
         self.copy_fixture(LEGACY_REGISTRY)

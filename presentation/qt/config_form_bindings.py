@@ -20,7 +20,7 @@ from domain.instruments.models import (
     POWER_SUPPLY_ROLE,
     canonical_role,
     make_device_key,
-    normalize_serial,
+    normalize_full_code,
     normalize_vendor,
 )
 
@@ -49,10 +49,10 @@ def binding_address(binding: Any) -> str:
 
 
 def binding_device_key(record: Any) -> str | None:
-    """返回一条设备绑定记录的身份键 ``厂商:序列号``；无法确定身份时返回 ``None``。
+    """返回一条设备绑定记录的身份键 ``厂商:完整设备码``；无法确定身份时返回 ``None``。
 
-    身份是 ``device_key``。旧记录只有厂商与序列号两段时在这里重新拼出同一个键；
-    只有序列号没有厂商时无法确定身份，返回 ``None``（不做“仅按序列号”的猜测匹配，
+    身份是 ``device_key``。旧记录只有厂商与完整设备码两段时在这里重新拼出同一个键；
+    只有完整设备码没有厂商时无法确定身份，返回 ``None``（不做“仅按设备码”的猜测匹配，
     否则两个厂商的同号设备会被混为一谈）。
     """
     if not isinstance(record, Mapping):
@@ -61,13 +61,25 @@ def binding_device_key(record: Any) -> str | None:
     if key:
         return key
     vendor = str(record.get("vendor") or "").strip()
-    serial = str(record.get("serial") or "").strip()
-    if not vendor or not serial:
+    full_code = _binding_full_code(record)
+    if not vendor or not full_code:
         return None
     try:
-        return make_device_key(vendor, serial)
+        return make_device_key(vendor, full_code)
     except ValueError:
         return None
+
+
+def _binding_full_code(record: Mapping[str, Any]) -> str:
+    """读取绑定记录里的完整设备码；``full_code`` 优先。
+
+    历史读取边界：旧绑定把完整设备码写在 ``serial`` 里。读入后立即投影为 ``full_code``，
+    新写出的绑定只带 ``full_code``。
+    """
+    value = record.get("full_code")
+    if value is None:
+        value = record.get("serial")
+    return str(value or "").strip()
 
 
 def _legacy_supply_id(record: Mapping[str, Any]) -> str | None:
@@ -100,56 +112,56 @@ def supply_id_problem(value: Any) -> str | None:
 
 
 def _identity_parts(device_key: str) -> tuple[str, str] | None:
-    """把 ``device_key`` 拆成 ``(厂商, 序列号)``（小写归一化）；不是该形式时返回 ``None``。
+    """把 ``device_key`` 拆成 ``(厂商, 完整设备码)``（小写归一化）；不是该形式时返回 ``None``。
 
-    键由 :func:`domain.instruments.models.make_device_key` 拼成 ``厂商:序列号``，所以按
-    **最后**一个分隔符拆分：厂商标识本身带冒号时，序列号仍是最后一段。
+    键由 :func:`domain.instruments.models.make_device_key` 拼成 ``厂商:完整设备码``，所以按
+    **最后**一个分隔符拆分：厂商标识本身带冒号时，完整设备码仍是最后一段。
     """
     if ":" not in device_key:
         return None
-    vendor, serial = device_key.rsplit(":", 1)
-    return vendor.strip().casefold(), serial.strip().casefold()
+    vendor, full_code = device_key.rsplit(":", 1)
+    return vendor.strip().casefold(), full_code.strip().casefold()
 
 
 def _binding_identity_problem(record: Mapping[str, Any]) -> str | None:
     """返回一条绑定记录身份不自洽的原因；身份完整时返回 ``None``。
 
-    身份就是 ``device_key``（``厂商:序列号``）：记录必须能给出它，且记录里**每一个**
-    声明出来的身份片段（厂商、序列号）都必须与 ``device_key`` 的对应部分一致。只声明其中
-    一个时同样要核对——只看“两个都在”会放过“厂商写着 A、键指向 B”的记录；而声明了厂商
-    或序列号却给不出 ``厂商:序列号`` 形式的键时，身份无法核对，也算不自洽。
+    身份就是 ``device_key``（``厂商:完整设备码``）：记录必须能给出它，且记录里**每一个**
+    声明出来的身份片段（厂商、完整设备码）都必须与 ``device_key`` 的对应部分一致。只声明
+    其中一个时同样要核对——只看“两个都在”会放过“厂商写着 A、键指向 B”的记录；而声明了
+    厂商或完整设备码却给不出 ``厂商:完整设备码`` 形式的键时，身份无法核对，也算不自洽。
 
     手改文件、旧版本写出的“地址 + 矛盾身份”不能进入可用绑定集合，否则配置会连接到一台
-    身份说不清（或身份与地址错配）的设备。只写 ``device_key``、不带厂商/序列号的记录仍然
-    可用：那时键是唯一身份，没有第二份取值需要核对。
+    身份说不清（或身份与地址错配）的设备。只写 ``device_key``、不带厂商/完整设备码的记录
+    仍然可用：那时键是唯一身份，没有第二份取值需要核对。
     """
     identity = binding_device_key(record)
     if identity is None:
-        return "缺少设备身份（device_key，或厂商 + 序列号）"
+        return "缺少设备身份（device_key，或厂商 + 完整设备码）"
     device_key = str(record.get("device_key") or "").strip()
     if not device_key:
-        # 身份由厂商 + 序列号拼出（:func:`make_device_key`）：不存在第二份取值可核对。
+        # 身份由厂商 + 完整设备码拼出（:func:`make_device_key`）：不存在第二份取值可核对。
         return None
     vendor = normalize_vendor(record.get("vendor"))
-    serial = normalize_serial(record.get("serial"))
-    if not vendor and not serial:
+    full_code = normalize_full_code(_binding_full_code(record))
+    if not vendor and not full_code:
         return None
     parts = _identity_parts(device_key)
     if parts is None:
-        return f"设备身份不是 厂商:序列号 形式（{device_key}）"
-    key_vendor, key_serial = parts
-    if vendor and serial:
+        return f"设备身份不是 厂商:完整设备码 形式（{device_key}）"
+    key_vendor, key_code = parts
+    if vendor and full_code:
         try:
-            expected = make_device_key(vendor, serial)
+            expected = make_device_key(vendor, full_code)
         except ValueError:
-            return f"设备身份无法解析（{vendor!r} / {serial!r}）"
+            return f"设备身份无法解析（{vendor!r} / {full_code!r}）"
         if device_key.casefold() != expected:
-            return f"设备身份与厂商/序列号不一致（{device_key} ≠ {expected}）"
+            return f"设备身份与厂商/完整设备码不一致（{device_key} ≠ {expected}）"
         return None
     if vendor and vendor.casefold() != key_vendor:
         return f"设备身份与厂商不一致（{device_key} ≠ {vendor.casefold()}:…）"
-    if serial and serial.casefold() != key_serial:
-        return f"设备身份与序列号不一致（{device_key} ≠ …{serial}）"
+    if full_code and full_code.casefold() != key_code:
+        return f"设备身份与完整设备码不一致（{device_key} ≠ …{full_code}）"
     return None
 
 
@@ -194,8 +206,8 @@ def power_supply_bindings(bindings: Any) -> dict[str, dict]:
 
     新结构是 ``device_bindings.power_supplies[<supply_id>]``（集合的键就是引用 ID，
     记录内部不再重复写 ``supply_id`` / ``label`` / ``role``）。读取时兼容步骤 5 的过渡
-    结构：记录按旧槽位 ``PS1``..``PS4`` 落键、记录内带短标签与设备身份。旧记录只有在
-    **身份可确认**（``厂商:序列号``）且带短标签时才会迁移——只有地址的旧绑定不是身份，
+    结构：记录按旧槽位 ``PS1``..``PS4`` 落键、记录内带缩写设备码与设备身份。旧记录只有在
+    **身份可确认**（``厂商:完整设备码``）且带可用的引用时才会迁移——只有地址的旧绑定不是身份，
     按既定规则必须重新扫描，这里不猜成某台电源。
 
     每条记录都要过同一套校验（见 :func:`power_supply_binding_problems`）：引用能否当
@@ -218,6 +230,12 @@ def power_supply_bindings(bindings: Any) -> dict[str, dict]:
         if identity is None or identity in seen:
             continue
         seen[identity] = supply_id
+        # 历史读取边界：旧绑定把完整设备码写在 ``serial`` 里；投影为 ``full_code`` 后丢弃旧键。
+        # ``name`` 是已退役的资产名，绑定记录不再携带它。
+        if "full_code" not in record:
+            record["full_code"] = record.get("serial")
+        record.pop("serial", None)
+        record.pop("name", None)
         record.pop("role", None)
         record.pop("label", None)
         record.pop("supply_id", None)
@@ -321,10 +339,10 @@ def _legacy_device_bindings(instruments: Mapping[str, Any]) -> dict[str, dict]:
         if item.get("enabled") is False:
             continue
         bindings[role] = {
-            "name": None,
             "vendor": None,
             "model": item.get("model"),
-            "serial": None,
+            "label": None,
+            "full_code": None,
             "device_key": None,
             "visa_address": address.strip(),
             "last_ip": None,

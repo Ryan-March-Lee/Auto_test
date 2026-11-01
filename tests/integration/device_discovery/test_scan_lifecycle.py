@@ -35,9 +35,9 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
         self.assertEqual(len(panel.cards()), 4)
         names = set(panel.card_headings())
         # 卡片正面只写设备名：角色在型号旁边，未登记的设备显示兜底名。
-        self.assertIn("SMW200A-1", names)
+        self.assertIn("SMW200A（105462）", names)
         # 电源还没有短标签时退回资产名，但仍然是类别“电源”，不是“电源 PS3”这种槽位编号。
-        self.assertIn("DP832A-1", names)
+        self.assertIn("DP832A（DP8B214901519）", names)
         self.assertIn("未知设备 (N9020A)", names)
         self.assertTrue(panel.apply_btn.isEnabled())
         text = panel.status_label.text()
@@ -89,17 +89,17 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
         self.run_scan(panel)
 
         self.assertEqual(panel.card_count(), 1)
-        card = panel.card_for("SMW200A-1")
+        card = panel.card_for("SMW200A（105462）")
         self.assertEqual(card.code_label.text(), "NA/SMW200A/105462")
-        self.assertEqual(panel.card_status("SMW200A-1"), "未分配角色 · 不能应用")
+        self.assertEqual(panel.card_status("SMW200A（105462）"), "未分配角色 · 不能应用")
         self.assertFalse(card.checkable)
-        panel.set_card_checked("SMW200A-1", True)
-        self.assertFalse(panel.card_checked("SMW200A-1"))
+        panel.set_card_checked("SMW200A（105462）", True)
+        self.assertFalse(panel.card_checked("SMW200A（105462）"))
         self.assertFalse(panel.apply_btn.isEnabled())
         self.assertIn("未分配角色 1 台", panel.status_label.text())
 
-    def test_power_supply_without_a_label_says_why_the_asset_name_is_shown(self):
-        """旧设备表还没有短标签：卡片显示资产名，提示里说明原因。
+    def test_power_supply_without_a_label_says_why_the_model_is_shown(self):
+        """旧设备表还没有缩写设备码：卡片显示型号，提示里说明原因。
 
         这台电源有旧槽位，所以不该同时出现“地址无处可写”的过渡提示——两件事分开写，
         用户才知道该做什么。
@@ -108,9 +108,9 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
 
         self.run_scan(panel)
 
-        tip = panel.card_tooltip("DP832A-1")
-        self.assertIn("短标签", tip)
-        self.assertIn("资产名", tip)
+        tip = panel.card_tooltip("DP832A（DP8B214901519）")
+        self.assertIn("缩写设备码", tip)
+        self.assertIn("型号", tip)
         self.assertNotIn("没有旧槽位", tip)
 
     def test_device_card_carries_picture_name_and_device_code(self):
@@ -118,7 +118,7 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
 
         self.run_scan(panel)
 
-        card = panel.card_for("SMW200A-1")
+        card = panel.card_for("SMW200A（105462）")
         self.assertTrue(card.image.has_picture(), "信号源卡片应显示仪器图片")
         # 第一行只写仪器名（型号），不再带资产名里的 ``-1``。
         self.assertEqual(card.name_label.text(), "SMW200A")
@@ -131,7 +131,7 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
         applied = []
         panel.apply_requested.connect(applied.append)
 
-        panel.set_card_checked("SMW200A-1", True)
+        panel.set_card_checked("SMW200A（105462）", True)
         panel.request_apply()
 
         self.assertEqual(len(applied), 1)
@@ -140,7 +140,7 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
     def test_clicking_a_card_toggles_its_selection(self):
         panel = self.make_panel()
         self.run_scan(panel)
-        card = panel.card_for("4082F-1")
+        card = panel.card_for("4082F（QZNI000866）")
 
         QTest.mouseClick(card, Qt.LeftButton)
         self.app.processEvents()
@@ -168,7 +168,7 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
         """卡片上的文字和图片不吞点击：点到名字、图片或设备码同样算选中。"""
         panel = self.make_panel()
         self.run_scan(panel)
-        card = panel.card_for("4082F-1")
+        card = panel.card_for("4082F（QZNI000866）")
 
         for target in (card.name_label, card.image, card.code_label):
             with self.subTest(target=type(target).__name__):
@@ -213,12 +213,12 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
         applied = []
         panel.apply_requested.connect(applied.append)
 
-        panel.set_card_checked("SMW200A-1", True)
+        panel.set_card_checked("SMW200A（105462）", True)
         panel.request_apply()
 
         assignment = applied[0][0]
         self.assertEqual(assignment["role"], "signal_generator")
-        self.assertEqual(assignment["serial"], "105462")
+        self.assertEqual(assignment["full_code"], "105462")
         self.assertEqual(assignment["address"], "TCPIP0::192.168.1.201::inst0::INSTR")
         self.assertTrue(assignment["known"])
         # 信号源没有现场短标签：``label`` / ``supply_id`` 为空，配置页不会拿它当电源引用。
@@ -226,17 +226,17 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
         self.assertIsNone(assignment["supply_id"])
 
     def test_power_supply_without_a_label_cannot_be_applied(self):
-        """旧设备表还没有短标签：电源没有可写的配置引用，面板明确拒绝。"""
+        """旧设备表还没有缩写设备码：电源没有可写的配置引用，面板明确拒绝。"""
         panel = self.make_panel()
         self.run_scan(panel)
         applied = []
         panel.apply_requested.connect(applied.append)
 
-        panel.set_card_checked("DP832A-1", True)
+        panel.set_card_checked("DP832A（DP8B214901519）", True)
         panel.request_apply()
 
         self.assertEqual(applied, [])
-        self.assertIn("短标签", panel.status_label.text())
+        self.assertIn("缩写设备码", panel.status_label.text())
 
     def test_invalid_subnet_reports_failure_without_crashing(self):
         panel = self.make_panel()
@@ -257,29 +257,29 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
     def test_scan_preselects_devices_bound_in_configuration(self):
         panel = self.make_panel()
         panel.set_device_bindings(
-            {"signal_generator": {"serial": "105462", "device_key": "rohde&schwarz:105462"}}
+            {"signal_generator": {"full_code": "105462", "device_key": "rohde&schwarz:105462"}}
         )
 
         self.run_scan(panel)
 
-        self.assertTrue(panel.card_checked("SMW200A-1"))
+        self.assertTrue(panel.card_checked("SMW200A（105462）"))
         self.assertIn("预选", panel.status_label.text())
-        self.assertIn("已按配置预选", panel.card_status("SMW200A-1"))
+        self.assertIn("已按配置预选", panel.card_status("SMW200A（105462）"))
         # 其他卡片不因预选被选上：用户仍可自由改。
-        self.assertFalse(panel.card_checked("DP832A-1"))
+        self.assertFalse(panel.card_checked("DP832A（DP8B214901519）"))
 
     def test_a_card_unchecked_by_the_user_is_not_preselected_again(self):
         """用户取消勾选后，刷新卡片不能把配置里的预选重新加回来。"""
         panel = self.make_panel()
         panel.set_device_bindings(
-            {"signal_generator": {"serial": "105462", "device_key": "rohde&schwarz:105462"}}
+            {"signal_generator": {"full_code": "105462", "device_key": "rohde&schwarz:105462"}}
         )
         self.run_scan(panel)
-        self.assertTrue(panel.card_checked("SMW200A-1"))
+        self.assertTrue(panel.card_checked("SMW200A（105462）"))
 
-        panel.set_card_checked("SMW200A-1", False)
+        panel.set_card_checked("SMW200A（105462）", False)
 
-        self.assertFalse(panel.card_checked("SMW200A-1"))
+        self.assertFalse(panel.card_checked("SMW200A（105462）"))
 
     def test_preselection_matches_by_device_key_even_when_ip_changes(self):
         panel = self.make_panel()
@@ -291,7 +291,7 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
 
         self.run_scan(panel)
 
-        self.assertTrue(panel.card_checked("4082F-1"))
+        self.assertTrue(panel.card_checked("4082F（QZNI000866）"))
         self.assertNotIn("配置里是", panel.status_label.text())
 
     def test_preselection_reports_a_role_change_instead_of_silently_moving_the_device(self):
@@ -303,7 +303,7 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
 
         self.run_scan(panel)
 
-        self.assertTrue(panel.card_checked("SMW200A-1"))
+        self.assertTrue(panel.card_checked("SMW200A（105462）"))
         text = panel.status_label.text()
         self.assertIn("角色以设备表为准", text)
         self.assertIn("配置里是 频谱分析仪", text)
@@ -315,7 +315,7 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
             {
                 "PS1": {
                     "device_key": "rigol technologies:dp8b214901519",
-                    "serial": "DP8B214901519",
+                    "full_code": "DP8B214901519",
                     "label": "DP8B1519",
                     "supply_id": "DP8B1519",
                     "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
@@ -325,7 +325,7 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
 
         self.run_scan(panel)
 
-        self.assertTrue(panel.card_checked("DP832A-1"))
+        self.assertTrue(panel.card_checked("DP832A（DP8B214901519）"))
         self.assertIn("预选", panel.status_label.text())
         self.assertNotIn("配置里是", panel.status_label.text())
 
@@ -333,17 +333,17 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
         """旧配置只有厂商+序列号时重新拼出同一个身份键，仍然认得出设备。"""
         panel = self.make_panel()
         panel.set_device_bindings(
-            {"signal_generator": {"vendor": "Rohde&Schwarz", "serial": "105462"}}
+            {"signal_generator": {"vendor": "Rohde&Schwarz", "full_code": "105462"}}
         )
 
         self.run_scan(panel)
 
-        self.assertTrue(panel.card_checked("SMW200A-1"))
+        self.assertTrue(panel.card_checked("SMW200A（105462）"))
 
     def test_preselection_never_matches_on_serial_alone(self):
         """只有序列号时不做猜测：不同厂商可能有相同序列号。"""
         panel = self.make_panel()
-        panel.set_device_bindings({"signal_generator": {"serial": "105462"}})
+        panel.set_device_bindings({"signal_generator": {"full_code": "105462"}})
 
         self.run_scan(panel)
 

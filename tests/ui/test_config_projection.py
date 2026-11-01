@@ -408,7 +408,7 @@ class ConfigProjectionTests(unittest.TestCase):
         )
 
     def test_power_options_show_the_label_with_model_and_keep_supply_id_as_data(self):
-        """步骤 9：显示文本是 ``短标签（型号）``，业务值是 ``itemData`` 里的 ``supply_id``。"""
+        """步骤 9：显示文本是 ``型号（缩写设备码）``，业务值是 ``itemData`` 里的 ``supply_id``。"""
         form = FakeForm()
         supplies = {
             "DP8B1519": {"model": "DP832A"},
@@ -429,7 +429,7 @@ class ConfigProjectionTests(unittest.TestCase):
         combo = form.power_assignment_widgets["pa_unit1_power"]
         self.assertEqual(
             [combo.itemText(index) for index in range(combo.count())],
-            ["DP8B1519（DP832A）", "DP8B0885（DP832A）", "DP8B0950"],
+            ["DP832A（DP8B1519）", "DP832A（DP8B0885）", "DP8B0950"],
         )
         self.assertEqual(
             [combo.itemData(index) for index in range(combo.count())],
@@ -437,7 +437,7 @@ class ConfigProjectionTests(unittest.TestCase):
         )
         # 两台型号相同：选中靠 itemData，不会因为显示文本相同而落到第一台。
         self.assertEqual(combo.currentData(), "DP8B0885")
-        self.assertEqual(combo.currentText(), "DP8B0885（DP832A）")
+        self.assertEqual(combo.currentText(), "DP832A（DP8B0885）")
 
     def test_identical_models_do_not_make_two_supplies_the_same_option(self):
         """型号重复时显示文本可能完全相同，按文本选中会选错设备；必须按数据选中。"""

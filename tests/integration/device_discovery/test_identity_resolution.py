@@ -45,12 +45,12 @@ class BindingKeyTests(unittest.TestCase):
 
     def test_vendor_and_serial_are_combined_when_key_is_missing(self):
         self.assertEqual(
-            binding_device_key({"vendor": "Rohde&Schwarz", "serial": "105462"}),
+            binding_device_key({"vendor": "Rohde&Schwarz", "full_code": "105462"}),
             "rohde&schwarz:105462",
         )
 
     def test_serial_alone_or_malformed_input_yields_none(self):
-        for record in ({"serial": "105462"}, {}, None, "not-a-record", {"device_key": "  "}):
+        for record in ({"full_code": "105462"}, {}, None, "not-a-record", {"device_key": "  "}):
             with self.subTest(record=record):
                 self.assertIsNone(binding_device_key(record))
 
@@ -64,13 +64,13 @@ class DeviceHeadingTests(unittest.TestCase):
             port=5555,
             idn=DP832A_IDN,
             identity=InstrumentIdentity.from_idn(DP832A_IDN),
-            known_name="DP832A-1",
+            registered=True,
             status=DeviceStatus.ONLINE,
             known_role="power_supply",
             known_label="DP8B1519",
         )
 
-        self.assertEqual(device_heading(device), "DP8B1519（DP832A，电源）")
+        self.assertEqual(device_heading(device), "DP832A（DP8B1519，电源）")
         self.assertEqual(device.supply_id, "DP8B1519")
         self.assertFalse(hasattr(device, "config_slot"), "旧槽位已从发现结果里删除")
 
@@ -80,7 +80,7 @@ class DeviceHeadingTests(unittest.TestCase):
             port=5555,
             idn=DP832A_IDN,
             identity=InstrumentIdentity.from_idn(DP832A_IDN),
-            known_name="DP832A-1",
+            registered=True,
             status=DeviceStatus.ONLINE,
             known_role="PS3",
         )
@@ -88,7 +88,7 @@ class DeviceHeadingTests(unittest.TestCase):
         self.assertEqual(device.role, "power_supply")
         self.assertFalse(hasattr(device, "config_slot"))
         self.assertIsNone(device.supply_id, "没有标签就没有 supply_id，发现过程不生成标签")
-        self.assertEqual(device_heading(device), "DP832A-1（DP832A，电源）")
+        self.assertEqual(device_heading(device), "DP832A（电源）")
 
     def test_other_roles_and_unknown_devices_keep_their_heading(self):
         signal = DiscoveredDevice(
@@ -96,7 +96,7 @@ class DeviceHeadingTests(unittest.TestCase):
             port=5025,
             idn=SMW_IDN,
             identity=InstrumentIdentity.from_idn(SMW_IDN),
-            known_name="SMW200A-1",
+            registered=True,
             status=DeviceStatus.ONLINE,
             known_role="signal_generator",
         )
@@ -105,11 +105,11 @@ class DeviceHeadingTests(unittest.TestCase):
             port=5025,
             idn=CEYEAR_IDN,
             identity=InstrumentIdentity.from_idn(CEYEAR_IDN),
-            known_name=None,
+            registered=False,
             status=DeviceStatus.UNKNOWN,
         )
 
-        self.assertEqual(device_heading(signal), "SMW200A-1（信号发生器）")
+        self.assertEqual(device_heading(signal), "SMW200A（信号发生器）")
         self.assertEqual(device_heading(unknown), "未知设备 (4082F)")
 
     def test_signal_generator_with_a_label_shows_model_then_label(self):
@@ -119,7 +119,7 @@ class DeviceHeadingTests(unittest.TestCase):
             port=5025,
             idn=SMW_IDN,
             identity=InstrumentIdentity.from_idn(SMW_IDN),
-            known_name="SMW200A-1",
+            registered=True,
             known_label="5462",
             status=DeviceStatus.ONLINE,
             known_role="signal_generator",
@@ -141,27 +141,27 @@ class DeviceCardContentTests(unittest.TestCase):
             "port": 5025,
             "idn": SMW_IDN,
             "identity": InstrumentIdentity.from_idn(SMW_IDN),
-            "known_name": "SMW200A-1",
+            "registered": True,
             "status": DeviceStatus.ONLINE,
             "known_role": "signal_generator",
         }
         values.update(overrides)
         return DiscoveredDevice(**values)
 
-    def test_device_code_uses_role_model_and_serial(self):
+    def test_device_code_uses_role_model_and_full_code(self):
         code, detail = device_code(self.device())
 
         self.assertEqual(code, "SG/SMW200A/105462")
         # 附注只写连接细节：身份码在卡片正面，不在提示里重复。
         self.assertEqual(detail, "地址 TCPIP0::10.0.0.2::inst0::INSTR")
 
-    def test_power_supply_code_is_its_short_label(self):
-        """电源的身份码就是注册表短标签（= ``supply_id``），不是 ``PS/型号/序列号``。"""
+    def test_power_supply_code_is_its_short_code(self):
+        """电源的身份码就是注册表缩写设备码（= ``supply_id``），不是 ``PS/型号/完整设备码``。"""
         supply = self.device(
             identity=InstrumentIdentity.from_idn(DP832A_IDN),
             idn=DP832A_IDN,
             known_role="power_supply",
-            known_name="DP832A-1",
+            registered=True,
             known_label="DP8B1519",
         )
 
@@ -175,13 +175,13 @@ class DeviceCardContentTests(unittest.TestCase):
             identity=InstrumentIdentity.from_idn(DP832A_IDN),
             idn=DP832A_IDN,
             known_role="power_supply",
-            known_name="DP832A-1",
+            registered=True,
         )
         spectrum = self.device(
             identity=InstrumentIdentity.from_idn(CEYEAR_IDN),
             idn=CEYEAR_IDN,
             known_role="spectrum_analyzer",
-            known_name="4082F-1",
+            registered=True,
         )
 
         self.assertEqual(device_code(supply)[0], "PS/DP832A/DP8B214901519")
@@ -190,7 +190,7 @@ class DeviceCardContentTests(unittest.TestCase):
         self.assertIsNone(supply.label)
 
     def test_unregistered_device_falls_back_to_the_unknown_role_code(self):
-        device = self.device(known_name=None, known_role=None)
+        device = self.device(registered=False, known_role=None)
 
         self.assertEqual(device_code(device)[0], "NA/SMW200A/105462")
 
@@ -198,7 +198,7 @@ class DeviceCardContentTests(unittest.TestCase):
         device = self.device(
             idn=None,
             identity=None,
-            known_name=None,
+            registered=False,
             known_role=None,
             status=DeviceStatus.UNKNOWN,
             error="GARBAGE",
@@ -216,16 +216,16 @@ class DeviceCardContentTests(unittest.TestCase):
             identity=InstrumentIdentity.from_idn(DP832A_IDN),
             idn=DP832A_IDN,
             known_role="power_supply",
-            known_name="DP832A-1",
+            registered=True,
             known_label="DP8B1519",
         )
 
-        self.assertEqual(card_heading(device), "DP8B1519")
+        self.assertEqual(card_heading(device), "DP832A（DP8B1519）")
         self.assertEqual(card_model(device), "DP832A")
         self.assertEqual(card_status_text(device), "")
 
     def test_cards_explain_why_a_device_cannot_be_used(self):
-        unregistered = self.device(known_name=None, known_role=None)
+        unregistered = self.device(registered=False, known_role=None)
         no_role = self.device(known_role=None)
 
         self.assertEqual(card_status_text(unregistered), "未登记 · 不能应用")

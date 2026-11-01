@@ -67,12 +67,12 @@ class ChannelDisplayFields(TypedDict, total=False):
 class PowerSupplyEntry(TypedDict, total=False):
     """一个电源标签页要显示的一条条目：身份字段 + 通道参数。
 
-    身份字段只用于显示（标签、型号，提示里的序列号与设备键），缺哪个就少显示哪段。
+    身份字段只用于显示（缩写设备码、型号，提示里的完整设备码与设备键），缺哪个就少显示哪段。
     """
 
     label: Any
     model: Any
-    serial: Any
+    full_code: Any
     device_key: Any
     channels: Mapping[str, ChannelDisplayFields]
 
@@ -157,7 +157,7 @@ def power_choice_combo(choices: PowerSupplyChoices, entry: Any):
     ``PS1``）时保持空选择，交给校验报告——静默停在第一项会把“这台电源已经不在”
     显示成“换成了另一台电源”。
 
-    显示文本是 ``DP8B1519（DP832A）`` 这样的短标签加型号，业务值放在 ``itemData``
+    显示文本是 ``DP832A（DP8B1519）`` 这样的型号加缩写设备码，业务值放在 ``itemData``
     （``supply_id``）；选中与读取都只看数据，不从显示字符串反解析身份。
 
     两种状态严格分开（见 :func:`presentation.qt.config_form_state.assignment_declared`）：
@@ -296,15 +296,15 @@ def _add_power_tab(
     source: Mapping[str, Any],
     channels: Mapping[str, Any],
 ) -> None:
-    """为一条电源配置建一个标签页；标题是短标签加型号（``DP8B1519（DP832A）``）。
+    """为一条电源配置建一个标签页；标题是型号加缩写设备码（``DP832A（DP8B1519）``）。
 
     标签页按配置键（``supply_id``）建，标题只用于显示：设备数量与身份都来自配置与
     当前绑定，没有固定的四个槽位页。
 
-    标签页的悬浮提示给**详情与审计**：短标签、型号、完整序列号与设备键（见
-    :func:`domain.instruments.labels.supply_identity_text`）。卡面上只放标签与型号，
-    因为标题栏很窄；追溯时把指针停在标签页上就能读到完整序列号。旧槽位条目没有序列号，
-    提示里就只有它的旧键（``PS1``），不推导一个不存在的标签。
+    标签页的悬浮提示给**详情与审计**：型号（缩写设备码）、完整设备码与设备键（见
+    :func:`domain.instruments.labels.supply_identity_text`）。卡面上只放型号与缩写码，
+    因为标题栏很窄；追溯时把指针停在标签页上就能读到完整设备码。旧槽位条目没有完整设备码，
+    提示里就只有它的旧键（``PS1``），不推导一个不存在的缩写码。
     """
     page_widget = QWidget()
     page_layout = QVBoxLayout(page_widget)
@@ -358,13 +358,13 @@ def _add_power_tab(
         record["channels"][channel] = controls
     title = supply_option_label(source.get("label") or key, source.get("model"))
     index = page.power_tabs.addTab(page_widget, title)
-    # 详情/审计文本与标题同源：标签 + 型号 + 完整序列号 + 设备键，缺哪个就少哪段。
+    # 详情/审计文本与标题同源：型号（缩写设备码）+ 完整设备码 + 设备键，缺哪个就少哪段。
     page.power_tabs.setTabToolTip(
         index,
         supply_identity_text(
             source.get("label") or key,
             source.get("model"),
-            source.get("serial"),
+            source.get("full_code"),
             source.get("device_key"),
         ),
     )

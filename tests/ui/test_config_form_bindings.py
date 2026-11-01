@@ -78,10 +78,10 @@ class BindingReadTests(unittest.TestCase):
         )
         # 旧记录只有厂商与序列号：拼出同一个键，不按序列号单独匹配。
         self.assertEqual(
-            binding_device_key({"vendor": "RIGOL TECHNOLOGIES", "serial": "DP8B214901519"}),
+            binding_device_key({"vendor": "RIGOL TECHNOLOGIES", "full_code": "DP8B214901519"}),
             "rigol technologies:dp8b214901519",
         )
-        self.assertIsNone(binding_device_key({"serial": "DP8B214901519"}))
+        self.assertIsNone(binding_device_key({"full_code": "DP8B214901519"}))
 
     def test_binding_records_flatten_roles_and_bound_supplies(self):
         records = binding_records(
@@ -146,7 +146,7 @@ class BindingNormalizationTests(unittest.TestCase):
                         "role": "power_supply",
                         "label": "DP8B1519",
                         "supply_id": "DP8B1519",
-                        "serial": "DP8B214901519",
+                        "full_code": "DP8B214901519",
                         "device_key": "rigol technologies:dp8b214901519",
                         "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
                         "source": "scan",
@@ -202,14 +202,14 @@ class BindingNormalizationTests(unittest.TestCase):
         self.assertIn("DP8B1519", problems[0])
         self.assertIn("缺少设备身份", problems[0])
 
-    def test_power_binding_identity_must_match_vendor_and_serial(self):
+    def test_power_binding_identity_must_match_vendor_and_full_code(self):
         """``device_key`` 与厂商/序列号矛盾时不得成为可用电源。"""
         bindings = {
             POWER_SUPPLY_BINDINGS: {
                 "DP8B1519": {
                     "device_key": "rigol technologies:dp8b174400885",
                     "vendor": "RIGOL TECHNOLOGIES",
-                    "serial": "DP8B214901519",
+                    "full_code": "DP8B214901519",
                     "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
                 }
             }
@@ -217,7 +217,7 @@ class BindingNormalizationTests(unittest.TestCase):
 
         self.assertEqual(power_supply_bindings(bindings), {})
         problems = power_supply_binding_problems(bindings)
-        self.assertIn("设备身份与厂商/序列号不一致", "；".join(problems))
+        self.assertIn("设备身份与厂商/完整设备码不一致", "；".join(problems))
 
     def test_binding_with_only_a_vendor_must_match_the_device_key(self):
         """只声明厂商时同样要核对：厂商写着 A、键指向 B 的记录不得成为可用电源。
@@ -251,40 +251,40 @@ class BindingNormalizationTests(unittest.TestCase):
         self.assertEqual(list(power_supply_bindings(matched)), ["DP8B1519"])
         self.assertEqual(power_supply_binding_problems(matched), [])
 
-    def test_binding_with_only_a_serial_must_match_the_device_key(self):
+    def test_binding_with_only_a_full_code_must_match_the_device_key(self):
         """只声明序列号时同样要核对：序列号与键尾不一致的记录不得成为可用电源。"""
         mismatched = {
             POWER_SUPPLY_BINDINGS: {
                 "DP8B1519": {
                     "device_key": "rigol technologies:dp8b174400885",
-                    "serial": "DP8B214901519",
+                    "full_code": "DP8B214901519",
                     "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
                 }
             }
         }
         self.assertEqual(power_supply_bindings(mismatched), {})
         self.assertIn(
-            "设备身份与序列号不一致", "；".join(power_supply_binding_problems(mismatched))
+            "设备身份与完整设备码不一致", "；".join(power_supply_binding_problems(mismatched))
         )
 
         matched = {
             POWER_SUPPLY_BINDINGS: {
                 "DP8B1519": {
                     "device_key": "rigol technologies:dp8b214901519",
-                    "serial": "dp8b214901519",
+                    "full_code": "dp8b214901519",
                     "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
                 }
             }
         }
         self.assertEqual(list(power_supply_bindings(matched)), ["DP8B1519"])
 
-    def test_declared_identity_parts_need_a_vendor_serial_device_key(self):
+    def test_declared_identity_parts_need_a_vendor_and_full_code_device_key(self):
         """声明了厂商/序列号却给不出 ``厂商:序列号`` 形式的键：身份无法核对，不算可用。"""
         bindings = {
             POWER_SUPPLY_BINDINGS: {
                 "DP8B1519": {
                     "device_key": "DP8B1519",
-                    "serial": "DP8B214901519",
+                    "full_code": "DP8B214901519",
                     "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
                 }
             }
@@ -292,7 +292,7 @@ class BindingNormalizationTests(unittest.TestCase):
 
         self.assertEqual(power_supply_bindings(bindings), {})
         self.assertIn(
-            "设备身份不是 厂商:序列号 形式", "；".join(power_supply_binding_problems(bindings))
+            "设备身份不是 厂商:完整设备码 形式", "；".join(power_supply_binding_problems(bindings))
         )
 
     def test_device_key_alone_is_a_complete_identity(self):

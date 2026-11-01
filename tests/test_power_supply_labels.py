@@ -20,9 +20,9 @@ from domain.instruments.labels import (
     generate_instrument_labels,
     label_candidates,
     label_prefix,
-    normalize_label_serial,
+    normalize_label_full_code,
 )
-from domain.instruments.models import InstrumentIdentity, make_device_key, normalize_serial
+from domain.instruments.models import InstrumentIdentity, make_device_key, normalize_full_code
 
 
 ROOT = Path(__file__).parents[1]
@@ -47,22 +47,22 @@ class NormalizeTests(unittest.TestCase):
     """序列号归一化：大小写、引号、空白与不可解析输入。"""
 
     def test_normalization_uppercases_and_strips_once(self):
-        self.assertEqual(normalize_label_serial(" dp8b214901519 "), "DP8B214901519")
-        self.assertEqual(normalize_label_serial('"dp8b214901519"'), "DP8B214901519")
+        self.assertEqual(normalize_label_full_code(" dp8b214901519 "), "DP8B214901519")
+        self.assertEqual(normalize_label_full_code('"dp8b214901519"'), "DP8B214901519")
         # 连续空白先折叠成一个内部空白，随即按“内部空白不可解析”拒绝。
         with self.assertRaises(InstrumentLabelError):
-            normalize_label_serial("DP8B  214901519")
+            normalize_label_full_code("DP8B  214901519")
 
     def test_quotes_and_spaces_need_two_rounds(self):
         # 两层引号加空白一轮剥不完，所以归一化必须循环到稳定。
-        self.assertEqual(normalize_label_serial(' " dp8b214901519 " '), "DP8B214901519")
-        self.assertEqual(normalize_serial(' " dp8b214901519 " '), "DP8B214901519")
+        self.assertEqual(normalize_label_full_code(' " dp8b214901519 " '), "DP8B214901519")
+        self.assertEqual(normalize_full_code(' " dp8b214901519 " '), "DP8B214901519")
 
     def test_normalization_is_a_single_stable_source(self):
-        # 标签、serial 与 device_key 必须来自同一个稳定值，否则同一台设备会有两个身份。
+        # 标签、full_code 与 device_key 必须来自同一个稳定值，否则同一台设备会有两个身份。
         raw = ' " dp8b214901519 " '
-        stable = normalize_label_serial(raw)
-        self.assertEqual(normalize_serial(raw), stable)
+        stable = normalize_label_full_code(raw)
+        self.assertEqual(normalize_full_code(raw), stable)
         self.assertEqual(
             make_device_key("RIGOL TECHNOLOGIES", raw),
             make_device_key("RIGOL TECHNOLOGIES", stable),
@@ -70,18 +70,18 @@ class NormalizeTests(unittest.TestCase):
         identity = InstrumentIdentity.from_idn(
             'RIGOL TECHNOLOGIES,DP832A, "dp8b214901519" ,00.01.16'
         )
-        self.assertEqual(identity.serial, stable)
-        self.assertEqual(generate_instrument_label(identity.serial), "DP8B1519")
+        self.assertEqual(identity.full_code, stable)
+        self.assertEqual(generate_instrument_label(identity.full_code), "DP8B1519")
 
     def test_internal_whitespace_is_rejected_instead_of_silently_removed(self):
         with self.assertRaises(InstrumentLabelError) as raised:
-            normalize_label_serial("DP8B 2149 01519")
+            normalize_label_full_code("DP8B 2149 01519")
         self.assertIn("内部空白", str(raised.exception))
 
     def test_empty_serial_is_rejected(self):
         for value in ("", "   ", "''", '""', None):
             with self.subTest(value=value), self.assertRaises(InstrumentLabelError):
-                normalize_label_serial(value)
+                normalize_label_full_code(value)
 
     def test_error_is_a_value_error_for_existing_handlers(self):
         self.assertTrue(issubclass(InstrumentLabelError, ValueError))
@@ -157,7 +157,7 @@ class GenerateTests(unittest.TestCase):
 
     def test_current_field_devices_get_expected_labels(self):
         for serial, expected in FIELD_DEVICES.items():
-            with self.subTest(serial=serial):
+            with self.subTest(full_code=serial):
                 self.assertEqual(generate_instrument_label(serial), expected)
 
     def test_leading_zeros_are_preserved(self):
@@ -190,7 +190,7 @@ class GenerateTests(unittest.TestCase):
             ({"DP8B1519", "DP8B51519", "DP8B951519"}, "DP8B1951519", "DP8B1951519"),
         )
         for existing, serial, expected in cases:
-            with self.subTest(serial=serial, existing=existing):
+            with self.subTest(full_code=serial, existing=existing):
                 self.assertEqual(
                     generate_instrument_label(serial, existing_labels=existing), expected
                 )
@@ -211,13 +211,13 @@ class GenerateTests(unittest.TestCase):
         second = generate_instrument_label("DP8B214901519", existing_labels=["DP8B0885"])
         self.assertEqual(first, second)
 
-    def test_all_candidates_occupied_raises_with_the_serial_and_candidates(self):
+    def test_all_candidates_occupied_raises_with_the_full_code_and_candidates(self):
         occupied = ["DP8B1519", "DP8B51519", "DP8B951519", "DP8B1951519"]
         with self.assertRaises(InstrumentLabelError) as raised:
             generate_instrument_label("DP8B1951519", existing_labels=occupied)
         message = str(raised.exception)
         self.assertIn("DP8B1951519", message)
-        self.assertIn("候选标签全部被占用", message)
+        self.assertIn("候选缩写码全部被占用", message)
 
     def test_short_serial_conflicting_with_itself_raises(self):
         with self.assertRaises(InstrumentLabelError):
@@ -256,7 +256,7 @@ class ContractFixtureTests(unittest.TestCase):
     """契约 fixture 里的标签必须能由本生成器复现（身份与标签同源）。"""
 
     def test_registry_fixture_labels_match_the_generator(self):
-        for name in ("registry_migrated_v3.json", "registry_migrated_v3_all_registered.json"):
+        for name in ("registry_migrated_v4.json", "registry_migrated_v4_all_registered.json"):
             records = [
                 record
                 for record in _fixture(name).get("instruments", [])
@@ -267,10 +267,10 @@ class ContractFixtureTests(unittest.TestCase):
                 other_labels = {
                     other["label"] for other in records if other["label"] != record["label"]
                 }
-                with self.subTest(fixture=name, serial=record["serial"]):
-                    self.assertEqual(record["serial"], normalize_label_serial(record["serial"]))
+                with self.subTest(fixture=name, full_code=record["full_code"]):
+                    self.assertEqual(record["full_code"], normalize_label_full_code(record["full_code"]))
                     self.assertEqual(
-                        generate_instrument_label(record["serial"], existing_labels=other_labels),
+                        generate_instrument_label(record["full_code"], existing_labels=other_labels),
                         record["label"],
                     )
 

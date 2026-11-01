@@ -8,12 +8,12 @@
   由配置页写成仪器连接配置（地址来自本次发现的设备）与设备身份记录。
 - **测试角色由设备表登记，界面不让用户选**：现场每台仪器只承担一种角色。卡片正面
   第一行是居中放大的仪器名（型号，如 ``SMW200A``），最下面一行是设备码缩写（信号源与
-  频谱仪是``角色缩写/型号/序列号``，电源就是它的短标签 ``DP8B1519``）；电源是同一个
-  类别下的多台设备，靠短标签区分，不再用“电源 PS3”这类槽位编号。角色与完整身份写在
-  悬浮提示里。没登记角色的设备不能选中应用。
+  频谱仪是``角色缩写/型号/完整设备码``，电源就是它的缩写设备码 ``DP8B1519``）；电源是
+  同一个类别下的多台设备，靠缩写设备码区分，不再用“电源 PS3”这类槽位编号。角色与完整
+  身份写在悬浮提示里。没登记角色的设备不能选中应用。
 - **多台电源各自独立**：电源不再按角色键互相覆盖，勾选几台就传递几台；只有信号源与
   频谱仪保持“一个角色一台设备”的唯一性。
-- 发现结果**包含未知设备**：未在设备表中登记的序列号同样显示一张卡片并标记为未登记；
+- 发现结果**包含未知设备**：未在设备表中登记的完整设备码同样显示一张卡片并标记为未登记；
   身份完全读不出来的地址也留一张卡片，但标记为“无法识别”，不允许被应用成测试角色。
 - 结果以卡片呈现（:mod:`presentation.qt.device_cards`）：点击卡片切换选中，卡片区
   按面板宽度自动换行、整组始终居中（不满一行时最后一行也居中），不再是一张横向表格。
@@ -79,9 +79,9 @@ from .input_controls import WheelSafeComboBox
 from .scan_card import SCAN_CARD_HEADROOM, ScanPromptCard
 from .theme import set_button_variant, set_tone
 
-# 角色标签是“本次测试语义”，与设备身份（序列号）分开：设备可以换 IP，角色不会变。
+# 角色标签是“本次测试语义”，与设备身份（完整设备码）分开：设备可以换 IP，角色不会变。
 # 角色值来自设备表 ``instruments.json`` 的 ``role`` 字段，这里只负责显示。电源的类别是
-# ``power_supply``（多台共用，按短标签区分），不再有 ``PS1``..``PS4`` 这类槽位编号。
+# ``power_supply``（多台共用，按缩写设备码区分），不再有 ``PS1``..``PS4`` 这类槽位编号。
 ROLE_LABELS: dict[str, str] = {
     "signal_generator": "信号发生器",
     "spectrum_analyzer": "频谱分析仪",
@@ -122,26 +122,24 @@ def device_heading(device: Any) -> str:
     每类设备都写“身份在前、类别在后”，具体格式由 ``domain.instruments.labels`` 提供，
     界面不各自拼括号：
 
-    - 电源：``DP8B1519（DP832A，电源）``——短标签就是 ``supply_id``，是业务主键，排在最前；
-    - 信号源 / 频谱仪：``SMW200A（5462，信号发生器）``——型号在前，短标签用来区分同型号的
-      另一台；没有标签时退回资产名 ``SMW200A-1（信号发生器）``（旧设备表还没保存过）；
+    - 电源：``DP832A（DP8B1519，电源）``——型号在前，缩写设备码在括号里；
+    - 信号源 / 频谱仪：``SMW200A（5462，信号发生器）``——同样型号在前，缩写设备码用来区分
+      同型号的另一台；没有缩写码时退回型号；
     - 未登记设备：``未知设备（型号）``。
 
-    资产名里的 ``-1`` 只是文件里的软件资产名，只要设备表保存过就有短标签，界面上不会出现。
+    卡片与下拉框都遵循“型号（缩写设备码）”；服务端匹配始终只用 ``device_key``。
     """
     role = canonical_role(getattr(device, "known_role", None))
     heading = str(device.display_name)
-    label = role_label(role)
-    if role == POWER_SUPPLY_ROLE:
-        identity = getattr(device, "identity", None)
-        model = getattr(identity, "model", "") or ""
-        return f"{heading}（{model}，{label}）" if model else f"{heading}（{label}）"
+    role_text = role_label(role)
     identity = getattr(device, "identity", None)
     short_label = str(getattr(device, "label", "") or "").strip()
     model = str(getattr(identity, "model", "") or "").strip()
     if short_label and model:
-        return instrument_display_label(short_label, model, label)
-    return f"{heading}（{label}）" if label else heading
+        return instrument_display_label(short_label, model, role_text)
+    if short_label:
+        return f"{short_label}（{role_text}）" if role_text else short_label
+    return f"{heading}（{role_text}）" if role_text else heading
 
 
 def device_applicable(device: Any) -> bool:
@@ -150,25 +148,30 @@ def device_applicable(device: Any) -> bool:
 
 
 def card_heading(device: Any, visitor_index: int = 0) -> str:
-    """卡片上的设备名：电源用短标签，其它登记设备用“型号（短标签）”；读不出身份时用兜底显示名。
+    """卡片上的设备名：统一用“型号（缩写设备码）”；读不出身份时用兜底显示名。
 
-    电源的短标签是现场核对实物用的名字（如 ``DP8B1519``），也是配置里的 ``supply_id``，
-    所以单独显示；信号源与频谱仪用 ``SMW200A（5462）``——型号在前，括号里的短标签区分同型号
-    的另一台。没有标签时（旧设备表还没保存过）才退回资产名 ``SMW200A-1``；“未知设备 (型号)”
-    这类兜底文本原样显示。身份完全读不出来的地址改称 ``未识别设备 #n``（``visitor_index``
-    由面板分配）：它有卡片、有访客编号，但没有可写的身份。
+    电源与信号源/频谱仪采用同一种写法：型号在前，括号里的缩写设备码区分同型号的另一台
+    （电源的缩写码同时是 ``supply_id``）。没有缩写码时（旧设备表还没保存过）只显示型号；
+    “未知设备 (型号)”这类兜底文本原样显示。身份完全读不出来的地址改称 ``未识别设备 #n``
+    （``visitor_index`` 由面板分配）：它有卡片、有访客编号，但没有可写的身份。
     """
-    role = canonical_role(getattr(device, "known_role", None))
-    label = str(getattr(device, "label", "") or "").strip()
-    model = card_model(device)
-    if role == POWER_SUPPLY_ROLE and label:
-        return label
-    if label and model:
-        return instrument_display_label(label, model)
-    name = str(getattr(device, "display_name", "") or "").strip()
     if getattr(device, "is_unidentified", False):
         return f"未识别设备 #{max(1, int(visitor_index or 0))}"
-    return name or "未命名设备"
+    if not getattr(device, "registered", False):
+        return str(getattr(device, "display_name", "") or "").strip() or "未命名设备"
+    label = str(getattr(device, "label", "") or "").strip()
+    model = card_model(device)
+    identity = getattr(device, "identity", None)
+    full_code = str(getattr(identity, "full_code", "") or "").strip()
+    if label and model:
+        return instrument_display_label(label, model)
+    if model and full_code:
+        # 还没有缩写设备码（旧设备表未保存过）：卡片标题用型号 + 完整设备码，
+        # 既不凭空造一个短码，也让同型号的两台设备各自有唯一标题。
+        return f"{model}（{full_code}）"
+    if label:
+        return label
+    return str(getattr(device, "display_name", "") or "").strip() or "未命名设备"
 
 
 def card_model(device: Any) -> str:
@@ -300,7 +303,7 @@ class DeviceDiscoveryPanel(QWidget):
         # 读不出身份的地址按“访客”编号（1、2、…），同一台设备两次刷新拿到同一个号。
         self._visitor_numbers: dict[tuple[str, int], int] = {}
         self._closed = False
-        # 配置里保存的设备身份（角色 -> 序列号/device_key），用于扫描后按身份预选。
+        # 配置里保存的设备身份（角色 -> 完整设备码/device_key），用于扫描后按身份预选。
         self.device_bindings: dict[str, dict[str, Any]] = {}
         self._build_ui(default_subnet or DEMO_SUBNET)
 
@@ -475,7 +478,7 @@ class DeviceDiscoveryPanel(QWidget):
         self.apply_btn = QPushButton("应用所选设备到配置")
         self.apply_btn.setEnabled(False)
         self.apply_btn.setToolTip(
-            "把勾选设备的当前地址与身份（序列号）写入仪器连接配置；"
+            "把勾选设备的当前地址与身份（完整设备码）写入仪器连接配置；"
             "测试角色取自设备表登记的 role"
         )
         set_button_variant(self.apply_btn, "primary")
@@ -765,8 +768,8 @@ class DeviceDiscoveryPanel(QWidget):
         """卡片的悬浮提示：身份详情、角色变化与无法应用的原因都写在这里。
 
         电源的身份文本只有一份实现（:func:`domain.instruments.labels.supply_identity_text`）：
-        短标签、型号、完整序列号与设备键按已知字段拼好，卡片提示不另写一套。其它仪器仍按
-        “型号 / 厂商”给身份，未改登记方式的旧数据不会因为这条规则变样。地址作为连接信息
+        型号（缩写设备码）、完整设备码与设备键按已知字段拼好，卡片提示不另写一套。其它仪器
+        仍按“型号 / 厂商”给身份，未改登记方式的旧数据不会因为这条规则变样。地址作为连接信息
         单独一行，不从身份码反解析。
         """
         identity = device.identity
@@ -774,7 +777,7 @@ class DeviceDiscoveryPanel(QWidget):
         if identity is not None and device.is_power_supply:
             lines.append(
                 supply_identity_text(
-                    device.label, identity.model, identity.serial, identity.device_key
+                    device.label, identity.model, identity.full_code, identity.device_key
                 )
             )
             if device.idn:
@@ -800,7 +803,7 @@ class DeviceDiscoveryPanel(QWidget):
             lines.append("设备表没有登记这台设备的测试角色（role）；补上后才能应用")
         elif device.is_power_supply and not device.label:
             lines.append(
-                "设备表里还没有这台电源的短标签（label），当前显示的是资产名，"
+                "设备表里还没有这台电源的缩写设备码（label），当前显示的是型号，"
                 "也无法写入配置引用；保存一次设备表后会自动补上"
             )
         elif status:
@@ -849,8 +852,8 @@ class DeviceDiscoveryPanel(QWidget):
     def _preselect_bound_devices(self) -> None:
         """按配置里保存的身份预选：IP 变了也能找回同一台设备。
 
-        只按 ``厂商:序列号`` 匹配，不做“仅按序列号”或“按短标签”的猜测。角色以设备表
-        登记为准；电源按 ``supply_id`` 逐台比对，旧槽位（``PS3``）只是一段兼容输入，
+        只按 ``厂商:完整设备码`` 匹配，不做“仅按完整设备码”或“按缩写设备码”的猜测。角色以
+        设备表登记为准；电源按 ``supply_id`` 逐台比对，旧槽位（``PS3``）只是一段兼容输入，
         折叠后仍是电源类别，不会因为“PS3 → 电源”被误报成角色变化。
         """
         if not self.device_bindings:
@@ -1022,7 +1025,7 @@ class DeviceDiscoveryPanel(QWidget):
 
         电源是同一个类别下的多台设备：勾选几台就返回几条，不再按角色键互相判定
         “重复”；只有信号源与频谱仪保持“一个角色一台设备”。每条记录都带短标签
-        （``label`` / ``supply_id``）与身份（``serial`` / ``device_key``），配置页不需要
+        （``label`` / ``supply_id``）与身份（``full_code`` / ``device_key``），配置页不需要
         从显示文本反解析。
         """
         assignments: list[dict[str, Any]] = []
@@ -1054,10 +1057,10 @@ class DeviceDiscoveryPanel(QWidget):
                     continue
                 used_roles[role_value] = device.display_name
             elif not device.supply_id:
-                # 电源引用是短标签（= supply_id）：没有标签就没有可写的配置引用。
+                # 电源引用是缩写设备码（= supply_id）：没有它就没有可写的配置引用。
                 problems.append(
-                    f"{device.display_name} 在设备表里还没有短标签（supply_id），"
-                    "没有可写的电源引用；请先保存一次设备表补上标签后重新扫描"
+                    f"{device.display_name} 在设备表里还没有缩写设备码（supply_id），"
+                    "没有可写的电源引用；请先保存一次设备表补上缩写设备码后重新扫描"
                 )
                 continue
             identity = device.identity
@@ -1067,10 +1070,9 @@ class DeviceDiscoveryPanel(QWidget):
                     "label": device.label,
                     "supply_id": device.supply_id,
                     "address": device.visa_address,
-                    "name": device.known_name,
                     "vendor": identity.vendor,
                     "model": identity.model,
-                    "serial": identity.serial,
+                    "full_code": identity.full_code,
                     "device_key": identity.device_key,
                     "ip": device.ip,
                     "port": device.port,

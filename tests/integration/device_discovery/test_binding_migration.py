@@ -25,7 +25,7 @@ class DeviceBindingMigrationTests(ConnectionPageTestCase):
                         "role": "power_supply",
                         "label": "DP8B1519",
                         "supply_id": "DP8B1519",
-                        "serial": "DP8B214901519",
+                        "full_code": "DP8B214901519",
                         "device_key": "rigol technologies:dp8b214901519",
                         "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
                         "source": "scan",

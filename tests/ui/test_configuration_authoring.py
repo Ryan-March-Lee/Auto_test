@@ -12,7 +12,7 @@ from presentation.qt.configuration_authoring import (
 def _flat_config() -> dict:
     """一份最小的表单配置：一台电源、一条 DUT 分配。
 
-    电源条目带身份字段（``label`` / ``serial`` / ``device_key``）：正式运行映射的快照
+    电源条目带身份字段（``label`` / ``full_code`` / ``device_key``）：正式运行映射的快照
     条目必须自带身份。只有地址的条目仍会被写进映射，但正式校验会报缺少身份。
     """
     return {
@@ -29,7 +29,7 @@ def _flat_config() -> dict:
                 "DP8B1519": {
                     "label": "DP8B1519",
                     "model": "DP832A",
-                    "serial": "DP8B214901519",
+                    "full_code": "DP8B214901519",
                     "device_key": "rigol technologies:dp8b214901519",
                     "address": "sim::ps1",
                     "enabled": True,
@@ -60,7 +60,7 @@ def _second_supply() -> dict:
     return {
         "label": "DP8B0885",
         "model": "DP832A",
-        "serial": "DP8B174400885",
+        "full_code": "DP8B174400885",
         "device_key": "rigol technologies:dp8b174400885",
         "address": "sim::ps2",
         "enabled": True,
@@ -84,6 +84,38 @@ class ConfigurationAuthoringTests(unittest.TestCase):
         self.assertEqual(
             set(configuration.test_plan.dut_power_channels), {"gate", "drain"}
         )
+
+    def test_run_mapping_freezes_instrument_identity(self):
+        """信号源与频谱仪的快照条目冻结缩写码、完整设备码、设备键与地址。"""
+        flat = _flat_config()
+        flat["instruments"]["signal_generator"].update(
+            {"label": "5462", "full_code": "105462", "device_key": "rohde&schwarz:105462"}
+        )
+        flat["instruments"]["spectrum_analyzer"].update(
+            {
+                "label": "QZNI0866",
+                "full_code": "QZNI000866",
+                "device_key": "ceyear technologies:qzni000866",
+            }
+        )
+
+        document = author_official_configuration(flat)
+
+        self.assertEqual(
+            document["run_mapping"]["instruments"]["signal_generator"],
+            {
+                "label": "5462",
+                "model": "SG",
+                "full_code": "105462",
+                "device_key": "rohde&schwarz:105462",
+                "visa_address": "sim::sg",
+            },
+        )
+        spectrum = document["run_mapping"]["instruments"]["spectrum_analyzer"]
+        self.assertEqual(spectrum["label"], "QZNI0866")
+        self.assertEqual(spectrum["full_code"], "QZNI000866")
+        for entry in (document["run_mapping"]["instruments"]["signal_generator"], spectrum):
+            self.assertNotIn("serial", entry)
 
     def test_unknown_channel_role_is_not_guessed(self):
         flat = _flat_config()
@@ -183,7 +215,7 @@ class ConfigurationAuthoringTests(unittest.TestCase):
             {
                 "label": "DP8B1519",
                 "model": "DP832A",
-                "serial": "DP8B214901519",
+                "full_code": "DP8B214901519",
                 "device_key": "rigol technologies:dp8b214901519",
                 "visa_address": "sim::ps1",
             },

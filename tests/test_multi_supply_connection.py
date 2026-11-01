@@ -433,7 +433,7 @@ class MultiSupplyConnectionTests(unittest.TestCase):
         config["instruments"]["power_supplies"]["DP8B1519"].update(
             {
                 "model": "DP832A",
-                "serial": "DP8B214901519",
+                "full_code": "DP8B214901519",
                 "device_key": "rigol technologies:dp8b214901519",
             }
         )
@@ -458,9 +458,9 @@ class MultiSupplyConnectionTests(unittest.TestCase):
             capture.close()
 
         text = capture.text()
-        # 现场短标签在前，完整序列号与设备键在后：日志能直接对应实物，也能追溯到设备。
+        # 型号（缩写设备码）在前，完整设备码与设备键在后：日志能直接对应实物，也能追溯。
         self.assertIn(
-            "生产电源身份核对: DP8B1519（DP832A） · 序列号 DP8B214901519"
+            "生产电源身份核对: DP832A（DP8B1519） · 完整设备码 DP8B214901519"
             " · 设备键 rigol technologies:dp8b214901519",
             text,
         )
@@ -469,15 +469,15 @@ class MultiSupplyConnectionTests(unittest.TestCase):
             "设备应答 *IDN? RIGOL TECHNOLOGIES,DP832A,DP8B214901519,00.01.16", text
         )
         self.assertIn("核对结果 一致", text)
-        # 没有型号/序列号的电源只显示短标签，也没有可比对的序列号。
+        # 没有型号/完整设备码的电源只显示缩写设备码，也没有可比对的完整设备码。
         self.assertIn("生产电源身份核对: DP8B0950；", text)
-        self.assertIn("核对结果 无法比较（配置没有序列号，设备序列号 DP8B174700950）", text)
+        self.assertIn("核对结果 无法比较（配置没有完整设备码，设备完整设备码 DP8B174700950）", text)
 
-    def test_identity_mismatch_is_reported_with_both_serials(self):
+    def test_identity_mismatch_is_reported_with_both_full_codes(self):
         """配置与实物不是同一台时必须能在日志里看出来，而不是两份身份并排放着。"""
         config = _two_supply_config()
-        config["instruments"]["power_supplies"]["DP8B1519"]["serial"] = "DP8B214901519"
-        # 地址上应答的是另一台 DP832A（序列号不同）。
+        config["instruments"]["power_supplies"]["DP8B1519"]["full_code"] = "DP8B214901519"
+        # 地址上应答的是另一台 DP832A（完整设备码不同）。
         manager = _FakeResourceManager(
             resource_factory=lambda address: _FakeResource(
                 address,
@@ -497,7 +497,7 @@ class MultiSupplyConnectionTests(unittest.TestCase):
 
         text = capture.text()
         self.assertIn(
-            "核对结果 不一致（配置 DP8B214901519，设备序列号 DP8B174400885）", text
+            "核对结果 不一致（配置 DP8B214901519，设备完整设备码 DP8B174400885）", text
         )
 
     def test_channel_actions_log_the_short_label_not_the_routing_key(self):

@@ -373,7 +373,7 @@ class OfficialConfigFileValidationTests(unittest.TestCase):
             "DP8B1519": {
                 "label": "DP8B1519",
                 "model": "DP832A",
-                "serial": "DP8B214901519",
+                "full_code": "DP8B214901519",
                 "device_key": "rigol technologies:dp8b214901519",
                 "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
             }
@@ -404,7 +404,7 @@ class SimulatedDeviceBindingValidationTests(unittest.TestCase):
         config = copy.deepcopy(self.base_config)
         config["device_bindings"] = {
             "signal_generator": {
-                "serial": "105462",
+                "full_code": "105462",
                 "device_key": "rohde&schwarz:105462",
                 "source": "simulated",
             }
@@ -438,7 +438,7 @@ class SimulatedDeviceBindingValidationTests(unittest.TestCase):
         config = copy.deepcopy(self.base_config)
         config["device_bindings"] = {
             "signal_generator": {
-                "serial": "105462",
+                "full_code": "105462",
                 "device_key": "rohde&schwarz:105462",
                 "source": "scan",
             }

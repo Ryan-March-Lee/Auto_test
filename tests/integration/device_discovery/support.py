@@ -37,25 +37,21 @@ DEVICE_ROLES = {
     CEYEAR_IDN: "spectrum_analyzer",
 }
 
-# 迁移到 schema 3 之后的电源记录：类别是 ``power_supply``，短标签已冻结，没有旧槽位。
+# 迁移到 schema 4 之后的电源记录：类别是 ``power_supply``，缩写设备码已冻结，没有旧槽位。
 MIGRATED_POWER_SUPPLIES = (
     {
-        "name": "DP832A-1",
         "vendor": "RIGOL TECHNOLOGIES",
         "model": "DP832A",
-        "model_index": 1,
-        "serial": "DP8B214901519",
+        "full_code": "DP8B214901519",
         "label": "DP8B1519",
         "role": "power_supply",
         "status": "online",
         "known_ips": [],
     },
     {
-        "name": "DP832A-3",
         "vendor": "RIGOL TECHNOLOGIES",
         "model": "DP832A",
-        "model_index": 3,
-        "serial": "DP8B174400885",
+        "full_code": "DP8B174400885",
         "label": "DP8B0885",
         "role": "power_supply",
         "status": "online",
@@ -72,9 +68,9 @@ def registry(roles=None):
 
 
 def migrated_registry() -> InstrumentRegistry:
-    """迁移后的设备表：两台电源都是 ``power_supply`` 带短标签，没有旧槽位。"""
+    """迁移后的设备表：两台电源都是 ``power_supply`` 带缩写设备码，没有旧槽位。"""
     return InstrumentRegistry(
-        document={"schema_version": 3, "instruments": [dict(item) for item in MIGRATED_POWER_SUPPLIES]}
+        document={"schema_version": 4, "instruments": [dict(item) for item in MIGRATED_POWER_SUPPLIES]}
     )
 
 

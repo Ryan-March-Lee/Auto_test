@@ -321,10 +321,10 @@ def _create_hardware_measurement_port(hardware_config_path: str, *, recorder=Non
             resource = _open_device(manager, supply.address, label)
             resources.append(resource)
             identity = _query(resource, "*IDN?", label)
-            # 审计用的一行：这台电源在配置里的完整身份（短标签 · 型号 · 完整序列号 ·
-            # 设备键）、设备自己应答的 *IDN? 原文，以及两边的核对结论。日志里短标签负责
-            # 快速对应实物，完整序列号与结论负责最终追溯（步骤 14）。
-            verdict_status, verdict = supply_identity_verdict(supply.serial, identity)
+            # 审计用的一行：这台电源在配置里的完整身份（型号（缩写设备码）· 完整设备码 ·
+            # 设备键）、设备自己应答的 *IDN? 原文，以及两边的核对结论。日志里缩写设备码负责
+            # 快速对应实物，完整设备码与结论负责最终追溯（步骤 14）。
+            verdict_status, verdict = supply_identity_verdict(supply.full_code, identity)
             log_identity = (
                 logger.warning if verdict_status == IDENTITY_MISMATCHED else logger.info
             )

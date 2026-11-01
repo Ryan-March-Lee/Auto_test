@@ -528,7 +528,7 @@ class ConfigPageTests(unittest.TestCase):
         combo = page.pa_unit1_power_combo
         self.assertEqual(
             [combo.itemText(index) for index in range(combo.count())],
-            ["DP8B1519（DP832A）", "DP8B0885（DP832A）"],
+            ["DP832A（DP8B1519）", "DP832A（DP8B0885）"],
         )
         # 两台型号相同、显示文本只差短标签：业务值必须来自 itemData。
         self.assertEqual(
@@ -548,7 +548,7 @@ class ConfigPageTests(unittest.TestCase):
                 "dut_amplifier": {"supplies": {"carrier": {"supply_id": "DP8B0885"}}}
             },
         )
-        self.assertEqual(page.pa_unit1_power_combo.currentText(), "DP8B0885（DP832A）")
+        self.assertEqual(page.pa_unit1_power_combo.currentText(), "DP832A（DP8B0885）")
 
         entry = page.build_config()["power_supply_assignment"]["dut_amplifier"][
             "supplies"
@@ -598,7 +598,7 @@ class ConfigPageTests(unittest.TestCase):
         self.assertEqual(page.pa_unit2_power_combo.currentIndex(), -1)
 
     def test_power_tabs_are_titled_with_the_label_and_model(self):
-        """电源标签页按配置与绑定动态创建，标题是 ``短标签（型号）``。"""
+        """电源标签页按配置与绑定动态创建，标题是 ``型号（缩写设备码）``。"""
         bindings = self.power_supply_bindings("DP8B1519", "DP8B0885")
         bindings["power_supplies"]["DP8B0885"]["model"] = "DP832A"
         page = self.make_page(
@@ -610,13 +610,13 @@ class ConfigPageTests(unittest.TestCase):
         titles = [
             page.power_tabs.tabText(index) for index in range(page.power_tabs.count())
         ]
-        self.assertEqual(titles, ["DP8B1519（DP832A）", "DP8B0885（DP832A）"])
+        self.assertEqual(titles, ["DP832A（DP8B1519）", "DP832A（DP8B0885）"])
         self.assertEqual(set(page.power_config_widgets), {"DP8B1519", "DP8B0885"})
 
     def test_power_tab_tooltips_carry_the_full_identity_for_audit(self):
-        """标签页悬浮提示给详情与审计：短标签 · 型号 · 完整序列号 · 设备键。
+        """标签页悬浮提示给详情与审计：型号（缩写设备码）· 完整设备码 · 设备键。
 
-        卡面标题只有 ``短标签（型号）``（标题栏很窄），追溯时把指针停在标签页上就能读到
+        卡面标题只有 ``型号（缩写设备码）``（标题栏很窄），追溯时把指针停在标签页上就能读到
         这台设备的完整序列号；两处文本同源（``domain.instruments.labels``），不会各说一套。
         """
         bindings = self.power_supply_bindings("DP8B1519")
@@ -624,7 +624,7 @@ class ConfigPageTests(unittest.TestCase):
             {
                 "model": "DP832A",
                 "vendor": "Rigol Technologies",
-                "serial": "DP8B214901519",
+                "full_code": "DP8B214901519",
                 "device_key": "rigol technologies:dp8b214901519",
             }
         )
@@ -634,10 +634,10 @@ class ConfigPageTests(unittest.TestCase):
             dut_config={"power_supply_count": 1},
         )
 
-        self.assertEqual(page.power_tabs.tabText(0), "DP8B1519（DP832A）")
+        self.assertEqual(page.power_tabs.tabText(0), "DP832A（DP8B1519）")
         self.assertEqual(
             page.power_tabs.tabToolTip(0),
-            "DP8B1519（DP832A） · 序列号 DP8B214901519"
+            "DP832A（DP8B1519） · 完整设备码 DP8B214901519"
             " · 设备键 rigol technologies:dp8b214901519",
         )
 
@@ -838,7 +838,7 @@ class ConfigPageTests(unittest.TestCase):
                 "supply_id": supply_id,
                 "name": supply_id,
                 "model": "DP832A",
-                "serial": f"DP8B{index}",
+                "full_code": f"DP8B{index}",
                 "vendor": "RIGOL Technologies",
                 "address": f"TCPIP0::192.168.1.{index}::inst0::INSTR",
                 "ip": f"192.168.1.{index}",

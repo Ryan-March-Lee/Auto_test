@@ -187,7 +187,7 @@ class PowerSectionBuildTests(unittest.TestCase):
                 "DP8B1519": {
                     "label": "DP8B1519",
                     "model": "DP832A",
-                    "serial": "SN-1519",
+                    "full_code": "SN-1519",
                     "channels": {"CH1": {"voltage": {"value": 12.0}}},
                 }
             },

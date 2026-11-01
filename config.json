@@ -281,40 +281,37 @@
     },
     "device_bindings": {
         "signal_generator": {
-            "name": null,
             "vendor": null,
             "model": "R&S SMW200A",
-            "serial": null,
             "device_key": null,
             "visa_address": "TCPIP0::192.168.1.201::inst0::INSTR",
             "last_ip": null,
             "last_port": null,
             "known": false,
-            "source": "legacy_config"
+            "source": "legacy_config",
+            "full_code": null
         },
         "spectrum_analyzer": {
-            "name": null,
             "vendor": null,
             "model": "Ceyear 4082F",
-            "serial": null,
             "device_key": null,
             "visa_address": "TCPIP0::192.168.1.202::inst0::INSTR",
             "last_ip": null,
             "last_port": null,
             "known": false,
-            "source": "legacy_config"
+            "source": "legacy_config",
+            "full_code": null
         },
         "PS1": {
-            "name": null,
             "vendor": null,
             "model": null,
-            "serial": null,
             "device_key": null,
             "visa_address": "TCPIP0::192.168.1.101::inst0::INSTR",
             "last_ip": null,
             "last_port": null,
             "known": false,
-            "source": "legacy_config"
+            "source": "legacy_config",
+            "full_code": null
         }
     }
 }

@@ -17,7 +17,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
                     "name": "4082F-1",
                     "vendor": "Ceyear Technologies",
                     "model": "4082F",
-                    "serial": "QZNI000866",
+                    "full_code": "QZNI000866",
                     "device_key": "ceyear technologies:qzni000866",
                     "ip": "192.168.1.202",
                     "port": 5025,
@@ -33,7 +33,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
         )
         self.assertTrue(config["instruments"]["spectrum_analyzer"]["enabled"])
         binding = config["device_bindings"]["spectrum_analyzer"]
-        self.assertEqual(binding["serial"], "QZNI000866")
+        self.assertEqual(binding["full_code"], "QZNI000866")
         self.assertEqual(binding["device_key"], "ceyear technologies:qzni000866")
         self.assertEqual(binding["last_ip"], "192.168.1.202")
         self.assertEqual(binding["source"], "scan")
@@ -50,7 +50,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
                 {
                     "role": "signal_generator",
                     "address": "TCPIP0::192.168.1.201::inst0::INSTR",
-                    "serial": "105462",
+                    "full_code": "105462",
                     "device_key": "rohde&schwarz:105462",
                     "ip": "192.168.1.201",
                     "port": 5025,
@@ -75,7 +75,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
                     "name": None,
                     "vendor": "Keysight Technologies",
                     "model": "N9020A",
-                    "serial": "MY51234567",
+                    "full_code": "MY51234567",
                     "device_key": "keysight technologies:my51234567",
                     "ip": "192.168.1.150",
                     "port": 5025,
@@ -92,7 +92,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
         # 绑定集合的键就是引用 ID，记录内保留身份（序列号/设备键）。
         binding = page.device_bindings["power_supplies"]["DP8B1519"]
         self.assertFalse(binding["known"])
-        self.assertEqual(binding["serial"], "MY51234567")
+        self.assertEqual(binding["full_code"], "MY51234567")
         self.assertIn("电源 DP8B1519", self.connection.discovery_panel.status_label.text())
 
     def test_single_power_supply_binding_uses_its_supply_id(self):
@@ -107,7 +107,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
                     "name": "DP832A-1",
                     "vendor": "RIGOL TECHNOLOGIES",
                     "model": "DP832A",
-                    "serial": "DP8B214901519",
+                    "full_code": "DP8B214901519",
                     "device_key": "rigol technologies:dp8b214901519",
                     "ip": "192.168.1.102",
                     "port": 5555,
@@ -119,7 +119,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
 
         self.assertEqual(set(page.device_bindings), {"power_supplies"})
         binding = page.device_bindings["power_supplies"]["DP8B1519"]
-        self.assertEqual(binding["serial"], "DP8B214901519")
+        self.assertEqual(binding["full_code"], "DP8B214901519")
         self.assertEqual(binding["device_key"], "rigol technologies:dp8b214901519")
         self.assertEqual(binding["visa_address"], "TCPIP0::192.168.1.102::inst0::INSTR")
         self.assertEqual(page.get_enabled_power_supplies(), ["DP8B1519"])
@@ -143,7 +143,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
                     "name": "DP832A-1",
                     "vendor": "RIGOL TECHNOLOGIES",
                     "model": "DP832A",
-                    "serial": "DP8B214901519",
+                    "full_code": "DP8B214901519",
                     "device_key": "rigol technologies:dp8b214901519",
                     "ip": "192.168.1.102",
                     "port": 5555,
@@ -166,7 +166,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
         first = {
             "role": "power_supply",
             "address": "TCPIP0::192.168.1.102::inst0::INSTR",
-            "serial": "DP8B214901519",
+            "full_code": "DP8B214901519",
             "name": "DP832A-1",
             "vendor": "RIGOL TECHNOLOGIES",
             "model": "DP832A",
@@ -176,7 +176,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
         second = {
             "role": "power_supply",
             "address": "TCPIP0::192.168.1.108::inst0::INSTR",
-            "serial": "DP8B174400885",
+            "full_code": "DP8B174400885",
             "name": "DP832A-3",
             "vendor": "RIGOL TECHNOLOGIES",
             "model": "DP832A",
@@ -208,7 +208,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
             "role": "power_supply",
             "supply_id": "DP8B1519",
             "address": "TCPIP0::192.168.1.102::inst0::INSTR",
-            "serial": "DP8B214901519",
+            "full_code": "DP8B214901519",
             "vendor": "RIGOL TECHNOLOGIES",
             "device_key": "rigol technologies:dp8b214901519",
         }
@@ -216,7 +216,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
             "role": "power_supply",
             "supply_id": "DP8B0885",
             "address": "TCPIP0::192.168.1.108::inst0::INSTR",
-            "serial": "DP8B174400885",
+            "full_code": "DP8B174400885",
             "vendor": "RIGOL TECHNOLOGIES",
             "device_key": "rigol technologies:dp8b174400885",
         }
@@ -237,7 +237,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
                 {
                     "role": "signal_generator",
                     "address": "TCPIP0::192.168.1.201::inst0::INSTR",
-                    "serial": "105462",
+                    "full_code": "105462",
                     "device_key": "rohde&schwarz:105462",
                     "ip": "192.168.1.201",
                     "port": 5025,
@@ -264,7 +264,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
                 {
                     "role": "signal_generator",
                     "address": "TCPIP0::192.168.1.201::inst0::INSTR",
-                    "serial": "105462",
+                    "full_code": "105462",
                     "device_key": "rohde&schwarz:105462",
                     "ip": "192.168.1.201",
                     "port": 5025,
@@ -274,7 +274,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
                     "role": "power_supply",
                     "supply_id": "DP8B1519",
                     "address": "TCPIP0::192.168.1.102::inst0::INSTR",
-                    "serial": "DP8B214901519",
+                    "full_code": "DP8B214901519",
                     "vendor": "RIGOL TECHNOLOGIES",
                     "device_key": "rigol technologies:dp8b214901519",
                     "ip": "192.168.1.102",
@@ -292,7 +292,8 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
                 {
                     "role": "signal_generator",
                     "address": "TCPIP0::192.168.1.211::inst0::INSTR",
-                    "serial": "105462",
+                    "label": "5462",
+                    "full_code": "105462",
                     "device_key": "rohde&schwarz:105462",
                     "ip": "192.168.1.211",
                     "port": 5025,
@@ -308,6 +309,8 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
             config["instruments"]["signal_generator"]["address"],
             "TCPIP0::192.168.1.211::inst0::INSTR",
         )
+        # 缩写设备码随绑定写进配置条目：运行快照的 ``short_code`` 只能从这里来。
+        self.assertEqual(config["instruments"]["signal_generator"]["label"], "5462")
         supply = config["instruments"]["power_supplies"]["DP8B1519"]
         self.assertNotIn("address", supply)
         self.assertFalse(supply["enabled"])
@@ -323,7 +326,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
                     "role": "power_supply",
                     "supply_id": "DP8B1519",
                     "address": "TCPIP0::192.168.1.102::inst0::INSTR",
-                    "serial": "DP8B214901519",
+                    "full_code": "DP8B214901519",
                     "vendor": "RIGOL TECHNOLOGIES",
                     "device_key": "rigol technologies:dp8b214901519",
                 },
@@ -331,7 +334,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
                     "role": "power_supply",
                     "supply_id": "DP8B0885",
                     "address": "TCPIP0::192.168.1.108::inst0::INSTR",
-                    "serial": "DP8B174400885",
+                    "full_code": "DP8B174400885",
                     "vendor": "RIGOL TECHNOLOGIES",
                     "device_key": "rigol technologies:dp8b174400885",
                 },
@@ -353,14 +356,14 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
         page = self.make_page()
         config = page.build_config()
         config["device_bindings"] = {
-            "signal_generator": {"serial": "105462", "device_key": "rohde&schwarz:105462"}
+            "signal_generator": {"full_code": "105462", "device_key": "rohde&schwarz:105462"}
         }
 
         page.apply_config(config)
 
-        self.assertEqual(page.device_bindings["signal_generator"]["serial"], "105462")
+        self.assertEqual(page.device_bindings["signal_generator"]["full_code"], "105462")
         self.assertEqual(
-            page.build_config()["device_bindings"]["signal_generator"]["serial"], "105462"
+            page.build_config()["device_bindings"]["signal_generator"]["full_code"], "105462"
         )
 
     def test_clearing_bindings_drops_them_from_the_saved_config(self):
@@ -370,7 +373,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
                 {
                     "role": "signal_generator",
                     "address": "TCPIP0::192.168.1.201::inst0::INSTR",
-                    "serial": "105462",
+                    "full_code": "105462",
                     "device_key": "rohde&schwarz:105462",
                     "ip": "192.168.1.201",
                     "port": 5025,
@@ -404,7 +407,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
                     "address": "TCPIP0::192.168.1.102::inst0::INSTR",
                     "vendor": "RIGOL TECHNOLOGIES",
                     "model": "DP832A",
-                    "serial": "DP8B214901519",
+                    "full_code": "DP8B214901519",
                     "device_key": "rigol technologies:dp8b214901519",
                 }
             ]

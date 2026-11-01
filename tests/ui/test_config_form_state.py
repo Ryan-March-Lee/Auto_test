@@ -105,7 +105,7 @@ class ConfigFormStateTests(unittest.TestCase):
             POWER_SUPPLY_BINDINGS: {
                 "DP8B1519": {
                     "device_key": "rigol technologies:dp8b214901519",
-                    "serial": "DP8B214901519",
+                    "full_code": "DP8B214901519",
                     "vendor": "RIGOL TECHNOLOGIES",
                     "model": "DP832A",
                     "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
@@ -130,11 +130,57 @@ class ConfigFormStateTests(unittest.TestCase):
         self.assertTrue(supply["enabled"])
         self.assertEqual(supply["label"], "DP8B1519")
         self.assertEqual(supply["device_key"], "rigol technologies:dp8b214901519")
-        self.assertEqual(supply["serial"], "DP8B214901519")
+        self.assertEqual(supply["full_code"], "DP8B214901519")
         self.assertEqual(supply["model"], "DP832A")
         # 没有绑定记录的角色不臆造地址，并显式写成“未启用”，避免旧地址继续被连接。
         self.assertNotIn("address", instruments["spectrum_analyzer"])
         self.assertFalse(instruments["spectrum_analyzer"]["enabled"])
+
+    def test_signal_instrument_identity_comes_from_the_binding_record(self):
+        """信号源/频谱仪的缩写码、完整设备码与设备键只从绑定记录写进配置条目。"""
+        widgets = type("Widgets", (), {})()
+        widgets.device_bindings = {
+            "signal_generator": {
+                "label": "5462",
+                "model": "SMW200A",
+                "full_code": "105462",
+                "device_key": "rohde&schwarz:105462",
+                "visa_address": "TCPIP0::192.168.1.201::inst0::INSTR",
+            },
+            "spectrum_analyzer": {
+                "label": None,
+                "model": "4082F",
+                "full_code": "QZNI000866",
+                "device_key": "ceyear technologies:qzni000866",
+                "visa_address": "TCPIP0::192.168.1.202::inst0::INSTR",
+            },
+        }
+        original = {
+            "instruments": {
+                "signal_generator": {"address": "old::sg", "label": "OLD", "model": "OLD"},
+                "spectrum_analyzer": {"address": "old::sa", "label": "OLD-SA"},
+            }
+        }
+
+        instruments = ConfigFormState(original, widgets).read_instrument_config()["instruments"]
+
+        self.assertEqual(
+            instruments["signal_generator"],
+            {
+                "label": "5462",
+                "model": "SMW200A",
+                "full_code": "105462",
+                "device_key": "rohde&schwarz:105462",
+                "enabled": True,
+                "address": "TCPIP0::192.168.1.201::inst0::INSTR",
+            },
+        )
+        # 记录声明了 label 但值为空：旧值必须删掉，不能留下“地址来自这台、身份来自上一台”。
+        self.assertNotIn("label", instruments["spectrum_analyzer"])
+        self.assertEqual(
+            instruments["spectrum_analyzer"]["device_key"],
+            "ceyear technologies:qzni000866",
+        )
 
     def test_read_instrument_config_rewrites_every_supply_from_bindings(self):
         """两条电源绑定各写一条地址；未绑定的旧槽位条目地址与启用状态一起失效。"""
@@ -143,12 +189,12 @@ class ConfigFormStateTests(unittest.TestCase):
             POWER_SUPPLY_BINDINGS: {
                 "DP8B1519": {
                     "device_key": "rigol technologies:dp8b214901519",
-                    "serial": "DP8B214901519",
+                    "full_code": "DP8B214901519",
                     "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
                 },
                 "DP8B0885": {
                     "device_key": "rigol technologies:dp8b174400885",
-                    "serial": "DP8B174400885",
+                    "full_code": "DP8B174400885",
                     "visa_address": "TCPIP0::192.168.1.108::inst0::INSTR",
                 },
             }
@@ -283,7 +329,7 @@ class ConfigFormStateTests(unittest.TestCase):
             POWER_SUPPLY_BINDINGS: {
                 "DP8B1519": {
                     "device_key": "rigol technologies:dp8b214901519",
-                    "serial": "DP8B214901519",
+                    "full_code": "DP8B214901519",
                     "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
                 }
             }
@@ -295,7 +341,7 @@ class ConfigFormStateTests(unittest.TestCase):
                         "address": "TCPIP0::192.168.1.101::inst0::INSTR",
                         "enabled": True,
                         "device_key": "rigol technologies:dp8b174400885",
-                        "serial": "DP8B174400885",
+                        "full_code": "DP8B174400885",
                         "model": "OLD-MODEL",
                         "channels": {"CH1": {"role": "gate"}},
                     }
@@ -308,9 +354,9 @@ class ConfigFormStateTests(unittest.TestCase):
         ]["DP8B1519"]
 
         self.assertEqual(supply["device_key"], "rigol technologies:dp8b214901519")
-        self.assertEqual(supply["serial"], "DP8B214901519")
+        self.assertEqual(supply["full_code"], "DP8B214901519")
         self.assertEqual(supply["address"], "TCPIP0::192.168.1.102::inst0::INSTR")
-        # device_key/serial 已由绑定改写，model 缺失时保留同一台电源配置里的型号：
+        # device_key/full_code 已由绑定改写，model 缺失时保留同一台电源配置里的型号：
         # 正式运行映射要求型号是快照身份的一部分（步骤 10）。
         self.assertEqual(supply["model"], "OLD-MODEL")
         # 通道参数不属于身份，原样保留。
@@ -476,7 +522,7 @@ def _channel_controls(role):
 def _bound(device_key, serial, model, address):
     return {
         "device_key": device_key,
-        "serial": serial,
+        "full_code": serial,
         "model": model,
         "visa_address": address,
         "source": "scan",

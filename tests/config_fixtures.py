@@ -30,7 +30,7 @@ def complete_combined_config() -> dict:
                     "DP8B1519": {
                         "label": "DP8B1519",
                         "model": "DP832A",
-                        "serial": "DP8B214901519",
+                        "full_code": "DP8B214901519",
                         "device_key": "rigol technologies:dp8b214901519",
                         "address": "sim::ps1",
                         "enabled": True,

@@ -32,7 +32,7 @@ from domain.instruments.models import (
     canonical_role,
     is_legacy_power_supply_slot,
     make_device_key,
-    normalize_serial,
+    normalize_full_code,
 )
 
 
@@ -63,13 +63,13 @@ EXPECTED_SCALES = {
 }
 REGISTRY_FIXTURES = (
     "registry_legacy_v2.json",
-    "registry_migrated_v3.json",
-    "registry_migrated_v3_all_registered.json",
+    "registry_migrated_v4.json",
+    "registry_migrated_v4_all_registered.json",
 )
 # 已经写完标签的设备表；旧版本设备表由 test_migration_only_changes_role_and_label 单独对照。
 MIGRATED_REGISTRIES = (
-    "registry_migrated_v3.json",
-    "registry_migrated_v3_all_registered.json",
+    "registry_migrated_v4.json",
+    "registry_migrated_v4_all_registered.json",
 )
 LEGACY_CONFIG = "config_slots_legacy.json"
 MIGRATED_CONFIG = "config_slots_migrated_partial.json"
@@ -272,35 +272,43 @@ def _used_supply_ids(config: dict) -> set:
 
 
 def _stable_serial(value: str) -> str:
-    """归一化到稳定值。``normalize_serial`` 自己已循环到稳定，这里只验证。"""
-    stable = normalize_serial(value)
-    if normalize_serial(stable) != stable:
-        raise AssertionError(f"序列号归一化不稳定: {value!r} -> {stable!r}")
+    """归一化到稳定值。``normalize_full_code`` 自己已循环到稳定，这里只验证。"""
+    stable = normalize_full_code(value)
+    if normalize_full_code(stable) != stable:
+        raise AssertionError(f"完整设备码归一化不稳定: {value!r} -> {stable!r}")
     return stable
 
 
+def _record_full_code(record):
+    """读取 fixture 里的完整设备码；旧样例（schema 1/2/3）可能仍写在 ``serial`` 里。"""
+    value = record.get("full_code")
+    if value is None:
+        value = record.get("serial")
+    return value
+
+
 def _fixture_serials():
-    """(fixture 名, 序列号) —— 注册表、配置电源条目、运行快照与迁移摘要里的全部序列号。"""
+    """(fixture 名, 完整设备码) —— 注册表、配置电源条目、运行快照与迁移摘要里的全部值。"""
     for name in REGISTRY_FIXTURES:
         for record in _instruments(_load(name)):
-            yield name, record.get("serial")
+            yield name, _record_full_code(record)
     for name in DYNAMIC_CONFIGS + (MIGRATED_CONFIG,):
         config = _load(name)
         for entry in _supplies(config).values():
-            yield name, entry.get("serial")
+            yield name, _record_full_code(entry)
         for entry in (config.get("run_mapping") or {}).get("instruments", {}).get(
             "power_supplies", {}
         ).values():
-            yield name, entry.get("serial")
+            yield name, _record_full_code(entry)
     for entry in _load(SUMMARY_FIXTURE)["entries"]:
-        yield SUMMARY_FIXTURE, entry.get("serial")
+        yield SUMMARY_FIXTURE, _record_full_code(entry)
     for name in (
         "run_mapping_legacy_single.json",
         "run_mapping_snapshot_two_supplies.json",
     ):
         mapping = _load(name)
         for entry in (mapping.get("instruments") or {}).get("power_supplies", {}).values():
-            yield name, entry.get("serial")
+            yield name, _record_full_code(entry)
 
 
 class FixtureInventoryTests(unittest.TestCase):
@@ -327,8 +335,8 @@ class RegistryContractTests(unittest.TestCase):
         for name in MIGRATED_REGISTRIES:
             for record in _instruments(_load(name)):
                 label = record.get("label")
-                serial = record.get("serial")
-                with self.subTest(fixture=name, serial=serial):
+                serial = _record_full_code(record)
+                with self.subTest(fixture=name, full_code=serial):
                     if label is None:
                         self.assertIsNone(
                             serial,
@@ -352,12 +360,13 @@ class RegistryContractTests(unittest.TestCase):
             with self.subTest(fixture=name):
                 self.assertEqual(len(labels), len(set(labels)), f"标签冲突: {labels}")
 
-    def test_instrument_identity_is_vendor_plus_serial(self):
+    def test_instrument_identity_is_vendor_plus_full_code(self):
         for name in REGISTRY_FIXTURES:
             for record in _instruments(_load(name)):
-                with self.subTest(fixture=name, serial=record.get("serial")):
-                    key = make_device_key(record.get("vendor"), record.get("serial"))
-                    self.assertEqual(key, (record["vendor"] + ":" + record["serial"]).casefold())
+                full_code = _record_full_code(record)
+                with self.subTest(fixture=name, full_code=full_code):
+                    key = make_device_key(record.get("vendor"), full_code)
+                    self.assertEqual(key, (record["vendor"] + ":" + full_code).casefold())
 
     def test_serials_are_stored_in_normalized_form(self):
         checked = 0
@@ -365,7 +374,7 @@ class RegistryContractTests(unittest.TestCase):
             if serial is None:
                 continue
             checked += 1
-            with self.subTest(fixture=name, serial=serial):
+            with self.subTest(fixture=name, full_code=serial):
                 self.assertEqual(
                     serial, _stable_serial(serial), "fixture 里的序列号必须是归一化后的稳定形态"
                 )
@@ -374,18 +383,23 @@ class RegistryContractTests(unittest.TestCase):
                 self.assertNotIn(" ", serial, "序列号含内部空白时标签生成会被拒绝，样例不能这样写")
         self.assertGreater(checked, 0, "没有任何序列号被检查")
 
-    def test_migration_only_changes_role_and_label(self):
-        before = {record["serial"]: record for record in _instruments(_load("registry_legacy_v2.json"))}
+    def test_migration_changes_identity_fields_but_not_addresses(self):
+        before = {
+            _record_full_code(record): record
+            for record in _instruments(_load("registry_legacy_v2.json"))
+        }
         after = {
-            record["serial"]: record
-            for record in _instruments(_load("registry_migrated_v3.json"))
+            _record_full_code(record): record
+            for record in _instruments(_load("registry_migrated_v4.json"))
         }
         self.assertEqual(sorted(before), sorted(after), "迁移不能增删设备记录")
         for serial, old in before.items():
             new = after[serial]
-            with self.subTest(serial=serial):
-                for field in ("name", "vendor", "model", "model_index", "current_ip", "known_ips"):
+            with self.subTest(full_code=serial):
+                for field in ("vendor", "model", "current_ip", "known_ips"):
                     self.assertEqual(new.get(field), old.get(field), f"迁移改动了身份/地址字段: {field}")
+                for retired in ("name", "model_index", "serial"):
+                    self.assertNotIn(retired, new, f"新设备表不得再写旧字段: {retired}")
                 if old.get("role") in POWER_SUPPLY_SLOTS:
                     self.assertEqual(new.get("role"), "power_supply")
                     self.assertEqual(new.get("label"), EXPECTED_LABELS[serial])
@@ -400,11 +414,11 @@ class RegistryContractTests(unittest.TestCase):
 
     def test_registering_a_device_explicitly_adds_its_label(self):
         records = {
-            record["serial"]: record
-            for record in _instruments(_load("registry_migrated_v3_all_registered.json"))
+            record["full_code"]: record
+            for record in _instruments(_load("registry_migrated_v4_all_registered.json"))
         }
         for serial in ("DP8B214901519", "DP8B174700950", "DP8B174400885"):
-            with self.subTest(serial=serial):
+            with self.subTest(full_code=serial):
                 self.assertEqual(records[serial]["role"], "power_supply")
                 self.assertEqual(records[serial]["label"], EXPECTED_LABELS[serial])
 
@@ -423,15 +437,15 @@ class ConfigContractTests(unittest.TestCase):
                     self.assertNotIn("supply_id", entry, "条目内部不再重复写 supply_id")
                     self.assertEqual(
                         entry.get("device_key"),
-                        make_device_key("RIGOL TECHNOLOGIES", entry.get("serial")),
+                        make_device_key("RIGOL TECHNOLOGIES", entry.get("full_code")),
                         "device_key 必须由厂商与序列号生成",
                     )
                     self.assertIn(
-                        entry.get("serial"),
+                        entry.get("full_code"),
                         EXPECTED_LABELS,
                         "出现未收录期望标签的序列号：先更新 EXPECTED_LABELS",
                     )
-                    self.assertEqual(supply_id, EXPECTED_LABELS[entry["serial"]])
+                    self.assertEqual(supply_id, EXPECTED_LABELS[entry["full_code"]])
                     self.assertEqual(entry.get("model"), "DP832A")
                     self.assertIn("channels", entry)
 
@@ -481,7 +495,7 @@ class ConfigContractTests(unittest.TestCase):
                 )
             for supply_id, entry in frozen.items():
                 with self.subTest(fixture=name, supply_id=supply_id):
-                    for field in ("label", "model", "serial", "device_key", "visa_address"):
+                    for field in ("label", "model", "full_code", "device_key", "visa_address"):
                         self.assertTrue(entry.get(field), f"快照条目缺少 {field}")
                     self.assertEqual(entry["label"], supply_id)
                     self.assertEqual(
@@ -547,7 +561,7 @@ class MigrationSummaryContractTests(unittest.TestCase):
             supply = migrated[entry["new_key"]]
             with self.subTest(old_key=entry["old_key"]):
                 self.assertEqual(entry["label"], supply["label"])
-                self.assertEqual(entry["serial"], supply["serial"])
+                self.assertEqual(entry["full_code"], supply["full_code"])
                 self.assertEqual(entry["device_key"], supply["device_key"])
                 self.assertEqual(entry["channels"], supply["channels"], "能自动迁移的电源也不能丢参数")
 
@@ -562,7 +576,7 @@ class MigrationSummaryContractTests(unittest.TestCase):
             if entry["status"] == "migrated":
                 continue
             with self.subTest(old_key=entry["old_key"]):
-                for field in ("new_key", "device_key", "serial", "label"):
+                for field in ("new_key", "device_key", "full_code", "label"):
                     self.assertIsNone(entry[field], "无法识别的旧条目不能凭空得到身份")
                 self.assertNotIn(entry["old_key"], migrated, "无法识别的旧条目不能变成电源条目")
                 if entry["legacy_address"]:
@@ -574,7 +588,7 @@ class MigrationSummaryContractTests(unittest.TestCase):
 
     def test_address_hint_follows_the_registry_known_addresses(self):
         known = {
-            endpoint.get("ip"): make_device_key(record["vendor"], record["serial"])
+            endpoint.get("ip"): make_device_key(record["vendor"], _record_full_code(record))
             for record in _instruments(_load("registry_legacy_v2.json"))
             for endpoint in (record.get("known_ips") or [])
         }
@@ -627,9 +641,9 @@ class RunSnapshotContractTests(unittest.TestCase):
         self.assertEqual(sorted(frozen), ["DP8B0885", "DP8B1519"])
         for supply_id, entry in frozen.items():
             with self.subTest(supply_id=supply_id):
-                for field in ("label", "model", "serial", "device_key", "visa_address"):
+                for field in ("label", "model", "full_code", "device_key", "visa_address"):
                     self.assertTrue(entry.get(field), f"快照条目缺少 {field}")
-                self.assertEqual(entry["device_key"], make_device_key("RIGOL TECHNOLOGIES", entry["serial"]))
+                self.assertEqual(entry["device_key"], make_device_key("RIGOL TECHNOLOGIES", entry["full_code"]))
         roles = {}
         for channel in mapping["dut_power_channels"]:
             roles[channel["role"]] = channel["channel"].split("/", 1)[0]
@@ -639,6 +653,42 @@ class RunSnapshotContractTests(unittest.TestCase):
             "gate 与 drain 必须能来自不同电源",
         )
         self.assertTrue(mapping["run_id"], "正式快照要有 run_id 才能被历史页找到")
+
+    def test_new_snapshot_carries_identity_for_every_instrument(self):
+        """信号源与频谱仪也冻结身份：运行期间不回查注册表，不按型号后缀或 IP 补全。"""
+        mapping = _load("run_mapping_snapshot_two_supplies.json")
+        for name in ("signal_generator", "spectrum_analyzer"):
+            entry = mapping["instruments"][name]
+            with self.subTest(instrument=name):
+                for field in ("label", "model", "full_code", "device_key", "visa_address"):
+                    self.assertTrue(entry.get(field), f"快照条目缺少 {field}")
+                self.assertNotIn("serial", entry, "完整设备码只写 full_code")
+
+
+class TargetConfigurationContractTests(unittest.TestCase):
+    """人工重扫并绑定后的配置样例：身份字段齐全，旧字段名不再出现。"""
+
+    def test_target_configs_carry_identity_and_no_legacy_fields(self):
+        for name in ("config_one_supply.json", "config_two_supplies.json", "config_five_supplies.json"):
+            document = _load(name)
+            for role in ("signal_generator", "spectrum_analyzer"):
+                entry = document["instruments"][role]
+                snapshot = document["run_mapping"]["instruments"][role]
+                for source, fields in (
+                    (entry, ("label", "model", "full_code", "device_key", "address")),
+                    (snapshot, ("label", "model", "full_code", "device_key", "visa_address")),
+                ):
+                    for field in fields:
+                        with self.subTest(fixture=name, instrument=role, field=field):
+                            self.assertTrue(source.get(field), f"缺少 {field}")
+                    self.assertNotIn("serial", source, "完整设备码只写 full_code")
+                with self.subTest(fixture=name, role=role):
+                    self.assertNotIn("serial", document["device_bindings"][role])
+                    self.assertNotIn("name", document["device_bindings"][role])
+            for supply_id, record in document["device_bindings"]["power_supplies"].items():
+                with self.subTest(fixture=name, supply_id=supply_id):
+                    self.assertNotIn("serial", record)
+                    self.assertNotIn("name", record)
 
 
 class NoFixedSlotDependencyTests(unittest.TestCase):

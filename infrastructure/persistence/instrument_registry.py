@@ -8,17 +8,16 @@
 文件结构（``instruments.json``）::
 
     {
-      "schema_version": 3,
+      "schema_version": 4,
       "updated_at": "2026-10-28T14:39:46+08:00",
       "instruments": [
         {
-          "name": "DP832A-1",           # 资产名 = 型号-同型号序号，永久稳定，但不进界面
           "vendor": "RIGOL TECHNOLOGIES",
-          "model": "DP832A",
-          "model_index": 1,
-          "serial": "DP8B214901519",    # 唯一身份，永不参与匹配的只有 IP 和名称
-          "label": "DP8B1519",          # 现场短标签（见下）＝电源的 supply_id，首次生成后冻结
-          "order_no": null,
+          "model": "DP832A",             # 型号可重复，不参与身份
+          "full_code": "DP8B214901519",  # 设备返回的完整设备码，唯一身份来源
+          "label": "DP8B1519",           # 现场缩写设备码（short_code）＝电源的 supply_id
+          "device_key": "厂商:完整设备码"  # 不落盘，读取时由厂商与完整设备码派生
+          "order_no": null,              # *IDN? 里的订单号，不并入完整设备码
           "firmware": "00.01.16.00.02",
           "options": [],
           "role": "power_supply",       # 设备类别（不含“第几台”），多台电源靠 label 区分
@@ -36,32 +35,33 @@
 
 设计约束：
 
-- 设备唯一标识由 ``厂商 + 序列号`` 派生（``device_key``），不落盘，避免两处不一致。
+- 设备唯一标识由 ``厂商 + 完整设备码`` 派生（``device_key``），不落盘，避免两处不一致。
+  设备查找、去重、绑定与预选只认这个键。
+- **型号可重复**：登记表不保存、也不生成“型号-同型号序号”资产名；设备的区别由缩写设备码
+  ``label`` 给出。登记、排序与显示都不再使用 ``name`` / ``model_index``。
 - ``current_ip`` 只是当前连接地址；IP 变化时旧地址进 ``known_ips`` 并保留最近若干条。
-- 资产名和同型号序号一经分配不再改动；退役设备保留记录与序号，新设备取最大序号 + 1。
 - ``role`` 是这台设备在测试链路里的类别（``signal_generator`` / ``spectrum_analyzer`` /
-  ``power_supply``），不含“第几台”：多台电源共用 ``power_supply``，靠各自的短标签
+  ``power_supply``），不含“第几台”：多台电源共用 ``power_supply``，靠各自的缩写设备码
   （``label``）区分。现场每台仪器只承担一种类别，因此角色随设备登记一次，界面不再让用户
   逐台选择；空值与未知角色都视为“未分配角色”，不允许绑定。
-- 读写分工：**读取兼容旧 schema**（``schema_version`` 1/2、``role: "PS1".."PS4"``、没有
-  ``label``），读出来仍是旧字面量，好让按旧槽位工作的调用方（设备发现面板、配置页，属于
-  步骤 5、6）继续可用；**保存统一写新字段**，写盘前由 :func:`_canonical_document` 迁移：
-  旧槽位经 ``domain.instruments.models.canonical_role`` 折叠成 ``power_supply``，没有标签
-  的设备按序列号补生成 ``label``（规则见 :mod:`domain.instruments.labels`）。
-- **标签对所有登记设备生效**：它只由序列号派生，与角色无关，因此换角色、换 IP、改同型号
-  序号都不会换标签。界面上凡是显示这台设备，用的都是标签（电源是 ``DP8B1519（DP832A）``，
-  其它仪器是 ``SMW200A（5462）``），资产名 ``型号-同型号序号`` 只作文件里的软件资产名，
-  不进界面——同型号两台靠标签区分，不靠后缀数字。
-- 补生成标签的失败处理分两档：**电源**没有标签就没有 ``supply_id``，配置与路由会失配，
-  因此派生失败一律阻止保存并指出是哪台设备；**其它角色与未登记角色的设备**标签只用于
-  展示，派生失败时留空（显示退回资产名），不阻断保存。
-- 迁移只改 ``role`` 与 ``label``：资产名、序列号、地址和人工补充的字段逐字节保留。
-- **已有标签原样保留**：迁移只填空缺，不规范化、不裁剪空白、不改大小写；标签必须能当
+- 读写分工：**读取兼容旧 schema**（``schema_version`` 1/2/3、``role: "PS1".."PS4"``、
+  没有 ``label``、以 ``serial`` 保存完整设备码、带 ``name`` / ``model_index``）。旧字段只在
+  读取边界被识别，读入后立即投影为 ``full_code`` 并丢弃资产名与型号序号；**保存统一写新
+  字段**，写盘前由 :func:`_canonical_document` 迁移：旧槽位经
+  ``domain.instruments.models.canonical_role`` 折叠成 ``power_supply``，没有缩写码的设备按
+  完整设备码补生成 ``label``（规则见 :mod:`domain.instruments.labels`）。
+- **缩写码对所有登记设备生效**：它只由完整设备码派生，与角色无关，因此换角色、换 IP、改
+  型号都不会换码。界面上凡是显示这台设备，都用“型号（缩写设备码）”，例如
+  ``DP832A（DP8B1519）``、``SMW200A（5462）``。
+- 补生成缩写码的失败处理分两档：**电源**没有缩写码就没有 ``supply_id``，配置与路由会失配，
+  因此派生失败一律阻止保存并指出是哪台设备；**其它角色与未登记角色的设备**缩写码只用于
+  展示，派生失败时留空（显示退回型号），不阻断保存。
+- **已有缩写码原样保留**：迁移只填空缺，不规范化、不裁剪空白、不改大小写；缩写码必须能当
   ``supply_id`` 用（非空字符串、不含空白与 ``/``），否则读取/保存直接报错，交给操作员
-  改正——迁移不许把写错的标签悄悄“洗干净”。``null``、空串与纯空白都表示“还没有标签”，
+  改正——迁移不许把写错的缩写码悄悄“洗干净”。``null``、空串与纯空白都表示“还没有缩写码”，
   保存时统一写 ``null``。
-- 标签冲突阻止保存并报出冲突的两台设备，绝不覆盖、也不静默改名；电源无法从序列号派生标签
-  时同样阻止保存并指出是哪台设备。
+- 缩写码冲突阻止保存并报出冲突的两台设备，绝不覆盖、也不静默改名；电源无法从完整设备码
+  派生缩写码时同样阻止保存并指出是哪台设备。
 - 写入使用 :func:`write_json_atomic`（临时文件 + 原子替换），中断不会留下半截文件；
   迁移、校验、``schema_version`` 与 ``updated_at`` 的更新都在内存副本上完成，写盘成功后才
   提交回对象，因此失败时内存文档与原文件都保持迁移前的样子。
@@ -71,7 +71,6 @@
 from __future__ import annotations
 
 import copy
-from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -84,33 +83,34 @@ from domain.instruments.models import (
     Instrument,
     InstrumentEndpoint,
     InstrumentIdentity,
-    build_instrument_name,
     canonical_role,
     make_device_key,
+    normalize_full_code,
     normalize_model,
     normalize_role,
-    normalize_serial,
     normalize_text,
     normalize_vendor,
 )
 from infrastructure.filesystem.atomic_json import read_json, write_json_atomic
 from infrastructure.filesystem.paths import DEFAULT_PATHS, PathLike
 
-SCHEMA_VERSION = 3
-# 读得动的旧版本：两者都缺 ``label``、电源用槽位编号 ``PS1``..``PS4``。读取时按旧字面量返回，
-# 保存时由 :func:`_canonical_document` 迁移；比当前版本更新的文件直接报错，避免降级覆盖。
-LEGACY_SCHEMA_VERSIONS = (1, 2)
+SCHEMA_VERSION = 4
+# 读得动的旧版本：1/2 缺 ``label`` 且电源用槽位编号 ``PS1``..``PS4``；1/2/3 用 ``serial``
+# 保存完整设备码，并带 ``name`` / ``model_index``。读取时立即投影成 ``full_code`` 并丢弃
+# 资产名与序号，保存时由 :func:`_canonical_document` 写回新 schema；比当前版本更新的文件
+# 直接报错，避免降级覆盖。
+LEGACY_SCHEMA_VERSIONS = (1, 2, 3)
 DEFAULT_REGISTRY_FILENAME = "instruments.json"
 MAX_KNOWN_IPS = 3
 
-# 标签同时是 ``supply_id``，会被拼成 ``supply_id/CHx``；含空白或 ``/`` 的标签会在路由处被截断。
+# 缩写码同时是 ``supply_id``，会被拼成 ``supply_id/CHx``；含空白或 ``/`` 的缩写码会在路由处被截断。
 _LABEL_SEPARATOR = "/"
 
 _VALID_STATUSES = {status.value for status in DeviceStatus}
 
 
 class InstrumentRegistryError(ValueError):
-    """设备表内容不合法（字段缺失、重复序列号、序号冲突等）。"""
+    """设备表内容不合法（字段缺失、重复完整设备码、缩写码冲突等）。"""
 
 
 def utc_now_iso() -> str:
@@ -126,8 +126,32 @@ def _empty_document() -> dict[str, Any]:
     return {"schema_version": SCHEMA_VERSION, "updated_at": utc_now_iso(), "instruments": []}
 
 
+def _entry_full_code(entry: Mapping[str, Any]) -> str:
+    """读取条目的完整设备码。
+
+    历史读取边界：schema 1/2/3 把它保存在 ``serial`` 里。``full_code`` 优先；旧键只在读取
+    时被识别，读入后调用方看到的是 ``full_code``，新文档不再写出旧键。
+    """
+    value = entry.get("full_code")
+    if value is None:
+        value = entry.get("serial")
+    return normalize_full_code(value)
+
+
 def _entry_device_key(entry: Mapping[str, Any]) -> str:
-    return make_device_key(entry.get("vendor"), entry.get("serial"))
+    return make_device_key(entry.get("vendor"), _entry_full_code(entry))
+
+
+def _strip_legacy_identity_fields(entry: dict[str, Any]) -> None:
+    """把旧条目投影成当前身份字段：``serial`` -> ``full_code``，删除资产名与型号序号。
+
+    只改这三个字段，其余内容（地址、选件、备注、未知手写字段）逐字节保留。
+    """
+    if "full_code" not in entry:
+        entry["full_code"] = entry.get("serial")
+    entry.pop("serial", None)
+    entry.pop("name", None)
+    entry.pop("model_index", None)
 
 
 def _declared_entry_role(entry: Mapping[str, Any]) -> str | None:
@@ -145,11 +169,11 @@ def _declared_entry_role(entry: Mapping[str, Any]) -> str | None:
 
 
 def _existing_label(entry: Mapping[str, Any]) -> Any:
-    """条目里已有的标签，**原样**返回；``null``、空串与纯空白表示“还没有标签”。
+    """条目里已有的缩写码，**原样**返回；``null``、空串与纯空白表示“还没有缩写码”。
 
-    这里刻意不做 :func:`normalize_text`：标签是人工可见的现场短标签，迁移的任务只是补空缺。
-    裁剪空白或统一大小写会让文件里的值与操作员写的值不一致，也会掩盖“标签不能当
-    ``supply_id``”这类错误；含空白与 ``/`` 的标签直接由 :func:`_validate_document` 报错。
+    这里刻意不做 :func:`normalize_text`：缩写码是人工可见的现场短码，迁移的任务只是补空缺。
+    裁剪空白或统一大小写会让文件里的值与操作员写的值不一致，也会掩盖“缩写码不能当
+    ``supply_id``”这类错误；含空白与 ``/`` 的缩写码直接由 :func:`_validate_document` 报错。
     类型写错的值同样原样留下，让校验说出“必须是字符串或 null”，而不是悄悄改成 ``null``。
     """
     raw = entry.get("label")
@@ -161,21 +185,22 @@ def _existing_label(entry: Mapping[str, Any]) -> Any:
 
 
 def _canonical_document(document: Mapping[str, Any]) -> dict[str, Any]:
-    """返回迁移到当前 schema 的设备表副本：折叠旧角色、为登记设备补生成短标签。
+    """返回迁移到当前 schema 的设备表副本：投影身份字段、折叠旧角色、补生成缩写码。
 
-    只改 ``role`` 与 ``label`` 两个字段，其余内容（资产名、序列号、地址、人工补充的字段）
-    原样保留。规则：
+    只改身份相关字段（``full_code`` / ``role`` / ``label``）并删除 ``name`` /
+    ``model_index`` / ``serial``，其余内容（地址、选件、备注、未知字段）原样保留。规则：
 
-    1. ``role``：旧槽位折叠成 ``power_supply``，未登记角色写 ``null``，未知角色原样留下
+    1. 身份：旧 ``serial`` 的值写进 ``full_code``，``name`` 与 ``model_index`` 删除；
+    2. ``role``：旧槽位折叠成 ``power_supply``，未登记角色写 ``null``，未知角色原样留下
        等校验报错；
-    2. ``label``：每条记录都写这个字段（没有标签写 ``null``）；已有标签原样保留，不裁剪、
-       不改大小写；**有序列号却没有标签的设备按序列号补生成一个**（不分角色——标签只由
-       序列号派生，见 :mod:`domain.instruments.labels`），冲突按同一模块的规则依次加宽，
-       全部候选都被占用时抛 :class:`InstrumentRegistryError`。补生成的顺序是电源优先，
-       其余按文件顺序：电源的标签就是 ``supply_id``，先挑就先占住首选候选；
-    3. 补生成失败分两档：电源没有标签就没有 ``supply_id``，配置与路由会失配，因此一律抛
-       :class:`InstrumentRegistryError`；其它角色与未登记角色的设备标签只用于展示，派生
-       失败时留 ``null``，显示退回资产名，不阻断保存。
+    3. ``label``：每条记录都写这个字段（没有缩写码写 ``null``）；已有缩写码原样保留，
+       不裁剪、不改大小写；**有完整设备码却没有缩写码的设备按完整设备码补生成一个**
+       （不分角色——缩写码只由完整设备码派生），冲突按同一模块的规则依次加宽，全部候选
+       都被占用时抛 :class:`InstrumentRegistryError`。补生成的顺序是电源优先，其余按文件
+       顺序：电源的缩写码就是 ``supply_id``，先挑就先占住首选候选；
+    4. 补生成失败分两档：电源没有缩写码就没有 ``supply_id``，配置与路由会失配，因此一律抛
+       :class:`InstrumentRegistryError`；其它角色与未登记角色的设备缩写码只用于展示，派生
+       失败时留 ``null``，显示退回型号，不阻断保存。
 
     纯函数：不改入参，也不写盘；由 :meth:`InstrumentRegistry.save` 在内存副本上调用。
     """
@@ -186,11 +211,12 @@ def _canonical_document(document: Mapping[str, Any]) -> dict[str, Any]:
         return migrated
     for entry in entries:
         if isinstance(entry, dict):
+            _strip_legacy_identity_fields(entry)
             entry["role"] = _declared_entry_role(entry)
-            # 已有标签原样冻结，空值才写 ``null``：每条记录都带这个字段，文件自身就能说明
-            # “这台还没有标签”。
+            # 已有缩写码原样冻结，空值才写 ``null``：每条记录都带这个字段，文件自身就能说明
+            # “这台还没有缩写码”。
             entry["label"] = _existing_label(entry)
-    # 已有标签一律冻结：迁移只填空缺，不改写、不回收。
+    # 已有缩写码一律冻结：迁移只填空缺，不改写、不回收。
     taken = [
         normalize_text(entry.get("label"))
         for entry in entries
@@ -198,10 +224,10 @@ def _canonical_document(document: Mapping[str, Any]) -> dict[str, Any]:
     ]
 
     def _missing_label_entries():
-        """还没有标签、且有序列号可派生的条目：**电源先**，其余按文件顺序。
+        """还没有缩写码、且有完整设备码可派生的条目：**电源先**，其余按文件顺序。
 
-        电源的标签就是 ``supply_id``，先挑就先占住首选候选，不会被别的设备挤到加宽的形态；
-        非电源设备只在必要时让路，它们的标签只用于展示。
+        电源的缩写码就是 ``supply_id``，先挑就先占住首选候选，不会被别的设备挤到加宽的形态；
+        非电源设备只在必要时让路，它们的缩写码只用于展示。
         """
         pending = [
             entry
@@ -213,23 +239,40 @@ def _canonical_document(document: Mapping[str, Any]) -> dict[str, Any]:
         return [*supplies, *others]
 
     for entry in _missing_label_entries():
-        serial = normalize_serial(entry.get("serial"))
-        if not serial:
-            # 缺序列号的记录由 _validate_document 报错；没有身份就没有派生标签的依据。
+        full_code = _entry_full_code(entry)
+        if not full_code:
+            # 缺完整设备码的记录由 _validate_document 报错；没有身份就没有派生缩写码的依据。
             continue
-        name = normalize_text(entry.get("name")) or "(未命名记录)"
+        vendor_hint = normalize_text(entry.get("vendor")) or "(未填厂商)"
+        model_hint = normalize_text(entry.get("model")) or "(无型号)"
         is_power_supply = entry.get("role") == POWER_SUPPLY_ROLE
         try:
-            label = generate_instrument_label(serial, taken)
+            label = generate_instrument_label(full_code, taken)
         except InstrumentLabelError as error:
             if not is_power_supply:
-                # 非电源的标签只用于展示：派生失败留空，显示退回资产名，不挡住整份保存。
+                # 非电源的缩写码只用于展示：派生失败留空，显示退回型号，不挡住整份保存。
                 continue
             raise InstrumentRegistryError(
-                f"设备 {name}（序列号 {serial}）无法生成电源短标签：{error}"
+                f"设备 {vendor_hint} {model_hint}（完整设备码 {full_code}）"
+                f"无法生成电源缩写码：{error}"
             ) from error
         entry["label"] = label
         taken.append(label)
+    return migrated
+
+
+def _migrate_legacy_document(document: Mapping[str, Any]) -> dict[str, Any]:
+    """读取边界：把旧 schema 的身份字段投影成当前字段，不做补标签等写盘动作。
+
+    校验要求 ``full_code``，因此旧文件必须在进入校验前完成 ``serial`` -> ``full_code`` 的
+    投影；投影只作用于内存副本，原文件直到显式 :meth:`InstrumentRegistry.save` 才会改写。
+    """
+    migrated = copy.deepcopy(dict(document))
+    entries = migrated.get("instruments")
+    if isinstance(entries, list):
+        for entry in entries:
+            if isinstance(entry, dict):
+                _strip_legacy_identity_fields(entry)
     return migrated
 
 
@@ -255,11 +298,9 @@ def _to_instrument(entry: Mapping[str, Any]) -> Instrument:
     )
     return Instrument(
         id=0,
-        name=normalize_text(entry.get("name")),
         vendor=normalize_vendor(entry.get("vendor")),
         model=normalize_model(entry.get("model")),
-        model_index=int(entry.get("model_index") or 0),
-        serial=normalize_serial(entry.get("serial")),
+        full_code=_entry_full_code(entry),
         device_key=_entry_device_key(entry),
         order_no=normalize_text(entry.get("order_no")) or None,
         firmware=normalize_text(entry.get("firmware")) or None,
@@ -268,7 +309,7 @@ def _to_instrument(entry: Mapping[str, Any]) -> Instrument:
         first_seen_at=normalize_text(entry.get("first_seen_at")) or None,
         last_seen_at=normalize_text(entry.get("last_seen_at")) or None,
         notes=normalize_text(entry.get("notes")) or None,
-        # 短标签只从注册表读取，不在这里生成：标签由登记/迁移动作写入并冻结。
+        # 缩写码只从注册表读取，不在这里生成：缩写码由登记/迁移动作写入并冻结。
         label=normalize_text(entry.get("label")) or None,
         # 旧槽位 ``PS1``..``PS4`` 原样读出，谁要写回谁负责用 ``canonical_role`` 折叠；
         # 读取侧不折叠，否则按旧角色找到设备的既有调用（发现面板、配置页）会全部失配。
@@ -278,14 +319,14 @@ def _to_instrument(entry: Mapping[str, Any]) -> Instrument:
 
 
 def _validate_label(value: Any, where: str) -> str | None:
-    """校验一个条目的 ``label``，返回查重用的比较键（没有标签时返回 ``None``）。
+    """校验一个条目的 ``label``，返回查重用的比较键（没有缩写码时返回 ``None``）。
 
-    标签就是 ``supply_id``，会被拼成 ``supply_id/CHx``，因此：
+    缩写码就是 ``supply_id``，会被拼成 ``supply_id/CHx``，因此：
 
-    - 必须是字符串或 ``null``；``null``、空串与纯空白都表示“还没有标签”；
+    - 必须是字符串或 ``null``；``null``、空串与纯空白都表示“还没有缩写码”；
     - 首尾不得有空白，内部不得有空白字符，也不得含通道分隔符 ``/``，否则路由会把
       ``supply_id`` 截断；
-    - 校验按**原字面值**进行，不做 :func:`normalize_text` 之类的清洗：写错的标签必须报错，
+    - 校验按**原字面值**进行，不做 :func:`normalize_text` 之类的清洗：写错的缩写码必须报错，
       不能被读取或保存悄悄改写成“看起来合法”的值。
     """
     if value is None:
@@ -307,10 +348,13 @@ def _validate_label(value: Any, where: str) -> str | None:
 
 
 def _validate_document(document: Mapping[str, Any]) -> None:
-    """校验设备表内容：版本门禁、必填字段、唯一性与标签契约。纯函数，不改入参。
+    """校验设备表内容：版本门禁、必填字段、唯一性与缩写码契约。纯函数，不改入参。
 
     :meth:`InstrumentRegistry.save` 用它校验“将要写盘的副本”，所以迁移、校验与写入之间没有
     缝隙：校验失败时内存文档与原文件都不变。
+
+    **型号可以重复**：校验不要求 ``name`` / ``model_index``，也不按型号分配序号；设备唯一性
+    只由 ``device_key`` 回答，用户可见的稳定性只由全局唯一的 ``label`` 回答。
     """
     declared_version = document.get("schema_version")
     if declared_version is not None:
@@ -330,48 +374,56 @@ def _validate_document(document: Mapping[str, Any]) -> None:
     entries = document.get("instruments")
     if not isinstance(entries, list):
         raise InstrumentRegistryError("设备表的 instruments 字段必须是数组")
-    seen_names: dict[str, int] = {}
     seen_keys: dict[str, int] = {}
-    seen_slots: dict[tuple[str, int], str] = {}
     seen_labels: dict[str, str] = {}
+
+    def describe(index: int, entry: Mapping[str, Any]) -> str:
+        """冲突消息里的设备称呼：型号 + 缩写码或完整设备码，不使用已退役的资产名。"""
+        model_text = normalize_text(entry.get("model")) or "(无型号)"
+        code_text = (
+            normalize_text(entry.get("label"))
+            or _entry_full_code(entry)
+            or f"instruments[{index}]"
+        )
+        return f"{model_text}（{code_text}）"
+
     for index, entry in enumerate(entries):
         where = f"instruments[{index}]"
         if not isinstance(entry, dict):
             raise InstrumentRegistryError(f"{where} 必须是对象")
         vendor = normalize_vendor(entry.get("vendor"))
         model = normalize_model(entry.get("model"))
-        serial = normalize_serial(entry.get("serial"))
-        name = normalize_text(entry.get("name"))
+        full_code = _entry_full_code(entry)
         if not vendor:
             raise InstrumentRegistryError(f"{where} 缺少厂商 vendor")
         if not model:
             raise InstrumentRegistryError(f"{where} 缺少型号 model")
-        if not serial:
-            raise InstrumentRegistryError(f"{where} 缺少序列号 serial")
-        if not name:
-            raise InstrumentRegistryError(f"{where} 缺少资产名 name")
-        raw_index = entry.get("model_index")
-        if not isinstance(raw_index, int) or raw_index < 1:
-            raise InstrumentRegistryError(f"{where}.model_index 必须是 >= 1 的整数")
-        expected_name = build_instrument_name(model, raw_index)
-        if name != expected_name:
+        if not full_code:
+            raise InstrumentRegistryError(f"{where} 缺少完整设备码 full_code")
+        if normalize_text(entry.get("serial")):
             raise InstrumentRegistryError(
-                f"{where}.name 必须是 {expected_name!r}（型号-同型号序号），实际 {name!r}"
+                f"{where} 使用了已退役字段 serial；完整设备码必须写在 full_code"
+            )
+        if normalize_text(entry.get("name")) or entry.get("model_index") is not None:
+            raise InstrumentRegistryError(
+                f"{where} 使用了已退役的资产名字段 name/model_index；设备身份只由 "
+                "full_code 与 label 表达"
             )
         status = normalize_text(entry.get("status")) or DeviceStatus.UNKNOWN.value
         if status not in _VALID_STATUSES:
             raise InstrumentRegistryError(
                 f"{where}.status 必须是 {sorted(_VALID_STATUSES)} 之一，实际 {status!r}"
             )
-        # 标签冲突必须阻止保存并报出两台设备，绝不覆盖、也不静默改名。
+        # 缩写码冲突必须阻止保存并报出两台设备，绝不覆盖、也不静默改名。
         label_key = _validate_label(entry.get("label"), where)
         if label_key is not None:
             if label_key in seen_labels:
                 raise InstrumentRegistryError(
-                    f"标签冲突: {entry.get('label')!r} 同时属于 "
-                    f"{seen_labels[label_key]} 与 {name}；电源短标签必须唯一，请人工改名后重试"
+                    f"缩写设备码冲突: {entry.get('label')!r} 同时属于 "
+                    f"{seen_labels[label_key]} 与 {describe(index, entry)}；"
+                    "缩写设备码必须唯一，请人工改名后重试"
                 )
-            seen_labels[label_key] = name
+            seen_labels[label_key] = describe(index, entry)
         raw_role = entry.get("role")
         if raw_role not in (None, "") and normalize_role(raw_role) is None:
             raise InstrumentRegistryError(
@@ -387,23 +439,14 @@ def _validate_document(document: Mapping[str, Any]) -> None:
             raise InstrumentRegistryError(
                 f"{where}.current_ip={current_ip!r} 必须出现在 known_ips 中"
             )
-        device_key = make_device_key(vendor, serial)
-        if name in seen_names:
-            raise InstrumentRegistryError(f"资产名重复: {name}")
+        device_key = make_device_key(vendor, full_code)
         if device_key in seen_keys:
             raise InstrumentRegistryError(
-                f"序列号重复: 厂商 {vendor} + 序列号 {serial}（{name} 与 "
-                f"{normalize_text(entries[seen_keys[device_key]].get('name'))}）"
+                f"完整设备码重复: 厂商 {vendor} + 完整设备码 {full_code}"
+                f"（{describe(seen_keys[device_key], entries[seen_keys[device_key]])} 与 "
+                f"{describe(index, entry)}）"
             )
-        slot = (model, raw_index)
-        if slot in seen_slots:
-            raise InstrumentRegistryError(
-                f"同型号序号重复: {model} 的序号 {raw_index} 同时属于 "
-                f"{seen_slots[slot]} 与 {name}"
-            )
-        seen_names[name] = index
         seen_keys[device_key] = index
-        seen_slots[slot] = name
 
 
 class InstrumentRegistry:
@@ -411,7 +454,9 @@ class InstrumentRegistry:
 
     def __init__(self, path: PathLike | None = None, document: dict[str, Any] | None = None) -> None:
         self.path = Path(path) if path is not None else default_registry_path()
-        self._document = copy.deepcopy(document) if document is not None else _empty_document()
+        source = copy.deepcopy(document) if document is not None else _empty_document()
+        # 读取边界：旧 schema 的 serial / name / model_index 在进入校验前投影成当前字段。
+        self._document = _migrate_legacy_document(source)
         self._validate()
 
     # ---------- 加载与保存 ----------
@@ -431,9 +476,9 @@ class InstrumentRegistry:
         """迁移为当前 schema 后写入设备表。
 
         顺序固定为“副本上迁移 → 副本上校验 → 补版本与时间戳 → 原子写入 → 提交回对象”：
-        迁移与校验都作用于内存副本，只有写盘成功才替换 :attr:`_document`。因此标签冲突、
-        序列号无法派生标签、结构不合法或磁盘写入失败时，内存文档与原文件都保持迁移前的
-        样子，原子写入再保证磁盘上不会出现半截文件。
+        迁移与校验都作用于内存副本，只有写盘成功才替换 :attr:`_document`。因此缩写码冲突、
+        完整设备码无法派生缩写码、结构不合法或磁盘写入失败时，内存文档与原文件都保持迁移前
+        的样子，原子写入再保证磁盘上不会出现半截文件。
         """
         migrated = _canonical_document(self._document)
         migrated["schema_version"] = SCHEMA_VERSION
@@ -448,7 +493,7 @@ class InstrumentRegistry:
             payload = read_json(self.path)
             if not isinstance(payload, dict):
                 raise InstrumentRegistryError(f"设备表根节点必须是对象: {self.path}")
-            self._document = payload
+            self._document = _migrate_legacy_document(payload)
         else:
             self._document = _empty_document()
         self._validate()
@@ -474,14 +519,21 @@ class InstrumentRegistry:
         model: str | None = None,
         status: DeviceStatus | None = None,
     ) -> list[Instrument]:
-        """列出设备，可按型号或状态过滤；选件匹配用 :meth:`Instrument.has_options`。"""
+        """列出设备，可按型号或状态过滤；选件匹配用 :meth:`Instrument.has_options`。
+
+        排序只使用型号与缩写设备码，不再有“同型号序号”；相同型号的多台设备按各自的缩写码
+        稳定排列。
+        """
         instruments = [_to_instrument(entry) for entry in self._document["instruments"]]
         if model is not None:
             wanted = normalize_model(model)
             instruments = [item for item in instruments if item.model == wanted]
         if status is not None:
             instruments = [item for item in instruments if item.status is status]
-        return sorted(instruments, key=lambda item: (item.model, item.model_index))
+        return sorted(
+            instruments,
+            key=lambda item: (item.model, item.label or "", item.full_code),
+        )
 
     def _find_entry(self, predicate: Any) -> dict[str, Any] | None:
         for entry in self._document["instruments"]:
@@ -489,21 +541,19 @@ class InstrumentRegistry:
                 return entry
         return None
 
-    def get_by_name(self, name: str) -> Instrument | None:
-        entry = self._find_entry(lambda item: normalize_text(item.get("name")) == normalize_text(name))
-        return _to_instrument(entry) if entry else None
-
     def get_by_device_key(self, device_key: str) -> Instrument | None:
+        """按系统匹配键查找设备；这是生产代码唯一的设备查找入口。"""
         wanted = normalize_text(device_key).casefold()
         entry = self._find_entry(lambda item: _entry_device_key(item) == wanted)
         return _to_instrument(entry) if entry else None
 
-    def get_by_serial(self, serial: str) -> list[Instrument]:
-        wanted = normalize_serial(serial)
+    def get_by_full_code(self, full_code: str) -> list[Instrument]:
+        """按完整设备码查设备（可能跨厂商命中多台，因此返回列表）。"""
+        wanted = normalize_full_code(full_code)
         return [
             _to_instrument(entry)
             for entry in self._document["instruments"]
-            if normalize_serial(entry.get("serial")) == wanted
+            if _entry_full_code(entry) == wanted
         ]
 
     def at_ip(self, ip: str) -> Instrument | None:
@@ -511,15 +561,6 @@ class InstrumentRegistry:
         wanted = normalize_text(ip)
         entry = self._find_entry(lambda item: normalize_text(item.get("current_ip")) == wanted)
         return _to_instrument(entry) if entry else None
-
-    def next_model_index(self, model: str) -> int:
-        wanted = normalize_model(model)
-        indexes = [
-            int(entry["model_index"])
-            for entry in self._document["instruments"]
-            if normalize_model(entry.get("model")) == wanted
-        ]
-        return (max(indexes) if indexes else 0) + 1
 
     # ---------- 写入 ----------
 
@@ -534,9 +575,10 @@ class InstrumentRegistry:
         notes: str | None = None,
         role: str | None = None,
     ) -> tuple[Instrument, bool]:
-        """按 ``(厂商, 序列号)`` 写入或更新设备，返回 ``(设备, 是否新建)``。
+        """按 ``(厂商, 完整设备码)`` 写入或更新设备，返回 ``(设备, 是否新建)``。
 
-        命中已有设备时只刷新可变属性，**不改动资产名与同型号序号**，保证它们永久稳定。
+        命中已有设备时只刷新可变属性，**不改动缩写设备码**，保证它永久稳定；型号可以随设备
+        应答更新，型号重复不影响身份。
 
         ``options`` / ``firmware`` / ``order_no`` / ``role`` 采用“有值才覆盖”的语义：
         传 ``None`` 或不传表示本次没有新的值、保留原值，避免一次扫描把已登记的角色清空。
@@ -561,15 +603,11 @@ class InstrumentRegistry:
 
         entry = self._find_entry(lambda item: _entry_device_key(item) == device_key)
         if entry is None:
-            model = normalize_model(identity.model)
-            model_index = self.next_model_index(model)
             self._document["instruments"].append(
                 {
-                    "name": build_instrument_name(model, model_index),
                     "vendor": normalize_vendor(identity.vendor),
-                    "model": model,
-                    "model_index": model_index,
-                    "serial": normalize_serial(identity.serial),
+                    "model": normalize_model(identity.model),
+                    "full_code": normalize_full_code(identity.full_code),
                     "label": None,
                     "order_no": identity.order_no,
                     "firmware": firmware_text,
@@ -604,6 +642,20 @@ class InstrumentRegistry:
         assert instrument is not None
         return instrument, created
 
+    @staticmethod
+    def _require_device_key(instrument: Instrument | str) -> str:
+        """把“设备对象或匹配键”统一成 ``device_key``。
+
+        设备查找只允许使用 ``device_key``：型号、缩写码、显示文本与 IP 都不是身份，按它们
+        查找会把两台同型号设备或换过地址的设备混在一起。
+        """
+        if isinstance(instrument, Instrument):
+            return instrument.device_key
+        key = normalize_text(instrument).casefold()
+        if not key:
+            raise InstrumentRegistryError("设备查找需要非空 device_key")
+        return key
+
     def record_endpoint(
         self,
         instrument: Instrument | str,
@@ -617,10 +669,12 @@ class InstrumentRegistry:
         seen_at: str | None = None,
     ) -> Instrument:
         """登记当前 IP，并把旧地址压入 ``known_ips`` 历史（最多 :data:`MAX_KNOWN_IPS` 条）。"""
-        name = instrument if isinstance(instrument, str) else instrument.name
-        entry = self._find_entry(lambda item: normalize_text(item.get("name")) == normalize_text(name))
+        device_key = self._require_device_key(instrument)
+        entry = self._find_entry(lambda item: _entry_device_key(item) == device_key)
         if entry is None:
-            raise InstrumentRegistryError(f"设备表中没有资产 {name!r}，无法登记地址")
+            raise InstrumentRegistryError(
+                f"设备表中没有 device_key={device_key!r} 的设备，无法登记地址"
+            )
         ip_text = normalize_text(ip)
         if not ip_text:
             raise InstrumentRegistryError("登记地址需要非空 IP")
@@ -647,18 +701,18 @@ class InstrumentRegistry:
         entry["current_ip"] = ip_text
         entry["last_seen_at"] = timestamp
         self._validate()
-        updated = self.get_by_name(name)
+        updated = self.get_by_device_key(device_key)
         assert updated is not None
         return updated
 
     def set_status(self, instrument: Instrument | str, status: DeviceStatus) -> Instrument:
-        name = instrument if isinstance(instrument, str) else instrument.name
-        entry = self._find_entry(lambda item: normalize_text(item.get("name")) == normalize_text(name))
+        device_key = self._require_device_key(instrument)
+        entry = self._find_entry(lambda item: _entry_device_key(item) == device_key)
         if entry is None:
-            raise InstrumentRegistryError(f"设备表中没有资产 {name!r}")
+            raise InstrumentRegistryError(f"设备表中没有 device_key={device_key!r} 的设备")
         entry["status"] = status.value
         self._validate()
-        updated = self.get_by_name(name)
+        updated = self.get_by_device_key(device_key)
         assert updated is not None
         return updated
 
@@ -669,12 +723,12 @@ class InstrumentRegistry:
         “用户选择”的角色来源。``role=None`` 表示这台设备暂时不承担任何测试角色。
 
         旧槽位 ``PS1``..``PS4`` 仍可作为输入（兼容旧调用），字面量先原样写入内存；
-        :meth:`save` 时统一折叠成 ``power_supply``，并为该设备补生成短标签。
+        :meth:`save` 时统一折叠成 ``power_supply``，并为该设备补生成缩写设备码。
         """
-        name = instrument if isinstance(instrument, str) else instrument.name
-        entry = self._find_entry(lambda item: normalize_text(item.get("name")) == normalize_text(name))
+        device_key = self._require_device_key(instrument)
+        entry = self._find_entry(lambda item: _entry_device_key(item) == device_key)
         if entry is None:
-            raise InstrumentRegistryError(f"设备表中没有资产 {name!r}")
+            raise InstrumentRegistryError(f"设备表中没有 device_key={device_key!r} 的设备")
         if role is None:
             entry.pop("role", None)
         else:
@@ -685,7 +739,7 @@ class InstrumentRegistry:
                 )
             entry["role"] = role_value
         self._validate()
-        updated = self.get_by_name(name)
+        updated = self.get_by_device_key(device_key)
         assert updated is not None
         return updated
 

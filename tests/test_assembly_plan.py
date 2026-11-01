@@ -6,7 +6,7 @@
   返回一份**只读的计划对象**（仪器地址与能力参数、每台电源的地址与声明通道、
   通道 token、日志文本、急停顺序），**不导入 pyvisa**、不打开任何资源、不构造驱动；
 - 计划里没有原始配置段：配置 schema 的解释到计划为止，装配方按计划取事实，
-  不回读 ``["address"]`` / ``["channels"]`` / ``["serial"]`` 这类配置键；
+  不回读 ``["address"]`` / ``["channels"]`` / ``["full_code"]`` 这类配置键；
 - 校验失败在连接任何仪器之前发生：地址重复、角色缺失/重复、通道不存在、
   DUT 与驱动功放抢同一个通道、短标签重复；
 - 急停顺序由声明角色决定（先漏后栅），且只覆盖被分配的通道；
@@ -139,7 +139,7 @@ class AssemblyPlanBoundaryTests(unittest.TestCase):
         self.assertEqual(supply.declared_channels, ("CH1", "CH2"))
         # 详情/审计文本在计划里算一次；身份字段本身也带上，供身份核对使用。
         self.assertEqual(supply.identity_text, "DP8B1519")
-        self.assertIsNone(supply.serial)
+        self.assertIsNone(supply.full_code)
 
     def test_plan_is_read_only(self):
         plan = hardware_assembly_plan(_config())

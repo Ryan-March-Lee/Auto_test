@@ -25,10 +25,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from domain.instruments.labels import instrument_display_label
 from domain.instruments.models import (
     POWER_SUPPLY_ROLE,
     make_device_key,
-    normalize_serial,
+    normalize_full_code,
 )
 
 from .config_form_bindings import (
@@ -95,7 +96,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         QWidget.__init__(self, parent)
         self.config = config if isinstance(config, dict) else {}
         # 设备身份绑定：信号源/频谱仪各一条（角色键），电源按 ``supply_id`` 多条
-        # （``power_supplies``）。只记录用户明确应用过的设备；IP 变化时按序列号重新识别，
+        # （``power_supplies``）。只记录用户明确应用过的设备；IP 变化时按完整设备码重新识别，
         # 不靠地址记忆。绑定是仪器连接的唯一来源；构建界面之前就要就位，电源标签页的
         # 条目与电源分配的可选项都由它决定。
         self.device_bindings = effective_device_bindings(self.config)
@@ -225,7 +226,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
 
         面板归独立页面（:mod:`presentation.qt.connection_page`）所有：它只管扫描与
         勾选，不改配置、不连接仪器。用户点“应用所选设备到配置”时，面板把所选设备交给
-        本页，本页整批校验后把当前地址与设备身份（序列号）记进 :attr:`device_bindings`，
+        本页，本页整批校验后把当前地址与设备身份（完整设备码）记进 :attr:`device_bindings`，
         保存时随配置一起落盘，作为下次按身份重新识别设备的依据；面板只负责显示结果。
 
         “应用/清除”写的是配置页状态，因此信号连在本页；面板的日志经
@@ -248,7 +249,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         角色不是用户选的：它来自设备表 ``instruments.json`` 登记的 ``role``（旧槽位
         ``PS1``..``PS4`` 由面板折叠成 ``power_supply``），面板按它交付。这是写入的最终
         边界，因此它自己的校验必须完整，不能只依赖面板的勾选校验：角色未知、唯一角色
-        重复、地址为空、缺少设备身份、身份与序列号不一致、电源缺少 ``supply_id`` 或
+        重复、地址为空、缺少设备身份、身份与完整设备码不一致、电源缺少 ``supply_id`` 或
         ``supply_id`` 不能作为配置引用、同一台设备被重复绑定，任何一项都整批拒绝，
         不留下“一半已应用”的配置。
 
@@ -276,7 +277,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             return
 
         # 第一遍只看角色与电源引用：未知角色、唯一角色重复、电源没有可用的引用 ID 是
-        # “这一批要做什么”的问题，先报出来，避免用户看到的是地址/序列号之类更细节的错。
+        # “这一批要做什么”的问题，先报出来，避免用户看到的是地址/完整设备码之类更细节的错。
         used_roles: dict[str, str] = {}
         supply_ids: dict[str, str] = {}
         for item in entries:
@@ -289,9 +290,9 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
                 supply_id = self._supply_id_of(item)
                 if not supply_id:
                     reject(
-                        f"电源 {item.get('name') or item.get('ip')} 还没有短标签"
-                        "（supply_id），没有可写的配置引用；请先在设备表里保存一次为它"
-                        "补上标签，再重新扫描"
+                        f"电源 {item.get('model') or item.get('ip')} 还没有缩写设备码"
+                        "（label/supply_id），没有可写的配置引用；请先在设备表里保存一次为它"
+                        "补上缩写码，再重新扫描"
                     )
                     return
                 reason = supply_id_problem(supply_id)
@@ -299,8 +300,8 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
                     # 引用会拼成 ``supply_id/CHx``：含空白或 ``/`` 的标签写进配置后
                     # 路由会截断，宁可整批拒绝并指出要修的标签，也不悄悄改名。
                     reject(
-                        f"电源短标签 {supply_id!r} 不能作为配置引用（{reason}）；"
-                        "请先在设备表里修正该标签并保存，再重新扫描"
+                        f"电源缩写设备码 {supply_id!r} 不能作为配置引用（{reason}）；"
+                        "请先在设备表里修正该缩写码并保存，再重新扫描"
                     )
                     return
                 if supply_id in supply_ids:
@@ -326,36 +327,36 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             if not isinstance(address, str) or not address.strip():
                 reject(f"{role} 的发现地址为空，未应用")
                 return
-            serial = str(item.get("serial") or "").strip()
+            full_code = str(item.get("full_code") or "").strip()
             vendor = str(item.get("vendor") or "").strip()
-            if not serial:
-                reject(f"{role} 缺少设备身份（序列号），未应用")
+            if not full_code:
+                reject(f"{role} 缺少设备身份（完整设备码），未应用")
                 return
             device_key = str(item.get("device_key") or "").strip()
             if device_key and vendor:
                 try:
-                    expected = make_device_key(vendor, serial)
+                    expected = make_device_key(vendor, full_code)
                 except ValueError as error:
                     reject(f"{role} 的设备身份无法解析: {error}")
                     return
                 if device_key.casefold() != expected:
                     reject(
-                        f"{role} 的设备身份与序列号不一致（{device_key} ≠ {expected}），未应用"
+                        f"{role} 的设备身份与完整设备码不一致（{device_key} ≠ {expected}），未应用"
                     )
                     return
             identity = device_key.casefold()
             if device_key and not vendor:
-                # 只有 ``device_key`` 时至少要求它携带的序列号与本次读到的序列号一致，
+                # 只有 ``device_key`` 时至少要求它携带的完整设备码与本次读到的一致，
                 # 否则地址会被写到一个身份自相矛盾的名字下。
                 tail = device_key.rsplit(":", 1)[-1].strip().casefold()
-                if tail != normalize_serial(serial).casefold():
+                if tail != normalize_full_code(full_code).casefold():
                     reject(
-                        f"{role} 的设备身份与序列号不一致（{device_key} ≠ {serial}），未应用"
+                        f"{role} 的设备身份与完整设备码不一致（{device_key} ≠ {full_code}），未应用"
                     )
                     return
             if not identity and vendor:
                 try:
-                    identity = make_device_key(vendor, serial)
+                    identity = make_device_key(vendor, full_code)
                 except ValueError:
                     identity = ""
             if role == POWER_SUPPLY_ROLE and not identity:
@@ -363,7 +364,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
                 # 配置读取也会把这条记录判为不可用，等于写了一条坏绑定。
                 reject(
                     f"电源 {self._supply_id_of(item)} 缺少可用于绑定的设备身份"
-                    "（device_key，或厂商 + 序列号），未应用"
+                    "（device_key，或厂商 + 完整设备码），未应用"
                 )
                 return
             checked.append((item, identity))
@@ -388,11 +389,10 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         for item, identity in checked:
             role = item["role"]
             record = {
-                "name": item.get("name"),
                 "vendor": item.get("vendor"),
                 "model": item.get("model"),
-                "serial": item.get("serial"),
-                # 身份统一写成 ``厂商:序列号`` 的小写形式；记录必须带身份，才能在下一次
+                "full_code": item.get("full_code"),
+                # 身份统一写成 ``厂商:完整设备码`` 的小写形式；记录必须带身份，才能在下一次
                 # 扫描时按身份找回同一台设备。
                 "device_key": identity or item.get("device_key"),
                 "visa_address": item["address"].strip(),
@@ -404,14 +404,17 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
                 "source": "simulated" if item.get("simulated") else "scan",
             }
             if role == POWER_SUPPLY_ROLE:
-                # 集合的键就是引用 ID：记录里不再重复写 role/label/supply_id。
+                # 集合的键就是引用 ID（= 缩写设备码）：记录里不再重复写 label/supply_id。
                 supplies[self._supply_id_of(item)] = record
                 applied.append(f"电源 {self._supply_id_of(item)}")
             else:
+                # 信号源与频谱仪的缩写设备码没有别的存放位置：必须随绑定一起冻结，配置条目
+                # 与运行快照才能带上 short_code（``label``）。
+                record["label"] = item.get("label")
                 bindings[role] = record
                 applied.append(
                     f"{role_label(role) or role} "
-                    f"{item.get('name') or item.get('model') or item.get('ip')}"
+                    f"{item.get('model') or item.get('full_code') or item.get('ip')}"
                 )
         if supplies:
             bindings[POWER_SUPPLY_BINDINGS] = supplies
@@ -447,12 +450,12 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
 
     @staticmethod
     def _binding_labels(bindings) -> list[str]:
-        """把绑定结构显示成“信号发生器 SMW200A-1 / 电源 DP8B1519”这类可读标签。"""
+        """把绑定结构显示成“信号发生器 SMW200A（5462） / 电源 DP8B1519”这类可读标签。"""
         labels: list[str] = []
         for key, record in binding_records(bindings):
-            name = record.get("name") or record.get("model") or record.get("serial") or ""
             if key in ("signal_generator", "spectrum_analyzer"):
-                labels.append(f"{role_label(key) or key} {name}".strip())
+                text = instrument_display_label(record.get("label"), record.get("model"))
+                labels.append(f"{role_label(key) or key} {text}".strip())
             else:
                 labels.append(f"电源 {key}")
         return labels
@@ -532,7 +535,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
                     sources[str(key)] = dict(item)
         for supply_id, record in power_supply_bindings(self.device_bindings).items():
             entry = dict(sources.get(supply_id) or {})
-            for field in ("label", "model", "serial", "device_key"):
+            for field in ("label", "model", "full_code", "device_key"):
                 value = record.get(field)
                 if isinstance(value, str) and value.strip():
                     entry[field] = value
@@ -659,7 +662,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
     def update_power_supply_options(self):
         """刷新电源分配下拉框：只保留当前绑定的电源，失效引用保持空选择。
 
-        选项按 ``supply_id`` 重建，显示文本是短标签加型号（``DP8B1519（DP832A）``），
+        选项按 ``supply_id`` 重建，显示文本是型号加缩写设备码（``DP832A（DP8B1519）``），
         业务值放在 ``itemData``。刷新按**数据值**恢复上一次的选择，不按位置、不按可见
         文本：``QComboBox.clear()`` 会把当前项重置到第一项，按位置保存就会把“这台电源
         已经不在”变成一次看不见的分配改动。
@@ -697,8 +700,8 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         """
         base_config = self.config if base is None else base
         config = ConfigFormState(base_config, self).build_config()
-        # 设备身份绑定随配置一起保存：角色 -> 序列号等稳定标识。各仪器的 address 由
-        # 绑定里的当前地址写入（当前测量链路按地址连接），身份用于下次扫描时按序列号
+        # 设备身份绑定随配置一起保存：角色 -> 完整设备码等稳定标识。各仪器的 address 由
+        # 绑定里的当前地址写入（当前测量链路按地址连接），身份用于下次扫描时按完整设备码
         # 重新识别同一台设备，而不是依赖可能变化的 IP。
         if self.device_bindings:
             config["device_bindings"] = copy.deepcopy(self.device_bindings)

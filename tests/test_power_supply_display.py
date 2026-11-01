@@ -74,7 +74,7 @@ def _two_supply_config() -> dict:
                     "enabled": True,
                     "label": "DP8B1519",
                     "model": "DP832A",
-                    "serial": "DP8B214901519",
+                    "full_code": "DP8B214901519",
                     "device_key": "rigol technologies:dp8b214901519",
                     "channels": _channels(),
                 },
@@ -109,11 +109,11 @@ def _two_supply_config() -> dict:
 
 
 class DisplayLabelTests(unittest.TestCase):
-    """列表、标签页标题与下拉框上的 ``短标签（型号）``。"""
+    """列表、标签页标题与下拉框上的 ``型号（缩写设备码）``。"""
 
     def test_label_and_model_are_shown_together(self):
         self.assertEqual(
-            supply_display_label("DP8B1519", "DP832A"), "DP8B1519（DP832A）"
+            supply_display_label("DP8B1519", "DP832A"), "DP832A（DP8B1519）"
         )
 
     def test_missing_or_duplicate_model_shows_the_label_only(self):
@@ -137,7 +137,7 @@ class DisplayLabelTests(unittest.TestCase):
     def test_non_string_values_are_treated_as_missing(self):
         self.assertEqual(supply_display_label({"label": "DP8B1519"}, None), "")
         self.assertEqual(supply_display_label("DP8B1519", ["DP832A"]), "DP8B1519")
-        self.assertEqual(supply_display_label(105462, "DP832A"), "105462（DP832A）")
+        self.assertEqual(supply_display_label(105462, "DP832A"), "DP832A（105462）")
 
     def test_display_text_is_shared_with_the_projection(self):
         # 下拉框与标签页标题共用同一份规则：同一输入必须给出同一文本。
@@ -188,39 +188,39 @@ class InstrumentDisplayLabelTests(unittest.TestCase):
 
 
 class IdentityTextTests(unittest.TestCase):
-    """详情与审计：短标签 · 型号 · 完整序列号 · 设备键。"""
+    """详情与审计：型号（缩写设备码）· 完整设备码 · 设备键。"""
     def test_full_identity_lists_every_known_field_in_order(self):
         text = supply_identity_text(
             "DP8B1519", "DP832A", "DP8B214901519", "rigol technologies:dp8b214901519"
         )
         self.assertEqual(
             text,
-            "DP8B1519（DP832A）"
+            "DP832A（DP8B1519）"
             + DISPLAY_SEPARATOR
-            + "序列号 DP8B214901519"
+            + "完整设备码 DP8B214901519"
             + DISPLAY_SEPARATOR
             + "设备键 rigol technologies:dp8b214901519",
         )
         # 现场读得出来的短标签在最前，系统身份在最后。
-        self.assertTrue(text.startswith("DP8B1519"))
+        self.assertTrue(text.startswith("DP832A"))
         self.assertTrue(text.endswith("rigol technologies:dp8b214901519"))
 
     def test_missing_fields_are_omitted_not_invented(self):
         self.assertEqual(
-            supply_identity_text("DP8B1519", "DP832A"), "DP8B1519（DP832A）"
+            supply_identity_text("DP8B1519", "DP832A"), "DP832A（DP8B1519）"
         )
         self.assertEqual(supply_identity_text("DP8B1519"), "DP8B1519")
         # 没有标签也没有型号时只给序列号，不把序列号当标签显示。
         self.assertEqual(
-            supply_identity_text(None, None, "DP8B214901519"), "序列号 DP8B214901519"
+            supply_identity_text(None, None, "DP8B214901519"), "完整设备码 DP8B214901519"
         )
         self.assertEqual(supply_identity_text(None, None), "")
 
-    def test_old_entry_without_serial_shows_its_old_key_only(self):
-        # 旧槽位条目没有序列号：提示里只有旧键，不出现“序列号”一段。
+    def test_old_entry_without_full_code_shows_its_old_key_only(self):
+        # 旧槽位条目没有完整设备码：提示里只有旧键，不出现“完整设备码”一段。
         text = supply_identity_text("PS1", None, None, None)
         self.assertEqual(text, "PS1")
-        self.assertNotIn("序列号", text)
+        self.assertNotIn("完整设备码", text)
 
 
 class ChannelTextTests(unittest.TestCase):
@@ -246,35 +246,35 @@ class ChannelTextTests(unittest.TestCase):
 
 
 class IdentityVerdictTests(unittest.TestCase):
-    """配置序列号与设备 ``*IDN?`` 应答的核对：说清楚一致、不一致、无法比较。"""
+    """配置完整设备码与设备 ``*IDN?`` 应答的核对：说清楚一致、不一致、无法比较。"""
 
     IDN = "RIGOL TECHNOLOGIES,DP832A,DP8B214901519,00.01.16"
 
-    def test_matching_serial_is_reported_as_matched(self):
+    def test_matching_full_code_is_reported_as_matched(self):
         status, text = supply_identity_verdict("DP8B214901519", self.IDN)
         self.assertEqual(status, IDENTITY_MATCHED)
         self.assertEqual(text, IDENTITY_MATCHED)
 
-    def test_normalized_serial_still_matches(self):
+    def test_normalized_full_code_still_matches(self):
         # 引号/空白/大小写差异是同一个身份，不能报成不一致。
         for serial in (' "dp8b214901519" ', " DP8B214901519 "):
-            with self.subTest(serial=serial):
+            with self.subTest(full_code=serial):
                 self.assertEqual(
                     supply_identity_verdict(serial, self.IDN)[0], IDENTITY_MATCHED
                 )
 
-    def test_different_serial_reports_both_values(self):
+    def test_different_full_code_reports_both_values(self):
         status, text = supply_identity_verdict("DP8B174400885", self.IDN)
         self.assertEqual(status, IDENTITY_MISMATCHED)
         self.assertIn("DP8B174400885", text)
         self.assertIn("DP8B214901519", text)
 
-    def test_old_entry_without_a_serial_is_uncomparable_not_mismatched(self):
-        for serial in (None, "", "   ", {"serial": "DP8B214901519"}):
-            with self.subTest(serial=serial):
+    def test_old_entry_without_a_full_code_is_uncomparable_not_mismatched(self):
+        for serial in (None, "", "   ", {"full_code": "DP8B214901519"}):
+            with self.subTest(full_code=serial):
                 status, text = supply_identity_verdict(serial, self.IDN)
                 self.assertEqual(status, IDENTITY_UNCOMPARABLE)
-                self.assertIn("配置没有序列号", text)
+                self.assertIn("配置没有完整设备码", text)
                 self.assertNotIn(IDENTITY_MISMATCHED, text)
 
     def test_unparseable_idn_is_uncomparable(self):
@@ -285,8 +285,8 @@ class IdentityVerdictTests(unittest.TestCase):
                 self.assertEqual(status, IDENTITY_UNCOMPARABLE)
                 self.assertIn("*IDN? 应答读不出设备身份", text)
 
-    def test_order_number_serial_form_is_compared_on_the_serial_part(self):
-        # R&S 的 ``订单号/序列号``：只比序列号，订单号不是身份。
+    def test_order_number_form_is_compared_on_the_full_code_part(self):
+        # R&S 的 ``订单号/完整设备码``：只比完整设备码，订单号不是身份。
         idn = "Rohde&Schwarz,SMW200A,1412.0000K02/105462,5.20.043.47"
         self.assertEqual(supply_identity_verdict("105462", idn)[0], IDENTITY_MATCHED)
         self.assertEqual(

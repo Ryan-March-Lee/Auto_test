@@ -80,7 +80,7 @@ def _assignment_entry(combo: Any) -> dict:
     """从分配下拉框读出一条供电分配记录。
 
     引用值取自控件的 ``itemData``（即选中项的 ``supply_id``）：下拉框的显示文本是
-    ``DP8B1519（DP832A）`` 这类给人看的标签，业务值绝不能从显示字符串反解析。控件为空
+    ``DP832A（DP8B1519）`` 这类给人看的标签，业务值绝不能从显示字符串反解析。控件为空
     或选中项没有数据时按“引用未绑定”处理，不会把显示文本当成 ``supply_id``。
 
     写回时**主字段是 ``supply_id``**；过渡期同时写同名 ``name``，让尚未迁移到
@@ -100,7 +100,7 @@ def _assignment_entry(combo: Any) -> dict:
 def _combo_supply_id(combo: Any) -> str | None:
     """下拉框当前选中的电源 ``supply_id``；空选择或选中项没有数据时返回 ``None``。
 
-    只读 ``itemData``：显示文本带型号（``DP8B1519（DP832A）``），也可能因型号相同而
+    只读 ``itemData``：显示文本带型号（``DP832A（DP8B1519）``），也可能因型号相同而
     只是互相接近，回落到文本就等于“从显示字符串反解析身份”，会把标签原样写成
     ``supply_id``。没有 ``itemData`` 能力的控件因此被视为空选择，由校验明确报错。
     """
@@ -130,6 +130,25 @@ def _apply_device_binding(item: dict, binding: Any) -> None:
     item["enabled"] = bool(address)
     if address:
         item["address"] = address
+
+
+def _apply_identity_fields(item: dict, record: Any) -> None:
+    """把绑定记录里的设备身份写进配置条目；记录没有声明的字段保持原值。
+
+    记录里出现的字段才是本次绑定的身份来源；字段值为空时删除配置里的旧值，避免出现
+    “地址来自这台、身份还是上一台”的条目。记录完全没写的字段不删除，因为它可能是这台
+    设备自己的既有事实（发现结果不总是带齐所有字段）。
+    """
+    if not isinstance(record, Mapping):
+        return
+    for field in ("label", "model", "full_code", "device_key"):
+        if field not in record:
+            continue
+        value = record.get(field)
+        if isinstance(value, str) and value.strip():
+            item[field] = value
+        else:
+            item.pop(field, None)
 
 
 class ConfigFormState:
@@ -273,8 +292,9 @@ class ConfigFormState:
         旧槽位键（``PS1``..``PS4``）同样是“未绑定”的配置项：通道参数原样保留，地址与
         启用状态随绑定一起失效，等迁移器把参数改挂到真正的 ``supply_id`` 上。
 
-        身份字段（``device_key`` / ``serial`` / ``model``）只认绑定记录：记录里没有的
-        字段不能沿用配置里的旧值，否则会出现“地址来自这台、身份还是上一台”的条目。
+        身份字段（``label`` / ``model`` / ``full_code`` / ``device_key``）只认绑定记录里
+        实际出现的字段：记录没有的字段保留配置里的既有事实（发现结果不总是带齐型号等
+        字段），记录里出现但为空时则删除，避免出现“地址来自这台、身份还是上一台”的条目。
         """
         instruments = _dict_copy(self.config.get("instruments"))
         supplies = _dict_copy(instruments.get("power_supplies"))
@@ -284,29 +304,20 @@ class ConfigFormState:
         for name in list(supplies):
             item = _dict_copy(supplies.get(name))
             _apply_device_binding(item, power_records.get(name))
+            _apply_identity_fields(item, power_records.get(name))
             supplies[name] = item
         for supply_id, record in power_records.items():
             item = _dict_copy(supplies.get(supply_id))
             _apply_device_binding(item, record)
-            # 集合的键就是引用 ID，条目里保留同名 ``label`` 便于人读与旧读取方兼容；
-            # 身份字段只认绑定记录——记录里没有的字段要把配置里的旧值删掉，否则会出现
-            # “地址来自这台、身份还是上一台”的条目（绑定是连接身份的唯一权威来源）。
+            _apply_identity_fields(item, record)
+            # 集合的键就是引用 ID，条目里保留同名 ``label`` 便于人读与旧读取方兼容。
             item["label"] = supply_id
-            # 身份字段以绑定记录为准，但记录里**没有**某字段（发现结果不总是带型号）时
-            # 不能把配置里同一台的型号删掉：那是这台电源自己的既有事实，不是上一台的
-            # 残留。只有记录里出现的字段才覆盖旧值，保证“身份始终来自当前绑定”。
-            for field in ("device_key", "serial", "model"):
-                if field not in record:
-                    continue
-                value = record.get(field)
-                if isinstance(value, str) and value.strip():
-                    item[field] = value
-                else:
-                    item.pop(field, None)
             supplies[supply_id] = item
         for name in INSTRUMENT_ROLES:
             item = _dict_copy(instruments.get(name))
-            _apply_device_binding(item, bindings.get(name))
+            record = bindings.get(name)
+            _apply_device_binding(item, record)
+            _apply_identity_fields(item, record)
             instruments[name] = item
         instruments["power_supplies"] = supplies
         return {"instruments": instruments}

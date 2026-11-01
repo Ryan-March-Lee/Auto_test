@@ -170,40 +170,76 @@ class TestPlan:
 
 @dataclass(frozen=True)
 class InstrumentMapping:
+    """运行快照里的一台仪器（信号源、频谱仪或旧单数电源条目）。
+
+    新快照冻结 ``label`` / ``model`` / ``full_code`` / ``device_key`` / ``visa_address``，
+    运行期间不回查设备表；旧快照只有 ``model`` / ``visa_address``，读取时完整设备码仍从
+    旧字段 ``serial`` 投影，写出时只保留已知字段，避免把历史形状改写成半新半旧。
+
+    身份字段只能追加在既有的 ``model`` / ``visa_address`` 之后：按位置构造
+    ``InstrumentMapping(model, visa_address)`` 的调用不能被静默改写成别的字段。
+    """
+
     model: Optional[str] = None
     visa_address: Optional[str] = None
+    label: Optional[str] = None
+    full_code: Optional[str] = None
+    device_key: Optional[str] = None
 
     @classmethod
     def from_dict(cls, value: Any) -> "InstrumentMapping":
         value = value if isinstance(value, Mapping) else {}
-        return cls(model=value.get("model"), visa_address=value.get("visa_address"))
+        # 历史读取边界：旧运行快照把完整设备码写在 ``serial`` 里。
+        full_code = value.get("full_code")
+        if full_code is None:
+            full_code = value.get("serial")
+        return cls(
+            label=value.get("label"),
+            model=value.get("model"),
+            full_code=full_code,
+            device_key=value.get("device_key"),
+            visa_address=value.get("visa_address"),
+        )
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"model": self.model, "visa_address": self.visa_address}
+        fields = {
+            "label": self.label,
+            "model": self.model,
+            "full_code": self.full_code,
+            "device_key": self.device_key,
+            "visa_address": self.visa_address,
+        }
+        return {key: value for key, value in fields.items() if value is not None}
 
 
 @dataclass(frozen=True)
 class PowerSupplyMapping:
     """运行快照里的一台本机供电电源，自带身份而不是只有名称。
 
-    集合键（``RunResourceMapping.power_supplies``）是 ``supply_id``，即现场短标签；
-    ``device_key`` / ``serial`` 用于追溯，``visa_address`` 用于连接。快照冻结后不再
-    回查设备注册表，历史查看与重现都以这条记录为准。
+    集合键（``RunResourceMapping.power_supplies``）是 ``supply_id``，即现场缩写设备码；
+    ``device_key`` / ``full_code`` 用于追溯，``visa_address`` 用于连接。快照冻结后不再
+    回查设备注册表，历史查看与重现都以这条记录为准。新快照只写 ``full_code``，不写任何
+    旧字段名。
     """
 
     label: Optional[str] = None
     model: Optional[str] = None
-    serial: Optional[str] = None
+    full_code: Optional[str] = None
     device_key: Optional[str] = None
     visa_address: Optional[str] = None
 
     @classmethod
     def from_dict(cls, value: Any) -> "PowerSupplyMapping":
         value = value if isinstance(value, Mapping) else {}
+        # 历史读取边界：旧运行快照把完整设备码写在 ``serial`` 里。读入后立即投影为
+        # ``full_code``；新文档不再写出旧键。
+        full_code = value.get("full_code")
+        if full_code is None:
+            full_code = value.get("serial")
         return cls(
             label=value.get("label"),
             model=value.get("model"),
-            serial=value.get("serial"),
+            full_code=full_code,
             device_key=value.get("device_key"),
             visa_address=value.get("visa_address"),
         )
@@ -212,7 +248,7 @@ class PowerSupplyMapping:
         return {
             "label": self.label,
             "model": self.model,
-            "serial": self.serial,
+            "full_code": self.full_code,
             "device_key": self.device_key,
             "visa_address": self.visa_address,
         }
@@ -234,7 +270,7 @@ class PowerSupplyMapping:
         return cls(
             label=label,
             model=label,
-            serial=None,
+            full_code=None,
             device_key=label,
             visa_address=address if address is not None else instrument.visa_address,
         )
@@ -435,6 +471,7 @@ def validate_run_mapping(mapping: Union[RunResourceMapping, Mapping[str, Any]]) 
     if not isinstance(mapping.driver_enabled, bool):
         error("driver_mode.enabled", "必须是布尔值")
     # 电源是集合：不再要求单数 ``instruments.power_supply``，改为校验电源集合本身。
+    _validate_identity_field_conflicts(mapping, error)
     for name in ("signal_generator", "spectrum_analyzer"):
         instrument = mapping.instruments.get(name)
         if instrument is None:
@@ -646,6 +683,37 @@ def _validate_channels(channels: Mapping[str, PowerChannelPlan], path: str, erro
         _optional_number(channel.current_protection, f"{channel_path}.current_protection", error, non_negative=True)
 
 
+def _validate_identity_field_conflicts(mapping: RunResourceMapping, error: Any) -> None:
+    """同一快照条目不得同时写 ``serial`` 与 ``full_code``。
+
+    ``serial`` 只在历史读取边界被识别，读入后立即投影成 ``full_code``；新写出的快照只有
+    ``full_code``。两条同时出现说明文档里存在两份互相独立的“完整设备码”，无法判断哪一份
+    才是这台设备的身份，连接前的身份核验也就失去意义。只检查来源文档里真实出现的键，
+    程序内直接构造的映射没有这条冲突。
+    """
+    instruments = mapping.raw.get("instruments") if mapping.raw else None
+    if not isinstance(instruments, Mapping):
+        return
+    for name, entry in instruments.items():
+        if name == POWER_SUPPLIES_KEY and isinstance(entry, Mapping):
+            for supply_id, supply in entry.items():
+                if isinstance(supply, Mapping):
+                    _check_identity_fields(
+                        supply, f"instruments.{POWER_SUPPLIES_KEY}.{supply_id}", error
+                    )
+            continue
+        if isinstance(entry, Mapping):
+            _check_identity_fields(entry, f"instruments.{name}", error)
+
+
+def _check_identity_fields(entry: Mapping[str, Any], path: str, error: Any) -> None:
+    if "serial" in entry and "full_code" in entry:
+        error(
+            path,
+            "快照不能同时写 serial 与 full_code：完整设备码只有 full_code 一个字段",
+        )
+
+
 def _validate_power_supplies(mapping: RunResourceMapping, error: Any) -> None:
     """校验运行映射里的电源段。
 
@@ -655,7 +723,7 @@ def _validate_power_supplies(mapping: RunResourceMapping, error: Any) -> None:
       集合非不非空——``power_supplies: {}`` 加旧条目同样是混写；
     - 旧快照的单数条目仍在时，按旧规则检查它自己的 ``model`` / ``visa_address``，
       缺字段报在旧键上，历史运行不会因为换了结构而“读得进、校验不过”；
-    - 每条必须带身份：``label``、``model``、``serial``、``device_key``、``visa_address``；
+    - 每条必须带身份：``label``、``model``、``full_code``、``device_key``、``visa_address``；
     - 集合键必须是该条目的 ``label``（它同时是 ``supply_id/CHx`` 的路由前缀）；
     - 地址不能与其它仪器或另一台电源重复，``device_key`` 不能重复——同一台设备
       在快照里出现两次只能意味着写错了身份。
@@ -694,7 +762,7 @@ def _validate_power_supplies(mapping: RunResourceMapping, error: Any) -> None:
             continue
         if supply_id != supply.label:
             error(path, f"集合键必须是该电源的 label: {supply_id!r} != {supply.label!r}")
-        for field in ("label", "model", "serial", "device_key", "visa_address"):
+        for field in ("label", "model", "full_code", "device_key", "visa_address"):
             _required_text(getattr(supply, field), f"{path}.{field}", error)
         if isinstance(supply.device_key, str) and supply.device_key.strip():
             key = supply.device_key.strip()

@@ -86,7 +86,7 @@ def _gui_config(*, start_power: float = -10.0) -> dict:
                 "DP8B1519": {
                     "label": "DP8B1519",
                     "model": "DP832A",
-                    "serial": "DP8B214901519",
+                    "full_code": "DP8B214901519",
                     "device_key": "rigol technologies:dp8b214901519",
                     "address": "sim::ps1",
                     "enabled": True,
@@ -759,7 +759,7 @@ class CreatePreparedRunTests(unittest.TestCase):
         conflicting["instruments"]["power_supplies"]["DP8B0885"] = {
             "label": "DP8B0885",
             "model": "DP832A",
-            "serial": "DP8B174400885",
+            "full_code": "DP8B174400885",
             "device_key": "rigol technologies:dp8b174400885",
             "address": "sim::ps1",
             "enabled": True,

@@ -13,13 +13,13 @@ class PowerSupplyDiscoveryTests(DiscoveryPanelTestCase):
 
         self.run_scan(panel)
 
-        self.assertEqual(set(panel.card_headings()), {"DP8B1519", "DP8B0885"})
+        self.assertEqual(set(panel.card_headings()), {"DP832A（DP8B1519）", "DP832A（DP8B0885）"})
         for heading, card in zip(panel.card_headings(), panel.cards()):
             self.assertTrue(card.checkable)
             # 第一行只写仪器名（型号），最下面一行是短标签。
             self.assertEqual(card.name_label.text(), "DP832A")
-            # 卡片正面的身份码就是短标签：不再拼 ``PS/型号/序列号``，电源没有“第几台”。
-            self.assertEqual(card.code_label.text(), heading)
+            # 卡片正面的身份码就是缩写设备码：不再拼 ``PS/型号/完整设备码``，电源没有“第几台”。
+            self.assertEqual(heading, f"DP832A（{card.code_label.text()}）")
             self.assertFalse(card.code_label.text().startswith("PS/"))
         self.assertTrue(panel.apply_btn.isEnabled())
 
@@ -29,9 +29,9 @@ class PowerSupplyDiscoveryTests(DiscoveryPanelTestCase):
 
         self.run_scan(panel)
 
-        tip = panel.card_tooltip("DP8B1519")
-        self.assertIn("DP8B1519（DP832A）", tip)
-        self.assertIn("序列号 DP8B214901519", tip)
+        tip = panel.card_tooltip("DP832A（DP8B1519）")
+        self.assertIn("DP832A（DP8B1519）", tip)
+        self.assertIn("完整设备码 DP8B214901519", tip)
         self.assertIn("设备键 rigol technologies:dp8b214901519", tip)
         # 地址只作为连接信息单独一行，不参与身份判定。
         self.assertIn("地址 TCPIP0::192.168.1.102::inst0::INSTR", tip)
@@ -42,8 +42,8 @@ class PowerSupplyDiscoveryTests(DiscoveryPanelTestCase):
 
         self.run_scan(panel)
 
-        self.assertEqual(panel.card_status("DP8B1519"), "")
-        self.assertNotIn("没有短标签", panel.card_tooltip("DP8B0885"))
+        self.assertEqual(panel.card_status("DP832A（DP8B1519）"), "")
+        self.assertNotIn("没有短标签", panel.card_tooltip("DP832A（DP8B0885）"))
 
     def test_two_supplies_are_applied_independently_without_a_duplicate_role_error(self):
         panel = self.make_panel()
@@ -102,6 +102,6 @@ class PowerSupplyDiscoveryTests(DiscoveryPanelTestCase):
 
         self.run_scan(panel)
 
-        self.assertTrue(panel.card_checked("DP8B0885"))
-        self.assertFalse(panel.card_checked("DP8B1519"))
+        self.assertTrue(panel.card_checked("DP832A（DP8B0885）"))
+        self.assertFalse(panel.card_checked("DP832A（DP8B1519）"))
         self.assertIn("预选 1 台", panel.status_label.text())

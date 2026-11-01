@@ -630,7 +630,7 @@ class CoordinatorConfigSaveTests(unittest.TestCase):
                     "DP8B1519": {
                         "label": "DP8B1519",
                         "model": "DP832A",
-                        "serial": "DP8B214901519",
+                        "full_code": "DP8B214901519",
                         "device_key": "rigol technologies:dp8b214901519",
                         "address": "sim::ps1",
                         "enabled": True,
@@ -639,7 +639,7 @@ class CoordinatorConfigSaveTests(unittest.TestCase):
                     "DP8B0885": {
                         "label": "DP8B0885",
                         "model": "DP832A",
-                        "serial": "DP8B174400885",
+                        "full_code": "DP8B174400885",
                         "device_key": "rigol technologies:dp8b174400885",
                         "address": "sim::ps2",
                         "enabled": True,

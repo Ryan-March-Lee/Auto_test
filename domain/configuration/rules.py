@@ -245,7 +245,7 @@ def validate_config(config: Dict[str, Any]) -> ConfigValidationResult:
 def simulated_binding_issues(document: Any) -> List[ConfigIssue]:
     """返回“模拟扫描写入的设备绑定”问题列表。
 
-    模拟扫描只用于没有设备网络的开发机；它产生的地址与序列号不是现场事实。这样的
+    模拟扫描只用于没有设备网络的开发机；它产生的地址与完整设备码不是现场事实。这样的
     绑定可以被保存用于演示，但绝不能进入真实运行：否则一次演示点击就会让测量对着
     演示地址（或干脆连不上）跑出看似有效的结果。
 

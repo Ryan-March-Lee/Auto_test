@@ -1,8 +1,8 @@
 """初始化并灌入设备表（instruments.json）。
 
 首次运行创建 ``instruments.json``，并用一次现场扫描结果写入 5 台仪器。
-脚本可重复执行：设备按 ``(厂商, 序列号)`` 命中已有记录时只刷新固件/选件/状态/地址，
-不会重复建档，也不会改动已分配的资产名与同型号序号。
+脚本可重复执行：设备按 ``(厂商, 完整设备码)`` 命中已有记录时只刷新固件/选件/状态/地址，
+不会重复建档，也不会改动已分配的缩写设备码。
 
 用法::
 
@@ -114,12 +114,12 @@ def seed(registry: InstrumentRegistry, devices) -> int:
 
 def print_table(registry: InstrumentRegistry) -> None:
     instruments = registry.list()
-    print(f"{'资产名':<12}{'型号':<10}{'角色':<18}{'序列号':<16}{'当前IP':<16}{'MAC':<20}{'状态':<12}{'固件'}")
-    print("-" * 120)
+    print(f"{'型号':<12}{'缩写码':<14}{'角色':<18}{'完整设备码':<18}{'当前IP':<16}{'MAC':<20}{'状态':<12}{'固件'}")
+    print("-" * 130)
     for item in instruments:
         endpoint = item.current_endpoint
         print(
-            f"{item.name:<12}{item.model:<10}{(item.role or '未分配'):<18}{item.serial:<16}"
+            f"{item.model:<12}{(item.label or '-'):<14}{(item.role or '未分配'):<18}{item.full_code:<18}"
             f"{(endpoint.ip if endpoint else '-'):<16}"
             f"{(endpoint.mac if endpoint else '-'):<20}"
             f"{item.status.value:<12}{item.firmware or '-'}"

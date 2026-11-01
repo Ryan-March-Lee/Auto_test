@@ -43,7 +43,7 @@ FULLY_VALID_CONFIG = author_official_configuration({
                 "address": "sim::ps1",
                 "label": "PS1",
                 "model": "DP832A",
-                "serial": "SIM1519",
+                "full_code": "SIM1519",
                 "device_key": "rigol technologies:ps1",
                 "enabled": True,
                 "channels": {
@@ -508,7 +508,7 @@ class GuiRuntimePreparationTests(unittest.TestCase):
             config = json.loads(path.read_text(encoding="utf-8"))
             config["device_bindings"] = {
                 "signal_generator": {
-                    "serial": "105462",
+                    "full_code": "105462",
                     "device_key": "rohde&schwarz:105462",
                     "source": "simulated",
                 }
@@ -533,7 +533,7 @@ class GuiRuntimePreparationTests(unittest.TestCase):
             config = json.loads(path.read_text(encoding="utf-8"))
             config["device_bindings"] = {
                 "signal_generator": {
-                    "serial": "105462",
+                    "full_code": "105462",
                     "device_key": "rohde&schwarz:105462",
                     "source": "scan",
                 }

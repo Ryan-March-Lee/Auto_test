@@ -232,8 +232,8 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `application.inputs.result_reading` | 报告参数叠加（内部实现；输入必须是正式结果 DTO） |
 | `application.lifecycle` | 测量生命周期包 |
 | `domain.instruments` | 设备表领域包 |
-| `domain.instruments.labels` | 设备短标签生成与显示文本：序列号归一化复用、前缀提取、末四位与冲突扩展（纯计算，不写注册表；标签不含通道分隔符），标签对所有登记设备生效（电源的标签同时是 `supply_id`），以及电源与其它仪器各自的显示文本、详情与审计用的身份文本、日志里的通道名（短标签/CHx）与身份核对结论（日志、页面与发现卡片共用同一份） |
-| `domain.instruments.models` | 仪器身份解析（`device_key` = 厂商 + 序列号是唯一标识）、设备类别与短标签字段、旧槽位识别（`is_legacy_power_supply_slot`，只读兼容，不得用于生成电源键）、地址别名与在线状态模型 |
+| `domain.instruments.labels` | 设备缩写设备码生成与显示文本：完整设备码归一化复用、前缀提取、末四位与冲突扩展（纯计算，不写注册表；缩写码不含通道分隔符），缩写码对所有登记设备生效（电源的缩写码同时是 `supply_id`），以及电源与其它仪器统一的 `型号（缩写设备码）` 显示、详情与审计用的身份文本、日志里的通道名（缩写码/CHx）与身份核对结论（日志、页面与发现卡片共用同一份） |
+| `domain.instruments.models` | 仪器身份解析（`device_key` = 厂商 + 完整设备码是唯一标识）、可重复型号、缩写设备码字段、旧槽位识别（`is_legacy_power_supply_slot`，只读兼容，不得用于生成电源键）、地址别名与在线状态模型；不生成、不校验 `name` / `model_index` |
 | `domain.models` | 运行、测试方案与会话生命周期模型；测量结果契约在 `application.dto` |
 | `infrastructure.filesystem.atomic_json` | 原子 JSON 写入 |
 | `infrastructure.filesystem.paths` | 路径服务 |
@@ -243,29 +243,29 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `infrastructure.discovery.simulated_network` | 离线演示用的设备网络响应（仅模拟扫描模式，不会被当成现场结果） |
 | `infrastructure.persistence` | 持久化适配器包 |
 | `infrastructure.persistence.artifact_generator` | 自动归档产物（CSV 与测试报告）生成适配器：只读 manifest 已登记并校验过的正式结果，产物的受控路径固定在运行目录 `artifacts/` 下；`ArchiveArtifactGenerator` 把两类实现组合成归档服务持有的唯一生成端口 |
-| `infrastructure.persistence.instrument_registry` | 设备表 JSON 仓储：`device_key`（厂商 + 序列号）为唯一标识，IP 只是可漂移的地址别名，固定测试角色随设备登记 |
+| `infrastructure.persistence.instrument_registry` | 设备表 JSON 仓储：`device_key`（厂商 + 完整设备码）为唯一标识，型号可重复、缩写设备码全局唯一，IP 只是可漂移的地址别名，固定测试角色随设备登记；旧 schema 的 `serial` / `name` / `model_index` 只在读取边界投影为 `full_code` |
 | `infrastructure.persistence.json_encoder` | JSON 编码器 |
 | `infrastructure.persistence.json_result_repository` | 结果 JSON 实现细节 |
 | `infrastructure.persistence.run_directory` | 运行目录文件布局 |
 | `infrastructure.runtime.dependency_lock` | 锁定清单的严格解析、整份环境核对与漂移分类；公共入口是 `infrastructure.runtime` |
 | `infrastructure.runtime.runtime_contract` | 运行时契约实现；公共入口是 `infrastructure.runtime` |
-| `instrument.assembly_plan` | 硬件装配计划：把配置解析成一份**只读的计划对象**（信号源/频谱仪地址与能力参数、每台电源的地址/短标签/身份字段/声明通道、`gate`/`drain` 角色与 `supply_id/CHx` 路由 token、日志文本、急停顺序），不带原始配置段；只读配置不接触 VISA，地址重复/角色缺失或重复/通道不存在/引用歧义都在连接任何仪器之前失败 |
+| `instrument.assembly_plan` | 硬件装配计划：把配置解析成一份**只读的计划对象**（信号源/频谱仪地址与能力参数、每台电源的地址/缩写设备码/完整设备码/声明通道、`gate`/`drain` 角色与 `supply_id/CHx` 路由 token、日志文本、急停顺序），不带原始配置段；只读配置不接触 VISA，地址重复/角色缺失或重复/通道不存在/引用歧义都在连接任何仪器之前失败 |
 | `instrument.flow` | 安全流程包；application 只通过 `application.ports.measurement_session` 依赖清理端口 |
 | `instrument.measurement_adapter` | 测量服务端口的显式适配器：设备方法显式定义，不按方法名转发，也不从注入对象推导路由 |
 | `instrument.measurement_factory` | 硬件/离线测量端口装配：按装配计划打开 VISA 资源、构造驱动与会话（电源身份与初始输出检查在这里），装配失败时逆序释放已打开资源再抛原始异常；不解释任何配置键，配置解释在 `instrument.assembly_plan` |
-| `instrument.power_routing` | 供电分配解析：把分配里的电源引用（`supply_id`、旧 `label`、残留 `visual` 槽位）解析成唯一的已启用电源键，并把被分配的通道解析成 `gate`/`drain` 角色 token、电压电流设置、日志写法（`短标签/CHx`）与急停顺序；纯计算：不看仪器地址、不接触 VISA |
+| `instrument.power_routing` | 供电分配解析：把分配里的电源引用（`supply_id`、旧 `label`、残留 `visual` 槽位）解析成唯一的已启用电源键，并把被分配的通道解析成 `gate`/`drain` 角色 token、电压电流设置、日志写法（`缩写设备码/CHx`）与急停顺序；纯计算：不看仪器地址、不接触 VISA |
 | `instrument.safety` | 设备安全动作与资源所有权边界；关闭回调的安全标记按显式签名判定调用形式 |
 | `presentation.qt.application_coordinator` | GUI 运行协调器：配置、运行契约与仪器端口所有者（经 `ConfigurationPagePort` 与配置页交互） |
 | `presentation.qt.archival_page` | 测量页面共享的归档状态生命周期：等待归档、保存中、结果展示、终止事件与运行切换后的旧摘要清理；不读文件、不判断产物可用性 |
 | `presentation.qt.archival_status` | 归档结果到页面文案与按钮状态的映射：无 Qt、不读文件、不判断路径存在，四类状态各有独立提示 |
 | `presentation.qt.archival_view` | 归档结果分组控件：显示标题/说明并按提示启用“打开结果目录/测试报告”；位置由窗口注入；动态文案按纯文本渲染 |
-| `presentation.qt.config_form_bindings` | 设备绑定的读取与规范化：`device_bindings` 到 `supply_id` 集合、早期绑定结构与只有地址的旧配置折叠、不可用记录的问题清单（记录里声明出的厂商/序列号都必须是 `device_key` 的一部分，任一片段对不上即不可用；纯数据：不读控件、不写配置、不碰 Qt） |
+| `presentation.qt.config_form_bindings` | 设备绑定的读取与规范化：`device_bindings` 到 `supply_id` 集合、早期绑定结构与只有地址的旧配置折叠、不可用记录的问题清单（记录里声明出的厂商/完整设备码都必须是 `device_key` 的一部分，任一片段对不上即不可用；旧 `serial` 只在读取边界投影为 `full_code`；纯数据：不读控件、不写配置、不碰 Qt） |
 | `presentation.qt.config_form_state` | 配置表单状态：按控件最小读取协议读出配置片段、合并为配置、给出页面自己的校验说明（设备绑定的读取与规范化在 `config_form_bindings`；正式 schema 由 `configuration_authoring` 构造） |
 | `presentation.qt.config_page` | 配置页面（编辑配置编写文档；向协调器提供 `ConfigurationPagePort` 窄接口） |
 | `presentation.qt.config_page_widgets` | 配置页面控件构建辅助（固定操作栏布局 + 页面共用的数值框/下拉框工厂；控件仍登记在页面上） |
 | `presentation.qt.config_power_section` | 配置页电源分区的控件构建：按电源键分页的通道参数标签页与电源分配设置表单，控件仍登记在页面上（页面负责信号连接、派生界面状态与配置读写；条目、可选项与分配引用以显式声明的类型传入，不从控件或文件里取状态） |
 | `presentation.qt.connection_page` | 仪表配置页：欢迎页选定测试模式后的整屏页面（不登记进标签栏），大字号页标题、标题下居中的扫描网段与扫描方式、勾选并应用本次测试所需的设备（“查找设备”是结果区顶部、紧跟扫描行的落点，结果区不画外框）、结果区右下的“连接仪器”，应用后由“下一步”进入仪器配置页；设备绑定的写入与派生界面（电源标签页、电源分配可选项）仍归 config_page |
-| `presentation.qt.device_cards` | 设备发现的仪器展示卡片：第一行居中放大的仪器名（型号，如 `DP832A`、`SMW200A`），第二行仪器图片（不加底板、不描边，等比缩放到同一视觉体积），最下面是加粗放大的设备码缩写（电源用注册表短标签 `DP8B1519`，其它仪器 `角色缩写/型号/序列号`）；圆角矩形，点击卡片即选中；卡片尺寸 `CARD_WIDTH` × `CARD_HEIGHT` 是唯一来源，“查找设备”按钮也按它取大小 |
+| `presentation.qt.device_cards` | 设备发现的仪器展示卡片：第一行居中放大的仪器名（型号，如 `DP832A`、`SMW200A`），第二行仪器图片（不加底板、不描边，等比缩放到同一视觉体积），最下面是加粗放大的设备码（电源用注册表缩写设备码 `DP8B1519`，其它仪器 `角色缩写/型号/完整设备码`）；圆角矩形，点击卡片即选中；卡片尺寸 `CARD_WIDTH` × `CARD_HEIGHT` 是唯一来源，“查找设备”按钮也按它取大小 |
 | `presentation.qt.device_discovery_panel` | 仪器连接配置（设备发现）：扫描网段、结果区（不画外框：无边框、无底色，未查找时“查找设备”卡片按钮紧跟在扫描行下面，点下去后按钮收走、开始加载设备）、以卡片展示已登记/未分配角色/未登记/无法识别结果、点击卡片即选中并应用（角色取自设备表）、显示当前已绑定设备、清除设备绑定；扫描线程只读探测，不改配置也不连接仪器 |
 | `presentation.qt.scan_card` | “查找设备”的卡片按钮：按钮本体是与仪器卡片同大的自绘深色卡片（尺寸取自 `presentation.qt.device_cards` 的 `CARD_WIDTH` × `CARD_HEIGHT`，渐变卡面、四角角标、靛蓝柔光），正中的渐变标题写着“查找设备”，卡片内部有横向光带、扫描线与外飘粒子在动；悬停时卡面上的两行字在 0.6s 里淡到看不见，同一时间轴里霓虹光斑的模糊同时加厚（复刻原 CSS 的 `::after`，`::before` 的紫→蓝底卡不保留）；要露在卡片外面的两层（投影、光斑）画在同级、不进布局、不吃鼠标的透明覆盖层上，按钮因此与卡片一样大，伸到结果区上沿外面的柔光会淡出、不留硬边，点击行为仍由设备发现面板接手 |
 | `presentation.qt.config_projection` | 配置编写文档（authoring document）到配置页控件的确定性投影：重置、逐字段投影、非法类型回落；正式 `test_plan` / `run_mapping` 只由 `configuration_authoring` 生成 |

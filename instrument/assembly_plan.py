@@ -28,7 +28,7 @@
 - ``SupplyPlan.label``：现场短标签，只用于显示与错误消息；
 - ``channel_labels``：每个路由 token（``supply_id/CHx``）到日志写法（``短标签/CHx``）
   的映射，在拼 token 的同一处生成，调用方不必也不许从 token 反解析；
-- ``SupplyPlan.identity_text``：同一台电源的详情/审计文本（短标签 · 型号 · 完整序列号 ·
+- ``SupplyPlan.identity_text``：同一台电源的详情/审计文本（型号（缩写设备码）· 完整设备码 ·
   设备键），身份核对日志直接用它，不再从配置里各挑各的字段。
 """
 
@@ -87,7 +87,7 @@ class SupplyPlan:
     supply_id: str
     address: str
     label: str
-    serial: Any
+    full_code: Any
     identity_text: str
     declared_channels: tuple[str, ...]
 
@@ -215,11 +215,11 @@ def _supply_plan(
         supply_id=supply_id,
         address=supply_addresses[supply_id],
         label=label,
-        serial=power_config.get("serial"),
+        full_code=power_config.get("full_code"),
         identity_text=supply_identity_text(
             label,
             power_config.get("model"),
-            power_config.get("serial"),
+            power_config.get("full_code"),
             power_config.get("device_key"),
         ),
         declared_channels=tuple(declared_channels(power_config, supply_id)),

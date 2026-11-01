@@ -46,7 +46,7 @@ class ConfigurationSaveRoundTripTests(unittest.TestCase):
                         "address": "sim::ps1",
                         "label": "PS1",
                         "model": "DP832A",
-                        "serial": "SIM1519",
+                        "full_code": "SIM1519",
                         "device_key": "rigol technologies:ps1",
                         "enabled": True,
                         "channels": {

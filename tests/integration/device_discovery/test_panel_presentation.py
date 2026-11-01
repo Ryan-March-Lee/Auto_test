@@ -36,7 +36,7 @@ class CardPresentationTests(DiscoveryPanelTestCase):
         panel = self.make_panel(size=(760, 560))
         self.run_scan(panel)
 
-        card = panel.card_for("SMW200A-1")
+        card = panel.card_for("SMW200A（105462）")
         self.assertEqual(card.objectName(), "instrumentCard")
         self.assertIn("border-radius: 12px;", self.app.styleSheet())
         # 自上而下：仪器名第一行、图片第二行、设备码在最下面。
@@ -115,7 +115,7 @@ class CardPresentationTests(DiscoveryPanelTestCase):
     def test_selected_card_has_the_checked_property(self):
         panel = self.make_panel()
         self.run_scan(panel)
-        card = panel.card_for("4082F-1")
+        card = panel.card_for("4082F（QZNI000866）")
 
         self.assertFalse(card.property("checked"))
         QTest.mouseClick(card, Qt.LeftButton)

@@ -3,8 +3,8 @@
 设计边界：
 
 - **身份只认 ``*IDN?``**。探测到的 IP/端口只是“本次运行可达的地址”；设备身份仍由
-  :func:`domain.instruments.models.make_device_key` 派生的 ``厂商:序列号`` 决定，与
-  ``instruments.json`` 里的资产名无关。
+  :func:`domain.instruments.models.make_device_key` 派生的 ``厂商:完整设备码`` 决定，与
+  ``instruments.json`` 里的显示文本无关。
 - **未知设备同样出现在结果里**：身份可解析但设备表没有的标为
   :data:`DiscoveryStatus.UNREGISTERED`，端口有应答但读不出身份的标为
   :data:`DiscoveryStatus.UNIDENTIFIED`。两者都必须让用户看见，发现动作本身绝不静默
@@ -84,15 +84,15 @@ class DiscoveryStatus(str, Enum):
 class DiscoveredDevice:
     """一次扫描发现的设备（含未知设备）。
 
-    ``known_name`` 是设备表中已登记资产的名称（``型号-序号``）；未登记设备为
-    ``None``，界面据此显示“未知设备”。``known_role`` 是设备表登记的固定测试角色
-    **原字面量**（``signal_generator`` / ``spectrum_analyzer``，旧设备表里还有
-    ``PS1``..``PS4``）：现场每台仪器只承担一种角色，界面不再让用户选；未登记角色或未
-    登记设备时为 ``None``。要“这是哪一类设备”的规范取值请用 :attr:`role`，它把旧槽位
-    折叠成 ``power_supply``。
+    ``registered`` 表示这台设备是否已在设备表中登记；未登记设备为 ``False``，界面据此显示
+    “未知设备”。登记本身不提供第二个名字：型号可重复，设备之间靠缩写设备码区分。
+    ``known_role`` 是设备表登记的固定测试角色**原字面量**（``signal_generator`` /
+    ``spectrum_analyzer``，旧设备表里还有 ``PS1``..``PS4``）：现场每台仪器只承担一种角色，
+    界面不再让用户选；未登记角色或未登记设备时为 ``None``。要“这是哪一类设备”的规范取值
+    请用 :attr:`role`，它把旧槽位折叠成 ``power_supply``。
 
-    ``known_label`` 是设备表里冻结的现场短标签（= 配置里的 ``supply_id``）；
-    **发现过程绝不生成标签**，标签只来自注册表或注册动作，所以没有登记标签的设备
+    ``known_label`` 是设备表里冻结的现场缩写设备码（= 配置里的 ``supply_id``）；
+    **发现过程绝不生成缩写码**，缩写码只来自注册表或注册动作，所以没有登记缩写码的设备
     （含旧设备表的全部电源）这里是 ``None``。
 
     ``identity`` 为空表示端口有应答但身份读不出。
@@ -102,7 +102,7 @@ class DiscoveredDevice:
     port: int
     idn: str | None
     identity: InstrumentIdentity | None
-    known_name: str | None
+    registered: bool
     status: DeviceStatus
     error: str | None = None
     known_role: str | None = None
@@ -113,8 +113,8 @@ class DiscoveredDevice:
         return self.identity.device_key if self.identity else None
 
     @property
-    def serial(self) -> str | None:
-        return self.identity.serial if self.identity else None
+    def full_code(self) -> str | None:
+        return self.identity.full_code if self.identity else None
 
     @property
     def role(self) -> str | None:
@@ -147,7 +147,7 @@ class DiscoveredDevice:
 
     @property
     def has_identity(self) -> bool:
-        """是否解析出了设备身份（序列号）。这是能否绑定到角色的前提。"""
+        """是否解析出了设备身份（完整设备码）。这是能否绑定到角色的前提。"""
         return self.identity is not None
 
     @property
@@ -162,12 +162,12 @@ class DiscoveredDevice:
 
     @property
     def is_known(self) -> bool:
-        return self.known_name is not None
+        return self.registered
 
     @property
     def is_unknown_identity(self) -> bool:
         """身份可解析但设备表没有登记：界面上是“未知设备/未登记”。"""
-        return self.identity is not None and self.known_name is None
+        return self.identity is not None and not self.registered
 
     @property
     def is_unidentified(self) -> bool:
@@ -191,13 +191,14 @@ class DiscoveredDevice:
 
     @property
     def display_name(self) -> str:
-        """现场显示名：有短标签时用短标签，否则退回设备表里的资产名。"""
+        """现场显示名：有缩写设备码时用它，否则退回型号，再退回完整设备码。"""
         if self.known_label:
             return self.known_label
-        if self.known_name:
-            return self.known_name
         if self.identity is not None:
-            return f"未知设备 ({self.identity.model})"
+            if not self.registered:
+                model = self.identity.model
+                return f"未知设备 ({model})" if model else "未知设备"
+            return self.identity.model or self.identity.full_code
         return "未知设备"
 
     def to_dict(self) -> dict[str, Any]:
@@ -209,9 +210,9 @@ class DiscoveredDevice:
             "idn": self.idn,
             "vendor": identity.vendor if identity else None,
             "model": identity.model if identity else None,
-            "serial": self.serial,
+            "full_code": self.full_code,
             "device_key": self.device_key,
-            "known_name": self.known_name,
+            "registered": self.registered,
             "label": self.known_label,
             "supply_id": self.supply_id,
             # ``role`` 是折叠后的类别（旧槽位 ``PS3`` 也写 ``power_supply``），
@@ -413,8 +414,8 @@ def _resolve_devices(
 class InstrumentScanner:
     """按网段并发的 SCPI 发现器。
 
-    ``registry`` 只做只读查询：已登记设备按 ``厂商:序列号`` 匹配资产名、角色与已冻结的
-    短标签，未匹配的设备以未知身份返回。扫描不会写设备表（因此也不会分配标签）、不会
+    ``registry`` 只做只读查询：已登记设备按 ``厂商:完整设备码`` 匹配角色与已冻结的
+    缩写设备码，未匹配的设备以未知身份返回。扫描不会写设备表（因此也不会生成缩写码）、不会
     打开 VISA 会话，也不会发送除 ``*IDN?`` 之外的任何命令。
 
     取消通过 :meth:`request_cancel` 发起，可从任意线程调用；扫描会在下一个结果边界
@@ -561,7 +562,7 @@ class InstrumentScanner:
                 port=port,
                 idn=None,
                 identity=None,
-                known_name=None,
+                registered=False,
                 status=DeviceStatus.UNREACHABLE,
                 error="端口有应答但 *IDN? 为空",
             )
@@ -574,7 +575,7 @@ class InstrumentScanner:
                 port=port,
                 idn=text,
                 identity=None,
-                known_name=None,
+                registered=False,
                 status=DeviceStatus.UNREACHABLE,
                 error=str(error),
             )
@@ -584,11 +585,11 @@ class InstrumentScanner:
             port=port,
             idn=text,
             identity=identity,
-            known_name=known.name if known is not None else None,
+            registered=known is not None,
             # 未登记设备的资产状态是“未知”，不是“在线”：在线与否要等登记并确认。
             status=DeviceStatus.ONLINE if known is not None else DeviceStatus.UNKNOWN,
             known_role=known.role if known is not None else None,
-            # 短标签只读设备表里已冻结的值：发现过程不生成标签，也不改写设备表。
+            # 缩写码只读设备表里已冻结的值：发现过程不生成缩写码，也不改写设备表。
             known_label=known.label if known is not None else None,
         )
 

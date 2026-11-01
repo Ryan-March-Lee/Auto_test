@@ -150,7 +150,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         saved["instruments"]["power_supplies"]["DP8B0885"] = {
             "label": "DP8B0885",
             "model": "DP832A",
-            "serial": "DP8B174400885",
+            "full_code": "DP8B174400885",
             "device_key": "rigol technologies:dp8b174400885",
             "address": "sim::ps2",
             "enabled": True,
@@ -158,7 +158,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         }
         saved["device_bindings"]["power_supplies"]["DP8B0885"] = {
             "device_key": "rigol technologies:dp8b174400885",
-            "serial": "DP8B174400885",
+            "full_code": "DP8B174400885",
             "model": "DP832A",
             "visa_address": "sim::ps2",
             "source": "scan",
@@ -183,7 +183,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIsNotNone(prepared)
         mapping = prepared.configuration.run_mapping
         self.assertEqual(sorted(mapping.power_supplies), ["DP8B0885", "DP8B1519"])
-        self.assertEqual(mapping.power_supplies["DP8B0885"].serial, "DP8B174400885")
+        self.assertEqual(mapping.power_supplies["DP8B0885"].full_code, "DP8B174400885")
         self.assertEqual(mapping.power_supplies["DP8B0885"].visa_address, "sim::ps2")
         self.assertEqual(
             [(item.channel, item.role) for item in mapping.dut_power_channels],

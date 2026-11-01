@@ -3,24 +3,24 @@
 迁移只回答一个问题：**旧配置里的每个电源条目和每条供电分配，能不能用已登记的身份
 改写成新字段**。它不扫描设备，也不猜身份：
 
-- 身份判据只有 ``device_key``（``厂商:序列号``）与注册表里冻结的短标签 ``label``；
+- 身份判据只有 ``device_key``（``厂商:完整设备码``）与注册表里冻结的缩写设备码 ``label``；
 - 旧地址 ``TCPIP0::…`` 只作重新扫描的线索（``address_hint``），**不参与**身份判定；
 - 认不出是哪一台的旧条目不会凭空得到身份，它的通道参数与仍引用它的分配写进迁移摘要，
   由操作员按摘要重新扫描后重填（摘要把每个旧条目的判定、身份与参数逐行写清）。
 
 判定顺序::
 
-    1. 旧条目自带 ``device_key`` / ``serial``，注册表唯一命中    -> migrated
+    1. 旧条目自带 ``device_key`` / 完整设备码，注册表唯一命中      -> migrated
     2. 旧键是 ``PSn``，注册表正好有一条 ``role == PSn``          -> migrated
     3. 旧键是 ``PSn``，该角色对应多台 / 命中的设备已有新键       -> conflict
     4. 身份字段互相矛盾、注册表里身份不唯一、``device_key`` 不在册 -> conflict
     5. 旧条目只有 ``address``（地址命中注册表也只是线索）        -> needs_rescan
-    6. 旧条目既无 ``address`` 也无 ``serial``                    -> unidentifiable
+    6. 旧条目既无 ``address`` 也无完整设备码                      -> unidentifiable
     7. 两个旧条目落在同一 ``device_key``                         -> conflict（阻止整次迁移）
 
-**身份字段之间必须互相印证**：旧条目同时写 ``device_key`` 与 ``serial`` 时，两者必须指向
-设备表里的同一条记录；指向不同设备、或注册表里同一 ``device_key`` / 序列号对应多条记录，
-都按“无法确认是哪一台”报 ``conflict``，绝不按字段顺序挑一个继续迁移。
+**身份字段之间必须互相印证**：旧条目同时写 ``device_key`` 与完整设备码时，两者必须指向
+设备表里的同一条记录；指向不同设备、或注册表里同一 ``device_key`` / 完整设备码对应多条
+记录，都按“无法确认是哪一台”报 ``conflict``，绝不按字段顺序挑一个继续迁移。
 
 迁移的输入与输出都是内存对象：:func:`migrate_legacy_power_supplies` 返回目标配置与逐条摘要，
 不改入参、不写盘。**只有每一条旧条目都 ``migrated``、且没有仍为空的供电分配引用时，结果才
@@ -49,8 +49,8 @@ from urllib.parse import unquote
 from domain.configuration.rules import ASSIGNMENT_GROUPS, assignment_supply_id
 from domain.instruments.models import (
     LEGACY_ROLES,
+    normalize_full_code,
     normalize_role,
-    normalize_serial,
     normalize_text,
 )
 from infrastructure.config.json_config_repository import JsonConfigurationRepository
@@ -65,8 +65,8 @@ from infrastructure.persistence.instrument_registry import (
 
 PathLike = Any
 
-# 迁移摘要的版本号；摘要结构变化时递增。
-SUMMARY_SCHEMA_VERSION = 1
+# 迁移摘要的版本号；摘要结构变化时递增（2：完整设备码改名为 full_code）。
+SUMMARY_SCHEMA_VERSION = 2
 
 # 迁移判定结果：只有这四种。
 STATUS_MIGRATED = "migrated"
@@ -83,7 +83,7 @@ MIGRATION_STATUSES = (
 STATUSES_REQUIRING_ACTION = (STATUS_NEEDS_RESCAN, STATUS_UNIDENTIFIABLE, STATUS_CONFLICT)
 
 # 集合键与条目内部重复的身份字段：新格式只从注册表取身份，旧条目里的同名键不沿用。
-_IDENTITY_FIELDS = ("label", "device_key", "serial", "model")
+_IDENTITY_FIELDS = ("label", "device_key", "full_code", "serial", "model")
 _SEPARATOR = "/"
 _IPV4 = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
 # 供电角色与连接说明的措辞与配置作者（``presentation.qt.configuration_authoring``）一致：
@@ -111,7 +111,7 @@ class LegacyMigrationEntry:
     status: str
     new_key: Optional[str]
     device_key: Optional[str]
-    serial: Optional[str]
+    full_code: Optional[str]
     label: Optional[str]
     address_hint: Optional[str]
     reason: str
@@ -128,7 +128,7 @@ class LegacyMigrationEntry:
             "status": self.status,
             "new_key": self.new_key,
             "device_key": self.device_key,
-            "serial": self.serial,
+            "full_code": self.full_code,
             "label": self.label,
             "address_hint": self.address_hint,
             "reason": self.reason,
@@ -291,14 +291,14 @@ def _match_identity(
     ``registry`` 必须是**原样**设备表：旧槽位 ``PS3`` 记录的 ``role`` 在补标签时会被折叠成
     ``power_supply``，那之后就回答不了“哪个旧键对应哪台设备”了。
 
-    身份字段之间必须互相印证：``device_key`` 与 ``serial`` 指向不同记录、注册表里同一
-    ``device_key`` / 同一序列号对应多条记录、或旧条目声明的 ``device_key`` 根本不在设备表里，
-    都返回 ``conflict``——这些都是“数据需要人核对”的信号，不是“换一台猜”的理由。
+    身份字段之间必须互相印证：``device_key`` 与完整设备码指向不同记录、注册表里同一
+    ``device_key`` / 同一完整设备码对应多条记录、或旧条目声明的 ``device_key`` 根本不在
+    设备表里，都返回 ``conflict``——这些都是“数据需要人核对”的信号，不是“换一台猜”的理由。
     """
     records = _registry_records(registry)
-    serial = normalize_serial(entry.get("serial"))
+    full_code = _entry_full_code(entry)
     device_key = normalize_text(entry.get("device_key")).casefold()
-    if not serial and not device_key:
+    if not full_code and not device_key:
         # 没有自带身份时才退回旧槽位角色：``PS3`` 对应哪台设备由设备表登记的角色回答。
         role = normalize_text(old_key)
         if role in LEGACY_ROLES:
@@ -312,49 +312,48 @@ def _match_identity(
         for record in records
         if device_key and _record_device_key(record) == device_key
     )
-    by_serial = tuple(
+    by_code = tuple(
         record
         for record in records
-        if serial and normalize_serial(record.get("serial")).casefold() == serial.casefold()
+        if full_code and _record_full_code(record).casefold() == full_code.casefold()
     )
     if len(by_key) > 1:
         return _IdentityEvidence(
             conflict=(
                 f"设备表里有 {len(by_key)} 条记录共用 device_key {device_key!r}"
-                f"（{'、'.join(_record_name(record) for record in by_key)}）；"
+                f"（{'、'.join(_record_description(record) for record in by_key)}）；"
                 "同一台设备只能登记一次，请先改正设备表"
             )
         )
-    if len(by_serial) > 1:
+    if len(by_code) > 1:
         return _IdentityEvidence(
             conflict=(
-                f"设备表里有 {len(by_serial)} 条记录共用序列号 {serial}"
-                f"（{'、'.join(_record_name(record) for record in by_serial)}）；"
-                "序列号重复时无法确认是哪一台，请先改正设备表"
+                f"设备表里有 {len(by_code)} 条记录共用完整设备码 {full_code}"
+                f"（{'、'.join(_record_description(record) for record in by_code)}）；"
+                "完整设备码重复时无法确认是哪一台，请先改正设备表"
             )
         )
     if device_key:
         if not by_key:
-            if not by_serial:
+            if not by_code:
                 return _IdentityEvidence()
             return _IdentityEvidence(
                 conflict=(
                     f"旧条目声明的 device_key {device_key!r} 不在设备表里；"
-                    "旧配置与设备表不一致，请核对后重试（不能只凭序列号猜成另一台设备）"
+                    "旧配置与设备表不一致，请核对后重试（不能只凭完整设备码猜成另一台设备）"
                 )
             )
-        if by_serial and by_serial[0] is not by_key[0]:
-            # device_key 与 serial 指向两台不同的设备：这是数据矛盾，不是“取更可信的那个”。
+        if by_code and by_code[0] is not by_key[0]:
+            # device_key 与完整设备码指向两台不同的设备：这是数据矛盾，不是“取更可信的那个”。
             return _IdentityEvidence(
                 conflict=(
-                    f"旧条目自相矛盾：device_key 指向 {_record_name(by_key[0])}"
-                    f"（序列号 {_record_serial(by_key[0])}），"
-                    f"序列号 {serial} 却属于 {_record_name(by_serial[0])}；"
+                    f"旧条目自相矛盾：device_key 指向 {_record_description(by_key[0])}，"
+                    f"完整设备码 {full_code} 却属于 {_record_description(by_code[0])}；"
                     "请核对旧配置与设备表后重试"
                 )
             )
         return _IdentityEvidence((by_key[0],))
-    return _IdentityEvidence((by_serial[0],) if by_serial else ())
+    return _IdentityEvidence((by_code[0],) if by_code else ())
 
 
 def _with_labeled_identity(
@@ -416,7 +415,7 @@ def _classify_entry(
             status=status,
             new_key=resolved_label if status == STATUS_MIGRATED else None,
             device_key=_record_device_key(identity),
-            serial=normalize_serial(identity.get("serial")) or None,
+            full_code=_record_full_code(identity) or None,
             label=resolved_label,
             address_hint=hint,
             reason=reason,
@@ -434,14 +433,14 @@ def _classify_entry(
         return verdict(
             STATUS_CONFLICT,
             f"旧键 {old_key} 同时对应 {len(matches)} 台已登记设备（"
-            + "、".join(f"{_record_name(record)}/{_record_serial(record)}" for record in matches)
+            + "、".join(_record_description(record) for record in matches)
             + "），不能确定是哪一台；请先在设备表里改正角色后重试",
         )
     if not matches:
         if address:
             return verdict(
                 STATUS_NEEDS_RESCAN,
-                f"旧条目只有地址，没有序列号；{address} "
+                f"旧条目只有地址，没有完整设备码；{address} "
                 + (
                     "不是任何已登记设备的地址"
                     if hint is None
@@ -451,43 +450,43 @@ def _classify_entry(
             )
         return verdict(
             STATUS_UNIDENTIFIABLE,
-            f"旧条目既没有地址也没有序列号，无法识别是哪台设备；"
-            f"设备表里没有 role={old_key} 或序列号能对上的已登记电源"
+            f"旧条目既没有地址也没有完整设备码，无法识别是哪台设备；"
+            f"设备表里没有 role={old_key} 或完整设备码能对上的已登记电源"
             f"（若设备表已迁移过、旧槽位角色已折叠成 power_supply，旧键就无法再对应到设备），"
             "也不能凭型号猜测它是电源",
         )
 
     record = matches[0]
     label = normalize_text(record.get("label"))
-    serial = normalize_serial(record.get("serial"))
+    full_code = _record_full_code(record)
     name = _record_name(record)
-    if not serial:
+    if not full_code:
         return verdict(
             STATUS_CONFLICT,
-            f"旧键 {old_key} 命中的设备 {name} 没有序列号，无法确认身份；请修正设备表后重试",
+            f"旧键 {old_key} 命中的设备 {name} 没有完整设备码，无法确认身份；请修正设备表后重试",
         )
     if _identity_source(entry):
-        matched_by = "device_key" if normalize_text(entry.get("device_key")) else "序列号"
-        reason = f"旧条目自带设备身份，按{matched_by}命中 {name}（序列号 {serial}）；"
-        claimed = normalize_serial(entry.get("serial"))
-        if claimed and claimed != serial:
-            # device_key 唯一命中、序列号却写着别的值：迁移按 device_key 走，但把不一致说出来，
-            # 不让操作员以为旧条目里的序列号也被采信了。
-            reason += f"注意旧条目写的序列号 {claimed} 与设备表不一致，迁移以 device_key 为准；"
+        matched_by = "device_key" if normalize_text(entry.get("device_key")) else "完整设备码"
+        reason = f"旧条目自带设备身份，按{matched_by}命中 {name}（完整设备码 {full_code}）；"
+        claimed = _entry_full_code(entry)
+        if claimed and claimed != full_code:
+            # device_key 唯一命中、完整设备码却写着别的值：迁移按 device_key 走，但把不一致
+            # 说出来，不让操作员以为旧条目里的完整设备码也被采信了。
+            reason += f"注意旧条目写的完整设备码 {claimed} 与设备表不一致，迁移以 device_key 为准；"
     else:
         reason = (
-            f"旧槽位按注册表 role={old_key} 命中唯一设备 {name}（序列号 {serial}）；"
+            f"旧槽位按注册表 role={old_key} 命中唯一设备 {name}（完整设备码 {full_code}）；"
         )
     if not label:
         return verdict(
             STATUS_NEEDS_RESCAN,
-            f"旧键 {old_key} 命中的设备 {name}（序列号 {serial}）还没有短标签；"
-            "请先保存一次设备表补齐标签，再重新迁移",
+            f"旧键 {old_key} 命中的设备 {name}（完整设备码 {full_code}）还没有缩写设备码；"
+            "请先保存一次设备表补齐缩写码，再重新迁移",
         )
     if _SEPARATOR in label or any(char.isspace() for char in label):
         return verdict(
             STATUS_CONFLICT,
-            f"旧键 {old_key} 命中的设备 {name} 的短标签 {label!r} 不能当 supply_id 用"
+            f"旧键 {old_key} 命中的设备 {name} 的缩写设备码 {label!r} 不能当 supply_id 用"
             f"（不得含空白或 {_SEPARATOR!r}），请在设备表里改正后重试",
         )
     reason += "迁移后保持未绑定未启用，需在配置页选中该设备"
@@ -497,7 +496,7 @@ def _classify_entry(
     if owner is not None and owner != old_key:
         return verdict(
             STATUS_CONFLICT,
-            f"旧键 {old_key} 与 {owner} 落到同一台设备 {name}（序列号 {serial}）上；"
+            f"旧键 {old_key} 与 {owner} 落到同一台设备 {name}（完整设备码 {full_code}）上；"
             "两台设备才能各占一条电源配置，不能自动合并，请人工处理",
             record=record,
             label=label,
@@ -506,7 +505,7 @@ def _classify_entry(
         # 旧键本身就是 ``supply_id``：这是已经迁移过的条目（迁移可重复执行）。
         return verdict(
             STATUS_MIGRATED,
-            f"条目已按 supply_id 写在新格式下，命中 {name}（序列号 {serial}）；原样保留",
+            f"条目已按 supply_id 写在新格式下，命中 {name}（完整设备码 {full_code}）；原样保留",
             record=record,
             label=label,
         )
@@ -528,8 +527,9 @@ def migrate_legacy_power_supplies(
 
     ``registry`` 的两种写法都接受：
 
-    - 已迁移的设备表（``schema_version: 3``，电源带 ``label``）；
-    - 现场旧设备表（``schema_version: 2``，``role: "PS3"``、没有 ``label``）。此时
+    - 已迁移的设备表（``schema_version: 4``，电源带 ``label`` 与 ``full_code``）；
+    - 现场旧设备表（``schema_version`` 1/2/3，``role: "PS3"``、没有 ``label``，完整设备码可能
+      仍写在 ``serial`` 里）。此时
       ``migrate_registry_labels=True`` 会先在**内存副本**上按步骤 4 的规则补齐短标签
       （旧槽位折叠成 ``power_supply``，按序列号生成标签），迁移用的就是这份补全后的设备表。
       调用方要落盘时用 :func:`persist_registry_labels`：配置迁移不会悄悄改写设备表。
@@ -539,7 +539,7 @@ def migrate_legacy_power_supplies(
     目标配置的写法：
 
     - ``instruments.power_supplies`` 的键改为 ``supply_id`` 并补上 ``label`` / ``device_key`` /
-      ``serial`` / ``model``；通道参数与未知字段原样保留；旧 ``enabled`` 不沿用——可用性只
+      ``full_code`` / ``model``；通道参数与未知字段原样保留；旧 ``enabled`` 不沿用——可用性只
       来自设备绑定：有带身份的绑定记录时地址与 ``enabled: true`` 一起写回（与配置页
       ``_apply_device_binding`` 同一条规则），否则写 ``enabled: false`` 且不留地址；旧条目的
       ``address`` 只在这两种情况下写进配置，其余情况删除并把旧值留在摘要 ``legacy_address``
@@ -765,7 +765,7 @@ def _migrated_supply_entries(
 ) -> Dict[str, Any]:
     """新 ``power_supplies`` 集合：键是 ``supply_id``，身份取自命中的注册表记录。
 
-    旧条目自己的 ``label`` / ``device_key`` / ``serial`` / ``model`` 一律丢弃：身份只有一个
+    旧条目自己的 ``label`` / ``device_key`` / ``full_code`` / ``serial`` / ``model`` 一律丢弃：身份只有一个
     来源（设备表）。旧 ``address`` 先删除，等设备绑定确认过再补回
     （:func:`_apply_trusted_bindings`）。**旧键已经等于新键的条目原样保留**：它们本来就是
     新格式，重写只会把参数与地址再动一次，也会让迁移无法重复执行。
@@ -787,7 +787,7 @@ def _migrated_supply_entries(
         # 可用电源只来自设备绑定：迁移不沿用旧的“启用”标志。
         migrated["label"] = entry.label
         migrated["device_key"] = entry.device_key
-        migrated["serial"] = entry.serial
+        migrated["full_code"] = entry.full_code
         migrated["model"] = entry.model
         migrated["enabled"] = False
         entries[entry.new_key] = migrated
@@ -904,15 +904,36 @@ def _rewrite_device_bindings(
                 # 只有地址的旧绑定（source=legacy_config）不是身份，必须重新扫描。
                 continue
             prepared = copy.deepcopy(dict(source_record))
+            prepared.pop("name", None)
+            if "full_code" not in prepared:
+                prepared["full_code"] = prepared.get("serial")
+            prepared.pop("serial", None)
             prepared["label"] = migrated.label
             prepared["supply_id"] = migrated.new_key
             power_bindings.setdefault(migrated.new_key, prepared)
             continue
-        kept[key] = record
+        kept[key] = _current_binding_record(record)
     # 电源绑定是一个集合：旧槽位键移除后仍保留这个键，文件自身就能说明“还没有绑定”。
     kept["power_supplies"] = power_bindings
     target["device_bindings"] = kept
     return power_bindings
+
+
+def _current_binding_record(record: Any) -> Any:
+    """把一条保留的绑定记录投影成当前字段：``serial`` -> ``full_code``，丢弃旧资产名。
+
+    迁移写出的是**新文档**：旧字段名只在读入时识别一次，不能继续带进结果。``name`` 是
+    已退役的资产名，``serial`` 由 ``full_code`` 取代；两者同时出现时以 ``full_code`` 为准。
+    非映射记录原样返回，交给使用方按“不是一条绑定记录”处理。
+    """
+    if not isinstance(record, Mapping):
+        return record
+    prepared = copy.deepcopy(dict(record))
+    prepared.pop("name", None)
+    if "full_code" not in prepared:
+        prepared["full_code"] = prepared.get("serial")
+    prepared.pop("serial", None)
+    return prepared
 
 
 def _rewrite_run_mapping(target: Dict[str, Any]) -> None:
@@ -1040,7 +1061,7 @@ def _run_mapping_supply_entry(
     return {
         "label": label,
         "model": supply.get("model"),
-        "serial": supply.get("serial"),
+        "full_code": supply.get("full_code"),
         "device_key": device_key,
         "visa_address": normalize_text(supply.get("address")) or None,
     }
@@ -1079,23 +1100,56 @@ def _record_device_key(record: Mapping[str, Any]) -> Optional[str]:
     if declared:
         return declared
     vendor = normalize_text(record.get("vendor")).casefold()
-    serial = normalize_serial(record.get("serial")).casefold()
-    if vendor and serial:
-        return f"{vendor}:{serial}"
+    full_code = _record_full_code(record).casefold()
+    if vendor and full_code:
+        return f"{vendor}:{full_code}"
     return None
 
 
+def _record_full_code(record: Mapping[str, Any]) -> str:
+    """读取设备记录里的完整设备码。
+
+    历史读取边界：旧设备表与旧绑定把它写在 ``serial`` 里；``full_code`` 优先，读入后立即
+    投影为 ``full_code``，新文档不再写出旧键。
+    """
+    value = record.get("full_code")
+    if value is None:
+        value = record.get("serial")
+    return normalize_full_code(value)
+
+
 def _record_name(record: Mapping[str, Any]) -> str:
-    return normalize_text(record.get("name")) or "(未命名设备)"
+    """设备的可读名称：缩写设备码优先，其次型号，最后完整设备码。
+
+    已退役的资产名 ``name`` 不再读取；设备表里也不再有这个字段。
+    """
+    return (
+        normalize_text(record.get("label"))
+        or normalize_text(record.get("model"))
+        or _record_full_code(record)
+        or "(未登记设备)"
+    )
 
 
-def _record_serial(record: Mapping[str, Any]) -> str:
-    return normalize_serial(record.get("serial")) or "(无序列号)"
+def _record_description(record: Mapping[str, Any]) -> str:
+    """冲突消息里的设备描述：厂商 + 型号 + 缩写码/完整设备码，便于区分同型号的两台。"""
+    vendor = normalize_text(record.get("vendor")) or "(无厂商)"
+    model = normalize_text(record.get("model")) or "(无型号)"
+    code = normalize_text(record.get("label")) or _record_full_code(record) or "(无设备码)"
+    return f"{vendor} {model}（{code}）"
+
+
+def _entry_full_code(entry: Mapping[str, Any]) -> str:
+    """旧配置条目的完整设备码：``full_code`` 优先，兼容旧 ``serial``。"""
+    value = entry.get("full_code")
+    if value is None:
+        value = entry.get("serial")
+    return normalize_full_code(value)
 
 
 def _identity_source(entry: Mapping[str, Any]) -> bool:
-    """旧条目自带身份（``device_key`` 或 ``serial``），走第一条判定。"""
-    return bool(normalize_text(entry.get("device_key")) or normalize_serial(entry.get("serial")))
+    """旧条目自带身份（``device_key`` 或完整设备码），走第一条判定。"""
+    return bool(normalize_text(entry.get("device_key")) or _entry_full_code(entry))
 
 
 def _binding_has_identity(record: Any) -> bool:
@@ -1103,7 +1157,7 @@ def _binding_has_identity(record: Any) -> bool:
         return False
     if normalize_text(record.get("source")).casefold() == "legacy_config":
         return False
-    return bool(normalize_text(record.get("device_key")) and normalize_text(record.get("serial")))
+    return bool(normalize_text(record.get("device_key")) and _record_full_code(record))
 
 
 def _looks_like_new_reference(value: str) -> bool:

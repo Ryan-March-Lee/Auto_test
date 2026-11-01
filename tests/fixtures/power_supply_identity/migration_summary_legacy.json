@@ -1,5 +1,5 @@
 {
-    "schema_version": 1,
+    "schema_version": 2,
     "source": {
         "registry": "registry_legacy_v2.json",
         "config": "config_slots_legacy.json",
@@ -14,10 +14,10 @@
             "status": "needs_rescan",
             "new_key": null,
             "device_key": null,
-            "serial": null,
+            "full_code": null,
             "label": null,
             "address_hint": null,
-            "reason": "旧条目只有地址，没有序列号；192.168.1.101 不是任何已登记设备的地址，不能推断是哪一台电源，必须重新扫描确认后再绑定",
+            "reason": "旧条目只有地址，没有完整设备码；TCPIP0::192.168.1.101::inst0::INSTR 不是任何已登记设备的地址，不能推断是哪一台电源，必须重新扫描确认后再绑定",
             "assignments": [
                 {
                     "group": "dut_amplifier",
@@ -64,10 +64,10 @@
             "status": "unidentifiable",
             "new_key": null,
             "device_key": null,
-            "serial": null,
+            "full_code": null,
             "label": null,
             "address_hint": null,
-            "reason": "旧条目既没有地址也没有序列号，无法识别是哪台设备；DP832A-2 当前未登记角色，也不能凭型号猜测它是电源",
+            "reason": "旧条目既没有地址也没有完整设备码，无法识别是哪台设备；设备表里没有 role=PS2 或完整设备码能对上的已登记电源（若设备表已迁移过、旧槽位角色已折叠成 power_supply，旧键就无法再对应到设备），也不能凭型号猜测它是电源",
             "assignments": [],
             "channels": {
                 "CH1": {
@@ -105,10 +105,10 @@
             "status": "migrated",
             "new_key": "DP8B1519",
             "device_key": "rigol technologies:dp8b214901519",
-            "serial": "DP8B214901519",
+            "full_code": "DP8B214901519",
             "label": "DP8B1519",
             "address_hint": null,
-            "reason": "旧槽位按注册表 role=PS3 命中唯一设备 DP832A-1（序列号 DP8B214901519）；迁移后保持未绑定未启用，需在配置页选中该设备",
+            "reason": "旧槽位按注册表 role=PS3 命中唯一设备 DP8B1519（完整设备码 DP8B214901519）；迁移后保持未绑定未启用，需在配置页选中该设备",
             "assignments": [],
             "channels": {
                 "CH1": {
@@ -146,10 +146,10 @@
             "status": "migrated",
             "new_key": "DP8B0885",
             "device_key": "rigol technologies:dp8b174400885",
-            "serial": "DP8B174400885",
+            "full_code": "DP8B174400885",
             "label": "DP8B0885",
             "address_hint": null,
-            "reason": "旧槽位按注册表 role=PS4 命中唯一设备 DP832A-3（序列号 DP8B174400885）；迁移后保持未绑定未启用，需在配置页选中该设备",
+            "reason": "旧槽位按注册表 role=PS4 命中唯一设备 DP8B0885（完整设备码 DP8B174400885）；迁移后保持未绑定未启用，需在配置页选中该设备",
             "assignments": [],
             "channels": {
                 "CH1": {

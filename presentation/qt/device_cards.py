@@ -134,10 +134,10 @@ def device_code(device: Any, visitor_index: int = 0) -> tuple[str, str]:
 
     身份码按设备类别取：
 
-    - **电源**：注册表冻结的短标签（``DP8B1519``，同时是配置里的 ``supply_id``）。短标签就是
-      现场核对实物用的名字，因此不再拼 ``PS/型号/序列号``——那个写法看起来像槽位编号，而
-      电源没有“第几台”。旧设备表还没有标签时退回 ``PS/型号/序列号`` 的旧写法，不生成标签；
-    - **其它仪器**：``角色缩写/型号/序列号``（如 ``SG/SMW200A/105462``）；
+    - **电源**：注册表冻结的缩写设备码（``DP8B1519``，同时是配置里的 ``supply_id``）。缩写码
+      就是现场核对实物用的名字，因此不再拼 ``PS/型号/完整设备码``——那个写法看起来像槽位
+      编号，而电源没有“第几台”。旧设备表还没有缩写码时退回完整设备码的旧写法，不生成缩写码；
+    - **其它仪器**：``角色缩写/型号/完整设备码``（如 ``SG/SMW200A/105462``）；
     - **读不出身份**：``未识别 #n``（``visitor_index`` 由面板分配，同一台设备两次刷新拿到
       同一个号）。
 
@@ -149,13 +149,13 @@ def device_code(device: Any, visitor_index: int = 0) -> tuple[str, str]:
     if identity is None:
         return f"未识别 #{max(1, int(visitor_index or 0))}", ""
     model = str(getattr(identity, "model", "") or "").strip()
-    serial = str(getattr(identity, "serial", "") or "").strip()
+    full_code = str(getattr(identity, "full_code", "") or "").strip()
     is_supply = bool(getattr(device, "is_power_supply", False))
     label = str(getattr(device, "label", "") or "").strip()
     if is_supply and label:
         code = label
     else:
-        parts = [part for part in (model, serial) if part]
+        parts = [part for part in (model, full_code) if part]
         code = "/".join([_device_code_role(role, is_supply), *parts])
     detail: list[str] = []
     address = str(getattr(device, "visa_address", "") or "").strip()

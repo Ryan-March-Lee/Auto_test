@@ -159,12 +159,35 @@ class RunContext:
         )
 
 
+# 运行上下文冻结的仪器身份字段：型号、缩写设备码、完整设备码、设备键和当前地址。
+# 快照冻结后运行期间不回查设备注册表，重放与审计都以这份记录为准；未知字段（旧快照）不补，
+# 也不在缺失时按型号后缀、IP 或显示名猜身份。
+_INSTRUMENT_SNAPSHOT_FIELDS = ("label", "model", "full_code", "device_key", "visa_address")
+
+
+def _project_legacy_full_code(record: dict[str, Any]) -> dict[str, Any]:
+    """历史读取边界：旧快照把完整设备码写在 ``serial`` 里。
+
+    读入后立即投影为 ``full_code`` 并丢弃旧键——快照里始终只有一份完整设备码。显式写
+    ``full_code: null`` 与没写等价，此时仍按旧键投影；这一点与
+    :meth:`domain.configuration.models.InstrumentMapping.from_dict` 保持同一判据，否则同一
+    份旧文档在“校验/追溯”和“运行”两条路径上会得到不同的身份。来源文档同时写出两个键
+    仍会被 :func:`domain.configuration.models.validate_run_mapping` 拒绝——投影只管读入，
+    不替操作员判断哪一份才算身份。
+    """
+    if record.get("full_code") is None and "serial" in record:
+        record["full_code"] = record.get("serial")
+    record.pop("serial", None)
+    return record
+
+
 def _instrument_snapshot(value: Any) -> dict[str, str]:
     if not isinstance(value, Mapping):
         return {}
+    record = _project_legacy_full_code(dict(value))
     result = {}
-    for key in ("model", "visa_address"):
-        item = value.get(key)
+    for key in _INSTRUMENT_SNAPSHOT_FIELDS:
+        item = record.get(key)
         if item is not None:
             result[key] = str(item)
     return result
@@ -173,7 +196,7 @@ def _instrument_snapshot(value: Any) -> dict[str, str]:
 def _power_supplies(
     mapping: Mapping[str, Any], legacy_power_supply: Mapping[str, Any]
 ) -> dict[str, dict[str, str]]:
-    """把运行映射里的电源集合转成 ``supply_id -> {label, model, serial, device_key, visa_address}``。
+    """把运行映射里的电源集合转成 ``supply_id -> {label, model, full_code, device_key, visa_address}``。
 
     新快照直接读 ``instruments.power_supplies``；仍然只有单数 ``instruments.power_supply``
     的旧映射按该条目的 ``model``（旧槽位名）读成一个条目，让历史运行的上下文保持可读。
@@ -198,20 +221,24 @@ def _power_supplies(
 
 
 def _supply_snapshot(value: Mapping[str, Any]) -> dict[str, str]:
-    result = {}
-    for key in ("label", "model", "serial", "device_key", "visa_address"):
-        item = value.get(key)
-        if item is not None:
-            result[key] = str(item)
-    return result
+    """电源条目也只有一份完整设备码：旧键的投影与逐台仪器共用同一处实现。"""
+    return _instrument_snapshot(value)
 
 
 def _legacy_power_supply(supplies: Mapping[str, Mapping[str, str]]) -> dict[str, str]:
-    """旧的单数 ``power_supply`` 视图：恰好一台电源时给出它的型号与地址，否则为空。"""
+    """旧的单数 ``power_supply`` 视图：恰好一台电源时给出它的型号与地址，否则为空。
+
+    这个视图是历史字段，保持旧形状（只有 ``model`` / ``visa_address``）；完整身份在
+    :attr:`RunContext.power_supplies` 的条目里。
+    """
     if len(supplies) != 1:
         return {}
     record = next(iter(supplies.values()))
-    return _instrument_snapshot(record)
+    return {
+        key: record[key]
+        for key in ("model", "visa_address")
+        if isinstance(record.get(key), str)
+    }
 
 
 class MeasurementState(str, Enum):

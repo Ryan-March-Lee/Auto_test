@@ -15,7 +15,7 @@
 - ``instruments.power_supplies.<name>.channels.<channel>.role`` 属于接线事实，由配置页
   控件显式选择后随表单写入；本模块不改写它，也不为缺失角色补默认值。
 - 正式 ``run_mapping`` 的电源段是**集合** ``instruments.power_supplies.<supply_id>``：
-  每台被供电分配实际引用的电源各占一条，条目自带 ``label`` / ``model`` / ``serial`` /
+  每台被供电分配实际引用的电源各占一条，条目自带 ``label`` / ``model`` / ``full_code`` /
   ``device_key`` / ``visa_address``。快照只登记实际使用的电源，绑定了但没被分配的电源
   不会进快照。集合大小由分配与绑定共同决定，1 台和多台走同一条路径，不再有“只能登记
   一个本机电源”的限制。
@@ -23,8 +23,9 @@
   ``supply/channel`` 路由一致），因此 DUT 的 gate 与 drain 可以来自不同电源。同一条
   物理通道被分配两次时**不在这里去重**：重复条目原样写进映射，由正式校验
   （``通道重复分配`` / ``供电角色重复分配``）在连接前失败，而不是悄悄只留一条。
-- 身份字段（``label`` / ``serial`` / ``device_key``）只从该电源自己的配置条目读取；
-  条目缺少身份时写空并在正式校验中报错，不按地址或型号去猜设备。
+- 身份字段（``label`` / ``full_code`` / ``device_key``）只从该仪器自己的配置条目读取：
+  信号源、频谱仪与每台电源的快照条目都带这组字段；条目缺少身份时写空，**不按地址、
+  型号或显示名补全**，也不在运行期间回查设备表。
 """
 
 from __future__ import annotations
@@ -130,22 +131,8 @@ def _author_run_mapping(document: Mapping[str, Any]) -> dict[str, Any]:
         "run_datetime": None,
         "operator": None,
         "instruments": {
-            "signal_generator": {
-                "model": signal_generator.get("model"),
-                "visa_address": (
-                    signal_generator.get("address")
-                    if signal_generator.get("enabled", True)
-                    else None
-                ),
-            },
-            "spectrum_analyzer": {
-                "model": spectrum_analyzer.get("model"),
-                "visa_address": (
-                    spectrum_analyzer.get("address")
-                    if spectrum_analyzer.get("enabled", True)
-                    else None
-                ),
-            },
+            "signal_generator": _author_instrument_entry(signal_generator),
+            "spectrum_analyzer": _author_instrument_entry(spectrum_analyzer),
             "power_supplies": _author_power_supply_entries(document),
         },
         "driver_mode": {
@@ -155,6 +142,23 @@ def _author_run_mapping(document: Mapping[str, Any]) -> dict[str, Any]:
         },
         "dut_power_channels": _author_dut_channel_mappings(document),
         "notes": None,
+    }
+
+
+def _author_instrument_entry(instrument: Mapping[str, Any]) -> dict[str, Any]:
+    """信号源/频谱仪的运行快照条目：冻结型号、缩写码、完整设备码、设备键与地址。
+
+    身份字段只从该仪器自己的配置条目读取；条目缺少身份时写空，由正式校验在连接前报错，
+    不按地址或型号去猜设备。未启用的条目只冻结身份、不写连接地址。
+    """
+    return {
+        "label": instrument.get("label"),
+        "model": instrument.get("model"),
+        "full_code": instrument.get("full_code"),
+        "device_key": instrument.get("device_key"),
+        "visa_address": (
+            instrument.get("address") if instrument.get("enabled", True) else None
+        ),
     }
 
 
@@ -283,7 +287,7 @@ def _assigned_supply_id(assignment: Mapping[str, Any]) -> str | None:
 def _author_power_supply_entries(document: Mapping[str, Any]) -> dict[str, Any]:
     """生成正式 ``run_mapping.instruments.power_supplies``：每台**实际使用**的电源一条。
 
-    条目自带身份（``label`` / ``model`` / ``serial`` / ``device_key``）和地址，历史查看
+    条目自带身份（``label`` / ``model`` / ``full_code`` / ``device_key``）和地址，历史查看
     与重现不再回查设备注册表。身份只从该电源自己的配置条目读取，不按地址或型号推断。
     """
     supplies = _mapping(_mapping(document.get("instruments")).get("power_supplies"))
@@ -298,7 +302,7 @@ def _author_power_supply_entries(document: Mapping[str, Any]) -> dict[str, Any]:
             "model": None
             if is_legacy_power_supply_slot(supply.get("model"))
             else supply.get("model"),
-            "serial": supply.get("serial"),
+            "full_code": supply.get("full_code"),
             "device_key": supply.get("device_key"),
             "visa_address": supply.get("address"),
         }

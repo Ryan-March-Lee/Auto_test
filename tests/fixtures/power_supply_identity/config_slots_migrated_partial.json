@@ -40,11 +40,6 @@
         },
         "power_supplies": {
             "DP8B1519": {
-                "label": "DP8B1519",
-                "device_key": "rigol technologies:dp8b214901519",
-                "serial": "DP8B214901519",
-                "model": "DP832A",
-                "enabled": false,
                 "channels": {
                     "CH1": {
                         "role": "gate",
@@ -72,14 +67,14 @@
                             "protection_enabled": true
                         }
                     }
-                }
+                },
+                "enabled": false,
+                "label": "DP8B1519",
+                "device_key": "rigol technologies:dp8b214901519",
+                "full_code": "DP8B214901519",
+                "model": "DP832A"
             },
             "DP8B0885": {
-                "label": "DP8B0885",
-                "device_key": "rigol technologies:dp8b174400885",
-                "serial": "DP8B174400885",
-                "model": "DP832A",
-                "enabled": false,
                 "channels": {
                     "CH1": {
                         "role": "gate",
@@ -107,7 +102,12 @@
                             "protection_enabled": true
                         }
                     }
-                }
+                },
+                "enabled": false,
+                "label": "DP8B0885",
+                "device_key": "rigol technologies:dp8b174400885",
+                "full_code": "DP8B174400885",
+                "model": "DP832A"
             }
         }
     },
@@ -120,11 +120,11 @@
             "power_supply_count": 0,
             "supplies": {
                 "carrier": {
-                    "supply_id": null,
                     "channel": [
                         "CH1",
                         "CH2"
-                    ]
+                    ],
+                    "supply_id": null
                 }
             }
         }
@@ -212,28 +212,26 @@
     },
     "device_bindings": {
         "signal_generator": {
-            "name": null,
             "vendor": null,
             "model": "R&S SMW200A",
-            "serial": null,
             "device_key": null,
             "visa_address": "TCPIP0::192.168.1.201::inst0::INSTR",
             "last_ip": null,
             "last_port": null,
             "known": false,
-            "source": "legacy_config"
+            "source": "legacy_config",
+            "full_code": null
         },
         "spectrum_analyzer": {
-            "name": null,
             "vendor": null,
             "model": "Ceyear 4082F",
-            "serial": null,
             "device_key": null,
             "visa_address": "TCPIP0::192.168.1.202::inst0::INSTR",
             "last_ip": null,
             "last_port": null,
             "known": false,
-            "source": "legacy_config"
+            "source": "legacy_config",
+            "full_code": null
         },
         "power_supplies": {}
     }

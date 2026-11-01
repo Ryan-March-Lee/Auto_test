@@ -5,10 +5,11 @@
 1. **现场样例可复现**：``config_slots_legacy.json`` + 现场设备表 ``registry_legacy_v2.json``
    迁移后与 ``config_slots_migrated_partial.json`` 逐字段相等，摘要与
    ``migration_summary_legacy.json`` 逐字段相等（只有 ``generated_at`` 随运行时间变化）；
-2. **自动迁移的依据是登记的身份**：旧条目自带 ``device_key`` / ``serial`` 时按身份迁移；
+2. **自动迁移的依据是登记的身份**：旧条目自带 ``device_key`` / 完整设备码（旧字段名
+   ``serial`` 只在读取边界识别）时按身份迁移；
    只有旧键 ``PSn`` 时按设备表里登记的 ``role`` 迁移，该角色对应多台就直接报 ``conflict``，
    绝不按顺序挑一台；
-3. **身份字段必须互相印证**：``device_key`` 与 ``serial`` 指向两台不同的设备、注册表里同一
+3. **身份字段必须互相印证**：``device_key`` 与完整设备码指向两台不同的设备、注册表里同一
    身份对应多条记录、旧条目声明的 ``device_key`` 不在册，一律 ``conflict``；
 4. **旧地址不是身份**：只有地址的条目一律 ``needs_rescan``，即使地址命中设备表的历史地址
    也只给 ``address_hint`` 提示，不给 ``new_key``；
@@ -62,7 +63,7 @@ FIXTURE_DIR = ROOT / "tests" / "fixtures" / "power_supply_identity"
 LEGACY_CONFIG = FIXTURE_DIR / "config_slots_legacy.json"
 MIGRATED_CONFIG = FIXTURE_DIR / "config_slots_migrated_partial.json"
 LEGACY_REGISTRY = FIXTURE_DIR / "registry_legacy_v2.json"
-MIGRATED_REGISTRY = FIXTURE_DIR / "registry_migrated_v3.json"
+MIGRATED_REGISTRY = FIXTURE_DIR / "registry_migrated_v4.json"
 SUMMARY = FIXTURE_DIR / "migration_summary_legacy.json"
 ONE_SUPPLY_CONFIG = FIXTURE_DIR / "config_one_supply.json"
 TWO_SUPPLIES_CONFIG = FIXTURE_DIR / "config_two_supplies.json"
@@ -98,7 +99,7 @@ def _legacy_two_supplies():
         "PS1": {
             "channels": gate_supply["channels"],
             "enabled": True,
-            "serial": "DP8B214901519",
+            "full_code": "DP8B214901519",
             "address": "TCPIP0::192.168.1.111::inst0::INSTR",
         },
         "PS2": {"channels": drain_supply["channels"], "enabled": False, "device_key": SUPPLY_THREE},
@@ -326,7 +327,7 @@ class IdentityRuleTests(unittest.TestCase):
         return config
 
     def test_entry_with_serial_is_migrated_by_identity(self):
-        config = self._config_with({"PS1": self._supply(serial="DP8B214901519", address="TCPIP0::192.168.9.9::inst0::INSTR")})
+        config = self._config_with({"PS1": self._supply(full_code="DP8B214901519", address="TCPIP0::192.168.9.9::inst0::INSTR")})
         result = migrate_legacy_power_supplies(config, self.registry)
         entry = _entries(result)["PS1"]
         self.assertEqual(entry.status, STATUS_MIGRATED)
@@ -344,19 +345,19 @@ class IdentityRuleTests(unittest.TestCase):
     def test_slot_role_matching_two_devices_is_a_conflict(self):
         registry = copy.deepcopy(self.registry)
         second = copy.deepcopy(registry["instruments"][0])
-        second.update({"name": "DP832A-9", "model_index": 9, "serial": "DP8B999999999",
+        second.update({"full_code": "DP8B999999999", "label": None,
                        "role": "PS3", "current_ip": "", "known_ips": []})
         registry["instruments"].append(second)
         entry = _entries(migrate_legacy_power_supplies(self.config, registry))["PS3"]
         self.assertEqual(entry.status, STATUS_CONFLICT)
         self.assertIsNone(entry.new_key)
         self.assertIn("2 台", entry.reason)
-        self.assertIn("DP832A-9", entry.reason)
+        self.assertIn("DP8B9999", entry.reason)
 
     def test_two_old_keys_on_the_same_device_conflict(self):
         supplies = {
-            "PS1": self._supply(serial="DP8B214901519"),
-            "PS2": self._supply(serial="DP8B214901519"),
+            "PS1": self._supply(full_code="DP8B214901519"),
+            "PS2": self._supply(full_code="DP8B214901519"),
         }
         result = migrate_legacy_power_supplies(self._config_with(supplies), self.registry)
         entries = _entries(result)
@@ -367,7 +368,7 @@ class IdentityRuleTests(unittest.TestCase):
         self.assertEqual(list(result.config["instruments"]["power_supplies"]), [LABEL_ONE])
 
     def test_entry_claiming_a_serial_the_registry_does_not_know_needs_a_rescan(self):
-        config = self._config_with({"PS1": self._supply(serial="DP8B000000000")})
+        config = self._config_with({"PS1": self._supply(full_code="DP8B000000000")})
         entry = _entries(migrate_legacy_power_supplies(config, self.registry))["PS1"]
         self.assertEqual(entry.status, STATUS_UNIDENTIFIABLE)
         self.assertIsNone(entry.new_key)
@@ -388,7 +389,7 @@ class IdentityRuleTests(unittest.TestCase):
         )["PS3"]
         self.assertEqual(entry.status, STATUS_NEEDS_RESCAN)
         self.assertIsNone(entry.new_key)
-        self.assertIn("短标签", entry.reason)
+        self.assertIn("缩写设备码", entry.reason)
 
     def test_slot_role_claiming_two_devices_conflicts(self):
         """``PS3`` 在设备表里对应两台设备：不按顺序挑一台，直接报 conflict。"""
@@ -404,7 +405,7 @@ class IdentityRuleTests(unittest.TestCase):
 
     def test_identity_source_takes_precedence_over_slot_role(self):
         """带序列号的条目按序列号走，不受同名旧槽位角色的影响。"""
-        config = self._config_with({"PS4": self._supply(serial="DP8B214901519")})
+        config = self._config_with({"PS4": self._supply(full_code="DP8B214901519")})
         entry = _entries(migrate_legacy_power_supplies(config, self.registry))["PS4"]
         self.assertEqual(entry.status, STATUS_MIGRATED)
         self.assertEqual(entry.new_key, LABEL_ONE)
@@ -446,7 +447,7 @@ class ReferenceRewriteTests(unittest.TestCase):
             "name": "DP832A-1",
             "vendor": "RIGOL TECHNOLOGIES",
             "model": "DP832A",
-            "serial": "DP8B214901519",
+            "full_code": "DP8B214901519",
             "device_key": SUPPLY_ONE,
             "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
             "last_ip": "192.168.1.102",
@@ -461,7 +462,7 @@ class ReferenceRewriteTests(unittest.TestCase):
         self.assertEqual(list(supplies), [LABEL_ONE])
         entry = supplies[LABEL_ONE]
         self.assertEqual(entry["label"], LABEL_ONE)
-        self.assertEqual(entry["serial"], "DP8B214901519")
+        self.assertEqual(entry["full_code"], "DP8B214901519")
         self.assertEqual(entry["device_key"], SUPPLY_ONE)
         # 快照里的地址来自设备绑定（重新扫描确认过的连接目标）；旧条目自己那个未经确认的
         # 地址不会出现在这里。
@@ -503,7 +504,7 @@ class ReferenceRewriteTests(unittest.TestCase):
             "name": "DP832A-1",
             "vendor": "RIGOL TECHNOLOGIES",
             "model": "DP832A",
-            "serial": "DP8B214901519",
+            "full_code": "DP8B214901519",
             "device_key": SUPPLY_ONE,
             "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
             "last_ip": "192.168.1.102",
@@ -627,8 +628,8 @@ class SavingTests(unittest.TestCase):
 
     def test_blocked_migration_leaves_the_file_untouched(self):
         supplies = {
-            "PS1": {"enabled": True, "serial": "DP8B214901519", "channels": {}},
-            "PS2": {"enabled": True, "serial": "DP8B214901519", "channels": {}},
+            "PS1": {"enabled": True, "full_code": "DP8B214901519", "channels": {}},
+            "PS2": {"enabled": True, "full_code": "DP8B214901519", "channels": {}},
         }
         config = _load(LEGACY_CONFIG)
         config["instruments"]["power_supplies"] = supplies
@@ -677,8 +678,8 @@ class SavingTests(unittest.TestCase):
         persist_registry_labels(registry_path)
 
         saved = InstrumentRegistry.load(registry_path)
-        self.assertEqual(saved.schema_version, 3)
-        by_serial = {item.serial: item for item in saved.list()}
+        self.assertEqual(saved.schema_version, 4)
+        by_serial = {item.full_code: item for item in saved.list()}
         self.assertEqual(by_serial["DP8B214901519"].label, LABEL_ONE)
         self.assertEqual(by_serial["DP8B174400885"].label, LABEL_THREE)
         # 短标签由序列号派生、与角色无关：未登记角色的那台也会拿到标签，只是 role 仍是 null。
@@ -703,9 +704,9 @@ class IdentityContradictionTests(unittest.TestCase):
         result = migrate_legacy_power_supplies(config, registry or self.registry, **kwargs)
         return _entries(result)["PS1"], result
 
-    def test_device_key_and_serial_pointing_to_different_devices_conflict(self):
+    def test_device_key_and_full_code_pointing_to_different_devices_conflict(self):
         entry, result = self._migrate_one(
-            self._entry(device_key=SUPPLY_THREE, serial="DP8B214901519")
+            self._entry(device_key=SUPPLY_THREE, full_code="DP8B214901519")
         )
         self.assertEqual(entry.status, STATUS_CONFLICT)
         self.assertIsNone(entry.new_key)
@@ -716,7 +717,7 @@ class IdentityContradictionTests(unittest.TestCase):
     def test_device_key_missing_from_the_registry_conflicts(self):
         """序列号能对上某台设备，但旧条目声明的 device_key 不在册：数据矛盾，不是身份。"""
         entry, _result = self._migrate_one(
-            self._entry(device_key="keysight technologies:my123456", serial="DP8B214901519")
+            self._entry(device_key="keysight technologies:my123456", full_code="DP8B214901519")
         )
         self.assertEqual(entry.status, STATUS_CONFLICT)
         self.assertIn("不在设备表里", entry.reason)
@@ -724,32 +725,30 @@ class IdentityContradictionTests(unittest.TestCase):
     def test_duplicate_device_key_in_the_registry_conflicts(self):
         registry = copy.deepcopy(self.registry)
         duplicate = copy.deepcopy(registry["instruments"][0])
-        duplicate["name"] = "DP832A-9"
-        duplicate["model_index"] = 9
         registry["instruments"].append(duplicate)
         # 走原样设备表：注册表保存路径本身也会拒绝重复序列号，这里测的是迁移器的判定。
         entry, _result = self._migrate_one(
-            self._entry(serial="DP8B214901519"), registry, migrate_registry_labels=False
+            self._entry(full_code="DP8B214901519"), registry, migrate_registry_labels=False
         )
         self.assertEqual(entry.status, STATUS_CONFLICT)
-        self.assertIn("共用序列号", entry.reason)
+        self.assertIn("共用完整设备码", entry.reason)
 
-    def test_serial_shared_by_two_vendors_conflicts(self):
+    def test_full_code_shared_by_two_vendors_conflicts(self):
         registry = copy.deepcopy(self.registry)
         other = copy.deepcopy(registry["instruments"][0])
-        other.update({"name": "N6705C-1", "vendor": "KEYSIGHT", "model": "N6705C", "model_index": 1})
+        other.update({"vendor": "KEYSIGHT", "model": "N6705C"})
         registry["instruments"].append(other)
         entry, _result = self._migrate_one(
-            self._entry(serial="DP8B214901519"), registry, migrate_registry_labels=False
+            self._entry(full_code="DP8B214901519"), registry, migrate_registry_labels=False
         )
         self.assertEqual(entry.status, STATUS_CONFLICT)
-        self.assertIn("序列号", entry.reason)
-        self.assertIn("N6705C-1", entry.reason)
+        self.assertIn("完整设备码", entry.reason)
+        self.assertIn("N6705C", entry.reason)
 
-    def test_stale_serial_is_reported_but_device_key_wins(self):
+    def test_stale_full_code_is_reported_but_device_key_wins(self):
         """device_key 唯一命中时按它迁移，但旧条目里的序列号不一致必须写进原因。"""
         entry, _result = self._migrate_one(
-            self._entry(device_key=SUPPLY_ONE, serial="DP8B000000000")
+            self._entry(device_key=SUPPLY_ONE, full_code="DP8B000000000")
         )
         self.assertEqual(entry.status, STATUS_MIGRATED)
         self.assertEqual(entry.new_key, LABEL_ONE)

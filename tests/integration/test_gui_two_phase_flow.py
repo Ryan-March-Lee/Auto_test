@@ -52,7 +52,7 @@ def _fully_valid_gui_config() -> dict:
                 "DP8B1519": {
                     "label": "DP8B1519",
                     "device_key": "rigol technologies:dp8b214901519",
-                    "serial": "DP8B214901519",
+                    "full_code": "DP8B214901519",
                     "model": "DP832A",
                     "address": "sim::ps1",
                     "enabled": True,
@@ -78,7 +78,7 @@ def _fully_valid_gui_config() -> dict:
             "power_supplies": {
                 "DP8B1519": {
                     "device_key": "rigol technologies:dp8b214901519",
-                    "serial": "DP8B214901519",
+                    "full_code": "DP8B214901519",
                     "visa_address": "sim::ps1",
                     "source": "scan",
                 }

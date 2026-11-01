@@ -238,16 +238,16 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
             button_top - hint_bottom, 40, "查找设备要紧跟在扫描行下面，不能隔着一大段空白"
         )
 
-    def test_the_scan_card_has_room_for_the_hover_ring_above_it(self):
-        """卡片上方要留出悬停时底卡露出来的那一圈：不能被结果区上沿裁成平的。"""
-        from presentation.qt.scan_card import UNDERLAY_GROW_HOVER
+    def test_the_scan_card_keeps_room_above_it_for_its_decorations(self):
+        """卡片上方要留出一圈：投影与柔光伸出卡片的那一段不能被结果区上沿裁成平的。"""
+        from presentation.qt.scan_card import SCAN_CARD_HEADROOM
 
         panel = self.make_panel()
         top = panel.scan_btn.mapTo(panel.centre_area, panel.scan_btn.rect().topLeft()).y()
         self.assertGreaterEqual(
             top,
-            UNDERLAY_GROW_HOVER,
-            "卡片背后的装饰会被父控件上沿裁掉：上边至少要留出悬停时底卡外扩的那一圈",
+            SCAN_CARD_HEADROOM,
+            "卡片上方要留出投影与柔光的位置，否则结果区上沿会把它们裁出一条硬边",
         )
 
     def test_scanning_takes_the_button_away(self):

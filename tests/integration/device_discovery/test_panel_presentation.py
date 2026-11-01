@@ -373,6 +373,29 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
             panel.cards_area.height(), 2 * card.height(), "结果区里至少放得下两行卡片"
         )
 
+    def test_the_summary_line_sits_under_the_cards_and_centred(self):
+        """统计/失败说明紧跟卡片下方并横向居中，不再孤零零地贴在结果区左下角。"""
+        panel = self.make_panel(size=(760, 560))
+        panel.request_scan()
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+
+        self.assertTrue(panel.status_label.isVisible())
+        box = panel.results_box
+        cards_bottom = max(
+            card.mapTo(box, card.rect().bottomLeft()).y() for card in panel.cards()
+        )
+        status_top = panel.status_label.mapTo(box, panel.status_label.rect().topLeft()).y()
+        self.assertGreaterEqual(
+            status_top, cards_bottom, "说明要排在最后一行卡片下面，不能压在卡片上"
+        )
+        self.assertLess(
+            status_top - cards_bottom, 40, "说明要紧跟卡片，不能隔着一整行的空白"
+        )
+        centre = panel.status_label.mapTo(box, panel.status_label.rect().center()).x()
+        self.assertAlmostEqual(centre, box.rect().center().x(), delta=2)
+
     def test_clearing_the_results_puts_the_scan_button_back(self):
         panel = self.make_panel()
         panel.request_scan()

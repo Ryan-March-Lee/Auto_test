@@ -4,8 +4,8 @@
 
 - 面板只负责界面与扫描线程生命周期；扫描实现由 ``scanner_factory(mode)`` 注入，
   因此离线测试与现场扫描共用同一套界面逻辑。
-- 面板不改配置、不连接仪器：用户确认“应用到配置”后，只把所选设备交给配置页，
-  由配置页写成仪器连接配置（地址来自本次发现的设备）与设备身份记录。
+- 面板不改配置、不连接仪器：用户勾选本次测试所需设备，点页面上的“下一步”时由
+  连接页把勾选结果交给配置页，写成仪器连接配置（地址来自本次发现的设备）与设备身份记录。
 - **测试角色由设备表登记，界面不让用户选**：现场每台仪器只承担一种角色。卡片正面
   第一行只写缩写设备码（电源就是它的缩写设备码 ``DP8B1519``；设备表还没保存过缩写码时
   退回完整设备码），最下面一行是仪器型号（如 ``SMW200A``）；电源是
@@ -24,7 +24,7 @@
 一大段空白），点下去之后换成“正在查找设备”，结果回来后再换成卡片。
 **结果区的高度是固定的**（两行卡片 + 按钮与状态行）：查找前后、结果多少都不改变它的
 大小，卡片超出时只在结果区里滚动。卡片区本身只占实际行数（最多两行）那么高，
-统计/失败说明紧跟在卡片下面并横向居中，应用/清除/返回再排在它下面；固定高度多出来的
+统计/失败说明紧跟在卡片下面并横向居中，“返回”再排在它下面；固定高度多出来的
 那一截留在按钮下方，不会把状态行顶到离卡片很远的地方。
 
 结果区**不是抽屉**：结果回来就留在那里，没有“收起 / 查看结果”的来回切换。要重新查找时
@@ -270,15 +270,14 @@ class DiscoveryWorker(QThread):
 
 
 class DeviceDiscoveryPanel(QWidget):
-    """扫描 + 结果区控件；通过 :attr:`apply_requested` 交付用户选中的设备。
+    """扫描 + 结果区控件；勾选结果由连接页在“下一步”时通过
+    :meth:`selected_assignments` 取走。
 
     版式分两段：扫描行（扫描网段、扫描方式）居中放在标题下面，不进结果区；“查找设备”
     是结果区顶部的那张卡片按钮，紧跟在扫描行下面。结果区不画外框（无边框、无底色），
     卡片直接落在页面背景上；点下去之后按钮收走，换成扫描进度，结果回来后再换成卡片。
     """
 
-    apply_requested = Signal(object)
-    clear_requested = Signal()
     log_message = Signal(str)
 
     def __init__(
@@ -325,8 +324,8 @@ class DeviceDiscoveryPanel(QWidget):
 
         本次的发现结果、卡片勾选与状态行都属于这一次查找，返回后整块回到还没查找过的
         样子（扫描行下面那张“查找设备”卡片），用户改网段或换扫描方式再查一次。
-        配置里已经应用的设备绑定不归面板管，所以返回不动它们；要删绑定仍用
-        “清除设备绑定”。
+        配置里的设备绑定不归面板管，所以返回不动它们；下一次勾选并点“下一步”时整批
+        替换掉。要重新绑定，改完网段再查一次即可。
         """
         if self.is_scanning():
             self._set_status("扫描正在进行，请等待完成")
@@ -364,7 +363,6 @@ class DeviceDiscoveryPanel(QWidget):
         """
         self.devices = []
         self._clear_cards()
-        self.apply_btn.setEnabled(False)
         self._set_status("")
         self._set_box_state(BOX_STATE_IDLE)
 
@@ -476,32 +474,20 @@ class DeviceDiscoveryPanel(QWidget):
         self.cards_area.setWidget(self.cards_host)
         self.cards_area.setVisible(False)
         box.addWidget(self.cards_area)
-        # 结果统计 / 失败原因紧跟在卡片下面，横向居中；应用/清除/返回留在它下面。
+        # 结果统计 / 失败原因紧跟在卡片下面，横向居中；“返回”留在它下面。
         # 结果区高度固定（按两行卡片算），卡片只有一行时多出来的高度落到最下面，
         # 不再把这句话和按钮顶到结果区底部、离卡片很远。
         box.addWidget(self.status_label)
 
         actions = QHBoxLayout()
         actions.setSpacing(10)
-        self.apply_btn = QPushButton("应用所选设备到配置")
-        self.apply_btn.setEnabled(False)
-        self.apply_btn.setToolTip(
-            "把勾选设备的当前地址与身份（完整设备码）写入仪器连接配置；"
-            "测试角色取自设备表登记的 role"
-        )
-        set_button_variant(self.apply_btn, "primary")
-        self.clear_btn = QPushButton("清除设备绑定")
-        self.clear_btn.setToolTip("删除配置中记录的角色与设备身份对应关系，不改动地址")
-        set_button_variant(self.clear_btn, "ghost")
         self.back_btn = QPushButton("返回")
         self.back_btn.setToolTip("清空本次查找的结果与勾选，回到扫描行下面的“查找设备”")
         set_button_variant(self.back_btn, "ghost")
         self.back_btn.setVisible(False)
-        actions.addWidget(self.apply_btn)
-        actions.addWidget(self.clear_btn)
         actions.addWidget(self.back_btn)
         actions.addStretch(1)
-        # 应用/清除/返回只对结果有效，跟在状态行下面。
+        # 返回只对结果有效，跟在状态行下面。
         box.addLayout(actions)
         # 固定高度里多出来的那一截留在按钮下面：卡片、状态行与按钮整组贴着结果区上沿，
         # 中间不再出现一大段空白。
@@ -509,8 +495,6 @@ class DeviceDiscoveryPanel(QWidget):
         layout.addWidget(self.results_box)
 
         self.scan_btn.clicked.connect(self.request_scan)
-        self.apply_btn.clicked.connect(self.request_apply)
-        self.clear_btn.clicked.connect(self.request_clear)
         self.back_btn.clicked.connect(self.request_back)
         self._update_mode_hint()
         self._refresh_cards_geometry()
@@ -534,7 +518,7 @@ class DeviceDiscoveryPanel(QWidget):
         chrome = (
             margins.top()
             + margins.bottom()
-            + self.apply_btn.sizeHint().height()
+            + self.back_btn.sizeHint().height()
             + self.status_label.sizeHint().height()
             + 2 * layout.spacing()
         )
@@ -583,8 +567,6 @@ class DeviceDiscoveryPanel(QWidget):
                     (self.scan_btn, idle),
                     (self.loading_label, busy),
                     (self.cards_area, results),
-                    (self.apply_btn, results),
-                    (self.clear_btn, results),
                     (self.back_btn, results),
                 )
                 if not visible
@@ -594,9 +576,8 @@ class DeviceDiscoveryPanel(QWidget):
         self.scan_btn.setVisible(idle)
         self.loading_label.setVisible(busy)
         self.cards_area.setVisible(results)
-        # 应用/清除/返回只对结果有效：没有卡片时不显示用不上的按钮。
-        for widget in (self.apply_btn, self.clear_btn, self.back_btn):
-            widget.setVisible(results)
+        # 返回只对结果有效：没有卡片时不显示用不上的按钮。
+        self.back_btn.setVisible(results)
 
     def _release_focus_before_hiding(self, widgets: Sequence[QWidget]) -> None:
         """把焦点从即将收走的控件上收回面板，隐藏它们时页面就不滚动。
@@ -643,7 +624,6 @@ class DeviceDiscoveryPanel(QWidget):
         subnet = self.subnet_edit.text().strip()
         self.devices = []
         self._clear_cards()
-        self.apply_btn.setEnabled(False)
         self._set_controls_enabled(False)
         self._set_box_state(BOX_STATE_BUSY)
         self._set_status(f"正在扫描 {subnet or '(空)'} …")
@@ -660,12 +640,11 @@ class DeviceDiscoveryPanel(QWidget):
         if not enabled:
             # 禁用焦点控件和隐藏它一样会让焦点跳到下一个控件、把页面滚走：先收回焦点。
             self._release_focus_before_hiding(
-                [self.scan_btn, self.subnet_edit, self.mode_combo, self.clear_btn]
+                [self.scan_btn, self.subnet_edit, self.mode_combo]
             )
         self.scan_btn.setEnabled(enabled)
         self.subnet_edit.setEnabled(enabled)
         self.mode_combo.setEnabled(enabled)
-        self.clear_btn.setEnabled(enabled)
 
     def _on_progress(self, done: int, total: int) -> None:
         if self._closed:
@@ -707,7 +686,6 @@ class DeviceDiscoveryPanel(QWidget):
         self.status_label.setVisible(True)
         # 预选说明会追加在扫描统计后面，因此先写统计再预选。
         self._preselect_bound_devices()
-        self.apply_btn.setEnabled(any(device_applicable(device) for device in devices))
         self._sync_results_height()
         self.log_message.emit(f"设备扫描完成: {self.status_label.text()}")
 
@@ -722,7 +700,6 @@ class DeviceDiscoveryPanel(QWidget):
     def _on_cancelled(self) -> None:
         if self._closed:
             return
-        self.apply_btn.setEnabled(False)
         self._set_box_state(BOX_STATE_IDLE)
         self._set_status("扫描已取消，结果未更新")
         self.log_message.emit("设备扫描已取消")
@@ -960,13 +937,9 @@ class DeviceDiscoveryPanel(QWidget):
             card.set_checked(checked, emit=False)
             preselected = bool(row["bound"]) and user_checked is None
             card.set_status("已按配置预选" if preselected else "")
-        # 只要有一台可以应用的设备，“应用”就可用：用户先勾选再应用，但不必先勾选才看得见按钮。
-        self.apply_btn.setEnabled(
-            any(device_applicable(row["device"]) for row in self._rows)
-        )
 
     def _on_card_activated(self, card: InstrumentCard) -> None:
-        """用户点击了某张卡片：记录这次选择，并同步按钮的可用状态。"""
+        """用户点击了某张卡片：记录这次选择。"""
         for row in self._rows:
             if row["card"] is card:
                 row["user_checked"] = card.is_checked()
@@ -1150,24 +1123,8 @@ class DeviceDiscoveryPanel(QWidget):
             )
         return assignments, problems
 
-    def request_apply(self) -> None:
-        assignments, problems = self.selected_assignments()
-        if problems:
-            self._set_status("；".join(problems))
-            return
-        if not assignments:
-            self._set_status("请先勾选本次测试所需的设备（测试角色来自设备表登记，不需要选择）")
-            return
-        self.apply_requested.emit(assignments)
-
-    def request_clear(self) -> None:
-        if not self.device_bindings:
-            self._set_status("配置中没有设备绑定记录")
-            return
-        self.clear_requested.emit()
-
     def show_message(self, message: str) -> None:
-        """显示一次应用/清除操作的结果（由配置页回写，避免面板自己猜结果）。"""
+        """显示一次绑定写入的结果（由配置页回写，避免面板自己猜结果）。"""
         if not self._closed:
             self._set_status(message)
 

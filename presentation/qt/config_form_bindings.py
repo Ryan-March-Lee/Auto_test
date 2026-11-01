@@ -357,7 +357,7 @@ def effective_device_bindings(config: Any) -> dict[str, dict]:
     """返回一份配置里的有效设备绑定，作为仪器连接的唯一来源。
 
     结构是“信号源 / 频谱仪各一条 + ``power_supplies`` 里按 ``supply_id`` 的多条”。
-    配置带 ``device_bindings`` 时以它为准（即使为空——用户清除过绑定）；缺少该键的旧
+    配置带 ``device_bindings`` 时以它为准（即使为空——配置显式写入了空绑定）；缺少该键的旧
     配置才按 ``instruments.<角色>.address`` 做一次性迁移（只含信号源与频谱仪）。迁移只
     发生在这里，之后保存的配置都带显式绑定记录，不会因为“地址还在”而重新变回可连接
     状态。

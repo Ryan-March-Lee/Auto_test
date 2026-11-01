@@ -1,4 +1,4 @@
-"""勾选结果写进配置：地址、身份与绑定记录，整批替换/清除之后地址与启用一起失效。"""
+"""勾选结果写进配置：地址、身份与绑定记录，换一批之后旧绑定的地址与启用一起失效。"""
 
 from .support import ConnectionPageTestCase
 
@@ -9,7 +9,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
     def test_applied_device_writes_address_and_identity_into_config(self):
         page = self.make_page()
 
-        page.apply_discovered_devices(
+        applied = page.apply_discovered_devices(
             [
                 {
                     "role": "spectrum_analyzer",
@@ -25,6 +25,8 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
                 }
             ]
         )
+
+        self.assertTrue(applied)
 
         config = page.build_config()
         self.assertEqual(
@@ -230,33 +232,6 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
         self.assertEqual(page.pa_unit1_power_combo.currentText(), "")
         self.assertEqual(page.pa_unit1_power_combo.currentIndex(), -1)
 
-    def test_clear_button_removes_bindings_and_invalidates_the_connection(self):
-        page = self.make_page()
-        page.apply_discovered_devices(
-            [
-                {
-                    "role": "signal_generator",
-                    "address": "TCPIP0::192.168.1.201::inst0::INSTR",
-                    "full_code": "105462",
-                    "device_key": "rohde&schwarz:105462",
-                    "ip": "192.168.1.201",
-                    "port": 5025,
-                    "known": True,
-                }
-            ]
-        )
-        # 相当于连接前已经保存过一次：地址已随配置落盘。
-        page.apply_config(page.build_config())
-
-        self.connection.discovery_panel.request_clear()
-
-        self.assertEqual(page.device_bindings, {})
-        config = page.build_config()
-        self.assertNotIn("device_bindings", config)
-        # 绑定是唯一连接来源：清除后地址与启用状态一起失效，不会打到旧设备。
-        self.assertNotIn("address", config["instruments"]["signal_generator"])
-        self.assertFalse(config["instruments"]["signal_generator"]["enabled"])
-
     def test_applying_a_subset_replaces_the_previous_bindings(self):
         page = self.make_page()
         page.apply_discovered_devices(
@@ -317,41 +292,6 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
         self.assertEqual(page.get_enabled_power_supplies(), [])
         self.assertIn("已移除", self.connection.discovery_panel.status_label.text())
 
-    def test_clearing_bindings_invalidates_every_bound_power_supply(self):
-        """清除绑定后所有对应电源地址和启用状态同时失效。"""
-        page = self.make_page()
-        page.apply_discovered_devices(
-            [
-                {
-                    "role": "power_supply",
-                    "supply_id": "DP8B1519",
-                    "address": "TCPIP0::192.168.1.102::inst0::INSTR",
-                    "full_code": "DP8B214901519",
-                    "vendor": "RIGOL TECHNOLOGIES",
-                    "device_key": "rigol technologies:dp8b214901519",
-                },
-                {
-                    "role": "power_supply",
-                    "supply_id": "DP8B0885",
-                    "address": "TCPIP0::192.168.1.108::inst0::INSTR",
-                    "full_code": "DP8B174400885",
-                    "vendor": "RIGOL TECHNOLOGIES",
-                    "device_key": "rigol technologies:dp8b174400885",
-                },
-            ]
-        )
-        page.apply_config(page.build_config())
-
-        page.clear_device_bindings()
-
-        config = page.build_config()
-        self.assertNotIn("device_bindings", config)
-        for supply_id in ("DP8B1519", "DP8B0885"):
-            supply = config["instruments"]["power_supplies"][supply_id]
-            self.assertNotIn("address", supply)
-            self.assertFalse(supply["enabled"])
-        self.assertEqual(page.get_enabled_power_supplies(), [])
-
     def test_loading_a_config_restores_device_bindings(self):
         page = self.make_page()
         config = page.build_config()
@@ -365,25 +305,6 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
         self.assertEqual(
             page.build_config()["device_bindings"]["signal_generator"]["full_code"], "105462"
         )
-
-    def test_clearing_bindings_drops_them_from_the_saved_config(self):
-        page = self.make_page()
-        page.apply_discovered_devices(
-            [
-                {
-                    "role": "signal_generator",
-                    "address": "TCPIP0::192.168.1.201::inst0::INSTR",
-                    "full_code": "105462",
-                    "device_key": "rohde&schwarz:105462",
-                    "ip": "192.168.1.201",
-                    "port": 5025,
-                    "known": True,
-                }
-            ]
-        )
-        page.clear_device_bindings()
-
-        self.assertNotIn("device_bindings", page.build_config())
 
     def test_applying_valid_devices_clears_a_recorded_binding_problem(self):
         """重新扫描并应用正确设备后，读入时记录的问题随之清除。"""

@@ -255,3 +255,118 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
         # 当前配置没有可用电源：校验挡住连接，说明点击确实到了配置页的连接入口。
         self.assertEqual(requested, [])
         self.assertTrue(failures)
+
+
+class ConnectionPageNextWriteTests(ConnectionPageTestCase):
+    """“下一步”就是写入点：勾选结果整批替换配置里的设备绑定。"""
+
+    def _scan(self):
+        panel = self.connection.discovery_panel
+        panel.request_scan()
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+        return panel
+
+    def test_the_panel_has_no_apply_or_clear_buttons(self):
+        self.make_page()
+        panel = self.connection.discovery_panel
+
+        self.assertFalse(hasattr(panel, "apply_btn"))
+        self.assertFalse(hasattr(panel, "clear_btn"))
+        self.assertFalse(hasattr(panel, "request_clear"))
+
+    def test_next_writes_the_checked_devices_before_leaving(self):
+        page = self.make_page()
+        panel = self._scan()
+        panel.set_card_checked("SMW200A（105462）", True)
+        requested = []
+        self.connection.next_requested.connect(lambda: requested.append(True))
+
+        self.connection.next_btn.click()
+
+        self.assertEqual(requested, [True], "写入成功后要进入下一页")
+        self.assertEqual(set(page.device_bindings), {"signal_generator"})
+        self.assertEqual(
+            page.build_config()["instruments"]["signal_generator"]["address"],
+            "TCPIP0::192.168.1.201::inst0::INSTR",
+        )
+
+    def test_next_with_results_and_nothing_checked_is_blocked(self):
+        """扫描出结果却一台没勾：阻止跳页，不把“没勾选”当成“清空绑定”。"""
+        page = self.make_page()
+        panel = self._scan()
+        requested = []
+        self.connection.next_requested.connect(lambda: requested.append(True))
+
+        self.connection.next_btn.click()
+
+        self.assertEqual(requested, [])
+        self.assertEqual(page.device_bindings, {})
+        self.assertIn("请先勾选", panel.status_label.text())
+
+    def test_next_is_blocked_when_the_selection_has_a_problem(self):
+        """勾选结果本身有歧义（同一角色两台设备）时留在本页，不写半份绑定。"""
+        from domain.instruments.models import InstrumentIdentity
+        from infrastructure.discovery.instrument_discovery import (
+            SCAN_MODE_SIMULATED,
+            build_scanner,
+        )
+        from infrastructure.persistence.instrument_registry import InstrumentRegistry
+
+        from .support import SMW_IDN
+
+        second_smw = "Rohde&Schwarz,SMW200A,1412.0000K02/200001,5.20.043.47"
+
+        def factory(_mode):
+            registry = InstrumentRegistry()
+            registry.upsert(InstrumentIdentity.from_idn(SMW_IDN), role="signal_generator")
+            registry.upsert(
+                InstrumentIdentity.from_idn(second_smw), role="signal_generator"
+            )
+            return build_scanner(
+                registry=registry,
+                mode=SCAN_MODE_SIMULATED,
+                responses={
+                    ("192.168.1.201", 5025): SMW_IDN,
+                    ("192.168.1.203", 5025): second_smw,
+                },
+                timeout_s=0.02,
+            )
+
+        page = self.make_page()
+        panel = self.connection.discovery_panel
+        panel.scanner_factory = factory
+        panel = self._scan()
+        for heading in panel.card_headings():
+            panel.set_card_checked(heading, True)
+        requested = []
+        self.connection.next_requested.connect(lambda: requested.append(True))
+
+        self.connection.next_btn.click()
+
+        self.assertEqual(requested, [])
+        self.assertEqual(page.device_bindings, {})
+        self.assertIn("重复选择", panel.status_label.text())
+
+    def test_next_without_a_scan_keeps_the_saved_bindings(self):
+        """返回本页只改参数、没重新扫描时，沿用已保存的绑定，不要求再选一次。"""
+        page = self.make_page(
+            {
+                "test_frequencies": [1.0],
+                "instruments": {"power_supplies": {}},
+                "device_bindings": {
+                    "signal_generator": {
+                        "full_code": "105462",
+                        "device_key": "rohde&schwarz:105462",
+                    }
+                },
+            }
+        )
+        requested = []
+        self.connection.next_requested.connect(lambda: requested.append(True))
+
+        self.connection.next_btn.click()
+
+        self.assertEqual(requested, [True])
+        self.assertIn("signal_generator", page.device_bindings)

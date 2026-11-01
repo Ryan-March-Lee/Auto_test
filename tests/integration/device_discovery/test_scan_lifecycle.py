@@ -39,7 +39,6 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
         # 电源还没有短标签时退回资产名，但仍然是类别“电源”，不是“电源 PS3”这种槽位编号。
         self.assertIn("DP832A（DP8B214901519）", names)
         self.assertIn("未知设备 (N9020A)", names)
-        self.assertTrue(panel.apply_btn.isEnabled())
         text = panel.status_label.text()
         self.assertIn("已登记 3 台", text)
         self.assertIn("其中可应用 3 台", text)
@@ -95,7 +94,6 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
         self.assertFalse(card.checkable)
         panel.set_card_checked("SMW200A（105462）", True)
         self.assertFalse(panel.card_checked("SMW200A（105462）"))
-        self.assertFalse(panel.apply_btn.isEnabled())
         self.assertIn("未分配角色 1 台", panel.status_label.text())
 
     def test_power_supply_without_a_label_says_why_the_model_is_shown(self):
@@ -125,17 +123,16 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
         self.assertEqual(card.code_label.text(), "105462")
 
     def test_selecting_a_card_is_enough_without_choosing_a_role(self):
-        """角色来自设备表：点击卡片即选中并应用，不会出现“未选择测试角色”。"""
+        """角色来自设备表：点击卡片即选中，交付结果里不会出现“未选择测试角色”。"""
         panel = self.make_panel()
         self.run_scan(panel)
-        applied = []
-        panel.apply_requested.connect(applied.append)
 
         panel.set_card_checked("SMW200A（105462）", True)
-        panel.request_apply()
+        assignments, problems = panel.selected_assignments()
 
-        self.assertEqual(len(applied), 1)
-        self.assertEqual(applied[0][0]["role"], "signal_generator")
+        self.assertEqual(problems, [])
+        self.assertEqual(len(assignments), 1)
+        self.assertEqual(assignments[0]["role"], "signal_generator")
 
     def test_clicking_a_card_toggles_its_selection(self):
         panel = self.make_panel()
@@ -177,7 +174,7 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
                 self.app.processEvents()
                 self.assertTrue(card.is_checked())
 
-    def test_duplicate_roles_are_rejected(self):
+    def test_duplicate_roles_are_reported_by_the_selection(self):
         """两台设备在设备表里登记成同一角色时整批拒绝，而不是静默覆盖。"""
         second_smw = "Rohde&Schwarz,SMW200A,1412.0000K02/200001,5.20.043.47"
 
@@ -199,24 +196,20 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
         self.run_scan(panel)
         for heading in panel.card_headings():
             panel.set_card_checked(heading, True)
-        applied = []
-        panel.apply_requested.connect(applied.append)
 
-        panel.request_apply()
+        problems = panel.selected_assignments()[1]
 
-        self.assertEqual(applied, [])
-        self.assertIn("重复选择", panel.status_label.text())
+        self.assertIn("重复选择", "；".join(problems))
 
-    def test_apply_reports_selected_role_and_identity(self):
+    def test_selection_reports_role_and_identity(self):
         panel = self.make_panel()
         self.run_scan(panel)
-        applied = []
-        panel.apply_requested.connect(applied.append)
 
         panel.set_card_checked("SMW200A（105462）", True)
-        panel.request_apply()
+        assignments, problems = panel.selected_assignments()
 
-        assignment = applied[0][0]
+        self.assertEqual(problems, [])
+        assignment = assignments[0]
         self.assertEqual(assignment["role"], "signal_generator")
         self.assertEqual(assignment["full_code"], "105462")
         self.assertEqual(assignment["address"], "TCPIP0::192.168.1.201::inst0::INSTR")
@@ -226,17 +219,15 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
         self.assertIsNone(assignment["supply_id"])
 
     def test_power_supply_without_a_label_cannot_be_applied(self):
-        """旧设备表还没有缩写设备码：电源没有可写的配置引用，面板明确拒绝。"""
+        """旧设备表还没有缩写设备码：电源没有可写的配置引用，选择结果明确报告。"""
         panel = self.make_panel()
         self.run_scan(panel)
-        applied = []
-        panel.apply_requested.connect(applied.append)
 
         panel.set_card_checked("DP832A（DP8B214901519）", True)
-        panel.request_apply()
+        assignments, problems = panel.selected_assignments()
 
-        self.assertEqual(applied, [])
-        self.assertIn("缩写设备码", panel.status_label.text())
+        self.assertEqual(assignments, [])
+        self.assertIn("缩写设备码", "；".join(problems))
 
     def test_invalid_subnet_reports_failure_without_crashing(self):
         panel = self.make_panel()
@@ -248,7 +239,6 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
 
         self.assertIn("扫描失败", panel.status_label.text())
         self.assertEqual(panel.card_count(), 0)
-        self.assertFalse(panel.apply_btn.isEnabled())
 
     def test_shutdown_without_running_scan_is_ok(self):
         panel = self.make_panel()
@@ -384,7 +374,6 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
         # 失败后结果区里仍然没有结果：顶部的“查找设备”回来。
         self.assertTrue(panel.scan_btn.isVisible())
         self.assertEqual(panel.box_state(), BOX_STATE_IDLE)
-        self.assertFalse(panel.apply_btn.isEnabled())
 
     def test_shutdown_during_scan_cancels_and_leaves_no_worker(self):
         panel = self.make_panel()

@@ -1,12 +1,11 @@
 """仪表配置页：欢迎页选择测试模式之后的第一个整屏页面。
 
-本页只做一件事：扫描网段、勾选本次测试使用的仪器，并把所选设备的当前地址与设备
-身份（完整设备码）写进配置里的设备绑定。写入边界与派生界面（电源标签页、电源分配可选
-项、读入时的坏绑定提示）都归 :class:`presentation.qt.config_page.ConfigPage`：本页
-把设备发现面板交给配置页登记，用户点“应用所选设备到配置”时由配置页整批校验后写入，
-配置页再把结果回写到面板的状态文本上。本页不写文件、不解析配置文档，也不自己连仪器：
-它只从配置页读当前绑定与已保存地址，用来填“当前配置”与扫描框初值；点“连接仪器”
-只是把请求交给配置页去校验。
+本页只做一件事：扫描网段、勾选本次测试使用的仪器，并在点“下一步”时把所选设备的
+当前地址与设备身份（完整设备码）写进配置里的设备绑定。写入边界与派生界面（电源标签页、
+电源分配可选项、读入时的坏绑定提示）都归 :class:`presentation.qt.config_page.ConfigPage`：
+本页把设备发现面板交给配置页登记，点“下一步”时由配置页整批校验后写入，配置页再把结果
+回写到面板的状态文本上。本页不写文件、不解析配置文档，也不自己连仪器：它只从配置页读
+当前绑定与已保存地址，用来填扫描框初值；点“连接仪器”只是把请求交给配置页去校验。
 
 版式只有三块：大字号标题、居中放在标题下面的扫描行（扫描网段 / 扫描方式），
 以及下面一块显示发现结果的区域。这一组内容不贴视口顶端：多出来的高度上下分配时
@@ -17,8 +16,8 @@
 配置页的连接入口（:meth:`presentation.qt.config_page.ConfigPage.request_connect`
 校验后发 ``connect_requested``，由窗口连仪器）。
 
-“下一步”只做页面切换：配置随“保存配置”或“校验并创建运行”一起落盘，因此从本页
-离开不会产生半保存的配置。
+“下一步”先把本次勾选的设备写入配置（整批替换），再切到仪器配置页；配置文件仍随
+“保存配置”或“校验并创建运行”一起落盘，因此从本页离开不会产生半保存的配置。
 """
 
 from __future__ import annotations
@@ -39,13 +38,17 @@ from PySide6.QtWidgets import (
 from application.ports.device_discovery import DEMO_SUBNET
 
 from .config_form_bindings import LEGACY_BINDING_SOURCE, binding_address, binding_records
-from .device_discovery_panel import DeviceDiscoveryPanel, subnet_from_address
+from .device_discovery_panel import (
+    BOX_STATE_RESULTS,
+    DeviceDiscoveryPanel,
+    subnet_from_address,
+)
 from .theme import set_button_variant
 
 #: 页面标题：整屏步骤页只有这一行大字号标题，跟着下面的一整组内容落在页面中线略偏下。
 PAGE_TITLE = "仪表配置"
-#: 操作栏提示：说明“下一步”不会丢弃已应用的设备绑定。
-ACTION_HINT = "已应用的设备会随配置一起保存；点“下一步”继续配置测试参数与运行。"
+#: 操作栏提示：说明“下一步”会写入本次勾选，并继续配置参数与运行。
+ACTION_HINT = "点“下一步”会把本次勾选的设备写入配置，并继续配置测试参数与运行。"
 
 
 class ConnectionPage(QWidget):
@@ -125,7 +128,7 @@ class ConnectionPage(QWidget):
         layout.setSpacing(10)
         layout.addStretch(1)
         self.connect_btn = QPushButton("连接仪器")
-        self.connect_btn.setToolTip("连接本次已应用的仪器（地址与身份来自设备绑定）")
+        self.connect_btn.setToolTip("连接本次运行冻结的仪器（地址与身份来自创建运行时的设备绑定）")
         set_button_variant(self.connect_btn, "primary")
         layout.addWidget(self.connect_btn)
         return row
@@ -150,16 +153,44 @@ class ConnectionPage(QWidget):
         return bar
 
     def _connect_signals(self) -> None:
-        self.next_btn.clicked.connect(self.next_requested.emit)
+        self.next_btn.clicked.connect(self.request_next)
         self.return_welcome_btn.clicked.connect(self.return_welcome_requested.emit)
         # “连接仪器”仍然走配置页的连接入口：先按当前配置校验，通过后由配置页发
-        # ``connect_requested``，窗口再交给协调器真正连仪器。连接只来自已应用的设备
-        # 绑定，本页不自己拼地址，也不持有连接端口。
+        # ``connect_requested``，窗口再交给协调器真正连仪器。连接只来自设备绑定，
+        # 本页不自己拼地址，也不持有连接端口。
         self.connect_btn.clicked.connect(self.config_page.request_connect)
         # 发现面板的日志（扫描结果、失败原因）经配置页转出，窗口统一写进状态面板。
         self.config_page.discovery_message.connect(self.log_message.emit)
-        # 面板的“应用/清除”由配置页处理：写绑定、重建电源标签页、回写面板状态。
+        # 面板的写入由配置页处理：写绑定、重建电源标签页、回写面板状态。
         self.config_page.attach_discovery_panel(self.discovery_panel)
+
+    def request_next(self) -> None:
+        """写入本次勾选的设备，然后进入“仪器配置”页。
+
+        勾选就是本次测试的设备清单，写入按整批替换：勾了几台，配置里就只留这几台，
+        没勾的旧角色与旧电源随地址一起失效。因此不再需要单独的“应用”按钮，也没有
+        “清除绑定”这一步。
+
+        - 扫描出了结果：把勾选结果交给配置页写入；校验失败就留在本页，面板状态行
+          说明原因，不跳页。
+        - 扫描出了结果却一台都没勾：明确阻止，避免用户以为“没勾选=没改”而带着上一批
+          设备继续。
+        - 还没扫描：视为本次不更换设备，沿用已保存的绑定，直接进入下一步。
+        """
+        panel = self.discovery_panel
+        if panel.box_state() == BOX_STATE_RESULTS:
+            assignments, problems = panel.selected_assignments()
+            if problems:
+                panel.show_message("；".join(problems))
+                return
+            if not assignments:
+                panel.show_message(
+                    "请先勾选本次测试所需的设备（测试角色来自设备表登记，不需要选择）"
+                )
+                return
+            if not self.config_page.apply_discovered_devices(assignments):
+                return
+        self.next_requested.emit()
 
     # ---- 进入页面 ---------------------------------------------------------
 

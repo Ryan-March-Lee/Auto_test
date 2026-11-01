@@ -113,10 +113,11 @@ class DeviceBindingRejectionTests(ConnectionPageTestCase):
         messages = []
         page.validation_failed.connect(messages.append)
 
-        page.apply_discovered_devices(
+        applied = page.apply_discovered_devices(
             [{"role": "signal_generator", "address": "TCPIP0::192.168.1.201::inst0::INSTR"}]
         )
 
+        self.assertFalse(applied)
         self.assertIn("缺少设备身份", messages[-1])
         self.assertNotIn("address", page.build_config()["instruments"]["signal_generator"])
 

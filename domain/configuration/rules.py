@@ -272,7 +272,7 @@ def simulated_binding_issues(document: Any) -> List[ConfigIssue]:
                 "error",
                 f"{path}.source",
                 "该设备绑定来自模拟扫描，只能用于离线演示：请用“真实网络扫描”重新获取设备"
-                "并应用，或清除设备绑定后再创建运行",
+                "并应用后再创建运行",
             )
         )
     return issues

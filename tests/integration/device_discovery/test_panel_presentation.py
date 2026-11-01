@@ -135,7 +135,6 @@ class CardPresentationTests(DiscoveryPanelTestCase):
         self.assertFalse(panel.cards_area.isVisible())
         # 结果区里不写常驻提示：没有扫描就没有话要说。
         self.assertFalse(panel.status_label.isVisible())
-        self.assertFalse(panel.apply_btn.isVisible())
         self.assertFalse(panel.back_btn.isVisible())
 
     def test_results_stay_in_place_without_a_collapse_control(self):
@@ -304,10 +303,9 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         self.assertFalse(panel.centre_area.isVisible(), "卡片看得见时顶部按钮让位给卡片")
         self.assertFalse(panel.scan_btn.isVisible())
 
-        # 结果区里的动作只属于有结果的这一次查找：应用 / 清除 / 返回。
-        for button in (panel.apply_btn, panel.clear_btn, panel.back_btn):
-            self.assertTrue(panel.results_box.isAncestorOf(button))
-            self.assertTrue(button.isVisible())
+        # 结果区里的动作只属于有结果的这一次查找：返回。
+        self.assertTrue(panel.results_box.isAncestorOf(panel.back_btn))
+        self.assertTrue(panel.back_btn.isVisible())
         self.assertEqual(panel.back_btn.text(), "返回")
 
     def test_back_clears_this_search_and_returns_to_the_scan_button(self):
@@ -331,8 +329,7 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         self.assertTrue(panel.centre_area.isVisible())
         self.assertTrue(panel.scan_btn.isVisible())
         self.assertEqual(panel.status_label.text(), "")
-        self.assertFalse(panel.apply_btn.isVisible())
-        self.assertFalse(panel.apply_btn.isEnabled())
+        self.assertFalse(panel.back_btn.isVisible())
 
     def test_the_box_keeps_its_size_through_the_whole_scan(self):
         """点“查找设备”前后框一样大：状态与结果数量都不改变框的大小。"""

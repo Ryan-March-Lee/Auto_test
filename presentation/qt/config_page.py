@@ -96,7 +96,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         QWidget.__init__(self, parent)
         self.config = config if isinstance(config, dict) else {}
         # 设备身份绑定：信号源/频谱仪各一条（角色键），电源按 ``supply_id`` 多条
-        # （``power_supplies``）。只记录用户明确应用过的设备；IP 变化时按完整设备码重新识别，
+        # （``power_supplies``）。只记录本次勾选并写入的设备；IP 变化时按完整设备码重新识别，
         # 不靠地址记忆。绑定是仪器连接的唯一来源；构建界面之前就要就位，电源标签页的
         # 条目与电源分配的可选项都由它决定。
         self.device_bindings = effective_device_bindings(self.config)
@@ -222,19 +222,17 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         return build_action_bar(self)
 
     def attach_discovery_panel(self, panel):
-        """登记「仪表配置」页上的设备发现面板，并接上应用/清除意图。
+        """登记「仪表配置」页上的设备发现面板，并接上写入意图。
 
         面板归独立页面（:mod:`presentation.qt.connection_page`）所有：它只管扫描与
-        勾选，不改配置、不连接仪器。用户点“应用所选设备到配置”时，面板把所选设备交给
-        本页，本页整批校验后把当前地址与设备身份（完整设备码）记进 :attr:`device_bindings`，
+        勾选，不改配置、不连接仪器。用户点“下一步”时，连接页把勾选结果交给本页，
+        本页整批校验后把当前地址与设备身份（完整设备码）记进 :attr:`device_bindings`，
         保存时随配置一起落盘，作为下次按身份重新识别设备的依据；面板只负责显示结果。
 
-        “应用/清除”写的是配置页状态，因此信号连在本页；面板的日志经
+        写入由连接页在离开本页时触发，因此这里不再登记“应用/清除”按钮；面板的日志经
         :attr:`discovery_message` 转给窗口统一呈现。
         """
         self.discovery_panel = panel
-        panel.apply_requested.connect(self.apply_discovered_devices)
-        panel.clear_requested.connect(self.clear_device_bindings)
         panel.log_message.connect(self.discovery_message.emit)
         panel.set_device_bindings(self.device_bindings)
         if self.binding_problems:
@@ -261,20 +259,23 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         应用是**整批替换**：本次勾选结果就是完整的设备绑定，没勾选的旧角色与旧电源会
         被移除并随地址一起失效。这样“更换设备”不会残留上一台设备的连接，电源分配也
         不会再指向一台本次没有选中的电源。
+
+        返回是否写入成功：整批拒绝时返回 ``False``（原因已回写到面板与日志），调用方
+        （“下一步”）据此决定是否继续跳页。
         """
         valid_roles = {"signal_generator", "spectrum_analyzer", POWER_SUPPLY_ROLE}
         entries = list(assignments or ())
         panel = getattr(self, "discovery_panel", None)
 
-        def reject(message: str) -> None:
+        def reject(message: str) -> bool:
             """拒绝整批：日志与面板状态都要看到原因，不能只留在日志里。"""
             if panel is not None:
                 panel.show_message(message)
             self.validation_failed.emit(message)
+            return False
 
         if not entries:
-            reject("请先在发现结果中勾选本次测试所需设备")
-            return
+            return reject("请先在发现结果中勾选本次测试所需设备")
 
         # 第一遍只看角色与电源引用：未知角色、唯一角色重复、电源没有可用的引用 ID 是
         # “这一批要做什么”的问题，先报出来，避免用户看到的是地址/完整设备码之类更细节的错。
@@ -283,41 +284,36 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         for item in entries:
             role = item.get("role")
             if role not in valid_roles:
-                reject(f"未知的测试角色: {role}")
-                return
+                return reject(f"未知的测试角色: {role}")
             if role == POWER_SUPPLY_ROLE:
                 # 电源是类别不是编号：多台各自独立，这里只判定引用 ID 可用且唯一。
                 supply_id = self._supply_id_of(item)
                 if not supply_id:
-                    reject(
+                    return reject(
                         f"电源 {item.get('model') or item.get('ip')} 还没有缩写设备码"
                         "（label/supply_id），没有可写的配置引用；请先在设备表里保存一次为它"
                         "补上缩写码，再重新扫描"
                     )
-                    return
                 reason = supply_id_problem(supply_id)
                 if reason:
                     # 引用会拼成 ``supply_id/CHx``：含空白或 ``/`` 的标签写进配置后
                     # 路由会截断，宁可整批拒绝并指出要修的标签，也不悄悄改名。
-                    reject(
+                    return reject(
                         f"电源缩写设备码 {supply_id!r} 不能作为配置引用（{reason}）；"
                         "请先在设备表里修正该缩写码并保存，再重新扫描"
                     )
-                    return
                 if supply_id in supply_ids:
-                    reject(
+                    return reject(
                         f"本次应用有两行发现结果都指向电源 {supply_id}"
                         f"（{supply_ids[supply_id]} 与 {item.get('ip')}）；请只保留一台"
                     )
-                    return
                 supply_ids[supply_id] = str(item.get("ip") or "")
                 continue
             if role in used_roles:
-                reject(
+                return reject(
                     f"角色 {role} 在本次应用中被重复指定（{used_roles[role]} 与 "
                     f"{item.get('ip')}）；请只保留一台设备"
                 )
-                return
             used_roles[role] = str(item.get("ip") or "")
         # 第二遍校验每条记录的地址与身份，全部通过后才写绑定记录。
         checked: list[tuple[dict, str]] = []
@@ -325,35 +321,30 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             role = item["role"]
             address = item.get("address")
             if not isinstance(address, str) or not address.strip():
-                reject(f"{role} 的发现地址为空，未应用")
-                return
+                return reject(f"{role} 的发现地址为空，未应用")
             full_code = str(item.get("full_code") or "").strip()
             vendor = str(item.get("vendor") or "").strip()
             if not full_code:
-                reject(f"{role} 缺少设备身份（完整设备码），未应用")
-                return
+                return reject(f"{role} 缺少设备身份（完整设备码），未应用")
             device_key = str(item.get("device_key") or "").strip()
             if device_key and vendor:
                 try:
                     expected = make_device_key(vendor, full_code)
                 except ValueError as error:
-                    reject(f"{role} 的设备身份无法解析: {error}")
-                    return
+                    return reject(f"{role} 的设备身份无法解析: {error}")
                 if device_key.casefold() != expected:
-                    reject(
+                    return reject(
                         f"{role} 的设备身份与完整设备码不一致（{device_key} ≠ {expected}），未应用"
                     )
-                    return
             identity = device_key.casefold()
             if device_key and not vendor:
                 # 只有 ``device_key`` 时至少要求它携带的完整设备码与本次读到的一致，
                 # 否则地址会被写到一个身份自相矛盾的名字下。
                 tail = device_key.rsplit(":", 1)[-1].strip().casefold()
                 if tail != normalize_full_code(full_code).casefold():
-                    reject(
+                    return reject(
                         f"{role} 的设备身份与完整设备码不一致（{device_key} ≠ {full_code}），未应用"
                     )
-                    return
             if not identity and vendor:
                 try:
                     identity = make_device_key(vendor, full_code)
@@ -362,11 +353,10 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             if role == POWER_SUPPLY_ROLE and not identity:
                 # 电源绑定的身份是唯一匹配依据：没有它，下一次扫描找不回这台设备，
                 # 配置读取也会把这条记录判为不可用，等于写了一条坏绑定。
-                reject(
+                return reject(
                     f"电源 {self._supply_id_of(item)} 缺少可用于绑定的设备身份"
                     "（device_key，或厂商 + 完整设备码），未应用"
                 )
-                return
             checked.append((item, identity))
 
         # 第三遍：同一个 device_key 不能出现在两条电源绑定里（同一台设备不能接两次）。
@@ -376,11 +366,10 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
                 continue
             supply_id = self._supply_id_of(item)
             if identity in bound_keys:
-                reject(
+                return reject(
                     f"电源 {supply_id} 与 {bound_keys[identity]} 是同一台设备"
                     f"（{identity}），同一台设备不能重复绑定；请只保留一台"
                 )
-                return
             bound_keys[identity] = supply_id
 
         bindings: dict[str, object] = {}
@@ -436,6 +425,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         if panel is not None:
             panel.show_message(message)
         self.discovery_message.emit(message)
+        return True
 
     @staticmethod
     def _supply_id_of(item) -> str:
@@ -459,22 +449,6 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             else:
                 labels.append(f"电源 {key}")
         return labels
-
-    def clear_device_bindings(self):
-        """清除全部设备绑定，并让这些角色的连接信息同时失效。
-
-        绑定是唯一的连接来源，所以清除后对应仪器在保存的配置里变成“未启用、无地址”。
-        若只删绑定记录、把旧地址留在配置里，界面看起来已经断开，连接却仍会打到旧设备。
-        """
-        self.device_bindings = {}
-        self.binding_problems = []
-        panel = getattr(self, "discovery_panel", None)
-        if panel is not None:
-            panel.set_device_bindings({})
-            panel.show_message("已清除设备绑定；相关仪器地址与启用状态一并失效，请重新扫描应用")
-        self._rebuild_power_tabs()
-        self.update_power_supply_options()
-        self.discovery_message.emit("已清除设备绑定记录")
 
     def _build_power_widgets(self, layout, supplies):
         """建电源分区：把页面状态（条目、分配引用、可选项、供电方式）交给构建模块。

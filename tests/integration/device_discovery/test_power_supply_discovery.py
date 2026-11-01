@@ -21,7 +21,6 @@ class PowerSupplyDiscoveryTests(DiscoveryPanelTestCase):
             # 卡片正面的身份码就是缩写设备码：不再拼 ``PS/型号/完整设备码``，电源没有“第几台”。
             self.assertEqual(heading, f"DP832A（{card.code_label.text()}）")
             self.assertFalse(card.code_label.text().startswith("PS/"))
-        self.assertTrue(panel.apply_btn.isEnabled())
 
     def test_power_supply_tooltip_uses_the_domain_identity_text(self):
         """电源悬浮提示与标签页、日志共用领域层的身份文本，不另拼一套。"""
@@ -45,19 +44,16 @@ class PowerSupplyDiscoveryTests(DiscoveryPanelTestCase):
         self.assertEqual(panel.card_status("DP832A（DP8B1519）"), "")
         self.assertNotIn("没有短标签", panel.card_tooltip("DP832A（DP8B0885）"))
 
-    def test_two_supplies_are_applied_independently_without_a_duplicate_role_error(self):
+    def test_two_supplies_are_selected_independently_without_a_duplicate_role_error(self):
         panel = self.make_panel()
         self.run_scan(panel)
         for heading in panel.card_headings():
             panel.set_card_checked(heading, True)
-        applied = []
-        panel.apply_requested.connect(applied.append)
 
-        panel.request_apply()
+        assignments, problems = panel.selected_assignments()
 
-        self.assertEqual(len(applied), 1, "两台电源要在同一批里一起交付，不是分两次")
-        assignments = applied[0]
-        self.assertEqual(len(assignments), 2)
+        self.assertEqual(problems, [])
+        self.assertEqual(len(assignments), 2, "两台电源要在同一批里一起交付，不是分两次")
         self.assertEqual({item["role"] for item in assignments}, {"power_supply"})
         self.assertEqual(
             {item["supply_id"] for item in assignments}, {"DP8B1519", "DP8B0885"}
@@ -69,20 +65,18 @@ class PowerSupplyDiscoveryTests(DiscoveryPanelTestCase):
                 "rigol technologies:dp8b174400885",
             },
         )
-        self.assertNotIn("重复选择", panel.status_label.text())
 
     def test_power_supply_hands_over_its_supply_id(self):
         """迁移后的设备表：面板交付短标签与身份，配置页按 ``supply_id`` 落地址。"""
         panel = self.make_panel()
         self.run_scan(panel)
         panel.set_card_checked(panel.card_headings()[0], True)
-        applied = []
-        panel.apply_requested.connect(applied.append)
 
-        panel.request_apply()
+        assignments, problems = panel.selected_assignments()
 
-        self.assertEqual(len(applied), 1)
-        assignment = applied[0][0]
+        self.assertEqual(problems, [])
+        self.assertEqual(len(assignments), 1)
+        assignment = assignments[0]
         self.assertNotIn("config_slot", assignment)
         self.assertIn(assignment["supply_id"], {"DP8B1519", "DP8B0885"})
 

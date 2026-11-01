@@ -27,6 +27,7 @@ from presentation.qt.config_projection import (
 ROOT = Path(__file__).resolve().parents[2]
 PROJECTION_SOURCE = ROOT / "presentation" / "qt" / "config_projection.py"
 PAGE_SOURCE = ROOT / "presentation" / "qt" / "config_page.py"
+ADAPTER_SOURCE = ROOT / "presentation" / "qt" / "config_form_adapter.py"
 AUTHORING_SOURCE = ROOT / "application" / "configuration_authoring.py"
 BACKFILL_HELPERS = (
     "_reset_control_widgets",
@@ -615,12 +616,15 @@ class ConfigPageOwnershipTests(unittest.TestCase):
             "逐字段回填逻辑必须留在 config_projection，页面只负责控件接线",
         )
 
-    def test_config_page_delegates_apply_config_to_the_projection(self):
-        source = PAGE_SOURCE.read_text(encoding="utf-8")
+    def test_config_page_delegates_apply_config_to_the_form_adapter(self):
+        page_source = PAGE_SOURCE.read_text(encoding="utf-8")
 
-        self.assertIn("project_authoring_config(", source)
-        self.assertIn("self, config, supplies=", source)
-        self.assertIn("from .config_projection import", source)
+        self.assertIn("self.form_adapter.apply_configuration(", page_source)
+        self.assertNotIn("project_authoring_config(", page_source)
+        adapter = ADAPTER_SOURCE.read_text(encoding="utf-8")
+        self.assertIn("project_authoring_config(", adapter)
+        self.assertIn("supplies=supplies", adapter)
+        self.assertIn("from .config_projection import", adapter)
 
     def test_config_page_and_projection_do_not_interpret_the_formal_schema(self):
         """正式 ``test_plan`` / ``run_mapping`` 只能由 configuration_authoring 生成。"""

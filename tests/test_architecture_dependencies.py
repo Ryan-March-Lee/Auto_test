@@ -931,11 +931,16 @@ class ProductionDependencyTests(unittest.TestCase):
         self.assertIn("application.dto.export_requests", modules)
 
     def test_configuration_page_delegates_backfill_to_the_projection_module(self):
-        """步骤 11：配置页只编辑配置编写文档，回填规则在 config_projection。"""
+        """步骤 7 / 11：配置页只经表单 Adapter 回填，逐字段规则仍在 config_projection。"""
         page_source = (ROOT / "presentation" / "qt" / "config_page.py").read_text(
             encoding="utf-8-sig"
         )
-        self.assertIn("project_authoring_config(", page_source)
+        adapter_source = (
+            ROOT / "presentation" / "qt" / "config_form_adapter.py"
+        ).read_text(encoding="utf-8-sig")
+        self.assertIn("self.form_adapter.apply_configuration(", page_source)
+        self.assertNotIn("project_authoring_config(", page_source)
+        self.assertIn("project_authoring_config(", adapter_source)
         # 电源分配的可选项由页面按当前绑定算好再交给投影（步骤 9：显示文本带型号，
         # 业务值在 itemData 里）；投影自己不从绑定记录拼显示文本。
         self.assertIn("supplies=self._power_supply_choices(", page_source)

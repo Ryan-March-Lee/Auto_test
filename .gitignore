@@ -14,6 +14,9 @@ __pycache__/
 # Local application state
 temp_loaded_data.json
 
+# Local agent/tool state (session screenshots and scratch files)
+.openchamber/
+
 # Generated reports and temporary files
 test_results/**
 !test_results/.gitkeep

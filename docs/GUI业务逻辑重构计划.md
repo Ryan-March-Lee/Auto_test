@@ -386,6 +386,35 @@ ViewModel 不导入 PySide6，不直接读写文件，不创建仪器，不弹 Q
 
 **工作范围控制**：先覆盖现有控件，不引入通用表单框架。
 
+**完成状态**：✅ 已完成。新增 `presentation.qt.config_form_adapter`：
+
+- `ConfigurationFormAdapter` 成为配置页控件读写的唯一边界：`read_form`（**一次**控件
+  读数同时给出完整配置文档与测试参数类型化快照）、`read_configuration`（整份配置
+  组装）、`read_test_parameters`（单独的测试参数快照）、
+  `read_power_channel_snapshot`（重建标签页时保留的通道参数）、`supply_id`（电源分配
+  下拉框只读 `itemData` 的业务值）、`validation_errors`、`refresh_power_choices`、
+  `apply_configuration`（回填投影）与 `report_errors`（把一组用户文案合并后交给页面
+  错误通道）。Adapter 不导入 PySide6，可用最小控件替身测试，也不含设备绑定或正式配置
+  业务规则；它不缓存控件值，页面按需创建（无状态属性），避免“页面 ↔ adapter”引用环
+  把 Qt 控件留给后台线程触发的循环垃圾回收；
+- `ConfigPage` 不再导入或调用 `ConfigFormState`、`project_authoring_config`、
+  `apply_power_choice`，也不再自己遍历分配下拉框、反解析业务值或拼接错误文案：
+  `build_config` / `apply_config` / `validate` / `update_power_supply_options` 都变成
+  adapter + 视图模型的短委托；页面只保留控件注册、信号连接与派生界面状态；
+- `ConfigurationViewModel.update_form(document, bindings=...)` 用页面读数同步整份编辑
+  文档（测试参数、电源通道参数、供电分配、设备绑定），但不重置干净基线与运行状态；
+  `build_config` 经 adapter 的 `read_form` 拿到同一份读数产生的完整文档与测试参数快照，
+  依次交给 `update_form` 与 `update_test_parameters`，并对测试参数保留“非法频率文本
+  不进入快照”的读数边界。文档与快照不会再分别读一次控件，因此视图模型的草稿、dirty
+  与保存文档一致。步骤 6 的 `save` / `create_run` Effect 因此持有完整文档；实际保存与
+  运行创建仍由 `ApplicationCoordinator` 执行，保存链路未改；
+- 新增 `tests/ui/test_config_form_adapter.py`（最小控件替身，不启动 `QApplication`）覆盖
+  整份读取、测试参数快照、业务值只读 `itemData`、回填投影、分配刷新、通道快照与错误
+  显示；`tests/ui/test_config_page.py` 的分配选择断言改走 adapter，页面/架构门禁改为
+  检查“页面经 adapter 回填、逐字段规则仍在 config_projection”；
+- 正式 API 清单、领域词汇与模块归属同步登记新模块。未改变字段含义、保存格式、校验
+  顺序、失败文案或页面布局。
+
 ### 步骤 8：解耦 `ConnectionPage` 和 `ConfigPage`
 
 **目的**：消除页面之间直接互相调用内部实现。

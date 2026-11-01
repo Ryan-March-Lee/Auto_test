@@ -192,6 +192,50 @@ class ConfigurationViewModelLoadTests(unittest.TestCase):
             state.bindings["signal_generator"] = {}  # type: ignore[index]
 
 
+class ConfigurationViewModelFormSyncTests(unittest.TestCase):
+    """步骤 7：页面读数经 ``update_form`` 收进整份草稿，但不重置干净基线。"""
+
+    def test_update_form_syncs_power_channels_and_assignments(self):
+        view = _loaded()
+        document = _config()
+        document["instruments"]["power_supplies"]["DP8B1519"]["channels"]["CH1"][
+            "voltage"
+        ]["value"] = 5.0
+        document["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"][
+            "supply_id"
+        ] = None
+
+        state = view.update_form(document)
+
+        supply = state.draft.power_supplies[0]
+        self.assertEqual(supply.channel("CH1").voltage, 5.0)
+        self.assertIsNone(state.draft.dut_assignments[0].supply_id)
+        self.assertTrue(state.dirty)
+
+    def test_update_form_does_not_reset_the_clean_baseline(self):
+        view = _loaded()
+        document = _config()
+        document["test_frequencies"] = [5.8]
+
+        view.update_form(document)
+        self.assertTrue(view.dirty)
+
+        view.update_form(document)
+        self.assertTrue(view.dirty)
+
+    def test_update_form_keeps_the_run_status(self):
+        view = _loaded()
+        view.set_run_status("当前运行: run-20261102")
+
+        state = view.update_form(_config())
+
+        self.assertEqual(state.run_status, "当前运行: run-20261102")
+
+    def test_update_form_rejects_non_object_documents(self):
+        with self.assertRaises(TypeError):
+            _loaded().update_form([])
+
+
 class ConfigurationTestParametersTests(unittest.TestCase):
     """测试参数快照：类型化、可由文档转换、只替换本组字段。"""
 
@@ -574,6 +618,7 @@ class ConfigurationViewModelBoundaryTests(unittest.TestCase):
 
         self.assertIn("from application.configuration_view_model import", page_source)
         self.assertIn("self.view_model.apply_device_selection(", page_source)
+        self.assertIn("self.view_model.update_form(", page_source)
         self.assertIn("self.view_model.update_test_parameters(", page_source)
         self.assertIn("self.view_model.set_run_status(", page_source)
         self.assertIn("self.view_model.mark_clean()", page_source)

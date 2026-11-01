@@ -13,17 +13,16 @@
   :meth:`ConfigurationViewModel.create_run` 只返回一个明确的页面 Effect
   (:class:`ConfigurationAction`)，由页面/协调器决定何时真正落盘。
 
-迁移边界（步骤 6 的工作范围）：先只接入“测试参数 + 设备绑定”。电源标签页的逐通道
-读数仍在 :mod:`presentation.qt.config_form_state`，由步骤 7 的配置表单 Adapter 接入；
-在此之前 ViewModel 的草稿保留加载时的电源参数，页面仍是这些控件值的权威来源，因此：
+迁移边界（步骤 6 先接入“测试参数 + 设备绑定”；步骤 7 收口整份表单）：控件读数经
+:class:`presentation.qt.config_form_adapter.ConfigurationFormAdapter` 集中读出后，
+:meth:`ConfigurationViewModel.update_form` 同步整份配置编辑文档，草稿因此覆盖电源通道
+参数与供电分配。页面不再自己组装文档，``build_config`` 只是 adapter 读数 + 本方法的
+短委托。因此：
 
-- 视图模型只对**已迁移的范围**（测试参数、设备绑定、运行状态、dirty）是业务状态的
-  来源；整份配置文档仍由页面在 :meth:`presentation.qt.config_page.ConfigPage.build_config`
-  里组装，电源通道参数与供电分配不在本步骤的状态里；
-- ``save`` / ``create_run`` 是步骤 7 的接线接口，本步骤**没有**页面或协调器消费它们：
-  实际保存/创建运行仍走 ``ConfigFormState.validate`` + ``ApplicationCoordinator``，
-  行为与文案不变。在步骤 7 把控件读数全部收进视图模型之前，不要把这里的 Effect 文档
-  当成当前保存链路的正式文档（它只反映已迁移的范围）。
+- 视图模型对整份配置页业务状态（草稿、设备绑定、运行状态、dirty）是唯一来源；
+- ``save`` / ``create_run`` 返回的 Effect 文档现在是完整的配置编辑文档（含电源通道、
+  供电分配与设备绑定）；实际保存/创建运行仍由 ``ApplicationCoordinator`` 调用页面的
+  ``build_config`` 执行，本步骤不改保存链路，也不在视图模型里写文件。
 
 校验问题的边界与步骤 3–5 一致：用户可修正的配置问题通过
 :class:`application.configuration_editing.ValidationResult` 返回；调用方契约错误（文档不是
@@ -311,11 +310,10 @@ class ConfigurationAction:
     视图模型不写文件、不创建运行；它只回答“以什么文档、在什么校验结论下执行哪个动作”。
     ``validation`` 不是 ``valid`` 时 ``document`` 为空，调用方不得落盘。
 
-    接入状态：这是步骤 7（控件读写收拢为 Qt Adapter）的接线接口，**当前没有消费方**。
-    在步骤 7 完成前，保存/创建运行仍由页面校验 + ``ApplicationCoordinator`` 执行，并且
-    ``document`` 只包含已迁移到视图模型的范围（测试参数、设备绑定与载入时保留的其它
-    顶层块）。不要把这里的 ``document`` 当作当前保存链路的权威文档，也不要在本步骤提前
-    接线，否则电源通道参数与供电分配会被静默丢弃。
+    接入状态：步骤 7 已把整份控件读数收进视图模型，因此这里的 ``document`` 是完整的
+    配置编辑文档。实际保存/创建运行仍由 ``ApplicationCoordinator`` 调用页面的
+    ``build_config`` 执行，本 Effect 只提供“动作是否可执行、要执行什么文档”的明确
+    结果，不在视图模型里写文件或创建运行。
     """
 
     kind: str
@@ -423,28 +421,28 @@ class ConfigurationViewModel:
         ``device_bindings``。缺失字段保持草稿的缺失状态，非法字段转成结构化问题，
         不猜默认设备。
         """
-        if document is None:
-            document = {}
-        if not isinstance(document, Mapping):
-            raise TypeError(
-                f"配置文档必须是对象，收到 {type(document).__name__}"
-            )
-        self._document = copy.deepcopy(dict(document))
-        if bindings is None:
-            raw_bindings = self._document.get("device_bindings")
-            snapshot = (
-                _bindings_snapshot(raw_bindings)
-                if isinstance(raw_bindings, Mapping)
-                else MappingProxyType({})
-            )
-        else:
-            snapshot = _bindings_snapshot(bindings)
-        read = ConfigurationDraft.from_document(self._document, bindings=snapshot)
-        self._draft = read.draft
-        self._bindings = snapshot
-        self._validation = read.validation
-        self._validation_is_formal = False
+        self._read_document(document, bindings)
         self._clean_baseline = self._authoring_document()
+        return self.state
+
+    def update_form(
+        self,
+        document: Mapping[str, Any] | None,
+        *,
+        bindings: Mapping[str, Any] | DeviceBindingsDraft | None = None,
+    ) -> ConfigurationPageState:
+        """用页面当前读数同步整份编辑文档，**不重置**干净基线。
+
+        这是步骤 7 的控件适配路径：:class:`ConfigurationFormAdapter` 把控件读数组装成
+        文档后交给这里，草稿随之更新（包括电源通道参数与供电分配）。与 :meth:`load`
+        的区别是它表示“用户正在编辑”，因此：
+
+        - 干净基线保持不变，dirty 仍按上次保存/回填/切换模式的基线判定；
+        - 运行状态文本保持不变；
+        - 正式校验结论描述的是改写前的整份配置，这里直接丢弃；转换阶段的问题按新读数
+          重新计算，不把旧字段的提示留在页面上。
+        """
+        self._read_document(document, bindings)
         return self.state
 
     def update_test_parameters(
@@ -543,6 +541,34 @@ class ConfigurationViewModel:
         return self.state
 
     # ---- 内部 ---------------------------------------------------------------
+
+    def _read_document(
+        self,
+        document: Mapping[str, Any] | None,
+        bindings: Mapping[str, Any] | DeviceBindingsDraft | None,
+    ) -> None:
+        """把一份文档读数写进当前状态（不改基线、不改运行状态）。"""
+        if document is None:
+            document = {}
+        if not isinstance(document, Mapping):
+            raise TypeError(
+                f"配置文档必须是对象，收到 {type(document).__name__}"
+            )
+        self._document = copy.deepcopy(dict(document))
+        if bindings is None:
+            raw_bindings = self._document.get("device_bindings")
+            snapshot = (
+                _bindings_snapshot(raw_bindings)
+                if isinstance(raw_bindings, Mapping)
+                else MappingProxyType({})
+            )
+        else:
+            snapshot = _bindings_snapshot(bindings)
+        read = ConfigurationDraft.from_document(self._document, bindings=snapshot)
+        self._draft = read.draft
+        self._bindings = snapshot
+        self._validation = read.validation
+        self._validation_is_formal = False
 
     def _action(self, kind: str) -> ConfigurationAction:
         validation = self.validate()

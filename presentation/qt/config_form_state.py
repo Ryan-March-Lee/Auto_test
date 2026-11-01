@@ -423,11 +423,23 @@ class ConfigFormState:
                 supplies[role] = _assignment_entry(controls.get(control))
         return {"power_supply_assignment": {"driver_amplifier": driver, "dut_amplifier": {"power_supply_count": count, "supplies": supplies}}}
 
-    def build_config(self) -> dict:
+    def build_config(
+        self, *, test_parameters: Mapping[str, Any] | None = None
+    ) -> dict:
+        """合并控件读数与基线，返回完整配置文档。
+
+        ``test_parameters`` 是调用方已经读出的测试参数片段（见
+        :meth:`read_test_parameters`）；传入时直接复用，避免为了同一份文档再读一次控件。
+        不传时保持原行为，由本方法自己读。
+        """
         w = self.widgets
         config = copy.deepcopy(self.config)
         config["instruments"] = self.read_instrument_config()["instruments"]
-        config.update(self.read_test_parameters())
+        config.update(
+            self.read_test_parameters()
+            if test_parameters is None
+            else test_parameters
+        )
         dut = _dict_copy(config.get("dut_config"))
         dut["max_input_power"] = self._value(w.max_input_power)
         dut["power_supply_count"] = int(self._current(w.pa_unit_count_combo))

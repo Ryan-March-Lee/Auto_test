@@ -453,6 +453,7 @@ INTERNAL_MODULES = {
     "presentation.qt.archival_page": "测量页面共享的归档状态生命周期（等待/保存中/结果/终止/运行切换）",
     "presentation.qt.archival_status": "归档结果到页面文案与按钮状态的映射（无 Qt、无路径判断）",
     "presentation.qt.archival_view": "归档结果分组控件：文案与“打开结果目录/报告”动作",
+    "presentation.qt.config_form_adapter": "配置页表单 Adapter（GUI 重构步骤 7）：控件读写与配置组装的唯一边界，集中读数、回填投影、电源分配业务值（只读 itemData）与页面错误提示；不导入 PySide6、不含设备绑定或正式配置业务规则",
     "presentation.qt.config_form_bindings": "设备绑定的读取与规范化：device_bindings 到 supply_id 集合、旧结构折叠与不可用记录的问题清单；旧 serial 只在读取边界投影为 full_code（纯数据，不读控件、不写配置）",
     "presentation.qt.config_form_state": "配置表单状态：控件读数、配置片段合并与页面自己的校验说明",
     "presentation.qt.config_page": "配置页面",

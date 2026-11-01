@@ -862,7 +862,7 @@ class ConfigPageTests(unittest.TestCase):
     def _assignment_selections(self, page):
         """读出四个电源分配槽位当前选中的 ``supply_id``，用于两条回填路径的一致性比对。"""
         return {
-            key: page._combo_supply_id(page.power_assignment_widgets[key])
+            key: page.form_adapter.supply_id(page.power_assignment_widgets[key])
             for key in (
                 "driver_power",
                 "pa_unit1_power",

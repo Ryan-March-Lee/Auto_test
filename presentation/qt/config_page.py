@@ -4,7 +4,10 @@
 转发和派生界面状态（单元可见性、驱动模式、电源选项）；电源分区的控件构建与标签页
 重建在 :mod:`presentation.qt.config_power_section`，把冻结配置投影到控件的规则在
 :mod:`presentation.qt.config_projection`，读取控件值组装配置的规则在
-:mod:`presentation.qt.config_form_state`。页面把电源分区要显示的条目、可选项与
+:mod:`presentation.qt.config_form_state`。控件读写统一经
+:mod:`presentation.qt.config_form_adapter`：页面不再直接调用 ``ConfigFormState``，
+``build_config`` / ``apply_config`` 只是 adapter + 视图模型的短委托。
+页面把电源分区要显示的条目、可选项与
 「槽位 -> 配置路径」的映射（``driver_amplifier.supplies.main`` 等，见
 :meth:`ConfigPage._assignment_entries`）读出来交给构建模块，构建模块不判断这些路径。
 页面不持有逐字段回填逻辑，也不依赖窗口、测量 controller 或硬件实现。
@@ -21,10 +24,9 @@
 :meth:`ConfigPage.apply_discovered_devices` 只提交本次勾选结果并投影返回的绑定集合。
 
 页面业务状态由 :class:`application.configuration_view_model.ConfigurationViewModel` 持有
-（步骤 6）：已迁移的范围是测试参数、设备绑定、运行状态与 dirty，页面把这些读数写进
-视图模型、再按它返回的状态渲染（运行状态文案、绑定集合）。整份配置文档仍由页面在
-:meth:`ConfigPage.build_config` 组装，电源标签页的逐通道读数与供电分配仍在
-:mod:`presentation.qt.config_form_state`，由步骤 7 的配置表单 Adapter 一并收口。
+（步骤 6）：测试参数、设备绑定、运行状态、dirty，以及步骤 7 经表单 Adapter 收口的
+整份配置读数（电源通道参数与供电分配）。页面把这些读数写进视图模型、再按它返回的
+状态渲染（运行状态文案、绑定集合）；页面不再直接读取或组装配置字典。
 """
 
 import copy
@@ -38,7 +40,6 @@ from PySide6.QtWidgets import (
 
 from application.configuration_view_model import (
     DEFAULT_RUN_STATUS,
-    ConfigurationTestParameters,
     ConfigurationViewModel,
 )
 from domain.instruments.labels import instrument_display_label
@@ -50,7 +51,7 @@ from .config_form_bindings import (
     power_supply_binding_problems,
     power_supply_bindings,
 )
-from .config_form_state import ConfigFormState
+from .config_form_adapter import ConfigurationFormAdapter
 from .config_projection import (
     DEFAULT_ATTENUATOR_TYPE,
     DEFAULT_COMPRESSION_TYPE,
@@ -59,11 +60,8 @@ from .config_projection import (
     DEFAULT_PA_UNIT_COUNT,
     DEFAULT_SIGNAL_SOURCE,
     DEFAULT_TEST_FREQUENCIES,
-    POWER_ASSIGNMENT_SLOTS,
     ConfigBackfillError,
-    apply_power_choice,
     driver_power_source_label,
-    project_authoring_config,
 )
 from .config_power_section import (
     PowerAssignmentEntries,
@@ -82,10 +80,6 @@ __all__ = [
     "ConfigBackfillError",
     "ConfigPage",
 ]
-
-# 电源分配下拉框的控件键。界面上的接线位置，与电源设备数量无关：这里只决定刷新时
-# 遍历哪些下拉框，选哪台电源完全来自配置引用与当前绑定集合。
-POWER_ASSIGNMENT_COMBO_KEYS = POWER_ASSIGNMENT_SLOTS
 
 
 class ConfigPage(PageControllerBindingMixin, QWidget):
@@ -137,6 +131,18 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             f"设备绑定不可用：{problem}"
             for problem in power_supply_binding_problems(devices)
         ]
+
+    @property
+    def form_adapter(self) -> ConfigurationFormAdapter:
+        """配置页表单 Adapter（控件读写、回填投影与错误提示的唯一入口）。
+
+        Adapter 是无状态的，每次按当前页面创建：它只保存页面引用与页面的错误通道，
+        不缓存控件值。按需创建也避免了“页面 -> adapter -> 页面”的引用环——Qt 控件
+        对象必须在主线程析构，不能留给后台扫描线程触发循环垃圾回收。
+        """
+        return ConfigurationFormAdapter(
+            self, on_error=self.validation_failed.emit
+        )
 
     def build_ui(self):
         """按页面协议构建并返回配置页根 widget。"""
@@ -392,20 +398,14 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             sources[supply_id] = entry
         return sources
 
-    def _power_channel_values(self) -> dict[str, dict]:
-        """读取当前电源标签页里的通道值，重建标签页时用它保留用户已填的参数。"""
-        if not getattr(self, "power_config_widgets", None):
-            return {}
-        fragment = ConfigFormState(self.config, self).read_power_supply_config()
-        return fragment.get("instruments", {}).get("power_supplies", {}) or {}
-
     def _rebuild_power_tabs(self, *, sources=None, preserve=True) -> None:
         """把重建标签页要用的页面状态读出来，交给构建模块。
 
         条目来源（配置键 + 本次绑定）与控件里的通道参数都是页面状态，所以在这里取；
         合并规则、按电源键恢复选中页与逐页控件构建都在
         :mod:`presentation.qt.config_power_section`。``preserve=False`` 是回填路径，以
-        新配置为准，不沿用重建前的残留值。本方法是同名保留的委托壳：
+        新配置为准，不沿用重建前的残留值。通道读数经表单 Adapter 读取，页面不再直接
+        调用 ``ConfigFormState``。本方法是同名保留的委托壳：
         ``tests/ui/test_config_page.py`` 直接调用它。
         """
         if getattr(self, "power_tabs", None) is None:
@@ -413,7 +413,9 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         rebuild_power_tabs(
             self,
             sources=self._power_supply_sources() if sources is None else sources,
-            preserved=self._power_channel_values() if preserve else {},
+            preserved=(
+                self.form_adapter.read_power_channel_snapshot() if preserve else {}
+            ),
         )
 
     def _current_power_tab_key(self) -> str | None:
@@ -484,20 +486,17 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         self.run_status_label.setText(state.run_status)
 
     def validate(self):
-        """校验当前表单；先把控件读数同步进视图模型，再汇总页面错误。
+        """校验当前表单；先同步整份控件读数，再汇总页面错误。
 
-        同步只更新测试参数快照（步骤 6 的迁移范围），不改变错误文案与顺序；它保证
-        “用户刚输入的值、页面校验看到的值、视图模型持有的值”是同一次读数。
+        控件读数经表单 Adapter 收进视图模型（步骤 7），错误文案与顺序保持原样；
+        “用户刚输入的值、页面校验看到的值、视图模型持有的值”来自同一次读数。
         """
         # 读入时判定为不可用的设备绑定先报出来：它们已经从可用电源里剔除，若不在这里
         # 明确失败，保存就会把对应条目的地址清空，看起来像“电源无故消失”。
-        form = ConfigFormState(self.config, self)
-        self._sync_test_parameters(form)
+        self.build_config()
         errors = list(getattr(self, "binding_problems", []))
-        errors.extend(form.validation_errors())
-        if errors:
-            self.validation_failed.emit("；".join(errors)); return False
-        return True
+        errors.extend(self.form_adapter.validation_errors())
+        return self.form_adapter.report_errors(errors)
 
     def on_pa_unit_count_changed(self, _value): self.update_pa_unit_ui()
     def update_pa_unit_ui(self):
@@ -529,59 +528,28 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         已经不在”变成一次看不见的分配改动。
 
         配置引用的电源不再绑定时不能被静默换成列表里的第一台——空选择交给校验明确报告，
-        由操作员重新选择。
+        由操作员重新选择。刷新动作本身由表单 Adapter 完成（步骤 7）。
         """
-        options = self._power_supply_choices()
-        for key in POWER_ASSIGNMENT_COMBO_KEYS:
-            combo = self.power_assignment_widgets[key]
-            current = self._combo_supply_id(combo)
-            apply_power_choice(combo, {"supply_id": current}, options)
-
-    @staticmethod
-    def _combo_supply_id(combo) -> str:
-        """下拉框当前选中项的 ``supply_id``（``itemData``）；空选择时返回空串。"""
-        if combo is None:
-            return ""
-        find_data = getattr(combo, "findData", None)
-        if not callable(find_data):
-            return ""
-        index = combo.currentIndex()
-        data = combo.itemData(index) if isinstance(index, int) and index >= 0 else None
-        return data.strip() if isinstance(data, str) and data.strip() else ""
+        self.form_adapter.refresh_power_choices(self._power_supply_choices())
 
     def _power_supply_choices(self) -> PowerSupplyChoices:
         """电源分配下拉框的可选项：当前绑定的电源，带真实设备的型号用于显示。"""
         return bound_power_supply_entries(self.device_bindings)
 
-    def _sync_test_parameters(self, form: ConfigFormState) -> None:
-        """把“测试参数 + DUT 输入上限/单元数量”的控件读数写进视图模型。
-
-        这是步骤 6 的控件适配路径：:class:`ConfigFormState` 读控件并返回文档片段，
-        :meth:`ConfigurationTestParameters.from_document` 把它转成类型化快照，视图模型
-        只接收快照。频率文本非法时片段里没有 ``test_frequencies``，快照因此是空频率；
-        页面校验仍按原文案报告，视图模型不会替用户猜一个频率（也不会把空频率当成
-        “读到了有效值”）。
-        """
-        document = form.read_test_parameters()
-        document["dut_config"] = {
-            "max_input_power": self.max_input_power.value(),
-            "power_supply_count": int(self.pa_unit_count_combo.currentText()),
-        }
-        parameters, _issues = ConfigurationTestParameters.from_document(document)
-        self.view_model.update_test_parameters(parameters)
-
     def build_config(self, base=None):
-        """按当前控件值组装完整配置。
+        """按当前控件值组装完整配置（控件读数经表单 Adapter）。
 
         ``base`` 是组装基线（缺省为页面自己的配置副本）。运行协调器传入它持有的
-        权威配置，保证“页面只是视图、配置只有一个数据源”。组装前先把测试参数读数交给
-        视图模型（步骤 6），因此页面业务状态与 dirty 有同一个来源；电源通道与分配仍由
-        控件读数组装，等步骤 7 的表单 Adapter 接入。
+        权威配置，保证“页面只是视图、配置只有一个数据源”。整份文档与测试参数快照
+        来自表单 Adapter 的**同一次**读数，随后一起写进视图模型（步骤 7），因此
+        页面业务状态、dirty 与保存文档不会出现两套读数；设备身份绑定仍随配置一起保存。
         """
-        base_config = self.config if base is None else base
-        form = ConfigFormState(base_config, self)
-        config = form.build_config()
-        self._sync_test_parameters(form)
+        reading = self.form_adapter.read_form(base)
+        config = reading.document
+        self.view_model.update_form(config, bindings=self.device_bindings)
+        # 测试参数是视图模型的类型化快照：非法频率文本不进入快照，页面校验仍按原文案
+        # 报告（步骤 6 的读数边界，步骤 7 保持），但快照与上面的文档来自同一次读数。
+        self.view_model.update_test_parameters(reading.test_parameters)
         # 设备身份绑定随配置一起保存：角色 -> 完整设备码等稳定标识。各仪器的 address 由
         # 绑定里的当前地址写入（当前测量链路按地址连接），身份用于下次扫描时按完整设备码
         # 重新识别同一台设备，而不是依赖可能变化的 IP。
@@ -635,10 +603,11 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         """把一份已冻结的配置编写文档确定性地投影到控件。
 
         投影规则（重置到空配置基线、逐字段读取编写文档字段、非法类型回落默认值）都在
-        :func:`presentation.qt.config_projection.project_authoring_config` 里，页面只
-        负责刷新派生界面状态。参数不是 JSON 对象（``dict``）时抛出
-        :class:`ConfigBackfillError`，不会被静默当作回填成功；全部投影成功后才更新
-        ``self.config``，避免部分失败时页面与文档副本互相矛盾。
+        :func:`presentation.qt.config_projection.project_authoring_config` 里，由
+        :class:`ConfigurationFormAdapter` 调用；页面只负责刷新派生界面状态并把结果交给
+        视图模型。参数不是 JSON 对象（``dict``）时抛出 :class:`ConfigBackfillError`，
+        不会被静默当作回填成功；全部投影成功后才更新 ``self.config``，避免部分失败时
+        页面与文档副本互相矛盾。
 
         只更新控件显示，不写文件、不保存、不连接仪器；运行期间的测量输入仍来自
         运行目录内的冻结快照。正式 ``test_plan`` / ``run_mapping`` 由
@@ -674,8 +643,8 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
                 sources=self._power_supply_sources(supplies),
                 preserve=False,
             )
-            projected = project_authoring_config(
-                self, config, supplies=self._power_supply_choices()
+            projected = self.form_adapter.apply_configuration(
+                config, supplies=self._power_supply_choices()
             )
         except ConfigBackfillError:
             self.device_bindings = previous_bindings

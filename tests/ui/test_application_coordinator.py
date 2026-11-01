@@ -355,6 +355,39 @@ class ConfigurationPagePortTests(unittest.TestCase):
         self.assertEqual(page.statuses, ["当前运行: 未创建"])
 
 
+class ConfigurationLoadTests(unittest.TestCase):
+    """加载已保存配置：单一读取入口；失败时告警并清空，不留旧配置。"""
+
+    def test_load_configuration_reads_through_the_gui_data_service(self):
+        service = MagicMock()
+        document = {"test_frequencies": [2.4]}
+        service.configuration.load.return_value = document
+        coordinator = _coordinator(service=service)
+
+        loaded = coordinator.load_configuration()
+
+        self.assertEqual(loaded, {"test_frequencies": [2.4]})
+        self.assertIs(loaded, coordinator.config)
+        # 协调器持有自己的顶层副本：后续组装/保存不得改写服务返回的对象。
+        self.assertIsNot(loaded, document)
+        self.assertEqual(coordinator.warnings, [])
+        service.configuration.load.assert_called_once_with()
+
+    def test_load_failure_warns_and_clears_the_previous_configuration(self):
+        service = MagicMock()
+        service.configuration.load.side_effect = OSError("文件损坏")
+        coordinator = _coordinator(service=service)
+        coordinator.config = {"stale": True}
+
+        loaded = coordinator.load_configuration()
+
+        self.assertEqual(loaded, {})
+        self.assertEqual(coordinator.config, {})
+        self.assertEqual(
+            coordinator.warnings, [("配置加载", "无法加载配置文件: 文件损坏")]
+        )
+
+
 class FeedbackCallbackTests(unittest.TestCase):
     def test_feedback_callbacks_are_required(self):
         for missing in ("log", "warn", "error"):

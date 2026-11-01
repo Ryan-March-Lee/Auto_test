@@ -146,5 +146,39 @@ class WelcomePageModeButtonTests(unittest.TestCase):
         self.assertGreater(pixmap.height(), 0)
 
 
+class TestModeSelectionTests(unittest.TestCase):
+    """欢迎页选择的测试模式只改写 ``driver_mode`` 的开关，不碰其它配置。
+
+    这两条只调用 ``apply_test_mode`` 这个纯函数：不建 ``QApplication``、不触碰控件
+    （本模块其余用例会导入 PySide6 并绘制按钮，但这里不需要）。
+    """
+
+    def test_mode_selection_keeps_the_existing_power_source(self):
+        from presentation.qt.welcome_page import apply_test_mode
+
+        config = {
+            "driver_mode": {"enabled": False, "power_source": "dc_supply"},
+            "test_frequencies": [2.4],
+        }
+
+        result = apply_test_mode(config, True)
+
+        # 返回并原地更新同一份配置副本：调用方随后交给配置页回填。
+        self.assertIs(result, config)
+        self.assertEqual(
+            config["driver_mode"], {"enabled": True, "power_source": "dc_supply"}
+        )
+        self.assertEqual(config["test_frequencies"], [2.4])
+
+    def test_mode_selection_rebuilds_a_malformed_driver_block(self):
+        from presentation.qt.welcome_page import apply_test_mode
+
+        config = {"driver_mode": "enabled"}
+
+        apply_test_mode(config, 0)
+
+        self.assertEqual(config["driver_mode"], {"enabled": False})
+
+
 if __name__ == "__main__":
     unittest.main()

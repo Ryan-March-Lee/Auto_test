@@ -7,6 +7,12 @@
 :class:`ConfigurationPagePort` 这个窄接口（校验、组装、回填、运行状态、驱动模式）
 与配置页交互，并通过注入的日志/告警/错误回调与窗口交互。这样它既不需要
 知道控件名字，也可以用纯 Python 替身单独测试。
+
+归属（见 `docs/配置领域词汇与模块归属.md`）：presentation controller。它持有呈现层配置状态并
+编排 application 用例（配置保存、运行创建/加载、仪器端口生命周期），不读控件、不定义业务规则；
+规则来源仍是 :mod:`application.run_service` 与 :mod:`domain.configuration.rules`。目前直接调用
+:func:`presentation.qt.configuration_authoring.author_official_configuration`，步骤 4 改走
+application 的配置编写服务。
 """
 
 from __future__ import annotations

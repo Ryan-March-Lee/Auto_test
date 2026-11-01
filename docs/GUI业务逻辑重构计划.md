@@ -122,7 +122,11 @@ ViewModel 不导入 PySide6，不直接读写文件，不创建仪器，不弹 Q
 - `ConfigurationDraft` 属于 application 配置编辑边界；
 - 配置规则和值对象属于 domain；
 - JSON 字段转换属于 application authoring service；
-- Qt 控件读写属于 presentation adapter。
+- Qt 控件读写属于 presentation adapter；
+- 规则所有者不等于唯一函数：domain 可同时持有编写文档入口（`validate_config`）与正式模型入口
+  （`validate_test_plan`），但语义只能有一份定义，页面不得复制判据；
+- 只影响控件初值的缺省（如缺省电源选择）登记为显示策略，不是业务规则，不进正式文档；
+- 持有呈现层状态并编排 application 用例的协调器登记为 presentation controller，不是纯数据 adapter。
 
 **完成标准**：
 
@@ -130,6 +134,15 @@ ViewModel 不导入 PySide6，不直接读写文件，不创建仪器，不弹 Q
 - 没有一项业务规则同时登记为页面规则和应用规则。
 
 **工作范围控制**：只改文档和模块注释，不改变运行行为。
+
+**完成状态**：✅ 已完成。词汇、三阶段对象和函数归属见[配置领域词汇与模块归属](配置领域词汇与模块归属.md)；
+`docs/正式API目录清单.md` 的配置相关职责已按新归属补充说明。只改了文档与模块注释，未重命名字段、
+未移动生产代码。
+
+初稿完成后又做了一次归属复核，修订见该文第 9 节：补登 `_formal_run_errors` 这处页面侧的正式校验
+副本；把“唯一实现”改为“规则定义与入口”；拆分身份语义（domain）与记录级一致性判定（application，
+步骤 5）；把缺省电源选择移出业务规则表、改登记为显示策略；新增 `presentation controller` 分类；
+完成标准改为入口级标注。修订只动文档、API 清单与模块注释，未改任何运行逻辑。
 
 ---
 

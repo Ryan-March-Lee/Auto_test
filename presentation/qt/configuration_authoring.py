@@ -1,5 +1,9 @@
 """把配置页表单直接编写为正式运行配置。
 
+归属（见 `docs/配置领域词汇与模块归属.md`）：本模块是**迁移期**的 presentation adapter。
+正式配置文档只允许由 `application` 的配置编写服务生成，步骤 4 迁移后这里只保留转发壳，
+不再新增规则。
+
 配置页仍然只编辑一份面向现场硬件的组合文档；本模块用当前表单值生成同一文档中的
 正式 ``test_plan`` / ``run_mapping`` 段，使保存出的文件可以被
 :class:`infrastructure.config.json_config_repository.JsonConfigurationRepository`

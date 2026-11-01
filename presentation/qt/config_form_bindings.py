@@ -10,6 +10,10 @@
 :mod:`presentation.qt.configuration_authoring`，正式校验在
 :mod:`domain.configuration.rules` 与 :mod:`infrastructure.config.validation`。这里既不
 构造正式 schema，也不决定设备身份（身份只来自设备发现结果与设备表）。
+
+归属（见 `docs/配置领域词汇与模块归属.md`）：presentation adapter。`domain.instruments` 只定义
+身份语义（`device_key` 与归一化）；**记录级**身份一致性判定与整批替换、角色/设备唯一性规则的目标
+归属都是 `application` 的设备绑定服务（步骤 5），届时本模块只保留读取与规范化。
 """
 
 import copy

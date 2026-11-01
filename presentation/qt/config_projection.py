@@ -26,6 +26,10 @@
   回填成功；缺失或类型不正确的字段落到明确默认值，绝不残留上一次运行的显示状态。
 
 本模块不依赖 Qt，因此可以用纯 Python 替身控件测试投影规则。
+
+归属（见 `docs/配置领域词汇与模块归属.md`）：presentation adapter。缺省电源选择与通道初值是
+**显示策略**（第 5.3 节），去掉它正式文档不变，因此不是业务规则；正式 `test_plan` /
+`run_mapping` 由配置编写服务生成（步骤 4 迁到 `application`）。
 """
 
 from __future__ import annotations

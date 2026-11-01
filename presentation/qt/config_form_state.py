@@ -8,6 +8,11 @@
 职责边界：本模块读表单控件、把读数合并成配置片段，并给出页面自己的校验说明。设备
 绑定记录本身的读取与规范化（``supply_id`` 集合、旧结构折叠、不可用记录的问题清单）
 在 :mod:`presentation.qt.config_form_bindings`，这里只消费它给出的结果。
+
+归属（见 `docs/配置领域词汇与模块归属.md`）：presentation adapter。读数后的合法性判据属于
+`domain` 配置规则；`_power_role_errors`、`_power_assignment_errors` 以及 `_formal_run_errors`
+提前执行的正式校验都是迁移期副本（步骤 7、13 收敛到 Adapter 展示结构化校验结果），不在这里
+新增第二套规则。
 """
 
 import ast

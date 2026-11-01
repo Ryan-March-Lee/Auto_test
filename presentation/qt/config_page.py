@@ -14,6 +14,10 @@
 只在 :meth:`ConfigPage.attach_discovery_panel` 里登记那一页交出的事件面板，并保留写
 绑定的边界（整批校验 + 写地址/身份）与派生界面更新。连接请求仍由
 :meth:`ConfigPage.request_connect` 校验后经 ``connect_requested`` 交给窗口。
+
+归属（见 `docs/配置领域词汇与模块归属.md`）：Qt 视图。页面只负责控件、布局、信号与派生界面
+状态；:meth:`ConfigPage.apply_discovered_devices` 的三轮绑定校验是迁移期业务逻辑，步骤 5
+迁到 `application` 的设备绑定服务。
 """
 
 import copy

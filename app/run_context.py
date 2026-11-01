@@ -1,4 +1,9 @@
-"""Application boundary for preparing a run before hardware access."""
+"""Application boundary for preparing a run before hardware access.
+
+归属（见 `docs/配置领域词汇与模块归属.md`）：application 装配入口。这里组装运行契约对象
+（`PreparedRun` 及其冻结快照），业务判据仍来自 `application.run_service` 与
+`domain.configuration.rules`，不在此新增规则。
+"""
 
 from __future__ import annotations
 

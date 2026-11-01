@@ -438,11 +438,9 @@ def validate_test_plan(plan: Union[TestPlan, Mapping[str, Any]]) -> ConfigValida
             error("frequencies.values", "不能包含重复频率")
     start = _number(plan.start_power, "signal_source.start_power", error)
     stop = _number(plan.stop_power, "signal_source.stop_power", error)
-    step = _number(plan.power_step, "signal_source.step", error, positive=True)
+    _number(plan.power_step, "signal_source.step", error, positive=True)
     if start is not None and stop is not None and start > stop:
         error("signal_source", "start_power 不能大于 stop_power")
-    if step is None:
-        pass
     if plan.compression_point not in SUPPORTED_COMPRESSION_POINTS:
         error("compression_point.type", "必须是 1dB、3dB 或 5dB")
     _number(plan.attenuator_value, "attenuator.value", error, non_negative=True)

@@ -943,5 +943,115 @@ class ConfigPageTests(unittest.TestCase):
         self.assertEqual(page.pa_unit1_power_combo.currentData(), "DP8B0885")
 
 
+class ConfigPageViewModelTests(unittest.TestCase):
+    """步骤 6：页面业务状态由 ConfigurationViewModel 持有，页面只按状态渲染。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def make_page(self, **extra):
+        config = {"test_frequencies": [1.0], "instruments": {"power_supplies": {}}}
+        config.update(extra)
+        page = ConfigPage(config)
+        page.show()
+        self.app.processEvents()
+        return page
+
+    def test_test_parameters_are_loaded_into_the_view_model(self):
+        page = self.make_page()
+
+        state = page.view_model.state
+        self.assertEqual([frequency.ghz for frequency in state.draft.frequencies], [1.0])
+        self.assertFalse(state.dirty)
+
+    def test_test_edits_mark_the_view_model_dirty_and_mark_clean_resets(self):
+        page = self.make_page()
+        self.assertFalse(page.is_dirty())
+
+        page.freq_edit.setText("[2.4, 5.8]")
+        self.assertTrue(page.is_dirty())
+        self.assertEqual(
+            [frequency.ghz for frequency in page.view_model.state.draft.frequencies],
+            [2.4, 5.8],
+        )
+
+        page.mark_clean()
+        self.assertFalse(page.is_dirty())
+        self.assertFalse(page.view_model.dirty)
+
+    def test_invalid_frequency_is_reported_by_the_page_and_does_not_guess(self):
+        page = self.make_page()
+        page.freq_edit.setText("not-a-frequency")
+
+        self.assertFalse(page.validate())
+
+        state = page.view_model.state
+        self.assertEqual(state.draft.frequencies, ())
+        self.assertTrue(state.dirty)
+        # 页面片段只带转换成功的字段；空频率仍会被正式校验拦下。
+        self.assertFalse(page.view_model.validate().valid)
+
+    def test_run_status_is_rendered_from_the_view_model(self):
+        page = self.make_page()
+
+        page.set_run_status("当前运行: run-20261102")
+
+        self.assertEqual(page.run_status_label.text(), "当前运行: run-20261102")
+        self.assertEqual(
+            page.view_model.state.run_status, "当前运行: run-20261102"
+        )
+
+    def test_applying_devices_writes_the_binding_into_the_view_model(self):
+        page = self.make_page()
+        assignment = {
+            "role": "power_supply",
+            "supply_id": "DP8B1519",
+            "label": "DP8B1519",
+            "address": "TCPIP0::192.168.1.102::inst0::INSTR",
+            "vendor": "RIGOL TECHNOLOGIES",
+            "model": "DP832A",
+            "full_code": "DP8B214901519",
+            "device_key": "rigol technologies:dp8b214901519",
+            "ip": "192.168.1.102",
+            "port": 5555,
+            "known": True,
+        }
+
+        self.assertTrue(page.apply_discovered_devices([assignment]))
+        self.assertEqual(
+            page.view_model.state.bindings_snapshot(), page.device_bindings
+        )
+        self.assertEqual(list(page.device_bindings["power_supplies"]), ["DP8B1519"])
+
+    def test_a_rejected_device_selection_leaves_the_view_model_unchanged(self):
+        page = self.make_page()
+        before = page.view_model.state
+
+        self.assertFalse(page.apply_discovered_devices([]))
+
+        self.assertEqual(
+            page.view_model.state.bindings_snapshot(), before.bindings_snapshot()
+        )
+        self.assertFalse(page.view_model.dirty)
+
+    def test_backfill_resets_the_view_model_to_a_clean_state(self):
+        page = self.make_page()
+        page.freq_edit.setText("[9.9]")
+        self.assertTrue(page.is_dirty())
+
+        page.apply_config(
+            {
+                "test_frequencies": [3.5],
+                "instruments": {"power_supplies": {}},
+            }
+        )
+
+        self.assertFalse(page.is_dirty())
+        state = page.view_model.state
+        self.assertEqual([frequency.ghz for frequency in state.draft.frequencies], [3.5])
+        self.assertFalse(state.dirty)
+
+
 if __name__ == "__main__":
     unittest.main()

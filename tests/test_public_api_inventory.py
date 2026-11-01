@@ -121,6 +121,16 @@ FORMAL_API = {
         "binding_identity_problem",
         "supply_id_problem",
     ),
+    "application.configuration_view_model": (
+        "CREATE_RUN",
+        "ConfigurationAction",
+        "ConfigurationBindingOutcome",
+        "ConfigurationPageState",
+        "ConfigurationTestParameters",
+        "ConfigurationViewModel",
+        "DEFAULT_RUN_STATUS",
+        "SAVE_CONFIGURATION",
+    ),
     "application.run_service": (
         "RunSnapshot",
         "create_run_snapshot",

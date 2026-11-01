@@ -332,6 +332,35 @@ ViewModel 不导入 PySide6，不直接读写文件，不创建仪器，不弹 Q
 
 **工作范围控制**：先只接入“测试参数 + 设备绑定”，电源动态标签页下一步接入。
 
+**完成状态**：✅ 已完成。新增 `application.configuration_view_model`：
+
+- `ConfigurationViewModel` 持有配置页**已迁移范围**的业务状态（测试参数、设备绑定、
+  运行状态、dirty）：`ConfigurationDraft`（步骤 3）、设备绑定快照、最近一次
+  `ValidationResult`、运行状态文本与 dirty；`ConfigurationPageState` 是不可变快照
+  （嵌套容器同样只读），`ConfigurationTestParameters` 是“测试参数 + DUT 输入上限/
+  单元数量”的类型化输入，类型与数值判据仍由 `ConfigurationDraft` 定义；
+- 显式动作 `load(document, bindings=...)`、`update_test_parameters(parameters)`、
+  `apply_device_selection(...)`、`validate()`、`set_run_status(...)`、`mark_clean()`
+  返回新状态；`save()` / `create_run()` 只返回 `ConfigurationAction`（种类 + 正式文档 +
+  校验结论），文件保存与运行创建仍由 `ApplicationCoordinator`/应用端口执行。这两个
+  Effect 是**步骤 7 的接线接口**，本步骤没有页面或协调器消费：实际保存/创建运行仍走
+  `ConfigFormState.validate` + 协调器，行为与文案不变；
+- 设备选择委托 `DeviceBindingService`（步骤 5），成功时整批替换绑定并写入状态，失败时
+  保留旧绑定；正式编写与校验委托 `ConfigurationAuthoringService`（步骤 4）；调用方
+  契约错误抛 `TypeError`，编写不出正式配置仍抛 `ConfigurationAuthoringError`；
+- `ConfigPage` 持有 `view_model`：建页/回填/切换测试模式时载入并重置干净基线，
+  `build_config()` 前把 `ConfigFormState` 的测试参数读数转成类型化快照写入视图模型，
+  `apply_discovered_devices()` 改为提交设备勾选并投影返回的绑定集合，
+  `set_run_status()` 只写视图模型并从返回状态渲染标签，`is_dirty()` 合并视图模型 dirty；
+  页面不再自己持有 `DeviceBindingService`；
+- 新增 `tests/test_configuration_view_model.py`（纯 Python，不启动 `QApplication`）覆盖
+  载入、测试参数更新、整批绑定、正式校验、保存/创建运行 Effect、运行状态、dirty 基线、
+  嵌套只读快照与“不导入 Qt / 不读写文件”的静态边界；`tests/ui/test_config_page.py` 补
+  页面状态接线用例（测试参数、dirty、运行状态、设备绑定、回填）；
+- 迁移期只接入测试参数与设备绑定：整份配置文档仍由页面 `build_config()` 组装，电源通道
+  读数仍在 `presentation.qt.config_form_state`，由步骤 7 的配置表单 Adapter 收敛；
+  页面校验文案、保存格式、页面文案均未改变。
+
 ### 步骤 7：把控件读写收拢为一个 Qt Adapter
 
 **目的**：隔离 Qt 控件协议和 ViewModel。

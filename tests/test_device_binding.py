@@ -325,9 +325,10 @@ class PresentationDelegationTests(unittest.TestCase):
         )
         cls.method_source = ast.get_source_segment(cls.source, cls.method)
 
-    def test_page_submits_the_request_to_the_application_service(self):
-        self.assertIn("ApplyDeviceSelectionRequest.from_assignments(", self.method_source)
-        self.assertIn("self._device_binding_service.apply(", self.method_source)
+    def test_page_submits_the_selection_to_the_view_model(self):
+        """步骤 6 起页面经视图模型提交勾选结果；请求 DTO 与服务调用都在 application。"""
+        self.assertIn("self.view_model.apply_device_selection(", self.method_source)
+        self.assertNotIn("DeviceBindingService()", self.method_source)
 
     def test_page_has_no_binding_validation_loop_left(self):
         for fragment in (
@@ -340,13 +341,20 @@ class PresentationDelegationTests(unittest.TestCase):
         ):
             self.assertNotIn(fragment, self.method_source)
 
-    def test_page_imports_the_service_from_the_application_boundary(self):
+    def test_the_view_model_submits_the_request_to_the_application_service(self):
+        view_model_source = (
+            ROOT / "application" / "configuration_view_model.py"
+        ).read_text(encoding="utf-8-sig")
         modules = {
             node.module
-            for node in ast.walk(self.tree)
+            for node in ast.walk(ast.parse(view_model_source))
             if isinstance(node, ast.ImportFrom) and not node.level
         }
         self.assertIn("application.device_binding", modules)
+        self.assertIn(
+            "ApplyDeviceSelectionRequest.from_assignments(", view_model_source
+        )
+        self.assertIn("self._binding_service.apply(", view_model_source)
 
 
 class RequestDtoTests(unittest.TestCase):

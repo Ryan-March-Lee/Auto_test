@@ -19,6 +19,12 @@
 状态；设备选择的角色唯一性、引用/身份校验与整批替换规则在
 :class:`application.device_binding.DeviceBindingService`（步骤 5），
 :meth:`ConfigPage.apply_discovered_devices` 只提交本次勾选结果并投影返回的绑定集合。
+
+页面业务状态由 :class:`application.configuration_view_model.ConfigurationViewModel` 持有
+（步骤 6）：已迁移的范围是测试参数、设备绑定、运行状态与 dirty，页面把这些读数写进
+视图模型、再按它返回的状态渲染（运行状态文案、绑定集合）。整份配置文档仍由页面在
+:meth:`ConfigPage.build_config` 组装，电源标签页的逐通道读数与供电分配仍在
+:mod:`presentation.qt.config_form_state`，由步骤 7 的配置表单 Adapter 一并收口。
 """
 
 import copy
@@ -30,7 +36,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from application.device_binding import ApplyDeviceSelectionRequest, DeviceBindingService
+from application.configuration_view_model import (
+    DEFAULT_RUN_STATUS,
+    ConfigurationTestParameters,
+    ConfigurationViewModel,
+)
 from domain.instruments.labels import instrument_display_label
 
 from .config_form_bindings import (
@@ -104,9 +114,10 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         # 「仪表配置」页交出的事件面板：写绑定之后由本页回写它的状态文本。
         # 未登记面板时（纯配置页场景）所有回写都跳过。
         self.discovery_panel = None
-        # 设备选择的业务规则在 application（步骤 5）：本页只提交本次勾选结果，再把返回的
-        # 绑定集合投影到控件与面板。
-        self._device_binding_service = DeviceBindingService()
+        # 页面业务状态由 application 的视图模型持有（步骤 6）：测试参数、设备绑定、运行
+        # 状态与 dirty 都在那里；设备选择的业务规则仍只在 DeviceBindingService（步骤 5）。
+        self.view_model = ConfigurationViewModel()
+        self.view_model.load(self.config, bindings=self.device_bindings)
         self.build_ui()
         self._connect_signals()
         self.update_pa_unit_ui()
@@ -115,6 +126,8 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         # 基线用组装结果而不是原始文档：旧配置迁移、绑定写入的启用状态都属于页面自身的
         # 规范化结果，刚打开的页面不应显示为“已修改”。
         self._dirty_baseline = copy.deepcopy(self.build_config(self.config))
+        # 视图模型以同一份组装结果作为干净基线：建页时写出的默认值不算用户修改。
+        self.view_model.mark_clean()
 
     @staticmethod
     def _binding_problems_of(config) -> list[str]:
@@ -248,15 +261,16 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         角色不是用户选的：它来自设备表 ``instruments.json`` 登记的 ``role``（旧槽位
         ``PS1``..``PS4`` 由面板折叠成 ``power_supply``），面板按它交付。写入规则（角色
         唯一性、电源引用、地址/身份、同一台设备不重复与整批替换）都在
-        :class:`application.device_binding.DeviceBindingService`；本页只提交本次勾选结果，
-        再把返回的绑定集合投影到页面状态（绑定、电源标签页、分配选项与面板文案）。
+        :class:`application.device_binding.DeviceBindingService`；页面只把本次勾选结果交给
+        :meth:`ConfigurationViewModel.apply_device_selection`，再把返回的新绑定集合投影到
+        页面状态（绑定、电源标签页、分配选项与面板文案）。
 
         返回是否写入成功：整批拒绝时返回 ``False``（原因已回写到面板与日志），调用方
         （“下一步”）据此决定是否继续跳页。
         """
-        request = ApplyDeviceSelectionRequest.from_assignments(assignments)
-        result = self._device_binding_service.apply(request)
         panel = getattr(self, "discovery_panel", None)
+        outcome = self.view_model.apply_device_selection(assignments)
+        result = outcome.result
         if not result.ok:
             # 面板与日志看到的是业务文案本身（不带结构化问题的路径前缀）。
             message = "；".join(issue.message for issue in result.issues)
@@ -266,7 +280,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             return False
 
         previous = self._binding_labels(self.device_bindings)
-        self.device_bindings = result.to_mapping()
+        self.device_bindings = outcome.state.bindings_snapshot()
         # 这一批记录刚刚通过全部校验：之前读入时的坏绑定要么被替换、要么已被移除。
         self.binding_problems = []
         self._rebuild_power_tabs()
@@ -418,7 +432,7 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         run_layout.setSpacing(8)
         self.create_run_btn = QPushButton("校验并创建运行")
         set_button_variant(self.create_run_btn, "primary")
-        self.run_status_label = QLabel("当前运行: 未创建")
+        self.run_status_label = QLabel(DEFAULT_RUN_STATUS)
         self.run_status_label.setWordWrap(True)
         self.run_status_label.setProperty("tone", "muted")
         self.load_run_id_edit = QLineEdit()
@@ -461,14 +475,26 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         self.load_run_requested.emit(run_id)
 
     def set_run_status(self, text: str) -> None:
-        """显示当前运行状态；由窗口在创建/加载运行后更新。"""
-        self.run_status_label.setText(text)
+        """显示当前运行状态；由窗口在创建/加载运行后更新。
+
+        运行状态只写进视图模型（步骤 6），标签文案从返回的状态渲染：页面不再是运行状态
+        的第二份来源。
+        """
+        state = self.view_model.set_run_status(text)
+        self.run_status_label.setText(state.run_status)
 
     def validate(self):
+        """校验当前表单；先把控件读数同步进视图模型，再汇总页面错误。
+
+        同步只更新测试参数快照（步骤 6 的迁移范围），不改变错误文案与顺序；它保证
+        “用户刚输入的值、页面校验看到的值、视图模型持有的值”是同一次读数。
+        """
         # 读入时判定为不可用的设备绑定先报出来：它们已经从可用电源里剔除，若不在这里
         # 明确失败，保存就会把对应条目的地址清空，看起来像“电源无故消失”。
+        form = ConfigFormState(self.config, self)
+        self._sync_test_parameters(form)
         errors = list(getattr(self, "binding_problems", []))
-        errors.extend(ConfigFormState(self.config, self).validation_errors())
+        errors.extend(form.validation_errors())
         if errors:
             self.validation_failed.emit("；".join(errors)); return False
         return True
@@ -527,14 +553,35 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         """电源分配下拉框的可选项：当前绑定的电源，带真实设备的型号用于显示。"""
         return bound_power_supply_entries(self.device_bindings)
 
+    def _sync_test_parameters(self, form: ConfigFormState) -> None:
+        """把“测试参数 + DUT 输入上限/单元数量”的控件读数写进视图模型。
+
+        这是步骤 6 的控件适配路径：:class:`ConfigFormState` 读控件并返回文档片段，
+        :meth:`ConfigurationTestParameters.from_document` 把它转成类型化快照，视图模型
+        只接收快照。频率文本非法时片段里没有 ``test_frequencies``，快照因此是空频率；
+        页面校验仍按原文案报告，视图模型不会替用户猜一个频率（也不会把空频率当成
+        “读到了有效值”）。
+        """
+        document = form.read_test_parameters()
+        document["dut_config"] = {
+            "max_input_power": self.max_input_power.value(),
+            "power_supply_count": int(self.pa_unit_count_combo.currentText()),
+        }
+        parameters, _issues = ConfigurationTestParameters.from_document(document)
+        self.view_model.update_test_parameters(parameters)
+
     def build_config(self, base=None):
         """按当前控件值组装完整配置。
 
         ``base`` 是组装基线（缺省为页面自己的配置副本）。运行协调器传入它持有的
-        权威配置，保证“页面只是视图、配置只有一个数据源”。
+        权威配置，保证“页面只是视图、配置只有一个数据源”。组装前先把测试参数读数交给
+        视图模型（步骤 6），因此页面业务状态与 dirty 有同一个来源；电源通道与分配仍由
+        控件读数组装，等步骤 7 的表单 Adapter 接入。
         """
         base_config = self.config if base is None else base
-        config = ConfigFormState(base_config, self).build_config()
+        form = ConfigFormState(base_config, self)
+        config = form.build_config()
+        self._sync_test_parameters(form)
         # 设备身份绑定随配置一起保存：角色 -> 完整设备码等稳定标识。各仪器的 address 由
         # 绑定里的当前地址写入（当前测量链路按地址连接），身份用于下次扫描时按完整设备码
         # 重新识别同一台设备，而不是依赖可能变化的 IP。
@@ -561,13 +608,23 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         self.power_assignment_group.setVisible(self.test_mode_enabled)
         self.update_driver_power_ui()
         self._dirty_baseline = copy.deepcopy(self.build_config(self.config))
+        # 切换测试模式本身不算“已修改”：页面与视图模型同时重置干净基线。
+        self.view_model.mark_clean()
         self.driver_mode_changed.emit(self.test_mode_enabled)
 
     def is_dirty(self) -> bool:
-        return self.build_config(self.config) != self._dirty_baseline
+        """当前控件读数是否与上次干净基线不同。
+
+        视图模型的 dirty 覆盖步骤 6 已接入的测试参数与设备绑定；整份组装结果的比较仍
+        负责尚未接入视图模型的电源通道参数与供电分配（步骤 7 收口）。先组装再比较，
+        保证视图模型在判定前已经看到本次控件读数。
+        """
+        current = self.build_config(self.config)
+        return self.view_model.dirty or current != self._dirty_baseline
 
     def mark_clean(self) -> None:
         self._dirty_baseline = copy.deepcopy(self.build_config(self.config))
+        self.view_model.mark_clean()
 
     def driver_mode_requested(self) -> bool:
         """返回欢迎页选择的驱放测试模式。"""
@@ -637,4 +694,8 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         self.update_pa_unit_ui()
         self.update_driver_power_ui()
         self.update_power_supply_options()
-        self._dirty_baseline = copy.deepcopy(self.build_config(self.config))
+        # 基线与视图模型都取“页面对这份文档的组装结果”：控件缺省值（例如驱放供电方式）
+        # 属于页面自身的规范化结果，刚回填完的页面不算已修改。
+        built = self.build_config(self.config)
+        self._dirty_baseline = copy.deepcopy(built)
+        self.view_model.load(built, bindings=self.device_bindings)

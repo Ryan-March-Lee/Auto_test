@@ -164,6 +164,31 @@ class DeviceBindingRejectionTests(ConnectionPageTestCase):
         self.assertIn("请先在发现结果中勾选", messages[-1])
         self.assertIn("signal_generator", page.device_bindings)
 
+    def test_a_rejected_batch_leaves_the_previous_bindings_and_power_ui_untouched(self):
+        """拒绝时页面不投影新状态：旧绑定、电源标签页与分配可选项都保持原样。"""
+        page = self.make_page()
+        page.apply_discovered_devices(
+            [
+                {
+                    "role": "power_supply",
+                    "supply_id": "DP8B1519",
+                    "address": "TCPIP0::192.168.1.102::inst0::INSTR",
+                    "vendor": "RIGOL TECHNOLOGIES",
+                    "model": "DP832A",
+                    "full_code": "DP8B214901519",
+                    "device_key": "rigol technologies:dp8b214901519",
+                }
+            ]
+        )
+        options_before = list(page.get_enabled_power_supplies())
+        tabs_before = set(page.power_config_widgets)
+
+        page.apply_discovered_devices([{"role": "nope", "address": "TCPIP0::1.2.3.4::inst0::INSTR"}])
+
+        self.assertEqual(set(page.device_bindings["power_supplies"]), {"DP8B1519"})
+        self.assertEqual(page.get_enabled_power_supplies(), options_before)
+        self.assertEqual(set(page.power_config_widgets), tabs_before)
+
     def test_rejected_batch_is_also_reported_in_the_panel_status(self):
         """整批拒绝的原因要同时出现在面板状态里，不能只写日志。"""
         page = self.make_page()

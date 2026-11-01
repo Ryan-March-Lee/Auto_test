@@ -11,32 +11,29 @@
 :mod:`domain.configuration.rules` 与 :mod:`infrastructure.config.validation`。这里既不
 构造正式 schema，也不决定设备身份（身份只来自设备发现结果与设备表）。
 
-归属（见 `docs/配置领域词汇与模块归属.md`）：presentation adapter。`domain.instruments` 只定义
-身份语义（`device_key` 与归一化）；**记录级**身份一致性判定与整批替换、角色/设备唯一性规则的目标
-归属都是 `application` 的设备绑定服务（步骤 5），届时本模块只保留读取与规范化。
+归属（见 `docs/配置领域词汇与模块归属.md`）：presentation adapter。本模块只保留绑定记录的
+读取、规范化与旧结构折叠；**记录级**身份一致性判定、`supply_id` 可用性、角色/设备唯一性
+与整批替换规则都在 `application.device_binding`（步骤 5），这里只导入并复用，不再定义第二份。
 """
 
 import copy
 from typing import Any, Mapping
 
+from application.device_binding import (
+    POWER_SUPPLY_BINDINGS,
+    binding_device_key,
+    binding_identity_problem,
+    supply_id_problem,
+)
 from domain.instruments.models import (
     INSTRUMENT_ROLES,
     POWER_SUPPLY_ROLE,
     canonical_role,
-    make_device_key,
-    normalize_full_code,
-    normalize_vendor,
 )
 
-# ``device_bindings`` 里的电源集合：键是 ``supply_id``（= 设备短标签），值是绑定记录。
-# 电源是同一类别下的多台设备，不能像信号源那样用角色键存放——否则第二台会覆盖第一台。
-POWER_SUPPLY_BINDINGS = "power_supplies"
 # 旧配置只有 ``instruments.<角色>.address``、没有绑定记录。迁移时用这个来源标记，
 # 表示“地址来自已保存的配置，尚未经过设备发现确认”，与 ``scan`` / ``simulated`` 分开。
 LEGACY_BINDING_SOURCE = "legacy_config"
-# 电源引用会拼成 ``supply_id/CHx`` 交给 ``instrument.measurement_factory`` 路由，因此
-# ``supply_id`` 与注册表里的 ``label`` 受同一套约束：不能含空白和通道分隔符。
-SUPPLY_ID_SEPARATOR = "/"
 
 
 def _record_copy(value: Any) -> dict | None:
@@ -52,120 +49,12 @@ def binding_address(binding: Any) -> str:
     return address.strip() if isinstance(address, str) else ""
 
 
-def binding_device_key(record: Any) -> str | None:
-    """返回一条设备绑定记录的身份键 ``厂商:完整设备码``；无法确定身份时返回 ``None``。
-
-    身份是 ``device_key``。旧记录只有厂商与完整设备码两段时在这里重新拼出同一个键；
-    只有完整设备码没有厂商时无法确定身份，返回 ``None``（不做“仅按设备码”的猜测匹配，
-    否则两个厂商的同号设备会被混为一谈）。
-    """
-    if not isinstance(record, Mapping):
-        return None
-    key = str(record.get("device_key") or "").strip().casefold()
-    if key:
-        return key
-    vendor = str(record.get("vendor") or "").strip()
-    full_code = _binding_full_code(record)
-    if not vendor or not full_code:
-        return None
-    try:
-        return make_device_key(vendor, full_code)
-    except ValueError:
-        return None
-
-
-def _binding_full_code(record: Mapping[str, Any]) -> str:
-    """读取绑定记录里的完整设备码；``full_code`` 优先。
-
-    历史读取边界：旧绑定把完整设备码写在 ``serial`` 里。读入后立即投影为 ``full_code``，
-    新写出的绑定只带 ``full_code``。
-    """
-    value = record.get("full_code")
-    if value is None:
-        value = record.get("serial")
-    return str(value or "").strip()
-
-
 def _legacy_supply_id(record: Mapping[str, Any]) -> str | None:
     """旧槽位绑定里的短标签；记录没有标签就没有可用的 ``supply_id``。"""
     for field in ("supply_id", "label"):
         value = record.get(field)
         if isinstance(value, str) and value.strip():
             return value.strip()
-    return None
-
-
-def supply_id_problem(value: Any) -> str | None:
-    """返回一个不能当 ``supply_id`` 使用的具体原因；可用时返回 ``None``。
-
-    规则与注册表里的 ``label`` 同源：引用会拼成 ``supply_id/CHx``，
-    所以不能为空、不能含空白、不能含通道分隔符 ``/``。这里只判断、不做清洗——写错的
-    标签必须报错，不能在校验时被悄悄改成“看起来合法”的值。
-    """
-    if not isinstance(value, str):
-        return "引用必须是字符串"
-    if not value.strip():
-        return "引用为空"
-    if value != value.strip():
-        return "引用含首尾空白"
-    if SUPPLY_ID_SEPARATOR in value:
-        return f"不得含通道分隔符 {SUPPLY_ID_SEPARATOR!r}"
-    if any(char.isspace() for char in value):
-        return "不得含空白"
-    return None
-
-
-def _identity_parts(device_key: str) -> tuple[str, str] | None:
-    """把 ``device_key`` 拆成 ``(厂商, 完整设备码)``（小写归一化）；不是该形式时返回 ``None``。
-
-    键由 :func:`domain.instruments.models.make_device_key` 拼成 ``厂商:完整设备码``，所以按
-    **最后**一个分隔符拆分：厂商标识本身带冒号时，完整设备码仍是最后一段。
-    """
-    if ":" not in device_key:
-        return None
-    vendor, full_code = device_key.rsplit(":", 1)
-    return vendor.strip().casefold(), full_code.strip().casefold()
-
-
-def _binding_identity_problem(record: Mapping[str, Any]) -> str | None:
-    """返回一条绑定记录身份不自洽的原因；身份完整时返回 ``None``。
-
-    身份就是 ``device_key``（``厂商:完整设备码``）：记录必须能给出它，且记录里**每一个**
-    声明出来的身份片段（厂商、完整设备码）都必须与 ``device_key`` 的对应部分一致。只声明
-    其中一个时同样要核对——只看“两个都在”会放过“厂商写着 A、键指向 B”的记录；而声明了
-    厂商或完整设备码却给不出 ``厂商:完整设备码`` 形式的键时，身份无法核对，也算不自洽。
-
-    手改文件、旧版本写出的“地址 + 矛盾身份”不能进入可用绑定集合，否则配置会连接到一台
-    身份说不清（或身份与地址错配）的设备。只写 ``device_key``、不带厂商/完整设备码的记录
-    仍然可用：那时键是唯一身份，没有第二份取值需要核对。
-    """
-    identity = binding_device_key(record)
-    if identity is None:
-        return "缺少设备身份（device_key，或厂商 + 完整设备码）"
-    device_key = str(record.get("device_key") or "").strip()
-    if not device_key:
-        # 身份由厂商 + 完整设备码拼出（:func:`make_device_key`）：不存在第二份取值可核对。
-        return None
-    vendor = normalize_vendor(record.get("vendor"))
-    full_code = normalize_full_code(_binding_full_code(record))
-    if not vendor and not full_code:
-        return None
-    parts = _identity_parts(device_key)
-    if parts is None:
-        return f"设备身份不是 厂商:完整设备码 形式（{device_key}）"
-    key_vendor, key_code = parts
-    if vendor and full_code:
-        try:
-            expected = make_device_key(vendor, full_code)
-        except ValueError:
-            return f"设备身份无法解析（{vendor!r} / {full_code!r}）"
-        if device_key.casefold() != expected:
-            return f"设备身份与厂商/完整设备码不一致（{device_key} ≠ {expected}）"
-        return None
-    if vendor and vendor.casefold() != key_vendor:
-        return f"设备身份与厂商不一致（{device_key} ≠ {vendor.casefold()}:…）"
-    if full_code and full_code.casefold() != key_code:
-        return f"设备身份与完整设备码不一致（{device_key} ≠ …{full_code}）"
     return None
 
 
@@ -228,7 +117,7 @@ def power_supply_bindings(bindings: Any) -> dict[str, dict]:
     for _where, supply_id, record in _iter_power_binding_entries(bindings):
         if record is None or not supply_id or supply_id in supplies:
             continue
-        if supply_id_problem(supply_id) or _binding_identity_problem(record):
+        if supply_id_problem(supply_id) or binding_identity_problem(record):
             continue
         identity = binding_device_key(record)
         if identity is None or identity in seen:
@@ -271,7 +160,7 @@ def power_supply_binding_problems(bindings: Any) -> list[str]:
         if reason:
             problems.append(f"{display} 的引用不能作为 supply_id：{reason}")
             continue
-        reason = _binding_identity_problem(record)
+        reason = binding_identity_problem(record)
         if reason:
             problems.append(f"{display} {reason}")
             continue

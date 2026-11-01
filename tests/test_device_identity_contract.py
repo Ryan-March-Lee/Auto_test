@@ -48,6 +48,7 @@ SERIAL_HISTORY_BOUNDARY_MODULES = frozenset(
         "domain/models.py",
         "infrastructure/config/legacy_power_supply_migration.py",
         "infrastructure/persistence/instrument_registry.py",
+        "application/device_binding.py",
         "presentation/qt/config_form_bindings.py",
     }
 )

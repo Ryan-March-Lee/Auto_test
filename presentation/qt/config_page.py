@@ -16,8 +16,9 @@
 :meth:`ConfigPage.request_connect` 校验后经 ``connect_requested`` 交给窗口。
 
 归属（见 `docs/配置领域词汇与模块归属.md`）：Qt 视图。页面只负责控件、布局、信号与派生界面
-状态；:meth:`ConfigPage.apply_discovered_devices` 的三轮绑定校验是迁移期业务逻辑，步骤 5
-迁到 `application` 的设备绑定服务。
+状态；设备选择的角色唯一性、引用/身份校验与整批替换规则在
+:class:`application.device_binding.DeviceBindingService`（步骤 5），
+:meth:`ConfigPage.apply_discovered_devices` 只提交本次勾选结果并投影返回的绑定集合。
 """
 
 import copy
@@ -29,22 +30,15 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from application.device_binding import ApplyDeviceSelectionRequest, DeviceBindingService
 from domain.instruments.labels import instrument_display_label
-from domain.instruments.models import (
-    POWER_SUPPLY_ROLE,
-    make_device_key,
-    normalize_full_code,
-)
 
 from .config_form_bindings import (
-    POWER_SUPPLY_BINDINGS,
     binding_records,
     bound_power_supply_entries,
-    bound_power_supplies,
     effective_device_bindings,
     power_supply_binding_problems,
     power_supply_bindings,
-    supply_id_problem,
 )
 from .config_form_state import ConfigFormState
 from .config_projection import (
@@ -110,6 +104,9 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         # 「仪表配置」页交出的事件面板：写绑定之后由本页回写它的状态文本。
         # 未登记面板时（纯配置页场景）所有回写都跳过。
         self.discovery_panel = None
+        # 设备选择的业务规则在 application（步骤 5）：本页只提交本次勾选结果，再把返回的
+        # 绑定集合投影到控件与面板。
+        self._device_binding_service = DeviceBindingService()
         self.build_ui()
         self._connect_signals()
         self.update_pa_unit_ui()
@@ -249,182 +246,41 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         """把面板勾选的设备写成配置里的连接信息与身份记录。
 
         角色不是用户选的：它来自设备表 ``instruments.json`` 登记的 ``role``（旧槽位
-        ``PS1``..``PS4`` 由面板折叠成 ``power_supply``），面板按它交付。这是写入的最终
-        边界，因此它自己的校验必须完整，不能只依赖面板的勾选校验：角色未知、唯一角色
-        重复、地址为空、缺少设备身份、身份与完整设备码不一致、电源缺少 ``supply_id`` 或
-        ``supply_id`` 不能作为配置引用、同一台设备被重复绑定，任何一项都整批拒绝，
-        不留下“一半已应用”的配置。
-
-        绑定结构：信号源与频谱仪用角色键（暂时保持单设备），**电源用
-        ``device_bindings.power_supplies[<supply_id>]``**——电源是同一类别下的多台设备，
-        一个角色键放不下第二台，每条记录必须带 ``device_key``，同一个 ``device_key``
-        不能出现在两条电源绑定里。
-
-        应用是**整批替换**：本次勾选结果就是完整的设备绑定，没勾选的旧角色与旧电源会
-        被移除并随地址一起失效。这样“更换设备”不会残留上一台设备的连接，电源分配也
-        不会再指向一台本次没有选中的电源。
+        ``PS1``..``PS4`` 由面板折叠成 ``power_supply``），面板按它交付。写入规则（角色
+        唯一性、电源引用、地址/身份、同一台设备不重复与整批替换）都在
+        :class:`application.device_binding.DeviceBindingService`；本页只提交本次勾选结果，
+        再把返回的绑定集合投影到页面状态（绑定、电源标签页、分配选项与面板文案）。
 
         返回是否写入成功：整批拒绝时返回 ``False``（原因已回写到面板与日志），调用方
         （“下一步”）据此决定是否继续跳页。
         """
-        valid_roles = {"signal_generator", "spectrum_analyzer", POWER_SUPPLY_ROLE}
-        entries = list(assignments or ())
+        request = ApplyDeviceSelectionRequest.from_assignments(assignments)
+        result = self._device_binding_service.apply(request)
         panel = getattr(self, "discovery_panel", None)
-
-        def reject(message: str) -> bool:
-            """拒绝整批：日志与面板状态都要看到原因，不能只留在日志里。"""
+        if not result.ok:
+            # 面板与日志看到的是业务文案本身（不带结构化问题的路径前缀）。
+            message = "；".join(issue.message for issue in result.issues)
             if panel is not None:
                 panel.show_message(message)
             self.validation_failed.emit(message)
             return False
 
-        if not entries:
-            return reject("请先在发现结果中勾选本次测试所需设备")
-
-        # 第一遍只看角色与电源引用：未知角色、唯一角色重复、电源没有可用的引用 ID 是
-        # “这一批要做什么”的问题，先报出来，避免用户看到的是地址/完整设备码之类更细节的错。
-        used_roles: dict[str, str] = {}
-        supply_ids: dict[str, str] = {}
-        for item in entries:
-            role = item.get("role")
-            if role not in valid_roles:
-                return reject(f"未知的测试角色: {role}")
-            if role == POWER_SUPPLY_ROLE:
-                # 电源是类别不是编号：多台各自独立，这里只判定引用 ID 可用且唯一。
-                supply_id = self._supply_id_of(item)
-                if not supply_id:
-                    return reject(
-                        f"电源 {item.get('model') or item.get('ip')} 还没有缩写设备码"
-                        "（label/supply_id），没有可写的配置引用；请先在设备表里保存一次为它"
-                        "补上缩写码，再重新扫描"
-                    )
-                reason = supply_id_problem(supply_id)
-                if reason:
-                    # 引用会拼成 ``supply_id/CHx``：含空白或 ``/`` 的标签写进配置后
-                    # 路由会截断，宁可整批拒绝并指出要修的标签，也不悄悄改名。
-                    return reject(
-                        f"电源缩写设备码 {supply_id!r} 不能作为配置引用（{reason}）；"
-                        "请先在设备表里修正该缩写码并保存，再重新扫描"
-                    )
-                if supply_id in supply_ids:
-                    return reject(
-                        f"本次应用有两行发现结果都指向电源 {supply_id}"
-                        f"（{supply_ids[supply_id]} 与 {item.get('ip')}）；请只保留一台"
-                    )
-                supply_ids[supply_id] = str(item.get("ip") or "")
-                continue
-            if role in used_roles:
-                return reject(
-                    f"角色 {role} 在本次应用中被重复指定（{used_roles[role]} 与 "
-                    f"{item.get('ip')}）；请只保留一台设备"
-                )
-            used_roles[role] = str(item.get("ip") or "")
-        # 第二遍校验每条记录的地址与身份，全部通过后才写绑定记录。
-        checked: list[tuple[dict, str]] = []
-        for item in entries:
-            role = item["role"]
-            address = item.get("address")
-            if not isinstance(address, str) or not address.strip():
-                return reject(f"{role} 的发现地址为空，未应用")
-            full_code = str(item.get("full_code") or "").strip()
-            vendor = str(item.get("vendor") or "").strip()
-            if not full_code:
-                return reject(f"{role} 缺少设备身份（完整设备码），未应用")
-            device_key = str(item.get("device_key") or "").strip()
-            if device_key and vendor:
-                try:
-                    expected = make_device_key(vendor, full_code)
-                except ValueError as error:
-                    return reject(f"{role} 的设备身份无法解析: {error}")
-                if device_key.casefold() != expected:
-                    return reject(
-                        f"{role} 的设备身份与完整设备码不一致（{device_key} ≠ {expected}），未应用"
-                    )
-            identity = device_key.casefold()
-            if device_key and not vendor:
-                # 只有 ``device_key`` 时至少要求它携带的完整设备码与本次读到的一致，
-                # 否则地址会被写到一个身份自相矛盾的名字下。
-                tail = device_key.rsplit(":", 1)[-1].strip().casefold()
-                if tail != normalize_full_code(full_code).casefold():
-                    return reject(
-                        f"{role} 的设备身份与完整设备码不一致（{device_key} ≠ {full_code}），未应用"
-                    )
-            if not identity and vendor:
-                try:
-                    identity = make_device_key(vendor, full_code)
-                except ValueError:
-                    identity = ""
-            if role == POWER_SUPPLY_ROLE and not identity:
-                # 电源绑定的身份是唯一匹配依据：没有它，下一次扫描找不回这台设备，
-                # 配置读取也会把这条记录判为不可用，等于写了一条坏绑定。
-                return reject(
-                    f"电源 {self._supply_id_of(item)} 缺少可用于绑定的设备身份"
-                    "（device_key，或厂商 + 完整设备码），未应用"
-                )
-            checked.append((item, identity))
-
-        # 第三遍：同一个 device_key 不能出现在两条电源绑定里（同一台设备不能接两次）。
-        bound_keys: dict[str, str] = {}
-        for item, identity in checked:
-            if item["role"] != POWER_SUPPLY_ROLE or not identity:
-                continue
-            supply_id = self._supply_id_of(item)
-            if identity in bound_keys:
-                return reject(
-                    f"电源 {supply_id} 与 {bound_keys[identity]} 是同一台设备"
-                    f"（{identity}），同一台设备不能重复绑定；请只保留一台"
-                )
-            bound_keys[identity] = supply_id
-
-        bindings: dict[str, object] = {}
-        supplies: dict[str, dict] = {}
-        applied = []
-        for item, identity in checked:
-            role = item["role"]
-            record = {
-                "vendor": item.get("vendor"),
-                "model": item.get("model"),
-                "full_code": item.get("full_code"),
-                # 身份统一写成 ``厂商:完整设备码`` 的小写形式；记录必须带身份，才能在下一次
-                # 扫描时按身份找回同一台设备。
-                "device_key": identity or item.get("device_key"),
-                "visa_address": item["address"].strip(),
-                "last_ip": item.get("ip"),
-                # 探测端口只是“这台设备在本网段怎么被读出身份”的记录，不参与拼接连接地址。
-                "last_port": item.get("port"),
-                "known": bool(item.get("known")),
-                # 模拟扫描写入的绑定带来源标记，避免演示数据被当成现场设备记录。
-                "source": "simulated" if item.get("simulated") else "scan",
-            }
-            if role == POWER_SUPPLY_ROLE:
-                # 集合的键就是引用 ID（= 缩写设备码）：记录里不再重复写 label/supply_id。
-                supplies[self._supply_id_of(item)] = record
-                applied.append(f"电源 {self._supply_id_of(item)}")
-            else:
-                # 信号源与频谱仪的缩写设备码没有别的存放位置：必须随绑定一起冻结，配置条目
-                # 与运行快照才能带上 short_code（``label``）。
-                record["label"] = item.get("label")
-                bindings[role] = record
-                applied.append(
-                    f"{role_label(role) or role} "
-                    f"{item.get('model') or item.get('full_code') or item.get('ip')}"
-                )
-        if supplies:
-            bindings[POWER_SUPPLY_BINDINGS] = supplies
         previous = self._binding_labels(self.device_bindings)
-        current = self._binding_labels(bindings)
-        removed = [label for label in previous if label not in set(current)]
-        self.device_bindings = bindings
+        self.device_bindings = result.to_mapping()
         # 这一批记录刚刚通过全部校验：之前读入时的坏绑定要么被替换、要么已被移除。
         self.binding_problems = []
         self._rebuild_power_tabs()
         self.update_power_supply_options()
         if panel is not None:
             panel.set_device_bindings(self.device_bindings)
-        message = "已应用发现设备: " + "，".join(applied)
+        message = "已应用发现设备: " + "，".join(
+            self._applied_labels(result.applied)
+        )
+        current = self._binding_labels(self.device_bindings)
+        removed = [label for label in previous if label not in set(current)]
         if removed:
             message += "；已移除本次未勾选的旧绑定: " + "、".join(removed)
-        if any(item.get("simulated") for item in entries):
+        if result.simulated:
             message += "（模拟数据，仅用于离线演示，不能用于真实测量）"
         if panel is not None:
             panel.show_message(message)
@@ -432,15 +288,16 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         return True
 
     @staticmethod
-    def _supply_id_of(item) -> str:
-        """一条电源发现结果对应的配置引用 ID（= 设备表里的短标签）。"""
-        if not isinstance(item, dict):
-            return ""
-        for field in ("supply_id", "label"):
-            value = item.get(field)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-        return ""
+    def _applied_labels(applied) -> list[str]:
+        """成功摘要里的设备名：角色显示名 + 型号/完整设备码/地址，电源只写引用 ID。"""
+        labels: list[str] = []
+        for item in applied:
+            if item.supply_id:
+                labels.append(f"电源 {item.supply_id}")
+            else:
+                name = item.model or item.full_code or item.ip
+                labels.append(f"{role_label(item.role) or item.role} {name}")
+        return labels
 
     @staticmethod
     def _binding_labels(bindings) -> list[str]:

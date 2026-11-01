@@ -269,6 +269,31 @@ ViewModel 不导入 PySide6，不直接读写文件，不创建仪器，不弹 Q
 
 **工作范围控制**：只迁移设备绑定，不同时改扫描卡片和扫描线程。
 
+**完成状态**：✅ 已完成。设备选择的业务规则整体搬到 `application.device_binding`：
+
+- 新增 `SelectedDevice`（发现结果的一条字段快照）、`ApplyDeviceSelectionRequest`
+  （“应用本次勾选”的命令 DTO）与 `DeviceBindingResult`（新绑定集合 + 结构化问题 +
+  显示摘要 + 模拟数据标记）；`DeviceBindingService.apply()` 是唯一写入边界；
+- 三轮校验（角色/引用、地址/身份、同一设备重复绑定）与整批替换规则原样迁移，错误码按
+  来源稳定登记（`device_binding.*`），用户文案保持不变；失败时返回空绑定集合，不写半份配置；
+- R14 的 `supply_id_problem` 与 R13 的记录级判定 `binding_identity_problem`（含旧
+  `serial` 读取边界）一并迁到 application；`presentation.qt.config_form_bindings`
+  只导入复用，不再定义第二份；
+- `ConfigPage.apply_discovered_devices()` 保留同名方法，改为提交请求并投影结果（绑定集合、
+  电源标签页、分配选项、面板与日志文案）；页面内不再有绑定校验循环，`_supply_id_of` 删除；
+- 新增 `tests/test_device_binding.py`（纯 Python，不启动 `QApplication`）：成功、空选择、
+  未知/重复角色、引用缺失或不可用、地址/身份缺失、身份矛盾、同一设备重复绑定、模拟数据、
+  整批拒绝与记录级身份判定；并静态验证页面只委托 application；
+- 错误边界保持项目的两条线：用户可修正的问题（角色/引用/地址/身份/重复）返回
+  `DeviceBindingResult` 的结构化问题；**调用方契约**错误（请求不是 `ApplyDeviceSelectionRequest`、
+  设备记录不是对象）抛 `TypeError`，不再把非对象条目收敛成空记录后误报“未知的测试角色”。
+  可写角色集合直接取 `domain.instruments.DEVICE_ROLES`，服务里不再写第二份角色清单；
+- 页面侧行为仍是同一组集成契约（`tests/integration/device_discovery`）：拒绝时不改动旧绑定、
+  电源标签页与分配可选项，成功摘要逐字固定；步骤 5 只补了一条成功摘要用例与一条
+  “拒绝不动电源界面”用例，没有重写既有 Qt 测试；
+- 正式 API 清单、领域词汇与模块归属、行为基线同步更新。未改变字段含义、绑定结构、保存
+  格式或页面文案。
+
 ---
 
 ## 阶段三：建立配置页面状态流

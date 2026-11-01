@@ -109,6 +109,18 @@ FORMAL_API = {
         "author_official_configuration",
         "parse_db_value",
     ),
+    "application.device_binding": (
+        "AppliedDeviceBinding",
+        "ApplyDeviceSelectionRequest",
+        "DeviceBindingResult",
+        "DeviceBindingService",
+        "POWER_SUPPLY_BINDINGS",
+        "SUPPLY_ID_SEPARATOR",
+        "SelectedDevice",
+        "binding_device_key",
+        "binding_identity_problem",
+        "supply_id_problem",
+    ),
     "application.run_service": (
         "RunSnapshot",
         "create_run_snapshot",

@@ -44,6 +44,36 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
             "spectrum_analyzer", self.connection.discovery_panel.device_bindings
         )
 
+    def test_the_success_message_lists_the_applied_devices(self):
+        """成功摘要由页面按服务返回的显示摘要拼装：角色显示名 + 型号，电源只写引用 ID。"""
+        page = self.make_page()
+
+        page.apply_discovered_devices(
+            [
+                {
+                    "role": "signal_generator",
+                    "address": "TCPIP0::192.168.1.201::inst0::INSTR",
+                    "model": "SMW200A",
+                    "full_code": "105462",
+                    "device_key": "rohde&schwarz:105462",
+                },
+                {
+                    "role": "power_supply",
+                    "supply_id": "DP8B1519",
+                    "address": "TCPIP0::192.168.1.102::inst0::INSTR",
+                    "vendor": "RIGOL TECHNOLOGIES",
+                    "model": "DP832A",
+                    "full_code": "DP8B214901519",
+                    "device_key": "rigol technologies:dp8b214901519",
+                },
+            ]
+        )
+
+        self.assertEqual(
+            self.connection.discovery_panel.status_label.text(),
+            "已应用发现设备: 信号发生器 SMW200A，电源 DP8B1519",
+        )
+
     def test_simulated_device_binding_is_marked_as_demo_data(self):
         page = self.make_page()
 

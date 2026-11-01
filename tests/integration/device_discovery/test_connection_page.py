@@ -1,6 +1,8 @@
 """连接页与发现面板的版面接线：整屏步骤、扫描行居中和结果区不跳动。"""
 
-from PySide6.QtWidgets import QLabel
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QLabel, QScrollArea
 
 from presentation.qt.device_discovery_panel import BOX_STATE_IDLE, DeviceDiscoveryPanel
 
@@ -199,6 +201,39 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
         self.assertEqual(scanning, before, "扫描中结果区不能移动或变形")
         self.assertEqual(results, before, "结果回来后结果区不能移动或变形")
         self.assertEqual(returned, before, "返回后结果区不能移动或变形")
+
+    def test_clicking_the_scan_button_keeps_the_scan_row_where_it_was(self):
+        """窗口矮到页面可以滚动时，点“查找设备”也不能把扫描行推走。
+
+        Qt 会在焦点控件被禁用或隐藏时把焦点交给下一个可聚焦控件，外层滚动区再滚到
+        它那里：卡片一收走，焦点落到结果区下面的“连接仪器”，整页向上滚，扫描行
+        （扫描网段 / 扫描方式）就离开了点之前的位置。以点击之前的位置为准。
+        """
+        self.make_page()
+        page = self.connection
+        # 这个尺寸下页面高于窗口，滚动条一定在：否则测不到焦点引起的滚动。
+        page.resize(1024, 600)
+        self.app.processEvents()
+        panel = page.discovery_panel
+        bar = page.findChild(QScrollArea).verticalScrollBar()
+        self.assertTrue(bar.isVisible(), "页面应当可以滚动，否则测不到焦点滚动")
+
+        def row_position():
+            point = panel.mode_combo.mapTo(page, panel.mode_combo.rect().topLeft())
+            return (point.x(), point.y())
+
+        before = row_position()
+        QTest.mouseClick(panel.scan_btn, Qt.LeftButton)
+        self.app.processEvents()
+        self.assertEqual(row_position(), before, "扫描中扫描行不能移动")
+        self.assertEqual(bar.value(), 0, "点“查找设备”不能滚动页面")
+
+        if panel.worker is not None:
+            panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+        self.assertEqual(row_position(), before, "结果回来后扫描行仍在原处")
+        self.assertEqual(bar.value(), 0, "结果回来不能滚动页面")
 
     def test_connect_button_sits_outside_the_results_area(self):
         """“连接仪器”在结果区外面（右下方）：点它先走配置页的连接入口。"""

@@ -46,7 +46,7 @@ from typing import Any, Callable, Sequence
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
@@ -563,6 +563,23 @@ class DeviceDiscoveryPanel(QWidget):
         idle = state == BOX_STATE_IDLE
         busy = state == BOX_STATE_BUSY
         results = state == BOX_STATE_RESULTS
+        # 先收起焦点，再隐藏控件：否则 Qt 会把焦点交给页面里下一个可聚焦控件，并把
+        # 外层滚动区滚到它那里，扫描行就跟着离开了点之前的位置。
+        self._release_focus_before_hiding(
+            [
+                widget
+                for widget, visible in (
+                    (self.centre_area, idle or busy),
+                    (self.scan_btn, idle),
+                    (self.loading_label, busy),
+                    (self.cards_area, results),
+                    (self.apply_btn, results),
+                    (self.clear_btn, results),
+                    (self.back_btn, results),
+                )
+                if not visible
+            ]
+        )
         self.centre_area.setVisible(idle or busy)
         self.scan_btn.setVisible(idle)
         self.loading_label.setVisible(busy)
@@ -570,6 +587,23 @@ class DeviceDiscoveryPanel(QWidget):
         # 应用/清除/返回只对结果有效：没有卡片时不显示用不上的按钮。
         for widget in (self.apply_btn, self.clear_btn, self.back_btn):
             widget.setVisible(results)
+
+    def _release_focus_before_hiding(self, widgets: Sequence[QWidget]) -> None:
+        """把焦点从即将收走的控件上收回面板，隐藏它们时页面就不滚动。
+
+        Qt 在焦点控件被隐藏时会把焦点交给下一个可聚焦控件，外层滚动区（仪表配置页
+        的滚动区）再滚过去让人看见它：点一次“查找设备”，卡片一收走，焦点就落到
+        结果区下面的“连接仪器”，整页向上滚一截，扫描行（扫描网段 / 扫描方式）也就
+        不在点之前的位置了。面板自己就在原处，先把焦点交给它，滚动区不必移动，
+        扫描行因此始终留在原处。键盘用户之后照常按 Tab 继续走。
+        """
+        focused = QApplication.focusWidget()
+        if focused is None:
+            return
+        for widget in widgets:
+            if widget is focused or widget.isAncestorOf(focused):
+                self.setFocus(Qt.OtherFocusReason)
+                return
 
     # ---------- 扫描 ----------
 
@@ -613,6 +647,11 @@ class DeviceDiscoveryPanel(QWidget):
         worker.start()
 
     def _set_controls_enabled(self, enabled: bool) -> None:
+        if not enabled:
+            # 禁用焦点控件和隐藏它一样会让焦点跳到下一个控件、把页面滚走：先收回焦点。
+            self._release_focus_before_hiding(
+                [self.scan_btn, self.subnet_edit, self.mode_combo, self.clear_btn]
+            )
         self.scan_btn.setEnabled(enabled)
         self.subnet_edit.setEnabled(enabled)
         self.mode_combo.setEnabled(enabled)
@@ -749,6 +788,8 @@ class DeviceDiscoveryPanel(QWidget):
         return [(row["heading"], row) for row in self._rows]
 
     def _clear_cards(self) -> None:
+        # 卡片被删掉时同样先收回焦点：焦点控件消失也会让滚动区去找下一个控件。
+        self._release_focus_before_hiding([self.cards_area])
         for row in self._rows:
             row["card"].setParent(None)
             row["card"].deleteLater()

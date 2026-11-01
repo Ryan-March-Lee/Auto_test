@@ -161,7 +161,7 @@ DUT 与驱动功放占用同一通道，都会在连接前报错。
 核对全部已安装发行版（含传递依赖）；`--validate-config` 只检查配置内容，不能替代依赖检查。
 两个命令不能同时使用。未知命令行参数会返回退出码 `2`。
 
-项目启动器会拒绝非 `Auto_test` 环境。PyCharm 的运行配置应直接指向 `launcher.py`，测试使用 `tools/run_tests.py`。不要再使用已经移除的 VS Code 包装器或 GUI 批处理入口。
+项目启动器会拒绝非 `Auto_test` 环境。PyCharm 的运行配置应直接指向 `launcher.py`，测试使用 `tools/run_tests.py`；这两个入口就是全部正式命令入口。
 
 ### 离线测试与现场交付
 
@@ -206,38 +206,78 @@ DUT 与驱动功放占用同一通道，都会在连接前报错。
 ```
 pa_auto_test/
 ├── launcher.py                     # 唯一应用启动器
-├── release_manifest.py             # 发布清单（绑定解释器与依赖锁，含回滚决定摘要）
+├── release_manifest.py             # 发布清单（绑定解释器、依赖锁与统一验证命令）
+├── collect_baseline.py             # 基线收集（产物落 baseline/collected/，默认不入库）
 ├── requirements.txt                # 主系统直接依赖（精确版本）
 ├── requirements.lock.txt           # 主系统完整依赖锁定（含传递依赖）
 ├── requirements-dpd.txt            # DPD_auto_test 专用依赖（与主系统隔离）
-├── tools/export_dependency_lock.py # 锁定清单导出与核对（禁止裸 pip freeze 覆盖）
-├── config.json                     # 配置文件
+├── config.json                     # 现场配置（正式 test_plan/run_mapping + 硬件装配段）
+├── instruments.json                # 设备表（身份、角色、地址历史与短标签）
+├── app/                            # 应用装配：运行上下文、事件、取消、GUI 运行时
+├── application/                    # 测量用例、端口、DTO 与运行服务
+├── domain/                         # 领域模型、配置 schema、测量计算与运行状态
+├── infrastructure/                 # 配置、持久化、文件系统、日志、运行时适配器
+├── instrument/                     # 设备会话、driver、transport、装配计划与安全清理
 ├── presentation/qt/                # GUI 页面、controller、主窗口、绘图与连接图
-├── application/                    # 测量用例、端口与 DTO
-├── infrastructure/                 # 配置、结果与路径实现（含 discovery/ 设备发现）
-├── instrument/                     # 设备会话、driver、transport 与安全流程
+├── analysis/                       # 只读分析、报告与可视化
+├── tests/                          # unit / simulation / ui / integration / hardware 分层
+├── tools/                          # 测试入口、编译检查、依赖锁导出与工具
+├── docs/                           # 架构、契约与重构记录
+├── assets/                         # 界面图片资源（发布边界）
+├── baseline/                       # 小型脱敏模板与归档校验清单
+├── hardware/                       # 受控真机 smoke 配置与脚本（不进入普通测试）
+├── DPD_auto_test/                  # 独立 DPD 子系统（依赖隔离）
+├── format_convert/                 # 独立格式转换工具
 └── README.md                       # 本文档
 ```
 
-根目录不再保留任何兼容再导出模块：日志、路径、测量计算、测量服务与测量清理只从正式模块
-（`infrastructure.logging.app_logging`、`infrastructure.filesystem.paths`、
+根目录只保留启动、发布、采集与配置文件；日志、路径、测量计算、测量服务与测量清理只从正式
+模块（`infrastructure.logging.app_logging`、`infrastructure.filesystem.paths`、
 `domain.measurement.calculations`、`application.measurements.services`、
-`instrument.flow.cleanup`）导入。三类旧测量根入口（`cable_loss_measurement.py`、
-`driver_power_mapping.py`、`app/legacy_amplifier_measurement.py` 及转发
-`amplifier_measurement.py`）已在技术债步骤 4 删除，五个纯再导出模块在步骤 16 删除，测量只能
-通过 `app.gui_runtime.create_*_measurement()` 与正式 application 用例启动。
+`instrument.flow.cleanup`）导入。测量只能通过
+`app.gui_runtime.create_*_measurement()` 与正式 application 用例启动。
 
 生产环境请通过 `& $env:AUTO_TEST_PYTHON launcher.py` 启动，不直接运行 GUI 模块。
 
 ## 使用流程
 
-### 运行目录与旧数据迁移
+### 运行目录与数据边界
 
-新测量应从配置校验和运行创建流程开始，并在后续阶段始终使用同一个 `run_id`。运行配置冻结在 `runs/<run_id>/config.json`，硬件装配配置位于 `inputs/hardware_config.json`，线损和驱动映射等阶段输入由当前运行目录持有，结果位置以 `manifest.json` 登记为准。不得以全局 `config.json`、固定兼容结果文件或目录中修改时间最新的结果替代当前运行输入。
+新测量从配置校验和运行创建流程开始，后续阶段始终使用同一个 `run_id`。每次正式运行绑定一个
+`runs/<run_id>/` 运行目录：
 
-根目录 `config.json` 由配置页面编辑和保存，保存时直接写出正式 `test_plan` / `run_mapping` 段，可被 `JsonConfigurationRepository` 直接读取；旧版扁平配置的自动转换（`load_legacy_data()` / `unresolved_fields`）已在技术债步骤 5 删除。缺少正式配置段的文件会在创建运行前明确失败，应先在配置页面中补全并保存。`launcher.py --validate-config` 同样执行正式 schema 与硬件装配段两套校验，因此不会再对缺正式段的文件报告“通过”。正式 `run_mapping` 只登记一个本机供电电源，配置页保存时若供电分配引用了多个本机电源会明确报错并说明处理方式，不会写出无法创建运行的配置。历史全局结果（如 `test_results/cable_loss_results.json` 和带时间戳的映射/功放 JSON）在技术债步骤 6 之后不再被应用发现或读取：历史查看、导出与报告只读正式运行目录结果。需要迁移校准数据时，应核验来源和 `run_id`，将所需文件复制到目标运行 `inputs/` 并登记 manifest；无法确认归属的数据不得作为新运行输入。
+- `manifest.json`：运行状态、阶段与产物登记（当前 schema 2；schema 1 仍可读取）；
+- `config.json`：创建运行时冻结的正式运行配置；
+- `inputs/hardware_config.json`：硬件装配的唯一权威来源；
+- `results/`：正式测量结果；`artifacts/`：自动归档的 CSV 与测试报告。
 
-旧结果仓储的 `latest_path()`、GUI `latest()` 查询及历史主功放入口均已弃用。`latest_path()` 兼容链、`LegacyResultInputReader`（无路径 `read_legacy_cable_loss()` / `read_latest_legacy_driver_mapping()`）已在重构步骤 B3 删除：输入读取不再回退到按修改时间扫描的“最新结果”。驱动模式的历史主功放入口要求显式传入 `driver_mapping_path`。测量输入端口 `ResultInputReader` 只接受显式路径，省略路径会立即失败；旧兼容流程缺少显式 `loss_data_path` / `driver_mapping_path`（或运行契约输入）时，在连接仪器或执行硬件动作前失败。历史查看与导出只读正式运行目录结果（`run::<run_id>::<相对路径>`，由运行 manifest 校验），不复用正式测量结果仓储，也不再扫描 `test_results/` 根目录的旧文件。新流程必须从当前运行 manifest 读取阶段输入。
+线损、驱动映射等阶段输入由当前运行目录持有，结果位置以 `manifest.json` 登记为准。不得以全局
+`config.json`、固定结果文件或目录中修改时间最新的结果替代当前运行输入。
+
+根目录 `config.json` 由配置页面编辑和保存，保存时同时写出正式 `test_plan` / `run_mapping`
+段与硬件装配段（`instruments`、`power_supply_assignment`、`device_bindings`），可被
+`JsonConfigurationRepository` 直接读取。加载与 `launcher.py --validate-config` 以正式段
+为准：缺少正式段的文件在创建运行前明确失败，扁平字段不再被解释或自动转换。正式 `run_mapping` 的
+电源段是集合 `instruments.power_supplies.<supply_id>`，每台被供电分配实际引用的电源各占一条，
+1 台和多台电源走同一条路径；通道统一写成 `supply_id/CHx`，同一物理通道被重复分配时在连接前
+失败。新快照不能同时写旧的单数 `instruments.power_supply`。
+
+历史查看、导出与报告只接受运行目录中 manifest 登记的正式结果，结果标识形如
+`run::<run_id>::<相对路径>`，不复用正式测量结果仓储，也不扫描 `test_results/` 根目录的旧文件。
+测量输入端口 `ResultInputReader` 只接受显式路径，省略路径立即失败；正式流程的路径由
+`RunStageRecorder.verified_result_path` 按当前运行 manifest 校验后传入。
+
+需要继续查看的历史数据只保留以下读取/迁移边界：
+
+- **设备表**：`instruments.json` 当前 schema 3；读取兼容 schema 1/2、旧角色 `PS1`..`PS4`
+  与缺少 `label` 的记录。旧槽位只在读取与迁移边界识别，保存时折叠为 `power_supply` 并补短标签。
+- **旧电源配置**：`infrastructure.config.legacy_power_supply_migration` 一次性把 `PS1`..`PS4`
+  改写成 `supply_id`。身份只取自设备表的 `device_key` / `label`，地址只作重新扫描线索；只要
+  有未决项就只写迁移摘要、不修改原文件，写盘前必须通过文件级校验。
+- **历史运行快照**：单数 `instruments.power_supply`、裸通道名 `CH1`/`CH2` 与 manifest schema 1
+  只读兼容，用于打开既有运行；读取后不会回填成新身份，新运行也不接受这些形状。
+- **旧全局结果**：不自动迁移。确需保留时，应核验来源和 `run_id`，把所需文件复制到目标运行
+  `inputs/` 并登记 manifest；无法确认归属的数据不得作为新运行输入。
 
 ### 1. 系统配置
 1. 在欢迎页选择本次测试模式（有驱放测试 / 无驱放测试）
@@ -306,40 +346,75 @@ pa_auto_test/
 ## 开发信息
 
 ### 版本历史
-- v1.0: 初始GUI版本，包含所有基本功能
-- 计划v1.1: 增加更多自定义配置选项
-- 计划v1.2: 支持更多仪器型号
+- v1.0：初始 GUI 版本，包含三类测量、结果自动归档与历史查看。
+- 现行：技术债分阶段重构已覆盖配置原子写入、运行契约、主功放正式输入、启动器单入口、模块
+  拆分、生成型基线与大体积资源版本管理；设备身份字段统一（`serial` → `full_code`、移除
+  `name`/`model_index` 与型号后缀资产名）尚未实施，见重构计划步骤 20。
 
-正式公共 API、正式内部模块和旧模块清单记录在 `docs/正式API目录清单.md`；正式 production
-code 只能导入登记的模块路径，旧模块禁止新增引用，由 `tests/test_public_api_inventory.py`
-静态门禁固定。兼容层已全部删除；历史弃用与删除过程的审计证据见 git 提交历史，不描述现行
-运行时机制。
+### 文档与门禁
 
-电源设备身份（`厂商:序列号`）与动态电源配置的现行数据契约：
-新配置的电源键是 `supply_id`（= 序列号派生的短标签），1 台、2 台、5 台都只是同一个集合的大小
-不同；旧槽位 `PS1..PS4` 只在读取旧配置/旧运行快照与迁移器里有效，生产代码不再引用槽位编号，由
-`tests/test_power_supply_identity_contract.py` 静态守住，样例数据在
-`tests/fixtures/power_supply_identity/`（见该目录 README）。
+正式公共 API、正式内部模块和已退役模块清单记录在
+[正式 API 目录清单](docs/正式API目录清单.md)；正式 production code 只能导入登记的模块路径，
+由 `tests/test_public_api_inventory.py` 静态门禁固定。文档只描述现行运行时机制，旧接口的
+退役与删除过程以 git 提交历史为审计证据。
 
-现行架构要点：
+### 架构决策（现行）
 
-- 运行契约是测量唯一入口：每次测量绑定同一个 `runs/<run_id>/` 运行目录（`config.json`、
-  `manifest.json`、`inputs/hardware_config.json`），硬件连接只从冻结快照取配置。仍存在的无契约
-  分支按[无运行契约调用方清单](docs/无运行契约调用方清单.md)逐项登记，由
-  `tests/test_run_contract_inventory.py` 冻结（仓库门禁 `GATE_MODULES` 成员，清单与基线双向一致、
-  只减不增）。
-- 正式结果只写 `runs/<run_id>/`；历史查看与导出只读运行目录 manifest 登记的正式结果，不再
-  扫描全局结果目录。
-- 三类测量结果只有唯一显式 DTO（`CableLossMeasurementResult` /
+- **运行契约是测量唯一入口**：每次测量绑定同一个 `runs/<run_id>/` 运行目录
+  （`config.json`、`manifest.json`、`inputs/hardware_config.json`），硬件连接只从冻结快照取
+  配置。组合根唯一入口是 `app.gui_runtime.connect_instruments(prepared_run, *, recorder=None)`，
+  三个测量工厂只接受必填关键字参数 `prepared_run`；装配入口不接受配置路径，也不做无契约回退。
+  [无运行契约调用方清单](docs/无运行契约调用方清单.md)当前为 0 处无契约分支 / 遗留签名参数，
+  由 `tests/test_run_contract_inventory.py` 作为仓库门禁只减不增地冻结。
+- **配置写入只有一条生产路径**：`ConfigurationPort.save` →
+  `infrastructure.gui_data_service.JsonConfigurationAdapter` →
+  `JsonConfigurationRepository.save_document`，序列化格式与“临时文件 + fsync + 原子替换”的
+  失败语义只在后者定义；运行目录内的 `config.json` 与 manifest 由运行仓储独立写入。
+- **主功放输入只有一个正式表示**：`application.dto.amplifier_inputs.AmplifierMeasurementInputs`，
+  频率、功率扫描、压缩目标、衰减器、DUT 输入限制、驱动模式与供电通道均为显式值对象；
+  运行配置只经 `from_run_configuration()` 转换，裸通道名与旧字典键不进入正式用例。
+- **启动器只有一个入口**：`launcher.py` 负责解释器/依赖检查、配置校验、运行目录查询与启动
+  GUI；没有版本选择、旧位置参数或兼容命令行参数，未知参数按 argparse 标准返回 `2`。
+- **仪器装配分层**：`instrument.assembly_plan` 把配置解析为只读装配计划，
+  `instrument.power_routing` 解析供电引用与 `gate`/`drain` 路由，
+  `instrument.measurement_factory` 只按计划打开 VISA 资源、构造驱动与会话并在失败时逆序释放；
+  装配方不解释配置键，不按运行时名字转发设备能力。
+- **正式结果只写运行目录**：三类结果只有唯一显式 DTO（`CableLossMeasurementResult` /
   `DriverPowerMappingMeasurementResult` / `AmplifierMeasurementResult`，定义在
-  `application/dto/measurement_results.py`）；写入端口只接受正式 DTO，结果文件与 canonical
-  model 属于同一次提交，历史列表只列出能解析为正式结果的文件，查询返回结果 DTO。
-- 配置页面保存时直接写出正式 `test_plan` / `run_mapping` 段，缺少正式段的文件在创建运行前
-  明确失败。
-- 仪器装配使用显式地址、角色与物理通道，不按运行时名字转发设备能力。
-- 根目录只保留 `launcher.py`、`release_manifest.py` 与脚本；兼容再导出模块与旧测量入口均已
-  删除，旧导入路径在任何进程中都会 `ModuleNotFoundError`。
-- 发布清单只登记正式发布边界与依赖锁，不再维护兼容/回滚文件列表。
+  `application/dto/measurement_results.py`）。历史查看与导出只读 manifest 登记的正式结果，
+  不扫描全局结果目录；结果文件与 canonical model 属于同一次提交。
+- **设备身份（现状）**：`device_key = 厂商:序列号`（`make_device_key()` 是唯一生成入口），
+  显示用短标签 `label` 由序列号派生；`serial` 仍是完整设备码字段，`name` / `model_index` 仍
+  存在于设备表。把它们统一为 `full_code` / `short_code` 并移除型号后缀资产名是重构计划步骤 20
+  的待办，尚未实施；在此之前，配置、运行快照、发现与测试仍按当前字段读取。
+- **生成型数据与资源**：只有 `baseline/` 下的小型脱敏模板与归档校验清单入库，
+  `baseline/collected/` 与 `archive/` 不进入版本控制（见 `baseline/README.md`）；`assets/`
+  界面图片属于发布边界，预算与 Notebook 版本策略见
+  [大体积静态资源与 Notebook 版本管理](docs/静态资源与Notebook版本管理.md)，当前不启用 Git LFS。
+- **测试按改动面分层**：纯表现层用 `--layer ui`，真实窗口与后端接线用 `--layer integration`，
+  交付前跑全量离线测试；所有范围都先跑仓库门禁。分层规则见 `AGENTS.md`。
+
+### 验证命令
+
+```powershell
+# 纯界面改动（表现层测试 + 全部门禁）
+& $env:AUTO_TEST_PYTHON tools/run_tests.py --layer ui
+
+# UI + 真实窗口/后端接线
+& $env:AUTO_TEST_PYTHON tools/run_tests.py --layer integration
+
+# 全量离线测试（交付前的完整验证）
+& $env:AUTO_TEST_PYTHON tools/run_tests.py
+
+# 依赖锁、启动环境与配置内容
+& $env:AUTO_TEST_PYTHON tools/export_dependency_lock.py --check
+& $env:AUTO_TEST_PYTHON launcher.py --check
+& $env:AUTO_TEST_PYTHON launcher.py --validate-config
+```
+
+`tools/run_tests.py` 已包含内存编译检查、依赖核对与仓库门禁；命令口径与
+`infrastructure.runtime.verification_commands()` 同源，完整约定见
+[依赖与运行时契约](docs/依赖与运行时契约.md)。
 
 ### 技术支持
 如遇到问题，请检查：

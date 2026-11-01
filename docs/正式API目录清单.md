@@ -2,11 +2,8 @@
 
 本文冻结正式公共 API、正式内部模块和已退役模块的目录边界。
 
-本清单只冻结边界，不删除旧文件：旧模块按步骤 3 至 6、9、16 分批退役。标为“已删除”的模块
-必须保持不存在；标为“待删除”“待清理”的模块在对应步骤执行前仍存在。
-
-步骤 3（2026-10-26）已退役 `result_storage`，步骤 4（2026-10-26）已退役三类旧测量入口及其
-主功放转发模块，因此这四个条目在本文与测试中均为“已删除”。
+本清单只冻结边界，不删除旧文件。第 6 节登记的全部旧模块均已删除，必须保持不存在；表中的
+“处理步骤”是退役当时的执行记录，不代表现行《技术债分阶段重构计划》的步骤编号。
 
 清单分为三个层次，避免把“可导入”误当成“公共承诺”：
 
@@ -60,8 +57,8 @@
 | 模块 | 正式公开名称 | 说明 |
 | --- | --- | --- |
 | `launcher` | `main`、`inspect_run`、`list_runs` | CLI 启动、运行目录检查与列表 |
-| `app.run_context` | `PreparedRun`、`create_prepared_run`、`load_prepared_run` | 运行契约对象与创建/重载入口；旧的 `prepare_run` 兼容前置校验入口已在技术债步骤 6 删除 |
-| `app.gui_runtime` | `prepare_configuration`、`connect_instruments`、`create_offline_measurement_port`、`create_cable_loss_measurement`、`create_driver_mapping_measurement`、`create_amplifier_measurement` | GUI 侧装配入口；页面不得直接调用测量组装函数。`connect_instruments(prepared_run, *, recorder=None)` 只接受运行契约对象，硬件配置取自运行目录冻结的 `inputs/hardware_config.json`，路径在该入口内解析一次，**不接受任何配置路径参数**（技术债步骤 6 已删除 `config_path` 与 `resolved_config_path` 透传）；三个测量工厂没有位置参数，`prepared_run` 是必填关键字参数，也不解析或转发硬件配置路径 |
+| `app.run_context` | `PreparedRun`、`create_prepared_run`、`load_prepared_run` | 运行契约对象与创建/重载入口；每次正式测量绑定同一个运行目录与冻结快照 |
+| `app.gui_runtime` | `prepare_configuration`、`connect_instruments`、`create_offline_measurement_port`、`create_cable_loss_measurement`、`create_driver_mapping_measurement`、`create_amplifier_measurement` | GUI 侧装配入口；页面不得直接调用测量组装函数。`connect_instruments(prepared_run, *, recorder=None)` 只接受运行契约对象，硬件配置取自运行目录冻结的 `inputs/hardware_config.json`，路径在该入口内解析一次，**不接受任何配置路径参数**；三个测量工厂没有位置参数，`prepared_run` 是必填关键字参数，也不解析或转发硬件配置路径 |
 | `app.events` | `EventSink`、`MeasurementEvent`、`ProgressEvent`、`MessageEvent`、`RealtimeDataEvent`、`CheckpointEvent`、`CompletedEvent`、`StoppedEvent`、`FailedEvent` | 测量事件与事件接收端口 |
 | `app.cancellation` | `CancellationMode`、`MeasurementCancelled`、`CancellationToken` | 取消语义 |
 
@@ -171,7 +168,7 @@
 
 | 模块 | 正式公开名称 | 说明 |
 | --- | --- | --- |
-| `application.dto` | `MeasurementRequest`、`CableLossMeasurementRequest`、`DriverPowerMappingRequest`、`AmplifierMeasurementRequest`、`AMPLIFIER_COMPRESSION_TARGETS_DB`、`AmplifierInputError`、`AmplifierMeasurementInputs`、`PowerSweep`、`SupplyChannel`、`ExportFormat`、`ExportOutcome`、`ExportRequest`、`MeasurementResult`、`MeasurementStatus`、`MeasurementType`、`CableLossMeasurementResult`、`DriverPowerMappingMeasurementResult`、`AmplifierMeasurementResult`、`CableLossRow`、`DriverPowerPoint`、`AmplifierCompressionPoint`、`AmplifierFrequencyResult`、`measurement_result_from_document`、`measurement_type_for_result_type`、`require_formal_result`、`normalize_frequency_key` | DTO 汇总再导出路径；旧兼容导出已在步骤 6 删除 |
+| `application.dto` | `MeasurementRequest`、`CableLossMeasurementRequest`、`DriverPowerMappingRequest`、`AmplifierMeasurementRequest`、`AMPLIFIER_COMPRESSION_TARGETS_DB`、`AmplifierInputError`、`AmplifierMeasurementInputs`、`PowerSweep`、`SupplyChannel`、`ExportFormat`、`ExportOutcome`、`ExportRequest`、`MeasurementResult`、`MeasurementStatus`、`MeasurementType`、`CableLossMeasurementResult`、`DriverPowerMappingMeasurementResult`、`AmplifierMeasurementResult`、`CableLossRow`、`DriverPowerPoint`、`AmplifierCompressionPoint`、`AmplifierFrequencyResult`、`measurement_result_from_document`、`measurement_type_for_result_type`、`require_formal_result`、`normalize_frequency_key` | 正式 DTO 汇总再导出路径 |
 | `application.dto.amplifier_inputs` | `AMPLIFIER_COMPRESSION_TARGETS_DB`、`AmplifierInputError`、`AmplifierMeasurementInputs`、`PowerSweep`、`SupplyChannel` | 主功放用例的正式输入模型（技术债步骤 7）：频率、功率扫描、压缩目标、衰减器、DUT 输入限制、驱动模式与 DUT 供电通道；字段均为显式值对象（GHz/dB/dBm 由类型表达），构造即校验，非法输入抛 `AmplifierInputError`（配置失败）；不复刻旧配置字典键名，不含仪器地址、运行标识或校准输入 |
 | `application.dto.export_requests` | `ExportFormat`、`ExportRequest`、`ExportOutcome` | 导出请求与结构化结果：格式为 JSON / CSV / 测试报告；JSON、CSV 必须带目标文件，报告位置由导出端口决定；`ExportOutcome` 只含 `result_id`、`format`、`filename`、`artifact_path`，不含界面文案 |
 | `application.dto.measurement_requests` | `MeasurementRequest`、`CableLossMeasurementRequest`、`DriverPowerMappingRequest`、`AmplifierMeasurementRequest` | 测量请求 |
@@ -236,17 +233,17 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `application.lifecycle` | 测量生命周期包 |
 | `domain.instruments` | 设备表领域包 |
 | `domain.instruments.labels` | 设备短标签生成与显示文本：序列号归一化复用、前缀提取、末四位与冲突扩展（纯计算，不写注册表；标签不含通道分隔符），标签对所有登记设备生效（电源的标签同时是 `supply_id`），以及电源与其它仪器各自的显示文本、详情与审计用的身份文本、日志里的通道名（短标签/CHx）与身份核对结论（日志、页面与发现卡片共用同一份） |
-| `domain.instruments.models` | 仪器身份解析（序列号唯一标识）、设备类别与短标签字段、旧槽位识别（`is_legacy_power_supply_slot`，只读兼容，不得用于生成电源键）、地址别名与在线状态模型 |
+| `domain.instruments.models` | 仪器身份解析（`device_key` = 厂商 + 序列号是唯一标识）、设备类别与短标签字段、旧槽位识别（`is_legacy_power_supply_slot`，只读兼容，不得用于生成电源键）、地址别名与在线状态模型 |
 | `domain.models` | 运行、测试方案与会话生命周期模型；测量结果契约在 `application.dto` |
 | `infrastructure.filesystem.atomic_json` | 原子 JSON 写入 |
 | `infrastructure.filesystem.paths` | 路径服务 |
 | `infrastructure.config.legacy_power_supply_migration` | 旧 `PS1..PS4` 配置迁移器：按设备表登记的身份把它们改写成 `supply_id`（电源集合、分配引用、设备绑定与运行映射），输出逐条迁移摘要；只有每条都能识别且引用都落地时才写盘（写前必须过文件级校验），写盘委托配置仓储的 `save_document`，未决项用 `save_migration_summary` 的摘要文件留存 |
 | `infrastructure.discovery` | 仪器发现包 |
-| `infrastructure.discovery.instrument_discovery` | 网段扫描与 `*IDN?` 身份解析：序列号匹配设备表，未知设备同样上报 |
+| `infrastructure.discovery.instrument_discovery` | 网段扫描与 `*IDN?` 身份解析：按 `device_key` 匹配设备表，未知设备同样上报 |
 | `infrastructure.discovery.simulated_network` | 离线演示用的设备网络响应（仅模拟扫描模式，不会被当成现场结果） |
 | `infrastructure.persistence` | 持久化适配器包 |
 | `infrastructure.persistence.artifact_generator` | 自动归档产物（CSV 与测试报告）生成适配器：只读 manifest 已登记并校验过的正式结果，产物的受控路径固定在运行目录 `artifacts/` 下；`ArchiveArtifactGenerator` 把两类实现组合成归档服务持有的唯一生成端口 |
-| `infrastructure.persistence.instrument_registry` | 设备表 JSON 仓储：序列号为唯一标识，IP 只是可漂移的地址别名，固定测试角色随设备登记 |
+| `infrastructure.persistence.instrument_registry` | 设备表 JSON 仓储：`device_key`（厂商 + 序列号）为唯一标识，IP 只是可漂移的地址别名，固定测试角色随设备登记 |
 | `infrastructure.persistence.json_encoder` | JSON 编码器 |
 | `infrastructure.persistence.json_result_repository` | 结果 JSON 实现细节 |
 | `infrastructure.persistence.run_directory` | 运行目录文件布局 |
@@ -262,7 +259,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `presentation.qt.archival_page` | 测量页面共享的归档状态生命周期：等待归档、保存中、结果展示、终止事件与运行切换后的旧摘要清理；不读文件、不判断产物可用性 |
 | `presentation.qt.archival_status` | 归档结果到页面文案与按钮状态的映射：无 Qt、不读文件、不判断路径存在，四类状态各有独立提示 |
 | `presentation.qt.archival_view` | 归档结果分组控件：显示标题/说明并按提示启用“打开结果目录/测试报告”；位置由窗口注入；动态文案按纯文本渲染 |
-| `presentation.qt.config_form_bindings` | 设备绑定的读取与规范化：`device_bindings` 到 `supply_id` 集合、步骤 5 过渡结构与只有地址的旧配置折叠、不可用记录的问题清单（记录里声明出的厂商/序列号都必须是 `device_key` 的一部分，任一片段对不上即不可用；纯数据：不读控件、不写配置、不碰 Qt） |
+| `presentation.qt.config_form_bindings` | 设备绑定的读取与规范化：`device_bindings` 到 `supply_id` 集合、早期绑定结构与只有地址的旧配置折叠、不可用记录的问题清单（记录里声明出的厂商/序列号都必须是 `device_key` 的一部分，任一片段对不上即不可用；纯数据：不读控件、不写配置、不碰 Qt） |
 | `presentation.qt.config_form_state` | 配置表单状态：按控件最小读取协议读出配置片段、合并为配置、给出页面自己的校验说明（设备绑定的读取与规范化在 `config_form_bindings`；正式 schema 由 `configuration_authoring` 构造） |
 | `presentation.qt.config_page` | 配置页面（编辑配置编写文档；向协调器提供 `ConfigurationPagePort` 窄接口） |
 | `presentation.qt.config_page_widgets` | 配置页面控件构建辅助（固定操作栏布局 + 页面共用的数值框/下拉框工厂；控件仍登记在页面上） |
@@ -291,9 +288,8 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 
 ## 6. 旧模块清单（非公共 API）
 
-旧模块的唯一登记表是测试中的 `LEGACY_MODULES`，包含状态、处理步骤和源文件。本步骤只冻结
-边界：状态为“待删除”或“待清理”的模块仍然存在，状态为“已删除”的模块必须保持不存在。
-“待删除”指整文件退役，“待清理”指按步骤重写或收敛，不保证整文件删除。
+旧模块的唯一登记表是测试中的 `LEGACY_MODULES`，包含状态、处理步骤和源文件。登记表中的
+全部条目均已删除，必须保持不存在；新增旧模块或恢复已删除文件都会使门禁失败。
 
 ### 6.1 根目录旧模块
 
@@ -336,21 +332,15 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 
 ### 6.3 存量引用基线
 
-旧模块禁止新增引用。下列存量引用在对应删除步骤前冻结，清单必须与代码严格一致；删除引用时
-同步删除基线条目，新增引用不得靠扩大基线通过。基线统计跨模块绝对导入；包内相对再导出
-（例如 `application/dto/__init__.py` 对旧适配器的再导出）随对应旧模块在步骤 6 一并删除。
-步骤 6 退役根目录结果解析转发、旧结果 DTO 适配器、旧领域结果读取层与旧全局历史端口/仓储；
-历史查看只读正式运行目录结果。步骤 9 把 `instrument.measurement_adapter` /
-`instrument.measurement_factory` 收敛为内部模块，并退役 `instrument.legacy_control` 与
-`instrument.power_roles`，基线因此为空。
+旧模块禁止新增引用。存量引用基线必须与代码严格一致；新增引用不得靠扩大基线通过。基线统计
+跨模块绝对导入。
 
 | 旧模块 | 允许继续引用的文件 |
 | --- | --- |
-| （无） | 步骤 9 之后正式 production code 不再引用任何旧模块；`instrument.measurement_factory` 已登记为内部模块，`instrument.power_roles` 已退役 |
+| （无） | 正式 production code 不引用任何旧模块；`instrument.measurement_factory` 已登记为内部模块 |
 
-跨层依赖：`application` 对 `instrument.flow` 具体实现的依赖已在步骤 7 清零，
-`application` 只导入 `application.ports.measurement_session` 的安全清理协议；
-`SafetyCleanupAdapter` 位于设备安全层并实现该端口。
+跨层依赖：`application` 只导入 `application.ports.measurement_session` 的安全清理协议，
+不导入 `instrument.flow` 的具体实现；`SafetyCleanupAdapter` 位于设备安全层并实现该端口。
 
 无法静态判定模块名的动态导入默认禁止。唯一例外是 `launcher.py` 的 `check_packages`：它只按
 固定依赖表探测第三方包，不导入项目模块。白名单同样与代码严格一致，必须随代码同步调整，
@@ -364,7 +354,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 2. 每个旧模块的表格行（模块名、源文件、状态、处理步骤）与登记表完全一致。
 3. 公共模块存在，导出清单声明的名称；声明 `__all__` 时名称必须在其内。
 4. 内部模块存在；公共模块与内部模块不得重叠；两类路径都位于登记的导入根下。
-5. 旧模块登记表与工作树一致：待删除/待清理文件存在，已删除文件不存在。
+5. 旧模块登记表与工作树一致：已删除文件不存在，登记表与工作树严格对应。
 6. 引用基线只引用已登记的旧模块和真实存在的文件。
 7. 范围内代码不导入未登记的第一方顶层包。
 8. 范围内代码不导入未登记的正式包内模块路径。
@@ -375,9 +365,10 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 13. 门禁辅助函数自身有回归测试（静态导入、`from package import module`、动态导入别名、
     非常量动态导入、星号导入）。
 
-步骤 15 另有独立的静态质量门禁 `tests/test_static_quality_gate.py`（裸 `except`、静默宽泛
-捕获、生产 `print`、旧模块导入、动态设备路由），与本文的导入登记门禁互补：本文冻结“允许导入
-什么”，步骤 15 冻结“用什么写法处理失败、往哪里输出”。
+另有独立的静态质量门禁 `tests/test_static_quality_gate.py`（裸 `except`、静默宽泛捕获、
+生产 `print`、旧模块导入、动态设备路由），与本文的导入登记门禁互补：本文冻结“允许导入什么”，
+该门禁冻结“用什么写法处理失败、往哪里输出”。规则与基线见
+[异常分类与静态质量门禁](异常分类与静态质量门禁.md)。
 
 定向验证命令：
 
@@ -385,53 +376,52 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 & "D:\Anaconda\envs\Auto_test\python.exe" -m unittest tests.test_public_api_inventory -v
 ```
 
-完整验证执行全量 unittest、`launcher.py --check`、
-`launcher.py --validate-config` 和 `tools/compile_check.py`。
+该命令只运行本文的清单门禁，不替代完整验证。交付前的完整验证以 `tools/run_tests.py` 为唯一
+测试入口（内存编译检查 + 依赖核对 + 全部门禁 + 选定范围的测试），再执行 `launcher.py --check`
+与 `launcher.py --validate-config`；直接运行 `unittest` 或单独执行 `tools/compile_check.py`
+都不构成完整验证。命令见第 8 节。
 
-## 8. 步骤 1 验收与现行清单规模
+## 8. 现行清单规模与验证
 
-- 正式公共 API：56 个模块路径、244 个公开名称，已在本文与测试中固定（步骤 5 新增
-  `infrastructure.config.validation.validate_official_config`，用于校验已解析的正式配置文档；
-  步骤 6 收敛结果 DTO；步骤 7 新增 `application.ports.measurement_session`；步骤 13 新增
-  `domain.measurement.values` 的测量值对象；步骤 15 新增 `application.errors` 的跨层异常分类
-  与失败项归一化 `normalize_failures`；归档重构步骤 2/3 新增 `application.dto.archival`、
-  `application.archival_service` 与 `application.ports.result_artifacts`，步骤 4 新增
-  `application.archival_service.archive_completed_stage`；归档重构步骤 7 新增
-  `application.dto.run_history`、`application.run_history_service` 与
-  `application.ports.gui_data_service` 的 `RunArchiveStatusPort` / `RunHistoryServicePort`）。
-- 正式内部模块：60 个路径已登记（以测试中的 `INTERNAL_MODULES` 为准），公共与内部边界不重叠
-  （步骤 7 补登记 `instrument.safety`：安全标记的显式签名判定是跨模块契约；归档重构步骤 4
-  补登记 `infrastructure.persistence.artifact_generator` 与 `analysis.reporting`：自动归档 CSV
-  产物的适配器及其复用的分析层写入能力；步骤 5 在同一适配器模块内补上报告产物与组合端口，
-  报告复用 `analysis.reporting.render_html_report`，不新增模块路径；归档重构步骤 7 未新增
-  内部模块——历史管理页沿用已登记的 `presentation.qt.history_view_model`；归档重构步骤 10
-  把页面模块与类名收口为 `presentation.qt.run_history_page` / `RunHistoryPage`，路由 key 改为
-  `run_history`，用户可见标题仍为“历史运行”；技术债计划步骤 13 把配置页的控件构建拆成
-  `presentation.qt.config_page_widgets`（固定操作栏与页面共用的数值框/下拉框工厂）与
-  `presentation.qt.config_power_section`（电源分区的通道参数标签页与分配表单），页面只负责
-  组合与交互协调；技术债计划步骤 14 把配置表单状态的绑定读取与规范化拆到
-  `presentation.qt.config_form_bindings`（`device_bindings` 到 `supply_id` 集合、旧结构
-  折叠与问题清单），`config_form_state` 只保留控件读数和配置合并；技术债计划步骤 15 把
-  `instrument.measurement_factory` 的配置解析职责拆成两个纯模块：
-  `instrument.assembly_plan`（把配置装订成**只读计划对象**：仪器地址与能力参数、每台电源的
-  地址与声明通道、短标签与审计文本、地址唯一性）与 `instrument.power_routing`（供电分配的
-  引用解析、`gate`/`drain` 角色 token、设置与急停顺序），两者都不接触 VISA；工厂只按计划
-  打开资源、构造驱动与会话，并在装配失败时按原顺序释放已打开资源，且不再解释任何配置键）。
-- 旧模块：29 个条目（21 个根模块、8 个正式包内实现），状态与工作树一致。步骤 16
-  （2026-10-27）已把最后五个根目录纯再导出模块（`measurement_calculations` /
-  `measurement_lifecycle` / `measurement_services` / `app_logging` / `project_paths`）
-  整文件退役，登记表全部为“已删除”。
-- 存量引用基线：空（步骤 4 与步骤 9 已把旧模块引用清零，新增引用直接失败）。
-- 跨层依赖基线：`application` → `instrument.flow` 已由步骤 7 清零（仅保留安全清理端口）。
+以下数字与 `tests/test_public_api_inventory.py` 中的 `FORMAL_API`、`INTERNAL_MODULES` 和
+`LEGACY_MODULES` 一致：
+
+- 正式公共 API：**57 个模块路径、255 个公开名称**。包括启动与装配入口、运行服务、应用
+  端口、配置/结果/运行适配器、领域值对象、仪器端口与安全清理、表现层页面契约，以及主功放
+  正式输入 `application.dto.amplifier_inputs`。
+- 正式内部模块：**61 个路径**，公共与内部边界不重叠。配置页控件构建拆分到
+  `presentation.qt.config_page_widgets` / `config_power_section`，设备绑定读取拆分到
+  `presentation.qt.config_form_bindings`；仪器装配职责拆分到 `instrument.assembly_plan`
+  （只读装配计划）与 `instrument.power_routing`（供电引用与角色路由），工厂只按计划打开
+  资源、构造驱动与会话。
+- 旧模块：**29 个条目**（21 个根模块、8 个正式包内实现），登记表全部为“已删除”，与工作树
+  一致；第 6 节的“处理步骤”只是退役记录。
+- 存量引用基线：空；正式 production code 不引用任何旧模块，新增引用直接失败。
+- 跨层依赖基线：`application` 不导入 `instrument.flow` 具体实现，只依赖
+  `application.ports.measurement_session` 的安全清理端口。
 - 动态导入白名单：1 处（`launcher.py` 的 `check_packages` 依赖探测）。
-- 本步骤未删除或改写任何旧实现文件。
-- 全量 unittest、`launcher.py --check`、`launcher.py --validate-config` 和编译检查通过。
+- 发布边界：`release_manifest.py` 只登记正式发布文件与 `assets`，不维护兼容/回滚文件列表；
+  依赖锁、解释器和验证命令同源记录（见[依赖与运行时契约](依赖与运行时契约.md)）。
+- 生成型基线与大资源策略分别见 `baseline/README.md` 和
+  [大体积静态资源与 Notebook 版本管理](静态资源与Notebook版本管理.md)。
+
+现行验证命令：
+
+```powershell
+# 本清单的定向门禁
+& "D:\Anaconda\envs\Auto_test\python.exe" -m unittest tests.test_public_api_inventory -v
+
+# 交付前的完整验证（编译检查 + 依赖核对 + 全部门禁 + 全量离线测试）
+& "D:\Anaconda\envs\Auto_test\python.exe" tools/run_tests.py
+& "D:\Anaconda\envs\Auto_test\python.exe" launcher.py --check
+& "D:\Anaconda\envs\Auto_test\python.exe" launcher.py --validate-config
+```
 
 ## 9. 后续步骤维护约定
 
 - 退役旧模块：整文件删除的把 `LEGACY_MODULES` 的 `present` 改为 `False`（或删除条目），
   重写后保留的从登记表删除；同步删除本文对应行、引用基线条目和发布清单登记，不要只放宽
-  断言。步骤 16 之后发布清单只登记正式发布边界，不再维护兼容/回滚文件列表。
+  断言。发布清单只登记正式发布边界，不维护兼容/回滚文件列表。
 - 删除存量引用：同步删除 `LEGACY_IMPORT_BASELINE` 的对应文件；基线必须与代码严格相等。
 - 新增公共模块或公开名称：先登记到本文和 `FORMAL_API`，再写调用方。
 - 新增内部模块并被跨模块导入：先登记到本文和 `INTERNAL_MODULES`。

@@ -225,6 +225,8 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         self.assertEqual(self._painted_background(box), TOKENS["canvas"].lower())
         self.assertTrue(panel.scan_btn.isVisible())
         self.assertFalse(panel.cards_area.isVisible())
+        # 悬停时不该弹出说明框：这张卡片的用法由扫描行与提示行说明。
+        self.assertEqual(panel.scan_btn.toolTip(), "")
 
         # 水平在结果区正中；竖直贴着结果区顶部，和上面的扫描行之间不留一大段空白。
         centre = panel.scan_btn.mapTo(box, panel.scan_btn.rect().center())
@@ -234,6 +236,18 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         self.assertGreaterEqual(button_top, hint_bottom)
         self.assertLessEqual(
             button_top - hint_bottom, 40, "查找设备要紧跟在扫描行下面，不能隔着一大段空白"
+        )
+
+    def test_the_scan_card_has_room_for_the_hover_ring_above_it(self):
+        """卡片上方要留出悬停时底卡露出来的那一圈：不能被结果区上沿裁成平的。"""
+        from presentation.qt.scan_card import UNDERLAY_GROW_HOVER
+
+        panel = self.make_panel()
+        top = panel.scan_btn.mapTo(panel.centre_area, panel.scan_btn.rect().topLeft()).y()
+        self.assertGreaterEqual(
+            top,
+            UNDERLAY_GROW_HOVER,
+            "卡片背后的装饰会被父控件上沿裁掉：上边至少要留出悬停时底卡外扩的那一圈",
         )
 
     def test_scanning_takes_the_button_away(self):

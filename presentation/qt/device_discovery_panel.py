@@ -31,7 +31,7 @@
 
 “查找设备”不是普通按钮而是一张自绘的深色卡片（:mod:`presentation.qt.scan_card`）：卡片
 正中是渐变标题，四周有柔光、光带与粒子自己在动；鼠标进来时卡面上的字淡到看不见、卡片底下
-的渐变底卡转出去（0.6s，见那个模块的说明）。那张按钮的大小由仪器卡片决定
+那张与卡片同形状的渐变底卡四周一起长开（0.6s，见那个模块的说明）。那张按钮的大小由仪器卡片决定
 （:data:`presentation.qt.device_cards.CARD_WIDTH` × :data:`CARD_HEIGHT`），因此与结果区里的
 仪器卡片一样大；版面里的占位、可点区域与悬停范围都只有卡片。它只负责外观与动效，点击
 行为仍由本面板的 :meth:`DeviceDiscoveryPanel.request_scan` 接手。
@@ -76,7 +76,7 @@ from .device_cards import (
     instrument_picture_path,
 )
 from .input_controls import WheelSafeComboBox
-from .scan_card import ScanPromptCard
+from .scan_card import SCAN_CARD_HEADROOM, ScanPromptCard
 from .theme import set_button_variant, set_tone
 
 # 角色标签是“本次测试语义”，与设备身份（序列号）分开：设备可以换 IP，角色不会变。
@@ -377,7 +377,6 @@ class DeviceDiscoveryPanel(QWidget):
         self.mode_combo = WheelSafeComboBox()
         self.mode_combo.addItems([label for _value, label in SCAN_MODE_CHOICES])
         self.scan_btn = ScanPromptCard("查找设备")
-        self.scan_btn.setToolTip("扫描网段并读取每台设备的 *IDN?；不会改变任何仪器状态")
         # 外观不取自样式表：它是一张自绘的深色卡片按钮（悬停动效见
         # ``presentation.qt.scan_card``），按钮的大小就是仪器卡片的大小，尺寸由
         # ``presentation.qt.device_cards`` 给出。
@@ -438,7 +437,10 @@ class DeviceDiscoveryPanel(QWidget):
         centre = QVBoxLayout(self.centre_area)
         centre.setContentsMargins(0, 0, 0, 0)
         centre.setSpacing(8)
-        centre.addSpacing(4)
+        # 卡片上方留出悬停时底卡要露出来的那一圈：卡片背后那层装饰是 card 的同级控件，
+        # 会被这个容器的上沿裁掉，贴到顶端时悬停就只剩一条被切平的上沿（
+        # ``scan_card.SCAN_CARD_HEADROOM`` 由底卡的外扩量算出来）。
+        centre.addSpacing(SCAN_CARD_HEADROOM)
         # 中间这一行自己按可见项居中：没有卡片时只有一张“查找设备”卡片。
         centre_row = QHBoxLayout()
         centre_row.setSpacing(10)

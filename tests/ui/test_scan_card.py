@@ -1,14 +1,14 @@
-"""“查找设备”卡片按钮：按钮本体正好是那张卡片，鼠标进来时文字淡出、底卡从卡片背后旋出去。
+"""“查找设备”卡片按钮：按钮本体正好是那张卡片，鼠标进来时文字淡出、底卡在卡片背后长出来。
 
 原效果（一段 HTML/CSS 卡片）在样式表里表达不出来，因此按钮整块自绘：卡面一直亮着，正中
 一行渐变标题，卡片内部的光带、扫描线与粒子自己在动；悬停动效用 Qt 复刻原 CSS 的两个伪
-元素——底卡转 -90° 并横向拉伸、纵向压扁（0.6s，``cubic-bezier(0.175, 0.885, 0.32,
-1.275)``），模糊的霓虹光斑同时加厚，卡面上的两行字（含副标题里的渐变高亮词）也在同一个
-0.6s 里淡到看不见。要露在卡片外面的那三层（投影、光斑、底卡）画在同级的一张透明覆盖层
-上，所以按钮本身只有卡片那么大（尺寸与结果区里的仪器卡片相同）。这里验证：点击仍然走
-``clicked``、按钮与卡片一样大、覆盖层不进布局也不吃鼠标、悬停把底卡转出来、悬停时文字
-全部消失、鼠标移开后回到原样、标题落在卡片正中，以及覆盖层跟着卡片搬家（隐藏/显示、换
-父控件、重排）且不改变页面层级。
+元素——底卡在 0.6s 里四周一起长开（形状、圆角都与卡片一致，始终以卡片中心为中心，
+``cubic-bezier(0.175, 0.885, 0.32, 1.275)``），模糊的霓虹光斑同时加厚，卡面上的两行字
+（含副标题里的渐变高亮词）也在同一个 0.6s 里淡到看不见。要露在卡片外面的那三层（投影、
+光斑、底卡）画在同级的一张透明覆盖层上，所以按钮本身只有卡片那么大（尺寸与结果区里的
+仪器卡片相同）。这里验证：点击仍然走 ``clicked``、按钮与卡片一样大、覆盖层不进布局也不
+吃鼠标、悬停把底卡四周长出来、悬停时文字全部消失、鼠标移开后回到原样、标题落在卡片正中，
+以及覆盖层跟着卡片搬家（隐藏/显示、换父控件、重排）且不改变页面层级。
 """
 
 import os
@@ -49,9 +49,9 @@ def _blank_host() -> QWidget:
 def _scene():
     """把卡片放进一块页面同色的底板里，返回 ``(底板, 卡片)``。
 
-    卡片背后那层装饰（投影、光斑、旋出去的底卡）是卡片的**同级控件**，所以抓图要抓底板：
+    卡片背后那层装饰（投影、光斑、长出来的底卡）是卡片的**同级控件**，所以抓图要抓底板：
     它们是底板的孩子，抓下来的画面里才连卡片外面那一圈一起有了。底板四周比装饰层的留白
-    再宽 20px，旋出去的底卡与模糊光斑才不会被底板的边裁掉。
+    再宽 20px，悬停时长开的底卡与模糊光斑才不会被底板的边裁掉。
     """
     from presentation.qt.scan_card import (
         BACKDROP_MARGIN_X,
@@ -112,10 +112,24 @@ def _card_pixel(host, image, card, x_ratio: float, y_ratio: float) -> QColor:
     )
 
 
-def _outside_left(host, image, card, offset: float) -> QColor:
-    """卡片左边 ``offset`` px、竖直居中的那一点：底卡转出去时会盖到它。"""
+def _outside(host, image, card, offset: float) -> dict[str, QColor]:
+    """卡片四边外面 ``offset`` px 的四个点：悬停时底卡就在这一圈里露出来。"""
     origin = _card_origin(host, card)
-    return _point(host, image, origin.x() - offset, origin.y() + card.height() / 2.0)
+    centre_x = origin.x() + card.width() / 2.0
+    centre_y = origin.y() + card.height() / 2.0
+    return {
+        "left": _point(host, image, origin.x() - offset, centre_y),
+        "right": _point(host, image, origin.x() + card.width() + offset, centre_y),
+        "top": _point(host, image, centre_x, origin.y() - offset),
+        "bottom": _point(host, image, centre_x, origin.y() + card.height() + offset),
+    }
+
+
+def _saturation(colour: QColor) -> int:
+    """颜色的彩度：紫→蓝渐变底卡很鲜艳，页面底色几乎是中性灰。"""
+    return max(colour.red(), colour.green(), colour.blue()) - min(
+        colour.red(), colour.green(), colour.blue()
+    )
 
 
 def _card_colours(host, image, card, inset: float = 8.0):
@@ -236,7 +250,7 @@ class ScanPromptCardTests(unittest.TestCase):
         self.assertEqual(button.size(), instrument.size(), "按钮要与仪器卡片一样大")
 
     def test_the_decorations_live_on_a_mouse_transparent_layer_behind_the_card(self):
-        """投影、光斑与旋出去的底卡在同一父控件的覆盖层上：不进布局、不吃鼠标、只跟卡片走。"""
+        """投影、光斑与长出来的底卡在同一父控件的覆盖层上：不进布局、不吃鼠标、只跟卡片走。"""
         host, card = _scene()
         backdrop = card._backdrop
         self.assertIsNotNone(backdrop, "卡片背后应有一层画投影、光斑与底卡的覆盖层")
@@ -322,27 +336,33 @@ class ScanPromptCardTests(unittest.TestCase):
             "卡片不应被自己的装饰层盖住",
         )
 
-    def test_hovering_turns_the_bottom_card_out(self):
-        """悬停到一半时，底卡转成斜的、从卡片侧面探出很远（原 CSS 的 rotate(-90deg)）。"""
-        host, card = _scene()
-        # 探出宽度随卡片高度变化：采样点取底卡中段仍能盖到的 30px（静止时只有 5px 外扩，
-        # 那里是页面底色），不贴着转动后的边缘取点，避免不同屏幕像素比下落到抗锯齿边缘。
-        rest = _outside_left(host, _frame(host, card, 0.0), card, 30.0)
-        turned = _outside_left(host, _frame(host, card, 0.5), card, 30.0)
+    def test_hovering_grows_the_bottom_card_evenly_around_the_card(self):
+        """悬停时底卡四周一起露出等宽的一圈，形状仍是卡片的样子（不是转成的一条色带）。"""
+        from presentation.qt.scan_card import UNDERLAY_GROW, UNDERLAY_GROW_HOVER
 
-        self.assertNotEqual(rest, turned, "悬停后卡片侧面应被转出来的底卡盖住")
-        saturation = max(turned.red(), turned.green(), turned.blue()) - min(
-            turned.red(), turned.green(), turned.blue()
-        )
         self.assertGreater(
-            saturation, 60, f"探出来的应是紫→蓝渐变底卡，实际 {turned.name()}"
+            UNDERLAY_GROW_HOVER, UNDERLAY_GROW, "悬停后底卡应比静止时更大"
         )
-        self.assertLess(
-            max(rest.red(), rest.green(), rest.blue())
-            - min(rest.red(), rest.green(), rest.blue()),
-            40,
-            f"静止时卡片侧面只有一圈很窄的底卡，实际 {rest.name()}",
-        )
+        # 采样点取两次外扩量的中点：静止时这里是页面底色（外面只有 5px 一圈），悬停后这里
+        # 已经落在底卡里。四边取同一距离，哪一边窄了或被切掉都会让断言失败。
+        offset = (UNDERLAY_GROW + UNDERLAY_GROW_HOVER) / 2.0
+        sides = {"左": "left", "右": "right", "上": "top", "下": "bottom"}
+        host, card = _scene()
+        rest = _outside(host, _frame(host, card, 0.0), card, offset)
+        turned = _outside(host, _frame(host, card, 1.0), card, offset)
+
+        for name, side in sides.items():
+            self.assertGreater(
+                _saturation(turned[side]),
+                60,
+                f"悬停后底卡应在卡片{name}侧露出来，实际 {turned[side].name()}",
+            )
+            self.assertGreater(
+                _saturation(turned[side]),
+                _saturation(rest[side]) + 20,
+                f"卡片{name}侧悬停时露出的应是鲜艳的底卡，静止时只有很淡的柔光："
+                f"{rest[side].name()} → {turned[side].name()}",
+            )
 
     def test_hovering_takes_every_line_of_text_away(self):
         """悬停时卡片上的字全部淡到看不见：正中标题、底边副标题、以及副标题里的高亮词。"""
@@ -364,7 +384,7 @@ class ScanPromptCardTests(unittest.TestCase):
         )
 
     def test_mouse_in_and_out_replays_the_transition(self):
-        """鼠标进来底卡转出去、文字收走，移开又都回来；两端画面与静止/悬停态完全一致。"""
+        """鼠标进来底卡长出来、文字收走，移开又都回来；两端画面与静止/悬停态完全一致。"""
         host, card = _scene()
         centre = QPointF(card.width() / 2.0, card.height() / 2.0)
         rest = _frame(host, card, 0.0)
@@ -379,7 +399,7 @@ class ScanPromptCardTests(unittest.TestCase):
         self.assertAlmostEqual(card._hover, 1.0, places=3, msg="悬停结束应停在终点")
         card._ambient = 0.35
         card._particle = 0.4
-        self.assertEqual(host.grab().toImage(), turned, "悬停之后就是转过头的底卡")
+        self.assertEqual(host.grab().toImage(), turned, "悬停之后就是四周长开的底卡")
 
         _leave(card)
         QTest.qWait(800)
@@ -392,7 +412,7 @@ class ScanPromptCardTests(unittest.TestCase):
         """鼠标停着的时候禁用卡片：Qt 不再给它送鼠标事件，卡片自己回到静止那一格。
 
         被禁用的控件收不到 ``leaveEvent``，所以“悬停到一半被禁用”必须由卡片自己收尾，
-        否则底卡会一直停在转出去的位置、字也一直收着。
+        否则底卡会一直停在长开的位置、字也一直收着。
         """
         host, card = _scene()
         _hover(card, QPointF(card.width() / 2.0, card.height() / 2.0))
@@ -401,7 +421,7 @@ class ScanPromptCardTests(unittest.TestCase):
 
         card.setEnabled(False)
         _application().processEvents()
-        self.assertEqual(card.hover_progress, 0.0, "禁用后底卡不该还停在转出去的位置")
+        self.assertEqual(card.hover_progress, 0.0, "禁用后底卡不该还停在长开的位置")
         self.assertFalse(card.hovered, "禁用后柔光应回到静止那一档")
 
         card.setEnabled(True)

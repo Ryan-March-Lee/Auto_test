@@ -239,7 +239,7 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         )
 
     def test_the_scan_card_keeps_room_above_it_for_its_decorations(self):
-        """卡片上方要留出一圈：投影与柔光伸出卡片的那一段不能被结果区上沿裁成平的。"""
+        """卡片上方要留出一圈：投影伸出卡片的那一段不能被结果区上沿裁成平的。"""
         from presentation.qt.scan_card import SCAN_CARD_HEADROOM
 
         panel = self.make_panel()
@@ -247,7 +247,7 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         self.assertGreaterEqual(
             top,
             SCAN_CARD_HEADROOM,
-            "卡片上方要留出投影与柔光的位置，否则结果区上沿会把它们裁出一条硬边",
+            "卡片上方要留出投影的位置，否则结果区上沿会把它裁出一条硬边",
         )
 
     def test_scanning_takes_the_button_away(self):

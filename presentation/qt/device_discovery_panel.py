@@ -30,8 +30,8 @@
 重新出现“查找设备”，也就是回到上一页那一步。
 
 “查找设备”不是普通按钮而是一张自绘的深色卡片（:mod:`presentation.qt.scan_card`）：卡片
-正中是渐变标题，四周有柔光、光带与粒子自己在动；鼠标进来时卡面上的字淡到看不见、卡片
-四周的柔光同时加厚（0.6s，见那个模块的说明）。那张按钮的大小由仪器卡片决定
+正中是渐变标题，内部有光带与粒子自己在动；鼠标进来时卡面上的字淡到看不见（0.6s，见那个
+模块的说明）。卡片外面只有一层投影，没有霓虹柔光。那张按钮的大小由仪器卡片决定
 （:data:`presentation.qt.device_cards.CARD_WIDTH` × :data:`CARD_HEIGHT`），因此与结果区里的
 仪器卡片一样大；版面里的占位、可点区域与悬停范围都只有卡片。它只负责外观与动效，点击
 行为仍由本面板的 :meth:`DeviceDiscoveryPanel.request_scan` 接手。
@@ -440,9 +440,9 @@ class DeviceDiscoveryPanel(QWidget):
         centre = QVBoxLayout(self.centre_area)
         centre.setContentsMargins(0, 0, 0, 0)
         centre.setSpacing(8)
-        # 卡片上方留出投影与柔光渐隐的位置：卡片背后那层装饰是 card 的同级控件，会被这个
-        # 容器的上沿裁掉；这一圈空白的宽度由装饰的伸出版面决定（``scan_card.SCAN_CARD_HEADROOM``）。
-        # 紫→蓝底卡已删除，这里只关系投影与柔光。
+        # 卡片上方留出投影的位置：卡片背后那层装饰是 card 的同级控件，会被这个容器的上沿
+        # 裁掉；这一圈空白的宽度由装饰的伸出版面决定（``scan_card.SCAN_CARD_HEADROOM``）。
+        # 紫→蓝底卡与霓虹柔光都已删除，这里只关系投影。
         centre.addSpacing(SCAN_CARD_HEADROOM)
         # 中间这一行自己按可见项居中：没有卡片时只有一张“查找设备”卡片。
         centre_row = QHBoxLayout()

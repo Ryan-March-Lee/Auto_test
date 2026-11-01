@@ -5,9 +5,10 @@
 元素——底卡转 -90° 并横向拉伸、纵向压扁（0.6s，``cubic-bezier(0.175, 0.885, 0.32,
 1.275)``），模糊的霓虹光斑同时加厚，卡面上的两行字（含副标题里的渐变高亮词）也在同一个
 0.6s 里淡到看不见。要露在卡片外面的那三层（投影、光斑、底卡）画在同级的一张透明覆盖层
-上，所以按钮本身只有 190×254。这里验证：点击仍然走 ``clicked``、按钮与卡片一样大、覆盖层
-不进布局也不吃鼠标、悬停把底卡转出来、悬停时文字全部消失、鼠标移开后回到原样、标题落在
-卡片正中，以及覆盖层跟着卡片搬家（隐藏/显示、换父控件、重排）且不改变页面层级。
+上，所以按钮本身只有卡片那么大（尺寸与结果区里的仪器卡片相同）。这里验证：点击仍然走
+``clicked``、按钮与卡片一样大、覆盖层不进布局也不吃鼠标、悬停把底卡转出来、悬停时文字
+全部消失、鼠标移开后回到原样、标题落在卡片正中，以及覆盖层跟着卡片搬家（隐藏/显示、换
+父控件、重排）且不改变页面层级。
 """
 
 import os
@@ -207,7 +208,7 @@ class ScanPromptCardTests(unittest.TestCase):
         self.assertEqual(clicks, [True])
 
     def test_the_button_is_exactly_the_card(self):
-        """按钮的大小就是卡片的大小（190×254）：四周没有一圈既吃版面又吃悬停的留白。"""
+        """按钮的大小就是卡片的大小：四周没有一圈既吃版面又吃悬停的留白。"""
         from presentation.qt.scan_card import CARD_HEIGHT, CARD_WIDTH
 
         host, card = _scene()
@@ -217,6 +218,22 @@ class ScanPromptCardTests(unittest.TestCase):
         self.assertEqual(card.height(), CARD_HEIGHT)
         # 底板只给了卡片这么大一块，装饰层不占版面。
         self.assertEqual(card.geometry().size(), card.sizeHint())
+
+    def test_the_button_size_always_follows_the_instrument_card(self):
+        """尺寸只有一处定义：仪器卡片多大，“查找设备”按钮就多大。"""
+        from presentation.qt.device_cards import CARD_HEIGHT as INSTRUMENT_CARD_HEIGHT
+        from presentation.qt.device_cards import CARD_WIDTH as INSTRUMENT_CARD_WIDTH
+        from presentation.qt.device_cards import InstrumentCard
+        from presentation.qt.scan_card import CARD_HEIGHT, CARD_WIDTH, ScanPromptCard
+
+        self.assertEqual(
+            (CARD_WIDTH, CARD_HEIGHT),
+            (INSTRUMENT_CARD_WIDTH, INSTRUMENT_CARD_HEIGHT),
+            "查找设备按钮的尺寸应直接取仪器卡片的尺寸",
+        )
+        instrument = InstrumentCard("DP832A", "PS/DP832A/DP8B1519")
+        button = ScanPromptCard("查找设备")
+        self.assertEqual(button.size(), instrument.size(), "按钮要与仪器卡片一样大")
 
     def test_the_decorations_live_on_a_mouse_transparent_layer_behind_the_card(self):
         """投影、光斑与旋出去的底卡在同一父控件的覆盖层上：不进布局、不吃鼠标、只跟卡片走。"""
@@ -308,8 +325,8 @@ class ScanPromptCardTests(unittest.TestCase):
     def test_hovering_turns_the_bottom_card_out(self):
         """悬停到一半时，底卡转成斜的、从卡片侧面探出很远（原 CSS 的 rotate(-90deg)）。"""
         host, card = _scene()
-        rest = _outside_left(host, _frame(host, card, 0.0), card, 55.0)
-        turned = _outside_left(host, _frame(host, card, 0.5), card, 55.0)
+        rest = _outside_left(host, _frame(host, card, 0.0), card, 40.0)
+        turned = _outside_left(host, _frame(host, card, 0.5), card, 40.0)
 
         self.assertNotEqual(rest, turned, "悬停后卡片侧面应被转出来的底卡盖住")
         saturation = max(turned.red(), turned.green(), turned.blue()) - min(

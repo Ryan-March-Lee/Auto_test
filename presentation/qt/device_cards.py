@@ -13,6 +13,9 @@
 
 卡片只负责显示与选中状态，不知道扫描结果的数据结构：选择、应用与校验仍由
 :class:`presentation.qt.device_discovery_panel.DeviceDiscoveryPanel` 负责。
+卡片尺寸（:data:`CARD_WIDTH` × :data:`CARD_HEIGHT`）是设备发现页的唯一定义：
+“查找设备”那张卡片按钮（:mod:`presentation.qt.scan_card`）按它取大小，因此按钮与仪器
+卡片始终一模一样大。
 图片按“角色 / 型号关键字”在 ``assets/instrument_pic/`` 里查找，找不到时留空；
 图片只解码一次并缓存（照片单张最大 4.7 MB，重复解码会明显拖慢一次扫描后的刷新）。
 """
@@ -36,6 +39,8 @@ from PySide6.QtWidgets import (
 from .theme import set_tone
 
 __all__ = [
+    "CARD_HEIGHT",
+    "CARD_WIDTH",
     "INSTRUMENT_PICTURE_DIR",
     "InstrumentCard",
     "InstrumentImage",
@@ -48,10 +53,12 @@ INSTRUMENT_PICTURE_DIR = (
     Path(__file__).resolve().parents[2] / "assets" / "instrument_pic"
 )
 
-# 卡片尺寸：所有卡片同宽等高，成行排列时不会参差。
-_CARD_WIDTH = 190
+# 卡片尺寸：所有卡片同宽等高，成行排列时不会参差。“查找设备”那张卡片按钮
+# （:mod:`presentation.qt.scan_card`）也取这一份尺寸，所以按钮始终和仪器卡片一样大；
+# 要改卡片大小只改这里。
+CARD_WIDTH = 190
 #: 卡片高度按三行内容算：放大的仪器名 + 图片 + 两行设备码，另留一行状态说明的位置。
-_CARD_HEIGHT = 214
+CARD_HEIGHT = 214
 _PICTURE_HEIGHT = 104
 #: 图片不描边、不垫底板，只留一点内缩，让照片不贴到卡片边上。
 _PICTURE_MARGIN = 4
@@ -302,7 +309,7 @@ class InstrumentImage(QWidget):
         return not self._picture.is_empty()
 
     def sizeHint(self) -> QSize:
-        return QSize(_CARD_WIDTH, _PICTURE_HEIGHT)
+        return QSize(CARD_WIDTH, _PICTURE_HEIGHT)
 
     def source_rect(self) -> QRectF:
         """要从原图里取的那一块（原图像素坐标）：仪器主体，没有图片时为空。"""
@@ -400,8 +407,8 @@ class InstrumentCard(QFrame):
         self.setFrameShape(QFrame.NoFrame)
         self.setProperty("checked", False)
         self.setProperty("enabled-state", checkable)
-        self.setFixedWidth(_CARD_WIDTH)
-        self.setFixedHeight(_CARD_HEIGHT)
+        self.setFixedWidth(CARD_WIDTH)
+        self.setFixedHeight(CARD_HEIGHT)
         # 尺寸固定：卡片高度不随卡片区拉伸，也不被父窗口压成一条。
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self._checkable = bool(checkable)

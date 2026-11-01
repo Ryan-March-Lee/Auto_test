@@ -40,7 +40,7 @@
 
 UI 图片只在两处显示，尺寸决定了压缩上限：
 
-- 设备卡片图片区为 182×104 逻辑像素（`device_cards.py` 的 `_CARD_WIDTH`、`_PICTURE_HEIGHT`），
+- 设备卡片图片区为 182×104 逻辑像素（`device_cards.py` 的 `CARD_WIDTH`、`_PICTURE_HEIGHT`），
   按仪器主体的包围盒等比放入，不裁切。
 - 欢迎页背景按窗口等比绘制，当前源图 1670×942。
 

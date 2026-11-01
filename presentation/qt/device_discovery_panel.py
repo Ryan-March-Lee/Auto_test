@@ -31,9 +31,10 @@
 
 “查找设备”不是普通按钮而是一张自绘的深色卡片（:mod:`presentation.qt.scan_card`）：卡片
 正中是渐变标题，四周有柔光、光带与粒子自己在动；鼠标进来时卡面上的字淡到看不见、卡片底下
-的渐变底卡转出去（0.6s，见那个模块的说明）。那张按钮的大小就是卡片本身（190×254），
-版面里的占位、可点区域与悬停范围都只有卡片。它只负责外观与动效，点击行为仍由本面板的
-:meth:`DeviceDiscoveryPanel.request_scan` 接手。
+的渐变底卡转出去（0.6s，见那个模块的说明）。那张按钮的大小由仪器卡片决定
+（:data:`presentation.qt.device_cards.CARD_WIDTH` × :data:`CARD_HEIGHT`），因此与结果区里的
+仪器卡片一样大；版面里的占位、可点区域与悬停范围都只有卡片。它只负责外观与动效，点击
+行为仍由本面板的 :meth:`DeviceDiscoveryPanel.request_scan` 接手。
 """
 
 from __future__ import annotations
@@ -67,8 +68,8 @@ from .config_form_bindings import (
     power_supply_bindings,
 )
 from .device_cards import (
-    _CARD_HEIGHT,
-    _CARD_WIDTH,
+    CARD_HEIGHT,
+    CARD_WIDTH,
     _MAX_COLUMNS,
     InstrumentCard,
     device_code,
@@ -92,7 +93,7 @@ SCAN_MODE_CHOICES: tuple[tuple[str, str], ...] = (
 )
 # 卡片网格的间距：列间留白由网格自己算，卡片本身不设外边距。
 _CARDS_SPACING = 10
-_CARDS_MIN_WIDTH = _CARD_WIDTH + _CARDS_SPACING
+_CARDS_MIN_WIDTH = CARD_WIDTH + _CARDS_SPACING
 #: 结果区的最小高度：再矮也要露出一行卡片的位置（约图片区 + 文字区）。
 _CARD_MIN_AREA_HEIGHT = 190
 #: 结果区的高度固定：按“两行卡片 + 按钮与状态行”算出来（
@@ -375,7 +376,8 @@ class DeviceDiscoveryPanel(QWidget):
         self.scan_btn = ScanPromptCard("查找设备")
         self.scan_btn.setToolTip("扫描网段并读取每台设备的 *IDN?；不会改变任何仪器状态")
         # 外观不取自样式表：它是一张自绘的深色卡片按钮（悬停动效见
-        # ``presentation.qt.scan_card``），按钮的大小就是那张卡片，尺寸由卡片自己给出。
+        # ``presentation.qt.scan_card``），按钮的大小就是仪器卡片的大小，尺寸由
+        # ``presentation.qt.device_cards`` 给出。
         # 扫描期间的结果区说明：按钮收走后，这里写明正在读取设备。
         self.loading_label = QLabel(LOADING_TEXT)
         self.loading_label.setAlignment(Qt.AlignHCenter)
@@ -516,7 +518,7 @@ class DeviceDiscoveryPanel(QWidget):
             + self.status_label.sizeHint().height()
             + 2 * layout.spacing()
         )
-        return chrome + rows * _CARD_HEIGHT + (rows - 1) * _CARDS_SPACING
+        return chrome + rows * CARD_HEIGHT + (rows - 1) * _CARDS_SPACING
 
     def box_state(self) -> str:
         """结果区当前状态：``idle``（还没查找）/ ``busy``（正在查找）/ ``results``（有结果）。"""

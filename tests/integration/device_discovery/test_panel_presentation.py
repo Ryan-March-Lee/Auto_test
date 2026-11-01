@@ -15,7 +15,7 @@ from presentation.qt.device_discovery_panel import (
     BOX_STATE_IDLE,
     BOX_STATE_RESULTS,
 )
-from presentation.qt.theme import TOKENS, apply_theme, build_stylesheet
+from presentation.qt.theme import TOKENS, build_stylesheet
 
 from .support import DiscoveryPanelTestCase, registry
 
@@ -24,8 +24,10 @@ class CardPresentationTests(DiscoveryPanelTestCase):
     """卡片外观：圆角、名字在上、图片其次、加粗设备码在下，并随面板宽度换行。"""
 
     def setUp(self):
+        # ``apply_theme`` 是幂等的（主题只装一次）；别的用例可能已经把它复原成空串，
+        # 这里直接取整份样式表，用例的通过条件就不依赖执行顺序。
         self._previous_stylesheet = self.app.styleSheet()
-        apply_theme(self.app)
+        self.app.setStyleSheet(build_stylesheet())
 
     def tearDown(self):
         self.app.setStyleSheet(self._previous_stylesheet)
@@ -63,6 +65,26 @@ class CardPresentationTests(DiscoveryPanelTestCase):
         # 卡片按可用宽度换行：窄面板换行排两列，宽面板排满四列，不排成一条长带子。
         self.assertGreaterEqual(narrow, 2, "窄面板要换行，不能挤成一列长条")
         self.assertEqual(wide, min(4, panel.card_count()))
+
+    def test_cards_are_centred_whatever_the_count(self):
+        """卡片整组居中：不论几张，每一行（含不满的最后一行）都落在卡片区中线。"""
+        panel = self.make_panel(size=(760, 560))
+        self.run_scan(panel)
+        host = panel.cards_host
+        self.assertGreaterEqual(panel.card_count(), 2)
+
+        rows: dict[int, list] = {}
+        for card in panel.cards():
+            rows.setdefault(card.geometry().top(), []).append(card)
+        # 窄面板上这批设备排成 3 + 1：最后一行只有一张，正好验证“不满一行也居中”。
+        self.assertGreaterEqual(len(rows), 2, "窄面板要多行排布，才验证得到不满一行的情况")
+        self.assertEqual(min(len(cards) for cards in rows.values()), 1)
+        for cards in rows.values():
+            left = min(card.geometry().left() for card in cards)
+            right = max(card.geometry().right() for card in cards)
+            self.assertAlmostEqual(
+                (left + right) / 2, host.width() / 2, delta=3, msg="每一行都居中"
+            )
 
     def test_shipped_pictures_draw_the_instruments_at_a_similar_size(self):
         """自带的三张仪器图留白各不相同，仪器在卡片上的视觉大小仍要接近。"""

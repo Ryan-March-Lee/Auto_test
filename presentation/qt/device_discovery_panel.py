@@ -16,7 +16,7 @@
 - 发现结果**包含未知设备**：未在设备表中登记的序列号同样显示一张卡片并标记为未登记；
   身份完全读不出来的地址也留一张卡片，但标记为“无法识别”，不允许被应用成测试角色。
 - 结果以卡片呈现（:mod:`presentation.qt.device_cards`）：点击卡片切换选中，卡片区
-  按面板宽度自动换行，不再是一张横向表格。
+  按面板宽度自动换行、整组始终居中（不满一行时最后一行也居中），不再是一张横向表格。
 
 版式：扫描行（扫描网段 / 扫描方式）在标题正下方居中，结果区在它下面。结果区**不画外框**
 （没有边框、没有底色），所以仪器卡片直接落在页面背景上；还没点过“查找设备”时，那张
@@ -46,7 +46,7 @@ from typing import Any, Callable, Sequence
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
-    QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
@@ -201,15 +201,18 @@ def subnet_from_address(address: Any) -> str | None:
         return None
 
 
-class _CardGridLayout(QGridLayout):
-    """卡片网格：卡片按固定宽度从左往右排，多出来的横向空间留在右侧。"""
+class _CardRowsLayout(QVBoxLayout):
+    """卡片区的行容器：每一行是一个自带左右留白的行布局，整组按行居中。
+
+    卡片宽度固定，居中交给每一行自己的两个弹性留白：行由
+    :meth:`DeviceDiscoveryPanel._rebuild_card_rows` 按当前列数重新生成，最后一行不满时
+    也由那一行居中，不靠给整块网格设对齐（那样不满的最后一行会靠左）。
+    """
 
     def __init__(self, parent: Any = None) -> None:
         super().__init__(parent)
         self.setContentsMargins(2, 2, 2, 2)
-        self.setHorizontalSpacing(_CARDS_SPACING)
-        self.setVerticalSpacing(_CARDS_SPACING)
-        self.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self.setSpacing(_CARDS_SPACING)
 
 
 class DiscoveryWorker(QThread):
@@ -458,7 +461,9 @@ class DeviceDiscoveryPanel(QWidget):
         self.cards_area.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
         self.cards_host = QWidget()
         self.cards_host.setObjectName("instrumentCardHost")
-        self.cards_layout = _CardGridLayout(self.cards_host)
+        # 卡片按行摆放：每一行左右各顶一个等大的弹性留白，所以无论有几张卡片、排成
+        # 几列，整组都落在卡片区正中，最后一行不满时也居中（不是靠左补空位）。
+        self.cards_layout = _CardRowsLayout(self.cards_host)
         self.cards_area.setWidget(self.cards_host)
         self.cards_area.setVisible(False)
         box.addWidget(self.cards_area)
@@ -913,24 +918,12 @@ class DeviceDiscoveryPanel(QWidget):
         self._sync_card_checks()
 
     def _apply_cards_layout(self) -> None:
-        """把卡片按面板宽度排成网格。
+        """把卡片按面板宽度排成居中的行。
 
         卡片区的高度由结果区分配（结果少时多余空间留在里面，结果多时在里面滚动），
-        所以这里不再按内容钉高，只负责把卡片摆进网格。
+        所以这里不再按内容钉高，只负责把卡片摆进新的行。
         """
-        layout = self.cards_layout
-        for card in self.cards():
-            layout.removeWidget(card)
-        if not self._rows:
-            self.cards_host.setMinimumHeight(0)
-            self._refresh_results_box_height()
-            return
-        # 先按面板宽度定列数（窗口刚显示时滚动区视口还没布局，宽度可能是 0）。
-        columns = self._column_count_for(self._panel_cards_width())
-        for index, card in enumerate(self.cards()):
-            row, column = divmod(index, columns)
-            layout.addWidget(card, row, column)
-        self._refresh_cards_geometry()
+        self._rebuild_card_rows()
 
     def _panel_cards_width(self) -> int:
         """估算卡片区可用宽度：滚动区视口还没布局时退回面板宽度减去边框与边距。"""
@@ -944,24 +937,62 @@ class DeviceDiscoveryPanel(QWidget):
         return max(1, min(int(fits), _MAX_COLUMNS))
 
     def _refresh_cards_geometry(self) -> None:
-        """按当前宽度决定列数，并把卡片按新列数就位。
+        """按当前宽度决定列数，并把卡片按新列数就位（整组始终居中）。
 
         结果区的高度是固定的：结果少时卡片在里面靠上排、下面留白，结果多时卡片区内部
         滚动，它的大小始终不变。
         """
         if not self._rows:
             return
+        self._rebuild_card_rows()
+
+    def _rebuild_card_rows(self) -> None:
+        """按当前列数重排卡片：一行一个行布局，卡片两侧的留白等大。
+
+        居中不靠“给整块网格设对齐”：卡片固定宽度，行布局自己带着左右两个弹性留白，
+        所以卡片只有一张时那一张在正中，五张排成 4 + 1 时最后一行的那张也在正中；
+        宽度变化只是换列数，居中规则不变。
+        """
+        self._clear_card_rows()
+        cards = self.cards()
+        if not cards:
+            self.cards_host.setMinimumHeight(0)
+            self._refresh_results_box_height()
+            return
         columns = self._column_count_for(self._panel_cards_width())
-        layout = self.cards_layout
-        for index, card in enumerate(self.cards()):
-            row, column = divmod(index, columns)
-            layout.removeWidget(card)
-            layout.addWidget(card, row, column)
+        for start in range(0, len(cards), columns):
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(_CARDS_SPACING)
+            row.addStretch(1)
+            for card in cards[start : start + columns]:
+                row.addWidget(card)
+            row.addStretch(1)
+            self.cards_layout.addLayout(row)
+        # 多出来的高度留在所有卡片下面：卡片贴着卡片区顶部排，不在竖直方向拉散。
+        self.cards_layout.addStretch(1)
         # 卡片区刚从不可见变为可见时布局还没激活，卡片位置会全是 (0, 0)；
         # 这里直接激活一次，宽度变化时卡片立即按新列数就位。
         self.cards_layout.activate()
         self.cards_host.updateGeometry()
         self._refresh_results_box_height()
+
+    def _clear_card_rows(self) -> None:
+        """拆掉当前的行布局；卡片本身不动，随后会被重新放进新的行里。"""
+        layout = self.cards_layout
+        while layout.count():
+            item = layout.takeAt(0)
+            row = item.layout()
+            if row is None:
+                continue
+            while row.count():
+                row_item = row.takeAt(0)
+                widget = row_item.widget()
+                if widget is not None:
+                    widget.setParent(self.cards_host)
+            # 行布局已经从容器里取出、里面也清空了：交回 Python 立即销毁，
+            # 不用 deleteLater 排队（下一次重排时它已经不占位置）。
+            row.setParent(None)
 
     def _notify_ancestors(self) -> None:
         """把“内容变了”一路上报，并让外层布局当场重排。

@@ -4,8 +4,6 @@
 # 新环境请按**锁定清单**安装，不要单独安装本文件的行：
 #     & $env:AUTO_TEST_PYTHON -m pip install -r requirements.lock.txt
 # 本文件只声明主系统直接依赖；传递依赖的固定版本见 requirements.lock.txt。
-# DPD_auto_test 的可选依赖（TensorFlow、Jupyter 等）只在 requirements-dpd.txt，
-# 不进入主系统安装清单。
 PySide6==6.11.2
 matplotlib==3.11.2
 numpy==2.4.6

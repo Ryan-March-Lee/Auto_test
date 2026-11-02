@@ -118,16 +118,12 @@ conda activate Auto_test
 ```
 
 依赖、解释器和命令口径的完整约定见[依赖与运行时契约](docs/依赖与运行时契约.md)。
-`DPD_auto_test` 的可选依赖（TensorFlow、Jupyter 等）在 `requirements-dpd.txt`，
-与主系统隔离，主系统启动与三类测量都不需要安装它们。
 
 ### 可选能力边界
 
 - `format_convert.csv_to_MDIF` 是独立命令行工具，输入和输出路径由调用者明确指定。
 - `format_convert.svg_to_png_transparent` 仅在调用时加载可选依赖，产物写入调用者指定的目录。
 - 连接图由 `presentation/qt/connection_diagrams.py` 按需生成；不可用时界面会说明原因，不能将空图当作有效接线图确认。
-- `DPD_auto_test` 是独立子系统，不读取或修改主系统的配置、结果和运行目录；跨系统交换数据必须显式传入脱敏文件路径。
-- DPD 依赖只安装在其独立环境中，不进入主系统的 `requirements.txt` 或 `requirements.lock.txt`。
 
 ### 启动方法
 
@@ -210,7 +206,6 @@ pa_auto_test/
 ├── collect_baseline.py             # 基线收集（产物落 baseline/collected/，默认不入库）
 ├── requirements.txt                # 主系统直接依赖（精确版本）
 ├── requirements.lock.txt           # 主系统完整依赖锁定（含传递依赖）
-├── requirements-dpd.txt            # DPD_auto_test 专用依赖（与主系统隔离）
 ├── config.json                     # 现场配置（正式 test_plan/run_mapping + 硬件装配段）
 ├── instruments.json                # 设备表（完整设备码、角色、地址历史与缩写设备码）
 ├── app/                            # 应用装配：运行上下文、事件、取消、GUI 运行时
@@ -226,7 +221,6 @@ pa_auto_test/
 ├── assets/                         # 界面图片资源（发布边界）
 ├── baseline/                       # 小型脱敏模板与归档校验清单
 ├── hardware/                       # 受控真机 smoke 配置与脚本（不进入普通测试）
-├── DPD_auto_test/                  # 独立 DPD 子系统（依赖隔离）
 ├── format_convert/                 # 独立格式转换工具
 └── README.md                       # 本文档
 ```
@@ -401,8 +395,8 @@ pa_auto_test/
   立即投影为 `full_code`，新文档不会写回旧字段。IP 只是连接位置，不参与身份。
 - **生成型数据与资源**：只有 `baseline/` 下的小型脱敏模板与归档校验清单入库，
   `baseline/collected/` 与 `archive/` 不进入版本控制（见 `baseline/README.md`）；`assets/`
-  界面图片属于发布边界，预算与 Notebook 版本策略见
-  [大体积静态资源与 Notebook 版本管理](docs/静态资源与Notebook版本管理.md)，当前不启用 Git LFS。
+  界面图片属于发布边界，预算与压缩规则见
+  [大体积静态资源版本管理](docs/静态资源版本管理.md)，当前不启用 Git LFS。
 - **测试按改动面分层**：纯表现层用 `--layer ui`，真实窗口与后端接线用 `--layer integration`，
   交付前跑全量离线测试；所有范围都先跑仓库门禁。分层规则见 `AGENTS.md`。
 - **改动按层落点**：视觉改动只动表现层；业务改动先在 `domain`/`application` 落规则和测试，再接 Qt；

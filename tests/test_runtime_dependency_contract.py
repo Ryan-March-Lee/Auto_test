@@ -1,12 +1,11 @@
 r"""门禁：固定依赖与运行时契约。
 
-固定五点：
+固定四点：
 
 1. 解释器只有 3.11 系列，启动器不再接受 ``>=3.7`` 之类过宽版本。
 2. 主系统依赖有精确锁定清单 ``requirements.lock.txt``，直接依赖与之保持一致。
 3. 锁文件按**整份环境**核对（含传递依赖），解析失败不静默降级。
 4. 测试、编译、锁定清单核对、启动检查、配置校验和发布清单使用同一份解释器命令。
-5. 主系统与 ``DPD_auto_test`` 依赖保持隔离，锁文件不掺入 DPD 依赖。
 
 验证方式：
 
@@ -27,20 +26,8 @@ from unittest.mock import patch
 ROOT = Path(__file__).parents[1]
 DIRECT_REQUIREMENTS = ROOT / "requirements.txt"
 LOCK_FILE = ROOT / "requirements.lock.txt"
-DPD_REQUIREMENTS = ROOT / "requirements-dpd.txt"
 CONTRACT_DOC = ROOT / "docs" / "依赖与运行时契约.md"
 EXPORT_TOOL = ROOT / "tools" / "export_dependency_lock.py"
-
-# DPD_auto_test 专属依赖：主系统直接依赖和锁文件里都不允许出现。
-DPD_ONLY_PACKAGES = {
-    "tensorflow",
-    "keras",
-    "jupyter",
-    "notebook",
-    "ipykernel",
-    "scipy",
-    "nptdms",
-}
 
 # 打包工具由安装环境自带，不属于应用依赖，不进入锁文件。
 PACKAGING_TOOLS = {"pip", "setuptools", "wheel"}
@@ -174,22 +161,6 @@ class DependencyLockTests(unittest.TestCase):
         locked = parse_pins(LOCK_FILE)
         leaked = locked.keys() & PACKAGING_TOOLS
         self.assertEqual(leaked, set(), f"锁文件不应锁定打包工具: {sorted(leaked)}")
-
-    def test_main_dependencies_stay_free_of_dpd_packages(self):
-        direct = set(parse_pins(DIRECT_REQUIREMENTS))
-        locked = set(parse_pins(LOCK_FILE))
-        for surface, name in (("requirements.txt", direct), ("requirements.lock.txt", locked)):
-            leaked = {package for package in name if normalize(package) in DPD_ONLY_PACKAGES}
-            self.assertEqual(leaked, set(), f"{surface} 掺入了 DPD 依赖: {sorted(leaked)}")
-
-    def test_dpd_requirements_stay_isolated(self):
-        text = DPD_REQUIREMENTS.read_text(encoding="utf-8-sig")
-        self.assertIn("tensorflow", text.lower())
-        self.assertIn("jupyter", text.lower())
-        self.assertIn("requirements-dpd.lock.txt", text)
-        lock_text = LOCK_FILE.read_text(encoding="utf-8-sig")
-        for package in DPD_ONLY_PACKAGES:
-            self.assertNotIn(package, lock_text.lower(), f"锁文件混入了 DPD 依赖: {package}")
 
     def test_launcher_required_packages_are_declared(self):
         import launcher
@@ -495,8 +466,6 @@ class UnifiedCommandTests(unittest.TestCase):
             dependencies["lock_sha256"],
             hashlib.sha256(LOCK_FILE.read_bytes()).hexdigest(),
         )
-        self.assertEqual(dependencies["dpd_requirements"], "requirements-dpd.txt")
-        self.assertTrue(dependencies["dpd_isolated"])
 
     def test_interpreter_command_quotes_paths_with_spaces(self):
         from infrastructure.runtime import interpreter_command
@@ -536,7 +505,6 @@ class RuntimeContractDocumentationTests(unittest.TestCase):
             "3.11",
             "requirements.lock.txt",
             "AUTO_TEST_PYTHON",
-            "requirements-dpd.txt",
             "tools/compile_check.py",
             "tools/export_dependency_lock.py",
             "不在运行时自动安装依赖",

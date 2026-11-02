@@ -16,7 +16,6 @@ from infrastructure.filesystem.paths import DEFAULT_PATHS
 from infrastructure.runtime import (
     DEPENDENCY_DIRECT_FILE,
     DEPENDENCY_LOCK_FILE,
-    DPD_REQUIREMENTS_FILE,
     current_runtime,
     interpreter_path,
     python_version_requirement,
@@ -27,7 +26,7 @@ from infrastructure.runtime import (
 
 RELEASE_FILES = (
     "launcher.py",
-    # 界面运行必需的图片资源：压缩规则与预算见 docs/静态资源与Notebook版本管理.md。
+    # 界面运行必需的图片资源：压缩规则与预算见 docs/静态资源版本管理.md。
     "assets",
     "domain/measurement",
     "domain/configuration",
@@ -92,8 +91,6 @@ def build_manifest(
             "direct": DEPENDENCY_DIRECT_FILE,
             "lock": DEPENDENCY_LOCK_FILE,
             "lock_sha256": _file_digest(root, DEPENDENCY_LOCK_FILE),
-            "dpd_requirements": DPD_REQUIREMENTS_FILE,
-            "dpd_isolated": True,
         },
         "verification": verification_commands(),
         "real_device_acceptance": real_device_acceptance,

@@ -9,7 +9,6 @@
 # - 每个条目必须是 == 精确版本；传递依赖也固定在这里。
 # - requirements.txt 中的直接依赖版本必须与本文件一致。
 # - 打包工具（pip / setuptools / wheel）由安装环境自带，不属于应用依赖，不锁定。
-# - DPD_auto_test 的依赖（requirements-dpd.txt）不得出现在本文件。
 #
 # 手工编辑无效：请改依赖后在 Auto_test 环境重新运行本脚本生成。
 colorama==0.4.6

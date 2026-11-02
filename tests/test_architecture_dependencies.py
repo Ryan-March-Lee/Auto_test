@@ -1025,21 +1025,12 @@ CABLE_FIELD_NAMES = frozenset(
 )
 
 
-def _main_system_sources():
-    """主系统的生产源码；DPD 子系统依赖与代码按步骤 14 隔离，不参与主系统单位门禁。"""
-    return [
-        path
-        for path in _production_sources()
-        if path.relative_to(ROOT).parts[0] != "DPD_auto_test"
-    ]
-
-
 class MeasurementValueBoundaryTests(unittest.TestCase):
     """单位换算与线缆字段名只能出现在测量值对象里。"""
 
     def test_power_conversions_live_only_in_the_measurement_value_objects(self):
         offenders = []
-        for path in _main_system_sources():
+        for path in _production_sources():
             if path == MEASUREMENT_VALUE_MODULE:
                 continue
             for node in ast.walk(_tree(path)):
@@ -1065,7 +1056,7 @@ class MeasurementValueBoundaryTests(unittest.TestCase):
 
     def test_cable_field_names_are_confined_to_the_value_objects(self):
         offenders = []
-        for path in _main_system_sources():
+        for path in _production_sources():
             if path == MEASUREMENT_VALUE_MODULE:
                 continue
             for node in ast.walk(_tree(path)):

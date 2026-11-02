@@ -422,7 +422,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 - 发布边界：`release_manifest.py` 只登记正式发布文件与 `assets`，不维护兼容/回滚文件列表；
   依赖锁、解释器和验证命令同源记录（见[依赖与运行时契约](依赖与运行时契约.md)）。
 - 生成型基线与大资源策略分别见 `baseline/README.md` 和
-  [大体积静态资源与 Notebook 版本管理](静态资源与Notebook版本管理.md)。
+  [大体积静态资源版本管理](静态资源版本管理.md)。
 
 现行验证命令：
 

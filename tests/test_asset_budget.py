@@ -1,13 +1,11 @@
-"""仓库大资源预算：界面运行时图片与实验 Notebook 的入库规则。
+"""仓库大资源预算：界面运行时图片的入库规则。
 
-规则与理由见 ``docs/静态资源与Notebook版本管理.md``。这里只冻结可观察结果：哪些文件
-随仓库交付、单文件与目录的体积上限、图片能否被 Qt 读出并保留透明通道、Notebook 是否
-还夹带输出。图片压缩的具体编码参数不绑定。
+规则与理由见 ``docs/静态资源版本管理.md``。这里只冻结可观察结果：哪些文件随仓库交付、
+单文件与目录的体积上限、图片能否被 Qt 读出并保留透明通道。图片压缩的具体编码参数不绑定。
 """
 
 from __future__ import annotations
 
-import json
 import unittest
 import xml.etree.ElementTree as ElementTree
 from pathlib import Path
@@ -23,7 +21,6 @@ from release_manifest import RELEASE_FILES, build_manifest
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "assets"
 INSTRUMENT_PICTURES = ASSETS / "instrument_pic"
-DPD = ROOT / "DPD_auto_test"
 
 #: 设备卡片的三个角色到图片文件的固定映射；新增设备图时同时更新这里与压缩规则。
 ROLE_PICTURES = {
@@ -143,28 +140,6 @@ class DesignerUiResourceTests(unittest.TestCase):
                     ),
                     f"{relative} 不在发布清单登记的边界内",
                 )
-
-
-class NotebookRepositoryTests(unittest.TestCase):
-    """实验 Notebook：源码入库、输出不入库，且不成为主系统安装依赖。"""
-
-    def test_notebooks_ship_without_outputs(self):
-        notebooks = sorted(DPD.glob("*.ipynb"))
-        self.assertTrue(notebooks, "DPD_auto_test/ 下应有实验 Notebook")
-        for path in notebooks:
-            with self.subTest(notebook=path.name):
-                document = json.loads(path.read_text(encoding="utf-8"))
-                for cell in document["cells"]:
-                    if cell.get("cell_type") != "code":
-                        continue
-                    self.assertEqual(cell.get("outputs"), [], "Notebook 输出不得入库")
-                    self.assertIsNone(cell.get("execution_count"))
-                self.assertNotIn("widgets", document.get("metadata", {}))
-                self.assertLessEqual(path.stat().st_size, 256 * KB)
-
-    def test_dpd_tree_stays_within_budget(self):
-        total = sum(path.stat().st_size for path in _files(DPD))
-        self.assertLessEqual(total, 512 * KB, f"DPD_auto_test/ 总量 {total} 字节超预算")
 
 
 if __name__ == "__main__":

@@ -13,10 +13,9 @@ DEFAULT_RUN_ID_PREFIX = "pa-auto-test"
 # 技术债步骤 14：项目只支持 3.11 系列解释器，测试、编译、启动检查和发布清单
 # 全部以本常量判定，不再各自维护过宽或过窄的版本条件。
 REQUIRED_PYTHON_SERIES = "3.11"
-# 主系统依赖的锁定清单；DPD 依赖保持在 requirements-dpd.txt，不合并进来。
+# 主系统依赖的锁定清单。
 DEPENDENCY_LOCK_FILE = "requirements.lock.txt"
 DEPENDENCY_DIRECT_FILE = "requirements.txt"
-DPD_REQUIREMENTS_FILE = "requirements-dpd.txt"
 
 
 def software_version_tag() -> str:

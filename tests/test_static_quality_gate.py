@@ -53,7 +53,7 @@ ROOT_MODULES = ("launcher.py", "release_manifest.py")
 #   - 清理聚合：无论设备抛出什么异常都要继续执行后续安全动作，最后一次性上报；
 #   - 边界翻译：把第三方库异常翻译成本项目的分类异常，并保留原始异常链；
 #   - 尽力记录：失败进入日志/阶段状态/事件，不改变原始返回值或异常。
-# DPD_auto_test、hardware/、format_convert/ 与 tools/ 不属于正式测量链路。
+# hardware/、format_convert/ 与 tools/ 不属于正式测量链路。
 BROAD_CATCH_BASELINE = {
     # 边界翻译 / 尽力记录（装配与运行记录）
     "app/gui_runtime.py": (

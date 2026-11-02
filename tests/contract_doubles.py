@@ -1,8 +1,7 @@
 """正式测量链路测试共用的运行契约替身。
 
 判据只有一份：:func:`application.run_service.has_run_contract`，它要求运行标识、
-运行目录、运行仓储与可调用的 ``hardware_connection_path()`` 四项齐备
-（见《无运行契约调用方清单》第 3.0 节第 3 条与第 8 节 D3/D10）：
+运行目录、运行仓储与可调用的 ``hardware_connection_path()`` 四项齐备：
 
 - **正式链路测试**必须用真实 ``PreparedRun`` 或本模块的契约替身；
 - **禁止**用 ``object()``、``SimpleNamespace(run_id=...)`` 这类“非空但不带契约”的

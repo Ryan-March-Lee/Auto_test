@@ -430,11 +430,46 @@ def _first_party_imports(tree, path=None):
     ] + relative
 
 
-def _retired_module_names():
-    """旧模块登记表来自步骤 1 的门禁，避免第二份“旧入口”清单。"""
-    from tests.test_public_api_inventory import LEGACY_MODULES
+# 已退役的旧入口模块名：删除后不得重新引入。
+RETIRED_MODULE_NAMES = frozenset(
+    {
+        "cable_loss_measurement",
+        "driver_power_mapping",
+        "amplifier_measurement",
+        "app.legacy_amplifier_measurement",
+        "config_io",
+        "config_models",
+        "config_validation",
+        "infrastructure.config.legacy_conversion",
+        "result_reading",
+        "application.dto.legacy_result_adapter",
+        "domain.result_reading",
+        "application.ports.result_history",
+        "infrastructure.persistence.result_history_repository",
+        "result_storage",
+        "instrument.legacy_control",
+        "instrument.power_roles",
+        "presentation.qt.configuration_authoring",
+        "measurement_calculations",
+        "measurement_lifecycle",
+        "measurement_services",
+        "app_logging",
+        "project_paths",
+        "legacy_config_conversion",
+        "enhanced_main_gui",
+        "llm",
+        "web_search_tools",
+        "instrument_control",
+        "data_visualization",
+        "connection_diagrams",
+        "persistence",
+    }
+)
 
-    return frozenset(LEGACY_MODULES)
+
+def _retired_module_names():
+    """旧入口已删除：模块名在这里冻结，避免重新引入。"""
+    return RETIRED_MODULE_NAMES
 
 
 def _retired_imports(modules, retired):

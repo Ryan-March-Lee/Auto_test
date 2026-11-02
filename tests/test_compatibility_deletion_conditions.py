@@ -6,7 +6,7 @@
 - 生产可执行代码与测试都不再导入这些模块（静态导入与常量字符串动态导入一并检查）；
 - 旧兼容接口标识不再以名字或字符串属性访问的形式出现在生产代码中；
 - 发布清单不再登记 `rollback` / `compatibility` 文件列表；
-- 正式替代入口可导入且导出预期符号，README 与正式 API 清单与实际目录结构一致。
+- 正式替代入口可导入且导出预期符号，README 与实际目录结构一致。
 
 门禁只约束可执行代码；注释、docstring 与 git 历史中保留的旧名称属于审计证据。
 """
@@ -20,9 +20,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).parents[1]
-INVENTORY_DOC = ROOT / "docs" / "正式API目录清单.md"
 README = ROOT / "README.md"
-RETIREMENT_STEP = "步骤 16"
 
 # 步骤 16 整文件退役的根目录纯再导出模块（相对路径，导入名同名）。
 RETIRED_ROOT_MODULES = (
@@ -457,13 +455,6 @@ class DocumentationConsistencyTests(unittest.TestCase):
                 with self.subTest(module=module, branch=branch):
                     self.assertNotIn(f"{branch} {module}", readme)
         self.assertNotIn("尚未收口的兼容再导出入口", readme)
-
-    def test_api_inventory_marks_the_retired_modules_as_deleted(self):
-        document = INVENTORY_DOC.read_text(encoding="utf-8-sig")
-        for module in RETIRED_MODULE_NAMES:
-            row = f"| `{module}` | `{module}.py` | 已删除 | {RETIREMENT_STEP} |"
-            with self.subTest(module=module):
-                self.assertIn(row, document)
 
 
 if __name__ == "__main__":

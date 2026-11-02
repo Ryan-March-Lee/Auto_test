@@ -31,8 +31,8 @@ only logged.
 硬件模式的配置权威是**当前运行目录内冻结的硬件配置快照**：生产调用只经
 :func:`app.gui_runtime.connect_instruments` 从运行契约解析并通过 manifest 校验后传入
 ``hardware_config_path``。本模块**不做来源校验**：它只是接受一个配置路径的工厂，
-`instrument` 层纯装配单测与受控真机冒烟可以显式传入配置路径（见《无运行契约调用方清单》
-第 3.0 节第 2 条与第 5 节）；“只能用运行快照”这条约束由生产组合根与门禁保证，不由本模块保证。
+`instrument` 层纯装配单测与受控真机冒烟可以显式传入配置路径；“只能用运行快照”这条约束由
+生产组合根与门禁保证，不由本模块保证。
 """
 
 from __future__ import annotations

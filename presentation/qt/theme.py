@@ -36,6 +36,7 @@ __all__ = [
     "TONE_NAMES",
     "LABEL_ROLES",
     "PAGE_CONTENT_MAX_WIDTH",
+    "CARD_RADIUS",
     "build_palette",
     "build_stylesheet",
     "base_font",
@@ -45,6 +46,10 @@ __all__ = [
 ]
 
 # ---- 设计令牌 ---------------------------------------------------------------
+
+#: 仪器卡片与“查找设备”卡片的圆角：两张卡片的形状完全一致，只差卡面配色。
+#: 样式表取它写 ``border-radius``，“查找设备”自绘卡面也从这里取同一个值。
+CARD_RADIUS = 8.0
 
 TOKENS = {
     # 底色与容器
@@ -56,6 +61,8 @@ TOKENS = {
     "border_strong": "#CBD5E1",
     "table_grid": "#F1F5F9",
     "header_text": "#475569",
+    # 卡片圆角：仪器卡片与“查找设备”卡片共用同一个值（见 :data:`CARD_RADIUS`）。
+    "radius_card": f"{CARD_RADIUS:g}px",
     # 文字
     "text": "#1F2937",
     "text_secondary": "#64748B",
@@ -435,7 +442,7 @@ QFrame#discoveryResultsBox {
 QFrame#instrumentCard {
     background-color: $surface;
     border: 1px solid $border;
-    border-radius: 8px;
+    border-radius: $radius_card;
 }
 QFrame#instrumentCard:hover {
     border-color: $border_strong;

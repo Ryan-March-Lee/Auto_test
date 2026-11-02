@@ -16,9 +16,9 @@
 
 卡片只负责显示与选中状态，不知道扫描结果的数据结构：选择、应用与校验仍由
 :class:`presentation.qt.device_discovery_panel.DeviceDiscoveryPanel` 负责。
-卡片尺寸（:data:`CARD_WIDTH` × :data:`CARD_HEIGHT`）是设备发现页的唯一定义：
-“查找设备”那张卡片按钮（:mod:`presentation.qt.scan_card`）按它取大小，因此按钮与仪器
-卡片始终一模一样大。
+卡片尺寸（:data:`CARD_WIDTH` × :data:`CARD_HEIGHT`）与圆角
+（:data:`presentation.qt.theme.CARD_RADIUS`）是设备发现页的唯一定义：“查找设备”那张卡片
+按钮（:mod:`presentation.qt.scan_card`）按它取大小与圆角，因此按钮与仪器卡片始终同形同大。
 图片按“角色 / 型号关键字”在 ``assets/instrument_pic/`` 里查找，找不到时留空；
 图片只解码一次并缓存（照片单张最大 4.7 MB，重复解码会明显拖慢一次扫描后的刷新）。
 """
@@ -57,7 +57,8 @@ INSTRUMENT_PICTURE_DIR = (
 )
 
 # 卡片尺寸：所有卡片同宽等高，成行排列时不会参差。“查找设备”那张卡片按钮
-# （:mod:`presentation.qt.scan_card`）也取这一份尺寸，所以按钮始终和仪器卡片一样大；
+# （:mod:`presentation.qt.scan_card`）也取这一份尺寸，并且与仪器卡片共用同一个圆角
+# （:data:`presentation.qt.theme.CARD_RADIUS`），所以按钮始终和仪器卡片同形同大；
 # 要改卡片大小只改这里。
 CARD_WIDTH = 190
 #: 卡片高度按“设备码 + 图片 + 型号·角色 + 地址”四行内容算，另留状态说明与行间留白的位置。

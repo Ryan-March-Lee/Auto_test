@@ -240,6 +240,19 @@ class ScanPromptCardTests(unittest.TestCase):
         button = ScanPromptCard("查找设备")
         self.assertEqual(button.size(), instrument.size(), "按钮要与仪器卡片一样大")
 
+    def test_the_button_rounding_always_follows_the_instrument_card(self):
+        """圆角也只有一处定义：仪器卡片样式表里的圆角就是按钮卡面的圆角。"""
+        from presentation.qt.scan_card import CARD_RADIUS
+
+        stylesheet = self.app.styleSheet()
+        card_rule = stylesheet.split("QFrame#instrumentCard {", 1)[1].split("}", 1)[0]
+        instrument_radius = card_rule.split("border-radius:", 1)[1].split(";", 1)[0].strip()
+        self.assertEqual(
+            instrument_radius,
+            f"{CARD_RADIUS:g}px",
+            "“查找设备”按钮与仪器卡片必须同一个圆角",
+        )
+
     def test_the_decorations_live_on_a_mouse_transparent_layer_behind_the_card(self):
         """投影在同一父控件的覆盖层上：不进布局、不吃鼠标、只跟卡片走。"""
         host, card = _scene()
@@ -465,10 +478,12 @@ def _stack_scene():
     return host, stack
 
 
-def _stack_frame(host, stack, elapsed_ms: float):
+def _stack_frame(host, stack, elapsed_ms: float, particle: float | None = None):
     """把动画钉在某一刻再抓图：每个时刻的画面才可比。"""
     stack._frame_timer.stop()
     stack._elapsed = float(elapsed_ms)
+    if particle is not None:
+        stack._particle = float(particle)
     stack.update()
     _application().processEvents()
     return host.grab().toImage()
@@ -587,6 +602,20 @@ class ScanWaitStackTests(unittest.TestCase):
             90,
             "卡片转到 45° 附近时应该探到静止卡片的上方",
         )
+
+    def test_the_spinning_cards_keep_their_particle_sparkles(self):
+        """卡片转起来时粒子照常外飘：粒子跟着卡面一起转，不会因为旋转就消失。"""
+        host, stack = _stack_scene()
+        still = _stack_frame(host, stack, 380, particle=0.0)
+        sparkling = _stack_frame(host, stack, 380, particle=0.25)
+
+        changed = sum(
+            1
+            for y in range(still.height())
+            for x in range(still.width())
+            if still.pixel(x, y) != sparkling.pixel(x, y)
+        )
+        self.assertGreater(changed, 20, "旋转中的卡片上也要看得到粒子")
 
     def test_the_deck_starts_over_every_time_it_is_shown(self):
         """扫描结束后动画收起来；下一次查找重新从一整叠、第一张卡开始。"""

@@ -1,4 +1,4 @@
-"""“查找设备”的卡片按钮：按钮本体就是一张与仪器卡片同大的深色卡片，正中一行渐变标题。
+"""“查找设备”的卡片按钮：按钮本体就是一张与仪器卡片同形同大的深色卡片，正中一行渐变标题。
 
 卡面来自一段 HTML/CSS 的 Uiverse 卡片（原效果是 190×254 的竖卡），这里用 Qt 的技术栈复刻它的
 **悬停动效**：
@@ -13,9 +13,10 @@
 - 投影比卡片大一圈，伸出父控件上沿的那一段会被裁掉。结果区因此在卡片上方留了
   :data:`SCAN_CARD_HEADROOM` 的一圈空白（见 ``device_discovery_panel``），让投影落得下。
 
-**按钮的大小就是卡片的大小**：控件固定为 :data:`CARD_WIDTH` × :data:`CARD_HEIGHT`，
-这份尺寸不是本模块自己定的，而是取自仪器卡片（:mod:`presentation.qt.device_cards`），
-因此“查找设备”按钮始终与结果区里的仪器卡片一样大；布局里的占位、可点区域与悬停触发
+**按钮的形状大小就是卡片的形状大小**：控件固定为 :data:`CARD_WIDTH` × :data:`CARD_HEIGHT`、
+圆角取 :data:`presentation.qt.theme.CARD_RADIUS`，这两份都不是本模块自己定的，而是与仪器
+卡片（:mod:`presentation.qt.device_cards`）共用，因此“查找设备”按钮始终与结果区里的仪器
+卡片同形同大；布局里的占位、可点区域与悬停触发
 范围都只有那张卡片，四周没有一圈既是空地又吃悬停的留白。投影本来要画到卡片外面去，而 Qt
 会把画到控件矩形外的像素裁掉：这层因此画在同级的一张透明覆盖层上
 （:class:`_CardBackdrop`），它不进布局、不吃鼠标，只跟着卡片的位置走。
@@ -38,7 +39,8 @@
 同一个模块里还有扫描期间的等待动画（:class:`ScanWaitStack`）：点下去之后按钮收走，
 同一位置换成 5 张与按钮同尺寸的卡叠成的一叠（5 张只是动画，与这次查到几台设备无关），
 从堆顶一张接一张绕自己的中心各转一整圈，5 张全部叠回去后停 0.5s 再来一轮。卡面与按钮
-共用同一张预渲染图，控件本身不吃鼠标、不占焦点，也不改变版面。每走完一整轮（牌堆复原）
+共用同一张预渲染图，卡面里的粒子动效跟着每张卡一起转（旋转时不会消失），控件本身不吃
+鼠标、不占焦点，也不改变版面。每走完一整轮（牌堆复原）
 它发出一次 :attr:`ScanWaitStack.cycle_finished`：设备发现面板据此保证“查找设备”至少
 完整播放一轮动画，才把结果换进结果区；结果还没回来就继续下一轮。
 """
@@ -78,7 +80,7 @@ from PySide6.QtWidgets import (
 )
 
 from .device_cards import CARD_HEIGHT, CARD_WIDTH
-from .theme import FONT_FAMILIES, TOKENS
+from .theme import CARD_RADIUS, FONT_FAMILIES, TOKENS
 
 __all__ = [
     "ScanPromptCard",
@@ -95,10 +97,10 @@ __all__ = [
 
 # ---- 尺寸（原效果的 px 值） --------------------------------------------------
 
-#: 卡片本体尺寸取自仪器卡片（:mod:`presentation.qt.device_cards`）：按钮的大小与仪器
-#: 卡片完全一致（右下角那张装饰层不算在内）。这里不再单独给一套尺寸，改仪器卡片的大小
-#: 就等于改按钮的大小。
-CARD_RADIUS = 20.0
+#: 卡片本体尺寸取自仪器卡片（:mod:`presentation.qt.device_cards`），圆角与仪器卡片共用
+#: 一个值（:data:`presentation.qt.theme.CARD_RADIUS`）：按钮的形状、大小始终与仪器卡片
+#: 一致（右下角那张装饰层不算在内），改仪器卡片就等于改这张按钮。
+
 #: 卡片外沿那道描边的宽度：深色卡面压在浅色页面背景上，原来是 2px，线太细、轮廓几乎看不出来，
 #: 这里加粗到 3px（颜色不变，仍是那层很淡的白）。
 CARD_EDGE_WIDTH = 3.0
@@ -400,6 +402,27 @@ def _paint_card_corners(painter: QPainter, card: QRectF) -> None:
     painter.setPen(solid)
     for start, end in strokes:
         painter.drawLine(QPointF(*start), QPointF(*end))
+
+
+def _paint_card_particles(painter: QPainter, card: QRectF, phase: float) -> None:
+    """六个小亮点向外飘散：``0 → 1 → 0`` 的透明度，位移最远 30px。
+
+    “查找设备”按钮与扫描期间那一叠卡共用这一份画法：粒子是卡面内部的动效，跟着卡片
+    一起转，不会因为卡在旋转就消失。调用方负责先把坐标系放到卡片上、并按圆角裁好。
+    """
+    opacity = _triangle(phase)
+    if opacity <= 0.0:
+        return
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(_alpha(_ACCENT, opacity))
+    half = _PARTICLE_SIZE / 2.0
+    travel = _PARTICLE_TRAVEL * phase
+    for x_ratio, y_ratio, dx, dy in _PARTICLES:
+        center = QPointF(
+            card.left() + card.width() * x_ratio + half + dx * travel,
+            card.top() + card.height() * y_ratio + half + dy * travel,
+        )
+        painter.drawEllipse(center, half, half)
 
 
 @lru_cache(maxsize=4)
@@ -824,19 +847,7 @@ class ScanPromptCard(QPushButton):
 
     def _paint_particles(self, painter: QPainter, card: QRectF) -> None:
         """六个小亮点向外飘散：``0 → 1 → 0`` 的透明度，位移最远 30px。"""
-        opacity = _triangle(self._particle)
-        if opacity <= 0.0:
-            return
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(_alpha(_ACCENT, opacity))
-        half = _PARTICLE_SIZE / 2.0
-        travel = _PARTICLE_TRAVEL * self._particle
-        for x_ratio, y_ratio, dx, dy in _PARTICLES:
-            center = QPointF(
-                card.left() + card.width() * x_ratio + half + dx * travel,
-                card.top() + card.height() * y_ratio + half + dy * travel,
-            )
-            painter.drawEllipse(center, half, half)
+        _paint_card_particles(painter, card, self._particle)
 
     def _paint_title(self, painter: QPainter, card: QRectF) -> None:
         """卡片正中的渐变大字：字形墨迹盒的重心就是卡片中心，带一层青绿光晕。"""
@@ -937,7 +948,8 @@ class ScanWaitStack(QWidget):
     它只是动画：不吃鼠标（``WA_TransparentForMouseEvents``）、不占键盘焦点，也不改变
     版面。控件固定为卡片对角线那么大的正方形（:data:`WAIT_STACK_SIZE`），卡片转到任何
     角度都落在自己的矩形里，不会被结果区上沿裁成一条硬边。卡面与按钮是同一张预渲染图
-    （:func:`_render_card_face`），每帧只是把它转个角度贴上去。
+    （:func:`_render_card_face`），每帧只是把它转个角度贴上去；卡面内部的粒子动效跟着
+    每张卡一起转（:func:`_paint_card_particles`），旋转时不会消失。
 
     每走完一整轮（5 张全部转回 0°，牌堆复原，准备开始下一轮）发出一次
     :attr:`cycle_finished`：设备发现面板等到这一刻才把扫描结果换进结果区，因此一次查找
@@ -960,6 +972,8 @@ class ScanWaitStack(QWidget):
         self._elapsed = 0.0
         #: 从显示到现在已经走完的整轮数：跨过一轮就发一次 ``cycle_finished``。
         self._completed_cycles = 0
+        #: 粒子相位（0..1，2s 一轮）：与“查找设备”按钮同一条时间轴，卡在旋转时也照常外飘。
+        self._particle = 0.0
         #: 卡面预渲染图（尺寸与屏幕像素比不变就一直用这一张）。
         self._face = QPixmap()
         self._face_key: tuple[int, int, float] | None = None
@@ -1011,6 +1025,7 @@ class ScanWaitStack(QWidget):
         """
         total = self._clock.elapsed()
         self._elapsed = float(total % WAIT_CYCLE_MS)
+        self._particle = (total / _PARTICLE_PERIOD_MS) % 1.0
         self.update()
         completed = int(total // WAIT_CYCLE_MS)
         if completed > self._completed_cycles:
@@ -1024,6 +1039,7 @@ class ScanWaitStack(QWidget):
         个确定性的收尾：5 张卡都回到 0°，计时从头开始。
         """
         self._elapsed = 0.0
+        self._particle = 0.0
         self._completed_cycles = 0
         self._clock.start()
         self.update()
@@ -1032,6 +1048,7 @@ class ScanWaitStack(QWidget):
     def showEvent(self, event):  # noqa: N802 - Qt 覆盖方法
         # 每次出现都从“一整叠”开始，并且从第一张卡开始转。
         self._elapsed = 0.0
+        self._particle = 0.0
         self._completed_cycles = 0
         self._clock.start()
         self._frame_timer.start()
@@ -1041,25 +1058,34 @@ class ScanWaitStack(QWidget):
         """收起来就停下计时器，并把角度归零：下一次查找重新从一整叠开始。"""
         self._frame_timer.stop()
         self._elapsed = 0.0
+        self._particle = 0.0
         self._completed_cycles = 0
         super().hideEvent(event)
 
     # ---- 绘制 ---------------------------------------------------------------
 
     def paintEvent(self, event):  # noqa: N802 - Qt 覆盖方法
-        """5 张卡绕同一个中心各自转一个角度；堆顶那张最后画。"""
+        """5 张卡绕同一个中心各自转一个角度；卡面与粒子一起转，堆顶那张最后画。"""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         face = self._deck_face()
         center = QPointF(self.width() / 2.0, self.height() / 2.0)
         half_width = float(CARD_WIDTH) / 2.0
         half_height = float(CARD_HEIGHT) / 2.0
+        card = QRectF(-half_width, -half_height, float(CARD_WIDTH), float(CARD_HEIGHT))
+        silhouette = QPainterPath()
+        silhouette.addRoundedRect(card, CARD_RADIUS, CARD_RADIUS)
         # 倒着画：索引 0 是堆顶那张，最后落笔，压在其他卡上面。
         for angle in reversed(self.angles_at(self._elapsed)):
             painter.save()
             painter.translate(center)
             painter.rotate(angle)
             painter.drawPixmap(QPointF(-half_width, -half_height), face)
+            # 粒子是卡面内部的动效：跟着这张卡一起转，并裁在圆角卡面里。
+            painter.save()
+            painter.setClipPath(silhouette)
+            _paint_card_particles(painter, card, self._particle)
+            painter.restore()
             painter.restore()
 
     def _deck_face(self) -> QPixmap:

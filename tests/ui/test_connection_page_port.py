@@ -5,9 +5,10 @@
 ``ConfigurationViewState``、提交的是 ``ApplyDeviceSelectionRequest``，并且“连接仪器”
 只发出用户意图。
 
-步骤 12 起，静态骨架的测试也走页面公开的语义查询（标题、动作文案与可见性、版心宽度、
-上下留白），不再按 ``.ui`` 的 objectName 找控件；控件层级契约只在
-``tests/ui/test_ui_loader.py`` 里保留。
+步骤 12 起，静态骨架的测试也走页面公开的语义查询（标题、动作文案与可见性），不再按
+``.ui`` 的 objectName 找控件；控件层级契约只在 ``tests/ui/test_ui_loader.py`` 里保留。
+版心宽度与上下留白属于视觉契约，由本模块直接量取页面呈现出来的几何，不为此在生产
+页面上新增测试专用查询方法。
 """
 
 import os
@@ -17,6 +18,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import QApplication
 
 from application.configuration_editing import ValidationIssue, ValidationResult
@@ -266,11 +268,11 @@ class ConnectionPageBoundaryTests(unittest.TestCase):
 
 
 class ConnectionPageStaticLayoutTests(unittest.TestCase):
-    """步骤 12：静态骨架的视觉契约通过页面公开的语义查询验证。
+    """步骤 12：静态骨架的视觉契约通过页面呈现结果验证。
 
     ``.ui`` 的控件层级与 objectName 契约只在 ``tests/ui/test_ui_loader.py`` 里保留；
-    这里断言用户看得见的结果——标题文案、页面动作、版心宽度与上下留白的比例。改控件名
-    或调整静态排列时，业务行为测试不需要跟着改。
+    这里断言用户看得见的结果——标题文案、页面动作、版心宽度与上下留白的比例。视觉几何
+    直接量取页面呈现出来的控件位置与尺寸，不要求生产页面新增测试专用查询方法。
     """
 
     @classmethod
@@ -295,11 +297,28 @@ class ConnectionPageStaticLayoutTests(unittest.TestCase):
 
         self.assertEqual(page.page_actions_visible(), (True, True))
 
-    def test_content_is_constrained_to_the_shared_width(self):
+    def test_content_is_constrained_to_the_shared_width_and_stays_centred(self):
         page = self.make_page()
+        page.resize(PAGE_CONTENT_MAX_WIDTH + 400, 900)
+        page.show()
+        self.app.processEvents()
+        self.app.processEvents()
 
-        # 版心宽度只有一个来源：``.ui`` 不声明尺寸，页面从主题令牌取值。
-        self.assertEqual(page.content_maximum_width(), PAGE_CONTENT_MAX_WIDTH)
+        # 版心是标题所在的滚动内容列；它在超宽窗口里应停在主题令牌上并保持居中。
+        content = page.title_label.parentWidget()
+        self.assertIsNotNone(content)
+        self.assertEqual(
+            content.width(),
+            PAGE_CONTENT_MAX_WIDTH,
+            "超宽窗口下版心应被主题令牌收住",
+        )
+        offset = content.mapTo(page, QPoint(0, 0)).x()
+        self.assertAlmostEqual(
+            offset,
+            (page.width() - content.width()) / 2,
+            delta=2,
+            msg="版心应居中而不是贴向一侧",
+        )
 
     def test_spare_height_stays_weighted_towards_the_top(self):
         """多出来的高度按 2:1 分给上下留白：标题与结果区落在页面中线略偏下。"""
@@ -309,8 +328,19 @@ class ConnectionPageStaticLayoutTests(unittest.TestCase):
         self.app.processEvents()
         self.app.processEvents()
 
-        top_gap, bottom_gap = page.spare_height_split()
+        # 操作栏由页面公开的返回按钮定位；这里只量取标题、结果区与操作栏的实际位置。
+        action_bar = page.return_welcome_btn.parentWidget()
+        self.assertIsNotNone(action_bar)
+        title_top = page.title_label.mapTo(
+            page, page.title_label.rect().topLeft()
+        ).y()
+        panel_bottom = page.discovery_panel.mapTo(
+            page, page.discovery_panel.rect().bottomLeft()
+        ).y()
+        action_bar_top = action_bar.mapTo(page, action_bar.rect().topLeft()).y()
 
+        top_gap = title_top
+        bottom_gap = action_bar_top - panel_bottom
         self.assertGreater(top_gap, bottom_gap, "上留白应大于下留白")
         self.assertGreater(
             top_gap / max(1, bottom_gap),

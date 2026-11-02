@@ -24,6 +24,9 @@
 卡片按钮就落在结果区顶部、紧跟在扫描行下面（不在整块结果区里居中，免得和扫描行之间隔
 一大段空白），点下去之后原地换成等待动画（:class:`presentation.qt.scan_card.ScanWaitStack`：
 5 张卡从堆顶一张接一张各转一整圈，叠回去停 0.5s 再来一轮），结果回来后再换成卡片。
+等待动画的舞台比卡片大一圈（卡片转到任意角度都要落得下），但牌堆的上沿与左沿正好压在
+按钮原来的位置：点下去卡片是在原地起转，不会先往下掉一截（舞台向上多出来的那一截伸进
+卡片上方的留白，占位控件只撑高、不撑宽，页面也不会被撑开）。
 **扫描结束不等于立刻换画面**：结果（或失败原因）先挂起，等等待动画至少完整播完一轮、
 5 张卡都叠回原样（``ScanWaitStack.cycle_finished``）才进入下一步；动画没播完就继续播，
 扫描结果等它，而不是把转动中途的牌堆直接收走。搜索一直不回来时动画就一轮接一轮地播。
@@ -84,7 +87,12 @@ from .device_cards import (
     instrument_picture_path,
 )
 from .input_controls import WheelSafeComboBox
-from .scan_card import SCAN_CARD_HEADROOM, ScanPromptCard, ScanWaitStack
+from .scan_card import (
+    SCAN_CARD_HEADROOM,
+    WAIT_STACK_SIZE,
+    ScanPromptCard,
+    ScanWaitStack,
+)
 from .theme import set_button_variant, set_tone
 
 # 角色标签是“本次测试语义”，与设备身份（完整设备码）分开：设备可以换 IP，角色不会变。
@@ -394,7 +402,10 @@ class DeviceDiscoveryPanel(QWidget):
         # ``presentation.qt.device_cards`` 给出。
         # 扫描期间的等待动画：点下去按钮收走，同一位置换成这一叠 5 张卡，从堆顶一张接
         # 一张各转一整圈，全部叠回去后停 0.5s 再来一轮（5 张只是动画，与设备台数无关）。
-        self.wait_stack = ScanWaitStack()
+        # 它是面板上的一层覆盖画面，不进扫描行里的格子：舞台比卡片大一圈，居中放进格子
+        # 会让整叠卡比按钮低一截，点下去卡片就像往下掉了一下。舞台位置由
+        # :meth:`_sync_wait_stack_geometry` 钉在按钮原来的位置上。
+        self.wait_stack = ScanWaitStack(self)
         self.wait_stack.setVisible(False)
         # 一整轮动画走完（牌堆复原）才允许把扫描结果换进结果区。
         self.wait_stack.cycle_finished.connect(self._on_wait_cycle_finished)
@@ -463,11 +474,20 @@ class DeviceDiscoveryPanel(QWidget):
         # 紫→蓝底卡与霓虹柔光都已删除，这里只关系投影。
         centre.addSpacing(SCAN_CARD_HEADROOM)
         # 中间这一行自己按可见项居中：没有卡片时只有一张“查找设备”卡片；扫描期间
-        # 同一位置换成那一叠等待动画（两者互斥，同一时刻只有一个可见）。
+        # 同一位置换成那一叠等待动画（两者互斥，同一时刻只有一个可见）。等待动画画在
+        # 面板上、不进这一行；这里用一个和按钮同宽、和舞台同高的透明占位把行撑到舞台
+        # 高度，行里看不见卡片时也保留原来的纵向排布，下面的说明行不会跳上来；宽度
+        # 仍与按钮一致，等待时页面也不会被撑宽。
         centre_row = QHBoxLayout()
         centre_row.setSpacing(10)
         centre_row.addStretch(1)
-        centre_row.addWidget(self.wait_stack)
+        self.centre_placeholder = QWidget(self.centre_area)
+        self.centre_placeholder.setObjectName("discoveryCentrePlaceholder")
+        self.centre_placeholder.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.centre_placeholder.setFocusPolicy(Qt.NoFocus)
+        self.centre_placeholder.setFixedSize(CARD_WIDTH, WAIT_STACK_SIZE)
+        self.centre_placeholder.setVisible(False)
+        centre_row.addWidget(self.centre_placeholder)
         centre_row.addWidget(self.scan_btn)
         centre_row.addStretch(1)
         centre.addLayout(centre_row)
@@ -586,6 +606,34 @@ class DeviceDiscoveryPanel(QWidget):
         self.results_box.update()
         self._refresh_results_box_height()
         self._notify_ancestors()
+        self._sync_wait_stack_geometry()
+
+    def _sync_wait_stack_geometry(self) -> None:
+        """把等待动画的牌堆钉在“查找设备”卡片原来的位置。
+
+        舞台（:data:`WAIT_STACK_SIZE`）比卡片大一圈，卡片转到任意角度才落得下。如果让
+        舞台按扫描行居中，整叠卡的圆心会比按钮低半个差值，点下去卡片就像往下掉了一截。
+        这里以按钮格子（扫描期间是同大的透明占位）的上沿为牌堆上沿，把舞台多出来的
+        那一截伸到卡片上方的留白里：牌堆与按钮重合，旋转只绕自己的中心。
+        """
+        placeholder = self.centre_placeholder
+        if not placeholder.isVisible():
+            return
+        owner = placeholder.parentWidget()
+        owner_layout = owner.layout() if owner is not None else None
+        if owner_layout is not None:
+            owner_layout.activate()
+        stage = self.wait_stack.size()
+        origin = placeholder.mapTo(self, placeholder.rect().topLeft())
+        deck_inset = max(0, (stage.height() - CARD_HEIGHT) // 2)
+        self.wait_stack.setGeometry(
+            origin.x() + (placeholder.width() - stage.width()) // 2,
+            origin.y() - deck_inset,
+            stage.width(),
+            stage.height(),
+        )
+        # 覆盖层要压在结果区与扫描行之上；它不吃鼠标，层级只影响这一块的画面。
+        self.wait_stack.raise_()
 
     def _sync_box_content(self) -> None:
         """结果区里只放当前状态该有的东西：查找 / 正在查找 / 卡片与操作按钮。
@@ -615,6 +663,7 @@ class DeviceDiscoveryPanel(QWidget):
             ]
         )
         self.centre_area.setVisible(idle or busy)
+        self.centre_placeholder.setVisible(busy)
         self.scan_btn.setVisible(idle)
         self.wait_stack.setVisible(busy)
         self.loading_label.setVisible(busy)
@@ -1143,6 +1192,10 @@ class DeviceDiscoveryPanel(QWidget):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._refresh_cards_geometry()
+        layout = self.layout()
+        if layout is not None:
+            layout.activate()
+        self._sync_wait_stack_geometry()
 
     def selected_assignments(self) -> tuple[list[dict[str, Any]], list[str]]:
         """返回 ``(要应用的设备, 问题说明)``；身份/角色缺失、唯一角色重复都算问题。

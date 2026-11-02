@@ -257,6 +257,27 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
             "卡片上方要留出投影的位置，否则结果区上沿会把它裁出一条硬边",
         )
 
+    def test_clicking_scan_does_not_make_the_card_drop_down(self):
+        """等待动画的牌堆从按钮原来的位置开始转，点下去卡片不能先往下掉一截。"""
+        from presentation.qt.device_cards import CARD_HEIGHT, CARD_WIDTH
+
+        panel = self.make_panel()
+        button = panel.scan_btn.mapTo(panel, panel.scan_btn.rect().topLeft())
+        size = (panel.width(), panel.height())
+
+        panel.request_scan()
+        self.app.processEvents()
+
+        self.assertTrue(panel.wait_stack.isVisible())
+        self.assertEqual(
+            (panel.width(), panel.height()), size, "换成等待动画不能把面板撑大或撑小"
+        )
+        stage = panel.wait_stack.mapTo(panel, panel.wait_stack.rect().topLeft())
+        deck_left = stage.x() + (panel.wait_stack.width() - CARD_WIDTH) // 2
+        deck_top = stage.y() + (panel.wait_stack.height() - CARD_HEIGHT) // 2
+        self.assertEqual(deck_top, button.y(), "牌堆上沿要与按钮上沿重合")
+        self.assertEqual(deck_left, button.x(), "牌堆左沿要与按钮左沿重合")
+
     def test_scanning_takes_the_button_away(self):
         panel = self.make_panel()
 

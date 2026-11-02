@@ -5,7 +5,15 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
+from application.device_binding import ApplyDeviceSelectionRequest
 from presentation.qt.config_page import ConfigPage
+
+
+def apply_devices(page, assignments):
+    """提交一次设备勾选；页面只接受命令 DTO（步骤 13 删除字典列表兼容入口）。"""
+    return page.apply_device_selection(
+        ApplyDeviceSelectionRequest.from_assignments(assignments)
+    )
 
 
 class ConfigPageTests(unittest.TestCase):
@@ -845,7 +853,9 @@ class ConfigPageTests(unittest.TestCase):
                 "ip": f"192.168.1.{index}",
             }
 
-        page.apply_discovered_devices([assignment("DP8B1519", 1)])
+        page.apply_device_selection(
+            ApplyDeviceSelectionRequest.from_assignments([assignment("DP8B1519", 1)])
+        )
 
         # 本次绑定的电源有当前参数页；已保存的另一台仍是“标签页 + 参数”，只是地址
         # 随绑定失效——这样“清除绑定”不会抹掉现场已调试好的通道参数。
@@ -1019,7 +1029,7 @@ class ConfigPageViewModelTests(unittest.TestCase):
             "known": True,
         }
 
-        self.assertTrue(page.apply_discovered_devices([assignment]))
+        self.assertTrue(apply_devices(page, [assignment]).ok)
         self.assertEqual(
             page.view_model.state.bindings_snapshot(), page.device_bindings
         )
@@ -1029,7 +1039,7 @@ class ConfigPageViewModelTests(unittest.TestCase):
         page = self.make_page()
         before = page.view_model.state
 
-        self.assertFalse(page.apply_discovered_devices([]))
+        self.assertFalse(apply_devices(page, []).ok)
 
         self.assertEqual(
             page.view_model.state.bindings_snapshot(), before.bindings_snapshot()

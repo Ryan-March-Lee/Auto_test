@@ -558,20 +558,20 @@ class ConfigurationViewModel:
         return self.state
 
     def apply_device_selection(
-        self, assignments: Any
+        self, request: ApplyDeviceSelectionRequest
     ) -> ConfigurationBindingOutcome:
         """应用一次设备勾选结果；成功时整批替换绑定，失败时状态不变。
 
-        ``assignments`` 可以是 :class:`ApplyDeviceSelectionRequest`，也可以是发现面板
-        交付的字典列表（由 :meth:`ApplyDeviceSelectionRequest.from_assignments` 收敛）。
-        业务规则仍只在 :class:`DeviceBindingService`：这里只决定何时调用、如何把结果写进
-        页面状态。
+        参数只能是 :class:`ApplyDeviceSelectionRequest`：发现面板交付的字典列表在
+        交付边界（连接页/设备绑定端口）收敛成命令 DTO，本方法不再保留第二套入参形态
+        （步骤 13）。业务规则仍只在 :class:`DeviceBindingService`：这里只决定何时调用、
+        如何把结果写进页面状态。
         """
-        request = (
-            assignments
-            if isinstance(assignments, ApplyDeviceSelectionRequest)
-            else ApplyDeviceSelectionRequest.from_assignments(assignments)
-        )
+        if not isinstance(request, ApplyDeviceSelectionRequest):
+            raise TypeError(
+                "request 必须是 ApplyDeviceSelectionRequest，"
+                f"收到 {type(request).__name__}"
+            )
         result = self._binding_service.apply(request)
         if not result.ok:
             # 整批拒绝：不替换旧绑定，也不写半份配置。

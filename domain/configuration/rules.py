@@ -21,6 +21,9 @@ DB_VALUE_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*dB\s*$", re.IGNORECASE)
 SIMULATED_BINDING_SOURCE = "simulated"
 # 供电分配的两个组：电源引用按组各自校验，物理通道在两组之间统一比对。
 ASSIGNMENT_GROUPS = ("driver_amplifier", "dut_amplifier")
+# 电源通道的供电角色词汇：只允许栅极 / 漏极，顺序就是控件里的展示顺序。页面、编写文档
+# 校验与正式分配校验都引用这一份，避免“页面认一套、运行认另一套”（R6）。
+POWER_CHANNEL_ROLES = ("gate", "drain")
 
 
 def assignment_supply_id(entry: Any) -> Optional[str]:
@@ -244,6 +247,125 @@ def validate_config(config: Dict[str, Any]) -> ConfigValidationResult:
     errors.extend(simulated_binding_issues(root))
 
     return ConfigValidationResult(errors=errors, warnings=warnings)
+
+
+def validate_power_channel_roles(config: Any) -> ConfigValidationResult:
+    """校验编写文档里电源通道的供电角色（R6 的编写文档入口）。
+
+    每台已配置电源的每个通道都必须显式选择 ``gate`` / ``drain``，同一台电源内不允许
+    重复角色。词表与正式分配校验共用 :data:`POWER_CHANNEL_ROLES`：非法角色（例如
+    ``bias``）同样会被报告，不会因为“不是 ``None``”就蒙混过关。判据与保存/连接时的
+    正式校验同源，但这里只回答“页面上这几个通道选好了没有”，因此错误文案面向操作员。
+
+    只读取 ``instruments.power_supplies`` 的通道声明，不引用设备绑定、不读控件；
+    非对象结构按缺失处理，交给 :func:`validate_config` 报结构问题。
+    """
+    errors: List[ConfigIssue] = []
+    instruments = config.get("instruments") if isinstance(config, Mapping) else None
+    supplies = instruments.get("power_supplies") if isinstance(instruments, Mapping) else None
+    if not isinstance(supplies, Mapping):
+        return ConfigValidationResult(errors=[], warnings=[])
+    for name, supply in supplies.items():
+        channels = supply.get("channels") if isinstance(supply, Mapping) else None
+        if not isinstance(channels, Mapping):
+            continue
+        path = f"instruments.power_supplies.{name}.channels"
+        roles = [
+            channel.get("role") if isinstance(channel, Mapping) else None
+            for channel in channels.values()
+        ]
+        if any(role is None for role in roles):
+            errors.append(
+                ConfigIssue(
+                    "error",
+                    path,
+                    f"{name} 存在未选择供电角色的通道",
+                )
+            )
+        for channel_name, channel in channels.items():
+            role = channel.get("role") if isinstance(channel, Mapping) else None
+            if role is not None and role not in POWER_CHANNEL_ROLES:
+                errors.append(
+                    ConfigIssue(
+                        "error",
+                        f"{path}.{channel_name}.role",
+                        f"{name} 的通道 {channel_name} 供电角色必须是 gate 或 drain，"
+                        f"当前为 {role!r}",
+                    )
+                )
+        valid_roles = [role for role in roles if role in POWER_CHANNEL_ROLES]
+        duplicates = sorted(
+            {role for role in valid_roles if valid_roles.count(role) > 1}
+        )
+        if duplicates:
+            errors.append(
+                ConfigIssue(
+                    "error",
+                    path,
+                    f"{name} 的通道供电角色重复: {'、'.join(duplicates)}",
+                )
+            )
+    return ConfigValidationResult(errors=errors, warnings=[])
+
+
+def validate_power_supply_assignment_references(config: Any) -> ConfigValidationResult:
+    """校验供电分配引用的是本次已应用的电源（R10 的编写文档入口）。
+
+    “已应用”在编写文档里的唯一证据是该电源条目带有连接地址：设备绑定写入时会为
+    已绑定设备写入当前地址，并把未绑定条目的地址清空、显式标记为未启用。因此这里
+    只看 ``instruments.power_supplies.<supply_id>`` 的地址，不猜设备、不回读绑定结构。
+
+    引用缺失的分配与“指向一台没有已应用设备的电源”是两种用户可修正的问题，文案分开
+    报告；结构性问题（分配不是对象等）仍由 :func:`validate_config` 负责。
+    """
+    errors: List[ConfigIssue] = []
+    if not isinstance(config, Mapping):
+        return ConfigValidationResult(errors=[], warnings=[])
+    assignments = config.get("power_supply_assignment")
+    if not isinstance(assignments, Mapping):
+        return ConfigValidationResult(errors=[], warnings=[])
+    instruments = config.get("instruments")
+    supplies = instruments.get("power_supplies") if isinstance(instruments, Mapping) else None
+    supplies = supplies if isinstance(supplies, Mapping) else {}
+    unselected: list[str] = []
+    unbound: list[str] = []
+    for group, label in (("driver_amplifier", "驱动功放"), ("dut_amplifier", "DUT")):
+        assignment = assignments.get(group)
+        supplies_map = assignment.get("supplies") if isinstance(assignment, Mapping) else None
+        if not isinstance(supplies_map, Mapping):
+            continue
+        for role, entry in supplies_map.items():
+            supply_id = assignment_supply_id(entry)
+            if not supply_id:
+                unselected.append(f"{label}({role})")
+                continue
+            if not _has_applied_address(supplies.get(supply_id)):
+                unbound.append(f"{label}({role}) → {supply_id}")
+    if unselected:
+        errors.append(
+            ConfigIssue(
+                "error",
+                "power_supply_assignment",
+                f"{'、'.join(unselected)} 未选择电源：请先在“仪表配置”页应用电源设备",
+            )
+        )
+    if unbound:
+        errors.append(
+            ConfigIssue(
+                "error",
+                "power_supply_assignment",
+                f"{'、'.join(unbound)} 引用的电源没有已应用的设备，不能保存或运行",
+            )
+        )
+    return ConfigValidationResult(errors=errors, warnings=[])
+
+
+def _has_applied_address(supply: Any) -> bool:
+    """电源条目是否代表一台本次已应用、可连接的设备（有非空地址即视为已应用）。"""
+    if not isinstance(supply, Mapping):
+        return False
+    address = supply.get("address")
+    return isinstance(address, str) and bool(address.strip())
 
 
 def simulated_binding_issues(document: Any) -> List[ConfigIssue]:
@@ -491,8 +613,8 @@ def _validate_assignment(
             )
         else:
             resolved_roles[item.role] = item.token
-    if resolved_roles and set(resolved_roles) != {"gate", "drain"}:
-        missing = sorted({"gate", "drain"} - set(resolved_roles))
+    if resolved_roles and set(resolved_roles) != set(POWER_CHANNEL_ROLES):
+        missing = sorted(set(POWER_CHANNEL_ROLES) - set(resolved_roles))
         error(
             f"{path}.supplies",
             "供电分配必须同时提供 gate 和 drain 通道，缺少: " + "、".join(missing),
@@ -597,7 +719,7 @@ def _collect_assignment_channels(
                         name=str(channel),
                         supply_id=supply_id,
                         token=f"{supply_id}/{channel}",
-                        role=role if check_roles and role in ("gate", "drain") else None,
+                        role=role if check_roles and role in POWER_CHANNEL_ROLES else None,
                     )
                 )
     return collected

@@ -22,7 +22,7 @@
 归属（见 `docs/配置领域词汇与模块归属.md`）：Qt 视图。页面只负责控件、布局、信号与派生界面
 状态；设备选择的角色唯一性、引用/身份校验与整批替换规则在
 :class:`application.device_binding.DeviceBindingService`（步骤 5），
-:meth:`ConfigPage.apply_discovered_devices` 只提交本次勾选结果并投影返回的绑定集合。
+:meth:`ConfigPage.apply_device_selection` 只提交本次勾选结果并投影返回的绑定集合。
 
 页面业务状态由 :class:`application.configuration_view_model.ConfigurationViewModel` 持有
 （步骤 6）：测试参数、设备绑定、运行状态、dirty，以及步骤 7 经表单 Adapter 收口的
@@ -299,19 +299,6 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         self.discovery_message.emit(message)
         self.device_selection_finished.emit(result, message)
         return result
-
-    def apply_discovered_devices(self, assignments):
-        """兼容入口：接受面板交付的字典列表或已构造的命令，返回是否写入成功。
-
-        连接页现在直接提交 :class:`ApplyDeviceSelectionRequest`；这个同名方法保留给
-        既有页面测试与迁移期调用方，语义仍是“整批写入，成功返回 ``True``”。
-        """
-        request = (
-            assignments
-            if isinstance(assignments, ApplyDeviceSelectionRequest)
-            else ApplyDeviceSelectionRequest.from_assignments(assignments)
-        )
-        return self.apply_device_selection(request).ok
 
     @staticmethod
     def _applied_labels(applied) -> list[str]:

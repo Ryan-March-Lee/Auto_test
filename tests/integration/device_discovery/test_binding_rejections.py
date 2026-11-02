@@ -1,6 +1,6 @@
 """整批拒绝：缺身份、重复角色、坏引用一律不写，原因同时出现在面板状态里。"""
 
-from .support import ConnectionPageTestCase
+from .support import ConnectionPageTestCase, apply_devices
 
 
 class DeviceBindingRejectionTests(ConnectionPageTestCase):
@@ -12,7 +12,7 @@ class DeviceBindingRejectionTests(ConnectionPageTestCase):
         messages = []
         page.validation_failed.connect(messages.append)
 
-        page.apply_discovered_devices(
+        apply_devices(page,
             [
                 {
                     "role": "power_supply",
@@ -40,7 +40,7 @@ class DeviceBindingRejectionTests(ConnectionPageTestCase):
             "device_key": "rigol technologies:dp8b214901519",
         }
 
-        page.apply_discovered_devices(
+        apply_devices(page,
             [dict(entry, supply_id="DP8B1519"), dict(entry, supply_id="DP8B1519-B")]
         )
 
@@ -52,7 +52,7 @@ class DeviceBindingRejectionTests(ConnectionPageTestCase):
         messages = []
         page.validation_failed.connect(messages.append)
 
-        page.apply_discovered_devices([{"role": "nope", "address": "TCPIP0::1.2.3.4::inst0::INSTR"}])
+        apply_devices(page, [{"role": "nope", "address": "TCPIP0::1.2.3.4::inst0::INSTR"}])
 
         self.assertIn("未知的测试角色", messages[-1])
         self.assertEqual(page.device_bindings, {})
@@ -62,7 +62,7 @@ class DeviceBindingRejectionTests(ConnectionPageTestCase):
         messages = []
         page.validation_failed.connect(messages.append)
 
-        page.apply_discovered_devices([{"role": "signal_generator", "address": "  "}])
+        apply_devices(page, [{"role": "signal_generator", "address": "  "}])
 
         self.assertIn("发现地址为空", messages[-1])
         self.assertNotIn("address", page.build_config()["instruments"]["signal_generator"])
@@ -72,7 +72,7 @@ class DeviceBindingRejectionTests(ConnectionPageTestCase):
         messages = []
         page.validation_failed.connect(messages.append)
 
-        page.apply_discovered_devices(
+        apply_devices(page,
             [
                 {"role": "signal_generator", "address": "TCPIP0::192.168.1.201::inst0::INSTR"},
                 {"role": "nope", "address": "TCPIP0::192.168.1.202::inst0::INSTR"},
@@ -89,7 +89,7 @@ class DeviceBindingRejectionTests(ConnectionPageTestCase):
         messages = []
         page.validation_failed.connect(messages.append)
 
-        page.apply_discovered_devices(
+        apply_devices(page,
             [
                 {
                     "role": "signal_generator",
@@ -113,11 +113,11 @@ class DeviceBindingRejectionTests(ConnectionPageTestCase):
         messages = []
         page.validation_failed.connect(messages.append)
 
-        applied = page.apply_discovered_devices(
+        applied = apply_devices(page,
             [{"role": "signal_generator", "address": "TCPIP0::192.168.1.201::inst0::INSTR"}]
         )
 
-        self.assertFalse(applied)
+        self.assertFalse(applied.ok)
         self.assertIn("缺少设备身份", messages[-1])
         self.assertNotIn("address", page.build_config()["instruments"]["signal_generator"])
 
@@ -126,7 +126,7 @@ class DeviceBindingRejectionTests(ConnectionPageTestCase):
         messages = []
         page.validation_failed.connect(messages.append)
 
-        page.apply_discovered_devices(
+        apply_devices(page,
             [
                 {
                     "role": "signal_generator",
@@ -143,7 +143,7 @@ class DeviceBindingRejectionTests(ConnectionPageTestCase):
 
     def test_empty_batch_is_rejected_without_touching_existing_bindings(self):
         page = self.make_page()
-        page.apply_discovered_devices(
+        apply_devices(page,
             [
                 {
                     "role": "signal_generator",
@@ -159,7 +159,7 @@ class DeviceBindingRejectionTests(ConnectionPageTestCase):
         messages = []
         page.validation_failed.connect(messages.append)
 
-        page.apply_discovered_devices([])
+        apply_devices(page, [])
 
         self.assertIn("请先在发现结果中勾选", messages[-1])
         self.assertIn("signal_generator", page.device_bindings)
@@ -167,7 +167,7 @@ class DeviceBindingRejectionTests(ConnectionPageTestCase):
     def test_a_rejected_batch_leaves_the_previous_bindings_and_power_ui_untouched(self):
         """拒绝时页面不投影新状态：旧绑定、电源标签页与分配可选项都保持原样。"""
         page = self.make_page()
-        page.apply_discovered_devices(
+        apply_devices(page,
             [
                 {
                     "role": "power_supply",
@@ -183,7 +183,7 @@ class DeviceBindingRejectionTests(ConnectionPageTestCase):
         options_before = list(page.get_enabled_power_supplies())
         tabs_before = set(page.power_config_widgets)
 
-        page.apply_discovered_devices([{"role": "nope", "address": "TCPIP0::1.2.3.4::inst0::INSTR"}])
+        apply_devices(page, [{"role": "nope", "address": "TCPIP0::1.2.3.4::inst0::INSTR"}])
 
         self.assertEqual(set(page.device_bindings["power_supplies"]), {"DP8B1519"})
         self.assertEqual(page.get_enabled_power_supplies(), options_before)
@@ -193,7 +193,7 @@ class DeviceBindingRejectionTests(ConnectionPageTestCase):
         """整批拒绝的原因要同时出现在面板状态里，不能只写日志。"""
         page = self.make_page()
 
-        page.apply_discovered_devices(
+        apply_devices(page,
             [{"role": "signal_generator", "address": "TCPIP0::192.168.1.201::inst0::INSTR"}]
         )
 
@@ -205,7 +205,7 @@ class DeviceBindingRejectionTests(ConnectionPageTestCase):
         messages = []
         page.validation_failed.connect(messages.append)
 
-        page.apply_discovered_devices(
+        apply_devices(page,
             [
                 {
                     "role": "power_supply",
@@ -229,7 +229,7 @@ class DeviceBindingRejectionTests(ConnectionPageTestCase):
         messages = []
         page.validation_failed.connect(messages.append)
 
-        page.apply_discovered_devices(
+        apply_devices(page,
             [
                 {
                     "role": "power_supply",

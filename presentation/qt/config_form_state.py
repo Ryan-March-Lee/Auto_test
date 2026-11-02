@@ -12,8 +12,8 @@
 归属（见 `docs/配置领域词汇与模块归属.md`）：presentation adapter。读数后的合法性判据属于
 `domain` 配置规则；正式运行校验与正式配置编写都委托
 `application.configuration_authoring`，本模块只把当前的读数包成配置编辑 DTO 并展示
-返回的消息。`_power_role_errors`、`_power_assignment_errors` 是迁移期副本（步骤 7、13
-收敛到 Adapter 展示结构化校验结果），不在这里新增第二套规则。
+返回的消息。供电角色与分配引用的判据也只由 domain 定义（步骤 13 收口），这里不再保留
+页面副本。
 """
 
 import ast
@@ -21,11 +21,8 @@ import copy
 import math
 from typing import Any, Mapping
 
-# 供电分配引用（``supply_id`` 为准、旧记录回落读一次 ``name``）只有一处实现：
-# ``domain.configuration.rules.assignment_supply_id``，这里再导出给配置页与投影使用，
-# 判据不在这层重写：``supply_id`` 为准、旧记录回落读一次 ``name`` 的规则只有一个实现。
 from application.errors import ConfigurationError
-from domain.configuration.rules import assignment_supply_id
+from domain.configuration.rules import POWER_CHANNEL_ROLES
 from domain.instruments.models import INSTRUMENT_ROLES
 
 from .config_form_bindings import binding_address, power_supply_bindings
@@ -183,8 +180,6 @@ class ConfigFormState:
         errors = []
         if parse_frequency_text(self._text(self.widgets.freq_edit)) is None:
             errors.append("测试频率必须是非空数字列表")
-        errors.extend(self._power_role_errors())
-        errors.extend(self._power_assignment_errors())
         errors.extend(self._formal_run_errors())
         return errors
 
@@ -204,7 +199,8 @@ class ConfigFormState:
         其它异常是程序缺陷，不能被改写成“配置有问题”的提示而掩盖掉，让它照常抛给上层。
         """
         # 编写与正式校验都在 application 边界完成（GUI 重构步骤 4）：页面只把当前读数
-        # 包成配置编辑 DTO 并展示消息，不导入 domain 的正式模型或校验函数。
+        # 包成配置编辑 DTO 并展示消息，不导入 domain 的正式模型或校验函数。供电角色与
+        # 分配引用的判据也由 domain 定义并由应用边界编排（步骤 13），页面不再保留副本。
         from application.configuration_authoring import (
             ConfigurationAuthoringService,
             ConfigurationEditingDocument,
@@ -219,64 +215,6 @@ class ConfigFormState:
             # 等），是用户要改的内容，转成页面错误。
             return [f"无法按当前配置生成正式运行映射: {failure}"]
         return [issue.message for issue in result.errors]
-
-    def _power_assignment_errors(self) -> list[str]:
-        """电源分配只能引用已应用设备的电源；未绑定的引用必须显式失败。
-
-        电源是否可用不再看界面上的“启用”勾选框，而看设备绑定——与保存出的
-        ``instruments.power_supplies.<name>.enabled`` 完全同源。因此这里能提前拦住
-        “分配指向一台已经不存在的电源”的配置，而不是等保存/连接时才失败。
-        """
-        controls = getattr(self.widgets, "power_assignment_widgets", None)
-        if not controls:
-            return []
-        bindings = getattr(self.widgets, "device_bindings", None)
-        records = power_supply_bindings(bindings)
-        fragment = self.read_power_assignment()
-        assignment = fragment.get("power_supply_assignment")
-        assignment = assignment if isinstance(assignment, Mapping) else {}
-        unselected: list[str] = []
-        unbound: list[str] = []
-        for group, label in (
-            ("driver_amplifier", "驱动功放"),
-            ("dut_amplifier", "DUT"),
-        ):
-            group_entry = assignment.get(group)
-            group_entry = group_entry if isinstance(group_entry, Mapping) else {}
-            supplies = group_entry.get("supplies")
-            supplies = supplies if isinstance(supplies, Mapping) else {}
-            for role, item in supplies.items():
-                supply_id = assignment_supply_id(item)
-                if not supply_id:
-                    unselected.append(f"{label}({role})")
-                elif not binding_address(records.get(supply_id)):
-                    unbound.append(f"{label}({role}) → {supply_id}")
-        errors = []
-        if unselected:
-            errors.append(
-                f"{'、'.join(unselected)} 未选择电源：请先在“仪表配置”页应用电源设备"
-            )
-        if unbound:
-            errors.append(
-                f"{'、'.join(unbound)} 引用的电源没有已应用的设备，不能保存或运行"
-            )
-        return errors
-
-    def _power_role_errors(self) -> list[str]:
-        """供电角色必须是显式选择且互不重复，避免保存连接时才失败的配置。"""
-        errors = []
-        fragment = self.read_power_supply_config()
-        supplies = fragment.get("instruments", {}).get("power_supplies", {})
-        for name, supply in supplies.items():
-            roles = [channel.get("role") for channel in supply.get("channels", {}).values()]
-            if any(role is None for role in roles):
-                errors.append(f"{name} 存在未选择供电角色的通道")
-            duplicates = sorted(
-                {role for role in roles if role is not None and roles.count(role) > 1}
-            )
-            if duplicates:
-                errors.append(f"{name} 的通道供电角色重复: {'、'.join(duplicates)}")
-        return errors
 
     def read_instrument_config(self) -> dict:
         """按设备发现结果写出仪器连接信息。
@@ -389,9 +327,9 @@ class ConfigFormState:
         role_widget = controls.get("role")
         if role_widget is not None:
             label = role_widget.currentText()
-            return label if label in ("gate", "drain") else None
+            return label if label in POWER_CHANNEL_ROLES else None
         existing = _dict_copy(existing_channels.get(channel)).get("role")
-        return existing if existing in ("gate", "drain") else None
+        return existing if existing in POWER_CHANNEL_ROLES else None
 
     def read_power_assignment(self) -> dict:
         """按当前下拉框写出供电分配，引用主字段是 ``supply_id``。

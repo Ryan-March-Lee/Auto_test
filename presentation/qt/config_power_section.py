@@ -151,8 +151,7 @@ def power_choice_combo(choices: PowerSupplyChoices, entry: Any):
     """电源分配下拉框：只把配置里的真实引用回填到当前可选项。
 
     引用按 ``supply_id`` 读取（旧配置只有 ``name`` 时读一次，规则只有一处实现：
-    :func:`domain.configuration.rules.assignment_supply_id`，由
-    :mod:`presentation.qt.config_form_state` 再导出），并且必须**出现在本次绑定的
+    :func:`domain.configuration.rules.assignment_supply_id`），并且必须**出现在本次绑定的
     可选项里**才会被选中。配置写了引用、但那台电源本次没有绑定（含还没迁移的旧槽位
     ``PS1``）时保持空选择，交给校验报告——静默停在第一项会把“这台电源已经不在”
     显示成“换成了另一台电源”。

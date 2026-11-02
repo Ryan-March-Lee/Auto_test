@@ -15,11 +15,9 @@
   读写的调用方接到本服务上的入口。两者最终都走同一套编写规则。
 
 正式校验也在这个边界内：:meth:`ConfigurationAuthoringService.validate_document` 先
-编写再调用 domain 的正式运行校验与硬件连接校验，返回结构化的
+编写再调用 domain 的编写文档校验、正式运行校验与硬件连接校验，返回结构化的
 :class:`application.configuration_editing.ValidationResult`。表现层只展示结果，不再
 直接导入 ``domain.configuration.models`` / ``domain.configuration.rules`` 做正式校验。
-
-迁移期的 ``presentation.qt.configuration_authoring`` 只保留转发壳，不再新增规则。
 
 约定：
 
@@ -61,7 +59,12 @@ from domain.configuration.models import (
     TestPlan,
     validate_run_configuration,
 )
-from domain.configuration.rules import assignment_supply_id, validate_hardware_connections
+from domain.configuration.rules import (
+    assignment_supply_id,
+    validate_hardware_connections,
+    validate_power_channel_roles,
+    validate_power_supply_assignment_references,
+)
 from domain.configuration.types import ConfigIssue
 from domain.instruments.models import is_legacy_power_supply_slot
 
@@ -82,6 +85,8 @@ DRIVER_CHANNEL_ROLE = "driver"
 _DB_VALUE_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*dB\s*$", re.IGNORECASE)
 _ASSIGNMENT_GROUPS = ("dut_amplifier", "driver_amplifier")
 # 正式校验问题的稳定错误码：只标识来源边界，不随文案变化。
+_CODE_POWER_CHANNEL_ROLES = "configuration.power_channel_roles"
+_CODE_POWER_ASSIGNMENT_REFERENCES = "configuration.power_assignment_references"
 _CODE_RUN_VALIDATION = "configuration.run_validation"
 _CODE_HARDWARE_CONNECTIONS = "configuration.hardware_connections"
 
@@ -182,14 +187,27 @@ class ConfigurationAuthoringService:
 
         这里只做编排：正式 ``test_plan`` / ``run_mapping`` 的判据仍由 domain 的
         ``validate_run_configuration`` 定义，硬件装配段的连接冲突仍由
-        ``validate_hardware_connections`` 定义；本方法不复制、不改写任何判据。
+        ``validate_hardware_connections`` 定义；供电角色与分配引用这两项面向操作员的
+        编写文档校验也由 domain 的 ``validate_power_channel_roles`` /
+        ``validate_power_supply_assignment_references`` 定义。本方法只把结果转成结构化
+        问题，不复制、不改写任何判据。
 
-        问题顺序与原页面一致：先正式运行校验（错误 + 警告），再硬件装配校验。页面通常
-        只展示 :attr:`ValidationResult.errors`，所以用户可见顺序仍是“正式段问题在前、
-        连接冲突在后”。编写失败（``ConfigurationError``）照常抛给调用方，不在这里
-        改写成“校验问题”。
+        问题顺序与原页面一致：先供电角色，再供电分配引用，然后正式运行校验（错误 +
+        警告），最后硬件装配校验。页面通常只展示 :attr:`ValidationResult.errors`，所以
+        用户可见顺序仍是“通道/分配问题在前、正式段问题居中、连接冲突在后”。编写失败
+        （``ConfigurationError``）照常抛给调用方，不在这里改写成“校验问题”。
         """
         authored = self.author_document(document)
+        source_issues = (
+            (
+                validate_power_channel_roles(authored),
+                _CODE_POWER_CHANNEL_ROLES,
+            ),
+            (
+                validate_power_supply_assignment_references(authored),
+                _CODE_POWER_ASSIGNMENT_REFERENCES,
+            ),
+        )
         run_issues = validate_run_configuration(
             RunConfiguration(
                 TestPlan.from_dict(authored.get("test_plan") or {}),
@@ -198,6 +216,10 @@ class ConfigurationAuthoringService:
         )
         connection_issues = validate_hardware_connections(authored)
         issues = tuple(
+            _validation_issue(issue, code)
+            for result, code in source_issues
+            for issue in (*result.errors, *result.warnings)
+        ) + tuple(
             _validation_issue(issue, _CODE_RUN_VALIDATION)
             for issue in (*run_issues.errors, *run_issues.warnings)
         ) + tuple(
@@ -213,7 +235,7 @@ def author_official_configuration(
     """把配置编辑文档写成正式配置文档（迁移期文档入口）。
 
     仅供尚未迁移到 :meth:`ConfigurationAuthoringService.author` 的调用方使用；它不读
-    控件、不写文件，行为与原 ``presentation.qt.configuration_authoring`` 相同。
+    控件、不写文件，行为与原页面编写入口相同（该页面入口已在步骤 13 删除）。
     """
     return ConfigurationAuthoringService().author_document(
         ConfigurationEditingDocument.from_mapping(config)

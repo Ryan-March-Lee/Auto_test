@@ -1,15 +1,15 @@
 """勾选结果写进配置：地址、身份与绑定记录，换一批之后旧绑定的地址与启用一起失效。"""
 
-from .support import ConnectionPageTestCase
+from .support import ConnectionPageTestCase, apply_devices
 
 
 class DeviceBindingWriteTests(ConnectionPageTestCase):
-    """``apply_discovered_devices`` 写入契约：写什么、换一批之后旧绑定怎么收尾。"""
+    """``apply_device_selection`` 写入契约：写什么、换一批之后旧绑定怎么收尾。"""
 
     def test_applied_device_writes_address_and_identity_into_config(self):
         page = self.make_page()
 
-        applied = page.apply_discovered_devices(
+        applied = apply_devices(page,
             [
                 {
                     "role": "spectrum_analyzer",
@@ -26,7 +26,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
             ]
         )
 
-        self.assertTrue(applied)
+        self.assertTrue(applied.ok)
 
         config = page.build_config()
         self.assertEqual(
@@ -48,7 +48,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
         """成功摘要由页面按服务返回的显示摘要拼装：角色显示名 + 型号，电源只写引用 ID。"""
         page = self.make_page()
 
-        page.apply_discovered_devices(
+        apply_devices(page,
             [
                 {
                     "role": "signal_generator",
@@ -77,7 +77,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
     def test_simulated_device_binding_is_marked_as_demo_data(self):
         page = self.make_page()
 
-        page.apply_discovered_devices(
+        apply_devices(page,
             [
                 {
                     "role": "signal_generator",
@@ -97,7 +97,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
     def test_power_supply_is_written_under_its_supply_id(self):
         page = self.make_page()
 
-        page.apply_discovered_devices(
+        apply_devices(page,
             [
                 {
                     "role": "power_supply",
@@ -131,7 +131,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
         """一台电源：绑定键是短标签，地址写进同名的配置条目。"""
         page = self.make_page()
 
-        page.apply_discovered_devices(
+        apply_devices(page,
             [
                 {
                     "role": "power_supply",
@@ -165,7 +165,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
         """电源绑定按 supply_id 存一条记录，记录里不再重复写类别与标签。"""
         page = self.make_page()
 
-        page.apply_discovered_devices(
+        apply_devices(page,
             [
                 {
                     "role": "power_supply",
@@ -216,7 +216,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
             "supply_id": "DP8B0885",
         }
 
-        page.apply_discovered_devices([first, second])
+        apply_devices(page, [first, second])
 
         self.assertEqual(messages, [])
         self.assertEqual(
@@ -252,19 +252,19 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
             "vendor": "RIGOL TECHNOLOGIES",
             "device_key": "rigol technologies:dp8b174400885",
         }
-        page.apply_discovered_devices([first, second])
+        apply_devices(page, [first, second])
         page.pa_unit1_power_combo.setCurrentIndex(
             page.pa_unit1_power_combo.findData("DP8B1519")
         )
 
-        page.apply_discovered_devices([second])
+        apply_devices(page, [second])
 
         self.assertEqual(page.pa_unit1_power_combo.currentText(), "")
         self.assertEqual(page.pa_unit1_power_combo.currentIndex(), -1)
 
     def test_applying_a_subset_replaces_the_previous_bindings(self):
         page = self.make_page()
-        page.apply_discovered_devices(
+        apply_devices(page,
             [
                 {
                     "role": "signal_generator",
@@ -292,7 +292,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
         page.apply_config(page.build_config())
         self.assertEqual(set(page.device_bindings["power_supplies"]), {"DP8B1519"})
 
-        page.apply_discovered_devices(
+        apply_devices(page,
             [
                 {
                     "role": "signal_generator",
@@ -350,7 +350,7 @@ class DeviceBindingWriteTests(ConnectionPageTestCase):
         page = self.make_page(config)
         self.assertTrue(page.binding_problems)
 
-        page.apply_discovered_devices(
+        apply_devices(page,
             [
                 {
                     "role": "power_supply",

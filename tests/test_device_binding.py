@@ -331,15 +331,15 @@ class PresentationDelegationTests(unittest.TestCase):
         """步骤 8 起页面经视图模型提交勾选结果；请求 DTO 与服务调用都在 application。"""
         self.assertIn("self.view_model.apply_device_selection(", self.method_source)
         self.assertNotIn("DeviceBindingService()", self.method_source)
-        # “下一步”的兼容入口只把字典列表收敛成命令 DTO，再转给上面的写入方法。
-        compat = next(
-            node
+
+    def test_page_has_no_dictionary_list_compatibility_entry(self):
+        """步骤 13 删除了 ``apply_discovered_devices``：调用方只提交命令 DTO。"""
+        names = {
+            node.name
             for node in self.page.body
-            if isinstance(node, ast.FunctionDef)
-            and node.name == "apply_discovered_devices"
-        )
-        compat_source = ast.get_source_segment(self.source, compat)
-        self.assertIn("self.apply_device_selection(request)", compat_source)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        self.assertNotIn("apply_discovered_devices", names)
 
     def test_page_has_no_binding_validation_loop_left(self):
         for fragment in (
@@ -362,9 +362,8 @@ class PresentationDelegationTests(unittest.TestCase):
             if isinstance(node, ast.ImportFrom) and not node.level
         }
         self.assertIn("application.device_binding", modules)
-        self.assertIn(
-            "ApplyDeviceSelectionRequest.from_assignments(", view_model_source
-        )
+        # 视图模型只接受命令 DTO：字典列表只在发现面板的交付边界收敛（步骤 13）。
+        self.assertNotIn("ApplyDeviceSelectionRequest.from_assignments(", view_model_source)
         self.assertIn("self._binding_service.apply(", view_model_source)
 
 

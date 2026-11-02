@@ -12,6 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
+from application.device_binding import ApplyDeviceSelectionRequest
 from domain.instruments.models import InstrumentIdentity
 from infrastructure.discovery.instrument_discovery import (
     SCAN_MODE_NETWORK,
@@ -96,6 +97,16 @@ def two_supply_factory(_mode):
             ("192.168.1.108", 5555): DP832A_SECOND_IDN,
         },
         timeout_s=0.02,
+    )
+
+
+def apply_devices(page, assignments):
+    """提交一次设备勾选，返回 ``DeviceBindingResult``。
+
+    页面只接受命令 DTO（步骤 13 删除了字典列表兼容入口），测试与连接页走同一条路径。
+    """
+    return page.apply_device_selection(
+        ApplyDeviceSelectionRequest.from_assignments(assignments)
     )
 
 

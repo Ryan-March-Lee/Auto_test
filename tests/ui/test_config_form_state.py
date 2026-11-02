@@ -6,11 +6,11 @@
 
 import unittest
 
+from domain.configuration.rules import assignment_supply_id
 from presentation.qt.config_form_bindings import POWER_SUPPLY_BINDINGS
 from presentation.qt.config_form_state import (
     ConfigFormState,
     assignment_declared,
-    assignment_supply_id,
     parse_frequency_text,
 )
 
@@ -463,11 +463,14 @@ class ConfigFormStateTests(unittest.TestCase):
     def test_assignment_reference_rule_lives_in_the_domain(self):
         """读引用的唯一实现是 ``domain.configuration.rules.assignment_supply_id``。
 
-        配置页、正式运行映射与文件级校验都用它；这层只再导出，不重写判据。
+        配置页、正式运行映射与文件级校验都用它；表现层不再为兼容再导出一份（步骤 13）。
         """
-        from domain.configuration import rules
+        from presentation.qt import config_form_state
 
-        self.assertIs(assignment_supply_id, rules.assignment_supply_id)
+        self.assertFalse(
+            hasattr(config_form_state, "assignment_supply_id"),
+            "兼容再导出必须随步骤 13 删除；调用方直接用 domain 实现",
+        )
 
 
 class _FormWidgets:

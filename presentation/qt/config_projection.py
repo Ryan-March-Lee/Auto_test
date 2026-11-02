@@ -11,9 +11,9 @@
 
 - 配置页不再持有逐字段的类型容错/回填逻辑，只负责控件接线与用户意图转发；
 - 投影只认识配置编写文档的字段名，不读取旧字段别名，也不做旧格式推断；唯一例外是
-  供电分配引用，它统一走 :func:`domain.configuration.rules.assignment_supply_id`（由
-  :mod:`presentation.qt.config_form_state` 再导出；``supply_id`` 为准，只有完全没有该字段
-  的旧记录才回落读一次 ``name``），与配置页初次建页、文件级校验使用同一判定；
+  供电分配引用，它统一走 :func:`domain.configuration.rules.assignment_supply_id`
+  （``supply_id`` 为准，只有完全没有该字段的旧记录才回落读一次 ``name``），与配置页
+  初次建页、文件级校验使用同一判定；
 - ``instruments`` 不由控件编辑（仪器连接只来自设备发现结果），因此投影只携带它，
   不把它写到控件上；
 - 电源分配的可选项由调用方按设备绑定传入（``supplies``）：配置引用了未绑定的电源时
@@ -39,9 +39,11 @@ from typing import Any, Mapping
 
 from application.configuration_authoring import DUT_CHANNEL_ROLES
 from application.errors import ConfigurationError
+from domain.configuration.models import resolve_driver_power_source
+from domain.configuration.rules import POWER_CHANNEL_ROLES, assignment_supply_id
 from domain.instruments.labels import supply_display_label
 
-from .config_form_state import assignment_declared, assignment_supply_id, parse_frequency_text
+from .config_form_state import assignment_declared, parse_frequency_text
 
 # 配置页受控控件的空配置基线。``project_authoring_config()`` 先把控件重置到这些默认值，
 # 再逐字段投影配置编写文档，从而保证投影结果与直接用同一份文档构造页面的结果一致。
@@ -68,8 +70,9 @@ POWER_ASSIGNMENT_SLOTS = (
     "pa_unit3_power",
 )
 # 供电角色是接线事实，由用户在配置页显式选择；``DUT_CHANNEL_ROLES`` 只提供本机台架
-# 固定接线的控件初值（CH1 栅极、CH2 漏极），装配层不再按通道名推导角色。
-POWER_SUPPLY_ROLES = ("gate", "drain")
+# 固定接线的控件初值（CH1 栅极、CH2 漏极），装配层不再按通道名推导角色。角色词表只有
+# domain 的一份（``POWER_CHANNEL_ROLES``），这里沿用旧名字给控件构建使用。
+POWER_SUPPLY_ROLES = POWER_CHANNEL_ROLES
 
 _ASSIGNMENT_ROLE_KEYS = (
     ("carrier", "pa_unit1_power"),
@@ -206,9 +209,9 @@ def _assignment_target(entry, options: list[tuple[str, str]] | None) -> str:
 def _assign_supply(combo, entry, options: list[tuple[str, str]] | None) -> None:
     """把一条电源分配写到组合框。
 
-    引用由 :func:`config_form_state.assignment_supply_id` 解析（``supply_id`` 为准，
-    旧记录只回落读一次 ``name``），与配置页初次建页共用同一判定；配置里显式写出的
-    电源必须真实存在于可选项里，不存在时清空选择，由校验明确报告，而不是临时把未知
+    引用由 :func:`domain.configuration.rules.assignment_supply_id` 解析（``supply_id``
+    为准，旧记录只回落读一次 ``name``），与配置页初次建页共用同一判定；配置里显式写出
+    的电源必须真实存在于可选项里，不存在时清空选择，由校验明确报告，而不是临时把未知
     电源补进下拉框、让一份连不上硬件的配置看起来合法。
 
     ``entry`` 不是对象表示配置里**没有**这条分配：按缺省规则落到第一台可用电源。
@@ -382,14 +385,15 @@ def driver_power_source_label(
 
     配置页初次建页、``apply_config`` 回填与 ``set_test_mode`` 共用这一个推断，避免同一
     份配置在两条路径上得到不同的供电方式——它连带决定驱动功放槽位是否可用，也会被写回
-    ``driver_mode``。
+    ``driver_mode``。推断判据由 domain 的 :func:`resolve_driver_power_source` 定义
+    （旧配置没有 ``power_source`` 时按是否配置驱动通道推断），这里只把结果映射成界面
+    文案，不再保留第二份判据（步骤 13）。
     """
-    if power_source in DRIVER_POWER_SOURCE_LABELS:
-        return DRIVER_POWER_SOURCE_LABELS[power_source]
     count = number_or_none(assignment_count)
-    if count is not None and count > 0:
-        return DRIVER_POWER_SOURCE_LABELS["dc_supply"]
-    return DRIVER_POWER_SOURCE_LABELS["external_ac"]
+    resolved = resolve_driver_power_source(
+        power_source, driver_channels=bool(count is not None and count > 0)
+    )
+    return DRIVER_POWER_SOURCE_LABELS[resolved]
 
 
 def _apply_power_assignment_widgets(

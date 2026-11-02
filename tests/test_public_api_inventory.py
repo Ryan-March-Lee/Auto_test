@@ -469,7 +469,6 @@ INTERNAL_MODULES = {
     "presentation.qt.device_discovery_panel": "设备发现面板：扫描网段、以卡片展示按设备表登记的角色可应用的设备（含未知设备标记）；勾选结果由连接页在“下一步”时取走写入",
     "presentation.qt.scan_card": "“查找设备”的卡片按钮：按钮本体是与仪器卡片同大的自绘深色卡片（尺寸取自 `presentation.qt.device_cards` 的 `CARD_WIDTH`/`CARD_HEIGHT`），正中的渐变标题写着“查找设备”，内部有光带、扫描线与粒子在动；悬停时两行字淡到看不见（原 CSS 的 `::after` 霓虹光斑与 `::before` 紫→蓝底卡都不保留，卡片外面只有一层投影），投影画在同级、不进布局、不吃鼠标的透明覆盖层上，点击行为由设备发现面板接手",
     "presentation.qt.config_projection": "正式配置到配置页控件的确定性投影",
-    "presentation.qt.configuration_authoring": "配置页保存的兼容转发壳：只再导出 application 的配置编写服务与常量，不含编写规则",
     "presentation.qt.connection_diagrams": "连接图渲染",
     "presentation.qt.connection_dialog": "连接确认对话框",
     "presentation.qt.run_history_page": "历史运行与结果管理页（运行/阶段/产物状态、失败产物重新生成、导出副本）",
@@ -565,6 +564,14 @@ LEGACY_MODULES = {
     ),
     "instrument.power_roles": LegacyModule(
         "旧电源角色自动推导", "已删除", "步骤 9", "instrument/power_roles.py", False
+    ),
+    # 步骤 13：旧配置编写转发壳（已整文件退役）
+    "presentation.qt.configuration_authoring": LegacyModule(
+        "旧配置编写兼容转发壳",
+        "已删除",
+        "步骤 13",
+        "presentation/qt/configuration_authoring.py",
+        False,
     ),
     # 步骤 16：其余纯再导出兼容模块（已整文件退役）
     "measurement_calculations": LegacyModule(

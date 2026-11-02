@@ -21,6 +21,7 @@ from application.configuration_view_model import (
     ConfigurationViewState,
     ConfigurationViewModel,
 )
+from application.device_binding import ApplyDeviceSelectionRequest
 from domain.measurement.values import Decibels, Frequency, PowerDbm
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -85,10 +86,12 @@ def _config():
                     "enabled": True,
                     "channels": {
                         "CH1": {
+                            "role": "gate",
                             "voltage": {"value": 2.8},
                             "current": {"value": 0.1},
                         },
                         "CH2": {
+                            "role": "drain",
                             "voltage": {"value": 28.0},
                             "current": {"value": 2.0},
                         },
@@ -133,6 +136,11 @@ def _discovered_power_supply(supply_id="DP8B0885", index=8):
         "port": 5555,
         "known": True,
     }
+
+
+def _selection_request(*devices):
+    """一次设备勾选的命令 DTO：发现面板的字典列表在交付边界收敛后交给视图模型。"""
+    return ApplyDeviceSelectionRequest.from_assignments(devices or ())
 
 
 class ConfigurationViewModelLoadTests(unittest.TestCase):
@@ -343,7 +351,9 @@ class ConfigurationViewModelBindingTests(unittest.TestCase):
     def test_successful_selection_replaces_every_binding(self):
         view = _loaded()
 
-        outcome = view.apply_device_selection([_discovered_power_supply()])
+        outcome = view.apply_device_selection(
+            _selection_request(_discovered_power_supply())
+        )
 
         self.assertIsInstance(outcome, ConfigurationBindingOutcome)
         self.assertTrue(outcome.ok, outcome.messages())
@@ -365,7 +375,7 @@ class ConfigurationViewModelBindingTests(unittest.TestCase):
         view = _loaded()
         before = view.state
 
-        outcome = view.apply_device_selection([])
+        outcome = view.apply_device_selection(ApplyDeviceSelectionRequest())
 
         self.assertFalse(outcome.ok)
         self.assertIn("请先在发现结果中勾选本次测试所需设备", outcome.messages()[0])
@@ -374,22 +384,16 @@ class ConfigurationViewModelBindingTests(unittest.TestCase):
         self.assertFalse(outcome.state.dirty)
 
     def test_selection_accepts_the_command_dto(self):
-        from application.device_binding import (
-            ApplyDeviceSelectionRequest,
-            SelectedDevice,
+        outcome = _loaded().apply_device_selection(
+            _selection_request(_discovered_power_supply())
         )
-
-        request = ApplyDeviceSelectionRequest(
-            devices=(SelectedDevice.from_mapping(_discovered_power_supply()),)
-        )
-
-        outcome = _loaded().apply_device_selection(request)
 
         self.assertTrue(outcome.ok, outcome.messages())
 
-    def test_selection_rejects_non_object_device_records(self):
+    def test_selection_rejects_a_dictionary_list(self):
+        """字典列表只在发现面板交付边界收敛；视图模型只接受命令 DTO（步骤 13）。"""
         with self.assertRaises(TypeError):
-            _loaded().apply_device_selection(["not-a-record"])
+            _loaded().apply_device_selection([_discovered_power_supply()])
 
     def test_nested_binding_records_are_read_only_through_the_state(self):
         view = _loaded()

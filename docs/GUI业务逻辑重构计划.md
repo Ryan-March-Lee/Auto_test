@@ -280,7 +280,8 @@ ViewModel 不导入 PySide6，不直接读写文件，不创建仪器，不弹 Q
   `serial` 读取边界）一并迁到 application；`presentation.qt.config_form_bindings`
   只导入复用，不再定义第二份；
 - `ConfigPage.apply_discovered_devices()` 保留同名方法，改为提交请求并投影结果（绑定集合、
-  电源标签页、分配选项、面板与日志文案）；页面内不再有绑定校验循环，`_supply_id_of` 删除；
+  电源标签页、分配选项、面板与日志文案）；页面内不再有绑定校验循环，`_supply_id_of` 删除
+  （该兼容入口已在步骤 13 删除）；
 - 新增 `tests/test_device_binding.py`（纯 Python，不启动 `QApplication`）：成功、空选择、
   未知/重复角色、引用缺失或不可用、地址/身份缺失、身份矛盾、同一设备重复绑定、模拟数据、
   整批拒绝与记录级身份判定；并静态验证页面只委托 application；
@@ -456,8 +457,8 @@ ViewModel 不导入 PySide6，不直接读写文件，不创建仪器，不弹 Q
   “下一步”构造 `ApplyDeviceSelectionRequest` 后提交，只有结果 `ok` 才发
   `next_requested`；“连接仪器”改为发 `connect_requested` 用户意图，窗口转给配置页
   `request_connect` 校验；
-- `ConfigPage.apply_discovered_devices(assignments)` 保留为兼容入口（返回是否成功），
-  新增 `apply_device_selection(request)` 返回 `DeviceBindingResult`；面板登记、成功/
+- `ConfigPage.apply_discovered_devices(assignments)` 保留为兼容入口（返回是否成功；步骤 13
+  已删除），新增 `apply_device_selection(request)` 返回 `DeviceBindingResult`；面板登记、成功/
   失败文案、电源标签页与分配选项的投影仍归配置页，行为与文案不变；
 - 新增 `tests/ui/test_connection_page_port.py`：用替身端口单独测试连接页（构造函数
   不再需要配置页、读只读视图、提交命令 DTO、拒绝/空选择不跳页、连接按钮只发意图）；
@@ -735,6 +736,45 @@ ViewModel 不导入 PySide6，不直接读写文件，不创建仪器，不弹 Q
 - 全部 repository gates、UI 测试和 integration 测试通过。
 
 **工作范围控制**：按模块逐个删除，不做一次性目录重命名。
+
+**完成状态**：✅ 已完成。
+
+- **调用方清单（删除前核对）**：`presentation.qt.configuration_authoring` 只剩
+  `tests/test_configuration_authoring.py` 的“转发壳不含规则”用例引用；
+  `ConfigPage.apply_discovered_devices` 只剩页面测试与
+  `tests/integration/device_discovery` 的既有用例；`config_form_state._power_role_errors` /
+  `_power_assignment_errors` 只由 `validation_errors()` 调用；`driver_power_source_label`
+  由配置页建页/回填/切换模式与电源分区共用。生产代码没有其他调用方。
+- **删除旧入口**：整文件删除 `presentation/qt/configuration_authoring.py`（纯转发壳）；
+  删除 `ConfigPage.apply_discovered_devices(assignments)` 字典列表兼容入口，页面只接受
+  `ApplyDeviceSelectionRequest`；`ConfigurationViewModel.apply_device_selection` 同步只
+  接受命令 DTO（字典列表只在发现面板的交付边界由
+  `ApplyDeviceSelectionRequest.from_assignments` 收敛），不再保留第二套入参形态；删除
+  `config_form_state` 对 `domain.configuration.rules.assignment_supply_id` 的兼容再导出，
+  投影与测试直接使用 domain 实现。`presentation.qt` 不再生成正式运行配置、也不再执行
+  设备绑定决策。
+- **收敛页面遗留校验**：供电角色（R6）与供电分配引用（R10）的判据搬到 domain
+  `validate_power_channel_roles` / `validate_power_supply_assignment_references`，
+  由 `ConfigurationAuthoringService.validate_document` 编排成结构化问题（新增
+  `configuration.power_channel_roles` / `configuration.power_assignment_references`
+  错误码）；`ConfigFormState.validation_errors` 只保留频率文本读数与“展示应用边界返回的
+  消息”，原有用户文案与顺序逐字不变。角色词表收口为 domain 的 `POWER_CHANNEL_ROLES`
+  一份：编写文档校验、正式分配校验、页面控件的角色读写都引用它；非法角色（如 `bias`）
+  现在由 `validate_power_channel_roles` 明确报告，而不是因为“不是 `None`”被漏过。驱放
+  供电方式推断改为委托 `domain.configuration.models.resolve_driver_power_source`，页面
+  只保留文案映射。
+- **测试同步**：`tests/integration/device_discovery` 改由 `support.apply_devices()` 提交
+  命令 DTO；`tests/ui/test_config_page.py` 与 `tests/test_device_binding.py` 不再断言或
+  调用旧兼容入口，并新增“兼容入口不得回归”的用例；`tests/test_configuration_view_model.py`
+  新增“只接受命令 DTO、字典列表按契约错误拒绝”的用例；`tests/test_configuration_authoring.py`
+  新增“转发壳文件不存在”与供电角色（缺失/非法/重复）及分配引用（未选择/未应用）的结构化
+  问题用例。仓库门禁 `tests/test_public_api_inventory.py` 把该转发壳登记为已删除旧模块，
+  正式 API 清单同步删除其内部模块行。
+- **文档同步**：`docs/正式API目录清单.md`、`docs/配置领域词汇与模块归属.md`（4.1/4.2/4.3/
+  4.5/5.1/5.2/5.3）与 `docs/配置编辑行为基线.md` 按新归属更新；行为基线补上新增的
+  非法角色提示，其余页面文案与顺序不变。
+- **验证**：`tools/run_tests.py`（完整离线套件，含全部门禁）、`launcher.py --check`、
+  `launcher.py --validate-config` 与 `tools/export_dependency_lock.py --check` 均通过。
 
 ### 步骤 14：建立长期改动规则
 

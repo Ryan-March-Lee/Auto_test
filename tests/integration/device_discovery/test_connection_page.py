@@ -23,7 +23,8 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
         # 面板只归连接页所有：配置页不再登记或持有它，回写出配置会话完成。
         self.assertFalse(hasattr(page, "discovery_panel"))
         self.assertFalse(hasattr(page, "attach_discovery_panel"))
-        self.assertTrue(hasattr(page, "apply_discovered_devices"))
+        self.assertTrue(hasattr(page, "apply_device_selection"))
+        self.assertFalse(hasattr(page, "apply_discovered_devices"))
 
     def test_the_connection_page_is_a_full_screen_step_before_the_configuration(self):
         """仪表配置页是“下一步”之前的一整屏页面：有自己的大标题、返回与下一步。"""

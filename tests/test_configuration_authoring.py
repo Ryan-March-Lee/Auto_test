@@ -1,8 +1,8 @@
 """正式配置编写的应用层测试（GUI 重构步骤 4，不需要 Qt）。
 
 覆盖：正式 ``test_plan`` / ``run_mapping`` 的生成规则、快照身份冻结、空引用与重复通道的
-处理，以及“旧文档入口与 ``ConfigurationDraft`` 入口生成同一份正式文档”。旧入口
-``presentation.qt.configuration_authoring`` 只保留转发壳，这里同时验证它不含规则。
+处理，以及“旧文档入口与 ``ConfigurationDraft`` 入口生成同一份正式文档”。旧转发壳
+``presentation.qt.configuration_authoring`` 已在步骤 13 删除，这里同时验证它不会重新出现。
 """
 
 import ast
@@ -59,8 +59,8 @@ def _flat_config() -> dict:
                     "address": "sim::ps1",
                     "enabled": True,
                     "channels": {
-                        "CH1": {"voltage": {"value": 2.8}, "current": {"value": 0.1}},
-                        "CH2": {"voltage": {"value": 28.0}, "current": {"value": 2.0}},
+                        "CH1": {"role": "gate", "voltage": {"value": 2.8}, "current": {"value": 0.1}},
+                        "CH2": {"role": "drain", "voltage": {"value": 28.0}, "current": {"value": 2.0}},
                     },
                 }
             },
@@ -90,8 +90,8 @@ def _second_supply() -> dict:
         "address": "sim::ps2",
         "enabled": True,
         "channels": {
-            "CH1": {"voltage": {"value": 5.0}, "current": {"value": 0.5}},
-            "CH2": {"voltage": {"value": 28.0}, "current": {"value": 1.0}},
+            "CH1": {"role": "gate", "voltage": {"value": 5.0}, "current": {"value": 0.5}},
+            "CH2": {"role": "drain", "voltage": {"value": 28.0}, "current": {"value": 1.0}},
         },
     }
 
@@ -190,6 +190,7 @@ class ConfigurationAuthoringTests(unittest.TestCase):
         """仪器侧供电角色由配置页控件显式选择，authoring 不按 CH1/CH2 补默认值。"""
         flat = _flat_config()
         flat["instruments"]["power_supplies"]["DP8B1519"]["channels"]["CH1"]["role"] = "drain"
+        flat["instruments"]["power_supplies"]["DP8B1519"]["channels"]["CH2"].pop("role")
         document = author_official_configuration(flat)
 
         channels = document["instruments"]["power_supplies"]["DP8B1519"]["channels"]
@@ -611,30 +612,110 @@ class PresentationFormalValidationBoundaryTests(unittest.TestCase):
         self.assertIn("validate_document", source)
 
 
-class CompatibilityShellTests(unittest.TestCase):
-    """旧模块只转发，不再持有编写规则。"""
+class RemovedCompatibilityShellTests(unittest.TestCase):
+    """旧转发壳（``presentation.qt.configuration_authoring``）已随步骤 13 删除。"""
 
-    def test_shell_reexports_the_application_entry(self):
-        from presentation.qt import configuration_authoring as shell
+    def test_forwarding_shell_file_is_gone(self):
+        shell = ROOT / "presentation" / "qt" / "configuration_authoring.py"
 
-        self.assertIs(shell.author_official_configuration, author_official_configuration)
-        self.assertIs(shell.parse_db_value, parse_db_value)
-        self.assertIs(shell.DUT_CHANNEL_ROLES, DUT_CHANNEL_ROLES)
-
-    def test_shell_has_no_authoring_helpers(self):
-        source_path = (
-            Path(__file__).resolve().parents[1]
-            / "presentation"
-            / "qt"
-            / "configuration_authoring.py"
+        self.assertFalse(shell.exists(), "兼容转发壳不得重新出现")
+        self.assertFalse(
+            hasattr(__import__("presentation.qt", fromlist=["qt"]), "configuration_authoring"),
+            "旧模块不得通过包属性重新暴露",
         )
-        tree = ast.parse(source_path.read_text(encoding="utf-8"))
-        functions = {
-            node.name
-            for node in ast.walk(tree)
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        }
-        self.assertEqual(functions, set(), "兼容壳不得再定义编写规则")
+
+
+class AuthoringDocumentValidationTests(unittest.TestCase):
+    """供电角色与分配引用由 domain 判定，应用边界只转成结构化问题。"""
+
+    def _document_with(self, mutate) -> dict:
+        flat = _flat_config()
+        mutate(flat)
+        return flat
+
+    def test_missing_power_channel_role_is_reported_with_the_domain_message(self):
+        def clear_role(flat):
+            flat["instruments"]["power_supplies"]["DP8B1519"]["channels"]["CH2"][
+                "role"
+            ] = None
+
+        result = ConfigurationAuthoringService().validate_document(
+            ConfigurationEditingDocument.from_mapping(self._document_with(clear_role))
+        )
+
+        messages = [issue.message for issue in result.errors]
+        self.assertIn("DP8B1519 存在未选择供电角色的通道", messages)
+        self.assertIn(
+            "configuration.power_channel_roles",
+            {issue.code for issue in result.errors},
+        )
+
+    def test_duplicate_power_channel_roles_are_reported(self):
+        def duplicate_role(flat):
+            channels = flat["instruments"]["power_supplies"]["DP8B1519"]["channels"]
+            channels["CH2"]["role"] = channels["CH1"]["role"]
+
+        result = ConfigurationAuthoringService().validate_document(
+            ConfigurationEditingDocument.from_mapping(self._document_with(duplicate_role))
+        )
+
+        self.assertIn(
+            "DP8B1519 的通道供电角色重复: gate",
+            [issue.message for issue in result.errors],
+        )
+
+    def test_invalid_power_channel_role_is_reported(self):
+        """角色不是 ``None`` 不代表合法：词表只有 gate / drain 两个值。"""
+
+        def invalid_role(flat):
+            flat["instruments"]["power_supplies"]["DP8B1519"]["channels"]["CH2"][
+                "role"
+            ] = "bias"
+
+        result = ConfigurationAuthoringService().validate_document(
+            ConfigurationEditingDocument.from_mapping(self._document_with(invalid_role))
+        )
+
+        self.assertIn(
+            "DP8B1519 的通道 CH2 供电角色必须是 gate 或 drain，当前为 'bias'",
+            [issue.message for issue in result.errors],
+        )
+        self.assertIn(
+            "configuration.power_channel_roles",
+            {issue.code for issue in result.errors},
+        )
+
+    def test_unselected_assignment_reference_is_reported(self):
+        def clear_reference(flat):
+            flat["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"][
+                "supply_id"
+            ] = None
+
+        result = ConfigurationAuthoringService().validate_document(
+            ConfigurationEditingDocument.from_mapping(self._document_with(clear_reference))
+        )
+
+        messages = [issue.message for issue in result.errors]
+        self.assertIn(
+            "DUT(carrier) 未选择电源：请先在“仪表配置”页应用电源设备", messages
+        )
+        self.assertIn(
+            "configuration.power_assignment_references",
+            {issue.code for issue in result.errors},
+        )
+
+    def test_assignment_reference_to_an_unapplied_supply_is_reported(self):
+        def drop_supply(flat):
+            flat["instruments"]["power_supplies"]["DP8B1519"].pop("address", None)
+
+        result = ConfigurationAuthoringService().validate_document(
+            ConfigurationEditingDocument.from_mapping(self._document_with(drop_supply))
+        )
+
+        self.assertIn(
+            "DUT(carrier) → DP8B1519 引用的电源没有已应用的设备，不能保存或运行",
+            [issue.message for issue in result.errors],
+        )
 
 
 if __name__ == "__main__":

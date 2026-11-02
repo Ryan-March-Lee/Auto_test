@@ -605,8 +605,11 @@ class ScanWaitStackTests(unittest.TestCase):
 
         stack = ScanWaitStack()
         early = stack.poses_at(WAIT_FAN_STAGGER_MS // 2)
-        self.assertFalse(early[WAIT_STACK_CARDS - 1].is_stacked(), "最靠后的那张先摊开")
-        self.assertTrue(early[0].is_stacked(), "最上面那张要等一个间隔才跟上")
+        self.assertFalse(early[0].is_stacked(), "最上面那张先摊开")
+        self.assertTrue(
+            early[WAIT_STACK_CARDS - 1].is_stacked(),
+            "最靠后的那张要等前面几张都跟上才开始",
+        )
 
         # 摊开之后停住，形状保持一整段（这段就是“看得清的一把扇形”）。
         fanned = stack.poses_at(WAIT_FAN_MS)
@@ -626,6 +629,75 @@ class ScanWaitStackTests(unittest.TestCase):
             stack.poses_at(WAIT_CYCLE_MS + WAIT_FAN_MS)[0].is_stacked(),
             "停顿结束后应重新摊开",
         )
+
+    def test_no_card_pokes_out_past_the_top_card_while_the_fan_opens_or_folds(self):
+        """摊开与叠回的每一刻，下层卡都落在最上面那张的边上（右沿、上沿、下沿）。
+
+        最上面那张与压在它右边的几张同步转开，左半边的牌再由内到外跟上（叠回时反过来）。
+        扇形每一刻的比例都与摊满时一致，下层卡因此不会因为“转得比最上面那张慢”而从它
+        的右边或下边探出去——那看起来就像下层卡压到了最上面那张，点“查找设备”后卡片
+        向右展开时不该出现。扇形只在最上面那张的左边铺开（左边就是“摊开”的方向），
+        所以左沿不在这里比较。
+        """
+        from presentation.qt.scan_card import (
+            WAIT_FAN_MS,
+            WAIT_FAN_STEP_DEG,
+            WAIT_HOLD_MS,
+            WAIT_STACK_CARDS,
+            ScanWaitStack,
+        )
+
+        stack = ScanWaitStack()
+
+        def box(pose):
+            """一张卡在舞台坐标里的轴对齐包围盒。"""
+            half_width, half_height = _card_extent(pose)
+            return (
+                pose.x - half_width,
+                pose.y - half_height,
+                pose.x + half_width,
+                pose.y + half_height,
+            )
+
+        opening = range(0, WAIT_FAN_MS + 1, 5)
+        closing = range(
+            WAIT_FAN_MS + WAIT_HOLD_MS,
+            WAIT_FAN_MS + WAIT_HOLD_MS + WAIT_FAN_MS + 1,
+            5,
+        )
+        centre = (WAIT_STACK_CARDS - 1) // 2
+        reach = (WAIT_STACK_CARDS - 1) / 2.0
+        full_angle = reach * WAIT_FAN_STEP_DEG
+        for elapsed in (*opening, *closing):
+            poses = stack.poses_at(elapsed)
+            _, top_edge, right_edge, bottom_edge = box(poses[0])
+            # 右半边几张与最上面那张按同一个比例转开：任何时刻都是摊满那一刻的等比缩小版。
+            amount = poses[0].angle / full_angle if full_angle else 0.0
+            for index in range(1, centre + 1):
+                expected = (reach - index) * WAIT_FAN_STEP_DEG * amount
+                self.assertAlmostEqual(
+                    poses[index].angle,
+                    expected,
+                    places=6,
+                    msg=f"{elapsed}ms 时第 {index} 张卡没有跟最上面那张同步转开",
+                )
+            for index in range(1, WAIT_STACK_CARDS):
+                _, card_top, card_right, card_bottom = box(poses[index])
+                self.assertLessEqual(
+                    card_right,
+                    right_edge + 1.0,
+                    f"{elapsed}ms 时第 {index} 张卡的右沿越过了最上面那张",
+                )
+                self.assertGreaterEqual(
+                    card_top,
+                    top_edge - 1.0,
+                    f"{elapsed}ms 时第 {index} 张卡的上沿越过了最上面那张",
+                )
+                self.assertLessEqual(
+                    card_bottom,
+                    bottom_edge + 1.0,
+                    f"{elapsed}ms 时第 {index} 张卡的下沿越过了最上面那张",
+                )
 
     def test_the_hold_ripples_through_the_fan_one_card_at_a_time(self):
         from presentation.qt.scan_card import (

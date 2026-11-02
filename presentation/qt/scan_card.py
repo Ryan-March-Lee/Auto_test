@@ -39,7 +39,9 @@
 同一个模块里还有扫描期间的等待动画（:class:`ScanWaitStack`）：点下去之后按钮收走，
 同一位置换成 7 张与按钮同尺寸的卡叠成的一叠（7 张只是动画，与这次查到几台设备无关）。
 整叠牌以中间那张为准对称摊成一把扇形，再像捻牌一样从一侧到另一侧轻轻拨一遍，最后叠回
-原样；停顿一下再来一轮。最上面那张是“查找设备”的完整卡面，下面几张都是牌背（渐变 + 斜纹
+原样；停顿一下再来一轮。摊开时最上面那张与压在它右边的几张同步转开，左半边的牌由内到外
+一张接一张跟上，叠回时反过来：扇形每一刻的比例都与摊满时一致，下层卡不会因为转得慢而
+抢在最上面那张前面露出来。最上面那张是“查找设备”的完整卡面，下面几张都是牌背（渐变 + 斜纹
 + 内框 + 小菱形）、越往后压得越暗；每张卡边缘还有一道贴边的暗缝和一圈亮边，因此叠在一起
 时读得出“这是一叠牌”，不会糊成一团。原来的等待动画是几张卡各绕自己的中心转满一整圈，
 同时有 3、4 张卡转到不同角度，光晕与角标搅在一起——那是“乱”的来源。控件本身不吃鼠标、
@@ -130,9 +132,11 @@ WAIT_FAN_STEP_DEG = 5.2
 #: 扇形的转轴在卡片中心正下方多远（px）：卡片绕它转，于是横向错开、上沿略低，
 #: 像手里摊开的一把牌。转轴越远，同样的角度错得越多。
 WAIT_FAN_PIVOT = 260.0
-#: 相邻两张开始摊开的间隔：最靠后的那张先动，最上面那张最后跟上，牌像一张张摊开。
+#: 相邻两张开始摊开的间隔：最上面那张所在的右半边与它同步转开，左半边的牌由内到外
+#: 一张接一张跟上（叠回时反过来，由外向内先收）。右半边必须同步：它们压在最上面那张
+#: 下面，转开的比例与摊满时一致，才不会有一张从它的右边或上边探出去。
 WAIT_FAN_STAGGER_MS = 45
-#: 摊开（或叠回）一张卡自己的时长：整段展开时间减去前面几张的错开量。
+#: 整段摊开（或叠回）的时间；一张卡自己的时长，是它减去最靠外那张晚起步的错开量。
 WAIT_FAN_MS = 520
 #: 摊开之后停一下，让“扇形”这个形状被看清。
 WAIT_HOLD_MS = 720
@@ -1080,7 +1084,9 @@ class ScanWaitStack(QWidget):
     动画，与这次真正查到几台设备无关）。整叠牌以中间那张为准对称摊成一把扇形
     （:data:`WAIT_FAN_STEP_DEG` / :data:`WAIT_FAN_PIVOT`），停一下，再从一侧到另一侧
     “捻”一遍（每张按顺序抬起来一点再落回去），最后叠回原样，停 :data:`WAIT_PAUSE_MS`
-    再来一轮（:data:`WAIT_CYCLE_MS` 是这一整轮的时长）。
+    再来一轮（:data:`WAIT_CYCLE_MS` 是这一整轮的时长）。摊开时最上面那张与压在它右边的
+    几张同步转开，左半边的牌由内到外一张接一张跟上（叠回时反过来）：扇形每一刻的比例
+    都与摊满时一致，下层卡不会因为转得慢而抢在最上面那张前面露出边角。
 
     动作是这样收敛的：同一时刻只有一两张卡在动；最上面那张是“查找设备”的卡面，下面
     几张都是牌背（:func:`_render_card_back`：渐变 + 斜纹 + 内框 + 小菱形），越靠后压得
@@ -1149,22 +1155,34 @@ class ScanWaitStack(QWidget):
     def open_amounts_at(self, elapsed_ms: float) -> tuple[float, ...]:
         """这一刻每张卡各自摊开了多少（0 是叠在牌堆里，1 是扇形上自己的位置）。
 
-        第 0 项是最上面那张（落笔最晚）；最靠后的那张先摊开、先叠回，最上面那张最后
-        跟上。整轮的最后一段是停顿，所有项都回到 0。
+        第 0 项是最上面那张（落笔最晚）。它和压在它下面的右半边几张一起转开：这几张
+        本来就叠在它的边上，比例与摊满时一致，任何时刻都不会有一张从它的右边或上边
+        探出去（那看起来就像下层卡压到了最上面那张）。正中间那张角度始终是 0，跟谁同步
+        都一样；左半边的牌按离中间那张的远近依次错开，牌因此还是一张张摊开的。
+        叠回时反过来：左半边由外向内先收，最上面那一组最后收起。整轮的最后一段是停顿，
+        所有项都回到 0。
         """
         elapsed = float(elapsed_ms) % WAIT_CYCLE_MS
-        span = WAIT_FAN_MS - (WAIT_STACK_CARDS - 1) * WAIT_FAN_STAGGER_MS
+        centre_slot = (WAIT_STACK_CARDS - 1) // 2
+        outer_count = WAIT_STACK_CARDS - 1 - centre_slot
+        # 每张卡自己走完的时长一样长，只有起步时刻错开，牌才是一张张摊开、一张张收起的；
+        # 最靠外那张晚起步多少，每张卡就走短多少，整段摊开 / 叠回仍正好是 WAIT_FAN_MS。
+        span = WAIT_FAN_MS - outer_count * WAIT_FAN_STAGGER_MS
         close_start = WAIT_FAN_MS + WAIT_HOLD_MS
         amounts = []
         for index in range(WAIT_STACK_CARDS):
-            delay = (WAIT_STACK_CARDS - 1 - index) * WAIT_FAN_STAGGER_MS
+            # 右半边（含最上面那张与中间那张）的 rank 是 0，永远走在最前面；左半边的
+            # 牌由内到外 rank 1、2、3，摊开时依次晚一点起步，叠回时依次早一点收。
+            rank = max(0, index - centre_slot)
+            open_delay = rank * WAIT_FAN_STAGGER_MS
+            close_delay = (outer_count - rank) * WAIT_FAN_STAGGER_MS
             if elapsed < WAIT_FAN_MS:
-                local = elapsed - delay
+                local = elapsed - open_delay
                 amount = _ease_in_out_cubic(local / span) if local > 0.0 else 0.0
             elif elapsed < close_start:
                 amount = 1.0
             elif elapsed < close_start + WAIT_FAN_MS:
-                local = elapsed - close_start - delay
+                local = elapsed - close_start - close_delay
                 amount = 1.0 if local <= 0.0 else 1.0 - _ease_in_out_cubic(local / span)
             else:
                 amount = 0.0

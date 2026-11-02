@@ -68,6 +68,7 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import Any
 
 from PySide6.QtCore import (
     QEasingCurve,
@@ -98,6 +99,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .animation_diagnostics import log_event, timestamp, widget_label
 from .device_cards import CARD_HEIGHT, CARD_WIDTH
 from .theme import CARD_RADIUS, FONT_FAMILIES, TOKENS
 
@@ -189,6 +191,12 @@ FLIP_MS = 260
 FLIP_STAGGER_MS = 105
 #: 发牌动画的帧间隔（约 60fps）：每帧只旋转/缩放着贴图。
 DEAL_FRAME_MS = 16
+#: 发牌/翻牌阶段名：运行时日志与 :meth:`DealRevealLayer.diagnostics` 使用固定名称。
+DEAL_PHASE_IDLE = "idle"
+DEAL_PHASE_DEALING = "dealing"
+DEAL_PHASE_SETTLING = "settling"
+DEAL_PHASE_FLIPPING = "flipping"
+DEAL_PHASE_FINISHED = "finished"
 #: 等待动画的舞台：比卡片宽不少，整把扇形才摊得开。最外那张卡转到自己的角度时，
 #: 轴对齐包围盒不能超出舞台（舞台之外会被结果区上沿裁掉）；各边再留一点给抗锯齿。
 #: 高度按扇形竖直范围（约 ±168）收在 340：舞台下方多出来的空白越少，“正在查找设备”
@@ -1526,6 +1534,20 @@ class DealRevealLayer(QWidget):
         self._timer = QTimer(self)
         self._timer.setInterval(DEAL_FRAME_MS)
         self._timer.timeout.connect(self._advance)
+        #: 运行时诊断（步骤 2）：开始/结束时间、阶段、绘制帧数与取消原因。
+        #: 只写日志与 :meth:`diagnostics` 快照，不显示给最终用户。
+        self._started_at: str | None = None
+        self._ended_at: str | None = None
+        self._phase = DEAL_PHASE_IDLE
+        self._paint_frames = 0
+        self._first_paint_ms: float | None = None
+        self._drawn_cards = 0
+        self._cancel_reason: str | None = None
+        self._restore_result: str | None = None
+        self._last_event = DEAL_PHASE_IDLE
+        #: 最近一次动画收尾时的快照：取消/完成后卡片与时长会被清空，
+        #: 快照保证 :meth:`diagnostics` 仍能给出同一时刻的完整数据。
+        self._last_run: dict[str, Any] | None = None
 
     # ---- 时间轴 -------------------------------------------------------------
 
@@ -1546,6 +1568,123 @@ class DealRevealLayer(QWidget):
         deal_end = (count - 1) * DEAL_STAGGER_MS + DEAL_FLY_MS
         return float(
             deal_end + DEAL_SETTLE_MS + (count - 1) * FLIP_STAGGER_MS + FLIP_MS
+        )
+
+    def phase_at(self, elapsed_ms: float | None = None) -> str:
+        """按已走时长判断阶段：``dealing`` → ``settling`` → ``flipping`` → ``finished``。"""
+        count = len(self._cards)
+        if count <= 0:
+            return DEAL_PHASE_IDLE
+        elapsed = self._elapsed if elapsed_ms is None else float(elapsed_ms)
+        deal_end = (count - 1) * DEAL_STAGGER_MS + DEAL_FLY_MS
+        if elapsed < deal_end:
+            return DEAL_PHASE_DEALING
+        if elapsed < deal_end + DEAL_SETTLE_MS:
+            return DEAL_PHASE_SETTLING
+        if elapsed < self.duration_ms():
+            return DEAL_PHASE_FLIPPING
+        return DEAL_PHASE_FINISHED
+
+    def diagnostics(self) -> dict[str, Any]:
+        """最近一次动画的诊断快照（字段名见 :mod:`presentation.qt.animation_diagnostics`）。
+
+        运行中返回当前值；结束或取消后返回那次动画收尾时的快照，因此 ``card_count``、
+        ``elapsed_ms``、``phase`` 与 ``event=cancel`` / ``event=finish`` 是同一时刻的
+        数据（不会出现“卡片已清空却还留着取消原因”的矛盾）。快照只给日志与测试看，
+        不进入用户界面。
+        """
+        if self._last_run is not None:
+            return dict(self._last_run)
+        return self._live_snapshot()
+
+    def _live_snapshot(self) -> dict[str, Any]:
+        """当场读出运行中的诊断字段。"""
+        return {
+            "event": self._last_event,
+            "running": self.is_running(),
+            "phase": self.phase_at(),
+            "started_at": self._started_at,
+            "ended_at": self._ended_at,
+            "elapsed_ms": float(self._elapsed),
+            "duration_ms": self.duration_ms(),
+            "card_count": len(self._cards),
+            "deck_x": float(self._deck.x()),
+            "deck_y": float(self._deck.y()),
+            "target_rects": self._target_labels(),
+            "overlay_visible": self.isVisible(),
+            "overlay_width": int(self.width()),
+            "overlay_height": int(self.height()),
+            "overlay_parent": widget_label(self.parentWidget()),
+            "paint_frames": self._paint_frames,
+            "first_paint_ms": self._first_paint_ms,
+            "drawn_cards": self._drawn_cards,
+            "revealed_count": self.revealed_count,
+            "cancel_reason": self._cancel_reason,
+            "restore_result": self._restore_result,
+        }
+
+    def _capture_run_end(self, event: str) -> None:
+        """在清空本次动画状态之前留下最终快照，供 :meth:`diagnostics` 读取。"""
+        self._last_event = event
+        snapshot = self._live_snapshot()
+        snapshot["event"] = event
+        self._last_run = snapshot
+
+    def _record(self, event: str, **fields: Any) -> None:
+        """更新内部快照并写一条固定字段的诊断日志。"""
+        self._last_event = event
+        log_event(event, **fields)
+
+    def _target_labels(self) -> tuple[str, ...]:
+        """每张卡的落点 ``(x,y,w,h)``，供日志与快照使用（不参与绘制）。"""
+        labels = []
+        for index in range(len(self._cards)):
+            rect = self._target_rect(index)
+            labels.append(
+                f"({rect.x():.1f},{rect.y():.1f},"
+                f"{rect.width():.1f},{rect.height():.1f})"
+            )
+        return tuple(labels)
+
+    def _sync_phase(self) -> None:
+        """阶段变了就记一条日志：``dealing`` / ``settling`` / ``flipping``。"""
+        phase = self.phase_at()
+        if phase == self._phase:
+            return
+        self._phase = phase
+        self._record(
+            "phase",
+            phase=phase,
+            elapsed_ms=float(self._elapsed),
+            card_count=len(self._cards),
+        )
+
+    def _record_paint(self, drawn_cards: int) -> None:
+        """每一帧真的进入绘制就计数；第一帧记 ``first_paint``。
+
+        ``drawn_cards`` 是这一帧里实际画到可见区域（覆盖层与卡片裁剪区之内）的牌面数，
+        不是“调用了绘制函数”的次数：没有它说明覆盖层没有画出来，它为 0 说明画了但
+        画面是空的。
+        """
+        if self._phase in (DEAL_PHASE_IDLE, DEAL_PHASE_FINISHED):
+            return
+        self._paint_frames += 1
+        if self._first_paint_ms is not None:
+            return
+        self._first_paint_ms = (
+            float(self._clock.elapsed()) if self._clock.isValid() else 0.0
+        )
+        self._drawn_cards = int(drawn_cards)
+        self._record(
+            "first_paint",
+            first_paint_ms=self._first_paint_ms,
+            drawn_cards=self._drawn_cards,
+            card_count=len(self._cards),
+            overlay_visible=self.isVisible(),
+            overlay_width=int(self.width()),
+            overlay_height=int(self.height()),
+            overlay_parent=widget_label(self.parentWidget()),
+            phase=self._phase,
         )
 
     def deal_progress(self, index: int, elapsed_ms: float | None = None) -> float:
@@ -1578,6 +1717,9 @@ class DealRevealLayer(QWidget):
         ``clip_widget`` 是卡片区的可见视口：结果多到要滚动时，没滚到的行不该被画到
         状态行或动作行上。
         """
+        if not cards:
+            self.skip(reason="no-cards")
+            return
         self._timer.stop()
         self._cards = list(cards)
         self._fronts = list(fronts)
@@ -1585,50 +1727,153 @@ class DealRevealLayer(QWidget):
         self._deck = QPointF(deck_origin)
         self._clip_widget = clip_widget
         self._elapsed = 0.0
-        if not self._cards:
-            self.hide()
-            return
+        self._started_at = None
+        self._ended_at = None
+        self._phase = DEAL_PHASE_IDLE
+        self._paint_frames = 0
+        self._first_paint_ms = None
+        self._drawn_cards = 0
+        self._cancel_reason = None
+        self._restore_result = None
+        self._last_run = None
+        self._started_at = timestamp()
         self._clock.start()
         self.setVisible(True)
         self.raise_()
+        self._phase = self.phase_at(0.0)
+        self._record(
+            "start",
+            started_at=self._started_at,
+            card_count=len(self._cards),
+            duration_ms=self.duration_ms(),
+            deck_x=float(self._deck.x()),
+            deck_y=float(self._deck.y()),
+            target_rects=self._target_labels(),
+            overlay_visible=self.isVisible(),
+            overlay_width=int(self.width()),
+            overlay_height=int(self.height()),
+            overlay_parent=widget_label(self.parentWidget()),
+            phase=self._phase,
+        )
         self.update()
         self._timer.start()
 
-    def finish(self) -> None:
-        """立刻走完这一段：所有牌翻开，收起覆盖层并发出 :attr:`finished`。"""
-        if not self._cards:
-            return
-        self._elapsed = self.duration_ms()
-        self._reveal_all()
-        self._stop()
-        self.finished.emit()
+    def skip(self, *, reason: str, card_count: int = 0) -> None:
+        """记录一次没有启动的动画：只写 ``skip`` 事件并收好覆盖层。
 
-    def cancel(self, *, reveal: bool = True) -> None:
-        """中途取消；``reveal=True`` 时把卡片直接恢复显示（例如页面重排）。"""
-        self._stop()
-        if reveal:
-            self._reveal_all()
+        ``reason`` 由调用方给出业务原因（例如 ``no-cards``）；这是“动画没有启动”
+        的唯一记录点，面板不再自己拼一条日志。
+        """
+        self._timer.stop()
+        self.hide()
         self._cards = []
         self._fronts = []
         self._revealed = []
         self._clip_widget = None
         self._elapsed = 0.0
+        self._phase = DEAL_PHASE_IDLE
+        self._paint_frames = 0
+        self._first_paint_ms = None
+        self._drawn_cards = 0
+        self._started_at = None
+        self._ended_at = None
+        self._cancel_reason = None
+        self._restore_result = None
+        self._last_run = None
+        self._record(
+            "skip",
+            skip_reason=reason,
+            card_count=int(card_count),
+            phase=DEAL_PHASE_IDLE,
+            overlay_visible=self.isVisible(),
+            overlay_width=int(self.width()),
+            overlay_height=int(self.height()),
+            overlay_parent=widget_label(self.parentWidget()),
+        )
+
+    def finish(self) -> None:
+        """立刻走完这一段：所有牌翻开，收起覆盖层并发出 :attr:`finished`。"""
+        if not self._cards:
+            return
+        self._complete()
+
+    def cancel(self, *, reveal: bool = True, reason: str = "unspecified") -> None:
+        """中途取消；``reason`` 写进诊断日志，``reveal=True`` 时把卡片恢复显示。
+
+        已经自然播完的动画只做清理，不再记 ``cancel``：否则“播完后换一批结果”会被
+        误读成一次中断，也会盖掉 ``finish`` 快照。
+        """
+        had_cards = bool(self._cards)
+        was_running = self.is_running()
+        interrupted = had_cards and self._phase != DEAL_PHASE_FINISHED
+        if interrupted:
+            self._cancel_reason = reason
+            self._restore_result = "revealed" if reveal else "hidden"
+            self._ended_at = timestamp()
+        self._stop()
+        if reveal:
+            self._reveal_all()
+        if interrupted:
+            self._record(
+                "cancel",
+                started_at=self._started_at,
+                ended_at=self._ended_at,
+                elapsed_ms=float(self._elapsed),
+                duration_ms=self.duration_ms(),
+                card_count=len(self._cards),
+                revealed_count=self.revealed_count,
+                paint_frames=self._paint_frames,
+                first_paint_ms=self._first_paint_ms,
+                cancel_reason=self._cancel_reason,
+                restore_result=self._restore_result,
+                was_running=was_running,
+                phase=self.phase_at(),
+            )
+            # 取消后卡片与时长会被清空：先把同一时刻的完整快照留下来。
+            self._capture_run_end("cancel")
+        self._cards = []
+        self._fronts = []
+        self._revealed = []
+        self._clip_widget = None
+        self._elapsed = 0.0
+        self._phase = DEAL_PHASE_IDLE
 
     def _stop(self) -> None:
         self._timer.stop()
         self.hide()
 
+    def _complete(self) -> None:
+        """自然走完或 ``finish()`` 的收尾：恢复卡片、记录结束诊断并通知面板。"""
+        self._elapsed = self.duration_ms()
+        self._reveal_all()
+        self._stop()
+        self._phase = DEAL_PHASE_FINISHED
+        self._ended_at = timestamp()
+        self._record(
+            "finish",
+            started_at=self._started_at,
+            ended_at=self._ended_at,
+            elapsed_ms=float(self._elapsed),
+            duration_ms=self.duration_ms(),
+            card_count=len(self._cards),
+            revealed_count=self.revealed_count,
+            paint_frames=self._paint_frames,
+            first_paint_ms=self._first_paint_ms,
+            phase=self._phase,
+        )
+        self._capture_run_end("finish")
+        self.finished.emit()
+
     def _advance(self) -> None:
         total = self.duration_ms()
         self._elapsed = float(min(total, self._clock.elapsed()))
+        self._sync_phase()
         for index in range(len(self._cards)):
             if not self._revealed[index] and self.flip_progress(index) >= 1.0:
                 self._reveal(index)
         self.update()
         if self._elapsed >= total:
-            self._reveal_all()
-            self._stop()
-            self.finished.emit()
+            self._complete()
 
     def _reveal(self, index: int) -> None:
         """翻完一张：撤掉透明度效果，让真正的卡片控件露出来。"""
@@ -1681,11 +1926,15 @@ class DealRevealLayer(QWidget):
         ratio = float(self.devicePixelRatioF())
         return _render_deal_back(int(CARD_WIDTH), int(CARD_HEIGHT), ratio)
 
-    def _draw_back(self, painter: QPainter, rect: QRectF, angle: float = 0.0) -> None:
-        """把背面图按 ``rect`` 缩放、旋转着贴上去（投影已在图里）。"""
-        if rect.width() <= 0.0 or rect.height() <= 0.0:
-            return
+    def _draw_back(self, painter: QPainter, rect: QRectF, angle: float = 0.0) -> bool:
+        """把背面图按 ``rect`` 缩放、旋转着贴上去（投影已在图里）。
+
+        返回是否真的画到了可见区域：``False`` 表示这一笔要么没有贴图，要么整块落在
+        覆盖层/裁剪区之外，不能算作“卡片已画出”。
+        """
         sprite = self._deal_back()
+        if sprite.isNull() or not self._is_visible_draw(painter, rect):
+            return False
         painter.save()
         painter.translate(rect.center())
         painter.rotate(float(angle))
@@ -1695,14 +1944,15 @@ class DealRevealLayer(QWidget):
             QPointF(-float(_WAIT_SHADOW_PAD), -float(_WAIT_SHADOW_PAD)), sprite
         )
         painter.restore()
+        return True
 
-    def _draw_front(self, painter: QPainter, rect: QRectF, index: int) -> None:
+    def _draw_front(self, painter: QPainter, rect: QRectF, index: int) -> bool:
         """把卡片控件的截图按 ``rect`` 缩放贴上去，并在下面补一层同样的投影。"""
         if index < 0 or index >= len(self._fronts):
-            return
+            return False
         front = self._fronts[index]
-        if front.isNull() or rect.width() <= 0.0 or rect.height() <= 0.0:
-            return
+        if front.isNull() or not self._is_visible_draw(painter, rect):
+            return False
         ratio = float(self.devicePixelRatioF())
         pad = float(_WAIT_SHADOW_PAD)
         shadow = _render_card_shadow(int(CARD_WIDTH), int(CARD_HEIGHT), ratio)
@@ -1719,6 +1969,18 @@ class DealRevealLayer(QWidget):
         # 整张截图（物理像素）映射进落点矩形：不依赖 grab() 报告的设备像素比，
         # 高分屏上也不会因为 dpr 与逻辑尺寸对不上而把卡片缩小/放大。
         painter.drawPixmap(rect, front, QRectF(front.rect()))
+        return True
+
+    def _is_visible_draw(self, painter: QPainter, rect: QRectF) -> bool:
+        """``rect``（含投影边距）是否与覆盖层当前的可见区域相交。"""
+        if rect.width() <= 0.0 or rect.height() <= 0.0:
+            return False
+        pad = float(_WAIT_SHADOW_PAD)
+        padded = rect.adjusted(-pad, -pad, pad, pad)
+        visible = painter.clipBoundingRect()
+        if visible.isNull():
+            visible = QRectF(self.rect())
+        return padded.intersects(visible)
 
     def paintEvent(self, event):  # noqa: N802 - Qt 覆盖方法
         """先画剩下的牌堆，再画飞出去的牌 / 落定的背面；翻到后半程贴正面。"""
@@ -1728,6 +1990,7 @@ class DealRevealLayer(QWidget):
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
         count = len(self._cards)
+        drawn = 0
         dealt = sum(
             1 for index in range(count) if self.deal_progress(index) > 0.0
         )
@@ -1741,7 +2004,8 @@ class DealRevealLayer(QWidget):
                     float(CARD_WIDTH),
                     float(CARD_HEIGHT),
                 )
-                self._draw_back(painter, rect)
+                if self._draw_back(painter, rect):
+                    drawn += 1
         clip = self._cards_clip_rect()
         if clip is not None:
             painter.save()
@@ -1770,18 +2034,22 @@ class DealRevealLayer(QWidget):
                     width,
                     height,
                 )
-                self._draw_back(painter, rect, angle)
+                if self._draw_back(painter, rect, angle):
+                    drawn += 1
                 continue
             flip = self.flip_progress(index)
             if flip <= 0.0:
-                self._draw_back(painter, target)
+                painted = self._draw_back(painter, target)
             elif flip < 1.0:
-                self._paint_flip(painter, target, index, flip)
+                painted = self._paint_flip(painter, target, index, flip)
             else:
                 # 翻完了但收尾信号还没到：直接贴正面，下一帧就会恢复真正的卡片。
-                self._draw_front(painter, target, index)
+                painted = self._draw_front(painter, target, index)
+            if painted:
+                drawn += 1
         if clip is not None:
             painter.restore()
+        self._record_paint(drawn)
 
     def _cards_clip_rect(self) -> QRectF | None:
         """卡片区的可见矩形（覆盖层坐标）：看不见的行不画到状态行与动作行上。"""
@@ -1798,8 +2066,8 @@ class DealRevealLayer(QWidget):
 
     def _paint_flip(
         self, painter: QPainter, target: QRectF, index: int, progress: float
-    ) -> None:
-        """绕竖直轴翻面：前半程背面收窄，后半程正面展开。"""
+    ) -> bool:
+        """绕竖直轴翻面：前半程背面收窄，后半程正面展开；返回是否画到可见区域。"""
         squeeze = abs(math.cos(math.pi * progress))
         squeeze = max(0.035, squeeze)
         grow = 1.0 + 0.04 * math.sin(math.pi * progress)
@@ -1812,13 +2080,14 @@ class DealRevealLayer(QWidget):
             height,
         )
         if progress < 0.5:
-            self._draw_back(painter, rect)
+            painted = self._draw_back(painter, rect)
         else:
-            self._draw_front(painter, rect, index)
+            painted = self._draw_front(painter, rect, index)
         shade = round(70 * math.sin(math.pi * progress))
         if shade:
             path = QPainterPath()
             radius = max(1.0, CARD_RADIUS * (rect.width() / CARD_WIDTH))
             path.addRoundedRect(rect, radius, radius)
             painter.fillPath(path, QColor(0, 0, 0, shade))
+        return painted
 

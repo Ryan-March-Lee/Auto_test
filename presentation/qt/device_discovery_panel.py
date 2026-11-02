@@ -412,7 +412,7 @@ class DeviceDiscoveryPanel(QWidget):
         清空后回到“还没查找过”的样子：结果区顶部重新出现“查找设备”。
         """
         self.devices = []
-        self._clear_cards()
+        self._clear_cards(reason="results-cleared")
         self._set_status("")
         self._set_box_state(BOX_STATE_IDLE)
         # 还没换进结果区的结论属于下一次查找：清空后不能再被动画结束事件补上。
@@ -868,7 +868,7 @@ class DeviceDiscoveryPanel(QWidget):
         subnet = self.subnet_edit.text().strip()
         self._pending_outcome = None
         self.devices = []
-        self._clear_cards()
+        self._clear_cards(reason="new-scan")
         self._set_controls_enabled(False)
         self._set_box_state(BOX_STATE_BUSY)
         self._set_status(f"{LOADING_TEXT} {subnet or '(空)'}")
@@ -982,6 +982,9 @@ class DeviceDiscoveryPanel(QWidget):
         """
         cards = self.cards()
         if not cards:
+            # 没有卡片就没有发牌：由动画层统一记一条 skip，日志里没有 start 时能分清
+            # “没启动”，而不是“启动了但没画出来”。
+            self.deal_layer.skip(reason="no-cards")
             return
         # 卡片先按最终版面就位，再截下每张卡的正面图；随后用透明度效果把它们藏起来
         # （仍然占着版面），覆盖层翻到哪张就把哪张恢复显示。
@@ -1032,12 +1035,12 @@ class DeviceDiscoveryPanel(QWidget):
         if self.box_state() == BOX_STATE_RESULTS:
             self.status_label.setVisible(bool(self.status_label.text()))
 
-    def _cancel_deal_reveal(self, *, reveal: bool) -> None:
-        """停止发牌覆盖层；``reveal=False`` 用于卡片即将被清空/删除时。"""
+    def _cancel_deal_reveal(self, *, reveal: bool, reason: str) -> None:
+        """停止发牌覆盖层；``reason`` 写进诊断日志，``reveal=False`` 用于卡片即将被删。"""
         layer = getattr(self, "deal_layer", None)
         if layer is None:
             return
-        layer.cancel(reveal=reveal)
+        layer.cancel(reveal=reveal, reason=reason)
         self.cards_area.setEnabled(True)
 
     def _on_failed(self, message: str) -> None:
@@ -1080,7 +1083,7 @@ class DeviceDiscoveryPanel(QWidget):
         """页面关闭时协作停止扫描；不强杀线程，失败时保留引用由调用方处理。"""
         self._closed = True
         self._pending_outcome = None
-        self._cancel_deal_reveal(reveal=False)
+        self._cancel_deal_reveal(reveal=False, reason="page-shutdown")
         worker = self.worker
         if worker is None:
             return True
@@ -1135,10 +1138,10 @@ class DeviceDiscoveryPanel(QWidget):
     def _cards_by_heading(self) -> list[tuple[str, dict[str, Any]]]:
         return [(row["heading"], row) for row in self._rows]
 
-    def _clear_cards(self) -> None:
+    def _clear_cards(self, *, reason: str = "cards-cleared") -> None:
         # 正在发牌/翻牌的覆盖层还指着这些卡片：先停下它（不恢复显示，卡片马上就会删掉），
-        # 再清空。
-        self._cancel_deal_reveal(reveal=False)
+        # 再清空。``reason`` 只进诊断日志，便于复现“发牌为什么被取消”。
+        self._cancel_deal_reveal(reveal=False, reason=reason)
         # 卡片被删掉时同样先收回焦点：焦点控件消失也会让滚动区去找下一个控件。
         self._release_focus_before_hiding([self.cards_area])
         for row in self._rows:
@@ -1203,7 +1206,7 @@ class DeviceDiscoveryPanel(QWidget):
         return "\n".join(line for line in lines if line)
 
     def _fill_cards(self, devices: Sequence[Any]) -> None:
-        self._clear_cards()
+        self._clear_cards(reason="cards-refilled")
         rows: list[dict[str, Any]] = []
         for device in devices:
             visitor_index = 0

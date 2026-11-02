@@ -1017,6 +1017,214 @@ class DealRevealLayerTests(unittest.TestCase):
         self.assertTrue(layer.testAttribute(Qt.WA_TransparentForMouseEvents))
         self.assertEqual(layer.focusPolicy(), Qt.NoFocus)
 
+    # ---- 运行时诊断（步骤 2） ------------------------------------------------
+
+    def test_diagnostics_expose_the_fixed_runtime_fields(self):
+        """动画开始后，快照里能读到起点、落点、覆盖层与固定字段名。"""
+        layer, _cards = self._layer(2)
+
+        snapshot = layer.diagnostics()
+
+        for field in (
+            "event",
+            "running",
+            "phase",
+            "started_at",
+            "ended_at",
+            "elapsed_ms",
+            "duration_ms",
+            "card_count",
+            "deck_x",
+            "deck_y",
+            "target_rects",
+            "overlay_visible",
+            "overlay_width",
+            "overlay_height",
+            "overlay_parent",
+            "paint_frames",
+            "first_paint_ms",
+            "drawn_cards",
+            "revealed_count",
+            "cancel_reason",
+            "restore_result",
+        ):
+            self.assertIn(field, snapshot, f"诊断字段名固定为 {field}")
+        self.assertEqual(snapshot["event"], "start")
+        self.assertEqual(snapshot["phase"], "dealing")
+        self.assertEqual(snapshot["card_count"], 2)
+        self.assertEqual(len(snapshot["target_rects"]), 2)
+        self.assertIsInstance(snapshot["overlay_visible"], bool)
+        self.assertTrue(snapshot["overlay_parent"], "覆盖层父控件要写进快照")
+        self.assertTrue(snapshot["started_at"], "动画开始时间要写进快照")
+
+    def test_every_painted_frame_is_counted(self):
+        """``paint_frames`` 是绘制帧数，不是“第一帧之后就不再计数”。"""
+        layer, _cards = self._layer(3)
+
+        self.assertEqual(layer.diagnostics()["paint_frames"], 0)
+        layer.grab()
+        layer.grab()
+
+        snapshot = layer.diagnostics()
+        self.assertGreaterEqual(snapshot["paint_frames"], 2, "每一帧都要计数")
+        self.assertIsNotNone(snapshot["first_paint_ms"])
+        self.assertGreater(snapshot["drawn_cards"], 0, "第一帧要真的画出牌堆/飞出的牌")
+
+    def test_cards_painted_outside_the_overlay_are_not_counted(self):
+        """落在覆盖层/裁剪区之外的牌不算“画出来了”，否则 first_paint 会骗人。"""
+        from PySide6.QtGui import QPixmap
+
+        from presentation.qt.scan_card import DealRevealLayer
+
+        host = QWidget()
+        host.resize(200, 220)
+        shown_card = QWidget(host)
+        shown_card.setGeometry(20, 20, 60, 100)
+        offstage_card = QWidget(host)
+        offstage_card.setGeometry(600, 600, 60, 100)
+        layer = DealRevealLayer(host)
+        layer.setGeometry(host.rect())
+        self.addCleanup(host.close)
+        fronts = [QPixmap(60, 100), QPixmap(60, 100)]
+
+        layer.start([shown_card, offstage_card], fronts, QPointF(-500.0, -500.0))
+        layer._timer.stop()
+        layer._elapsed = layer.duration_ms()
+        layer.grab()
+
+        snapshot = layer.diagnostics()
+        self.assertEqual(snapshot["drawn_cards"], 1, "只有落在覆盖层里的那张算画出")
+        self.assertEqual(snapshot["paint_frames"], 1)
+
+    def test_the_log_separates_start_from_first_paint(self):
+        """日志里同时留下 start 与 first_paint，复现“启动但没画出来”时有据可查。"""
+        from presentation.qt.animation_diagnostics import logger
+        from presentation.qt.scan_card import DealRevealLayer
+
+        host = QWidget()
+        cards = [QWidget(host) for _ in range(2)]
+        for index, card in enumerate(cards):
+            card.setGeometry(20 + index * 80, 40, 60, 100)
+        layer = DealRevealLayer(host)
+        layer.setGeometry(host.rect())
+        self.addCleanup(host.close)
+
+        with self.assertLogs(logger, level="INFO") as captured:
+            layer.start(cards, [], QPointF(host.width() / 2.0, host.height() - 40.0))
+            layer._timer.stop()
+            layer.grab()
+
+        output = "\n".join(captured.output)
+        self.assertIn("event=start", output)
+        self.assertIn("event=first_paint", output)
+        self.assertIn("card_count=2", output)
+        self.assertIn("overlay_parent=", output)
+
+    def test_phases_are_named_dealing_settling_flipping(self):
+        from presentation.qt.scan_card import (
+            DEAL_FLY_MS,
+            DEAL_SETTLE_MS,
+            DEAL_STAGGER_MS,
+        )
+
+        layer, _cards = self._layer(2)
+        deal_end = DEAL_STAGGER_MS + DEAL_FLY_MS
+
+        self.assertEqual(layer.phase_at(0.0), "dealing")
+        self.assertEqual(layer.phase_at(deal_end + DEAL_SETTLE_MS / 2.0), "settling")
+        self.assertEqual(layer.phase_at(deal_end + DEAL_SETTLE_MS + 1.0), "flipping")
+        self.assertEqual(layer.phase_at(layer.duration_ms()), "finished")
+
+    def test_finishing_records_the_end_time(self):
+        layer, _cards = self._layer(2)
+
+        layer.finish()
+
+        snapshot = layer.diagnostics()
+        self.assertEqual(snapshot["event"], "finish")
+        self.assertEqual(snapshot["phase"], "finished")
+        self.assertFalse(snapshot["running"])
+        self.assertTrue(snapshot["ended_at"], "结束时间要写进快照")
+        self.assertEqual(snapshot["card_count"], 2, "完成后的快照仍是这次动画的 2 张")
+        self.assertEqual(snapshot["revealed_count"], 2)
+
+    def test_cancel_records_the_reason_and_the_restore_result(self):
+        from presentation.qt.animation_diagnostics import logger
+
+        layer, _cards = self._layer(3)
+
+        with self.assertLogs(logger, level="INFO") as captured:
+            layer.cancel(reveal=False, reason="cards-cleared")
+
+        snapshot = layer.diagnostics()
+        self.assertEqual(snapshot["cancel_reason"], "cards-cleared")
+        self.assertEqual(snapshot["restore_result"], "hidden")
+        self.assertEqual(snapshot["event"], "cancel")
+        # 取消后内部状态清空，但快照仍描述被取消的那一次，不能自相矛盾。
+        self.assertEqual(snapshot["card_count"], 3)
+        self.assertEqual(snapshot["phase"], "dealing")
+        self.assertEqual(snapshot["revealed_count"], 0)
+        self.assertFalse(snapshot["running"])
+        output = "\n".join(captured.output)
+        self.assertIn("event=cancel", output)
+        self.assertIn("cancel_reason=cards-cleared", output)
+        self.assertIn("restore_result=hidden", output)
+
+    def test_cancel_with_reveal_keeps_the_restored_count_in_the_snapshot(self):
+        layer, _cards = self._layer(3)
+
+        layer.cancel(reveal=True, reason="results-cleared")
+
+        snapshot = layer.diagnostics()
+        self.assertEqual(snapshot["restore_result"], "revealed")
+        self.assertEqual(snapshot["revealed_count"], 3, "恢复显示后的张数应与恢复结果一致")
+
+    def test_cancel_after_finish_is_only_cleanup(self):
+        """播完后清结果不算中断：finish 快照不能被 cancel 覆盖。"""
+        from presentation.qt.animation_diagnostics import logger
+
+        layer, _cards = self._layer(2)
+        layer.finish()
+
+        with self.assertNoLogs(logger, level="INFO"):
+            layer.cancel(reveal=False, reason="new-scan")
+
+        snapshot = layer.diagnostics()
+        self.assertEqual(snapshot["event"], "finish")
+        self.assertEqual(snapshot["phase"], "finished")
+        self.assertIsNone(snapshot["cancel_reason"])
+
+    def test_a_start_without_cards_reports_a_skip_instead_of_a_start(self):
+        """没有卡片时只有 skip、没有 start：日志据此区分“动画没有启动”。"""
+        layer, _cards = self._layer(0)
+
+        snapshot = layer.diagnostics()
+        self.assertEqual(snapshot["event"], "skip")
+        self.assertEqual(snapshot["phase"], "idle")
+        self.assertEqual(snapshot["card_count"], 0)
+        self.assertFalse(snapshot["running"])
+
+    def test_skip_is_recorded_once_with_the_caller_reason(self):
+        """``skip`` 由动画层统一记录一次，调用方只提供原因。"""
+        from presentation.qt.animation_diagnostics import logger
+        from presentation.qt.scan_card import DealRevealLayer
+
+        host = QWidget()
+        host.resize(300, 300)
+        layer = DealRevealLayer(host)
+        layer.setGeometry(host.rect())
+        self.addCleanup(host.close)
+
+        with self.assertLogs(logger, level="INFO") as captured:
+            layer.skip(reason="empty-results")
+
+        skips = [line for line in captured.output if "event=skip" in line]
+        self.assertEqual(len(skips), 1, "同一次未启动只允许一条 skip")
+        self.assertIn("skip_reason=empty-results", skips[0])
+        snapshot = layer.diagnostics()
+        self.assertEqual(snapshot["event"], "skip")
+        self.assertIsNone(snapshot["started_at"])
+
 
 if __name__ == "__main__":
     unittest.main()

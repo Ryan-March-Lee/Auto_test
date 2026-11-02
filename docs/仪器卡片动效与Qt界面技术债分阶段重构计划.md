@@ -101,6 +101,8 @@ IDLE → SCANNING → RESULT_PENDING → DEALING → INTERACTIVE
 
 ## 步骤 2：增加动画运行时诊断信息
 
+**执行状态：已完成**。诊断模块：`presentation/qt/animation_diagnostics.py`；发牌层的内部快照：`DealRevealLayer.diagnostics()`。日志写在项目的 `logs/pa_auto_test_*.log`，检索 `animation event=` 即可看到一个固定字段序列。
+
 ### 执行策略
 
 在开发模式或日志中记录：
@@ -116,6 +118,49 @@ IDLE → SCANNING → RESULT_PENDING → DEALING → INTERACTIVE
 - 诊断信息使用日志或内部调试属性，不直接显示给最终用户。
 - 不依赖截图来判断动画是否开始。
 - 日志字段使用固定名称，方便后续复现“动画运行但不可见”的问题。
+
+### 已实现的事件与字段
+
+日志行形如：
+
+```text
+animation event=start card_count=6 deck_x=480.0 deck_y=620.0 phase=dealing ...
+animation event=first_paint drawn_cards=3 first_paint_ms=12.0 ...
+animation event=phase phase=settling ...
+animation event=finish ended_at=...
+animation event=cancel cancel_reason=results-cleared restore_result=hidden ...
+```
+
+固定字段：
+
+| 字段 | 含义 |
+| --- | --- |
+| `event` | `start` / `skip` / `phase` / `first_paint` / `finish` / `cancel` |
+| `started_at` / `ended_at` | 开始、结束的本地时间（ISO 8601） |
+| `elapsed_ms` / `duration_ms` | 已走时长与整段时长 |
+| `phase` | `dealing` / `settling` / `flipping` / `finished` / `idle` |
+| `card_count` | 本次要发的卡片数 |
+| `deck_x` / `deck_y` | 发牌起点（覆盖层坐标） |
+| `target_rects` | 每张卡的落点 `(x,y,w,h)` |
+| `overlay_visible` / `overlay_width` / `overlay_height` / `overlay_parent` | 覆盖层可见性、尺寸与父控件 |
+| `paint_frames` / `first_paint_ms` / `drawn_cards` | 已绘制的帧数（每个 `paintEvent` 计一次）、首帧延迟、首帧里实际画到可见区域（覆盖层与卡片裁剪区之内）的牌面数 |
+| `revealed_count` | 已翻开的卡片数 |
+| `cancel_reason` / `restore_result` / `was_running` | 取消原因、取消后卡片是恢复显示还是随结果清空、取消时是否仍在播放 |
+| `skip_reason` | 动画没有启动的原因（例如 `no-cards`） |
+
+`DealRevealLayer.diagnostics()` 运行中返回当前快照，完成或取消后返回那次动画收尾时的快照：`card_count`、`elapsed_ms`、`phase`、`revealed_count` 与 `event=finish` / `event=cancel` 同一时刻，不会出现“卡片已清空却还留着取消原因”。
+
+`skip` 只由 `DealRevealLayer.skip(reason=...)` 记录一次，调用方只提供原因，不再各自拼日志。
+
+排查顺序：
+
+- 只有 `skip`、没有 `start`：动画没有启动；
+- 有 `start`、没有 `first_paint`：动画启动了，但覆盖层没有绘制出来；
+- `first_paint` 里 `overlay_visible=false`：画了，但覆盖层当时没显示（父控件隐藏、未加入窗口或被层级盖住）；
+- 有 `first_paint` 但 `drawn_cards` 为 0：画了但画面是空的（贴图为空或全在可见区域之外）；
+- 有 `start` 和 `first_paint`、`drawn_cards` 也大于 0 但用户仍看不到：问题在覆盖层之后的可见性、裁剪或层级，而不是时间轴。
+
+面板取消发牌的既有入口分别写入 `results-cleared`（返回/清空结果）、`new-scan`（开始新扫描）、`cards-refilled`（换一批卡片）和 `page-shutdown`（页面关闭）。
 
 ### 完成标准
 

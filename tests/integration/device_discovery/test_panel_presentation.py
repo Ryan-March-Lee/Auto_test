@@ -335,6 +335,17 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         self.assertFalse(
             panel.status_label.isVisible(), "牌还背面朝上时先不要写出结果统计"
         )
+        diagnostics = panel.deal_layer.diagnostics()
+        self.assertIn(diagnostics["event"], ("start", "first_paint"))
+        self.assertIn(
+            diagnostics["phase"], ("dealing", "settling", "flipping")
+        )
+        self.assertGreater(
+            diagnostics["paint_frames"], 0, "发牌层启动后必须真的绘制出来"
+        )
+        self.assertGreater(
+            diagnostics["drawn_cards"], 0, "首帧要真的画出可见的牌面，而不是空画面"
+        )
         for card in panel.cards():
             effect = card.graphicsEffect()
             self.assertIsNotNone(effect, "发牌期间真正的卡片应藏在覆盖层后面")
@@ -410,6 +421,34 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         self.assertFalse(panel.deal_layer.isVisible())
         self.assertEqual(panel.card_count(), 0)
         self.assertTrue(panel.scan_btn.isVisible())
+        diagnostics = panel.deal_layer.diagnostics()
+        self.assertEqual(
+            diagnostics["cancel_reason"], "results-cleared", "返回清空结果要写明取消原因"
+        )
+        self.assertEqual(diagnostics["restore_result"], "hidden")
+        self.assertEqual(diagnostics["event"], "cancel")
+        self.assertGreater(
+            diagnostics["card_count"], 0, "取消后的快照仍要描述被取消的那一次动画"
+        )
+
+    def test_shutdown_while_dealing_records_the_cancel_reason(self):
+        """关页面时取消发牌，日志里要能看出是页面关闭而不是别的原因。"""
+        panel = self.make_panel()
+        panel.request_scan()
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+        panel.wait_stack.finish_cycle()
+        self.app.processEvents()
+        self.app.processEvents()
+        self.assertTrue(panel.deal_layer.is_running())
+
+        self.assertTrue(panel.shutdown())
+
+        diagnostics = panel.deal_layer.diagnostics()
+        self.assertEqual(diagnostics["cancel_reason"], "page-shutdown")
+        self.assertEqual(diagnostics["restore_result"], "hidden")
+        self.assertFalse(diagnostics["running"])
 
     def test_a_scan_that_finds_nothing_leaves_the_button_in_the_box_again(self):
         def factory(_mode):

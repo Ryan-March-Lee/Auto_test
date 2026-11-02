@@ -13,9 +13,10 @@
 页面不持有逐字段回填逻辑，也不依赖窗口、测量 controller 或硬件实现。
 
 仪表配置（扫描、勾选设备、设备身份绑定、连接仪器）已独立成
-:mod:`presentation.qt.connection_page`：本页不再创建发现面板，也不再提供连接入口，
-只在 :meth:`ConfigPage.attach_discovery_panel` 里登记那一页交出的事件面板，并保留写
-绑定的边界（整批校验 + 写地址/身份）与派生界面更新。连接请求仍由
+:mod:`presentation.qt.connection_page`：本页不再创建发现面板、不持有它，也不再提供
+连接入口，只保留写绑定的边界（整批校验 + 写地址/身份）与派生界面更新。写入结果经
+``device_selection_finished`` 交给 :class:`presentation.qt.configuration_session`，
+由会话把状态行与绑定回写给连接页的面板；连接请求仍由
 :meth:`ConfigPage.request_connect` 校验后经 ``connect_requested`` 交给窗口。
 
 归属（见 `docs/配置领域词汇与模块归属.md`）：Qt 视图。页面只负责控件、布局、信号与派生界面
@@ -42,6 +43,7 @@ from application.configuration_view_model import (
     DEFAULT_RUN_STATUS,
     ConfigurationViewModel,
 )
+from application.device_binding import ApplyDeviceSelectionRequest
 from domain.instruments.labels import instrument_display_label
 
 from .config_form_bindings import (
@@ -92,6 +94,9 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
     validation_failed = Signal(str)
     driver_mode_changed = Signal(bool)
     discovery_message = Signal(str)
+    #: 一次设备勾选写入的完整结果：(DeviceBindingResult, 面向操作员的提示文案)。
+    #: 面板归连接页所有，本页只交出结果；回写由配置会话完成。
+    device_selection_finished = Signal(object, str)
 
     def __init__(self, config=None, parent=None):
         PageControllerBindingMixin.__init__(self)
@@ -105,9 +110,6 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         # 配置里原本就不可用的电源绑定：读入时会从可用集合里剔除，但必须在这里留下记录，
         # 由界面提示并在保存/运行校验时明确报错——否则它们会表现为“电源莫名消失”。
         self.binding_problems = self._binding_problems_of(self.config)
-        # 「仪表配置」页交出的事件面板：写绑定之后由本页回写它的状态文本。
-        # 未登记面板时（纯配置页场景）所有回写都跳过。
-        self.discovery_panel = None
         # 页面业务状态由 application 的视图模型持有（步骤 6）：测试参数、设备绑定、运行
         # 状态与 dirty 都在那里；设备选择的业务规则仍只在 DeviceBindingService（步骤 5）。
         self.view_model = ConfigurationViewModel()
@@ -241,49 +243,42 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         """页面底部固定操作栏：回到仪表配置、保存当前配置或返回欢迎页。"""
         return build_action_bar(self)
 
-    def attach_discovery_panel(self, panel):
-        """登记「仪表配置」页上的设备发现面板，并接上写入意图。
+    def view_state(self):
+        """返回连接页读取的只读配置视图。
 
-        面板归独立页面（:mod:`presentation.qt.connection_page`）所有：它只管扫描与
-        勾选，不改配置、不连接仪器。用户点“下一步”时，连接页把勾选结果交给本页，
-        本页整批校验后把当前地址与设备身份（完整设备码）记进 :attr:`device_bindings`，
-        保存时随配置一起落盘，作为下次按身份重新识别设备的依据；面板只负责显示结果。
-
-        写入由连接页在离开本页时触发，因此这里不再登记“应用/清除”按钮；面板的日志经
-        :attr:`discovery_message` 转给窗口统一呈现。
+        连接页与配置会话只经这里读绑定、已保存的仪器地址和旧绑定条数，不碰页面的
+        ``config`` / ``device_bindings`` 内部字典。
         """
-        self.discovery_panel = panel
-        panel.log_message.connect(self.discovery_message.emit)
-        panel.set_device_bindings(self.device_bindings)
-        if self.binding_problems:
-            panel.show_message(
-                "；".join(self.binding_problems)
-                + "；请重新扫描并应用这些电源，或修正配置后再保存"
-            )
+        return self.view_model.view_state()
 
-    def apply_discovered_devices(self, assignments):
-        """把面板勾选的设备写成配置里的连接信息与身份记录。
+    def apply_device_selection(self, request):
+        """把“应用本次勾选结果”的命令写成配置里的连接信息与身份记录。
 
         角色不是用户选的：它来自设备表 ``instruments.json`` 登记的 ``role``（旧槽位
         ``PS1``..``PS4`` 由面板折叠成 ``power_supply``），面板按它交付。写入规则（角色
         唯一性、电源引用、地址/身份、同一台设备不重复与整批替换）都在
-        :class:`application.device_binding.DeviceBindingService`；页面只把本次勾选结果交给
-        :meth:`ConfigurationViewModel.apply_device_selection`，再把返回的新绑定集合投影到
-        页面状态（绑定、电源标签页、分配选项与面板文案）。
+        :class:`application.device_binding.DeviceBindingService`；页面只把请求交给
+        :meth:`ConfigurationViewModel.apply_device_selection`，再把返回的新绑定集合投影
+        到页面状态（绑定、电源标签页、分配选项）。
 
-        返回是否写入成功：整批拒绝时返回 ``False``（原因已回写到面板与日志），调用方
-        （“下一步”）据此决定是否继续跳页。
+        成功与失败都返回 :class:`application.device_binding.DeviceBindingResult`，并发出
+        ``device_selection_finished(result, message)``：面板归连接页所有，本页不持有它，
+        由配置会话把提示与绑定回写到面板。``ok`` 为假表示整批拒绝（调用方留在本页）；
+        为真表示绑定已整批替换，可以继续跳页。
         """
-        panel = getattr(self, "discovery_panel", None)
-        outcome = self.view_model.apply_device_selection(assignments)
+        if not isinstance(request, ApplyDeviceSelectionRequest):
+            raise TypeError(
+                "request 必须是 ApplyDeviceSelectionRequest，"
+                f"收到 {type(request).__name__}"
+            )
+        outcome = self.view_model.apply_device_selection(request)
         result = outcome.result
         if not result.ok:
             # 面板与日志看到的是业务文案本身（不带结构化问题的路径前缀）。
             message = "；".join(issue.message for issue in result.issues)
-            if panel is not None:
-                panel.show_message(message)
             self.validation_failed.emit(message)
-            return False
+            self.device_selection_finished.emit(result, message)
+            return result
 
         previous = self._binding_labels(self.device_bindings)
         self.device_bindings = outcome.state.bindings_snapshot()
@@ -291,8 +286,6 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         self.binding_problems = []
         self._rebuild_power_tabs()
         self.update_power_supply_options()
-        if panel is not None:
-            panel.set_device_bindings(self.device_bindings)
         message = "已应用发现设备: " + "，".join(
             self._applied_labels(result.applied)
         )
@@ -302,10 +295,22 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             message += "；已移除本次未勾选的旧绑定: " + "、".join(removed)
         if result.simulated:
             message += "（模拟数据，仅用于离线演示，不能用于真实测量）"
-        if panel is not None:
-            panel.show_message(message)
         self.discovery_message.emit(message)
-        return True
+        self.device_selection_finished.emit(result, message)
+        return result
+
+    def apply_discovered_devices(self, assignments):
+        """兼容入口：接受面板交付的字典列表或已构造的命令，返回是否写入成功。
+
+        连接页现在直接提交 :class:`ApplyDeviceSelectionRequest`；这个同名方法保留给
+        既有页面测试与迁移期调用方，语义仍是“整批写入，成功返回 ``True``”。
+        """
+        request = (
+            assignments
+            if isinstance(assignments, ApplyDeviceSelectionRequest)
+            else ApplyDeviceSelectionRequest.from_assignments(assignments)
+        )
+        return self.apply_device_selection(request).ok
 
     @staticmethod
     def _applied_labels(applied) -> list[str]:
@@ -654,10 +659,8 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
             raise
         self.config = projected
         self.binding_problems = self._binding_problems_of(config)
-        panel = getattr(self, "discovery_panel", None)
-        if panel is not None:
-            panel.set_device_bindings(self.device_bindings)
-            panel.clear_results()
+        # 面板归连接页所有：窗口在回填后调用 ``ConnectionPage.enter()``，由它按新的
+        # 只读视图重置面板；本页只在日志里报告读入时就不可用的绑定。
         if self.binding_problems:
             self.discovery_message.emit("；".join(self.binding_problems))
         self.update_pa_unit_ui()

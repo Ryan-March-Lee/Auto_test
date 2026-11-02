@@ -18,6 +18,7 @@ from application.configuration_view_model import (
     ConfigurationBindingOutcome,
     ConfigurationPageState,
     ConfigurationTestParameters,
+    ConfigurationViewState,
     ConfigurationViewModel,
 )
 from domain.measurement.values import Decibels, Frequency, PowerDbm
@@ -581,6 +582,57 @@ class ConfigurationViewModelDirtyAndStatusTests(unittest.TestCase):
             ConfigurationPageState(
                 draft=ConfigurationDraft(), dirty="yes"  # type: ignore[arg-type]
             )
+
+
+class ConfigurationViewStateTests(unittest.TestCase):
+    """步骤 8 的只读视图：连接页只读它，不再读配置页的绑定/配置内部状态。"""
+
+    def test_view_state_exposes_bindings_and_saved_instrument_addresses(self):
+        view = _loaded()
+
+        state = view.view_state()
+
+        self.assertEqual(
+            set(state.bindings), {"signal_generator", "spectrum_analyzer", "power_supplies"}
+        )
+        # 顺序与文档一致：信号源、频谱仪，然后是电源集合的声明顺序。
+        self.assertEqual(
+            state.instrument_addresses, ("sim::sg", "sim::sa", "sim::ps1")
+        )
+        self.assertEqual(state.legacy_binding_count, 0)
+
+    def test_view_state_tracks_the_current_document_and_bindings(self):
+        view = _loaded()
+        document = _config()
+        document["instruments"]["signal_generator"]["address"] = "sim::new-sg"
+        view.update_form(document, bindings=_bindings())
+
+        self.assertEqual(view.view_state().instrument_addresses[0], "sim::new-sg")
+
+    def test_view_state_counts_legacy_bindings_without_changing_them(self):
+        legacy = _bindings()
+        legacy["signal_generator"]["source"] = "legacy_config"
+        view = ConfigurationViewModel()
+        view.load(_config(), bindings=legacy)
+
+        state = view.view_state()
+
+        self.assertEqual(state.legacy_binding_count, 1)
+        self.assertEqual(state.bindings["signal_generator"]["source"], "legacy_config")
+
+    def test_view_state_bindings_are_read_only(self):
+        state = _loaded().view_state()
+
+        with self.assertRaises(TypeError):
+            state.bindings["signal_generator"] = {}  # type: ignore[index]
+
+    def test_view_state_rejects_invalid_addresses_and_counts(self):
+        with self.assertRaises(TypeError):
+            ConfigurationViewState(instrument_addresses=("ok", None))  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            ConfigurationViewState(legacy_binding_count="1")  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            ConfigurationViewState(legacy_binding_count=-1)
 
 
 class ConfigurationViewModelBoundaryTests(unittest.TestCase):

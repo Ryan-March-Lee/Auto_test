@@ -5,6 +5,7 @@ from .config_repository import (
     RunMappingRepository,
     TestPlanRepository,
 )
+from .device_binding import DeviceBindingPort
 from .measurement_session import (
     CleanupRecord,
     CleanupStepStatus,
@@ -37,6 +38,7 @@ __all__ = [
     "CleanupStepStatus",
     "ConfigurationLoadResult",
     "ConfigurationRepository",
+    "DeviceBindingPort",
     "GeneratedArtifact",
     "MeasurementResultRepository",
     "MeasurementSessionBinding",

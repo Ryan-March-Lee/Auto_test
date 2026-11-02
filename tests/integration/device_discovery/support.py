@@ -21,6 +21,7 @@ from infrastructure.discovery.instrument_discovery import (
 from infrastructure.discovery.simulated_network import demo_idn_responses
 from infrastructure.persistence.instrument_registry import InstrumentRegistry
 from presentation.qt.config_page import ConfigPage
+from presentation.qt.configuration_session import ConfigurationSession
 from presentation.qt.connection_page import ConnectionPage
 from presentation.qt.device_discovery_panel import DeviceDiscoveryPanel
 
@@ -150,7 +151,12 @@ class ConnectionPageTestCase(unittest.TestCase):
             if config is not None
             else {"test_frequencies": [1.0], "instruments": {"power_supplies": {}}}
         )
-        connection = ConnectionPage(page, scanner_factory=scanner_factory)
+        session = ConfigurationSession(page)
+        connection = ConnectionPage(session, scanner_factory=scanner_factory)
+        # 与主窗口同一套装配：连接页只发出“连接仪器”的意图，面板回写仍归配置页。
+        connection.connect_requested.connect(page.request_connect)
+        page.discovery_message.connect(connection.log_message.emit)
+        session.attach_discovery_panel(connection.discovery_panel)
         # 连接页是整屏页面：按窗口尺寸布局，卡片网格才按真实宽度换行。
         connection.resize(1200, 900)
         page.show()

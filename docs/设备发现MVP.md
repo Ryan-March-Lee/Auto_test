@@ -185,8 +185,9 @@
 | `presentation/qt/device_cards.py` | 结果卡片：第一行只写加粗的缩写设备码（没有缩写码时退回完整设备码）、第二行仪器图片（按角色/型号在 `assets/instrument_pic/` 里选图、先找出仪器主体的包围盒再等比缩放进图片区，照片留白不参与缩放、不垫底板不描边）、最下面一行居中放大的仪器型号、查看/选中状态；卡片尺寸 `CARD_WIDTH` × `CARD_HEIGHT` 是唯一来源，“查找设备”按钮也按它取大小 |
 | `presentation/qt/device_discovery_panel.py` | 面板、扫描线程、卡片行（按宽度换行、每一行都居中，不满一行时也居中）、按身份预选、勾选结果校验与“返回”清空本次结果；结果区的三种状态（未查找时紧跟在扫描行下面的“查找设备”卡片按钮、扫描进行中、有结果），结果区不画外框（无边框、无底色） |
 | `presentation/qt/scan_card.py` | “查找设备”那张卡片按钮：按钮本体是与仪器卡片同大的自绘深色卡片（尺寸取自 `device_cards.CARD_WIDTH`/`CARD_HEIGHT`，渐变卡面、四角角标、卡面内发光），正中一行渐变标题、底边一行副标题，卡片内部有横向光带、扫描线与外飘粒子在动；悬停时卡面上的两行字在 0.6s 里淡到看不见（原 CSS 的 `::after` 霓虹光斑与 `::before` 紫→蓝底卡都不保留，卡片外面只有一层投影），移开鼠标一起倒放回去；要露在卡片外面的投影画在同级、不进布局、不吃鼠标的透明覆盖层上，所以按钮与卡片一样大；点击行为由面板接手 |
-| `presentation/qt/connection_page.py` | “仪表配置”整屏页面：大字号标题、标题下居中的扫描行、发现面板（不画外框的结果区，顶部是“查找设备”）、框外的“连接仪器”、“下一步/返回欢迎页”，把面板交给配置页登记 |
-| `presentation/qt/config_page.py` | 把选中设备写成仪器连接配置与 `device_bindings`（整批校验的最终边界；面板只是这里的展示端） |
+| `presentation/qt/connection_page.py` | “仪表配置”整屏页面：大字号标题、标题下居中的扫描行、发现面板（不画外框的结果区，顶部是“查找设备”）、框外的“连接仪器”、“下一步/返回欢迎页”；只依赖 `DeviceBindingPort` 读取只读配置视图并提交 `ApplyDeviceSelectionRequest`，不持有配置页实例 |
+| `presentation/qt/configuration_session.py` | 配置会话协调器：把连接页的窄接口转给配置页的视图模型与派生界面，登记发现面板、转发“连接仪器”意图，并把 `device_selection_finished` 的结果与文案回写到面板；只认 Protocol，不持有具体 QWidget 类型 |
+| `presentation/qt/config_page.py` | 把选中设备写成仪器连接配置与 `device_bindings`（整批校验的最终边界），发 `device_selection_finished` 交会话回写面板；配置页本身不持有发现面板 |
 | `presentation/qt/config_page_widgets.py` | 配置页固定操作栏的控件构建与布局，以及页面共用的数值框/下拉框工厂 |
 | `presentation/qt/config_power_section.py` | 配置页电源分区的控件构建：按电源键分页的通道参数标签页与电源分配设置表单（控件登记在页面上；条目、可选项与分配引用以显式类型传入） |
 | `presentation/qt/config_form_state.py` | 绑定 -> 仪器连接/启用状态的唯一写入点，电源分配校验 |

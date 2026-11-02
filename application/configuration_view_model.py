@@ -49,6 +49,7 @@ from application.device_binding import (
     ApplyDeviceSelectionRequest,
     DeviceBindingResult,
     DeviceBindingService,
+    legacy_binding_count as _count_legacy_bindings,
 )
 from application.dto.amplifier_inputs import PowerSweep
 from domain.measurement.values import Decibels, Frequency, PowerDbm
@@ -59,6 +60,7 @@ __all__ = [
     "ConfigurationBindingOutcome",
     "ConfigurationPageState",
     "ConfigurationTestParameters",
+    "ConfigurationViewState",
     "ConfigurationViewModel",
     "DEFAULT_RUN_STATUS",
     "SAVE_CONFIGURATION",
@@ -120,6 +122,32 @@ def _bindings_snapshot(value: Any) -> Mapping[str, Any]:
         )
     # 快照：调用方之后改写原字典（包括嵌套记录）不会改变视图模型持有的绑定。
     return _freeze(dict(value))
+
+
+def _configured_instrument_addresses(document: Mapping[str, Any]) -> tuple[str, ...]:
+    """读取配置编辑文档里已保存的仪器地址（扫描框在没有绑定时回退到它们）。
+
+    顺序与配置文档一致：信号源、频谱仪，随后是电源集合的声明顺序。只收非空字符串；
+    非对象段与非文本地址不参与回退，由配置校验负责报告。
+    """
+    instruments = document.get("instruments")
+    if not isinstance(instruments, Mapping):
+        return ()
+    entries: list[Any] = [
+        instruments.get("signal_generator"),
+        instruments.get("spectrum_analyzer"),
+    ]
+    supplies = instruments.get("power_supplies")
+    if isinstance(supplies, Mapping):
+        entries.extend(supplies.values())
+    addresses: list[str] = []
+    for item in entries:
+        if not isinstance(item, Mapping):
+            continue
+        address = item.get("address")
+        if isinstance(address, str) and address.strip():
+            addresses.append(address)
+    return tuple(addresses)
 
 
 def _without_issues(
@@ -269,6 +297,49 @@ class ConfigurationPageState:
 
 
 @dataclass(frozen=True)
+class ConfigurationViewState:
+    """连接页需要的只读配置视图（GUI 重构步骤 8）。
+
+    它是 :class:`ConfigurationViewModel` 对外提供的窄读取面：设备发现页只需要
+    “当前绑定集合”（填扫描框初值、标记旧绑定）、配置里已保存的仪器地址（没有绑定时
+    的网段回退）和“沿用已保存地址、未扫描确认”的旧绑定条数。页面据此渲染扫描框与
+    日志，不再读取另一个页面的 ``config`` / ``device_bindings`` 内部状态。
+
+    ``bindings`` 与 :class:`ConfigurationPageState` 一样是只读快照（嵌套容器也不可
+    改写）；``instrument_addresses`` 按配置文档中的出现顺序保留，空串与非文本地址
+    不会进入视图。
+    """
+
+    bindings: Mapping[str, Any] = field(default_factory=dict)
+    instrument_addresses: tuple[str, ...] = ()
+    legacy_binding_count: int = 0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "bindings", _bindings_snapshot(self.bindings))
+        addresses = tuple(self.instrument_addresses)
+        for index, address in enumerate(addresses):
+            if not isinstance(address, str):
+                raise TypeError(
+                    f"instrument_addresses[{index}] 必须是字符串，"
+                    f"收到 {type(address).__name__}"
+                )
+        object.__setattr__(self, "instrument_addresses", addresses)
+        count = self.legacy_binding_count
+        if isinstance(count, bool) or not isinstance(count, int):
+            raise TypeError(
+                "legacy_binding_count 必须是整数，"
+                f"收到 {type(count).__name__}"
+            )
+        if count < 0:
+            raise ValueError("legacy_binding_count 不能为负数")
+        object.__setattr__(self, "legacy_binding_count", count)
+
+    def bindings_snapshot(self) -> dict[str, Any]:
+        """输出绑定集合的可写副本；调用方不能通过返回值改写视图内部结构。"""
+        return _thaw(self.bindings)
+
+
+@dataclass(frozen=True)
 class ConfigurationBindingOutcome:
     """一次“应用设备选择”的结果：绑定服务的结构化结果 + 操作后的页面状态。
 
@@ -406,6 +477,19 @@ class ConfigurationViewModel:
     def dirty(self) -> bool:
         """当前配置文档与上次干净基线不同。"""
         return self._authoring_document() != self._clean_baseline
+
+    def view_state(self) -> ConfigurationViewState:
+        """返回连接页读取的只读配置视图（步骤 8）。
+
+        绑定取当前绑定快照；仪器地址与旧绑定条数来自当前编辑文档与绑定集合，因此页面
+        不需要再读配置字典。这个方法只读，不改变状态、不重置基线。
+        """
+        return ConfigurationViewState(
+            bindings=self._bindings,
+            instrument_addresses=_configured_instrument_addresses(self._document),
+            # 绑定结构的解释只在 application.device_binding，这里不另立一份遍历规则。
+            legacy_binding_count=_count_legacy_bindings(self._bindings),
+        )
 
     # ---- 动作 ---------------------------------------------------------------
 

@@ -43,17 +43,22 @@ __all__ = [
     "ApplyDeviceSelectionRequest",
     "DeviceBindingResult",
     "DeviceBindingService",
+    "LEGACY_BINDING_SOURCE",
     "POWER_SUPPLY_BINDINGS",
     "SelectedDevice",
     "SUPPLY_ID_SEPARATOR",
     "binding_device_key",
     "binding_identity_problem",
+    "legacy_binding_count",
     "supply_id_problem",
 ]
 
 # ``device_bindings`` 里的电源集合：键是 ``supply_id``（= 设备短标签），值是绑定记录。
 # 电源是同一类别下的多台设备，不能像信号源那样用角色键存放——否则第二台会覆盖第一台。
 POWER_SUPPLY_BINDINGS = "power_supplies"
+# 绑定记录的来源标记：地址来自已保存的配置、尚未被设备发现确认。表现层只做展示
+# （扫描框初值与“未扫描确认”提示），不另写一份字面量；写入规则仍只在本模块。
+LEGACY_BINDING_SOURCE = "legacy_config"
 # 电源引用会拼成 ``supply_id/CHx`` 交给 ``instrument.measurement_factory`` 路由，因此
 # ``supply_id`` 与注册表里的 ``label`` 受同一套约束：不能含空白和通道分隔符。
 SUPPLY_ID_SEPARATOR = "/"
@@ -591,6 +596,35 @@ def binding_identity_problem(record: Mapping[str, Any]) -> str | None:
     if full_code and full_code.casefold() != key_code:
         return f"设备身份与完整设备码不一致（{device_key} ≠ …{full_code}）"
     return None
+
+
+def legacy_binding_count(bindings: Any) -> int:
+    """统计“沿用已保存地址、未扫描确认”的旧绑定条数。
+
+    绑定结构只在本模块解释：当前结构是角色键 + ``power_supplies`` 集合，步骤 5 的过渡
+    结构还可能在顶层留下 ``PS1``..``PS4`` 槽位。两种结构都按记录里的 ``source`` 判定；
+    电源集合是嵌套的，单独遍历。这只是一个展示计数，不参与绑定写入或身份判定。
+    """
+    if not isinstance(bindings, Mapping):
+        return 0
+    count = 0
+    supplies = bindings.get(POWER_SUPPLY_BINDINGS)
+    if isinstance(supplies, Mapping):
+        count += sum(
+            1
+            for record in supplies.values()
+            if isinstance(record, Mapping)
+            and record.get("source") == LEGACY_BINDING_SOURCE
+        )
+    for key, record in bindings.items():
+        if key == POWER_SUPPLY_BINDINGS:
+            continue
+        if (
+            isinstance(record, Mapping)
+            and record.get("source") == LEGACY_BINDING_SOURCE
+        ):
+            count += 1
+    return count
 
 
 def _identity_parts(device_key: str) -> tuple[str, str] | None:

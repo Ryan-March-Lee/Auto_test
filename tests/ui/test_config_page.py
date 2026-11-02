@@ -330,8 +330,9 @@ class ConfigPageTests(unittest.TestCase):
     def test_instrument_connection_is_its_own_page(self):
         """仪表配置已独立成整屏页面：配置页只留“上一步”入口，不再有连接按钮。"""
         page = self.make_page()
-        # 面板由连接页创建后交给配置页登记；配置页自己不再建面板。
-        self.assertIsNone(page.discovery_panel)
+        # 面板只归连接页所有：配置页既不创建也不登记它。
+        self.assertFalse(hasattr(page, "discovery_panel"))
+        self.assertFalse(hasattr(page, "attach_discovery_panel"))
         steps = []
         page.connection_step_requested.connect(lambda: steps.append(True))
 

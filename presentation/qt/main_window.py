@@ -27,6 +27,7 @@ from infrastructure.logging.app_logging import get_logger, setup_logging
 from presentation.qt.application_coordinator import ApplicationCoordinator
 from presentation.qt.composition import build_device_scanner_factory, default_paths
 from presentation.qt.config_page import ConfigPage
+from presentation.qt.configuration_session import ConfigurationSession
 from presentation.qt.connection_dialog import ConnectionDialog
 from presentation.qt.connection_page import ConnectionPage
 from presentation.qt.run_history_page import build_run_history_page
@@ -177,14 +178,23 @@ class MainWindow(QMainWindow):
         self.view_stack.addWidget(self.workspace_page)
 
         # 仪表配置是欢迎页之后的整屏页面，不登记进标签栏：先选设备、连接，再配测试参数。
-        # 它只把设备绑定写进配置页，页面切换由本窗口负责。
+        # 连接页只依赖配置会话的窄接口，不持有配置页实例；面板回写与“连接仪器”的
+        # 校验入口都由窗口装配给会话/配置页。
+        self.configuration_session = ConfigurationSession(self.config_page)
         self.connection_page = ConnectionPage(
-            self.config_page,
+            self.configuration_session,
             scanner_factory=build_device_scanner_factory(self.paths),
         )
         self.connection_page.next_requested.connect(self._open_configuration_page)
         self.connection_page.return_welcome_requested.connect(self._return_to_welcome)
+        self.connection_page.connect_requested.connect(
+            self.configuration_session.request_connect
+        )
         self.connection_page.log_message.connect(self.add_log_message)
+        self.config_page.discovery_message.connect(self.connection_page.log_message.emit)
+        self.configuration_session.attach_discovery_panel(
+            self.connection_page.discovery_panel
+        )
         self.view_stack.insertWidget(1, self.connection_page)
 
         central_layout = QVBoxLayout(central_widget)

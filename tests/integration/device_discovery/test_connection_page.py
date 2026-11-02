@@ -20,8 +20,9 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
     def test_page_builds_the_discovery_panel(self):
         page = self.make_page()
         self.assertIsInstance(self.connection.discovery_panel, DeviceDiscoveryPanel)
-        # 面板由连接页交出、配置页登记：写绑定归配置页，展示归连接页。
-        self.assertIs(page.discovery_panel, self.connection.discovery_panel)
+        # 面板只归连接页所有：配置页不再登记或持有它，回写出配置会话完成。
+        self.assertFalse(hasattr(page, "discovery_panel"))
+        self.assertFalse(hasattr(page, "attach_discovery_panel"))
         self.assertTrue(hasattr(page, "apply_discovered_devices"))
 
     def test_the_connection_page_is_a_full_screen_step_before_the_configuration(self):

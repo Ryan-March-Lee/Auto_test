@@ -440,6 +440,40 @@ ViewModel 不导入 PySide6，不直接读写文件，不创建仪器，不弹 Q
 
 **工作范围控制**：只改页面接口和装配，不改变扫描视觉和卡片布局。
 
+**完成状态**：✅ 已完成。
+
+- 新增 `application.ports.device_binding.DeviceBindingPort`：连接页只依赖两个方法——
+  `view_state()` 读取只读 `ConfigurationViewState`，`apply_selection(request)` 提交
+  `ApplyDeviceSelectionRequest`；不读控件、不写文件、不定义绑定规则；
+- `application.configuration_view_model` 新增 `ConfigurationViewState` 与
+  `ConfigurationViewModel.view_state()`：只读绑定快照、配置文档里已保存的仪器地址与
+  “沿用旧配置、未扫描确认”的绑定条数。扫描框默认网段与旧绑定日志改读这份视图，
+  连接页不再读取配置页的 `config` / `device_bindings`；
+- 新增 `presentation.qt.configuration_session.ConfigurationSession`（presentation
+  controller）：把连接页的窄接口转给配置页的视图模型与派生界面（`view_state`、
+  `apply_selection`、面板登记、`request_connect`），由窗口装配；
+- `ConnectionPage` 构造函数改为接受 `binding_port`，不再接受 `ConfigPage` 实例；
+  “下一步”构造 `ApplyDeviceSelectionRequest` 后提交，只有结果 `ok` 才发
+  `next_requested`；“连接仪器”改为发 `connect_requested` 用户意图，窗口转给配置页
+  `request_connect` 校验；
+- `ConfigPage.apply_discovered_devices(assignments)` 保留为兼容入口（返回是否成功），
+  新增 `apply_device_selection(request)` 返回 `DeviceBindingResult`；面板登记、成功/
+  失败文案、电源标签页与分配选项的投影仍归配置页，行为与文案不变；
+- 新增 `tests/ui/test_connection_page_port.py`：用替身端口单独测试连接页（构造函数
+  不再需要配置页、读只读视图、提交命令 DTO、拒绝/空选择不跳页、连接按钮只发意图）；
+  `tests/test_configuration_view_model.py` 补 `ConfigurationViewState` 用例；
+  `tests/integration/device_discovery/support.py` 改为主窗口同款装配；
+- 正式 API 清单、领域词汇与模块归属同步登记。未改变扫描视觉、卡片布局、绑定结构与
+  保存格式。
+- 收尾复核（同一步骤内）：把 `legacy_config` 来源标记收敛为
+  `application.device_binding.LEGACY_BINDING_SOURCE` 唯一字面量，旧绑定计数改由
+  `application.device_binding.legacy_binding_count` 解释绑定结构，`ConfigurationViewState`
+  不再自己遍历；`ConfigPage` 不再持有发现面板，删除 `attach_discovery_panel`，改为
+  `device_selection_finished(result, message)` 交配置会话回写；`ConfigurationSession`
+  改为依赖 `ConfigurationBindingTarget` / `DiscoveryPanelPort` 两个 Protocol，不再以
+  `Any` 持有配置页；新增 `tests/ui/test_configuration_session.py` 与绑定来源常量/计数
+  用例，集成测试的装配与断言同步更新。
+
 ---
 
 ## 阶段四：收敛测量业务入口

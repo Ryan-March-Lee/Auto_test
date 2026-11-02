@@ -20,6 +20,7 @@ import copy
 from typing import Any, Mapping
 
 from application.device_binding import (
+    LEGACY_BINDING_SOURCE,
     POWER_SUPPLY_BINDINGS,
     binding_device_key,
     binding_identity_problem,
@@ -31,9 +32,10 @@ from domain.instruments.models import (
     canonical_role,
 )
 
-# 旧配置只有 ``instruments.<角色>.address``、没有绑定记录。迁移时用这个来源标记，
-# 表示“地址来自已保存的配置，尚未经过设备发现确认”，与 ``scan`` / ``simulated`` 分开。
-LEGACY_BINDING_SOURCE = "legacy_config"
+# 旧配置只有 ``instruments.<角色>.address``、没有绑定记录。迁移时用
+# ``LEGACY_BINDING_SOURCE`` 标记“地址来自已保存的配置，尚未经过设备发现确认”，与
+# ``scan`` / ``simulated`` 分开。字面量与写入语义都在 ``application.device_binding``；
+# 这里只再导出，方便同层模块与既有测试继续按原路径引用。
 
 
 def _record_copy(value: Any) -> dict | None:

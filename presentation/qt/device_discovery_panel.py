@@ -1147,7 +1147,7 @@ class DeviceDiscoveryPanel(QWidget):
         return assignments, problems
 
     def show_message(self, message: str) -> None:
-        """显示一次绑定写入的结果（由配置页回写，避免面板自己猜结果）。"""
+        """显示一次绑定写入的结果（由配置会话回写，避免面板自己猜结果）。"""
         if not self._closed:
             self._set_status(message)
 

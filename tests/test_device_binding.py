@@ -13,10 +13,12 @@ from application.device_binding import (
     ApplyDeviceSelectionRequest,
     DeviceBindingResult,
     DeviceBindingService,
+    LEGACY_BINDING_SOURCE,
     POWER_SUPPLY_BINDINGS,
     SelectedDevice,
     binding_device_key,
     binding_identity_problem,
+    legacy_binding_count,
     supply_id_problem,
 )
 from domain.instruments.models import DEVICE_ROLES, POWER_SUPPLY_ROLE
@@ -321,14 +323,23 @@ class PresentationDelegationTests(unittest.TestCase):
         cls.method = next(
             node
             for node in cls.page.body
-            if isinstance(node, ast.FunctionDef) and node.name == "apply_discovered_devices"
+            if isinstance(node, ast.FunctionDef) and node.name == "apply_device_selection"
         )
         cls.method_source = ast.get_source_segment(cls.source, cls.method)
 
     def test_page_submits_the_selection_to_the_view_model(self):
-        """步骤 6 起页面经视图模型提交勾选结果；请求 DTO 与服务调用都在 application。"""
+        """步骤 8 起页面经视图模型提交勾选结果；请求 DTO 与服务调用都在 application。"""
         self.assertIn("self.view_model.apply_device_selection(", self.method_source)
         self.assertNotIn("DeviceBindingService()", self.method_source)
+        # “下一步”的兼容入口只把字典列表收敛成命令 DTO，再转给上面的写入方法。
+        compat = next(
+            node
+            for node in self.page.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "apply_discovered_devices"
+        )
+        compat_source = ast.get_source_segment(self.source, compat)
+        self.assertIn("self.apply_device_selection(request)", compat_source)
 
     def test_page_has_no_binding_validation_loop_left(self):
         for fragment in (
@@ -355,6 +366,45 @@ class PresentationDelegationTests(unittest.TestCase):
             "ApplyDeviceSelectionRequest.from_assignments(", view_model_source
         )
         self.assertIn("self._binding_service.apply(", view_model_source)
+
+
+class BindingSourceConstantTests(unittest.TestCase):
+    """绑定来源标记只有一份定义：表现层只再导出，不另写字面量。"""
+
+    def test_presentation_reexports_the_application_marker(self):
+        from presentation.qt.config_form_bindings import (
+            LEGACY_BINDING_SOURCE as presentation_source,
+        )
+
+        self.assertIs(presentation_source, LEGACY_BINDING_SOURCE)
+
+    def test_only_the_binding_module_declares_the_literal(self):
+        canonical = ROOT / "application" / "device_binding.py"
+        literal = f'"{LEGACY_BINDING_SOURCE}"'
+        for package in ("application", "presentation"):
+            for path in (ROOT / package).rglob("*.py"):
+                if path == canonical:
+                    continue
+                with self.subTest(path=path.relative_to(ROOT).as_posix()):
+                    self.assertNotIn(
+                        literal, path.read_text(encoding="utf-8-sig")
+                    )
+
+    def test_legacy_binding_count_reads_current_and_legacy_structures(self):
+        current = {
+            "signal_generator": {"source": LEGACY_BINDING_SOURCE},
+            "spectrum_analyzer": {"source": "scan"},
+            "power_supplies": {
+                "DP8B1519": {"source": LEGACY_BINDING_SOURCE},
+                "DP8B1520": {"source": "scan"},
+            },
+        }
+        self.assertEqual(legacy_binding_count(current), 2)
+        self.assertEqual(
+            legacy_binding_count({"PS1": {"source": LEGACY_BINDING_SOURCE}}), 1
+        )
+        self.assertEqual(legacy_binding_count({"signal_generator": "not-a-record"}), 0)
+        self.assertEqual(legacy_binding_count(None), 0)
 
 
 class RequestDtoTests(unittest.TestCase):

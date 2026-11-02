@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .measurement_controller_contract import MeasurementCommand
+from .measurement_start_facade import MeasurementStartFacade, StartMeasurementRequest
 from application.dto import DriverPowerMappingMeasurementResult
 from .archival_page import ArchivalPageMixin
 from .measurement_state import (
@@ -25,7 +25,6 @@ from .measurement_state import (
     MeasurementKind,
 )
 from .pages import PageControllerBindingMixin
-from .run_contract import is_valid_prepared_run
 from .realtime_buffer import RealtimeMeasurementBuffer
 from .realtime_page import RealtimePageMixin
 from .theme import set_button_variant
@@ -53,8 +52,10 @@ class DriverMappingPage(
     ) -> None:
         PageControllerBindingMixin.__init__(self)
         QWidget.__init__(self)
-        self._config_path_provider = config_path_provider
         self._run_provider = run_provider
+        self._start_facade = MeasurementStartFacade(
+            config_path_provider=config_path_provider
+        )
         self._connection_dialog_factory = connection_dialog_factory
         self._plot_widget_factory = plot_widget_factory
         self._realtime_data_callback = realtime_data_callback or (lambda _data: None)
@@ -159,29 +160,28 @@ class DriverMappingPage(
         self._connect_signal(signals.finished, self._on_finished)
 
     def start_measurement(self) -> None:
-        controller = self.controller
-        if controller is None:
-            return
-        if getattr(controller.state, "is_active", False):
-            self._log_callback("已有测量正在运行")
-            return
-        # 只接受配置阶段创建（或按 run_id 重新打开）的当前运行契约。
-        run = self._run_provider()
-        if not is_valid_prepared_run(run):
-            self._error_callback("正式驱动映射测量必须先创建或按 run_id 重新加载运行")
-            return
-        dialog = self._connection_dialog_factory("driver_mapping", self)
-        if dialog.exec() != QDialog.Accepted:
+        # controller 只在 prepare 时读取一次：决策携带检查过的那个对象，接线对话框
+        # 的嵌套事件循环返回后不会重新读取 self.controller。
+        decision = self._start_facade.prepare(
+            lambda: StartMeasurementRequest(
+                MeasurementKind.DRIVER_MAPPING, self._run_provider()
+            ),
+            controller=self.controller,
+            confirm_connection=self._confirm_start_connection,
+        )
+        if not decision.ready:
+            decision.report(self._log_callback, self._error_callback)
             return
         self._log_callback("驱动映射现场接线已确认")
         self.reset_realtime_data()
         self._log_callback("开始驱动功放映射...")
         self._archival_try_start(
-            lambda: controller.start_driver_mapping(
-                MeasurementCommand(self._config_path_provider(), prepared_run=run)
-            ),
+            lambda: decision.launch(),
             "驱动映射测试未能启动，未开始测量",
         )
+
+    def _confirm_start_connection(self) -> bool:
+        return self._connection_dialog_factory("driver_mapping", self).exec() == QDialog.Accepted
 
     def stop_measurement(self) -> None:
         if self.controller is not None:

@@ -504,6 +504,39 @@ ViewModel 不导入 PySide6，不直接读写文件，不创建仪器，不弹 Q
 
 **工作范围控制**：先只抽取启动流程，不改实时图和结果表。
 
+**完成状态**：✅ 已完成。新增 `presentation.qt.measurement_start_facade`：
+
+- `StartMeasurementRequest` 只装页面在点击时读取的“测量类型 + 当前 `PreparedRun`”；
+  `MeasurementStartFacade.prepare()` 依次检查 controller 是否绑定、是否已有测量运行、当前
+  运行是否满足正式契约，再调用页面传入的接线确认回调，最后构造唯一的
+  `MeasurementCommand`；`StartMeasurementDecision` 携带就绪命令（连同检查过的
+  controller）或稳定状态与用户文案，并在构造期按状态校验字段组合（就绪 = 启动意图 +
+  命令 + controller；运行契约不满足 = 启动意图 + controller + 文案；接线取消 = 启动
+  意图 + controller；忙碌 = controller + 文案；未绑定 controller = 空），未就绪时
+  `report()` 统一映射“忙碌记日志 / 运行契约问题走错误通道”；
+- 运行契约判据仍只来自 `presentation.qt.run_contract`（→
+  `application.run_service.has_run_contract`），facade 不复制判据；`launch()` 按
+  `measurement_controller_contract.START_METHODS` 分发给决策里那个 controller，页面把
+  启动包在既有 `_archival_try_start` 中，因此“等待归档”仍只在 controller 接受之后出现；
+- 三个测量页面的 `start_measurement()` 改为“读取当前运行 → 提交启动意图 → 页面专属
+  重置与日志 → 启动 controller”，不再导入或构造 `MeasurementCommand`，也不再直接调用
+  `is_valid_prepared_run`；接线确认回调仍由页面提供（主功放先刷新驱动模式说明），
+  facade 不创建 Qt 对话框；
+- 线损的“第二步继续”、各页接线图、日志顺序、归档状态、结果表与错误文案全部保持原样；
+- 前置检查与提交绑定同一个 controller：`prepare()` 把检查过的 controller 收进决策，
+  `decision.launch()` 只提交给这一个对象；页面只在调用 `prepare()` 时读取一次
+  `self.controller`，因此接线确认（模态对话框、嵌套事件循环）期间重新绑定 controller
+  也不会把检查结果用到另一个 controller 上（决策不携带 Qt 依赖，`controller` 只按
+  `START_METHODS` 调用启动方法）；
+- 新增 `tests/ui/test_measurement_start_facade.py`（纯 Python，不启动 `QApplication`）：
+  三类测量都构造同一命令并按类型分发、决策只提交给检查过的 controller（之后绑定的
+  controller 收不到调用）、决策状态矩阵（每种状态允许与禁止的字段组合）、无 controller、
+  已有测量运行、无运行/旧运行（逐字文案）、拒绝接线、controller 拒绝启动、调用方契约
+  错误，以及“页面不再直接构造命令、线损保留第二步、facade 不导入 Qt”的静态边界；三个页面各补一条页面级用例，证明接线
+  对话框期间重绑 controller 时启动仍提交给完成前置检查的那一个，并补驱动映射页
+  “controller 拒绝启动不留下等待归档外观”的归档用例；现有 controller 与集成测试未改。
+- 正式 API 清单同步登记新内部模块。未改变页面布局、接线图、归档或结果展示。
+
 ### 步骤 10：抽取测量页面公共状态绑定
 
 **目的**：减少按钮启用状态、停止、错误和完成处理的重复代码。

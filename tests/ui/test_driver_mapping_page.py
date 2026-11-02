@@ -139,6 +139,24 @@ class DriverMappingPageTests(unittest.TestCase):
         self.page.start_measurement()
         self.assertEqual(self.controller.calls, [])
 
+    def test_start_submits_to_the_controller_checked_before_the_dialog(self):
+        checked = self.controller
+        replacement = Controller()
+
+        def factory(*_args):
+            # 模态接线对话框运行期间 controller 可能被重新绑定：启动必须继续
+            # 提交给完成前置检查的那一个，而不是事后重新读取的 controller。
+            self.page.bind_controller(replacement)
+            return self.dialog
+
+        self.page._connection_dialog_factory = factory
+
+        self.page.start_measurement()
+
+        self.assertEqual(len(checked.calls), 1)
+        self.assertEqual(checked.calls[0][0], "start")
+        self.assertEqual(replacement.calls, [])
+
     def test_power_mapping_is_converted_to_plot_display_model(self):
         self.controller.signals.data_update.emit({
             "frequency": "1.0", "sweep_data": {"input_power_sg": [-10], "output_power_driver": [2]},

@@ -493,11 +493,13 @@ class DriverMappingPageArchivalTests(unittest.TestCase):
     def setUp(self):
         self.controller = Controller()
         self.locations = []
+        self.logs = []
         self.page = DriverMappingPage(
             config_path_provider=lambda: "config.json",
             run_provider=lambda: _run(),
             connection_dialog_factory=lambda *_: Dialog(),
             plot_widget_factory=lambda parent: Plot(parent),
+            log_callback=self.logs.append,
             error_callback=lambda _message: None,
             archival_location_provider=_location_provider(self.locations),
         )
@@ -521,6 +523,15 @@ class DriverMappingPageArchivalTests(unittest.TestCase):
         self.controller.signals.error.emit("扫描失败")
         self.assertIn("测试异常", self.state.headline())
         self.assertIn("扫描失败", self.state.detail())
+
+    def test_start_rejected_by_controller_leaves_no_waiting_appearance(self):
+        self.controller.start_result = False
+
+        self.page.start_measurement()
+
+        self.assertIn("尚未执行归档", self.state.headline())
+        self.assertFalse(self.page._archival_pending)
+        self.assertIn("驱动映射测试未能启动，未开始测量", self.logs)
 
     def test_progress_100_announces_saving_until_the_outcome_arrives(self):
         self.page.start_measurement()

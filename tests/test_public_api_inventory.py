@@ -475,6 +475,7 @@ INTERNAL_MODULES = {
     "presentation.qt.run_history_page": "历史运行与结果管理页（运行/阶段/产物状态、失败产物重新生成、导出副本）",
     "presentation.qt.history_view_model": "历史查看只读视图模型（结果列表、运行摘要、选中项、频率浏览）",
     "presentation.qt.input_controls": "通用输入控件类（只提供输入行为；页面共用的构建工厂在 config_page_widgets）",
+    "presentation.qt.measurement_start_facade": "测量启动 Facade（GUI 重构步骤 9）：三个测量页面共享的启动前置检查（controller、已有测量、正式运行契约）、接线确认编排与唯一的 MeasurementCommand 构造；决策携带检查过的 controller 并按测量类型分发启动，运行契约判据仍委托 presentation.qt.run_contract，facade 不导入 Qt、不创建对话框或 worker，线损第二步继续与各页结果展示仍是页面专属行为",
     "presentation.qt.measurement_state": "测量状态对象",
     "presentation.qt.measurement_worker_factories": "测量 worker 工厂",
     "presentation.qt.realtime_buffer": "实时数据缓冲",

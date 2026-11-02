@@ -21,12 +21,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .measurement_controller_contract import MeasurementCommand
 from application.dto import AmplifierMeasurementResult
 from .archival_page import ArchivalPageMixin
+from .measurement_start_facade import MeasurementStartFacade, StartMeasurementRequest
 from .measurement_state import AmplifierPageResultState, MeasurementKind
 from .pages import PageControllerBindingMixin
-from .run_contract import is_valid_prepared_run
 from .realtime_buffer import RealtimeMeasurementBuffer
 from .realtime_page import RealtimePageMixin
 from .theme import set_button_variant
@@ -55,8 +54,10 @@ class AmplifierPage(
     ) -> None:
         PageControllerBindingMixin.__init__(self)
         QWidget.__init__(self)
-        self._config_path_provider = config_path_provider
         self._run_provider = run_provider
+        self._start_facade = MeasurementStartFacade(
+            config_path_provider=config_path_provider
+        )
         self._driver_mode_provider = driver_mode_provider
         self._connection_dialog_factory = connection_dialog_factory
         self._plot_widget_factory = plot_widget_factory
@@ -190,21 +191,17 @@ class AmplifierPage(
         self.instruction_text.setHtml(text)
 
     def start_measurement(self) -> None:
-        controller = self.controller
-        if controller is None:
-            return
-        if getattr(controller.state, "is_active", False):
-            self._log_callback("已有测量正在运行")
-            return
-        # 只接受配置阶段创建（或按 run_id 重新打开）的当前运行契约；主功放参数已在
-        # 该运行的冻结快照中，不再从 GUI 重新保存配置。
-        run = self._run_provider()
-        if not is_valid_prepared_run(run):
-            self._error_callback("正式主功放测量必须先创建或按 run_id 重新加载运行")
-            return
-        self.update_instruction_text()
-        diagram = "amplifier_test" if self._driver_mode_provider() else "amplifier_test_no_driver"
-        if self._connection_dialog_factory(diagram, self).exec() != QDialog.Accepted:
+        # controller 只在 prepare 时读取一次：决策携带检查过的那个对象，接线对话框
+        # 的嵌套事件循环返回后不会重新读取 self.controller。
+        decision = self._start_facade.prepare(
+            lambda: StartMeasurementRequest(
+                MeasurementKind.AMPLIFIER, self._run_provider()
+            ),
+            controller=self.controller,
+            confirm_connection=self._confirm_start_connection,
+        )
+        if not decision.ready:
+            decision.report(self._log_callback, self._error_callback)
             return
         self._log_callback("主功放现场接线已确认")
         self.reset_realtime_data()
@@ -213,11 +210,19 @@ class AmplifierPage(
         self._log_callback("开始主功放测试...")
         # “等待归档”只在 controller 接受启动之后出现。
         self._archival_try_start(
-            lambda: controller.start_amplifier(
-                MeasurementCommand(self._config_path_provider(), prepared_run=run)
-            ),
+            lambda: decision.launch(),
             "主功放测试未能启动，未开始测量",
         )
+
+    def _confirm_start_connection(self) -> bool:
+        """按驱动模式刷新说明并显示连接图，接受才算完成接线确认。"""
+        self.update_instruction_text()
+        diagram = (
+            "amplifier_test"
+            if self._driver_mode_provider()
+            else "amplifier_test_no_driver"
+        )
+        return self._connection_dialog_factory(diagram, self).exec() == QDialog.Accepted
 
     def stop_measurement(self) -> None:
         if self.controller is not None:

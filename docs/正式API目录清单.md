@@ -290,6 +290,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `presentation.qt.run_history_page` | 历史运行与结果管理页（只构造 `ExportRequest`，按 `ResultExportServicePort` 注入导出用例；运行/阶段/产物状态来自 `HistoryViewModel`，失败产物重新生成走 `RunHistoryServicePort`；用户文案由页面生成） |
 | `presentation.qt.history_view_model` | 历史查看只读视图模型：结果列表、运行摘要、选中项、已加载结果与频率浏览（无 Qt、无路径） |
 | `presentation.qt.input_controls` | 通用输入控件类（只提供输入行为；页面共用的构建工厂在 `config_page_widgets`） |
+| `presentation.qt.measurement_start_facade` | 测量启动 Facade（GUI 重构步骤 9）：三个测量页面共享的启动前置检查（是否绑定 controller、是否已有测量运行、当前运行是否满足正式运行契约）、接线确认编排与唯一的 `MeasurementCommand` 构造；运行契约判据仍只委托 `presentation.qt.run_contract`，facade 不导入 Qt、不创建对话框或 worker。线损的“第二步继续”、各页接线图、日志、归档与结果展示仍是页面专属行为 |
 | `presentation.qt.measurement_state` | 测量状态对象 |
 | `presentation.qt.measurement_worker_factories` | 测量 worker 工厂 |
 | `presentation.qt.realtime_buffer` | 实时数据缓冲 |

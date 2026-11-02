@@ -1,6 +1,10 @@
 import ast
+import collections.abc
+import re
 import unittest
+from dataclasses import fields
 from pathlib import Path
+from typing import get_origin, get_type_hints
 
 from tests.test_architecture_dependencies import _worker_construction_violations
 
@@ -23,6 +27,118 @@ COMPOSITION_ROOT = "composition.py"
 CROSS_CUTTING_INFRASTRUCTURE = "infrastructure.logging"
 # UI 测试只覆盖表现层与 DTO/端口，装配真实后端的场景属于 tests/integration。
 BACKEND_IMPLEMENTATION_ROOTS = HARDWARE_ROOTS | {"app", "infrastructure"}
+
+# 步骤 14：配置 authoring、设备绑定与 domain 校验的唯一实现留在 application/domain。
+# 门禁按模块族判定：新增 ``application.configuration_*`` 或 ``domain.configuration.*``
+# 模块会自动纳入，不依赖手工维护的模块清单。存量依赖按“文件 -> 模块 -> 名称”显式登记。
+CONFIGURATION_BUSINESS_MODULE_PREFIXES = (
+    "application.configuration_",
+    "domain.configuration.",
+)
+CONFIGURATION_BUSINESS_MODULE_NAMES = frozenset(
+    {"application.device_binding", "domain.configuration"}
+)
+# 页面可以消费的配置边界：面向页面的 ViewModel/facade 与结构化结果值对象。
+# 它们只表达“结果与状态”，规则本身仍在 application/domain 的实现模块里。
+CONFIGURATION_BOUNDARY_MODULES = frozenset(
+    {
+        "application.configuration_editing",
+        "application.configuration_view_model",
+        "domain.configuration.types",
+    }
+)
+# ``import application.configuration_authoring`` 或 ``from application import
+# configuration_authoring`` 没有具体名称可登记，用这个标记替代名称。
+WHOLE_MODULE_IMPORT = "<module>"
+# 这份基线是重构完成时的现状，不是允许继续扩张的白名单：
+# - 新增文件、模块或导入名称都会让门禁失败；
+# - 删除依赖后必须同步删除对应条目（精确匹配，不接受“只加不减”的静默变化）；
+# - 确需新增时必须先改 docs/GUI改动分层规则.md，说明为什么规则不能留在 application/domain。
+CONFIGURATION_BUSINESS_IMPORT_BASELINE = {
+    "application_coordinator.py": {
+        "application.configuration_authoring": {
+            "ConfigurationAuthoringService",
+            "ConfigurationEditingDocument",
+        },
+    },
+    "config_form_bindings.py": {
+        "application.device_binding": {
+            "LEGACY_BINDING_SOURCE",
+            "POWER_SUPPLY_BINDINGS",
+            "binding_device_key",
+            "binding_identity_problem",
+            "supply_id_problem",
+        },
+    },
+    "config_form_state.py": {
+        "application.configuration_authoring": {
+            "ConfigurationAuthoringService",
+            "ConfigurationEditingDocument",
+        },
+        "domain.configuration.rules": {"POWER_CHANNEL_ROLES"},
+    },
+    "config_page.py": {
+        "application.device_binding": {"ApplyDeviceSelectionRequest"},
+    },
+    "config_power_section.py": {
+        "application.configuration_authoring": {"DUT_CHANNEL_ROLES"},
+    },
+    "config_projection.py": {
+        "application.configuration_authoring": {"DUT_CHANNEL_ROLES"},
+        "domain.configuration.models": {"resolve_driver_power_source"},
+        "domain.configuration.rules": {
+            "POWER_CHANNEL_ROLES",
+            "assignment_supply_id",
+        },
+    },
+    "configuration_session.py": {
+        "application.device_binding": {
+            "ApplyDeviceSelectionRequest",
+            "DeviceBindingResult",
+        },
+    },
+    "connection_page.py": {
+        "application.device_binding": {"ApplyDeviceSelectionRequest"},
+    },
+}
+
+# 已登记的用户可见页面模块。只有页面注册表（pages.py）与窗口装配根（main_window.py）
+# 可以导入页面类型；其他页面必须通过窄接口/端口拿依赖，不能持有另一个页面实例。
+REGISTERED_PAGE_MODULES = frozenset(
+    {
+        "config_page",
+        "connection_page",
+        "cable_loss_page",
+        "driver_mapping_page",
+        "amplifier_page",
+        "visualization_page",
+        "run_history_page",
+        "welcome_page",
+    }
+)
+PAGE_ASSEMBLY_PATHS = frozenset({"main_window.py", "pages.py"})
+
+# 页面构造的唯一上下文。新增页面动作应经 ViewModel/Application facade 与页面自己的
+# 一个信号完成，不得把新回调塞进 PageContext；确需调整契约时先更新分层规则文档。
+PAGE_CONTEXT_FIELDS = (
+    "controller",
+    "config_path_provider",
+    "run_provider",
+    "driver_mode_provider",
+    "connection_dialog_factory",
+    "plot_widget_factory",
+    "log_callback",
+    "progress_callback",
+    "error_callback",
+    "archival_location_provider",
+    "archival_run_id_provider",
+    "driver_realtime_data_callback",
+    "amplifier_realtime_data_callback",
+    "clear_realtime_callback",
+    "build_configuration",
+    "build_visualization",
+    "build_run_history",
+)
 
 
 def _tree(path):
@@ -48,6 +164,215 @@ def _imported_roots(tree):
         elif isinstance(node, ast.ImportFrom) and node.module:
             roots.add(node.module.split(".")[0])
     return roots
+
+
+def _is_configuration_business_module(module):
+    """判断模块是否是配置业务实现（页面不得直接依赖）。"""
+    if not module:
+        return False
+    for boundary in CONFIGURATION_BOUNDARY_MODULES:
+        if module == boundary or module.startswith(boundary + "."):
+            return False
+    for name in CONFIGURATION_BUSINESS_MODULE_NAMES:
+        if module == name or module.startswith(name + "."):
+            return True
+    return any(
+        module.startswith(prefix) for prefix in CONFIGURATION_BUSINESS_MODULE_PREFIXES
+    )
+
+
+def _module_file(module):
+    """按仓库布局判断一个点分名字是否是模块，避免把类名误当成子模块。"""
+    base = ROOT.joinpath(*module.split("."))
+    package_init = base / "__init__.py"
+    if package_init.is_file():
+        return package_init
+    candidate = base.with_suffix(".py")
+    return candidate if candidate.is_file() else None
+
+
+def _literal_import_argument(node):
+    """取出 ``import_module("x")`` / ``__import__("x")`` 的字面量模块名。"""
+    if not isinstance(node, ast.Call) or not node.args:
+        return None
+    function = node.func
+    if isinstance(function, ast.Name):
+        name = function.id
+    elif isinstance(function, ast.Attribute):
+        name = function.attr
+    else:
+        return None
+    if name not in {"import_module", "__import__"}:
+        return None
+    first = node.args[0]
+    if isinstance(first, ast.Constant) and isinstance(first.value, str):
+        return first.value
+    return None
+
+
+def _configuration_business_imports_in_tree(tree):
+    """返回语法树中从配置业务实现导入的名称：``{模块: {名称}}``。
+
+    ``import 模块``、``from 包 import 模块`` 与含字面量模块名的
+    ``importlib.import_module(...)`` 没有可登记的具体名称，记为
+    ``WHOLE_MODULE_IMPORT``，同样必须显式登记才能通过。
+    """
+    found = {}
+
+    def record(module, names=None):
+        found.setdefault(module, set()).update(names or {WHOLE_MODULE_IMPORT})
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if _is_configuration_business_module(alias.name):
+                    record(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                # 相对导入只可能指向 presentation.qt 内部；配置业务实现都是绝对包。
+                continue
+            module = node.module or ""
+            named = set()
+            for alias in node.names:
+                full = f"{module}.{alias.name}" if module else alias.name
+                if _module_file(full) and _is_configuration_business_module(full):
+                    # ``from domain.configuration import rules`` 导入的是子模块本身。
+                    record(full)
+                elif _is_configuration_business_module(module):
+                    named.add(alias.name)
+            if named:
+                record(module, named)
+        elif isinstance(node, ast.Call):
+            module = _literal_import_argument(node)
+            if module and _is_configuration_business_module(module):
+                record(module)
+    return found
+
+
+def _configuration_business_imports(path):
+    """返回 Qt 模块从配置业务实现导入的名称：``{模块: {名称}}``。"""
+    return _configuration_business_imports_in_tree(_tree(path))
+
+
+def _module_relative_path(path):
+    """返回相对 Qt 根目录的 POSIX 路径，例如 ``ui/pages.py``。"""
+    return path.relative_to(QT_ROOT).as_posix()
+
+
+def _is_page_assembly_module(path):
+    """只有 Qt 根目录下的页面注册表与窗口装配根可以导入页面类型。
+
+    按相对路径而不是文件名判定：子目录里的同名模块不继承装配根豁免。
+    """
+    try:
+        return _module_relative_path(path) in PAGE_ASSEMBLY_PATHS
+    except ValueError:
+        return False
+
+
+def _declared_page_classes_in_tree(tree):
+    """返回模块里按约定声明的页面类名（``*Page`` 或显式继承 ``BasePage``）。"""
+    found = set()
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        bases = {ast.unparse(base).split(".")[-1] for base in node.bases}
+        if node.name.endswith("Page") or "BasePage" in bases:
+            found.add(node.name)
+    return found
+
+
+def _declared_page_modules():
+    """扫描全部 Qt 模块，返回 ``{模块路径: {页面类名}}``。
+
+    页面模块不局限于 ``*_page.py``：页面类换个文件名也不能绕过页面导入门禁。
+    """
+    declared = {}
+    for path in sorted(QT_ROOT.rglob("*.py")):
+        if _is_page_assembly_module(path):
+            continue
+        classes = _declared_page_classes_in_tree(_tree(path))
+        if classes:
+            declared[path] = classes
+    return declared
+
+
+_PAGE_PARAMETER_ANNOTATION = re.compile(r"(?:^|[^A-Za-z0-9_])[A-Za-z0-9_]*Page\b")
+
+
+def _page_constructor_violations(page_class, page_names):
+    """页面构造函数不得吞入任意依赖，也不得收下另一个页面实例。"""
+    violations = []
+    names = set(page_names)
+    for node in page_class.body:
+        if not isinstance(node, ast.FunctionDef) or node.name != "__init__":
+            continue
+        arguments = node.args
+        if arguments.vararg or arguments.kwarg:
+            violations.append(
+                f"{page_class.name}.__init__ 接受 *args/**kwargs，无法约束窄依赖"
+            )
+        positional = [*arguments.posonlyargs, *arguments.args]
+        positional_defaults = [None] * (
+            len(positional) - len(arguments.defaults)
+        ) + list(arguments.defaults)
+        parameters = list(zip(positional, positional_defaults)) + list(
+            zip(arguments.kwonlyargs, arguments.kw_defaults)
+        )
+        for argument, default in parameters:
+            if argument.arg == "self":
+                continue
+            lowered = argument.arg.lower()
+            if re.fullmatch(r"(?:.*_)?page", lowered):
+                violations.append(
+                    f"{page_class.name}.__init__ 参数 {argument.arg} 看起来是另一个页面"
+                )
+            annotations = ast.unparse(argument.annotation) if argument.annotation else ""
+            values = [annotations]
+            if default is not None:
+                values.append(ast.unparse(default))
+            for text in values:
+                if not text:
+                    continue
+                if _PAGE_PARAMETER_ANNOTATION.search(text) or any(
+                    re.search(rf"\b{re.escape(name)}\b", text) for name in names
+                ):
+                    violations.append(
+                        f"{page_class.name}.__init__ 参数 {argument.arg} 依赖页面类型: "
+                        f"{text}"
+                    )
+                    break
+    return violations
+
+
+
+def _imported_page_modules(tree):
+    """返回模块导入的已登记页面模块，例如 ``presentation.qt.config_page``。"""
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if node.level == 0:
+                base = module
+            elif node.level == 1:
+                base = f"presentation.qt.{module}" if module else "presentation.qt"
+            elif node.level == 2:
+                base = f"presentation.{module}" if module else "presentation"
+            else:
+                continue
+            if not base:
+                continue
+            for alias in node.names:
+                imported.add(f"{base}.{alias.name}")
+    found = set()
+    for module in imported:
+        parts = module.split(".")
+        if len(parts) >= 3 and parts[:2] == ["presentation", "qt"]:
+            if parts[2] in REGISTERED_PAGE_MODULES:
+                found.add(".".join(parts[:3]))
+    return found
 
 
 class PresentationBoundaryTests(unittest.TestCase):
@@ -251,6 +576,208 @@ class QtMigrationResidueTests(unittest.TestCase):
             [],
             "生产 Qt 代码不得强杀线程: " + ", ".join(violations),
         )
+
+
+class LongTermChangeBoundaryTests(unittest.TestCase):
+    """步骤 14：重构完成后的长期改动规则。
+
+    这里冻结的不是页面外观，而是三件事：配置业务规则只能由 application/domain 实现；
+    页面之间只能通过窄接口协作；页面构造上下文不得被新动作持续扩张。
+    """
+
+    def test_configuration_business_import_baseline_is_exact(self):
+        actual = {}
+        for path in sorted(QT_ROOT.rglob("*.py")):
+            imports = _configuration_business_imports(path)
+            if imports:
+                actual[_module_relative_path(path)] = imports
+        declared = {
+            file: {module: set(names) for module, names in modules.items()}
+            for file, modules in CONFIGURATION_BUSINESS_IMPORT_BASELINE.items()
+        }
+
+        added = []
+        removed = []
+        for file in sorted(set(actual) | set(declared)):
+            actual_modules = actual.get(file, {})
+            declared_modules = declared.get(file, {})
+            for module in sorted(set(actual_modules) | set(declared_modules)):
+                new_names = actual_modules.get(module, set()) - declared_modules.get(
+                    module, set()
+                )
+                stale_names = declared_modules.get(module, set()) - actual_modules.get(
+                    module, set()
+                )
+                if new_names:
+                    added.append(f"{file} imports {module}: {sorted(new_names)}")
+                if stale_names:
+                    removed.append(
+                        f"{file} no longer imports {module}: {sorted(stale_names)}"
+                    )
+
+        self.assertEqual(
+            added,
+            [],
+            "Qt 不得新增配置业务实现（application.configuration_* / "
+            "domain.configuration.* / device_binding）的依赖；规则应留在 "
+            "application/domain，页面只消费 ViewModel、DTO 与结果: " + "; ".join(added),
+        )
+        self.assertEqual(
+            removed,
+            [],
+            "配置业务导入基线必须与代码精确一致；删除依赖后同步删除登记条目: "
+            + "; ".join(removed),
+        )
+
+    def test_only_the_page_registry_and_window_assemble_page_types(self):
+        """页面不持有另一个页面实例：跨页协作走端口、ViewModel 或窗口转发的信号。"""
+        violations = []
+        for path in sorted(QT_ROOT.rglob("*.py")):
+            if _is_page_assembly_module(path):
+                continue
+            imported = _imported_page_modules(_tree(path))
+            if imported:
+                violations.append(
+                    f"{path.relative_to(ROOT)} imports {sorted(imported)}"
+                )
+        self.assertEqual(
+            violations,
+            [],
+            "只有 Qt 根目录的 pages.py 与 main_window.py 可以导入页面类型；其它模块"
+            "必须使用窄依赖接口，而不是直接持有另一个页面: " + "; ".join(violations),
+        )
+
+    def test_page_assembly_exemption_is_path_exact(self):
+        """装配根豁免只覆盖 Qt 根目录的两个模块，不按文件名扩散到子目录。"""
+        self.assertTrue(_is_page_assembly_module(QT_ROOT / "pages.py"))
+        self.assertTrue(_is_page_assembly_module(QT_ROOT / "main_window.py"))
+        self.assertFalse(_is_page_assembly_module(QT_ROOT / "ui" / "pages.py"))
+        self.assertFalse(_is_page_assembly_module(QT_ROOT / "nested" / "main_window.py"))
+
+    def test_configuration_import_scan_detects_new_import_forms(self):
+        """门禁本身要能识别模块族、包内模块、具名导入与字面量动态导入。"""
+        tree = ast.parse(
+            "import application.configuration_authoring\n"
+            "from application import device_binding\n"
+            "from domain.configuration import rules\n"
+            "from application.device_binding import DeviceBindingService\n"
+            "import application.configuration_draft\n"
+            "from importlib import import_module\n"
+            "import_module('domain.configuration.custom_rules')\n"
+            "from application.configuration_view_model import ConfigurationViewModel\n"
+        )
+        self.assertEqual(
+            _configuration_business_imports_in_tree(tree),
+            {
+                "application.configuration_authoring": {WHOLE_MODULE_IMPORT},
+                "application.device_binding": {
+                    WHOLE_MODULE_IMPORT,
+                    "DeviceBindingService",
+                },
+                "domain.configuration.rules": {WHOLE_MODULE_IMPORT},
+                "application.configuration_draft": {WHOLE_MODULE_IMPORT},
+                "domain.configuration.custom_rules": {WHOLE_MODULE_IMPORT},
+            },
+        )
+
+    def test_page_import_scan_detects_relative_and_absolute_forms(self):
+        tree = ast.parse(
+            "from .config_page import ConfigPage\n"
+            "import presentation.qt.connection_page\n"
+        )
+        self.assertEqual(
+            _imported_page_modules(tree),
+            {"presentation.qt.config_page", "presentation.qt.connection_page"},
+        )
+
+    def test_page_module_registry_covers_every_declared_page_class(self):
+        """新增页面必须登记，页面导入门禁才能覆盖它。"""
+        declared = {path.stem for path in _declared_page_modules()}
+        self.assertEqual(
+            declared,
+            set(REGISTERED_PAGE_MODULES),
+            "新增页面必须在 REGISTERED_PAGE_MODULES 登记，并提供窄依赖接口；"
+            "页面类以 Page 结尾（换文件名也不豁免），共享 mixin 不应以 Page 结尾命名。",
+        )
+
+    def test_page_constructors_take_narrow_dependencies(self):
+        """页面只接收端口、ViewModel、回调与工厂，不接收另一个页面实例。"""
+        declared = _declared_page_modules()
+        page_names = set().union(*declared.values())
+        violations = []
+        for path, classes in sorted(declared.items()):
+            tree = _tree(path)
+            for node in tree.body:
+                if isinstance(node, ast.ClassDef) and node.name in classes:
+                    violations.extend(
+                        f"{path.relative_to(ROOT)}: {violation}"
+                        for violation in _page_constructor_violations(node, page_names)
+                    )
+        self.assertEqual(
+            violations,
+            [],
+            "页面构造只能接收窄依赖（端口、ViewModel、回调、工厂）；不接受 "
+            "*args/**kwargs、页面类型注解或另一个页面实例: " + "; ".join(violations),
+        )
+
+    def test_page_constructor_scan_rejects_page_dependencies(self):
+        """门禁自身要能识别 *args/**kwargs、页面类型注解与页面实例参数。"""
+        tree = ast.parse(
+            "class DemoPage:\n"
+            "    def __init__(self, config_page, parent=None, **options):\n"
+            "        pass\n"
+            "class TypedPage:\n"
+            "    def __init__(self, other: 'ConfigPage') -> None:\n"
+            "        pass\n"
+            "class NarrowPage:\n"
+            "    def __init__(self, *, port, parent=None):\n"
+            "        pass\n"
+            "class DefaultPage:\n"
+            "    def __init__(self, factory=ConfigPage):\n"
+            "        pass\n"
+        )
+        names = {"ConfigPage"}
+        demo = _page_constructor_violations(tree.body[0], names)
+        typed = _page_constructor_violations(tree.body[1], names)
+        narrow = _page_constructor_violations(tree.body[2], names)
+        defaulted = _page_constructor_violations(tree.body[3], names)
+        self.assertTrue(
+            any("**kwargs" in violation for violation in demo), demo
+        )
+        self.assertTrue(
+            any("config_page" in violation for violation in demo), demo
+        )
+        self.assertTrue(any("ConfigPage" in violation for violation in typed), typed)
+        self.assertTrue(any("factory" in violation for violation in defaulted), defaulted)
+        self.assertEqual(narrow, [])
+
+    def test_page_context_stays_frozen_and_narrow(self):
+        """新增页面动作经 ViewModel/Application facade，不扩张 PageContext。"""
+        from presentation.qt.pages import PageContext
+
+        self.assertTrue(
+            PageContext.__dataclass_params__.frozen,
+            "PageContext 必须是冻结的构造契约，页面不能回写共享上下文",
+        )
+        actual = tuple(field.name for field in fields(PageContext))
+        self.assertEqual(
+            actual,
+            PAGE_CONTEXT_FIELDS,
+            "PageContext 是页面的窄组合接口。新增动作应加在 ViewModel/Application facade "
+            "并用页面自己的一个信号表达；确需调整此契约时，先更新 "
+            "docs/GUI改动分层规则.md 与本基线。",
+        )
+        hints = get_type_hints(PageContext)
+        for field in fields(PageContext):
+            if field.name == "controller":
+                continue
+            self.assertIs(
+                get_origin(hints[field.name]),
+                collections.abc.Callable,
+                f"PageContext.{field.name} 必须是回调或共享 controller，不能塞入页面对象",
+            )
+
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -799,6 +799,37 @@ ViewModel 不导入 PySide6，不直接读写文件，不创建仪器，不弹 Q
 - 后续新增页面动作不会扩张 `PageContext`；
 - “只改 UI”能够稳定使用 `--layer ui` 验证。
 
+**完成状态**：✅ 已完成。
+
+- **长期门禁**：在 `tests/test_presentation_boundaries.py` 新增
+  `LongTermChangeBoundaryTests`，随 `GATE_MODULES` 在 `--layer ui`/`integration` 与全量
+  套件中执行，不引入新的运行时框架：
+  - 配置业务依赖按**模块族**判定：`application.configuration_*`、`application.device_binding`
+    与 `domain.configuration.*` 中的任何模块（含以后新增的）都不得被 Qt 直接导入；只有
+    `application.configuration_view_model`、`application.configuration_editing`、
+    `domain.configuration.types` 这类只表达状态与结构化结果的边界模块可以消费。存量依赖
+    按“文件 -> 模块 -> 名称”冻结为 `CONFIGURATION_BUSINESS_IMPORT_BASELINE`，删除依赖后
+    必须同步缩小基线；字面量 `importlib.import_module(...)` 也会被识别。
+  - 只有 Qt 根目录的 `pages.py`（页面注册表）与 `main_window.py`（窗口装配根）可以导入
+    页面类型，豁免按相对路径精确判定；页面模块从全部 Qt 文件按 `*Page` 类发现，换个文件名
+    也不能绕过登记。页面构造函数不得接受 `*args`/`**kwargs`、页面类型注解或另一个页面实例，
+    跨页协作只能经端口、ViewModel、回调或信号。
+  - `PageContext` 的字段清单、冻结属性与回调注解由 `PAGE_CONTEXT_FIELDS` 固定；新增页面
+    动作应经 ViewModel/Application facade 和页面自己的一个信号，不得扩张共享构造上下文。
+  - 静态门禁只覆盖依赖方向与构造签名；运行时把页面放进通用容器等动态组装不追踪，属于评审
+    责任，规则写在分层文档里。
+- **固定落点**：新增文档 `docs/GUI改动分层规则.md`，给出视觉改动/业务改动/硬件改动三类改动的
+  修改位置、测试落点、验证命令和禁止事项，并列出配置字段、校验规则、页面状态、页面动作、
+  结果展示与新页面的固定落点。“新业务行为先在 application/domain 写测试、再接 Qt”是开发
+  顺序约定，由评审把关，不伪装成门禁能自动判断的检查。例外必须显式登记并同步文档与基线，
+  不允许用同名转发、放宽断言或改宽基线静默绕过。
+- **开发入口同步**：`README.md` 的开发信息与 `AGENTS.md` 的测试范围规则都链接到该文档；
+  `--layer ui` 仍是纯视觉/表现层改动的标准验证，业务或硬件改动按同一文档升级到
+  `--layer integration` 或全量套件。
+- **验证**：`tools/run_tests.py --layer ui`、`tools/run_tests.py`（完整离线套件，含全部门禁）、
+  `launcher.py --check`、`launcher.py --validate-config` 与
+  `tools/export_dependency_lock.py --check` 均通过。
+
 ---
 
 ## 推荐执行顺序

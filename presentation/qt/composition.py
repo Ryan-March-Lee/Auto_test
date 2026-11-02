@@ -78,7 +78,11 @@ def build_device_scanner_factory(
             raise InstrumentDiscoveryError(
                 f"无法读取设备表 {registry_path}: {error}"
             ) from error
-        responses = demo_idn_responses() if mode == SCAN_MODE_SIMULATED else None
+        # 离线演示展示设备表里登记的全部仪器：把设备表交给演示响应生成器，按各自的
+        # 当前 IP、探测端口与身份补出 *IDN?，不另存一份会与设备表脱节的设备清单。
+        responses = (
+            demo_idn_responses(registry) if mode == SCAN_MODE_SIMULATED else None
+        )
         return build_scanner(registry=registry, mode=mode, responses=responses)
 
     return factory

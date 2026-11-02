@@ -80,6 +80,7 @@ from .config_form_bindings import (
 )
 from .device_cards import (
     CARD_HEIGHT,
+    CARD_MIN_WIDTH,
     CARD_WIDTH,
     _MAX_COLUMNS,
     InstrumentCard,
@@ -109,11 +110,13 @@ SCAN_MODE_CHOICES: tuple[tuple[str, str], ...] = (
 )
 # 卡片网格的间距：列间留白由网格自己算，卡片本身不设外边距。
 _CARDS_SPACING = 10
-_CARDS_MIN_WIDTH = CARD_WIDTH + _CARDS_SPACING
+#: 排一列至少要的宽度：卡片可以收窄到 :data:`CARD_MIN_WIDTH`，但不能再窄。
+_CARDS_MIN_WIDTH = CARD_MIN_WIDTH + _CARDS_SPACING
 #: 结果区的高度固定：按“两行卡片 + 按钮与状态行”算出来（
 #: :meth:`DeviceDiscoveryPanel._results_box_height`）。高度不随状态变化（未查找 /
 #: 正在查找 / 有结果都一样大），所以点一次“查找设备”不会让页面跳动；卡片的行数超过
-#: 这个高度时只在结果区里滚动。两行正好放下场地上的 5 台仪器（最多 4 列）。
+#: 这个高度时只在结果区里滚动。最多 6 列，两行可放 12 台；场地的 5 台登记仪器加 1 台
+#: 未登记演示设备在默认窗口宽度下排成一行。
 _RESULTS_BOX_ROWS = 2
 #: 结果区的三种状态：还没查找（顶部按钮）、正在查找（进度）、有结果（卡片）。
 BOX_STATE_IDLE = "idle"
@@ -1088,15 +1091,34 @@ class DeviceDiscoveryPanel(QWidget):
         self._rebuild_card_rows()
 
     def _panel_cards_width(self) -> int:
-        """估算卡片区可用宽度：滚动区视口还没布局时退回面板宽度减去边框与边距。"""
+        """卡片区可用于排一行的最大宽度（已扣掉行容器的左右留白）。
+
+        视口宽度会因竖向滚动条出现而变窄；列数要先按“不出现滚动条”的整块宽度算，
+        否则卡片从多行变回一行时，旧的窄视口会让窗口变宽后仍少排一列。
+        """
         viewport = self.cards_area.viewport().width()
-        if viewport > 0:
-            return viewport
+        inner = self.cards_area.width() - 2 * self.cards_area.frameWidth()
+        width = max(viewport, inner)
+        if width > 0:
+            margins = self.cards_layout.contentsMargins()
+            return max(0, width - margins.left() - margins.right())
         return max(_CARDS_MIN_WIDTH, self.width() - 4 * _CARDS_SPACING)
 
     def _column_count_for(self, width: int) -> int:
-        fits = max(0, int(width)) // _CARDS_MIN_WIDTH
+        # 一行 n 张卡只需要 n 张卡宽加 (n-1) 个间距，最后一张后面不再留间距；
+        # 先补上一个间距再整除，才不会在“刚好放得下 6 张”的宽度上少算一列。
+        fits = max(0, (int(width) + _CARDS_SPACING) // _CARDS_MIN_WIDTH)
         return max(1, min(int(fits), _MAX_COLUMNS))
+
+    def _card_width_for(self, available: int, columns: int) -> int:
+        """按当前行宽把卡片分到最宽，但不超过理想宽度 :data:`CARD_WIDTH`。
+
+        宽窗口恢复 190，卡片不会因为固定宽度而缩在中间；窄窗口才等比收窄到
+        :data:`CARD_MIN_WIDTH`，保证 6 张仍能排成一行。
+        """
+        gaps = max(0, columns - 1) * _CARDS_SPACING
+        width = (max(0, int(available)) - gaps) // max(1, int(columns))
+        return max(CARD_MIN_WIDTH, min(CARD_WIDTH, width))
 
     def _refresh_cards_geometry(self) -> None:
         """按当前宽度决定列数，并把卡片按新列数就位（整组始终居中）。
@@ -1122,9 +1144,10 @@ class DeviceDiscoveryPanel(QWidget):
     def _rebuild_card_rows(self) -> None:
         """按当前列数重排卡片：一行一个行布局，卡片两侧的留白等大。
 
-        居中不靠“给整块网格设对齐”：卡片固定宽度，行布局自己带着左右两个弹性留白，
-        所以卡片只有一张时那一张在正中，五张排成 4 + 1 时最后一行的那张也在正中；
-        宽度变化只是换列数，居中规则不变。
+        居中不靠“给整块网格设对齐”：行布局自己带着左右两个弹性留白，所以卡片只有一张
+        时那一张在正中，五张排成 4 + 1 时最后一行的那张也在正中；宽度变化只是换列数，
+        居中规则不变。卡片宽度随可用宽度在 :data:`CARD_MIN_WIDTH` 与 :data:`CARD_WIDTH`
+        之间收缩：宽窗口保持理想宽度，窄窗口只收到刚好铺满一行，不会为了超过 6 列而变窄。
 
         卡片区的高度跟着实际行数走（最多两行）：这样状态行紧贴在最后一行卡片下面，
         不会隔着一段为第二行预留的空白。
@@ -1136,7 +1159,20 @@ class DeviceDiscoveryPanel(QWidget):
             self.cards_area.setFixedHeight(0)
             self._refresh_results_box_height()
             return
-        columns = self._column_count_for(self._panel_cards_width())
+        available = self._panel_cards_width()
+        columns = self._column_count_for(available)
+        rows = (len(cards) + columns - 1) // columns
+        if rows > _RESULTS_BOX_ROWS:
+            # 超过两行时卡片区会出现竖向滚动条，排卡片要按变窄后的宽度重算一次，
+            # 否则最右一张会被裁掉一截。
+            scrollbar = self.cards_area.verticalScrollBar().sizeHint().width()
+            available = max(_CARDS_MIN_WIDTH, available - scrollbar)
+            columns = self._column_count_for(available)
+            rows = (len(cards) + columns - 1) // columns
+        # 宽窗口把卡片恢复到理想宽度；只有排不下时才收窄到刚好铺满一行。
+        card_width = self._card_width_for(available, min(columns, len(cards)))
+        for card in cards:
+            card.setFixedWidth(card_width)
         for start in range(0, len(cards), columns):
             row = QHBoxLayout()
             row.setContentsMargins(0, 0, 0, 0)
@@ -1148,7 +1184,6 @@ class DeviceDiscoveryPanel(QWidget):
             self.cards_layout.addLayout(row)
         # 多出来的高度留在所有卡片下面：卡片贴着卡片区顶部排，不在竖直方向拉散。
         self.cards_layout.addStretch(1)
-        rows = (len(cards) + columns - 1) // columns
         self.cards_area.setFixedHeight(self._cards_area_height(rows))
         # 卡片区刚从不可见变为可见时布局还没激活，卡片位置会全是 (0, 0)；
         # 这里直接激活一次，宽度变化时卡片立即按新列数就位。
@@ -1192,10 +1227,12 @@ class DeviceDiscoveryPanel(QWidget):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        self._refresh_cards_geometry()
+        # 先把外层布局激活，卡片区（以及它的视口）拿到新宽度后再决定列数；否则会按
+        # resize 前的视口宽度少排一列，窗口变宽后仍停在旧列数。
         layout = self.layout()
         if layout is not None:
             layout.activate()
+        self._refresh_cards_geometry()
         self._sync_wait_stack_geometry()
 
     def selected_assignments(self) -> tuple[list[dict[str, Any]], list[str]]:

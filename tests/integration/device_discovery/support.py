@@ -100,6 +100,23 @@ def two_supply_factory(_mode):
     )
 
 
+def six_device_factory(_mode):
+    """六台设备的模拟网络：验证卡片一行最多排 6 张，不再在 4 台处换行。"""
+    return build_scanner(
+        registry=registry(),
+        mode=SCAN_MODE_SIMULATED,
+        responses={
+            ("192.168.1.201", 5025): SMW_IDN,
+            ("192.168.1.202", 5025): CEYEAR_IDN,
+            ("192.168.1.102", 5555): DP832A_IDN,
+            ("192.168.1.103", 5555): DP832A_SECOND_IDN,
+            ("192.168.1.104", 5555): "RIGOL TECHNOLOGIES,DP832A,DP8B174700950,00.01.14",
+            ("192.168.1.150", 5025): "Keysight Technologies,N9020A,MY51234567,A.18.21",
+        },
+        timeout_s=0.02,
+    )
+
+
 def apply_devices(page, assignments):
     """提交一次设备勾选，返回 ``DeviceBindingResult``。
 

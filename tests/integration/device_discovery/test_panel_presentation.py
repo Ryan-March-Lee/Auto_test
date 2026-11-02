@@ -17,7 +17,7 @@ from presentation.qt.device_discovery_panel import (
 )
 from presentation.qt.theme import TOKENS, build_stylesheet
 
-from .support import DiscoveryPanelTestCase, registry
+from .support import DiscoveryPanelTestCase, registry, six_device_factory
 
 
 class CardPresentationTests(DiscoveryPanelTestCase):
@@ -61,7 +61,7 @@ class CardPresentationTests(DiscoveryPanelTestCase):
             self.assertEqual(element.height(), card.height(), "同一行卡片高度一致")
 
     def test_cards_wrap_into_columns_instead_of_a_long_strip(self):
-        panel = self.make_panel(size=(520, 700))
+        panel = self.make_panel(six_device_factory, size=(520, 700))
         self.run_scan(panel)
 
         narrow = len({card.geometry().left() for card in panel.cards()})
@@ -70,13 +70,14 @@ class CardPresentationTests(DiscoveryPanelTestCase):
         self.app.processEvents()
         wide = len({card.geometry().left() for card in panel.cards()})
 
-        # 卡片按可用宽度换行：窄面板换行排两列，宽面板排满四列，不排成一条长带子。
+        # 卡片按可用宽度换行：窄面板换行排两列，宽面板一行排满六列，不排成一条长带子。
         self.assertGreaterEqual(narrow, 2, "窄面板要换行，不能挤成一列长条")
-        self.assertEqual(wide, min(4, panel.card_count()))
+        self.assertEqual(panel.card_count(), 6)
+        self.assertEqual(wide, 6, "默认窗口宽度下 6 台设备排成一行，不在 4 台处换行")
 
     def test_cards_are_centred_whatever_the_count(self):
         """卡片整组居中：不论几张，每一行（含不满的最后一行）都落在卡片区中线。"""
-        panel = self.make_panel(size=(760, 560))
+        panel = self.make_panel(size=(660, 560))
         self.run_scan(panel)
         host = panel.cards_host
         self.assertGreaterEqual(panel.card_count(), 2)
@@ -457,7 +458,7 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
 
         card = panel.cards()[0]
         self.assertGreaterEqual(
-            panel.cards_area.height(), 2 * card.height(), "结果区里至少放得下两行卡片"
+            panel.results_box.height(), 2 * card.height(), "结果区里至少放得下两行卡片"
         )
 
     def test_the_summary_line_sits_under_the_cards_and_centred(self):

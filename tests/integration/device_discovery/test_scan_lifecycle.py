@@ -407,3 +407,19 @@ class DiscoveryEnabledOfflineDefaultsTests(unittest.TestCase):
 
         # /30 的两个可用地址都有演示响应：SMW200A 与 4082F。
         self.assertEqual(len(result.devices), 2)
+
+    def test_default_factory_lists_every_registered_instrument_plus_one_unknown(self):
+        """离线演示展示设备表里登记的全部仪器，并保留一台未登记设备。"""
+        from presentation.qt.composition import build_device_scanner_factory
+
+        registered = InstrumentRegistry.load()
+        scanner = build_device_scanner_factory()(SCAN_MODE_SIMULATED)
+
+        result = scanner.scan("192.168.1.0/24")
+
+        self.assertEqual(
+            {device.device_key for device in result.known},
+            {instrument.device_key for instrument in registered.list()},
+        )
+        self.assertEqual(len(result.unknown), 1)
+        self.assertEqual(result.unknown[0].identity.model, "N9020A")

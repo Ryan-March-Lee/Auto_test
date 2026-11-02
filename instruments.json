@@ -1,6 +1,6 @@
 {
     "schema_version": 4,
-    "updated_at": "2026-11-01T11:49:18+08:00",
+    "updated_at": "2026-11-02T19:07:52+08:00",
     "instruments": [
         {
             "vendor": "Rohde&Schwarz",
@@ -99,7 +99,7 @@
             "status": "online",
             "current_ip": "192.168.1.106",
             "notes": null,
-            "role": null,
+            "role": "power_supply",
             "first_seen_at": "2026-10-28T14:47:20+08:00",
             "last_seen_at": "2026-10-28T14:48:20+08:00",
             "known_ips": [

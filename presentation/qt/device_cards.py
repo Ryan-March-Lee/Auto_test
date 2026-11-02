@@ -16,9 +16,11 @@
 
 卡片只负责显示与选中状态，不知道扫描结果的数据结构：选择、应用与校验仍由
 :class:`presentation.qt.device_discovery_panel.DeviceDiscoveryPanel` 负责。
-卡片尺寸（:data:`CARD_WIDTH` × :data:`CARD_HEIGHT`）与圆角
-（:data:`presentation.qt.theme.CARD_RADIUS`）是设备发现页的唯一定义：“查找设备”那张卡片
-按钮（:mod:`presentation.qt.scan_card`）按它取大小与圆角，因此按钮与仪器卡片始终同形同大。
+卡片尺寸（:data:`CARD_WIDTH` × :data:`CARD_HEIGHT`，必要时缩到
+:data:`CARD_MIN_WIDTH`）与圆角（:data:`presentation.qt.theme.CARD_RADIUS`）是设备发现页的
+唯一定义：“查找设备”那张卡片按钮（:mod:`presentation.qt.scan_card`）按它取大小与圆角，
+因此按钮与仪器卡片始终同形同大；结果区在窄窗口里会把卡片等比收窄到能一行排下 6 张，
+宽窗口里则恢复 :data:`CARD_WIDTH`。
 图片按“角色 / 型号关键字”在 ``assets/instrument_pic/`` 里查找，找不到时留空；
 图片只解码一次并缓存（照片单张最大 4.7 MB，重复解码会明显拖慢一次扫描后的刷新）。
 """
@@ -43,6 +45,7 @@ from .theme import set_tone
 
 __all__ = [
     "CARD_HEIGHT",
+    "CARD_MIN_WIDTH",
     "CARD_WIDTH",
     "INSTRUMENT_PICTURE_DIR",
     "InstrumentCard",
@@ -59,8 +62,10 @@ INSTRUMENT_PICTURE_DIR = (
 # 卡片尺寸：所有卡片同宽等高，成行排列时不会参差。“查找设备”那张卡片按钮
 # （:mod:`presentation.qt.scan_card`）也取这一份尺寸，并且与仪器卡片共用同一个圆角
 # （:data:`presentation.qt.theme.CARD_RADIUS`），所以按钮始终和仪器卡片同形同大；
-# 要改卡片大小只改这里。
+# 要改卡片大小只改这里。CARD_WIDTH 是宽窗口下的理想宽度；结果区排不下 6 张时按
+# CARD_MIN_WIDTH 等比收窄，卡片不会被挤成一条窄带，也不会因此退到 5 张换行。
 CARD_WIDTH = 190
+CARD_MIN_WIDTH = 160
 #: 卡片高度按“设备码 + 图片 + 型号·角色 + 地址”四行内容算，另留状态说明与行间留白的位置。
 CARD_HEIGHT = 276
 _PICTURE_HEIGHT = 104
@@ -70,8 +75,9 @@ _PICTURE_MARGIN = 4
 _CODE_LABEL_HEIGHT = 56
 #: 地址行固定一行高度：有地址时写 IP，没有地址时那一行留空，卡片高度不变。
 _ADDRESS_LABEL_HEIGHT = 16
-#: 卡片网格的最大列数：卡片区再宽也不排成一条长带子。
-_MAX_COLUMNS = 4
+#: 卡片网格的最大列数：卡片区再宽也不排成一条长带子。6 列让现场的 5 台登记仪器
+#: 加 1 台未登记演示设备排成一行，不必在 4 台处就换行。
+_MAX_COLUMNS = 6
 
 #: 按“角色”“型号关键字”映射到图片文件名（不含扩展名）。角色优先：同型号的设备换了
 #: 角色也不会拿错图；型号关键字兜住没有登记角色但型号已知的设备（如未登记的设备）。

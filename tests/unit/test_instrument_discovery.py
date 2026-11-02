@@ -184,6 +184,56 @@ class SimulatedScanTests(unittest.TestCase):
         self.assertTrue(all(not device.registered for device in result.devices))
 
 
+class DemoNetworkTests(unittest.TestCase):
+    """离线演示网络：设备表里的全部已登记设备 + 固定的一台未登记设备。"""
+
+    def _registry_with_addresses(self):
+        registry = _registry_with(SMW_IDN, DP832A_IDN)
+        smw = registry.get_by_device_key(InstrumentIdentity.from_idn(SMW_IDN).device_key)
+        supply = registry.get_by_device_key(
+            InstrumentIdentity.from_idn(DP832A_IDN).device_key
+        )
+        registry.record_endpoint(smw, ip="192.168.1.201", idn_port=5025)
+        # 故意换一个固定清单里没有的地址：演示网络要跟着设备表走，而不是旧地址。
+        registry.record_endpoint(supply, ip="192.168.1.106", idn_port=5555)
+        return registry
+
+    def test_demo_scan_lists_every_registered_instrument_at_its_current_address(self):
+        registry = self._registry_with_addresses()
+        scanner = build_scanner(
+            registry=registry,
+            mode=SCAN_MODE_SIMULATED,
+            responses=demo_idn_responses(registry),
+            timeout_s=0.05,
+        )
+
+        result = scanner.scan("192.168.1.0/24")
+
+        by_key = {device.device_key: device for device in result.devices}
+        smw = by_key[InstrumentIdentity.from_idn(SMW_IDN).device_key]
+        supply = by_key[InstrumentIdentity.from_idn(DP832A_IDN).device_key]
+        self.assertEqual(smw.ip, "192.168.1.201")
+        # 设备表当前地址是 106：固定清单里的旧地址 102 不再冒出一台同身份的幽灵设备。
+        self.assertEqual(supply.ip, "192.168.1.106")
+        self.assertTrue(smw.is_known)
+        self.assertTrue(supply.is_known)
+
+    def test_demo_scan_keeps_the_unregistered_device(self):
+        registry = self._registry_with_addresses()
+        scanner = build_scanner(
+            registry=registry,
+            mode=SCAN_MODE_SIMULATED,
+            responses=demo_idn_responses(registry),
+            timeout_s=0.05,
+        )
+
+        result = scanner.scan("192.168.1.0/24")
+
+        unknown_ips = {device.ip for device in result.unknown}
+        self.assertIn("192.168.1.150", unknown_ips)
+        self.assertIn("N9020A", {device.identity.model for device in result.unknown})
+
+
 class ProbeResultTests(unittest.TestCase):
     def _scanner_with(self, responses):
         return InstrumentScanner(

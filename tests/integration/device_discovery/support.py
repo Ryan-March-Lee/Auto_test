@@ -152,10 +152,13 @@ class DiscoveryPanelTestCase(unittest.TestCase):
         return panel
 
     def finish_scan(self, panel):
-        """把等待动画走到一轮结束（牌堆复原）：扫描结果这时才换进结果区。"""
+        """把等待动画走到一轮结束（牌堆复原），再把发牌/翻牌动画直接走完。"""
         panel.wait_stack.finish_cycle()
         self.app.processEvents()
         self.app.processEvents()
+        if panel.deal_layer.is_running():
+            panel.deal_layer.finish()
+            self.app.processEvents()
 
     def run_scan(self, panel):
         """点“查找设备”，等到后台扫描线程结束、等待动画也走完一轮后返回。"""
@@ -181,10 +184,13 @@ class ConnectionPageTestCase(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def finish_scan(self, panel):
-        """把等待动画走到一轮结束（牌堆复原）：扫描结果这时才换进结果区。"""
+        """把等待动画走到一轮结束（牌堆复原），再把发牌/翻牌动画直接走完。"""
         panel.wait_stack.finish_cycle()
         self.app.processEvents()
         self.app.processEvents()
+        if panel.deal_layer.is_running():
+            panel.deal_layer.finish()
+            self.app.processEvents()
 
     def run_scan(self, panel):
         """点“查找设备”，等到后台扫描线程结束、等待动画也走完一轮后返回。"""

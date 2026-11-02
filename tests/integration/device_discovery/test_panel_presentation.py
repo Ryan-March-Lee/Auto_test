@@ -318,6 +318,99 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         # 卡片装进结果区之后，它依然没有边框与底色。
         self.assertEqual(self._painted_background(panel.results_box), TOKENS["canvas"].lower())
 
+    def test_the_results_are_dealt_face_down_and_then_flipped_one_by_one(self):
+        """结果不是直接出现：先背面朝上发到卡片位，全部发完再逐张翻开。"""
+        panel = self.make_panel()
+        panel.request_scan()
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+        panel.wait_stack.finish_cycle()
+        self.app.processEvents()
+        self.app.processEvents()
+
+        self.assertEqual(panel.box_state(), BOX_STATE_RESULTS)
+        self.assertTrue(panel.cards_area.isVisible())
+        self.assertTrue(panel.deal_layer.is_running(), "结果卡片应由发牌动画带出来")
+        self.assertFalse(
+            panel.status_label.isVisible(), "牌还背面朝上时先不要写出结果统计"
+        )
+        for card in panel.cards():
+            effect = card.graphicsEffect()
+            self.assertIsNotNone(effect, "发牌期间真正的卡片应藏在覆盖层后面")
+            self.assertAlmostEqual(effect.opacity(), 0.0)
+
+        # 覆盖层走完：所有正面露出来，状态行这时才出现。
+        panel.deal_layer.finish()
+        self.app.processEvents()
+        self.assertFalse(panel.deal_layer.is_running())
+        self.assertFalse(panel.deal_layer.isVisible())
+        self.assertTrue(panel.status_label.isVisible())
+        for card in panel.cards():
+            self.assertIsNone(card.graphicsEffect())
+
+    def test_every_card_is_dealt_to_where_it_will_be_flipped(self):
+        """发牌落点就是卡片最终所在的位置：一开始就按最终版面取位，翻牌也翻在同一处。
+
+        卡片数在拿到扫描结果时就定了（一台仪器一张卡片），因此发牌前结果区的版面
+        已经落定：每张牌各飞各的格子，不会全部飞向同一个点、等下一轮事件才散开。
+        """
+        panel = self.make_panel(size=(760, 560))
+        panel.request_scan()
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+
+        # 这一轮等待动画走完之后直接进入发牌：中间不再处理事件，验证的是“发牌第一帧
+        # 拿到的就是最终位置”，而不是下一轮布局事件补出来的位置。
+        panel.wait_stack.finish_cycle()
+
+        layer = panel.deal_layer
+        self.assertTrue(layer.is_running())
+        cards = panel.cards()
+        self.assertGreater(len(cards), 1)
+        starts = [card.geometry().topLeft() for card in cards]
+        self.assertEqual(
+            len(set(starts)), len(starts), "发牌一开始每张卡片就该在自己的格子上"
+        )
+        slots = []
+        for index, card in enumerate(cards):
+            slot = layer._target_rect(index)
+            origin = card.mapTo(layer, card.rect().topLeft())
+            self.assertAlmostEqual(slot.x(), origin.x(), delta=1, msg="发牌落点就是卡片位")
+            self.assertAlmostEqual(slot.y(), origin.y(), delta=1, msg="发牌落点就是卡片位")
+            self.assertAlmostEqual(slot.width(), card.width(), delta=1)
+            self.assertAlmostEqual(slot.height(), card.height(), delta=1)
+            slots.append((round(slot.x()), round(slot.y())))
+
+        # 翻牌期间不再挪窝：走完发牌与翻牌，每张卡片仍在它的格子上。
+        layer.finish()
+        self.app.processEvents()
+        self.assertEqual(layer.revealed_count, len(cards), "查到的每台仪器都要发出来")
+        for (left, top), card in zip(slots, cards):
+            origin = card.mapTo(layer, card.rect().topLeft())
+            self.assertEqual((round(origin.x()), round(origin.y())), (left, top))
+
+    def test_back_while_dealing_returns_to_the_scan_button(self):
+        """发牌/翻牌期间按“返回”也能干净收尾：覆盖层收起，本次结果清空。"""
+        panel = self.make_panel()
+        panel.request_scan()
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+        panel.wait_stack.finish_cycle()
+        self.app.processEvents()
+        self.app.processEvents()
+        self.assertTrue(panel.deal_layer.is_running())
+
+        panel.request_back()
+        self.app.processEvents()
+
+        self.assertEqual(panel.box_state(), BOX_STATE_IDLE)
+        self.assertFalse(panel.deal_layer.isVisible())
+        self.assertEqual(panel.card_count(), 0)
+        self.assertTrue(panel.scan_btn.isVisible())
+
     def test_a_scan_that_finds_nothing_leaves_the_button_in_the_box_again(self):
         def factory(_mode):
             return build_scanner(

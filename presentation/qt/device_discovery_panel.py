@@ -32,6 +32,12 @@
 **扫描结束不等于立刻换画面**：结果（或失败原因）先挂起，等等待动画至少完整播完一轮、
 所有卡都叠回原样（``ScanWaitStack.cycle_finished``）才进入下一步；动画没播完就继续播，
 扫描结果等它，而不是把摊开中途的牌堆直接收走。搜索一直不回来时动画就一轮接一轮地播。
+**结果卡片由发牌动画带出来**（:class:`presentation.qt.scan_card.DealRevealLayer`）：等待
+动画收拢后，牌从按钮牌堆原来的位置一张张飞向结果位，背面朝上（背面就是按钮那张卡面的
+纹样）；全部落定后停一下，再从左到右逐张翻开，把仪器卡片露出来。拿到扫描结果时卡片数
+（一台仪器一张）就已经定了，结果区先按这个数量把版面排定，发牌因此直接落在卡片最终的
+位置上，翻牌也翻在同一处。发牌期间真正的卡片用透明度效果藏起来、暂不可点；翻完最后一张
+才恢复交互并写出“发现 N 台设备 …”。
 **结果区的高度由页面给出的可用高度决定**（宽裕时按两行卡片 + 按钮与状态行；窗口矮时
 由页面压到一行）：扫描状态与结果数量本身不改变它的大小，只有页面重新分配可用高度时
 才会伸缩，卡片超出时在结果区里滚动。卡片区本身只占实际行数（最多两行）那么高，
@@ -59,10 +65,10 @@ import re
 import threading
 from typing import Any, Callable, Sequence
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import QPointF, Qt, QThread, Signal
 from PySide6.QtWidgets import (
-    QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QScrollArea, QSizePolicy, QSpacerItem, QVBoxLayout, QWidget,
+    QApplication, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QLineEdit,
+    QPushButton, QScrollArea, QSizePolicy, QSpacerItem, QVBoxLayout, QWidget,
 )
 
 from application.ports.device_discovery import (
@@ -95,6 +101,7 @@ from .input_controls import WheelSafeComboBox
 from .scan_card import (
     SCAN_CARD_HEADROOM,
     WAIT_STACK_HEIGHT,
+    DealRevealLayer,
     ScanPromptCard,
     ScanWaitStack,
 )
@@ -571,6 +578,13 @@ class DeviceDiscoveryPanel(QWidget):
         box.addStretch(1)
         layout.addWidget(self.results_box)
 
+        # 结果卡片不是直接出现：等待动画收拢后，这一层从按钮牌堆往卡片位发牌（背面朝上），
+        # 全部发完再逐张翻开。它是结果区的覆盖画面，不进布局、不吃鼠标；卡片自己先挂一层
+        # 透明度效果藏起来，翻到哪张才把哪张露出来。
+        self.deal_layer = DealRevealLayer(self.results_box)
+        self.deal_layer.setVisible(False)
+        self.deal_layer.finished.connect(self._on_deal_reveal_finished)
+
         self.scan_btn.clicked.connect(self.request_scan)
         self.back_btn.clicked.connect(self.request_back)
         self._update_mode_hint()
@@ -651,6 +665,7 @@ class DeviceDiscoveryPanel(QWidget):
         self._refresh_results_box_height()
         # 结果区一变高/变矮，钉在原按钮位置上的等待动画要跟着重新对一次。
         self._sync_wait_stack_geometry()
+        self._sync_deal_layer_geometry()
 
     def _centre_lead_chrome(self) -> int:
         """引导高度计算用的结果区固定开销：状态行按“只占一行”算。
@@ -909,7 +924,16 @@ class DeviceDiscoveryPanel(QWidget):
             self._show_cancelled()
 
     def _show_results(self, result: Any) -> None:
-        """把一次成功的扫描结果放进结果区，并写统计与预选说明。"""
+        """把一次成功的扫描结果放进结果区，并写统计与预选说明。
+
+        有设备时先不让卡片直接露出来：先从“查找设备”牌堆逐张发到卡片位（背面朝上），
+        全部发完再逐张翻开（:class:`presentation.qt.scan_card.DealRevealLayer`）。
+        发牌起点是牌堆现在还留在屏幕上的位置；页面随后会收起页头、整块面板上移，所以
+        这里记的是屏幕坐标，等布局落定后再换回覆盖层坐标。
+        """
+        deck_anchor = None
+        if self.wait_stack.isVisible():
+            deck_anchor = self.wait_stack.mapToGlobal(self.wait_stack.rect().center())
         devices = list(result.devices)
         self.devices = devices
         self.last_mode = getattr(result, "mode", self.current_mode())
@@ -938,11 +962,83 @@ class DeviceDiscoveryPanel(QWidget):
         if self.last_mode == SCAN_MODE_SIMULATED:
             text += "（模拟数据，仅用于离线演示；不能用于真实测量）"
         self.status_label.setText(text)
-        self.status_label.setVisible(True)
+        # 发牌期间状态行先不出现：牌还背面朝上时就把“发现 N 台设备”写出来，等于提前
+        # 剧透；翻完最后一张再让说明和卡片一起出现。没有结果时照旧当场显示。
+        self.status_label.setVisible(not devices)
         # 预选说明会追加在扫描统计后面，因此先写统计再预选。
         self._preselect_bound_devices()
         self._sync_results_height()
         self.log_message.emit(f"设备扫描完成: {self.status_label.text()}")
+        if devices:
+            self._start_deal_reveal(deck_anchor)
+
+    def _start_deal_reveal(self, deck_anchor: Any) -> None:
+        """把结果卡片藏起来，交给发牌覆盖层发出去、再逐张翻开。
+
+        卡片数在拿到扫描结果时就定了（一台仪器一张卡片），版面也已经按这个数量排好：
+        先把最终版面落定，再截下每张卡的正面图，然后用透明度效果把它们藏起来（仍然
+        占着版面）。覆盖层的落点每帧从这些卡片现取，因此发牌落点就是卡片最终所在的
+        位置，翻开也翻在同一处。
+        """
+        cards = self.cards()
+        if not cards:
+            return
+        # 卡片先按最终版面就位，再截下每张卡的正面图；随后用透明度效果把它们藏起来
+        # （仍然占着版面），覆盖层翻到哪张就把哪张恢复显示。
+        self._settle_deal_layout()
+        fronts = [card.grab() for card in cards]
+        for card in cards:
+            effect = QGraphicsOpacityEffect(card)
+            effect.setOpacity(0.0)
+            card.setGraphicsEffect(effect)
+        # 发牌期间卡片还不能点：覆盖层不吃鼠标，但下面的卡片已经看不见了。
+        self.cards_area.setEnabled(False)
+        self._sync_deal_layer_geometry()
+        anchor = (
+            self.deal_layer.mapFromGlobal(deck_anchor)
+            if deck_anchor is not None
+            else self.deal_layer.rect().center()
+        )
+        self.deal_layer.start(
+            cards, fronts, QPointF(anchor), self.cards_area.viewport()
+        )
+
+    def _settle_deal_layout(self) -> None:
+        """让结果区的布局在截取正面图、开始发牌之前落定。
+
+        卡片才刚挂进卡片区的行布局（:meth:`_rebuild_card_rows` 里已经重新显示，
+        隐藏的控件在布局里占 0 高），这里再逐层激活一次：结果区的框、卡片区的行
+        布局都按最终列数就位，后面发牌取的落点与翻牌的位置才是同一个。
+        """
+        box_layout = self.results_box.layout()
+        if box_layout is not None:
+            box_layout.activate()
+        self.cards_layout.activate()
+
+    def _sync_deal_layer_geometry(self) -> None:
+        """覆盖层始终铺满结果区；结果区变高/变矮或窗口缩放时重新对一次。"""
+        layer = getattr(self, "deal_layer", None)
+        if layer is None:
+            return
+        layer.setGeometry(self.results_box.rect())
+        if layer.isVisible():
+            layer.raise_()
+
+    def _on_deal_reveal_finished(self) -> None:
+        """发牌与翻牌结束：恢复卡片交互，状态行这时才出现。"""
+        if self._closed:
+            return
+        self.cards_area.setEnabled(True)
+        if self.box_state() == BOX_STATE_RESULTS:
+            self.status_label.setVisible(bool(self.status_label.text()))
+
+    def _cancel_deal_reveal(self, *, reveal: bool) -> None:
+        """停止发牌覆盖层；``reveal=False`` 用于卡片即将被清空/删除时。"""
+        layer = getattr(self, "deal_layer", None)
+        if layer is None:
+            return
+        layer.cancel(reveal=reveal)
+        self.cards_area.setEnabled(True)
 
     def _on_failed(self, message: str) -> None:
         """扫描失败：同样等这一轮动画播完再收走牌堆。"""
@@ -984,6 +1080,7 @@ class DeviceDiscoveryPanel(QWidget):
         """页面关闭时协作停止扫描；不强杀线程，失败时保留引用由调用方处理。"""
         self._closed = True
         self._pending_outcome = None
+        self._cancel_deal_reveal(reveal=False)
         worker = self.worker
         if worker is None:
             return True
@@ -1039,6 +1136,9 @@ class DeviceDiscoveryPanel(QWidget):
         return [(row["heading"], row) for row in self._rows]
 
     def _clear_cards(self) -> None:
+        # 正在发牌/翻牌的覆盖层还指着这些卡片：先停下它（不恢复显示，卡片马上就会删掉），
+        # 再清空。
+        self._cancel_deal_reveal(reveal=False)
         # 卡片被删掉时同样先收回焦点：焦点控件消失也会让滚动区去找下一个控件。
         self._release_focus_before_hiding([self.cards_area])
         for row in self._rows:
@@ -1307,6 +1407,11 @@ class DeviceDiscoveryPanel(QWidget):
         card_width = self._card_width_for(available, min(columns, len(cards)))
         for card in cards:
             card.setFixedWidth(card_width)
+            # 卡片刚被重新挂到 :attr:`cards_host` 下（见 :meth:`_clear_card_rows`）：
+            # ``QWidget.setParent`` 会把它藏起来，而隐藏的控件在布局里占 0 高，卡片的位置
+            # 要等下一轮事件才出现。这里当场显示出来，紧接着的布局激活才真的把卡片摆到
+            # 最终位置——发牌动画一开始就要按这个位置发牌（见 :meth:`_start_deal_reveal`）。
+            card.show()
         for start in range(0, len(cards), columns):
             row = QHBoxLayout()
             row.setContentsMargins(0, 0, 0, 0)
@@ -1372,6 +1477,7 @@ class DeviceDiscoveryPanel(QWidget):
             layout.activate()
         self._refresh_cards_geometry()
         self._sync_wait_stack_geometry()
+        self._sync_deal_layer_geometry()
 
     def selected_assignments(self) -> tuple[list[dict[str, Any]], list[str]]:
         """返回 ``(要应用的设备, 问题说明)``；身份/角色缺失、唯一角色重复都算问题。

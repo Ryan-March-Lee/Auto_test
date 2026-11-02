@@ -908,5 +908,115 @@ class ScanWaitStackTests(unittest.TestCase):
         self.assertEqual(announced, [True])
 
 
+class DealRevealLayerTests(unittest.TestCase):
+    """发牌动画：所有牌先背面朝上落定，再一张接一张翻开。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _application()
+
+    def _layer(self, count: int = 4):
+        """一块透明底板 + 几张卡片 + 覆盖层；计时器先停住，按给定时刻取进度。"""
+        from PySide6.QtCore import QPointF
+
+        from presentation.qt.scan_card import DealRevealLayer
+
+        host = QWidget()
+        cards = [QWidget(host) for _ in range(count)]
+        for index, card in enumerate(cards):
+            card.setGeometry(20 + index * 80, 40, 60, 100)
+        layer = DealRevealLayer(host)
+        layer.setGeometry(host.rect())
+        layer.start(cards, [], QPointF(host.width() / 2.0, host.height() - 40.0))
+        layer._timer.stop()
+        self.addCleanup(host.close)
+        return layer, cards
+
+    def test_every_card_lands_before_the_first_one_turns_over(self):
+        from presentation.qt.scan_card import (
+            DEAL_FLY_MS,
+            DEAL_SETTLE_MS,
+            DEAL_STAGGER_MS,
+            FLIP_MS,
+            FLIP_STAGGER_MS,
+        )
+
+        layer, _cards = self._layer(4)
+        deal_end = 3 * DEAL_STAGGER_MS + DEAL_FLY_MS
+        for index in range(4):
+            self.assertAlmostEqual(layer.deal_progress(index, deal_end), 1.0)
+            self.assertEqual(
+                layer.flip_progress(index, deal_end + DEAL_SETTLE_MS - 1), 0.0
+            )
+        self.assertGreater(
+            layer.flip_progress(0, deal_end + DEAL_SETTLE_MS + FLIP_STAGGER_MS / 2.0),
+            0.0,
+        )
+        self.assertEqual(
+            layer.flip_progress(1, deal_end + DEAL_SETTLE_MS + FLIP_STAGGER_MS / 2.0),
+            0.0,
+            "翻牌是一张接一张：第二张要等第一张翻完才起步",
+        )
+        last_start = deal_end + DEAL_SETTLE_MS + 3 * FLIP_STAGGER_MS
+        self.assertAlmostEqual(layer.flip_progress(3, last_start + FLIP_MS), 1.0)
+        self.assertAlmostEqual(layer.duration_ms(), last_start + FLIP_MS)
+
+    def test_finishing_reveals_every_card_and_hides_the_layer(self):
+        from PySide6.QtWidgets import QGraphicsOpacityEffect
+
+        layer, cards = self._layer(4)
+        for card in cards:
+            effect = QGraphicsOpacityEffect(card)
+            effect.setOpacity(0.0)
+            card.setGraphicsEffect(effect)
+
+        layer.finish()
+
+        self.assertEqual(layer.revealed_count, 4, "收尾时每张牌都要翻开")
+        self.assertFalse(layer.is_running())
+        self.assertFalse(layer.isVisible(), "翻完就把覆盖层收起来")
+        for card in cards:
+            self.assertIsNone(card.graphicsEffect(), "翻开的卡片不再需要透明度效果")
+
+    def test_the_deal_back_is_the_button_card_face(self):
+        """背面是“查找设备”按钮那张卡面的纹样（不带正中文字），不是另一套牌背。"""
+        from presentation.qt.device_cards import CARD_HEIGHT, CARD_WIDTH
+        from presentation.qt.scan_card import (
+            _render_card_back,
+            _render_card_face,
+            _render_deal_back,
+        )
+
+        def green_points(pixmap) -> int:
+            image = pixmap.toImage()
+            return sum(
+                1
+                for y in range(image.height())
+                for x in range(image.width())
+                if QColor(image.pixel(x, y)).green()
+                > QColor(image.pixel(x, y)).red() + 8
+            )
+
+        face = _render_card_face(CARD_WIDTH, CARD_HEIGHT, 1.0)
+        back = _render_deal_back(CARD_WIDTH, CARD_HEIGHT, 1.0)
+        existing = _render_card_back(CARD_WIDTH, CARD_HEIGHT, 1.0)
+        self.assertGreater(green_points(back), 1000, "发牌背面应带着按钮卡面的青绿光晕")
+        self.assertGreater(
+            green_points(back),
+            green_points(existing) * 4,
+            "发牌背面应是按钮卡面，而不是等待动画下层那张安静的牌背",
+        )
+        self.assertGreaterEqual(
+            green_points(back), green_points(face) // 2, "背面应保留按钮卡面的主要纹样"
+        )
+
+    def test_the_layer_is_only_a_picture(self):
+        from PySide6.QtCore import Qt
+
+        layer, _cards = self._layer(2)
+        self.assertTrue(layer.testAttribute(Qt.WA_TransparentForMouseEvents))
+        self.assertEqual(layer.focusPolicy(), Qt.NoFocus)
+
+
 if __name__ == "__main__":
     unittest.main()

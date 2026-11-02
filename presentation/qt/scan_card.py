@@ -49,6 +49,12 @@
 :attr:`ScanWaitStack.cycle_finished`：设备发现面板据此保证“查找设备”至少完整播放一轮
 动画，才把结果换进结果区；结果还没回来就继续下一轮。
 
+等待动画收拢之后，结果卡片不是瞬间出现：:class:`DealRevealLayer` 从按钮牌堆原来的位置
+往结果位一张张发牌（背面朝上，背面取按钮卡面的纹样，不带正中文字），全部落定后停一下，
+再从左到右逐张翻开，把真正的仪器卡片露出来。落点就是卡片最终所在的位置：扫到几台仪器
+就有几张卡片，发牌前结果区已经按这个数量排定版面，发牌与翻牌因此都落在同一处。它覆盖在
+结果区上，只负责画面；面板把卡片先藏起来（仍占着版面），翻到哪张才恢复哪张。
+
 **每帧只贴图，不重新描边**：投影、临边暗缝、卡面、压暗与亮边相对卡片都是静止的，只有整张
 卡在动；每帧给 7 张卡各描两道抗锯齿圆角路径曾经是这条动画最大的一笔开销（高分屏上单帧
 描边就超过一帧预算，动画因此发卡）。这些层现在按“第几张卡”预渲染成一整张图
@@ -59,6 +65,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -95,6 +102,7 @@ from .device_cards import CARD_HEIGHT, CARD_WIDTH
 from .theme import CARD_RADIUS, FONT_FAMILIES, TOKENS
 
 __all__ = [
+    "DealRevealLayer",
     "ScanPromptCard",
     "ScanWaitStack",
     "CARD_HEIGHT",
@@ -106,6 +114,11 @@ __all__ = [
     "WAIT_STACK_CARDS",
     "WAIT_STACK_WIDTH",
     "WAIT_STACK_HEIGHT",
+    "DEAL_FLY_MS",
+    "DEAL_STAGGER_MS",
+    "DEAL_SETTLE_MS",
+    "FLIP_MS",
+    "FLIP_STAGGER_MS",
 ]
 
 # ---- 尺寸（原效果的 px 值） --------------------------------------------------
@@ -157,6 +170,25 @@ WAIT_PAUSE_MS = 380
 WAIT_CYCLE_MS = (
     WAIT_FAN_MS + WAIT_HOLD_MS + WAIT_FAN_MS + WAIT_PAUSE_MS
 )
+
+# ---- 发牌与翻牌 --------------------------------------------------------------
+
+#: 每张牌从按钮牌堆飞到结果位的时长。
+DEAL_FLY_MS = 320
+#: 相邻两张开始发牌的间隔：牌是一张张出去的，不是整把一起飞。
+DEAL_STAGGER_MS = 70
+#: 飞行弧线在起点与落点连线中点之上再抬多高（px）：从下方牌堆抛上来，有一点弧。
+DEAL_ARC_LIFT = 36.0
+#: 起飞时的缩放与角度：牌从牌堆里被抽出来时略小、略歪。
+DEAL_START_SCALE = 0.84
+DEAL_START_ANGLE = 7.0
+#: 最后一张落定后停一下，再开始翻第一张。
+DEAL_SETTLE_MS = 140
+#: 一张牌翻面的时长与相邻两张开始翻的间隔。
+FLIP_MS = 260
+FLIP_STAGGER_MS = 105
+#: 发牌动画的帧间隔（约 60fps）：每帧只旋转/缩放着贴图。
+DEAL_FRAME_MS = 16
 #: 等待动画的舞台：比卡片宽不少，整把扇形才摊得开。最外那张卡转到自己的角度时，
 #: 轴对齐包围盒不能超出舞台（舞台之外会被结果区上沿裁掉）；各边再留一点给抗锯齿。
 #: 高度按扇形竖直范围（约 ±168）收在 340：舞台下方多出来的空白越少，“正在查找设备”
@@ -680,6 +712,37 @@ def _render_wait_sprites(
         _render_wait_sprite(index, width, height, ratio)
         for index in range(WAIT_STACK_CARDS)
     )
+
+
+@lru_cache(maxsize=8)
+def _render_deal_back(width: int, height: int, ratio: float) -> QPixmap:
+    """发牌时每张牌的背面：按钮那张卡面的纹样 + 描边 + 投影。
+
+    背面不再另画一套图案：用户点下去时牌堆最上面那张就是“查找设备”的卡面，发出去的
+    牌因此把这张卡面（不带正中文字）当作背面——牌是从同一副牌里发出来的。投影与描边
+    和等待动画一样烘焙进这张图，发牌/翻牌每帧只缩放、旋转着贴。
+    """
+    pad = _WAIT_SHADOW_PAD
+    drop = _WAIT_SHADOW_DROP
+    size = QSize(
+        max(1, round((width + 2 * pad) * ratio)),
+        max(1, round((height + 2 * pad + drop) * ratio)),
+    )
+    pixmap = QPixmap(size)
+    pixmap.fill(Qt.transparent)
+    pixmap.setDevicePixelRatio(ratio)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    painter.drawPixmap(
+        QPointF(0.0, float(drop)), _render_card_shadow(width, height, ratio)
+    )
+    card = QRectF(float(pad), float(pad), float(width), float(height))
+    painter.drawPixmap(card.topLeft(), _render_card_face(width, height, ratio))
+    painter.setPen(QPen(_EDGE, CARD_EDGE_WIDTH))
+    painter.setBrush(Qt.NoBrush)
+    painter.drawRoundedRect(card, CARD_RADIUS, CARD_RADIUS)
+    painter.end()
+    return pixmap
 
 
 class _CardBackdrop(QWidget):
@@ -1414,4 +1477,348 @@ class ScanWaitStack(QWidget):
             self._sprites = _render_wait_sprites(*key)
             self._sprites_key = key
         return self._sprites
+
+
+def _ease_out_cubic(phase: float) -> float:
+    """发牌飞行的缓动：起步快、落点慢，牌是“放”到结果位上的。"""
+    phase = max(0.0, min(1.0, float(phase)))
+    return 1.0 - (1.0 - phase) ** 3
+
+
+class DealRevealLayer(QWidget):
+    """发牌与翻牌：从“查找设备”牌堆往结果位发牌，背面朝上，再逐张翻开。
+
+    扫描结果回来、等待动画走完一整轮之后，面板不直接把卡片摆出来，而是让这个覆盖层
+    接住这一段：牌从按钮牌堆原来的位置一张张飞向结果区里的卡片位，飞行中背面朝上；
+    所有牌都落定后停一下，再从左到右逐张翻面，把仪器卡片（正面）露出来。
+
+    **背面就是按钮的卡面**（:func:`_render_deal_back` 用 :func:`_render_card_face`
+    的纹样，不带正中文字）：牌是从按钮那一叠里发出来的，背面因此与牌堆最上面那张一致。
+    正面由调用方在动画开始前截好（:class:`presentation.qt.device_cards.InstrumentCard`
+    的整张图），翻到后半程时贴的是这张正面；翻完一张才把真正的卡片控件恢复显示，用户
+    因此不会看到“卡片背后藏着一张已经能点的卡片”。
+
+    它只是画面：不吃鼠标（``WA_TransparentForMouseEvents``）、不占焦点、不进布局；
+    覆盖在结果区上，目标的矩形每帧从卡片控件现取，窗口缩放时也能跟到新位置。
+    全部翻完后发出 :attr:`finished`，面板据此恢复状态行与卡片交互。
+    """
+
+    #: 所有牌都翻开、覆盖层收起时发出。
+    finished = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("dealRevealLayer")
+        # 动画不是控件：点击、悬停与键盘焦点都留给下面的卡片与按钮。
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setFocusPolicy(Qt.NoFocus)
+        #: 本次要发的牌（按结果区里的显示顺序）与它们的正面截图。
+        self._cards: list[QWidget] = []
+        self._fronts: list[QPixmap] = []
+        #: 已经翻开的牌：翻完就恢复真正的卡片控件，不再由覆盖层画。
+        self._revealed: list[bool] = []
+        #: 牌堆在覆盖层坐标里的中心（发牌起点）。
+        self._deck = QPointF()
+        #: 只让卡片画在卡片区视口里：结果多到要滚动时，看不见的行不会画到状态行/动作行上。
+        self._clip_widget: QWidget | None = None
+        self._elapsed = 0.0
+        self._clock = QElapsedTimer()
+        self._timer = QTimer(self)
+        self._timer.setInterval(DEAL_FRAME_MS)
+        self._timer.timeout.connect(self._advance)
+
+    # ---- 时间轴 -------------------------------------------------------------
+
+    def is_running(self) -> bool:
+        """发牌/翻牌是否正在走。"""
+        return self._timer.isActive()
+
+    @property
+    def revealed_count(self) -> int:
+        """已经翻开的张数（测试与收尾用）。"""
+        return sum(1 for revealed in self._revealed if revealed)
+
+    def duration_ms(self) -> float:
+        """这一次发牌 + 翻牌的整段时长；没有牌时为 0。"""
+        count = len(self._cards)
+        if count <= 0:
+            return 0.0
+        deal_end = (count - 1) * DEAL_STAGGER_MS + DEAL_FLY_MS
+        return float(
+            deal_end + DEAL_SETTLE_MS + (count - 1) * FLIP_STAGGER_MS + FLIP_MS
+        )
+
+    def deal_progress(self, index: int, elapsed_ms: float | None = None) -> float:
+        """第 ``index`` 张牌飞到了哪里（0 刚离开牌堆，1 已落定）。"""
+        if index < 0 or index >= len(self._cards):
+            return 0.0
+        elapsed = self._elapsed if elapsed_ms is None else float(elapsed_ms)
+        local = elapsed - index * DEAL_STAGGER_MS
+        return max(0.0, min(1.0, local / DEAL_FLY_MS))
+
+    def flip_progress(self, index: int, elapsed_ms: float | None = None) -> float:
+        """第 ``index`` 张牌翻到了哪里（0 还没动，0.5 侧对屏幕，1 已翻开）。"""
+        if index < 0 or index >= len(self._cards):
+            return 0.0
+        elapsed = self._elapsed if elapsed_ms is None else float(elapsed_ms)
+        count = len(self._cards)
+        deal_end = (count - 1) * DEAL_STAGGER_MS + DEAL_FLY_MS
+        start = deal_end + DEAL_SETTLE_MS + index * FLIP_STAGGER_MS
+        return max(0.0, min(1.0, (elapsed - start) / FLIP_MS))
+
+    def start(
+        self,
+        cards: Sequence[QWidget],
+        fronts: Sequence[QPixmap],
+        deck_origin: QPointF,
+        clip_widget: QWidget | None = None,
+    ) -> None:
+        """从 ``deck_origin`` 开始发 ``cards``；``fronts`` 是每张卡的正面截图。
+
+        ``clip_widget`` 是卡片区的可见视口：结果多到要滚动时，没滚到的行不该被画到
+        状态行或动作行上。
+        """
+        self._timer.stop()
+        self._cards = list(cards)
+        self._fronts = list(fronts)
+        self._revealed = [False] * len(self._cards)
+        self._deck = QPointF(deck_origin)
+        self._clip_widget = clip_widget
+        self._elapsed = 0.0
+        if not self._cards:
+            self.hide()
+            return
+        self._clock.start()
+        self.setVisible(True)
+        self.raise_()
+        self.update()
+        self._timer.start()
+
+    def finish(self) -> None:
+        """立刻走完这一段：所有牌翻开，收起覆盖层并发出 :attr:`finished`。"""
+        if not self._cards:
+            return
+        self._elapsed = self.duration_ms()
+        self._reveal_all()
+        self._stop()
+        self.finished.emit()
+
+    def cancel(self, *, reveal: bool = True) -> None:
+        """中途取消；``reveal=True`` 时把卡片直接恢复显示（例如页面重排）。"""
+        self._stop()
+        if reveal:
+            self._reveal_all()
+        self._cards = []
+        self._fronts = []
+        self._revealed = []
+        self._clip_widget = None
+        self._elapsed = 0.0
+
+    def _stop(self) -> None:
+        self._timer.stop()
+        self.hide()
+
+    def _advance(self) -> None:
+        total = self.duration_ms()
+        self._elapsed = float(min(total, self._clock.elapsed()))
+        for index in range(len(self._cards)):
+            if not self._revealed[index] and self.flip_progress(index) >= 1.0:
+                self._reveal(index)
+        self.update()
+        if self._elapsed >= total:
+            self._reveal_all()
+            self._stop()
+            self.finished.emit()
+
+    def _reveal(self, index: int) -> None:
+        """翻完一张：撤掉透明度效果，让真正的卡片控件露出来。"""
+        if index < 0 or index >= len(self._cards) or self._revealed[index]:
+            return
+        self._revealed[index] = True
+        self._cards[index].setGraphicsEffect(None)
+
+    def _reveal_all(self) -> None:
+        for index in range(len(self._cards)):
+            self._reveal(index)
+        self.update()
+
+    # ---- 几何 ---------------------------------------------------------------
+
+    def _target_rect(self, index: int) -> QRectF:
+        """第 ``index`` 张卡在覆盖层里的落点：每帧从卡片控件现取。"""
+        card = self._cards[index]
+        origin = card.mapTo(self, card.rect().topLeft())
+        return QRectF(
+            float(origin.x()),
+            float(origin.y()),
+            float(card.width()),
+            float(card.height()),
+        )
+
+    def _flight_center(self, index: int, progress: float) -> QPointF:
+        """飞行中的牌中心：从牌堆到落点的一条向上拱起的二次曲线。"""
+        target = self._target_rect(index).center()
+        start = self._deck
+        control = QPointF(
+            (start.x() + target.x()) / 2.0,
+            min(start.y(), target.y()) - DEAL_ARC_LIFT,
+        )
+        eased = _ease_out_cubic(progress)
+        inverse = 1.0 - eased
+        return QPointF(
+            start.x() * inverse * inverse
+            + control.x() * 2.0 * inverse * eased
+            + target.x() * eased * eased,
+            start.y() * inverse * inverse
+            + control.y() * 2.0 * inverse * eased
+            + target.y() * eased * eased,
+        )
+
+    # ---- 绘制 ---------------------------------------------------------------
+
+    def _deal_back(self) -> QPixmap:
+        """本次发牌共用的背面图：尺寸与屏幕像素比不变就一直复用。"""
+        ratio = float(self.devicePixelRatioF())
+        return _render_deal_back(int(CARD_WIDTH), int(CARD_HEIGHT), ratio)
+
+    def _draw_back(self, painter: QPainter, rect: QRectF, angle: float = 0.0) -> None:
+        """把背面图按 ``rect`` 缩放、旋转着贴上去（投影已在图里）。"""
+        if rect.width() <= 0.0 or rect.height() <= 0.0:
+            return
+        sprite = self._deal_back()
+        painter.save()
+        painter.translate(rect.center())
+        painter.rotate(float(angle))
+        painter.scale(rect.width() / CARD_WIDTH, rect.height() / CARD_HEIGHT)
+        painter.translate(-CARD_WIDTH / 2.0, -CARD_HEIGHT / 2.0)
+        painter.drawPixmap(
+            QPointF(-float(_WAIT_SHADOW_PAD), -float(_WAIT_SHADOW_PAD)), sprite
+        )
+        painter.restore()
+
+    def _draw_front(self, painter: QPainter, rect: QRectF, index: int) -> None:
+        """把卡片控件的截图按 ``rect`` 缩放贴上去，并在下面补一层同样的投影。"""
+        if index < 0 or index >= len(self._fronts):
+            return
+        front = self._fronts[index]
+        if front.isNull() or rect.width() <= 0.0 or rect.height() <= 0.0:
+            return
+        ratio = float(self.devicePixelRatioF())
+        pad = float(_WAIT_SHADOW_PAD)
+        shadow = _render_card_shadow(int(CARD_WIDTH), int(CARD_HEIGHT), ratio)
+        # 投影与背面共用同一张预渲染图：翻面时只缩放它，不按每一帧的新宽度重画。
+        painter.save()
+        painter.translate(rect.center())
+        painter.scale(rect.width() / CARD_WIDTH, rect.height() / CARD_HEIGHT)
+        painter.translate(-CARD_WIDTH / 2.0, -CARD_HEIGHT / 2.0)
+        painter.drawPixmap(
+            QPointF(-pad, -pad + _WAIT_SHADOW_DROP),
+            shadow,
+        )
+        painter.restore()
+        # 整张截图（物理像素）映射进落点矩形：不依赖 grab() 报告的设备像素比，
+        # 高分屏上也不会因为 dpr 与逻辑尺寸对不上而把卡片缩小/放大。
+        painter.drawPixmap(rect, front, QRectF(front.rect()))
+
+    def paintEvent(self, event):  # noqa: N802 - Qt 覆盖方法
+        """先画剩下的牌堆，再画飞出去的牌 / 落定的背面；翻到后半程贴正面。"""
+        if not self._cards:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        count = len(self._cards)
+        dealt = sum(
+            1 for index in range(count) if self.deal_progress(index) > 0.0
+        )
+        remaining = count - dealt
+        if remaining > 0:
+            # 牌堆最多叠三张：发走一张，剩下的少一层，看得出“牌是从这叠里出去的”。
+            for depth in range(min(3, remaining) - 1, -1, -1):
+                rect = QRectF(
+                    self._deck.x() - CARD_WIDTH / 2.0,
+                    self._deck.y() - CARD_HEIGHT / 2.0 - depth * 2.0,
+                    float(CARD_WIDTH),
+                    float(CARD_HEIGHT),
+                )
+                self._draw_back(painter, rect)
+        clip = self._cards_clip_rect()
+        if clip is not None:
+            painter.save()
+            painter.setClipRect(clip, Qt.IntersectClip)
+        for index in range(count):
+            if self._revealed[index]:
+                continue
+            deal = self.deal_progress(index)
+            if deal <= 0.0:
+                continue
+            target = self._target_rect(index)
+            if deal < 1.0:
+                eased = _ease_out_cubic(deal)
+                scale = DEAL_START_SCALE + (1.0 - DEAL_START_SCALE) * eased
+                angle = (
+                    DEAL_START_ANGLE
+                    * (1.0 - eased)
+                    * (1.0 if index % 2 == 0 else -1.0)
+                )
+                width = target.width() * scale
+                height = target.height() * scale
+                center = self._flight_center(index, deal)
+                rect = QRectF(
+                    center.x() - width / 2.0,
+                    center.y() - height / 2.0,
+                    width,
+                    height,
+                )
+                self._draw_back(painter, rect, angle)
+                continue
+            flip = self.flip_progress(index)
+            if flip <= 0.0:
+                self._draw_back(painter, target)
+            elif flip < 1.0:
+                self._paint_flip(painter, target, index, flip)
+            else:
+                # 翻完了但收尾信号还没到：直接贴正面，下一帧就会恢复真正的卡片。
+                self._draw_front(painter, target, index)
+        if clip is not None:
+            painter.restore()
+
+    def _cards_clip_rect(self) -> QRectF | None:
+        """卡片区的可见矩形（覆盖层坐标）：看不见的行不画到状态行与动作行上。"""
+        clip = self._clip_widget
+        if clip is None or not clip.isVisible():
+            return None
+        origin = clip.mapTo(self, clip.rect().topLeft())
+        return QRectF(
+            float(origin.x()),
+            float(origin.y()),
+            float(clip.width()),
+            float(clip.height()),
+        )
+
+    def _paint_flip(
+        self, painter: QPainter, target: QRectF, index: int, progress: float
+    ) -> None:
+        """绕竖直轴翻面：前半程背面收窄，后半程正面展开。"""
+        squeeze = abs(math.cos(math.pi * progress))
+        squeeze = max(0.035, squeeze)
+        grow = 1.0 + 0.04 * math.sin(math.pi * progress)
+        width = target.width() * squeeze
+        height = target.height() * grow
+        rect = QRectF(
+            target.center().x() - width / 2.0,
+            target.center().y() - height / 2.0,
+            width,
+            height,
+        )
+        if progress < 0.5:
+            self._draw_back(painter, rect)
+        else:
+            self._draw_front(painter, rect, index)
+        shade = round(70 * math.sin(math.pi * progress))
+        if shade:
+            path = QPainterPath()
+            radius = max(1.0, CARD_RADIUS * (rect.width() / CARD_WIDTH))
+            path.addRoundedRect(rect, radius, radius)
+            painter.fillPath(path, QColor(0, 0, 0, shade))
 

@@ -20,6 +20,10 @@ from PySide6.QtWidgets import (
 from .measurement_start_facade import MeasurementStartFacade, StartMeasurementRequest
 from application.dto import DriverPowerMappingMeasurementResult
 from .archival_page import ArchivalPageMixin
+from .measurement_controls import (
+    MeasurementAction,
+    MeasurementControlPresenter,
+)
 from .measurement_state import (
     DriverMappingPageResultState,
     MeasurementKind,
@@ -111,16 +115,23 @@ class DriverMappingPage(
         self.driver_mapping_btn.clicked.connect(self.start_measurement)
         self.driver_cancel_btn = QPushButton("取消")
         set_button_variant(self.driver_cancel_btn, "secondary")
-        self.driver_cancel_btn.setEnabled(False)
         self.driver_cancel_btn.clicked.connect(self.cancel_measurement)
         self.driver_stop_btn = QPushButton("停止测量")
         set_button_variant(self.driver_stop_btn, "secondary")
-        self.driver_stop_btn.setEnabled(False)
         self.driver_stop_btn.clicked.connect(self.stop_measurement)
         self.driver_emergency_stop_btn = QPushButton("紧急停止")
         set_button_variant(self.driver_emergency_stop_btn, "danger")
-        self.driver_emergency_stop_btn.setEnabled(False)
         self.driver_emergency_stop_btn.clicked.connect(self.emergency_stop_measurement)
+        self.controls = MeasurementControlPresenter(
+            MeasurementKind.DRIVER_MAPPING,
+            {
+                MeasurementAction.START: self.driver_mapping_btn,
+                MeasurementAction.STOP: self.driver_stop_btn,
+                MeasurementAction.CANCEL: self.driver_cancel_btn,
+                MeasurementAction.EMERGENCY_STOP: self.driver_emergency_stop_btn,
+            },
+        )
+        self.controls.show_idle()
         # 测量控制按钮横向排列在同一行，减少纵向占用面积。
         for button in (
             self.driver_mapping_btn,
@@ -265,29 +276,19 @@ class DriverMappingPage(
             update_plot(dict(data))
 
     def _on_state_changed(self, state: Any) -> None:
-        active = state.kind is MeasurementKind.DRIVER_MAPPING and state.is_active
-        self.driver_mapping_btn.setEnabled(not active)
-        self.driver_stop_btn.setEnabled(active)
-        self.driver_emergency_stop_btn.setEnabled(active)
-        self.driver_cancel_btn.setEnabled(active)
+        self.controls.apply(state)
 
     def _on_error(self, message: str) -> None:
         if not self._archival_is_for_this_page():
             return
-        self.driver_mapping_btn.setEnabled(True)
-        self.driver_stop_btn.setEnabled(False)
-        self.driver_emergency_stop_btn.setEnabled(False)
-        self.driver_cancel_btn.setEnabled(False)
+        self.controls.show_idle()
         self._archival_test_failed(message)
         self._error_callback(message)
 
     def _on_stopped(self, reason: str) -> None:
         if not self._archival_is_for_this_page():
             return
-        self.driver_mapping_btn.setEnabled(True)
-        self.driver_stop_btn.setEnabled(False)
-        self.driver_emergency_stop_btn.setEnabled(False)
-        self.driver_cancel_btn.setEnabled(False)
+        self.controls.show_idle()
         self._archival_test_stopped(reason)
         self._log_callback(f"测量已停止: {reason}")
         self._progress_callback(0)
@@ -295,9 +296,7 @@ class DriverMappingPage(
     def _on_finished(self) -> None:
         if not self._archival_is_for_this_page():
             return
-        self.driver_mapping_btn.setEnabled(True)
-        self.driver_stop_btn.setEnabled(False)
-        self.driver_emergency_stop_btn.setEnabled(False)
+        self.controls.show_idle()
         self._progress_callback(100)
         self._archival_test_finished()
         self._log_callback("测量完成！")

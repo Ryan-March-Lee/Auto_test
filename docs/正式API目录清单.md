@@ -291,6 +291,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `presentation.qt.history_view_model` | 历史查看只读视图模型：结果列表、运行摘要、选中项、已加载结果与频率浏览（无 Qt、无路径） |
 | `presentation.qt.input_controls` | 通用输入控件类（只提供输入行为；页面共用的构建工厂在 `config_page_widgets`） |
 | `presentation.qt.measurement_start_facade` | 测量启动 Facade（GUI 重构步骤 9）：三个测量页面共享的启动前置检查（是否绑定 controller、是否已有测量运行、当前运行是否满足正式运行契约）、接线确认编排与唯一的 `MeasurementCommand` 构造；运行契约判据仍只委托 `presentation.qt.run_contract`，facade 不导入 Qt、不创建对话框或 worker。线损的“第二步继续”、各页接线图、日志、归档与结果展示仍是页面专属行为 |
+| `presentation.qt.measurement_controls` | 测量页面公共按钮状态绑定（GUI 重构步骤 10）：页面只声明自己支持的开始/停止/取消/紧急停止/继续动作，`MeasurementControlPresenter` 把 `ControllerState`（或 `MeasurementViewState`）映射成按钮可用性，并在终止事件或页面初始化时恢复空闲布局；状态判据仍来自现有测量状态契约，不新增第二套状态机，状态快照的 `is_active` 只接受 `bool`（缺失时才按 `status` 推导）。纯 Python：不导入 Qt、不连接 signal、不启动或停止 worker，也不改变测量线程与清理流程 |
 | `presentation.qt.measurement_state` | 测量状态对象 |
 | `presentation.qt.measurement_worker_factories` | 测量 worker 工厂 |
 | `presentation.qt.realtime_buffer` | 实时数据缓冲 |

@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QApplication, QDialog
 from application.dto import CableLossMeasurementResult, CableLossRow
 from presentation.qt.cable_loss_page import CableLossPage
 from presentation.qt.measurement_controller_contract import MeasurementCommand
+from presentation.qt.measurement_controls import MeasurementAction
 from presentation.qt.measurement_state import (
     MeasurementKind,
     MeasurementResultReference,
@@ -196,6 +197,36 @@ class CableLossPageTests(unittest.TestCase):
         self.assertEqual(self.page.cable_loss_table.item(0, 0).text(), "3.5")
         self.assertEqual(self.page.cable_loss_table.item(0, 1).text(), "1.111")
         self.assertEqual(self.page.cable_loss_table.item(0, 4).text(), "4.444")
+
+    def test_control_buttons_follow_the_shared_state_binding(self):
+        self.assertEqual(
+            self.page.controls.supported_actions,
+            frozenset(
+                {
+                    MeasurementAction.START,
+                    MeasurementAction.STOP,
+                    MeasurementAction.CANCEL,
+                    MeasurementAction.CONTINUE,
+                }
+            ),
+        )
+        self.controller.signals.state_changed.emit(type(
+            "State", (), {
+                "kind": MeasurementKind.CABLE_LOSS,
+                "status": MeasurementStatus.WAITING_FOR_CONTINUE,
+                "is_active": True,
+            }
+        )())
+        self.assertFalse(self.page.cable_loss_btn.isEnabled())
+        self.assertTrue(self.page.stop_cable_loss_btn.isEnabled())
+        self.assertTrue(self.page.cancel_cable_loss_btn.isEnabled())
+        self.assertTrue(self.page.continue_cable_loss_btn.isEnabled())
+
+        self.controller.signals.stopped.emit("用户停止")
+        self.assertTrue(self.page.cable_loss_btn.isEnabled())
+        self.assertFalse(self.page.stop_cable_loss_btn.isEnabled())
+        self.assertFalse(self.page.cancel_cable_loss_btn.isEnabled())
+        self.assertFalse(self.page.continue_cable_loss_btn.isEnabled())
 
     def test_non_formal_result_is_reported_and_not_displayed(self):
         self.page.show_loaded_result(MeasurementResultReference(

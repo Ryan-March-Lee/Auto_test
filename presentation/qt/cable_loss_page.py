@@ -25,6 +25,10 @@ from PySide6.QtWidgets import (
 from .measurement_start_facade import MeasurementStartFacade, StartMeasurementRequest
 from application.dto import CableLossMeasurementResult
 from .archival_page import ArchivalPageMixin
+from .measurement_controls import (
+    MeasurementAction,
+    MeasurementControlPresenter,
+)
 from .measurement_state import CableLossPageResultState, MeasurementKind, MeasurementStatus
 from .pages import PageControllerBindingMixin
 from .theme import set_button_variant
@@ -118,16 +122,23 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         set_button_variant(self.continue_cable_loss_btn, "primary")
         set_button_variant(self.stop_cable_loss_btn, "secondary")
         set_button_variant(self.load_cable_results_btn, "secondary")
-        self.stop_cable_loss_btn.setEnabled(False)
-        self.continue_cable_loss_btn.setEnabled(False)
         self.cable_loss_btn.clicked.connect(self.start_measurement)
         self.load_cable_results_btn.clicked.connect(self.load_result_requested.emit)
         self.stop_cable_loss_btn.clicked.connect(self.stop_measurement)
         self.cancel_cable_loss_btn = QPushButton("取消")
         set_button_variant(self.cancel_cable_loss_btn, "secondary")
-        self.cancel_cable_loss_btn.setEnabled(False)
         self.cancel_cable_loss_btn.clicked.connect(self.cancel_measurement)
         self.continue_cable_loss_btn.clicked.connect(self.continue_measurement)
+        self.controls = MeasurementControlPresenter(
+            MeasurementKind.CABLE_LOSS,
+            {
+                MeasurementAction.START: self.cable_loss_btn,
+                MeasurementAction.STOP: self.stop_cable_loss_btn,
+                MeasurementAction.CANCEL: self.cancel_cable_loss_btn,
+                MeasurementAction.CONTINUE: self.continue_cable_loss_btn,
+            },
+        )
+        self.controls.show_idle()
         control_layout.addWidget(self.cable_loss_btn, 0, 0)
         control_layout.addWidget(self.stop_cable_loss_btn, 0, 1)
         control_layout.addWidget(self.continue_cable_loss_btn, 1, 0)
@@ -227,28 +238,19 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
             self._log_callback("线损测量已取消")
 
     def _on_state_changed(self, state: Any) -> None:
-        active = state.kind is MeasurementKind.CABLE_LOSS and state.is_active
-        self.cable_loss_btn.setEnabled(not active)
-        self.stop_cable_loss_btn.setEnabled(active)
-        self.cancel_cable_loss_btn.setEnabled(active)
-        self.continue_cable_loss_btn.setEnabled(
-            state.kind is MeasurementKind.CABLE_LOSS
-            and state.status is MeasurementStatus.WAITING_FOR_CONTINUE
-        )
+        self.controls.apply(state)
 
     def _on_error(self, message: str) -> None:
         if not self._archival_is_for_this_page():
             return
-        self.cable_loss_btn.setEnabled(True)
-        self.stop_cable_loss_btn.setEnabled(False)
-        self.cancel_cable_loss_btn.setEnabled(False)
-        self.continue_cable_loss_btn.setEnabled(False)
+        self.controls.show_idle()
         self._archival_test_failed(message)
         self._error_callback(message)
 
     def _on_stopped(self, reason: str) -> None:
         if not self._archival_is_for_this_page():
             return
+        self.controls.show_idle()
         self._archival_test_stopped(reason)
         self._log_callback(f"测量已停止: {reason}")
         self._progress_callback(0)
@@ -256,6 +258,7 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
     def _on_finished(self) -> None:
         if not self._archival_is_for_this_page():
             return
+        self.controls.show_idle()
         self._progress_callback(100)
         self._archival_test_finished()
         self._log_callback("测量完成！")

@@ -23,6 +23,10 @@ from PySide6.QtWidgets import (
 
 from application.dto import AmplifierMeasurementResult
 from .archival_page import ArchivalPageMixin
+from .measurement_controls import (
+    MeasurementAction,
+    MeasurementControlPresenter,
+)
 from .measurement_start_facade import MeasurementStartFacade, StartMeasurementRequest
 from .measurement_state import AmplifierPageResultState, MeasurementKind
 from .pages import PageControllerBindingMixin
@@ -110,12 +114,19 @@ class AmplifierPage(
         self.amplifier_test_btn.clicked.connect(self.start_measurement)
         self.cancel_btn = QPushButton("取消")
         set_button_variant(self.cancel_btn, "secondary")
-        self.cancel_btn.setEnabled(False)
         self.cancel_btn.clicked.connect(self.cancel_measurement)
         self.emergency_stop_btn = QPushButton("紧急停止")
         set_button_variant(self.emergency_stop_btn, "danger")
-        self.emergency_stop_btn.setEnabled(False)
         self.emergency_stop_btn.clicked.connect(self.emergency_stop_measurement)
+        self.controls = MeasurementControlPresenter(
+            MeasurementKind.AMPLIFIER,
+            {
+                MeasurementAction.START: self.amplifier_test_btn,
+                MeasurementAction.CANCEL: self.cancel_btn,
+                MeasurementAction.EMERGENCY_STOP: self.emergency_stop_btn,
+            },
+        )
+        self.controls.show_idle()
         # 测量控制按钮横向排列在同一行，减少纵向占用面积。
         for button in (
             self.amplifier_test_btn,
@@ -279,26 +290,19 @@ class AmplifierPage(
             update_plot(dict(data))
 
     def _on_state_changed(self, state: Any) -> None:
-        active = state.kind is MeasurementKind.AMPLIFIER and state.is_active
-        self.amplifier_test_btn.setEnabled(not active)
-        self.emergency_stop_btn.setEnabled(active)
-        self.cancel_btn.setEnabled(active)
+        self.controls.apply(state)
 
     def _on_error(self, message: str) -> None:
         if not self._archival_is_for_this_page():
             return
-        self.amplifier_test_btn.setEnabled(True)
-        self.emergency_stop_btn.setEnabled(False)
-        self.cancel_btn.setEnabled(False)
+        self.controls.show_idle()
         self._archival_test_failed(message)
         self._error_callback(message)
 
     def _on_stopped(self, reason: str) -> None:
         if not self._archival_is_for_this_page():
             return
-        self.amplifier_test_btn.setEnabled(True)
-        self.emergency_stop_btn.setEnabled(False)
-        self.cancel_btn.setEnabled(False)
+        self.controls.show_idle()
         self._progress_callback(0)
         self._archival_test_stopped(reason)
         self._log_callback(f"测量已停止: {reason}")
@@ -306,8 +310,7 @@ class AmplifierPage(
     def _on_finished(self) -> None:
         if not self._archival_is_for_this_page():
             return
-        self.amplifier_test_btn.setEnabled(True)
-        self.emergency_stop_btn.setEnabled(False)
+        self.controls.show_idle()
         self._progress_callback(100)
         # 测试确实完成了，但没有收到归档结果时如实提示状态未知。
         self._archival_test_finished()

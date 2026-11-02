@@ -12,6 +12,7 @@ from application.dto import (
 )
 from presentation.qt.amplifier_page import AmplifierPage
 from presentation.qt.measurement_controller_contract import MeasurementCommand
+from presentation.qt.measurement_controls import MeasurementAction
 from presentation.qt.measurement_state import MeasurementKind, MeasurementStatus
 
 
@@ -186,6 +187,29 @@ class AmplifierPageTests(unittest.TestCase):
         self.assertEqual(self.controller.calls, [("stop",)])
         self.controller.signals.error.emit("失败")
         self.assertTrue(self.page.amplifier_test_btn.isEnabled())
+
+    def test_control_buttons_follow_the_shared_state_binding(self):
+        self.assertEqual(
+            self.page.controls.supported_actions,
+            frozenset(
+                {
+                    MeasurementAction.START,
+                    MeasurementAction.CANCEL,
+                    MeasurementAction.EMERGENCY_STOP,
+                }
+            ),
+        )
+        self.controller.signals.state_changed.emit(type("State", (), {
+            "kind": MeasurementKind.AMPLIFIER, "is_active": True,
+        })())
+        self.assertFalse(self.page.amplifier_test_btn.isEnabled())
+        self.assertTrue(self.page.cancel_btn.isEnabled())
+        self.assertTrue(self.page.emergency_stop_btn.isEnabled())
+
+        self.controller.signals.finished.emit()
+        self.assertTrue(self.page.amplifier_test_btn.isEnabled())
+        self.assertFalse(self.page.cancel_btn.isEnabled())
+        self.assertFalse(self.page.emergency_stop_btn.isEnabled())
 
     def test_control_buttons_share_one_row(self):
         page = self.page

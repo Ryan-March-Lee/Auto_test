@@ -562,6 +562,30 @@ ViewModel 不导入 PySide6，不直接读写文件，不创建仪器，不弹 Q
 
 **工作范围控制**：只处理公共控制状态，不碰硬件业务和结果 DTO。
 
+**完成状态**：✅ 已完成。新增 `presentation.qt.measurement_controls`：
+
+- `MeasurementAction` 是页面可声明的控制动作（开始、停止、取消、紧急停止、继续）；
+  `MeasurementControlPresenter` 按页面登记的动作集合把 `ControllerState`（或
+  `MeasurementViewState`，缺少 `is_active` 时按状态推导；该属性存在时必须是 `bool`，
+  否则按调用方契约错误拒绝）映射成 `MeasurementControlAvailability`，并只写入页面
+  实际拥有的按钮。活动测量属于本页时关闭“开始”、打开停止类动作；
+  `waiting_for_continue` 才打开“继续”；终止状态、空闲状态或其他测量类型都回到
+  “开始可用、停止类关闭”的空闲布局。状态判据仍来自现有
+  `ControllerState` / `MeasurementViewState`，没有新增第二套状态机；
+- `MeasurementControlPresenter.apply(state)` 是 `state_changed` 的唯一入口，
+  `show_idle()` 供页面初始化与 `error` / `stopped` / `finished` 终止事件使用；不导入
+  PySide6、不连接 signal、不启动/停止 worker，也不改变测量线程、进度与硬件清理流程；
+- 三个测量页面只声明自己的动作集合（线损：开始/停止/取消/继续；驱动映射：开始/停止/
+  取消/紧急停止；主功放：开始/取消/紧急停止），`_on_state_changed` 与终止事件改为
+  一行委托，删除各页重复的 `setEnabled` 判断；线损的“第二步继续”仍由页面自己的
+  `step_pause` 对话框与 `continue_cable_loss` 处理，归档状态机仍由
+  `ArchivalPageMixin` 负责；
+- 新增 `tests/ui/test_measurement_controls.py`（纯 Python，不启动 `QApplication`）覆盖
+  空闲/活动/等待继续/终止/其他测量类型的可用性矩阵、未登记动作不写入、控件映射快照、
+  调用方契约错误与“页面不再直接调用 `setEnabled`”的静态边界；三个页面各补一条按钮
+  状态接线用例，现有页面、controller 与集成测试未改；
+- 正式 API 清单同步登记新内部模块。未改变按钮布局、页面文案、测量线程与硬件清理流程。
+
 ---
 
 ## 阶段五：让视觉改动停留在表现层

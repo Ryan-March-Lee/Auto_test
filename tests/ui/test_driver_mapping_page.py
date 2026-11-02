@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QWidget
 from application.dto import DriverPowerMappingMeasurementResult, DriverPowerPoint
 from presentation.qt.driver_mapping_page import DriverMappingPage
 from presentation.qt.measurement_controller_contract import MeasurementCommand
+from presentation.qt.measurement_controls import MeasurementAction
 from presentation.qt.measurement_state import (
     DriverMappingPageResultState,
     MeasurementKind,
@@ -230,6 +231,32 @@ class DriverMappingPageTests(unittest.TestCase):
         )()
         self.controller.signals.finished.emit()
         self.assertIn("测量完成！", self.logs)
+
+    def test_control_buttons_follow_the_shared_state_binding(self):
+        self.assertEqual(
+            self.page.controls.supported_actions,
+            frozenset(
+                {
+                    MeasurementAction.START,
+                    MeasurementAction.STOP,
+                    MeasurementAction.CANCEL,
+                    MeasurementAction.EMERGENCY_STOP,
+                }
+            ),
+        )
+        self.controller.signals.state_changed.emit(
+            type("State", (), {"kind": MeasurementKind.DRIVER_MAPPING, "is_active": True})()
+        )
+        self.assertFalse(self.page.driver_mapping_btn.isEnabled())
+        self.assertTrue(self.page.driver_stop_btn.isEnabled())
+        self.assertTrue(self.page.driver_cancel_btn.isEnabled())
+        self.assertTrue(self.page.driver_emergency_stop_btn.isEnabled())
+
+        self.controller.signals.stopped.emit("用户停止")
+        self.assertTrue(self.page.driver_mapping_btn.isEnabled())
+        self.assertFalse(self.page.driver_stop_btn.isEnabled())
+        self.assertFalse(self.page.driver_cancel_btn.isEnabled())
+        self.assertFalse(self.page.driver_emergency_stop_btn.isEnabled())
 
     def test_other_measurement_terminal_events_are_ignored(self):
         self.controller.state = type(

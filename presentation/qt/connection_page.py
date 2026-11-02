@@ -18,9 +18,13 @@ Python 里构建并插进骨架。两个页面动作虽然声明在 ``.ui`` 的�
 页面不写颜色、字号与间距常量：颜色与字号来自 :mod:`presentation.qt.theme`，静态间距在
 ``.ui`` 里，版心宽度用主题令牌 ``theme.PAGE_CONTENT_MAX_WIDTH`` 收口。
 
-点“查找设备”后，大标题与面板里的扫描网段/方式提示一起淡出，结果卡片与动作行留在
-页面中间偏上的位置；按“返回”重新查找、扫描失败或没有结果时，页头再淡回来。淡出只改
-透明度、不收版面，所以卡片区的位置不随动画跳动。
+点“查找设备”后，大标题与面板里的扫描网段/方式提示**隐去文字**（扫描行同时禁用），但保留
+这一块固定的高度。它是页面主体的锚点：`查找设备` 按钮与点下去后换成的等待动画落在同一个
+格子里，若这时把页头从布局里拿掉，主体会整体上移一截，按钮就会跳。**扫描出结果后页头连同
+高度一起拿掉**：按钮已经收走，仪器卡片因此可以升到按钮上方、靠近页面顶部，不再和按钮
+同高（按钮本身在结果区里被引导间距压在卡片落点之下，两者矩形不重叠）；按“返回”重新查找、
+扫描失败或没有结果时页头原样回来。页面主体本身固定在上部
+（`connection_page.ui` 的顶部留白只留一小段，富余高度全部落在底部）。
 
 “下一步”先把本次勾选的设备写入配置（整批替换），再切到仪器配置页；配置文件仍随
 “保存配置”或“校验并创建运行”一起落盘，因此从本页离开不会产生半保存的配置。
@@ -30,7 +34,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, TypeVar
 
-from PySide6.QtCore import QEasingCurve, QEvent, QVariantAnimation, Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtWidgets import (
     QGraphicsOpacityEffect,
     QLabel,
@@ -47,7 +51,7 @@ from application.ports.device_discovery import DEMO_SUBNET
 
 from .config_form_bindings import binding_address, binding_records
 from .device_discovery_panel import (
-    BOX_STATE_BUSY,
+    BOX_STATE_IDLE,
     BOX_STATE_RESULTS,
     DeviceDiscoveryPanel,
     subnet_from_address,
@@ -57,9 +61,6 @@ from .ui_loader import load_ui
 
 #: 控件查询的返回类型；``.ui`` 里声明的控件必须存在，缺失属于装配错误而不是运行状态。
 _Widget = TypeVar("_Widget", bound=QWidget)
-
-#: 查找开始后页头（大标题与扫描行）淡出的时长。
-_HEADER_FADE_MS = 280
 
 
 class ConnectionPage(QWidget):
@@ -121,9 +122,9 @@ class ConnectionPage(QWidget):
             parent=host,
         )
         host_layout.addWidget(self.discovery_panel)
-        # 点“查找设备”后大标题与扫描行一起淡出，结果卡片独自占据中间偏上的位置；
-        # 返回重新查找、扫描失败或没有结果时再淡回来。
-        self._setup_header_fade()
+        # 大标题与扫描行在扫描中隐去文字，但保留高度：它们是页面主体的锚点，
+        # 按钮、等待动画与结果卡片因此不再上下跳。
+        self._setup_header_visibility()
         # 页面动作栏：两个页面动作移进结果区动作行后，这一栏不再有可见内容；保留引用
         # 供视觉契约量取页面上下留白。
         self.page_action_bar = self._require(QWidget, "pageActionBar")
@@ -177,13 +178,18 @@ class ConnectionPage(QWidget):
             raise RuntimeError(f"connection_page.ui 缺少控件: {name}")
         return widget
 
-    def _setup_header_fade(self) -> None:
-        """给大标题与设备发现面板的扫描行装上同一条淡出时间轴。
+    def _setup_header_visibility(self) -> None:
+        """给大标题与设备发现面板的扫描行各挂一层透明度效果。
 
-        两处控件属于不同页面层级（标题在 ``.ui`` 骨架上，扫描行在动态面板里），
-        因此各挂一个透明度效果，由一个动画同时驱动；淡出后只把透明度降到 0，不收起
-        版面，卡片区的位置保持不变，仍落在界面的中间偏上部分。
+        页头在三种结果区状态下有不同的版面职责：
+
+        - 未查找：文字可见，按钮停在页头下面；
+        - 正在查找：文字隐去但**保留高度**。结果区里的“查找设备”按钮与点下去后换成的
+          等待动画落在同一格；若这时把页头从布局里拿掉，主体会上移一截，按钮就会跳一下。
+        - 有结果：页头连同高度一起拿掉（见 :meth:`_set_header_hidden`）。按钮已经收走，
+          仪器卡片因此能升到按钮上方、靠近页面顶部，不必再和按钮同高。
         """
+        self._header_hidden = False
         self._title_opacity = QGraphicsOpacityEffect(self.title_label)
         self._title_opacity.setOpacity(1.0)
         self.title_label.setGraphicsEffect(self._title_opacity)
@@ -192,39 +198,46 @@ class ConnectionPage(QWidget):
         )
         self._scan_header_opacity.setOpacity(1.0)
         self.discovery_panel.scan_header.setGraphicsEffect(self._scan_header_opacity)
-        self._header_opacity_value = 1.0
-        self._header_fade = QVariantAnimation(self)
-        self._header_fade.setDuration(_HEADER_FADE_MS)
-        self._header_fade.setEasingCurve(QEasingCurve.Type.InOutCubic)
-        self._header_fade.valueChanged.connect(self._apply_header_opacity)
 
-    def _on_box_state_changed(self, state: str) -> None:
-        """开始查找或有结果时淡出页头；回到未查找状态时淡回来。"""
-        if state in (BOX_STATE_BUSY, BOX_STATE_RESULTS):
-            self._fade_header(True)
-        else:
-            self._fade_header(False)
-
-    def _fade_header(self, hidden: bool) -> None:
-        """把大标题与扫描行淡到透明（或淡回可见），从中断处继续。"""
-        target = 0.0 if hidden else 1.0
-        # 扫描行淡出后不再接收鼠标与键盘：面板会重新启用网段/扫描方式控件，但页头
-        # 已经看不见，不能留下一个不可见却可操作的输入区。
-        self.discovery_panel.scan_header.setEnabled(not hidden)
-        if abs(self._header_opacity_value - target) < 0.001:
-            self._apply_header_opacity(target)
-            return
-        self._header_fade.stop()
-        self._header_fade.setStartValue(self._header_opacity_value)
-        self._header_fade.setEndValue(target)
-        self._header_fade.start()
-
-    def _apply_header_opacity(self, value: float) -> None:
-        """把同一条时间轴上的透明度同时写到大标题与扫描行。"""
-        opacity = max(0.0, min(1.0, float(value)))
-        self._header_opacity_value = opacity
+    def _set_header_text_visible(self, visible: bool) -> None:
+        """显示或隐去页头文字：只改透明度与可用性，不改版面。"""
+        opacity = 1.0 if visible else 0.0
         self._title_opacity.setOpacity(opacity)
         self._scan_header_opacity.setOpacity(opacity)
+        # 隐去后不能再留下一个看不见却可操作的输入区。
+        self.discovery_panel.scan_header.setEnabled(visible)
+
+    def _set_header_hidden(self, hidden: bool) -> None:
+        """把页头整块拿掉（有结果时）或放回版面（回到查找/扫描时）。
+
+        只有这一处会改变页面的固定高度：有结果时按钮已经收走，页头不必再占着位置，
+        仪器卡片因此可以升到页面顶部、高于按钮原来的位置。未查找与正在查找时页头都
+        留在版面里，点“查找设备”前后按钮与等待动画不跳。
+        """
+        hidden = bool(hidden)
+        if hidden == self._header_hidden:
+            return
+        self._header_hidden = hidden
+        self.title_label.setVisible(not hidden)
+        self.discovery_panel.scan_header.setVisible(not hidden)
+        if hidden:
+            self._set_header_text_visible(False)
+        layout = self.content_widget.layout()
+        if layout is not None:
+            layout.activate()
+        panel_layout = self.discovery_panel.layout()
+        if panel_layout is not None:
+            panel_layout.activate()
+        # 页头让出/收回的高度会改变结果区可用的高度：当场重排，避免卡片压到别处。
+        self._fit_discovery_panel()
+
+    def _on_box_state_changed(self, state: str) -> None:
+        """有结果时把页头整块拿掉（卡片上移）；其余状态按需隐去或复原文字。"""
+        if state == BOX_STATE_RESULTS:
+            self._set_header_hidden(True)
+            return
+        self._set_header_hidden(False)
+        self._set_header_text_visible(state == BOX_STATE_IDLE)
 
     def _build_connect_button(self) -> QPushButton:
         """结果区动作行里的“连接仪器”：与“返回”、返回欢迎页、下一步同一行。"""

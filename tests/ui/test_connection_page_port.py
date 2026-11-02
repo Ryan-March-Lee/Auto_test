@@ -320,33 +320,46 @@ class ConnectionPageStaticLayoutTests(unittest.TestCase):
             msg="版心应居中而不是贴向一侧",
         )
 
-    def test_spare_height_stays_weighted_towards_the_top(self):
-        """顶部固定留白把主体压在偏下位置：上留白明显大于下留白。"""
+    def test_the_result_cards_sit_above_the_scan_button(self):
+        """页面主体靠上：标题靠近顶部，结果卡片那一格在按钮上方。
+
+        “查找设备”按钮被引导间距压到结果卡片下沿之下：结果卡片在页面顶部出现，
+        两者不重叠，过渡动画才有干净的起点与终点。
+        """
+        from presentation.qt.device_cards import CARD_HEIGHT
+
         page = self.make_page()
         page.resize(1200, 900)
         page.show()
         self.app.processEvents()
         self.app.processEvents()
 
-        # 页面动作栏只保留两个页面动作的静态声明，运行时不承载可见内容；这里仍用它
-        # 定位内容区的下边界。视觉断言只量取标题、结果区与动作栏的实际位置。
-        action_bar = page.page_action_bar
-        self.assertIsNotNone(action_bar)
         title_top = page.title_label.mapTo(
             page, page.title_label.rect().topLeft()
         ).y()
-        panel_bottom = page.discovery_panel.mapTo(
-            page, page.discovery_panel.rect().bottomLeft()
-        ).y()
-        action_bar_top = action_bar.mapTo(page, action_bar.rect().topLeft()).y()
+        self.assertLess(title_top, page.height() * 0.2, "页标题应靠近窗口上部")
 
-        top_gap = title_top
-        bottom_gap = action_bar_top - panel_bottom
-        self.assertGreater(top_gap, bottom_gap, "上留白应大于下留白")
+        # 设备发现面板（扫描行 + 结果区）从页面上部开始。
+        panel = page.discovery_panel
+        panel_top = panel.mapTo(page, panel.rect().topLeft()).y()
+        self.assertLess(panel_top, page.height() * 0.35, "设备发现面板应靠近页面上部")
+
+        # 结果卡片从结果区顶部开始排；按钮被引导间距整体压到下半区，给卡片让位。
+        box_top = panel.results_box.mapTo(
+            page, panel.results_box.rect().topLeft()
+        ).y()
+        button_top = panel.scan_btn.mapTo(
+            page, panel.scan_btn.rect().topLeft()
+        ).y()
         self.assertGreater(
-            top_gap / max(1, bottom_gap),
-            1.5,
-            "顶部留白应明显大于底部留白，主体才不会贴到页面顶部",
+            button_top - box_top,
+            CARD_HEIGHT - 48,
+            "按钮应在结果区里给上方卡片让出引导高度",
+        )
+        self.assertGreater(
+            panel.scan_btn.mapTo(page, panel.scan_btn.rect().center()).y(),
+            page.height() / 2.0,
+            "按钮整体应落在页面下半区，卡片在其上方",
         )
 
 

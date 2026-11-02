@@ -54,9 +54,9 @@
        <property name="bottomMargin">
         <number>0</number>
        </property>
-       <!-- 顶部先留出一段固定空白，把页面主体压到窗口的偏下位置；剩下的富余高度再
-            由 topSpacerSecond 与 bottomSpacer 按 1:1 分配。QUiLoader 不读取 Designer
-            的 layout stretch 属性，因此用固定高度 + 弹性项的组合表达。 -->
+       <!-- 页面主体固定在窗口上部（“中间偏上”的落点）：顶部只留一段很小的固定空白，
+            富余高度全部交给 bottomSpacer。这样结果卡片能升到页面顶部附近，而“查找设备”
+            按钮由结果区里的引导间距压到卡片下方，两者互不重叠。 -->
        <item>
         <spacer name="topSpacer">
          <property name="orientation">
@@ -68,20 +68,7 @@
          <property name="sizeHint" stdset="0">
           <size>
            <width>20</width>
-           <height>160</height>
-          </size>
-         </property>
-        </spacer>
-       </item>
-       <item>
-        <spacer name="topSpacerSecond">
-         <property name="orientation">
-          <enum>Qt::Vertical</enum>
-         </property>
-         <property name="sizeHint" stdset="0">
-          <size>
-           <width>20</width>
-           <height>0</height>
+           <height>8</height>
           </size>
          </property>
         </spacer>
@@ -110,7 +97,7 @@
          <property name="sizeHint" stdset="0">
           <size>
            <width>20</width>
-           <height>12</height>
+           <height>0</height>
           </size>
          </property>
         </spacer>

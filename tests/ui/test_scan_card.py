@@ -794,6 +794,29 @@ class ScanWaitStackTests(unittest.TestCase):
                 gap = min(lightness_at(pose, -half - outset) for outset in (1.0, 2.0, 3.0))
                 self.assertLess(gap, rim - 15, f"第 {index} 张卡外侧应有暗缝")
 
+    def test_the_whole_card_is_pre_rendered_so_a_frame_only_blits(self):
+        """投影、暗缝、压暗与亮边都烘焙进一张图：每帧不再给 7 张卡各描两道圆角路径。"""
+        from presentation.qt.device_cards import CARD_HEIGHT, CARD_WIDTH
+        from presentation.qt.scan_card import _WAIT_SPRITE_PAD
+
+        _host, stack = _stack_scene()
+        sprites = stack._deck_sprites()
+        self.assertEqual(len(sprites), 7)
+        self.assertIs(sprites, stack._deck_sprites(), "同尺寸下整叠图只渲染一次")
+        ratio = stack.devicePixelRatioF()
+        for sprite in sprites:
+            self.assertFalse(sprite.isNull())
+            self.assertAlmostEqual(sprite.devicePixelRatio(), ratio)
+            self.assertAlmostEqual(
+                sprite.width() / ratio,
+                CARD_WIDTH + 2 * _WAIT_SPRITE_PAD,
+                delta=1.0,
+                msg="整张图要装得下卡片四边伸出去的投影与描边",
+            )
+            self.assertGreaterEqual(
+                sprite.height() / ratio, CARD_HEIGHT + 2 * _WAIT_SPRITE_PAD
+            )
+
     def test_the_cards_behind_the_top_one_show_a_card_back(self):
         """后层卡面是牌背：只有纹样，不再叠正面的大光晕与角标。"""
         from presentation.qt.device_cards import CARD_HEIGHT, CARD_WIDTH

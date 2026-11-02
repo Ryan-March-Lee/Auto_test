@@ -20,21 +20,25 @@
   按面板宽度自动换行、整组始终居中（不满一行时最后一行也居中），不再是一张横向表格。
 
 版式：扫描行（扫描网段 / 扫描方式）在标题正下方居中，结果区在它下面。结果区**不画外框**
-（没有边框、没有底色），所以仪器卡片直接落在页面背景上；还没点过“查找设备”时，那张
-卡片按钮就落在结果区顶部、紧跟在扫描行下面（不在整块结果区里居中，免得和扫描行之间隔
-一大段空白），点下去之后原地换成等待动画（:class:`presentation.qt.scan_card.ScanWaitStack`：
-7 张卡叠成一叠，以中间那张为准摊成一把扇形，停一下、轻轻捻过一遍，再叠回原样；停一下
-再来一轮），结果回来后再换成卡片。等待动画的舞台比卡片大一圈（扇形要摊得下），但牌堆
-的上沿与左沿正好压在按钮原来的位置：点下去卡片是在原地摊开，不会先往下掉一截（舞台向
-上多出来的那一截伸进卡片上方的留白，占位控件只撑高、不撑宽，页面也不会被撑开）。
+（没有边框、没有底色），所以仪器卡片直接落在页面背景上。结果区里分成上下两块：上面是
+结果卡片的落点（有结果时卡片从结果区顶部排起），下面是“查找设备”/等待动画的落点——两者
+被一段引导高度（:data:`_CENTRE_LEAD`）隔开，按钮整体落在卡片下沿之下，过渡动画不会把
+按钮与卡片叠在一起。点“查找设备”后按钮原地换成等待动画
+（:class:`presentation.qt.scan_card.ScanWaitStack`：7 张卡叠成一叠，以中间那张为准摊成
+一把扇形，停一下、轻轻捻过一遍，再叠回原样；停一下再来一轮），结果回来后再换成上方的
+卡片。等待动画的舞台比卡片大一圈（扇形要摊得下），但牌堆的上沿与左沿正好压在按钮原来的
+位置：点下去卡片是在原地摊开，不会先往下掉一截（舞台向上多出来的那一截伸进卡片上方的
+留白，占位控件只撑高、不撑宽，页面也不会被撑开）。
 **扫描结束不等于立刻换画面**：结果（或失败原因）先挂起，等等待动画至少完整播完一轮、
 所有卡都叠回原样（``ScanWaitStack.cycle_finished``）才进入下一步；动画没播完就继续播，
 扫描结果等它，而不是把摊开中途的牌堆直接收走。搜索一直不回来时动画就一轮接一轮地播。
-**结果区的高度是固定的**（两行卡片 + 按钮与状态行）：查找前后、结果多少都不改变它的
-大小，卡片超出时只在结果区里滚动。卡片区本身只占实际行数（最多两行）那么高，
-统计/失败说明紧跟在卡片下面并横向居中，动作行再排在它下面（“返回”在左，页面级动作
-如“连接仪器”在右，由页面通过 :meth:`DeviceDiscoveryPanel.add_action_widget` 加进同一行）；
-固定高度多出来的那一截留在动作行下方，不会把状态行顶到离卡片很远的地方。
+**结果区的高度由页面给出的可用高度决定**（宽裕时按两行卡片 + 按钮与状态行；窗口矮时
+由页面压到一行）：扫描状态与结果数量本身不改变它的大小，只有页面重新分配可用高度时
+才会伸缩，卡片超出时在结果区里滚动。卡片区本身只占实际行数（最多两行）那么高，
+统计/失败说明紧跟在卡片下面并横向居中；扫描期间的“正在查找设备 …”与进度直接写在这条
+状态行里，不另占一行，所以灰字紧贴按钮下方的舞台。动作行再排在它下面（“返回”在左，
+页面级动作如“连接仪器”在右，由页面通过 :meth:`DeviceDiscoveryPanel.add_action_widget`
+加进同一行）；固定高度多出来的那一截留在动作行下方，不会把状态行顶到离卡片很远的地方。
 
 结果区**不是抽屉**：结果回来就留在那里，没有“收起 / 查看结果”的来回切换。要重新查找时
 按“返回”（:meth:`DeviceDiscoveryPanel.request_back`）：清空本次结果与勾选，结果区顶部
@@ -58,7 +62,7 @@ from typing import Any, Callable, Sequence
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
+    QScrollArea, QSizePolicy, QSpacerItem, QVBoxLayout, QWidget,
 )
 
 from application.ports.device_discovery import (
@@ -120,12 +124,16 @@ _CARDS_MIN_WIDTH = CARD_MIN_WIDTH + _CARDS_SPACING
 #: 一次“查找设备”不会让页面跳动。最多 6 列，两行可放 12 台；场地的 5 台登记仪器加 1 台
 #: 未登记演示设备在默认窗口宽度下排成一行。
 _RESULTS_BOX_ROWS = 2
+#: “查找设备”按钮 / 等待动画在结果区里的引导高度。结果卡片在页面顶部出现，按钮必须
+#: 整体落在卡片下沿之下（两者都是 276px 高），过渡动画才不会把卡片和按钮叠在一起。
+#: 窗口矮时按结果区的可用高度截断，宁可少留一点空白，也不把状态行挤出结果区。
+_CENTRE_LEAD = 208
 #: 结果区的三种状态：还没查找（顶部按钮）、正在查找（进度）、有结果（卡片）。
 BOX_STATE_IDLE = "idle"
 BOX_STATE_BUSY = "busy"
 BOX_STATE_RESULTS = "results"
 BOX_STATES: tuple[str, ...] = (BOX_STATE_IDLE, BOX_STATE_BUSY, BOX_STATE_RESULTS)
-#: 扫描期间写在结果区里的话：按钮收走后，这里说明正在读取设备。
+#: 扫描期间写在状态行里的话：按钮收走后，这里说明正在读取设备与进度。
 LOADING_TEXT = "正在查找设备 …"
 _IP_PATTERN = re.compile(r"(\d{1,3}(?:\.\d{1,3}){3})")
 
@@ -293,12 +301,13 @@ class DeviceDiscoveryPanel(QWidget):
     :meth:`selected_assignments` 取走。
 
     版式分两段：扫描行（扫描网段、扫描方式）居中放在标题下面，不进结果区；“查找设备”
-    是结果区顶部的那张卡片按钮，紧跟在扫描行下面。结果区不画外框（无边框、无底色），
-    卡片直接落在页面背景上；点下去之后按钮收走，换成扫描进度，结果回来后再换成卡片。
+    是结果区里给卡片让出位置后的那张卡片按钮，落在结果卡片落点之下。结果区不画外框
+    （无边框、无底色），卡片直接落在页面背景上；点下去之后按钮收走，换成等待动画，
+    结果回来后再换成上方的卡片。
     """
 
     log_message = Signal(str)
-    #: 结果区状态变化（``idle`` / ``busy`` / ``results``）；连接页据此淡出/恢复页头。
+    #: 结果区状态变化（``idle`` / ``busy`` / ``results``）；连接页据此隐去/复原页头文字。
     box_state_changed = Signal(str)
 
     def __init__(
@@ -426,11 +435,6 @@ class DeviceDiscoveryPanel(QWidget):
         self.wait_stack.setVisible(False)
         # 一整轮动画走完（牌堆复原）才允许把扫描结果换进结果区。
         self.wait_stack.cycle_finished.connect(self._on_wait_cycle_finished)
-        # 扫描期间的结果区说明：按钮收走后，这里写明正在读取设备。
-        self.loading_label = QLabel(LOADING_TEXT)
-        self.loading_label.setAlignment(Qt.AlignHCenter)
-        self.loading_label.setProperty("role", "hint")
-        self.loading_label.setVisible(False)
         self.status_label = QLabel("")
         self.status_label.setWordWrap(True)
         # 结果统计/失败原因紧跟在卡片下方，横向落在结果区正中：这句话通常只有一行，
@@ -480,7 +484,7 @@ class DeviceDiscoveryPanel(QWidget):
         box = QVBoxLayout(self.results_box)
         box.setContentsMargins(12, 12, 12, 12)
         box.setSpacing(8)
-        # 结果区里：还没点过“查找设备”时按钮紧跟在扫描行下面；点下去之后同一块换成
+        # 结果区里：按钮被引导高度压在结果卡片落点之下；点下去之后同一块换成
         # 扫描进度。
         self.centre_area = QWidget(self.results_box)
         self.centre_area.setObjectName("discoveryCentreArea")
@@ -493,6 +497,12 @@ class DeviceDiscoveryPanel(QWidget):
         # 卡片上方留出投影的位置：卡片背后那层装饰是 card 的同级控件，会被这个容器的上沿
         # 裁掉；这一圈空白的宽度由装饰的伸出版面决定（``scan_card.SCAN_CARD_HEADROOM``）。
         # 紫→蓝底卡与霓虹柔光都已删除，这里只关系投影。
+        # 再往后是引导高度：把“查找设备”与等待动画压到结果卡片下沿之下（按钮与卡片
+        # 同高，二者在结果区里必须错开，过渡动画才不会叠在一起）；窗口矮时会被截断。
+        self._centre_lead = QSpacerItem(
+            0, _CENTRE_LEAD, QSizePolicy.Fixed, QSizePolicy.Fixed
+        )
+        centre.addSpacerItem(self._centre_lead)
         centre.addSpacing(SCAN_CARD_HEADROOM)
         # 中间这一行自己按可见项居中：没有卡片时只有一张“查找设备”卡片；扫描期间
         # 同一位置换成那一叠等待动画（两者互斥，同一时刻只有一个可见）。等待动画画在
@@ -512,8 +522,8 @@ class DeviceDiscoveryPanel(QWidget):
         centre_row.addWidget(self.scan_btn)
         centre_row.addStretch(1)
         centre.addLayout(centre_row)
-        # 扫描期间的说明单独一行：它只在 busy 时出现，不挤上面那一行的居中。
-        centre.addWidget(self.loading_label, 0, Qt.AlignHCenter)
+        # “正在查找设备 …”与进度不另占一行：扫描期间直接写进下面的状态行，
+        # 灰字因此紧贴按钮下方的舞台，而不是在舞台下面再隔一段。
         centre.addStretch(1)
         box.addWidget(self.centre_area)
         self.cards_area = QScrollArea(self.results_box)
@@ -634,9 +644,55 @@ class DeviceDiscoveryPanel(QWidget):
 
     def _apply_results_height(self) -> None:
         """把结果区的高度设成当前窗口允许的值，并让卡片区跟着重新分配高度。"""
-        self.results_box.setFixedHeight(self._results_target_height())
+        target = self._results_target_height()
+        self.results_box.setFixedHeight(target)
+        self._apply_centre_lead(target)
         self._refresh_cards_geometry()
         self._refresh_results_box_height()
+        # 结果区一变高/变矮，钉在原按钮位置上的等待动画要跟着重新对一次。
+        self._sync_wait_stack_geometry()
+
+    def _centre_lead_chrome(self) -> int:
+        """引导高度计算用的结果区固定开销：状态行按“只占一行”算。
+
+        ``status_label.sizeHint()`` 在布局前会按 0 宽度折行，长统计文本会虚高；这里
+        只取字体一行的高度（未查找/扫描期间状态行始终是“正在查找设备 …”一行），
+        按钮在查找前后因此落在同一个位置。
+        """
+        layout = self.results_box.layout()
+        if layout is None:
+            return 0
+        margins = layout.contentsMargins()
+        action_row_height = max(
+            (widget.sizeHint().height() for widget in self._action_widgets),
+            default=0,
+        )
+        return (
+            margins.top()
+            + margins.bottom()
+            + action_row_height
+            + self.status_label.fontMetrics().height()
+            + 2 * layout.spacing()
+        )
+
+    def _apply_centre_lead(self, box_height: int) -> None:
+        """把“查找设备”/等待动画压到结果卡片下沿之下。
+
+        按钮与结果卡片同高（:data:`CARD_HEIGHT`），结果卡片在页面顶部出现；按钮在
+        结果区里必须整体落到卡片下沿之下，过渡动画才不会把两者叠在一起。引导高度取
+        :data:`_CENTRE_LEAD`，窗口矮到放不下时按“结果区剩余高度 - 舞台高度 - 投影
+        留白”截断：宁可少留一点空白，也不把状态行挤出结果区。
+        """
+        centre_height = max(0, box_height - self._centre_lead_chrome())
+        max_lead = max(
+            0, centre_height - SCAN_CARD_HEADROOM - WAIT_STACK_HEIGHT
+        )
+        self._centre_lead.changeSize(
+            0, min(_CENTRE_LEAD, max_lead), QSizePolicy.Fixed, QSizePolicy.Fixed
+        )
+        centre_layout = self.centre_area.layout()
+        if centre_layout is not None:
+            centre_layout.invalidate()
 
     def _results_box_height(self, rows: int = _RESULTS_BOX_ROWS) -> int:
         """结果区按 ``rows`` 行卡片计算的高度。
@@ -719,7 +775,7 @@ class DeviceDiscoveryPanel(QWidget):
     def _sync_box_content(self) -> None:
         """结果区里只放当前状态该有的东西：查找 / 正在查找 / 卡片与操作按钮。
 
-        还没查找时结果区顶部是“查找设备”，扫描期间是进度说明，结果回来才换成一格卡片；
+        还没查找时下方是“查找设备”，扫描期间同一块换成等待动画、进度写进状态行，
         卡片看得见时这一块整块让位——任何时刻都只有明确的那几样东西，扫描行始终
         只有网段与扫描方式两项、可以稳稳居中。
         """
@@ -736,7 +792,6 @@ class DeviceDiscoveryPanel(QWidget):
                     (self.centre_area, idle or busy),
                     (self.scan_btn, idle),
                     (self.wait_stack, busy),
-                    (self.loading_label, busy),
                     (self.cards_area, results),
                     (self.back_btn, results),
                 )
@@ -747,7 +802,6 @@ class DeviceDiscoveryPanel(QWidget):
         self.centre_placeholder.setVisible(busy)
         self.scan_btn.setVisible(idle)
         self.wait_stack.setVisible(busy)
-        self.loading_label.setVisible(busy)
         self.cards_area.setVisible(results)
         # 返回只对结果有效：没有卡片时不显示用不上的按钮。
         self.back_btn.setVisible(results)
@@ -788,7 +842,7 @@ class DeviceDiscoveryPanel(QWidget):
     def request_scan(self) -> None:
         """启动后台扫描；同一时刻只允许一个扫描线程。
 
-        点下去就是“开始加载设备”：结果区顶部的按钮收走，原地换成那一叠卡的等待动画
+        点下去就是“开始加载设备”：卡片按钮收走，原地换成那一叠卡的等待动画
         （7 张卡以中间那张为准摊成一把扇形、捻过一遍再叠回原样）；卡片区等结果回来
         再出现，扫描期间不出现用不上的操作按钮。扫描结束后结果先挂起，等一下动画至少
         完整走完一轮（牌堆复原）才换进结果区。
@@ -802,7 +856,7 @@ class DeviceDiscoveryPanel(QWidget):
         self._clear_cards()
         self._set_controls_enabled(False)
         self._set_box_state(BOX_STATE_BUSY)
-        self._set_status(f"正在扫描 {subnet or '(空)'} …")
+        self._set_status(f"{LOADING_TEXT} {subnet or '(空)'}")
         worker = DiscoveryWorker(self.scanner_factory, subnet, self.current_mode(), self)
         worker.progress.connect(self._on_progress)
         worker.completed.connect(self._on_completed)
@@ -825,7 +879,7 @@ class DeviceDiscoveryPanel(QWidget):
     def _on_progress(self, done: int, total: int) -> None:
         if self._closed:
             return
-        self.status_label.setText(f"正在扫描 … {done}/{total}")
+        self.status_label.setText(f"{LOADING_TEXT} {done}/{total}")
         self.status_label.setVisible(True)
 
     def _on_completed(self, result: Any) -> None:

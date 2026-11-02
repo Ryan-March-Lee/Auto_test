@@ -157,8 +157,8 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
             self._scan_row_centre(panel), panel.width() / 2, delta=3, msg="返回后仍然居中"
         )
 
-    def test_scanning_fades_the_page_header_and_restores_it_on_back(self):
-        """点“查找设备”后标题与扫描行淡出；返回重新查找时淡回。"""
+    def test_scanning_hides_the_header_text_and_results_take_its_space(self):
+        """扫描中只隐去页头文字（高度保留，按钮不跳）；有结果时页头整块让位。"""
         self.make_page()
         page = self.connection
         panel = page.discovery_panel
@@ -169,11 +169,13 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
         self.assertAlmostEqual(title_effect.opacity(), 1.0, places=2)
 
         QTest.mouseClick(panel.scan_btn, Qt.LeftButton)
+        self.app.processEvents()
         self.assertEqual(panel.box_state(), "busy")
-        QTest.qWait(400)
         self.assertAlmostEqual(title_effect.opacity(), 0.0, places=2)
         self.assertAlmostEqual(header_effect.opacity(), 0.0, places=2)
-        self.assertFalse(panel.scan_header.isEnabled(), "淡出的扫描行不能继续接收输入")
+        self.assertTrue(page.title_label.isVisible(), "扫描中页头高度仍保留，按钮才不跳")
+        self.assertTrue(panel.scan_header.isVisible())
+        self.assertFalse(panel.scan_header.isEnabled(), "隐去的扫描行不能继续接收输入")
 
         if panel.worker is not None:
             panel.worker.wait(5000)
@@ -181,13 +183,17 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
         self.app.processEvents()
         self.finish_scan(panel)
         self.assertEqual(panel.box_state(), "results")
-        self.assertAlmostEqual(title_effect.opacity(), 0.0, places=2)
+        self.assertFalse(page.title_label.isVisible(), "有结果时页头整块让位给卡片")
+        self.assertFalse(panel.scan_header.isVisible())
 
         panel.request_back()
-        QTest.qWait(400)
+        self.app.processEvents()
+        self.assertTrue(page.title_label.isVisible())
+        self.assertTrue(panel.scan_header.isVisible())
         self.assertAlmostEqual(title_effect.opacity(), 1.0, places=2)
         self.assertAlmostEqual(header_effect.opacity(), 1.0, places=2)
         self.assertTrue(panel.scan_header.isEnabled())
+        self.assertEqual(panel.box_state(), "idle")
 
     def test_the_scan_button_sits_in_the_results_area(self):
         """“查找设备”是结果区顶部的落点，不在上面的扫描行里。"""
@@ -197,55 +203,82 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
         self.assertTrue(panel.results_box.isAncestorOf(panel.scan_btn))
         self.assertEqual(panel.box_state(), BOX_STATE_IDLE)
 
-    def test_scanning_does_not_move_or_resize_the_results_area(self):
-        """点“查找设备”前后，结果区的位置与大小都不变：页面不会跳一下。"""
+    def test_the_button_does_not_jump_and_results_sit_above_it(self):
+        """点“查找设备”按钮不跳；结果卡片与按钮解耦，出现位置高于按钮。
+
+        - 未查找 → 正在查找：页头只隐去文字、高度保留，按钮与等待动画同格，结果区几何不变；
+        - 正在查找 → 有结果：页头整块让位，结果卡片升到按钮原来的位置之上；
+        - 返回：页头复原，按钮回到原来的位置。
+        """
         self.make_page()
         panel = self.connection.discovery_panel
         box = panel.results_box
+        page = self.connection
 
         def snapshot():
-            top_left = box.mapTo(self.connection, box.rect().topLeft())
+            top_left = box.mapTo(page, box.rect().topLeft())
             return (top_left.x(), top_left.y(), box.width(), box.height())
 
         before = snapshot()
+        button_before = panel.scan_btn.mapTo(
+            page, panel.scan_btn.rect().topLeft()
+        )
 
         panel.request_scan()
         self.app.processEvents()
         scanning = snapshot()
+        self.assertEqual(scanning, before, "扫描中结果区不能移动或变形")
+
+        # 等待动画的牌堆正好压住按钮原来的位置：点下去卡片原地摊开。
+        stage = panel.wait_stack.mapTo(page, panel.wait_stack.rect().topLeft())
+        deck_x = stage.x() + (panel.wait_stack.width() - panel.scan_btn.width()) // 2
+        deck_y = stage.y() + (panel.wait_stack.height() - panel.scan_btn.height()) // 2
+        self.assertEqual(
+            (deck_x, deck_y), (button_before.x(), button_before.y()),
+            "等待动画的牌堆必须与按钮同一位置，按钮不能跳变",
+        )
 
         panel.worker.wait(5000)
         self.app.processEvents()
         self.app.processEvents()
-        # 结果先挂起，等这一轮动画走完才换进结果区；框的大小在这段等待里同样不能变。
         self.assertEqual(panel.box_state(), BOX_STATE_BUSY)
-        animating = snapshot()
+        self.assertEqual(snapshot(), scanning, "等动画时结果区不能移动或变形")
         self.finish_scan(panel)
         results = snapshot()
 
+        # 有结果后页头让位，卡片整体上移，高于按钮原来的位置。
+        self.assertLess(results[1], scanning[1], "结果卡片应升到按钮上方")
+        first_card = panel.cards()[0]
+        card_top = first_card.mapTo(page, first_card.rect().topLeft()).y()
+        card_bottom = first_card.mapTo(page, first_card.rect().bottomLeft()).y()
+        self.assertLess(card_top, button_before.y(), "卡片出现的位置应高于按钮")
+        self.assertLess(
+            card_bottom, button_before.y(), "卡片与按钮不能重叠：整块卡片都在按钮上方"
+        )
+        self.assertLess(
+            card_top, page.height() * 0.3, "卡片应出现在页面顶部附近"
+        )
+
         panel.request_back()
         self.app.processEvents()
-        returned = snapshot()
+        self.assertEqual(snapshot(), before, "返回后按钮与结果区回到原位")
 
-        self.assertEqual(scanning, before, "扫描中结果区不能移动或变形")
-        self.assertEqual(animating, before, "结果挂起等动画时结果区不能移动或变形")
-        self.assertEqual(results, before, "结果回来后结果区不能移动或变形")
-        self.assertEqual(returned, before, "返回后结果区不能移动或变形")
-
-    def test_clicking_the_scan_button_keeps_the_scan_row_where_it_was(self):
-        """窗口矮到页面可以滚动时，点“查找设备”也不能把扫描行推走。
+    def test_clicking_the_scan_button_does_not_move_the_scan_row_or_scroll_the_page(self):
+        """点“查找设备”不能把扫描行推走或滚动页面。
 
         Qt 会在焦点控件被禁用或隐藏时把焦点交给下一个可聚焦控件，外层滚动区再滚到
         它那里：卡片一收走，焦点落到结果区动作行里的“连接仪器”，整页向上滚，扫描行
-        （扫描网段 / 扫描方式）就离开了点之前的位置。以点击之前的位置为准。
+        （扫描网段 / 扫描方式）就离开了点之前的位置。扫描中页头文字隐去、高度保留，
+        扫描行本身留在原处；以点击之前的位置为准。
         """
         self.make_page()
         page = self.connection
-        # 这个尺寸下页面高于窗口，滚动条一定在：否则测不到焦点引起的滚动。
+        # 用矮窗口模拟“页面可能滚动”的情形；滚动条是否出现不影响这条断言。
         page.resize(1024, 520)
         self.app.processEvents()
         panel = page.discovery_panel
         bar = page.findChild(QScrollArea).verticalScrollBar()
-        self.assertTrue(bar.isVisible(), "页面应当可以滚动，否则测不到焦点滚动")
+        before_value = bar.value()
 
         def row_position():
             point = panel.mode_combo.mapTo(page, panel.mode_combo.rect().topLeft())
@@ -254,16 +287,29 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
         before = row_position()
         QTest.mouseClick(panel.scan_btn, Qt.LeftButton)
         self.app.processEvents()
+        self.assertEqual(panel.box_state(), "busy")
+        self.assertAlmostEqual(
+            panel.scan_header.graphicsEffect().opacity(), 0.0, places=2
+        )
         self.assertEqual(row_position(), before, "扫描中扫描行不能移动")
-        self.assertEqual(bar.value(), 0, "点“查找设备”不能滚动页面")
+        self.assertEqual(bar.value(), before_value, "点“查找设备”不能滚动页面")
 
         if panel.worker is not None:
             panel.worker.wait(5000)
         self.app.processEvents()
         self.app.processEvents()
         self.finish_scan(panel)
-        self.assertEqual(row_position(), before, "结果回来后扫描行仍在原处")
-        self.assertEqual(bar.value(), 0, "结果回来不能滚动页面")
+        self.assertFalse(panel.scan_header.isVisible(), "有结果时页头让位给卡片")
+        self.assertEqual(bar.value(), before_value, "结果回来不能滚动页面")
+
+        panel.request_back()
+        self.app.processEvents()
+        self.assertTrue(panel.scan_header.isVisible())
+        self.assertAlmostEqual(
+            panel.scan_header.graphicsEffect().opacity(), 1.0, places=2
+        )
+        self.assertEqual(row_position(), before, "返回后扫描行仍在原处")
+        self.assertEqual(bar.value(), before_value, "返回也不能滚动页面")
 
     def test_connect_button_shares_the_back_row(self):
         """“连接仪器”和“返回”同一行、落在右端：点它先走配置页的连接入口。"""

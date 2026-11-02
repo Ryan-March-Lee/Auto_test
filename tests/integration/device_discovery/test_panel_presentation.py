@@ -236,14 +236,20 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         # 悬停时不该弹出说明框：这张卡片的用法由扫描行与提示行说明。
         self.assertEqual(panel.scan_btn.toolTip(), "")
 
-        # 水平在结果区正中；竖直贴着结果区顶部，和上面的扫描行之间不留一大段空白。
+        # 水平在结果区正中；竖直方向给结果卡片让位：按钮整体落在“结果卡片”那一格
+        # 的下方（页面还会在结果显示时把标题/扫描行让出来，页面级位置由连接页测试锁定）。
+        from presentation.qt.scan_card import SCAN_CARD_HEADROOM
+
         centre = panel.scan_btn.mapTo(box, panel.scan_btn.rect().center())
         self.assertAlmostEqual(centre.x(), box.rect().center().x(), delta=2)
         button_top = panel.scan_btn.mapTo(panel, panel.scan_btn.rect().topLeft()).y()
         hint_bottom = panel.mode_hint.mapTo(panel, panel.mode_hint.rect().bottomLeft()).y()
         self.assertGreaterEqual(button_top, hint_bottom)
-        self.assertLessEqual(
-            button_top - hint_bottom, 40, "查找设备要紧跟在扫描行下面，不能隔着一大段空白"
+        box_top = box.mapTo(panel, box.rect().topLeft()).y()
+        self.assertGreater(
+            button_top - box_top,
+            SCAN_CARD_HEADROOM,
+            "查找设备要在结果区里让出引导高度，不能贴着结果区顶边",
         )
 
     def test_the_scan_card_keeps_room_above_it_for_its_decorations(self):
@@ -285,12 +291,11 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         panel.request_scan()
         self.app.processEvents()
 
-        # 点下去就开始加载设备：按钮收走，同一位置换成那一叠等待动画，下面一行仍是进度说明。
+        # 点下去就开始加载设备：按钮收走，同一位置换成那一叠等待动画；进度写进状态行。
         self.assertEqual(panel.box_state(), BOX_STATE_BUSY)
         self.assertFalse(panel.scan_btn.isVisible())
         self.assertTrue(panel.wait_stack.isVisible())
-        self.assertTrue(panel.loading_label.isVisible())
-        self.assertIn("正在扫描", panel.status_label.text())
+        self.assertIn("正在查找设备", panel.status_label.text())
 
         panel.worker.wait(5000)
         self.app.processEvents()
@@ -308,7 +313,6 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         self.assertEqual(panel.box_state(), BOX_STATE_RESULTS)
         self.assertFalse(panel.scan_btn.isVisible())
         self.assertFalse(panel.wait_stack.isVisible())
-        self.assertFalse(panel.loading_label.isVisible())
         self.assertTrue(panel.cards_area.isVisible())
         self.assertGreater(panel.card_count(), 0)
         # 卡片装进结果区之后，它依然没有边框与底色。

@@ -10,14 +10,11 @@
 它只从只读视图读出当前绑定与已保存地址，用来填扫描框初值；点“连接仪器”只发出用户意图
 （``connect_requested``），由窗口转给配置页的校验入口。
 
-版式只有三块：大字号标题、居中放在标题下面的扫描行（扫描网段 / 扫描方式），
-以及下面一块显示发现结果的区域。这一组内容不贴视口顶端：多出来的高度上下分配时
-上留白多留一些（见 :meth:`ConnectionPage._build_ui`），整组因此落在页面中线略偏下。
-这块区域不画外框（没有边框、没有底色），仪器卡片直接
-落在页面背景上；“查找设备”是一张落在结果区顶部、紧跟在扫描行下面的卡片按钮，点下去
-之后按钮收走、开始加载设备。“连接仪器”和结果区左下角的“返回”同一行，落在这一行的
-右端，点它只发出 ``connect_requested``；窗口把它转给配置页的 ``request_connect``
-（校验后由配置页发 ``connect_requested``，再交给协调器真正连仪器）。
+版式分两层：静态骨架（页面标题、居中滚动区、底部固定操作栏）由 Qt Designer 文件
+``presentation/qt/ui/connection_page.ui`` 描述，改排列或文案只动那个文件；动态部分
+（设备发现面板、扫描结果卡片与“连接仪器”）仍在 Python 里构建并插进骨架。页面不写
+颜色、字号与间距常量：颜色与字号来自 :mod:`presentation.qt.theme`，静态间距在 ``.ui``
+里，版心宽度用主题令牌 ``theme.PAGE_CONTENT_MAX_WIDTH`` 收口。
 
 “下一步”先把本次勾选的设备写入配置（整批替换），再切到仪器配置页；配置文件仍随
 “保存配置”或“校验并创建运行”一起落盘，因此从本页离开不会产生半保存的配置。
@@ -25,15 +22,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Callable, TypeVar
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
-    QFrame,
-    QHBoxLayout,
     QLabel,
     QPushButton,
-    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -49,12 +43,11 @@ from .device_discovery_panel import (
     DeviceDiscoveryPanel,
     subnet_from_address,
 )
-from .theme import set_button_variant
+from .theme import PAGE_CONTENT_MAX_WIDTH, set_button_variant
+from .ui_loader import load_ui
 
-#: 页面标题：整屏步骤页只有这一行大字号标题，跟着下面的一整组内容落在页面中线略偏下。
-PAGE_TITLE = "仪表配置"
-#: 操作栏提示：说明“下一步”会写入本次勾选，并继续配置参数与运行。
-ACTION_HINT = "点“下一步”会把本次勾选的设备写入配置，并继续配置测试参数与运行。"
+#: 控件查询的返回类型；``.ui`` 里声明的控件必须存在，缺失属于装配错误而不是运行状态。
+_Widget = TypeVar("_Widget", bound=QWidget)
 
 
 class ConnectionPage(QWidget):
@@ -64,6 +57,9 @@ class ConnectionPage(QWidget):
     （返回欢迎页、下一步、连接仪器）；设备绑定的写入与派生界面状态由配置页负责，本页
     通过 :class:`application.ports.device_binding.DeviceBindingPort` 读取与提交，不持有
     配置页实例。
+
+    静态骨架来自 ``.ui``，页面只做控件绑定、动态面板插入与信号接线。因此调整按钮顺序、
+    文案或静态间距不需要改这个模块，业务边界也不会被视觉改动带着走。
     """
 
     next_requested = Signal()
@@ -87,73 +83,53 @@ class ConnectionPage(QWidget):
     # ---- 界面 -------------------------------------------------------------
 
     def _build_ui(self) -> None:
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 16, 0, 0)
-        root.setSpacing(10)
+        """加载 ``.ui`` 静态骨架，再把设备发现面板与“连接仪器”接到动态位置。"""
+        self._ui = load_ui("connection_page")
+        shell = QVBoxLayout(self)
+        shell.setContentsMargins(0, 0, 0, 0)
+        shell.setSpacing(0)
+        shell.addWidget(self._ui)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
-        content = QWidget()
-        # 与仪器配置页同一套版心宽度：窗口再宽，卡片网格也不会被拉成很长的边框。
-        content.setMaximumWidth(1180)
-        column = QVBoxLayout(content)
-        column.setContentsMargins(16, 0, 16, 0)
-        column.setSpacing(12)
+        # 版心宽度是跨页面共用的设计令牌，不写进 ``.ui`` 也不在本页另存一份。
+        self._require(QWidget, "connectionContent").setMaximumWidth(
+            PAGE_CONTENT_MAX_WIDTH
+        )
+        self.title_label = self._require(QLabel, "connectionPageTitle")
 
-        # 整页只有标题、扫描行与结果区三块：“连接仪器”加进结果区动作行，和“返回”
-        # 同一行。多出来的高度按 2:1 分给上下留白（不是对半分）：这一组控件因此落在
-        # 页面中线略偏下的位置，标题不贴视口上沿。窗口变矮时只会压缩这两段留白，
-        # 不会多出滚动条。
-        column.addStretch(2)
-        self.title_label = QLabel(PAGE_TITLE)
-        self.title_label.setObjectName("connectionPageTitle")
-        self.title_label.setProperty("role", "pageTitle")
-        self.title_label.setAlignment(Qt.AlignHCenter)
-        column.addWidget(self.title_label)
-        column.addSpacing(12)
-
-        # 扫描行（扫描网段 / 扫描方式）就排在这个标题下面、和标题一起居中；
-        # 面板的结果区里才放“查找设备”，点下去就开始加载设备。
+        # 扫描行与结果区属于动态面板（卡片数量、扫描状态都由运行时决定），
+        # 所以面板本身仍由 Python 创建，只把它的外层位置交给 ``.ui``。
+        host = self._require(QWidget, "discoveryPanelHost")
+        host_layout = host.layout()
+        if host_layout is None:
+            raise RuntimeError("connection_page.ui 的 discoveryPanelHost 缺少布局")
         self.discovery_panel = DeviceDiscoveryPanel(
             scanner_factory=self._scanner_factory or self._default_scanner_factory(),
             default_subnet=self._default_scan_subnet(self.binding_port.view_state()),
-            parent=self,
+            parent=host,
         )
-        column.addWidget(self.discovery_panel)
+        host_layout.addWidget(self.discovery_panel)
         # “连接仪器”放进结果区动作行，和“返回”同一行、落在行的右端。
         self.discovery_panel.add_action_widget(self._build_connect_button())
-        column.addStretch(1)
-        scroll.setWidget(content)
-        root.addWidget(scroll, 1)
-        root.addWidget(self._build_action_bar())
+
+        self.return_welcome_btn = self._require(QPushButton, "returnWelcomeButton")
+        self.next_btn = self._require(QPushButton, "nextButton")
+
+    def _require(self, widget_type: type[_Widget], name: str) -> _Widget:
+        """取 ``.ui`` 里声明的控件；缺失或类型不符时尽早报装配错误。"""
+        widget = self._ui.findChild(widget_type, name)
+        if widget is None:
+            raise RuntimeError(f"connection_page.ui 缺少控件: {name}")
+        return widget
 
     def _build_connect_button(self) -> QPushButton:
         """结果区动作行右端的“连接仪器”：与“返回”同一行。"""
         self.connect_btn = QPushButton("连接仪器")
-        self.connect_btn.setToolTip("连接本次运行冻结的仪器（地址与身份来自创建运行时的设备绑定）")
+        self.connect_btn.setObjectName("connectButton")
+        self.connect_btn.setToolTip(
+            "连接本次运行冻结的仪器（地址与身份来自创建运行时的设备绑定）"
+        )
         set_button_variant(self.connect_btn, "primary")
         return self.connect_btn
-
-    def _build_action_bar(self) -> QWidget:
-        """页面底部固定操作栏：返回欢迎页，或进入测试参数配置。"""
-        bar = QWidget()
-        bar.setObjectName("pageActionBar")
-        row = QHBoxLayout(bar)
-        row.setContentsMargins(16, 0, 16, 0)
-        row.setSpacing(10)
-        hint = QLabel(ACTION_HINT)
-        hint.setProperty("role", "hint")
-        row.addWidget(hint, 1)
-        self.return_welcome_btn = QPushButton("返回欢迎页")
-        set_button_variant(self.return_welcome_btn, "secondary")
-        self.next_btn = QPushButton("下一步")
-        self.next_btn.setToolTip("进入仪器配置页，配置测试参数并创建运行")
-        set_button_variant(self.next_btn, "primary")
-        row.addWidget(self.return_welcome_btn)
-        row.addWidget(self.next_btn)
-        return bar
 
     def _connect_signals(self) -> None:
         self.next_btn.clicked.connect(self.request_next)
@@ -242,4 +218,4 @@ class ConnectionPage(QWidget):
             self.log_message.emit("设备扫描线程未能在关闭期限内停止")
 
 
-__all__ = ["ConnectionPage", "PAGE_TITLE", "ACTION_HINT"]
+__all__ = ["ConnectionPage"]

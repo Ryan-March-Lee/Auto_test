@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import json
 import unittest
+import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 
 from PySide6.QtGui import QImage, QImageReader
 
 from presentation.qt.device_cards import instrument_picture_path
 from presentation.qt.theme import WELCOME_BACKGROUND_FILE
+from presentation.qt.ui_loader import UI_DIRECTORY
 from release_manifest import RELEASE_FILES, build_manifest
 
 
@@ -113,6 +115,27 @@ class RuntimePictureBudgetTests(unittest.TestCase):
         for path in runtime_files:
             relative = path.relative_to(ROOT).as_posix()
             with self.subTest(asset=relative):
+                self.assertTrue(
+                    any(
+                        relative == entry or relative.startswith(f"{entry}/")
+                        for entry in manifest["release_files"]
+                    ),
+                    f"{relative} 不在发布清单登记的边界内",
+                )
+
+
+class DesignerUiResourceTests(unittest.TestCase):
+    """Qt Designer 静态布局是运行时资源：随发布边界交付，且必须能被 XML 解析。"""
+
+    def test_designer_files_ship_with_the_release_boundaries(self):
+        files = sorted(UI_DIRECTORY.rglob("*.ui"))
+        self.assertTrue(files, "至少应有一个 Qt Designer 静态布局文件")
+        manifest = build_manifest(ROOT)
+        for path in files:
+            relative = path.relative_to(ROOT).as_posix()
+            with self.subTest(ui=relative):
+                self.assertLessEqual(path.stat().st_size, 256 * KB, "单个 .ui 不应是资源包")
+                self.assertEqual(ElementTree.parse(path).getroot().tag, "ui")
                 self.assertTrue(
                     any(
                         relative == entry or relative.startswith(f"{entry}/")

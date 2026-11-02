@@ -7,12 +7,13 @@
 """
 
 import os
+import re
 import unittest
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 from application.configuration_editing import ValidationIssue, ValidationResult
 from application.configuration_view_model import ConfigurationViewState
@@ -23,6 +24,7 @@ from application.device_binding import (
 )
 from presentation.qt.connection_page import ConnectionPage
 from presentation.qt.device_discovery_panel import BOX_STATE_RESULTS
+from presentation.qt.theme import PAGE_CONTENT_MAX_WIDTH
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -220,6 +222,90 @@ class ConnectionPageBoundaryTests(unittest.TestCase):
         ):
             with self.subTest(fragment=fragment):
                 self.assertNotIn(fragment, source)
+
+    def test_static_layout_and_visual_tokens_live_outside_the_page_module(self):
+        """步骤 11：页面模块不写颜色、字号或内联样式；静态排列在 ``.ui``。"""
+        source = (ROOT / "presentation" / "qt" / "connection_page.py").read_text(
+            encoding="utf-8-sig"
+        )
+
+        self.assertIn('load_ui("connection_page")', source)
+        self.assertNotIn("setStyleSheet", source)
+        self.assertNotRegex(source, re.compile(r"#[0-9A-Fa-f]{6}"))
+        self.assertNotIn("font-size", source)
+
+    def test_page_local_geometry_stays_in_the_designed_skeleton(self):
+        """静态边距/间距只能在 ``.ui``：页面模块只把外壳布局归零。
+
+        Qt 的布局尺寸只能长在布局对象上，Designer 是唯一能预览它们的地方，因此页面
+        本地的几何归 ``.ui`` 单文件所有；这条门禁防止它慢慢散回 Python 常量。
+        """
+        source = (ROOT / "presentation" / "qt" / "connection_page.py").read_text(
+            encoding="utf-8-sig"
+        )
+
+        self.assertNotIn("addSpacing(", source)
+        self.assertNotRegex(source, r"setContentsMargins\((?!0, 0, 0, 0\))")
+        self.assertNotRegex(source, r"setSpacing\((?!0\))")
+        for call in (
+            "setMinimumWidth",
+            "setFixedWidth",
+            "setMinimumHeight",
+            "setFixedHeight",
+        ):
+            with self.subTest(call=call):
+                self.assertNotIn(call, source)
+        # 版心宽度是跨页面令牌：页面只引用令牌，不在这里另写数字。
+        self.assertIn("setMaximumWidth(", source)
+        self.assertIn("PAGE_CONTENT_MAX_WIDTH", source)
+        self.assertNotRegex(source, r"setMaximumWidth\(\s*\d")
+
+
+class ConnectionPageStaticLayoutTests(unittest.TestCase):
+    """步骤 11：``.ui`` 提供静态骨架，页面只做动态接入与主题令牌收口。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def make_page(self):
+        page = ConnectionPage(_StubPort(), scanner_factory=_scanner_factory)
+        self.addCleanup(page.close)
+        return page
+
+    def test_page_uses_the_designed_skeleton_and_shared_content_width(self):
+        page = self.make_page()
+
+        self.assertIsNotNone(page.findChild(QWidget, "connectionPageUi"))
+        content = page.findChild(QWidget, "connectionContent")
+        self.assertIsNotNone(content)
+        # 版心宽度只有一个来源：``.ui`` 不声明尺寸，页面从主题令牌取值。
+        self.assertEqual(content.maximumWidth(), PAGE_CONTENT_MAX_WIDTH)
+
+    def test_spare_height_stays_weighted_towards_the_top(self):
+        """多出来的高度按 2:1 分给上下留白：标题与结果区落在页面中线略偏下。"""
+        page = self.make_page()
+        page.resize(1200, 900)
+        page.show()
+        self.app.processEvents()
+        self.app.processEvents()
+
+        action_bar = page.findChild(QWidget, "pageActionBar")
+        self.assertIsNotNone(action_bar)
+        title_top = page.title_label.mapTo(page, page.title_label.rect().topLeft()).y()
+        panel_bottom = page.discovery_panel.mapTo(
+            page, page.discovery_panel.rect().bottomLeft()
+        ).y()
+        action_bar_top = action_bar.mapTo(page, action_bar.rect().topLeft()).y()
+
+        top_gap = title_top
+        bottom_gap = action_bar_top - panel_bottom
+        self.assertGreater(top_gap, bottom_gap, "上留白应大于下留白")
+        self.assertGreater(
+            top_gap / max(1, bottom_gap),
+            1.5,
+            "上下留白应保持接近 2:1，内容才不会贴到页面顶部",
+        )
 
 
 if __name__ == "__main__":

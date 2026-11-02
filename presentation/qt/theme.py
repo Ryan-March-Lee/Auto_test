@@ -1,6 +1,6 @@
 """统一主题：设计令牌、调色板与全局样式表。
 
-界面只有一处配色与排版来源：本模块给出颜色/字号/间距令牌（:data:`TOKENS`）并生成
+界面只有一处配色与排版来源：本模块给出颜色/字号令牌（:data:`TOKENS`）并生成
 整份 QSS（:func:`build_stylesheet`）。页面不再各自 ``setStyleSheet`` 写死颜色，只用
 控件属性声明语义（``variant`` 表示按钮层级、``tone`` 表示文字语义），外观由样式表
 决定；因此“主操作/次要操作/危险操作/状态文字”在任何页面都是同一套视觉。
@@ -9,6 +9,13 @@
 （下拉箭头、步进箭头、勾选标记）以 SVG 放在 ``assets/``：样式表只能引用图片文件，
 无法用 QSS 画出来，因此这些图标随本模块一起维护，描边色与 :data:`TOKENS` 的文字色
 一致（``text_secondary`` / ``text_muted`` / 白色）。
+
+Qt Designer 的 ``.ui`` 文件只声明控件层级、静态文案、页面本地的排列（边距、间距与
+弹性留白）和语义属性（``role`` / ``variant`` / ``tone``），不写颜色、字体、内联样式或
+数值宽度。Qt 的布局尺寸只能长在布局对象上，而 Designer 是唯一能预览它们的地方，
+因此“页面本地的几何”归 ``.ui`` 单文件所有；页面模块不得再写非零边距/间距。
+颜色、字号、语义取值以及跨页面共用的尺寸以具名常量给出（如
+:data:`PAGE_CONTENT_MAX_WIDTH`），页面与 ``.ui`` 都从这里取同一来源。
 """
 
 from __future__ import annotations
@@ -25,8 +32,10 @@ __all__ = [
     "FONT_FAMILIES",
     "WELCOME_BACKGROUND_FILE",
     "BUTTON_VARIANTS",
+    "DEFAULT_BUTTON_VARIANT",
     "TONE_NAMES",
-    "button_variant",
+    "LABEL_ROLES",
+    "PAGE_CONTENT_MAX_WIDTH",
     "build_palette",
     "build_stylesheet",
     "base_font",
@@ -109,8 +118,19 @@ FONT_FAMILIES = ("Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI")
 #: 允许的按钮层级：主操作、次要操作、危险操作、低强调动作、正向切换。
 BUTTON_VARIANTS = ("primary", "secondary", "danger", "ghost", "success")
 
+#: 未声明 ``variant`` 时按钮的默认层级。它直接使用基础 ``QPushButton`` 规则，
+#: 因此样式表里没有单独的 ``[variant="secondary"]`` 选择器；其余层级各有一条。
+DEFAULT_BUTTON_VARIANT = "secondary"
+
 #: 允许的语义文字色，用于状态标签（归档结果、扫描提示等）。
 TONE_NAMES = ("info", "success", "warning", "danger", "muted")
+
+#: 允许的标签语义角色；页面与 ``.ui`` 只声明角色，字号与字重由样式表决定。
+LABEL_ROLES = ("pageTitle", "section", "hint", "fieldLabel", "note")
+
+#: 整屏步骤页的版心最大宽度：窗口更宽时内容不再横向拉伸。连接页与配置页共用，
+#: 版面调整只改这一处（``.ui`` 与页面都不再各自写死宽度）。
+PAGE_CONTENT_MAX_WIDTH = 1180
 
 
 #: 欢迎页背景图，放在项目根目录的 ``assets/``：它是一张场景图而不是界面字形，
@@ -176,7 +196,7 @@ def _repolish(widget: Any) -> None:
     widget.update()
 
 
-def set_button_variant(button: Any, variant: str = "secondary") -> Any:
+def set_button_variant(button: Any, variant: str = DEFAULT_BUTTON_VARIANT) -> Any:
     """声明按钮层级（``primary``/``secondary``/``danger``/``ghost``/``success``）。
 
     只设置样式属性，不改变按钮的可用状态、文本或信号连接。

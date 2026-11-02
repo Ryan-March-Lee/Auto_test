@@ -279,7 +279,7 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `presentation.qt.configuration_session` | 配置会话协调器（GUI 重构步骤 8）：把连接页的 `DeviceBindingPort` 转给配置页的视图模型与派生界面（`view_state`、`apply_selection`、面板登记与“连接仪器”意图转发），并把配置页 `device_selection_finished` 的结果与文案回写给连接页的面板；只认结构类型 `ConfigurationBindingTarget` / `DiscoveryPanelPort`（Protocol），只做装配与转发，不读控件、不定义设备绑定规则；面板归连接页所有，配置页不持有它 |
 | `presentation.qt.config_page_widgets` | 配置页面控件构建辅助（固定操作栏布局 + 页面共用的数值框/下拉框工厂；控件仍登记在页面上） |
 | `presentation.qt.config_power_section` | 配置页电源分区的控件构建：按电源键分页的通道参数标签页与电源分配设置表单，控件仍登记在页面上（页面负责信号连接、派生界面状态与配置读写；条目、可选项与分配引用以显式声明的类型传入，不从控件或文件里取状态） |
-| `presentation.qt.connection_page` | 仪表配置页：欢迎页选定测试模式后的整屏页面（不登记进标签栏），大字号页标题、标题下居中的扫描网段与扫描方式、勾选本次测试所需的设备（“查找设备”是结果区顶部、紧跟扫描行的落点，结果区不画外框）、结果区右下的“连接仪器”，点“下一步”时提交 `ApplyDeviceSelectionRequest` 整批写入勾选结果并进入仪器配置页；只依赖 `application.ports.device_binding.DeviceBindingPort` 读取只读 `ConfigurationViewState`（扫描框初值、旧绑定提示）和提交选择，不再持有 `ConfigPage` 实例或回读其 `config` / `device_bindings`；“连接仪器”只发出 `connect_requested` 用户意图，由窗口转给配置页校验 |
+| `presentation.qt.connection_page` | 仪表配置页：欢迎页选定测试模式后的整屏页面（不登记进标签栏），大字号页标题、标题下居中的扫描网段与扫描方式、勾选本次测试所需的设备（“查找设备”是结果区顶部、紧跟扫描行的落点，结果区不画外框）、结果区右下的“连接仪器”，点“下一步”时提交 `ApplyDeviceSelectionRequest` 整批写入勾选结果并进入仪器配置页；只依赖 `application.ports.device_binding.DeviceBindingPort` 读取只读 `ConfigurationViewState`（扫描框初值、旧绑定提示）和提交选择，不再持有 `ConfigPage` 实例或回读其 `config` / `device_bindings`；“连接仪器”只发出 `connect_requested` 用户意图，由窗口转给配置页校验。静态骨架（标题、居中滚动区、底部操作栏）由 `presentation/qt/ui/connection_page.ui` 描述，动态发现面板插入骨架，页面不写颜色/字号/间距常量（步骤 11） |
 | `presentation.qt.device_cards` | 设备发现的仪器展示卡片：第一行只写加粗放大的缩写设备码（设备表登记过就用它，电源的缩写码同时是 `supply_id`，如 `DP8B1519`、`5462`；还没有缩写码时退回完整设备码，绝不凭空生成），第二行仪器图片（不加底板、不描边，等比缩放到同一视觉体积），最下面一行居中放大的仪器型号（如 `DP832A`、`SMW200A`）；圆角矩形，点击卡片即选中；卡片尺寸 `CARD_WIDTH` × `CARD_HEIGHT` 是唯一来源，“查找设备”按钮也按它取大小 |
 | `presentation.qt.device_discovery_panel` | 仪器连接配置（设备发现）：扫描网段、结果区（不画外框：无边框、无底色，未查找时“查找设备”卡片按钮紧跟在扫描行下面，点下去后按钮收走、开始加载设备）、以卡片展示已登记/未分配角色/未登记/无法识别结果、点击卡片即选中（角色取自设备表）、按配置身份预选；扫描线程只读探测，不改配置也不连接仪器 |
 | `presentation.qt.scan_card` | “查找设备”的卡片按钮：按钮本体是与仪器卡片同大的自绘深色卡片（尺寸取自 `presentation.qt.device_cards` 的 `CARD_WIDTH` × `CARD_HEIGHT`，渐变卡面、四角角标、卡面内发光），正中的渐变标题写着“查找设备”，卡片内部有横向光带、扫描线与外飘粒子在动；悬停时卡面上的两行字在 0.6s 里淡到看不见（原 CSS 的 `::after` 霓虹光斑与 `::before` 紫→蓝底卡都不保留，卡片外面只有一层投影）；要露在卡片外面的投影画在同级、不进布局、不吃鼠标的透明覆盖层上，按钮因此与卡片一样大，点击行为仍由设备发现面板接手 |
@@ -297,7 +297,8 @@ DTO 的显式属性（`report_rows()`、`sweep_rows()`、`saturation_points()`�
 | `presentation.qt.realtime_buffer` | 实时数据缓冲 |
 | `presentation.qt.realtime_plot` | 实时绘图控件 |
 | `presentation.qt.status_panel` | 状态/日志面板 |
-| `presentation.qt.theme` | 统一主题：设计令牌、调色板与全局样式表（按钮层级与文字语义色的唯一来源） |
+| `presentation.qt.theme` | 统一主题：设计令牌、调色板与全局样式表（按钮层级、文字语义色、标签语义角色、默认按钮层级与共享版心宽度的唯一来源；页面本地边距/间距留在 `.ui`） |
+| `presentation.qt.ui_loader` | Qt Designer 静态布局加载器（GUI 重构步骤 11）：从 `presentation/qt/ui/` 读取 `.ui` 并返回根控件，页面名按小写蛇形标识校验，文件缺失/无法读取/解析失败时抛出 `UiLoadError`；`.ui` 只承担控件层级、静态文案、页面本地排列与语义属性，不写颜色/字体/内联样式/固定尺寸，业务规则、动态内容与控件接线仍留在页面模块 |
 | `presentation.qt.visualization_page` | 历史可视化页面（只渲染控件并把动作转发给 `history_view_model`） |
 | `presentation.qt.welcome_page` | 启动欢迎页与测试模式选择 |
 | `presentation.qt.window_geometry` | 主窗口初始几何：按屏幕可用区域收缩并居中，避开任务栏与屏幕边缘 |

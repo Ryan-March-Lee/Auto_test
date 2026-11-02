@@ -76,7 +76,7 @@ from .config_power_section import (
 from .config_page_widgets import build_action_bar, combo_box, spin_box
 from .device_discovery_panel import role_label
 from .pages import PageControllerBindingMixin
-from .theme import set_button_variant
+from .theme import PAGE_CONTENT_MAX_WIDTH, set_button_variant
 
 __all__ = [
     "ConfigBackfillError",
@@ -160,8 +160,9 @@ class ConfigPage(PageControllerBindingMixin, QWidget):
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
         content = QWidget()
-        # 限制内容最大宽度：窗口过宽时不再把卡片横向拉伸成很长的边框。
-        content.setMaximumWidth(1180)
+        # 限制内容最大宽度：窗口过宽时不再把卡片横向拉伸成很长的边框。宽度是跨页面
+        # 共用的主题令牌，连接页的 ``.ui`` 与这里取同一个值。
+        content.setMaximumWidth(PAGE_CONTENT_MAX_WIDTH)
         # 两栏布局：左侧仪器连接/测试参数/运行，右侧电源配置。避免单个卡片
         # 随视口无限横向拉伸，同时降低页面总高度。
         columns = QHBoxLayout(content)

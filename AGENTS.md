@@ -40,7 +40,7 @@ Rules:
 - `tests/ui` may import only `presentation`, `application` DTO/ports and Qt; importing `app`/`infrastructure`/hardware fails `test_presentation_boundaries`. Real-backend UI scenarios belong in `tests/integration`.
 - If the boundary is unclear, or a DTO/port signature changed, run the full suite. `tools/run_tests.py --parallel` runs the full suite with pytest-xdist (~1 min).
 
-Where a change belongs and which tests come first is fixed by `docs/GUI改动分层规则.md`: visual changes stay in `presentation/qt`, business rules are added in `domain`/`application` with tests before Qt wiring, and hardware changes stay in `app`/`application`/`instrument`. `tests/test_presentation_boundaries.py` rejects new Qt imports of configuration business modules (`application.configuration_*`, `application.device_binding`, `domain.configuration.*`), cross-page type imports outside the root `pages.py`/`main_window.py`, page constructors that take another page or `*args`/`**kwargs`, and growth of `PageContext`.
+Where a change belongs and which tests come first: visual changes stay in `presentation/qt`, business rules are added in `domain`/`application` with tests before Qt wiring, and hardware changes stay in `app`/`application`/`instrument`. `tests/test_presentation_boundaries.py` rejects new Qt imports of configuration business modules (`application.configuration_*`, `application.device_binding`, `domain.configuration.*`), cross-page type imports outside the root `pages.py`/`main_window.py`, page constructors that take another page or `*args`/`**kwargs`, and growth of `PageContext`.
 
 ### Real-device smoke
 

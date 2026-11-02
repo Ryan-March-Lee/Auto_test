@@ -1,6 +1,6 @@
 """正式运行配置文档的唯一生成入口（GUI 重构步骤 4）。
 
-归属（见 `docs/配置领域词汇与模块归属.md` 与 `docs/GUI业务逻辑重构计划.md`）：application。
+归属（见 `docs/配置领域词汇与模块归属.md`）：application。
 配置页只编辑一份面向现场硬件的组合文档；本服务用配置编辑段生成同一文档中的正式
 ``test_plan`` / ``run_mapping`` 段，使保存出的文件可以被
 :class:`infrastructure.config.json_config_repository.JsonConfigurationRepository`

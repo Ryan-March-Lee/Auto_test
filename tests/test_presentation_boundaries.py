@@ -53,7 +53,7 @@ WHOLE_MODULE_IMPORT = "<module>"
 # 这份基线是重构完成时的现状，不是允许继续扩张的白名单：
 # - 新增文件、模块或导入名称都会让门禁失败；
 # - 删除依赖后必须同步删除对应条目（精确匹配，不接受“只加不减”的静默变化）；
-# - 确需新增时必须先改 docs/GUI改动分层规则.md，说明为什么规则不能留在 application/domain。
+# - 确需新增时必须说明为什么规则不能留在 application/domain，并同步更新本文件的长期规则用例。
 CONFIGURATION_BUSINESS_IMPORT_BASELINE = {
     "application_coordinator.py": {
         "application.configuration_authoring": {
@@ -765,7 +765,7 @@ class LongTermChangeBoundaryTests(unittest.TestCase):
             PAGE_CONTEXT_FIELDS,
             "PageContext 是页面的窄组合接口。新增动作应加在 ViewModel/Application facade "
             "并用页面自己的一个信号表达；确需调整此契约时，先更新 "
-            "docs/GUI改动分层规则.md 与本基线。",
+            "本文件的长期规则用例与本基线。",
         )
         hints = get_type_hints(PageContext)
         for field in fields(PageContext):

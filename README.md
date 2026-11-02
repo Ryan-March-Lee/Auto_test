@@ -406,9 +406,9 @@ pa_auto_test/
 - **测试按改动面分层**：纯表现层用 `--layer ui`，真实窗口与后端接线用 `--layer integration`，
   交付前跑全量离线测试；所有范围都先跑仓库门禁。分层规则见 `AGENTS.md`。
 - **改动按层落点**：视觉改动只动表现层；业务改动先在 `domain`/`application` 落规则和测试，再接 Qt；
-  硬件改动留在 `app`/`application`/`instrument`。新增字段、页面与页面动作的固定落点及例外登记见
-  [GUI 改动分层规则](docs/GUI改动分层规则.md)，由 `tests/test_presentation_boundaries.py` 的
-  长期规则用例固定（配置业务模块族导入、跨页导入、页面构造窄依赖与 `PageContext` 字段）。
+  硬件改动留在 `app`/`application`/`instrument`。新增字段、页面与页面动作的固定落点由
+  `tests/test_presentation_boundaries.py` 的长期规则用例固定（配置业务模块族导入、跨页导入、
+  页面构造窄依赖与 `PageContext` 字段）。
 
 ### 验证命令
 

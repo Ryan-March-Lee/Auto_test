@@ -10,10 +10,10 @@
 它只从只读视图读出当前绑定与已保存地址，用来填扫描框初值；点“连接仪器”只发出用户意图
 （``connect_requested``），由窗口转给配置页的校验入口。
 
-版式分两层：静态骨架（页面标题、居中滚动区、底部提示栏）由 Qt Designer 文件
+版式分两层：静态骨架（页面标题、居中滚动区、页面动作的声明位置）由 Qt Designer 文件
 ``presentation/qt/ui/connection_page.ui`` 描述，改排列或文案只动那个文件；动态部分
 （设备发现面板、扫描结果卡片，以及“连接仪器／返回欢迎页／下一步”这一行动作）仍在
-Python 里构建并插进骨架。两个页面动作虽然声明在 ``.ui`` 的底部栏里，但最终和“连接仪器”
+Python 里构建并插进骨架。两个页面动作虽然声明在 ``.ui`` 的页面动作栏里，但最终和“连接仪器”
 一起排进设备发现面板的结果区动作行：那一行才是卡片、“返回”与页面动作共同所在的版面。
 页面不写颜色、字号与间距常量：颜色与字号来自 :mod:`presentation.qt.theme`，静态间距在
 ``.ui`` 里，版心宽度用主题令牌 ``theme.PAGE_CONTENT_MAX_WIDTH`` 收口。
@@ -112,12 +112,12 @@ class ConnectionPage(QWidget):
             parent=host,
         )
         host_layout.addWidget(self.discovery_panel)
-        # 底部提示栏：两个页面动作移进结果区动作行后，这一栏只剩提示语；保留引用供
-        # 视觉契约量取页面上下留白。
+        # 页面动作栏：两个页面动作移进结果区动作行后，这一栏不再有可见内容；保留引用
+        # 供视觉契约量取页面上下留白。
         self.page_action_bar = self._require(QWidget, "pageActionBar")
         # 三个动作排在同一行：连接仪器、返回欢迎页、下一步。两个页面级按钮虽然声明在
-        # ``.ui`` 的底部操作栏里，但按钮之间的“哪一行”属于动态面板的版面（结果区动作行
-        # 才是卡片与“返回”所在的那一行），因此在这里把它们移进同一行，底部栏只留提示语。
+        # ``.ui`` 的页面动作栏里，但按钮之间的“哪一行”属于动态面板的版面（结果区动作行
+        # 才是卡片与“返回”所在的那一行），因此在这里把它们移进同一行。
         self.return_welcome_btn = self._require(QPushButton, "returnWelcomeButton")
         self.next_btn = self._require(QPushButton, "nextButton")
         self.discovery_panel.add_action_widget(self._build_connect_button())
@@ -195,11 +195,11 @@ class ConnectionPage(QWidget):
         return self.title_label.text()
 
     def action_labels(self) -> tuple[str, str]:
-        """底部两个页面级动作的文案：返回欢迎页、下一步。"""
+        """两个页面级动作的文案：返回欢迎页、下一步。"""
         return self.return_welcome_btn.text(), self.next_btn.text()
 
     def page_actions_visible(self) -> tuple[bool, bool]:
-        """底部两个页面级动作当前是否可见（仍按返回、下一步的顺序）。"""
+        """两个页面级动作当前是否可见（仍按返回、下一步的顺序）。"""
         return self.return_welcome_btn.isVisible(), self.next_btn.isVisible()
 
     def request_next(self) -> None:

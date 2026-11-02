@@ -83,11 +83,6 @@ class UiLoaderTests(unittest.TestCase):
         self.assertEqual(title.text(), "仪表配置")
         self.assertEqual(title.property("role"), "pageTitle")
 
-        hint = ui.findChild(QLabel, "actionHint")
-        self.assertIsNotNone(hint)
-        self.assertIn("下一步", hint.text())
-        self.assertEqual(hint.property("role"), "hint")
-
         scroll = ui.findChild(QScrollArea, "connectionScroll")
         self.assertIsNotNone(scroll)
         self.assertTrue(scroll.widgetResizable())

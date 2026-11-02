@@ -321,14 +321,15 @@ class ConnectionPageStaticLayoutTests(unittest.TestCase):
         )
 
     def test_spare_height_stays_weighted_towards_the_top(self):
-        """多出来的高度按 2:1 分给上下留白：标题与结果区落在页面中线略偏下。"""
+        """顶部固定留白把主体压在偏下位置：上留白明显大于下留白。"""
         page = self.make_page()
         page.resize(1200, 900)
         page.show()
         self.app.processEvents()
         self.app.processEvents()
 
-        # 操作栏（现在只放提示语）由页面公开引用定位；这里只量取标题、结果区与操作栏的实际位置。
+        # 页面动作栏只保留两个页面动作的静态声明，运行时不承载可见内容；这里仍用它
+        # 定位内容区的下边界。视觉断言只量取标题、结果区与动作栏的实际位置。
         action_bar = page.page_action_bar
         self.assertIsNotNone(action_bar)
         title_top = page.title_label.mapTo(
@@ -345,7 +346,7 @@ class ConnectionPageStaticLayoutTests(unittest.TestCase):
         self.assertGreater(
             top_gap / max(1, bottom_gap),
             1.5,
-            "上下留白应保持接近 2:1，内容才不会贴到页面顶部",
+            "顶部留白应明显大于底部留白，主体才不会贴到页面顶部",
         )
 
 

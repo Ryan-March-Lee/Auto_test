@@ -249,6 +249,13 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
             panel.back_btn.parentWidget(),
             "连接仪器要与返回放在同一行",
         )
+        # 两个页面级动作也在这一行：它们与“连接仪器”共用同一个父控件、同一条水平线。
+        for action in (self.connection.return_welcome_btn, self.connection.next_btn):
+            self.assertIs(
+                action.parentWidget(),
+                button.parentWidget(),
+                "返回欢迎页与下一步要和连接仪器同一行",
+            )
         # 有结果时“返回”才可见，两个按钮的几何位置也才有意义。
         self.run_scan(panel)
         self.assertTrue(panel.back_btn.isVisible())
@@ -261,9 +268,14 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
         self.assertAlmostEqual(
             connect_centre.y(), back_centre.y(), delta=2, msg="两个按钮同一条水平线"
         )
-        self.assertGreater(
-            connect_centre.x(), back_centre.x(), "连接仪器落在这一行的右端"
-        )
+        for action in (self.connection.return_welcome_btn, self.connection.next_btn):
+            centre = action.mapTo(self.connection, action.rect().center())
+            self.assertAlmostEqual(
+                centre.y(), connect_centre.y(), delta=2, msg="页面动作与连接仪器同一行"
+            )
+            self.assertGreater(
+                centre.x(), connect_centre.x(), "页面动作排在连接仪器右侧"
+            )
 
         button.click()
 

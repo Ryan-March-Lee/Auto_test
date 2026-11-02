@@ -489,125 +489,272 @@ def _stack_frame(host, stack, elapsed_ms: float, particle: float | None = None):
     return host.grab().toImage()
 
 
+def _card_point(stack, pose, x_local: float, y_local: float) -> tuple[float, float]:
+    """把卡片自己的坐标（中心为原点）换算成舞台坐标。"""
+    radians = math.radians(pose.angle)
+    return (
+        stack.width() / 2.0
+        + pose.x
+        + x_local * math.cos(radians)
+        - y_local * math.sin(radians),
+        stack.height() / 2.0
+        + pose.y
+        + x_local * math.sin(radians)
+        + y_local * math.cos(radians),
+    )
+
+
+def _card_extent(pose) -> tuple[float, float]:
+    """一张卡转了一个角度之后，轴对齐包围盒从舞台中心伸出去多远。"""
+    from presentation.qt.device_cards import CARD_HEIGHT, CARD_WIDTH
+
+    radians = math.radians(pose.angle)
+    half_width = (
+        CARD_WIDTH * abs(math.cos(radians)) + CARD_HEIGHT * abs(math.sin(radians))
+    ) / 2.0
+    half_height = (
+        CARD_HEIGHT * abs(math.cos(radians)) + CARD_WIDTH * abs(math.sin(radians))
+    ) / 2.0
+    return abs(pose.x) + half_width, abs(pose.y) + half_height
+
+
 class ScanWaitStackTests(unittest.TestCase):
-    """扫描等待动画：5 张卡从堆顶一张接一张各转一整圈，叠回去停 0.5s 再来一轮。"""
+    """扫描等待动画：7 张卡摊成一把扇形、捻过一遍，再叠回原样。"""
 
     @classmethod
     def setUpClass(cls):
         cls.app = _application()
 
-    def test_the_stage_is_big_enough_for_the_card_at_any_angle(self):
+    def test_the_stage_holds_the_whole_fan_at_every_moment(self):
         from presentation.qt.scan_card import (
-            CARD_HEIGHT,
-            CARD_WIDTH,
+            WAIT_CYCLE_MS,
             WAIT_STACK_CARDS,
-            WAIT_STACK_SIZE,
+            WAIT_STACK_HEIGHT,
+            WAIT_STACK_WIDTH,
             ScanWaitStack,
         )
 
         stack = ScanWaitStack()
         self.assertEqual(
-            WAIT_STACK_CARDS, 5, "动画永远是 5 张卡：它只是动画，不跟设备台数走"
+            WAIT_STACK_CARDS, 7, "动画永远是 7 张卡：它只是动画，不跟设备台数走"
         )
-        self.assertGreaterEqual(
-            WAIT_STACK_SIZE,
-            math.hypot(CARD_WIDTH, CARD_HEIGHT),
-            "卡片转到任意角度都要落在舞台里，否则结果区上沿会把它裁成一条硬边",
+        for elapsed in range(0, WAIT_CYCLE_MS + 1, 10):
+            for index, pose in enumerate(stack.poses_at(elapsed)):
+                half_width, half_height = _card_extent(pose)
+                self.assertLessEqual(
+                    half_width,
+                    WAIT_STACK_WIDTH / 2.0 + 0.5,
+                    f"{elapsed}ms 时第 {index} 张卡伸出了舞台左右边界，会被裁成硬边",
+                )
+                self.assertLessEqual(
+                    half_height,
+                    WAIT_STACK_HEIGHT / 2.0 + 0.5,
+                    f"{elapsed}ms 时第 {index} 张卡伸出了舞台上下边界，会被裁成硬边",
+                )
+        self.assertEqual(stack.size().width(), WAIT_STACK_WIDTH)
+        self.assertEqual(stack.size().height(), WAIT_STACK_HEIGHT)
+        self.assertGreater(
+            WAIT_STACK_WIDTH,
+            WAIT_STACK_HEIGHT,
+            "舞台要比卡片宽：整把扇形才摊得开",
         )
-        self.assertEqual(stack.size().width(), WAIT_STACK_SIZE)
-        self.assertEqual(stack.size().height(), WAIT_STACK_SIZE)
         self.assertTrue(
             stack.testAttribute(Qt.WA_TransparentForMouseEvents),
             "等待动画只是画面：点击与悬停都留给面板",
         )
         self.assertEqual(stack.focusPolicy(), Qt.NoFocus)
 
-    def test_each_card_turns_a_full_circle_one_after_another_from_the_top(self):
+    def test_the_deck_fans_out_symmetrically_around_the_middle_card(self):
         from presentation.qt.scan_card import (
-            WAIT_CYCLE_MS,
-            WAIT_PAUSE_MS,
-            WAIT_SPIN_MS,
-            WAIT_SPIN_STAGGER_MS,
+            WAIT_FAN_MS,
+            WAIT_FAN_STEP_DEG,
             WAIT_STACK_CARDS,
             ScanWaitStack,
         )
 
         stack = ScanWaitStack()
-        zero = (0.0,) * WAIT_STACK_CARDS
-        self.assertEqual(stack.angles_at(0), zero, "开始前是一整叠")
-
-        # 堆顶那张先动：它已经开始转时，下面那张还没起步；再往后两张都在转，但上
-        # 面那张转过的角度更大。
-        first = stack.angles_at(WAIT_SPIN_STAGGER_MS // 2)
-        self.assertGreater(first[0], 0.0, "第一张应最先开始")
-        self.assertEqual(first[1], 0.0, "第二张要等一个间隔才开始")
-        later = stack.angles_at(WAIT_SPIN_STAGGER_MS + WAIT_SPIN_MS // 4)
-        self.assertGreater(later[0], later[1], "应该从堆顶一张一张往下转")
-        self.assertGreater(later[1], 0.0, "后一张这时也应转起来了")
-
-        # 每张都转满一整圈：四分之三处已经过了半圈，结束后回到 0°。
-        self.assertGreater(stack.angles_at(WAIT_SPIN_MS * 3 // 4)[0], 180.0)
-        finished = (WAIT_STACK_CARDS - 1) * WAIT_SPIN_STAGGER_MS + WAIT_SPIN_MS
-        self.assertEqual(stack.angles_at(finished), zero, "5 张都要转回整叠")
-
-        # 全部转完后停 0.5s，再从头开始。
-        self.assertEqual(
-            stack.angles_at(finished + WAIT_PAUSE_MS - 1),
-            zero,
-            "叠回去之后要停 0.5s 才开始下一轮",
+        self.assertTrue(
+            all(pose.is_stacked() for pose in stack.poses_at(0)),
+            "开始前是一整叠",
         )
-        self.assertEqual(stack.angles_at(WAIT_CYCLE_MS), zero, "新一轮从头开始")
-        self.assertGreater(
-            stack.angles_at(WAIT_CYCLE_MS + 100)[0], 0.0, "停顿结束后应重新转起来"
+        middle = (WAIT_STACK_CARDS - 1) // 2
+        reach = (WAIT_STACK_CARDS - 1) / 2.0
+        fanned = stack.poses_at(WAIT_FAN_MS)
+        self.assertAlmostEqual(fanned[middle].angle, 0.0, msg="中间那张始终是正的")
+        self.assertAlmostEqual(fanned[middle].x, 0.0)
+        self.assertAlmostEqual(fanned[0].angle, reach * WAIT_FAN_STEP_DEG)
+        self.assertAlmostEqual(fanned[-1].angle, -reach * WAIT_FAN_STEP_DEG)
+        self.assertAlmostEqual(fanned[0].x, -fanned[-1].x, msg="扇形左右对称")
+        self.assertAlmostEqual(fanned[0].y, fanned[-1].y)
+        # 摊开的幅度是有限的：不再有卡片原地转整圈。
+        for pose in fanned:
+            self.assertLess(abs(pose.angle), 20.0, "扇形角度要有分寸，不能转成风车")
+        # 扇形确实铺得比单张卡宽：这就是“展开的面积大了一些”。
+        self.assertGreater(fanned[0].x - fanned[-1].x, 100.0)
+
+    def test_the_fan_opens_and_folds_back_within_one_cycle(self):
+        from presentation.qt.scan_card import (
+            WAIT_CYCLE_MS,
+            WAIT_FAN_MS,
+            WAIT_FAN_STAGGER_MS,
+            WAIT_HOLD_MS,
+            WAIT_PAUSE_MS,
+            WAIT_STACK_CARDS,
+            ScanWaitStack,
+        )
+
+        stack = ScanWaitStack()
+        early = stack.poses_at(WAIT_FAN_STAGGER_MS // 2)
+        self.assertFalse(early[WAIT_STACK_CARDS - 1].is_stacked(), "最靠后的那张先摊开")
+        self.assertTrue(early[0].is_stacked(), "最上面那张要等一个间隔才跟上")
+
+        # 摊开之后停住，形状保持一整段（这段就是“看得清的一把扇形”）。
+        fanned = stack.poses_at(WAIT_FAN_MS)
+        held = stack.poses_at(WAIT_FAN_MS + WAIT_HOLD_MS - 1)
+        self.assertAlmostEqual(fanned[0].angle, held[0].angle)
+
+        closed = WAIT_FAN_MS + WAIT_HOLD_MS + WAIT_FAN_MS
+        self.assertTrue(
+            all(pose.is_stacked() for pose in stack.poses_at(closed)),
+            "一整轮的最后要把所有卡叠回原样",
+        )
+        self.assertTrue(
+            all(pose.is_stacked() for pose in stack.poses_at(closed + WAIT_PAUSE_MS - 1)),
+            "叠回去之后要停一下才开始下一轮",
+        )
+        self.assertFalse(
+            stack.poses_at(WAIT_CYCLE_MS + WAIT_FAN_MS)[0].is_stacked(),
+            "停顿结束后应重新摊开",
+        )
+
+    def test_the_hold_ripples_through_the_fan_one_card_at_a_time(self):
+        from presentation.qt.scan_card import (
+            WAIT_FAN_MS,
+            WAIT_RIPPLE_LIFT,
+            WAIT_RIPPLE_MS,
+            WAIT_RIPPLE_STAGGER_MS,
+            WAIT_STACK_CARDS,
+            ScanWaitStack,
+        )
+
+        stack = ScanWaitStack()
+        settled = stack.poses_at(WAIT_FAN_MS)
+        first_peak = stack.poses_at(WAIT_FAN_MS + WAIT_RIPPLE_MS / 2)
+        backmost = WAIT_STACK_CARDS - 1
+        # 波纹从最靠后的那张开始：它被抬到最高时，最上面那张还没动。
+        self.assertAlmostEqual(
+            settled[backmost].y - first_peak[backmost].y,
+            WAIT_RIPPLE_LIFT,
+            delta=0.01,
+        )
+        self.assertAlmostEqual(settled[0].y, first_peak[0].y)
+
+        last_peak = stack.poses_at(
+            WAIT_FAN_MS + backmost * WAIT_RIPPLE_STAGGER_MS + WAIT_RIPPLE_MS / 2
+        )
+        self.assertAlmostEqual(
+            settled[0].y - last_peak[0].y, WAIT_RIPPLE_LIFT, delta=0.01
         )
 
     def test_the_deck_comes_back_to_the_same_stacked_frame(self):
-        from presentation.qt.scan_card import (
-            WAIT_SPIN_MS,
-            WAIT_SPIN_STAGGER_MS,
-            WAIT_STACK_CARDS,
-        )
+        from presentation.qt.scan_card import WAIT_FAN_MS, WAIT_HOLD_MS
 
         host, stack = _stack_scene()
-        finished = (WAIT_STACK_CARDS - 1) * WAIT_SPIN_STAGGER_MS + WAIT_SPIN_MS
+        closed = WAIT_FAN_MS + WAIT_HOLD_MS + WAIT_FAN_MS
         self.assertEqual(
-            _stack_frame(host, stack, 0),
-            _stack_frame(host, stack, finished),
-            "全部转完应叠回与开始时一模一样的一整叠",
+            _stack_frame(host, stack, 0, particle=0.0),
+            _stack_frame(host, stack, closed, particle=0.0),
+            "全部叠回时应与开始时一模一样",
         )
 
-    def test_the_cards_turn_out_of_the_stacked_card_while_the_deck_spins(self):
-        """转起来时同一块舞台上看得见卡片的边角；停下来又只剩那一张卡。"""
-        from presentation.qt.device_cards import CARD_HEIGHT
-        from presentation.qt.scan_card import WAIT_STACK_SIZE
+    def test_the_fanned_deck_spreads_outside_the_stacked_card(self):
+        """摊开时同一块舞台上看得见卡片的边角；收拢后又只剩那一张卡。"""
+        from presentation.qt.device_cards import CARD_WIDTH
+        from presentation.qt.scan_card import (
+            WAIT_FAN_MS,
+            WAIT_STACK_HEIGHT,
+            WAIT_STACK_WIDTH,
+        )
         from presentation.qt.theme import TOKENS
 
         host, stack = _stack_scene()
         rest = _stack_frame(host, stack, 0)
-        turning = _stack_frame(host, stack, 380)
-        # 静止卡片的左上角：卡片比舞台矮，上下各留一截空白。
-        resting_top = (WAIT_STACK_SIZE - CARD_HEIGHT) / 2.0
-        # 探测点取在静止卡片上沿之外、斜靠左上的角上——卡片转到 45° 附近时那个角
-        # 正好探出来；正中上方探不到（高卡转到 45° 时竖直方向的顶点偏窄）。
-        probe_x = WAIT_STACK_SIZE * 0.63
-        probe_y = resting_top - 5.0
+        fanned = _stack_frame(host, stack, WAIT_FAN_MS)
+        # 静止卡片的左沿再往外 20px（跳过卡片外那圈投影）：摊开时扇形的一角正好伸到这里。
+        probe_x = (WAIT_STACK_WIDTH - CARD_WIDTH) / 2.0 - 20.0
+        probe_y = WAIT_STACK_HEIGHT / 2.0
 
         self.assertEqual(
             _point(host, rest, probe_x, probe_y).name(),
             TOKENS["canvas"].lower(),
-            "静止时卡片上沿之外是页面底色",
+            "静止时卡片左沿之外是页面底色",
         )
         self.assertLess(
-            _point(host, turning, probe_x, probe_y).lightness(),
+            _point(host, fanned, probe_x, probe_y).lightness(),
             90,
-            "卡片转到 45° 附近时应该探到静止卡片的上方",
+            "摊开时扇形应该伸到静止卡片的外面",
         )
 
-    def test_the_spinning_cards_keep_their_particle_sparkles(self):
-        """卡片转起来时粒子照常外飘：粒子跟着卡面一起转，不会因为旋转就消失。"""
+    def test_every_fanned_card_keeps_its_own_bright_edge(self):
+        """扇形里每张卡都有一道亮边和一道暗缝：叠得再紧也读得出是两张卡。"""
+        from presentation.qt.device_cards import CARD_WIDTH
+        from presentation.qt.scan_card import WAIT_FAN_MS
+
         host, stack = _stack_scene()
-        still = _stack_frame(host, stack, 380, particle=0.0)
-        sparkling = _stack_frame(host, stack, 380, particle=0.25)
+        image = _stack_frame(host, stack, WAIT_FAN_MS, particle=0.0)
+        poses = stack.poses_at(WAIT_FAN_MS)
+        half = CARD_WIDTH / 2.0
+
+        def lightness_at(pose, x_local: float) -> int:
+            x, y = _card_point(stack, pose, x_local, 0.0)
+            return _point(host, image, x, y).lightness()
+
+        for index, pose in enumerate(poses):
+            # 亮边只有 1~2px 宽，直接取某一个采样点会踩到抗锯齿的边缘；
+            # 沿左沿往里扫一小段，取最亮的那一点当作亮边。
+            rim = max(lightness_at(pose, -half + inset) for inset in (0.5, 1.0, 1.5, 2.0))
+            face = lightness_at(pose, -half + 8.0)
+            self.assertGreater(
+                rim, face + 20, f"第 {index} 张卡的亮边应与自己的卡面分得开"
+            )
+            if index < len(poses) - 1:
+                # 亮边外面还有一道暗缝：那是它压着的下一张卡，不是同一张卡的延续。
+                gap = min(lightness_at(pose, -half - outset) for outset in (1.0, 2.0, 3.0))
+                self.assertLess(gap, rim - 15, f"第 {index} 张卡外侧应有暗缝")
+
+    def test_the_cards_behind_the_top_one_show_a_card_back(self):
+        """后层卡面是牌背：只有纹样，不再叠正面的大光晕与角标。"""
+        from presentation.qt.device_cards import CARD_HEIGHT, CARD_WIDTH
+        from presentation.qt.scan_card import _render_card_back, _render_card_face
+
+        def bright_coloured_points(pixmap) -> int:
+            image = pixmap.toImage()
+            count = 0
+            for y in range(image.height()):
+                for x in range(image.width()):
+                    colour = QColor(image.pixel(x, y))
+                    if colour.green() > colour.red() + 8 and colour.green() > 60:
+                        count += 1
+            return count
+
+        face = _render_card_face(CARD_WIDTH, CARD_HEIGHT, 1.0)
+        back = _render_card_back(CARD_WIDTH, CARD_HEIGHT, 1.0)
+        face_points = bright_coloured_points(face)
+        back_points = bright_coloured_points(back)
+        self.assertGreater(face_points, 1000, "卡面上有青绿光晕与角标")
+        self.assertLess(
+            back_points * 4,
+            face_points,
+            "牌背只有一小圈内框与中心徽记，不能有大片光晕",
+        )
+
+    def test_the_top_card_keeps_its_particle_sparkles(self):
+        """粒子只属于最上面那张卡：它照样外飘，不会让一叠卡各飘一团。"""
+        from presentation.qt.scan_card import WAIT_FAN_MS
+
+        host, stack = _stack_scene()
+        still = _stack_frame(host, stack, WAIT_FAN_MS, particle=0.0)
+        sparkling = _stack_frame(host, stack, WAIT_FAN_MS, particle=0.25)
 
         changed = sum(
             1
@@ -615,7 +762,7 @@ class ScanWaitStackTests(unittest.TestCase):
             for x in range(still.width())
             if still.pixel(x, y) != sparkling.pixel(x, y)
         )
-        self.assertGreater(changed, 20, "旋转中的卡片上也要看得到粒子")
+        self.assertGreater(changed, 20, "摊开的牌堆上也应看得到粒子")
 
     def test_the_deck_starts_over_every_time_it_is_shown(self):
         """扫描结束后动画收起来；下一次查找重新从一整叠、第一张卡开始。"""
@@ -625,15 +772,18 @@ class ScanWaitStackTests(unittest.TestCase):
         stack.hide()
         _application().processEvents()
         self.assertFalse(stack._frame_timer.isActive(), "收起来后不该还在计时")
-        self.assertEqual(stack.spin_angles, (0.0,) * 5, "收起来时角度归零")
+        self.assertTrue(
+            all(pose.is_stacked() for pose in stack.current_poses),
+            "收起来时牌堆归零",
+        )
 
         stack.show()
         _application().processEvents()
         self.assertTrue(stack._frame_timer.isActive(), "再显示时应重新开始")
-        self.assertEqual(stack._elapsed, 0.0, "重新开始时应从一整叠、第一张卡起步")
+        self.assertEqual(stack._elapsed, 0.0, "重新开始时应从一整叠起步")
 
     def test_a_full_cycle_is_announced_when_the_deck_is_stacked_again(self):
-        """一轮完整动画走完、牌堆复原时才通知面板；转动中途不能提前通知。"""
+        """一轮完整动画走完、牌堆复原时才通知面板；摊开中途不能提前通知。"""
         from presentation.qt.scan_card import WAIT_CYCLE_MS
 
         _host, stack = _stack_scene()
@@ -644,12 +794,10 @@ class ScanWaitStackTests(unittest.TestCase):
         self.assertEqual(announced, [], "一轮还没走完，不能通知面板换画面")
 
         QTest.qWait(WAIT_CYCLE_MS + 300)
-        self.assertTrue(announced, "整轮走完（5 张卡叠回原样）要通知面板")
+        self.assertTrue(announced, "整轮走完（所有卡叠回原样）要通知面板")
 
     def test_finish_cycle_stacks_the_deck_and_announces_it(self):
         """收尾入口把当前这一轮直接走完：牌堆复原，并发出一次结束通知。"""
-        from presentation.qt.scan_card import WAIT_STACK_CARDS
-
         _host, stack = _stack_scene()
         announced = []
         stack.cycle_finished.connect(lambda: announced.append(True))
@@ -658,8 +806,9 @@ class ScanWaitStackTests(unittest.TestCase):
 
         stack.finish_cycle()
 
-        self.assertEqual(
-            stack.spin_angles, (0.0,) * WAIT_STACK_CARDS, "收尾时 5 张卡必须叠回原样"
+        self.assertTrue(
+            all(pose.is_stacked() for pose in stack.current_poses),
+            "收尾时所有卡必须叠回原样",
         )
         self.assertEqual(announced, [True])
 

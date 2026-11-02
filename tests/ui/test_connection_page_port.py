@@ -328,8 +328,8 @@ class ConnectionPageStaticLayoutTests(unittest.TestCase):
         self.app.processEvents()
         self.app.processEvents()
 
-        # 操作栏由页面公开的返回按钮定位；这里只量取标题、结果区与操作栏的实际位置。
-        action_bar = page.return_welcome_btn.parentWidget()
+        # 操作栏（现在只放提示语）由页面公开引用定位；这里只量取标题、结果区与操作栏的实际位置。
+        action_bar = page.page_action_bar
         self.assertIsNotNone(action_bar)
         title_top = page.title_label.mapTo(
             page, page.title_label.rect().topLeft()

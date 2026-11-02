@@ -10,11 +10,13 @@
 它只从只读视图读出当前绑定与已保存地址，用来填扫描框初值；点“连接仪器”只发出用户意图
 （``connect_requested``），由窗口转给配置页的校验入口。
 
-版式分两层：静态骨架（页面标题、居中滚动区、底部固定操作栏）由 Qt Designer 文件
+版式分两层：静态骨架（页面标题、居中滚动区、底部提示栏）由 Qt Designer 文件
 ``presentation/qt/ui/connection_page.ui`` 描述，改排列或文案只动那个文件；动态部分
-（设备发现面板、扫描结果卡片与“连接仪器”）仍在 Python 里构建并插进骨架。页面不写
-颜色、字号与间距常量：颜色与字号来自 :mod:`presentation.qt.theme`，静态间距在 ``.ui``
-里，版心宽度用主题令牌 ``theme.PAGE_CONTENT_MAX_WIDTH`` 收口。
+（设备发现面板、扫描结果卡片，以及“连接仪器／返回欢迎页／下一步”这一行动作）仍在
+Python 里构建并插进骨架。两个页面动作虽然声明在 ``.ui`` 的底部栏里，但最终和“连接仪器”
+一起排进设备发现面板的结果区动作行：那一行才是卡片、“返回”与页面动作共同所在的版面。
+页面不写颜色、字号与间距常量：颜色与字号来自 :mod:`presentation.qt.theme`，静态间距在
+``.ui`` 里，版心宽度用主题令牌 ``theme.PAGE_CONTENT_MAX_WIDTH`` 收口。
 
 “下一步”先把本次勾选的设备写入配置（整批替换），再切到仪器配置页；配置文件仍随
 “保存配置”或“校验并创建运行”一起落盘，因此从本页离开不会产生半保存的配置。
@@ -53,9 +55,10 @@ _Widget = TypeVar("_Widget", bound=QWidget)
 class ConnectionPage(QWidget):
     """仪表配置页：整屏页面，不登记进标签栏。
 
-    页面持有大字号标题、设备发现面板、结果区动作行里的“连接仪器”，以及三个页面级动作
-    （返回欢迎页、下一步、连接仪器）；设备绑定的写入与派生界面状态由配置页负责，本页
-    通过 :class:`application.ports.device_binding.DeviceBindingPort` 读取与提交，不持有
+    页面持有大字号标题、设备发现面板，以及结果区动作行里的三个动作（返回欢迎页、
+    下一步、连接仪器——它们和面板自己的“返回”排在同一条水平线上）；设备绑定的写入与
+    派生界面状态由配置页负责，本页通过
+    :class:`application.ports.device_binding.DeviceBindingPort` 读取与提交，不持有
     配置页实例。
 
     静态骨架来自 ``.ui``，页面只做控件绑定、动态面板插入与信号接线。因此调整按钮顺序、
@@ -83,7 +86,7 @@ class ConnectionPage(QWidget):
     # ---- 界面 -------------------------------------------------------------
 
     def _build_ui(self) -> None:
-        """加载 ``.ui`` 静态骨架，再把设备发现面板与“连接仪器”接到动态位置。"""
+        """加载 ``.ui`` 静态骨架，再把设备发现面板与三个动作接到动态位置。"""
         self._ui = load_ui("connection_page")
         shell = QVBoxLayout(self)
         shell.setContentsMargins(0, 0, 0, 0)
@@ -108,11 +111,17 @@ class ConnectionPage(QWidget):
             parent=host,
         )
         host_layout.addWidget(self.discovery_panel)
-        # “连接仪器”放进结果区动作行，和“返回”同一行、落在行的右端。
-        self.discovery_panel.add_action_widget(self._build_connect_button())
-
+        # 底部提示栏：两个页面动作移进结果区动作行后，这一栏只剩提示语；保留引用供
+        # 视觉契约量取页面上下留白。
+        self.page_action_bar = self._require(QWidget, "pageActionBar")
+        # 三个动作排在同一行：连接仪器、返回欢迎页、下一步。两个页面级按钮虽然声明在
+        # ``.ui`` 的底部操作栏里，但按钮之间的“哪一行”属于动态面板的版面（结果区动作行
+        # 才是卡片与“返回”所在的那一行），因此在这里把它们移进同一行，底部栏只留提示语。
         self.return_welcome_btn = self._require(QPushButton, "returnWelcomeButton")
         self.next_btn = self._require(QPushButton, "nextButton")
+        self.discovery_panel.add_action_widget(self._build_connect_button())
+        self.discovery_panel.add_action_widget(self.return_welcome_btn)
+        self.discovery_panel.add_action_widget(self.next_btn)
 
     def _require(self, widget_type: type[_Widget], name: str) -> _Widget:
         """取 ``.ui`` 里声明的控件；缺失或类型不符时尽早报装配错误。"""
@@ -122,7 +131,7 @@ class ConnectionPage(QWidget):
         return widget
 
     def _build_connect_button(self) -> QPushButton:
-        """结果区动作行右端的“连接仪器”：与“返回”同一行。"""
+        """结果区动作行里的“连接仪器”：与“返回”、返回欢迎页、下一步同一行。"""
         self.connect_btn = QPushButton("连接仪器")
         self.connect_btn.setObjectName("connectButton")
         self.connect_btn.setToolTip(

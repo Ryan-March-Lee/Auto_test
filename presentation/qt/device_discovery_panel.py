@@ -23,13 +23,13 @@
 （没有边框、没有底色），所以仪器卡片直接落在页面背景上；还没点过“查找设备”时，那张
 卡片按钮就落在结果区顶部、紧跟在扫描行下面（不在整块结果区里居中，免得和扫描行之间隔
 一大段空白），点下去之后原地换成等待动画（:class:`presentation.qt.scan_card.ScanWaitStack`：
-5 张卡从堆顶一张接一张各转一整圈，叠回去停 0.5s 再来一轮），结果回来后再换成卡片。
-等待动画的舞台比卡片大一圈（卡片转到任意角度都要落得下），但牌堆的上沿与左沿正好压在
-按钮原来的位置：点下去卡片是在原地起转，不会先往下掉一截（舞台向上多出来的那一截伸进
-卡片上方的留白，占位控件只撑高、不撑宽，页面也不会被撑开）。
+7 张卡叠成一叠，以中间那张为准摊成一把扇形，停一下、轻轻捻过一遍，再叠回原样；停一下
+再来一轮），结果回来后再换成卡片。等待动画的舞台比卡片大一圈（扇形要摊得下），但牌堆
+的上沿与左沿正好压在按钮原来的位置：点下去卡片是在原地摊开，不会先往下掉一截（舞台向
+上多出来的那一截伸进卡片上方的留白，占位控件只撑高、不撑宽，页面也不会被撑开）。
 **扫描结束不等于立刻换画面**：结果（或失败原因）先挂起，等等待动画至少完整播完一轮、
-5 张卡都叠回原样（``ScanWaitStack.cycle_finished``）才进入下一步；动画没播完就继续播，
-扫描结果等它，而不是把转动中途的牌堆直接收走。搜索一直不回来时动画就一轮接一轮地播。
+所有卡都叠回原样（``ScanWaitStack.cycle_finished``）才进入下一步；动画没播完就继续播，
+扫描结果等它，而不是把摊开中途的牌堆直接收走。搜索一直不回来时动画就一轮接一轮地播。
 **结果区的高度是固定的**（两行卡片 + 按钮与状态行）：查找前后、结果多少都不改变它的
 大小，卡片超出时只在结果区里滚动。卡片区本身只占实际行数（最多两行）那么高，
 统计/失败说明紧跟在卡片下面并横向居中，动作行再排在它下面（“返回”在左，页面级动作
@@ -89,7 +89,7 @@ from .device_cards import (
 from .input_controls import WheelSafeComboBox
 from .scan_card import (
     SCAN_CARD_HEADROOM,
-    WAIT_STACK_SIZE,
+    WAIT_STACK_HEIGHT,
     ScanPromptCard,
     ScanWaitStack,
 )
@@ -400,9 +400,9 @@ class DeviceDiscoveryPanel(QWidget):
         # 外观不取自样式表：它是一张自绘的深色卡片按钮（悬停动效见
         # ``presentation.qt.scan_card``），按钮的大小就是仪器卡片的大小，尺寸由
         # ``presentation.qt.device_cards`` 给出。
-        # 扫描期间的等待动画：点下去按钮收走，同一位置换成这一叠 5 张卡，从堆顶一张接
-        # 一张各转一整圈，全部叠回去后停 0.5s 再来一轮（5 张只是动画，与设备台数无关）。
-        # 它是面板上的一层覆盖画面，不进扫描行里的格子：舞台比卡片大一圈，居中放进格子
+        # 扫描期间的等待动画：点下去按钮收走，同一位置换成这一叠 7 张卡，以中间那张
+        # 为准摊成一把扇形、捻过一遍再叠回原样（7 张只是动画，与设备台数无关）。它是
+        # 面板上的一层覆盖画面，不进扫描行里的格子：舞台比卡片大一圈，居中放进格子
         # 会让整叠卡比按钮低一截，点下去卡片就像往下掉了一下。舞台位置由
         # :meth:`_sync_wait_stack_geometry` 钉在按钮原来的位置上。
         self.wait_stack = ScanWaitStack(self)
@@ -485,7 +485,7 @@ class DeviceDiscoveryPanel(QWidget):
         self.centre_placeholder.setObjectName("discoveryCentrePlaceholder")
         self.centre_placeholder.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.centre_placeholder.setFocusPolicy(Qt.NoFocus)
-        self.centre_placeholder.setFixedSize(CARD_WIDTH, WAIT_STACK_SIZE)
+        self.centre_placeholder.setFixedSize(CARD_WIDTH, WAIT_STACK_HEIGHT)
         self.centre_placeholder.setVisible(False)
         centre_row.addWidget(self.centre_placeholder)
         centre_row.addWidget(self.scan_btn)
@@ -611,10 +611,11 @@ class DeviceDiscoveryPanel(QWidget):
     def _sync_wait_stack_geometry(self) -> None:
         """把等待动画的牌堆钉在“查找设备”卡片原来的位置。
 
-        舞台（:data:`WAIT_STACK_SIZE`）比卡片大一圈，卡片转到任意角度才落得下。如果让
-        舞台按扫描行居中，整叠卡的圆心会比按钮低半个差值，点下去卡片就像往下掉了一截。
-        这里以按钮格子（扫描期间是同大的透明占位）的上沿为牌堆上沿，把舞台多出来的
-        那一截伸到卡片上方的留白里：牌堆与按钮重合，旋转只绕自己的中心。
+        舞台（:data:`WAIT_STACK_HEIGHT` / :data:`WAIT_STACK_WIDTH`）比卡片大一圈，扇形才
+        摊得下。如果让舞台按扫描行居中，整叠牌的圆心会比按钮低半个差值，点下去卡片就像
+        往下掉了一截。这里以按钮格子（扫描期间是同大的透明占位）的上沿为牌堆上沿，把
+        舞台多出来的那一截伸到卡片上方的留白里：叠着的牌与按钮重合，摊开也只从原位置
+        往外散。
         """
         placeholder = self.centre_placeholder
         if not placeholder.isVisible():
@@ -708,9 +709,9 @@ class DeviceDiscoveryPanel(QWidget):
         """启动后台扫描；同一时刻只允许一个扫描线程。
 
         点下去就是“开始加载设备”：结果区顶部的按钮收走，原地换成那一叠卡的等待动画
-        （5 张卡从堆顶一张接一张各转一整圈，叠回去停 0.5s 再来一轮）；卡片区等结果
-        回来再出现，扫描期间不出现用不上的操作按钮。扫描结束后结果先挂起，等一下动画
-        至少完整走完一轮（牌堆复原）才换进结果区。
+        （7 张卡以中间那张为准摊成一把扇形、捻过一遍再叠回原样）；卡片区等结果回来
+        再出现，扫描期间不出现用不上的操作按钮。扫描结束后结果先挂起，等一下动画至少
+        完整走完一轮（牌堆复原）才换进结果区。
         """
         if self.is_scanning() or self._pending_outcome is not None:
             self._set_status("扫描正在进行，请等待完成")
@@ -756,7 +757,7 @@ class DeviceDiscoveryPanel(QWidget):
     def _on_wait_cycle_finished(self) -> None:
         """一整轮等待动画走完（牌堆复原）：这时才允许进入下一步。
 
-        扫描一结束就把结论挂在这里；动画至少完整播完一轮、5 张卡都叠回原样才切换
+        扫描一结束就把结论挂在这里；动画至少完整播完一轮、所有卡都叠回原样才切换
         画面，转动的牌堆不会在中途被收走。结果还没回来就什么也不做，动画继续下一轮。
         """
         if self._closed:

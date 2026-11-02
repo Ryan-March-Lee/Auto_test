@@ -46,7 +46,7 @@
         <number>16</number>
        </property>
        <property name="topMargin">
-        <number>0</number>
+        <number>48</number>
        </property>
        <property name="rightMargin">
         <number>16</number>
@@ -54,8 +54,9 @@
        <property name="bottomMargin">
         <number>0</number>
        </property>
-       <!-- 上下留白按 2:1 分配：两个上留白 + 一个下留白。QUiLoader 不读取
-            Designer 的 layout stretch 属性，因此用等价的弹性项组合表达 addStretch(2)/addStretch(1)。 -->
+       <!-- 顶部先留出一段固定空白，页面主体才不会贴到窗口上沿；剩下的富余高度再按
+            2:1 分给上下留白：两个上留白 + 一个下留白。QUiLoader 不读取 Designer 的
+            layout stretch 属性，因此用等价的弹性项组合表达 addStretch(2)/addStretch(1)。 -->
        <item>
         <spacer name="topSpacer">
          <property name="orientation">
@@ -150,6 +151,9 @@
     </widget>
    </item>
    <item>
+    <!-- 两个页面动作在这里声明（控件名与静态文案契约），但 ConnectionPage 会把它们
+         移进设备发现面板的结果区动作行，和“连接仪器”“返回”排在同一行；这一栏最终
+         只留下面那行提示语。 -->
     <widget class="QWidget" name="pageActionBar">
      <layout class="QHBoxLayout" name="actionBarLayout">
       <property name="spacing">

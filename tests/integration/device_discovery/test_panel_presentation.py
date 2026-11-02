@@ -301,7 +301,7 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         self.assertFalse(panel.cards_area.isVisible())
         self.assertEqual(panel.card_count(), 0)
 
-        # 一整轮播完（5 张卡叠回原样）才进入下一步：结果换进结果区。
+        # 一整轮播完（所有卡叠回原样）才进入下一步：结果换进结果区。
         self.finish_scan(panel)
 
         self.assertEqual(panel.box_state(), BOX_STATE_RESULTS)

@@ -37,17 +37,21 @@
 空格/回车与悬浮提示照旧，调用方不必知道它是自绘的。
 
 同一个模块里还有扫描期间的等待动画（:class:`ScanWaitStack`）：点下去之后按钮收走，
-同一位置换成 5 张与按钮同尺寸的卡叠成的一叠（5 张只是动画，与这次查到几台设备无关），
-从堆顶一张接一张绕自己的中心各转一整圈，5 张全部叠回去后停 0.5s 再来一轮。卡面与按钮
-共用同一张预渲染图，卡面里的粒子动效跟着每张卡一起转（旋转时不会消失），控件本身不吃
-鼠标、不占焦点，也不改变版面。每走完一整轮（牌堆复原）
-它发出一次 :attr:`ScanWaitStack.cycle_finished`：设备发现面板据此保证“查找设备”至少
-完整播放一轮动画，才把结果换进结果区；结果还没回来就继续下一轮。
+同一位置换成 7 张与按钮同尺寸的卡叠成的一叠（7 张只是动画，与这次查到几台设备无关）。
+整叠牌以中间那张为准对称摊成一把扇形，再像捻牌一样从一侧到另一侧轻轻拨一遍，最后叠回
+原样；停顿一下再来一轮。最上面那张是“查找设备”的完整卡面，下面几张都是牌背（渐变 + 斜纹
++ 内框 + 小菱形）、越往后压得越暗；每张卡边缘还有一道贴边的暗缝和一圈亮边，因此叠在一起
+时读得出“这是一叠牌”，不会糊成一团。原来的等待动画是几张卡各绕自己的中心转满一整圈，
+同时有 3、4 张卡转到不同角度，光晕与角标搅在一起——那是“乱”的来源。控件本身不吃鼠标、
+不占焦点，也不改变版面。每走完一整轮（牌堆复原）它发出一次
+:attr:`ScanWaitStack.cycle_finished`：设备发现面板据此保证“查找设备”至少完整播放一轮
+动画，才把结果换进结果区；结果还没回来就继续下一轮。
 """
 
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from functools import lru_cache
 
 from PySide6.QtCore import (
@@ -92,7 +96,8 @@ __all__ = [
     "SCAN_CARD_HEADROOM",
     "WAIT_CYCLE_MS",
     "WAIT_STACK_CARDS",
-    "WAIT_STACK_SIZE",
+    "WAIT_STACK_WIDTH",
+    "WAIT_STACK_HEIGHT",
 ]
 
 # ---- 尺寸（原效果的 px 值） --------------------------------------------------
@@ -118,20 +123,47 @@ BACKDROP_MARGIN_Y = 8
 # ---- 等待动画 ----------------------------------------------------------------
 
 #: 扫描期间那一叠卡的张数：只是动画，与这次真正查到几台设备无关。
-WAIT_STACK_CARDS = 5
-#: 每张卡绕自己的中心转满一圈的时长。
-WAIT_SPIN_MS = 1200
-#: 相邻两张卡开始转动的间隔：前一张还没转完，后一张就接上，转动过程中同时看得见几张。
-WAIT_SPIN_STAGGER_MS = 250
-#: 5 张全部转完、叠回一整叠之后的停顿；停完再来一轮。
-WAIT_PAUSE_MS = 500
-#: 一轮完整动画：5 张依次转满一圈，再停 :data:`WAIT_PAUSE_MS`。
+WAIT_STACK_CARDS = 7
+#: 扇形展开时相邻两张卡相差的角度（度）。7 张卡因此摊开约 ±15.6°，每张之间留得开，
+#: 又不至于把两边的卡推出舞台。
+WAIT_FAN_STEP_DEG = 5.2
+#: 扇形的转轴在卡片中心正下方多远（px）：卡片绕它转，于是横向错开、上沿略低，
+#: 像手里摊开的一把牌。转轴越远，同样的角度错得越多。
+WAIT_FAN_PIVOT = 260.0
+#: 相邻两张开始摊开的间隔：最靠后的那张先动，最上面那张最后跟上，牌像一张张摊开。
+WAIT_FAN_STAGGER_MS = 45
+#: 摊开（或叠回）一张卡自己的时长：整段展开时间减去前面几张的错开量。
+WAIT_FAN_MS = 520
+#: 摊开之后停一下，让“扇形”这个形状被看清。
+WAIT_HOLD_MS = 720
+#: 停顿里那道“捻牌”的波纹：每张卡按顺序从扇面上抬起来一点再落回去，从一侧传到另一侧
+#: （只上下抬 :data:`WAIT_RIPPLE_LIFT`，不改扇形角度，才不会撑出舞台）。
+WAIT_RIPPLE_MS = 240
+WAIT_RIPPLE_STAGGER_MS = 70
+WAIT_RIPPLE_LIFT = 8.0
+#: 叠回原样之后再停一下，然后开始下一轮。
+WAIT_PAUSE_MS = 380
+#: 一轮完整动画：摊开 → 停一下并捻过一遍 → 叠回 → 停一下。
 WAIT_CYCLE_MS = (
-    (WAIT_STACK_CARDS - 1) * WAIT_SPIN_STAGGER_MS + WAIT_SPIN_MS + WAIT_PAUSE_MS
+    WAIT_FAN_MS + WAIT_HOLD_MS + WAIT_FAN_MS + WAIT_PAUSE_MS
 )
-#: 等待动画的舞台边长：卡片转到任意角度都落在自己的矩形里，最长就是对角线
-#: （卡片转到 45° 附近时轴对齐包围盒最大），再留 2px 给抗锯齿。
-WAIT_STACK_SIZE = int(math.ceil(math.hypot(CARD_WIDTH, CARD_HEIGHT))) + 2
+#: 等待动画的舞台：比卡片宽不少，整把扇形才摊得开。最外那张卡转到自己的角度时，
+#: 轴对齐包围盒不能超出舞台（舞台之外会被结果区上沿裁掉）；各边再留一点给抗锯齿。
+WAIT_STACK_WIDTH = 420
+WAIT_STACK_HEIGHT = 360
+#: 越靠后的卡压得越暗：一叠牌因此有前亮后暗的层次。
+_WAIT_DIM = (0, 20, 36, 52, 66, 78, 90)
+#: 卡与卡之间的投影（预渲染的那张图四边各留出的空白，以及向下偏移的像素）。
+_WAIT_SHADOW_PAD = 12
+_WAIT_SHADOW_DROP = 3
+#: 等待动画里每张卡的“亮边 + 暗缝”：外圈一道贴边的暗缝负责把叠在一起的深色卡分开，
+#: 里圈一道更亮的白边勾出卡片轮廓（沿轮廓往里收 :data:`_WAIT_RIM_INSET` 再描）。
+#: 两道加起来不到 3px，不改变卡片的大小。
+_WAIT_CREASE_WIDTH = 2.0
+_WAIT_CREASE_ALPHA = 120
+_WAIT_RIM_INSET = 1.0
+_WAIT_EDGE_WIDTH = 1.4
+_WAIT_EDGE_ALPHA = 0.30
 
 #: 卡片上的文案：正中是渐变大字，底边一行副标题（高亮词单独上渐变）。
 CARD_TEXT = "查找设备"
@@ -234,6 +266,19 @@ def _glow_pen(color: QColor, width: float) -> QPen:
     pen.setCapStyle(Qt.RoundCap)
     pen.setJoinStyle(Qt.RoundJoin)
     return pen
+
+
+@dataclass(frozen=True)
+class _CardPose:
+    """等待动画里一张卡的位置：相对舞台中心的偏移，以及绕自己中心转过的角度（度）。"""
+
+    x: float
+    y: float
+    angle: float
+
+    def is_stacked(self) -> bool:
+        """是否就是“叠在牌堆里”的那一格（扇形收拢、整叠复原）。"""
+        return self.x == 0.0 and self.y == 0.0 and self.angle == 0.0
 
 
 @lru_cache(maxsize=6)
@@ -404,11 +449,50 @@ def _paint_card_corners(painter: QPainter, card: QRectF) -> None:
         painter.drawLine(QPointF(*start), QPointF(*end))
 
 
+def _paint_card_back(painter: QPainter, card: QRectF) -> None:
+    """牌背：斜向细纹 + 一圈内框 + 正中一个小菱形，全是压得很低的装饰。
+
+    等待动画里只有最上面那张是“查找设备”的卡面，下面几张都是牌背。牌背要能一眼看出
+    是另一张牌，但又不能比正面还热闹：这里只给一层几乎看不见的斜纹、一道细内框和一个
+    小菱形，叠成扇形时靠 :data:`_WAIT_DIM` 越压越暗。调用方负责先按圆角裁好。
+    """
+    painter.save()
+    # 45° 斜纹：剪在卡片圆角里，间距 16px、白 7% 左右，只当纹理看。
+    painter.setPen(QPen(QColor(255, 255, 255, 18), 1.0))
+    step = 16.0
+    height = card.height()
+    x = card.left() - height
+    while x < card.right() + height:
+        painter.drawLine(QPointF(x, card.bottom()), QPointF(x + height, card.top()))
+        x += step
+    # 内框：与正面四角的角标呼应，是一条完整的细边。
+    frame = card.adjusted(10.0, 10.0, -10.0, -10.0)
+    painter.setPen(QPen(_alpha(_ACCENT_BLUE, 0.30), 1.2))
+    painter.setBrush(Qt.NoBrush)
+    radius = max(1.0, CARD_RADIUS - 6.0)
+    painter.drawRoundedRect(frame, radius, radius)
+    # 正中一个小菱形，给牌背一个可读的中心。
+    centre = card.center()
+    reach = 13.0
+    diamond = QPainterPath()
+    diamond.moveTo(centre.x(), centre.y() - reach)
+    diamond.lineTo(centre.x() + reach, centre.y())
+    diamond.lineTo(centre.x(), centre.y() + reach)
+    diamond.lineTo(centre.x() - reach, centre.y())
+    diamond.closeSubpath()
+    painter.setPen(QPen(_alpha(_ACCENT, 0.45), 1.4))
+    painter.drawPath(diamond)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(_alpha(_ACCENT, 0.55))
+    painter.drawEllipse(centre, 2.2, 2.2)
+    painter.restore()
+
+
 def _paint_card_particles(painter: QPainter, card: QRectF, phase: float) -> None:
     """六个小亮点向外飘散：``0 → 1 → 0`` 的透明度，位移最远 30px。
 
-    “查找设备”按钮与扫描期间那一叠卡共用这一份画法：粒子是卡面内部的动效，跟着卡片
-    一起转，不会因为卡在旋转就消失。调用方负责先把坐标系放到卡片上、并按圆角裁好。
+    “查找设备”按钮与扫描期间摊开的牌堆共用这一份画法：粒子是卡面内部的动效，画在卡片
+    自己的坐标系里。调用方负责先把坐标系放到卡片上、并按圆角裁好。
     """
     opacity = _triangle(phase)
     if opacity <= 0.0:
@@ -429,8 +513,8 @@ def _paint_card_particles(painter: QPainter, card: QRectF, phase: float) -> None
 def _render_card_face(width: int, height: int, ratio: float) -> QPixmap:
     """卡面、柔光、光晕与四角角标的预渲染图：尺寸与屏幕像素比不变就整张复用。
 
-    按钮本体与等待动画里的 5 张卡画的是同一张卡，因此都从这里取图：旋转只是把这张
-    位图转个角度，不必每帧重画卡面。
+    按钮本体与等待动画里的卡画的是同一张卡面，因此都从这里取图：摊开只是把这张
+    位图平移、转一个角度，不必每帧重画卡面。
     """
     size = QSize(max(1, round(width * ratio)), max(1, round(height * ratio)))
     pixmap = QPixmap(size)
@@ -447,6 +531,61 @@ def _render_card_face(width: int, height: int, ratio: float) -> QPixmap:
     _paint_card_glow(painter, card)
     _paint_card_blobs(painter, card)
     _paint_card_corners(painter, card)
+    painter.end()
+    return pixmap
+
+
+@lru_cache(maxsize=4)
+def _render_card_back(width: int, height: int, ratio: float) -> QPixmap:
+    """牌背的预渲染图：渐变卡面 + 斜纹、内框与小菱形，不带正面的光晕与角标。
+
+    等待动画里压在最上面那张下面的卡只露出窄窄一条；如果它们也带着完整的卡面动效，
+    7 张叠在一起时那些重复的光晕就会连成一片，看着像糊在一起。牌背只留卡片本身的
+    形状、明暗与一层很安静的纹样，边缘由亮边和暗缝交代。
+    """
+    size = QSize(max(1, round(width * ratio)), max(1, round(height * ratio)))
+    pixmap = QPixmap(size)
+    pixmap.fill(Qt.transparent)
+    # 带 dpr 的画布由 Qt 换算成逻辑坐标，这里不再自己缩放一次。
+    pixmap.setDevicePixelRatio(ratio)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    card = QRectF(0.0, 0.0, float(width), float(height))
+    silhouette = QPainterPath()
+    silhouette.addRoundedRect(card, CARD_RADIUS, CARD_RADIUS)
+    painter.setClipPath(silhouette)
+    _paint_card_face(painter, card)
+    _paint_card_back(painter, card)
+    painter.end()
+    return pixmap
+
+
+@lru_cache(maxsize=4)
+def _render_card_shadow(width: int, height: int, ratio: float) -> QPixmap:
+    """等待动画里卡与卡之间的那层投影：预渲染一次，每帧只平移着贴。
+
+    投影本来就画在卡片外面，而舞台上的卡是自由摆放的，所以这张图比卡面四边各大
+    :data:`_WAIT_SHADOW_PAD`。几层由内向外收窄的深色描边叠出一圈柔边（Qt 没有
+    便宜的模糊），比逐帧现画省掉一大截时间。
+    """
+    pad = _WAIT_SHADOW_PAD
+    size = QSize(
+        max(1, round((width + 2 * pad) * ratio)),
+        max(1, round((height + 2 * pad) * ratio)),
+    )
+    pixmap = QPixmap(size)
+    pixmap.fill(Qt.transparent)
+    # 带 dpr 的画布由 Qt 换算成逻辑坐标，这里不再自己缩放一次。
+    pixmap.setDevicePixelRatio(ratio)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    painter.translate(float(pad), float(pad))
+    card = QRectF(0.0, 0.0, float(width), float(height))
+    painter.setBrush(Qt.NoBrush)
+    for step in range(_SHADOW_LAYERS):
+        width_px = 3.0 + step * 3.5
+        painter.setPen(QPen(QColor(0, 0, 0, 30 - step * 6), width_px))
+        painter.drawRoundedRect(card, CARD_RADIUS, CARD_RADIUS)
     painter.end()
     return pixmap
 
@@ -935,25 +1074,31 @@ class ScanPromptCard(QPushButton):
 
 
 class ScanWaitStack(QWidget):
-    """扫描进行中的等待动画：一叠 5 张卡，从堆顶一张接一张各转一整圈。
+    """扫描进行中的等待动画：一叠 7 张卡摊成扇形、轻轻捻过一遍，再叠回原样。
 
-    点“查找设备”之后，面板把按钮换成这个控件：5 张与按钮同尺寸的卡叠在一起（5 张只是
-    动画，与这次真正查到几台设备无关）。第 0 张（堆顶那张，最后落笔、压在其他卡上面）
-    先绕自己的中心转 360°，隔 :data:`WAIT_SPIN_STAGGER_MS` 第 1 张接上，依此类推；每张
-    用 :data:`WAIT_SPIN_MS` 转满一圈回到 0°。5 张全部转完正好叠回一整叠，停
-    :data:`WAIT_PAUSE_MS` 再来一轮（:data:`WAIT_CYCLE_MS` 是这一整轮的时长）。相邻两张的
-    转动互相重叠，所以转的过程中同时看得见几张不同角度的卡——参考图里的中间几格就是
-    这种时刻。
+    点“查找设备”之后，面板把按钮换成这个控件：7 张与按钮同尺寸的卡叠在一起（7 张只是
+    动画，与这次真正查到几台设备无关）。整叠牌以中间那张为准对称摊成一把扇形
+    （:data:`WAIT_FAN_STEP_DEG` / :data:`WAIT_FAN_PIVOT`），停一下，再从一侧到另一侧
+    “捻”一遍（每张按顺序抬起来一点再落回去），最后叠回原样，停 :data:`WAIT_PAUSE_MS`
+    再来一轮（:data:`WAIT_CYCLE_MS` 是这一整轮的时长）。
+
+    动作是这样收敛的：同一时刻只有一两张卡在动；最上面那张是“查找设备”的卡面，下面
+    几张都是牌背（:func:`_render_card_back`：渐变 + 斜纹 + 内框 + 小菱形），越靠后压得
+    越暗（:data:`_WAIT_DIM`）；每张卡还带一道贴边的暗缝与一圈亮边
+    （:data:`_WAIT_CREASE_ALPHA` / :data:`_WAIT_EDGE_ALPHA`），卡与卡之间因此有明确的
+    轮廓，叠在一起时读得出“这是一叠牌”，不会糊成一片。原来的等待动画是几张卡各绕自己
+    的中心转满一整圈，同时有 3、4 张卡转到不同角度，光晕与角标搅在一起——那是“乱”的
+    来源。
 
     它只是动画：不吃鼠标（``WA_TransparentForMouseEvents``）、不占键盘焦点，也不改变
-    版面。控件固定为卡片对角线那么大的正方形（:data:`WAIT_STACK_SIZE`），卡片转到任何
-    角度都落在自己的矩形里，不会被结果区上沿裁成一条硬边。卡面与按钮是同一张预渲染图
-    （:func:`_render_card_face`），每帧只是把它转个角度贴上去；卡面内部的粒子动效跟着
-    每张卡一起转（:func:`_paint_card_particles`），旋转时不会消失。
+    版面。控件固定为 :data:`WAIT_STACK_WIDTH` × :data:`WAIT_STACK_HEIGHT` 的舞台（比
+    卡片宽），扇形最外那张卡也落在自己的矩形里，不会被结果区上沿裁成一条硬边。卡面与
+    按钮是同一张预渲染图（:func:`_render_card_face`）；粒子只画在最上面那张卡上，不会
+    让一叠卡各飘一团。
 
-    每走完一整轮（5 张全部转回 0°，牌堆复原，准备开始下一轮）发出一次
-    :attr:`cycle_finished`：设备发现面板等到这一刻才把扫描结果换进结果区，因此一次查找
-    至少完整播完一轮动画；结果还没回来就继续下一轮。牌的转动中途从不被打断。
+    每走完一整轮（7 张全部叠回原样）发出一次 :attr:`cycle_finished`：设备发现面板等到
+    这一刻才把扫描结果换进结果区，因此一次查找至少完整播完一轮动画；结果还没回来就继续
+    下一轮。牌的摊开与叠回中途从不被打断。
     """
 
     #: 一整轮动画走完（牌堆复原）时发出；面板据此决定什么时候进入下一步。
@@ -968,15 +1113,21 @@ class ScanWaitStack(QWidget):
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.setFixedSize(self.sizeHint())
 
-        #: 本轮动画已经走到哪一刻（0..WAIT_CYCLE_MS），每帧按它算 5 个角度。
+        #: 本轮动画已经走到哪一刻（0..WAIT_CYCLE_MS），每帧按它算每张卡的位置。
         self._elapsed = 0.0
         #: 从显示到现在已经走完的整轮数：跨过一轮就发一次 ``cycle_finished``。
         self._completed_cycles = 0
-        #: 粒子相位（0..1，2s 一轮）：与“查找设备”按钮同一条时间轴，卡在旋转时也照常外飘。
+        #: 粒子相位（0..1，2s 一轮）：与“查找设备”按钮同一条时间轴，只画在最上面那张卡上。
         self._particle = 0.0
         #: 卡面预渲染图（尺寸与屏幕像素比不变就一直用这一张）。
         self._face = QPixmap()
         self._face_key: tuple[int, int, float] | None = None
+        #: 后层卡面（牌背）的预渲染图：只留渐变与内阴影，不再叠光晕和角标。
+        self._back = QPixmap()
+        self._back_key: tuple[int, int, float] | None = None
+        #: 卡与卡之间那层投影也是预渲染的：每帧只平移着贴 5 次。
+        self._shadow = QPixmap()
+        self._shadow_key: tuple[int, int, float] | None = None
         self._clock = QElapsedTimer()
         self._clock.start()
 
@@ -987,41 +1138,86 @@ class ScanWaitStack(QWidget):
     # ---- 尺寸 ---------------------------------------------------------------
 
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt 覆盖方法
-        """舞台正好装得下卡片转到任意角度：边长取卡片对角线。"""
-        return QSize(WAIT_STACK_SIZE, WAIT_STACK_SIZE)
+        """舞台正好装得下摊开的扇形：比卡片宽，卡片本身在舞台正中。"""
+        return QSize(WAIT_STACK_WIDTH, WAIT_STACK_HEIGHT)
 
     def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt 覆盖方法
         return self.sizeHint()
 
     # ---- 时间轴 -------------------------------------------------------------
 
-    def angles_at(self, elapsed_ms: float) -> tuple[float, ...]:
-        """这一刻 5 张卡各自转过的角度（度）；``elapsed_ms`` 按一轮取模。
+    def open_amounts_at(self, elapsed_ms: float) -> tuple[float, ...]:
+        """这一刻每张卡各自摊开了多少（0 是叠在牌堆里，1 是扇形上自己的位置）。
 
-        第 0 项是堆顶那张，也是最先开始转的那张。每张从 0° 起转，:data:`WAIT_SPIN_MS`
-        之后正好回到 0°（转满 360°），所以全部转完时是一整叠；之后到本轮结束时角度都
-        是 0°，那就是停 :data:`WAIT_PAUSE_MS` 的那一段。
+        第 0 项是最上面那张（落笔最晚）；最靠后的那张先摊开、先叠回，最上面那张最后
+        跟上。整轮的最后一段是停顿，所有项都回到 0。
         """
         elapsed = float(elapsed_ms) % WAIT_CYCLE_MS
-        angles = []
+        span = WAIT_FAN_MS - (WAIT_STACK_CARDS - 1) * WAIT_FAN_STAGGER_MS
+        close_start = WAIT_FAN_MS + WAIT_HOLD_MS
+        amounts = []
         for index in range(WAIT_STACK_CARDS):
-            local = elapsed - index * WAIT_SPIN_STAGGER_MS
-            if local <= 0.0 or local >= WAIT_SPIN_MS:
-                angles.append(0.0)
+            delay = (WAIT_STACK_CARDS - 1 - index) * WAIT_FAN_STAGGER_MS
+            if elapsed < WAIT_FAN_MS:
+                local = elapsed - delay
+                amount = _ease_in_out_cubic(local / span) if local > 0.0 else 0.0
+            elif elapsed < close_start:
+                amount = 1.0
+            elif elapsed < close_start + WAIT_FAN_MS:
+                local = elapsed - close_start - delay
+                amount = 1.0 if local <= 0.0 else 1.0 - _ease_in_out_cubic(local / span)
             else:
-                angles.append(360.0 * _ease_in_out_cubic(local / WAIT_SPIN_MS))
-        return tuple(angles)
+                amount = 0.0
+            amounts.append(max(0.0, min(1.0, amount)))
+        return tuple(amounts)
+
+    def poses_at(self, elapsed_ms: float) -> tuple[_CardPose, ...]:
+        """这一刻每张卡的位置与角度（第 0 项是最上面那张，落笔时压在其他卡上）。
+
+        扇形以中间那张（角度始终为 0）为准对称摊开：卡片绕
+        :data:`WAIT_FAN_PIVOT` 下方的转轴转，因此左右错开、上沿略低，像手里摊开的一把牌。
+        停顿里的“捻牌”波纹只把卡向上抬一点，不改变扇形角度（再转就撑出舞台了）。
+        """
+        elapsed = float(elapsed_ms) % WAIT_CYCLE_MS
+        poses = []
+        # 整叠牌以中间那张为准对称摊开：扇形中心正对最上面那张的落点，两边各露出几张，
+        # 不会整把牌都歪向一侧。
+        centre_slot = (WAIT_STACK_CARDS - 1) / 2.0
+        for index, amount in enumerate(self.open_amounts_at(elapsed)):
+            angle = (centre_slot - index) * WAIT_FAN_STEP_DEG * amount
+            radians = math.radians(angle)
+            poses.append(
+                _CardPose(
+                    x=WAIT_FAN_PIVOT * math.sin(radians),
+                    y=WAIT_FAN_PIVOT * (1.0 - math.cos(radians))
+                    - self._ripple_lift(index, elapsed),
+                    angle=angle,
+                )
+            )
+        return tuple(poses)
+
+    def _ripple_lift(self, index: int, elapsed: float) -> float:
+        """这一步这张卡被“捻”起来多高（px）：0 是贴在扇面上。
+
+        波纹在停顿里从一侧传到另一侧（索引 4 → 0）：每张卡抬起
+        :data:`WAIT_RIPPLE_LIFT` 再落回去，一张接一张，像拇指从牌堆一侧拨过去。
+        """
+        start = WAIT_FAN_MS + (WAIT_STACK_CARDS - 1 - index) * WAIT_RIPPLE_STAGGER_MS
+        local = (elapsed - start) / WAIT_RIPPLE_MS
+        if local <= 0.0 or local >= 1.0:
+            return 0.0
+        return WAIT_RIPPLE_LIFT * math.sin(math.pi * local)
 
     @property
-    def spin_angles(self) -> tuple[float, ...]:
-        """当前画在屏幕上的 5 个角度（第 0 项是堆顶那张）。"""
-        return self.angles_at(self._elapsed)
+    def current_poses(self) -> tuple[_CardPose, ...]:
+        """当前画在屏幕上的每张卡的位置与角度（第 0 项是最上面那张）。"""
+        return self.poses_at(self._elapsed)
 
     def _advance(self) -> None:
         """推进到这一刻并重画；跨过一整轮就通知面板“牌堆复原了”。
 
         计时从显示那一刻开始累加，因此跨过的轮数按 ``WAIT_CYCLE_MS`` 整除算；停顿期间
-        也在计时，跨过整轮边界时 5 张刚刚回到 0°（新的一轮从这一刻起步）。
+        也在计时，跨过整轮边界时所有卡刚刚叠回原样（新的一轮从这一刻起步）。
         """
         total = self._clock.elapsed()
         self._elapsed = float(total % WAIT_CYCLE_MS)
@@ -1036,7 +1232,7 @@ class ScanWaitStack(QWidget):
         """立刻把当前这一轮走完：牌堆复原，并发出 :attr:`cycle_finished`。
 
         动画本身按时间走；只有已经拿到结果、却还在等这一轮走完的调用方（测试）需要这
-        个确定性的收尾：5 张卡都回到 0°，计时从头开始。
+        个确定性的收尾：所有卡都叠回原样，计时从头开始。
         """
         self._elapsed = 0.0
         self._particle = 0.0
@@ -1046,7 +1242,7 @@ class ScanWaitStack(QWidget):
         self.cycle_finished.emit()
 
     def showEvent(self, event):  # noqa: N802 - Qt 覆盖方法
-        # 每次出现都从“一整叠”开始，并且从第一张卡开始转。
+        # 每次出现都从“一整叠”开始，再摊开。
         self._elapsed = 0.0
         self._particle = 0.0
         self._completed_cycles = 0
@@ -1055,7 +1251,7 @@ class ScanWaitStack(QWidget):
         super().showEvent(event)
 
     def hideEvent(self, event):  # noqa: N802 - Qt 覆盖方法
-        """收起来就停下计时器，并把角度归零：下一次查找重新从一整叠开始。"""
+        """收起来就停下计时器，并把位置归零：下一次查找重新从一整叠开始。"""
         self._frame_timer.stop()
         self._elapsed = 0.0
         self._particle = 0.0
@@ -1065,27 +1261,68 @@ class ScanWaitStack(QWidget):
     # ---- 绘制 ---------------------------------------------------------------
 
     def paintEvent(self, event):  # noqa: N802 - Qt 覆盖方法
-        """5 张卡绕同一个中心各自转一个角度；卡面与粒子一起转，堆顶那张最后画。"""
+        """从最后一张往前画：每张卡各自平移、转一个角度，最上面那张最后落笔。"""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         face = self._deck_face()
-        center = QPointF(self.width() / 2.0, self.height() / 2.0)
+        back = self._deck_back()
+        shadow = self._card_shadow()
+        centre = QPointF(self.width() / 2.0, self.height() / 2.0)
         half_width = float(CARD_WIDTH) / 2.0
         half_height = float(CARD_HEIGHT) / 2.0
         card = QRectF(-half_width, -half_height, float(CARD_WIDTH), float(CARD_HEIGHT))
         silhouette = QPainterPath()
         silhouette.addRoundedRect(card, CARD_RADIUS, CARD_RADIUS)
-        # 倒着画：索引 0 是堆顶那张，最后落笔，压在其他卡上面。
-        for angle in reversed(self.angles_at(self._elapsed)):
+        inset = _WAIT_RIM_INSET
+        rim_path = QPainterPath()
+        rim_path.addRoundedRect(
+            card.adjusted(inset, inset, -inset, -inset),
+            max(1.0, CARD_RADIUS - inset),
+            max(1.0, CARD_RADIUS - inset),
+        )
+        poses = self.poses_at(self._elapsed)
+        for index in range(WAIT_STACK_CARDS - 1, -1, -1):
+            pose = poses[index]
             painter.save()
-            painter.translate(center)
-            painter.rotate(angle)
-            painter.drawPixmap(QPointF(-half_width, -half_height), face)
-            # 粒子是卡面内部的动效：跟着这张卡一起转，并裁在圆角卡面里。
-            painter.save()
-            painter.setClipPath(silhouette)
-            _paint_card_particles(painter, card, self._particle)
-            painter.restore()
+            painter.translate(centre + QPointF(pose.x, pose.y))
+            painter.rotate(pose.angle)
+            # 叠得严丝合缝的那几张不必各画一遍投影：它们会被上面那张完全盖住，只剩
+            # 外面一圈会累加成一道比按钮重得多的黑边。最上面那张永远画。
+            if index == 0 or pose != poses[index - 1]:
+                painter.drawPixmap(
+                    QPointF(
+                        -half_width - _WAIT_SHADOW_PAD,
+                        -half_height - _WAIT_SHADOW_PAD + _WAIT_SHADOW_DROP,
+                    ),
+                    shadow,
+                )
+            # 贴边的一道暗缝：两张深色卡叠在一起时，这条缝把上面那张的轮廓压出来。
+            painter.setPen(QPen(QColor(0, 0, 0, _WAIT_CREASE_ALPHA), _WAIT_CREASE_WIDTH))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPath(silhouette)
+            painter.drawPixmap(
+                QPointF(-half_width, -half_height), face if index == 0 else back
+            )
+            # 越靠后的卡压得越暗：一叠牌因此有前亮后暗的层次。
+            dim = _WAIT_DIM[min(index, len(_WAIT_DIM) - 1)]
+            if dim:
+                painter.fillPath(silhouette, QColor(0, 0, 0, dim))
+            # 里圈一道亮边：沿轮廓往里收 1px 再描一条细线，卡片边缘因此有一条清晰的亮线，
+            # 不会和下面那张卡的黑边糊成一片。
+            painter.setPen(
+                QPen(
+                    QColor(255, 255, 255, round(255 * _WAIT_EDGE_ALPHA)),
+                    _WAIT_EDGE_WIDTH,
+                )
+            )
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPath(rim_path)
+            if index == 0:
+                # 粒子只属于最上面那张卡：一叠卡各飘一团就又把画面弄花了。
+                painter.save()
+                painter.setClipPath(silhouette)
+                _paint_card_particles(painter, card, self._particle)
+                painter.restore()
             painter.restore()
 
     def _deck_face(self) -> QPixmap:
@@ -1096,4 +1333,22 @@ class ScanWaitStack(QWidget):
             self._face = _render_card_face(CARD_WIDTH, CARD_HEIGHT, ratio)
             self._face_key = key
         return self._face
+
+    def _deck_back(self) -> QPixmap:
+        """后层卡面的预渲染图：只有渐变与内阴影，不重复叠光晕与角标。"""
+        ratio = float(self.devicePixelRatioF())
+        key = (CARD_WIDTH, CARD_HEIGHT, round(ratio, 3))
+        if self._back_key != key:
+            self._back = _render_card_back(CARD_WIDTH, CARD_HEIGHT, ratio)
+            self._back_key = key
+        return self._back
+
+    def _card_shadow(self) -> QPixmap:
+        """卡与卡之间的投影：卡面之外那一圈淡黑影，尺寸不变就一直复用。"""
+        ratio = float(self.devicePixelRatioF())
+        key = (CARD_WIDTH, CARD_HEIGHT, round(ratio, 3))
+        if self._shadow_key != key:
+            self._shadow = _render_card_shadow(CARD_WIDTH, CARD_HEIGHT, ratio)
+            self._shadow_key = key
+        return self._shadow
 

@@ -91,10 +91,10 @@ class ConnectionPage(QWidget):
         shell.addWidget(self._ui)
 
         # 版心宽度是跨页面共用的设计令牌，不写进 ``.ui`` 也不在本页另存一份。
-        self._require(QWidget, "connectionContent").setMaximumWidth(
-            PAGE_CONTENT_MAX_WIDTH
-        )
+        self._content = self._require(QWidget, "connectionContent")
+        self._content.setMaximumWidth(PAGE_CONTENT_MAX_WIDTH)
         self.title_label = self._require(QLabel, "connectionPageTitle")
+        self.action_bar = self._require(QWidget, "pageActionBar")
 
         # 扫描行与结果区属于动态面板（卡片数量、扫描状态都由运行时决定），
         # 所以面板本身仍由 Python 创建，只把它的外层位置交给 ``.ui``。
@@ -138,6 +138,45 @@ class ConnectionPage(QWidget):
         # 窗口把 ``connect_requested`` 转给配置页的 ``request_connect``，校验通过后
         # 再由配置页发 ``connect_requested`` 交给协调器真正连仪器。
         self.connect_btn.clicked.connect(self.connect_requested.emit)
+
+    # ---- 语义查询 ---------------------------------------------------------
+    #
+    # 行为测试和窗口装配只读这些入口，不按 ``.ui`` 的 objectName 找控件。控件层级与
+    # 静态文案的契约仍由 ``tests/ui/test_ui_loader.py`` 对 ``.ui`` 单独锁定；改控件名或
+    # 调整静态排列时，这里只改实现，业务行为测试不需要跟着改。
+
+    def page_title(self) -> str:
+        """页面大标题文案。"""
+        return self.title_label.text()
+
+    def action_labels(self) -> tuple[str, str]:
+        """底部两个页面级动作的文案：返回欢迎页、下一步。"""
+        return self.return_welcome_btn.text(), self.next_btn.text()
+
+    def page_actions_visible(self) -> tuple[bool, bool]:
+        """底部两个页面级动作当前是否可见（仍按返回、下一步的顺序）。"""
+        return self.return_welcome_btn.isVisible(), self.next_btn.isVisible()
+
+    def content_maximum_width(self) -> int:
+        """版心允许的最大宽度；跨页面宽度只来自主题令牌。"""
+        return self._content.maximumWidth()
+
+    def spare_height_split(self) -> tuple[int, int]:
+        """返回页面上下两段留白的高度：标题之上、结果区与操作栏之间。
+
+        只报告用户在版面上看到的留白，不暴露布局层级；行为测试用它锁住“多余高度按
+        2:1 分给上下留白”的视觉契约。
+        """
+        title_top = self.title_label.mapTo(
+            self, self.title_label.rect().topLeft()
+        ).y()
+        panel_bottom = self.discovery_panel.mapTo(
+            self, self.discovery_panel.rect().bottomLeft()
+        ).y()
+        action_bar_top = self.action_bar.mapTo(
+            self, self.action_bar.rect().topLeft()
+        ).y()
+        return title_top, action_bar_top - panel_bottom
 
     def request_next(self) -> None:
         """写入本次勾选的设备，然后进入“仪器配置”页。

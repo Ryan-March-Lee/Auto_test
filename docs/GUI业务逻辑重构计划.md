@@ -685,10 +685,24 @@ ViewModel 不导入 PySide6，不直接读写文件，不创建仪器，不弹 Q
 
 **工作范围控制**：每次只迁移一个测试模块，不集中重写全部 UI 测试。
 
-**步骤 11 留下的后续**：`tests/ui/test_connection_page_port.py` 的静态布局用例仍按
-`connectionPageUi` / `connectionContent` / `pageActionBar` 这类 objectName 找控件；
-迁移到行为测试时优先改为页面公开的语义查询（标题文案、按钮、可见性与相对位置），
-只在 `.ui` 加载测试里保留控件契约。
+**完成状态**：✅ 已完成（按“每次只迁移一个测试模块”推进，先迁移步骤 11 留下的连接页模块）。
+
+- `ConnectionPage` 新增页面公开的语义查询：`page_title()`、`action_labels()`、
+  `page_actions_visible()`、`content_maximum_width()`、`spare_height_split()`；行为测试
+  不再按 `connectionPageUi` / `connectionContent` / `pageActionBar` 这类 objectName 找控件。
+  控件层级与静态文案契约只留在 `tests/ui/test_ui_loader.py`。
+- `tests/ui/test_connection_page_port.py` 的静态布局用例改为行为断言：标题文案、两个页面
+  动作的文案与可见性、版心宽度来自主题令牌、上下留白约 2:1；页面内部排列或控件名变化
+  不再要求改这些测试。`tests/integration/device_discovery/test_connection_page.py` 的
+  标题/动作断言同步改走同一组语义查询。
+- 纯 Python 业务规则的重复断言从 `tests/ui/test_config_form_bindings.py` 删除：
+  `binding_device_key` 与 `supply_id_problem` 的细则只由 `tests/test_device_binding.py`
+  覆盖，表现层测试只保留“不可用引用不出现在可选集合、并给出诊断”的行为。
+  `tests/ui/test_config_page_widgets.py` 不再断言操作栏的 objectName。
+- 没有批量重写页面测试：点击、禁用、导航、错误提示、电源标签页与测量页面状态等
+  用户可见行为继续保留；控件 objectName 不再作为页面测试契约，布局与文案断言走语义
+  查询，需要点击时仍使用页面登记的动作控件。不把控件变量名新增为公共 API。
+- `tools/run_tests.py --layer ui` 与 `--layer integration` 通过；架构门禁顺序未改。
 
 ---
 

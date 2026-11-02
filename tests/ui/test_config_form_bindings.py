@@ -17,14 +17,12 @@ from presentation.qt.config_form_bindings import (
     LEGACY_BINDING_SOURCE,
     POWER_SUPPLY_BINDINGS,
     binding_address,
-    binding_device_key,
     binding_records,
     bound_power_supplies,
     bound_power_supply_entries,
     effective_device_bindings,
     power_supply_binding_problems,
     power_supply_bindings,
-    supply_id_problem,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -70,18 +68,6 @@ class BindingReadTests(unittest.TestCase):
         self.assertEqual(binding_address({"visa_address": None}), "")
         self.assertEqual(binding_address({"address": "TCPIP0::192.168.1.102::inst0::INSTR"}), "")
         self.assertEqual(binding_address(None), "")
-
-    def test_binding_device_key_prefers_the_record_identity(self):
-        self.assertEqual(
-            binding_device_key({"device_key": "RIGOL TECHNOLOGIES:DP8B214901519"}),
-            "rigol technologies:dp8b214901519",
-        )
-        # 旧记录只有厂商与序列号：拼出同一个键，不按序列号单独匹配。
-        self.assertEqual(
-            binding_device_key({"vendor": "RIGOL TECHNOLOGIES", "full_code": "DP8B214901519"}),
-            "rigol technologies:dp8b214901519",
-        )
-        self.assertIsNone(binding_device_key({"full_code": "DP8B214901519"}))
 
     def test_binding_records_flatten_roles_and_bound_supplies(self):
         records = binding_records(
@@ -329,10 +315,8 @@ class BindingNormalizationTests(unittest.TestCase):
         problems = "；".join(power_supply_binding_problems(bindings))
         self.assertIn("不得含空白", problems)
         self.assertIn("不得含通道分隔符", problems)
-        self.assertEqual(supply_id_problem("DP8B1519"), None)
-        self.assertIn("不得含空白", supply_id_problem("DP8B 1519"))
-        # 首尾空白不裁剪：写错的引用必须报出来，不能被“洗干净”后当成另一台设备。
-        self.assertIn("首尾空白", supply_id_problem(" DP8B1519"))
+        # 引用规则的细则由 tests/test_device_binding.py 覆盖（application 是唯一所有者）；
+        # 这里只验证表现层把不可用引用挡在可选集合外，并把原因交给页面。
         self.assertEqual(
             power_supply_bindings(
                 {

@@ -4,6 +4,10 @@
 :class:`application.ports.device_binding.DeviceBindingPort`。测试断言页面读的是只读
 ``ConfigurationViewState``、提交的是 ``ApplyDeviceSelectionRequest``，并且“连接仪器”
 只发出用户意图。
+
+步骤 12 起，静态骨架的测试也走页面公开的语义查询（标题、动作文案与可见性、版心宽度、
+上下留白），不再按 ``.ui`` 的 objectName 找控件；控件层级契约只在
+``tests/ui/test_ui_loader.py`` 里保留。
 """
 
 import os
@@ -13,7 +17,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication
 
 from application.configuration_editing import ValidationIssue, ValidationResult
 from application.configuration_view_model import ConfigurationViewState
@@ -262,7 +266,12 @@ class ConnectionPageBoundaryTests(unittest.TestCase):
 
 
 class ConnectionPageStaticLayoutTests(unittest.TestCase):
-    """步骤 11：``.ui`` 提供静态骨架，页面只做动态接入与主题令牌收口。"""
+    """步骤 12：静态骨架的视觉契约通过页面公开的语义查询验证。
+
+    ``.ui`` 的控件层级与 objectName 契约只在 ``tests/ui/test_ui_loader.py`` 里保留；
+    这里断言用户看得见的结果——标题文案、页面动作、版心宽度与上下留白的比例。改控件名
+    或调整静态排列时，业务行为测试不需要跟着改。
+    """
 
     @classmethod
     def setUpClass(cls):
@@ -273,14 +282,24 @@ class ConnectionPageStaticLayoutTests(unittest.TestCase):
         self.addCleanup(page.close)
         return page
 
-    def test_page_uses_the_designed_skeleton_and_shared_content_width(self):
+    def test_page_shows_its_title_and_page_actions(self):
         page = self.make_page()
 
-        self.assertIsNotNone(page.findChild(QWidget, "connectionPageUi"))
-        content = page.findChild(QWidget, "connectionContent")
-        self.assertIsNotNone(content)
+        self.assertEqual(page.page_title(), "仪表配置")
+        self.assertEqual(page.action_labels(), ("返回欢迎页", "下一步"))
+
+    def test_page_actions_are_visible(self):
+        page = self.make_page()
+        page.show()
+        self.app.processEvents()
+
+        self.assertEqual(page.page_actions_visible(), (True, True))
+
+    def test_content_is_constrained_to_the_shared_width(self):
+        page = self.make_page()
+
         # 版心宽度只有一个来源：``.ui`` 不声明尺寸，页面从主题令牌取值。
-        self.assertEqual(content.maximumWidth(), PAGE_CONTENT_MAX_WIDTH)
+        self.assertEqual(page.content_maximum_width(), PAGE_CONTENT_MAX_WIDTH)
 
     def test_spare_height_stays_weighted_towards_the_top(self):
         """多出来的高度按 2:1 分给上下留白：标题与结果区落在页面中线略偏下。"""
@@ -290,16 +309,8 @@ class ConnectionPageStaticLayoutTests(unittest.TestCase):
         self.app.processEvents()
         self.app.processEvents()
 
-        action_bar = page.findChild(QWidget, "pageActionBar")
-        self.assertIsNotNone(action_bar)
-        title_top = page.title_label.mapTo(page, page.title_label.rect().topLeft()).y()
-        panel_bottom = page.discovery_panel.mapTo(
-            page, page.discovery_panel.rect().bottomLeft()
-        ).y()
-        action_bar_top = action_bar.mapTo(page, action_bar.rect().topLeft()).y()
+        top_gap, bottom_gap = page.spare_height_split()
 
-        top_gap = title_top
-        bottom_gap = action_bar_top - panel_bottom
         self.assertGreater(top_gap, bottom_gap, "上留白应大于下留白")
         self.assertGreater(
             top_gap / max(1, bottom_gap),

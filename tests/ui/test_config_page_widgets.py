@@ -24,11 +24,12 @@ class BuildActionBarTests(unittest.TestCase):
     def test_registers_the_buttons_the_page_connects(self):
         page = QWidget()
 
+        # 操作栏没有父控件：保留引用，避免按钮随操作栏一起被回收。
         bar = build_action_bar(page)
+        self.assertIsNotNone(bar)
 
         for name in ("previous_step_btn", "save_config_btn", "return_welcome_btn"):
             self.assertTrue(hasattr(page, name), f"操作栏应把 {name} 登记到页面上")
-        self.assertEqual(bar.objectName(), "pageActionBar")
         self.assertEqual(page.save_config_btn.text(), "保存配置")
 
 

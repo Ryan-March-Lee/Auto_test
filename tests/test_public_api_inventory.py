@@ -464,7 +464,7 @@ INTERNAL_MODULES = {
     "presentation.qt.configuration_session": "配置会话协调器（GUI 重构步骤 8）：把连接页的窄接口 DeviceBindingPort 转给配置页的视图模型与派生界面，并把一次写入的结果回写给连接页的面板；只认结构类型 Protocol，只做装配与转发，不读控件、不定义设备绑定规则",
     "presentation.qt.config_page_widgets": "配置页面控件构建辅助：固定操作栏布局，以及页面共用的数值框/下拉框工厂（控件仍登记在页面上）",
     "presentation.qt.config_power_section": "配置页电源分区的控件构建：按电源键分页的通道参数标签页与电源分配设置表单，控件登记在页面上",
-    "presentation.qt.connection_page": "仪器连接配置页：欢迎页选定测试模式后的整屏页面，静态骨架（页面标题、居中滚动区、底部操作栏）来自 Qt Designer 文件 ui/connection_page.ui，动态设备发现面板与“连接仪器”仍由页面构造后插入骨架；扫描并勾选本次测试所需设备，点“下一步”时提交 ApplyDeviceSelectionRequest 整批写入配置（设备绑定写入与派生界面归配置页），然后进入仪器配置页；只依赖 DeviceBindingPort 读取只读配置视图，不持有配置页实例，不写颜色/字号/间距常量",
+    "presentation.qt.connection_page": "仪器连接配置页：欢迎页选定测试模式后的整屏页面，静态骨架（页面标题、居中滚动区、底部操作栏）来自 Qt Designer 文件 ui/connection_page.ui，动态设备发现面板与“连接仪器”仍由页面构造后插入骨架；扫描并勾选本次测试所需设备，点“下一步”时提交 ApplyDeviceSelectionRequest 整批写入配置（设备绑定写入与派生界面归配置页），然后进入仪器配置页；只依赖 DeviceBindingPort 读取只读配置视图，不持有配置页实例，不写颜色/字号/间距常量；公开标题、动作文案与可见性、版心宽度和上下留白的语义查询（步骤 12），行为测试不依赖 .ui 控件名",
     "presentation.qt.device_cards": "设备发现的仪器展示卡片：第一行只写加粗放大的缩写设备码（设备表登记过就用它，电源的缩写码同时是 supply_id；还没有缩写码时退回完整设备码，不凭空生成）、第二行仪器图片（不垫底板不描边）、最下面居中放大的仪器型号；点击卡片即选中",
     "presentation.qt.device_discovery_panel": "设备发现面板：扫描网段、以卡片展示按设备表登记的角色可应用的设备（含未知设备标记）；勾选结果由连接页在“下一步”时取走写入",
     "presentation.qt.scan_card": "“查找设备”的卡片按钮：按钮本体是与仪器卡片同大的自绘深色卡片（尺寸取自 `presentation.qt.device_cards` 的 `CARD_WIDTH`/`CARD_HEIGHT`），正中的渐变标题写着“查找设备”，内部有光带、扫描线与粒子在动；悬停时两行字淡到看不见（原 CSS 的 `::after` 霓虹光斑与 `::before` 紫→蓝底卡都不保留，卡片外面只有一层投影），投影画在同级、不进布局、不吃鼠标的透明覆盖层上，点击行为由设备发现面板接手",

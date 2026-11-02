@@ -2,7 +2,7 @@
 
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QLabel, QScrollArea
+from PySide6.QtWidgets import QScrollArea
 
 from presentation.qt.device_discovery_panel import BOX_STATE_IDLE, DeviceDiscoveryPanel
 
@@ -29,14 +29,8 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
         """仪表配置页是“下一步”之前的一整屏页面：有自己的大标题、返回与下一步。"""
         self.make_page()
 
-        titles = [
-            label.text()
-            for label in self.connection.findChildren(QLabel)
-            if label.property("role") == "pageTitle"
-        ]
-        self.assertEqual(titles, ["仪表配置"])
-        self.assertEqual(self.connection.next_btn.text(), "下一步")
-        self.assertEqual(self.connection.return_welcome_btn.text(), "返回欢迎页")
+        self.assertEqual(self.connection.page_title(), "仪表配置")
+        self.assertEqual(self.connection.action_labels(), ("返回欢迎页", "下一步"))
 
         requested = []
         self.connection.next_requested.connect(lambda: requested.append(True))

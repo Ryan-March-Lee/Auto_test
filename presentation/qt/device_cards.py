@@ -16,6 +16,12 @@
 
 卡片只负责显示与选中状态，不知道扫描结果的数据结构：选择、应用与校验仍由
 :class:`presentation.qt.device_discovery_panel.DeviceDiscoveryPanel` 负责。
+
+**卡片内容是一份纯数据**（:class:`InstrumentCardData`）：面板从扫描结果算出“第一行写
+什么、图片用哪张、状态说明是什么”，把这份数据同时交给真实卡片
+（:class:`InstrumentCard`）和之后的动画资产；卡片与动画因此读同一份内容，动画不必回头
+读扫描结果 DTO 或问卡片控件要文字。
+
 卡片尺寸（:data:`CARD_WIDTH` × :data:`CARD_HEIGHT`，必要时缩到
 :data:`CARD_MIN_WIDTH`）与圆角（:data:`presentation.qt.theme.CARD_RADIUS`）是设备发现页的
 唯一定义：“查找设备”那张卡片按钮（:mod:`presentation.qt.scan_card`）按它取大小与圆角，
@@ -49,6 +55,7 @@ __all__ = [
     "CARD_WIDTH",
     "INSTRUMENT_PICTURE_DIR",
     "InstrumentCard",
+    "InstrumentCardData",
     "InstrumentImage",
     "device_code",
     "instrument_picture_path",
@@ -389,46 +396,83 @@ def _caption_text(model: str, role_text: str) -> str:
     return "·".join(parts)
 
 
+@dataclass(frozen=True)
+class InstrumentCardData:
+    """一张仪器卡片要显示的全部内容：纯数据，不依赖 Qt 控件，也不认识扫描结果 DTO。
+
+    面板从一次扫描结果里算出这份数据（第一行写哪个设备码、图片用哪张、状态说明是什么），
+    再把它交给真实卡片。之后动画资产也从同一份数据渲染正面，因此动画跑起来时不再回头
+    读设备扫描结果、也不向卡片控件要文字。
+
+    字段与卡片上的位置一一对应：
+
+    - ``heading``：这台设备在结果里的名字（面板按它找卡片、写日志），卡片本身不画；
+    - ``code``：第一行加粗放大的缩写设备码；
+    - ``model``：型号，只出现在型号·角色那一行；
+    - ``role``：测试角色的界面文案（如 ``电源``），已经是给人看的字，不是领域角色键；
+    - ``address``：最下面一行的连接地址（本次扫描到的 IP），没有时那一行留空；
+    - ``status``：不可应用的原因或预选说明，空串表示不显示；
+    - ``checked``：构建这一份内容时这张卡是否选中；用户之后的选择仍由页面保存；
+    - ``picture_path``：图片区要显示的仪器图，``None`` 表示没有对应图片；
+    - ``tooltip``：整张卡片的悬浮提示全文；
+    - ``checkable``：这张卡能否被选中（不能应用的设备只显示原因）。
+    """
+
+    heading: str
+    code: str = ""
+    model: str = ""
+    role: str = ""
+    address: str = ""
+    status: str = ""
+    checked: bool = False
+    picture_path: Path | None = None
+    tooltip: str = ""
+    checkable: bool = True
+
+    def caption(self) -> str:
+        """底部那一行“型号·角色”（两段都缺时为空串）。
+
+        真实卡片与之后的动画正面都从这里取整行文字，不各拼一次。
+        """
+        return _caption_text(self.model, self.role)
+
+
 class InstrumentCard(QFrame):
     """一张设备卡片：第一行是加粗放大的设备码缩写，图片其次，下面是型号·角色与地址。
 
-    卡片是可选控件：可以勾选的选择显示为“点击切换选中”的整块卡片（``checkable=True``），
-    不能应用的设备（无法识别、未登记、未分配角色）只显示带警示色的状态说明，不可选中。
+    卡片由 :class:`InstrumentCardData` 构建：凡是卡片上出现的文字与图片都来自那份数据，
+    卡片不解析扫描结果，也不替面板决定“写什么”。卡片是可选控件：可以勾选的选择显示为
+    “点击切换选中”的整块卡片（``checkable=True``），不能应用的设备（无法识别、未登记、
+    未分配角色）只显示带警示色的状态说明，不可选中。
     """
 
     activated = Signal(object)
 
     def __init__(
         self,
-        name: str,
-        code: str,
+        data: InstrumentCardData,
         *,
-        role_text: str = "",
-        address: str = "",
-        status_text: str = "",
-        tooltip: str = "",
-        picture: Path | None = None,
-        checkable: bool = True,
-        checked: bool = False,
         tag: Any = None,
         parent: Any = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("instrumentCard")
         self.setFrameShape(QFrame.NoFrame)
+        #: 构建这张卡片的内容（只读）：卡片上的文字与图片都从这里来。
+        self.data = data
         self.setProperty("checked", False)
-        self.setProperty("enabled-state", checkable)
+        self.setProperty("enabled-state", data.checkable)
         self.setFixedWidth(CARD_WIDTH)
         self.setFixedHeight(CARD_HEIGHT)
         # 尺寸固定：卡片高度不随卡片区拉伸，也不被父窗口压成一条。
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self._checkable = bool(checkable)
-        self._checked = bool(checked) and self._checkable
+        self._checkable = bool(data.checkable)
+        self._checked = bool(data.checked) and self._checkable
         self.tag = tag
         if self._checkable:
             self.setCursor(Qt.PointingHandCursor)
-        if tooltip:
-            self.setToolTip(tooltip)
+        if data.tooltip:
+            self.setToolTip(data.tooltip)
 
         layout = QVBoxLayout(self)
         # 上下留白比左右多一点：第一行设备码不贴卡片上沿，卡片上部因此不显得挤。
@@ -437,7 +481,7 @@ class InstrumentCard(QFrame):
 
         # 第一行：缩写设备码——只写码本身（型号在最下面一行），现场对机时一眼看清；
         # 这是卡片里字号最大、最加粗的一行。
-        self.code_label = QLabel(code, self)
+        self.code_label = QLabel(data.code, self)
         self.code_label.setObjectName("instrumentCardCode")
         self.code_label.setMargin(2)
         # 设备码整段都要能读到：允许折成两行，而不是截断；单行时在两行高度里居中。
@@ -449,34 +493,34 @@ class InstrumentCard(QFrame):
         # 第二行：仪器图，直接贴在卡片本色上。
         self.image = InstrumentImage(self)
         self.image.setObjectName("instrumentCardImage")
-        self.image.set_picture(picture)
+        self.image.set_picture(data.picture_path)
         layout.addWidget(self.image)
 
         # 状态说明（不能应用的原因）紧跟在图片下：下面留给型号·角色与地址。
         # 状态说明始终存在（可应用的卡片文字为空）：卡片等高，状态出现/消失不会跳动。
-        self.status_label = QLabel(status_text, self)
+        self.status_label = QLabel(data.status, self)
         self.status_label.setObjectName("instrumentCardStatus")
         self.status_label.setWordWrap(True)
-        self.status_label.setVisible(bool(status_text))
+        self.status_label.setVisible(bool(data.status))
         set_tone(self.status_label, "warning")
         layout.addWidget(self.status_label)
 
         layout.addStretch(1)
 
         # 型号·角色：比设备码小一号的一行，写“型号·角色”（如 ``DP832A·电源``）。
-        self.name_label = _ElidedLabel(_caption_text(name, role_text), self)
+        self.name_label = _ElidedLabel(data.caption(), self)
         self.name_label.setObjectName("instrumentCardName")
         self.name_label.setAlignment(Qt.AlignCenter)
         self.name_label.setTextInteractionFlags(Qt.NoTextInteraction)
         layout.addWidget(self.name_label)
 
         # 最下面一行：本次扫描得到的 IP，灰色小字。地址会漂移，只是连接信息。
-        self.address_label = _ElidedLabel(address, self)
+        self.address_label = _ElidedLabel(data.address, self)
         self.address_label.setObjectName("instrumentCardAddress")
         self.address_label.setAlignment(Qt.AlignCenter)
         self.address_label.setFixedHeight(_ADDRESS_LABEL_HEIGHT)
         self.address_label.setTextInteractionFlags(Qt.NoTextInteraction)
-        self.address_label.setVisible(bool(address))
+        self.address_label.setVisible(bool(data.address))
         layout.addWidget(self.address_label)
         self._bind_tooltips()
         self._apply_check_state()

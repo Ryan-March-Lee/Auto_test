@@ -1,7 +1,11 @@
-"""卡片图片区：缩放的是“仪器主体”，不是整张照片。
+"""卡片内容与图片区：一份纯数据画出一张卡片，图片按“仪器主体”缩放。
+
+卡片上的文字与图片都来自 :class:`InstrumentCardData`：真实卡片与之后的动画正面读同一份
+数据，动画因此不必回头读扫描结果或问卡片控件要文字。这里锁住数据对象本身（只读、型号·
+角色的拼法）以及“卡片显示的就是数据里写的”。
 
 原图留白各不相同（现有三张仪器图里，主体只占画布的 70%~96%），按整张画布等比缩放会让
-同一行卡片上的仪器看起来大小不一。这里锁住“先找主体包围盒、再把主体等比放进图片区”的
+同一行卡片上的仪器看起来大小不一。这里锁定“先找主体包围盒、再把主体等比放进图片区”的
 行为，并锁住“照片本来没有留白时不裁掉任何东西”的兜底。
 """
 
@@ -10,6 +14,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 # 构造 QImage / 控件前需要离屏平台：单独运行本模块时也一样。
@@ -20,6 +25,8 @@ from PySide6.QtGui import QColor, QImage, QPainter  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from presentation.qt.device_cards import (  # noqa: E402
+    InstrumentCard,
+    InstrumentCardData,
     InstrumentImage,
     _content_rect,
     instrument_picture_path,
@@ -171,6 +178,92 @@ class RuntimePictureTests(unittest.TestCase):
                 self.assertGreaterEqual(rect.top(), float(widget.rect().top()))
                 self.assertLessEqual(rect.right(), float(widget.rect().right()))
                 self.assertLessEqual(rect.bottom(), float(widget.rect().bottom()))
+
+
+class InstrumentCardDataTests(unittest.TestCase):
+    """卡片数据：纯数据、只读，拼“型号·角色”的规则只有一份。"""
+
+    def test_the_data_object_is_read_only(self):
+        data = InstrumentCardData("SMW200A（105462）", code="105462")
+
+        with self.assertRaises(FrozenInstanceError):
+            data.code = "OTHER"  # type: ignore[misc]
+
+    def test_caption_joins_model_and_role_only_when_present(self):
+        self.assertEqual(
+            InstrumentCardData("h", model="DP832A", role="电源").caption(),
+            "DP832A·电源",
+        )
+        self.assertEqual(InstrumentCardData("h", model="N9020A").caption(), "N9020A")
+        self.assertEqual(InstrumentCardData("h", role="电源").caption(), "电源")
+        self.assertEqual(InstrumentCardData("h").caption(), "")
+
+
+class CardFromDataTests(unittest.TestCase):
+    """``InstrumentCard`` 由数据构建：卡片上出现的东西全部来自那份数据。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.application = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self._directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self._directory.cleanup)
+
+    def picture(self) -> Path:
+        path = Path(self._directory.name) / "instrument.png"
+        self.assertTrue(photo(400, 200, QRect(100, 20, 200, 160)).save(str(path)))
+        return path
+
+    def test_the_card_shows_exactly_what_the_data_says(self):
+        picture = self.picture()
+        data = InstrumentCardData(
+            "DP832A（DP8B1519）",
+            code="DP8B1519",
+            model="DP832A",
+            role="电源",
+            address="192.168.1.102",
+            status="已按配置预选",
+            checked=True,
+            picture_path=picture,
+            tooltip="DP832A（DP8B1519，电源）\n地址 192.168.1.102",
+        )
+
+        card = InstrumentCard(data)
+
+        self.assertEqual(card.code_label.text(), data.code)
+        self.assertEqual(card.name_label.text(), "DP832A·电源")
+        self.assertEqual(card.address_label.text(), data.address)
+        self.assertEqual(card.status_label.text(), data.status)
+        self.assertTrue(card.status_label.isVisibleTo(card))
+        self.assertEqual(card.toolTip(), data.tooltip)
+        self.assertTrue(card.image.has_picture(), "图片路径来自数据")
+        self.assertTrue(card.is_checked(), "选中状态来自数据")
+        self.assertTrue(card.property("checked"))
+
+    def test_an_unchecked_card_starts_unchecked_and_empty_lines_stay_hidden(self):
+        card = InstrumentCard(InstrumentCardData("未识别设备 #1", code="未识别 #1"))
+
+        self.assertFalse(card.is_checked())
+        self.assertFalse(card.address_label.isVisibleTo(card), "没有地址时那一行不出现")
+        self.assertFalse(card.status_label.isVisibleTo(card), "没有状态说明时不出现")
+        self.assertEqual(card.toolTip(), "")
+
+    def test_a_card_that_cannot_be_applied_is_never_checked(self):
+        data = InstrumentCardData(
+            "N9020A（MY51234567）",
+            code="MY51234567",
+            model="N9020A",
+            role="信号发生器",
+            status="未登记 · 不能应用",
+            checked=True,
+            checkable=False,
+        )
+
+        card = InstrumentCard(data)
+
+        self.assertFalse(card.checkable)
+        self.assertFalse(card.is_checked(), "不能应用的设备就算数据里勾着也不能选中")
 
 
 if __name__ == "__main__":

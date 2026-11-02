@@ -228,7 +228,7 @@ class ScanPromptCardTests(unittest.TestCase):
         """尺寸只有一处定义：仪器卡片多大，“查找设备”按钮就多大。"""
         from presentation.qt.device_cards import CARD_HEIGHT as INSTRUMENT_CARD_HEIGHT
         from presentation.qt.device_cards import CARD_WIDTH as INSTRUMENT_CARD_WIDTH
-        from presentation.qt.device_cards import InstrumentCard
+        from presentation.qt.device_cards import InstrumentCard, InstrumentCardData
         from presentation.qt.scan_card import CARD_HEIGHT, CARD_WIDTH, ScanPromptCard
 
         self.assertEqual(
@@ -236,7 +236,9 @@ class ScanPromptCardTests(unittest.TestCase):
             (INSTRUMENT_CARD_WIDTH, INSTRUMENT_CARD_HEIGHT),
             "查找设备按钮的尺寸应直接取仪器卡片的尺寸",
         )
-        instrument = InstrumentCard("DP832A", "DP8B1519")
+        instrument = InstrumentCard(
+            InstrumentCardData("DP832A", code="DP8B1519")
+        )
         button = ScanPromptCard("查找设备")
         self.assertEqual(button.size(), instrument.size(), "按钮要与仪器卡片一样大")
 

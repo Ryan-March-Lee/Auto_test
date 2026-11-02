@@ -9,7 +9,11 @@ from PySide6.QtGui import QColor, QImage
 from PySide6.QtTest import QTest
 
 from infrastructure.discovery.instrument_discovery import SCAN_MODE_SIMULATED, build_scanner
-from presentation.qt.device_cards import InstrumentCard, instrument_picture_path
+from presentation.qt.device_cards import (
+    InstrumentCard,
+    InstrumentCardData,
+    instrument_picture_path,
+)
 from presentation.qt.device_discovery_panel import (
     BOX_STATE_BUSY,
     BOX_STATE_IDLE,
@@ -60,6 +64,29 @@ class CardPresentationTests(DiscoveryPanelTestCase):
             self.assertEqual(element.width(), card.width(), "卡片同宽同列")
             self.assertEqual(element.height(), card.height(), "同一行卡片高度一致")
 
+    def test_cards_and_the_animation_read_the_same_data_snapshot(self):
+        """卡片上写的、和动画要读的，是同一份数据：动画不必问卡片控件要文字。"""
+        panel = self.make_panel()
+        self.run_scan(panel)
+
+        heading = "SMW200A（105462）"
+        data = panel.card_data(heading)
+        card = panel.card_for(heading)
+        self.assertEqual(data.heading, heading)
+        self.assertEqual(data.code, card.code_label.text())
+        self.assertEqual(data.caption(), card.name_label.text())
+        self.assertEqual(data.address, card.address_label.text())
+        self.assertEqual(data.status, card.status_label.text())
+        self.assertFalse(data.checked)
+
+        # 用户勾选后快照跟着走：发牌那一刻读到的是卡片上真正的选中状态。
+        panel.set_card_checked(heading, True)
+        self.assertTrue(panel.card_data(heading).checked)
+        self.assertTrue(panel.card_for(heading).is_checked())
+
+        with self.assertRaises(KeyError):
+            panel.card_data("没有这台设备")
+
     def test_cards_wrap_into_columns_instead_of_a_long_strip(self):
         panel = self.make_panel(six_device_factory, size=(520, 700))
         self.run_scan(panel)
@@ -104,7 +131,9 @@ class CardPresentationTests(DiscoveryPanelTestCase):
             ("spectrum_analyzer", "FPL1000"),
         ):
             card = InstrumentCard(
-                "型号", "CODE", picture=instrument_picture_path(role, model)
+                InstrumentCardData(
+                    "型号", code="CODE", picture_path=instrument_picture_path(role, model)
+                )
             )
             card.show()
             self.addCleanup(card.close)

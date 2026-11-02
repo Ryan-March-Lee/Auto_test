@@ -174,6 +174,8 @@ animation event=cancel cancel_reason=results-cleared restore_result=hidden ...
 
 ## 步骤 3：提取卡片数据模型和视觉输入
 
+**执行状态：已完成**。数据对象：`presentation/qt/device_cards.py` 的 `InstrumentCardData`（只读 dataclass，只有字符串/路径/布尔值）；`InstrumentCard` 改为只由它构建，面板在 `_fill_cards` 里一次算定内容，`DeviceDiscoveryPanel.card_data(heading)` 返回这张卡片此刻的同一份快照。
+
 ### 执行策略
 
 定义一个仅包含显示所需数据的轻量对象，例如：
@@ -196,6 +198,19 @@ InstrumentCardData
 - 数据模型不依赖 Qt 控件。
 - 选择状态仍由页面保存，动画资产只读取动画开始时的快照。
 - 不在本步骤改变卡片外观。
+
+### 已实现
+
+`InstrumentCardData` 的字段与卡片上的位置一一对应：`heading`（结果里的设备名，面板按它
+找卡片，卡片本身不画）、`code`（第一行缩写设备码）、`model`、`role`（测试角色的界面
+文案，例如 `电源`，由面板把领域角色折叠成标签）、`address`、`status`、`checked`、
+`picture_path`、`tooltip`、`checkable`。`caption()` 只在这里拼一次“型号·角色”，真实
+卡片与之后的动画正面共用。
+
+`DeviceDiscoveryPanel` 把这份数据挂在每一行结果上：`_fill_cards` 生成，`_sync_card_checks`
+在预选或用户勾选后按行更新 `checked` 与 `status`，`card_data(heading)` 对外提供同一份
+快照。真实卡片通过 `InstrumentCard(data, tag=..., parent=...)` 构建，不再接收零散文字参数，
+也没有第二条“从扫描结果拼卡片”的路径。
 
 ### 完成标准
 

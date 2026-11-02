@@ -63,6 +63,7 @@ from __future__ import annotations
 import ipaddress
 import re
 import threading
+from dataclasses import replace
 from typing import Any, Callable, Sequence
 
 from PySide6.QtCore import QPointF, Qt, QThread, Signal
@@ -94,6 +95,7 @@ from .device_cards import (
     CARD_WIDTH,
     _MAX_COLUMNS,
     InstrumentCard,
+    InstrumentCardData,
     device_code,
     instrument_picture_path,
 )
@@ -1117,6 +1119,17 @@ class DeviceDiscoveryPanel(QWidget):
                 return row["card"]
         raise KeyError(heading)
 
+    def card_data(self, heading: str) -> InstrumentCardData:
+        """这张卡片此刻显示的全部内容；找不到时抛出 ``KeyError``。
+
+        这是真实卡片与之后的动画资产共用的那一份数据：发牌动画开始时读它，就不必回头
+        读扫描结果 DTO，也不必向卡片控件要文字。
+        """
+        for card_heading_value, row in self._cards_by_heading():
+            if card_heading_value == heading:
+                return row["data"]
+        raise KeyError(heading)
+
     def card_tooltip(self, heading: str) -> str:
         """卡片（含状态说明）的悬浮提示全文。"""
         return self.card_for(heading).toolTip()
@@ -1136,7 +1149,7 @@ class DeviceDiscoveryPanel(QWidget):
         self._on_card_activated(card)
 
     def _cards_by_heading(self) -> list[tuple[str, dict[str, Any]]]:
-        return [(row["heading"], row) for row in self._rows]
+        return [(row["data"].heading, row) for row in self._rows]
 
     def _clear_cards(self, *, reason: str = "cards-cleared") -> None:
         # 正在发牌/翻牌的覆盖层还指着这些卡片：先停下它（不恢复显示，卡片马上就会删掉），
@@ -1212,32 +1225,36 @@ class DeviceDiscoveryPanel(QWidget):
             visitor_index = 0
             if not device.has_identity or device.is_unidentified:
                 visitor_index = self._visitor_index(device)
-            heading = card_heading(device, visitor_index)
             model = card_model(device)
             role = canonical_role(getattr(device, "known_role", None))
             picture_role = role or ("power_supply" if device.is_power_supply else "")
             code, code_detail = device_code(device, visitor_index)
-            card = InstrumentCard(
-                # 型号下面的一行只写“型号·角色”；读不出型号时留空——第一行已经写着
-                # 缩写码，“这是哪一台”不会因为型号缺失而说不清，也不再重复兜底标题。
-                model,
-                code,
-                role_text=role_label(role),
+            # 卡片上要显示的东西在这里一次算定（:class:`InstrumentCardData`）：真实卡片与
+            # 之后的动画正面都读这一份，动画因此不必回头读扫描结果或问卡片要文字。
+            data = InstrumentCardData(
+                heading=card_heading(device, visitor_index),
+                # 第一行只写缩写设备码；型号与角色只出现在下面那一行“型号·角色”里。读不出
+                # 型号时那一行留空——第一行已经写着缩写码，“这是哪一台”不会因为型号缺失
+                # 而说不清，也不再重复兜底标题。
+                code=code,
+                model=model,
+                role=role_label(role),
                 # 最下面一行的灰色小字只写本次扫描到的 IP；地址会漂移，不参与身份。
                 address=str(getattr(device, "ip", "") or ""),
-                status_text=card_status_text(device),
+                status=card_status_text(device),
                 tooltip=self._card_tooltip(device, code_detail),
-                picture=instrument_picture_path(picture_role, model),
+                picture_path=instrument_picture_path(picture_role, model),
                 checkable=device_applicable(device),
-                tag=device,
-                parent=self.cards_host,
             )
+            card = InstrumentCard(data, tag=device, parent=self.cards_host)
             card.activated.connect(lambda item: self._on_card_activated(item))
             rows.append(
                 {
                     "device": device,
                     "card": card,
-                    "heading": heading,
+                    # 这张卡此刻显示的全部内容：用户选择与预选说明变化时按行更新
+                    # （见 :meth:`_sync_card_checks`），动画开始时直接读这里。
+                    "data": data,
                     # None 表示用户还没动过这张卡片：配置预选可以生效；
                     # True/False 是用户自己的选择，预选不能覆盖它。
                     "user_checked": None,
@@ -1299,6 +1316,9 @@ class DeviceDiscoveryPanel(QWidget):
 
         用户自己的选择优先：点过（选上或取消）的卡片不再被配置预选改写；没动过的卡片
         才按身份预选，并在卡片上写明“已按配置预选”。
+
+        卡片显示状态变化后，这一行的内容快照（``row["data"]``）跟着更新：动画资产读的
+        是这份快照，因此“发牌那一刻卡片上写着什么、选没选中”与真实卡片一致。
         """
         for row in self._rows:
             card = row["card"]
@@ -1306,7 +1326,11 @@ class DeviceDiscoveryPanel(QWidget):
             checked = bool(row["bound"]) if user_checked is None else bool(user_checked)
             card.set_checked(checked, emit=False)
             preselected = bool(row["bound"]) and user_checked is None
-            card.set_status("已按配置预选" if preselected else "")
+            status = "已按配置预选" if preselected else ""
+            card.set_status(status)
+            row["data"] = replace(
+                row["data"], checked=card.is_checked(), status=status
+            )
 
     def _on_card_activated(self, card: InstrumentCard) -> None:
         """用户点击了某张卡片：记录这次选择。"""

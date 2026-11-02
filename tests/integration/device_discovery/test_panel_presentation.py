@@ -461,6 +461,30 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
             panel.results_box.height(), 2 * card.height(), "结果区里至少放得下两行卡片"
         )
 
+    def test_available_height_caps_the_box_but_keeps_one_card_row(self):
+        """页面给出的矮窗口高度把结果区压下来，但不会再压到一行卡片以下。"""
+        from presentation.qt.device_cards import CARD_HEIGHT
+
+        panel = self.make_panel()
+        two_rows = panel.results_box.height()
+
+        panel.set_available_height(two_rows - 60)
+        self.assertEqual(panel.results_box.height(), two_rows - 60)
+
+        panel.set_available_height(1)
+        self.assertGreaterEqual(
+            panel.results_box.height(),
+            CARD_HEIGHT,
+            "结果区至少留一行卡片，扫描卡片与动作行才不会被裁掉",
+        )
+
+        panel.set_available_height(two_rows + 500)
+        self.assertEqual(
+            panel.results_box.height(),
+            two_rows,
+            "窗口再高也不超过两行卡片：多出来的高度留给页面留白",
+        )
+
     def test_the_summary_line_sits_under_the_cards_and_centred(self):
         """统计/失败说明紧跟卡片下方并横向居中，不再孤零零地贴在结果区左下角。"""
         panel = self.make_panel(size=(760, 560))

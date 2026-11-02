@@ -26,10 +26,11 @@ from __future__ import annotations
 
 from typing import Any, Callable, TypeVar
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QEvent, Signal
 from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -94,9 +95,9 @@ class ConnectionPage(QWidget):
         shell.addWidget(self._ui)
 
         # 版心宽度是跨页面共用的设计令牌，不写进 ``.ui`` 也不在本页另存一份。
-        self._require(QWidget, "connectionContent").setMaximumWidth(
-            PAGE_CONTENT_MAX_WIDTH
-        )
+        self.scroll_area = self._require(QScrollArea, "connectionScroll")
+        self.content_widget = self._require(QWidget, "connectionContent")
+        self.content_widget.setMaximumWidth(PAGE_CONTENT_MAX_WIDTH)
         self.title_label = self._require(QLabel, "connectionPageTitle")
 
         # 扫描行与结果区属于动态面板（卡片数量、扫描状态都由运行时决定），
@@ -122,6 +123,40 @@ class ConnectionPage(QWidget):
         self.discovery_panel.add_action_widget(self._build_connect_button())
         self.discovery_panel.add_action_widget(self.return_welcome_btn)
         self.discovery_panel.add_action_widget(self.next_btn)
+        # 窗口尺寸变化时把结果区高度收进当前窗口。视口第一次拿到真实高度是在显示之后，
+        # 所以这里只装监听：每次视口尺寸变化都会按新的可用高度重算一次。
+        self.scroll_area.viewport().installEventFilter(self)
+
+    def eventFilter(self, watched: Any, event: Any) -> bool:
+        """视口尺寸变化时重新安排结果区；其余事件照常交给基类。"""
+        if (
+            watched is self.scroll_area.viewport()
+            and event.type() == QEvent.Type.Resize
+        ):
+            self._fit_discovery_panel()
+        return super().eventFilter(watched, event)
+
+    def _fit_discovery_panel(self) -> None:
+        """按当前视口高度给结果区留出合适的高度。
+
+        结果区原先固定按两行卡片占位：窗口一矮（例如 1366x768 的笔记本），标题、扫描行
+        加这块固定高度就超过了视口，页面右侧于是出现滚动条，而屏幕上的组件其实全都看得
+        见。这里把“结果区以外的高度”减掉，剩下的才是结果区真正能用的高度：够高时仍按
+        两行卡片占位（结果区大小不随扫描状态变化），不够高时收起到一行卡片，卡片多出来
+        的行在卡片区内部滚动，页面本身保持不滚动。
+        """
+        panel = getattr(self, "discovery_panel", None)
+        scroll = getattr(self, "scroll_area", None)
+        if panel is None or scroll is None:
+            return
+        viewport_height = scroll.viewport().height()
+        content = scroll.widget()
+        if viewport_height <= 0 or content is None:
+            return
+        # 结果区以外的高度（标题、上下留白、扫描行）与视口无关：内容的最小高度减去结果区
+        # 当前占用的高度就是这部分固定开销。
+        fixed_height = content.minimumSizeHint().height() - panel.results_box.height()
+        panel.set_available_height(viewport_height - fixed_height)
 
     def _require(self, widget_type: type[_Widget], name: str) -> _Widget:
         """取 ``.ui`` 里声明的控件；缺失或类型不符时尽早报装配错误。"""

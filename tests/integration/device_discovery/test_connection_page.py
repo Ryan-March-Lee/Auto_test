@@ -209,7 +209,7 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
         self.make_page()
         page = self.connection
         # 这个尺寸下页面高于窗口，滚动条一定在：否则测不到焦点引起的滚动。
-        page.resize(1024, 600)
+        page.resize(1024, 520)
         self.app.processEvents()
         panel = page.discovery_panel
         bar = page.findChild(QScrollArea).verticalScrollBar()

@@ -112,10 +112,12 @@ SCAN_MODE_CHOICES: tuple[tuple[str, str], ...] = (
 _CARDS_SPACING = 10
 #: 排一列至少要的宽度：卡片可以收窄到 :data:`CARD_MIN_WIDTH`，但不能再窄。
 _CARDS_MIN_WIDTH = CARD_MIN_WIDTH + _CARDS_SPACING
-#: 结果区的高度固定：按“两行卡片 + 按钮与状态行”算出来（
-#: :meth:`DeviceDiscoveryPanel._results_box_height`）。高度不随状态变化（未查找 /
-#: 正在查找 / 有结果都一样大），所以点一次“查找设备”不会让页面跳动；卡片的行数超过
-#: 这个高度时只在结果区里滚动。最多 6 列，两行可放 12 台；场地的 5 台登记仪器加 1 台
+#: 结果区最多按“两行卡片 + 按钮与状态行”算高（
+#: :meth:`DeviceDiscoveryPanel._results_box_height`）。窗口够高时就是这个高度；窗口
+#: 较矮时由页面给出可用高度（:meth:`DeviceDiscoveryPanel.set_available_height`），
+#: 结果区收起到一行卡片，卡片多出来的行在卡片区内部滚动，页面本身不再多出滚动条。
+#: 高度只随窗口大小变化、不随状态变化（未查找 / 正在查找 / 有结果都一样大），所以点
+#: 一次“查找设备”不会让页面跳动。最多 6 列，两行可放 12 台；场地的 5 台登记仪器加 1 台
 #: 未登记演示设备在默认窗口宽度下排成一行。
 _RESULTS_BOX_ROWS = 2
 #: 结果区的三种状态：还没查找（顶部按钮）、正在查找（进度）、有结果（卡片）。
@@ -324,6 +326,11 @@ class DeviceDiscoveryPanel(QWidget):
         self._pending_outcome: tuple[str, Any] | None = None
         # 配置里保存的设备身份（角色 -> 完整设备码/device_key），用于扫描后按身份预选。
         self.device_bindings: dict[str, dict[str, Any]] = {}
+        # 页面给出的结果区可用高度（``None`` 表示没有页面约束：按两行卡片算）。
+        # 它只随窗口尺寸变化，不随扫描状态变化。
+        self._available_height: int | None = None
+        # “两行卡片”的结果区高度：窗口缩放时的上限，建面板时记一次，不随状态文字变化。
+        self._results_height_max = 0
         self._build_ui(default_subnet or DEMO_SUBNET)
 
     def set_device_bindings(self, bindings: Any) -> None:
@@ -355,8 +362,9 @@ class DeviceDiscoveryPanel(QWidget):
     def _refresh_results_box_height(self) -> None:
         """让外层布局当场重排一次。
 
-        结果区的高度是固定的（见 :meth:`_results_box_height`），不随内容变化；这里只负责
-        把“里面的东西变了”立刻告诉外层布局，按钮才不会慢一拍压在卡片上。
+        结果区高度由窗口给出或按两行卡片算（见 :meth:`_results_box_height` 与
+        :meth:`set_available_height`），不随内容变化；这里只负责把“里面的东西变了”
+        立刻告诉外层布局，按钮才不会慢一拍压在卡片上。
         """
         layout = self.results_box.layout()
         if layout is not None:
@@ -364,8 +372,12 @@ class DeviceDiscoveryPanel(QWidget):
         self._notify_ancestors()
 
     def _sync_results_height(self) -> None:
-        """结果区里的文字变了（多一行或少一行）同样让外层重排一次。"""
-        self._refresh_results_box_height()
+        """结果区里的文字变了（多一行或少一行）：重算高度让卡片区让出位置。
+
+        说明行换行后卡在窗口里的结果区要重新分配“说明 + 一行卡片”的高度，窗口够高时
+        结果区仍是两行卡片、大小不变。
+        """
+        self._apply_results_height()
 
     def _set_status(self, text: str) -> None:
         """结果区里的状态行：只有真的有话要说时占位（结果统计、失败原因、应用问题）。
@@ -456,8 +468,8 @@ class DeviceDiscoveryPanel(QWidget):
         # （见主题里的 ``QFrame#discoveryResultsBox``），卡片直接落在页面背景上。
         self.results_box = QFrame()
         self.results_box.setObjectName("discoveryResultsBox")
-        # 高度在 _build_ui 末尾一次钉死（见 _results_box_height）：状态与结果数量都不改变
-        # 它的大小，点一次“查找设备”不会让页面变大或变小。
+        # 高度在 _build_ui 末尾一次算定（见 _results_box_height / set_available_height）：
+        # 状态与结果数量都不改变它的大小，点一次“查找设备”不会让页面变大或变小。
         self.results_box.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
         box = QVBoxLayout(self.results_box)
         box.setContentsMargins(12, 12, 12, 12)
@@ -547,20 +559,29 @@ class DeviceDiscoveryPanel(QWidget):
         self.back_btn.clicked.connect(self.request_back)
         self._update_mode_hint()
         self._refresh_cards_geometry()
-        # 它的高度在这里一次钉死：此后无论查找前后还是结果多少，都是同一个大小。
-        self.results_box.setFixedHeight(self._results_box_height())
+        # 高度按“两行卡片”算定；页面可以用 set_available_height 把它收进窗口。
+        self._capture_results_height_max()
+        self._apply_results_height()
         self._set_box_state(BOX_STATE_IDLE)
 
     # ---------- 结果区状态 ----------
 
-    def _results_box_height(self, rows: int = _RESULTS_BOX_ROWS) -> int:
-        """结果区的固定高度：``rows`` 行卡片 + 里面的动作行与状态行。
+    def set_available_height(self, height: int) -> None:
+        """按页面给出的可用高度调整结果区：窗口矮时收起到一行卡片。
 
-        高度只由卡片尺寸与内部控件算出来，跟状态（未查找 / 正在查找 / 有结果）和结果
-        数量都无关：点一次“查找设备”不会让它变大或变小，页面也就不会跟着跳一下。
-        设备多到超过这个高度时，卡片区在里面滚动。动作行按其中最高的按钮计算，所以
-        页面把“连接仪器”加进同一行时不会把它挤出结果区。
+        调用方（仪表配置页）在窗口尺寸变化时把“结果区真正能用的高度”交进来。结果区
+        不再固定按两行卡片占位：窗口放得下两行时仍是两行，放不下时压到一行，卡片多
+        出来的行在卡片区内部滚动。高度只在窗口尺寸变化时才调整，扫描状态与结果数量
+        都不影响它，因此点一次“查找设备”页面仍然不会跳动。
         """
+        height = max(0, int(height))
+        if self._available_height == height:
+            return
+        self._available_height = height
+        self._apply_results_height()
+
+    def _results_chrome_height(self) -> int:
+        """结果区里除卡片行以外的高度：内外边距、状态行、动作行与间距。"""
         layout = self.results_box.layout()
         if layout is None:
             return 0
@@ -569,24 +590,73 @@ class DeviceDiscoveryPanel(QWidget):
             (widget.sizeHint().height() for widget in self._action_widgets),
             default=0,
         )
-        chrome = (
+        return (
             margins.top()
             + margins.bottom()
             + action_row_height
             + self.status_label.sizeHint().height()
             + 2 * layout.spacing()
         )
-        return chrome + rows * CARD_HEIGHT + (rows - 1) * _CARDS_SPACING
+
+    def _minimum_results_height(self) -> int:
+        """结果区的最小高度：一行卡片 + 状态行与动作行（未查找时放得下扫描卡片）。
+
+        状态行高度读的是当前文字：长说明换行时结果区随之留出那一行，不会被裁掉。
+        """
+        return self._results_chrome_height() + CARD_HEIGHT
+
+    def _results_target_height(self) -> int:
+        """当前窗口下结果区应有的高度：不低于一行卡片，不高于两行卡片。
+
+        上限在建面板时记下（:meth:`_capture_results_height_max`），不随扫描状态或
+        说明文字变化；下限按当前说明行算，窗口极矮时宁可让页面滚动，也不裁掉说明。
+        """
+        maximum = self._results_height_max or self._results_box_height()
+        if self._available_height is None:
+            return maximum
+        return max(self._minimum_results_height(), min(maximum, self._available_height))
+
+    def _capture_results_height_max(self) -> None:
+        """记下“两行卡片”的结果区高度：此后它只是窗口缩放时的上限。"""
+        self._results_height_max = self._results_box_height()
+
+    def _visible_cards_height(self) -> int | None:
+        """卡片区在结果区里能拿到的高度；没有窗口约束时返回 ``None``（按行数算）。"""
+        if self._available_height is None:
+            return None
+        return max(0, self.results_box.height() - self._results_chrome_height())
+
+    def _apply_results_height(self) -> None:
+        """把结果区的高度设成当前窗口允许的值，并让卡片区跟着重新分配高度。"""
+        self.results_box.setFixedHeight(self._results_target_height())
+        self._refresh_cards_geometry()
+        self._refresh_results_box_height()
+
+    def _results_box_height(self, rows: int = _RESULTS_BOX_ROWS) -> int:
+        """结果区按 ``rows`` 行卡片计算的高度。
+
+        高度只由卡片尺寸与内部控件算出来，跟状态（未查找 / 正在查找 / 有结果）和结果
+        数量都无关：点一次“查找设备”不会让它变大或变小，页面也就不会跟着跳一下。
+        设备多到超过窗口给出的高度时，卡片区在里面滚动。动作行按其中最高的按钮计算，
+        所以页面把“连接仪器”加进同一行时不会把它挤出结果区。
+        """
+        return (
+            self._results_chrome_height()
+            + rows * CARD_HEIGHT
+            + (rows - 1) * _CARDS_SPACING
+        )
 
     def add_action_widget(self, widget: QWidget) -> None:
-        """把一个页面级动作放到“返回”同一行的右端，并重算结果区固定高度。
+        """把一个页面级动作放到“返回”同一行的右端，并重算结果区高度。
 
         面板只提供版面：动作由页面创建与接线（例如连接页的“连接仪器”），面板不认识
         它的语义，也不替它发信号。
         """
         self.action_layout.addWidget(widget)
         self._action_widgets.append(widget)
-        self.results_box.setFixedHeight(self._results_box_height())
+        # 动作行的高度可能变了：两行卡片的上限跟着重算一次。
+        self._capture_results_height_max()
+        self._apply_results_height()
 
     def box_state(self) -> str:
         """结果区当前状态：``idle``（还没查找）/ ``busy``（正在查找）/ ``results``（有结果）。"""
@@ -1123,8 +1193,9 @@ class DeviceDiscoveryPanel(QWidget):
     def _refresh_cards_geometry(self) -> None:
         """按当前宽度决定列数，并把卡片按新列数就位（整组始终居中）。
 
-        结果区的高度是固定的（按两行卡片算），但卡片区本身只有实际行数那么高：状态行
-        因此紧跟在最后一行卡片下面。卡片多到超过两行时，超出部分在卡片区里滚动。
+        结果区的高度按两行卡片算（窗口矮时由页面压到一行），但卡片区本身只有实际
+        行数那么高：状态行因此紧跟在最后一行卡片下面。卡片多到超过结果区的高度时，
+        超出部分在卡片区里滚动。
         """
         if not self._rows:
             return
@@ -1149,8 +1220,9 @@ class DeviceDiscoveryPanel(QWidget):
         居中规则不变。卡片宽度随可用宽度在 :data:`CARD_MIN_WIDTH` 与 :data:`CARD_WIDTH`
         之间收缩：宽窗口保持理想宽度，窄窗口只收到刚好铺满一行，不会为了超过 6 列而变窄。
 
-        卡片区的高度跟着实际行数走（最多两行）：这样状态行紧贴在最后一行卡片下面，
-        不会隔着一段为第二行预留的空白。
+        卡片区的高度跟着实际行数走（最多两行，且不超过结果区剩下的高度）：这样状态行
+        紧贴在最后一行卡片下面，不会隔着一段为第二行预留的空白；窗口矮到放不下时，
+        卡片区内部滚动，页面本身不出现滚动条。
         """
         self._clear_card_rows()
         cards = self.cards()
@@ -1162,9 +1234,10 @@ class DeviceDiscoveryPanel(QWidget):
         available = self._panel_cards_width()
         columns = self._column_count_for(available)
         rows = (len(cards) + columns - 1) // columns
-        if rows > _RESULTS_BOX_ROWS:
-            # 超过两行时卡片区会出现竖向滚动条，排卡片要按变窄后的宽度重算一次，
-            # 否则最右一张会被裁掉一截。
+        # 结果区放不下这些行时（超过两行，或窗口矮到只给得出一行），卡片区会出现竖向
+        # 滚动条；排卡片要按变窄后的宽度重算一次，否则最右一张会被裁掉一截。
+        limit = self._visible_cards_height()
+        if limit is not None and self._cards_area_height(rows) > limit:
             scrollbar = self.cards_area.verticalScrollBar().sizeHint().width()
             available = max(_CARDS_MIN_WIDTH, available - scrollbar)
             columns = self._column_count_for(available)
@@ -1184,7 +1257,11 @@ class DeviceDiscoveryPanel(QWidget):
             self.cards_layout.addLayout(row)
         # 多出来的高度留在所有卡片下面：卡片贴着卡片区顶部排，不在竖直方向拉散。
         self.cards_layout.addStretch(1)
-        self.cards_area.setFixedHeight(self._cards_area_height(rows))
+        area_height = self._cards_area_height(rows)
+        if limit is not None:
+            # 卡片区最多占结果区剩下的高度；再多的行在卡片区内部滚动。
+            area_height = min(area_height, max(CARD_HEIGHT, limit))
+        self.cards_area.setFixedHeight(area_height)
         # 卡片区刚从不可见变为可见时布局还没激活，卡片位置会全是 (0, 0)；
         # 这里直接激活一次，宽度变化时卡片立即按新列数就位。
         self.cards_layout.activate()

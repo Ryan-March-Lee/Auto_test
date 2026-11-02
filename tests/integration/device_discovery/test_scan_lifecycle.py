@@ -18,7 +18,7 @@ from infrastructure.discovery.instrument_discovery import (
     build_scanner,
 )
 from infrastructure.persistence.instrument_registry import InstrumentRegistry
-from presentation.qt.device_discovery_panel import BOX_STATE_IDLE
+from presentation.qt.device_discovery_panel import BOX_STATE_BUSY, BOX_STATE_IDLE
 
 from .support import SMW_IDN, DiscoveryPanelTestCase, registry
 
@@ -44,13 +44,14 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
         self.assertIn("其中可应用 3 台", text)
         self.assertIn("未登记 1 台", text)
 
-    def test_cards_do_not_show_addresses(self):
-        """IP 只是本次可达的地址，不是用户需要关心的信息：卡片正面不展示。"""
+    def test_cards_show_the_ip_on_its_own_gray_line(self):
+        """IP 只写在卡片最下面那一行的灰色小字里，不混进设备码或型号。"""
         panel = self.make_panel()
 
         self.run_scan(panel)
 
         for card in panel.cards():
+            self.assertRegex(card.address_label.text(), r"^192\.168\.1\.\d+$")
             for label in (card.name_label, card.code_label):
                 self.assertNotIn("192.168.1.", label.text())
 
@@ -61,9 +62,10 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
 
         heading = "未知设备 (N9020A)"
         card = panel.card_for(heading)
-        # 第一行只写缩写码：未登记设备没有缩写码，退回完整设备码；最下面一行写仪器型号。
+        # 第一行只写缩写码：未登记设备没有缩写码，退回完整设备码；型号行没有角色可写。
         self.assertEqual(card.code_label.text(), "MY51234567")
         self.assertEqual(card.name_label.text(), "N9020A")
+        self.assertEqual(card.address_label.text(), "192.168.1.150")
         tip = panel.card_tooltip(heading)
         self.assertIn("N9020A / Keysight Technologies", tip)
         self.assertIn("MY51234567", tip)
@@ -118,8 +120,8 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
 
         card = panel.card_for("SMW200A（105462）")
         self.assertTrue(card.image.has_picture(), "信号源卡片应显示仪器图片")
-        # 第一行只写缩写码：设备表还没有缩写码，退回完整设备码；最下面一行写型号。
-        self.assertEqual(card.name_label.text(), "SMW200A")
+        # 第一行只写缩写码：设备表还没有缩写码，退回完整设备码；型号后面接角色。
+        self.assertEqual(card.name_label.text(), "SMW200A·信号发生器")
         self.assertEqual(card.code_label.text(), "105462")
 
     def test_selecting_a_card_is_enough_without_choosing_a_role(self):
@@ -167,7 +169,7 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
         self.run_scan(panel)
         card = panel.card_for("4082F（QZNI000866）")
 
-        for target in (card.name_label, card.image, card.code_label):
+        for target in (card.name_label, card.address_label, card.image, card.code_label):
             with self.subTest(target=type(target).__name__):
                 card.set_checked(False, emit=False)
                 QTest.mouseClick(target, Qt.LeftButton)
@@ -236,6 +238,11 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
         panel.request_scan()
         panel.worker.wait(5000)
         self.app.processEvents()
+        self.app.processEvents()
+
+        # 失败也要等这一轮动画走完（牌堆复原）才收走等待动画。
+        self.assertEqual(panel.box_state(), BOX_STATE_BUSY)
+        self.finish_scan(panel)
 
         self.assertIn("扫描失败", panel.status_label.text())
         self.assertEqual(panel.card_count(), 0)

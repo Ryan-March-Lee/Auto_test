@@ -127,7 +127,7 @@ class DeviceHeadingTests(unittest.TestCase):
 
         self.assertEqual(device_heading(signal), "SMW200A（5462，信号发生器）")
         self.assertEqual(card_heading(signal), "SMW200A（5462）")
-        # 卡片最下面一行写仪器型号，图片挑选也按型号来。
+        # 卡片型号行写仪器型号，图片挑选也按型号来。
         self.assertEqual(card_model(signal), "SMW200A")
 
 

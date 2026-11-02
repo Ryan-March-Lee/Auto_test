@@ -563,21 +563,27 @@ class ScanWaitStackTests(unittest.TestCase):
 
     def test_the_cards_turn_out_of_the_stacked_card_while_the_deck_spins(self):
         """转起来时同一块舞台上看得见卡片的边角；停下来又只剩那一张卡。"""
+        from presentation.qt.device_cards import CARD_HEIGHT
         from presentation.qt.scan_card import WAIT_STACK_SIZE
         from presentation.qt.theme import TOKENS
 
         host, stack = _stack_scene()
-        centre_x = WAIT_STACK_SIZE / 2.0
         rest = _stack_frame(host, stack, 0)
         turning = _stack_frame(host, stack, 380)
+        # 静止卡片的左上角：卡片比舞台矮，上下各留一截空白。
+        resting_top = (WAIT_STACK_SIZE - CARD_HEIGHT) / 2.0
+        # 探测点取在静止卡片上沿之外、斜靠左上的角上——卡片转到 45° 附近时那个角
+        # 正好探出来；正中上方探不到（高卡转到 45° 时竖直方向的顶点偏窄）。
+        probe_x = WAIT_STACK_SIZE * 0.63
+        probe_y = resting_top - 5.0
 
         self.assertEqual(
-            _point(host, rest, centre_x, 26.0).name(),
+            _point(host, rest, probe_x, probe_y).name(),
             TOKENS["canvas"].lower(),
-            "静止时舞台上方是页面底色（卡片只有 240 高）",
+            "静止时卡片上沿之外是页面底色",
         )
         self.assertLess(
-            _point(host, turning, centre_x, 26.0).lightness(),
+            _point(host, turning, probe_x, probe_y).lightness(),
             90,
             "卡片转到 45° 附近时应该探到静止卡片的上方",
         )
@@ -596,6 +602,37 @@ class ScanWaitStackTests(unittest.TestCase):
         _application().processEvents()
         self.assertTrue(stack._frame_timer.isActive(), "再显示时应重新开始")
         self.assertEqual(stack._elapsed, 0.0, "重新开始时应从一整叠、第一张卡起步")
+
+    def test_a_full_cycle_is_announced_when_the_deck_is_stacked_again(self):
+        """一轮完整动画走完、牌堆复原时才通知面板；转动中途不能提前通知。"""
+        from presentation.qt.scan_card import WAIT_CYCLE_MS
+
+        _host, stack = _stack_scene()
+        announced = []
+        stack.cycle_finished.connect(lambda: announced.append(True))
+
+        QTest.qWait(300)
+        self.assertEqual(announced, [], "一轮还没走完，不能通知面板换画面")
+
+        QTest.qWait(WAIT_CYCLE_MS + 300)
+        self.assertTrue(announced, "整轮走完（5 张卡叠回原样）要通知面板")
+
+    def test_finish_cycle_stacks_the_deck_and_announces_it(self):
+        """收尾入口把当前这一轮直接走完：牌堆复原，并发出一次结束通知。"""
+        from presentation.qt.scan_card import WAIT_STACK_CARDS
+
+        _host, stack = _stack_scene()
+        announced = []
+        stack.cycle_finished.connect(lambda: announced.append(True))
+        stack._elapsed = 380.0
+        stack.update()
+
+        stack.finish_cycle()
+
+        self.assertEqual(
+            stack.spin_angles, (0.0,) * WAIT_STACK_CARDS, "收尾时 5 张卡必须叠回原样"
+        )
+        self.assertEqual(announced, [True])
 
 
 if __name__ == "__main__":

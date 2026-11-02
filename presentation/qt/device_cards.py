@@ -4,12 +4,15 @@
 
 - 设备码缩写：第一行，加粗放大的等宽字，只写缩写设备码本身（如 ``DP8B1519``、
   ``5462``；设备表还没有缩写码时退回完整设备码，见 :func:`device_code`），现场对机时
-  一眼看清——卡片里最先读到的是“这是哪一台”；
+  一眼看清——卡片里字号最大、最先读到的是“这是哪一台”；
 - 图片区：仪器实拍图直接摆在本色卡片上（不加底板、不描边）。照片的留白各不相同
   （有的图仪器几乎顶到边，有的只占六成），所以缩放的对象是**仪器主体的包围盒**而不是
   整张画布：先找出主体边界，再把这一块等比放进图片区（不裁切仪器），几张图的“视觉
   体积”因此对齐；
-- 仪器型号（如 ``DP832A``、``SMW200A``）：最下面一行，作为卡片底部的型号说明。
+- 型号与角色（如 ``DP832A·电源``、``SMW200A·信号发生器``）：型号下面的一行小字，
+  用间隔号连起来，一眼看出这台仪器的型号和它在本次测试里承担的角色；
+- 地址：最下面一行的灰色小字，只写本次扫描得到的 IP（如 ``192.168.1.102``）。地址会
+  漂移，所以不参与身份，只作连接信息。
 
 卡片只负责显示与选中状态，不知道扫描结果的数据结构：选择、应用与校验仍由
 :class:`presentation.qt.device_discovery_panel.DeviceDiscoveryPanel` 负责。
@@ -57,13 +60,15 @@ INSTRUMENT_PICTURE_DIR = (
 # （:mod:`presentation.qt.scan_card`）也取这一份尺寸，所以按钮始终和仪器卡片一样大；
 # 要改卡片大小只改这里。
 CARD_WIDTH = 190
-#: 卡片高度按“设备码 + 图片 + 型号”三行内容算，另留状态说明与行间留白的位置。
-CARD_HEIGHT = 240
+#: 卡片高度按“设备码 + 图片 + 型号·角色 + 地址”四行内容算，另留状态说明与行间留白的位置。
+CARD_HEIGHT = 276
 _PICTURE_HEIGHT = 104
 #: 图片不描边、不垫底板，只留一点内缩，让照片不贴到卡片边上。
 _PICTURE_MARGIN = 4
 #: 设备码标签固定两行高度：加粗放大的等宽字下长序列号会折行，卡片高度因此保持不变。
-_CODE_LABEL_HEIGHT = 40
+_CODE_LABEL_HEIGHT = 56
+#: 地址行固定一行高度：有地址时写 IP，没有地址时那一行留空，卡片高度不变。
+_ADDRESS_LABEL_HEIGHT = 16
 #: 卡片网格的最大列数：卡片区再宽也不排成一条长带子。
 _MAX_COLUMNS = 4
 
@@ -132,10 +137,10 @@ def device_code(device: Any, visitor_index: int = 0) -> tuple[str, str]:
     - **读不出身份**：``未识别 #n``（``visitor_index`` 由面板分配，同一台设备两次刷新拿到
       同一个号）。
 
-    型号写在卡片最下面一行（由调用方单独传入），因此缩写码里不再重复型号。
+    型号与角色写在卡片下面的型号行（由调用方单独传入），因此缩写码里不再重复型号。
 
     附注只写连接细节（地址、探测端口），不重复缩写码：身份由悬浮提示里的身份文本表达，
-    IP 只是本次可达的连接信息，不占卡片正面的文字行。
+    IP 作为连接信息单独写在卡片最下面一行的灰色小字里（由调用方传入），不占设备码那一行。
     """
     identity = getattr(device, "identity", None)
     if identity is None:
@@ -367,8 +372,18 @@ class _ElidedLabel(QLabel):
         painter.drawText(rect, int(self.alignment()), text)
 
 
+def _caption_text(model: str, role_text: str) -> str:
+    """卡片底部的“型号·角色”：两段都有的中间用间隔号，缺一段就只写另一段。
+
+    型号可重复，所以型号本身不是身份；角色是设备表登记的固定测试角色，两者放在一起
+    才说明“这台仪器是干什么用的”。
+    """
+    parts = [part.strip() for part in (model or "", role_text or "") if part.strip()]
+    return "·".join(parts)
+
+
 class InstrumentCard(QFrame):
-    """一张设备卡片：第一行是加粗的设备码缩写，图片其次，最下面是居中的仪器型号。
+    """一张设备卡片：第一行是加粗放大的设备码缩写，图片其次，下面是型号·角色与地址。
 
     卡片是可选控件：可以勾选的选择显示为“点击切换选中”的整块卡片（``checkable=True``），
     不能应用的设备（无法识别、未登记、未分配角色）只显示带警示色的状态说明，不可选中。
@@ -381,6 +396,8 @@ class InstrumentCard(QFrame):
         name: str,
         code: str,
         *,
+        role_text: str = "",
+        address: str = "",
         status_text: str = "",
         tooltip: str = "",
         picture: Path | None = None,
@@ -411,7 +428,8 @@ class InstrumentCard(QFrame):
         layout.setContentsMargins(10, 12, 10, 10)
         layout.setSpacing(8)
 
-        # 第一行：缩写设备码——只写码本身（型号在最下面一行），现场对机时一眼看清。
+        # 第一行：缩写设备码——只写码本身（型号在最下面一行），现场对机时一眼看清；
+        # 这是卡片里字号最大、最加粗的一行。
         self.code_label = QLabel(code, self)
         self.code_label.setObjectName("instrumentCardCode")
         self.code_label.setMargin(2)
@@ -427,7 +445,7 @@ class InstrumentCard(QFrame):
         self.image.set_picture(picture)
         layout.addWidget(self.image)
 
-        # 状态说明（不能应用的原因）紧跟在图片下：最下面一行留给型号。
+        # 状态说明（不能应用的原因）紧跟在图片下：下面留给型号·角色与地址。
         # 状态说明始终存在（可应用的卡片文字为空）：卡片等高，状态出现/消失不会跳动。
         self.status_label = QLabel(status_text, self)
         self.status_label.setObjectName("instrumentCardStatus")
@@ -438,12 +456,21 @@ class InstrumentCard(QFrame):
 
         layout.addStretch(1)
 
-        # 最下面一行：仪器型号，居中放大——卡片底部照样读得到“这是哪台型号”。
-        self.name_label = _ElidedLabel(name, self)
+        # 型号·角色：比设备码小一号的一行，写“型号·角色”（如 ``DP832A·电源``）。
+        self.name_label = _ElidedLabel(_caption_text(name, role_text), self)
         self.name_label.setObjectName("instrumentCardName")
         self.name_label.setAlignment(Qt.AlignCenter)
         self.name_label.setTextInteractionFlags(Qt.NoTextInteraction)
         layout.addWidget(self.name_label)
+
+        # 最下面一行：本次扫描得到的 IP，灰色小字。地址会漂移，只是连接信息。
+        self.address_label = _ElidedLabel(address, self)
+        self.address_label.setObjectName("instrumentCardAddress")
+        self.address_label.setAlignment(Qt.AlignCenter)
+        self.address_label.setFixedHeight(_ADDRESS_LABEL_HEIGHT)
+        self.address_label.setTextInteractionFlags(Qt.NoTextInteraction)
+        self.address_label.setVisible(bool(address))
+        layout.addWidget(self.address_label)
         self._bind_tooltips()
         self._apply_check_state()
 
@@ -451,7 +478,12 @@ class InstrumentCard(QFrame):
 
     def _bind_tooltips(self) -> None:
         base = self.toolTip()
-        for label in (self.name_label, self.code_label, self.status_label):
+        for label in (
+            self.name_label,
+            self.code_label,
+            self.status_label,
+            self.address_label,
+        ):
             label.setToolTip(base)
 
     # ---------- 选中状态 ----------

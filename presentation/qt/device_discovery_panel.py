@@ -7,10 +7,11 @@
 - 面板不改配置、不连接仪器：用户勾选本次测试所需设备，点页面上的“下一步”时由
   连接页把勾选结果交给配置页，写成仪器连接配置（地址来自本次发现的设备）与设备身份记录。
 - **测试角色由设备表登记，界面不让用户选**：现场每台仪器只承担一种角色。卡片正面
-  第一行只写缩写设备码（电源就是它的缩写设备码 ``DP8B1519``；设备表还没保存过缩写码时
-  退回完整设备码），最下面一行是仪器型号（如 ``SMW200A``）；电源是
-  同一个类别下的多台设备，靠缩写设备码区分，不再用“电源 PS3”这类槽位编号。角色与完整
-  身份写在悬浮提示里。没登记角色的设备不能选中应用。
+  第一行只写加粗放大的缩写设备码（电源就是它的缩写设备码 ``DP8B1519``；设备表还没保存过
+  缩写码时退回完整设备码），型号下面一行写“型号·角色”（如 ``SMW200A·信号发生器``），
+  最下面一行用灰色小字写本次扫描到的 IP；电源是同一个类别下的多台设备，靠缩写设备码
+  区分，不再用“电源 PS3”这类槽位编号。完整身份与连接细节写在悬浮提示里。没登记角色的
+  设备不能选中应用。
 - **多台电源各自独立**：电源不再按角色键互相覆盖，勾选几台就传递几台；只有信号源与
   频谱仪保持“一个角色一台设备”的唯一性。
 - 发现结果**包含未知设备**：未在设备表中登记的完整设备码同样显示一张卡片并标记为未登记；
@@ -23,6 +24,9 @@
 卡片按钮就落在结果区顶部、紧跟在扫描行下面（不在整块结果区里居中，免得和扫描行之间隔
 一大段空白），点下去之后原地换成等待动画（:class:`presentation.qt.scan_card.ScanWaitStack`：
 5 张卡从堆顶一张接一张各转一整圈，叠回去停 0.5s 再来一轮），结果回来后再换成卡片。
+**扫描结束不等于立刻换画面**：结果（或失败原因）先挂起，等等待动画至少完整播完一轮、
+5 张卡都叠回原样（``ScanWaitStack.cycle_finished``）才进入下一步；动画没播完就继续播，
+扫描结果等它，而不是把转动中途的牌堆直接收走。搜索一直不回来时动画就一轮接一轮地播。
 **结果区的高度是固定的**（两行卡片 + 按钮与状态行）：查找前后、结果多少都不改变它的
 大小，卡片超出时只在结果区里滚动。卡片区本身只占实际行数（最多两行）那么高，
 统计/失败说明紧跟在卡片下面并横向居中，动作行再排在它下面（“返回”在左，页面级动作
@@ -304,6 +308,9 @@ class DeviceDiscoveryPanel(QWidget):
         # 读不出身份的地址按“访客”编号（1、2、…），同一台设备两次刷新拿到同一个号。
         self._visitor_numbers: dict[tuple[str, int], int] = {}
         self._closed = False
+        # 扫描已有结论、但等待动画还没播完一整轮时先挂在这里：结果必须等牌堆复原才
+        # 进入下一步。``("completed", 结果)`` / ``("failed", 说明)`` / ``("cancelled", None)``。
+        self._pending_outcome: tuple[str, Any] | None = None
         # 配置里保存的设备身份（角色 -> 完整设备码/device_key），用于扫描后按身份预选。
         self.device_bindings: dict[str, dict[str, Any]] = {}
         self._build_ui(default_subnet or DEMO_SUBNET)
@@ -329,7 +336,7 @@ class DeviceDiscoveryPanel(QWidget):
         配置里的设备绑定不归面板管，所以返回不动它们；下一次勾选并点“下一步”时整批
         替换掉。要重新绑定，改完网段再查一次即可。
         """
-        if self.is_scanning():
+        if self.is_scanning() or self._pending_outcome is not None:
             self._set_status("扫描正在进行，请等待完成")
             return
         self.clear_results()
@@ -367,6 +374,8 @@ class DeviceDiscoveryPanel(QWidget):
         self._clear_cards()
         self._set_status("")
         self._set_box_state(BOX_STATE_IDLE)
+        # 还没换进结果区的结论属于下一次查找：清空后不能再被动画结束事件补上。
+        self._pending_outcome = None
 
     # ---------- 界面 ----------
 
@@ -387,6 +396,8 @@ class DeviceDiscoveryPanel(QWidget):
         # 一张各转一整圈，全部叠回去后停 0.5s 再来一轮（5 张只是动画，与设备台数无关）。
         self.wait_stack = ScanWaitStack()
         self.wait_stack.setVisible(False)
+        # 一整轮动画走完（牌堆复原）才允许把扫描结果换进结果区。
+        self.wait_stack.cycle_finished.connect(self._on_wait_cycle_finished)
         # 扫描期间的结果区说明：按钮收走后，这里写明正在读取设备。
         self.loading_label = QLabel(LOADING_TEXT)
         self.loading_label.setAlignment(Qt.AlignHCenter)
@@ -649,12 +660,14 @@ class DeviceDiscoveryPanel(QWidget):
 
         点下去就是“开始加载设备”：结果区顶部的按钮收走，原地换成那一叠卡的等待动画
         （5 张卡从堆顶一张接一张各转一整圈，叠回去停 0.5s 再来一轮）；卡片区等结果
-        回来再出现，扫描期间不出现用不上的操作按钮。
+        回来再出现，扫描期间不出现用不上的操作按钮。扫描结束后结果先挂起，等一下动画
+        至少完整走完一轮（牌堆复原）才换进结果区。
         """
-        if self.is_scanning():
+        if self.is_scanning() or self._pending_outcome is not None:
             self._set_status("扫描正在进行，请等待完成")
             return
         subnet = self.subnet_edit.text().strip()
+        self._pending_outcome = None
         self.devices = []
         self._clear_cards()
         self._set_controls_enabled(False)
@@ -686,8 +699,33 @@ class DeviceDiscoveryPanel(QWidget):
         self.status_label.setVisible(True)
 
     def _on_completed(self, result: Any) -> None:
+        """扫描成功：先挂起结果，等一轮等待动画播完（牌堆复原）再换进结果区。"""
         if self._closed:
             return
+        self._pending_outcome = ("completed", result)
+
+    def _on_wait_cycle_finished(self) -> None:
+        """一整轮等待动画走完（牌堆复原）：这时才允许进入下一步。
+
+        扫描一结束就把结论挂在这里；动画至少完整播完一轮、5 张卡都叠回原样才切换
+        画面，转动的牌堆不会在中途被收走。结果还没回来就什么也不做，动画继续下一轮。
+        """
+        if self._closed:
+            return
+        pending = self._pending_outcome
+        if pending is None:
+            return
+        self._pending_outcome = None
+        kind, payload = pending
+        if kind == "completed":
+            self._show_results(payload)
+        elif kind == "failed":
+            self._show_failure(payload)
+        else:
+            self._show_cancelled()
+
+    def _show_results(self, result: Any) -> None:
+        """把一次成功的扫描结果放进结果区，并写统计与预选说明。"""
         devices = list(result.devices)
         self.devices = devices
         self.last_mode = getattr(result, "mode", self.current_mode())
@@ -723,16 +761,24 @@ class DeviceDiscoveryPanel(QWidget):
         self.log_message.emit(f"设备扫描完成: {self.status_label.text()}")
 
     def _on_failed(self, message: str) -> None:
+        """扫描失败：同样等这一轮动画播完再收走牌堆。"""
         if self._closed:
             return
-        # 失败后没有结果：结果区顶部重新出现“查找设备”，用户改网段或换扫描方式再试。
+        self._pending_outcome = ("failed", message)
+
+    def _show_failure(self, message: str) -> None:
+        """失败后没有结果：结果区顶部重新出现“查找设备”，用户改网段或换扫描方式再试。"""
         self._set_box_state(BOX_STATE_IDLE)
         self._set_status(f"扫描失败: {message}")
         self.log_message.emit(f"设备扫描失败: {message}")
 
     def _on_cancelled(self) -> None:
+        """扫描取消：等这一轮动画播完再回到“查找设备”。"""
         if self._closed:
             return
+        self._pending_outcome = ("cancelled", None)
+
+    def _show_cancelled(self) -> None:
         self._set_box_state(BOX_STATE_IDLE)
         self._set_status("扫描已取消，结果未更新")
         self.log_message.emit("设备扫描已取消")
@@ -753,6 +799,7 @@ class DeviceDiscoveryPanel(QWidget):
     def shutdown(self, timeout_ms: int = 3000) -> bool:
         """页面关闭时协作停止扫描；不强杀线程，失败时保留引用由调用方处理。"""
         self._closed = True
+        self._pending_outcome = None
         worker = self.worker
         if worker is None:
             return True
@@ -884,10 +931,13 @@ class DeviceDiscoveryPanel(QWidget):
             picture_role = role or ("power_supply" if device.is_power_supply else "")
             code, code_detail = device_code(device, visitor_index)
             card = InstrumentCard(
-                # 最下面一行只写型号；读不出型号时留空——第一行已经写着缩写码，
-                # “这是哪一台”不会因为型号缺失而说不清，也不再重复兜底标题。
+                # 型号下面的一行只写“型号·角色”；读不出型号时留空——第一行已经写着
+                # 缩写码，“这是哪一台”不会因为型号缺失而说不清，也不再重复兜底标题。
                 model,
                 code,
+                role_text=role_label(role),
+                # 最下面一行的灰色小字只写本次扫描到的 IP；地址会漂移，不参与身份。
+                address=str(getattr(device, "ip", "") or ""),
                 status_text=card_status_text(device),
                 tooltip=self._card_tooltip(device, code_detail),
                 picture=instrument_picture_path(picture_role, model),

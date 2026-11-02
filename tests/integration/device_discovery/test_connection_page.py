@@ -4,7 +4,11 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QScrollArea
 
-from presentation.qt.device_discovery_panel import BOX_STATE_IDLE, DeviceDiscoveryPanel
+from presentation.qt.device_discovery_panel import (
+    BOX_STATE_BUSY,
+    BOX_STATE_IDLE,
+    DeviceDiscoveryPanel,
+)
 
 from .support import ConnectionPageTestCase
 
@@ -42,9 +46,7 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
         """再次进入本页时，上一次的结果不能冒充本次的发现结果。"""
         self.make_page()
         panel = self.connection.discovery_panel
-        panel.request_scan()
-        panel.worker.wait(5000)
-        self.app.processEvents()
+        self.run_scan(panel)
         self.assertTrue(panel.card_headings())
 
         self.connection.enter()
@@ -59,10 +61,7 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
         self.make_page()
         panel = self.connection.discovery_panel
 
-        panel.request_scan()
-        panel.worker.wait(5000)
-        self.app.processEvents()
-        self.app.processEvents()
+        self.run_scan(panel)
 
         self.assertTrue(panel.cards_area.isVisible())
         self.assertGreaterEqual(panel.height(), panel.minimumSizeHint().height())
@@ -151,10 +150,7 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
         )
 
         # 有结果、按“返回”回到查找按钮之后也一样：动作按钮都在结果区里，不挤这一行。
-        panel.request_scan()
-        panel.worker.wait(5000)
-        self.app.processEvents()
-        self.app.processEvents()
+        self.run_scan(panel)
         panel.request_back()
         self.app.processEvents()
         self.assertAlmostEqual(
@@ -188,6 +184,10 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
         panel.worker.wait(5000)
         self.app.processEvents()
         self.app.processEvents()
+        # 结果先挂起，等这一轮动画走完才换进结果区；框的大小在这段等待里同样不能变。
+        self.assertEqual(panel.box_state(), BOX_STATE_BUSY)
+        animating = snapshot()
+        self.finish_scan(panel)
         results = snapshot()
 
         panel.request_back()
@@ -195,6 +195,7 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
         returned = snapshot()
 
         self.assertEqual(scanning, before, "扫描中结果区不能移动或变形")
+        self.assertEqual(animating, before, "结果挂起等动画时结果区不能移动或变形")
         self.assertEqual(results, before, "结果回来后结果区不能移动或变形")
         self.assertEqual(returned, before, "返回后结果区不能移动或变形")
 
@@ -228,6 +229,7 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
             panel.worker.wait(5000)
         self.app.processEvents()
         self.app.processEvents()
+        self.finish_scan(panel)
         self.assertEqual(row_position(), before, "结果回来后扫描行仍在原处")
         self.assertEqual(bar.value(), 0, "结果回来不能滚动页面")
 
@@ -248,10 +250,7 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
             "连接仪器要与返回放在同一行",
         )
         # 有结果时“返回”才可见，两个按钮的几何位置也才有意义。
-        panel.request_scan()
-        panel.worker.wait(5000)
-        self.app.processEvents()
-        self.app.processEvents()
+        self.run_scan(panel)
         self.assertTrue(panel.back_btn.isVisible())
         connect_centre = button.mapTo(
             self.connection, button.rect().center()
@@ -278,11 +277,7 @@ class ConnectionPageNextWriteTests(ConnectionPageTestCase):
 
     def _scan(self):
         panel = self.connection.discovery_panel
-        panel.request_scan()
-        panel.worker.wait(5000)
-        self.app.processEvents()
-        self.app.processEvents()
-        return panel
+        return self.run_scan(panel)
 
     def test_the_panel_has_no_apply_or_clear_buttons(self):
         self.make_page()

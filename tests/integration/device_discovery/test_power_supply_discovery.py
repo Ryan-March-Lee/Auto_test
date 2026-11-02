@@ -16,8 +16,8 @@ class PowerSupplyDiscoveryTests(DiscoveryPanelTestCase):
         self.assertEqual(set(panel.card_headings()), {"DP832A（DP8B1519）", "DP832A（DP8B0885）"})
         for heading, card in zip(panel.card_headings(), panel.cards()):
             self.assertTrue(card.checkable)
-            # 第一行是设备码（缩写设备码），最下面一行是型号。
-            self.assertEqual(card.name_label.text(), "DP832A")
+            # 第一行是设备码（缩写设备码），型号下面一行写“型号·角色”。
+            self.assertEqual(card.name_label.text(), "DP832A·电源")
             # 卡片正面的身份码就是缩写设备码：不再拼 ``PS/型号/完整设备码``，电源没有“第几台”。
             self.assertEqual(heading, f"DP832A（{card.code_label.text()}）")
             self.assertFalse(card.code_label.text().startswith("PS/"))

@@ -134,14 +134,21 @@ class DiscoveryPanelTestCase(unittest.TestCase):
         self.addCleanup(panel.shutdown)
         return panel
 
+    def finish_scan(self, panel):
+        """把等待动画走到一轮结束（牌堆复原）：扫描结果这时才换进结果区。"""
+        panel.wait_stack.finish_cycle()
+        self.app.processEvents()
+        self.app.processEvents()
+
     def run_scan(self, panel):
-        """点“查找设备”，等到后台扫描线程结束后再返回。"""
+        """点“查找设备”，等到后台扫描线程结束、等待动画也走完一轮后返回。"""
         panel.request_scan()
         self.assertTrue(panel.worker is not None)
         panel.worker.wait(5000)
         self.app.processEvents()
         self.app.processEvents()
         self.assertIsNone(panel.worker)
+        self.finish_scan(panel)
         return panel
 
 
@@ -155,6 +162,23 @@ class ConnectionPageTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
+
+    def finish_scan(self, panel):
+        """把等待动画走到一轮结束（牌堆复原）：扫描结果这时才换进结果区。"""
+        panel.wait_stack.finish_cycle()
+        self.app.processEvents()
+        self.app.processEvents()
+
+    def run_scan(self, panel):
+        """点“查找设备”，等到后台扫描线程结束、等待动画也走完一轮后返回。"""
+        panel.request_scan()
+        self.assertTrue(panel.worker is not None)
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+        self.assertIsNone(panel.worker)
+        self.finish_scan(panel)
+        return panel
 
     def make_page(self, config=None):
         page = ConfigPage(

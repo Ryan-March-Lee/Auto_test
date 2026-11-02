@@ -38,7 +38,9 @@
 同一个模块里还有扫描期间的等待动画（:class:`ScanWaitStack`）：点下去之后按钮收走，
 同一位置换成 5 张与按钮同尺寸的卡叠成的一叠（5 张只是动画，与这次查到几台设备无关），
 从堆顶一张接一张绕自己的中心各转一整圈，5 张全部叠回去后停 0.5s 再来一轮。卡面与按钮
-共用同一张预渲染图，控件本身不吃鼠标、不占焦点，也不改变版面。
+共用同一张预渲染图，控件本身不吃鼠标、不占焦点，也不改变版面。每走完一整轮（牌堆复原）
+它发出一次 :attr:`ScanWaitStack.cycle_finished`：设备发现面板据此保证“查找设备”至少
+完整播放一轮动画，才把结果换进结果区；结果还没回来就继续下一轮。
 """
 
 from __future__ import annotations
@@ -56,6 +58,7 @@ from PySide6.QtCore import (
     Qt,
     QTimer,
     QVariantAnimation,
+    Signal,
 )
 from PySide6.QtGui import (
     QColor,
@@ -935,7 +938,14 @@ class ScanWaitStack(QWidget):
     版面。控件固定为卡片对角线那么大的正方形（:data:`WAIT_STACK_SIZE`），卡片转到任何
     角度都落在自己的矩形里，不会被结果区上沿裁成一条硬边。卡面与按钮是同一张预渲染图
     （:func:`_render_card_face`），每帧只是把它转个角度贴上去。
+
+    每走完一整轮（5 张全部转回 0°，牌堆复原，准备开始下一轮）发出一次
+    :attr:`cycle_finished`：设备发现面板等到这一刻才把扫描结果换进结果区，因此一次查找
+    至少完整播完一轮动画；结果还没回来就继续下一轮。牌的转动中途从不被打断。
     """
+
+    #: 一整轮动画走完（牌堆复原）时发出；面板据此决定什么时候进入下一步。
+    cycle_finished = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -948,6 +958,8 @@ class ScanWaitStack(QWidget):
 
         #: 本轮动画已经走到哪一刻（0..WAIT_CYCLE_MS），每帧按它算 5 个角度。
         self._elapsed = 0.0
+        #: 从显示到现在已经走完的整轮数：跨过一轮就发一次 ``cycle_finished``。
+        self._completed_cycles = 0
         #: 卡面预渲染图（尺寸与屏幕像素比不变就一直用这一张）。
         self._face = QPixmap()
         self._face_key: tuple[int, int, float] | None = None
@@ -992,13 +1004,35 @@ class ScanWaitStack(QWidget):
         return self.angles_at(self._elapsed)
 
     def _advance(self) -> None:
-        """推进到这一刻并重画：一圈 360° 走完就回到叠起的样子。"""
-        self._elapsed = float(self._clock.elapsed() % WAIT_CYCLE_MS)
+        """推进到这一刻并重画；跨过一整轮就通知面板“牌堆复原了”。
+
+        计时从显示那一刻开始累加，因此跨过的轮数按 ``WAIT_CYCLE_MS`` 整除算；停顿期间
+        也在计时，跨过整轮边界时 5 张刚刚回到 0°（新的一轮从这一刻起步）。
+        """
+        total = self._clock.elapsed()
+        self._elapsed = float(total % WAIT_CYCLE_MS)
         self.update()
+        completed = int(total // WAIT_CYCLE_MS)
+        if completed > self._completed_cycles:
+            self._completed_cycles = completed
+            self.cycle_finished.emit()
+
+    def finish_cycle(self) -> None:
+        """立刻把当前这一轮走完：牌堆复原，并发出 :attr:`cycle_finished`。
+
+        动画本身按时间走；只有已经拿到结果、却还在等这一轮走完的调用方（测试）需要这
+        个确定性的收尾：5 张卡都回到 0°，计时从头开始。
+        """
+        self._elapsed = 0.0
+        self._completed_cycles = 0
+        self._clock.start()
+        self.update()
+        self.cycle_finished.emit()
 
     def showEvent(self, event):  # noqa: N802 - Qt 覆盖方法
         # 每次出现都从“一整叠”开始，并且从第一张卡开始转。
         self._elapsed = 0.0
+        self._completed_cycles = 0
         self._clock.start()
         self._frame_timer.start()
         super().showEvent(event)
@@ -1007,6 +1041,7 @@ class ScanWaitStack(QWidget):
         """收起来就停下计时器，并把角度归零：下一次查找重新从一整叠开始。"""
         self._frame_timer.stop()
         self._elapsed = 0.0
+        self._completed_cycles = 0
         super().hideEvent(event)
 
     # ---- 绘制 ---------------------------------------------------------------

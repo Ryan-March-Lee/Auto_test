@@ -106,10 +106,12 @@ TOKENS = {
     "font_small": "8.5pt",
     # 扫描行（“仪表配置”页的网段 / 扫描方式）比正文大一号：它是这一页唯一的输入入口。
     "font_field": "12pt",
-    # 设备卡片第一行的仪器名：居中放大，“仪表配置”页一眼看到型号。
-    "font_card_name": "14pt",
-    # 设备码：加粗放大的等宽字，现场对机时一眼认得出。
-    "font_code": "12.5pt",
+    # 设备卡片的“型号·角色”：比设备码小一号，型号在下面只作说明。
+    "font_card_name": "10.5pt",
+    # 设备码：卡片里最大的一行，加粗放大的等宽字，现场对机时一眼认得出。
+    "font_code": "18pt",
+    # 设备卡片最下面的 IP：灰色小字，只作连接信息。
+    "font_card_address": "8pt",
     "font_mono": "Consolas",
 }
 
@@ -425,14 +427,15 @@ QFrame#discoveryResultsBox {
    的一层透明覆盖层上（``scan_card._CardBackdrop``），不进布局、不吃鼠标。 */
 
 /* ===== 设备卡片（“仪表配置”页的发现结果） =====
-   一台仪器一张卡片，自上而下读：第一行加粗的设备码缩写、仪器图、最下面的仪器型号。
+   一台仪器一张卡片，自上而下读：第一行加粗放大的设备码缩写、仪器图、型号·角色、
+   最下面一行的灰色 IP 地址。
    图片直接贴在卡片本色上，不垫底板也不描边。卡片可点击选中：选中时整块描主色并
    铺一层极浅的主色底，与“只悬停”区分得开；不可应用的卡片整块降低对比度，并在
    卡片里写明原因。 */
 QFrame#instrumentCard {
     background-color: $surface;
     border: 1px solid $border;
-    border-radius: 12px;
+    border-radius: 8px;
 }
 QFrame#instrumentCard:hover {
     border-color: $border_strong;
@@ -452,7 +455,7 @@ QWidget#instrumentCardImage {
 QLabel#instrumentCardName {
     color: $text;
     font-size: $font_card_name;
-    font-weight: 700;
+    font-weight: 600;
 }
 QLabel#instrumentCardCode {
     background: transparent;
@@ -461,6 +464,11 @@ QLabel#instrumentCardCode {
     font-family: "$font_mono";
     font-size: $font_code;
     font-weight: 700;
+}
+QLabel#instrumentCardAddress {
+    color: $text_secondary;
+    font-size: $font_card_address;
+    font-weight: 400;
 }
 QLabel#instrumentCardStatus {
     color: $warning;

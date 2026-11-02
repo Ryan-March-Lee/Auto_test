@@ -32,23 +32,30 @@ class CardPresentationTests(DiscoveryPanelTestCase):
     def tearDown(self):
         self.app.setStyleSheet(self._previous_stylesheet)
 
-    def test_cards_are_rounded_and_ordered_code_picture_model(self):
+    def test_cards_are_rounded_and_ordered_code_picture_caption_address(self):
         panel = self.make_panel(size=(760, 560))
         self.run_scan(panel)
 
         card = panel.card_for("SMW200A（105462）")
         self.assertEqual(card.objectName(), "instrumentCard")
-        self.assertIn("border-radius: 12px;", self.app.styleSheet())
-        # 自上而下：设备码第一行、图片第二行、型号在最下面。
+        stylesheet = self.app.styleSheet()
+        card_rule = stylesheet.split("QFrame#instrumentCard {", 1)[1].split("}", 1)[0]
+        self.assertIn("border-radius: 8px;", card_rule, "卡片四角只做轻微圆角")
+        # 自上而下：设备码第一行、图片第二行，型号·角色在图片下面，最下面是 IP 地址。
         layout = card.layout()
         rows = [layout.itemAt(index).widget() for index in range(layout.count())]
         self.assertIs(rows[0], card.code_label, "设备码缩写放在卡片第一行")
         self.assertLess(rows.index(card.code_label), rows.index(card.image))
         self.assertGreater(rows.index(card.name_label), rows.index(card.image))
-        self.assertEqual(rows[-1], card.name_label, "仪器型号放在卡片最下面")
-        # 设备码第一行也要居中，型号同样居中。
+        self.assertGreater(rows.index(card.address_label), rows.index(card.name_label))
+        self.assertEqual(rows[-1], card.address_label, "IP 地址放在卡片最下面")
+        # 设备码第一行也要居中，型号·角色与地址同样居中。
         self.assertTrue(card.code_label.alignment() & Qt.AlignHCenter)
         self.assertTrue(card.name_label.alignment() & Qt.AlignHCenter)
+        self.assertTrue(card.address_label.alignment() & Qt.AlignHCenter)
+        # 型号后面接角色，最下面一行是本次扫描到的 IP。
+        self.assertEqual(card.name_label.text(), "SMW200A·信号发生器")
+        self.assertEqual(card.address_label.text(), "192.168.1.201")
         for element in panel.cards():
             self.assertEqual(element.width(), card.width(), "卡片同宽同列")
             self.assertEqual(element.height(), card.height(), "同一行卡片高度一致")
@@ -267,6 +274,15 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         self.app.processEvents()
         self.app.processEvents()
 
+        # 后台扫描已经结束，但这一轮等待动画还没走完：结果先挂起，牌堆继续转。
+        self.assertEqual(panel.box_state(), BOX_STATE_BUSY)
+        self.assertTrue(panel.wait_stack.isVisible())
+        self.assertFalse(panel.cards_area.isVisible())
+        self.assertEqual(panel.card_count(), 0)
+
+        # 一整轮播完（5 张卡叠回原样）才进入下一步：结果换进结果区。
+        self.finish_scan(panel)
+
         self.assertEqual(panel.box_state(), BOX_STATE_RESULTS)
         self.assertFalse(panel.scan_btn.isVisible())
         self.assertFalse(panel.wait_stack.isVisible())
@@ -288,17 +304,69 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         self.app.processEvents()
         self.app.processEvents()
 
+        # 扫描结束但动画还没走完：牌堆留在原处，不能中途收走。
+        self.assertEqual(panel.box_state(), BOX_STATE_BUSY)
+        self.assertTrue(panel.wait_stack.isVisible())
+
+        self.finish_scan(panel)
+
         # 一台都没读到：结果区里放不出卡片，顶部的“查找设备”回来好让用户再试一次。
         self.assertEqual(panel.card_count(), 0)
         self.assertEqual(panel.box_state(), BOX_STATE_IDLE)
         self.assertTrue(panel.scan_btn.isVisible())
+        self.assertFalse(panel.wait_stack.isVisible())
 
-    def test_the_results_take_the_box_over_from_the_centre(self):
-        panel = self.make_panel()
+    def test_the_wait_animation_keeps_looping_while_the_scan_is_still_running(self):
+        """一轮动画走完时结果还没回来：不换画面，牌堆继续下一轮，等扫描结束。"""
+        import threading
+
+        release = threading.Event()
+        base_factory = self.default_factory
+
+        def factory(mode):
+            scanner = base_factory(mode)
+
+            class _DelayedScanner:
+                def set_cancel_event(self, event):
+                    scanner.set_cancel_event(event)
+
+                def scan(self, subnet, progress=None):
+                    release.wait(5)
+                    return scanner.scan(subnet, progress=progress)
+
+                def request_cancel(self):
+                    scanner.request_cancel()
+
+            return _DelayedScanner()
+
+        panel = self.make_panel(factory)
         panel.request_scan()
+        self.app.processEvents()
+
+        # 扫描还没结束，动画已经走完一轮：没有结果可换，画面保持等待动画。
+        panel.wait_stack.finish_cycle()
+        self.app.processEvents()
+        self.assertEqual(panel.box_state(), BOX_STATE_BUSY)
+        self.assertTrue(panel.wait_stack.isVisible())
+        self.assertFalse(panel.scan_btn.isVisible())
+        self.assertFalse(panel.cards_area.isVisible())
+
+        # 结果回来后仍要等这一轮动画走完（牌堆复原）才进入下一步。
+        release.set()
         panel.worker.wait(5000)
         self.app.processEvents()
         self.app.processEvents()
+        self.assertEqual(panel.box_state(), BOX_STATE_BUSY)
+        self.assertEqual(panel.card_count(), 0)
+
+        self.finish_scan(panel)
+
+        self.assertEqual(panel.box_state(), BOX_STATE_RESULTS)
+        self.assertGreater(panel.card_count(), 0)
+
+    def test_the_results_take_the_box_over_from_the_centre(self):
+        panel = self.make_panel()
+        self.run_scan(panel)
 
         self.assertEqual(panel.box_state(), BOX_STATE_RESULTS)
         self.assertTrue(panel.cards_area.isVisible())
@@ -312,10 +380,7 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
 
     def test_back_clears_this_search_and_returns_to_the_scan_button(self):
         panel = self.make_panel()
-        panel.request_scan()
-        panel.worker.wait(5000)
-        self.app.processEvents()
-        self.app.processEvents()
+        self.run_scan(panel)
         panel.set_card_checked(panel.card_headings()[0], True)
         self.assertTrue(panel.devices)
 
@@ -348,6 +413,10 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         panel.worker.wait(5000)
         self.app.processEvents()
         self.app.processEvents()
+        # 结果还没换进结果区（动画未走完），框的大小同样不能变。
+        animating = (box.width(), box.height())
+
+        self.finish_scan(panel)
         results = (box.width(), box.height())
 
         panel.request_back()
@@ -356,16 +425,14 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
 
         self.assertGreater(idle[1], 0)
         self.assertEqual(busy, idle, "扫描中结果区不能变")
+        self.assertEqual(animating, idle, "结果挂起等动画时结果区不能变")
         self.assertEqual(results, idle, "结果回来后结果区不能变")
         self.assertEqual(returned, idle, "返回后结果区不能变")
 
     def test_the_box_has_room_for_two_rows_of_cards(self):
         """结果区的固定高度按“两行卡片 + 里面的按钮与状态行”算：场地上 5 台设备不用滚动。"""
         panel = self.make_panel()
-        panel.request_scan()
-        panel.worker.wait(5000)
-        self.app.processEvents()
-        self.app.processEvents()
+        self.run_scan(panel)
 
         card = panel.cards()[0]
         self.assertGreaterEqual(
@@ -375,10 +442,7 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
     def test_the_summary_line_sits_under_the_cards_and_centred(self):
         """统计/失败说明紧跟卡片下方并横向居中，不再孤零零地贴在结果区左下角。"""
         panel = self.make_panel(size=(760, 560))
-        panel.request_scan()
-        panel.worker.wait(5000)
-        self.app.processEvents()
-        self.app.processEvents()
+        self.run_scan(panel)
 
         self.assertTrue(panel.status_label.isVisible())
         box = panel.results_box
@@ -397,10 +461,7 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
 
     def test_clearing_the_results_puts_the_scan_button_back(self):
         panel = self.make_panel()
-        panel.request_scan()
-        panel.worker.wait(5000)
-        self.app.processEvents()
-        self.app.processEvents()
+        self.run_scan(panel)
 
         panel.clear_results()
         self.app.processEvents()

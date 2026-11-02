@@ -109,8 +109,8 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
 
     @staticmethod
     def _scan_row(panel):
-        """面板布局里的扫描行（第一层是控制区，控制区的第一行才是扫描行）。"""
-        return panel.layout().itemAt(0).layout().itemAt(0).layout()
+        """扫描行：整块扫描提示容器的第一行。"""
+        return panel.scan_header.layout().itemAt(0).layout()
 
     def _scan_row_centre(self, panel):
         """扫描行里所有可见控件的整体中线（面板坐标）。"""
@@ -156,6 +156,38 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
         self.assertAlmostEqual(
             self._scan_row_centre(panel), panel.width() / 2, delta=3, msg="返回后仍然居中"
         )
+
+    def test_scanning_fades_the_page_header_and_restores_it_on_back(self):
+        """点“查找设备”后标题与扫描行淡出；返回重新查找时淡回。"""
+        self.make_page()
+        page = self.connection
+        panel = page.discovery_panel
+        title_effect = page.title_label.graphicsEffect()
+        header_effect = panel.scan_header.graphicsEffect()
+        self.assertIsNotNone(title_effect)
+        self.assertIsNotNone(header_effect)
+        self.assertAlmostEqual(title_effect.opacity(), 1.0, places=2)
+
+        QTest.mouseClick(panel.scan_btn, Qt.LeftButton)
+        self.assertEqual(panel.box_state(), "busy")
+        QTest.qWait(400)
+        self.assertAlmostEqual(title_effect.opacity(), 0.0, places=2)
+        self.assertAlmostEqual(header_effect.opacity(), 0.0, places=2)
+        self.assertFalse(panel.scan_header.isEnabled(), "淡出的扫描行不能继续接收输入")
+
+        if panel.worker is not None:
+            panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+        self.finish_scan(panel)
+        self.assertEqual(panel.box_state(), "results")
+        self.assertAlmostEqual(title_effect.opacity(), 0.0, places=2)
+
+        panel.request_back()
+        QTest.qWait(400)
+        self.assertAlmostEqual(title_effect.opacity(), 1.0, places=2)
+        self.assertAlmostEqual(header_effect.opacity(), 1.0, places=2)
+        self.assertTrue(panel.scan_header.isEnabled())
 
     def test_the_scan_button_sits_in_the_results_area(self):
         """“查找设备”是结果区顶部的落点，不在上面的扫描行里。"""

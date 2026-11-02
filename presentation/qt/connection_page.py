@@ -18,6 +18,10 @@ Python 里构建并插进骨架。两个页面动作虽然声明在 ``.ui`` 的�
 页面不写颜色、字号与间距常量：颜色与字号来自 :mod:`presentation.qt.theme`，静态间距在
 ``.ui`` 里，版心宽度用主题令牌 ``theme.PAGE_CONTENT_MAX_WIDTH`` 收口。
 
+点“查找设备”后，大标题与面板里的扫描网段/方式提示一起淡出，结果卡片与动作行留在
+页面中间偏上的位置；按“返回”重新查找、扫描失败或没有结果时，页头再淡回来。淡出只改
+透明度、不收版面，所以卡片区的位置不随动画跳动。
+
 “下一步”先把本次勾选的设备写入配置（整批替换），再切到仪器配置页；配置文件仍随
 “保存配置”或“校验并创建运行”一起落盘，因此从本页离开不会产生半保存的配置。
 """
@@ -26,8 +30,9 @@ from __future__ import annotations
 
 from typing import Any, Callable, TypeVar
 
-from PySide6.QtCore import QEvent, Signal
+from PySide6.QtCore import QEasingCurve, QEvent, QVariantAnimation, Qt, Signal
 from PySide6.QtWidgets import (
+    QGraphicsOpacityEffect,
     QLabel,
     QPushButton,
     QScrollArea,
@@ -42,6 +47,7 @@ from application.ports.device_discovery import DEMO_SUBNET
 
 from .config_form_bindings import binding_address, binding_records
 from .device_discovery_panel import (
+    BOX_STATE_BUSY,
     BOX_STATE_RESULTS,
     DeviceDiscoveryPanel,
     subnet_from_address,
@@ -51,6 +57,9 @@ from .ui_loader import load_ui
 
 #: 控件查询的返回类型；``.ui`` 里声明的控件必须存在，缺失属于装配错误而不是运行状态。
 _Widget = TypeVar("_Widget", bound=QWidget)
+
+#: 查找开始后页头（大标题与扫描行）淡出的时长。
+_HEADER_FADE_MS = 280
 
 
 class ConnectionPage(QWidget):
@@ -112,6 +121,9 @@ class ConnectionPage(QWidget):
             parent=host,
         )
         host_layout.addWidget(self.discovery_panel)
+        # 点“查找设备”后大标题与扫描行一起淡出，结果卡片独自占据中间偏上的位置；
+        # 返回重新查找、扫描失败或没有结果时再淡回来。
+        self._setup_header_fade()
         # 页面动作栏：两个页面动作移进结果区动作行后，这一栏不再有可见内容；保留引用
         # 供视觉契约量取页面上下留白。
         self.page_action_bar = self._require(QWidget, "pageActionBar")
@@ -165,6 +177,55 @@ class ConnectionPage(QWidget):
             raise RuntimeError(f"connection_page.ui 缺少控件: {name}")
         return widget
 
+    def _setup_header_fade(self) -> None:
+        """给大标题与设备发现面板的扫描行装上同一条淡出时间轴。
+
+        两处控件属于不同页面层级（标题在 ``.ui`` 骨架上，扫描行在动态面板里），
+        因此各挂一个透明度效果，由一个动画同时驱动；淡出后只把透明度降到 0，不收起
+        版面，卡片区的位置保持不变，仍落在界面的中间偏上部分。
+        """
+        self._title_opacity = QGraphicsOpacityEffect(self.title_label)
+        self._title_opacity.setOpacity(1.0)
+        self.title_label.setGraphicsEffect(self._title_opacity)
+        self._scan_header_opacity = QGraphicsOpacityEffect(
+            self.discovery_panel.scan_header
+        )
+        self._scan_header_opacity.setOpacity(1.0)
+        self.discovery_panel.scan_header.setGraphicsEffect(self._scan_header_opacity)
+        self._header_opacity_value = 1.0
+        self._header_fade = QVariantAnimation(self)
+        self._header_fade.setDuration(_HEADER_FADE_MS)
+        self._header_fade.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self._header_fade.valueChanged.connect(self._apply_header_opacity)
+
+    def _on_box_state_changed(self, state: str) -> None:
+        """开始查找或有结果时淡出页头；回到未查找状态时淡回来。"""
+        if state in (BOX_STATE_BUSY, BOX_STATE_RESULTS):
+            self._fade_header(True)
+        else:
+            self._fade_header(False)
+
+    def _fade_header(self, hidden: bool) -> None:
+        """把大标题与扫描行淡到透明（或淡回可见），从中断处继续。"""
+        target = 0.0 if hidden else 1.0
+        # 扫描行淡出后不再接收鼠标与键盘：面板会重新启用网段/扫描方式控件，但页头
+        # 已经看不见，不能留下一个不可见却可操作的输入区。
+        self.discovery_panel.scan_header.setEnabled(not hidden)
+        if abs(self._header_opacity_value - target) < 0.001:
+            self._apply_header_opacity(target)
+            return
+        self._header_fade.stop()
+        self._header_fade.setStartValue(self._header_opacity_value)
+        self._header_fade.setEndValue(target)
+        self._header_fade.start()
+
+    def _apply_header_opacity(self, value: float) -> None:
+        """把同一条时间轴上的透明度同时写到大标题与扫描行。"""
+        opacity = max(0.0, min(1.0, float(value)))
+        self._header_opacity_value = opacity
+        self._title_opacity.setOpacity(opacity)
+        self._scan_header_opacity.setOpacity(opacity)
+
     def _build_connect_button(self) -> QPushButton:
         """结果区动作行里的“连接仪器”：与“返回”、返回欢迎页、下一步同一行。"""
         self.connect_btn = QPushButton("连接仪器")
@@ -176,6 +237,7 @@ class ConnectionPage(QWidget):
         return self.connect_btn
 
     def _connect_signals(self) -> None:
+        self.discovery_panel.box_state_changed.connect(self._on_box_state_changed)
         self.next_btn.clicked.connect(self.request_next)
         self.return_welcome_btn.clicked.connect(self.return_welcome_requested.emit)
         # “连接仪器”只发出用户意图：本页不校验配置、不拼地址、也不持有连接端口。

@@ -298,6 +298,8 @@ class DeviceDiscoveryPanel(QWidget):
     """
 
     log_message = Signal(str)
+    #: 结果区状态变化（``idle`` / ``busy`` / ``results``）；连接页据此淡出/恢复页头。
+    box_state_changed = Signal(str)
 
     def __init__(
         self,
@@ -442,9 +444,13 @@ class DeviceDiscoveryPanel(QWidget):
         self.mode_hint.setProperty("role", "note")
         # 扫描行留在结果区外面：整行按页面中线居中，跟着“仪表配置”标题走；行里只有
         # 扫描网段与扫描方式两项，动作按钮都落在结果区里（见下面的 centre_area），
-        # 所以这一行永远是对称的。
-        controls = QVBoxLayout()
-        controls.setSpacing(8)
+        # 所以这一行永远是对称的。整块扫描提示收在一个容器里：连接页在开始查找后把
+        # 标题与这块一起淡出，结果卡片因此独自占据界面的中间偏上位置。
+        self.scan_header = QWidget(self)
+        self.scan_header.setObjectName("discoveryScanHeader")
+        header = QVBoxLayout(self.scan_header)
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
         row = QHBoxLayout()
         row.setSpacing(8)
         row.addStretch(1)
@@ -458,9 +464,9 @@ class DeviceDiscoveryPanel(QWidget):
         row.addWidget(self.mode_label)
         row.addWidget(self.mode_combo)
         row.addStretch(1)
-        controls.addLayout(row)
-        controls.addWidget(self.mode_hint)
-        layout.addLayout(controls)
+        header.addLayout(row)
+        header.addWidget(self.mode_hint)
+        layout.addWidget(self.scan_header)
         self.mode_combo.currentIndexChanged.connect(self._update_mode_hint)
 
         # 结果区：一台仪器一张卡片，按宽度自动换行。卡片区放在可伸缩的滚动区里，
@@ -680,6 +686,7 @@ class DeviceDiscoveryPanel(QWidget):
         self._refresh_results_box_height()
         self._notify_ancestors()
         self._sync_wait_stack_geometry()
+        self.box_state_changed.emit(state)
 
     def _sync_wait_stack_geometry(self) -> None:
         """把等待动画的牌堆钉在“查找设备”卡片原来的位置。

@@ -256,9 +256,10 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         panel.request_scan()
         self.app.processEvents()
 
-        # 点下去就开始加载设备：按钮收走，结果区顶部换成进度说明。
+        # 点下去就开始加载设备：按钮收走，同一位置换成那一叠等待动画，下面一行仍是进度说明。
         self.assertEqual(panel.box_state(), BOX_STATE_BUSY)
         self.assertFalse(panel.scan_btn.isVisible())
+        self.assertTrue(panel.wait_stack.isVisible())
         self.assertTrue(panel.loading_label.isVisible())
         self.assertIn("正在扫描", panel.status_label.text())
 
@@ -268,6 +269,7 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
 
         self.assertEqual(panel.box_state(), BOX_STATE_RESULTS)
         self.assertFalse(panel.scan_btn.isVisible())
+        self.assertFalse(panel.wait_stack.isVisible())
         self.assertFalse(panel.loading_label.isVisible())
         self.assertTrue(panel.cards_area.isVisible())
         self.assertGreater(panel.card_count(), 0)

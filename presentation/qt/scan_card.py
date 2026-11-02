@@ -34,6 +34,11 @@
 
 它仍是 ``QPushButton`` 的子类：``clicked``、``setEnabled``、``setToolTip``、键盘
 空格/回车与悬浮提示照旧，调用方不必知道它是自绘的。
+
+同一个模块里还有扫描期间的等待动画（:class:`ScanWaitStack`）：点下去之后按钮收走，
+同一位置换成 5 张与按钮同尺寸的卡叠成的一叠（5 张只是动画，与这次查到几台设备无关），
+从堆顶一张接一张绕自己的中心各转一整圈，5 张全部叠回去后停 0.5s 再来一轮。卡面与按钮
+共用同一张预渲染图，控件本身不吃鼠标、不占焦点，也不改变版面。
 """
 
 from __future__ import annotations
@@ -74,11 +79,15 @@ from .theme import FONT_FAMILIES, TOKENS
 
 __all__ = [
     "ScanPromptCard",
+    "ScanWaitStack",
     "CARD_HEIGHT",
     "CARD_WIDTH",
     "BACKDROP_MARGIN_X",
     "BACKDROP_MARGIN_Y",
     "SCAN_CARD_HEADROOM",
+    "WAIT_CYCLE_MS",
+    "WAIT_STACK_CARDS",
+    "WAIT_STACK_SIZE",
 ]
 
 # ---- 尺寸（原效果的 px 值） --------------------------------------------------
@@ -100,6 +109,24 @@ SCAN_CARD_HEADROOM = 12
 #: 按钮的一部分：它不占版面、不吃鼠标，只跟着卡片的位置走。
 BACKDROP_MARGIN_X = 8
 BACKDROP_MARGIN_Y = 8
+
+# ---- 等待动画 ----------------------------------------------------------------
+
+#: 扫描期间那一叠卡的张数：只是动画，与这次真正查到几台设备无关。
+WAIT_STACK_CARDS = 5
+#: 每张卡绕自己的中心转满一圈的时长。
+WAIT_SPIN_MS = 1200
+#: 相邻两张卡开始转动的间隔：前一张还没转完，后一张就接上，转动过程中同时看得见几张。
+WAIT_SPIN_STAGGER_MS = 250
+#: 5 张全部转完、叠回一整叠之后的停顿；停完再来一轮。
+WAIT_PAUSE_MS = 500
+#: 一轮完整动画：5 张依次转满一圈，再停 :data:`WAIT_PAUSE_MS`。
+WAIT_CYCLE_MS = (
+    (WAIT_STACK_CARDS - 1) * WAIT_SPIN_STAGGER_MS + WAIT_SPIN_MS + WAIT_PAUSE_MS
+)
+#: 等待动画的舞台边长：卡片转到任意角度都落在自己的矩形里，最长就是对角线
+#: （卡片转到 45° 附近时轴对齐包围盒最大），再留 2px 给抗锯齿。
+WAIT_STACK_SIZE = int(math.ceil(math.hypot(CARD_WIDTH, CARD_HEIGHT))) + 2
 
 #: 卡片上的文案：正中是渐变大字，底边一行副标题（高亮词单独上渐变）。
 CARD_TEXT = "查找设备"
@@ -188,6 +215,14 @@ def _triangle(phase: float) -> float:
     return phase * 2.0 if phase < 0.5 else (1.0 - phase) * 2.0
 
 
+def _ease_in_out_cubic(phase: float) -> float:
+    """``cubic-bezier`` 那一档缓入缓出：一张卡起步与收尾都放慢，转起来才不像急停。"""
+    phase = max(0.0, min(1.0, phase))
+    if phase < 0.5:
+        return 4.0 * phase * phase * phase
+    return 1.0 - ((-2.0 * phase + 2.0) ** 3) / 2.0
+
+
 def _glow_pen(color: QColor, width: float) -> QPen:
     """圆头圆角的描边笔：文字外发光与角标光晕都用它，描边没有断口。"""
     pen = QPen(color, float(width))
@@ -266,6 +301,128 @@ def _hover_curve() -> QEasingCurve:
     curve = QEasingCurve(QEasingCurve.Type.BezierSpline)
     curve.addCubicBezierSegment(QPointF(x1, y1), QPointF(x2, y2), QPointF(1.0, 1.0))
     return curve
+
+
+# ---- 卡面（不随时间变化的那一层）：按钮与等待动画里每一张卡共用 -------------------
+
+
+def _paint_card_face(painter: QPainter, card: QRectF) -> None:
+    """45° 的近黑渐变卡面 + 四边内阴影 + 一层提亮（``filter: brightness(1.1)``）。"""
+    gradient = _diagonal_gradient(card)
+    gradient.setColorAt(0.0, _FACE_START)
+    gradient.setColorAt(1.0, _FACE_END)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(gradient)
+    painter.drawRect(card)
+
+    # ``inset 0 0 20px rgba(0, 0, 0, 0.2)``：沿四边往里画几圈很淡的暗色。
+    painter.setBrush(Qt.NoBrush)
+    for step in range(4):
+        inset = 1.0 + step * 4.0
+        painter.setPen(QPen(_alpha(_BLACK, 10 / 255.0), 4.0))
+        painter.drawRoundedRect(
+            card.adjusted(inset, inset, -inset, -inset),
+            max(1.0, CARD_RADIUS - inset),
+            max(1.0, CARD_RADIUS - inset),
+        )
+
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(_alpha(_WHITE, _BRIGHTNESS_WASH))
+    painter.drawRect(card)
+
+
+def _paint_card_glow(painter: QPainter, card: QRectF) -> None:
+    """卡面自己的一团青绿→天蓝柔光（压深色卡面用的内发光，不是背后的霓虹光斑）。"""
+    center = card.center()
+    reach = 0.75 * math.hypot(card.width(), card.height())
+    gradient = QRadialGradient(center, reach)
+    gradient.setColorAt(0.0, _alpha(_ACCENT, 0.08))
+    gradient.setColorAt(0.5, _alpha(_ACCENT_BLUE, 0.04))
+    gradient.setColorAt(1.0, _alpha(_ACCENT_BLUE, 0.0))
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(gradient)
+    painter.drawEllipse(center, reach, reach)
+
+
+def _paint_card_blobs(painter: QPainter, card: QRectF) -> None:
+    """三团光晕（``.glow-1..3``）：左上角外、右侧外、底部偏左。"""
+    radius = _BLOB_SIZE / 2.0
+    centers = (
+        # glow-1：``top: -20px; left: -20px``。
+        QPointF(card.left() + 30.0, card.top() + 30.0),
+        # glow-2：``top: 50%; right: -30px``，竖直居中。
+        QPointF(card.right() - 20.0, card.center().y()),
+        # glow-3：``bottom: -20px; left: 30%``。
+        QPointF(card.left() + card.width() * 0.30 + radius, card.bottom() - 30.0),
+    )
+    painter.setPen(Qt.NoPen)
+    for center in centers:
+        # ``filter: blur(15px)`` 的近似：把半径放大一圈，让它自己就散开。
+        reach = radius * 1.3
+        gradient = QRadialGradient(center, reach)
+        gradient.setColorAt(0.0, _alpha(_ACCENT, 0.3))
+        gradient.setColorAt(0.7, _alpha(_ACCENT, 0.0))
+        painter.setBrush(gradient)
+        painter.drawEllipse(center, reach, reach)
+
+
+def _paint_card_corners(painter: QPainter, card: QRectF) -> None:
+    """四角的直角角标：靛蓝描边 + 一圈外发光。"""
+    color = _alpha(_INDIGO, 0.8)
+    size = 15.0
+    gap = 10.0
+    left = card.left() + gap
+    right = card.right() - gap
+    top = card.top() + gap
+    bottom = card.bottom() - gap
+    strokes = (
+        ((left, top), (left + size, top)),
+        ((left, top), (left, top + size)),
+        ((right - size, top), (right, top)),
+        ((right, top), (right, top + size)),
+        ((left, bottom), (left + size, bottom)),
+        ((left, bottom - size), (left, bottom)),
+        ((right - size, bottom), (right, bottom)),
+        ((right, bottom - size), (right, bottom)),
+    )
+    # ``box-shadow: 0 0 10px rgba(92, 103, 255, 0.5)``：先描一圈更淡更粗的底。
+    painter.setBrush(Qt.NoBrush)
+    glow = _glow_pen(_alpha(_INDIGO, 0.35), 5.0)
+    glow.setCapStyle(Qt.FlatCap)
+    painter.setPen(glow)
+    for start, end in strokes:
+        painter.drawLine(QPointF(*start), QPointF(*end))
+    solid = _glow_pen(color, CORNER_STROKE)
+    solid.setCapStyle(Qt.FlatCap)
+    painter.setPen(solid)
+    for start, end in strokes:
+        painter.drawLine(QPointF(*start), QPointF(*end))
+
+
+@lru_cache(maxsize=4)
+def _render_card_face(width: int, height: int, ratio: float) -> QPixmap:
+    """卡面、柔光、光晕与四角角标的预渲染图：尺寸与屏幕像素比不变就整张复用。
+
+    按钮本体与等待动画里的 5 张卡画的是同一张卡，因此都从这里取图：旋转只是把这张
+    位图转个角度，不必每帧重画卡面。
+    """
+    size = QSize(max(1, round(width * ratio)), max(1, round(height * ratio)))
+    pixmap = QPixmap(size)
+    pixmap.fill(Qt.transparent)
+    # 带 dpr 的画布由 Qt 换算成逻辑坐标，这里不再自己缩放一次。
+    pixmap.setDevicePixelRatio(ratio)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    card = QRectF(0.0, 0.0, float(width), float(height))
+    silhouette = QPainterPath()
+    silhouette.addRoundedRect(card, CARD_RADIUS, CARD_RADIUS)
+    painter.setClipPath(silhouette)
+    _paint_card_face(painter, card)
+    _paint_card_glow(painter, card)
+    _paint_card_blobs(painter, card)
+    _paint_card_corners(painter, card)
+    painter.end()
+    return pixmap
 
 
 class _CardBackdrop(QWidget):
@@ -606,26 +763,8 @@ class ScanPromptCard(QPushButton):
         return self._face
 
     def _render_face(self, ratio: float) -> QPixmap:
-        """渐变卡面、提亮、柔光与四角角标：都不动，画进位图（投影在装饰层上）。"""
-        size = QSize(
-            max(1, round(self.width() * ratio)), max(1, round(self.height() * ratio))
-        )
-        pixmap = QPixmap(size)
-        pixmap.fill(Qt.transparent)
-        # 带 dpr 的画布由 Qt 换算成逻辑坐标，这里不再自己缩放一次。
-        pixmap.setDevicePixelRatio(ratio)
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        card = self._card_rect()
-        silhouette = QPainterPath()
-        silhouette.addRoundedRect(card, CARD_RADIUS, CARD_RADIUS)
-        painter.setClipPath(silhouette)
-        self._paint_face(painter, card)
-        self._paint_card_glow(painter, card)
-        self._paint_blobs(painter, card)
-        self._paint_corners(painter, card)
-        painter.end()
-        return pixmap
+        """渐变卡面、提亮、柔光与四角角标：都不动，整张预渲染（投影在装饰层上）。"""
+        return _render_card_face(self.width(), self.height(), ratio)
 
     def _text_fade(self) -> float:
         """悬停时两行字淡到看不见的程度：0 是完全不透明，1 是完全看不见。
@@ -646,95 +785,6 @@ class ScanPromptCard(QPushButton):
         self._paint_title(painter, card)
         self._paint_subtitle(painter, card)
         painter.restore()
-
-    def _paint_face(self, painter: QPainter, card: QRectF) -> None:
-        """45° 的近黑渐变卡面 + 四边内阴影 + 一层提亮（``filter: brightness(1.1)``）。"""
-        gradient = _diagonal_gradient(card)
-        gradient.setColorAt(0.0, _FACE_START)
-        gradient.setColorAt(1.0, _FACE_END)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(gradient)
-        painter.drawRect(card)
-
-        # ``inset 0 0 20px rgba(0, 0, 0, 0.2)``：沿四边往里画几圈很淡的暗色。
-        painter.setBrush(Qt.NoBrush)
-        for step in range(4):
-            inset = 1.0 + step * 4.0
-            painter.setPen(QPen(_alpha(_BLACK, 10 / 255.0), 4.0))
-            painter.drawRoundedRect(
-                card.adjusted(inset, inset, -inset, -inset),
-                max(1.0, CARD_RADIUS - inset),
-                max(1.0, CARD_RADIUS - inset),
-            )
-
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(_alpha(_WHITE, _BRIGHTNESS_WASH))
-        painter.drawRect(card)
-
-    def _paint_card_glow(self, painter: QPainter, card: QRectF) -> None:
-        """卡面自己的一团青绿→天蓝柔光（压深色卡面用的内发光，不是背后的霓虹光斑）。"""
-        center = card.center()
-        reach = 0.75 * math.hypot(card.width(), card.height())
-        gradient = QRadialGradient(center, reach)
-        gradient.setColorAt(0.0, _alpha(_ACCENT, 0.08))
-        gradient.setColorAt(0.5, _alpha(_ACCENT_BLUE, 0.04))
-        gradient.setColorAt(1.0, _alpha(_ACCENT_BLUE, 0.0))
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(gradient)
-        painter.drawEllipse(center, reach, reach)
-
-    def _paint_blobs(self, painter: QPainter, card: QRectF) -> None:
-        """三团光晕（``.glow-1..3``）：左上角外、右侧外、底部偏左。"""
-        radius = _BLOB_SIZE / 2.0
-        centers = (
-            # glow-1：``top: -20px; left: -20px``。
-            QPointF(card.left() + 30.0, card.top() + 30.0),
-            # glow-2：``top: 50%; right: -30px``，竖直居中。
-            QPointF(card.right() - 20.0, card.center().y()),
-            # glow-3：``bottom: -20px; left: 30%``。
-            QPointF(card.left() + card.width() * 0.30 + radius, card.bottom() - 30.0),
-        )
-        painter.setPen(Qt.NoPen)
-        for center in centers:
-            # ``filter: blur(15px)`` 的近似：把半径放大一圈，让它自己就散开。
-            reach = radius * 1.3
-            gradient = QRadialGradient(center, reach)
-            gradient.setColorAt(0.0, _alpha(_ACCENT, 0.3))
-            gradient.setColorAt(0.7, _alpha(_ACCENT, 0.0))
-            painter.setBrush(gradient)
-            painter.drawEllipse(center, reach, reach)
-
-    def _paint_corners(self, painter: QPainter, card: QRectF) -> None:
-        """四角的直角角标：靛蓝描边 + 一圈外发光。"""
-        color = _alpha(_INDIGO, 0.8)
-        size = 15.0
-        gap = 10.0
-        left = card.left() + gap
-        right = card.right() - gap
-        top = card.top() + gap
-        bottom = card.bottom() - gap
-        strokes = (
-            ((left, top), (left + size, top)),
-            ((left, top), (left, top + size)),
-            ((right - size, top), (right, top)),
-            ((right, top), (right, top + size)),
-            ((left, bottom), (left + size, bottom)),
-            ((left, bottom - size), (left, bottom)),
-            ((right - size, bottom), (right, bottom)),
-            ((right, bottom - size), (right, bottom)),
-        )
-        # ``box-shadow: 0 0 10px rgba(92, 103, 255, 0.5)``：先描一圈更淡更粗的底。
-        painter.setBrush(Qt.NoBrush)
-        glow = _glow_pen(_alpha(_INDIGO, 0.35), 5.0)
-        glow.setCapStyle(Qt.FlatCap)
-        painter.setPen(glow)
-        for start, end in strokes:
-            painter.drawLine(QPointF(*start), QPointF(*end))
-        solid = _glow_pen(color, CORNER_STROKE)
-        solid.setCapStyle(Qt.FlatCap)
-        painter.setPen(solid)
-        for start, end in strokes:
-            painter.drawLine(QPointF(*start), QPointF(*end))
 
     def _paint_cyber_lines(self, painter: QPainter, card: QRectF) -> None:
         """四条横向光带：``scaleX`` 从中间向两端长出去再收回来（``lineGrow``）。"""
@@ -868,3 +918,121 @@ class ScanPromptCard(QPushButton):
         painter.setPen(Qt.NoPen)
         painter.setBrush(gradient)
         painter.drawRect(card)
+
+
+class ScanWaitStack(QWidget):
+    """扫描进行中的等待动画：一叠 5 张卡，从堆顶一张接一张各转一整圈。
+
+    点“查找设备”之后，面板把按钮换成这个控件：5 张与按钮同尺寸的卡叠在一起（5 张只是
+    动画，与这次真正查到几台设备无关）。第 0 张（堆顶那张，最后落笔、压在其他卡上面）
+    先绕自己的中心转 360°，隔 :data:`WAIT_SPIN_STAGGER_MS` 第 1 张接上，依此类推；每张
+    用 :data:`WAIT_SPIN_MS` 转满一圈回到 0°。5 张全部转完正好叠回一整叠，停
+    :data:`WAIT_PAUSE_MS` 再来一轮（:data:`WAIT_CYCLE_MS` 是这一整轮的时长）。相邻两张的
+    转动互相重叠，所以转的过程中同时看得见几张不同角度的卡——参考图里的中间几格就是
+    这种时刻。
+
+    它只是动画：不吃鼠标（``WA_TransparentForMouseEvents``）、不占键盘焦点，也不改变
+    版面。控件固定为卡片对角线那么大的正方形（:data:`WAIT_STACK_SIZE`），卡片转到任何
+    角度都落在自己的矩形里，不会被结果区上沿裁成一条硬边。卡面与按钮是同一张预渲染图
+    （:func:`_render_card_face`），每帧只是把它转个角度贴上去。
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("scanWaitStack")
+        # 这是动画，不是按钮：点击、悬停与键盘焦点都留在面板上。
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.setFixedSize(self.sizeHint())
+
+        #: 本轮动画已经走到哪一刻（0..WAIT_CYCLE_MS），每帧按它算 5 个角度。
+        self._elapsed = 0.0
+        #: 卡面预渲染图（尺寸与屏幕像素比不变就一直用这一张）。
+        self._face = QPixmap()
+        self._face_key: tuple[int, int, float] | None = None
+        self._clock = QElapsedTimer()
+        self._clock.start()
+
+        self._frame_timer = QTimer(self)
+        self._frame_timer.setInterval(_FRAME_MS)
+        self._frame_timer.timeout.connect(self._advance)
+
+    # ---- 尺寸 ---------------------------------------------------------------
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt 覆盖方法
+        """舞台正好装得下卡片转到任意角度：边长取卡片对角线。"""
+        return QSize(WAIT_STACK_SIZE, WAIT_STACK_SIZE)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt 覆盖方法
+        return self.sizeHint()
+
+    # ---- 时间轴 -------------------------------------------------------------
+
+    def angles_at(self, elapsed_ms: float) -> tuple[float, ...]:
+        """这一刻 5 张卡各自转过的角度（度）；``elapsed_ms`` 按一轮取模。
+
+        第 0 项是堆顶那张，也是最先开始转的那张。每张从 0° 起转，:data:`WAIT_SPIN_MS`
+        之后正好回到 0°（转满 360°），所以全部转完时是一整叠；之后到本轮结束时角度都
+        是 0°，那就是停 :data:`WAIT_PAUSE_MS` 的那一段。
+        """
+        elapsed = float(elapsed_ms) % WAIT_CYCLE_MS
+        angles = []
+        for index in range(WAIT_STACK_CARDS):
+            local = elapsed - index * WAIT_SPIN_STAGGER_MS
+            if local <= 0.0 or local >= WAIT_SPIN_MS:
+                angles.append(0.0)
+            else:
+                angles.append(360.0 * _ease_in_out_cubic(local / WAIT_SPIN_MS))
+        return tuple(angles)
+
+    @property
+    def spin_angles(self) -> tuple[float, ...]:
+        """当前画在屏幕上的 5 个角度（第 0 项是堆顶那张）。"""
+        return self.angles_at(self._elapsed)
+
+    def _advance(self) -> None:
+        """推进到这一刻并重画：一圈 360° 走完就回到叠起的样子。"""
+        self._elapsed = float(self._clock.elapsed() % WAIT_CYCLE_MS)
+        self.update()
+
+    def showEvent(self, event):  # noqa: N802 - Qt 覆盖方法
+        # 每次出现都从“一整叠”开始，并且从第一张卡开始转。
+        self._elapsed = 0.0
+        self._clock.start()
+        self._frame_timer.start()
+        super().showEvent(event)
+
+    def hideEvent(self, event):  # noqa: N802 - Qt 覆盖方法
+        """收起来就停下计时器，并把角度归零：下一次查找重新从一整叠开始。"""
+        self._frame_timer.stop()
+        self._elapsed = 0.0
+        super().hideEvent(event)
+
+    # ---- 绘制 ---------------------------------------------------------------
+
+    def paintEvent(self, event):  # noqa: N802 - Qt 覆盖方法
+        """5 张卡绕同一个中心各自转一个角度；堆顶那张最后画。"""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        face = self._deck_face()
+        center = QPointF(self.width() / 2.0, self.height() / 2.0)
+        half_width = float(CARD_WIDTH) / 2.0
+        half_height = float(CARD_HEIGHT) / 2.0
+        # 倒着画：索引 0 是堆顶那张，最后落笔，压在其他卡上面。
+        for angle in reversed(self.angles_at(self._elapsed)):
+            painter.save()
+            painter.translate(center)
+            painter.rotate(angle)
+            painter.drawPixmap(QPointF(-half_width, -half_height), face)
+            painter.restore()
+
+    def _deck_face(self) -> QPixmap:
+        """这一叠共用的卡面：与“查找设备”按钮画的是同一张图。"""
+        ratio = float(self.devicePixelRatioF())
+        key = (CARD_WIDTH, CARD_HEIGHT, round(ratio, 3))
+        if self._face_key != key:
+            self._face = _render_card_face(CARD_WIDTH, CARD_HEIGHT, ratio)
+            self._face_key = key
+        return self._face
+

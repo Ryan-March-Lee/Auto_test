@@ -21,7 +21,8 @@
 版式：扫描行（扫描网段 / 扫描方式）在标题正下方居中，结果区在它下面。结果区**不画外框**
 （没有边框、没有底色），所以仪器卡片直接落在页面背景上；还没点过“查找设备”时，那张
 卡片按钮就落在结果区顶部、紧跟在扫描行下面（不在整块结果区里居中，免得和扫描行之间隔
-一大段空白），点下去之后换成“正在查找设备”，结果回来后再换成卡片。
+一大段空白），点下去之后原地换成等待动画（:class:`presentation.qt.scan_card.ScanWaitStack`：
+5 张卡从堆顶一张接一张各转一整圈，叠回去停 0.5s 再来一轮），结果回来后再换成卡片。
 **结果区的高度是固定的**（两行卡片 + 按钮与状态行）：查找前后、结果多少都不改变它的
 大小，卡片超出时只在结果区里滚动。卡片区本身只占实际行数（最多两行）那么高，
 统计/失败说明紧跟在卡片下面并横向居中，动作行再排在它下面（“返回”在左，页面级动作
@@ -79,7 +80,7 @@ from .device_cards import (
     instrument_picture_path,
 )
 from .input_controls import WheelSafeComboBox
-from .scan_card import SCAN_CARD_HEADROOM, ScanPromptCard
+from .scan_card import SCAN_CARD_HEADROOM, ScanPromptCard, ScanWaitStack
 from .theme import set_button_variant, set_tone
 
 # 角色标签是“本次测试语义”，与设备身份（完整设备码）分开：设备可以换 IP，角色不会变。
@@ -382,6 +383,10 @@ class DeviceDiscoveryPanel(QWidget):
         # 外观不取自样式表：它是一张自绘的深色卡片按钮（悬停动效见
         # ``presentation.qt.scan_card``），按钮的大小就是仪器卡片的大小，尺寸由
         # ``presentation.qt.device_cards`` 给出。
+        # 扫描期间的等待动画：点下去按钮收走，同一位置换成这一叠 5 张卡，从堆顶一张接
+        # 一张各转一整圈，全部叠回去后停 0.5s 再来一轮（5 张只是动画，与设备台数无关）。
+        self.wait_stack = ScanWaitStack()
+        self.wait_stack.setVisible(False)
         # 扫描期间的结果区说明：按钮收走后，这里写明正在读取设备。
         self.loading_label = QLabel(LOADING_TEXT)
         self.loading_label.setAlignment(Qt.AlignHCenter)
@@ -446,10 +451,12 @@ class DeviceDiscoveryPanel(QWidget):
         # 裁掉；这一圈空白的宽度由装饰的伸出版面决定（``scan_card.SCAN_CARD_HEADROOM``）。
         # 紫→蓝底卡与霓虹柔光都已删除，这里只关系投影。
         centre.addSpacing(SCAN_CARD_HEADROOM)
-        # 中间这一行自己按可见项居中：没有卡片时只有一张“查找设备”卡片。
+        # 中间这一行自己按可见项居中：没有卡片时只有一张“查找设备”卡片；扫描期间
+        # 同一位置换成那一叠等待动画（两者互斥，同一时刻只有一个可见）。
         centre_row = QHBoxLayout()
         centre_row.setSpacing(10)
         centre_row.addStretch(1)
+        centre_row.addWidget(self.wait_stack)
         centre_row.addWidget(self.scan_btn)
         centre_row.addStretch(1)
         centre.addLayout(centre_row)
@@ -588,6 +595,7 @@ class DeviceDiscoveryPanel(QWidget):
                 for widget, visible in (
                     (self.centre_area, idle or busy),
                     (self.scan_btn, idle),
+                    (self.wait_stack, busy),
                     (self.loading_label, busy),
                     (self.cards_area, results),
                     (self.back_btn, results),
@@ -597,6 +605,7 @@ class DeviceDiscoveryPanel(QWidget):
         )
         self.centre_area.setVisible(idle or busy)
         self.scan_btn.setVisible(idle)
+        self.wait_stack.setVisible(busy)
         self.loading_label.setVisible(busy)
         self.cards_area.setVisible(results)
         # 返回只对结果有效：没有卡片时不显示用不上的按钮。
@@ -638,7 +647,8 @@ class DeviceDiscoveryPanel(QWidget):
     def request_scan(self) -> None:
         """启动后台扫描；同一时刻只允许一个扫描线程。
 
-        点下去就是“开始加载设备”：结果区顶部的按钮收走，换成扫描进度；卡片区等结果
+        点下去就是“开始加载设备”：结果区顶部的按钮收走，原地换成那一叠卡的等待动画
+        （5 张卡从堆顶一张接一张各转一整圈，叠回去停 0.5s 再来一轮）；卡片区等结果
         回来再出现，扫描期间不出现用不上的操作按钮。
         """
         if self.is_scanning():

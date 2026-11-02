@@ -11,6 +11,7 @@
 搬家（隐藏/显示、换父控件、重排）且不改变页面层级。
 """
 
+import math
 import os
 import unittest
 
@@ -445,6 +446,156 @@ class ScanPromptCardTests(unittest.TestCase):
         self.assertAlmostEqual(
             relative, 0.5, delta=0.08, msg=f"标题应在卡片竖直中央，实际在 {relative:.3f}"
         )
+
+
+def _stack_scene():
+    """把等待动画放进一块页面同色的底板里，返回 ``(底板, 动画)``。"""
+    from presentation.qt.scan_card import ScanWaitStack
+    from presentation.qt.theme import TOKENS
+
+    stack = ScanWaitStack()
+    host = QWidget()
+    host.setStyleSheet(f"background-color: {TOKENS['canvas']};")
+    layout = QVBoxLayout(host)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.addWidget(stack, 0, Qt.AlignHCenter)
+    host.resize(stack.width(), stack.height())
+    host.show()
+    _application().processEvents()
+    return host, stack
+
+
+def _stack_frame(host, stack, elapsed_ms: float):
+    """把动画钉在某一刻再抓图：每个时刻的画面才可比。"""
+    stack._frame_timer.stop()
+    stack._elapsed = float(elapsed_ms)
+    stack.update()
+    _application().processEvents()
+    return host.grab().toImage()
+
+
+class ScanWaitStackTests(unittest.TestCase):
+    """扫描等待动画：5 张卡从堆顶一张接一张各转一整圈，叠回去停 0.5s 再来一轮。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _application()
+
+    def test_the_stage_is_big_enough_for_the_card_at_any_angle(self):
+        from presentation.qt.scan_card import (
+            CARD_HEIGHT,
+            CARD_WIDTH,
+            WAIT_STACK_CARDS,
+            WAIT_STACK_SIZE,
+            ScanWaitStack,
+        )
+
+        stack = ScanWaitStack()
+        self.assertEqual(
+            WAIT_STACK_CARDS, 5, "动画永远是 5 张卡：它只是动画，不跟设备台数走"
+        )
+        self.assertGreaterEqual(
+            WAIT_STACK_SIZE,
+            math.hypot(CARD_WIDTH, CARD_HEIGHT),
+            "卡片转到任意角度都要落在舞台里，否则结果区上沿会把它裁成一条硬边",
+        )
+        self.assertEqual(stack.size().width(), WAIT_STACK_SIZE)
+        self.assertEqual(stack.size().height(), WAIT_STACK_SIZE)
+        self.assertTrue(
+            stack.testAttribute(Qt.WA_TransparentForMouseEvents),
+            "等待动画只是画面：点击与悬停都留给面板",
+        )
+        self.assertEqual(stack.focusPolicy(), Qt.NoFocus)
+
+    def test_each_card_turns_a_full_circle_one_after_another_from_the_top(self):
+        from presentation.qt.scan_card import (
+            WAIT_CYCLE_MS,
+            WAIT_PAUSE_MS,
+            WAIT_SPIN_MS,
+            WAIT_SPIN_STAGGER_MS,
+            WAIT_STACK_CARDS,
+            ScanWaitStack,
+        )
+
+        stack = ScanWaitStack()
+        zero = (0.0,) * WAIT_STACK_CARDS
+        self.assertEqual(stack.angles_at(0), zero, "开始前是一整叠")
+
+        # 堆顶那张先动：它已经开始转时，下面那张还没起步；再往后两张都在转，但上
+        # 面那张转过的角度更大。
+        first = stack.angles_at(WAIT_SPIN_STAGGER_MS // 2)
+        self.assertGreater(first[0], 0.0, "第一张应最先开始")
+        self.assertEqual(first[1], 0.0, "第二张要等一个间隔才开始")
+        later = stack.angles_at(WAIT_SPIN_STAGGER_MS + WAIT_SPIN_MS // 4)
+        self.assertGreater(later[0], later[1], "应该从堆顶一张一张往下转")
+        self.assertGreater(later[1], 0.0, "后一张这时也应转起来了")
+
+        # 每张都转满一整圈：四分之三处已经过了半圈，结束后回到 0°。
+        self.assertGreater(stack.angles_at(WAIT_SPIN_MS * 3 // 4)[0], 180.0)
+        finished = (WAIT_STACK_CARDS - 1) * WAIT_SPIN_STAGGER_MS + WAIT_SPIN_MS
+        self.assertEqual(stack.angles_at(finished), zero, "5 张都要转回整叠")
+
+        # 全部转完后停 0.5s，再从头开始。
+        self.assertEqual(
+            stack.angles_at(finished + WAIT_PAUSE_MS - 1),
+            zero,
+            "叠回去之后要停 0.5s 才开始下一轮",
+        )
+        self.assertEqual(stack.angles_at(WAIT_CYCLE_MS), zero, "新一轮从头开始")
+        self.assertGreater(
+            stack.angles_at(WAIT_CYCLE_MS + 100)[0], 0.0, "停顿结束后应重新转起来"
+        )
+
+    def test_the_deck_comes_back_to_the_same_stacked_frame(self):
+        from presentation.qt.scan_card import (
+            WAIT_SPIN_MS,
+            WAIT_SPIN_STAGGER_MS,
+            WAIT_STACK_CARDS,
+        )
+
+        host, stack = _stack_scene()
+        finished = (WAIT_STACK_CARDS - 1) * WAIT_SPIN_STAGGER_MS + WAIT_SPIN_MS
+        self.assertEqual(
+            _stack_frame(host, stack, 0),
+            _stack_frame(host, stack, finished),
+            "全部转完应叠回与开始时一模一样的一整叠",
+        )
+
+    def test_the_cards_turn_out_of_the_stacked_card_while_the_deck_spins(self):
+        """转起来时同一块舞台上看得见卡片的边角；停下来又只剩那一张卡。"""
+        from presentation.qt.scan_card import WAIT_STACK_SIZE
+        from presentation.qt.theme import TOKENS
+
+        host, stack = _stack_scene()
+        centre_x = WAIT_STACK_SIZE / 2.0
+        rest = _stack_frame(host, stack, 0)
+        turning = _stack_frame(host, stack, 380)
+
+        self.assertEqual(
+            _point(host, rest, centre_x, 26.0).name(),
+            TOKENS["canvas"].lower(),
+            "静止时舞台上方是页面底色（卡片只有 240 高）",
+        )
+        self.assertLess(
+            _point(host, turning, centre_x, 26.0).lightness(),
+            90,
+            "卡片转到 45° 附近时应该探到静止卡片的上方",
+        )
+
+    def test_the_deck_starts_over_every_time_it_is_shown(self):
+        """扫描结束后动画收起来；下一次查找重新从一整叠、第一张卡开始。"""
+        _host, stack = _stack_scene()
+        self.assertTrue(stack._frame_timer.isActive(), "显示时动画应在走")
+
+        stack.hide()
+        _application().processEvents()
+        self.assertFalse(stack._frame_timer.isActive(), "收起来后不该还在计时")
+        self.assertEqual(stack.spin_angles, (0.0,) * 5, "收起来时角度归零")
+
+        stack.show()
+        _application().processEvents()
+        self.assertTrue(stack._frame_timer.isActive(), "再显示时应重新开始")
+        self.assertEqual(stack._elapsed, 0.0, "重新开始时应从一整叠、第一张卡起步")
 
 
 if __name__ == "__main__":

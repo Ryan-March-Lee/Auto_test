@@ -2212,4 +2212,3 @@ __all__ = [
 #: 兼容期旧类名（计划步骤 13）。新代码使用 :class:`InstrumentDiscoveryPanel`；旧名称在
 #: ``presentation.qt.device_discovery_panel`` 的兼容模块和本模块同时可用，迁移完成后删除。
 DeviceDiscoveryPanel = InstrumentDiscoveryPanel
-

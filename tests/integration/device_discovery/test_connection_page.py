@@ -471,3 +471,140 @@ class ConnectionPageNextWriteTests(ConnectionPageTestCase):
 
         self.assertEqual(requested, [True])
         self.assertIn("signal_generator", page.device_bindings)
+
+
+class DiscoveryAnimationOverlayTests(ConnectionPageTestCase):
+    """页面级动画覆盖层（技术债重构步骤 6）：不放进卡片滚动区，落点在开始时冻结。"""
+
+    def _dealing(self, size=(1200, 900), position=None):
+        """扫完一轮、进入发牌但先不替它收尾：返回 ``(page, panel, layer)``。
+
+        ``position`` 把页面窗口挪到桌面上的另一处：覆盖层坐标应只取决于控件之间的
+        相对位置，窗口在哪里都不该改变落点。
+        """
+        self.make_page()
+        page = self.connection
+        page.resize(*size)
+        if position is not None:
+            page.move(*position)
+        self.app.processEvents()
+        panel = page.discovery_panel
+        panel.request_scan()
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+        panel.wait_stack.finish_cycle()
+        self.app.processEvents()
+        self.app.processEvents()
+        self.assertTrue(panel.deal_layer.is_running(), "扫描结果应由发牌动画带出来")
+        return page, panel, panel.deal_layer
+
+    def test_the_deal_overlay_sits_on_the_page_root_not_in_the_scroll_area(self):
+        """覆盖层挂在页面根容器上：滚动区与结果区都不再是它的坐标系。
+
+        计划步骤 6：动画不依赖 ``results_box`` 的内部布局，也不随 ``QScrollArea`` 滚动。
+        """
+        self.make_page()
+        page = self.connection
+        panel = page.discovery_panel
+        overlay = page.animation_overlay
+
+        self.assertIs(panel.animation_overlay(), overlay)
+        self.assertIs(
+            panel.deal_layer.parentWidget(), overlay, "发牌层铺在页面级覆盖层里"
+        )
+        self.assertIs(overlay.parentWidget(), page.overlay_host)
+        self.assertFalse(page.scroll_area.isAncestorOf(overlay), "覆盖层不能在滚动区里")
+        self.assertFalse(panel.results_box.isAncestorOf(overlay), "覆盖层不能挂结果区")
+        self.assertTrue(overlay.testAttribute(Qt.WA_TransparentForMouseEvents))
+        self.assertEqual(overlay.focusPolicy(), Qt.NoFocus)
+        self.assertEqual(
+            overlay.geometry(), page.overlay_host.rect(), "覆盖层要铺满页面根容器"
+        )
+
+    def test_the_targets_are_captured_in_overlay_coordinates(self):
+        """每张牌的落点在动画开始时换算到覆盖层坐标，之后不再追踪卡片控件。"""
+        page, panel, layer = self._dealing()
+        cards = panel.cards()
+        self.assertGreater(len(cards), 1)
+        diagnostics = layer.diagnostics()
+        self.assertGreater(diagnostics["paint_frames"], 0, "页面级覆盖层要真的绘制出来")
+        self.assertGreater(diagnostics["drawn_cards"], 0, "首帧要画出可见的牌面")
+        self.assertIn(
+            "AnimationOverlay(pageAnimationOverlay)",
+            diagnostics["overlay_parent"],
+            "诊断里的父控件应指向页面级覆盖层",
+        )
+
+        for index, card in enumerate(cards):
+            target = layer._target_rect(index)
+            # 期望值用页面根容器（卡片与覆盖层的共同祖先）换算；覆盖层与它同大，
+            # 因此这既是卡片在覆盖层里的位置，也不经过任何“映射到兄弟控件”的捷径。
+            origin = card.mapTo(page.overlay_host, card.rect().topLeft())
+            self.assertAlmostEqual(target.x(), origin.x(), delta=1, msg="落点在覆盖层坐标里")
+            self.assertAlmostEqual(target.y(), origin.y(), delta=1, msg="落点在覆盖层坐标里")
+            self.assertAlmostEqual(target.width(), card.width(), delta=1)
+            self.assertAlmostEqual(target.height(), card.height(), delta=1)
+
+        # 页头文字淡出只改透明度、不改版面：已经开始的动画坐标保持不变。
+        frozen = [layer._target_rect(index) for index in range(len(cards))]
+        page._set_header_text_visible(False)
+        self.app.processEvents()
+        self.assertEqual(
+            [layer._target_rect(index) for index in range(len(cards))],
+            frozen,
+            "开始之后淡出页头文字不能移动已经算好的落点",
+        )
+
+        layer.finish()
+        self.app.processEvents()
+
+    def test_the_targets_do_not_depend_on_where_the_window_sits(self):
+        """覆盖层坐标只看控件相对位置：窗口挪到桌面别处，落点不能跟着偏。
+
+        旧实现用 ``mapTo`` 把卡片映射到兄弟分支的覆盖层，窗口不在 (0, 0) 时会拿到
+        屏幕坐标；这条用例把窗口挪开再扫描，专门盯住那个偏移。
+        """
+        page, panel, layer = self._dealing(position=(140, 90))
+        host = page.overlay_host
+
+        for index, card in enumerate(panel.cards()):
+            target = layer._target_rect(index)
+            expected = card.mapTo(host, card.rect().topLeft())
+            self.assertAlmostEqual(target.x(), expected.x(), delta=1, msg="落点不能被窗口位置带偏")
+            self.assertAlmostEqual(target.y(), expected.y(), delta=1, msg="落点不能被窗口位置带偏")
+
+        layer.finish()
+        self.app.processEvents()
+
+    def test_a_card_area_layout_change_while_dealing_cancels(self):
+        """卡片区自己的重排（不改变页面根容器尺寸）也要取消这次发牌。
+
+        结果区在页面里可能单独变高/变矮（滚动条出现、页头让出高度），覆盖层收不到
+        resize；面板必须自己按 ``surface-changed`` 收尾，不能把牌画到旧坐标上。
+        """
+        _page, panel, layer = self._dealing()
+        panel.resize(panel.width() - 60, panel.height())
+        self.app.processEvents()
+
+        self.assertFalse(layer.is_running(), "卡片区布局变化应结束这一次发牌")
+        self.assertEqual(layer.diagnostics()["cancel_reason"], "surface-changed")
+        self.assertTrue(panel.cards_area.isEnabled(), "取消后卡片恢复可交互")
+
+    def test_resizing_the_page_while_dealing_cancels_instead_of_tracking(self):
+        """窗口缩放时取消这一次发牌并恢复卡片，而不是在动画中途追踪布局。"""
+        page, panel, layer = self._dealing()
+        page.resize(page.width() - 80, page.height())
+        self.app.processEvents()
+
+        self.assertFalse(layer.is_running(), "缩放应结束这一次发牌")
+        self.assertFalse(layer.isVisible())
+        diagnostics = layer.diagnostics()
+        self.assertEqual(diagnostics["cancel_reason"], "surface-changed")
+        self.assertEqual(diagnostics["restore_result"], "revealed")
+        self.assertTrue(panel.cards_area.isEnabled(), "取消后卡片恢复可交互")
+        self.assertTrue(
+            panel.status_label.isVisible(), "取消后结果统计也要放出来，不能一直藏着"
+        )
+        for card in panel.cards():
+            self.assertIsNone(card.graphicsEffect(), "取消后卡片不再被透明度效果藏起来")

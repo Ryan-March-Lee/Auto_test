@@ -39,7 +39,11 @@
 不依赖卡片是否已经显示、是否完成重排。拿到扫描结果时卡片数
 （一台仪器一张）就已经定了，结果区先按这个数量把版面排定，发牌因此直接落在卡片最终的
 位置上，翻牌也翻在同一处。发牌期间真正的卡片用透明度效果藏起来、暂不可点；翻完最后一张
-才恢复交互并写出“发现 N 台设备 …”。
+才恢复交互并写出“发现 N 台设备 …”。发牌画面挂在**页面根容器**的覆盖层上
+（:mod:`presentation.qt.animation_overlay`，由页面通过 :meth:`DeviceDiscoveryPanel.attach_animation_overlay`
+挂进来），不在结果区或卡片滚动区里：起点与每张牌的落点在动画开始时一次性换算到覆盖层
+坐标，滚动与页头收放都不会挪动已经开始的动画；页面尺寸或滚动位置变化时页面取消这一次
+发牌并恢复卡片（``reason=surface-changed``）。面板单独使用（没有页面）时退回挂在结果区上。
 **结果区的高度由页面给出的可用高度决定**（宽裕时按两行卡片 + 按钮与状态行；窗口矮时
 由页面压到一行）：扫描状态与结果数量本身不改变它的大小，只有页面重新分配可用高度时
 才会伸缩，卡片超出时在结果区里滚动。卡片区本身只占实际行数（最多两行）那么高，
@@ -68,7 +72,7 @@ import threading
 from dataclasses import replace
 from typing import Any, Callable, Sequence
 
-from PySide6.QtCore import QPointF, Qt, QThread, Signal
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QApplication, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QScrollArea, QSizePolicy, QSpacerItem, QVBoxLayout, QWidget,
@@ -86,6 +90,7 @@ from domain.instruments.models import (
     canonical_role,
 )
 
+from .animation_overlay import AnimationOverlay, widget_rect_in
 from .card_assets import CardAsset, render_card_asset
 from .config_form_bindings import (
     binding_device_key,
@@ -360,9 +365,13 @@ class DeviceDiscoveryPanel(QWidget):
         # 页面给出的结果区可用高度（``None`` 表示没有页面约束：按两行卡片算）。
         # 它只随窗口尺寸变化，不随扫描状态变化。
         self._available_height: int | None = None
+        # 页面级动画覆盖层（技术债重构步骤 6）：有页面挂进来时，发牌画面挂在页面根容器
+        # 上，而不是结果区里；没有页面时退回挂在结果区上（面板单独使用的情形）。
+        self._animation_overlay: AnimationOverlay | None = None
         # “两行卡片”的结果区高度：窗口缩放时的上限，建面板时记一次，不随状态文字变化。
         self._results_height_max = 0
         self._build_ui(default_subnet or DEMO_SUBNET)
+        self._watch_animation_surfaces()
 
     def set_device_bindings(self, bindings: Any) -> None:
         """登记配置里的角色绑定；下一次扫描结果会按身份预选同一台设备。"""
@@ -371,6 +380,102 @@ class DeviceDiscoveryPanel(QWidget):
             for role, record in (bindings or {}).items()
             if isinstance(record, dict)
         }
+
+    # ---------- 动画覆盖层 ----------
+    #
+    # 发牌画面属于页面，而不是结果区：结果区在滚动区里，坐标会随滚动与页头收放变化。
+    # 页面把根容器上的覆盖层挂进来（:class:`presentation.qt.animation_overlay.AnimationOverlay`），
+    # 面板只负责在开始时把落点换算到覆盖层坐标并交给动画。
+
+    def attach_animation_overlay(self, overlay: AnimationOverlay) -> None:
+        """把发牌画面搬到页面级覆盖层上。
+
+        覆盖层与页面根容器同大、不进布局、不吃鼠标；发牌层成为它的子控件并铺满它。
+        动画坐标因此只跟页面走：``QScrollArea`` 的滚动与结果区内部布局都不再参与换算。
+        在动画进行中调用会先把这一次发牌收尾（恢复卡片），避免把运行中的画面搬到另一
+        个坐标系里。
+        """
+        if overlay is self._animation_overlay:
+            return
+        layer = self.deal_layer
+        if layer.is_running():
+            layer.cancel(reveal=True, reason="overlay-attached")
+        self._animation_overlay = overlay
+        if layer.parentWidget() is not overlay:
+            layer.setParent(overlay)
+        # 覆盖层尺寸一变，发牌层先跟上新的宿主矩形；要不要取消这次发牌由页面的
+        # “surface-changed”策略决定（面板自己的卡片区变化由下面的看护负责）。
+        overlay.resized.connect(self._sync_deal_layer_geometry)
+        self._sync_deal_layer_geometry()
+
+    def animation_overlay(self) -> AnimationOverlay | None:
+        """当前挂着的页面级覆盖层；面板单独使用时为 ``None``。"""
+        return self._animation_overlay
+
+    def _watch_animation_surfaces(self) -> None:
+        """盯住会挪动卡片、让已冻结的覆盖层坐标失效的控件。
+
+        页面根容器的尺寸与页面滚动由连接页盯着；卡片区自己的视口尺寸与滚动条位置
+        归面板：结果区在页面里也可能单独重排（滚动条出现、页头让出或收回高度），这时
+        不取消就会把牌画到旧位置上。
+        """
+        self.cards_area.viewport().installEventFilter(self)
+        for bar in (
+            self.cards_area.verticalScrollBar(),
+            self.cards_area.horizontalScrollBar(),
+        ):
+            bar.valueChanged.connect(self._on_animation_surface_changed)
+
+    def _on_animation_surface_changed(self, *_args: Any) -> None:
+        """卡片区的几何或滚动变了：落点真的挪了才取消这一次发牌。
+
+        布局落定期间视口常会再收到一两次 resize（滚动条出现/消失、首帧排版），此时
+        卡片位置往往没变；直接取消会让发牌动画永远播不出来。因此这里先按当前布局重算
+        一次落点与冻结值比较：卡片动了就按 ``surface-changed`` 取消并恢复卡片；只是
+        可见区域变了，就刷新裁剪遮罩，落点仍保持冻结。没有在播时什么也不做。
+        """
+        layer = getattr(self, "deal_layer", None)
+        if layer is None or not layer.is_running():
+            return
+        current_clip = self._deal_clip_rect(layer)
+        if self._deal_targets_moved(layer) or self._deal_clip_shrank(layer, current_clip):
+            self.cancel_deal_reveal(reveal=True, reason="surface-changed")
+            return
+        layer.refresh_clip_rect(current_clip)
+
+    def _deal_targets_moved(self, layer: DealRevealLayer) -> bool:
+        """当前卡片位置是否已经偏离本次动画冻结的落点（容差半像素）。"""
+        frozen = layer.targets()
+        cards = self.cards()
+        if len(frozen) != len(cards):
+            return True
+        for index, card in enumerate(cards):
+            current = self._deal_target_rect(card, layer)
+            target = frozen[index]
+            if (
+                abs(current.x() - target.x()) > 0.5
+                or abs(current.y() - target.y()) > 0.5
+                or abs(current.width() - target.width()) > 0.5
+                or abs(current.height() - target.height()) > 0.5
+            ):
+                return True
+        return False
+
+    @staticmethod
+    def _deal_clip_shrank(layer: DealRevealLayer, current: QRectF | None) -> bool:
+        """卡片区可见区域是否变小了：变窄可能触发重排，变矮可能裁到卡片。
+
+        变大只需刷新遮罩；卡片区整个不可见（``current`` 为空）时同样按失效处理。
+        """
+        frozen = layer.clip_rect()
+        if frozen is None:
+            return False
+        if current is None:
+            return True
+        return (
+            current.width() + 0.5 < frozen.width()
+            or current.height() + 0.5 < frozen.height()
+        )
 
     # ---------- 返回 ----------
     #
@@ -592,7 +697,7 @@ class DeviceDiscoveryPanel(QWidget):
         layout.addWidget(self.results_box)
 
         # 结果卡片不是直接出现：等待动画收拢后，这一层从按钮牌堆往卡片位发牌（背面朝上），
-        # 全部发完再逐张翻开。它是结果区的覆盖画面，不进布局、不吃鼠标；卡片自己先挂一层
+        # 全部发完再逐张翻开。它是页面级覆盖层里的画面，不进布局、不吃鼠标；卡片自己先挂一层
         # 透明度效果藏起来，翻到哪张才把哪张露出来。
         self.deal_layer = DealRevealLayer(self.results_box)
         self.deal_layer.setVisible(False)
@@ -990,8 +1095,9 @@ class DeviceDiscoveryPanel(QWidget):
 
         卡片数在拿到扫描结果时就定了（一台仪器一张卡片），版面也已经按这个数量排好：
         先把最终版面落定，再按卡片此刻的内容渲染每张卡的动画资产（正面不截控件），
-        然后用透明度效果把它们藏起来（仍然占着版面）。覆盖层的落点每帧从这些卡片现取，
-        因此发牌落点就是卡片最终所在的位置，翻开也翻在同一处。
+        然后用透明度效果把它们藏起来（仍然占着版面）。随后把每张卡的落点与卡片区裁剪
+        矩形一次性换算到覆盖层坐标；发牌因此落在卡片最终所在的位置，翻开也翻在同一处，
+        动画期间不再读卡片控件的坐标。
         """
         cards = self.cards()
         if not cards:
@@ -1004,25 +1110,57 @@ class DeviceDiscoveryPanel(QWidget):
         self._settle_deal_layout()
         front_source = self._deal_front_source()
         assets = self._deal_assets(cards, front_source)
+        layer = self.deal_layer
+        self._sync_deal_layer_geometry()
+        # 落点与裁剪区在这一刻一次性换算到覆盖层坐标：动画期间不再读卡片控件的位置，
+        # 滚动或内部布局变化都不会把已经飞出去的牌拽到别处（页面用取消代替追踪）。
+        # 先把所有输入算齐再藏卡片：任何校验失败都不会留下“看不见又点不了”的半状态。
+        targets = [self._deal_target_rect(card, layer) for card in cards]
+        clip = self._deal_clip_rect(layer)
+        anchor = (
+            layer.mapFromGlobal(deck_anchor)
+            if deck_anchor is not None
+            else layer.rect().center()
+        )
         for card in cards:
             effect = QGraphicsOpacityEffect(card)
             effect.setOpacity(0.0)
             card.setGraphicsEffect(effect)
         # 发牌期间卡片还不能点：覆盖层不吃鼠标，但下面的卡片已经看不见了。
         self.cards_area.setEnabled(False)
-        self._sync_deal_layer_geometry()
-        anchor = (
-            self.deal_layer.mapFromGlobal(deck_anchor)
-            if deck_anchor is not None
-            else self.deal_layer.rect().center()
-        )
-        self.deal_layer.start(
-            cards,
-            assets,
-            QPointF(anchor),
-            self.cards_area.viewport(),
-            front_source=front_source,
-        )
+        try:
+            layer.start(
+                cards,
+                assets,
+                QPointF(anchor),
+                target_rects=targets,
+                clip_rect=clip,
+                front_source=front_source,
+            )
+        except ValueError:
+            # 输入的份数/取值是内部约定，正常不会失败；真失败时把卡片恢复原样，
+            # 不能让异常把面板留在卡片透明、不可点的状态。
+            for card in cards:
+                card.setGraphicsEffect(None)
+            self.cards_area.setEnabled(True)
+            raise
+
+    @staticmethod
+    def _deal_target_rect(card: InstrumentCard, layer: QWidget) -> QRectF:
+        """这张卡在发牌覆盖层里的落点：动画开始时算一次。
+
+        卡片与覆盖层分属页面根容器的两个分支，换算经屏幕坐标中转（见
+        :func:`presentation.qt.animation_overlay.widget_rect_in`），窗口在桌面上的
+        位置不会混进落点。
+        """
+        return widget_rect_in(card, layer)
+
+    def _deal_clip_rect(self, layer: QWidget) -> QRectF | None:
+        """卡片区可见视口在覆盖层里的矩形：动画开始时算一次。"""
+        viewport = self.cards_area.viewport()
+        if not viewport.isVisible():
+            return None
+        return widget_rect_in(viewport, layer)
 
     def _deal_front_source(self) -> str:
         """本次发牌正面的来源：默认 ``asset``，排障回退为 ``screenshot``。
@@ -1082,11 +1220,16 @@ class DeviceDiscoveryPanel(QWidget):
         self.cards_layout.activate()
 
     def _sync_deal_layer_geometry(self) -> None:
-        """覆盖层始终铺满结果区；结果区变高/变矮或窗口缩放时重新对一次。"""
+        """覆盖层铺满它的宿主：页面级覆盖层（有页面时）或结果区（面板单独使用时）。"""
         layer = getattr(self, "deal_layer", None)
         if layer is None:
             return
-        layer.setGeometry(self.results_box.rect())
+        overlay = self._animation_overlay
+        if overlay is not None:
+            overlay.sync_geometry()
+            layer.setGeometry(overlay.rect())
+        else:
+            layer.setGeometry(self.results_box.rect())
         if layer.isVisible():
             layer.raise_()
 
@@ -1097,6 +1240,24 @@ class DeviceDiscoveryPanel(QWidget):
         self.cards_area.setEnabled(True)
         if self.box_state() == BOX_STATE_RESULTS:
             self.status_label.setVisible(bool(self.status_label.text()))
+
+    def cancel_deal_reveal(
+        self, *, reveal: bool = True, reason: str = "unspecified"
+    ) -> bool:
+        """取消正在播的发牌/翻牌；没有在播时什么也不做，返回是否取消了一次动画。
+
+        页面在根容器尺寸变化或滚动位置变化时调用它（计划步骤 6：动画中途不追踪复杂
+        布局）。``reveal=True`` 把卡片恢复显示，结果立刻以最终版面出现。
+        """
+        layer = getattr(self, "deal_layer", None)
+        if layer is None or not layer.is_running():
+            return False
+        layer.cancel(reveal=reveal, reason=reason)
+        self.cards_area.setEnabled(True)
+        if reveal:
+            # 取消后同样算“这一段结束了”：恢复卡片交互，有结果时把统计行放出来。
+            self._on_deal_reveal_finished()
+        return True
 
     def _cancel_deal_reveal(self, *, reveal: bool, reason: str) -> None:
         """停止发牌覆盖层；``reason`` 写进诊断日志，``reveal=False`` 用于卡片即将被删。"""
@@ -1551,6 +1712,22 @@ class DeviceDiscoveryPanel(QWidget):
             parent.updateGeometry()
             parent = parent.parentWidget()
 
+    def eventFilter(self, watched: Any, event: Any) -> bool:
+        """卡片区视口尺寸变化：落点或裁剪区可能已经失效。
+
+        覆盖层挂在页面根容器上，卡片区视口的 resize 不会改变覆盖层尺寸，页面收不到
+        通知；这里把变化交给 :meth:`_on_animation_surface_changed` 判断——卡片真的
+        挪了就取消这一次发牌（``surface-changed``），只是可见区域变了就刷新裁剪遮罩。
+        """
+        cards_area = getattr(self, "cards_area", None)
+        if (
+            cards_area is not None
+            and watched is cards_area.viewport()
+            and event.type() == QEvent.Type.Resize
+        ):
+            self._on_animation_surface_changed()
+        return super().eventFilter(watched, event)
+
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         # 先把外层布局激活，卡片区（以及它的视口）拿到新宽度后再决定列数；否则会按
@@ -1561,6 +1738,9 @@ class DeviceDiscoveryPanel(QWidget):
         self._refresh_cards_geometry()
         self._sync_wait_stack_geometry()
         self._sync_deal_layer_geometry()
+        # 面板自身尺寸变化同样会挪动卡片：页面根容器没变时（例如滚动条出现把视口挤窄）
+        # 覆盖层收不到通知，这里补上同一策略。
+        self._on_animation_surface_changed()
 
     def selected_assignments(self) -> tuple[list[dict[str, Any]], list[str]]:
         """返回 ``(要应用的设备, 问题说明)``；身份/角色缺失、唯一角色重复都算问题。

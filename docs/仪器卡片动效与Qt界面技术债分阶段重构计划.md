@@ -161,7 +161,7 @@ animation event=cancel cancel_reason=results-cleared restore_result=hidden ...
 - 有 `first_paint` 但 `drawn_cards` 为 0：画了但画面是空的（贴图为空或全在可见区域之外）；
 - 有 `start` 和 `first_paint`、`drawn_cards` 也大于 0 但用户仍看不到：问题在覆盖层之后的可见性、裁剪或层级，而不是时间轴。
 
-面板取消发牌的既有入口分别写入 `results-cleared`（返回/清空结果）、`new-scan`（开始新扫描）、`cards-refilled`（换一批卡片）和 `page-shutdown`（页面关闭）。
+面板取消发牌的既有入口分别写入 `results-cleared`（返回/清空结果）、`new-scan`（开始新扫描）、`cards-refilled`（换一批卡片）、`page-shutdown`（页面关闭）和 `surface-changed`（页面根容器尺寸、页面滚动或卡片区视口/滚动变化，步骤 6）；`overlay-attached` 只在动画进行中把覆盖层重挂到另一个宿主时出现。
 
 ### 完成标准
 
@@ -319,6 +319,42 @@ InstrumentCardData
 # 阶段三：拆出独立动画舞台
 
 ## 步骤 6：建立页面级 AnimationOverlay
+
+**执行状态：已完成**。新增 `presentation/qt/animation_overlay.py` 的
+`AnimationOverlay`：它挂在连接页（`InstrumentSetupPage`/`ConnectionPage`）新建的根容器
+`overlay_host` 上，与普通内容（`.ui` 骨架，含滚动区与发现面板）同级，不进任何布局、
+`WA_TransparentForMouseEvents`、`NoFocus`，几何始终等于宿主矩形。页面结构因此是
+`ConnectionPage → overlay_host → {normal_content, animation_overlay}`；发牌层被重挂到
+覆盖层里（`DeviceDiscoveryPanel.attach_animation_overlay()`），不再是 `results_box` 的
+子控件，`QScrollArea` 的滚动与结果区内部重排都不再参与动画坐标。
+
+`DealRevealLayer.start()` 新增 `target_rects` / `clip_rect`：面板在动画开始前把每张卡的
+落点和卡片区裁剪矩形一次性换算到覆盖层坐标（`_deal_target_rect()` /
+`_deal_clip_rect()`），动画期间不再逐帧追踪卡片控件。覆盖层与卡片分属页面根容器的两个
+分支，`QWidget.mapTo()` 只对祖先关系可靠，因此换算统一走
+`animation_overlay.widget_rect_in()`（经屏幕坐标中转），窗口在桌面上的位置不会混进落点。
+省略这两个参数时（面板单独使用、单元测试）在 `start()` 里按同一规则冻结一次控件几何。
+落点份数与卡片数不等、资产份数与卡片数不等时直接抛 `ValueError`，不会退回“按控件现取”；
+面板在抛出后把卡片恢复原样，不会留下透明且不可点的半状态。
+
+页面根容器尺寸变化（`AnimationOverlay.resized`）或页面滚动条位置变化时，连接页调用
+`DeviceDiscoveryPanel.cancel_deal_reveal(reveal=True, reason="surface-changed")`：取消
+这一次发牌、恢复卡片为最终版面并写一条固定原因的诊断，而不是在动画中途追踪复杂布局。
+卡片区自己的视口尺寸与滚动条位置由面板看护：先重算一次当前落点与冻结值比较，卡片真的
+挪了才按同一原因取消；只是可见区域变了（布局落定后滚动条出现/消失、首帧排版微调）就
+用 `DealRevealLayer.refresh_clip_rect()` 换掉裁剪遮罩，落点保持冻结。重新开始动画留给
+步骤 8 的页面状态机统一决定。页头文字淡出只改透明度、不改版面，因此不会移动已经开始的
+坐标；页头整块收放本身发生在发牌开始前，若发牌中因状态切换发生，则同样按
+`surface-changed` 收尾。
+
+完成标准对应验证：`tests/ui/test_animation_overlay.py` 验证覆盖层铺满宿主、不进布局、
+不吃鼠标/不占焦点、跟随尺寸变化并发出通知、压在普通内容之上，以及跨分支换算
+（`widget_rect_in()`）在窗口挪位后仍给出覆盖层坐标；`tests/ui/test_scan_card.py` 新增
+落点在开始时冻结（含窗口挪位）、覆盖层坐标由调用方给出、裁剪遮罩可单独刷新、落点/资产
+份数不符即报错四组用例；`tests/integration/device_discovery/test_connection_page.py`
+验证覆盖层不在滚动区/结果区里、落点等于卡片在页面根容器里的位置、窗口挪位不改变落点、
+淡出页头文字不移动已开始的坐标、页面缩放与卡片区重排分别以 `surface-changed` 取消并
+恢复卡片。
 
 ### 执行策略
 

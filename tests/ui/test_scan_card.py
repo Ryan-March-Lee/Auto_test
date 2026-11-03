@@ -1148,6 +1148,144 @@ class DealRevealLayerTests(unittest.TestCase):
 
         self.assertFalse(layer.is_running(), "被拒绝的调用不应启动时间轴")
 
+    def test_the_targets_are_frozen_when_the_animation_starts(self):
+        """落点在开始时冻结：动画期间不再读卡片控件的位置。
+
+        计划步骤 6：滚动、页头收放与布局重排都不该在动画中途把已经飞出去的牌拽走。
+        """
+        from PySide6.QtCore import QPointF
+
+        from presentation.qt.scan_card import DealRevealLayer
+
+        host = QWidget()
+        host.resize(400, 400)
+        card = QWidget(host)
+        card.setGeometry(30, 40, 60, 100)
+        layer = DealRevealLayer(host)
+        layer.setGeometry(host.rect())
+        self.addCleanup(host.close)
+
+        layer.start([card], self._assets(1), QPointF(10.0, 10.0))
+        layer._timer.stop()
+        frozen = layer._target_rect(0)
+
+        card.move(200, 200)
+        self.assertEqual(
+            layer._target_rect(0),
+            frozen,
+            "动画途中挪动卡片控件不能改变已经开始的落点",
+        )
+
+    def test_the_caller_hands_over_overlay_coordinates(self):
+        """页面可以在开始前换算出覆盖层坐标：落点与裁剪区都按给的坐标冻结。"""
+        from PySide6.QtCore import QPointF, QRectF
+
+        from presentation.qt.scan_card import DealRevealLayer
+
+        host = QWidget()
+        host.resize(400, 400)
+        card = QWidget(host)
+        card.setGeometry(30, 40, 60, 100)
+        layer = DealRevealLayer(host)
+        layer.setGeometry(host.rect())
+        self.addCleanup(host.close)
+        target = QRectF(121.5, 242.25, 60.0, 100.0)
+        clip = QRectF(0.0, 0.0, 300.0, 220.0)
+
+        layer.start(
+            [card],
+            self._assets(1),
+            QPointF(10.0, 10.0),
+            target_rects=[target],
+            clip_rect=clip,
+        )
+        layer._timer.stop()
+
+        self.assertEqual(layer._target_rect(0), target)
+        self.assertEqual(layer._cards_clip_rect(), clip)
+        self.assertEqual(layer.diagnostics()["target_rects"][0], "(121.5,242.2,60.0,100.0)")
+
+    def test_targets_are_frozen_in_layer_coordinates_whatever_the_window_position(self):
+        """面板单独使用（没有页面覆盖层）时，落点同样经屏幕坐标换算。"""
+        from PySide6.QtCore import QPointF, QRectF
+
+        from presentation.qt.scan_card import DealRevealLayer
+
+        host = QWidget()
+        host.resize(400, 400)
+        card = QWidget(host)
+        card.setGeometry(30, 40, 60, 100)
+        layer = DealRevealLayer(host)
+        layer.setGeometry(host.rect())
+        host.move(120, 80)
+        host.show()
+        self.addCleanup(host.close)
+        self.app.processEvents()
+
+        layer.start([card], self._assets(1), QPointF(10.0, 10.0))
+        layer._timer.stop()
+
+        self.assertEqual(
+            layer._target_rect(0),
+            QRectF(30.0, 40.0, 60.0, 100.0),
+            "窗口位置不能混进落点（mapTo 对兄弟控件返回的是屏幕坐标）",
+        )
+
+    def test_refreshing_the_clip_keeps_the_frozen_targets(self):
+        """只换裁剪遮罩时落点不动：布局落定后的视口微调不该重算已经开始的动画。"""
+        from PySide6.QtCore import QPointF, QRectF
+
+        from presentation.qt.scan_card import DealRevealLayer
+
+        host = QWidget()
+        host.resize(400, 400)
+        card = QWidget(host)
+        card.setGeometry(30, 40, 60, 100)
+        layer = DealRevealLayer(host)
+        layer.setGeometry(host.rect())
+        self.addCleanup(host.close)
+        target = QRectF(30.0, 40.0, 60.0, 100.0)
+        narrow = QRectF(0.0, 0.0, 300.0, 220.0)
+        wide = QRectF(0.0, 0.0, 360.0, 220.0)
+
+        layer.start(
+            [card],
+            self._assets(1),
+            QPointF(10.0, 10.0),
+            target_rects=[target],
+            clip_rect=narrow,
+        )
+        layer._timer.stop()
+
+        layer.refresh_clip_rect(wide)
+
+        self.assertEqual(layer._target_rect(0), target, "裁剪区变化不能挪动落点")
+        self.assertEqual(layer._cards_clip_rect(), wide, "裁剪区要跟上新的可见区域")
+
+    def test_start_rejects_target_rects_that_do_not_cover_every_card(self):
+        """落点同样按位置一一对应：少给一个就报错，不能退回按控件现取。"""
+        from PySide6.QtCore import QPointF, QRectF
+
+        from presentation.qt.scan_card import DealRevealLayer
+
+        host = QWidget()
+        host.resize(300, 300)
+        cards = [QWidget(host) for _ in range(2)]
+        layer = DealRevealLayer(host)
+        layer.setGeometry(host.rect())
+        self.addCleanup(host.close)
+
+        with self.assertRaises(ValueError):
+            layer.start(
+                cards,
+                self._assets(2),
+                QPointF(10.0, 10.0),
+                target_rects=[QRectF(0.0, 0.0, 60.0, 100.0)],
+            )
+
+        self.assertFalse(layer.is_running(), "被拒绝的调用不应启动时间轴")
+        self.assertEqual(layer.diagnostics()["card_count"], 0)
+
     def test_the_layer_is_only_a_picture(self):
         from PySide6.QtCore import Qt
 

@@ -49,6 +49,7 @@ from application.device_binding import ApplyDeviceSelectionRequest
 from application.ports.device_binding import DeviceBindingPort
 from application.ports.device_discovery import DEMO_SUBNET
 
+from .animation_overlay import AnimationOverlay
 from .config_form_bindings import binding_address, binding_records
 from .device_discovery_panel import (
     BOX_STATE_IDLE,
@@ -102,7 +103,19 @@ class ConnectionPage(QWidget):
         shell = QVBoxLayout(self)
         shell.setContentsMargins(0, 0, 0, 0)
         shell.setSpacing(0)
-        shell.addWidget(self._ui)
+        # 页面根容器：普通内容（``.ui`` 骨架，含滚动区）与动画覆盖层同级。发牌动画因此
+        # 有一个稳定的坐标系——滚动区滚到哪里、页头收放多少，覆盖层都不跟着变。
+        self.overlay_host = QWidget(self)
+        self.overlay_host.setObjectName("discoveryOverlayHost")
+        host_layout = QVBoxLayout(self.overlay_host)
+        host_layout.setContentsMargins(0, 0, 0, 0)
+        host_layout.setSpacing(0)
+        self.normal_content = self._ui
+        host_layout.addWidget(self.normal_content)
+        shell.addWidget(self.overlay_host, 1)
+        # 覆盖层不进布局：它自己钉在页面根容器上，只负责覆盖绘制与鼠标穿透。
+        self.animation_overlay = AnimationOverlay(self.overlay_host)
+        self.animation_overlay.show()
 
         # 版心宽度是跨页面共用的设计令牌，不写进 ``.ui`` 也不在本页另存一份。
         self.scroll_area = self._require(QScrollArea, "connectionScroll")
@@ -113,15 +126,27 @@ class ConnectionPage(QWidget):
         # 扫描行与结果区属于动态面板（卡片数量、扫描状态都由运行时决定），
         # 所以面板本身仍由 Python 创建，只把它的外层位置交给 ``.ui``。
         host = self._require(QWidget, "discoveryPanelHost")
-        host_layout = host.layout()
-        if host_layout is None:
+        panel_host_layout = host.layout()
+        if panel_host_layout is None:
             raise RuntimeError("connection_page.ui 的 discoveryPanelHost 缺少布局")
         self.discovery_panel = DeviceDiscoveryPanel(
             scanner_factory=self._scanner_factory or self._default_scanner_factory(),
             default_subnet=self._default_scan_subnet(self.binding_port.view_state()),
             parent=host,
         )
-        host_layout.addWidget(self.discovery_panel)
+        panel_host_layout.addWidget(self.discovery_panel)
+        # 发牌画面挂在页面级覆盖层上：结果区在滚动区里，动画不该跟着它滚动或重排。
+        self.discovery_panel.attach_animation_overlay(self.animation_overlay)
+        # 页面根容器尺寸变化时，已经算好的动画坐标失效：取消这一次发牌（见
+        # :meth:`_on_animation_surface_changed`），不在动画中途追踪布局。
+        self.animation_overlay.resized.connect(self._on_animation_surface_changed)
+        # 滚动同样会改变卡片在覆盖层里的位置：播放中滚动就按同一个确定策略收尾。
+        # 两个方向都接上，不假设页面将来只竖向滚动。
+        for bar in (
+            self.scroll_area.verticalScrollBar(),
+            self.scroll_area.horizontalScrollBar(),
+        ):
+            bar.valueChanged.connect(self._on_animation_surface_changed)
         # 大标题与扫描行在扫描中隐去文字，但保留高度：它们是页面主体的锚点，
         # 按钮、等待动画与结果卡片因此不再上下跳。
         self._setup_header_visibility()
@@ -148,6 +173,18 @@ class ConnectionPage(QWidget):
         ):
             self._fit_discovery_panel()
         return super().eventFilter(watched, event)
+
+    def _on_animation_surface_changed(self, *_args: Any) -> None:
+        """页面根容器尺寸或滚动位置变了：已经换算好的动画坐标失效。
+
+        计划步骤 6 的确定策略是“不追踪、先收尾”：发牌/翻牌正在播放时直接取消它并把
+        卡片恢复成最终版面，而不是在动画中途按新布局重算每一张牌的落点。重新开始动画
+        由页面状态机统一决定（步骤 8），这里只保证不会把牌画到旧位置上。
+        """
+        panel = getattr(self, "discovery_panel", None)
+        if panel is None:
+            return
+        panel.cancel_deal_reveal(reveal=True, reason="surface-changed")
 
     def _fit_discovery_panel(self) -> None:
         """按当前视口高度给结果区留出合适的高度。

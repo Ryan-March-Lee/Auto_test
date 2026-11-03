@@ -100,6 +100,7 @@ from PySide6.QtWidgets import (
 )
 
 from .animation_diagnostics import log_event, timestamp, widget_label
+from .animation_overlay import widget_rect_in
 from .card_assets import CardAsset
 from .device_cards import CARD_HEIGHT, CARD_WIDTH
 from .theme import CARD_RADIUS, FONT_FAMILIES, TOKENS
@@ -1511,8 +1512,10 @@ class DealRevealLayer(QWidget):
     （不再用 ``QWidget.grab()`` 截图），翻到后半程时贴的就是资产里的正面；翻完一张才
     把真正的卡片控件恢复显示，用户因此不会看到“卡片背后藏着一张已经能点的卡片”。
 
-    它只是画面：不吃鼠标（``WA_TransparentForMouseEvents``）、不占焦点、不进布局；
-    覆盖在结果区上，目标的矩形每帧从卡片控件现取，窗口缩放时也能跟到新位置。
+    它只是画面：不吃鼠标（``WA_TransparentForMouseEvents``）、不占焦点、不进布局。
+    覆盖层挂在**页面根容器**上（见 :mod:`presentation.qt.animation_overlay`），不放进
+    卡片滚动区：起点与落点在动画开始前一次性换算到覆盖层坐标，之后不再逐帧
+    ``mapTo`` 追踪卡片控件，滚动与内部布局变化也就不会把已经开始的牌拽到别处。
     全部翻完后发出 :attr:`finished`，面板据此恢复状态行与卡片交互。
     """
 
@@ -1532,8 +1535,12 @@ class DealRevealLayer(QWidget):
         self._revealed: list[bool] = []
         #: 牌堆在覆盖层坐标里的中心（发牌起点）。
         self._deck = QPointF()
-        #: 只让卡片画在卡片区视口里：结果多到要滚动时，看不见的行不会画到状态行/动作行上。
-        self._clip_widget: QWidget | None = None
+        #: 每张牌的落点（覆盖层坐标）：在 :meth:`start` 时一次性换算好，之后不再追踪
+        #: 卡片控件。窗口缩放或滚动由页面取消动画（见 :mod:`animation_overlay`）。
+        self._targets: list[QRectF] = []
+        #: 卡片区的可见矩形（覆盖层坐标），同样在开始时冻结；结果多到要滚动时，
+        #: 看不见的行不会画到状态行/动作行上。
+        self._clip: QRectF | None = None
         self._elapsed = 0.0
         self._clock = QElapsedTimer()
         self._timer = QTimer(self)
@@ -1714,6 +1721,25 @@ class DealRevealLayer(QWidget):
         start = deal_end + DEAL_SETTLE_MS + index * FLIP_STAGGER_MS
         return max(0.0, min(1.0, (elapsed - start) / FLIP_MS))
 
+    def targets(self) -> tuple[QRectF, ...]:
+        """本次动画冻结的落点（覆盖层坐标）；没有在播时为空。"""
+        return tuple(QRectF(rect) for rect in self._targets)
+
+    def clip_rect(self) -> QRectF | None:
+        """本次动画冻结的裁剪遮罩（覆盖层坐标）；没有裁剪时为空。"""
+        return QRectF(self._clip) if self._clip is not None else None
+
+    def refresh_clip_rect(self, clip_rect: QRectF | None) -> None:
+        """只换裁剪遮罩（卡片区可见区域），不改变任何冻结的落点。
+
+        用于布局落定后视口尺寸微调、而卡片位置没变的场景：画面继续按原落点播完，
+        但不会画到新的状态行/动作行上。
+        """
+        if not self._cards:
+            return
+        self._clip = QRectF(clip_rect) if clip_rect is not None else None
+        self.update()
+
     def start(
         self,
         cards: Sequence[QWidget],
@@ -1722,6 +1748,8 @@ class DealRevealLayer(QWidget):
         clip_widget: QWidget | None = None,
         *,
         front_source: str = DEAL_FRONT_SOURCE_ASSET,
+        target_rects: Sequence[QRectF] | None = None,
+        clip_rect: QRectF | None = None,
     ) -> None:
         """从 ``deck_origin`` 开始发 ``cards``；``assets`` 是每张卡的动画资产。
 
@@ -1737,9 +1765,18 @@ class DealRevealLayer(QWidget):
         :data:`DEAL_FRONT_SOURCE_ASSET` / :data:`DEAL_FRONT_SOURCE_SCREENSHOT`，写错
         会让诊断分不清资产路径与截图回退。
 
-        ``clip_widget`` 是卡片区的可见视口：结果多到要滚动时，没滚到的行不该被画到
-        状态行或动作行上。
+        ``target_rects`` 是每张牌在覆盖层里的落点（与 ``cards`` 一一对应），由页面在
+        动画开始前一次性换算好；省略时按卡片此刻的控件几何冻结一次。无论走哪条路径，
+        落点在 :meth:`start` 之后都**不再变化**：动画不在每帧 ``mapTo`` 追踪卡片，
+        滚动或布局变化因此不会把飞出去的牌拽走（页面用取消代替中途追踪）。
+
+        ``clip_rect`` 是卡片区的可见视口（覆盖层坐标）；省略时由 ``clip_widget`` 在
+        开始时冻结一次。结果多到要滚动时，没滚到的行不该被画到状态行或动作行上。
+        布局落定后只有可见区域变化（卡片没动）时，调用方用 :meth:`refresh_clip_rect`
+        换遮罩；落点始终不变。
         """
+        cards = list(cards)
+        assets = list(assets)
         if not cards:
             self.skip(reason="no-cards")
             return
@@ -1757,13 +1794,21 @@ class DealRevealLayer(QWidget):
                 f"{DEAL_FRONT_SOURCE_ASSET!r} 或 {DEAL_FRONT_SOURCE_SCREENSHOT!r}，"
                 f"收到 {front_source!r}"
             )
+        # 落点在启动前定死：这是一次性的换算，之后不再读卡片控件的坐标。
+        targets = self._freeze_targets(cards, target_rects)
+        frozen_clip = (
+            QRectF(clip_rect)
+            if clip_rect is not None
+            else self._live_clip_rect(clip_widget)
+        )
         self._timer.stop()
-        self._cards = list(cards)
-        self._assets = list(assets)
+        self._cards = cards
+        self._assets = assets
         self._front_source = str(front_source)
         self._revealed = [False] * len(self._cards)
         self._deck = QPointF(deck_origin)
-        self._clip_widget = clip_widget
+        self._targets = targets
+        self._clip = frozen_clip
         self._elapsed = 0.0
         self._started_at = None
         self._ended_at = None
@@ -1808,7 +1853,8 @@ class DealRevealLayer(QWidget):
         self._cards = []
         self._assets = []
         self._revealed = []
-        self._clip_widget = None
+        self._targets = []
+        self._clip = None
         self._elapsed = 0.0
         self._phase = DEAL_PHASE_IDLE
         self._paint_frames = 0
@@ -1875,7 +1921,8 @@ class DealRevealLayer(QWidget):
         self._cards = []
         self._assets = []
         self._revealed = []
-        self._clip_widget = None
+        self._targets = []
+        self._clip = None
         self._elapsed = 0.0
         self._phase = DEAL_PHASE_IDLE
         self._front_source = DEAL_FRONT_SOURCE_ASSET
@@ -1932,15 +1979,33 @@ class DealRevealLayer(QWidget):
     # ---- 几何 ---------------------------------------------------------------
 
     def _target_rect(self, index: int) -> QRectF:
-        """第 ``index`` 张卡在覆盖层里的落点：每帧从卡片控件现取。"""
-        card = self._cards[index]
-        origin = card.mapTo(self, card.rect().topLeft())
-        return QRectF(
-            float(origin.x()),
-            float(origin.y()),
-            float(card.width()),
-            float(card.height()),
-        )
+        """第 ``index`` 张卡在覆盖层里的落点：开始时就冻结好的坐标，不再现取。"""
+        if index < 0 or index >= len(self._targets):
+            return QRectF()
+        return QRectF(self._targets[index])
+
+    def _freeze_targets(
+        self, cards: Sequence[QWidget], target_rects: Sequence[QRectF] | None
+    ) -> list[QRectF]:
+        """把每张卡的落点定下来：优先用调用方给的覆盖层坐标，否则现取一次。"""
+        if target_rects is None:
+            return [self._widget_target_rect(card) for card in cards]
+        frozen = [QRectF(rect) for rect in target_rects]
+        if len(frozen) != len(cards):
+            raise ValueError(
+                "发牌落点必须与卡片一一对应："
+                f"{len(cards)} 张卡片、{len(frozen)} 个落点"
+            )
+        return frozen
+
+    def _widget_target_rect(self, card: QWidget) -> QRectF:
+        """按卡片此刻的控件几何取一次落点（只在 :meth:`start` 里用）。
+
+        卡片与覆盖层可能分属页面根容器的两个分支，换算经屏幕坐标中转（见
+        :func:`presentation.qt.animation_overlay.widget_rect_in`），窗口位置不会影响
+        落点。
+        """
+        return widget_rect_in(card, self)
 
     def _flight_center(self, index: int, progress: float) -> QPointF:
         """飞行中的牌中心：从牌堆到落点的一条向上拱起的二次曲线。"""
@@ -2095,17 +2160,19 @@ class DealRevealLayer(QWidget):
         self._record_paint(drawn)
 
     def _cards_clip_rect(self) -> QRectF | None:
-        """卡片区的可见矩形（覆盖层坐标）：看不见的行不画到状态行与动作行上。"""
-        clip = self._clip_widget
-        if clip is None or not clip.isVisible():
+        """卡片区的可见矩形（覆盖层坐标）：开始时冻结，之后不再追踪滚动。"""
+        if self._clip is None or self._clip.isEmpty():
             return None
-        origin = clip.mapTo(self, clip.rect().topLeft())
-        return QRectF(
-            float(origin.x()),
-            float(origin.y()),
-            float(clip.width()),
-            float(clip.height()),
-        )
+        return QRectF(self._clip)
+
+    def _live_clip_rect(self, clip_widget: QWidget | None) -> QRectF | None:
+        """按卡片区视口取一次可见矩形（只在 :meth:`start` 里用）。
+
+        视口同样可能与覆盖层分属不同分支，换算规则与落点一致。
+        """
+        if clip_widget is None or not clip_widget.isVisible():
+            return None
+        return widget_rect_in(clip_widget, self)
 
     def _paint_flip(
         self, painter: QPainter, target: QRectF, index: int, progress: float

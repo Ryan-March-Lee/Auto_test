@@ -557,7 +557,7 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         slots = []
         for index, card in enumerate(cards):
             slot = layer._target_rect(index)
-            origin = card.mapTo(layer, card.rect().topLeft())
+            origin = card.mapTo(panel.results_box, card.rect().topLeft())
             self.assertAlmostEqual(slot.x(), origin.x(), delta=1, msg="发牌落点就是卡片位")
             self.assertAlmostEqual(slot.y(), origin.y(), delta=1, msg="发牌落点就是卡片位")
             self.assertAlmostEqual(slot.width(), card.width(), delta=1)
@@ -569,7 +569,7 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         self.app.processEvents()
         self.assertEqual(layer.revealed_count, len(cards), "查到的每台仪器都要发出来")
         for (left, top), card in zip(slots, cards):
-            origin = card.mapTo(layer, card.rect().topLeft())
+            origin = card.mapTo(panel.results_box, card.rect().topLeft())
             self.assertEqual((round(origin.x()), round(origin.y())), (left, top))
 
     def test_back_while_dealing_returns_to_the_scan_button(self):

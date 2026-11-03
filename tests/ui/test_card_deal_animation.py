@@ -523,6 +523,7 @@ class CardDealAnimationTests(unittest.TestCase):
             "paint_frames",
             "first_paint_ms",
             "drawn_cards",
+            "first_drawn_cards",
             "revealed_count",
             "cancel_reason",
             "restore_result",
@@ -564,7 +565,29 @@ class CardDealAnimationTests(unittest.TestCase):
         snapshot = layer.diagnostics()
         self.assertGreaterEqual(snapshot["paint_frames"], 2, "每一帧都要计数")
         self.assertIsNotNone(snapshot["first_paint_ms"])
-        self.assertGreater(snapshot["drawn_cards"], 0, "第一帧要真的画出牌堆/飞出的牌")
+        self.assertGreater(
+            snapshot["first_drawn_cards"], 0, "第一帧要真的画出牌堆/飞出的牌"
+        )
+
+    def test_drawn_cards_describe_the_latest_frame(self):
+        """``drawn_cards`` 跟着最近一帧刷新；首帧的值留在 ``first_drawn_cards``。"""
+        from presentation.qt.card_deal_animation import DEAL_FLY_MS, DEAL_STAGGER_MS
+
+        layer, _items = self._animation(2, host_size=(200, 220))
+        layer.grab()
+        snapshot = layer.diagnostics()
+        first = snapshot["drawn_cards"]
+        self.assertGreater(first, 0, "第一帧有牌堆")
+        self.assertEqual(snapshot["first_drawn_cards"], first)
+
+        # 牌已发完（牌堆收起），再把裁剪区缩到左上角：这一帧一张也画不出来。
+        layer._elapsed = DEAL_STAGGER_MS + DEAL_FLY_MS
+        layer.refresh_clip_rect(QRectF(0.0, 0.0, 1.0, 1.0))
+        layer.grab()
+
+        snapshot = layer.diagnostics()
+        self.assertEqual(snapshot["drawn_cards"], 0, "最近一帧没有画出任何牌")
+        self.assertEqual(snapshot["first_drawn_cards"], first, "首帧的值保持不变")
 
     def test_cards_painted_outside_the_overlay_are_not_counted(self):
         """落在覆盖层/裁剪区之外的牌不算“画出来了”，否则 first_paint 会骗人。"""

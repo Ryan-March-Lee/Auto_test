@@ -144,7 +144,7 @@ animation event=cancel cancel_reason=results-cleared restore_result=hidden ...
 | `deck_x` / `deck_y` | 发牌起点（覆盖层坐标） |
 | `target_rects` | 每张卡的落点 `(x,y,w,h)` |
 | `overlay_visible` / `overlay_width` / `overlay_height` / `overlay_parent` | 覆盖层可见性、尺寸与父控件 |
-| `paint_frames` / `first_paint_ms` / `drawn_cards` | 已绘制的帧数（每个 `paintEvent` 计一次）、首帧延迟、首帧里实际画到可见区域（覆盖层与卡片裁剪区之内）的牌面数 |
+| `paint_frames` / `first_paint_ms` / `drawn_cards` / `first_drawn_cards` | 已绘制的帧数（每个 `paintEvent` 计一次）、首帧延迟、最近一帧里实际画到可见区域（覆盖层与卡片裁剪区之内）的牌面数、首帧的同一数字 |
 | `revealed_count` | 已翻开的卡片数 |
 | `cancel_reason` / `restore_result` / `was_running` | 取消原因、取消后卡片是恢复显示还是随结果清空、取消时是否仍在播放 |
 | `skip_reason` | 动画没有启动的原因（例如 `no-cards`） |
@@ -158,8 +158,9 @@ animation event=cancel cancel_reason=results-cleared restore_result=hidden ...
 - 只有 `skip`、没有 `start`：动画没有启动；
 - 有 `start`、没有 `first_paint`：动画启动了，但覆盖层没有绘制出来；
 - `first_paint` 里 `overlay_visible=false`：画了，但覆盖层当时没显示（父控件隐藏、未加入窗口或被层级盖住）；
-- 有 `first_paint` 但 `drawn_cards` 为 0：画了但画面是空的（贴图为空或全在可见区域之外）；
-- 有 `start` 和 `first_paint`、`drawn_cards` 也大于 0 但用户仍看不到：问题在覆盖层之后的可见性、裁剪或层级，而不是时间轴。
+- 有 `first_paint` 但 `first_drawn_cards` 为 0：画了但画面是空的（贴图为空或全在可见区域之外）；
+- 运行中 `drawn_cards` 为 0：最近一帧是空的，问题同样在贴图、裁剪或落点；
+- 有 `start` 和 `first_paint`、牌面数也大于 0 但用户仍看不到：问题在覆盖层之后的可见性、裁剪或层级，而不是时间轴。
 
 面板取消发牌的既有入口分别写入 `results-cleared`（返回/清空结果）、`new-scan`（开始新扫描）、`cards-refilled`（换一批卡片）、`page-shutdown`（页面关闭）和 `surface-changed`（页面根容器尺寸、页面滚动或卡片区视口/滚动变化，步骤 6）；`overlay-attached` 只在动画进行中把覆盖层重挂到另一个宿主时出现。
 
@@ -488,25 +489,34 @@ index
 ## 步骤 9：补充动效中间帧测试
 
 **执行状态：已完成**。新增 `tests/ui/test_card_deal_frames.py`（纯动画对象的固定时刻画面）
-与 `tests/integration/device_discovery/test_discovery_frames.py`（真实发现页的场景矩阵），
-两者都不改运行逻辑。固定时刻的做法是停住计时器、把 `CardDealAnimation._elapsed` 钉在
-那一刻再 `grab()`，走的是运行时同一个 `paintEvent`，不为测试另写一套绘制。
+与 `tests/integration/device_discovery/test_discovery_frames.py`（真实发现页的场景矩阵）。
+除把 `drawn_cards` 的语义收紧为“最近一帧的牌面数”并新增 `first_drawn_cards` 外，不改
+时间轴与绘制。固定时刻的做法是停住计时器、把 `CardDealAnimation._elapsed` 钉在那一刻再
+`grab()`，走的是运行时同一个 `paintEvent`，不为测试另写一套绘制。
 
-`tests/ui/test_card_deal_frames.py` 用六张正反面颜色各不相同的纯色资产覆盖执行策略里的
+`tests/ui/test_card_deal_frames.py` 用正反面颜色各不相同的纯色资产覆盖执行策略里的
 六个时刻：第一张刚离开牌堆（牌堆仍在、飞出去的是牌背、落点还没有正面）、多张牌同时在
 空中（两张各自的牌背、位置不重合）、全部落位尚未翻牌（每个槽位是自己的牌背、一张正面
 都没有、牌堆已收走）、第一张翻到一半（正面出现、横向宽度压到不足原位六成、第二张仍在
 翻牌前半程）、最后一张翻完（所有槽位都是正面，`finish()` 后覆盖层收起、四张按序交回）、
 取消（`card_revealed` 交回每一张、计时器停止、画面里不再有正反面颜色）。另有单设备全
-流程、窄画布加裁剪遮罩、以及“计时器在走但覆盖层是空的”三条用例：最后一条把牌全部放到
-覆盖层之外，断言 `paint_frames > 0` 而 `drawn_cards == 0`，保证“非空画面”的断言不是
-空转。每个固定时刻都同时检查 `drawn_cards > 0` 或画面里确有牌面，因此能直接发现
-“计时器在运行但覆盖层是空的”。
+流程、窄画布加裁剪遮罩、以及空覆盖层检测。“最后一张翻完”那一帧的非空与正反面由每个
+槽位的像素直接证明，不引用 `drawn_cards`。
+
+空覆盖层有两条用例：一条把牌全部放到覆盖层之外、停表钉在 120ms，断言
+`paint_frames > 0` 而 `drawn_cards == 0`；另一条让真实计时器 tick 一次，断言
+`elapsed_ms` 确实推进、随后抓到的这一帧仍为 `drawn_cards == 0`。前者稳定复现“画了但
+画面是空的”，后者证明判断用的是运行中的时间轴而不是手动摆出的静态值。
+
+`CardDealAnimation.diagnostics()["drawn_cards"]` 的语义是**最近一帧**画到可见区域的牌面
+数，每帧刷新；首帧的值另记 `first_drawn_cards`，`first_paint` 诊断按它判断。因此固定帧
+测试在每次 `_frame()` 之后读到的绘制数就是那一帧的值，不能用早先帧的计数冒充当前帧。
 
 关键帧另存为视觉基准：`tests/ui/visual_baselines/card_deal_frames/` 下的六张 PNG
-（起飞、双牌飞行、全部落位、半翻、全翻开、单设备起飞）。比对按每 4 个像素采样、单通道
+（起飞、双牌飞行、全部落位、半翻、全翻开、单设备起飞）。整帧按每 4 个像素采样、单通道
 容差 24、允许不超过 4% 的采样点不一致，只拦住空画面、错画面这类整体回归，不追求逐像素
-相等；有意改动画面时设置 `UPDATE_DEAL_FRAME_BASELINES=1` 重跑该模块即可更新。
+相等；卡片落点区域再按每 2 个像素、允许不超过 2% 的比例单独比对，避免整帧容差放过一小块
+局部错误。有意改动画面时设置 `UPDATE_DEAL_FRAME_BASELINES=1` 重跑该模块即可更新。
 
 `tests/integration/device_discovery/test_discovery_frames.py` 覆盖完成标准里的场景矩阵：
 无设备（`skip`、`paint_frames == 0`、覆盖层空白）、单设备（发牌、翻完前画面仍非空、翻完
@@ -517,8 +527,9 @@ index
 真实卡片资产也能用同一条断言。接线到连接页时画布是页面级 `AnimationOverlay`；单独测试
 面板时退回结果区里的发牌层，两种宿主共用同一段绘制。
 
-验证：`tools/run_tests.py --layer ui`（纯动画画面）与
-`tools/run_tests.py --layer integration`（真实面板场景矩阵）均应通过。
+验证：`tools/run_tests.py --layer ui`（636 项，含纯动画画面）与
+`tools/run_tests.py --layer integration`（303 项，真实面板场景矩阵）通过；完整离线套件
+2722 项通过（跳过 5 项）。
 
 ### 执行策略
 

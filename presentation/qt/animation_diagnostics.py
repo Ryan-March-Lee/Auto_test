@@ -22,10 +22,11 @@
     每张卡的落点 ``(x,y,w,h)``，按显示顺序。
 ``overlay_visible`` / ``overlay_width`` / ``overlay_height`` / ``overlay_parent``
     覆盖层当时的可见性、尺寸与父控件。
-``paint_frames`` / ``first_paint_ms`` / ``drawn_cards``
-    已绘制的帧数（每个 ``paintEvent`` 计一次）、第一次绘制距开始多少毫秒、第一帧里
-    实际画到可见区域（覆盖层与卡片裁剪区之内）的牌面数。
-    ``first_paint`` 只说明“真的进入了绘制”，``drawn_cards=0`` 说明画了但画面是空的。
+``paint_frames`` / ``first_paint_ms`` / ``drawn_cards`` / ``first_drawn_cards``
+    已绘制的帧数（每个 ``paintEvent`` 计一次）、第一次绘制距开始多少毫秒、最近一帧里
+    实际画到可见区域（覆盖层与卡片裁剪区之内）的牌面数、第一帧的同一数字。
+    ``first_paint`` 只说明“真的进入了绘制”，``first_drawn_cards=0`` 说明第一帧画出来
+    是空的；运行中 ``drawn_cards=0`` 说明最近一帧是空的。
 ``revealed_count``
     已经翻开的卡片数。
 ``cancel_reason`` / ``restore_result`` / ``was_running``
@@ -61,7 +62,7 @@ animation event=discovery_phase previous=scanning phase=result-pending box_state
 - 有 ``start``、没有 ``first_paint``：动画启动了，但覆盖层没有绘制出来；
 - ``first_paint`` 里 ``overlay_visible=false``：画了，但覆盖层当时没有显示（父控件
   隐藏、未加入窗口或层级被盖住）；
-- 有 ``first_paint`` 但 ``drawn_cards`` 为 0，或用户仍看不到：画面为空或问题出在
+- 有 ``first_paint`` 但 ``first_drawn_cards`` 为 0，或用户仍看不到：画面为空或问题出在
   覆盖层之后的可见性、裁剪与层级，而不是时间轴。
 
 日志挂在 ``pa_auto_test.presentation.qt.animation_diagnostics`` 下，按固定字段拼接，

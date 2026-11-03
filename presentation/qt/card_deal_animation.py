@@ -214,6 +214,7 @@ class CardDealAnimation(QWidget):
         self._paint_frames = 0
         self._first_paint_ms: float | None = None
         self._drawn_cards = 0
+        self._first_drawn_cards = 0
         self._cancel_reason: str | None = None
         self._restore_result: str | None = None
         self._last_event = DEAL_PHASE_IDLE
@@ -298,6 +299,7 @@ class CardDealAnimation(QWidget):
             "paint_frames": self._paint_frames,
             "first_paint_ms": self._first_paint_ms,
             "drawn_cards": self._drawn_cards,
+            "first_drawn_cards": self._first_drawn_cards,
             "revealed_count": self.revealed_count,
             "cancel_reason": self._cancel_reason,
             "restore_result": self._restore_result,
@@ -340,25 +342,26 @@ class CardDealAnimation(QWidget):
         )
 
     def _record_paint(self, drawn_cards: int) -> None:
-        """每一帧真的进入绘制就计数；第一帧记 ``first_paint``。
+        """每一帧真的进入绘制就计数；第一帧额外记 ``first_paint``。
 
-        ``drawn_cards`` 是这一帧里实际画到可见区域（覆盖层与卡片裁剪区之内）的牌面数，
-        不是“调用了绘制函数”的次数：没有它说明覆盖层没有画出来，它为 0 说明画了但
-        画面是空的。
+        ``drawn_cards`` 是**最近一帧**里实际画到可见区域（覆盖层与卡片裁剪区之内）的
+        牌面数，每帧刷新；``first_drawn_cards`` 保留第一帧的值，供 ``first_paint``
+        诊断使用。两者为 0 都表示那一帧是空的（贴图为空或全在可见区域之外）。
         """
         if self._phase in (DEAL_PHASE_IDLE, DEAL_PHASE_FINISHED):
             return
         self._paint_frames += 1
+        self._drawn_cards = int(drawn_cards)
         if self._first_paint_ms is not None:
             return
+        self._first_drawn_cards = int(drawn_cards)
         self._first_paint_ms = (
             float(self._clock.elapsed()) if self._clock.isValid() else 0.0
         )
-        self._drawn_cards = int(drawn_cards)
         self._record(
             "first_paint",
             first_paint_ms=self._first_paint_ms,
-            drawn_cards=self._drawn_cards,
+            drawn_cards=self._first_drawn_cards,
             card_count=len(self._items),
             overlay_visible=self.isVisible(),
             overlay_width=int(self.width()),
@@ -463,6 +466,7 @@ class CardDealAnimation(QWidget):
         self._paint_frames = 0
         self._first_paint_ms = None
         self._drawn_cards = 0
+        self._first_drawn_cards = 0
         self._cancel_reason = None
         self._restore_result = None
         self._last_run = None
@@ -538,6 +542,7 @@ class CardDealAnimation(QWidget):
         self._paint_frames = 0
         self._first_paint_ms = None
         self._drawn_cards = 0
+        self._first_drawn_cards = 0
         self._started_at = None
         self._ended_at = None
         self._cancel_reason = None

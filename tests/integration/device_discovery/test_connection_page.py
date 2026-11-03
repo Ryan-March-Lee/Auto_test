@@ -1,6 +1,7 @@
 """连接页与发现面板的版面接线：整屏步骤、扫描行居中和结果区不跳动。"""
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QPalette
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QScrollArea
 
@@ -11,6 +12,7 @@ from presentation.qt.instrument_discovery_panel import (
     InstrumentDiscoveryPanel,
     DiscoveryPhase,
 )
+from presentation.qt.theme import TOKENS, build_stylesheet
 
 from .support import InstrumentSetupPageTestCase
 
@@ -178,6 +180,9 @@ class InstrumentSetupPageLayoutTests(InstrumentSetupPageTestCase):
         self.assertTrue(page.title_label.isVisible(), "扫描中页头高度仍保留，按钮才不跳")
         self.assertTrue(panel.scan_header.isVisible())
         self.assertFalse(panel.scan_header.isEnabled(), "隐去的扫描行不能继续接收输入")
+        # 返回欢迎页在页头里，跟着一起变透明（仍然保留高度），但不能再点击。
+        self.assertTrue(page.return_welcome_btn.isVisible())
+        self.assertFalse(page.return_welcome_btn.isEnabled())
 
         if panel.worker is not None:
             panel.worker.wait(5000)
@@ -187,6 +192,10 @@ class InstrumentSetupPageLayoutTests(InstrumentSetupPageTestCase):
         self.assertEqual(panel.box_state(), "results")
         self.assertFalse(page.title_label.isVisible(), "有结果时页头整块让位给卡片")
         self.assertFalse(panel.scan_header.isVisible())
+        self.assertFalse(
+            page.return_welcome_btn.isVisible(),
+            "有结果时页头整块让位，返回欢迎页链接也一起消失",
+        )
 
         panel.request_back()
         self.app.processEvents()
@@ -314,7 +323,7 @@ class InstrumentSetupPageLayoutTests(InstrumentSetupPageTestCase):
         self.assertEqual(bar.value(), before_value, "返回也不能滚动页面")
 
     def test_connect_button_shares_the_back_row(self):
-        """“连接仪器”和“返回”同一行、落在右端：点它先走配置页的连接入口。"""
+        """“连接仪器”“下一步”和“返回”同一行、落在右端：点它先走配置页的连接入口。"""
         page = self.make_page()
         failures = []
         requested = []
@@ -329,13 +338,17 @@ class InstrumentSetupPageLayoutTests(InstrumentSetupPageTestCase):
             panel.back_btn.parentWidget(),
             "连接仪器要与返回放在同一行",
         )
-        # 两个页面级动作也在这一行：它们与“连接仪器”共用同一个父控件、同一条水平线。
-        for action in (self.connection.return_welcome_btn, self.connection.next_btn):
-            self.assertIs(
-                action.parentWidget(),
-                button.parentWidget(),
-                "返回欢迎页与下一步要和连接仪器同一行",
-            )
+        # “下一步”也在这一行；返回欢迎页是页头里的一行小字，不在这里。
+        self.assertIs(
+            self.connection.next_btn.parentWidget(),
+            button.parentWidget(),
+            "下一步要和连接仪器同一行",
+        )
+        self.assertIsNot(
+            self.connection.return_welcome_btn.parentWidget(),
+            button.parentWidget(),
+            "返回欢迎页是黄字下方的一行链接，不占结果区动作行",
+        )
         # 有结果时“返回”才可见，两个按钮的几何位置也才有意义。
         self.run_scan(panel)
         self.assertTrue(panel.back_btn.isVisible())
@@ -348,20 +361,63 @@ class InstrumentSetupPageLayoutTests(InstrumentSetupPageTestCase):
         self.assertAlmostEqual(
             connect_centre.y(), back_centre.y(), delta=2, msg="两个按钮同一条水平线"
         )
-        for action in (self.connection.return_welcome_btn, self.connection.next_btn):
-            centre = action.mapTo(self.connection, action.rect().center())
-            self.assertAlmostEqual(
-                centre.y(), connect_centre.y(), delta=2, msg="页面动作与连接仪器同一行"
-            )
-            self.assertGreater(
-                centre.x(), connect_centre.x(), "页面动作排在连接仪器右侧"
-            )
+        next_centre = self.connection.next_btn.mapTo(
+            self.connection, self.connection.next_btn.rect().center()
+        )
+        self.assertAlmostEqual(
+            next_centre.y(), connect_centre.y(), delta=2, msg="下一步与连接仪器同一行"
+        )
+        self.assertGreater(
+            next_centre.x(), connect_centre.x(), "下一步排在连接仪器右侧"
+        )
 
         button.click()
 
         # 当前配置没有可用电源：校验挡住连接，说明点击确实到了配置页的连接入口。
         self.assertEqual(requested, [])
         self.assertTrue(failures)
+
+    def test_return_welcome_is_a_link_under_the_mode_hint(self):
+        """返回欢迎页是黄字正下方的一行蓝色小字链接，属于页头而不是结果区动作行。"""
+        self.make_page()
+        page = self.connection
+        panel = page.discovery_panel
+        link = page.return_welcome_btn
+
+        self.assertEqual(link.property("variant"), "link")
+        self.assertTrue(
+            panel.scan_header.isAncestorOf(link),
+            "返回欢迎页要落在扫描行里，跟着页头一起淡出与让位",
+        )
+        link_centre = link.mapTo(panel, link.rect().center())
+        hint_rect = panel.mode_hint.mapTo(panel, panel.mode_hint.rect().topLeft())
+        self.assertGreater(
+            link_centre.y(),
+            hint_rect.y() + panel.mode_hint.height(),
+            "链接要落在黄字（扫描提示）下方",
+        )
+        self.assertAlmostEqual(
+            link_centre.x(), panel.width() / 2, delta=3, msg="链接横向居中"
+        )
+
+    def test_the_return_link_renders_as_small_blue_underlined_text(self):
+        """返回欢迎页在主题里就是“蓝色下划线小字”，不是普通按钮。"""
+        previous = self.app.styleSheet()
+        self.addCleanup(self.app.setStyleSheet, previous)
+        self.app.setStyleSheet(build_stylesheet())
+        self.make_page()
+        link = self.connection.return_welcome_btn
+        self.app.processEvents()
+
+        self.assertAlmostEqual(
+            link.font().pointSizeF(), 8.5, delta=0.25, msg="链接要用主题小字"
+        )
+        self.assertTrue(link.font().underline(), "链接文字要带下划线")
+        self.assertEqual(
+            link.palette().color(QPalette.ButtonText).name(),
+            TOKENS["primary"].lower(),
+            "链接文字要用主色蓝",
+        )
 
 
 class InstrumentSetupPageNextWriteTests(InstrumentSetupPageTestCase):

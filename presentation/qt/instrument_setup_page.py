@@ -16,16 +16,18 @@
 
 版式分两层：静态骨架（页面标题、居中滚动区、页面动作的声明位置）由 Qt Designer 文件
 ``presentation/qt/ui/instrument_setup_page.ui`` 描述，改排列或文案只动那个文件；动态部分
-（设备发现面板、扫描结果卡片，以及“连接仪器／返回欢迎页／下一步”这一行动作）仍在
-Python 里构建并插进骨架。两个页面动作虽然声明在 ``.ui`` 的页面动作栏里，但最终和“连接仪器”
-一起排进设备发现面板的结果区动作行：那一行才是卡片、“返回”与页面动作共同所在的版面。
+（设备发现面板、扫描结果卡片，以及“连接仪器／下一步”这一行动作）仍在
+Python 里构建并插进骨架。“返回欢迎页”不再与它们同排：它被移进扫描提示（模拟模式的
+黄色说明）正下方，显示为一行蓝色下划线小字，并随页头文字一起淡出、随页头一起让位。
+两个页面动作虽然声明在 ``.ui`` 的页面动作栏里，但最终分别落到页头与设备发现面板的
+结果区动作行。
 页面不写颜色、字号与间距常量：颜色与字号来自 :mod:`presentation.qt.theme`，静态间距在
 ``.ui`` 里，版心宽度用主题令牌 ``theme.PAGE_CONTENT_MAX_WIDTH`` 收口。
 
-点“查找设备”后，大标题与面板里的扫描网段/方式提示**隐去文字**（扫描行同时禁用），但保留
+点“查找设备”后，大标题与面板里的扫描网段/方式提示（连同黄字下方的“返回欢迎页”链接）**隐去文字**（扫描行同时禁用），但保留
 这一块固定的高度。它是页面主体的锚点：`查找设备` 按钮与点下去后换成的等待动画落在同一个
 格子里，若这时把页头从布局里拿掉，主体会整体上移一截，按钮就会跳。**扫描出结果后页头连同
-高度一起拿掉**：按钮已经收走，仪器卡片因此可以升到按钮上方、靠近页面顶部，不再和按钮
+高度一起拿掉**（也就带走了“返回欢迎页”）：按钮已经收走，仪器卡片因此可以升到按钮上方、靠近页面顶部，不再和按钮
 同高（按钮本身在结果区里被引导间距压在卡片落点之下，两者矩形不重叠）；按“返回”重新查找、
 扫描失败或没有结果时页头原样回来。页面主体本身固定在上部
 （`instrument_setup_page.ui` 的顶部留白只留一小段，富余高度全部落在底部）。
@@ -72,9 +74,9 @@ _Widget = TypeVar("_Widget", bound=QWidget)
 class InstrumentSetupPage(QWidget):
     """仪器设置页：整屏页面，不登记进标签栏。
 
-    页面持有大字号标题、设备发现面板，以及结果区动作行里的三个动作（返回欢迎页、
-    下一步、连接仪器——它们和面板自己的“返回”排在同一条水平线上）；设备绑定的写入与
-    派生界面状态由配置页负责，本页通过
+    页面持有大字号标题、设备发现面板，以及结果区动作行里的两个动作（下一步、连接仪器
+    ——它们和面板自己的“返回”排在同一条水平线上）；“返回欢迎页”是页头里的一行蓝色
+    下划线小字，落在扫描提示正下方。设备绑定的写入与派生界面状态由配置页负责，本页通过
     :class:`application.ports.device_binding.DeviceBindingPort` 读取与提交，不持有
     配置页实例。
 
@@ -150,16 +152,16 @@ class InstrumentSetupPage(QWidget):
         # 大标题与扫描行在扫描中隐去文字，但保留高度：它们是页面主体的锚点，
         # 按钮、等待动画与结果卡片因此不再上下跳。
         self._setup_header_visibility()
-        # 页面动作栏：两个页面动作移进结果区动作行后，这一栏不再有可见内容；保留引用
-        # 供视觉契约量取页面上下留白。
+        # 页面动作栏：两个页面动作移走后，这一栏不再有可见内容；保留引用供视觉契约
+        # 量取页面上下留白。
         self.page_action_bar = self._require(QWidget, "pageActionBar")
-        # 三个动作排在同一行：连接仪器、返回欢迎页、下一步。两个页面级按钮虽然声明在
-        # ``.ui`` 的页面动作栏里，但按钮之间的“哪一行”属于动态面板的版面（结果区动作行
-        # 才是卡片与“返回”所在的那一行），因此在这里把它们移进同一行。
+        # 结果区动作行：连接仪器与下一步和面板自己的“返回”排在同一行（结果区动作行才
+        # 是卡片与“返回”所在的那一行）。“返回欢迎页”不属于这里：它是一行文字链接，
+        # 落在扫描提示正下方，属于页头，随页头文字一起淡出、有结果时整块让位。
         self.return_welcome_btn = self._require(QPushButton, "returnWelcomeButton")
         self.next_btn = self._require(QPushButton, "nextButton")
+        self.discovery_panel.add_header_widget(self.return_welcome_btn)
         self.discovery_panel.add_action_widget(self._build_connect_button())
-        self.discovery_panel.add_action_widget(self.return_welcome_btn)
         self.discovery_panel.add_action_widget(self.next_btn)
         # 窗口尺寸变化时把结果区高度收进当前窗口。视口第一次拿到真实高度是在显示之后，
         # 所以这里只装监听：每次视口尺寸变化都会按新的可用高度重算一次。
@@ -265,7 +267,7 @@ class InstrumentSetupPage(QWidget):
         self._set_header_text_visible(state == BOX_STATE_IDLE)
 
     def _build_connect_button(self) -> QPushButton:
-        """结果区动作行里的“连接仪器”：与“返回”、返回欢迎页、下一步同一行。"""
+        """结果区动作行里的“连接仪器”：与“返回”、下一步同一行。"""
         self.connect_btn = QPushButton("连接仪器")
         self.connect_btn.setObjectName("connectButton")
         self.connect_btn.setToolTip(
@@ -295,11 +297,15 @@ class InstrumentSetupPage(QWidget):
         return self.title_label.text()
 
     def action_labels(self) -> tuple[str, str]:
-        """两个页面级动作的文案：返回欢迎页、下一步。"""
+        """两个页面级动作的文案：返回欢迎页（页头链接）、下一步。"""
         return self.return_welcome_btn.text(), self.next_btn.text()
 
     def page_actions_visible(self) -> tuple[bool, bool]:
-        """两个页面级动作当前是否可见（仍按返回、下一步的顺序）。"""
+        """两个页面级动作当前是否可见（仍按返回、下一步的顺序）。
+
+        “返回欢迎页”在页头里：查找期间它随页头文字一起淡出（仍然可见、只是透明），
+        有结果时页头整块让位，它也就不可见了。
+        """
         return self.return_welcome_btn.isVisible(), self.next_btn.isVisible()
 
     def request_next(self) -> None:

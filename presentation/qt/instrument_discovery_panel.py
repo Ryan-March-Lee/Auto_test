@@ -890,6 +890,27 @@ class InstrumentDiscoveryPanel(QWidget):
         self._available_height = height
         self._apply_results_height()
 
+    def _status_line_height(self) -> int:
+        """状态行需要的高度；为空时沿用标签自己的单行高度。
+
+        不能直接用 ``status_label.sizeHint()``：控件还没拿到最终宽度时，带换行标签的
+        ``sizeHint`` 会按旧宽度折行，扫描刚开始的那一帧会虚高一行，结果区跟着长高
+        4px、下一帧又缩回去，页面于是短暂出现滚动条（扫描行横向跳一下）。有文字时按
+        结果区的实际内宽算高度，扫描前后都是同一行；长说明仍会按实际宽度占足行数。
+        """
+        label = self.status_label
+        text = label.text()
+        if not text:
+            return label.sizeHint().height()
+        layout = self.results_box.layout()
+        margins = layout.contentsMargins() if layout is not None else None
+        width = self.results_box.width()
+        if margins is not None:
+            width -= margins.left() + margins.right()
+        if width <= 0:
+            return label.fontMetrics().height()
+        return max(label.fontMetrics().height(), label.heightForWidth(width))
+
     def _results_chrome_height(self) -> int:
         """结果区里除卡片行以外的高度：内外边距、状态行、动作行与间距。"""
         layout = self.results_box.layout()
@@ -904,7 +925,7 @@ class InstrumentDiscoveryPanel(QWidget):
             margins.top()
             + margins.bottom()
             + action_row_height
-            + self.status_label.sizeHint().height()
+            + self._status_line_height()
             + 2 * layout.spacing()
         )
 
@@ -1024,6 +1045,26 @@ class InstrumentDiscoveryPanel(QWidget):
         # 动作行的高度可能变了：两行卡片的上限跟着重算一次。
         self._capture_results_height_max()
         self._apply_results_height()
+
+    def add_header_widget(self, widget: QWidget) -> None:
+        """把一个页面级动作放到扫描提示（黄字）正下方，横向居中。
+
+        与 :meth:`add_action_widget` 一样，面板只提供版面：动作由页面创建与接线。
+        这块内容属于页头，因此跟着扫描行一起淡出、一起让位：查找期间页面只改扫描行的
+        透明度，有结果时扫描行整块从版面里拿掉。
+        """
+        header = self.scan_header.layout()
+        if header is None:
+            raise RuntimeError("扫描行缺少布局")
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+        row.addStretch(1)
+        row.addWidget(widget)
+        row.addStretch(1)
+        header.addLayout(row)
+        # 页头多了一行：外层布局与页面的结果区高度分配要当场重排一次。
+        self._notify_ancestors()
 
     def box_state(self) -> str:
         """结果区当前状态：``idle``（还没查找）/ ``busy``（正在查找）/ ``results``（有结果）。

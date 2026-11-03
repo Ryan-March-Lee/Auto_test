@@ -130,8 +130,8 @@ TOKENS = {
 
 FONT_FAMILIES = ("Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI")
 
-#: 允许的按钮层级：主操作、次要操作、危险操作、低强调动作、正向切换。
-BUTTON_VARIANTS = ("primary", "secondary", "danger", "ghost", "success")
+#: 允许的按钮层级：主操作、次要操作、危险操作、低强调动作、正向切换、文字链接。
+BUTTON_VARIANTS = ("primary", "secondary", "danger", "ghost", "success", "link")
 
 #: 未声明 ``variant`` 时按钮的默认层级。它直接使用基础 ``QPushButton`` 规则，
 #: 因此样式表里没有单独的 ``[variant="secondary"]`` 选择器；其余层级各有一条。
@@ -917,6 +917,39 @@ QPushButton[variant="ghost"]:hover {
 QPushButton[variant="ghost"]:pressed {
     background-color: $primary_soft_border;
     color: $primary_pressed;
+}
+/* 文字链接：没有按钮表面，只有一行蓝色带下划线的小字（例如“返回欢迎页”）。
+   内边距与最小高度都归零，外观与同一列里的说明文字一样高。 */
+QPushButton[variant="link"] {
+    background: transparent;
+    border: none;
+    color: $primary;
+    font-size: $font_small;
+    font-weight: 500;
+    text-decoration: underline;
+    min-height: 0px;
+    padding: 0px;
+}
+QPushButton[variant="link"]:hover {
+    background: transparent;
+    border: none;
+    color: $primary_hover;
+    text-decoration: underline;
+}
+QPushButton[variant="link"]:pressed {
+    background: transparent;
+    border: none;
+    color: $primary_pressed;
+    text-decoration: underline;
+}
+QPushButton[variant="link"]:focus {
+    border: none;
+}
+QPushButton[variant="link"]:disabled {
+    background: transparent;
+    border: none;
+    color: $disabled_text;
+    text-decoration: underline;
 }
 QPushButton:disabled {
     background-color: $disabled_bg;

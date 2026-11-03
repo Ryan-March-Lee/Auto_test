@@ -94,7 +94,7 @@ class UiLoaderTests(unittest.TestCase):
         self.assertEqual(next_btn.text(), "下一步")
         self.assertEqual(return_btn.text(), "返回欢迎页")
         self.assertEqual(next_btn.property("variant"), "primary")
-        self.assertEqual(return_btn.property("variant"), "secondary")
+        self.assertEqual(return_btn.property("variant"), "link")
 
     def test_ui_files_declare_no_colors_fonts_styles_or_fixed_sizes(self):
         """结构在 ``.ui``，外观与尺寸令牌在 ``theme.py``：两边不各自维护一套视觉常量。"""

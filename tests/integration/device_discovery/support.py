@@ -211,8 +211,6 @@ class InstrumentSetupPageTestCase(unittest.TestCase):
         )
         session = ConfigurationSession(page)
         connection = InstrumentSetupPage(session, scanner_factory=scanner_factory)
-        # 与主窗口同一套装配：连接页只发出“连接仪器”的意图，面板回写仍归配置页。
-        connection.connect_requested.connect(page.request_connect)
         page.discovery_message.connect(connection.log_message.emit)
         session.attach_discovery_panel(connection.discovery_panel)
         # 连接页是整屏页面：按窗口尺寸布局，卡片网格才按真实宽度换行。

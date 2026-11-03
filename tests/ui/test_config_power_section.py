@@ -397,8 +397,7 @@ class PowerSectionOwnershipTests(unittest.TestCase):
 
         for signal in (
             "save_requested",
-            "connect_requested",
-            "create_run_requested",
+            "finalize_run_requested",
             "load_run_requested",
             "validation_failed",
         ):

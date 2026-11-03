@@ -2,7 +2,7 @@
 
 覆盖验收标准：
 
-- 配置页面通过“校验并创建运行”创建 ``PreparedRun``，并提供按 ``run_id`` 重新打开
+- 配置页面通过“完成配置并连接仪器”创建 ``PreparedRun``，并提供按 ``run_id`` 重新打开
   已有运行的入口。
 - 三个测量页面只接受当前 ``PreparedRun``，不再在开始前重新保存 GUI 配置。
 - controller / worker 直接消费运行契约，不再重复执行配置预检。
@@ -883,21 +883,6 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
 class MainWindowCompositionTests(unittest.TestCase):
     """窗口只剩组装职责：连接与测量入口必须委托给协调器。"""
 
-    def test_connect_instruments_restores_button_when_start_fails(self):
-        from presentation.qt.main_window import MainWindow
-
-        window = MainWindow.__new__(MainWindow)
-        # 连接入口只有一个，在“仪表配置”页上：窗口通过连接页拿到那个按钮。
-        window.connection_page = MagicMock()
-        window.coordinator = MagicMock()
-        window.coordinator.connect_instruments.return_value = False
-
-        MainWindow.connect_instruments(window)
-
-        button = window.connection_page.connect_btn
-        button.setEnabled.assert_any_call(False)
-        button.setEnabled.assert_called_with(True)
-
     def test_instrument_worker_callbacks_delegate_to_the_coordinator(self):
         from presentation.qt.main_window import MainWindow
 
@@ -927,26 +912,26 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
 
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_create_run_signal_is_emitted_after_validation(self):
+    def test_finalize_run_signal_is_emitted_after_validation(self):
         from presentation.qt.configuration_page import ConfigurationPage
 
         page = ConfigurationPage(_fully_valid_gui_config())
         requested = []
-        page.create_run_requested.connect(lambda: requested.append(True))
-        page.create_run_btn.click()
+        page.finalize_run_requested.connect(lambda: requested.append(True))
+        page.finalize_run_btn.click()
         self.assertEqual(requested, [True])
 
-    def test_create_run_is_blocked_when_no_device_is_bound(self):
-        """没有任何已应用设备时电源分配无法成立，创建运行必须明确失败。"""
+    def test_finalize_run_is_blocked_when_no_device_is_bound(self):
+        """没有任何已应用设备时电源分配无法成立，最终动作必须明确失败。"""
         from presentation.qt.configuration_page import ConfigurationPage
 
         page = ConfigurationPage({})
         failures = []
         requested = []
         page.validation_failed.connect(failures.append)
-        page.create_run_requested.connect(lambda: requested.append(True))
+        page.finalize_run_requested.connect(lambda: requested.append(True))
 
-        page.create_run_btn.click()
+        page.finalize_run_btn.click()
 
         self.assertEqual(requested, [])
         self.assertIn("未选择电源", failures[0])
@@ -970,10 +955,10 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         failures = []
         requested = []
         page.validation_failed.connect(failures.append)
-        page.connect_requested.connect(lambda: requested.append(True))
+        page.finalize_run_requested.connect(lambda: requested.append(True))
 
-        # 连接入口的按钮在“仪表配置”页：配置页只留校验通过的请求入口。
-        page.request_connect()
+        # 最终动作的按钮在参数配置页：校验不通过时不会发起保存/连接事务。
+        page.request_finalize_run()
 
         self.assertEqual(requested, [])
         self.assertEqual(len(failures), 1)

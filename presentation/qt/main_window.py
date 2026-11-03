@@ -82,6 +82,8 @@ class MainWindow(QMainWindow):
         self.measurement_controller.signals.message.connect(self.add_log_message)
         self.measurement_controller.signals.rejected.connect(self.add_log_message)
         self.coordinator.load_configuration()
+        # 最终动作异步：只有连接成功且端口交接完成才切到测量区。
+        self._finalize_pending = self._finalize_port_ready = False
         self.init_ui()
         self.log_timer = QTimer()
         self.log_timer.timeout.connect(self.update_status)
@@ -177,9 +179,9 @@ class MainWindow(QMainWindow):
         workspace_layout.addWidget(self.workspace_splitter, 1)
         self.view_stack.addWidget(self.workspace_page)
 
-        # 仪表配置是欢迎页之后的整屏页面，不登记进标签栏：先选设备、连接，再配测试参数。
-        # 连接页只依赖配置会话的窄接口，不持有配置页实例；面板回写与“连接仪器”的
-        # 校验入口都由窗口装配给会话/配置页。
+        # 仪表配置是欢迎页之后的整屏页面，不登记进标签栏：先选设备，再配测试参数，
+        # 最后由参数配置页的“完成配置并连接仪器”提交最终动作。仪表配置页只依赖配置
+        # 会话的窄接口，不持有配置页实例；面板回写由窗口装配给会话。
         self.configuration_session = ConfigurationSession(self.config_page)
         self.connection_page = InstrumentSetupPage(
             self.configuration_session,
@@ -187,9 +189,6 @@ class MainWindow(QMainWindow):
         )
         self.connection_page.next_requested.connect(self._open_configuration_page)
         self.connection_page.return_welcome_requested.connect(self._return_to_welcome)
-        self.connection_page.connect_requested.connect(
-            self.configuration_session.request_connect
-        )
         self.connection_page.log_message.connect(self.add_log_message)
         self.config_page.discovery_message.connect(self.connection_page.log_message.emit)
         self.configuration_session.attach_discovery_panel(
@@ -226,10 +225,10 @@ class MainWindow(QMainWindow):
         self._sync_status_panel_visibility()
 
     def _open_configuration_page(self) -> None:
-        """仪表配置完成：进入工作区，当前页面仍是“仪器配置”。
+        """仪表配置完成：进入工作区，当前页面是“仪器配置”。
 
-        “下一步”只做页面切换，不写配置：设备绑定已经记在配置页上，保存与创建运行
-        时随配置一起落盘/冻结，因此中途返回欢迎页也不会留下半保存的配置。
+        “下一步”已经由仪表配置页把本次勾选整批写成设备绑定；这里只切页，不写文件、
+        不创建运行。保存配置、创建运行与连接仪器都归参数配置页的最终按钮。
         """
         self.tab_widget.setCurrentIndex(0)
         self.view_stack.setCurrentWidget(self.workspace_page)
@@ -341,8 +340,7 @@ class MainWindow(QMainWindow):
         """创建仪器配置选项卡；配置页与协调器在这里互相登记。"""
         tab = ConfigurationPage(self.config, self)
         tab.save_requested.connect(self.save_config)
-        tab.connect_requested.connect(self.connect_instruments)
-        tab.create_run_requested.connect(self.coordinator.create_prepared_run)
+        tab.finalize_run_requested.connect(self._finalize_run)
         tab.load_run_requested.connect(self.coordinator.load_prepared_run)
         tab.return_welcome_requested.connect(self._return_to_welcome)
         tab.connection_step_requested.connect(self._return_to_connection_page)
@@ -406,28 +404,33 @@ class MainWindow(QMainWindow):
         if self.prepared_run is not None:
             self.add_log_message(
                 f"注意：当前运行 {self.prepared_run.run_id} 的配置已冻结；"
-                "若要使用本次修改，请重新“校验并创建运行”"
+                "若要使用本次修改，请重新“完成配置并连接仪器”"
             )
         QMessageBox.information(self, "保存成功", "配置文件已保存")
 
-    # ---- 仪器连接（端口与 worker 归协调器，窗口只连接信号） ----
-
-    def _set_connect_enabled(self, enabled: bool) -> None:
-        """连接期间禁用/恢复唯一那个连接入口。
-
-        连接按钮在“仪表配置”页（欢迎页之后的第一步），不在标签页里；窗口只负责
-        它在连接过程中的可用状态，不自己持有按钮。
-        """
-        page = getattr(self, "connection_page", None)
-        button = getattr(page, "connect_btn", None)
-        if button is not None:
-            button.setEnabled(enabled)
-
-    def connect_instruments(self):
-        """连接仪器；连接成功前按钮保持禁用。"""
-        self._set_connect_enabled(False)
+    def _finalize_run(self):
+        """冻结运行并启动连接；连接成功且端口交接完成才进入测量区。"""
+        page = getattr(self, "config_page", None)
+        if page is None or self._finalize_pending:
+            return
+        page.set_finalizing(True)
+        prepared = None
+        try:
+            prepared = self.coordinator.create_prepared_run()
+        finally:
+            if prepared is None:  # 失败或异常：恢复页面；成功则等连接 worker 收尾。
+                page.set_finalizing(False)
+        if prepared is None:
+            return
+        self._finalize_pending, self._finalize_port_ready = True, False
         if not self.coordinator.connect_instruments(self._bind_instrument_worker_signals):
-            self._set_connect_enabled(True)
+            self._end_finalize()
+
+    def _end_finalize(self):
+        """结束进行中的最终动作并恢复页面；失败路径也走这里，便于修正后重试。"""
+        self._finalize_pending = self._finalize_port_ready = False
+        page = getattr(self, "config_page", None)
+        if page is not None: page.set_finalizing(False)
 
     def _bind_instrument_worker_signals(self, worker):
         worker.signals.finished.connect(self.on_instrument_connected)
@@ -438,32 +441,37 @@ class MainWindow(QMainWindow):
         worker.signals.progress.connect(self.progress_bar.setValue)
 
     def on_instrument_controller_ready(self, controller):
-        """端口交接：协调器保存端口并注入 controller。"""
-        if not self.coordinator.accept_instrument_controller(controller):
-            self.add_log_message(
-                "上一次连接的仪器清理未完成，已登记为未决清理；请现场确认后重试"
-            )
-
+        """端口交接；结果留给完成事件，交接失败不能算最终动作成功。"""
+        accepted = self.coordinator.accept_instrument_controller(controller)
+        self._finalize_port_ready = accepted
+        if not accepted:
+            self.add_log_message("上一次连接的仪器清理未完成，已登记为未决清理；请现场确认后重试")
     def on_instrument_connected(self):
-        """仪器连接完成"""
-        self._set_connect_enabled(True)
+        """连接完成：最终动作成功时进入测量区，不自动开始测量。"""
         self.progress_bar.setValue(0)
         self.add_log_message("所有仪器连接成功！")
+        if not self._finalize_pending:
+            return
+        port_ready = self._finalize_port_ready
+        self._end_finalize()
+        if not port_ready:
+            self.add_log_message("仪器已连接，但端口交接未完成；请处理未决清理后再重试最终动作")
+            return
+        self.tab_widget.setCurrentIndex(0)
+        self.view_stack.setCurrentWidget(self.workspace_page)
+        self._sync_status_panel_visibility()
 
     def on_instrument_error(self, error_message):
-        """处理仪器连接 worker 的错误。"""
         self.add_log_message(f"错误: {error_message}")
         QMessageBox.critical(self, "错误", error_message)
-        # 连接 worker 失败时只恢复连接控件；测量页面由 controller 状态驱动。
-        self._set_connect_enabled(True)
         self.progress_bar.setValue(0)
+        self._end_finalize()
         self.coordinator.release_instrument_port()
 
     def on_instrument_stopped(self, reason):
-        """处理仪器连接 worker 的停止。"""
         self.add_log_message(f"仪器连接线程已停止: {reason}")
-        self._set_connect_enabled(True)
         self.progress_bar.setValue(0)
+        self._end_finalize()
         self.coordinator.release_instrument_port()
 
     def _on_measurement_controller_thread_finished(self):

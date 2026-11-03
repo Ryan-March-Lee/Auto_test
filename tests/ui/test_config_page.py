@@ -336,7 +336,7 @@ class ConfigurationPageTests(unittest.TestCase):
         self.assertLessEqual(max(widths), 900)
 
     def test_instrument_connection_is_its_own_page(self):
-        """仪表配置已独立成整屏页面：配置页只留“上一步”入口，不再有连接按钮。"""
+        """仪表配置已独立成整屏页面：配置页只留“上一步”入口与最终动作。"""
         page = self.make_page()
         # 面板只归连接页所有：配置页既不创建也不登记它。
         self.assertFalse(hasattr(page, "discovery_panel"))
@@ -348,8 +348,50 @@ class ConfigurationPageTests(unittest.TestCase):
 
         self.assertEqual(steps, [True])
         self.assertFalse(hasattr(page, "sg_address"))
-        # 连接入口只有一个，在“仪表配置”页的框外右下角。
+        # 旧连接入口（按钮、信号、请求方法）都已删除；连接只由最终按钮发起。
         self.assertFalse(hasattr(page, "connect_btn"))
+        self.assertFalse(hasattr(page, "connect_requested"))
+        self.assertFalse(hasattr(page, "request_connect"))
+        self.assertEqual(page.finalize_run_btn.text(), "完成配置并连接仪器")
+
+    def test_finalizing_disables_the_page_without_overwriting_derived_states(self):
+        """最终动作只临时禁用控件，退出时恢复各控件原来的可用状态。
+
+        驱放供电切到“自带供电”后，驱动电源分配本来就被禁用；最终动作结束后不能
+        把它顺手启用，否则界面会提供一个业务上不允许的编辑入口。
+        """
+        page = self.make_page(driver_mode={"enabled": True, "power_source": "dc_supply"})
+        page.set_test_mode(True)
+        page.driver_power_source_combo.setCurrentText("自带供电")
+        self.assertFalse(page.driver_power_combo.isEnabled())
+        page.save_config_btn.setEnabled(False)
+
+        page.set_finalizing(True)
+
+        self.assertFalse(page.finalize_run_btn.isEnabled())
+        self.assertFalse(page.test_parameters_group.isEnabled())
+        self.assertFalse(page.power_assignment_group.isEnabled())
+        self.assertFalse(page.previous_step_btn.isEnabled())
+
+        page.set_finalizing(False)
+
+        self.assertTrue(page.finalize_run_btn.isEnabled())
+        self.assertTrue(page.test_parameters_group.isEnabled())
+        self.assertTrue(page.previous_step_btn.isEnabled())
+        self.assertFalse(page.save_config_btn.isEnabled(), "进入前就禁用的控件保持禁用")
+        self.assertFalse(
+            page.driver_power_combo.isEnabled(), "业务派生出的禁用状态不能被最终动作改写"
+        )
+
+    def test_finalize_request_is_ignored_while_a_finalize_is_running(self):
+        page = self.make_page()
+        requested = []
+        page.finalize_run_requested.connect(lambda: requested.append(True))
+
+        page.set_finalizing(True)
+        page.request_finalize_run()
+
+        self.assertEqual(requested, [])
 
     def test_config_sections_use_two_columns(self):
         from PySide6.QtWidgets import QGroupBox

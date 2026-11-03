@@ -40,11 +40,12 @@ class InstrumentSetupPageLayoutTests(InstrumentSetupPageTestCase):
 
         self.assertEqual(self.connection.page_title(), "仪表配置")
         self.assertEqual(self.connection.action_labels(), ("返回欢迎页", "下一步"))
-
+        # 首次查找前不提供“下一步”：必须先从本次扫描结果中选择设备。
+        self.assertFalse(self.connection.next_btn.isVisible())
         requested = []
         self.connection.next_requested.connect(lambda: requested.append(True))
         self.connection.next_btn.click()
-        self.assertEqual(requested, [True])
+        self.assertEqual(requested, [])
 
     def test_entering_the_page_resets_stale_scan_results(self):
         """再次进入本页时，上一次的结果不能冒充本次的发现结果。"""
@@ -278,7 +279,7 @@ class InstrumentSetupPageLayoutTests(InstrumentSetupPageTestCase):
         """点“查找设备”不能把扫描行推走或滚动页面。
 
         Qt 会在焦点控件被禁用或隐藏时把焦点交给下一个可聚焦控件，外层滚动区再滚到
-        它那里：卡片一收走，焦点落到结果区动作行里的“连接仪器”，整页向上滚，扫描行
+        它那里：卡片一收走，焦点落到结果区动作行里的“下一步”，整页向上滚，扫描行
         （扫描网段 / 扫描方式）就离开了点之前的位置。扫描中页头文字隐去、高度保留，
         扫描行本身留在原处；以点击之前的位置为准。
         """
@@ -322,60 +323,39 @@ class InstrumentSetupPageLayoutTests(InstrumentSetupPageTestCase):
         self.assertEqual(row_position(), before, "返回后扫描行仍在原处")
         self.assertEqual(bar.value(), before_value, "返回也不能滚动页面")
 
-    def test_connect_button_shares_the_back_row(self):
-        """“连接仪器”“下一步”和“返回”同一行、落在右端：点它先走配置页的连接入口。"""
-        page = self.make_page()
-        failures = []
-        requested = []
-        page.validation_failed.connect(failures.append)
-        page.connect_requested.connect(lambda: requested.append(True))
-
-        button = self.connection.connect_btn
+    def test_next_shares_the_back_row_when_a_result_is_available(self):
+        """“下一步”和“返回”同一行、落在右端；仪表配置页没有独立的连接按钮。"""
+        self.make_page()
         panel = self.connection.discovery_panel
-        self.assertEqual(button.text(), "连接仪器")
-        self.assertIs(
-            button.parentWidget(),
-            panel.back_btn.parentWidget(),
-            "连接仪器要与返回放在同一行",
-        )
-        # “下一步”也在这一行；返回欢迎页是页头里的一行小字，不在这里。
+        self.assertFalse(hasattr(self.connection, "connect_btn"))
+        self.assertFalse(hasattr(self.connection, "connect_requested"))
         self.assertIs(
             self.connection.next_btn.parentWidget(),
-            button.parentWidget(),
-            "下一步要和连接仪器同一行",
+            panel.back_btn.parentWidget(),
+            "下一步要与返回放在同一行",
         )
         self.assertIsNot(
             self.connection.return_welcome_btn.parentWidget(),
-            button.parentWidget(),
+            panel.back_btn.parentWidget(),
             "返回欢迎页是黄字下方的一行链接，不占结果区动作行",
         )
-        # 有结果时“返回”才可见，两个按钮的几何位置也才有意义。
+
+        # 有可应用结果后才出现；几何位置在“返回”可见时才可量取。
         self.run_scan(panel)
         self.assertTrue(panel.back_btn.isVisible())
-        connect_centre = button.mapTo(
-            self.connection, button.rect().center()
+        self.assertTrue(self.connection.next_btn.isVisible())
+        next_centre = self.connection.next_btn.mapTo(
+            self.connection, self.connection.next_btn.rect().center()
         )
         back_centre = panel.back_btn.mapTo(
             self.connection, panel.back_btn.rect().center()
         )
         self.assertAlmostEqual(
-            connect_centre.y(), back_centre.y(), delta=2, msg="两个按钮同一条水平线"
-        )
-        next_centre = self.connection.next_btn.mapTo(
-            self.connection, self.connection.next_btn.rect().center()
-        )
-        self.assertAlmostEqual(
-            next_centre.y(), connect_centre.y(), delta=2, msg="下一步与连接仪器同一行"
+            next_centre.y(), back_centre.y(), delta=2, msg="两个按钮同一条水平线"
         )
         self.assertGreater(
-            next_centre.x(), connect_centre.x(), "下一步排在连接仪器右侧"
+            next_centre.x(), back_centre.x(), "下一步排在“返回”右侧"
         )
-
-        button.click()
-
-        # 当前配置没有可用电源：校验挡住连接，说明点击确实到了配置页的连接入口。
-        self.assertEqual(requested, [])
-        self.assertTrue(failures)
 
     def test_return_welcome_is_a_link_under_the_mode_hint(self):
         """返回欢迎页是黄字正下方的一行蓝色小字链接，属于页头而不是结果区动作行。"""
@@ -508,8 +488,8 @@ class InstrumentSetupPageNextWriteTests(InstrumentSetupPageTestCase):
         self.assertEqual(page.device_bindings, {})
         self.assertIn("重复选择", panel.status_label.text())
 
-    def test_next_without_a_scan_keeps_the_saved_bindings(self):
-        """返回本页只改参数、没重新扫描时，沿用已保存的绑定，不要求再选一次。"""
+    def test_next_before_any_scan_is_refused_even_with_saved_bindings(self):
+        """未查找时不能沿用已保存的绑定进入参数页：页面不提供绕过查找的入口。"""
         page = self.make_page(
             {
                 "test_frequencies": [1.0],
@@ -524,11 +504,35 @@ class InstrumentSetupPageNextWriteTests(InstrumentSetupPageTestCase):
         )
         requested = []
         self.connection.next_requested.connect(lambda: requested.append(True))
+        self.assertFalse(self.connection.next_btn.isVisible())
 
+        # 直接调用页面推进入口也不能绕过：必须先从本次扫描结果中选择设备。
+        self.connection.request_next()
         self.connection.next_btn.click()
 
-        self.assertEqual(requested, [True])
+        self.assertEqual(requested, [])
         self.assertIn("signal_generator", page.device_bindings)
+        self.assertIn("请先查找设备", self.connection.discovery_panel.status_label.text())
+
+    def test_next_appears_only_after_a_selectable_result(self):
+        page = self.make_page()
+        panel = self.connection.discovery_panel
+        self.assertFalse(self.connection.next_btn.isVisible(), "首次查找前隐藏")
+        panel.request_scan()
+        self.app.processEvents()
+        self.assertFalse(self.connection.next_btn.isVisible(), "扫描中隐藏")
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        panel.wait_stack.finish_cycle()
+        self.app.processEvents()
+        if panel.deal_animation.is_running():
+            panel.deal_animation.finish()
+            self.app.processEvents()
+        self.assertTrue(self.connection.next_btn.isVisible(), "有可应用结果后才显示")
+
+        panel.request_back()
+        self.app.processEvents()
+        self.assertFalse(self.connection.next_btn.isVisible(), "返回后重新隐藏")
 
 
 class DiscoveryAnimationOverlayTests(InstrumentSetupPageTestCase):

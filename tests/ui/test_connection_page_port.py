@@ -62,13 +62,21 @@ class _StubPort:
 
 
 class _PanelStub:
-    def __init__(self, assignments=(), problems=()):
+    def __init__(self, assignments=(), problems=(), *, interactive=True, selectable=True):
         self._assignments = list(assignments)
         self._problems = list(problems)
+        self._interactive = bool(interactive)
+        self._selectable = bool(selectable)
         self.messages = []
 
     def box_state(self):
         return BOX_STATE_RESULTS
+
+    def is_interactive(self):
+        return self._interactive
+
+    def has_selectable_devices(self):
+        return self._selectable
 
     def selected_assignments(self):
         return list(self._assignments), list(self._problems)
@@ -201,14 +209,40 @@ class InstrumentSetupPagePortTests(unittest.TestCase):
         self.assertEqual(port.requests, [])
         self.assertEqual(requested, [])
 
-    def test_connect_button_only_emits_user_intent(self):
+    def test_connect_button_no_longer_exists(self):
+        """连接仪器已并入参数配置页的最终动作：仪表配置页没有连接入口。"""
         page = self.make_page(_StubPort())
+
+        self.assertFalse(hasattr(page, "connect_btn"))
+        self.assertFalse(hasattr(page, "connect_requested"))
+
+    def test_next_is_blocked_until_this_scan_has_an_interactive_result(self):
+        """程序化调用也不能绕过“先查找”：没有本次可交互结果时不写绑定、不跳页。"""
+        port = _StubPort()
+        page = self.make_page(port)
+        page.discovery_panel = _PanelStub(
+            assignments=[{"role": "signal_generator", "address": "sim::sg"}],
+            interactive=False,
+        )
         requested = []
-        page.connect_requested.connect(lambda: requested.append(True))
+        page.next_requested.connect(lambda: requested.append(True))
 
-        page.connect_btn.click()
+        page.request_next()
 
-        self.assertEqual(requested, [True])
+        self.assertEqual(port.requests, [])
+        self.assertEqual(requested, [])
+        self.assertTrue(page.discovery_panel.messages)
+
+    def test_next_is_blocked_when_the_result_has_no_selectable_device(self):
+        page = self.make_page(_StubPort())
+        page.discovery_panel = _PanelStub(assignments=[], selectable=False)
+        requested = []
+        page.next_requested.connect(lambda: requested.append(True))
+
+        page.request_next()
+
+        self.assertEqual(requested, [])
+        self.assertTrue(page.discovery_panel.messages)
 
 
 class InstrumentSetupPageBoundaryTests(unittest.TestCase):
@@ -290,12 +324,13 @@ class InstrumentSetupPageStaticLayoutTests(unittest.TestCase):
         self.assertEqual(page.page_title(), "仪表配置")
         self.assertEqual(page.action_labels(), ("返回欢迎页", "下一步"))
 
-    def test_page_actions_are_visible(self):
+    def test_page_actions_appear_only_after_a_usable_result(self):
         page = self.make_page()
         page.show()
         self.app.processEvents()
 
-        self.assertEqual(page.page_actions_visible(), (True, True))
+        # 首次查找前“下一步”不出现，只保留页头里的“返回欢迎页”。
+        self.assertEqual(page.page_actions_visible(), (True, False))
 
     def test_content_is_constrained_to_the_shared_width_and_stays_centred(self):
         page = self.make_page()

@@ -174,7 +174,7 @@
       <item>
        <widget class="QPushButton" name="nextButton">
         <property name="toolTip">
-         <string>进入仪器配置页，配置测试参数并创建运行</string>
+         <string>进入仪器配置页，配置测试参数并完成仪器连接</string>
         </property>
         <property name="text">
          <string>下一步</string>

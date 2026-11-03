@@ -82,6 +82,41 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.addCleanup(window.close)
         return window
 
+    def _scan_and_select(self, window):
+        """在仪表配置页完成一次确定性的模拟查找，并勾选一台设备。
+
+        窗口默认的扫描器会读临时目录里的设备表；这里换成集成测试使用的模拟设备表，
+        使“查找 → 勾选 → 下一步”的整条页面流程可以离屏复现，不依赖现场网络。
+        """
+        from tests.integration.device_discovery.support import scanner_factory
+
+        page = window.connection_page
+        panel = page.discovery_panel
+        panel.scanner_factory = scanner_factory
+        panel.request_scan()
+        self.assertIsNotNone(panel.worker)
+        panel.worker.wait(5000)
+        self.app.processEvents()
+        self.app.processEvents()
+        self.assertIsNone(panel.worker)
+        panel.wait_stack.finish_cycle()
+        self.app.processEvents()
+        self.app.processEvents()
+        if panel.deal_animation.is_running():
+            panel.deal_animation.finish()
+            self.app.processEvents()
+        for card in panel.cards():
+            if card.is_checked():
+                panel.set_card_checked(card.data.heading, False)
+        heading = next(
+            card.data.heading
+            for card in panel.cards()
+            if card.checkable and card.data.role == "信号发生器"
+        )
+        panel.set_card_checked(heading, True)
+        self.app.processEvents()
+        return panel
+
     def test_window_exposes_the_coordinator_state_and_initial_run_status(self):
         self._silence_dialogs()
         window = self._window()
@@ -96,6 +131,62 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         # 配置页被登记成协调器的窄接口，而不是控件宿主。
         self.assertIs(window.coordinator.config_page, window.config_page)
 
+    def test_finalize_enters_the_workspace_only_after_the_connection_succeeds(self):
+        """最终按钮承诺“连接仪器”：运行冻结后还要等连接成功才离开参数页。"""
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+
+        with patch.object(
+            window.coordinator, "create_prepared_run", return_value=object()
+        ), patch.object(
+            window.coordinator, "connect_instruments", return_value=True
+        ) as connect:
+            window._finalize_run()
+
+        connect.assert_called_once_with(window._bind_instrument_worker_signals)
+        self.assertIs(window.view_stack.currentWidget(), window.connection_page)
+        self.assertFalse(window.config_page.finalize_run_btn.isEnabled(), "连接中不能重复提交")
+
+        with patch.object(
+            window.coordinator, "accept_instrument_controller", return_value=True
+        ):
+            window.on_instrument_controller_ready(object())
+        window.on_instrument_connected()
+
+        self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
+        self.assertTrue(window.config_page.finalize_run_btn.isEnabled())
+
+    def test_finalize_stays_on_the_configuration_page_when_the_connection_fails(self):
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+
+        with patch.object(
+            window.coordinator, "create_prepared_run", return_value=object()
+        ), patch.object(window.coordinator, "connect_instruments", return_value=True):
+            window._finalize_run()
+
+        with patch.object(window.coordinator, "release_instrument_port") as release:
+            window.on_instrument_error("仪器连接失败")
+
+        release.assert_called_once_with()
+        self.assertIs(window.view_stack.currentWidget(), window.connection_page)
+        self.assertTrue(window.config_page.finalize_run_btn.isEnabled(), "失败后允许重试")
+
+    def test_finalize_restores_the_page_when_the_connection_cannot_start(self):
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+
+        with patch.object(
+            window.coordinator, "create_prepared_run", return_value=object()
+        ), patch.object(window.coordinator, "connect_instruments", return_value=False):
+            window._finalize_run()
+
+        self.assertIs(window.view_stack.currentWidget(), window.connection_page)
+        self.assertTrue(window.config_page.finalize_run_btn.isEnabled())
+
     def test_startup_shows_welcome_and_selection_applies_mode(self):
         self._silence_dialogs()
         window = self._window()
@@ -107,6 +198,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertTrue(window.config_page.driver_mode_requested())
         self.assertTrue(window.config["driver_mode"]["enabled"])
 
+        self._scan_and_select(window)
         window.connection_page.next_btn.click()
         self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
         self.assertIs(window.tab_widget.currentWidget(), window.config_page)
@@ -128,12 +220,15 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         window = self._window()
 
         window._enter_test_mode(True)
+        self._scan_and_select(window)
         window.connection_page.next_btn.click()
         self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
 
         window.config_page.previous_step_btn.click()
         self.assertIs(window.view_stack.currentWidget(), window.connection_page)
 
+        # 回到仪表配置页会清空上一次结果：必须重新查找并选择，不能沿用旧绑定直接推进。
+        self._scan_and_select(window)
         window.connection_page.next_btn.click()
         self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
         self.assertIs(window.tab_widget.currentWidget(), window.config_page)

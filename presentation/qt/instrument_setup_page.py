@@ -11,12 +11,11 @@
 :class:`application.ports.device_binding.DeviceBindingPort` 读取只读配置视图并提交
 :class:`application.device_binding.ApplyDeviceSelectionRequest`，由配置会话协调器交给
 配置页的视图模型。本页不持有配置页实例、不写文件、不解析配置文档，也不自己连仪器；
-它只从只读视图读出当前绑定与已保存地址，用来填扫描框初值；点“连接仪器”只发出用户意图
-（``connect_requested``），由窗口转给配置页的校验入口。
+连接仪器是参数配置页最终按钮的职责。
 
 版式分两层：静态骨架（页面标题、居中滚动区、页面动作的声明位置）由 Qt Designer 文件
 ``presentation/qt/ui/instrument_setup_page.ui`` 描述，改排列或文案只动那个文件；动态部分
-（设备发现面板、扫描结果卡片，以及“连接仪器／下一步”这一行动作）仍在
+（设备发现面板、扫描结果卡片，以及“下一步”这一行动作）仍在
 Python 里构建并插进骨架。“返回欢迎页”不再与它们同排：它被移进扫描提示（模拟模式的
 黄色说明）正下方，显示为一行蓝色下划线小字，并随页头文字一起淡出、随页头一起让位。
 两个页面动作虽然声明在 ``.ui`` 的页面动作栏里，但最终分别落到页头与设备发现面板的
@@ -33,7 +32,8 @@ Python 里构建并插进骨架。“返回欢迎页”不再与它们同排：�
 （`instrument_setup_page.ui` 的顶部留白只留一小段，富余高度全部落在底部）。
 
 “下一步”先把本次勾选的设备写入配置（整批替换），再切到仪器配置页；配置文件仍随
-“保存配置”或“校验并创建运行”一起落盘，因此从本页离开不会产生半保存的配置。
+“保存配置”或最终按钮一起落盘，因此从本页离开不会产生半保存的配置。首次查找前、扫描中、
+扫描失败或没有可应用设备时“下一步”不出现；必须从本次扫描结果中选择设备才能推进。
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ from .instrument_discovery_panel import (
     InstrumentDiscoveryPanel,
     subnet_from_address,
 )
-from .theme import PAGE_CONTENT_MAX_WIDTH, set_button_variant
+from .theme import PAGE_CONTENT_MAX_WIDTH
 from .ui_loader import load_ui
 
 #: 控件查询的返回类型；``.ui`` 里声明的控件必须存在，缺失属于装配错误而不是运行状态。
@@ -74,9 +74,10 @@ _Widget = TypeVar("_Widget", bound=QWidget)
 class InstrumentSetupPage(QWidget):
     """仪器设置页：整屏页面，不登记进标签栏。
 
-    页面持有大字号标题、设备发现面板，以及结果区动作行里的两个动作（下一步、连接仪器
-    ——它们和面板自己的“返回”排在同一条水平线上）；“返回欢迎页”是页头里的一行蓝色
-    下划线小字，落在扫描提示正下方。设备绑定的写入与派生界面状态由配置页负责，本页通过
+    页面持有大字号标题、设备发现面板，以及结果区动作行里的“下一步”（它和面板自己的
+    “返回”排在同一条水平线上）；“返回欢迎页”是页头里的一行蓝色下划线小字，落在扫描
+    提示正下方。“下一步”只在本次扫描出现可应用设备后显示，初次查找前保持隐藏。设备
+    绑定的写入与派生界面状态由配置页负责，本页通过
     :class:`application.ports.device_binding.DeviceBindingPort` 读取与提交，不持有
     配置页实例。
 
@@ -86,7 +87,6 @@ class InstrumentSetupPage(QWidget):
 
     next_requested = Signal()
     return_welcome_requested = Signal()
-    connect_requested = Signal()
     log_message = Signal(str)
 
     def __init__(
@@ -105,7 +105,7 @@ class InstrumentSetupPage(QWidget):
     # ---- 界面 -------------------------------------------------------------
 
     def _build_ui(self) -> None:
-        """加载 ``.ui`` 静态骨架，再把设备发现面板与三个动作接到动态位置。"""
+        """加载 ``.ui`` 静态骨架，再把设备发现面板与页面动作接到动态位置。"""
         self._ui = load_ui("instrument_setup_page")
         shell = QVBoxLayout(self)
         shell.setContentsMargins(0, 0, 0, 0)
@@ -155,14 +155,15 @@ class InstrumentSetupPage(QWidget):
         # 页面动作栏：两个页面动作移走后，这一栏不再有可见内容；保留引用供视觉契约
         # 量取页面上下留白。
         self.page_action_bar = self._require(QWidget, "pageActionBar")
-        # 结果区动作行：连接仪器与下一步和面板自己的“返回”排在同一行（结果区动作行才
-        # 是卡片与“返回”所在的那一行）。“返回欢迎页”不属于这里：它是一行文字链接，
-        # 落在扫描提示正下方，属于页头，随页头文字一起淡出、有结果时整块让位。
+        # 结果区动作行：“下一步”和面板自己的“返回”排在同一行（结果区动作行才是卡片与
+        # “返回”所在的那一行）。“返回欢迎页”不属于这里：它是一行文字链接，落在扫描提示
+        # 正下方，属于页头，随页头文字一起淡出、有结果时整块让位。
         self.return_welcome_btn = self._require(QPushButton, "returnWelcomeButton")
         self.next_btn = self._require(QPushButton, "nextButton")
         self.discovery_panel.add_header_widget(self.return_welcome_btn)
-        self.discovery_panel.add_action_widget(self._build_connect_button())
         self.discovery_panel.add_action_widget(self.next_btn)
+        # 初次查找前没有可应用的本次结果：“下一步”保持隐藏，页面不提供绕过查找的入口。
+        self.next_btn.setVisible(False)
         # 窗口尺寸变化时把结果区高度收进当前窗口。视口第一次拿到真实高度是在显示之后，
         # 所以这里只装监听：每次视口尺寸变化都会按新的可用高度重算一次。
         self.scroll_area.viewport().installEventFilter(self)
@@ -266,24 +267,27 @@ class InstrumentSetupPage(QWidget):
         self._set_header_hidden(False)
         self._set_header_text_visible(state == BOX_STATE_IDLE)
 
-    def _build_connect_button(self) -> QPushButton:
-        """结果区动作行里的“连接仪器”：与“返回”、下一步同一行。"""
-        self.connect_btn = QPushButton("连接仪器")
-        self.connect_btn.setObjectName("connectButton")
-        self.connect_btn.setToolTip(
-            "连接本次运行冻结的仪器（地址与身份来自创建运行时的设备绑定）"
-        )
-        set_button_variant(self.connect_btn, "primary")
-        return self.connect_btn
-
     def _connect_signals(self) -> None:
         self.discovery_panel.box_state_changed.connect(self._on_box_state_changed)
+        self.discovery_panel.phase_changed.connect(self._on_discovery_phase_changed)
+        self.discovery_panel.selection_changed.connect(self._sync_next_action)
         self.next_btn.clicked.connect(self.request_next)
         self.return_welcome_btn.clicked.connect(self.return_welcome_requested.emit)
-        # “连接仪器”只发出用户意图：本页不校验配置、不拼地址、也不持有连接端口。
-        # 窗口把 ``connect_requested`` 转给配置页的 ``request_connect``，校验通过后
-        # 再由配置页发 ``connect_requested`` 交给协调器真正连仪器。
-        self.connect_btn.clicked.connect(self.connect_requested.emit)
+
+    def _on_discovery_phase_changed(self, _phase: str) -> None:
+        """发现流程推进后更新“下一步”：只有可交互的本次结果才给这个入口。"""
+        self._sync_next_action()
+
+    def _sync_next_action(self) -> None:
+        """按本次发现结果管理“下一步”的可见性。
+
+        页面只有在 ``INTERACTIVE``（结果已进结果区、卡片可点）且存在可应用设备时才显示
+        “下一步”；初次查找前、扫描中、失败、取消与空结果都不显示。勾选是否有设备由
+        :meth:`request_next` 再校验一次，界面状态不能替代写入规则。
+        """
+        panel = self.discovery_panel
+        available = panel.is_interactive() and panel.has_selectable_devices()
+        self.next_btn.setVisible(available)
 
     # ---- 语义查询 ---------------------------------------------------------
     #
@@ -304,7 +308,8 @@ class InstrumentSetupPage(QWidget):
         """两个页面级动作当前是否可见（仍按返回、下一步的顺序）。
 
         “返回欢迎页”在页头里：查找期间它随页头文字一起淡出（仍然可见、只是透明），
-        有结果时页头整块让位，它也就不可见了。
+        有结果时页头整块让位，它也就不可见了。“下一步”在首次查找前与没有可应用设备的
+        结果下都不出现。
         """
         return self.return_welcome_btn.isVisible(), self.next_btn.isVisible()
 
@@ -315,27 +320,36 @@ class InstrumentSetupPage(QWidget):
         没勾的旧角色与旧电源随地址一起失效。因此不再需要单独的“应用”按钮，也没有
         “清除绑定”这一步。
 
-        - 扫描出了结果：把勾选结果包成
-          :class:`application.device_binding.ApplyDeviceSelectionRequest` 交给设备绑定
-          端口；拒绝时留在本页，面板状态行说明原因，不跳页。
+        这里的检查是最后一道边界，不依赖按钮是否可见：
+
+        - 还没完成一次查找（或扫描中/失败/取消）：拒绝推进，不沿用旧绑定；
+        - 本次结果里没有可应用设备：拒绝推进并说明原因；
         - 扫描出了结果却一台都没勾：明确阻止，避免用户以为“没勾选=没改”而带着上一批
-          设备继续。
-        - 还没扫描：视为本次不更换设备，沿用已保存的绑定，直接进入下一步。
+          设备继续；
+        - 勾选有歧义（同一角色两台设备等）：留在本页，面板状态行说明原因；
+        - 绑定端口拒绝：留在本页，不进入参数配置。
         """
         panel = self.discovery_panel
-        if panel.box_state() == BOX_STATE_RESULTS:
-            assignments, problems = panel.selected_assignments()
-            if problems:
-                panel.show_message("；".join(problems))
-                return
-            if not assignments:
-                panel.show_message(
-                    "请先勾选本次测试所需的设备（测试角色来自设备表登记，不需要选择）"
-                )
-                return
-            request = ApplyDeviceSelectionRequest.from_assignments(assignments)
-            if not self.binding_port.apply_selection(request).ok:
-                return
+        if not panel.is_interactive():
+            panel.show_message("请先查找设备，并在本次结果中选择要使用的设备")
+            return
+        if not panel.has_selectable_devices():
+            panel.show_message(
+                "本次查找没有可应用的设备；请检查设备表登记或调整扫描范围后重试"
+            )
+            return
+        assignments, problems = panel.selected_assignments()
+        if problems:
+            panel.show_message("；".join(problems))
+            return
+        if not assignments:
+            panel.show_message(
+                "请先勾选本次测试所需的设备（测试角色来自设备表登记，不需要选择）"
+            )
+            return
+        request = ApplyDeviceSelectionRequest.from_assignments(assignments)
+        if not self.binding_port.apply_selection(request).ok:
+            return
         self.next_requested.emit()
 
     # ---- 进入页面 ---------------------------------------------------------
@@ -352,6 +366,7 @@ class InstrumentSetupPage(QWidget):
         panel.set_device_bindings(state.bindings_snapshot())
         panel.clear_results()
         panel.subnet_edit.setText(self._default_scan_subnet(state) or DEMO_SUBNET)
+        self._sync_next_action()
         if state.legacy_binding_count:
             self.log_message.emit(
                 f"有 {state.legacy_binding_count} 台设备的连接沿用已保存的配置，未扫描确认"

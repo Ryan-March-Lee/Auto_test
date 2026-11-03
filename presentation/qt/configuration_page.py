@@ -16,12 +16,13 @@
 :meth:`ConfigurationPage._assignment_entries`）读出来交给构建模块，构建模块不判断这些路径。
 页面不持有逐字段回填逻辑，也不依赖窗口、测量 controller 或硬件实现。
 
-仪表配置（扫描、勾选设备、设备身份绑定、连接仪器）已独立成
+仪表配置（扫描、勾选设备、设备身份绑定）已独立成
 :mod:`presentation.qt.instrument_setup_page`：本页不再创建发现面板、不持有它，也不再提供
-连接入口，只保留写绑定的边界（整批校验 + 写地址/身份）与派生界面更新。写入结果经
+设备发现入口，只保留写绑定的边界（整批校验 + 写地址/身份）与派生界面更新。写入结果经
 ``device_selection_finished`` 交给 :class:`presentation.qt.configuration_session`，
-由会话把状态行与绑定回写给连接页的面板；连接请求仍由
-:meth:`ConfigurationPage.request_connect` 校验后经 ``connect_requested`` 交给窗口。
+由会话把状态行与绑定回写给仪表配置页的面板。连接仪器不再有独立入口：页面底部的最终
+按钮一次完成“校验 → 保存配置 → 创建运行 → 完整连接检查”，与窗口的信号接线是
+``finalize_run_requested``。
 
 归属（见 `docs/配置领域词汇与模块归属.md`）：Qt 视图。页面只负责控件、布局、信号与派生界面
 状态；设备选择的角色唯一性、引用/身份校验与整批替换规则在
@@ -91,8 +92,7 @@ __all__ = [
 
 class ConfigurationPage(PageControllerBindingMixin, QWidget):
     save_requested = Signal()
-    connect_requested = Signal()
-    create_run_requested = Signal()
+    finalize_run_requested = Signal()
     load_run_requested = Signal(str)
     return_welcome_requested = Signal()
     connection_step_requested = Signal()
@@ -107,6 +107,10 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         PageControllerBindingMixin.__init__(self)
         QWidget.__init__(self, parent)
         self.config = config if isinstance(config, dict) else {}
+        # 最终动作进行中：页面不接受重复提交，参数与回退入口都禁用，直到窗口把结果交回。
+        self._finalizing = False
+        # 进入最终动作前这些控件各自的可用状态；退出时按原样恢复，不能一律启用。
+        self._finalizing_enabled: dict[QWidget, bool] = {}
         # 设备身份绑定：信号源/频谱仪各一条（角色键），电源按 ``supply_id`` 多条
         # （``power_supplies``）。只记录本次勾选并写入的设备；IP 变化时按完整设备码重新识别，
         # 不靠地址记忆。绑定是仪器连接的唯一来源；构建界面之前就要就位，电源标签页的
@@ -187,10 +191,11 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         supplies = instruments.get("power_supplies")
         supplies = supplies if isinstance(supplies, dict) else {}
 
-        # 设备发现与“连接仪器”都在“仪表配置”页（欢迎页之后的第一步）：本页只配置测试
+        # 设备发现与设备勾选都在“仪表配置”页（欢迎页之后的第一步）：本页只配置测试
         # 参数与运行，设备地址与身份来自那一页写入的设备绑定，页面不再提供手工填写地址
-        # 的控件，也不再有连接入口。
+        # 的控件，也不再有设备发现入口。
         params = QGroupBox("测试参数配置")
+        self.test_parameters_group = params
         form = QGridLayout(params)
         form.setHorizontalSpacing(10)
         form.setVerticalSpacing(8)
@@ -421,17 +426,21 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         return current_power_tab_key(self)
 
     def _build_run_widgets(self, layout):
-        """运行入口：校验并创建一次运行，或按 run_id 重新打开已有运行。
+        """最终动作入口：一次完成校验、保存配置、创建运行与完整连接检查。
 
         保存配置与返回欢迎页放在页面底部固定操作栏（``_build_action_bar``），
-        运行入口留在左栏，便于“改参数 → 创建运行”就近操作。
+        最终动作留在左栏，便于“改参数 → 完成配置并连接仪器”就近操作。
         """
-        # 配置阶段入口：校验并创建一次运行。运行创建后测量页面只消费该不可变快照。
+        # 配置阶段入口：页面最终按钮。文案固定为“完成配置并连接仪器”；连接成功后
+        # 由窗口切到测量区，页面不会自动开始任何测量。
         run_group = QGroupBox("运行")
         run_layout = QVBoxLayout(run_group)
         run_layout.setSpacing(8)
-        self.create_run_btn = QPushButton("校验并创建运行")
-        set_button_variant(self.create_run_btn, "primary")
+        self.finalize_run_btn = QPushButton("完成配置并连接仪器")
+        self.finalize_run_btn.setToolTip(
+            "校验并保存配置，创建本次运行，然后连接全部仪器；连接失败会留在本页"
+        )
+        set_button_variant(self.finalize_run_btn, "primary")
         self.run_status_label = QLabel(DEFAULT_RUN_STATUS)
         self.run_status_label.setWordWrap(True)
         self.run_status_label.setProperty("tone", "muted")
@@ -443,14 +452,14 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         load_row.setSpacing(8)
         load_row.addWidget(self.load_run_id_edit, 1)
         load_row.addWidget(self.load_run_btn)
-        run_layout.addWidget(self.create_run_btn)
+        run_layout.addWidget(self.finalize_run_btn)
         run_layout.addWidget(self.run_status_label)
         run_layout.addLayout(load_row)
         layout.addWidget(run_group)
 
     def _connect_signals(self):
         self.save_config_btn.clicked.connect(self.request_save)
-        self.create_run_btn.clicked.connect(self.request_create_run)
+        self.finalize_run_btn.clicked.connect(self.request_finalize_run)
         self.load_run_btn.clicked.connect(self.request_load_run)
         self.return_welcome_btn.clicked.connect(self.return_welcome_requested.emit)
         self.previous_step_btn.clicked.connect(self.connection_step_requested.emit)
@@ -460,12 +469,49 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
     def request_save(self):
         if self.validate(): self.save_requested.emit()
 
-    def request_connect(self):
-        """连接入口（按钮在“仪表配置”页）：校验通过后由窗口连仪器。"""
-        if self.validate(): self.connect_requested.emit()
+    def request_finalize_run(self):
+        """最终动作入口：表单校验通过后才把意图交给窗口。
 
-    def request_create_run(self):
-        if self.validate(): self.create_run_requested.emit()
+        真正的保存、运行冻结、连接检查与提交在协调器里完成；本页只负责“当前表单是
+        否可以提交”，并在动作进行中拒绝重复点击。
+        """
+        if self._finalizing:
+            return
+        if self.validate():
+            self.finalize_run_requested.emit()
+
+    def set_finalizing(self, active: bool) -> None:
+        """进入/退出最终动作状态：禁用提交、回退与参数编辑。
+
+        真正的连接由协调器在后台完成，页面在这段时间里不应允许改参数、回上一步或
+        再提交一次。窗口在动作结束（成功或失败）后调用 ``False`` 恢复控件。恢复的是
+        进入前各自的可用状态，而不是一律启用：参数区里本来就被业务状态禁用的控件
+        （例如驱放供电只在直流电源时可编辑）必须保持原样，最终动作不能顺手把它们打开。
+        """
+        active = bool(active)
+        if active == self._finalizing:
+            return
+        widgets = (
+            self.finalize_run_btn,
+            self.save_config_btn,
+            self.previous_step_btn,
+            self.return_welcome_btn,
+            self.load_run_btn,
+            self.load_run_id_edit,
+            self.test_parameters_group,
+            self.power_tabs,
+            self.power_assignment_group,
+        )
+        self._finalizing = active
+        if active:
+            self._finalizing_enabled = {widget: widget.isEnabled() for widget in widgets}
+            for widget in widgets:
+                widget.setEnabled(False)
+            return
+        previous = self._finalizing_enabled
+        self._finalizing_enabled = {}
+        for widget in widgets:
+            widget.setEnabled(previous.get(widget, True))
 
     def request_load_run(self):
         run_id = self.load_run_id_edit.text().strip()

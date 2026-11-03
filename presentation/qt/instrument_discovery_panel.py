@@ -61,7 +61,7 @@
 才会伸缩，卡片超出时在结果区里滚动。卡片区本身只占实际行数（最多两行）那么高，
 统计/失败说明紧跟在卡片下面并横向居中；扫描期间的“正在查找设备 …”与进度直接写在这条
 状态行里，不另占一行，所以灰字紧贴按钮下方的舞台。动作行再排在它下面（“返回”在左，
-页面级动作如“连接仪器”在右，由页面通过 :meth:`InstrumentDiscoveryPanel.add_action_widget`
+页面级动作如“下一步”在右，由页面通过 :meth:`InstrumentDiscoveryPanel.add_action_widget`
 加进同一行）；固定高度多出来的那一截留在动作行下方，不会把状态行顶到离卡片很远的地方。
 
 结果区**不是抽屉**：结果回来就留在那里，没有“收起 / 查看结果”的来回切换。要重新查找时
@@ -431,6 +431,8 @@ class InstrumentDiscoveryPanel(QWidget):
     box_state_changed = Signal(str)
     #: 流程状态变化（``DiscoveryPhase`` 的值）；日志与测试按它复现一次查找。
     phase_changed = Signal(str)
+    #: 本次结果的勾选变化（用户点选/取消，或扫描后按配置预选）；页面据此更新“下一步”。
+    selection_changed = Signal()
 
     def __init__(
         self,
@@ -831,7 +833,7 @@ class InstrumentDiscoveryPanel(QWidget):
         self.cards_area.setVisible(False)
         box.addWidget(self.cards_area)
         # 结果统计 / 失败原因紧跟在卡片下面，横向居中；动作行留在它下面：
-        # “返回”在左，页面级动作（如“连接仪器”）由页面加进这一行的右端。
+        # “返回”在左，页面级动作（如“下一步”）由页面加进这一行的右端。
         # 结果区高度固定（按两行卡片算），卡片只有一行时多出来的高度落到最下面，
         # 不再把这句话和按钮顶到结果区底部、离卡片很远。
         box.addWidget(self.status_label)
@@ -1026,7 +1028,7 @@ class InstrumentDiscoveryPanel(QWidget):
         高度只由卡片尺寸与内部控件算出来，跟状态（未查找 / 正在查找 / 有结果）和结果
         数量都无关：点一次“查找设备”不会让它变大或变小，页面也就不会跟着跳一下。
         设备多到超过窗口给出的高度时，卡片区在里面滚动。动作行按其中最高的按钮计算，
-        所以页面把“连接仪器”加进同一行时不会把它挤出结果区。
+        所以页面把“下一步”加进同一行时不会把它挤出结果区。
         """
         return (
             self._results_chrome_height()
@@ -1037,7 +1039,7 @@ class InstrumentDiscoveryPanel(QWidget):
     def add_action_widget(self, widget: QWidget) -> None:
         """把一个页面级动作放到“返回”同一行的右端，并重算结果区高度。
 
-        面板只提供版面：动作由页面创建与接线（例如连接页的“连接仪器”），面板不认识
+        面板只提供版面：动作由页面创建与接线（例如仪表配置页的“下一步”），面板不认识
         它的语义，也不替它发信号。
         """
         self.action_layout.addWidget(widget)
@@ -1224,7 +1226,7 @@ class InstrumentDiscoveryPanel(QWidget):
 
         Qt 在焦点控件被隐藏时会把焦点交给下一个可聚焦控件，外层滚动区（仪表配置页
         的滚动区）再滚过去让人看见它：点一次“查找设备”，卡片一收走，焦点就落到
-        结果区动作行里的“连接仪器”，整页向上滚一截，扫描行（扫描网段 / 扫描方式）也就
+        结果区动作行里的“下一步”，整页向上滚一截，扫描行（扫描网段 / 扫描方式）也就
         不在点之前的位置了。面板自己就在原处，先把焦点交给它，滚动区不必移动，
         扫描行因此始终留在原处。键盘用户之后照常按 Tab 继续走。
         """
@@ -1515,7 +1517,11 @@ class InstrumentDiscoveryPanel(QWidget):
         return widget_rect_in(card, layer)
 
     def _deal_clip_rect(self, layer: QWidget) -> QRectF | None:
-        """卡片区可见视口在覆盖层里的矩形：动画开始时算一次。"""
+        """卡片区可见视口在覆盖层里的矩形：动画开始时算一次。
+
+        动画只拿它约束**已经落定**的牌（挡住滚动后看不见的行）；牌堆与飞行段不裁剪，
+        否则牌会在卡片区边界上被平切（见 :class:`CardDealAnimation`）。
+        """
         viewport = self.cards_area.viewport()
         if not viewport.isVisible():
             return None
@@ -1966,12 +1972,13 @@ class InstrumentDiscoveryPanel(QWidget):
             card.set_status("已按配置预选" if preselected else "")
 
     def _on_card_activated(self, card: InstrumentCard) -> None:
-        """用户点击了某张卡片：记录这次选择。"""
+        """用户点击了某张卡片：记录这次选择，并通知页面刷新“下一步”的可用状态。"""
         for row in self._rows:
             if row["card"] is card:
                 row["user_checked"] = card.is_checked()
                 break
         self._sync_card_checks()
+        self.selection_changed.emit()
 
     def _apply_cards_layout(self) -> None:
         """把卡片按面板宽度排成居中的行。
@@ -2157,6 +2164,13 @@ class InstrumentDiscoveryPanel(QWidget):
         # 面板自身尺寸变化同样会挪动卡片：页面根容器没变时（例如滚动条出现把视口挤窄）
         # 覆盖层收不到通知，这里补上同一策略。
         self._on_animation_surface_changed()
+
+    def has_selectable_devices(self) -> bool:
+        """本次结果里是否有可应用的设备（身份可解析且设备表登记了角色）。
+
+        页面用它决定“下一步”是否出现：没有可勾选的设备时，进入参数配置没有意义。
+        """
+        return any(row["card"].checkable for row in self._rows)
 
     def selected_assignments(self) -> tuple[list[dict[str, Any]], list[str]]:
         """返回 ``(要应用的设备, 问题说明)``；身份/角色缺失、唯一角色重复都算问题。

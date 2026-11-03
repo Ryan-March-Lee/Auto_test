@@ -365,3 +365,42 @@ class DeviceBindingWriteTests(InstrumentSetupPageTestCase):
         )
 
         self.assertEqual(page.binding_problems, [])
+
+    def test_preselected_devices_count_as_this_scans_selection(self):
+        """配置预选也属于“本次扫描结果中的选择”：点“下一步”即确认这批勾选。
+
+        预选不是未扫描时沿用旧绑定：它只在本次扫描按身份匹配成功后才有勾选状态，
+        用户看到的卡片明确标注“已按配置预选”。
+        """
+        page = self.make_page()
+        apply_devices(
+            page,
+            [
+                {
+                    "role": "signal_generator",
+                    "address": "TCPIP0::192.168.1.201::inst0::INSTR",
+                    "model": "SMW200A",
+                    "full_code": "105462",
+                    "device_key": "rohde&schwarz:105462",
+                    "ip": "192.168.1.201",
+                    "port": 5025,
+                    "known": True,
+                }
+            ],
+        )
+        self.connection.enter()
+        panel = self.connection.discovery_panel
+        self.run_scan(panel)
+
+        self.assertTrue(panel.card_checked("SMW200A（105462）"))
+        self.assertIn("已按配置预选", panel.card_status("SMW200A（105462）"))
+
+        requested = []
+        self.connection.next_requested.connect(lambda: requested.append(True))
+        self.connection.request_next()
+
+        self.assertEqual(requested, [True])
+        self.assertEqual(
+            page.build_config()["instruments"]["signal_generator"]["address"],
+            "TCPIP0::192.168.1.201::inst0::INSTR",
+        )

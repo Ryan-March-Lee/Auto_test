@@ -1,7 +1,7 @@
 """配置会话协调器（GUI 重构步骤 8）：只做转发，不依赖具体页面或 Qt。
 
 连接页只依赖 ``DeviceBindingPort``；配置会话把连接页与配置页接起来。这里用纯 Python
-替身验证会话的四条职责：转发只读视图、转发写入命令、回写发现面板、转达连接意图。
+替身验证会话的三条职责：转发只读视图、转发写入命令、回写发现面板。
 """
 
 import unittest
@@ -40,7 +40,6 @@ class _StubTarget:
         self.discovery_message = _Signal()
         self.device_selection_finished = _Signal()
         self.requests = []
-        self.connect_requests = 0
 
     def view_state(self):
         return self.state
@@ -48,9 +47,6 @@ class _StubTarget:
     def apply_device_selection(self, request):
         self.requests.append(request)
         return self.result
-
-    def request_connect(self):
-        self.connect_requests += 1
 
 
 class _StubPanel:
@@ -95,14 +91,6 @@ class ConfigurationSessionTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             session.apply_selection([{"role": "signal_generator"}])
         self.assertEqual(target.requests, [])
-
-    def test_request_connect_is_only_forwarded(self):
-        target = _StubTarget()
-        session = ConfigurationSession(target)
-
-        session.request_connect()
-
-        self.assertEqual(target.connect_requests, 1)
 
     def test_attaching_the_panel_restores_bindings_and_forwards_scan_logs(self):
         target = _StubTarget()

@@ -264,7 +264,7 @@ class ApplicationCoordinator:
         run = self.prepared_run
         if run is None:
             raise RunNotResumable(
-                "尚未创建运行，不能连接仪器；请先在“仪器配置”页点击“校验并创建运行”"
+                "尚未创建运行，不能连接仪器；请先在“仪器配置”页点击“完成配置并连接仪器”"
             )
         resolver = getattr(run, "hardware_connection_path", None)
         if resolver is None:
@@ -276,7 +276,7 @@ class ApplicationCoordinator:
     def resolve_measurement_run(self):
         """返回当前运行契约，供测量页面消费；不可用时提示并返回 ``None``。"""
         if self.prepared_run is None:
-            self._error("尚未创建运行：请先在“仪器配置”页点击“校验并创建运行”")
+            self._error("尚未创建运行：请先在“仪器配置”页点击“完成配置并连接仪器”")
             return None
         if self.instrument_ctrl is None:
             self._error("请先连接仪器；上一次测量结束后端口已安全释放")
@@ -483,17 +483,17 @@ class ApplicationCoordinator:
         run = self.prepared_run
         if run is None:
             self._log(
-                "无法连接仪器: 尚未创建运行；请先在“仪器配置”页点击“校验并创建运行”"
+                "无法连接仪器: 尚未创建运行；请先在“仪器配置”页点击“完成配置并连接仪器”"
             )
             self._warn(
-                "仪器连接失败", "尚未创建运行：请先在“仪器配置”页校验并创建运行"
+                "仪器连接失败", "尚未创建运行：请先在“仪器配置”页完成配置并连接仪器"
             )
             return False
         self._log(f"使用已冻结的运行配置连接仪器: {run.run_id}")
         if self._configuration_page_is_dirty():
             self._log(
                 "注意：仪器配置页存在尚未创建运行的修改；本次连接仍使用运行 "
-                f"{run.run_id} 的冻结快照，若要应用修改请重新“校验并创建运行”"
+                f"{run.run_id} 的冻结快照，若要应用修改请重新“完成配置并连接仪器”"
             )
         try:
             # 只做前置校验：拿不到可用快照就在启动 worker 前失败；端口本身由

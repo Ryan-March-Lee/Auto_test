@@ -612,6 +612,38 @@ index
 
 ## 步骤 11：统一页面状态渲染入口
 
+**执行状态：已完成**。试点页面选 `RunHistoryPage`：`presentation/qt/run_history_page.py`
+新增只读快照 `RunHistoryPageState`（历史运行行数、历史结果行数、当前选中的运行），
+页面只保留一个动态渲染入口 `render_state(state=None)`——空表说明的显示与“重新生成”
+按钮的可用性都在这里一次写完。不传状态时从两张表格和视图模型推导快照（越界或已消失
+的选中行一并清空）；传入显式快照时只按键值渲染，视图模型仍是“能否重新生成”的唯一
+事实来源（`RunHistoryPageState.can_regenerate` 直接读选中的 `RunHistoryRow`）。
+
+刷新路径不再各自写控件：`_load_run_rows()` / `_load_result_rows()` 只在
+`QSignalBlocker` 里批量填表，`refresh()` 在两张表都填好后调用一次 `render_state()`；
+`refresh_run_list()` / `refresh_result_list()` 各自也是“填表 + 一次渲染”，运行表格的
+选中变化只调用同一个入口。`render_state()` 内部把“同步表格选中到视图模型”拆成
+`_sync_selection_from_tables()`，`_snapshot_state()` 因此是纯读取：显式传入快照时只按键值
+渲染，不反向修改选择。原来的 `_sync_empty_hints()` 与构造期的
+`regenerate_button.setEnabled(False)` 一并删除，按钮初始不可用由首次渲染给出。用户可见
+行为不变：空列表仍显示说明，只有“可重新生成”的选中运行才点亮按钮。
+
+读取失败的状态一致性也在这里收口：`_load_run_rows()` / `_load_result_rows()` 各自处理失败
+（清表同样包在 `QSignalBlocker` 里，不会因为清掉选中行额外触发一次渲染），并调用视图模型的
+`reset_runs()` / `reset_results()` 丢弃陈旧行与选择。因此“表格里已经看不到的运行”不会再参与
+导出的可用性判定，失败路径与成功路径一样只调用一次 `render_state()`，单独的
+`refresh_result_list()` 也不会再把异常抛给点击回调。
+
+验证：新增 `tests/ui/test_run_history_page_state.py`（17 项）覆盖状态快照的只读与输入
+校验（负数/布尔/浮点行数、非 `RunHistoryRow` 选中项被拒绝）、显式快照优先于表格且不回写
+选择、推导快照会清掉失效选择、全量刷新/单表刷新/选中变化各只渲染一次、两张表读取失败时
+表格与视图模型一起清空，并用两层 AST 门禁冻结写入位置：所有控件状态写入只出现在
+`_build_ui`（一次性结构配置）与 `render_state`（唯一动态入口），而三个随状态变化的控件
+（两份空表说明与“重新生成”按钮）只允许 `render_state` 写入。视图模型的
+`reset_runs()` / `reset_results()` 在 `tests/integration/test_run_history_page.py` 里另有
+2 项直接契约测试，该文件 48 项保持通过。后续页面（例如 `ConfigPage`）按同一“只读状态 +
+单一 `render_state()`”模式推广，增加淡入、禁用或局部过渡时只改渲染入口。
+
 ### 执行策略
 
 选择一个低风险页面先试点，例如 ``RunHistoryPage`` 或 ``ConfigPage``，将分散的：

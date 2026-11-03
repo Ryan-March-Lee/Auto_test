@@ -10,6 +10,7 @@
   损坏运行只给可用性与原因；已登记为 ``completed`` 的产物文件被删除时标记 ``missing``，
   但 manifest 记录不被改写；
 - ``HistoryViewModel``：运行摘要转成展示文本，选择清空规则，产物文件缺失的文案；
+  读取失败时 ``reset_runs()`` / ``reset_results()`` 一并丢弃陈旧行与选择；
 - ``RunHistoryPage``：显示运行与产物状态、按失败产物启用“重新生成”、不可用运行禁止导出，
   导出副本按**结果所属运行**判定可用性（两张表格各选一行时不会张冠李戴）；
 - 步骤 9 补充的页面边界：无效运行不能重新生成、部分运行（进行中 / 未归档）与没有产物
@@ -41,6 +42,7 @@ from application.dto.run_history import (
     RunStageSummary,
 )
 from application.export_service import ResultExportUseCase
+from application.ports.gui_data_service import ResultFileDto
 from application.ports.result_artifacts import ArtifactGenerationError
 from application.run_history_service import RunHistoryRequestError, RunHistoryService
 from application.run_stages import RunStageRecorder
@@ -611,6 +613,48 @@ class RunHistoryViewModelTests(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             view_model.reload_runs()
+
+    def test_reset_runs_drops_the_rows_and_the_selection(self):
+        """读取失败后页面清空运行表，视图模型也不能再用旧摘要回答按标识查询。"""
+        view_model = self._view_model([_summary()])
+        view_model.reload_runs()
+        view_model.select_run(0)
+
+        view_model.reset_runs()
+
+        self.assertEqual(view_model.run_rows, ())
+        self.assertIsNone(view_model.selected_run)
+        self.assertIsNone(view_model.selected_run_index)
+        self.assertIsNone(view_model.run_row(RUN_ID))
+
+    def test_reset_results_drops_the_rows_and_the_selection(self):
+        """结果表被清空后，按旧索引不能再取回用户已经看不见的结果。"""
+
+        class OneResultQuery:
+            def list_results(self):
+                return [
+                    ResultFileDto(
+                        result_id="run::x::results/a.json",
+                        filename="a.json",
+                        file_type="amplifier",
+                        modified_at=CREATED_AT,
+                        run_id=RUN_ID,
+                    )
+                ]
+
+            def load(self, result_id):
+                raise AssertionError("测试不加载结果")
+
+        view_model = HistoryViewModel(OneResultQuery())
+        view_model.reload()
+        self.assertIsNotNone(view_model.select(0))
+
+        view_model.reset_results()
+
+        self.assertEqual(view_model.rows, ())
+        self.assertIsNone(view_model.selected)
+        self.assertIsNone(view_model.selected_index)
+        self.assertIsNone(view_model.row_at(0))
 
 
 # -- 页面 -----------------------------------------------------------------

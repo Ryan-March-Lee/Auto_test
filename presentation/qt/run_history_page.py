@@ -18,12 +18,16 @@
   **结果所属的运行**核对可用性（不能只看运行表格的选中行）。
 - 用户可见文案属于本页面：应用层返回结构化结果（``ArchivalOutcome`` /
   ``ExportOutcome``），页面据此生成日志与对话框文本。
+- 页面可见状态只有一个渲染入口：刷新、选中变化与读取失败都只更新表格数据，再由
+  ``render_state()`` 按只读的 ``RunHistoryPageState`` 一次渲染空表说明与按钮可用性。
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Callable
 
+from PySide6.QtCore import QSignalBlocker
 from PySide6.QtWidgets import (
     QFileDialog,
     QGroupBox,
@@ -70,6 +74,47 @@ _EXPORT_BUTTONS = (
 )
 # 历史运行表格的列顺序；页面只按视图模型给出的文本填表。
 _RUN_COLUMNS = ("运行", "创建时间", "状态", "阶段", "正式结果", "交付产物", "说明")
+
+
+@dataclass(frozen=True)
+class RunHistoryPageState:
+    """历史管理页可见状态的只读快照。
+
+    页面不再在刷新、选中与读取失败分支里各自调用 ``setVisible`` / ``setEnabled``：
+    这些分支只更新两张表格的数据，再交给 :meth:`RunHistoryPage.render_state` 一次渲染。
+    状态对象因此只保留驱动外观所需的事实（行数与当前选中的运行），行内展示文本与
+    “能否重新生成”仍由视图模型给出。以后增加淡入、禁用或局部过渡时只改渲染入口，
+    不需要追踪每个回调。
+    """
+
+    run_count: int = 0
+    result_count: int = 0
+    selected_run: RunHistoryRow | None = None
+
+    def __post_init__(self) -> None:
+        for name in ("run_count", "result_count"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} 必须是非负整数，收到: {value!r}")
+        if self.selected_run is not None and not isinstance(
+            self.selected_run, RunHistoryRow
+        ):
+            raise TypeError("selected_run 必须是 RunHistoryRow 或 None")
+
+    @property
+    def run_list_empty(self) -> bool:
+        """历史运行表格是否没有内容（决定空表说明是否显示）。"""
+        return self.run_count == 0
+
+    @property
+    def result_list_empty(self) -> bool:
+        """历史结果表格是否没有内容（决定空表说明是否显示）。"""
+        return self.result_count == 0
+
+    @property
+    def can_regenerate(self) -> bool:
+        """选中的运行是否有可重新生成的失败产物。"""
+        return self.selected_run is not None and self.selected_run.can_regenerate
 
 
 class RunHistoryPage(QWidget):
@@ -163,7 +208,6 @@ class RunHistoryPage(QWidget):
         action_layout = QHBoxLayout(action_group)
         action_layout.setSpacing(10)
         self.regenerate_button = QPushButton("重新生成失败的产物")
-        self.regenerate_button.setEnabled(False)
         set_button_variant(self.regenerate_button, "primary")
         self.regenerate_button.clicked.connect(self.regenerate_failed_artifacts)
         action_layout.addWidget(self.regenerate_button)
@@ -187,77 +231,114 @@ class RunHistoryPage(QWidget):
         """刷新历史运行与历史结果列表。
 
         测量可能在别的页签完成，所以完成信号与页面激活都会走这里；两张表必须一起
-        更新，否则运行状态、阶段与交付产物状态会停在测量前的快照。读取失败只记日志
-        并把该表清空：刷新失败不能让完成信号或切换标签页抛异常，用户刷新后即可恢复。
+        更新，否则运行状态、阶段与交付产物状态会停在测量前的快照。读取失败只由
+        各自的 ``_load_*_rows()`` 处理：清空该表、丢弃视图模型里的陈旧行并记日志，
+        刷新失败不能让完成信号或切换标签页抛异常。两张表都填好之后只调用一次
+        :meth:`render_state`。
         """
-        rows = self.refresh_run_list()
-        try:
-            results = self.refresh_result_list()
-        except (OSError, ValueError, RuntimeError) as error:
-            self.result_table.setRowCount(0)
-            self.history.select(self.result_table.currentRow())
-            self.log_callback(f"读取历史结果失败: {error}")
-            results = ()
-        self._sync_empty_hints()
+        rows = self._load_run_rows()
+        results = self._load_result_rows()
+        self.render_state()
         return rows, results
 
-    def _sync_empty_hints(self) -> None:
-        """表格为空时给出说明，避免用户把空白表格当成“数据没显示出来”。"""
-        for hint_name, table in (
-            ("run_empty_hint", self.run_table),
-            ("result_empty_hint", self.result_table),
-        ):
-            hint = getattr(self, hint_name, None)
-            if hint is not None:
-                hint.setVisible(table.rowCount() == 0)
+    # -- 状态渲染 -----------------------------------------------------------
+
+    def render_state(
+        self, state: RunHistoryPageState | None = None
+    ) -> RunHistoryPageState:
+        """页面可见状态的唯一渲染入口：空表说明与“重新生成”按钮都在这里更新。
+
+        不传 ``state`` 时先把两张表格的当前行同步给视图模型，再从表格与视图模型取
+        当前快照（越界选择会一并清空），因此在刷新、选中变化与读取失败之后都走同一条
+        渲染路径；传入显式快照时只按键值渲染，不动选中状态。以后增加淡入、禁用或局部
+        过渡时只改这一处，不再分散到各个回调里。
+        """
+        if state is None:
+            self._sync_selection_from_tables()
+            state = self._snapshot_state()
+        elif not isinstance(state, RunHistoryPageState):
+            raise TypeError("页面渲染必须使用 RunHistoryPageState")
+        self.run_empty_hint.setVisible(state.run_list_empty)
+        self.result_empty_hint.setVisible(state.result_list_empty)
+        self.regenerate_button.setEnabled(state.can_regenerate)
+        return state
+
+    def _sync_selection_from_tables(self) -> None:
+        """把两张表格的当前行写回视图模型；空表或越界行会清空对应选择。"""
+        self.history.select_run(self.run_table.currentRow())
+        self.history.select(self.result_table.currentRow())
+
+    def _snapshot_state(self) -> RunHistoryPageState:
+        """从当前表格与视图模型推出可见状态快照，本身不修改任何状态。"""
+        return RunHistoryPageState(
+            run_count=self.run_table.rowCount(),
+            result_count=self.result_table.rowCount(),
+            selected_run=self.history.selected_run,
+        )
 
     # -- 列表 ---------------------------------------------------------------
 
     def refresh_run_list(self):
-        """重新读取历史运行摘要并刷新表格。
+        """重新读取历史运行摘要并刷新表格，然后渲染一次页面状态。"""
+        rows = self._load_run_rows()
+        self.render_state()
+        return rows
 
-        读取失败不能让页面构造或切换标签页失败：清空运行表格、禁用重新生成，并把
-        原因写进日志；结果列表仍可用，用户刷新后即可恢复。
-        """
+    def _load_run_rows(self):
+        """读取历史运行摘要并填表；失败时清空表格与陈旧摘要并返回空元组。"""
         if self.history.run_source is None:
-            self.run_table.setRowCount(0)
-            self._on_run_selection_changed()
-            self._sync_empty_hints()
+            _clear_table(self.run_table)
             return ()
         try:
             rows = self.history.reload_runs()
         except (OSError, ValueError, RuntimeError) as error:
-            self.run_table.setRowCount(0)
-            self._on_run_selection_changed()
+            _clear_table(self.run_table)
+            # 表格已空，视图模型里的旧摘要与选中运行也必须一起丢弃：否则导出仍会
+            # 按照用户已经看不见的运行做可用性判定。
+            self.history.reset_runs()
             self.log_callback(f"读取历史运行失败: {error}")
-            self._sync_empty_hints()
             return ()
-        self.run_table.setRowCount(0)
-        for index, row in enumerate(rows):
-            self.run_table.insertRow(index)
-            for column, text in enumerate(_run_row_texts(row)):
-                _set_cell(self.run_table, index, column, text)
-        self._on_run_selection_changed()
-        self._sync_empty_hints()
+        # 批量填表时不逐行触发选中变化：一次读取只产生一次状态渲染。
+        with QSignalBlocker(self.run_table):
+            self.run_table.setRowCount(0)
+            for index, row in enumerate(rows):
+                self.run_table.insertRow(index)
+                for column, text in enumerate(_run_row_texts(row)):
+                    _set_cell(self.run_table, index, column, text)
         return rows
 
     def refresh_result_list(self):
-        """重新读取只读历史结果列表并刷新表格。"""
-        rows = self.history.reload()
-        self.result_table.setRowCount(0)
-        for index, row in enumerate(rows):
-            self.result_table.insertRow(index)
-            _set_cell(self.result_table, index, 0, row.filename)
-            _set_cell(self.result_table, index, 1, row.file_type)
-            _set_cell(self.result_table, index, 2, row.source_label)
-            _set_cell(self.result_table, index, 3, row.modified_text)
-        self._sync_empty_hints()
+        """重新读取只读历史结果列表并刷新表格，然后渲染一次页面状态。"""
+        rows = self._load_result_rows()
+        self.render_state()
+        return rows
+
+    def _load_result_rows(self):
+        """读取历史结果并填表；失败时清空表格与陈旧行并返回空元组。
+
+        失败处理和 :meth:`_load_run_rows` 一致，因此 ``refresh()`` 与单独的
+        ``refresh_result_list()`` 走同一条路径，不会有一个抛异常、另一个只记日志。
+        """
+        try:
+            rows = self.history.reload()
+        except (OSError, ValueError, RuntimeError) as error:
+            _clear_table(self.result_table)
+            self.history.reset_results()
+            self.log_callback(f"读取历史结果失败: {error}")
+            return ()
+        with QSignalBlocker(self.result_table):
+            self.result_table.setRowCount(0)
+            for index, row in enumerate(rows):
+                self.result_table.insertRow(index)
+                _set_cell(self.result_table, index, 0, row.filename)
+                _set_cell(self.result_table, index, 1, row.file_type)
+                _set_cell(self.result_table, index, 2, row.source_label)
+                _set_cell(self.result_table, index, 3, row.modified_text)
         return rows
 
     def _on_run_selection_changed(self):
-        """选中运行变化时同步“重新生成”按钮：只有可重新生成的运行才可点。"""
-        row = self.history.select_run(self.run_table.currentRow())
-        self.regenerate_button.setEnabled(row is not None and row.can_regenerate)
+        """选中运行变化时只推进状态：按钮是否可点由 :meth:`render_state` 统一决定。"""
+        self.render_state()
 
     def selected_run_row(self) -> RunHistoryRow | None:
         """把运行表格选中行交给视图模型；未选中时提示并返回 ``None``。"""
@@ -409,6 +490,12 @@ def _set_cell(table: QTableWidget, row: int, column: int, text: str) -> None:
     item = QTableWidgetItem(text)
     item.setToolTip(text)
     table.setItem(row, column, item)
+
+
+def _clear_table(table: QTableWidget) -> None:
+    """清空表格且不触发选中变化：调用方随后只渲染一次状态。"""
+    with QSignalBlocker(table):
+        table.setRowCount(0)
 
 
 def _run_row_texts(row: RunHistoryRow) -> tuple[str, ...]:

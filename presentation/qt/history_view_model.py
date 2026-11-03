@@ -358,6 +358,15 @@ class HistoryViewModel:
             self._selected_index = None
         return self._rows
 
+    def reset_results(self) -> None:
+        """丢弃当前结果列表与选中行（历史查询失败后的状态对齐）。
+
+        读取失败时页面会清空结果表格；如果视图模型仍保留旧行，``select()`` 仍能按
+        旧索引取到用户已经看不见的结果。列表与选择必须一起丢弃，页面才只有一份事实。
+        """
+        self._rows = ()
+        self._selected_index = None
+
     def row_at(self, index: int | None) -> HistoryRow | None:
         if not isinstance(index, int) or isinstance(index, bool):
             return None
@@ -400,6 +409,15 @@ class HistoryViewModel:
         ):
             self._selected_run_index = None
         return self._run_rows
+
+    def reset_runs(self) -> None:
+        """丢弃当前运行摘要与选中运行（运行摘要读取失败后的状态对齐）。
+
+        运行表格被清空后，视图模型若保留旧摘要，``run_row()`` 仍会拿陈旧数据给导出
+        做可用性判定，出现“表格里看不到这次运行，导出却按它放行/拒绝”的分裂。
+        """
+        self._run_rows = ()
+        self._selected_run_index = None
 
     def run_row(self, run_id: str | None) -> RunHistoryRow | None:
         """按运行标识查找当前列表中的运行摘要。

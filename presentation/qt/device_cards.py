@@ -33,9 +33,10 @@
 **卡片内部几何也只有这一份**：内容边距、间距、设备码/图片/地址行高与图片内缩以
 :data:`CARD_CONTENT_MARGINS`、:data:`CARD_CONTENT_SPACING`、:data:`CARD_CODE_HEIGHT`、
 :data:`CARD_PICTURE_HEIGHT`、:data:`CARD_ADDRESS_HEIGHT`、:data:`CARD_PICTURE_MARGIN`
-给出，行位置由 :func:`card_code_rect`、:func:`card_picture_rect`、
-:func:`card_address_rect` 算定。真实卡片按这些常量布局，动画正面
-（:mod:`presentation.qt.card_assets`）也按同一组函数画；图片按“仪器主体放大”的规则
+给出，行位置由 :func:`card_row_plan` 一次算定（也提供 :func:`card_inner_rect`、
+:func:`card_code_rect`、:func:`card_picture_rect`、:func:`card_address_rect` 这几个
+单行查询）。真实卡片按这份行计划钉住每一行的高度，动画正面
+（:mod:`presentation.qt.card_assets`）按同一份行计划画字；图片按“仪器主体放大”的规则
 由 :func:`picture_target_rect` 统一计算，因此资产不必截取控件也能与真实卡片同形。
 """
 
@@ -45,8 +46,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QImage, QPainter, QPalette, QPixmap
+from PySide6.QtCore import QEvent, QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QFontMetrics, QFontMetricsF, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
     QLabel,
@@ -55,7 +56,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .theme import set_tone
+from .theme import (
+    TOKENS,
+    card_caption_font,
+    card_status_font,
+    set_tone,
+)
 
 __all__ = [
     "CARD_ADDRESS_HEIGHT",
@@ -69,14 +75,20 @@ __all__ = [
     "CARD_PICTURE_MARGIN",
     "CARD_WIDTH",
     "INSTRUMENT_PICTURE_DIR",
+    "CardRowPlan",
     "InstrumentCard",
     "InstrumentCardData",
     "InstrumentImage",
     "InstrumentPicture",
     "card_address_rect",
+    "card_border_width",
+    "card_caption_height",
     "card_code_rect",
     "card_inner_rect",
     "card_picture_rect",
+    "card_row_plan",
+    "card_size",
+    "card_status_height",
     "device_code",
     "instrument_picture",
     "instrument_picture_path",
@@ -156,14 +168,6 @@ def instrument_picture_path(role: str = "", model: str = "") -> Path | None:
         if candidate.is_file():
             return candidate
     return None
-
-
-def _falls_back_to_device_name(device: Any) -> bool:
-    """显示名是不是“读不出身份”时的兜底文本（``未知设备 (型号)`` / ``<ip>:<port>``）。"""
-    name = str(getattr(device, "display_name", "") or "")
-    if name.startswith("未知设备"):
-        return True
-    return bool(_IP_PATTERN.search(name))
 
 
 def device_code(device: Any, visitor_index: int = 0) -> tuple[str, str]:
@@ -368,26 +372,41 @@ def picture_target_rect(
 # ---- 卡片内部行位置 ----------------------------------------------------------
 
 
-def card_inner_rect(width: int = CARD_WIDTH, height: int = CARD_HEIGHT) -> QRectF:
-    """卡片内容区（卡片坐标）：扣掉描边与内容边距后的那一块。"""
+def card_inner_rect(
+    width: int = CARD_WIDTH,
+    height: int = CARD_HEIGHT,
+    *,
+    border: int = CARD_BORDER_WIDTH,
+) -> QRectF:
+    """卡片内容区（卡片坐标）：扣掉描边与内容边距后的那一块。
+
+    ``border`` 是描边宽度，默认取未选中时的 :data:`CARD_BORDER_WIDTH`（1px）。行计划
+    固定用它，不跟着选中状态变：样式表把边框加粗到 2px 时，多出来的那 1px 压在内容区
+    的留白上，不改变每一行的位置（见 :func:`card_border_width`）。
+    """
     left, top, right, bottom = CARD_CONTENT_MARGINS
     return QRectF(
-        float(CARD_BORDER_WIDTH + left),
-        float(CARD_BORDER_WIDTH + top),
+        float(border + left),
+        float(border + top),
         max(
             0.0,
-            float(width - 2 * CARD_BORDER_WIDTH - left - right),
+            float(width - 2 * border - left - right),
         ),
         max(
             0.0,
-            float(height - 2 * CARD_BORDER_WIDTH - top - bottom),
+            float(height - 2 * border - top - bottom),
         ),
     )
 
 
-def card_code_rect(width: int = CARD_WIDTH, height: int = CARD_HEIGHT) -> QRectF:
+def card_code_rect(
+    width: int = CARD_WIDTH,
+    height: int = CARD_HEIGHT,
+    *,
+    border: int = CARD_BORDER_WIDTH,
+) -> QRectF:
     """第一行设备码的区域（卡片坐标）：固定两行高度。"""
-    inner = card_inner_rect(width, height)
+    inner = card_inner_rect(width, height, border=border)
     return QRectF(
         inner.left(),
         inner.top(),
@@ -396,10 +415,15 @@ def card_code_rect(width: int = CARD_WIDTH, height: int = CARD_HEIGHT) -> QRectF
     )
 
 
-def card_picture_rect(width: int = CARD_WIDTH, height: int = CARD_HEIGHT) -> QRectF:
+def card_picture_rect(
+    width: int = CARD_WIDTH,
+    height: int = CARD_HEIGHT,
+    *,
+    border: int = CARD_BORDER_WIDTH,
+) -> QRectF:
     """图片区的区域（卡片坐标）：紧跟在设备码下面一个行间距。"""
-    inner = card_inner_rect(width, height)
-    code = card_code_rect(width, height)
+    inner = card_inner_rect(width, height, border=border)
+    code = card_code_rect(width, height, border=border)
     top = code.bottom() + CARD_CONTENT_SPACING
     return QRectF(
         inner.left(),
@@ -409,9 +433,14 @@ def card_picture_rect(width: int = CARD_WIDTH, height: int = CARD_HEIGHT) -> QRe
     )
 
 
-def card_address_rect(width: int = CARD_WIDTH, height: int = CARD_HEIGHT) -> QRectF:
+def card_address_rect(
+    width: int = CARD_WIDTH,
+    height: int = CARD_HEIGHT,
+    *,
+    border: int = CARD_BORDER_WIDTH,
+) -> QRectF:
     """最下面地址行的区域（卡片坐标）：贴着内容区底边，固定一行高度。"""
-    inner = card_inner_rect(width, height)
+    inner = card_inner_rect(width, height, border=border)
     row_height = min(float(CARD_ADDRESS_HEIGHT), inner.height())
     return QRectF(
         inner.left(),
@@ -419,6 +448,50 @@ def card_address_rect(width: int = CARD_WIDTH, height: int = CARD_HEIGHT) -> QRe
         inner.width(),
         row_height,
     )
+
+
+def card_size(width: Any = CARD_WIDTH, height: Any = CARD_HEIGHT) -> tuple[int, int]:
+    """卡片尺寸的输入契约：宽高必须是正整数。
+
+    真实卡片与动画正面都按这份尺寸排字，因此尺寸只接受明确的整数：``0``、负数、``190.0``
+    之类的值一律报错，而不是悄悄画出一张空位图、或者让 :class:`CardAsset` 的元数据与
+    位图的实际尺寸对不上（``190.4`` 这类尺寸的取整方向没人能事先说清）。
+    """
+    for name, value in (("width", width), ("height", height)):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError(f"卡片 {name} 必须是整数，收到 {value!r}")
+        if value <= 0:
+            raise ValueError(f"卡片 {name} 必须是正整数，收到 {value!r}")
+    return int(width), int(height)
+
+
+def _status_line_height() -> int:
+    """状态说明一行的高度：折行后的行高，也是这一行的最小高度。"""
+    return max(1, QFontMetrics(card_status_font()).height())
+
+
+def card_caption_height() -> int:
+    """型号·角色行高：单行标签的高度（字体取自样式表的 10.5pt、600）。"""
+    return max(1, QFontMetrics(card_caption_font()).height())
+
+
+def card_status_height(text: str, width: float) -> int:
+    """状态说明在 ``width`` 宽的内容区里折行后需要的高度；空串为 0。
+
+    真实卡片把这一行的高度直接钉成这个值（不交给布局自行折行分配），动画正面也按它
+    留白，所以两边读到的行高是同一个数。
+    """
+    if not text:
+        return 0
+    line = _status_line_height()
+    if width <= 0.0:
+        return line
+    wrapped = QFontMetricsF(card_status_font()).boundingRect(
+        QRectF(0.0, 0.0, float(width), 1_000_000.0),
+        int(Qt.TextWordWrap),
+        text,
+    )
+    return max(line, int(round(wrapped.height())))
 
 
 class InstrumentImage(QWidget):
@@ -461,7 +534,9 @@ class InstrumentImage(QWidget):
         picture = self._picture.pixmap
         if picture.isNull():
             # 没有对应图片时不画任何图形，只留一行淡字，避免看起来像加载失败。
-            painter.setPen(self.palette().color(QPalette.PlaceholderText))
+            # 颜色取界面里的浅灰令牌：动画正面（presentation.qt.card_assets）用同一个值，
+            # 两边因此不会一边是令牌色、一边是调色板派生出来的另一种灰。
+            painter.setPen(QColor(TOKENS["text_muted"]))
             painter.drawText(self.rect(), Qt.AlignCenter, "暂无图片")
             return
         destination = self.picture_rect()
@@ -543,6 +618,143 @@ class InstrumentCardData:
         return _caption_text(self.model, self.role)
 
 
+# ---- 卡片行计划：真实卡片与动画正面共用的“每一行在哪里” ----------------------
+
+
+def card_border_width(data: InstrumentCardData) -> int:
+    """卡片描边的宽度（像素）：选中时样式表把边框加粗到 2px。
+
+    这个值只影响**画出来的那道边框**：2px 的边框向卡片内部多压 1px，压住的是内容区的
+    留白，不改变每一行的位置（行位置始终按 :data:`CARD_BORDER_WIDTH` 计算，见
+    :func:`card_row_plan`）。这样同一张卡片在选中/取消时文字不会跳动——Qt 只在第一次
+    应用样式表时按边框粗细调整内容边距，之后切换选中并不会重排，行计划因此不能跟着它走。
+    """
+    checked = bool(data.checked) and bool(data.checkable)
+    return 2 if checked else CARD_BORDER_WIDTH
+
+
+@dataclass(frozen=True)
+class CardRowPlan:
+    """卡片内部每一行的位置（卡片坐标，已扣掉描边与内容边距）。
+
+    真实卡片按它钉住每一行的高度，动画正面按它画字：两边读到的是同一份几何，动画因此
+    不需要截取控件，也不会因为标签自己的折行结果与资产算法不同而错位。矩形为空
+    （:meth:`QRectF.isEmpty`）表示数据里没有那一段文字，那一行不显示。
+    """
+
+    width: int
+    height: int
+    inner: QRectF
+    code: QRectF
+    picture: QRectF
+    status: QRectF
+    caption: QRectF
+    address: QRectF
+
+    def rows(self) -> tuple[QRectF, ...]:
+        """实际出现的那几行，自上而下（空行不在其中）。"""
+        return tuple(
+            row
+            for row in (
+                self.code,
+                self.picture,
+                self.status,
+                self.caption,
+                self.address,
+            )
+            if not row.isEmpty()
+        )
+
+
+def card_row_plan(
+    data: InstrumentCardData,
+    width: int = CARD_WIDTH,
+    height: int = CARD_HEIGHT,
+) -> CardRowPlan:
+    """算出一张卡片每一行的位置：设备码、图片、状态说明、型号·角色、地址。
+
+    规则与卡片原来的竖直布局一致：行距 :data:`CARD_CONTENT_SPACING`，型号·角色与地址
+    贴着内容区底边，中间的留白被行距与弹性留白吃满。区别是结果唯一：每行高度都由这里
+    钉死，状态说明先按宽度折行量出需要的高度，再只允许它占用“除其余各行与两个行距之外”
+    的剩余高度；装不下时先让图片变矮，以免把一行字压成看不见。真实卡片上的状态说明都
+    只有一行，图片因此始终是 :data:`CARD_PICTURE_HEIGHT`。
+    """
+    width, height = card_size(width, height)
+    inner = card_inner_rect(width, height)
+    spacing = CARD_CONTENT_SPACING
+    available = int(inner.height())
+    code_height = min(CARD_CODE_HEIGHT, available)
+    picture_height = min(CARD_PICTURE_HEIGHT, max(0, available - code_height - spacing))
+    caption_height = min(card_caption_height(), available)
+    address_height = CARD_ADDRESS_HEIGHT if data.address else 0
+    status_height = (
+        min(card_status_height(data.status, inner.width()), available)
+        if data.status
+        else 0
+    )
+    # 状态说明最少保留一行：宁可先缩图片，也不把一行字压成看不见。
+    status_floor = min(_status_line_height(), available) if data.status else 0
+
+    def fixed_tail() -> int:
+        return caption_height + (spacing + address_height if address_height else 0)
+
+    def fixed_head() -> int:
+        rows = code_height + spacing + picture_height
+        if status_height:
+            rows += spacing + status_height
+        return rows
+
+    # 预算不够时先让图片变矮，再让状态说明变矮；其余行与行距保持不变。真实卡片上的状态
+    # 说明只有一行（“无法识别”“未登记 · 不可应用”“已按配置预选”），图片因此始终是
+    # 104px；只有人工构造的超长说明才会占掉图片的高度，这时宁可少画一点图，也不截断文字。
+    overflow = fixed_head() + fixed_tail() + 2 * spacing - available
+    if overflow > 0:
+        picture_height = max(0, picture_height - overflow)
+        overflow = fixed_head() + fixed_tail() + 2 * spacing - available
+    if overflow > 0 and status_height > status_floor:
+        status_height = max(status_floor, status_height - overflow)
+
+    code = QRectF(inner.left(), inner.top(), inner.width(), float(code_height))
+    picture = QRectF(
+        inner.left(),
+        code.bottom() + spacing,
+        inner.width(),
+        float(picture_height),
+    )
+    status = QRectF()
+    if status_height:
+        status = QRectF(
+            inner.left(),
+            picture.bottom() + spacing,
+            inner.width(),
+            float(status_height),
+        )
+    caption = QRectF(
+        inner.left(),
+        inner.bottom() - float(fixed_tail()),
+        inner.width(),
+        float(caption_height),
+    )
+    address = QRectF()
+    if address_height:
+        address = QRectF(
+            inner.left(),
+            caption.bottom() + spacing,
+            inner.width(),
+            float(address_height),
+        )
+    return CardRowPlan(
+        width=width,
+        height=height,
+        inner=inner,
+        code=code,
+        picture=picture,
+        status=status,
+        caption=caption,
+        address=address,
+    )
+
+
 class InstrumentCard(QFrame):
     """一张设备卡片：第一行是加粗放大的设备码缩写，图片其次，下面是型号·角色与地址。
 
@@ -566,6 +778,9 @@ class InstrumentCard(QFrame):
         self.setFrameShape(QFrame.NoFrame)
         self.setProperty("checked", False)
         self.setProperty("enabled-state", data.checkable)
+        # 行计划要等所有标签都在位之后才能应用；``setFixedSize`` 会在构造途中触发一次
+        # ``resizeEvent``，那时子控件还不存在。
+        self._row_plan_ready = False
         self.setFixedWidth(CARD_WIDTH)
         self.setFixedHeight(CARD_HEIGHT)
         # 尺寸固定：卡片高度不随卡片区拉伸，也不被父窗口压成一条。
@@ -583,6 +798,8 @@ class InstrumentCard(QFrame):
 
         layout = QVBoxLayout(self)
         # 上下留白比左右多一点：第一行设备码不贴卡片上沿，卡片上部因此不显得挤。
+        # 每行高度由 :func:`card_row_plan` 钉住（见 :meth:`_apply_row_plan`），这里的
+        # 弹性留白只能吃掉行计划剩下的那一段。
         layout.setContentsMargins(*CARD_CONTENT_MARGINS)
         layout.setSpacing(CARD_CONTENT_SPACING)
 
@@ -631,6 +848,52 @@ class InstrumentCard(QFrame):
         layout.addWidget(self.address_label)
         self._bind_tooltips()
         self._apply_check_state()
+        self._row_plan_ready = True
+        self._apply_row_plan()
+
+    # ---------- 行位置 ----------
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._apply_row_plan()
+
+    def changeEvent(self, event) -> None:
+        # 样式表重新应用时 Qt 会按边框粗细改动控件的内容边距：行位置要重新对齐一次。
+        super().changeEvent(event)
+        if event.type() == QEvent.StyleChange:
+            self._apply_row_plan()
+
+    def _apply_row_plan(self) -> None:
+        """把每一行钉在 :func:`card_row_plan` 给出的位置上。
+
+        行高全部固定之后，竖直布局里只剩计划预留的那段弹性留白，真实卡片的行位置因此
+        与动画正面逐像素同源：动画不必截取控件，也不会因为标签自己的折行结果与资产算法
+        不同而错开。宽度变化（结果区会把卡片收窄到 :data:`CARD_MIN_WIDTH`）时状态说明
+        会重新折行，所以这里也随 ``resizeEvent`` 重算。
+
+        布局边距按“计划的内容区减去控件自己的内容边距”反算：Qt 只在第一次应用样式表时
+        按边框粗细设置内容边距，选中/取消之后不会再改它，直接套用会让行位置随选中状态
+        漂移 1px。
+        """
+        if not getattr(self, "_row_plan_ready", False):
+            return
+        plan = card_row_plan(self._data, self.width(), self.height())
+        layout = self.layout()
+        if layout is not None:
+            margins = self.contentsMargins()
+            layout.setContentsMargins(
+                int(plan.inner.left()) - margins.left(),
+                int(plan.inner.top()) - margins.top(),
+                self.width() - int(plan.inner.right()) - margins.right(),
+                self.height() - int(plan.inner.bottom()) - margins.bottom(),
+            )
+        self.code_label.setFixedHeight(max(1, int(plan.code.height())))
+        self.image.setFixedHeight(max(1, int(plan.picture.height())))
+        self.name_label.setFixedHeight(max(1, int(plan.caption.height())))
+        if not plan.status.isEmpty():
+            self.status_label.setFixedHeight(int(plan.status.height()))
+        if not plan.address.isEmpty():
+            self.address_label.setFixedHeight(int(plan.address.height()))
 
     # ---------- 内容 ----------
 
@@ -671,8 +934,11 @@ class InstrumentCard(QFrame):
         if checked == self._checked:
             return
         self._checked = checked
-        self._apply_check_state()
         self._data = replace(self._data, checked=checked)
+        self._apply_check_state()
+        # 重新应用样式表可能改动控件的内容边距：行位置再对齐一次（行计划本身不随选中变化，
+        # 见 :func:`card_border_width`）。
+        self._apply_row_plan()
         if emit:
             self.activated.emit(self)
 
@@ -694,6 +960,8 @@ class InstrumentCard(QFrame):
         self.status_label.setToolTip(self.toolTip())
         if text != self._data.status:
             self._data = replace(self._data, status=text)
+        # 状态说明有没有、折几行都会改变行位置：行计划跟着数据重算一次。
+        self._apply_row_plan()
 
     # ---------- 事件 ----------
 

@@ -1,9 +1,16 @@
-"""卡片资产：不截取控件也能得到与真实卡片同形的正面。
+"""卡片资产：不截取控件，也能得到与真实卡片同形的正面。
 
 计划步骤 4 的完成标准都在这里：正面的逻辑尺寸与真实卡片一致、内容非空、图片落在
 真实卡片画图片的位置、选中/不可应用/空字段的样式一致、高 DPI 下逻辑版面不变，并且
-正面画面与 ``InstrumentCard.grab()`` 在边框以内基本一致（边框圆角的抗锯齿差异不
-纳入逐像素比较）。
+正面画面与 ``InstrumentCard.grab()`` 在边框以内一致。
+
+两条边界各有一组用例：
+
+- :class:`CardRowPlanTests` 锁住“行位置只有一份”：真实卡片按
+  :func:`presentation.qt.device_cards.card_row_plan` 钉住行高，资产按同一份行计划画字，
+  所以两种宽度、选中/不可应用、长设备码、长状态、空地址都对得上；
+- :class:`CardAssetContractTests` 锁住渲染接口的输入契约：尺寸只收正整数、屏幕像素比
+  拿不到时按 1.0、资产的元数据与位图实际尺寸一致。
 
 测试允许用 ``grab()`` 作为参照物；生产代码不调用它——正面由
 :func:`presentation.qt.card_assets.render_card_front` 直接画出来。
@@ -32,19 +39,30 @@ from presentation.qt.card_assets import (  # noqa: E402
 )
 from presentation.qt.device_cards import (  # noqa: E402
     CARD_HEIGHT,
+    CARD_MIN_WIDTH,
+    CARD_PICTURE_HEIGHT,
     CARD_WIDTH,
     InstrumentCard,
     InstrumentCardData,
     card_address_rect,
+    card_border_width,
+    card_caption_height,
     card_code_rect,
-    card_picture_rect,
     card_inner_rect,
+    card_picture_rect,
+    card_row_plan,
+    card_status_height,
 )
 from presentation.qt.theme import CARD_RADIUS, TOKENS  # noqa: E402
 
 #: 参照照片里仪器主体的颜色：与白底、卡片底色、文字色都分得开，便于找包围盒。
 _SUBJECT = QColor(0, 200, 0)
 _SUBJECT_TOLERANCE = 40
+#: 边框以内的画面要逐像素一致；这里留一点余量给字体/抗锯齿的版本差异。
+_INTERIOR_TOLERANCE = 0.001
+#: 比较“边框以内”时避开的边距：1px 描边与 8px 圆角由样式表的路径描边画出，
+#: 圆角外侧是透明（资产）或控件底色（截图），两者本来就不该相等。
+_BORDER_INSET = 8
 
 
 def _application():
@@ -115,6 +133,37 @@ def _diff_count(first: QImage, second: QImage, rect) -> int:
     return count
 
 
+def _card_rect(card: InstrumentCard, widget: QWidget) -> QRect:
+    """``widget`` 在卡片坐标系里的矩形。
+
+    卡片的子控件是直接挂在卡片上的，``widget.geometry()`` 本来就是卡片坐标；这里把
+    这个前提写成断言，免得以后换成嵌套容器时用例悄悄比错了地方。
+    """
+    assert widget.parent() is card, "子控件必须直接挂在卡片上，几何才是卡片坐标"
+    rect = widget.geometry()
+    assert card.rect().contains(rect), "子控件不能画到卡片外面"
+    return rect
+
+
+def _rect_tuple(rect) -> tuple[int, int, int, int]:
+    return (
+        int(round(rect.x())),
+        int(round(rect.y())),
+        int(round(rect.width())),
+        int(round(rect.height())),
+    )
+
+
+def _plain_data(text: str = "DP8B1519") -> InstrumentCardData:
+    return InstrumentCardData(
+        "DP832A（DP8B1519）",
+        code=text,
+        model="DP832A",
+        role="电源",
+        address="192.168.1.102",
+    )
+
+
 class CardAssetBasicsTests(unittest.TestCase):
     """资产的尺寸、几何与“正面/牌背都画得出来”。"""
 
@@ -168,26 +217,31 @@ class CardAssetBasicsTests(unittest.TestCase):
         # 取内容区左边缘里的一个点：不会落在文字或图片上。
         sample = (float(card_inner_rect().left()) + 2.0, CARD_HEIGHT / 2.0)
         self.assertEqual(_color_at(plain, *sample).name(), TOKENS["surface"].lower())
-        self.assertEqual(_color_at(checked, *sample).name(), TOKENS["primary_soft"].lower())
-        self.assertEqual(_color_at(disabled, *sample).name(), TOKENS["surface_alt"].lower())
+        self.assertEqual(
+            _color_at(checked, *sample).name(), TOKENS["primary_soft"].lower()
+        )
+        self.assertEqual(
+            _color_at(disabled, *sample).name(), TOKENS["surface_alt"].lower()
+        )
 
         # 选中时描主色边；普通卡片描浅灰边（与样式表的两条规则一致）。
-        self.assertEqual(_color_at(checked, 0.5, CARD_HEIGHT / 2.0).name(), TOKENS["primary"].lower())
-        self.assertEqual(_color_at(plain, 0.0, CARD_HEIGHT / 2.0).name(), TOKENS["border"].lower())
+        self.assertEqual(
+            _color_at(checked, 0.5, CARD_HEIGHT / 2.0).name(),
+            TOKENS["primary"].lower(),
+        )
+        self.assertEqual(
+            _color_at(plain, 0.0, CARD_HEIGHT / 2.0).name(), TOKENS["border"].lower()
+        )
 
     def test_high_dpi_only_adds_pixels_and_keeps_the_logical_layout(self):
-        data = InstrumentCardData(
-            "DP832A（DP8B1519）",
-            code="DP8B1519",
-            model="DP832A",
-            role="电源",
-            address="192.168.1.102",
-        )
+        data = _plain_data()
 
         regular = render_card_front(data, device_pixel_ratio=1.0)
         retina = render_card_front(data, device_pixel_ratio=2.0)
 
-        self.assertEqual((retina.width(), retina.height()), (CARD_WIDTH * 2, CARD_HEIGHT * 2))
+        self.assertEqual(
+            (retina.width(), retina.height()), (CARD_WIDTH * 2, CARD_HEIGHT * 2)
+        )
         self.assertEqual(retina.devicePixelRatio(), 2.0)
         self.assertEqual(
             _color_at(regular, 6.0, CARD_HEIGHT / 2.0).name(),
@@ -201,6 +255,269 @@ class CardAssetBasicsTests(unittest.TestCase):
             _color_at(back, CARD_WIDTH * 0.25, CARD_HEIGHT / 2.0).lightness(),
             128,
         )
+
+
+class CardAssetContractTests(unittest.TestCase):
+    """渲染接口的输入契约与元数据。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.application = _application()
+
+    def test_the_asset_metadata_is_the_size_that_was_really_rendered(self):
+        asset = render_card_asset(
+            _plain_data(), width=CARD_MIN_WIDTH, device_pixel_ratio=1.5
+        )
+
+        self.assertEqual((asset.width, asset.height), (CARD_MIN_WIDTH, CARD_HEIGHT))
+        self.assertEqual(asset.size(), QSize(CARD_MIN_WIDTH, CARD_HEIGHT))
+        # 逻辑尺寸不变，物理像素按屏幕像素比放大。
+        self.assertEqual(
+            (asset.front.width(), asset.front.height()),
+            (round(CARD_MIN_WIDTH * 1.5), round(CARD_HEIGHT * 1.5)),
+        )
+        self.assertEqual(asset.front.devicePixelRatio(), 1.5)
+
+    def test_sizes_must_be_positive_integers(self):
+        data = _plain_data()
+        for bad_size in (0, -1, -240):
+            with self.subTest(size=bad_size):
+                with self.assertRaises(ValueError):
+                    render_card_front(data, width=bad_size)
+                with self.assertRaises(ValueError):
+                    render_card_back(height=bad_size)
+                with self.assertRaises(ValueError):
+                    render_card_asset(data, height=bad_size)
+        for bad_size in (190.0, "190", None, True):
+            with self.subTest(size=bad_size):
+                with self.assertRaises(TypeError):
+                    render_card_front(data, width=bad_size)
+                with self.assertRaises(TypeError):
+                    render_card_asset(data, width=bad_size)
+
+    def test_a_bad_device_pixel_ratio_falls_back_to_one(self):
+        data = _plain_data()
+        for bad_ratio in (0, -2.0, float("nan"), float("inf"), None, "retina"):
+            with self.subTest(ratio=bad_ratio):
+                front = render_card_front(data, device_pixel_ratio=bad_ratio)
+                self.assertEqual(front.devicePixelRatio(), 1.0)
+                self.assertEqual(
+                    (front.width(), front.height()), (CARD_WIDTH, CARD_HEIGHT)
+                )
+
+
+class CardRowPlanTests(unittest.TestCase):
+    """行位置只有一份：真实卡片按它钉住行高，资产按它画字。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.application = _application()
+
+    def setUp(self):
+        self._directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self._directory.cleanup)
+
+    def save_picture(self) -> Path:
+        path = Path(self._directory.name) / "instrument.png"
+        self.assertTrue(photo(400, 200, QRect(100, 20, 200, 160)).save(str(path)))
+        return path
+
+    def card(self, data: InstrumentCardData, width: int = CARD_WIDTH) -> InstrumentCard:
+        host = QWidget()
+        host.resize(width + 80, CARD_HEIGHT + 80)
+        host.show()
+        self.addCleanup(host.deleteLater)
+        card = InstrumentCard(data)
+        card.setParent(host)
+        # 挪开 (0,0)：离屏平台的鼠标停在原点，卡片贴在原点会被判成悬停（边框换色）。
+        card.move(40, 40)
+        card.setFixedWidth(width)
+        card.show()
+        self.application.processEvents()
+        card.layout().activate()
+        self.application.processEvents()
+        return card
+
+    def variants(self) -> dict[str, InstrumentCardData]:
+        picture = self.save_picture()
+        return {
+            "full": InstrumentCardData(
+                "DP832A（DP8B1519）",
+                code="DP8B1519",
+                model="DP832A",
+                role="电源",
+                address="192.168.1.102",
+                status="已按配置预选",
+                picture_path=picture,
+            ),
+            "plain": _plain_data(),
+            "no-address": InstrumentCardData(
+                "DP832A（DP8B1519）", code="DP8B1519", model="DP832A", role="电源"
+            ),
+            "no-caption": InstrumentCardData(
+                "DP8B1519", code="DP8B1519", address="192.168.1.102"
+            ),
+            "no-picture": _plain_data(),
+            "long-code": InstrumentCardData(
+                "DP832A", code="DP8B214901519", model="DP832A", role="电源"
+            ),
+            "long-status": InstrumentCardData(
+                "未登记设备 #1",
+                code="未识别 #1",
+                status=(
+                    "未在设备表中登记，无法确定测试角色，请先登记设备再扫描一次"
+                    "以完成身份匹配"
+                ),
+                checkable=False,
+            ),
+            "checked": InstrumentCardData(
+                "DP832A（DP8B1519）",
+                code="DP8B1519",
+                model="DP832A",
+                role="电源",
+                address="192.168.1.102",
+                checked=True,
+            ),
+            "not-applicable": InstrumentCardData(
+                "N9020A（MY51234567）",
+                code="MY51234567",
+                model="N9020A",
+                role="信号发生器",
+                address="192.168.1.102",
+                status="未登记 · 不可应用",
+                checkable=False,
+            ),
+        }
+
+    def rows_of(self, card: InstrumentCard):
+        return (
+            ("code", card.code_label),
+            ("picture", card.image),
+            ("status", card.status_label),
+            ("caption", card.name_label),
+            ("address", card.address_label),
+        )
+
+    def test_the_live_card_sits_exactly_where_the_plan_says(self):
+        """两种宽度、九种内容：真实卡片的行几何 == 行计划（不再靠单组数据碰运气）。"""
+        for width in (CARD_WIDTH, CARD_MIN_WIDTH, 175):
+            for label, data in self.variants().items():
+                with self.subTest(width=width, variant=label):
+                    card = self.card(data, width)
+                    plan = card_row_plan(card.data, card.width(), card.height())
+
+                    for name, row, widget in (
+                        ("code", plan.code, card.code_label),
+                        ("picture", plan.picture, card.image),
+                        ("status", plan.status, card.status_label),
+                        ("caption", plan.caption, card.name_label),
+                        ("address", plan.address, card.address_label),
+                    ):
+                        if row.isEmpty():
+                            self.assertFalse(
+                                widget.isVisibleTo(card),
+                                f"{name} 在计划里没有位置，控件就不该显示",
+                            )
+                            continue
+                        self.assertTrue(
+                            widget.isVisibleTo(card), f"{name} 在计划里有位置，控件就该显示"
+                        )
+                        self.assertEqual(
+                            _rect_tuple(_card_rect(card, widget)),
+                            _rect_tuple(row),
+                            f"{name} 的位置与行计划不一致",
+                        )
+
+    def test_the_plan_can_be_computed_without_a_widget(self):
+        plan = card_row_plan(_plain_data())
+
+        self.assertEqual(plan.width, CARD_WIDTH)
+        self.assertEqual(plan.height, CARD_HEIGHT)
+        self.assertEqual(_rect_tuple(plan.inner), _rect_tuple(card_inner_rect()))
+        self.assertEqual(_rect_tuple(plan.code), _rect_tuple(card_code_rect()))
+        self.assertEqual(_rect_tuple(plan.picture), _rect_tuple(card_picture_rect()))
+        self.assertEqual(_rect_tuple(plan.address), _rect_tuple(card_address_rect()))
+        self.assertEqual(plan.caption.height(), card_caption_height())
+        self.assertTrue(plan.status.isEmpty(), "没有状态说明时那一行不占位置")
+        self.assertEqual(
+            [row.top() for row in plan.rows()],
+            sorted(row.top() for row in plan.rows()),
+            "行按自上而下的顺序给出",
+        )
+
+    def test_rows_never_overlap_and_stay_inside_the_content_area(self):
+        for width in (CARD_WIDTH, CARD_MIN_WIDTH, 120):
+            for label, data in self.variants().items():
+                with self.subTest(width=width, variant=label):
+                    plan = card_row_plan(data, width=width)
+                    rows = plan.rows()
+                    for row in rows:
+                        self.assertGreaterEqual(row.left(), plan.inner.left())
+                        self.assertLessEqual(row.right(), plan.inner.right())
+                        self.assertLessEqual(row.top(), row.bottom())
+                    for previous, following in zip(rows, rows[1:]):
+                        self.assertLessEqual(
+                            previous.bottom(), following.top(), "行与行不能压在一起"
+                        )
+                    self.assertLessEqual(rows[-1].bottom(), plan.inner.bottom())
+
+    def test_an_unusually_long_status_takes_room_from_the_picture(self):
+        """状态说明按宽度折行后要占的位置由图片让出来，行距与底部两行不动。"""
+        short = card_row_plan(_plain_data())
+        long_text = "未在设备表中登记，无法确定测试角色，请先登记设备再扫描一次以完成身份匹配"
+        long = card_row_plan(
+            InstrumentCardData("h", code="DP8B1519", address="1.2.3.4", status=long_text)
+        )
+
+        self.assertEqual(
+            long.status.height(),
+            card_status_height(long_text, long.inner.width()),
+            "状态说明拿到的就是折行后的高度（不截断文字）",
+        )
+        self.assertLess(long.picture.height(), short.picture.height(), "由图片让出高度")
+        self.assertEqual(
+            _rect_tuple(long.caption), _rect_tuple(short.caption), "型号行位置不变"
+        )
+        self.assertEqual(
+            _rect_tuple(long.address), _rect_tuple(short.address), "地址行位置不变"
+        )
+        self.assertGreaterEqual(
+            long.picture.height(), 0, "再长的说明也不能把图片挤成负数"
+        )
+
+    def test_selecting_a_card_does_not_move_its_rows(self):
+        """选中只把描边加粗到 2px（向内容区多压 1px），每一行的位置不变。"""
+        plain = card_row_plan(_plain_data())
+        checked = card_row_plan(
+            InstrumentCardData("h", code="DP8B1519", address="192.168.1.102", checked=True)
+        )
+
+        self.assertEqual(card_border_width(_plain_data()), 1)
+        self.assertEqual(
+            card_border_width(
+                InstrumentCardData("h", code="DP8B1519", checked=True)
+            ),
+            2,
+        )
+        for name in ("inner", "code", "picture", "caption", "address"):
+            with self.subTest(row=name):
+                self.assertEqual(
+                    _rect_tuple(getattr(checked, name)),
+                    _rect_tuple(getattr(plain, name)),
+                    "选中/取消不应让内容跳 1px",
+                )
+
+    def test_the_picture_area_keeps_its_full_height_for_real_cards(self):
+        """真实卡片的状态说明都只有一行：图片不该因此变矮。"""
+        for status in ("已按配置预选", "未登记 · 不可应用", "未分配角色 · 不可应用", "无法识别"):
+            for address in ("", "192.168.1.102"):
+                with self.subTest(status=status, address=bool(address)):
+                    plan = card_row_plan(
+                        InstrumentCardData(
+                            "h", code="DP8B1519", address=address, status=status
+                        )
+                    )
+                    self.assertEqual(plan.picture.height(), CARD_PICTURE_HEIGHT)
 
 
 class CardFrontContentTests(unittest.TestCase):
@@ -219,17 +536,89 @@ class CardFrontContentTests(unittest.TestCase):
         self.assertTrue(photo(400, 200, QRect(100, 20, 200, 160)).save(str(path)))
         return path
 
-    def card_geometry(self, data: InstrumentCardData) -> InstrumentCard:
+    def card_geometry(
+        self,
+        data: InstrumentCardData,
+        width: int = CARD_WIDTH,
+    ) -> InstrumentCard:
         """把真实卡片放进一个底板并显示：行位置以 Qt 布局算出来的为准。"""
         host = QWidget()
-        host.resize(400, 400)
+        host.resize(width + 80, CARD_HEIGHT + 80)
         host.show()
         self.addCleanup(host.deleteLater)
         card = InstrumentCard(data)
         card.setParent(host)
+        card.move(40, 40)
+        card.setFixedWidth(width)
         card.show()
         self.application.processEvents()
+        card.layout().activate()
+        self.application.processEvents()
         return card
+
+    def variants(self, picture: Path) -> dict[str, InstrumentCardData]:
+        return {
+            "full": InstrumentCardData(
+                "DP832A（DP8B1519）",
+                code="DP8B1519",
+                model="DP832A",
+                role="电源",
+                address="192.168.1.102",
+                status="已按配置预选",
+                picture_path=picture,
+            ),
+            "plain": InstrumentCardData(
+                "DP832A（DP8B1519）",
+                code="DP8B1519",
+                model="DP832A",
+                role="电源",
+                address="192.168.1.102",
+                picture_path=picture,
+            ),
+            "no-address": InstrumentCardData(
+                "DP832A（DP8B1519）",
+                code="DP8B1519",
+                model="DP832A",
+                role="电源",
+                picture_path=picture,
+            ),
+            "no-picture": InstrumentCardData(
+                "未识别设备 #1",
+                code="未识别 #1",
+                address="192.168.1.102",
+            ),
+            "long-code": InstrumentCardData(
+                "DP832A", code="DP8B214901519", model="DP832A", role="电源"
+            ),
+            "checked": InstrumentCardData(
+                "DP832A（DP8B1519）",
+                code="DP8B1519",
+                model="DP832A",
+                role="电源",
+                address="192.168.1.102",
+                checked=True,
+                picture_path=picture,
+            ),
+            "not-applicable": InstrumentCardData(
+                "N9020A（MY51234567）",
+                code="MY51234567",
+                model="N9020A",
+                role="信号发生器",
+                address="192.168.1.102",
+                status="未登记 · 不可应用",
+                checkable=False,
+                picture_path=picture,
+            ),
+            "long-status": InstrumentCardData(
+                "未识别设备 #1",
+                code="未识别 #1",
+                status=(
+                    "未在设备表中登记，无法确定测试角色，请先登记设备再扫描一次"
+                    "以完成身份匹配"
+                ),
+                checkable=False,
+            ),
+        }
 
     def test_empty_rows_stay_empty_while_filled_rows_draw_content(self):
         full = InstrumentCardData(
@@ -247,10 +636,10 @@ class CardFrontContentTests(unittest.TestCase):
         empty = render_card_front(bare).toImage()
 
         rows = {
-            "code": card.code_label.geometry(),
-            "status": card.status_label.geometry(),
-            "caption": card.name_label.geometry(),
-            "address": card.address_label.geometry(),
+            "code": _card_rect(card, card.code_label),
+            "status": _card_rect(card, card.status_label),
+            "caption": _card_rect(card, card.name_label),
+            "address": _card_rect(card, card.address_label),
         }
         for name, row in rows.items():
             with self.subTest(row=name):
@@ -311,30 +700,57 @@ class CardFrontContentTests(unittest.TestCase):
             "没有图片时图片区仍要写出占位文字",
         )
 
-    def test_the_front_matches_the_real_card_inside_the_border(self):
+    def test_the_front_matches_the_card_inside_the_border_at_every_width(self):
+        """两种宽度、八种内容：边框以内逐像素一致（0 像素差异，留一点余量给抗锯齿）。"""
         picture = self.save_picture()
-        data = InstrumentCardData(
-            "DP832A（DP8B1519）",
-            code="DP8B1519",
-            model="DP832A",
-            role="电源",
-            address="192.168.1.102",
-            status="已按配置预选",
-            picture_path=picture,
-        )
-        card = self.card_geometry(data)
-        real = card.grab().toImage()
-        asset = render_card_front(data).toImage()
+        for width in (CARD_WIDTH, CARD_MIN_WIDTH):
+            for label, data in self.variants(picture).items():
+                with self.subTest(width=width, variant=label):
+                    card = self.card_geometry(data, width)
+                    real = card.grab().toImage()
+                    asset = render_card_front(data, width=width).toImage()
 
-        self.assertEqual(real.size(), asset.size())
-        # 边框与圆角由样式表描边，抗锯齿在不同平台略有差异；比较边框以内的画面。
-        interior = QRect(8, 8, CARD_WIDTH - 16, CARD_HEIGHT - 16)
-        area = interior.width() * interior.height()
-        differences = _diff_count(real, asset, interior)
-        self.assertLess(
-            differences,
-            int(area * 0.02),
-            f"边框以内的画面应与真实卡片基本一致（差异 {differences}/{area} 像素）",
+                    self.assertEqual(real.size(), asset.size())
+                    interior = QRect(
+                        _BORDER_INSET,
+                        _BORDER_INSET,
+                        asset.width() - 2 * _BORDER_INSET,
+                        asset.height() - 2 * _BORDER_INSET,
+                    )
+                    differences = _diff_count(real, asset, interior)
+                    allowed = int(
+                        interior.width() * interior.height() * _INTERIOR_TOLERANCE
+                    )
+                    self.assertLessEqual(
+                        differences,
+                        allowed,
+                        f"边框以内的画面应与真实卡片一致（差异 {differences}/{allowed} 像素）",
+                    )
+
+    def test_the_front_follows_the_card_when_the_status_or_selection_changes(self):
+        """卡片在运行时改状态、改选中之后，资产仍然与它同形。"""
+        data = _plain_data()
+        card = self.card_geometry(data)
+
+        card.set_status("已按配置预选")
+        card.set_checked(True)
+        self.application.processEvents()
+
+        current = card.data
+        asset = render_card_front(current).toImage()
+        real = card.grab().toImage()
+        interior = QRect(
+            _BORDER_INSET,
+            _BORDER_INSET,
+            asset.width() - 2 * _BORDER_INSET,
+            asset.height() - 2 * _BORDER_INSET,
+        )
+
+        self.assertEqual(current.status, "已按配置预选")
+        self.assertTrue(current.checked)
+        self.assertLessEqual(
+            _diff_count(real, asset, interior),
+            int(interior.width() * interior.height() * _INTERIOR_TOLERANCE),
         )
 
 

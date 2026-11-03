@@ -20,6 +20,7 @@ Qt Designer 的 ``.ui`` 文件只声明控件层级、静态文案、页面本�
 
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 from string import Template
 from typing import Any
@@ -40,6 +41,11 @@ __all__ = [
     "build_palette",
     "build_stylesheet",
     "base_font",
+    "card_code_font",
+    "card_caption_font",
+    "card_address_font",
+    "card_status_font",
+    "card_placeholder_font",
     "apply_theme",
     "set_button_variant",
     "set_tone",
@@ -245,6 +251,66 @@ _VALUES["icon_chevron_down_muted"] = _asset("chevron-down-muted.svg")
 _VALUES["icon_chevron_up"] = _asset("chevron-up.svg")
 _VALUES["icon_chevron_up_muted"] = _asset("chevron-up-muted.svg")
 _VALUES["icon_check"] = _asset("check.svg")
+
+
+# ---- 卡片字体：与样式表同名同号 -------------------------------------------
+
+
+def _point_size(token: str) -> float:
+    """样式表字号令牌（如 ``"10.5pt"``）的磅值；令牌不是 ``pt`` 时直接报错。
+
+    卡片字体只能有一份来源：样式表写 ``$font_card_name`` 之类的令牌，这里也从同一张
+    :data:`TOKENS` 表读磅值，因此“资产上的字”与“真实卡片上的字”不会各自漂移。
+    """
+    raw = str(_VALUES[token]).strip()
+    if not raw.endswith("pt"):
+        raise ValueError(f"字号令牌 {token}={raw!r} 不是以 pt 为单位")
+    return float(raw[: -len("pt")])
+
+
+@lru_cache(maxsize=8)
+def _font_of(token: str, mono: bool, weight: int) -> QFont:
+    """按样式表令牌构造一份字体；只在第一次绘制时构造（此时一定已有 ``QApplication``）。
+
+    单字体名（``setFamily``）与样式表的 ``font-family: "$font_stack"`` 同义：真实标签
+    由 QSS 拿到单个字体名，这里也必须是单个字体名，否则字体度量与 QSS 标签差 1px。
+    """
+    font = QFont()
+    font.setFamily(str(_VALUES["font_mono"] if mono else _VALUES["font_stack"]))
+    font.setPointSizeF(_point_size(token))
+    font.setWeight(QFont.Weight(weight))
+    return font
+
+
+def _card_font(token: str, *, mono: bool = False, weight: int = 400) -> QFont:
+    """取一份卡片字体（只读副本）：调用方只用来画字/量字，不修改它。"""
+    return QFont(_font_of(token, mono, weight))
+
+
+def card_code_font() -> QFont:
+    """``QLabel#instrumentCardCode`` 的字体：等宽 18pt 加粗。"""
+    return _card_font("font_code", mono=True, weight=700)
+
+
+def card_caption_font() -> QFont:
+    """``QLabel#instrumentCardName`` 的字体：10.5pt、600。"""
+    return _card_font("font_card_name", weight=600)
+
+
+def card_address_font() -> QFont:
+    """``QLabel#instrumentCardAddress`` 的字体：8pt 常规。"""
+    return _card_font("font_card_address")
+
+
+def card_status_font() -> QFont:
+    """``QLabel#instrumentCardStatus`` 的字体：8.5pt（``$font_small``）常规。"""
+    return _card_font("font_small")
+
+
+def card_placeholder_font() -> QFont:
+    """图片占位文字的字体：界面基准字号（``$font_base``），与 ``InstrumentImage`` 一致。"""
+    return _card_font("font_base")
+
 
 _QSS = Template(
     """

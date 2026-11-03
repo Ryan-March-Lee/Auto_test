@@ -226,7 +226,7 @@ InstrumentCardData
 
 ## 步骤 4：实现 CardAsset 和正面渲染器
 
-**执行状态：已完成**。新增 `presentation/qt/card_assets.py`：`CardAsset` 提供 `front` / `back`、逻辑尺寸、`radius` 与 `shadow_margin`，由 `render_card_asset()` 从 `InstrumentCardData` 一次渲染，不需要 `QWidget.grab()`。正面与真实卡片共用同一份内容和几何：内容边距、行距、设备码/图片/地址行高与图片落点计算都在 `presentation/qt/device_cards.py` 的 `CARD_*` 常量、`card_code_rect()` / `card_picture_rect()` / `card_address_rect()` / `picture_target_rect()` 里，字体与颜色取主题样式表的同名规则；选中、不可应用与空字段的底色、描边、留白也与样式表一致。牌背是一张独立的深色卡背（渐变、斜纹、内框、中央菱形），暂不承接“查找设备”卡面的装饰动效。登记测试：`tests/ui/test_card_assets.py`（尺寸/圆角/阴影边距、非空内容、选中与不可应用配色、高 DPI、图片落点、与真实卡片边框以内的画面一致性）。本步不改变面板现有的 `card.grab()` 路径，切换资产在步骤 5 完成。
+**执行状态：已完成**。新增 `presentation/qt/card_assets.py`：`CardAsset` 提供 `front` / `back`、逻辑尺寸、`radius` 与 `shadow_margin`，由 `render_card_asset()` 从 `InstrumentCardData` 一次渲染，不需要 `QWidget.grab()`。正面与真实卡片共用同一份**内容、行位置和字体**：`presentation/qt/device_cards.py` 的 `card_row_plan()` 一次算定设备码/图片/状态说明/型号·角色/地址的位置（`CARD_*` 常量与 `card_code_rect()` / `card_picture_rect()` / `card_address_rect()` 是同一份几何的单行查询），真实卡片按它钉住每行高度、资产按它画字；字体取自 `presentation/qt/theme.py` 的 `card_code_font()` / `card_caption_font()` / `card_status_font()` / `card_address_font()` / `card_placeholder_font()`，这些函数读样式表里同一个字号令牌，因此同名同号同字重；图片落点仍由 `picture_target_rect()` 统一计算。选中、不可应用与空字段的底色、描边、留白也与样式表一致；状态说明按宽度折行后要占的高度由图片让出（真实卡片的状态说明都只有一行，图片因此始终 104px），行距与底部两行不动。渲染接口的尺寸只接受正整数（`card_size()`），屏幕像素比不是正数时按 1.0；位图是 `QPixmap`，因此约定在 GUI 线程、`Application` 创建之后调用。牌背是一张独立的深色卡背（渐变、斜纹、内框、中央菱形），暂不承接“查找设备”卡面的装饰动效。登记测试：`tests/ui/test_card_assets.py`（`CARD_WIDTH` / `CARD_MIN_WIDTH` / 175 三种宽度 × 九种内容的行位置等于行计划；两种宽度 × 八种内容在边框以内逐像素一致；尺寸契约、屏幕像素比兜底、元数据与位图一致、选中不推动行位置、长状态由图片让位、空字段、图片落点、高 DPI）。本步不改变面板现有的 `card.grab()` 路径，切换资产在步骤 5 完成。
 
 ### 执行策略
 

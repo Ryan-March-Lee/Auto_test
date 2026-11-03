@@ -240,6 +240,23 @@ class CardFromDataTests(unittest.TestCase):
         self.assertTrue(card.image.has_picture(), "图片路径来自数据")
         self.assertTrue(card.is_checked(), "选中状态来自数据")
         self.assertTrue(card.property("checked"))
+        self.assertEqual(card.data, data, "卡片持有的就是这份内容")
+
+    def test_the_snapshot_follows_selection_and_status(self):
+        """卡片内容始终等于它此刻显示的东西：动画读到的快照不会停在构建那一刻。"""
+        card = InstrumentCard(InstrumentCardData("DP832A（DP8B1519）", code="DP8B1519"))
+
+        card.set_checked(True)
+        self.assertTrue(card.data.checked, "勾选后快照跟着更新")
+
+        card.set_status("已按配置预选")
+        self.assertEqual(card.data.status, "已按配置预选")
+
+        card.set_status("")
+        self.assertEqual(card.data.status, "", "状态说明被清掉，快照里也要清掉")
+
+        card.set_checked(False)
+        self.assertFalse(card.data.checked)
 
     def test_an_unchecked_card_starts_unchecked_and_empty_lines_stay_hidden(self):
         card = InstrumentCard(InstrumentCardData("未识别设备 #1", code="未识别 #1"))
@@ -264,6 +281,8 @@ class CardFromDataTests(unittest.TestCase):
 
         self.assertFalse(card.checkable)
         self.assertFalse(card.is_checked(), "不能应用的设备就算数据里勾着也不能选中")
+        self.assertFalse(card.data.checked, "快照与卡片实际状态一致")
+        self.assertTrue(data.checked, "卡片不改调用方给的那份数据")
 
 
 if __name__ == "__main__":

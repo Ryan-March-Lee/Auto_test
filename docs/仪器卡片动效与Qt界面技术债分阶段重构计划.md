@@ -207,10 +207,13 @@ InstrumentCardData
 `picture_path`、`tooltip`、`checkable`。`caption()` 只在这里拼一次“型号·角色”，真实
 卡片与之后的动画正面共用。
 
-`DeviceDiscoveryPanel` 把这份数据挂在每一行结果上：`_fill_cards` 生成，`_sync_card_checks`
-在预选或用户勾选后按行更新 `checked` 与 `status`，`card_data(heading)` 对外提供同一份
-快照。真实卡片通过 `InstrumentCard(data, tag=..., parent=...)` 构建，不再接收零散文字参数，
-也没有第二条“从扫描结果拼卡片”的路径。
+`DeviceDiscoveryPanel` 在 `_fill_cards` 里为每张卡片生成这份数据并交给 `InstrumentCard`：
+卡片持有它作为“此刻显示的内容”，`set_checked` 与 `set_status` 用 `dataclasses.replace`
+原子更新同一份快照（不另存一份选中状态或状态说明），不能应用的卡片在构造时就把快照
+规整成实际显示的样子。`DeviceDiscoveryPanel.card_data(heading)` 原样返回这张卡片的快照，
+面板不再另存一份：动画读到的就是卡片上写着、选中的东西。真实卡片通过
+`InstrumentCard(data, tag=..., parent=...)` 构建，不再接收零散文字参数，也没有第二条
+“从扫描结果拼卡片”的路径。
 
 ### 完成标准
 

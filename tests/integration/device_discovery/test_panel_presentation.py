@@ -83,9 +83,39 @@ class CardPresentationTests(DiscoveryPanelTestCase):
         panel.set_card_checked(heading, True)
         self.assertTrue(panel.card_data(heading).checked)
         self.assertTrue(panel.card_for(heading).is_checked())
+        self.assertEqual(panel.card_data(heading).status, "", "用户自己选的卡片不再写预选说明")
+        self.assertEqual(
+            panel.card_data(heading),
+            panel.card_for(heading).data,
+            "动画读的快照就是卡片此刻显示的内容",
+        )
 
         with self.assertRaises(KeyError):
             panel.card_data("没有这台设备")
+
+    def test_the_snapshot_carries_the_preselection_status(self):
+        """配置预选写下的说明也进同一份快照：动画不必另读控件文字。"""
+        panel = self.make_panel(
+            bindings={
+                "signal_generator": {
+                    "full_code": "105462",
+                    "device_key": "rohde&schwarz:105462",
+                }
+            }
+        )
+        self.run_scan(panel)
+
+        data = panel.card_data("SMW200A（105462）")
+        self.assertTrue(data.checked)
+        self.assertEqual(data.status, "已按配置预选")
+        self.assertFalse(panel.card_data("DP832A（DP8B214901519）").checked)
+
+        # 用户取消后预选说明随之消失，快照仍与卡片一致。
+        panel.set_card_checked("SMW200A（105462）", False)
+        data = panel.card_data("SMW200A（105462）")
+        self.assertFalse(data.checked)
+        self.assertEqual(data.status, "")
+        self.assertEqual(data, panel.card_for("SMW200A（105462）").data)
 
     def test_cards_wrap_into_columns_instead_of_a_long_strip(self):
         panel = self.make_panel(six_device_factory, size=(520, 700))

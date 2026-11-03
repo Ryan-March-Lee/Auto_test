@@ -33,7 +33,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -458,8 +458,6 @@ class InstrumentCard(QFrame):
         super().__init__(parent)
         self.setObjectName("instrumentCard")
         self.setFrameShape(QFrame.NoFrame)
-        #: 构建这张卡片的内容（只读）：卡片上的文字与图片都从这里来。
-        self.data = data
         self.setProperty("checked", False)
         self.setProperty("enabled-state", data.checkable)
         self.setFixedWidth(CARD_WIDTH)
@@ -468,6 +466,9 @@ class InstrumentCard(QFrame):
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self._checkable = bool(data.checkable)
         self._checked = bool(data.checked) and self._checkable
+        # 卡片此刻显示的内容：选中状态以卡片实际能显示出来的为准（不能应用的卡片
+        # 不会因为数据里勾着就真的选中），所以这里存一份规整后的快照。
+        self._data = replace(data, checked=self._checked)
         self.tag = tag
         if self._checkable:
             self.setCursor(Qt.PointingHandCursor)
@@ -527,6 +528,16 @@ class InstrumentCard(QFrame):
 
     # ---------- 内容 ----------
 
+    @property
+    def data(self) -> InstrumentCardData:
+        """这张卡片此刻显示的内容（只读快照）。
+
+        选中与状态说明变化时由 :meth:`set_checked` / :meth:`set_status` 一起更新，
+        所以 ``card.data`` 始终等于卡片上写着的、选中的东西；面板把这份快照交给
+        动画资产，动画不必回头读扫描结果或向控件要文字。
+        """
+        return self._data
+
     def _bind_tooltips(self) -> None:
         base = self.toolTip()
         for label in (
@@ -555,6 +566,7 @@ class InstrumentCard(QFrame):
             return
         self._checked = checked
         self._apply_check_state()
+        self._data = replace(self._data, checked=checked)
         if emit:
             self.activated.emit(self)
 
@@ -574,6 +586,8 @@ class InstrumentCard(QFrame):
         self.status_label.setText(text)
         self.status_label.setVisible(bool(text))
         self.status_label.setToolTip(self.toolTip())
+        if text != self._data.status:
+            self._data = replace(self._data, status=text)
 
     # ---------- 事件 ----------
 

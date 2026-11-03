@@ -351,10 +351,20 @@ class ConnectionPageStaticLayoutTests(unittest.TestCase):
         button_top = panel.scan_btn.mapTo(
             page, panel.scan_btn.rect().topLeft()
         ).y()
+        # 等待动画的舞台比卡片高，上沿要伸到按钮上方；按钮至少得下沉这段溢出，
+        # 舞台才不会越出结果区上沿（卡片上方的投影留白另算）。
+        from presentation.qt.scan_card import WAIT_STACK_HEIGHT
+
+        stage_overhang = max(0, (WAIT_STACK_HEIGHT - CARD_HEIGHT) // 2)
         self.assertGreater(
             button_top - box_top,
-            CARD_HEIGHT - 48,
-            "按钮应在结果区里给上方卡片让出引导高度",
+            stage_overhang + 8,
+            "按钮要给上方卡片与等待动画的舞台让出引导高度",
+        )
+        self.assertGreater(
+            button_top - box_top,
+            CARD_HEIGHT // 2,
+            "按钮整体落在卡片下沿附近，不贴结果区顶部",
         )
         self.assertGreater(
             panel.scan_btn.mapTo(page, panel.scan_btn.rect().center()).y(),

@@ -38,6 +38,7 @@ from presentation.qt.card_assets import (  # noqa: E402
     render_card_front,
 )
 from presentation.qt.device_cards import (  # noqa: E402
+    CARD_CONTENT_SPACING,
     CARD_HEIGHT,
     CARD_MIN_WIDTH,
     CARD_PICTURE_HEIGHT,
@@ -507,17 +508,39 @@ class CardRowPlanTests(unittest.TestCase):
                     "选中/取消不应让内容跳 1px",
                 )
 
-    def test_the_picture_area_keeps_its_full_height_for_real_cards(self):
-        """真实卡片的状态说明都只有一行：图片不该因此变矮。"""
-        for status in ("已按配置预选", "未登记 · 不可应用", "未分配角色 · 不可应用", "无法识别"):
-            for address in ("", "192.168.1.102"):
+    def test_a_one_line_status_only_takes_its_own_line_from_the_picture(self):
+        """真实状态说明都只有一行：它最多让图片让出自己那一行，型号与地址不挪位。"""
+        statuses = ("已按配置预选", "未登记 · 不可应用", "未分配角色 · 不可应用", "无法识别")
+        for address in ("", "192.168.1.102"):
+            plain = card_row_plan(
+                InstrumentCardData("h", code="DP8B1519", address=address)
+            )
+            for status in statuses:
                 with self.subTest(status=status, address=bool(address)):
                     plan = card_row_plan(
                         InstrumentCardData(
                             "h", code="DP8B1519", address=address, status=status
                         )
                     )
-                    self.assertEqual(plan.picture.height(), CARD_PICTURE_HEIGHT)
+                    self.assertEqual(
+                        _rect_tuple(plan.caption), _rect_tuple(plain.caption),
+                        "型号·角色钉在原来的位置",
+                    )
+                    self.assertEqual(
+                        _rect_tuple(plan.address), _rect_tuple(plain.address),
+                        "地址钉在原来的位置",
+                    )
+                    # 紧凑的卡片高度里，一行状态说明最多占掉自己那一行（加一个行距）；
+                    # 没有地址行时它连图片的高度都不用占。
+                    allowance = (
+                        card_status_height(status, plan.inner.width())
+                        + CARD_CONTENT_SPACING
+                    )
+                    self.assertGreaterEqual(
+                        plan.picture.height(),
+                        CARD_PICTURE_HEIGHT - (0 if not address else allowance),
+                        "一行状态说明不该额外吃掉图片高度",
+                    )
 
 
 class CardFrontContentTests(unittest.TestCase):

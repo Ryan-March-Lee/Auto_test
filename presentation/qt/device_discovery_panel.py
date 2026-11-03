@@ -161,8 +161,8 @@ _CARDS_MIN_WIDTH = CARD_MIN_WIDTH + _CARDS_SPACING
 #: 未登记演示设备在默认窗口宽度下排成一行。
 _RESULTS_BOX_ROWS = 2
 #: “查找设备”按钮 / 等待动画在结果区里的引导高度。结果卡片在页面顶部出现，按钮必须
-#: 整体落在卡片下沿之下（两者都是 276px 高），过渡动画才不会把卡片和按钮叠在一起。
-#: 窗口矮时按结果区的可用高度截断，宁可少留一点空白，也不把状态行挤出结果区。
+#: 整体落在卡片下沿之下（两者都取 :data:`CARD_HEIGHT` 高），过渡动画才不会把卡片和按钮
+#: 叠在一起。窗口矮时按结果区的可用高度截断，宁可少留一点空白，也不把状态行挤出结果区。
 _CENTRE_LEAD = 208
 #: 结果区的三种状态：还没查找（顶部按钮）、正在查找（进度）、有结果（卡片）。
 BOX_STATE_IDLE = "idle"
@@ -961,12 +961,22 @@ class DeviceDiscoveryPanel(QWidget):
 
         按钮与结果卡片同高（:data:`CARD_HEIGHT`），结果卡片在页面顶部出现；按钮在
         结果区里必须整体落到卡片下沿之下，过渡动画才不会把两者叠在一起。引导高度取
-        :data:`_CENTRE_LEAD`，窗口矮到放不下时按“结果区剩余高度 - 舞台高度 - 投影
-        留白”截断：宁可少留一点空白，也不把状态行挤出结果区。
+        :data:`_CENTRE_LEAD`，窗口矮到放不下时按“结果区剩余高度 - 舞台留在按钮下方
+        的那一段 - 投影留白”截断：宁可少留一点空白，也不把状态行挤出结果区。
+
+        舞台比按钮高出来的那一段是**伸到按钮上方**的（见
+        :meth:`_sync_wait_stack_geometry`）：牌堆以按钮上沿为基准居中，舞台因此有
+        ``(WAIT_STACK_HEIGHT - CARD_HEIGHT) / 2`` 在按钮上面。截断时要扣的是按钮下方
+        的那一段（``WAIT_STACK_HEIGHT - 溢出``），不是整个舞台——否则卡片变矮、舞台
+        在按钮上方伸得更多时，按钮会被无谓地提上去，反而与结果卡片重叠。
         """
-        centre_height = max(0, box_height - self._centre_lead_chrome())
+        deck_overhang = max(0, (WAIT_STACK_HEIGHT - CARD_HEIGHT) // 2)
         max_lead = max(
-            0, centre_height - SCAN_CARD_HEADROOM - WAIT_STACK_HEIGHT
+            0,
+            box_height
+            - self._centre_lead_chrome()
+            - SCAN_CARD_HEADROOM
+            - (WAIT_STACK_HEIGHT - deck_overhang),
         )
         self._centre_lead.changeSize(
             0, min(_CENTRE_LEAD, max_lead), QSizePolicy.Fixed, QSizePolicy.Fixed

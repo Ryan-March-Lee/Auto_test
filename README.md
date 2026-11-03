@@ -181,6 +181,21 @@ DUT 与驱动功放占用同一通道，都会在连接前报错。
 约 45 秒），涉及真实窗口与后端接线用 `--layer integration`；全量离线测试仍是交付前的
 唯一完整验证。选择规则见 `AGENTS.md`。
 
+界面动效在交付前还要在真实 Windows 窗口里做一次发现页验收：
+
+```powershell
+& $env:AUTO_TEST_PYTHON tools/manual_acceptance.py --label high-dpi
+& $env:AUTO_TEST_PYTHON tools/manual_acceptance.py --scale 0.8 --label normal-dpi
+```
+
+脚本打开 1366×768 的真实窗口，用模拟扫描器覆盖等待、发牌、翻牌、扫描失败、空结果、
+发牌中点“返回”和发牌中调整窗口七个验收点，截图与报告写到
+`test_results/manual_acceptance/`（不入库）。脚本只接受 Windows 桌面平台；窗口必须完整
+可见、截图必须来自桌面合成、阶段序列必须完整一致，等待周期按生产常量
+`WAIT_CYCLE_MS` 校验，证据不足直接判为未通过。这些判定由
+`tests/test_manual_acceptance_contract.py` 离线覆盖。判定标准与本次记录见
+[仪器发现页真实窗口验收](docs/仪器发现页真实窗口验收.md)。
+
 普通测试只执行离线和仿真路径，不会初始化真实设备。Hardware smoke 必须使用
 `tools/run_tests.py --layer hardware --config hardware/smoke_config.local.json --confirm-hardware-smoke`，
 并由 `hardware/smoke_gate.py` 在打开任何 VISA 资源之前检查：配置位于 `hardware/` 且不是示例、

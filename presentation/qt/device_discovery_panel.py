@@ -34,7 +34,9 @@
 扫描结果等它，而不是把摊开中途的牌堆直接收走。搜索一直不回来时动画就一轮接一轮地播。
 **结果卡片由发牌动画带出来**（:class:`presentation.qt.scan_card.DealRevealLayer`）：等待
 动画收拢后，牌从按钮牌堆原来的位置一张张飞向结果位，背面朝上（背面就是按钮那张卡面的
-纹样）；全部落定后停一下，再从左到右逐张翻开，把仪器卡片露出来。拿到扫描结果时卡片数
+纹样）；全部落定后停一下，再从左到右逐张翻开，把仪器卡片露出来。翻开的正面是发牌前
+由 :mod:`presentation.qt.card_assets` 按卡片内容渲染好的资产，不截取卡片控件，因此动画
+不依赖卡片是否已经显示、是否完成重排。拿到扫描结果时卡片数
 （一台仪器一张）就已经定了，结果区先按这个数量把版面排定，发牌因此直接落在卡片最终的
 位置上，翻牌也翻在同一处。发牌期间真正的卡片用透明度效果藏起来、暂不可点；翻完最后一张
 才恢复交互并写出“发现 N 台设备 …”。
@@ -63,6 +65,7 @@ from __future__ import annotations
 import ipaddress
 import re
 import threading
+from dataclasses import replace
 from typing import Any, Callable, Sequence
 
 from PySide6.QtCore import QPointF, Qt, QThread, Signal
@@ -83,6 +86,7 @@ from domain.instruments.models import (
     canonical_role,
 )
 
+from .card_assets import CardAsset, render_card_asset
 from .config_form_bindings import (
     binding_device_key,
     binding_records,
@@ -100,6 +104,8 @@ from .device_cards import (
 )
 from .input_controls import WheelSafeComboBox
 from .scan_card import (
+    DEAL_FRONT_SOURCE_ASSET,
+    DEAL_FRONT_SOURCE_SCREENSHOT,
     SCAN_CARD_HEADROOM,
     WAIT_STACK_HEIGHT,
     DealRevealLayer,
@@ -143,6 +149,12 @@ BOX_STATE_RESULTS = "results"
 BOX_STATES: tuple[str, ...] = (BOX_STATE_IDLE, BOX_STATE_BUSY, BOX_STATE_RESULTS)
 #: 扫描期间写在状态行里的话：按钮收走后，这里说明正在读取设备与进度。
 LOADING_TEXT = "正在查找设备 …"
+#: 排障开关：默认 ``False``，发牌正面由
+#: :func:`presentation.qt.card_assets.render_card_asset` 按卡片数据渲染
+#: （:attr:`CardAsset.front`）。改成 ``True`` 时正面退回旧的 ``card.grab()`` 截图，
+#: 只用于对照排障“资产画面与真实卡片不一致”；不要接到配置或界面上，也不要让它
+#: 成为第二条长期实现路径（计划步骤 5：回退只用于排障）。
+_USE_SCREENSHOT_FRONTS = False
 _IP_PATTERN = re.compile(r"(\d{1,3}(?:\.\d{1,3}){3})")
 
 
@@ -977,9 +989,9 @@ class DeviceDiscoveryPanel(QWidget):
         """把结果卡片藏起来，交给发牌覆盖层发出去、再逐张翻开。
 
         卡片数在拿到扫描结果时就定了（一台仪器一张卡片），版面也已经按这个数量排好：
-        先把最终版面落定，再截下每张卡的正面图，然后用透明度效果把它们藏起来（仍然
-        占着版面）。覆盖层的落点每帧从这些卡片现取，因此发牌落点就是卡片最终所在的
-        位置，翻开也翻在同一处。
+        先把最终版面落定，再按卡片此刻的内容渲染每张卡的动画资产（正面不截控件），
+        然后用透明度效果把它们藏起来（仍然占着版面）。覆盖层的落点每帧从这些卡片现取，
+        因此发牌落点就是卡片最终所在的位置，翻开也翻在同一处。
         """
         cards = self.cards()
         if not cards:
@@ -987,10 +999,10 @@ class DeviceDiscoveryPanel(QWidget):
             # “没启动”，而不是“启动了但没画出来”。
             self.deal_layer.skip(reason="no-cards")
             return
-        # 卡片先按最终版面就位，再截下每张卡的正面图；随后用透明度效果把它们藏起来
+        # 卡片先按最终版面就位，再为每张卡渲染动画资产；随后用透明度效果把它们藏起来
         # （仍然占着版面），覆盖层翻到哪张就把哪张恢复显示。
         self._settle_deal_layout()
-        fronts = [card.grab() for card in cards]
+        assets = self._deal_assets()
         for card in cards:
             effect = QGraphicsOpacityEffect(card)
             effect.setOpacity(0.0)
@@ -1004,11 +1016,49 @@ class DeviceDiscoveryPanel(QWidget):
             else self.deal_layer.rect().center()
         )
         self.deal_layer.start(
-            cards, fronts, QPointF(anchor), self.cards_area.viewport()
+            cards,
+            assets,
+            QPointF(anchor),
+            self.cards_area.viewport(),
+            front_source=self._deal_front_source(),
         )
 
+    def _deal_front_source(self) -> str:
+        """本次发牌正面的来源：默认 ``asset``，排障回退为 ``screenshot``。"""
+        return (
+            DEAL_FRONT_SOURCE_SCREENSHOT
+            if _USE_SCREENSHOT_FRONTS
+            else DEAL_FRONT_SOURCE_ASSET
+        )
+
+    def _deal_assets(self) -> list[CardAsset]:
+        """按显示顺序为每张卡片渲染发牌用的动画资产。
+
+        正面由 :func:`presentation.qt.card_assets.render_card_asset` 按卡片此刻的内容
+        （:meth:`card_data`：预选与状态说明都已经写在上面）直接画出，不读控件画面，
+        因此发牌不再依赖卡片是否显示过、是否完成一次重排，也不再调用 ``QWidget.grab()``。
+        资产和真实卡片共用同一份内容、行位置与字体，尺寸取卡片自己的逻辑尺寸。
+
+        :data:`_USE_SCREENSHOT_FRONTS` 是排障回退：打开时只把正面换回旧截图，牌背、
+        几何与其余绘制仍走资产，保证两条路径的差别只有“正面怎么来”。
+        """
+        ratio = float(self.devicePixelRatioF())
+        assets: list[CardAsset] = []
+        for heading in self.card_headings():
+            card = self.card_for(heading)
+            asset = render_card_asset(
+                self.card_data(heading),
+                width=max(1, int(card.width())),
+                height=max(1, int(card.height())),
+                device_pixel_ratio=ratio,
+            )
+            if _USE_SCREENSHOT_FRONTS:
+                asset = replace(asset, front=card.grab())
+            assets.append(asset)
+        return assets
+
     def _settle_deal_layout(self) -> None:
-        """让结果区的布局在截取正面图、开始发牌之前落定。
+        """让结果区的布局在渲染动画资产、开始发牌之前落定。
 
         卡片才刚挂进卡片区的行布局（:meth:`_rebuild_card_rows` 里已经重新显示，
         隐藏的控件在布局里占 0 高），这里再逐层激活一次：结果区的框、卡片区的行

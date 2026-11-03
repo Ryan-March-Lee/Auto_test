@@ -140,6 +140,7 @@ animation event=cancel cancel_reason=results-cleared restore_result=hidden ...
 | `elapsed_ms` / `duration_ms` | 已走时长与整段时长 |
 | `phase` | `dealing` / `settling` / `flipping` / `finished` / `idle` |
 | `card_count` | 本次要发的卡片数 |
+| `front_source` | 发牌正面的来源：`asset`（默认，卡片资产）或 `screenshot`（排障回退的旧截图） |
 | `deck_x` / `deck_y` | 发牌起点（覆盖层坐标） |
 | `target_rects` | 每张卡的落点 `(x,y,w,h)` |
 | `overlay_visible` / `overlay_width` / `overlay_height` / `overlay_parent` | 覆盖层可见性、尺寸与父控件 |
@@ -263,6 +264,19 @@ presentation/qt/card_assets.py
 中小，预计 1 天左右。
 
 ## 步骤 5：让真实卡片和动画资产并行使用
+
+**执行状态：已完成**。发牌正面改由 `presentation/qt/card_assets.py` 的
+`render_card_asset()` 按卡片此刻的内容渲染（`CardAsset.front`），`DealRevealLayer.start()`
+只接收每张卡的 `CardAsset`，绘制时贴 `asset.front`；面板在 `_start_deal_reveal` 里先落定
+最终版面、再用 `_deal_assets()` 为每张卡渲染资产，随后用透明度效果藏起真实卡片。发牌不再
+调用 `card.grab()`，也不依赖卡片控件是否显示过、是否完成重排。旧的截图路径只在
+`device_discovery_panel._USE_SCREENSHOT_FRONTS = True` 时用于排障对照（面板常量，不接配置
+和界面，也不作为第二条长期实现）；两种来源在诊断里记为 `front_source=asset|screenshot`，
+`front_source` 已加入步骤 2 的固定字段。牌背仍取按钮卡面的纹样，是否改成 `CardAsset.back`
+留给步骤 7 的独立动画对象统一决定；本步不改变覆盖层位置与时间轴。资产与真实卡片的一致性
+由 `tests/ui/test_card_assets.py` 逐像素比对，`tests/ui/test_scan_card.py` 验证正面确实来自
+资产、诊断记录来源，`tests/integration/device_discovery/test_panel_presentation.py` 在
+`InstrumentCard.grab` 被替换成抛错时仍能正常发牌。
 
 ### 执行策略
 

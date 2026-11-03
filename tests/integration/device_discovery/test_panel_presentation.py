@@ -4,6 +4,8 @@
 DTO 的纯控件行为仍在 ``tests/ui``。
 """
 
+from unittest import mock
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtTest import QTest
@@ -418,6 +420,52 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         self.assertTrue(panel.status_label.isVisible())
         for card in panel.cards():
             self.assertIsNone(card.graphicsEffect())
+
+    def test_the_deal_fronts_do_not_come_from_a_card_screenshot(self):
+        """发牌正面由卡片资产渲染：卡片即使截不出来，发牌也照常走。
+
+        计划步骤 5：默认路径改用 ``CardAsset.front``，``card.grab()`` 只留在排障回退里。
+        """
+        panel = self.make_panel()
+        with mock.patch.object(
+            InstrumentCard, "grab", side_effect=AssertionError("发牌不应再截取卡片")
+        ):
+            panel.request_scan()
+            panel.worker.wait(5000)
+            self.app.processEvents()
+            self.app.processEvents()
+            panel.wait_stack.finish_cycle()
+            self.app.processEvents()
+            self.app.processEvents()
+
+            self.assertTrue(panel.deal_layer.is_running())
+            diagnostics = panel.deal_layer.diagnostics()
+            self.assertEqual(diagnostics["front_source"], "asset")
+            self.assertGreater(diagnostics["drawn_cards"], 0, "画面仍要有牌")
+            panel.deal_layer.finish()
+
+    def test_the_screenshot_fronts_are_only_a_troubleshooting_fallback(self):
+        """回退开关打开时正面换回截图，并在诊断里写成 ``screenshot``。"""
+        from presentation.qt import device_discovery_panel as panel_module
+
+        if panel_module._USE_SCREENSHOT_FRONTS:
+            self.skipTest("默认路径就是资产；回退开关只在排障时人工打开")
+
+        panel = self.make_panel()
+        with mock.patch.object(panel_module, "_USE_SCREENSHOT_FRONTS", True):
+            panel.request_scan()
+            panel.worker.wait(5000)
+            self.app.processEvents()
+            self.app.processEvents()
+            panel.wait_stack.finish_cycle()
+            self.app.processEvents()
+            self.app.processEvents()
+
+            self.assertTrue(panel.deal_layer.is_running())
+            self.assertEqual(
+                panel.deal_layer.diagnostics()["front_source"], "screenshot"
+            )
+            panel.deal_layer.finish()
 
     def test_every_card_is_dealt_to_where_it_will_be_flipped(self):
         """发牌落点就是卡片最终所在的位置：一开始就按最终版面取位，翻牌也翻在同一处。

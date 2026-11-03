@@ -917,6 +917,20 @@ class DealRevealLayerTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = _application()
 
+    def _assets(self, count: int, width: int = 190, height: int = 276):
+        """几张稳定的动画资产：发牌层只认资产，不认控件截图。"""
+        from presentation.qt.card_assets import render_card_asset
+        from presentation.qt.device_cards import InstrumentCardData
+
+        return [
+            render_card_asset(
+                InstrumentCardData(f"设备 {index}", code=f"DEV{index}"),
+                width=width,
+                height=height,
+            )
+            for index in range(count)
+        ]
+
     def _layer(self, count: int = 4):
         """一块透明底板 + 几张卡片 + 覆盖层；计时器先停住，按给定时刻取进度。"""
         from PySide6.QtCore import QPointF
@@ -929,7 +943,11 @@ class DealRevealLayerTests(unittest.TestCase):
             card.setGeometry(20 + index * 80, 40, 60, 100)
         layer = DealRevealLayer(host)
         layer.setGeometry(host.rect())
-        layer.start(cards, [], QPointF(host.width() / 2.0, host.height() - 40.0))
+        layer.start(
+            cards,
+            self._assets(count),
+            QPointF(host.width() / 2.0, host.height() - 40.0),
+        )
         layer._timer.stop()
         self.addCleanup(host.close)
         return layer, cards
@@ -1012,6 +1030,78 @@ class DealRevealLayerTests(unittest.TestCase):
             green_points(back), green_points(face) // 2, "背面应保留按钮卡面的主要纹样"
         )
 
+    def test_the_front_is_the_card_asset(self):
+        """正面贴的是资产里的图：控件自己画什么不影响翻开的牌面。"""
+        from PySide6.QtGui import QColor, QPixmap
+
+        from presentation.qt.card_assets import CardAsset
+        from presentation.qt.scan_card import DealRevealLayer
+
+        host = QWidget()
+        host.resize(260, 260)
+        # 一张什么也不画的控件：截图只会是一块空画面，资产是另一张红色图。
+        card = QWidget(host)
+        card.setGeometry(30, 30, 60, 100)
+        layer = DealRevealLayer(host)
+        layer.setGeometry(host.rect())
+        self.addCleanup(host.close)
+        front = QPixmap(60, 100)
+        front.fill(QColor(255, 0, 0))
+        asset = CardAsset(
+            front=front,
+            back=QPixmap(60, 100),
+            width=60,
+            height=100,
+            radius=8.0,
+            shadow_margin=12,
+        )
+
+        layer.start([card], [asset], QPointF(10.0, 10.0))
+        layer._timer.stop()
+        layer._elapsed = layer.duration_ms()
+        image = layer.grab().toImage()
+
+        centre = layer._target_rect(0).center().toPoint()
+        ratio = image.devicePixelRatio()
+        if ratio != 1.0:
+            # 位图是物理像素：高分屏上要按设备像素比换算到同一处再取色。
+            centre = QPoint(
+                int(centre.x() * ratio),
+                int(centre.y() * ratio),
+            )
+        colour = image.pixelColor(centre)
+        self.assertGreater(colour.red(), 200, "翻开的牌面应是资产那张正面")
+        self.assertLess(colour.green(), 60)
+        self.assertLess(colour.blue(), 60)
+        self.assertEqual(layer.diagnostics()["front_source"], "asset")
+
+    def test_diagnostics_name_the_screenshot_fallback(self):
+        """排障回退时快照写明 ``screenshot``：两种来源在日志里分得开。"""
+        from presentation.qt.scan_card import (
+            DEAL_FRONT_SOURCE_SCREENSHOT,
+            DealRevealLayer,
+        )
+
+        host = QWidget()
+        cards = [QWidget(host) for _ in range(2)]
+        for index, card in enumerate(cards):
+            card.setGeometry(20 + index * 80, 40, 60, 100)
+        layer = DealRevealLayer(host)
+        layer.setGeometry(host.rect())
+        self.addCleanup(host.close)
+
+        layer.start(
+            cards,
+            self._assets(2),
+            QPointF(host.width() / 2.0, host.height() - 40.0),
+            front_source=DEAL_FRONT_SOURCE_SCREENSHOT,
+        )
+        layer._timer.stop()
+
+        self.assertEqual(
+            layer.diagnostics()["front_source"], DEAL_FRONT_SOURCE_SCREENSHOT
+        )
+
     def test_the_layer_is_only_a_picture(self):
         from PySide6.QtCore import Qt
 
@@ -1036,6 +1126,7 @@ class DealRevealLayerTests(unittest.TestCase):
             "elapsed_ms",
             "duration_ms",
             "card_count",
+            "front_source",
             "deck_x",
             "deck_y",
             "target_rects",
@@ -1076,6 +1167,7 @@ class DealRevealLayerTests(unittest.TestCase):
         """落在覆盖层/裁剪区之外的牌不算“画出来了”，否则 first_paint 会骗人。"""
         from PySide6.QtGui import QPixmap
 
+        from presentation.qt.card_assets import CardAsset
         from presentation.qt.scan_card import DealRevealLayer
 
         host = QWidget()
@@ -1087,9 +1179,16 @@ class DealRevealLayerTests(unittest.TestCase):
         layer = DealRevealLayer(host)
         layer.setGeometry(host.rect())
         self.addCleanup(host.close)
-        fronts = [QPixmap(60, 100), QPixmap(60, 100)]
+        asset = CardAsset(
+            front=QPixmap(60, 100),
+            back=QPixmap(60, 100),
+            width=60,
+            height=100,
+            radius=8.0,
+            shadow_margin=12,
+        )
 
-        layer.start([shown_card, offstage_card], fronts, QPointF(-500.0, -500.0))
+        layer.start([shown_card, offstage_card], [asset, asset], QPointF(-500.0, -500.0))
         layer._timer.stop()
         layer._elapsed = layer.duration_ms()
         layer.grab()
@@ -1112,12 +1211,17 @@ class DealRevealLayerTests(unittest.TestCase):
         self.addCleanup(host.close)
 
         with self.assertLogs(logger, level="INFO") as captured:
-            layer.start(cards, [], QPointF(host.width() / 2.0, host.height() - 40.0))
+            layer.start(
+                cards,
+                self._assets(2),
+                QPointF(host.width() / 2.0, host.height() - 40.0),
+            )
             layer._timer.stop()
             layer.grab()
 
         output = "\n".join(captured.output)
         self.assertIn("event=start", output)
+        self.assertIn("front_source=asset", output)
         self.assertIn("event=first_paint", output)
         self.assertIn("card_count=2", output)
         self.assertIn("overlay_parent=", output)

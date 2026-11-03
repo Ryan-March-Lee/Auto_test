@@ -13,6 +13,9 @@
     当前阶段：``dealing`` / ``settling`` / ``flipping`` / ``finished`` / ``idle``。
 ``card_count``
     本次要发的卡片数量。
+``front_source``
+    发牌正面的来源：``asset``（默认，由 :mod:`presentation.qt.card_assets` 按卡片数据
+    渲染）或 ``screenshot``（面板的排障回退，旧 ``QWidget.grab()`` 截图）。
 ``deck_x`` / ``deck_y``
     发牌起点（覆盖层坐标）。
 ``target_rects``

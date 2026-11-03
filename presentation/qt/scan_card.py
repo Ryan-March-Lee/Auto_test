@@ -100,6 +100,7 @@ from PySide6.QtWidgets import (
 )
 
 from .animation_diagnostics import log_event, timestamp, widget_label
+from .card_assets import CardAsset
 from .device_cards import CARD_HEIGHT, CARD_WIDTH
 from .theme import CARD_RADIUS, FONT_FAMILIES, TOKENS
 
@@ -197,6 +198,10 @@ DEAL_PHASE_DEALING = "dealing"
 DEAL_PHASE_SETTLING = "settling"
 DEAL_PHASE_FLIPPING = "flipping"
 DEAL_PHASE_FINISHED = "finished"
+#: 发牌正面的来源（诊断字段 ``front_source``）：默认由卡片资产渲染；``screenshot``
+#: 是面板的排障回退（旧 ``QWidget.grab()`` 截图），不作为长期路径。
+DEAL_FRONT_SOURCE_ASSET = "asset"
+DEAL_FRONT_SOURCE_SCREENSHOT = "screenshot"
 #: 等待动画的舞台：比卡片宽不少，整把扇形才摊得开。最外那张卡转到自己的角度时，
 #: 轴对齐包围盒不能超出舞台（舞台之外会被结果区上沿裁掉）；各边再留一点给抗锯齿。
 #: 高度按扇形竖直范围（约 ±168）收在 340：舞台下方多出来的空白越少，“正在查找设备”
@@ -1502,9 +1507,9 @@ class DealRevealLayer(QWidget):
 
     **背面就是按钮的卡面**（:func:`_render_deal_back` 用 :func:`_render_card_face`
     的纹样，不带正中文字）：牌是从按钮那一叠里发出来的，背面因此与牌堆最上面那张一致。
-    正面由调用方在动画开始前截好（:class:`presentation.qt.device_cards.InstrumentCard`
-    的整张图），翻到后半程时贴的是这张正面；翻完一张才把真正的卡片控件恢复显示，用户
-    因此不会看到“卡片背后藏着一张已经能点的卡片”。
+    正面由调用方在动画开始前渲染成 :class:`presentation.qt.card_assets.CardAsset`
+    （不再用 ``QWidget.grab()`` 截图），翻到后半程时贴的就是资产里的正面；翻完一张才
+    把真正的卡片控件恢复显示，用户因此不会看到“卡片背后藏着一张已经能点的卡片”。
 
     它只是画面：不吃鼠标（``WA_TransparentForMouseEvents``）、不占焦点、不进布局；
     覆盖在结果区上，目标的矩形每帧从卡片控件现取，窗口缩放时也能跟到新位置。
@@ -1520,9 +1525,9 @@ class DealRevealLayer(QWidget):
         # 动画不是控件：点击、悬停与键盘焦点都留给下面的卡片与按钮。
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.setFocusPolicy(Qt.NoFocus)
-        #: 本次要发的牌（按结果区里的显示顺序）与它们的正面截图。
+        #: 本次要发的牌（按结果区里的显示顺序）与每张卡的稳定动画资产。
         self._cards: list[QWidget] = []
-        self._fronts: list[QPixmap] = []
+        self._assets: list[CardAsset] = []
         #: 已经翻开的牌：翻完就恢复真正的卡片控件，不再由覆盖层画。
         self._revealed: list[bool] = []
         #: 牌堆在覆盖层坐标里的中心（发牌起点）。
@@ -1545,6 +1550,9 @@ class DealRevealLayer(QWidget):
         self._cancel_reason: str | None = None
         self._restore_result: str | None = None
         self._last_event = DEAL_PHASE_IDLE
+        #: 本次发牌正面的来源：``asset``（默认，卡片资产渲染）或 ``screenshot``
+        #: （面板的排障回退，旧 ``QWidget.grab()`` 截图）。只进日志与诊断快照。
+        self._front_source = DEAL_FRONT_SOURCE_ASSET
         #: 最近一次动画收尾时的快照：取消/完成后卡片与时长会被清空，
         #: 快照保证 :meth:`diagnostics` 仍能给出同一时刻的完整数据。
         self._last_run: dict[str, Any] | None = None
@@ -1608,6 +1616,7 @@ class DealRevealLayer(QWidget):
             "elapsed_ms": float(self._elapsed),
             "duration_ms": self.duration_ms(),
             "card_count": len(self._cards),
+            "front_source": self._front_source,
             "deck_x": float(self._deck.x()),
             "deck_y": float(self._deck.y()),
             "target_rects": self._target_labels(),
@@ -1708,11 +1717,18 @@ class DealRevealLayer(QWidget):
     def start(
         self,
         cards: Sequence[QWidget],
-        fronts: Sequence[QPixmap],
+        assets: Sequence[CardAsset],
         deck_origin: QPointF,
         clip_widget: QWidget | None = None,
+        *,
+        front_source: str = DEAL_FRONT_SOURCE_ASSET,
     ) -> None:
-        """从 ``deck_origin`` 开始发 ``cards``；``fronts`` 是每张卡的正面截图。
+        """从 ``deck_origin`` 开始发 ``cards``；``assets`` 是每张卡的动画资产。
+
+        正面取自 ``assets[index].front``：调用方在动画开始前由
+        :func:`presentation.qt.card_assets.render_card_asset` 渲染好，动画因此不读卡片
+        控件，也不再调用 ``QWidget.grab()``。``front_source`` 只写进日志与诊断快照，
+        用来区分默认的 ``asset`` 与排障时的 ``screenshot`` 回退。
 
         ``clip_widget`` 是卡片区的可见视口：结果多到要滚动时，没滚到的行不该被画到
         状态行或动作行上。
@@ -1722,7 +1738,8 @@ class DealRevealLayer(QWidget):
             return
         self._timer.stop()
         self._cards = list(cards)
-        self._fronts = list(fronts)
+        self._assets = list(assets)
+        self._front_source = str(front_source)
         self._revealed = [False] * len(self._cards)
         self._deck = QPointF(deck_origin)
         self._clip_widget = clip_widget
@@ -1745,6 +1762,7 @@ class DealRevealLayer(QWidget):
             "start",
             started_at=self._started_at,
             card_count=len(self._cards),
+            front_source=self._front_source,
             duration_ms=self.duration_ms(),
             deck_x=float(self._deck.x()),
             deck_y=float(self._deck.y()),
@@ -1767,7 +1785,7 @@ class DealRevealLayer(QWidget):
         self._timer.stop()
         self.hide()
         self._cards = []
-        self._fronts = []
+        self._assets = []
         self._revealed = []
         self._clip_widget = None
         self._elapsed = 0.0
@@ -1779,6 +1797,7 @@ class DealRevealLayer(QWidget):
         self._ended_at = None
         self._cancel_reason = None
         self._restore_result = None
+        self._front_source = DEAL_FRONT_SOURCE_ASSET
         self._last_run = None
         self._record(
             "skip",
@@ -1824,6 +1843,7 @@ class DealRevealLayer(QWidget):
                 revealed_count=self.revealed_count,
                 paint_frames=self._paint_frames,
                 first_paint_ms=self._first_paint_ms,
+                front_source=self._front_source,
                 cancel_reason=self._cancel_reason,
                 restore_result=self._restore_result,
                 was_running=was_running,
@@ -1832,11 +1852,12 @@ class DealRevealLayer(QWidget):
             # 取消后卡片与时长会被清空：先把同一时刻的完整快照留下来。
             self._capture_run_end("cancel")
         self._cards = []
-        self._fronts = []
+        self._assets = []
         self._revealed = []
         self._clip_widget = None
         self._elapsed = 0.0
         self._phase = DEAL_PHASE_IDLE
+        self._front_source = DEAL_FRONT_SOURCE_ASSET
 
     def _stop(self) -> None:
         self._timer.stop()
@@ -1947,10 +1968,11 @@ class DealRevealLayer(QWidget):
         return True
 
     def _draw_front(self, painter: QPainter, rect: QRectF, index: int) -> bool:
-        """把卡片控件的截图按 ``rect`` 缩放贴上去，并在下面补一层同样的投影。"""
-        if index < 0 or index >= len(self._fronts):
+        """把 ``assets[index]`` 的正面按 ``rect`` 缩放贴上去，并在下面补一层同样的投影。"""
+        if index < 0 or index >= len(self._assets):
             return False
-        front = self._fronts[index]
+        asset = self._assets[index]
+        front = asset.front
         if front.isNull() or not self._is_visible_draw(painter, rect):
             return False
         ratio = float(self.devicePixelRatioF())
@@ -1966,8 +1988,8 @@ class DealRevealLayer(QWidget):
             shadow,
         )
         painter.restore()
-        # 整张截图（物理像素）映射进落点矩形：不依赖 grab() 报告的设备像素比，
-        # 高分屏上也不会因为 dpr 与逻辑尺寸对不上而把卡片缩小/放大。
+        # 资产按卡片逻辑尺寸（含屏幕像素比）渲染，这里把整张图映射进落点矩形：
+        # 不依赖 grab() 报告的设备像素比，高分屏上也不会把卡片缩小/放大。
         painter.drawPixmap(rect, front, QRectF(front.rect()))
         return True
 

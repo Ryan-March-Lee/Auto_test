@@ -442,6 +442,14 @@ index
 
 ## 步骤 8：重接发现页状态机
 
+**执行状态：已完成**。`presentation/qt/device_discovery_panel.py` 现在有显式的 `DiscoveryPhase`（`IDLE` / `SCANNING` / `RESULT_PENDING` / `DEALING` / `INTERACTIVE` / `CLOSED`）：`_set_phase()` 是唯一的转移入口，`_render_phase()` 是唯一的渲染入口，`results_box.boxState` 只由当前状态推导（扫描/等待 → `busy`，发牌/可交互 → `results`，其余 → `idle`）。扫描结果不再各自调用 `setVisible` 驱动发牌：worker 的结果、失败与取消都先挂进 `_pending_outcome` 并进入 `RESULT_PENDING`，`_consume_pending_outcome()` 再按结论分流——有设备时先切到 `DEALING`、在可见的卡片区里生成卡片与资产，再由 `CardDealAnimation` 播放；空结果跳过发牌（`deal_layer.skip(reason="no-cards")`），直接回 `IDLE` 并显示“发现 0 台设备 …”；失败与取消回 `IDLE`（`outcome=failed` / `cancelled`）并保留状态行说明。
+
+等待牌堆仍是扫描期间独立的 loading 动效。产品要求的“结果到达时先播完这一轮”由模块常量 `WAIT_FOR_FULL_CYCLE` 明确表达：为真时结果停在 `RESULT_PENDING`，等 `ScanWaitStack.cycle_finished`（牌堆复原）再消费；为假时扫描结论一到就直接进入 `DEALING` / 空结果，不再依赖等待周期。真实卡片只在 `INTERACTIVE` 可交互：`DEALING` 期间卡片区禁用、状态行隐藏，翻完最后一张才恢复；发牌启动抛错时面板先恢复卡片与卡片区，再把状态推进到 `INTERACTIVE`，不留下停在发牌中的半状态。面板同时提供 `phase()` / `is_interactive()` 与 `phase_changed` 信号，每次转移写一条固定字段日志 `animation event=discovery_phase previous=... phase=... box_state=... pending=... cards=... outcome=...`，成功、空结果、失败、取消、返回与关闭都能按同一条序列复现。
+
+状态机的异步边界也在这一步收紧：`_set_phase` 按 `_PHASE_TRANSITIONS` 校验跳转，`CLOSED` 是终态；每次 `request_scan` 递增扫描代次并交给 `DiscoveryWorker`，`clear_results` / `shutdown` 作废当前代次并请求协作取消，因此旧扫描的结果、进度、失败与取消只会释放线程，不会把结果画回页面；`QThread.start()` 失败时回到 `IDLE` 并报告原因（异常继续传播），旧线程的 `finished` 也不会动新的扫描。
+
+验证：`tests/integration/device_discovery/test_discovery_phase.py` 覆盖成功路径（`scanning → result-pending → dealing → interactive`）、空结果跳过发牌、失败回 `IDLE`、返回/关闭状态、显式关闭 `WAIT_FOR_FULL_CYCLE` 后结果直接发牌（成功、空结果、失败三条分支）、发牌启动失败仍可交互、扫描线程启动失败回 `IDLE`、未定义跳转被拒绝、清空结果作废进行中/挂起的扫描、关闭后迟到信号不改变状态，以及状态日志字段；`test_panel_presentation.py` / `test_connection_page.py` / `test_scan_lifecycle.py` 的既有可见行为保持不变。
+
 ### 执行策略
 
 将扫描流程改成：
@@ -459,8 +467,11 @@ index
 ### 技术决定
 
 - 等待动画和发牌动画保持两个独立组件。
-- 发牌不再要求等待动画完成一整轮才能启动；如产品仍需要完整一轮，作为明确的状态策略保留，而不是隐含在多个回调中。
+- 发牌不再要求等待动画完成一整轮才能启动；如产品仍需要完整一轮，作为明确的状态策略保留，而不是隐含在多个回调中（`WAIT_FOR_FULL_CYCLE`）。
 - 结果为空时跳过发牌，直接进入空结果状态。
+- 状态转移只走 `_set_phase`，并由允许转移表校验；`CLOSED` 是终态。
+- 扫描结果按代次归属：清空、重扫、关闭都会作废旧扫描，迟到信号只释放资源。
+- 扫描线程启动失败回到 `IDLE` 并提示，异常不吞；发牌启动失败让结果立即可用（`INTERACTIVE`），异常不吞。
 
 ### 完成标准
 

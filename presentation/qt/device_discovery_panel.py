@@ -45,6 +45,11 @@
 挂进来），不在结果区或卡片滚动区里：起点与每张牌的落点在动画开始时一次性换算到覆盖层
 坐标，滚动与页头收放都不会挪动已经开始的动画；页面尺寸或滚动位置变化时页面取消这一次
 发牌并恢复卡片（``reason=surface-changed``）。面板单独使用（没有页面）时退回挂在结果区上。
+**流程状态是显式的**（计划步骤 8）：页面只在 :meth:`DeviceDiscoveryPanel._set_phase`
+推进 ``IDLE → SCANNING → RESULT_PENDING → DEALING → INTERACTIVE``（失败、取消与空结果
+回 ``IDLE``，关闭进 ``CLOSED``），可见性、状态行与卡片是否可点都由当前状态一次渲染。
+扫描结果不再各自调用 ``setVisible`` 驱动发牌；等待牌堆是扫描期间独立的 loading 动效，
+“结果要等牌堆完整收拢一轮”这一产品要求由 :data:`WAIT_FOR_FULL_CYCLE` 明确表达。
 **结果区的高度由页面给出的可用高度决定**（宽裕时按两行卡片 + 按钮与状态行；窗口矮时
 由页面压到一行）：扫描状态与结果数量本身不改变它的大小，只有页面重新分配可用高度时
 才会伸缩，卡片超出时在结果区里滚动。卡片区本身只占实际行数（最多两行）那么高，
@@ -71,6 +76,7 @@ import ipaddress
 import re
 import threading
 from dataclasses import replace
+from enum import Enum
 from typing import Any, Callable, Sequence
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QThread, Signal
@@ -91,6 +97,7 @@ from domain.instruments.models import (
     canonical_role,
 )
 
+from .animation_diagnostics import log_event
 from .animation_overlay import AnimationOverlay, widget_rect_in
 from .card_assets import CardAsset, render_card_asset
 from .card_deal_animation import (
@@ -156,6 +163,68 @@ BOX_STATE_IDLE = "idle"
 BOX_STATE_BUSY = "busy"
 BOX_STATE_RESULTS = "results"
 BOX_STATES: tuple[str, ...] = (BOX_STATE_IDLE, BOX_STATE_BUSY, BOX_STATE_RESULTS)
+
+
+class DiscoveryPhase(str, Enum):
+    """发现页的流程状态（计划步骤 8）：页面自己只在一个地方决定“现在在哪一步”。
+
+    ``boxState`` 只描述结果区长什么样；它不能区分“扫描线程还在跑”和“结果已挂起、
+    等待牌堆收拢”，也不能区分“正在发牌”和“翻牌完成可交互”。这里把完整流程显式
+    写成枚举，转移只经过 :meth:`DeviceDiscoveryPanel._set_phase`：
+
+    - ``IDLE``：还没查找，或本次结果为空 / 失败 / 已取消；
+    - ``SCANNING``：扫描线程正在执行，等待牌堆播放；
+    - ``RESULT_PENDING``：扫描已有结论，等这一轮等待动画收拢（显式策略
+      :data:`WAIT_FOR_FULL_CYCLE`）；
+    - ``DEALING``：发牌/翻牌覆盖层正在播放，真实卡片隐藏且不可点；
+    - ``INTERACTIVE``：翻牌完成，真实卡片可交互；
+    - ``CLOSED``：页面正在关闭，不再保证控件可用性。
+    """
+
+    IDLE = "idle"
+    SCANNING = "scanning"
+    RESULT_PENDING = "result-pending"
+    DEALING = "dealing"
+    INTERACTIVE = "interactive"
+    CLOSED = "closed"
+
+
+#: 流程状态 → 结果区外观状态。失败与取消不是持久状态，两者都落回 ``IDLE`` 布局，
+#: 只由状态行说明原因；``CLOSED`` 不改外观（页面正在关闭）。
+_PHASE_BOX_STATES: dict[DiscoveryPhase, str] = {
+    DiscoveryPhase.IDLE: BOX_STATE_IDLE,
+    DiscoveryPhase.SCANNING: BOX_STATE_BUSY,
+    DiscoveryPhase.RESULT_PENDING: BOX_STATE_BUSY,
+    DiscoveryPhase.DEALING: BOX_STATE_RESULTS,
+    DiscoveryPhase.INTERACTIVE: BOX_STATE_RESULTS,
+}
+
+#: 允许的状态转移（计划步骤 8）：状态机自己拒绝没定义过的跳转，而不是悄悄停在两个
+#: 状态之间。``IDLE`` 可以从任何未关闭状态回来（清空结果、空结果、失败、取消），
+#: ``CLOSED`` 是终态，之后不再有转移。
+_PHASE_TRANSITIONS: dict[DiscoveryPhase, frozenset[DiscoveryPhase]] = {
+    DiscoveryPhase.IDLE: frozenset({DiscoveryPhase.SCANNING, DiscoveryPhase.CLOSED}),
+    DiscoveryPhase.SCANNING: frozenset(
+        {DiscoveryPhase.RESULT_PENDING, DiscoveryPhase.IDLE, DiscoveryPhase.CLOSED}
+    ),
+    DiscoveryPhase.RESULT_PENDING: frozenset(
+        {DiscoveryPhase.DEALING, DiscoveryPhase.IDLE, DiscoveryPhase.CLOSED}
+    ),
+    DiscoveryPhase.DEALING: frozenset(
+        {DiscoveryPhase.INTERACTIVE, DiscoveryPhase.IDLE, DiscoveryPhase.CLOSED}
+    ),
+    DiscoveryPhase.INTERACTIVE: frozenset(
+        {DiscoveryPhase.IDLE, DiscoveryPhase.SCANNING, DiscoveryPhase.CLOSED}
+    ),
+    DiscoveryPhase.CLOSED: frozenset(),
+}
+
+#: 结果消费策略（计划步骤 8）：等待牌堆是扫描期间独立的 loading 动效，不是发牌的一部分。
+#: 结果到达时不打断正在摊开 / 收拢的那一轮，牌堆复原（``cycle_finished``）之后才消费；
+#: 这是状态机里的显式策略，不散落在多个回调中。改成 ``False`` 时扫描结论一到就直接
+#: 进入发牌或空结果，不再等牌堆收拢（产品的“完整一轮”要求因此可以单独关闭）。
+WAIT_FOR_FULL_CYCLE = True
+
 #: 扫描期间写在状态行里的话：按钮收走后，这里说明正在读取设备与进度。
 LOADING_TEXT = "正在查找设备 …"
 #: 排障开关：默认 ``False``，发牌正面由
@@ -275,7 +344,11 @@ class _CardRowsLayout(QVBoxLayout):
 
 
 class DiscoveryWorker(QThread):
-    """在后台线程执行一次扫描；只上报结果与失败，不触碰界面。"""
+    """在后台线程执行一次扫描；只上报结果与失败，不触碰界面。
+
+    ``token`` 是这一次查找的代次（由面板递增）：结果迟到时面板按它判断“这份结论
+    是不是已经作废的扫描发来的”，从而不会把旧结果重新画回页面。
+    """
 
     progress = Signal(int, int)
     completed = Signal(object)
@@ -288,11 +361,14 @@ class DiscoveryWorker(QThread):
         subnet: str,
         mode: str,
         parent: Any = None,
+        *,
+        token: int = 0,
     ) -> None:
         super().__init__(parent)
         self.scanner_factory = scanner_factory
         self.subnet = subnet
         self.mode = mode
+        self.token = int(token)
         self.scanner: Any = None
         # 取消标记在构造时创建并交给扫描器：即使取消发生在扫描开始之前也不会丢失。
         self.cancel_event = threading.Event()
@@ -307,6 +383,10 @@ class DiscoveryWorker(QThread):
         if self.isInterruptionRequested():
             self.cancel_event.set()
         self.scanner = scanner
+        if self.cancel_event.is_set():
+            # 取消可能早于线程真正跑起来：只置事件不够，扫描器也要收到“别扫了”。
+            # 迟到的结果仍由面板按代次丢弃，这里只是让线程更快收尾。
+            scanner.request_cancel()
         try:
             result = scanner.scan(
                 self.subnet,
@@ -338,6 +418,8 @@ class DeviceDiscoveryPanel(QWidget):
     log_message = Signal(str)
     #: 结果区状态变化（``idle`` / ``busy`` / ``results``）；连接页据此隐去/复原页头文字。
     box_state_changed = Signal(str)
+    #: 流程状态变化（``DiscoveryPhase`` 的值）；日志与测试按它复现一次查找。
+    phase_changed = Signal(str)
 
     def __init__(
         self,
@@ -364,6 +446,10 @@ class DeviceDiscoveryPanel(QWidget):
         # 扫描已有结论、但等待动画还没播完一整轮时先挂在这里：结果必须等牌堆复原才
         # 进入下一步。``("completed", 结果)`` / ``("failed", 说明)`` / ``("cancelled", None)``。
         self._pending_outcome: tuple[str, Any] | None = None
+        #: 流程状态（计划步骤 8）：扫描 / 等待 / 发牌 / 可交互只经过 ``_set_phase``。
+        self._phase = DiscoveryPhase.IDLE
+        #: 当前这次查找的代次：清空、重扫与关闭都会递增，迟到结果据此作废。
+        self._scan_token = 0
         # 配置里保存的设备身份（角色 -> 完整设备码/device_key），用于扫描后按身份预选。
         self.device_bindings: dict[str, dict[str, Any]] = {}
         # 页面给出的结果区可用高度（``None`` 表示没有页面约束：按两行卡片算）。
@@ -404,6 +490,8 @@ class DeviceDiscoveryPanel(QWidget):
         layer = self.deal_layer
         if layer.is_running():
             layer.cancel(reveal=True, reason="overlay-attached")
+            # 换坐标系前先把这一次发牌按完成路径收尾：卡片恢复显示，流程回到可交互。
+            self._on_deal_reveal_finished()
         self._animation_overlay = overlay
         if layer.parentWidget() is not overlay:
             layer.setParent(overlay)
@@ -522,23 +610,57 @@ class DeviceDiscoveryPanel(QWidget):
     def _set_status(self, text: str) -> None:
         """结果区里的状态行：只有真的有话要说时占位（结果统计、失败原因、应用问题）。
 
-        没有结果时不写“尚未扫描”这类常驻提示，所以没有内容时整行隐藏。
+        没有结果时不写“尚未扫描”这类常驻提示，所以没有内容时整行隐藏。可见性仍由
+        当前流程状态决定：发牌期间即使已经备好统计也先藏着，翻牌完成后再出现。
+        页面关闭后不再改控件：这时用户已经看不到这一页，也没有下一次查找。
         """
+        if self._phase is DiscoveryPhase.CLOSED:
+            return
         self.status_label.setText(text)
-        self.status_label.setVisible(bool(text))
+        self.status_label.setVisible(self._status_visible(self._phase))
         self._sync_results_height()
 
     def clear_results(self) -> None:
         """清空上一次扫描结果；切换/重新加载配置或按“返回”时调用。
 
-        清空后回到“还没查找过”的样子：结果区顶部重新出现“查找设备”。
+        清空后回到“还没查找过”的样子：结果区顶部重新出现“查找设备”。流程状态也回到
+        ``IDLE``，正在播的发牌先按“卡片即将删除”取消，不会留下透明或不可点的卡片。
+        正在跑的扫描同时作废（协作取消 + 代次失效）：它的结论与界面无关了，迟到信号
+        只负责释放线程，不能把旧结果补回页面。
         """
         self.devices = []
-        self._clear_cards(reason="results-cleared")
-        self._set_status("")
-        self._set_box_state(BOX_STATE_IDLE)
         # 还没换进结果区的结论属于下一次查找：清空后不能再被动画结束事件补上。
         self._pending_outcome = None
+        self._invalidate_scan()
+        self._clear_cards(reason="results-cleared")
+        self._set_status("")
+        self._set_phase(DiscoveryPhase.IDLE, outcome="results-cleared")
+
+    def _invalidate_scan(self) -> None:
+        """让当前这次查找作废：代次递增，正在跑的线程协作停止。
+
+        只置取消标记、不等待线程：``worker.finished`` 之后照常释放引用并恢复扫描设置，
+        但这一次扫描的进度、结果、失败与取消都不许再改页面。清空结果与页面关闭走这里；
+        开始新查找时 ``request_scan`` 同样递增代次，因此“旧扫描把结果画回来”没有别的入口。
+        """
+        self._scan_token += 1
+        worker = self.worker
+        if worker is None:
+            return
+        worker.cancel_event.set()
+        worker.requestInterruption()
+        scanner = worker.scanner
+        if scanner is not None:
+            scanner.request_cancel()
+
+    def _is_stale_scan_signal(self) -> bool:
+        """这次信号是否来自已经作废的那次扫描。
+
+        直接在测试里调用处理器时没有发送者（``None``），按“当前扫描”处理；真实信号
+        一定来自 :class:`DiscoveryWorker`，代次对不上就不再更新页面。
+        """
+        sender = self.sender()
+        return isinstance(sender, DiscoveryWorker) and sender.token != self._scan_token
 
     # ---------- 界面 ----------
 
@@ -715,7 +837,7 @@ class DeviceDiscoveryPanel(QWidget):
         # 高度按“两行卡片”算定；页面可以用 set_available_height 把它收进窗口。
         self._capture_results_height_max()
         self._apply_results_height()
-        self._set_box_state(BOX_STATE_IDLE)
+        self._set_phase(DiscoveryPhase.IDLE, outcome="initial")
 
     # ---------- 结果区状态 ----------
 
@@ -859,28 +981,129 @@ class DeviceDiscoveryPanel(QWidget):
         self._apply_results_height()
 
     def box_state(self) -> str:
-        """结果区当前状态：``idle``（还没查找）/ ``busy``（正在查找）/ ``results``（有结果）。"""
+        """结果区当前状态：``idle``（还没查找）/ ``busy``（正在查找）/ ``results``（有结果）。
+
+        它只是外观状态，由 :meth:`phase` 推导；判断流程“现在在哪一步”请用
+        :meth:`phase`，不要用控件是否可见或 ``boxState`` 反推。
+        """
         return str(self.results_box.property("boxState") or BOX_STATE_IDLE)
 
-    def _set_box_state(self, state: str) -> None:
-        """切换结果区状态：顶部的按钮/进度、卡片区与操作按钮随状态收放。
+    def phase(self) -> DiscoveryPhase:
+        """发现页的流程状态；日志与测试按它复现一次查找。"""
+        return self._phase
 
-        结果区不画外框（无边框、无底色），所以状态切换只影响它里面的内容，不改变外观
-        底色：卡片直接落在页面背景上。
+    def is_interactive(self) -> bool:
+        """真实卡片是否已经可以交互（翻牌完成）。"""
+        return self._phase is DiscoveryPhase.INTERACTIVE
+
+    def _set_phase(self, phase: DiscoveryPhase, *, outcome: str | None = None) -> None:
+        """进入下一个流程状态：唯一的转移入口，可见变化都交给 :meth:`_render_phase`。
+
+        扫描完成、等待周期结束、发牌完成与返回不再是各自调用 ``setVisible`` 的独立
+        路径：它们只推进状态，页面长什么样由当前状态一次渲染。没定义过的跳转（含
+        ``CLOSED`` 之后的一切）直接报错，不会悄悄停在两个状态之间。
         """
-        if state not in BOX_STATES:
-            raise ValueError(f"未知的结果区状态: {state}")
-        self.results_box.setProperty("boxState", state)
-        self._sync_box_content()
-        style = self.results_box.style()
-        if style is not None:
-            style.unpolish(self.results_box)
-            style.polish(self.results_box)
+        if not isinstance(phase, DiscoveryPhase):
+            raise ValueError(f"未知的发现页状态: {phase!r}")
+        previous = self._phase
+        if phase is not previous and phase not in _PHASE_TRANSITIONS[previous]:
+            raise ValueError(
+                f"发现页状态不能从 {previous.value} 进入 {phase.value}"
+            )
+        self._phase = phase
+        self._render_phase()
+        if previous is phase:
+            return
+        self._log_phase(previous, phase, outcome)
+        self.phase_changed.emit(phase.value)
+
+    def _log_phase(
+        self,
+        previous: DiscoveryPhase,
+        phase: DiscoveryPhase,
+        outcome: str | None,
+    ) -> None:
+        """写一条固定字段的流程状态日志：``animation event=discovery_phase ...``。
+
+        与发牌诊断共用同一份日志，按 ``event=discovery_phase`` 检索一次查找的完整
+        路径（空闲 → 扫描 → 等待 → 发牌 → 可交互 / 空结果）。
+        """
+        pending = self._pending_outcome[0] if self._pending_outcome is not None else None
+        log_event(
+            "discovery_phase",
+            previous=previous.value,
+            phase=phase.value,
+            box_state=_PHASE_BOX_STATES.get(phase) or self.box_state(),
+            pending=pending,
+            # 进入 DEALING 时卡片刚拿到还没建好，``devices`` 已经知道要发几张；
+            # 两者取大，日志里的卡片数在进入发牌那一刻就是本次结果的真实数量。
+            cards=max(len(self._rows), len(self.devices)),
+            outcome=outcome,
+        )
+
+    def _render_phase(self) -> None:
+        """按当前流程状态一次渲染结果区：按钮 / 等待牌堆 / 卡片 / 操作按钮与状态行。
+
+        这里是页面状态唯一的渲染入口。失败与取消都映射回 ``IDLE`` 布局，状态行保留
+        说明；``DEALING`` 期间卡片区禁用，翻牌完成进入 ``INTERACTIVE`` 才可交互。
+        结果区不画外框（无边框、无底色），状态切换只影响里面的内容，不改变外观底色。
+        """
+        phase = self._phase
+        if phase is DiscoveryPhase.CLOSED:
+            # 页面正在关闭：不再保证控件的可见性与可用性，只停止动画（由 shutdown 负责）。
+            return
+        box_state = _PHASE_BOX_STATES[phase]
+        box_changed = self.box_state() != box_state
+        self.results_box.setProperty("boxState", box_state)
+
+        idle = phase is DiscoveryPhase.IDLE
+        waiting = phase in (DiscoveryPhase.SCANNING, DiscoveryPhase.RESULT_PENDING)
+        showing = phase in (DiscoveryPhase.DEALING, DiscoveryPhase.INTERACTIVE)
+        # 先收起焦点，再隐藏控件：否则 Qt 会把焦点交给页面里下一个可聚焦控件，并把
+        # 外层滚动区滚到它那里，扫描行就跟着离开了点之前的位置。
+        self._release_focus_before_hiding(
+            [
+                widget
+                for widget, visible in (
+                    (self.centre_area, idle or waiting),
+                    (self.scan_btn, idle),
+                    (self.wait_stack, waiting),
+                    (self.cards_area, showing),
+                    (self.back_btn, showing),
+                )
+                if not visible
+            ]
+        )
+        self.centre_area.setVisible(idle or waiting)
+        self.centre_placeholder.setVisible(waiting)
+        self.scan_btn.setVisible(idle)
+        self.wait_stack.setVisible(waiting)
+        self.cards_area.setVisible(showing)
+        # 返回只对结果有效：没有卡片时不显示用不上的按钮。
+        self.back_btn.setVisible(showing)
+        # 真实卡片只在翻牌完成后可交互：发牌期间卡片藏起来，也不接受点击。
+        self.cards_area.setEnabled(phase is DiscoveryPhase.INTERACTIVE)
+        self.status_label.setVisible(self._status_visible(phase))
+
+        if box_changed:
+            style = self.results_box.style()
+            if style is not None:
+                style.unpolish(self.results_box)
+                style.polish(self.results_box)
         self.results_box.update()
         self._refresh_results_box_height()
         self._notify_ancestors()
         self._sync_wait_stack_geometry()
-        self.box_state_changed.emit(state)
+        if box_changed:
+            self.box_state_changed.emit(box_state)
+
+    def _status_visible(self, phase: DiscoveryPhase) -> bool:
+        """当前状态是否应显示状态行：扫描中始终显示，发牌中隐藏，其余看有没有话要说。"""
+        if phase in (DiscoveryPhase.SCANNING, DiscoveryPhase.RESULT_PENDING):
+            return True
+        if phase is DiscoveryPhase.DEALING:
+            return False
+        return bool(self.status_label.text())
 
     def _sync_wait_stack_geometry(self) -> None:
         """把等待动画的牌堆钉在“查找设备”卡片原来的位置。
@@ -909,40 +1132,6 @@ class DeviceDiscoveryPanel(QWidget):
         )
         # 覆盖层要压在结果区与扫描行之上；它不吃鼠标，层级只影响这一块的画面。
         self.wait_stack.raise_()
-
-    def _sync_box_content(self) -> None:
-        """结果区里只放当前状态该有的东西：查找 / 正在查找 / 卡片与操作按钮。
-
-        还没查找时下方是“查找设备”，扫描期间同一块换成等待动画、进度写进状态行，
-        卡片看得见时这一块整块让位——任何时刻都只有明确的那几样东西，扫描行始终
-        只有网段与扫描方式两项、可以稳稳居中。
-        """
-        state = self.box_state()
-        idle = state == BOX_STATE_IDLE
-        busy = state == BOX_STATE_BUSY
-        results = state == BOX_STATE_RESULTS
-        # 先收起焦点，再隐藏控件：否则 Qt 会把焦点交给页面里下一个可聚焦控件，并把
-        # 外层滚动区滚到它那里，扫描行就跟着离开了点之前的位置。
-        self._release_focus_before_hiding(
-            [
-                widget
-                for widget, visible in (
-                    (self.centre_area, idle or busy),
-                    (self.scan_btn, idle),
-                    (self.wait_stack, busy),
-                    (self.cards_area, results),
-                    (self.back_btn, results),
-                )
-                if not visible
-            ]
-        )
-        self.centre_area.setVisible(idle or busy)
-        self.centre_placeholder.setVisible(busy)
-        self.scan_btn.setVisible(idle)
-        self.wait_stack.setVisible(busy)
-        self.cards_area.setVisible(results)
-        # 返回只对结果有效：没有卡片时不显示用不上的按钮。
-        self.back_btn.setVisible(results)
 
     def _release_focus_before_hiding(self, widgets: Sequence[QWidget]) -> None:
         """把焦点从即将收走的控件上收回面板，隐藏它们时页面就不滚动。
@@ -984,8 +1173,21 @@ class DeviceDiscoveryPanel(QWidget):
         （7 张卡以中间那张为准摊成一把扇形、捻过一遍再叠回原样）；卡片区等结果回来
         再出现，扫描期间不出现用不上的操作按钮。扫描结束后结果先挂起，等一下动画至少
         完整走完一轮（牌堆复原）才换进结果区。
+
+        只有 ``IDLE`` / ``INTERACTIVE`` 能开始新查找：已经在扫描、结果还没消费或正在
+        发牌时，界面路径上都点不到这个按钮，程序调用也按同一张状态表拒绝。
         """
-        if self.is_scanning() or self._pending_outcome is not None:
+        if self._phase is DiscoveryPhase.CLOSED:
+            return
+        if self._phase is DiscoveryPhase.DEALING:
+            # 卡片与覆盖层都指着这份结果：等它翻完，或先“返回”再查。
+            return
+        if (
+            self._phase is DiscoveryPhase.SCANNING
+            or self._phase is DiscoveryPhase.RESULT_PENDING
+            or self.is_scanning()
+            or self._pending_outcome is not None
+        ):
             self._set_status("扫描正在进行，请等待完成")
             return
         subnet = self.subnet_edit.text().strip()
@@ -993,16 +1195,33 @@ class DeviceDiscoveryPanel(QWidget):
         self.devices = []
         self._clear_cards(reason="new-scan")
         self._set_controls_enabled(False)
-        self._set_box_state(BOX_STATE_BUSY)
         self._set_status(f"{LOADING_TEXT} {subnet or '(空)'}")
-        worker = DiscoveryWorker(self.scanner_factory, subnet, self.current_mode(), self)
+        self._scan_token += 1
+        worker = DiscoveryWorker(
+            self.scanner_factory,
+            subnet,
+            self.current_mode(),
+            self,
+            token=self._scan_token,
+        )
         worker.progress.connect(self._on_progress)
         worker.completed.connect(self._on_completed)
         worker.failed.connect(self._on_failed)
         worker.cancelled.connect(self._on_cancelled)
         worker.finished.connect(self._on_worker_finished)
         self.worker = worker
-        worker.start()
+        self._set_phase(DiscoveryPhase.SCANNING, outcome="scan-started")
+        try:
+            worker.start()
+        except (RuntimeError, OSError):
+            # 线程启动失败（资源耗尽、线程对象不可用等）：先回到可重试的空闲状态，
+            # 不留在“正在查找”的假忙碌里；异常照常向外传播，不静默吞掉。
+            self.worker = None
+            worker.deleteLater()
+            self._set_controls_enabled(True)
+            self._set_status("扫描失败: 无法启动扫描线程，请重试")
+            self._set_phase(DiscoveryPhase.IDLE, outcome="scan-start-failed")
+            raise
 
     def _set_controls_enabled(self, enabled: bool) -> None:
         if not enabled:
@@ -1015,55 +1234,97 @@ class DeviceDiscoveryPanel(QWidget):
         self.mode_combo.setEnabled(enabled)
 
     def _on_progress(self, done: int, total: int) -> None:
-        if self._closed:
+        if self._closed or self._is_stale_scan_signal():
             return
-        self.status_label.setText(f"{LOADING_TEXT} {done}/{total}")
-        self.status_label.setVisible(True)
+        self._set_status(f"{LOADING_TEXT} {done}/{total}")
 
     def _on_completed(self, result: Any) -> None:
-        """扫描成功：先挂起结果，等一轮等待动画播完（牌堆复原）再换进结果区。"""
-        if self._closed:
+        """扫描成功：先把结论挂起，再按显式策略决定什么时候消费它。
+
+        等待牌堆是扫描期间独立的 loading 动效。产品的“至少完整一轮”要求由
+        :data:`WAIT_FOR_FULL_CYCLE` 明确表达：为真时进入 ``RESULT_PENDING``，等牌堆
+        复原再换画面；为假时扫描结论一到就进入发牌或空结果，不再依赖牌堆周期。
+        已经作废的扫描（清空或关闭之后）迟到的结果不再更新页面。
+        """
+        if self._closed or self._is_stale_scan_signal():
             return
-        self._pending_outcome = ("completed", result)
+        self._hold_outcome("completed", result)
+
+    def _hold_outcome(self, kind: str, payload: Any) -> None:
+        """把扫描结论挂到 ``RESULT_PENDING``，并应用结果消费策略。"""
+        self._pending_outcome = (kind, payload)
+        self._set_phase(DiscoveryPhase.RESULT_PENDING, outcome=kind)
+        if not WAIT_FOR_FULL_CYCLE:
+            self._consume_pending_outcome()
 
     def _on_wait_cycle_finished(self) -> None:
-        """一整轮等待动画走完（牌堆复原）：这时才允许进入下一步。
+        """一整轮等待动画走完（牌堆复原）：``RESULT_PENDING`` 这时才允许进入下一步。
 
         扫描一结束就把结论挂在这里；动画至少完整播完一轮、所有卡都叠回原样才切换
         画面，转动的牌堆不会在中途被收走。结果还没回来就什么也不做，动画继续下一轮。
         """
         if self._closed:
             return
+        if self._phase is not DiscoveryPhase.RESULT_PENDING:
+            return
+        self._consume_pending_outcome()
+
+    def _consume_pending_outcome(self) -> None:
+        """消费一次挂起结论：成功结果进发牌 / 空结果，失败与取消回 ``IDLE`` 布局。"""
         pending = self._pending_outcome
-        if pending is None:
+        if pending is None or self._closed:
             return
         self._pending_outcome = None
         kind, payload = pending
         if kind == "completed":
-            self._show_results(payload)
+            self._enter_results(payload)
         elif kind == "failed":
             self._show_failure(payload)
         else:
             self._show_cancelled()
 
-    def _show_results(self, result: Any) -> None:
-        """把一次成功的扫描结果放进结果区，并写统计与预选说明。
+    def _enter_results(self, result: Any) -> None:
+        """把一次成功的扫描结果带进页面：先备好卡片与资产，再进入 ``DEALING``。
 
-        有设备时先不让卡片直接露出来：先从“查找设备”牌堆逐张发到卡片位（背面朝上），
-        全部发完再逐张翻开（:class:`presentation.qt.card_deal_animation.CardDealAnimation`）。
-        发牌起点是牌堆现在还留在屏幕上的位置；页面随后会收起页头、整块面板上移，所以
-        这里记的是屏幕坐标，等布局落定后再换回覆盖层坐标。
+        流程对应计划步骤 8：
+
+        .. code-block:: text
+
+            扫描完成 → 生成 CardAsset 与目标槽位 → DEALING → 覆盖层播放 → INTERACTIVE
+
+        有设备时卡片先按最终版面就位，但真实控件用透明度效果藏起来（仍占着版面），
+        由发牌覆盖层逐张翻开；翻完最后一张才进入 ``INTERACTIVE``。空结果跳过发牌，
+        直接回 ``IDLE`` 并显示“发现 0 台设备 …”。真实卡片在 ``DEALING`` 期间不可点。
         """
+        # 发牌起点是牌堆现在还留在屏幕上的位置；进入 DEALING 会收走等待牌堆，所以先记。
         deck_anchor = None
         if self.wait_stack.isVisible():
             deck_anchor = self.wait_stack.mapToGlobal(self.wait_stack.rect().center())
         devices = list(result.devices)
         self.devices = devices
         self.last_mode = getattr(result, "mode", self.current_mode())
-        # 有设备就把卡片放进结果区；一台都没读到就回到顶部的“查找设备”，用户可以改
-        # 网段再试。
-        self._set_box_state(BOX_STATE_RESULTS if devices else BOX_STATE_IDLE)
+        if not devices:
+            # 空结果不发牌：跳过动画并直接回到查找画面，用户可以改网段再试。
+            self._fill_cards(devices)
+            self._set_status(self._results_summary(result, devices))
+            self.deal_layer.skip(reason="no-cards")
+            self._set_phase(DiscoveryPhase.IDLE, outcome="completed-empty")
+            self.log_message.emit(f"设备扫描完成: {self.status_label.text()}")
+            return
+        # 先把结果区切到 DEALING（卡片区可见、状态行隐藏、卡片区禁用），再生成卡片：
+        # 卡片因此在可见的卡片区里完成布局，落点冻结之后不会因为刚显示出来而重排。
+        self._set_phase(DiscoveryPhase.DEALING, outcome="completed")
         self._fill_cards(devices)
+        # 预选说明会追加在扫描统计后面，因此先写统计再预选。
+        self.status_label.setText(self._results_summary(result, devices))
+        self._preselect_bound_devices()
+        self._sync_results_height()
+        self.log_message.emit(f"设备扫描完成: {self.status_label.text()}")
+        self._start_deal_reveal(deck_anchor)
+
+    @staticmethod
+    def _results_summary(result: Any, devices: Sequence[Any]) -> str:
+        """结果统计与提示：数量、未登记/无法识别、扫描器给出的失败与提示。"""
         known = sum(1 for device in devices if device.is_known)
         usable = sum(1 for device in devices if device_applicable(device))
         no_role = sum(1 for device in devices if device.is_known and not device.has_role)
@@ -1082,18 +1343,9 @@ class DeviceDiscoveryPanel(QWidget):
             text += "；" + "；".join(failures)
         if notices:
             text += "；提示：" + "；".join(notices)
-        if self.last_mode == SCAN_MODE_SIMULATED:
+        if getattr(result, "mode", None) == SCAN_MODE_SIMULATED:
             text += "（模拟数据，仅用于离线演示；不能用于真实测量）"
-        self.status_label.setText(text)
-        # 发牌期间状态行先不出现：牌还背面朝上时就把“发现 N 台设备”写出来，等于提前
-        # 剧透；翻完最后一张再让说明和卡片一起出现。没有结果时照旧当场显示。
-        self.status_label.setVisible(not devices)
-        # 预选说明会追加在扫描统计后面，因此先写统计再预选。
-        self._preselect_bound_devices()
-        self._sync_results_height()
-        self.log_message.emit(f"设备扫描完成: {self.status_label.text()}")
-        if devices:
-            self._start_deal_reveal(deck_anchor)
+        return text
 
     def _start_deal_reveal(self, deck_anchor: Any) -> None:
         """把结果卡片藏起来，交给发牌覆盖层发出去、再逐张翻开。
@@ -1107,8 +1359,10 @@ class DeviceDiscoveryPanel(QWidget):
         cards = self.cards()
         if not cards:
             # 没有卡片就没有发牌：由动画层统一记一条 skip，日志里没有 start 时能分清
-            # “没启动”，而不是“启动了但没画出来”。
+            # “没启动”，而不是“启动了但没画出来”。状态也回到可交互，不停在 DEALING。
             self.deal_layer.skip(reason="no-cards")
+            if self._phase is DiscoveryPhase.DEALING:
+                self._set_phase(DiscoveryPhase.INTERACTIVE, outcome="deal-skipped")
             return
         # 卡片先按最终版面就位，再为每张卡渲染动画资产；随后用透明度效果把它们藏起来
         # （仍然占着版面），覆盖层翻到哪张就把哪张恢复显示。
@@ -1155,6 +1409,14 @@ class DeviceDiscoveryPanel(QWidget):
             # 照常向外传播，既不被吞掉，也不给宽泛捕获再开一个口子。
             if not started:
                 self._abort_deal_reveal()
+                # 启动失败时面板已经恢复卡片与卡片区；状态也回到可交互，不留下
+                # “卡片看得见却停在发牌中”的半状态。产品决定：结果立即可用，
+                # 但故障必须被看见（异常继续传播），不能静默降级。
+                self.log_message.emit("发牌动画未启动，结果已直接显示；请查看运行日志")
+                if self._phase is DiscoveryPhase.DEALING:
+                    self._set_phase(
+                        DiscoveryPhase.INTERACTIVE, outcome="deal-start-failed"
+                    )
 
     @staticmethod
     def _deal_target_rect(card: InstrumentCard, layer: QWidget) -> QRectF:
@@ -1258,7 +1520,11 @@ class DeviceDiscoveryPanel(QWidget):
             cards[index].setGraphicsEffect(None)
 
     def _on_deal_reveal_finished(self) -> None:
-        """发牌与翻牌结束：恢复卡片交互，状态行这时才出现。"""
+        """发牌与翻牌结束：真实卡片恢复交互，状态行这时才出现。
+
+        自然完成、``finish()`` 与取消（``reveal=True``）都走这里；它只负责把状态推进到
+        ``INTERACTIVE``，可见性与可点状态由 :meth:`_render_phase` 一次渲染。
+        """
         if self._closed:
             return
         # 正常路径每张都由 ``card_revealed`` 恢复；这里再兜一次底，保证中断或信号
@@ -1266,9 +1532,11 @@ class DeviceDiscoveryPanel(QWidget):
         for card in self.cards():
             if card.graphicsEffect() is not None:
                 card.setGraphicsEffect(None)
-        self.cards_area.setEnabled(True)
-        if self.box_state() == BOX_STATE_RESULTS:
-            self.status_label.setVisible(bool(self.status_label.text()))
+        if self._phase is DiscoveryPhase.DEALING:
+            self._set_phase(DiscoveryPhase.INTERACTIVE, outcome="deal-finished")
+        else:
+            # 迟到的收尾信号（结果已经被清空或换掉）：只重画当前状态，不倒退流程。
+            self._render_phase()
 
     def cancel_deal_reveal(
         self, *, reveal: bool = True, reason: str = "unspecified"
@@ -1276,25 +1544,28 @@ class DeviceDiscoveryPanel(QWidget):
         """取消正在播的发牌/翻牌；没有在播时什么也不做，返回是否取消了一次动画。
 
         页面在根容器尺寸变化或滚动位置变化时调用它（计划步骤 6：动画中途不追踪复杂
-        布局）。``reveal=True`` 把卡片恢复显示，结果立刻以最终版面出现。
+        布局）。``reveal=True`` 把卡片恢复显示，流程进入 ``INTERACTIVE``，结果立刻以
+        最终版面出现；``reveal=False`` 交给调用方随后清空或关闭页面。
         """
         layer = getattr(self, "deal_layer", None)
         if layer is None or not layer.is_running():
             return False
         layer.cancel(reveal=reveal, reason=reason)
-        self.cards_area.setEnabled(True)
         if reveal:
             # 取消后同样算“这一段结束了”：恢复卡片交互，有结果时把统计行放出来。
             self._on_deal_reveal_finished()
         return True
 
     def _cancel_deal_reveal(self, *, reveal: bool, reason: str) -> None:
-        """停止发牌覆盖层；``reason`` 写进诊断日志，``reveal=False`` 用于卡片即将被删。"""
+        """停止发牌覆盖层；``reason`` 写进诊断日志，``reveal=False`` 用于卡片即将被删。
+
+        它只停动画，不决定页面状态：调用方随后会进入 ``IDLE``（清空）或 ``CLOSED``
+        （关闭），可见性仍由 :meth:`_render_phase` 一次渲染。
+        """
         layer = getattr(self, "deal_layer", None)
         if layer is None:
             return
         layer.cancel(reveal=reveal, reason=reason)
-        self.cards_area.setEnabled(True)
 
     def _abort_deal_reveal(self) -> None:
         """发牌启动失败后的兜底清理：停掉时间轴，恢复卡片效果与卡片区交互。
@@ -1312,29 +1583,40 @@ class DeviceDiscoveryPanel(QWidget):
         self.cards_area.setEnabled(True)
 
     def _on_failed(self, message: str) -> None:
-        """扫描失败：同样等这一轮动画播完再收走牌堆。"""
-        if self._closed:
+        """扫描失败：同样按结果消费策略等这一轮动画播完再收走牌堆。"""
+        if self._closed or self._is_stale_scan_signal():
             return
-        self._pending_outcome = ("failed", message)
+        self._hold_outcome("failed", message)
 
     def _show_failure(self, message: str) -> None:
         """失败后没有结果：结果区顶部重新出现“查找设备”，用户改网段或换扫描方式再试。"""
-        self._set_box_state(BOX_STATE_IDLE)
         self._set_status(f"扫描失败: {message}")
+        self._set_phase(DiscoveryPhase.IDLE, outcome="failed")
         self.log_message.emit(f"设备扫描失败: {message}")
 
     def _on_cancelled(self) -> None:
-        """扫描取消：等这一轮动画播完再回到“查找设备”。"""
-        if self._closed:
+        """扫描取消：同样按结果消费策略等这一轮动画播完再回到“查找设备”。"""
+        if self._closed or self._is_stale_scan_signal():
             return
-        self._pending_outcome = ("cancelled", None)
+        self._hold_outcome("cancelled", None)
 
     def _show_cancelled(self) -> None:
-        self._set_box_state(BOX_STATE_IDLE)
         self._set_status("扫描已取消，结果未更新")
+        self._set_phase(DiscoveryPhase.IDLE, outcome="cancelled")
         self.log_message.emit("设备扫描已取消")
 
     def _on_worker_finished(self) -> None:
+        """线程收尾：释放引用并恢复扫描设置包络；不推进流程状态。
+
+        只认当前那一个 worker：旧线程（已经重扫过）的收尾不能把新的这次扫描的设置
+        重新打开或清掉它的引用。
+        """
+        sender = self.sender()
+        if isinstance(sender, DiscoveryWorker) and sender is not self.worker:
+            # 旧线程的收尾：不动当前这次扫描的设置与引用，只让它自己回收。
+            if not self._closed:
+                sender.deleteLater()
+            return
         worker = self.worker
         self.worker = None
         self._set_controls_enabled(True)
@@ -1351,7 +1633,9 @@ class DeviceDiscoveryPanel(QWidget):
         """页面关闭时协作停止扫描；不强杀线程，失败时保留引用由调用方处理。"""
         self._closed = True
         self._pending_outcome = None
+        self._invalidate_scan()
         self._cancel_deal_reveal(reveal=False, reason="page-shutdown")
+        self._set_phase(DiscoveryPhase.CLOSED, outcome="page-shutdown")
         worker = self.worker
         if worker is None:
             return True
@@ -1859,11 +2143,13 @@ __all__ = [
     "BOX_STATE_BUSY",
     "BOX_STATE_IDLE",
     "BOX_STATE_RESULTS",
+    "DiscoveryPhase",
     "DeviceDiscoveryPanel",
     "DiscoveryWorker",
     "LOADING_TEXT",
     "ROLE_LABELS",
     "SCAN_MODE_CHOICES",
+    "WAIT_FOR_FULL_CYCLE",
     "binding_device_key",
     "card_heading",
     "card_model",

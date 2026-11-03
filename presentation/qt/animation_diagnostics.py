@@ -37,6 +37,20 @@
     动画没有启动的原因（例如没有卡片）。``skip`` 只由 :meth:`CardDealAnimation.skip`
     记录，面板不再单独拼一条，避免同一次未启动出现重复事件。
 
+除了发牌时间轴，发现页的流程状态（计划步骤 8）也写进同一份日志，事件名
+``discovery_phase``：
+
+```text
+animation event=discovery_phase previous=scanning phase=result-pending box_state=busy pending=completed cards=0 outcome=completed
+```
+
+字段 ``previous`` / ``phase`` 是转移前后的 ``DiscoveryPhase`` 值，``box_state`` 是这次
+转移后结果区的外观状态，``pending`` 是挂起结论的类型（没有时为空），``cards`` 是本次
+结果的卡片数（已经建好，或刚拿到结果、进入发牌时即将建好），``outcome`` 是触发这次
+转移的事件（``scan-started`` / ``completed`` / ``completed-empty`` / ``failed`` /
+``cancelled`` / ``results-cleared`` / ``page-shutdown`` 等）。成功、空结果、失败与
+取消因此都能按同一条固定字段序列复现。
+
 ``CardDealAnimation.diagnostics()`` 在运行中返回当前快照，在完成/取消后返回那次动画
 收尾时的快照（``card_count``、``elapsed_ms``、``phase`` 都与结束事件同一时刻），
 不会出现“卡片已清空却还留着取消原因”的矛盾。

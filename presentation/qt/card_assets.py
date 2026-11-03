@@ -36,10 +36,13 @@
 时直接报错，而不是画出一张尺寸与资产元数据对不上的图。屏幕像素比拿不到或不是正数时
 按 1.0 处理——那只是清晰度下降，不影响版面。
 
-牌背（:func:`render_card_back`）是一张安静的深色背面：45° 渐变、细斜纹、一道细
-内框与正中一枚小菱形，与等待动画下层牌的视觉语言一致。它不承担“查找到设备”的装饰
-动效；发牌动画现在正面用 :attr:`CardAsset.front`、背面用 :attr:`CardAsset.back`
-（计划步骤 7 已把发牌层拆成独立的 :class:`presentation.qt.card_deal_animation.CardDealAnimation`）。
+牌背（:func:`render_card_back`）就是“查找设备”按钮与等待动画最上面那张牌的那张
+**绿色光子卡面**：深色 45° 渐变、三团青绿光晕与靛蓝四角角标，由
+:mod:`presentation.qt.photon_card` 画出同一份位图；牌背朝上时，动画再按
+:attr:`CardAsset.back_particles` 叠一层外飘的绿色粒子。发牌动画正面用
+:attr:`CardAsset.front`、背面用 :attr:`CardAsset.back`
+（计划步骤 7 已把发牌层拆成独立的
+:class:`presentation.qt.card_deal_animation.CardDealAnimation`）。
 面板的旧 ``card.grab()`` 截图路径只在
 :data:`presentation.qt.instrument_discovery_panel._USE_SCREENSHOT_FRONTS`
 打开时用于排障对照，默认不走。
@@ -50,11 +53,10 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt
+from PySide6.QtCore import QRectF, QSize, Qt
 from PySide6.QtGui import (
     QColor,
     QFontMetricsF,
-    QLinearGradient,
     QPainter,
     QPainterPath,
     QPen,
@@ -73,6 +75,7 @@ from .device_cards import (
     instrument_picture,
     picture_target_rect,
 )
+from .photon_card import render_photon_card
 from .theme import (
     CARD_RADIUS,
     TOKENS,
@@ -106,19 +109,6 @@ _TEXT_SECONDARY = QColor(TOKENS["text_secondary"])
 _TEXT_MUTED = QColor(TOKENS["text_muted"])
 _WARNING = QColor(TOKENS["warning"])
 
-# ---- 牌背配色：与等待动画下层的深色牌同一套视觉语言 --------------------------
-
-_BACK_START = QColor("#1A1A1A")
-_BACK_END = QColor("#262626")
-_BACK_STRIPE = QColor(255, 255, 255, 18)
-_BACK_FRAME = QColor(0, 162, 255, 76)
-_BACK_MARK = QColor("#00FFAA")
-_BACK_EDGE = QColor(255, 255, 255, 26)
-_BACK_EDGE_WIDTH = 3.0
-_BACK_STRIPE_STEP = 16.0
-_BACK_FRAME_INSET = 10.0
-_BACK_DIAMOND_REACH = 13.0
-
 
 @dataclass(frozen=True)
 class CardAsset:
@@ -127,6 +117,10 @@ class CardAsset:
     ``front`` / ``back`` 只含卡片本身（逻辑尺寸 ``width`` × ``height``，物理像素按
     屏幕像素比放大）；投影要画在卡片外面，由动画按 :attr:`shadow_margin` 留出边距。
     ``radius`` 与真实卡片共用 :data:`presentation.qt.theme.CARD_RADIUS`。
+
+    :attr:`back_particles` 说明牌背是否还要叠一层绿色粒子：粒子是动效，不能烘进位图，
+    由动画每帧按相位画。真实的发牌资产打开它（牌背取绿色光子卡面）；测试里直接构造的
+    纯色资产默认关掉，画面因此只由位图决定。
 
     资产里全是 ``QPixmap``：只在 GUI 线程、创建 ``QApplication`` 之后渲染和读取
     （见模块文档的“运行约束”）。
@@ -138,6 +132,7 @@ class CardAsset:
     height: int
     radius: float
     shadow_margin: int
+    back_particles: bool = False
 
     def size(self) -> QSize:
         """卡片的逻辑尺寸（动画落点、缩放都按它算）。"""
@@ -345,63 +340,18 @@ def render_card_back(
     *,
     device_pixel_ratio: float = 1.0,
 ) -> QPixmap:
-    """稳定的牌背：深色渐变 + 细斜纹 + 内框 + 中央小菱形（不含投影）。
+    """绿色光子牌背：与等待动画最上面那张牌同一张卡面（不含投影）。
+
+    深色 45° 渐变、三团青绿光晕与靛蓝四角角标都由
+    :func:`presentation.qt.photon_card.render_photon_card` 画出；发牌牌背、等待牌堆
+    最上面那张与“查找设备”按钮的卡面因此是同一份位图，不会各画一套。牌背上的绿色
+    粒子是动效，由 :class:`presentation.qt.card_deal_animation.CardDealAnimation`
+    每帧另画（见 :attr:`CardAsset.back_particles`）。
 
     尺寸契约与 :func:`render_card_front` 相同（正整数、GUI 线程）。
     """
     width, height = card_size(width, height)
-    pixmap = _canvas(width, height, _device_pixel_ratio(device_pixel_ratio))
-    painter = QPainter(pixmap)
-    try:
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        card = QRectF(0.0, 0.0, float(width), float(height))
-        silhouette = _rounded(card)
-        painter.setClipPath(silhouette)
-        gradient = QLinearGradient(card.topLeft(), card.bottomRight())
-        gradient.setColorAt(0.0, _BACK_START)
-        gradient.setColorAt(1.0, _BACK_END)
-        painter.fillPath(silhouette, gradient)
-        # 45° 细斜纹：间距 16px、很淡，只当纹理看。
-        painter.setPen(QPen(_BACK_STRIPE, 1.0))
-        x = card.left() - card.height()
-        while x < card.right():
-            painter.drawLine(
-                QPointF(x, card.bottom()),
-                QPointF(x + card.height(), card.top()),
-            )
-            x += _BACK_STRIPE_STEP
-        # 内框：与正面卡片相同的圆角语言，往里收一圈。
-        frame = card.adjusted(
-            _BACK_FRAME_INSET,
-            _BACK_FRAME_INSET,
-            -_BACK_FRAME_INSET,
-            -_BACK_FRAME_INSET,
-        )
-        painter.setBrush(Qt.NoBrush)
-        painter.setPen(QPen(_BACK_FRAME, 1.2))
-        painter.drawRoundedRect(
-            frame,
-            max(1.0, CARD_RADIUS - 6.0),
-            max(1.0, CARD_RADIUS - 6.0),
-        )
-        # 正中一个小菱形，给牌背一个可读的中心。
-        centre = card.center()
-        reach = _BACK_DIAMOND_REACH
-        diamond = QPainterPath()
-        diamond.moveTo(centre.x(), centre.y() - reach)
-        diamond.lineTo(centre.x() + reach, centre.y())
-        diamond.lineTo(centre.x(), centre.y() + reach)
-        diamond.lineTo(centre.x() - reach, centre.y())
-        diamond.closeSubpath()
-        painter.setPen(QPen(_BACK_MARK, 1.4))
-        painter.drawPath(diamond)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(_BACK_MARK)
-        painter.drawEllipse(centre, 2.2, 2.2)
-        _stroke(painter, card, _BACK_EDGE, _BACK_EDGE_WIDTH)
-    finally:
-        painter.end()
-    return pixmap
+    return render_photon_card(width, height, _device_pixel_ratio(device_pixel_ratio))
 
 
 def render_card_asset(
@@ -434,4 +384,5 @@ def render_card_asset(
         height=height,
         radius=float(CARD_RADIUS),
         shadow_margin=CARD_ASSET_SHADOW_MARGIN,
+        back_particles=True,
     )

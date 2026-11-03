@@ -20,8 +20,11 @@
 
 因此它可以在没有扫描线程、没有发现页的情况下单独播放：建一块宿主控件、给几份
 :class:`~presentation.qt.card_assets.CardAsset` 和目标矩形即可。牌背取
-``CardAsset.back``（步骤 4 已经渲染好的稳定资产），正面取 ``CardAsset.front``，
-发牌层因此不再依赖按钮卡面或等待动画的内部绘制函数。
+``CardAsset.back``（绿色光子卡面，与等待动画最上面那张牌同一张位图），正面取
+``CardAsset.front``；``CardAsset.back_particles`` 打开时，牌背朝上的每一帧再按相位叠
+一层外飘的绿色粒子（画法与等待动画共用
+:func:`presentation.qt.photon_card.paint_photon_particles`）。发牌层因此不再依赖按钮
+卡面或等待动画的内部绘制函数。
 
 坐标约定与步骤 6 一致：``deck_origin``、``target_rect`` 与 ``clip_rect`` 都是
 **覆盖层坐标**。面板在动画开始前一次性换算好，动画期间不再逐帧 ``mapTo`` 追踪
@@ -42,6 +45,7 @@ from PySide6.QtWidgets import QWidget
 
 from .animation_diagnostics import log_event, timestamp, widget_label
 from .card_assets import CardAsset
+from .photon_card import PARTICLE_PERIOD_MS, paint_photon_particles
 
 __all__ = [
     "CardDealAnimation",
@@ -79,6 +83,9 @@ FLIP_MS = 260
 FLIP_STAGGER_MS = 105
 #: 发牌动画的帧间隔（约 60fps）：每帧只旋转/缩放着贴图。
 DEAL_FRAME_MS = 16
+#: 牌背上绿色粒子的相位错开量（粒子一轮是 :data:`photon_card.PARTICLE_PERIOD_MS`）：
+#: 相邻两张差 0.13 轮，六张牌不会一起亮、一起灭。
+_BACK_PARTICLE_PHASE_STEP = 0.13
 #: 牌堆最多叠几张：发走一张，剩下的少一层，看得出“牌是从这叠里出去的”。
 DEAL_DECK_DEPTH = 3
 #: 发牌/翻牌阶段名：运行时日志与 :meth:`CardDealAnimation.diagnostics` 使用固定名称。
@@ -153,6 +160,14 @@ def _render_shadow(
         painter.drawRoundedRect(card, radius, radius)
     painter.end()
     return pixmap
+
+
+@lru_cache(maxsize=8)
+def _card_silhouette(width: float, height: float, radius: float) -> QPainterPath:
+    """卡片圆角轮廓（只读缓存）：牌背粒子每帧都按它裁一次，不重画路径。"""
+    path = QPainterPath()
+    path.addRoundedRect(QRectF(0.0, 0.0, width, height), radius, radius)
+    return path
 
 
 class CardDealAnimation(QWidget):
@@ -718,8 +733,14 @@ class CardDealAnimation(QWidget):
         pixmap: QPixmap,
         asset: CardAsset,
         angle: float = 0.0,
+        *,
+        particle_phase: float | None = None,
     ) -> bool:
         """把一张卡（投影 + 卡面）按 ``rect`` 缩放、旋转着贴上去。
+
+        ``particle_phase`` 不为 ``None`` 时，再在牌背上叠一层绿色粒子：粒子是动效，
+        不能烘进 ``asset.back``，只能每帧按相位画在卡片自己的坐标系里（圆角裁切与
+        卡片一致）。文件本身给出 ``0..1`` 的相位；错开由调用方决定。
 
         返回是否真的画到了可见区域：``False`` 表示这一笔要么没有贴图，要么整块落在
         覆盖层/裁剪区之外，不能算作“卡片已画出”。
@@ -749,14 +770,49 @@ class CardDealAnimation(QWidget):
         )
         # 资产位图按卡片逻辑尺寸（含屏幕像素比）渲染，这里不再自己缩放一次。
         painter.drawPixmap(QPointF(0.0, 0.0), pixmap)
+        if particle_phase is not None:
+            self._paint_back_particles(painter, asset, particle_phase)
         painter.restore()
         return True
 
+    def _paint_back_particles(
+        self, painter: QPainter, asset: CardAsset, phase: float
+    ) -> None:
+        """在牌背上画那六个绿色粒子：坐标系已经在卡片里（原点在卡片左上角）。"""
+        card = QRectF(0.0, 0.0, float(asset.width), float(asset.height))
+        painter.save()
+        painter.setClipPath(
+            _card_silhouette(
+                float(asset.width), float(asset.height), float(asset.radius)
+            )
+        )
+        paint_photon_particles(painter, card, phase)
+        painter.restore()
+
+    def _back_particle_phase(self, index: int) -> float:
+        """牌背粒子的相位：按“第几张”错开一点，六张牌不会一起亮、一起灭。"""
+        return (
+            self._elapsed / float(PARTICLE_PERIOD_MS) + index * _BACK_PARTICLE_PHASE_STEP
+        ) % 1.0
+
     def _draw_back(
-        self, painter: QPainter, rect: QRectF, asset: CardAsset, angle: float = 0.0
+        self,
+        painter: QPainter,
+        rect: QRectF,
+        asset: CardAsset,
+        angle: float = 0.0,
+        *,
+        index: int = 0,
     ) -> bool:
-        """按 ``rect`` 缩放、旋转着贴牌背（投影由 :meth:`_draw_surface` 补）。"""
-        return self._draw_surface(painter, rect, asset.back, asset, angle)
+        """按 ``rect`` 缩放、旋转着贴牌背（投影由 :meth:`_draw_surface` 补）。
+
+        ``asset.back_particles`` 打开时，牌背朝上的每一帧都叠着绿色粒子；相位按
+        ``index`` 错开。
+        """
+        phase = self._back_particle_phase(index) if asset.back_particles else None
+        return self._draw_surface(
+            painter, rect, asset.back, asset, angle, particle_phase=phase
+        )
 
     def _draw_front(self, painter: QPainter, rect: QRectF, index: int) -> bool:
         """把第 ``index`` 张的正面按 ``rect`` 缩放贴上去，并在下面补一层同样的投影。"""
@@ -802,7 +858,7 @@ class CardDealAnimation(QWidget):
                     float(deck_asset.width),
                     float(deck_asset.height),
                 )
-                if self._draw_back(painter, rect, deck_asset):
+                if self._draw_back(painter, rect, deck_asset, index=depth):
                     drawn += 1
         clip = self._cards_clip_rect()
         if clip is not None:
@@ -832,13 +888,15 @@ class CardDealAnimation(QWidget):
                     width,
                     height,
                 )
-                if self._draw_back(painter, rect, self._items[index].asset, angle):
+                if self._draw_back(
+                    painter, rect, self._items[index].asset, angle, index=index
+                ):
                     drawn += 1
                 continue
             flip = self.flip_progress(index)
             if flip <= 0.0:
                 painted = self._draw_back(
-                    painter, target, self._items[index].asset
+                    painter, target, self._items[index].asset, index=index
                 )
             elif flip < 1.0:
                 painted = self._paint_flip(painter, target, index, flip)
@@ -874,7 +932,7 @@ class CardDealAnimation(QWidget):
             height,
         )
         if progress < 0.5:
-            painted = self._draw_back(painter, rect, asset)
+            painted = self._draw_back(painter, rect, asset, index=index)
         else:
             painted = self._draw_front(painter, rect, index)
         shade = round(70 * math.sin(math.pi * progress))

@@ -181,6 +181,10 @@ class CardAssetBasicsTests(unittest.TestCase):
         self.assertEqual(asset.radius, CARD_RADIUS)
         self.assertEqual(asset.shadow_margin, CARD_ASSET_SHADOW_MARGIN)
         self.assertGreater(asset.shadow_margin, 0, "动画要按这个边距把投影画在卡片外面")
+        self.assertTrue(
+            asset.back_particles,
+            "发牌牌背是绿色光子卡面，牌背朝上时要叠粒子",
+        )
         self.assertEqual(
             (asset.front.width(), asset.front.height()),
             (CARD_WIDTH, CARD_HEIGHT),
@@ -207,6 +211,27 @@ class CardAssetBasicsTests(unittest.TestCase):
         centre = _color_at(asset.back, CARD_WIDTH * 0.25, CARD_HEIGHT / 2.0)
         self.assertLess(centre.lightness(), 128, "牌背应是深色卡背")
         self.assertNotEqual(asset.front.toImage(), asset.back.toImage())
+
+    def test_the_back_is_the_same_photon_card_as_the_wait_animation(self):
+        """发牌牌背与等待动画最上面那张牌是同一张绿色光子卡面，不各画一套。"""
+        from presentation.qt.scan_card import _render_card_face
+
+        back = render_card_back(device_pixel_ratio=1.0)
+        face = _render_card_face(CARD_WIDTH, CARD_HEIGHT, 1.0)
+
+        self.assertEqual(
+            back.toImage(),
+            face.toImage(),
+            "牌背必须与等待动画最上面那张牌逐像素一致",
+        )
+        self.assertGreater(
+            _ink_count(
+                back.toImage(),
+                QRect(20, 20, CARD_WIDTH - 40, CARD_HEIGHT - 40),
+            ),
+            500,
+            "绿色光子牌背不能是一张空图",
+        )
 
     def test_checked_and_unapplicable_cards_use_the_stylesheet_surfaces(self):
         plain = render_card_front(InstrumentCardData("h", code="A"))

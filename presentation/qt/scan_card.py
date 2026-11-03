@@ -29,9 +29,9 @@
 实现：**整块自绘**（``paintEvent`` 依次画卡面、光带/扫描线/粒子、标题与副标题、高光），
 覆盖层自己画投影。不随时间变化的那些层（卡面、柔光、角标）预算成一张位图；悬停进度由
 一条 ``QVariantAnimation`` 推进，环境动效由一个 30fps 的计时器推进。样式表表达不了伪元素、
-``transition`` 与 ``transform``，因此本控件不着样式表：颜色与字号都在本模块给出（尺寸
-取自仪器卡片），深色卡面 + 青绿/靛蓝/紫青配色是这段效果的一部分，不并入浅色主题的令牌；
-焦点框仍取 :data:`theme.TOKENS` 的主色）。
+``transition`` 与 ``transform``，因此本控件不着样式表：字号在本模块给出，深色卡面与
+青绿/靛蓝/紫青配色在 :mod:`presentation.qt.photon_card`（尺寸取自仪器卡片）；这套配色是
+这段效果的一部分，不并入浅色主题的令牌；焦点框仍取 :data:`theme.TOKENS` 的主色）。
 
 它仍是 ``QPushButton`` 的子类：``clicked``、``setEnabled``、``setToolTip``、键盘
 空格/回车与悬浮提示照旧，调用方不必知道它是自绘的。
@@ -52,7 +52,8 @@
 等待动画收拢之后，结果卡片不是瞬间出现：发牌与翻牌现在由独立的
 :class:`presentation.qt.card_deal_animation.CardDealAnimation` 播放，它从按钮牌堆
 原来的位置往结果位一张张发牌（背面朝上，背面取
-:attr:`presentation.qt.card_assets.CardAsset.back`），全部落定后
+:attr:`presentation.qt.card_assets.CardAsset.back`：与等待动画最上面那张牌同一张绿色光子
+卡面，牌背朝上时还叠着同一套绿色粒子），全部落定后
 停一下，再从左到右逐张翻开，把真正的仪器卡片露出来。落点就是卡片最终所在的位置：
 扫到几台仪器就有几张卡片，发牌前结果区已经按这个数量排定版面，发牌与翻牌因此都落在
 同一处。动画只认资产、落点与顺序，不持有卡片控件；面板把卡片先藏起来（仍占着版面），
@@ -93,7 +94,6 @@ from PySide6.QtGui import (
     QPainterPath,
     QPen,
     QPixmap,
-    QRadialGradient,
 )
 from PySide6.QtWidgets import (
     QPushButton,
@@ -102,6 +102,22 @@ from PySide6.QtWidgets import (
 )
 
 from .device_cards import CARD_HEIGHT, CARD_WIDTH
+from .photon_card import (
+    ACCENT,
+    ACCENT_BLUE,
+    BLACK,
+    EDGE,
+    INDIGO,
+    PARTICLE_PERIOD_MS,
+    VIOLET,
+    WHITE,
+    alpha,
+    glow_pen,
+    paint_photon_face,
+    paint_photon_particles,
+    render_photon_card,
+    triangle,
+)
 from .theme import CARD_RADIUS, FONT_FAMILIES, TOKENS
 
 __all__ = [
@@ -118,6 +134,27 @@ __all__ = [
     "WAIT_STACK_HEIGHT",
 ]
 
+# ---- 从 photon_card 借用的短名字 ----------------------------------------------
+#
+# 卡面配色、绿色光晕、四角角标与粒子都集中在 :mod:`presentation.qt.photon_card`：
+# “查找设备”按钮、等待牌堆最上面那张牌与发牌牌背共用同一张绿色光子卡面。这里保留模块
+# 内原来的短名字，读起来仍是“本模块的一套配色”。
+_ACCENT = ACCENT
+_ACCENT_BLUE = ACCENT_BLUE
+_INDIGO = INDIGO
+_VIOLET = VIOLET
+_WHITE = WHITE
+_BLACK = BLACK
+#: ``rgba(255, 255, 255, 0.1)`` 的卡面描边（宽度见 :data:`CARD_EDGE_WIDTH`）。
+_EDGE = EDGE
+_PARTICLE_PERIOD_MS = PARTICLE_PERIOD_MS
+_alpha = alpha
+_glow_pen = glow_pen
+_triangle = triangle
+_paint_card_face = paint_photon_face
+_paint_card_particles = paint_photon_particles
+_render_card_face = render_photon_card
+
 # ---- 尺寸（原效果的 px 值） --------------------------------------------------
 
 #: 卡片本体尺寸取自仪器卡片（:mod:`presentation.qt.device_cards`），圆角与仪器卡片共用
@@ -127,8 +164,6 @@ __all__ = [
 #: 卡片外沿那道描边的宽度：深色卡面压在浅色页面背景上，原来是 2px，线太细、轮廓几乎看不出来，
 #: 这里加粗到 3px（颜色不变，仍是那层很淡的白）。
 CARD_EDGE_WIDTH = 3.0
-#: 四角角标的笔画宽度（原效果的 ``.corner`` 是 2px）。
-CORNER_STROKE = 2.0
 #: 卡片上方要留的一圈空白（结果区的上沿会把画到外面的像素裁掉）。投影伸出卡片约 7px，
 #: 必须整段落在这圈空白里；12px 让投影四边都落得下，结果区上沿不会把它裁成一条硬边。
 SCAN_CARD_HEADROOM = 12
@@ -205,20 +240,13 @@ SUBTITLE_LETTER_SPACING = 2.0
 #: ``.highlight`` 的 ``margin-left: 5px``。
 HIGHLIGHT_GAP = 5.0
 
-# ---- 配色（原效果的配色，集中在模块里一次） ----------------------------------
+# ---- 配色 --------------------------------------------------------------------
+#
+# 深色卡面本身的配色在 :mod:`presentation.qt.photon_card`（按钮、等待牌堆最上面那张
+# 与发牌牌背共用）；这里只留卡片文案自己的颜色。
 
-_FACE_START = QColor("#1A1A1A")
-_FACE_END = QColor("#262626")
-#: ``rgba(255, 255, 255, 0.1)`` 的卡面描边（宽度见 :data:`CARD_EDGE_WIDTH`）。
-_EDGE = QColor(255, 255, 255, 26)
 #: ``rgba(255, 255, 255, 0.6)`` 的副标题。
 _SUBTITLE_COLOR = QColor(255, 255, 255, 153)
-_ACCENT = QColor("#00FFAA")
-_ACCENT_BLUE = QColor("#00A2FF")
-_INDIGO = QColor("#5C67FF")
-_VIOLET = QColor("#AD51FF")
-_WHITE = QColor("#FFFFFF")
-_BLACK = QColor("#000000")
 
 # ---- 悬停动效 ----------------------------------------------------------------
 
@@ -234,10 +262,9 @@ _FRAME_MS = 33
 #: 等待动画的帧间隔（约 60fps）。静态层已经预渲染成一张图，每帧只剩旋转着贴，
 #: 60fps 才吃得下；扫描等待时用户一直盯着这一叠牌，30fps 本身也读得出顿挫。
 WAIT_FRAME_MS = 16
-#: ``lineGrow`` 3s、``scanMove`` 2s、``particleFloat`` 2s。
+#: ``lineGrow`` 3s、``scanMove`` 2s；粒子相位在 :data:`photon_card.PARTICLE_PERIOD_MS`。
 _CYBER_PERIOD_MS = 3000
 _SCAN_PERIOD_MS = 2000
-_PARTICLE_PERIOD_MS = 2000
 
 #: 横向光带：(纵向位置占比, 是否从左端起, 动画延迟秒数)，对应四个 ``.cyber-lines span``。
 _CYBER_LINES = (
@@ -246,41 +273,12 @@ _CYBER_LINES = (
     (0.60, True, 2.0),
     (0.80, False, 1.5),
 )
-#: 粒子：(横向占比, 纵向占比, 外飘方向 x, 外飘方向 y)，对应六个 ``.card-particles span``。
-_PARTICLES = (
-    (0.20, 0.40, 1.0, -1.0),
-    (0.80, 0.60, -1.0, -1.0),
-    (0.40, 0.20, 0.5, 1.0),
-    (0.60, 0.80, -0.5, 1.0),
-    (0.60, 0.30, 1.0, 0.5),
-    (0.40, 0.70, -1.0, 0.5),
-)
-#: 三团光晕的直径：原效果的 ``.glow-1..3`` 是 100×100 的圆形色斑。
-_BLOB_SIZE = 100.0
-_PARTICLE_SIZE = 3.0
-#: 粒子外飘的最大位移（原效果 ``--x/--y`` 乘 30px）。
-_PARTICLE_TRAVEL = 30.0
 #: 外发光（``0 0 20px rgba(0, 0, 0, 0.3)``）用几层逐渐收窄的描边叠出来。
 _SHADOW_LAYERS = 5
-#: 卡面提亮那一层白的透明度：近黑卡面上约等于 ``filter: brightness(1.1)``。
-_BRIGHTNESS_WASH = 0.02
 #: 不可点时整块淡下去：浅色页面上“灰掉”比另配一套深色配色更清楚。
 _DISABLED_OPACITY = 0.55
 #: 标题光晕的预渲染图四周多留的像素：9px 描边会溢出字形包围盒。
 _HALO_PAD = 10
-
-
-def _alpha(color: QColor, ratio: float) -> QColor:
-    """同色不同透明度：``ratio`` 是相对原 alpha 的比例。"""
-    faded = QColor(color)
-    faded.setAlpha(round(color.alpha() * max(0.0, min(1.0, ratio))))
-    return faded
-
-
-def _triangle(phase: float) -> float:
-    """``0 → 1 → 0`` 的三角波：``lineGrow`` 与 ``particleFloat`` 的关键帧就是它。"""
-    phase = phase % 1.0
-    return phase * 2.0 if phase < 0.5 else (1.0 - phase) * 2.0
 
 
 def _ease_in_out_cubic(phase: float) -> float:
@@ -289,14 +287,6 @@ def _ease_in_out_cubic(phase: float) -> float:
     if phase < 0.5:
         return 4.0 * phase * phase * phase
     return 1.0 - ((-2.0 * phase + 2.0) ** 3) / 2.0
-
-
-def _glow_pen(color: QColor, width: float) -> QPen:
-    """圆头圆角的描边笔：文字外发光与角标光晕都用它，描边没有断口。"""
-    pen = QPen(color, float(width))
-    pen.setCapStyle(Qt.RoundCap)
-    pen.setJoinStyle(Qt.RoundJoin)
-    return pen
 
 
 @dataclass(frozen=True)
@@ -384,100 +374,7 @@ def _hover_curve() -> QEasingCurve:
     return curve
 
 
-# ---- 卡面（不随时间变化的那一层）：按钮与等待动画里每一张卡共用 -------------------
-
-
-def _paint_card_face(painter: QPainter, card: QRectF) -> None:
-    """45° 的近黑渐变卡面 + 四边内阴影 + 一层提亮（``filter: brightness(1.1)``）。"""
-    gradient = _diagonal_gradient(card)
-    gradient.setColorAt(0.0, _FACE_START)
-    gradient.setColorAt(1.0, _FACE_END)
-    painter.setPen(Qt.NoPen)
-    painter.setBrush(gradient)
-    painter.drawRect(card)
-
-    # ``inset 0 0 20px rgba(0, 0, 0, 0.2)``：沿四边往里画几圈很淡的暗色。
-    painter.setBrush(Qt.NoBrush)
-    for step in range(4):
-        inset = 1.0 + step * 4.0
-        painter.setPen(QPen(_alpha(_BLACK, 10 / 255.0), 4.0))
-        painter.drawRoundedRect(
-            card.adjusted(inset, inset, -inset, -inset),
-            max(1.0, CARD_RADIUS - inset),
-            max(1.0, CARD_RADIUS - inset),
-        )
-
-    painter.setPen(Qt.NoPen)
-    painter.setBrush(_alpha(_WHITE, _BRIGHTNESS_WASH))
-    painter.drawRect(card)
-
-
-def _paint_card_glow(painter: QPainter, card: QRectF) -> None:
-    """卡面自己的一团青绿→天蓝柔光（压深色卡面用的内发光，不是背后的霓虹光斑）。"""
-    center = card.center()
-    reach = 0.75 * math.hypot(card.width(), card.height())
-    gradient = QRadialGradient(center, reach)
-    gradient.setColorAt(0.0, _alpha(_ACCENT, 0.08))
-    gradient.setColorAt(0.5, _alpha(_ACCENT_BLUE, 0.04))
-    gradient.setColorAt(1.0, _alpha(_ACCENT_BLUE, 0.0))
-    painter.setPen(Qt.NoPen)
-    painter.setBrush(gradient)
-    painter.drawEllipse(center, reach, reach)
-
-
-def _paint_card_blobs(painter: QPainter, card: QRectF) -> None:
-    """三团光晕（``.glow-1..3``）：左上角外、右侧外、底部偏左。"""
-    radius = _BLOB_SIZE / 2.0
-    centers = (
-        # glow-1：``top: -20px; left: -20px``。
-        QPointF(card.left() + 30.0, card.top() + 30.0),
-        # glow-2：``top: 50%; right: -30px``，竖直居中。
-        QPointF(card.right() - 20.0, card.center().y()),
-        # glow-3：``bottom: -20px; left: 30%``。
-        QPointF(card.left() + card.width() * 0.30 + radius, card.bottom() - 30.0),
-    )
-    painter.setPen(Qt.NoPen)
-    for center in centers:
-        # ``filter: blur(15px)`` 的近似：把半径放大一圈，让它自己就散开。
-        reach = radius * 1.3
-        gradient = QRadialGradient(center, reach)
-        gradient.setColorAt(0.0, _alpha(_ACCENT, 0.3))
-        gradient.setColorAt(0.7, _alpha(_ACCENT, 0.0))
-        painter.setBrush(gradient)
-        painter.drawEllipse(center, reach, reach)
-
-
-def _paint_card_corners(painter: QPainter, card: QRectF) -> None:
-    """四角的直角角标：靛蓝描边 + 一圈外发光。"""
-    color = _alpha(_INDIGO, 0.8)
-    size = 15.0
-    gap = 10.0
-    left = card.left() + gap
-    right = card.right() - gap
-    top = card.top() + gap
-    bottom = card.bottom() - gap
-    strokes = (
-        ((left, top), (left + size, top)),
-        ((left, top), (left, top + size)),
-        ((right - size, top), (right, top)),
-        ((right, top), (right, top + size)),
-        ((left, bottom), (left + size, bottom)),
-        ((left, bottom - size), (left, bottom)),
-        ((right - size, bottom), (right, bottom)),
-        ((right, bottom - size), (right, bottom)),
-    )
-    # ``box-shadow: 0 0 10px rgba(92, 103, 255, 0.5)``：先描一圈更淡更粗的底。
-    painter.setBrush(Qt.NoBrush)
-    glow = _glow_pen(_alpha(_INDIGO, 0.35), 5.0)
-    glow.setCapStyle(Qt.FlatCap)
-    painter.setPen(glow)
-    for start, end in strokes:
-        painter.drawLine(QPointF(*start), QPointF(*end))
-    solid = _glow_pen(color, CORNER_STROKE)
-    solid.setCapStyle(Qt.FlatCap)
-    painter.setPen(solid)
-    for start, end in strokes:
-        painter.drawLine(QPointF(*start), QPointF(*end))
+# ---- 牌背（等待动画下层的卡）：更安静的斜纹 ----------------------------------
 
 
 def _paint_card_back(painter: QPainter, card: QRectF) -> None:
@@ -517,53 +414,6 @@ def _paint_card_back(painter: QPainter, card: QRectF) -> None:
     painter.setBrush(_alpha(_ACCENT, 0.55))
     painter.drawEllipse(centre, 2.2, 2.2)
     painter.restore()
-
-
-def _paint_card_particles(painter: QPainter, card: QRectF, phase: float) -> None:
-    """六个小亮点向外飘散：``0 → 1 → 0`` 的透明度，位移最远 30px。
-
-    “查找设备”按钮与扫描期间摊开的牌堆共用这一份画法：粒子是卡面内部的动效，画在卡片
-    自己的坐标系里。调用方负责先把坐标系放到卡片上、并按圆角裁好。
-    """
-    opacity = _triangle(phase)
-    if opacity <= 0.0:
-        return
-    painter.setPen(Qt.NoPen)
-    painter.setBrush(_alpha(_ACCENT, opacity))
-    half = _PARTICLE_SIZE / 2.0
-    travel = _PARTICLE_TRAVEL * phase
-    for x_ratio, y_ratio, dx, dy in _PARTICLES:
-        center = QPointF(
-            card.left() + card.width() * x_ratio + half + dx * travel,
-            card.top() + card.height() * y_ratio + half + dy * travel,
-        )
-        painter.drawEllipse(center, half, half)
-
-
-@lru_cache(maxsize=4)
-def _render_card_face(width: int, height: int, ratio: float) -> QPixmap:
-    """卡面、柔光、光晕与四角角标的预渲染图：尺寸与屏幕像素比不变就整张复用。
-
-    按钮本体与等待动画里的卡画的是同一张卡面，因此都从这里取图：摊开只是把这张
-    位图平移、转一个角度，不必每帧重画卡面。
-    """
-    size = QSize(max(1, round(width * ratio)), max(1, round(height * ratio)))
-    pixmap = QPixmap(size)
-    pixmap.fill(Qt.transparent)
-    # 带 dpr 的画布由 Qt 换算成逻辑坐标，这里不再自己缩放一次。
-    pixmap.setDevicePixelRatio(ratio)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing, True)
-    card = QRectF(0.0, 0.0, float(width), float(height))
-    silhouette = QPainterPath()
-    silhouette.addRoundedRect(card, CARD_RADIUS, CARD_RADIUS)
-    painter.setClipPath(silhouette)
-    _paint_card_face(painter, card)
-    _paint_card_glow(painter, card)
-    _paint_card_blobs(painter, card)
-    _paint_card_corners(painter, card)
-    painter.end()
-    return pixmap
 
 
 @lru_cache(maxsize=4)

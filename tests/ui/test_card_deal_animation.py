@@ -169,6 +169,46 @@ class CardDealAnimationTests(unittest.TestCase):
         self.assertGreater(front_pixel.red(), 200, "翻完后应露出资产正面")
         self.assertLess(front_pixel.blue(), 60)
 
+    def test_the_photon_back_particles_move_while_the_card_is_face_down(self):
+        """牌背粒子由资产开关控制：打开时两帧不同，关掉后画面只由静态位图决定。"""
+        from dataclasses import replace
+
+        from presentation.qt.card_assets import render_card_asset
+        from presentation.qt.card_deal_animation import DEAL_FLY_MS
+        from presentation.qt.device_cards import (
+            CARD_HEIGHT,
+            CARD_WIDTH,
+            InstrumentCardData,
+        )
+
+        asset = render_card_asset(
+            InstrumentCardData("DP832A（DP8B1519）", code="DP8B1519")
+        )
+        self.assertTrue(asset.back_particles)
+        target = QRectF(20.0, 40.0, CARD_WIDTH, CARD_HEIGHT)
+        host_size = (CARD_WIDTH + 40, CARD_HEIGHT + 80)
+        layer, _items = self._animation(
+            1, assets=[asset], targets=[target], host_size=host_size
+        )
+
+        layer._elapsed = float(DEAL_FLY_MS)
+        first = layer.grab().toImage()
+        layer._elapsed = float(DEAL_FLY_MS) + 110.0
+        second = layer.grab().toImage()
+        self.assertNotEqual(first, second, "牌背朝上时绿色粒子应在动")
+
+        still_layer, _items = self._animation(
+            1,
+            assets=[replace(asset, back_particles=False)],
+            targets=[target],
+            host_size=host_size,
+        )
+        still_layer._elapsed = float(DEAL_FLY_MS)
+        first_still = still_layer.grab().toImage()
+        still_layer._elapsed = float(DEAL_FLY_MS) + 110.0
+        second_still = still_layer.grab().toImage()
+        self.assertEqual(first_still, second_still, "没有粒子的牌背不应逐帧变化")
+
     def test_the_animation_holds_no_widgets_even_without_a_discovery_page(self):
         """独立播放：item 里只有资产与几何，没有卡片控件，也没有页面依赖。"""
         from presentation.qt.card_deal_animation import CardDealItem

@@ -29,6 +29,11 @@
 坐标约定与步骤 6 一致：``deck_origin``、``target_rect`` 与 ``clip_rect`` 都是
 **覆盖层坐标**。面板在动画开始前一次性换算好，动画期间不再逐帧 ``mapTo`` 追踪
 卡片控件；页面根容器或卡片区变化时由调用方取消，而不是让画面跟着布局漂移。
+
+``clip_rect`` 只约束**已经落定**的牌（挡住滚动后看不见的结果行）：牌堆按设计就在
+卡片视口之外（它继承“查找设备”按钮的位置），飞行段从牌堆出发、必须整段可见，否则
+牌会在卡片区边界上被平切成“从外面进来”的样子。落点自己就在视口外的牌不画，
+免得飞行轨迹压到状态行/动作行上。
 """
 
 from __future__ import annotations
@@ -443,7 +448,8 @@ class CardDealAnimation(QWidget):
         让“翻开的第几张”与页面上的卡片对不上。没有 item 时走 :meth:`skip`（若上一次
         发牌还在播，会先按完成路径把卡片交回页面），不需要资产。
 
-        ``clip_rect`` 是卡片区的可见视口（覆盖层坐标）；省略时不裁剪。布局落定后
+        ``clip_rect`` 是卡片区的可见视口（覆盖层坐标）；省略时不裁剪。它只约束已经
+        落定的牌：牌堆与飞行段整段可见，否则牌会从卡片区边界平切进来。布局落定后
         只有可见区域变化（卡片没动）时，调用方用 :meth:`refresh_clip_rect` 换遮罩；
         落点始终不变。
 
@@ -836,7 +842,12 @@ class CardDealAnimation(QWidget):
         return padded.intersects(visible)
 
     def paintEvent(self, event):  # noqa: N802 - Qt 覆盖方法
-        """先画剩下的牌堆，再画飞出去的牌 / 落定的背面；翻到后半程贴正面。"""
+        """先画剩下的牌堆，再画飞出去的牌 / 落定的背面；翻到后半程贴正面。
+
+        牌堆与飞行中的牌整段可见（不套卡片区裁剪），只有已经落定的牌才受裁剪约束：
+        裁剪是为了挡住滚动后看不见的结果行，而飞行段必须从牌堆一路连到槽位，不能
+        在卡片区边界上被平切。
+        """
         if not self._items:
             return
         painter = QPainter(self)
@@ -861,9 +872,6 @@ class CardDealAnimation(QWidget):
                 if self._draw_back(painter, rect, deck_asset, index=depth):
                     drawn += 1
         clip = self._cards_clip_rect()
-        if clip is not None:
-            painter.save()
-            painter.setClipRect(clip, Qt.IntersectClip)
         for index in range(count):
             if self._revealed[index]:
                 continue
@@ -871,7 +879,13 @@ class CardDealAnimation(QWidget):
             if deal <= 0.0:
                 continue
             target = self._target_rect(index)
+            if clip is not None and not clip.intersects(target):
+                # 落点不在可见的卡片区里：这张牌怎么飞都看不见，不要画到状态行/
+                # 动作行上（发牌期间它们仍然占着自己的位置）。
+                continue
             if deal < 1.0:
+                # 飞行段从牌堆出发，而牌堆按设计就在卡片视口之外；这一段不套卡片区
+                # 裁剪，否则牌只会从卡片区边界“平切”进来（见模块 docstring）。
                 eased = _ease_out_cubic(deal)
                 scale = DEAL_START_SCALE + (1.0 - DEAL_START_SCALE) * eased
                 angle = (
@@ -888,29 +902,47 @@ class CardDealAnimation(QWidget):
                     width,
                     height,
                 )
-                if self._draw_back(
-                    painter, rect, self._items[index].asset, angle, index=index
-                ):
-                    drawn += 1
-                continue
-            flip = self.flip_progress(index)
-            if flip <= 0.0:
                 painted = self._draw_back(
-                    painter, target, self._items[index].asset, index=index
+                    painter, rect, self._items[index].asset, angle, index=index
                 )
-            elif flip < 1.0:
-                painted = self._paint_flip(painter, target, index, flip)
             else:
-                # 翻完了但收尾信号还没到：直接贴正面，下一帧就会恢复真正的卡片。
-                painted = self._draw_front(painter, target, index)
+                painted = self._paint_settled(painter, target, index, clip)
             if painted:
                 drawn += 1
-        if clip is not None:
-            painter.restore()
         self._record_paint(drawn)
 
+    def _paint_settled(
+        self, painter: QPainter, target: QRectF, index: int, clip: QRectF | None
+    ) -> bool:
+        """画一张已经落定的牌（背面、翻面过程或正面），只在这时套卡片区裁剪。
+
+        裁剪的用途是“结果多到要滚动时，看不见的行不画到状态行/动作行上”，只对已经
+        停在槽位上的牌成立。牌堆与飞行中的牌不裁剪：牌堆按设计就在卡片视口之外
+        （它继承“查找设备”按钮的位置），套上视口裁剪会让牌从边界平切进来，看起来
+        不是从牌堆发出来的。
+        """
+        if clip is not None:
+            painter.save()
+            painter.setClipRect(clip, Qt.IntersectClip)
+        try:
+            flip = self.flip_progress(index)
+            if flip <= 0.0:
+                return self._draw_back(
+                    painter, target, self._items[index].asset, index=index
+                )
+            if flip < 1.0:
+                return self._paint_flip(painter, target, index, flip)
+            # 翻完了但收尾信号还没到：直接贴正面，下一帧就会恢复真正的卡片。
+            return self._draw_front(painter, target, index)
+        finally:
+            if clip is not None:
+                painter.restore()
+
     def _cards_clip_rect(self) -> QRectF | None:
-        """卡片区的可见矩形（覆盖层坐标）：开始时冻结，之后不再追踪滚动。"""
+        """卡片区的可见矩形（覆盖层坐标）：开始时冻结，之后不再追踪滚动。
+
+        只用于已经落定的牌；飞行段与牌堆不裁剪（见 :meth:`paintEvent`）。
+        """
         if self._clip is None or self._clip.isEmpty():
             return None
         return QRectF(self._clip)

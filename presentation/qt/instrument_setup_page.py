@@ -70,6 +70,11 @@ from .ui_loader import load_ui
 #: 控件查询的返回类型；``.ui`` 里声明的控件必须存在，缺失属于装配错误而不是运行状态。
 _Widget = TypeVar("_Widget", bound=QWidget)
 
+#: 有结果时（页头已整块让位）内容列顶部保留的固定留白：卡片行再往上收一截，牌堆
+#: 与卡片行之间因此留出看得见的空隙，翻牌画面不会压在卡片上。未查找/扫描期间仍用
+#: ``.ui`` 里的顶部留白，按钮与等待动画的位置不因此跳动。
+_RESULTS_TOP_MARGIN = 8
+
 
 class InstrumentSetupPage(QWidget):
     """仪器设置页：整屏页面，不登记进标签栏。
@@ -129,6 +134,14 @@ class InstrumentSetupPage(QWidget):
         self.content_widget = self._require(QWidget, "instrumentSetupContent")
         self.content_widget.setMaximumWidth(PAGE_CONTENT_MAX_WIDTH)
         self.title_label = self._require(QLabel, "instrumentSetupPageTitle")
+        # 有结果时页头整块让位，内容列顶部留白一起收一截（见 :meth:`_set_header_hidden`），
+        # 卡片行因此再往上走；这里记下 ``.ui`` 里未查找/扫描期间的原始留白。
+        content_layout = self.content_widget.layout()
+        self._idle_top_margin = (
+            content_layout.contentsMargins().top()
+            if content_layout is not None
+            else 0
+        )
 
         # 扫描行与结果区属于动态面板（卡片数量、扫描状态都由运行时决定），
         # 所以面板本身仍由 Python 创建，只把它的外层位置交给 ``.ui``。
@@ -238,9 +251,11 @@ class InstrumentSetupPage(QWidget):
     def _set_header_hidden(self, hidden: bool) -> None:
         """把页头整块拿掉（有结果时）或放回版面（回到查找/扫描时）。
 
-        只有这一处会改变页面的固定高度：有结果时按钮已经收走，页头不必再占着位置，
-        仪器卡片因此可以升到页面顶部、高于按钮原来的位置。未查找与正在查找时页头都
-        留在版面里，点“查找设备”前后按钮与等待动画不跳。
+        有结果时按钮已经收走，页头不必再占着位置：页头连同高度一起让位，内容列顶部
+        留白也收一截（:data:`_RESULTS_TOP_MARGIN`），仪器卡片因此升到页面顶部附近；
+        牌堆放牌时停在旧位置，卡片行又往上走了一截，两者之间就有了看得见的空隙。
+        未查找与正在查找时页头都留在版面里、留白也用 ``.ui`` 的原始值，点“查找设备”
+        前后按钮与等待动画不跳。
         """
         hidden = bool(hidden)
         if hidden == self._header_hidden:
@@ -252,6 +267,12 @@ class InstrumentSetupPage(QWidget):
             self._set_header_text_visible(False)
         layout = self.content_widget.layout()
         if layout is not None:
+            margins = layout.contentsMargins()
+            top = _RESULTS_TOP_MARGIN if hidden else self._idle_top_margin
+            if margins.top() != top:
+                layout.setContentsMargins(
+                    margins.left(), top, margins.right(), margins.bottom()
+                )
             layout.activate()
         panel_layout = self.discovery_panel.layout()
         if panel_layout is not None:

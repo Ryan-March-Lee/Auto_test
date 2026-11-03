@@ -29,6 +29,14 @@
 宽窗口里则恢复 :data:`CARD_WIDTH`。
 图片按“角色 / 型号关键字”在 ``assets/instrument_pic/`` 里查找，找不到时留空；
 图片只解码一次并缓存（照片单张最大 4.7 MB，重复解码会明显拖慢一次扫描后的刷新）。
+
+**卡片内部几何也只有这一份**：内容边距、间距、设备码/图片/地址行高与图片内缩以
+:data:`CARD_CONTENT_MARGINS`、:data:`CARD_CONTENT_SPACING`、:data:`CARD_CODE_HEIGHT`、
+:data:`CARD_PICTURE_HEIGHT`、:data:`CARD_ADDRESS_HEIGHT`、:data:`CARD_PICTURE_MARGIN`
+给出，行位置由 :func:`card_code_rect`、:func:`card_picture_rect`、
+:func:`card_address_rect` 算定。真实卡片按这些常量布局，动画正面
+（:mod:`presentation.qt.card_assets`）也按同一组函数画；图片按“仪器主体放大”的规则
+由 :func:`picture_target_rect` 统一计算，因此资产不必截取控件也能与真实卡片同形。
 """
 
 from __future__ import annotations
@@ -50,15 +58,29 @@ from PySide6.QtWidgets import (
 from .theme import set_tone
 
 __all__ = [
+    "CARD_ADDRESS_HEIGHT",
+    "CARD_BORDER_WIDTH",
+    "CARD_CODE_HEIGHT",
+    "CARD_CONTENT_MARGINS",
+    "CARD_CONTENT_SPACING",
     "CARD_HEIGHT",
     "CARD_MIN_WIDTH",
+    "CARD_PICTURE_HEIGHT",
+    "CARD_PICTURE_MARGIN",
     "CARD_WIDTH",
     "INSTRUMENT_PICTURE_DIR",
     "InstrumentCard",
     "InstrumentCardData",
     "InstrumentImage",
+    "InstrumentPicture",
+    "card_address_rect",
+    "card_code_rect",
+    "card_inner_rect",
+    "card_picture_rect",
     "device_code",
+    "instrument_picture",
     "instrument_picture_path",
+    "picture_target_rect",
 ]
 
 #: 仪器图片目录：与欢迎页背景一样放在项目根目录的 ``assets/``（场景照片，不是界面字形）。
@@ -75,13 +97,19 @@ CARD_WIDTH = 190
 CARD_MIN_WIDTH = 160
 #: 卡片高度按“设备码 + 图片 + 型号·角色 + 地址”四行内容算，另留状态说明与行间留白的位置。
 CARD_HEIGHT = 276
-_PICTURE_HEIGHT = 104
+#: 卡片的边框宽度：样式表里的 1px 描边算在控件内部，布局内容因此还要再缩进 1px。
+CARD_BORDER_WIDTH = 1
+#: 卡片内容边距（左、上、右、下）：上下留白比左右多一点，第一行设备码不贴卡片上沿。
+CARD_CONTENT_MARGINS = (10, 12, 10, 10)
+#: 相邻两行之间的间距：设备码、图片、状态说明、型号·角色、地址都按这一个值排。
+CARD_CONTENT_SPACING = 8
+CARD_PICTURE_HEIGHT = 104
 #: 图片不描边、不垫底板，只留一点内缩，让照片不贴到卡片边上。
-_PICTURE_MARGIN = 4
+CARD_PICTURE_MARGIN = 4
 #: 设备码标签固定两行高度：加粗放大的等宽字下长序列号会折行，卡片高度因此保持不变。
-_CODE_LABEL_HEIGHT = 56
+CARD_CODE_HEIGHT = 56
 #: 地址行固定一行高度：有地址时写 IP，没有地址时那一行留空，卡片高度不变。
-_ADDRESS_LABEL_HEIGHT = 16
+CARD_ADDRESS_HEIGHT = 16
 #: 卡片网格的最大列数：卡片区再宽也不排成一条长带子。6 列让现场的 5 台登记仪器
 #: 加 1 台未登记演示设备排成一行，不必在 4 台处就换行。
 _MAX_COLUMNS = 6
@@ -258,7 +286,7 @@ def _content_rect(image: QImage) -> QRectF:
 
 
 @dataclass(frozen=True)
-class _Picture:
+class InstrumentPicture:
     """一张已解码的仪器图，以及它的仪器主体在图中占的位置（原图像素坐标）。"""
 
     pixmap: QPixmap
@@ -267,31 +295,130 @@ class _Picture:
     def is_empty(self) -> bool:
         return self.pixmap.isNull()
 
+    def source_rect(self) -> QRectF:
+        """要从原图里取的那一块（原图像素坐标）：仪器主体，没有图片时为空。"""
+        if self.is_empty():
+            return QRectF()
+        if self.content.isEmpty():
+            return QRectF(self.pixmap.rect())
+        return self.content
+
 
 class _PictureCache:
     """按文件路径缓存已解码的原图与它的主体边界；键是 ``(路径, 文件大小, 修改时间)``。"""
 
     def __init__(self) -> None:
-        self._items: dict[tuple[str, int, int], _Picture] = {}
+        self._items: dict[tuple[str, int, int], InstrumentPicture] = {}
 
-    def picture(self, path: Path | None) -> _Picture:
+    def picture(self, path: Path | None) -> InstrumentPicture:
         if path is None:
-            return _Picture(QPixmap(), QRectF())
+            return InstrumentPicture(QPixmap(), QRectF())
         try:
             stat = path.stat()
         except OSError:
-            return _Picture(QPixmap(), QRectF())
+            return InstrumentPicture(QPixmap(), QRectF())
         key = (str(path), int(stat.st_size), int(stat.st_mtime))
         cached = self._items.get(key)
         if cached is not None:
             return cached
         picture = QPixmap(str(path))
-        picture_entry = _Picture(picture, _content_rect(picture.toImage()))
+        picture_entry = InstrumentPicture(picture, _content_rect(picture.toImage()))
         self._items[key] = picture_entry
         return picture_entry
 
 
 _PICTURES = _PictureCache()
+
+
+def instrument_picture(path: Path | None) -> InstrumentPicture:
+    """按路径取已解码的仪器图（含主体包围盒）；同一张图只解码一次。
+
+    真实卡片（:class:`InstrumentImage`）与动画正面（:mod:`presentation.qt.card_assets`）
+    都从这里取图：两边看到的是同一张位图、同一个主体边界，因此动画正面不需要截取控件。
+    """
+    return _PICTURES.picture(path)
+
+
+def picture_target_rect(
+    source: QRectF,
+    area: QRectF,
+    margin: float = CARD_PICTURE_MARGIN,
+) -> QRectF:
+    """把 ``source``（仪器主体）等比放进 ``area``（图片区），居中并留 ``margin`` 内缩。
+
+    “放大的是主体包围盒而不是整张画布”：照片留白多少不会改变仪器在卡片上的视觉大小。
+    真实卡片与动画正面共用这一份落点计算。
+    """
+    if source.isEmpty() or area.isEmpty():
+        return QRectF()
+    target = area.adjusted(margin, margin, -margin, -margin)
+    if target.width() <= 0.0 or target.height() <= 0.0:
+        return QRectF()
+    scale = min(target.width() / source.width(), target.height() / source.height())
+    width = source.width() * scale
+    height = source.height() * scale
+    return QRectF(
+        target.center().x() - width / 2.0,
+        target.center().y() - height / 2.0,
+        width,
+        height,
+    )
+
+
+# ---- 卡片内部行位置 ----------------------------------------------------------
+
+
+def card_inner_rect(width: int = CARD_WIDTH, height: int = CARD_HEIGHT) -> QRectF:
+    """卡片内容区（卡片坐标）：扣掉描边与内容边距后的那一块。"""
+    left, top, right, bottom = CARD_CONTENT_MARGINS
+    return QRectF(
+        float(CARD_BORDER_WIDTH + left),
+        float(CARD_BORDER_WIDTH + top),
+        max(
+            0.0,
+            float(width - 2 * CARD_BORDER_WIDTH - left - right),
+        ),
+        max(
+            0.0,
+            float(height - 2 * CARD_BORDER_WIDTH - top - bottom),
+        ),
+    )
+
+
+def card_code_rect(width: int = CARD_WIDTH, height: int = CARD_HEIGHT) -> QRectF:
+    """第一行设备码的区域（卡片坐标）：固定两行高度。"""
+    inner = card_inner_rect(width, height)
+    return QRectF(
+        inner.left(),
+        inner.top(),
+        inner.width(),
+        min(float(CARD_CODE_HEIGHT), inner.height()),
+    )
+
+
+def card_picture_rect(width: int = CARD_WIDTH, height: int = CARD_HEIGHT) -> QRectF:
+    """图片区的区域（卡片坐标）：紧跟在设备码下面一个行间距。"""
+    inner = card_inner_rect(width, height)
+    code = card_code_rect(width, height)
+    top = code.bottom() + CARD_CONTENT_SPACING
+    return QRectF(
+        inner.left(),
+        top,
+        inner.width(),
+        min(CARD_PICTURE_HEIGHT, max(0.0, inner.bottom() - top)),
+    )
+
+
+def card_address_rect(width: int = CARD_WIDTH, height: int = CARD_HEIGHT) -> QRectF:
+    """最下面地址行的区域（卡片坐标）：贴着内容区底边，固定一行高度。"""
+    inner = card_inner_rect(width, height)
+    row_height = min(float(CARD_ADDRESS_HEIGHT), inner.height())
+    return QRectF(
+        inner.left(),
+        inner.bottom() - row_height,
+        inner.width(),
+        row_height,
+    )
 
 
 class InstrumentImage(QWidget):
@@ -302,49 +429,28 @@ class InstrumentImage(QWidget):
 
     def __init__(self, parent: Any = None) -> None:
         super().__init__(parent)
-        self._picture = _Picture(QPixmap(), QRectF())
-        self.setFixedHeight(_PICTURE_HEIGHT)
+        self._picture = InstrumentPicture(QPixmap(), QRectF())
+        self.setFixedHeight(CARD_PICTURE_HEIGHT)
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.setAttribute(Qt.WA_StyledBackground, True)
 
     def set_picture(self, path: Path | None) -> None:
-        self._picture = _PICTURES.picture(path)
+        self._picture = instrument_picture(path)
         self.update()
 
     def has_picture(self) -> bool:
         return not self._picture.is_empty()
 
     def sizeHint(self) -> QSize:
-        return QSize(CARD_WIDTH, _PICTURE_HEIGHT)
+        return QSize(CARD_WIDTH, CARD_PICTURE_HEIGHT)
 
     def source_rect(self) -> QRectF:
         """要从原图里取的那一块（原图像素坐标）：仪器主体，没有图片时为空。"""
-        if self._picture.is_empty():
-            return QRectF()
-        content = self._picture.content
-        if content.isEmpty():
-            return QRectF(self._picture.pixmap.rect())
-        return content
+        return self._picture.source_rect()
 
     def picture_rect(self) -> QRectF:
         """仪器图实际画出的矩形（图片区坐标）：只由主体决定，与照片留白无关。"""
-        source = self.source_rect()
-        if source.isEmpty():
-            return QRectF()
-        target = QRectF(self.rect()).adjusted(
-            _PICTURE_MARGIN, _PICTURE_MARGIN, -_PICTURE_MARGIN, -_PICTURE_MARGIN
-        )
-        if target.width() <= 0.0 or target.height() <= 0.0:
-            return QRectF()
-        scale = min(target.width() / source.width(), target.height() / source.height())
-        width = source.width() * scale
-        height = source.height() * scale
-        return QRectF(
-            target.center().x() - width / 2.0,
-            target.center().y() - height / 2.0,
-            width,
-            height,
-        )
+        return picture_target_rect(self.source_rect(), QRectF(self.rect()))
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
@@ -477,8 +583,8 @@ class InstrumentCard(QFrame):
 
         layout = QVBoxLayout(self)
         # 上下留白比左右多一点：第一行设备码不贴卡片上沿，卡片上部因此不显得挤。
-        layout.setContentsMargins(10, 12, 10, 10)
-        layout.setSpacing(8)
+        layout.setContentsMargins(*CARD_CONTENT_MARGINS)
+        layout.setSpacing(CARD_CONTENT_SPACING)
 
         # 第一行：缩写设备码——只写码本身（型号在最下面一行），现场对机时一眼看清；
         # 这是卡片里字号最大、最加粗的一行。
@@ -488,7 +594,7 @@ class InstrumentCard(QFrame):
         # 设备码整段都要能读到：允许折成两行，而不是截断；单行时在两行高度里居中。
         self.code_label.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
         self.code_label.setWordWrap(True)
-        self.code_label.setFixedHeight(_CODE_LABEL_HEIGHT)
+        self.code_label.setFixedHeight(CARD_CODE_HEIGHT)
         layout.addWidget(self.code_label)
 
         # 第二行：仪器图，直接贴在卡片本色上。
@@ -519,7 +625,7 @@ class InstrumentCard(QFrame):
         self.address_label = _ElidedLabel(data.address, self)
         self.address_label.setObjectName("instrumentCardAddress")
         self.address_label.setAlignment(Qt.AlignCenter)
-        self.address_label.setFixedHeight(_ADDRESS_LABEL_HEIGHT)
+        self.address_label.setFixedHeight(CARD_ADDRESS_HEIGHT)
         self.address_label.setTextInteractionFlags(Qt.NoTextInteraction)
         self.address_label.setVisible(bool(data.address))
         layout.addWidget(self.address_label)

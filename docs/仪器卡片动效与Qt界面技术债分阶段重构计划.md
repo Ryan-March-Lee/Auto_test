@@ -226,6 +226,8 @@ InstrumentCardData
 
 ## 步骤 4：实现 CardAsset 和正面渲染器
 
+**执行状态：已完成**。新增 `presentation/qt/card_assets.py`：`CardAsset` 提供 `front` / `back`、逻辑尺寸、`radius` 与 `shadow_margin`，由 `render_card_asset()` 从 `InstrumentCardData` 一次渲染，不需要 `QWidget.grab()`。正面与真实卡片共用同一份内容和几何：内容边距、行距、设备码/图片/地址行高与图片落点计算都在 `presentation/qt/device_cards.py` 的 `CARD_*` 常量、`card_code_rect()` / `card_picture_rect()` / `card_address_rect()` / `picture_target_rect()` 里，字体与颜色取主题样式表的同名规则；选中、不可应用与空字段的底色、描边、留白也与样式表一致。牌背是一张独立的深色卡背（渐变、斜纹、内框、中央菱形），暂不承接“查找设备”卡面的装饰动效。登记测试：`tests/ui/test_card_assets.py`（尺寸/圆角/阴影边距、非空内容、选中与不可应用配色、高 DPI、图片落点、与真实卡片边框以内的画面一致性）。本步不改变面板现有的 `card.grab()` 路径，切换资产在步骤 5 完成。
+
 ### 执行策略
 
 新增独立模块，例如：

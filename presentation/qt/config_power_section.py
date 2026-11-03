@@ -13,7 +13,7 @@
 不读文件；字段的回填仍归 :mod:`presentation.qt.config_projection`，正式配置编写归
 :mod:`application.configuration_authoring`，正式校验在
 :mod:`domain.configuration.rules` 与 :mod:`infrastructure.config.validation`；
-「槽位 -> 配置路径」的映射留在页面（``ConfigPage._assignment_entries``）。
+「槽位 -> 配置路径」的映射留在页面（``ConfigurationPage._assignment_entries``）。
 
 通道数值框的上下界（``_VOLTAGE_LIMITS`` / ``_CURRENT_LIMITS``）只约束输入框能填到
 哪里，比正式校验更严：界外的值由控件夹到界内，这里不报错也不改配置。重建标签页时
@@ -164,7 +164,7 @@ def power_choice_combo(choices: PowerSupplyChoices, entry: Any):
     （``supply_id: null``）时保持空选择，不能按缺省规则补一台。判定与整份配置回填
     共用 :func:`presentation.qt.config_projection.apply_power_choice`，所有槽位
     （含驱动功放）用同一条缺省规则；驱动功放是否启用由
-    :meth:`ConfigPage.update_driver_power_ui` 按驱放模式与供电方式决定。
+    :meth:`ConfigurationPage.update_driver_power_ui` 按驱放模式与供电方式决定。
     """
     combo = combo_box()
     apply_power_choice(combo, entry, choices)
@@ -263,7 +263,7 @@ def rebuild_power_tabs(
     也按**电源键**恢复：某台电源被移除或新增时，操作者仍然停在原来那台设备上。
     ``preserved`` 为空是回填路径，以新配置为准，不沿用重建前的残留值。
 
-    页面入口已经确认电源分区存在（``ConfigPage._rebuild_power_tabs``），因此这里直接
+    页面入口已经确认电源分区存在（``ConfigurationPage._rebuild_power_tabs``），因此这里直接
     使用 ``page.power_tabs``：分区不存在属于调用方的编程错误，不静默返回。
     """
     tabs = page.power_tabs

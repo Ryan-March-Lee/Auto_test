@@ -6,7 +6,7 @@
 
 .. code-block:: text
 
-    ConnectionPage
+    InstrumentSetupPage
     └── overlay_host
         ├── normal_content      # .ui 骨架（含滚动区、设备发现面板）
         └── animation_overlay   # 本模块，不进布局

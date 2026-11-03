@@ -29,7 +29,7 @@ from presentation.qt.composition import build_device_scanner_factory, default_pa
 from presentation.qt.configuration_page import ConfigurationPage
 from presentation.qt.configuration_session import ConfigurationSession
 from presentation.qt.connection_dialog import ConnectionDialog
-from presentation.qt.connection_page import ConnectionPage
+from presentation.qt.instrument_setup_page import InstrumentSetupPage
 from presentation.qt.run_history_page import build_run_history_page
 from presentation.qt.history_view_model import HistoryViewModel
 from presentation.qt.measurement_state import MeasurementKind, MeasurementResultReference
@@ -181,7 +181,7 @@ class MainWindow(QMainWindow):
         # 连接页只依赖配置会话的窄接口，不持有配置页实例；面板回写与“连接仪器”的
         # 校验入口都由窗口装配给会话/配置页。
         self.configuration_session = ConfigurationSession(self.config_page)
-        self.connection_page = ConnectionPage(
+        self.connection_page = InstrumentSetupPage(
             self.configuration_session,
             scanner_factory=build_device_scanner_factory(self.paths),
         )

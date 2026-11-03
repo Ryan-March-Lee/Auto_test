@@ -510,13 +510,13 @@ class AcceptanceCase:
     # ---- 生命周期 --------------------------------------------------------
 
     def open(self, factory: Callable[[str], Any]) -> "AcceptanceCase":
-        from presentation.qt.config_page import ConfigPage
+        from presentation.qt.configuration_page import ConfigurationPage
         from presentation.qt.configuration_session import ConfigurationSession
-        from presentation.qt.connection_page import ConnectionPage
+        from presentation.qt.instrument_setup_page import InstrumentSetupPage
 
-        self.page = ConfigPage(dict(ACCEPTANCE_CONFIG))
+        self.page = ConfigurationPage(dict(ACCEPTANCE_CONFIG))
         session = ConfigurationSession(self.page)
-        self.window = ConnectionPage(session, scanner_factory=factory)
+        self.window = InstrumentSetupPage(session, scanner_factory=factory)
         self.window.setWindowTitle(f"PA 自动测试 · 真实窗口验收 · {self.result.title}")
         self.window.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
         self.window.move(0, 0)
@@ -661,7 +661,7 @@ class AcceptanceCase:
 
 def _scenario_deal(case: AcceptanceCase) -> None:
     """正常路径：等待 → 发牌 → 翻牌 → 可交互。"""
-    from presentation.qt.device_discovery_panel import DiscoveryPhase
+    from presentation.qt.instrument_discovery_panel import DiscoveryPhase
     from presentation.qt.scan_card import WAIT_CYCLE_MS
 
     panel = case.panel
@@ -804,7 +804,7 @@ def _scenario_deal(case: AcceptanceCase) -> None:
 
 def _scenario_failure(case: AcceptanceCase) -> None:
     """扫描失败：等完一轮 → 失败说明，不进入发牌。"""
-    from presentation.qt.device_discovery_panel import DiscoveryPhase
+    from presentation.qt.instrument_discovery_panel import DiscoveryPhase
     from presentation.qt.scan_card import WAIT_CYCLE_MS
 
     panel = case.panel
@@ -859,7 +859,7 @@ def _scenario_failure(case: AcceptanceCase) -> None:
 
 def _scenario_empty(case: AcceptanceCase) -> None:
     """空结果：等完一轮 → 跳过发牌，显示“发现 0 台设备”。"""
-    from presentation.qt.device_discovery_panel import DiscoveryPhase
+    from presentation.qt.instrument_discovery_panel import DiscoveryPhase
     from presentation.qt.scan_card import WAIT_CYCLE_MS
 
     panel = case.panel
@@ -914,7 +914,7 @@ def _scenario_empty(case: AcceptanceCase) -> None:
 
 def _scenario_back(case: AcceptanceCase) -> None:
     """发牌期间点“返回”：覆盖层清空，卡片随结果一起清空。"""
-    from presentation.qt.device_discovery_panel import DiscoveryPhase
+    from presentation.qt.instrument_discovery_panel import DiscoveryPhase
 
     panel = case.panel
     layer = panel.deal_layer
@@ -968,7 +968,7 @@ def _scenario_back(case: AcceptanceCase) -> None:
 
 def _scenario_resize(case: AcceptanceCase) -> None:
     """发牌期间调整窗口：按 surface-changed 取消，卡片恢复可见可点。"""
-    from presentation.qt.device_discovery_panel import DiscoveryPhase
+    from presentation.qt.instrument_discovery_panel import DiscoveryPhase
 
     panel = case.panel
     layer = panel.deal_layer

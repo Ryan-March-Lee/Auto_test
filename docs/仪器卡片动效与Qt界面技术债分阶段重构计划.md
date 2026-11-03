@@ -272,7 +272,7 @@ presentation/qt/card_assets.py
 `CardDealItem` 传入），绘制时贴 `asset.front`；面板在 `_start_deal_reveal` 里先落定
 最终版面、再用 `_deal_assets()` 为每张卡渲染资产，随后用透明度效果藏起真实卡片。发牌不再
 调用 `card.grab()`，也不依赖卡片控件是否显示过、是否完成重排。旧的截图路径只在
-`device_discovery_panel._USE_SCREENSHOT_FRONTS = True` 时用于排障对照（面板常量，不接配置
+`instrument_discovery_panel._USE_SCREENSHOT_FRONTS = True` 时用于排障对照（面板常量，不接配置
 和界面，也不作为第二条长期实现）；两种来源在诊断里记为 `front_source=asset|screenshot`，
 `front_source` 已加入步骤 2 的固定字段。牌背当时仍取按钮卡面的纹样，是否改成
 `CardAsset.back` 留给步骤 7 的独立动画对象统一决定（步骤 7 已完成：发牌背面改用
@@ -398,7 +398,7 @@ InstrumentSetupPage
 
 **执行状态：已完成**。新增 `presentation/qt/card_deal_animation.py`：`CardDealItem(asset, target_rect, index)` 是只读的输入项，`CardDealAnimation` 只保留时间轴与绘制，接口为 `start(items, deck_origin)` / `cancel(reveal=True)` / `finish()` / `is_running()` / `finished`；`start()` 另接两个关键字参数 `clip_rect`（步骤 6 的裁剪遮罩）与 `front_source`（步骤 2 的诊断来源），默认值不影响窄接口。动画按 `index` 排序、翻到哪张就发 `card_revealed(index)`，由面板撤掉那张卡片的透明度效果；`finished` 只表示整段结束，面板据此恢复交互与状态行。动画本身不再持有任何 `QWidget`：`DealRevealLayer` 里的 `self._cards`、`setGraphicsEffect(None)` 与 `QWidget.grab()` 调用全部移出。
 
-发牌背面改为 `CardAsset.back`（步骤 4 已经渲染好的稳定资产），不再是按钮卡面的截图/纹样；`scan_card.py` 因此只保留“查找设备”按钮与扫描等待牌堆，`_render_deal_back`、发牌常量与 `DealRevealLayer` 一并迁走。面板字段仍叫 `deal_layer`（步骤 13 再统一命名），但类型换成 `CardDealAnimation`。
+发牌背面改为 `CardAsset.back`（步骤 4 已经渲染好的稳定资产），不再是按钮卡面的截图/纹样；`scan_card.py` 因此只保留“查找设备”按钮与扫描等待牌堆，`_render_deal_back`、发牌常量与 `DealRevealLayer` 一并迁走。面板字段在步骤 13 从 `deal_layer` 改名为 `deal_animation`（旧名保留兼容属性），类型是 `CardDealAnimation`。
 
 输入校验在改动运行状态之前完成：`index` 必须是 `0..N-1` 的连续编号（面板直接拿它当卡片列表下标，重复、负数或缺口都会恢复错卡片），`front_source` 只接受 `asset` / `screenshot`，项目必须是 `CardDealItem`；任何一项不合格都直接抛错，上一次动画（若有）保持原样，不会留下“卡片已藏起、计时器还在走”的半状态。上一次发牌还在播时 `start()` 直接抛 `RuntimeError`（先 `cancel()` / `finish()`），避免静默丢掉上一组卡片的恢复信号；空输入走 `skip()`，它先把还在播的一次按完成路径收尾（每张 `card_revealed` + `finished`），再记录“这一次没有牌”，因此空结果不会留下透明卡片。`finish()` 与 `skip()` 都幂等：已经收尾过的一次不会重复发 `finished`。`cancel()` 会停表、隐藏覆盖层并清空本次输入；`reveal=True` 与自然完成走同一条 `card_revealed` 路径，因此中断、返回和关闭页面都不会留下对卡片的悬空引用或未撤掉的透明度效果。面板把“藏卡片 + 禁用卡片区 + `start()`”放在同一个保护范围里，任何启动异常都经 `_abort_deal_reveal()` 撤销效果、恢复卡片区后原样抛出；`finished` 时再兜底清理一次残留效果。
 
@@ -443,7 +443,7 @@ index
 
 ## 步骤 8：重接发现页状态机
 
-**执行状态：已完成**。`presentation/qt/device_discovery_panel.py` 现在有显式的 `DiscoveryPhase`（`IDLE` / `SCANNING` / `RESULT_PENDING` / `DEALING` / `INTERACTIVE` / `CLOSED`）：`_set_phase()` 是唯一的转移入口，`_render_phase()` 是唯一的渲染入口，`results_box.boxState` 只由当前状态推导（扫描/等待 → `busy`，发牌/可交互 → `results`，其余 → `idle`）。扫描结果不再各自调用 `setVisible` 驱动发牌：worker 的结果、失败与取消都先挂进 `_pending_outcome` 并进入 `RESULT_PENDING`，`_consume_pending_outcome()` 再按结论分流——有设备时先切到 `DEALING`、在可见的卡片区里生成卡片与资产，再由 `CardDealAnimation` 播放；空结果跳过发牌（`deal_layer.skip(reason="no-cards")`），直接回 `IDLE` 并显示“发现 0 台设备 …”；失败与取消回 `IDLE`（`outcome=failed` / `cancelled`）并保留状态行说明。
+**执行状态：已完成**。`presentation/qt/instrument_discovery_panel.py` 现在有显式的 `DiscoveryPhase`（`IDLE` / `SCANNING` / `RESULT_PENDING` / `DEALING` / `INTERACTIVE` / `CLOSED`）：`_set_phase()` 是唯一的转移入口，`_render_phase()` 是唯一的渲染入口，`results_box.boxState` 只由当前状态推导（扫描/等待 → `busy`，发牌/可交互 → `results`，其余 → `idle`）。扫描结果不再各自调用 `setVisible` 驱动发牌：worker 的结果、失败与取消都先挂进 `_pending_outcome` 并进入 `RESULT_PENDING`，`_consume_pending_outcome()` 再按结论分流——有设备时先切到 `DEALING`、在可见的卡片区里生成卡片与资产，再由 `CardDealAnimation` 播放；空结果跳过发牌（`deal_animation.skip(reason="no-cards")`），直接回 `IDLE` 并显示“发现 0 台设备 …”；失败与取消回 `IDLE`（`outcome=failed` / `cancelled`）并保留状态行说明。
 
 等待牌堆仍是扫描期间独立的 loading 动效。产品要求的“结果到达时先播完这一轮”由模块常量 `WAIT_FOR_FULL_CYCLE` 明确表达：为真时结果停在 `RESULT_PENDING`，等 `ScanWaitStack.cycle_finished`（牌堆复原）再消费；为假时扫描结论一到就直接进入 `DEALING` / 空结果，不再依赖等待周期。真实卡片只在 `INTERACTIVE` 可交互：`DEALING` 期间卡片区禁用、状态行隐藏，翻完最后一张才恢复；发牌启动抛错时面板先恢复卡片与卡片区，再把状态推进到 `INTERACTIVE`，不留下停在发牌中的半状态。面板同时提供 `phase()` / `is_interactive()` 与 `phase_changed` 信号，每次转移写一条固定字段日志 `animation event=discovery_phase previous=... phase=... box_state=... pending=... cards=... outcome=...`，成功、空结果、失败、取消、返回与关闭都能按同一条序列复现。
 
@@ -641,12 +641,12 @@ index
 `_build_ui`（一次性结构配置）与 `render_state`（唯一动态入口），而三个随状态变化的控件
 （两份空表说明与“重新生成”按钮）只允许 `render_state` 写入。视图模型的
 `reset_runs()` / `reset_results()` 在 `tests/integration/test_run_history_page.py` 里另有
-2 项直接契约测试，该文件 48 项保持通过。后续页面（例如 `ConfigPage`）按同一“只读状态 +
+2 项直接契约测试，该文件 48 项保持通过。后续页面（例如 `ConfigurationPage`）按同一“只读状态 +
 单一 `render_state()`”模式推广，增加淡入、禁用或局部过渡时只改渲染入口。
 
 ### 执行策略
 
-选择一个低风险页面先试点，例如 ``RunHistoryPage`` 或 ``ConfigPage``，将分散的：
+选择一个低风险页面先试点，例如 ``RunHistoryPage`` 或 ``ConfigurationPage``，将分散的：
 
 ```text
 setText
@@ -745,6 +745,31 @@ setProperty
 小，预计 0.5～1 天。
 
 ## 步骤 13：逐步统一页面命名和模块边界
+
+**执行状态：已完成**。按“一次迁移一个模块”的顺序完成三组命名，旧名称全部保留
+兼容再导出，没有在同一个提交里改动业务规则：
+
+| 旧名称 | 新名称 | 迁移内容 |
+| --- | --- | --- |
+| `presentation.qt.config_page` / `ConfigPage` | `presentation.qt.configuration_page` / `ConfigurationPage` | 页面类与模块；`ConfigBackfillError` 名称不变 |
+| `presentation.qt.device_discovery_panel` / `DeviceDiscoveryPanel` | `presentation.qt.instrument_discovery_panel` / `InstrumentDiscoveryPanel` | 面板类与模块；发牌字段 `deal_layer` → `deal_animation` |
+| `presentation.qt.connection_page` / `ConnectionPage` | `presentation.qt.instrument_setup_page` / `InstrumentSetupPage` | 页面类、模块与 `.ui` 骨架（`instrument_setup_page.ui`，根对象 `instrumentSetupPageUi`） |
+
+实现只落在新模块：旧的 `config_page.py`、`device_discovery_panel.py`、
+`connection_page.py` 只再导出新名称，不再声明第二份页面/面板类。旧类名、旧模块名与
+旧字段名在兼容期内仍然可用；`InstrumentDiscoveryPanel.deal_layer` 是
+`deal_animation` 的读写兼容属性。窗口装配（`main_window.py`）已改为直接导入新模块，
+新功能不得再使用旧命名。兼容模块的删除条件登记在
+`docs/配置领域词汇与模块归属.md`，删除前不得让旧名称承载新逻辑。
+
+已知边界：旧 `.ui` 文件名 `connection_page.ui` 随页面一起删除，`load_ui("connection_page")`
+会失败；这是资源名而不是 Python 模块名，兼容范围只覆盖导入路径、类名与字段名。旧模块
+仍可导入，但测试或调用方如果要替换模块级协作对象（例如 `CardDealAnimation`），必须对
+新模块打补丁。
+
+验证：新增 `tests/ui/test_page_naming.py`（6 项）冻结新模块/旧兼容对象的同一性与窗口
+装配只导入新模块；每个模块迁移后各跑一次 UI 与集成层，最后完整套件 2797 项（跳过 5 项）
+通过；`launcher.py --check` 与 `launcher.py --validate-config` 通过。
 
 ### 执行策略
 

@@ -21,9 +21,9 @@ from infrastructure.discovery.instrument_discovery import (
 )
 from infrastructure.discovery.simulated_network import demo_idn_responses
 from infrastructure.persistence.instrument_registry import InstrumentRegistry
-from presentation.qt.config_page import ConfigPage
+from presentation.qt.configuration_page import ConfigurationPage
 from presentation.qt.configuration_session import ConfigurationSession
-from presentation.qt.connection_page import ConnectionPage
+from presentation.qt.instrument_setup_page import InstrumentSetupPage
 from presentation.qt.instrument_discovery_panel import InstrumentDiscoveryPanel
 
 
@@ -172,7 +172,7 @@ class DiscoveryPanelTestCase(unittest.TestCase):
         return panel
 
 
-class ConnectionPageTestCase(unittest.TestCase):
+class InstrumentSetupPageTestCase(unittest.TestCase):
     """同时持有配置页与连接页：绑定写在配置页，扫描与勾选在连接页的面板上。
 
     ``page`` 是配置页（绑定写入与其派生界面：电源标签页、电源分配可选项），
@@ -204,13 +204,13 @@ class ConnectionPageTestCase(unittest.TestCase):
         return panel
 
     def make_page(self, config=None):
-        page = ConfigPage(
+        page = ConfigurationPage(
             config
             if config is not None
             else {"test_frequencies": [1.0], "instruments": {"power_supplies": {}}}
         )
         session = ConfigurationSession(page)
-        connection = ConnectionPage(session, scanner_factory=scanner_factory)
+        connection = InstrumentSetupPage(session, scanner_factory=scanner_factory)
         # 与主窗口同一套装配：连接页只发出“连接仪器”的意图，面板回写仍归配置页。
         connection.connect_requested.connect(page.request_connect)
         page.discovery_message.connect(connection.log_message.emit)

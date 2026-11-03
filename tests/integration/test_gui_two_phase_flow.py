@@ -815,7 +815,7 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         self.assertEqual(coordinator.config, {"test_frequencies": [2.4]})
 
     def test_load_run_reports_backfill_failure_instead_of_success(self):
-        from presentation.qt.config_page import ConfigBackfillError
+        from presentation.qt.configuration_page import ConfigBackfillError
 
         current_port = _ClosedPort()
         current_run = object()
@@ -917,7 +917,7 @@ class MainWindowCompositionTests(unittest.TestCase):
         self.assertEqual(window.coordinator.release_instrument_port.call_count, 2)
 
 
-class ConfigPageRunEntryTests(unittest.TestCase):
+class ConfigurationPageRunEntryTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         import os
@@ -928,9 +928,9 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def test_create_run_signal_is_emitted_after_validation(self):
-        from presentation.qt.config_page import ConfigPage
+        from presentation.qt.configuration_page import ConfigurationPage
 
-        page = ConfigPage(_fully_valid_gui_config())
+        page = ConfigurationPage(_fully_valid_gui_config())
         requested = []
         page.create_run_requested.connect(lambda: requested.append(True))
         page.create_run_btn.click()
@@ -938,9 +938,9 @@ class ConfigPageRunEntryTests(unittest.TestCase):
 
     def test_create_run_is_blocked_when_no_device_is_bound(self):
         """没有任何已应用设备时电源分配无法成立，创建运行必须明确失败。"""
-        from presentation.qt.config_page import ConfigPage
+        from presentation.qt.configuration_page import ConfigurationPage
 
-        page = ConfigPage({})
+        page = ConfigurationPage({})
         failures = []
         requested = []
         page.validation_failed.connect(failures.append)
@@ -952,9 +952,9 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         self.assertIn("未选择电源", failures[0])
 
     def test_load_run_signal_carries_the_run_id(self):
-        from presentation.qt.config_page import ConfigPage
+        from presentation.qt.configuration_page import ConfigurationPage
 
-        page = ConfigPage({})
+        page = ConfigurationPage({})
         requested = []
         page.load_run_requested.connect(requested.append)
         page.load_run_id_edit.setText(RUN_ID)
@@ -962,9 +962,9 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         self.assertEqual(requested, [RUN_ID])
 
     def test_validate_blocks_duplicate_power_channel_roles(self):
-        from presentation.qt.config_page import ConfigPage
+        from presentation.qt.configuration_page import ConfigurationPage
 
-        page = ConfigPage({"instruments": {"power_supplies": {"DP8B1519": {}}}})
+        page = ConfigurationPage({"instruments": {"power_supplies": {"DP8B1519": {}}}})
         page.power_config_widgets["DP8B1519"]["channels"]["CH1"]["role"].setCurrentText("gate")
         page.power_config_widgets["DP8B1519"]["channels"]["CH2"]["role"].setCurrentText("gate")
         failures = []
@@ -980,9 +980,9 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         self.assertIn("供电角色重复", failures[0])
 
     def test_load_run_requires_a_run_id(self):
-        from presentation.qt.config_page import ConfigPage
+        from presentation.qt.configuration_page import ConfigurationPage
 
-        page = ConfigPage({})
+        page = ConfigurationPage({})
         failures = []
         requested = []
         page.validation_failed.connect(failures.append)
@@ -992,16 +992,16 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         self.assertEqual(len(failures), 1)
 
     def test_run_status_label_is_updated_by_the_window(self):
-        from presentation.qt.config_page import ConfigPage
+        from presentation.qt.configuration_page import ConfigurationPage
 
-        page = ConfigPage({})
+        page = ConfigurationPage({})
         page.set_run_status(f"当前运行: {RUN_ID}")
         self.assertEqual(page.run_status_label.text(), f"当前运行: {RUN_ID}")
 
     def test_apply_config_reflects_a_frozen_run_on_the_widgets(self):
-        from presentation.qt.config_page import ConfigPage
+        from presentation.qt.configuration_page import ConfigurationPage
 
-        page = ConfigPage({})
+        page = ConfigurationPage({})
         frozen = _fully_valid_gui_config()
         frozen["test_frequencies"] = [2.4, 2.6]
         frozen["driver_mode"] = {"enabled": False}
@@ -1018,9 +1018,9 @@ class ConfigPageRunEntryTests(unittest.TestCase):
 
     def test_config_page_makes_power_channel_roles_explicit(self):
         """保存配置页时按控件当前选择写入显式角色，不再由装配层推导。"""
-        from presentation.qt.config_page import ConfigPage
+        from presentation.qt.configuration_page import ConfigurationPage
 
-        page = ConfigPage({})
+        page = ConfigurationPage({})
         page.apply_config(_fully_valid_gui_config())
 
         built = page.build_config()
@@ -1030,12 +1030,12 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         self.assertEqual(channels["CH2"]["role"], "drain")
 
     def test_config_page_keeps_the_role_declared_in_the_configuration(self):
-        from presentation.qt.config_page import ConfigPage
+        from presentation.qt.configuration_page import ConfigurationPage
 
         config = _fully_valid_gui_config()
         config["instruments"]["power_supplies"]["DP8B1519"]["channels"]["CH1"]["role"] = "drain"
         config["instruments"]["power_supplies"]["DP8B1519"]["channels"]["CH2"]["role"] = "gate"
-        page = ConfigPage({})
+        page = ConfigurationPage({})
         page.apply_config(config)
 
         self.assertEqual(
@@ -1048,9 +1048,9 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         self.assertEqual(channels["CH2"]["role"], "gate")
 
     def test_apply_config_clears_previous_values(self):
-        from presentation.qt.config_page import ConfigPage
+        from presentation.qt.configuration_page import ConfigurationPage
 
-        page = ConfigPage({})
+        page = ConfigurationPage({})
         page.apply_config(_fully_valid_gui_config())
         # 先确认配置 A 确实写入了非基线值，避免测试空转。
         built = page.build_config()["instruments"]
@@ -1080,7 +1080,7 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         self.assertEqual(page.get_enabled_power_supplies(), [])
 
     def test_apply_config_projects_all_supported_fields(self):
-        from presentation.qt.config_page import ConfigPage
+        from presentation.qt.configuration_page import ConfigurationPage
 
         frozen = {
             "test_frequencies": [2.4, 2.6],
@@ -1155,7 +1155,7 @@ class ConfigPageRunEntryTests(unittest.TestCase):
             },
         }
 
-        page = ConfigPage({})
+        page = ConfigurationPage({})
         page.apply_config(frozen)
 
         self.assertEqual(page.freq_edit.text(), "[2.4, 2.6]")
@@ -1192,11 +1192,11 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         self.assertEqual(page.pa_unit3_power_combo.currentText(), "DP8B1519")
 
     def test_apply_config_matches_a_freshly_built_page(self):
-        from presentation.qt.config_page import ConfigPage
+        from presentation.qt.configuration_page import ConfigurationPage
 
         partial = {"test_frequencies": [9.0], "driver_mode": {"enabled": False}}
-        rebuilt = ConfigPage(partial)
-        page = ConfigPage({})
+        rebuilt = ConfigurationPage(partial)
+        page = ConfigurationPage({})
         page.apply_config(_fully_valid_gui_config())
         page.apply_config(partial)
 
@@ -1217,18 +1217,18 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         )
 
     def test_apply_config_reports_invalid_payload(self):
-        from presentation.qt.config_page import ConfigBackfillError, ConfigPage
+        from presentation.qt.configuration_page import ConfigBackfillError, ConfigurationPage
 
-        page = ConfigPage({})
+        page = ConfigurationPage({})
         for payload in (None, ["not", "a", "mapping"], "text"):
             with self.subTest(payload=payload):
                 with self.assertRaises(ConfigBackfillError):
                     page.apply_config(payload)
 
     def test_apply_config_uses_defaults_for_invalid_field_types(self):
-        from presentation.qt.config_page import ConfigPage
+        from presentation.qt.configuration_page import ConfigurationPage
 
-        page = ConfigPage({})
+        page = ConfigurationPage({})
         page.apply_config(
             {
                 "test_frequencies": ["invalid"],
@@ -1267,9 +1267,9 @@ class ConfigPageRunEntryTests(unittest.TestCase):
         self.assertFalse(channel["current_protection_enabled"].isChecked())
 
     def test_apply_config_rejects_invalid_frequency_lists(self):
-        from presentation.qt.config_page import ConfigPage
+        from presentation.qt.configuration_page import ConfigurationPage
 
-        page = ConfigPage({})
+        page = ConfigurationPage({})
         for bad in (None, "not-a-list", [], ["bad"], [True], [float("nan")], [[]]):
             with self.subTest(bad=bad):
                 page.apply_config({"test_frequencies": bad})

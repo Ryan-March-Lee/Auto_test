@@ -1,6 +1,6 @@
 """连接页与文档化窄接口（GUI 重构步骤 8）：用替身端口独立验证页面行为。
 
-这里不构造 ``ConfigPage``：连接页只依赖
+这里不构造 ``ConfigurationPage``：连接页只依赖
 :class:`application.ports.device_binding.DeviceBindingPort`。测试断言页面读的是只读
 ``ConfigurationViewState``、提交的是 ``ApplyDeviceSelectionRequest``，并且“连接仪器”
 只发出用户意图。
@@ -28,7 +28,7 @@ from application.device_binding import (
     AppliedDeviceBinding,
     DeviceBindingResult,
 )
-from presentation.qt.connection_page import ConnectionPage
+from presentation.qt.instrument_setup_page import InstrumentSetupPage
 from presentation.qt.instrument_discovery_panel import BOX_STATE_RESULTS
 from presentation.qt.theme import PAGE_CONTENT_MAX_WIDTH
 
@@ -80,13 +80,13 @@ class _PanelStub:
         return True
 
 
-class ConnectionPagePortTests(unittest.TestCase):
+class InstrumentSetupPagePortTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
     def make_page(self, port):
-        page = ConnectionPage(port, scanner_factory=_scanner_factory)
+        page = InstrumentSetupPage(port, scanner_factory=_scanner_factory)
         self.addCleanup(page.close)
         return page
 
@@ -211,18 +211,18 @@ class ConnectionPagePortTests(unittest.TestCase):
         self.assertEqual(requested, [True])
 
 
-class ConnectionPageBoundaryTests(unittest.TestCase):
+class InstrumentSetupPageBoundaryTests(unittest.TestCase):
     """静态边界：连接页不回读配置页，也不自己构造它。"""
 
     def test_module_never_reaches_into_the_configuration_page(self):
-        source = (ROOT / "presentation" / "qt" / "connection_page.py").read_text(
+        source = (ROOT / "presentation" / "qt" / "instrument_setup_page.py").read_text(
             encoding="utf-8-sig"
         )
 
         for fragment in (
             "self.config_page",
             "from .config_page",
-            "ConfigPage(",
+            "ConfigurationPage(",
             "config_page.device_bindings",
             "config_page.config",
         ):
@@ -231,11 +231,11 @@ class ConnectionPageBoundaryTests(unittest.TestCase):
 
     def test_static_layout_and_visual_tokens_live_outside_the_page_module(self):
         """步骤 11：页面模块不写颜色、字号或内联样式；静态排列在 ``.ui``。"""
-        source = (ROOT / "presentation" / "qt" / "connection_page.py").read_text(
+        source = (ROOT / "presentation" / "qt" / "instrument_setup_page.py").read_text(
             encoding="utf-8-sig"
         )
 
-        self.assertIn('load_ui("connection_page")', source)
+        self.assertIn('load_ui("instrument_setup_page")', source)
         self.assertNotIn("setStyleSheet", source)
         self.assertNotRegex(source, re.compile(r"#[0-9A-Fa-f]{6}"))
         self.assertNotIn("font-size", source)
@@ -246,7 +246,7 @@ class ConnectionPageBoundaryTests(unittest.TestCase):
         Qt 的布局尺寸只能长在布局对象上，Designer 是唯一能预览它们的地方，因此页面
         本地的几何归 ``.ui`` 单文件所有；这条门禁防止它慢慢散回 Python 常量。
         """
-        source = (ROOT / "presentation" / "qt" / "connection_page.py").read_text(
+        source = (ROOT / "presentation" / "qt" / "instrument_setup_page.py").read_text(
             encoding="utf-8-sig"
         )
 
@@ -267,7 +267,7 @@ class ConnectionPageBoundaryTests(unittest.TestCase):
         self.assertNotRegex(source, r"setMaximumWidth\(\s*\d")
 
 
-class ConnectionPageStaticLayoutTests(unittest.TestCase):
+class InstrumentSetupPageStaticLayoutTests(unittest.TestCase):
     """步骤 12：静态骨架的视觉契约通过页面呈现结果验证。
 
     ``.ui`` 的控件层级与 objectName 契约只在 ``tests/ui/test_ui_loader.py`` 里保留；
@@ -280,7 +280,7 @@ class ConnectionPageStaticLayoutTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def make_page(self):
-        page = ConnectionPage(_StubPort(), scanner_factory=_scanner_factory)
+        page = InstrumentSetupPage(_StubPort(), scanner_factory=_scanner_factory)
         self.addCleanup(page.close)
         return page
 

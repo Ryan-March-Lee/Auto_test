@@ -97,7 +97,7 @@ CONFIGURATION_BUSINESS_IMPORT_BASELINE = {
             "DeviceBindingResult",
         },
     },
-    "connection_page.py": {
+    "instrument_setup_page.py": {
         "application.device_binding": {"ApplyDeviceSelectionRequest"},
     },
 }
@@ -107,7 +107,7 @@ CONFIGURATION_BUSINESS_IMPORT_BASELINE = {
 REGISTERED_PAGE_MODULES = frozenset(
     {
         "configuration_page",
-        "connection_page",
+        "instrument_setup_page",
         "cable_loss_page",
         "driver_mapping_page",
         "amplifier_page",
@@ -351,7 +351,7 @@ def _page_constructor_violations(page_class, page_names):
 
 
 def _imported_page_modules(tree):
-    """返回模块导入的已登记页面模块，例如 ``presentation.qt.config_page``。"""
+    """返回模块导入的已登记页面模块，例如 ``presentation.qt.configuration_page``。"""
     imported = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -689,11 +689,14 @@ class LongTermChangeBoundaryTests(unittest.TestCase):
     def test_page_import_scan_detects_relative_and_absolute_forms(self):
         tree = ast.parse(
             "from .configuration_page import ConfigurationPage\n"
-            "import presentation.qt.connection_page\n"
+            "import presentation.qt.instrument_setup_page\n"
         )
         self.assertEqual(
             _imported_page_modules(tree),
-            {"presentation.qt.configuration_page", "presentation.qt.connection_page"},
+            {
+                "presentation.qt.configuration_page",
+                "presentation.qt.instrument_setup_page",
+            },
         )
 
     def test_page_module_registry_covers_every_declared_page_class(self):
@@ -739,7 +742,7 @@ class LongTermChangeBoundaryTests(unittest.TestCase):
             "    def __init__(self, *, port, parent=None):\n"
             "        pass\n"
             "class DefaultPage:\n"
-            "    def __init__(self, factory=ConfigPage):\n"
+            "    def __init__(self, factory=ConfigurationPage):\n"
             "        pass\n"
         )
         names = {"ConfigurationPage"}

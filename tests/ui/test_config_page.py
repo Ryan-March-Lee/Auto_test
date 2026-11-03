@@ -6,7 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
 
 from application.device_binding import ApplyDeviceSelectionRequest
-from presentation.qt.config_page import ConfigPage
+from presentation.qt.configuration_page import ConfigurationPage
 
 
 def apply_devices(page, assignments):
@@ -16,7 +16,7 @@ def apply_devices(page, assignments):
     )
 
 
-class ConfigPageTests(unittest.TestCase):
+class ConfigurationPageTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
@@ -24,7 +24,7 @@ class ConfigPageTests(unittest.TestCase):
     def make_page(self, **extra):
         config = {"test_frequencies": [1.0], "instruments": {"power_supplies": {}}}
         config.update(extra)
-        page = ConfigPage(config)
+        page = ConfigurationPage(config)
         page.show()
         self.app.processEvents()
         return page
@@ -954,7 +954,7 @@ class ConfigPageTests(unittest.TestCase):
         self.assertEqual(page.pa_unit1_power_combo.currentData(), "DP8B0885")
 
 
-class ConfigPageViewModelTests(unittest.TestCase):
+class ConfigurationPageViewModelTests(unittest.TestCase):
     """步骤 6：页面业务状态由 ConfigurationViewModel 持有，页面只按状态渲染。"""
 
     @classmethod
@@ -964,7 +964,7 @@ class ConfigPageViewModelTests(unittest.TestCase):
     def make_page(self, **extra):
         config = {"test_frequencies": [1.0], "instruments": {"power_supplies": {}}}
         config.update(extra)
-        page = ConfigPage(config)
+        page = ConfigurationPage(config)
         page.show()
         self.app.processEvents()
         return page

@@ -311,10 +311,10 @@ class ConfigurationPagePortTests(unittest.TestCase):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         from PySide6.QtWidgets import QApplication
 
-        from presentation.qt.config_page import ConfigPage
+        from presentation.qt.configuration_page import ConfigurationPage
 
         self.assertIsNotNone(QApplication.instance() or QApplication([]))
-        page = ConfigPage({})
+        page = ConfigurationPage({})
         self.assertIsInstance(page, ConfigurationPagePort)
 
     def test_building_configuration_requires_a_bound_page(self):

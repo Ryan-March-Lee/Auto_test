@@ -74,19 +74,19 @@ class UiLoaderTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_connection_page_ui_loads_its_static_skeleton(self):
-        ui = load_ui("connection_page")
+    def test_instrument_setup_page_ui_loads_its_static_skeleton(self):
+        ui = load_ui("instrument_setup_page")
 
-        self.assertEqual(ui.objectName(), "connectionPageUi")
-        title = ui.findChild(QLabel, "connectionPageTitle")
+        self.assertEqual(ui.objectName(), "instrumentSetupPageUi")
+        title = ui.findChild(QLabel, "instrumentSetupPageTitle")
         self.assertIsNotNone(title)
         self.assertEqual(title.text(), "仪表配置")
         self.assertEqual(title.property("role"), "pageTitle")
 
-        scroll = ui.findChild(QScrollArea, "connectionScroll")
+        scroll = ui.findChild(QScrollArea, "instrumentSetupScroll")
         self.assertIsNotNone(scroll)
         self.assertTrue(scroll.widgetResizable())
-        self.assertIsNotNone(ui.findChild(QWidget, "connectionContent"))
+        self.assertIsNotNone(ui.findChild(QWidget, "instrumentSetupContent"))
         self.assertIsNotNone(ui.findChild(QWidget, "discoveryPanelHost"))
 
         next_btn = ui.findChild(QPushButton, "nextButton")
@@ -149,7 +149,7 @@ class UiLoaderTests(unittest.TestCase):
         for name in (
             "../connection_page",
             "connection_page/../../outside",
-            "ConnectionPage",
+            "InstrumentSetupPage",
             "connection-page",
             "",
             ".hidden",

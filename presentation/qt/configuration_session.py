@@ -15,7 +15,7 @@
 ViewModel”由这里承担。
 
 依赖方向：本模块只认结构类型 :class:`ConfigurationBindingTarget` 与
-:class:`DiscoveryPanelPort`（两个 Protocol），不把具体 ``ConfigPage`` / ``QWidget`` 写进
+:class:`DiscoveryPanelPort`（两个 Protocol），不把具体 ``ConfigurationPage`` / ``QWidget`` 写进
 接口，因此会话可以用纯 Python 替身单独测试。
 """
 

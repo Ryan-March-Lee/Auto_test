@@ -12,10 +12,10 @@ from presentation.qt.instrument_discovery_panel import (
     DiscoveryPhase,
 )
 
-from .support import ConnectionPageTestCase
+from .support import InstrumentSetupPageTestCase
 
 
-class ConnectionPageLayoutTests(ConnectionPageTestCase):
+class InstrumentSetupPageLayoutTests(InstrumentSetupPageTestCase):
     """连接页是“下一步”之前的整屏步骤：版面、居中、结果区位置与页面切换。
 
     绑定写入与派生界面（电源标签页、电源分配可选项）的契约在
@@ -364,7 +364,7 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
         self.assertTrue(failures)
 
 
-class ConnectionPageNextWriteTests(ConnectionPageTestCase):
+class InstrumentSetupPageNextWriteTests(InstrumentSetupPageTestCase):
     """“下一步”就是写入点：勾选结果整批替换配置里的设备绑定。"""
 
     def _scan(self):
@@ -475,7 +475,7 @@ class ConnectionPageNextWriteTests(ConnectionPageTestCase):
         self.assertIn("signal_generator", page.device_bindings)
 
 
-class DiscoveryAnimationOverlayTests(ConnectionPageTestCase):
+class DiscoveryAnimationOverlayTests(InstrumentSetupPageTestCase):
     """页面级动画覆盖层（技术债重构步骤 6）：不放进卡片滚动区，落点在开始时冻结。"""
 
     def _dealing(self, size=(1200, 900), position=None):

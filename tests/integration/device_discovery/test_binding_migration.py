@@ -1,9 +1,9 @@
 """旧绑定与旧配置的迁移：按身份改写，只有地址的旧记录要求重新扫描。"""
 
-from .support import ConnectionPageTestCase
+from .support import InstrumentSetupPageTestCase
 
 
-class DeviceBindingMigrationTests(ConnectionPageTestCase):
+class DeviceBindingMigrationTests(InstrumentSetupPageTestCase):
     """旧槽位键与旧地址绑定的迁移边界：能认出设备的迁移，认不出的失效。"""
 
     def test_legacy_slot_binding_is_migrated_to_its_supply_id(self):

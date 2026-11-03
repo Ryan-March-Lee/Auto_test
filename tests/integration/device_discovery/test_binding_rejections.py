@@ -1,9 +1,9 @@
 """整批拒绝：缺身份、重复角色、坏引用一律不写，原因同时出现在面板状态里。"""
 
-from .support import ConnectionPageTestCase, apply_devices
+from .support import InstrumentSetupPageTestCase, apply_devices
 
 
-class DeviceBindingRejectionTests(ConnectionPageTestCase):
+class DeviceBindingRejectionTests(InstrumentSetupPageTestCase):
     """不合法或有歧义的勾选结果必须整批拒绝，且不留下半份绑定。"""
 
     def test_power_supply_without_a_label_is_rejected_with_the_reason(self):

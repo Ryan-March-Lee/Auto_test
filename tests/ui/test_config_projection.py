@@ -599,7 +599,7 @@ class ConfigProjectionTests(unittest.TestCase):
                     project_authoring_config(form, payload)
 
 
-class ConfigPageOwnershipTests(unittest.TestCase):
+class ConfigurationPageOwnershipTests(unittest.TestCase):
     """配置页只编辑配置编写文档：逐字段回填规则与正式 schema 都不属于页面。"""
 
     def test_config_page_no_longer_holds_projection_helpers(self):

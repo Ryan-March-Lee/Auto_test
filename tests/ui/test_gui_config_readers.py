@@ -69,10 +69,10 @@ def channel_widgets(voltage, voltage_protection, voltage_enabled, current, curre
     return controls
 
 
-class ConfigPageStub:
+class ConfigurationPageStub:
     """配置页替身：只实现协调器需要的窄接口。
 
-    控件读取仍交给 :class:`ConfigFormState`，与真实 ``ConfigPage.build_config()``
+    控件读取仍交给 :class:`ConfigFormState`，与真实 ``ConfigurationPage.build_config()``
     走同一条组装路径，因此协调器测试不复制配置组装逻辑。
     """
 
@@ -101,7 +101,7 @@ class ConfigPageStub:
 
 
 def _coordinator(*, config=None, service=None, widgets=None, log=None, warn=None, error=None):
-    page = ConfigPageStub(widgets, config) if widgets is not None else None
+    page = ConfigurationPageStub(widgets, config) if widgets is not None else None
     coordinator = ApplicationCoordinator(
         log=log or (lambda _message: None),
         warn=warn or (lambda _title, _message: None),

@@ -1,9 +1,9 @@
 """勾选结果写进配置：地址、身份与绑定记录，换一批之后旧绑定的地址与启用一起失效。"""
 
-from .support import ConnectionPageTestCase, apply_devices
+from .support import InstrumentSetupPageTestCase, apply_devices
 
 
-class DeviceBindingWriteTests(ConnectionPageTestCase):
+class DeviceBindingWriteTests(InstrumentSetupPageTestCase):
     """``apply_device_selection`` 写入契约：写什么、换一批之后旧绑定怎么收尾。"""
 
     def test_applied_device_writes_address_and_identity_into_config(self):

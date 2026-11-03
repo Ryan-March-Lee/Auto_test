@@ -278,6 +278,16 @@ presentation/qt/card_assets.py
 资产、诊断记录来源，`tests/integration/device_discovery/test_panel_presentation.py` 在
 `InstrumentCard.grab` 被替换成抛错时仍能正常发牌。
 
+资产与卡片**按位置一一对应**：`_deal_assets(cards, front_source)` 遍历的正是随后交给
+`start()` 的那份卡片列表，每张卡读自己的 `data` 快照。不按 `heading` 回查——卡片标题
+不保证唯一（同型号、同缩写码或未登记设备都可能重名），用标题当关联键会把某一台的画面
+套到另一台上。`DealRevealLayer.start()` 因此把这份对应关系当成契约：`len(assets)` 与
+`len(cards)` 不等、或 `front_source` 不是 `asset` / `screenshot` 时直接抛 `ValueError`
+（没有卡片仍走 `skip(reason="no-cards")`）。回退来源只由 `_deal_front_source()` 决定一次
+并同时用于渲染与诊断，字段与实际画面不会不一致。回退路径的集成测试除了断言
+`front_source=screenshot`，还断言 `InstrumentCard.grab` 为每张卡片各调用一次；默认路径
+断言它一次也没被调用。
+
 ### 执行策略
 
 在发现页结果生成时，同时生成：

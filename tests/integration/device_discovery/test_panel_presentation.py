@@ -7,11 +7,13 @@ DTO 的纯控件行为仍在 ``tests/ui``。
 from unittest import mock
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QImage
+from PySide6.QtGui import QColor, QImage, QPixmap
 from PySide6.QtTest import QTest
 
 from infrastructure.discovery.instrument_discovery import SCAN_MODE_SIMULATED, build_scanner
 from presentation.qt.device_cards import (
+    CARD_HEIGHT,
+    CARD_WIDTH,
     InstrumentCard,
     InstrumentCardData,
     instrument_picture_path,
@@ -429,7 +431,7 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         panel = self.make_panel()
         with mock.patch.object(
             InstrumentCard, "grab", side_effect=AssertionError("发牌不应再截取卡片")
-        ):
+        ) as grab:
             panel.request_scan()
             panel.worker.wait(5000)
             self.app.processEvents()
@@ -442,17 +444,30 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
             diagnostics = panel.deal_layer.diagnostics()
             self.assertEqual(diagnostics["front_source"], "asset")
             self.assertGreater(diagnostics["drawn_cards"], 0, "画面仍要有牌")
+            grab.assert_not_called()
             panel.deal_layer.finish()
 
     def test_the_screenshot_fronts_are_only_a_troubleshooting_fallback(self):
-        """回退开关打开时正面换回截图，并在诊断里写成 ``screenshot``。"""
+        """回退开关打开时正面换回截图，并在诊断里写成 ``screenshot``。
+
+        回退必须真的截了每一张卡：只看诊断字段的话，字段写对、画面仍是资产也能通过。
+        """
         from presentation.qt import device_discovery_panel as panel_module
 
         if panel_module._USE_SCREENSHOT_FRONTS:
             self.skipTest("默认路径就是资产；回退开关只在排障时人工打开")
 
         panel = self.make_panel()
-        with mock.patch.object(panel_module, "_USE_SCREENSHOT_FRONTS", True):
+        grabbed: list[bool] = []
+
+        def record_grab():
+            grabbed.append(True)
+            return QPixmap(CARD_WIDTH, CARD_HEIGHT)
+
+        with (
+            mock.patch.object(panel_module, "_USE_SCREENSHOT_FRONTS", True),
+            mock.patch.object(InstrumentCard, "grab", side_effect=record_grab),
+        ):
             panel.request_scan()
             panel.worker.wait(5000)
             self.app.processEvents()
@@ -465,7 +480,55 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
             self.assertEqual(
                 panel.deal_layer.diagnostics()["front_source"], "screenshot"
             )
+            self.assertEqual(
+                len(grabbed),
+                len(panel.cards()),
+                "回退路径要为每张卡片各截一次图",
+            )
             panel.deal_layer.finish()
+
+    def test_the_deal_assets_follow_the_cards_not_the_heading(self):
+        """资产按卡片对象逐张渲染：标题重复也不会把某一台的画面套到另一台上。
+
+        卡片标题并不保证唯一（同型号、同缩写码或未登记设备都可能重名）。这里给两张
+        标题相同的卡片，验证 ``_deal_assets`` 读的是各自的 ``data`` 快照。
+        """
+        from presentation.qt import device_discovery_panel as panel_module
+        from presentation.qt.card_assets import render_card_asset as real_render
+
+        class _StubCard:
+            """只需要 ``_deal_assets`` 用到的那几样：内容快照与逻辑尺寸。"""
+
+            def __init__(self, data):
+                self.data = data
+
+            def width(self) -> int:
+                return CARD_WIDTH
+
+            def height(self) -> int:
+                return CARD_HEIGHT
+
+        panel = self.make_panel()
+        shared_heading = "DP832A（DP8B1519）"
+        first = _StubCard(InstrumentCardData(shared_heading, code="DP8B1519"))
+        second = _StubCard(InstrumentCardData(shared_heading, code="DP8B0885"))
+        seen = []
+
+        def record_asset(data, **kwargs):
+            seen.append(data)
+            return real_render(data, **kwargs)
+
+        with mock.patch.object(
+            panel_module, "render_card_asset", side_effect=record_asset
+        ):
+            assets = panel._deal_assets(
+                [first, second], panel_module.DEAL_FRONT_SOURCE_ASSET
+            )
+
+        self.assertEqual([data.code for data in seen], ["DP8B1519", "DP8B0885"])
+        self.assertIs(seen[0], first.data, "第一份资产读的是第一张卡自己的快照")
+        self.assertIs(seen[1], second.data, "第二份资产读的是第二张卡自己的快照")
+        self.assertEqual(len(assets), 2, "资产必须与卡片一一对应")
 
     def test_every_card_is_dealt_to_where_it_will_be_flipped(self):
         """发牌落点就是卡片最终所在的位置：一开始就按最终版面取位，翻牌也翻在同一处。

@@ -1102,6 +1102,52 @@ class DealRevealLayerTests(unittest.TestCase):
             layer.diagnostics()["front_source"], DEAL_FRONT_SOURCE_SCREENSHOT
         )
 
+    def test_start_rejects_assets_that_do_not_cover_every_card(self):
+        """资产与卡片按位置一一对应：少给一份就报错，不能悄悄画成空白。
+
+        画面与卡片错位时动画仍然会播完，用户看到的却是别的卡片内容；这类调用错误要在
+        启动前就停下，而不是留到画面上。
+        """
+        from PySide6.QtCore import QPointF
+
+        from presentation.qt.scan_card import DealRevealLayer
+
+        host = QWidget()
+        host.resize(300, 300)
+        cards = [QWidget(host) for _ in range(2)]
+        layer = DealRevealLayer(host)
+        layer.setGeometry(host.rect())
+        self.addCleanup(host.close)
+
+        with self.assertRaises(ValueError):
+            layer.start(cards, self._assets(1), QPointF(10.0, 10.0))
+
+        self.assertFalse(layer.is_running(), "被拒绝的调用不应启动时间轴")
+        self.assertEqual(layer.diagnostics()["card_count"], 0)
+
+    def test_start_rejects_an_unknown_front_source(self):
+        """``front_source`` 只认资产与截图两种值：写错就失去诊断意义。"""
+        from PySide6.QtCore import QPointF
+
+        from presentation.qt.scan_card import DealRevealLayer
+
+        host = QWidget()
+        host.resize(300, 300)
+        cards = [QWidget(host) for _ in range(2)]
+        layer = DealRevealLayer(host)
+        layer.setGeometry(host.rect())
+        self.addCleanup(host.close)
+
+        with self.assertRaises(ValueError):
+            layer.start(
+                cards,
+                self._assets(2),
+                QPointF(10.0, 10.0),
+                front_source="grab",
+            )
+
+        self.assertFalse(layer.is_running(), "被拒绝的调用不应启动时间轴")
+
     def test_the_layer_is_only_a_picture(self):
         from PySide6.QtCore import Qt
 

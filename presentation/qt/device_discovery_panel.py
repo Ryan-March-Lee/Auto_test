@@ -1002,7 +1002,8 @@ class DeviceDiscoveryPanel(QWidget):
         # 卡片先按最终版面就位，再为每张卡渲染动画资产；随后用透明度效果把它们藏起来
         # （仍然占着版面），覆盖层翻到哪张就把哪张恢复显示。
         self._settle_deal_layout()
-        assets = self._deal_assets()
+        front_source = self._deal_front_source()
+        assets = self._deal_assets(cards, front_source)
         for card in cards:
             effect = QGraphicsOpacityEffect(card)
             effect.setOpacity(0.0)
@@ -1020,39 +1021,50 @@ class DeviceDiscoveryPanel(QWidget):
             assets,
             QPointF(anchor),
             self.cards_area.viewport(),
-            front_source=self._deal_front_source(),
+            front_source=front_source,
         )
 
     def _deal_front_source(self) -> str:
-        """本次发牌正面的来源：默认 ``asset``，排障回退为 ``screenshot``。"""
+        """本次发牌正面的来源：默认 ``asset``，排障回退为 ``screenshot``。
+
+        这是唯一的判断点：:meth:`_deal_assets` 按它决定要不要截图，诊断也写同一个值，
+        因此日志里的来源与画面实际用的来源不会对不上。
+        """
         return (
             DEAL_FRONT_SOURCE_SCREENSHOT
             if _USE_SCREENSHOT_FRONTS
             else DEAL_FRONT_SOURCE_ASSET
         )
 
-    def _deal_assets(self) -> list[CardAsset]:
-        """按显示顺序为每张卡片渲染发牌用的动画资产。
+    def _deal_assets(
+        self, cards: Sequence[InstrumentCard], front_source: str
+    ) -> list[CardAsset]:
+        """按 ``cards`` 的顺序返回每张卡的动画资产（与发牌顺序一一对应）。
 
-        正面由 :func:`presentation.qt.card_assets.render_card_asset` 按卡片此刻的内容
-        （:meth:`card_data`：预选与状态说明都已经写在上面）直接画出，不读控件画面，
-        因此发牌不再依赖卡片是否显示过、是否完成一次重排，也不再调用 ``QWidget.grab()``。
-        资产和真实卡片共用同一份内容、行位置与字体，尺寸取卡片自己的逻辑尺寸。
+        取的正是调用方随后交给 ``DealRevealLayer.start()`` 的那份卡片列表，逐张读卡片
+        自己的 ``data`` 快照（预选与状态说明都已经写在上面），不按设备名回查：卡片标题
+        并不保证唯一（同型号、同缩写码或未登记设备都可能重名），用 ``heading`` 当关联键
+        会把某一台的画面套到另一台上。
 
-        :data:`_USE_SCREENSHOT_FRONTS` 是排障回退：打开时只把正面换回旧截图，牌背、
-        几何与其余绘制仍走资产，保证两条路径的差别只有“正面怎么来”。
+        正面由 :func:`presentation.qt.card_assets.render_card_asset` 直接画出，不读控件
+        画面，因此发牌不再依赖卡片是否显示过、是否完成一次重排，也不再看
+        ``QWidget.grab()``；尺寸取卡片自己的逻辑尺寸，与落点一致。
+
+        ``front_source`` 由 :meth:`_deal_front_source` 定：``screenshot``（排障回退）时
+        只把正面换回旧截图，牌背、几何与其余绘制仍走资产，保证两条路径的差别只有
+        “正面怎么来”，且诊断写下的来源与实际使用的画面不会不一致。
         """
         ratio = float(self.devicePixelRatioF())
+        screenshot = front_source == DEAL_FRONT_SOURCE_SCREENSHOT
         assets: list[CardAsset] = []
-        for heading in self.card_headings():
-            card = self.card_for(heading)
+        for card in cards:
             asset = render_card_asset(
-                self.card_data(heading),
+                card.data,
                 width=max(1, int(card.width())),
                 height=max(1, int(card.height())),
                 device_pixel_ratio=ratio,
             )
-            if _USE_SCREENSHOT_FRONTS:
+            if screenshot:
                 asset = replace(asset, front=card.grab())
             assets.append(asset)
         return assets

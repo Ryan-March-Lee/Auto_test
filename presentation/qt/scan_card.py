@@ -1730,12 +1730,33 @@ class DealRevealLayer(QWidget):
         控件，也不再调用 ``QWidget.grab()``。``front_source`` 只写进日志与诊断快照，
         用来区分默认的 ``asset`` 与排障时的 ``screenshot`` 回退。
 
+        契约是**按位置一一对应**：``assets`` 必须与 ``cards`` 等长，第 ``index`` 份资产
+        就是第 ``index`` 张卡片的画面。少给或多给都直接报错——画面与卡片错位时动画仍会
+        播完，用户看到的却是别的卡片内容，这种错误不能靠“画成空白”悄悄吞掉。没有卡片
+        时走 :meth:`skip`，不需要资产。``front_source`` 只接受
+        :data:`DEAL_FRONT_SOURCE_ASSET` / :data:`DEAL_FRONT_SOURCE_SCREENSHOT`，写错
+        会让诊断分不清资产路径与截图回退。
+
         ``clip_widget`` 是卡片区的可见视口：结果多到要滚动时，没滚到的行不该被画到
         状态行或动作行上。
         """
         if not cards:
             self.skip(reason="no-cards")
             return
+        if len(assets) != len(cards):
+            raise ValueError(
+                "发牌资产必须与卡片一一对应："
+                f"{len(cards)} 张卡片、{len(assets)} 份资产"
+            )
+        if front_source not in (
+            DEAL_FRONT_SOURCE_ASSET,
+            DEAL_FRONT_SOURCE_SCREENSHOT,
+        ):
+            raise ValueError(
+                "发牌正面来源只接受 "
+                f"{DEAL_FRONT_SOURCE_ASSET!r} 或 {DEAL_FRONT_SOURCE_SCREENSHOT!r}，"
+                f"收到 {front_source!r}"
+            )
         self._timer.stop()
         self._cards = list(cards)
         self._assets = list(assets)

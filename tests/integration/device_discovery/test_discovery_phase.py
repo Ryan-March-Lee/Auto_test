@@ -16,9 +16,9 @@ from infrastructure.discovery.instrument_discovery import (
     build_scanner,
 )
 from infrastructure.discovery.simulated_network import demo_idn_responses
-from presentation.qt import device_discovery_panel as panel_module
+from presentation.qt import instrument_discovery_panel as panel_module
 from presentation.qt.animation_diagnostics import logger as animation_logger
-from presentation.qt.device_discovery_panel import (
+from presentation.qt.instrument_discovery_panel import (
     BOX_STATE_BUSY,
     BOX_STATE_IDLE,
     BOX_STATE_RESULTS,
@@ -98,14 +98,14 @@ class DiscoveryPhaseTests(DiscoveryPanelTestCase):
         # 结果一消费就进入 DEALING：卡片按最终版面就位，但真实控件藏起来且不可点。
         self.assertIs(panel.phase(), DiscoveryPhase.DEALING)
         self.assertEqual(panel.box_state(), BOX_STATE_RESULTS)
-        self.assertTrue(panel.deal_layer.is_running())
+        self.assertTrue(panel.deal_animation.is_running())
         self.assertTrue(panel.cards_area.isVisible())
         self.assertFalse(panel.cards_area.isEnabled(), "发牌期间真实卡片不能点")
         self.assertFalse(panel.status_label.isVisible(), "牌还背面朝上时先不剧透统计")
         for card in panel.cards():
             self.assertIsNotNone(card.graphicsEffect())
 
-        panel.deal_layer.finish()
+        panel.deal_animation.finish()
         self.app.processEvents()
 
         self.assertIs(panel.phase(), DiscoveryPhase.INTERACTIVE)
@@ -137,9 +137,9 @@ class DiscoveryPhaseTests(DiscoveryPanelTestCase):
         self.assertEqual(panel.box_state(), BOX_STATE_IDLE)
         self.assertNotIn("dealing", phases, "空结果不进入发牌")
         self.assertEqual(panel.card_count(), 0)
-        self.assertFalse(panel.deal_layer.is_running())
+        self.assertFalse(panel.deal_animation.is_running())
         self.assertEqual(
-            panel.deal_layer.diagnostics()["event"], "skip", "没有卡片时由动画统一记 skip"
+            panel.deal_animation.diagnostics()["event"], "skip", "没有卡片时由动画统一记 skip"
         )
         self.assertTrue(panel.scan_btn.isVisible())
         self.assertTrue(panel.status_label.isVisible())
@@ -192,13 +192,13 @@ class DiscoveryPhaseTests(DiscoveryPanelTestCase):
         self.app.processEvents()
         self.app.processEvents()
         self.assertIs(panel.phase(), DiscoveryPhase.DEALING)
-        self.assertTrue(panel.deal_layer.is_running())
+        self.assertTrue(panel.deal_animation.is_running())
 
         panel.hide()
         self.app.processEvents()
 
-        self.assertFalse(panel.deal_layer.is_running(), "隐藏后发牌不能还在走")
-        diagnostics = panel.deal_layer.diagnostics()
+        self.assertFalse(panel.deal_animation.is_running(), "隐藏后发牌不能还在走")
+        diagnostics = panel.deal_animation.diagnostics()
         self.assertEqual(diagnostics["cancel_reason"], "page-hidden")
         self.assertEqual(diagnostics["restore_result"], "revealed")
         self.assertIs(panel.phase(), DiscoveryPhase.INTERACTIVE)
@@ -215,9 +215,9 @@ class DiscoveryPhaseTests(DiscoveryPanelTestCase):
 
             # 没有发出 cycle_finished：结果照样进入 DEALING，说明不再隐含依赖牌堆周期。
             self.assertIs(panel.phase(), DiscoveryPhase.DEALING)
-            self.assertTrue(panel.deal_layer.is_running())
+            self.assertTrue(panel.deal_animation.is_running())
 
-            panel.deal_layer.finish()
+            panel.deal_animation.finish()
             self.app.processEvents()
             self.assertIs(panel.phase(), DiscoveryPhase.INTERACTIVE)
 
@@ -228,7 +228,7 @@ class DiscoveryPhaseTests(DiscoveryPanelTestCase):
         self.assertIs(panel.phase(), DiscoveryPhase.RESULT_PENDING)
 
         with mock.patch.object(
-            panel.deal_layer, "start", side_effect=RuntimeError("boom")
+            panel.deal_animation, "start", side_effect=RuntimeError("boom")
         ):
             with self.assertRaises(RuntimeError):
                 panel._consume_pending_outcome()
@@ -248,7 +248,7 @@ class DiscoveryPhaseTests(DiscoveryPanelTestCase):
             panel.wait_stack.finish_cycle()
             self.app.processEvents()
             self.app.processEvents()
-            panel.deal_layer.finish()
+            panel.deal_animation.finish()
             self.app.processEvents()
 
         lines = [
@@ -393,7 +393,7 @@ class DiscoveryPhaseTests(DiscoveryPanelTestCase):
 
         panel.request_scan()
         self.assertIs(panel.phase(), DiscoveryPhase.DEALING)
-        self.assertTrue(panel.deal_layer.is_running())
+        self.assertTrue(panel.deal_animation.is_running())
 
 
 if __name__ == "__main__":

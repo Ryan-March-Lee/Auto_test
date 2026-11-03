@@ -10,7 +10,7 @@ import unittest
 from domain.instruments.models import DeviceStatus, InstrumentIdentity
 from infrastructure.discovery.instrument_discovery import DiscoveredDevice
 from presentation.qt.device_cards import device_code, instrument_picture_path
-from presentation.qt.device_discovery_panel import (
+from presentation.qt.instrument_discovery_panel import (
     binding_device_key,
     card_heading,
     card_model,

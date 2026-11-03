@@ -18,7 +18,7 @@ from infrastructure.discovery.instrument_discovery import (
     build_scanner,
 )
 from infrastructure.persistence.instrument_registry import InstrumentRegistry
-from presentation.qt.device_discovery_panel import BOX_STATE_BUSY, BOX_STATE_IDLE
+from presentation.qt.instrument_discovery_panel import BOX_STATE_BUSY, BOX_STATE_IDLE
 
 from .support import SMW_IDN, DiscoveryPanelTestCase, registry
 

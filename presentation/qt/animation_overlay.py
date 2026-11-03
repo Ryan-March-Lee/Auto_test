@@ -19,7 +19,7 @@
   键盘焦点都落到下面的普通内容；它只是画面。
 
 覆盖层坐标系就是页面根容器的坐标系：卡片落点在动画开始前一次性换算到这里（见
-:meth:`DeviceDiscoveryPanel._start_deal_reveal`），之后滚动或内部布局变化都不会再
+:meth:`InstrumentDiscoveryPanel._start_deal_reveal`），之后滚动或内部布局变化都不会再
 影响已经开始的动画。宿主尺寸变化时发出 :attr:`resized`；宿主被藏起来或所在窗口被
 最小化时发出 :attr:`host_hidden`（同一次“看不见”只发一次）。页面把这些事件交给
 :class:`presentation.qt.animation_lifecycle.OverlayLifecycle`，按“取消并恢复”的确定

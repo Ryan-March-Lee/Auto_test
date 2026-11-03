@@ -29,7 +29,7 @@ from application.device_binding import (
     DeviceBindingResult,
 )
 from presentation.qt.connection_page import ConnectionPage
-from presentation.qt.device_discovery_panel import BOX_STATE_RESULTS
+from presentation.qt.instrument_discovery_panel import BOX_STATE_RESULTS
 from presentation.qt.theme import PAGE_CONTENT_MAX_WIDTH
 
 ROOT = Path(__file__).resolve().parents[2]

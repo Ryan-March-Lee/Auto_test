@@ -28,7 +28,7 @@ from infrastructure.discovery.instrument_discovery import (  # noqa: E402
     SCAN_MODE_SIMULATED,
     build_scanner,
 )
-from presentation.qt.device_discovery_panel import DiscoveryPhase  # noqa: E402
+from presentation.qt.instrument_discovery_panel import DiscoveryPhase  # noqa: E402
 
 from .support import (  # noqa: E402
     SMW_IDN,
@@ -109,17 +109,17 @@ class DiscoveryFrameTests(DiscoveryPanelTestCase):
         panel = self.make_panel(factory or self.default_factory, size=size)
         self._scan_until_result(panel)
         self.assertIs(panel.phase(), DiscoveryPhase.DEALING)
-        self.assertTrue(panel.deal_layer.is_running(), "有设备时应进入发牌")
+        self.assertTrue(panel.deal_animation.is_running(), "有设备时应进入发牌")
         return panel
 
     @staticmethod
     def _canvas(panel):
         """动画画布：接线到页面时是页面级覆盖层，单独测试面板时是结果区里的发牌层。"""
-        return panel.animation_overlay() or panel.deal_layer
+        return panel.animation_overlay() or panel.deal_animation
 
     def _overlay_ink(self, panel, elapsed_ms: float | None = None):
         """画布在某一时刻的画面与“与底色不同的采样点数量”。"""
-        layer = panel.deal_layer
+        layer = panel.deal_animation
         layer._timer.stop()
         if elapsed_ms is not None:
             layer._elapsed = float(elapsed_ms)
@@ -134,7 +134,7 @@ class DiscoveryFrameTests(DiscoveryPanelTestCase):
         self._scan_until_result(panel)
 
         self.assertIs(panel.phase(), DiscoveryPhase.IDLE)
-        layer = panel.deal_layer
+        layer = panel.deal_animation
         self.assertFalse(layer.is_running())
         self.assertFalse(layer.isVisible())
         self.assertEqual(layer.item_count(), 0)
@@ -154,8 +154,8 @@ class DiscoveryFrameTests(DiscoveryPanelTestCase):
         panel = self._dealing(_single_device_factory)
 
         self.assertEqual(panel.card_count(), 1)
-        self.assertEqual(panel.deal_layer.item_count(), 1)
-        self.assertEqual(len(panel.deal_layer.targets()), 1)
+        self.assertEqual(panel.deal_animation.item_count(), 1)
+        self.assertEqual(len(panel.deal_animation.targets()), 1)
         # 刚起飞时画面里至少是牌堆/飞行中的牌，不能是空覆盖层。
         taking_off, _image, layer = self._overlay_ink(panel, 40.0)
         self.assertGreater(taking_off, 0, "单设备也要真的画出牌")
@@ -180,7 +180,7 @@ class DiscoveryFrameTests(DiscoveryPanelTestCase):
         panel = self._dealing()
 
         cards = panel.cards()
-        layer = panel.deal_layer
+        layer = panel.deal_animation
         self.assertGreater(len(cards), 1)
         self.assertEqual(layer.item_count(), len(cards))
         targets = layer.targets()
@@ -209,7 +209,7 @@ class DiscoveryFrameTests(DiscoveryPanelTestCase):
         panel = self._dealing(six_device_factory, size=(520, 900))
 
         self.assertEqual(panel.card_count(), 6)
-        layer = panel.deal_layer
+        layer = panel.deal_animation
         overlay_rect = QRectF(self._canvas(panel).rect())
         targets = layer.targets()
         self.assertEqual(len(targets), 6)
@@ -240,7 +240,7 @@ class DiscoveryFrameTests(DiscoveryPanelTestCase):
     def test_cancelling_mid_deal_restores_the_real_cards_and_clears_the_overlay(self):
         """发牌中取消：覆盖层清空，真实卡片恢复可见、可点，统计重新出现。"""
         panel = self._dealing()
-        layer = panel.deal_layer
+        layer = panel.deal_animation
         ink_before, _image, _layer = self._overlay_ink(panel, 200.0)
         self.assertGreater(ink_before, 0, "取消前画面是满的")
         # 取帧时为了钉住时刻停过表；取消入口按“正在播”判断，这里恢复计时器。

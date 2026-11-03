@@ -52,10 +52,10 @@ from application.ports.device_discovery import DEMO_SUBNET
 from .animation_lifecycle import OverlayLifecycle
 from .animation_overlay import AnimationOverlay
 from .config_form_bindings import binding_address, binding_records
-from .device_discovery_panel import (
+from .instrument_discovery_panel import (
     BOX_STATE_IDLE,
     BOX_STATE_RESULTS,
-    DeviceDiscoveryPanel,
+    InstrumentDiscoveryPanel,
     subnet_from_address,
 )
 from .theme import PAGE_CONTENT_MAX_WIDTH, set_button_variant
@@ -130,7 +130,7 @@ class ConnectionPage(QWidget):
         panel_host_layout = host.layout()
         if panel_host_layout is None:
             raise RuntimeError("connection_page.ui 的 discoveryPanelHost 缺少布局")
-        self.discovery_panel = DeviceDiscoveryPanel(
+        self.discovery_panel = InstrumentDiscoveryPanel(
             scanner_factory=self._scanner_factory or self._default_scanner_factory(),
             default_subnet=self._default_scan_subnet(self.binding_port.view_state()),
             parent=host,

@@ -4,11 +4,11 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QScrollArea
 
-from presentation.qt.device_discovery_panel import (
+from presentation.qt.instrument_discovery_panel import (
     BOX_STATE_BUSY,
     BOX_STATE_IDLE,
     BOX_STATE_RESULTS,
-    DeviceDiscoveryPanel,
+    InstrumentDiscoveryPanel,
     DiscoveryPhase,
 )
 
@@ -25,7 +25,7 @@ class ConnectionPageLayoutTests(ConnectionPageTestCase):
 
     def test_page_builds_the_discovery_panel(self):
         page = self.make_page()
-        self.assertIsInstance(self.connection.discovery_panel, DeviceDiscoveryPanel)
+        self.assertIsInstance(self.connection.discovery_panel, InstrumentDiscoveryPanel)
         # 面板只归连接页所有：配置页不再登记或持有它，回写出配置会话完成。
         self.assertFalse(hasattr(page, "discovery_panel"))
         self.assertFalse(hasattr(page, "attach_discovery_panel"))
@@ -498,8 +498,8 @@ class DiscoveryAnimationOverlayTests(ConnectionPageTestCase):
         panel.wait_stack.finish_cycle()
         self.app.processEvents()
         self.app.processEvents()
-        self.assertTrue(panel.deal_layer.is_running(), "扫描结果应由发牌动画带出来")
-        return page, panel, panel.deal_layer
+        self.assertTrue(panel.deal_animation.is_running(), "扫描结果应由发牌动画带出来")
+        return page, panel, panel.deal_animation
 
     def test_the_deal_overlay_sits_on_the_page_root_not_in_the_scroll_area(self):
         """覆盖层挂在页面根容器上：滚动区与结果区都不再是它的坐标系。
@@ -513,7 +513,7 @@ class DiscoveryAnimationOverlayTests(ConnectionPageTestCase):
 
         self.assertIs(panel.animation_overlay(), overlay)
         self.assertIs(
-            panel.deal_layer.parentWidget(), overlay, "发牌层铺在页面级覆盖层里"
+            panel.deal_animation.parentWidget(), overlay, "发牌层铺在页面级覆盖层里"
         )
         self.assertIs(overlay.parentWidget(), page.overlay_host)
         self.assertFalse(page.scroll_area.isAncestorOf(overlay), "覆盖层不能在滚动区里")

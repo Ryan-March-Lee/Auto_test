@@ -15,7 +15,7 @@
   漂移，所以不参与身份，只作连接信息。
 
 卡片只负责显示与选中状态，不知道扫描结果的数据结构：选择、应用与校验仍由
-:class:`presentation.qt.device_discovery_panel.DeviceDiscoveryPanel` 负责。
+:class:`presentation.qt.instrument_discovery_panel.InstrumentDiscoveryPanel` 负责。
 
 **卡片内容是一份纯数据**（:class:`InstrumentCardData`）：面板从扫描结果算出“第一行写
 什么、图片用哪张、状态说明是什么”，把这份数据同时交给真实卡片

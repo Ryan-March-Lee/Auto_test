@@ -41,7 +41,7 @@
 动效；发牌动画现在正面用 :attr:`CardAsset.front`、背面用 :attr:`CardAsset.back`
 （计划步骤 7 已把发牌层拆成独立的 :class:`presentation.qt.card_deal_animation.CardDealAnimation`）。
 面板的旧 ``card.grab()`` 截图路径只在
-:data:`presentation.qt.device_discovery_panel._USE_SCREENSHOT_FRONTS`
+:data:`presentation.qt.instrument_discovery_panel._USE_SCREENSHOT_FRONTS`
 打开时用于排障对照，默认不走。
 """
 

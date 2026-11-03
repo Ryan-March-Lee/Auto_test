@@ -11,7 +11,7 @@
 - 原 CSS 在卡片底下还有一张紫→蓝渐变底卡（``::before``），这里**不要**：卡片外面只有
   投影，悬停也不会从卡片背后转出一张色卡来。
 - 投影比卡片大一圈，伸出父控件上沿的那一段会被裁掉。结果区因此在卡片上方留了
-  :data:`SCAN_CARD_HEADROOM` 的一圈空白（见 ``device_discovery_panel``），让投影落得下。
+  :data:`SCAN_CARD_HEADROOM` 的一圈空白（见 ``instrument_discovery_panel``），让投影落得下。
 
 **按钮的形状大小就是卡片的形状大小**：控件固定为 :data:`CARD_WIDTH` × :data:`CARD_HEIGHT`、
 圆角取 :data:`presentation.qt.theme.CARD_RADIUS`，这两份都不是本模块自己定的，而是与仪器

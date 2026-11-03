@@ -24,7 +24,7 @@ from infrastructure.persistence.instrument_registry import InstrumentRegistry
 from presentation.qt.config_page import ConfigPage
 from presentation.qt.configuration_session import ConfigurationSession
 from presentation.qt.connection_page import ConnectionPage
-from presentation.qt.device_discovery_panel import DeviceDiscoveryPanel
+from presentation.qt.instrument_discovery_panel import InstrumentDiscoveryPanel
 
 
 SMW_IDN = "Rohde&Schwarz,SMW200A,1412.0000K02/105462,5.20.043.47"
@@ -140,7 +140,7 @@ class DiscoveryPanelTestCase(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def make_panel(self, factory=None, bindings=None, size=None):
-        panel = DeviceDiscoveryPanel(scanner_factory=factory or self.default_factory)
+        panel = InstrumentDiscoveryPanel(scanner_factory=factory or self.default_factory)
         if bindings is not None:
             panel.set_device_bindings(bindings)
         size = size or self.panel_size
@@ -156,8 +156,8 @@ class DiscoveryPanelTestCase(unittest.TestCase):
         panel.wait_stack.finish_cycle()
         self.app.processEvents()
         self.app.processEvents()
-        if panel.deal_layer.is_running():
-            panel.deal_layer.finish()
+        if panel.deal_animation.is_running():
+            panel.deal_animation.finish()
             self.app.processEvents()
 
     def run_scan(self, panel):
@@ -188,8 +188,8 @@ class ConnectionPageTestCase(unittest.TestCase):
         panel.wait_stack.finish_cycle()
         self.app.processEvents()
         self.app.processEvents()
-        if panel.deal_layer.is_running():
-            panel.deal_layer.finish()
+        if panel.deal_animation.is_running():
+            panel.deal_animation.finish()
             self.app.processEvents()
 
     def run_scan(self, panel):

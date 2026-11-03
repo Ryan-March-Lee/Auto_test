@@ -71,7 +71,7 @@ class CancelableAnimation(Protocol):
 
 @runtime_checkable
 class CancelEntry(Protocol):
-    """页面登记的收尾入口（``DeviceDiscoveryPanel.cancel_deal_reveal`` 实现它）。
+    """页面登记的收尾入口（``InstrumentDiscoveryPanel.cancel_deal_reveal`` 实现它）。
 
     比动画对象多两件事：调用动画的 ``cancel(...)`` 之后恢复真实控件与流程；返回
     “这一次是否真的收尾了一个还在播的过渡”。没有在播时返回 ``False``，因此页面隐藏
@@ -127,7 +127,7 @@ class OverlayLifecycle(QObject):
     def attach(self, entry: CancelEntry) -> None:
         """登记页面的收尾入口（:class:`CancelEntry`）。
 
-        传 :meth:`DeviceDiscoveryPanel.cancel_deal_reveal` 这类“页面自己的收尾入口”，
+        传 :meth:`InstrumentDiscoveryPanel.cancel_deal_reveal` 这类“页面自己的收尾入口”，
         而不是动画对象本身：页面还需要在收尾之后恢复卡片与流程状态，并且要回答这一次
         是否真的收尾了一个还在播的过渡。
         """

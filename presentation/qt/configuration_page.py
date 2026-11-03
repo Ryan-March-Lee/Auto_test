@@ -78,7 +78,7 @@ from .config_power_section import (
     rebuild_power_tabs,
 )
 from .config_page_widgets import build_action_bar, combo_box, spin_box
-from .device_discovery_panel import role_label
+from .instrument_discovery_panel import role_label
 from .pages import PageControllerBindingMixin
 from .theme import PAGE_CONTENT_MAX_WIDTH, set_button_variant
 

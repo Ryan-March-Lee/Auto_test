@@ -18,7 +18,7 @@ from presentation.qt.device_cards import (
     InstrumentCardData,
     instrument_picture_path,
 )
-from presentation.qt.device_discovery_panel import (
+from presentation.qt.instrument_discovery_panel import (
     BOX_STATE_BUSY,
     BOX_STATE_IDLE,
     BOX_STATE_RESULTS,
@@ -394,11 +394,11 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
 
         self.assertEqual(panel.box_state(), BOX_STATE_RESULTS)
         self.assertTrue(panel.cards_area.isVisible())
-        self.assertTrue(panel.deal_layer.is_running(), "结果卡片应由发牌动画带出来")
+        self.assertTrue(panel.deal_animation.is_running(), "结果卡片应由发牌动画带出来")
         self.assertFalse(
             panel.status_label.isVisible(), "牌还背面朝上时先不要写出结果统计"
         )
-        diagnostics = panel.deal_layer.diagnostics()
+        diagnostics = panel.deal_animation.diagnostics()
         self.assertIn(diagnostics["event"], ("start", "first_paint"))
         self.assertIn(
             diagnostics["phase"], ("dealing", "settling", "flipping")
@@ -415,10 +415,10 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
             self.assertAlmostEqual(effect.opacity(), 0.0)
 
         # 覆盖层走完：所有正面露出来，状态行这时才出现。
-        panel.deal_layer.finish()
+        panel.deal_animation.finish()
         self.app.processEvents()
-        self.assertFalse(panel.deal_layer.is_running())
-        self.assertFalse(panel.deal_layer.isVisible())
+        self.assertFalse(panel.deal_animation.is_running())
+        self.assertFalse(panel.deal_animation.isVisible())
         self.assertTrue(panel.status_label.isVisible())
         for card in panel.cards():
             self.assertIsNone(card.graphicsEffect())
@@ -440,19 +440,19 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
             self.app.processEvents()
             self.app.processEvents()
 
-            self.assertTrue(panel.deal_layer.is_running())
-            diagnostics = panel.deal_layer.diagnostics()
+            self.assertTrue(panel.deal_animation.is_running())
+            diagnostics = panel.deal_animation.diagnostics()
             self.assertEqual(diagnostics["front_source"], "asset")
             self.assertGreater(diagnostics["drawn_cards"], 0, "画面仍要有牌")
             grab.assert_not_called()
-            panel.deal_layer.finish()
+            panel.deal_animation.finish()
 
     def test_the_screenshot_fronts_are_only_a_troubleshooting_fallback(self):
         """回退开关打开时正面换回截图，并在诊断里写成 ``screenshot``。
 
         回退必须真的截了每一张卡：只看诊断字段的话，字段写对、画面仍是资产也能通过。
         """
-        from presentation.qt import device_discovery_panel as panel_module
+        from presentation.qt import instrument_discovery_panel as panel_module
 
         if panel_module._USE_SCREENSHOT_FRONTS:
             self.skipTest("默认路径就是资产；回退开关只在排障时人工打开")
@@ -476,16 +476,16 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
             self.app.processEvents()
             self.app.processEvents()
 
-            self.assertTrue(panel.deal_layer.is_running())
+            self.assertTrue(panel.deal_animation.is_running())
             self.assertEqual(
-                panel.deal_layer.diagnostics()["front_source"], "screenshot"
+                panel.deal_animation.diagnostics()["front_source"], "screenshot"
             )
             self.assertEqual(
                 len(grabbed),
                 len(panel.cards()),
                 "回退路径要为每张卡片各截一次图",
             )
-            panel.deal_layer.finish()
+            panel.deal_animation.finish()
 
     def test_the_deal_assets_follow_the_cards_not_the_heading(self):
         """资产按卡片对象逐张渲染：标题重复也不会把某一台的画面套到另一台上。
@@ -493,7 +493,7 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         卡片标题并不保证唯一（同型号、同缩写码或未登记设备都可能重名）。这里给两张
         标题相同的卡片，验证 ``_deal_assets`` 读的是各自的 ``data`` 快照。
         """
-        from presentation.qt import device_discovery_panel as panel_module
+        from presentation.qt import instrument_discovery_panel as panel_module
         from presentation.qt.card_assets import render_card_asset as real_render
 
         class _StubCard:
@@ -546,7 +546,7 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         # 拿到的就是最终位置”，而不是下一轮布局事件补出来的位置。
         panel.wait_stack.finish_cycle()
 
-        layer = panel.deal_layer
+        layer = panel.deal_animation
         self.assertTrue(layer.is_running())
         cards = panel.cards()
         self.assertGreater(len(cards), 1)
@@ -582,16 +582,16 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         panel.wait_stack.finish_cycle()
         self.app.processEvents()
         self.app.processEvents()
-        self.assertTrue(panel.deal_layer.is_running())
+        self.assertTrue(panel.deal_animation.is_running())
 
         panel.request_back()
         self.app.processEvents()
 
         self.assertEqual(panel.box_state(), BOX_STATE_IDLE)
-        self.assertFalse(panel.deal_layer.isVisible())
+        self.assertFalse(panel.deal_animation.isVisible())
         self.assertEqual(panel.card_count(), 0)
         self.assertTrue(panel.scan_btn.isVisible())
-        diagnostics = panel.deal_layer.diagnostics()
+        diagnostics = panel.deal_animation.diagnostics()
         self.assertEqual(
             diagnostics["cancel_reason"], "results-cleared", "返回清空结果要写明取消原因"
         )
@@ -611,11 +611,11 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         panel.wait_stack.finish_cycle()
         self.app.processEvents()
         self.app.processEvents()
-        self.assertTrue(panel.deal_layer.is_running())
+        self.assertTrue(panel.deal_animation.is_running())
 
         self.assertTrue(panel.shutdown())
 
-        diagnostics = panel.deal_layer.diagnostics()
+        diagnostics = panel.deal_animation.diagnostics()
         self.assertEqual(diagnostics["cancel_reason"], "page-shutdown")
         self.assertEqual(diagnostics["restore_result"], "hidden")
         self.assertFalse(diagnostics["running"])
@@ -627,9 +627,9 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         清理，再把异常原样抛出去。
         """
         panel = self.run_scan(self.make_panel())
-        self.assertFalse(panel.deal_layer.is_running())
+        self.assertFalse(panel.deal_animation.is_running())
         with mock.patch.object(
-            panel.deal_layer, "start", side_effect=RuntimeError("boom")
+            panel.deal_animation, "start", side_effect=RuntimeError("boom")
         ):
             with self.assertRaises(RuntimeError):
                 panel._start_deal_reveal(None)
@@ -637,8 +637,8 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         for card in panel.cards():
             self.assertIsNone(card.graphicsEffect(), "失败后卡片不能再藏着")
         self.assertTrue(panel.cards_area.isEnabled(), "失败后卡片区要能继续操作")
-        self.assertFalse(panel.deal_layer.isVisible())
-        self.assertFalse(panel.deal_layer.is_running())
+        self.assertFalse(panel.deal_animation.isVisible())
+        self.assertFalse(panel.deal_animation.is_running())
 
     def test_a_scan_that_finds_nothing_leaves_the_button_in_the_box_again(self):
         def factory(_mode):

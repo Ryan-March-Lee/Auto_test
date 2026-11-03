@@ -487,7 +487,7 @@ QLabel[role="pageTitle"] {
 /* ===== 设备发现结果区（“仪表配置”页） =====
    扫描行留在结果区外面；结果区**不画外框**：没有边框、没有底色，仪器卡片直接落在
    页面背景上，“查找设备”也是浮在页面上的一张卡片按钮。结果区的高度按“两行卡片”
-   算定（见 ``device_discovery_panel.DeviceDiscoveryPanel._results_box_height``），
+   算定（见 ``instrument_discovery_panel.InstrumentDiscoveryPanel._results_box_height``），
    窗口矮时由页面把它收进可用高度、多余卡片在卡片区内部滚动；高度不随扫描状态变化，
    因此点一次“查找设备”不会让页面跳动。 */
 QFrame#discoveryResultsBox {

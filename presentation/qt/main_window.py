@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 from infrastructure.logging.app_logging import get_logger, setup_logging
 from presentation.qt.application_coordinator import ApplicationCoordinator
 from presentation.qt.composition import build_device_scanner_factory, default_paths
-from presentation.qt.config_page import ConfigPage
+from presentation.qt.configuration_page import ConfigurationPage
 from presentation.qt.configuration_session import ConfigurationSession
 from presentation.qt.connection_dialog import ConnectionDialog
 from presentation.qt.connection_page import ConnectionPage
@@ -339,7 +339,7 @@ class MainWindow(QMainWindow):
 
     def create_config_tab(self):
         """创建仪器配置选项卡；配置页与协调器在这里互相登记。"""
-        tab = ConfigPage(self.config, self)
+        tab = ConfigurationPage(self.config, self)
         tab.save_requested.connect(self.save_config)
         tab.connect_requested.connect(self.connect_instruments)
         tab.create_run_requested.connect(self.coordinator.create_prepared_run)

@@ -2,7 +2,7 @@
 
 本模块构建配置页右栏的两块控件：按电源键分页的「电源详细配置」标签页，以及
 「电源分配设置」表单。构建所需的配置条目与可选项由页面
-（:mod:`presentation.qt.config_page`）读出后传入，控件仍登记在页面上——页面负责信号
+（:mod:`presentation.qt.configuration_page`）读出后传入，控件仍登记在页面上——页面负责信号
 连接、派生界面状态（PA 单元可见性、驱放供电方式）和配置读写。
 
 页面传进来的输入都是显式声明的结构（见 :data:`PowerSupplySources`、

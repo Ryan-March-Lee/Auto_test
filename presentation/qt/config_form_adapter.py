@@ -82,7 +82,7 @@ class ConfigurationFormAdapter:
     只在确有用户可见错误时调用一次。
 
     适配器本身不保存控件读数，页面按需创建它（见
-    :meth:`presentation.qt.config_page.ConfigPage.form_adapter`）：这样页面与适配器之间
+    :meth:`presentation.qt.configuration_page.ConfigurationPage.form_adapter`）：这样页面与适配器之间
     不形成引用环，Qt 控件不会因为后台线程触发的循环垃圾回收而在非主线程析构。
     """
 

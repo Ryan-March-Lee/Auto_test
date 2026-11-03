@@ -13,7 +13,7 @@ from presentation.qt.config_form_adapter import ConfigurationFormAdapter
 
 ROOT = Path(__file__).resolve().parents[2]
 ADAPTER_SOURCE = ROOT / "presentation" / "qt" / "config_form_adapter.py"
-PAGE_SOURCE = ROOT / "presentation" / "qt" / "config_page.py"
+PAGE_SOURCE = ROOT / "presentation" / "qt" / "configuration_page.py"
 
 
 class _Text:

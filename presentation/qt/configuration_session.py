@@ -1,6 +1,6 @@
 """配置会话协调器（GUI 重构步骤 8）：连接页与配置页之间的窄接口。
 
-“仪表配置”页（:mod:`presentation.qt.connection_page`）不再持有配置页实例，也不再读它的
+“仪表配置”页（:mod:`presentation.qt.instrument_setup_page`）不再持有配置页实例，也不再读它的
 ``device_bindings`` / ``config``。它只依赖 :class:`application.ports.device_binding.DeviceBindingPort`：
 
 - :meth:`ConfigurationSession.view_state` 转发配置页的只读视图

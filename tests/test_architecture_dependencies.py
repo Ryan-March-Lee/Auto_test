@@ -396,7 +396,7 @@ class ProductionDependencyTests(unittest.TestCase):
         self.assertNotIn("on_pa_unit_count_changed", methods)
 
     def test_configuration_modules_do_not_depend_on_main_window(self):
-        for path in (Path("presentation/qt/config_page.py"), Path("presentation/qt/config_form_state.py")):
+        for path in (Path("presentation/qt/configuration_page.py"), Path("presentation/qt/config_form_state.py")):
             source = path.read_text(encoding="utf-8-sig")
             self.assertNotIn("enhanced_main_gui", source)
             self.assertNotIn("MeasurementController", source)
@@ -527,7 +527,7 @@ class ProductionDependencyTests(unittest.TestCase):
 
     def test_gui_data_pages_do_not_access_storage_implementations(self):
         sources = (
-            ROOT / "presentation" / "qt" / "config_page.py",
+            ROOT / "presentation" / "qt" / "configuration_page.py",
             ROOT / "presentation" / "qt" / "config_projection.py",
             ROOT / "presentation" / "qt" / "history_view_model.py",
             ROOT / "presentation" / "qt" / "visualization_page.py",
@@ -723,14 +723,17 @@ class ProductionDependencyTests(unittest.TestCase):
             {"validate", "build_config", "apply_config", "set_run_status", "driver_mode_requested"},
             "配置页端口能力集合变化时必须同步更新协调器与页面，而不是放开断言",
         )
-        page = _class_node(_tree(ROOT / "presentation" / "qt" / "config_page.py"), "ConfigPage")
+        page = _class_node(
+            _tree(ROOT / "presentation" / "qt" / "configuration_page.py"),
+            "ConfigurationPage",
+        )
         page_methods = {
             node.name for node in page.body if isinstance(node, ast.FunctionDef)
         }
         self.assertEqual(
             members - page_methods,
             set(),
-            "ConfigPage 必须实现配置页端口的全部能力",
+            "ConfigurationPage 必须实现配置页端口的全部能力",
         )
 
     def test_run_coordinator_requires_explicit_user_feedback_callbacks(self):
@@ -932,7 +935,7 @@ class ProductionDependencyTests(unittest.TestCase):
 
     def test_configuration_page_delegates_backfill_to_the_projection_module(self):
         """步骤 7 / 11：配置页只经表单 Adapter 回填，逐字段规则仍在 config_projection。"""
-        page_source = (ROOT / "presentation" / "qt" / "config_page.py").read_text(
+        page_source = (ROOT / "presentation" / "qt" / "configuration_page.py").read_text(
             encoding="utf-8-sig"
         )
         adapter_source = (
@@ -944,8 +947,8 @@ class ProductionDependencyTests(unittest.TestCase):
         # 电源分配的可选项由页面按当前绑定算好再交给投影（步骤 9：显示文本带型号，
         # 业务值在 itemData 里）；投影自己不从绑定记录拼显示文本。
         self.assertIn("supplies=self._power_supply_choices(", page_source)
-        tree = _tree(ROOT / "presentation" / "qt" / "config_page.py")
-        page = _class_node(tree, "ConfigPage")
+        tree = _tree(ROOT / "presentation" / "qt" / "configuration_page.py")
+        page = _class_node(tree, "ConfigurationPage")
         page_methods = {
             node.name for node in page.body if isinstance(node, ast.FunctionDef)
         }

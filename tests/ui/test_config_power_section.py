@@ -23,7 +23,7 @@ from presentation.qt.config_power_section import (
 from presentation.qt.config_projection import DEFAULT_POWER_CHANNEL_VALUE
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-PAGE_SOURCE = PROJECT_ROOT / "presentation" / "qt" / "config_page.py"
+PAGE_SOURCE = PROJECT_ROOT / "presentation" / "qt" / "configuration_page.py"
 SECTION_SOURCE = PROJECT_ROOT / "presentation" / "qt" / "config_power_section.py"
 
 # 页面保留的三个委托壳，以及它们分别要转给的构建模块入口。
@@ -40,7 +40,7 @@ def _page_class(tree) -> ast.ClassDef:
     return next(
         node
         for node in tree.body
-        if isinstance(node, ast.ClassDef) and node.name == "ConfigPage"
+        if isinstance(node, ast.ClassDef) and node.name == "ConfigurationPage"
     )
 
 
@@ -363,7 +363,7 @@ class PowerSectionOwnershipTests(unittest.TestCase):
         """别的分区合法使用同一批控件类时不误报——边界只按电源分区的方法判断。"""
         page = _page_class(
             ast.parse(
-                "class ConfigPage:\n"
+                "class ConfigurationPage:\n"
                 "    def _build_power_widgets(self, layout, supplies):\n"
                 "        build_power_section(self, layout, sources=supplies)\n"
                 "\n"

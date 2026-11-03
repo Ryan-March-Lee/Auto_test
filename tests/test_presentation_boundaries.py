@@ -77,7 +77,7 @@ CONFIGURATION_BUSINESS_IMPORT_BASELINE = {
         },
         "domain.configuration.rules": {"POWER_CHANNEL_ROLES"},
     },
-    "config_page.py": {
+    "configuration_page.py": {
         "application.device_binding": {"ApplyDeviceSelectionRequest"},
     },
     "config_power_section.py": {
@@ -106,7 +106,7 @@ CONFIGURATION_BUSINESS_IMPORT_BASELINE = {
 # 可以导入页面类型；其他页面必须通过窄接口/端口拿依赖，不能持有另一个页面实例。
 REGISTERED_PAGE_MODULES = frozenset(
     {
-        "config_page",
+        "configuration_page",
         "connection_page",
         "cable_loss_page",
         "driver_mapping_page",
@@ -117,6 +117,10 @@ REGISTERED_PAGE_MODULES = frozenset(
     }
 )
 PAGE_ASSEMBLY_PATHS = frozenset({"main_window.py", "pages.py"})
+
+# 步骤 13 的命名迁移兼容期：这些旧模块只再导出新模块的页面类型，不再承载实现。
+# 它们允许导入新页面模块（否则兼容入口无法工作），迁移完成后随旧模块一起删除。
+COMPATIBILITY_PAGE_MODULES = frozenset({"config_page.py", "connection_page.py"})
 
 # 页面构造的唯一上下文。新增页面动作应经 ViewModel/Application facade 与页面自己的
 # 一个信号完成，不得把新回调塞进 PageContext；确需调整契约时先更新分层规则文档。
@@ -635,6 +639,8 @@ class LongTermChangeBoundaryTests(unittest.TestCase):
         for path in sorted(QT_ROOT.rglob("*.py")):
             if _is_page_assembly_module(path):
                 continue
+            if _module_relative_path(path) in COMPATIBILITY_PAGE_MODULES:
+                continue
             imported = _imported_page_modules(_tree(path))
             if imported:
                 violations.append(
@@ -682,12 +688,12 @@ class LongTermChangeBoundaryTests(unittest.TestCase):
 
     def test_page_import_scan_detects_relative_and_absolute_forms(self):
         tree = ast.parse(
-            "from .config_page import ConfigPage\n"
+            "from .configuration_page import ConfigurationPage\n"
             "import presentation.qt.connection_page\n"
         )
         self.assertEqual(
             _imported_page_modules(tree),
-            {"presentation.qt.config_page", "presentation.qt.connection_page"},
+            {"presentation.qt.configuration_page", "presentation.qt.connection_page"},
         )
 
     def test_page_module_registry_covers_every_declared_page_class(self):
@@ -727,7 +733,7 @@ class LongTermChangeBoundaryTests(unittest.TestCase):
             "    def __init__(self, config_page, parent=None, **options):\n"
             "        pass\n"
             "class TypedPage:\n"
-            "    def __init__(self, other: 'ConfigPage') -> None:\n"
+            "    def __init__(self, other: 'ConfigurationPage') -> None:\n"
             "        pass\n"
             "class NarrowPage:\n"
             "    def __init__(self, *, port, parent=None):\n"
@@ -736,7 +742,7 @@ class LongTermChangeBoundaryTests(unittest.TestCase):
             "    def __init__(self, factory=ConfigPage):\n"
             "        pass\n"
         )
-        names = {"ConfigPage"}
+        names = {"ConfigurationPage"}
         demo = _page_constructor_violations(tree.body[0], names)
         typed = _page_constructor_violations(tree.body[1], names)
         narrow = _page_constructor_violations(tree.body[2], names)
@@ -747,7 +753,9 @@ class LongTermChangeBoundaryTests(unittest.TestCase):
         self.assertTrue(
             any("config_page" in violation for violation in demo), demo
         )
-        self.assertTrue(any("ConfigPage" in violation for violation in typed), typed)
+        self.assertTrue(
+            any("ConfigurationPage" in violation for violation in typed), typed
+        )
         self.assertTrue(any("factory" in violation for violation in defaulted), defaulted)
         self.assertEqual(narrow, [])
 

@@ -637,7 +637,7 @@ class AcceptanceCase:
     def check_no_residuals(self) -> None:
         """动画、等待牌堆与扫描线程都收干净，不留下看不见的计时器。"""
         panel = self.panel
-        layer = panel.deal_layer
+        layer = panel.deal_animation
         # worker.finished 可能比结果消费晚到：先给它一点时间释放，再判断有没有残留。
         _wait_until(
             lambda: panel.worker is None and not panel.is_scanning(), timeout_ms=1500
@@ -665,7 +665,7 @@ def _scenario_deal(case: AcceptanceCase) -> None:
     from presentation.qt.scan_card import WAIT_CYCLE_MS
 
     panel = case.panel
-    layer = panel.deal_layer
+    layer = panel.deal_animation
 
     case.begin_scan()
     case.check(
@@ -846,14 +846,14 @@ def _scenario_failure(case: AcceptanceCase) -> None:
     case.check("重新显示“查找设备”", panel.scan_btn.isVisible())
     case.check("不显示结果“返回”", not panel.back_btn.isVisible())
     case.check("没有留下结果卡片", panel.card_count() == 0)
-    skipped = panel.deal_layer.diagnostics()
+    skipped = panel.deal_animation.diagnostics()
     case.diag("no-deal", skipped)
     case.check(
         "没有启动发牌动画",
         skipped.get("event") == "idle" and int(skipped.get("paint_frames") or 0) == 0,
         f"event={skipped.get('event')}",
     )
-    case.check("失败不留下发牌画面", _widget_ink(panel.deal_layer) == 0)
+    case.check("失败不留下发牌画面", _widget_ink(panel.deal_animation) == 0)
     case.check_no_residuals()
 
 
@@ -900,7 +900,7 @@ def _scenario_empty(case: AcceptanceCase) -> None:
     )
     case.check("重新显示“查找设备”", panel.scan_btn.isVisible())
     case.check("没有结果卡片", panel.card_count() == 0)
-    skipped = panel.deal_layer.diagnostics()
+    skipped = panel.deal_animation.diagnostics()
     case.diag("skip", skipped)
     case.check(
         "空结果走 skip，不绘制发牌画面",
@@ -908,7 +908,7 @@ def _scenario_empty(case: AcceptanceCase) -> None:
         and int(skipped.get("paint_frames") or 0) == 0,
         f"event={skipped.get('event')} paint_frames={skipped.get('paint_frames')}",
     )
-    case.check("覆盖层保持空白", _widget_ink(panel.deal_layer) == 0)
+    case.check("覆盖层保持空白", _widget_ink(panel.deal_animation) == 0)
     case.check_no_residuals()
 
 
@@ -917,7 +917,7 @@ def _scenario_back(case: AcceptanceCase) -> None:
     from presentation.qt.instrument_discovery_panel import DiscoveryPhase
 
     panel = case.panel
-    layer = panel.deal_layer
+    layer = panel.deal_animation
 
     case.begin_scan()
     case.check(
@@ -971,7 +971,7 @@ def _scenario_resize(case: AcceptanceCase) -> None:
     from presentation.qt.instrument_discovery_panel import DiscoveryPhase
 
     panel = case.panel
-    layer = panel.deal_layer
+    layer = panel.deal_animation
 
     case.begin_scan()
     case.check(

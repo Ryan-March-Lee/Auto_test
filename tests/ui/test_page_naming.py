@@ -94,6 +94,35 @@ class PageNamingTests(unittest.TestCase):
         self.assertIn("def deal_layer", panel_source)
         self.assertIsInstance(_USE_SCREENSHOT_FRONTS, bool)
 
+    def test_repository_code_uses_the_new_animation_field_name(self):
+        """兼容属性只留给外部调用方：仓库内代码一律访问 ``deal_animation``。
+
+        ``tools/manual_acceptance.py`` 是项目自己维护的验收脚本，不能继续依赖
+        旧字段名，否则兼容属性会悄悄变成事实上的第二套名称。
+        """
+        allowed = {
+            QT_ROOT / "instrument_discovery_panel.py",  # 兼容属性定义处
+            QT_ROOT / "device_discovery_panel.py",  # 兼容模块的说明文字
+        }
+        offenders = []
+        for base in (QT_ROOT, ROOT / "tools"):
+            for path in sorted(base.rglob("*.py")):
+                if path in allowed:
+                    continue
+                source = path.read_text(encoding="utf-8-sig")
+                if ".deal_layer" in source:
+                    offenders.append(str(path.relative_to(ROOT)))
+        self.assertEqual(
+            offenders,
+            [],
+            "仓库内代码应访问 deal_animation，deal_layer 只作为兼容属性: "
+            + "; ".join(offenders),
+        )
+        acceptance = (ROOT / "tools" / "manual_acceptance.py").read_text(
+            encoding="utf-8-sig"
+        )
+        self.assertIn("panel.deal_animation", acceptance)
+
     def test_ui_resource_uses_the_new_page_name(self):
         files = {path.name for path in UI_DIRECTORY.glob("*.ui")}
         self.assertIn("instrument_setup_page.ui", files)

@@ -758,18 +758,21 @@ setProperty
 实现只落在新模块：旧的 `config_page.py`、`device_discovery_panel.py`、
 `connection_page.py` 只再导出新名称，不再声明第二份页面/面板类。旧类名、旧模块名与
 旧字段名在兼容期内仍然可用；`InstrumentDiscoveryPanel.deal_layer` 是
-`deal_animation` 的读写兼容属性。窗口装配（`main_window.py`）已改为直接导入新模块，
-新功能不得再使用旧命名。兼容模块的删除条件登记在
-`docs/配置领域词汇与模块归属.md`，删除前不得让旧名称承载新逻辑。
+`deal_animation` 的读写兼容属性。仓库内代码不再引用旧字段名：手工验收脚本
+（`tools/manual_acceptance.py`）已改为访问 `panel.deal_animation`，兼容属性只留给
+外部调用方。窗口装配（`main_window.py`）已改为直接导入新模块，新功能不得再使用旧
+命名。兼容模块的删除条件登记在 `docs/配置领域词汇与模块归属.md`，删除前不得让旧
+名称承载新逻辑。
 
 已知边界：旧 `.ui` 文件名 `connection_page.ui` 随页面一起删除，`load_ui("connection_page")`
 会失败；这是资源名而不是 Python 模块名，兼容范围只覆盖导入路径、类名与字段名。旧模块
 仍可导入，但测试或调用方如果要替换模块级协作对象（例如 `CardDealAnimation`），必须对
 新模块打补丁。
 
-验证：新增 `tests/ui/test_page_naming.py`（6 项）冻结新模块/旧兼容对象的同一性与窗口
-装配只导入新模块；每个模块迁移后各跑一次 UI 与集成层，最后完整套件 2797 项（跳过 5 项）
-通过；`launcher.py --check` 与 `launcher.py --validate-config` 通过。
+验证：新增 `tests/ui/test_page_naming.py`（7 项）冻结新模块/旧兼容对象的同一性、
+窗口装配只导入新模块，以及仓库内代码（含手工验收脚本）不再访问旧字段名；每个模块
+迁移后各跑一次 UI 与集成层，最后完整套件 2798 项（跳过 5 项）通过；
+`launcher.py --check` 与 `launcher.py --validate-config` 通过。
 
 ### 执行策略
 

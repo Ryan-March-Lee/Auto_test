@@ -193,8 +193,7 @@ DUT 与驱动功放占用同一通道，都会在连接前报错。
 `test_results/manual_acceptance/`（不入库）。脚本只接受 Windows 桌面平台；窗口必须完整
 可见、截图必须来自桌面合成、阶段序列必须完整一致，等待周期按生产常量
 `WAIT_CYCLE_MS` 校验，证据不足直接判为未通过。这些判定由
-`tests/test_manual_acceptance_contract.py` 离线覆盖。判定标准与本次记录见
-[仪器发现页真实窗口验收](docs/仪器发现页真实窗口验收.md)。
+`tests/test_manual_acceptance_contract.py` 离线覆盖。
 
 普通测试只执行离线和仿真路径，不会初始化真实设备。Hardware smoke 必须使用
 `tools/run_tests.py --layer hardware --config hardware/smoke_config.local.json --confirm-hardware-smoke`，

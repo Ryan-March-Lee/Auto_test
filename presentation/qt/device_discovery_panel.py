@@ -515,9 +515,12 @@ class DeviceDiscoveryPanel(QWidget):
         """面板被藏起来：收掉正在播的发牌，恢复卡片与流程。
 
         通用过渡约定（计划步骤 12）：看不见的动画立即收尾。页面级覆盖层由
-        :class:`~presentation.qt.animation_lifecycle.OverlayLifecycle` 先按
+        :class:`~presentation.qt.animation_lifecycle.OverlayLifecycle` 按同一个
         ``page-hidden`` 收尾；面板单独使用（没有页面）时没有那层约定，这里走同一个公开
-        入口，因此卡片不会停在透明、计时器停不下来的半状态。没有在播时什么也不做。
+        入口，因此卡片不会停在透明、计时器停不下来的半状态。
+
+        页面宿主与面板的隐藏事件没有约定的先后顺序，两个入口都可能触发；收尾入口在
+        没有在播时返回 ``False``，所以重复触发是幂等的，不会重复恢复卡片或重复推进流程。
         """
         self.cancel_deal_reveal(reveal=True, reason=CANCEL_REASON_PAGE_HIDDEN)
         super().hideEvent(event)
@@ -1561,9 +1564,11 @@ class DeviceDiscoveryPanel(QWidget):
     ) -> bool:
         """取消正在播的发牌/翻牌；没有在播时什么也不做，返回是否取消了一次动画。
 
-        页面在根容器尺寸变化或滚动位置变化时调用它（计划步骤 6：动画中途不追踪复杂
-        布局）。``reveal=True`` 把卡片恢复显示，流程进入 ``INTERACTIVE``，结果立刻以
-        最终版面出现；``reveal=False`` 交给调用方随后清空或关闭页面。
+        页面在根容器尺寸变化、页面滚动、页面隐藏（含窗口最小化）时通过覆盖层生命周期
+        调用它；面板单独使用时由自己的隐藏事件调同一个入口。两条入口没有先后约定，
+        没有在播时返回 ``False``，因此重复触发是幂等的。``reveal=True`` 把卡片恢复
+        显示，流程进入 ``INTERACTIVE``，结果立刻以最终版面出现；``reveal=False`` 交给
+        调用方随后清空或关闭页面。
         """
         layer = getattr(self, "deal_layer", None)
         if layer is None or not layer.is_running():

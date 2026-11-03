@@ -8,9 +8,10 @@
 - :class:`presentation.qt.animation_lifecycle.OverlayLifecycle` 把“宿主尺寸/滚动/
   隐藏变化就收尾”收在一处，页面只登记一个收尾入口；
 - 收尾原因取固定名称（``surface-changed`` / ``page-hidden`` / ``page-shutdown``）；
-- 一次性过渡只暴露 ``is_running()`` / ``cancel(*, reveal, reason)``，每张控件由页面在
-  收尾入口里统一恢复；
-- 宿主隐藏时自动收尾（面板单独使用、没有页面级覆盖层的情形由面板自己接隐藏事件）。
+- 动画对象只暴露 ``is_running()`` / ``cancel(*, reveal, reason)``，页面收尾入口
+  （``CancelEntry``）另外回答“这一次是否真的收尾了”，每张控件由它统一恢复；
+- 宿主隐藏、所在窗口最小化时自动收尾（面板单独使用、没有页面级覆盖层的情形由面板
+  自己接隐藏事件）。
 
 这里只验证覆盖层与生命周期约定本身；发现页的真实接线（页面隐藏、页面关闭时收尾）在
 ``tests/integration/device_discovery``。
@@ -89,7 +90,7 @@ class OverlayLifecycleTests(unittest.TestCase):
         self.assertEqual(animation_lifecycle.CANCEL_REASON_PAGE_SHUTDOWN, "page-shutdown")
 
     def test_an_animation_only_needs_is_running_and_cancel(self):
-        """一次性过渡的能力只有“是否在播”与“如何收尾”，没有别的入口。"""
+        """动画对象只回答“是否在播”与“如何收尾”，不承担页面状态恢复。"""
         from presentation.qt.animation_lifecycle import CancelableAnimation
         from presentation.qt.card_deal_animation import CardDealAnimation
 
@@ -98,6 +99,20 @@ class OverlayLifecycleTests(unittest.TestCase):
 
         self.assertIsInstance(animation, CancelableAnimation)
         self.assertFalse(animation.is_running())
+        self.assertIsNone(
+            animation.cancel(reason="surface-changed"),
+            "动画对象的 cancel() 不返回“页面是否收尾”，那是收尾入口的职责",
+        )
+
+    def test_the_page_entry_reports_whether_it_cancelled(self):
+        """页面收尾入口返回“这一次是否真的收尾了”：重复入口据此幂等。"""
+        from presentation.qt.animation_lifecycle import CancelEntry
+
+        entry = RecordingCancel()
+
+        self.assertIsInstance(entry, CancelEntry)
+        self.assertTrue(entry(reason="page-hidden"))
+        self.assertFalse(entry(reason="page-hidden"), "没有在播时不再算一次收尾")
 
     def test_attaching_something_else_is_rejected(self):
         _host, _overlay, lifecycle, _cancel = self._lifecycle()
@@ -170,6 +185,29 @@ class OverlayLifecycleTests(unittest.TestCase):
         self.app.processEvents()
 
         self.assertEqual(cancel.calls, [(True, CANCEL_REASON_PAGE_HIDDEN)])
+
+    def test_minimizing_the_host_window_cancels_and_announces_once(self):
+        """最小化只发给顶层窗口：覆盖层要自己盯住窗口状态，并且只通知一次。
+
+        有些平台把最小化翻译成子控件的 Hide，有些只发顶层 ``WindowStateChange``；
+        两条路径都走同一个“看不见”通知，因此收尾入口只应收到一次 ``page-hidden``。
+        """
+        from presentation.qt.animation_lifecycle import CANCEL_REASON_PAGE_HIDDEN
+
+        host, overlay, _lifecycle, cancel = self._lifecycle()
+        announced = []
+        overlay.host_hidden.connect(lambda: announced.append(True))
+
+        host.showMinimized()
+        self.app.processEvents()
+
+        self.assertTrue(host.isMinimized())
+        self.assertEqual(announced, [True], "同一次最小化只通知一次")
+        self.assertEqual(cancel.calls, [(True, CANCEL_REASON_PAGE_HIDDEN)])
+
+        host.showNormal()
+        self.app.processEvents()
+        self.assertFalse(host.isMinimized())
 
     def test_the_overlay_announces_that_its_host_was_hidden(self):
         """覆盖层只报“宿主藏起来了”；层级与几何仍由它自己保证。"""

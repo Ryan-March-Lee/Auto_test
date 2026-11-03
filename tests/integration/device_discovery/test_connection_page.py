@@ -638,6 +638,53 @@ class DiscoveryAnimationOverlayTests(ConnectionPageTestCase):
         self.assertFalse(layer.is_running(), "回到页面不该重播已经结束的发牌")
         self.assertIs(panel.phase(), DiscoveryPhase.INTERACTIVE)
 
+    def test_minimizing_the_window_while_dealing_stops_the_animation(self):
+        """窗口最小化：顶层窗口状态变化也按 ``page-hidden`` 收尾。
+
+        最小化不一定给子控件发 ``Hide``（各平台实现不同），所以覆盖层同时盯住宿主所在
+        顶层窗口的 ``WindowStateChange``；无论哪条路径先到，收尾只发生一次。
+        """
+        page, panel, layer = self._dealing()
+
+        page.showMinimized()
+        self.app.processEvents()
+
+        self.assertTrue(page.isMinimized())
+        self.assertFalse(layer.is_running(), "最小化后发牌不能还在走")
+        diagnostics = layer.diagnostics()
+        self.assertEqual(diagnostics["cancel_reason"], "page-hidden")
+        self.assertEqual(diagnostics["restore_result"], "revealed")
+        self.assertIs(panel.phase(), DiscoveryPhase.INTERACTIVE)
+        self.assertTrue(panel.cards_area.isEnabled())
+        for card in panel.cards():
+            self.assertIsNone(card.graphicsEffect(), "收尾后卡片不再被藏起来")
+
+        page.showNormal()
+        self.app.processEvents()
+        self.assertFalse(layer.is_running(), "恢复正常窗口不该重播已经结束的发牌")
+        self.assertIs(panel.phase(), DiscoveryPhase.INTERACTIVE)
+
+    def test_hiding_the_page_closes_the_transition_exactly_once(self):
+        """页面级覆盖层与面板隐藏都会触发收尾：重复入口必须幂等。
+
+        子控件与页面宿主的隐藏事件没有约定先后顺序；两条路径都调用同一个公开入口，
+        没有在播时返回 ``False``，因此流程只推进一次、只写一份诊断。
+        """
+        page, panel, layer = self._dealing()
+        transitions = []
+        panel.phase_changed.connect(transitions.append)
+
+        page.hide()
+        self.app.processEvents()
+
+        self.assertEqual(
+            transitions,
+            [DiscoveryPhase.INTERACTIVE.value],
+            "收尾入口重复触发不能重复推进流程",
+        )
+        self.assertEqual(layer.diagnostics()["cancel_reason"], "page-hidden")
+        self.assertFalse(layer.is_running())
+
     def test_closing_the_page_while_dealing_stops_without_restoring(self):
         """页面关闭：收尾但不恢复即将销毁的控件，流程进入 ``CLOSED``。"""
         page, panel, layer = self._dealing()

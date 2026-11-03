@@ -14,7 +14,7 @@
 
 ## 当前问题摘要
 
-当前发现页的结果动画链路为：
+重构前（步骤 1 之前）的发现页结果动画链路为：
 
 ```text
 扫描线程完成
@@ -101,7 +101,7 @@ IDLE → SCANNING → RESULT_PENDING → DEALING → INTERACTIVE
 
 ## 步骤 2：增加动画运行时诊断信息
 
-**执行状态：已完成**。诊断模块：`presentation/qt/animation_diagnostics.py`；发牌层的内部快照：`DealRevealLayer.diagnostics()`。日志写在项目的 `logs/pa_auto_test_*.log`，检索 `animation event=` 即可看到一个固定字段序列。
+**执行状态：已完成**。诊断模块：`presentation/qt/animation_diagnostics.py`；发牌层的内部快照：`DealRevealLayer.diagnostics()`（步骤 7 后同一快照由 `CardDealAnimation.diagnostics()` 提供，字段不变）。日志写在项目的 `logs/pa_auto_test_*.log`，检索 `animation event=` 即可看到一个固定字段序列。
 
 ### 执行策略
 
@@ -149,9 +149,9 @@ animation event=cancel cancel_reason=results-cleared restore_result=hidden ...
 | `cancel_reason` / `restore_result` / `was_running` | 取消原因、取消后卡片是恢复显示还是随结果清空、取消时是否仍在播放 |
 | `skip_reason` | 动画没有启动的原因（例如 `no-cards`） |
 
-`DealRevealLayer.diagnostics()` 运行中返回当前快照，完成或取消后返回那次动画收尾时的快照：`card_count`、`elapsed_ms`、`phase`、`revealed_count` 与 `event=finish` / `event=cancel` 同一时刻，不会出现“卡片已清空却还留着取消原因”。
+`CardDealAnimation.diagnostics()`（步骤 7 之前是 `DealRevealLayer.diagnostics()`，字段不变）运行中返回当前快照，完成或取消后返回那次动画收尾时的快照：`card_count`、`elapsed_ms`、`phase`、`revealed_count` 与 `event=finish` / `event=cancel` 同一时刻，不会出现“卡片已清空却还留着取消原因”。
 
-`skip` 只由 `DealRevealLayer.skip(reason=...)` 记录一次，调用方只提供原因，不再各自拼日志。
+`skip` 只由动画对象的 `skip(reason=...)` 记录一次（步骤 7 之前是 `DealRevealLayer.skip`），调用方只提供原因，不再各自拼日志。
 
 排查顺序：
 
@@ -266,14 +266,16 @@ presentation/qt/card_assets.py
 ## 步骤 5：让真实卡片和动画资产并行使用
 
 **执行状态：已完成**。发牌正面改由 `presentation/qt/card_assets.py` 的
-`render_card_asset()` 按卡片此刻的内容渲染（`CardAsset.front`），`DealRevealLayer.start()`
-只接收每张卡的 `CardAsset`，绘制时贴 `asset.front`；面板在 `_start_deal_reveal` 里先落定
+`render_card_asset()` 按卡片此刻的内容渲染（`CardAsset.front`），动画的 `start()`
+（步骤 7 后为 `CardDealAnimation.start(items, ...)`）只接收每张卡的 `CardAsset`（随
+`CardDealItem` 传入），绘制时贴 `asset.front`；面板在 `_start_deal_reveal` 里先落定
 最终版面、再用 `_deal_assets()` 为每张卡渲染资产，随后用透明度效果藏起真实卡片。发牌不再
 调用 `card.grab()`，也不依赖卡片控件是否显示过、是否完成重排。旧的截图路径只在
 `device_discovery_panel._USE_SCREENSHOT_FRONTS = True` 时用于排障对照（面板常量，不接配置
 和界面，也不作为第二条长期实现）；两种来源在诊断里记为 `front_source=asset|screenshot`，
-`front_source` 已加入步骤 2 的固定字段。牌背仍取按钮卡面的纹样，是否改成 `CardAsset.back`
-留给步骤 7 的独立动画对象统一决定；本步不改变覆盖层位置与时间轴。资产与真实卡片的一致性
+`front_source` 已加入步骤 2 的固定字段。牌背当时仍取按钮卡面的纹样，是否改成
+`CardAsset.back` 留给步骤 7 的独立动画对象统一决定（步骤 7 已完成：发牌背面改用
+`CardAsset.back`）；本步不改变覆盖层位置与时间轴。资产与真实卡片的一致性
 由 `tests/ui/test_card_assets.py` 逐像素比对，`tests/ui/test_scan_card.py` 验证正面确实来自
 资产、诊断记录来源，`tests/integration/device_discovery/test_panel_presentation.py` 在
 `InstrumentCard.grab` 被替换成抛错时仍能正常发牌。
@@ -281,9 +283,11 @@ presentation/qt/card_assets.py
 资产与卡片**按位置一一对应**：`_deal_assets(cards, front_source)` 遍历的正是随后交给
 `start()` 的那份卡片列表，每张卡读自己的 `data` 快照。不按 `heading` 回查——卡片标题
 不保证唯一（同型号、同缩写码或未登记设备都可能重名），用标题当关联键会把某一台的画面
-套到另一台上。`DealRevealLayer.start()` 因此把这份对应关系当成契约：`len(assets)` 与
+套到另一台上。动画的 `start()` 因此把这份对应关系当成契约：`len(assets)` 与
 `len(cards)` 不等、或 `front_source` 不是 `asset` / `screenshot` 时直接抛 `ValueError`
-（没有卡片仍走 `skip(reason="no-cards")`）。回退来源只由 `_deal_front_source()` 决定一次
+（没有卡片仍走 `skip(reason="no-cards")`）。步骤 7 后这条对应关系由 `CardDealItem`
+承载：每张卡一个 item，资产、落点与 `index` 一起传入，`start()` 不再接收单独的
+cards/assets 列表。回退来源只由 `_deal_front_source()` 决定一次
 并同时用于渲染与诊断，字段与实际画面不会不一致。回退路径的集成测试除了断言
 `front_source=screenshot`，还断言 `InstrumentCard.grab` 为每张卡片各调用一次；默认路径
 断言它一次也没被调用。
@@ -328,21 +332,22 @@ InstrumentCardData
 覆盖层里（`DeviceDiscoveryPanel.attach_animation_overlay()`），不再是 `results_box` 的
 子控件，`QScrollArea` 的滚动与结果区内部重排都不再参与动画坐标。
 
-`DealRevealLayer.start()` 新增 `target_rects` / `clip_rect`：面板在动画开始前把每张卡的
+`DealRevealLayer.start()` 新增 `target_rects` / `clip_rect`（步骤 7 后合并为
+`CardDealAnimation.start()` 的 `clip_rect` 参数：`target_rects` 随每个
+`CardDealItem.target_rect` 传入）：面板在动画开始前把每张卡的
 落点和卡片区裁剪矩形一次性换算到覆盖层坐标（`_deal_target_rect()` /
 `_deal_clip_rect()`），动画期间不再逐帧追踪卡片控件。覆盖层与卡片分属页面根容器的两个
 分支，`QWidget.mapTo()` 只对祖先关系可靠，因此换算统一走
 `animation_overlay.widget_rect_in()`（经屏幕坐标中转），窗口在桌面上的位置不会混进落点。
-省略这两个参数时（面板单独使用、单元测试）在 `start()` 里按同一规则冻结一次控件几何。
-落点份数与卡片数不等、资产份数与卡片数不等时直接抛 `ValueError`，不会退回“按控件现取”；
-面板在抛出后把卡片恢复原样，不会留下透明且不可点的半状态。
+落点或资产份数与卡片数不等（步骤 7 后是 item 数、`index` 与卡片对不上）时直接抛错，
+不会退回“按控件现取”；面板在抛出后把卡片恢复原样，不会留下透明且不可点的半状态。
 
 页面根容器尺寸变化（`AnimationOverlay.resized`）或页面滚动条位置变化时，连接页调用
 `DeviceDiscoveryPanel.cancel_deal_reveal(reveal=True, reason="surface-changed")`：取消
 这一次发牌、恢复卡片为最终版面并写一条固定原因的诊断，而不是在动画中途追踪复杂布局。
 卡片区自己的视口尺寸与滚动条位置由面板看护：先重算一次当前落点与冻结值比较，卡片真的
 挪了才按同一原因取消；只是可见区域变了（布局落定后滚动条出现/消失、首帧排版微调）就
-用 `DealRevealLayer.refresh_clip_rect()` 换掉裁剪遮罩，落点保持冻结。重新开始动画留给
+用 `CardDealAnimation.refresh_clip_rect()`（步骤 7 前为 `DealRevealLayer`）换掉裁剪遮罩，落点保持冻结。重新开始动画留给
 步骤 8 的页面状态机统一决定。页头文字淡出只改透明度、不改版面，因此不会移动已经开始的
 坐标；页头整块收放本身发生在发牌开始前，若发牌中因状态切换发生，则同样按
 `surface-changed` 收尾。
@@ -351,7 +356,8 @@ InstrumentCardData
 不吃鼠标/不占焦点、跟随尺寸变化并发出通知、压在普通内容之上，以及跨分支换算
 （`widget_rect_in()`）在窗口挪位后仍给出覆盖层坐标；`tests/ui/test_scan_card.py` 新增
 落点在开始时冻结（含窗口挪位）、覆盖层坐标由调用方给出、裁剪遮罩可单独刷新、落点/资产
-份数不符即报错四组用例；`tests/integration/device_discovery/test_connection_page.py`
+份数不符即报错四组用例（步骤 7 后这些用例随动画一起迁到
+`tests/ui/test_card_deal_animation.py`）；`tests/integration/device_discovery/test_connection_page.py`
 验证覆盖层不在滚动区/结果区里、落点等于卡片在页面根容器里的位置、窗口挪位不改变落点、
 淡出页头文字不移动已开始的坐标、页面缩放与卡片区重排分别以 `surface-changed` 取消并
 恢复卡片。
@@ -388,6 +394,14 @@ InstrumentSetupPage
 中小，预计 1 天左右。
 
 ## 步骤 7：把发牌/翻牌封装成独立 CardDealAnimation
+
+**执行状态：已完成**。新增 `presentation/qt/card_deal_animation.py`：`CardDealItem(asset, target_rect, index)` 是只读的输入项，`CardDealAnimation` 只保留时间轴与绘制，接口为 `start(items, deck_origin)` / `cancel(reveal=True)` / `finish()` / `is_running()` / `finished`；`start()` 另接两个关键字参数 `clip_rect`（步骤 6 的裁剪遮罩）与 `front_source`（步骤 2 的诊断来源），默认值不影响窄接口。动画按 `index` 排序、翻到哪张就发 `card_revealed(index)`，由面板撤掉那张卡片的透明度效果；`finished` 只表示整段结束，面板据此恢复交互与状态行。动画本身不再持有任何 `QWidget`：`DealRevealLayer` 里的 `self._cards`、`setGraphicsEffect(None)` 与 `QWidget.grab()` 调用全部移出。
+
+发牌背面改为 `CardAsset.back`（步骤 4 已经渲染好的稳定资产），不再是按钮卡面的截图/纹样；`scan_card.py` 因此只保留“查找设备”按钮与扫描等待牌堆，`_render_deal_back`、发牌常量与 `DealRevealLayer` 一并迁走。面板字段仍叫 `deal_layer`（步骤 13 再统一命名），但类型换成 `CardDealAnimation`。
+
+输入校验在改动运行状态之前完成：`index` 必须是 `0..N-1` 的连续编号（面板直接拿它当卡片列表下标，重复、负数或缺口都会恢复错卡片），`front_source` 只接受 `asset` / `screenshot`，项目必须是 `CardDealItem`；任何一项不合格都直接抛错，上一次动画（若有）保持原样，不会留下“卡片已藏起、计时器还在走”的半状态。上一次发牌还在播时 `start()` 直接抛 `RuntimeError`（先 `cancel()` / `finish()`），避免静默丢掉上一组卡片的恢复信号；空输入走 `skip()`，它先把还在播的一次按完成路径收尾（每张 `card_revealed` + `finished`），再记录“这一次没有牌”，因此空结果不会留下透明卡片。`finish()` 与 `skip()` 都幂等：已经收尾过的一次不会重复发 `finished`。`cancel()` 会停表、隐藏覆盖层并清空本次输入；`reveal=True` 与自然完成走同一条 `card_revealed` 路径，因此中断、返回和关闭页面都不会留下对卡片的悬空引用或未撤掉的透明度效果。面板把“藏卡片 + 禁用卡片区 + `start()`”放在同一个保护范围里，任何启动异常都经 `_abort_deal_reveal()` 撤销效果、恢复卡片区后原样抛出；`finished` 时再兜底清理一次残留效果。
+
+验证：`tests/ui/test_card_deal_animation.py` 覆盖独立播放（无扫描线程、无发现页、item 里没有控件）、资产正反面、`card_revealed` / `finished` 时序、取消与完成后的清理、空输入先收尾再 `skip`、运行中重复 `start()` 被拒绝、稀疏 `index` 被拒绝、重复 `finish()` 只发一次 `finished`、输入校验、落点冻结、裁剪遮罩刷新、固定诊断字段与首帧计数；`tests/integration/device_discovery/` 的发牌、取消、返回与页面关闭用例继续通过，并新增“启动发牌抛错后卡片仍可见可点”的用例。诊断字段与步骤 2 保持不变。
 
 ### 执行策略
 

@@ -620,6 +620,26 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         self.assertEqual(diagnostics["restore_result"], "hidden")
         self.assertFalse(diagnostics["running"])
 
+    def test_a_failed_deal_start_leaves_the_cards_visible_and_clickable(self):
+        """启动发牌抛错时不能留下透明卡片或不可点的卡片区。
+
+        面板在 ``start()`` 之前就把卡片藏起来并禁用卡片区；任何异常都要按统一路径
+        清理，再把异常原样抛出去。
+        """
+        panel = self.run_scan(self.make_panel())
+        self.assertFalse(panel.deal_layer.is_running())
+        with mock.patch.object(
+            panel.deal_layer, "start", side_effect=RuntimeError("boom")
+        ):
+            with self.assertRaises(RuntimeError):
+                panel._start_deal_reveal(None)
+
+        for card in panel.cards():
+            self.assertIsNone(card.graphicsEffect(), "失败后卡片不能再藏着")
+        self.assertTrue(panel.cards_area.isEnabled(), "失败后卡片区要能继续操作")
+        self.assertFalse(panel.deal_layer.isVisible())
+        self.assertFalse(panel.deal_layer.is_running())
+
     def test_a_scan_that_finds_nothing_leaves_the_button_in_the_box_again(self):
         def factory(_mode):
             return build_scanner(

@@ -65,7 +65,7 @@ class AnimationOverlay(QWidget):
 
     宿主（通常是页面根容器）拥有它，普通内容与它同级；覆盖层的几何始终等于
     :meth:`host` 的 ``rect()``。它自己什么也不画，由动画对象（目前是
-    :class:`presentation.qt.scan_card.DealRevealLayer`）作为子控件铺满它。
+    :class:`presentation.qt.card_deal_animation.CardDealAnimation`）作为子控件铺满它。
     """
 
     #: 宿主尺寸变了：已经换算好的动画坐标因此失效。

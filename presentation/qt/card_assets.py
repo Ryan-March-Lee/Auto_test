@@ -38,9 +38,10 @@
 
 牌背（:func:`render_card_back`）是一张安静的深色背面：45° 渐变、细斜纹、一道细
 内框与正中一枚小菱形，与等待动画下层牌的视觉语言一致。它不承担“查找到设备”的装饰
-动效；发牌层现在（计划步骤 5）用 :attr:`CardAsset.front` 作正面，背面仍取按钮那张卡面
-的纹样，是否也换成这张牌背留给步骤 7 的独立动画对象统一决定。面板的旧 ``card.grab()``
-截图路径只在 :data:`presentation.qt.device_discovery_panel._USE_SCREENSHOT_FRONTS`
+动效；发牌动画现在正面用 :attr:`CardAsset.front`、背面用 :attr:`CardAsset.back`
+（计划步骤 7 已把发牌层拆成独立的 :class:`presentation.qt.card_deal_animation.CardDealAnimation`）。
+面板的旧 ``card.grab()`` 截图路径只在
+:data:`presentation.qt.device_discovery_panel._USE_SCREENSHOT_FRONTS`
 打开时用于排障对照，默认不走。
 """
 

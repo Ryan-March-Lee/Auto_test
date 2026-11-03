@@ -34,10 +34,10 @@
     ``page-shutdown`` / ``surface-changed``（页面根容器尺寸、页面滚动或卡片区视口/滚动
     发生变化） / ``overlay-attached``（动画中重挂覆盖层）。
 ``skip_reason``
-    动画没有启动的原因（例如没有卡片）。``skip`` 只由 :meth:`DealRevealLayer.skip`
+    动画没有启动的原因（例如没有卡片）。``skip`` 只由 :meth:`CardDealAnimation.skip`
     记录，面板不再单独拼一条，避免同一次未启动出现重复事件。
 
-``DealRevealLayer.diagnostics()`` 在运行中返回当前快照，在完成/取消后返回那次动画
+``CardDealAnimation.diagnostics()`` 在运行中返回当前快照，在完成/取消后返回那次动画
 收尾时的快照（``card_count``、``elapsed_ms``、``phase`` 都与结束事件同一时刻），
 不会出现“卡片已清空却还留着取消原因”的矛盾。
 

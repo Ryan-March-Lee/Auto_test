@@ -32,14 +32,15 @@
 **扫描结束不等于立刻换画面**：结果（或失败原因）先挂起，等等待动画至少完整播完一轮、
 所有卡都叠回原样（``ScanWaitStack.cycle_finished``）才进入下一步；动画没播完就继续播，
 扫描结果等它，而不是把摊开中途的牌堆直接收走。搜索一直不回来时动画就一轮接一轮地播。
-**结果卡片由发牌动画带出来**（:class:`presentation.qt.scan_card.DealRevealLayer`）：等待
-动画收拢后，牌从按钮牌堆原来的位置一张张飞向结果位，背面朝上（背面就是按钮那张卡面的
-纹样）；全部落定后停一下，再从左到右逐张翻开，把仪器卡片露出来。翻开的正面是发牌前
-由 :mod:`presentation.qt.card_assets` 按卡片内容渲染好的资产，不截取卡片控件，因此动画
-不依赖卡片是否已经显示、是否完成重排。拿到扫描结果时卡片数
-（一台仪器一张）就已经定了，结果区先按这个数量把版面排定，发牌因此直接落在卡片最终的
-位置上，翻牌也翻在同一处。发牌期间真正的卡片用透明度效果藏起来、暂不可点；翻完最后一张
-才恢复交互并写出“发现 N 台设备 …”。发牌画面挂在**页面根容器**的覆盖层上
+**结果卡片由发牌动画带出来**（:class:`presentation.qt.card_deal_animation.CardDealAnimation`）：等待
+动画收拢后，牌从按钮牌堆原来的位置一张张飞向结果位，背面朝上（背面取
+:attr:`presentation.qt.card_assets.CardAsset.back`）；全部落定后停一下，再从左到右逐张
+翻开，把仪器卡片露出来。翻开的正面是发牌前由 :mod:`presentation.qt.card_assets` 按卡片
+内容渲染好的资产，不截取卡片控件，因此动画不依赖卡片是否已经显示、是否完成重排。拿到扫描
+结果时卡片数（一台仪器一张）就已经定了，结果区先按这个数量把版面排定，发牌因此直接落在
+卡片最终的位置上，翻牌也翻在同一处。发牌期间真正的卡片用透明度效果藏起来、暂不可点；
+动画翻到哪一张就发一次 ``card_revealed``，面板据此恢复哪一张，翻完最后一张才恢复交互并
+写出“发现 N 台设备 …”。发牌画面挂在**页面根容器**的覆盖层上
 （:mod:`presentation.qt.animation_overlay`，由页面通过 :meth:`DeviceDiscoveryPanel.attach_animation_overlay`
 挂进来），不在结果区或卡片滚动区里：起点与每张牌的落点在动画开始时一次性换算到覆盖层
 坐标，滚动与页头收放都不会挪动已经开始的动画；页面尺寸或滚动位置变化时页面取消这一次
@@ -92,6 +93,12 @@ from domain.instruments.models import (
 
 from .animation_overlay import AnimationOverlay, widget_rect_in
 from .card_assets import CardAsset, render_card_asset
+from .card_deal_animation import (
+    DEAL_FRONT_SOURCE_ASSET,
+    DEAL_FRONT_SOURCE_SCREENSHOT,
+    CardDealAnimation,
+    CardDealItem,
+)
 from .config_form_bindings import (
     binding_device_key,
     binding_records,
@@ -109,11 +116,8 @@ from .device_cards import (
 )
 from .input_controls import WheelSafeComboBox
 from .scan_card import (
-    DEAL_FRONT_SOURCE_ASSET,
-    DEAL_FRONT_SOURCE_SCREENSHOT,
     SCAN_CARD_HEADROOM,
     WAIT_STACK_HEIGHT,
-    DealRevealLayer,
     ScanPromptCard,
     ScanWaitStack,
 )
@@ -443,7 +447,7 @@ class DeviceDiscoveryPanel(QWidget):
             return
         layer.refresh_clip_rect(current_clip)
 
-    def _deal_targets_moved(self, layer: DealRevealLayer) -> bool:
+    def _deal_targets_moved(self, layer: CardDealAnimation) -> bool:
         """当前卡片位置是否已经偏离本次动画冻结的落点（容差半像素）。"""
         frozen = layer.targets()
         cards = self.cards()
@@ -462,7 +466,7 @@ class DeviceDiscoveryPanel(QWidget):
         return False
 
     @staticmethod
-    def _deal_clip_shrank(layer: DealRevealLayer, current: QRectF | None) -> bool:
+    def _deal_clip_shrank(layer: CardDealAnimation, current: QRectF | None) -> bool:
         """卡片区可见区域是否变小了：变窄可能触发重排，变矮可能裁到卡片。
 
         变大只需刷新遮罩；卡片区整个不可见（``current`` 为空）时同样按失效处理。
@@ -699,8 +703,9 @@ class DeviceDiscoveryPanel(QWidget):
         # 结果卡片不是直接出现：等待动画收拢后，这一层从按钮牌堆往卡片位发牌（背面朝上），
         # 全部发完再逐张翻开。它是页面级覆盖层里的画面，不进布局、不吃鼠标；卡片自己先挂一层
         # 透明度效果藏起来，翻到哪张才把哪张露出来。
-        self.deal_layer = DealRevealLayer(self.results_box)
+        self.deal_layer = CardDealAnimation(self.results_box)
         self.deal_layer.setVisible(False)
+        self.deal_layer.card_revealed.connect(self._on_deal_card_revealed)
         self.deal_layer.finished.connect(self._on_deal_reveal_finished)
 
         self.scan_btn.clicked.connect(self.request_scan)
@@ -1045,7 +1050,7 @@ class DeviceDiscoveryPanel(QWidget):
         """把一次成功的扫描结果放进结果区，并写统计与预选说明。
 
         有设备时先不让卡片直接露出来：先从“查找设备”牌堆逐张发到卡片位（背面朝上），
-        全部发完再逐张翻开（:class:`presentation.qt.scan_card.DealRevealLayer`）。
+        全部发完再逐张翻开（:class:`presentation.qt.card_deal_animation.CardDealAnimation`）。
         发牌起点是牌堆现在还留在屏幕上的位置；页面随后会收起页头、整块面板上移，所以
         这里记的是屏幕坐标，等布局落定后再换回覆盖层坐标。
         """
@@ -1122,28 +1127,34 @@ class DeviceDiscoveryPanel(QWidget):
             if deck_anchor is not None
             else layer.rect().center()
         )
+        # 每一项只带资产、落点与身份（卡片在结果区里的位置）：动画不持有卡片控件，
+        # 翻到哪一张通过 ``card_revealed`` 交回来，由面板自己恢复对应的真实卡片。
+        items = [
+            CardDealItem(asset=asset, target_rect=target, index=index)
+            for index, (asset, target) in enumerate(zip(assets, targets))
+        ]
         for card in cards:
             effect = QGraphicsOpacityEffect(card)
             effect.setOpacity(0.0)
             card.setGraphicsEffect(effect)
         # 发牌期间卡片还不能点：覆盖层不吃鼠标，但下面的卡片已经看不见了。
         self.cards_area.setEnabled(False)
+        started = False
         try:
             layer.start(
-                cards,
-                assets,
+                items,
                 QPointF(anchor),
-                target_rects=targets,
                 clip_rect=clip,
                 front_source=front_source,
             )
-        except ValueError:
-            # 输入的份数/取值是内部约定，正常不会失败；真失败时把卡片恢复原样，
-            # 不能让异常把面板留在卡片透明、不可点的状态。
-            for card in cards:
-                card.setGraphicsEffect(None)
-            self.cards_area.setEnabled(True)
-            raise
+            started = True
+        finally:
+            # 输入的份数/取值是内部约定，正常不会失败；但任何启动异常（包括 Qt 在
+            # 绘制前的错误）都不能把面板留在“卡片透明、卡片区不可点”的半状态。
+            # 用 finally 而不是 except：先按统一路径清理本次发牌与卡片效果，异常随后
+            # 照常向外传播，既不被吞掉，也不给宽泛捕获再开一个口子。
+            if not started:
+                self._abort_deal_reveal()
 
     @staticmethod
     def _deal_target_rect(card: InstrumentCard, layer: QWidget) -> QRectF:
@@ -1179,8 +1190,8 @@ class DeviceDiscoveryPanel(QWidget):
     ) -> list[CardAsset]:
         """按 ``cards`` 的顺序返回每张卡的动画资产（与发牌顺序一一对应）。
 
-        取的正是调用方随后交给 ``DealRevealLayer.start()`` 的那份卡片列表，逐张读卡片
-        自己的 ``data`` 快照（预选与状态说明都已经写在上面），不按设备名回查：卡片标题
+        取的正是调用方随后按同一顺序为每张卡构造的 ``CardDealItem`` 列表（每张读自己的
+        ``data`` 快照，预选与状态说明都已经写在上面），不按设备名回查：卡片标题
         并不保证唯一（同型号、同缩写码或未登记设备都可能重名），用 ``heading`` 当关联键
         会把某一台的画面套到另一台上。
 
@@ -1233,10 +1244,28 @@ class DeviceDiscoveryPanel(QWidget):
         if layer.isVisible():
             layer.raise_()
 
+    def _on_deal_card_revealed(self, index: int) -> None:
+        """动画翻到第 ``index`` 张：撤掉透明度效果，让真实卡片露出来。
+
+        动画不持有卡片控件，翻开哪一张由 :attr:`CardDealAnimation.card_revealed`
+        交回来；这里恢复的正是发牌开始前藏起来的那张卡片。索引越界（结果已被换掉或
+        清空）时什么也不做，不会去碰别的控件。
+        """
+        if self._closed:
+            return
+        cards = self.cards()
+        if 0 <= index < len(cards):
+            cards[index].setGraphicsEffect(None)
+
     def _on_deal_reveal_finished(self) -> None:
         """发牌与翻牌结束：恢复卡片交互，状态行这时才出现。"""
         if self._closed:
             return
+        # 正常路径每张都由 ``card_revealed`` 恢复；这里再兜一次底，保证中断或信号
+        # 漏掉时也不会留下“透明但占着位置”的卡片。
+        for card in self.cards():
+            if card.graphicsEffect() is not None:
+                card.setGraphicsEffect(None)
         self.cards_area.setEnabled(True)
         if self.box_state() == BOX_STATE_RESULTS:
             self.status_label.setVisible(bool(self.status_label.text()))
@@ -1265,6 +1294,21 @@ class DeviceDiscoveryPanel(QWidget):
         if layer is None:
             return
         layer.cancel(reveal=reveal, reason=reason)
+        self.cards_area.setEnabled(True)
+
+    def _abort_deal_reveal(self) -> None:
+        """发牌启动失败后的兜底清理：停掉时间轴，恢复卡片效果与卡片区交互。
+
+        启动失败可能发生在 ``start()`` 已经改过一部分状态之后，因此这里不假设它什么
+        都没做：先取消本次发牌（不恢复显示，卡片马上由下面统一撤掉效果），再把每张
+        卡片上的透明度效果清掉、恢复卡片区可点。调用方随后继续抛出原异常。
+        """
+        layer = getattr(self, "deal_layer", None)
+        if layer is not None:
+            layer.cancel(reveal=False, reason="start-failed")
+        for card in self.cards():
+            if card.graphicsEffect() is not None:
+                card.setGraphicsEffect(None)
         self.cards_area.setEnabled(True)
 
     def _on_failed(self, message: str) -> None:

@@ -20,9 +20,10 @@
 
 覆盖层坐标系就是页面根容器的坐标系：卡片落点在动画开始前一次性换算到这里（见
 :meth:`DeviceDiscoveryPanel._start_deal_reveal`），之后滚动或内部布局变化都不会再
-影响已经开始的动画。页面根容器尺寸变化时发出 :attr:`resized`；页面滚动与卡片区视口/
-滚动变化分别由连接页和发现面板盯着，按“取消并恢复”的确定策略收尾，而不是在动画中途
-逐帧追踪复杂布局。
+影响已经开始的动画。宿主尺寸变化时发出 :attr:`resized`，宿主被藏起来时发出
+:attr:`host_hidden`；页面把这些事件交给
+:class:`presentation.qt.animation_lifecycle.OverlayLifecycle`，按“取消并恢复”的确定
+策略收尾，而不是在动画中途逐帧追踪复杂布局。
 
 跨分支换算必须用 :func:`widget_rect_in`：覆盖层与卡片位于页面根容器的两个分支，
 ``QWidget.mapTo()`` 只对祖先关系可靠，直接映射会得到屏幕坐标而不是覆盖层坐标。
@@ -70,6 +71,8 @@ class AnimationOverlay(QWidget):
 
     #: 宿主尺寸变了：已经换算好的动画坐标因此失效。
     resized = Signal()
+    #: 宿主被藏起来了（切页、标签页切走、窗口最小化）：正在播的动画该收尾了。
+    host_hidden = Signal()
 
     def __init__(self, host: QWidget) -> None:
         super().__init__(host)
@@ -99,7 +102,7 @@ class AnimationOverlay(QWidget):
     # ---- 事件 ---------------------------------------------------------------
 
     def eventFilter(self, watched: Any, event: Any) -> bool:
-        """宿主尺寸变化：先跟上宿主，再通知页面坐标已失效。
+        """宿主尺寸变化或藏起来：先跟上宿主，再通知页面发生了什么。
 
         ``_host`` 用 ``getattr`` 读：宿主销毁时 Qt 仍可能把事件送到这里，而此时 Python
         包装对象上的属性可能已经清掉，不能在这条路径上抛 ``AttributeError``。
@@ -108,6 +111,8 @@ class AnimationOverlay(QWidget):
         if watched is host and event.type() == QEvent.Type.Resize:
             self.sync_geometry()
             self.resized.emit()
+        elif watched is host and event.type() == QEvent.Type.Hide:
+            self.host_hidden.emit()
         return super().eventFilter(watched, event)
 
     def showEvent(self, event):  # noqa: N802 - Qt 覆盖方法

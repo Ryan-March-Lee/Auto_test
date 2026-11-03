@@ -32,8 +32,9 @@
 ``cancel_reason`` / ``restore_result`` / ``was_running``
     取消原因、取消后卡片的恢复方式（``revealed`` / ``hidden``）以及取消时是否还在播放。
     原因取固定名称：``results-cleared`` / ``new-scan`` / ``cards-refilled`` /
-    ``page-shutdown`` / ``surface-changed``（页面根容器尺寸、页面滚动或卡片区视口/滚动
-    发生变化） / ``overlay-attached``（动画中重挂覆盖层）。
+    ``page-shutdown`` / ``page-hidden``（宿主被藏起来：切页、标签页切走、窗口最小化） /
+    ``surface-changed``（页面根容器尺寸、页面滚动或卡片区视口/滚动发生变化） /
+    ``overlay-attached``（动画中重挂覆盖层）。
 ``skip_reason``
     动画没有启动的原因（例如没有卡片）。``skip`` 只由 :meth:`CardDealAnimation.skip`
     记录，面板不再单独拼一条，避免同一次未启动出现重复事件。

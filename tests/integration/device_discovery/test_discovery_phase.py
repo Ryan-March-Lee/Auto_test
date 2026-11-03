@@ -178,6 +178,34 @@ class DiscoveryPhaseTests(DiscoveryPanelTestCase):
         self.assertTrue(panel.shutdown())
         self.assertIs(panel.phase(), DiscoveryPhase.CLOSED)
 
+    def test_hiding_a_standalone_panel_stops_the_deal_and_restores_the_cards(self):
+        """面板单独使用（没有页面级覆盖层）：自己被藏起来时按 ``page-hidden`` 收尾。
+
+        计划步骤 12 的约定是“看不见的动画立即收尾”，页面级覆盖层由
+        ``OverlayLifecycle`` 负责；面板单独使用时由面板自己的隐藏事件走同一个公开入口，
+        因此计时器不会留在隐藏的控件上，卡片也不会停在透明、不可点的半状态。
+        """
+        panel = self.make_panel()
+        panel.request_scan()
+        self._finish_worker(panel)
+        panel.wait_stack.finish_cycle()
+        self.app.processEvents()
+        self.app.processEvents()
+        self.assertIs(panel.phase(), DiscoveryPhase.DEALING)
+        self.assertTrue(panel.deal_layer.is_running())
+
+        panel.hide()
+        self.app.processEvents()
+
+        self.assertFalse(panel.deal_layer.is_running(), "隐藏后发牌不能还在走")
+        diagnostics = panel.deal_layer.diagnostics()
+        self.assertEqual(diagnostics["cancel_reason"], "page-hidden")
+        self.assertEqual(diagnostics["restore_result"], "revealed")
+        self.assertIs(panel.phase(), DiscoveryPhase.INTERACTIVE)
+        self.assertTrue(panel.cards_area.isEnabled())
+        for card in panel.cards():
+            self.assertIsNone(card.graphicsEffect())
+
     def test_the_full_cycle_policy_is_explicit_and_can_be_disabled(self):
         """产品要求完整一轮时由 ``WAIT_FOR_FULL_CYCLE`` 表达；关掉后结果一到就发牌。"""
         with mock.patch.object(panel_module, "WAIT_FOR_FULL_CYCLE", False):

@@ -49,6 +49,7 @@ from application.device_binding import ApplyDeviceSelectionRequest
 from application.ports.device_binding import DeviceBindingPort
 from application.ports.device_discovery import DEMO_SUBNET
 
+from .animation_lifecycle import OverlayLifecycle
 from .animation_overlay import AnimationOverlay
 from .config_form_bindings import binding_address, binding_records
 from .device_discovery_panel import (
@@ -137,16 +138,11 @@ class ConnectionPage(QWidget):
         panel_host_layout.addWidget(self.discovery_panel)
         # 发牌画面挂在页面级覆盖层上：结果区在滚动区里，动画不该跟着它滚动或重排。
         self.discovery_panel.attach_animation_overlay(self.animation_overlay)
-        # 页面根容器尺寸变化时，已经算好的动画坐标失效：取消这一次发牌（见
-        # :meth:`_on_animation_surface_changed`），不在动画中途追踪布局。
-        self.animation_overlay.resized.connect(self._on_animation_surface_changed)
-        # 滚动同样会改变卡片在覆盖层里的位置：播放中滚动就按同一个确定策略收尾。
-        # 两个方向都接上，不假设页面将来只竖向滚动。
-        for bar in (
-            self.scroll_area.verticalScrollBar(),
-            self.scroll_area.horizontalScrollBar(),
-        ):
-            bar.valueChanged.connect(self._on_animation_surface_changed)
+        # 覆盖层、取消协议与“宿主变化就收尾”的规则集中在一处（计划步骤 12）：
+        # 页面不再自己接 resize / 滚动 / 隐藏事件，也不再自己判断定时器什么时候停。
+        self.animation_lifecycle = OverlayLifecycle(self.animation_overlay, parent=self)
+        self.animation_lifecycle.attach(self.discovery_panel.cancel_deal_reveal)
+        self.animation_lifecycle.watch_scrolling(self.scroll_area)
         # 大标题与扫描行在扫描中隐去文字，但保留高度：它们是页面主体的锚点，
         # 按钮、等待动画与结果卡片因此不再上下跳。
         self._setup_header_visibility()
@@ -173,18 +169,6 @@ class ConnectionPage(QWidget):
         ):
             self._fit_discovery_panel()
         return super().eventFilter(watched, event)
-
-    def _on_animation_surface_changed(self, *_args: Any) -> None:
-        """页面根容器尺寸或滚动位置变了：已经换算好的动画坐标失效。
-
-        计划步骤 6 的确定策略是“不追踪、先收尾”：发牌/翻牌正在播放时直接取消它并把
-        卡片恢复成最终版面，而不是在动画中途按新布局重算每一张牌的落点。重新开始动画
-        由页面状态机统一决定（步骤 8），这里只保证不会把牌画到旧位置上。
-        """
-        panel = getattr(self, "discovery_panel", None)
-        if panel is None:
-            return
-        panel.cancel_deal_reveal(reveal=True, reason="surface-changed")
 
     def _fit_discovery_panel(self) -> None:
         """按当前视口高度给结果区留出合适的高度。
@@ -388,6 +372,10 @@ class ConnectionPage(QWidget):
 
     def close(self) -> None:
         """关闭页面：协作停止设备扫描线程（幂等，可重复调用）。"""
+        lifecycle = getattr(self, "animation_lifecycle", None)
+        if lifecycle is not None:
+            # 页面关闭时收尾动画但不恢复即将销毁的控件；计时器由动画自己停。
+            lifecycle.shutdown()
         panel = getattr(self, "discovery_panel", None)
         if panel is not None and not panel.shutdown():
             self.log_message.emit("设备扫描线程未能在关闭期限内停止")

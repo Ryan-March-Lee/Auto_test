@@ -674,6 +674,40 @@ setProperty
 
 ## 步骤 12：建立通用过渡和 Overlay 约定
 
+**执行状态：已完成**。只抽取仪器卡片重构里已经出现两次以上的四件事，全部收进新增的
+`presentation/qt/animation_lifecycle.py`，没有建立通用动画框架：
+
+- **取消协议**：`CANCEL_REASON_SURFACE_CHANGED` / `CANCEL_REASON_PAGE_HIDDEN` /
+  `CANCEL_REASON_PAGE_SHUTDOWN` 是收尾原因的固定名称；`CancelableAnimation` 只要求
+  `is_running()` 与 `cancel(*, reveal, reason)`，发牌层原样满足，页面不再读动画的内部
+  阶段。
+- **Overlay 生命周期**：`AnimationOverlay` 新增 `host_hidden`（宿主被藏起来）；铺满
+  宿主、不进布局、不吃鼠标、压在普通内容之上仍由覆盖层自己保证。
+- **页面隐藏时自动停止**：`OverlayLifecycle` 接住宿主 resize、登记过的滚动区与
+  `host_hidden`，分别按 `surface-changed` / `page-hidden` 取消；`shutdown()` 按
+  `page-shutdown` 收尾（不恢复即将销毁的控件）并断开事件源，幂等。
+- **窗口变化时的策略**：仍是“取消并恢复”，不在动画中途追踪布局；定时器由动画自己的
+  `cancel()` 停，页面只登记一个收尾入口。
+
+接线：`ConnectionPage` 构造时创建 `OverlayLifecycle(animation_overlay)`，把
+`DeviceDiscoveryPanel.cancel_deal_reveal` 登记为收尾入口、把 `scroll_area` 交给
+`watch_scrolling()`；页面自己的 `_on_animation_surface_changed` 与逐根连接滚动条的代码
+删掉，`close()` 改调 `lifecycle.shutdown()`。面板在自己被藏起来时（`hideEvent`，即没有
+页面级覆盖层、面板单独使用的场景）调用同一个公开入口，`reason=page-hidden`；
+`shutdown` 与卡片区变化也改用固定原因常量。发牌层本身没有改行为：`cancel()` 仍只发
+`card_revealed`、不发 `finished`（步骤 7 的既有契约），取消后的状态恢复统一由页面的
+收尾入口完成。
+
+欢迎页按钮动画与扫描等待牌堆保持不动：它们已经满足“显示时走、隐藏时停”，只是没有
+接入 `OverlayLifecycle`（既没有页面级 Overlay，也没有需要恢复的真实控件）。
+
+验证：新增 `tests/ui/test_animation_lifecycle.py`（11 项：固定原因名、取消协议契约、
+宿主缩放/滚动/隐藏各只收尾一次、关闭幂等并断开事件源、没有登记入口或没有在播时返回
+`False`）；`tests/integration/device_discovery/test_connection_page.py` 新增“发牌中
+隐藏页面”和“发牌中关闭页面”两项，`test_discovery_phase.py` 新增“面板单独使用时被藏
+起来”一项。`tools/run_tests.py --layer ui`（664 项）与
+`tools/run_tests.py --layer integration`（308 项）通过。
+
 ### 执行策略
 
 根据仪器卡片重构的实际结果，提取最小公共能力：

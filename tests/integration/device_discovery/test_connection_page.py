@@ -7,7 +7,9 @@ from PySide6.QtWidgets import QScrollArea
 from presentation.qt.device_discovery_panel import (
     BOX_STATE_BUSY,
     BOX_STATE_IDLE,
+    BOX_STATE_RESULTS,
     DeviceDiscoveryPanel,
+    DiscoveryPhase,
 )
 
 from .support import ConnectionPageTestCase
@@ -608,3 +610,43 @@ class DiscoveryAnimationOverlayTests(ConnectionPageTestCase):
         )
         for card in panel.cards():
             self.assertIsNone(card.graphicsEffect(), "取消后卡片不再被透明度效果藏起来")
+
+    def test_leaving_the_page_while_dealing_stops_the_animation(self):
+        """页面被藏起来（切页、标签页切走、窗口最小化）：按 ``page-hidden`` 收尾。
+
+        通用过渡约定（计划步骤 12）：看不见的动画不该继续走，也不该把计时器留在隐藏的
+        页面上。收尾之后卡片恢复可交互，回到页面时不会重播已经结束的一次发牌。
+        """
+        page, panel, layer = self._dealing()
+
+        page.hide()
+        self.app.processEvents()
+
+        self.assertFalse(layer.is_running(), "页面隐藏后发牌不能还在走")
+        self.assertFalse(layer.isVisible())
+        diagnostics = layer.diagnostics()
+        self.assertEqual(diagnostics["cancel_reason"], "page-hidden")
+        self.assertEqual(diagnostics["restore_result"], "revealed")
+        self.assertIs(panel.phase(), DiscoveryPhase.INTERACTIVE)
+        self.assertTrue(panel.cards_area.isEnabled())
+        self.assertFalse(panel.status_label.isHidden(), "收尾后统计行要放出来")
+        for card in panel.cards():
+            self.assertIsNone(card.graphicsEffect(), "收尾后卡片不再被藏起来")
+
+        page.show()
+        self.app.processEvents()
+        self.assertFalse(layer.is_running(), "回到页面不该重播已经结束的发牌")
+        self.assertIs(panel.phase(), DiscoveryPhase.INTERACTIVE)
+
+    def test_closing_the_page_while_dealing_stops_without_restoring(self):
+        """页面关闭：收尾但不恢复即将销毁的控件，流程进入 ``CLOSED``。"""
+        page, panel, layer = self._dealing()
+
+        page.close()
+        self.app.processEvents()
+
+        self.assertFalse(layer.is_running(), "关闭页面后不能还有发牌计时器")
+        diagnostics = layer.diagnostics()
+        self.assertEqual(diagnostics["cancel_reason"], "page-shutdown")
+        self.assertEqual(diagnostics["restore_result"], "hidden")
+        self.assertIs(panel.phase(), DiscoveryPhase.CLOSED)

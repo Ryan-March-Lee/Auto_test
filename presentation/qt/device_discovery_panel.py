@@ -43,8 +43,9 @@
 写出“发现 N 台设备 …”。发牌画面挂在**页面根容器**的覆盖层上
 （:mod:`presentation.qt.animation_overlay`，由页面通过 :meth:`DeviceDiscoveryPanel.attach_animation_overlay`
 挂进来），不在结果区或卡片滚动区里：起点与每张牌的落点在动画开始时一次性换算到覆盖层
-坐标，滚动与页头收放都不会挪动已经开始的动画；页面尺寸或滚动位置变化时页面取消这一次
-发牌并恢复卡片（``reason=surface-changed``）。面板单独使用（没有页面）时退回挂在结果区上。
+坐标，滚动与页头收放都不会挪动已经开始的动画；页面尺寸、滚动或页面隐藏时页面按
+:class:`presentation.qt.animation_lifecycle.OverlayLifecycle` 的约定取消这一次发牌并恢复
+卡片。面板单独使用（没有页面）时退回挂在结果区上，动画自己被藏起来时同样收尾。
 **流程状态是显式的**（计划步骤 8）：页面只在 :meth:`DeviceDiscoveryPanel._set_phase`
 推进 ``IDLE → SCANNING → RESULT_PENDING → DEALING → INTERACTIVE``（失败、取消与空结果
 回 ``IDLE``，关闭进 ``CLOSED``），可见性、状态行与卡片是否可点都由当前状态一次渲染。
@@ -98,6 +99,11 @@ from domain.instruments.models import (
 )
 
 from .animation_diagnostics import log_event
+from .animation_lifecycle import (
+    CANCEL_REASON_PAGE_HIDDEN,
+    CANCEL_REASON_PAGE_SHUTDOWN,
+    CANCEL_REASON_SURFACE_CHANGED,
+)
 from .animation_overlay import AnimationOverlay, widget_rect_in
 from .card_assets import CardAsset, render_card_asset
 from .card_deal_animation import (
@@ -495,14 +501,26 @@ class DeviceDiscoveryPanel(QWidget):
         self._animation_overlay = overlay
         if layer.parentWidget() is not overlay:
             layer.setParent(overlay)
-        # 覆盖层尺寸一变，发牌层先跟上新的宿主矩形；要不要取消这次发牌由页面的
-        # “surface-changed”策略决定（面板自己的卡片区变化由下面的看护负责）。
+        # 覆盖层尺寸一变，发牌层先跟上新的宿主矩形；什么时候取消这次发牌由页面的
+        # ``OverlayLifecycle``（surface-changed / page-hidden）决定，面板自己的卡片区
+        # 变化由下面的看护负责。
         overlay.resized.connect(self._sync_deal_layer_geometry)
         self._sync_deal_layer_geometry()
 
     def animation_overlay(self) -> AnimationOverlay | None:
         """当前挂着的页面级覆盖层；面板单独使用时为 ``None``。"""
         return self._animation_overlay
+
+    def hideEvent(self, event):  # noqa: N802 - Qt 覆盖方法
+        """面板被藏起来：收掉正在播的发牌，恢复卡片与流程。
+
+        通用过渡约定（计划步骤 12）：看不见的动画立即收尾。页面级覆盖层由
+        :class:`~presentation.qt.animation_lifecycle.OverlayLifecycle` 先按
+        ``page-hidden`` 收尾；面板单独使用（没有页面）时没有那层约定，这里走同一个公开
+        入口，因此卡片不会停在透明、计时器停不下来的半状态。没有在播时什么也不做。
+        """
+        self.cancel_deal_reveal(reveal=True, reason=CANCEL_REASON_PAGE_HIDDEN)
+        super().hideEvent(event)
 
     def _watch_animation_surfaces(self) -> None:
         """盯住会挪动卡片、让已冻结的覆盖层坐标失效的控件。
@@ -531,7 +549,7 @@ class DeviceDiscoveryPanel(QWidget):
             return
         current_clip = self._deal_clip_rect(layer)
         if self._deal_targets_moved(layer) or self._deal_clip_shrank(layer, current_clip):
-            self.cancel_deal_reveal(reveal=True, reason="surface-changed")
+            self.cancel_deal_reveal(reveal=True, reason=CANCEL_REASON_SURFACE_CHANGED)
             return
         layer.refresh_clip_rect(current_clip)
 
@@ -1634,8 +1652,8 @@ class DeviceDiscoveryPanel(QWidget):
         self._closed = True
         self._pending_outcome = None
         self._invalidate_scan()
-        self._cancel_deal_reveal(reveal=False, reason="page-shutdown")
-        self._set_phase(DiscoveryPhase.CLOSED, outcome="page-shutdown")
+        self._cancel_deal_reveal(reveal=False, reason=CANCEL_REASON_PAGE_SHUTDOWN)
+        self._set_phase(DiscoveryPhase.CLOSED, outcome=CANCEL_REASON_PAGE_SHUTDOWN)
         worker = self.worker
         if worker is None:
             return True

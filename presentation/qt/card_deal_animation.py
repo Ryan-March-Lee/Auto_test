@@ -174,6 +174,10 @@ class CardDealAnimation(QWidget):
     - :meth:`cancel`：``reveal=True`` 时同样为每张牌发 :attr:`card_revealed`，
       让页面把卡片恢复显示；``reveal=False`` 用于卡片即将被删除。
 
+    被页面藏起来（切页、标签页切走、窗口最小化）时也走 ``cancel(reveal=True)``：通用
+    过渡约定是“看不见的动画立即收尾”，计时器不留给隐藏的页面；这一步由动画的宿主
+    （页面覆盖层生命周期或发现面板）在隐藏事件里调用。
+
     空输入（没有 item）走 :meth:`skip`：它先把还在播的一次按完成路径收尾，再记录
     “这一次没有牌”，因此页面不会因为空结果而留下透明的卡片。
 

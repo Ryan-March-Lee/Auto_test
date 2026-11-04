@@ -13,7 +13,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from domain.run.models import RunStatus
 from infrastructure.filesystem.paths import PathService
+from infrastructure.persistence.run_repository import RunRepository
 from presentation.qt.application_coordinator import RunFlowState
 from tests.integration.test_gui_two_phase_flow import _fully_valid_gui_config
 from tests.ui.test_gui_import import gui_dependencies_available
@@ -28,6 +30,8 @@ class _RecordingConnectionWorker:
     def __init__(self, run):
         self.run = run
         self.started = False
+        self.stopped = False
+        self.unreleased_port = None
         self.signals = SimpleNamespace(
             finished=MagicMock(),
             result=MagicMock(),
@@ -42,6 +46,12 @@ class _RecordingConnectionWorker:
 
     def isRunning(self):
         return False
+
+    def stop(self):
+        self.stopped = True
+
+    def wait(self, timeout_ms=None):
+        return True
 
 
 class _ConnectedPort:
@@ -164,6 +174,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         prepared = SimpleNamespace(
             run_id="20261104T010000Z_final001",
             run_directory=self.root / "runs" / "20261104T010000Z_final001",
+            run_repository=RunRepository(paths=self.paths),
             hardware_connection_path=lambda: self.root / "frozen-hardware.json",
         )
         window.coordinator._instrument_worker_factory = _RecordingConnectionWorker
@@ -246,6 +257,43 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIs(window.coordinator.state, RunFlowState.CONFIGURING)
         self.assertIs(window.view_stack.currentWidget(), window.connection_page)
         self.assertTrue(window.config_page.finalize_run_btn.isEnabled())
+
+    def test_failed_connection_removes_the_unstarted_run_directory(self):
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+
+        prepared = window.coordinator.prepare_pending_run()
+        self.assertIsNotNone(prepared)
+        self.assertTrue(prepared.run_directory.is_dir())
+
+        window.coordinator.fail_finalization("电源型号不符")
+
+        # 阶段三：连接失败不留下可被误认为有效运行的目录。
+        self.assertFalse(prepared.run_directory.exists())
+        self.assertIsNone(window.prepared_run)
+        self.assertIsNone(window.coordinator._pending_run)
+        self.assertIs(window.coordinator.state, RunFlowState.CONFIGURING)
+
+    def test_abandoning_a_started_run_is_refused_and_keeps_the_directory(self):
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+
+        prepared = window.coordinator.prepare_pending_run()
+        self.assertIsNotNone(prepared)
+        repository = RunRepository(paths=self.paths)
+        manifest = repository.load_manifest(prepared.run_id).with_status(
+            RunStatus.RUNNING
+        )
+        repository.update_manifest(prepared.run_id, manifest)
+
+        self.assertFalse(window.coordinator.abandon_pending_run())
+
+        # 阶段出口：已进入测量的运行永远不会被放弃流程删除。
+        self.assertTrue(prepared.run_directory.is_dir())
+        self.assertTrue(window.coordinator.has_pending_run())
+        self.assertIs(window.coordinator.state, RunFlowState.MANUAL_CLEANUP_REQUIRED)
 
     def test_user_stop_with_unconfirmed_cleanup_requires_manual_cleanup(self):
         dialogs = self._silence_dialogs()

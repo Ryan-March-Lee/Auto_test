@@ -7,6 +7,8 @@
 - 通过 :class:`RunRepositoryPort` 在运行目录写入不可变的 ``config.json`` 和初始 manifest。
 - 返回 :class:`RunSnapshot`，后续阶段据此携带的运行目录读取配置和写入结果。
 - 提供 :func:`load_run_configuration`，使快照可以脱离 GUI 单独加载并重新校验。
+- 提供 :func:`discard_unstarted_run`，只允许撤销“已创建但从未开始”的运行；
+  已开始或已完成的运行绝不被补偿/放弃流程删除。
 
 本模块只依赖领域模型与端口，不导入基础设施或 Qt。
 """
@@ -59,6 +61,14 @@ class RunNotResumable(ConfigurationError):
 
 class RunIntegrityError(RunNotResumable):
     """运行目录文件缺失、被替换或未通过快照校验。"""
+
+
+class RunNotDiscardable(ConfigurationError):
+    """运行已开始或已结束，不能按“未开始运行”放弃。
+
+    放弃/失败补偿只能撤销从未开始的运行目录；已经进入测量阶段或已有终态的阶段
+    记录说明这份运行代表真实测量历史，删除它会丢失可追溯结果，因此必须拒绝。
+    """
 
 
 @dataclass(frozen=True)
@@ -324,6 +334,61 @@ def _freeze_hardware_config(
     return Path(layout.run_directory) / reference.path
 
 
+def discard_unstarted_run(
+    run_repository: RunRepositoryPort, run_id: str
+) -> str:
+    """撤销一个**尚未开始**的运行目录，并返回运行标识。
+
+    这是“连接失败补偿”和“放弃/退出”共用的用例，业务判断只在这里做一次：
+
+    - 只有 manifest 状态为 ``created`` 且全部阶段仍为 ``pending`` 才允许撤销；
+    - 已进入测量（``running``）、已有任何阶段开始/结束，或运行已处于终态时抛出
+      :class:`RunNotDiscardable`，文件系统保持不变；
+    - 运行目录不存在时按幂等无操作处理，重复补偿不会失败，也**不会**再触碰该路径；
+    - 目录存在但结构不完整或被替换时不做猜测，直接失败交给人工诊断。
+
+    仓储层的 :meth:`RunRepositoryPort.discard_run` 仍只承担底层删除，不增加业务
+    判断；本函数只在确认“未开始”后调用它。崩溃/强杀留下的残留运行不在这里自动
+    扫描，仍通过历史/诊断工具处理。
+    """
+    layout = run_repository.layout(run_id)
+    directory = Path(layout.run_directory)
+    if directory.is_symlink() or (directory.exists() and not directory.is_dir()):
+        # 路径存在但不是本仓储创建的运行目录：按底层同一条拒绝规则失败，
+        # 不在这里猜测，也不删除任何内容。
+        return run_repository.discard_run(run_id)
+    if not directory.is_dir():
+        # 目录已经不存在，撤销的正确结果就是“没有这份运行”。这里刻意不调用
+        # discard_run()：检查与删除之间可能有另一个进程用同一 run_id 写出新的
+        # 运行目录，盲目交给底层删除会删掉不属于本次补偿的运行。
+        logger.info("运行 %s 的目录已不存在，按幂等撤销处理", run_id)
+        return layout.run_id
+    manifest = run_repository.load_manifest(run_id)
+    _ensure_run_unstarted(manifest)
+    discarded = run_repository.discard_run(run_id)
+    logger.info("已撤销未开始的运行 %s", run_id)
+    return discarded
+
+
+def _ensure_run_unstarted(manifest: RunManifest) -> None:
+    """拒绝把已开始或已结束的运行当作未开始运行撤销。"""
+    if manifest.status is not RunStatus.CREATED:
+        raise RunNotDiscardable(
+            f"运行 {manifest.run_id} 的状态为 {manifest.status.value}，"
+            "已开始或已结束，不能按未开始运行放弃"
+        )
+    started = sorted(
+        name
+        for name, record in manifest.stages.items()
+        if record.status is not StageStatus.PENDING
+    )
+    if started:
+        raise RunNotDiscardable(
+            f"运行 {manifest.run_id} 已有阶段开始或结束（{', '.join(started)}），"
+            "不能按未开始运行放弃"
+        )
+
+
 def load_run_configuration(
     run_repository: RunRepositoryPort, run_id: str
 ) -> ConfigurationLoadResult:
@@ -493,11 +558,13 @@ __all__ = [
     "REQUIRED_RUN_REPOSITORY_METHODS",
     "RunNotResumable",
     "RunIntegrityError",
+    "RunNotDiscardable",
     "RunInspection",
     "FileCheck",
     "RunSnapshot",
     "configuration_snapshot",
     "create_run_snapshot",
+    "discard_unstarted_run",
     "ensure_run_repository_supports_run_contract",
     "ensure_run_resumable",
     "find_run_hardware_config",

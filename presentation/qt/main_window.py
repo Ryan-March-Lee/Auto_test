@@ -539,34 +539,40 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "错误", error_message)
 
     def closeEvent(self, event):
-        """窗口关闭：先完成全部确认，再提交不可逆的停止与清理动作。
+        """窗口关闭：确认一次后停止线程、撤销未开始运行并安全清理端口。
 
-        确认只在开头做一次：一旦用户同意退出，停止测量与连接线程就是已提交的
-        动作，不会在后续步骤里再被“取消退出”打断（否则会出现“测量已停、窗口还在”
-        的半提交状态）。之后只剩两类明确的失败询问：停止超时与清理未完成。
-
-        顺序固定为“硬件安全清理 → 关闭页面 → 接受关闭”，仪器端口的安全释放
-        绝不能因为后续步骤失败而被跳过。
+        连接线程未停止、待提交运行撤销失败或端口未确认清理时窗口保持打开：没有
+        “确认后带着未清理端口退出”的旁路，也不会把未完成清理报告成成功。收尾顺序为
+        测量线程 → 连接 worker（含已跑完但未收尾的引用）→ 最终动作补偿 → 残留待提交
+        运行 → 端口 → 未决清理；后一步以前一步完成为前提，因此撤销运行目录只发生在
+        连接线程停止之后。
         """
+        coordinator = self.coordinator
         measurement_active = self.measurement_controller.state.is_active
-        worker_running = self.coordinator.instrument_worker_running()
-        if (measurement_active or worker_running) and not self._confirm_exit():
+        needs_attention = (
+            measurement_active
+            or coordinator.has_instrument_worker()
+            or coordinator.state is RunFlowState.FINALIZING
+            or coordinator.has_pending_run()
+        )
+        if needs_attention and not self._confirm_exit():
             event.ignore()
             return
         if measurement_active and not self.measurement_controller.shutdown(timeout_ms=5000):
-            self.add_log_message("测量线程未能在关闭期限内停止；窗口保持打开")
-            event.ignore()
-            return
-        if worker_running and not self.coordinator.stop_instrument_worker(5000):
-            event.ignore()
-            return
-        if self.coordinator.state is RunFlowState.FINALIZING:
-            # 未提交的待提交运行不能留给下一次启动；取消并补偿后再释放端口。
-            self.coordinator.cancel_finalization("窗口关闭")
-        self.coordinator.release_instrument_port()
-        if self.coordinator.has_unreleased_ports() and not self._confirm_exit_with_unreleased_ports():
-            event.ignore()
-            return
+            return self._keep_window_open(event, "测量线程未能在关闭期限内停止；窗口保持打开")
+        if not coordinator.stop_instrument_worker(5000):
+            return self._keep_window_open(event, "仪器连接线程未能在关闭期限内停止；窗口保持打开")
+        # 重新读取状态：确认框期间最终动作可能已自行完成，已提交的运行不能被放弃流程删掉。
+        if coordinator.state is RunFlowState.FINALIZING and not (
+            coordinator.cancel_finalization("窗口关闭")
+        ):
+            return self._keep_window_open(event, "最终动作未能安全撤销；请完成仪器清理后再退出")
+        if coordinator.has_pending_run() and not coordinator.abandon_pending_run():
+            return self._keep_window_open(event, "待提交运行未能撤销；请完成仪器清理后再退出")
+        if not coordinator.release_instrument_port():
+            return self._keep_window_open(event, "仪器端口未能确认清理；请在现场确认后重试清理")
+        if coordinator.has_unreleased_ports():
+            return self._keep_window_open(event, "仍有未完成的仪器清理；清理完成前不能退出")
         self._disconnect_page_signals()
         for page in getattr(self, "pages", {}).values():
             page.close()
@@ -574,6 +580,11 @@ class MainWindow(QMainWindow):
         if connection_page is not None:
             connection_page.close()
         event.accept()
+
+    def _keep_window_open(self, event, message: str) -> None:
+        """记录关闭被拒绝的原因并保持窗口打开。"""
+        self.add_log_message(message)
+        event.ignore()
 
     def _disconnect_page_signals(self) -> None:
         """幂等断开页签切换信号；重复关闭不再触发 libpyside 断开警告。"""
@@ -591,17 +602,6 @@ class MainWindow(QMainWindow):
         """退出前的唯一确认点；返回 True 表示后续停止动作已获授权。"""
         reply = QMessageBox.question(
             self, "退出", "测试正在进行中，确定要退出吗？",
-            QMessageBox.Yes | QMessageBox.No,
-        )
-        return reply == QMessageBox.Yes
-
-    def _confirm_exit_with_unreleased_ports(self) -> bool:
-        """清理未完成时的二次确认：明确告知可能仍有 RF/电源输出。"""
-        reply = QMessageBox.question(
-            self,
-            "退出",
-            "部分仪器未能完成安全清理，可能仍有 RF 或电源输出。\n"
-            "确定仍然退出吗？退出后请现场手动确认仪器状态。",
             QMessageBox.Yes | QMessageBox.No,
         )
         return reply == QMessageBox.Yes

@@ -90,20 +90,27 @@ class MainWindowCloseEventTests(unittest.TestCase):
     """关闭窗口：确认只做一次，之后的停止动作视为已提交。"""
 
     def _window(self, *, measurement_active=False, worker_running=False,
-                shutdown_ok=True, stop_ok=True, release_ok=True,
-                unreleased=False):
+                worker_reference=False, shutdown_ok=True, stop_ok=True,
+                release_ok=True, unreleased=False, pending_run=False,
+                pending_discard_ok=True):
         from PySide6.QtWidgets import QMessageBox
 
+        from presentation.qt.application_coordinator import RunFlowState
         from presentation.qt.main_window import MainWindow
 
         controller = Mock()
         controller.state.is_active = measurement_active
         controller.shutdown.return_value = shutdown_ok
         coordinator = Mock()
+        coordinator.state = RunFlowState.CONFIGURING
         coordinator.instrument_worker_running.return_value = worker_running
+        coordinator.has_instrument_worker.return_value = worker_running or worker_reference
         coordinator.stop_instrument_worker.return_value = stop_ok
         coordinator.release_instrument_port.return_value = release_ok
         coordinator.has_unreleased_ports.return_value = unreleased
+        coordinator.has_pending_run.return_value = pending_run
+        coordinator.abandon_pending_run.return_value = pending_discard_ok
+        coordinator.cancel_finalization.return_value = True
 
         tab_signal = Mock()
         pages = {"first": Mock(), "second": Mock()}
@@ -115,10 +122,10 @@ class MainWindowCloseEventTests(unittest.TestCase):
             add_log_message=Mock(),
         )
         window._on_page_changed = Mock()
-        # 未通过 __init__ 构造的替身窗口需要显式绑定这两个确认/收尾方法。
+        # 未通过 __init__ 构造的替身窗口需要显式绑定确认/收尾方法。
         window._confirm_exit = lambda: MainWindow._confirm_exit(window)
-        window._confirm_exit_with_unreleased_ports = (
-            lambda: MainWindow._confirm_exit_with_unreleased_ports(window)
+        window._keep_window_open = lambda event, message: MainWindow._keep_window_open(
+            window, event, message
         )
         window._disconnect_page_signals = lambda: MainWindow._disconnect_page_signals(
             window
@@ -207,26 +214,46 @@ class MainWindowCloseEventTests(unittest.TestCase):
         event.ignore.assert_called_once_with()
         event.accept.assert_not_called()
 
-    def test_close_event_asks_before_leaving_unreleased_ports(self):
+    def test_close_event_stays_open_when_the_port_cannot_be_cleaned(self):
         MainWindow, window, event, pages, _tab = self._window(
             release_ok=False, unreleased=True
         )
 
-        with patch(
-            "presentation.qt.main_window.QMessageBox.question",
-            side_effect=[self.No],
-        ) as question:
-            MainWindow.closeEvent(window, event)
+        MainWindow.closeEvent(window, event)
 
-        self.assertEqual(question.call_count, 1)
+        # 阶段三：端口未确认清理时没有“确认后带病退出”的旁路，窗口必须保持打开。
         event.ignore.assert_called_once_with()
         event.accept.assert_not_called()
         for page in pages.values():
             page.close.assert_not_called()
+        self.assertTrue(
+            any(
+                "仪器端口未能确认清理" in str(call.args[0])
+                for call in window.add_log_message.call_args_list
+            )
+        )
 
-    def test_close_event_leaves_unreleased_ports_only_with_explicit_confirmation(self):
+    def test_close_event_stays_open_while_unreleased_ports_remain(self):
         MainWindow, window, event, pages, _tab = self._window(
-            release_ok=False, unreleased=True
+            release_ok=True, unreleased=True
+        )
+
+        MainWindow.closeEvent(window, event)
+
+        event.ignore.assert_called_once_with()
+        event.accept.assert_not_called()
+        for page in pages.values():
+            page.close.assert_not_called()
+        self.assertTrue(
+            any(
+                "仍有未完成的仪器清理" in str(call.args[0])
+                for call in window.add_log_message.call_args_list
+            )
+        )
+
+    def test_close_event_stays_open_when_the_pending_run_cannot_be_discarded(self):
+        MainWindow, window, event, pages, _tab = self._window(
+            pending_run=True, pending_discard_ok=False
         )
 
         with patch(
@@ -234,9 +261,92 @@ class MainWindowCloseEventTests(unittest.TestCase):
         ):
             MainWindow.closeEvent(window, event)
 
-        event.accept.assert_called_once_with()
+        window.coordinator.abandon_pending_run.assert_called_once_with()
+        event.ignore.assert_called_once_with()
+        event.accept.assert_not_called()
         for page in pages.values():
-            page.close.assert_called_once_with()
+            page.close.assert_not_called()
+
+    def test_close_event_cancels_the_finalization_before_discarding(self):
+        MainWindow, window, event, _pages, _tab = self._window()
+        from presentation.qt.application_coordinator import RunFlowState
+
+        window.coordinator.state = RunFlowState.FINALIZING
+        pending = {"value": True}
+        window.coordinator.has_pending_run.side_effect = lambda: pending["value"]
+
+        def _cancel(*_args):
+            pending["value"] = False
+            return True
+
+        window.coordinator.cancel_finalization.side_effect = _cancel
+
+        with patch(
+            "presentation.qt.main_window.QMessageBox.question", return_value=self.Yes
+        ):
+            MainWindow.closeEvent(window, event)
+
+        window.coordinator.cancel_finalization.assert_called_once_with("窗口关闭")
+        window.coordinator.abandon_pending_run.assert_not_called()
+        event.accept.assert_called_once_with()
+
+    def test_close_event_stops_a_finished_worker_reference_before_discarding(self):
+        """worker 已跑完但引用还在时也要先收尾，不能直接跳过连接线程这一步。"""
+        MainWindow, window, event, _pages, _tab = self._window(
+            worker_reference=True, pending_run=True
+        )
+
+        with patch(
+            "presentation.qt.main_window.QMessageBox.question", return_value=self.Yes
+        ):
+            MainWindow.closeEvent(window, event)
+
+        window.coordinator.stop_instrument_worker.assert_called_once_with(5000)
+        called = [entry[0] for entry in window.coordinator.mock_calls]
+        self.assertLess(
+            called.index("stop_instrument_worker"),
+            called.index("abandon_pending_run"),
+            "撤销运行目录只能在连接线程停止之后",
+        )
+        event.accept.assert_called_once_with()
+
+    def test_close_event_never_discards_the_run_before_the_worker_stops(self):
+        MainWindow, window, event, _pages, _tab = self._window(
+            worker_running=True, stop_ok=False, pending_run=True
+        )
+
+        with patch(
+            "presentation.qt.main_window.QMessageBox.question", return_value=self.Yes
+        ):
+            MainWindow.closeEvent(window, event)
+
+        window.coordinator.abandon_pending_run.assert_not_called()
+        window.coordinator.release_instrument_port.assert_not_called()
+        event.ignore.assert_called_once_with()
+        event.accept.assert_not_called()
+
+    def test_close_event_does_not_cancel_a_finalization_that_finished_meanwhile(self):
+        """确认框期间连接已经成功：已提交的运行不能被退出流程当成待撤销事务。"""
+        MainWindow, window, event, _pages, _tab = self._window()
+        from presentation.qt.application_coordinator import RunFlowState
+
+        window.coordinator.state = RunFlowState.FINALIZING
+        window.coordinator.has_pending_run.return_value = False
+
+        def _commit_during_close(*_args):
+            window.coordinator.state = RunFlowState.CONNECTED
+            return True
+
+        window.coordinator.stop_instrument_worker.side_effect = _commit_during_close
+
+        with patch(
+            "presentation.qt.main_window.QMessageBox.question", return_value=self.Yes
+        ):
+            MainWindow.closeEvent(window, event)
+
+        window.coordinator.cancel_finalization.assert_not_called()
+        window.coordinator.abandon_pending_run.assert_not_called()
+        event.accept.assert_called_once_with()
 
 class _FakeStatusPanel:
     """状态面板替身：只记录显隐调用，可见性语义与真实 ``StatusPanel`` 一致。"""

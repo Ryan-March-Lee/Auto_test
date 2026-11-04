@@ -5,13 +5,16 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 from app.run_context import create_prepared_run, load_prepared_run
 from application.ports.config_repository import ConfigurationLoadResult
 from application.run_service import (
+    RunNotDiscardable,
     RunNotResumable,
     RunSnapshot,
     create_run_snapshot,
+    discard_unstarted_run,
     find_run_hardware_config,
     load_hardware_config,
     load_run_configuration,
@@ -29,9 +32,11 @@ from domain.configuration.models import (
 from domain.configuration.types import ConfigIssue, ConfigValidationResult
 from domain.run.models import (
     HARDWARE_CONFIG_INPUT_PATH,
+    MANIFEST_FILENAME,
     RunStatus,
     StageStatus,
     default_manifest,
+    default_stage_result_path,
 )
 from infrastructure.config.json_config_repository import ConfigurationRepository
 from infrastructure.filesystem.paths import PathService
@@ -718,6 +723,154 @@ class RunSnapshotIsolationTests(unittest.TestCase):
             load_run_configuration(self.repository, RUN_ID)
         with self.assertRaisesRegex(ValueError, "SHA-256"):
             load_prepared_run(RUN_ID, run_repository=self.repository)
+
+
+class _RecordingRunRepository:
+    """只记录底层删除/读取调用的运行仓储替身，运行目录事先不存在。"""
+
+    def __init__(self, root: Path):
+        self.root = Path(root)
+        self.discarded: list[str] = []
+        self.manifest_reads: list[str] = []
+
+    def layout(self, run_id: str):
+        return SimpleNamespace(run_id=run_id, run_directory=self.root / run_id)
+
+    def load_manifest(self, run_id: str):
+        self.manifest_reads.append(run_id)
+        raise AssertionError(f"运行目录不存在时不应读取 manifest: {run_id}")
+
+    def discard_run(self, run_id: str) -> str:
+        self.discarded.append(run_id)
+        return run_id
+
+
+class DiscardUnstartedRunTests(unittest.TestCase):
+    """阶段三：只有“已创建且从未开始”的运行允许被补偿/放弃撤销。"""
+
+    def setUp(self):
+        self._temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temporary.cleanup)
+        self.root = Path(self._temporary.name)
+        self.repository = RunRepository(self.root / "runs")
+
+    def _create(self, run_id: str = RUN_ID) -> RunSnapshot:
+        return create_run_snapshot(
+            _loaded(_valid_configuration()),
+            run_repository=self.repository,
+            run_id=run_id,
+            hardware_config=_gui_config(),
+            now=CREATED_AT,
+        )
+
+    def _mark_run_status(self, run_id: str, status: RunStatus) -> None:
+        manifest = self.repository.load_manifest(run_id).with_status(status)
+        self.repository.update_manifest(run_id, manifest)
+
+    def _mark_stage(self, run_id: str, status: StageStatus) -> None:
+        manifest = self.repository.load_manifest(run_id)
+        name = next(iter(manifest.stages))
+        record = manifest.stage(name).transition_to(StageStatus.RUNNING)
+        if status is StageStatus.COMPLETED:
+            record = record.transition_to(
+                StageStatus.COMPLETED, result=default_stage_result_path(name)
+            )
+        manifest = manifest.with_stage(record)
+        self.repository.update_manifest(run_id, manifest)
+
+    def test_created_and_unstarted_run_is_discarded(self):
+        snapshot = self._create()
+        self.assertTrue(snapshot.run_directory.is_dir())
+
+        discarded = discard_unstarted_run(self.repository, RUN_ID)
+
+        self.assertEqual(discarded, RUN_ID)
+        self.assertFalse(snapshot.run_directory.exists())
+        self.assertEqual(self.repository.list_run_ids(), ())
+
+    def test_missing_run_directory_is_idempotent(self):
+        # 重复补偿或目录已被人工删除时不应失败。
+        self.assertEqual(discard_unstarted_run(self.repository, RUN_ID), RUN_ID)
+        self.assertEqual(discard_unstarted_run(self.repository, RUN_ID), RUN_ID)
+
+    def test_missing_directory_is_not_a_delete_command(self):
+        """目录已不存在时只返回运行标识，不调用底层删除。
+
+        检查与删除之间可能有另一个进程用同一 ``run_id`` 写出新的运行目录；
+        幂等分支再调用 ``discard_run()`` 会把那份新运行一起删掉。
+        """
+        repository = _RecordingRunRepository(self.root / "runs")
+
+        self.assertEqual(discard_unstarted_run(repository, RUN_ID), RUN_ID)
+        self.assertEqual(repository.discarded, [])
+        self.assertEqual(repository.manifest_reads, [])
+
+    def test_incomplete_run_directory_is_left_for_manual_diagnosis(self):
+        snapshot = self._create()
+        (snapshot.run_directory / MANIFEST_FILENAME).unlink()
+
+        with self.assertRaises(FileNotFoundError):
+            discard_unstarted_run(self.repository, RUN_ID)
+
+        # 结构不完整时不能猜测性删除：补偿失败交给人工诊断。
+        self.assertTrue(snapshot.run_directory.is_dir())
+
+    def test_path_that_is_not_a_run_directory_is_refused(self):
+        target = self.root / "runs" / RUN_ID
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("{}", encoding="utf-8")
+
+        with self.assertRaises(NotADirectoryError):
+            discard_unstarted_run(self.repository, RUN_ID)
+
+        self.assertTrue(target.is_file(), "同名普通文件不能被当成运行目录删除")
+
+    def test_started_run_is_never_discarded(self):
+        snapshot = self._create()
+        self._mark_run_status(RUN_ID, RunStatus.RUNNING)
+
+        with self.assertRaisesRegex(RunNotDiscardable, "running"):
+            discard_unstarted_run(self.repository, RUN_ID)
+
+        self.assertTrue(snapshot.run_directory.is_dir())
+
+    def test_run_with_any_started_stage_is_never_discarded(self):
+        snapshot = self._create()
+        self._mark_stage(RUN_ID, StageStatus.RUNNING)
+
+        with self.assertRaisesRegex(RunNotDiscardable, "阶段"):
+            discard_unstarted_run(self.repository, RUN_ID)
+
+        self.assertTrue(snapshot.run_directory.is_dir())
+
+    def test_run_with_a_completed_stage_is_never_discarded(self):
+        snapshot = self._create()
+        self._mark_stage(RUN_ID, StageStatus.COMPLETED)
+
+        with self.assertRaises(RunNotDiscardable):
+            discard_unstarted_run(self.repository, RUN_ID)
+
+        self.assertTrue(snapshot.run_directory.is_dir())
+
+    def test_terminal_run_is_never_discarded(self):
+        snapshot = self._create()
+        self._mark_run_status(RUN_ID, RunStatus.CANCELLED)
+
+        with self.assertRaises(RunNotDiscardable):
+            discard_unstarted_run(self.repository, RUN_ID)
+
+        self.assertTrue(snapshot.run_directory.is_dir())
+
+    def test_discarding_one_run_leaves_other_runs_intact(self):
+        other_id = "20261022T153000Z_deadbeef"
+        first = self._create()
+        second = self._create(other_id)
+
+        discard_unstarted_run(self.repository, RUN_ID)
+
+        self.assertFalse(first.run_directory.exists())
+        self.assertTrue(second.run_directory.exists())
+        self.assertEqual(self.repository.list_run_ids(), (other_id,))
 
 
 class CreatePreparedRunTests(unittest.TestCase):

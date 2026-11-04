@@ -9,11 +9,16 @@
    缺少用户可见反馈回调时在构造阶段失败，不允许失败路径静默。
 """
 
+import atexit
+import itertools
+import shutil
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from domain.run.models import RunStatus, default_manifest
 from presentation.qt.application_coordinator import (
     ApplicationCoordinator,
     ConfigurationPagePort,
@@ -23,6 +28,12 @@ from presentation.qt.application_coordinator import (
 )
 
 RUN_ID = "20261027T101500Z_c0ffee01"
+
+# 替身需要的真实运行目录统一放在进程级临时根下，退出时显式清理，避免垃圾回收时
+# 隐式删除临时目录而触发 ResourceWarning。
+_RUN_REPOSITORY_ROOT = tempfile.TemporaryDirectory(prefix="coordinator-runs-")
+atexit.register(_RUN_REPOSITORY_ROOT.cleanup)
+_RUN_REPOSITORY_IDS = itertools.count(1)
 
 
 class _OkPort:
@@ -89,6 +100,42 @@ class _Page:
 
     def driver_mode_requested(self):
         return self._driver_mode
+
+
+class _RunRepository:
+    """运行仓储替身：提供真实存在的运行目录与 manifest，只记录底层删除。
+
+    撤销用例只在运行目录真实存在时读取 manifest，因此替身在 ``layout()`` 里准备好
+    目录并生成对应 ``status`` 的 manifest；“是否允许撤销”仍由
+    ``application.run_service.discard_unstarted_run`` 判断，替身不复制这条规则。
+    """
+
+    def __init__(self, *, status=RunStatus.CREATED):
+        self.root = Path(_RUN_REPOSITORY_ROOT.name) / f"runs-{next(_RUN_REPOSITORY_IDS)}"
+        self.status = status
+        self.discarded = []
+        self._manifests = {}
+
+    def layout(self, run_id):
+        directory = self.root / run_id
+        directory.mkdir(parents=True, exist_ok=True)
+        self._manifests.setdefault(
+            run_id, default_manifest(run_id, status=self.status)
+        )
+        return SimpleNamespace(run_id=run_id, run_directory=directory)
+
+    def load_manifest(self, run_id):
+        manifest = self._manifests.get(run_id)
+        if manifest is None:
+            raise FileNotFoundError(f"运行不存在: {run_id}")
+        return manifest
+
+    def discard_run(self, run_id):
+        self.discarded.append(run_id)
+        directory = self.root / run_id
+        if directory.is_dir():
+            shutil.rmtree(directory)
+        return run_id
 
 
 def _coordinator(*, page=None, controller=None, service=None, **overrides):
@@ -203,6 +250,7 @@ class PortCleanupContractTests(unittest.TestCase):
     def test_stop_instrument_worker_clears_reference_only_after_stop(self):
         coordinator = _coordinator()
         worker = MagicMock()
+        worker.unreleased_port = None
         worker.wait.return_value = False
         coordinator.instrument_worker = worker
 
@@ -212,6 +260,22 @@ class PortCleanupContractTests(unittest.TestCase):
         worker.wait.return_value = True
         self.assertTrue(coordinator.stop_instrument_worker(5000))
         self.assertIsNone(coordinator.instrument_worker)
+
+    def test_stop_instrument_worker_adopts_an_unconfirmed_port_before_forgetting_it(self):
+        coordinator = _coordinator()
+        worker = MagicMock()
+        port = _FailingPort("RF 未确认关闭")
+        worker.unreleased_port = port
+        worker.wait.return_value = True
+        coordinator.instrument_worker = worker
+
+        self.assertTrue(coordinator.stop_instrument_worker(5000))
+
+        # 线程引用可以清掉，但它未能确认关闭的端口必须先进入未决清理清单。
+        self.assertIsNone(coordinator.instrument_worker)
+        self.assertIsNone(worker.unreleased_port)
+        self.assertTrue(coordinator.has_unreleased_ports())
+        self.assertEqual(coordinator.unreleased_port_count(), 1)
 
 
 class PortHandoffTests(unittest.TestCase):
@@ -313,11 +377,17 @@ class _RecordingWorker:
     def start(self):
         self.started = True
 
+    def isRunning(self):
+        return False
 
-def _prepared_run():
+
+def _prepared_run(repository=None):
+    repository = repository or _RunRepository()
+    layout = repository.layout(RUN_ID)
     return SimpleNamespace(
         run_id=RUN_ID,
-        run_directory=Path("runs") / RUN_ID,
+        run_directory=layout.run_directory,
+        run_repository=repository,
         hardware_connection_path=lambda: Path("frozen-hardware.json"),
     )
 
@@ -456,6 +526,97 @@ class FinalizationTransactionTests(unittest.TestCase):
         self.assertIs(coordinator.instrument_ctrl, port)
         self.assertIs(coordinator.state, RunFlowState.CONNECTED)
         controller.set_measurement_port.assert_called_once_with(port)
+
+    def test_failed_connection_discards_the_unstarted_pending_run(self):
+        coordinator = self._finalization_coordinator()
+        repository = _RunRepository()
+        coordinator.save_configuration = MagicMock(return_value=True)
+        with patch(
+            "presentation.qt.application_coordinator.prepare_configuration",
+            return_value=_prepared_run(repository),
+        ):
+            coordinator.prepare_pending_run()
+
+        coordinator.fail_finalization("电源型号不符")
+
+        # 连接失败不能留下可被误认为有效运行的目录。
+        self.assertEqual(repository.discarded, [RUN_ID])
+        self.assertIsNone(coordinator._pending_run)
+        self.assertIsNone(coordinator.prepared_run)
+        self.assertIs(coordinator.state, RunFlowState.CONFIGURING)
+
+    def test_pending_run_without_a_run_contract_is_never_deleted_blindly(self):
+        coordinator = self._finalization_coordinator()
+        coordinator._set_state(RunFlowState.FINALIZING)
+        coordinator._pending_run = SimpleNamespace(
+            run_id=RUN_ID, run_directory=Path("runs") / RUN_ID
+        )
+
+        self.assertFalse(coordinator.fail_finalization("仪器连接失败"))
+
+        # 无法证明运行未开始就不能删除目录：保留引用并阻断后续事务。
+        self.assertIs(coordinator.state, RunFlowState.MANUAL_CLEANUP_REQUIRED)
+        self.assertIsNotNone(coordinator._pending_run)
+        self.assertTrue(coordinator.has_pending_run())
+        with patch(
+            "presentation.qt.application_coordinator.prepare_configuration"
+        ) as create:
+            self.assertFalse(coordinator.finalize_configuration())
+        create.assert_not_called()
+
+    def test_retry_abandon_discards_the_pending_run_after_manual_cleanup(self):
+        coordinator = self._finalization_coordinator()
+        repository = _RunRepository()
+        coordinator._set_state(RunFlowState.MANUAL_CLEANUP_REQUIRED)
+        coordinator._pending_run = _prepared_run(repository)
+
+        self.assertTrue(coordinator.abandon_pending_run())
+
+        self.assertEqual(repository.discarded, [RUN_ID])
+        self.assertIsNone(coordinator._pending_run)
+        self.assertFalse(coordinator.has_pending_run())
+
+    def test_abandon_failure_keeps_the_pending_run_and_manual_state(self):
+        coordinator = self._finalization_coordinator()
+        coordinator._set_state(RunFlowState.MANUAL_CLEANUP_REQUIRED)
+        coordinator._pending_run = _prepared_run()
+        coordinator._discard_pending_run = MagicMock(
+            side_effect=RuntimeError("运行目录无法撤销")
+        )
+
+        self.assertFalse(coordinator.abandon_pending_run())
+
+        self.assertIsNotNone(coordinator._pending_run)
+        self.assertIs(coordinator.state, RunFlowState.MANUAL_CLEANUP_REQUIRED)
+
+    def test_abandon_never_deletes_a_run_that_already_started(self):
+        """阶段出口：已进入测量的运行永远不会被放弃流程删除。"""
+        coordinator = self._finalization_coordinator()
+        repository = _RunRepository(status=RunStatus.RUNNING)
+        coordinator._set_state(RunFlowState.MANUAL_CLEANUP_REQUIRED)
+        coordinator._pending_run = _prepared_run(repository)
+
+        self.assertFalse(coordinator.abandon_pending_run())
+
+        self.assertEqual(repository.discarded, [])
+        self.assertTrue(Path(coordinator._pending_run.run_directory).is_dir())
+        self.assertTrue(coordinator.has_pending_run())
+        self.assertIs(coordinator.state, RunFlowState.MANUAL_CLEANUP_REQUIRED)
+
+    def test_abandon_refuses_while_the_connection_worker_is_running(self):
+        """撤销运行目录只能在连接线程停止之后发生。"""
+        coordinator = self._finalization_coordinator()
+        repository = _RunRepository()
+        coordinator._set_state(RunFlowState.MANUAL_CLEANUP_REQUIRED)
+        coordinator._pending_run = _prepared_run(repository)
+        worker = MagicMock()
+        worker.isRunning.return_value = True
+        coordinator.instrument_worker = worker
+
+        self.assertFalse(coordinator.abandon_pending_run())
+
+        self.assertEqual(repository.discarded, [])
+        self.assertTrue(coordinator.has_pending_run())
 
     def test_commit_failure_compensates_pending_run_and_requires_reconnect(self):
         controller = MagicMock()

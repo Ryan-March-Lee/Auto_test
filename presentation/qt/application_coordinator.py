@@ -27,7 +27,11 @@ from application.configuration_authoring import (
     ConfigurationEditingDocument,
 )
 from application.gui_data_service import GuiDataService
-from application.run_service import RunNotResumable
+from application.run_service import (
+    RunNotDiscardable,
+    RunNotResumable,
+    discard_unstarted_run,
+)
 from domain.run.models import normalize_artifact_path
 
 from .composition import build_gui_data_service, default_paths
@@ -590,6 +594,30 @@ class ApplicationCoordinator:
         self._log("连接线程未能确认关闭仪器端口；已登记为未决清理")
         return True
 
+    def has_pending_run(self) -> bool:
+        """是否存在尚未提交的待提交运行。"""
+        return self._pending_run is not None
+
+    def abandon_pending_run(self) -> bool:
+        """放弃尚未提交的待提交运行（与连接失败补偿共用同一套步骤）。
+
+        只在最终动作之外重试补偿时使用，调用方必须先收尾连接 worker：线程还在
+        运行时撤销运行目录会留下“目录已删、连接仍在进行”的半提交状态，因此这里
+        直接拒绝。撤销失败保持 ``_pending_run`` 引用并进入人工清理，返回 ``False``；
+        成功返回 ``True``。运行已开始或已结束时会由
+        :func:`application.run_service.discard_unstarted_run` 拒绝，绝不删除已有的
+        测量历史。
+        """
+        if self._pending_run is None:
+            return True
+        if self.instrument_worker_running():
+            self._log("仪器连接线程仍在运行；停止后才能撤销待提交运行")
+            return False
+        if not self._compensate_pending_run():
+            self._require_manual_cleanup("待提交运行撤销失败")
+            return False
+        return True
+
     def _compensate_pending_run(self) -> bool:
         """守卫式放弃待提交运行；返回是否为干净补偿。"""
         pending = self._pending_run
@@ -607,12 +635,21 @@ class ApplicationCoordinator:
         return True
 
     def _discard_pending_run(self, pending: Any) -> None:
-        """阶段二补偿挂钩：只放弃提交，不删除运行目录。
+        """撤销尚未开始的待提交运行目录。
 
-        阶段三接入 :func:`application.run_service.discard_unstarted_run` 后，这里
-        负责撤销尚未开始的运行；在此之前保留运行目录供人工诊断，绝不把它当成
-        当前运行或交给测量页。
+        只删除“已创建且从未开始”的运行；业务判断在
+        :func:`application.run_service.discard_unstarted_run`，仓储的
+        ``discard_run()`` 仍只做底层删除。运行契约不完整时拒绝执行：无法证明它
+        未开始就不能删除，补偿失败会把流程留在人工清理状态。
         """
+        run_id = getattr(pending, "run_id", None)
+        run_repository = getattr(pending, "run_repository", None)
+        if not isinstance(run_id, str) or not run_id.strip() or run_repository is None:
+            raise RunNotDiscardable(
+                "待提交运行缺少运行契约（运行标识或运行仓储），无法安全撤销；"
+                "请人工检查运行目录后重试"
+            )
+        discard_unstarted_run(run_repository, run_id)
 
     def load_prepared_run(self, run_id: str):
         """配置阶段：按 run_id 重新打开已有运行，不依赖 GUI 内存中的配置。"""
@@ -963,8 +1000,22 @@ class ApplicationCoordinator:
         worker = self.instrument_worker
         return bool(worker is not None and worker.isRunning())
 
+    def has_instrument_worker(self) -> bool:
+        """是否仍持有连接 worker 引用（运行中，或已跑完但尚未收尾）。
+
+        只判断“是否在运行”会漏掉一种状态：线程已经结束、引用还没清除，它可能带着
+        未确认关闭的端口。窗口关闭必须先经停并收管这类 worker，不能因为
+        :meth:`instrument_worker_running` 为 ``False`` 就跳过收尾。
+        """
+        return self.instrument_worker is not None
+
     def stop_instrument_worker(self, timeout_ms: int = 5000) -> bool:
-        """请求停止连接 worker 并在期限内等待；成功停止后清除引用。"""
+        """请求停止连接 worker 并在期限内等待；成功停止后清除引用。
+
+        线程停止后、清除引用前先收管它未能确认关闭的端口：连接 worker 在停止/异常
+        路径自行关闭端口失败时会保留 ``unreleased_port``，窗口关闭流程必须先把它
+        登记为未决清理，不能因为引用被清掉而误判为“已清理”。
+        """
         worker = self.instrument_worker
         if worker is None:
             return True
@@ -972,6 +1023,7 @@ class ApplicationCoordinator:
         if not worker.wait(timeout_ms):
             self._log("仪器连接线程未能在关闭期限内停止")
             return False
+        self._adopt_worker_unreleased_port()
         self.instrument_worker = None
         return True
 

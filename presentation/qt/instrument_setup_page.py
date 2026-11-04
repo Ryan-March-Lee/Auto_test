@@ -55,6 +55,7 @@ from application.device_binding import ApplyDeviceSelectionRequest
 from application.ports.device_binding import DeviceBindingPort
 from application.ports.device_discovery import DEMO_SUBNET
 
+from .action_button import AnimatedActionButton
 from .animation_lifecycle import OverlayLifecycle
 from .animation_overlay import AnimationOverlay
 from .config_form_bindings import binding_address, binding_records
@@ -172,11 +173,21 @@ class InstrumentSetupPage(QWidget):
         # “返回”所在的那一行）。“返回欢迎页”不属于这里：它是一行文字链接，落在扫描提示
         # 正下方，属于页头，随页头文字一起淡出、有结果时整块让位。
         self.return_welcome_btn = self._require(QPushButton, "returnWelcomeButton")
-        self.next_btn = self._require(QPushButton, "nextButton")
+        # “下一步”的静态声明仍在 ``.ui``（控件名、文案与层级契约），但它的两种状态
+        # （灰色不可点到蓝色填充展开）样式表表达不了，因此运行时换成自绘按钮：拿
+        # ``.ui`` 里的文案与提示，保留同一个 objectName，再把占位控件从版面里拿掉。
+        placeholder = self._require(QPushButton, "nextButton")
+        self.next_btn = AnimatedActionButton(placeholder.text(), self)
+        self.next_btn.setObjectName("nextButton")
+        self.next_btn.setToolTip(placeholder.toolTip())
+        self.next_btn.setProperty("variant", placeholder.property("variant"))
+        placeholder.setParent(None)
+        placeholder.deleteLater()
         self.discovery_panel.add_header_widget(self.return_welcome_btn)
         self.discovery_panel.add_action_widget(self.next_btn)
-        # 初次查找前没有可应用的本次结果：“下一步”保持隐藏，页面不提供绕过查找的入口。
+        # 初次查找前没有可应用的本次结果：“下一步”保持隐藏且不可点，页面不提供绕过查找的入口。
         self.next_btn.setVisible(False)
+        self.next_btn.setEnabled(False)
         # 窗口尺寸变化时把结果区高度收进当前窗口。视口第一次拿到真实高度是在显示之后，
         # 所以这里只装监听：每次视口尺寸变化都会按新的可用高度重算一次。
         self.scroll_area.viewport().installEventFilter(self)
@@ -300,15 +311,23 @@ class InstrumentSetupPage(QWidget):
         self._sync_next_action()
 
     def _sync_next_action(self) -> None:
-        """按本次发现结果管理“下一步”的可见性。
+        """按本次发现结果与勾选状态管理“下一步”的可见性与可用性。
 
         页面只有在 ``INTERACTIVE``（结果已进结果区、卡片可点）且存在可应用设备时才显示
-        “下一步”；初次查找前、扫描中、失败、取消与空结果都不显示。勾选是否有设备由
-        :meth:`request_next` 再校验一次，界面状态不能替代写入规则。
+        “下一步”；初次查找前、扫描中、失败、取消与空结果都不显示。显示之后还要看勾选：
+        一台都没勾时按钮是灰色、不可点的静止态，勾上任何一台才变成可点的蓝色按钮
+        （自绘按钮在那次状态切换里播放填充动效）。勾选是否有设备由 :meth:`request_next`
+        再校验一次，界面状态不能替代写入规则。
         """
         panel = self.discovery_panel
         available = panel.is_interactive() and panel.has_selectable_devices()
         self.next_btn.setVisible(available)
+        self.next_btn.setEnabled(available and panel.has_selected_devices())
+        self.next_btn.setToolTip(
+            "进入仪器配置页，配置测试参数并完成仪器连接"
+            if self.next_btn.isEnabled()
+            else "请先在本次扫描结果中勾选要使用的设备"
+        )
 
     # ---- 语义查询 ---------------------------------------------------------
     #

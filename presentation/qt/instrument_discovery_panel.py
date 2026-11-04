@@ -2172,6 +2172,16 @@ class InstrumentDiscoveryPanel(QWidget):
         """
         return any(row["card"].checkable for row in self._rows)
 
+    def has_selected_devices(self) -> bool:
+        """本次结果里是否至少勾选了一台设备。
+
+        页面用它决定“下一步”是否可点：有结果但一台都没勾时按钮先停在灰色静止态，
+        勾上任何一台才允许推进。写入前的完整校验（身份、角色、重复）仍由
+        :meth:`selected_assignments` 与页面 :meth:`~InstrumentSetupPage.request_next`
+        负责，这里只回答“有没有勾选”。
+        """
+        return any(row["card"].is_checked() for row in self._rows)
+
     def selected_assignments(self) -> tuple[list[dict[str, Any]], list[str]]:
         """返回 ``(要应用的设备, 问题说明)``；身份/角色缺失、唯一角色重复都算问题。
 

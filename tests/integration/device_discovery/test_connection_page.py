@@ -432,14 +432,20 @@ class InstrumentSetupPageNextWriteTests(InstrumentSetupPageTestCase):
         )
 
     def test_next_with_results_and_nothing_checked_is_blocked(self):
-        """扫描出结果却一台没勾：阻止跳页，不把“没勾选”当成“清空绑定”。"""
+        """扫描出结果却一台没勾：按钮停在灰色不可点，程序化推进也被拒绝。"""
         page = self.make_page()
         panel = self._scan()
         requested = []
         self.connection.next_requested.connect(lambda: requested.append(True))
 
+        self.assertFalse(
+            self.connection.next_btn.isEnabled(), "没有勾选设备时按钮应是灰色不可点"
+        )
         self.connection.next_btn.click()
+        self.assertEqual(requested, [], "不可点的按钮不能推进")
 
+        # 界面状态不能替代写入规则：直接调用入口仍要给出原因并留在本页。
+        self.connection.request_next()
         self.assertEqual(requested, [])
         self.assertEqual(page.device_bindings, {})
         self.assertIn("请先勾选", panel.status_label.text())
@@ -529,6 +535,18 @@ class InstrumentSetupPageNextWriteTests(InstrumentSetupPageTestCase):
             panel.deal_animation.finish()
             self.app.processEvents()
         self.assertTrue(self.connection.next_btn.isVisible(), "有可应用结果后才显示")
+        self.assertFalse(
+            self.connection.next_btn.isEnabled(), "有结果但一台没勾时按钮不可点"
+        )
+        heading = next(card.data.heading for card in panel.cards() if card.checkable)
+        panel.set_card_checked(heading, True)
+        self.app.processEvents()
+        self.assertTrue(self.connection.next_btn.isEnabled(), "勾选设备后按钮可点")
+        panel.set_card_checked(heading, False)
+        self.app.processEvents()
+        self.assertFalse(
+            self.connection.next_btn.isEnabled(), "取消勾选后按钮回到不可点"
+        )
 
         panel.request_back()
         self.app.processEvents()

@@ -353,6 +353,11 @@ class ConfigurationPageTests(unittest.TestCase):
         self.assertFalse(hasattr(page, "connect_requested"))
         self.assertFalse(hasattr(page, "request_connect"))
         self.assertEqual(page.finalize_run_btn.text(), "完成配置并连接仪器")
+        self.assertIn(
+            "冻结待提交运行",
+            page.finalize_run_btn.toolTip(),
+            "最终按钮文案必须说明连接成功前运行只是待提交对象",
+        )
 
     def test_reconnect_mode_only_changes_the_final_button_semantics(self):
         page = self.make_page()

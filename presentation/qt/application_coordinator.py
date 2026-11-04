@@ -469,7 +469,7 @@ class ApplicationCoordinator:
         self.update_configuration_from_ui()
         if not self.save_configuration():
             self._log(f"配置保存失败: {self.last_save_error}")
-            self._warn("创建运行失败", f"配置保存失败: {self.last_save_error}")
+            self._warn("最终化失败", f"配置保存失败: {self.last_save_error}")
             return False
         mark_clean = getattr(self.config_page, "mark_clean", None)
         if callable(mark_clean):
@@ -486,7 +486,7 @@ class ApplicationCoordinator:
             "端口已进入未决清理清单"
         )
         self._warn(
-            "创建运行未生效",
+            "最终化未生效",
             "上一次连接的仪器未能完成安全清理；请在现场确认仪器已断开后重试",
         )
         return False
@@ -500,8 +500,8 @@ class ApplicationCoordinator:
                 hardware_config=self.config,
             )
         except Exception as failure:  # noqa: BLE001 - 建运行失败必须回到界面，且不得切换运行
-            self._log(f"创建运行失败: {failure}")
-            self._warn("创建运行失败", str(failure))
+            self._log(f"冻结待提交运行失败: {failure}")
+            self._warn("最终化失败", str(failure))
             # 旧端口已在冻结前释放；旧运行若还在，只能通过重新连接继续。
             if self.prepared_run is not None:
                 self._set_state(RunFlowState.RECONNECT_REQUIRED)

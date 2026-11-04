@@ -1,6 +1,6 @@
-r"""门禁：异常写法、输出、旧模块导入与动态设备路由。
+r"""门禁：异常写法、输出、旧模块导入、动态设备路由与运行流程入口。
 
-本文件与[异常分类与静态质量门禁](../docs/异常分类与静态质量门禁.md)一一对应。门禁覆盖六类静态问题：
+本文件与[异常分类与静态质量门禁](../docs/异常分类与静态质量门禁.md)一一对应。门禁覆盖七类静态问题：
 
 1. **裸 ``except``**：生产代码一处都不允许，必须写明捕获类型。
 2. **静默宽泛捕获**：``except Exception`` / ``except BaseException`` 的处理器不得只有
@@ -12,6 +12,9 @@ r"""门禁：异常写法、输出、旧模块导入与动态设备路由。
 6. **动态设备路由**：不得按运行时名字访问设备能力（``getattr(<设备>, <变量>)``）、
    不得 ``getattr(<设备>, <名字>)(...)`` 立即转发、不得保存后调用设备方法、不得对设备
    对象 ``setattr``。
+7. **旧运行流程入口与最终化链**：独立“连接仪器”按钮与 ``request_connect`` 链不得回到
+   生产代码；最终化、提交、补偿与阶段结算的直接调用关系必须保持，未开始运行的撤销和
+   阶段端口结算必须继续走唯一守卫，事务入口只允许由主窗口调用。
 
 验证方式：
 
@@ -24,6 +27,16 @@ import ast
 import re
 import unittest
 from pathlib import Path
+
+from tests.support.run_flow_contract import (
+    COORDINATOR_FINALIZATION_ENTRY_NAMES,
+    SINGLE_FINALIZATION_ENTRY_NAMES,
+    WINDOW_FINALIZATION_ENTRY_NAMES,
+    call_sites,
+    missing_contract_items,
+    parse_source,
+    retired_run_flow_sites,
+)
 
 
 ROOT = Path(__file__).parents[1]
@@ -259,7 +272,7 @@ DYNAMIC_ROUTING_BOUNDARIES = frozenset(
 
 
 def _tree(path):
-    return ast.parse(path.read_text(encoding="utf-8-sig"), str(path))
+    return parse_source(path)
 
 
 def _package_sources(*packages):
@@ -469,6 +482,55 @@ RETIRED_MODULE_NAMES = frozenset(
         "persistence",
     }
 )
+
+# 最终化与失败补偿的调用链基线：文件 -> 必须存在的定义、导入与直接调用。
+# - 未开始运行只能经 ``application.run_service.discard_unstarted_run`` 撤销，协调器
+#   不得直接删除运行目录；
+# - 阶段成功复用只经 ``end_stage`` 结算，异常阶段必须关闭端口；
+# - 最终化入口与补偿步骤保持在同一事务里，不能被第二个提交入口绕过。
+#
+# 只冻结“谁直接调用谁”，不做控制流推理：方法仍在、但事务链断开是本门禁要拦的回归。
+# 入口名称集合与 AST 辅助函数单源在 ``tests/support/run_flow_contract.py``。
+FINALIZATION_COMPENSATION_CHAIN = {
+    "application/run_service.py": {
+        "definitions": ("discard_unstarted_run",),
+    },
+    "presentation/qt/application_coordinator.py": {
+        "definitions": COORDINATOR_FINALIZATION_ENTRY_NAMES,
+        "imports": (("application.run_service", "discard_unstarted_run"),),
+        "calls": (
+            ("finalize_configuration", "prepare_pending_run"),
+            ("finalize_configuration", "_start_connection_worker"),
+            ("prepare_pending_run", "_save_configuration_for_finalize"),
+            ("prepare_pending_run", "_release_previous_port_for_finalize"),
+            ("prepare_pending_run", "_freeze_pending_run"),
+            ("commit_finalization", "accept_instrument_controller"),
+            ("_abort_finalization", "_compensate_pending_run"),
+            ("_compensate_pending_run", "_discard_pending_run"),
+            ("_discard_pending_run", "discard_unstarted_run"),
+            ("release_port_after_measurement", "_settle_port_after_stage"),
+            ("release_port_after_measurement", "_close_port_after_stage"),
+            ("_settle_port_after_stage", "settle_instrument_stage"),
+            ("settle_instrument_stage", "end_stage"),
+        ),
+    },
+    "presentation/qt/main_window.py": {
+        "definitions": WINDOW_FINALIZATION_ENTRY_NAMES,
+        "calls": (
+            ("_finalize_run", "finalize_configuration"),
+            ("on_instrument_controller_ready", "commit_finalization"),
+            ("on_instrument_error", "fail_finalization"),
+            ("on_instrument_stopped", "cancel_finalization"),
+            (
+                "_on_measurement_controller_thread_finished",
+                "release_port_after_measurement",
+            ),
+        ),
+    },
+    "instrument/ports.py": {"definitions": ("end_stage",)},
+    "instrument/session.py": {"definitions": ("end_stage",)},
+    "instrument/measurement_adapter.py": {"definitions": ("end_stage",)},
+}
 
 
 def _retired_module_names():
@@ -851,6 +913,107 @@ class DynamicDeviceRoutingTests(unittest.TestCase):
             len(dynamic_routing_sites(tree, "instrument/other.py")),
             1,
             "同样的写法出现在别的模块必须被拦截",
+        )
+
+
+class RunFlowEntryGateTests(unittest.TestCase):
+    """阶段五：旧运行流程入口保持删除，最终化与补偿链保持冻结。"""
+
+    def test_production_code_has_no_retired_run_flow_entry(self):
+        offenders = [
+            f"{_relative(path)}:{lineno}:{name}"
+            for path in _production_sources()
+            for name, lineno in retired_run_flow_sites(_tree(path))
+        ]
+        self.assertEqual(
+            offenders,
+            [],
+            "生产代码不得再出现已删除的运行流程入口（连接按钮/独立连接链）: "
+            + ", ".join(offenders),
+        )
+
+    def test_finalization_and_compensation_chain_is_frozen(self):
+        """事务节点不仅要存在，还必须保持正确的直接调用关系。"""
+        missing = []
+        for relative, contract in FINALIZATION_COMPENSATION_CHAIN.items():
+            path = ROOT / relative
+            if not path.is_file():
+                missing.append(f"{relative} 不存在")
+                continue
+            missing.extend(missing_contract_items(relative, _tree(path), contract))
+        self.assertEqual(
+            missing,
+            [],
+            "最终化/补偿链必须保持存在且守卫唯一：删除、改名或断开调用关系会重新打开"
+            "“运行已创建但端口未连接”与“已开始运行被当成未开始撤销”的缺口: "
+            + "; ".join(missing),
+        )
+
+    def test_call_chain_contract_reports_kept_but_disconnected_method(self):
+        """方法仍在但事务链断开时必须报错，不能因为定义存在就通过。"""
+        tree = ast.parse(
+            "class Coordinator:\n"
+            "    def finalize_configuration(self):\n"
+            "        return self.prepare_pending_run()\n"
+            "    def prepare_pending_run(self):\n"
+            "        return None\n"
+        )
+        contract = {
+            "definitions": ("finalize_configuration", "prepare_pending_run"),
+            "calls": (
+                ("finalize_configuration", "prepare_pending_run"),
+                ("finalize_configuration", "_start_connection_worker"),
+            ),
+        }
+
+        missing = missing_contract_items("demo.py", tree, contract)
+
+        self.assertEqual(
+            missing,
+            ["demo.py 的 finalize_configuration 未调用 _start_connection_worker"],
+        )
+
+    def test_only_the_window_opens_the_finalization_transaction(self):
+        """事务入口只允许由主窗口调用；第二个调用文件就是第二个提交端口入口。"""
+        entry_names = set(SINGLE_FINALIZATION_ENTRY_NAMES)
+        callers: dict[str, set[str]] = {}
+        for path in _production_sources():
+            for name, _lineno in call_sites(_tree(path), entry_names):
+                callers.setdefault(name, set()).add(_relative(path))
+        problems = []
+        for name in SINGLE_FINALIZATION_ENTRY_NAMES:
+            actual = callers.get(name, set())
+            if actual == {"presentation/qt/main_window.py"}:
+                continue
+            problems.append(f"{name} 的调用文件为 {sorted(actual)}")
+        self.assertEqual(
+            problems,
+            [],
+            "最终化/提交/失败补偿只能由主窗口转发到协调器；出现第二个调用入口时"
+            "必须先在评审中说明为什么它不会绕过待提交运行与端口事务: "
+            + "; ".join(problems),
+        )
+
+    def test_run_flow_entry_detector_recognises_all_reference_forms(self):
+        tree = ast.parse(
+            "page.connect_btn.setEnabled(True)\n"
+            "getattr(page, 'request_connect')()\n"
+            "class Page:\n"
+            "    connect_requested = Signal()\n"
+            "    def create_run_requested(self):\n"
+            "        pass\n"
+            "    def _set_connect_enabled(self):\n"
+            "        pass\n"
+        )
+        self.assertEqual(
+            [name for name, _lineno in retired_run_flow_sites(tree)],
+            [
+                "connect_btn",
+                "request_connect",
+                "connect_requested",
+                "create_run_requested",
+                "_set_connect_enabled",
+            ],
         )
 
 

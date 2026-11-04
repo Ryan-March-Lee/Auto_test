@@ -21,8 +21,9 @@
 设备发现入口，只保留写绑定的边界（整批校验 + 写地址/身份）与派生界面更新。写入结果经
 ``device_selection_finished`` 交给 :class:`presentation.qt.configuration_session`，
 由会话把状态行与绑定回写给仪表配置页的面板。连接仪器不再有独立入口：页面底部的最终
-按钮一次完成“校验 → 保存配置 → 创建运行 → 完整连接检查”，与窗口的信号接线是
-``finalize_run_requested``。
+按钮一次完成“校验 → 保存配置 → 释放旧端口 → 冻结待提交运行 → 完整只读连接检查”，
+与窗口的信号接线是 ``finalize_run_requested``。连接成功前运行只是内部待提交对象，
+不会成为测量页可消费的正式运行。
 
 归属（见 `docs/配置领域词汇与模块归属.md`）：Qt 视图。页面只负责控件、布局、信号与派生界面
 状态；设备选择的角色唯一性、引用/身份校验与整批替换规则在
@@ -440,7 +441,8 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         run_layout.setSpacing(8)
         self.finalize_run_btn = QPushButton("完成配置并连接仪器")
         self.finalize_run_btn.setToolTip(
-            "校验并保存配置，创建本次运行，然后连接全部仪器；连接失败会留在本页"
+            "校验并保存配置，释放旧端口并冻结待提交运行，然后检查全部仪器；"
+            "连接成功后才提交运行，失败会留在本页"
         )
         set_button_variant(self.finalize_run_btn, "primary")
         self.run_status_label = QLabel(DEFAULT_RUN_STATUS)
@@ -542,7 +544,8 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
             return
         self.finalize_run_btn.setText("完成配置并连接仪器")
         self.finalize_run_btn.setToolTip(
-            "校验并保存配置，创建本次运行，然后连接全部仪器；连接失败会留在本页"
+            "校验并保存配置，释放旧端口并冻结待提交运行，然后检查全部仪器；"
+            "连接成功后才提交运行，失败会留在本页"
         )
 
     def validate(self):

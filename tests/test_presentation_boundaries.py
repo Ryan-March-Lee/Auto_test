@@ -6,6 +6,19 @@ from dataclasses import fields
 from pathlib import Path
 from typing import get_origin, get_type_hints
 
+from tests.support.run_flow_contract import (
+    COORDINATOR_FINALIZATION_ENTRY_NAMES,
+    FINALIZATION_WINDOW_CALLS,
+    FINALIZATION_WINDOW_CONNECTIONS,
+    WINDOW_FINALIZATION_ENTRY_NAMES,
+    called_names,
+    declared_identifier_names,
+    emitted_signal_names,
+    function_definitions,
+    parse_source,
+    retired_run_flow_sites,
+    signal_connections,
+)
 from tests.test_architecture_dependencies import _worker_construction_violations
 
 
@@ -144,9 +157,38 @@ PAGE_CONTEXT_FIELDS = (
     "build_run_history",
 )
 
+# 阶段五：运行流程入口的长期基线。
+#
+# 阶段一删除了“先创建运行、再单独连接”的旧用户入口：设备发现页的“连接仪器”按钮、
+# 参数页的 ``request_connect``，以及窗口里的旧连接接线。旧入口名称与 AST 扫描规则
+# 单源在 ``tests/support/run_flow_contract.py``；这里冻结 Qt 页面与窗口的接线。
+#
+# 文件 -> 必须具备的入口名（信号与方法都按声明名匹配）。只冻结契约与事务编排，
+# 不冻结页面外观；按钮文案由页面测试与 README 各自维护。
+FINALIZATION_ENTRY_BASELINE = {
+    "configuration_page.py": (
+        "finalize_run_requested",
+        "set_finalizing",
+        "set_reconnect_required",
+    ),
+    "instrument_setup_page.py": (
+        "next_requested",
+        "return_welcome_requested",
+        "request_next",
+        "request_select_all",
+        "page_actions_visible",
+    ),
+    "configuration_session.py": (
+        "apply_selection",
+        "view_state",
+        "attach_discovery_panel",
+    ),
+    "application_coordinator.py": COORDINATOR_FINALIZATION_ENTRY_NAMES,
+}
+
 
 def _tree(path):
-    return ast.parse(path.read_text(encoding="utf-8-sig"), str(path))
+    return parse_source(path)
 
 
 def _imported_modules(tree):
@@ -788,6 +830,111 @@ class LongTermChangeBoundaryTests(unittest.TestCase):
                 f"PageContext.{field.name} 必须是回调或共享 controller，不能塞入页面对象",
             )
 
+
+class RunFlowEntryBoundaryTests(unittest.TestCase):
+    """阶段五：单一运行流程的页面入口基线。
+
+    旧流程的“连接仪器”按钮与独立连接入口必须保持删除；最终化、重连和补偿只能经
+    “页面动作 → 窗口 → 协调器最终化事务”这一条链完成，不能重新出现第二个提交端口
+    的入口。
+    """
+
+    def test_retired_run_flow_entries_stay_deleted(self):
+        offenders = []
+        for path in sorted(QT_ROOT.rglob("*.py")):
+            for name, lineno in retired_run_flow_sites(_tree(path)):
+                offenders.append(f"{_module_relative_path(path)}:{lineno} {name}")
+        self.assertEqual(
+            offenders,
+            [],
+            "设备发现页的连接按钮与参数页的独立连接入口已在阶段一删除，不得以属性、"
+            "名字或字符串访问回到生产 Qt 代码: " + ", ".join(offenders),
+        )
+
+    def test_finalization_and_compensation_entries_are_frozen(self):
+        missing = []
+        for file, names in FINALIZATION_ENTRY_BASELINE.items():
+            path = QT_ROOT / file
+            if not path.is_file():
+                missing.append(f"{file} 不存在")
+                continue
+            declared = declared_identifier_names(_tree(path))
+            missing.extend(
+                f"{file} 缺少最终化/补偿入口 {name}"
+                for name in names
+                if name not in declared
+            )
+        self.assertEqual(
+            missing,
+            [],
+            "最终化、重连与失败补偿的入口必须保留在同一条链上；删除或改名会让"
+            "“运行已创建但端口未连接”重新有缝可钻。新增入口先更新本基线: "
+            + "; ".join(missing),
+        )
+
+    def test_run_flow_entry_scan_detects_all_reference_forms(self):
+        tree = ast.parse(
+            "page.connect_btn.setEnabled(True)\n"
+            "page.connect_requested.emit()\n"
+            "getattr(page, 'request_connect')()\n"
+            "class Page:\n"
+            "    create_run_requested = Signal()\n"
+            "    def _set_connect_enabled(self):\n"
+            "        pass\n"
+        )
+        self.assertEqual(
+            [name for name, _lineno in retired_run_flow_sites(tree)],
+            [
+                "connect_btn",
+                "connect_requested",
+                "request_connect",
+                "create_run_requested",
+                "_set_connect_enabled",
+            ],
+        )
+
+    def test_page_requests_finalization_only_through_its_signal(self):
+        """参数页不直接调用协调器：最终动作只经页面自己的信号交给窗口。"""
+        page = function_definitions(_tree(QT_ROOT / "configuration_page.py"))
+        request = page.get("request_finalize_run")
+        self.assertIsNotNone(
+            request, "参数页必须保留唯一的最终动作请求入口 request_finalize_run"
+        )
+        self.assertIn(
+            "finalize_run_requested",
+            emitted_signal_names(request),
+            "最终动作请求必须发出 finalize_run_requested，由窗口转给协调器",
+        )
+
+    def test_window_wires_the_finalization_signal_and_transaction(self):
+        """窗口必须把页面信号接到唯一最终化入口，并接住成功/失败/取消。"""
+        window = _tree(MAIN_WINDOW)
+        connections = signal_connections(window)
+        definitions = function_definitions(window)
+        missing = []
+        for signal, slot in FINALIZATION_WINDOW_CONNECTIONS.items():
+            if slot not in connections.get(signal, set()):
+                missing.append(f"{signal} 未连接到 {slot}")
+        for function in WINDOW_FINALIZATION_ENTRY_NAMES:
+            if function not in definitions:
+                missing.append(f"窗口缺少入口 {function}")
+        for function, calls in FINALIZATION_WINDOW_CALLS.items():
+            node = definitions.get(function)
+            if node is None:
+                continue
+            actual = called_names(node)
+            missing.extend(
+                f"{function} 未调用 {called}"
+                for called in calls
+                if called not in actual
+            )
+        self.assertEqual(
+            missing,
+            [],
+            "最终化只能经“页面信号 → 窗口入口 → 协调器事务”这一条链；"
+            "成功、失败与取消必须分别落到提交、补偿和取消入口: "
+            + "; ".join(missing),
+        )
 
 
 if __name__ == "__main__":

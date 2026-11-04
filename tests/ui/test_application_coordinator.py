@@ -358,7 +358,7 @@ class RunSwitchRequiresCleanReleaseTests(unittest.TestCase):
             any("未能安全释放" in message for message in coordinator.messages)
         )
         self.assertTrue(
-            any(title == "创建运行未生效" for title, _message in coordinator.warnings)
+            any(title == "最终化未生效" for title, _message in coordinator.warnings)
         )
 
     def test_load_run_is_not_adopted_when_the_old_port_cannot_be_released(self):
@@ -564,6 +564,19 @@ class FinalizationTransactionTests(unittest.TestCase):
         self.assertIsNone(coordinator._pending_run)
         self.assertIsNone(coordinator.prepared_run)
         self.assertIs(coordinator.state, RunFlowState.CONFIGURING)
+
+    def test_pending_run_discard_delegates_to_the_unstarted_run_use_case(self):
+        """补偿只走 ``discard_unstarted_run``；“未开始”判断不在表现层重写。"""
+        coordinator = self._finalization_coordinator()
+        repository = MagicMock()
+        pending = SimpleNamespace(run_id=RUN_ID, run_repository=repository)
+
+        with patch(
+            "presentation.qt.application_coordinator.discard_unstarted_run"
+        ) as discard:
+            coordinator._discard_pending_run(pending)
+
+        discard.assert_called_once_with(repository, RUN_ID)
 
     def test_pending_run_without_a_run_contract_is_never_deleted_blindly(self):
         coordinator = self._finalization_coordinator()

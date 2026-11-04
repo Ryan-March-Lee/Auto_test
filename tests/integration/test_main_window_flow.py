@@ -339,6 +339,19 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIs(window.view_stack.currentWidget(), window.connection_page)
         self.assertTrue(window.config_page.finalize_run_btn.isEnabled())
 
+    def test_finalize_signal_routes_to_the_coordinator_once(self):
+        """参数页信号必须由主窗口转给唯一最终化入口，页面不直接调用协调器。"""
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+
+        with patch.object(
+            window.coordinator, "finalize_configuration", return_value=False
+        ) as finalize:
+            window.config_page.finalize_run_requested.emit()
+
+        finalize.assert_called_once()
+
     def test_startup_shows_welcome_and_selection_applies_mode(self):
         self._silence_dialogs()
         window = self._window()

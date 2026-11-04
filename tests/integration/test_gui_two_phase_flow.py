@@ -1015,23 +1015,20 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         page.load_run_btn.click()
         self.assertEqual(requested, [RUN_ID])
 
-    def test_validate_blocks_duplicate_power_channel_roles(self):
+    def test_validate_no_longer_blocks_duplicate_power_channel_roles(self):
+        """步骤 5：角色重复不再是否决条件；通道按物理路由校验。"""
         from presentation.qt.configuration_page import ConfigurationPage
 
         page = ConfigurationPage({"instruments": {"power_supplies": {"DP8B1519": {}}}})
         page.power_config_widgets["DP8B1519"]["channels"]["CH1"]["role"].setCurrentText("gate")
         page.power_config_widgets["DP8B1519"]["channels"]["CH2"]["role"].setCurrentText("gate")
         failures = []
-        requested = []
         page.validation_failed.connect(failures.append)
-        page.finalize_run_requested.connect(lambda: requested.append(True))
 
-        # 最终动作的按钮在参数配置页：校验不通过时不会发起保存/连接事务。
         page.request_finalize_run()
 
-        self.assertEqual(requested, [])
-        self.assertEqual(len(failures), 1)
-        self.assertIn("供电角色重复", failures[0])
+        self.assertTrue(failures, "缺少仪器/频率等配置仍应阻止发起运行")
+        self.assertFalse(any("供电角色" in message for message in failures), failures)
 
     def test_load_run_requires_a_run_id(self):
         from presentation.qt.configuration_page import ConfigurationPage

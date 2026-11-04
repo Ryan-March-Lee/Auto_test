@@ -164,7 +164,8 @@ class ConfigModelTests(unittest.TestCase):
         plan = complete_plan()
         plan["dut"]["power_channels"]["CH_BAD"] = None
         result = validate_test_plan(plan)
-        self.assertTrue(any("CH_BAD" in issue.path for issue in result.errors))
+        # 角色已不参与校验；非对象条目仍按空参数保留在计划里，不再伪装成角色错误。
+        self.assertTrue(result.valid, result.errors)
         mapping = complete_mapping()
         mapping["dut_power_channels"].append(None)
         result = validate_run_mapping(mapping)
@@ -228,20 +229,34 @@ class ConfigModelTests(unittest.TestCase):
         self.assertEqual(TestPlan.from_dict(plan.to_dict()).dut_power_channels.keys(), plan.dut_power_channels.keys())
         self.assertEqual(RunResourceMapping.from_dict(mapping.to_dict()).dut_power_channels[0].channel, "CH_A")
 
-    def test_combined_validation_requires_plan_roles_in_run_mapping(self):
+    def test_combined_validation_does_not_compare_channel_roles(self):
+        """角色不再参与 DUT 计划与运行映射的配对：物理通道一致即可。"""
         plan = TestPlan.from_dict(complete_plan())
         mapping_data = complete_mapping()
         mapping_data["dut_power_channels"][1]["role"] = "bias"
         result = validate_run_configuration(
             RunConfiguration(plan, RunResourceMapping.from_dict(mapping_data))
         )
-        self.assertTrue(any("drain" in issue.message for issue in result.errors))
+        self.assertTrue(result.valid, result.errors)
 
-    def test_run_mapping_requires_channel_role(self):
+    def test_run_mapping_does_not_require_channel_role(self):
         mapping = complete_mapping()
         del mapping["dut_power_channels"][0]["role"]
         result = validate_run_mapping(mapping)
-        self.assertIn("dut_power_channels[0].role", {issue.path for issue in result.errors})
+        self.assertTrue(result.valid, result.errors)
+
+    def test_role_free_plan_and_mapping_are_valid(self):
+        """步骤 5：通道没有 role 也能通过正式校验。"""
+        plan = complete_plan()
+        for channel in plan["dut"]["power_channels"].values():
+            channel.pop("role", None)
+        mapping = complete_mapping()
+        for channel in mapping["dut_power_channels"]:
+            channel.pop("role", None)
+        result = validate_run_configuration(
+            RunConfiguration(TestPlan.from_dict(plan), RunResourceMapping.from_dict(mapping))
+        )
+        self.assertTrue(result.valid, result.errors)
 
     def test_load_run_configuration_is_file_only(self):
         with tempfile.TemporaryDirectory() as directory:

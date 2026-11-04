@@ -23,9 +23,9 @@
 
 - 表单缺失或非法的字段保持 ``None`` / 空列表，由正式校验在连接仪器前明确失败，
   不生成“待人工确认”的半成品。
-- 现场固定接线的 DUT 通道角色（``CH1`` 栅极、``CH2`` 漏极）在这里作为**编辑约定**
-  写入正式 ``test_plan`` / ``run_mapping`` 角色；不从旧配置文件反推，也不猜测未知
-  通道的角色。
+- 现场固定接线的 DUT 通道角色（``CH1`` 栅极、``CH2`` 漏极）在这里只作为**1.0 兼容
+  输出**写入旧正式段；步骤 5 起它不再参与校验、映射或上电，步骤 6 会随新计划一起删除。
+  不从旧配置文件反推，也不猜测未知通道的角色。
 - ``instruments.power_supplies.<name>.channels.<channel>.role`` 属于接线事实，由配置页
   控件显式选择后随表单写入；本服务不改写它，也不为缺失角色补默认值。
 - 正式 ``run_mapping`` 的电源段是**集合** ``instruments.power_supplies.<supply_id>``：
@@ -36,7 +36,7 @@
 - 通道连接统一写成 ``supply_id/CHx``（与 ``instrument.measurement_factory`` 的
   ``supply/channel`` 路由一致），因此 DUT 的 gate 与 drain 可以来自不同电源。同一条
   物理通道被分配两次时**不在这里去重**：重复条目原样写进映射，由正式校验
-  （``通道重复分配`` / ``供电角色重复分配``）在连接前失败，而不是悄悄只留一条。
+  （``通道重复分配`` / 组内重复分配）在连接前失败，而不是悄悄只留一条。
 - 身份字段（``label`` / ``full_code`` / ``device_key``）只从该仪器自己的配置条目读取：
   信号源、频谱仪与每台电源的快照条目都带这组字段；条目缺少身份时写空，**不按地址、
   型号或显示名补全**，也不在运行期间回查设备表。
@@ -62,7 +62,7 @@ from domain.configuration.models import (
 from domain.configuration.rules import (
     assignment_supply_id,
     validate_hardware_connections,
-    validate_power_channel_roles,
+    validate_power_plan,
     validate_power_supply_assignment_references,
 )
 from domain.configuration.types import ConfigIssue
@@ -85,7 +85,7 @@ DRIVER_CHANNEL_ROLE = "driver"
 _DB_VALUE_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*dB\s*$", re.IGNORECASE)
 _ASSIGNMENT_GROUPS = ("dut_amplifier", "driver_amplifier")
 # 正式校验问题的稳定错误码：只标识来源边界，不随文案变化。
-_CODE_POWER_CHANNEL_ROLES = "configuration.power_channel_roles"
+_CODE_POWER_PLAN = "configuration.power_plan"
 _CODE_POWER_ASSIGNMENT_REFERENCES = "configuration.power_assignment_references"
 _CODE_RUN_VALIDATION = "configuration.run_validation"
 _CODE_HARDWARE_CONNECTIONS = "configuration.hardware_connections"
@@ -187,21 +187,22 @@ class ConfigurationAuthoringService:
 
         这里只做编排：正式 ``test_plan`` / ``run_mapping`` 的判据仍由 domain 的
         ``validate_run_configuration`` 定义，硬件装配段的连接冲突仍由
-        ``validate_hardware_connections`` 定义；供电角色与分配引用这两项面向操作员的
-        编写文档校验也由 domain 的 ``validate_power_channel_roles`` /
+        ``validate_hardware_connections`` 定义；编写文档里的上电计划、漏极引用与供电
+        分配引用也由 domain 的 ``validate_power_plan`` /
         ``validate_power_supply_assignment_references`` 定义。本方法只把结果转成结构化
         问题，不复制、不改写任何判据。
 
-        问题顺序与原页面一致：先供电角色，再供电分配引用，然后正式运行校验（错误 +
-        警告），最后硬件装配校验。页面通常只展示 :attr:`ValidationResult.errors`，所以
-        用户可见顺序仍是“通道/分配问题在前、正式段问题居中、连接冲突在后”。编写失败
-        （``ConfigurationError``）照常抛给调用方，不在这里改写成“校验问题”。
+        问题顺序与原页面一致：先上电计划/漏极，再供电分配引用，然后正式运行校验
+        （错误 + 警告），最后硬件装配校验。页面通常只展示
+        :attr:`ValidationResult.errors`，所以用户可见顺序仍是“计划/分配问题在前、正式
+        段问题居中、连接冲突在后”。编写失败（``ConfigurationError``）照常抛给调用方，
+        不在这里改写成“校验问题”。
         """
         authored = self.author_document(document)
         source_issues = (
             (
-                validate_power_channel_roles(authored),
-                _CODE_POWER_CHANNEL_ROLES,
+                validate_power_plan(authored),
+                _CODE_POWER_PLAN,
             ),
             (
                 validate_power_supply_assignment_references(authored),

@@ -88,7 +88,6 @@ CONFIGURATION_BUSINESS_IMPORT_BASELINE = {
             "ConfigurationAuthoringService",
             "ConfigurationEditingDocument",
         },
-        "domain.configuration.rules": {"POWER_CHANNEL_ROLES"},
     },
     "configuration_page.py": {
         "application.device_binding": {"ApplyDeviceSelectionRequest"},
@@ -99,10 +98,7 @@ CONFIGURATION_BUSINESS_IMPORT_BASELINE = {
     "config_projection.py": {
         "application.configuration_authoring": {"DUT_CHANNEL_ROLES"},
         "domain.configuration.models": {"resolve_driver_power_source"},
-        "domain.configuration.rules": {
-            "POWER_CHANNEL_ROLES",
-            "assignment_supply_id",
-        },
+        "domain.configuration.rules": {"assignment_supply_id"},
     },
     "configuration_session.py": {
         "application.device_binding": {

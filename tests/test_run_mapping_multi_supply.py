@@ -238,14 +238,14 @@ class MultiSupplyMappingTests(unittest.TestCase):
 
         self.assertIn("dut_power_channels[1].channel", paths)
 
-    def test_duplicate_supply_role_is_rejected(self):
-        """两台电源都声称 ``gate``：按角色寻址时没有唯一答案，必须在连接前失败。"""
+    def test_duplicate_supply_role_is_no_longer_rejected(self):
+        """步骤 5：通道不再按角色寻址，两台电源写同一个角色不再有意义。"""
         data = two_supply_mapping()
         data["dut_power_channels"][1]["role"] = "gate"
 
-        paths = {issue.path for issue in validate_run_mapping(data).errors}
+        result = validate_run_mapping(data)
 
-        self.assertIn("dut_power_channels[1].role", paths)
+        self.assertTrue(result.valid, result.errors)
 
     def test_one_supply_may_feed_both_roles_of_the_dut(self):
         """两台电源不是前提：同一台的两条通道分别供 gate 与 drain 仍然合法。"""

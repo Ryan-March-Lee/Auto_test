@@ -44,7 +44,11 @@ def resolve_driver_power_source(source: Any, *, driver_channels: Any) -> str:
 
 @dataclass(frozen=True)
 class PowerChannelPlan:
-    """一个稳定供电角色的测试方案参数，不绑定现场物理通道名。"""
+    """一个旧式供电角色键下的测试方案参数，不绑定现场物理通道名。
+
+    ``role`` 只为读取/写回 1.0 正式段保留；步骤 5 起它不再参与任何校验或上电，
+    新计划（``power_plan`` + ``channel_settings``）由后续步骤接管。
+    """
 
     role: Optional[str] = None
     voltage: Optional[float] = None
@@ -487,7 +491,6 @@ def validate_run_mapping(mapping: Union[RunResourceMapping, Mapping[str, Any]]) 
     _validate_power_supplies(mapping, error)
     _validate_mappings(mapping.dut_power_channels, "dut_power_channels", error)
     _validate_mappings(mapping.driver_power_channels, "driver_mode.power_channels", error)
-    _validate_role_uniqueness(mapping.dut_power_channels, "dut_power_channels", error)
     dut_channels = {item.channel for item in mapping.dut_power_channels}
     driver_channels = {item.channel for item in mapping.driver_power_channels}
     if not dut_channels:
@@ -510,18 +513,6 @@ def validate_run_configuration(configuration: RunConfiguration) -> ConfigValidat
     mapping_result = validate_run_mapping(configuration.run_mapping)
     errors = plan_result.errors + mapping_result.errors
     warnings = plan_result.warnings + mapping_result.warnings
-    if not configuration.test_plan.template and not configuration.run_mapping.template:
-        plan_roles = set(configuration.test_plan.dut_power_channels)
-        mapping_roles = {
-            item.role for item in configuration.run_mapping.dut_power_channels if item.role
-        }
-        missing_roles = plan_roles - mapping_roles
-        if missing_roles:
-            errors.append(ConfigIssue(
-                "error",
-                "dut_power_channels",
-                f"运行映射缺少测试方案供电角色: {', '.join(sorted(missing_roles))}",
-            ))
     return ConfigValidationResult(
         errors=errors,
         warnings=warnings,
@@ -532,7 +523,7 @@ def validate_cable_loss_configuration(configuration: RunConfiguration) -> Config
     """校验线损测量所需的最小配置。
 
     线损测量只使用信号源、频谱仪和衰减器，不应被
-    功放测试的供电角色或驱动功放映射阻塞。完整功放运行仍使用
+    功放测试的供电通道或驱动功放映射阻塞。完整功放运行仍使用
     ``validate_run_configuration``。
     """
     errors: List[ConfigIssue] = []
@@ -560,7 +551,7 @@ def validate_driver_mapping_configuration(configuration: RunConfiguration) -> Co
     """校验驱动功放映射所需的最小配置。
 
     驱动映射只测量信号源到频谱仪之间的 RF 链路。驱动功放可能由
-    外部电源供电，因此不能把 DUT 供电角色或驱动功放电源分配作为本
+    外部电源供电，因此不能把 DUT 供电通道或驱动功放电源分配作为本
     测量的必填项。
     """
     errors: List[ConfigIssue] = []
@@ -680,8 +671,6 @@ def _validate_channels(channels: Mapping[str, PowerChannelPlan], path: str, erro
         channel_path = f"{path}.{name}"
         if not name.strip() or name in PLACEHOLDER_VALUES:
             error(channel_path, "通道名称不能是空值或占位值")
-        if not isinstance(channel.role, str) or not channel.role.strip() or channel.role in PLACEHOLDER_VALUES:
-            error(f"{channel_path}.role", "必须填写稳定的供电角色，不能填写现场 CH 名称")
         _optional_number(channel.voltage, f"{channel_path}.voltage", error)
         _optional_number(channel.current, f"{channel_path}.current", error, non_negative=True)
         _optional_number(channel.voltage_protection, f"{channel_path}.voltage_protection", error)
@@ -841,35 +830,7 @@ def _validate_mappings(mappings: List[ChannelMapping], path: str, error: Any) ->
         if item.channel in seen:
             error(f"{item_path}.channel", f"通道重复分配: {item.channel}")
         seen.add(item.channel)
-        _required_text(item.role, f"{item_path}.role", error)
         _required_text(item.connection, f"{item_path}.connection", error)
-
-
-def _validate_role_uniqueness(
-    mappings: List[ChannelMapping], path: str, error: Any
-) -> None:
-    """同一个供电角色只能由一个通道提供。
-
-    DUT 的 ``gate`` / ``drain`` 在装配时按**角色**寻址：两个通道都声称 ``gate`` 时，
-    “哪一台给栅极”没有唯一答案，连接前必须失败。多电源让角色冲突不再等于通道重复——
-    ``DP8B1519/CH1`` 供 ``gate``、``DP8B0885/CH1`` 也供 ``gate`` 是两条不同的通道，
-    只有角色是重复的，因此不能只靠 :func:`_validate_mappings` 的通道去重发现。
-
-    驱动功放通道不在此列：它们都是同一个 ``driver`` 角色，多通道按物理路由区分。
-    """
-    seen: Dict[str, int] = {}
-    for index, item in enumerate(mappings):
-        role = item.role
-        if not isinstance(role, str) or not role.strip():
-            continue
-        role = role.strip()
-        if role in seen:
-            error(
-                f"{path}[{index}].role",
-                f"供电角色重复分配: {role}（另见 {path}[{seen[role]}]）",
-            )
-            continue
-        seen[role] = index
 
 
 def _validate_driver_mode(enabled: Any, source: Any, channels: Any, error: Any) -> None:

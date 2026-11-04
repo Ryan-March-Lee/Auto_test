@@ -12,8 +12,7 @@
 归属（见 `docs/配置领域词汇与模块归属.md`）：presentation adapter。读数后的合法性判据属于
 `domain` 配置规则；正式运行校验与正式配置编写都委托
 `application.configuration_authoring`，本模块只把当前的读数包成配置编辑 DTO 并展示
-返回的消息。供电角色与分配引用的判据也只由 domain 定义（步骤 13 收口），这里不再保留
-页面副本。
+返回的消息。供电分配引用的判据也只由 domain 定义（步骤 13 收口），这里不再保留页面副本。
 """
 
 import ast
@@ -22,10 +21,13 @@ import math
 from typing import Any, Mapping
 
 from application.errors import ConfigurationError
-from domain.configuration.rules import POWER_CHANNEL_ROLES
 from domain.instruments.models import INSTRUMENT_ROLES
 
 from .config_form_bindings import binding_address, power_supply_bindings
+
+# 旧电源控件显示的通道角色词表（步骤 5 从 domain 收回）：它只是尚未拆走的控件选项，
+# 不参与校验、映射或上电；步骤 11/12 随独立电源页一起删除。
+POWER_SUPPLY_ROLES = ("gate", "drain")
 
 
 def parse_frequency_text(value: str) -> list[float] | None:
@@ -327,9 +329,9 @@ class ConfigFormState:
         role_widget = controls.get("role")
         if role_widget is not None:
             label = role_widget.currentText()
-            return label if label in POWER_CHANNEL_ROLES else None
+            return label if label in POWER_SUPPLY_ROLES else None
         existing = _dict_copy(existing_channels.get(channel)).get("role")
-        return existing if existing in POWER_CHANNEL_ROLES else None
+        return existing if existing in POWER_SUPPLY_ROLES else None
 
     def read_power_assignment(self) -> dict:
         """按当前下拉框写出供电分配，引用主字段是 ``supply_id``。

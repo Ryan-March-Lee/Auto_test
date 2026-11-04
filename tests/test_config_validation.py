@@ -115,28 +115,20 @@ class ConfigValidationTests(unittest.TestCase):
         result = validate_config(config)
         self.assertTrue(any("CH99" in issue.message for issue in result.errors))
 
-    def test_assigned_channel_requires_explicit_role(self):
+    def test_assigned_channel_does_not_require_a_role(self):
         config = copy.deepcopy(self.base_config)
         del config["instruments"]["power_supplies"]["PS4"]["channels"]["CH1"]["role"]
         result = validate_config(config)
-        self.assertFalse(result.valid)
-        self.assertTrue(
-            any("显式声明 role" in issue.message for issue in result.errors),
-            [issue.message for issue in result.errors],
-        )
+        self.assertTrue(result.valid, result.errors)
 
-    def test_duplicate_assigned_role_is_error(self):
+    def test_duplicate_assigned_role_is_no_longer_an_error(self):
         config = copy.deepcopy(self.base_config)
         config["instruments"]["power_supplies"]["PS4"]["channels"]["CH2"]["role"] = "gate"
         result = validate_config(config)
-        self.assertFalse(result.valid)
-        self.assertTrue(
-            any("供电角色重复配置" in issue.message for issue in result.errors),
-            [issue.message for issue in result.errors],
-        )
+        self.assertTrue(result.valid, result.errors)
 
-    def test_duplicate_assigned_role_across_supplies_is_error(self):
-        """gate 由两个不同电源同时提供同样是重复配置。"""
+    def test_duplicate_physical_route_in_one_group_is_error(self):
+        """角色重复不再有意义；真正矛盾的是同一物理通道被分配两次。"""
         config = copy.deepcopy(self.base_config)
         config["instruments"]["power_supplies"]["PS1"]["enabled"] = True
         config["power_supply_assignment"]["dut_amplifier"]["supplies"]["peaking"] = {
@@ -146,19 +138,15 @@ class ConfigValidationTests(unittest.TestCase):
         result = validate_config(config)
         self.assertFalse(result.valid)
         self.assertTrue(
-            any("供电角色重复配置" in issue.message for issue in result.errors),
+            any("组内重复分配" in issue.message for issue in result.errors),
             [issue.message for issue in result.errors],
         )
 
-    def test_assignment_must_provide_both_gate_and_drain(self):
+    def test_assignment_may_provide_only_one_channel(self):
         config = copy.deepcopy(self.base_config)
         config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]["channel"] = ["CH1"]
         result = validate_config(config)
-        self.assertFalse(result.valid)
-        self.assertTrue(
-            any("gate 和 drain" in issue.message for issue in result.errors),
-            [issue.message for issue in result.errors],
-        )
+        self.assertTrue(result.valid, result.errors)
 
     def test_two_enabled_supplies_with_the_same_address_are_error(self):
         """两台会被连接的电源不能抢同一个 VISA 地址（步骤 11）。"""
@@ -480,28 +468,24 @@ class HardwareConnectionValidationTests(unittest.TestCase):
         self.assertTrue(validate_hardware_connections(config).valid)
         self.assertFalse(validate_config(config).valid)
 
-    def test_missing_role_is_field_completeness_not_a_connection_conflict(self):
-        """通道没声明供电角色是配置作者要补的内容，不是“会连错设备”。
-
-        运行创建只拦连接冲突；若这里也把它当冲突，一份结构缺失的配置会在写运行目录前
-        以“供电连接存在冲突”被拒，把人引向排查接线。
-        """
+    def test_missing_role_is_not_a_connection_conflict_or_a_field_error(self):
+        """步骤 5 起通道角色不再是字段：没有角色不影响连接校验，也不影响完整校验。"""
         config = copy.deepcopy(self.config)
         supply = config["instruments"]["power_supplies"]["PS4"]
         for channel in supply["channels"].values():
             channel.pop("role", None)
 
         self.assertTrue(validate_hardware_connections(config).valid)
-        paths = {issue.path for issue in validate_config(config).errors}
-        self.assertIn("power_supply_assignment.dut_amplifier.supplies.carrier.channel", paths)
+        self.assertTrue(validate_config(config).valid, validate_config(config).errors)
 
-    def test_missing_gate_or_drain_and_channel_list_are_not_connection_conflicts(self):
-        """gate/drain 不齐、通道列表为空同样只由完整校验报。"""
+    def test_single_channel_and_empty_channel_list_are_field_checks(self):
+        """单通道分配合法；通道列表为空是结构问题，两者都不是连接冲突。"""
         config = copy.deepcopy(self.config)
         config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]["channel"] = [
             "CH1"
         ]
         self.assertTrue(validate_hardware_connections(config).valid)
+        self.assertTrue(validate_config(config).valid, validate_config(config).errors)
 
         config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]["channel"] = []
         self.assertTrue(validate_hardware_connections(config).valid)

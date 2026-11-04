@@ -171,7 +171,8 @@ class ConfigurationAuthoringTests(unittest.TestCase):
         for entry in (document["run_mapping"]["instruments"]["signal_generator"], spectrum):
             self.assertNotIn("serial", entry)
 
-    def test_unknown_channel_role_is_not_guessed(self):
+    def test_unknown_channel_is_not_guessed_into_a_role(self):
+        """步骤 5：未知通道不再报角色缺失，按物理通道原样通过正式校验。"""
         flat = _flat_config()
         flat["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]["channel"] = [
             "CH99"
@@ -183,8 +184,8 @@ class ConfigurationAuthoringTests(unittest.TestCase):
             TestPlan.from_dict(document["test_plan"]),
             RunResourceMapping.from_dict(document["run_mapping"]),
         )
-        paths = {issue.path for issue in validate_run_configuration(configuration).errors}
-        self.assertIn("dut_power_channels[0].role", paths)
+        result = validate_run_configuration(configuration)
+        self.assertTrue(result.valid, result.errors)
 
     def test_instrument_power_channel_roles_are_not_invented(self):
         """仪器侧供电角色由配置页控件显式选择，authoring 不按 CH1/CH2 补默认值。"""
@@ -394,8 +395,8 @@ class ConfigurationAuthoringTests(unittest.TestCase):
         paths = {issue.path for issue in validate_run_configuration(configuration).errors}
         self.assertIn("dut_power_channels[2].channel", paths)
 
-    def test_two_supplies_claiming_the_same_role_are_rejected(self):
-        """两台电源都声称 gate：通道不同但角色重复，必须在连接前失败。"""
+    def test_two_supplies_sharing_a_role_are_no_longer_rejected(self):
+        """步骤 5：通道按物理路由识别，两个通道写同一个角色不再矛盾。"""
         flat = _flat_config()
         flat["instruments"]["power_supplies"]["DP8B0885"] = _second_supply()
         flat["power_supply_assignment"]["dut_amplifier"]["supplies"] = {
@@ -414,8 +415,7 @@ class ConfigurationAuthoringTests(unittest.TestCase):
             TestPlan.from_dict(document["test_plan"]),
             RunResourceMapping.from_dict(document["run_mapping"]),
         )
-        paths = {issue.path for issue in validate_run_configuration(configuration).errors}
-        self.assertIn("dut_power_channels[1].role", paths)
+        self.assertTrue(validate_run_configuration(configuration).valid)
 
     def test_parse_db_value(self):
         self.assertEqual(parse_db_value("30dB"), 30.0)
@@ -626,67 +626,35 @@ class RemovedCompatibilityShellTests(unittest.TestCase):
 
 
 class AuthoringDocumentValidationTests(unittest.TestCase):
-    """供电角色与分配引用由 domain 判定，应用边界只转成结构化问题。"""
+    """上电计划、漏极与分配引用由 domain 判定，应用边界只转成结构化问题。"""
 
     def _document_with(self, mutate) -> dict:
         flat = _flat_config()
         mutate(flat)
         return flat
 
-    def test_missing_power_channel_role_is_reported_with_the_domain_message(self):
-        def clear_role(flat):
-            flat["instruments"]["power_supplies"]["DP8B1519"]["channels"]["CH2"][
-                "role"
-            ] = None
-
-        result = ConfigurationAuthoringService().validate_document(
-            ConfigurationEditingDocument.from_mapping(self._document_with(clear_role))
-        )
-
-        messages = [issue.message for issue in result.errors]
-        self.assertIn("DP8B1519 存在未选择供电角色的通道", messages)
-        self.assertIn(
-            "configuration.power_channel_roles",
-            {issue.code for issue in result.errors},
-        )
-
-    def test_duplicate_power_channel_roles_are_reported(self):
-        def duplicate_role(flat):
-            channels = flat["instruments"]["power_supplies"]["DP8B1519"]["channels"]
-            channels["CH2"]["role"] = channels["CH1"]["role"]
-
-        result = ConfigurationAuthoringService().validate_document(
-            ConfigurationEditingDocument.from_mapping(self._document_with(duplicate_role))
-        )
-
-        self.assertIn(
-            "DP8B1519 的通道供电角色重复: gate",
-            [issue.message for issue in result.errors],
-        )
-
-    def test_invalid_power_channel_role_is_reported(self):
-        """角色不是 ``None`` 不代表合法：词表只有 gate / drain 两个值。"""
-
-        def invalid_role(flat):
-            flat["instruments"]["power_supplies"]["DP8B1519"]["channels"]["CH2"][
-                "role"
-            ] = "bias"
-
-        result = ConfigurationAuthoringService().validate_document(
-            ConfigurationEditingDocument.from_mapping(self._document_with(invalid_role))
-        )
-
-        self.assertIn(
-            "DP8B1519 的通道 CH2 供电角色必须是 gate 或 drain，当前为 'bias'",
-            [issue.message for issue in result.errors],
-        )
-        self.assertIn(
-            "configuration.power_channel_roles",
-            {issue.code for issue in result.errors},
-        )
+    @staticmethod
+    def _plan_document() -> dict:
+        flat = _flat_config()
+        flat["dut_config"]["drain_channel"] = {
+            "supply_id": "DP8B1519",
+            "channel": "CH2",
+        }
+        flat["power_supply_assignment"]["dut_amplifier"]["power_plan"] = {
+            "power_sequence": [
+                {"supply_id": "DP8B1519", "channel": "CH1"},
+                {"supply_id": "DP8B1519", "channel": "CH2"},
+            ],
+            "inter_channel_delay_s": 2.0,
+        }
+        flat["power_supply_assignment"]["driver_amplifier"]["power_plan"] = {
+            "power_sequence": [],
+            "inter_channel_delay_s": 0.0,
+        }
+        return flat
 
     def test_role_free_channels_are_accepted_by_the_editing_check(self):
-        """步骤 3 起通道角色不再是草稿字段：编辑文档没有 role 时不再报角色缺失。"""
+        """步骤 5 起通道角色不再是草稿字段：编辑文档没有 role 时不再报角色缺失。"""
 
         def clear_roles(flat):
             channels = flat["instruments"]["power_supplies"]["DP8B1519"]["channels"]
@@ -699,8 +667,156 @@ class AuthoringDocumentValidationTests(unittest.TestCase):
 
         self.assertTrue(result.valid, result.messages())
         self.assertNotIn(
-            "configuration.power_channel_roles",
+            "configuration.power_plan",
             {issue.code for issue in result.errors},
+        )
+
+    def test_power_plan_and_drain_are_accepted(self):
+        result = ConfigurationAuthoringService().validate_document(
+            ConfigurationEditingDocument.from_mapping(self._plan_document())
+        )
+        self.assertTrue(result.valid, result.messages())
+
+    def test_plan_must_cover_every_assigned_channel(self):
+        document = self._plan_document()
+        document["power_supply_assignment"]["dut_amplifier"]["power_plan"][
+            "power_sequence"
+        ] = [{"supply_id": "DP8B1519", "channel": "CH1"}]
+
+        result = ConfigurationAuthoringService().validate_document(
+            ConfigurationEditingDocument.from_mapping(document)
+        )
+
+        self.assertIn(
+            "power_supply_assignment.dut_amplifier.power_plan.power_sequence",
+            {issue.path for issue in result.errors},
+        )
+        self.assertIn("configuration.power_plan", {issue.code for issue in result.errors})
+
+    def test_plan_route_must_reference_a_configured_channel(self):
+        document = self._plan_document()
+        document["power_supply_assignment"]["dut_amplifier"]["power_plan"][
+            "power_sequence"
+        ] = [
+            {"supply_id": "DP8B1519", "channel": "CH1"},
+            {"supply_id": "DP8B1519", "channel": "CH99"},
+        ]
+
+        result = ConfigurationAuthoringService().validate_document(
+            ConfigurationEditingDocument.from_mapping(document)
+        )
+
+        self.assertTrue(
+            any("CH99" in issue.message for issue in result.errors),
+            [issue.message for issue in result.errors],
+        )
+
+    def test_plan_must_declare_both_keys(self):
+        for key in ("power_sequence", "inter_channel_delay_s"):
+            with self.subTest(key=key):
+                document = self._plan_document()
+                document["power_supply_assignment"]["dut_amplifier"]["power_plan"].pop(key)
+
+                result = ConfigurationAuthoringService().validate_document(
+                    ConfigurationEditingDocument.from_mapping(document)
+                )
+
+                self.assertIn(
+                    f"power_supply_assignment.dut_amplifier.power_plan.{key}",
+                    {issue.path for issue in result.errors},
+                )
+                self.assertIn(
+                    "configuration.power_plan", {issue.code for issue in result.errors}
+                )
+
+    def test_plan_rejects_duplicate_physical_routes(self):
+        document = self._plan_document()
+        duplicate = {"supply_id": "DP8B1519", "channel": "CH1"}
+        document["power_supply_assignment"]["dut_amplifier"]["power_plan"][
+            "power_sequence"
+        ] = [duplicate, duplicate]
+
+        result = ConfigurationAuthoringService().validate_document(
+            ConfigurationEditingDocument.from_mapping(document)
+        )
+
+        self.assertTrue(
+            any("不能重复" in issue.message for issue in result.errors),
+            [issue.message for issue in result.errors],
+        )
+        self.assertIn(
+            "power_supply_assignment.dut_amplifier.power_plan.power_sequence",
+            {issue.path for issue in result.errors},
+        )
+
+    def test_plan_rejects_out_of_range_delay(self):
+        document = self._plan_document()
+        document["power_supply_assignment"]["dut_amplifier"]["power_plan"][
+            "inter_channel_delay_s"
+        ] = 61
+
+        result = ConfigurationAuthoringService().validate_document(
+            ConfigurationEditingDocument.from_mapping(document)
+        )
+
+        self.assertIn(
+            "power_supply_assignment.dut_amplifier.power_plan.inter_channel_delay_s",
+            {issue.path for issue in result.errors},
+        )
+
+    def test_drain_must_be_a_dut_channel_in_the_power_sequence(self):
+        document = self._plan_document()
+        document["dut_config"]["drain_channel"] = {
+            "supply_id": "DP8B1519",
+            "channel": "CH99",
+        }
+        result = ConfigurationAuthoringService().validate_document(
+            ConfigurationEditingDocument.from_mapping(document)
+        )
+        self.assertTrue(
+            any(
+                issue.path == "dut_config.drain_channel" and "DUT 已分配" in issue.message
+                for issue in result.errors
+            ),
+            [f"{issue.path}: {issue.message}" for issue in result.errors],
+        )
+
+        document = self._plan_document()
+        document["power_supply_assignment"]["dut_amplifier"]["power_plan"][
+            "power_sequence"
+        ] = [{"supply_id": "DP8B1519", "channel": "CH1"}]
+        result = ConfigurationAuthoringService().validate_document(
+            ConfigurationEditingDocument.from_mapping(document)
+        )
+        self.assertTrue(
+            any(
+                issue.path == "dut_config.drain_channel"
+                and "上电顺序" in issue.message
+                for issue in result.errors
+            ),
+            [f"{issue.path}: {issue.message}" for issue in result.errors],
+        )
+
+    def test_cross_group_plan_routes_are_rejected(self):
+        document = self._plan_document()
+        document["driver_mode"] = {"enabled": True, "power_source": "dc_supply"}
+        document["instruments"]["power_supplies"]["DP8B0885"] = _second_supply()
+        document["power_supply_assignment"]["driver_amplifier"] = {
+            "power_supply_count": 1,
+            "supplies": {"main": {"supply_id": "DP8B0885", "channel": ["CH1"]}},
+            "power_plan": {
+                "power_sequence": [{"supply_id": "DP8B1519", "channel": "CH1"}],
+                "inter_channel_delay_s": 0.0,
+            },
+        }
+
+        result = ConfigurationAuthoringService().validate_document(
+            ConfigurationEditingDocument.from_mapping(document)
+        )
+
+        self.assertTrue(
+            any("不能同时用于 DUT 与驱动功放" in issue.message for issue in result.errors),
+            [issue.message for issue in result.errors],
         )
 
     def test_unselected_assignment_reference_is_reported(self):

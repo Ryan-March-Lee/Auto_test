@@ -40,10 +40,14 @@ from typing import Any, Mapping
 from application.configuration_authoring import DUT_CHANNEL_ROLES
 from application.errors import ConfigurationError
 from domain.configuration.models import resolve_driver_power_source
-from domain.configuration.rules import POWER_CHANNEL_ROLES, assignment_supply_id
+from domain.configuration.rules import assignment_supply_id
 from domain.instruments.labels import supply_display_label
 
-from .config_form_state import assignment_declared, parse_frequency_text
+from .config_form_state import (
+    POWER_SUPPLY_ROLES,
+    assignment_declared,
+    parse_frequency_text,
+)
 
 # 配置页受控控件的空配置基线。``project_authoring_config()`` 先把控件重置到这些默认值，
 # 再逐字段投影配置编写文档，从而保证投影结果与直接用同一份文档构造页面的结果一致。
@@ -69,10 +73,8 @@ POWER_ASSIGNMENT_SLOTS = (
     "pa_unit2_power",
     "pa_unit3_power",
 )
-# 供电角色是接线事实，由用户在配置页显式选择；``DUT_CHANNEL_ROLES`` 只提供本机台架
-# 固定接线的控件初值（CH1 栅极、CH2 漏极），装配层不再按通道名推导角色。角色词表只有
-# domain 的一份（``POWER_CHANNEL_ROLES``），这里沿用旧名字给控件构建使用。
-POWER_SUPPLY_ROLES = POWER_CHANNEL_ROLES
+# 供电角色只是旧电源控件尚未拆走的显示选项（步骤 5 起不再由 domain 定义、也不再参与
+# 校验或上电）；``DUT_CHANNEL_ROLES`` 只提供本机台架固定接线的控件初值。
 
 _ASSIGNMENT_ROLE_KEYS = (
     ("carrier", "pa_unit1_power"),

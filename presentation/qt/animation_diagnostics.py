@@ -1,7 +1,7 @@
-"""发牌/翻牌动画的运行时诊断（技术债重构步骤 2）。
+"""发牌/翻牌与收牌动画的运行时诊断（技术债重构步骤 2）。
 
 诊断只写专用日志与内部快照，不进入用户界面，也不靠截图判断动画是否发生。
-一次发牌固定记录下面这些字段（名称为契约，后续复现问题时按字段检索）：
+一次动画固定记录下面这些字段（名称为契约，后续复现问题时按字段检索）：
 
 ``event``
     事件名：``start`` / ``skip`` / ``phase`` / ``first_paint`` / ``finish`` / ``cancel``。
@@ -10,9 +10,12 @@
 ``elapsed_ms`` / ``duration_ms``
     已走时长与本次整段时长。
 ``phase``
-    当前阶段：``dealing`` / ``settling`` / ``flipping`` / ``finished`` / ``idle``。
+    当前阶段：``dealing`` / ``settling`` / ``flipping`` / ``flipping-back`` /
+    ``returning`` / ``finished`` / ``idle``。
+``direction``
+    动画方向：``deal``（发牌/翻牌）或 ``return``（按“返回”时收牌回牌堆）。
 ``card_count``
-    本次要发的卡片数量。
+    本次要发/要收的卡片数量。
 ``front_source``
     发牌正面的来源：``asset``（默认，由 :mod:`presentation.qt.card_assets` 按卡片数据
     渲染）或 ``screenshot``（面板的排障回退，旧 ``QWidget.grab()`` 截图）。

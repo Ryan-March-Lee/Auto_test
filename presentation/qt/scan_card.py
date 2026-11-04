@@ -638,6 +638,8 @@ class ScanPromptCard(QPushButton):
         self._hover = 0.0
         #: 焦点框只在键盘走到这里时画：鼠标点出来的焦点不该在卡片外留一圈线。
         self._focus_visible = False
+        #: 卡面与投影是否可见：收牌动画期间先让位给牌堆，不改变版面与按钮几何。
+        self._face_visible = True
         #: 不随时间变化的那些层（卡面、柔光、角标）的预渲染图。
         self._face = QPixmap()
         self._face_key: tuple[int, int, float] | None = None
@@ -697,6 +699,23 @@ class ScanPromptCard(QPushButton):
         """卡片本体在控件里的矩形：按钮就是卡片，所以是整块控件矩形。"""
         return QRectF(self.rect())
 
+    def set_face_visible(self, visible: bool) -> None:
+        """显示/隐藏整张卡面与背后的投影，不改变版面或按钮几何。
+
+        收牌动画期间由设备发现面板调用：此刻“查找设备”卡片的位置是收牌终点，卡面
+        先让位给覆盖层上的牌堆，动画播完再和页头文字一起露出来。
+        """
+        visible = bool(visible)
+        if visible == self._face_visible:
+            return
+        self._face_visible = visible
+        self._sync_backdrop()
+        self.update()
+
+    def face_visible(self) -> bool:
+        """卡面当前是否可见（收牌动画期间为 ``False``）。"""
+        return self._face_visible
+
     # ---- 卡片背后的装饰层 ---------------------------------------------------
 
     def _sync_backdrop(self) -> None:
@@ -719,7 +738,7 @@ class ScanPromptCard(QPushButton):
                 -BACKDROP_MARGIN_X, -BACKDROP_MARGIN_Y, BACKDROP_MARGIN_X, BACKDROP_MARGIN_Y
             )
         )
-        backdrop.setVisible(self.isVisible())
+        backdrop.setVisible(self.isVisible() and self._face_visible)
         # 装饰层压在卡片底下：两个同级控件谁在上面，靠这一句定下来。这里只把装饰层按下去，
         # 卡片自己不越到任何同级控件上面（``raise_()`` 会把卡片顶到后来出现的同级控件
         # 之上，装饰层的位置本来不该改变页面的层级）。
@@ -839,6 +858,8 @@ class ScanPromptCard(QPushButton):
         投影要露在卡片外面，画在同级的装饰层上（:class:`_CardBackdrop`），不在这里：
         按钮本体只有卡片那么大。
         """
+        if not self._face_visible:
+            return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         if not self.isEnabled():

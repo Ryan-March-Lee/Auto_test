@@ -169,6 +169,85 @@ class CardDealAnimationTests(unittest.TestCase):
         self.assertGreater(front_pixel.red(), 200, "翻完后应露出资产正面")
         self.assertLess(front_pixel.blue(), 60)
 
+    def test_return_flips_from_front_to_back_then_flies_to_the_deck(self):
+        """按“返回”的反向画面：先正面、再翻回背面，最后落在牌堆位置。"""
+        from presentation.qt.card_deal_animation import (
+            RETURN_FLIP_MS,
+            RETURN_FLY_MS,
+        )
+
+        asset = _solid_asset(QColor(255, 0, 0), QColor(0, 0, 255))
+        layer, items = self._animation(1, assets=[asset])
+        layer._timer.stop()
+        deck = QPointF(200.0, 360.0)
+        layer.start_return(items, deck)
+        layer._timer.stop()
+        centre = items[0].target_rect.center().toPoint()
+
+        self.assertEqual(layer.direction(), "return")
+        self.assertEqual(layer.phase_at(0.0), "flipping-back")
+        self.assertAlmostEqual(
+            layer.duration_ms(), RETURN_FLIP_MS + RETURN_FLY_MS
+        )
+        self.assertEqual(
+            layer.phase_at(float(RETURN_FLIP_MS) + 1.0), "returning"
+        )
+
+        front = _sample_colour(layer.grab().toImage(), centre)
+        self.assertGreater(front.red(), 200, "收牌从卡片正面开始")
+        self.assertLess(front.blue(), 60)
+
+        layer._elapsed = float(RETURN_FLIP_MS)
+        back = _sample_colour(layer.grab().toImage(), centre)
+        self.assertGreater(back.blue(), 200, "翻完后回到牌背")
+        self.assertLess(back.red(), 60)
+
+        layer._elapsed = float(RETURN_FLIP_MS) + RETURN_FLY_MS * 0.95
+        near_deck = _sample_colour(
+            layer.grab().toImage(), deck.toPoint()
+        )
+        self.assertGreater(near_deck.blue(), 200, "牌已经飞到牌堆位置")
+        self.assertEqual(layer.direction(), "return")
+        self.assertAlmostEqual(
+            layer.duration_ms(), RETURN_FLIP_MS + RETURN_FLY_MS
+        )
+
+    def test_return_takes_the_last_card_back_first(self):
+        """收牌顺序与发牌相反：最后一张先翻面，第一张最后回到牌堆。"""
+        from presentation.qt.card_deal_animation import RETURN_FLIP_STAGGER_MS
+
+        layer, items = self._animation(2)
+        layer._timer.stop()
+        layer.start_return(items, QPointF(200.0, 360.0))
+        layer._timer.stop()
+
+        halfway = RETURN_FLIP_STAGGER_MS / 2.0
+        self.assertGreater(layer.return_flip_progress(1, halfway), 0.0)
+        self.assertEqual(layer.return_flip_progress(0, halfway), 0.0)
+        self.assertGreater(
+            layer.return_fly_progress(1, layer.duration_ms()),
+            0.9,
+        )
+        self.assertEqual(layer.return_flip_progress(0, layer.duration_ms()), 1.0)
+
+    def test_return_finishes_without_handing_cards_back(self):
+        """收牌不恢复真实卡片：页面已经清空结果，不能再收到 card_revealed。"""
+        layer, items = self._animation(2)
+        layer._timer.stop()
+        layer.start_return(items, QPointF(200.0, 360.0))
+        layer._timer.stop()
+        revealed: list[int] = []
+        finished: list[bool] = []
+        layer.card_revealed.connect(revealed.append)
+        layer.finished.connect(lambda: finished.append(True))
+
+        layer.finish()
+
+        self.assertEqual(revealed, [])
+        self.assertEqual(finished, [True])
+        self.assertEqual(layer.diagnostics()["direction"], "return")
+        self.assertFalse(layer.isVisible())
+
     def test_the_photon_back_particles_move_while_the_card_is_face_down(self):
         """牌背粒子由资产开关控制：打开时两帧不同，关掉后画面只由静态位图决定。"""
         from dataclasses import replace

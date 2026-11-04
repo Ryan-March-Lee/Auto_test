@@ -67,7 +67,8 @@
 
 结果区**不是抽屉**：结果回来就留在那里，没有“收起 / 查看结果”的来回切换。要重新查找时
 按“返回”（:meth:`InstrumentDiscoveryPanel.request_back`）：清空本次结果与勾选，结果区顶部
-重新出现“查找设备”，也就是回到上一页那一步。
+重新出现“查找设备”，也就是回到上一页那一步。结果可交互时还会在覆盖层上补一段与发牌
+相反的收牌画面（卡片翻回背面、飞回查找卡片），让“收回去”和发牌一样看得见。
 
 “查找设备”不是普通按钮而是一张自绘的深色卡片（:mod:`presentation.qt.scan_card`）：卡片
 正中是渐变标题，内部有光带与粒子自己在动；鼠标进来时卡面上的字淡到看不见（0.6s，见那个
@@ -86,7 +87,7 @@ from dataclasses import replace
 from enum import Enum
 from typing import Any, Callable, Sequence
 
-from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QThread, Signal
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication, QFrame, QGraphicsOpacityEffect, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy, QSpacerItem,
@@ -116,6 +117,7 @@ from .card_assets import CardAsset, render_card_asset
 from .card_deal_animation import (
     DEAL_FRONT_SOURCE_ASSET,
     DEAL_FRONT_SOURCE_SCREENSHOT,
+    DIRECTION_RETURN,
     CardDealAnimation,
     CardDealItem,
 )
@@ -435,6 +437,8 @@ class InstrumentDiscoveryPanel(QWidget):
     phase_changed = Signal(str)
     #: 本次结果的勾选变化（用户点选/取消，或扫描后按配置预选）；页面据此更新“下一步”。
     selection_changed = Signal()
+    #: 收牌动画开始（True）/ 结束或取消（False）：页面据此把页头文字留到动画播完再出现。
+    return_animation_changed = Signal(bool)
 
     def __init__(
         self,
@@ -463,6 +467,8 @@ class InstrumentDiscoveryPanel(QWidget):
         self._pending_outcome: tuple[str, Any] | None = None
         #: 流程状态（计划步骤 8）：扫描 / 等待 / 发牌 / 可交互只经过 ``_set_phase``。
         self._phase = DiscoveryPhase.IDLE
+        #: 收牌动画期间卡面与页头文字是否暂时藏起来；动画结束/取消时一起恢复。
+        self._return_presentation_hidden = False
         #: 当前这次查找的代次：清空、重扫与关闭都会递增，迟到结果据此作废。
         self._scan_token = 0
         # 配置里保存的设备身份（角色 -> 完整设备码/device_key），用于扫描后按身份预选。
@@ -568,6 +574,10 @@ class InstrumentDiscoveryPanel(QWidget):
         layer = getattr(self, "deal_animation", None)
         if layer is None or not layer.is_running():
             return
+        if layer.direction() == DIRECTION_RETURN:
+            # 收牌时结果卡片已经清空：落点就是按下“返回”时冻结的那一组，面板自己的
+            # 布局变化（页头收回、卡片区隐藏）不该把这次收牌画面半路掐掉。
+            return
         current_clip = self._deal_clip_rect(layer)
         if self._deal_targets_moved(layer) or self._deal_clip_shrank(layer, current_clip):
             self.cancel_deal_reveal(reveal=True, reason=CANCEL_REASON_SURFACE_CHANGED)
@@ -620,9 +630,21 @@ class InstrumentDiscoveryPanel(QWidget):
         样子（扫描行下面那张“查找设备”卡片），用户改网段或换扫描方式再查一次。
         配置里的设备绑定不归面板管，所以返回不动它们；下一次勾选并点“下一步”时整批
         替换掉。要重新绑定，改完网段再查一次即可。
+
+        结果可交互时先播一段与发牌相反的收牌动画：卡片从结果位翻回背面、沿发牌弧线
+        飞回“查找设备”卡片并叠成牌堆。可见状态仍立即回到 ``IDLE``（页头文字与查找
+        卡片当场回来），覆盖层只是把“收回去”的画面补完；发牌还没翻完时保持原来的
+        立即清空，不播放半截收牌。
         """
         if self.is_scanning() or self._pending_outcome is not None:
             self._set_status("扫描正在进行，请等待完成")
+            return
+        if (
+            self._phase is DiscoveryPhase.INTERACTIVE
+            and self.cards()
+            and not self._closed
+        ):
+            self._start_return_reveal()
             return
         self.clear_results()
 
@@ -1535,6 +1557,88 @@ class InstrumentDiscoveryPanel(QWidget):
                         DiscoveryPhase.INTERACTIVE, outcome="deal-start-failed"
                     )
 
+    def _start_return_reveal(self) -> None:
+        """按“返回”时补一段收牌画面：卡片翻回背面，再飞回“查找设备”卡片。
+
+        画面要用的东西（资产、落点、卡片区裁剪）在清空结果之前一次取齐：清空之后
+        卡片控件会被删掉，动画层不再持有它们。随后先走原来的清空路径，让流程、页头
+        文字与查找卡片立即回到 ``IDLE``；“查找设备”卡片此刻的位置就是收牌的目的地。
+        收牌层只画画面、不改流程，播完自己收起；按下返回之后如果马上重新查找，
+        :meth:`request_scan` 的清空路径会先把这段画面收掉。
+        """
+        cards = self.cards()
+        layer = self.deal_animation
+        self._settle_deal_layout()
+        self._sync_deal_animation_geometry()
+        front_source = self._deal_front_source()
+        assets = self._deal_assets(cards, front_source)
+        targets = [self._deal_target_rect(card, layer) for card in cards]
+        clip = self._deal_clip_rect(layer)
+        items = [
+            CardDealItem(asset=asset, target_rect=target, index=index)
+            for index, (asset, target) in enumerate(zip(assets, targets))
+        ]
+        # 收牌期间先把页头文字与“查找设备”卡面藏起来：版面照常回到 IDLE（收牌终点
+        # 就是按钮的最终位置），但文字与卡面要等最后一张牌落回后才一起出现。
+        self._enter_return_presentation()
+        self.clear_results()
+        try:
+            layer.start_return(
+                items,
+                self._return_deck_anchor(layer),
+                clip_rect=clip,
+                front_source=front_source,
+                deck_extent=(
+                    float(self.scan_btn.width()),
+                    float(self.scan_btn.height()),
+                ),
+            )
+        except (RuntimeError, ValueError):
+            # 启动失败不能把卡面留在“藏起来、不可点”的半状态；异常继续向外传播。
+            self._leave_return_presentation()
+            raise
+        # 页头收回、滚动条显隐等布局变化可能晚一拍才落定：在第一张牌开始飞之前
+        # 再对一次牌堆目的地，保证它和“查找设备”按钮的最终位置完全重合。
+        QTimer.singleShot(0, self._refresh_return_deck_anchor)
+
+    def _refresh_return_deck_anchor(self) -> None:
+        """收牌开始后的下一拍：把牌堆目的地对齐到按钮的最终位置。"""
+        layer = self.deal_animation
+        if layer.is_running() and layer.direction() == DIRECTION_RETURN:
+            layer.refresh_deck_origin(self._return_deck_anchor(layer))
+
+    def _enter_return_presentation(self) -> None:
+        """收牌开始：先藏起页头文字与“查找设备”卡面，动画播完再一起露出。"""
+        if self._return_presentation_hidden:
+            return
+        self._return_presentation_hidden = True
+        self.scan_btn.set_face_visible(False)
+        self.scan_btn.setEnabled(False)
+        self.return_animation_changed.emit(True)
+
+    def _leave_return_presentation(self) -> None:
+        """收牌结束/取消：恢复“查找设备”卡面与页头文字。"""
+        if not self._return_presentation_hidden:
+            return
+        self._return_presentation_hidden = False
+        self.scan_btn.set_face_visible(True)
+        self.scan_btn.setEnabled(True)
+        self.return_animation_changed.emit(False)
+
+    def _return_deck_anchor(self, layer: QWidget) -> QPointF:
+        """收牌目的地：清空后“查找设备”卡片的中心（覆盖层坐标为主）。
+
+        面板单独使用时没有页面级覆盖层，坐标就落在结果区自己的覆盖层里；两种情况都
+        以控件当前显示位置为准，不在面板里另算一套版式。
+        """
+        self._settle_deal_layout()
+        button = self.scan_btn
+        if button.isVisible() and button.width() > 0:
+            point = button.mapToGlobal(button.rect().center())
+        else:
+            point = self.mapToGlobal(self.rect().center())
+        return QPointF(layer.mapFromGlobal(point))
+
     @staticmethod
     def _deal_target_rect(card: InstrumentCard, layer: QWidget) -> QRectF:
         """这张卡在发牌覆盖层里的落点：动画开始时算一次。
@@ -1645,7 +1749,9 @@ class InstrumentDiscoveryPanel(QWidget):
 
         自然完成、``finish()`` 与取消（``reveal=True``）都走这里；它只负责把状态推进到
         ``INTERACTIVE``，可见性与可点状态由 :meth:`_render_phase` 一次渲染。
+        收牌方向播完时，页头文字与“查找设备”卡面在这里一起恢复。
         """
+        self._leave_return_presentation()
         if self._closed:
             return
         # 正常路径每张都由 ``card_revealed`` 恢复；这里再兜一次底，保证中断或信号
@@ -1674,6 +1780,7 @@ class InstrumentDiscoveryPanel(QWidget):
         if layer is None or not layer.is_running():
             return False
         layer.cancel(reveal=reveal, reason=reason)
+        self._leave_return_presentation()
         if reveal:
             # 取消后同样算“这一段结束了”：恢复卡片交互，有结果时把统计行放出来。
             self._on_deal_reveal_finished()
@@ -1688,7 +1795,12 @@ class InstrumentDiscoveryPanel(QWidget):
         layer = getattr(self, "deal_animation", None)
         if layer is None:
             return
+        was_running = layer.is_running()
         layer.cancel(reveal=reveal, reason=reason)
+        if was_running:
+            # 只有真的停掉了一段动画才恢复收牌期间藏起来的卡面；清空结果时本来就
+            # 没有在播的动画，不能把刚开始的收牌显现状态又改回去。
+            self._leave_return_presentation()
 
     def _abort_deal_reveal(self) -> None:
         """发牌启动失败后的兜底清理：停掉时间轴，恢复卡片效果与卡片区交互。

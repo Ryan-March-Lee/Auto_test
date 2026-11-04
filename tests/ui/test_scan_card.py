@@ -359,6 +359,36 @@ class ScanPromptCardTests(unittest.TestCase):
                     f"{label}时卡片{name}侧不应再有一圈实色底卡，实际 {colour.name()}",
                 )
 
+    def test_hiding_the_face_takes_the_card_and_backdrop_away_without_relayout(self):
+        """收牌期间卡面与投影一起让位给牌堆，按钮几何不变，播完再一起回来。"""
+        host, card = _scene()
+        before = card.geometry()
+        self.assertTrue(card.face_visible())
+        self.assertTrue(card._backdrop.isVisible())
+
+        card.set_face_visible(False)
+        _application().processEvents()
+        hidden = _still_frame(host, card, 0.0)
+
+        self.assertFalse(card.face_visible())
+        self.assertFalse(card._backdrop.isVisible())
+        self.assertEqual(card.geometry(), before, "藏起卡面不能改变按钮的版面")
+        self.assertEqual(
+            _card_pixel(host, hidden, card, 0.5, 0.5),
+            _point(host, hidden, 2, 2),
+            "卡面位置应与页面底色一致",
+        )
+
+        card.set_face_visible(True)
+        _application().processEvents()
+        self.assertTrue(card.face_visible())
+        self.assertTrue(card._backdrop.isVisible())
+        self.assertNotEqual(
+            _card_pixel(host, _still_frame(host, card, 0.0), card, 0.5, 0.5),
+            _point(host, hidden, 2, 2),
+            "恢复后卡面重新画出来",
+        )
+
     def test_hovering_takes_every_line_of_text_away(self):
         """悬停时卡片上的字全部淡到看不见：正中标题、底边副标题、以及副标题里的高亮词。"""
         host, card = _scene()

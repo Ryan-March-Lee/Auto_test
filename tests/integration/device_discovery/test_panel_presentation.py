@@ -766,6 +766,35 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         self.assertEqual(panel.status_label.text(), "")
         self.assertFalse(panel.back_btn.isVisible())
 
+    def test_back_plays_the_reverse_deal_back_to_the_scan_card(self):
+        """按“返回”清空结果的同时，覆盖层把卡片翻回背面飞回查找卡片。"""
+        panel = self.make_panel()
+        self.run_scan(panel)
+        card_count = panel.card_count()
+        self.assertGreater(card_count, 0)
+        layer = panel.deal_animation
+
+        panel.request_back()
+        self.app.processEvents()
+
+        self.assertTrue(layer.is_running(), "返回要补一段收牌画面")
+        self.assertEqual(layer.direction(), "return")
+        self.assertEqual(layer.phase_at(0.0), "flipping-back", "先翻面，再飞回")
+        self.assertEqual(layer.item_count(), card_count, "每张结果卡片都要飞回去")
+        # 流程与版面立即回到查找状态：这是原来的返回语义，动画只补画面。
+        self.assertEqual(panel.card_count(), 0)
+        self.assertEqual(panel.devices, [])
+        self.assertEqual(panel.box_state(), BOX_STATE_IDLE)
+        self.assertTrue(panel.scan_btn.isVisible())
+        self.assertFalse(panel.scan_btn.face_visible(), "收牌期间卡面先让位给牌堆")
+        self.assertFalse(panel.back_btn.isVisible())
+
+        layer.finish()
+        self.app.processEvents()
+        self.assertFalse(layer.is_running())
+        self.assertFalse(layer.isVisible())
+        self.assertTrue(panel.scan_btn.face_visible(), "收牌完成后卡面与页头文字一起出现")
+
     def test_the_box_keeps_its_size_through_the_whole_scan(self):
         """点“查找设备”前后框一样大：状态与结果数量都不改变框的大小。"""
         panel = self.make_panel()

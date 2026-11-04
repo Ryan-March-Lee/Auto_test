@@ -29,7 +29,8 @@ Python 里构建并插进骨架。“返回欢迎页”不再与它们同排：�
 格子里，若这时把页头从布局里拿掉，主体会整体上移一截，按钮就会跳。**扫描出结果后页头连同
 高度一起拿掉**（也就带走了“返回欢迎页”）：按钮已经收走，仪器卡片因此可以升到按钮上方、靠近页面顶部，不再和按钮
 同高（按钮本身在结果区里被引导间距压在卡片落点之下，两者矩形不重叠）；按“返回”重新查找、
-扫描失败或没有结果时页头原样回来。页面主体本身固定在上部
+扫描失败或没有结果时页头原样回来。结果可交互时按“返回”先播收牌动画，页头高度当场回来
+（收牌终点按最终版面量），文字与“查找设备”卡面等最后一张牌落回后才一起出现。页面主体本身固定在上部
 （`instrument_setup_page.ui` 的顶部留白只留一小段，富余高度全部落在底部）。
 
 “全选”只在本次扫描出现可应用设备后与“下一步”一起出现：点击后选中所有可应用的
@@ -262,6 +263,8 @@ class InstrumentSetupPage(QWidget):
           仪器卡片因此能升到按钮上方、靠近页面顶部，不必再和按钮同高。
         """
         self._header_hidden = False
+        #: 收牌动画期间把页头文字留到动画播完再出现（高度照常占着，版面不跳）。
+        self._defer_header_text = False
         self._title_opacity = QGraphicsOpacityEffect(self.title_label)
         self._title_opacity.setOpacity(1.0)
         self.title_label.setGraphicsEffect(self._title_opacity)
@@ -317,10 +320,28 @@ class InstrumentSetupPage(QWidget):
             self._set_header_hidden(True)
             return
         self._set_header_hidden(False)
+        # 收牌动画还没播完：页头高度先回来（收牌终点要按最终版面量），文字继续藏着，
+        # 等最后一张牌落回后与“查找设备”卡面一起出现。
+        self._set_header_text_visible(
+            state == BOX_STATE_IDLE and not self._defer_header_text
+        )
+
+    def _on_return_animation_changed(self, running: bool) -> None:
+        """收牌动画开始/结束：页头文字跟着延后出现，与卡面恢复在同一拍。"""
+        self._defer_header_text = bool(running)
+        state = self.discovery_panel.box_state()
+        if running:
+            if state == BOX_STATE_IDLE:
+                self._set_header_text_visible(False)
+            return
+        self._set_header_hidden(state == BOX_STATE_RESULTS)
         self._set_header_text_visible(state == BOX_STATE_IDLE)
 
     def _connect_signals(self) -> None:
         self.discovery_panel.box_state_changed.connect(self._on_box_state_changed)
+        self.discovery_panel.return_animation_changed.connect(
+            self._on_return_animation_changed
+        )
         self.discovery_panel.phase_changed.connect(self._on_discovery_phase_changed)
         self.discovery_panel.selection_changed.connect(self._sync_actions)
         self.select_all_btn.clicked.connect(self.request_select_all)

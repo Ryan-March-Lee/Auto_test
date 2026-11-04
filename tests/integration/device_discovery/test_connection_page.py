@@ -200,11 +200,22 @@ class InstrumentSetupPageLayoutTests(InstrumentSetupPageTestCase):
 
         panel.request_back()
         self.app.processEvents()
+        # 收牌动画期间页头高度已经回来（收牌终点按最终版面量），文字与卡面先藏着。
+        self.assertTrue(panel.deal_animation.is_running())
         self.assertTrue(page.title_label.isVisible())
         self.assertTrue(panel.scan_header.isVisible())
+        self.assertAlmostEqual(title_effect.opacity(), 0.0, places=2)
+        self.assertAlmostEqual(header_effect.opacity(), 0.0, places=2)
+        self.assertFalse(panel.scan_btn.face_visible())
+        self.assertFalse(panel.scan_btn.isEnabled())
+        # 最后一张牌落回：页头文字与“查找设备”卡面一起出现。
+        panel.deal_animation.finish()
+        self.app.processEvents()
         self.assertAlmostEqual(title_effect.opacity(), 1.0, places=2)
         self.assertAlmostEqual(header_effect.opacity(), 1.0, places=2)
         self.assertTrue(panel.scan_header.isEnabled())
+        self.assertTrue(panel.scan_btn.face_visible())
+        self.assertTrue(panel.scan_btn.isEnabled())
         self.assertEqual(panel.box_state(), "idle")
 
     def test_the_scan_button_sits_in_the_results_area(self):
@@ -317,6 +328,11 @@ class InstrumentSetupPageLayoutTests(InstrumentSetupPageTestCase):
         panel.request_back()
         self.app.processEvents()
         self.assertTrue(panel.scan_header.isVisible())
+        self.assertAlmostEqual(
+            panel.scan_header.graphicsEffect().opacity(), 0.0, places=2
+        )
+        panel.deal_animation.finish()
+        self.app.processEvents()
         self.assertAlmostEqual(
             panel.scan_header.graphicsEffect().opacity(), 1.0, places=2
         )

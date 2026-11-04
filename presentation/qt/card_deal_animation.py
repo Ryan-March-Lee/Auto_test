@@ -18,6 +18,10 @@
   恢复显示；全部翻完后发 :attr:`CardDealAnimation.finished`，页面据此恢复交互；
 - ``cancel(reveal=True)`` 同样只发 ``card_revealed``，不替页面改控件。
 
+反方向是 :meth:`CardDealAnimation.start_return`：按“返回”时严格分两段，先把同一组
+卡片全部翻回背面，再沿同一条弧线一起飞回牌堆。收牌不交回 ``card_revealed``（页面
+已经清空结果），只在自然播完后发 ``finished``；诊断里的 ``direction`` 区分两个方向。
+
 因此它可以在没有扫描线程、没有发现页的情况下单独播放：建一块宿主控件、给几份
 :class:`~presentation.qt.card_assets.CardAsset` 和目标矩形即可。牌背取
 ``CardAsset.back``（绿色光子卡面，与等待动画最上面那张牌同一张位图），正面取
@@ -66,8 +70,16 @@ __all__ = [
     "DEAL_PHASE_SETTLING",
     "DEAL_PHASE_FLIPPING",
     "DEAL_PHASE_FINISHED",
+    "DEAL_PHASE_FLIPPING_BACK",
+    "DEAL_PHASE_RETURNING",
     "DEAL_FRONT_SOURCE_ASSET",
     "DEAL_FRONT_SOURCE_SCREENSHOT",
+    "DIRECTION_DEAL",
+    "DIRECTION_RETURN",
+    "RETURN_FLIP_MS",
+    "RETURN_FLIP_STAGGER_MS",
+    "RETURN_FLY_MS",
+    "RETURN_FLY_STAGGER_MS",
 ]
 
 # ---- 时间轴 ------------------------------------------------------------------
@@ -88,6 +100,13 @@ FLIP_MS = 260
 FLIP_STAGGER_MS = 105
 #: 发牌动画的帧间隔（约 60fps）：每帧只旋转/缩放着贴图。
 DEAL_FRAME_MS = 16
+#: 收牌（按“返回”）时间轴，严格分成两段：先把所有牌翻回背面，再一起飞回牌堆。
+#: 翻面阶段与飞行阶段各自有“一张的时长”和“相邻两张的间隔”。最后一张先翻，
+#: 全部翻完后最后一张先飞，回到牌堆的牌按顺序叠回去。
+RETURN_FLIP_MS = 230
+RETURN_FLIP_STAGGER_MS = 60
+RETURN_FLY_MS = 300
+RETURN_FLY_STAGGER_MS = 55
 #: 牌背上绿色粒子的相位错开量（粒子一轮是 :data:`photon_card.PARTICLE_PERIOD_MS`）：
 #: 相邻两张差 0.13 轮，六张牌不会一起亮、一起灭。
 _BACK_PARTICLE_PHASE_STEP = 0.13
@@ -99,6 +118,13 @@ DEAL_PHASE_DEALING = "dealing"
 DEAL_PHASE_SETTLING = "settling"
 DEAL_PHASE_FLIPPING = "flipping"
 DEAL_PHASE_FINISHED = "finished"
+#: 收牌（按“返回”）的第一段：所有牌先原地翻回背面。
+DEAL_PHASE_FLIPPING_BACK = "flipping-back"
+#: 收牌（按“返回”）的第二段：翻完的牌沿发牌弧线飞回牌堆。
+DEAL_PHASE_RETURNING = "returning"
+#: 动画方向（诊断字段 ``direction``）：``deal`` 是发牌/翻牌，``return`` 是收牌。
+DIRECTION_DEAL = "deal"
+DIRECTION_RETURN = "return"
 #: 发牌正面的来源（诊断字段 ``front_source``）：默认由卡片资产渲染；``screenshot``
 #: 是面板的排障回退（旧 ``QWidget.grab()`` 截图），不作为长期路径。
 DEAL_FRONT_SOURCE_ASSET = "asset"
@@ -185,7 +211,9 @@ class CardDealAnimation(QWidget):
 
     动作：牌从 ``deck_origin`` 一张张飞向各自的 ``target_rect``（背面朝上），全部
     落定后停一下，再按 ``index`` 从小到大逐张翻面，把 ``asset.front`` 露出来。
-    翻牌仍是原来的二维宽度压缩，不追求三维效果。
+    翻牌仍是原来的二维宽度压缩，不追求三维效果。:meth:`start_return` 播放相反的
+    收牌画面，严格分成两段：先按 ``index`` 从大到小把所有牌翻回背面，再按同样顺序
+    沿同一条弧线一起飞回 ``deck_origin``。
 
     收尾有两条路，都会停掉计时器、收起覆盖层并清理本次输入：
 
@@ -220,8 +248,10 @@ class CardDealAnimation(QWidget):
         self._items: list[CardDealItem] = []
         #: 已经翻开的牌：翻完就通知页面恢复对应的真实卡片，不再由覆盖层画。
         self._revealed: list[bool] = []
-        #: 牌堆在覆盖层坐标里的中心（发牌起点）。
+        #: 牌堆在覆盖层坐标里的中心（发牌起点 / 收牌终点）。
         self._deck = QPointF()
+        #: 收牌时牌堆卡片的尺寸；``None`` 表示沿用品第一张牌的资产尺寸。
+        self._deck_extent: tuple[float, float] | None = None
         #: 卡片区的可见矩形（覆盖层坐标），开始时冻结；结果多到要滚动时，
         #: 看不见的行不会画到状态行/动作行上。
         self._clip: QRectF | None = None
@@ -242,6 +272,8 @@ class CardDealAnimation(QWidget):
         self._cancel_reason: str | None = None
         self._restore_result: str | None = None
         self._last_event = DEAL_PHASE_IDLE
+        #: 本次动画方向：``deal``（发牌/翻牌）或 ``return``（收牌回牌堆）。
+        self._direction = DIRECTION_DEAL
         #: 本次发牌正面的来源：``asset``（默认，卡片资产渲染）或 ``screenshot``
         #: （面板的排障回退，旧 ``QWidget.grab()`` 截图）。只进日志与诊断快照。
         self._front_source = DEAL_FRONT_SOURCE_ASSET
@@ -264,22 +296,49 @@ class CardDealAnimation(QWidget):
         """本次要发的牌数；没有在播时为 0。"""
         return len(self._items)
 
+    def direction(self) -> str:
+        """本次动画方向：``deal`` 或 ``return``。"""
+        return self._direction
+
     def duration_ms(self) -> float:
-        """这一次发牌 + 翻牌的整段时长；没有牌时为 0。"""
+        """这一次动画的整段时长；没有牌时为 0。"""
         count = len(self._items)
         if count <= 0:
             return 0.0
+        if self._direction == DIRECTION_RETURN:
+            return float(
+                self._return_flip_end_ms()
+                + (count - 1) * RETURN_FLY_STAGGER_MS
+                + RETURN_FLY_MS
+            )
         deal_end = (count - 1) * DEAL_STAGGER_MS + DEAL_FLY_MS
         return float(
             deal_end + DEAL_SETTLE_MS + (count - 1) * FLIP_STAGGER_MS + FLIP_MS
         )
 
+    def _return_flip_end_ms(self) -> float:
+        """收牌第一段（全部翻回背面）结束的时刻。"""
+        count = len(self._items)
+        if count <= 0:
+            return 0.0
+        return float((count - 1) * RETURN_FLIP_STAGGER_MS + RETURN_FLIP_MS)
+
     def phase_at(self, elapsed_ms: float | None = None) -> str:
-        """按已走时长判断阶段：``dealing`` → ``settling`` → ``flipping`` → ``finished``。"""
+        """按已走时长判断阶段。
+
+        发牌：``dealing`` → ``settling`` → ``flipping`` → ``finished``；
+        收牌：``flipping-back`` → ``returning`` → ``finished``。
+        """
         count = len(self._items)
         if count <= 0:
             return DEAL_PHASE_IDLE
         elapsed = self._elapsed if elapsed_ms is None else float(elapsed_ms)
+        if self._direction == DIRECTION_RETURN:
+            if elapsed < self._return_flip_end_ms():
+                return DEAL_PHASE_FLIPPING_BACK
+            if elapsed < self.duration_ms():
+                return DEAL_PHASE_RETURNING
+            return DEAL_PHASE_FINISHED
         deal_end = (count - 1) * DEAL_STAGGER_MS + DEAL_FLY_MS
         if elapsed < deal_end:
             return DEAL_PHASE_DEALING
@@ -312,6 +371,7 @@ class CardDealAnimation(QWidget):
             "elapsed_ms": float(self._elapsed),
             "duration_ms": self.duration_ms(),
             "card_count": len(self._items),
+            "direction": self._direction,
             "front_source": self._front_source,
             "deck_x": float(self._deck.x()),
             "deck_y": float(self._deck.y()),
@@ -363,6 +423,7 @@ class CardDealAnimation(QWidget):
             phase=phase,
             elapsed_ms=float(self._elapsed),
             card_count=len(self._items),
+            direction=self._direction,
         )
 
     def _record_paint(self, drawn_cards: int) -> None:
@@ -412,6 +473,28 @@ class CardDealAnimation(QWidget):
         start = deal_end + DEAL_SETTLE_MS + index * FLIP_STAGGER_MS
         return max(0.0, min(1.0, (elapsed - start) / FLIP_MS))
 
+    def return_flip_progress(
+        self, index: int, elapsed_ms: float | None = None
+    ) -> float:
+        """收牌时第 ``index`` 张翻回背面到了哪里（0 还是正面，1 已是背面）。"""
+        if index < 0 or index >= len(self._items):
+            return 0.0
+        elapsed = self._elapsed if elapsed_ms is None else float(elapsed_ms)
+        slot = len(self._items) - 1 - index
+        start = slot * RETURN_FLIP_STAGGER_MS
+        return max(0.0, min(1.0, (elapsed - start) / RETURN_FLIP_MS))
+
+    def return_fly_progress(
+        self, index: int, elapsed_ms: float | None = None
+    ) -> float:
+        """收牌时第 ``index`` 张飞回牌堆到了哪里（0 还在结果位，1 已落回牌堆）。"""
+        if index < 0 or index >= len(self._items):
+            return 0.0
+        elapsed = self._elapsed if elapsed_ms is None else float(elapsed_ms)
+        slot = len(self._items) - 1 - index
+        start = self._return_flip_end_ms() + slot * RETURN_FLY_STAGGER_MS
+        return max(0.0, min(1.0, (elapsed - start) / RETURN_FLY_MS))
+
     def targets(self) -> tuple[QRectF, ...]:
         """本次动画冻结的落点（覆盖层坐标）；没有在播时为空。"""
         return tuple(QRectF(item.target_rect) for item in self._items)
@@ -429,6 +512,17 @@ class CardDealAnimation(QWidget):
         if not self._items:
             return
         self._clip = QRectF(clip_rect) if clip_rect is not None else None
+        self.update()
+
+    def refresh_deck_origin(self, deck_origin: QPointF) -> None:
+        """收牌期间只换牌堆目的地（返回后的版面再落定一次时用），落点不变。
+
+        发牌方向没有“目的地后补”的场景，调用会被忽略；收牌时牌堆与按钮必须在同一
+        位置，布局晚一拍落定时用它把牌堆钉到按钮的最终位置。
+        """
+        if not self._items or self._direction != DIRECTION_RETURN:
+            return
+        self._deck = QPointF(deck_origin)
         self.update()
 
     # ---- 生命周期 -----------------------------------------------------------
@@ -460,6 +554,55 @@ class CardDealAnimation(QWidget):
         上一组卡片的 ``card_revealed`` / ``finished``，卡片会一直透明。调用方要先
         :meth:`cancel`（或 :meth:`finish`）再开始新的一次。
         """
+        self._begin(
+            items,
+            deck_origin,
+            clip_rect=clip_rect,
+            front_source=front_source,
+            direction=DIRECTION_DEAL,
+        )
+
+    def start_return(
+        self,
+        items: Sequence[CardDealItem],
+        deck_origin: QPointF,
+        *,
+        clip_rect: QRectF | None = None,
+        front_source: str = DEAL_FRONT_SOURCE_ASSET,
+        deck_extent: tuple[float, float] | None = None,
+    ) -> None:
+        """收牌：把 ``items`` 从各自的结果位翻回背面，再沿原弧线飞回牌堆。
+
+        ``items`` 的落点就是发牌时冻结的同一组位置（覆盖层坐标）。整段严格分两步：
+        先按 ``index`` 从大到小逐张翻回背面，全部翻完后按同样顺序飞回牌堆，先发的牌
+        最后落回、压在牌堆最上面。收牌不交回任何 ``card_revealed``：页面通常在按下
+        “返回”时已经把结果清空，这一层只负责把“卡片飞回去”的画面补完；自然播完发
+        :attr:`finished`。
+
+        ``deck_extent`` 是收牌牌堆的卡片尺寸（宽、高）；结果卡片被窗口收窄过时，
+        牌堆仍按“查找设备”卡片的大小叠，落回的位置和按钮完全一致。省略时沿用品
+        第一张牌的资产尺寸。
+        """
+        self._begin(
+            items,
+            deck_origin,
+            clip_rect=clip_rect,
+            front_source=front_source,
+            direction=DIRECTION_RETURN,
+            deck_extent=deck_extent,
+        )
+
+    def _begin(
+        self,
+        items: Sequence[CardDealItem],
+        deck_origin: QPointF,
+        *,
+        clip_rect: QRectF | None,
+        front_source: str,
+        direction: str,
+        deck_extent: tuple[float, float] | None = None,
+    ) -> None:
+        """两种方向共用的启动路径：校验输入、冻结落点并开始时间轴。"""
         ordered = self._normalize_items(items)
         if not ordered:
             self.skip(reason="no-cards")
@@ -473,16 +616,27 @@ class CardDealAnimation(QWidget):
                 f"{DEAL_FRONT_SOURCE_ASSET!r} 或 {DEAL_FRONT_SOURCE_SCREENSHOT!r}，"
                 f"收到 {front_source!r}"
             )
+        if direction not in (DIRECTION_DEAL, DIRECTION_RETURN):
+            raise ValueError(
+                f"动画方向只接受 {DIRECTION_DEAL!r} 或 {DIRECTION_RETURN!r}，"
+                f"收到 {direction!r}"
+            )
         if self.is_running():
             raise RuntimeError(
-                "上一次发牌还在播：先 cancel() 或 finish() 再开始新的一次，"
+                "上一次动画还在播：先 cancel() 或 finish() 再开始新的一次，"
                 "否则页面收不到上一组卡片的 card_revealed / finished"
             )
         self._timer.stop()
         self._items = ordered
         self._revealed = [False] * len(ordered)
+        self._direction = direction
         self._front_source = str(front_source)
         self._deck = QPointF(deck_origin)
+        self._deck_extent = (
+            (float(deck_extent[0]), float(deck_extent[1]))
+            if direction == DIRECTION_RETURN and deck_extent is not None
+            else None
+        )
         self._clip = QRectF(clip_rect) if clip_rect is not None else None
         self._elapsed = 0.0
         self._started_at = None
@@ -504,6 +658,7 @@ class CardDealAnimation(QWidget):
             "start",
             started_at=self._started_at,
             card_count=len(self._items),
+            direction=self._direction,
             front_source=self._front_source,
             duration_ms=self.duration_ms(),
             deck_x=float(self._deck.x()),
@@ -562,6 +717,7 @@ class CardDealAnimation(QWidget):
         self._items = []
         self._revealed = []
         self._clip = None
+        self._deck_extent = None
         self._elapsed = 0.0
         self._phase = DEAL_PHASE_IDLE
         self._paint_frames = 0
@@ -572,6 +728,7 @@ class CardDealAnimation(QWidget):
         self._ended_at = None
         self._cancel_reason = None
         self._restore_result = None
+        self._direction = DIRECTION_DEAL
         self._front_source = DEAL_FRONT_SOURCE_ASSET
         self._last_run = None
         self._record(
@@ -586,10 +743,11 @@ class CardDealAnimation(QWidget):
         )
 
     def finish(self) -> None:
-        """立刻走完这一段：所有牌翻开，收起覆盖层并发出 :attr:`finished`。
+        """立刻走完这一段：收起覆盖层并发出 :attr:`finished`。
 
-        已经自然播完的一次只保留已有结果：重复调用不会再发一次 ``finished``，页面
-        因此不会收到两遍“整段结束”。
+        发牌方向会把所有牌翻开（页面据此恢复卡片）；收牌方向不交回任何牌，只结束
+        画面。已经自然播完的一次只保留已有结果：重复调用不会再发一次 ``finished``，
+        页面因此不会收到两遍“整段结束”。
         """
         if not self._items or self._phase == DEAL_PHASE_FINISHED:
             return
@@ -619,10 +777,17 @@ class CardDealAnimation(QWidget):
         interrupted = had_items and self._phase != DEAL_PHASE_FINISHED
         if interrupted:
             self._cancel_reason = reason
-            self._restore_result = "revealed" if reveal else "hidden"
+            # 收牌方向本来就没有真实卡片等着恢复；取消时只能记“没有恢复”。
+            self._restore_result = (
+                "revealed"
+                if reveal and self._direction != DIRECTION_RETURN
+                else "hidden"
+            )
             self._ended_at = timestamp()
         self._stop()
-        if reveal:
+        # 收牌方向没有“真实卡片等着恢复”：页面在按下返回时已经清空结果，交回
+        # card_revealed 反而会让页面去找一组已经不存在的卡片。
+        if reveal and self._direction != DIRECTION_RETURN:
             self._reveal_all()
         if interrupted:
             self._record(
@@ -632,6 +797,7 @@ class CardDealAnimation(QWidget):
                 elapsed_ms=float(self._elapsed),
                 duration_ms=self.duration_ms(),
                 card_count=len(self._items),
+                direction=self._direction,
                 revealed_count=self.revealed_count,
                 paint_frames=self._paint_frames,
                 first_paint_ms=self._first_paint_ms,
@@ -646,8 +812,10 @@ class CardDealAnimation(QWidget):
         self._items = []
         self._revealed = []
         self._clip = None
+        self._deck_extent = None
         self._elapsed = 0.0
         self._phase = DEAL_PHASE_IDLE
+        self._direction = DIRECTION_DEAL
         self._front_source = DEAL_FRONT_SOURCE_ASSET
 
     def _stop(self) -> None:
@@ -655,9 +823,13 @@ class CardDealAnimation(QWidget):
         self.hide()
 
     def _complete(self) -> None:
-        """自然走完或 ``finish()`` 的收尾：通知页面恢复卡片、记录结束诊断并收尾。"""
+        """自然走完或 ``finish()`` 的收尾：记录结束诊断并收起覆盖层。
+
+        发牌方向先把每张牌交回页面（恢复真实卡片），收牌方向不交回任何牌。
+        """
         self._elapsed = self.duration_ms()
-        self._reveal_all()
+        if self._direction != DIRECTION_RETURN:
+            self._reveal_all()
         self._stop()
         self._phase = DEAL_PHASE_FINISHED
         self._ended_at = timestamp()
@@ -668,6 +840,7 @@ class CardDealAnimation(QWidget):
             elapsed_ms=float(self._elapsed),
             duration_ms=self.duration_ms(),
             card_count=len(self._items),
+            direction=self._direction,
             revealed_count=self.revealed_count,
             paint_frames=self._paint_frames,
             first_paint_ms=self._first_paint_ms,
@@ -684,9 +857,10 @@ class CardDealAnimation(QWidget):
         total = self.duration_ms()
         self._elapsed = float(min(total, self._clock.elapsed()))
         self._sync_phase()
-        for index in range(len(self._items)):
-            if not self._revealed[index] and self.flip_progress(index) >= 1.0:
-                self._reveal(index)
+        if self._direction != DIRECTION_RETURN:
+            for index in range(len(self._items)):
+                if not self._revealed[index] and self.flip_progress(index) >= 1.0:
+                    self._reveal(index)
         self.update()
         if self._elapsed >= total:
             self._complete()
@@ -728,6 +902,25 @@ class CardDealAnimation(QWidget):
             start.y() * inverse * inverse
             + control.y() * 2.0 * inverse * eased
             + target.y() * eased * eased,
+        )
+
+    def _return_flight_center(self, index: int, progress: float) -> QPointF:
+        """收牌飞行中的牌中心：沿发牌同一条弧线，从落点飞回牌堆。"""
+        target = self._target_rect(index).center()
+        deck = self._deck
+        control = QPointF(
+            (target.x() + deck.x()) / 2.0,
+            min(target.y(), deck.y()) - DEAL_ARC_LIFT,
+        )
+        eased = _ease_out_cubic(progress)
+        inverse = 1.0 - eased
+        return QPointF(
+            target.x() * inverse * inverse
+            + control.x() * 2.0 * inverse * eased
+            + deck.x() * eased * eased,
+            target.y() * inverse * inverse
+            + control.y() * 2.0 * inverse * eased
+            + deck.y() * eased * eased,
         )
 
     # ---- 绘制 ---------------------------------------------------------------
@@ -853,6 +1046,9 @@ class CardDealAnimation(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        if self._direction == DIRECTION_RETURN:
+            self._paint_return(painter)
+            return
         count = len(self._items)
         drawn = 0
         dealt = sum(
@@ -907,6 +1103,84 @@ class CardDealAnimation(QWidget):
                 )
             else:
                 painted = self._paint_settled(painter, target, index, clip)
+            if painted:
+                drawn += 1
+        self._record_paint(drawn)
+
+    def _paint_return(self, painter: QPainter) -> None:
+        """收牌画面：落回牌堆的牌叠成一叠，其余先翻回背面，再飞回牌堆。
+
+        牌堆画在 ``_deck``（“查找设备”卡片的位置）。已经到位的牌按
+        :data:`DEAL_DECK_DEPTH` 叠成牌堆；还在结果位的牌先原地翻面，翻完后沿发牌
+        弧线飞回牌堆。与发牌一致，只有停在结果位上的牌受卡片区裁剪约束，飞行段
+        整段可见。
+        """
+        count = len(self._items)
+        drawn = 0
+        landed = sum(
+            1
+            for index in range(count)
+            if self.return_fly_progress(index) >= 1.0
+        )
+        # 牌堆从一开始就画出来（至少一层）：它压在“查找设备”卡片上，收牌期间卡面
+        # 文字先让位给牌背，最后一张落回、覆盖层收起时文字才重新露出来。
+        deck_layers = min(DEAL_DECK_DEPTH, max(1, landed))
+        deck_asset = self._items[0].asset
+        deck_width, deck_height = self._deck_extent or (
+            float(deck_asset.width),
+            float(deck_asset.height),
+        )
+        for depth in range(deck_layers - 1, -1, -1):
+            rect = QRectF(
+                self._deck.x() - deck_width / 2.0,
+                self._deck.y() - deck_height / 2.0 - depth * 2.0,
+                deck_width,
+                deck_height,
+            )
+            if self._draw_back(painter, rect, deck_asset, index=depth):
+                drawn += 1
+        clip = self._cards_clip_rect()
+        # 倒着画：最后才飞走的第一张压在其它牌上面，收牌过程不会有牌中途“钻到”
+        # 还没动的那张下面。
+        for index in range(count - 1, -1, -1):
+            target = self._target_rect(index)
+            fly = self.return_fly_progress(index)
+            if fly >= 1.0:
+                continue
+            if clip is not None and not clip.intersects(target):
+                # 这张牌的落点本来就不在可见的卡片区里：收牌时也不把它画到
+                # 状态行/动作行上。
+                continue
+            flip = self.return_flip_progress(index)
+            if flip < 1.0:
+                if clip is not None:
+                    painter.save()
+                    painter.setClipRect(clip, Qt.IntersectClip)
+                try:
+                    painted = self._paint_flip(painter, target, index, 1.0 - flip)
+                finally:
+                    if clip is not None:
+                        painter.restore()
+            else:
+                eased = _ease_out_cubic(fly)
+                scale = 1.0 - (1.0 - DEAL_START_SCALE) * eased
+                angle = (
+                    DEAL_START_ANGLE
+                    * eased
+                    * (1.0 if index % 2 == 0 else -1.0)
+                )
+                width = target.width() * scale
+                height = target.height() * scale
+                center = self._return_flight_center(index, fly)
+                rect = QRectF(
+                    center.x() - width / 2.0,
+                    center.y() - height / 2.0,
+                    width,
+                    height,
+                )
+                painted = self._draw_back(
+                    painter, rect, self._items[index].asset, angle, index=index
+                )
             if painted:
                 drawn += 1
         self._record_paint(drawn)

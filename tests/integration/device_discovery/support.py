@@ -10,6 +10,7 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QCoreApplication, QEvent
 from PySide6.QtWidgets import QApplication
 
 from application.device_binding import ApplyDeviceSelectionRequest
@@ -127,6 +128,24 @@ def apply_devices(page, assignments):
     )
 
 
+def _flush_deferred_deletes() -> None:
+    """把 ``clear_results()`` 排进 DeferredDelete 的卡片删除真正执行掉。
+
+    ``InstrumentCard`` 用 ``deleteLater()`` 删除，避免 ``setParent(None)`` 之后 Python
+    包装对象被回收、C++ 控件提前销毁造成双重释放。测试在用例结束时同步丢掉顶层面板
+    （没有父控件，Python 回收包装对象会立刻销毁 C++ 控件），这些排队删除还没执行；
+    下一个用例跑 ``QTest.qWait`` / 事件循环时再去删除已经不存在的对象，Qt 会直接 abort。
+    这里在丢弃面板前把 DeferredDelete 投递完。
+    """
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def _teardown_panel(panel) -> None:
+    """停掉面板后立刻投递排队的删除；``panel`` 参数保证清理期间面板仍被持有。"""
+    panel.shutdown()
+    _flush_deferred_deletes()
+
+
 class DiscoveryPanelTestCase(unittest.TestCase):
     """面板用例的共同前置：一个 QApplication、面板构造与“等扫描结束”。"""
 
@@ -139,16 +158,16 @@ class DiscoveryPanelTestCase(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def make_panel(self, factory=None, bindings=None, size=None):
+    def make_panel(self, factory=None, size=None):
         panel = InstrumentDiscoveryPanel(scanner_factory=factory or self.default_factory)
-        if bindings is not None:
-            panel.set_device_bindings(bindings)
         size = size or self.panel_size
         if size is not None:
             panel.resize(*size)
         panel.show()
         self.app.processEvents()
-        self.addCleanup(panel.shutdown)
+        # 清理期间由参数持有面板：先 shutdown（停线程/动画），再把排队的卡片删除
+        # 投递掉；之后局部变量释放时不会留下指向已销毁对象的 DeferredDelete 事件。
+        self.addCleanup(_teardown_panel, panel)
         return panel
 
     def finish_scan(self, panel):
@@ -219,6 +238,9 @@ class InstrumentSetupPageTestCase(unittest.TestCase):
         connection.show()
         self.app.processEvents()
         self.connection = connection
+        # LIFO：先关闭连接页与配置页（关闭连接页会停扫描/动画），最后投递排队的
+        # 卡片删除，避免 DeferredDelete 落到下一个用例的事件循环里。
+        self.addCleanup(_flush_deferred_deletes)
         self.addCleanup(page.close)
         self.addCleanup(connection.close)
         return page

@@ -50,6 +50,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -145,6 +146,14 @@ class InstrumentSetupPage(QWidget):
         self._idle_top_margin = (
             content_layout.contentsMargins().top()
             if content_layout is not None
+            else 0
+        )
+        # 标题与扫描区之间那段固定留白（``.ui`` 的 titleSpacer）也属于页头：有结果时它
+        # 跟着标题一起收掉，卡片上方不会凭空多出一块空白。这里记下 ``.ui`` 里的原始高度。
+        self._title_gap_item = self._title_gap_item_of(content_layout)
+        self._title_gap_height = (
+            self._title_gap_item.sizeHint().height()
+            if self._title_gap_item is not None
             else 0
         )
 
@@ -251,6 +260,22 @@ class InstrumentSetupPage(QWidget):
             raise RuntimeError(f"instrument_setup_page.ui 缺少控件: {name}")
         return widget
 
+    def _title_gap_item_of(self, layout: Any) -> Any:
+        """取标题正下方那段固定留白（``.ui`` 的 titleSpacer）。
+
+        留白项不是控件，``findChild`` 找不到它：按标题在布局里的位置取紧随其后的那一项。
+        紧随其后不是留白时返回 ``None``，页面照常工作，只是有结果时少收这一截。
+        """
+        if layout is None:
+            return None
+        index = layout.indexOf(self.title_label)
+        if index < 0 or index + 1 >= layout.count():
+            return None
+        item = layout.itemAt(index + 1)
+        if item is None or item.spacerItem() is None:
+            return None
+        return item
+
     def _setup_header_visibility(self) -> None:
         """给大标题与设备发现面板的扫描行各挂一层透明度效果。
 
@@ -285,11 +310,11 @@ class InstrumentSetupPage(QWidget):
     def _set_header_hidden(self, hidden: bool) -> None:
         """把页头整块拿掉（有结果时）或放回版面（回到查找/扫描时）。
 
-        有结果时按钮已经收走，页头不必再占着位置：页头连同高度一起让位，内容列顶部
-        留白也收一截（:data:`_RESULTS_TOP_MARGIN`），仪器卡片因此升到页面顶部附近；
-        牌堆放牌时停在旧位置，卡片行又往上走了一截，两者之间就有了看得见的空隙。
-        未查找与正在查找时页头都留在版面里、留白也用 ``.ui`` 的原始值，点“查找设备”
-        前后按钮与等待动画不跳。
+        有结果时按钮已经收走，页头不必再占着位置：页头连同高度一起让位（标题与扫描区
+        之间那段固定留白也一起收掉），内容列顶部留白再收一截（:data:`_RESULTS_TOP_MARGIN`），
+        仪器卡片因此升到页面顶部附近；牌堆放牌时停在旧位置，卡片行又往上走了一截，
+        两者之间就有了看得见的空隙。未查找与正在查找时页头都留在版面里、留白也用
+        ``.ui`` 的原始值，点“查找设备”前后按钮与等待动画不跳。
         """
         hidden = bool(hidden)
         if hidden == self._header_hidden:
@@ -299,6 +324,12 @@ class InstrumentSetupPage(QWidget):
         self.discovery_panel.scan_header.setVisible(not hidden)
         if hidden:
             self._set_header_text_visible(False)
+        if self._title_gap_item is not None:
+            # 这段留白只在页头可见时才算数：标题都让位了，卡片上方不该留着它。
+            gap = 0 if hidden else self._title_gap_height
+            self._title_gap_item.changeSize(
+                0, gap, QSizePolicy.Fixed, QSizePolicy.Fixed
+            )
         layout = self.content_widget.layout()
         if layout is not None:
             margins = layout.contentsMargins()

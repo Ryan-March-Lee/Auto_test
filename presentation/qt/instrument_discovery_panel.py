@@ -174,6 +174,12 @@ _RESULTS_BOX_ROWS = 2
 #: 整体落在卡片下沿之下（两者都取 :data:`CARD_HEIGHT` 高），过渡动画才不会把卡片和按钮
 #: 叠在一起。窗口矮时按结果区的可用高度截断，宁可少留一点空白，也不把状态行挤出结果区。
 _CENTRE_LEAD = 208
+#: 扫描行与下面那行说明（模拟模式的黄字）之间的留白。说明是页头的第二层，与扫描行
+#: 拉开一小段，不贴着输入框下沿。
+_MODE_HINT_TOP_GAP = 18
+#: 页头最下面“返回欢迎页”链接上方的留白。它比说明再远一截，页头因此分成扫描行、
+#: 说明、链接三层；链接与输入框也拉得够开，不会看着像扫描行的一部分。
+_RETURN_LINK_TOP_GAP = 34
 #: 结果区的三种状态：还没查找（顶部按钮）、正在查找（进度）、有结果（卡片）。
 BOX_STATE_IDLE = "idle"
 BOX_STATE_BUSY = "busy"
@@ -757,7 +763,8 @@ class InstrumentDiscoveryPanel(QWidget):
         self.scan_header.setObjectName("discoveryScanHeader")
         header = QVBoxLayout(self.scan_header)
         header.setContentsMargins(0, 0, 0, 0)
-        header.setSpacing(8)
+        # 间距一律写成显式留白：说明与链接要各自下移一段，等距 spacing 表达不了。
+        header.setSpacing(0)
         row = QHBoxLayout()
         row.setSpacing(8)
         row.addStretch(1)
@@ -772,6 +779,7 @@ class InstrumentDiscoveryPanel(QWidget):
         row.addWidget(self.mode_combo)
         row.addStretch(1)
         header.addLayout(row)
+        header.addSpacing(_MODE_HINT_TOP_GAP)
         header.addWidget(self.mode_hint)
         layout.addWidget(self.scan_header)
         self.mode_combo.currentIndexChanged.connect(self._update_mode_hint)
@@ -1091,7 +1099,7 @@ class InstrumentDiscoveryPanel(QWidget):
         self.actions_row.setMinimumHeight(height)
 
     def add_header_widget(self, widget: QWidget) -> None:
-        """把一个页面级动作放到扫描提示（黄字）正下方，横向居中。
+        """把一个页面级动作放到扫描提示（黄字）下方一段留白之后，横向居中。
 
         与 :meth:`add_action_widget` 一样，面板只提供版面：动作由页面创建与接线。
         这块内容属于页头，因此跟着扫描行一起淡出、一起让位：查找期间页面只改扫描行的
@@ -1100,6 +1108,8 @@ class InstrumentDiscoveryPanel(QWidget):
         header = self.scan_header.layout()
         if header is None:
             raise RuntimeError("扫描行缺少布局")
+        # 链接比说明再低一截：它落在页头最下面，与上面两层分开。
+        header.addSpacing(_RETURN_LINK_TOP_GAP)
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(0)

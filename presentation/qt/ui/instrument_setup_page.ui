@@ -87,6 +87,8 @@
         </widget>
        </item>
        <item>
+        <!-- 标题与扫描区之间的固定留白：整块页头（扫描行、黄字说明与“返回欢迎页”）
+             一起往下挪一些，不再紧贴标题。 -->
         <spacer name="titleSpacer">
          <property name="orientation">
           <enum>Qt::Vertical</enum>
@@ -97,7 +99,7 @@
          <property name="sizeHint" stdset="0">
           <size>
            <width>20</width>
-           <height>0</height>
+           <height>24</height>
           </size>
          </property>
         </spacer>

@@ -162,6 +162,38 @@ class InstrumentSetupPageLayoutTests(InstrumentSetupPageTestCase):
             self._scan_row_centre(panel), panel.width() / 2, delta=3, msg="返回后仍然居中"
         )
 
+    def test_the_whole_header_group_sits_below_the_title(self):
+        """扫描行、黄字说明与“返回欢迎页”一起落在标题下方一段，不贴着标题。"""
+        self.make_page()
+        page = self.connection
+        panel = page.discovery_panel
+
+        title_bottom = page.title_label.mapTo(
+            page, page.title_label.rect().bottomLeft()
+        ).y()
+        row_top = panel.subnet_label.mapTo(
+            page, panel.subnet_label.rect().topLeft()
+        ).y()
+        self.assertGreaterEqual(
+            row_top - title_bottom,
+            30,
+            "整块页头（含扫描网段/扫描方式）要在标题下方留出固定空白",
+        )
+
+        # 有结果时这段留白跟标题一起让位：卡片上方不会凭空多出一块空白。
+        self.run_scan(panel)
+        self.app.processEvents()
+        content = page.content_widget
+        content_top = content.mapTo(page, content.rect().topLeft()).y()
+        box_top = panel.results_box.mapTo(
+            page, panel.results_box.rect().topLeft()
+        ).y()
+        self.assertLessEqual(
+            box_top - content_top,
+            20,
+            "有结果时页头留白要随页头一起收掉",
+        )
+
     def test_scanning_hides_the_header_text_and_results_take_its_space(self):
         """扫描中只隐去页头文字（高度保留，按钮不跳）；有结果时页头整块让位。"""
         self.make_page()
@@ -530,6 +562,28 @@ class InstrumentSetupPageLayoutTests(InstrumentSetupPageTestCase):
             link_centre.y(),
             hint_rect.y() + panel.mode_hint.height(),
             "链接要落在黄字（扫描提示）下方",
+        )
+        # 页头分三层：扫描行 → 说明 → 链接。说明与扫描行、链接与说明之间都要留出
+        # 看得见的距离，不能挤成一整块。
+        row_bottom = max(
+            widget.mapTo(panel, widget.rect().bottomLeft()).y()
+            for widget in (
+                panel.subnet_label,
+                panel.subnet_edit,
+                panel.mode_label,
+                panel.mode_combo,
+            )
+        )
+        self.assertGreaterEqual(
+            hint_rect.y() - row_bottom,
+            12,
+            "扫描提示要离开扫描行一小段，不贴着输入框下沿",
+        )
+        link_top = link.mapTo(panel, link.rect().topLeft()).y()
+        self.assertGreaterEqual(
+            link_top - (hint_rect.y() + panel.mode_hint.height()),
+            22,
+            "返回欢迎页要比扫描提示再低一截，两行不能挤在一起",
         )
         self.assertAlmostEqual(
             link_centre.x(), panel.width() / 2, delta=3, msg="链接横向居中"

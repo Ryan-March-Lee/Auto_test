@@ -1958,8 +1958,16 @@ class InstrumentDiscoveryPanel(QWidget):
         # 卡片被删掉时同样先收回焦点：焦点控件消失也会让滚动区去找下一个控件。
         self._release_focus_before_hiding([self.cards_area])
         for row in self._rows:
-            row["card"].setParent(None)
-            row["card"].deleteLater()
+            card = row["card"]
+            # **不要先 setParent(None) 再 deleteLater**：setParent(None) 把 C++ 所有权
+            # 交给 Python，而下面 self._rows 清空后最后一个 Python 引用也没了。PySide6
+            # 会在包装对象被回收时立刻销毁 C++ 控件，但 deleteLater 已经把“稍后删除”
+            # 排进事件队列；延迟删除随后再访问已释放的内存，就是一次双重释放。它不会
+            # 当场报错，往往在下一次扫描创建 QThread 时以访问冲突（0xC0000005）爆出来，
+            # 看起来像“点查找设备就卡死/闪退”。保留父控件后 Qt 仍持有所有权，Python
+            # 包装对象可以安全回收，deleteLater 自己完成删除。
+            card.hide()
+            card.deleteLater()
         self._rows = []
         self._apply_cards_layout()
 

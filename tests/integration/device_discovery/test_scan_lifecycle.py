@@ -263,6 +263,25 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
         # 其他卡片不因预选被选上：用户仍可自由改。
         self.assertFalse(panel.card_checked("DP832A（DP8B214901519）"))
 
+    def test_clearing_results_keeps_cards_owned_by_qt_until_deferred_delete(self):
+        """清空结果时卡片仍必须挂在父控件下，不能先 setParent(None) 再 deleteLater。
+
+        先交出父控件会把 C++ 所有权转给 Python；``self._rows`` 清空后包装对象被回收，
+        C++ 控件立刻销毁，而 deleteLater 已经排进事件队列，随后访问已释放内存造成
+        双重释放。它不会当场报错，往往在下一次“查找设备”创建扫描线程时以访问冲突
+        闪退，表现为点查找设备就卡死。这里锁定父控件仍然存在这一必要条件。
+        """
+        panel = self.make_panel()
+        self.run_scan(panel)
+        cards = list(panel.cards())
+
+        panel.clear_results()
+
+        for card in cards:
+            self.assertIsNotNone(
+                card.parent(), "deleteLater 之前卡片必须仍由 Qt 父控件持有"
+            )
+
     def test_back_drops_the_preselection_baseline_for_the_next_scan(self):
         """返回后重新查找从空白开始：不能再按配置把上一次的设备勾回去。"""
         panel = self.make_panel(

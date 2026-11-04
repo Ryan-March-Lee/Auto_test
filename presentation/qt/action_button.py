@@ -230,6 +230,10 @@ class AnimatedActionButton(QPushButton):
         self.update()
         super().focusOutEvent(event)
 
+    def shows_focus_ring(self) -> bool:
+        """焦点框当前是否可见：只有键盘走过来的焦点画它，鼠标点出来的不算。"""
+        return self._focus_visible
+
     # ---- 绘制 ---------------------------------------------------------------
 
     def _pill_rect(self) -> QRectF:
@@ -444,6 +448,10 @@ class OutlineActionButton(QPushButton):
         self._focus_visible = False
         self.update()
         super().focusOutEvent(event)
+
+    def shows_focus_ring(self) -> bool:
+        """焦点框当前是否可见：只有键盘走过来的焦点画它，鼠标点出来的不算。"""
+        return self._focus_visible
 
     # ---- 绘制 ---------------------------------------------------------------
 

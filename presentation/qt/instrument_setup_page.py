@@ -348,12 +348,23 @@ class InstrumentSetupPage(QWidget):
         panel = self.discovery_panel
         available = panel.is_interactive() and panel.has_selectable_devices()
         all_selected = available and panel.all_selectable_selected()
+        select_all_enabled = available and not all_selected
         self.select_all_btn.setVisible(available)
         self.next_btn.setVisible(available)
         # 先让“下一步”拿到新状态，再禁用“全选”：点击全选后焦点会自然落到相邻的
-        # “下一步”上，不会跳回页面别处。
+        # “下一步”上，不会跳回页面别处。鼠标点出来的这次交接不能画焦点框：Qt 会按
+        # Tab 焦点把焦点交给“下一步”，在它外面留一圈框，看起来像“下一步也被选中”。
+        # 这里先以 ``OtherFocusReason`` 把焦点交给“下一步”，位置不变但不画那圈框；
+        # 键盘用户激活“全选”时焦点框本来就可见，仍照旧交给 Qt 完成交接。
         self.next_btn.setEnabled(available and panel.has_selected_devices())
-        self.select_all_btn.setEnabled(available and not all_selected)
+        if (
+            not select_all_enabled
+            and self.select_all_btn.hasFocus()
+            and not self.select_all_btn.shows_focus_ring()
+            and self.next_btn.isEnabled()
+        ):
+            self.next_btn.setFocus(Qt.OtherFocusReason)
+        self.select_all_btn.setEnabled(select_all_enabled)
         self.select_all_btn.setToolTip(
             "已选中本次结果里全部可应用的设备"
             if all_selected

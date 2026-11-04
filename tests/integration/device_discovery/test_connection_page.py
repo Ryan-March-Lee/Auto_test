@@ -442,6 +442,60 @@ class InstrumentSetupPageLayoutTests(InstrumentSetupPageTestCase):
         self.app.processEvents()
         self.assertFalse(select_all.isVisible(), "返回后与本次结果一起隐藏")
 
+    def test_mouse_select_all_does_not_put_a_focus_ring_on_next(self):
+        """鼠标点“全选”后，“下一步”被启用但不应像被选中那样多出一圈焦点框。"""
+        self.make_page()
+        panel = self.connection.discovery_panel
+        select_all = self.connection.select_all_btn
+        next_btn = self.connection.next_btn
+
+        self.run_scan(panel)
+        for heading in panel.card_headings():
+            panel.set_card_checked(heading, False)
+        self.app.processEvents()
+
+        QTest.mouseClick(select_all, Qt.LeftButton)
+        self.app.processEvents()
+
+        self.assertTrue(panel.all_selectable_selected())
+        self.assertTrue(next_btn.isEnabled(), "全选之后下一步可点")
+        self.assertFalse(
+            select_all.shows_focus_ring(), "鼠标点出来的焦点不画焦点框"
+        )
+        self.assertFalse(
+            next_btn.shows_focus_ring(),
+            "焦点交接不能给下一步画上键盘焦点框",
+        )
+        self.assertIs(
+            self.app.focusWidget(), next_btn, "焦点仍落在下一步，不跳回页面别处"
+        )
+
+    def test_keyboard_select_all_still_shows_the_focus_ring_on_next(self):
+        """键盘激活“全选”后焦点框随焦点交给“下一步”，键盘用户看得到当前位置。"""
+        self.make_page()
+        panel = self.connection.discovery_panel
+        select_all = self.connection.select_all_btn
+        next_btn = self.connection.next_btn
+
+        self.run_scan(panel)
+        for heading in panel.card_headings():
+            panel.set_card_checked(heading, False)
+        self.app.processEvents()
+
+        select_all.setFocus(Qt.TabFocusReason)
+        self.app.processEvents()
+        self.assertTrue(select_all.shows_focus_ring(), "Tab 过来的焦点应可见")
+
+        QTest.keyClick(select_all, Qt.Key_Space)
+        self.app.processEvents()
+
+        self.assertTrue(panel.all_selectable_selected())
+        self.assertIs(self.app.focusWidget(), next_btn)
+        self.assertTrue(
+            next_btn.shows_focus_ring(),
+            "键盘用户激活全选后，下一步应保留可见的焦点框",
+        )
+
     def test_return_welcome_is_a_link_under_the_mode_hint(self):
         """返回欢迎页是黄字正下方的一行蓝色小字链接，属于页头而不是结果区动作行。"""
         self.make_page()

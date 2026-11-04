@@ -89,6 +89,10 @@ TOKENS = {
     "success_soft": "#F0FDF4",
     "warning": "#D97706",
     "warning_soft": "#FFFBEB",
+    # 电源通道卡片的两个通道底色：与主色/警告色同色系，但比 *_soft 稍深一点，
+    # 左右两半并排时能一眼分开；关闭态改用 disabled_bg，不另造灰色。
+    "channel_cool": "#DBEAFE",
+    "channel_warm": "#FEF3C7",
     "danger": "#DC2626",
     "danger_hover": "#B91C1C",
     "danger_pressed": "#991B1B",

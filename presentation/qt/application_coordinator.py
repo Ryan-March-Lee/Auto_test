@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Iterable, Protocol, runtime_checkable
 
@@ -52,6 +53,24 @@ _CONFIG_PAGE_MEMBERS = (
     "set_run_status",
     "driver_mode_requested",
 )
+
+
+class RunFlowState(str, Enum):
+    """运行流程状态；只由协调器写入，页面只渲染状态文案。
+
+    ``FINALIZING`` 覆盖“待提交运行已冻结、正在做只读连接检查”的完整窗口。连接
+    失败时不会退化成“运行已提交但没有端口”：协调器要么把 ``_pending_run`` 与
+    新端口一起提交为 ``CONNECTED``，要么补偿 ``_pending_run`` 并回到
+    ``RECONNECT_REQUIRED``/``CONFIGURING``；补偿或清理失败则停在
+    ``MANUAL_CLEANUP_REQUIRED``，阻止新的最终动作与测量。
+    """
+
+    DEVICE_SELECTION = "device_selection"
+    CONFIGURING = "configuring"
+    FINALIZING = "finalizing"
+    CONNECTED = "connected"
+    RECONNECT_REQUIRED = "reconnect_required"
+    MANUAL_CLEANUP_REQUIRED = "manual_cleanup_required"
 
 
 @runtime_checkable
@@ -174,8 +193,54 @@ class ApplicationCoordinator:
         self.instrument_ctrl: Any = None
         self.instrument_worker: Any = None
         self.last_save_error: Exception | None = None
+        # 最终化事务：待提交运行在连接成功前不写进 prepared_run，也不交给测量页。
+        self._pending_run: Any = None
+        self._reconnecting = False
+        self._state = RunFlowState.DEVICE_SELECTION
         # 清理失败的端口进入未决清单：绝不因为一次失败就丢掉引用，现场可重试。
         self._unreleased_ports: list[Any] = []
+
+    # ---- 运行流程状态 ----
+
+    @property
+    def state(self) -> RunFlowState:
+        """当前运行流程状态；协调器是唯一写入方。"""
+        return self._state
+
+    def _set_state(self, state: RunFlowState) -> None:
+        if state is self._state:
+            return
+        previous = self._state
+        self._state = state
+        self._log(f"运行流程状态: {previous.value} → {state.value}")
+        self.run_status_changed(self.run_status_text())
+
+    def begin_device_selection(self) -> None:
+        """进入仪表配置页：仍在查找/选择设备。"""
+        self._set_state(RunFlowState.DEVICE_SELECTION)
+
+    def begin_configuration(self) -> None:
+        """设备绑定已应用：进入参数配置；已提交运行不受影响。"""
+        if self._state is RunFlowState.DEVICE_SELECTION:
+            self._set_state(RunFlowState.CONFIGURING)
+
+    def _measurement_is_active(self) -> bool:
+        """测量线程是否正在使用当前端口；只读测量 controller 的状态。
+
+        测量期间替换端口会让正在运行的用例失去设备，因此所有会保存配置、
+        释放旧端口或重新打开仪器的入口都必须在动作前拒绝。
+        """
+        state = getattr(self.controller, "state", None)
+        return getattr(state, "is_active", False) is True
+
+    def _refuse_while_measuring(self, title: str) -> bool:
+        """测量进行中时给出统一提示并返回 ``True``（调用方应立即失败）。"""
+        if not self._measurement_is_active():
+            return False
+        message = "测量正在运行；请先结束或停止测量，再重新配置或连接仪器"
+        self._log(message)
+        self._warn(title, message)
+        return True
 
     # ---- 配置页适配 ----
 
@@ -274,12 +339,22 @@ class ApplicationCoordinator:
         return str(resolver())
 
     def resolve_measurement_run(self):
-        """返回当前运行契约，供测量页面消费；不可用时提示并返回 ``None``。"""
+        """返回当前运行契约，供测量页面消费；不可用时提示并返回 ``None``。
+
+        ``_pending_run`` 永远不在这里出现：待提交运行只有在最终化事务成功、端口
+        同时提交后才会变成 ``prepared_run``。
+        """
+        if self.has_unreleased_ports() or self._state is RunFlowState.MANUAL_CLEANUP_REQUIRED:
+            self._error(
+                "存在未完成的仪器清理：请在现场确认仪器已断开后重试清理，"
+                "清理完成前不能开始测量"
+            )
+            return None
         if self.prepared_run is None:
             self._error("尚未创建运行：请先在“仪器配置”页点击“完成配置并连接仪器”")
             return None
         if self.instrument_ctrl is None:
-            self._error("请先连接仪器；上一次测量结束后端口已安全释放")
+            self._error("请先重新连接仪器；上一次连接或测量结束后端口已安全释放")
             return None
         try:
             self.measurement_config_path()
@@ -288,50 +363,261 @@ class ApplicationCoordinator:
             return None
         return self.prepared_run
 
-    def create_prepared_run(self):
-        """配置阶段：校验配置并冻结为不可变的运行目录快照。
+    # ---- 最终化事务 ----
 
-        创建运行只做参数校验：配置页校验 + 完整运行配置校验，通过后冻结快照。
-        现场接线由各测量页开始前的连接图对话框确认，不在创建运行时预置。
+    def finalize_configuration(
+        self, bind_signals: Callable[[Any], None] | None = None
+    ) -> bool:
+        """最终化事务入口：保存 → 释放旧端口 → 冻结待提交运行 → 启动连接检查。
+
+        返回是否已经启动事务。连接结果是异步的：成功后由
+        :meth:`commit_finalization` 原子提交 ``_pending_run`` 与新端口；失败由
+        :meth:`fail_finalization` / :meth:`cancel_finalization` 补偿。任何同步失败
+        都不会切换 ``prepared_run``，也不会留下“已提交运行 + 未连接端口”。
+
+        已有运行但端口丢失（``RECONNECT_REQUIRED``）时，同一入口只重连已有运行：
+        不保存配置、不创建新运行。
         """
+        if self._refuse_while_measuring("无法完成配置"):
+            return False
+        if self._state is RunFlowState.FINALIZING:
+            self._log("最终动作正在进行，忽略重复提交")
+            return False
+        if self.has_unreleased_ports() or self._state is RunFlowState.MANUAL_CLEANUP_REQUIRED:
+            self._set_state(RunFlowState.MANUAL_CLEANUP_REQUIRED)
+            self._warn(
+                "无法完成配置",
+                "存在未完成的仪器清理；请在现场确认仪器已断开并重试清理后再提交",
+            )
+            return False
+        if self._should_reconnect():
+            return self._start_reconnect(bind_signals)
+        pending = self.prepare_pending_run()
+        if pending is None:
+            return False
+        if not self._start_connection_worker(pending, bind_signals):
+            if self._state is RunFlowState.FINALIZING:
+                self._abort_finalization("连接检查未能启动")
+            return False
+        return True
+
+    def prepare_pending_run(self):
+        """事务步骤：校验、保存、释放旧端口并冻结待提交运行（不提交）。
+
+        成功时 ``_pending_run`` 就绪、状态为 ``FINALIZING``，但 ``prepared_run``
+        保持不变；连接检查成功前，测量页无法消费这份运行。
+        """
+        if self._refuse_while_measuring("无法完成配置"):
+            return None
+        if self._pending_run is not None:
+            self._log("已存在未提交的待提交运行；请先完成或取消当前最终动作")
+            return None
+        if self.has_unreleased_ports() or self._state is RunFlowState.MANUAL_CLEANUP_REQUIRED:
+            self._set_state(RunFlowState.MANUAL_CLEANUP_REQUIRED)
+            self._warn(
+                "无法完成配置",
+                "存在未完成的仪器清理；请在现场确认仪器已断开并重试清理后再提交",
+            )
+            return None
         page = self.config_page
         if page is None or not page.validate():
+            self._log("配置校验失败：未保存配置，也未创建运行")
             return None
+        if not self._save_configuration_for_finalize():
+            return None
+        if not self._release_previous_port_for_finalize():
+            return None
+        pending = self._freeze_pending_run()
+        if pending is None:
+            return None
+        self._pending_run = pending
+        self._set_state(RunFlowState.FINALIZING)
+        self._log(
+            f"已冻结待提交运行 {pending.run_id}，运行目录: {pending.run_directory}"
+        )
+        return pending
+
+    def _save_configuration_for_finalize(self) -> bool:
+        """步骤：从页面读取完整配置并写入正式配置。失败不释放旧端口。"""
         self.update_configuration_from_ui()
         if not self.save_configuration():
             self._log(f"配置保存失败: {self.last_save_error}")
             self._warn("创建运行失败", f"配置保存失败: {self.last_save_error}")
-            return None
+            return False
+        mark_clean = getattr(self.config_page, "mark_clean", None)
+        if callable(mark_clean):
+            mark_clean()
+        return True
+
+    def _release_previous_port_for_finalize(self) -> bool:
+        """步骤：释放上一次连接的端口；失败进入未决清理并阻断本次事务。"""
+        if self.release_instrument_for_new_run():
+            return True
+        self._set_state(RunFlowState.MANUAL_CLEANUP_REQUIRED)
+        self._log(
+            "上一次连接的仪器未能安全释放；当前运行保持不变，"
+            "端口已进入未决清理清单"
+        )
+        self._warn(
+            "创建运行未生效",
+            "上一次连接的仪器未能完成安全清理；请在现场确认仪器已断开后重试",
+        )
+        return False
+
+    def _freeze_pending_run(self):
+        """步骤：把已保存配置冻结为运行目录快照；失败不切换当前运行。"""
         try:
-            prepared = prepare_configuration(
+            return prepare_configuration(
                 str(self.config_path),
                 paths=self.paths,
                 hardware_config=self.config,
             )
-        except Exception as failure:  # noqa: BLE001 - 创建失败必须回到界面，且不得切换运行
+        except Exception as failure:  # noqa: BLE001 - 建运行失败必须回到界面，且不得切换运行
             self._log(f"创建运行失败: {failure}")
             self._warn("创建运行失败", str(failure))
+            # 旧端口已在冻结前释放；旧运行若还在，只能通过重新连接继续。
+            if self.prepared_run is not None:
+                self._set_state(RunFlowState.RECONNECT_REQUIRED)
             return None
-        if not self.release_instrument_for_new_run():
-            # 旧端口未能安全释放：不得把界面切到新运行，否则现场会以为连接已收尾。
-            self._log(
-                f"运行 {prepared.run_id} 已冻结在 {prepared.run_directory}，"
-                "但上一次连接的仪器未能安全释放；当前运行保持不变"
-            )
-            self._warn(
-                "创建运行未生效",
-                "上一次连接的仪器未能完成安全清理；请在现场确认仪器已断开后重试",
-            )
-            return None
-        self.prepared_run = prepared
-        self.run_status_changed(self.run_status_text())
-        self._log(
-            f"已创建运行 {prepared.run_id}，运行目录: {prepared.run_directory}"
+
+    def _should_reconnect(self) -> bool:
+        return (
+            self._state is RunFlowState.RECONNECT_REQUIRED
+            and self.prepared_run is not None
+            and self.instrument_ctrl is None
         )
-        return prepared
+
+    def _start_reconnect(self, bind_signals: Callable[[Any], None] | None) -> bool:
+        """重连已有运行：不保存配置、不创建新运行，只提交新端口。"""
+        run = self.prepared_run
+        if run is None:
+            self._warn("重新连接失败", "没有可重新连接的运行")
+            return False
+        self._reconnecting = True
+        self._set_state(RunFlowState.FINALIZING)
+        self._log(f"重新连接运行 {getattr(run, 'run_id', run)} 的仪器")
+        if not self._start_connection_worker(run, bind_signals):
+            self._reconnecting = False
+            if self._state is RunFlowState.FINALIZING:
+                self._set_state(RunFlowState.RECONNECT_REQUIRED)
+            return False
+        return True
+
+    def commit_finalization(self, controller: Any) -> bool:
+        """连接成功：把新端口与 ``_pending_run`` 一次性提交为当前运行。
+
+        新端口注入失败时关闭刚拿到的端口，并走失败补偿；调用方据此不要导航到
+        测量区。
+        """
+        if self._state is not RunFlowState.FINALIZING:
+            self._log("没有进行中的最终动作；忽略迟到的端口提交")
+            errors = close_instrument_port(controller)
+            if errors:
+                self._log("迟到端口清理失败: " + describe_cleanup_errors(errors))
+                self._remember_unreleased_port(controller)
+                self._set_state(RunFlowState.MANUAL_CLEANUP_REQUIRED)
+            return False
+        target = self.prepared_run if self._reconnecting else self._pending_run
+        if target is None:
+            self._abort_finalization("待提交运行缺失，不能提交端口")
+            return False
+        if not self.accept_instrument_controller(controller):
+            self._abort_finalization("新端口交接失败")
+            return False
+        if not self._reconnecting:
+            # 原子提交：端口已经就绪，此时才把待提交运行交给测量页。
+            self.prepared_run = target
+            self._pending_run = None
+        self._reconnecting = False
+        self._set_state(RunFlowState.CONNECTED)
+        self._log(
+            f"已提交运行 {getattr(target, 'run_id', target)} 与仪器端口"
+        )
+        return True
+
+    def fail_finalization(self, reason: str = "") -> bool:
+        """连接检查失败：关闭新端口、补偿待提交运行并标记后续状态。"""
+        return self._abort_finalization(reason or "仪器连接失败")
+
+    def cancel_finalization(self, reason: str = "") -> bool:
+        """用户取消最终动作：与失败补偿共用同一套清理，但不弹错误提示。"""
+        return self._abort_finalization(reason or "用户取消最终动作")
+
+    def _abort_finalization(self, reason: str) -> bool:
+        # worker 在停止/异常路径自行关闭端口；未确认关闭的引用必须先收管，
+        # 否则协调器会误以为没有未决清理而允许下一次事务。
+        adopted = self._adopt_worker_unreleased_port()
+        if self._state is not RunFlowState.FINALIZING:
+            if adopted:
+                self._require_manual_cleanup(reason)
+            self._log(f"忽略迟到的连接结束事件: {reason}")
+            return False
+        if self.instrument_ctrl is not None:
+            self.release_instrument_port()
+        compensated = True
+        if not self._reconnecting and self._pending_run is not None:
+            compensated = self._compensate_pending_run()
+        self._reconnecting = False
+        if not compensated or self.has_unreleased_ports():
+            self._require_manual_cleanup(reason)
+            self._log(f"最终动作未完成且需要人工清理: {reason}")
+            return False
+        if self.prepared_run is not None:
+            self._set_state(RunFlowState.RECONNECT_REQUIRED)
+        else:
+            self._set_state(RunFlowState.CONFIGURING)
+        self._log(f"最终动作未提交: {reason}")
+        return True
+
+    def _require_manual_cleanup(self, reason: str) -> None:
+        """进入人工清理状态：阻断后续事务并把原因交给用户。"""
+        self._set_state(RunFlowState.MANUAL_CLEANUP_REQUIRED)
+        self._log(f"需要人工清理仪器端口: {reason}")
+        self._warn(
+            "仪器清理未完成",
+            "未能确认仪器已安全断开；请在现场确认后重试清理，"
+            "清理完成前不能开始测量或重新连接",
+        )
+
+    def _adopt_worker_unreleased_port(self) -> bool:
+        """收管连接 worker 自行关闭未确认的端口；返回是否收管了新端口。"""
+        worker = self.instrument_worker
+        port = getattr(worker, "unreleased_port", None)
+        if port is None:
+            return False
+        self._remember_unreleased_port(port)
+        worker.unreleased_port = None
+        self._log("连接线程未能确认关闭仪器端口；已登记为未决清理")
+        return True
+
+    def _compensate_pending_run(self) -> bool:
+        """守卫式放弃待提交运行；返回是否为干净补偿。"""
+        pending = self._pending_run
+        if pending is None:
+            return True
+        try:
+            self._discard_pending_run(pending)
+        except Exception as failure:  # noqa: BLE001 - 补偿失败必须阻断后续事务
+            self._log(f"撤销待提交运行失败: {failure}")
+            return False
+        self._pending_run = None
+        self._log(
+            f"待提交运行 {getattr(pending, 'run_id', pending)} 未提交，已放弃"
+        )
+        return True
+
+    def _discard_pending_run(self, pending: Any) -> None:
+        """阶段二补偿挂钩：只放弃提交，不删除运行目录。
+
+        阶段三接入 :func:`application.run_service.discard_unstarted_run` 后，这里
+        负责撤销尚未开始的运行；在此之前保留运行目录供人工诊断，绝不把它当成
+        当前运行或交给测量页。
+        """
 
     def load_prepared_run(self, run_id: str):
         """配置阶段：按 run_id 重新打开已有运行，不依赖 GUI 内存中的配置。"""
+        if self._refuse_while_measuring("加载运行失败"):
+            return None
         try:
             prepared = load_prepared_run(
                 run_id, config_path=Path(self.config_path), paths=self.paths
@@ -361,7 +647,8 @@ class ApplicationCoordinator:
             )
             return None
         self.prepared_run = prepared
-        self.run_status_changed(self.run_status_text())
+        # 加载的运行还没有端口：用户需要走“重新连接仪器”，而不是再冻结一份新运行。
+        self._set_state(RunFlowState.RECONNECT_REQUIRED)
         self._log(
             f"已加载运行 {prepared.run_id}，运行目录: {prepared.run_directory}"
         )
@@ -393,7 +680,8 @@ class ApplicationCoordinator:
 
     def run_status_text(self) -> str:
         run = self.prepared_run
-        return "当前运行: 未创建" if run is None else f"当前运行: {run.run_id}"
+        run_id = getattr(run, "run_id", None) if run is not None else None
+        return "当前运行: 未创建" if run_id is None else f"当前运行: {run_id}"
 
     def run_status_changed(self, text: str) -> None:
         """把运行状态写进配置页；窗口可覆盖此方法改变展示位置。"""
@@ -473,13 +761,14 @@ class ApplicationCoordinator:
     def connect_instruments(
         self, bind_signals: Callable[[Any], None] | None = None
     ) -> bool:
-        """启动仪器连接 worker；返回是否已启动。
+        """重新连接当前已提交运行的快捷入口；返回是否已启动。
 
-        连接必须绑定当前运行：没有运行（或运行快照不可用）时不保存全局配置、也不
-        打开任何设备，而是明确失败。``bind_signals`` 由窗口提供，在 worker 启动前连接
-        窗口自身的 Qt 槽，保证第一个事件不会在连接建立前发出。
+        这是“运行保留但端口丢失”后的重连动作：不保存配置、不创建新运行，只使用
+        现有运行快照打开仪器。没有运行（或运行快照不可用）时不打开任何设备，而是
+        明确失败。``bind_signals`` 由窗口提供，在 worker 启动前连接窗口自身的 Qt 槽。
         """
-        self._log("开始连接仪器...")
+        if self._refuse_while_measuring("仪器连接失败"):
+            return False
         run = self.prepared_run
         if run is None:
             self._log(
@@ -489,41 +778,104 @@ class ApplicationCoordinator:
                 "仪器连接失败", "尚未创建运行：请先在“仪器配置”页完成配置并连接仪器"
             )
             return False
-        self._log(f"使用已冻结的运行配置连接仪器: {run.run_id}")
+        if self.instrument_ctrl is not None:
+            self._log("当前已有连接的仪器端口；请先完成或取消当前连接流程再重新连接")
+            return False
+        if self._state is RunFlowState.FINALIZING:
+            self._log("最终动作正在进行，忽略重复连接")
+            return False
+        self._reconnecting = True
+        self._set_state(RunFlowState.FINALIZING)
+        if not self._start_connection_worker(run, bind_signals):
+            self._reconnecting = False
+            if self._state is RunFlowState.FINALIZING:
+                self._set_state(RunFlowState.RECONNECT_REQUIRED)
+            return False
+        return True
+
+    def _start_connection_worker(
+        self,
+        run: Any,
+        bind_signals: Callable[[Any], None] | None = None,
+    ) -> bool:
+        """事务步骤：按指定运行启动连接 worker；不提交运行或端口。
+
+        运行必须是已经冻结的运行契约（最终化时是 ``_pending_run``，重连时是
+        ``prepared_run``）。这里只做前置校验和 worker 启动；成功提交、失败补偿由
+        :meth:`commit_finalization` / :meth:`_abort_finalization` 负责。
+        """
+        if self.has_unreleased_ports() or self._state is RunFlowState.MANUAL_CLEANUP_REQUIRED:
+            self._set_state(RunFlowState.MANUAL_CLEANUP_REQUIRED)
+            self._warn(
+                "仪器连接失败",
+                "存在未完成的仪器清理；请在现场确认仪器已断开并重试清理后再连接",
+            )
+            return False
+        if run is None:
+            self._log(
+                "无法连接仪器: 尚未创建运行；请先在“仪器配置”页点击“完成配置并连接仪器”"
+            )
+            self._warn(
+                "仪器连接失败", "尚未创建运行：请先在“仪器配置”页完成配置并连接仪器"
+            )
+            return False
+        self._log(
+            f"使用已冻结的运行配置连接仪器: {getattr(run, 'run_id', run)}"
+        )
         if self._configuration_page_is_dirty():
             self._log(
                 "注意：仪器配置页存在尚未创建运行的修改；本次连接仍使用运行 "
-                f"{run.run_id} 的冻结快照，若要应用修改请重新“完成配置并连接仪器”"
+                f"{getattr(run, 'run_id', run)} 的冻结快照，"
+                "若要应用修改请重新“完成配置并连接仪器”"
             )
         try:
             # 只做前置校验：拿不到可用快照就在启动 worker 前失败；端口本身由
             # connect_instruments() 装配，并按同一份快照再校验一次（幂等）。
-            self.measurement_config_path()
+            resolver = getattr(run, "hardware_connection_path", None)
+            if resolver is None:
+                raise RunNotResumable(
+                    "当前运行契约不可用，不能连接仪器；请重新创建或重新加载运行"
+                )
+            str(resolver())
         except RunNotResumable as failure:
             self._log(f"无法连接仪器: {failure}")
             self._warn("仪器连接失败", str(failure))
             return False
-        worker = self._instrument_worker_factory(run)
-        if bind_signals is not None:
-            bind_signals(worker)
-        self.instrument_worker = worker
-        worker.start()
+        try:
+            worker = self._instrument_worker_factory(run)
+            if bind_signals is not None:
+                bind_signals(worker)
+            self.instrument_worker = worker
+            worker.start()
+        except Exception as failure:  # noqa: BLE001 - worker 无法启动必须回到界面并补偿事务
+            self.instrument_worker = None
+            self._log(f"无法启动仪器连接: {failure}")
+            self._warn("仪器连接失败", f"无法启动仪器连接: {failure}")
+            return False
         return True
 
     def accept_instrument_controller(self, controller: Any) -> bool:
-        """接管已连接的仪器端口并注入 controller。
+        """验证并提交一个新端口；不负责释放旧端口或提交运行。
 
-        返回是否完全干净地完成交接：旧端口清理失败时它进入未决清理清单（引用不丢），
-        新端口仍被接管，避免把一次可用的连接判成不可用。
+        旧端口必须先由最终化事务的释放步骤处理。这里只有在测量 controller 接受
+        端口后才把引用交给协调器；注入失败时关闭刚拿到的端口，避免泄漏。
         """
-        released = self.release_instrument_port()
-        self.instrument_ctrl = controller
+        if controller is None:
+            self._log("仪器连接没有返回端口")
+            return False
+        if self.instrument_ctrl is not None:
+            self._log("端口交接前仍持有旧端口；拒绝覆盖，请先释放旧端口")
+            # 新端口已由连接线程打开：不接管就必须关闭，不能让它泄漏。
+            self._close_and_record(controller)
+            return False
         try:
             self.controller.set_measurement_port(controller)
         except RuntimeError as failure:
             self._log(f"注入测量端口失败: {failure}")
+            self._close_and_record(controller)
             return False
-        return released
+        self.instrument_ctrl = controller
+        return True
 
     def release_instrument_port(self) -> bool:
         """释放当前端口；失败时端口进入未决清理清单，返回 ``False``。"""
@@ -545,11 +897,21 @@ class ApplicationCoordinator:
         return True
 
     def release_port_after_measurement(self) -> bool:
-        """测量线程结束后释放端口；非测量终态（如仅连接仪器）不释放。"""
+        """测量线程结束后释放端口；非测量终态（如仅连接仪器）不释放。
+
+        测量完成释放后运行仍然保留，但已经没有可复用的端口，因此状态进入
+        ``RECONNECT_REQUIRED``；清理失败则进入 ``MANUAL_CLEANUP_REQUIRED``，阻止
+        下一阶段在未确认安全的情况下重新连接。
+        """
         state = getattr(self.controller, "state", None)
         if getattr(state, "kind", None) not in _MEASUREMENT_KINDS:
             return True
-        return self.release_instrument_port()
+        released = self.release_instrument_port()
+        if not released:
+            self._set_state(RunFlowState.MANUAL_CLEANUP_REQUIRED)
+        elif self.prepared_run is not None:
+            self._set_state(RunFlowState.RECONNECT_REQUIRED)
+        return released
 
     def _close_and_record(self, port: Any) -> bool:
         """关闭一个端口；失败时记录逐项错误并把它放进未决清理清单。"""
@@ -590,6 +952,11 @@ class ApplicationCoordinator:
                     "未决仪器清理仍失败: " + describe_cleanup_errors(errors)
                 )
         self._unreleased_ports = remaining
+        if not remaining and self._state is RunFlowState.MANUAL_CLEANUP_REQUIRED:
+            if self.prepared_run is not None:
+                self._set_state(RunFlowState.RECONNECT_REQUIRED)
+            else:
+                self._set_state(RunFlowState.CONFIGURING)
         return not remaining
 
     def instrument_worker_running(self) -> bool:
@@ -623,6 +990,7 @@ class ApplicationCoordinator:
 __all__ = [
     "ApplicationCoordinator",
     "ConfigurationPagePort",
+    "RunFlowState",
     "close_instrument_port",
     "describe_cleanup_errors",
 ]

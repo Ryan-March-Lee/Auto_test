@@ -10,14 +10,56 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 from infrastructure.filesystem.paths import PathService
+from presentation.qt.application_coordinator import RunFlowState
 from tests.integration.test_gui_two_phase_flow import _fully_valid_gui_config
 from tests.ui.test_gui_import import gui_dependencies_available
 
 
 _APPLICATION = None
+
+
+class _RecordingConnectionWorker:
+    """连接 worker 替身：只记录启动，不打开任何设备。"""
+
+    def __init__(self, run):
+        self.run = run
+        self.started = False
+        self.signals = SimpleNamespace(
+            finished=MagicMock(),
+            result=MagicMock(),
+            stopped=MagicMock(),
+            error=MagicMock(),
+            message=MagicMock(),
+            progress=MagicMock(),
+        )
+
+    def start(self):
+        self.started = True
+
+    def isRunning(self):
+        return False
+
+
+class _ConnectedPort:
+    """可正常关闭的测量端口替身。"""
+
+    def __init__(self):
+        self.close_calls = 0
+
+    def close_all(self, *, close_rf=False):
+        self.close_calls += 1
+        return []
+
+
+class _UnconfirmedClosePort:
+    """关闭返回逐项错误的端口替身（模拟 RF 未确认关闭）。"""
+
+    def close_all(self, *, close_rf=False):
+        return [RuntimeError("RF 未确认关闭")]
 
 
 def _shared_application():
@@ -117,6 +159,28 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.app.processEvents()
         return panel
 
+    def _finalize_with_fake_worker(self, window):
+        """走真实最终化事务，只把连接 worker 换成不打开设备的替身。"""
+        prepared = SimpleNamespace(
+            run_id="20261104T010000Z_final001",
+            run_directory=self.root / "runs" / "20261104T010000Z_final001",
+            hardware_connection_path=lambda: self.root / "frozen-hardware.json",
+        )
+        window.coordinator._instrument_worker_factory = _RecordingConnectionWorker
+        with patch(
+            "presentation.qt.application_coordinator.prepare_configuration",
+            return_value=prepared,
+        ):
+            window._finalize_run()
+        return prepared
+
+    def _prepare_and_commit(self, window):
+        """走真实事务步骤冻结并提交运行（用替身端口代替硬件连接）。"""
+        prepared = window.coordinator.prepare_pending_run()
+        self.assertIsNotNone(prepared)
+        self.assertTrue(window.coordinator.commit_finalization(_ConnectedPort()))
+        return prepared
+
     def test_window_exposes_the_coordinator_state_and_initial_run_status(self):
         self._silence_dialogs()
         window = self._window()
@@ -137,23 +201,20 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         window = self._window()
         window._enter_test_mode(False)
 
-        with patch.object(
-            window.coordinator, "create_prepared_run", return_value=object()
-        ), patch.object(
-            window.coordinator, "connect_instruments", return_value=True
-        ) as connect:
-            window._finalize_run()
+        prepared = self._finalize_with_fake_worker(window)
 
-        connect.assert_called_once_with(window._bind_instrument_worker_signals)
+        self.assertIs(window.coordinator.state, RunFlowState.FINALIZING)
+        self.assertIsNone(window.prepared_run, "待提交运行不能提前成为当前运行")
         self.assertIs(window.view_stack.currentWidget(), window.connection_page)
         self.assertFalse(window.config_page.finalize_run_btn.isEnabled(), "连接中不能重复提交")
 
-        with patch.object(
-            window.coordinator, "accept_instrument_controller", return_value=True
-        ):
-            window.on_instrument_controller_ready(object())
+        port = _ConnectedPort()
+        window.on_instrument_controller_ready(port)
         window.on_instrument_connected()
 
+        self.assertIs(window.prepared_run, prepared)
+        self.assertIs(window.coordinator.instrument_ctrl, port)
+        self.assertIs(window.coordinator.state, RunFlowState.CONNECTED)
         self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
         self.assertTrue(window.config_page.finalize_run_btn.isEnabled())
 
@@ -161,18 +222,61 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self._silence_dialogs()
         window = self._window()
         window._enter_test_mode(False)
+        self._finalize_with_fake_worker(window)
 
-        with patch.object(
-            window.coordinator, "create_prepared_run", return_value=object()
-        ), patch.object(window.coordinator, "connect_instruments", return_value=True):
-            window._finalize_run()
+        window.on_instrument_error("仪器连接失败")
 
-        with patch.object(window.coordinator, "release_instrument_port") as release:
-            window.on_instrument_error("仪器连接失败")
-
-        release.assert_called_once_with()
+        # 失败补偿：待提交运行被放弃，当前运行不会被半提交为“已创建但无端口”。
+        self.assertIsNone(window.prepared_run)
+        self.assertIsNone(window.coordinator._pending_run)
+        self.assertIs(window.coordinator.state, RunFlowState.CONFIGURING)
         self.assertIs(window.view_stack.currentWidget(), window.connection_page)
         self.assertTrue(window.config_page.finalize_run_btn.isEnabled(), "失败后允许重试")
+
+    def test_user_stop_compensates_the_pending_run_without_navigating(self):
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+        self._finalize_with_fake_worker(window)
+
+        window.on_instrument_stopped("用户取消")
+
+        self.assertIsNone(window.prepared_run)
+        self.assertIsNone(window.coordinator._pending_run)
+        self.assertIs(window.coordinator.state, RunFlowState.CONFIGURING)
+        self.assertIs(window.view_stack.currentWidget(), window.connection_page)
+        self.assertTrue(window.config_page.finalize_run_btn.isEnabled())
+
+    def test_user_stop_with_unconfirmed_cleanup_requires_manual_cleanup(self):
+        dialogs = self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+        self._finalize_with_fake_worker(window)
+        window.coordinator.instrument_worker.unreleased_port = _UnconfirmedClosePort()
+
+        window.on_instrument_stopped("用户取消")
+
+        # 连接线程未能确认关闭端口：必须进入人工清理，且不允许再次最终化。
+        self.assertIs(
+            window.coordinator.state, RunFlowState.MANUAL_CLEANUP_REQUIRED
+        )
+        self.assertTrue(window.coordinator.has_unreleased_ports())
+        self.assertIs(window.view_stack.currentWidget(), window.connection_page)
+        self.assertTrue(window.config_page.finalize_run_btn.isEnabled())
+        self.assertTrue(dialogs["warning"].called, "清理未完成必须提示用户")
+
+    def test_finished_event_does_not_enter_the_workspace_before_commit(self):
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+        self._finalize_with_fake_worker(window)
+
+        window.on_instrument_connected()
+
+        # 只有 result 已经原子提交后才导航；单独的完成事件不能宣称成功。
+        self.assertIs(window.coordinator.state, RunFlowState.FINALIZING)
+        self.assertIs(window.view_stack.currentWidget(), window.connection_page)
+        self.assertTrue(window.config_page.finalize_run_btn.isEnabled())
 
     def test_finalize_restores_the_page_when_the_connection_cannot_start(self):
         self._silence_dialogs()
@@ -180,8 +284,8 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         window._enter_test_mode(False)
 
         with patch.object(
-            window.coordinator, "create_prepared_run", return_value=object()
-        ), patch.object(window.coordinator, "connect_instruments", return_value=False):
+            window.coordinator, "finalize_configuration", return_value=False
+        ):
             window._finalize_run()
 
         self.assertIs(window.view_stack.currentWidget(), window.connection_page)
@@ -273,7 +377,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         # 分配下拉框是用户操作面：按数据（``itemData``）选中另一台电源给驱动功放。
         driver_combo = window.config_page.driver_power_combo
         driver_combo.setCurrentIndex(driver_combo.findData("DP8B0885"))
-        prepared = window.coordinator.create_prepared_run()
+        prepared = self._prepare_and_commit(window)
 
         self.assertIsNotNone(prepared)
         mapping = prepared.configuration.run_mapping
@@ -304,7 +408,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
                 "driver_amplifier"
             ]["power_supply_count"]
         )
-        prepared = window.coordinator.create_prepared_run()
+        prepared = self._prepare_and_commit(window)
 
         self.assertIsNotNone(prepared)
         self.assertFalse(prepared.configuration.test_plan.driver_enabled)
@@ -399,7 +503,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self._silence_dialogs()
         window = self._window()
 
-        prepared = window.coordinator.create_prepared_run()
+        prepared = self._prepare_and_commit(window)
 
         self.assertIsNotNone(prepared)
         self.assertIs(window.prepared_run, prepared)
@@ -427,7 +531,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         port = _FailingPort()
         window.coordinator.instrument_ctrl = port
 
-        prepared = window.coordinator.create_prepared_run()
+        prepared = window.coordinator.prepare_pending_run()
 
         self.assertIsNone(prepared)
         self.assertIsNone(window.prepared_run)
@@ -451,13 +555,13 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
             def close_all(self, *, close_rf=False):
                 return []
 
-        window.coordinator.create_prepared_run()
+        window.coordinator.prepare_pending_run()
 
-        self.assertIsNotNone(window.prepared_run)
-        # 已创建运行但还没有接管端口：仍然拒绝开始测量。
+        # 已冻结待提交运行但还没有提交端口：仍然拒绝开始测量。
+        self.assertIsNone(window.prepared_run)
         self.assertIsNone(window.coordinator.resolve_measurement_run())
 
-        self.assertTrue(window.coordinator.accept_instrument_controller(_Port()))
+        self.assertTrue(window.coordinator.commit_finalization(_Port()))
         self.assertIs(
             window.coordinator.resolve_measurement_run(), window.prepared_run
         )

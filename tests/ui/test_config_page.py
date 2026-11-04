@@ -354,6 +354,18 @@ class ConfigurationPageTests(unittest.TestCase):
         self.assertFalse(hasattr(page, "request_connect"))
         self.assertEqual(page.finalize_run_btn.text(), "完成配置并连接仪器")
 
+    def test_reconnect_mode_only_changes_the_final_button_semantics(self):
+        page = self.make_page()
+
+        page.set_reconnect_required(True)
+
+        self.assertEqual(page.finalize_run_btn.text(), "重新连接仪器")
+        self.assertIn("不创建新运行", page.finalize_run_btn.toolTip())
+
+        page.set_reconnect_required(False)
+
+        self.assertEqual(page.finalize_run_btn.text(), "完成配置并连接仪器")
+
     def test_finalizing_disables_the_page_without_overwriting_derived_states(self):
         """最终动作只临时禁用控件，退出时恢复各控件原来的可用状态。
 

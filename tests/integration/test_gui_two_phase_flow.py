@@ -28,6 +28,7 @@ from application.configuration_authoring import author_official_configuration
 from presentation.qt.measurement_controller import MeasurementController
 from presentation.qt.measurement_controller_contract import MeasurementCommand
 from presentation.qt.measurement_state import MeasurementKind
+from presentation.qt.application_coordinator import RunFlowState
 from presentation.qt.workers import AmplifierWorker, CableLossWorker, DriverMappingWorker
 
 from tests.contract_doubles import contract_run
@@ -126,6 +127,7 @@ def _resolvable_contract_run(path="frozen-hardware.json"):
         (),
         {
             "run_id": RUN_ID,
+            "run_directory": Path("runs") / RUN_ID,
             "hardware_connection_path": lambda self, _path=path: Path(_path),
         },
     )()
@@ -152,6 +154,17 @@ class _FailingPort:
     def close_all(self, *, close_rf=False):
         self.close_calls += 1
         return list(self.errors)
+
+
+class _RecordingWorker:
+    """只记录启动的连接 worker 替身（不启动真实 QThread）。"""
+
+    def __init__(self, run):
+        self.run = run
+        self.started = False
+
+    def start(self):
+        self.started = True
 
 
 class _CableService:
@@ -541,37 +554,42 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
                 self.assertEqual(len(errors), 1)
                 self.assertIn("硬件配置快照", errors[0])
 
-    def test_create_prepared_run_freezes_the_run_contract(self):
+    def test_finalize_configuration_freezes_pending_run_and_starts_worker(self):
         page = MagicMock()
         page.validate.return_value = True
         warn = MagicMock()
         coordinator = self._coordinator(
             warn=warn,
+            instrument_worker_factory=_RecordingWorker,
         )
         coordinator.config_page = page
         coordinator.config = {}
         coordinator.update_configuration_from_ui = MagicMock()
         coordinator.save_configuration = MagicMock(return_value=True)
 
-        prepared = SimpleNamespace(run_id=RUN_ID, run_directory=Path("runs") / RUN_ID)
+        prepared = _resolvable_contract_run()
         with patch(
             "presentation.qt.application_coordinator.prepare_configuration",
             return_value=prepared,
         ) as create:
-            result = coordinator.create_prepared_run()
+            started = coordinator.finalize_configuration()
 
-        self.assertIs(result, prepared)
-        self.assertIs(coordinator.prepared_run, prepared)
+        self.assertTrue(started)
+        # 待提交运行只进入事务内部，连接成功前不能成为当前运行。
+        self.assertIs(coordinator._pending_run, prepared)
+        self.assertIsNone(coordinator.prepared_run)
+        self.assertIs(coordinator.state, RunFlowState.FINALIZING)
+        self.assertIs(coordinator.instrument_worker.run, prepared)
+        self.assertTrue(coordinator.instrument_worker.started)
         coordinator.save_configuration.assert_called_once_with()
         create.assert_called_once()
         args, kwargs = create.call_args
         self.assertEqual(args, (str(coordinator.config_path),))
-        # 创建运行入口不再接受 run_contract 开关：GUI 只走唯一的运行契约路径。
         self.assertNotIn("run_contract", kwargs)
         self.assertEqual(kwargs["hardware_config"], coordinator.config)
         warn.assert_not_called()
 
-    def test_create_prepared_run_aborts_when_validation_fails(self):
+    def test_finalize_configuration_aborts_when_validation_fails(self):
         page = MagicMock()
         page.validate.return_value = False
         coordinator = self._coordinator()
@@ -580,12 +598,14 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         with patch(
             "presentation.qt.application_coordinator.prepare_configuration"
         ) as create:
-            self.assertIsNone(coordinator.create_prepared_run())
+            self.assertFalse(coordinator.finalize_configuration())
 
         create.assert_not_called()
+        self.assertIsNone(coordinator._pending_run)
+        self.assertIsNone(coordinator.instrument_worker)
 
-    def test_create_prepared_run_needs_only_parameter_validation(self):
-        """创建运行不再询问现场接线：校验通过就直接冻结运行。"""
+    def test_prepare_pending_run_needs_only_parameter_validation(self):
+        """最终化只做参数校验：校验通过就直接冻结待提交运行。"""
         page = MagicMock()
         page.validate.return_value = True
         coordinator = self._coordinator()
@@ -593,14 +613,15 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         coordinator.update_configuration_from_ui = MagicMock()
         coordinator.save_configuration = MagicMock(return_value=True)
 
-        prepared = SimpleNamespace(run_id=RUN_ID, run_directory=Path("runs") / RUN_ID)
+        prepared = _resolvable_contract_run()
         with patch(
             "presentation.qt.application_coordinator.prepare_configuration",
             return_value=prepared,
         ):
-            self.assertIs(coordinator.create_prepared_run(), prepared)
+            self.assertIs(coordinator.prepare_pending_run(), prepared)
+        self.assertIs(coordinator.state, RunFlowState.FINALIZING)
 
-    def test_create_prepared_run_releases_previous_instrument_port(self):
+    def test_prepare_pending_run_releases_previous_instrument_port(self):
         port = _ClosedPort()
         page = MagicMock()
         page.validate.return_value = True
@@ -611,28 +632,55 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         coordinator.update_configuration_from_ui = MagicMock()
         coordinator.save_configuration = MagicMock(return_value=True)
 
-        prepared = SimpleNamespace(run_id=RUN_ID, run_directory=Path("runs") / RUN_ID)
+        prepared = _resolvable_contract_run()
         with patch(
             "presentation.qt.application_coordinator.prepare_configuration",
             return_value=prepared,
         ):
-            result = coordinator.create_prepared_run()
+            result = coordinator.prepare_pending_run()
 
-        # 创建新运行必须释放旧连接的仪器端口，避免新运行复用旧配置的资源。
+        # 新运行冻结前必须释放旧端口；但新运行此时只是待提交，不能成为当前运行。
         self.assertIs(result, prepared)
         self.assertEqual(port.close_calls, 1)
         self.assertIsNone(coordinator.instrument_ctrl)
-        self.assertIs(coordinator.prepared_run, prepared)
+        self.assertIs(coordinator._pending_run, prepared)
+        self.assertIsNone(coordinator.prepared_run)
 
-    def test_create_prepared_run_failure_keeps_previous_run_and_port(self):
+    def test_save_failure_keeps_previous_run_and_port(self):
         port = _ClosedPort()
         previous_run = object()
         page = MagicMock()
         page.validate.return_value = True
         warn = MagicMock()
-        coordinator = self._coordinator(
-            warn=warn,
-        )
+        coordinator = self._coordinator(warn=warn)
+        coordinator.config_page = page
+        coordinator.config = {}
+        coordinator.instrument_ctrl = port
+        coordinator.prepared_run = previous_run
+        coordinator.update_configuration_from_ui = MagicMock()
+        coordinator.save_configuration = MagicMock(return_value=False)
+        coordinator.last_save_error = RuntimeError("配置保存失败：磁盘已满")
+
+        with patch(
+            "presentation.qt.application_coordinator.prepare_configuration"
+        ) as create:
+            result = coordinator.finalize_configuration()
+
+        # 保存失败不得切换运行、释放端口或创建待提交运行。
+        self.assertFalse(result)
+        create.assert_not_called()
+        self.assertIs(coordinator.prepared_run, previous_run)
+        self.assertIs(coordinator.instrument_ctrl, port)
+        self.assertEqual(port.close_calls, 0)
+        self.assertIsNone(coordinator._pending_run)
+        warn.assert_called_once()
+
+    def test_freeze_failure_after_release_requires_reconnect(self):
+        port = _ClosedPort()
+        previous_run = _resolvable_contract_run()
+        page = MagicMock()
+        page.validate.return_value = True
+        coordinator = self._coordinator()
         coordinator.config_page = page
         coordinator.config = {}
         coordinator.instrument_ctrl = port
@@ -644,14 +692,14 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
             "presentation.qt.application_coordinator.prepare_configuration",
             side_effect=RuntimeError("创建运行失败：磁盘已满"),
         ):
-            result = coordinator.create_prepared_run()
+            result = coordinator.finalize_configuration()
 
-        # 创建失败不得切换运行、释放端口或报告为新状态。
-        self.assertIsNone(result)
+        self.assertFalse(result)
         self.assertIs(coordinator.prepared_run, previous_run)
-        self.assertIs(coordinator.instrument_ctrl, port)
-        self.assertEqual(port.close_calls, 0)
-        warn.assert_called_once()
+        self.assertIsNone(coordinator.instrument_ctrl)
+        self.assertEqual(port.close_calls, 1)
+        self.assertIsNone(coordinator._pending_run)
+        self.assertIs(coordinator.state, RunFlowState.RECONNECT_REQUIRED)
 
     def test_measurement_config_path_prefers_frozen_run_config(self):
         coordinator = self._coordinator()
@@ -896,10 +944,12 @@ class MainWindowCompositionTests(unittest.TestCase):
             MainWindow.on_instrument_error(window, "连接失败")
 
         critical.assert_called_once()
-        window.coordinator.release_instrument_port.assert_called_once_with()
+        window.coordinator.fail_finalization.assert_called_once_with("连接失败")
+        window.coordinator.release_instrument_port.assert_not_called()
 
         MainWindow.on_instrument_stopped(window, "用户停止")
-        self.assertEqual(window.coordinator.release_instrument_port.call_count, 2)
+        window.coordinator.cancel_finalization.assert_called_once_with("用户停止")
+        window.coordinator.release_instrument_port.assert_not_called()
 
 
 class ConfigurationPageRunEntryTests(unittest.TestCase):

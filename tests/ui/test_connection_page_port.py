@@ -78,6 +78,9 @@ class _PanelStub:
     def has_selectable_devices(self):
         return self._selectable
 
+    def has_selected_devices(self):
+        return bool(self._assignments)
+
     def selected_assignments(self):
         return list(self._assignments), list(self._problems)
 
@@ -285,7 +288,13 @@ class InstrumentSetupPageBoundaryTests(unittest.TestCase):
         )
 
         self.assertNotIn("addSpacing(", source)
-        self.assertNotRegex(source, r"setContentsMargins\((?!0, 0, 0, 0\))")
+        # 静态像素边距只能留在 .ui；页面唯一允许的运行时边距是隐藏页头时把结果卡片
+        # 贴回页面顶部（top 由 header 布局计算，不是新的固定像素常量）。
+        self.assertNotRegex(
+            source,
+            r"setContentsMargins\((?!0, 0, 0, 0\))"
+            r"(?!\s*margins\.left\(\), top, margins\.right\(\), margins\.bottom\(\)\s*\))",
+        )
         self.assertNotRegex(source, r"setSpacing\((?!0\))")
         for call in (
             "setMinimumWidth",

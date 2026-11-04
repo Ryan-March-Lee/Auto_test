@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 from presentation.qt.application_coordinator import (
     ApplicationCoordinator,
     ConfigurationPagePort,
+    RunFlowState,
     close_instrument_port,
     describe_cleanup_errors,
 )
@@ -224,7 +225,7 @@ class PortHandoffTests(unittest.TestCase):
         self.assertIs(coordinator.instrument_ctrl, port)
         controller.set_measurement_port.assert_called_once_with(port)
 
-    def test_accept_controller_keeps_both_ports_when_old_cleanup_fails(self):
+    def test_accept_controller_refuses_to_overwrite_an_unreleased_old_port(self):
         coordinator = _coordinator()
         old_port = _FailingPort()
         coordinator.instrument_ctrl = old_port
@@ -232,9 +233,14 @@ class PortHandoffTests(unittest.TestCase):
 
         self.assertFalse(coordinator.accept_instrument_controller(new_port))
 
-        self.assertIs(coordinator.instrument_ctrl, new_port)
-        self.assertEqual(coordinator.unreleased_port_count(), 1)
-        self.assertEqual(old_port.close_calls, 1)
+        # 交接只负责新端口：旧端口必须先由最终化释放步骤处理，不能在这里被静默覆盖；
+        # 被拒绝的新端口已经打开，必须当场关闭，避免泄漏。
+        self.assertIs(coordinator.instrument_ctrl, old_port)
+        self.assertEqual(old_port.close_calls, 0)
+        self.assertEqual(new_port.close_calls, 1)
+        self.assertTrue(
+            any("拒绝覆盖" in message for message in coordinator.messages)
+        )
 
 
 class RunSwitchRequiresCleanReleaseTests(unittest.TestCase):
@@ -243,7 +249,7 @@ class RunSwitchRequiresCleanReleaseTests(unittest.TestCase):
         page.config = {}
         return page
 
-    def test_create_run_is_not_adopted_when_the_old_port_cannot_be_released(self):
+    def test_pending_run_is_not_created_when_the_old_port_cannot_be_released(self):
         page = self._page()
         coordinator = _coordinator(page=page)
         previous_run = object()
@@ -255,11 +261,14 @@ class RunSwitchRequiresCleanReleaseTests(unittest.TestCase):
         with patch(
             "presentation.qt.application_coordinator.prepare_configuration",
             return_value=prepared,
-        ):
-            result = coordinator.create_prepared_run()
+        ) as create:
+            result = coordinator.prepare_pending_run()
 
         self.assertIsNone(result)
+        create.assert_not_called()
         self.assertIs(coordinator.prepared_run, previous_run)
+        self.assertIsNone(coordinator._pending_run)
+        self.assertIs(coordinator.state, RunFlowState.MANUAL_CLEANUP_REQUIRED)
         self.assertTrue(coordinator.has_unreleased_ports())
         self.assertTrue(
             any("未能安全释放" in message for message in coordinator.messages)
@@ -294,7 +303,318 @@ class RunSwitchRequiresCleanReleaseTests(unittest.TestCase):
         )
 
 
+class _RecordingWorker:
+    """只记录启动的连接 worker 替身（协调器测试不启动真实 QThread）。"""
+
+    def __init__(self, run):
+        self.run = run
+        self.started = False
+
+    def start(self):
+        self.started = True
+
+
+def _prepared_run():
+    return SimpleNamespace(
+        run_id=RUN_ID,
+        run_directory=Path("runs") / RUN_ID,
+        hardware_connection_path=lambda: Path("frozen-hardware.json"),
+    )
+
+
+class FinalizationTransactionTests(unittest.TestCase):
+    """最终化事务：保存、释放、冻结、提交与失败补偿是同一套可验证步骤。"""
+
+    def _finalization_coordinator(self, *, page=None, controller=None):
+        coordinator = _coordinator(
+            page=page or _Page(),
+            controller=controller or MagicMock(),
+            instrument_worker_factory=_RecordingWorker,
+        )
+        coordinator.update_configuration_from_ui = MagicMock()
+        return coordinator
+
+    def test_finalize_freezes_pending_run_without_committing_it(self):
+        coordinator = self._finalization_coordinator()
+        coordinator.save_configuration = MagicMock(return_value=True)
+        prepared = _prepared_run()
+
+        with patch(
+            "presentation.qt.application_coordinator.prepare_configuration",
+            return_value=prepared,
+        ) as create:
+            self.assertTrue(coordinator.finalize_configuration())
+
+        self.assertIs(coordinator._pending_run, prepared)
+        self.assertIsNone(coordinator.prepared_run)
+        self.assertIs(coordinator.state, RunFlowState.FINALIZING)
+        self.assertTrue(coordinator.instrument_worker.started)
+        self.assertIs(coordinator.instrument_worker.run, prepared)
+        coordinator.save_configuration.assert_called_once_with()
+        self.assertEqual(create.call_args.kwargs["hardware_config"], coordinator.config)
+
+    def test_validation_failure_changes_nothing(self):
+        page = _Page(valid=False)
+        coordinator = self._finalization_coordinator(page=page)
+        coordinator.save_configuration = MagicMock(return_value=True)
+
+        with patch(
+            "presentation.qt.application_coordinator.prepare_configuration"
+        ) as create:
+            self.assertFalse(coordinator.finalize_configuration())
+
+        coordinator.save_configuration.assert_not_called()
+        create.assert_not_called()
+        self.assertIsNone(coordinator._pending_run)
+        self.assertIsNone(coordinator.instrument_worker)
+
+    def test_save_failure_keeps_the_old_run_and_port(self):
+        coordinator = self._finalization_coordinator()
+        previous_run = _prepared_run()
+        port = _OkPort()
+        coordinator.prepared_run = previous_run
+        coordinator.instrument_ctrl = port
+        coordinator.save_configuration = MagicMock(return_value=False)
+        coordinator.last_save_error = RuntimeError("磁盘已满")
+
+        with patch(
+            "presentation.qt.application_coordinator.prepare_configuration"
+        ) as create:
+            self.assertFalse(coordinator.finalize_configuration())
+
+        create.assert_not_called()
+        self.assertIs(coordinator.prepared_run, previous_run)
+        self.assertIs(coordinator.instrument_ctrl, port)
+        self.assertEqual(port.close_calls, 0)
+        self.assertIsNone(coordinator._pending_run)
+
+    def test_release_failure_enters_manual_cleanup(self):
+        coordinator = self._finalization_coordinator()
+        coordinator.prepared_run = _prepared_run()
+        coordinator.instrument_ctrl = _FailingPort("RF 未确认关闭")
+        coordinator.save_configuration = MagicMock(return_value=True)
+
+        with patch(
+            "presentation.qt.application_coordinator.prepare_configuration"
+        ) as create:
+            self.assertFalse(coordinator.finalize_configuration())
+
+        create.assert_not_called()
+        self.assertIs(coordinator.state, RunFlowState.MANUAL_CLEANUP_REQUIRED)
+        self.assertTrue(coordinator.has_unreleased_ports())
+        self.assertIsNone(coordinator._pending_run)
+
+    def test_freeze_failure_after_release_requires_reconnect(self):
+        coordinator = self._finalization_coordinator()
+        previous_run = _prepared_run()
+        port = _OkPort()
+        coordinator.prepared_run = previous_run
+        coordinator.instrument_ctrl = port
+        coordinator.save_configuration = MagicMock(return_value=True)
+
+        with patch(
+            "presentation.qt.application_coordinator.prepare_configuration",
+            side_effect=RuntimeError("运行目录写入失败"),
+        ):
+            self.assertFalse(coordinator.finalize_configuration())
+
+        self.assertEqual(port.close_calls, 1)
+        self.assertIs(coordinator.prepared_run, previous_run)
+        self.assertIsNone(coordinator._pending_run)
+        self.assertIs(coordinator.state, RunFlowState.RECONNECT_REQUIRED)
+
+    def test_unreleased_ports_block_a_new_finalization(self):
+        coordinator = self._finalization_coordinator()
+        coordinator.instrument_ctrl = _FailingPort()
+        coordinator.release_instrument_port()
+        self.assertTrue(coordinator.has_unreleased_ports())
+
+        with patch(
+            "presentation.qt.application_coordinator.prepare_configuration"
+        ) as create:
+            self.assertFalse(coordinator.finalize_configuration())
+
+        create.assert_not_called()
+        self.assertIs(coordinator.state, RunFlowState.MANUAL_CLEANUP_REQUIRED)
+
+    def test_commit_adopts_pending_run_and_port_atomically(self):
+        controller = MagicMock()
+        coordinator = self._finalization_coordinator(controller=controller)
+        coordinator.save_configuration = MagicMock(return_value=True)
+        prepared = _prepared_run()
+        with patch(
+            "presentation.qt.application_coordinator.prepare_configuration",
+            return_value=prepared,
+        ):
+            coordinator.prepare_pending_run()
+        port = _OkPort()
+
+        self.assertTrue(coordinator.commit_finalization(port))
+
+        self.assertIs(coordinator.prepared_run, prepared)
+        self.assertIsNone(coordinator._pending_run)
+        self.assertIs(coordinator.instrument_ctrl, port)
+        self.assertIs(coordinator.state, RunFlowState.CONNECTED)
+        controller.set_measurement_port.assert_called_once_with(port)
+
+    def test_commit_failure_compensates_pending_run_and_requires_reconnect(self):
+        controller = MagicMock()
+        controller.set_measurement_port.side_effect = RuntimeError("测量已启动")
+        coordinator = self._finalization_coordinator(controller=controller)
+        previous_run = _prepared_run()
+        coordinator.prepared_run = previous_run
+        coordinator.save_configuration = MagicMock(return_value=True)
+        with patch(
+            "presentation.qt.application_coordinator.prepare_configuration",
+            return_value=_prepared_run(),
+        ):
+            coordinator.prepare_pending_run()
+        port = _OkPort()
+
+        self.assertFalse(coordinator.commit_finalization(port))
+
+        self.assertIs(coordinator.prepared_run, previous_run)
+        self.assertIsNone(coordinator._pending_run)
+        self.assertIsNone(coordinator.instrument_ctrl)
+        self.assertIs(coordinator.state, RunFlowState.RECONNECT_REQUIRED)
+        self.assertEqual(port.close_calls, 1)
+
+    def test_compensation_failure_blocks_further_transactions(self):
+        coordinator = self._finalization_coordinator()
+        coordinator.prepared_run = _prepared_run()
+        coordinator.save_configuration = MagicMock(return_value=True)
+        with patch(
+            "presentation.qt.application_coordinator.prepare_configuration",
+            return_value=_prepared_run(),
+        ):
+            coordinator.prepare_pending_run()
+        pending = coordinator._pending_run
+        coordinator._discard_pending_run = MagicMock(
+            side_effect=RuntimeError("运行目录无法撤销")
+        )
+
+        coordinator.fail_finalization("仪器连接失败")
+
+        self.assertIs(coordinator.state, RunFlowState.MANUAL_CLEANUP_REQUIRED)
+        self.assertIs(coordinator._pending_run, pending)
+        with patch(
+            "presentation.qt.application_coordinator.prepare_configuration"
+        ) as create:
+            self.assertFalse(coordinator.finalize_configuration())
+        create.assert_not_called()
+
+    def test_worker_error_never_commits_the_pending_run(self):
+        coordinator = self._finalization_coordinator()
+        previous_run = _prepared_run()
+        coordinator.prepared_run = previous_run
+        coordinator.save_configuration = MagicMock(return_value=True)
+        with patch(
+            "presentation.qt.application_coordinator.prepare_configuration",
+            return_value=_prepared_run(),
+        ):
+            coordinator.prepare_pending_run()
+
+        coordinator.fail_finalization("电源型号不符")
+
+        self.assertIs(coordinator.prepared_run, previous_run)
+        self.assertIsNone(coordinator._pending_run)
+        self.assertIsNone(coordinator.instrument_ctrl)
+        self.assertIs(coordinator.state, RunFlowState.RECONNECT_REQUIRED)
+
+    def test_pending_run_is_invisible_to_measurement_pages(self):
+        coordinator = self._finalization_coordinator()
+        coordinator.config_page = _Page()
+        coordinator._pending_run = _prepared_run()
+        coordinator.instrument_ctrl = _OkPort()
+
+        self.assertIsNone(coordinator.resolve_measurement_run())
+        self.assertTrue(
+            any("尚未创建运行" in message for message in coordinator.errors)
+        )
+
+    def test_reconnect_reuses_the_committed_run_without_saving_or_freezing(self):
+        coordinator = self._finalization_coordinator()
+        previous_run = _prepared_run()
+        coordinator.prepared_run = previous_run
+        coordinator.save_configuration = MagicMock(return_value=True)
+        coordinator._set_state(RunFlowState.RECONNECT_REQUIRED)
+
+        with patch(
+            "presentation.qt.application_coordinator.prepare_configuration"
+        ) as create:
+            self.assertTrue(coordinator.finalize_configuration())
+
+        create.assert_not_called()
+        coordinator.save_configuration.assert_not_called()
+        self.assertIs(coordinator.instrument_worker.run, previous_run)
+        self.assertIs(coordinator.state, RunFlowState.FINALIZING)
+
+    def test_measurement_in_progress_blocks_finalization_before_any_action(self):
+        controller = MagicMock()
+        controller.state = SimpleNamespace(is_active=True)
+        coordinator = self._finalization_coordinator(controller=controller)
+        port = _OkPort()
+        coordinator.instrument_ctrl = port
+        coordinator.save_configuration = MagicMock(return_value=True)
+
+        with patch(
+            "presentation.qt.application_coordinator.prepare_configuration"
+        ) as create:
+            self.assertFalse(coordinator.finalize_configuration())
+
+        # 测量正在使用端口：不能保存、不能释放、不能冻结，也不能启动 worker。
+        create.assert_not_called()
+        coordinator.save_configuration.assert_not_called()
+        self.assertEqual(port.close_calls, 0)
+        self.assertIs(coordinator.instrument_ctrl, port)
+        self.assertIsNone(coordinator._pending_run)
+        self.assertIsNone(coordinator.instrument_worker)
+        self.assertTrue(
+            any("测量正在运行" in message for message in coordinator.messages)
+        )
+
+    def test_measurement_in_progress_blocks_reconnect(self):
+        controller = MagicMock()
+        controller.state = SimpleNamespace(is_active=True)
+        coordinator = self._finalization_coordinator(controller=controller)
+        previous_run = _prepared_run()
+        coordinator.prepared_run = previous_run
+        coordinator._set_state(RunFlowState.RECONNECT_REQUIRED)
+
+        self.assertFalse(coordinator.finalize_configuration())
+
+        self.assertIs(coordinator.prepared_run, previous_run)
+        self.assertIsNone(coordinator.instrument_worker)
+        self.assertIs(coordinator.state, RunFlowState.RECONNECT_REQUIRED)
+
+    def test_worker_cleanup_failure_blocks_the_next_transaction(self):
+        coordinator = self._finalization_coordinator()
+        coordinator.prepared_run = _prepared_run()
+        coordinator.save_configuration = MagicMock(return_value=True)
+        with patch(
+            "presentation.qt.application_coordinator.prepare_configuration",
+            return_value=_prepared_run(),
+        ):
+            coordinator.prepare_pending_run()
+        port = _FailingPort("RF 未确认关闭")
+        # 连接 worker 在停止/异常路径自行关闭端口失败时保留的引用。
+        coordinator.instrument_worker = SimpleNamespace(unreleased_port=port)
+
+        coordinator.fail_finalization("仪器连接失败")
+
+        self.assertTrue(coordinator.has_unreleased_ports())
+        self.assertEqual(coordinator.unreleased_port_count(), 1)
+        self.assertIsNone(coordinator.instrument_worker.unreleased_port)
+        self.assertIs(coordinator.state, RunFlowState.MANUAL_CLEANUP_REQUIRED)
+        with patch(
+            "presentation.qt.application_coordinator.prepare_configuration"
+        ) as create:
+            self.assertFalse(coordinator.finalize_configuration())
+        create.assert_not_called()
+
+
 class ConfigurationPagePortTests(unittest.TestCase):
+
     def test_bind_rejects_a_page_without_the_required_capabilities(self):
         coordinator = _coordinator()
 

@@ -490,7 +490,59 @@ class GuiWorkerTests(unittest.TestCase):
             worker.run()
         self.assertEqual(port.close_calls, [True])
         self.assertIsNone(worker.measurement_port)
+        self.assertIsNone(worker.unreleased_port)
         self.assertEqual(stopped, ["用户停止"])
+
+    def test_instrument_worker_keeps_port_when_stop_cleanup_is_unconfirmed(self):
+        class _Port:
+            def __init__(self):
+                self.close_calls = 0
+
+            def close_all(self, *, close_rf=False):
+                self.close_calls += 1
+                return [RuntimeError("RF 未确认关闭")]
+
+        port = _Port()
+        worker = InstrumentWorker(
+            self._contract_run(), sleep_fn=lambda _seconds: None
+        )
+        worker.stop()
+        stopped = []
+        messages = []
+        worker.signals.stopped.connect(stopped.append)
+        worker.signals.message.connect(messages.append)
+        with patch("app.gui_runtime.connect_instruments", return_value=port):
+            worker.run()
+
+        # 关闭未确认时不能丢引用：协调器必须能看到它并转入人工清理。
+        self.assertIs(worker.unreleased_port, port)
+        self.assertIsNone(worker.measurement_port)
+        self.assertEqual(stopped, ["用户停止"])
+        self.assertTrue(any("仪器关闭未确认" in message for message in messages))
+
+    def test_instrument_worker_keeps_port_when_failure_cleanup_is_unconfirmed(self):
+        class _Port:
+            def __init__(self):
+                self.close_calls = 0
+
+            def close_all(self, *, close_rf=False):
+                self.close_calls += 1
+                return [RuntimeError("电源仍在输出")]
+
+        port = _Port()
+        worker = InstrumentWorker(
+            self._contract_run(),
+            sleep_fn=lambda _seconds: (_ for _ in ()).throw(OSError("handoff failed")),
+        )
+        errors = []
+        worker.signals.error.connect(errors.append)
+        with patch("app.gui_runtime.connect_instruments", return_value=port):
+            worker.run()
+
+        self.assertIs(worker.unreleased_port, port)
+        self.assertIsNone(worker.measurement_port)
+        self.assertEqual(port.close_calls, 1)
+        self.assertTrue(errors)
 
 
 if __name__ == "__main__":

@@ -17,6 +17,23 @@ from .run_contract import require_prepared_run
 logger = get_logger(__name__)
 
 
+def _close_errors(result) -> list[BaseException]:
+    """把 ``close_all()`` 的返回值收敛成错误列表（``None`` 视为已关闭）。"""
+    if result is None:
+        return []
+    if isinstance(result, BaseException):
+        return [result]
+    try:
+        items = tuple(result)
+    except TypeError:
+        return [RuntimeError(f"端口关闭返回了无法判定的结果: {result!r}")]
+    return [
+        item if isinstance(item, BaseException) else RuntimeError(str(item))
+        for item in items
+        if item is not None
+    ]
+
+
 class WorkerSignals(QObject):
     finished = Signal()
     error = Signal(str)
@@ -153,6 +170,28 @@ class InstrumentWorker(BaseWorker):
         self.sleep_fn = sleep_fn or time.sleep
         self.measurement_port = measurement_port
         self.connect_factory = connect_factory
+        # 自行关闭但未确认关闭的端口：保留引用，由协调器收管为未决清理。
+        self.unreleased_port = None
+
+    def _close_own_port(self, controller) -> None:
+        """关闭尚未交接的端口；未确认关闭时保留引用并报告，绝不静默丢弃。"""
+        self.measurement_port = None
+        close = getattr(controller, "close_all", None)
+        if close is None:
+            return
+        errors: list[BaseException] = []
+        try:
+            result = close(close_rf=True)
+        except Exception as error:  # noqa: BLE001 - 关闭失败必须上报，不能覆盖原始错误
+            errors.append(error)
+        else:
+            errors.extend(_close_errors(result))
+        if not errors:
+            return
+        self.unreleased_port = controller
+        detail = "；".join(str(error) or type(error).__name__ for error in errors)
+        self.emit_message(f"仪器关闭未确认: {detail}")
+        logger.warning("仪器关闭未确认: %s", detail)
 
     def run(self) -> None:
         controller = None
@@ -166,10 +205,7 @@ class InstrumentWorker(BaseWorker):
             controller = connect_instruments(prepared)
             self.measurement_port = controller
             if self._stop_requested:
-                close = getattr(controller, "close_all", None)
-                if close is not None:
-                    close(close_rf=True)
-                self.measurement_port = None
+                self._close_own_port(controller)
                 self.signals.stopped.emit(self.stop_reason)
                 return
             self.signals.progress.emit(75)
@@ -181,15 +217,7 @@ class InstrumentWorker(BaseWorker):
             self.signals.finished.emit()
         except Exception as error:
             if controller is not None and not handed_off:
-                close = getattr(controller, "close_all", None)
-                if close is not None:
-                    try:
-                        close(close_rf=True)
-                    except Exception as close_error:  # noqa: BLE001
-                        # 连接失败时的补救关闭失败不能被吞掉：记录到日志并告知界面。
-                        logger.warning("连接失败后的仪器关闭也存在错误: %s", close_error)
-                        self.emit_message(f"仪器关闭失败: {close_error}")
-                self.measurement_port = None
+                self._close_own_port(controller)
             self._failed("仪器连接失败", error)
 
 

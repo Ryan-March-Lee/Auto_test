@@ -109,6 +109,8 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         self.config = config if isinstance(config, dict) else {}
         # 最终动作进行中：页面不接受重复提交，参数与回退入口都禁用，直到窗口把结果交回。
         self._finalizing = False
+        # 端口丢失时最终按钮改为“重新连接仪器”：不保存配置、不创建新运行。
+        self._reconnect_required = False
         # 进入最终动作前这些控件各自的可用状态；退出时按原样恢复，不能一律启用。
         self._finalizing_enabled: dict[QWidget, bool] = {}
         # 设备身份绑定：信号源/频谱仪各一条（角色键），电源按 ``supply_id`` 多条
@@ -528,6 +530,20 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         """
         state = self.view_model.set_run_status(text)
         self.run_status_label.setText(state.run_status)
+
+    def set_reconnect_required(self, required: bool) -> None:
+        """切换最终按钮的语义：已有运行但端口丢失时只重连，不重建运行。"""
+        self._reconnect_required = bool(required)
+        if self._reconnect_required:
+            self.finalize_run_btn.setText("重新连接仪器")
+            self.finalize_run_btn.setToolTip(
+                "不保存配置、不创建新运行，只使用当前运行的冻结快照重新连接仪器"
+            )
+            return
+        self.finalize_run_btn.setText("完成配置并连接仪器")
+        self.finalize_run_btn.setToolTip(
+            "校验并保存配置，创建本次运行，然后连接全部仪器；连接失败会留在本页"
+        )
 
     def validate(self):
         """校验当前表单；先同步整份控件读数，再汇总页面错误。

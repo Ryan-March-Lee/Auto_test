@@ -183,9 +183,11 @@ BROAD_CATCH_BASELINE = {
         "close_instrument_port#2",
         "ApplicationCoordinator.load_configuration#1",
         "ApplicationCoordinator.save_configuration#1",
-        "ApplicationCoordinator.create_prepared_run#1",
+        "ApplicationCoordinator._freeze_pending_run#1",
+        "ApplicationCoordinator._compensate_pending_run#1",
         "ApplicationCoordinator.load_prepared_run#1",
         "ApplicationCoordinator.apply_run_configuration#1",
+        "ApplicationCoordinator._start_connection_worker#1",
     ),
     "presentation/qt/run_history_page.py": (
         "RunHistoryPage.export#1",
@@ -208,8 +210,8 @@ BROAD_CATCH_BASELINE = {
         "VisualizationPage.generate_report#1",
     ),
     "presentation/qt/workers.py": (
+        "InstrumentWorker._close_own_port#1",
         "InstrumentWorker.run#1",
-        "InstrumentWorker.run#2",
         "CableLossWorker.run#1",
         "CableLossWorker.run#2",
         "DriverMappingWorker._run_measurement#1",

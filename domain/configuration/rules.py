@@ -257,6 +257,11 @@ def validate_power_channel_roles(config: Any) -> ConfigValidationResult:
     ``bias``）同样会被报告，不会因为“不是 ``None``”就蒙混过关。判据与保存/连接时的
     正式校验同源，但这里只回答“页面上这几个通道选好了没有”，因此错误文案面向操作员。
 
+    **角色是可选声明（步骤 3 起）**：通道角色已不再属于配置草稿，新写出的编辑文档
+    可以完全没有 ``role``。整台电源的通道都不声明 ``role`` 时，本函数跳过它，交给
+    后续的有序通道计划校验；只要还声明了 ``role``（旧配置或尚未迁移的页面读数），
+    就按上面的旧规则完整校验。步骤 5 会连同本函数一起删除。
+
     只读取 ``instruments.power_supplies`` 的通道声明，不引用设备绑定、不读控件；
     非对象结构按缺失处理，交给 :func:`validate_config` 报结构问题。
     """
@@ -268,6 +273,13 @@ def validate_power_channel_roles(config: Any) -> ConfigValidationResult:
     for name, supply in supplies.items():
         channels = supply.get("channels") if isinstance(supply, Mapping) else None
         if not isinstance(channels, Mapping):
+            continue
+        # 整台电源都不再声明 role：这是步骤 3 之后的新编辑文档，角色选项已移除，
+        # 不能再把“没有角色”当成字段缺失。
+        if not any(
+            isinstance(channel, Mapping) and "role" in channel
+            for channel in channels.values()
+        ):
             continue
         path = f"instruments.power_supplies.{name}.channels"
         roles = [

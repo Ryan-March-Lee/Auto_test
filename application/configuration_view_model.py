@@ -670,6 +670,8 @@ class ConfigurationViewModel:
 
         测试参数、电源参数、供电分配与设备绑定由草稿生成；草稿没有建模的顶层键（例如
         调用方保留的未知块或已保存的正式段）原样保留，避免视图模型在保存时静默丢字段。
+        草稿不再建模通道 ``role``，因此旧配置里已有的取值也不会被写回这份文档：角色
+        只属于旧配置的兼容读取，不能借“保留未建模字段”重新进入保存链路。
         """
         document = copy.deepcopy(self._document)
         document.update(self._draft.to_document())

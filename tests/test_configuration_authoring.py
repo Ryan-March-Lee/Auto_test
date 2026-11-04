@@ -685,6 +685,24 @@ class AuthoringDocumentValidationTests(unittest.TestCase):
             {issue.code for issue in result.errors},
         )
 
+    def test_role_free_channels_are_accepted_by_the_editing_check(self):
+        """步骤 3 起通道角色不再是草稿字段：编辑文档没有 role 时不再报角色缺失。"""
+
+        def clear_roles(flat):
+            channels = flat["instruments"]["power_supplies"]["DP8B1519"]["channels"]
+            for channel in channels.values():
+                channel.pop("role", None)
+
+        result = ConfigurationAuthoringService().validate_document(
+            ConfigurationEditingDocument.from_mapping(self._document_with(clear_roles))
+        )
+
+        self.assertTrue(result.valid, result.messages())
+        self.assertNotIn(
+            "configuration.power_channel_roles",
+            {issue.code for issue in result.errors},
+        )
+
     def test_unselected_assignment_reference_is_reported(self):
         def clear_reference(flat):
             flat["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"][

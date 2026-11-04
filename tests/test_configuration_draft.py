@@ -179,8 +179,8 @@ class ConfigurationDraftModelTests(unittest.TestCase):
                 PowerSupplyDraft(
                     supply_id="PSA",
                     channels=(
-                        PowerChannelDraft(channel="CH1", role="gate", voltage=2.8),
-                        PowerChannelDraft(channel="CH2", role="drain", voltage=28.0),
+                        PowerChannelDraft(channel="CH1", voltage=2.8),
+                        PowerChannelDraft(channel="CH2", voltage=28.0),
                     ),
                 ),
             ),
@@ -273,7 +273,7 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
             (SupplyChannel("PSA", "CH1"), SupplyChannel("PSA", "CH2")),
         )
         self.assertEqual(draft.driver_channels, (SupplyChannel("PSA", "CH1"),))
-        self.assertEqual(draft.power_supplies[0].channel("CH1").role, "gate")
+        self.assertEqual(draft.power_supplies[0].channel("CH1").voltage, 2.8)
         self.assertEqual(
             draft.bindings.power_supplies["PSA"].device_key,
             "rigol technologies:dp8b214901519",
@@ -310,10 +310,89 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
             ]["channel"],
             ["CH1"],
         )
+        # 旧文档的通道 ``role`` 不进入草稿，也不重新写出；数值字段原样保留。
+        channels = document["instruments"]["power_supplies"]["PSA"]["channels"]
+        self.assertEqual(
+            channels["CH1"],
+            {
+                "voltage": {
+                    "value": 2.8,
+                    "protection": 3.0,
+                    "protection_enabled": True,
+                },
+                "current": {
+                    "value": 0.1,
+                    "protection": 0.2,
+                    "protection_enabled": True,
+                },
+            },
+        )
+        self.assertEqual(channels["CH2"]["voltage"]["value"], 28.0)
         self.assertIn("device_bindings", document)
         # ``to_document`` 只输出编辑段；正式段与 schema 版本由配置编写服务补。
         for formal in ("test_plan", "run_mapping", "schema_version", "wiring"):
             self.assertNotIn(formal, document)
+
+    def test_legacy_channel_role_is_ignored_without_touching_settings(self):
+        """旧通道 ``role`` 读入即忽略，写出不再出现；工作值/保护值原样保留。"""
+        document = {
+            "instruments": {
+                "power_supplies": {
+                    "PSA": {
+                        "channels": {
+                            "CH1": {
+                                "role": "gate",
+                                "voltage": {
+                                    "value": 2.8,
+                                    "protection": 3.0,
+                                    "protection_enabled": True,
+                                },
+                                "current": {
+                                    "value": 0.1,
+                                    "protection": 0.2,
+                                    "protection_enabled": False,
+                                },
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        result = ConfigurationDraft.from_document(document)
+
+        self.assertTrue(result.valid, result.messages())
+        channel = result.draft.power_supplies[0].channel("CH1")
+        self.assertFalse(hasattr(channel, "role"))
+        self.assertEqual(
+            channel,
+            PowerChannelDraft(
+                channel="CH1",
+                voltage=2.8,
+                voltage_protection=3.0,
+                voltage_protection_enabled=True,
+                current=0.1,
+                current_protection=0.2,
+                current_protection_enabled=False,
+            ),
+        )
+        written = result.draft.to_document()["instruments"]["power_supplies"]["PSA"]
+        self.assertNotIn("role", written["channels"]["CH1"])
+        self.assertEqual(
+            written["channels"]["CH1"],
+            {
+                "voltage": {
+                    "value": 2.8,
+                    "protection": 3.0,
+                    "protection_enabled": True,
+                },
+                "current": {
+                    "value": 0.1,
+                    "protection": 0.2,
+                    "protection_enabled": False,
+                },
+            },
+        )
 
     def test_missing_sections_stay_explicitly_empty_without_issues(self):
         result = ConfigurationDraft.from_document({})
@@ -385,8 +464,11 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
         self.assertIsNone(result.draft.driver_enabled)
         self.assertIsNone(result.draft.driver_power_source)
         self.assertEqual(result.draft.dut_channels, ())
-        self.assertEqual(
-            result.draft.power_supplies[0].channel("CH1").role, None
+        channel = result.draft.power_supplies[0].channel("CH1")
+        self.assertIsNone(channel.voltage)
+        # 旧字段 ``role``（这里还是非法类型）按契约忽略，不产生类型问题。
+        self.assertFalse(
+            any(issue.path.endswith(".role") for issue in result.issues)
         )
 
     def test_missing_booleans_stay_unset_instead_of_false(self):
@@ -560,7 +642,7 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
             power_supplies=(
                 PowerSupplyDraft(
                     supply_id="PSA",
-                    channels=(PowerChannelDraft(channel="CH1", role="gate"),),
+                    channels=(PowerChannelDraft(channel="CH1"),),
                 ),
             )
         )

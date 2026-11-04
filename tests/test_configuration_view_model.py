@@ -494,6 +494,42 @@ class ConfigurationViewModelValidationTests(unittest.TestCase):
         self.assertTrue(action.ok, action.validation.messages())
         self.assertEqual(action.to_document()["custom_block"], {"keep": True})
 
+    def test_actions_do_not_write_back_legacy_channel_roles(self):
+        """旧配置的通道 ``role`` 不进入保存文档，也不影响校验。"""
+        document = _config()
+        document["instruments"]["power_supplies"]["DP8B1519"]["channels"]["CH1"][
+            "role"
+        ] = "bias"
+        view = _loaded(document)
+
+        action = view.save()
+
+        self.assertTrue(action.ok, action.validation.messages())
+        channels = action.to_document()["instruments"]["power_supplies"]["DP8B1519"][
+            "channels"
+        ]
+        self.assertNotIn("role", channels["CH1"])
+        self.assertNotIn("role", channels["CH2"])
+        self.assertEqual(channels["CH1"]["voltage"]["value"], 2.8)
+        self.assertEqual(channels["CH2"]["current"]["value"], 2.0)
+
+    def test_form_readings_cannot_restore_a_removed_channel_role(self):
+        """页面读数里的 role 只属于读取兼容，不能在保存时被重新写回。"""
+        view = _loaded()
+        document = _config()
+        document["instruments"]["power_supplies"]["DP8B1519"]["channels"]["CH2"][
+            "role"
+        ] = "gate"
+
+        view.update_form(document)
+        action = view.save()
+
+        self.assertTrue(action.ok, action.validation.messages())
+        channel = action.to_document()["instruments"]["power_supplies"]["DP8B1519"][
+            "channels"
+        ]["CH2"]
+        self.assertEqual(set(channel), {"voltage", "current"})
+
     def test_action_rejects_unknown_kinds(self):
         with self.assertRaises(ValueError):
             ConfigurationAction(kind="print")

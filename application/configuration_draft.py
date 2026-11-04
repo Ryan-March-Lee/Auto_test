@@ -314,13 +314,14 @@ class DeviceBindingsDraft:
 class PowerChannelDraft:
     """一台电源的单个通道参数。
 
-    供电角色（``gate`` / ``drain``）是接线事实，缺失时保持 ``None``，不按通道名推断。
-    电压/电流的工作值与保护值缺失时保持 ``None``，不填入显示初值。保护开关同样区分
-    “未填写”（``None``）与“明确关闭”（``False``），不在读取时补默认值。
+    通道身份只有通道名；供电角色（``gate`` / ``drain``）不再属于草稿，旧文档里的
+    ``role`` 在读入时忽略、写出时不输出。漏极是独立的路由引用，后续加入上电计划
+    模型，不在这里按通道名推断。电压/电流的工作值与保护值缺失时保持 ``None``，
+    不填入显示初值。保护开关同样区分“未填写”（``None``）与“明确关闭”（``False``），
+    不在读取时补默认值。
     """
 
     channel: str
-    role: str | None = None
     voltage: float | None = None
     voltage_protection: float | None = None
     voltage_protection_enabled: bool | None = None
@@ -330,7 +331,6 @@ class PowerChannelDraft:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "channel", _text(self.channel, "通道名"))
-        object.__setattr__(self, "role", _optional_text(self.role, "供电角色"))
         for name in (
             "voltage",
             "voltage_protection",
@@ -938,9 +938,8 @@ def _read_channels(
             )
             continue
         channel = _mapping(entry, channel_path, issues)
-        role = _optional_text_field(
-            channel.get("role"), f"{channel_path}.role", issues
-        )
+        # 旧文档可能带 ``role``：它已不参与通道身份、映射或上电，读取时直接忽略，
+        # 不报问题、也不保留到草稿里；写出时由 ``_channel_document`` 不再输出。
         voltage_value, voltage_protection, voltage_enabled = _read_channel_setting(
             channel.get("voltage"), f"{channel_path}.voltage", issues
         )
@@ -950,7 +949,6 @@ def _read_channels(
         channels.append(
             PowerChannelDraft(
                 channel=name,
-                role=role,
                 voltage=voltage_value,
                 voltage_protection=voltage_protection,
                 voltage_protection_enabled=voltage_enabled,
@@ -1236,7 +1234,6 @@ def _instrument_entry(binding: DeviceBindingDraft | None) -> dict[str, Any]:
 
 def _channel_document(channel: PowerChannelDraft) -> dict[str, Any]:
     return {
-        "role": channel.role,
         "voltage": {
             "value": channel.voltage,
             "protection": channel.voltage_protection,

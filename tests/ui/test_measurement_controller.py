@@ -286,6 +286,67 @@ class MeasurementControllerTests(unittest.TestCase):
         self.assertIs(self.controller.current_worker, worker)
         self.assertEqual(self.controller.state.status, MeasurementStatus.STOPPING)
 
+    def test_stage_begin_runs_before_worker_construction(self):
+        class _ReusablePort:
+            def __init__(self):
+                self.begin_calls = 0
+
+            def begin_stage(self):
+                self.begin_calls += 1
+
+        port = _ReusablePort()
+        controller = MeasurementController(
+            self.factories, lambda: "runtime-config.json", measurement_port=port
+        )
+
+        self.assertTrue(
+            controller.start_amplifier(
+                MeasurementCommand("config.json", _PREPARED_RUN)
+            )
+        )
+
+        self.assertEqual(port.begin_calls, 1)
+        self.assertEqual(len(self.factory_calls), 1)
+        self.assertEqual(self.workers[-1].start_calls, 1)
+
+    def test_stage_begin_failure_does_not_start_worker(self):
+        class _NotReusablePort:
+            def begin_stage(self):
+                raise RuntimeError("RF 输出尚未关闭")
+
+        controller = MeasurementController(
+            self.factories, lambda: "runtime-config.json",
+            measurement_port=_NotReusablePort(),
+        )
+        errors = []
+        controller.signals.error.connect(errors.append)
+        reasons = []
+        controller.signals.stage_start_failed.connect(reasons.append)
+
+        self.assertFalse(
+            controller.start_amplifier(
+                MeasurementCommand("config.json", _PREPARED_RUN)
+            )
+        )
+
+        self.assertEqual(controller.state.status, MeasurementStatus.FAILED)
+        self.assertEqual(errors, ["RF 输出尚未关闭"])
+        self.assertEqual(self.factory_calls, [])
+        self.assertIsNone(controller.current_worker)
+        self.assertEqual(reasons, ["RF 输出尚未关闭"])
+
+    def test_successful_start_does_not_report_a_stage_start_failure(self):
+        reasons = []
+        self.controller.signals.stage_start_failed.connect(reasons.append)
+
+        self.assertTrue(
+            self.controller.start_amplifier(
+                MeasurementCommand("config.json", _PREPARED_RUN)
+            )
+        )
+
+        self.assertEqual(reasons, [])
+
     def test_factory_failure_does_not_start_worker(self):
         def broken_factory(command, *, measurement_port=None):
             raise RuntimeError("构造失败")
@@ -294,9 +355,12 @@ class MeasurementControllerTests(unittest.TestCase):
             {MeasurementKind.AMPLIFIER: broken_factory}, lambda: "config.json"
         )
         controller.signals.error.connect(self.errors.append)
+        reasons = []
+        controller.signals.stage_start_failed.connect(reasons.append)
         self.assertFalse(controller.start_amplifier(MeasurementCommand("config.json", _PREPARED_RUN)))
         self.assertEqual(controller.state.status, MeasurementStatus.FAILED)
         self.assertEqual(self.errors, ["构造失败"])
+        self.assertEqual(reasons, ["构造失败"])
         self.assertIsNone(controller.current_worker)
 
     def test_start_failure_cleans_worker_and_allows_restart(self):

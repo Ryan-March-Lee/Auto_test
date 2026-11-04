@@ -147,6 +147,7 @@ BROAD_CATCH_BASELINE = {
     ),
     # 边界翻译（VISA/SCPI 第三方异常、装配失败后的资源释放、仿真替身）
     "instrument/measurement_adapter.py": (
+        "PortMeasurementAdapter.end_stage#1",
         "PortMeasurementAdapter.emergency_power_off_all#1",
         "PortMeasurementAdapter.close_all#1",
         "PortMeasurementAdapter.close_all#2",
@@ -181,6 +182,7 @@ BROAD_CATCH_BASELINE = {
     "presentation/qt/application_coordinator.py": (
         "close_instrument_port#1",
         "close_instrument_port#2",
+        "settle_instrument_stage#1",
         "ApplicationCoordinator.load_configuration#1",
         "ApplicationCoordinator.save_configuration#1",
         "ApplicationCoordinator._freeze_pending_run#1",

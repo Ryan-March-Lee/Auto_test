@@ -1,8 +1,9 @@
 import unittest
 
 from instrument.power_control import PowerController, PowerControlError
+from instrument.ports import InstrumentState
+from instrument.session import InstrumentSessionError, ManagedInstrumentSession
 from instrument.simulation import CommandRecorder, SimulatedPowerSupply, SimulatedSignalGenerator, SimulatedSpectrumAnalyzer
-from instrument.session import ManagedInstrumentSession
 from infrastructure.logging import app_logging
 
 # 模块 logger 挂在专用 ``pa_auto_test`` 下：assertLogs 必须点名同一个 logger。
@@ -119,6 +120,209 @@ class InstrumentBoundaryTests(unittest.TestCase):
         self.assertFalse(analyzer.connected)
         self.assertFalse(supply.connected)
         self.assertEqual(session.state.value, "cleaned")
+
+    def test_end_stage_settles_the_session_and_allows_reuse(self):
+        """成功阶段结束回到 PREPARED：同一会话可直接开始下一阶段。"""
+        recorder = CommandRecorder()
+        signal = SimulatedSignalGenerator(recorder)
+        supply = SimulatedPowerSupply(recorder)
+        session = ManagedInstrumentSession(
+            signal,
+            SimulatedSpectrumAnalyzer(recorder=recorder),
+            supply,
+            {"gate": "CH1", "drain": "CH2"},
+        )
+        session.validate()
+        session.connect()
+        session.prepare()
+        session.power_on()
+        session.start_measurement()
+        signal.set_rf_enabled(True)
+
+        session.end_stage()
+
+        self.assertEqual(session.state, InstrumentState.PREPARED)
+        self.assertFalse(signal.rf_enabled)
+        self.assertEqual(supply.outputs, {"CH1": False, "CH2": False})
+
+        # 下一阶段复用同一会话：不重新 connect，前置条件仍然成立。
+        session.require_stage_ready()
+        session.power_on()
+        session.start_measurement()
+        self.assertEqual(session.state, InstrumentState.MEASURING)
+        power_actions = [
+            action
+            for device, action, _value in recorder.commands
+            if device == "power_supply" and action in {"output_on", "output_off"}
+        ]
+        self.assertEqual(
+            power_actions,
+            [
+                "output_on",
+                "output_on",
+                "output_off",
+                "output_off",
+                "output_on",
+                "output_on",
+            ],
+        )
+
+    def test_prepared_stage_can_enable_rf_without_power_on(self):
+        """线损阶段不上电也要能开 RF；结算后仍回到可复用的 PREPARED。"""
+        recorder = CommandRecorder()
+        signal = SimulatedSignalGenerator(recorder)
+        session = ManagedInstrumentSession(
+            signal,
+            SimulatedSpectrumAnalyzer(recorder=recorder),
+            SimulatedPowerSupply(recorder),
+            {"gate": "CH1", "drain": "CH2"},
+        )
+        session.validate()
+        session.connect()
+        session.prepare()
+
+        session.require_stage_ready()
+        session.set_rf_enabled(True)
+        self.assertTrue(signal.rf_enabled)
+
+        session.end_stage()
+
+        self.assertEqual(session.state, InstrumentState.PREPARED)
+        self.assertFalse(signal.rf_enabled)
+
+    def test_end_stage_failure_blocks_reuse(self):
+        """安全清理失败时不得进入 PREPARED；只有关闭端口仍被允许。"""
+        recorder = CommandRecorder()
+        signal = SimulatedSignalGenerator(recorder)
+        supply = SimulatedPowerSupply(recorder)
+        session = ManagedInstrumentSession(
+            signal,
+            SimulatedSpectrumAnalyzer(recorder=recorder),
+            supply,
+            {"gate": "CH1", "drain": "CH2"},
+        )
+        session.validate()
+        session.connect()
+        session.prepare()
+        session.power_on()
+        supply.inject_failure("output_off", once=True)
+
+        with self.assertRaises(InstrumentSessionError) as raised:
+            session.end_stage()
+
+        self.assertEqual(raised.exception.actions, ("power_supplies",))
+        self.assertEqual(session.state, InstrumentState.STOPPING)
+        with self.assertRaises(ValueError):
+            session.require_stage_ready()
+        with self.assertRaises(ValueError):
+            session.power_on()
+        with self.assertRaises(ValueError):
+            session.start_measurement()
+
+        # 唯一允许的收尾动作仍然是关闭端口。
+        session.close()
+        self.assertEqual(session.state, InstrumentState.CLEANED)
+
+    def test_end_stage_fails_when_rf_cannot_be_disabled(self):
+        """不能发出 RF 关闭命令就无法确认关闭：结算必须失败而不是当成已安全。"""
+        recorder = CommandRecorder()
+        signal = SimulatedSignalGenerator(recorder)
+        session = ManagedInstrumentSession(
+            signal,
+            SimulatedSpectrumAnalyzer(recorder=recorder),
+            SimulatedPowerSupply(recorder),
+            {"gate": "CH1", "drain": "CH2"},
+            can_disable_rf=False,
+        )
+        session.validate()
+        session.connect()
+        session.prepare()
+        session.power_on()
+        signal.rf_enabled = True
+
+        with self.assertRaises(InstrumentSessionError) as raised:
+            session.end_stage()
+
+        self.assertEqual(raised.exception.actions, ("rf_output",))
+        self.assertEqual(session.state, InstrumentState.STOPPING)
+        with self.assertRaises(ValueError):
+            session.require_stage_ready()
+        # 收尾仍然只允许关闭；关闭时不能确认 RF 的责任留给调用方处理。
+        session.close()
+
+    def test_end_stage_fails_when_power_cannot_be_disabled(self):
+        """会话管理着已连接电源却不能关闭时，同样不能进入可复用的 PREPARED。"""
+        recorder = CommandRecorder()
+        signal = SimulatedSignalGenerator(recorder)
+        supply = SimulatedPowerSupply(recorder)
+        session = ManagedInstrumentSession(
+            signal,
+            SimulatedSpectrumAnalyzer(recorder=recorder),
+            supply,
+            {"gate": "CH1", "drain": "CH2"},
+            can_disable_power=False,
+        )
+        session.validate()
+        session.connect()
+        session.prepare()
+        session.power_on()
+        session.start_measurement()
+        session.set_rf_enabled(True)
+
+        with self.assertRaises(InstrumentSessionError) as raised:
+            session.end_stage()
+
+        self.assertEqual(raised.exception.actions, ("power_supplies",))
+        self.assertEqual(session.state, InstrumentState.STOPPING)
+        # RF 关闭动作仍然执行过，失败只来自无法确认的电源输出。
+        self.assertFalse(signal.rf_enabled)
+        self.assertIn(("power_supply", "output_on", "CH1"), recorder.commands)
+        self.assertNotIn(("power_supply", "output_off", "CH1"), recorder.commands)
+
+    def test_end_stage_does_not_require_power_confirmation_without_managed_outputs(self):
+        """没有受管电源输出时不存在“应关闭而无法确认”的项，结算可以成功。"""
+        recorder = CommandRecorder()
+        session = ManagedInstrumentSession(
+            SimulatedSignalGenerator(recorder),
+            SimulatedSpectrumAnalyzer(recorder=recorder),
+            SimulatedPowerSupply(recorder),
+            {},
+            can_disable_power=False,
+        )
+        session.validate()
+        session.connect()
+        session.prepare()
+
+        session.end_stage()
+
+        self.assertEqual(session.state, InstrumentState.PREPARED)
+        session.close()
+
+    def test_require_stage_ready_rejects_open_rf_and_closed_session(self):
+        recorder = CommandRecorder()
+        signal = SimulatedSignalGenerator(recorder)
+        session = ManagedInstrumentSession(
+            signal,
+            SimulatedSpectrumAnalyzer(recorder=recorder),
+            SimulatedPowerSupply(recorder),
+            {"gate": "CH1", "drain": "CH2"},
+        )
+        session.validate()
+        session.connect()
+        session.prepare()
+        signal.rf_enabled = True
+
+        with self.assertRaises(ValueError):
+            session.require_stage_ready()
+
+        signal.rf_enabled = False
+        session.require_stage_ready()
+        session.close()
+
+        with self.assertRaises(ValueError):
+            session.end_stage()
+        with self.assertRaises(ValueError):
+            session.require_stage_ready()
 
 
 if __name__ == "__main__":

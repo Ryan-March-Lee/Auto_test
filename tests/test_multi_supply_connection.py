@@ -386,6 +386,40 @@ class MultiSupplyConnectionTests(unittest.TestCase):
             self.assertIn(("write", ":OUTPut CH2,OFF"), resource.commands)
             self.assertTrue(resource.closed)
 
+    def test_two_stages_reuse_the_same_visa_resources(self):
+        """成功阶段结算后端口保留：连续两个阶段不再打开任何 VISA 资源。"""
+        manager = _FakeResourceManager()
+        with _ConfigFile(_two_supply_config()) as path, _PatchedManager(manager):
+            port = create_measurement_port(path, mode="hardware")
+            opened = list(manager.opened_addresses)
+
+            for _stage in range(2):
+                port.begin_stage()
+                port.setup_driver_amplifier_power()
+                port.setup_dut_power()
+                port.power_on_driver()
+                port.power_on_sequence()
+                port.start_measurement()
+                port.set_frequency(2.3)
+                port.set_span(10)
+                port.rf_output_on()
+                port.measure_power_with_average()
+                port.rf_output_off()
+                port.power_off_driver()
+                port.power_off_sequence()
+                port.end_stage()
+
+            self.assertEqual(manager.opened_addresses, opened)
+            self.assertFalse(
+                any(resource.closed for resource in manager.resources),
+                "阶段之间不得关闭 VISA 连接",
+            )
+
+            self.assertEqual(port.close_all(close_rf=True), [])
+
+        self.assertTrue(all(resource.closed for resource in manager.resources))
+        self.assertTrue(manager.closed)
+
     def test_initial_output_check_covers_every_configured_channel(self):
         """安全前提：整台电源的输出都必须已关闭，未分配的通道也不例外。"""
         manager = _FakeResourceManager()

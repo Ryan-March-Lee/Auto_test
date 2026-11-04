@@ -157,6 +157,7 @@ class MeasurementControllerSignals(Protocol):
     rejected: ControllerSignal  # (reason: str)
     state_changed: ControllerSignal  # (state: ControllerState)
     thread_finished: ControllerSignal  # ()；worker 线程真正结束并清理后
+    stage_start_failed: ControllerSignal  # (reason: str)；阶段在 worker 创建前失败，端口必须按异常阶段关闭
 
 
 @runtime_checkable

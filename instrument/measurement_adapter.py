@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Iterable, Mapping, Sequence
 
+from application.errors import FailureRecord
 from infrastructure.logging.app_logging import get_logger
+
+from .safety import InstrumentSafetyError
 
 logger = get_logger(__name__)
 
@@ -119,6 +122,46 @@ class PortMeasurementAdapter:
     def start_measurement(self) -> None:
         """Enter the measurement state without enabling DUT power outputs."""
         self.session.start_measurement()
+
+    def begin_stage(self) -> None:
+        """下一阶段开始前确认同一端口可以复用。
+
+        复用条件由会话自己裁定（已结算到 ``PREPARED`` 且 RF 关闭）；适配器只负责
+        把失败翻译成阶段启动失败，不在这里重新打开资源。
+        """
+        if self._session_cleaned:
+            raise RuntimeError("instrument session has already been cleaned")
+        self.session.require_stage_ready()
+
+    def end_stage(self, *, timeout_s: float = 30.0) -> None:
+        """成功阶段结束后结算会话；失败时调用方必须关闭端口。
+
+        会话按角色只保存一组 ``gate``/``drain``，而适配器可能另外管理驱动放大器
+        电源组。结算前先把会话通道表覆盖不到、但由本适配器上电的通道全部关闭，
+        否则“阶段已安全”只覆盖了会话认识的那一组输出。任一组关闭失败都不结算
+        会话，让协调器按异常阶段关闭端口。
+        """
+        if self._session_cleaned:
+            raise RuntimeError("instrument session has already been cleaned")
+        covered = set(self.session.power_channels.values())
+        failures = []
+        for group in ("driver", "dut"):
+            channels = self._active_power_groups.get(group)
+            if not channels or set(channels.values()) <= covered:
+                # 会话自己的通道表覆盖该组；由 session.end_stage 关闭并确认。
+                continue
+            try:
+                self.session.power_off(
+                    roles=tuple(channels),
+                    power_channels=channels,
+                    timeout_s=timeout_s,
+                )
+            except Exception as error:  # 清理聚合：一组失败不阻止尝试其余组
+                failures.append(FailureRecord("power_supplies", error))
+        if failures:
+            raise InstrumentSafetyError("阶段结束前的电源关闭失败", failures)
+        self.session.end_stage(timeout_s=timeout_s)
+        self._active_power_groups.clear()
 
     def emergency_power_off_all(self, *, timeout_s: float = 5.0) -> list[BaseException]:
         """Switch off the explicitly configured channels before closing.

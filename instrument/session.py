@@ -143,9 +143,93 @@ class ManagedInstrumentSession:
             raise ValueError(f"cannot measure from {self.state.value}")
         self.state = InstrumentState.MEASURING
 
+    def require_stage_ready(self) -> None:
+        """校验下一阶段开始前的复用前置条件。
+
+        只有上一阶段已经结算（``PREPARED``）且 RF 已关闭时才允许继续复用同一
+        端口；失败时抛 ``ValueError``，由调用方保留本阶段错误而不是重新打开资源。
+        """
+        if self.state is not InstrumentState.PREPARED:
+            raise ValueError(
+                f"仪器会话不在可复用阶段（当前 {self.state.value}）；"
+                "请先结束上一阶段或重新连接仪器"
+            )
+        if self.signal_generator.rf_enabled:
+            raise ValueError("RF 输出尚未关闭，禁止开始下一阶段")
+
+    def _stage_rf_shutdown(self, timeout_s: float):
+        """返回阶段结算用的 RF 关闭动作。
+
+        ``can_disable_rf=False`` 表示会话不能发出 RF 关闭命令；此时无法确认 RF 已
+        关闭，结算必须失败。把“没有动作”当成清理成功会让未确认安全的端口进入可
+        复用状态。
+        """
+        if not self.can_disable_rf:
+            def _cannot_confirm() -> None:
+                raise RuntimeError("会话不具备关闭 RF 的能力，无法确认 RF 已关闭")
+
+            return _cannot_confirm
+        return lambda: self.set_rf_enabled(False, timeout_s=timeout_s)
+
+    def _stage_power_shutdown(self, timeout_s: float):
+        """返回阶段结算用的电源关闭动作。
+
+        ``can_disable_power=False`` 且会话确实管理着已连接的电源输出时同样无法确认
+        关闭；只有“没有受管输出”才不需要这个动作。
+        """
+        if not self.can_disable_power:
+            if not self.power_channels:
+                # 没有受管通道就没有需要确认的输出。
+                return None
+
+            def _cannot_confirm() -> None:
+                raise RuntimeError("会话不具备关闭电源输出的能力，无法确认输出已关闭")
+
+            return _cannot_confirm
+        return lambda: self.power_off(timeout_s=timeout_s)
+
+    def end_stage(self, *, timeout_s: float = 30.0) -> None:
+        """结束一个测量阶段并把会话带回 ``PREPARED``。
+
+        成功阶段结束后端口保留给下一阶段复用：只有 RF 和已连接电源的输出都确认
+        关闭时才进入 ``PREPARED``。任一动作失败（包括会话本身没有关闭能力、无法
+        确认输出已关闭）都把会话留在 ``STOPPING``（不可复用），并以
+        :class:`InstrumentSessionError` 聚合上报；调用方必须关闭端口并标记需重新
+        连接，不能靠放宽状态前置条件继续下一阶段。
+
+        确认口径是“关闭命令成功返回”，不额外回读 ``OUTP?``/RF 状态：生产测量服务
+        在阶段结束时已经执行过同样的安全清理，这里复核的是同一组动作没有失败。
+        """
+        if self.state not in (
+            InstrumentState.PREPARED,
+            InstrumentState.POWERED,
+            InstrumentState.MEASURING,
+        ):
+            raise ValueError(f"cannot end stage from {self.state.value}")
+        try:
+            shutdown_instruments(
+                rf_off=self._stage_rf_shutdown(timeout_s),
+                power_off=self._stage_power_shutdown(timeout_s),
+            )
+        except InstrumentSafetyError as error:
+            # 未确认关闭的会话不能复用：STOPPING 会让 power_on /
+            # start_measurement / end_stage 的前置条件显式失败，关闭端口是唯一
+            # 允许的收尾动作。
+            self.state = InstrumentState.STOPPING
+            raise InstrumentSessionError(
+                "instrument stage cleanup failed", error.failures
+            ) from cause_of(error.failures)
+        self.state = InstrumentState.PREPARED
+
     def set_rf_enabled(self, enabled: bool, *, timeout_s: float = 5.0) -> None:
-        if enabled and self.state not in (InstrumentState.POWERED, InstrumentState.MEASURING):
-            raise ValueError("RF may only be enabled after preparation and power-on")
+        # RF 只要求已完成准备：线损阶段不打开 DUT 供电，但仍要启用 RF 测量通路。
+        # 电源输出关闭由阶段开始（require_stage_ready）和结算（end_stage）分别保证。
+        if enabled and self.state not in (
+            InstrumentState.PREPARED,
+            InstrumentState.POWERED,
+            InstrumentState.MEASURING,
+        ):
+            raise ValueError("RF may only be enabled after preparation")
         self.signal_generator.set_rf_enabled(enabled, timeout_s=timeout_s)
 
     def stop(self, *, emergency=False, timeout_s: float = 30.0) -> None:

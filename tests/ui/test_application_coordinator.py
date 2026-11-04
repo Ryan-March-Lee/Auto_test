@@ -26,6 +26,7 @@ from presentation.qt.application_coordinator import (
     close_instrument_port,
     describe_cleanup_errors,
 )
+from presentation.qt.measurement_state import MeasurementKind, MeasurementStatus
 
 RUN_ID = "20261027T101500Z_c0ffee01"
 
@@ -68,6 +69,25 @@ class _FlakyPort:
     def close_all(self, *, close_rf=False):
         self.attempts += 1
         return [RuntimeError("电源仍在输出")] if self.attempts == 1 else []
+
+
+class _SettlingPort:
+    """带阶段结算入口的端口替身：成功时可复用，失败时仍能完整关闭。"""
+
+    def __init__(self, *, settle_error=None, close_errors=()):
+        self.end_stage_calls = 0
+        self.close_calls = 0
+        self._settle_error = settle_error
+        self._close_errors = list(close_errors)
+
+    def end_stage(self, *, timeout_s=30.0):
+        self.end_stage_calls += 1
+        if self._settle_error is not None:
+            raise self._settle_error
+
+    def close_all(self, *, close_rf=False):
+        self.close_calls += 1
+        return list(self._close_errors)
 
 
 class _Page:
@@ -961,6 +981,178 @@ class ArchivalLocationTests(unittest.TestCase):
         self.assertIsNone(coordinator.current_run_id())
         self.assertEqual(coordinator.errors, [])
         self.assertEqual(coordinator.messages, [])
+
+
+class StageReuseTests(unittest.TestCase):
+    """阶段四：成功阶段保留端口复用，异常/结算失败必须关闭并标记需重连。"""
+
+    def _coordinator_for(self, status, port):
+        controller = MagicMock()
+        controller.state.kind = MeasurementKind.AMPLIFIER
+        controller.state.status = status
+        coordinator = _coordinator(controller=controller)
+        coordinator.instrument_ctrl = port
+        coordinator.prepared_run = SimpleNamespace(run_id=RUN_ID)
+        coordinator._set_state(RunFlowState.CONNECTED)
+        return coordinator
+
+    def test_completed_stage_keeps_the_port_for_reuse(self):
+        port = _SettlingPort()
+        coordinator = self._coordinator_for(MeasurementStatus.COMPLETED, port)
+
+        self.assertTrue(coordinator.release_port_after_measurement())
+
+        self.assertIs(coordinator.instrument_ctrl, port)
+        self.assertEqual(port.end_stage_calls, 1)
+        self.assertEqual(port.close_calls, 0)
+        self.assertIs(coordinator.state, RunFlowState.CONNECTED)
+        self.assertFalse(coordinator.has_unreleased_ports())
+
+    def test_completed_stage_without_a_settle_entry_is_closed(self):
+        port = _OkPort()
+        coordinator = self._coordinator_for(MeasurementStatus.COMPLETED, port)
+
+        self.assertTrue(coordinator.release_port_after_measurement())
+
+        self.assertIsNone(coordinator.instrument_ctrl)
+        self.assertEqual(port.close_calls, 1)
+        self.assertIs(coordinator.state, RunFlowState.RECONNECT_REQUIRED)
+        self.assertTrue(
+            any("没有阶段结算入口" in message for message in coordinator.messages)
+        )
+
+    def test_settle_failure_closes_the_port_and_requires_reconnect(self):
+        port = _SettlingPort(settle_error=RuntimeError("RF 未确认关闭"))
+        coordinator = self._coordinator_for(MeasurementStatus.COMPLETED, port)
+
+        self.assertTrue(coordinator.release_port_after_measurement())
+
+        self.assertEqual(port.end_stage_calls, 1)
+        self.assertEqual(port.close_calls, 1)
+        self.assertIsNone(coordinator.instrument_ctrl)
+        self.assertIs(coordinator.state, RunFlowState.RECONNECT_REQUIRED)
+        self.assertTrue(
+            any("阶段结束安全清理失败" in message for message in coordinator.messages)
+        )
+
+    def test_settle_and_close_failure_requires_manual_cleanup(self):
+        port = _SettlingPort(
+            settle_error=RuntimeError("RF 未确认关闭"),
+            close_errors=[RuntimeError("电源仍在输出")],
+        )
+        coordinator = self._coordinator_for(MeasurementStatus.COMPLETED, port)
+
+        self.assertFalse(coordinator.release_port_after_measurement())
+
+        self.assertIsNone(coordinator.instrument_ctrl)
+        self.assertTrue(coordinator.has_unreleased_ports())
+        self.assertIs(coordinator.state, RunFlowState.MANUAL_CLEANUP_REQUIRED)
+
+    def test_cancelled_failed_or_emergency_stopped_stage_closes_the_port(self):
+        for status in (
+            MeasurementStatus.FAILED,
+            MeasurementStatus.CANCELLED,
+            MeasurementStatus.EMERGENCY_STOPPED,
+        ):
+            with self.subTest(status=status):
+                port = _SettlingPort()
+                coordinator = self._coordinator_for(status, port)
+
+                self.assertTrue(coordinator.release_port_after_measurement())
+
+                self.assertEqual(port.end_stage_calls, 0)
+                self.assertEqual(port.close_calls, 1)
+                self.assertIsNone(coordinator.instrument_ctrl)
+                self.assertIs(coordinator.state, RunFlowState.RECONNECT_REQUIRED)
+
+    def test_closed_stage_detaches_the_port_from_the_controller(self):
+        """关闭端口后 controller 不能再把已关闭的会话交给下一阶段。"""
+        port = _SettlingPort()
+        coordinator = self._coordinator_for(MeasurementStatus.FAILED, port)
+        coordinator.controller.set_measurement_port.reset_mock()
+
+        self.assertTrue(coordinator.release_port_after_measurement())
+
+        coordinator.controller.set_measurement_port.assert_called_once_with(None)
+
+    def test_reused_stage_keeps_the_controller_port_reference(self):
+        port = _SettlingPort()
+        coordinator = self._coordinator_for(MeasurementStatus.COMPLETED, port)
+        coordinator.controller.set_measurement_port.reset_mock()
+
+        self.assertTrue(coordinator.release_port_after_measurement())
+
+        coordinator.controller.set_measurement_port.assert_not_called()
+
+    def test_an_active_measurement_does_not_block_port_release(self):
+        """运行中的测量无法替换引用；释放端口本身仍然必须完成。"""
+        port = _SettlingPort()
+        coordinator = self._coordinator_for(MeasurementStatus.FAILED, port)
+        coordinator.controller.set_measurement_port.side_effect = RuntimeError(
+            "测量运行期间不能替换测量端口"
+        )
+
+        self.assertTrue(coordinator.release_port_after_measurement())
+
+        self.assertIsNone(coordinator.instrument_ctrl)
+        self.assertEqual(port.close_calls, 1)
+
+    def test_non_measurement_state_leaves_the_port_alone(self):
+        controller = MagicMock()
+        controller.state.kind = None
+        coordinator = _coordinator(controller=controller)
+        port = _SettlingPort()
+        coordinator.instrument_ctrl = port
+
+        self.assertTrue(coordinator.release_port_after_measurement())
+
+        self.assertIs(coordinator.instrument_ctrl, port)
+        self.assertEqual(port.end_stage_calls, 0)
+        self.assertEqual(port.close_calls, 0)
+
+
+class StageStartFailureTests(unittest.TestCase):
+    """阶段在 worker 创建前失败：没有线程结束事件，端口仍必须由协调器关闭。"""
+
+    def test_begin_stage_failure_closes_the_port_and_requires_reconnect(self):
+        from presentation.qt.measurement_controller import MeasurementController
+        from presentation.qt.measurement_controller_contract import MeasurementCommand
+        from presentation.qt.measurement_state import MeasurementKind
+
+        from tests.contract_doubles import contract_run
+
+        class _NotReusablePort:
+            def __init__(self):
+                self.close_calls = 0
+
+            def begin_stage(self):
+                raise RuntimeError("RF 输出尚未关闭")
+
+            def close_all(self, *, close_rf=False):
+                self.close_calls += 1
+                return []
+
+        port = _NotReusablePort()
+        controller = MeasurementController(
+            {MeasurementKind.AMPLIFIER: MagicMock()},
+            lambda: "config.json",
+            measurement_port=port,
+        )
+        coordinator = _coordinator(controller=controller)
+        coordinator.instrument_ctrl = port
+        coordinator.prepared_run = SimpleNamespace(run_id=RUN_ID)
+        coordinator._set_state(RunFlowState.CONNECTED)
+
+        self.assertFalse(
+            controller.start_amplifier(
+                MeasurementCommand("config.json", contract_run())
+            )
+        )
+
+        self.assertIsNone(coordinator.instrument_ctrl)
+        self.assertEqual(port.close_calls, 1)
+        self.assertIs(coordinator.state, RunFlowState.RECONNECT_REQUIRED)
+        self.assertTrue(any("阶段启动失败" in message for message in coordinator.messages))
 
 
 if __name__ == "__main__":

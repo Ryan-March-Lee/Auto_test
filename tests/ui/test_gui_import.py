@@ -101,7 +101,7 @@ class GuiImportSmokeTests(unittest.TestCase):
         self.assertIsInstance(errors[0], RuntimeError)
 
     def test_measurement_thread_cleanup_releases_port_reference(self):
-        from presentation.qt.measurement_state import MeasurementKind
+        from presentation.qt.measurement_state import MeasurementKind, MeasurementStatus
 
         class _Port:
             def __init__(self):
@@ -117,6 +117,7 @@ class GuiImportSmokeTests(unittest.TestCase):
         ):
             controller = MagicMock()
             controller.state.kind = kind
+            controller.state.status = MeasurementStatus.FAILED
             coordinator = _coordinator(controller)
             port = _Port()
             coordinator.instrument_ctrl = port
@@ -125,6 +126,34 @@ class GuiImportSmokeTests(unittest.TestCase):
 
             self.assertIsNone(coordinator.instrument_ctrl)
             self.assertEqual(port.close_calls, [True])
+
+    def test_successful_stage_keeps_the_port_for_reuse(self):
+        from presentation.qt.measurement_state import MeasurementKind, MeasurementStatus
+
+        class _Port:
+            def __init__(self):
+                self.stage_calls = 0
+                self.close_calls = 0
+
+            def end_stage(self, *, timeout_s=30.0):
+                self.stage_calls += 1
+
+            def close_all(self, *, close_rf=False):
+                self.close_calls += 1
+                return []
+
+        controller = MagicMock()
+        controller.state.kind = MeasurementKind.AMPLIFIER
+        controller.state.status = MeasurementStatus.COMPLETED
+        coordinator = _coordinator(controller)
+        port = _Port()
+        coordinator.instrument_ctrl = port
+
+        coordinator.release_port_after_measurement()
+
+        self.assertIs(coordinator.instrument_ctrl, port)
+        self.assertEqual(port.stage_calls, 1)
+        self.assertEqual(port.close_calls, 0)
 
     def test_driver_mapping_realtime_bridge_updates_realtime_buffer(self):
         coordinator = _coordinator()

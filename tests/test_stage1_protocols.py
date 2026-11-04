@@ -32,6 +32,9 @@ class MinimalInstrumentSession:
     def prepare(self, *, timeout_s=30.0):
         pass
 
+    def end_stage(self, *, timeout_s=30.0):
+        pass
+
     def close(self, *, emergency=False, timeout_s=30.0):
         pass
 

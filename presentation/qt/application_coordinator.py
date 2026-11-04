@@ -37,7 +37,7 @@ from domain.run.models import normalize_artifact_path
 from .composition import build_gui_data_service, default_paths
 from .config_projection import ConfigBackfillError
 from .measurement_controller import MeasurementController
-from .measurement_state import MeasurementKind
+from .measurement_state import MeasurementKind, MeasurementStatus
 from .measurement_worker_factories import build_measurement_worker_factories
 from .realtime_buffer import RealtimeMeasurementBuffer
 from .workers import InstrumentWorker
@@ -126,6 +126,25 @@ def close_instrument_port(port: Any) -> tuple[BaseException, ...]:
     return ()
 
 
+def settle_instrument_stage(port: Any) -> tuple[BaseException, ...] | None:
+    """把成功结束的阶段端口带回可复用状态。
+
+    返回空元组表示已确认可以复用；非空元组表示阶段结算失败；``None`` 表示端口
+    没有阶段结算入口——无法确认输出已经关闭，调用方必须按完整关闭处理，绝不能把
+    “没有报错”当成可以复用。
+    """
+    if port is None:
+        return ()
+    end_stage = getattr(port, "end_stage", None)
+    if not callable(end_stage):
+        return None
+    try:
+        end_stage()
+    except Exception as failure:  # noqa: BLE001 - 结算失败必须进入关闭流程，不能从 Qt 槽抛出
+        return (failure,)
+    return ()
+
+
 def _cleanup_errors(result: Any) -> tuple[BaseException, ...]:
     """把 ``close_all()`` 的返回值收敛成错误元组（``None`` 视为无错误）。"""
     if result is None:
@@ -185,6 +204,10 @@ class ApplicationCoordinator:
         )
         self.controller: MeasurementController = controller or MeasurementController(
             build_measurement_worker_factories(), self.measurement_config_path
+        )
+        # 阶段在 worker 创建前失败时没有线程结束事件；端口所有者必须自己收尾。
+        self.controller.signals.stage_start_failed.connect(
+            self._on_stage_start_failed
         )
         self.realtime_buffer = RealtimeMeasurementBuffer()
         self._log = log
@@ -920,6 +943,7 @@ class ApplicationCoordinator:
         if port is None:
             return True
         self.instrument_ctrl = None
+        self._detach_measurement_port()
         return self._close_and_record(port)
 
     def release_instrument_for_new_run(self) -> bool:
@@ -928,21 +952,66 @@ class ApplicationCoordinator:
         if port is None:
             return True
         self.instrument_ctrl = None
+        self._detach_measurement_port()
         if not self._close_and_record(port):
             return False
         self._log("已释放上一次连接的仪器端口；请重新连接仪器")
         return True
 
-    def release_port_after_measurement(self) -> bool:
-        """测量线程结束后释放端口；非测量终态（如仅连接仪器）不释放。
+    def _detach_measurement_port(self) -> None:
+        """让 controller 不再持有已释放的端口。
 
-        测量完成释放后运行仍然保留，但已经没有可复用的端口，因此状态进入
-        ``RECONNECT_REQUIRED``；清理失败则进入 ``MANUAL_CLEANUP_REQUIRED``，阻止
-        下一阶段在未确认安全的情况下重新连接。
+        端口关闭后会话不能再用；如果 controller 继续保存这个引用，下一阶段会把已
+        关闭的会话注入 worker。测量仍在运行时无法替换引用（worker 正在使用），此时
+        保留引用由线程结束后的收尾负责。
+        """
+        try:
+            self.controller.set_measurement_port(None)
+        except RuntimeError:
+            self._log("测量运行中，暂不解除已释放端口的引用")
+
+    def release_port_after_measurement(self) -> bool:
+        """测量线程结束后按阶段结果决定复用还是关闭端口。
+
+        成功完成（``COMPLETED``）的阶段在确认 RF 与供电关闭后保留同一端口供下一
+        阶段复用；取消、异常、急停或阶段结算失败都关闭端口，运行保留但标记需重新
+        连接。清理失败进入 ``MANUAL_CLEANUP_REQUIRED``，不会静默复用未确认安全的
+        会话。
         """
         state = getattr(self.controller, "state", None)
         if getattr(state, "kind", None) not in _MEASUREMENT_KINDS:
             return True
+        if getattr(state, "status", None) is MeasurementStatus.COMPLETED:
+            return self._settle_port_after_stage()
+        return self._close_port_after_stage()
+
+    def _on_stage_start_failed(self, reason: str) -> None:
+        """阶段在 worker 创建前失败：按异常阶段关闭端口。
+
+        这条路径没有 worker 线程，因此不会有 ``thread_finished``；只把 controller 标成
+        失败会让协调器继续持有未确认安全的端口，下一阶段还会把它当成可复用端口。
+        协调器是端口所有者，必须自己完成关闭并进入需重连/人工处理。
+        """
+        self._log(f"阶段启动失败，按异常阶段收尾仪器端口: {reason}")
+        self.release_port_after_measurement()
+
+    def _settle_port_after_stage(self) -> bool:
+        """成功阶段：结算端口并保留引用；无法确认安全时退化为完整关闭。"""
+        port = self.instrument_ctrl
+        if port is None:
+            return True
+        errors = settle_instrument_stage(port)
+        if errors is None:
+            self._log("仪器端口没有阶段结算入口；按完整关闭处理，下一阶段需要重新连接")
+            return self._close_port_after_stage()
+        if errors:
+            self._log("阶段结束安全清理失败: " + describe_cleanup_errors(errors))
+            return self._close_port_after_stage()
+        self._log("阶段完成，仪器端口已确认安全并保留供下一阶段复用")
+        return True
+
+    def _close_port_after_stage(self) -> bool:
+        """异常阶段：关闭端口；运行保留时进入需重连，清理失败进入人工处理。"""
         released = self.release_instrument_port()
         if not released:
             self._set_state(RunFlowState.MANUAL_CLEANUP_REQUIRED)
@@ -1045,4 +1114,5 @@ __all__ = [
     "RunFlowState",
     "close_instrument_port",
     "describe_cleanup_errors",
+    "settle_instrument_stage",
 ]

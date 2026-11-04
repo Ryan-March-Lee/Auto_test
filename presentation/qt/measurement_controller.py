@@ -38,6 +38,7 @@ class _ControllerSignals(QObject):
     rejected = Signal(str)
     state_changed = Signal(object)
     thread_finished = Signal()
+    stage_start_failed = Signal(str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -128,6 +129,11 @@ class MeasurementController:
         preparing = MeasurementViewState(kind).prepare()
         self._set_state(kind, preparing)
         try:
+            # 复用同一端口时，下一阶段开始前必须先确认上一阶段已安全结算。
+            # 没有阶段入口的端口（测试替身/旧端口）保持原有行为。
+            begin_stage = getattr(self._measurement_port, "begin_stage", None)
+            if callable(begin_stage):
+                begin_stage()
             factory = self._worker_factories[kind]
             config_path = self._config_path_provider()
             if not isinstance(config_path, str) or not config_path.strip():
@@ -147,6 +153,10 @@ class MeasurementController:
             self._worker_lifecycle.disconnect()
             self._worker = None
             self._set_state(kind, preparing.fail(str(error) or error.__class__.__name__))
+            # 阶段没有进入 worker，就不会有线程结束事件；端口必须在这里交给所有者
+            # 按异常阶段关闭，不能留到下一阶段被当成可复用端口。先收尾再报错，避免
+            # 用户确认错误对话框期间端口还开着。
+            self.signals.stage_start_failed.emit(str(error) or error.__class__.__name__)
             self.signals.error.emit(str(error))
             return False
 

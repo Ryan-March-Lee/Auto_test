@@ -27,6 +27,7 @@ from instrument.ports import (
     InstrumentCapabilityError,
     MeasurementInstrumentPort,
 )
+from instrument.safety import InstrumentSafetyError
 from tests.contract_doubles import amplifier_inputs
 from tests.fakes import RecordingSafetyCleanup
 
@@ -226,6 +227,87 @@ class MeasurementInstrumentPortTests(unittest.TestCase):
             {"gate": "A", "drain": "B"},
         )
         self.assertIsInstance(PortMeasurementAdapter(session), MeasurementInstrumentPort)
+
+    def test_adapter_end_stage_powers_off_driver_channels_outside_the_session_roles(self):
+        """会话只按角色认识一组通道；适配器上的驱动电源组不会被漏掉。"""
+        from instrument.measurement_adapter import PortMeasurementAdapter
+        from instrument.session import ManagedInstrumentSession
+        from instrument.simulation import (
+            CommandRecorder,
+            SimulatedPowerSupply,
+            SimulatedSignalGenerator,
+            SimulatedSpectrumAnalyzer,
+        )
+
+        recorder = CommandRecorder()
+        supply = SimulatedPowerSupply(recorder)
+        signal = SimulatedSignalGenerator(recorder)
+        session = ManagedInstrumentSession(
+            signal,
+            SimulatedSpectrumAnalyzer(recorder=recorder),
+            supply,
+            {"gate": "A", "drain": "B"},
+        )
+        session.validate()
+        session.connect()
+        session.prepare()
+        adapter = PortMeasurementAdapter(
+            session,
+            dut_power_channels={"gate": "A", "drain": "B"},
+            driver_power_channels={"gate": "C", "drain": "D"},
+        )
+        adapter.begin_stage()
+        adapter.power_on_driver()
+        adapter.power_on_sequence()
+        adapter.start_measurement()
+        adapter.rf_output_on()
+
+        adapter.end_stage()
+
+        self.assertFalse(signal.rf_enabled)
+        self.assertEqual(
+            supply.outputs, {"A": False, "B": False, "C": False, "D": False}
+        )
+        self.assertEqual(session.state.value, "prepared")
+        # 结算成功后不再需要按组补偿上电记录。
+        self.assertEqual(adapter._active_power_groups, {})
+
+    def test_adapter_end_stage_failure_keeps_the_session_unsettled(self):
+        """驱动电源组关不掉时不得结算会话；端口必须由调用方关闭。"""
+        from instrument.measurement_adapter import PortMeasurementAdapter
+        from instrument.session import ManagedInstrumentSession
+        from instrument.simulation import (
+            CommandRecorder,
+            SimulatedPowerSupply,
+            SimulatedSignalGenerator,
+            SimulatedSpectrumAnalyzer,
+        )
+
+        recorder = CommandRecorder()
+        supply = SimulatedPowerSupply(recorder)
+        session = ManagedInstrumentSession(
+            SimulatedSignalGenerator(recorder),
+            SimulatedSpectrumAnalyzer(recorder=recorder),
+            supply,
+            {"gate": "A", "drain": "B"},
+        )
+        session.validate()
+        session.connect()
+        session.prepare()
+        adapter = PortMeasurementAdapter(
+            session,
+            dut_power_channels={"gate": "A", "drain": "B"},
+            driver_power_channels={"gate": "C", "drain": "D"},
+        )
+        adapter.begin_stage()
+        adapter.power_on_driver()
+        supply.inject_failure("output_off", once=True)
+
+        with self.assertRaises(InstrumentSafetyError) as raised:
+            adapter.end_stage()
+
+        self.assertEqual(raised.exception.actions, ("power_supplies",))
+        self.assertEqual(session.state.value, "powered")
 
     def test_measurement_request_annotates_the_instrument_protocol(self):
         self.assertEqual(

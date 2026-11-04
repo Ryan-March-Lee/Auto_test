@@ -27,7 +27,7 @@ from infrastructure.persistence.run_repository import RunRepository
 from application.configuration_authoring import author_official_configuration
 from presentation.qt.measurement_controller import MeasurementController
 from presentation.qt.measurement_controller_contract import MeasurementCommand
-from presentation.qt.measurement_state import MeasurementKind
+from presentation.qt.measurement_state import MeasurementKind, MeasurementStatus
 from presentation.qt.application_coordinator import RunFlowState
 from presentation.qt.workers import AmplifierWorker, CableLossWorker, DriverMappingWorker
 
@@ -138,6 +138,10 @@ class _ClosedPort:
 
     def __init__(self):
         self.close_calls = 0
+        self.stage_calls = 0
+
+    def end_stage(self, *, timeout_s=30.0):
+        self.stage_calls += 1
 
     def close_all(self, *, close_rf=False):
         self.close_calls += 1
@@ -909,16 +913,31 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         self.assertIs(coordinator.instrument_ctrl, port)
         coordinator.controller.set_measurement_port.assert_called_once_with(port)
 
-    def test_measurement_completion_releases_port_only_for_measurement_kinds(self):
+    def test_measurement_completion_settles_port_only_for_measurement_kinds(self):
         coordinator = self._coordinator()
         coordinator.controller.state.kind = MeasurementKind.CABLE_LOSS
+        coordinator.controller.state.status = MeasurementStatus.COMPLETED
+        coordinator.prepared_run = _resolvable_contract_run()
+        coordinator._set_state(RunFlowState.CONNECTED)
         port = _ClosedPort()
         coordinator.instrument_ctrl = port
 
         self.assertTrue(coordinator.release_port_after_measurement())
 
-        self.assertEqual(port.close_calls, 1)
+        # 成功阶段保留同一端口供下一阶段复用，不重新打开 VISA 资源。
+        self.assertEqual(port.stage_calls, 1)
+        self.assertEqual(port.close_calls, 0)
+        self.assertIs(coordinator.instrument_ctrl, port)
+        self.assertIs(coordinator.state, RunFlowState.CONNECTED)
+
+        failed = _ClosedPort()
+        coordinator.controller.state.status = MeasurementStatus.FAILED
+        coordinator.instrument_ctrl = failed
+        coordinator.release_port_after_measurement()
+        self.assertEqual(failed.stage_calls, 0)
+        self.assertEqual(failed.close_calls, 1)
         self.assertIsNone(coordinator.instrument_ctrl)
+        self.assertIs(coordinator.state, RunFlowState.RECONNECT_REQUIRED)
 
         idle_port = _ClosedPort()
         coordinator.controller.state.kind = None

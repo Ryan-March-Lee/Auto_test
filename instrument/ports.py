@@ -150,8 +150,9 @@ class InstrumentSession(Protocol):
     """仪器集合的生命周期协议。
 
     实现必须按 ``created -> validated -> connected -> prepared`` 推进，
-    测量期间可进入 ``powered``/``measuring``。close 必须幂等，并尽力按
-    RF 关闭、供电关闭、连接关闭的顺序清理所有资源。
+    测量期间可进入 ``powered``/``measuring``。成功阶段结束后必须能通过
+    :meth:`end_stage` 回到 ``prepared`` 以复用同一端口；close 必须幂等，并尽力
+    按 RF 关闭、供电关闭、连接关闭的顺序清理所有资源。
     """
 
     state: InstrumentState
@@ -164,6 +165,14 @@ class InstrumentSession(Protocol):
 
     def prepare(self, *, timeout_s: float = 30.0) -> None:
         """配置端口但保持 RF 和电源输出关闭。"""
+
+    def end_stage(self, *, timeout_s: float = 30.0) -> None:
+        """成功阶段结束后确认 RF/供电关闭并回到 ``prepared``，供下一阶段复用。
+
+        任何关闭动作失败，或实现本身不具备关闭 RF/受管电源输出的能力而无法确认
+        关闭，都必须阻止进入 ``prepared`` 并聚合上报；调用方据此关闭端口而不是复用
+        未确认安全的会话。确认口径是关闭动作成功返回（不要求额外回读输出状态）。
+        """
 
     def close(self, *, emergency: bool = False, timeout_s: float = 30.0) -> None:
         """执行幂等清理；emergency=True 时首先关闭 RF。"""

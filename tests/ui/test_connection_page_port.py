@@ -129,8 +129,6 @@ class InstrumentSetupPagePortTests(unittest.TestCase):
 
         self.assertEqual(page.discovery_panel.subnet_edit.text(), "10.2.3.0/24")
         self.assertTrue(any("未扫描确认" in line for line in logs))
-        # 绑定来自只读视图；页面没有回读另一个页面的内部状态。
-        self.assertIn("signal_generator", page.discovery_panel.device_bindings)
 
     def test_enter_falls_back_to_saved_instrument_addresses(self):
         port = _StubPort(

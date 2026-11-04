@@ -247,7 +247,7 @@ def _paint_picture(
 
 
 def _paint_status(painter: QPainter, data: InstrumentCardData, plan: CardRowPlan) -> None:
-    """图片下面那行状态说明（例如“已按配置预选”）；空串不画，行计划里也不留位置。"""
+    """图片下面那行状态说明（例如“未登记 · 不能应用”）；空串不画，行计划里也不留位置。"""
     if not data.status or plan.status.isEmpty():
         return
     row = plan.status

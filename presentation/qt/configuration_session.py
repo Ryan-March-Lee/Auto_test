@@ -7,8 +7,8 @@
   :class:`application.configuration_view_model.ConfigurationViewState`；
 - :meth:`ConfigurationSession.apply_selection` 把 ``ApplyDeviceSelectionRequest`` 交给
   配置页，由配置页委托视图模型与 ``DeviceBindingService`` 写入，并投影派生界面；
-- 配置页发出 ``device_selection_finished(result, message)`` 后，本会话把提示文案与新的
-  绑定集合回写给连接页的设备发现面板。面板归连接页所有，配置页不持有它。
+- 配置页发出 ``device_selection_finished(result, message)`` 后，本会话把提示文案回写给
+  连接页的设备发现面板。面板归连接页所有，配置页不持有它。
 
 本模块属于 presentation controller：只做装配与转发，不读控件、不定义设备绑定规则，也不
 写文件或连接仪器。路径规划中的“MainWindow 或配置会话协调器负责把连接页结果交给
@@ -21,7 +21,7 @@ ViewModel”由这里承担；连接意图不再经过本会话，参数配置�
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from typing import Any, Protocol
 
 from application.configuration_view_model import ConfigurationViewState
@@ -37,7 +37,6 @@ class ConfigurationBindingTarget(Protocol):
     会话通过 ``connect`` / ``emit`` 使用，不需要导入 PySide6。
     """
 
-    device_bindings: Mapping[str, Any]
     binding_problems: Sequence[str]
     discovery_message: Any
     device_selection_finished: Any
@@ -55,9 +54,6 @@ class DiscoveryPanelPort(Protocol):
     """连接页设备发现面板的窄接口：只用于回写状态，不涉及扫描逻辑。"""
 
     log_message: Any
-
-    def set_device_bindings(self, bindings: Any) -> None:
-        """登记当前绑定，供下一次扫描按身份预选。"""
 
     def show_message(self, message: str) -> None:
         """在结果区状态行显示一次写入结果。"""
@@ -90,7 +86,7 @@ class ConfigurationSession:
 
         面板归连接页所有；本会话是唯一回写它的地方：扫描日志经配置页的
         ``discovery_message`` 转给窗口；配置页每次写入结束（成功或拒绝）都会发出
-        ``device_selection_finished``，这里据此更新面板的绑定与状态行。同一个面板重复
+        ``device_selection_finished``，这里据此把提示写到面板状态行。同一个面板重复
         登记是幂等的，换成另一个面板实例会拒绝，避免同一个信号被接到两块面板上。
         """
         if panel is self._panel:
@@ -99,7 +95,6 @@ class ConfigurationSession:
             raise RuntimeError("设备发现面板已经登记，不能换成另一个面板实例")
         self._panel = panel
         panel.log_message.connect(self._target.discovery_message.emit)
-        panel.set_device_bindings(dict(self._target.device_bindings))
         if self._target.binding_problems:
             panel.show_message(
                 "；".join(self._target.binding_problems)
@@ -107,11 +102,9 @@ class ConfigurationSession:
             )
         self._target.device_selection_finished.connect(self._on_selection_finished)
 
-    def _on_selection_finished(self, result: DeviceBindingResult, message: str) -> None:
-        """把配置页的写入结果回写到发现面板（只在成功时刷新绑定）。"""
+    def _on_selection_finished(self, _result: DeviceBindingResult, message: str) -> None:
+        """把配置页的写入结果写到发现面板状态行（成功与拒绝都只写提示）。"""
         panel = self._panel
         if panel is None:
             return
-        if result.ok:
-            panel.set_device_bindings(dict(self._target.device_bindings))
         panel.show_message(message)

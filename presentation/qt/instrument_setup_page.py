@@ -475,12 +475,13 @@ class InstrumentSetupPage(QWidget):
         """每次从欢迎页进入本页时按当前配置重置面板。
 
         上次会话的扫描结果不能留下来冒充本次的发现结果：清空卡片与状态行；扫描框初值
-        按当前配置（含刚选定的测试模式）重新取，落在这批设备所在的网段上。只有地址、
-        没被本次扫描确认过的旧绑定不再画在结果区里，改为写一条日志，说明它们“未扫描确认”。
+        按当前配置（含刚选定的测试模式）重新取，落在这批设备所在的网段上。配置里的
+        设备绑定只用来取网段，不会把卡片预先勾上：本次要用哪几台，由用户在“查找设备”
+        的结果里重新选择。只有地址、没被本次扫描确认过的旧绑定不再画在结果区里，改为
+        写一条日志，说明它们“未扫描确认”。
         """
         state = self.binding_port.view_state()
         panel = self.discovery_panel
-        panel.set_device_bindings(state.bindings_snapshot())
         panel.clear_results()
         panel.subnet_edit.setText(self._default_scan_subnet(state) or DEMO_SUBNET)
         self._sync_actions()

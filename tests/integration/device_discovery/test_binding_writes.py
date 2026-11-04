@@ -39,10 +39,6 @@ class DeviceBindingWriteTests(InstrumentSetupPageTestCase):
         self.assertEqual(binding["device_key"], "ceyear technologies:qzni000866")
         self.assertEqual(binding["last_ip"], "192.168.1.202")
         self.assertEqual(binding["source"], "scan")
-        # 绑定已经写进配置页：再次进入本页时按身份预选同一台设备。
-        self.assertIn(
-            "spectrum_analyzer", self.connection.discovery_panel.device_bindings
-        )
 
     def test_the_success_message_lists_the_applied_devices(self):
         """成功摘要由页面按服务返回的显示摘要拼装：角色显示名 + 型号，电源只写引用 ID。"""
@@ -366,11 +362,11 @@ class DeviceBindingWriteTests(InstrumentSetupPageTestCase):
 
         self.assertEqual(page.binding_problems, [])
 
-    def test_preselected_devices_count_as_this_scans_selection(self):
-        """配置预选也属于“本次扫描结果中的选择”：点“下一步”即确认这批勾选。
+    def test_reentering_after_applying_devices_starts_the_next_scan_unselected(self):
+        """从下一页回到本页再点“查找设备”：配置里的旧设备不会被预先勾上。
 
-        预选不是未扫描时沿用旧绑定：它只在本次扫描按身份匹配成功后才有勾选状态，
-        用户看到的卡片明确标注“已按配置预选”。
+        配置里的绑定仍然保留（扫描不改配置），但选择只属于本次扫描结果：卡片一条都
+        不选，用户必须重新勾选后才能点“下一步”。这正是“查找设备”承担的重置语义。
         """
         page = self.make_page()
         apply_devices(
@@ -388,19 +384,12 @@ class DeviceBindingWriteTests(InstrumentSetupPageTestCase):
                 }
             ],
         )
+        self.assertIn("signal_generator", page.device_bindings)
+
         self.connection.enter()
         panel = self.connection.discovery_panel
         self.run_scan(panel)
 
-        self.assertTrue(panel.card_checked("SMW200A（105462）"))
-        self.assertIn("已按配置预选", panel.card_status("SMW200A（105462）"))
-
-        requested = []
-        self.connection.next_requested.connect(lambda: requested.append(True))
-        self.connection.request_next()
-
-        self.assertEqual(requested, [True])
-        self.assertEqual(
-            page.build_config()["instruments"]["signal_generator"]["address"],
-            "TCPIP0::192.168.1.201::inst0::INSTR",
-        )
+        for card in panel.cards():
+            self.assertFalse(card.is_checked(), "重新查找必须从一台都没选开始")
+        self.assertEqual(panel.status_label.text(), "")

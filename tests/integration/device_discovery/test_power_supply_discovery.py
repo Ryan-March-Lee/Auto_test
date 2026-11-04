@@ -79,22 +79,3 @@ class PowerSupplyDiscoveryTests(DiscoveryPanelTestCase):
         assignment = assignments[0]
         self.assertNotIn("config_slot", assignment)
         self.assertIn(assignment["supply_id"], {"DP8B1519", "DP8B0885"})
-
-    def test_two_supplies_are_preselected_by_identity_after_an_ip_change(self):
-        panel = self.make_panel(
-            bindings={
-                "power_supplies": {
-                    "DP8B0885": {
-                        "device_key": "rigol technologies:dp8b174400885",
-                        "visa_address": "TCPIP0::192.168.9.108::inst0::INSTR",
-                    }
-                }
-            }
-        )
-        # 换一个网段再扫描：地址变了，身份（序列号）没变。
-        panel.subnet_edit.setText("192.168.1.0/24")
-
-        self.run_scan(panel)
-
-        self.assertTrue(panel.card_checked("DP832A（DP8B0885）"))
-        self.assertFalse(panel.card_checked("DP832A（DP8B1519）"))

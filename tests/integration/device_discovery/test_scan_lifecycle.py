@@ -1,4 +1,4 @@
-"""扫描生命周期：点“查找设备”之后结果怎么来，失败、关闭与预选怎么收尾。
+"""扫描生命周期：点“查找设备”之后结果怎么来，失败、关闭与选择怎么收尾。
 
 面板把结果渲染成卡片的样子见 ``test_panel_presentation.py``，把勾选写进配置见
 ``test_binding_writes.py``；这里只看扫描本身：开始、结束、失败、取消，以及没有设备
@@ -24,7 +24,7 @@ from .support import SMW_IDN, DiscoveryPanelTestCase, registry
 
 
 class DiscoveryPanelTests(DiscoveryPanelTestCase):
-    """点“查找设备”之后的可见结果、失败收尾与按配置预选。"""
+    """点“查找设备”之后的可见结果、失败收尾与每次查找的干净起点。"""
 
     def test_scan_shows_one_card_per_device(self):
         panel = self.make_panel()
@@ -250,18 +250,19 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
         panel = self.make_panel()
         self.assertTrue(panel.shutdown())
 
-    def test_scan_preselects_devices_bound_in_configuration(self):
+    def test_scan_starts_with_nothing_selected(self):
+        """每次点“查找设备”都是新的一次选择：新结果里的卡片一条都不选中。"""
         panel = self.make_panel()
-        panel.set_device_bindings(
-            {"signal_generator": {"full_code": "105462", "device_key": "rohde&schwarz:105462"}}
-        )
+        self.run_scan(panel)
+        heading = "SMW200A（105462）"
+        panel.set_card_checked(heading, True)
+        self.assertTrue(panel.card_checked(heading))
 
+        # 结果可交互时再查一次：上一轮的勾选不能带进新结果。
         self.run_scan(panel)
 
-        self.assertTrue(panel.card_checked("SMW200A（105462）"))
-        self.assertIn("已按配置预选", panel.card_status("SMW200A（105462）"))
-        # 其他卡片不因预选被选上：用户仍可自由改。
-        self.assertFalse(panel.card_checked("DP832A（DP8B214901519）"))
+        for card in panel.cards():
+            self.assertFalse(card.is_checked(), "新一次查找必须从一台都没选开始")
 
     def test_clearing_results_keeps_cards_owned_by_qt_until_deferred_delete(self):
         """清空结果时卡片仍必须挂在父控件下，不能先 setParent(None) 再 deleteLater。
@@ -281,111 +282,6 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
             self.assertIsNotNone(
                 card.parent(), "deleteLater 之前卡片必须仍由 Qt 父控件持有"
             )
-
-    def test_back_drops_the_preselection_baseline_for_the_next_scan(self):
-        """返回后重新查找从空白开始：不能再按配置把上一次的设备勾回去。"""
-        panel = self.make_panel(
-            bindings={
-                "signal_generator": {
-                    "full_code": "105462",
-                    "device_key": "rohde&schwarz:105462",
-                }
-            }
-        )
-        self.run_scan(panel)
-        self.assertTrue(panel.card_checked("SMW200A（105462）"))
-        self.assertIn("已按配置预选", panel.card_status("SMW200A（105462）"))
-
-        panel.request_back()
-        self.app.processEvents()
-        self.run_scan(panel)
-
-        # 返回是用户明确要重来一次：下一次查找不能马上又按旧绑定把卡片勾上。
-        for card in panel.cards():
-            self.assertFalse(card.is_checked(), "返回后重新查找必须从一台都没选开始")
-        self.assertEqual(panel.status_label.text(), "")
-
-    def test_a_card_unchecked_by_the_user_is_not_preselected_again(self):
-        """用户取消勾选后，刷新卡片不能把配置里的预选重新加回来。"""
-        panel = self.make_panel()
-        panel.set_device_bindings(
-            {"signal_generator": {"full_code": "105462", "device_key": "rohde&schwarz:105462"}}
-        )
-        self.run_scan(panel)
-        self.assertTrue(panel.card_checked("SMW200A（105462）"))
-
-        panel.set_card_checked("SMW200A（105462）", False)
-
-        self.assertFalse(panel.card_checked("SMW200A（105462）"))
-
-    def test_preselection_matches_by_device_key_even_when_ip_changes(self):
-        panel = self.make_panel()
-        panel.set_device_bindings(
-            {"spectrum_analyzer": {"device_key": "ceyear technologies:qzni000866"}}
-        )
-        # 换一个网段再扫描，设备 IP 变化但身份不变。
-        panel.subnet_edit.setText("192.168.1.0/24")
-
-        self.run_scan(panel)
-
-        self.assertTrue(panel.card_checked("4082F（QZNI000866）"))
-        self.assertNotIn("配置里是", panel.status_label.text())
-
-    def test_preselection_reports_a_role_change_instead_of_silently_moving_the_device(self):
-        """配置里的旧角色与设备表不一致时说明清楚：角色以设备表为准。"""
-        panel = self.make_panel()
-        panel.set_device_bindings(
-            {"spectrum_analyzer": {"device_key": "rohde&schwarz:105462"}}
-        )
-
-        self.run_scan(panel)
-
-        self.assertTrue(panel.card_checked("SMW200A（105462）"))
-        text = panel.status_label.text()
-        self.assertIn("角色以设备表为准", text)
-        self.assertIn("配置里是 频谱分析仪", text)
-
-    def test_legacy_slot_binding_preselects_a_power_supply_without_a_role_change(self):
-        """旧绑定按 ``PS1`` 落键时不算“角色变了”：记录里的短标签折叠成同一台电源。"""
-        panel = self.make_panel()
-        panel.set_device_bindings(
-            {
-                "PS1": {
-                    "device_key": "rigol technologies:dp8b214901519",
-                    "full_code": "DP8B214901519",
-                    "label": "DP8B1519",
-                    "supply_id": "DP8B1519",
-                    "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
-                }
-            }
-        )
-
-        self.run_scan(panel)
-
-        self.assertTrue(panel.card_checked("DP832A（DP8B214901519）"))
-        self.assertNotIn("配置里是", panel.status_label.text())
-
-    def test_preselection_uses_vendor_and_serial_when_key_is_missing(self):
-        """旧配置只有厂商+序列号时重新拼出同一个身份键，仍然认得出设备。"""
-        panel = self.make_panel()
-        panel.set_device_bindings(
-            {"signal_generator": {"vendor": "Rohde&Schwarz", "full_code": "105462"}}
-        )
-
-        self.run_scan(panel)
-
-        self.assertTrue(panel.card_checked("SMW200A（105462）"))
-
-    def test_preselection_never_matches_on_serial_alone(self):
-        """只有序列号时不做猜测：不同厂商可能有相同序列号。"""
-        panel = self.make_panel()
-        panel.set_device_bindings({"signal_generator": {"full_code": "105462"}})
-
-        self.run_scan(panel)
-
-        for card in panel.cards():
-            self.assertFalse(card.is_checked())
-        self.assertEqual(panel.status_label.text(), "")
 
     def test_unidentified_address_is_listed_but_cannot_be_applied(self):
         def factory(_mode):

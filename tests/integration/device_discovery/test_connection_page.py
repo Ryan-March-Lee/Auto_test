@@ -419,7 +419,7 @@ class InstrumentSetupPageLayoutTests(InstrumentSetupPageTestCase):
         self.assertTrue(select_all.isVisible())
         self.assertEqual(select_all.text(), "全选")
 
-        # 从“还有卡片未选”的初始态开始：扫描可能已经按配置预选过设备。
+        # 扫描结果初始一台都没选；这里仍显式清一遍，用例不依赖扫描前的状态。
         for heading in panel.card_headings():
             panel.set_card_checked(heading, False)
         self.app.processEvents()

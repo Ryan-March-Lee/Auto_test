@@ -35,7 +35,6 @@ class _StubTarget:
     def __init__(self, state=None, result=None):
         self.state = state or ConfigurationViewState()
         self.result = result or DeviceBindingResult()
-        self.device_bindings = {}
         self.binding_problems = []
         self.discovery_message = _Signal()
         self.device_selection_finished = _Signal()
@@ -50,15 +49,11 @@ class _StubTarget:
 
 
 class _StubPanel:
-    """设备发现面板替身：只记录回写的绑定与状态行。"""
+    """设备发现面板替身：只记录回写的状态行。"""
 
     def __init__(self):
         self.log_message = _Signal()
-        self.bindings = []
         self.messages = []
-
-    def set_device_bindings(self, bindings):
-        self.bindings.append(bindings)
 
     def show_message(self, message):
         self.messages.append(message)
@@ -92,11 +87,8 @@ class ConfigurationSessionTests(unittest.TestCase):
             session.apply_selection([{"role": "signal_generator"}])
         self.assertEqual(target.requests, [])
 
-    def test_attaching_the_panel_restores_bindings_and_forwards_scan_logs(self):
+    def test_attaching_the_panel_forwards_scan_logs_and_binding_problems(self):
         target = _StubTarget()
-        target.device_bindings = {
-            "signal_generator": {"visa_address": "sim::sg"},
-        }
         target.binding_problems = ["电源绑定不可用：缺少设备身份"]
         panel = _StubPanel()
         logs = []
@@ -106,21 +98,17 @@ class ConfigurationSessionTests(unittest.TestCase):
         session.attach_discovery_panel(panel)
         panel.log_message.emit("正在扫描")
 
-        self.assertEqual(panel.bindings, [target.device_bindings])
         self.assertIn("缺少设备身份", panel.messages[-1])
         self.assertEqual(logs, ["正在扫描"])
 
-    def test_a_successful_selection_refreshes_the_panel_bindings_and_message(self):
+    def test_a_successful_selection_reports_its_message(self):
         target = _StubTarget()
-        target.device_bindings = {"signal_generator": {"visa_address": "sim::new"}}
         panel = _StubPanel()
         session = ConfigurationSession(target)
         session.attach_discovery_panel(panel)
-        panel.bindings.clear()
 
         target.device_selection_finished.emit(DeviceBindingResult(), "已应用发现设备: 信号发生器")
 
-        self.assertEqual(panel.bindings, [target.device_bindings])
         self.assertEqual(panel.messages[-1], "已应用发现设备: 信号发生器")
 
     def test_a_rejected_selection_only_reports_the_message(self):
@@ -137,22 +125,23 @@ class ConfigurationSessionTests(unittest.TestCase):
         panel = _StubPanel()
         session = ConfigurationSession(target)
         session.attach_discovery_panel(panel)
-        panel.bindings.clear()
 
         target.device_selection_finished.emit(rejected, "角色被重复选择")
 
-        self.assertEqual(panel.bindings, [])
         self.assertEqual(panel.messages[-1], "角色被重复选择")
 
     def test_attaching_the_same_panel_is_idempotent(self):
         target = _StubTarget()
         panel = _StubPanel()
+        logs = []
+        target.discovery_message.connect(logs.append)
         session = ConfigurationSession(target)
 
         session.attach_discovery_panel(panel)
         session.attach_discovery_panel(panel)
+        panel.log_message.emit("正在扫描")
 
-        self.assertEqual(len(panel.bindings), 1)
+        self.assertEqual(logs, ["正在扫描"], "同一个面板只接一次日志转发")
 
     def test_attaching_a_second_panel_is_refused(self):
         session = ConfigurationSession(_StubTarget())

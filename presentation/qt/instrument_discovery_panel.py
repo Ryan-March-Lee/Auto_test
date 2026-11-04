@@ -69,8 +69,10 @@
 
 结果区**不是抽屉**：结果回来就留在那里，没有“收起 / 查看结果”的来回切换。要重新查找时
 按“返回”（:meth:`InstrumentDiscoveryPanel.request_back`）：清空本次结果与勾选，结果区顶部
-重新出现“查找设备”，也就是回到上一页那一步。结果可交互时还会在覆盖层上补一段与发牌
+重新出现“查找设备”，也就是回到这一步。结果可交互时还会在覆盖层上补一段与发牌
 相反的收牌画面（卡片翻回背面、飞回查找卡片），让“收回去”和发牌一样看得见。
+**每次查找都从本次结果重新开始**：配置里已保存的设备绑定不会把卡片预先勾上，上一次
+查找的勾选也不会带进来；用户点“查找设备”后看到的是一组干净的、一条都没选的卡片。
 
 “查找设备”不是普通按钮而是一张自绘的深色卡片（:mod:`presentation.qt.scan_card`）：卡片
 正中是渐变标题，内部有光带与粒子自己在动；鼠标进来时卡面上的字淡到看不见（0.6s，见那个
@@ -123,11 +125,8 @@ from .card_deal_animation import (
     CardDealAnimation,
     CardDealItem,
 )
-from .config_form_bindings import (
-    binding_device_key,
-    binding_records,
-    power_supply_bindings,
-)
+# 兼容期再导出：旧 ``device_discovery_panel`` 模块仍从本模块的 ``__all__`` 取这个名字。
+from .config_form_bindings import binding_device_key  # noqa: F401
 from .device_cards import (
     CARD_HEIGHT,
     CARD_MIN_WIDTH,
@@ -437,7 +436,7 @@ class InstrumentDiscoveryPanel(QWidget):
     box_state_changed = Signal(str)
     #: 流程状态变化（``DiscoveryPhase`` 的值）；日志与测试按它复现一次查找。
     phase_changed = Signal(str)
-    #: 本次结果的勾选变化（用户点选/取消，或扫描后按配置预选）；页面据此更新“下一步”。
+    #: 本次结果的勾选变化（用户点选/取消）；页面据此更新“下一步”。
     selection_changed = Signal()
     #: 收牌动画开始（True）/ 结束或取消（False）：页面据此把页头文字留到动画播完再出现。
     return_animation_changed = Signal(bool)
@@ -473,8 +472,6 @@ class InstrumentDiscoveryPanel(QWidget):
         self._return_presentation_hidden = False
         #: 当前这次查找的代次：清空、重扫与关闭都会递增，迟到结果据此作废。
         self._scan_token = 0
-        # 配置里保存的设备身份（角色 -> 完整设备码/device_key），用于扫描后按身份预选。
-        self.device_bindings: dict[str, dict[str, Any]] = {}
         # 页面给出的结果区可用高度（``None`` 表示没有页面约束：按两行卡片算）。
         # 它只随窗口尺寸变化，不随扫描状态变化。
         self._available_height: int | None = None
@@ -485,14 +482,6 @@ class InstrumentDiscoveryPanel(QWidget):
         self._results_height_max = 0
         self._build_ui(default_subnet or DEMO_SUBNET)
         self._watch_animation_surfaces()
-
-    def set_device_bindings(self, bindings: Any) -> None:
-        """登记配置里的角色绑定；下一次扫描结果会按身份预选同一台设备。"""
-        self.device_bindings = {
-            str(role): dict(record)
-            for role, record in (bindings or {}).items()
-            if isinstance(record, dict)
-        }
 
     # ---------- 动画覆盖层 ----------
     #
@@ -626,18 +615,12 @@ class InstrumentDiscoveryPanel(QWidget):
     # “查找设备”，不在“收起 / 查看结果”之间来回切。
 
     def request_back(self) -> None:
-        """返回上一步：清空本次扫描结果与勾选，结果区顶部重新出现“查找设备”。
+        """回到查找画面：本次结果与卡片随结果区一起收回，顶部重新出现“查找设备”。
 
-        本次的发现结果、卡片勾选与状态行都属于这一次查找，返回后整块回到还没查找过的
-        样子（扫描行下面那张“查找设备”卡片），用户改网段或换扫描方式再查一次。
-        配置里的设备绑定不归面板管，所以返回不动它们；下一次勾选并点“下一步”时整批
-        替换掉。要重新绑定，改完网段再查一次即可。
-
-        这次返回同时作废本次进入页面时登记的配置预选基线（:meth:`_drop_preselection`）：
-        下一次查找从“什么都没选”开始。否则按“返回”再查一次，卡片会立刻又被配置预选
-        勾上，用户看到的仍是上一次的选择状态，“返回”也就没有意义了。配置本身没有被
-        改写，重新进入本页时（:meth:`~presentation.qt.instrument_setup_page.InstrumentSetupPage.enter`）
-        仍会按身份预选同一台设备。
+        本次的发现结果、卡片勾选与状态行都属于这一次查找；返回后整块回到还没查找过的
+        样子（扫描行下面那张“查找设备”卡片），用户改网段或换扫描方式再查一次。返回
+        本身不带任何额外的清理或改写：配置里的设备绑定不归面板管，面板也不保存“上一次
+        选了哪几台”。下一次查找从干净结果开始这件事由 :meth:`request_scan` 负责。
 
         结果可交互时先播一段与发牌相反的收牌动画：卡片从结果位翻回背面、沿发牌弧线
         飞回“查找设备”卡片并叠成牌堆。可见状态仍立即回到 ``IDLE``（页头文字与查找
@@ -647,7 +630,6 @@ class InstrumentDiscoveryPanel(QWidget):
         if self.is_scanning() or self._pending_outcome is not None:
             self._set_status("扫描正在进行，请等待完成")
             return
-        self._drop_preselection()
         if (
             self._phase is DiscoveryPhase.INTERACTIVE
             and self.cards()
@@ -656,15 +638,6 @@ class InstrumentDiscoveryPanel(QWidget):
             self._start_return_reveal()
             return
         self.clear_results()
-
-    def _drop_preselection(self) -> None:
-        """作废本次进入页面时登记的配置预选基线：下一次查找从“什么都没选”开始。
-
-        只清面板内存里的 :attr:`device_bindings` 快照，不改配置、也不改已经写入的绑定；
-        重新进入本页时页面会按当前配置再登记一次。按“返回”是用户明确要重来一次，不能
-        马上又按旧绑定把卡片勾回去。
-        """
-        self.device_bindings = {}
 
     def _refresh_results_box_height(self) -> None:
         """让外层布局当场重排一次。
@@ -883,7 +856,7 @@ class InstrumentDiscoveryPanel(QWidget):
         self.actions_row = QWidget(self.results_box)
         self.actions_row.setObjectName("discoveryActionsRow")
         self.back_btn = QPushButton("返回")
-        self.back_btn.setToolTip("清空本次查找的结果与勾选，回到扫描行下面的“查找设备”")
+        self.back_btn.setToolTip("回到扫描行下面的“查找设备”，重新查找并选择设备")
         set_button_variant(self.back_btn, "ghost")
         self.back_btn.setVisible(False)
         # 动作行左右两端等宽占位：左边空出与“返回”同宽再加一个间距的空间，右边“返回”
@@ -1331,6 +1304,10 @@ class InstrumentDiscoveryPanel(QWidget):
         再出现，扫描期间不出现用不上的操作按钮。扫描结束后结果先挂起，等一下动画至少
         完整走完一轮（牌堆复原）才换进结果区。
 
+        **这里是“重新开始”的唯一入口**：上一轮的结果、卡片与勾选在扫描启动时一起清掉，
+        新结果里的卡片一条都不选中；配置里已保存的设备绑定不会预先把卡片勾上。用户要
+        更换设备，点“查找设备”重新查找并重新选择即可。
+
         只有 ``IDLE`` / ``INTERACTIVE`` 能开始新查找：已经在扫描、结果还没消费或正在
         发牌时，界面路径上都点不到这个按钮，程序调用也按同一张状态表拒绝。
         """
@@ -1473,9 +1450,7 @@ class InstrumentDiscoveryPanel(QWidget):
         # 卡片因此在可见的卡片区里完成布局，落点冻结之后不会因为刚显示出来而重排。
         self._set_phase(DiscoveryPhase.DEALING, outcome="completed")
         self._fill_cards(devices)
-        # 预选说明会追加在提示后面，因此先写提示再预选。
         self.status_label.setText(self._results_message(result, devices))
-        self._preselect_bound_devices()
         self._sync_results_height()
         details = self.status_label.text()
         summary = f"设备扫描完成: 发现 {len(devices)} 台设备"
@@ -1693,7 +1668,7 @@ class InstrumentDiscoveryPanel(QWidget):
         """按 ``cards`` 的顺序返回每张卡的动画资产（与发牌顺序一一对应）。
 
         取的正是调用方随后按同一顺序为每张卡构造的 ``CardDealItem`` 列表（每张读自己的
-        ``data`` 快照，预选与状态说明都已经写在上面），不按设备名回查：卡片标题
+        ``data`` 快照，选中与状态说明都已经写在上面），不按设备名回查：卡片标题
         并不保证唯一（同型号、同缩写码或未登记设备都可能重名），用 ``heading`` 当关联键
         会把某一台的画面套到另一台上。
 
@@ -2056,93 +2031,14 @@ class InstrumentDiscoveryPanel(QWidget):
             )
             card = InstrumentCard(data, tag=device, parent=self.cards_host)
             card.activated.connect(lambda item: self._on_card_activated(item))
-            rows.append(
-                {
-                    "device": device,
-                    "card": card,
-                    # None 表示用户还没动过这张卡片：配置预选可以生效；
-                    # True/False 是用户自己的选择，预选不能覆盖它。
-                    "user_checked": None,
-                    "bound": False,
-                }
-            )
+            # 新卡片一律从“没选中”开始：每次查找都是新的一次选择，配置里的旧绑定
+            # 不会把任何一张预选上。
+            rows.append({"device": device, "card": card})
         self._rows = rows
         self._apply_cards_layout()
 
-    def _preselect_bound_devices(self) -> None:
-        """按配置里保存的身份预选：IP 变了也能找回同一台设备。
-
-        只按 ``厂商:完整设备码`` 匹配，不做“仅按完整设备码”或“按缩写设备码”的猜测。角色以
-        设备表登记为准；电源按 ``supply_id`` 逐台比对，旧槽位（``PS3``）只是一段兼容输入，
-        折叠后仍是电源类别，不会因为“PS3 → 电源”被误报成角色变化。
-        """
-        if not self.device_bindings:
-            return
-        bound = {
-            binding_device_key(record): key
-            for key, record in binding_records(self.device_bindings)
-            if binding_device_key(record) is not None
-        }
-        if not bound:
-            return
-        power_keys = set(power_supply_bindings(self.device_bindings))
-        matched = 0
-        moved: list[str] = []
-        for row in self._rows:
-            device = row["device"]
-            key = device.device_key
-            if key is None or key not in bound:
-                continue
-            if not device_applicable(device):
-                # 设备表没登记角色时不能预选：应用后只会写进一个猜出来的角色。
-                continue
-            row["bound"] = True
-            matched += 1
-            bound_key = bound[key]
-            # 绑定键可能是类别（``power_supply``）或短标签（``DP8B1519``）：类别折叠后
-            # 比较，短标签只在双方都是电源时按“是不是这台电源”比对。
-            bound_role = canonical_role(bound_key) or bound_key
-            same_category = bound_role == device.role
-            same_supply = device.is_power_supply and bound_key in power_keys
-            if not (same_category or same_supply):
-                moved.append(
-                    f"{device.display_name} 配置里是 {role_label(bound_role) or bound_role}，"
-                    f"设备表登记为 {role_label(device.role)}"
-                )
-        if matched and moved:
-            # 卡片自己会写“已按配置预选”，这里只补用户需要核对的角色差异：不能把配置
-            # 里的旧角色静默当成设备表登记的角色。
-            note = "角色以设备表为准（" + "；".join(moved) + "）"
-            existing = self.status_label.text()
-            self.status_label.setText(f"{existing}；{note}" if existing else note)
-        self._sync_card_checks()
-
-    def _sync_card_checks(self) -> None:
-        """按“用户点击”与“配置预选”刷新卡片选中状态。
-
-        用户自己的选择优先：点过（选上或取消）的卡片不再被配置预选改写；没动过的卡片
-        才按身份预选，并在卡片上写明“已按配置预选”。
-
-        卡片的选中与状态说明变化时，卡片自己把内容快照一起更新（
-        :meth:`presentation.qt.device_cards.InstrumentCard.set_checked` /
-        :meth:`~presentation.qt.device_cards.InstrumentCard.set_status`），所以面板不另存
-        一份：动画读的 :meth:`card_data` 就是卡片此刻显示的那份内容。
-        """
-        for row in self._rows:
-            card = row["card"]
-            user_checked = row["user_checked"]
-            checked = bool(row["bound"]) if user_checked is None else bool(user_checked)
-            card.set_checked(checked, emit=False)
-            preselected = bool(row["bound"]) and user_checked is None
-            card.set_status("已按配置预选" if preselected else "")
-
-    def _on_card_activated(self, card: InstrumentCard) -> None:
-        """用户点击了某张卡片：记录这次选择，并通知页面刷新“下一步”的可用状态。"""
-        for row in self._rows:
-            if row["card"] is card:
-                row["user_checked"] = card.is_checked()
-                break
-        self._sync_card_checks()
+    def _on_card_activated(self, _card: InstrumentCard) -> None:
+        """用户点击了某张卡片：卡片自己已经切换选中，这里只通知页面刷新动作状态。"""
         self.selection_changed.emit()
 
     def _apply_cards_layout(self) -> None:
@@ -2363,14 +2259,13 @@ class InstrumentDiscoveryPanel(QWidget):
         """选中本次结果里所有可应用的设备，等价于用户逐张点选。
 
         只处理可勾选卡片：未登记、无角色或无法识别地址的设备本来就不可选，保持原样。
-        选择记在每行的 ``user_checked`` 上，随后的 :meth:`_sync_card_checks` 会把
-        “已按配置预选”的说明清掉，并像用户点过一样刷新卡片；最后发一次
+        卡片自己的选中状态与内容快照一起更新；最后发一次
         :attr:`selection_changed`，页面据此更新“全选”与“下一步”的外观。
         """
         for row in self._rows:
-            if row["card"].checkable:
-                row["user_checked"] = True
-        self._sync_card_checks()
+            card = row["card"]
+            if card.checkable:
+                card.set_checked(True, emit=False)
         self.selection_changed.emit()
 
     def selected_assignments(self) -> tuple[list[dict[str, Any]], list[str]]:

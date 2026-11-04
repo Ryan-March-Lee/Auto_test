@@ -594,7 +594,7 @@ class InstrumentCardData:
     - ``model``：型号，只出现在型号·角色那一行；
     - ``role``：测试角色的界面文案（如 ``电源``），已经是给人看的字，不是领域角色键；
     - ``address``：最下面一行的连接地址（本次扫描到的 IP），没有时那一行留空；
-    - ``status``：不可应用的原因或预选说明，空串表示不显示；
+    - ``status``：不可应用的原因，空串表示不显示；
     - ``checked``：构建这一份内容时这张卡是否选中；用户之后的选择仍由页面保存；
     - ``picture_path``：图片区要显示的仪器图，``None`` 表示没有对应图片；
     - ``tooltip``：整张卡片的悬浮提示全文；
@@ -708,7 +708,7 @@ def card_row_plan(
         return rows
 
     # 预算不够时先让图片变矮，再让状态说明变矮；其余行与行距保持不变。真实卡片上的状态
-    # 说明只有一行（“无法识别”“未登记 · 不可应用”“已按配置预选”）：紧凑的卡片高度里它
+    # 说明只有一行（“无法识别”“未登记 · 不能应用”）：紧凑的卡片高度里它
     # 会占掉图片的一点高度，型号·角色与地址仍然钉在原位；只有人工构造的超长说明才会继续
     # 压图片，这时宁可少画一点图，也不截断文字。
     overflow = fixed_head() + fixed_tail() + 2 * spacing - available
@@ -931,7 +931,7 @@ class InstrumentCard(QFrame):
         return self._checked
 
     def set_checked(self, checked: bool, *, emit: bool = False) -> None:
-        """切换选中状态；``emit=False`` 用于扫描后的预选，不触发“用户点击”。"""
+        """切换选中状态；``emit=False`` 用于批量设置（如“全选”），不触发“用户点击”。"""
         if not self._checkable:
             return
         checked = bool(checked)
@@ -958,7 +958,7 @@ class InstrumentCard(QFrame):
         self.update()
 
     def set_status(self, text: str) -> None:
-        """更新卡片上的状态说明（例如“已按配置预选”）；空串表示不显示。"""
+        """更新卡片上的状态说明（例如“未登记 · 不能应用”）；空串表示不显示。"""
         self.status_label.setText(text)
         self.status_label.setVisible(bool(text))
         self.status_label.setToolTip(self.toolTip())

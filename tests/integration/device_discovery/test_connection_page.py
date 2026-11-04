@@ -838,8 +838,8 @@ class DiscoveryAnimationOverlayTests(InstrumentSetupPageTestCase):
         self.assertEqual(diagnostics["cancel_reason"], "surface-changed")
         self.assertEqual(diagnostics["restore_result"], "revealed")
         self.assertTrue(panel.cards_area.isEnabled(), "取消后卡片恢复可交互")
-        self.assertTrue(
-            panel.status_label.isVisible(), "取消后结果统计也要放出来，不能一直藏着"
+        self.assertEqual(
+            panel.status_label.text(), "", "取消后不再补写结果统计，状态行保持空白"
         )
         for card in panel.cards():
             self.assertIsNone(card.graphicsEffect(), "取消后卡片不再被透明度效果藏起来")
@@ -862,7 +862,7 @@ class DiscoveryAnimationOverlayTests(InstrumentSetupPageTestCase):
         self.assertEqual(diagnostics["restore_result"], "revealed")
         self.assertIs(panel.phase(), DiscoveryPhase.INTERACTIVE)
         self.assertTrue(panel.cards_area.isEnabled())
-        self.assertFalse(panel.status_label.isHidden(), "收尾后统计行要放出来")
+        self.assertEqual(panel.status_label.text(), "", "收尾后不补写结果统计")
         for card in panel.cards():
             self.assertIsNone(card.graphicsEffect(), "收尾后卡片不再被藏起来")
 

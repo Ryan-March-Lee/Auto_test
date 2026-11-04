@@ -197,7 +197,9 @@ class DiscoveryFrameTests(DiscoveryPanelTestCase):
         self.app.processEvents()
 
         self.assertIs(panel.phase(), DiscoveryPhase.INTERACTIVE)
-        self.assertTrue(panel.status_label.isVisible(), "翻完最后一张才显示统计")
+        # 结果统计不再写回状态行：翻完最后一张后没有提示，整行保持隐藏。
+        self.assertEqual(panel.status_label.text(), "")
+        self.assertFalse(panel.status_label.isVisible())
         for card in cards:
             self.assertIsNone(card.graphicsEffect())
             self.assertTrue(card.isVisible())
@@ -238,7 +240,7 @@ class DiscoveryFrameTests(DiscoveryPanelTestCase):
     # ---- 取消后恢复 ---------------------------------------------------------
 
     def test_cancelling_mid_deal_restores_the_real_cards_and_clears_the_overlay(self):
-        """发牌中取消：覆盖层清空，真实卡片恢复可见、可点，统计重新出现。"""
+        """发牌中取消：覆盖层清空，真实卡片恢复可见、可点，状态行不留下统计。"""
         panel = self._dealing()
         layer = panel.deal_animation
         ink_before, _image, _layer = self._overlay_ink(panel, 200.0)
@@ -260,7 +262,7 @@ class DiscoveryFrameTests(DiscoveryPanelTestCase):
         self.assertEqual(snapshot["cancel_reason"], "test-cancel")
         self.assertEqual(snapshot["restore_result"], "revealed")
         self.assertTrue(panel.cards_area.isEnabled(), "取消后卡片区恢复可点")
-        self.assertTrue(panel.status_label.isVisible(), "取消后结果统计也要放出来")
+        self.assertEqual(panel.status_label.text(), "", "取消后不补写结果统计")
         for card in panel.cards():
             self.assertIsNone(card.graphicsEffect(), "取消后卡片不再被藏起来")
             self.assertTrue(card.isVisible())

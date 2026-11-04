@@ -5,7 +5,7 @@
 
 1. 常规：扫描较快返回 6 台设备 → 等待牌堆 → 发牌 → 翻牌 → 可交互；
 2. 扫描失败 → 等完一轮 → 失败说明，不进入发牌；
-3. 空结果 → 等完一轮 → 跳过发牌，显示“发现 0 台设备”；
+3. 空结果 → 等完一轮 → 跳过发牌，显示“未发现设备”；
 4. 发牌期间点“返回” → 覆盖层清空，结果卡片随结果一起清空；
 5. 发牌期间调整窗口大小 → 按 ``surface-changed`` 取消，卡片恢复可见可点。
 
@@ -777,8 +777,8 @@ def _scenario_deal(case: AcceptanceCase) -> None:
     )
     case.check("卡片区恢复可点", panel.cards_area.isEnabled())
     case.check(
-        "统计行重新出现",
-        panel.status_label.isVisible() and "发现 6 台设备" in panel.status_label.text(),
+        "不再补写统计行",
+        not panel.status_label.isVisible(),
         f"status={panel.status_label.text()!r}",
     )
     finished = layer.diagnostics()
@@ -858,7 +858,7 @@ def _scenario_failure(case: AcceptanceCase) -> None:
 
 
 def _scenario_empty(case: AcceptanceCase) -> None:
-    """空结果：等完一轮 → 跳过发牌，显示“发现 0 台设备”。"""
+    """空结果：等完一轮 → 跳过发牌，显示“未发现设备”。"""
     from presentation.qt.instrument_discovery_panel import DiscoveryPhase
     from presentation.qt.scan_card import WAIT_CYCLE_MS
 
@@ -894,8 +894,8 @@ def _scenario_empty(case: AcceptanceCase) -> None:
     )
     case.check("空结果同样等完这一轮等待动画", ok, detail)
     case.check(
-        "显示“发现 0 台设备”",
-        panel.status_label.isVisible() and "发现 0 台设备" in panel.status_label.text(),
+        "显示“未发现设备”",
+        panel.status_label.isVisible() and "未发现设备" in panel.status_label.text(),
         f"status={panel.status_label.text()!r}",
     )
     case.check("重新显示“查找设备”", panel.scan_btn.isVisible())
@@ -1012,7 +1012,7 @@ def _scenario_resize(case: AcceptanceCase) -> None:
         ),
     )
     case.check("卡片区恢复可点", panel.cards_area.isEnabled())
-    case.check("结果统计重新出现", panel.status_label.isVisible())
+    case.check("取消后不补写统计行", not panel.status_label.isVisible())
     case.check("覆盖层回到空白", _widget_ink(layer) == 0)
     case.check_no_residuals()
 

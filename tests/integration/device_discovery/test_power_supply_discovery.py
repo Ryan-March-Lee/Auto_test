@@ -98,4 +98,3 @@ class PowerSupplyDiscoveryTests(DiscoveryPanelTestCase):
 
         self.assertTrue(panel.card_checked("DP832A（DP8B0885）"))
         self.assertFalse(panel.card_checked("DP832A（DP8B1519）"))
-        self.assertIn("预选 1 台", panel.status_label.text())

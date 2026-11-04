@@ -111,7 +111,9 @@ class DiscoveryPhaseTests(DiscoveryPanelTestCase):
         self.assertIs(panel.phase(), DiscoveryPhase.INTERACTIVE)
         self.assertTrue(panel.is_interactive())
         self.assertTrue(panel.cards_area.isEnabled())
-        self.assertTrue(panel.status_label.isVisible())
+        # 结果统计不再写回状态行：没有提示时它保持空白、整行隐藏。
+        self.assertEqual(panel.status_label.text(), "")
+        self.assertFalse(panel.status_label.isVisible())
         for card in panel.cards():
             self.assertIsNone(card.graphicsEffect())
 
@@ -143,7 +145,7 @@ class DiscoveryPhaseTests(DiscoveryPanelTestCase):
         )
         self.assertTrue(panel.scan_btn.isVisible())
         self.assertTrue(panel.status_label.isVisible())
-        self.assertIn("发现 0 台设备", panel.status_label.text())
+        self.assertIn("未发现设备", panel.status_label.text())
 
     def test_a_failed_scan_returns_to_the_idle_layout_after_the_wait_cycle(self):
         def factory(_mode):
@@ -379,7 +381,7 @@ class DiscoveryPhaseTests(DiscoveryPanelTestCase):
             self._finish_worker(empty)
             self.assertIs(empty.phase(), DiscoveryPhase.IDLE)
             self.assertEqual(empty.card_count(), 0)
-            self.assertIn("发现 0 台设备", empty.status_label.text())
+            self.assertIn("未发现设备", empty.status_label.text())
 
     def test_programmatic_scan_requests_are_refused_mid_deal(self):
         """发牌期间不接新的查找：卡片与覆盖层都还指着这一次结果。"""

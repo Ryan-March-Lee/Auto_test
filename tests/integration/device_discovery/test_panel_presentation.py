@@ -416,7 +416,7 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         self.assertTrue(panel.cards_area.isVisible())
         self.assertTrue(panel.deal_animation.is_running(), "结果卡片应由发牌动画带出来")
         self.assertFalse(
-            panel.status_label.isVisible(), "牌还背面朝上时先不要写出结果统计"
+            panel.status_label.isVisible(), "牌还背面朝上时先不写任何提示"
         )
         diagnostics = panel.deal_animation.diagnostics()
         self.assertIn(diagnostics["event"], ("start", "first_paint"))
@@ -434,12 +434,13 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
             self.assertIsNotNone(effect, "发牌期间真正的卡片应藏在覆盖层后面")
             self.assertAlmostEqual(effect.opacity(), 0.0)
 
-        # 覆盖层走完：所有正面露出来，状态行这时才出现。
+        # 覆盖层走完：所有正面露出来。没有提示时状态行仍是隐藏的。
         panel.deal_animation.finish()
         self.app.processEvents()
         self.assertFalse(panel.deal_animation.is_running())
         self.assertFalse(panel.deal_animation.isVisible())
-        self.assertTrue(panel.status_label.isVisible())
+        self.assertEqual(panel.status_label.text(), "")
+        self.assertFalse(panel.status_label.isVisible())
         for card in panel.cards():
             self.assertIsNone(card.graphicsEffect())
 
@@ -861,11 +862,19 @@ class ResultsBoxStateTests(DiscoveryPanelTestCase):
         )
 
     def test_the_summary_line_sits_under_the_cards_and_centred(self):
-        """统计/失败说明紧跟卡片下方并横向居中，不再孤零零地贴在结果区左下角。"""
+        """提示行紧跟卡片下方并横向居中，不再孤零零地贴在结果区左下角。
+
+        结果统计已经不再显示；这里用“角色以设备表为准”这条需要用户核对的提示来验证
+        同一行文字的版面：它仍然排在最后一行卡片下面、落在结果区正中。
+        """
         panel = self.make_panel(size=(760, 560))
+        panel.set_device_bindings(
+            {"spectrum_analyzer": {"device_key": "rohde&schwarz:105462"}}
+        )
         self.run_scan(panel)
 
         self.assertTrue(panel.status_label.isVisible())
+        self.assertIn("角色以设备表为准", panel.status_label.text())
         box = panel.results_box
         cards_bottom = max(
             card.mapTo(box, card.rect().bottomLeft()).y() for card in panel.cards()

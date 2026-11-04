@@ -45,7 +45,7 @@
 结果时卡片数（一台仪器一张）就已经定了，结果区先按这个数量把版面排定，发牌因此直接落在
 卡片最终的位置上，翻牌也翻在同一处。发牌期间真正的卡片用透明度效果藏起来、暂不可点；
 动画翻到哪一张就发一次 ``card_revealed``，面板据此恢复哪一张，翻完最后一张才恢复交互并
-写出“发现 N 台设备 …”。发牌画面挂在**页面根容器**的覆盖层上
+写出需要用户注意的提示（没有提示时状态行保持隐藏）。发牌画面挂在**页面根容器**的覆盖层上
 （:mod:`presentation.qt.animation_overlay`，由页面通过 :meth:`InstrumentDiscoveryPanel.attach_animation_overlay`
 挂进来），不在结果区或卡片滚动区里：起点与每张牌的落点在动画开始时一次性换算到覆盖层
 坐标，滚动与页头收放都不会挪动已经开始的动画；页面尺寸、滚动或页面隐藏时页面按
@@ -59,8 +59,10 @@
 **结果区的高度由页面给出的可用高度决定**（宽裕时按两行卡片 + 按钮与状态行；窗口矮时
 由页面压到一行）：扫描状态与结果数量本身不改变它的大小，只有页面重新分配可用高度时
 才会伸缩，卡片超出时在结果区里滚动。卡片区本身只占实际行数（最多两行）那么高，
-统计/失败说明紧跟在卡片下面并横向居中；扫描期间的“正在查找设备 …”与进度直接写在这条
-状态行里，不另占一行，所以灰字紧贴按钮下方的舞台。动作行再排在它下面：页面级动作
+失败说明与需要用户核对的提示紧跟在卡片下面并横向居中；扫描期间的“正在查找设备 …”
+与进度直接写在这条状态行里，不另占一行，所以灰字紧贴按钮下方的舞台。结果回来后不再
+写“发现 N 台设备／已登记／可应用”这类统计：卡片自己写明每台设备的状态，这行只在真的
+有话要说时才出现。动作行再排在它下面：页面级动作
 （如“全选”与“下一步”）作为一个整体落在动作行正中，面板自己的“返回”贴在最右端
 （由页面通过 :meth:`InstrumentDiscoveryPanel.add_action_widget` 加进居中的动作组）；
 固定高度多出来的那一截留在动作行下方，不会把状态行顶到离卡片很远的地方。
@@ -631,6 +633,12 @@ class InstrumentDiscoveryPanel(QWidget):
         配置里的设备绑定不归面板管，所以返回不动它们；下一次勾选并点“下一步”时整批
         替换掉。要重新绑定，改完网段再查一次即可。
 
+        这次返回同时作废本次进入页面时登记的配置预选基线（:meth:`_drop_preselection`）：
+        下一次查找从“什么都没选”开始。否则按“返回”再查一次，卡片会立刻又被配置预选
+        勾上，用户看到的仍是上一次的选择状态，“返回”也就没有意义了。配置本身没有被
+        改写，重新进入本页时（:meth:`~presentation.qt.instrument_setup_page.InstrumentSetupPage.enter`）
+        仍会按身份预选同一台设备。
+
         结果可交互时先播一段与发牌相反的收牌动画：卡片从结果位翻回背面、沿发牌弧线
         飞回“查找设备”卡片并叠成牌堆。可见状态仍立即回到 ``IDLE``（页头文字与查找
         卡片当场回来），覆盖层只是把“收回去”的画面补完；发牌还没翻完时保持原来的
@@ -639,6 +647,7 @@ class InstrumentDiscoveryPanel(QWidget):
         if self.is_scanning() or self._pending_outcome is not None:
             self._set_status("扫描正在进行，请等待完成")
             return
+        self._drop_preselection()
         if (
             self._phase is DiscoveryPhase.INTERACTIVE
             and self.cards()
@@ -647,6 +656,15 @@ class InstrumentDiscoveryPanel(QWidget):
             self._start_return_reveal()
             return
         self.clear_results()
+
+    def _drop_preselection(self) -> None:
+        """作废本次进入页面时登记的配置预选基线：下一次查找从“什么都没选”开始。
+
+        只清面板内存里的 :attr:`device_bindings` 快照，不改配置、也不改已经写入的绑定；
+        重新进入本页时页面会按当前配置再登记一次。按“返回”是用户明确要重来一次，不能
+        马上又按旧绑定把卡片勾回去。
+        """
+        self.device_bindings = {}
 
     def _refresh_results_box_height(self) -> None:
         """让外层布局当场重排一次。
@@ -669,7 +687,7 @@ class InstrumentDiscoveryPanel(QWidget):
         self._apply_results_height()
 
     def _set_status(self, text: str) -> None:
-        """结果区里的状态行：只有真的有话要说时占位（结果统计、失败原因、应用问题）。
+        """结果区里的状态行：只有真的有话要说时占位（失败原因、应用问题、需要核对的提示）。
 
         没有结果时不写“尚未扫描”这类常驻提示，所以没有内容时整行隐藏。可见性仍由
         当前流程状态决定：发牌期间即使已经备好统计也先藏着，翻牌完成后再出现。
@@ -749,8 +767,8 @@ class InstrumentDiscoveryPanel(QWidget):
         self.wait_stack.cycle_finished.connect(self._on_wait_cycle_finished)
         self.status_label = QLabel("")
         self.status_label.setWordWrap(True)
-        # 结果统计/失败原因紧跟在卡片下方，横向落在结果区正中：这句话通常只有一行，
-        # 靠左会孤零零地贴在整块宽度的一角。
+        # 失败原因与需要核对的提示紧跟在卡片下方，横向落在结果区正中：这句话通常只有
+        # 一行，靠左会孤零零地贴在整块宽度的一角。
         self.status_label.setAlignment(Qt.AlignHCenter)
         self.status_label.setProperty("role", "hint")
         self.status_label.setVisible(False)
@@ -856,7 +874,7 @@ class InstrumentDiscoveryPanel(QWidget):
         self.cards_area.setWidget(self.cards_host)
         self.cards_area.setVisible(False)
         box.addWidget(self.cards_area)
-        # 结果统计 / 失败原因紧跟在卡片下面，横向居中；动作行留在它下面：
+        # 失败原因与提示紧跟在卡片下面，横向居中；动作行留在它下面：
         # “返回”在左，页面级动作（如“下一步”）由页面加进这一行的右端。
         # 结果区高度固定（按两行卡片算），卡片只有一行时多出来的高度落到最下面，
         # 不再把这句话和按钮顶到结果区底部、离卡片很远。
@@ -1433,7 +1451,7 @@ class InstrumentDiscoveryPanel(QWidget):
 
         有设备时卡片先按最终版面就位，但真实控件用透明度效果藏起来（仍占着版面），
         由发牌覆盖层逐张翻开；翻完最后一张才进入 ``INTERACTIVE``。空结果跳过发牌，
-        直接回 ``IDLE`` 并显示“发现 0 台设备 …”。真实卡片在 ``DEALING`` 期间不可点。
+        直接回 ``IDLE`` 并给出一句空结果说明。真实卡片在 ``DEALING`` 期间不可点。
         """
         # 发牌起点是牌堆现在还留在屏幕上的位置；进入 DEALING 会收走等待牌堆，所以先记。
         deck_anchor = None
@@ -1445,46 +1463,43 @@ class InstrumentDiscoveryPanel(QWidget):
         if not devices:
             # 空结果不发牌：跳过动画并直接回到查找画面，用户可以改网段再试。
             self._fill_cards(devices)
-            self._set_status(self._results_summary(result, devices))
+            message = self._results_message(result, devices)
+            self._set_status(message)
             self.deal_animation.skip(reason="no-cards")
             self._set_phase(DiscoveryPhase.IDLE, outcome="completed-empty")
-            self.log_message.emit(f"设备扫描完成: {self.status_label.text()}")
+            self.log_message.emit(f"设备扫描完成: {message}")
             return
         # 先把结果区切到 DEALING（卡片区可见、状态行隐藏、卡片区禁用），再生成卡片：
         # 卡片因此在可见的卡片区里完成布局，落点冻结之后不会因为刚显示出来而重排。
         self._set_phase(DiscoveryPhase.DEALING, outcome="completed")
         self._fill_cards(devices)
-        # 预选说明会追加在扫描统计后面，因此先写统计再预选。
-        self.status_label.setText(self._results_summary(result, devices))
+        # 预选说明会追加在提示后面，因此先写提示再预选。
+        self.status_label.setText(self._results_message(result, devices))
         self._preselect_bound_devices()
         self._sync_results_height()
-        self.log_message.emit(f"设备扫描完成: {self.status_label.text()}")
+        details = self.status_label.text()
+        summary = f"设备扫描完成: 发现 {len(devices)} 台设备"
+        self.log_message.emit(f"{summary}；{details}" if details else summary)
         self._start_deal_reveal(deck_anchor)
 
     @staticmethod
-    def _results_summary(result: Any, devices: Sequence[Any]) -> str:
-        """结果统计与提示：数量、未登记/无法识别、扫描器给出的失败与提示。"""
-        known = sum(1 for device in devices if device.is_known)
-        usable = sum(1 for device in devices if device_applicable(device))
-        no_role = sum(1 for device in devices if device.is_known and not device.has_role)
-        unregistered = sum(1 for device in devices if device.is_unknown_identity)
-        unidentified = sum(1 for device in devices if device.is_unidentified)
-        text = f"发现 {len(devices)} 台设备：已登记 {known} 台，其中可应用 {usable} 台"
-        if no_role:
-            text += f"，未分配角色 {no_role} 台"
-        if unregistered:
-            text += f"，未登记 {unregistered} 台"
-        if unidentified:
-            text += f"，无法识别 {unidentified} 个地址"
-        failures = tuple(result.failures)
+    def _results_message(result: Any, devices: Sequence[Any]) -> str:
+        """结果提示：只写扫描器报告的问题与需要用户核对的信息。
+
+        “发现 N 台设备／已登记／可应用”这类数量统计不写在这里：卡片自己写明每台设备的
+        登记与可用状态（未登记、未分配角色、无法识别），再用一行灰字重复一遍只是噪音。
+        没有别的话要说时返回空串，状态行整行隐藏。模拟模式的安全提示已经在扫描设置那
+        一行的 :attr:`mode_hint` 里，也不在这里重复。空结果仍给一句说明，否则用户分不清
+        “查找过但没设备”和“还没查找过”。
+        """
+        parts: list[str] = []
+        if not devices:
+            parts.append("未发现设备，可调整网段或扫描方式后重新查找")
+        parts.extend(tuple(result.failures))
         notices = tuple(getattr(result, "notices", ()) or ())
-        if failures:
-            text += "；" + "；".join(failures)
         if notices:
-            text += "；提示：" + "；".join(notices)
-        if getattr(result, "mode", None) == SCAN_MODE_SIMULATED:
-            text += "（模拟数据，仅用于离线演示；不能用于真实测量）"
-        return text
+            parts.append("提示：" + "；".join(notices))
+        return "；".join(parts)
 
     def _start_deal_reveal(self, deck_anchor: Any) -> None:
         """把结果卡片藏起来，交给发牌覆盖层发出去、再逐张翻开。
@@ -2086,11 +2101,12 @@ class InstrumentDiscoveryPanel(QWidget):
                     f"{device.display_name} 配置里是 {role_label(bound_role) or bound_role}，"
                     f"设备表登记为 {role_label(device.role)}"
                 )
-        if matched:
-            text = f"{self.status_label.text()}；已按配置中的设备身份预选 {matched} 台"
-            if moved:
-                text += "；角色以设备表为准（" + "；".join(moved) + "）"
-            self.status_label.setText(text)
+        if matched and moved:
+            # 卡片自己会写“已按配置预选”，这里只补用户需要核对的角色差异：不能把配置
+            # 里的旧角色静默当成设备表登记的角色。
+            note = "角色以设备表为准（" + "；".join(moved) + "）"
+            existing = self.status_label.text()
+            self.status_label.setText(f"{existing}；{note}" if existing else note)
         self._sync_card_checks()
 
     def _sync_card_checks(self) -> None:

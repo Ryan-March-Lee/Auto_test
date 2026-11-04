@@ -39,10 +39,9 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
         # 电源还没有短标签时退回资产名，但仍然是类别“电源”，不是“电源 PS3”这种槽位编号。
         self.assertIn("DP832A（DP8B214901519）", names)
         self.assertIn("未知设备 (N9020A)", names)
-        text = panel.status_label.text()
-        self.assertIn("已登记 3 台", text)
-        self.assertIn("其中可应用 3 台", text)
-        self.assertIn("未登记 1 台", text)
+        # 数量统计不再重复写进状态行：每张卡片自己写明登记与可用状态。
+        self.assertEqual(panel.status_label.text(), "")
+        self.assertFalse(panel.status_label.isVisible())
 
     def test_cards_show_the_ip_on_its_own_gray_line(self):
         """IP 只写在卡片最下面那一行的灰色小字里，不混进设备码或型号。"""
@@ -96,7 +95,7 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
         self.assertFalse(card.checkable)
         panel.set_card_checked("SMW200A（105462）", True)
         self.assertFalse(panel.card_checked("SMW200A（105462）"))
-        self.assertIn("未分配角色 1 台", panel.status_label.text())
+        self.assertEqual(panel.status_label.text(), "", "没有可说的提示时状态行保持空白")
 
     def test_power_supply_without_a_label_says_why_the_model_is_shown(self):
         """旧设备表还没有缩写设备码：卡片显示型号，提示里说明原因。
@@ -260,10 +259,32 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
         self.run_scan(panel)
 
         self.assertTrue(panel.card_checked("SMW200A（105462）"))
-        self.assertIn("预选", panel.status_label.text())
         self.assertIn("已按配置预选", panel.card_status("SMW200A（105462）"))
         # 其他卡片不因预选被选上：用户仍可自由改。
         self.assertFalse(panel.card_checked("DP832A（DP8B214901519）"))
+
+    def test_back_drops_the_preselection_baseline_for_the_next_scan(self):
+        """返回后重新查找从空白开始：不能再按配置把上一次的设备勾回去。"""
+        panel = self.make_panel(
+            bindings={
+                "signal_generator": {
+                    "full_code": "105462",
+                    "device_key": "rohde&schwarz:105462",
+                }
+            }
+        )
+        self.run_scan(panel)
+        self.assertTrue(panel.card_checked("SMW200A（105462）"))
+        self.assertIn("已按配置预选", panel.card_status("SMW200A（105462）"))
+
+        panel.request_back()
+        self.app.processEvents()
+        self.run_scan(panel)
+
+        # 返回是用户明确要重来一次：下一次查找不能马上又按旧绑定把卡片勾上。
+        for card in panel.cards():
+            self.assertFalse(card.is_checked(), "返回后重新查找必须从一台都没选开始")
+        self.assertEqual(panel.status_label.text(), "")
 
     def test_a_card_unchecked_by_the_user_is_not_preselected_again(self):
         """用户取消勾选后，刷新卡片不能把配置里的预选重新加回来。"""
@@ -323,7 +344,6 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
         self.run_scan(panel)
 
         self.assertTrue(panel.card_checked("DP832A（DP8B214901519）"))
-        self.assertIn("预选", panel.status_label.text())
         self.assertNotIn("配置里是", panel.status_label.text())
 
     def test_preselection_uses_vendor_and_serial_when_key_is_missing(self):
@@ -346,7 +366,7 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
 
         for card in panel.cards():
             self.assertFalse(card.is_checked())
-        self.assertNotIn("预选", panel.status_label.text())
+        self.assertEqual(panel.status_label.text(), "")
 
     def test_unidentified_address_is_listed_but_cannot_be_applied(self):
         def factory(_mode):
@@ -365,7 +385,6 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
         card = panel.card_for("未识别设备 #1")
         self.assertEqual(card.code_label.text(), "未识别 #1")
         self.assertFalse(card.checkable)
-        self.assertIn("无法识别 1 个地址", panel.status_label.text())
 
     def test_scan_failure_restores_the_button_and_shows_the_reason(self):
         def factory(_mode):

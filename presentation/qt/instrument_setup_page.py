@@ -15,11 +15,12 @@
 
 版式分两层：静态骨架（页面标题、居中滚动区、页面动作的声明位置）由 Qt Designer 文件
 ``presentation/qt/ui/instrument_setup_page.ui`` 描述，改排列或文案只动那个文件；动态部分
-（设备发现面板、扫描结果卡片，以及“下一步”这一行动作）仍在
+（设备发现面板、扫描结果卡片，以及“全选”“下一步”这一行动作）仍在
 Python 里构建并插进骨架。“返回欢迎页”不再与它们同排：它被移进扫描提示（模拟模式的
 黄色说明）正下方，显示为一行蓝色下划线小字，并随页头文字一起淡出、随页头一起让位。
-两个页面动作虽然声明在 ``.ui`` 的页面动作栏里，但最终分别落到页头与设备发现面板的
-结果区动作行。
+三个页面动作虽然声明在 ``.ui`` 的页面动作栏里，但最终分别落到页头与设备发现面板的
+结果区动作行；结果区动作行里“全选”和“下一步”作为一个整体居中，面板自己的“返回”
+贴在最右端。
 页面不写颜色、字号与间距常量：颜色与字号来自 :mod:`presentation.qt.theme`，静态间距在
 ``.ui`` 里，版心宽度用主题令牌 ``theme.PAGE_CONTENT_MAX_WIDTH`` 收口。
 
@@ -31,9 +32,11 @@ Python 里构建并插进骨架。“返回欢迎页”不再与它们同排：�
 扫描失败或没有结果时页头原样回来。页面主体本身固定在上部
 （`instrument_setup_page.ui` 的顶部留白只留一小段，富余高度全部落在底部）。
 
+“全选”只在本次扫描出现可应用设备后与“下一步”一起出现：点击后选中所有可应用的
+卡片，按钮随即变成白底灰框灰字、不可点；用户取消任意一张卡片后恢复白底黑框黑字。
 “下一步”先把本次勾选的设备写入配置（整批替换），再切到仪器配置页；配置文件仍随
 “保存配置”或最终按钮一起落盘，因此从本页离开不会产生半保存的配置。首次查找前、扫描中、
-扫描失败或没有可应用设备时“下一步”不出现；必须从本次扫描结果中选择设备才能推进。
+扫描失败或没有可应用设备时两个按钮都不出现；必须从本次扫描结果中选择设备才能推进。
 """
 
 from __future__ import annotations
@@ -55,7 +58,7 @@ from application.device_binding import ApplyDeviceSelectionRequest
 from application.ports.device_binding import DeviceBindingPort
 from application.ports.device_discovery import DEMO_SUBNET
 
-from .action_button import AnimatedActionButton
+from .action_button import AnimatedActionButton, OutlineActionButton
 from .animation_lifecycle import OverlayLifecycle
 from .animation_overlay import AnimationOverlay
 from .config_form_bindings import binding_address, binding_records
@@ -80,10 +83,10 @@ _RESULTS_TOP_MARGIN = 8
 class InstrumentSetupPage(QWidget):
     """仪器设置页：整屏页面，不登记进标签栏。
 
-    页面持有大字号标题、设备发现面板，以及结果区动作行里的“下一步”（它和面板自己的
-    “返回”排在同一条水平线上）；“返回欢迎页”是页头里的一行蓝色下划线小字，落在扫描
-    提示正下方。“下一步”只在本次扫描出现可应用设备后显示，初次查找前保持隐藏。设备
-    绑定的写入与派生界面状态由配置页负责，本页通过
+    页面持有大字号标题、设备发现面板，以及结果区动作行里居中的“全选”和“下一步”
+    （面板自己的“返回”贴在同一行最右端）；“返回欢迎页”是页头里的一行蓝色下划线小字，
+    落在扫描提示正下方。“全选”与“下一步”只在本次扫描出现可应用设备后显示，初次查找
+    前保持隐藏。设备绑定的写入与派生界面状态由配置页负责，本页通过
     :class:`application.ports.device_binding.DeviceBindingPort` 读取与提交，不持有
     配置页实例。
 
@@ -166,16 +169,28 @@ class InstrumentSetupPage(QWidget):
         # 大标题与扫描行在扫描中隐去文字，但保留高度：它们是页面主体的锚点，
         # 按钮、等待动画与结果卡片因此不再上下跳。
         self._setup_header_visibility()
-        # 页面动作栏：两个页面动作移走后，这一栏不再有可见内容；保留引用供视觉契约
+        # 页面动作栏：页面动作移走后，这一栏不再有可见内容；保留引用供视觉契约
         # 量取页面上下留白。
         self.page_action_bar = self._require(QWidget, "pageActionBar")
-        # 结果区动作行：“下一步”和面板自己的“返回”排在同一行（结果区动作行才是卡片与
-        # “返回”所在的那一行）。“返回欢迎页”不属于这里：它是一行文字链接，落在扫描提示
-        # 正下方，属于页头，随页头文字一起淡出、有结果时整块让位。
+        # 结果区动作行：“全选”“下一步”和面板自己的“返回”排在同一行（结果区动作行才是
+        # 卡片与“返回”所在的那一行）；前两者作为一个整体居中，“返回”贴在最右端。
+        # “返回欢迎页”不属于这里：它是一行文字链接，落在扫描提示正下方，属于页头，
+        # 随页头文字一起淡出、有结果时整块让位。
         self.return_welcome_btn = self._require(QPushButton, "returnWelcomeButton")
-        # “下一步”的静态声明仍在 ``.ui``（控件名、文案与层级契约），但它的两种状态
-        # （灰色不可点到蓝色填充展开）样式表表达不了，因此运行时换成自绘按钮：拿
-        # ``.ui`` 里的文案与提示，保留同一个 objectName，再把占位控件从版面里拿掉。
+        # “全选”与“下一步”的静态声明仍在 ``.ui``（控件名、文案与层级契约），但它们的
+        # 状态样式表表达不了，因此运行时换成自绘按钮：拿 ``.ui`` 里的文案与提示，保留
+        # 同一个 objectName，再把占位控件从版面里拿掉。
+        select_all_placeholder = self._require(QPushButton, "selectAllButton")
+        self.select_all_btn = OutlineActionButton(
+            select_all_placeholder.text(), self
+        )
+        self.select_all_btn.setObjectName("selectAllButton")
+        self.select_all_btn.setToolTip(select_all_placeholder.toolTip())
+        self.select_all_btn.setProperty(
+            "variant", select_all_placeholder.property("variant")
+        )
+        select_all_placeholder.setParent(None)
+        select_all_placeholder.deleteLater()
         placeholder = self._require(QPushButton, "nextButton")
         self.next_btn = AnimatedActionButton(placeholder.text(), self)
         self.next_btn.setObjectName("nextButton")
@@ -184,8 +199,13 @@ class InstrumentSetupPage(QWidget):
         placeholder.setParent(None)
         placeholder.deleteLater()
         self.discovery_panel.add_header_widget(self.return_welcome_btn)
+        # 先加“全选”再加“下一步”：居中的动作组按这个顺序从左到右排列。
+        self.discovery_panel.add_action_widget(self.select_all_btn)
         self.discovery_panel.add_action_widget(self.next_btn)
-        # 初次查找前没有可应用的本次结果：“下一步”保持隐藏且不可点，页面不提供绕过查找的入口。
+        # 初次查找前没有可应用的本次结果：两个动作都保持隐藏且不可点，页面不提供绕过
+        # 查找的入口。
+        self.select_all_btn.setVisible(False)
+        self.select_all_btn.setEnabled(False)
         self.next_btn.setVisible(False)
         self.next_btn.setEnabled(False)
         # 窗口尺寸变化时把结果区高度收进当前窗口。视口第一次拿到真实高度是在显示之后，
@@ -302,27 +322,43 @@ class InstrumentSetupPage(QWidget):
     def _connect_signals(self) -> None:
         self.discovery_panel.box_state_changed.connect(self._on_box_state_changed)
         self.discovery_panel.phase_changed.connect(self._on_discovery_phase_changed)
-        self.discovery_panel.selection_changed.connect(self._sync_next_action)
+        self.discovery_panel.selection_changed.connect(self._sync_actions)
+        self.select_all_btn.clicked.connect(self.request_select_all)
         self.next_btn.clicked.connect(self.request_next)
         self.return_welcome_btn.clicked.connect(self.return_welcome_requested.emit)
 
     def _on_discovery_phase_changed(self, _phase: str) -> None:
-        """发现流程推进后更新“下一步”：只有可交互的本次结果才给这个入口。"""
-        self._sync_next_action()
+        """发现流程推进后更新页面动作：只有可交互的本次结果才给这些入口。"""
+        self._sync_actions()
 
-    def _sync_next_action(self) -> None:
-        """按本次发现结果与勾选状态管理“下一步”的可见性与可用性。
+    def _sync_actions(self) -> None:
+        """按本次发现结果与勾选状态管理“全选”和“下一步”。
 
-        页面只有在 ``INTERACTIVE``（结果已进结果区、卡片可点）且存在可应用设备时才显示
-        “下一步”；初次查找前、扫描中、失败、取消与空结果都不显示。显示之后还要看勾选：
-        一台都没勾时按钮是灰色、不可点的静止态，勾上任何一台才变成可点的蓝色按钮
-        （自绘按钮在那次状态切换里播放填充动效）。勾选是否有设备由 :meth:`request_next`
-        再校验一次，界面状态不能替代写入规则。
+        两个动作都只在 ``INTERACTIVE``（结果已进结果区、卡片可点）且存在可应用设备时
+        出现；初次查找前、扫描中、失败、取消与空结果都不显示。
+
+        - “全选”在还有未选中的可应用设备时保持白底黑框黑字、可点；所有可勾选卡片都
+          选中后变成白底灰框灰字、不可点，取消任意一张卡片后自动回到初始态。
+        - “下一步”仍按是否至少勾选一台设备决定可用性：一台都没勾时是灰色、不可点的
+          静止态，勾上任何一台才变成可点的蓝色按钮（自绘按钮在那次状态切换里播放填充
+          动效）。
+
+        勾选与写入的最终校验仍由 :meth:`request_next` 负责，界面状态不能替代写入规则。
         """
         panel = self.discovery_panel
         available = panel.is_interactive() and panel.has_selectable_devices()
+        all_selected = available and panel.all_selectable_selected()
+        self.select_all_btn.setVisible(available)
         self.next_btn.setVisible(available)
+        # 先让“下一步”拿到新状态，再禁用“全选”：点击全选后焦点会自然落到相邻的
+        # “下一步”上，不会跳回页面别处。
         self.next_btn.setEnabled(available and panel.has_selected_devices())
+        self.select_all_btn.setEnabled(available and not all_selected)
+        self.select_all_btn.setToolTip(
+            "已选中本次结果里全部可应用的设备"
+            if all_selected
+            else "选中本次扫描结果中所有可应用的设备"
+        )
         self.next_btn.setToolTip(
             "进入仪器配置页，配置测试参数并完成仪器连接"
             if self.next_btn.isEnabled()
@@ -341,7 +377,7 @@ class InstrumentSetupPage(QWidget):
         return self.title_label.text()
 
     def action_labels(self) -> tuple[str, str]:
-        """两个页面级动作的文案：返回欢迎页（页头链接）、下一步。"""
+        """返回欢迎页（页头链接）与下一步的文案；全选由 ``select_all_btn`` 单独暴露。"""
         return self.return_welcome_btn.text(), self.next_btn.text()
 
     def page_actions_visible(self) -> tuple[bool, bool]:
@@ -352,6 +388,15 @@ class InstrumentSetupPage(QWidget):
         结果下都不出现。
         """
         return self.return_welcome_btn.isVisible(), self.next_btn.isVisible()
+
+    def request_select_all(self) -> None:
+        """选中本次扫描结果里所有可应用的设备。
+
+        “全选”按钮的唯一入口：只改本次结果里的勾选，不写配置文件；按钮自身的灰态与
+        “下一步”的可用性都由面板发回的选择变化信号刷新。不可应用的卡片本来就不可选，
+        不会被这个方法选中。
+        """
+        self.discovery_panel.select_all_devices()
 
     def request_next(self) -> None:
         """写入本次勾选的设备，然后进入“仪器配置”页。
@@ -406,7 +451,7 @@ class InstrumentSetupPage(QWidget):
         panel.set_device_bindings(state.bindings_snapshot())
         panel.clear_results()
         panel.subnet_edit.setText(self._default_scan_subnet(state) or DEMO_SUBNET)
-        self._sync_next_action()
+        self._sync_actions()
         if state.legacy_binding_count:
             self.log_message.emit(
                 f"有 {state.legacy_binding_count} 台设备的连接沿用已保存的配置，未扫描确认"

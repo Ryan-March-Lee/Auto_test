@@ -28,6 +28,7 @@ from application.device_binding import (
     AppliedDeviceBinding,
     DeviceBindingResult,
 )
+from presentation.qt.action_button import AnimatedActionButton, OutlineActionButton
 from presentation.qt.instrument_setup_page import InstrumentSetupPage
 from presentation.qt.instrument_discovery_panel import BOX_STATE_RESULTS
 from presentation.qt.theme import PAGE_CONTENT_MAX_WIDTH
@@ -332,6 +333,20 @@ class InstrumentSetupPageStaticLayoutTests(unittest.TestCase):
 
         self.assertEqual(page.page_title(), "仪表配置")
         self.assertEqual(page.action_labels(), ("返回欢迎页", "下一步"))
+
+    def test_page_actions_use_the_shared_pill_geometry(self):
+        """下一步保留自绘动效胶囊；全选使用同一份胶囊几何的描边版本。"""
+        page = self.make_page()
+
+        self.assertIsInstance(page.next_btn, AnimatedActionButton)
+        self.assertIsInstance(page.select_all_btn, OutlineActionButton)
+        self.assertEqual(page.next_btn.property("variant"), "primary")
+        self.assertEqual(page.select_all_btn.property("variant"), "secondary")
+        self.assertEqual(
+            page.next_btn.sizeHint().height(),
+            page.select_all_btn.sizeHint().height(),
+            "两个按钮的胶囊高度必须一致",
+        )
 
     def test_page_actions_appear_only_after_a_usable_result(self):
         page = self.make_page()

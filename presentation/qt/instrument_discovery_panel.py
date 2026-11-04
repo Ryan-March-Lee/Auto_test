@@ -60,9 +60,10 @@
 由页面压到一行）：扫描状态与结果数量本身不改变它的大小，只有页面重新分配可用高度时
 才会伸缩，卡片超出时在结果区里滚动。卡片区本身只占实际行数（最多两行）那么高，
 统计/失败说明紧跟在卡片下面并横向居中；扫描期间的“正在查找设备 …”与进度直接写在这条
-状态行里，不另占一行，所以灰字紧贴按钮下方的舞台。动作行再排在它下面（“返回”在左，
-页面级动作如“下一步”在右，由页面通过 :meth:`InstrumentDiscoveryPanel.add_action_widget`
-加进同一行）；固定高度多出来的那一截留在动作行下方，不会把状态行顶到离卡片很远的地方。
+状态行里，不另占一行，所以灰字紧贴按钮下方的舞台。动作行再排在它下面：页面级动作
+（如“全选”与“下一步”）作为一个整体落在动作行正中，面板自己的“返回”贴在最右端
+（由页面通过 :meth:`InstrumentDiscoveryPanel.add_action_widget` 加进居中的动作组）；
+固定高度多出来的那一截留在动作行下方，不会把状态行顶到离卡片很远的地方。
 
 结果区**不是抽屉**：结果回来就留在那里，没有“收起 / 查看结果”的来回切换。要重新查找时
 按“返回”（:meth:`InstrumentDiscoveryPanel.request_back`）：清空本次结果与勾选，结果区顶部
@@ -87,8 +88,9 @@ from typing import Any, Callable, Sequence
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QThread, Signal
 from PySide6.QtWidgets import (
-    QApplication, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QScrollArea, QSizePolicy, QSpacerItem, QVBoxLayout, QWidget,
+    QApplication, QFrame, QGraphicsOpacityEffect, QHBoxLayout,
+    QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy, QSpacerItem,
+    QVBoxLayout, QWidget,
 )
 
 from application.ports.device_discovery import (
@@ -840,18 +842,30 @@ class InstrumentDiscoveryPanel(QWidget):
 
         self.actions_row = QWidget(self.results_box)
         self.actions_row.setObjectName("discoveryActionsRow")
-        actions = QHBoxLayout(self.actions_row)
-        actions.setContentsMargins(0, 0, 0, 0)
-        actions.setSpacing(10)
         self.back_btn = QPushButton("返回")
         self.back_btn.setToolTip("清空本次查找的结果与勾选，回到扫描行下面的“查找设备”")
         set_button_variant(self.back_btn, "ghost")
         self.back_btn.setVisible(False)
-        actions.addWidget(self.back_btn)
+        # 动作行左右两端等宽占位：左边空出与“返回”同宽再加一个间距的空间，右边“返回”
+        # 前留同样间距，两个弹簧等分剩余宽度，动作组因此严格落在行中心；“返回”贴住最右端。
+        # 间距写成显式占位而不是布局 spacing：QBoxLayout 只在部分项之间插入 spacing，
+        # 会让左右两侧实际宽度不等，居中就偏出几个像素。
+        actions = QHBoxLayout(self.actions_row)
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(0)
+        back_width = self.back_btn.sizeHint().width()
+        actions.addSpacing(back_width + 10)
         actions.addStretch(1)
-        # 页面之后追加的动作按顺序落在右端；高度计算要把它们一并算进去。
-        self.action_layout = actions
+        # 页面之后追加的动作按顺序落在这个居中的组里；高度计算要把它们一并算进去。
+        self.action_layout = QHBoxLayout()
+        self.action_layout.setContentsMargins(0, 0, 0, 0)
+        self.action_layout.setSpacing(10)
+        actions.addLayout(self.action_layout)
+        actions.addStretch(1)
+        actions.addSpacing(10)
+        actions.addWidget(self.back_btn)
         self._action_widgets: list[QWidget] = [self.back_btn]
+        self._sync_action_row_height()
         # 返回只对结果有效，跟在状态行下面。
         box.addWidget(self.actions_row)
         # 固定高度里多出来的那一截留在按钮下面：卡片、状态行与按钮整组贴着结果区上沿，
@@ -1037,16 +1051,31 @@ class InstrumentDiscoveryPanel(QWidget):
         )
 
     def add_action_widget(self, widget: QWidget) -> None:
-        """把一个页面级动作放到“返回”同一行的右端，并重算结果区高度。
+        """把一个页面级动作加进动作行正中的动作组，并重算结果区高度。
 
-        面板只提供版面：动作由页面创建与接线（例如仪表配置页的“下一步”），面板不认识
-        它的语义，也不替它发信号。
+        动作组按调用顺序从左到右排列，整组在动作行里居中；“返回”单独落在最右端。
+        面板只提供版面：动作由页面创建与接线（例如仪表配置页的“全选”与“下一步”），
+        面板不认识它的语义，也不替它发信号。
         """
         self.action_layout.addWidget(widget)
         self._action_widgets.append(widget)
+        self._sync_action_row_height()
         # 动作行的高度可能变了：两行卡片的上限跟着重算一次。
         self._capture_results_height_max()
         self._apply_results_height()
+
+    def _sync_action_row_height(self) -> None:
+        """让动作行至少装得下最高的动作。
+
+        页面级自绘胶囊比标准“返回”按钮高（胶囊外还要留光晕与上浮的余地），而
+        ``QHBoxLayout`` 嵌在另一个布局里时会按最小高度而不是提示高度分配空间。
+        不把动作行的下限抬到最高动作的提示高度，胶囊会被压扁成标准按钮那么高。
+        """
+        height = max(
+            (widget.sizeHint().height() for widget in self._action_widgets),
+            default=0,
+        )
+        self.actions_row.setMinimumHeight(height)
 
     def add_header_widget(self, widget: QWidget) -> None:
         """把一个页面级动作放到扫描提示（黄字）正下方，横向居中。
@@ -2181,6 +2210,32 @@ class InstrumentDiscoveryPanel(QWidget):
         负责，这里只回答“有没有勾选”。
         """
         return any(row["card"].is_checked() for row in self._rows)
+
+    def all_selectable_selected(self) -> bool:
+        """所有可勾选卡片是否都已选中（至少存在一张可勾选卡片）。
+
+        页面用它决定“全选”的两种外观：还有未选中的可应用设备时按钮可点并保持白底
+        黑框黑字；全部选中后变成白底灰框灰字、不可点的静止态。不可应用的卡片本来就
+        不能勾选，不参与这个判断。
+        """
+        selectable = [row for row in self._rows if row["card"].checkable]
+        return bool(selectable) and all(
+            row["card"].is_checked() for row in selectable
+        )
+
+    def select_all_devices(self) -> None:
+        """选中本次结果里所有可应用的设备，等价于用户逐张点选。
+
+        只处理可勾选卡片：未登记、无角色或无法识别地址的设备本来就不可选，保持原样。
+        选择记在每行的 ``user_checked`` 上，随后的 :meth:`_sync_card_checks` 会把
+        “已按配置预选”的说明清掉，并像用户点过一样刷新卡片；最后发一次
+        :attr:`selection_changed`，页面据此更新“全选”与“下一步”的外观。
+        """
+        for row in self._rows:
+            if row["card"].checkable:
+                row["user_checked"] = True
+        self._sync_card_checks()
+        self.selection_changed.emit()
 
     def selected_assignments(self) -> tuple[list[dict[str, Any]], list[str]]:
         """返回 ``(要应用的设备, 问题说明)``；身份/角色缺失、唯一角色重复都算问题。

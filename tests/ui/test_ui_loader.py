@@ -91,10 +91,13 @@ class UiLoaderTests(unittest.TestCase):
 
         next_btn = ui.findChild(QPushButton, "nextButton")
         return_btn = ui.findChild(QPushButton, "returnWelcomeButton")
+        select_all_btn = ui.findChild(QPushButton, "selectAllButton")
         self.assertEqual(next_btn.text(), "下一步")
         self.assertEqual(return_btn.text(), "返回欢迎页")
+        self.assertEqual(select_all_btn.text(), "全选")
         self.assertEqual(next_btn.property("variant"), "primary")
         self.assertEqual(return_btn.property("variant"), "link")
+        self.assertEqual(select_all_btn.property("variant"), "secondary")
 
     def test_ui_files_declare_no_colors_fonts_styles_or_fixed_sizes(self):
         """结构在 ``.ui``，外观与尺寸令牌在 ``theme.py``：两边不各自维护一套视觉常量。"""

@@ -1,4 +1,4 @@
-"""页面主操作按钮：从中心涌出的圆形填充 + 外圈光晕 + 悬停上浮。
+"""页面主操作按钮与描边胶囊按钮：从中心涌出的圆形填充 + 外圈光晕 + 悬停上浮。
 
 复刻参考按钮（Uiverse 的 ``animated-button``）在浅色主题下的两种状态：
 
@@ -16,6 +16,10 @@
 
 按钮仍是 :class:`QPushButton` 的子类：``clicked``、``setEnabled``、``setToolTip`` 与键盘
 操作照旧，页面只负责在“是否勾选了设备”变化时调用 :meth:`QWidget.setEnabled`。
+
+同一模块还提供 :class:`OutlineActionButton`：胶囊高度、圆角、左右内边距与字号和上面的
+主操作按钮完全一致，但只有白底黑框黑字 / 白底灰框灰字两种静止状态，没有蓝色填充。
+仪表配置页的“全选”用它，因此两个按钮并排时轮廓一样高。
 """
 
 from __future__ import annotations
@@ -54,6 +58,9 @@ PRESS_SCALE = 0.95
 #: 参考按钮的 2px 细边与 5px 光晕；可用状态在两者之间随填充进度过渡。
 RING_WIDTH_IDLE = 2.0
 RING_WIDTH_ACTIVE = 5.0
+
+#: 描边按钮（“全选”）的边框宽度：与主按钮静止时的外圈同宽，并排时轮廓一样粗。
+OUTLINE_WIDTH = 2.0
 
 #: 填充动画 0.8s，上浮 0.18s；参考按钮的 ``transition`` 是 0.6s / 0.8s，上浮是额外
 #: 要求的轻量反馈，不跟着走满 0.6s。
@@ -371,6 +378,138 @@ class AnimatedActionButton(QPushButton):
         painter.restore()
 
 
+class OutlineActionButton(QPushButton):
+    """描边胶囊按钮：可用是白底黑框黑字，不可用是白底灰框灰字。
+
+    它与 :class:`AnimatedActionButton` 共用胶囊高度、圆角、左右内边距与字号，因此并排
+    时两个按钮的轮廓一样高；但它没有蓝色填充与上浮动效，点击“全选”后直接进入不可用
+    态，边框和文字同时转灰，用户取消任意一张卡片后重新变黑。白底在两种状态下都不变，
+    所以禁用时不会像主操作按钮那样整块变灰。
+    """
+
+    def __init__(self, text: str, parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
+        self._font = QFont()
+        self._font.setFamilies(list(FONT_FAMILIES))
+        self._font.setPointSizeF(_POINT_SIZE)
+        self._font.setWeight(QFont.DemiBold)
+
+        #: 焦点框只在键盘走到这里时画。
+        self._focus_visible = False
+        self._apply_fixed_size()
+
+    # ---- 尺寸 ---------------------------------------------------------------
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt 覆盖方法
+        text_width = QFontMetricsF(self._font, self).horizontalAdvance(self.text())
+        return QSize(
+            round(text_width + 2.0 * PILL_PADDING_X + 2.0 * GLOW_MARGIN),
+            round(PILL_HEIGHT + 2.0 * GLOW_MARGIN),
+        )
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt 覆盖方法
+        return self.sizeHint()
+
+    def _apply_fixed_size(self) -> None:
+        self.setFixedSize(self.sizeHint())
+
+    # ---- 状态 ---------------------------------------------------------------
+
+    def changeEvent(self, event):  # noqa: N802 - Qt 覆盖方法
+        if event.type() == QEvent.Type.StyleChange:
+            self._apply_fixed_size()
+        elif event.type() == QEvent.Type.EnabledChange:
+            self.setCursor(
+                Qt.PointingHandCursor if self.isEnabled() else Qt.ArrowCursor
+            )
+            self.update()
+        super().changeEvent(event)
+
+    def focusInEvent(self, event: QFocusEvent):  # noqa: N802 - Qt 覆盖方法
+        """只有 Tab/快捷键走过来的焦点才画焦点框。"""
+        self._focus_visible = event.reason() not in (
+            Qt.FocusReason.MouseFocusReason,
+            Qt.FocusReason.ActiveWindowFocusReason,
+            Qt.FocusReason.PopupFocusReason,
+            Qt.FocusReason.OtherFocusReason,
+        )
+        self.update()
+        super().focusInEvent(event)
+
+    def focusOutEvent(self, event: QFocusEvent):  # noqa: N802 - Qt 覆盖方法
+        self._focus_visible = False
+        self.update()
+        super().focusOutEvent(event)
+
+    # ---- 绘制 ---------------------------------------------------------------
+
+    def _pill_rect(self) -> QRectF:
+        return QRectF(self.rect()).adjusted(
+            GLOW_MARGIN, GLOW_MARGIN, -GLOW_MARGIN, -GLOW_MARGIN
+        )
+
+    def paintEvent(self, event):  # noqa: N802 - Qt 覆盖方法
+        """白底 → 2px 边框 → 文字 → 键盘焦点框。"""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
+
+        pill = self._pill_rect()
+        radius = pill.height() / 2.0
+        capsule = QPainterPath()
+        capsule.addRoundedRect(pill, radius, radius)
+
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(TOKENS["surface"]))
+        painter.drawPath(capsule)
+
+        self._paint_outline(painter, pill)
+        self._paint_text(painter, pill)
+        self._paint_focus_ring(painter, pill)
+
+    def _paint_outline(self, painter: QPainter, pill: QRectF) -> None:
+        """2px 边框：可用是正文黑，不可用是灰色边框令牌。"""
+        color = QColor(
+            TOKENS["text"] if self.isEnabled() else TOKENS["border_strong"]
+        )
+        ring = pill.adjusted(
+            -OUTLINE_WIDTH / 2.0,
+            -OUTLINE_WIDTH / 2.0,
+            OUTLINE_WIDTH / 2.0,
+            OUTLINE_WIDTH / 2.0,
+        )
+        painter.setPen(QPen(color, OUTLINE_WIDTH))
+        painter.setBrush(Qt.NoBrush)
+        radius = ring.height() / 2.0
+        painter.drawRoundedRect(ring, radius, radius)
+
+    def _paint_text(self, painter: QPainter, pill: QRectF) -> None:
+        painter.setFont(self._font)
+        painter.setPen(
+            QColor(
+                TOKENS["text"] if self.isEnabled() else TOKENS["disabled_text"]
+            )
+        )
+        painter.drawText(pill, int(Qt.AlignCenter), self.text())
+
+    def _paint_focus_ring(self, painter: QPainter, pill: QRectF) -> None:
+        if not self._focus_visible:
+            return
+        focus = pill.adjusted(
+            -(RING_WIDTH_ACTIVE + 3.0),
+            -(RING_WIDTH_ACTIVE + 3.0),
+            RING_WIDTH_ACTIVE + 3.0,
+            RING_WIDTH_ACTIVE + 3.0,
+        )
+        painter.setPen(QPen(QColor(TOKENS["primary"]), 2.0))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRoundedRect(focus, focus.height() / 2.0, focus.height() / 2.0)
+
+
 def _with_alpha(color: QColor, ratio: float) -> QColor:
     """同一颜色换个透明度：外圈光晕由主色派生。"""
     faded = QColor(color)
@@ -378,4 +517,4 @@ def _with_alpha(color: QColor, ratio: float) -> QColor:
     return faded
 
 
-__all__ = ["AnimatedActionButton"]
+__all__ = ["AnimatedActionButton", "OutlineActionButton"]

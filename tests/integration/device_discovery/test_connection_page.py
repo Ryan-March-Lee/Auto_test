@@ -1,6 +1,6 @@
 """连接页与发现面板的版面接线：整屏步骤、扫描行居中和结果区不跳动。"""
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, QRect, Qt
 from PySide6.QtGui import QPalette
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QScrollArea
@@ -323,16 +323,22 @@ class InstrumentSetupPageLayoutTests(InstrumentSetupPageTestCase):
         self.assertEqual(row_position(), before, "返回后扫描行仍在原处")
         self.assertEqual(bar.value(), before_value, "返回也不能滚动页面")
 
-    def test_next_shares_the_back_row_when_a_result_is_available(self):
-        """“下一步”和“返回”同一行、落在右端；仪表配置页没有独立的连接按钮。"""
+    def test_select_all_and_next_share_the_centre_with_back_at_the_right(self):
+        """“全选”和“下一步”作为一组居中，“返回”贴在最右端。"""
         self.make_page()
         panel = self.connection.discovery_panel
+        select_all = self.connection.select_all_btn
         self.assertFalse(hasattr(self.connection, "connect_btn"))
         self.assertFalse(hasattr(self.connection, "connect_requested"))
         self.assertIs(
+            select_all.parentWidget(),
+            panel.back_btn.parentWidget(),
+            "全选与返回要在同一行",
+        )
+        self.assertIs(
             self.connection.next_btn.parentWidget(),
             panel.back_btn.parentWidget(),
-            "下一步要与返回放在同一行",
+            "下一步与返回要在同一行",
         )
         self.assertIsNot(
             self.connection.return_welcome_btn.parentWidget(),
@@ -343,19 +349,98 @@ class InstrumentSetupPageLayoutTests(InstrumentSetupPageTestCase):
         # 有可应用结果后才出现；几何位置在“返回”可见时才可量取。
         self.run_scan(panel)
         self.assertTrue(panel.back_btn.isVisible())
+        self.assertTrue(select_all.isVisible())
         self.assertTrue(self.connection.next_btn.isVisible())
-        next_centre = self.connection.next_btn.mapTo(
-            self.connection, self.connection.next_btn.rect().center()
+
+        row = panel.actions_row
+        select_rect = QRect(
+            select_all.mapTo(row, QPoint(0, 0)), select_all.size()
         )
-        back_centre = panel.back_btn.mapTo(
-            self.connection, panel.back_btn.rect().center()
+        next_rect = QRect(
+            self.connection.next_btn.mapTo(row, QPoint(0, 0)),
+            self.connection.next_btn.size(),
+        )
+        back_rect = QRect(
+            panel.back_btn.mapTo(row, QPoint(0, 0)), panel.back_btn.size()
         )
         self.assertAlmostEqual(
-            next_centre.y(), back_centre.y(), delta=2, msg="两个按钮同一条水平线"
+            select_rect.center().y(),
+            next_rect.center().y(),
+            delta=2,
+            msg="全选与下一步同一条水平线",
+        )
+        self.assertLess(
+            select_rect.center().x(),
+            next_rect.center().x(),
+            "全选排在“下一步”左侧",
+        )
+        group_centre = (select_rect.left() + next_rect.x() + next_rect.width()) / 2.0
+        self.assertAlmostEqual(
+            group_centre,
+            row.width() / 2.0,
+            delta=2,
+            msg="全选与下一步应作为一个整体居中",
         )
         self.assertGreater(
-            next_centre.x(), back_centre.x(), "下一步排在“返回”右侧"
+            back_rect.center().x(),
+            next_rect.center().x(),
+            "返回在下一步右侧",
         )
+        self.assertGreaterEqual(
+            back_rect.x() + back_rect.width(),
+            row.width() - 2,
+            "返回应贴住动作行最右端",
+        )
+
+    def test_select_all_checks_every_applicable_card_then_rests_grey(self):
+        """全选一次选中所有可应用卡片，随即变灰不可点；取消一张就恢复。"""
+        self.make_page()
+        panel = self.connection.discovery_panel
+        select_all = self.connection.select_all_btn
+        self.assertFalse(select_all.isVisible(), "首次查找前隐藏")
+
+        self.run_scan(panel)
+        self.assertTrue(select_all.isVisible())
+        self.assertEqual(select_all.text(), "全选")
+
+        # 从“还有卡片未选”的初始态开始：扫描可能已经按配置预选过设备。
+        for heading in panel.card_headings():
+            panel.set_card_checked(heading, False)
+        self.app.processEvents()
+        self.assertTrue(select_all.isEnabled(), "还有未选卡片时全选可点")
+        self.assertFalse(panel.all_selectable_selected())
+
+        select_all.click()
+        self.app.processEvents()
+
+        self.assertTrue(
+            panel.all_selectable_selected(), "点击后所有可应用卡片都已选中"
+        )
+        self.assertTrue(
+            all(
+                panel.card_checked(card.data.heading)
+                for card in panel.cards()
+                if card.checkable
+            ),
+            "可勾选卡片应全部选中",
+        )
+        self.assertFalse(select_all.isEnabled(), "全部选中后全选转为不可点")
+        self.assertTrue(
+            self.connection.next_btn.isEnabled(), "全选之后下一步可点"
+        )
+
+        heading = next(
+            card.data.heading for card in panel.cards() if card.checkable
+        )
+        panel.set_card_checked(heading, False)
+        self.app.processEvents()
+
+        self.assertTrue(select_all.isEnabled(), "取消任意一张后全选恢复可点")
+        self.assertFalse(panel.all_selectable_selected())
+
+        panel.request_back()
+        self.app.processEvents()
+        self.assertFalse(select_all.isVisible(), "返回后与本次结果一起隐藏")
 
     def test_return_welcome_is_a_link_under_the_mode_hint(self):
         """返回欢迎页是黄字正下方的一行蓝色小字链接，属于页头而不是结果区动作行。"""

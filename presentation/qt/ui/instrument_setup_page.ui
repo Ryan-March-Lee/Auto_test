@@ -141,9 +141,10 @@
     </widget>
    </item>
    <item>
-    <!-- 两个页面动作在这里声明（控件名与静态文案契约）：返回欢迎页在运行时被移进
-         扫描行的黄字下方，显示为一行蓝色下划线小字；下一步移进设备发现面板的结果区
-         动作行。移动之后这一栏不再承载可见内容，只保留为两个页面动作的静态声明位置。 -->
+    <!-- 页面动作在这里声明（控件名与静态文案契约）：返回欢迎页在运行时被移进
+         扫描行的黄字下方，显示为一行蓝色下划线小字；全选与下一步移进设备发现面板的
+         结果区动作行（两者居中，返回在最右端）。移动之后这一栏不再承载可见内容，
+         只保留为页面动作的静态声明位置。 -->
     <widget class="QWidget" name="pageActionBar">
      <layout class="QHBoxLayout" name="actionBarLayout">
       <property name="spacing">
@@ -168,6 +169,19 @@
         </property>
         <property name="variant" stdset="0">
          <string>link</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="selectAllButton">
+        <property name="toolTip">
+         <string>选中本次扫描结果中所有可应用的设备</string>
+        </property>
+        <property name="text">
+         <string>全选</string>
+        </property>
+        <property name="variant" stdset="0">
+         <string>secondary</string>
         </property>
        </widget>
       </item>

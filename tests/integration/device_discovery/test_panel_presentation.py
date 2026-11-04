@@ -194,6 +194,26 @@ class CardPresentationTests(DiscoveryPanelTestCase):
         self.app.processEvents()
         self.assertTrue(card.property("checked"))
 
+    def test_select_all_skips_cards_that_cannot_be_selected(self):
+        """全选只选可应用卡片；未登记/无角色的卡片保持未选。"""
+        panel = self.make_panel(six_device_factory)
+        self.run_scan(panel)
+        selectable = [card for card in panel.cards() if card.checkable]
+        blocked = [card for card in panel.cards() if not card.checkable]
+        self.assertTrue(selectable)
+        self.assertTrue(blocked, "六台设备的模拟网络里应包含不可应用的卡片")
+        for card in selectable:
+            card.set_checked(False, emit=False)
+
+        panel.select_all_devices()
+
+        self.assertTrue(all(card.is_checked() for card in selectable))
+        self.assertTrue(all(not card.is_checked() for card in blocked))
+        self.assertTrue(panel.all_selectable_selected())
+
+        panel.set_card_checked(selectable[0].data.heading, False)
+        self.assertFalse(panel.all_selectable_selected())
+
     def test_cards_leave_room_while_there_are_no_results(self):
         panel = self.make_panel()
 

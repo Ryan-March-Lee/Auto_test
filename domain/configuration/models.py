@@ -20,6 +20,10 @@ PathLike = Union[str, os.PathLike[str]]
 SUPPORTED_SCHEMA_VERSION = "1.0"
 SUPPORTED_COMPRESSION_POINTS = {"1dB", "3dB", "5dB"}
 PLACEHOLDER_VALUES = {"", "无", "待填写", "<channel_name>", "<gate_or_drain_or_other>"}
+# 组内相邻两次通道开启之间的最大等待秒数（单位秒）。放在 domain 是因为它既是
+# 编辑文档的字段范围（v1.1 §6.8），也要被 domain 的 ``validate_power_plan`` 使用；
+# application 的 ``PowerPlan`` 值对象从本模块导入同一数值，全仓不出现第二份。
+MAX_INTER_CHANNEL_DELAY_S = 60.0
 # 驱动功放（驱放）的供电方式：由本机直流电源供电，或由驱放自带电源（市电）供电。
 # 两种情况都处于驱放测试模式，区别只在驱动功放通道是否由本系统控制。
 DRIVER_POWER_DC = "dc_supply"

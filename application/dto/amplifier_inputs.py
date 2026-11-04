@@ -28,6 +28,16 @@
 ``SupplyChannel`` 只接受显式路由（``supply_id + channel`` 或
 ``"<supply_id>/<channel>"``）：裸通道名（旧快照的 ``CH1``）不在这里被猜测成“唯一那台
 电源”。运行配置转换也只接受显式路由，不按单电源假设猜测设备。
+
+``PowerPlan`` / ``DrainChannel`` 是 v1.1 通道计划的值对象（步骤 4）：前者表达一组
+通道的有序上电顺序与组内间隔，后者表达可选的漏极测量路由。两者共用同一个
+``SupplyChannel`` 路由类型，不引入第二份路由实现；计划本身不判断绑定关系，也不强制
+DUT 必须有漏极。
+
+解析与业务校验在这里是分开的两件事：``from_document`` 只负责把规范文档形状读成值
+对象（路由必须写成 ``{supply_id, channel}`` 两段对象），``DrainChannel`` 的成员判定
+由显式调用 ``require_in_routes`` 完成，不塞进解析入口。归属 DUT、是否在启用序列内、
+是否已绑定等整体规则属于配置/运行校验（步骤 5），不在本模块重复实现。
 """
 
 from __future__ import annotations
@@ -39,13 +49,20 @@ from types import MappingProxyType
 from typing import Any
 
 from application.errors import ConfigurationError
-from domain.configuration.models import PLACEHOLDER_VALUES, SUPPORTED_COMPRESSION_POINTS
+from domain.configuration.models import (
+    MAX_INTER_CHANNEL_DELAY_S,
+    PLACEHOLDER_VALUES,
+    SUPPORTED_COMPRESSION_POINTS,
+)
 from domain.measurement.values import Decibels, Frequency, PowerDbm
 
 __all__ = [
     "AMPLIFIER_COMPRESSION_TARGETS_DB",
     "AmplifierInputError",
     "AmplifierMeasurementInputs",
+    "DrainChannel",
+    "MAX_INTER_CHANNEL_DELAY_S",
+    "PowerPlan",
     "PowerSweep",
     "SupplyChannel",
 ]
@@ -65,6 +82,13 @@ class AmplifierInputError(ConfigurationError):
 AMPLIFIER_COMPRESSION_TARGETS_DB = frozenset(
     Decibels.parse(text).db for text in SUPPORTED_COMPRESSION_POINTS
 )
+
+# 组内相邻两次通道开启之间的最大等待秒数。唯一来源是 domain 的配置模型
+# （``domain.configuration.models.MAX_INTER_CHANNEL_DELAY_S``），这样步骤 5 的
+# ``validate_power_plan`` 与这里的值对象共用同一个上限，domain 也不必反向依赖
+# application。本模块只做再导出，不另写一份数值。
+# 范围由组计划值对象在构造时判定，超界（例如把毫秒误填成 2000）必须显式失败，
+# 不能裁剪成允许值。
 
 
 def _text(value: Any, label: str) -> str:
@@ -115,8 +139,9 @@ class SupplyChannel:
     def from_routing(cls, token: Any) -> "SupplyChannel":
         """把运行映射里的路由写法 ``<supply_id>/<channel>`` 解析成显式两段。
 
-        裸通道名不是合法路由：旧快照的 ``CH1`` 属于“按单电源猜测”，不在正式输入
-        模型里放行。
+        这是唯一接受拼接文本的入口；规范文档解析（:meth:`from_document`）不接受
+        它。裸通道名不是合法路由：旧快照的 ``CH1`` 属于“按单电源猜测”，不在正式
+        输入模型里放行。
         """
         text = _text(token, "供电路由")
         supply_id, separator, channel = text.partition("/")
@@ -126,6 +151,46 @@ class SupplyChannel:
             )
         return cls(supply_id=supply_id, channel=channel)
 
+    @classmethod
+    def from_document(cls, value: Any) -> "SupplyChannel":
+        """把 v1.1 文档里的路由读成显式两段。
+
+        正式形状是两个平铺键 ``{"supply_id", "channel"}``；也接受已经构造好的
+        :class:`SupplyChannel`。未知键、缺字段与拼接文本都拒绝：``"supply_id/CHx"``
+        只属于运行映射的历史写法，必须由调用方显式交给
+        :meth:`from_routing`，不在文档解析里隐式兼容，否则“新格式写入、旧格式读入”
+        会在同一入口混用。
+        """
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, Mapping):
+            unknown = {
+                key
+                for key in value
+                if key not in {"supply_id", "channel"}
+            }
+            if unknown:
+                names = "、".join(sorted(str(key) for key in unknown))
+                raise AmplifierInputError(f"供电路由不能包含额外字段：{names}")
+            if "supply_id" not in value or "channel" not in value:
+                raise AmplifierInputError(
+                    "供电路由必须写成 {supply_id, channel} 两个字段"
+                )
+            return cls(supply_id=value["supply_id"], channel=value["channel"])
+        if isinstance(value, str):
+            raise AmplifierInputError(
+                "供电路由必须写成 {supply_id, channel} 对象；"
+                f"拼接文本 {value!r} 只在运行映射兼容读取处由 from_routing 解析"
+            )
+        raise AmplifierInputError(
+            "供电路由必须是 {supply_id, channel} 对象，"
+            f"收到 {type(value).__name__}"
+        )
+
+    def to_document(self) -> dict[str, str]:
+        """输出 v1.1 文档里的两段路由对象；不写 ``supply_id/CHx`` 拼接串。"""
+        return {"supply_id": self.supply_id, "channel": self.channel}
+
     @property
     def token(self) -> str:
         """运行映射/日志使用的路由写法；只用于展示与持久化原文，不参与解析。"""
@@ -133,6 +198,224 @@ class SupplyChannel:
 
     def __str__(self) -> str:
         return self.token
+
+
+def _route_members(values: Any, label: str) -> tuple[SupplyChannel, ...]:
+    """把通道集合收敛为受控 tuple，只检查元素类型，不要求去重。"""
+    if isinstance(values, (str, bytes, Mapping)) or not isinstance(values, Iterable):
+        raise AmplifierInputError(
+            f"{label}必须是 SupplyChannel 序列，收到 {type(values).__name__}"
+        )
+    routes = tuple(values)
+    for index, route in enumerate(routes):
+        if not isinstance(route, SupplyChannel):
+            raise AmplifierInputError(
+                f"{label}[{index}] 必须是 SupplyChannel，"
+                f"收到 {type(route).__name__}"
+            )
+    return routes
+
+
+def _ordered_routes(values: Any, label: str) -> tuple[SupplyChannel, ...]:
+    """上电顺序：只接受 ``list``/``tuple``，并拒绝重复的物理路由。
+
+    白名单是刻意的：顺序就是上电顺序，集合与生成器不能在这里被悄悄展开成某个
+    顺序。调用方若持有其它有序容器（``deque`` 等），需要自己显式转换。
+    """
+    if not isinstance(values, (list, tuple)):
+        raise AmplifierInputError(
+            f"{label}必须是有序序列（列表或元组），"
+            f"收到 {type(values).__name__}"
+        )
+    routes = _route_members(values, label)
+    seen: set[tuple[str, str]] = set()
+    for index, route in enumerate(routes):
+        key = (route.supply_id, route.channel)
+        if key in seen:
+            raise AmplifierInputError(
+                f"{label}不能重复：{route.token}（重复项见 [{index}]）"
+            )
+        seen.add(key)
+    return routes
+
+
+def _inter_channel_delay(value: Any) -> float:
+    """把组间隔收敛为有限的非负秒数；超界不裁剪，直接失败。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise AmplifierInputError(
+            "通道间隔必须是有限数值（秒），"
+            f"收到 {type(value).__name__}"
+        )
+    seconds = float(value)
+    if not math.isfinite(seconds):
+        raise AmplifierInputError(f"通道间隔必须是有限数值（秒），收到 {value!r}")
+    if seconds < 0:
+        raise AmplifierInputError(f"通道间隔不能为负值，收到 {seconds}s")
+    if seconds > MAX_INTER_CHANNEL_DELAY_S:
+        raise AmplifierInputError(
+            f"通道间隔不能超过 {MAX_INTER_CHANNEL_DELAY_S:g}s，收到 {seconds}s"
+        )
+    return seconds
+
+
+@dataclass(frozen=True)
+class PowerPlan:
+    """一组电源通道的有序上电计划。
+
+    ``power_sequence`` 的**列表顺序就是上电顺序**；每条元素是显式物理路由
+    （``supply_id + channel``）。``inter_channel_delay_s`` 是同组相邻两次成功开启
+    之间的等待秒数，单通道计划不生效但仍须在 ``0..MAX_INTER_CHANNEL_DELAY_S`` 内。
+
+    构造只接受 ``list``/``tuple``（其它容器需显式转换）；值对象只回答计划本身是否
+    成立：拒绝重复物理路由、非法路由与越界间隔；不判断路由是否属于已绑定电源，
+    也不强制 DUT 必须配置漏极——前者是文档/绑定校验，后者只在需要效率计算的测量
+    模式下由运行校验要求。
+    """
+
+    power_sequence: tuple[SupplyChannel, ...] = ()
+    inter_channel_delay_s: float = 0.0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "power_sequence",
+            _ordered_routes(self.power_sequence, "通道上电顺序"),
+        )
+        object.__setattr__(
+            self,
+            "inter_channel_delay_s",
+            _inter_channel_delay(self.inter_channel_delay_s),
+        )
+
+    @classmethod
+    def empty(cls) -> "PowerPlan":
+        """空计划：没有任何通道要开启，间隔固定写成规范值 ``0.0``。"""
+        return cls()
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.power_sequence
+
+    @property
+    def tokens(self) -> tuple[str, ...]:
+        """按上电顺序返回 ``supply_id/channel``；只用于展示、比较与日志。"""
+        return tuple(route.token for route in self.power_sequence)
+
+    @classmethod
+    def from_document(cls, value: Any) -> "PowerPlan":
+        """读取 v1.1 的 ``power_plan`` 对象。
+
+        ``None`` 或缺失的整个 ``power_plan`` 按空计划处理（迁移产物与尚未配置的
+        编辑段都属于这种状态）；对象里的未知键、非法路由与越界间隔仍然拒绝。
+        缺失的 ``power_sequence`` / ``inter_channel_delay_s`` 分别按空序列与
+        ``0.0`` 归一，写出时两个键永远同时存在。
+        """
+        if value is None:
+            return cls()
+        if not isinstance(value, Mapping):
+            raise AmplifierInputError(
+                "power_plan 必须是对象，"
+                f"收到 {type(value).__name__}"
+            )
+        unknown = {
+            key
+            for key in value
+            if key not in {"power_sequence", "inter_channel_delay_s"}
+        }
+        if unknown:
+            names = "、".join(sorted(str(key) for key in unknown))
+            raise AmplifierInputError(f"power_plan 不能包含未知字段：{names}")
+        raw_sequence = value.get("power_sequence", ())
+        if not isinstance(raw_sequence, (list, tuple)):
+            raise AmplifierInputError(
+                "power_sequence 必须是有序序列（列表或元组），"
+                f"收到 {type(raw_sequence).__name__}"
+            )
+        routes = tuple(
+            SupplyChannel.from_document(item) for item in raw_sequence
+        )
+        delay = value.get("inter_channel_delay_s", 0.0)
+        return cls(power_sequence=routes, inter_channel_delay_s=delay)
+
+    def to_document(self) -> dict[str, Any]:
+        """输出 v1.1 的 ``power_plan``；顺序、两段路由与 float 间隔。"""
+        return {
+            "power_sequence": [
+                route.to_document() for route in self.power_sequence
+            ],
+            "inter_channel_delay_s": self.inter_channel_delay_s,
+        }
+
+
+@dataclass(frozen=True)
+class DrainChannel:
+    """效率计算使用的漏极路由；它不是上电计划的一部分。
+
+    漏极是**可选**测量输入：线损、驱动映射等不需要效率的测量不配置它（``None``）。
+    只要配置了，就必须指向本次配置里真实存在的物理通道；值对象只提供显式的
+    :meth:`require_in_routes` 成员判定，完整的有效性判定链（属于 DUT、在启用序列
+    与 ``channel_settings`` 中、电源已登记并启用）属于步骤 5 的配置/运行校验。是否
+    必须配置属于“主功放运行”的校验，不在值对象里强制。漏极不参与排序、间隔、启停
+    或安全关断。
+    """
+
+    route: SupplyChannel | None = None
+
+    def __post_init__(self) -> None:
+        if self.route is not None and not isinstance(self.route, SupplyChannel):
+            raise AmplifierInputError(
+                "漏极路由必须是 SupplyChannel 或 None，"
+                f"收到 {type(self.route).__name__}"
+            )
+
+    @property
+    def is_configured(self) -> bool:
+        return self.route is not None
+
+    @classmethod
+    def from_document(
+        cls,
+        value: Any,
+        *,
+        available: Iterable[SupplyChannel] | None = None,
+    ) -> "DrainChannel":
+        """读取 ``drain_channel``；``None`` 表示未配置。
+
+        只做形状解析：漏极是否真属于“本次配置的通道”需要完整配置（分组、序列、
+        ``channel_settings`` 与绑定），属于步骤 5 的配置/运行校验，不在这里猜。
+
+        ``available`` 是显式可选的便捷成员判定，语义严格等于
+        ``require_in_routes(available)``：调用方给出的集合是什么，就只检查是否在
+        其中，不隐含“属于 DUT/已启用/在序列内”。
+        """
+        drain = cls(
+            route=None if value is None else SupplyChannel.from_document(value)
+        )
+        if available is not None:
+            drain.require_in_routes(available)
+        return drain
+
+    def to_document(self) -> dict[str, str] | None:
+        """未配置写 ``None``；已配置写两段路由对象，不写拼接串。"""
+        return None if self.route is None else self.route.to_document()
+
+    def require_in_routes(
+        self, routes: Iterable[SupplyChannel]
+    ) -> "DrainChannel":
+        """已配置的漏极必须出现在给定路由集合里；本方法只回答“在不在”。
+
+        它不判断该集合是否属于 DUT、是否已绑定、是否在 ``power_sequence`` 或
+        ``channel_settings`` 中——那些是完整配置校验的职责（§6.9 判定链）。未配置
+        漏极时直接返回，不做任何要求。
+        """
+        if self.route is None:
+            return self
+        members = _route_members(routes, "给定通道集合")
+        if self.route not in members:
+            raise AmplifierInputError(
+                f"漏极通道 {self.route.token} 不在给定的通道集合中"
+            )
+        return self
 
 
 @dataclass(frozen=True)

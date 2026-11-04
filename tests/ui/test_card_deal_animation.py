@@ -212,6 +212,30 @@ class CardDealAnimationTests(unittest.TestCase):
             layer.duration_ms(), RETURN_FLIP_MS + RETURN_FLY_MS
         )
 
+    def test_return_does_not_show_a_deck_before_a_card_lands(self):
+        """收牌开始时目的地是空的：不能先在下方凭空摆一张牌背。"""
+        asset = _solid_asset(QColor(255, 0, 0), QColor(0, 0, 255))
+        layer, items = self._animation(2, assets=[asset, asset])
+        layer._timer.stop()
+        deck = QPointF(200.0, 300.0)
+        layer.start_return(items, deck)
+        layer._timer.stop()
+
+        # 翻面阶段（还没有牌落回）牌堆位置应和空白背景一样，没有牌背。
+        layer._elapsed = 0.0
+        image = layer.grab().toImage()
+        self.assertEqual(
+            _sample_colour(image, deck.toPoint()).getRgb(),
+            _sample_colour(image, QPoint(350, 350)).getRgb(),
+            "第一张牌落回之前，牌堆位置不能出现卡牌",
+        )
+
+        # 最后一张牌落回：牌堆这时才由落回的牌叠出来。
+        layer._elapsed = layer.duration_ms()
+        landed = _sample_colour(layer.grab().toImage(), deck.toPoint())
+        self.assertGreater(landed.blue(), 200, "落回后牌堆位置应是资产牌背")
+        self.assertLess(landed.red(), 60)
+
     def test_return_takes_the_last_card_back_first(self):
         """收牌顺序与发牌相反：最后一张先翻面，第一张最后回到牌堆。"""
         from presentation.qt.card_deal_animation import RETURN_FLIP_STAGGER_MS

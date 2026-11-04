@@ -1122,9 +1122,9 @@ class CardDealAnimation(QWidget):
             for index in range(count)
             if self.return_fly_progress(index) >= 1.0
         )
-        # 牌堆从一开始就画出来（至少一层）：它压在“查找设备”卡片上，收牌期间卡面
-        # 文字先让位给牌背，最后一张落回、覆盖层收起时文字才重新露出来。
-        deck_layers = min(DEAL_DECK_DEPTH, max(1, landed))
+        # 牌堆只画已经落回的牌：收牌刚开始时目的地还是空的，先在那里放一张牌背会让
+        # 人看到下方“凭空多出一张牌”。第一张牌落回才出现第一层，之后按落回顺序叠高。
+        deck_layers = min(DEAL_DECK_DEPTH, landed)
         deck_asset = self._items[0].asset
         deck_width, deck_height = self._deck_extent or (
             float(deck_asset.width),

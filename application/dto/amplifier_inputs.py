@@ -25,7 +25,7 @@
 | `driver_enabled` | `bool` | 测试方案的驱动模式开关 | 是 | 非布尔值（含 `1`/`"yes"`）→ `AmplifierInputError` |
 | `dut_power_plan` | `PowerPlan` | 运行映射里冻结的 DUT 上电顺序与组间隔 | 是，非空 | 空序列、重复路由、非法路由、越界间隔 → `AmplifierInputError` |
 | `channel_settings` | `Mapping[SupplyChannel, ChannelSetting]` | 测试方案里每条 DUT 路由的工作值/保护值 | 是，且与序列集合完全相等 | 缺设置、多设置、非路由键、缺工作值 → `AmplifierInputError` |
-| `drain_channel` | `DrainChannel` | 测试方案的漏极测量路由（可选） | 是（可未配置） | 已配置但不在上电序列里 → `AmplifierInputError` |
+| `drain_channel` | `DrainChannel` | 测试方案的漏极测量路由（可选） | 可选，但主功放测量服务构造时要求已配置 | 已配置但不在上电序列里 → `AmplifierInputError` |
 
 ``SupplyChannel`` 只接受显式路由（``supply_id + channel`` 或
 ``"<supply_id>/<channel>"``）：裸通道名（旧快照的 ``CH1``）不在这里被猜测成“唯一那台
@@ -464,8 +464,9 @@ class DrainChannel:
     只要配置了，就必须指向本次配置里真实存在的物理通道；值对象只提供显式的
     :meth:`require_in_routes` 成员判定，完整的有效性判定链（属于 DUT、在启用序列
     与 ``channel_settings`` 中、电源已登记并启用）属于步骤 5 的配置/运行校验。是否
-    必须配置属于“主功放运行”的校验，不在值对象里强制。漏极不参与排序、间隔、启停
-    或安全关断。
+    必须配置属于“主功放运行”的校验，不在值对象里强制：DTO 可被不需要效率的场景
+    复用，而 :class:`AmplifierMeasurementService` 在构造时要求漏极已配置，缺失即抛
+    ``AmplifierInputError``。漏极不参与排序、间隔、启停或安全关断。
     """
 
     route: SupplyChannel | None = None
@@ -581,7 +582,8 @@ class AmplifierMeasurementInputs:
 
     - ``dut_power_plan``：**有序**物理路由与组间隔，顺序就是上电顺序；
     - ``channel_settings``：按物理路由索引的工作值/保护值，是**无序集合**；
-    - ``drain_channel``：可选的漏极测量路由，只供效率计算读取，不参与排序或启停。
+    - ``drain_channel``：可选的漏极测量路由，只供效率计算读取，不参与排序或启停；
+      主功放测量服务在构造时另行要求它已配置。
 
     构造时要求两个集合完全一致：序列里的每条路由都必须有设置，设置里也不能出现
     未列入序列的通道。这是 DTO 能安全消费“已校验计划”的最低保证；归属 DUT、绑定
@@ -708,8 +710,12 @@ class AmplifierMeasurementInputs:
         """按电源分组的 DUT 通道：``{supply_id: (通道名, ...)}``，顺序按上电顺序。
 
         同一台电源可以同时供 DUT 的多个通道；分组是只读投影，供测量逐通道读取
-        电压/电流时使用。步骤 10 起效率只读 ``drain_channel``，分组顺序不再影响
-        ``dc_power``。
+        电压/电流时使用。步骤 10 已完成：效率只读 ``drain_channel``，分组顺序不再
+        影响 ``dc_power``。
+
+        该投影只是采样清单，不是路由身份：路由身份由 :class:`SupplyChannel` 表达。
+        测量结果仍以 ``f"{supply_id}_{channel}"`` 作为兼容键，因此无法仅凭结果键
+        还原物理路由（两段都允许下划线），选择漏极时必须比较路由对象。
         """
         grouped: dict[str, list[str]] = {}
         for item in self.dut_power_plan.power_sequence:

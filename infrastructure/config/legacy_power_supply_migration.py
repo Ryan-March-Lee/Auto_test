@@ -1,4 +1,4 @@
-"""旧 ``PS1..PS4`` 配置到 ``supply_id`` 的字段级迁移器（电源重构计划步骤 13）。
+"""旧 ``PS1..PS4`` 配置到 1.1 电源计划的字段级迁移器（电源重构计划步骤 14）。
 
 迁移只回答一个问题：**旧配置里的每个电源条目和每条供电分配，能不能用已登记的身份
 改写成新字段**。它不扫描设备，也不猜身份：
@@ -22,12 +22,28 @@
 设备表里的同一条记录；指向不同设备、或注册表里同一 ``device_key`` / 完整设备码对应多条
 记录，都按“无法确认是哪一台”报 ``conflict``，绝不按字段顺序挑一个继续迁移。
 
+步骤 14 起，迁移**不再按旧角色生成上电顺序或漏极路由**：
+
+- 每组的 ``power_supply_assignment.<group>.power_plan`` 写成空计划（空序列 + ``0.0``），
+  摘要列出候选物理路由，由用户在电源页确认；
+- 旧 ``role == "drain"`` 只有在 DUT 分配通道里恰好一条、且能唯一映射到物理路由时才写入
+  ``dut_config.drain_channel``；0 条或多条一律写 ``null`` 并记入摘要待确认项；
+- 旧 ``test_plan.dut.power_roles`` 与旧 ``run_mapping.dut_power_channels`` 只在 role 集合
+  完全一致、各自唯一、token 能解析到迁移后的电源/通道时才用于重建 ``channel_settings``；
+  否则该组参数不迁移，摘要标记 ``configuration.power_settings_unmapped``；
+- 通道 ``role``、``power_roles``、``power_channels`` / ``connection`` 不再出现在输出里。
+
 迁移的输入与输出都是内存对象：:func:`migrate_legacy_power_supplies` 返回目标配置与逐条摘要，
 不改入参、不写盘。**只有每一条旧条目都 ``migrated``、且没有仍为空的供电分配引用时，结果才
 允许落盘**（:attr:`LegacyMigrationResult.writable`）：:func:`save_migrated_configuration` 在
 写盘前先跑文件级校验，任何未决项或校验失败都抛错且原文件逐字节不变。认不出的旧条目的通道
 参数只存在于摘要里，因此摘要必须能离开进程保存——用 :func:`save_migration_summary` 把它写成
 独立的摘要文件，而不是靠“先把半成品写进 config.json”来留存。
+
+写盘内容是**由 authoring 重新生成的 1.1 文档**：迁移器只改编辑段（身份、引用、通道参数、
+空计划和漏极），正式 ``test_plan`` / ``run_mapping`` 一律交给
+:class:`application.configuration_authoring.ConfigurationAuthoringService`，不手写。
+``runs/`` 下的历史快照不迁移、不改写，仍按 1.0 只读路径查看。
 
 现场样例（``tests/fixtures/power_supply_identity/``）：``config_slots_legacy.json`` +
 ``registry_legacy_v2.json`` -> ``config_slots_migrated_partial.json`` +
@@ -37,6 +53,7 @@
 from __future__ import annotations
 
 import copy
+import math
 import re
 import shutil
 import tempfile
@@ -46,6 +63,11 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import unquote
 
+from application.configuration_authoring import (
+    ConfigurationAuthoringService,
+    ConfigurationEditingDocument,
+    OFFICIAL_SCHEMA_VERSION,
+)
 from domain.configuration.rules import ASSIGNMENT_GROUPS, assignment_supply_id
 from domain.instruments.models import (
     LEGACY_ROLES,
@@ -55,7 +77,7 @@ from domain.instruments.models import (
 )
 from infrastructure.config.json_config_repository import JsonConfigurationRepository
 from infrastructure.config.json_io import load_json_object
-from infrastructure.config.validation import validate_official_config
+from infrastructure.config.validation import validate_saveable_configuration
 from infrastructure.filesystem.atomic_json import read_json, write_json_atomic
 from infrastructure.persistence.instrument_registry import (
     DEFAULT_REGISTRY_FILENAME,
@@ -65,8 +87,9 @@ from infrastructure.persistence.instrument_registry import (
 
 PathLike = Any
 
-# 迁移摘要的版本号；摘要结构变化时递增（2：完整设备码改名为 full_code）。
-SUMMARY_SCHEMA_VERSION = 2
+# 迁移摘要的版本号；摘要结构变化时递增。
+# 3：步骤 14 增加每组空计划/候选路由、漏极迁移状态与通道参数映射状态。
+SUMMARY_SCHEMA_VERSION = 3
 
 # 迁移判定结果：只有这四种。
 STATUS_MIGRATED = "migrated"
@@ -82,15 +105,26 @@ MIGRATION_STATUSES = (
 # 需要人工处理后才能使用的判定：目标配置里不会为它们生成电源条目。
 STATUSES_REQUIRING_ACTION = (STATUS_NEEDS_RESCAN, STATUS_UNIDENTIFIABLE, STATUS_CONFLICT)
 
+# 通道参数映射状态（步骤 14 §6.14 规则 2）：只有旧角色两侧唯一配对成功才搬运参数。
+CHANNEL_SETTINGS_MAPPED = "mapped"
+CHANNEL_SETTINGS_UNMAPPED = "unmapped"
+CHANNEL_SETTINGS_NOT_APPLICABLE = "not_applicable"
+# 漏极迁移状态（步骤 14 §6.14 规则 3）：不按通道名猜，0 条或多条一律待确认。
+DRAIN_MIGRATED = "migrated"
+DRAIN_PRESERVED = "preserved"
+DRAIN_NEEDS_CONFIRMATION = "needs_confirmation"
+DRAIN_NOT_APPLICABLE = "not_applicable"
+# 旧角色通道参数无法唯一配对时摘要使用的稳定错误码（§6.14 规则 2）。
+CODE_POWER_SETTINGS_UNMAPPED = "configuration.power_settings_unmapped"
+
 # 集合键与条目内部重复的身份字段：新格式只从注册表取身份，旧条目里的同名键不沿用。
 _IDENTITY_FIELDS = ("label", "device_key", "full_code", "serial", "model")
 _SEPARATOR = "/"
 _IPV4 = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
-# 供电角色与连接说明的措辞与配置作者（``application.configuration_authoring``）一致：
-# 迁移生成的运行快照必须和配置页保存出来的那份长得一样，否则同一份映射会有两种文本。
-_DUT_GATE = "gate"
-_DUT_DRAIN = "drain"
-_DRIVER_ROLE = "driver"
+# 旧供电角色只用于读取兼容与参数配对，**不生成上电顺序**。
+_LEGACY_DUT_DRAIN = "drain"
+_LEGACY_DRIVER = "driver"
+_EMPTY_POWER_PLAN = {"power_sequence": [], "inter_channel_delay_s": 0.0}
 
 
 class LegacyConfigMigrationError(ValueError):
@@ -138,6 +172,46 @@ class LegacyMigrationEntry:
 
 
 @dataclass(frozen=True)
+class LegacyChannelMapping:
+    """一组旧角色化通道参数能否唯一映射到迁移后的物理路由。
+
+    ``routes`` 是成功解析出的物理路由；``settings`` 只用于在迁移内部写回编辑段的通道
+    参数，不进入摘要（摘要只回答“能不能映射、为什么不能”）。
+    """
+
+    group: str
+    status: str
+    reason: str
+    routes: Tuple[Tuple[str, str], ...] = ()
+    settings: Tuple[Tuple[Tuple[str, str], Dict[str, Any]], ...] = ()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "status": self.status,
+            "reason": self.reason,
+            "routes": [_route_document(route) for route in self.routes],
+        }
+
+
+@dataclass(frozen=True)
+class LegacyDrainMigration:
+    """旧 ``role == "drain"`` 声明的迁移结果（步骤 14 §6.14 规则 3）。"""
+
+    status: str
+    reason: str
+    route: Optional[Tuple[str, str]] = None
+    candidates: Tuple[Tuple[str, str], ...] = ()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "status": self.status,
+            "reason": self.reason,
+            "route": _route_document(self.route) if self.route is not None else None,
+            "candidates": [_route_document(route) for route in self.candidates],
+        }
+
+
+@dataclass(frozen=True)
 class LegacyMigrationResult:
     """迁移结果：目标配置、逐条摘要，以及**没有进入目标配置**的旧键。"""
 
@@ -150,6 +224,11 @@ class LegacyMigrationResult:
     # ``supply_id`` 只能写 ``null``。它们让“这份文档还缺什么”可被程序读取，而不是只
     # 靠人看配置猜；写盘门槛也据此拒绝半成品。
     unresolved_references: Tuple[str, ...] = ()
+    # 步骤 14 新增：每组空计划的候选路由、旧角色参数映射状态、漏极迁移状态。
+    # 这些只用于摘要，不进入配置 schema（§6.7：确认状态不落库）。
+    plan_candidates: Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...] = ()
+    channel_mappings: Tuple[LegacyChannelMapping, ...] = ()
+    drain_migration: Optional[LegacyDrainMigration] = None
 
     @property
     def blocked(self) -> bool:
@@ -184,7 +263,35 @@ class LegacyMigrationResult:
         migrated_config_source: Optional[str] = None,
         generated_at: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """面向操作员的摘要；``source`` 段与旧配置结构相同，只为追溯用。"""
+        """面向操作员的摘要；``source`` 段与旧配置结构相同，只为追溯用。
+
+        ``groups`` 不保存配置里的确认状态（§6.7：状态派生、不落库），只记录这次迁移
+        写出的空计划和候选路由；``drain_channel`` / ``channel_settings`` 记录“自动迁移
+        能确定什么、什么必须由用户确认”。
+        """
+        mappings = {item.group: item for item in self.channel_mappings}
+        candidates = dict(self.plan_candidates)
+        groups: Dict[str, Any] = {}
+        for group in _ordered_groups(_mapping(self.config.get("power_supply_assignment"))):
+            plan = _mapping(_mapping(self.config.get("power_supply_assignment")).get(group)).get(
+                "power_plan"
+            )
+            mapping = mappings.get(group)
+            groups[group] = {
+                "power_plan": copy.deepcopy(plan)
+                if isinstance(plan, Mapping)
+                else copy.deepcopy(_EMPTY_POWER_PLAN),
+                "candidate_routes": [
+                    _route_document(route) for route in candidates.get(group, ())
+                ],
+                "channel_settings": mapping.to_dict()
+                if mapping is not None
+                else {
+                    "status": CHANNEL_SETTINGS_NOT_APPLICABLE,
+                    "reason": "旧配置没有可配对的角色化通道参数",
+                    "routes": [],
+                },
+            }
         return {
             "schema_version": SUMMARY_SCHEMA_VERSION,
             "source": {
@@ -194,6 +301,18 @@ class LegacyMigrationResult:
             },
             "generated_at": generated_at or _now_iso(),
             "entries": [entry.to_dict() for entry in self.entries],
+            "groups": groups,
+            "drain_channel": (
+                self.drain_migration.to_dict()
+                if self.drain_migration is not None
+                else {
+                    "status": DRAIN_NOT_APPLICABLE,
+                    "reason": "旧配置没有 DUT 漏极声明",
+                    "route": None,
+                    "candidates": [],
+                }
+            ),
+            "unresolved_references": list(self.unresolved_references),
         }
 
     def summary_text(self) -> str:
@@ -211,6 +330,31 @@ class LegacyMigrationResult:
         for entry in self.entries:
             lines.append(
                 f"- {entry.old_key} -> {entry.new_key or '(无)'} [{entry.status}] {entry.reason}"
+            )
+        candidates = dict(self.plan_candidates)
+        for group, routes in candidates.items():
+            text = (
+                "、".join(_route_token(route) for route in routes)
+                if routes
+                else "(无候选通道)"
+            )
+            lines.append(
+                f"上电计划 {group}: 空计划，待用户在电源页确认；候选通道: {text}"
+            )
+        if self.drain_migration is not None:
+            drain = self.drain_migration
+            lines.append(
+                "漏极: "
+                + (
+                    _route_token(drain.route)
+                    if drain.route is not None
+                    else "(未写入，待确认)"
+                )
+                + f" [{drain.status}] {drain.reason}"
+            )
+        for mapping in self.channel_mappings:
+            lines.append(
+                f"通道参数 {mapping.group}: [{mapping.status}] {mapping.reason}"
             )
         if self.unresolved_references:
             lines.append(
@@ -536,25 +680,31 @@ def migrate_legacy_power_supplies(
       ``migrate_registry_labels=False`` 时旧设备表被原样使用——没有标签的设备不可能成为
       ``supply_id``，判定为 ``needs_rescan``（先保存一次设备表），绝不在这里另生成一套编号。
 
-    目标配置的写法：
+    目标配置的写法（步骤 14 起）：
 
-    - ``instruments.power_supplies`` 的键改为 ``supply_id`` 并补上 ``label`` / ``device_key`` /
-      ``full_code`` / ``model``；通道参数与未知字段原样保留；旧 ``enabled`` 不沿用——可用性只
-      来自设备绑定：有带身份的绑定记录时地址与 ``enabled: true`` 一起写回（与配置页
-      ``_apply_device_binding`` 同一条规则），否则写 ``enabled: false`` 且不留地址；旧条目的
-      ``address`` 只在这两种情况下写进配置，其余情况删除并把旧值留在摘要 ``legacy_address``
-      里，不给配置写一个没人确认过的连接目标；
+    - 编辑段 ``instruments.power_supplies`` 的键改为 ``supply_id`` 并补上 ``label`` /
+      ``device_key`` / ``full_code`` / ``model``；通道参数与未知字段原样保留；旧 ``enabled``
+      不沿用——可用性只来自设备绑定：有带身份的绑定记录时地址与 ``enabled: true`` 一起写回
+      （与配置页 ``_apply_device_binding`` 同一条规则），否则写 ``enabled: false`` 且不留地址；
+      旧条目的 ``address`` 只在这两种情况下写进配置，其余情况删除并把旧值留在摘要
+      ``legacy_address`` 里，不给配置写一个没人确认过的连接目标；
     - ``power_supply_assignment.*.supplies.*`` 的引用写成 ``supply_id``（能迁移时）或
       ``supply_id: null``（不能迁移时），过渡别名 ``name`` 只在能迁移时同值写出；
+    - 每组 ``power_plan`` 写成空计划（空序列 + ``0.0``），**不根据旧角色生成顺序**；摘要的
+      ``groups.<组>.candidate_routes`` 列出用户在电源页可选的物理路由；
+    - 旧 ``test_plan.dut.power_roles`` 与旧 ``run_mapping.dut_power_channels`` 只在 role 集合
+      完全一致、各自唯一、token 能解析到迁移后的电源/通道时用于重建通道参数；否则该组的
+      ``channel_settings`` 保持为空，摘要 ``channel_settings.status = unmapped``；
+    - 旧 ``role == "drain"`` 只在 DUT 分配通道里恰好一条且能唯一映射时写入
+      ``dut_config.drain_channel``；否则写 ``null``，摘要记录 ``needs_confirmation``；
     - ``device_bindings`` 只保留单设备角色，旧槽位键移除；能迁移的电源若旧绑定本身带身份
       （``source != legacy_config``），折进 ``power_supplies.<supply_id>``，只有地址的旧绑定
       一律丢弃并交由重新扫描；
-    - ``run_mapping.instruments.power_supply``（单数）改写成 ``instruments.power_supplies``，
-      快照只含被供电分配实际引用且身份完整的电源；``dut_power_channels`` 与
-      ``driver_mode.power_channels`` 按迁移后的分配重建成 ``supply_id/CHx`` 路由，旧槽位
-      通道名不保留；
     - ``power_supply_assignment.<组>.power_supply_count`` 按该组仍能落地的引用数重算；
-      ``dut_config.power_supply_count`` 是测试方案里的现场参数，**不重算**（迁移不改测试方案）。
+      ``dut_config.power_supply_count`` 是测试方案里的现场参数，**不重算**（迁移不改测试方案）；
+    - 正式 ``test_plan`` / ``run_mapping`` 由 authoring 从编辑段重新生成，迁移输出
+      ``schema_version = 1.1``，不再保留 ``role`` / ``power_roles`` / ``power_channels`` /
+      ``connection`` / ``dut_power_channels``。``runs/`` 下的历史快照不迁移、不改写。
 
     返回值里的 :attr:`LegacyMigrationResult.writable` 说明这次迁移是否已完整；只有它为真时
     才允许用 :func:`save_migrated_configuration` 写盘。
@@ -598,6 +748,20 @@ def migrate_legacy_power_supplies(
     migrated_by_old = {
         entry.old_key: entry for entry in entries if entry.status == STATUS_MIGRATED
     }
+    # 已经是当前 1.1 且不含旧槽位/旧角色字段的文档原样返回：迁移必须可重复执行，也不能
+    # 把用户已经确认的顺序或漏极重写成空计划。
+    if _is_current_clean_document(config):
+        return LegacyMigrationResult(
+            config=target,
+            entries=tuple(entries),
+            old_keys=old_keys,
+            unresolved=_unresolved_entries(entries),
+            unresolved_references=_unresolved_references(target),
+            plan_candidates=_plan_candidates(target),
+            channel_mappings=(),
+            drain_migration=None,
+        )
+
     # 旧键已经是 ``supply_id`` 的条目按原样保留：它们本来就是新格式，再重写一遍只会把
     # 通道参数重新拼一次、把地址再删一次。迁移因此可以对同一份配置重复执行。
     rewritten = {
@@ -611,19 +775,34 @@ def migrate_legacy_power_supplies(
     bindings = _rewrite_device_bindings(target, config, migrated_by_old)
     _recount_assignments(target)
     _apply_trusted_bindings(target_supplies, bindings, migrated_by_old)
-    _rewrite_run_mapping(target)
 
-    unresolved = tuple(
+    # 步骤 14：先按旧角色唯一配对重建通道参数，再把每组计划写成空计划，最后交给
+    # authoring 生成正式段。顺序不能反：参数映射读取的是**迁移后**的物理路由。
+    channel_mappings = _migrate_channel_settings(target, config, migrated_by_old)
+    drain_migration = _migrate_drain_channel(target, config, migrated_by_old)
+    _write_empty_power_plans(target)
+
+    authored = _author_migrated_document(target)
+
+    return LegacyMigrationResult(
+        config=authored,
+        entries=tuple(entries),
+        old_keys=old_keys,
+        unresolved=_unresolved_entries(entries),
+        unresolved_references=_unresolved_references(authored),
+        plan_candidates=_plan_candidates(authored),
+        channel_mappings=channel_mappings,
+        drain_migration=drain_migration,
+    )
+
+
+def _unresolved_entries(
+    entries: Iterable[LegacyMigrationEntry],
+) -> Tuple[Tuple[str, str], ...]:
+    return tuple(
         (entry.old_key, entry.reason)
         for entry in entries
         if entry.status in STATUSES_REQUIRING_ACTION
-    )
-    return LegacyMigrationResult(
-        config=target,
-        entries=tuple(entries),
-        old_keys=old_keys,
-        unresolved=unresolved,
-        unresolved_references=_unresolved_references(target),
     )
 
 
@@ -644,8 +823,10 @@ def save_migrated_configuration(
        再迁移一次。
     2. 迁移后没有仍为空的供电分配引用（``supply_id: null``）。
     3. 文件级校验通过：``validator`` 缺省使用
-       :func:`infrastructure.config.validation.validate_official_config`，**不能跳过**；
-       校验只拒绝写入，不会先写再校验。
+       :func:`infrastructure.config.validation.validate_saveable_configuration`，**不能跳过**；
+       它校验整份文件的结构/类型（含正式段与硬件装配段），但跳过“运行就绪”规则——迁移
+       写出的空计划必须由用户先确认顺序（§6.6），创建运行时自然会再拦一次。校验只拒绝
+       写入，不会先写再校验。
 
     返回写入路径（原子替换）。
     """
@@ -664,7 +845,7 @@ def save_migrated_configuration(
             "迁移后仍有未落地的供电分配引用，未写入任何文件（原配置保持不变）: "
             + "、".join(result.unresolved_references)
         )
-    check = validator if validator is not None else validate_official_config
+    check = validator if validator is not None else validate_saveable_configuration
     validation = check(result.config)
     if not getattr(validation, "valid", False):
         errors = [
@@ -936,72 +1117,455 @@ def _current_binding_record(record: Any) -> Any:
     return prepared
 
 
-def _rewrite_run_mapping(target: Dict[str, Any]) -> None:
-    """旧单数 ``power_supply`` 段改写成集合；快照只含实际使用且身份完整的电源。
+def _is_current_clean_document(config: Mapping[str, Any]) -> bool:
+    """这份文档是否已经是当前 1.1、且不含任何 1.0 电源字段。
 
-    通道行不沿用旧写法：旧快照的 ``CH1`` 与 ``PS1-CH1 -> DUT 栅极`` 没有物理路由，一旦
-    电源集合出现（哪怕是空集合），``validate_run_mapping`` 就要求每条通道写成
-    ``supply_id/CHx`` 且前缀指向快照里的电源。因此这里按**迁移后的分配**重新生成通道行：
-    能落地的引用按 ``<supply_id>/<通道>`` 与电源自己声明的通道角色写，落地不了的一律不写
-    （参数仍留在迁移摘要里，由操作员重扫后重填）。
+    只有“已经迁移干净”的文档才原样返回；迁移可重复执行，但绝不能把用户确认过的
+    顺序、间隔或漏极重新写成空计划。
     """
-    mapping = target.get("run_mapping")
-    if not isinstance(mapping, Mapping):
-        return
-    instruments = mapping.get("instruments")
-    if not isinstance(instruments, dict):
-        return
-    instruments.pop("power_supply", None)
-    entries: Dict[str, Any] = {}
-    for supply_id in _used_supply_ids(target):
-        entry = _run_mapping_supply_entry(target, supply_id)
-        if entry is not None:
-            entries[supply_id] = entry
-    instruments["power_supplies"] = entries
-    mapping["dut_power_channels"] = _channel_snapshot(target, entries, "dut_amplifier")
-    driver = mapping.get("driver_mode")
-    if isinstance(driver, dict):
-        driver["power_channels"] = _channel_snapshot(target, entries, "driver_amplifier")
+    if config.get("schema_version") != OFFICIAL_SCHEMA_VERSION:
+        return False
+    return not _has_legacy_power_inputs(config)
 
 
-def _channel_snapshot(
-    target: Mapping[str, Any],
-    entries: Mapping[str, Any],
-    group: str,
-) -> List[Dict[str, Any]]:
-    """按某个分配组生成快照通道行：``channel`` 是 ``supply_id/CHx``，``role`` 取电源声明。
+def _has_legacy_power_inputs(config: Mapping[str, Any]) -> bool:
+    """是否存在只在 1.0 读取兼容层出现的电源字段。"""
+    supplies = _mapping(_mapping(config.get("instruments")).get("power_supplies"))
+    for key, supply in supplies.items():
+        if str(key) in LEGACY_ROLES:
+            return True
+        for channel in _mapping(_mapping(supply).get("channels")).values():
+            if "role" in _mapping(channel):
+                return True
+    groups = _mapping(config.get("power_supply_assignment"))
+    for group in groups.values():
+        for assignment in _mapping(_mapping(group).get("supplies")).values():
+            item = _mapping(assignment)
+            if "name" in item and "supply_id" not in item:
+                return True
+            if item.get("supply_id") in LEGACY_ROLES:
+                return True
+    plan = _mapping(config.get("test_plan"))
+    for section in (_mapping(plan.get("dut")), _mapping(plan.get("driver_mode"))):
+        if "power_roles" in section or "power_channels" in section:
+            return True
+    mapping = _mapping(config.get("run_mapping"))
+    if "dut_power_channels" in mapping:
+        return True
+    if "power_channels" in _mapping(mapping.get("driver_mode")):
+        return True
+    if "power_supply" in _mapping(mapping.get("instruments")):
+        return True
+    return False
 
-    只写快照里有条目的电源（``entries``）：引用没落地、或电源身份/地址不完整的，其通道
-    不进快照——半条路由比没有路由更危险，校验会发现快照不完整并拒绝创建运行。
+
+def _write_empty_power_plans(target: Dict[str, Any]) -> None:
+    """把每组计划写成空计划；从不根据旧角色生成顺序（§6.14 规则 4）。
+
+    走到这里的文档都含 1.0 遗留电源字段，本次迁移必须把顺序交回用户确认：旧角色不能
+    变成顺序，残留的 ``power_plan`` 也不能当成“已经确认过”而沿用。已经迁移干净的 1.1
+    文档在 :func:`migrate_legacy_power_supplies` 里提前返回，用户确认过的顺序、间隔与
+    漏极不会因此被清空。
     """
-    rows: List[Dict[str, Any]] = []
-    assignments = _mapping(_mapping(target.get("power_supply_assignment")).get(group))
-    supplies = _mapping(_mapping(target.get("instruments")).get("power_supplies"))
-    for assignment in _mapping(assignments.get("supplies")).values():
-        if not isinstance(assignment, Mapping):
+    groups = target.get("power_supply_assignment")
+    if not isinstance(groups, dict):
+        return
+    for group in groups.values():
+        if not isinstance(group, dict):
             continue
-        supply_id = assignment_supply_id(assignment)
-        if supply_id is None or supply_id not in entries:
-            continue
-        declared = _mapping(_mapping(supplies.get(supply_id)).get("channels"))
-        for channel in _channel_list(assignment.get("channel")):
-            token = f"{supply_id}{_SEPARATOR}{channel}"
-            role = normalize_text(_mapping(declared.get(channel)).get("role")) or None
-            rows.append(
-                {"channel": token, "role": role, "connection": _connection_text(token, role)}
+        group["power_plan"] = copy.deepcopy(_EMPTY_POWER_PLAN)
+
+
+def _author_migrated_document(target: Dict[str, Any]) -> Dict[str, Any]:
+    """把编辑段交给 authoring，生成 1.1 正式段（§6.14 规则 5）。
+
+    迁移器自己不改写 ``test_plan`` / ``run_mapping``；通道 ``role``、旧 ``name`` 别名与
+    旧正式段都在这一步消失。
+    """
+    target["schema_version"] = OFFICIAL_SCHEMA_VERSION
+    return ConfigurationAuthoringService().author_document(
+        ConfigurationEditingDocument.from_mapping(target)
+    )
+
+
+def _migrate_channel_settings(
+    target: Dict[str, Any],
+    source: Mapping[str, Any],
+    migrated_by_old: Mapping[str, LegacyMigrationEntry],
+) -> Tuple[LegacyChannelMapping, ...]:
+    """按旧 role 值唯一配对，重建每组的通道参数（§6.14 规则 2）。
+
+    只有 role 集合完全一致、role 各自唯一、每条旧 token 都能解析成**迁移后**的
+    物理路由，并且路由落在该组分配通道里时，才把旧 ``power_roles`` 的数值搬运到编辑段；
+    任何一步不满足都只返回 ``unmapped``，不采信旧正式段的参数，由摘要提示用户重新核对。
+    正式 ``channel_settings`` 始终由 authoring 从编辑段生成，迁移器不手写正式段。
+    """
+    mappings: List[LegacyChannelMapping] = []
+    for group in ASSIGNMENT_GROUPS:
+        roles, rows = _legacy_role_inputs(source, group)
+        if not roles and not rows:
+            mappings.append(
+                LegacyChannelMapping(
+                    group=group,
+                    status=CHANNEL_SETTINGS_NOT_APPLICABLE,
+                    reason="旧配置没有角色化通道参数，沿用编辑段里的通道数值",
+                )
             )
-    return rows
+            continue
+        if not roles or not rows:
+            mappings.append(
+                LegacyChannelMapping(
+                    group=group,
+                    status=CHANNEL_SETTINGS_UNMAPPED,
+                    reason=(
+                        f"{CODE_POWER_SETTINGS_UNMAPPED}: "
+                        "旧 test_plan 的 power_roles 与旧 run_mapping 的通道列表"
+                        "不是两边都有，无法按 role 唯一配对"
+                    ),
+                )
+            )
+            continue
+
+        failure = _legacy_role_mapping_failure(
+            target, group, roles, rows, migrated_by_old
+        )
+        if failure is not None:
+            mappings.append(
+                LegacyChannelMapping(
+                    group=group,
+                    status=CHANNEL_SETTINGS_UNMAPPED,
+                    reason=f"{CODE_POWER_SETTINGS_UNMAPPED}: {failure}",
+                )
+            )
+            continue
+
+        record_by_role, route_by_role = _legacy_role_maps(
+            target, group, roles, rows, migrated_by_old
+        )
+        settings: List[Tuple[Tuple[str, str], Dict[str, Any]]] = []
+        for role, record in record_by_role.items():
+            route = route_by_role[role]
+            values = _legacy_channel_values(record)
+            _write_channel_values(target, route, values)
+            settings.append((route, values))
+        mappings.append(
+            LegacyChannelMapping(
+                group=group,
+                status=CHANNEL_SETTINGS_MAPPED,
+                reason="按旧 role 值唯一配对到迁移后的物理路由",
+                routes=tuple(route_by_role.values()),
+                settings=tuple(settings),
+            )
+        )
+    return tuple(mappings)
 
 
-def _connection_text(token: str, role: Optional[str]) -> str:
-    """连接说明与配置作者写的一致：``<token> -> DUT 栅极/漏极``、``<token> -> 驱动功放``。"""
-    if role == _DUT_GATE:
-        return f"{token} -> DUT 栅极"
-    if role == _DUT_DRAIN:
-        return f"{token} -> DUT 漏极"
-    if role == _DRIVER_ROLE:
-        return f"{token} -> 驱动功放"
-    return token
+def _legacy_role_inputs(
+    source: Mapping[str, Any], group: str
+) -> Tuple[Mapping[str, Any], List[Any]]:
+    plan = _mapping(source.get("test_plan"))
+    mapping = _mapping(source.get("run_mapping"))
+    if group == "dut_amplifier":
+        roles = _mapping(_mapping(plan.get("dut")).get("power_roles"))
+        rows = _list(mapping.get("dut_power_channels"))
+        return roles, list(rows)
+    roles = _mapping(_mapping(plan.get("driver_mode")).get("power_roles"))
+    rows = _list(_mapping(mapping.get("driver_mode")).get("power_channels"))
+    return roles, list(rows)
+
+
+def _legacy_role_mapping_failure(
+    target: Mapping[str, Any],
+    group: str,
+    roles: Mapping[str, Any],
+    rows: Sequence[Any],
+    migrated_by_old: Mapping[str, LegacyMigrationEntry],
+) -> Optional[str]:
+    """检查旧 role 两侧能否唯一配对；返回失败原因，成功返回 ``None``。"""
+    role_records: Dict[str, Mapping[str, Any]] = {}
+    for key, item in roles.items():
+        record = _mapping(item)
+        role = normalize_text(record.get("role")) or normalize_text(key)
+        if not role:
+            return f"旧 power_roles 的 {key!r} 没有可识别的 role"
+        if role in role_records:
+            return f"旧 power_roles 里 role={role!r} 重复，无法确定哪条参数属于哪个通道"
+        role_records[role] = record
+    if group == "driver_amplifier":
+        if set(role_records) != {_LEGACY_DRIVER}:
+            return "驱放旧 power_roles 只能有一个 driver 键"
+        if len(rows) != 1:
+            return f"驱放旧通道有 {len(rows)} 条，只有一个 driver 参数，无法区分是哪一条"
+    routes_by_role: Dict[str, Tuple[str, str]] = {}
+    for row in rows:
+        item = _mapping(row)
+        role = normalize_text(item.get("role"))
+        if not role:
+            return "旧运行映射里有通道没有 role，无法与旧参数配对"
+        if role in routes_by_role:
+            return f"旧运行映射里 role={role!r} 出现多次，无法唯一配对"
+        route = _resolve_legacy_route(item, target, group, migrated_by_old)
+        if route is None:
+            return f"旧运行映射里 role={role!r} 的通道无法解析成迁移后的物理路由"
+        routes_by_role[role] = route
+    if set(routes_by_role) != set(role_records):
+        return (
+            "旧 power_roles 与旧运行映射的 role 集合不一致（"
+            + "、".join(sorted(set(role_records)))
+            + " vs "
+            + "、".join(sorted(set(routes_by_role)))
+            + "）"
+        )
+    group_routes = set(_assignment_routes(target, group))
+    supplies = _mapping(_mapping(target.get("instruments")).get("power_supplies"))
+    for role, route in routes_by_role.items():
+        if route not in group_routes:
+            return f"role={role!r} 映射到 {_route_token(route)}，但该通道不在迁移后的分配里"
+        channels = _mapping(_mapping(supplies.get(route[0])).get("channels"))
+        if route[1] not in channels:
+            return f"role={role!r} 映射到 {_route_token(route)}，但电源没有声明该通道"
+    return None
+
+
+def _legacy_role_maps(
+    target: Mapping[str, Any],
+    group: str,
+    roles: Mapping[str, Any],
+    rows: Sequence[Any],
+    migrated_by_old: Mapping[str, LegacyMigrationEntry],
+) -> Tuple[Dict[str, Mapping[str, Any]], Dict[str, Tuple[str, str]]]:
+    """在 :func:`_legacy_role_mapping_failure` 通过后建立 role 两侧的映射。"""
+    record_by_role: Dict[str, Mapping[str, Any]] = {}
+    for key, item in roles.items():
+        record = _mapping(item)
+        role = normalize_text(record.get("role")) or normalize_text(key)
+        record_by_role[role] = record
+    route_by_role: Dict[str, Tuple[str, str]] = {}
+    for row in rows:
+        item = _mapping(row)
+        role = normalize_text(item.get("role"))
+        route_by_role[role] = _resolve_legacy_route(item, target, group, migrated_by_old)
+    return record_by_role, route_by_role
+
+
+def _resolve_legacy_route(
+    row: Mapping[str, Any],
+    target: Mapping[str, Any],
+    group: str,
+    migrated_by_old: Mapping[str, LegacyMigrationEntry],
+) -> Optional[Tuple[str, str]]:
+    """把旧快照的 ``CH1`` 或 ``supply_id/CH1`` 解析成迁移后的物理路由。
+
+    裸通道名只属于 1.0 单电源快照：先取旧单数 ``instruments.power_supply`` 的身份，再
+    经身份迁移表改写。解析不了就返回 ``None``——绝不按 ``CH1``/``CH2`` 猜电源或角色。
+    """
+    token = normalize_text(row.get("channel"))
+    if not token:
+        return None
+    if _SEPARATOR in token:
+        supply_ref, channel = token.split(_SEPARATOR, 1)
+    else:
+        supply_ref, channel = _legacy_single_supply_reference(target, group), token
+    supply_id = _mapped_supply_id(supply_ref, migrated_by_old)
+    channel = normalize_text(channel)
+    if not supply_id or not channel or _SEPARATOR in channel:
+        return None
+    return supply_id, channel
+
+
+def _legacy_single_supply_reference(source: Mapping[str, Any], group: str) -> Optional[str]:
+    """1.0 快照的裸通道属于哪台电源：旧单数条目优先，其次该组唯一引用。"""
+    single = _mapping(_mapping(_mapping(source.get("run_mapping")).get("instruments")).get("power_supply"))
+    for key in ("label", "model", "device_key"):
+        value = normalize_text(single.get(key))
+        if value:
+            return value
+    references: List[str] = []
+    for assignment in _mapping(_mapping(_mapping(source.get("power_supply_assignment")).get(group)).get("supplies")).values():
+        value = assignment_supply_id(_mapping(assignment))
+        if value is not None and value not in references:
+            references.append(value)
+    return references[0] if len(references) == 1 else None
+
+
+def _mapped_supply_id(
+    reference: Optional[str],
+    migrated_by_old: Mapping[str, LegacyMigrationEntry],
+) -> Optional[str]:
+    """旧引用 -> 迁移后的 ``supply_id``；已经是新键的原样返回。"""
+    text = normalize_text(reference)
+    if not text:
+        return None
+    entry = migrated_by_old.get(text)
+    if entry is not None and entry.new_key:
+        return entry.new_key
+    return text if _looks_like_new_reference(text) else None
+
+
+def _legacy_channel_values(record: Mapping[str, Any]) -> Dict[str, Any]:
+    return {
+        "voltage": _finite_number(record.get("voltage")),
+        "current": _finite_number(record.get("current")),
+        "voltage_protection": _finite_number(record.get("voltage_protection")),
+        "current_protection": _finite_number(record.get("current_protection")),
+    }
+
+
+def _write_channel_values(
+    target: Dict[str, Any], route: Tuple[str, str], values: Mapping[str, Any]
+) -> bool:
+    """把旧正式段的数值写回编辑段的通道参数；``None`` 不覆盖已有值。"""
+    supply = _mapping(
+        _mapping(_mapping(target.get("instruments")).get("power_supplies")).get(route[0])
+    )
+    channel = supply.get("channels")
+    if not isinstance(channel, dict):
+        return False
+    item = channel.get(route[1])
+    if not isinstance(item, dict):
+        return False
+    for section, field, value in (
+        ("voltage", "value", values.get("voltage")),
+        ("current", "value", values.get("current")),
+        ("voltage", "protection", values.get("voltage_protection")),
+        ("current", "protection", values.get("current_protection")),
+    ):
+        if value is None:
+            continue
+        block = item.get(section)
+        if not isinstance(block, dict):
+            block = {}
+            item[section] = block
+        block[field] = value
+    return True
+
+
+def _migrate_drain_channel(
+    target: Dict[str, Any],
+    source: Mapping[str, Any],
+    migrated_by_old: Mapping[str, LegacyMigrationEntry],
+) -> LegacyDrainMigration:
+    """按旧 ``role == "drain"`` 迁移漏极；0 条或多条一律待确认，不按 CH 名猜。"""
+    dut_config = target.get("dut_config")
+    if not isinstance(dut_config, dict):
+        dut_config = {}
+        target["dut_config"] = dut_config
+    preserved = dut_config.get("drain_channel")
+    if preserved is not None:
+        route = _route_from_document(preserved)
+        return LegacyDrainMigration(
+            status=DRAIN_PRESERVED,
+            reason="文档里已有漏极引用，迁移不改写用户确认过的漏极",
+            route=route,
+        )
+
+    rows = [
+        _mapping(row)
+        for row in _list(_mapping(source.get("run_mapping")).get("dut_power_channels"))
+        if normalize_text(_mapping(row).get("role")) == _LEGACY_DUT_DRAIN
+    ]
+    candidates = [
+        route
+        for route in (
+            _resolve_legacy_route(row, target, "dut_amplifier", migrated_by_old)
+            for row in rows
+        )
+        if route is not None
+    ]
+    group_routes = set(_assignment_routes(target, "dut_amplifier"))
+    if not rows and not group_routes:
+        return LegacyDrainMigration(
+            status=DRAIN_NOT_APPLICABLE,
+            reason="旧配置没有 DUT 电源通道，也没有漏极声明",
+        )
+    if len(rows) != 1:
+        dut_config["drain_channel"] = None
+        reason = (
+            "旧配置没有 role=drain 的 DUT 通道，漏极必须由用户确认"
+            if not rows
+            else f"旧配置有 {len(rows)} 条 role=drain 的 DUT 通道，不能确定哪一个才是漏极"
+        )
+        return LegacyDrainMigration(
+            status=DRAIN_NEEDS_CONFIRMATION,
+            reason=reason,
+            candidates=tuple(candidates),
+        )
+    route = _resolve_legacy_route(rows[0], target, "dut_amplifier", migrated_by_old)
+    if route is None:
+        dut_config["drain_channel"] = None
+        return LegacyDrainMigration(
+            status=DRAIN_NEEDS_CONFIRMATION,
+            reason="旧 role=drain 的通道无法映射到迁移后的物理路由",
+            candidates=tuple(candidates),
+        )
+    if route not in group_routes:
+        dut_config["drain_channel"] = None
+        return LegacyDrainMigration(
+            status=DRAIN_NEEDS_CONFIRMATION,
+            reason=(
+                f"旧 role=drain 映射到 {_route_token(route)}，"
+                "但该通道不在迁移后的 DUT 分配里"
+            ),
+            candidates=tuple(candidates),
+        )
+    dut_config["drain_channel"] = _route_document(route)
+    return LegacyDrainMigration(
+        status=DRAIN_MIGRATED,
+        reason=f"旧配置恰好一条 role=drain 且唯一映射到 {_route_token(route)}",
+        route=route,
+        candidates=tuple(candidates),
+    )
+
+
+def _plan_candidates(
+    document: Mapping[str, Any],
+) -> Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...]:
+    """每组分配里可选的物理路由，供用户在电源页确认上电顺序。"""
+    groups = _mapping(document.get("power_supply_assignment"))
+    result: List[Tuple[str, Tuple[Tuple[str, str], ...]]] = []
+    for group in _ordered_groups(groups):
+        result.append((group, tuple(_assignment_routes(document, group))))
+    return tuple(result)
+
+
+def _assignment_routes(document: Mapping[str, Any], group: str) -> List[Tuple[str, str]]:
+    """一组分配引用里的物理路由（按出现顺序去重，未落地的引用跳过）。"""
+    routes: List[Tuple[str, str]] = []
+    supplies = _mapping(_mapping(_mapping(document.get("power_supply_assignment")).get(group)).get("supplies"))
+    for assignment in supplies.values():
+        supply_id = assignment_supply_id(_mapping(assignment))
+        if supply_id is None:
+            continue
+        for channel in _channel_list(_mapping(assignment).get("channel")):
+            route = (supply_id, channel)
+            if route not in routes:
+                routes.append(route)
+    return routes
+
+
+def _route_document(route: Tuple[str, str]) -> Dict[str, str]:
+    return {"supply_id": route[0], "channel": route[1]}
+
+
+def _route_token(route: Tuple[str, str]) -> str:
+    return f"{route[0]}{_SEPARATOR}{route[1]}"
+
+
+def _route_from_document(value: Any) -> Optional[Tuple[str, str]]:
+    if not isinstance(value, Mapping):
+        return None
+    supply_id = normalize_text(value.get("supply_id"))
+    channel = normalize_text(value.get("channel"))
+    if not supply_id or not channel or _SEPARATOR in supply_id or _SEPARATOR in channel:
+        return None
+    return supply_id, channel
+
+
+def _finite_number(value: Any) -> Optional[float]:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    parsed = float(value)
+    return parsed if math.isfinite(parsed) else None
 
 
 def _resolvable_count(supplies: Mapping[str, Any]) -> int:
@@ -1026,45 +1590,6 @@ def _unresolved_references(document: Mapping[str, Any]) -> Tuple[str, ...]:
             if assignment_supply_id(assignment) is None:
                 pending.append(f"{group_name}.{role_key}")
     return tuple(pending)
-
-
-def _used_supply_ids(document: Mapping[str, Any]) -> List[str]:
-    """按出现顺序返回供电分配实际引用的 ``supply_id``（去重）。"""
-    referenced: List[str] = []
-    groups = _mapping(document.get("power_supply_assignment"))
-    for group_name in _ordered_groups(groups):
-        supplies = _mapping(_mapping(groups.get(group_name)).get("supplies"))
-        for assignment in supplies.values():
-            supply_id = assignment_supply_id(assignment)
-            if supply_id is not None and supply_id not in referenced:
-                referenced.append(supply_id)
-    return referenced
-
-
-def _run_mapping_supply_entry(
-    target: Mapping[str, Any],
-    supply_id: str,
-) -> Optional[Dict[str, Any]]:
-    """快照里的电源条目：身份与地址都取自迁移后的配置条目。
-
-    地址只可能是设备绑定确认过的那一个（见 :func:`_apply_trusted_bindings`）；没有确认过
-    地址的电源写成空地址，交给正式校验，绝不回扫设备表去替它挑一个。
-    """
-    supplies = _mapping(_mapping(target.get("instruments")).get("power_supplies"))
-    supply = supplies.get(supply_id)
-    if not isinstance(supply, Mapping):
-        return None
-    label = normalize_text(supply.get("label"))
-    device_key = normalize_text(supply.get("device_key"))
-    if not label or not device_key:
-        return None
-    return {
-        "label": label,
-        "model": supply.get("model"),
-        "full_code": supply.get("full_code"),
-        "device_key": device_key,
-        "visa_address": normalize_text(supply.get("address")) or None,
-    }
 
 
 def _recount_assignments(target: Dict[str, Any]) -> None:
@@ -1204,7 +1729,17 @@ def _now_iso() -> str:
 
 
 __all__ = [
+    "CHANNEL_SETTINGS_MAPPED",
+    "CHANNEL_SETTINGS_NOT_APPLICABLE",
+    "CHANNEL_SETTINGS_UNMAPPED",
+    "CODE_POWER_SETTINGS_UNMAPPED",
+    "DRAIN_MIGRATED",
+    "DRAIN_NEEDS_CONFIRMATION",
+    "DRAIN_NOT_APPLICABLE",
+    "DRAIN_PRESERVED",
+    "LegacyChannelMapping",
     "LegacyConfigMigrationError",
+    "LegacyDrainMigration",
     "LegacyMigrationEntry",
     "LegacyMigrationResult",
     "MIGRATION_STATUSES",

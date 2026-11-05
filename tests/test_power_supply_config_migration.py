@@ -1,4 +1,4 @@
-"""门禁：旧配置迁移器（电源重构计划步骤 13）。
+"""门禁：旧配置迁移器（电源重构计划步骤 14）。
 
 固定的行为：
 
@@ -15,14 +15,21 @@
    也只给 ``address_hint`` 提示，不给 ``new_key``；
 5. **参数不丢**：每个旧条目（含 ``migrated`` 的）都有一条摘要，``channels`` 与
    ``assignments`` 原样取自旧配置；能迁移的电源条目与摘要里的通道参数逐字段相等；
-6. **只有完整迁移才写盘**：``save_migrated_configuration`` 默认就跑文件级校验，任何
+6. **步骤 14：旧角色不再驱动顺序或漏极**：每组 ``power_plan`` 是空计划，摘要列出候选
+   路由；只有唯一且可映射的旧 ``role == "drain"`` 才写 ``drain_channel``；通道参数只在
+   旧 ``power_roles`` 与旧快照 role 集合唯一配对时搬运，否则摘要标记 ``unmapped``；
+   只有“已迁移干净”的 1.1 文档提前返回，仍带旧字段的文档一律改写，残留计划也清空；
+7. **输出是 authoring 生成的 1.1**：迁移只改编辑段，正式段由 authoring 重写，不再保留
+   ``role`` / ``power_roles`` / ``power_channels`` / ``connection`` / ``dut_power_channels``；
+8. **只有完整迁移才写盘**：``save_migrated_configuration`` 默认就跑文件级校验，任何
    ``needs_rescan`` / ``unidentifiable`` / ``conflict``、或仍未落地的分配引用都拒绝写入，
    原文件逐字节不变；认不出的参数靠 ``save_migration_summary`` 保存的摘要留存；
-7. **迁移可重复执行**：对已迁移的配置再跑一次，结果与第一次相同（旧槽位不会复活）；
-8. **设备表不被悄悄改写**：迁移只读设备表；要让旧槽位的短标签落盘，必须显式调用
-   :func:`persist_registry_labels`；
-9. **认不出的条目不会变成电源条目**：目标配置里没有它的电源条目，未绑定的引用写成
-   ``supply_id: null``，运行映射的电源段与通道行都按迁移后的分配重建，不留旧槽位通道名。
+9. **迁移可重复执行**：对已迁移干净的 1.1 配置再跑一次，结果与第一次相同（不重排计划）；
+10. **设备表不被悄悄改写**：迁移只读设备表；要让旧槽位的短标签落盘，必须显式调用
+    :func:`persist_registry_labels`；
+11. **认不出的条目不会变成电源条目**：目标配置里没有它的电源条目，未绑定的引用写成
+    ``supply_id: null``，运行映射的电源段与通道行都按迁移后的分配重建，不留旧槽位通道名；
+12. **历史快照继续可读取**：``runs/`` 下的 1.0 快照不迁移，仍按旧结构读取。
 
 验证方式：
 
@@ -40,6 +47,11 @@ from pathlib import Path
 
 from domain.configuration.rules import validate_config
 from infrastructure.config.legacy_power_supply_migration import (
+    CHANNEL_SETTINGS_MAPPED,
+    CHANNEL_SETTINGS_UNMAPPED,
+    CODE_POWER_SETTINGS_UNMAPPED,
+    DRAIN_MIGRATED,
+    DRAIN_NEEDS_CONFIRMATION,
     STATUS_CONFLICT,
     STATUS_MIGRATED,
     STATUS_NEEDS_RESCAN,
@@ -55,8 +67,12 @@ from infrastructure.config.legacy_power_supply_migration import (
     save_migrated_configuration,
     save_migration_summary,
 )
-from infrastructure.config.validation import validate_official_config
+from infrastructure.config.validation import (
+    validate_official_config,
+    validate_saveable_configuration,
+)
 from infrastructure.persistence.instrument_registry import InstrumentRegistry
+from tests.config_fixtures import complete_combined_config
 
 ROOT = Path(__file__).parents[1]
 FIXTURE_DIR = ROOT / "tests" / "fixtures" / "power_supply_identity"
@@ -65,7 +81,6 @@ MIGRATED_CONFIG = FIXTURE_DIR / "config_slots_migrated_partial.json"
 LEGACY_REGISTRY = FIXTURE_DIR / "registry_legacy_v2.json"
 MIGRATED_REGISTRY = FIXTURE_DIR / "registry_migrated_v4.json"
 SUMMARY = FIXTURE_DIR / "migration_summary_legacy.json"
-ONE_SUPPLY_CONFIG = FIXTURE_DIR / "config_one_supply.json"
 TWO_SUPPLIES_CONFIG = FIXTURE_DIR / "config_two_supplies.json"
 
 # 现场三台 DP832A：注册表里登记为 PS3 / 未登记 / PS4，配置里用的是 PS1..PS4。
@@ -141,8 +156,8 @@ class MigrationFixtureTests(unittest.TestCase):
             migrated_config_source=MIGRATED_CONFIG.name,
         )
         expected = _load(SUMMARY)
-        for key in ("schema_version", "source"):
-            self.assertEqual(summary[key], expected[key])
+        for key in ("schema_version", "source", "groups", "drain_channel", "unresolved_references"):
+            self.assertEqual(summary[key], expected[key], key)
         self.assertIsInstance(summary["generated_at"], str)
         self.assertEqual(len(summary["entries"]), len(expected["entries"]))
         for actual, wanted in zip(summary["entries"], expected["entries"]):
@@ -171,8 +186,14 @@ class MigrationFixtureTests(unittest.TestCase):
         for old_key, new_key in (("PS3", LABEL_ONE), ("PS4", LABEL_THREE)):
             with self.subTest(old_key=old_key):
                 supply = supplies[new_key]
-                self.assertEqual(supply["channels"], legacy[old_key]["channels"])
-                self.assertEqual(supply["channels"], entries[old_key].channels)
+                expected_channels = copy.deepcopy(legacy[old_key]["channels"])
+                for channel in expected_channels.values():
+                    channel.pop("role", None)
+                self.assertEqual(supply["channels"], expected_channels)
+                entry_channels = copy.deepcopy(entries[old_key].channels)
+                for channel in entry_channels.values():
+                    channel.pop("role", None)
+                self.assertEqual(supply["channels"], entry_channels)
                 self.assertIs(supply["enabled"], False, "可用电源只来自设备绑定")
                 self.assertEqual(supply["model"], "DP832A")
                 self.assertNotIn("address", supply)
@@ -193,11 +214,25 @@ class MigrationFixtureTests(unittest.TestCase):
         self.assertEqual(bindings["power_supplies"], {})
         self.assertIn("signal_generator", bindings)
 
-    def test_single_power_supply_run_mapping_becomes_an_empty_collection(self):
-        mapping = self.result.config["run_mapping"]
+    def test_single_power_supply_run_mapping_becomes_an_empty_11_plan(self):
+        config = self.result.config
+        mapping = config["run_mapping"]
         self.assertNotIn("power_supply", mapping["instruments"])
+        self.assertNotIn("dut_power_channels", mapping)
         self.assertEqual(mapping["instruments"]["power_supplies"], {})
-        self.assertEqual(mapping["dut_power_channels"], [], "旧写法的通道没有物理路由")
+        self.assertEqual(
+            mapping["dut_power_plan"],
+            {"power_sequence": [], "inter_channel_delay_s": 0.0},
+            "旧写法的通道没有物理路由，也不生成顺序",
+        )
+        self.assertEqual(
+            mapping["driver_mode"]["power_plan"],
+            {"power_sequence": [], "inter_channel_delay_s": 0.0},
+        )
+        self.assertEqual(config["schema_version"], "1.1")
+        self.assertEqual(config["test_plan"]["schema_version"], "1.1")
+        self.assertNotIn("power_roles", config["test_plan"]["dut"])
+        self.assertNotIn("role", json.dumps(config, ensure_ascii=False))
 
     def test_every_entry_reports_its_assignments_and_reason(self):
         carrier = _entries(self.result)["PS1"].assignments
@@ -430,7 +465,7 @@ class ReferenceRewriteTests(unittest.TestCase):
         result = migrate_legacy_power_supplies(config, self.registry)
         carrier = result.config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]
         self.assertEqual(carrier["supply_id"], LABEL_ONE)
-        self.assertEqual(carrier["name"], LABEL_ONE, "过渡别名与新引用同值")
+        self.assertNotIn("name", carrier, "过渡别名不进入 1.1 输出")
         self.assertEqual(
             result.config["power_supply_assignment"]["dut_amplifier"]["power_supply_count"], 1
         )
@@ -458,6 +493,7 @@ class ReferenceRewriteTests(unittest.TestCase):
         result = migrate_legacy_power_supplies(config, self.registry)
         mapping = result.config["run_mapping"]
         self.assertNotIn("power_supply", mapping["instruments"])
+        self.assertNotIn("dut_power_channels", mapping)
         supplies = mapping["instruments"]["power_supplies"]
         self.assertEqual(list(supplies), [LABEL_ONE])
         entry = supplies[LABEL_ONE]
@@ -468,20 +504,35 @@ class ReferenceRewriteTests(unittest.TestCase):
         # 地址不会出现在这里。
         self.assertEqual(entry["visa_address"], "TCPIP0::192.168.1.102::inst0::INSTR")
         self.assertEqual(
-            mapping["dut_power_channels"],
+            mapping["dut_power_plan"],
+            {"power_sequence": [], "inter_channel_delay_s": 0.0},
+            "旧快照的 role→channel 不生成上电顺序",
+        )
+        self.assertEqual(
+            result.config["test_plan"]["dut"]["channel_settings"],
             [
                 {
-                    "channel": f"{LABEL_ONE}/CH1",
-                    "role": "gate",
-                    "connection": f"{LABEL_ONE}/CH1 -> DUT 栅极",
+                    "supply_id": LABEL_ONE,
+                    "channel": "CH1",
+                    "voltage": 2.8,
+                    "current": 0.1,
+                    "voltage_protection": 1.0,
+                    "current_protection": 0.0,
+                    "unit_voltage": "V",
+                    "unit_current": "A",
                 },
                 {
-                    "channel": f"{LABEL_ONE}/CH2",
-                    "role": "drain",
-                    "connection": f"{LABEL_ONE}/CH2 -> DUT 漏极",
+                    "supply_id": LABEL_ONE,
+                    "channel": "CH2",
+                    "voltage": 28.0,
+                    "current": 2.0,
+                    "voltage_protection": 30.0,
+                    "current_protection": 2.5,
+                    "unit_voltage": "V",
+                    "unit_current": "A",
                 },
             ],
-            "通道行按迁移后的分配重写：旧快照的 PS1-CH1 是旧槽位名，没有物理路由",
+            "旧角色参数没有唯一配对时，正式段仍按编辑段生成通道参数（摘要标记 unmapped）",
         )
 
     def test_unconfirmed_supply_keeps_no_address_or_snapshot_entry(self):
@@ -535,6 +586,155 @@ class ReferenceRewriteTests(unittest.TestCase):
         result = migrate_legacy_power_supplies(config, self.registry)
         carrier = result.config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]
         self.assertEqual(carrier, {"supply_id": "SOME-SUPPLY", "channel": ["CH1"]})
+
+
+class PowerPlanAndDrainMigrationTests(unittest.TestCase):
+    """步骤 14：旧角色只用于唯一配对参数与漏极，不生成顺序。"""
+
+    def setUp(self):
+        self.registry = _load(LEGACY_REGISTRY)
+
+    def _legacy_two_supplies_with_formal_channels(self):
+        config = _legacy_two_supplies()
+        config["run_mapping"]["dut_power_channels"] = [
+            {
+                "channel": f"{LABEL_ONE}/CH1",
+                "role": "gate",
+                "connection": f"{LABEL_ONE}/CH1 -> DUT 栅极",
+            },
+            {
+                "channel": f"{LABEL_THREE}/CH2",
+                "role": "drain",
+                "connection": f"{LABEL_THREE}/CH2 -> DUT 漏极",
+            },
+        ]
+        return config
+
+    def test_unique_roles_rebuild_channel_settings_and_drain(self):
+        result = migrate_legacy_power_supplies(
+            self._legacy_two_supplies_with_formal_channels(), self.registry
+        )
+        self.assertTrue(result.writable, [entry.reason for entry in result.pending])
+        mappings = {item.group: item for item in result.channel_mappings}
+        self.assertEqual(mappings["dut_amplifier"].status, CHANNEL_SETTINGS_MAPPED)
+        self.assertEqual(
+            list(mappings["dut_amplifier"].routes),
+            [(LABEL_ONE, "CH1"), (LABEL_THREE, "CH2")],
+        )
+        self.assertEqual(result.drain_migration.status, DRAIN_MIGRATED)
+        self.assertEqual(
+            result.drain_migration.route, (LABEL_THREE, "CH2"),
+            "漏极来自明确的旧 drain 角色，不按 CH2 猜",
+        )
+
+        settings = result.config["test_plan"]["dut"]["channel_settings"]
+        self.assertEqual(
+            [(item["supply_id"], item["channel"]) for item in settings],
+            [(LABEL_ONE, "CH1"), (LABEL_THREE, "CH2")],
+        )
+        self.assertEqual(settings[0]["voltage"], 2.8, "参数取自旧 power_roles")
+        self.assertEqual(settings[1]["current"], 2.0)
+        self.assertEqual(
+            result.config["dut_config"]["drain_channel"],
+            {"supply_id": LABEL_THREE, "channel": "CH2"},
+        )
+        self.assertEqual(
+            result.config["run_mapping"]["dut_power_plan"],
+            {"power_sequence": [], "inter_channel_delay_s": 0.0},
+            "顺序从不自动生成",
+        )
+
+    def test_role_mismatch_reports_unmapped_instead_of_guessing(self):
+        config = self._legacy_two_supplies_with_formal_channels()
+        # 旧参数有 gate/drain，旧快照却只剩 gate：集合不相等，不能按顺序硬配。
+        config["run_mapping"]["dut_power_channels"] = config["run_mapping"][
+            "dut_power_channels"
+        ][:1]
+        result = migrate_legacy_power_supplies(config, self.registry)
+        mapping = {item.group: item for item in result.channel_mappings}["dut_amplifier"]
+        self.assertEqual(mapping.status, CHANNEL_SETTINGS_UNMAPPED)
+        self.assertIn(CODE_POWER_SETTINGS_UNMAPPED, mapping.reason)
+        self.assertIn("role", mapping.reason)
+        summary = result.summary()
+        self.assertEqual(
+            summary["groups"]["dut_amplifier"]["channel_settings"]["status"],
+            CHANNEL_SETTINGS_UNMAPPED,
+        )
+        self.assertTrue(
+            all("role" not in item for item in result.config["test_plan"]["dut"]["channel_settings"]),
+            "旧角色值不会被带进 1.1 参数",
+        )
+
+    def test_two_drain_roles_need_confirmation(self):
+        config = self._legacy_two_supplies_with_formal_channels()
+        config["run_mapping"]["dut_power_channels"].append(
+            {
+                "channel": f"{LABEL_ONE}/CH2",
+                "role": "drain",
+                "connection": f"{LABEL_ONE}/CH2 -> DUT 漏极候选",
+            }
+        )
+        result = migrate_legacy_power_supplies(config, self.registry)
+        self.assertEqual(result.drain_migration.status, DRAIN_NEEDS_CONFIRMATION)
+        self.assertIsNone(result.config["dut_config"]["drain_channel"])
+        self.assertEqual(len(result.drain_migration.candidates), 2)
+        self.assertIn("2 条", result.drain_migration.reason)
+
+    def test_missing_drain_role_is_never_guessed_from_channel_name(self):
+        config = self._legacy_two_supplies_with_formal_channels()
+        for row in config["run_mapping"]["dut_power_channels"]:
+            row["role"] = "gate"
+        result = migrate_legacy_power_supplies(config, self.registry)
+        self.assertEqual(result.drain_migration.status, DRAIN_NEEDS_CONFIRMATION)
+        self.assertIsNone(result.config["dut_config"]["drain_channel"])
+        self.assertIn("没有 role=drain", result.drain_migration.reason)
+
+    def test_migrated_plan_is_saveable_but_not_runnable(self):
+        result = migrate_legacy_power_supplies(
+            self._legacy_two_supplies_with_formal_channels(), self.registry
+        )
+        self.assertTrue(validate_saveable_configuration(result.config).valid)
+        run_check = validate_official_config(result.config)
+        self.assertFalse(run_check.valid)
+        self.assertIn(
+            "run_mapping.dut_power_plan.power_sequence",
+            {issue.path for issue in run_check.errors},
+        )
+
+    def test_residual_legacy_fields_still_clear_the_plan(self):
+        """含旧字段的 1.1 文档也走“计划交回用户确认”，残留计划不被当成本次迁移的结论。
+
+        已经迁移干净的 1.1 文档由提前返回保护；只有仍带旧角色/旧引用的文档才进入改写，
+        因此它的 ``power_plan`` 不能沿用——那份顺序不是本次迁移确认出来的。
+        """
+        migrated = migrate_legacy_power_supplies(
+            _legacy_two_supplies(), self.registry
+        ).config
+        migrated["instruments"]["power_supplies"][LABEL_ONE]["channels"]["CH1"][
+            "role"
+        ] = "gate"
+        migrated["power_supply_assignment"]["dut_amplifier"]["power_plan"] = {
+            "power_sequence": [{"supply_id": LABEL_ONE, "channel": "CH1"}],
+            "inter_channel_delay_s": 1.5,
+        }
+
+        result = migrate_legacy_power_supplies(migrated, self.registry)
+
+        self.assertEqual(
+            result.config["power_supply_assignment"]["dut_amplifier"]["power_plan"],
+            {"power_sequence": [], "inter_channel_delay_s": 0.0},
+        )
+        self.assertEqual(
+            result.summary()["groups"]["dut_amplifier"]["power_plan"],
+            {"power_sequence": [], "inter_channel_delay_s": 0.0},
+        )
+        self.assertNotIn(
+            "role",
+            result.config["instruments"]["power_supplies"][LABEL_ONE]["channels"]["CH1"],
+            "残留的旧角色字段不会进入 1.1 输出",
+        )
+        self.assertEqual(result.unresolved_references, ())
+        self.assertTrue(validate_saveable_configuration(result.config).valid)
 
 
 class SummaryHelperTests(unittest.TestCase):
@@ -612,7 +812,11 @@ class SavingTests(unittest.TestCase):
         self.assertEqual(ps1["legacy_address"], "TCPIP0::192.168.1.101::inst0::INSTR")
 
     def test_fully_migrated_configuration_is_written_and_valid(self):
-        """每条都能识别、引用都能落地时，结果原子写入并通过文件级校验。"""
+        """每条都能识别、引用都能落地时，结果原子写入并通过**保存级**文件校验。
+
+        迁移按要求不生成上电顺序，因此结果可以保存、可以打开，但创建功放运行仍会被
+        规则 8 拦住；真正可运行的配置需要用户在电源页确认顺序。
+        """
         result = migrate_legacy_power_supplies(_legacy_two_supplies(), _load(LEGACY_REGISTRY))
         self.assertTrue(result.writable, [entry.reason for entry in result.pending])
         self.assertEqual(result.unresolved_references, ())
@@ -621,9 +825,16 @@ class SavingTests(unittest.TestCase):
 
         self.assertEqual(written, self.config_path)
         self.assertEqual(_load(self.config_path), result.config)
+        saved = _load(self.config_path)
         self.assertTrue(
-            validate_official_config(_load(self.config_path)).valid,
-            "写进 config.json 的迁移结果必须能通过正式校验",
+            validate_saveable_configuration(saved).valid,
+            "写进 config.json 的迁移结果必须能通过保存级文件校验",
+        )
+        run_check = validate_official_config(saved)
+        self.assertFalse(run_check.valid, "尚未排序的迁移结果不能直接创建运行")
+        self.assertIn(
+            "run_mapping.dut_power_plan.power_sequence",
+            {issue.path for issue in run_check.errors},
         )
 
     def test_blocked_migration_leaves_the_file_untouched(self):
@@ -756,13 +967,13 @@ class IdentityContradictionTests(unittest.TestCase):
 
 
 class AlreadyMigratedConfigurationTests(unittest.TestCase):
-    """已经写成新格式的配置不被迁移器改写。"""
+    """已经写成 1.1 且不含旧角色字段的配置不被迁移器改写。"""
 
     def test_new_format_configuration_is_left_alone(self):
-        config = _load(ONE_SUPPLY_CONFIG)
+        config = complete_combined_config()
         result = migrate_legacy_power_supplies(config, _load(MIGRATED_REGISTRY))
         self.assertEqual(result.old_keys, (LABEL_ONE,))
-        self.assertEqual(result.config, config)
+        self.assertEqual(result.config, config, "已确认的顺序、间隔与漏极不得被重写")
         self.assertEqual(result.entries[0].status, STATUS_MIGRATED)
 
     def test_invalid_documents_are_rejected_before_migration(self):

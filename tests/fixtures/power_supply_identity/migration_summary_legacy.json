@@ -1,5 +1,5 @@
 {
-    "schema_version": 2,
+    "schema_version": 3,
     "source": {
         "registry": "registry_legacy_v2.json",
         "config": "config_slots_legacy.json",
@@ -180,5 +180,40 @@
                 }
             }
         }
+    ],
+    "groups": {
+        "driver_amplifier": {
+            "power_plan": {
+                "power_sequence": [],
+                "inter_channel_delay_s": 0.0
+            },
+            "candidate_routes": [],
+            "channel_settings": {
+                "status": "not_applicable",
+                "reason": "旧配置没有角色化通道参数，沿用编辑段里的通道数值",
+                "routes": []
+            }
+        },
+        "dut_amplifier": {
+            "power_plan": {
+                "power_sequence": [],
+                "inter_channel_delay_s": 0.0
+            },
+            "candidate_routes": [],
+            "channel_settings": {
+                "status": "unmapped",
+                "reason": "configuration.power_settings_unmapped: 旧运行映射里 role='gate' 的通道无法解析成迁移后的物理路由",
+                "routes": []
+            }
+        }
+    },
+    "drain_channel": {
+        "status": "needs_confirmation",
+        "reason": "旧 role=drain 的通道无法映射到迁移后的物理路由",
+        "route": null,
+        "candidates": []
+    },
+    "unresolved_references": [
+        "dut_amplifier.carrier"
     ]
 }

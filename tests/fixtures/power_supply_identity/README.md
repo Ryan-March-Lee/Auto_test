@@ -23,8 +23,8 @@
 | `registry_migrated_v4.json` | 同一份设备表迁移后：`schema_version: 4`，三台都按完整设备码得到 `label`（缩写码与角色无关），已登记角色的两台 `role: power_supply`，未登记角色的那台保持 `role: null`；不再有 `name` / `model_index` / `serial` | 自动迁移的期望结果（不含任何人工登记） |
 | `registry_migrated_v4_all_registered.json` | 在上一份基础上由操作员显式把未登记角色的那台登记为 `power_supply`，得到 `DP8B0950` | 多电源配置样例假设的设备表状态 |
 | `config_slots_legacy.json` | 现场旧配置副本：`PS1`..`PS4` 四个槽位、单数 `run_mapping.instruments.power_supply`、`device_bindings.PS1` | 迁移输入（不要手改） |
-| `config_slots_migrated_partial.json` | 上述旧配置的迁移结果：`PS3`→`DP8B1519`、`PS4`→`DP8B0885` 自动成型并保持未启用未绑定；`PS1`/`PS2` 无法识别，DUT 分配写成 `supply_id: null`，运行映射的电源段为空；电源条目与绑定记录只写 `full_code`，不再带 `name` / `serial` | “自动能迁移什么、之后必须人工补什么” |
-| `migration_summary_legacy.json` | 四个旧槽位的迁移摘要（schema 2）：`status` / `reason` / 仍引用它的分配 / 旧通道参数（含电压、电流、保护值），以及只作线索的 `legacy_address`、`address_hint`；身份字段是 `full_code` | 无法迁移电源的参数留存与人工重填依据 |
+| `config_slots_migrated_partial.json` | 上述旧配置的迁移结果（1.1）：`PS3`→`DP8B1519`、`PS4`→`DP8B0885` 自动成型并保持未启用未绑定；`PS1`/`PS2` 无法识别，DUT 分配写成 `supply_id: null`，运行映射的电源段为空，每组 `power_plan` 是空计划，漏极为 `null` 待确认；电源条目与绑定记录只写 `full_code`，不再带 `name` / `serial` / 通道 `role` | “自动能迁移什么、之后必须人工补什么” |
+| `migration_summary_legacy.json` | 四个旧槽位的迁移摘要（schema 3）：`status` / `reason` / 仍引用它的分配 / 旧通道参数（含电压、电流、保护值），以及只作线索的 `legacy_address`、`address_hint`；身份字段是 `full_code`。另记每组空计划与候选路由、`channel_settings` 映射状态、`drain_channel` 迁移状态 | 无法迁移电源的参数留存与人工重填依据 |
 | `config_one_supply.json` | 人工重扫并绑定后的单电源完整配置：`DP8B1519` 一路承担 gate 与 drain；信号源、频谱仪与电源的配置条目和运行快照都带 `label` / `model` / `full_code` / `device_key` / 地址 | 1 台电源的目标形态，也是当前现场的等价形态 |
 | `config_two_supplies.json` | 两台电源：`DP8B1519/CH1` 供 gate，`DP8B0885/CH2` 供 drain | 2 台电源、gate 与 drain 分属不同电源 |
 | `config_five_supplies.json` | 5 台电源已绑定入配置，其中 2 台真正参与本次分配 | 多台电源的目标形态；运行快照只冻结实际使用的 2 台 |

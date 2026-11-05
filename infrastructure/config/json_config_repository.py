@@ -73,11 +73,16 @@ def load_run_configuration(plan_path: PathLike, mapping_path: PathLike) -> RunCo
     return RunConfiguration(load_test_plan(plan_path), load_run_mapping(mapping_path))
 
 
-def load_combined_configuration(document: Mapping[str, Any]) -> ConfigurationLoadResult:
+def load_combined_configuration(
+    document: Mapping[str, Any], *, require_runnable: bool = True
+) -> ConfigurationLoadResult:
     """把单文件正式组合配置解析为运行配置。
 
     只接受正式 schema；缺失 ``test_plan`` / ``run_mapping`` 或根 ``schema_version``
     不匹配时，在返回结果中给出明确错误，不做任何旧格式推断。
+
+    ``require_runnable=False`` 时跳过“能不能开始运行”的电源规则，仅供保存/迁移写盘
+    校验一份尚未排序、但结构完整的配置；读取、启动器校验与创建运行仍用默认值。
     """
     errors: list[ConfigIssue] = []
     root_version = document.get("schema_version")
@@ -130,7 +135,9 @@ def load_combined_configuration(document: Mapping[str, Any]) -> ConfigurationLoa
         TestPlan.from_dict(plan_data),
         RunResourceMapping.from_dict(mapping_data),
     )
-    validation = validate_run_configuration(configuration)
+    validation = validate_run_configuration(
+        configuration, require_runnable=require_runnable
+    )
     if errors:
         validation = ConfigValidationResult(
             errors=errors + validation.errors,

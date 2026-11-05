@@ -670,7 +670,16 @@ def validate_run_mapping(mapping: Union[RunResourceMapping, Mapping[str, Any]]) 
     return ConfigValidationResult(errors=errors, warnings=warnings)
 
 
-def validate_run_configuration(configuration: RunConfiguration) -> ConfigValidationResult:
+def validate_run_configuration(
+    configuration: RunConfiguration, *, require_runnable: bool = True
+) -> ConfigValidationResult:
+    """校验一份运行配置。
+
+    ``require_runnable=False`` 只做结构/类型校验，跳过“能不能真的开始一次运行”的
+    v1.1 电源规则（§6.12 规则 8–13）。配置文件保存与迁移写盘用这个模式：迁移把用户
+    尚未排序的计划写成空计划，这是可保存的合法状态（§6.6），真正的可运行判据在创建
+    运行时再过一遍。默认仍为 ``True``，启动器、创建运行与继续运行的行为不变。
+    """
     plan_result = validate_test_plan(configuration.test_plan)
     mapping_result = validate_run_mapping(configuration.run_mapping)
     errors = plan_result.errors + mapping_result.errors
@@ -686,7 +695,7 @@ def validate_run_configuration(configuration: RunConfiguration) -> ConfigValidat
                 f"{SUPPORTED_SCHEMA_VERSION}",
             )
         )
-    else:
+    elif require_runnable:
         errors.extend(_validate_current_power_configuration(configuration))
     return ConfigValidationResult(errors=errors, warnings=warnings)
 

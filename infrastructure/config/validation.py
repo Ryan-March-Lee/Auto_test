@@ -44,6 +44,20 @@ def validate_official_config(document: Mapping[str, Any]) -> ConfigValidationRes
     return _merge_results(formal, hardware)
 
 
+def validate_saveable_configuration(document: Mapping[str, Any]) -> ConfigValidationResult:
+    """校验一份**可以保存**的组合配置，但不要求它已经可以运行。
+
+    与 :func:`validate_official_config` 的区别只有一处：跳过 v1.1 的“运行就绪”电源
+    规则（空计划、未确认漏极等）。迁移器把旧配置升级成 1.1 时，上电顺序必须由用户
+    在电源页确认，因此迁移结果天然是“结构完整、尚不可运行”的一份文档（§6.6、
+    §6.14 规则 4）。保存门槛用它，创建运行仍走 :func:`validate_official_config`。
+    """
+    data = dict(document)
+    formal = load_combined_configuration(data, require_runnable=False).validation
+    hardware = validate_config(data)
+    return _merge_results(formal, hardware)
+
+
 def validate_config_file(config_path: Optional[PathLike] = None) -> ConfigValidationResult:
     """加载并校验指定配置文件的正式 schema 与硬件装配段。"""
     return validate_official_config(load_config(config_path))
@@ -72,4 +86,5 @@ __all__ = [
     "validate_config",
     "validate_config_file",
     "validate_official_config",
+    "validate_saveable_configuration",
 ]

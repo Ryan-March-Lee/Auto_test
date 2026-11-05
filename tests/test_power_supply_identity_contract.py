@@ -21,6 +21,7 @@
 """
 
 import ast
+import copy
 import json
 import re
 import sys
@@ -475,11 +476,20 @@ class ConfigContractTests(unittest.TestCase):
         self.assertEqual(sorted(supplies), ["DP8B0885", "DP8B1519"])
         for slot in POWER_SUPPLY_SLOTS:
             self.assertNotIn(slot, supplies, "迁移结果不能保留旧槽位键")
+        self.assertEqual(config["schema_version"], "1.1")
         carrier = config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]
         self.assertIsNone(carrier["supply_id"], "只有地址的旧电源必须留成未绑定引用")
         self.assertEqual(carrier["channel"], ["CH1", "CH2"], "通道列表要保留，参数由迁移摘要给出")
         self.assertEqual(config["run_mapping"]["instruments"]["power_supplies"], {})
-        self.assertEqual(config["run_mapping"]["dut_power_channels"], [])
+        self.assertNotIn("dut_power_channels", config["run_mapping"])
+        self.assertEqual(
+            config["run_mapping"]["dut_power_plan"],
+            {"power_sequence": [], "inter_channel_delay_s": 0.0},
+            "迁移从不生成上电顺序",
+        )
+        self.assertEqual(config["test_plan"]["dut"]["channel_settings"], [])
+        self.assertIsNone(config["test_plan"]["dut"]["drain_channel"])
+        self.assertNotIn("role", json.dumps(config, ensure_ascii=False))
         self.assertEqual(
             config["device_bindings"]["power_supplies"], {}, "无法识别的旧绑定不能变成电源绑定"
         )
@@ -503,11 +513,18 @@ class ConfigContractTests(unittest.TestCase):
                         _supplies(config)[supply_id]["device_key"],
                         "快照身份必须与配置里的电源条目一致",
                     )
-            for channel in mapping["dut_power_channels"]:
+            for channel in mapping.get("dut_power_channels", []):
                 with self.subTest(fixture=name, channel=channel.get("channel")):
                     token = channel.get("channel") or ""
                     self.assertIn("/", token, "通道必须写成 supply_id/CHx")
                     self.assertIn(token.split("/", 1)[0], frozen, "通道路由必须指到快照里的电源")
+            if "dut_power_plan" in mapping:
+                with self.subTest(fixture=name):
+                    self.assertNotIn("dut_power_channels", mapping)
+                    self.assertTrue(
+                        all("role" not in row for row in mapping["dut_power_plan"]["power_sequence"]),
+                        "上电顺序只写物理路由，不再带角色",
+                    )
 
     def test_legacy_config_is_kept_verbatim_as_slot_input(self):
         config = _load("config_slots_legacy.json")
@@ -563,7 +580,12 @@ class MigrationSummaryContractTests(unittest.TestCase):
                 self.assertEqual(entry["label"], supply["label"])
                 self.assertEqual(entry["full_code"], supply["full_code"])
                 self.assertEqual(entry["device_key"], supply["device_key"])
-                self.assertEqual(entry["channels"], supply["channels"], "能自动迁移的电源也不能丢参数")
+                expected_channels = copy.deepcopy(entry["channels"])
+                for channel in expected_channels.values():
+                    channel.pop("role", None)
+                self.assertEqual(
+                    expected_channels, supply["channels"], "能自动迁移的电源也不能丢参数"
+                )
 
     def test_unmigrated_entries_never_claim_a_device(self):
         migrated = _supplies(_load(MIGRATED_CONFIG))

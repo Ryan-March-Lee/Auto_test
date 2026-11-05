@@ -1338,11 +1338,12 @@ def _power_supply_entry(
 
 
 def _assignment_entry(assignment: PowerAssignmentDraft) -> dict[str, Any]:
-    entry: dict[str, Any] = {
+    """写出分配引用；1.1 的唯一引用字段是 ``supply_id``。
+
+    旧 ``name`` 只在读取旧文档时识别，写回时不再输出（``_read_assignment_reference``
+    仍优先 ``supply_id``、缺失时才读 ``name``）。
+    """
+    return {
         "supply_id": assignment.supply_id,
         "channel": list(assignment.channels),
     }
-    if assignment.supply_id:
-        # 过渡期同时写同名 ``name``：旧读取方仍可用，两者必须同值。
-        entry["name"] = assignment.supply_id
-    return entry

@@ -411,6 +411,7 @@ class ConfigurationPageTests(unittest.TestCase):
         self.assertEqual(requested, [])
 
     def test_config_sections_use_two_columns(self):
+        from PySide6.QtCore import QPoint
         from PySide6.QtWidgets import QGroupBox
 
         page = self.make_page()
@@ -420,8 +421,10 @@ class ConfigurationPageTests(unittest.TestCase):
         params = titles["测试参数配置"]
         power_detail = titles["电源详细配置"]
         # 两栏布局：测试参数/运行在左，电源配置在右，而不是单列纵向堆叠。
-        # 仪器连接配置已独立成欢迎页之后的整屏页面，本页不再包含它。
-        self.assertLess(params.x() + params.width(), power_detail.x())
+        # 电源分区现在归独立组件所有，子控件的 x 是相对该组件的，比较前映射回页面。
+        params_x = params.mapTo(page, QPoint(0, 0)).x()
+        power_x = power_detail.mapTo(page, QPoint(0, 0)).x()
+        self.assertLess(params_x + params.width(), power_x)
 
     @staticmethod
     def power_supply_bindings(*supply_ids):
@@ -456,6 +459,77 @@ class ConfigurationPageTests(unittest.TestCase):
             "supplies"
         ]["carrier"]
         self.assertIsNone(entry["supply_id"])
+
+    def test_power_plan_candidates_follow_the_assignment_channels(self):
+        """计划候选只来自分配声明的通道，不从整台电源展开 CH1/CH2。"""
+        page = self.make_page(
+            device_bindings=self.power_supply_bindings("DP8B1519", "DP8B0885"),
+            dut_config={"power_supply_count": 2},
+            power_supply_assignment={
+                "dut_amplifier": {
+                    "power_supply_count": 2,
+                    "supplies": {
+                        "carrier": {"supply_id": "DP8B1519", "channel": ["CH1"]},
+                        "peaking": {"supply_id": "DP8B0885", "channel": ["CH2"]},
+                    },
+                }
+            },
+        )
+
+        self.assertEqual(
+            page.dut_power_plan_editor.routes(),
+            (("DP8B1519", "CH1"), ("DP8B0885", "CH2")),
+        )
+        self.assertIn("未确认", page.dut_power_plan_editor.status.text())
+
+    def test_power_plan_and_drain_are_backfilled_and_written_back(self):
+        """页面把组计划、间隔与漏极放进统一配置读数（步骤 11 的组件接线）。"""
+        plan = {
+            "power_sequence": [
+                {"supply_id": "DP8B0885", "channel": "CH2"},
+                {"supply_id": "DP8B1519", "channel": "CH1"},
+            ],
+            "inter_channel_delay_s": 2.0,
+        }
+        page = self.make_page(
+            device_bindings=self.power_supply_bindings("DP8B1519", "DP8B0885"),
+            dut_config={
+                "power_supply_count": 2,
+                "drain_channel": {"supply_id": "DP8B0885", "channel": "CH2"},
+            },
+            power_supply_assignment={
+                "driver_amplifier": {
+                    "power_supply_count": 0,
+                    "supplies": {},
+                    "power_plan": {"power_sequence": [], "inter_channel_delay_s": 0.0},
+                },
+                "dut_amplifier": {
+                    "power_supply_count": 2,
+                    "supplies": {
+                        "carrier": {
+                            "supply_id": "DP8B1519",
+                            "channel": ["CH1", "CH2"],
+                        },
+                        "peaking": {
+                            "supply_id": "DP8B0885",
+                            "channel": ["CH1", "CH2"],
+                        },
+                    },
+                    "power_plan": plan,
+                },
+            },
+        )
+
+        self.assertEqual(page.dut_power_plan_editor.read_plan(), plan)
+        written = page.build_config()
+        self.assertEqual(
+            written["power_supply_assignment"]["dut_amplifier"]["power_plan"],
+            plan,
+        )
+        self.assertEqual(
+            written["dut_config"]["drain_channel"],
+            {"supply_id": "DP8B0885", "channel": "CH2"},
+        )
 
     def test_power_assignment_reference_is_read_from_supply_id(self):
         """读配置时 ``supply_id`` 优先，旧字段 ``name`` 不参与选择。"""
@@ -623,7 +697,7 @@ class ConfigurationPageTests(unittest.TestCase):
         ]["carrier"]
 
         self.assertEqual(entry["supply_id"], "DP8B0885")
-        self.assertEqual(entry["name"], "DP8B0885")
+        self.assertNotIn("name", entry, "1.1 只写 supply_id，不再写过渡别名")
 
     def test_refreshing_the_options_keeps_the_selection_by_supply_id(self):
         """刷新选项后仍停在原来那台电源上：按数据恢复，不按位置也不按显示文本。"""

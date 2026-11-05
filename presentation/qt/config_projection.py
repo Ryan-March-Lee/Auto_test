@@ -42,12 +42,7 @@ from domain.configuration.models import resolve_driver_power_source
 from domain.configuration.rules import assignment_supply_id
 from domain.instruments.labels import supply_display_label
 
-from .config_form_state import (
-    DUT_CHANNEL_ROLES,
-    POWER_SUPPLY_ROLES,
-    assignment_declared,
-    parse_frequency_text,
-)
+from .config_form_state import assignment_declared, parse_frequency_text
 
 # 配置页受控控件的空配置基线。``project_authoring_config()`` 先把控件重置到这些默认值，
 # 再逐字段投影配置编写文档，从而保证投影结果与直接用同一份文档构造页面的结果一致。
@@ -73,13 +68,19 @@ POWER_ASSIGNMENT_SLOTS = (
     "pa_unit2_power",
     "pa_unit3_power",
 )
-# 供电角色只是旧电源控件尚未拆走的显示选项（步骤 5 起不再由 domain 定义、也不再参与
-# 校验或上电）；``DUT_CHANNEL_ROLES`` 只提供本机台架固定接线的控件初值。
-
-_ASSIGNMENT_ROLE_KEYS = (
-    ("carrier", "pa_unit1_power"),
-    ("peaking", "pa_unit2_power"),
-    ("peaking2", "pa_unit3_power"),
+# 分配槽位的两条命名轴：界面槽位（``pa_unit1_power``）与配置槽位/组
+# （``dut_amplifier.supplies.carrier``）。回填、读取与独立电源表单的通道候选都从这里
+# 取映射，避免在三个模块里各写一份对应关系。
+ASSIGNMENT_SLOT_PATHS = (
+    ("driver_power", "driver_amplifier", "main"),
+    ("pa_unit1_power", "dut_amplifier", "carrier"),
+    ("pa_unit2_power", "dut_amplifier", "peaking"),
+    ("pa_unit3_power", "dut_amplifier", "peaking2"),
+)
+_ASSIGNMENT_ROLE_KEYS = tuple(
+    (config_slot, slot)
+    for slot, group, config_slot in ASSIGNMENT_SLOT_PATHS
+    if group == "dut_amplifier"
 )
 
 
@@ -269,18 +270,19 @@ def reset_control_widgets(widgets: Any, *, supplies: Any = None) -> None:
     set_combo(widgets.pa_unit_count_combo, DEFAULT_PA_UNIT_COUNT)
     _reset_power_supply_channels(widgets)
     _reset_power_assignment_widgets(widgets, supplies=supplies)
+    reset_plans = getattr(widgets, "reset_power_plans", None)
+    if callable(reset_plans):
+        # 计划与漏极属于独立电源表单；回填前一起回到空基线，避免旧勾选残留。
+        reset_plans()
 
 
 def _reset_power_supply_channels(widgets: Any) -> None:
     for record in getattr(widgets, "power_config_widgets", {}).values():
-        for channel, controls in record.get("channels", {}).items():
+        for controls in record.get("channels", {}).values():
             for key in ("voltage", "voltage_protection", "current", "current_protection"):
                 controls[key].setValue(DEFAULT_POWER_CHANNEL_VALUE)
             for key in ("voltage_protection_enabled", "current_protection_enabled"):
                 controls[key].setChecked(False)
-            controls["role"].setCurrentText(
-                DUT_CHANNEL_ROLES.get(channel, POWER_SUPPLY_ROLES[0])
-            )
 
 
 def _reset_power_assignment_widgets(widgets: Any, *, supplies: Any = None) -> None:
@@ -360,10 +362,6 @@ def _apply_channel_widgets(controls: Mapping[str, Any], values: Mapping[str, Any
     voltage = voltage if isinstance(voltage, dict) else {}
     current = values.get("current")
     current = current if isinstance(current, dict) else {}
-    role = values.get("role")
-    role_widget = controls.get("role")
-    if role_widget is not None and role in POWER_SUPPLY_ROLES:
-        role_widget.setCurrentText(role)
     for key, value in (
         ("voltage", voltage.get("value")),
         ("voltage_protection", voltage.get("protection")),
@@ -460,6 +458,7 @@ def apply_power_choice(combo, entry, supplies: Any) -> None:
 
 
 __all__ = [
+    "ASSIGNMENT_SLOT_PATHS",
     "ConfigBackfillError",
     "DEFAULT_ATTENUATOR_TYPE",
     "DEFAULT_COMPRESSION_TYPE",
@@ -472,7 +471,6 @@ __all__ = [
     "DEFAULT_SIGNAL_SOURCE",
     "DEFAULT_TEST_FREQUENCIES",
     "POWER_ASSIGNMENT_SLOTS",
-    "POWER_SUPPLY_ROLES",
     "apply_power_choice",
     "driver_power_source_label",
     "project_authoring_config",

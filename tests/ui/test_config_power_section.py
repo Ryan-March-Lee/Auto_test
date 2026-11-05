@@ -26,10 +26,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PAGE_SOURCE = PROJECT_ROOT / "presentation" / "qt" / "configuration_page.py"
 SECTION_SOURCE = PROJECT_ROOT / "presentation" / "qt" / "config_power_section.py"
 
-# 页面保留的三个委托壳，以及它们分别要转给的构建模块入口。
+# 页面保留的三个委托壳，以及它们分别要转给的入口。``None`` 表示委托给独立组件
+# 的方法（属性调用，``_called_names`` 看不到），由测试单独检查 ``.rebuild(``。
 POWER_METHOD_BUILDERS = {
-    "_build_power_widgets": "build_power_section",
-    "_rebuild_power_tabs": "rebuild_power_tabs",
+    "_build_power_widgets": "PowerFormSection",
+    "_rebuild_power_tabs": None,
     "_current_power_tab_key": "current_power_tab_key",
 }
 # 电源分区的控件类：这些只由构建模块创建。
@@ -351,7 +352,14 @@ class PowerSectionOwnershipTests(unittest.TestCase):
                 method = _method(self.page, method_name)
                 self.assertIsNotNone(method, f"页面应保留 {method_name} 委托壳")
                 called = _called_names(method)
-                self.assertIn(builder, called, f"{method_name} 应委托 {builder}")
+                if builder is not None:
+                    self.assertIn(builder, called, f"{method_name} 应委托 {builder}")
+                else:
+                    self.assertIn(
+                        ".rebuild(",
+                        ast.unparse(method),
+                        f"{method_name} 应委托独立组件的 rebuild()",
+                    )
                 self.assertEqual(
                     called & POWER_SECTION_WIDGET_CLASSES,
                     set(),

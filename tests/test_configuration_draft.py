@@ -302,7 +302,7 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
             document["power_supply_assignment"]["dut_amplifier"]["supplies"][
                 "carrier"
             ],
-            {"supply_id": "PSA", "name": "PSA", "channel": ["CH1", "CH2"]},
+            {"supply_id": "PSA", "channel": ["CH1", "CH2"]},
         )
         self.assertEqual(
             document["power_supply_assignment"]["driver_amplifier"]["supplies"][

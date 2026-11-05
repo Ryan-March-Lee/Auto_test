@@ -311,7 +311,7 @@ class ConfigFormStateReaderTests(unittest.TestCase):
         channels = result['instruments']['power_supplies']['PS1']['channels']
         self.assertNotIn('role', channels['CH1'])
 
-    def test_power_assignment_reader_preserves_legacy_roles_and_channels(self):
+    def test_power_assignment_reader_writes_supply_id_and_channels(self):
         self.host.power_assignment_widgets = {
             'driver_source': FakeComboWidget('直流电源'),
             'driver_power': FakeSupplyCombo('PS4'),
@@ -323,11 +323,10 @@ class ConfigFormStateReaderTests(unittest.TestCase):
 
         result = self.reader.read_power_assignment()['power_supply_assignment']
 
-        self.assertEqual(result['driver_amplifier']['supplies']['main']['name'], 'PS4')
-        self.assertEqual(
-            list(result['driver_amplifier']['supplies']['main']['channel']),
-            ['CH1', 'CH2'],
-        )
+        main = result['driver_amplifier']['supplies']['main']
+        self.assertEqual(main['supply_id'], 'PS4')
+        self.assertNotIn('name', main, '1.1 只写 supply_id')
+        self.assertEqual(list(main['channel']), ['CH1', 'CH2'])
         self.assertEqual(set(result['dut_amplifier']['supplies']), {'carrier', 'peaking', 'peaking2'})
         self.assertEqual(result['dut_amplifier']['power_supply_count'], 3)
 
@@ -520,7 +519,8 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
 
         driver = result['power_supply_assignment']['driver_amplifier']
         self.assertEqual(driver['power_supply_count'], 1)
-        self.assertEqual(driver['supplies']['main']['name'], 'PS4')
+        self.assertEqual(driver['supplies']['main']['supply_id'], 'PS4')
+        self.assertNotIn('name', driver['supplies']['main'], '1.1 只写 supply_id')
         self.assertEqual(list(driver['supplies']['main']['channel']), ['CH1', 'CH2'])
         self.assertEqual(result['driver_mode']['power_source'], 'dc_supply')
 

@@ -167,10 +167,23 @@ class ConfigurationFormAdapter:
             apply_power_choice(combo, {"supply_id": current}, choices)
 
     def apply_configuration(
-        self, config: Any, *, supplies: Mapping[str, Any] | None = None
+        self,
+        config: Any,
+        *,
+        supplies: Mapping[str, Any] | None = None,
+        driver_plan_active: bool | None = None,
     ) -> dict[str, Any]:
-        """把一份配置编写文档确定性地投影到控件，返回文档副本。"""
-        return project_authoring_config(self.widgets, config, supplies=supplies)
+        """把一份配置编写文档确定性地投影到控件，返回文档副本。
+
+        测试参数、通道参数与分配槽位走 :func:`project_authoring_config`；组上电计划与
+        漏极属于独立电源表单，若控件提供 ``apply_power_plan_config``，就在同一入口里
+        交给它，页面不需要再直接操作电源控件。
+        """
+        projected = project_authoring_config(self.widgets, config, supplies=supplies)
+        apply_plans = getattr(self.widgets, "apply_power_plan_config", None)
+        if callable(apply_plans):
+            apply_plans(config, driver_plan_active=driver_plan_active)
+        return projected
 
     # ---- 错误显示 -----------------------------------------------------------
 

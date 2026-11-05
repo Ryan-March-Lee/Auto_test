@@ -179,7 +179,6 @@ class FakeForm:
             name: {
                 "channels": {
                     channel: {
-                        "role": _Combo(("gate", "drain")),
                         "voltage": _Value(),
                         "voltage_protection": _Value(),
                         "voltage_protection_enabled": _Check(),
@@ -247,7 +246,7 @@ class ConfigProjectionTests(unittest.TestCase):
         self.assertEqual(form.compression_combo.currentText(), "3dB")
         self.assertEqual(form.pa_unit_count_combo.currentText(), "3")
         channel = form.power_config_widgets["DP8B1519"]["channels"]["CH1"]
-        self.assertEqual(channel["role"].currentText(), "gate")
+        self.assertNotIn("role", channel, "1.1 电源通道不再有供电角色控件")
         self.assertEqual(channel["voltage"].value(), 3.3)
         self.assertEqual(channel["current"].value(), 0.5)
         self.assertTrue(form.test_mode_enabled)

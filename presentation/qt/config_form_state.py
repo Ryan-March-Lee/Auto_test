@@ -24,13 +24,9 @@ from application.errors import ConfigurationError
 from domain.instruments.models import INSTRUMENT_ROLES
 
 from .config_form_bindings import binding_address, power_supply_bindings
-
-# 旧电源控件显示的通道角色词表（步骤 5 从 domain 收回）：它只是尚未拆走的控件选项，
-# 不参与校验、映射或上电；步骤 11/12 随独立电源页一起删除。
-POWER_SUPPLY_ROLES = ("gate", "drain")
-# 本机台架固定接线的控件初值（CH1 栅极、CH2 漏极）。它只是尚未拆走的旧电源控件的
-# 显示默认值，不参与校验、映射、上电或写回草稿；步骤 11/12 拆出电源页时删除。
-DUT_CHANNEL_ROLES = {"CH1": "gate", "CH2": "drain"}
+# 电源通道的显示顺序：界面固定为每台电源两个通道。组计划与分配写出都按这个顺序，
+# 但顺序本身不是上电顺序——上电顺序只来自计划列表。
+from .config_power_assignments import POWER_SUPPLY_CHANNELS, assignment_channels
 
 
 def parse_frequency_text(value: str) -> list[float] | None:
@@ -83,25 +79,25 @@ def _clear_driver_power_assignment(document):
     return True
 
 
-def _assignment_entry(combo: Any) -> dict:
+def _assignment_entry(combo: Any, channels: Any = None) -> dict:
     """从分配下拉框读出一条供电分配记录。
 
     引用值取自控件的 ``itemData``（即选中项的 ``supply_id``）：下拉框的显示文本是
     ``DP832A（DP8B1519）`` 这类给人看的标签，业务值绝不能从显示字符串反解析。控件为空
     或选中项没有数据时按“引用未绑定”处理，不会把显示文本当成 ``supply_id``。
 
-    写回时**主字段是 ``supply_id``**；过渡期同时写同名 ``name``，让尚未迁移到
-    ``supply_id`` 的读取方（正式运行映射、硬件装配）仍能工作。两者取值必须相同——
-    不存在第二套编号。
+    ``channels`` 是配置里这条分配声明的通道集合（:func:`assignment_channels`）；它表达
+    “这个 PA 单元接哪些物理通道”，**不**由计划勾选或排序推导。计划只写
+    ``power_plan.power_sequence``；两处集合是否相等由正式校验比较。缺少通道声明时保持
+    每台电源固定的两个通道。
 
-    控件为空表示“引用未绑定”：写成 ``supply_id: null`` 且不写 ``name``，由校验明确
+    写回只写 ``supply_id``：1.1 的唯一引用字段是它；旧 ``name`` 只属于迁移/读取兼容，
+    不再由表单写回。控件为空表示“引用未绑定”，写成 ``supply_id: null``，由校验明确
     报错，绝不在这里挑一台可用电源补上。
     """
     supply_id = _combo_supply_id(combo)
-    entry: dict = {"supply_id": supply_id, "channel": ["CH1", "CH2"]}
-    if supply_id:
-        entry["name"] = supply_id
-    return entry
+    selected = list(POWER_SUPPLY_CHANNELS) if channels is None else list(channels)
+    return {"supply_id": supply_id, "channel": selected}
 
 
 def _combo_supply_id(combo: Any) -> str | None:
@@ -301,8 +297,7 @@ class ConfigFormState:
         for name, supply in getattr(self.widgets, "power_config_widgets", {}).items():
             channels = {}
             for channel, controls in supply.get("channels", {}).items():
-                # 步骤 6 起正式配置不再写通道 role；控件里的角色选择只是旧页面的
-                # 显示默认值，不能随保存重新进入 1.1 文档（步骤 11/12 删除该控件）。
+                # 1.1 正式配置不再写通道 role；电源表单也只保存工作值与保护值。
                 channels[channel] = {
                     "voltage": {"value": self._value(controls["voltage"]), "protection": self._value(controls["voltage_protection"]), "protection_enabled": self._checked(controls["voltage_protection_enabled"])},
                     "current": {"value": self._value(controls["current"]), "protection": self._value(controls["current_protection"]), "protection_enabled": self._checked(controls["current_protection_enabled"])},
@@ -311,11 +306,19 @@ class ConfigFormState:
         return {"instruments": {"power_supplies": result}} if result else {}
 
     def read_power_assignment(self) -> dict:
-        """按当前下拉框写出供电分配，引用主字段是 ``supply_id``。
+        """按当前下拉框、分配通道与组计划写出供电分配，引用主字段是 ``supply_id``。
 
         值只来自控件的选中项（``itemData`` 里的 ``supply_id``，见 :func:`_combo_supply_id`），
-        不从显示字符串反解析；过渡期同时写同名 ``name``（见 :func:`_assignment_entry`）。
+        不从显示字符串反解析；写出只含 ``supply_id``（1.1 不再写过渡别名 ``name``）。
         可选项本身只来自设备绑定，因此这里写出的每个引用都对应一台本次已应用的电源。
+
+        分配的 ``channel`` 是配置里该槽位已有的通道集合（:func:`assignment_channels`），
+        与计划勾选、排序互不推导：计划只写 ``power_plan``，集合是否与序列相等交给正式
+        校验。这样同一台电源供两个 PA 单元时，两个槽位各自保留自己的通道，不会因为
+        计划里勾了某台电源的全部通道而互相复制。
+
+        每组的 ``power_plan`` 读自计划控件；没有计划控件的旧表单沿用配置里已有的计划，
+        不能因为页面尚未接入排序控件就把用户写入的顺序丢掉。
         """
         w = self.widgets
         controls = getattr(w, "power_assignment_widgets", None)
@@ -329,28 +332,80 @@ class ConfigFormState:
             source = "直流电源" if legacy_control is not None and self._checked(legacy_control) else "自带供电"
         # 无驱放测试不写驱动功放供电分配；有驱放但驱放自带供电时同样不占本机电源。
         driver_enabled = source == "直流电源" and bool(getattr(w, "test_mode_enabled", True))
+        count = int(self._current(w.pa_unit_count_combo))
+        existing = _dict_copy(self.config.get("power_supply_assignment"))
+        driver_existing = _dict_copy(existing.get("driver_amplifier"))
+        dut_existing = _dict_copy(existing.get("dut_amplifier"))
+        driver_plan = self._read_power_plan(
+            "driver_power_plan_editor", driver_existing.get("power_plan")
+        )
+        dut_plan = self._read_power_plan(
+            "dut_power_plan_editor", dut_existing.get("power_plan")
+        )
         driver = {"power_supply_count": 1 if driver_enabled else 0, "supplies": {}}
         if driver_enabled:
-            driver["supplies"]["main"] = _assignment_entry(controls.get("driver_power"))
-        count = int(self._current(w.pa_unit_count_combo))
+            driver["supplies"]["main"] = _assignment_entry(
+                controls.get("driver_power"),
+                assignment_channels(
+                    _dict_copy(driver_existing.get("supplies")).get("main")
+                ),
+            )
         roles = (("carrier", "pa_unit1_power"), ("peaking", "pa_unit2_power"), ("peaking2", "pa_unit3_power"))
         supplies = {}
+        existing_supplies = _dict_copy(dut_existing.get("supplies"))
         for index, (role, control) in enumerate(roles, 1):
-            if index <= count:
-                supplies[role] = _assignment_entry(controls.get(control))
-        # 上电顺序控件在步骤 11/12 才进入本页；在此之前保留已加载的计划，不能因为
-        # 页面还没有排序控件就把用户/迁移器写入的顺序丢掉。
-        existing = _dict_copy(self.config.get("power_supply_assignment"))
-        driver_plan = _dict_copy(existing.get("driver_amplifier")).get("power_plan")
-        dut_plan = _dict_copy(existing.get("dut_amplifier")).get("power_plan")
-        if isinstance(driver_plan, Mapping):
+            if index > count:
+                continue
+            supplies[role] = _assignment_entry(
+                controls.get(control),
+                assignment_channels(existing_supplies.get(role)),
+            )
+        if driver_plan is not None:
             driver["power_plan"] = _dict_copy(driver_plan)
-        if isinstance(dut_plan, Mapping):
-            dut = {"power_supply_count": count, "supplies": supplies}
+        dut = {"power_supply_count": count, "supplies": supplies}
+        if dut_plan is not None:
             dut["power_plan"] = _dict_copy(dut_plan)
-        else:
-            dut = {"power_supply_count": count, "supplies": supplies}
         return {"power_supply_assignment": {"driver_amplifier": driver, "dut_amplifier": dut}}
+
+    def _read_power_plan(self, editor_name: str, existing: Any) -> Any:
+        """读取一组的计划控件；没有控件时沿用配置里已有的计划。
+
+        没有计划控件的表单（旧替身或尚未接入的页面）不能被悄悄写成空计划；有控件时
+        以控件读数为准，包括明确的空计划（“尚未确认顺序”）。
+        """
+        editor = getattr(self.widgets, editor_name, None)
+        reader = getattr(editor, "read_active_plan", None)
+        if not callable(reader):
+            reader = getattr(editor, "read_plan", None)
+        if callable(reader):
+            return reader()
+        return _dict_copy(existing) if isinstance(existing, Mapping) else None
+
+    def read_drain_channel(self) -> dict | None:
+        """读取漏极选择；未选择或控件缺失时返回 ``None``。
+
+        漏极是独立的测量路由，不参与分配与上电；这里只从控件的 ``itemData`` 读两段
+        路由，不把显示文本或通道名当成路由身份。
+        """
+        combo = getattr(self.widgets, "drain_channel_combo", None)
+        if combo is None:
+            return None
+        index_of = getattr(combo, "currentIndex", None)
+        index = index_of() if callable(index_of) else -1
+        item_data = getattr(combo, "itemData", None)
+        data = item_data(index) if callable(item_data) and isinstance(index, int) and index >= 0 else None
+        if isinstance(data, Mapping):
+            supply_id, channel = data.get("supply_id"), data.get("channel")
+        elif isinstance(data, (list, tuple)) and len(data) == 2:
+            supply_id, channel = data
+        else:
+            return None
+        if not isinstance(supply_id, str) or not isinstance(channel, str):
+            return None
+        supply_id, channel = supply_id.strip(), channel.strip()
+        if not supply_id or not channel:
+            return None
+        return {"supply_id": supply_id, "channel": channel}
 
     def build_config(
         self, *, test_parameters: Mapping[str, Any] | None = None
@@ -372,14 +427,16 @@ class ConfigFormState:
         dut = _dict_copy(config.get("dut_config"))
         dut["max_input_power"] = self._value(w.max_input_power)
         dut["power_supply_count"] = int(self._current(w.pa_unit_count_combo))
+        if getattr(w, "drain_channel_combo", None) is not None:
+            dut["drain_channel"] = self.read_drain_channel()
         config["dut_config"] = dut
         fragment = self.read_power_supply_config()
         for name, value in fragment.get("instruments", {}).get("power_supplies", {}).items():
             target = _dict_copy(config["instruments"]["power_supplies"].get(name))
             channels = _dict_copy(target.get("channels"))
             channels.update(copy.deepcopy(value.get("channels", {})))
-            # 1.1 正式文档不再包含通道 role：旧配置里的取值不能在“合并控件读数”时
-            # 被原样保留下来（步骤 11/12 删除角色控件后这段兼容也一起删除）。
+            # 1.1 正式文档不再包含通道 role：旧配置里的残留值不能随“合并控件读数”
+            # 写回；旧读取兼容只属于迁移器。
             for channel in channels.values():
                 if isinstance(channel, dict):
                     channel.pop("role", None)

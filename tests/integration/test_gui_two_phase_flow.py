@@ -1035,12 +1035,28 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         self.assertEqual(requested, [RUN_ID])
 
     def test_validate_no_longer_blocks_duplicate_power_channel_roles(self):
-        """步骤 5：角色重复不再是否决条件；通道按物理路由校验。"""
+        """步骤 5/11：角色重复不再是否决条件，电源表单也不再提供角色控件。"""
         from presentation.qt.configuration_page import ConfigurationPage
 
-        page = ConfigurationPage({"instruments": {"power_supplies": {"DP8B1519": {}}}})
-        page.power_config_widgets["DP8B1519"]["channels"]["CH1"]["role"].setCurrentText("gate")
-        page.power_config_widgets["DP8B1519"]["channels"]["CH2"]["role"].setCurrentText("gate")
+        page = ConfigurationPage(
+            {
+                "instruments": {
+                    "power_supplies": {
+                        "DP8B1519": {
+                            "channels": {
+                                "CH1": {"role": "gate"},
+                                "CH2": {"role": "gate"},
+                            }
+                        }
+                    }
+                }
+            }
+        )
+        self.assertNotIn(
+            "role",
+            page.power_config_widgets["DP8B1519"]["channels"]["CH1"],
+            "步骤 11 起电源通道不再提供供电角色控件",
+        )
         failures = []
         page.validation_failed.connect(failures.append)
 
@@ -1099,7 +1115,7 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         self.assertNotIn("role", channels["CH1"])
         self.assertNotIn("role", channels["CH2"])
 
-    def test_config_page_keeps_the_role_declared_in_the_configuration_for_display_only(self):
+    def test_config_page_does_not_keep_channel_roles_from_the_configuration(self):
         from presentation.qt.configuration_page import ConfigurationPage
 
         config = _fully_valid_gui_config()
@@ -1108,9 +1124,10 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         page = ConfigurationPage({})
         page.apply_config(config)
 
-        self.assertEqual(
-            page.power_config_widgets["DP8B1519"]["channels"]["CH1"]["role"].currentText(),
-            "drain",
+        self.assertNotIn(
+            "role",
+            page.power_config_widgets["DP8B1519"]["channels"]["CH1"],
+            "旧 role 只由迁移器读取，不再出现在电源表单控件里",
         )
         built = page.build_config()
         channels = built["instruments"]["power_supplies"]["DP8B1519"]["channels"]

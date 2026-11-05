@@ -393,8 +393,8 @@ class ConfigFormStateTests(unittest.TestCase):
         self.assertIsNone(assignment_supply_id({}))
         self.assertIsNone(assignment_supply_id(None))
 
-    def test_read_power_assignment_writes_supply_id_with_the_legacy_name_alias(self):
-        """引用写成 ``supply_id``，过渡期同写同名 ``name`` 供旧读取方使用。"""
+    def test_read_power_assignment_writes_only_supply_id(self):
+        """1.1 只写 ``supply_id``；旧 ``name`` 别名不再由表单写回。"""
         widgets = type("Widgets", (), {})()
         widgets.test_mode_enabled = True
         widgets.pa_unit_count_combo = _combo("2")
@@ -411,7 +411,7 @@ class ConfigFormStateTests(unittest.TestCase):
 
         main = assignment["driver_amplifier"]["supplies"]["main"]
         self.assertEqual(main["supply_id"], "DP8B0950")
-        self.assertEqual(main["name"], "DP8B0950")
+        self.assertNotIn("name", main)
         self.assertEqual(main["channel"], ["CH1", "CH2"])
         self.assertEqual(
             {

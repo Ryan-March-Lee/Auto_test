@@ -73,11 +73,10 @@ from .config_projection import (
 )
 from .config_power_section import (
     PowerAssignmentEntries,
+    PowerFormSection,
     PowerSupplyChoices,
     PowerSupplySources,
-    build_power_section,
     current_power_tab_key,
-    rebuild_power_tabs,
 )
 from .config_page_widgets import build_action_bar, combo_box, spin_box
 from .instrument_discovery_panel import role_label
@@ -126,6 +125,8 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         # 状态与 dirty 都在那里；设备选择的业务规则仍只在 DeviceBindingService（步骤 5）。
         self.view_model = ConfigurationViewModel()
         self.view_model.load(self.config, bindings=self.device_bindings)
+        # 独立电源表单在 build_ui 里创建；此前的委托入口按“还没有分区”处理。
+        self.power_section = None
         self.build_ui()
         self._connect_signals()
         self.update_pa_unit_ui()
@@ -338,19 +339,25 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         return labels
 
     def _build_power_widgets(self, layout, supplies):
-        """建电源分区：把页面状态（条目、分配引用、可选项、供电方式）交给构建模块。
+        """建独立电源表单：把页面状态（条目、分配引用、可选项、供电方式）交给组件。
 
         电源数量与身份都由设备绑定决定，不再有 ``PS1``..``PS4`` 固定页；标签页标题、
-        通道控件与分配表单的布局见 :mod:`presentation.qt.config_power_section`。
+        通道控件、分配表单、组上电计划与漏极选择的布局和读写都在
+        :class:`presentation.qt.config_power_section.PowerFormSection`。页面只把组件放进
+        布局，并在 PA 单元数量/驱放供电方式变化时转发派生状态。
         """
-        build_power_section(
-            self,
-            layout,
+        self.power_section = PowerFormSection(
             sources=self._power_supply_sources(supplies),
             choices=self._power_supply_choices(),
             assignment_entries=self._assignment_entries(),
             driver_power_source=self.driver_power_source,
+            dut_supply_count=int(self.pa_unit_count_combo.currentText()),
+            driver_plan_active=self._driver_plan_active(),
+            dut_power_plan=self._power_plan_entry("dut_amplifier"),
+            driver_power_plan=self._power_plan_entry("driver_amplifier"),
+            drain_channel=self._drain_channel_entry(),
         )
+        layout.addWidget(self.power_section)
 
     def _assignment_entries(self) -> PowerAssignmentEntries:
         """电源分配各槽位在配置里的引用条目；``None`` 表示配置没有写这条分配。
@@ -414,19 +421,44 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         调用 ``ConfigFormState``。本方法是同名保留的委托壳：
         ``tests/ui/test_config_page.py`` 直接调用它。
         """
-        if getattr(self, "power_tabs", None) is None:
+        if self.power_section is None:
             return
-        rebuild_power_tabs(
-            self,
+        self.power_section.rebuild(
             sources=self._power_supply_sources() if sources is None else sources,
-            preserved=(
+            preserved_channels=(
                 self.form_adapter.read_power_channel_snapshot() if preserve else {}
             ),
+            preserve=preserve,
         )
 
     def _current_power_tab_key(self) -> str | None:
         """当前选中电源标签页的电源键；同名委托壳（测试直接调用）。"""
-        return current_power_tab_key(self)
+        if self.power_section is None:
+            return None
+        return current_power_tab_key(self.power_section)
+
+    def _power_plan_entry(self, group: str):
+        """配置里一组的组计划；缺失时返回 ``None``（尚未确认顺序）。"""
+        assignment = self.config.get("power_supply_assignment")
+        block = assignment.get(group) if isinstance(assignment, dict) else None
+        return block.get("power_plan") if isinstance(block, dict) else None
+
+    def _drain_channel_entry(self):
+        dut = self.config.get("dut_config")
+        return dut.get("drain_channel") if isinstance(dut, dict) else None
+
+    def _driver_plan_active(self) -> bool:
+        """驱放计划是否生效：只有本机直流供电的驱放测试模式才有上电顺序。"""
+        return bool(self.test_mode_enabled and self.driver_power_source == "直流电源")
+
+    def apply_power_plan_config(
+        self, config, *, driver_plan_active: bool | None = None
+    ) -> None:
+        """把文档里的组计划与漏极投影到独立电源表单。"""
+        if self.power_section is not None:
+            self.power_section.apply_power_plan_config(
+                config, driver_plan_active=driver_plan_active
+            )
 
     def _build_run_widgets(self, layout):
         """最终动作入口：一次完成校验、保存配置、创建运行与完整连接检查。
@@ -503,6 +535,7 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
             self.load_run_btn,
             self.load_run_id_edit,
             self.test_parameters_group,
+            self.power_section,
             self.power_tabs,
             self.power_assignment_group,
         )
@@ -568,12 +601,16 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
             visible = count >= index
             self.power_assignment_widgets[f"pa_unit{index}_power"].setVisible(visible)
             self.power_assignment_widgets[f"pa_unit{index}_label"].setVisible(visible)
+        if self.power_section is not None:
+            self.power_section.set_dut_supply_count(count)
     def on_driver_power_toggled(self, _value): self.update_driver_power_ui()
     def update_driver_power_ui(self):
         enabled = self.test_mode_enabled and self.driver_power_source_combo.currentText() == "直流电源"
         self.driver_power_combo.setEnabled(enabled); self.driver_power_label.setEnabled(enabled)
         self.driver_power_hint.setVisible(self.test_mode_enabled and not enabled)
         if not enabled: self.driver_power_combo.setCurrentIndex(-1)
+        if self.power_section is not None:
+            self.power_section.set_driver_plan_active(enabled)
     def get_enabled_power_supplies(self):
         """电源分配里可选的电源：只来自当前已应用的设备绑定。
 
@@ -594,6 +631,9 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         由操作员重新选择。刷新动作本身由表单 Adapter 完成（步骤 7）。
         """
         self.form_adapter.refresh_power_choices(self._power_supply_choices())
+        if self.power_section is not None:
+            # 下拉框重建后候选路由跟着绑定走；保留操作者尚未保存的勾选、顺序与漏极。
+            self.power_section.refresh_plan_routes(preserve=True)
 
     def _power_supply_choices(self) -> PowerSupplyChoices:
         """电源分配下拉框的可选项：当前绑定的电源，带真实设备的型号用于显示。"""
@@ -701,13 +741,17 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         self.driver_power_source = driver_power_source_label(
             mode.get("power_source"), driver.get("power_supply_count")
         )
+        # 驱放计划是否生效必须按**新配置**判定；此时页面上的 test_mode_enabled 还是旧值。
+        driver_plan_active = bool(mode.get("enabled")) and self.driver_power_source == "直流电源"
         try:
             self._rebuild_power_tabs(
                 sources=self._power_supply_sources(supplies),
                 preserve=False,
             )
             projected = self.form_adapter.apply_configuration(
-                config, supplies=self._power_supply_choices()
+                config,
+                supplies=self._power_supply_choices(),
+                driver_plan_active=driver_plan_active,
             )
         except ConfigBackfillError:
             self.device_bindings = previous_bindings
@@ -729,6 +773,47 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         built = self.build_config(self.config)
         self._dirty_baseline = copy.deepcopy(built)
         self.view_model.load(built, bindings=self.device_bindings)
+
+
+# 电源控件现在归独立组件所有。页面保留同名只读属性，让现有测试与页面方法按原来的
+# 名字访问它们，同时保证重建后读到的是组件当前的控件（而不是建页时的一份旧引用）。
+_POWER_SECTION_ATTRIBUTES = (
+    "power_tabs",
+    "power_config_widgets",
+    "power_assignment_group",
+    "power_assignment_widgets",
+    "driver_power_source_combo",
+    "driver_power_source_label",
+    "driver_power_hint",
+    "driver_power_combo",
+    "driver_power_label",
+    "pa_unit1_power_combo",
+    "pa_unit2_power_combo",
+    "pa_unit3_power_combo",
+    "pa_unit2_label",
+    "pa_unit3_label",
+    "power_plan_group",
+    "driver_power_plan_box",
+    "dut_power_plan_editor",
+    "driver_power_plan_editor",
+    "drain_channel_group",
+    "drain_channel_combo",
+)
+
+
+def _power_section_attribute(name):
+    def read(self):
+        section = getattr(self, "power_section", None)
+        if section is None:
+            raise AttributeError(f"电源表单尚未创建：{name}")
+        return getattr(section, name)
+
+    return property(read)
+
+
+for _power_attribute in _POWER_SECTION_ATTRIBUTES:
+    setattr(ConfigurationPage, _power_attribute, _power_section_attribute(_power_attribute))
+del _power_attribute
 
 
 #: 兼容期旧类名（计划步骤 13）。新代码使用 :class:`ConfigurationPage`；旧名称在

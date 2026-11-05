@@ -1,16 +1,16 @@
-"""配置页电源分区的控件构建。
+"""配置页电源分区的控件构建与独立电源表单。
 
-本模块构建配置页右栏的两块控件：按电源键分页的「电源详细配置」标签页，以及
-「电源分配设置」表单。构建所需的配置条目与可选项由页面
-（:mod:`presentation.qt.configuration_page`）读出后传入，控件仍登记在页面上——页面负责信号
-连接、派生界面状态（PA 单元可见性、驱放供电方式）和配置读写。
+本模块构建配置页右栏的电源分区：按电源键分页的「电源详细配置」标签页、
+「电源分配设置」表单，以及步骤 11 新增的「通道上电计划」与「效率测量」漏极选择。
+:class:`PowerFormSection` 把这几块控件收在一个独立组件里，页面只负责把它放进布局、
+转发页面级派生状态（PA 单元数量、驱放供电方式）并按需回填。
 
 页面传进来的输入都是显式声明的结构（见 :data:`PowerSupplySources`、
 :data:`PowerSupplyChoices` 与 :data:`PowerAssignmentEntries`）：键是电源键或槽位名，
-值是配置条目里本模块要显示的字段，本模块不从控件或文件里另外取状态。这里只按字段位置
-读出要显示的数值，并把不正确的类型回落到与投影一致的缺省值（见 :func:`spin_value` 与
-通道角色回退）：那是显示口径，不是校验。本模块不校验配置、不迁移旧字段、不写配置、也
-不读文件；字段的回填仍归 :mod:`presentation.qt.config_projection`，正式配置编写归
+值是配置条目里本模块要显示的字段，本模块不从文件里另外取状态。这里只按字段位置
+读出要显示的数值，并把不正确的类型回落到与投影一致的缺省值（见 :func:`spin_value`）：
+那是显示口径，不是校验。本模块不校验配置、不迁移旧字段、不写配置、也不读文件；字段的
+回填仍归 :mod:`presentation.qt.config_projection`，正式配置编写归
 :mod:`application.configuration_authoring`，正式校验在
 :mod:`domain.configuration.rules` 与 :mod:`infrastructure.config.validation`；
 「槽位 -> 配置路径」的映射留在页面（``ConfigurationPage._assignment_entries``）。
@@ -22,28 +22,28 @@
 """
 
 import math
-from typing import Any, Mapping, TypedDict
+from typing import Any, Iterable, Mapping, Sequence, TypedDict
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QFormLayout, QGridLayout, QGroupBox, QLabel, QTabWidget,
+    QAbstractItemView, QCheckBox, QFormLayout, QGridLayout, QGroupBox,
+    QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QTabWidget,
     QVBoxLayout, QWidget,
 )
 
+from application.dto.amplifier_inputs import MAX_INTER_CHANNEL_DELAY_S
 from domain.instruments.labels import supply_identity_text
 
 from .config_page_widgets import combo_box, spin_box
 from .config_projection import (
+    ASSIGNMENT_SLOT_PATHS,
     DEFAULT_POWER_CHANNEL_VALUE,
     DRIVER_POWER_SOURCE_VALUES,
-    DUT_CHANNEL_ROLES,
-    POWER_SUPPLY_ROLES,
     apply_power_choice,
     supply_option_label,
 )
-
-# 每台电源固定两个通道：通道名既是配置里的键，也是标签页内通道分组框的标题。
-POWER_SUPPLY_CHANNELS = ("CH1", "CH2")
+from .config_power_assignments import POWER_SUPPLY_CHANNELS, assignment_channels
+from .input_controls import KeyboardOnlyDoubleSpinBox
 
 # 通道数值框的显示上下界：只约束输入框能填到哪里。正式校验的合法范围在
 # domain.configuration.rules（只要求有限数值），因此界外的配置值在控件里被夹到界内，
@@ -55,11 +55,10 @@ _CURRENT_LIMITS = (0.0, 10.0)
 class ChannelDisplayFields(TypedDict, total=False):
     """一个电源通道里本模块要显示的字段。
 
-    值原样取自配置条目，取值时的类型回落由 :func:`spin_value` 与通道角色回退负责；
-    它不是校验清单：缺字段或类型不对只会显示成缺省值。
+    值原样取自配置条目，取值时的类型回落由 :func:`spin_value` 负责；它不是校验
+    清单：缺字段或类型不对只会显示成缺省值。通道不再声明供电角色，这里也没有该字段。
     """
 
-    role: Any
     voltage: Mapping[str, Any]
     current: Mapping[str, Any]
 
@@ -90,6 +89,8 @@ __all__ = [
     "ChannelDisplayFields",
     "POWER_SUPPLY_CHANNELS",
     "PowerAssignmentEntries",
+    "PowerFormSection",
+    "PowerPlanEditor",
     "PowerSupplyChoices",
     "PowerSupplyEntry",
     "PowerSupplySources",
@@ -269,7 +270,8 @@ def rebuild_power_tabs(
     tabs = page.power_tabs
     current_key = current_power_tab_key(page)
     tabs.clear()
-    page.power_config_widgets = {}
+    # 原地清空：页面或独立组件可能持有同一份映射的引用，重建不应把它换成新对象。
+    page.power_config_widgets.clear()
     for key, source in sources.items():
         source = source if isinstance(source, dict) else {}
         _add_power_tab(page, key, source, channel_map(source, preserved.get(key)))
@@ -324,11 +326,7 @@ def _add_power_tab(
         form.setHorizontalSpacing(10)
         form.setVerticalSpacing(6)
         form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        role = value.get("role")
-        if role not in POWER_SUPPLY_ROLES:
-            role = DUT_CHANNEL_ROLES.get(channel, POWER_SUPPLY_ROLES[0])
         controls = {
-            "role": combo_box(POWER_SUPPLY_ROLES, role),
             "voltage": spin_box(spin_value(voltage.get("value")), *_VOLTAGE_LIMITS),
             "voltage_protection": spin_box(
                 spin_value(voltage.get("protection")), *_VOLTAGE_LIMITS
@@ -346,7 +344,6 @@ def _add_power_tab(
         controls["current_protection_enabled"].setChecked(
             current.get("protection_enabled") is True
         )
-        form.addRow("供电角色", controls["role"])
         form.addRow("电压 (V)", controls["voltage"])
         form.addRow("保护电压 (V)", controls["voltage_protection"])
         form.addRow("电压保护", controls["voltage_protection_enabled"])
@@ -368,3 +365,622 @@ def _add_power_tab(
         ),
     )
     page.power_config_widgets[key] = record
+
+
+# ---------------------------------------------------------------------------
+# 组上电计划与漏极：独立电源表单的控件与状态
+# ---------------------------------------------------------------------------
+
+_ROUTE_ROLE = Qt.ItemDataRole.UserRole
+_UNSET_DRAIN_LABEL = "（未指定）"
+
+
+def _combo_supply_id(combo: Any) -> str:
+    """下拉框当前选中的 ``supply_id``；只看 ``itemData``，不看显示文本。"""
+    if combo is None:
+        return ""
+    index_of = getattr(combo, "currentIndex", None)
+    index = index_of() if callable(index_of) else -1
+    item_data = getattr(combo, "itemData", None)
+    data = item_data(index) if callable(item_data) and isinstance(index, int) and index >= 0 else None
+    return data.strip() if isinstance(data, str) and data.strip() else ""
+
+
+def _route(value: Any) -> tuple[str, str] | None:
+    """把两段路由对象（或内部 ``(supply_id, channel)``）读成内部路由元组。"""
+    if isinstance(value, (tuple, list)) and len(value) == 2:
+        supply_id, channel = value
+    elif isinstance(value, Mapping):
+        supply_id = value.get("supply_id")
+        channel = value.get("channel")
+    else:
+        return None
+    if not isinstance(supply_id, str) or not isinstance(channel, str):
+        return None
+    supply_id, channel = supply_id.strip(), channel.strip()
+    if not supply_id or not channel or "/" in supply_id or "/" in channel:
+        return None
+    return (supply_id, channel)
+
+
+def _route_text(route: tuple[str, str]) -> str:
+    return f"{route[0]} / {route[1]}"
+
+
+def _plan_routes(plan: Any) -> tuple[tuple[str, str], ...]:
+    """``power_plan`` 里的有序路由；非法/缺字段的项跳过，由校验报告。"""
+    if not isinstance(plan, Mapping):
+        return ()
+    sequence = plan.get("power_sequence")
+    if not isinstance(sequence, (list, tuple)):
+        return ()
+    routes: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in sequence:
+        route = _route(item)
+        if route is not None and route not in seen:
+            seen.add(route)
+            routes.append(route)
+    return tuple(routes)
+
+
+def _plan_delay(plan: Any) -> float:
+    value = plan.get("inter_channel_delay_s") if isinstance(plan, Mapping) else None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    seconds = float(value)
+    if not math.isfinite(seconds) or seconds < 0 or seconds > MAX_INTER_CHANNEL_DELAY_S:
+        return 0.0
+    return seconds
+
+
+class PowerPlanEditor(QWidget):
+    """一组的“通道启用 + 上电顺序 + 组间隔”控件。
+
+    列表从上到下就是上电顺序；每一行的勾选状态表示该物理通道是否参与上电。
+    控件只生成 ``{power_sequence, inter_channel_delay_s}`` 形状的计划，不判断路由是否
+    属于本次分配、跨组是否重复或间隔是否超界——那些由正式校验报告。``active`` 为假
+    （驱放关闭或自带供电）时读取结果是空计划，避免页面留着上一次的勾选被写回。
+    """
+
+    def __init__(self, *, active: bool = True, parent: Any = None) -> None:
+        super().__init__(parent)
+        self._active = bool(active)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        hint = QLabel("勾选参与上电的通道；列表顺序就是上电顺序。")
+        hint.setProperty("role", "hint")
+        hint.setWordWrap(True)
+        self.list = QListWidget()
+        self.list.setObjectName("powerPlanList")
+        self.list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.list.setMinimumHeight(82)
+        self.list.setMaximumHeight(170)
+        move_row = QHBoxLayout()
+        move_row.setSpacing(8)
+        self.up_button = QPushButton("上移")
+        self.down_button = QPushButton("下移")
+        self.up_button.setToolTip("把选中通道提前一位")
+        self.down_button.setToolTip("把选中通道推后一位")
+        move_row.addWidget(self.up_button)
+        move_row.addWidget(self.down_button)
+        move_row.addStretch(1)
+        delay_row = QHBoxLayout()
+        delay_row.setSpacing(8)
+        delay_label = QLabel("通道间隔 (s):")
+        self.delay_spin = KeyboardOnlyDoubleSpinBox()
+        self.delay_spin.setObjectName("powerPlanDelay")
+        self.delay_spin.setRange(0.0, MAX_INTER_CHANNEL_DELAY_S)
+        self.delay_spin.setDecimals(2)
+        self.delay_spin.setSingleStep(0.5)
+        self.delay_spin.setMaximumWidth(140)
+        delay_row.addWidget(delay_label)
+        delay_row.addWidget(self.delay_spin)
+        delay_row.addStretch(1)
+        self.status = QLabel()
+        self.status.setObjectName("powerPlanStatus")
+        self.status.setProperty("role", "hint")
+        self.status.setWordWrap(True)
+        layout.addWidget(hint)
+        layout.addWidget(self.list)
+        layout.addLayout(move_row)
+        layout.addLayout(delay_row)
+        layout.addWidget(self.status)
+        self.up_button.clicked.connect(lambda: self.move_current(-1))
+        self.down_button.clicked.connect(lambda: self.move_current(1))
+        self.list.currentRowChanged.connect(self._update_move_buttons)
+        # 勾选变化只影响本编辑器的状态与漏极候选；_update_status 不读配置，不写字段。
+        self.list.itemChanged.connect(lambda _item: self._update_status())
+        self._update_move_buttons()
+        self.set_active(self._active)
+
+    # ---- 写入 ---------------------------------------------------------------
+    def set_plan(self, plan: Any, routes: Iterable[Any] | None = None) -> None:
+        """按计划重新填列表：先按计划顺序，再补未出现在计划里的候选路由。
+
+        计划缺失（``None``）表示“还没有确认顺序”：候选路由全部未勾选，间隔为 0。
+        不能把候选路由擅自勾上——那会把尚未确认的顺序伪装成可运行计划；状态行会
+        明确显示“未确认”，由操作者勾选/排序后保存。显式的空计划与缺失计划显示相同，
+        但写回时保留空计划（契约允许保存未确认状态，创建运行再由正式校验阻断）。
+        """
+        sequence = _plan_routes(plan)
+        candidates = [_route(item) for item in (routes or ())]
+        order: list[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for route in (*sequence, *candidates):
+            if route is not None and route not in seen:
+                seen.add(route)
+                order.append(route)
+        enabled = set(sequence)
+        self.list.blockSignals(True)
+        self.list.clear()
+        for route in order:
+            item = QListWidgetItem(_route_text(route))
+            item.setData(_ROUTE_ROLE, route)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(
+                Qt.CheckState.Checked if route in enabled else Qt.CheckState.Unchecked
+            )
+            self.list.addItem(item)
+        self.delay_spin.setValue(_plan_delay(plan))
+        self.list.blockSignals(False)
+        self._update_move_buttons()
+        self._update_status()
+
+    def refresh(self, routes: Iterable[Any], plan: Any = None) -> None:
+        """用新的候选路由重建列表，并按给定计划恢复勾选与间隔。"""
+        self.set_plan(plan, routes=routes)
+
+    def reset(self) -> None:
+        """清空候选与计划（回填前的确定性基线）。"""
+        self.set_plan(None, routes=())
+
+    def set_active(self, active: bool) -> None:
+        self._active = bool(active)
+        self.setEnabled(self._active)
+        self._update_status()
+
+    def set_route_checked(self, route: Any, checked: bool) -> bool:
+        """按路由设置勾选状态；路由不在列表里时返回 ``False``。"""
+        target = _route(route)
+        for row in range(self.list.count()):
+            if self.list.item(row).data(_ROUTE_ROLE) == target:
+                self.list.item(row).setCheckState(
+                    Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+                )
+                return True
+        return False
+
+    def move_row(self, row: int, delta: int) -> int:
+        """把第 ``row`` 行移动 ``delta`` 位，返回移动后的行号。"""
+        count = self.list.count()
+        target = row + delta
+        if row < 0 or row >= count or target < 0 or target >= count:
+            return row
+        item = self.list.takeItem(row)
+        self.list.insertItem(target, item)
+        self.list.setCurrentRow(target)
+        self._update_move_buttons()
+        return target
+
+    def move_current(self, delta: int) -> int:
+        return self.move_row(self.list.currentRow(), delta)
+
+    # ---- 读取 ---------------------------------------------------------------
+    @property
+    def is_active(self) -> bool:
+        return self._active
+
+    def read_plan(self) -> dict[str, Any]:
+        """读出当前列表与间隔（即使该组暂不生效，也保留界面上的勾选）。"""
+        sequence = []
+        for row in range(self.list.count()):
+            item = self.list.item(row)
+            if item.checkState() != Qt.CheckState.Checked:
+                continue
+            route = _route(item.data(_ROUTE_ROLE))
+            if route is not None:
+                sequence.append({"supply_id": route[0], "channel": route[1]})
+        return {
+            "power_sequence": sequence,
+            "inter_channel_delay_s": float(self.delay_spin.value()),
+        }
+
+    def read_active_plan(self) -> dict[str, Any]:
+        """写回配置时使用的计划；未激活的组固定写成空计划。"""
+        if not self._active:
+            return {"power_sequence": [], "inter_channel_delay_s": 0.0}
+        return self.read_plan()
+
+    def routes(self) -> tuple[tuple[str, str], ...]:
+        routes = []
+        for row in range(self.list.count()):
+            route = _route(self.list.item(row).data(_ROUTE_ROLE))
+            if route is not None:
+                routes.append(route)
+        return tuple(routes)
+
+    def _update_move_buttons(self, _row: int | None = None) -> None:
+        row = self.list.currentRow()
+        count = self.list.count()
+        self.up_button.setEnabled(row > 0)
+        self.down_button.setEnabled(0 <= row < count - 1)
+
+    def _update_status(self) -> None:
+        """显示计划的确认状态（派生文本，不落库、不改变读数）。"""
+        total = self.list.count()
+        checked = sum(
+            1
+            for row in range(total)
+            if self.list.item(row).checkState() == Qt.CheckState.Checked
+        )
+        if not self._active:
+            text = "本组不使用本机直流电源，上电顺序不生效。"
+        elif total == 0:
+            text = "没有已分配的通道。"
+        elif checked == 0:
+            text = "未确认：请勾选并排序上电通道。"
+        elif checked < total:
+            text = f"未完成：还有 {total - checked} 个已分配通道未加入上电顺序。"
+        else:
+            text = f"就绪：{checked} 个通道。"
+        self.status.setText(text)
+
+
+class PowerFormSection(QWidget):
+    """独立电源表单：通道参数、供电分配、组上电计划与漏极选择。
+
+    组件自己保存控件，页面只负责把它放进布局、转发页面级派生状态（PA 单元数量、
+    驱放是否使用直流电源）并读取整份配置。这样页面不再持有电源控件的逐字段读写规则；
+    绑定变化时 :meth:`rebuild` 会保留操作者尚未保存的通道参数、顺序、间隔与漏极。
+    """
+
+    def __init__(
+        self,
+        *,
+        sources: PowerSupplySources,
+        choices: PowerSupplyChoices,
+        assignment_entries: PowerAssignmentEntries,
+        driver_power_source: Any,
+        dut_supply_count: int = 2,
+        driver_plan_active: bool = True,
+        dut_power_plan: Any = None,
+        driver_power_plan: Any = None,
+        drain_channel: Any = None,
+        parent: Any = None,
+    ) -> None:
+        super().__init__(parent)
+        self._dut_supply_count = max(0, int(dut_supply_count))
+        self._driver_plan_active = bool(driver_plan_active)
+        self._driver_power_source = driver_power_source
+        # 每个分配槽位声明的物理通道（“属于哪个 PA 单元”）。计划候选只在这些通道里
+        # 排序；勾选/排序不会反过来改写这里的集合。
+        self._slot_channels = {
+            slot: assignment_channels(entry)
+            for slot, entry in assignment_entries.items()
+        }
+        # DUT 计划是否已经在文档里出现（含显式空计划）。未出现时漏极候选退回分配通道；
+        # 出现后（包括用户开始勾选后）就只能从计划里选择，取消勾选会让旧漏极标为无效。
+        self._dut_plan_defined = False
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+        build_power_section(
+            self,
+            layout,
+            sources=sources,
+            choices=choices,
+            assignment_entries=assignment_entries,
+            driver_power_source=driver_power_source,
+        )
+        self._build_plan_widgets(layout)
+        self._build_drain_widgets(layout)
+        self._connect_assignment_signals()
+        self.refresh_plan_routes(
+            preserve=False,
+            dut_plan=dut_power_plan,
+            driver_plan=driver_power_plan,
+            drain=drain_channel,
+        )
+
+    # ---- 构建 ---------------------------------------------------------------
+    def _build_plan_widgets(self, layout: Any) -> None:
+        group = QGroupBox("通道上电计划")
+        outer = QVBoxLayout(group)
+        outer.setSpacing(8)
+        dut_box = QGroupBox("DUT")
+        dut_layout = QVBoxLayout(dut_box)
+        self.dut_power_plan_editor = PowerPlanEditor()
+        dut_layout.addWidget(self.dut_power_plan_editor)
+        driver_box = QGroupBox("驱动功放")
+        driver_layout = QVBoxLayout(driver_box)
+        self.driver_power_plan_editor = PowerPlanEditor(active=self._driver_plan_active)
+        driver_layout.addWidget(self.driver_power_plan_editor)
+        self.power_plan_group = group
+        self.driver_power_plan_box = driver_box
+        outer.addWidget(dut_box)
+        outer.addWidget(driver_box)
+        layout.addWidget(group)
+
+    def _build_drain_widgets(self, layout: Any) -> None:
+        group = QGroupBox("效率测量")
+        form = QGridLayout(group)
+        form.setHorizontalSpacing(10)
+        form.setVerticalSpacing(6)
+        form.setColumnMinimumWidth(0, 118)
+        label = QLabel("漏极通道:")
+        self.drain_channel_combo = combo_box()
+        self.drain_channel_combo.setToolTip(
+            "漏极必须是 DUT 上电计划中的通道；只用于效率计算的电压/电流读取，"
+            "不参与上电顺序、间隔或安全关断。"
+        )
+        hint = QLabel("漏极必须是 DUT 上电计划中的通道，仅用于效率测量，不影响上电顺序。")
+        hint.setProperty("role", "hint")
+        hint.setWordWrap(True)
+        form.addWidget(label, 0, 0)
+        form.addWidget(self.drain_channel_combo, 0, 1)
+        form.addWidget(hint, 1, 0, 1, 2)
+        form.setColumnStretch(1, 1)
+        self.drain_channel_group = group
+        layout.addWidget(group)
+
+    def _connect_assignment_signals(self) -> None:
+        controls = getattr(self, "power_assignment_widgets", {})
+        for key in (
+            "driver_power",
+            "pa_unit1_power",
+            "pa_unit2_power",
+            "pa_unit3_power",
+        ):
+            combo = controls.get(key)
+            if combo is not None and hasattr(combo, "currentIndexChanged"):
+                combo.currentIndexChanged.connect(self._on_assignment_changed)
+        # 计划的勾选决定“哪些通道参与上电”，漏极只能在其中选择；勾选变化时只刷新
+        # 漏极候选，不重建计划本身（否则会打断操作者的排序）。
+        self.dut_power_plan_editor.list.itemChanged.connect(self._on_dut_plan_changed)
+
+    def _on_assignment_changed(self, _index: int = -1) -> None:
+        self.refresh_plan_routes(preserve=True)
+
+    def _on_dut_plan_changed(self, _item: Any = None) -> None:
+        plan_routes = _plan_routes(self.dut_power_plan_editor.read_plan())
+        if plan_routes:
+            # 操作者一旦勾选过通道，计划就从“未确认”进入“已配置”，此后取消全部勾选
+            # 仍按空计划处理，不能把漏极候选退回全部分配通道。
+            self._dut_plan_defined = True
+        candidates = (
+            plan_routes if self._dut_plan_defined else self.dut_power_plan_editor.routes()
+        )
+        self._set_drain_routes(candidates, self.read_drain_channel())
+
+    # ---- 页面级派生状态 -----------------------------------------------------
+    def set_dut_supply_count(self, count: int) -> None:
+        count = max(0, int(count))
+        if count == self._dut_supply_count:
+            return
+        self._dut_supply_count = count
+        self.refresh_plan_routes(preserve=True)
+
+    def set_driver_plan_active(self, active: bool) -> None:
+        active = bool(active)
+        if active == self._driver_plan_active:
+            return
+        self._driver_plan_active = active
+        self.driver_power_plan_editor.set_active(active)
+        self.refresh_plan_routes(preserve=True)
+
+    # ---- 路由与计划 ---------------------------------------------------------
+    def _channels_for_slot(self, slot: str) -> list[str]:
+        """槽位声明的通道；没有声明时回落到每台电源固定的两个通道。"""
+        channels = self._slot_channels.get(slot)
+        return list(channels) if channels is not None else list(POWER_SUPPLY_CHANNELS)
+
+    def _selected_routes(self, slots: Sequence[str]) -> tuple[tuple[str, str], ...]:
+        """按槽位声明展开当前选中电源的物理路由（去重、保持槽位/通道顺序）。
+
+        候选只来自分配里声明的通道：同一条电源供多个 PA 单元时，每个槽位只出现
+        自己的通道，不会因为计划里勾了某台电源的全部通道而复制到其他槽位。
+        """
+        routes: list[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for slot in slots:
+            combo = getattr(self, "power_assignment_widgets", {}).get(slot)
+            supply_id = _combo_supply_id(combo)
+            if not supply_id:
+                continue
+            for channel in self._channels_for_slot(slot):
+                route = (supply_id, channel)
+                if route not in seen:
+                    seen.add(route)
+                    routes.append(route)
+        return tuple(routes)
+
+    def _dut_routes(self) -> tuple[tuple[str, str], ...]:
+        slots = [f"pa_unit{index}_power" for index in range(1, self._dut_supply_count + 1)]
+        return self._selected_routes(slots)
+
+    def _driver_routes(self) -> tuple[tuple[str, str], ...]:
+        return self._selected_routes(["driver_power"])
+
+    def _drain_candidates(
+        self, routes: tuple[tuple[str, str], ...]
+    ) -> tuple[tuple[str, str], ...]:
+        """漏极候选：有计划时只允许计划里参与上电的通道，否则退回分配通道。
+
+        “有计划”包括显式的空计划（:attr:`_dut_plan_defined`）；空计划没有任何可测量的
+        已启用通道，漏极只能保持未指定或显示旧值（由正式校验报告）。计划还没生成时先列
+        分配通道，让操作者可以先选漏极，保存时会因“漏极必须包含在 DUT 上电顺序中”被
+        正式校验阻断。
+        """
+        if self._dut_plan_defined:
+            return _plan_routes(self.dut_power_plan_editor.read_plan())
+        return routes
+
+    def refresh_plan_routes(
+        self,
+        *,
+        preserve: bool,
+        dut_plan: Any = None,
+        driver_plan: Any = None,
+        drain: Any = None,
+    ) -> None:
+        """按当前分配重建计划候选，并恢复计划与漏极。
+
+        ``preserve=True`` 用于绑定/PA 数量变化后的重建：先读当前控件里的顺序、勾选、
+        间隔和漏极，再用新候选重建，未提交编辑不会丢。候选只来自各分配槽位声明的
+        通道；计划里已有、但当前绑定已解析不到的路由仍保留在列表里，交给校验报告。
+        """
+        if preserve:
+            dut_plan = self.dut_power_plan_editor.read_plan()
+            driver_plan = self.driver_power_plan_editor.read_plan()
+            drain = self.read_drain_channel()
+        else:
+            self._dut_plan_defined = dut_plan is not None
+        dut_routes = self._dut_routes()
+        driver_routes = self._driver_routes()
+        self.dut_power_plan_editor.refresh(dut_routes, plan=dut_plan)
+        self.driver_power_plan_editor.set_active(self._driver_plan_active)
+        self.driver_power_plan_editor.refresh(driver_routes, plan=driver_plan)
+        self._set_drain_routes(self._drain_candidates(dut_routes), drain)
+
+    def rebuild(
+        self,
+        *,
+        sources: PowerSupplySources,
+        preserved_channels: Mapping[str, Any],
+        preserve: bool,
+    ) -> None:
+        """按新电源集合重建标签页，并按需保留操作者尚未保存的计划与漏极。"""
+        dut_plan = self.dut_power_plan_editor.read_plan() if preserve else None
+        driver_plan = self.driver_power_plan_editor.read_plan() if preserve else None
+        drain = self.read_drain_channel() if preserve else None
+        rebuild_power_tabs(self, sources=sources, preserved=preserved_channels)
+        self.refresh_plan_routes(
+            preserve=False,
+            dut_plan=dut_plan,
+            driver_plan=driver_plan,
+            drain=drain,
+        )
+
+    # ---- 回填 ---------------------------------------------------------------
+    def apply_power_plan_config(
+        self, config: Any, *, driver_plan_active: bool | None = None
+    ) -> None:
+        """把一份配置文档的组计划与漏极投影到本组件（绑定变化后仍按文档为准）。
+
+        文档的分配通道集合也在这里同步到槽位候选：载入另一份配置后，计划列表必须按
+        新文档的 ``supplies.<slot>.channel`` 重建，而不是沿用建页时的旧集合。
+        """
+        if driver_plan_active is not None:
+            self._driver_plan_active = bool(driver_plan_active)
+        assignment = config.get("power_supply_assignment") if isinstance(config, Mapping) else {}
+        assignment = assignment if isinstance(assignment, Mapping) else {}
+        self._sync_slot_channels(assignment)
+        dut_plan = _group_plan(assignment, "dut_amplifier")
+        driver_plan = _group_plan(assignment, "driver_amplifier")
+        self._dut_plan_defined = dut_plan is not None
+        dut_routes = _document_routes(config, "dut_amplifier")
+        driver_routes = _document_routes(config, "driver_amplifier")
+        self.dut_power_plan_editor.refresh(dut_routes, plan=dut_plan)
+        self.driver_power_plan_editor.set_active(self._driver_plan_active)
+        self.driver_power_plan_editor.refresh(driver_routes, plan=driver_plan)
+        self._set_drain_routes(
+            self._drain_candidates(dut_routes), _document_drain(config)
+        )
+
+    def _sync_slot_channels(self, assignment: Mapping[str, Any]) -> None:
+        """按编辑段的分配条目更新每个界面槽位声明的通道。"""
+        for slot, group, config_slot in ASSIGNMENT_SLOT_PATHS:
+            block = assignment.get(group)
+            supplies = block.get("supplies") if isinstance(block, Mapping) else None
+            entry = supplies.get(config_slot) if isinstance(supplies, Mapping) else None
+            if isinstance(entry, Mapping):
+                self._slot_channels[slot] = assignment_channels(entry)
+
+    def reset_power_plans(self) -> None:
+        """回到空计划基线；回填投影开始前调用，保证不留上一次的勾选。"""
+        self._dut_plan_defined = False
+        self.dut_power_plan_editor.reset()
+        self.driver_power_plan_editor.reset()
+        self._set_drain_routes((), None)
+
+    # ---- 漏极 ---------------------------------------------------------------
+    def _set_drain_routes(
+        self, routes: Iterable[tuple[str, str]], current: Any
+    ) -> None:
+        current_route = _route(current)
+        combo = self.drain_channel_combo
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem(_UNSET_DRAIN_LABEL, None)
+        known: list[tuple[str, str]] = []
+        for route in routes:
+            if route not in known:
+                known.append(route)
+                combo.addItem(_route_text(route), route)
+        # 文档里显式写了、但已不在当前候选里的漏极仍显示出来，交给正式校验报告；
+        # 静默清空会让一份无效配置看起来像是“用户刚取消了漏极”。
+        if current_route is not None and current_route not in known:
+            combo.addItem(f"{_route_text(current_route)}（无效）", current_route)
+        target = 0
+        for index in range(combo.count()):
+            if _route(combo.itemData(index)) == current_route:
+                target = index
+                break
+        combo.setCurrentIndex(target)
+        combo.blockSignals(False)
+
+    def read_drain_channel(self) -> dict[str, str] | None:
+        combo = getattr(self, "drain_channel_combo", None)
+        if combo is None:
+            return None
+        index_of = getattr(combo, "currentIndex", None)
+        index = index_of() if callable(index_of) else -1
+        item_data = getattr(combo, "itemData", None)
+        data = item_data(index) if callable(item_data) and isinstance(index, int) and index >= 0 else None
+        route = _route(data)
+        return None if route is None else {"supply_id": route[0], "channel": route[1]}
+
+
+def _group_plan(assignment: Mapping[str, Any], group: str) -> Any:
+    block = assignment.get(group)
+    if not isinstance(block, Mapping):
+        return None
+    return block.get("power_plan")
+
+
+def _document_routes(config: Any, group: str) -> tuple[tuple[str, str], ...]:
+    """从配置编辑段读出一组的物理路由（用于回填计划候选）。"""
+    if not isinstance(config, Mapping):
+        return ()
+    assignment = config.get("power_supply_assignment")
+    block = assignment.get(group) if isinstance(assignment, Mapping) else None
+    supplies = block.get("supplies") if isinstance(block, Mapping) else None
+    if not isinstance(supplies, Mapping):
+        return ()
+    routes: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for entry in supplies.values():
+        if not isinstance(entry, Mapping):
+            continue
+        supply_id = entry.get("supply_id")
+        if not isinstance(supply_id, str) or not supply_id.strip():
+            legacy = entry.get("name")
+            supply_id = legacy if isinstance(legacy, str) else ""
+        channels = entry.get("channel")
+        if not isinstance(channels, (list, tuple)):
+            continue
+        for channel in channels:
+            route = _route((supply_id, channel))
+            if route is not None and route not in seen:
+                seen.add(route)
+                routes.append(route)
+    return tuple(routes)
+
+
+def _document_drain(config: Any) -> Any:
+    if not isinstance(config, Mapping):
+        return None
+    dut = config.get("dut_config")
+    return dut.get("drain_channel") if isinstance(dut, Mapping) else None

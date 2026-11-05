@@ -93,6 +93,16 @@ TOKENS = {
     # 左右两半并排时能一眼分开；关闭态改用 disabled_bg，不另造灰色。
     "channel_cool": "#DBEAFE",
     "channel_warm": "#FEF3C7",
+    # 电源通道卡片的圆形电源键：关闭是深灰金属按钮，按下后转青白并带一圈青色辉光。
+    # 图标、描边、内阴影与辉光都从这里取色，绘制分支不另写十六进制。
+    "power_switch_off": "#636363",
+    "power_switch_off_border": "#7E7E7E",
+    "power_switch_icon_off": "#303030",
+    "power_switch_on": "#92B4B8",
+    "power_switch_on_border": "#FFFFFF",
+    "power_switch_icon_on": "#FFFFFF",
+    "power_switch_glow": "#97F3FF",
+    "power_switch_inset": "#020202",
     "danger": "#DC2626",
     "danger_hover": "#B91C1C",
     "danger_pressed": "#991B1B",

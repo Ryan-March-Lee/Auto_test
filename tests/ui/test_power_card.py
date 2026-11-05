@@ -4,9 +4,10 @@
 
 - :class:`PowerCardDataTests`：两个通道、通道顺序、四个值必须是有限非负数；
 - :class:`PowerCardLayoutTests`：440×232 卡面里每个开关和数值框都在自己的通道内，
-  两行两列的顺序是 ``VS / VL`` 再 ``IS / IL``；
+  开关与 ``CH1`` / ``CH2`` 同处一行（开关在左），数值按 ``VS / VL`` 再 ``IS / IL``
+  排成两行两列；
 - :class:`PowerCardRenderTests`：导出的位图与页面控件共用一份绘制，开启/关闭的
-  通道底色、数值框与标题都按状态变化；
+  通道底色、数值框、标题与圆形电源键都按状态变化；
 - :class:`PowerSupplyCardWidgetTests`：开关可点击、可键盘操作、只改卡面状态，
   并且程序化设置与整卡换数据都不会悄悄发信号。
 
@@ -176,7 +177,12 @@ class PowerCardLayoutTests(unittest.TestCase):
             with self.subTest(channel=channel.channel):
                 self.assertTrue(channel.panel.contains(channel.label))
                 self.assertTrue(channel.panel.contains(channel.switch))
-                self.assertLessEqual(channel.label.bottom(), channel.switch.top())
+                self.assertLessEqual(channel.switch.right(), channel.label.left())
+                self.assertEqual(
+                    channel.switch.center().y(),
+                    channel.label.center().y(),
+                    "开关与通道标题必须处在同一行",
+                )
                 for label, box in zip(channel.value_labels, channel.value_boxes):
                     self.assertTrue(channel.panel.contains(label))
                     self.assertTrue(channel.panel.contains(box))
@@ -184,6 +190,9 @@ class PowerCardLayoutTests(unittest.TestCase):
                     self.assertEqual(label.center().y(), box.center().y())
                 self.assertLessEqual(
                     channel.switch.bottom(), channel.value_boxes[0].top()
+                )
+                self.assertLessEqual(
+                    channel.label.bottom(), channel.value_boxes[0].top()
                 )
                 for previous, following in zip(
                     channel.value_boxes[0:2], channel.value_boxes[2:4]
@@ -200,13 +209,20 @@ class PowerCardLayoutTests(unittest.TestCase):
         self.assertLess(labels[0].center().y(), labels[2].center().y())
         self.assertLess(labels[2].center().x(), labels[3].center().x())
 
-    def test_switch_is_centred_in_each_channel(self):
+    def test_switch_and_label_form_one_centred_row(self):
+        """开关在左、标题在右，两者作为一整组在通道里居中。"""
         for channel in power_card_layout().channels:
             with self.subTest(channel=channel.channel):
+                self.assertLess(channel.switch.right(), channel.label.left())
                 self.assertAlmostEqual(
-                    channel.switch.center().x(),
+                    (channel.switch.left() + channel.label.right()) / 2.0,
                     channel.panel.center().x(),
                 )
+                self.assertAlmostEqual(
+                    channel.switch.center().y(),
+                    channel.label.center().y(),
+                )
+                self.assertLessEqual(channel.switch.width(), channel.panel.width() / 3.0)
 
 
 class PowerCardRenderTests(unittest.TestCase):
@@ -310,6 +326,41 @@ class PowerCardRenderTests(unittest.TestCase):
                         0,
                         "数值框里应该画出四位值之一，而不是空框",
                     )
+
+    def test_power_switch_body_follows_the_channel_state(self):
+        """圆形电源键：关闭是深灰金属面，点亮后转青白；采样点避开图标与内阴影。"""
+        layout = power_card_layout()
+        for index, channel in enumerate(layout.channels):
+            with self.subTest(channel=channel.channel):
+                sample = (
+                    channel.switch.center().x(),
+                    channel.switch.center().y() + channel.switch.height() * 0.06,
+                )
+                both_on = _data()
+                one_off = _data(ch1=index != 0, ch2=index != 1)
+                self.assertEqual(
+                    _color_at(render_power_card(both_on), *sample).name(),
+                    TOKENS["power_switch_on"].lower(),
+                )
+                self.assertEqual(
+                    _color_at(render_power_card(one_off), *sample).name(),
+                    TOKENS["power_switch_off"].lower(),
+                )
+
+    def test_lit_switch_emits_a_cyan_halo_outside_the_button(self):
+        layout = power_card_layout()
+        channel = layout.channels[0]
+        sample = (channel.switch.right() + 6.0, channel.switch.center().y())
+
+        lit = _color_at(render_power_card(_data()), *sample)
+        dark = _color_at(render_power_card(_data(ch1=False)), *sample)
+
+        self.assertNotEqual(lit.name(), dark.name(), "点亮后按钮外侧应有辉光")
+        self.assertGreater(
+            lit.green() - lit.red(),
+            dark.green() - dark.red() + 5,
+            "辉光应偏青色，而不是把通道底色整体压暗",
+        )
 
     def test_empty_code_still_draws_a_placeholder(self):
         data = PowerSupplyCardData(code="", channels=_data().channels)

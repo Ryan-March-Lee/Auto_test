@@ -4,13 +4,15 @@
 因此没有牌背。卡面内容自上而下：
 
 - **设备码缩写**：整张卡最上面的一行，等宽加粗字，只写 ``label``（``DP8B1519``）；
-- **两个通道**：左右各一半，标题是 ``CH1`` / ``CH2``，下面是该通道的拨动开关；
+- **两个通道**：左右各一半，每个通道顶部是一行“圆形电源键 + ``CH1`` / ``CH2``”，
+  开关在左、标题在右，两者共用同一条基线；
 - **四个只读值**：每个通道两行两列，``VS``（电压设定）、``VL``（电压保护）、
   ``IS``（电流设定）、``IL``（电流保护），与配置里的
   ``voltage.value`` / ``voltage.protection`` / ``current.value`` /
   ``current.protection`` 一一对应；
 - **通道开关**：关闭时该通道整块降为灰色（``disabled_bg``），数值框、标签与开关
-  一起变灰；打开时恢复通道底色（左浅蓝、右浅琥珀）。
+  一起变灰；打开时恢复通道底色（左浅蓝、右浅琥珀），电源键同时点亮，
+  边框转白、底色转青、图标与四周泛起青色辉光。
 
 数值在本卡上只读：编辑仍走现有表单，卡片只显示一份快照。通道开关目前也只控制
 卡面显示，不改配置模型；页面通过 :attr:`PowerSupplyCard.channel_toggled` 决定之后
@@ -19,14 +21,16 @@
 **卡面与交互共用一份绘制**：:func:`render_power_card` 把同一个
 :func:`_paint_power_card` 画到透明位图上，所以导出的 PNG 预览与页面上的真实卡片
 逐像素同源；开关的悬停、按下与键盘焦点也由这份绘制按状态参数画出来，不看控件
-截图。
+截图。开关的点亮/熄灭由 0–1 的进度值驱动，控件在 500 ms 内插值重绘，导出位图
+则直接取终态。
 
 **尺寸与字体**：卡片固定为 :data:`POWER_CARD_WIDTH` × :data:`POWER_CARD_HEIGHT`
 （440×232，约 1.9:1），圆角取 :data:`presentation.qt.theme.CARD_RADIUS`，与设备
-发现卡片同值；字体系列取自 :func:`presentation.qt.theme.card_code_font` 与
-:func:`presentation.qt.theme.card_caption_font`，只改字号，不再另起一套字体。
+发现卡片同值；圆形电源键的直径按卡片高度取比例（:data:`_SWITCH_DIAMETER`），
+卡片改尺寸时开关跟着缩放。字体系列取自 :func:`presentation.qt.theme.card_code_font`，
+只改字号，不再另起一套字体。
 颜色全部来自 :data:`presentation.qt.theme.TOKENS`，其中包括为两个通道新增的
-``channel_cool`` / ``channel_warm`` 两个浅底色。
+``channel_cool`` / ``channel_warm`` 两个浅底色与 ``power_switch_*`` 一组开关色。
 
 **运行约束**：位图用 ``QPixmap`` 绘制，必须在创建 ``QApplication`` 之后、在 GUI
 线程里调用。卡片控件本身也只在 GUI 线程中使用。
@@ -36,10 +40,19 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, Mapping
 
-from PySide6.QtCore import QRectF, QSize, Qt, Signal
+from PySide6.QtCore import (
+    QEasingCurve,
+    QPointF,
+    QRectF,
+    QSize,
+    Qt,
+    QVariantAnimation,
+    Signal,
+)
 from PySide6.QtGui import (
+    QBrush,
     QColor,
     QFont,
     QFontMetricsF,
@@ -47,13 +60,13 @@ from PySide6.QtGui import (
     QPainterPath,
     QPen,
     QPixmap,
+    QRadialGradient,
 )
 from PySide6.QtWidgets import QAbstractButton, QSizePolicy, QWidget
 
 from .theme import (
     CARD_RADIUS,
     TOKENS,
-    card_caption_font,
     card_code_font,
 )
 
@@ -83,12 +96,13 @@ POWER_CARD_SIZE = QSize(POWER_CARD_WIDTH, POWER_CARD_HEIGHT)
 _TITLE_HEIGHT = 64.0
 _PADDING = 14.0
 _HALF_WIDTH = POWER_CARD_WIDTH / 2.0
-_CHANNEL_LABEL_TOP = 72.0
-_CHANNEL_LABEL_HEIGHT = 14.0
-_SWITCH_TOP = 90.0
-_SWITCH_WIDTH = 112.0
-_SWITCH_HEIGHT = 30.0
+# 圆形电源键：直径按卡片高度取 18%，与参考实现里 70px 按钮 / 约 390px 卡面的比例接近；
+# 卡片尺寸变化时开关跟着缩放，不另写死像素。开关与通道标题同处一行，开关在左。
+_SWITCH_DIAMETER = round(POWER_CARD_HEIGHT * 0.18, 1)
 _GRID_TOP = 130.0
+_SWITCH_CENTER_Y = (_TITLE_HEIGHT + _GRID_TOP) / 2.0
+_SWITCH_LABEL_GAP = 8.0
+_SWITCH_LABEL_WIDTH = 46.0
 _ROW_HEIGHT = 38.0
 _ROW_GAP = 10.0
 _BOX_HEIGHT = 28.0
@@ -107,18 +121,19 @@ _OFF = QColor(TOKENS["disabled_bg"])
 _BORDER = QColor(TOKENS["border"])
 _BORDER_STRONG = QColor(TOKENS["border_strong"])
 _TEXT = QColor(TOKENS["text"])
-_TEXT_SECONDARY = QColor(TOKENS["text_secondary"])
 _TEXT_MUTED = QColor(TOKENS["text_muted"])
 _DISABLED_TEXT = QColor(TOKENS["disabled_text"])
 _PRIMARY = QColor(TOKENS["primary"])
 _WARNING = QColor(TOKENS["warning"])
-_SWITCH_ON = QColor(TOKENS["tooltip_bg"])
-_SWITCH_ON_HOVER = _SWITCH_ON.lighter(125)
-_SWITCH_ON_PRESSED = _SWITCH_ON.darker(120)
-_SWITCH_OFF = _SURFACE
-_SWITCH_OFF_HOVER = _SURFACE_ALT
-_SWITCH_OFF_PRESSED = _BORDER
-_KNOB = _SURFACE
+# 电源键：关闭是深灰金属面，点亮后转青白并向外发光；配色逐项来自 TOKENS。
+_SWITCH_BODY_OFF = QColor(TOKENS["power_switch_off"])
+_SWITCH_BORDER_OFF = QColor(TOKENS["power_switch_off_border"])
+_SWITCH_ICON_OFF = QColor(TOKENS["power_switch_icon_off"])
+_SWITCH_BODY_ON = QColor(TOKENS["power_switch_on"])
+_SWITCH_BORDER_ON = QColor(TOKENS["power_switch_on_border"])
+_SWITCH_ICON_ON = QColor(TOKENS["power_switch_icon_on"])
+_SWITCH_GLOW = QColor(TOKENS["power_switch_glow"])
+_SWITCH_INSET = QColor(TOKENS["power_switch_inset"])
 
 
 # ---- 数据 ------------------------------------------------------------------
@@ -263,7 +278,8 @@ def power_card_layout() -> PowerCardLayout:
     """算出整张卡片的几何；绘制、命中区与测试都读这一份结果。
 
     卡片尺寸固定，因此不需要宽高参数。左右通道按 :data:`CHANNEL_NAMES` 的顺序
-    排列；每个通道的四个值按 ``VS / VL / IS / IL`` 的顺序排成两行两列。
+    排列；每个通道顶部是“开关在左、标题在右”的一行，四个值按 ``VS / VL / IS / IL``
+    的顺序排成两行两列。
     """
     card = QRectF(0.0, 0.0, float(POWER_CARD_WIDTH), float(POWER_CARD_HEIGHT))
     title = QRectF(0.0, 0.0, float(POWER_CARD_WIDTH), _TITLE_HEIGHT)
@@ -276,17 +292,20 @@ def power_card_layout() -> PowerCardLayout:
             _HALF_WIDTH,
             float(POWER_CARD_HEIGHT) - _TITLE_HEIGHT,
         )
-        label = QRectF(
-            left,
-            _CHANNEL_LABEL_TOP,
-            _HALF_WIDTH,
-            _CHANNEL_LABEL_HEIGHT,
-        )
+        # 开关 + 标题当作一整组在通道里居中；标题框只放“小色点 + CH1/CH2”，
+        # 宽度按最宽的三个等宽字预留，绘制时再按实际字宽在框内居中。
+        row_width = _SWITCH_DIAMETER + _SWITCH_LABEL_GAP + _SWITCH_LABEL_WIDTH
         switch = QRectF(
-            left + (_HALF_WIDTH - _SWITCH_WIDTH) / 2.0,
-            _SWITCH_TOP,
-            _SWITCH_WIDTH,
-            _SWITCH_HEIGHT,
+            left + (_HALF_WIDTH - row_width) / 2.0,
+            _SWITCH_CENTER_Y - _SWITCH_DIAMETER / 2.0,
+            _SWITCH_DIAMETER,
+            _SWITCH_DIAMETER,
+        )
+        label = QRectF(
+            switch.right() + _SWITCH_LABEL_GAP,
+            switch.top(),
+            _SWITCH_LABEL_WIDTH,
+            _SWITCH_DIAMETER,
         )
         value_labels: list[QRectF] = []
         value_boxes: list[QRectF] = []
@@ -332,9 +351,9 @@ def _rounded(rect: QRectF, inset: float = 0.0) -> QPainterPath:
 
 
 def _channel_label_font() -> QFont:
-    """通道标题 ``CH1`` / ``CH2``：比设备码小两号，仍用等宽加粗。"""
+    """通道标题 ``CH1`` / ``CH2``：比设备码小一号，仍用等宽加粗。"""
     font = QFont(card_code_font())
-    font.setPointSizeF(9.5)
+    font.setPointSizeF(10.5)
     return font
 
 
@@ -349,13 +368,6 @@ def _value_font() -> QFont:
     """数值本身：12pt 等宽加粗，保证 ``50.00`` 这类五位数也放得下。"""
     font = QFont(card_code_font())
     font.setPointSizeF(12.0)
-    return font
-
-
-def _switch_font() -> QFont:
-    """开关状态文字：与卡片说明同一份无衬线字体，避免中文落在等宽字上。"""
-    font = QFont(card_caption_font())
-    font.setPointSizeF(10.0)
     return font
 
 
@@ -411,7 +423,7 @@ def _paint_channel_label(
     index: int,
     enabled: bool,
 ) -> None:
-    """通道标题：一个小色点 + ``CH1`` / ``CH2``，在通道顶部居中。"""
+    """通道标题：一个小色点 + ``CH1`` / ``CH2``，与开关并排、在标题框内居中。"""
     font = _channel_label_font()
     metrics = QFontMetricsF(font)
     text = layout.channel
@@ -489,80 +501,154 @@ def _paint_value(
     painter.restore()
 
 
+def _mix_color(start: QColor, end: QColor, amount: float) -> QColor:
+    """按 0–1 的比例混合两种颜色；比例越界时夹到端点。"""
+    ratio = min(1.0, max(0.0, float(amount)))
+    return QColor.fromRgbF(
+        start.redF() + (end.redF() - start.redF()) * ratio,
+        start.greenF() + (end.greenF() - start.greenF()) * ratio,
+        start.blueF() + (end.blueF() - start.blueF()) * ratio,
+        start.alphaF() + (end.alphaF() - start.alphaF()) * ratio,
+    )
+
+
+def _with_alpha(color: QColor, alpha: float) -> QColor:
+    """同一颜色换一个 0–1 的透明度，用于逐层叠出辉光与内阴影。"""
+    tinted = QColor(color)
+    tinted.setAlphaF(min(1.0, max(0.0, float(alpha))))
+    return tinted
+
+
+def _draw_power_icon(
+    painter: QPainter,
+    center: QPointF,
+    size: float,
+    pen: QPen,
+) -> None:
+    """画一个电源符号：顶部留口的圆环 + 从缺口伸进圆心的竖线。
+
+    只描边不填充，线宽与尺寸都由调用方按按钮直径算好；离屏环境里不依赖字体，
+    因此和其它卡片图标一样在任何平台都能画出来。
+    """
+    radius = size / 2.0
+    ring = QRectF(center.x() - radius, center.y() - radius, size, size)
+    painter.setBrush(Qt.NoBrush)
+    painter.setPen(pen)
+    painter.drawArc(ring, 120 * 16, 300 * 16)
+    painter.drawLine(
+        QPointF(center.x(), center.y() - radius * 1.32),
+        QPointF(center.x(), center.y() - radius * 0.08),
+    )
+
+
+def _paint_switch_glow(
+    painter: QPainter,
+    rect: QRectF,
+    strength: float,
+) -> None:
+    """按钮外侧的青色辉光：三层径向渐变由近及远淡出。
+
+    参考实现用多条 ``box-shadow`` 叠出 5/40/100px 的光晕；QPainter 里用不同半径、
+    不同透明度的同心径向渐变等效表达，因此不依赖模糊滤镜，离屏渲染也一致。
+    """
+    if strength <= 0.001:
+        return
+    center = rect.center()
+    radius = rect.width() / 2.0
+    painter.save()
+    painter.setPen(Qt.NoPen)
+    for spread, alpha in ((1.5, 0.34), (2.3, 0.16), (3.3, 0.08)):
+        outer = radius * spread
+        edge = radius / outer
+        gradient = QRadialGradient(center, outer)
+        gradient.setColorAt(0.0, _with_alpha(_SWITCH_GLOW, 0.0))
+        gradient.setColorAt(max(0.0, edge - 0.02), _with_alpha(_SWITCH_GLOW, 0.0))
+        gradient.setColorAt(edge, _with_alpha(_SWITCH_GLOW, alpha * strength))
+        gradient.setColorAt(1.0, _with_alpha(_SWITCH_GLOW, 0.0))
+        painter.setBrush(QBrush(gradient))
+        painter.drawEllipse(center, outer, outer)
+    painter.restore()
+
+
 def _paint_switch(
     painter: QPainter,
     rect: QRectF,
-    enabled: bool,
     *,
+    lit: float,
     hovered: bool,
     focused: bool,
     pressed: bool,
 ) -> None:
-    """拨动开关：开启是深色胶囊 + 右侧圆钮，关闭是白底灰边 + 左侧圆钮。
+    """圆形电源键：关闭是深灰金属按钮，点亮后转青白并向外发光。
 
-    开关的悬停、按下与焦点只改变这一块的绘制，不影响卡片其他位置；焦点环画在
-    胶囊外侧，键盘用户能看出当前在哪个通道上。
+    ``lit`` 是 0–1 的点亮进度，由控件在 500 ms 内插值，导出位图直接取 0 / 1；
+    悬停只轻微提亮，按下沿用参考实现的行为——按键瞬间点亮、整体下移一点，
+    焦点环画在按钮外侧，键盘用户能看出当前在哪个通道上。
     """
-    radius = rect.height() / 2.0
+    lit = 1.0 if pressed else min(1.0, max(0.0, float(lit)))
+    if pressed:
+        rect = rect.translated(0.0, rect.height() * 0.05)
+    glow_strength = lit
+    if hovered and lit > 0.0:
+        glow_strength = min(1.0, lit + 0.12)
+
     painter.save()
-    if enabled:
-        fill = _SWITCH_ON_PRESSED if pressed else _SWITCH_ON_HOVER if hovered else _SWITCH_ON
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(fill)
-        painter.drawRoundedRect(rect, radius, radius)
-    else:
-        fill = _SWITCH_OFF_PRESSED if pressed else _SWITCH_OFF_HOVER if hovered else _SWITCH_OFF
-        painter.setPen(QPen(_BORDER_STRONG, 1.0))
-        painter.setBrush(fill)
-        painter.drawRoundedRect(
-            rect.adjusted(0.5, 0.5, -0.5, -0.5),
-            radius - 0.5,
-            radius - 0.5,
-        )
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    _paint_switch_glow(painter, rect, glow_strength)
 
-    knob_size = rect.height() - 8.0
-    knob_y = rect.center().y() - knob_size / 2.0
-    knob_x = (
-        rect.right() - 4.0 - knob_size
-        if enabled
-        else rect.left() + 4.0
-    )
-    knob = QRectF(knob_x, knob_y, knob_size, knob_size)
-    painter.setBrush(_KNOB)
-    painter.setPen(QPen(_BORDER_STRONG, 1.0) if not enabled else Qt.NoPen)
-    painter.drawEllipse(knob)
+    border = max(1.5, rect.width() * 0.05)
+    body = rect.adjusted(border / 2.0, border / 2.0, -border / 2.0, -border / 2.0)
+    body_path = QPainterPath()
+    body_path.addEllipse(body)
 
-    painter.setFont(_switch_font())
-    if enabled:
-        text_rect = QRectF(
-            rect.left() + 10.0,
-            rect.top(),
-            max(0.0, knob.left() - rect.left() - 14.0),
-            rect.height(),
-        )
-        painter.setPen(_SURFACE)
-    else:
-        text_rect = QRectF(
-            knob.right() + 6.0,
-            rect.top(),
-            max(0.0, rect.right() - knob.right() - 12.0),
-            rect.height(),
-        )
-        painter.setPen(_TEXT_SECONDARY)
-    painter.drawText(
-        text_rect,
-        int(Qt.AlignCenter),
-        "开" if enabled else "关",
-    )
+    fill = _mix_color(_SWITCH_BODY_OFF, _SWITCH_BODY_ON, lit)
+    if hovered:
+        fill = fill.lighter(107)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QBrush(fill))
+    painter.drawPath(body_path)
+
+    # 内阴影与内发光都裁在按钮圆形里：关闭时边缘压暗（inset 阴影），
+    # 点亮时边缘泛青（inset 光晕），与参考实现的多层 inset box-shadow 对应。
+    painter.save()
+    painter.setClipPath(body_path)
+    if lit < 0.999:
+        inset = QRadialGradient(body.center(), body.width() / 2.0)
+        inset.setColorAt(0.0, _with_alpha(_SWITCH_INSET, 0.0))
+        inset.setColorAt(0.70, _with_alpha(_SWITCH_INSET, 0.0))
+        inset.setColorAt(1.0, _with_alpha(_SWITCH_INSET, 0.55 * (1.0 - lit)))
+        painter.fillPath(body_path, QBrush(inset))
+    if lit > 0.001:
+        inner = QRadialGradient(body.center(), body.width() / 2.0)
+        inner.setColorAt(0.0, _with_alpha(_SWITCH_GLOW, 0.0))
+        inner.setColorAt(0.52, _with_alpha(_SWITCH_GLOW, 0.0))
+        inner.setColorAt(0.88, _with_alpha(_SWITCH_GLOW, 0.30 * lit))
+        inner.setColorAt(1.0, _with_alpha(_SWITCH_GLOW, 0.62 * lit))
+        painter.fillPath(body_path, QBrush(inner))
+    painter.restore()
+
+    painter.setBrush(Qt.NoBrush)
+    painter.setPen(QPen(_mix_color(_SWITCH_BORDER_OFF, _SWITCH_BORDER_ON, lit), border))
+    painter.drawEllipse(body)
+
+    icon_size = rect.width() * 0.36
+    icon_pen = max(1.4, rect.width() * 0.046)
+    if glow_strength > 0.001:
+        for width_scale, alpha in ((2.4, 0.10), (1.6, 0.24)):
+            halo = QPen(
+                _with_alpha(_SWITCH_GLOW, alpha * glow_strength),
+                icon_pen * width_scale,
+            )
+            halo.setCapStyle(Qt.RoundCap)
+            _draw_power_icon(painter, rect.center(), icon_size, halo)
+    icon = QPen(_mix_color(_SWITCH_ICON_OFF, _SWITCH_ICON_ON, lit), icon_pen)
+    icon.setCapStyle(Qt.RoundCap)
+    _draw_power_icon(painter, rect.center(), icon_size, icon)
 
     if focused:
         painter.setBrush(Qt.NoBrush)
         painter.setPen(QPen(_PRIMARY, 2.0))
-        painter.drawRoundedRect(
-            rect.adjusted(-2.5, -2.5, 2.5, 2.5),
-            radius + 2.5,
-            radius + 2.5,
-        )
+        painter.drawEllipse(rect.adjusted(-3.5, -3.5, 3.5, 3.5))
     painter.restore()
 
 
@@ -573,8 +659,13 @@ def _paint_power_card(
     hover_channel: str | None = None,
     focus_channel: str | None = None,
     pressed_channel: str | None = None,
+    glow: Mapping[str, float] | None = None,
 ) -> None:
-    """把整张卡画到 ``painter`` 上；控件与导出位图共用这一份绘制。"""
+    """把整张卡画到 ``painter`` 上；控件与导出位图共用这一份绘制。
+
+    ``glow`` 是“通道 -> 点亮进度（0–1）”，控件用它播 500 ms 的亮灭过渡；不传时
+    取数据的终态（开 = 1、关 = 0），导出位图因此总是画最终样子。
+    """
     layout = power_card_layout()
     painter.save()
     painter.setRenderHint(QPainter.Antialiasing, True)
@@ -605,6 +696,19 @@ def _paint_power_card(
 
     for index, channel_layout in enumerate(layout.channels):
         channel = data.channels[index]
+        # 先画开关再画文字与数值：按钮的辉光是装饰，数据与标题必须压在最上层，
+        # 否则青色光晕会把数值框和标题一起染色（参考实现里按钮 z-index 高于同级内容）。
+        _paint_switch(
+            painter,
+            channel_layout.switch,
+            lit=(glow or {}).get(
+                channel.channel,
+                1.0 if channel.enabled else 0.0,
+            ),
+            hovered=hover_channel == channel.channel,
+            focused=focus_channel == channel.channel,
+            pressed=pressed_channel == channel.channel,
+        )
         _paint_channel_label(painter, channel_layout, index, channel.enabled)
         values = (
             channel.voltage_set,
@@ -624,14 +728,6 @@ def _paint_power_card(
                 index,
                 channel.enabled,
             )
-        _paint_switch(
-            painter,
-            channel_layout.switch,
-            channel.enabled,
-            hovered=hover_channel == channel.channel,
-            focused=focus_channel == channel.channel,
-            pressed=pressed_channel == channel.channel,
-        )
 
     painter.setBrush(Qt.NoBrush)
     painter.setPen(QPen(_BORDER, 1.0))
@@ -704,7 +800,7 @@ class ChannelSwitch(QAbstractButton):
         self.setAccessibleDescription("切换该通道在卡面上的启用状态")
 
     def sizeHint(self) -> QSize:
-        return QSize(round(_SWITCH_WIDTH), round(_SWITCH_HEIGHT))
+        return QSize(round(_SWITCH_DIAMETER), round(_SWITCH_DIAMETER))
 
     def paintEvent(self, event) -> None:
         # 外观由父卡片统一画；这里只接受事件，不留下任何控件自己的底色。
@@ -756,6 +852,12 @@ class PowerSupplyCard(QWidget):
         self._hover_channel: str | None = None
         self._focus_channel: str | None = None
         self._pressed_channel: str | None = None
+        # 每个通道的点亮进度（0–1）：控件用它播过渡，导出的位图则只取终态。
+        self._glow: dict[str, float] = {
+            name: 1.0 if data.channel(name).enabled else 0.0
+            for name in CHANNEL_NAMES
+        }
+        self._glow_animations: dict[str, QVariantAnimation] = {}
 
         self._switches: dict[str, ChannelSwitch] = {}
         for channel_layout in self._layout.channels:
@@ -808,12 +910,14 @@ class PowerSupplyCard(QWidget):
             raise TypeError(f"data 必须是 PowerSupplyCardData，收到 {data!r}")
         self._data = data
         for channel_layout in self._layout.channels:
-            switch = self._switches[channel_layout.channel]
-            enabled = data.channel(channel_layout.channel).enabled
+            name = channel_layout.channel
+            switch = self._switches[name]
+            enabled = data.channel(name).enabled
             if switch.isChecked() != enabled:
                 switch.blockSignals(True)
                 switch.setChecked(enabled)
                 switch.blockSignals(False)
+            self._settle_glow(name, 1.0 if enabled else 0.0)
         self._update_tooltips()
         self.update()
 
@@ -833,16 +937,50 @@ class PowerSupplyCard(QWidget):
             switch.setChecked(enabled)
             switch.blockSignals(False)
             self._data = self._data.with_channel_enabled(channel, enabled)
+            self._settle_glow(channel, 1.0 if enabled else 0.0)
             self._update_tooltips()
             self.update()
         if emit:
             self.channel_toggled.emit(channel, enabled)
+
+    # ---------- 点亮过渡 ----------
+
+    def _settle_glow(self, channel: str, value: float) -> None:
+        """把某个通道的点亮进度直接定到终态；程序化路径不播过渡动画。"""
+        animation = self._glow_animations.get(channel)
+        if animation is not None:
+            animation.stop()
+        self._glow[channel] = min(1.0, max(0.0, float(value)))
+        self.update()
+
+    def _animate_glow(self, channel: str, enabled: bool) -> None:
+        """用户拨动后播放 500 ms 的点亮/熄灭，与参考实现的 ``transition`` 同长。"""
+        animation = self._glow_animations.get(channel)
+        if animation is None:
+            animation = QVariantAnimation(self)
+            animation.setDuration(500)
+            animation.setEasingCurve(QEasingCurve.InOutQuad)
+            animation.valueChanged.connect(
+                lambda value, name=channel: self._on_glow_changed(name, value)
+            )
+            self._glow_animations[channel] = animation
+        animation.stop()
+        # 按下时按钮已经点亮（参考实现的 :active 状态），所以从 1 开始：
+        # 打开时不会先灭再亮，关闭时才走完整的 1 → 0 过渡。
+        animation.setStartValue(1.0)
+        animation.setEndValue(1.0 if enabled else 0.0)
+        animation.start()
+
+    def _on_glow_changed(self, channel: str, value: Any) -> None:
+        self._glow[channel] = min(1.0, max(0.0, float(value)))
+        self.update()
 
     # ---------- 开关事件 ----------
 
     def _on_switch_toggled(self, channel: str, enabled: bool) -> None:
         """用户拨动开关：只更新卡面快照，不写配置、不连硬件。"""
         self._data = self._data.with_channel_enabled(channel, bool(enabled))
+        self._animate_glow(channel, bool(enabled))
         self._update_tooltips()
         self.update()
         self.channel_toggled.emit(channel, bool(enabled))
@@ -896,6 +1034,7 @@ class PowerSupplyCard(QWidget):
                 hover_channel=self._hover_channel,
                 focus_channel=self._focus_channel,
                 pressed_channel=self._pressed_channel,
+                glow=self._glow,
             )
         finally:
             painter.end()

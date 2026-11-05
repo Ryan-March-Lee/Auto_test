@@ -113,6 +113,7 @@ CONFIGURATION_BUSINESS_IMPORT_BASELINE = {
 REGISTERED_PAGE_MODULES = frozenset(
     {
         "configuration_page",
+        "power_configuration_page",
         "instrument_setup_page",
         "cable_loss_page",
         "driver_mapping_page",
@@ -146,6 +147,7 @@ PAGE_CONTEXT_FIELDS = (
     "amplifier_realtime_data_callback",
     "clear_realtime_callback",
     "build_configuration",
+    "build_power_configuration",
     "build_visualization",
     "build_run_history",
 )

@@ -26,6 +26,7 @@ from presentation.qt.application_coordinator import (
     close_instrument_port,
     describe_cleanup_errors,
 )
+from presentation.qt.config_projection import ConfigBackfillError
 from presentation.qt.measurement_state import MeasurementKind, MeasurementStatus
 
 RUN_ID = "20261027T101500Z_c0ffee01"
@@ -846,6 +847,52 @@ class ConfigurationPagePortTests(unittest.TestCase):
 
         self.assertEqual(built, {"test_frequencies": [2.4]})
         self.assertIs(page.bases[-1], coordinator.config)
+
+    def test_building_configuration_merges_the_power_fragment_after_the_parameter_page(self):
+        page = _Page()
+        power = _Page()
+
+        def build_power_fragment(base=None):
+            power.bases.append(base)
+            return {**dict(base or {}), "power_fragment": True}
+
+        power.build_config = build_power_fragment
+        coordinator = _coordinator(page=page)
+        coordinator.bind_power_page(power)
+        coordinator.config = {"test_frequencies": [2.4]}
+
+        built = coordinator.build_configuration_from_ui()
+
+        self.assertEqual(
+            built, {"test_frequencies": [2.4], "power_fragment": True}
+        )
+        self.assertIs(page.bases[-1], coordinator.config)
+        self.assertEqual(power.bases[-1], {"test_frequencies": [2.4]})
+
+    def test_validate_configuration_requires_both_pages(self):
+        page = _Page(valid=True)
+        power = _Page(valid=False)
+        coordinator = _coordinator(page=page)
+        coordinator.bind_power_page(power)
+        coordinator.update_configuration_from_ui = MagicMock()
+
+        self.assertFalse(coordinator.validate_configuration())
+        coordinator.update_configuration_from_ui.assert_called_once_with()
+
+    def test_run_configuration_backfill_rolls_back_both_pages_on_failure(self):
+        page = _Page()
+        power = _Page(apply_error=ConfigBackfillError("电源页回填失败"))
+        coordinator = _coordinator(page=page)
+        coordinator.bind_power_page(power)
+        prepared = SimpleNamespace(hardware_config={"test_frequencies": [1.0]})
+
+        self.assertFalse(coordinator.apply_run_configuration(prepared))
+
+        # 参数页先回填了新配置，随后电源页失败：参数页必须回到调用前的读数。
+        self.assertEqual(
+            page.applied, [{"test_frequencies": [1.0]}, {}]
+        )
+        self.assertEqual(coordinator.config, {})
 
     def test_driver_mode_uses_the_page_port_not_widgets(self):
         page = _Page(driver_mode=True)

@@ -81,6 +81,7 @@ __all__ = [
     "OFFICIAL_SCHEMA_VERSION",
     "author_official_configuration",
     "has_editing_section",
+    "is_power_validation_issue",
     "parse_db_value",
 ]
 
@@ -110,6 +111,39 @@ _CODE_POWER_PLAN = "configuration.power_plan"
 _CODE_POWER_ASSIGNMENT_REFERENCES = "configuration.power_assignment_references"
 _CODE_RUN_VALIDATION = "configuration.run_validation"
 _CODE_HARDWARE_CONNECTIONS = "configuration.hardware_connections"
+# 独立电源页负责的正式校验路径（domain 在 ``path`` 上区分问题位置）。
+# 页面归属按“电源字段”划分：同一个问题只由一个页面报告，测试参数/设备连接的故障
+# 不会以“电源配置校验失败”的名义出现，也不会在参数页重复报告电源问题。
+_POWER_ISSUE_PATH_PREFIXES = (
+    "power_supply_assignment",
+    "instruments.power_supplies",
+    "run_mapping.power_supplies",
+    "run_mapping.instruments.power_supplies",
+    "run_mapping.dut_power_plan",
+    "run_mapping.driver_mode.power_plan",
+    "run_mapping.driver_mode.power_source",
+    "test_plan.dut.drain_channel",
+    "test_plan.dut.channel_settings",
+    "test_plan.dut.power_channels",
+    "test_plan.driver_mode.channel_settings",
+    "test_plan.driver_mode.power_plan",
+    "test_plan.driver_mode.power_source",
+)
+
+
+def is_power_validation_issue(issue: ValidationIssue) -> bool:
+    """这条正式校验问题是否归独立电源页负责。
+
+    判据只有两个来源：问题来源码（上电计划/供电分配引用）与 domain 给出的路径前缀。
+    路径前缀覆盖运行校验与硬件连接校验里的电源段；其余问题归参数页。
+    """
+    if issue.code in (_CODE_POWER_PLAN, _CODE_POWER_ASSIGNMENT_REFERENCES):
+        return True
+    path = issue.path or ""
+    for prefix in _POWER_ISSUE_PATH_PREFIXES:
+        if path == prefix or path.startswith(prefix + ".") or path.startswith(prefix + "["):
+            return True
+    return False
 
 
 class ConfigurationAuthoringError(ConfigurationError):
@@ -293,6 +327,33 @@ class ConfigurationAuthoringService:
             for issue in (*connection_issues.errors, *connection_issues.warnings)
         )
         return ValidationResult(issues=issues)
+
+    def validate_power_document(
+        self, document: ConfigurationEditingDocument
+    ) -> ValidationResult:
+        """只返回独立电源页负责的正式校验问题。
+
+        电源页展示的必须只是它自己的字段（通道参数、供电分配、上电计划、漏极与
+        驱动供电方式）；整份配置的其余问题归参数页。这样两个页面各报自己的一段，
+        合起来仍是完整校验，不会把“测试频率非法”写成“电源配置校验失败”。
+        """
+        result = self.validate_document(document)
+        return ValidationResult(
+            issues=tuple(
+                issue for issue in result.issues if is_power_validation_issue(issue)
+            )
+        )
+
+    def validate_parameter_document(
+        self, document: ConfigurationEditingDocument
+    ) -> ValidationResult:
+        """只返回参数页负责的正式校验问题（完整校验去掉电源段）。"""
+        result = self.validate_document(document)
+        return ValidationResult(
+            issues=tuple(
+                issue for issue in result.issues if not is_power_validation_issue(issue)
+            )
+        )
 
 
 def author_official_configuration(

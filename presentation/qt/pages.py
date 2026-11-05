@@ -165,6 +165,7 @@ class PageContext:
     amplifier_realtime_data_callback: Callable[[Any], Any]
     clear_realtime_callback: Callable[[], Any]
     build_configuration: Callable[[], Any]
+    build_power_configuration: Callable[[], Any]
     build_visualization: Callable[[], Any]
     build_run_history: Callable[[], Any]
 
@@ -187,6 +188,13 @@ def _page_forwarder(callback: Any) -> Any:
     if callback is None:
         return None
     return lambda *args, **kwargs: callback(*args, **kwargs)
+
+
+def _build_power_configuration_page(context: PageContext) -> Any:
+    """独立电源配置页：电源参数、供电分配、上电计划与漏极。"""
+    page = context.build_power_configuration()
+    page.bind_controller(context.controller)
+    return page
 
 
 def _build_cable_loss_page(context: PageContext) -> Any:
@@ -249,6 +257,7 @@ def _build_amplifier_page(context: PageContext) -> Any:
 
 PAGE_DEFINITIONS = (
     PageDefinition("configuration", "仪器配置", lambda context: context.build_configuration()),
+    PageDefinition("power_configuration", "电源配置", _build_power_configuration_page),
     PageDefinition("cable_loss", "线损测量", _build_cable_loss_page),
     PageDefinition("driver_mapping", "驱动映射", _build_driver_mapping_page),
     PageDefinition("amplifier", "功放测试", _build_amplifier_page),

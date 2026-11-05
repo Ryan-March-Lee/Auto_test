@@ -443,7 +443,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         # 创建运行需要驱放模式打开（页面只在驱放模式下提交驱动功放分配）。
         window._enter_test_mode(True)
         # 分配下拉框是用户操作面：按数据（``itemData``）选中另一台电源给驱动功放。
-        driver_combo = window.config_page.driver_power_combo
+        driver_combo = window.power_page.driver_power_combo
         driver_combo.setCurrentIndex(driver_combo.findData("DP8B0885"))
         prepared = self._prepare_and_commit(window)
 
@@ -473,9 +473,9 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         window = self._window()
         window._enter_test_mode(False)
 
-        self.assertTrue(window.config_page.power_assignment_group.isHidden())
+        self.assertTrue(window.power_page.power_assignment_group.isHidden())
         self.assertFalse(
-            window.config_page.build_config()["power_supply_assignment"][
+            window.power_page.build_config()["power_supply_assignment"][
                 "driver_amplifier"
             ]["power_supply_count"]
         )
@@ -490,12 +490,12 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
 
         window._enter_test_mode(True)
 
-        self.assertFalse(window.config_page.power_assignment_group.isHidden())
+        self.assertFalse(window.power_page.power_assignment_group.isHidden())
         # 现场配置里没有本机驱动供电通道：按自带供电推断，不占用本机电源。
         self.assertEqual(
-            window.config_page.driver_power_source_combo.currentText(), "自带供电"
+            window.power_page.driver_power_source_combo.currentText(), "自带供电"
         )
-        self.assertFalse(window.config_page.driver_power_hint.isHidden())
+        self.assertFalse(window.power_page.driver_power_hint.isHidden())
         self.assertIn(
             "驱动功放", window.amplifier_page.instruction_text.toPlainText()
         )
@@ -569,6 +569,173 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIn("test_plan", saved)
         self.assertIn("run_mapping", saved)
         self.assertIn("test_plan", window.config)
+
+    def test_power_configuration_page_is_a_tab_in_the_shared_editor(self):
+        self._silence_dialogs()
+        window = self._window()
+
+        self.assertIs(window.power_page, window.pages["power_configuration"])
+        self.assertIn("电源配置", [
+            window.tab_widget.tabText(index)
+            for index in range(window.tab_widget.count())
+        ])
+        self.assertEqual(
+            window.configuration_editor.pages(),
+            [window.config_page, window.power_page],
+        )
+
+    def test_unsaved_power_edit_survives_tab_switching_and_saves_once(self):
+        """两页往返不丢未保存修改；一次保存把整份草稿写入同一文件。"""
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+        channel = window.power_page.power_config_widgets["DP8B1519"]["channels"]["CH1"]
+        channel["voltage"].setValue(7.5)
+        self.assertTrue(window.configuration_editor.is_dirty())
+
+        window.tab_widget.setCurrentIndex(
+            window.tab_widget.indexOf(window.power_page)
+        )
+        self.app.processEvents()
+        window.tab_widget.setCurrentIndex(
+            window.tab_widget.indexOf(window.config_page)
+        )
+        self.app.processEvents()
+        self.assertEqual(
+            window.power_page.power_config_widgets["DP8B1519"]["channels"]["CH1"][
+                "voltage"
+            ].value(),
+            7.5,
+        )
+
+        window.save_config()
+
+        saved = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            saved["instruments"]["power_supplies"]["DP8B1519"]["channels"]["CH1"][
+                "voltage"
+            ]["value"],
+            7.5,
+        )
+        self.assertFalse(window.configuration_editor.is_dirty())
+
+    def test_applying_devices_refreshes_the_power_page_options(self):
+        from application.device_binding import ApplyDeviceSelectionRequest
+
+        self._silence_dialogs()
+        window = self._window()
+
+        result = window.config_page.apply_device_selection(
+            ApplyDeviceSelectionRequest.from_assignments(
+                [
+                    {
+                        "role": "power_supply",
+                        "supply_id": "DP8B0885",
+                        "address": "TCPIP0::192.168.1.108::inst0::INSTR",
+                        "vendor": "RIGOL TECHNOLOGIES",
+                        "model": "DP832A",
+                        "full_code": "DP8B174400885",
+                        "device_key": "rigol technologies:dp8b174400885",
+                    }
+                ]
+            )
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            window.power_page.get_enabled_power_supplies(), ["DP8B0885"]
+        )
+        self.assertIn("DP8B0885", window.power_page.power_config_widgets)
+
+    def test_rebinding_power_supplies_keeps_unsaved_power_edits(self):
+        """绑定回写是派生刷新：仍有效的未保存通道/计划/漏极编辑必须保留。"""
+        from application.device_binding import ApplyDeviceSelectionRequest
+
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+        power = window.power_page
+        power.power_config_widgets["DP8B1519"]["channels"]["CH1"]["voltage"].setValue(
+            7.5
+        )
+        power.power_config_widgets["DP8B1519"]["channels"]["CH1"][
+            "current_protection_enabled"
+        ].setChecked(True)
+        power.dut_power_plan_editor.delay_spin.setValue(1.5)
+        expected_plan = power.dut_power_plan_editor.read_plan()
+        expected_drain = power.read_drain_channel()
+        self.assertTrue(window.configuration_editor.is_dirty())
+
+        window.config_page.apply_device_selection(
+            ApplyDeviceSelectionRequest.from_assignments(
+                [
+                    {
+                        "role": "power_supply",
+                        "supply_id": "DP8B1519",
+                        "address": "TCPIP0::192.168.1.102::inst0::INSTR",
+                        "vendor": "RIGOL TECHNOLOGIES",
+                        "model": "DP832A",
+                        "full_code": "DP8B214901519",
+                        "device_key": "rigol technologies:dp8b214901519",
+                    },
+                    {
+                        "role": "power_supply",
+                        "supply_id": "DP8B0885",
+                        "address": "TCPIP0::192.168.1.108::inst0::INSTR",
+                        "vendor": "RIGOL TECHNOLOGIES",
+                        "model": "DP832A",
+                        "full_code": "DP8B174400885",
+                        "device_key": "rigol technologies:dp8b174400885",
+                    },
+                ]
+            )
+        )
+
+        channel = power.power_config_widgets["DP8B1519"]["channels"]["CH1"]
+        self.assertEqual(channel["voltage"].value(), 7.5)
+        self.assertTrue(channel["current_protection_enabled"].isChecked())
+        self.assertEqual(power.dut_power_plan_editor.read_plan(), expected_plan)
+        self.assertEqual(power.read_drain_channel(), expected_drain)
+        self.assertEqual(
+            power.get_enabled_power_supplies(), ["DP8B1519", "DP8B0885"]
+        )
+
+        # 旧电源失去绑定：未提交的编辑仍留在页面上，引用保持空选择并交给校验报告。
+        window.config_page.apply_device_selection(
+            ApplyDeviceSelectionRequest.from_assignments(
+                [
+                    {
+                        "role": "power_supply",
+                        "supply_id": "DP8B0885",
+                        "address": "TCPIP0::192.168.1.108::inst0::INSTR",
+                        "vendor": "RIGOL TECHNOLOGIES",
+                        "model": "DP832A",
+                        "full_code": "DP8B174400885",
+                        "device_key": "rigol technologies:dp8b174400885",
+                    }
+                ]
+            )
+        )
+        channel = power.power_config_widgets["DP8B1519"]["channels"]["CH1"]
+        self.assertEqual(channel["voltage"].value(), 7.5)
+        self.assertEqual(power.pa_unit1_power_combo.currentIndex(), -1)
+        failures = []
+        power.validation_failed.connect(failures.append)
+
+        self.assertFalse(power.validate())
+        self.assertIn("未选择电源", "；".join(failures))
+
+    def test_driver_mode_switch_updates_both_configuration_pages(self):
+        self._silence_dialogs()
+        window = self._window()
+
+        window._enter_test_mode(False)
+        self.assertFalse(window.config_page.driver_mode_requested())
+        self.assertTrue(window.power_page.power_assignment_group.isHidden())
+
+        window._enter_test_mode(True)
+        self.assertTrue(window.config_page.driver_mode_requested())
+        self.assertFalse(window.power_page.power_assignment_group.isHidden())
 
     def test_create_run_freezes_the_run_and_updates_the_page(self):
         self._silence_dialogs()

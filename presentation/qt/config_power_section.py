@@ -165,7 +165,8 @@ def power_choice_combo(choices: PowerSupplyChoices, entry: Any):
     （``supply_id: null``）时保持空选择，不能按缺省规则补一台。判定与整份配置回填
     共用 :func:`presentation.qt.config_projection.apply_power_choice`，所有槽位
     （含驱动功放）用同一条缺省规则；驱动功放是否启用由
-    :meth:`ConfigurationPage.update_driver_power_ui` 按驱放模式与供电方式决定。
+    :meth:`presentation.qt.power_configuration_page.PowerConfigurationPage.update_driver_power_ui`
+    按驱放模式与供电方式决定。
     """
     combo = combo_box()
     apply_power_choice(combo, entry, choices)
@@ -264,7 +265,7 @@ def rebuild_power_tabs(
     也按**电源键**恢复：某台电源被移除或新增时，操作者仍然停在原来那台设备上。
     ``preserved`` 为空是回填路径，以新配置为准，不沿用重建前的残留值。
 
-    页面入口已经确认电源分区存在（``ConfigurationPage._rebuild_power_tabs``），因此这里直接
+    页面入口已经确认电源分区存在（``PowerConfigurationPage._rebuild_power_tabs``），因此这里直接
     使用 ``page.power_tabs``：分区不存在属于调用方的编程错误，不静默返回。
     """
     tabs = page.power_tabs

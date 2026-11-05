@@ -4,9 +4,10 @@
 连接以及端口清理都在这里完成。
 
 协调器是 **Qt 表现层** 组件，但不接触任何具体控件：它只通过
-:class:`ConfigurationPagePort` 这个窄接口（校验、组装、回填、运行状态、驱动模式）
-与配置页交互，并通过注入的日志/告警/错误回调与窗口交互。这样它既不需要
-知道控件名字，也可以用纯 Python 替身单独测试。
+:class:`ConfigurationPagePort` 与 :class:`PowerConfigurationPagePort` 两个窄接口
+（校验、组装、回填、运行状态、驱动模式）与两个配置页交互，并通过注入的日志/告警/
+错误回调与窗口交互。这样它既不需要知道控件名字，也可以用纯 Python 替身单独测试。
+两页的片段在本层合并成唯一编辑草稿：参数页先写，独立电源页只覆盖自己负责的电源字段。
 
 归属（见 `docs/配置领域词汇与模块归属.md`）：presentation controller。它持有呈现层配置状态并
 编排 application 用例（配置保存、运行创建/加载、仪器端口生命周期），不读控件、不定义业务规则；
@@ -36,6 +37,7 @@ from domain.run.models import normalize_artifact_path
 
 from .composition import build_gui_data_service, default_paths
 from .config_projection import ConfigBackfillError
+from .configuration_editor import apply_config_to_pages
 from .measurement_controller import MeasurementController
 from .measurement_state import MeasurementKind, MeasurementStatus
 from .measurement_worker_factories import build_measurement_worker_factories
@@ -56,6 +58,12 @@ _CONFIG_PAGE_MEMBERS = (
     "apply_config",
     "set_run_status",
     "driver_mode_requested",
+)
+
+_POWER_PAGE_MEMBERS = (
+    "validate",
+    "build_config",
+    "apply_config",
 )
 
 
@@ -99,6 +107,24 @@ class ConfigurationPagePort(Protocol):
 
     def driver_mode_requested(self) -> bool:
         """返回用户当前选择的驱动功放模式。"""
+
+
+@runtime_checkable
+class PowerConfigurationPagePort(Protocol):
+    """独立电源页向协调器提供的窄接口。
+
+    页面只提交/接收电源片段；整份编辑文档仍由协调器合并并保存，页面不持有
+    另一页的实例，也不拥有自己的保存文件。
+    """
+
+    def validate(self) -> bool:
+        """校验电源片段；返回是否可以通过。"""
+
+    def build_config(self, base: Any = None) -> dict[str, Any]:
+        """把电源片段合并进 ``base`` 编辑文档并返回。"""
+
+    def apply_config(self, config: dict[str, Any]) -> None:
+        """把编辑文档里的电源字段回填到控件；失败时抛出 ``ConfigBackfillError``。"""
 
 
 def close_instrument_port(port: Any) -> tuple[BaseException, ...]:
@@ -215,6 +241,7 @@ class ApplicationCoordinator:
         self._error = error
         self._instrument_worker_factory = instrument_worker_factory
         self.config_page: ConfigurationPagePort | None = None
+        self.power_page: PowerConfigurationPagePort | None = None
         self.config: dict[str, Any] = {}
         self.prepared_run: Any = None
         self.instrument_ctrl: Any = None
@@ -281,6 +308,15 @@ class ApplicationCoordinator:
         self.config_page = page
         self.run_status_changed(self.run_status_text())
 
+    def bind_power_page(self, page: Any) -> None:
+        """登记独立电源页；片段由协调器合并进唯一的编辑草稿。"""
+        missing = [
+            name for name in _POWER_PAGE_MEMBERS if not callable(getattr(page, name, None))
+        ]
+        if missing:
+            raise TypeError("电源配置页缺少协调器所需能力: " + ", ".join(missing))
+        self.power_page = page
+
     def _require_config_page(self) -> ConfigurationPagePort:
         page = self.config_page
         if page is None:
@@ -299,9 +335,38 @@ class ApplicationCoordinator:
         return self.config
 
     def build_configuration_from_ui(self) -> dict[str, Any]:
-        """按配置页当前控件值组装完整配置；自身配置是唯一组装基线。"""
+        """合并两页的片段：参数页先写，电源页只覆盖自己负责的字段。
+
+        顺序固定为“参数页 → 电源页”：参数页拥有测试参数、PA 单元数量与设备连接，
+        电源页只把 ``instruments.power_supplies``、``power_supply_assignment``、
+        ``dut_config.drain_channel`` 与 ``driver_mode.power_source`` 合并进来，因此
+        两页尚未保存的编辑都不会被对方整段覆盖。
+        """
         page = self._require_config_page()
-        return page.build_config(self.config)
+        config = page.build_config(self.config)
+        power = self.power_page
+        if power is not None:
+            config = power.build_config(config)
+        return config
+
+    def validate_configuration(self) -> bool:
+        """统一校验两页；最终动作只在这里放行。
+
+        先把两页当前读数合成唯一草稿（并回推两页），再让各页校验自己负责的字段：
+        参数页看测试参数、绑定与非电源部分的正式校验，电源页只看电源字段的问题。
+        两页结果合起来仍是完整正式校验，因此最终动作不会放行一份有问题的配置；同时
+        各自的问题只出现在自己的页面上，不会互相误报。
+        """
+        page = self.config_page
+        if page is None:
+            return False
+        self.update_configuration_from_ui()
+        if not page.validate():
+            return False
+        power = self.power_page
+        if power is not None and not power.validate():
+            return False
+        return True
 
     def update_configuration_from_ui(self) -> dict[str, Any]:
         """用当前控件值替换协调器持有的配置副本。"""
@@ -310,15 +375,15 @@ class ApplicationCoordinator:
         return self.config
 
     def _push_config_to_page(self) -> None:
-        """让配置页持有与协调器相同的配置副本。
+        """让两页持有与协调器相同的配置副本。
 
-        ``config`` 不在 :class:`ConfigurationPagePort` 的能力清单里（它会让
-        ``runtime_checkable`` 协议退化为数据协议），但页面组装与保存都以它作为基线，
-        因此协调器写完配置后仍要同步这一份副本。
+        ``config`` 不在两个页面协议的能力清单里（它会让 ``runtime_checkable`` 协议
+        退化为数据协议），但页面组装与保存都以它作为基线，因此协调器写完配置后仍要
+        同步这一份副本。两页共享同一份编辑草稿，页面之间不互相持有实例。
         """
-        page = self.config_page
-        if page is not None:
-            page.config = self.config
+        for page in (self.config_page, self.power_page):
+            if page is not None:
+                page.config = self.config
 
     def save_configuration(self) -> bool:
         """把当前配置写为正式配置；失败时保留 :attr:`last_save_error`。
@@ -447,7 +512,7 @@ class ApplicationCoordinator:
             )
             return None
         page = self.config_page
-        if page is None or not page.validate():
+        if page is None or not self.validate_configuration():
             self._log("配置校验失败：未保存配置，也未创建运行")
             return None
         if not self._save_configuration_for_finalize():
@@ -471,9 +536,10 @@ class ApplicationCoordinator:
             self._log(f"配置保存失败: {self.last_save_error}")
             self._warn("最终化失败", f"配置保存失败: {self.last_save_error}")
             return False
-        mark_clean = getattr(self.config_page, "mark_clean", None)
-        if callable(mark_clean):
-            mark_clean()
+        for page in (self.config_page, self.power_page):
+            mark_clean = getattr(page, "mark_clean", None)
+            if callable(mark_clean):
+                mark_clean()
         return True
 
     def _release_previous_port_for_finalize(self) -> bool:
@@ -728,7 +794,8 @@ class ApplicationCoordinator:
             self._log("配置页不支持回填冻结配置；配置页未回填")
             return False
         try:
-            applier(config)
+            # 两页共享一份草稿：任一页回填失败时一起回滚，不留下半新半旧的界面。
+            apply_config_to_pages([page, self.power_page], config, log=self._log)
         except ConfigBackfillError as failure:
             self._log(f"冻结配置同步到配置页失败: {failure}")
             return False

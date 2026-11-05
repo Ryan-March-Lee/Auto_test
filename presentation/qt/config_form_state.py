@@ -52,6 +52,57 @@ def _dict_copy(value: Any) -> dict:
     return copy.deepcopy(value) if isinstance(value, dict) else {}
 
 
+def _formal_validation_errors(
+    document: Mapping[str, Any], *, scope: str = "all"
+) -> list[str]:
+    """在应用边界编写并校验一份编辑文档，返回用户可见的错误消息。
+
+    编写与正式校验都在 application 边界完成（GUI 重构步骤 4）：页面只把当前读数
+    包成配置编辑 DTO 并展示消息，不导入 domain 的正式模型或校验函数。只把
+    :class:`ConfigurationError` 转成页面错误；其它异常是程序缺陷，不能被改写成
+    “配置有问题”的提示而掩盖掉。
+
+    ``scope`` 决定页面归属：``"parameters"`` 只返回非电源问题，``"power"`` 只返回
+    独立电源页负责的问题，两页合起来仍是完整校验；``"all"`` 保留整份结果。
+    """
+    from application.configuration_authoring import (
+        ConfigurationAuthoringService,
+        ConfigurationEditingDocument,
+    )
+
+    service = ConfigurationAuthoringService()
+    editing = ConfigurationEditingDocument.from_mapping(document)
+    try:
+        if scope == "power":
+            result = service.validate_power_document(editing)
+        elif scope == "parameters":
+            result = service.validate_parameter_document(editing)
+        else:
+            result = service.validate_document(editing)
+    except ConfigurationError as failure:
+        return [f"无法按当前配置生成正式运行映射: {failure}"]
+    return [issue.message for issue in result.errors]
+
+
+def strip_channel_roles(supplies: Any) -> None:
+    """原地删除电源通道里的旧 ``role`` 字段（1.1 编辑段不再包含它）。
+
+    电源参数已拆到独立页，但参数页组装文档时仍会带上基线里的旧字段；两条写入路径
+    都调用这里，保证保存出的文档不因页面上没有对应控件而把 1.0 角色写回去。
+    """
+    if not isinstance(supplies, Mapping):
+        return
+    for supply in supplies.values():
+        if not isinstance(supply, dict):
+            continue
+        channels = supply.get("channels")
+        if not isinstance(channels, dict):
+            continue
+        for channel in channels.values():
+            if isinstance(channel, dict):
+                channel.pop("role", None)
+
+
 def assignment_declared(entry: Any) -> bool:
     """配置里是否存在这条供电分配（与它是否指向一台已绑定电源无关）。
 
@@ -178,44 +229,26 @@ class ConfigFormState:
         return widget.currentText()
 
     def validation_errors(self) -> list[str]:
+        """参数页要显示的用户错误：只报本页负责的字段。
+
+        整份配置的正式校验按页面归属拆开：本页只展示测试参数、设备连接等非电源问题；
+        供电分配引用、上电计划、通道与漏极的问题由独立电源页展示。两页合起来仍是
+        完整校验，因此最终动作不需要第二份校验入口，也不会把电源故障写进本页。
+        """
         errors = []
         if parse_frequency_text(self._text(self.widgets.freq_edit)) is None:
             errors.append("测试频率必须是非空数字列表")
-        errors.extend(self._formal_run_errors())
+        errors.extend(
+            _formal_validation_errors(self.build_config(), scope="parameters")
+        )
         return errors
 
-    def _formal_run_errors(self) -> list[str]:
-        """按当前控件组装出的正式配置必须能通过正式运行校验。
+    def formal_validation_errors(self) -> list[str]:
+        """按整张表单做正式校验（含设备连接与电源段）。
 
-        界面自己的检查只看“选了没有、绑定了没有”；真正决定能否连接仪器的是正式
-        ``test_plan`` / ``run_mapping``（多电源的地址重复、同一物理通道重复、供电角色
-        冲突等规则都在那里，见步骤 11）。这里调用应用边界的同一套编写与校验，让这些失败
-        在点击“开始”之前、并出现在创建运行的那一条提示里。
-
-        校验对象是页面此刻的读数（:meth:`build_config`）：协调器持有的配置副本可能还带着
-        页面已经放弃的旧段（例如关闭驱放前保存的驱动分配），按它报错会让刚做对的界面无法
-        开始。绑定写出的地址也在这份读数里，所以“两台电源抢同一个地址”同样在这里被拦住。
-
-        只把 :class:`ConfigurationError` 转成页面错误：那是配置作者对当前读数的判断。
-        其它异常是程序缺陷，不能被改写成“配置有问题”的提示而掩盖掉，让它照常抛给上层。
+        参数页不再调用它；保留为共享实现，供电源页与单独校验表单状态的测试使用。
         """
-        # 编写与正式校验都在 application 边界完成（GUI 重构步骤 4）：页面只把当前读数
-        # 包成配置编辑 DTO 并展示消息，不导入 domain 的正式模型或校验函数。供电角色与
-        # 分配引用的判据也由 domain 定义并由应用边界编排（步骤 13），页面不再保留副本。
-        from application.configuration_authoring import (
-            ConfigurationAuthoringService,
-            ConfigurationEditingDocument,
-        )
-
-        try:
-            result = ConfigurationAuthoringService().validate_document(
-                ConfigurationEditingDocument.from_mapping(self.build_config())
-            )
-        except ConfigurationError as failure:
-            # 配置作者对“现在的配置写不成正式映射”给出的判断（未绑定的分配、缺少身份字段
-            # 等），是用户要改的内容，转成页面错误。
-            return [f"无法按当前配置生成正式运行映射: {failure}"]
-        return [issue.message for issue in result.errors]
+        return _formal_validation_errors(self.build_config())
 
     def read_instrument_config(self) -> dict:
         """按设备发现结果写出仪器连接信息。
@@ -286,10 +319,20 @@ class ConfigFormState:
         if not enabled:
             return {"enabled": False}
         source_widget = getattr(w, "driver_power_source_combo", None)
-        label = self._current(source_widget) if source_widget is not None else "直流电源"
+        if source_widget is not None:
+            label = self._current(source_widget)
+            return {
+                "enabled": True,
+                "power_source": {"自带供电": "external_ac"}.get(label, "dc_supply"),
+            }
+        # 电源表单已拆到独立页面：参数页没有供电方式控件，不能把已保存的
+        # ``external_ac`` 默认改回 ``dc_supply``；来源只由回填基线保留。
+        existing = _dict_copy(self.config.get("driver_mode")).get("power_source")
         return {
             "enabled": True,
-            "power_source": {"自带供电": "external_ac"}.get(label, "dc_supply"),
+            "power_source": (
+                existing if existing in ("dc_supply", "external_ac") else "dc_supply"
+            ),
         }
 
     def read_power_supply_config(self) -> dict:
@@ -332,7 +375,14 @@ class ConfigFormState:
             source = "直流电源" if legacy_control is not None and self._checked(legacy_control) else "自带供电"
         # 无驱放测试不写驱动功放供电分配；有驱放但驱放自带供电时同样不占本机电源。
         driver_enabled = source == "直流电源" and bool(getattr(w, "test_mode_enabled", True))
-        count = int(self._current(w.pa_unit_count_combo))
+        # PA 单元数量属于测试参数：完整配置页有下拉框，独立电源页只接收页面级派生值
+        # （``pa_unit_count``）。两者都只是“要写几条 DUT 分配”的输入，不在这里推断。
+        count_widget = getattr(w, "pa_unit_count_combo", None)
+        count = (
+            int(self._current(count_widget))
+            if count_widget is not None
+            else max(0, int(getattr(w, "pa_unit_count", 0)))
+        )
         existing = _dict_copy(self.config.get("power_supply_assignment"))
         driver_existing = _dict_copy(existing.get("driver_amplifier"))
         dut_existing = _dict_copy(existing.get("dut_amplifier"))
@@ -407,6 +457,85 @@ class ConfigFormState:
             return None
         return {"supply_id": supply_id, "channel": channel}
 
+    def read_power_fragment(self) -> dict:
+        """只读出电源相关的配置片段（独立电源页提交给统一会话的形状）。
+
+        片段只含本页拥有的字段：``instruments.power_supplies``（通道参数）、
+        ``power_supply_assignment``（分配与组计划）和 ``dut_config.drain_channel``。
+        测试参数、设备地址与身份不在这里读取，页面之间因此不需要互相持有控件。
+        没有对应控件时该段缺席，而不是写成空段——由调用方决定是否保留基线值。
+        """
+        fragment: dict[str, Any] = {}
+        channels = self.read_power_supply_config()
+        if channels:
+            fragment.update(channels)
+        assignment = self.read_power_assignment()
+        if assignment:
+            fragment["power_supply_assignment"] = assignment["power_supply_assignment"]
+        if getattr(self.widgets, "driver_power_source_combo", None) is not None:
+            # 驱放供电方式是电源分配的一部分，但落在测试参数段 ``driver_mode`` 里。
+            # 片段只带 ``power_source``，``enabled`` 仍由参数页决定；合并方按字段合并，
+            # 不能用电源片段整段覆盖 ``driver_mode``。
+            source = self._read_driver_mode(self.widgets).get("power_source")
+            if source is not None:
+                fragment["driver_mode"] = {"power_source": source}
+        if getattr(self.widgets, "drain_channel_combo", None) is not None:
+            fragment["dut_config"] = {
+                "drain_channel": self.read_drain_channel(),
+            }
+        return fragment
+
+    def build_power_config(self, base: Mapping[str, Any] | None = None) -> dict:
+        """把当前电源控件读数合并进 ``base``，返回完整编辑文档。
+
+        合并只覆盖电源字段，基线里的测试参数、仪器连接与未知字段原样保留；这与
+        :meth:`build_config` 的整份读数互补：独立电源页只提交自己负责的片段，不
+        重新发明另一页的字段。
+        """
+        config = copy.deepcopy(base if base is not None else self.config)
+        instruments = _dict_copy(config.get("instruments"))
+        supplies = _dict_copy(instruments.get("power_supplies"))
+        fragment = self.read_power_supply_config().get("instruments", {}).get(
+            "power_supplies", {}
+        )
+        for name, value in fragment.items():
+            target = _dict_copy(supplies.get(name))
+            channels = _dict_copy(target.get("channels"))
+            channels.update(copy.deepcopy(value.get("channels", {})))
+            target["channels"] = channels
+            supplies[name] = target
+        strip_channel_roles(supplies)
+        instruments["power_supplies"] = supplies
+        config["instruments"] = instruments
+        assignment = self.read_power_assignment()
+        if assignment:
+            config["power_supply_assignment"] = assignment["power_supply_assignment"]
+        elif not _dict_copy(config.get("driver_mode")).get("enabled"):
+            _clear_driver_power_assignment(config)
+        if getattr(self.widgets, "driver_power_source_combo", None) is not None:
+            # 供电方式是否生效以页面当前的测试模式为准，而不是基线里的旧 ``enabled``。
+            read_mode = self._read_driver_mode(self.widgets)
+            if read_mode.get("enabled"):
+                mode = _dict_copy(config.get("driver_mode"))
+                mode["power_source"] = read_mode.get("power_source")
+                config["driver_mode"] = mode
+        if getattr(self.widgets, "drain_channel_combo", None) is not None:
+            dut = _dict_copy(config.get("dut_config"))
+            dut["drain_channel"] = self.read_drain_channel()
+            config["dut_config"] = dut
+        return config
+
+    def power_validation_errors(self, base: Mapping[str, Any] | None = None) -> list[str]:
+        """按电源页当前读数给出正式校验问题（只供独立电源页显示）。
+
+        校验对象仍是应用边界的同一套编写与正式校验：页面只把读数包成编辑文档并
+        展示返回的消息，不在这里复制计划/漏极/分配引用规则。这里只保留电源字段的
+        问题，测试参数与设备连接的错误由参数页报告。
+        """
+        return _formal_validation_errors(
+            self.build_power_config(base), scope="power"
+        )
+
     def build_config(
         self, *, test_parameters: Mapping[str, Any] | None = None
     ) -> dict:
@@ -435,13 +564,11 @@ class ConfigFormState:
             target = _dict_copy(config["instruments"]["power_supplies"].get(name))
             channels = _dict_copy(target.get("channels"))
             channels.update(copy.deepcopy(value.get("channels", {})))
-            # 1.1 正式文档不再包含通道 role：旧配置里的残留值不能随“合并控件读数”
-            # 写回；旧读取兼容只属于迁移器。
-            for channel in channels.values():
-                if isinstance(channel, dict):
-                    channel.pop("role", None)
             target["channels"] = channels
             config["instruments"]["power_supplies"][name] = target
+        # 1.1 正式文档不再包含通道 role：电源表单已拆到独立页，参数页仍不能把基线里
+        # 的旧值原样写回。整组清理一次，不依赖本页是否存在电源控件。
+        strip_channel_roles(config["instruments"]["power_supplies"])
         assignment = self.read_power_assignment()
         if assignment:
             config["power_supply_assignment"] = assignment["power_supply_assignment"]

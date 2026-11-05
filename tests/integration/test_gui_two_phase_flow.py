@@ -1010,18 +1010,16 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         self.assertEqual(requested, [True])
 
     def test_finalize_run_is_blocked_when_no_device_is_bound(self):
-        """没有任何已应用设备时电源分配无法成立，最终动作必须明确失败。"""
-        from presentation.qt.configuration_page import ConfigurationPage
+        """没有任何已应用设备时电源分配无法成立，电源页必须明确拒绝。"""
+        from presentation.qt.power_configuration_page import PowerConfigurationPage
 
-        page = ConfigurationPage({})
+        page = PowerConfigurationPage({})
         failures = []
-        requested = []
         page.validation_failed.connect(failures.append)
-        page.finalize_run_requested.connect(lambda: requested.append(True))
 
-        page.finalize_run_btn.click()
+        self.assertFalse(page.validate())
 
-        self.assertEqual(requested, [])
+        self.assertTrue(failures)
         self.assertIn("未选择电源", failures[0])
 
     def test_load_run_signal_carries_the_run_id(self):
@@ -1036,9 +1034,9 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
 
     def test_validate_no_longer_blocks_duplicate_power_channel_roles(self):
         """步骤 5/11：角色重复不再是否决条件，电源表单也不再提供角色控件。"""
-        from presentation.qt.configuration_page import ConfigurationPage
+        from presentation.qt.power_configuration_page import PowerConfigurationPage
 
-        page = ConfigurationPage(
+        page = PowerConfigurationPage(
             {
                 "instruments": {
                     "power_supplies": {
@@ -1060,7 +1058,7 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         failures = []
         page.validation_failed.connect(failures.append)
 
-        page.request_finalize_run()
+        self.assertFalse(page.validate())
 
         self.assertTrue(failures, "缺少仪器/频率等配置仍应阻止发起运行")
         self.assertFalse(any("供电角色" in message for message in failures), failures)
@@ -1086,21 +1084,27 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
 
     def test_apply_config_reflects_a_frozen_run_on_the_widgets(self):
         from presentation.qt.configuration_page import ConfigurationPage
+        from presentation.qt.power_configuration_page import PowerConfigurationPage
 
         page = ConfigurationPage({})
+        power = PowerConfigurationPage({})
         frozen = _fully_valid_gui_config()
         frozen["test_frequencies"] = [2.4, 2.6]
         frozen["driver_mode"] = {"enabled": False}
 
         page.apply_config(frozen)
+        power.apply_config(frozen)
 
         self.assertEqual(page.freq_edit.text(), "[2.4, 2.6]")
         self.assertFalse(page.driver_mode_requested())
         built = page.build_config()["instruments"]
         self.assertEqual(built["signal_generator"]["address"], "sim::sg")
         self.assertEqual(built["power_supplies"]["DP8B1519"]["address"], "sim::ps1")
-        self.assertEqual(page.pa_unit1_power_combo.currentText(), "DP8B1519")
-        self.assertEqual(page.power_config_widgets["DP8B1519"]["channels"]["CH2"]["voltage"].value(), 28.0)
+        self.assertEqual(power.pa_unit1_power_combo.currentText(), "DP8B1519")
+        self.assertEqual(
+            power.power_config_widgets["DP8B1519"]["channels"]["CH2"]["voltage"].value(),
+            28.0,
+        )
 
     def test_config_page_build_config_does_not_write_channel_roles(self):
         """步骤 6：通道 role 不再进入保存文档；控件默认值只是旧页面的显示状态。"""
@@ -1117,16 +1121,19 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
 
     def test_config_page_does_not_keep_channel_roles_from_the_configuration(self):
         from presentation.qt.configuration_page import ConfigurationPage
+        from presentation.qt.power_configuration_page import PowerConfigurationPage
 
         config = _fully_valid_gui_config()
         config["instruments"]["power_supplies"]["DP8B1519"]["channels"]["CH1"]["role"] = "drain"
         config["instruments"]["power_supplies"]["DP8B1519"]["channels"]["CH2"]["role"] = "gate"
         page = ConfigurationPage({})
+        power = PowerConfigurationPage({})
         page.apply_config(config)
+        power.apply_config(config)
 
         self.assertNotIn(
             "role",
-            page.power_config_widgets["DP8B1519"]["channels"]["CH1"],
+            power.power_config_widgets["DP8B1519"]["channels"]["CH1"],
             "旧 role 只由迁移器读取，不再出现在电源表单控件里",
         )
         built = page.build_config()
@@ -1136,9 +1143,12 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
 
     def test_apply_config_clears_previous_values(self):
         from presentation.qt.configuration_page import ConfigurationPage
+        from presentation.qt.power_configuration_page import PowerConfigurationPage
 
         page = ConfigurationPage({})
+        power = PowerConfigurationPage({})
         page.apply_config(_fully_valid_gui_config())
+        power.apply_config(_fully_valid_gui_config())
         # 先确认配置 A 确实写入了非基线值，避免测试空转。
         built = page.build_config()["instruments"]
         self.assertEqual(built["signal_generator"]["address"], "sim::sg")
@@ -1147,12 +1157,13 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
 
         # 配置 B 为空：所有受控控件必须回到空配置基线，不残留 A 的值。
         page.apply_config({})
+        power.apply_config({})
 
         built = page.build_config()["instruments"]
         self.assertEqual(built["signal_generator"], {"enabled": False})
         # 空配置既没有可连接的电源，也没有电源条目或标签页留下上一份配置的参数。
         self.assertEqual(built["power_supplies"], {})
-        self.assertEqual(page.power_config_widgets, {})
+        self.assertEqual(power.power_config_widgets, {})
         self.assertEqual(page.freq_edit.text(), "[4.0, 4.4, 4.8, 5.2, 5.6, 5.8]")
         self.assertEqual(page.start_power.value(), -38.0)
         self.assertEqual(page.stop_power.value(), -16.0)
@@ -1164,10 +1175,11 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         self.assertEqual(page.pa_unit_count_combo.currentText(), "2")
         # 没有任何已绑定/已保存的电源：电源分配不再提供可选项（旧界面默认的 PS1/PS2
         # 来自已被移除的“启用”勾选框，不再是连接来源）。
-        self.assertEqual(page.get_enabled_power_supplies(), [])
+        self.assertEqual(power.get_enabled_power_supplies(), [])
 
     def test_apply_config_projects_all_supported_fields(self):
         from presentation.qt.configuration_page import ConfigurationPage
+        from presentation.qt.power_configuration_page import PowerConfigurationPage
 
         frozen = {
             "test_frequencies": [2.4, 2.6],
@@ -1243,7 +1255,9 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         }
 
         page = ConfigurationPage({})
+        power = PowerConfigurationPage({})
         page.apply_config(frozen)
+        power.apply_config(frozen)
 
         self.assertEqual(page.freq_edit.text(), "[2.4, 2.6]")
         self.assertEqual(page.start_power.value(), -30.0)
@@ -1262,30 +1276,35 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         self.assertTrue(built["spectrum_analyzer"]["enabled"])
         self.assertEqual(built["power_supplies"]["DP8B1519"]["address"], "sim::ps1")
         self.assertEqual(
-            set(page.get_enabled_power_supplies()),
+            set(power.get_enabled_power_supplies()),
             {"DP8B1519", "DP8B0885", "DP8B1191"},
         )
-        channel = page.power_config_widgets["DP8B1519"]["channels"]["CH1"]
+        channel = power.power_config_widgets["DP8B1519"]["channels"]["CH1"]
         self.assertEqual(channel["voltage"].value(), 3.3)
         self.assertEqual(channel["voltage_protection"].value(), 5.0)
         self.assertTrue(channel["voltage_protection_enabled"].isChecked())
         self.assertEqual(channel["current"].value(), 0.5)
         self.assertEqual(channel["current_protection"].value(), 1.0)
         self.assertTrue(channel["current_protection_enabled"].isChecked())
-        self.assertEqual(page.driver_power_source_combo.currentText(), "直流电源")
-        self.assertEqual(page.driver_power_combo.currentText(), "DP8B1519")
-        self.assertEqual(page.pa_unit1_power_combo.currentText(), "DP8B0885")
-        self.assertEqual(page.pa_unit2_power_combo.currentText(), "DP8B1191")
-        self.assertEqual(page.pa_unit3_power_combo.currentText(), "DP8B1519")
+        self.assertEqual(power.driver_power_source_combo.currentText(), "直流电源")
+        self.assertEqual(power.driver_power_combo.currentText(), "DP8B1519")
+        self.assertEqual(power.pa_unit1_power_combo.currentText(), "DP8B0885")
+        self.assertEqual(power.pa_unit2_power_combo.currentText(), "DP8B1191")
+        self.assertEqual(power.pa_unit3_power_combo.currentText(), "DP8B1519")
 
     def test_apply_config_matches_a_freshly_built_page(self):
         from presentation.qt.configuration_page import ConfigurationPage
+        from presentation.qt.power_configuration_page import PowerConfigurationPage
 
         partial = {"test_frequencies": [9.0], "driver_mode": {"enabled": False}}
         rebuilt = ConfigurationPage(partial)
+        rebuilt_power = PowerConfigurationPage(partial)
         page = ConfigurationPage({})
+        power = PowerConfigurationPage({})
         page.apply_config(_fully_valid_gui_config())
+        power.apply_config(_fully_valid_gui_config())
         page.apply_config(partial)
+        power.apply_config(partial)
 
         self.assertEqual(page.freq_edit.text(), rebuilt.freq_edit.text())
         self.assertEqual(page.start_power.value(), rebuilt.start_power.value())
@@ -1298,9 +1317,10 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         self.assertFalse(page.driver_mode_requested())
         # 回填结果必须与直接用同一份文档构造的页面完全一致（含仪器连接信息）。
         self.assertEqual(page.build_config(), rebuilt.build_config())
+        self.assertEqual(power.build_config(), rebuilt_power.build_config())
         self.assertEqual(
-            page.pa_unit1_power_combo.currentText(),
-            rebuilt.pa_unit1_power_combo.currentText(),
+            power.pa_unit1_power_combo.currentText(),
+            rebuilt_power.pa_unit1_power_combo.currentText(),
         )
 
     def test_apply_config_reports_invalid_payload(self):
@@ -1314,33 +1334,35 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
 
     def test_apply_config_uses_defaults_for_invalid_field_types(self):
         from presentation.qt.configuration_page import ConfigurationPage
+        from presentation.qt.power_configuration_page import PowerConfigurationPage
 
         page = ConfigurationPage({})
-        page.apply_config(
-            {
-                "test_frequencies": ["invalid"],
-                "driver_mode": {"enabled": "false"},
-                "dut_config": {"power_supply_count": True, "max_input_power": "30"},
-                "instruments": {
-                    "signal_generator": {"address": None, "enabled": "false"},
-                    "power_supplies": {
-                        "PS1": {
-                            "address": 123,
-                            "enabled": "false",
-                            "channels": {
-                                "CH1": {
-                                    "voltage": {"value": "12"},
-                                    "current": {
-                                        "value": True,
-                                        "protection_enabled": "false",
-                                    },
-                                }
-                            },
-                        }
-                    },
+        power = PowerConfigurationPage({})
+        payload = {
+            "test_frequencies": ["invalid"],
+            "driver_mode": {"enabled": "false"},
+            "dut_config": {"power_supply_count": True, "max_input_power": "30"},
+            "instruments": {
+                "signal_generator": {"address": None, "enabled": "false"},
+                "power_supplies": {
+                    "PS1": {
+                        "address": 123,
+                        "enabled": "false",
+                        "channels": {
+                            "CH1": {
+                                "voltage": {"value": "12"},
+                                "current": {
+                                    "value": True,
+                                    "protection_enabled": "false",
+                                },
+                            }
+                        },
+                    }
                 },
-            }
-        )
+            },
+        }
+        page.apply_config(payload)
+        power.apply_config(payload)
 
         # 字符串不是合法文本值：布尔回落默认，数字回落基线。仪器连接信息不由控件
         # 编辑，也不在这里做类型容错，留给正式校验在连接前明确报告。
@@ -1348,7 +1370,7 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         self.assertEqual(page.freq_edit.text(), "[4.0, 4.4, 4.8, 5.2, 5.6, 5.8]")
         self.assertEqual(page.pa_unit_count_combo.currentText(), "2")
         self.assertEqual(page.max_input_power.value(), 33.5)
-        channel = page.power_config_widgets["PS1"]["channels"]["CH1"]
+        channel = power.power_config_widgets["PS1"]["channels"]["CH1"]
         self.assertEqual(channel["voltage"].value(), 0.0)
         self.assertEqual(channel["current"].value(), 0.0)
         self.assertFalse(channel["current_protection_enabled"].isChecked())

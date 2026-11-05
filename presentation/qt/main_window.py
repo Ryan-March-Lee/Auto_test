@@ -26,10 +26,12 @@ from PySide6.QtWidgets import (
 from infrastructure.logging.app_logging import get_logger, setup_logging
 from presentation.qt.application_coordinator import ApplicationCoordinator, RunFlowState
 from presentation.qt.composition import build_device_scanner_factory, default_paths
+from presentation.qt.configuration_editor import ConfigurationEditor
 from presentation.qt.configuration_page import ConfigurationPage
 from presentation.qt.configuration_session import ConfigurationSession
 from presentation.qt.connection_dialog import ConnectionDialog
 from presentation.qt.instrument_setup_page import InstrumentSetupPage
+from presentation.qt.power_configuration_page import PowerConfigurationPage
 from presentation.qt.run_history_page import build_run_history_page
 from presentation.qt.history_view_model import HistoryViewModel
 from presentation.qt.measurement_state import MeasurementKind, MeasurementResultReference
@@ -212,8 +214,8 @@ class MainWindow(QMainWindow):
     def _enter_test_mode(self, driver_enabled: bool) -> None:
         config = apply_test_mode(dict(self.coordinator.load_configuration()), driver_enabled)
         self.coordinator.config = config
-        self.config_page.apply_config(config)
-        self.config_page.set_test_mode(driver_enabled)
+        self.configuration_editor.apply_config(config)
+        self.configuration_editor.set_test_mode(driver_enabled)
         self._apply_driver_mode_to_pages(driver_enabled)
         self.mode_badge.setText("有驱放测试" if driver_enabled else "无驱放测试")
         self.tab_widget.setCurrentIndex(0)
@@ -243,7 +245,7 @@ class MainWindow(QMainWindow):
             self.tab_widget.setTabVisible(index, bool(driver_enabled))
 
     def _return_to_welcome(self) -> None:
-        if confirm_leave_configuration(self, self.config_page.is_dirty()):
+        if confirm_leave_configuration(self, self.configuration_editor.is_dirty()):
             self.mode_badge.setText("未选择测试模式")
             self.view_stack.setCurrentWidget(self.welcome_page)
 
@@ -265,6 +267,7 @@ class MainWindow(QMainWindow):
             amplifier_realtime_data_callback=self.coordinator.store_realtime_data,
             clear_realtime_callback=self.clear_real_time_data,
             build_configuration=self.create_config_tab,
+            build_power_configuration=self.create_power_configuration_tab,
             build_visualization=self.create_visualization_tab,
             build_run_history=self.create_run_history_tab,
         )
@@ -315,9 +318,12 @@ class MainWindow(QMainWindow):
         splitter = getattr(self, "workspace_splitter", None)
         if panel is None or splitter is None:
             return
-        config_page = getattr(self, "config_page", None)
         current = self.tab_widget.currentWidget()
-        should_hide = config_page is not None and current is config_page
+        editor = getattr(self, "configuration_editor", None)
+        config_page = getattr(self, "config_page", None)
+        should_hide = current is not None and (
+            current is config_page or (editor is not None and editor.contains(current))
+        )
         if should_hide == panel.isHidden():
             return
         if should_hide:
@@ -347,6 +353,19 @@ class MainWindow(QMainWindow):
         tab.driver_mode_changed.connect(self._refresh_amplifier_instruction_text)
         self.config_page = tab
         self.coordinator.bind_config_page(tab)
+        return tab
+
+    def create_power_configuration_tab(self):
+        """创建独立电源配置选项卡，并把它接入共享编辑状态。"""
+        tab = PowerConfigurationPage(self.config, self)
+        self.power_page = tab
+        self.coordinator.bind_power_page(tab)
+        self.configuration_editor = ConfigurationEditor(
+            self.config_page,
+            tab,
+            log=self.add_log_message,
+            driver_mode_changed=self._refresh_amplifier_instruction_text,
+        )
         return tab
 
     def create_visualization_tab(self):
@@ -394,9 +413,9 @@ class MainWindow(QMainWindow):
             self.add_log_message(f"配置保存失败: {error}")
             QMessageBox.warning(self, "保存失败", f"配置保存失败: {error}")
             return
-        page = getattr(self, "config_page", None)
-        if page is not None:
-            page.mark_clean()
+        editor = getattr(self, "configuration_editor", None)
+        if editor is not None:
+            editor.mark_clean()
         self.add_log_message("配置已保存")
         if self.prepared_run is not None:
             self.add_log_message(
@@ -410,7 +429,9 @@ class MainWindow(QMainWindow):
         page = getattr(self, "config_page", None)
         if page is None or self.coordinator.state is RunFlowState.FINALIZING:
             return
-        page.set_finalizing(True)
+        editor = getattr(self, "configuration_editor", None)
+        if editor is not None:
+            editor.set_finalizing(True)
         started = self.coordinator.finalize_configuration(
             self._bind_instrument_worker_signals
         )
@@ -418,10 +439,10 @@ class MainWindow(QMainWindow):
             self._restore_config_page()
 
     def _restore_config_page(self):
-        """恢复参数页控件并按协调器状态同步最终按钮语义。"""
-        page = getattr(self, "config_page", None)
-        if page is not None:
-            page.set_finalizing(False)
+        """恢复参数/电源页控件并按协调器状态同步最终按钮语义。"""
+        editor = getattr(self, "configuration_editor", None)
+        if editor is not None:
+            editor.set_finalizing(False)
         self._sync_finalize_entry()
 
     def _sync_finalize_entry(self):

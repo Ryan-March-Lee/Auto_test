@@ -26,6 +26,7 @@ from presentation.qt.configuration_page import ConfigurationPage
 from presentation.qt.configuration_session import ConfigurationSession
 from presentation.qt.instrument_setup_page import InstrumentSetupPage
 from presentation.qt.instrument_discovery_panel import InstrumentDiscoveryPanel
+from presentation.qt.power_configuration_page import PowerConfigurationPage
 
 
 SMW_IDN = "Rohde&Schwarz,SMW200A,1412.0000K02/105462,5.20.043.47"
@@ -192,10 +193,11 @@ class DiscoveryPanelTestCase(unittest.TestCase):
 
 
 class InstrumentSetupPageTestCase(unittest.TestCase):
-    """同时持有配置页与连接页：绑定写在配置页，扫描与勾选在连接页的面板上。
+    """同时持有配置页、独立电源页与连接页：绑定写在配置页，扫描与勾选在连接页的面板。
 
-    ``page`` 是配置页（绑定写入与其派生界面：电源标签页、电源分配可选项），
-    ``self.connection`` 是连接页（面板入口）。
+    ``page`` 是配置页（绑定写入），``self.power_page`` 是独立电源页（电源标签页与
+    分配可选项），``self.connection`` 是连接页（面板入口）。绑定写入后按窗口的接线把
+    结果同步给电源页，测试覆盖的正是两页协作的真实路径。
     """
 
     @classmethod
@@ -223,11 +225,21 @@ class InstrumentSetupPageTestCase(unittest.TestCase):
         return panel
 
     def make_page(self, config=None):
-        page = ConfigurationPage(
+        config = (
             config
             if config is not None
             else {"test_frequencies": [1.0], "instruments": {"power_supplies": {}}}
         )
+        page = ConfigurationPage(config)
+        # 步骤 12/13：电源控件在独立页；绑定写入后窗口会把结果同步给电源页，
+        # 这里用同样的接线让测试覆盖真实的两页协作。
+        power_page = PowerConfigurationPage(config)
+        page.device_selection_finished.connect(
+            lambda _result, _message: power_page.apply_device_bindings(
+                page.device_bindings
+            )
+        )
+        page.pa_unit_count_changed.connect(power_page.set_pa_unit_count)
         session = ConfigurationSession(page)
         connection = InstrumentSetupPage(session, scanner_factory=scanner_factory)
         page.discovery_message.connect(connection.log_message.emit)
@@ -235,12 +247,15 @@ class InstrumentSetupPageTestCase(unittest.TestCase):
         # 连接页是整屏页面：按窗口尺寸布局，卡片网格才按真实宽度换行。
         connection.resize(1200, 900)
         page.show()
+        power_page.show()
         connection.show()
         self.app.processEvents()
         self.connection = connection
+        self.power_page = power_page
         # LIFO：先关闭连接页与配置页（关闭连接页会停扫描/动画），最后投递排队的
         # 卡片删除，避免 DeferredDelete 落到下一个用例的事件循环里。
         self.addCleanup(_flush_deferred_deletes)
+        self.addCleanup(power_page.close)
         self.addCleanup(page.close)
         self.addCleanup(connection.close)
         return page

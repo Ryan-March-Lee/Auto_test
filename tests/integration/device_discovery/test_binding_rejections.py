@@ -180,14 +180,14 @@ class DeviceBindingRejectionTests(InstrumentSetupPageTestCase):
                 }
             ]
         )
-        options_before = list(page.get_enabled_power_supplies())
-        tabs_before = set(page.power_config_widgets)
+        options_before = list(self.power_page.get_enabled_power_supplies())
+        tabs_before = set(self.power_page.power_config_widgets)
 
         apply_devices(page, [{"role": "nope", "address": "TCPIP0::1.2.3.4::inst0::INSTR"}])
 
         self.assertEqual(set(page.device_bindings["power_supplies"]), {"DP8B1519"})
-        self.assertEqual(page.get_enabled_power_supplies(), options_before)
-        self.assertEqual(set(page.power_config_widgets), tabs_before)
+        self.assertEqual(self.power_page.get_enabled_power_supplies(), options_before)
+        self.assertEqual(set(self.power_page.power_config_widgets), tabs_before)
 
     def test_rejected_batch_is_also_reported_in_the_panel_status(self):
         """整批拒绝的原因要同时出现在面板状态里，不能只写日志。"""
@@ -267,7 +267,7 @@ class DeviceBindingRejectionTests(InstrumentSetupPageTestCase):
         page.validation_failed.connect(messages.append)
 
         # 坏绑定不进入可用电源，也不会被当成已连接设备。
-        self.assertEqual(page.get_enabled_power_supplies(), [])
+        self.assertEqual(self.power_page.get_enabled_power_supplies(), [])
         self.assertEqual(page.device_bindings, {})
         self.assertIn("缺少设备身份", "；".join(page.binding_problems))
         self.assertIn("缺少设备身份", self.connection.discovery_panel.status_label.text())

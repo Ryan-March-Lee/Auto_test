@@ -24,9 +24,12 @@ from presentation.qt.config_projection import DEFAULT_POWER_CHANNEL_VALUE
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PAGE_SOURCE = PROJECT_ROOT / "presentation" / "qt" / "configuration_page.py"
+POWER_PAGE_SOURCE = (
+    PROJECT_ROOT / "presentation" / "qt" / "power_configuration_page.py"
+)
 SECTION_SOURCE = PROJECT_ROOT / "presentation" / "qt" / "config_power_section.py"
 
-# 页面保留的三个委托壳，以及它们分别要转给的入口。``None`` 表示委托给独立组件
+# 独立电源页保留的三个委托壳，以及它们分别要转给的入口。``None`` 表示委托给独立组件
 # 的方法（属性调用，``_called_names`` 看不到），由测试单独检查 ``.rebuild(``。
 POWER_METHOD_BUILDERS = {
     "_build_power_widgets": "PowerFormSection",
@@ -37,11 +40,11 @@ POWER_METHOD_BUILDERS = {
 POWER_SECTION_WIDGET_CLASSES = {"QCheckBox", "QFormLayout", "QGroupBox", "QTabWidget"}
 
 
-def _page_class(tree) -> ast.ClassDef:
+def _page_class(tree, name: str = "ConfigurationPage") -> ast.ClassDef:
     return next(
         node
         for node in tree.body
-        if isinstance(node, ast.ClassDef) and node.name == "ConfigurationPage"
+        if isinstance(node, ast.ClassDef) and node.name == name
     )
 
 
@@ -154,8 +157,11 @@ class PowerSectionInputContractTests(unittest.TestCase):
                 self.assertTrue(hasattr(section, alias), f"{alias} 应可在运行时取到")
 
     def test_the_page_side_producers_use_the_same_types(self):
-        """页面读出的三份页面状态也按同一份类型声明，契约两端对齐。"""
-        page = _page_class(ast.parse(PAGE_SOURCE.read_text(encoding="utf-8")))
+        """独立电源页读出的三份页面状态也按同一份类型声明，契约两端对齐。"""
+        page = _page_class(
+            ast.parse(POWER_PAGE_SOURCE.read_text(encoding="utf-8")),
+            "PowerConfigurationPage",
+        )
 
         for method_name, alias in (
             ("_power_supply_sources", "PowerSupplySources"),
@@ -326,13 +332,13 @@ class PowerSectionBuildTests(unittest.TestCase):
 
 
 class PowerSectionOwnershipTests(unittest.TestCase):
-    """配置页只组合与协调：电源分区的控件构建与标签页重建留在构建模块。"""
+    """独立电源页只组合与协调：电源分区的控件构建与标签页重建留在构建模块。"""
 
     def setUp(self):
-        self.tree = ast.parse(PAGE_SOURCE.read_text(encoding="utf-8"))
-        self.page = _page_class(self.tree)
+        self.tree = ast.parse(POWER_PAGE_SOURCE.read_text(encoding="utf-8"))
+        self.page = _page_class(self.tree, "PowerConfigurationPage")
 
-    def test_config_page_imports_the_section_builders(self):
+    def test_power_page_imports_the_section_builders(self):
         imported = {
             node.module
             for node in ast.walk(self.tree)
@@ -342,7 +348,7 @@ class PowerSectionOwnershipTests(unittest.TestCase):
         self.assertIn(
             "config_power_section",
             imported,
-            "页面必须从 config_power_section 取分区构建与标签页重建",
+            "独立电源页必须从 config_power_section 取分区构建与标签页重建",
         )
 
     def test_each_power_method_delegates_and_builds_no_widgets(self):
@@ -394,14 +400,15 @@ class PowerSectionOwnershipTests(unittest.TestCase):
         )
 
     def test_config_page_keeps_the_public_entry_and_signal_contract(self):
+        page = _page_class(ast.parse(PAGE_SOURCE.read_text(encoding="utf-8")))
         signals = {
             target.id
-            for node in self.page.body
+            for node in page.body
             if isinstance(node, ast.Assign)
             for target in node.targets
             if isinstance(target, ast.Name)
         }
-        methods = {node.name for node in self.page.body if isinstance(node, ast.FunctionDef)}
+        methods = {node.name for node in page.body if isinstance(node, ast.FunctionDef)}
 
         for signal in (
             "save_requested",

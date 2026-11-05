@@ -150,8 +150,12 @@ class DeviceBindingWriteTests(InstrumentSetupPageTestCase):
         self.assertEqual(binding["full_code"], "DP8B214901519")
         self.assertEqual(binding["device_key"], "rigol technologies:dp8b214901519")
         self.assertEqual(binding["visa_address"], "TCPIP0::192.168.1.102::inst0::INSTR")
-        self.assertEqual(page.get_enabled_power_supplies(), ["DP8B1519"])
-        self.assertIn("DP8B1519", page.power_config_widgets, "新绑定的电源要有自己的参数页")
+        self.assertEqual(self.power_page.get_enabled_power_supplies(), ["DP8B1519"])
+        self.assertIn(
+            "DP8B1519",
+            self.power_page.power_config_widgets,
+            "新绑定的电源要有自己的参数页",
+        )
         self.assertEqual(
             page.build_config()["instruments"]["power_supplies"]["DP8B1519"]["address"],
             "TCPIP0::192.168.1.102::inst0::INSTR",
@@ -224,9 +228,12 @@ class DeviceBindingWriteTests(InstrumentSetupPageTestCase):
         self.assertTrue(supplies["DP8B1519"]["enabled"])
         self.assertTrue(supplies["DP8B0885"]["enabled"])
         # 每台电源各有独立的通道参数页，不按位置互相覆盖。
-        self.assertEqual(set(page.power_config_widgets), {"DP8B1519", "DP8B0885"})
         self.assertEqual(
-            sorted(page.get_enabled_power_supplies()), ["DP8B0885", "DP8B1519"]
+            set(self.power_page.power_config_widgets), {"DP8B1519", "DP8B0885"}
+        )
+        self.assertEqual(
+            sorted(self.power_page.get_enabled_power_supplies()),
+            ["DP8B0885", "DP8B1519"],
         )
 
     def test_replacing_the_power_supply_leaves_the_assignment_empty_instead_of_repointing(self):
@@ -249,14 +256,14 @@ class DeviceBindingWriteTests(InstrumentSetupPageTestCase):
             "device_key": "rigol technologies:dp8b174400885",
         }
         apply_devices(page, [first, second])
-        page.pa_unit1_power_combo.setCurrentIndex(
-            page.pa_unit1_power_combo.findData("DP8B1519")
+        self.power_page.pa_unit1_power_combo.setCurrentIndex(
+            self.power_page.pa_unit1_power_combo.findData("DP8B1519")
         )
 
         apply_devices(page, [second])
 
-        self.assertEqual(page.pa_unit1_power_combo.currentText(), "")
-        self.assertEqual(page.pa_unit1_power_combo.currentIndex(), -1)
+        self.assertEqual(self.power_page.pa_unit1_power_combo.currentText(), "")
+        self.assertEqual(self.power_page.pa_unit1_power_combo.currentIndex(), -1)
 
     def test_applying_a_subset_replaces_the_previous_bindings(self):
         page = self.make_page()
@@ -315,7 +322,7 @@ class DeviceBindingWriteTests(InstrumentSetupPageTestCase):
         supply = config["instruments"]["power_supplies"]["DP8B1519"]
         self.assertNotIn("address", supply)
         self.assertFalse(supply["enabled"])
-        self.assertEqual(page.get_enabled_power_supplies(), [])
+        self.assertEqual(self.power_page.get_enabled_power_supplies(), [])
         self.assertIn("已移除", self.connection.discovery_panel.status_label.text())
 
     def test_loading_a_config_restores_device_bindings(self):

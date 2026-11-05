@@ -255,6 +255,41 @@ def project_authoring_config(
     return copy.deepcopy(config)
 
 
+def project_power_config(
+    widgets: Any, config: Any, *, supplies: Any = None
+) -> dict[str, Any]:
+    """把一份配置编写文档里的电源字段投影到独立电源页的控件。
+
+    与 :func:`project_authoring_config` 的区别只在受控范围：测试参数与运行控件归
+    完整配置页，电源页只重置并回填通道参数、供电分配与组计划。两处共用的重置规则
+    （通道基线、分配缺省、计划清空）只实现一次，避免独立页面与完整页面出现两套
+    回填口径。
+
+    参数不是 JSON 对象时同样抛出 :class:`ConfigBackfillError`，与整份投影的失败
+    语义一致。
+    """
+    if not isinstance(config, dict):
+        raise ConfigBackfillError(
+            "冻结配置必须是 JSON 对象（dict），无法确定性地回填电源配置页"
+        )
+    reset_power_controls(widgets, supplies=supplies)
+    _apply_power_supply_widgets(widgets, config.get("instruments"))
+    _apply_power_assignment_widgets(
+        widgets, config.get("power_supply_assignment"), supplies=supplies
+    )
+    return copy.deepcopy(config)
+
+
+def reset_power_controls(widgets: Any, *, supplies: Any = None) -> None:
+    """把电源页受控控件重置到空配置基线（不触碰测试参数控件）。"""
+    _reset_power_supply_channels(widgets)
+    _reset_power_assignment_widgets(widgets, supplies=supplies)
+    reset_plans = getattr(widgets, "reset_power_plans", None)
+    if callable(reset_plans):
+        # 计划与漏极属于独立电源表单；回填前一起回到空基线，避免旧勾选残留。
+        reset_plans()
+
+
 def reset_control_widgets(widgets: Any, *, supplies: Any = None) -> None:
     """把所有受控控件重置到空配置基线，消除上一次运行的残留值。"""
     widgets.freq_edit.setText(str(list(DEFAULT_TEST_FREQUENCIES)))
@@ -268,12 +303,7 @@ def reset_control_widgets(widgets: Any, *, supplies: Any = None) -> None:
         set_combo(widgets.driver_power_source_combo, "直流电源")
     widgets.max_input_power.setValue(DEFAULT_MAX_INPUT_POWER)
     set_combo(widgets.pa_unit_count_combo, DEFAULT_PA_UNIT_COUNT)
-    _reset_power_supply_channels(widgets)
-    _reset_power_assignment_widgets(widgets, supplies=supplies)
-    reset_plans = getattr(widgets, "reset_power_plans", None)
-    if callable(reset_plans):
-        # 计划与漏极属于独立电源表单；回填前一起回到空基线，避免旧勾选残留。
-        reset_plans()
+    reset_power_controls(widgets, supplies=supplies)
 
 
 def _reset_power_supply_channels(widgets: Any) -> None:
@@ -474,6 +504,8 @@ __all__ = [
     "apply_power_choice",
     "driver_power_source_label",
     "project_authoring_config",
+    "project_power_config",
     "reset_control_widgets",
+    "reset_power_controls",
     "supply_option_label",
 ]

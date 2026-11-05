@@ -5,15 +5,13 @@
 从本模块导入。
 
 页面拥有配置控件，窗口只通过信号协调保存和连接。该模块只负责控件组合、用户意图
-转发和派生界面状态（单元可见性、驱动模式、电源选项）；电源分区的控件构建与标签页
-重建在 :mod:`presentation.qt.config_power_section`，把冻结配置投影到控件的规则在
+转发和派生界面状态（驱动模式）；电源参数、供电分配、通道上电计划与漏极已移入
+:mod:`presentation.qt.power_configuration_page`，本页不再创建或重建电源控件，也不再
+读取电源分配的可选项。把冻结配置投影到控件的规则在
 :mod:`presentation.qt.config_projection`，读取控件值组装配置的规则在
 :mod:`presentation.qt.config_form_state`。控件读写统一经
 :mod:`presentation.qt.config_form_adapter`：页面不再直接调用 ``ConfigFormState``，
 ``build_config`` / ``apply_config`` 只是 adapter + 视图模型的短委托。
-页面把电源分区要显示的条目、可选项与
-「槽位 -> 配置路径」的映射（``driver_amplifier.supplies.main`` 等，见
-:meth:`ConfigurationPage._assignment_entries`）读出来交给构建模块，构建模块不判断这些路径。
 页面不持有逐字段回填逻辑，也不依赖窗口、测量 controller 或硬件实现。
 
 仪表配置（扫描、勾选设备、设备身份绑定）已独立成
@@ -31,9 +29,10 @@
 :meth:`ConfigurationPage.apply_device_selection` 只提交本次勾选结果并投影返回的绑定集合。
 
 页面业务状态由 :class:`application.configuration_view_model.ConfigurationViewModel` 持有
-（步骤 6）：测试参数、设备绑定、运行状态、dirty，以及步骤 7 经表单 Adapter 收口的
-整份配置读数（电源通道参数与供电分配）。页面把这些读数写进视图模型、再按它返回的
-状态渲染（运行状态文案、绑定集合）；页面不再直接读取或组装配置字典。
+（步骤 6）：测试参数、设备绑定、运行状态与 dirty。本页只把测试参数与连接信息的读数
+写进视图模型、再按它返回的状态渲染（运行状态文案、绑定集合）；电源片段由独立电源页
+提交，窗口用 :class:`presentation.qt.configuration_editor.ConfigurationEditor` 统一
+回填/切换模式/汇总 dirty，协调器负责合并整份草稿与最终校验（步骤 13）。
 """
 
 import copy
@@ -54,10 +53,8 @@ from domain.instruments.labels import instrument_display_label
 
 from .config_form_bindings import (
     binding_records,
-    bound_power_supply_entries,
     effective_device_bindings,
     power_supply_binding_problems,
-    power_supply_bindings,
 )
 from .config_form_adapter import ConfigurationFormAdapter
 from .config_projection import (
@@ -69,14 +66,6 @@ from .config_projection import (
     DEFAULT_SIGNAL_SOURCE,
     DEFAULT_TEST_FREQUENCIES,
     ConfigBackfillError,
-    driver_power_source_label,
-)
-from .config_power_section import (
-    PowerAssignmentEntries,
-    PowerFormSection,
-    PowerSupplyChoices,
-    PowerSupplySources,
-    current_power_tab_key,
 )
 from .config_page_widgets import build_action_bar, combo_box, spin_box
 from .instrument_discovery_panel import role_label
@@ -98,6 +87,8 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
     connection_step_requested = Signal()
     validation_failed = Signal(str)
     driver_mode_changed = Signal(bool)
+    #: PA 单元数量变化；电源页据此同步 DUT 分配槽位（数量仍由本页拥有）。
+    pa_unit_count_changed = Signal(int)
     discovery_message = Signal(str)
     #: 一次设备勾选写入的完整结果：(DeviceBindingResult, 面向操作员的提示文案)。
     #: 面板归连接页所有，本页只交出结果；回写由配置会话完成。
@@ -125,13 +116,8 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         # 状态与 dirty 都在那里；设备选择的业务规则仍只在 DeviceBindingService（步骤 5）。
         self.view_model = ConfigurationViewModel()
         self.view_model.load(self.config, bindings=self.device_bindings)
-        # 独立电源表单在 build_ui 里创建；此前的委托入口按“还没有分区”处理。
-        self.power_section = None
         self.build_ui()
         self._connect_signals()
-        self.update_pa_unit_ui()
-        self.update_driver_power_ui()
-        self.update_power_supply_options()
         # 基线用组装结果而不是原始文档：旧配置迁移、绑定写入的启用状态都属于页面自身的
         # 规范化结果，刚打开的页面不应显示为“已修改”。
         self._dirty_baseline = copy.deepcopy(self.build_config(self.config))
@@ -176,24 +162,14 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         # 限制内容最大宽度：窗口过宽时不再把卡片横向拉伸成很长的边框。宽度是跨页面
         # 共用的主题令牌，连接页的 ``.ui`` 与这里取同一个值。
         content.setMaximumWidth(PAGE_CONTENT_MAX_WIDTH)
-        # 两栏布局：左侧仪器连接/测试参数/运行，右侧电源配置。避免单个卡片
-        # 随视口无限横向拉伸，同时降低页面总高度。
-        columns = QHBoxLayout(content)
-        columns.setContentsMargins(0, 0, 4, 0)
-        columns.setSpacing(12)
-        left_column = QVBoxLayout()
-        left_column.setSpacing(12)
-        right_column = QVBoxLayout()
-        right_column.setSpacing(12)
-        columns.addLayout(left_column, 3)
-        columns.addLayout(right_column, 2)
+        # 单列布局：测试参数与运行入口都在这里；电源参数、分配与上电计划已移入
+        # :mod:`presentation.qt.power_configuration_page`，本页不再持有电源控件。
+        column = QVBoxLayout(content)
+        column.setContentsMargins(0, 0, 4, 0)
+        column.setSpacing(12)
         root.addWidget(scroll, 1)
         scroll.setWidget(content)
-
-        instruments = self.config.get("instruments")
-        instruments = instruments if isinstance(instruments, dict) else {}
-        supplies = instruments.get("power_supplies")
-        supplies = supplies if isinstance(supplies, dict) else {}
+        page_column = column
 
         # 设备发现与设备勾选都在“仪表配置”页（欢迎页之后的第一步）：本页只配置测试
         # 参数与运行，设备地址与身份来自那一页写入的设备绑定，页面不再提供手工填写地址
@@ -223,12 +199,6 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         mode = self.config.get("driver_mode", {})
         mode = mode if isinstance(mode, dict) else {}
         self.test_mode_enabled = bool(mode.get("enabled", DEFAULT_DRIVER_MODE_ENABLED))
-        assignment = self.config.get("power_supply_assignment", {})
-        driver = assignment.get("driver_amplifier") if isinstance(assignment, dict) else {}
-        driver = driver if isinstance(driver, dict) else {}
-        self.driver_power_source = driver_power_source_label(
-            mode.get("power_source"), driver.get("power_supply_count")
-        )
         dut = self.config.get("dut_config", {})
         if not isinstance(dut, dict): dut = {}
         self.max_input_power = spin_box(dut.get("max_input_power", DEFAULT_MAX_INPUT_POWER), 0, 50)
@@ -246,12 +216,10 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         freq_hint = QLabel("测试频率以 GHz 为单位，用逗号分隔多个频点。")
         freq_hint.setProperty("role", "hint")
         form.addWidget(freq_hint, 4, 0, 1, 4)
-        left_column.addWidget(params)
-        self._build_power_widgets(right_column, supplies)
+        page_column.addWidget(params)
         # 运行入口紧随测试参数，保存与返回放在页面底部固定操作栏。
-        self._build_run_widgets(left_column)
-        left_column.addStretch(1)
-        right_column.addStretch(1)
+        self._build_run_widgets(page_column)
+        page_column.addStretch(1)
         root.addWidget(self._build_action_bar())
 
     def _build_action_bar(self):
@@ -299,8 +267,6 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         self.device_bindings = outcome.state.bindings_snapshot()
         # 这一批记录刚刚通过全部校验：之前读入时的坏绑定要么被替换、要么已被移除。
         self.binding_problems = []
-        self._rebuild_power_tabs()
-        self.update_power_supply_options()
         message = "已应用发现设备: " + "，".join(
             self._applied_labels(result.applied)
         )
@@ -338,133 +304,11 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
                 labels.append(f"电源 {key}")
         return labels
 
-    def _build_power_widgets(self, layout, supplies):
-        """建独立电源表单：把页面状态（条目、分配引用、可选项、供电方式）交给组件。
-
-        电源数量与身份都由设备绑定决定，不再有 ``PS1``..``PS4`` 固定页；标签页标题、
-        通道控件、分配表单、组上电计划与漏极选择的布局和读写都在
-        :class:`presentation.qt.config_power_section.PowerFormSection`。页面只把组件放进
-        布局，并在 PA 单元数量/驱放供电方式变化时转发派生状态。
-        """
-        self.power_section = PowerFormSection(
-            sources=self._power_supply_sources(supplies),
-            choices=self._power_supply_choices(),
-            assignment_entries=self._assignment_entries(),
-            driver_power_source=self.driver_power_source,
-            dut_supply_count=int(self.pa_unit_count_combo.currentText()),
-            driver_plan_active=self._driver_plan_active(),
-            dut_power_plan=self._power_plan_entry("dut_amplifier"),
-            driver_power_plan=self._power_plan_entry("driver_amplifier"),
-            drain_channel=self._drain_channel_entry(),
-        )
-        layout.addWidget(self.power_section)
-
-    def _assignment_entries(self) -> PowerAssignmentEntries:
-        """电源分配各槽位在配置里的引用条目；``None`` 表示配置没有写这条分配。
-
-        “条目缺失”与“声明了但引用为空”在回填时是两回事：前者按缺省规则选第一台可用
-        电源，后者保持空选择，因此这里不把 ``None`` 换成空字典。
-
-        「槽位 -> 配置路径」（``driver_amplifier.supplies.main``、
-        ``dut_amplifier.supplies.carrier/peaking/peaking2``）只在这里：构建模块拿到的是
-        已经取好的引用，不再读这些路径。
-        """
-        existing = self.config.get("power_supply_assignment", {})
-        if not isinstance(existing, dict): existing = {}
-        driver = existing.get("driver_amplifier", {}); dut = existing.get("dut_amplifier", {})
-        if not isinstance(driver, dict): driver = {}
-        if not isinstance(dut, dict): dut = {}
-        driver_supply = driver.get("supplies", {}); dut_supply = dut.get("supplies", {})
-        if not isinstance(driver_supply, dict): driver_supply = {}
-        if not isinstance(dut_supply, dict): dut_supply = {}
-        return {
-            "driver_power": driver_supply.get("main"),
-            "pa_unit1_power": dut_supply.get("carrier"),
-            "pa_unit2_power": dut_supply.get("peaking"),
-            "pa_unit3_power": dut_supply.get("peaking2"),
-        }
-
-    def _power_supply_sources(self, supplies=None) -> PowerSupplySources:
-        """电源标签页要显示的条目：配置里已有的键 + 本次已绑定的 ``supply_id``。
-
-        配置条目保留各自未知字段与通道参数；绑定记录只补身份字段（短标签、型号、序列
-        号、设备键），不覆盖配置里已有的值。这样“更换电源”不会沿用上一台的身份，而
-        “重装页面”也不会因为配置里已有同名字段而丢掉绑定来源。绑定记录的型号比配置里
-        的旧值更可信（它是这台设备本次扫描读到的型号），因此标签页标题优先用它。
-        """
-        if supplies is None:
-            instruments = self.config.get("instruments")
-            instruments = instruments if isinstance(instruments, dict) else {}
-            supplies = instruments.get("power_supplies")
-        sources: dict[str, dict] = {}
-        if isinstance(supplies, dict):
-            for key, item in supplies.items():
-                if isinstance(item, dict):
-                    sources[str(key)] = dict(item)
-        for supply_id, record in power_supply_bindings(self.device_bindings).items():
-            entry = dict(sources.get(supply_id) or {})
-            for field in ("label", "model", "full_code", "device_key"):
-                value = record.get(field)
-                if isinstance(value, str) and value.strip():
-                    entry[field] = value
-            entry.setdefault("label", supply_id)
-            sources[supply_id] = entry
-        return sources
-
-    def _rebuild_power_tabs(self, *, sources=None, preserve=True) -> None:
-        """把重建标签页要用的页面状态读出来，交给构建模块。
-
-        条目来源（配置键 + 本次绑定）与控件里的通道参数都是页面状态，所以在这里取；
-        合并规则、按电源键恢复选中页与逐页控件构建都在
-        :mod:`presentation.qt.config_power_section`。``preserve=False`` 是回填路径，以
-        新配置为准，不沿用重建前的残留值。通道读数经表单 Adapter 读取，页面不再直接
-        调用 ``ConfigFormState``。本方法是同名保留的委托壳：
-        ``tests/ui/test_config_page.py`` 直接调用它。
-        """
-        if self.power_section is None:
-            return
-        self.power_section.rebuild(
-            sources=self._power_supply_sources() if sources is None else sources,
-            preserved_channels=(
-                self.form_adapter.read_power_channel_snapshot() if preserve else {}
-            ),
-            preserve=preserve,
-        )
-
-    def _current_power_tab_key(self) -> str | None:
-        """当前选中电源标签页的电源键；同名委托壳（测试直接调用）。"""
-        if self.power_section is None:
-            return None
-        return current_power_tab_key(self.power_section)
-
-    def _power_plan_entry(self, group: str):
-        """配置里一组的组计划；缺失时返回 ``None``（尚未确认顺序）。"""
-        assignment = self.config.get("power_supply_assignment")
-        block = assignment.get(group) if isinstance(assignment, dict) else None
-        return block.get("power_plan") if isinstance(block, dict) else None
-
-    def _drain_channel_entry(self):
-        dut = self.config.get("dut_config")
-        return dut.get("drain_channel") if isinstance(dut, dict) else None
-
-    def _driver_plan_active(self) -> bool:
-        """驱放计划是否生效：只有本机直流供电的驱放测试模式才有上电顺序。"""
-        return bool(self.test_mode_enabled and self.driver_power_source == "直流电源")
-
-    def apply_power_plan_config(
-        self, config, *, driver_plan_active: bool | None = None
-    ) -> None:
-        """把文档里的组计划与漏极投影到独立电源表单。"""
-        if self.power_section is not None:
-            self.power_section.apply_power_plan_config(
-                config, driver_plan_active=driver_plan_active
-            )
-
     def _build_run_widgets(self, layout):
         """最终动作入口：一次完成校验、保存配置、创建运行与完整连接检查。
 
         保存配置与返回欢迎页放在页面底部固定操作栏（``_build_action_bar``），
-        最终动作留在左栏，便于“改参数 → 完成配置并连接仪器”就近操作。
+        最终动作留在参数区下方，便于“改参数 → 完成配置并连接仪器”就近操作。
         """
         # 配置阶段入口：页面最终按钮。文案固定为“完成配置并连接仪器”；连接成功后
         # 由窗口切到测量区，页面不会自动开始任何测量。
@@ -499,8 +343,17 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         self.load_run_btn.clicked.connect(self.request_load_run)
         self.return_welcome_btn.clicked.connect(self.return_welcome_requested.emit)
         self.previous_step_btn.clicked.connect(self.connection_step_requested.emit)
-        self.pa_unit_count_combo.currentTextChanged.connect(self.on_pa_unit_count_changed)
-        self.driver_power_source_combo.currentTextChanged.connect(self.on_driver_power_toggled)
+        self.pa_unit_count_combo.currentTextChanged.connect(
+            self._on_pa_unit_count_changed
+        )
+
+    def _on_pa_unit_count_changed(self, text: str) -> None:
+        """转发布局派生状态：电源页只跟着数量调整 DUT 分配槽位。"""
+        try:
+            count = int(text)
+        except (TypeError, ValueError):
+            return
+        self.pa_unit_count_changed.emit(count)
 
     def request_save(self):
         if self.validate(): self.save_requested.emit()
@@ -535,9 +388,6 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
             self.load_run_btn,
             self.load_run_id_edit,
             self.test_parameters_group,
-            self.power_section,
-            self.power_tabs,
-            self.power_assignment_group,
         )
         self._finalizing = active
         if active:
@@ -594,51 +444,6 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         errors.extend(self.form_adapter.validation_errors())
         return self.form_adapter.report_errors(errors)
 
-    def on_pa_unit_count_changed(self, _value): self.update_pa_unit_ui()
-    def update_pa_unit_ui(self):
-        count = int(self.pa_unit_count_combo.currentText())
-        for index in (2, 3):
-            visible = count >= index
-            self.power_assignment_widgets[f"pa_unit{index}_power"].setVisible(visible)
-            self.power_assignment_widgets[f"pa_unit{index}_label"].setVisible(visible)
-        if self.power_section is not None:
-            self.power_section.set_dut_supply_count(count)
-    def on_driver_power_toggled(self, _value): self.update_driver_power_ui()
-    def update_driver_power_ui(self):
-        enabled = self.test_mode_enabled and self.driver_power_source_combo.currentText() == "直流电源"
-        self.driver_power_combo.setEnabled(enabled); self.driver_power_label.setEnabled(enabled)
-        self.driver_power_hint.setVisible(self.test_mode_enabled and not enabled)
-        if not enabled: self.driver_power_combo.setCurrentIndex(-1)
-        if self.power_section is not None:
-            self.power_section.set_driver_plan_active(enabled)
-    def get_enabled_power_supplies(self):
-        """电源分配里可选的电源：只来自当前已应用的设备绑定。
-
-        “启用”不再由界面上的勾选框决定：``instruments.power_supplies.<name>.enabled``
-        由绑定写入，因此可选项与保存出的配置使用同一个来源，不存在“界面能选、配置里
-        却未启用”的错位。
-        """
-        return list(self._power_supply_choices())
-    def update_power_supply_options(self):
-        """刷新电源分配下拉框：只保留当前绑定的电源，失效引用保持空选择。
-
-        选项按 ``supply_id`` 重建，显示文本是型号加缩写设备码（``DP832A（DP8B1519）``），
-        业务值放在 ``itemData``。刷新按**数据值**恢复上一次的选择，不按位置、不按可见
-        文本：``QComboBox.clear()`` 会把当前项重置到第一项，按位置保存就会把“这台电源
-        已经不在”变成一次看不见的分配改动。
-
-        配置引用的电源不再绑定时不能被静默换成列表里的第一台——空选择交给校验明确报告，
-        由操作员重新选择。刷新动作本身由表单 Adapter 完成（步骤 7）。
-        """
-        self.form_adapter.refresh_power_choices(self._power_supply_choices())
-        if self.power_section is not None:
-            # 下拉框重建后候选路由跟着绑定走；保留操作者尚未保存的勾选、顺序与漏极。
-            self.power_section.refresh_plan_routes(preserve=True)
-
-    def _power_supply_choices(self) -> PowerSupplyChoices:
-        """电源分配下拉框的可选项：当前绑定的电源，带真实设备的型号用于显示。"""
-        return bound_power_supply_entries(self.device_bindings)
-
     def build_config(self, base=None):
         """按当前控件值组装完整配置（控件读数经表单 Adapter）。
 
@@ -664,20 +469,8 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         return config
 
     def set_test_mode(self, enabled: bool) -> None:
-        """设置欢迎页选择的测试模式并同步供电选项。"""
+        """设置欢迎页选择的测试模式；电源分配与上电计划归独立电源页。"""
         self.test_mode_enabled = bool(enabled)
-        mode = self.config.get("driver_mode", {})
-        mode = dict(mode) if isinstance(mode, dict) else {}
-        assignment = self.config.get("power_supply_assignment", {})
-        driver = assignment.get("driver_amplifier", {}) if isinstance(assignment, dict) else {}
-        driver = driver if isinstance(driver, dict) else {}
-        # 与建页、回填同一个推断：``power_source`` 缺失时看驱动功放分配。
-        self.driver_power_source = driver_power_source_label(
-            mode.get("power_source"), driver.get("power_supply_count")
-        )
-        self.driver_power_source_combo.setCurrentText(self.driver_power_source)
-        self.power_assignment_group.setVisible(self.test_mode_enabled)
-        self.update_driver_power_ui()
         self._dirty_baseline = copy.deepcopy(self.build_config(self.config))
         # 切换测试模式本身不算“已修改”：页面与视图模型同时重置干净基线。
         self.view_model.mark_clean()
@@ -717,47 +510,17 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         :class:`application.configuration_authoring.ConfigurationAuthoringService`
         生成，本页面不读取也不解释它们。
         """
-        # 先算绑定，再用它决定电源分配的可选项与电源标签页：投影不允许把配置引用的
-        # 电源临时塞进下拉框，否则一份指向“没有绑定设备”的电源配置会被静默保存下来；
-        # 标签页也按新配置的电源键与绑定重建，投影才有对应控件可写。
-        # 重建属于“回填动作”：投影失败时把绑定与标签页恢复原样，页面不留在半新半旧的
-        # 状态（``self.config`` 本来就只在投影成功后才更新）。
+        # 先算绑定；本页不再重建电源标签页或分配选项——电源字段由独立电源页回填，
+        # 投影失败时只需恢复本页持有的绑定与问题清单。
         bindings = effective_device_bindings(config)
-        instruments = config.get("instruments") if isinstance(config, dict) else {}
-        instruments = instruments if isinstance(instruments, dict) else {}
-        supplies = instruments.get("power_supplies")
-        supplies = supplies if isinstance(supplies, dict) else {}
         previous_bindings = self.device_bindings
         previous_problems = self.binding_problems
-        previous_driver_source = self.driver_power_source
         self.device_bindings = bindings
-        # 供电方式必须先按新配置算好：投影不另立一套推断，它读的就是这个页面状态。
-        mode = config.get("driver_mode") if isinstance(config, dict) else None
-        mode = mode if isinstance(mode, dict) else {}
-        assignment = config.get("power_supply_assignment") if isinstance(config, dict) else None
-        assignment = assignment if isinstance(assignment, dict) else {}
-        driver = assignment.get("driver_amplifier")
-        driver = driver if isinstance(driver, dict) else {}
-        self.driver_power_source = driver_power_source_label(
-            mode.get("power_source"), driver.get("power_supply_count")
-        )
-        # 驱放计划是否生效必须按**新配置**判定；此时页面上的 test_mode_enabled 还是旧值。
-        driver_plan_active = bool(mode.get("enabled")) and self.driver_power_source == "直流电源"
         try:
-            self._rebuild_power_tabs(
-                sources=self._power_supply_sources(supplies),
-                preserve=False,
-            )
-            projected = self.form_adapter.apply_configuration(
-                config,
-                supplies=self._power_supply_choices(),
-                driver_plan_active=driver_plan_active,
-            )
+            projected = self.form_adapter.apply_configuration(config)
         except ConfigBackfillError:
             self.device_bindings = previous_bindings
             self.binding_problems = previous_problems
-            self.driver_power_source = previous_driver_source
-            self._rebuild_power_tabs(sources=self._power_supply_sources(), preserve=False)
             raise
         self.config = projected
         self.binding_problems = self._binding_problems_of(config)
@@ -765,55 +528,11 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         # 只读视图重置面板；本页只在日志里报告读入时就不可用的绑定。
         if self.binding_problems:
             self.discovery_message.emit("；".join(self.binding_problems))
-        self.update_pa_unit_ui()
-        self.update_driver_power_ui()
-        self.update_power_supply_options()
-        # 基线与视图模型都取“页面对这份文档的组装结果”：控件缺省值（例如驱放供电方式）
-        # 属于页面自身的规范化结果，刚回填完的页面不算已修改。
+        # 基线与视图模型都取“页面对这份文档的组装结果”：控件缺省值属于页面自身的
+        # 规范化结果，刚回填完的页面不算已修改。
         built = self.build_config(self.config)
         self._dirty_baseline = copy.deepcopy(built)
         self.view_model.load(built, bindings=self.device_bindings)
-
-
-# 电源控件现在归独立组件所有。页面保留同名只读属性，让现有测试与页面方法按原来的
-# 名字访问它们，同时保证重建后读到的是组件当前的控件（而不是建页时的一份旧引用）。
-_POWER_SECTION_ATTRIBUTES = (
-    "power_tabs",
-    "power_config_widgets",
-    "power_assignment_group",
-    "power_assignment_widgets",
-    "driver_power_source_combo",
-    "driver_power_source_label",
-    "driver_power_hint",
-    "driver_power_combo",
-    "driver_power_label",
-    "pa_unit1_power_combo",
-    "pa_unit2_power_combo",
-    "pa_unit3_power_combo",
-    "pa_unit2_label",
-    "pa_unit3_label",
-    "power_plan_group",
-    "driver_power_plan_box",
-    "dut_power_plan_editor",
-    "driver_power_plan_editor",
-    "drain_channel_group",
-    "drain_channel_combo",
-)
-
-
-def _power_section_attribute(name):
-    def read(self):
-        section = getattr(self, "power_section", None)
-        if section is None:
-            raise AttributeError(f"电源表单尚未创建：{name}")
-        return getattr(section, name)
-
-    return property(read)
-
-
-for _power_attribute in _POWER_SECTION_ATTRIBUTES:
-    setattr(ConfigurationPage, _power_attribute, _power_section_attribute(_power_attribute))
-del _power_attribute
 
 
 #: 兼容期旧类名（计划步骤 13）。新代码使用 :class:`ConfigurationPage`；旧名称在

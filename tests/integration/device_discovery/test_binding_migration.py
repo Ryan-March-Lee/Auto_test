@@ -40,7 +40,7 @@ class DeviceBindingMigrationTests(InstrumentSetupPageTestCase):
         self.assertTrue(supplies["DP8B1519"]["enabled"])
         self.assertNotIn("address", supplies["PS3"])
         self.assertFalse(supplies["PS3"]["enabled"])
-        self.assertEqual(page.get_enabled_power_supplies(), ["DP8B1519"])
+        self.assertEqual(self.power_page.get_enabled_power_supplies(), ["DP8B1519"])
 
     def test_legacy_power_binding_with_only_an_address_requires_a_rescan(self):
         """只有地址的旧绑定不是身份：不迁移，地址与启用状态一起失效。"""
@@ -69,7 +69,7 @@ class DeviceBindingMigrationTests(InstrumentSetupPageTestCase):
         supply = page.build_config()["instruments"]["power_supplies"]["PS1"]
         self.assertNotIn("address", supply)
         self.assertFalse(supply["enabled"])
-        self.assertEqual(page.get_enabled_power_supplies(), [])
+        self.assertEqual(self.power_page.get_enabled_power_supplies(), [])
 
     def test_legacy_config_address_is_migrated_as_an_unconfirmed_binding(self):
         """只有地址的旧配置：加载后仍可连接，并明确记一条“未扫描确认”的日志。"""

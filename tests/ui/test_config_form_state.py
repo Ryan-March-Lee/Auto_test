@@ -43,7 +43,7 @@ def _combo(value):
 def _form_widgets(**attributes):
     """电源相关字段之外的一组合法读数控件。
 
-    ``validation_errors`` 会按整张表单写出正式配置，因此只关心电源的测试也必须提供
+    ``formal_validation_errors`` 会按整张表单写出正式配置，因此只关心电源的测试也必须提供
     测试参数、压缩点、衰减器等读数；缺一项就是替身不完整，会让页面校验抛
     ``AttributeError``（不是要被吞掉的配置错误）。
     """
@@ -272,7 +272,7 @@ class ConfigFormStateTests(unittest.TestCase):
             },
         )
 
-        errors = ConfigFormState({}, widgets).validation_errors()
+        errors = ConfigFormState({}, widgets).formal_validation_errors()
 
         joined = "；".join(errors)
         self.assertIn("PS3", joined)
@@ -297,7 +297,7 @@ class ConfigFormStateTests(unittest.TestCase):
         )
 
         state = ConfigFormState({}, widgets)
-        errors = state.validation_errors()
+        errors = state.formal_validation_errors()
         written = state.read_power_assignment()["power_supply_assignment"][
             "dut_amplifier"
         ]["supplies"]["carrier"]
@@ -318,7 +318,7 @@ class ConfigFormStateTests(unittest.TestCase):
             },
         )
 
-        errors = ConfigFormState({}, widgets).validation_errors()
+        errors = ConfigFormState({}, widgets).formal_validation_errors()
 
         self.assertIn("未选择电源", "；".join(errors))
 
@@ -374,7 +374,7 @@ class ConfigFormStateTests(unittest.TestCase):
             },
         )
 
-        message = "；".join(ConfigFormState({}, widgets).validation_errors())
+        message = "；".join(ConfigFormState({}, widgets).formal_validation_errors())
 
         self.assertIn("DP8B1519", message)
         self.assertIn("没有已应用的设备", message)
@@ -444,7 +444,7 @@ class ConfigFormStateTests(unittest.TestCase):
         self.assertIsNone(
             assignment["dut_amplifier"]["supplies"]["carrier"]["supply_id"]
         )
-        self.assertIn("未选择电源", "；".join(state.validation_errors()))
+        self.assertIn("未选择电源", "；".join(state.formal_validation_errors()))
 
     def test_assignment_declared_separates_missing_from_unbound(self):
         """“没有这条分配”与“声明了但未绑定”必须能分开，否则回填会补一台电源。"""
@@ -563,7 +563,7 @@ class PowerSupplyConnectionTests(unittest.TestCase):
             driver_supply_id="DP8B1519",
         )
 
-        errors = ConfigFormState({}, widgets).validation_errors()
+        errors = ConfigFormState({}, widgets).formal_validation_errors()
 
         self.assertTrue(
             any("同一物理通道不能同时用于 DUT 与驱动功放" in error for error in errors),
@@ -576,7 +576,7 @@ class PowerSupplyConnectionTests(unittest.TestCase):
             test_mode_enabled=False, supply_id="DP8B1519", bindings=self._bindings()
         )
 
-        errors = ConfigFormState({}, widgets).validation_errors()
+        errors = ConfigFormState({}, widgets).formal_validation_errors()
 
         self.assertTrue(any("共用同一 VISA 地址" in error for error in errors), errors)
 
@@ -598,7 +598,7 @@ class PowerSupplyConnectionTests(unittest.TestCase):
             "author_document",
             side_effect=ConfigurationError("缺少电源身份"),
         ):
-            errors = ConfigFormState({}, widgets).validation_errors()
+            errors = ConfigFormState({}, widgets).formal_validation_errors()
 
         self.assertIn("缺少电源身份", "；".join(errors))
 
@@ -616,7 +616,7 @@ class PowerSupplyConnectionTests(unittest.TestCase):
             state, "build_config", side_effect=AttributeError("start_power")
         ):
             with self.assertRaises(AttributeError):
-                state.validation_errors()
+                state.formal_validation_errors()
 
     def test_distinct_addresses_have_no_connection_error(self):
         widgets = _FormWidgets(
@@ -625,7 +625,7 @@ class PowerSupplyConnectionTests(unittest.TestCase):
             bindings=self._bindings(second_address="TCPIP0::192.168.1.108::inst0::INSTR"),
         )
 
-        errors = ConfigFormState({}, widgets).validation_errors()
+        errors = ConfigFormState({}, widgets).formal_validation_errors()
 
         self.assertFalse([error for error in errors if "VISA 地址" in error], errors)
 

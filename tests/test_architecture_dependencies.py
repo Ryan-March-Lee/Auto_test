@@ -934,21 +934,26 @@ class ProductionDependencyTests(unittest.TestCase):
         self.assertIn("application.dto.export_requests", modules)
 
     def test_configuration_page_delegates_backfill_to_the_projection_module(self):
-        """步骤 7 / 11：配置页只经表单 Adapter 回填，逐字段规则仍在 config_projection。"""
+        """步骤 7 / 11 / 12：配置页与独立电源页只经表单 Adapter 回填。"""
         page_source = (ROOT / "presentation" / "qt" / "configuration_page.py").read_text(
             encoding="utf-8-sig"
         )
+        power_page_source = (
+            ROOT / "presentation" / "qt" / "power_configuration_page.py"
+        ).read_text(encoding="utf-8-sig")
         adapter_source = (
             ROOT / "presentation" / "qt" / "config_form_adapter.py"
         ).read_text(encoding="utf-8-sig")
         self.assertIn("self.form_adapter.apply_configuration(", page_source)
+        self.assertIn("self.form_adapter.apply_power_configuration(", power_page_source)
         self.assertNotIn("project_authoring_config(", page_source)
+        self.assertNotIn("project_authoring_config(", power_page_source)
         self.assertIn("project_authoring_config(", adapter_source)
-        # 电源分配的可选项由页面按当前绑定算好再交给投影（步骤 9：显示文本带型号，
-        # 业务值在 itemData 里）；投影自己不从绑定记录拼显示文本。
-        self.assertIn("supplies=self._power_supply_choices(", page_source)
-        tree = _tree(ROOT / "presentation" / "qt" / "configuration_page.py")
-        page = _class_node(tree, "ConfigurationPage")
+        self.assertIn("project_power_config(", adapter_source)
+        # 电源分配的可选项由独立电源页按当前绑定算好再交给投影。
+        self.assertIn("supplies=self._power_supply_choices(", power_page_source)
+        tree = _tree(ROOT / "presentation" / "qt" / "power_configuration_page.py")
+        page = _class_node(tree, "PowerConfigurationPage")
         page_methods = {
             node.name for node in page.body if isinstance(node, ast.FunctionDef)
         }

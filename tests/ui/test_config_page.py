@@ -29,34 +29,6 @@ class ConfigurationPageTests(unittest.TestCase):
         self.app.processEvents()
         return page
 
-    def test_pa_unit_visibility_tracks_count(self):
-        page = self.make_page(dut_config={"power_supply_count": 1})
-        self.assertFalse(page.pa_unit2_power_combo.isVisible())
-        self.assertFalse(page.pa_unit3_power_combo.isVisible())
-        page.pa_unit_count_combo.setCurrentText("2")
-        self.assertTrue(page.pa_unit2_power_combo.isVisible())
-        self.assertFalse(page.pa_unit3_power_combo.isVisible())
-        page.pa_unit_count_combo.setCurrentText("3")
-        self.assertTrue(page.pa_unit3_power_combo.isVisible())
-
-    def test_driver_power_channel_follows_the_power_source(self):
-        page = self.make_page(driver_mode={"enabled": True, "power_source": "dc_supply"})
-        page.set_test_mode(True)
-        self.assertEqual(page.driver_power_source_combo.currentText(), "直流电源")
-        self.assertTrue(page.driver_power_combo.isEnabled())
-        self.assertTrue(page.driver_power_hint.isHidden())
-
-        page.driver_power_source_combo.setCurrentText("自带供电")
-        self.assertFalse(page.driver_power_combo.isEnabled())
-        self.assertTrue(page.driver_power_hint.isVisible())
-
-        page.driver_power_source_combo.setCurrentText("直流电源")
-        self.assertTrue(page.driver_power_combo.isEnabled())
-        self.assertTrue(page.driver_power_hint.isHidden())
-
-        page.set_test_mode(False)
-        self.assertFalse(page.driver_power_combo.isEnabled())
-
     def test_driver_mode_emits_change_signal(self):
         page = self.make_page()
         changes = []
@@ -66,62 +38,127 @@ class ConfigurationPageTests(unittest.TestCase):
         page.set_test_mode(True)
         self.assertEqual(changes[-1], True)
 
-    def test_no_driver_mode_hides_the_power_assignment_box(self):
-        page = self.make_page(
-            driver_mode={"enabled": True},
-            power_supply_assignment={
-                "driver_amplifier": {
-                    "power_supply_count": 1,
-                    "supplies": {"main": {"name": "PS1", "channel": ["CH1", "CH2"]}},
+    def test_power_controls_live_on_the_independent_page(self):
+        """步骤 12：电源控件与上电计划不再由参数配置页创建或读取。"""
+        page = self.make_page()
+        for name in (
+            "power_section",
+            "power_tabs",
+            "power_config_widgets",
+            "power_assignment_group",
+            "dut_power_plan_editor",
+            "drain_channel_combo",
+        ):
+            with self.subTest(name=name):
+                self.assertFalse(hasattr(page, name))
+
+    def test_validation_does_not_report_power_section_errors_owned_by_the_power_page(self):
+        """正式校验按页面归属拆分：供电分配/计划/漏极的问题归独立电源页。"""
+        page = ConfigurationPage(
+            {
+                "test_frequencies": [2.4],
+                "signal_source": {"start_power": -10.0, "stop_power": 0.0, "step": 1.0},
+                "compression_point": {"type": "5dB"},
+                "attenuator": {"type": "30dB"},
+                "driver_mode": {"enabled": False},
+                "dut_config": {"max_input_power": 30.0, "power_supply_count": 1},
+                "instruments": {
+                    "signal_generator": {
+                        "address": "sim::sg",
+                        "model": "SG",
+                        "enabled": True,
+                    },
+                    "spectrum_analyzer": {
+                        "address": "sim::sa",
+                        "model": "SA",
+                        "enabled": True,
+                    },
+                    "power_supplies": {
+                        "DP8B1519": {
+                            "address": "sim::ps1",
+                            "model": "DP832A",
+                            "enabled": True,
+                            "channels": {"CH1": {"voltage": {"value": 2.8}}},
+                        }
+                    },
                 },
-                "dut_amplifier": {
-                    "power_supply_count": 1,
-                    "supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}},
+                "device_bindings": {
+                    "signal_generator": {"visa_address": "sim::sg"},
+                    "spectrum_analyzer": {"visa_address": "sim::sa"},
+                    "power_supplies": {
+                        "DP8B1519": {
+                            "visa_address": "sim::ps1",
+                            "model": "DP832A",
+                            "device_key": "rigol technologies:dp8b214901519",
+                            "full_code": "DP8B214901519",
+                        }
+                    },
                 },
-            },
-        )
-
-        page.set_test_mode(False)
-
-        self.assertFalse(page.power_assignment_group.isVisible())
-        self.assertFalse(page.driver_mode_requested())
-        self.assertEqual(page.build_config()["driver_mode"], {"enabled": False})
-        assignment = page.build_config()["power_supply_assignment"]
-        self.assertEqual(assignment["driver_amplifier"]["power_supply_count"], 0)
-        self.assertEqual(assignment["driver_amplifier"]["supplies"], {})
-
-    def test_driver_mode_keeps_the_box_and_infers_the_legacy_power_source(self):
-        page = self.make_page(
-            power_supply_assignment={
-                "driver_amplifier": {
-                    "power_supply_count": 1,
-                    "supplies": {"main": {"name": "PS1", "channel": ["CH1", "CH2"]}},
-                }
+                # 引用一台没有已应用设备的电源：这是电源页的问题，不应由参数页报告。
+                "power_supply_assignment": {
+                    "dut_amplifier": {
+                        "power_supply_count": 1,
+                        "supplies": {
+                            "carrier": {
+                                "supply_id": "PS9",
+                                "channel": ["CH1"],
+                            }
+                        },
+                    }
+                },
             }
         )
+        page.show()
+        self.app.processEvents()
+        failures = []
+        page.validation_failed.connect(failures.append)
 
-        page.set_test_mode(True)
+        allowed = page.validate()
 
-        self.assertTrue(page.power_assignment_group.isVisible())
-        self.assertTrue(page.driver_mode_requested())
-        # 旧配置没有 power_source，但有本机驱动通道，按直流电源推断并保留分配。
-        self.assertEqual(page.driver_power_source_combo.currentText(), "直流电源")
-        self.assertEqual(
-            page.build_config()["power_supply_assignment"]["driver_amplifier"][
-                "power_supply_count"
-            ],
-            1,
+        self.assertTrue(allowed)
+        self.assertEqual(failures, [])
+
+    def test_validation_still_reports_parameter_errors_on_the_parameter_page(self):
+        page = ConfigurationPage({"test_frequencies": [], "instruments": {}})
+        page.show()
+        self.app.processEvents()
+        failures = []
+        page.validation_failed.connect(failures.append)
+
+        allowed = page.validate()
+
+        self.assertFalse(allowed)
+        self.assertIn("频率", failures[0])
+
+    def test_build_config_keeps_the_power_section_owned_by_the_other_page(self):
+        """参数页只读测试参数；电源字段由独立电源页提交，不被本页清空。"""
+        assignment = {
+            "dut_amplifier": {
+                "power_supply_count": 1,
+                "supplies": {
+                    "carrier": {"supply_id": "DP8B1519", "channel": ["CH1"]}
+                },
+                "power_plan": {
+                    "power_sequence": [{"supply_id": "DP8B1519", "channel": "CH1"}],
+                    "inter_channel_delay_s": 1.0,
+                },
+            }
+        }
+        page = self.make_page(
+            dut_config={
+                "power_supply_count": 1,
+                "drain_channel": {"supply_id": "DP8B1519", "channel": "CH1"},
+            },
+            power_supply_assignment=assignment,
         )
-        # 用户按现场情况改成自带供电后，不再占用本机驱动电源通道。
-        page.driver_power_source_combo.setCurrentText("自带供电")
-        self.assertEqual(
-            page.build_config()["power_supply_assignment"]["driver_amplifier"][
-                "power_supply_count"
-            ],
-            0,
-        )
-        self.assertEqual(page.build_config()["driver_mode"]["power_source"], "external_ac")
 
+        built = page.build_config()
+
+        self.assertEqual(built["power_supply_assignment"], assignment)
+        self.assertEqual(
+            built["dut_config"]["drain_channel"],
+            {"supply_id": "DP8B1519", "channel": "CH1"},
+        )
 
     def test_invalid_frequency_prevents_save_request(self):
         page = self.make_page()
@@ -283,6 +320,7 @@ class ConfigurationPageTests(unittest.TestCase):
         self.assertEqual(widget.value(), start + 1)
 
     def test_spin_down_clicked_through_line_edit_steps_down(self):
+        """行编辑框盖住下按钮时，落在下箭头上的点击仍应减一。"""
         page = self.make_page()
         widget = page.start_power
         _up, down = self.spin_button_rects(widget)
@@ -327,13 +365,15 @@ class ConfigurationPageTests(unittest.TestCase):
     def test_wide_window_keeps_group_boxes_compact(self):
         from PySide6.QtWidgets import QGroupBox
 
+        from presentation.qt.theme import PAGE_CONTENT_MAX_WIDTH
+
         page = self.make_page()
         page.resize(2400, 900)
         self.app.processEvents()
         widths = [box.width() for box in page.findChildren(QGroupBox) if box.isVisible()]
         self.assertTrue(widths)
-        # 分组框不应随窗口宽度无限拉伸，避免出现很长的灰色边框。
-        self.assertLessEqual(max(widths), 900)
+        # 分组框不随窗口宽度无限拉伸：内容宽度由跨页面共用的主题令牌收口。
+        self.assertLessEqual(max(widths), PAGE_CONTENT_MAX_WIDTH)
 
     def test_instrument_connection_is_its_own_page(self):
         """仪表配置已独立成整屏页面：配置页只留“上一步”入口与最终动作。"""
@@ -371,23 +411,15 @@ class ConfigurationPageTests(unittest.TestCase):
 
         self.assertEqual(page.finalize_run_btn.text(), "完成配置并连接仪器")
 
-    def test_finalizing_disables_the_page_without_overwriting_derived_states(self):
-        """最终动作只临时禁用控件，退出时恢复各控件原来的可用状态。
-
-        驱放供电切到“自带供电”后，驱动电源分配本来就被禁用；最终动作结束后不能
-        把它顺手启用，否则界面会提供一个业务上不允许的编辑入口。
-        """
-        page = self.make_page(driver_mode={"enabled": True, "power_source": "dc_supply"})
-        page.set_test_mode(True)
-        page.driver_power_source_combo.setCurrentText("自带供电")
-        self.assertFalse(page.driver_power_combo.isEnabled())
+    def test_finalizing_disables_the_page_and_restores_previous_states(self):
+        """最终动作只临时禁用控件，退出时恢复各控件原来的可用状态。"""
+        page = self.make_page()
         page.save_config_btn.setEnabled(False)
 
         page.set_finalizing(True)
 
         self.assertFalse(page.finalize_run_btn.isEnabled())
         self.assertFalse(page.test_parameters_group.isEnabled())
-        self.assertFalse(page.power_assignment_group.isEnabled())
         self.assertFalse(page.previous_step_btn.isEnabled())
 
         page.set_finalizing(False)
@@ -396,9 +428,6 @@ class ConfigurationPageTests(unittest.TestCase):
         self.assertTrue(page.test_parameters_group.isEnabled())
         self.assertTrue(page.previous_step_btn.isEnabled())
         self.assertFalse(page.save_config_btn.isEnabled(), "进入前就禁用的控件保持禁用")
-        self.assertFalse(
-            page.driver_power_combo.isEnabled(), "业务派生出的禁用状态不能被最终动作改写"
-        )
 
     def test_finalize_request_is_ignored_while_a_finalize_is_running(self):
         page = self.make_page()
@@ -409,682 +438,6 @@ class ConfigurationPageTests(unittest.TestCase):
         page.request_finalize_run()
 
         self.assertEqual(requested, [])
-
-    def test_config_sections_use_two_columns(self):
-        from PySide6.QtCore import QPoint
-        from PySide6.QtWidgets import QGroupBox
-
-        page = self.make_page()
-        page.resize(1400, 900)
-        self.app.processEvents()
-        titles = {box.title(): box for box in page.findChildren(QGroupBox) if box.isVisible()}
-        params = titles["测试参数配置"]
-        power_detail = titles["电源详细配置"]
-        # 两栏布局：测试参数/运行在左，电源配置在右，而不是单列纵向堆叠。
-        # 电源分区现在归独立组件所有，子控件的 x 是相对该组件的，比较前映射回页面。
-        params_x = params.mapTo(page, QPoint(0, 0)).x()
-        power_x = power_detail.mapTo(page, QPoint(0, 0)).x()
-        self.assertLess(params_x + params.width(), power_x)
-
-    @staticmethod
-    def power_supply_bindings(*supply_ids):
-        """按给定短标签造一份电源绑定集合（每台各带地址与身份）。"""
-        return {
-            "power_supplies": {
-                supply_id: {
-                    "device_key": f"rigol technologies:{supply_id.casefold()}",
-                    "visa_address": f"TCPIP0::192.168.1.{index}::inst0::INSTR",
-                }
-                for index, supply_id in enumerate(supply_ids, 1)
-            }
-        }
-
-    def test_unbound_power_reference_does_not_select_another_supply(self):
-        """载入配置时旧引用失效就保持空选择，不能停在下拉框第一项。"""
-        page = self.make_page(
-            device_bindings=self.power_supply_bindings("DP8B0885"),
-            dut_config={"power_supply_count": 1},
-            power_supply_assignment={
-                "dut_amplifier": {
-                    "power_supply_count": 1,
-                    "supplies": {"carrier": {"name": "DP8B1519", "channel": ["CH1", "CH2"]}},
-                }
-            },
-        )
-
-        self.assertEqual(page.pa_unit1_power_combo.currentText(), "")
-        self.assertEqual(page.pa_unit1_power_combo.currentIndex(), -1)
-        # 保存的是“引用未绑定”，不是另一台电源。
-        entry = page.build_config()["power_supply_assignment"]["dut_amplifier"][
-            "supplies"
-        ]["carrier"]
-        self.assertIsNone(entry["supply_id"])
-
-    def test_power_plan_candidates_follow_the_assignment_channels(self):
-        """计划候选只来自分配声明的通道，不从整台电源展开 CH1/CH2。"""
-        page = self.make_page(
-            device_bindings=self.power_supply_bindings("DP8B1519", "DP8B0885"),
-            dut_config={"power_supply_count": 2},
-            power_supply_assignment={
-                "dut_amplifier": {
-                    "power_supply_count": 2,
-                    "supplies": {
-                        "carrier": {"supply_id": "DP8B1519", "channel": ["CH1"]},
-                        "peaking": {"supply_id": "DP8B0885", "channel": ["CH2"]},
-                    },
-                }
-            },
-        )
-
-        self.assertEqual(
-            page.dut_power_plan_editor.routes(),
-            (("DP8B1519", "CH1"), ("DP8B0885", "CH2")),
-        )
-        self.assertIn("未确认", page.dut_power_plan_editor.status.text())
-
-    def test_power_plan_and_drain_are_backfilled_and_written_back(self):
-        """页面把组计划、间隔与漏极放进统一配置读数（步骤 11 的组件接线）。"""
-        plan = {
-            "power_sequence": [
-                {"supply_id": "DP8B0885", "channel": "CH2"},
-                {"supply_id": "DP8B1519", "channel": "CH1"},
-            ],
-            "inter_channel_delay_s": 2.0,
-        }
-        page = self.make_page(
-            device_bindings=self.power_supply_bindings("DP8B1519", "DP8B0885"),
-            dut_config={
-                "power_supply_count": 2,
-                "drain_channel": {"supply_id": "DP8B0885", "channel": "CH2"},
-            },
-            power_supply_assignment={
-                "driver_amplifier": {
-                    "power_supply_count": 0,
-                    "supplies": {},
-                    "power_plan": {"power_sequence": [], "inter_channel_delay_s": 0.0},
-                },
-                "dut_amplifier": {
-                    "power_supply_count": 2,
-                    "supplies": {
-                        "carrier": {
-                            "supply_id": "DP8B1519",
-                            "channel": ["CH1", "CH2"],
-                        },
-                        "peaking": {
-                            "supply_id": "DP8B0885",
-                            "channel": ["CH1", "CH2"],
-                        },
-                    },
-                    "power_plan": plan,
-                },
-            },
-        )
-
-        self.assertEqual(page.dut_power_plan_editor.read_plan(), plan)
-        written = page.build_config()
-        self.assertEqual(
-            written["power_supply_assignment"]["dut_amplifier"]["power_plan"],
-            plan,
-        )
-        self.assertEqual(
-            written["dut_config"]["drain_channel"],
-            {"supply_id": "DP8B0885", "channel": "CH2"},
-        )
-
-    def test_power_assignment_reference_is_read_from_supply_id(self):
-        """读配置时 ``supply_id`` 优先，旧字段 ``name`` 不参与选择。"""
-        page = self.make_page(
-            device_bindings=self.power_supply_bindings("DP8B1519", "DP8B0885"),
-            dut_config={"power_supply_count": 1},
-            power_supply_assignment={
-                "dut_amplifier": {
-                    "power_supply_count": 1,
-                    "supplies": {
-                        "carrier": {
-                            "supply_id": "DP8B0885",
-                            "name": "DP8B1519",
-                            "channel": ["CH1", "CH2"],
-                        }
-                    },
-                }
-            },
-        )
-
-        self.assertEqual(page.pa_unit1_power_combo.currentData(), "DP8B0885")
-
-    def test_power_assignment_options_are_the_bound_supplies(self):
-        """下拉框只列本次绑定的电源：1 台、2 台、5 台都只是集合长度不同。"""
-        for supply_ids in (
-            ("DP8B1519",),
-            ("DP8B1519", "DP8B0885"),
-            ("DP8B1519", "DP8B0885", "DP8B0950", "DP8B1191", "DP8B1216"),
-        ):
-            with self.subTest(count=len(supply_ids)):
-                page = self.make_page(
-                    device_bindings=self.power_supply_bindings(*supply_ids),
-                    dut_config={"power_supply_count": 1},
-                )
-                options = [
-                    page.pa_unit1_power_combo.itemText(index)
-                    for index in range(page.pa_unit1_power_combo.count())
-                ]
-                self.assertEqual(options, list(supply_ids))
-                self.assertEqual(page.get_enabled_power_supplies(), list(supply_ids))
-
-    def test_explicitly_unbound_reference_stays_empty(self):
-        """配置明确写 ``supply_id: null`` 时不能按缺省规则补上第一台可用电源。"""
-        page = self.make_page(
-            device_bindings=self.power_supply_bindings("DP8B0885"),
-            dut_config={"power_supply_count": 1},
-            power_supply_assignment={
-                "dut_amplifier": {
-                    "power_supply_count": 1,
-                    "supplies": {
-                        "carrier": {"supply_id": None, "channel": ["CH1", "CH2"]}
-                    },
-                }
-            },
-        )
-
-        self.assertEqual(page.pa_unit1_power_combo.currentIndex(), -1)
-        self.assertEqual(page.pa_unit1_power_combo.currentText(), "")
-        entry = page.build_config()["power_supply_assignment"]["dut_amplifier"][
-            "supplies"
-        ]["carrier"]
-        self.assertIsNone(entry["supply_id"])
-        self.assertNotIn("name", entry)
-
-    def test_missing_assignment_defaults_to_the_first_bound_supply(self):
-        """配置里没有这条分配时按缺省规则选第一台可用电源（缺失 ≠ 未绑定）。"""
-        page = self.make_page(
-            device_bindings=self.power_supply_bindings("DP8B1519", "DP8B0885"),
-            dut_config={"power_supply_count": 1},
-        )
-
-        self.assertEqual(page.pa_unit1_power_combo.currentData(), "DP8B1519")
-
-    def test_applied_config_keeps_an_explicitly_unbound_reference_empty(self):
-        """回填路径（apply_config）与初次建页共用同一判定：显式 null 仍是空选择。"""
-        page = self.make_page()
-
-        page.apply_config(
-            {
-                "test_frequencies": [1.0],
-                "instruments": {"power_supplies": {}},
-                "device_bindings": self.power_supply_bindings("DP8B0885"),
-                "driver_mode": {"enabled": True, "power_source": "dc_supply"},
-                "dut_config": {"power_supply_count": 1},
-                "power_supply_assignment": {
-                    "driver_amplifier": {
-                        "power_supply_count": 1,
-                        "supplies": {"main": {"supply_id": None}},
-                    },
-                    "dut_amplifier": {
-                        "power_supply_count": 1,
-                        "supplies": {"carrier": {"supply_id": None}},
-                    },
-                },
-            }
-        )
-
-        self.assertEqual(page.pa_unit1_power_combo.currentIndex(), -1)
-        self.assertEqual(page.driver_power_combo.currentIndex(), -1)
-
-    def test_applied_config_reference_follows_supply_id_not_name(self):
-        """回填时 ``supply_id`` 为准：与之冲突的旧字段 ``name`` 不参与选择。"""
-        page = self.make_page()
-
-        def applied(carrier):
-            page.apply_config(
-                {
-                    "test_frequencies": [1.0],
-                    "instruments": {"power_supplies": {}},
-                    "device_bindings": self.power_supply_bindings(
-                        "DP8B1519", "DP8B0885"
-                    ),
-                    "dut_config": {"power_supply_count": 1},
-                    "power_supply_assignment": {
-                        "dut_amplifier": {
-                            "power_supply_count": 1,
-                            "supplies": {"carrier": carrier},
-                        }
-                    },
-                }
-            )
-            return page.pa_unit1_power_combo.currentData() or ""
-
-        # supply_id 指向已绑定电源：即使 name 是另一台，也选 supply_id 指定的那台。
-        self.assertEqual(applied({"supply_id": "DP8B0885", "name": "DP8B1519"}), "DP8B0885")
-        # 反过来：supply_id 指向未绑定的电源时保持空选择，不被 name 改指另一台。
-        self.assertEqual(applied({"supply_id": "DP8B9999", "name": "DP8B1519"}), "")
-
-    def test_power_assignment_shows_the_label_with_model_and_keeps_supply_id_as_data(self):
-        """步骤 9：下拉显示 ``DP8B1519（DP832A）``，``itemData`` 保存 ``supply_id``。"""
-        bindings = self.power_supply_bindings("DP8B1519", "DP8B0885")
-        bindings["power_supplies"]["DP8B1519"]["model"] = "DP832A"
-        bindings["power_supplies"]["DP8B0885"]["model"] = "DP832A"
-        page = self.make_page(
-            device_bindings=bindings, dut_config={"power_supply_count": 1}
-        )
-
-        combo = page.pa_unit1_power_combo
-        self.assertEqual(
-            [combo.itemText(index) for index in range(combo.count())],
-            ["DP832A（DP8B1519）", "DP832A（DP8B0885）"],
-        )
-        # 两台型号相同、显示文本只差短标签：业务值必须来自 itemData。
-        self.assertEqual(
-            [combo.itemData(index) for index in range(combo.count())],
-            ["DP8B1519", "DP8B0885"],
-        )
-        self.assertEqual(combo.currentData(), "DP8B1519")
-
-    def test_saving_reads_the_supply_id_from_item_data_not_the_display_text(self):
-        """保存的引用来自 ``itemData``：显示文本带型号（含全角括号）也不会被写进配置。"""
-        bindings = self.power_supply_bindings("DP8B1519", "DP8B0885")
-        bindings["power_supplies"]["DP8B0885"]["model"] = "DP832A"
-        page = self.make_page(
-            device_bindings=bindings,
-            dut_config={"power_supply_count": 1},
-            power_supply_assignment={
-                "dut_amplifier": {"supplies": {"carrier": {"supply_id": "DP8B0885"}}}
-            },
-        )
-        self.assertEqual(page.pa_unit1_power_combo.currentText(), "DP832A（DP8B0885）")
-
-        entry = page.build_config()["power_supply_assignment"]["dut_amplifier"][
-            "supplies"
-        ]["carrier"]
-
-        self.assertEqual(entry["supply_id"], "DP8B0885")
-        self.assertNotIn("name", entry, "1.1 只写 supply_id，不再写过渡别名")
-
-    def test_refreshing_the_options_keeps_the_selection_by_supply_id(self):
-        """刷新选项后仍停在原来那台电源上：按数据恢复，不按位置也不按显示文本。"""
-        page = self.make_page(
-            device_bindings=self.power_supply_bindings("DP8B1519", "DP8B0885"),
-            dut_config={"power_supply_count": 1},
-            power_supply_assignment={
-                "dut_amplifier": {"supplies": {"carrier": {"supply_id": "DP8B0885"}}}
-            },
-        )
-        self.assertEqual(page.pa_unit1_power_combo.currentData(), "DP8B0885")
-
-        page.update_power_supply_options()
-
-        self.assertEqual(page.pa_unit1_power_combo.currentData(), "DP8B0885")
-
-    def test_refreshing_after_a_supply_was_removed_clears_only_that_slot(self):
-        """某台电源不再绑定时，只清掉引用它的槽位，其它槽位保持原选择。"""
-        page = self.make_page(
-            device_bindings=self.power_supply_bindings("DP8B1519", "DP8B0885"),
-            dut_config={"power_supply_count": 2},
-            driver_mode={"enabled": True, "power_source": "dc_supply"},
-            power_supply_assignment={
-                "driver_amplifier": {"supplies": {"main": {"supply_id": "DP8B1519"}}},
-                "dut_amplifier": {
-                    "power_supply_count": 2,
-                    "supplies": {
-                        "carrier": {"supply_id": "DP8B0885"},
-                        "peaking": {"supply_id": "DP8B0885"},
-                    },
-                },
-            },
-        )
-        page.device_bindings = self.power_supply_bindings("DP8B1519")
-
-        page.update_power_supply_options()
-
-        self.assertEqual(page.driver_power_combo.currentData(), "DP8B1519")
-        self.assertEqual(page.pa_unit1_power_combo.currentIndex(), -1)
-        self.assertEqual(page.pa_unit2_power_combo.currentIndex(), -1)
-
-    def test_power_tabs_are_titled_with_the_label_and_model(self):
-        """电源标签页按配置与绑定动态创建，标题是 ``型号（缩写设备码）``。"""
-        bindings = self.power_supply_bindings("DP8B1519", "DP8B0885")
-        bindings["power_supplies"]["DP8B0885"]["model"] = "DP832A"
-        page = self.make_page(
-            device_bindings=bindings,
-            instruments={"power_supplies": {"DP8B1519": {"model": "DP832A"}}},
-            dut_config={"power_supply_count": 1},
-        )
-
-        titles = [
-            page.power_tabs.tabText(index) for index in range(page.power_tabs.count())
-        ]
-        self.assertEqual(titles, ["DP832A（DP8B1519）", "DP832A（DP8B0885）"])
-        self.assertEqual(set(page.power_config_widgets), {"DP8B1519", "DP8B0885"})
-
-    def test_power_tab_tooltips_carry_the_full_identity_for_audit(self):
-        """标签页悬浮提示给详情与审计：型号（缩写设备码）· 完整设备码 · 设备键。
-
-        卡面标题只有 ``型号（缩写设备码）``（标题栏很窄），追溯时把指针停在标签页上就能读到
-        这台设备的完整序列号；两处文本同源（``domain.instruments.labels``），不会各说一套。
-        """
-        bindings = self.power_supply_bindings("DP8B1519")
-        bindings["power_supplies"]["DP8B1519"].update(
-            {
-                "model": "DP832A",
-                "vendor": "Rigol Technologies",
-                "full_code": "DP8B214901519",
-                "device_key": "rigol technologies:dp8b214901519",
-            }
-        )
-        page = self.make_page(
-            device_bindings=bindings,
-            instruments={"power_supplies": {}},
-            dut_config={"power_supply_count": 1},
-        )
-
-        self.assertEqual(page.power_tabs.tabText(0), "DP832A（DP8B1519）")
-        self.assertEqual(
-            page.power_tabs.tabToolTip(0),
-            "DP832A（DP8B1519） · 完整设备码 DP8B214901519"
-            " · 设备键 rigol technologies:dp8b214901519",
-        )
-
-    def test_old_slot_entry_tooltip_does_not_invent_a_label(self):
-        """旧槽位条目按旧字段显示：标题与提示都只有 ``PS1``，没有序列号也没有新标签。"""
-        page = self.make_page(
-            instruments={"power_supplies": {"PS1": {"model": "PS1", "channels": {}}}},
-            dut_config={"power_supply_count": 1},
-        )
-
-        self.assertEqual(page.power_tabs.tabText(0), "PS1")
-        self.assertEqual(page.power_tabs.tabToolTip(0), "PS1")
-        self.assertNotIn("序列号", page.power_tabs.tabToolTip(0))
-
-    def test_power_tabs_follow_the_bound_supply_count(self):
-        """电源数量变化时页面动态增减标签页：1、2、5 台都不需要改常量。"""
-        for supply_ids in (
-            ("DP8B1519",),
-            ("DP8B1519", "DP8B0885"),
-            ("DP8B1519", "DP8B0885", "DP8B0950", "DP8B1191", "DP8B1216"),
-        ):
-            with self.subTest(count=len(supply_ids)):
-                page = self.make_page(
-                    device_bindings=self.power_supply_bindings(*supply_ids),
-                    dut_config={"power_supply_count": 1},
-                )
-                self.assertEqual(page.power_tabs.count(), len(supply_ids))
-                self.assertEqual(
-                    list(page.power_config_widgets), list(supply_ids)
-                )
-
-    def test_power_tabs_are_indexed_by_key_not_by_position(self):
-        """回填按电源键建页：两台电源各自的通道参数不会互换。"""
-        page = self.make_page()
-        page.apply_config(
-            {
-                "test_frequencies": [1.0],
-                "instruments": {
-                    "power_supplies": {
-                        "DP8B1519": {
-                            "model": "DP832A",
-                            "channels": {"CH1": {"voltage": {"value": 12.0}}},
-                        },
-                        "DP8B0885": {
-                            "model": "DP832A",
-                            "channels": {"CH1": {"voltage": {"value": 3.3}}},
-                        },
-                    }
-                },
-                "device_bindings": self.power_supply_bindings(
-                    "DP8B1519", "DP8B0885"
-                ),
-                "dut_config": {"power_supply_count": 1},
-            }
-        )
-
-        self.assertEqual(
-            page.power_config_widgets["DP8B1519"]["channels"]["CH1"]["voltage"].value(),
-            12.0,
-        )
-        self.assertEqual(
-            page.power_config_widgets["DP8B0885"]["channels"]["CH1"]["voltage"].value(),
-            3.3,
-        )
-
-    def test_rebuilding_power_tabs_keeps_channel_values_and_the_selected_supply(self):
-        """重建（如再次应用绑定）不丢通道参数，且仍停留在原来那台电源的标签页。
-
-        回填（``preserve=False``）本来就按新配置重建控件，这里覆盖的是“电源数量变化但
-        用户刚填的值还要保留”的重建路径。
-        """
-        page = self.make_page(
-            device_bindings=self.power_supply_bindings("DP8B1519", "DP8B0885"),
-            dut_config={"power_supply_count": 1},
-        )
-        page.power_config_widgets["DP8B0885"]["channels"]["CH2"]["voltage"].setValue(28.0)
-        page.power_tabs.setCurrentIndex(
-            page.power_tabs.indexOf(page.power_config_widgets["DP8B0885"]["page"])
-        )
-        self.assertIs(page._current_power_tab_key(), "DP8B0885")
-
-        page._rebuild_power_tabs(preserve=True)
-
-        self.assertEqual(
-            page.power_config_widgets["DP8B0885"]["channels"]["CH2"]["voltage"].value(),
-            28.0,
-        )
-        self.assertEqual(page._current_power_tab_key(), "DP8B0885")
-
-    def test_rebuilding_keeps_values_the_operator_just_edited(self):
-        """配置里已有通道参数时，``preserve=True`` 的重建仍以控件里刚填的值为准。
-
-        刷新发生在保存之前：如果重建无条件回到配置里的旧值，操作者刚改的参数会被悄悄
-        改回去，这正是“刷新不丢通道参数”要避免的情况。
-        """
-        page = self.make_page(
-            device_bindings=self.power_supply_bindings("DP8B1519", "DP8B0885"),
-            instruments={
-                "power_supplies": {
-                    "DP8B1519": {"channels": {"CH1": {"voltage": {"value": 5.0}}}},
-                    "DP8B0885": {"channels": {"CH1": {"voltage": {"value": 9.0}}}},
-                }
-            },
-            dut_config={"power_supply_count": 1},
-        )
-        self.assertEqual(
-            page.power_config_widgets["DP8B0885"]["channels"]["CH1"]["voltage"].value(),
-            9.0,
-        )
-        page.power_config_widgets["DP8B0885"]["channels"]["CH1"]["voltage"].setValue(15.0)
-        page.power_config_widgets["DP8B0885"]["channels"]["CH1"][
-            "current_protection_enabled"
-        ].setChecked(True)
-
-        page._rebuild_power_tabs(preserve=True)
-
-        widgets = page.power_config_widgets
-        self.assertEqual(widgets["DP8B0885"]["channels"]["CH1"]["voltage"].value(), 15.0)
-        self.assertTrue(
-            widgets["DP8B0885"]["channels"]["CH1"][
-                "current_protection_enabled"
-            ].isChecked()
-        )
-        # 参数按电源键合并，另一台电源的值不会串过来，也不会被这次重建改掉。
-        self.assertEqual(widgets["DP8B1519"]["channels"]["CH1"]["voltage"].value(), 5.0)
-
-    def test_backfill_rebuild_uses_the_new_configuration_not_the_old_widgets(self):
-        """``preserve=False`` 是回填路径：结果等于新配置，不沿用重建前的控件值。"""
-        page = self.make_page(
-            device_bindings=self.power_supply_bindings("DP8B1519"),
-            instruments={
-                "power_supplies": {"DP8B1519": {"channels": {"CH1": {"voltage": {"value": 5.0}}}}}
-            },
-            dut_config={"power_supply_count": 1},
-        )
-        page.power_config_widgets["DP8B1519"]["channels"]["CH1"]["voltage"].setValue(20.0)
-
-        page._rebuild_power_tabs(
-            sources={
-                "DP8B1519": {"channels": {"CH1": {"voltage": {"value": 3.3}}}}
-            },
-            preserve=False,
-        )
-
-        self.assertEqual(
-            page.power_config_widgets["DP8B1519"]["channels"]["CH1"]["voltage"].value(),
-            3.3,
-        )
-
-    def test_pa_unit_count_and_power_supply_count_stay_separate(self):
-        """PA 单元数量只控制分配槽位可见性与 DUT 分配条数，不增减电源标签页。"""
-        page = self.make_page(
-            device_bindings=self.power_supply_bindings("DP8B1519", "DP8B0885"),
-            dut_config={"power_supply_count": 1},
-        )
-        self.assertEqual(page.power_tabs.count(), 2)
-
-        page.pa_unit_count_combo.setCurrentText("3")
-
-        self.assertEqual(page.power_tabs.count(), 2)
-        built = page.build_config()["dut_config"]
-        self.assertEqual(built["power_supply_count"], 3)
-
-    def test_legacy_slot_supplies_still_get_their_own_tabs(self):
-        """尚未迁移的旧槽位条目各占一页（参数保留），并被保存校验明确报告。"""
-        page = self.make_page(
-            instruments={
-                "power_supplies": {
-                    "PS1": {"channels": {"CH1": {"voltage": {"value": 5.0}}}}
-                }
-            },
-            dut_config={"power_supply_count": 1},
-        )
-
-        self.assertEqual(page.power_tabs.count(), 1)
-        self.assertEqual(
-            page.power_config_widgets["PS1"]["channels"]["CH1"]["voltage"].value(), 5.0
-        )
-        # 旧槽位不是可用的电源引用：分配不会选中它，校验也不会凭空补一台。
-        self.assertEqual(page.pa_unit1_power_combo.currentIndex(), -1)
-
-    def test_power_tabs_keep_the_configuration_of_removed_supplies(self):
-        """再次应用绑定后标签页跟着新绑定走，但配置里已保存的另一台参数不被丢掉。"""
-        page = self.make_page(
-            device_bindings=self.power_supply_bindings("DP8B1519", "DP8B0885"),
-            instruments={
-                "power_supplies": {
-                    "DP8B1519": {},
-                    "DP8B0885": {"channels": {"CH1": {"voltage": {"value": 9.0}}}},
-                }
-            },
-            dut_config={"power_supply_count": 1},
-        )
-
-        def assignment(supply_id, index):
-            return {
-                "role": "power_supply",
-                "supply_id": supply_id,
-                "name": supply_id,
-                "model": "DP832A",
-                "full_code": f"DP8B{index}",
-                "vendor": "RIGOL Technologies",
-                "address": f"TCPIP0::192.168.1.{index}::inst0::INSTR",
-                "ip": f"192.168.1.{index}",
-            }
-
-        page.apply_device_selection(
-            ApplyDeviceSelectionRequest.from_assignments([assignment("DP8B1519", 1)])
-        )
-
-        # 本次绑定的电源有当前参数页；已保存的另一台仍是“标签页 + 参数”，只是地址
-        # 随绑定失效——这样“清除绑定”不会抹掉现场已调试好的通道参数。
-        self.assertEqual(
-            page.power_config_widgets["DP8B0885"]["channels"]["CH1"]["voltage"].value(),
-            9.0,
-        )
-        # 分配下拉框只列本次绑定的电源；引用了被移除的那台时保持空选择。
-        options = [
-            page.pa_unit1_power_combo.itemData(index)
-            for index in range(page.pa_unit1_power_combo.count())
-        ]
-        self.assertEqual(options, ["DP8B1519"])
-
-    def _assignment_selections(self, page):
-        """读出四个电源分配槽位当前选中的 ``supply_id``，用于两条回填路径的一致性比对。"""
-        return {
-            key: page.form_adapter.supply_id(page.power_assignment_widgets[key])
-            for key in (
-                "driver_power",
-                "pa_unit1_power",
-                "pa_unit2_power",
-                "pa_unit3_power",
-            )
-        }
-
-    def test_missing_driver_assignment_uses_the_same_default_on_both_paths(self):
-        """驱动功放与 PA 单元共用缺省规则：初次建页与 apply_config 结果必须一致。"""
-        config = {
-            "test_frequencies": [1.0],
-            "instruments": {"power_supplies": {}},
-            "device_bindings": self.power_supply_bindings("DP8B0885", "DP8B0950"),
-            "driver_mode": {"enabled": True, "power_source": "dc_supply"},
-            "dut_config": {"power_supply_count": 1},
-        }
-
-        built = self._assignment_selections(self.make_page(**config))
-        page = self.make_page()
-        page.apply_config(config)
-
-        self.assertEqual(built["driver_power"], "DP8B0885")
-        self.assertEqual(self._assignment_selections(page), built)
-
-    def test_applied_config_does_not_reuse_the_previous_selection(self):
-        """投影不受上一次控件残留值影响：只按当前绑定集合取第一台。"""
-        page = self.make_page()
-
-        page.apply_config(
-            {
-                "test_frequencies": [1.0],
-                "instruments": {"power_supplies": {}},
-                "device_bindings": self.power_supply_bindings("DP8B1519", "DP8B0885"),
-                "dut_config": {"power_supply_count": 1},
-                "power_supply_assignment": {
-                    "dut_amplifier": {
-                        "power_supply_count": 1,
-                        "supplies": {"carrier": {"supply_id": "DP8B0885"}},
-                    }
-                },
-            }
-        )
-        self.assertEqual(page.pa_unit1_power_combo.currentData(), "DP8B0885")
-        # 用户手动换过选择，随后载入一份没有这条分配的配置：不能沿用 DP8B0885。
-        page.pa_unit1_power_combo.setCurrentIndex(
-            page.pa_unit1_power_combo.findData("DP8B1519")
-        )
-
-        page.apply_config(
-            {
-                "test_frequencies": [1.0],
-                "instruments": {"power_supplies": {}},
-                "device_bindings": self.power_supply_bindings("DP8B0950", "DP8B0885"),
-                "dut_config": {"power_supply_count": 1},
-            }
-        )
-
-        self.assertEqual(page.pa_unit1_power_combo.currentData(), "DP8B0950")
-
-    def test_external_driver_power_still_clears_the_driver_slot(self):
-        """统一缺省规则不改变页面状态：外部供电时驱动功放槽位仍被清空并禁用。"""
-        config = {
-            "test_frequencies": [1.0],
-            "instruments": {"power_supplies": {}},
-            "device_bindings": self.power_supply_bindings("DP8B0885"),
-            "driver_mode": {"enabled": True, "power_source": "external_ac"},
-            "dut_config": {"power_supply_count": 1},
-        }
-
-        page = self.make_page(**config)
-        page.set_test_mode(True)
-
-        self.assertEqual(page.driver_power_source_combo.currentText(), "自带供电")
-        self.assertEqual(page.driver_power_combo.currentIndex(), -1)
-        self.assertFalse(page.driver_power_combo.isEnabled())
-        # PA 单元不受驱放供电方式影响。
-        self.assertEqual(page.pa_unit1_power_combo.currentData(), "DP8B0885")
 
 
 class ConfigurationPageViewModelTests(unittest.TestCase):

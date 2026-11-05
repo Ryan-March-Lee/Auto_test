@@ -20,7 +20,11 @@
     },
     "dut_config": {
         "max_input_power": 31.0,
-        "power_supply_count": 1
+        "power_supply_count": 1,
+        "drain_channel": {
+            "supply_id": "DP8B1519",
+            "channel": "CH2"
+        }
     },
     "instruments": {
         "signal_generator": {
@@ -48,7 +52,6 @@
                 "enabled": true,
                 "channels": {
                     "CH1": {
-                        "role": "gate",
                         "voltage": {
                             "value": 2.8,
                             "protection": 1.0,
@@ -61,7 +64,6 @@
                         }
                     },
                     "CH2": {
-                        "role": "drain",
                         "voltage": {
                             "value": 28.0,
                             "protection": 30.0,
@@ -81,123 +83,39 @@
     "power_supply_assignment": {
         "driver_amplifier": {
             "power_supply_count": 0,
-            "supplies": {}
+            "supplies": {},
+            "power_plan": {
+                "power_sequence": [],
+                "inter_channel_delay_s": 0.0
+            }
         },
         "dut_amplifier": {
             "power_supply_count": 1,
             "supplies": {
                 "carrier": {
                     "supply_id": "DP8B1519",
-                    "name": "DP8B1519",
                     "channel": [
                         "CH1",
                         "CH2"
                     ]
                 }
+            },
+            "power_plan": {
+                "power_sequence": [
+                    {
+                        "supply_id": "DP8B1519",
+                        "channel": "CH1"
+                    },
+                    {
+                        "supply_id": "DP8B1519",
+                        "channel": "CH2"
+                    }
+                ],
+                "inter_channel_delay_s": 0.0
             }
         }
     },
-    "schema_version": "1.0",
-    "test_plan": {
-        "schema_version": "1.0",
-        "template": false,
-        "plan_id": "gui-configuration",
-        "frequencies": {
-            "values": [
-                2.4,
-                2.5
-            ],
-            "unit": "GHz"
-        },
-        "signal_source": {
-            "start_power": -40.0,
-            "stop_power": -28.0,
-            "step": 0.5,
-            "unit": "dBm"
-        },
-        "compression_point": {
-            "type": "5dB"
-        },
-        "attenuator": {
-            "value": 40.0,
-            "unit": "dB"
-        },
-        "dut": {
-            "max_input_power": 31.0,
-            "power_roles": {
-                "gate": {
-                    "role": "gate",
-                    "voltage": 2.8,
-                    "current": 0.1,
-                    "voltage_protection": 1.0,
-                    "current_protection": 0.0
-                },
-                "drain": {
-                    "role": "drain",
-                    "voltage": 28.0,
-                    "current": 2.0,
-                    "voltage_protection": 30.0,
-                    "current_protection": 2.5
-                }
-            }
-        },
-        "driver_mode": {
-            "enabled": true,
-            "power_source": "external_ac",
-            "power_roles": {}
-        },
-        "other_parameters": {}
-    },
-    "run_mapping": {
-        "schema_version": "1.0",
-        "template": false,
-        "run_id": null,
-        "run_datetime": null,
-        "operator": null,
-        "instruments": {
-            "signal_generator": {
-                "label": "5462",
-                "model": "SMW200A",
-                "full_code": "105462",
-                "device_key": "rohde&schwarz:105462",
-                "visa_address": "TCPIP0::192.168.1.201::inst0::INSTR"
-            },
-            "spectrum_analyzer": {
-                "label": "QZNI0866",
-                "model": "4082F",
-                "full_code": "QZNI000866",
-                "device_key": "ceyear technologies:qzni000866",
-                "visa_address": "TCPIP0::192.168.1.202::inst0::INSTR"
-            },
-            "power_supplies": {
-                "DP8B1519": {
-                    "label": "DP8B1519",
-                    "model": "DP832A",
-                    "full_code": "DP8B214901519",
-                    "device_key": "rigol technologies:dp8b214901519",
-                    "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR"
-                }
-            }
-        },
-        "driver_mode": {
-            "enabled": true,
-            "power_source": "external_ac",
-            "power_channels": []
-        },
-        "dut_power_channels": [
-            {
-                "channel": "DP8B1519/CH1",
-                "role": "gate",
-                "connection": "DP8B1519/CH1 -> DUT 栅极"
-            },
-            {
-                "channel": "DP8B1519/CH2",
-                "role": "drain",
-                "connection": "DP8B1519/CH2 -> DUT 漏极"
-            }
-        ],
-        "notes": null
-    },
+    "schema_version": "1.1",
     "device_bindings": {
         "signal_generator": {
             "vendor": "Rohde&Schwarz",
@@ -236,5 +154,119 @@
                 "full_code": "DP8B214901519"
             }
         }
+    },
+    "test_plan": {
+        "schema_version": "1.1",
+        "template": false,
+        "plan_id": "gui-configuration",
+        "frequencies": {
+            "values": [
+                2.4,
+                2.5
+            ],
+            "unit": "GHz"
+        },
+        "signal_source": {
+            "start_power": -40.0,
+            "stop_power": -28.0,
+            "step": 0.5,
+            "unit": "dBm"
+        },
+        "compression_point": {
+            "type": "5dB"
+        },
+        "attenuator": {
+            "value": 40.0,
+            "unit": "dB"
+        },
+        "dut": {
+            "max_input_power": 31.0,
+            "drain_channel": {
+                "supply_id": "DP8B1519",
+                "channel": "CH2"
+            },
+            "channel_settings": [
+                {
+                    "supply_id": "DP8B1519",
+                    "channel": "CH1",
+                    "voltage": 2.8,
+                    "current": 0.1,
+                    "voltage_protection": 1.0,
+                    "current_protection": 0.0,
+                    "unit_voltage": "V",
+                    "unit_current": "A"
+                },
+                {
+                    "supply_id": "DP8B1519",
+                    "channel": "CH2",
+                    "voltage": 28.0,
+                    "current": 2.0,
+                    "voltage_protection": 30.0,
+                    "current_protection": 2.5,
+                    "unit_voltage": "V",
+                    "unit_current": "A"
+                }
+            ]
+        },
+        "driver_mode": {
+            "enabled": true,
+            "power_source": "external_ac",
+            "channel_settings": []
+        },
+        "other_parameters": {}
+    },
+    "run_mapping": {
+        "schema_version": "1.1",
+        "template": false,
+        "run_id": null,
+        "run_datetime": null,
+        "operator": null,
+        "instruments": {
+            "signal_generator": {
+                "label": "5462",
+                "model": "SMW200A",
+                "full_code": "105462",
+                "device_key": "rohde&schwarz:105462",
+                "visa_address": "TCPIP0::192.168.1.201::inst0::INSTR"
+            },
+            "spectrum_analyzer": {
+                "label": "QZNI0866",
+                "model": "4082F",
+                "full_code": "QZNI000866",
+                "device_key": "ceyear technologies:qzni000866",
+                "visa_address": "TCPIP0::192.168.1.202::inst0::INSTR"
+            },
+            "power_supplies": {
+                "DP8B1519": {
+                    "label": "DP8B1519",
+                    "model": "DP832A",
+                    "full_code": "DP8B214901519",
+                    "device_key": "rigol technologies:dp8b214901519",
+                    "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR"
+                }
+            }
+        },
+        "driver_mode": {
+            "enabled": true,
+            "power_source": "external_ac",
+            "power_plan": {
+                "power_sequence": [],
+                "inter_channel_delay_s": 0.0
+            }
+        },
+        "dut_power_plan": {
+            "power_sequence": [
+                {
+                    "supply_id": "DP8B1519",
+                    "channel": "CH1"
+                },
+                {
+                    "supply_id": "DP8B1519",
+                    "channel": "CH2"
+                }
+            ],
+            "inter_channel_delay_s": 0.0
+        },
+        "notes": null
     }
 }

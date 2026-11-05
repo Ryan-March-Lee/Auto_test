@@ -666,13 +666,16 @@ class RunSnapshotContractTests(unittest.TestCase):
                 for field in ("label", "model", "full_code", "device_key", "visa_address"):
                     self.assertTrue(entry.get(field), f"快照条目缺少 {field}")
                 self.assertEqual(entry["device_key"], make_device_key("RIGOL TECHNOLOGIES", entry["full_code"]))
-        roles = {}
-        for channel in mapping["dut_power_channels"]:
-            roles[channel["role"]] = channel["channel"].split("/", 1)[0]
+        plan = mapping["dut_power_plan"]
+        self.assertNotIn("dut_power_channels", mapping)
         self.assertEqual(
-            roles,
-            {"gate": "DP8B1519", "drain": "DP8B0885"},
-            "gate 与 drain 必须能来自不同电源",
+            [(row["supply_id"], row["channel"]) for row in plan["power_sequence"]],
+            [("DP8B1519", "CH1"), ("DP8B0885", "CH2")],
+            "上电计划必须按用户顺序冻结物理路由",
+        )
+        self.assertTrue(
+            all("role" not in row for row in plan["power_sequence"]),
+            "1.1 快照不再写通道角色",
         )
         self.assertTrue(mapping["run_id"], "正式快照要有 run_id 才能被历史页找到")
 

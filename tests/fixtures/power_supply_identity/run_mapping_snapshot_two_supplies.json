@@ -1,5 +1,5 @@
 {
-    "schema_version": "1.0",
+    "schema_version": "1.1",
     "template": false,
     "run_id": "20261029-100500-two-supplies",
     "run_datetime": "2026-10-29T10:05:00+08:00",
@@ -39,19 +39,23 @@
     "driver_mode": {
         "enabled": true,
         "power_source": "external_ac",
-        "power_channels": []
-    },
-    "dut_power_channels": [
-        {
-            "channel": "DP8B1519/CH1",
-            "role": "gate",
-            "connection": "DP8B1519/CH1 -> DUT 栅极"
-        },
-        {
-            "channel": "DP8B0885/CH2",
-            "role": "drain",
-            "connection": "DP8B0885/CH2 -> DUT 漏极"
+        "power_plan": {
+            "power_sequence": [],
+            "inter_channel_delay_s": 0.0
         }
-    ],
-    "notes": "多电源快照：gate 与 drain 来自不同电源，快照自带缩写设备码、型号、完整设备码、设备键和地址"
+    },
+    "dut_power_plan": {
+        "power_sequence": [
+            {
+                "supply_id": "DP8B1519",
+                "channel": "CH1"
+            },
+            {
+                "supply_id": "DP8B0885",
+                "channel": "CH2"
+            }
+        ],
+        "inter_channel_delay_s": 0.0
+    },
+    "notes": "多电源快照：上电计划来自不同电源，快照自带缩写设备码、型号、完整设备码、设备键和地址"
 }

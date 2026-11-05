@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from domain.configuration.models import RunResourceMapping, validate_run_mapping
 from domain.configuration.rules import validate_config, validate_hardware_connections
 from infrastructure.config.validation import load_config, validate_config_file
 
@@ -99,7 +100,7 @@ class ConfigValidationTests(unittest.TestCase):
 
     def test_missing_assigned_supply_is_error(self):
         config = copy.deepcopy(self.base_config)
-        config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]["name"] = "PS_UNKNOWN"
+        config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]["supply_id"] = "PS_UNKNOWN"
         result = validate_config(config)
         self.assertTrue(any("不存在的电源" in issue.message for issue in result.errors))
 
@@ -117,11 +118,13 @@ class ConfigValidationTests(unittest.TestCase):
 
     def test_assigned_channel_does_not_require_a_role(self):
         config = copy.deepcopy(self.base_config)
-        del config["instruments"]["power_supplies"]["PS4"]["channels"]["CH1"]["role"]
+        for channel in config["instruments"]["power_supplies"]["PS4"]["channels"].values():
+            channel.pop("role", None)
         result = validate_config(config)
         self.assertTrue(result.valid, result.errors)
 
     def test_duplicate_assigned_role_is_no_longer_an_error(self):
+        """1.0 残留的 ``role`` 只是读取兼容字段，不影响校验或上电。"""
         config = copy.deepcopy(self.base_config)
         config["instruments"]["power_supplies"]["PS4"]["channels"]["CH2"]["role"] = "gate"
         result = validate_config(config)
@@ -228,6 +231,7 @@ class ConfigValidationTests(unittest.TestCase):
         """过渡别名 ``name`` 与 ``supply_id`` 不同值就是第二套编号，必须报错。"""
         config = copy.deepcopy(self.base_config)
         carrier = config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]
+        carrier["name"] = "PS4"
         carrier["supply_id"] = "PS1"
         result = validate_config(config)
         self.assertFalse(result.valid)
@@ -315,7 +319,7 @@ class OfficialConfigFileValidationTests(unittest.TestCase):
     def test_legacy_wiring_block_no_longer_blocks_the_file_level_check(self):
         """接线不再是配置字段：旧文件残留的 wiring 块既不校验也不阻塞。"""
         config = copy.deepcopy(self.base_config)
-        config["run_mapping"]["wiring"]["confirmed"] = False
+        config["run_mapping"]["wiring"] = {"confirmed": False, "connection_note": None}
         with tempfile.TemporaryDirectory() as directory:
             result = validate_config_file(self._write(directory, config))
         self.assertFalse(any(issue.path.startswith("wiring") for issue in result.errors))
@@ -345,14 +349,11 @@ class OfficialConfigFileValidationTests(unittest.TestCase):
         现场 ``config.json`` 就是这种形态，字段级校验必须继续通过，由迁移器改写。
         """
         shipped = json.loads((PROJECT_ROOT / "config.json").read_text(encoding="utf-8-sig"))
-        config = copy.deepcopy(self.base_config)
-        config["run_mapping"] = copy.deepcopy(shipped["run_mapping"])
-        config["run_mapping"]["instruments"].pop("power_supplies", None)
-        with tempfile.TemporaryDirectory() as directory:
-            result = validate_config_file(self._write(directory, config))
-        self.assertTrue(
-            result.valid, [f"{issue.path}: {issue.message}" for issue in result.errors]
-        )
+        mapping = RunResourceMapping.from_dict(shipped["run_mapping"])
+        self.assertEqual(mapping.schema_version, "1.0")
+        self.assertIn("power_supply", mapping.instruments)
+        self.assertNotIn("power_supplies", mapping.instruments)
+        self.assertTrue(validate_run_mapping(mapping).valid)
 
     def test_single_supply_entry_cannot_mix_with_the_collection(self):
         """电源只有一个来源：新旧两种写法同时出现必须报错，而不是二选一。"""
@@ -511,6 +512,7 @@ class HardwareConnectionValidationTests(unittest.TestCase):
     def test_unbound_reference_and_supply_id_alias_conflict_are_reported(self):
         config = copy.deepcopy(self.config)
         carrier = config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]
+        carrier["name"] = "PS4"
         carrier["supply_id"] = "PS1"
         paths = {issue.path for issue in validate_hardware_connections(config).errors}
         self.assertIn("power_supply_assignment.dut_amplifier.supplies.carrier.name", paths)

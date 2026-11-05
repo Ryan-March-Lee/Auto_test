@@ -127,8 +127,40 @@ def _legacy_two_supplies():
     bindings["PS1"] = bindings["power_supplies"].pop("DP8B1519")
     bindings["PS2"] = bindings["power_supplies"].pop("DP8B0885")
     bindings.pop("power_supplies")
-    config["run_mapping"]["instruments"].pop("power_supplies")
-    config["run_mapping"]["dut_power_channels"] = []
+    # 目标 fixture 现在是 1.1；“旧写法”需要同时重建 1.0 的正式段才能测旧角色迁移。
+    config["schema_version"] = "1.0"
+    config["dut_config"].pop("drain_channel", None)
+    for group in config["power_supply_assignment"].values():
+        group.pop("power_plan", None)
+    plan = config["test_plan"]
+    plan["schema_version"] = "1.0"
+    plan["dut"].pop("drain_channel", None)
+    plan["dut"].pop("channel_settings", None)
+    plan["dut"]["power_roles"] = {
+        "gate": {
+            "role": "gate",
+            "voltage": 2.8,
+            "current": 0.1,
+            "voltage_protection": 1.0,
+            "current_protection": 0.0,
+        },
+        "drain": {
+            "role": "drain",
+            "voltage": 28.0,
+            "current": 2.0,
+            "voltage_protection": 30.0,
+            "current_protection": 2.5,
+        },
+    }
+    plan["driver_mode"].pop("channel_settings", None)
+    plan["driver_mode"]["power_roles"] = {}
+    mapping = config["run_mapping"]
+    mapping["schema_version"] = "1.0"
+    mapping["instruments"].pop("power_supplies")
+    mapping.pop("dut_power_plan", None)
+    mapping["driver_mode"].pop("power_plan", None)
+    mapping["driver_mode"]["power_channels"] = []
+    mapping["dut_power_channels"] = []
     return config
 
 
@@ -859,7 +891,7 @@ class SavingTests(unittest.TestCase):
         before = path.read_bytes()
         config = _load(TWO_SUPPLIES_CONFIG)
         # 把一组引用指向一台不存在的电源：迁移本身不产生未决项，但校验必然失败。
-        config["power_supply_assignment"]["dut_amplifier"]["supplies"]["gate"]["supply_id"] = (
+        config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]["supply_id"] = (
             "MISSING"
         )
         result = migrate_legacy_power_supplies(config, _load(MIGRATED_REGISTRY))

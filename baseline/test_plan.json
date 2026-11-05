@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "template": true,
   "plan_id": "待填写",
   "frequencies": {
@@ -21,17 +21,18 @@
   },
   "dut": {
     "max_input_power": null,
-    "unit": "dBm",
-    "power_roles": {}
+    "drain_channel": null,
+    "channel_settings": []
   },
   "driver_mode": {
     "enabled": false,
-    "power_roles": {}
+    "power_source": null,
+    "channel_settings": []
   },
   "other_parameters": {},
   "source_status": {
     "source": "模板",
     "complete": false,
-    "instruction": "复制此模板后填写本次测试方案；使用稳定供电角色（如 gate、drain）保存参数，不绑定现场 CH 名称"
+    "instruction": "复制此模板后填写本次测试方案；通道参数按物理路由写 channel_settings，漏极只写测得的 drain_channel，上电顺序由 run_mapping 的计划冻结"
   }
 }

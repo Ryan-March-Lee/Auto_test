@@ -84,9 +84,12 @@ class BaselineRepositoryHygieneTests(unittest.TestCase):
         self.assertIsNone(mapping["run_datetime"])
         self.assertIsNone(mapping["operator"])
         for role, instrument in mapping["instruments"].items():
+            if role == "power_supplies":
+                self.assertEqual({}, instrument, "模板电源集合必须为空")
+                continue
             self.assertIsNone(instrument["visa_address"], f"模板 instruments.{role} 地址必须为空")
-        self.assertEqual([], mapping["driver_mode"]["power_channels"])
-        self.assertEqual([], mapping["dut_power_channels"])
+        self.assertEqual([], mapping["driver_mode"]["power_plan"]["power_sequence"])
+        self.assertEqual([], mapping["dut_power_plan"]["power_sequence"])
         for kind, path in mapping["result_files"].items():
             self.assertIsNone(path, f"模板 result_files.{kind} 必须为空")
 
@@ -95,8 +98,15 @@ class BaselineRepositoryHygieneTests(unittest.TestCase):
             self.assertIsNone(plan["signal_source"][key], f"模板 signal_source.{key} 必须为空")
         self.assertIsNone(plan["attenuator"]["value"])
         self.assertIsNone(plan["dut"]["max_input_power"])
-        self.assertEqual({}, plan["dut"]["power_roles"])
-        self.assertEqual({}, plan["driver_mode"]["power_roles"])
+        self.assertIsNone(plan["dut"]["drain_channel"])
+        self.assertEqual([], plan["dut"]["channel_settings"])
+        self.assertEqual([], plan["driver_mode"]["channel_settings"])
+
+        # 模板是新 schema 的样例：不能重新出现 1.0 的通道角色/枚举结构。
+        for name, payload in (("test_plan.json", plan), ("run_mapping.json", mapping)):
+            text = json.dumps(payload, ensure_ascii=False)
+            for legacy in ('"power_roles"', '"power_channels"', '"dut_power_channels"', '"role"'):
+                self.assertNotIn(legacy, text, f"baseline/{name} 不得写 1.0 旧字段 {legacy}")
 
     def test_collected_archive_checksum_records_are_well_formed(self):
         entries = self._archive_checksum_entries()

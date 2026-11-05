@@ -209,7 +209,7 @@ def run_new_path_minimal_action(
                 cleanup_errors.extend(str(error) for error in port.emergency_power_off_all(timeout_s=cleanup_timeout))
             except Exception as exc:
                 cleanup_errors.append(f"power emergency shutdown: {type(exc).__name__}: {exc}")
-            for index, channel in getattr(port, "_last_emergency_power_off", []):
+            for index, channel in getattr(port, "_last_emergency_power_off_succeeded", []):
                 if index < len(report.get("devices", {}).get("power_supply", [])):
                     report["devices"]["power_supply"][index].setdefault("cleanup", []).append(
                         f"OUTP {channel},OFF"
@@ -221,7 +221,6 @@ def run_new_path_minimal_action(
             for index, driver in enumerate(power_drivers):
                 result = report.get("devices", {}).get("power_supply", [{}] * len(power_drivers))[index]
                 try:
-                    result["cleanup"] = ["OUTP CH2,OFF", "OUTP CH1,OFF"]
                     result["final_state"] = _verify_queries(
                         "power_supply", driver, power_config.get("state_queries", []), cleanup_timeout
                     )

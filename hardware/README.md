@@ -24,10 +24,15 @@ address: it enumerates VISA resources, queries `*IDN?` and both output states,
 and includes every matching idle DP832A. The operator must ensure all supplies
 are unloaded before starting. Each discovered supply is connected, included in
 the action/cleanup boundary, and verified off; the number and addresses may
-differ between tests. The application hardware factory is separate from this
-smoke behavior: it opens only configured power-supply addresses and routes each
-logical role to its configured supply and channel; every assigned channel must
-declare `role: gate` or `role: drain` (there is no `CH1`/`CH2` fallback).
+differ between tests.
+
+The application hardware factory and the smoke runner share one rule: the
+physical channel plan decides order. The factory opens only configured
+power-supply addresses and follows `supply_id/channel`; the `drain_channel`
+marker only selects the efficiency measurement route. The minimal-action
+runner applies `power_supply.power_off_sequence` in exactly the configured
+order, verifies every channel named there is off, and never infers a channel or
+an order from a name or from a legacy `gate`/`drain` role.
 Measurement assignments define the production topology; smoke discovery must
 not be used as that topology.
 Signal-generator and supply configurations must query output state before and

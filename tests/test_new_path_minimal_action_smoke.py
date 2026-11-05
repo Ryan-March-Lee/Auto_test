@@ -112,9 +112,11 @@ class FakePort:
         return self.spectrum_analyzer.measure_power_dbm(timeout_s=timeout_s)
 
     def emergency_power_off_all(self, *, timeout_s):
-        for supply in self.power_supply.supplies:
-            for channel in ("CH2", "CH1"):
+        self._last_emergency_power_off_succeeded = []
+        for index, supply in enumerate(self.power_supply.supplies):
+            for channel in ("CH3", "CH1", "CH2"):
                 supply.set_output_enabled(channel, False, timeout_s=timeout_s)
+                self._last_emergency_power_off_succeeded.append((index, channel))
         return []
 
     def close_all(self, *, close_rf, timeout_s):
@@ -181,7 +183,15 @@ class NewPathMinimalActionTests(unittest.TestCase):
         self.assertEqual(report["action_count"], 1)
         self.assertTrue(report["resources_closed"])
         self.assertTrue(report["devices"]["signal_generator"]["safe_after_cleanup"])
-        self.assertEqual(port.power_supply.supplies[0].off_calls, [("CH2", False), ("CH1", False)])
+        self.assertEqual(
+            port.power_supply.supplies[0].off_calls,
+            [("CH3", False), ("CH1", False), ("CH2", False)],
+        )
+        # 报告记录电源端口实际关断的通道与顺序，不写死 CH1/CH2。
+        self.assertEqual(
+            report["devices"]["power_supply"][0]["cleanup"],
+            ["OUTP CH3,OFF", "OUTP CH1,OFF", "OUTP CH2,OFF"],
+        )
         self.assertLess(
             port.spectrum_analyzer.transport.operations.index(("write", "CALC:MARK1:MAX")),
             port.spectrum_analyzer.transport.operations.index(("query", "CALC:MARK1:Y?")),

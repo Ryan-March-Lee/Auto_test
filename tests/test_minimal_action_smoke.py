@@ -1,3 +1,4 @@
+import re
 import unittest
 
 from hardware.minimal_action_smoke import run_minimal_action_smoke
@@ -19,10 +20,9 @@ class Resource:
             self.responses["OUTP?"] = "1"
         if command == "OUTP OFF":
             self.responses["OUTP?"] = "0"
-        if command == "OUTP CH2,OFF":
-            self.responses["OUTP? CH2"] = "0"
-        if command == "OUTP CH1,OFF":
-            self.responses["OUTP? CH1"] = "0"
+        match = re.fullmatch(r":?OUTP(?:UT)?\s+(CH\d+)\s*,?\s*(?:OFF|0)", command.strip(), re.IGNORECASE)
+        if match:
+            self.responses[f"OUTP? {match.group(1).upper()}"] = "0"
 
     def query(self, command):
         self.commands.append(("query", command))
@@ -246,6 +246,52 @@ class MinimalActionSmokeTests(unittest.TestCase):
         ops = resources["sg"].commands
         self.assertLess(ops.index(("write", "OUTP OFF")), len(ops) - 1)
         self.assertEqual(ops[-1], ("query", "OUTP?"))
+
+    def test_power_off_sequence_is_the_operator_channel_plan(self):
+        """关断顺序就是配置里的物理通道顺序，不按通道名或角色推导。"""
+        setup = config()
+        power = setup["devices"]["power_supply"]
+        power["power_off_sequence"] = ["OUTP CH3,OFF", "OUTP CH1,OFF", "OUTP CH2,OFF"]
+        power["cleanup_commands"] = list(power["power_off_sequence"])
+        power["state_queries"] = [
+            {"command": "OUTP? CH3", "expected": "0"},
+            {"command": "OUTP? CH1", "expected": "0"},
+            {"command": "OUTP? CH2", "expected": "0"},
+        ]
+        resources = self.resources()
+        resources["ps"].responses["OUTP? CH3"] = "0"
+
+        report = run_minimal_action_smoke(setup, Manager(resources))
+
+        writes = [command for kind, command in resources["ps"].commands if kind == "write"]
+        self.assertEqual(writes, ["OUTP CH3,OFF", "OUTP CH1,OFF", "OUTP CH2,OFF"])
+        self.assertEqual(report["devices"]["power_supply"]["cleanup"], writes)
+        self.assertTrue(report["devices"]["power_supply"]["safe_after_cleanup"])
+
+    def test_power_off_sequence_must_name_its_channels(self):
+        for sequence in ([], ["OUTP OFF"]):
+            setup = config()
+            setup["devices"]["power_supply"]["power_off_sequence"] = list(sequence)
+            setup["devices"]["power_supply"]["cleanup_commands"] = list(sequence)
+            with self.assertRaises(ValueError):
+                run_minimal_action_smoke(setup, Manager(self.resources()))
+
+    def test_power_off_sequence_commands_must_turn_outputs_off(self):
+        setup = config()
+        power = setup["devices"]["power_supply"]
+        power["power_off_sequence"] = ["OUTP CH1,ON"]
+        power["cleanup_commands"] = ["OUTP CH1,ON"]
+        with self.assertRaises(ValueError):
+            run_minimal_action_smoke(setup, Manager(self.resources()))
+
+    def test_every_planned_channel_must_be_verified_off(self):
+        setup = config()
+        setup["devices"]["power_supply"]["state_queries"] = [
+            {"command": "OUTP? CH1", "expected": "0"}
+        ]
+        with self.assertRaises(ValueError) as caught:
+            run_minimal_action_smoke(setup, Manager(self.resources()))
+        self.assertIn("CH2", str(caught.exception))
 
 
 if __name__ == "__main__":

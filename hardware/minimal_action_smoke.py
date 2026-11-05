@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 import time
 from pathlib import Path
 from typing import Any, Mapping
@@ -26,6 +27,25 @@ _SAFE_CLEANUP_ROOTS = {
     **_SAFE_SETUP_ROOTS,
     "spectrum_analyzer": _SAFE_SETUP_ROOTS["spectrum_analyzer"] | {"CLS"},
 }
+# 通道是物理路由 ``CHx``，不是角色：任何编号都允许出现在查询与关断计划里。
+_POWER_CHANNEL_QUERY = re.compile(r":?(?:OUTP|OUTPUT)\?\s+CH\d+")
+_POWER_CHANNEL_TOKEN = re.compile(r"\bCH\d+\b")
+_OFF_EXPECTATIONS = {"0", 0, False, "OFF"}
+
+
+def _power_off_channels(command: Any, label: str) -> list[str]:
+    """返回一条关断命令涉及的物理通道。
+
+    ``power_off_sequence`` 的列表顺序就是操作者的关断计划，脚本不按通道名
+    推导顺序，也不识别旧的 ``gate``/``drain`` 角色。整机 ``OUTP OFF`` 这类
+    不带通道的命令返回空列表，由调用方决定它是否足以覆盖声明的通道。
+    """
+    if not isinstance(command, str) or not command.strip() or "\n" in command or "\r" in command:
+        raise ValueError(f"{label} commands must be non-empty single-line SCPI")
+    text = command.strip().upper()
+    if not text.startswith(("OUTP ", ":OUTPUT ")) or not text.endswith((",OFF", ",0", " OFF", " 0")):
+        raise ValueError(f"{label} commands must turn a supply output off")
+    return _POWER_CHANNEL_TOKEN.findall(text)
 
 
 def _query(resource: Any, command: str, clock: Any, deadline: float | None = None) -> dict[str, Any]:
@@ -51,7 +71,9 @@ def _validate_queries(name: str, values: Any, *, require_expected: bool) -> list
         command = command.strip()
         upper = command.upper()
         query_path = upper.rstrip("?").lstrip(":").split(":", 1)[0]
-        channel_query = name == "power_supply" and upper in {"OUTP? CH1", "OUTP? CH2", ":OUTPUT? CH1", ":OUTPUT? CH2"}
+        channel_query = (
+            name == "power_supply" and _POWER_CHANNEL_QUERY.fullmatch(upper) is not None
+        )
         allowed = channel_query or (query_path in _QUERY_ROOTS[name] and upper.endswith("?") and " " not in upper)
         if not allowed or (not channel_query and not upper.endswith("?")):
             raise ValueError(f"{name} query is outside the read-only command set: {command!r}")
@@ -130,22 +152,36 @@ def _validate_config(config: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
                 raise ValueError("signal_generator state_queries must verify RF/output is off")
         if name == "power_supply":
             power = raw.get("power_off_sequence")
-            if not isinstance(power, list) or len(power) != 2:
-                raise ValueError("power_supply requires power_off_sequence [Drain off, Gate off]")
+            if not isinstance(power, list) or not power:
+                raise ValueError(
+                    "power_supply requires a non-empty power_off_sequence of "
+                    "physical-channel output-off commands"
+                )
             commands = []
+            channels: list[str] = []
             for command in power:
-                if not isinstance(command, str) or "\n" in command or "\r" in command:
-                    raise ValueError("power_off_sequence commands must be single-line SCPI")
-                command = command.strip()
-                if not command.upper().startswith(("OUTP ", ":OUTPUT ")) or not command.upper().endswith((",OFF", ",0", " OFF", " 0")):
-                    raise ValueError("power_off_sequence commands must turn outputs off")
-                commands.append(command)
-            if not any(token in commands[0].upper() for token in ("CH2,OFF", "CH2,0", "CH2 OFF", "CH2 0")) or not any(token in commands[1].upper() for token in ("CH1,OFF", "CH1,0", "CH1 OFF", "CH1 0")):
-                raise ValueError("power_off_sequence must disable Drain CH2 before Gate CH1")
+                for channel in _power_off_channels(command, "power_off_sequence"):
+                    if channel not in channels:
+                        channels.append(channel)
+                commands.append(command.strip())
+            if not channels:
+                raise ValueError(
+                    "power_off_sequence must name each physical channel it turns off "
+                    "(for example 'OUTP CH1,OFF')"
+                )
             cleanup = commands
-            for channel in ("CH2", "CH1"):
-                if not any(channel in q["command"].upper() and q["expected"] in {"0", 0, False, "OFF"} for q in state):
-                    raise ValueError(f"power_supply state_queries must verify {channel} is off")
+            verified = {
+                match.group(0)
+                for check in state
+                if (match := _POWER_CHANNEL_TOKEN.search(check["command"].upper()))
+                and check["expected"] in _OFF_EXPECTATIONS
+            }
+            missing = [channel for channel in channels if channel not in verified]
+            if missing:
+                raise ValueError(
+                    "power_supply state_queries must verify these physical channels are off: "
+                    + ", ".join(missing)
+                )
         normalized[name] = {**raw, "timeout_ms": timeout_ms, "setup_commands": setup,
                             "cleanup_commands": cleanup, "state_queries": state, "measurement_queries": measurements}
 

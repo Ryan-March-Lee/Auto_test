@@ -1,4 +1,5 @@
 {
+    "schema_version": "1.1",
     "test_frequencies": [
         2.3,
         2.4,
@@ -25,24 +26,33 @@
     },
     "dut_config": {
         "max_input_power": 31.0,
-        "power_supply_count": 1
+        "power_supply_count": 1,
+        "drain_channel": {
+            "supply_id": "DP8B1519",
+            "channel": "CH2"
+        }
     },
     "instruments": {
         "signal_generator": {
-            "model": "R&S SMW200A",
-            "enabled": true,
-            "address": "TCPIP0::192.168.1.201::inst0::INSTR"
+            "model": "Rohde&Schwarz SMW200A",
+            "address": "TCPIP0::192.168.1.201::inst0::INSTR",
+            "enabled": true
         },
         "spectrum_analyzer": {
-            "model": "Ceyear 4082F",
-            "enabled": true,
-            "address": "TCPIP0::192.168.1.202::inst0::INSTR"
+            "model": "Ceyear Technologies 4082F",
+            "address": "TCPIP0::192.168.1.202::inst0::INSTR",
+            "enabled": true
         },
         "power_supplies": {
-            "PS1": {
+            "DP8B1519": {
+                "label": "DP8B1519",
+                "model": "DP832A",
+                "full_code": "DP8B214901519",
+                "device_key": "rigol technologies:dp8b214901519",
+                "address": "TCPIP0::192.168.1.102::inst0::INSTR",
+                "enabled": true,
                 "channels": {
                     "CH1": {
-                        "role": "gate",
                         "voltage": {
                             "value": 2.8,
                             "protection": 1.0,
@@ -55,7 +65,6 @@
                         }
                     },
                     "CH2": {
-                        "role": "drain",
                         "voltage": {
                             "value": 28.0,
                             "protection": 30.0,
@@ -67,126 +76,78 @@
                             "protection_enabled": true
                         }
                     }
-                },
-                "enabled": true,
-                "address": "TCPIP0::192.168.1.101::inst0::INSTR"
-            },
-            "PS2": {
-                "channels": {
-                    "CH1": {
-                        "role": "gate",
-                        "voltage": {
-                            "value": 5.8,
-                            "protection": 1.0,
-                            "protection_enabled": false
-                        },
-                        "current": {
-                            "value": 0.1,
-                            "protection": 1.0,
-                            "protection_enabled": false
-                        }
-                    },
-                    "CH2": {
-                        "role": "drain",
-                        "voltage": {
-                            "value": 30.0,
-                            "protection": 32.0,
-                            "protection_enabled": true
-                        },
-                        "current": {
-                            "value": 1.0,
-                            "protection": 1.1,
-                            "protection_enabled": true
-                        }
-                    }
-                },
-                "enabled": false
-            },
-            "PS3": {
-                "channels": {
-                    "CH1": {
-                        "role": "gate",
-                        "voltage": {
-                            "value": 5.3,
-                            "protection": 0.1,
-                            "protection_enabled": false
-                        },
-                        "current": {
-                            "value": 0.1,
-                            "protection": 1.0,
-                            "protection_enabled": false
-                        }
-                    },
-                    "CH2": {
-                        "role": "drain",
-                        "voltage": {
-                            "value": 30.0,
-                            "protection": 32.0,
-                            "protection_enabled": true
-                        },
-                        "current": {
-                            "value": 1.0,
-                            "protection": 1.1,
-                            "protection_enabled": true
-                        }
-                    }
-                },
-                "enabled": false
-            },
-            "PS4": {
-                "channels": {
-                    "CH1": {
-                        "role": "gate",
-                        "voltage": {
-                            "value": 2.8,
-                            "protection": 1.0,
-                            "protection_enabled": false
-                        },
-                        "current": {
-                            "value": 0.1,
-                            "protection": 1.0,
-                            "protection_enabled": false
-                        }
-                    },
-                    "CH2": {
-                        "role": "drain",
-                        "voltage": {
-                            "value": 28.0,
-                            "protection": 30.0,
-                            "protection_enabled": true
-                        },
-                        "current": {
-                            "value": 1.0,
-                            "protection": 1.1,
-                            "protection_enabled": true
-                        }
-                    }
-                },
-                "enabled": false
+                }
             }
         }
     },
     "power_supply_assignment": {
         "driver_amplifier": {
             "power_supply_count": 0,
-            "supplies": {}
+            "supplies": {},
+            "power_plan": {
+                "power_sequence": [],
+                "inter_channel_delay_s": 0.0
+            }
         },
         "dut_amplifier": {
             "power_supply_count": 1,
             "supplies": {
                 "carrier": {
-                    "name": "PS1",
+                    "supply_id": "DP8B1519",
                     "channel": [
                         "CH1",
                         "CH2"
                     ]
                 }
+            },
+            "power_plan": {
+                "power_sequence": [
+                    {
+                        "supply_id": "DP8B1519",
+                        "channel": "CH1"
+                    },
+                    {
+                        "supply_id": "DP8B1519",
+                        "channel": "CH2"
+                    }
+                ],
+                "inter_channel_delay_s": 2.0
             }
         }
     },
-    "schema_version": "1.0",
+    "device_bindings": {
+        "signal_generator": {
+            "vendor": "Rohde&Schwarz",
+            "model": "SMW200A",
+            "full_code": "105462",
+            "device_key": "rohde&schwarz:105462",
+            "label": "5462",
+            "visa_address": "TCPIP0::192.168.1.201::inst0::INSTR",
+            "source": "scan"
+        },
+        "spectrum_analyzer": {
+            "vendor": "Ceyear Technologies",
+            "model": "4082F",
+            "full_code": "QZNI000866",
+            "device_key": "ceyear technologies:qzni000866",
+            "label": "QZNI0866",
+            "visa_address": "TCPIP0::192.168.1.202::inst0::INSTR",
+            "source": "scan"
+        },
+        "power_supplies": {
+            "DP8B1519": {
+                "vendor": "RIGOL TECHNOLOGIES",
+                "model": "DP832A",
+                "full_code": "DP8B214901519",
+                "device_key": "rigol technologies:dp8b214901519",
+                "label": "DP8B1519",
+                "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
+                "source": "scan"
+            }
+        }
+    },
     "test_plan": {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "template": false,
         "plan_id": "gui-configuration",
         "frequencies": {
@@ -216,102 +177,92 @@
         },
         "dut": {
             "max_input_power": 31.0,
-            "power_roles": {
-                "gate": {
-                    "role": "gate",
+            "drain_channel": {
+                "supply_id": "DP8B1519",
+                "channel": "CH2"
+            },
+            "channel_settings": [
+                {
+                    "supply_id": "DP8B1519",
+                    "channel": "CH1",
                     "voltage": 2.8,
                     "current": 0.1,
                     "voltage_protection": 1.0,
-                    "current_protection": 0.0
+                    "current_protection": 0.0,
+                    "unit_voltage": "V",
+                    "unit_current": "A"
                 },
-                "drain": {
-                    "role": "drain",
+                {
+                    "supply_id": "DP8B1519",
+                    "channel": "CH2",
                     "voltage": 28.0,
                     "current": 2.0,
                     "voltage_protection": 30.0,
-                    "current_protection": 2.5
+                    "current_protection": 2.5,
+                    "unit_voltage": "V",
+                    "unit_current": "A"
                 }
-            }
+            ]
         },
         "driver_mode": {
             "enabled": true,
             "power_source": "external_ac",
-            "power_roles": {}
+            "channel_settings": []
         },
         "other_parameters": {}
     },
     "run_mapping": {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "template": false,
         "run_id": null,
         "run_datetime": null,
         "operator": null,
         "instruments": {
             "signal_generator": {
-                "model": "R&S SMW200A",
+                "label": null,
+                "model": "Rohde&Schwarz SMW200A",
+                "full_code": null,
+                "device_key": null,
                 "visa_address": "TCPIP0::192.168.1.201::inst0::INSTR"
             },
             "spectrum_analyzer": {
-                "model": "Ceyear 4082F",
+                "label": null,
+                "model": "Ceyear Technologies 4082F",
+                "full_code": null,
+                "device_key": null,
                 "visa_address": "TCPIP0::192.168.1.202::inst0::INSTR"
             },
-            "power_supply": {
-                "model": "PS1",
-                "visa_address": "TCPIP0::192.168.1.101::inst0::INSTR"
+            "power_supplies": {
+                "DP8B1519": {
+                    "label": "DP8B1519",
+                    "model": "DP832A",
+                    "full_code": "DP8B214901519",
+                    "device_key": "rigol technologies:dp8b214901519",
+                    "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR"
+                }
             }
         },
         "driver_mode": {
             "enabled": true,
             "power_source": "external_ac",
-            "power_channels": []
-        },
-        "dut_power_channels": [
-            {
-                "channel": "CH1",
-                "role": "gate",
-                "connection": "PS1-CH1 -> DUT 栅极"
-            },
-            {
-                "channel": "CH2",
-                "role": "drain",
-                "connection": "PS1-CH2 -> DUT 漏极"
+            "power_plan": {
+                "power_sequence": [],
+                "inter_channel_delay_s": 0.0
             }
-        ],
+        },
+        "dut_power_plan": {
+            "power_sequence": [
+                {
+                    "supply_id": "DP8B1519",
+                    "channel": "CH1"
+                },
+                {
+                    "supply_id": "DP8B1519",
+                    "channel": "CH2"
+                }
+            ],
+            "inter_channel_delay_s": 2.0
+        },
         "notes": null
-    },
-    "device_bindings": {
-        "signal_generator": {
-            "vendor": null,
-            "model": "R&S SMW200A",
-            "device_key": null,
-            "visa_address": "TCPIP0::192.168.1.201::inst0::INSTR",
-            "last_ip": null,
-            "last_port": null,
-            "known": false,
-            "source": "legacy_config",
-            "full_code": null
-        },
-        "spectrum_analyzer": {
-            "vendor": null,
-            "model": "Ceyear 4082F",
-            "device_key": null,
-            "visa_address": "TCPIP0::192.168.1.202::inst0::INSTR",
-            "last_ip": null,
-            "last_port": null,
-            "known": false,
-            "source": "legacy_config",
-            "full_code": null
-        },
-        "PS1": {
-            "vendor": null,
-            "model": null,
-            "device_key": null,
-            "visa_address": "TCPIP0::192.168.1.101::inst0::INSTR",
-            "last_ip": null,
-            "last_port": null,
-            "known": false,
-            "source": "legacy_config",
-            "full_code": null
-        }
     }
 }

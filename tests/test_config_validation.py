@@ -11,6 +11,14 @@ from infrastructure.config.validation import load_config, validate_config_file
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "config_driver_enabled_no_assignment.json"
+# 旧运行映射（单数 ``instruments.power_supply``、裸通道名）的固定样例。历史运行目录
+# 仍按 1.0 读取；仓库当前生产配置已经是 1.1，不能再用它当旧格式样例。
+LEGACY_RUN_MAPPING_PATH = (
+    Path(__file__).resolve().parent
+    / "fixtures"
+    / "power_supply_identity"
+    / "run_mapping_legacy_single.json"
+)
 
 
 class ConfigValidationTests(unittest.TestCase):
@@ -346,10 +354,12 @@ class OfficialConfigFileValidationTests(unittest.TestCase):
     def test_legacy_single_supply_run_mapping_is_readable(self):
         """步骤 10：旧运行映射（单数 ``instruments.power_supply``、裸通道名）仍可读取。
 
-        现场 ``config.json`` 就是这种形态，字段级校验必须继续通过，由迁移器改写。
+        历史运行目录里的 1.0 映射必须继续通过字段级校验；升级现场配置不会改写它们。
         """
-        shipped = json.loads((PROJECT_ROOT / "config.json").read_text(encoding="utf-8-sig"))
-        mapping = RunResourceMapping.from_dict(shipped["run_mapping"])
+        legacy = json.loads(
+            LEGACY_RUN_MAPPING_PATH.read_text(encoding="utf-8-sig")
+        )
+        mapping = RunResourceMapping.from_dict(legacy)
         self.assertEqual(mapping.schema_version, "1.0")
         self.assertIn("power_supply", mapping.instruments)
         self.assertNotIn("power_supplies", mapping.instruments)

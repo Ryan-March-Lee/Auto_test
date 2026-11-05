@@ -243,6 +243,26 @@ class ConfigurationAuthoringService:
         values["run_mapping"] = _author_run_mapping(values)
         return values
 
+    def save_block_reason(
+        self, document: ConfigurationEditingDocument
+    ) -> str | None:
+        """返回这份编辑文档为什么不能保存；可保存时返回 ``None``。
+
+        版本门禁与保存走同一个判据（:func:`_require_saveable_document`），界面在打开
+        文档时用它切换到只读态，不需要另外复制一份版本规则。这里只回答“能不能写”，
+        不尝试迁移，也不把 1.0 文档补成当前版本。
+        """
+        if not isinstance(document, ConfigurationEditingDocument):
+            raise TypeError(
+                "document 必须是 ConfigurationEditingDocument，"
+                f"收到 {type(document).__name__}"
+            )
+        try:
+            _require_saveable_document(document.to_mapping())
+        except ConfigurationAuthoringError as failure:
+            return str(failure)
+        return None
+
     def stale_formal_sections(
         self, document: ConfigurationEditingDocument
     ) -> tuple[ValidationIssue, ...]:

@@ -144,6 +144,19 @@ class PowerConfigurationPageTests(unittest.TestCase):
         self.assertEqual(page.power_tabs.count(), 1)
         self.assertIn("DP8B1519", page.power_tabs.tabText(0))
 
+    def test_a_read_only_document_disables_the_power_form_and_shows_the_reason(self):
+        page = self.make_page()
+
+        page.set_read_only("1.0 配置只能查看，不能保存；请先运行迁移器升级到 1.1")
+
+        self.assertTrue(page.read_only_notice.isVisibleTo(page))
+        self.assertIn("迁移器", page.read_only_notice.text())
+        self.assertFalse(page.power_section.isEnabled())
+
+        page.set_read_only(None)
+        self.assertFalse(page.read_only_notice.isVisibleTo(page))
+        self.assertTrue(page.power_section.isEnabled())
+
     def test_binding_status_lists_the_applied_supplies(self):
         page = self.make_page()
 

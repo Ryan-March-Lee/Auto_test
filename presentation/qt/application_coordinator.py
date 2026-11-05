@@ -332,7 +332,28 @@ class ApplicationCoordinator:
         except Exception as failure:  # noqa: BLE001 - 读取失败必须让用户看到，而不是带着旧配置运行
             self._warn("配置加载", f"无法加载配置文件: {failure}")
             self.config = {}
+        self._sync_page_read_only()
         return self.config
+
+    def editing_read_only_reason(self) -> str | None:
+        """当前编辑文档为何只读；可编辑时返回 ``None``。
+
+        版本门禁归 application 的 authoring 服务（1.0 只能经迁移器升级）；窗口与两个
+        配置页只消费这个结论，不各自识别 ``schema_version`` 或复制迁移规则。
+        """
+        service = ConfigurationAuthoringService()
+        return service.save_block_reason(
+            ConfigurationEditingDocument.from_mapping(self.config)
+        )
+
+    def _sync_page_read_only(self) -> str | None:
+        """把编辑文档的只读结论同步到两页；返回只读原因（可编辑时为 ``None``）。"""
+        reason = self.editing_read_only_reason()
+        for page in (self.config_page, self.power_page):
+            setter = getattr(page, "set_read_only", None)
+            if callable(setter):
+                setter(reason)
+        return reason
 
     def build_configuration_from_ui(self) -> dict[str, Any]:
         """合并两页的片段：参数页先写，电源页只覆盖自己负责的字段。
@@ -403,6 +424,7 @@ class ApplicationCoordinator:
             self.last_save_error = failure
             return False
         self.last_save_error = None
+        self._sync_page_read_only()
         return True
 
     # ---- 运行契约 ----
@@ -803,6 +825,8 @@ class ApplicationCoordinator:
             self._log(f"冻结配置同步到配置页出现未预期错误: {failure}")
             return False
         self.config = dict(config)
+        # 历史运行快照也可能是 1.0：回填后同样进入只读，不允许把旧快照当编辑稿保存。
+        self._sync_page_read_only()
         return True
 
     def run_status_text(self) -> str:

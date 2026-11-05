@@ -98,6 +98,9 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         PageControllerBindingMixin.__init__(self)
         QWidget.__init__(self, parent)
         self.config = config if isinstance(config, dict) else {}
+        # 1.0 编辑文档（或其他不可写版本）只读：禁用参数与保存/最终入口，保留回退入口。
+        self.read_only_reason: str | None = None
+        self._read_only_enabled: dict[QWidget, bool] = {}
         # 最终动作进行中：页面不接受重复提交，参数与回退入口都禁用，直到窗口把结果交回。
         self._finalizing = False
         # 端口丢失时最终按钮改为“重新连接仪器”：不保存配置、不创建新运行。
@@ -170,6 +173,13 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         root.addWidget(scroll, 1)
         scroll.setWidget(content)
         page_column = column
+        # 1.0 编辑文档只能查看：提示固定显示在参数区上方，不靠一次模态对话框。
+        self.read_only_notice = QLabel()
+        self.read_only_notice.setObjectName("configurationReadOnlyNotice")
+        self.read_only_notice.setProperty("tone", "warning")
+        self.read_only_notice.setWordWrap(True)
+        self.read_only_notice.setVisible(False)
+        page_column.addWidget(self.read_only_notice)
 
         # 设备发现与设备勾选都在“仪表配置”页（欢迎页之后的第一步）：本页只配置测试
         # 参数与运行，设备地址与身份来自那一页写入的设备绑定，页面不再提供手工填写地址
@@ -356,6 +366,8 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         self.pa_unit_count_changed.emit(count)
 
     def request_save(self):
+        if self.read_only_reason:
+            return
         if self.validate(): self.save_requested.emit()
 
     def request_finalize_run(self):
@@ -364,10 +376,43 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         真正的保存、运行冻结、连接检查与提交在协调器里完成；本页只负责“当前表单是
         否可以提交”，并在动作进行中拒绝重复点击。
         """
-        if self._finalizing:
+        if self._finalizing or self.read_only_reason:
             return
         if self.validate():
             self.finalize_run_requested.emit()
+
+    def set_read_only(self, reason: str | None) -> None:
+        """按统一会话给出的版本结论切换只读态。
+
+        1.0 编辑文档仍可查看参数与绑定，但不能改动测试参数、保存或进入最终动作；
+        “返回欢迎页/上一步”保持可用，操作者可以离开而不是被锁在页面里。原因只由
+        authoring 的版本门禁给出，页面不识别 ``schema_version``。
+        """
+        reason = (reason or "").strip() or None
+        was_read_only = bool(self.read_only_reason)
+        self.read_only_reason = reason
+        self.read_only_notice.setText(
+            f"当前配置只读：{reason}" if reason else ""
+        )
+        self.read_only_notice.setVisible(bool(reason))
+        widgets = (
+            self.test_parameters_group,
+            self.save_config_btn,
+            self.finalize_run_btn,
+        )
+        if reason:
+            if not was_read_only:
+                # 记住进入只读前的可用状态：退出只读时不能顺手打开本该禁用的控件。
+                self._read_only_enabled = {
+                    widget: widget.isEnabled() for widget in widgets
+                }
+            for widget in widgets:
+                widget.setEnabled(False)
+        elif was_read_only:
+            previous = self._read_only_enabled
+            self._read_only_enabled = {}
+            for widget in widgets:
+                widget.setEnabled(previous.get(widget, True))
 
     def set_finalizing(self, active: bool) -> None:
         """进入/退出最终动作状态：禁用提交、回退与参数编辑。
@@ -399,6 +444,15 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         self._finalizing_enabled = {}
         for widget in widgets:
             widget.setEnabled(previous.get(widget, True))
+        # 只读文档在进入最终动作前就被拒绝；恢复时仍以只读结论为准，不能把保存或
+        # 最终入口顺手打开。非只读时保留上面恢复的原状态，不改写其它业务禁用。
+        if self.read_only_reason:
+            for widget in (
+                self.test_parameters_group,
+                self.save_config_btn,
+                self.finalize_run_btn,
+            ):
+                widget.setEnabled(False)
 
     def request_load_run(self):
         run_id = self.load_run_id_edit.text().strip()

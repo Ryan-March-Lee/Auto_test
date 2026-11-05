@@ -80,6 +80,7 @@ class ConfigurationEditor:
         self.power_page = power_page
         self._log = log
         self._driver_mode_changed = driver_mode_changed
+        self.read_only_reason: str | None = None
         self._connect()
 
     def pages(self) -> list[Any]:
@@ -142,6 +143,15 @@ class ConfigurationEditor:
             mark_clean = getattr(page, "mark_clean", None)
             if callable(mark_clean):
                 mark_clean()
+
+    def set_read_only(self, reason: str | None) -> None:
+        """两页一起切换只读；原因由协调器的 authoring 版本门禁给出。"""
+        reason = (reason or "").strip() or None
+        self.read_only_reason = reason
+        for page in self.pages():
+            setter = getattr(page, "set_read_only", None)
+            if callable(setter):
+                setter(reason)
 
     def set_finalizing(self, active: bool) -> None:
         for page in self.pages():

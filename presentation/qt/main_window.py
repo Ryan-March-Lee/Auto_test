@@ -216,6 +216,10 @@ class MainWindow(QMainWindow):
         self.coordinator.config = config
         self.configuration_editor.apply_config(config)
         self.configuration_editor.set_test_mode(driver_enabled)
+        read_only_reason = self.coordinator.editing_read_only_reason()
+        self.configuration_editor.set_read_only(read_only_reason)
+        if read_only_reason:
+            self.add_log_message(f"配置只读: {read_only_reason}")
         self._apply_driver_mode_to_pages(driver_enabled)
         self.mode_badge.setText("有驱放测试" if driver_enabled else "无驱放测试")
         self.tab_widget.setCurrentIndex(0)

@@ -97,6 +97,8 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         dut = dut if isinstance(dut, dict) else {}
         self.pa_unit_count = max(0, self._int_or(dut.get("power_supply_count"), 2))
         self.power_section: PowerFormSection | None = None
+        # 1.0 编辑文档只读：整段电源表单禁用，但页面本身与回退入口保持可用。
+        self.read_only_reason: str | None = None
         # 回填/重建期间控件会连续发出 valueChanged；那是程序写入，不是用户编辑。
         self._silent = False
         self._finalizing = False
@@ -125,6 +127,12 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         column = QVBoxLayout(content)
         column.setContentsMargins(0, 0, 4, 0)
         column.setSpacing(12)
+        self.read_only_notice = QLabel()
+        self.read_only_notice.setObjectName("powerReadOnlyNotice")
+        self.read_only_notice.setProperty("tone", "warning")
+        self.read_only_notice.setWordWrap(True)
+        self.read_only_notice.setVisible(False)
+        column.addWidget(self.read_only_notice)
         column.addWidget(self._build_binding_widgets())
         self._build_power_widgets(column)
         column.addStretch(1)
@@ -533,14 +541,34 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
 
     # ---- dirty --------------------------------------------------------------
 
+    def set_read_only(self, reason: str | None) -> None:
+        """按统一会话给出的版本结论切换只读态。
+
+        电源片段（通道参数、分配、计划与漏极）整体禁用；设备绑定状态仍显示，操作者
+        能看到当前文档与绑定情况。原因只由 authoring 的版本门禁给出，页面不识别
+        ``schema_version``，也不自行尝试迁移。
+        """
+        reason = (reason or "").strip() or None
+        self.read_only_reason = reason
+        self.read_only_notice.setText(
+            f"当前配置只读：{reason}" if reason else ""
+        )
+        self.read_only_notice.setVisible(bool(reason))
+        self._apply_read_only_controls()
+
+    def _apply_read_only_controls(self) -> None:
+        if self.power_section is not None:
+            self.power_section.setEnabled(
+                not self._finalizing and not bool(self.read_only_reason)
+            )
+
     def set_finalizing(self, active: bool) -> None:
         """最终动作进行中禁用电源表单，防止提交后继续改片段。"""
         active = bool(active)
         if active == self._finalizing:
             return
         self._finalizing = active
-        if self.power_section is not None:
-            self.power_section.setEnabled(not active)
+        self._apply_read_only_controls()
 
     def mark_clean(self) -> None:
         self._dirty_baseline = copy.deepcopy(self.build_config(self.config))

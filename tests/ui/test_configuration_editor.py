@@ -66,6 +66,9 @@ class _EditorPage(_Page):
     def apply_device_bindings(self, _bindings):
         return None
 
+    def set_read_only(self, reason):
+        self.read_only_reason = reason
+
 
 class AtomicBackfillTests(unittest.TestCase):
     def test_a_failing_second_page_rolls_the_first_page_back(self):
@@ -97,6 +100,17 @@ class AtomicBackfillTests(unittest.TestCase):
 
         self.assertEqual(first.value, "first")
         self.assertEqual(second.value, "second")
+
+    def test_read_only_is_forwarded_to_both_pages(self):
+        first = _EditorPage("first")
+        second = _EditorPage("second")
+        editor = ConfigurationEditor(first, second)
+
+        editor.set_read_only("1.0 配置只能查看")
+
+        self.assertEqual(editor.read_only_reason, "1.0 配置只能查看")
+        self.assertEqual(first.read_only_reason, "1.0 配置只能查看")
+        self.assertEqual(second.read_only_reason, "1.0 配置只能查看")
 
 
 if __name__ == "__main__":

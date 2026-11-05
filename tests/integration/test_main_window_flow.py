@@ -203,6 +203,26 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertEqual(
             window.config_page.run_status_label.text(), "当前运行: 未创建"
         )
+
+    def test_a_10_configuration_opens_both_pages_read_only(self):
+        """步骤 13：1.0 编辑文档只读并提示迁移；两条编辑入口都不能写盘。"""
+        self._silence_dialogs()
+        config = _fully_valid_gui_config()
+        config["schema_version"] = "1.0"
+        self.config_path.write_text(json.dumps(config), encoding="utf-8")
+        window = self._window()
+
+        window._enter_test_mode(False)
+        window._open_configuration_page()
+
+        self.assertIn("迁移器", window.config_page.read_only_reason)
+        self.assertIn("迁移器", window.power_page.read_only_reason)
+        self.assertFalse(window.config_page.read_only_notice.isHidden())
+        self.assertFalse(window.power_page.read_only_notice.isHidden())
+        self.assertFalse(window.config_page.save_config_btn.isEnabled())
+        self.assertFalse(window.config_page.finalize_run_btn.isEnabled())
+        self.assertFalse(window.power_page.power_section.isEnabled())
+        self.assertTrue(window.config_page.return_welcome_btn.isEnabled())
         # 配置页被登记成协调器的窄接口，而不是控件宿主。
         self.assertIs(window.coordinator.config_page, window.config_page)
 

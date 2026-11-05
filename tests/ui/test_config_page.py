@@ -29,6 +29,28 @@ class ConfigurationPageTests(unittest.TestCase):
         self.app.processEvents()
         return page
 
+    def test_a_read_only_document_blocks_editing_and_saving(self):
+        """1.0 编辑文档只读：提示可见、参数与保存入口禁用，回退入口保持可用。"""
+        page = self.make_page()
+        saves = []
+        page.save_requested.connect(lambda: saves.append(True))
+
+        page.set_read_only("1.0 配置只能查看，不能保存；请先运行迁移器升级到 1.1")
+
+        self.assertTrue(page.read_only_notice.isVisibleTo(page))
+        self.assertIn("迁移器", page.read_only_notice.text())
+        self.assertFalse(page.test_parameters_group.isEnabled())
+        self.assertFalse(page.save_config_btn.isEnabled())
+        self.assertFalse(page.finalize_run_btn.isEnabled())
+        self.assertTrue(page.return_welcome_btn.isEnabled())
+        page.request_save()
+        self.assertEqual(saves, [])
+
+        page.set_read_only(None)
+        self.assertFalse(page.read_only_notice.isVisibleTo(page))
+        self.assertTrue(page.test_parameters_group.isEnabled())
+        self.assertTrue(page.save_config_btn.isEnabled())
+
     def test_driver_mode_emits_change_signal(self):
         page = self.make_page()
         changes = []

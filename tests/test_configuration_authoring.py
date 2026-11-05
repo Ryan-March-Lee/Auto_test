@@ -609,6 +609,24 @@ class ConfigurationAuthoringServiceTests(unittest.TestCase):
             author_official_configuration(flat)
         self.assertEqual(caught.exception.path, "schema_version")
 
+    def test_save_block_reason_is_the_same_gate_as_saving(self):
+        """只读判定与保存门禁同源：1.0 给出原因，1.1 允许保存。"""
+        service = ConfigurationAuthoringService()
+        legacy = _flat_config()
+        legacy["schema_version"] = "1.0"
+        current = _flat_config()
+
+        self.assertIn(
+            "迁移器", service.save_block_reason(
+                ConfigurationEditingDocument.from_mapping(legacy)
+            )
+        )
+        self.assertIsNone(
+            service.save_block_reason(
+                ConfigurationEditingDocument.from_mapping(current)
+            )
+        )
+
     def test_newer_schema_version_is_refused(self):
         flat = _flat_config()
         flat["schema_version"] = "2.0"

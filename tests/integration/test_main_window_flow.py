@@ -212,6 +212,10 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.config_path.write_text(json.dumps(config), encoding="utf-8")
         window = self._window()
 
+        # 构造即同步：不经过欢迎页也必须已经只读，避免出现可编辑窗口。
+        self.assertIn("迁移器", window.config_page.read_only_reason)
+        self.assertIn("迁移器", window.power_page.read_only_reason)
+
         window._enter_test_mode(False)
         window._open_configuration_page()
 

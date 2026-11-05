@@ -615,6 +615,49 @@ class CoordinatorConfigSaveTests(unittest.TestCase):
         self.assertFalse(result)
         self.assertIsNotNone(self.coordinator.last_save_error)
 
+    def test_save_refuses_a_legacy_document_before_writing(self):
+        """1.0 文档在保存边界即被拒绝：不迁移、不改写、不调用仓储。"""
+        legacy = {"schema_version": "1.0", "test_frequencies": [1.0]}
+        coordinator = _coordinator(config=legacy, service=self.service)
+
+        self.assertFalse(coordinator.save_configuration())
+
+        self.assertIn("迁移器", str(coordinator.last_save_error))
+        self.assertEqual(coordinator.config, legacy)
+        self.assertEqual(coordinator.config["schema_version"], "1.0")
+        self.service.configuration.save.assert_not_called()
+
+    def test_read_only_document_is_not_rewritten_from_page_widgets(self):
+        """只读文档也不接受页面读数：保存前不会先把 1.0 就地合并成新草稿。"""
+
+        class _LegacyPage:
+            def __init__(self):
+                self.config = {}
+
+            def validate(self):
+                return True
+
+            def build_config(self, base=None):
+                return {"schema_version": "1.1", "test_frequencies": [9.9]}
+
+            def apply_config(self, config):
+                self.config = dict(config)
+
+            def set_run_status(self, text):
+                pass
+
+            def driver_mode_requested(self):
+                return False
+
+        legacy = {"schema_version": "1.0", "test_frequencies": [1.0]}
+        coordinator = _coordinator(config=legacy, service=self.service)
+        coordinator.bind_config_page(_LegacyPage())
+
+        self.assertEqual(coordinator.update_configuration_from_ui(), legacy)
+        self.assertFalse(coordinator.save_configuration())
+        self.assertEqual(coordinator.config, legacy)
+        self.service.configuration.save.assert_not_called()
+
     def test_save_configuration_accepts_a_two_supply_assignment(self):
         """步骤 10：多电源指派已成为正式 schema，保存写出的 run_mapping 能通过正式校验。"""
         self.coordinator.config = {

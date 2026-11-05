@@ -150,6 +150,10 @@ class MainWindow(QMainWindow):
         self.tab_widget.setDocumentMode(True)
         left_layout.addWidget(self.tab_widget)
         self._register_pages()
+        # 页面一建好就对齐只读态：绕过欢迎页也不能先呈现为可编辑。
+        self.configuration_editor.set_read_only(
+            self.coordinator.editing_read_only_reason()
+        )
         # 测试模式徽标并入标签栏右侧：系统名与版本号已由窗口标题栏显示，不再重复一行。
         self.tab_widget.setCornerWidget(
             self._build_mode_badge(), Qt.Corner.TopRightCorner

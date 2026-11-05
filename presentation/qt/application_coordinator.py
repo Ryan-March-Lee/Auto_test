@@ -390,7 +390,13 @@ class ApplicationCoordinator:
         return True
 
     def update_configuration_from_ui(self) -> dict[str, Any]:
-        """用当前控件值替换协调器持有的配置副本。"""
+        """用当前控件值替换协调器持有的配置副本。
+
+        只读文档（例如 1.0）不接受页面读数：控件已被禁用，任何合并都只会把待迁移的
+        旧文档就地改写。此时保持文档原样，保存与最终动作由版本门禁拒绝。
+        """
+        if self.editing_read_only_reason() is not None:
+            return self.config
         self.config = self.build_configuration_from_ui()
         self._push_config_to_page()
         return self.config
@@ -413,6 +419,11 @@ class ApplicationCoordinator:
         :class:`application.configuration_authoring.ConfigurationAuthoringService`
         生成正式文档（校验失败就不会写盘），再经 ``ConfigurationPort.save`` 交给配置
         仓储的原子写入。界面不接触文件、序列化格式或临时文件，运行快照也不走这里。
+
+        版本门禁在 ``author_document`` 内先于任何字段改写执行，因此只读文档（1.0）
+        即使绕过被禁用的界面按钮调用这里，也不会被迁移或写盘；配合
+        :meth:`update_configuration_from_ui` 的只读保护，保存路径不会先把旧文档
+        就地改写。
         """
         try:
             self.config = ConfigurationAuthoringService().author_document(

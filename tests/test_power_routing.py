@@ -1,14 +1,14 @@
-"""步骤 15：供电分配解析是一份可独立测试的纯路由计算。
+"""步骤 15：上电计划解析是一份可独立测试的纯路由计算。
 
 固定的行为：
 
-- :func:`instrument.power_routing.resolve_supply_keys` 把分配里的引用解析成
+- :func:`instrument.power_routing.resolve_supply_keys` 把计划里的引用解析成
   ``power_supplies`` 的集合键：``supply_id`` 直接命中，旧 ``label`` 与残留的
   ``visual`` 槽位必须唯一指向**一台已启用**的电源，任何歧义都明确失败；
-- :func:`instrument.power_routing.resolve_channel_routing` 把分配解析成有序物理
-  通道计划：顺序只来自 ``power_plan.power_sequence``，旧文件没有计划键时才按分配
-  声明顺序补齐；token 只由集合键拼成，日志写法（``短标签/CHx``）在同一处生成，
-  急停按全局上电顺序逆序；
+- :func:`instrument.power_routing.resolve_channel_routing` 把计划解析成有序物理
+  通道计划：顺序只来自 ``power_plan.power_sequence``；计划同时是“哪些通道给哪个
+  器件”的唯一来源，不再读取按器件固定分配电源的旧 ``supplies`` 段。token 只由集合键
+  拼成，日志写法（``短标签/CHx``）在同一处生成，急停按全局上电顺序逆序；
 - 模块本身不接触设备库：没有 pyvisa、没有地址、没有资源，因此可以在连接任何
   仪器之前单独测试。
 
@@ -23,8 +23,8 @@ import unittest
 from pathlib import Path
 
 from instrument.power_routing import (
-    assigned_supply_references,
     declared_channels,
+    planned_supply_references,
     resolve_channel_routing,
     resolve_supply_keys,
     supply_short_label,
@@ -53,10 +53,6 @@ def _supply(*, address, label=None, visual=None, enabled=True, extra_channels=()
     return item
 
 
-def _assignment(*, supply_id, channels=("CH1", "CH2")):
-    return {"supply_id": supply_id, "name": supply_id, "channel": list(channels)}
-
-
 def _power_configs(**overrides):
     supplies = {
         "DP8B1519": _supply(address=SUPPLY_A),
@@ -67,13 +63,24 @@ def _power_configs(**overrides):
     return supplies
 
 
+def _plan(routes, *, delay=0.0):
+    return {
+        "power_plan": {
+            "power_sequence": [
+                {"supply_id": supply_id, "channel": channel}
+                for supply_id, channel in routes
+            ],
+            "inter_channel_delay_s": delay,
+        }
+    }
+
+
 def _assignments(dut="DP8B1519", driver="DP8B0950"):
-    dut_supplies = {} if dut is None else {"carrier": _assignment(supply_id=dut)}
-    driver_supplies = {} if driver is None else {"main": _assignment(supply_id=driver)}
-    return (
-        {"supplies": dut_supplies},
-        {"supplies": driver_supplies},
+    dut_assignment = {} if dut is None else _plan([(dut, "CH1"), (dut, "CH2")])
+    driver_assignment = (
+        {} if driver is None else _plan([(driver, "CH1"), (driver, "CH2")])
     )
+    return dut_assignment, driver_assignment
 
 
 def _routing(power_configs=None, *, dut="DP8B1519", driver="DP8B0950", enabled=None):
@@ -82,7 +89,7 @@ def _routing(power_configs=None, *, dut="DP8B1519", driver="DP8B0950", enabled=N
     enabled_ids = enabled if enabled is not None else [name for name in configs]
     resolution = resolve_supply_keys(
         configs,
-        assigned_supply_references(dut_assignment, driver_assignment),
+        planned_supply_references(dut_assignment, driver_assignment),
         enabled_ids,
     )
     return resolution, resolve_channel_routing(
@@ -110,7 +117,7 @@ class RoutingModuleIsPureTests(unittest.TestCase):
 
 
 class ReferenceResolutionTests(unittest.TestCase):
-    """分配引用只解析到唯一一台已启用的电源。"""
+    """计划引用只解析到唯一一台已启用的电源。"""
 
     def test_supply_id_resolves_to_itself(self):
         resolution, _routing_result = _routing()
@@ -152,20 +159,21 @@ class ReferenceResolutionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "未启用的电源"):
             resolve_supply_keys(configs, ["DP8B1519"], ["DP8B0950"])
 
-    def test_references_are_collected_without_trimming(self):
-        dut_assignment, driver_assignment = _assignments(dut=" DP8B1519 ")
-        references = assigned_supply_references(dut_assignment, driver_assignment)
+    def test_references_are_collected_from_the_plan_without_trimming(self):
+        dut_assignment = _plan([(" DP8B1519 ", "CH1")])
+        driver_assignment = _plan([("DP8B0950", "CH1")])
+        references = planned_supply_references(dut_assignment, driver_assignment)
         self.assertEqual(references, (" DP8B1519 ", "DP8B0950"))
         with self.assertRaisesRegex(ValueError, "不存在的电源"):
             resolve_supply_keys(_power_configs(), references, list(_power_configs()))
 
-    def test_assignment_entry_must_be_an_object(self):
-        with self.assertRaisesRegex(ValueError, "供电分配条目必须是对象"):
-            assigned_supply_references({"supplies": {"carrier": "DP8B1519"}})
-
-    def test_assignment_must_provide_a_supplies_object(self):
-        with self.assertRaisesRegex(ValueError, "供电分配必须提供 supplies 对象"):
-            assigned_supply_references({"supplies": ["DP8B1519"]})
+    def test_plan_items_that_are_not_routes_are_skipped(self):
+        self.assertEqual(
+            planned_supply_references(
+                {"power_plan": {"power_sequence": ["DP8B1519/CH1", {"channel": "CH1"}]}}
+            ),
+            (),
+        )
 
 
 class ChannelRoutingTests(unittest.TestCase):
@@ -194,20 +202,13 @@ class ChannelRoutingTests(unittest.TestCase):
 
     def test_power_plan_sequence_is_the_power_on_order(self):
         configs = _power_configs()
-        dut_assignment = {
-            "supplies": {"carrier": _assignment(supply_id="DP8B1519")},
-            "power_plan": {
-                "power_sequence": [
-                    {"supply_id": "DP8B1519", "channel": "CH2"},
-                    {"supply_id": "DP8B1519", "channel": "CH1"},
-                ],
-                "inter_channel_delay_s": 3.0,
-            },
-        }
+        dut_assignment = _plan(
+            [("DP8B1519", "CH2"), ("DP8B1519", "CH1")], delay=3.0
+        )
         resolution = resolve_supply_keys(configs, ["DP8B1519"], list(configs))
         routing = resolve_channel_routing(
             dut_assignment=dut_assignment,
-            driver_assignment={"supplies": {}},
+            driver_assignment={},
             power_configs=configs,
             resolution=resolution,
         )
@@ -215,26 +216,6 @@ class ChannelRoutingTests(unittest.TestCase):
             routing.dut_power_plan.tokens, ("DP8B1519/CH2", "DP8B1519/CH1")
         )
         self.assertEqual(routing.dut_power_plan.inter_channel_delay_s, 3.0)
-
-    def test_power_plan_must_cover_the_declared_assignment(self):
-        configs = _power_configs()
-        dut_assignment = {
-            "supplies": {"carrier": _assignment(supply_id="DP8B1519")},
-            "power_plan": {
-                "power_sequence": [
-                    {"supply_id": "DP8B1519", "channel": "CH1"},
-                ],
-                "inter_channel_delay_s": 0.0,
-            },
-        }
-        resolution = resolve_supply_keys(configs, ["DP8B1519"], list(configs))
-        with self.assertRaisesRegex(ValueError, "恰好包含该组分配的全部物理通道"):
-            resolve_channel_routing(
-                dut_assignment=dut_assignment,
-                driver_assignment={"supplies": {}},
-                power_configs=configs,
-                resolution=resolution,
-            )
 
     def test_emergency_order_is_the_reverse_of_the_global_power_on_order(self):
         _resolution, routing = _routing()
@@ -249,7 +230,7 @@ class ChannelRoutingTests(unittest.TestCase):
             ),
         )
 
-    def test_unassigned_channels_are_not_routed(self):
+    def test_channels_outside_the_plan_are_not_routed(self):
         configs = _power_configs(
             DP8B1519=_supply(address=SUPPLY_A, extra_channels=("CH3",))
         )
@@ -270,37 +251,42 @@ class ChannelRoutingTests(unittest.TestCase):
             routing.dut_power_plan.tokens, ("DP8B1519/CH1", "DP8B1519/CH2")
         )
 
-    def test_single_channel_assignment_is_a_valid_plan(self):
+    def test_single_channel_plan_is_valid(self):
         configs = _power_configs()
-        dut_assignment = {
-            "supplies": {"carrier": _assignment(supply_id="DP8B1519", channels=["CH1"])}
-        }
+        dut_assignment = _plan([("DP8B1519", "CH1")])
         resolution = resolve_supply_keys(configs, ["DP8B1519"], list(configs))
         routing = resolve_channel_routing(
             dut_assignment=dut_assignment,
-            driver_assignment={"supplies": {}},
+            driver_assignment={},
             power_configs=configs,
             resolution=resolution,
         )
         self.assertEqual(routing.dut_power_plan.tokens, ("DP8B1519/CH1",))
 
     def test_unknown_channel_fails(self):
-        dut_assignment = {
-            "supplies": {"carrier": _assignment(supply_id="DP8B1519", channels=["CH9"])}
-        }
+        dut_assignment = _plan([("DP8B1519", "CH9")])
         configs = _power_configs()
         resolution = resolve_supply_keys(configs, ["DP8B1519"], ["DP8B1519"])
         with self.assertRaisesRegex(ValueError, "不存在的通道"):
             resolve_channel_routing(
                 dut_assignment=dut_assignment,
-                driver_assignment={"supplies": {}},
+                driver_assignment={},
                 power_configs=configs,
                 resolution=resolution,
             )
 
     def test_dut_and_driver_cannot_share_a_channel(self):
+        configs = _power_configs()
+        dut_assignment = _plan([("DP8B1519", "CH1")])
+        driver_assignment = _plan([("DP8B1519", "CH1")])
+        resolution = resolve_supply_keys(configs, ["DP8B1519"], list(configs))
         with self.assertRaisesRegex(ValueError, "占用了同一个电源通道"):
-            _routing(driver="DP8B1519")
+            resolve_channel_routing(
+                dut_assignment=dut_assignment,
+                driver_assignment=driver_assignment,
+                power_configs=configs,
+                resolution=resolution,
+            )
 
 
 class SharedRuleTests(unittest.TestCase):

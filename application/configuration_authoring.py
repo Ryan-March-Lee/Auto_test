@@ -33,13 +33,14 @@
   1.0、更高版本，以及“无版本但含 1.0 遗留电源字段”的文档一律拒绝。旧配置只能先经
   迁移器升级（§6.11.3、§6.14），authoring 不做隐式升级。
 - 正式 ``run_mapping`` 的电源段是**集合** ``instruments.power_supplies.<supply_id>``：
-  每台被供电分配实际引用的电源各占一条，条目自带 ``label`` / ``model`` / ``full_code`` /
-  ``device_key`` / ``visa_address``。快照只登记实际使用的电源，绑定了但没被分配的电源
-  不会进快照。集合大小由分配与绑定共同决定，1 台和多台走同一条路径，不再有“只能登记
-  一个本机电源”的限制。
-- 通道参数按物理路由 ``(supply_id, channel)`` 标识，DUT 的漏极与其他通道可以来自不同
-  电源。同一物理通道被分配两次时这里只写一条 ``channel_settings``（集合语义），重复
-  分配仍由编辑文档校验报告，不在这里伪造两条参数。
+  每台在上电计划里**实际使用**的电源各占一条，条目自带 ``label`` / ``model`` /
+  ``full_code`` / ``device_key`` / ``visa_address``。快照只登记计划引用的电源，绑定了
+  但没进计划的电源不会进快照。集合大小由计划与绑定共同决定，1 台和多台走同一条路径，
+  不再有“只能登记一个本机电源”的限制。
+- 通道参数按物理路由 ``(supply_id, channel)`` 标识，路由集合直接来自两组的
+  ``power_plan.power_sequence``；不再另存“给驱放/功放固定分配某台电源”的表。DUT 的
+  漏极与其他通道可以来自不同电源。同一物理通道在计划里重复时这里只写一条
+  ``channel_settings``（集合语义），重复仍由编辑文档校验报告。
 - 身份字段（``label`` / ``full_code`` / ``device_key``）只从该仪器自己的配置条目读取：
   信号源、频谱仪与每台电源的快照条目都带这组字段；条目缺少身份时写空，**不按地址、
   型号或显示名补全**，也不在运行期间回查设备表。
@@ -65,10 +66,8 @@ from domain.configuration.models import (
     validate_run_configuration,
 )
 from domain.configuration.rules import (
-    assignment_supply_id,
     validate_hardware_connections,
     validate_power_plan,
-    validate_power_supply_assignment_references,
 )
 from domain.configuration.types import ConfigIssue
 from domain.instruments.models import is_legacy_power_supply_slot
@@ -108,7 +107,6 @@ EDITING_SECTION_FIELDS = frozenset(
 )
 # 正式校验问题的稳定错误码：只标识来源边界，不随文案变化。
 _CODE_POWER_PLAN = "configuration.power_plan"
-_CODE_POWER_ASSIGNMENT_REFERENCES = "configuration.power_assignment_references"
 _CODE_RUN_VALIDATION = "configuration.run_validation"
 _CODE_HARDWARE_CONNECTIONS = "configuration.hardware_connections"
 # 独立电源页负责的正式校验路径（domain 在 ``path`` 上区分问题位置）。
@@ -134,10 +132,10 @@ _POWER_ISSUE_PATH_PREFIXES = (
 def is_power_validation_issue(issue: ValidationIssue) -> bool:
     """这条正式校验问题是否归独立电源页负责。
 
-    判据只有两个来源：问题来源码（上电计划/供电分配引用）与 domain 给出的路径前缀。
+    判据只有两个来源：问题来源码（上电计划）与 domain 给出的路径前缀。
     路径前缀覆盖运行校验与硬件连接校验里的电源段；其余问题归参数页。
     """
-    if issue.code in (_CODE_POWER_PLAN, _CODE_POWER_ASSIGNMENT_REFERENCES):
+    if issue.code in (_CODE_POWER_PLAN,):
         return True
     path = issue.path or ""
     for prefix in _POWER_ISSUE_PATH_PREFIXES:
@@ -236,7 +234,6 @@ class ConfigurationAuthoringService:
             )
         values = document.to_mapping()
         _require_saveable_document(values)
-        _require_consistent_legacy_references(values)
         _strip_legacy_editing_fields(values)
         values["schema_version"] = OFFICIAL_SCHEMA_VERSION
         values["test_plan"] = _author_test_plan(values)
@@ -303,14 +300,13 @@ class ConfigurationAuthoringService:
 
         这里只做编排：正式 ``test_plan`` / ``run_mapping`` 的判据仍由 domain 的
         ``validate_run_configuration`` 定义，硬件装配段的连接冲突仍由
-        ``validate_hardware_connections`` 定义；编写文档里的上电计划、漏极引用与供电
-        分配引用也由 domain 的 ``validate_power_plan`` /
-        ``validate_power_supply_assignment_references`` 定义。本方法只把结果转成结构化
-        问题，不复制、不改写任何判据。
+        ``validate_hardware_connections`` 定义；编写文档里的上电计划与漏极引用也由
+        domain 的 ``validate_power_plan`` 定义。本方法只把结果转成结构化问题，不复制、
+        不改写任何判据。
 
-        问题顺序与原页面一致：先上电计划/漏极，再供电分配引用，然后正式运行校验
-        （错误 + 警告），最后硬件装配校验。页面通常只展示
-        :attr:`ValidationResult.errors`，所以用户可见顺序仍是“计划/分配问题在前、正式
+        问题顺序与原页面一致：先上电计划/漏极，然后正式运行校验（错误 + 警告），
+        最后硬件装配校验。页面通常只展示
+        :attr:`ValidationResult.errors`，所以用户可见顺序仍是“计划问题在前、正式
         段问题居中、连接冲突在后”。编写失败（``ConfigurationError``）照常抛给调用方，
         不在这里改写成“校验问题”。
         """
@@ -322,10 +318,6 @@ class ConfigurationAuthoringService:
             (
                 validate_power_plan(authored),
                 _CODE_POWER_PLAN,
-            ),
-            (
-                validate_power_supply_assignment_references(authored),
-                _CODE_POWER_ASSIGNMENT_REFERENCES,
             ),
         )
         run_issues = validate_run_configuration(
@@ -353,8 +345,8 @@ class ConfigurationAuthoringService:
     ) -> ValidationResult:
         """只返回独立电源页负责的正式校验问题。
 
-        电源页展示的必须只是它自己的字段（通道参数、供电分配、上电计划、漏极与
-        驱动供电方式）；整份配置的其余问题归参数页。这样两个页面各报自己的一段，
+        电源页展示的必须只是它自己的字段（通道参数、上电计划、漏极与驱动供电方式）；
+        整份配置的其余问题归参数页。这样两个页面各报自己的一段，
         合起来仍是完整校验，不会把“测试频率非法”写成“电源配置校验失败”。
         """
         result = self.validate_document(document)
@@ -500,50 +492,12 @@ def _legacy_power_field_path(document: Mapping[str, Any]) -> str | None:
     return None
 
 
-def _require_consistent_legacy_references(document: Mapping[str, Any]) -> None:
-    """1.1 编辑段的旧 ``name`` 别名只能与 ``supply_id`` 同值。
-
-    ``name`` 是过渡别名，保存时必须被剥离；如果先剥离再校验，一条
-    ``{"supply_id": "PS1", "name": "PS2"}`` 就会悄悄变成 ``PS1``，把“两个身份”的
-    数据错误藏起来。这里在剥离前检查：两者同时出现且不同值直接拒绝；只有别名
-    没有主字段的 1.1 文档同样拒绝（1.1 的引用字段只有 ``supply_id``，旧槽位迁移
-    属于迁移器）。``supply_id: null`` 表示“明确未绑定”，此时 ``name`` 只是残留，
-    不参与引用，也不提升成某台电源。
-    """
-    assignments = _mapping(document.get("power_supply_assignment"))
-    for group in _ASSIGNMENT_GROUPS:
-        supplies = _mapping(_mapping(assignments.get(group)).get("supplies"))
-        for slot, entry in supplies.items():
-            item = _mapping(entry)
-            if "name" not in item:
-                continue
-            path = f"power_supply_assignment.{group}.supplies.{slot}.name"
-            if "supply_id" not in item:
-                raise ConfigurationAuthoringError(
-                    "1.1 供电分配只能使用 supply_id 引用电源；"
-                    "旧字段 name 需先经迁移器升级",
-                    path=path,
-                )
-            supply_id = item.get("supply_id")
-            name = item.get("name")
-            if (
-                isinstance(supply_id, str)
-                and supply_id.strip()
-                and isinstance(name, str)
-                and name.strip()
-                and supply_id.strip() != name.strip()
-            ):
-                raise ConfigurationAuthoringError(
-                    f"过渡字段 name 必须与 supply_id 同值: {name!r} != {supply_id!r}",
-                    path=path,
-                )
-
-
 def _strip_legacy_editing_fields(document: dict[str, Any]) -> None:
-    """把 1.1 编辑段里残留的旧角色/旧槽位别名从写出内容中剥离。
+    """把 1.1 编辑段里残留的旧字段从写出内容中剥离。
 
-    角色和 ``name`` 引用都只属于 1.0 读取兼容；1.1 的唯一引用是 ``supply_id``，
-    通道参数由物理路由标识。这里只改要写出的副本，不动调用方的文档。
+    1.1 不再给器件固定分配电源：``power_supply_assignment.<组>.supplies`` 与
+    ``power_supply_count`` 只属于旧编辑段，上电计划才是唯一来源；通道 ``role`` 也只
+    属于 1.0 读取兼容。这里只改要写出的副本，不动调用方的文档。
     """
     instruments = _mapping(document.get("instruments"))
     for supply in _mapping(instruments.get("power_supplies")).values():
@@ -552,9 +506,10 @@ def _strip_legacy_editing_fields(document: dict[str, Any]) -> None:
                 channel.pop("role", None)
     assignments = _mapping(document.get("power_supply_assignment"))
     for group in _ASSIGNMENT_GROUPS:
-        for entry in _mapping(_mapping(assignments.get(group)).get("supplies")).values():
-            if isinstance(entry, dict):
-                entry.pop("name", None)
+        block = assignments.get(group)
+        if isinstance(block, dict):
+            block.pop("supplies", None)
+            block.pop("power_supply_count", None)
 
 
 def _normalized_section(value: Any, section: str) -> Any:
@@ -596,7 +551,7 @@ def _author_test_plan(document: Mapping[str, Any]) -> dict[str, Any]:
     attenuator = _mapping(document.get("attenuator"))
     dut_config = _mapping(document.get("dut_config"))
     driver_mode = _mapping(document.get("driver_mode"))
-    driver_routes = _assignment_routes(document, "driver_amplifier")
+    driver_routes = _power_plan_routes(document, "driver_amplifier")
     return {
         "schema_version": OFFICIAL_SCHEMA_VERSION,
         "template": False,
@@ -635,7 +590,7 @@ def _author_run_mapping(document: Mapping[str, Any]) -> dict[str, Any]:
     instruments = _mapping(document.get("instruments"))
     signal_generator = _mapping(instruments.get("signal_generator"))
     spectrum_analyzer = _mapping(instruments.get("spectrum_analyzer"))
-    driver_routes = _assignment_routes(document, "driver_amplifier")
+    driver_routes = _power_plan_routes(document, "driver_amplifier")
     return {
         "schema_version": OFFICIAL_SCHEMA_VERSION,
         "template": False,
@@ -704,12 +659,13 @@ def _author_channel_settings(
 ) -> list[dict[str, Any]]:
     """按物理路由写出 ``channel_settings``：路由两段平铺 + 工作值/保护值。
 
-    顺序无关（集合语义）；这里按分配出现顺序稳定输出，同一物理路由只写一条
-    （重复分配由编辑文档校验负责报告）。缺少工作值时写 ``None``，让运行校验在连接
-    前明确失败，不补默认电压/电流。
+    路由就是该组上电计划里的有序通道：计划是“哪些电源的哪些通道给哪个器件上电”的
+    唯一来源，不再另写一份按器件固定分配电源的表。顺序无关（集合语义）；这里按计划
+    顺序稳定输出，同一物理路由只写一条（计划内重复由编辑文档校验负责报告）。缺少
+    工作值时写 ``None``，让运行校验在连接前明确失败，不补默认电压/电流。
     """
     settings: list[dict[str, Any]] = []
-    for supply_id, channel in _assignment_routes(document, group):
+    for supply_id, channel in _power_plan_routes(document, group):
         channel_config = _mapping(_supply_channels(document, supply_id).get(channel))
         settings.append(
             {
@@ -726,39 +682,49 @@ def _author_channel_settings(
     return settings
 
 
-def _assignment_routes(
+def _power_plan_routes(
     document: Mapping[str, Any], group: str
 ) -> list[tuple[str, str]]:
-    """一组分配引用的物理路由，按出现顺序去重。
+    """一组上电计划引用的物理路由，按计划顺序去重。
 
-    只收集可解析的引用：未选择电源、通道名非字符串或含 ``/`` 的条目留给正式校验
-    报告，不在这里猜测成某台电源/某个通道。
+    只收集可解析的路由：缺失电源、非法路由形状留给正式校验报告，不在这里猜测成某台
+    电源/某个通道。
     """
+    plan = _mapping(
+        _mapping(_mapping(document.get("power_supply_assignment")).get(group)).get(
+            "power_plan"
+        )
+    )
+    sequence = plan.get("power_sequence")
+    if not isinstance(sequence, (list, tuple)):
+        return []
     routes: list[tuple[str, str]] = []
     seen: set[tuple[str, str]] = set()
-    for assignment in _assignment_supplies(document, group).values():
-        supply_id = _assigned_supply_id(assignment)
-        if supply_id is None or "/" in supply_id:
+    for item in sequence:
+        if not isinstance(item, Mapping):
             continue
-        for channel in _channel_list(assignment.get("channel")):
-            if not channel.strip() or "/" in channel:
-                continue
-            route = (supply_id, channel.strip())
-            if route in seen:
-                continue
-            seen.add(route)
-            routes.append(route)
+        supply_id = item.get("supply_id")
+        channel = item.get("channel")
+        if (
+            not isinstance(supply_id, str)
+            or not supply_id.strip()
+            or "/" in supply_id
+            or not isinstance(channel, str)
+            or not channel.strip()
+            or "/" in channel
+        ):
+            continue
+        route = (supply_id.strip(), channel.strip())
+        if route in seen:
+            continue
+        seen.add(route)
+        routes.append(route)
     return routes
 
 
 def _setting(channel: Mapping[str, Any], section: str, key: str) -> Any:
     value = _mapping(channel.get(section)).get(key)
     return value if _is_finite_number(value) else None
-
-
-def _assignment_supplies(document: Mapping[str, Any], assignment_name: str) -> Mapping[str, Any]:
-    assignments = _mapping(document.get("power_supply_assignment"))
-    return _mapping(_mapping(assignments.get(assignment_name)).get("supplies"))
 
 
 def _supply_channels(document: Mapping[str, Any], supply_name: Any) -> Mapping[str, Any]:
@@ -769,31 +735,17 @@ def _supply_channels(document: Mapping[str, Any], supply_name: Any) -> Mapping[s
 
 
 def _used_supply_ids(document: Mapping[str, Any]) -> list[str]:
-    """按出现顺序返回供电分配实际引用的 ``supply_id``（去重）。
+    """按上电顺序返回**实际使用**的 ``supply_id``（去重）。
 
-    只认 ``supply_id``：它才是电源引用。旧记录没有该字段时回落读一次同名
-    ``name``（过渡期两者同值），完全未绑定的引用（``supply_id: null``）不计入——
-    它交给正式校验报告，不能被当成一台电源写进快照。
+    电源只由两组的 ``power_plan.power_sequence`` 引用；计划里没出现的电源即使已绑定，
+    也不会进入运行快照。漏极由运行校验约束为 DUT 计划成员，因此不需要单独登记。
     """
     names: list[str] = []
     for group in _ASSIGNMENT_GROUPS:
-        for assignment in _assignment_supplies(document, group).values():
-            name = _assigned_supply_id(assignment)
-            # 没有引用（``supply_id: null``、空白）的分配不算一台电源：它交给正式校验
-            # 报告，不能被当成某台设备写进快照。
-            if name is not None and name not in names:
-                names.append(name)
+        for supply_id, _channel in _power_plan_routes(document, group):
+            if supply_id not in names:
+                names.append(supply_id)
     return names
-
-
-def _assigned_supply_id(assignment: Mapping[str, Any]) -> str | None:
-    """分配条目引用的电源 ``supply_id``。
-
-    读引用规则只有一处实现（:func:`domain.configuration.rules.assignment_supply_id`）：
-    ``supply_id`` 优先，只有完全没有该字段的旧记录才回落读一次 ``name``。配置页、正式
-    运行映射与文件级校验都用它，不存在第二套编号。
-    """
-    return assignment_supply_id(assignment)
 
 
 def _author_power_supply_entries(document: Mapping[str, Any]) -> dict[str, Any]:
@@ -819,12 +771,6 @@ def _author_power_supply_entries(document: Mapping[str, Any]) -> dict[str, Any]:
             "visa_address": supply.get("address"),
         }
     return entries
-
-
-def _channel_list(value: Any) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [item for item in value if isinstance(item, str)]
 
 
 def _frequencies(value: Any) -> list[Any]:

@@ -1,7 +1,7 @@
 """纯 Python 配置表单状态适配器。
 
 该模块只依赖控件的最小读取协议（``text``、``value``、``isChecked`` 和 ``currentText``；
-电源分配下拉框另外要求 ``currentIndex`` + ``itemData``，业务值只从那里读），以及页面
+漏极下拉框另外要求 ``currentIndex`` + ``itemData``，业务值只从那里读），以及页面
 持有的 ``device_bindings``（仪器连接的唯一来源），因此可以在没有 QApplication 的情况下
 测试配置组装。
 
@@ -12,7 +12,7 @@
 归属（见 `docs/配置领域词汇与模块归属.md`）：presentation adapter。读数后的合法性判据属于
 `domain` 配置规则；正式运行校验与正式配置编写都委托
 `application.configuration_authoring`，本模块只把当前的读数包成配置编辑 DTO 并展示
-返回的消息。供电分配引用的判据也只由 domain 定义（步骤 13 收口），这里不再保留页面副本。
+返回的消息。上电计划的判据只由 domain 定义（步骤 13 收口），这里不再保留页面副本。
 """
 
 import ast
@@ -24,9 +24,6 @@ from application.errors import ConfigurationError
 from domain.instruments.models import INSTRUMENT_ROLES
 
 from .config_form_bindings import binding_address, power_supply_bindings
-# 电源通道的显示顺序：界面固定为每台电源两个通道。组计划与分配写出都按这个顺序，
-# 但顺序本身不是上电顺序——上电顺序只来自计划列表。
-from .config_power_assignments import POWER_SUPPLY_CHANNELS, assignment_channels
 
 
 def parse_frequency_text(value: str) -> list[float] | None:
@@ -103,72 +100,24 @@ def strip_channel_roles(supplies: Any) -> None:
                 channel.pop("role", None)
 
 
-def assignment_declared(entry: Any) -> bool:
-    """配置里是否存在这条供电分配（与它是否指向一台已绑定电源无关）。
+def _clear_driver_power_plan(document):
+    """关闭驱放测试模式时清掉文档里遗留的驱动功放上电计划。
 
-    回填控件必须分开两种状态：**没有这条分配**（键缺失/不是对象）按缺省规则选第一台
-    可用电源；**声明了但未绑定**（``supply_id: null``、空白引用，或记录里根本没有引用
-    字段）必须保持空选择并交给校验报告。把后者当成前者，会在载入一份“等人工补全”的
-    配置时静默选上一台电源，保存后就把“这台电源已不在”写成了一次看不见的分配改动。
-    """
-    return isinstance(entry, Mapping)
-
-
-def _clear_driver_power_assignment(document):
-    """关闭驱放测试模式时清掉文档里遗留的驱动功放供电分配。
-
-    页面在关闭驱放后不再提交驱动分配（不占本机电源），但协调器持有的配置副本仍带着上一次
-    保存的 ``driver_amplifier.supplies``；两份副本因此不一致。正式校验会按“驱放模式关闭时
-    不能配置驱动功放通道”拒绝它，于是页面刚做的正确选择反而让运行创建失败（步骤 11）。
-    这里只清这一段供电分配，电源通道参数与 DUT 分配原样保留。
+    页面在关闭驱放后不再提交驱动计划（不占本机电源），但协调器持有的配置副本仍带着
+    上一次保存的 ``driver_amplifier.power_plan``；两份副本因此不一致。正式校验会按
+    “驱放模式关闭时不能配置驱动功放上电计划”拒绝它，于是页面刚做的正确选择反而让运行
+    创建失败。这里只清这一段计划，电源通道参数与 DUT 计划原样保留。
     """
     assignment = _dict_copy(document.get("power_supply_assignment"))
-    if not assignment or assignment.get("driver_amplifier") in (None, {}):
+    if not assignment:
         return False
-    assignment["driver_amplifier"] = {"power_supply_count": 0, "supplies": {}}
+    driver = assignment.get("driver_amplifier")
+    if not isinstance(driver, dict) or "power_plan" not in driver:
+        return False
+    driver["power_plan"] = {"power_sequence": [], "inter_channel_delay_s": 0.0}
+    assignment["driver_amplifier"] = driver
     document["power_supply_assignment"] = assignment
     return True
-
-
-def _assignment_entry(combo: Any, channels: Any = None) -> dict:
-    """从分配下拉框读出一条供电分配记录。
-
-    引用值取自控件的 ``itemData``（即选中项的 ``supply_id``）：下拉框的显示文本是
-    ``DP832A（DP8B1519）`` 这类给人看的标签，业务值绝不能从显示字符串反解析。控件为空
-    或选中项没有数据时按“引用未绑定”处理，不会把显示文本当成 ``supply_id``。
-
-    ``channels`` 是配置里这条分配声明的通道集合（:func:`assignment_channels`）；它表达
-    “这个 PA 单元接哪些物理通道”，**不**由计划勾选或排序推导。计划只写
-    ``power_plan.power_sequence``；两处集合是否相等由正式校验比较。缺少通道声明时保持
-    每台电源固定的两个通道。
-
-    写回只写 ``supply_id``：1.1 的唯一引用字段是它；旧 ``name`` 只属于迁移/读取兼容，
-    不再由表单写回。控件为空表示“引用未绑定”，写成 ``supply_id: null``，由校验明确
-    报错，绝不在这里挑一台可用电源补上。
-    """
-    supply_id = _combo_supply_id(combo)
-    selected = list(POWER_SUPPLY_CHANNELS) if channels is None else list(channels)
-    return {"supply_id": supply_id, "channel": selected}
-
-
-def _combo_supply_id(combo: Any) -> str | None:
-    """下拉框当前选中的电源 ``supply_id``；空选择或选中项没有数据时返回 ``None``。
-
-    只读 ``itemData``：显示文本带型号（``DP832A（DP8B1519）``），也可能因型号相同而
-    只是互相接近，回落到文本就等于“从显示字符串反解析身份”，会把标签原样写成
-    ``supply_id``。没有 ``itemData`` 能力的控件因此被视为空选择，由校验明确报错。
-    """
-    if combo is None:
-        return None
-    index_of = getattr(combo, "currentIndex", None)
-    index = index_of() if callable(index_of) else -1
-    if not isinstance(index, int) or index < 0:
-        return None
-    item_data = getattr(combo, "itemData", None)
-    data = item_data(index) if callable(item_data) else None
-    if isinstance(data, str) and data.strip():
-        return data
-    return None
 
 
 def _apply_device_binding(item: dict, binding: Any) -> None:
@@ -232,8 +181,8 @@ class ConfigFormState:
         """参数页要显示的用户错误：只报本页负责的字段。
 
         整份配置的正式校验按页面归属拆开：本页只展示测试参数、设备连接等非电源问题；
-        供电分配引用、上电计划、通道与漏极的问题由独立电源页展示。两页合起来仍是
-        完整校验，因此最终动作不需要第二份校验入口，也不会把电源故障写进本页。
+        上电计划、通道与漏极的问题由独立电源页展示。两页合起来仍是完整校验，因此最终
+        动作不需要第二份校验入口，也不会把电源故障写进本页。
         """
         errors = []
         if parse_frequency_text(self._text(self.widgets.freq_edit)) is None:
@@ -349,72 +298,41 @@ class ConfigFormState:
         return {"instruments": {"power_supplies": result}} if result else {}
 
     def read_power_assignment(self) -> dict:
-        """按当前下拉框、分配通道与组计划写出供电分配，引用主字段是 ``supply_id``。
+        """写出两组的通道上电计划（``power_plan``）。
 
-        值只来自控件的选中项（``itemData`` 里的 ``supply_id``，见 :func:`_combo_supply_id`），
-        不从显示字符串反解析；写出只含 ``supply_id``（1.1 不再写过渡别名 ``name``）。
-        可选项本身只来自设备绑定，因此这里写出的每个引用都对应一台本次已应用的电源。
-
-        分配的 ``channel`` 是配置里该槽位已有的通道集合（:func:`assignment_channels`），
-        与计划勾选、排序互不推导：计划只写 ``power_plan``，集合是否与序列相等交给正式
-        校验。这样同一台电源供两个 PA 单元时，两个槽位各自保留自己的通道，不会因为
-        计划里勾了某台电源的全部通道而互相复制。
-
-        每组的 ``power_plan`` 读自计划控件；没有计划控件的旧表单沿用配置里已有的计划，
-        不能因为页面尚未接入排序控件就把用户写入的顺序丢掉。
+        计划是“哪些电源的哪些通道给哪个器件上电”的唯一来源：这里不再读取按器件选择
+        电源的下拉框，也不写 ``supplies`` / ``power_supply_count``。每组的计划读自计划
+        控件；没有计划控件的旧表单沿用配置里已有的计划，不能因为页面尚未接入排序控件
+        就把用户写入的顺序丢掉。
         """
-        w = self.widgets
-        controls = getattr(w, "power_assignment_widgets", None)
-        if not controls:
-            return {}
-        source_control = controls.get("driver_source")
-        if source_control is not None:
-            source = self._current(source_control)
-        else:
-            legacy_control = controls.get("driver_enabled")
-            source = "直流电源" if legacy_control is not None and self._checked(legacy_control) else "自带供电"
-        # 无驱放测试不写驱动功放供电分配；有驱放但驱放自带供电时同样不占本机电源。
-        driver_enabled = source == "直流电源" and bool(getattr(w, "test_mode_enabled", True))
-        # PA 单元数量属于测试参数：完整配置页有下拉框，独立电源页只接收页面级派生值
-        # （``pa_unit_count``）。两者都只是“要写几条 DUT 分配”的输入，不在这里推断。
-        count_widget = getattr(w, "pa_unit_count_combo", None)
-        count = (
-            int(self._current(count_widget))
-            if count_widget is not None
-            else max(0, int(getattr(w, "pa_unit_count", 0)))
-        )
         existing = _dict_copy(self.config.get("power_supply_assignment"))
         driver_existing = _dict_copy(existing.get("driver_amplifier"))
         dut_existing = _dict_copy(existing.get("dut_amplifier"))
+        driver_editor = getattr(
+            self.widgets, "driver_power_plan_editor", None
+        )
+        dut_editor = getattr(self.widgets, "dut_power_plan_editor", None)
+        if driver_editor is None and dut_editor is None:
+            # 参数页没有计划控件：它不拥有电源段，不能把旧编辑字段顺手改写掉。
+            return {}
         driver_plan = self._read_power_plan(
             "driver_power_plan_editor", driver_existing.get("power_plan")
         )
         dut_plan = self._read_power_plan(
             "dut_power_plan_editor", dut_existing.get("power_plan")
         )
-        driver = {"power_supply_count": 1 if driver_enabled else 0, "supplies": {}}
-        if driver_enabled:
-            driver["supplies"]["main"] = _assignment_entry(
-                controls.get("driver_power"),
-                assignment_channels(
-                    _dict_copy(driver_existing.get("supplies")).get("main")
-                ),
-            )
-        roles = (("carrier", "pa_unit1_power"), ("peaking", "pa_unit2_power"), ("peaking2", "pa_unit3_power"))
-        supplies = {}
-        existing_supplies = _dict_copy(dut_existing.get("supplies"))
-        for index, (role, control) in enumerate(roles, 1):
-            if index > count:
-                continue
-            supplies[role] = _assignment_entry(
-                controls.get(control),
-                assignment_channels(existing_supplies.get(role)),
-            )
-        if driver_plan is not None:
-            driver["power_plan"] = _dict_copy(driver_plan)
-        dut = {"power_supply_count": count, "supplies": supplies}
-        if dut_plan is not None:
-            dut["power_plan"] = _dict_copy(dut_plan)
+        if driver_plan is None and dut_plan is None:
+            return {}
+        driver = (
+            {"power_plan": _dict_copy(driver_plan)}
+            if driver_plan is not None
+            else {}
+        )
+        dut = (
+            {"power_plan": _dict_copy(dut_plan)}
+            if dut_plan is not None
+            else {}
+        )
         return {"power_supply_assignment": {"driver_amplifier": driver, "dut_amplifier": dut}}
 
     def _read_power_plan(self, editor_name: str, existing: Any) -> Any:
@@ -461,7 +379,7 @@ class ConfigFormState:
         """只读出电源相关的配置片段（独立电源页提交给统一会话的形状）。
 
         片段只含本页拥有的字段：``instruments.power_supplies``（通道参数）、
-        ``power_supply_assignment``（分配与组计划）和 ``dut_config.drain_channel``。
+        ``power_supply_assignment``（两组上电计划）和 ``dut_config.drain_channel``。
         测试参数、设备地址与身份不在这里读取，页面之间因此不需要互相持有控件。
         没有对应控件时该段缺席，而不是写成空段——由调用方决定是否保留基线值。
         """
@@ -473,7 +391,7 @@ class ConfigFormState:
         if assignment:
             fragment["power_supply_assignment"] = assignment["power_supply_assignment"]
         if getattr(self.widgets, "driver_power_source_combo", None) is not None:
-            # 驱放供电方式是电源分配的一部分，但落在测试参数段 ``driver_mode`` 里。
+            # 驱放供电方式属于电源页的片段，但落在测试参数段 ``driver_mode`` 里。
             # 片段只带 ``power_source``，``enabled`` 仍由参数页决定；合并方按字段合并，
             # 不能用电源片段整段覆盖 ``driver_mode``。
             source = self._read_driver_mode(self.widgets).get("power_source")
@@ -504,6 +422,16 @@ class ConfigFormState:
             channels.update(copy.deepcopy(value.get("channels", {})))
             target["channels"] = channels
             supplies[name] = target
+        # 连接状态只来自设备绑定：电源页校验的是“这次绑定的设备能不能按计划上电”，
+        # 因此先把每台电源的地址/启用状态按当前绑定刷新一遍，再交给正式校验。绑定写入
+        # 与参数页共用同一个 `_apply_device_binding`，不另立一套判据。
+        bindings = getattr(self.widgets, "device_bindings", None)
+        if isinstance(bindings, Mapping):
+            records = power_supply_bindings(bindings)
+            for name in list(supplies):
+                item = _dict_copy(supplies.get(name))
+                _apply_device_binding(item, records.get(name))
+                supplies[name] = item
         strip_channel_roles(supplies)
         instruments["power_supplies"] = supplies
         config["instruments"] = instruments
@@ -511,7 +439,7 @@ class ConfigFormState:
         if assignment:
             config["power_supply_assignment"] = assignment["power_supply_assignment"]
         elif not _dict_copy(config.get("driver_mode")).get("enabled"):
-            _clear_driver_power_assignment(config)
+            _clear_driver_power_plan(config)
         if getattr(self.widgets, "driver_power_source_combo", None) is not None:
             # 供电方式是否生效以页面当前的测试模式为准，而不是基线里的旧 ``enabled``。
             read_mode = self._read_driver_mode(self.widgets)
@@ -529,7 +457,7 @@ class ConfigFormState:
         """按电源页当前读数给出正式校验问题（只供独立电源页显示）。
 
         校验对象仍是应用边界的同一套编写与正式校验：页面只把读数包成编辑文档并
-        展示返回的消息，不在这里复制计划/漏极/分配引用规则。这里只保留电源字段的
+        展示返回的消息，不在这里复制计划/漏极/计划候选规则。这里只保留电源字段的
         问题，测试参数与设备连接的错误由参数页报告。
         """
         return _formal_validation_errors(
@@ -573,7 +501,7 @@ class ConfigFormState:
         if assignment:
             config["power_supply_assignment"] = assignment["power_supply_assignment"]
         elif not _dict_copy(config.get("driver_mode")).get("enabled"):
-            _clear_driver_power_assignment(config)
+            _clear_driver_power_plan(config)
         # 现场接线不再属于配置：接线由各阶段开始前的连接图对话框确认，旧文件里的
         # ``wiring`` 块不随表单继续写回，避免留下永远为空的“已确认”字段。
         config.pop("wiring", None)

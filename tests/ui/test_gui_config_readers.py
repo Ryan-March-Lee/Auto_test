@@ -41,14 +41,23 @@ class FakeComboWidget:
         return self.value
 
 
-class FakeSupplyCombo(FakeComboWidget):
-    """电源分配下拉框的替身：业务值放在 ``itemData``（真实控件显示 ``短标签（型号）``）。"""
+class FakePlanEditor:
+    """上电计划编辑器的替身：只实现表单读取用到的两个入口。"""
 
-    def currentIndex(self):
-        return 0 if self.value else -1
+    def __init__(self, sequence=(), active=True):
+        self.sequence = [dict(route) for route in sequence]
+        self.active = active
 
-    def itemData(self, index):
-        return self.value if index >= 0 else None
+    def read_plan(self):
+        return {
+            "power_sequence": [dict(route) for route in self.sequence],
+            "inter_channel_delay_s": 0.0,
+        }
+
+    def read_active_plan(self):
+        if not self.active:
+            return {"power_sequence": [], "inter_channel_delay_s": 0.0}
+        return self.read_plan()
 
 
 class _WidgetHost:
@@ -161,33 +170,42 @@ class ConfigFormStateReaderTests(unittest.TestCase):
         }
         self.reader = ConfigFormState(self.config, self.host)
 
-    def _setup_all_widgets(self, pa_unit_count='2', driver_enabled=True):
-        """设置全部控件，供 build/save 测试使用。"""
-        self.host.freq_edit = FakeTextWidget('[1.0, 2.0]')
-        self.host.start_power = FakeValueWidget(-10)
-        self.host.stop_power = FakeValueWidget(10)
-        self.host.power_step = FakeValueWidget(1)
-        self.host.compression_combo = FakeComboWidget('5dB')
-        self.host.attenuator_combo = FakeComboWidget('30dB')
-        self.host.test_mode_enabled = False
-        self.host.driver_power_source_combo = FakeComboWidget('自带供电')
-        self.host.max_input_power = FakeValueWidget(29.5)
-        self.host.pa_unit_count_combo = FakeComboWidget(pa_unit_count)
-        self.host.power_config_widgets = {
-            'PS1': {
-                'channels': {
-                    'CH1': channel_widgets(2.8, 3.0, True, 0.1, 0.2, False),
-                    'CH2': channel_widgets(28.0, 30.0, True, 1.0, 2.0, True),
-                }
-            }
-        }
+    def test_power_assignment_reader_writes_plans_only(self):
+        self.host.dut_power_plan_editor = FakePlanEditor(
+            [
+                {"supply_id": "DP8B1519", "channel": "CH1"},
+                {"supply_id": "DP8B1519", "channel": "CH2"},
+            ]
+        )
+        self.host.driver_power_plan_editor = FakePlanEditor(
+            [{"supply_id": "DP8B0885", "channel": "CH1"}],
+            active=False,
+        )
         self.host.power_assignment_widgets = {
-            'driver_source': FakeComboWidget('直流电源' if driver_enabled else '自带供电'),
-            'driver_power': FakeSupplyCombo('PS4'),
-            'pa_unit1_power': FakeSupplyCombo('PS1'),
-            'pa_unit2_power': FakeSupplyCombo('PS2'),
-            'pa_unit3_power': FakeSupplyCombo('PS3'),
+            'driver_source': FakeComboWidget('直流电源'),
         }
+
+        result = self.reader.read_power_assignment()['power_supply_assignment']
+
+        self.assertEqual(
+            result['dut_amplifier']['power_plan']['power_sequence'],
+            [
+                {"supply_id": "DP8B1519", "channel": "CH1"},
+                {"supply_id": "DP8B1519", "channel": "CH2"},
+            ],
+        )
+        # 未激活的驱动计划写成空计划：它不占本机电源，不留下上一次的勾选。
+        self.assertEqual(
+            result['driver_amplifier']['power_plan']['power_sequence'], []
+        )
+        for group in result.values():
+            self.assertEqual(set(group), {'power_plan'}, '不再写 supplies / power_supply_count')
+
+    def test_power_assignment_reader_is_silent_without_plan_editors(self):
+        """参数页没有计划控件：不能把已保存的电源段改写成空段。"""
+        self.host.power_assignment_widgets = {}
+
+        self.assertEqual(self.reader.read_power_assignment(), {})
 
     def test_instrument_reader_wraps_instruments_and_preserves_existing_fields(self):
         result = self.reader.read_instrument_config()
@@ -311,25 +329,6 @@ class ConfigFormStateReaderTests(unittest.TestCase):
         channels = result['instruments']['power_supplies']['PS1']['channels']
         self.assertNotIn('role', channels['CH1'])
 
-    def test_power_assignment_reader_writes_supply_id_and_channels(self):
-        self.host.power_assignment_widgets = {
-            'driver_source': FakeComboWidget('直流电源'),
-            'driver_power': FakeSupplyCombo('PS4'),
-            'pa_unit1_power': FakeSupplyCombo('PS1'),
-            'pa_unit2_power': FakeSupplyCombo('PS2'),
-            'pa_unit3_power': FakeSupplyCombo('PS3'),
-        }
-        self.host.pa_unit_count_combo = FakeComboWidget('3')
-
-        result = self.reader.read_power_assignment()['power_supply_assignment']
-
-        main = result['driver_amplifier']['supplies']['main']
-        self.assertEqual(main['supply_id'], 'PS4')
-        self.assertNotIn('name', main, '1.1 只写 supply_id')
-        self.assertEqual(list(main['channel']), ['CH1', 'CH2'])
-        self.assertEqual(set(result['dut_amplifier']['supplies']), {'carrier', 'peaking', 'peaking2'})
-        self.assertEqual(result['dut_amplifier']['power_supply_count'], 3)
-
 
 class CoordinatorConfigBuildTests(unittest.TestCase):
     """步骤5-7: 协调器按当前控件状态组装完整配置，并替换自己的配置副本。"""
@@ -400,11 +399,17 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
         self.host.driver_power_source_combo = FakeComboWidget('自带供电')
         self.host.power_assignment_widgets = {
             'driver_source': self.host.driver_power_source_combo,
-            'driver_power': FakeSupplyCombo('PS4'),
-            'pa_unit1_power': FakeSupplyCombo('PS1'),
-            'pa_unit2_power': FakeSupplyCombo('PS2'),
-            'pa_unit3_power': FakeSupplyCombo('PS3'),
         }
+        self.host.dut_power_plan_editor = FakePlanEditor(
+            [
+                {'supply_id': 'DP8B1519', 'channel': 'CH1'},
+                {'supply_id': 'DP8B0885', 'channel': 'CH2'},
+            ]
+        )
+        # 驱放测试模式默认关闭，驱动计划此时不生效。
+        self.host.driver_power_plan_editor = FakePlanEditor(
+            [{'supply_id': 'DP8B0885', 'channel': 'CH1'}], active=False
+        )
         self.coordinator = _coordinator(config=self.config, widgets=self.host)
 
     def test_build_preserves_top_level_and_instrument_extra_fields(self):
@@ -470,38 +475,29 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
         self.assertEqual(result['dut_config']['power_supply_count'], 2)
         self.assertEqual(result['dut_config']['extra'], 'keep')
 
-    def test_build_pa_unit_count_1_only_carrier(self):
-        self.host.pa_unit_count_combo = FakeComboWidget('1')
+    def test_build_writes_the_dut_power_plan_as_read(self):
+        """上电计划是唯一的电源选择来源：顺序与路由原样写入，不再由 PA 数量推导。"""
         result = self.coordinator.build_configuration_from_ui()
 
-        supplies = result['power_supply_assignment']['dut_amplifier']['supplies']
-        self.assertEqual(set(supplies), {'carrier'})
-        self.assertEqual(result['power_supply_assignment']['dut_amplifier']['power_supply_count'], 1)
+        dut = result['power_supply_assignment']['dut_amplifier']
+        self.assertEqual(
+            dut['power_plan']['power_sequence'],
+            [
+                {'supply_id': 'DP8B1519', 'channel': 'CH1'},
+                {'supply_id': 'DP8B0885', 'channel': 'CH2'},
+            ],
+        )
+        self.assertEqual(set(dut), {'power_plan'}, '不再写 supplies / power_supply_count')
 
-    def test_build_pa_unit_count_2_carrier_and_peaking(self):
-        result = self.coordinator.build_configuration_from_ui()
-
-        supplies = result['power_supply_assignment']['dut_amplifier']['supplies']
-        self.assertEqual(set(supplies), {'carrier', 'peaking'})
-        self.assertEqual(result['power_supply_assignment']['dut_amplifier']['power_supply_count'], 2)
-
-    def test_build_pa_unit_count_3_all_roles(self):
-        self.host.pa_unit_count_combo = FakeComboWidget('3')
-        result = self.coordinator.build_configuration_from_ui()
-
-        supplies = result['power_supply_assignment']['dut_amplifier']['supplies']
-        self.assertEqual(set(supplies), {'carrier', 'peaking', 'peaking2'})
-        self.assertEqual(result['power_supply_assignment']['dut_amplifier']['power_supply_count'], 3)
-
-    def test_build_driver_disabled_empty_supplies(self):
+    def test_build_driver_disabled_writes_an_empty_plan(self):
         result = self.coordinator.build_configuration_from_ui()
 
         driver = result['power_supply_assignment']['driver_amplifier']
-        self.assertEqual(driver['power_supply_count'], 0)
-        self.assertEqual(driver['supplies'], {})
+        self.assertEqual(driver['power_plan']['power_sequence'], [])
+        self.assertEqual(set(driver), {'power_plan'})
 
     def test_build_driver_enabled_with_external_power_keeps_the_mode(self):
-        """驱放自带供电：仍是有驱放测试，但不写本机驱动功放供电分配。"""
+        """驱放自带供电：仍是有驱放测试，但不占本机电源。"""
         self.host.test_mode_enabled = True
         self.host.driver_power_source_combo.value = '自带供电'
         result = self.coordinator.build_configuration_from_ui()
@@ -509,26 +505,20 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
         self.assertTrue(result['driver_mode']['enabled'])
         self.assertEqual(result['driver_mode']['power_source'], 'external_ac')
         driver = result['power_supply_assignment']['driver_amplifier']
-        self.assertEqual(driver['power_supply_count'], 0)
-        self.assertEqual(driver['supplies'], {})
+        self.assertEqual(driver['power_plan']['power_sequence'], [])
 
-    def test_build_driver_enabled_with_main(self):
+    def test_build_driver_enabled_with_dc_supply_writes_the_plan(self):
         self.host.test_mode_enabled = True
         self.host.driver_power_source_combo.value = '直流电源'
+        self.host.driver_power_plan_editor.active = True
         result = self.coordinator.build_configuration_from_ui()
 
         driver = result['power_supply_assignment']['driver_amplifier']
-        self.assertEqual(driver['power_supply_count'], 1)
-        self.assertEqual(driver['supplies']['main']['supply_id'], 'PS4')
-        self.assertNotIn('name', driver['supplies']['main'], '1.1 只写 supply_id')
-        self.assertEqual(list(driver['supplies']['main']['channel']), ['CH1', 'CH2'])
+        self.assertEqual(
+            driver['power_plan']['power_sequence'],
+            [{'supply_id': 'DP8B0885', 'channel': 'CH1'}],
+        )
         self.assertEqual(result['driver_mode']['power_source'], 'dc_supply')
-
-    def test_build_channel_order_is_ch1_then_ch2(self):
-        result = self.coordinator.build_configuration_from_ui()
-
-        for supply in result['power_supply_assignment']['dut_amplifier']['supplies'].values():
-            self.assertEqual(list(supply['channel']), ['CH1', 'CH2'])
 
     def test_build_does_not_mutate_the_stored_config(self):
         original = json.dumps(self.coordinator.config, sort_keys=True)
@@ -658,8 +648,8 @@ class CoordinatorConfigSaveTests(unittest.TestCase):
         self.assertEqual(coordinator.config, legacy)
         self.service.configuration.save.assert_not_called()
 
-    def test_save_configuration_accepts_a_two_supply_assignment(self):
-        """步骤 10：多电源指派已成为正式 schema，保存写出的 run_mapping 能通过正式校验。"""
+    def test_save_configuration_accepts_a_two_supply_plan(self):
+        """步骤 10：多电源上电计划已成为正式 schema，保存写出的 run_mapping 能通过正式校验。"""
         self.coordinator.config = {
             "schema_version": "1.1",
             "test_frequencies": [2.4],
@@ -703,10 +693,6 @@ class CoordinatorConfigSaveTests(unittest.TestCase):
             },
             "power_supply_assignment": {
                 "dut_amplifier": {
-                    "supplies": {
-                        "gate": {"supply_id": "DP8B1519", "channel": ["CH1"]},
-                        "drain": {"supply_id": "DP8B0885", "channel": ["CH2"]},
-                    },
                     "power_plan": {
                         "power_sequence": [
                             {"supply_id": "DP8B1519", "channel": "CH1"},
@@ -716,7 +702,6 @@ class CoordinatorConfigSaveTests(unittest.TestCase):
                     },
                 },
                 "driver_amplifier": {
-                    "supplies": {"driver": {"supply_id": "DP8B0885", "channel": ["CH1"]}},
                     "power_plan": {
                         "power_sequence": [
                             {"supply_id": "DP8B0885", "channel": "CH1"}

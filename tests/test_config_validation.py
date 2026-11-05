@@ -108,7 +108,9 @@ class ConfigValidationTests(unittest.TestCase):
 
     def test_missing_assigned_supply_is_error(self):
         config = copy.deepcopy(self.base_config)
-        config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]["supply_id"] = "PS_UNKNOWN"
+        config["power_supply_assignment"]["dut_amplifier"]["power_plan"][
+            "power_sequence"
+        ][0]["supply_id"] = "PS_UNKNOWN"
         result = validate_config(config)
         self.assertTrue(any("不存在的电源" in issue.message for issue in result.errors))
 
@@ -120,7 +122,9 @@ class ConfigValidationTests(unittest.TestCase):
 
     def test_missing_assigned_channel_is_error(self):
         config = copy.deepcopy(self.base_config)
-        config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]["channel"] = ["CH99"]
+        config["power_supply_assignment"]["dut_amplifier"]["power_plan"][
+            "power_sequence"
+        ][0]["channel"] = "CH99"
         result = validate_config(config)
         self.assertTrue(any("CH99" in issue.message for issue in result.errors))
 
@@ -139,23 +143,25 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertTrue(result.valid, result.errors)
 
     def test_duplicate_physical_route_in_one_group_is_error(self):
-        """角色重复不再有意义；真正矛盾的是同一物理通道被分配两次。"""
+        """同一物理通道在计划里出现两次是计划自身的矛盾。"""
         config = copy.deepcopy(self.base_config)
-        config["instruments"]["power_supplies"]["PS1"]["enabled"] = True
-        config["power_supply_assignment"]["dut_amplifier"]["supplies"]["peaking"] = {
-            "name": "PS4",
-            "channel": ["CH1"],
-        }
+        sequence = config["power_supply_assignment"]["dut_amplifier"]["power_plan"][
+            "power_sequence"
+        ]
+        sequence.append(dict(sequence[0]))
         result = validate_config(config)
         self.assertFalse(result.valid)
         self.assertTrue(
-            any("组内重复分配" in issue.message for issue in result.errors),
+            any("不能重复" in issue.message for issue in result.errors),
             [issue.message for issue in result.errors],
         )
 
-    def test_assignment_may_provide_only_one_channel(self):
+    def test_plan_may_provide_only_one_channel(self):
         config = copy.deepcopy(self.base_config)
-        config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]["channel"] = ["CH1"]
+        config["power_supply_assignment"]["dut_amplifier"]["power_plan"][
+            "power_sequence"
+        ] = [{"supply_id": "PS4", "channel": "CH1"}]
+        config["dut_config"]["drain_channel"] = {"supply_id": "PS4", "channel": "CH1"}
         result = validate_config(config)
         self.assertTrue(result.valid, result.errors)
 
@@ -206,15 +212,41 @@ class ConfigValidationTests(unittest.TestCase):
             [issue.message for issue in result.errors],
         )
 
+    def test_one_supply_may_feed_driver_and_dut_on_different_channels(self):
+        """同一台电源 CH1 供驱放、CH2 供 DUT：计划是唯一来源，连接校验不要求两台。"""
+        config = copy.deepcopy(self.base_config)
+        config["driver_mode"] = {"enabled": True, "power_source": "dc_supply"}
+        config["power_supply_assignment"]["dut_amplifier"]["power_plan"][
+            "power_sequence"
+        ] = [{"supply_id": "PS4", "channel": "CH2"}]
+        config["dut_config"]["drain_channel"] = {
+            "supply_id": "PS4",
+            "channel": "CH2",
+        }
+        config["power_supply_assignment"]["driver_amplifier"]["power_plan"] = {
+            "power_sequence": [{"supply_id": "PS4", "channel": "CH1"}],
+            "inter_channel_delay_s": 0.0,
+        }
+
+        result = validate_config(config)
+
+        self.assertTrue(
+            result.valid,
+            [f"{issue.path}: {issue.message}" for issue in result.errors],
+        )
+
     def test_same_physical_channel_for_dut_and_driver_is_error(self):
         """同一个 ``supply_id/CHx`` 不能同时接 DUT 与驱动功放（步骤 11）。"""
         config = copy.deepcopy(self.base_config)
         config["driver_mode"] = {"enabled": True, "power_source": "dc_supply"}
         config["power_supply_assignment"]["driver_amplifier"] = {
-            "power_supply_count": 1,
-            "supplies": {
-                "main": {"supply_id": "PS4", "name": "PS4", "channel": ["CH1", "CH2"]}
-            },
+            "power_plan": {
+                "power_sequence": [
+                    {"supply_id": "PS4", "channel": "CH1"},
+                    {"supply_id": "PS4", "channel": "CH2"},
+                ],
+                "inter_channel_delay_s": 0.0,
+            }
         }
         result = validate_config(config)
         self.assertFalse(result.valid)
@@ -235,36 +267,25 @@ class ConfigValidationTests(unittest.TestCase):
         result = validate_config(config)
         self.assertTrue(result.valid, [f"{issue.path}: {issue.message}" for issue in result.errors])
 
-    def test_reference_alias_must_match_the_supply_id(self):
-        """过渡别名 ``name`` 与 ``supply_id`` 不同值就是第二套编号，必须报错。"""
+    def test_legacy_assignment_supplies_do_not_affect_validation(self):
+        """旧编辑段的 ``supplies`` 只用于读取历史文档，校验只看上电计划。"""
         config = copy.deepcopy(self.base_config)
         carrier = config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]
         carrier["name"] = "PS4"
         carrier["supply_id"] = "PS1"
         result = validate_config(config)
-        self.assertFalse(result.valid)
-        self.assertTrue(
-            any(
-                issue.path == "power_supply_assignment.dut_amplifier.supplies.carrier.name"
-                and "必须与 supply_id 同值" in issue.message
-                for issue in result.errors
-            ),
-            [f"{issue.path}: {issue.message}" for issue in result.errors],
-        )
+        self.assertTrue(result.valid, result.errors)
 
-    def test_unbound_reference_is_reported_on_the_supply_id_field(self):
-        """``supply_id: null`` 是“声明了但未绑定”，必须报错，不能按缺省补一台电源。"""
+    def test_unbound_plan_route_is_reported(self):
+        """计划引用了没有连接地址的电源，必须报错，不能按缺省补一台电源。"""
         config = copy.deepcopy(self.base_config)
-        config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"] = {
-            "supply_id": None,
-            "channel": ["CH1", "CH2"],
-        }
+        config["instruments"]["power_supplies"]["PS4"].pop("address", None)
         result = validate_config(config)
         self.assertFalse(result.valid)
         self.assertTrue(
             any(
-                issue.path == "power_supply_assignment.dut_amplifier.supplies.carrier.supply_id"
-                and "必须填写已绑定的电源引用" in issue.message
+                "power_supply_assignment.dut_amplifier.power_plan.power_sequence" in issue.path
+                and "没有已应用的设备" in issue.message
                 for issue in result.errors
             ),
             [f"{issue.path}: {issue.message}" for issue in result.errors],
@@ -489,44 +510,45 @@ class HardwareConnectionValidationTests(unittest.TestCase):
         self.assertTrue(validate_hardware_connections(config).valid)
         self.assertTrue(validate_config(config).valid, validate_config(config).errors)
 
-    def test_single_channel_and_empty_channel_list_are_field_checks(self):
-        """单通道分配合法；通道列表为空是结构问题，两者都不是连接冲突。"""
+    def test_single_channel_plan_is_valid_and_malformed_plan_is_a_field_check(self):
+        """单通道计划合法；计划形状错误归完整校验，连接校验不跟着失败。"""
         config = copy.deepcopy(self.config)
-        config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]["channel"] = [
-            "CH1"
-        ]
+        config["power_supply_assignment"]["dut_amplifier"]["power_plan"][
+            "power_sequence"
+        ] = [{"supply_id": "PS4", "channel": "CH1"}]
+        config["dut_config"]["drain_channel"] = {"supply_id": "PS4", "channel": "CH1"}
         self.assertTrue(validate_hardware_connections(config).valid)
         self.assertTrue(validate_config(config).valid, validate_config(config).errors)
 
-        config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]["channel"] = []
+        config["power_supply_assignment"]["dut_amplifier"]["power_plan"][
+            "power_sequence"
+        ] = "CH1"
         self.assertTrue(validate_hardware_connections(config).valid)
         self.assertFalse(validate_config(config).valid)
 
     def test_channel_list_that_is_not_a_list_is_left_to_the_full_check(self):
-        """``channel`` 不是列表是结构问题：完整校验报，连接校验不跟着失败。"""
+        """计划里的路由形状错误归完整校验：连接校验不跟着失败。"""
         config = copy.deepcopy(self.config)
-        config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]["channel"] = "CH1"
+        config["power_supply_assignment"]["dut_amplifier"]["power_plan"][
+            "power_sequence"
+        ][0]["channel"] = ["CH1"]
         self.assertTrue(validate_hardware_connections(config).valid)
         self.assertFalse(validate_config(config).valid)
 
     def test_channel_missing_from_the_supply_is_still_a_connection_conflict(self):
         """引用了这台电源上不存在的通道：装配时按 ``supply_id/CHx`` 路由会失败。"""
         config = copy.deepcopy(self.config)
-        config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]["channel"] = [
-            "CH1",
-            "CH9",
-        ]
+        config["power_supply_assignment"]["dut_amplifier"]["power_plan"][
+            "power_sequence"
+        ].append({"supply_id": "PS4", "channel": "CH9"})
         messages = [issue.message for issue in validate_hardware_connections(config).errors]
         self.assertTrue(any("CH9" in message and "不存在" in message for message in messages), messages)
 
-    def test_unbound_reference_and_supply_id_alias_conflict_are_reported(self):
+    def test_plan_route_to_an_unapplied_supply_is_reported(self):
         config = copy.deepcopy(self.config)
-        carrier = config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]
-        carrier["name"] = "PS4"
-        carrier["supply_id"] = "PS1"
+        config["instruments"]["power_supplies"]["PS4"].pop("address", None)
         paths = {issue.path for issue in validate_hardware_connections(config).errors}
-        self.assertIn("power_supply_assignment.dut_amplifier.supplies.carrier.name", paths)
-        self.assertIn("power_supply_assignment.dut_amplifier.supplies.carrier.supply_id", paths)
+        self.assertIn("power_supply_assignment.dut_amplifier.power_plan.power_sequence[0]", paths)
 
     def test_disabled_supply_is_not_part_of_the_connection(self):
         config = copy.deepcopy(self.config)
@@ -538,10 +560,10 @@ class HardwareConnectionValidationTests(unittest.TestCase):
     def test_same_physical_channel_for_dut_and_driver_is_a_conflict(self):
         config = copy.deepcopy(self.config)
         config["power_supply_assignment"]["driver_amplifier"] = {
-            "power_supply_count": 1,
-            "supplies": {
-                "main": {"supply_id": "PS4", "name": "PS4", "channel": ["CH1"]}
-            },
+            "power_plan": {
+                "power_sequence": [{"supply_id": "PS4", "channel": "CH1"}],
+                "inter_channel_delay_s": 0.0,
+            }
         }
         messages = [issue.message for issue in validate_hardware_connections(config).errors]
         self.assertTrue(

@@ -952,8 +952,11 @@ class ProductionDependencyTests(unittest.TestCase):
         self.assertNotIn("project_authoring_config(", power_page_source)
         self.assertIn("project_authoring_config(", adapter_source)
         self.assertIn("project_power_config(", adapter_source)
-        # 电源分配的可选项由独立电源页按当前绑定算好再交给投影。
-        self.assertIn("supplies=self._power_supply_choices(", power_page_source)
+        self.assertNotIn(
+            "supplies=",
+            adapter_source,
+            "投影不再接收或转发旧固定分配参数",
+        )
         tree = _tree(ROOT / "presentation" / "qt" / "power_configuration_page.py")
         page = _class_node(tree, "PowerConfigurationPage")
         page_methods = {
@@ -978,6 +981,29 @@ class ProductionDependencyTests(unittest.TestCase):
                 page_methods,
                 f"逐字段回填规则必须留在 config_projection，不得回到 {helper}",
             )
+
+    def test_production_routing_never_reads_legacy_assignments(self):
+        """旧 ``supplies`` 表只属于读取/迁移边界，生产路由不得再把它当来源。"""
+        offenders = []
+        for relative in (
+            "domain/configuration/rules.py",
+            "instrument/power_routing.py",
+            "instrument/assembly_plan.py",
+            "application/configuration_draft.py",
+            "app/run_context.py",
+            "presentation/qt/config_form_state.py",
+            "presentation/qt/config_form_adapter.py",
+            "presentation/qt/config_projection.py",
+        ):
+            source = (ROOT / relative).read_text(encoding="utf-8-sig")
+            for token in ('.get("supplies")', "['supplies']", '["supplies"]'):
+                if token in source:
+                    offenders.append(f"{relative}: {token}")
+        self.assertEqual(
+            offenders,
+            [],
+            "生产路由/UI 不得读取旧固定分配表: " + ", ".join(offenders),
+        )
 
     def test_production_sources_have_no_placeholder_text(self):
         """源码注释/文档不得以占位问号代替说明（回填被截断时能立刻发现）。"""

@@ -68,7 +68,11 @@ from application.configuration_authoring import (
     ConfigurationEditingDocument,
     OFFICIAL_SCHEMA_VERSION,
 )
-from domain.configuration.rules import ASSIGNMENT_GROUPS, assignment_supply_id
+from domain.configuration.rules import (
+    ASSIGNMENT_GROUPS,
+    DRIVER_POWER_DC,
+    assignment_supply_id,
+)
 from domain.instruments.models import (
     LEGACY_ROLES,
     normalize_full_code,
@@ -224,6 +228,10 @@ class LegacyMigrationResult:
     # ``supply_id`` 只能写 ``null``。它们让“这份文档还缺什么”可被程序读取，而不是只
     # 靠人看配置猜；写盘门槛也据此拒绝半成品。
     unresolved_references: Tuple[str, ...] = ()
+    # 已迁移干净的 1.1 文档不再保存旧 ``supplies``/未决引用，单看文档无法区分“完整迁移
+    # 但计划尚未确认”和“迁移缺少来源、需要人工补全”。重新迁移这类文档时，计划为空即
+    # 不能断言迁移完整；路径让写盘门槛继续要求操作员在电源页确认顺序。
+    unconfirmed_plans: Tuple[str, ...] = ()
     # 步骤 14 新增：每组空计划的候选路由、旧角色参数映射状态、漏极迁移状态。
     # 这些只用于摘要，不进入配置 schema（§6.7：确认状态不落库）。
     plan_candidates: Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...] = ()
@@ -253,7 +261,11 @@ class LegacyMigrationResult:
         只有这时目标配置才等价于“操作员重扫并重填后”的形态；任何未决项都意味着参数
         只留在摘要里，写进 ``config.json`` 会让它们从配置里彻底消失。
         """
-        return not self.pending and not self.unresolved_references
+        return (
+            not self.pending
+            and not self.unresolved_references
+            and not self.unconfirmed_plans
+        )
 
     def summary(
         self,
@@ -313,6 +325,7 @@ class LegacyMigrationResult:
                 }
             ),
             "unresolved_references": list(self.unresolved_references),
+            "unconfirmed_plans": list(self.unconfirmed_plans),
         }
 
     def summary_text(self) -> str:
@@ -361,6 +374,12 @@ class LegacyMigrationResult:
                 "仍为空的供电分配引用: "
                 + "、".join(self.unresolved_references)
                 + "（这些参数只在本摘要里，重扫后按上面的旧值重填）"
+            )
+        if self.unconfirmed_plans:
+            lines.append(
+                "仍待确认的上电计划: "
+                + "、".join(self.unconfirmed_plans)
+                + "（迁移产物不再保存旧引用，请在电源页确认顺序后再写盘）"
             )
         return "\n".join(lines)
 
@@ -757,6 +776,7 @@ def migrate_legacy_power_supplies(
             old_keys=old_keys,
             unresolved=_unresolved_entries(entries),
             unresolved_references=_unresolved_references(target),
+            unconfirmed_plans=_unconfirmed_plan_paths(target),
             plan_candidates=_plan_candidates(target),
             channel_mappings=(),
             drain_migration=None,
@@ -773,14 +793,17 @@ def migrate_legacy_power_supplies(
     _write_instrument_supplies(target, target_supplies)
     _rewrite_assignments(target, migrated_by_old)
     bindings = _rewrite_device_bindings(target, config, migrated_by_old)
-    _recount_assignments(target)
     _apply_trusted_bindings(target_supplies, bindings, migrated_by_old)
 
-    # 步骤 14：先按旧角色唯一配对重建通道参数，再把每组计划写成空计划，最后交给
-    # authoring 生成正式段。顺序不能反：参数映射读取的是**迁移后**的物理路由。
+    # 步骤 14：先按旧角色唯一配对重建通道参数，再把每组计划写成空计划。旧供电分配
+    # 段只在这里用于读旧数据与统计待决项；写出的 1.1 编辑段只保留上电计划，不再给
+    # 器件固定分配电源。
     channel_mappings = _migrate_channel_settings(target, config, migrated_by_old)
     drain_migration = _migrate_drain_channel(target, config, migrated_by_old)
     _write_empty_power_plans(target)
+    unresolved = _unresolved_references(target)
+    plan_candidates = _plan_candidates(target)
+    _strip_power_assignments(target)
 
     authored = _author_migrated_document(target)
 
@@ -789,8 +812,8 @@ def migrate_legacy_power_supplies(
         entries=tuple(entries),
         old_keys=old_keys,
         unresolved=_unresolved_entries(entries),
-        unresolved_references=_unresolved_references(authored),
-        plan_candidates=_plan_candidates(authored),
+        unresolved_references=unresolved,
+        plan_candidates=plan_candidates,
         channel_mappings=channel_mappings,
         drain_migration=drain_migration,
     )
@@ -844,6 +867,13 @@ def save_migrated_configuration(
         raise LegacyConfigMigrationError(
             "迁移后仍有未落地的供电分配引用，未写入任何文件（原配置保持不变）: "
             + "、".join(result.unresolved_references)
+        )
+    if result.unconfirmed_plans:
+        raise LegacyConfigMigrationError(
+            "迁移产物仍有未确认的上电计划，未写入任何文件（原配置保持不变）: "
+            + "、".join(result.unconfirmed_plans)
+            + "；这份 1.1 文档已不再保存旧引用或旧条目，无法仅凭文档证明迁移完整，"
+            "请先在电源页确认顺序再保存"
         )
     check = validator if validator is not None else validate_saveable_configuration
     validation = check(result.config)
@@ -1568,12 +1598,6 @@ def _finite_number(value: Any) -> Optional[float]:
     return parsed if math.isfinite(parsed) else None
 
 
-def _resolvable_count(supplies: Mapping[str, Any]) -> int:
-    return sum(
-        1 for assignment in supplies.values() if assignment_supply_id(assignment) is not None
-    )
-
-
 def _unresolved_references(document: Mapping[str, Any]) -> Tuple[str, ...]:
     """迁移后仍为空的分配引用（``dut_amplifier.carrier`` 这样的 ``组.角色键``）。
 
@@ -1592,22 +1616,51 @@ def _unresolved_references(document: Mapping[str, Any]) -> Tuple[str, ...]:
     return tuple(pending)
 
 
-def _recount_assignments(target: Dict[str, Any]) -> None:
-    """``power_supply_count`` 按“仍能落地的引用数”重算，不让旧计数留在新配置里。
+def _plan_has_routes(assignment: Any) -> bool:
+    """一组的 ``power_plan`` 是否已有至少一条可解析的路由。"""
+    plan = _mapping(_mapping(assignment).get("power_plan"))
+    sequence = plan.get("power_sequence")
+    if not isinstance(sequence, Sequence) or isinstance(sequence, (str, bytes)):
+        return False
+    return any(isinstance(item, Mapping) for item in sequence)
 
-    只重算供电分配组自己的计数：它是“这一组实际配了几台电源”，引用置空后继续写着旧数字会
-    让 ``validate_config`` 报一条与事实无关的差异警告。``dut_config.power_supply_count`` 属于
-    测试方案参数，迁移不改测试方案。
+
+def _unconfirmed_plan_paths(document: Mapping[str, Any]) -> Tuple[str, ...]:
+    """重新迁移“已迁移干净”的 1.1 文档时，仍未确认路线的计划路径。
+
+    这类文档已经删除旧 ``supplies``，因此无法再区分“完整迁移但用户尚未排序”和
+    “迁移本身缺来源、需要人工补全”。写盘门槛不能把后者当成完整迁移：DUT 计划是运行
+    就绪的必需项，驱动功放在直流供电时同样必须有计划；任一为空都要求先确认，而不是
+    返回 ``writable=True``。用户确认过的计划（非空）仍原样保留，不会被二次迁移清空。
+    """
+    paths: List[str] = []
+    groups = _mapping(document.get("power_supply_assignment"))
+    if not _plan_has_routes(groups.get("dut_amplifier")):
+        paths.append("power_supply_assignment.dut_amplifier.power_plan")
+    driver_mode = _mapping(document.get("driver_mode"))
+    if (
+        driver_mode.get("enabled") is True
+        and driver_mode.get("power_source") == DRIVER_POWER_DC
+        and not _plan_has_routes(groups.get("driver_amplifier"))
+    ):
+        paths.append("power_supply_assignment.driver_amplifier.power_plan")
+    return tuple(paths)
+
+
+def _strip_power_assignments(target: Dict[str, Any]) -> None:
+    """删除旧编辑段的“按器件固定分配电源”表，只保留上电计划。
+
+    1.1 的电源使用完全由 ``power_plan.power_sequence`` 决定；``supplies`` 与
+    ``power_supply_count`` 只用于读取旧配置、判断迁移是否完整，不能写进新文档。
     """
     groups = target.get("power_supply_assignment")
     if not isinstance(groups, dict):
         return
     for group in groups.values():
-        supplies = group.get("supplies") if isinstance(group, dict) else None
-        if not isinstance(supplies, dict):
+        if not isinstance(group, dict):
             continue
-        if "power_supply_count" in group:
-            group["power_supply_count"] = _resolvable_count(supplies)
+        group.pop("supplies", None)
+        group.pop("power_supply_count", None)
 
 
 # --------------------------------------------------------------------------- 小工具

@@ -10,7 +10,6 @@ from domain.configuration.rules import assignment_supply_id
 from presentation.qt.config_form_bindings import POWER_SUPPLY_BINDINGS
 from presentation.qt.config_form_state import (
     ConfigFormState,
-    assignment_declared,
     parse_frequency_text,
 )
 
@@ -252,225 +251,99 @@ class ConfigFormStateTests(unittest.TestCase):
         self.assertNotIn("address", supply)
         self.assertFalse(supply["enabled"])
 
-    def test_power_assignment_must_reference_a_bound_supply(self):
+    def test_read_power_assignment_writes_only_plans(self):
+        """??????? ``power_plan``???????????? ``supplies``?"""
         widgets = _form_widgets(
-            device_bindings={
-                POWER_SUPPLY_BINDINGS: {
-                    "DP8B1519": {
-                        "device_key": "rigol technologies:dp8b214901519",
-                        "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
-                    }
-                }
-            },
-            power_config_widgets={},
-            pa_unit_count_combo=type("C", (), {"currentText": lambda self: "2"})(),
-            power_assignment_widgets={
-                "driver_source": type("C", (), {"currentText": lambda self: "自带供电"})(),
-                "driver_power": _combo(""),
-                "pa_unit1_power": _combo("DP8B1519"),
-                "pa_unit2_power": _combo("PS3"),
-            },
-        )
-
-        errors = ConfigFormState({}, widgets).formal_validation_errors()
-
-        joined = "；".join(errors)
-        self.assertIn("PS3", joined)
-        self.assertIn("没有已应用的设备", joined)
-
-    def test_a_combo_without_item_data_is_reported_as_unselected(self):
-        """只有可见文本（没有 ``itemData``）的控件不能被当成已选电源。
-
-        显示文本可能是 ``DP8B1519（DP832A）``，把它原样写成 ``supply_id`` 就等于从显示
-        字符串反解析业务值；这里要求按“未选择电源”报告，交给操作员重新选择。
-        """
-        widgets = _form_widgets(
-            device_bindings=bound_supplies("DP8B1519"),
             power_config_widgets={},
             pa_unit_count_combo=_combo("1"),
-            power_assignment_widgets={
-                "driver_source": type("C", (), {"currentText": lambda self: "自带供电"})(),
-                "pa_unit1_power": type(
-                    "C", (), {"currentText": lambda self: "DP8B1519（DP832A）"}
-                )(),
-            },
+            driver_power_plan_editor=_PlanEditor(
+                [("DP8B0950", "CH1")]
+            ),
+            dut_power_plan_editor=_PlanEditor(
+                [
+                    ("DP8B1519", "CH1"),
+                    ("DP8B0885", "CH2"),
+                ]
+            ),
         )
-
-        state = ConfigFormState({}, widgets)
-        errors = state.formal_validation_errors()
-        written = state.read_power_assignment()["power_supply_assignment"][
-            "dut_amplifier"
-        ]["supplies"]["carrier"]
-
-        self.assertIn("未选择电源", "；".join(errors))
-        self.assertIsNone(written["supply_id"])
-        self.assertNotIn("name", written)
-
-    def test_power_assignment_without_any_supply_is_reported(self):
-        widgets = _form_widgets(
-            device_bindings={},
-            power_config_widgets={},
-            pa_unit_count_combo=type("C", (), {"currentText": lambda self: "1"})(),
-            power_assignment_widgets={
-                "driver_source": type("C", (), {"currentText": lambda self: "自带供电"})(),
-                "driver_power": type("C", (), {"currentText": lambda self: ""})(),
-                "pa_unit1_power": type("C", (), {"currentText": lambda self: ""})(),
-            },
-        )
-
-        errors = ConfigFormState({}, widgets).formal_validation_errors()
-
-        self.assertIn("未选择电源", "；".join(errors))
-
-    def test_bound_supply_identity_comes_from_the_binding_not_the_config(self):
-        """绑定是身份的权威来源：记录里没有的字段不能沿用配置里的旧值。"""
-        widgets = type("Widgets", (), {})()
-        widgets.device_bindings = {
-            POWER_SUPPLY_BINDINGS: {
-                "DP8B1519": {
-                    "device_key": "rigol technologies:dp8b214901519",
-                    "full_code": "DP8B214901519",
-                    "visa_address": "TCPIP0::192.168.1.102::inst0::INSTR",
-                }
-            }
-        }
-        config = {
-            "instruments": {
-                "power_supplies": {
-                    "DP8B1519": {
-                        "address": "TCPIP0::192.168.1.101::inst0::INSTR",
-                        "enabled": True,
-                        "device_key": "rigol technologies:dp8b174400885",
-                        "full_code": "DP8B174400885",
-                        "model": "OLD-MODEL",
-                        "channels": {"CH1": {"role": "gate"}},
-                    }
-                }
-            }
-        }
-
-        supply = ConfigFormState(config, widgets).read_instrument_config()["instruments"][
-            "power_supplies"
-        ]["DP8B1519"]
-
-        self.assertEqual(supply["device_key"], "rigol technologies:dp8b214901519")
-        self.assertEqual(supply["full_code"], "DP8B214901519")
-        self.assertEqual(supply["address"], "TCPIP0::192.168.1.102::inst0::INSTR")
-        # device_key/full_code 已由绑定改写，model 缺失时保留同一台电源配置里的型号：
-        # 正式运行映射要求型号是快照身份的一部分（步骤 10）。
-        self.assertEqual(supply["model"], "OLD-MODEL")
-        # 通道参数不属于身份，原样保留。
-        self.assertEqual(supply["channels"], {"CH1": {"role": "gate"}})
-
-    def test_replaced_power_supply_leaves_the_old_reference_unbound(self):
-        """换电源后旧 ID 只是“没有绑定”，不会被解释成新绑定的那台设备。"""
-        widgets = _form_widgets(
-            device_bindings=bound_supplies("DP8B0885"),
-            power_config_widgets={},
-            pa_unit_count_combo=_combo("1"),
-            power_assignment_widgets={
-                "driver_source": _combo("自带供电"),
-                "pa_unit1_power": _combo("DP8B1519"),
-            },
-        )
-
-        message = "；".join(ConfigFormState({}, widgets).formal_validation_errors())
-
-        self.assertIn("DP8B1519", message)
-        self.assertIn("没有已应用的设备", message)
-        # 新绑定的那台只是在候选里，不会被当成旧引用的替代品。
-        self.assertNotIn("DP8B0885", message)
-
-    def test_assignment_reference_prefers_supply_id_over_the_legacy_name(self):
-        """``supply_id`` 是主字段；只有完全没有它时才读旧字段 ``name``。"""
-        self.assertEqual(assignment_supply_id({"name": "PS1"}), "PS1")
-        self.assertEqual(
-            assignment_supply_id({"supply_id": "DP8B1519", "name": "PS1"}), "DP8B1519"
-        )
-        # 出现即为准：``null`` / 空白是“引用未绑定”，不回落到 name 去猜一台电源。
-        self.assertIsNone(assignment_supply_id({"supply_id": None, "name": "PS1"}))
-        self.assertIsNone(assignment_supply_id({"supply_id": "  ", "name": "PS1"}))
-        self.assertIsNone(assignment_supply_id({}))
-        self.assertIsNone(assignment_supply_id(None))
-
-    def test_read_power_assignment_writes_only_supply_id(self):
-        """1.1 只写 ``supply_id``；旧 ``name`` 别名不再由表单写回。"""
-        widgets = type("Widgets", (), {})()
-        widgets.test_mode_enabled = True
-        widgets.pa_unit_count_combo = _combo("2")
-        widgets.power_assignment_widgets = {
-            "driver_source": _combo("直流电源"),
-            "driver_power": _combo("DP8B0950"),
-            "pa_unit1_power": _combo("DP8B1519"),
-            "pa_unit2_power": _combo("DP8B0885"),
-        }
 
         assignment = ConfigFormState({}, widgets).read_power_assignment()[
             "power_supply_assignment"
         ]
 
-        main = assignment["driver_amplifier"]["supplies"]["main"]
-        self.assertEqual(main["supply_id"], "DP8B0950")
-        self.assertNotIn("name", main)
-        self.assertEqual(main["channel"], ["CH1", "CH2"])
         self.assertEqual(
-            {
-                role: entry["supply_id"]
-                for role, entry in assignment["dut_amplifier"]["supplies"].items()
+            assignment["driver_amplifier"]["power_plan"]["power_sequence"],
+            [{"supply_id": "DP8B0950", "channel": "CH1"}],
+        )
+        self.assertEqual(
+            assignment["dut_amplifier"]["power_plan"]["power_sequence"],
+            [
+                {"supply_id": "DP8B1519", "channel": "CH1"},
+                {"supply_id": "DP8B0885", "channel": "CH2"},
+            ],
+        )
+        self.assertNotIn("supplies", assignment["dut_amplifier"])
+        self.assertNotIn("power_supply_count", assignment["dut_amplifier"])
+
+    def test_parameter_page_does_not_rewrite_the_power_section(self):
+        """???????????????????????????"""
+        existing = {
+            "driver_amplifier": {
+                "power_plan": {"power_sequence": [], "inter_channel_delay_s": 0.0}
             },
-            {"carrier": "DP8B1519", "peaking": "DP8B0885"},
-        )
-
-    def test_unbound_power_assignment_is_written_as_a_null_reference(self):
-        """没有选到电源时写 ``supply_id: null``，不写 name，也不临时挑一台可用电源。"""
-        widgets = _form_widgets(
-            device_bindings=bound_supplies("DP8B1519"),
-            power_config_widgets={},
-            test_mode_enabled=True,
-            pa_unit_count_combo=_combo("1"),
-            power_assignment_widgets={
-                "driver_source": _combo("直流电源"),
-                "driver_power": _combo(""),
-                "pa_unit1_power": _combo(""),
+            "dut_amplifier": {
+                "supplies": {"carrier": {"supply_id": "DP8B1519", "channel": ["CH1", "CH2"]}},
+                "power_plan": {
+                    "power_sequence": [
+                        {"supply_id": "DP8B1519", "channel": "CH1"},
+                        {"supply_id": "DP8B1519", "channel": "CH2"},
+                    ],
+                    "inter_channel_delay_s": 0.0,
+                },
             },
+        }
+        widgets = _form_widgets(power_config_widgets={})
+        self.assertEqual(ConfigFormState({"power_supply_assignment": existing}, widgets).read_power_assignment(), {})
+
+    def test_assignment_reference_prefers_supply_id_over_the_legacy_name(self):
+        """``supply_id`` ?????????????????? ``name``?"""
+        self.assertEqual(assignment_supply_id({"name": "PS1"}), "PS1")
+        self.assertEqual(
+            assignment_supply_id({"supply_id": "DP8B1519", "name": "PS1"}), "DP8B1519"
         )
-
-        state = ConfigFormState({}, widgets)
-        assignment = state.read_power_assignment()["power_supply_assignment"]
-
-        main = assignment["driver_amplifier"]["supplies"]["main"]
-        self.assertIsNone(main["supply_id"])
-        self.assertNotIn("name", main)
-        self.assertIsNone(
-            assignment["dut_amplifier"]["supplies"]["carrier"]["supply_id"]
-        )
-        self.assertIn("未选择电源", "；".join(state.formal_validation_errors()))
-
-    def test_assignment_declared_separates_missing_from_unbound(self):
-        """“没有这条分配”与“声明了但未绑定”必须能分开，否则回填会补一台电源。"""
-        # 键缺失或不是对象：配置里没有这条分配，缺省规则适用。
-        self.assertFalse(assignment_declared(None))
-        self.assertFalse(assignment_declared("PS1"))
-        self.assertFalse(assignment_declared(["PS1"]))
-        # 记录存在就是声明过：即使引用为空，也不是“配置缺失”。
-        self.assertTrue(assignment_declared({}))
-        self.assertTrue(assignment_declared({"supply_id": None}))
-        self.assertTrue(assignment_declared({"name": "PS1"}))
-        # 两种状态都会让引用读成 None，只有 assignment_declared 能区分。
-        self.assertIsNone(assignment_supply_id({"supply_id": None}))
+        # ??????``null`` / ??????????????? name ???????
+        self.assertIsNone(assignment_supply_id({"supply_id": None, "name": "PS1"}))
+        self.assertIsNone(assignment_supply_id({"supply_id": "  ", "name": "PS1"}))
+        self.assertIsNone(assignment_supply_id({}))
         self.assertIsNone(assignment_supply_id(None))
 
     def test_assignment_reference_rule_lives_in_the_domain(self):
-        """读引用的唯一实现是 ``domain.configuration.rules.assignment_supply_id``。
-
-        配置页、正式运行映射与文件级校验都用它；表现层不再为兼容再导出一份（步骤 13）。
-        """
+        """??????????? ``domain.configuration.rules.assignment_supply_id`` ?????"""
         from presentation.qt import config_form_state
 
         self.assertFalse(
             hasattr(config_form_state, "assignment_supply_id"),
-            "兼容再导出必须随步骤 13 删除；调用方直接用 domain 实现",
+            "?????????? 13 ????????? domain ??",
         )
+
+
+class _PlanEditor:
+    """计划控件替身：``read_plan`` / ``read_active_plan`` 返回同一份计划。"""
+
+    def __init__(self, sequence=()):
+        self._plan = {
+            "power_sequence": [
+                {"supply_id": supply_id, "channel": channel}
+                for supply_id, channel in sequence
+            ],
+            "inter_channel_delay_s": 0.0,
+        }
+
+    def read_plan(self):
+        return dict(self._plan)
+
+    def read_active_plan(self):
+        return dict(self._plan)
 
 
 class _FormWidgets:
@@ -502,11 +375,16 @@ class _FormWidgets:
                 }
             }
         }
-        self.power_assignment_widgets = {
-            "driver_source": type("C", (), {"currentText": lambda self: source})(),
-            "driver_power": _combo(driver_supply_id or ""),
-            "pa_unit1_power": _combo(supply_id),
-        }
+        # 上电计划是唯一的电源使用来源：DUT 计划覆盖两条通道；驱放计划只在给了
+        # ``driver_supply_id`` 时占用同一台电源的通道。
+        self.dut_power_plan_editor = _PlanEditor(
+            [(supply_id, "CH1"), (supply_id, "CH2")]
+        )
+        self.driver_power_plan_editor = _PlanEditor(
+            [(driver_supply_id, "CH1"), (driver_supply_id, "CH2")]
+            if driver_supply_id
+            else ()
+        )
 
 
 def _channel_controls(role):

@@ -465,24 +465,19 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         saved["device_bindings"]["power_supplies"]["DP8B1519"]["visa_address"] = "sim::ps1"
         saved["device_bindings"]["power_supplies"]["DP8B1519"]["model"] = "DP832A"
         saved["power_supply_assignment"]["driver_amplifier"] = {
-            "power_supply_count": 1,
-            "supplies": {"driver": {"supply_id": "DP8B0885", "channel": ["CH1", "CH2"]}},
             "power_plan": {
                 "power_sequence": [
                     {"supply_id": "DP8B0885", "channel": "CH1"},
                     {"supply_id": "DP8B0885", "channel": "CH2"},
                 ],
                 "inter_channel_delay_s": 0.0,
-            },
+            }
         }
         self.config_path.write_text(json.dumps(saved), encoding="utf-8")
 
         window = self._window()
-        # 创建运行需要驱放模式打开（页面只在驱放模式下提交驱动功放分配）。
+        # 创建运行需要驱放模式打开（页面只在驱放模式下提交驱动功放上电计划）。
         window._enter_test_mode(True)
-        # 分配下拉框是用户操作面：按数据（``itemData``）选中另一台电源给驱动功放。
-        driver_combo = window.power_page.driver_power_combo
-        driver_combo.setCurrentIndex(driver_combo.findData("DP8B0885"))
         prepared = self._prepare_and_commit(window)
 
         self.assertIsNotNone(prepared)
@@ -498,13 +493,15 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
             ],
         )
 
-    def test_no_driver_mode_drops_a_saved_driver_assignment_and_still_creates_a_run(self):
+    def test_no_driver_mode_drops_a_saved_driver_plan_and_still_creates_a_run(self):
         self._silence_dialogs()
         saved = _fully_valid_gui_config()
         saved["driver_mode"] = {"enabled": True, "power_source": "dc_supply"}
         saved["power_supply_assignment"]["driver_amplifier"] = {
-            "power_supply_count": 1,
-            "supplies": {"driver": {"supply_id": "DP8B1519", "channel": ["CH1"]}},
+            "power_plan": {
+                "power_sequence": [{"supply_id": "DP8B1519", "channel": "CH1"}],
+                "inter_channel_delay_s": 0.0,
+            },
         }
         self.config_path.write_text(json.dumps(saved), encoding="utf-8")
 
@@ -512,10 +509,12 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         window._enter_test_mode(False)
 
         self.assertTrue(window.power_page.power_assignment_group.isHidden())
-        self.assertFalse(
+        self.assertEqual(
             window.power_page.build_config()["power_supply_assignment"][
                 "driver_amplifier"
-            ]["power_supply_count"]
+            ]["power_plan"]["power_sequence"],
+            [],
+            "关闭驱放后不再提交驱动功放计划",
         )
         prepared = self._prepare_and_commit(window)
 
@@ -756,12 +755,16 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         )
         channel = power.power_config_widgets["DP8B1519"]["channels"]["CH1"]
         self.assertEqual(channel["voltage"].value(), 7.5)
-        self.assertEqual(power.pa_unit1_power_combo.currentIndex(), -1)
+        self.assertIn(
+            ("DP8B1519", "CH1"),
+            power.dut_power_plan_editor.routes(),
+            "失去绑定的电源路由仍留在计划里，交给校验报告",
+        )
         failures = []
         power.validation_failed.connect(failures.append)
 
         self.assertFalse(power.validate())
-        self.assertIn("未选择电源", "；".join(failures))
+        self.assertIn("没有已应用的设备", "；".join(failures))
 
     def test_driver_mode_switch_updates_both_configuration_pages(self):
         self._silence_dialogs()

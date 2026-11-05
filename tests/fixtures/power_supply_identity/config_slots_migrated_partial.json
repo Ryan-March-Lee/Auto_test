@@ -110,24 +110,12 @@
     },
     "power_supply_assignment": {
         "driver_amplifier": {
-            "power_supply_count": 0,
-            "supplies": {},
             "power_plan": {
                 "power_sequence": [],
                 "inter_channel_delay_s": 0.0
             }
         },
         "dut_amplifier": {
-            "power_supply_count": 0,
-            "supplies": {
-                "carrier": {
-                    "channel": [
-                        "CH1",
-                        "CH2"
-                    ],
-                    "supply_id": null
-                }
-            },
             "power_plan": {
                 "power_sequence": [],
                 "inter_channel_delay_s": 0.0

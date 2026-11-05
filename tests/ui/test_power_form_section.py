@@ -21,16 +21,6 @@ from presentation.qt.config_power_section import (
 SUPPLIES = ("DP8B1519", "DP8B0885", "DP8B0950")
 
 
-class _CountCombo:
-    """PA 单元数量下拉框的最小替身。"""
-
-    def __init__(self, text):
-        self.text = text
-
-    def currentText(self):
-        return self.text
-
-
 def _source(*supply_ids):
     return {
         supply_id: {
@@ -44,13 +34,6 @@ def _source(*supply_ids):
 
 def _choices(*supply_ids):
     return {supply_id: {"label": supply_id, "model": "DP832A"} for supply_id in supply_ids}
-
-
-def _assignment(supply_id, channels=None):
-    return {
-        "supply_id": supply_id,
-        "channel": list(POWER_SUPPLY_CHANNELS if channels is None else channels),
-    }
 
 
 def _plan(*routes, delay=0.0):
@@ -67,23 +50,15 @@ def _section(
     *,
     plans=None,
     drain=None,
-    supplies=("DP8B1519", "DP8B0885"),
-    channels=None,
-    count=2,
+    bound=SUPPLIES,
     driver_plan_active=False,
 ):
-    channels = channels or {}
-    assignment_entries = {
-        f"pa_unit{index}_power": _assignment(supply_id, channels.get(index))
-        for index, supply_id in enumerate(supplies, 1)
-    }
+    """一个独立电源表单；``bound`` 控制本次已绑定的电源（计划候选来源）。"""
     plans = plans or {}
     return PowerFormSection(
         sources=_source(*SUPPLIES),
-        choices=_choices(*SUPPLIES),
-        assignment_entries=assignment_entries,
+        choices=_choices(*bound),
         driver_power_source="直流电源",
-        dut_supply_count=count,
         driver_plan_active=driver_plan_active,
         dut_power_plan=plans.get("dut"),
         driver_power_plan=plans.get("driver"),
@@ -118,8 +93,10 @@ class PowerPlanWidgetTests(unittest.TestCase):
                 ("DP8B1519", "CH1"),
                 ("DP8B1519", "CH2"),
                 ("DP8B0885", "CH1"),
+                ("DP8B0950", "CH1"),
+                ("DP8B0950", "CH2"),
             ),
-            "计划里的顺序先显示，未出现在计划里的候选路由按分配顺序补在后面",
+            "计划里的顺序先显示，未出现在计划里的候选路由按绑定顺序补在后面",
         )
         self.assertAlmostEqual(editor.read_plan()["inter_channel_delay_s"], 2.5)
 
@@ -164,13 +141,13 @@ class PowerPlanWidgetTests(unittest.TestCase):
         self.assertIn("未确认", section.dut_power_plan_editor.status.text())
 
     def test_the_status_line_reports_incomplete_and_ready_plans(self):
-        section = _section(channels={1: ["CH1"], 2: ["CH2"]})
+        section = _section(bound=("DP8B1519",))
         editor = section.dut_power_plan_editor
 
         _check(editor, ("DP8B1519", "CH1"))
         self.assertIn("未完成", editor.status.text())
 
-        _check(editor, ("DP8B0885", "CH2"))
+        _check(editor, ("DP8B1519", "CH2"))
         self.assertIn("就绪", editor.status.text())
 
     def test_inactive_driver_group_reads_an_empty_plan(self):
@@ -178,13 +155,8 @@ class PowerPlanWidgetTests(unittest.TestCase):
             plans={
                 "driver": _plan(("DP8B0950", "CH1"), delay=3.0),
             },
-            supplies=("DP8B1519",),
             driver_plan_active=False,
         )
-        section.power_assignment_widgets["driver_power"].setCurrentIndex(
-            section.power_assignment_widgets["driver_power"].findData("DP8B0950")
-        )
-        section.power_assignment_widgets["driver_power"].currentIndexChanged.emit(0)
         section.driver_power_plan_editor.set_route_checked(("DP8B0950", "CH1"), True)
 
         self.assertEqual(
@@ -237,7 +209,6 @@ class DrainSelectionTests(unittest.TestCase):
     def test_drain_options_are_limited_to_the_active_plan(self):
         section = _section(
             plans={"dut": _plan(("DP8B0885", "CH2"))},
-            channels={1: ["CH1"], 2: ["CH2"]},
         )
 
         options = [
@@ -250,7 +221,6 @@ class DrainSelectionTests(unittest.TestCase):
     def test_unchecking_the_drain_channel_keeps_it_visible_as_invalid(self):
         section = _section(
             plans={"dut": _plan(("DP8B0885", "CH2"), ("DP8B1519", "CH1"))},
-            channels={1: ["CH1"], 2: ["CH2"]},
             drain={"supply_id": "DP8B0885", "channel": "CH2"},
         )
 
@@ -274,10 +244,6 @@ class PowerPlanBackfillTests(unittest.TestCase):
         document = {
             "power_supply_assignment": {
                 "dut_amplifier": {
-                    "supplies": {
-                        "carrier": _assignment("DP8B1519"),
-                        "peaking": _assignment("DP8B0885"),
-                    },
                     "power_plan": _plan(
                         ("DP8B0885", "CH2"), ("DP8B1519", "CH1"), delay=1.5
                     ),
@@ -299,62 +265,65 @@ class PowerPlanBackfillTests(unittest.TestCase):
             {"supply_id": "DP8B1519", "channel": "CH1"},
         )
 
-    def test_plan_membership_does_not_rewrite_the_assignment_channels(self):
-        """计划只决定顺序/启用；分配通道集合仍是配置声明的集合，不会被隐式改写。"""
-        section = _section(
-            plans={"dut": _plan(("DP8B1519", "CH1"))},
-            supplies=("DP8B1519", "DP8B0885"),
-            channels={1: ["CH1"], 2: ["CH2"]},
-            count=2,
-        )
-        section.test_mode_enabled = False
-        section.pa_unit_count_combo = _CountCombo("2")
+    def test_reading_the_form_writes_plans_and_not_supply_lists(self):
+        """计划是唯一来源：读回只剩 ``power_plan``，不再补按器件固定分配的表。"""
+        section = _section(plans={"dut": _plan(("DP8B1519", "CH1"))})
         config = {
             "power_supply_assignment": {
                 "dut_amplifier": {
-                    "supplies": {
-                        "carrier": {"supply_id": "DP8B1519", "channel": ["CH1"]},
-                        "peaking": {"supply_id": "DP8B0885", "channel": ["CH2"]},
-                    }
+                    "power_supply_count": 1,
+                    "supplies": {"carrier": {"supply_id": "DP8B1519"}},
                 }
             }
         }
 
         assignment = ConfigFormState(config, section).read_power_assignment()[
             "power_supply_assignment"
-        ]["dut_amplifier"]["supplies"]
+        ]
 
-        self.assertEqual(assignment["carrier"]["channel"], ["CH1"])
         self.assertEqual(
-            assignment["peaking"]["channel"],
-            ["CH2"],
-            "未勾选的通道仍属于该 PA 单元；计划集合与分配集合的差异交给正式校验",
+            assignment["dut_amplifier"]["power_plan"],
+            _plan(("DP8B1519", "CH1")),
         )
-        self.assertNotIn("name", assignment["carrier"], "1.1 只写 supply_id")
+        self.assertEqual(set(assignment["dut_amplifier"]), {"power_plan"})
+        self.assertEqual(set(assignment["driver_amplifier"]), {"power_plan"})
 
-    def test_candidates_are_the_channels_declared_by_each_slot(self):
-        """计划候选只来自分配声明的通道，不默认展开整台电源的 CH1/CH2。"""
-        section = _section(
-            supplies=("DP8B1519", "DP8B0885"),
-            channels={1: ["CH1"], 2: ["CH2"]},
-        )
+    def test_candidates_are_the_channels_of_every_bound_supply(self):
+        """候选来自绑定集合，不默认展开整台电源以外的通道，也不按 PA 单元裁剪。"""
+        section = _section(bound=("DP8B1519", "DP8B0885"))
 
         self.assertEqual(
             section.dut_power_plan_editor.routes(),
-            (("DP8B1519", "CH1"), ("DP8B0885", "CH2")),
+            (
+                ("DP8B1519", "CH1"),
+                ("DP8B1519", "CH2"),
+                ("DP8B0885", "CH1"),
+                ("DP8B0885", "CH2"),
+            ),
+        )
+        self.assertEqual(
+            section.driver_power_plan_editor.routes(),
+            section.dut_power_plan_editor.routes(),
         )
 
-    def test_two_slots_may_share_a_supply_without_copying_channels(self):
-        """同一台电源供两个 PA 单元时，各槽位的通道不会互相复制。"""
+    def test_one_supply_can_serve_driver_and_dut_on_different_channels(self):
+        """同一台电源 CH1 供驱放、CH2 供 DUT：计划路由已经表达清楚，不需要固定分配。"""
         section = _section(
-            supplies=("DP8B1519", "DP8B1519"),
-            channels={1: ["CH1"], 2: ["CH2"]},
-            count=2,
+            bound=("DP8B1519",),
+            plans={
+                "dut": _plan(("DP8B1519", "CH2")),
+                "driver": _plan(("DP8B1519", "CH1")),
+            },
+            driver_plan_active=True,
         )
 
         self.assertEqual(
-            section.dut_power_plan_editor.routes(),
-            (("DP8B1519", "CH1"), ("DP8B1519", "CH2")),
+            section.dut_power_plan_editor.read_plan()["power_sequence"],
+            [{"supply_id": "DP8B1519", "channel": "CH2"}],
+        )
+        self.assertEqual(
+            section.driver_power_plan_editor.read_active_plan()["power_sequence"],
+            [{"supply_id": "DP8B1519", "channel": "CH1"}],
         )
 
 

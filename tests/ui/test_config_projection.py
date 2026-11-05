@@ -1,8 +1,8 @@
 """步骤 11 / 步骤 8：配置投影规则的独立测试（不需要 Qt）。
 
 覆盖：投影只认识配置编写文档的字段、先重置再投影、非法输入必须失败、配置页不再持有
-逐字段回填逻辑、“正式 schema 只由 configuration_authoring 生成”，以及电源分配不再
-使用固定槽位默认值（缺省值只来自当前绑定集合）。
+逐字段回填逻辑、“正式 schema 只由 configuration_authoring 生成”，以及器件电源选择不再
+有固定槽位下拉框（供电方式由页面推断，器件用哪台电源由计划路由决定）。
 """
 
 import ast
@@ -17,7 +17,6 @@ from presentation.qt.config_projection import (
     DEFAULT_POWER_CHANNEL_VALUE,
     DEFAULT_SIGNAL_SOURCE,
     DEFAULT_TEST_FREQUENCIES,
-    POWER_ASSIGNMENT_SLOTS,
     ConfigBackfillError,
     driver_power_source_label,
     project_authoring_config,
@@ -175,6 +174,8 @@ class FakeForm:
         self.pa_unit_count_combo = _Combo(("1", "2", "3"))
         self.test_mode_enabled = False
         self.driver_power_source_combo = _Combo(("直流电源", "自带供电"))
+        # 页面算好的供电方式；投影只把它写到控件，不自己再推断一遍。
+        self.driver_power_source = "直流电源"
         self.power_config_widgets = {
             name: {
                 "channels": {
@@ -191,12 +192,9 @@ class FakeForm:
             }
             for name in supplies
         }
+        # 器件用哪台电源、哪个通道由计划路由决定，表单只剩供电方式一个下拉框。
         self.power_assignment_widgets = {
             "driver_source": _Combo(("直流电源", "自带供电")),
-            "driver_power": _Combo(supplies),
-            "pa_unit1_power": _Combo(supplies),
-            "pa_unit2_power": _Combo(supplies),
-            "pa_unit3_power": _Combo(supplies),
         }
 
 
@@ -210,7 +208,7 @@ class ConfigProjectionTests(unittest.TestCase):
                 "signal_source": {"start_power": -30.0, "stop_power": -5.0, "step": 0.5},
                 "compression_point": {"type": "3dB"},
                 "attenuator": {"type": "30dB"},
-                "driver_mode": {"enabled": True},
+                "driver_mode": {"enabled": True, "power_source": "dc_supply"},
                 "dut_config": {"max_input_power": 25.5, "power_supply_count": 3},
                 "instruments": {
                     "signal_generator": {"address": "sim::sg2", "enabled": False},
@@ -230,15 +228,23 @@ class ConfigProjectionTests(unittest.TestCase):
                 },
                 "power_supply_assignment": {
                     "driver_amplifier": {
-                        "power_supply_count": 1,
-                        "supplies": {"main": {"supply_id": "DP8B0885"}},
+                        "power_plan": {
+                            "power_sequence": [
+                                {"supply_id": "DP8B1519", "channel": "CH1"}
+                            ],
+                            "inter_channel_delay_s": 0.0,
+                        }
                     },
                     "dut_amplifier": {
-                        "supplies": {"carrier": {"supply_id": "DP8B0950"}}
+                        "power_plan": {
+                            "power_sequence": [
+                                {"supply_id": "DP8B1519", "channel": "CH2"}
+                            ],
+                            "inter_channel_delay_s": 0.5,
+                        }
                     },
                 },
             },
-            supplies=["DP8B1519", "DP8B0885", "DP8B0950"],
         )
 
         self.assertEqual(form.freq_edit.text(), "[2.4, 2.6]")
@@ -250,17 +256,9 @@ class ConfigProjectionTests(unittest.TestCase):
         self.assertEqual(channel["voltage"].value(), 3.3)
         self.assertEqual(channel["current"].value(), 0.5)
         self.assertTrue(form.test_mode_enabled)
-        self.assertEqual(
-            form.driver_power_source_combo.currentText(), "直流电源"
-        )
+        self.assertEqual(form.driver_power_source_combo.currentText(), "直流电源")
         self.assertEqual(
             form.power_assignment_widgets["driver_source"].currentText(), "直流电源"
-        )
-        self.assertEqual(
-            form.power_assignment_widgets["driver_power"].currentData(), "DP8B0885"
-        )
-        self.assertEqual(
-            form.power_assignment_widgets["pa_unit1_power"].currentData(), "DP8B0950"
         )
         # 仪器连接不由控件编辑：投影只把文档原样带回，交给页面与发现面板处理。
         self.assertEqual(
@@ -270,188 +268,26 @@ class ConfigProjectionTests(unittest.TestCase):
         projected["test_frequencies"].append(9.9)
         self.assertEqual(form.freq_edit.text(), "[2.4, 2.6]")
 
-    def test_projection_restricts_power_options_to_bound_supplies(self):
-        """可选项来自设备绑定：未绑定的电源既不会被选中，也不会被补进下拉框。"""
+    def test_projection_does_not_restore_supply_selection_combos(self):
+        """计划路由是器件电源选择的唯一来源，投影不再按旧分配恢复下拉框。"""
         form = FakeForm()
 
         project_authoring_config(
             form,
             {
-                "test_frequencies": [2.4],
-                "dut_config": {"power_supply_count": 2},
                 "power_supply_assignment": {
-                    "driver_amplifier": {
+                    "dut_amplifier": {
                         "power_supply_count": 1,
-                        "supplies": {"main": {"name": "DP8B0885"}},
-                    },
-                    "dut_amplifier": {
-                        "supplies": {
-                            "carrier": {"name": "DP8B1519"},
-                            "peaking": {"name": "DP8B0950"},
-                        }
-                    },
-                },
-            },
-            supplies=["DP8B1519"],
-        )
-
-        controls = form.power_assignment_widgets
-        self.assertEqual(controls["driver_power"].items, ["DP8B1519"])
-        self.assertEqual(controls["pa_unit1_power"].currentText(), "DP8B1519")
-        # 显式引用未绑定的 DP8B0885/DP8B0950：保持空选择，交给校验报告，而不是临时补选项。
-        self.assertIsNone(controls["driver_power"].current)
-        self.assertIsNone(controls["pa_unit2_power"].current)
-
-    def test_projection_uses_the_first_bound_supply_when_assignment_is_missing(self):
-        form = FakeForm()
-
-        project_authoring_config(
-            form, {"test_frequencies": [2.4]}, supplies=["DP8B0885", "DP8B0950"]
-        )
-
-        controls = form.power_assignment_widgets
-        self.assertEqual(controls["pa_unit1_power"].items, ["DP8B0885", "DP8B0950"])
-        # 缺失的分配落到绑定集合的第一台，而不是固定的 PS1..PS4。
-        self.assertEqual(controls["pa_unit1_power"].currentText(), "DP8B0885")
-        self.assertEqual(controls["driver_power"].currentText(), "DP8B0885")
-
-    def test_projection_never_uses_a_fixed_slot_default(self):
-        """绑定里只有 PS1 之外的短标签时，缺省值也必须是绑定里的设备。"""
-        form = FakeForm(("DP8B0885",))
-
-        project_authoring_config(form, {}, supplies=["DP8B0885"])
-
-        for key in POWER_ASSIGNMENT_SLOTS:
-            with self.subTest(slot=key):
-                self.assertEqual(
-                    form.power_assignment_widgets[key].currentText(), "DP8B0885"
-                )
-                self.assertNotIn("PS1", form.power_assignment_widgets[key].items)
-
-    def test_projection_without_bindings_leaves_power_assignment_empty(self):
-        form = FakeForm()
-
-        project_authoring_config(form, {"test_frequencies": [2.4]}, supplies=[])
-
-        controls = form.power_assignment_widgets
-        self.assertEqual(controls["driver_power"].items, [])
-        self.assertIsNone(controls["driver_power"].current)
-
-    def test_projection_reads_the_reference_from_supply_id(self):
-        """``supply_id`` 是主字段：与之冲突的旧别名 ``name`` 不参与选择。"""
-        form = FakeForm()
-
-        project_authoring_config(
-            form,
-            {
-                "power_supply_assignment": {
-                    "dut_amplifier": {
-                        "supplies": {
-                            "carrier": {
-                                "supply_id": "DP8B0950",
-                                "name": "DP8B1519",
-                            },
-                            "peaking": {
-                                "supply_id": "DP9B9999",
-                                "name": "DP8B1519",
-                            },
-                        }
+                        "supplies": {"carrier": {"supply_id": "DP8B0885"}},
                     }
                 }
             },
-            supplies=["DP8B1519", "DP8B0885", "DP8B0950"],
         )
 
-        controls = form.power_assignment_widgets
-        self.assertEqual(controls["pa_unit1_power"].currentText(), "DP8B0950")
-        # supply_id 指向未绑定电源时保持空选择，不被 name 改指另一台。
-        self.assertIsNone(controls["pa_unit2_power"].current)
-
-    def test_projection_keeps_an_explicitly_unbound_reference_empty(self):
-        """``supply_id: null`` 是“声明了未绑定”，不能按缺省规则补第一台可用电源。"""
-        form = FakeForm()
-
-        project_authoring_config(
-            form,
-            {
-                "power_supply_assignment": {
-                    "dut_amplifier": {
-                        "supplies": {
-                            "carrier": {"supply_id": None, "channel": ["CH1", "CH2"]}
-                        }
-                    }
-                }
-            },
-            supplies=["DP8B1519"],
-        )
-
-        controls = form.power_assignment_widgets
-        self.assertEqual(controls["pa_unit1_power"].items, ["DP8B1519"])
-        self.assertIsNone(controls["pa_unit1_power"].current)
-
-    def test_projection_reads_a_legacy_reference_once(self):
-        """只有 ``name`` 的旧记录仍能回填；它只被读一次，不是第二个可用性来源。"""
-        form = FakeForm()
-
-        project_authoring_config(
-            form,
-            {
-                "power_supply_assignment": {
-                    "dut_amplifier": {"supplies": {"carrier": {"name": "DP8B0885"}}}
-                }
-            },
-            supplies=["DP8B1519", "DP8B0885"],
-        )
-
+        self.assertEqual(set(form.power_assignment_widgets), {"driver_source"})
         self.assertEqual(
-            form.power_assignment_widgets["pa_unit1_power"].currentText(), "DP8B0885"
+            form.power_assignment_widgets["driver_source"].currentText(), "直流电源"
         )
-
-    def test_power_options_show_the_label_with_model_and_keep_supply_id_as_data(self):
-        """步骤 9：显示文本是 ``型号（缩写设备码）``，业务值是 ``itemData`` 里的 ``supply_id``。"""
-        form = FakeForm()
-        supplies = {
-            "DP8B1519": {"model": "DP832A"},
-            "DP8B0885": {"model": "DP832A"},
-            "DP8B0950": {},
-        }
-
-        project_authoring_config(
-            form,
-            {
-                "power_supply_assignment": {
-                    "dut_amplifier": {"supplies": {"carrier": {"supply_id": "DP8B0885"}}}
-                }
-            },
-            supplies=supplies,
-        )
-
-        combo = form.power_assignment_widgets["pa_unit1_power"]
-        self.assertEqual(
-            [combo.itemText(index) for index in range(combo.count())],
-            ["DP832A（DP8B1519）", "DP832A（DP8B0885）", "DP8B0950"],
-        )
-        self.assertEqual(
-            [combo.itemData(index) for index in range(combo.count())],
-            ["DP8B1519", "DP8B0885", "DP8B0950"],
-        )
-        # 两台型号相同：选中靠 itemData，不会因为显示文本相同而落到第一台。
-        self.assertEqual(combo.currentData(), "DP8B0885")
-        self.assertEqual(combo.currentText(), "DP832A（DP8B0885）")
-
-    def test_identical_models_do_not_make_two_supplies_the_same_option(self):
-        """型号重复时显示文本可能完全相同，按文本选中会选错设备；必须按数据选中。"""
-        form = FakeForm(("DP8B1519", "DP8B0885"))
-
-        project_authoring_config(
-            form, {}, supplies={"DP8B1519": {"model": "DP832A"}, "DP8B0885": {"model": "DP832A"}}
-        )
-
-        for key in POWER_ASSIGNMENT_SLOTS:
-            with self.subTest(slot=key):
-                combo = form.power_assignment_widgets[key]
-                self.assertEqual(combo.count(), 2)
-                self.assertEqual(combo.currentData(), "DP8B1519")
 
     def test_reset_uses_the_shared_channel_baseline(self):
         """通道数值重置到空配置基线的值，与构建模块的非法值回落同源。"""
@@ -461,52 +297,25 @@ class ConfigProjectionTests(unittest.TestCase):
                 controls["voltage"].setValue(9.5)
                 controls["current_protection"].setValue(4.0)
 
-        reset_control_widgets(form, supplies=["DP8B1519"])
+        reset_control_widgets(form)
 
         channel = form.power_config_widgets["DP8B1519"]["channels"]["CH1"]
         for key in ("voltage", "current_protection"):
             with self.subTest(control=key):
                 self.assertEqual(channel[key].value(), DEFAULT_POWER_CHANNEL_VALUE)
 
-    def test_projection_ignores_a_previous_control_selection(self):
-        """重置是无状态的：上一次的控件选择不参与缺省决策，只按当前绑定取第一台。"""
+    def test_reset_returns_the_driver_source_to_the_baseline(self):
+        """重置是无状态的：上一次的供电方式选择不参与回填。"""
         form = FakeForm()
-        form.power_assignment_widgets["pa_unit1_power"].setCurrentData("DP8B0885")
+        form.power_assignment_widgets["driver_source"].setCurrentText("自带供电")
 
-        reset_control_widgets(form, supplies=["DP8B1519", "DP8B0885"])
-
-        for key in POWER_ASSIGNMENT_SLOTS:
-            with self.subTest(slot=key):
-                self.assertEqual(
-                    form.power_assignment_widgets[key].currentData(), "DP8B1519"
-                )
-
-    def test_projection_keeps_an_existing_reference_from_the_document(self):
-        """“已有引用优先”指配置文档里的引用，而不是控件残留值。"""
-        form = FakeForm()
-        form.power_assignment_widgets["pa_unit1_power"].setCurrentData("DP8B1519")
-
-        project_authoring_config(
-            form,
-            {
-                "power_supply_assignment": {
-                    "dut_amplifier": {
-                        "supplies": {"carrier": {"supply_id": "DP8B0885"}}
-                    }
-                }
-            },
-            supplies=["DP8B1519", "DP8B0885"],
-        )
+        reset_control_widgets(form)
 
         self.assertEqual(
-            form.power_assignment_widgets["pa_unit1_power"].currentData(), "DP8B0885"
-        )
-        # 文档里没有的分配仍取第一台可用电源，不受上面那条引用的影响。
-        self.assertEqual(
-            form.power_assignment_widgets["pa_unit2_power"].currentData(), "DP8B1519"
+            form.power_assignment_widgets["driver_source"].currentText(), "直流电源"
         )
 
-    def test_driver_source_uses_the_page_inference_without_its_own_guess(self):
+    def test_projection_uses_the_page_inferred_driver_source(self):
         """供电方式由 :func:`driver_power_source_label` 算好，投影不另立一套推断。"""
         form = FakeForm()
         form.driver_power_source = "自带供电"
@@ -516,40 +325,28 @@ class ConfigProjectionTests(unittest.TestCase):
             {
                 "driver_mode": {"enabled": True},
                 "power_supply_assignment": {
-                    "driver_amplifier": {"power_supply_count": 1}
+                    "driver_amplifier": {
+                        "power_plan": {
+                            "power_sequence": [
+                                {"supply_id": "DP8B0885", "channel": "CH1"}
+                            ]
+                        }
+                    }
                 },
             },
-            supplies=["DP8B0885"],
         )
 
-        # 分配里有 1 台驱动电源，但页面推断是自带供电：投影必须听页面的。
+        # 计划里有 1 条驱动路由，但页面推断是自带供电：投影必须听页面的。
         self.assertEqual(
             form.power_assignment_widgets["driver_source"].currentText(), "自带供电"
         )
 
-    def test_driver_source_label_falls_back_to_the_assignment(self):
-        """``power_source`` 缺失时按驱动功放分配推断，两条路径同源。"""
+    def test_driver_source_label_falls_back_to_the_plan_route_count(self):
+        """``power_source`` 缺失时按驱动计划的路由数推断，两条路径同源。"""
         self.assertEqual(driver_power_source_label(None, 1), "直流电源")
         self.assertEqual(driver_power_source_label(None, 0), "自带供电")
         self.assertEqual(driver_power_source_label(None, None), "自带供电")
         self.assertEqual(driver_power_source_label("external_ac", 1), "自带供电")
-
-    def test_driver_slot_uses_the_same_dynamic_default(self):
-        """驱动功放与 PA 单元共用缺省规则，页面不再另设“空选择”默认。"""
-        form = FakeForm()
-
-        project_authoring_config(
-            form,
-            {"driver_mode": {"enabled": True, "power_source": "dc_supply"}},
-            supplies=["DP8B0885", "DP8B0950"],
-        )
-
-        self.assertEqual(
-            form.power_assignment_widgets["driver_power"].currentText(), "DP8B0885"
-        )
-        self.assertEqual(
-            form.driver_power_source_combo.currentText(), "直流电源"
-        )
 
     def test_projection_resets_before_applying(self):
         form = FakeForm()
@@ -622,7 +419,11 @@ class ConfigurationPageOwnershipTests(unittest.TestCase):
         self.assertNotIn("project_authoring_config(", page_source)
         adapter = ADAPTER_SOURCE.read_text(encoding="utf-8")
         self.assertIn("project_authoring_config(", adapter)
-        self.assertIn("supplies=supplies", adapter)
+        self.assertNotIn(
+            "supplies=",
+            adapter,
+            "投影不再接收或转发旧固定分配参数",
+        )
         self.assertIn("from .config_projection import", adapter)
 
     def test_config_page_and_projection_do_not_interpret_the_formal_schema(self):

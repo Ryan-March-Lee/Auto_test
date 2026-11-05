@@ -1,9 +1,7 @@
-"""供电分配条目的纯数据读取（不依赖 Qt，也不读取表单控件）。
+"""电源通道候选的纯数据读取（不依赖 Qt，也不读取表单控件）。
 
-界面槽位（``pa_unit1_power`` 等）与配置槽位（``carrier`` 等）之间由
-:mod:`presentation.qt.config_projection` 的 ``ASSIGNMENT_SLOT_PATHS`` 连接；本模块只回答
-“一条分配声明了哪些物理通道”。配置页的读数（``config_form_state``）与独立电源表单
-（``config_power_section``）共用这一条规则，避免两边各写一份通道回落逻辑。
+上电计划以物理路由 ``supply_id/channel`` 为唯一身份；本模块只回答“一台已绑定电源
+声明了哪些可用通道”。配置页与独立电源表单共用这一条规则，避免各写一份通道回落逻辑。
 """
 
 from typing import Any, Mapping
@@ -15,12 +13,10 @@ POWER_SUPPLY_CHANNELS = ("CH1", "CH2")
 
 
 def assignment_channels(entry: Any) -> list[str]:
-    """一条供电分配声明的物理通道（“属于哪个 PA 单元”）。
+    """一台电源声明的物理通道，作为上电计划的候选。
 
-    编辑段里 ``supplies.<slot>.channel`` 是分配通道集合，计划只决定它们的顺序；
-    两者集合相等由正式校验比较。条目缺少 ``channel``（尚未迁移/新建槽位）时回落到
-    每台电源固定的两个通道；显式的空列表原样返回，让正式校验报告结构错误，不在读取
-    时替用户补通道。
+    条目缺少 ``channel``（尚未迁移/新建槽位）时回落到每台电源固定的两个通道；显式的
+    空列表原样返回，让正式校验报告结构错误，不在读取时替用户补通道。
     """
     if isinstance(entry, Mapping):
         channels = entry.get("channel")

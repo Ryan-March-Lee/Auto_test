@@ -28,8 +28,7 @@ def combo_box(items=(), current=None):
     """建一个下拉框；给了选项就按顺序加入，``current`` 不是 ``None`` 时才选中。
 
     ``current=None`` 表示“此刻还没有值”，因此不调用 ``setCurrentText``：既不会把
-    ``None`` 渲染成一项文本，也让“先建空框、稍后再填选项”的调用点（电源分配下拉框
-    由 :func:`presentation.qt.config_projection.apply_power_choice` 填充）保持原样。
+    ``None`` 渲染成一项文本，也让“先建空框、稍后再填选项”的调用点保持原样。
     """
     widget = WheelSafeComboBox()
     if items:

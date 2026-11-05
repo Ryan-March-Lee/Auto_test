@@ -16,12 +16,12 @@
 迁移边界（步骤 6 先接入“测试参数 + 设备绑定”；步骤 7 收口整份表单）：控件读数经
 :class:`presentation.qt.config_form_adapter.ConfigurationFormAdapter` 集中读出后，
 :meth:`ConfigurationViewModel.update_form` 同步整份配置编辑文档，草稿因此覆盖电源通道
-参数与供电分配。页面不再自己组装文档，``build_config`` 只是 adapter 读数 + 本方法的
+参数与上电计划。页面不再自己组装文档，``build_config`` 只是 adapter 读数 + 本方法的
 短委托。因此：
 
 - 视图模型对整份配置页业务状态（草稿、设备绑定、运行状态、dirty）是唯一来源；
 - ``save`` / ``create_run`` 返回的 Effect 文档现在是完整的配置编辑文档（含电源通道、
-  供电分配与设备绑定）；实际保存/创建运行仍由 ``ApplicationCoordinator`` 调用页面的
+  上电计划与设备绑定）；实际保存/创建运行仍由 ``ApplicationCoordinator`` 调用页面的
   ``build_config`` 执行，本步骤不改保存链路，也不在视图模型里写文件。
 
 校验问题的边界与步骤 3–5 一致：用户可修正的配置问题通过
@@ -518,7 +518,7 @@ class ConfigurationViewModel:
         """用页面当前读数同步整份编辑文档，**不重置**干净基线。
 
         这是步骤 7 的控件适配路径：:class:`ConfigurationFormAdapter` 把控件读数组装成
-        文档后交给这里，草稿随之更新（包括电源通道参数与供电分配）。与 :meth:`load`
+        文档后交给这里，草稿随之更新（包括电源通道参数与上电计划）。与 :meth:`load`
         的区别是它表示“用户正在编辑”，因此：
 
         - 干净基线保持不变，dirty 仍按上次保存/回填/切换模式的基线判定；
@@ -668,7 +668,7 @@ class ConfigurationViewModel:
     def _authoring_document(self) -> dict[str, Any]:
         """当前状态对应的配置编辑文档。
 
-        测试参数、电源参数、供电分配与设备绑定由草稿生成；草稿没有建模的顶层键（例如
+        测试参数、电源参数、上电计划与设备绑定由草稿生成；草稿没有建模的顶层键（例如
         调用方保留的未知块或已保存的正式段）原样保留，避免视图模型在保存时静默丢字段。
         草稿不再建模通道 ``role``，因此旧配置里已有的取值也不会被写回这份文档：角色
         只属于旧配置的兼容读取，不能借“保留未建模字段”重新进入保存链路。

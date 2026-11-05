@@ -1,12 +1,14 @@
 r"""步骤 5 测试：按物理路由校验上电计划与漏极，不再校验供电角色。
 
-覆盖 ``domain.configuration.rules.validate_power_plan`` 的规则 4/5/7：
+覆盖 ``domain.configuration.rules.validate_power_plan`` 的规则 5/7/15：
 
 1. 计划形状：``power_plan`` 对象、两个键必需、两段路由、间隔范围；
-2. 顺序完整性：序列集合 = 该组分配通道集合，序列内不重复；
-3. 引用有效性：电源存在且启用、通道已声明；
-4. 跨组冲突与驱放一致性；
-5. 漏极只能是 DUT 已分配且（计划存在时）在序列中的通道。
+2. 引用有效性：电源存在且启用、通道已声明；
+3. 跨组冲突与驱放一致性；
+4. 漏极只能出现在 DUT 上电顺序中。
+
+计划本身就是“哪些电源的哪些通道给哪个器件上电”的唯一来源，不再与固定的供电分配
+比较通道集合。
 
 验证方式：
 
@@ -37,10 +39,6 @@ def _document():
         },
         "power_supply_assignment": {
             "dut_amplifier": {
-                "power_supply_count": 1,
-                "supplies": {
-                    "carrier": {"supply_id": "PS1", "channel": ["CH1", "CH2"]}
-                },
                 "power_plan": {
                     "power_sequence": [
                         {"supply_id": "PS1", "channel": "CH1"},
@@ -50,8 +48,6 @@ def _document():
                 },
             },
             "driver_amplifier": {
-                "power_supply_count": 0,
-                "supplies": {},
                 "power_plan": {"power_sequence": [], "inter_channel_delay_s": 0.0},
             },
         },
@@ -73,18 +69,15 @@ class PowerPlanValidationTests(unittest.TestCase):
         document["power_supply_assignment"]["dut_amplifier"].pop("power_plan")
         self.assertTrue(validate_power_plan(document).valid)
 
-    def test_sequence_must_cover_every_assigned_channel(self):
+    def test_plan_sequence_is_the_only_channel_set(self):
+        """计划里没有的通道不参与上电，也不再与任何“固定分配”比较。"""
         document = _document()
+        document["dut_config"].pop("drain_channel")
         document["power_supply_assignment"]["dut_amplifier"]["power_plan"][
             "power_sequence"
         ] = [{"supply_id": "PS1", "channel": "CH1"}]
 
-        result = validate_power_plan(document)
-
-        self.assertIn(
-            "power_supply_assignment.dut_amplifier.power_plan.power_sequence",
-            _paths(result),
-        )
+        self.assertTrue(validate_power_plan(document).valid)
 
     def test_sequence_may_not_repeat_a_route(self):
         document = _document()
@@ -199,8 +192,6 @@ class PowerPlanValidationTests(unittest.TestCase):
         document = _document()
         document["dut_config"].pop("drain_channel")
         assignment = document["power_supply_assignment"]["dut_amplifier"]
-        assignment["power_supply_count"] = 0
-        assignment["supplies"] = {}
         assignment["power_plan"] = {"power_sequence": []}
 
         result = validate_power_plan(document)
@@ -210,6 +201,20 @@ class PowerPlanValidationTests(unittest.TestCase):
             _paths(result),
         )
 
+    def test_one_supply_may_serve_driver_and_dut_on_different_channels(self):
+        """同一台电源 CH1 供驱放、CH2 供 DUT：计划已经表达清楚，不需要固定分配。"""
+        document = _document()
+        document["driver_mode"] = {"enabled": True, "power_source": "dc_supply"}
+        document["power_supply_assignment"]["dut_amplifier"]["power_plan"][
+            "power_sequence"
+        ] = [{"supply_id": "PS1", "channel": "CH2"}]
+        document["power_supply_assignment"]["driver_amplifier"]["power_plan"] = {
+            "power_sequence": [{"supply_id": "PS1", "channel": "CH1"}],
+            "inter_channel_delay_s": 0.0,
+        }
+
+        self.assertTrue(validate_power_plan(document).valid)
+
     def test_same_physical_route_cannot_appear_in_both_groups(self):
         document = _document()
         document["driver_mode"] = {"enabled": True, "power_source": "dc_supply"}
@@ -218,8 +223,6 @@ class PowerPlanValidationTests(unittest.TestCase):
             "channels": {"CH1": {}},
         }
         document["power_supply_assignment"]["driver_amplifier"] = {
-            "power_supply_count": 1,
-            "supplies": {"main": {"supply_id": "PS2", "channel": ["CH1"]}},
             "power_plan": {
                 "power_sequence": [{"supply_id": "PS2", "channel": "CH1"}],
                 "inter_channel_delay_s": 1.0,
@@ -326,8 +329,6 @@ class DrainReferenceTests(unittest.TestCase):
             "channels": {"CH1": {}},
         }
         document["power_supply_assignment"]["driver_amplifier"] = {
-            "power_supply_count": 1,
-            "supplies": {"main": {"supply_id": "PS2", "channel": ["CH1"]}},
             "power_plan": {
                 "power_sequence": [{"supply_id": "PS2", "channel": "CH1"}],
                 "inter_channel_delay_s": 0.0,

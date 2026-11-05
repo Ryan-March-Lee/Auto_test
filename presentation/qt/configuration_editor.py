@@ -1,9 +1,9 @@
 """两个配置页共享一份编辑草稿的装配器（步骤 13）。
 
 ``ConfigurationPage`` 拥有测试参数、设备连接与运行入口，``PowerConfigurationPage``
-拥有电源参数、供电分配、上电计划与漏极。窗口把两个页面实例交给本模块，由它统一：
+拥有电源参数、上电计划与漏极。窗口把两个页面实例交给本模块，由它统一：
 
-- 连接“PA 单元数量”和“设备绑定写回”这两个跨页派生事件；
+- 连接“设备绑定写回”这一跨页派生事件；
 - 把同一份文档回填到两页、同期切换测试模式、汇总 dirty、统一标记保存成功；
 - 在最终动作期间同时禁用两页。
 
@@ -98,12 +98,10 @@ class ConfigurationEditor:
         page, power = self.config_page, self.power_page
         if page is None or power is None:
             return
-        page.pa_unit_count_changed.connect(power.set_pa_unit_count)
         page.device_selection_finished.connect(self._refresh_power_bindings)
         power.validation_failed.connect(self._report_power_error)
         if self._driver_mode_changed is not None:
             power.driver_mode_changed.connect(self._driver_mode_changed)
-        self._sync_pa_unit_count()
 
     def _report_power_error(self, message: str) -> None:
         if self._log is not None:
@@ -115,16 +113,6 @@ class ConfigurationEditor:
         if power is None:
             return
         power.apply_device_bindings(getattr(self.config_page, "device_bindings", {}))
-
-    def _sync_pa_unit_count(self) -> None:
-        power = self.power_page
-        combo = getattr(self.config_page, "pa_unit_count_combo", None)
-        if power is None or combo is None:
-            return
-        try:
-            power.set_pa_unit_count(int(combo.currentText()))
-        except (TypeError, ValueError):
-            return
 
     # ---- 页面状态 -----------------------------------------------------------
 

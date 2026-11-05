@@ -2,7 +2,7 @@
 
 本模块是配置页控件的**唯一读写边界**：页面只登记控件与连接信号，控件的文本/数值/
 业务值读取、整份配置文档的组装、回填投影与错误提示都由这里完成。它依赖的是控件的
-最小协议（``text``、``value``、``isChecked``、``currentText``，电源分配下拉框另外要求
+最小协议（``text``、``value``、``isChecked``、``currentText``；漏极下拉框另外要求
 ``currentIndex`` + ``itemData``），不直接依赖 PySide6，因此可以用控件替身测试。
 
 职责边界：
@@ -10,7 +10,8 @@
 - 读数与投影规则仍是 :mod:`presentation.qt.config_form_state` 与
   :mod:`presentation.qt.config_projection` 的实现，本模块只按页面的调用顺序把它们
   组合起来；不改写字段语义、不挑默认设备、不生成正式 ``test_plan`` / ``run_mapping``。
-- 组合框的显示文本与业务值继续分离：``supply_id`` 只从 ``itemData`` 读取。
+- 器件电源的选择不在本模块：上电计划里的 ``(supply_id, channel)`` 路由是唯一来源，
+  下拉框只用来选漏极，业务值仍从 ``itemData`` 读取。
 - 设备绑定与正式配置业务规则分别在 :mod:`application.device_binding` 与
   :mod:`application.configuration_authoring`；本模块不包含这些规则。
 - 错误显示只把已得到的用户文案合并后交给页面的错误通道，不重新解释业务判据。
@@ -25,8 +26,6 @@ from application.configuration_view_model import ConfigurationTestParameters
 
 from .config_form_state import ConfigFormState
 from .config_projection import (
-    POWER_ASSIGNMENT_SLOTS,
-    apply_power_choice,
     project_authoring_config,
     project_power_config,
 )
@@ -135,7 +134,7 @@ class ConfigurationFormAdapter:
         return fragment.get("instruments", {}).get("power_supplies", {}) or {}
 
     def read_power_fragment(self, base: Mapping[str, Any] | None = None) -> dict[str, Any]:
-        """读出独立电源页负责的配置片段（通道参数、分配、计划与漏极）。"""
+        """读出独立电源页负责的配置片段（通道参数、计划与漏极）。"""
         page_config = getattr(self.widgets, "config", None)
         return ConfigFormState(
             page_config if base is None else base, self.widgets
@@ -159,22 +158,6 @@ class ConfigurationFormAdapter:
             page_config if base is None else base, self.widgets
         ).power_validation_errors()
 
-    @staticmethod
-    def supply_id(combo: Any) -> str:
-        """下拉框当前选中项的业务值（``itemData`` 里的 ``supply_id``）。
-
-        空选择或选中项没有数据时返回空串；绝不从显示文本反解析设备身份。控件缺失
-        ``itemData`` 能力时同样按空选择处理，交给校验明确报告。
-        """
-        if combo is None:
-            return ""
-        find_data = getattr(combo, "findData", None)
-        if not callable(find_data):
-            return ""
-        index = combo.currentIndex()
-        data = combo.itemData(index) if isinstance(index, int) and index >= 0 else None
-        return data.strip() if isinstance(data, str) and data.strip() else ""
-
     def validation_errors(self) -> list[str]:
         """按当前控件读数给出页面要显示的用户错误（顺序与文案保持原样）。"""
         page_config = getattr(self.widgets, "config", None)
@@ -182,30 +165,19 @@ class ConfigurationFormAdapter:
 
     # ---- 控件赋值 -----------------------------------------------------------
 
-    def refresh_power_choices(self, choices: Mapping[str, Any]) -> None:
-        """刷新电源分配下拉框：按业务值恢复选择，失效引用保持空选择。"""
-        controls = getattr(self.widgets, "power_assignment_widgets", None) or {}
-        for key in POWER_ASSIGNMENT_SLOTS:
-            combo = controls.get(key)
-            if combo is None:
-                continue
-            current = self.supply_id(combo)
-            apply_power_choice(combo, {"supply_id": current}, choices)
-
     def apply_configuration(
         self,
         config: Any,
         *,
-        supplies: Mapping[str, Any] | None = None,
         driver_plan_active: bool | None = None,
     ) -> dict[str, Any]:
         """把一份配置编写文档确定性地投影到控件，返回文档副本。
 
-        测试参数、通道参数与分配槽位走 :func:`project_authoring_config`；组上电计划与
+        测试参数、通道参数与供电方式走 :func:`project_authoring_config`；组上电计划与
         漏极属于独立电源表单，若控件提供 ``apply_power_plan_config``，就在同一入口里
         交给它，页面不需要再直接操作电源控件。
         """
-        projected = project_authoring_config(self.widgets, config, supplies=supplies)
+        projected = project_authoring_config(self.widgets, config)
         apply_plans = getattr(self.widgets, "apply_power_plan_config", None)
         if callable(apply_plans):
             apply_plans(config, driver_plan_active=driver_plan_active)
@@ -215,15 +187,14 @@ class ConfigurationFormAdapter:
         self,
         config: Any,
         *,
-        supplies: Mapping[str, Any] | None = None,
         driver_plan_active: bool | None = None,
     ) -> dict[str, Any]:
         """把文档里的电源字段投影到独立电源页，返回文档副本。
 
-        测试参数不由本页回填；与整份回填共用 ``config_projection`` 的通道/分配
+        测试参数不由本页回填；与整份回填共用 ``config_projection`` 的通道/供电方式
         重置规则，计划与漏极仍交给表单组件的同一入口。
         """
-        projected = project_power_config(self.widgets, config, supplies=supplies)
+        projected = project_power_config(self.widgets, config)
         apply_plans = getattr(self.widgets, "apply_power_plan_config", None)
         if callable(apply_plans):
             apply_plans(config, driver_plan_active=driver_plan_active)

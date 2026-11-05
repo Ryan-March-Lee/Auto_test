@@ -95,7 +95,6 @@ CONFIGURATION_BUSINESS_IMPORT_BASELINE = {
     "config_power_section.py": {},
     "config_projection.py": {
         "domain.configuration.models": {"resolve_driver_power_source"},
-        "domain.configuration.rules": {"assignment_supply_id"},
     },
     "configuration_session.py": {
         "application.device_binding": {

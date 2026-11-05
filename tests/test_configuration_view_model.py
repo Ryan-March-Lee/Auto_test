@@ -104,18 +104,9 @@ def _config():
         },
         "power_supply_assignment": {
             "driver_amplifier": {
-                "power_supply_count": 0,
-                "supplies": {},
                 "power_plan": {"power_sequence": [], "inter_channel_delay_s": 0.0},
             },
             "dut_amplifier": {
-                "power_supply_count": 1,
-                "supplies": {
-                    "carrier": {
-                        "supply_id": "DP8B1519",
-                        "channel": ["CH1", "CH2"],
-                    }
-                },
                 "power_plan": {
                     "power_sequence": [
                         {"supply_id": "DP8B1519", "channel": "CH1"},
@@ -217,21 +208,24 @@ class ConfigurationViewModelLoadTests(unittest.TestCase):
 class ConfigurationViewModelFormSyncTests(unittest.TestCase):
     """步骤 7：页面读数经 ``update_form`` 收进整份草稿，但不重置干净基线。"""
 
-    def test_update_form_syncs_power_channels_and_assignments(self):
+    def test_update_form_syncs_power_channels_and_plans(self):
         view = _loaded()
         document = _config()
         document["instruments"]["power_supplies"]["DP8B1519"]["channels"]["CH1"][
             "voltage"
         ]["value"] = 5.0
-        document["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"][
-            "supply_id"
-        ] = None
+        document["power_supply_assignment"]["dut_amplifier"]["power_plan"][
+            "power_sequence"
+        ].reverse()
 
         state = view.update_form(document)
 
         supply = state.draft.power_supplies[0]
         self.assertEqual(supply.channel("CH1").voltage, 5.0)
-        self.assertIsNone(state.draft.dut_assignments[0].supply_id)
+        self.assertEqual(
+            [(route.supply_id, route.channel) for route in state.draft.dut_channels],
+            [("DP8B1519", "CH2"), ("DP8B1519", "CH1")],
+        )
         self.assertTrue(state.dirty)
 
     def test_update_form_does_not_reset_the_clean_baseline(self):

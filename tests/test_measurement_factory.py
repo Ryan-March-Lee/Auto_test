@@ -19,6 +19,24 @@ from instrument.ports import PowerSupplyPort
 from instrument.simulation import SimulatedSignalGenerator, SimulatedSpectrumAnalyzer, SimulatedPowerSupply
 
 
+def _plan(*routes, delay=0.0):
+    return {
+        "power_sequence": [
+            {"supply_id": supply_id, "channel": channel}
+            for supply_id, channel in routes
+        ],
+        "inter_channel_delay_s": delay,
+    }
+
+
+def _assignment(dut=(), driver=(), dut_delay=0.0):
+    """一份只含上电计划的编辑段；电源选择由计划路由表达。"""
+    return {
+        "dut_amplifier": {"power_plan": _plan(*dut, delay=dut_delay)},
+        "driver_amplifier": {"power_plan": _plan(*driver)},
+    }
+
+
 class MeasurementFactoryTests(unittest.TestCase):
     def test_simulation_mode_assembles_new_session_and_adapter(self):
         port = create_measurement_port(
@@ -73,10 +91,9 @@ class MeasurementFactoryTests(unittest.TestCase):
                     }
                 },
             },
-            "power_supply_assignment": {
-                "dut_amplifier": {"supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}}},
-                "driver_amplifier": {"supplies": {}},
-            },
+            "power_supply_assignment": _assignment(
+                dut=(("PS1", "CH1"), ("PS1", "CH2"))
+            ),
         }
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
@@ -95,10 +112,7 @@ class MeasurementFactoryTests(unittest.TestCase):
 
     def test_hardware_mode_uses_configured_supply_and_channel_only(self):
         config = _base_hardware_config()
-        config["power_supply_assignment"] = {
-            "dut_amplifier": {"supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}}},
-            "driver_amplifier": {"supplies": {}},
-        }
+        config["power_supply_assignment"] = _assignment(dut=(("PS1", "CH1"), ("PS1", "CH2")))
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
             path.write_text(json.dumps(config), encoding="utf-8")
@@ -114,27 +128,24 @@ class MeasurementFactoryTests(unittest.TestCase):
             self.assertEqual(port.close_all(close_rf=True), [])
             self.assertTrue(all(resource.closed for resource in manager.resources))
 
-    def test_hardware_mode_rejects_missing_explicit_supply_assignment(self):
+    def test_hardware_mode_rejects_missing_power_plan(self):
         config = _base_hardware_config()
         config["instruments"]["power_supplies"]["PS2"] = {
             "address": "PS2", "enabled": True, "channels": {}
         }
-        config["power_supply_assignment"] = {"dut_amplifier": {"supplies": {}}, "driver_amplifier": {"supplies": {}}}
+        config["power_supply_assignment"] = _assignment()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
             path.write_text(json.dumps(config), encoding="utf-8")
             manager = _DiscoveryResourceManager()
             with patch("instrument.measurement_factory.pyvisa.ResourceManager", return_value=manager):
-                with self.assertRaisesRegex(ValueError, "必须显式配置电源分配和通道"):
+                with self.assertRaisesRegex(ValueError, "必须显式配置电源上电计划"):
                     create_measurement_port(str(path), mode="hardware")
 
     def test_hardware_mode_rejects_unenabled_assigned_supply(self):
         config = _base_hardware_config()
         config["instruments"]["power_supplies"]["PS1"]["enabled"] = False
-        config["power_supply_assignment"] = {
-            "dut_amplifier": {"supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}}},
-            "driver_amplifier": {"supplies": {}},
-        }
+        config["power_supply_assignment"] = _assignment(dut=(("PS1", "CH1"), ("PS1", "CH2")))
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
             path.write_text(json.dumps(config), encoding="utf-8")
@@ -144,10 +155,7 @@ class MeasurementFactoryTests(unittest.TestCase):
 
     def test_hardware_mode_accepts_a_single_channel_assignment(self):
         config = _base_hardware_config()
-        config["power_supply_assignment"] = {
-            "dut_amplifier": {"supplies": {"carrier": {"name": "PS1", "channel": ["CH1"]}}},
-            "driver_amplifier": {"supplies": {}},
-        }
+        config["power_supply_assignment"] = _assignment(dut=(("PS1", "CH1"),))
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
             path.write_text(json.dumps(config), encoding="utf-8")
@@ -159,10 +167,7 @@ class MeasurementFactoryTests(unittest.TestCase):
 
     def test_hardware_mode_rejects_unknown_assigned_channel(self):
         config = _base_hardware_config()
-        config["power_supply_assignment"] = {
-            "dut_amplifier": {"supplies": {"carrier": {"name": "PS1", "channel": ["CH9"]}}},
-            "driver_amplifier": {"supplies": {}},
-        }
+        config["power_supply_assignment"] = _assignment(dut=(("PS1", "CH9"),))
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
             path.write_text(json.dumps(config), encoding="utf-8")
@@ -180,15 +185,9 @@ class MeasurementFactoryTests(unittest.TestCase):
                 "CH2": {"role": "drain", "voltage": {"value": 30.0}, "current": {"value": 1.0}},
             },
         }
-        config["power_supply_assignment"] = {
-            "dut_amplifier": {
-                "supplies": {
-                    "carrier": {"name": "PS1", "channel": ["CH1"]},
-                    "peaking": {"name": "PS2", "channel": ["CH2"]},
-                }
-            },
-            "driver_amplifier": {"supplies": {}},
-        }
+        config["power_supply_assignment"] = _assignment(
+            dut=(("PS1", "CH1"), ("PS2", "CH2"))
+        )
         manager = _FakeResourceManager()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
@@ -202,10 +201,7 @@ class MeasurementFactoryTests(unittest.TestCase):
         config = _base_hardware_config()
         del config["instruments"]["power_supplies"]["PS1"]["channels"]["CH1"]["role"]
         config["instruments"]["power_supplies"]["PS1"]["channels"]["CH2"]["role"] = "gate"
-        config["power_supply_assignment"] = {
-            "dut_amplifier": {"supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}}},
-            "driver_amplifier": {"supplies": {}},
-        }
+        config["power_supply_assignment"] = _assignment(dut=(("PS1", "CH1"), ("PS1", "CH2")))
         manager = _FakeResourceManager()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
@@ -217,19 +213,9 @@ class MeasurementFactoryTests(unittest.TestCase):
 
     def test_hardware_mode_uses_the_power_plan_sequence(self):
         config = _base_hardware_config()
-        config["power_supply_assignment"] = {
-            "dut_amplifier": {
-                "supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}},
-                "power_plan": {
-                    "power_sequence": [
-                        {"supply_id": "PS1", "channel": "CH2"},
-                        {"supply_id": "PS1", "channel": "CH1"},
-                    ],
-                    "inter_channel_delay_s": 2.0,
-                },
-            },
-            "driver_amplifier": {"supplies": {}},
-        }
+        config["power_supply_assignment"] = _assignment(
+            dut=(("PS1", "CH2"), ("PS1", "CH1")), dut_delay=2.0
+        )
         manager = _FakeResourceManager()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
@@ -243,10 +229,7 @@ class MeasurementFactoryTests(unittest.TestCase):
     def test_hardware_mode_rejects_identical_signal_and_spectrum_address_before_opening(self):
         config = _base_hardware_config()
         config["instruments"]["spectrum_analyzer"]["address"] = "SG"
-        config["power_supply_assignment"] = {
-            "dut_amplifier": {"supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}}},
-            "driver_amplifier": {"supplies": {}},
-        }
+        config["power_supply_assignment"] = _assignment(dut=(("PS1", "CH1"), ("PS1", "CH2")))
         manager = _FakeResourceManager()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
@@ -258,10 +241,10 @@ class MeasurementFactoryTests(unittest.TestCase):
 
     def test_hardware_mode_rejects_dut_and_driver_channel_overlap_before_opening(self):
         config = _base_hardware_config()
-        config["power_supply_assignment"] = {
-            "dut_amplifier": {"supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}}},
-            "driver_amplifier": {"supplies": {"main": {"name": "PS1", "channel": ["CH1", "CH2"]}}},
-        }
+        config["power_supply_assignment"] = _assignment(
+            dut=(("PS1", "CH1"), ("PS1", "CH2")),
+            driver=(("PS1", "CH1"), ("PS1", "CH2")),
+        )
         manager = _FakeResourceManager()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
@@ -273,10 +256,7 @@ class MeasurementFactoryTests(unittest.TestCase):
 
     def test_hardware_mode_routes_explicit_supply_channel_tokens(self):
         config = _base_hardware_config()
-        config["power_supply_assignment"] = {
-            "dut_amplifier": {"supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}}},
-            "driver_amplifier": {"supplies": {}},
-        }
+        config["power_supply_assignment"] = _assignment(dut=(("PS1", "CH1"), ("PS1", "CH2")))
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
             path.write_text(json.dumps(config), encoding="utf-8")
@@ -299,10 +279,7 @@ class MeasurementFactoryTests(unittest.TestCase):
 
     def test_hardware_mode_emergency_power_off_uses_configured_channels(self):
         config = _base_hardware_config()
-        config["power_supply_assignment"] = {
-            "dut_amplifier": {"supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}}},
-            "driver_amplifier": {"supplies": {}},
-        }
+        config["power_supply_assignment"] = _assignment(dut=(("PS1", "CH1"), ("PS1", "CH2")))
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
             path.write_text(json.dumps(config), encoding="utf-8")
@@ -320,17 +297,14 @@ class MeasurementFactoryTests(unittest.TestCase):
             self.assertIn(("write", ":OUTPut CH1,OFF"), commands)
             self.assertEqual(port.close_all(close_rf=True), [])
 
-    def test_emergency_power_off_order_follows_roles_not_configuration_order(self):
-        """通道在配置里的书写顺序不影响急停顺序：先漏极后栅极。"""
+    def test_emergency_power_off_order_is_the_reverse_of_the_power_plan(self):
+        """通道在配置里的书写顺序不影响急停顺序：按上电计划逆序。"""
         config = _base_hardware_config()
         config["instruments"]["power_supplies"]["PS1"]["channels"] = {
             "CH2": {"role": "drain", "voltage": {"value": 28.0}, "current": {"value": 2.0}},
             "CH1": {"role": "gate", "voltage": {"value": 2.8}, "current": {"value": 0.1}},
         }
-        config["power_supply_assignment"] = {
-            "dut_amplifier": {"supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}}},
-            "driver_amplifier": {"supplies": {}},
-        }
+        config["power_supply_assignment"] = _assignment(dut=(("PS1", "CH1"), ("PS1", "CH2")))
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
             path.write_text(json.dumps(config), encoding="utf-8")
@@ -351,10 +325,7 @@ class MeasurementFactoryTests(unittest.TestCase):
         config["instruments"]["power_supplies"]["PS1"]["channels"]["CH3"] = {
             "voltage": {"value": 0.0}, "current": {"value": 0.0}
         }
-        config["power_supply_assignment"] = {
-            "dut_amplifier": {"supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}}},
-            "driver_amplifier": {"supplies": {}},
-        }
+        config["power_supply_assignment"] = _assignment(dut=(("PS1", "CH1"), ("PS1", "CH2")))
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
             path.write_text(json.dumps(config), encoding="utf-8")
@@ -501,10 +472,7 @@ class _WrongModelResource(_FakeResource):
 
 def _hardware_config_path(directory):
     config = _base_hardware_config()
-    config["power_supply_assignment"] = {
-        "dut_amplifier": {"supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}}},
-        "driver_amplifier": {"supplies": {}},
-    }
+    config["power_supply_assignment"] = _assignment(dut=(("PS1", "CH1"), ("PS1", "CH2")))
     path = Path(directory) / "config.json"
     path.write_text(json.dumps(config), encoding="utf-8")
     return str(path)
@@ -515,10 +483,7 @@ class ConnectionErrorClassificationTests(unittest.TestCase):
 
     def test_unreachable_instrument_is_reported_as_device_connection_error(self):
         config = _base_hardware_config()
-        config["power_supply_assignment"] = {
-            "dut_amplifier": {"supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}}},
-            "driver_amplifier": {"supplies": {}},
-        }
+        config["power_supply_assignment"] = _assignment(dut=(("PS1", "CH1"), ("PS1", "CH2")))
         manager = _FakeResourceManager()
 
         def fail_open(address):

@@ -254,7 +254,6 @@ class InstrumentSetupPageTestCase(unittest.TestCase):
                 page.device_bindings
             )
         )
-        page.pa_unit_count_changed.connect(power_page.set_pa_unit_count)
         session = ConfigurationSession(page)
         connection = InstrumentSetupPage(session, scanner_factory=scanner_factory)
         page.discovery_message.connect(connection.log_message.emit)

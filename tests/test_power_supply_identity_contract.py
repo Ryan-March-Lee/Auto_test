@@ -477,9 +477,11 @@ class ConfigContractTests(unittest.TestCase):
         for slot in POWER_SUPPLY_SLOTS:
             self.assertNotIn(slot, supplies, "迁移结果不能保留旧槽位键")
         self.assertEqual(config["schema_version"], "1.1")
-        carrier = config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]
-        self.assertIsNone(carrier["supply_id"], "只有地址的旧电源必须留成未绑定引用")
-        self.assertEqual(carrier["channel"], ["CH1", "CH2"], "通道列表要保留，参数由迁移摘要给出")
+        dut = config["power_supply_assignment"]["dut_amplifier"]
+        self.assertEqual(
+            set(dut), {"power_plan"}, "迁移结果只保留上电计划，不再留未绑定引用"
+        )
+        self.assertEqual(dut["power_plan"]["power_sequence"], [])
         self.assertEqual(config["run_mapping"]["instruments"]["power_supplies"], {})
         self.assertNotIn("dut_power_channels", config["run_mapping"])
         self.assertEqual(
@@ -630,19 +632,24 @@ class MigrationSummaryContractTests(unittest.TestCase):
                 self.assertIsNone(entry["new_key"], "地址命中也不能据此自动迁移")
 
     def test_every_unbound_reference_is_reported_in_the_summary(self):
-        config = _load(MIGRATED_CONFIG)
-        reported = {
+        """旧分配（含未落地的引用）必须全部出现在摘要里，不能静默消失。"""
+        summary_assignments = {
             (assignment["group"], assignment["role_key"])
             for entry in _load(SUMMARY_FIXTURE)["entries"]
             for assignment in entry["assignments"]
         }
-        actual = {
+        legacy = _load("config_slots_legacy.json")["power_supply_assignment"] or {}
+        legacy_assignments = {
             (group_name, role_key)
-            for group_name, group in (config["power_supply_assignment"] or {}).items()
-            for role_key, reference in (group or {}).get("supplies", {}).items()
-            if reference.get("supply_id") is None
+            for group_name, group in legacy.items()
+            for role_key in (group or {}).get("supplies", {})
         }
-        self.assertEqual(actual, reported, "未绑定的引用必须在摘要里交代清楚，不能静默消失")
+        self.assertLessEqual(
+            legacy_assignments,
+            summary_assignments,
+            "未绑定的引用必须在摘要里交代清楚，不能静默消失",
+        )
+        self.assertIn(("dut_amplifier", "carrier"), summary_assignments)
 
 
 class RunSnapshotContractTests(unittest.TestCase):

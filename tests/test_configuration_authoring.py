@@ -207,9 +207,6 @@ class ConfigurationAuthoringTests(unittest.TestCase):
     def test_unknown_channel_is_kept_as_a_physical_route(self):
         """authoring 不按通道名猜角色；未知通道按用户写的物理路由原样进入正式段。"""
         flat = _flat_config()
-        flat["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]["channel"] = [
-            "CH99"
-        ]
         flat["power_supply_assignment"]["dut_amplifier"]["power_plan"] = {
             "power_sequence": [{"supply_id": "DP8B1519", "channel": "CH99"}],
             "inter_channel_delay_s": 0.0,
@@ -351,10 +348,6 @@ class ConfigurationAuthoringTests(unittest.TestCase):
         """DUT 的漏极与其它通道可以来自不同电源，顺序由用户计划决定。"""
         flat = _flat_config()
         flat["instruments"]["power_supplies"]["DP8B0885"] = _second_supply()
-        flat["power_supply_assignment"]["dut_amplifier"]["supplies"] = {
-            "carrier": {"supply_id": "DP8B1519", "channel": ["CH1"]},
-            "peaking": {"supply_id": "DP8B0885", "channel": ["CH2"]},
-        }
         flat["power_supply_assignment"]["dut_amplifier"]["power_plan"] = {
             "power_sequence": [
                 {"supply_id": "DP8B0885", "channel": "CH2"},
@@ -373,7 +366,7 @@ class ConfigurationAuthoringTests(unittest.TestCase):
                 (item["supply_id"], item["channel"])
                 for item in document["test_plan"]["dut"]["channel_settings"]
             ],
-            [("DP8B1519", "CH1"), ("DP8B0885", "CH2")],
+            [("DP8B0885", "CH2"), ("DP8B1519", "CH1")],
         )
         self.assertEqual(
             document["run_mapping"]["dut_power_plan"]["power_sequence"],
@@ -385,6 +378,57 @@ class ConfigurationAuthoringTests(unittest.TestCase):
         self.assertEqual(
             sorted(document["run_mapping"]["instruments"]["power_supplies"]),
             ["DP8B0885", "DP8B1519"],
+        )
+        self.assertTrue(validate_run_configuration(self._configuration(document)).valid)
+
+    def test_one_supply_may_power_driver_and_dut_on_different_channels(self):
+        """同一台电源 CH1→驱放、CH2→DUT：计划路由唯一来源，不再需要固定分配。"""
+        flat = _flat_config()
+        flat["driver_mode"] = {"enabled": True, "power_source": "dc_supply"}
+        flat["power_supply_assignment"]["driver_amplifier"]["power_plan"] = {
+            "power_sequence": [{"supply_id": "DP8B1519", "channel": "CH1"}],
+            "inter_channel_delay_s": 0.0,
+        }
+        flat["power_supply_assignment"]["dut_amplifier"]["power_plan"] = {
+            "power_sequence": [{"supply_id": "DP8B1519", "channel": "CH2"}],
+            "inter_channel_delay_s": 1.0,
+        }
+        flat["dut_config"]["drain_channel"] = {
+            "supply_id": "DP8B1519",
+            "channel": "CH2",
+        }
+
+        document = author_official_configuration(flat)
+
+        self.assertEqual(
+            document["run_mapping"]["driver_mode"]["power_plan"]["power_sequence"],
+            [{"supply_id": "DP8B1519", "channel": "CH1"}],
+        )
+        self.assertEqual(
+            document["run_mapping"]["dut_power_plan"]["power_sequence"],
+            [{"supply_id": "DP8B1519", "channel": "CH2"}],
+        )
+        self.assertEqual(
+            [
+                (item["supply_id"], item["channel"])
+                for item in document["test_plan"]["driver_mode"]["channel_settings"]
+            ],
+            [("DP8B1519", "CH1")],
+        )
+        self.assertEqual(
+            [
+                (item["supply_id"], item["channel"])
+                for item in document["test_plan"]["dut"]["channel_settings"]
+            ],
+            [("DP8B1519", "CH2")],
+        )
+        self.assertEqual(
+            sorted(document["run_mapping"]["instruments"]["power_supplies"]),
+            ["DP8B1519"],
+            "同一台电源只登记一次",
+        )
+        self.assertNotIn(
+            "supplies", document["power_supply_assignment"]["dut_amplifier"]
         )
         self.assertTrue(validate_run_configuration(self._configuration(document)).valid)
 
@@ -416,7 +460,11 @@ class ConfigurationAuthoringTests(unittest.TestCase):
 
     def test_unassigned_supplies_are_not_registered_as_the_run_supply(self):
         flat = _flat_config()
-        flat["power_supply_assignment"]["dut_amplifier"]["supplies"] = {}
+        flat["power_supply_assignment"]["dut_amplifier"]["power_plan"] = {
+            "power_sequence": [],
+            "inter_channel_delay_s": 0.0,
+        }
+        flat["dut_config"].pop("drain_channel", None)
         document = author_official_configuration(flat)
         self.assertEqual(document["run_mapping"]["instruments"]["power_supplies"], {})
 
@@ -427,19 +475,19 @@ class ConfigurationAuthoringTests(unittest.TestCase):
             RunResourceMapping.from_dict(document["run_mapping"]),
         )
         paths = {issue.path for issue in validate_run_configuration(configuration).errors}
-        self.assertIn("instruments.power_supplies", paths)
+        self.assertIn("run_mapping.instruments.power_supplies", paths)
 
-    def test_unbound_reference_never_becomes_a_power_supply(self):
-        """``supply_id: null`` 表示“引用了未绑定的电源”，不能凭空写进快照。"""
+    def test_route_without_a_supply_never_becomes_a_power_supply(self):
+        """计划里不可解析的路由不会凭空写进快照。"""
         flat = _flat_config()
-        flat["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"] = {
-            "supply_id": None,
-            "channel": ["CH1"],
+        flat["power_supply_assignment"]["dut_amplifier"]["power_plan"] = {
+            "power_sequence": [{"supply_id": None, "channel": "CH1"}],
+            "inter_channel_delay_s": 0.0,
         }
+        flat["dut_config"].pop("drain_channel", None)
         document = author_official_configuration(flat)
 
         self.assertEqual(document["run_mapping"]["instruments"]["power_supplies"], {})
-        # 未选择电源的分配不能凭空变成某台电源的路由。
         self.assertEqual(document["test_plan"]["dut"]["channel_settings"], [])
         paths = {
             issue.path
@@ -447,15 +495,18 @@ class ConfigurationAuthoringTests(unittest.TestCase):
                 self._configuration(document)
             ).errors
         }
-        self.assertIn("instruments.power_supplies", paths)
+        self.assertIn("run_mapping.instruments.power_supplies", paths)
 
     def test_a_channel_used_twice_has_one_settings_entry(self):
-        """``channel_settings`` 是集合：同一物理路由只写一条，重复分配由编辑校验报告。"""
+        """``channel_settings`` 是集合：同一物理路由只写一条，重复路由由编辑校验报告。"""
         flat = _flat_config()
-        flat["power_supply_assignment"]["dut_amplifier"]["supplies"]["peaking"] = {
-            "supply_id": "DP8B1519",
-            "channel": ["CH1"],
-        }
+        flat["power_supply_assignment"]["dut_amplifier"]["power_plan"][
+            "power_sequence"
+        ] = [
+            {"supply_id": "DP8B1519", "channel": "CH1"},
+            {"supply_id": "DP8B1519", "channel": "CH1"},
+            {"supply_id": "DP8B1519", "channel": "CH2"},
+        ]
         document = author_official_configuration(flat)
 
         routes = [
@@ -659,42 +710,12 @@ class ConfigurationAuthoringServiceTests(unittest.TestCase):
 
         channels = document["instruments"]["power_supplies"]["DP8B1519"]["channels"]
         self.assertNotIn("role", channels["CH1"])
-        self.assertNotIn(
-            "name",
-            document["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"],
-        )
+        dut_block = document["power_supply_assignment"]["dut_amplifier"]
+        self.assertNotIn("supplies", dut_block)
+        self.assertNotIn("power_supply_count", dut_block)
 
-    def test_conflicting_legacy_name_is_refused(self):
-        """``name`` 是过渡别名：与 ``supply_id`` 不同值时不能先剥离再悄悄保存。"""
-        flat = _flat_config()
-        entry = flat["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]
-        entry["name"] = "DP8B0885"
-
-        with self.assertRaises(ConfigurationAuthoringError) as caught:
-            author_official_configuration(flat)
-
-        self.assertEqual(
-            caught.exception.path,
-            "power_supply_assignment.dut_amplifier.supplies.carrier.name",
-        )
-
-    def test_legacy_name_without_supply_id_is_refused(self):
-        """1.1 的引用字段只有 ``supply_id``；只有 ``name`` 的文件必须交给迁移器。"""
-        flat = _flat_config()
-        entry = flat["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]
-        entry.pop("supply_id")
-        entry["name"] = "DP8B1519"
-
-        with self.assertRaises(ConfigurationAuthoringError) as caught:
-            author_official_configuration(flat)
-
-        self.assertEqual(
-            caught.exception.path,
-            "power_supply_assignment.dut_amplifier.supplies.carrier.name",
-        )
-
-    def test_explicit_unbound_reference_is_not_promoted_from_name(self):
-        """``supply_id: null`` 是明确的“未绑定”，残留 ``name`` 不能变成一台电源。"""
+    def test_legacy_assignment_supplies_are_dropped(self):
+        """旧编辑段的固定电源分配表只用于读取，保存后只保留上电计划。"""
         flat = _flat_config()
         entry = flat["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]
         entry["supply_id"] = None
@@ -702,11 +723,15 @@ class ConfigurationAuthoringServiceTests(unittest.TestCase):
 
         document = author_official_configuration(flat)
 
-        saved = document["power_supply_assignment"]["dut_amplifier"]["supplies"][
-            "carrier"
-        ]
-        self.assertIsNone(saved["supply_id"])
-        self.assertNotIn("name", saved)
+        dut_block = document["power_supply_assignment"]["dut_amplifier"]
+        self.assertNotIn("supplies", dut_block)
+        self.assertEqual(
+            document["run_mapping"]["dut_power_plan"]["power_sequence"],
+            [
+                {"supply_id": "DP8B1519", "channel": "CH1"},
+                {"supply_id": "DP8B1519", "channel": "CH2"},
+            ],
+        )
 
     def test_versionless_clean_draft_is_still_saveable(self):
         flat = _flat_config()
@@ -878,21 +903,25 @@ class AuthoringDocumentValidationTests(unittest.TestCase):
         )
         self.assertTrue(result.valid, result.messages())
 
-    def test_plan_must_cover_every_assigned_channel(self):
+    def test_plan_is_independent_of_legacy_supplies(self):
         document = self._plan_document()
+        document["dut_config"]["drain_channel"] = {
+            "supply_id": "DP8B1519",
+            "channel": "CH1",
+        }
         document["power_supply_assignment"]["dut_amplifier"]["power_plan"][
             "power_sequence"
         ] = [{"supply_id": "DP8B1519", "channel": "CH1"}]
+        # 旧编辑段的固定分配表与计划不再需要相等。
+        document["power_supply_assignment"]["dut_amplifier"]["supplies"] = {
+            "carrier": {"supply_id": "DP8B1519", "channel": ["CH1", "CH2"]}
+        }
 
         result = ConfigurationAuthoringService().validate_document(
             ConfigurationEditingDocument.from_mapping(document)
         )
 
-        self.assertIn(
-            "power_supply_assignment.dut_amplifier.power_plan.power_sequence",
-            {issue.path for issue in result.errors},
-        )
-        self.assertIn("configuration.power_plan", {issue.code for issue in result.errors})
+        self.assertTrue(result.valid, result.messages())
 
     def test_plan_route_must_reference_a_configured_channel(self):
         document = self._plan_document()
@@ -976,7 +1005,7 @@ class AuthoringDocumentValidationTests(unittest.TestCase):
         )
         self.assertTrue(
             any(
-                issue.path == "dut_config.drain_channel" and "DUT 已分配" in issue.message
+                issue.path == "dut_config.drain_channel" and "上电顺序" in issue.message
                 for issue in result.errors
             ),
             [f"{issue.path}: {issue.message}" for issue in result.errors],
@@ -1020,26 +1049,28 @@ class AuthoringDocumentValidationTests(unittest.TestCase):
             [issue.message for issue in result.errors],
         )
 
-    def test_unselected_assignment_reference_is_reported(self):
-        def clear_reference(flat):
-            flat["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"][
-                "supply_id"
-            ] = None
+    def test_empty_dut_plan_is_reported_by_run_validation(self):
+        document = self._plan_document()
+        document["dut_config"].pop("drain_channel", None)
+        document["power_supply_assignment"]["dut_amplifier"]["power_plan"] = {
+            "power_sequence": [],
+            "inter_channel_delay_s": 0.0,
+        }
 
         result = ConfigurationAuthoringService().validate_document(
-            ConfigurationEditingDocument.from_mapping(self._document_with(clear_reference))
+            ConfigurationEditingDocument.from_mapping(document)
         )
 
-        messages = [issue.message for issue in result.errors]
         self.assertIn(
-            "DUT(carrier) 未选择电源：请先在“仪表配置”页应用电源设备", messages
+            "run_mapping.dut_power_plan.power_sequence",
+            {issue.path for issue in result.errors},
         )
         self.assertIn(
-            "configuration.power_assignment_references",
+            "configuration.run_validation",
             {issue.code for issue in result.errors},
         )
 
-    def test_assignment_reference_to_an_unapplied_supply_is_reported(self):
+    def test_plan_route_to_an_unapplied_supply_is_reported(self):
         def drop_supply(flat):
             flat["instruments"]["power_supplies"]["DP8B1519"].pop("address", None)
 
@@ -1047,8 +1078,11 @@ class AuthoringDocumentValidationTests(unittest.TestCase):
             ConfigurationEditingDocument.from_mapping(self._document_with(drop_supply))
         )
 
-        self.assertIn(
-            "DUT(carrier) → DP8B1519 引用的电源没有已应用的设备，不能保存或运行",
+        self.assertTrue(
+            any(
+                "上电计划引用的电源 'DP8B1519' 没有已应用的设备" in issue.message
+                for issue in result.errors
+            ),
             [issue.message for issue in result.errors],
         )
 

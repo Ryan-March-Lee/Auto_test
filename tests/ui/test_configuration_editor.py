@@ -43,7 +43,6 @@ class _Page:
 class _EditorPage(_Page):
     """装配器需要的完整页面能力集合（信号 + 状态转发）。"""
 
-    pa_unit_count_changed = _Signals()
     device_selection_finished = _Signals()
     validation_failed = _Signals()
     driver_mode_changed = _Signals()
@@ -58,9 +57,6 @@ class _EditorPage(_Page):
         return None
 
     def set_finalizing(self, _active):
-        return None
-
-    def set_pa_unit_count(self, _count):
         return None
 
     def apply_device_bindings(self, _bindings):

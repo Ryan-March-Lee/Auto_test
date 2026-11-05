@@ -6,7 +6,7 @@
 
 本页只做一件事：扫描网段、勾选本次测试使用的仪器，并在点“下一步”时把所选设备的
 当前地址与设备身份（完整设备码）写进配置里的设备绑定。写入边界与派生界面（电源标签页、
-电源分配可选项、读入时的坏绑定提示）都归
+计划候选、读入时的坏绑定提示）都归
 :class:`presentation.qt.configuration_page.ConfigurationPage`：本页只通过窄接口
 :class:`application.ports.device_binding.DeviceBindingPort` 读取只读配置视图并提交
 :class:`application.device_binding.ApplyDeviceSelectionRequest`，由配置会话协调器交给

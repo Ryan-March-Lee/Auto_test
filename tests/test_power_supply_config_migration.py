@@ -45,7 +45,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from domain.configuration.rules import validate_config
+from domain.configuration.types import ConfigIssue, ConfigValidationResult
 from infrastructure.config.legacy_power_supply_migration import (
     CHANNEL_SETTINGS_MAPPED,
     CHANNEL_SETTINGS_UNMAPPED,
@@ -231,13 +231,14 @@ class MigrationFixtureTests(unittest.TestCase):
                 self.assertNotIn("address", supply)
         self.assertEqual(list(supplies), [LABEL_ONE, LABEL_THREE], "认不出的旧条目不成条目")
 
-    def test_dut_assignment_becomes_an_explicit_unbound_reference(self):
-        carrier = self.result.config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]
-        self.assertIsNone(carrier["supply_id"])
-        self.assertNotIn("name", carrier, "认不出电源时不能留着旧槽位名冒充引用")
-        self.assertEqual(carrier["channel"], ["CH1", "CH2"])
+    def test_dut_assignment_becomes_a_plan_only_group(self):
+        dut = self.result.config["power_supply_assignment"]["dut_amplifier"]
+        self.assertEqual(set(dut), {"power_plan"}, "旧 supplies/power_supply_count 不进入 1.1")
+        self.assertEqual(dut["power_plan"]["power_sequence"], [])
         self.assertEqual(
-            self.result.config["power_supply_assignment"]["dut_amplifier"]["power_supply_count"], 0
+            self.result.unresolved_references,
+            ("dut_amplifier.carrier",),
+            "认不出电源的旧引用记在迁移结果里，而不是写进新文档",
         )
 
     def test_legacy_slot_bindings_are_dropped_and_the_collection_kept(self):
@@ -279,12 +280,14 @@ class MigrationFixtureTests(unittest.TestCase):
         unresolved = {old_key for old_key, _reason in self.result.unresolved}
         self.assertEqual(unresolved, {"PS1", "PS2"})
 
-    def test_partial_result_is_still_self_consistent_but_not_runnable(self):
-        """迁移结果自身可读（可继续被配置页打开），但运行前校验会要求补全引用。"""
-        hardware = validate_config(self.result.config)
+    def test_partial_result_is_saveable_but_not_runnable(self):
+        """迁移结果自身可读（可继续被配置页打开），但运行前校验会要求补全计划与引用。"""
+        hardware = validate_official_config(self.result.config)
         self.assertFalse(hardware.valid)
-        paths = {issue.path for issue in hardware.errors}
-        self.assertIn("power_supply_assignment.dut_amplifier.supplies.carrier.supply_id", paths)
+        self.assertIn(
+            "run_mapping.dut_power_plan.power_sequence",
+            {issue.path for issue in hardware.errors},
+        )
 
     def test_source_objects_are_not_modified(self):
         config_before = copy.deepcopy(self.config)
@@ -323,19 +326,76 @@ class MigrationFixtureTests(unittest.TestCase):
         )
         self.assertNotIn("legacy_address", json.dumps(again.config, ensure_ascii=False))
 
-    def test_partially_migrated_document_still_reports_what_is_missing(self):
-        """把半成品再迁移一次也不会“看起来完整”：未落地的引用仍然被点出来，且不允许写盘。
+    def test_clean_11_document_with_empty_plans_is_not_writable_on_remigration(self):
+        """已删除旧 ``supplies`` 的 1.1 文档不能仅凭“看起来干净”断言迁移完整。
+
+        这份文档已经没有任何“还缺什么”的旧引用可读；若把空计划当成“完整迁移”，
+        一份缺少来源的半成品就会被二次迁移悄悄提升为可写盘。因此计划为空时必须继续
+        要求人工确认，同时原样返回配置，不清空任何已确认内容。
+        """
+        again = migrate_legacy_power_supplies(self.result.config, self.registry)
+
+        self.assertFalse(again.writable)
+        self.assertEqual(
+            again.unconfirmed_plans,
+            ("power_supply_assignment.dut_amplifier.power_plan",),
+        )
+        self.assertIn("仍待确认的上电计划", again.summary_text())
+        self.assertEqual(
+            again.config["power_supply_assignment"],
+            self.result.config["power_supply_assignment"],
+            "保守判定不能改写计划",
+        )
+
+    def test_remigration_keeps_confirmed_plans_and_stays_writable(self):
+        """用户已确认顺序的 1.1 文档仍是可写盘的幂等路径。"""
+        config = copy.deepcopy(self.result.config)
+        config["driver_mode"] = {"enabled": True, "power_source": "dc_supply"}
+        config["power_supply_assignment"]["dut_amplifier"]["power_plan"] = {
+            "power_sequence": [{"supply_id": LABEL_ONE, "channel": "CH1"}],
+            "inter_channel_delay_s": 0.5,
+        }
+        config["power_supply_assignment"]["driver_amplifier"]["power_plan"] = {
+            "power_sequence": [{"supply_id": LABEL_THREE, "channel": "CH2"}],
+            "inter_channel_delay_s": 0.0,
+        }
+
+        again = migrate_legacy_power_supplies(config, self.registry)
+
+        self.assertTrue(again.writable)
+        self.assertEqual(again.unconfirmed_plans, ())
+        self.assertEqual(
+            again.config["power_supply_assignment"],
+            config["power_supply_assignment"],
+            "二次迁移不会清空已确认的计划",
+        )
+
+    def test_partial_result_records_the_unresolved_reference_in_its_summary(self):
+        """半成品不允许写盘：未落地的引用记在迁移结果与摘要里，而不是写进新文档。
 
         认不出的旧条目的通道参数只存在于摘要里（``config_slots_migrated_partial.json`` 里
         已经没有 ``PS1``/``PS2``）。因此半成品永远不能当配置保存——这正是
         ``save_migrated_configuration`` 拒绝未决结果的原因；参数靠
-        ``save_migration_summary`` 写的摘要文件留存。
+        ``save_migration_summary`` 写的摘要文件留存。再迁移一次时，未落地引用已经不在
+        文档里（新文档只有空计划），补全依据仍是上一轮的摘要；写盘门槛因此改为要求
+        计划先被确认，而不是把“看不到旧引用”当成完整迁移。
         """
+        self.assertFalse(self.result.writable)
+        self.assertEqual(self.result.unresolved_references, ("dut_amplifier.carrier",))
+        self.assertIn("dut_amplifier.carrier", self.result.summary_text())
+
         again = migrate_legacy_power_supplies(self.result.config, self.registry)
-        self.assertEqual(again.pending, ())
-        self.assertEqual(again.unresolved_references, ("dut_amplifier.carrier",))
-        self.assertFalse(again.writable, "引用没落地就不是完整迁移")
-        self.assertIn("dut_amplifier.carrier", again.summary_text())
+        self.assertEqual(again.unresolved_references, (), "新文档不再保存旧引用")
+        self.assertFalse(again.writable, "缺少迁移来源的 1.1 文档不能自动变成可写盘")
+        self.assertIn(
+            "power_supply_assignment.dut_amplifier.power_plan",
+            again.unconfirmed_plans,
+        )
+        self.assertEqual(
+            again.config["power_supply_assignment"],
+            self.result.config["power_supply_assignment"],
+            "重复迁移不会把空计划变成别的形状",
+        )
 
 
 class AddressIsNotIdentityTests(unittest.TestCase):
@@ -491,15 +551,19 @@ class ReferenceRewriteTests(unittest.TestCase):
         supplies["PS3"]["channels"] = copy.deepcopy(supplies["PS1"]["channels"])
         return config
 
-    def test_references_to_migrated_supplies_are_rewritten_with_the_alias(self):
+    def test_references_to_migrated_supplies_become_plan_candidates(self):
         config = self._config()
         config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]["name"] = "PS3"
         result = migrate_legacy_power_supplies(config, self.registry)
-        carrier = result.config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]
-        self.assertEqual(carrier["supply_id"], LABEL_ONE)
-        self.assertNotIn("name", carrier, "过渡别名不进入 1.1 输出")
         self.assertEqual(
-            result.config["power_supply_assignment"]["dut_amplifier"]["power_supply_count"], 1
+            dict(result.plan_candidates)["dut_amplifier"],
+            ((LABEL_ONE, "CH1"), (LABEL_ONE, "CH2")),
+            "迁移后引用指向新的 supply_id，候选路由供电源页确认顺序",
+        )
+        self.assertEqual(
+            set(result.config["power_supply_assignment"]["dut_amplifier"]),
+            {"power_plan"},
+            "旧 supplies 字段不进入 1.1 文档",
         )
         self.assertEqual(
             result.config["dut_config"]["power_supply_count"],
@@ -507,7 +571,7 @@ class ReferenceRewriteTests(unittest.TestCase):
             "dut_config 是测试方案参数，迁移不改测试方案",
         )
 
-    def test_run_mapping_follows_the_references(self):
+    def test_run_mapping_stays_empty_until_the_plan_is_confirmed(self):
         config = self._config()
         config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]["name"] = "PS3"
         config["device_bindings"]["PS3"] = {
@@ -526,15 +590,11 @@ class ReferenceRewriteTests(unittest.TestCase):
         mapping = result.config["run_mapping"]
         self.assertNotIn("power_supply", mapping["instruments"])
         self.assertNotIn("dut_power_channels", mapping)
-        supplies = mapping["instruments"]["power_supplies"]
-        self.assertEqual(list(supplies), [LABEL_ONE])
-        entry = supplies[LABEL_ONE]
-        self.assertEqual(entry["label"], LABEL_ONE)
-        self.assertEqual(entry["full_code"], "DP8B214901519")
-        self.assertEqual(entry["device_key"], SUPPLY_ONE)
-        # 快照里的地址来自设备绑定（重新扫描确认过的连接目标）；旧条目自己那个未经确认的
-        # 地址不会出现在这里。
-        self.assertEqual(entry["visa_address"], "TCPIP0::192.168.1.102::inst0::INSTR")
+        self.assertEqual(
+            mapping["instruments"]["power_supplies"],
+            {},
+            "运行快照只登记计划里实际用到的电源；空计划没有快照条目",
+        )
         self.assertEqual(
             mapping["dut_power_plan"],
             {"power_sequence": [], "inter_channel_delay_s": 0.0},
@@ -542,29 +602,13 @@ class ReferenceRewriteTests(unittest.TestCase):
         )
         self.assertEqual(
             result.config["test_plan"]["dut"]["channel_settings"],
-            [
-                {
-                    "supply_id": LABEL_ONE,
-                    "channel": "CH1",
-                    "voltage": 2.8,
-                    "current": 0.1,
-                    "voltage_protection": 1.0,
-                    "current_protection": 0.0,
-                    "unit_voltage": "V",
-                    "unit_current": "A",
-                },
-                {
-                    "supply_id": LABEL_ONE,
-                    "channel": "CH2",
-                    "voltage": 28.0,
-                    "current": 2.0,
-                    "voltage_protection": 30.0,
-                    "current_protection": 2.5,
-                    "unit_voltage": "V",
-                    "unit_current": "A",
-                },
-            ],
-            "旧角色参数没有唯一配对时，正式段仍按编辑段生成通道参数（摘要标记 unmapped）",
+            [],
+            "正式段按空计划生成，参数只留在迁移摘要里待用户确认",
+        )
+        # 候选路由仍由迁移结果给出，供用户在电源页确认顺序后重新生成正式段。
+        self.assertEqual(
+            dict(result.plan_candidates)["dut_amplifier"],
+            ((LABEL_ONE, "CH1"), (LABEL_ONE, "CH2")),
         )
 
     def test_unconfirmed_supply_keeps_no_address_or_snapshot_entry(self):
@@ -575,10 +619,13 @@ class ReferenceRewriteTests(unittest.TestCase):
         self.assertNotIn("address", supply, "未确认的旧地址不能成为连接目标")
         self.assertEqual(result.config["run_mapping"]["instruments"]["power_supplies"], {})
         self.assertEqual(
-            result.config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"][
-                "supply_id"
-            ],
-            None,
+            result.unresolved_references,
+            ("dut_amplifier.carrier",),
+            "认不出电源的旧引用只记在迁移结果里",
+        )
+        self.assertEqual(
+            set(result.config["power_supply_assignment"]["dut_amplifier"]),
+            {"power_plan"},
         )
 
     def test_trusted_binding_supplies_the_address_and_others_do_not(self):
@@ -609,15 +656,22 @@ class ReferenceRewriteTests(unittest.TestCase):
         self.assertEqual(list(bindings), [LABEL_ONE])
         self.assertEqual(bindings[LABEL_ONE]["device_key"], SUPPLY_ONE)
 
-    def test_existing_new_style_references_are_kept(self):
+    def test_existing_new_style_references_become_plan_candidates(self):
         config = self._config()
         config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"] = {
             "supply_id": "SOME-SUPPLY",
             "channel": ["CH1"],
         }
         result = migrate_legacy_power_supplies(config, self.registry)
-        carrier = result.config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]
-        self.assertEqual(carrier, {"supply_id": "SOME-SUPPLY", "channel": ["CH1"]})
+        self.assertEqual(
+            dict(result.plan_candidates)["dut_amplifier"],
+            (("SOME-SUPPLY", "CH1"),),
+            "已经写成 supply_id 的引用原样成为候选路由",
+        )
+        self.assertEqual(
+            set(result.config["power_supply_assignment"]["dut_amplifier"]),
+            {"power_plan"},
+        )
 
 
 class PowerPlanAndDrainMigrationTests(unittest.TestCase):
@@ -659,13 +713,15 @@ class PowerPlanAndDrainMigrationTests(unittest.TestCase):
             "漏极来自明确的旧 drain 角色，不按 CH2 猜",
         )
 
-        settings = result.config["test_plan"]["dut"]["channel_settings"]
+        # 计划为空，正式段不写通道参数；参数映射留在迁移结果里，供电源页确认顺序后写回。
         self.assertEqual(
-            [(item["supply_id"], item["channel"]) for item in settings],
-            [(LABEL_ONE, "CH1"), (LABEL_THREE, "CH2")],
+            result.config["test_plan"]["dut"]["channel_settings"],
+            [],
+            "空计划不生成正式通道参数",
         )
-        self.assertEqual(settings[0]["voltage"], 2.8, "参数取自旧 power_roles")
-        self.assertEqual(settings[1]["current"], 2.0)
+        mapped = dict(mappings["dut_amplifier"].settings)
+        self.assertEqual(mapped[(LABEL_ONE, "CH1")]["voltage"], 2.8, "参数取自旧 power_roles")
+        self.assertEqual(mapped[(LABEL_THREE, "CH2")]["current"], 2.0)
         self.assertEqual(
             result.config["dut_config"]["drain_channel"],
             {"supply_id": LABEL_THREE, "channel": "CH2"},
@@ -818,6 +874,21 @@ class SavingTests(unittest.TestCase):
         self.assertIn("摘要", message, "要告诉操作员参数在哪、下一步怎么做")
         self.assertEqual(self.config_path.read_bytes(), self.original_bytes)
 
+    def test_partial_11_artifact_is_not_redeclared_complete_by_remigration(self):
+        """保存后的部分迁移产物再次迁移时，写盘门槛仍必须保持未决。"""
+        partial = _load(MIGRATED_CONFIG)
+        again = migrate_legacy_power_supplies(partial, _load(LEGACY_REGISTRY))
+        self.assertFalse(again.writable)
+        self.assertIn(
+            "power_supply_assignment.dut_amplifier.power_plan",
+            again.unconfirmed_plans,
+        )
+
+        with self.assertRaises(LegacyConfigMigrationError) as caught:
+            save_migrated_configuration(self.config_path, again)
+        self.assertIn("未确认的上电计划", str(caught.exception))
+        self.assertEqual(self.config_path.read_bytes(), self.original_bytes)
+
     def test_summary_file_keeps_the_unresolved_parameters(self):
         """摘要写成独立文件：认不出的旧条目的通道参数能离开进程，配置本身不动。"""
         result = migrate_legacy_power_supplies(_load(LEGACY_CONFIG), _load(LEGACY_REGISTRY))
@@ -889,16 +960,19 @@ class SavingTests(unittest.TestCase):
         path = self.directory / "two_supplies.json"
         shutil.copyfile(TWO_SUPPLIES_CONFIG, path)
         before = path.read_bytes()
-        config = _load(TWO_SUPPLIES_CONFIG)
-        # 把一组引用指向一台不存在的电源：迁移本身不产生未决项，但校验必然失败。
-        config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]["supply_id"] = (
-            "MISSING"
+        result = migrate_legacy_power_supplies(
+            _load(TWO_SUPPLIES_CONFIG), _load(MIGRATED_REGISTRY)
         )
-        result = migrate_legacy_power_supplies(config, _load(MIGRATED_REGISTRY))
         self.assertTrue(result.writable, "这里要测的是校验器，而不是未决项门槛")
 
+        def invalid(_document):
+            return ConfigValidationResult(
+                errors=[ConfigIssue("error", "dut_config.max_input_power", "MISSING")],
+                warnings=[],
+            )
+
         with self.assertRaises(LegacyConfigMigrationError) as caught:
-            save_migrated_configuration(path, result)
+            save_migrated_configuration(path, result, validator=invalid)
         self.assertIn("MISSING", str(caught.exception))
         self.assertEqual(path.read_bytes(), before)
 

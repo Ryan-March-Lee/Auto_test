@@ -60,7 +60,7 @@ class InputFactoryTests(unittest.TestCase):
         self.assertEqual(widget.currentIndex(), 0)
 
     def test_combo_box_can_start_empty_for_choices_filled_later(self):
-        """电源分配下拉框先建空框，选项由 ``apply_power_choice`` 填入。"""
+        """漏极选择这类下拉框先建空框，选项由回填/候选刷新填入。"""
         widget = combo_box()
 
         self.assertEqual(widget.count(), 0)

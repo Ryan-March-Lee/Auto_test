@@ -16,12 +16,11 @@ from application.configuration_draft import (
     ConfigurationDraftResult,
     DeviceBindingDraft,
     DeviceBindingsDraft,
-    PowerAssignmentDraft,
     PowerChannelDraft,
     PowerSupplyDraft,
 )
 from application.configuration_editing import ValidationIssue, ValidationResult
-from application.dto.amplifier_inputs import PowerSweep, SupplyChannel
+from application.dto.amplifier_inputs import PowerPlan, PowerSweep, SupplyChannel
 from domain.measurement.values import Decibels, Frequency, PowerDbm
 
 
@@ -112,24 +111,19 @@ def _document():
         },
         "power_supply_assignment": {
             "driver_amplifier": {
-                "power_supply_count": 1,
-                "supplies": {
-                    "main": {
-                        "supply_id": "PSA",
-                        "name": "PSA",
-                        "channel": ["CH1"],
-                    }
-                },
+                "power_plan": {
+                    "power_sequence": [{"supply_id": "PSA", "channel": "CH1"}],
+                    "inter_channel_delay_s": 0.0,
+                }
             },
             "dut_amplifier": {
-                "power_supply_count": 1,
-                "supplies": {
-                    "carrier": {
-                        "supply_id": "PSA",
-                        "name": "PSA",
-                        "channel": ["CH1", "CH2"],
-                    }
-                },
+                "power_plan": {
+                    "power_sequence": [
+                        {"supply_id": "PSA", "channel": "CH1"},
+                        {"supply_id": "PSA", "channel": "CH2"},
+                    ],
+                    "inter_channel_delay_s": 0.0,
+                }
             },
         },
         "device_bindings": {
@@ -170,10 +164,11 @@ class ConfigurationDraftModelTests(unittest.TestCase):
             driver_enabled=True,
             driver_power_source="dc_supply",
             dut_supply_count=1,
-            dut_assignments=(
-                PowerAssignmentDraft(
-                    slot="carrier", supply_id="PSA", channels=("CH1", "CH2")
-                ),
+            dut_power_plan=PowerPlan(
+                power_sequence=(
+                    SupplyChannel("PSA", "CH1"),
+                    SupplyChannel("PSA", "CH2"),
+                )
             ),
             power_supplies=(
                 PowerSupplyDraft(
@@ -193,7 +188,7 @@ class ConfigurationDraftModelTests(unittest.TestCase):
         self.assertEqual(copy.deepcopy(draft), draft)
         self.assertEqual(replace(draft, driver_enabled=False).driver_enabled, False)
         self.assertIsInstance(draft.frequencies, tuple)
-        self.assertIsInstance(draft.dut_assignments, tuple)
+        self.assertIsInstance(draft.dut_power_plan, PowerPlan)
         self.assertEqual(
             draft.dut_channels,
             (SupplyChannel("PSA", "CH1"), SupplyChannel("PSA", "CH2")),
@@ -214,13 +209,6 @@ class ConfigurationDraftModelTests(unittest.TestCase):
                 power_supplies=(
                     PowerSupplyDraft("PSA"),
                     PowerSupplyDraft("PSA"),
-                )
-            )
-        with self.assertRaises(ValueError):
-            ConfigurationDraft(
-                dut_assignments=(
-                    PowerAssignmentDraft("carrier"),
-                    PowerAssignmentDraft("carrier"),
                 )
             )
         with self.assertRaises(ValueError):
@@ -299,16 +287,19 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
             {"max_input_power": 33.5, "power_supply_count": 1},
         )
         self.assertEqual(
-            document["power_supply_assignment"]["dut_amplifier"]["supplies"][
-                "carrier"
+            document["power_supply_assignment"]["dut_amplifier"]["power_plan"][
+                "power_sequence"
             ],
-            {"supply_id": "PSA", "channel": ["CH1", "CH2"]},
+            [
+                {"supply_id": "PSA", "channel": "CH1"},
+                {"supply_id": "PSA", "channel": "CH2"},
+            ],
         )
         self.assertEqual(
-            document["power_supply_assignment"]["driver_amplifier"]["supplies"][
-                "main"
-            ]["channel"],
-            ["CH1"],
+            document["power_supply_assignment"]["driver_amplifier"]["power_plan"][
+                "power_sequence"
+            ],
+            [{"supply_id": "PSA", "channel": "CH1"}],
         )
         # 旧文档的通道 ``role`` 不进入草稿，也不重新写出；数值字段原样保留。
         channels = document["instruments"]["power_supplies"]["PSA"]["channels"]
@@ -439,7 +430,7 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
             },
             "power_supply_assignment": {
                 "dut_amplifier": {
-                    "supplies": {"carrier": {"supply_id": None, "channel": ["CH1"]}}
+                    "power_plan": {"power_sequence": []}
                 }
             },
         }
@@ -453,6 +444,7 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
         self.assertIn("configuration.invalid_type", by_code)
         self.assertIn("configuration.invalid_number", by_code)
         self.assertIn("configuration.invalid_dut_supply_count", by_code)
+        self.assertIn("configuration.invalid_power_plan", by_code)
 
         # 非法值保持缺失状态，不用缺省测试频率或默认设备补齐。
         self.assertEqual(result.draft.frequencies, (Frequency.from_ghz(2.4),))
@@ -536,13 +528,11 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
             )
             self.assertIsNone(result.draft.dut_supply_count)
 
-    def test_assignment_reference_of_wrong_type_is_reported(self):
+    def test_plan_of_wrong_type_is_reported(self):
         document = {
             "power_supply_assignment": {
                 "dut_amplifier": {
-                    "supplies": {
-                        "carrier": {"supply_id": 5, "channel": ["CH1"]}
-                    }
+                    "power_plan": {"power_sequence": "CH1", "inter_channel_delay_s": 0.0}
                 }
             }
         }
@@ -552,23 +542,21 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
         issue = next(
             issue
             for issue in result.issues
-            if issue.code == "configuration.invalid_assignment"
+            if issue.code == "configuration.invalid_power_plan"
         )
         self.assertEqual(
-            issue.path,
-            "power_supply_assignment.dut_amplifier.supplies.carrier.supply_id",
+            issue.path, "power_supply_assignment.dut_amplifier.power_plan"
         )
-        assignment = result.draft.dut_assignments[0]
-        self.assertIsNone(assignment.supply_id)
-        self.assertEqual(assignment.channels, ("CH1",))
+        self.assertIsNone(result.draft.dut_power_plan)
         self.assertEqual(result.draft.dut_channels, ())
 
-    def test_unbound_assignment_is_preserved_without_picking_a_supply(self):
+    def test_plan_round_trips_as_the_only_power_usage_source(self):
         document = {
             "power_supply_assignment": {
                 "dut_amplifier": {
-                    "supplies": {
-                        "carrier": {"supply_id": None, "channel": ["CH1"]}
+                    "power_plan": {
+                        "power_sequence": [{"supply_id": "PSA", "channel": "CH1"}],
+                        "inter_channel_delay_s": 0.0,
                     }
                 }
             }
@@ -576,16 +564,20 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
         result = ConfigurationDraft.from_document(document)
 
         self.assertTrue(result.valid, result.messages())
-        assignment = result.draft.dut_assignments[0]
-        self.assertIsNone(assignment.supply_id)
-        self.assertEqual(assignment.channels, ("CH1",))
-        self.assertEqual(result.draft.dut_channels, ())
+        self.assertEqual(
+            result.draft.dut_channels, (SupplyChannel("PSA", "CH1"),)
+        )
         document_out = result.draft.to_document()
-        entry = document_out["power_supply_assignment"]["dut_amplifier"]["supplies"][
-            "carrier"
-        ]
-        self.assertIsNone(entry["supply_id"])
-        self.assertNotIn("name", entry)
+        self.assertEqual(
+            document_out["power_supply_assignment"]["dut_amplifier"]["power_plan"][
+                "power_sequence"
+            ],
+            [{"supply_id": "PSA", "channel": "CH1"}],
+        )
+        self.assertNotIn(
+            "supplies",
+            document_out["power_supply_assignment"]["dut_amplifier"],
+        )
 
     def test_existing_five_supply_fixture_is_read_without_rewriting_its_count(self):
         """旧配置记录的电源数量可以大于页面下拉框范围；草稿保留原值，不套用页面默认值。"""

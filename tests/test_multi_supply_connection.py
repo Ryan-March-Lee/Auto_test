@@ -69,8 +69,18 @@ def _supply(
     return item
 
 
-def _assignment(supply: str, channels: list[str]) -> dict:
-    return {"name": supply, "supply_id": supply, "channel": channels}
+def _routes_plan(*routes, delay=0.0):
+    return {
+        "power_sequence": [
+            {"supply_id": supply_id, "channel": channel}
+            for supply_id, channel in routes
+        ],
+        "inter_channel_delay_s": delay,
+    }
+
+
+def _empty_plan() -> dict:
+    return _routes_plan()
 
 
 def _two_supply_config() -> dict:
@@ -91,10 +101,10 @@ def _two_supply_config() -> dict:
         },
         "power_supply_assignment": {
             "dut_amplifier": {
-                "supplies": {"carrier": _assignment("DP8B1519", ["CH1", "CH2"])}
+                "power_plan": _routes_plan(("DP8B1519", "CH1"), ("DP8B1519", "CH2"))
             },
             "driver_amplifier": {
-                "supplies": {"main": _assignment("DP8B0950", ["CH1", "CH2"])}
+                "power_plan": _routes_plan(("DP8B0950", "CH1"), ("DP8B0950", "CH2"))
             },
         },
     }
@@ -605,13 +615,11 @@ class MultiSupplyConnectionTests(unittest.TestCase):
 
 class AssignmentReferenceTests(unittest.TestCase):
     def _plan(self, config, reference):
-        assignment = dict(
-            config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"]
+        """把 DUT 计划换成只引用 ``reference`` 的一条路由，并清空驱动计划。"""
+        config["power_supply_assignment"]["dut_amplifier"]["power_plan"] = _routes_plan(
+            (reference, "CH1")
         )
-        assignment["name"] = reference
-        assignment["supply_id"] = reference
-        config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"] = assignment
-        config["power_supply_assignment"]["driver_amplifier"]["supplies"] = {}
+        config["power_supply_assignment"]["driver_amplifier"]["power_plan"] = _empty_plan()
         return hardware_assembly_plan(config)
 
     def test_supply_id_and_label_resolve_to_the_same_supply(self):
@@ -637,10 +645,9 @@ class AssignmentReferenceTests(unittest.TestCase):
     def test_unknown_reference_fails_before_opening_anything(self):
         manager = _FakeResourceManager()
         config = _two_supply_config()
-        for field in ("supply_id", "name"):
-            config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"][
-                field
-            ] = "PS1"
+        config["power_supply_assignment"]["dut_amplifier"]["power_plan"] = _routes_plan(
+            ("PS1", "CH1")
+        )
         with _ConfigFile(config) as path, _PatchedManager(manager):
             with self.assertRaisesRegex(ValueError, "不存在的电源"):
                 create_measurement_port(path, mode="hardware")
@@ -675,10 +682,10 @@ class AssignmentReferenceTests(unittest.TestCase):
         config["instruments"]["power_supplies"]["DP8B0950"]["label"] = "DP8B1519"
         config["instruments"]["power_supplies"]["DP8B0885"]["label"] = "DP8B1519"
         config["instruments"]["power_supplies"]["DP8B0885"]["enabled"] = True
-        # 引用写另一台已启用但没被引用的电源，避免先撞上“同名别名”这条更早的
+        # 引用另一台已启用但没被引用的电源，避免先撞上“同名别名”这条更早的
         # 引用歧义规则；这里专门覆盖显示名重复。
-        config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"] = (
-            _assignment("DP8B0885", ["CH1", "CH2"])
+        config["power_supply_assignment"]["dut_amplifier"]["power_plan"] = _routes_plan(
+            ("DP8B0885", "CH1"), ("DP8B0885", "CH2")
         )
         with self.assertRaisesRegex(ValueError, "短标签重复"):
             hardware_assembly_plan(config)

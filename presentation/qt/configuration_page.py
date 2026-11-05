@@ -5,9 +5,9 @@
 从本模块导入。
 
 页面拥有配置控件，窗口只通过信号协调保存和连接。该模块只负责控件组合、用户意图
-转发和派生界面状态（驱动模式）；电源参数、供电分配、通道上电计划与漏极已移入
+转发和派生界面状态（驱动模式）；电源参数、通道上电计划与漏极已移入
 :mod:`presentation.qt.power_configuration_page`，本页不再创建或重建电源控件，也不再
-读取电源分配的可选项。把冻结配置投影到控件的规则在
+读取计划候选。把冻结配置投影到控件的规则在
 :mod:`presentation.qt.config_projection`，读取控件值组装配置的规则在
 :mod:`presentation.qt.config_form_state`。控件读写统一经
 :mod:`presentation.qt.config_form_adapter`：页面不再直接调用 ``ConfigFormState``，
@@ -87,8 +87,6 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
     connection_step_requested = Signal()
     validation_failed = Signal(str)
     driver_mode_changed = Signal(bool)
-    #: PA 单元数量变化；电源页据此同步 DUT 分配槽位（数量仍由本页拥有）。
-    pa_unit_count_changed = Signal(int)
     discovery_message = Signal(str)
     #: 一次设备勾选写入的完整结果：(DeviceBindingResult, 面向操作员的提示文案)。
     #: 面板归连接页所有，本页只交出结果；回写由配置会话完成。
@@ -110,7 +108,7 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         # 设备身份绑定：信号源/频谱仪各一条（角色键），电源按 ``supply_id`` 多条
         # （``power_supplies``）。只记录本次勾选并写入的设备；IP 变化时按完整设备码重新识别，
         # 不靠地址记忆。绑定是仪器连接的唯一来源；构建界面之前就要就位，电源标签页的
-        # 条目与电源分配的可选项都由它决定。
+        # 条目与上电计划候选都由它决定。
         self.device_bindings = effective_device_bindings(self.config)
         # 配置里原本就不可用的电源绑定：读入时会从可用集合里剔除，但必须在这里留下记录，
         # 由界面提示并在保存/运行校验时明确报错——否则它们会表现为“电源莫名消失”。
@@ -353,17 +351,6 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         self.load_run_btn.clicked.connect(self.request_load_run)
         self.return_welcome_btn.clicked.connect(self.return_welcome_requested.emit)
         self.previous_step_btn.clicked.connect(self.connection_step_requested.emit)
-        self.pa_unit_count_combo.currentTextChanged.connect(
-            self._on_pa_unit_count_changed
-        )
-
-    def _on_pa_unit_count_changed(self, text: str) -> None:
-        """转发布局派生状态：电源页只跟着数量调整 DUT 分配槽位。"""
-        try:
-            count = int(text)
-        except (TypeError, ValueError):
-            return
-        self.pa_unit_count_changed.emit(count)
 
     def request_save(self):
         if self.read_only_reason:
@@ -523,7 +510,7 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         return config
 
     def set_test_mode(self, enabled: bool) -> None:
-        """设置欢迎页选择的测试模式；电源分配与上电计划归独立电源页。"""
+        """设置欢迎页选择的测试模式；上电计划与漏极归独立电源页。"""
         self.test_mode_enabled = bool(enabled)
         self._dirty_baseline = copy.deepcopy(self.build_config(self.config))
         # 切换测试模式本身不算“已修改”：页面与视图模型同时重置干净基线。
@@ -534,7 +521,7 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         """当前控件读数是否与上次干净基线不同。
 
         视图模型的 dirty 覆盖步骤 6 已接入的测试参数与设备绑定；整份组装结果的比较仍
-        负责尚未接入视图模型的电源通道参数与供电分配（步骤 7 收口）。先组装再比较，
+        负责尚未接入视图模型的电源通道参数与上电计划（步骤 7 收口）。先组装再比较，
         保证视图模型在判定前已经看到本次控件读数。
         """
         current = self.build_config(self.config)

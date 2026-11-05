@@ -9,12 +9,12 @@
 能力参数、每台电源的地址/短标签/身份字段/声明通道、有序通道计划、日志文本与急停
 顺序），**不再带原始配置段**。装配方因此不必回读配置，配置字段的含义只有一个解释处。
 
-供电分配的引用解析、通道计划建立与 token 拼装属于纯路由计算，在
+上电计划的引用解析、通道计划建立与 token 拼装属于纯路由计算，在
 :mod:`instrument.power_routing` 里完成；本模块把它的结果与仪器身份组装成计划。
 
 硬件路径只使用配置里显式声明的仪器地址与物理通道：上电顺序只来自
-``power_supply_assignment.<group>.power_plan``，旧文件没有计划键时按分配声明顺序
-补齐；通道上残留的 ``role`` 字段不参与选择、排序或关断。
+``power_supply_assignment.<group>.power_plan``，没有计划（或计划为空）时直接拒绝装配，
+不从旧分配段补齐；通道上残留的 ``role`` 字段不参与选择、排序或关断。
 
 电源是**动态集合**：``instruments.power_supplies`` 以 ``supply_id`` 为键（现场短标签，
 如 ``DP8B1519``），每条物理路由都是显式的 ``supply_id/CHx`` token。计划按实际被引用的
@@ -43,8 +43,8 @@ from .power_control import PowerGroupPlan
 from .power_routing import (
     ChannelRouting,
     SupplyKeyResolution,
-    assigned_supply_references,
     declared_channels,
+    planned_supply_references,
     resolve_channel_routing,
     resolve_supply_keys,
 )
@@ -142,11 +142,11 @@ def hardware_assembly_plan(config: Mapping[str, Any]) -> HardwareAssemblyPlan:
     driver_assignment = _mapping_section(
         assignments, "driver_amplifier", "power_supply_assignment", optional=True
     )
-    references = assigned_supply_references(dut_assignment, driver_assignment)
+    references = planned_supply_references(dut_assignment, driver_assignment)
     if not enabled_supply_ids and not references:
         raise ValueError("硬件测量路径至少需要一个电源模板配置")
     if not references:
-        raise ValueError("生产硬件路径必须显式配置电源分配和通道")
+        raise ValueError("生产硬件路径必须显式配置电源上电计划")
 
     routed = resolve_supply_keys(power_configs, references, enabled_supply_ids)
     _reject_duplicate_labels(routed.supply_labels)

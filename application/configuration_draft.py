@@ -15,7 +15,7 @@
   （``None`` 未填写 / ``True`` / ``False``），读取时不补默认值，模型不会替用户挑一台
   默认设备，也不会把空引用补成某台电源；
 - :meth:`ConfigurationDraft.from_document` / :meth:`ConfigurationDraft.to_document`
-  只转换配置编辑段（测试参数、供电分配、电源通道参数、组上电计划、漏极与设备绑定），
+  只转换配置编辑段（测试参数、电源通道参数、组上电计划、漏极与设备绑定），
   不生成正式 ``test_plan`` / ``run_mapping``——那属于配置编写服务（步骤 4）。
   ``schema_version`` 同样由配置编写服务补齐，草稿不持有文件元数据。上电计划与漏极
   只原样读写，不推断顺序，也不按通道名猜漏极。
@@ -40,7 +40,6 @@ from application.dto.amplifier_inputs import (
     PowerSweep,
     SupplyChannel,
 )
-from domain.configuration.rules import assignment_supply_id
 from domain.instruments.models import INSTRUMENT_ROLES
 from domain.measurement.values import Decibels, Frequency, PowerDbm
 
@@ -49,7 +48,6 @@ __all__ = [
     "ConfigurationDraftResult",
     "DeviceBindingDraft",
     "DeviceBindingsDraft",
-    "PowerAssignmentDraft",
     "PowerChannelDraft",
     "PowerSupplyDraft",
 ]
@@ -64,7 +62,7 @@ _CODE_INVALID_DECIBELS = "configuration.invalid_decibels"
 _CODE_INVALID_DUT_SUPPLY_COUNT = "configuration.invalid_dut_supply_count"
 _CODE_INVALID_BINDING = "configuration.invalid_binding"
 _CODE_LEGACY_BINDING = "configuration.legacy_binding"
-_CODE_INVALID_ASSIGNMENT = "configuration.invalid_assignment"
+_CODE_INVALID_ASSIGNMENT = "configuration.invalid_power_plan"
 
 _POWER_ASSIGNMENT_GROUPS = ("dut_amplifier", "driver_amplifier")
 
@@ -374,46 +372,6 @@ class PowerSupplyDraft:
 
 
 @dataclass(frozen=True)
-class PowerAssignmentDraft:
-    """一条供电分配：界面槽位（``carrier`` / ``peak`` / ``main`` 等）指向的电源与通道。
-
-    ``supply_id=None`` 表示**空引用**：用户还没有选择电源，或配置里本来就没有指向任何
-    设备。它不会被替换成某台可用电源；校验与保存都按“未选择”处理。
-    """
-
-    slot: str
-    supply_id: str | None = None
-    channels: tuple[str, ...] = ()
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "slot", _text(self.slot, "供电分配槽位"))
-        object.__setattr__(
-            self, "supply_id", _optional_text(self.supply_id, "供电分配的电源引用")
-        )
-        object.__setattr__(
-            self, "channels", _text_tuple(self.channels, "供电分配的通道")
-        )
-
-    @property
-    def routed_channels(self) -> tuple[SupplyChannel, ...]:
-        """可写成显式路由的通道；空引用或无法表达的通道保留在分配记录里，不猜测。"""
-        if not isinstance(self.supply_id, str) or not self.supply_id.strip():
-            return ()
-        if "/" in self.supply_id:
-            return ()
-        result: list[SupplyChannel] = []
-        for channel in self.channels:
-            if not channel.strip() or "/" in channel:
-                continue
-            try:
-                result.append(SupplyChannel(self.supply_id, channel))
-            except ValueError:
-                # 占位值等不可表达为正式路由的写法仍保留在 assignments 中，由校验报告。
-                continue
-        return tuple(result)
-
-
-@dataclass(frozen=True)
 class ConfigurationDraft:
     """用户正在编辑的配置；配置页状态的唯一业务数据模型。"""
 
@@ -424,12 +382,12 @@ class ConfigurationDraft:
     max_dut_input_power: PowerDbm | None = None
     driver_enabled: bool | None = None
     driver_power_source: str | None = None
+    # 测试方案现场参数（页面下拉框），不驱动电源分配；缺失时写出阶段按 DUT 计划路由数回退。
     dut_supply_count: int | None = None
     # 漏极只供效率计算读取，不参与排序/间隔/启停；缺失时保持 None。
     drain_channel: SupplyChannel | None = None
-    dut_assignments: tuple[PowerAssignmentDraft, ...] = ()
-    driver_assignments: tuple[PowerAssignmentDraft, ...] = ()
     # 组上电计划：None 表示来源文档没有该键；写出时按空计划规范形状补齐。
+    # 计划同时是“哪些电源的哪些通道给哪个器件上电”的唯一来源，不再另存固定分配表。
     dut_power_plan: PowerPlan | None = None
     driver_power_plan: PowerPlan | None = None
     power_supplies: tuple[PowerSupplyDraft, ...] = ()
@@ -463,28 +421,8 @@ class ConfigurationDraft:
         _require_optional(self.driver_power_plan, PowerPlan, "驱动功放上电计划")
         object.__setattr__(
             self,
-            "dut_assignments",
-            _tuple_of(self.dut_assignments, PowerAssignmentDraft, "DUT 供电分配"),
-        )
-        object.__setattr__(
-            self,
-            "driver_assignments",
-            _tuple_of(
-                self.driver_assignments, PowerAssignmentDraft, "驱动功放供电分配"
-            ),
-        )
-        object.__setattr__(
-            self,
             "power_supplies",
             _tuple_of(self.power_supplies, PowerSupplyDraft, "电源参数"),
-        )
-        _require_unique(
-            (assignment.slot for assignment in self.dut_assignments),
-            "DUT 供电分配的槽位",
-        )
-        _require_unique(
-            (assignment.slot for assignment in self.driver_assignments),
-            "驱动功放供电分配的槽位",
         )
         _require_unique(
             (supply.supply_id for supply in self.power_supplies),
@@ -498,20 +436,20 @@ class ConfigurationDraft:
 
     @property
     def dut_channels(self) -> tuple[SupplyChannel, ...]:
-        """DUT 已绑定通道的只读投影；空引用不会变成任何默认电源。"""
-        return tuple(
-            channel
-            for assignment in self.dut_assignments
-            for channel in assignment.routed_channels
+        """DUT 上电计划里的物理路由（计划是唯一来源）。"""
+        return (
+            tuple(self.dut_power_plan.power_sequence)
+            if self.dut_power_plan is not None
+            else ()
         )
 
     @property
     def driver_channels(self) -> tuple[SupplyChannel, ...]:
-        """驱动功放已绑定通道的只读投影。"""
-        return tuple(
-            channel
-            for assignment in self.driver_assignments
-            for channel in assignment.routed_channels
+        """驱动功放上电计划里的物理路由。"""
+        return (
+            tuple(self.driver_power_plan.power_sequence)
+            if self.driver_power_plan is not None
+            else ()
         )
 
     @classmethod
@@ -558,7 +496,6 @@ class ConfigurationDraft:
         )
         power_supplies = _read_power_supplies(document.get("instruments"), issues)
         assignments = document.get("power_supply_assignment")
-        dut_assignments, driver_assignments = _read_assignments(assignments, issues)
         dut_power_plan = _read_power_plan(assignments, "dut_amplifier", issues)
         driver_power_plan = _read_power_plan(assignments, "driver_amplifier", issues)
         device_bindings = _read_device_bindings(document, bindings, issues)
@@ -574,8 +511,6 @@ class ConfigurationDraft:
             driver_power_source=driver_power_source,
             dut_supply_count=dut_supply_count,
             drain_channel=drain_channel,
-            dut_assignments=dut_assignments,
-            driver_assignments=driver_assignments,
             dut_power_plan=dut_power_plan,
             driver_power_plan=driver_power_plan,
             power_supplies=power_supplies,
@@ -595,8 +530,10 @@ class ConfigurationDraft:
         count = (
             self.dut_supply_count
             if self.dut_supply_count is not None
-            else len(self.dut_assignments)
+            else len(self.dut_channels)
         )
+        # ``power_supply_count`` 只是测试方案现场参数：固定分配表删除后没有“PA 单元槽位”
+        # 可数，缺失时按 DUT 计划路由数回退，仅供页面下拉框显示，不参与校验或正式 schema。
         dut_config = {
             "max_input_power": (
                 self.max_dut_input_power.dbm
@@ -644,20 +581,8 @@ class ConfigurationDraft:
         }
 
     def _assignment_document(self) -> dict[str, Any]:
-        driver = {
-            "power_supply_count": len(self.driver_assignments),
-            "supplies": {
-                assignment.slot: _assignment_entry(assignment)
-                for assignment in self.driver_assignments
-            },
-        }
-        dut = {
-            "power_supply_count": len(self.dut_assignments),
-            "supplies": {
-                assignment.slot: _assignment_entry(assignment)
-                for assignment in self.dut_assignments
-            },
-        }
+        driver: dict[str, Any] = {}
+        dut: dict[str, Any] = {}
         # 缺失的计划保持缺失：不把“还没有排序”伪装成一份空计划写回文档。
         if self.driver_power_plan is not None:
             driver["power_plan"] = self.driver_power_plan.to_document()
@@ -1054,95 +979,6 @@ def _read_channel_setting(
     return work, protection, enabled
 
 
-def _read_assignments(
-    value: Any, issues: list[ValidationIssue]
-) -> tuple[
-    tuple[PowerAssignmentDraft, ...], tuple[PowerAssignmentDraft, ...]
-]:
-    if value is None:
-        return (), ()
-    assignment = _mapping(value, "power_supply_assignment", issues)
-    dut: list[PowerAssignmentDraft] = []
-    driver: list[PowerAssignmentDraft] = []
-    for group in _POWER_ASSIGNMENT_GROUPS:
-        target = dut if group == "dut_amplifier" else driver
-        group_path = f"power_supply_assignment.{group}"
-        section = _mapping(assignment.get(group), group_path, issues)
-        supplies = section.get("supplies")
-        if supplies is None:
-            continue
-        if not isinstance(supplies, Mapping):
-            issues.append(_issue(f"{group_path}.supplies", _CODE_INVALID_TYPE, "必须是对象"))
-            continue
-        for slot, entry in supplies.items():
-            slot_path = f"{group_path}.supplies.{slot}"
-            if not isinstance(slot, str):
-                issues.append(
-                    _issue(slot_path, _CODE_INVALID_ASSIGNMENT, "分配槽位必须是字符串")
-                )
-                continue
-            item = _mapping(entry, slot_path, issues)
-            supply_id = _read_assignment_reference(item, slot_path, issues)
-            channels = _read_assignment_channels(
-                item.get("channel"), f"{slot_path}.channel", issues
-            )
-            target.append(
-                PowerAssignmentDraft(
-                    slot=slot, supply_id=supply_id, channels=channels
-                )
-            )
-    return tuple(dut), tuple(driver)
-
-
-def _read_assignment_reference(
-    entry: Mapping[str, Any], path: str, issues: list[ValidationIssue]
-) -> str | None:
-    """读取一条分配的电源引用：空引用是合法状态，非法类型必须报问题。
-
-    ``assignment_supply_id`` 只回答“指向哪台电源”，非字符串输入在那里统一返回
-    ``None``；草稿必须区分“用户还没选”和“文档写错了类型”，所以先在这里判类型。
-    """
-    field = "supply_id" if "supply_id" in entry else "name"
-    raw = entry.get(field)
-    if raw is None:
-        return None
-    if not isinstance(raw, str):
-        issues.append(
-            _issue(
-                f"{path}.{field}",
-                _CODE_INVALID_ASSIGNMENT,
-                "电源引用必须是字符串或 null",
-            )
-        )
-        return None
-    return assignment_supply_id(entry)
-
-
-def _read_assignment_channels(
-    value: Any, path: str, issues: list[ValidationIssue]
-) -> tuple[str, ...]:
-    if value is None:
-        return ()
-    if not isinstance(value, (list, tuple)):
-        issues.append(
-            _issue(path, _CODE_INVALID_ASSIGNMENT, "通道必须是非空字符串列表")
-        )
-        return ()
-    channels: list[str] = []
-    for index, item in enumerate(value):
-        if not isinstance(item, str):
-            issues.append(
-                _issue(
-                    f"{path}[{index}]",
-                    _CODE_INVALID_ASSIGNMENT,
-                    "通道名必须是字符串",
-                )
-            )
-            continue
-        channels.append(item)
-    return tuple(channels)
-
-
 def _read_device_bindings(
     document: Mapping[str, Any],
     bindings: DeviceBindingsDraft | Mapping[str, Any] | None,
@@ -1335,15 +1171,3 @@ def _power_supply_entry(
         channel.channel: _channel_document(channel) for channel in channels
     }
     return entry
-
-
-def _assignment_entry(assignment: PowerAssignmentDraft) -> dict[str, Any]:
-    """写出分配引用；1.1 的唯一引用字段是 ``supply_id``。
-
-    旧 ``name`` 只在读取旧文档时识别，写回时不再输出（``_read_assignment_reference``
-    仍优先 ``supply_id``、缺失时才读 ``name``）。
-    """
-    return {
-        "supply_id": assignment.supply_id,
-        "channel": list(assignment.channels),
-    }

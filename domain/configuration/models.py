@@ -1165,6 +1165,14 @@ def _validate_current_power_configuration(
             "主功放运行必须配置非空的 DUT 上电顺序",
         )
 
+    # 运行就绪还要求运行映射至少登记一台本机电源：1.1 的快照按计划路由生成，
+    # 保存/迁移阶段允许为空，创建运行前必须已有实际使用的电源。
+    if not mapping.power_supplies:
+        error(
+            "run_mapping.instruments.power_supplies",
+            "必须至少登记一台本机供电电源",
+        )
+
     # 规则 9：channel_settings 的路由集合必须等于序列路由集合。
     if sequence is not None and set(sequence) != set(settings):
         error(
@@ -1286,8 +1294,9 @@ def _check_identity_fields(entry: Mapping[str, Any], path: str, error: Any) -> N
 def _validate_power_supplies(mapping: RunResourceMapping, error: Any) -> None:
     """校验运行映射里的电源段。
 
-    - 没有电源时无法运行：DUT 通道必须由某台本机电源供电，报告落在
-      ``instruments.power_supplies`` 上（新结构的“缺集合”）；
+    - 1.1 的电源快照按计划路由生成：尚未确认上电顺序时集合为空是结构完整的可保存
+      状态，运行就绪由规则 8 与 ``_validate_current_power_configuration`` 另行判定；
+      1.0 旧结构没有计划可推导，空集合仍报“缺电源段”；
     - 新快照不得同时写旧单数条目，电源只有一个来源。判据是集合**键**在不在，不是
       集合非不非空——``power_supplies: {}`` 加旧条目同样是混写；
     - 旧快照的单数条目仍在时，按旧规则检查它自己的 ``model`` / ``visa_address``，
@@ -1322,7 +1331,10 @@ def _validate_power_supplies(mapping: RunResourceMapping, error: Any) -> None:
             error,
         )
     if not supplies:
-        if legacy_entry is None:
+        # 1.1 的运行映射只登记“计划里实际用到的电源”：尚未确认上电顺序时集合为空是
+        # 结构完整、但还不能运行的状态（运行就绪由规则 8 与 `_validate_current_power_configuration`
+        # 另行判定）。1.0 的旧结构没有计划可以推导，空集合仍然意味着缺电源段。
+        if legacy_entry is None and _is_legacy_mapping(mapping):
             error(f"instruments.{POWER_SUPPLIES_KEY}", "必须至少登记一台本机供电电源")
         return
     for supply_id, supply in supplies.items():

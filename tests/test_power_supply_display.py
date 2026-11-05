@@ -87,21 +87,21 @@ def _two_supply_config() -> dict:
         },
         "power_supply_assignment": {
             "dut_amplifier": {
-                "supplies": {
-                    "carrier": {
-                        "supply_id": "DP8B1519",
-                        "name": "DP8B1519",
-                        "channel": ["CH1", "CH2"],
-                    }
+                "power_plan": {
+                    "power_sequence": [
+                        {"supply_id": "DP8B1519", "channel": "CH1"},
+                        {"supply_id": "DP8B1519", "channel": "CH2"},
+                    ],
+                    "inter_channel_delay_s": 0.0,
                 }
             },
             "driver_amplifier": {
-                "supplies": {
-                    "main": {
-                        "supply_id": "DP8B0950",
-                        "name": "DP8B0950",
-                        "channel": ["CH1", "CH2"],
-                    }
+                "power_plan": {
+                    "power_sequence": [
+                        {"supply_id": "DP8B0950", "channel": "CH1"},
+                        {"supply_id": "DP8B0950", "channel": "CH2"},
+                    ],
+                    "inter_channel_delay_s": 0.0,
                 }
             },
         },

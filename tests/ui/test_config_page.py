@@ -119,12 +119,11 @@ class ConfigurationPageTests(unittest.TestCase):
                 # 引用一台没有已应用设备的电源：这是电源页的问题，不应由参数页报告。
                 "power_supply_assignment": {
                     "dut_amplifier": {
-                        "power_supply_count": 1,
-                        "supplies": {
-                            "carrier": {
-                                "supply_id": "PS9",
-                                "channel": ["CH1"],
-                            }
+                        "power_plan": {
+                            "power_sequence": [
+                                {"supply_id": "PS9", "channel": "CH1"}
+                            ],
+                            "inter_channel_delay_s": 0.0,
                         },
                     }
                 },
@@ -156,10 +155,6 @@ class ConfigurationPageTests(unittest.TestCase):
         """参数页只读测试参数；电源字段由独立电源页提交，不被本页清空。"""
         assignment = {
             "dut_amplifier": {
-                "power_supply_count": 1,
-                "supplies": {
-                    "carrier": {"supply_id": "DP8B1519", "channel": ["CH1"]}
-                },
                 "power_plan": {
                     "power_sequence": [{"supply_id": "DP8B1519", "channel": "CH1"}],
                     "inter_channel_delay_s": 1.0,

@@ -175,24 +175,12 @@
         },
         "power_supply_assignment": {
           "driver_amplifier": {
-            "power_supply_count": 0,
-            "supplies": {},
             "power_plan": {
               "power_sequence": [],
               "inter_channel_delay_s": 0.0
             }
           },
           "dut_amplifier": {
-            "power_supply_count": 1,
-            "supplies": {
-              "carrier": {
-                "supply_id": "DP8B1519",
-                "channel": [
-                  "CH1",
-                  "CH2"
-                ]
-              }
-            },
             "power_plan": {
               "power_sequence": [
                 {
@@ -554,29 +542,12 @@
         },
         "power_supply_assignment": {
           "driver_amplifier": {
-            "power_supply_count": 0,
-            "supplies": {},
             "power_plan": {
               "power_sequence": [],
               "inter_channel_delay_s": 0.0
             }
           },
           "dut_amplifier": {
-            "power_supply_count": 1,
-            "supplies": {
-              "gate": {
-                "supply_id": "DP8B1519",
-                "channel": [
-                  "CH1"
-                ]
-              },
-              "drain": {
-                "supply_id": "DP8B0885",
-                "channel": [
-                  "CH2"
-                ]
-              }
-            },
             "power_plan": {
               "power_sequence": [
                 {
@@ -954,15 +925,6 @@
         },
         "power_supply_assignment": {
           "driver_amplifier": {
-            "power_supply_count": 1,
-            "supplies": {
-              "driver": {
-                "supply_id": "DP8B0885",
-                "channel": [
-                  "CH1"
-                ]
-              }
-            },
             "power_plan": {
               "power_sequence": [
                 {
@@ -974,16 +936,6 @@
             }
           },
           "dut_amplifier": {
-            "power_supply_count": 1,
-            "supplies": {
-              "carrier": {
-                "supply_id": "DP8B1519",
-                "channel": [
-                  "CH1",
-                  "CH2"
-                ]
-              }
-            },
             "power_plan": {
               "power_sequence": [
                 {
@@ -1313,24 +1265,12 @@
         },
         "power_supply_assignment": {
           "driver_amplifier": {
-            "power_supply_count": 0,
-            "supplies": {},
             "power_plan": {
               "power_sequence": [],
               "inter_channel_delay_s": 0.0
             }
           },
           "dut_amplifier": {
-            "power_supply_count": 1,
-            "supplies": {
-              "carrier": {
-                "supply_id": "DP8B1519",
-                "channel": [
-                  "CH1",
-                  "CH2"
-                ]
-              }
-            },
             "power_plan": {
               "power_sequence": [
                 {
@@ -1642,15 +1582,6 @@
         },
         "power_supply_assignment": {
           "driver_amplifier": {
-            "power_supply_count": 1,
-            "supplies": {
-              "main": {
-                "supply_id": "DP8B1519",
-                "channel": [
-                  "CH1"
-                ]
-              }
-            },
             "power_plan": {
               "power_sequence": [
                 {
@@ -1662,15 +1593,6 @@
             }
           },
           "dut_amplifier": {
-            "power_supply_count": 1,
-            "supplies": {
-              "carrier": {
-                "supply_id": "DP8B1519",
-                "channel": [
-                  "CH2"
-                ]
-              }
-            },
             "power_plan": {
               "power_sequence": [
                 {
@@ -1957,23 +1879,12 @@
         },
         "power_supply_assignment": {
           "driver_amplifier": {
-            "power_supply_count": 0,
-            "supplies": {},
             "power_plan": {
               "power_sequence": [],
               "inter_channel_delay_s": 0.0
             }
           },
           "dut_amplifier": {
-            "power_supply_count": 1,
-            "supplies": {
-              "carrier": {
-                "supply_id": null,
-                "channel": [
-                  "CH1"
-                ]
-              }
-            },
             "power_plan": {
               "power_sequence": [],
               "inter_channel_delay_s": 0.0
@@ -2234,30 +2145,12 @@
         },
         "power_supply_assignment": {
           "driver_amplifier": {
-            "power_supply_count": 0,
-            "supplies": {},
             "power_plan": {
               "power_sequence": [],
               "inter_channel_delay_s": 0.0
             }
           },
           "dut_amplifier": {
-            "power_supply_count": 1,
-            "supplies": {
-              "carrier": {
-                "supply_id": "DP8B1519",
-                "channel": [
-                  "CH1",
-                  "CH2"
-                ]
-              },
-              "peaking": {
-                "supply_id": "DP8B1519",
-                "channel": [
-                  "CH1"
-                ]
-              }
-            },
             "power_plan": {
               "power_sequence": [
                 {
@@ -2557,23 +2450,12 @@
         },
         "power_supply_assignment": {
           "driver_amplifier": {
-            "power_supply_count": 0,
-            "supplies": {},
             "power_plan": {
               "power_sequence": [],
               "inter_channel_delay_s": 0.0
             }
           },
           "dut_amplifier": {
-            "power_supply_count": 1,
-            "supplies": {
-              "carrier": {
-                "supply_id": "DP8B1519",
-                "channel": [
-                  "CH99"
-                ]
-              }
-            },
             "power_plan": {
               "power_sequence": [
                 {
@@ -2860,24 +2742,12 @@
         },
         "power_supply_assignment": {
           "driver_amplifier": {
-            "power_supply_count": 0,
-            "supplies": {},
             "power_plan": {
               "power_sequence": [],
               "inter_channel_delay_s": 0.0
             }
           },
           "dut_amplifier": {
-            "power_supply_count": 1,
-            "supplies": {
-              "carrier": {
-                "supply_id": "DP8B1519",
-                "channel": [
-                  "CH1",
-                  "CH2"
-                ]
-              }
-            },
             "power_plan": {
               "power_sequence": [
                 {
@@ -3180,24 +3050,12 @@
         },
         "power_supply_assignment": {
           "driver_amplifier": {
-            "power_supply_count": 0,
-            "supplies": {},
             "power_plan": {
               "power_sequence": [],
               "inter_channel_delay_s": 0.0
             }
           },
           "dut_amplifier": {
-            "power_supply_count": 1,
-            "supplies": {
-              "carrier": {
-                "supply_id": "DP8B1519",
-                "channel": [
-                  "CH1",
-                  "CH2"
-                ]
-              }
-            },
             "power_plan": {
               "power_sequence": [
                 {
@@ -3510,24 +3368,12 @@
         },
         "power_supply_assignment": {
           "driver_amplifier": {
-            "power_supply_count": 0,
-            "supplies": {},
             "power_plan": {
               "power_sequence": [],
               "inter_channel_delay_s": 0.0
             }
           },
           "dut_amplifier": {
-            "power_supply_count": 1,
-            "supplies": {
-              "carrier": {
-                "supply_id": "DP8B1519",
-                "channel": [
-                  "CH1",
-                  "CH2"
-                ]
-              }
-            },
             "power_plan": {
               "power_sequence": [
                 {
@@ -3697,16 +3543,12 @@
         "schema_version": "1.1",
         "power_supply_assignment": {
           "dut_amplifier": {
-            "power_supply_count": 0,
-            "supplies": {},
             "power_plan": {
               "power_sequence": [],
               "inter_channel_delay_s": 0.0
             }
           },
           "driver_amplifier": {
-            "power_supply_count": 0,
-            "supplies": {},
             "power_plan": {
               "power_sequence": [],
               "inter_channel_delay_s": 0.0

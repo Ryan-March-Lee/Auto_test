@@ -63,15 +63,9 @@ class ConfigurationSaveRoundTripTests(unittest.TestCase):
             },
             "power_supply_assignment": {
                 "driver_amplifier": {
-                    "power_supply_count": 0,
-                    "supplies": {},
                     "power_plan": {"power_sequence": [], "inter_channel_delay_s": 0.0},
                 },
                 "dut_amplifier": {
-                    "power_supply_count": 1,
-                    "supplies": {
-                        "carrier": {"supply_id": "PS1", "channel": ["CH1", "CH2"]}
-                    },
                     "power_plan": {
                         "power_sequence": [
                             {"supply_id": "PS1", "channel": "CH1"},

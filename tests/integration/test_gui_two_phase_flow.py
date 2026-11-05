@@ -90,18 +90,9 @@ def _fully_valid_gui_config() -> dict:
         },
         "power_supply_assignment": {
             "driver_amplifier": {
-                "power_supply_count": 0,
-                "supplies": {},
                 "power_plan": {"power_sequence": [], "inter_channel_delay_s": 0.0},
             },
             "dut_amplifier": {
-                "power_supply_count": 1,
-                "supplies": {
-                    "carrier": {
-                        "supply_id": "DP8B1519",
-                        "channel": ["CH1", "CH2"],
-                    }
-                },
                 "power_plan": {
                     "power_sequence": [
                         {"supply_id": "DP8B1519", "channel": "CH1"},
@@ -1020,7 +1011,8 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         self.assertFalse(page.validate())
 
         self.assertTrue(failures)
-        self.assertIn("未选择电源", failures[0])
+        self.assertIn("必须配置非空的 DUT 上电顺序", failures[0])
+        self.assertIn("必须至少登记一台本机供电电源", failures[0])
 
     def test_load_run_signal_carries_the_run_id(self):
         from presentation.qt.configuration_page import ConfigurationPage
@@ -1100,7 +1092,13 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         built = page.build_config()["instruments"]
         self.assertEqual(built["signal_generator"]["address"], "sim::sg")
         self.assertEqual(built["power_supplies"]["DP8B1519"]["address"], "sim::ps1")
-        self.assertEqual(power.pa_unit1_power_combo.currentText(), "DP8B1519")
+        self.assertEqual(
+            power.dut_power_plan_editor.read_plan()["power_sequence"],
+            [
+                {"supply_id": "DP8B1519", "channel": "CH1"},
+                {"supply_id": "DP8B1519", "channel": "CH2"},
+            ],
+        )
         self.assertEqual(
             power.power_config_widgets["DP8B1519"]["channels"]["CH2"]["voltage"].value(),
             28.0,
@@ -1240,15 +1238,21 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
             },
             "power_supply_assignment": {
                 "driver_amplifier": {
-                    "power_supply_count": 1,
-                    "supplies": {"main": {"name": "DP8B1519", "channel": ["CH1"]}},
+                    "power_plan": {
+                        "power_sequence": [
+                            {"supply_id": "DP8B1519", "channel": "CH1"}
+                        ],
+                        "inter_channel_delay_s": 0.0,
+                    },
                 },
                 "dut_amplifier": {
-                    "power_supply_count": 3,
-                    "supplies": {
-                        "carrier": {"name": "DP8B0885"},
-                        "peaking": {"name": "DP8B1191"},
-                        "peaking2": {"name": "DP8B1519"},
+                    "power_plan": {
+                        "power_sequence": [
+                            {"supply_id": "DP8B0885", "channel": "CH1"},
+                            {"supply_id": "DP8B1191", "channel": "CH2"},
+                            {"supply_id": "DP8B1519", "channel": "CH1"},
+                        ],
+                        "inter_channel_delay_s": 0.0,
                     },
                 },
             },
@@ -1287,10 +1291,18 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         self.assertEqual(channel["current_protection"].value(), 1.0)
         self.assertTrue(channel["current_protection_enabled"].isChecked())
         self.assertEqual(power.driver_power_source_combo.currentText(), "直流电源")
-        self.assertEqual(power.driver_power_combo.currentText(), "DP8B1519")
-        self.assertEqual(power.pa_unit1_power_combo.currentText(), "DP8B0885")
-        self.assertEqual(power.pa_unit2_power_combo.currentText(), "DP8B1191")
-        self.assertEqual(power.pa_unit3_power_combo.currentText(), "DP8B1519")
+        self.assertEqual(
+            power.driver_power_plan_editor.read_plan()["power_sequence"],
+            [{"supply_id": "DP8B1519", "channel": "CH1"}],
+        )
+        self.assertEqual(
+            power.dut_power_plan_editor.read_plan()["power_sequence"],
+            [
+                {"supply_id": "DP8B0885", "channel": "CH1"},
+                {"supply_id": "DP8B1191", "channel": "CH2"},
+                {"supply_id": "DP8B1519", "channel": "CH1"},
+            ],
+        )
 
     def test_apply_config_matches_a_freshly_built_page(self):
         from presentation.qt.configuration_page import ConfigurationPage
@@ -1319,8 +1331,8 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         self.assertEqual(page.build_config(), rebuilt.build_config())
         self.assertEqual(power.build_config(), rebuilt_power.build_config())
         self.assertEqual(
-            power.pa_unit1_power_combo.currentText(),
-            rebuilt_power.pa_unit1_power_combo.currentText(),
+            power.dut_power_plan_editor.read_plan(),
+            rebuilt_power.dut_power_plan_editor.read_plan(),
         )
 
     def test_apply_config_reports_invalid_payload(self):

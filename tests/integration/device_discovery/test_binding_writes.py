@@ -236,8 +236,8 @@ class DeviceBindingWriteTests(InstrumentSetupPageTestCase):
             ["DP8B0885", "DP8B1519"],
         )
 
-    def test_replacing_the_power_supply_leaves_the_assignment_empty_instead_of_repointing(self):
-        """旧引用失效时保持空选择：更换电源不能让分配静默指向另一台。"""
+    def test_replacing_the_power_supply_keeps_the_invalid_plan_visible(self):
+        """旧引用失效时计划不静默改指另一台：路由保留在列表里，交给正式校验报告。"""
         page = self.make_page()
         first = {
             "role": "power_supply",
@@ -256,14 +256,21 @@ class DeviceBindingWriteTests(InstrumentSetupPageTestCase):
             "device_key": "rigol technologies:dp8b174400885",
         }
         apply_devices(page, [first, second])
-        self.power_page.pa_unit1_power_combo.setCurrentIndex(
-            self.power_page.pa_unit1_power_combo.findData("DP8B1519")
+        self.power_page.dut_power_plan_editor.set_route_checked(
+            ("DP8B1519", "CH1"), True
         )
 
         apply_devices(page, [second])
 
-        self.assertEqual(self.power_page.pa_unit1_power_combo.currentText(), "")
-        self.assertEqual(self.power_page.pa_unit1_power_combo.currentIndex(), -1)
+        self.assertIn(
+            ("DP8B1519", "CH1"),
+            self.power_page.dut_power_plan_editor.routes(),
+            "绑定变化不能让旧路由从计划里悄悄消失",
+        )
+        self.assertEqual(
+            self.power_page.dut_power_plan_editor.read_plan()["power_sequence"],
+            [{"supply_id": "DP8B1519", "channel": "CH1"}],
+        )
 
     def test_applying_a_subset_replaces_the_previous_bindings(self):
         page = self.make_page()

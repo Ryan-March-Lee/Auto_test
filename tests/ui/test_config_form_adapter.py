@@ -213,21 +213,6 @@ class ConfigurationFormAdapterReadTests(unittest.TestCase):
         self.assertEqual(reading.document["test_frequencies"], [9.9])
         self.assertEqual(reading.test_parameters.frequencies, ())
 
-    def test_supply_id_comes_from_item_data_not_the_display_text(self):
-        combo = _Combo(
-            ("DP832A（DP8B1519）", "DP832A（DP8B0885）"),
-            data=("DP8B1519", "DP8B0885"),
-            current=1,
-        )
-        self.assertEqual(ConfigurationFormAdapter.supply_id(combo), "DP8B0885")
-        combo.setCurrentIndex(-1)
-        self.assertEqual(ConfigurationFormAdapter.supply_id(combo), "")
-
-    def test_a_widget_without_item_data_is_an_empty_selection(self):
-        combo = type("TextOnly", (), {"currentIndex": lambda self: 0})()
-        self.assertEqual(ConfigurationFormAdapter.supply_id(combo), "")
-
-
 class ConfigurationFormAdapterWriteTests(unittest.TestCase):
     def test_apply_configuration_projects_the_document_onto_widgets(self):
         page = _page()
@@ -241,8 +226,7 @@ class ConfigurationFormAdapterWriteTests(unittest.TestCase):
                 "attenuator": {"type": "30dB"},
                 "driver_mode": {"enabled": False},
                 "dut_config": {"max_input_power": 20.0, "power_supply_count": 2},
-            },
-            supplies=page.device_bindings["power_supplies"],
+            }
         )
 
         self.assertEqual(projected["test_frequencies"], [3.5])
@@ -250,33 +234,6 @@ class ConfigurationFormAdapterWriteTests(unittest.TestCase):
         self.assertEqual(page.compression_combo.currentText(), "3dB")
         self.assertEqual(page.pa_unit_count_combo.currentText(), "2")
         self.assertEqual(adapter.read_configuration()["test_frequencies"], [3.5])
-
-    def test_refresh_power_choices_keeps_the_selection_by_data_value(self):
-        page = _page()
-        page.power_assignment_widgets["pa_unit1_power"].setCurrentIndex(1)
-        adapter = ConfigurationFormAdapter(page)
-
-        adapter.refresh_power_choices(page.device_bindings["power_supplies"])
-
-        self.assertEqual(
-            page.power_assignment_widgets["pa_unit1_power"].currentData(), "DP8B0885"
-        )
-
-    def test_refresh_power_choices_clears_removed_supplies_only(self):
-        page = _page()
-        page.power_assignment_widgets["pa_unit1_power"].setCurrentIndex(1)
-        adapter = ConfigurationFormAdapter(page)
-
-        adapter.refresh_power_choices(
-            {"DP8B1519": page.device_bindings["power_supplies"]["DP8B1519"]}
-        )
-
-        self.assertEqual(
-            page.power_assignment_widgets["driver_power"].currentData(), "DP8B1519"
-        )
-        self.assertEqual(
-            page.power_assignment_widgets["pa_unit1_power"].currentIndex(), -1
-        )
 
     def test_read_power_channel_snapshot_returns_the_supplies_mapping(self):
         page = _page()

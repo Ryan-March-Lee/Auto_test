@@ -1,19 +1,21 @@
 """配置页电源分区的控件构建与独立电源表单。
 
 本模块构建配置页右栏的电源分区：按电源键分页的「电源详细配置」标签页、
-「电源分配设置」表单，以及步骤 11 新增的「通道上电计划」与「效率测量」漏极选择。
+「驱动功放供电」方式选择，以及步骤 11 新增的「通道上电计划」与「效率测量」漏极选择。
 :class:`PowerFormSection` 把这几块控件收在一个独立组件里，页面只负责把它放进布局、
-转发页面级派生状态（PA 单元数量、驱放供电方式）并按需回填。
+转发页面级派生状态（驱放供电方式、测试模式）并按需回填。
 
-页面传进来的输入都是显式声明的结构（见 :data:`PowerSupplySources`、
-:data:`PowerSupplyChoices` 与 :data:`PowerAssignmentEntries`）：键是电源键或槽位名，
-值是配置条目里本模块要显示的字段，本模块不从文件里另外取状态。这里只按字段位置
-读出要显示的数值，并把不正确的类型回落到与投影一致的缺省值（见 :func:`spin_value`）：
-那是显示口径，不是校验。本模块不校验配置、不迁移旧字段、不写配置、也不读文件；字段的
-回填仍归 :mod:`presentation.qt.config_projection`，正式配置编写归
-:mod:`application.configuration_authoring`，正式校验在
-:mod:`domain.configuration.rules` 与 :mod:`infrastructure.config.validation`；
-「槽位 -> 配置路径」的映射留在页面（``ConfigurationPage._assignment_entries``）。
+页面传进来的输入都是显式声明的结构（见 :data:`PowerSupplySources` 与
+:data:`PowerSupplyChoices`）：键是电源键，值是配置条目里本模块要显示的字段，本模块不从
+文件里另外取状态。这里只按字段位置读出要显示的数值，并把不正确的类型回落到与投影一致
+的缺省值（见 :func:`spin_value`）：那是显示口径，不是校验。本模块不校验配置、不迁移旧
+字段、不写配置、也不读文件；字段的回填仍归 :mod:`presentation.qt.config_projection`，
+正式配置编写归 :mod:`application.configuration_authoring`，正式校验在
+:mod:`domain.configuration.rules` 与 :mod:`infrastructure.config.validation`。
+
+器件电源的选择只由计划路由表达：每台电源声明（或默认）的通道构成两份计划编辑器的
+同一份候选，`(supply_id, channel)` 勾在哪一组就表示该通道给哪个器件上电；本模块不再
+提供按器件固定分配电源的下拉框。
 
 通道数值框的上下界（``_VOLTAGE_LIMITS`` / ``_CURRENT_LIMITS``）只约束输入框能填到
 哪里，比正式校验更严：界外的值由控件夹到界内，这里不报错也不改配置。重建标签页时
@@ -22,7 +24,7 @@
 """
 
 import math
-from typing import Any, Iterable, Mapping, Sequence, TypedDict
+from typing import Any, Iterable, Mapping, TypedDict
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -36,10 +38,8 @@ from domain.instruments.labels import supply_identity_text
 
 from .config_page_widgets import combo_box, spin_box
 from .config_projection import (
-    ASSIGNMENT_SLOT_PATHS,
     DEFAULT_POWER_CHANNEL_VALUE,
     DRIVER_POWER_SOURCE_VALUES,
-    apply_power_choice,
     supply_option_label,
 )
 from .config_power_assignments import POWER_SUPPLY_CHANNELS, assignment_channels
@@ -76,19 +76,15 @@ class PowerSupplyEntry(TypedDict, total=False):
     channels: Mapping[str, ChannelDisplayFields]
 
 
-# 页面交给构建模块的三份输入（都是显式结构，不从控件或文件里再读）：
+# 页面交给构建模块的两份输入（都是显式结构，不从控件或文件里再读）：
 # - ``sources``：电源键 -> 显示条目，键就是配置里的电源键（旧槽位是 ``PS1`` 这类旧键）。
 PowerSupplySources = Mapping[str, PowerSupplyEntry]
-# - ``choices``：电源分配下拉框的可选项，``supply_id -> 显示条目``，只来自本次绑定。
+# - ``choices``：计划候选与标签页显示用的已绑定电源，``supply_id -> 显示条目``。
 PowerSupplyChoices = Mapping[str, Mapping[str, Any]]
-# - ``assignment_entries``：槽位 -> 配置里该槽位已有的引用条目；配置没写这条分配时
-#   没有这个键（读出来是 ``None``），“声明了但引用为空”则是另一种值。
-PowerAssignmentEntries = Mapping[str, Any]
 
 __all__ = [
     "ChannelDisplayFields",
     "POWER_SUPPLY_CHANNELS",
-    "PowerAssignmentEntries",
     "PowerFormSection",
     "PowerPlanEditor",
     "PowerSupplyChoices",
@@ -97,7 +93,6 @@ __all__ = [
     "build_power_section",
     "channel_map",
     "current_power_tab_key",
-    "power_choice_combo",
     "rebuild_power_tabs",
     "spin_value",
 ]
@@ -148,48 +143,18 @@ def channel_map(source: Any, preserved: Any) -> dict:
     return channels
 
 
-def power_choice_combo(choices: PowerSupplyChoices, entry: Any):
-    """电源分配下拉框：只把配置里的真实引用回填到当前可选项。
-
-    引用按 ``supply_id`` 读取（旧配置只有 ``name`` 时读一次，规则只有一处实现：
-    :func:`domain.configuration.rules.assignment_supply_id`），并且必须**出现在本次绑定的
-    可选项里**才会被选中。配置写了引用、但那台电源本次没有绑定（含还没迁移的旧槽位
-    ``PS1``）时保持空选择，交给校验报告——静默停在第一项会把“这台电源已经不在”
-    显示成“换成了另一台电源”。
-
-    显示文本是 ``DP832A（DP8B1519）`` 这样的型号加缩写设备码，业务值放在 ``itemData``
-    （``supply_id``）；选中与读取都只看数据，不从显示字符串反解析身份。
-
-    两种状态严格分开（见 :func:`presentation.qt.config_form_state.assignment_declared`）：
-    配置里**没有**这条分配时落到第一台可用电源；配置里**有**这条分配但引用为空
-    （``supply_id: null``）时保持空选择，不能按缺省规则补一台。判定与整份配置回填
-    共用 :func:`presentation.qt.config_projection.apply_power_choice`，所有槽位
-    （含驱动功放）用同一条缺省规则；驱动功放是否启用由
-    :meth:`presentation.qt.power_configuration_page.PowerConfigurationPage.update_driver_power_ui`
-    按驱放模式与供电方式决定。
-    """
-    combo = combo_box()
-    apply_power_choice(combo, entry, choices)
-    return combo
-
-
 def build_power_section(
     page: Any,
     layout: Any,
     *,
     sources: PowerSupplySources,
-    choices: PowerSupplyChoices,
-    assignment_entries: PowerAssignmentEntries,
     driver_power_source: Any,
 ) -> None:
-    """构建电源详细配置与电源分配设置，并把页面要读写的控件登记到 ``page``。
+    """构建电源详细配置与驱放供电方式，并把页面要读写的控件登记到 ``page``。
 
-    - ``sources``：标签页要显示的电源条目（配置里已有的键 + 本次绑定的 ``supply_id``），
-      由页面合并配置与绑定后传入。
-    - ``choices``：电源分配下拉框的可选项（``supply_id -> 条目``），只来自当前绑定。
-    - ``assignment_entries``：槽位 -> 配置里该槽位已有的引用条目，``None`` 表示配置
-      没有这条分配（与“声明了但引用为空”在回填时不是一回事）。
-    - ``driver_power_source``：页面按驱放模式推断出的供电方式显示文本。
+    电源使用哪个通道不再通过“给器件固定分配某台电源”的下拉框选择：上电计划里的
+    路由 ``(supply_id, channel)`` 已经是唯一来源，计划候选由 :class:`PowerFormSection`
+    自行按已绑定电源生成；``sources`` 是标签页要显示的电源条目。
     """
     detail = QGroupBox("电源详细配置")
     detail_layout = QVBoxLayout(detail)
@@ -201,57 +166,28 @@ def build_power_section(
     detail_layout.addWidget(page.power_tabs)
     layout.addWidget(detail)
 
-    assignment = QGroupBox("电源分配设置")
-    form = QGridLayout(assignment)
+    driver_box = QGroupBox("驱动功放供电")
+    form = QGridLayout(driver_box)
     form.setHorizontalSpacing(10)
     form.setVerticalSpacing(8)
     form.setColumnMinimumWidth(0, 118)
-    page.power_assignment_group = assignment
+    page.power_assignment_group = driver_box
     page.driver_power_source_combo = combo_box(
         DRIVER_POWER_SOURCE_VALUES, str(driver_power_source)
     )
     page.driver_power_source_label = QLabel("驱放供电方式:")
-    page.driver_power_hint = QLabel("自带供电的驱放由外部供电设备供电，本系统不会控制其电源。")
+    page.driver_power_hint = QLabel(
+        "自带供电的驱放由外部供电设备供电，本系统不会控制其电源；"
+        "使用直流电源时，在下方“驱动功放”上电计划里勾选实际使用的通道。"
+    )
     page.driver_power_hint.setWordWrap(True)
-    # 所有槽位（含驱动功放）用同一条缺省规则：已有引用优先，否则第一台可用电源。
-    # 驱动功放是否真的启用由 update_driver_power_ui() 按驱放模式与供电方式处理。
-    page.driver_power_combo = power_choice_combo(
-        choices, assignment_entries.get("driver_power")
-    )
-    page.pa_unit1_power_combo = power_choice_combo(
-        choices, assignment_entries.get("pa_unit1_power")
-    )
-    page.pa_unit2_power_combo = power_choice_combo(
-        choices, assignment_entries.get("pa_unit2_power")
-    )
-    page.pa_unit3_power_combo = power_choice_combo(
-        choices, assignment_entries.get("pa_unit3_power")
-    )
-    page.driver_power_label = QLabel("驱动功放电源:")
-    page.pa_unit2_label = QLabel("PA Unit2电源:")
-    page.pa_unit3_label = QLabel("PA Unit3电源:")
-    # 两列布局（标签 + 下拉框），避免右栏过窄时撑出横向滚动条。
     form.addWidget(page.driver_power_source_label, 0, 0)
     form.addWidget(page.driver_power_source_combo, 0, 1)
     form.addWidget(page.driver_power_hint, 1, 0, 1, 2)
-    form.addWidget(page.driver_power_label, 2, 0)
-    form.addWidget(page.driver_power_combo, 2, 1)
-    form.addWidget(QLabel("PA Unit1电源:"), 3, 0)
-    form.addWidget(page.pa_unit1_power_combo, 3, 1)
-    form.addWidget(page.pa_unit2_label, 4, 0)
-    form.addWidget(page.pa_unit2_power_combo, 4, 1)
-    form.addWidget(page.pa_unit3_label, 5, 0)
-    form.addWidget(page.pa_unit3_power_combo, 5, 1)
     form.setColumnStretch(1, 1)
-    layout.addWidget(assignment)
+    layout.addWidget(driver_box)
     page.power_assignment_widgets = {
         "driver_source": page.driver_power_source_combo,
-        "driver_power": page.driver_power_combo,
-        "pa_unit1_power": page.pa_unit1_power_combo,
-        "pa_unit2_power": page.pa_unit2_power_combo,
-        "pa_unit2_label": page.pa_unit2_label,
-        "pa_unit3_power": page.pa_unit3_power_combo,
-        "pa_unit3_label": page.pa_unit3_label,
     }
 
 
@@ -374,17 +310,6 @@ def _add_power_tab(
 
 _ROUTE_ROLE = Qt.ItemDataRole.UserRole
 _UNSET_DRAIN_LABEL = "（未指定）"
-
-
-def _combo_supply_id(combo: Any) -> str:
-    """下拉框当前选中的 ``supply_id``；只看 ``itemData``，不看显示文本。"""
-    if combo is None:
-        return ""
-    index_of = getattr(combo, "currentIndex", None)
-    index = index_of() if callable(index_of) else -1
-    item_data = getattr(combo, "itemData", None)
-    data = item_data(index) if callable(item_data) and isinstance(index, int) and index >= 0 else None
-    return data.strip() if isinstance(data, str) and data.strip() else ""
 
 
 def _route(value: Any) -> tuple[str, str] | None:
@@ -630,11 +555,12 @@ class PowerPlanEditor(QWidget):
 
 
 class PowerFormSection(QWidget):
-    """独立电源表单：通道参数、供电分配、组上电计划与漏极选择。
+    """独立电源表单：通道参数、组上电计划与漏极选择。
 
-    组件自己保存控件，页面只负责把它放进布局、转发页面级派生状态（PA 单元数量、
-    驱放是否使用直流电源）并读取整份配置。这样页面不再持有电源控件的逐字段读写规则；
-    绑定变化时 :meth:`rebuild` 会保留操作者尚未保存的通道参数、顺序、间隔与漏极。
+    组件自己保存控件，页面只负责把它放进布局、转发页面级派生状态（驱放是否使用直流
+    电源）并读取整份配置。上电计划是“哪些电源的哪些通道给哪个器件上电”的唯一来源，
+    计划候选由已绑定电源及其声明通道生成；绑定变化时 :meth:`rebuild` 会保留操作者
+    尚未保存的通道参数、顺序、间隔与漏极。
     """
 
     def __init__(
@@ -642,9 +568,7 @@ class PowerFormSection(QWidget):
         *,
         sources: PowerSupplySources,
         choices: PowerSupplyChoices,
-        assignment_entries: PowerAssignmentEntries,
         driver_power_source: Any,
-        dut_supply_count: int = 2,
         driver_plan_active: bool = True,
         dut_power_plan: Any = None,
         driver_power_plan: Any = None,
@@ -652,17 +576,14 @@ class PowerFormSection(QWidget):
         parent: Any = None,
     ) -> None:
         super().__init__(parent)
-        self._dut_supply_count = max(0, int(dut_supply_count))
         self._driver_plan_active = bool(driver_plan_active)
         self._driver_power_source = driver_power_source
-        # 每个分配槽位声明的物理通道（“属于哪个 PA 单元”）。计划候选只在这些通道里
-        # 排序；勾选/排序不会反过来改写这里的集合。
-        self._slot_channels = {
-            slot: assignment_channels(entry)
-            for slot, entry in assignment_entries.items()
-        }
-        # DUT 计划是否已经在文档里出现（含显式空计划）。未出现时漏极候选退回分配通道；
-        # 出现后（包括用户开始勾选后）就只能从计划里选择，取消勾选会让旧漏极标为无效。
+        # 计划候选：已绑定电源的声明通道（没有声明时回落到每台电源固定的 CH1/CH2）。
+        # 两个编辑器的候选相同，器件归属由“勾在哪一组”决定。
+        self._plan_routes = _candidate_routes(sources, choices)
+        # DUT 计划是否已经在文档里出现（含显式空计划）。未出现时漏极候选退回全部
+        # 候选路由；出现后（包括用户开始勾选后）就只能从计划里选择，取消勾选会让旧
+        # 漏极标为无效。
         self._dut_plan_defined = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -671,8 +592,6 @@ class PowerFormSection(QWidget):
             self,
             layout,
             sources=sources,
-            choices=choices,
-            assignment_entries=assignment_entries,
             driver_power_source=driver_power_source,
         )
         self._build_plan_widgets(layout)
@@ -727,28 +646,15 @@ class PowerFormSection(QWidget):
         layout.addWidget(group)
 
     def _connect_assignment_signals(self) -> None:
-        controls = getattr(self, "power_assignment_widgets", {})
-        for key in (
-            "driver_power",
-            "pa_unit1_power",
-            "pa_unit2_power",
-            "pa_unit3_power",
-        ):
-            combo = controls.get(key)
-            if combo is not None and hasattr(combo, "currentIndexChanged"):
-                combo.currentIndexChanged.connect(self._on_assignment_changed)
         # 计划的勾选决定“哪些通道参与上电”，漏极只能在其中选择；勾选变化时只刷新
         # 漏极候选，不重建计划本身（否则会打断操作者的排序）。
         self.dut_power_plan_editor.list.itemChanged.connect(self._on_dut_plan_changed)
-
-    def _on_assignment_changed(self, _index: int = -1) -> None:
-        self.refresh_plan_routes(preserve=True)
 
     def _on_dut_plan_changed(self, _item: Any = None) -> None:
         plan_routes = _plan_routes(self.dut_power_plan_editor.read_plan())
         if plan_routes:
             # 操作者一旦勾选过通道，计划就从“未确认”进入“已配置”，此后取消全部勾选
-            # 仍按空计划处理，不能把漏极候选退回全部分配通道。
+            # 仍按空计划处理，不能把漏极候选退回全部候选通道。
             self._dut_plan_defined = True
         candidates = (
             plan_routes if self._dut_plan_defined else self.dut_power_plan_editor.routes()
@@ -756,11 +662,14 @@ class PowerFormSection(QWidget):
         self._set_drain_routes(candidates, self.read_drain_channel())
 
     # ---- 页面级派生状态 -----------------------------------------------------
-    def set_dut_supply_count(self, count: int) -> None:
-        count = max(0, int(count))
-        if count == self._dut_supply_count:
+    def set_power_choices(
+        self, sources: PowerSupplySources, choices: PowerSupplyChoices
+    ) -> None:
+        """设备绑定变化后更新计划候选；已勾选的计划与当前顺序保持不变。"""
+        routes = _candidate_routes(sources, choices)
+        if routes == self._plan_routes:
             return
-        self._dut_supply_count = count
+        self._plan_routes = routes
         self.refresh_plan_routes(preserve=True)
 
     def set_driver_plan_active(self, active: bool) -> None:
@@ -772,47 +681,15 @@ class PowerFormSection(QWidget):
         self.refresh_plan_routes(preserve=True)
 
     # ---- 路由与计划 ---------------------------------------------------------
-    def _channels_for_slot(self, slot: str) -> list[str]:
-        """槽位声明的通道；没有声明时回落到每台电源固定的两个通道。"""
-        channels = self._slot_channels.get(slot)
-        return list(channels) if channels is not None else list(POWER_SUPPLY_CHANNELS)
-
-    def _selected_routes(self, slots: Sequence[str]) -> tuple[tuple[str, str], ...]:
-        """按槽位声明展开当前选中电源的物理路由（去重、保持槽位/通道顺序）。
-
-        候选只来自分配里声明的通道：同一条电源供多个 PA 单元时，每个槽位只出现
-        自己的通道，不会因为计划里勾了某台电源的全部通道而复制到其他槽位。
-        """
-        routes: list[tuple[str, str]] = []
-        seen: set[tuple[str, str]] = set()
-        for slot in slots:
-            combo = getattr(self, "power_assignment_widgets", {}).get(slot)
-            supply_id = _combo_supply_id(combo)
-            if not supply_id:
-                continue
-            for channel in self._channels_for_slot(slot):
-                route = (supply_id, channel)
-                if route not in seen:
-                    seen.add(route)
-                    routes.append(route)
-        return tuple(routes)
-
-    def _dut_routes(self) -> tuple[tuple[str, str], ...]:
-        slots = [f"pa_unit{index}_power" for index in range(1, self._dut_supply_count + 1)]
-        return self._selected_routes(slots)
-
-    def _driver_routes(self) -> tuple[tuple[str, str], ...]:
-        return self._selected_routes(["driver_power"])
-
     def _drain_candidates(
         self, routes: tuple[tuple[str, str], ...]
     ) -> tuple[tuple[str, str], ...]:
-        """漏极候选：有计划时只允许计划里参与上电的通道，否则退回分配通道。
+        """漏极候选：有计划时只允许计划里参与上电的通道，否则退回全部候选路由。
 
         “有计划”包括显式的空计划（:attr:`_dut_plan_defined`）；空计划没有任何可测量的
         已启用通道，漏极只能保持未指定或显示旧值（由正式校验报告）。计划还没生成时先列
-        分配通道，让操作者可以先选漏极，保存时会因“漏极必须包含在 DUT 上电顺序中”被
-        正式校验阻断。
+        所有已绑定通道，让操作者可以先选漏极，保存时会因“漏极必须包含在 DUT 上电顺序
+        中”被正式校验阻断。
         """
         if self._dut_plan_defined:
             return _plan_routes(self.dut_power_plan_editor.read_plan())
@@ -826,11 +703,11 @@ class PowerFormSection(QWidget):
         driver_plan: Any = None,
         drain: Any = None,
     ) -> None:
-        """按当前分配重建计划候选，并恢复计划与漏极。
+        """按当前候选重建计划列表，并恢复计划与漏极。
 
-        ``preserve=True`` 用于绑定/PA 数量变化后的重建：先读当前控件里的顺序、勾选、
-        间隔和漏极，再用新候选重建，未提交编辑不会丢。候选只来自各分配槽位声明的
-        通道；计划里已有、但当前绑定已解析不到的路由仍保留在列表里，交给校验报告。
+        ``preserve=True`` 用于绑定/候选变化后的重建：先读当前控件里的顺序、勾选、间隔
+        和漏极，再用新候选重建，未提交编辑不会丢。候选是已绑定电源的全部声明通道；计划
+        里已有、但当前绑定已解析不到的路由仍保留在列表里，交给校验报告。
         """
         if preserve:
             dut_plan = self.dut_power_plan_editor.read_plan()
@@ -838,12 +715,10 @@ class PowerFormSection(QWidget):
             drain = self.read_drain_channel()
         else:
             self._dut_plan_defined = dut_plan is not None
-        dut_routes = self._dut_routes()
-        driver_routes = self._driver_routes()
-        self.dut_power_plan_editor.refresh(dut_routes, plan=dut_plan)
+        self.dut_power_plan_editor.refresh(self._plan_routes, plan=dut_plan)
         self.driver_power_plan_editor.set_active(self._driver_plan_active)
-        self.driver_power_plan_editor.refresh(driver_routes, plan=driver_plan)
-        self._set_drain_routes(self._drain_candidates(dut_routes), drain)
+        self.driver_power_plan_editor.refresh(self._plan_routes, plan=driver_plan)
+        self._set_drain_routes(self._drain_candidates(self._plan_routes), drain)
 
     def rebuild(
         self,
@@ -870,34 +745,22 @@ class PowerFormSection(QWidget):
     ) -> None:
         """把一份配置文档的组计划与漏极投影到本组件（绑定变化后仍按文档为准）。
 
-        文档的分配通道集合也在这里同步到槽位候选：载入另一份配置后，计划列表必须按
-        新文档的 ``supplies.<slot>.channel`` 重建，而不是沿用建页时的旧集合。
+        候选来自当前已绑定电源；载入另一份配置后，计划列表仍可用文档里的计划路由
+        恢复勾选与顺序，不需要再读一份按器件固定分配电源的表。
         """
         if driver_plan_active is not None:
             self._driver_plan_active = bool(driver_plan_active)
         assignment = config.get("power_supply_assignment") if isinstance(config, Mapping) else {}
         assignment = assignment if isinstance(assignment, Mapping) else {}
-        self._sync_slot_channels(assignment)
         dut_plan = _group_plan(assignment, "dut_amplifier")
         driver_plan = _group_plan(assignment, "driver_amplifier")
         self._dut_plan_defined = dut_plan is not None
-        dut_routes = _document_routes(config, "dut_amplifier")
-        driver_routes = _document_routes(config, "driver_amplifier")
-        self.dut_power_plan_editor.refresh(dut_routes, plan=dut_plan)
+        self.dut_power_plan_editor.refresh(self._plan_routes, plan=dut_plan)
         self.driver_power_plan_editor.set_active(self._driver_plan_active)
-        self.driver_power_plan_editor.refresh(driver_routes, plan=driver_plan)
+        self.driver_power_plan_editor.refresh(self._plan_routes, plan=driver_plan)
         self._set_drain_routes(
-            self._drain_candidates(dut_routes), _document_drain(config)
+            self._drain_candidates(self._plan_routes), _document_drain(config)
         )
-
-    def _sync_slot_channels(self, assignment: Mapping[str, Any]) -> None:
-        """按编辑段的分配条目更新每个界面槽位声明的通道。"""
-        for slot, group, config_slot in ASSIGNMENT_SLOT_PATHS:
-            block = assignment.get(group)
-            supplies = block.get("supplies") if isinstance(block, Mapping) else None
-            entry = supplies.get(config_slot) if isinstance(supplies, Mapping) else None
-            if isinstance(entry, Mapping):
-                self._slot_channels[slot] = assignment_channels(entry)
 
     def reset_power_plans(self) -> None:
         """回到空计划基线；回填投影开始前调用，保证不留上一次的勾选。"""
@@ -951,28 +814,19 @@ def _group_plan(assignment: Mapping[str, Any], group: str) -> Any:
     return block.get("power_plan")
 
 
-def _document_routes(config: Any, group: str) -> tuple[tuple[str, str], ...]:
-    """从配置编辑段读出一组的物理路由（用于回填计划候选）。"""
-    if not isinstance(config, Mapping):
-        return ()
-    assignment = config.get("power_supply_assignment")
-    block = assignment.get(group) if isinstance(assignment, Mapping) else None
-    supplies = block.get("supplies") if isinstance(block, Mapping) else None
-    if not isinstance(supplies, Mapping):
-        return ()
+def _candidate_routes(
+    sources: PowerSupplySources, choices: PowerSupplyChoices
+) -> tuple[tuple[str, str], ...]:
+    """上电计划候选：每台已绑定电源声明（或默认）的物理通道。
+
+    器件归属由“勾在哪一组计划里”决定，因此两个编辑器使用同一份候选。顺序来自绑定
+    集合与通道声明顺序，只影响列表初值，不表示上电顺序。
+    """
     routes: list[tuple[str, str]] = []
     seen: set[tuple[str, str]] = set()
-    for entry in supplies.values():
-        if not isinstance(entry, Mapping):
-            continue
-        supply_id = entry.get("supply_id")
-        if not isinstance(supply_id, str) or not supply_id.strip():
-            legacy = entry.get("name")
-            supply_id = legacy if isinstance(legacy, str) else ""
-        channels = entry.get("channel")
-        if not isinstance(channels, (list, tuple)):
-            continue
-        for channel in channels:
+    for supply_id in choices:
+        entry = sources.get(supply_id) or {}
+        for channel in assignment_channels(entry):
             route = _route((supply_id, channel))
             if route is not None and route not in seen:
                 seen.add(route)

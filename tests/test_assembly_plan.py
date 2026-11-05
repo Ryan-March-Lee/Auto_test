@@ -54,29 +54,29 @@ def _supply(address, *, label=None, gate="CH1", drain="CH2", enabled=True):
     return item
 
 
+def _plan(supply_id, channels=("CH1", "CH2")):
+    return {
+        "power_plan": {
+            "power_sequence": [
+                {"supply_id": supply_id, "channel": channel}
+                for channel in channels
+            ],
+            "inter_channel_delay_s": 0.0,
+        }
+    }
+
+
 def _config(*, dut="DP8B1519", driver=None) -> dict:
     supplies = {
         "DP8B1519": _supply(SUPPLY_A),
         "DP8B0950": _supply(SUPPLY_B, label="DP8B0950"),
     }
     assignment = {
-        "dut_amplifier": {
-            "supplies": {
-                "carrier": {
-                    "supply_id": dut,
-                    "name": dut,
-                    "channel": ["CH1", "CH2"],
-                }
-            }
+        "dut_amplifier": _plan(dut),
+        "driver_amplifier": _plan(driver) if driver is not None else {
+            "power_plan": {"power_sequence": [], "inter_channel_delay_s": 0.0}
         },
-        "driver_amplifier": {"supplies": {}},
     }
-    if driver is not None:
-        assignment["driver_amplifier"]["supplies"]["main"] = {
-            "supply_id": driver,
-            "name": driver,
-            "channel": ["CH1", "CH2"],
-        }
     return {
         "instruments": {
             "signal_generator": {"address": SIGNAL, "enabled": True},
@@ -172,11 +172,11 @@ class AssemblyPlanValidationTests(unittest.TestCase):
         plan = hardware_assembly_plan(config)
         self.assertEqual(plan.dut_power_plan.tokens, ("DP8B1519/CH1", "DP8B1519/CH2"))
 
-    def test_declared_channel_order_is_used_when_no_plan_is_present(self):
+    def test_plan_order_is_the_only_order_source(self):
         config = _config()
-        config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"][
-            "channel"
-        ] = ["CH2", "CH1"]
+        config["power_supply_assignment"]["dut_amplifier"] = _plan(
+            "DP8B1519", ("CH2", "CH1")
+        )
         plan = hardware_assembly_plan(config)
         self.assertEqual(plan.dut_power_plan.tokens, ("DP8B1519/CH2", "DP8B1519/CH1"))
 
@@ -191,6 +191,23 @@ class AssemblyPlanValidationTests(unittest.TestCase):
         del config["instruments"]["power_supplies"]["DP8B1519"]["address"]
         with self.assertRaisesRegex(ValueError, "生产电源 DP8B1519 必须配置 address"):
             hardware_assembly_plan(config)
+
+    def test_one_supply_may_feed_driver_and_dut_on_different_channels(self):
+        """同一台电源 CH1→驱放、CH2→DUT：计划路由足够，装配不要求两台电源。"""
+        config = _config()
+        del config["instruments"]["power_supplies"]["DP8B0950"]
+        config["power_supply_assignment"]["driver_amplifier"] = _plan(
+            "DP8B1519", ("CH1",)
+        )
+        config["power_supply_assignment"]["dut_amplifier"] = _plan(
+            "DP8B1519", ("CH2",)
+        )
+
+        plan = hardware_assembly_plan(config)
+
+        self.assertEqual(plan.driver_power_plan.tokens, ("DP8B1519/CH1",))
+        self.assertEqual(plan.dut_power_plan.tokens, ("DP8B1519/CH2",))
+        self.assertEqual([supply.supply_id for supply in plan.supplies], ["DP8B1519"])
 
     def test_dut_and_driver_cannot_share_a_channel(self):
         with self.assertRaisesRegex(ValueError, "占用了同一个电源通道"):
@@ -207,10 +224,14 @@ class AssemblyPlanValidationTests(unittest.TestCase):
     def test_missing_assignment_is_rejected(self):
         config = _config()
         config["power_supply_assignment"] = {
-            "dut_amplifier": {"supplies": {}},
-            "driver_amplifier": {"supplies": {}},
+            "dut_amplifier": {
+                "power_plan": {"power_sequence": [], "inter_channel_delay_s": 0.0}
+            },
+            "driver_amplifier": {
+                "power_plan": {"power_sequence": [], "inter_channel_delay_s": 0.0}
+            },
         }
-        with self.assertRaisesRegex(ValueError, "必须显式配置电源分配和通道"):
+        with self.assertRaisesRegex(ValueError, "必须显式配置电源上电计划"):
             hardware_assembly_plan(config)
 
 

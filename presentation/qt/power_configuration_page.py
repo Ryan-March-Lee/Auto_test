@@ -1,6 +1,6 @@
 """独立电源配置页（``PowerConfigurationPage``）。
 
-电源参数、供电分配、通道上电计划与效率测量漏极都归本页；测试参数、运行入口与
+电源参数、通道上电计划与效率测量漏极都归本页；测试参数、运行入口与
 设备发现仍属于 :mod:`presentation.qt.configuration_page` 与
 :mod:`presentation.qt.instrument_setup_page`。页面只把控件组合成显式的电源片段，
 不写文件、不连接仪器、不导入基础设施或硬件模块；统一保存、版本门禁与运行冻结由
@@ -19,7 +19,7 @@
 不持有另一页的实例，也不写文件。
 
 漏极候选只来自有效 DUT 物理通道（已有 DUT 计划时限定在计划内，计划尚未生成时退回
-分配通道），页面上明确写出“漏极仅用于效率测量，不影响上电顺序”。漏极不是上电
+全部候选通道），页面上明确写出“漏极仅用于效率测量，不影响上电顺序”。漏极不是上电
 通道角色，也不参与排序、间隔或安全关断。
 """
 
@@ -46,25 +46,34 @@ from .config_form_bindings import (
     power_supply_bindings,
 )
 from .config_power_section import (
-    PowerAssignmentEntries,
     PowerFormSection,
     PowerSupplyChoices,
     PowerSupplySources,
     current_power_tab_key,
 )
-from .config_projection import (
-    DEFAULT_PA_UNIT_COUNT,
-    ConfigBackfillError,
-    driver_power_source_label,
-)
+from .config_projection import ConfigBackfillError, driver_power_source_label
 from .pages import PageControllerBindingMixin
 from .theme import PAGE_CONTENT_MAX_WIDTH
 
 __all__ = ["PowerConfigurationPage"]
 
 
+def _plan_route_count(group: Any) -> int:
+    """一组上电计划里的路由数量；计划缺失或形状不对时为 0。
+
+    只用于判断“驱放是否占用本机电源”的显示与派生状态，不代替正式校验。
+    """
+    if not isinstance(group, Mapping):
+        return 0
+    plan = group.get("power_plan")
+    if not isinstance(plan, Mapping):
+        return 0
+    sequence = plan.get("power_sequence")
+    return len(sequence) if isinstance(sequence, (list, tuple)) else 0
+
+
 class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
-    """独立电源配置页：通道参数、供电分配、组计划和漏极。
+    """独立电源配置页：通道参数、上电计划、驱放供电方式与漏极。
 
     页面通过 :meth:`build_fragment` 提交自己负责的片段，通过 :meth:`apply_config`
     接收同一份编辑草稿中的电源字段；两种方向都不读写其它页面的控件。绑定状态由
@@ -91,11 +100,8 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         driver = assignment.get("driver_amplifier") if isinstance(assignment, dict) else {}
         driver = driver if isinstance(driver, dict) else {}
         self.driver_power_source = driver_power_source_label(
-            mode.get("power_source"), driver.get("power_supply_count")
+            mode.get("power_source"), _plan_route_count(driver)
         )
-        dut = self.config.get("dut_config")
-        dut = dut if isinstance(dut, dict) else {}
-        self.pa_unit_count = max(0, self._int_or(dut.get("power_supply_count"), 2))
         self.power_section: PowerFormSection | None = None
         # 1.0 编辑文档只读：整段电源表单禁用，但页面本身与回退入口保持可用。
         self.read_only_reason: str | None = None
@@ -105,7 +111,6 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         self._fragment_signal_connections: list[tuple[Any, Any]] = []
         self.build_ui()
         self._connect_signals()
-        self.update_pa_unit_ui()
         self.update_driver_power_ui()
         self._refresh_binding_status()
         self._dirty_baseline = copy.deepcopy(self.build_config(self.config))
@@ -157,9 +162,7 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         self.power_section = PowerFormSection(
             sources=self._power_supply_sources(),
             choices=self._power_supply_choices(),
-            assignment_entries=self._assignment_entries(),
             driver_power_source=self.driver_power_source,
-            dut_supply_count=self.pa_unit_count,
             driver_plan_active=self._driver_plan_active(),
             dut_power_plan=self._power_plan_entry("dut_amplifier"),
             driver_power_plan=self._power_plan_entry("driver_amplifier"),
@@ -212,15 +215,6 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
                     widget = controls.get(key)
                     if widget is not None and hasattr(widget, "toggled"):
                         hook(widget.toggled, notify)
-        for key in (
-            "driver_power",
-            "pa_unit1_power",
-            "pa_unit2_power",
-            "pa_unit3_power",
-        ):
-            combo = section.power_assignment_widgets.get(key)
-            if combo is not None and hasattr(combo, "currentIndexChanged"):
-                hook(combo.currentIndexChanged, notify)
         for editor in (section.dut_power_plan_editor, section.driver_power_plan_editor):
             hook(editor.list.itemChanged, notify)
             hook(editor.delay_spin.valueChanged, notify)
@@ -250,36 +244,11 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         self._emit_fragment_changed()
 
     def update_driver_power_ui(self) -> None:
-        """驱放是否占用本机电源：关闭驱放或自带供电时禁用驱动槽位与计划。"""
+        """驱放是否占用本机电源：关闭驱放或自带供电时禁用驱动计划。"""
         enabled = self._driver_plan_active()
-        self.driver_power_combo.setEnabled(enabled)
-        self.driver_power_label.setEnabled(enabled)
         self.driver_power_hint.setVisible(self.test_mode_enabled and not enabled)
-        if not enabled:
-            self.driver_power_combo.setCurrentIndex(-1)
         if self.power_section is not None:
             self.power_section.set_driver_plan_active(enabled)
-
-    def update_pa_unit_ui(self) -> None:
-        """PA 单元数量只控制 DUT 分配槽位的可见性与候选，不增减电源标签页。"""
-        for index in (2, 3):
-            visible = self.pa_unit_count >= index
-            self.power_assignment_widgets[f"pa_unit{index}_power"].setVisible(visible)
-            self.power_assignment_widgets[f"pa_unit{index}_label"].setVisible(visible)
-        if self.power_section is not None:
-            self.power_section.set_dut_supply_count(self.pa_unit_count)
-
-    def set_pa_unit_count(self, count: int) -> None:
-        count = max(0, int(count))
-        if count == self.pa_unit_count:
-            return
-        self.pa_unit_count = count
-        self._silent = True
-        try:
-            self.update_pa_unit_ui()
-        finally:
-            self._silent = False
-        self._emit_fragment_changed()
 
     def set_test_mode(self, enabled: bool) -> None:
         """设置欢迎页选择的驱放测试模式，并刷新依赖它的电源派生状态。
@@ -309,9 +278,6 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         self._silent = True
         try:
             self._rebuild_power_tabs(preserve=True)
-            self.form_adapter.refresh_power_choices(self._power_supply_choices())
-            if self.power_section is not None:
-                self.power_section.refresh_plan_routes(preserve=True)
         finally:
             self._silent = False
         self._refresh_binding_status()
@@ -338,29 +304,6 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         self.binding_status_label.setText(text)
 
     # ---- 配置输入（只取本页负责的字段） ------------------------------------
-
-    def _assignment_entries(self) -> PowerAssignmentEntries:
-        existing = self.config.get("power_supply_assignment", {})
-        if not isinstance(existing, dict):
-            existing = {}
-        driver = existing.get("driver_amplifier", {})
-        dut = existing.get("dut_amplifier", {})
-        if not isinstance(driver, dict):
-            driver = {}
-        if not isinstance(dut, dict):
-            dut = {}
-        driver_supply = driver.get("supplies", {})
-        dut_supply = dut.get("supplies", {})
-        if not isinstance(driver_supply, dict):
-            driver_supply = {}
-        if not isinstance(dut_supply, dict):
-            dut_supply = {}
-        return {
-            "driver_power": driver_supply.get("main"),
-            "pa_unit1_power": dut_supply.get("carrier"),
-            "pa_unit2_power": dut_supply.get("peaking"),
-            "pa_unit3_power": dut_supply.get("peaking2"),
-        }
 
     def _power_supply_sources(self, supplies: Any = None) -> PowerSupplySources:
         """电源标签页条目：配置里已有的键 + 本次已绑定的 ``supply_id``。"""
@@ -407,12 +350,16 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
     def _rebuild_power_tabs(self, *, sources: Any = None, preserve: bool = True) -> None:
         if self.power_section is None:
             return
+        current_sources = self._power_supply_sources() if sources is None else sources
         self.power_section.rebuild(
-            sources=self._power_supply_sources() if sources is None else sources,
+            sources=current_sources,
             preserved_channels=(
                 self.form_adapter.read_power_channel_snapshot() if preserve else {}
             ),
             preserve=preserve,
+        )
+        self.power_section.set_power_choices(
+            current_sources, self._power_supply_choices()
         )
         # 重建会把通道控件换成新对象：旧连接随控件一起失效，必须按新控件重连。
         self._wire_fragment_signals()
@@ -423,10 +370,11 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         return current_power_tab_key(self.power_section)
 
     def update_power_supply_options(self) -> None:
-        """刷新分配下拉框：只保留当前绑定，失效引用保持空选择。"""
-        self.form_adapter.refresh_power_choices(self._power_supply_choices())
+        """刷新计划候选：只保留当前绑定，失效路由留在计划里交给校验。"""
         if self.power_section is not None:
-            self.power_section.refresh_plan_routes(preserve=True)
+            self.power_section.set_power_choices(
+                self._power_supply_sources(), self._power_supply_choices()
+            )
         self._emit_fragment_changed()
 
     def get_enabled_power_supplies(self) -> list[str]:
@@ -480,7 +428,6 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         previous_problems = self.binding_problems
         previous_source = self.driver_power_source
         previous_test_mode = self.test_mode_enabled
-        previous_count = self.pa_unit_count
         self._silent = True
         try:
             bindings = effective_device_bindings(config)
@@ -490,15 +437,10 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             assignment = assignment if isinstance(assignment, dict) else {}
             driver = assignment.get("driver_amplifier")
             driver = driver if isinstance(driver, dict) else {}
-            dut = config.get("dut_config")
-            dut = dut if isinstance(dut, dict) else {}
             self.device_bindings = bindings
             self.test_mode_enabled = bool(mode.get("enabled", True))
             self.driver_power_source = driver_power_source_label(
-                mode.get("power_source"), driver.get("power_supply_count")
-            )
-            self.pa_unit_count = max(
-                0, self._int_or(dut.get("power_supply_count"), int(DEFAULT_PA_UNIT_COUNT))
+                mode.get("power_source"), _plan_route_count(driver)
             )
             driver_plan_active = (
                 bool(mode.get("enabled")) and self.driver_power_source == "直流电源"
@@ -516,7 +458,6 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
                 )
                 projected = self.form_adapter.apply_power_configuration(
                     config,
-                    supplies=self._power_supply_choices(),
                     driver_plan_active=driver_plan_active,
                 )
             except ConfigBackfillError:
@@ -524,14 +465,12 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
                 self.binding_problems = previous_problems
                 self.driver_power_source = previous_source
                 self.test_mode_enabled = previous_test_mode
-                self.pa_unit_count = previous_count
                 self._rebuild_power_tabs(
                     sources=self._power_supply_sources(), preserve=False
                 )
                 raise
             self.config = projected
             self.binding_problems = self._binding_problems_of(config)
-            self.update_pa_unit_ui()
             self.update_driver_power_ui()
             self.update_power_supply_options()
             self._refresh_binding_status()
@@ -576,17 +515,6 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
     def is_dirty(self) -> bool:
         return self.build_config(self.config) != self._dirty_baseline
 
-    # ---- 小工具 -------------------------------------------------------------
-
-    @staticmethod
-    def _int_or(value: Any, default: int) -> int:
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            return default
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return default
-
     # ---- 控件只读入口（表单组件持有，页面不重复保存） ----------------------
 
     @property
@@ -616,34 +544,6 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
     @property
     def driver_power_hint(self):
         return self.power_section.driver_power_hint
-
-    @property
-    def driver_power_combo(self):
-        return self.power_section.driver_power_combo
-
-    @property
-    def driver_power_label(self):
-        return self.power_section.driver_power_label
-
-    @property
-    def pa_unit1_power_combo(self):
-        return self.power_section.pa_unit1_power_combo
-
-    @property
-    def pa_unit2_power_combo(self):
-        return self.power_section.pa_unit2_power_combo
-
-    @property
-    def pa_unit3_power_combo(self):
-        return self.power_section.pa_unit3_power_combo
-
-    @property
-    def pa_unit2_label(self):
-        return self.power_section.pa_unit2_label
-
-    @property
-    def pa_unit3_label(self):
-        return self.power_section.pa_unit3_label
 
     @property
     def power_plan_group(self):

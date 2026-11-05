@@ -145,7 +145,6 @@ class PowerSectionInputContractTests(unittest.TestCase):
         for parameter, alias in (
             ("sources", "PowerSupplySources"),
             ("choices", "PowerSupplyChoices"),
-            ("assignment_entries", "PowerAssignmentEntries"),
         ):
             with self.subTest(parameter=parameter):
                 self.assertEqual(
@@ -157,7 +156,7 @@ class PowerSectionInputContractTests(unittest.TestCase):
                 self.assertTrue(hasattr(section, alias), f"{alias} 应可在运行时取到")
 
     def test_the_page_side_producers_use_the_same_types(self):
-        """独立电源页读出的三份页面状态也按同一份类型声明，契约两端对齐。"""
+        """独立电源页读出的页面状态也按同一份类型声明，契约两端对齐。"""
         page = _page_class(
             ast.parse(POWER_PAGE_SOURCE.read_text(encoding="utf-8")),
             "PowerConfigurationPage",
@@ -166,7 +165,6 @@ class PowerSectionInputContractTests(unittest.TestCase):
         for method_name, alias in (
             ("_power_supply_sources", "PowerSupplySources"),
             ("_power_supply_choices", "PowerSupplyChoices"),
-            ("_assignment_entries", "PowerAssignmentEntries"),
         ):
             with self.subTest(method=method_name):
                 method = _method(page, method_name)
@@ -198,8 +196,6 @@ class PowerSectionBuildTests(unittest.TestCase):
                     "channels": {"CH1": {"voltage": {"value": 12.0}}},
                 }
             },
-            "choices": {},
-            "assignment_entries": {},
             "driver_power_source": "直流电源",
         }
         arguments.update(overrides)
@@ -272,49 +268,12 @@ class PowerSectionBuildTests(unittest.TestCase):
         self.assertEqual(channels["voltage"].value(), DEFAULT_POWER_CHANNEL_VALUE)
         self.assertEqual(channels["current"].value(), DEFAULT_POWER_CHANNEL_VALUE)
 
-    def test_assignment_form_registers_the_slots_the_page_redraws(self):
+    def test_assignment_form_registers_only_the_driver_source(self):
+        """器件用哪台电源、哪个通道由计划路由决定，表单不再有固定分配下拉框。"""
         page = self.build()
 
-        self.assertEqual(
-            set(page.power_assignment_widgets),
-            {
-                "driver_source",
-                "driver_power",
-                "pa_unit1_power",
-                "pa_unit2_power",
-                "pa_unit2_label",
-                "pa_unit3_power",
-                "pa_unit3_label",
-            },
-        )
+        self.assertEqual(set(page.power_assignment_widgets), {"driver_source"})
         self.assertEqual(page.driver_power_source_combo.currentText(), "直流电源")
-
-    def test_a_declared_but_unbound_supply_stays_unselected(self):
-        """配置里声明了引用、但本次没有可选项时保持空选择，交给校验报告。"""
-        page = self.build(assignment_entries={"pa_unit1_power": {"supply_id": "DP8B0885"}})
-
-        self.assertEqual(page.pa_unit1_power_combo.currentIndex(), -1)
-
-    def test_an_undeclared_assignment_falls_back_to_the_first_bound_supply(self):
-        """配置里没有这条分配（``None``）时才按缺省规则选中第一台可用电源。"""
-        page = self.build(
-            choices={
-                "DP8B1519": {"label": "DP8B1519", "model": "DP832A"},
-                "DP8B0885": {"label": "DP8B0885", "model": "DP832A"},
-            },
-            assignment_entries={},
-        )
-
-        self.assertEqual(page.pa_unit1_power_combo.currentData(), "DP8B1519")
-
-    def test_a_declared_assignment_selects_the_bound_supply(self):
-        """声明了引用、且这台电源本次已绑定：选中它，业务值在 ``itemData``。"""
-        page = self.build(
-            choices={"DP8B0885": {"label": "DP8B0885", "model": "DP832A"}},
-            assignment_entries={"pa_unit1_power": {"supply_id": "DP8B0885"}},
-        )
-
-        self.assertEqual(page.pa_unit1_power_combo.currentData(), "DP8B0885")
 
     def test_tab_tooltip_omits_identity_parts_the_entry_does_not_have(self):
         """旧槽位条目没有序列号与设备键：标题与提示里只有它的旧键，不编造身份。"""

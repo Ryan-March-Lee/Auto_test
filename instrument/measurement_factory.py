@@ -55,6 +55,7 @@ from infrastructure.logging.app_logging import get_logger
 from .assembly_plan import hardware_assembly_plan
 from .drivers import ScpiPowerSupplyDriver, ScpiSignalGeneratorDriver, ScpiSpectrumAnalyzerDriver
 from .measurement_adapter import PortMeasurementAdapter
+from .power_control import PowerGroupPlan
 from .session import ManagedInstrumentSession
 from .transport import VisaScpiTransport
 from .simulation import (
@@ -77,9 +78,8 @@ def create_measurement_port(
     hardware_config_path: str | None = None,
     *,
     mode: str = "hardware",
-    power_channels: Mapping[str, str] | None = None,
-    driver_power_channels: Mapping[str, str] | None = None,
-    power_settings: Mapping[str, Mapping[str, float]] | None = None,
+    dut_power_plan: PowerGroupPlan | None = None,
+    driver_power_plan: PowerGroupPlan | None = None,
     recorder: Any = None,
 ):
     """Create a service port for hardware or offline simulation mode.
@@ -91,8 +91,12 @@ def create_measurement_port(
     与第 5 节）。本模块不做来源校验，来源约束由组合根与门禁保证。仿真模式不打开任何 VISA
     资源，因此不需要该路径。
 
+    仿真模式的上电计划由调用方显式传入；没有计划就是“没有受管电源输出”，不会
+    自行猜一组 gate/drain 通道。硬件模式从装配计划的 ``dut_power_plan`` /
+    ``driver_power_plan`` 取冻结顺序。
+
     Hardware construction owns the VISA manager and all resources through the
-    returned session.  Validation of addresses, roles and channels happens
+    returned session.  Validation of addresses, channels and power plans happens
     before any VISA resource is opened (see :mod:`instrument.assembly_plan`).
     """
     if mode == "hardware":
@@ -105,23 +109,20 @@ def create_measurement_port(
     if mode != "simulation":
         raise ValueError(f"不支持的测量端口模式: {mode}")
 
-    dut_channels = dict(power_channels or {})
-    driver_channels = dict(driver_power_channels or {})
-    session_channels = dut_channels or {"gate": "A", "drain": "B"}
+    dut_plan = dut_power_plan or PowerGroupPlan()
+    driver_plan = driver_power_plan or PowerGroupPlan()
     session = ManagedInstrumentSession(
         SimulatedSignalGenerator(recorder),
         SimulatedSpectrumAnalyzer(recorder=recorder),
         SimulatedPowerSupply(recorder),
-        session_channels,
     )
     session.validate()
     session.connect()
     session.prepare()
     return PortMeasurementAdapter(
         session,
-        dut_power_channels=dut_channels,
-        driver_power_channels=driver_channels,
-        power_settings=power_settings,
+        dut_power_plan=dut_plan,
+        driver_power_plan=driver_plan,
     )
 
 
@@ -382,7 +383,6 @@ def _create_hardware_measurement_port(hardware_config_path: str, *, recorder=Non
             signal,
             spectrum,
             power,
-            plan.all_channels,
             # 通道动作日志用 ``短标签/CHx``；物理路由仍是上面的 token。
             power_channel_labels=plan.channel_labels,
         )
@@ -395,9 +395,8 @@ def _create_hardware_measurement_port(hardware_config_path: str, *, recorder=Non
         session.prepare()
         return PortMeasurementAdapter(
             session,
-            dut_power_channels=plan.dut_channels,
-            driver_power_channels=plan.driver_channels,
-            power_settings=plan.power_settings,
+            dut_power_plan=plan.dut_power_plan,
+            driver_power_plan=plan.driver_power_plan,
             qualified_power_channels=True,
             emergency_channels=plan.emergency_channels,
             power_channel_labels=plan.channel_labels,

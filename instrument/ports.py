@@ -166,6 +166,9 @@ class InstrumentSession(Protocol):
     def prepare(self, *, timeout_s: float = 30.0) -> None:
         """配置端口但保持 RF 和电源输出关闭。"""
 
+    def mark_powered(self) -> None:
+        """登记调用方已按显式通道计划打开输出；不重新执行任何输出动作。"""
+
     def end_stage(self, *, timeout_s: float = 30.0) -> None:
         """成功阶段结束后确认 RF/供电关闭并回到 ``prepared``，供下一阶段复用。
 

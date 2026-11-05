@@ -39,19 +39,12 @@ from application.ports.measurement_session import (
 )
 from application.run_service import RunNotResumable
 from application.run_stages import StageInputUnavailable
-from instrument.action import PowerSupplyActions
 from instrument.drivers.spectrum_analyzer import SpectrumAnalyzerMeasurementError
-from instrument.flow import (
-    PowerOffFlow,
-    PowerOffFlowError,
-    PowerOnFlow,
-    PowerOnFlowError,
-    SafetyShutdownError,
-)
+from instrument.flow import SafetyShutdownError
 from instrument.flow.cleanup import cleanup_measurement
 from instrument.measurement_adapter import PortMeasurementAdapter
 from instrument.ports import InstrumentCapabilityError
-from instrument.power_control import PowerControlError
+from instrument.power_control import PowerControlError, PowerOnControlError
 from instrument.session import InstrumentSessionError, ManagedInstrumentSession
 from instrument.simulation import (
     CommandRecorder,
@@ -105,11 +98,10 @@ class ExistingErrorClassificationTests(unittest.TestCase):
         self.assertIs(ScpiTransportTimeoutError.category, ErrorCategory.PROTOCOL)
         self.assertIs(InstrumentCapabilityError.category, ErrorCategory.CAPABILITY)
         self.assertIs(SpectrumAnalyzerMeasurementError.category, ErrorCategory.MEASUREMENT)
-        self.assertIs(PowerOnFlowError.category, ErrorCategory.MEASUREMENT)
+        self.assertIs(PowerOnControlError.category, ErrorCategory.MEASUREMENT)
         for error_type in (SafetyShutdownError, InstrumentSafetyError, InstrumentSessionError):
             self.assertIs(error_type.category, ErrorCategory.CLEANUP)
-        for error_type in (PowerOffFlowError,):
-            self.assertIs(error_type.category, ErrorCategory.CLEANUP)
+        self.assertIs(PowerControlError.category, ErrorCategory.CLEANUP)
 
     def test_application_and_presentation_errors_are_classified(self):
         for error_type in (
@@ -136,9 +128,8 @@ class ExistingErrorClassificationTests(unittest.TestCase):
         for error_type in (
             InstrumentSafetyError,
             InstrumentSessionError,
-            PowerOffFlowError,
-            PowerOnFlowError,
             PowerControlError,
+            PowerOnControlError,
         ):
             self.assertTrue(issubclass(error_type, RuntimeError), error_type.__name__)
         self.assertTrue(issubclass(SpectrumAnalyzerMeasurementError, ValueError))
@@ -233,8 +224,7 @@ class LegacyAggregateCompatibilityTests(unittest.TestCase):
         for error_type in (
             InstrumentSafetyError,
             InstrumentSessionError,
-            PowerOffFlowError,
-            PowerOnFlowError,
+            PowerOnControlError,
             PowerControlError,
         ):
             with self.subTest(error_type=error_type.__name__):
@@ -367,38 +357,6 @@ class CorePathNarrowingTests(unittest.TestCase):
         )
         self.assertIsInstance(raised.exception.__cause__, ScpiTransportError)
         self.assertEqual(raised.exception.operation, "close")
-
-
-class PowerSupplyFlowAggregationTests(unittest.TestCase):
-    """供电流程同样按动作记录失败。"""
-
-    def setUp(self):
-        self.recorder = CommandRecorder()
-        self.supply = SimulatedPowerSupply(self.recorder)
-        self.supply.connect()
-        self.gate = PowerSupplyActions(self.supply, channel="A")
-        self.drain = PowerSupplyActions(self.supply, channel="B")
-
-    def test_power_on_failure_records_the_failed_step_and_cleanup(self):
-        self.supply.inject_failure("output_on", once=True)
-        flow = PowerOnFlow({"gate": self.gate, "drain": self.drain})
-
-        with self.assertRaises(PowerOnFlowError) as raised:
-            flow.run({
-                "gate": {"voltage_v": 2, "current_a": 1},
-                "drain": {"voltage_v": 20, "current_a": 1},
-            })
-
-        self.assertEqual(raised.exception.actions, ("gate.output_on",))
-
-    def test_power_off_failure_records_every_failed_channel(self):
-        self.supply.inject_failure("output_off", once=True)
-        flow = PowerOffFlow({"gate": self.gate, "drain": self.drain})
-
-        with self.assertRaises(PowerOffFlowError) as raised:
-            flow.run()
-
-        self.assertEqual(raised.exception.actions, ("drain.output_off",))
 
 
 if __name__ == "__main__":

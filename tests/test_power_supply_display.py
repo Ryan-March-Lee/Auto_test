@@ -317,13 +317,10 @@ class AuditPlanTests(unittest.TestCase):
         # 显示与审计文本不参与路由：通道仍然是显式的 ``supply_id/CHx``。
         plan = hardware_assembly_plan(_two_supply_config())
         self.assertEqual(
-            plan.all_channels,
-            {
-                "gate": "DP8B1519/CH1",
-                "drain": "DP8B1519/CH2",
-            },
+            plan.dut_power_plan.tokens,
+            ("DP8B1519/CH1", "DP8B1519/CH2"),
         )
-        self.assertEqual(plan.power_settings["gate"]["voltage_v"], 2.8)
+        self.assertEqual(plan.dut_power_plan.channels[0].voltage_v, 2.8)
 
     def test_plan_maps_every_routing_token_to_its_log_text(self):
         """通道动作日志的显示文本与路由 token 一一对应，且在拼 token 的地方生成。"""
@@ -345,9 +342,9 @@ class AuditPlanTests(unittest.TestCase):
         # 没有标签的电源：显示文本就等于路由 token，不凭空补一个标签。
         self.assertEqual(plan.channel_labels["DP8B0950/CH1"], "DP8B0950/CH1")
         # 路由值不受显示文本影响。
-        self.assertEqual(plan.all_channels["gate"], "DP8B1519/CH1")
+        self.assertEqual(plan.dut_power_plan.tokens[0], "DP8B1519/CH1")
         # 每个被分配的通道（DUT 与驱动功放）都有日志写法，键就是路由 token。
-        assigned = set(plan.dut_channels.values()) | set(plan.driver_channels.values())
+        assigned = set(plan.dut_power_plan.tokens) | set(plan.driver_power_plan.tokens)
         self.assertEqual(set(plan.channel_labels), assigned)
 
 

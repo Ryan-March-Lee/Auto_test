@@ -6,7 +6,7 @@
   地址连接、各自做 ``*IDN?`` 身份检查和“初始输出已关闭”检查；
 - 供电分配可以写 ``supply_id``（新配置），也可以写该电源自己的 ``label`` 或
   旧文件残留的 ``visual`` 槽位；三者都唯一解析到同一台电源，含混时在连接前失败；
-- 物理路由统一是 ``supply_id/CHx``，急停只关闭实际声明的通道，且先漏后栅；
+- 物理路由统一是 ``supply_id/CHx``，急停只关闭实际声明的通道，并按全局上电顺序逆序；
 - 任意异常路径（身份不符 / 初始输出未关闭 / 第二台连接失败 / 准备失败）都关闭
   所有已打开的资源，并把 ResourceManager 一起释放；
 - 日志中出现 ``DP8B1519/CH1`` 形式的短标签与通道；集合键与 ``label`` 不同时，通道动作
@@ -242,11 +242,11 @@ class MultiSupplyConnectionTests(unittest.TestCase):
             self.assertIn(("query", "OUTP? CH2"), resource.commands)
         # 路由前缀是 supply_id：DUT 与驱动功放各自落在自己的电源上。
         self.assertEqual(
-            port.dut_power_channels, {"gate": "DP8B1519/CH1", "drain": "DP8B1519/CH2"}
+            port.dut_power_plan.tokens, ("DP8B1519/CH1", "DP8B1519/CH2")
         )
         self.assertEqual(
-            port.driver_power_channels,
-            {"gate": "DP8B0950/CH1", "drain": "DP8B0950/CH2"},
+            port.driver_power_plan.tokens,
+            ("DP8B0950/CH1", "DP8B0950/CH2"),
         )
         self.assertEqual(port.close_all(close_rf=True), [])
         self.assertTrue(manager.closed)
@@ -321,7 +321,7 @@ class MultiSupplyConnectionTests(unittest.TestCase):
         self.assertTrue(manager.resource(SPECTRUM).closed)
         self.assertTrue(manager.closed)
 
-    def test_emergency_shutdown_covers_both_supplies_drain_before_gate(self):
+    def test_emergency_shutdown_covers_both_supplies_in_reverse_global_order(self):
         manager = _FakeResourceManager()
         with _ConfigFile(_two_supply_config()) as path, _PatchedManager(manager):
             port = create_measurement_port(path, mode="hardware")
@@ -331,10 +331,10 @@ class MultiSupplyConnectionTests(unittest.TestCase):
         self.assertEqual(
             port._last_emergency_power_off,
             [
-                (0, "DP8B0950/CH2"),
                 (1, "DP8B1519/CH2"),
-                (0, "DP8B0950/CH1"),
                 (1, "DP8B1519/CH1"),
+                (0, "DP8B0950/CH2"),
+                (0, "DP8B0950/CH1"),
             ],
         )
         self.assertIn(("write", ":OUTPut CH2,OFF"), manager.resource(SUPPLY_B).commands)
@@ -553,7 +553,7 @@ class MultiSupplyConnectionTests(unittest.TestCase):
             capture.close()
 
         text = capture.text()
-        self.assertIn("打开电源通道 现场 A 电源/CH1（gate）", text)
+        self.assertIn("打开电源通道 现场 A 电源/CH1", text)
         self.assertIn("紧急关闭电源通道 现场 A 电源/CH2", text)
         # 日志不能把集合键当成设备名。
         self.assertNotIn("打开电源通道 DP8B1519/CH1", text)
@@ -572,8 +572,8 @@ class MultiSupplyConnectionTests(unittest.TestCase):
             with _ConfigFile(config) as path, _PatchedManager(manager):
                 port = create_measurement_port(path, mode="hardware")
                 self.assertEqual(
-                    port.dut_power_channels,
-                    {"gate": "DP8B1519/CH1", "drain": "DP8B1519/CH2"},
+                    port.dut_power_plan.tokens,
+                    ("DP8B1519/CH1", "DP8B1519/CH2"),
                 )
                 # 配置 + 上电 + 读取都落在被分配的那台电源上，且不会被标签挡住。
                 port.setup_dut_power()
@@ -591,10 +591,10 @@ class MultiSupplyConnectionTests(unittest.TestCase):
         self.assertEqual(
             port._last_emergency_power_off,
             [
-                (0, "DP8B0950/CH2"),
                 (1, "DP8B1519/CH2"),
-                (0, "DP8B0950/CH1"),
                 (1, "DP8B1519/CH1"),
+                (0, "DP8B0950/CH2"),
+                (0, "DP8B0950/CH1"),
             ],
         )
         # 日志说人话：短标签 + 通道。
@@ -619,7 +619,7 @@ class AssignmentReferenceTests(unittest.TestCase):
             with self.subTest(reference=reference):
                 plan = self._plan(_two_supply_config(), reference)
                 self.assertEqual([supply.supply_id for supply in plan.supplies], [supply_id])
-                self.assertEqual(plan.all_channels["gate"], f"{supply_id}/CH1")
+                self.assertEqual(plan.dut_power_plan.tokens[0], f"{supply_id}/CH1")
 
     def test_visual_slot_resolves_to_the_supply_actually_named_by_the_config(self):
         # 旧文件里 ``visual: PS3`` 指向 DP8B0885；这里按身份解析，不按槽位序号。
@@ -628,7 +628,7 @@ class AssignmentReferenceTests(unittest.TestCase):
         plan = self._plan(config, "PS3")
         self.assertEqual([supply.supply_id for supply in plan.supplies], ["DP8B0885"])
         self.assertEqual(plan.supply_labels["DP8B0885"], "DP8B0885")
-        self.assertEqual(plan.all_channels["gate"], "DP8B0885/CH1")
+        self.assertEqual(plan.dut_power_plan.tokens[0], "DP8B0885/CH1")
 
     def test_supply_without_a_label_uses_its_supply_id(self):
         plan = self._plan(_two_supply_config(), "DP8B1519")

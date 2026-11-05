@@ -104,7 +104,7 @@ FailureKind = FailureRecord | BaseException | str
 def normalize_failures(failures: Iterable[FailureKind]) -> tuple[FailureRecord, ...]:
     """把失败项统一成 :class:`FailureRecord` 元组。
 
-    分类之前的聚合异常（``InstrumentSafetyError``、``PowerOffFlowError`` 等）以
+    分类之前的聚合异常（``InstrumentSafetyError``、``PowerOnControlError`` 等）以
     ``(message, errors)`` 接收 ``list[BaseException]``，运行记录里也可能只剩文本。
     这些形态都必须在同一套聚合结构里保留下来，所以 ``AutoTestError`` 在构造时统一
     转换：没有动作名的项留空 ``action``，而不是丢弃或猜测动作。

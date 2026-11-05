@@ -20,7 +20,7 @@ class SimulationLifecycleTests(unittest.TestCase):
         self.sa = SimulatedSpectrumAnalyzer((-30.0, -25.0), self.recorder)
         self.ps = SimulatedPowerSupply(self.recorder)
         self.session = SafetyInstrumentSession(
-            self.sg, self.sa, self.ps, {"gate": "A", "drain": "B"}
+            self.sg, self.sa, self.ps, ("A", "B")
         )
 
     def _prepare(self):
@@ -28,7 +28,7 @@ class SimulationLifecycleTests(unittest.TestCase):
         self.session.connect()
         self.session.prepare(frequency_hz=1e9, bandwidth_hz=1e6)
 
-    def test_normal_completion_has_rf_off_then_drain_gate_then_close(self):
+    def test_normal_completion_has_rf_off_then_reverse_power_then_close(self):
         self._prepare()
         self.session.power_on()
         self.session.start_measurement()
@@ -76,7 +76,7 @@ class SimulationLifecycleTests(unittest.TestCase):
         self.assertFalse(self.sa.connected)
         self.assertFalse(self.ps.connected)
 
-    def test_rf_is_default_off_and_power_order_is_gate_then_drain(self):
+    def test_rf_is_default_off_and_power_follows_the_session_sequence(self):
         self._prepare()
         self.assertFalse(self.sg.rf_enabled)
         self.session.power_on()
@@ -84,12 +84,9 @@ class SimulationLifecycleTests(unittest.TestCase):
                    if device == "power_supply" and action == "output_on"]
         self.assertEqual(outputs, [("output_on", "A"), ("output_on", "B")])
 
-    def test_incomplete_power_mapping_is_rejected_before_connect(self):
-        invalid = SafetyInstrumentSession(
-            self.sg, self.sa, self.ps, {"gate": "A"}
-        )
-        with self.assertRaisesRegex(ValueError, "mapped together"):
-            invalid.validate()
+    def test_duplicate_power_channels_are_rejected_before_connect(self):
+        with self.assertRaisesRegex(ValueError, "不能重复"):
+            SafetyInstrumentSession(self.sg, self.sa, self.ps, ("A", "A"))
         self.assertEqual(self.recorder.commands, [])
 
     def test_rf_off_failure_keeps_signal_generator_open_for_retry(self):
@@ -143,6 +140,7 @@ class SimulationLifecycleTests(unittest.TestCase):
 
     def test_setting_reading_and_shutdown_failures_are_injectable_and_cleanup_continues(self):
         self._prepare()
+        self.session.power_on()
         self.sa.fail_on = "measure_power_dbm"
         with self.assertRaisesRegex(RuntimeError, "spectrum analyzer failure"):
             self.sa.measure_power_dbm()

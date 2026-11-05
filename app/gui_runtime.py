@@ -104,15 +104,15 @@ def _close_owned_measurement_port(port: Any) -> None:
 
 def create_offline_measurement_port(
     *,
-    power_channels: dict[str, str] | None = None,
-    driver_power_channels: dict[str, str] | None = None,
+    dut_power_plan: Any = None,
+    driver_power_plan: Any = None,
     recorder: Any = None,
 ) -> Any:
     """Create the explicit simulation assembly used by offline callers."""
     return create_measurement_port(
         mode="simulation",
-        power_channels=power_channels,
-        driver_power_channels=driver_power_channels,
+        dut_power_plan=dut_power_plan,
+        driver_power_plan=driver_power_plan,
         recorder=recorder,
     )
 

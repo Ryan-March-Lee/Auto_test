@@ -14,6 +14,7 @@ from application.errors import (
 )
 from instrument.measurement_adapter import PortMeasurementAdapter
 from instrument.measurement_factory import create_measurement_port, _VisaSession
+from instrument.power_control import PowerGroupPlan
 from instrument.ports import PowerSupplyPort
 from instrument.simulation import SimulatedSignalGenerator, SimulatedSpectrumAnalyzer, SimulatedPowerSupply
 
@@ -22,8 +23,8 @@ class MeasurementFactoryTests(unittest.TestCase):
     def test_simulation_mode_assembles_new_session_and_adapter(self):
         port = create_measurement_port(
             mode="simulation",
-            power_channels={"gate": "A", "drain": "B"},
-            driver_power_channels={"gate": "C", "drain": "D"},
+            dut_power_plan=PowerGroupPlan.from_channels(["A", "B"]),
+            driver_power_plan=PowerGroupPlan.from_channels(["C", "D"]),
         )
         self.assertIsInstance(port, PortMeasurementAdapter)
         self.assertEqual(port.session.state.value, "prepared")
@@ -43,7 +44,7 @@ class MeasurementFactoryTests(unittest.TestCase):
         signal = SimulatedSignalGenerator()
         analyzer = SimulatedSpectrumAnalyzer()
         power = SimulatedPowerSupply()
-        session = _VisaSession(manager, signal, analyzer, power, {"gate": "A", "drain": "B"})
+        session = _VisaSession(manager, signal, analyzer, power, ("A", "B"))
         session.validate()
         session.connect()
         session.prepare()
@@ -124,7 +125,7 @@ class MeasurementFactoryTests(unittest.TestCase):
             path.write_text(json.dumps(config), encoding="utf-8")
             manager = _DiscoveryResourceManager()
             with patch("instrument.measurement_factory.pyvisa.ResourceManager", return_value=manager):
-                with self.assertRaisesRegex(ValueError, "必须显式配置电源角色"):
+                with self.assertRaisesRegex(ValueError, "必须显式配置电源分配和通道"):
                     create_measurement_port(str(path), mode="hardware")
 
     def test_hardware_mode_rejects_unenabled_assigned_supply(self):
@@ -141,7 +142,7 @@ class MeasurementFactoryTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "未启用"):
                     create_measurement_port(str(path), mode="hardware")
 
-    def test_hardware_mode_rejects_incomplete_dut_mapping(self):
+    def test_hardware_mode_accepts_a_single_channel_assignment(self):
         config = _base_hardware_config()
         config["power_supply_assignment"] = {
             "dut_amplifier": {"supplies": {"carrier": {"name": "PS1", "channel": ["CH1"]}}},
@@ -150,9 +151,11 @@ class MeasurementFactoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
             path.write_text(json.dumps(config), encoding="utf-8")
-            with patch("instrument.measurement_factory.pyvisa.ResourceManager", return_value=_FakeResourceManager()):
-                with self.assertRaisesRegex(ValueError, "DUT 电源"):
-                    create_measurement_port(str(path), mode="hardware")
+            manager = _FakeResourceManager()
+            with patch("instrument.measurement_factory.pyvisa.ResourceManager", return_value=manager):
+                port = create_measurement_port(str(path), mode="hardware")
+            self.assertEqual(port.dut_power_plan.tokens, ("PS1/CH1",))
+            self.assertEqual(port.close_all(close_rf=True), [])
 
     def test_hardware_mode_rejects_unknown_assigned_channel(self):
         config = _base_hardware_config()
@@ -195,24 +198,9 @@ class MeasurementFactoryTests(unittest.TestCase):
                     create_measurement_port(str(path), mode="hardware")
         self.assertEqual(manager.opened_addresses, [])
 
-    def test_hardware_mode_requires_explicit_channel_role_before_opening(self):
+    def test_hardware_mode_ignores_channel_roles_when_building_the_plan(self):
         config = _base_hardware_config()
         del config["instruments"]["power_supplies"]["PS1"]["channels"]["CH1"]["role"]
-        config["power_supply_assignment"] = {
-            "dut_amplifier": {"supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}}},
-            "driver_amplifier": {"supplies": {}},
-        }
-        manager = _FakeResourceManager()
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "config.json"
-            path.write_text(json.dumps(config), encoding="utf-8")
-            with patch("instrument.measurement_factory.pyvisa.ResourceManager", return_value=manager):
-                with self.assertRaisesRegex(ValueError, "显式 gate/drain 角色"):
-                    create_measurement_port(str(path), mode="hardware")
-        self.assertEqual(manager.opened_addresses, [])
-
-    def test_hardware_mode_rejects_duplicate_power_roles_before_opening(self):
-        config = _base_hardware_config()
         config["instruments"]["power_supplies"]["PS1"]["channels"]["CH2"]["role"] = "gate"
         config["power_supply_assignment"] = {
             "dut_amplifier": {"supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}}},
@@ -223,9 +211,34 @@ class MeasurementFactoryTests(unittest.TestCase):
             path = Path(directory) / "config.json"
             path.write_text(json.dumps(config), encoding="utf-8")
             with patch("instrument.measurement_factory.pyvisa.ResourceManager", return_value=manager):
-                with self.assertRaisesRegex(ValueError, "供电角色重复配置"):
-                    create_measurement_port(str(path), mode="hardware")
-        self.assertEqual(manager.opened_addresses, [])
+                port = create_measurement_port(str(path), mode="hardware")
+            self.assertEqual(port.dut_power_plan.tokens, ("PS1/CH1", "PS1/CH2"))
+            self.assertEqual(port.close_all(close_rf=True), [])
+
+    def test_hardware_mode_uses_the_power_plan_sequence(self):
+        config = _base_hardware_config()
+        config["power_supply_assignment"] = {
+            "dut_amplifier": {
+                "supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}},
+                "power_plan": {
+                    "power_sequence": [
+                        {"supply_id": "PS1", "channel": "CH2"},
+                        {"supply_id": "PS1", "channel": "CH1"},
+                    ],
+                    "inter_channel_delay_s": 2.0,
+                },
+            },
+            "driver_amplifier": {"supplies": {}},
+        }
+        manager = _FakeResourceManager()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps(config), encoding="utf-8")
+            with patch("instrument.measurement_factory.pyvisa.ResourceManager", return_value=manager):
+                port = create_measurement_port(str(path), mode="hardware")
+            self.assertEqual(port.dut_power_plan.tokens, ("PS1/CH2", "PS1/CH1"))
+            self.assertEqual(port.dut_power_plan.inter_channel_delay_s, 2.0)
+            self.assertEqual(port.close_all(close_rf=True), [])
 
     def test_hardware_mode_rejects_identical_signal_and_spectrum_address_before_opening(self):
         config = _base_hardware_config()

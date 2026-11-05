@@ -128,21 +128,16 @@ BROAD_CATCH_BASELINE = {
         "SafetyCleanupAdapter.cleanup.power_off#1",
         "SafetyCleanupAdapter.cleanup.close#1",
     ),
-    "instrument/flow/power_off_flow.py": (
-        "PowerOffFlow.run#1",
-    ),
-    "instrument/flow/power_on_flow.py": (
-        "PowerOnFlow.run#1",
-        "PowerOnFlow.run#2",
-        "PowerOnFlow._step#1",
-    ),
     "instrument/flow/safety_shutdown_flow.py": (
         "SafetyShutdownFlow.run#1",
         "SafetyShutdownFlow.run#2",
         "SafetyShutdownFlow.run#3",
     ),
     "instrument/power_control.py": (
-        "PowerController.power_off#1",
+        # 上电失败与取消路径都要先逆序关闭已成功通道，再保留原始失败/取消。
+        "PowerController.power_on#1",
+        "PowerController._cancellation_guard#1",
+        "PowerController._shutdown#1",
     ),
     "instrument/safety.py": (
         "shutdown_instruments#1",
@@ -171,18 +166,6 @@ BROAD_CATCH_BASELINE = {
         "_create_hardware_measurement_port#1",
         "_create_hardware_measurement_port#2",
         "_create_hardware_measurement_port#3",
-    ),
-    "instrument/simulation.py": (
-        "_LegacySafetyInstrumentSession.connect#1",
-        "_LegacySafetyInstrumentSession.connect#2",
-        "_LegacySafetyInstrumentSession.prepare#1",
-        "_LegacySafetyInstrumentSession.prepare#2",
-        "_LegacySafetyInstrumentSession.power_on#1",
-        "_LegacySafetyInstrumentSession.power_on#2",
-        "_LegacySafetyInstrumentSession.power_off#1",
-        "_LegacySafetyInstrumentSession.close#1",
-        "_LegacySafetyInstrumentSession.close#2",
-        "_LegacySafetyInstrumentSession.close#3",
     ),
     "instrument/transport/visa_transport.py": (
         "VisaScpiTransport.__init__#1",

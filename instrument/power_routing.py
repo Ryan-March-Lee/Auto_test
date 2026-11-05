@@ -1,18 +1,18 @@
-"""供电分配解析：把配置里的电源引用解析成显式的 ``supply_id/CHx`` 路由。
+"""供电分配解析：把配置里的电源引用解析成有序的物理通道计划。
 
 本模块只**读配置**、只**算路由**，是纯计算：不打开 VISA 资源、不构造驱动、不认识
 会话；仪器地址、启用状态与仪器身份由 :mod:`instrument.assembly_plan` 在同一份配置上
-校验，本模块只在“已启用的电源键”这一前提上工作。它回答两个问题：
+校验。它回答两个问题：
 
 - 分配里写的那台电源到底是谁（:func:`resolve_supply_keys`）：``supply_id`` 就是
   ``instruments.power_supplies`` 的集合键；旧文件仍可能写 ``label``（迁移前的显示名）
   或残留的 ``visual`` 槽位（``PS1`` 等），别名必须唯一指向一台**已启用**的电源。
   任何歧义都明确失败——按位置或按数量挑一台，等于把电接到不知道哪台设备上。
-- 被引用的通道承什么角色、走哪个物理 token（:func:`resolve_channel_routing`）：
-  角色只认通道上显式声明的 ``gate``/``drain``；物理 token 只由集合键拼成，短标签是
-  显示文本，可能被改动或与键不同，绝不进入被路由的通道值。
+- 被引用的通道按什么顺序上电（:func:`resolve_channel_routing`）：顺序只来自用户
+  计划 ``power_plan.power_sequence``；没有计划键的旧文件按分配里 ``channel`` 列表的
+  声明顺序补齐。通道上残留的 ``role`` 字段既不是顺序来源，也不是选择条件。
 
-两个阶段都是纯函数：同一份配置总得到同一份路由，因此可以在连接任何仪器之前单独
+两个阶段都是纯函数：同一份配置总得到同一份计划，因此可以在连接任何仪器之前单独
 测试，也可以在任何资源被创建之前失败。
 """
 
@@ -24,8 +24,7 @@ from typing import Any, Iterable, Mapping, Sequence
 from domain.configuration.rules import assignment_supply_id
 from domain.instruments.labels import supply_channel_text
 
-# 生产供电只接受配置中显式声明的角色；不再按 CH1/CH2 推导。
-POWER_ROLES = ("gate", "drain")
+from .power_control import PowerChannelStep, PowerGroupPlan
 
 
 @dataclass(frozen=True)
@@ -39,12 +38,11 @@ class SupplyKeyResolution:
 
 @dataclass(frozen=True)
 class ChannelRouting:
-    """被引用通道的路由：角色到 token、电压/电流设置、日志写法与急停顺序。"""
+    """两组通道计划、日志写法与急停顺序。"""
 
-    dut_channels: Mapping[str, str]
-    driver_channels: Mapping[str, str]
-    power_settings: Mapping[str, Mapping[str, float]]
-    all_channels: Mapping[str, str]
+    dut_power_plan: PowerGroupPlan
+    driver_power_plan: PowerGroupPlan
+    all_channels: tuple[str, ...]
     channel_labels: Mapping[str, str]
     emergency_channels: tuple[tuple[int, str], ...]
 
@@ -79,7 +77,7 @@ def assigned_supply_references(*assignments: Mapping[str, Any]) -> tuple[str, ..
 
 
 def declared_channels(power_config: Mapping[str, Any], power_name: str) -> Mapping[str, Any]:
-    """一台电源在配置里声明的通道（角色校验与初始输出检查共用这一份判据）。"""
+    """一台电源在配置里声明的通道（校验与初始输出检查共用这一份判据）。"""
     channels = power_config.get("channels")
     if not isinstance(channels, Mapping) or not channels:
         raise ValueError(f"生产电源 {power_name} 必须配置非空通道对象")
@@ -119,29 +117,172 @@ def resolve_channel_routing(
     power_configs: Mapping[str, Any],
     resolution: SupplyKeyResolution,
 ) -> ChannelRouting:
-    """把 DUT 与驱动功放的分配解析成角色 token、设置、日志写法与急停顺序。"""
-    dut_channels, dut_settings, dut_channel_labels = _assigned_channels(
-        dut_assignment, power_configs, resolution.supply_keys, resolution.supply_labels, "DUT"
+    """把 DUT 与驱动功放的分配解析成有序通道计划、日志写法与急停顺序。"""
+    dut_plan, dut_channel_labels = _group_plan(
+        dut_assignment, power_configs, resolution, "DUT"
     )
-    driver_channels, driver_settings, driver_channel_labels = _assigned_channels(
-        driver_assignment, power_configs, resolution.supply_keys, resolution.supply_labels, "驱动"
+    driver_plan, driver_channel_labels = _group_plan(
+        driver_assignment, power_configs, resolution, "驱动"
     )
-    overlap = set(dut_channels.values()) & set(driver_channels.values())
+    overlap = set(dut_plan.tokens) & set(driver_plan.tokens)
     if overlap:
         raise ValueError(
             "DUT 与驱动功放占用了同一个电源通道: " + ", ".join(sorted(overlap))
         )
+    # 全局上电顺序：先驱动功放、后 DUT；急停与收尾按这个顺序的逆序执行。
+    all_channels = driver_plan.tokens + dut_plan.tokens
     return ChannelRouting(
-        dut_channels=dut_channels,
-        driver_channels=driver_channels,
-        power_settings={**driver_settings, **dut_settings},
-        all_channels={**driver_channels, **dut_channels},
+        dut_power_plan=dut_plan,
+        driver_power_plan=driver_plan,
+        all_channels=all_channels,
         # 路由 token -> 日志里的 ``短标签/CHx``：路由值不变，只是给日志与错误一份可读写法。
         channel_labels={**driver_channel_labels, **dut_channel_labels},
         emergency_channels=_emergency_channels(
-            resolution.supply_ids, driver_channels, dut_channels
+            resolution.supply_ids, driver_plan, dut_plan
         ),
     )
+
+
+def _group_plan(
+    assignment: Mapping[str, Any],
+    power_configs: Mapping[str, Any],
+    resolution: SupplyKeyResolution,
+    label: str,
+) -> tuple[PowerGroupPlan, dict[str, str]]:
+    """解析一组的计划；有 ``power_plan`` 用用户顺序，没有才按声明顺序补齐。"""
+    assignment = assignment if isinstance(assignment, Mapping) else {}
+    labels: dict[str, str] = {}
+    declared_entries = _assignment_entries(
+        assignment, power_configs, resolution, label, labels
+    )
+    if "power_plan" in assignment:
+        entries, delay = _planned_entries(
+            assignment.get("power_plan"), power_configs, resolution, label, labels
+        )
+        declared_routes = {(name, channel) for name, channel, _settings in declared_entries}
+        planned_routes = {(name, channel) for name, channel, _settings in entries}
+        if planned_routes != declared_routes:
+            raise ValueError(
+                f"{label} 上电顺序必须恰好包含该组分配的全部物理通道"
+            )
+    else:
+        # 旧配置没有计划键：按分配里 channel 列表的声明顺序建立计划。角色字段不参与。
+        entries, delay = declared_entries, 0.0
+    steps = tuple(
+        PowerChannelStep(channel=f"{name}/{channel}", **settings)
+        for name, channel, settings in entries
+    )
+    return PowerGroupPlan(channels=steps, inter_channel_delay_s=delay), labels
+
+
+def _assignment_entries(
+    assignment: Mapping[str, Any],
+    power_configs: Mapping[str, Any],
+    resolution: SupplyKeyResolution,
+    label: str,
+    labels: dict[str, str],
+) -> list[tuple[str, str, dict[str, float]]]:
+    """按分配声明顺序展开通道，作为旧文件顺序与计划完整性校验的共同判据。"""
+    entries: list[tuple[str, str, dict[str, float]]] = []
+    for supply in _supply_assignments(assignment).values():
+        if not isinstance(supply, Mapping):
+            raise ValueError(f"{label} 供电分配条目必须是对象")
+        reference = _assigned_supply_name(supply)
+        power_name = resolution.supply_keys.get(reference)
+        if power_name is None:
+            raise ValueError(f"供电分配引用了不存在的电源: {reference}")
+        power_config = power_configs.get(power_name)
+        if not isinstance(power_config, Mapping):
+            raise ValueError(f"供电分配引用了不存在的电源: {reference}")
+        power_label = resolution.supply_labels.get(power_name, str(power_name))
+        configured = declared_channels(power_config, power_name)
+        for channel in _channel_list(supply, power_label):
+            entries.append(
+                _entry(
+                    power_name,
+                    power_label,
+                    channel,
+                    configured,
+                    labels,
+                )
+            )
+    return entries
+
+
+def _planned_entries(
+    plan: Any,
+    power_configs: Mapping[str, Any],
+    resolution: SupplyKeyResolution,
+    label: str,
+    labels: dict[str, str],
+) -> tuple[list[tuple[str, str, dict[str, float]]], float]:
+    """读取用户计划：``power_sequence`` 的顺序就是上电顺序。"""
+    if not isinstance(plan, Mapping):
+        raise ValueError(f"{label} 上电计划必须是对象")
+    missing = [key for key in ("power_sequence", "inter_channel_delay_s") if key not in plan]
+    if missing:
+        raise ValueError(f"{label} 上电计划缺少字段: " + ", ".join(missing))
+    sequence = plan.get("power_sequence")
+    if not isinstance(sequence, list):
+        raise ValueError(f"{label} 上电计划的 power_sequence 必须是列表")
+    entries: list[tuple[str, str, dict[str, float]]] = []
+    for index, item in enumerate(sequence):
+        if not isinstance(item, Mapping):
+            raise ValueError(f"{label} 上电计划[{index}] 必须是 {{supply_id, channel}} 对象")
+        reference = item.get("supply_id")
+        channel = item.get("channel")
+        if not isinstance(reference, str) or not reference.strip():
+            raise ValueError(f"{label} 上电计划[{index}] 缺少 supply_id")
+        if not isinstance(channel, str) or not channel.strip():
+            raise ValueError(f"{label} 上电计划[{index}] 缺少 channel")
+        power_name = _plan_supply_key(reference, resolution, label, index)
+        power_config = power_configs.get(power_name)
+        if not isinstance(power_config, Mapping):
+            raise ValueError(f"上电计划引用了不存在的电源: {reference}")
+        power_label = resolution.supply_labels.get(power_name, str(power_name))
+        configured = declared_channels(power_config, power_name)
+        entries.append(
+            _entry(
+                power_name,
+                power_label,
+                channel.strip(),
+                configured,
+                labels,
+            )
+        )
+    delay = plan.get("inter_channel_delay_s")
+    return entries, delay
+
+
+def _plan_supply_key(
+    reference: str,
+    resolution: SupplyKeyResolution,
+    label: str,
+    index: int,
+) -> str:
+    """计划里的 ``supply_id`` 必须是本次参与装配的电源键；别名同样唯一解析。"""
+    if reference in resolution.supply_keys:
+        return resolution.supply_keys[reference]
+    if reference in resolution.supply_ids:
+        return reference
+    raise ValueError(
+        f"{label} 上电计划[{index}] 引用了未参与本次分配的电源: {reference}"
+    )
+
+
+def _entry(
+    power_name: str,
+    power_label: str,
+    channel: str,
+    configured: Mapping[str, Any],
+    labels: dict[str, str],
+) -> tuple[str, str, dict[str, float]]:
+    channel_config = configured.get(channel)
+    if not isinstance(channel_config, Mapping):
+        raise ValueError(f"供电分配引用了不存在的通道: {power_label}/{channel}")
+    token = f"{power_name}/{channel}"
+    labels[token] = supply_channel_text(power_name, channel, power_label)
+    return power_name, channel, _channel_settings(channel_config, token)
 
 
 def _supply_assignments(assignment: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -149,53 +290,6 @@ def _supply_assignments(assignment: Mapping[str, Any]) -> Mapping[str, Any]:
     if not isinstance(supplies, Mapping):
         raise ValueError("供电分配必须提供 supplies 对象")
     return supplies
-
-
-def _assigned_channels(
-    assignment: Mapping[str, Any],
-    power_configs: Mapping[str, Any],
-    supply_keys: Mapping[str, str],
-    supply_labels: Mapping[str, str],
-    label: str,
-) -> tuple[dict[str, str], dict[str, dict[str, float]], dict[str, str]]:
-    """Resolve assigned logical roles to explicit ``supply_id/channel`` tokens.
-
-    ``supply_keys`` 把分配里的引用（``supply_id`` / ``label`` / 旧槽位）解析成
-    ``power_supplies`` 的集合键。物理路由的 token 只由集合键拼成：短标签是显示
-    文本，可能被改动或与键不同，绝不能出现在被路由的通道值里。错误消息用短标签。
-
-    第三个返回值是同一批 token 的**日志写法**（``短标签/CHx``）。它在拼 token 的同一处
-    生成，因为这里同时握着集合键与短标签两个来源；调用方不必、也不许从 token 反解析。
-    """
-    channels: dict[str, str] = {}
-    settings: dict[str, dict[str, float]] = {}
-    channel_labels: dict[str, str] = {}
-    for supply in _supply_assignments(assignment).values():
-        if not isinstance(supply, Mapping):
-            raise ValueError(f"{label} 供电分配条目必须是对象")
-        reference = _assigned_supply_name(supply)
-        power_name = supply_keys.get(reference)
-        power_config = power_configs.get(power_name)
-        if not isinstance(power_config, Mapping):
-            raise ValueError(f"供电分配引用了不存在的电源: {reference}")
-        power_label = supply_labels.get(power_name, str(power_name))
-        configured = declared_channels(power_config, power_name)
-        for channel in _channel_list(supply, power_label):
-            channel_config = configured.get(channel)
-            if not isinstance(channel_config, Mapping):
-                raise ValueError(f"供电分配引用了不存在的通道: {power_label}/{channel}")
-            token = f"{power_name}/{channel}"
-            channel_labels[token] = supply_channel_text(power_name, channel, power_label)
-            role = _explicit_role(channel_config, token)
-            if role in channels and channels[role] != token:
-                raise ValueError(
-                    f"供电角色重复配置: {role} 同时出现在 {channels[role]} 和 {token}"
-                )
-            channels[role] = token
-            settings[role] = _channel_settings(channel_config, token)
-    if channels and set(channels) != {"gate", "drain"}:
-        raise ValueError(f"{label} 电源必须同时配置 gate 和 drain 通道")
-    return channels, settings, channel_labels
 
 
 def _assigned_supply_name(supply: Mapping[str, Any]) -> str | None:
@@ -295,14 +389,6 @@ def _channel_list(supply: Mapping[str, Any], power_label: str) -> list[str]:
     return names
 
 
-def _explicit_role(channel_config: Mapping[str, Any], token: str) -> str:
-    role = channel_config.get("role")
-    normalized = role.strip().lower() if isinstance(role, str) else ""
-    if normalized not in POWER_ROLES:
-        raise ValueError(f"电源通道未配置显式 gate/drain 角色: {token}")
-    return normalized
-
-
 def _channel_settings(channel_config: Mapping[str, Any], token: str) -> dict[str, float]:
     try:
         return {
@@ -315,28 +401,24 @@ def _channel_settings(channel_config: Mapping[str, Any], token: str) -> dict[str
 
 def _emergency_channels(
     supply_ids: Sequence[str],
-    *role_groups: Mapping[str, str],
+    driver_plan: PowerGroupPlan,
+    dut_plan: PowerGroupPlan,
 ) -> tuple[tuple[int, str], ...]:
-    """Return the outputs a shutdown must switch off, drain before gate.
+    """Return the outputs an emergency shutdown must switch off.
 
-    Only tokens assigned to a declared role are returned: those are the outputs
-    the port can energize, and they are the only channels the power drivers
-    support.  Order follows the safe off sequence (``drain`` before ``gate``)
-    instead of the order channels appear in the configuration.  The first tuple
-    item is the supply index, matching the order drivers are created in.
+    顺序是全局上电顺序的逆序（先 DUT、再驱动功放；组内也逆序），只覆盖计划里的
+    通道。第一个元素是电源在装配顺序里的下标，与驱动创建顺序一致。
     """
     positions = {name: index for index, name in enumerate(supply_ids)}
     ordered: list[str] = []
-    for role in ("drain", "gate"):
-        for group in role_groups:
-            token = group.get(role)
-            if token is not None and token not in ordered:
-                ordered.append(token)
+    # 全局上电顺序是驱动功放 -> DUT；逆序因此是 DUT 逆序 -> 驱动功放逆序。
+    for token in reversed(driver_plan.tokens + dut_plan.tokens):
+        if token not in ordered:
+            ordered.append(token)
     return tuple((positions[token.split("/", 1)[0]], token) for token in ordered)
 
 
 __all__ = [
-    "POWER_ROLES",
     "ChannelRouting",
     "SupplyKeyResolution",
     "assigned_supply_references",

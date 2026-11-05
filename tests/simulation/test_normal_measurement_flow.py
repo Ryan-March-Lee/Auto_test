@@ -47,7 +47,7 @@ class NormalSimulatedMeasurementFlowTests(unittest.TestCase):
                 signal_generator,
                 spectrum_analyzer,
                 power_supply,
-                config["power_channels"],
+                tuple(config["power_channels"].values()),
             )
 
             # validate -> connect -> prepare: RF and power must remain off.

@@ -5,9 +5,10 @@
 - :func:`instrument.power_routing.resolve_supply_keys` 把分配里的引用解析成
   ``power_supplies`` 的集合键：``supply_id`` 直接命中，旧 ``label`` 与残留的
   ``visual`` 槽位必须唯一指向**一台已启用**的电源，任何歧义都明确失败；
-- :func:`instrument.power_routing.resolve_channel_routing` 把分配解析成角色 token：
-  角色只认通道上显式声明的 ``gate``/``drain``，token 只由集合键拼成，日志写法
-  （``短标签/CHx``）在同一处生成，急停先漏后栅；
+- :func:`instrument.power_routing.resolve_channel_routing` 把分配解析成有序物理
+  通道计划：顺序只来自 ``power_plan.power_sequence``，旧文件没有计划键时才按分配
+  声明顺序补齐；token 只由集合键拼成，日志写法（``短标签/CHx``）在同一处生成，
+  急停按全局上电顺序逆序；
 - 模块本身不接触设备库：没有 pyvisa、没有地址、没有资源，因此可以在连接任何
   仪器之前单独测试。
 
@@ -22,7 +23,6 @@ import unittest
 from pathlib import Path
 
 from instrument.power_routing import (
-    POWER_ROLES,
     assigned_supply_references,
     declared_channels,
     resolve_channel_routing,
@@ -103,7 +103,7 @@ class RoutingModuleIsPureTests(unittest.TestCase):
         self.assertNotIn("list_resources", source)
 
     def test_module_does_not_interpret_instrument_addresses(self):
-        # 地址是装配计划的事：路由只认集合键、角色与通道。
+        # 地址是装配计划的事：路由只认集合键、计划顺序与通道。
         source = ROUTING_SOURCE.read_text(encoding="utf-8")
         self.assertNotIn('"address"', source)
         self.assertNotIn("signal_generator", source)
@@ -169,36 +169,83 @@ class ReferenceResolutionTests(unittest.TestCase):
 
 
 class ChannelRoutingTests(unittest.TestCase):
-    """角色 token、设置、日志写法与急停顺序。"""
+    """有序通道计划、设置、日志写法与急停顺序。"""
 
-    def test_roles_become_explicit_supply_id_tokens(self):
+    def test_routes_become_explicit_supply_id_plans(self):
         _resolution, routing = _routing()
 
         self.assertEqual(
-            routing.dut_channels, {"gate": "DP8B1519/CH1", "drain": "DP8B1519/CH2"}
+            routing.dut_power_plan.tokens,
+            ("DP8B1519/CH1", "DP8B1519/CH2"),
         )
         self.assertEqual(
-            routing.driver_channels, {"gate": "DP8B0950/CH1", "drain": "DP8B0950/CH2"}
+            routing.driver_power_plan.tokens,
+            ("DP8B0950/CH1", "DP8B0950/CH2"),
         )
-        self.assertEqual(routing.power_settings["drain"]["voltage_v"], 28.0)
+        self.assertEqual(routing.all_channels, routing.driver_power_plan.tokens + routing.dut_power_plan.tokens)
+        self.assertEqual(routing.dut_power_plan.channels[1].voltage_v, 28.0)
 
     def test_log_text_uses_the_short_label_and_routing_keeps_the_token(self):
         configs = _power_configs(DP8B1519=_supply(address=SUPPLY_A, label="现场 A 电源"))
         _resolution, routing = _routing(configs, driver=None)
 
         self.assertEqual(routing.channel_labels["DP8B1519/CH1"], "现场 A 电源/CH1")
-        self.assertEqual(routing.all_channels["gate"], "DP8B1519/CH1")
+        self.assertEqual(routing.dut_power_plan.tokens, ("DP8B1519/CH1", "DP8B1519/CH2"))
 
-    def test_shutdown_switches_assigned_roles_drain_before_gate(self):
+    def test_power_plan_sequence_is_the_power_on_order(self):
+        configs = _power_configs()
+        dut_assignment = {
+            "supplies": {"carrier": _assignment(supply_id="DP8B1519")},
+            "power_plan": {
+                "power_sequence": [
+                    {"supply_id": "DP8B1519", "channel": "CH2"},
+                    {"supply_id": "DP8B1519", "channel": "CH1"},
+                ],
+                "inter_channel_delay_s": 3.0,
+            },
+        }
+        resolution = resolve_supply_keys(configs, ["DP8B1519"], list(configs))
+        routing = resolve_channel_routing(
+            dut_assignment=dut_assignment,
+            driver_assignment={"supplies": {}},
+            power_configs=configs,
+            resolution=resolution,
+        )
+        self.assertEqual(
+            routing.dut_power_plan.tokens, ("DP8B1519/CH2", "DP8B1519/CH1")
+        )
+        self.assertEqual(routing.dut_power_plan.inter_channel_delay_s, 3.0)
+
+    def test_power_plan_must_cover_the_declared_assignment(self):
+        configs = _power_configs()
+        dut_assignment = {
+            "supplies": {"carrier": _assignment(supply_id="DP8B1519")},
+            "power_plan": {
+                "power_sequence": [
+                    {"supply_id": "DP8B1519", "channel": "CH1"},
+                ],
+                "inter_channel_delay_s": 0.0,
+            },
+        }
+        resolution = resolve_supply_keys(configs, ["DP8B1519"], list(configs))
+        with self.assertRaisesRegex(ValueError, "恰好包含该组分配的全部物理通道"):
+            resolve_channel_routing(
+                dut_assignment=dut_assignment,
+                driver_assignment={"supplies": {}},
+                power_configs=configs,
+                resolution=resolution,
+            )
+
+    def test_emergency_order_is_the_reverse_of_the_global_power_on_order(self):
         _resolution, routing = _routing()
 
         self.assertEqual(
             routing.emergency_channels,
             (
-                (0, "DP8B0950/CH2"),
                 (1, "DP8B1519/CH2"),
-                (0, "DP8B0950/CH1"),
                 (1, "DP8B1519/CH1"),
+                (0, "DP8B0950/CH2"),
+                (0, "DP8B0950/CH1"),
             ),
         )
 
@@ -214,31 +261,28 @@ class ChannelRoutingTests(unittest.TestCase):
             ["DP8B1519/CH2", "DP8B1519/CH1"],
         )
 
-    def test_missing_role_fails(self):
+    def test_channel_role_is_neither_required_nor_used_for_order(self):
         configs = _power_configs()
         del configs["DP8B1519"]["channels"]["CH1"]["role"]
-        with self.assertRaisesRegex(ValueError, "显式 gate/drain 角色"):
-            _routing(configs, driver=None)
-
-    def test_duplicate_role_fails(self):
-        configs = _power_configs()
         configs["DP8B1519"]["channels"]["CH2"]["role"] = "gate"
-        with self.assertRaisesRegex(ValueError, "供电角色重复配置"):
-            _routing(configs, driver=None)
+        _resolution, routing = _routing(configs, driver=None)
+        self.assertEqual(
+            routing.dut_power_plan.tokens, ("DP8B1519/CH1", "DP8B1519/CH2")
+        )
 
-    def test_incomplete_role_pair_fails(self):
+    def test_single_channel_assignment_is_a_valid_plan(self):
         configs = _power_configs()
         dut_assignment = {
             "supplies": {"carrier": _assignment(supply_id="DP8B1519", channels=["CH1"])}
         }
         resolution = resolve_supply_keys(configs, ["DP8B1519"], list(configs))
-        with self.assertRaisesRegex(ValueError, "必须同时配置 gate 和 drain"):
-            resolve_channel_routing(
-                dut_assignment=dut_assignment,
-                driver_assignment={"supplies": {}},
-                power_configs=configs,
-                resolution=resolution,
-            )
+        routing = resolve_channel_routing(
+            dut_assignment=dut_assignment,
+            driver_assignment={"supplies": {}},
+            power_configs=configs,
+            resolution=resolution,
+        )
+        self.assertEqual(routing.dut_power_plan.tokens, ("DP8B1519/CH1",))
 
     def test_unknown_channel_fails(self):
         dut_assignment = {
@@ -265,9 +309,6 @@ class SharedRuleTests(unittest.TestCase):
     def test_short_label_prefers_the_configured_label(self):
         self.assertEqual(supply_short_label(" DP8B1519 ", "key"), "DP8B1519")
         self.assertEqual(supply_short_label("", "key"), "key")
-
-    def test_power_roles_are_the_two_declared_roles(self):
-        self.assertEqual(POWER_ROLES, ("gate", "drain"))
 
     def test_declared_channels_requires_a_non_empty_object(self):
         with self.assertRaisesRegex(ValueError, "必须配置非空通道对象"):

@@ -224,13 +224,14 @@ class MeasurementInstrumentPortTests(unittest.TestCase):
             SimulatedSignalGenerator(recorder),
             SimulatedSpectrumAnalyzer(recorder=recorder),
             SimulatedPowerSupply(recorder),
-            {"gate": "A", "drain": "B"},
+            ("A", "B"),
         )
         self.assertIsInstance(PortMeasurementAdapter(session), MeasurementInstrumentPort)
 
     def test_adapter_end_stage_powers_off_driver_channels_outside_the_session_roles(self):
         """会话只按角色认识一组通道；适配器上的驱动电源组不会被漏掉。"""
         from instrument.measurement_adapter import PortMeasurementAdapter
+        from instrument.power_control import PowerGroupPlan
         from instrument.session import ManagedInstrumentSession
         from instrument.simulation import (
             CommandRecorder,
@@ -246,15 +247,15 @@ class MeasurementInstrumentPortTests(unittest.TestCase):
             signal,
             SimulatedSpectrumAnalyzer(recorder=recorder),
             supply,
-            {"gate": "A", "drain": "B"},
+            ("A", "B"),
         )
         session.validate()
         session.connect()
         session.prepare()
         adapter = PortMeasurementAdapter(
             session,
-            dut_power_channels={"gate": "A", "drain": "B"},
-            driver_power_channels={"gate": "C", "drain": "D"},
+            dut_power_plan=PowerGroupPlan.from_channels(["A", "B"]),
+            driver_power_plan=PowerGroupPlan.from_channels(["C", "D"]),
         )
         adapter.begin_stage()
         adapter.power_on_driver()
@@ -275,6 +276,7 @@ class MeasurementInstrumentPortTests(unittest.TestCase):
     def test_adapter_end_stage_failure_keeps_the_session_unsettled(self):
         """驱动电源组关不掉时不得结算会话；端口必须由调用方关闭。"""
         from instrument.measurement_adapter import PortMeasurementAdapter
+        from instrument.power_control import PowerGroupPlan
         from instrument.session import ManagedInstrumentSession
         from instrument.simulation import (
             CommandRecorder,
@@ -289,15 +291,15 @@ class MeasurementInstrumentPortTests(unittest.TestCase):
             SimulatedSignalGenerator(recorder),
             SimulatedSpectrumAnalyzer(recorder=recorder),
             supply,
-            {"gate": "A", "drain": "B"},
+            ("A", "B"),
         )
         session.validate()
         session.connect()
         session.prepare()
         adapter = PortMeasurementAdapter(
             session,
-            dut_power_channels={"gate": "A", "drain": "B"},
-            driver_power_channels={"gate": "C", "drain": "D"},
+            dut_power_plan=PowerGroupPlan.from_channels(["A", "B"]),
+            driver_power_plan=PowerGroupPlan.from_channels(["C", "D"]),
         )
         adapter.begin_stage()
         adapter.power_on_driver()

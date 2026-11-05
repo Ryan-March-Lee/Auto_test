@@ -44,15 +44,17 @@ from .action import (
 )
 from .signal_generator_factory import create_signal_generator_driver
 from .flow import (
-    PowerChannelSetup,
-    PowerOffFlow,
-    PowerOffFlowError,
-    PowerOnFlow,
-    PowerOnFlowError,
     SafetyShutdownError,
     SafetyShutdownFlow,
 )
-from .power_control import PowerController, PowerControlError
+from .power_control import (
+    PowerChannelStep,
+    PowerControlError,
+    PowerController,
+    PowerGroupPlan,
+    PowerOnControlError,
+    cleanup_failures_of,
+)
 from .safety import InstrumentSafetyError, shutdown_instruments
 
 __all__ = [
@@ -85,18 +87,17 @@ __all__ = [
     "ActionContext",
     "ActionLogger",
     "create_signal_generator_driver",
-    "PowerChannelSetup",
-    "PowerOnFlow",
-    "PowerOnFlowError",
-    "PowerOffFlow",
-    "PowerOffFlowError",
     "SafetyShutdownFlow",
     "SafetyShutdownError",
     "InstrumentSession",
     "ManagedInstrumentSession",
     "InstrumentSessionError",
+    "PowerChannelStep",
     "PowerController",
     "PowerControlError",
+    "PowerGroupPlan",
+    "PowerOnControlError",
+    "cleanup_failures_of",
     "InstrumentSafetyError",
     "shutdown_instruments",
 ]

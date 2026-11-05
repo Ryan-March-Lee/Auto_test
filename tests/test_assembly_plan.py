@@ -7,9 +7,9 @@
   通道 token、日志文本、急停顺序），**不导入 pyvisa**、不打开任何资源、不构造驱动；
 - 计划里没有原始配置段：配置 schema 的解释到计划为止，装配方按计划取事实，
   不回读 ``["address"]`` / ``["channels"]`` / ``["full_code"]`` 这类配置键；
-- 校验失败在连接任何仪器之前发生：地址重复、角色缺失/重复、通道不存在、
+- 校验失败在连接任何仪器之前发生：地址重复、通道不存在、上电计划与分配不一致、
   DUT 与驱动功放抢同一个通道、短标签重复；
-- 急停顺序由声明角色决定（先漏后栅），且只覆盖被分配的通道；
+- 急停顺序是全局上电顺序（驱动功放 → DUT）的逆序，且只覆盖计划里的通道；
 - 短标签只有一个来源（``supply_short_label``）：配置里的 ``label`` 优先，
   缺失时退回集合键，不推导、不猜测。
 
@@ -28,7 +28,7 @@ import unittest
 from pathlib import Path
 
 from instrument.assembly_plan import HardwareAssemblyPlan, hardware_assembly_plan
-from instrument.power_routing import POWER_ROLES, declared_channels, supply_short_label
+from instrument.power_routing import declared_channels, supply_short_label
 
 ROOT = Path(__file__).parents[1]
 PLAN_SOURCE = ROOT / "instrument" / "assembly_plan.py"
@@ -96,16 +96,14 @@ class AssemblyPlanIsPureTests(unittest.TestCase):
         self.assertNotIn("open_resource", source)
         self.assertNotIn("list_resources", source)
 
-    def test_plan_carries_routing_tokens_and_log_texts(self):
+    def test_plan_carries_ordered_power_plans_and_log_texts(self):
         plan = hardware_assembly_plan(_config())
 
         self.assertIsInstance(plan, HardwareAssemblyPlan)
         self.assertEqual(plan.signal.address, SIGNAL)
         self.assertEqual(plan.spectrum.address, SPECTRUM)
-        self.assertEqual(
-            plan.all_channels,
-            {"gate": "DP8B1519/CH1", "drain": "DP8B1519/CH2"},
-        )
+        self.assertEqual(plan.dut_power_plan.tokens, ("DP8B1519/CH1", "DP8B1519/CH2"))
+        self.assertEqual(plan.driver_power_plan.tokens, ())
         self.assertEqual([supply.supply_id for supply in plan.supplies], ["DP8B1519"])
         self.assertEqual(plan.supply_labels, {"DP8B1519": "DP8B1519"})
         self.assertEqual(
@@ -115,7 +113,9 @@ class AssemblyPlanIsPureTests(unittest.TestCase):
                 "DP8B1519/CH2": "DP8B1519/CH2",
             },
         )
-        self.assertEqual(plan.power_settings["drain"]["voltage_v"], 28.0)
+        drain = plan.dut_power_plan.channels[1]
+        self.assertEqual((drain.channel, drain.voltage_v, drain.current_a),
+                         ("DP8B1519/CH2", 28.0, 2.0))
 
 
 class AssemblyPlanBoundaryTests(unittest.TestCase):
@@ -147,7 +147,7 @@ class AssemblyPlanBoundaryTests(unittest.TestCase):
         with self.assertRaises(AttributeError):
             plan.supplies[0].address = "TCPIP0::0.0.0.0::INSTR"
         with self.assertRaises(TypeError):
-            plan.all_channels["gate"] = "DP8B1519/CH9"
+            plan.channel_labels["DP8B1519/CH1"] = "DP8B1519/CH9"
 
     def test_factory_never_reads_configuration_keys(self):
         # 构造方只消费计划：一旦它自己解释配置字段，这条边界就破了。
@@ -166,17 +166,19 @@ class AssemblyPlanBoundaryTests(unittest.TestCase):
 class AssemblyPlanValidationTests(unittest.TestCase):
     """配置错误在连接任何仪器之前失败。"""
 
-    def test_missing_channel_role_fails(self):
+    def test_channel_role_is_not_required_or_used_for_order(self):
         config = _config()
         del config["instruments"]["power_supplies"]["DP8B1519"]["channels"]["CH1"]["role"]
-        with self.assertRaisesRegex(ValueError, "显式 gate/drain 角色"):
-            hardware_assembly_plan(config)
+        plan = hardware_assembly_plan(config)
+        self.assertEqual(plan.dut_power_plan.tokens, ("DP8B1519/CH1", "DP8B1519/CH2"))
 
-    def test_duplicate_role_across_channels_fails(self):
+    def test_declared_channel_order_is_used_when_no_plan_is_present(self):
         config = _config()
-        config["instruments"]["power_supplies"]["DP8B1519"]["channels"]["CH2"]["role"] = "gate"
-        with self.assertRaisesRegex(ValueError, "供电角色重复配置"):
-            hardware_assembly_plan(config)
+        config["power_supply_assignment"]["dut_amplifier"]["supplies"]["carrier"][
+            "channel"
+        ] = ["CH2", "CH1"]
+        plan = hardware_assembly_plan(config)
+        self.assertEqual(plan.dut_power_plan.tokens, ("DP8B1519/CH2", "DP8B1519/CH1"))
 
     def test_duplicate_instrument_address_fails(self):
         config = _config(driver="DP8B0950")
@@ -208,23 +210,23 @@ class AssemblyPlanValidationTests(unittest.TestCase):
             "dut_amplifier": {"supplies": {}},
             "driver_amplifier": {"supplies": {}},
         }
-        with self.assertRaisesRegex(ValueError, "必须显式配置电源角色"):
+        with self.assertRaisesRegex(ValueError, "必须显式配置电源分配和通道"):
             hardware_assembly_plan(config)
 
 
 class EmergencyChannelOrderTests(unittest.TestCase):
-    """急停只关闭被分配的角色通道，先漏后栅，按电源顺序编号。"""
+    """急停按全局上电顺序的逆序关闭，只覆盖计划里的通道。"""
 
-    def test_two_supplies_shut_down_drain_before_gate(self):
+    def test_two_supplies_shut_down_in_reverse_global_order(self):
         plan = hardware_assembly_plan(_config(driver="DP8B0950"))
 
         self.assertEqual(
             plan.emergency_channels,
             (
-                (0, "DP8B0950/CH2"),
                 (1, "DP8B1519/CH2"),
-                (0, "DP8B0950/CH1"),
                 (1, "DP8B1519/CH1"),
+                (0, "DP8B0950/CH2"),
+                (0, "DP8B0950/CH1"),
             ),
         )
 
@@ -252,9 +254,6 @@ class SharedHelperTests(unittest.TestCase):
         self.assertEqual(supply_short_label("   ", "key"), "key")
         self.assertEqual(supply_short_label(None, "key"), "key")
         self.assertEqual(supply_short_label({"label": "x"}, "key"), "key")
-
-    def test_power_roles_are_the_two_declared_roles(self):
-        self.assertEqual(POWER_ROLES, ("gate", "drain"))
 
     def test_declared_channels_requires_a_non_empty_object(self):
         with self.assertRaisesRegex(ValueError, "必须配置非空通道对象"):

@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 
 from application.errors import CleanupError, cause_of
 
@@ -23,19 +23,24 @@ class ManagedInstrumentSession:
     """统一管理设备生命周期、安全动作和资源所有权。"""
 
     def __init__(self, signal_generator, spectrum_analyzer, power_supply,
-                 power_channels: Mapping[str, str] | None = None, *,
+                 power_channels: Iterable[str] | None = None, *,
                  power_channel_labels: Mapping[str, str] | None = None,
                  owns_signal_generator: bool = True,
                  owns_spectrum_analyzer: bool = True,
                  owns_power_supply: bool = True,
                  can_disable_rf: bool = True,
                  can_disable_power: bool = True,
-                 sleep_fn=None, gate_settle_time_s: float = 1.5,
-                 drain_settle_time_s: float = 2.0):
+                 sleep_fn=None):
         self.signal_generator = signal_generator
         self.spectrum_analyzer = spectrum_analyzer
         self.power_supply = power_supply
-        self.power_channels = dict(power_channels or {})
+        # 会话管理的是**物理通道序列**，不是角色映射。顺序只在显式传入计划时由
+        # 计划决定；这里只保留一个可独立测试的生命周期级通道列表。
+        self.power_channels = tuple(str(channel) for channel in (power_channels or ()))
+        if any(not channel.strip() for channel in self.power_channels):
+            raise ValueError("会话的供电通道不能为空")
+        if len(set(self.power_channels)) != len(self.power_channels):
+            raise ValueError("会话的供电通道不能重复")
         # 路由 token -> 日志写法（``短标签/CHx``）：只影响日志与失败记录，不参与路由。
         self.power_channel_labels = dict(power_channel_labels or {})
         self.owns_signal_generator = owns_signal_generator
@@ -46,22 +51,13 @@ class ManagedInstrumentSession:
         self.state = InstrumentState.CREATED
         self._attempted = []
         self._connected = []
-        self._power = PowerController(
-            power_supply, self.power_channels, sleep_fn=sleep_fn,
-            gate_settle_time_s=gate_settle_time_s,
-            drain_settle_time_s=drain_settle_time_s,
-            channel_labels=self.power_channel_labels,
-        )
+        self._sleep_fn = sleep_fn
+        # 本次实际成功打开的输出；关断与生命周期确认都以它为准，不用角色反查。
+        self._powered_channels: tuple[str, ...] = ()
 
     def validate(self, *, timeout_s: float = 10.0) -> None:
         if self.state is not InstrumentState.CREATED:
             raise ValueError(f"cannot validate from {self.state.value}")
-        if len(set(self.power_channels.values())) != len(self.power_channels):
-            raise ValueError("power roles must map to unique physical channels")
-        if set(self.power_channels) - {"gate", "drain"}:
-            raise ValueError("power mapping contains an unknown supply role")
-        if self.power_channels and set(self.power_channels) != {"gate", "drain"}:
-            raise ValueError("gate and drain channels must be mapped together")
         self.state = InstrumentState.VALIDATED
 
     def connect(self, *, timeout_s: float = 30.0) -> None:
@@ -105,19 +101,27 @@ class ManagedInstrumentSession:
                 raise error from cleanup_error
             raise
 
-    def power_on(self, *, roles=None, power_channels=None, timeout_s: float = 10.0) -> None:
+    def power_on(self, *, channels: Iterable[str] | None = None,
+                 inter_channel_delay_s: float = 0.0,
+                 timeout_s: float = 10.0) -> None:
+        """按物理通道序列逐个上电；失败会停止后续通道并逆序清理。
+
+        会话只保留生命周期状态；通道顺序由调用方给出的序列决定，不接受
+        role/gate/drain 参数，也不从通道名推断顺序。
+        """
         if self.state not in (InstrumentState.PREPARED, InstrumentState.POWERED):
             raise ValueError(f"cannot power on from {self.state.value}")
-        channels = self.power_channels if power_channels is None else dict(power_channels)
-        if roles is None:
-            roles = ("gate", "drain")
-        selected = {role: channels[role] for role in roles if role in channels}
-        controller = PowerController(self.power_supply, selected, sleep_fn=self._power.sleep_fn,
-                                     gate_settle_time_s=self._power.gate_settle_time_s,
-                                     drain_settle_time_s=self._power.drain_settle_time_s,
-                                     channel_labels=self.power_channel_labels)
+        targets = tuple(channels) if channels is not None else self.power_channels
+        controller = PowerController(
+            self.power_supply,
+            targets,
+            inter_channel_delay_s=inter_channel_delay_s,
+            sleep_fn=self._sleep_fn,
+            channel_labels=self.power_channel_labels,
+        )
         try:
-            controller.power_on(timeout_s=timeout_s)
+            powered = controller.power_on(timeout_s=timeout_s)
+            self._powered_channels = tuple(powered)
             self.state = InstrumentState.POWERED
         except Exception as error:
             try:
@@ -126,17 +130,30 @@ class ManagedInstrumentSession:
                 raise error from cleanup_error
             raise
 
-    def power_off(self, *, roles=None, power_channels=None, timeout_s: float = 10.0) -> None:
+    def power_off(self, *, channels: Iterable[str] | None = None,
+                  timeout_s: float = 10.0) -> None:
         if self.power_supply not in self._connected:
             return
-        channels = self.power_channels if power_channels is None else dict(power_channels)
-        if roles is None:
-            roles = ("gate", "drain")
-        selected = {role: channels[role] for role in roles if role in channels}
-        PowerController(self.power_supply, selected, sleep_fn=self._power.sleep_fn,
-                        gate_settle_time_s=self._power.gate_settle_time_s,
-                        drain_settle_time_s=self._power.drain_settle_time_s,
-                        channel_labels=self.power_channel_labels).power_off(timeout_s=timeout_s)
+        targets = tuple(channels) if channels is not None else self._powered_channels
+        if not targets:
+            return
+        PowerController(
+            self.power_supply,
+            targets,
+            sleep_fn=self._sleep_fn,
+            channel_labels=self.power_channel_labels,
+        ).power_off(timeout_s=timeout_s)
+        self._powered_channels = ()
+
+    def mark_powered(self) -> None:
+        """登记“输出已由调用方按显式通道计划打开”。
+
+        通道顺序与失败回滚由适配器按计划执行；会话只保留生命周期状态，因此这里
+        不接受 roles/gate/drain 参数，也不重新执行任何输出动作。
+        """
+        if self.state not in (InstrumentState.PREPARED, InstrumentState.POWERED):
+            raise ValueError(f"cannot mark powered from {self.state.value}")
+        self.state = InstrumentState.POWERED
 
     def start_measurement(self) -> None:
         if self.state not in (InstrumentState.PREPARED, InstrumentState.POWERED):
@@ -178,7 +195,7 @@ class ManagedInstrumentSession:
         关闭；只有“没有受管输出”才不需要这个动作。
         """
         if not self.can_disable_power:
-            if not self.power_channels:
+            if not self.power_channels and not self._powered_channels:
                 # 没有受管通道就没有需要确认的输出。
                 return None
 
@@ -237,7 +254,7 @@ class ManagedInstrumentSession:
             raise ValueError(f"ordinary stop is invalid from {self.state.value}")
         self.close(emergency=emergency, timeout_s=timeout_s)
 
-    def close(self, *, emergency=False, timeout_s: float = 30.0, **kwargs) -> None:
+    def close(self, *, emergency=False, timeout_s: float = 30.0) -> None:
         if self.state is InstrumentState.CLEANED:
             return
         self.state = InstrumentState.STOPPING
@@ -269,10 +286,8 @@ class ManagedInstrumentSession:
             shutdown_instruments(
                 rf_off=(lambda: self.set_rf_enabled(False, timeout_s=timeout_s))
                 if self.can_disable_rf else None,
-                power_off=lambda: self.power_off(
-                    power_channels=kwargs.get("power_channels"),
-                    roles=kwargs.get("power_roles"), timeout_s=timeout_s,
-                ) if self.can_disable_power else None,
+                power_off=lambda: self.power_off(timeout_s=timeout_s)
+                if self.can_disable_power else None,
                 close=close_owned,
                 emergency=emergency,
             )

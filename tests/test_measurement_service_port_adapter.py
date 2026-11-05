@@ -3,6 +3,7 @@ import unittest
 from instrument.measurement_adapter import PortMeasurementAdapter
 from application.measurements.services import DriverPowerMappingService
 from instrument.flow.cleanup import SafetyCleanupAdapter
+from instrument.power_control import PowerChannelStep, PowerGroupPlan
 from instrument.simulation import (
     CommandRecorder,
     SafetyInstrumentSession,
@@ -22,18 +23,19 @@ class MeasurementServicePortAdapterTests(unittest.TestCase):
         sg = SimulatedSignalGenerator(recorder)
         sa = SimulatedSpectrumAnalyzer(readings=(-30.0,), recorder=recorder)
         ps = SimulatedPowerSupply(recorder)
-        session = SafetyInstrumentSession(sg, sa, ps, {"gate": "A", "drain": "B"})
+        session = SafetyInstrumentSession(sg, sa, ps, ("A", "B"))
         session.validate()
         session.connect()
         session.prepare(frequency_hz=1e9, bandwidth_hz=10e6)
         adapter = PortMeasurementAdapter(
             session,
-            dut_power_channels={"gate": "A", "drain": "B"},
-            driver_power_channels={"gate": "C", "drain": "D"},
-            power_settings={
-                "gate": {"voltage_v": 2.8, "current_a": 0.1},
-                "drain": {"voltage_v": 28.0, "current_a": 1.0},
-            },
+            dut_power_plan=PowerGroupPlan(
+                channels=(
+                    PowerChannelStep("A", 2.8, 0.1),
+                    PowerChannelStep("B", 28.0, 1.0),
+                )
+            ),
+            driver_power_plan=PowerGroupPlan.from_channels(["C", "D"]),
         )
         return adapter, session, recorder
 
@@ -108,18 +110,18 @@ class MeasurementServicePortAdapterTests(unittest.TestCase):
             1,
         )
 
-    def test_default_emergency_channels_follow_declared_roles(self):
-        """未显式注入急停通道时，按声明角色先漏后栅关闭，不猜通道名。"""
+    def test_default_emergency_channels_follow_the_declared_plan_order(self):
+        """未显式注入急停通道时，按声明顺序的逆序关闭，不猜角色或通道名。"""
         adapter, _session, recorder = self.make_adapter()
 
         self.assertEqual(
             adapter.emergency_channels,
-            ((0, "D"), (0, "B"), (0, "C"), (0, "A")),
+            ((0, "B"), (0, "A"), (0, "D"), (0, "C")),
         )
         self.assertEqual(adapter.emergency_power_off_all(), [])
         self.assertEqual(
             [item[2] for item in recorder.commands if item[:2] == ("power_supply", "output_off")],
-            ["D", "B", "C", "A"],
+            ["B", "A", "D", "C"],
         )
 
     def test_emergency_log_names_the_short_label_and_keeps_the_routing_token(self):
@@ -129,14 +131,16 @@ class MeasurementServicePortAdapterTests(unittest.TestCase):
             SimulatedSignalGenerator(recorder),
             SimulatedSpectrumAnalyzer(recorder=recorder),
             SimulatedPowerSupply(recorder),
-            {"gate": "DP8B1519/CH1", "drain": "DP8B1519/CH2"},
+            ("DP8B1519/CH1", "DP8B1519/CH2"),
         )
         session.validate()
         session.connect()
         session.prepare()
         adapter = PortMeasurementAdapter(
             session,
-            dut_power_channels={"gate": "DP8B1519/CH1", "drain": "DP8B1519/CH2"},
+            dut_power_plan=PowerGroupPlan.from_channels(
+                ["DP8B1519/CH1", "DP8B1519/CH2"]
+            ),
             power_channel_labels={
                 "DP8B1519/CH1": "现场 A 电源/CH1",
                 "DP8B1519/CH2": "现场 A 电源/CH2",
@@ -159,13 +163,13 @@ class MeasurementServicePortAdapterTests(unittest.TestCase):
             SimulatedSignalGenerator(recorder),
             SimulatedSpectrumAnalyzer(recorder=recorder),
             SimulatedPowerSupply(recorder),
-            {"gate": "A", "drain": "B"},
+            ("A", "B"),
         )
         with self.assertRaisesRegex(ValueError, "overlap"):
             PortMeasurementAdapter(
                 session,
-                dut_power_channels={"gate": "A", "drain": "B"},
-                driver_power_channels={"gate": "A", "drain": "C"},
+                dut_power_plan=PowerGroupPlan.from_channels(["A", "B"]),
+                driver_power_plan=PowerGroupPlan.from_channels(["A", "C"]),
             )
 
     def test_close_all_is_idempotent_and_returns_cleanup_errors(self):

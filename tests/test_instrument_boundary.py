@@ -11,11 +11,11 @@ POWER_CONTROL_LOGGER = app_logging.get_logger("instrument.power_control").name
 
 
 class InstrumentBoundaryTests(unittest.TestCase):
-    def test_power_controller_uses_gate_then_drain_on_and_drain_then_gate_off(self):
+    def test_power_controller_follows_the_plan_on_and_reverses_off(self):
         recorder = CommandRecorder()
         supply = SimulatedPowerSupply(recorder)
         supply.connect()
-        controller = PowerController(supply, {"gate": "CH1", "drain": "CH2"})
+        controller = PowerController(supply, ["CH1", "CH2"])
 
         controller.power_on()
         controller.power_off()
@@ -27,12 +27,12 @@ class InstrumentBoundaryTests(unittest.TestCase):
             ("output_off", "CH2"), ("output_off", "CH1"),
         ])
 
-    def test_power_controller_attempts_gate_after_drain_failure(self):
+    def test_power_controller_attempts_remaining_channels_after_one_failure(self):
         recorder = CommandRecorder()
         supply = SimulatedPowerSupply(recorder)
         supply.connect()
         supply.inject_failure("output_off", once=True)
-        controller = PowerController(supply, {"gate": "CH1", "drain": "CH2"})
+        controller = PowerController(supply, ["CH1", "CH2"])
 
         with self.assertRaises(PowerControlError):
             controller.power_off()
@@ -46,7 +46,7 @@ class InstrumentBoundaryTests(unittest.TestCase):
         supply.connect()
         controller = PowerController(
             supply,
-            {"gate": "DP8B1519/CH1", "drain": "DP8B1519/CH2"},
+            ["DP8B1519/CH1", "DP8B1519/CH2"],
             channel_labels={
                 "DP8B1519/CH1": "现场 A 电源/CH1",
                 "DP8B1519/CH2": "现场 A 电源/CH2",
@@ -55,7 +55,7 @@ class InstrumentBoundaryTests(unittest.TestCase):
 
         with self.assertLogs(POWER_CONTROL_LOGGER, level="INFO") as captured:
             controller.power_on()
-        self.assertIn("打开电源通道 现场 A 电源/CH1（gate）", captured.output[0])
+        self.assertIn("打开电源通道 现场 A 电源/CH1", captured.output[0])
         self.assertNotIn("DP8B1519/CH1", "\n".join(captured.output))
         # 路由没被显示文本改掉。
         self.assertIn(("power_supply", "output_on", "DP8B1519/CH1"), recorder.commands)
@@ -65,7 +65,7 @@ class InstrumentBoundaryTests(unittest.TestCase):
             with self.assertRaises(PowerControlError) as raised:
                 controller.power_off()
 
-        self.assertIn("关闭电源通道失败 现场 A 电源/CH2（drain）", captured.output[0])
+        self.assertIn("关闭电源通道失败 现场 A 电源/CH2", captured.output[0])
         self.assertEqual(
             [failure.action for failure in raised.exception.failures],
             ["现场 A 电源/CH2"],
@@ -75,12 +75,12 @@ class InstrumentBoundaryTests(unittest.TestCase):
         """没有登记显示文本时退回 token：日志宁可粗糙，也不能指向另一台电源。"""
         supply = SimulatedPowerSupply(CommandRecorder())
         supply.connect()
-        controller = PowerController(supply, {"gate": "PS1/CH1", "drain": "PS1/CH2"})
+        controller = PowerController(supply, ["PS1/CH1", "PS1/CH2"])
 
         with self.assertLogs(POWER_CONTROL_LOGGER, level="INFO") as captured:
             controller.power_on()
 
-        self.assertIn("打开电源通道 PS1/CH1（gate）", captured.output[0])
+        self.assertIn("打开电源通道 PS1/CH1", captured.output[0])
 
     def test_formal_session_uses_explicit_resource_ownership(self):
         recorder = CommandRecorder()
@@ -88,7 +88,7 @@ class InstrumentBoundaryTests(unittest.TestCase):
         analyzer = SimulatedSpectrumAnalyzer(recorder=recorder)
         supply = SimulatedPowerSupply(recorder)
         session = ManagedInstrumentSession(
-            signal, analyzer, supply, {"gate": "CH1", "drain": "CH2"},
+            signal, analyzer, supply, ("CH1", "CH2"),
             owns_signal_generator=False,
             owns_spectrum_analyzer=False,
             owns_power_supply=False,
@@ -109,7 +109,7 @@ class InstrumentBoundaryTests(unittest.TestCase):
         analyzer = SimulatedSpectrumAnalyzer(recorder=recorder)
         supply = SimulatedPowerSupply(recorder)
         session = ManagedInstrumentSession(
-            signal, analyzer, supply, {"gate": "CH1", "drain": "CH2"},
+            signal, analyzer, supply, ("CH1", "CH2"),
         )
         session.validate()
         session.connect()
@@ -130,7 +130,7 @@ class InstrumentBoundaryTests(unittest.TestCase):
             signal,
             SimulatedSpectrumAnalyzer(recorder=recorder),
             supply,
-            {"gate": "CH1", "drain": "CH2"},
+            ("CH1", "CH2"),
         )
         session.validate()
         session.connect()
@@ -175,7 +175,7 @@ class InstrumentBoundaryTests(unittest.TestCase):
             signal,
             SimulatedSpectrumAnalyzer(recorder=recorder),
             SimulatedPowerSupply(recorder),
-            {"gate": "CH1", "drain": "CH2"},
+            ("CH1", "CH2"),
         )
         session.validate()
         session.connect()
@@ -199,7 +199,7 @@ class InstrumentBoundaryTests(unittest.TestCase):
             signal,
             SimulatedSpectrumAnalyzer(recorder=recorder),
             supply,
-            {"gate": "CH1", "drain": "CH2"},
+            ("CH1", "CH2"),
         )
         session.validate()
         session.connect()
@@ -231,7 +231,7 @@ class InstrumentBoundaryTests(unittest.TestCase):
             signal,
             SimulatedSpectrumAnalyzer(recorder=recorder),
             SimulatedPowerSupply(recorder),
-            {"gate": "CH1", "drain": "CH2"},
+            ("CH1", "CH2"),
             can_disable_rf=False,
         )
         session.validate()
@@ -259,7 +259,7 @@ class InstrumentBoundaryTests(unittest.TestCase):
             signal,
             SimulatedSpectrumAnalyzer(recorder=recorder),
             supply,
-            {"gate": "CH1", "drain": "CH2"},
+            ("CH1", "CH2"),
             can_disable_power=False,
         )
         session.validate()
@@ -305,7 +305,7 @@ class InstrumentBoundaryTests(unittest.TestCase):
             signal,
             SimulatedSpectrumAnalyzer(recorder=recorder),
             SimulatedPowerSupply(recorder),
-            {"gate": "CH1", "drain": "CH2"},
+            ("CH1", "CH2"),
         )
         session.validate()
         session.connect()

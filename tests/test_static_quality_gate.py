@@ -151,6 +151,7 @@ BROAD_CATCH_BASELINE = {
         "ManagedInstrumentSession.prepare#2",
         "ManagedInstrumentSession.power_on#1",
         "ManagedInstrumentSession.power_on#2",
+        "ManagedInstrumentSession.power_off#1",
         "ManagedInstrumentSession.close.close_owned#1",
     ),
     # 边界翻译（VISA/SCPI 第三方异常、装配失败后的资源释放、仿真替身）
@@ -159,7 +160,6 @@ BROAD_CATCH_BASELINE = {
         "PortMeasurementAdapter.emergency_power_off_all#1",
         "PortMeasurementAdapter.close_all#1",
         "PortMeasurementAdapter.close_all#2",
-        "PortMeasurementAdapter.close_all#3",
     ),
     "instrument/measurement_factory.py": (
         "_ConfiguredPowerSupply.close#1",

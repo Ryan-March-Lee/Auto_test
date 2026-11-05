@@ -10,6 +10,17 @@ from infrastructure.logging import app_logging
 POWER_CONTROL_LOGGER = app_logging.get_logger("instrument.power_control").name
 
 
+class _EnableAckLostPowerSupply(SimulatedPowerSupply):
+    """设备已执行上电但响应丢失：输出已打开后才向调用方抛错。"""
+
+    def set_output_enabled(self, channel, enabled, *, timeout_s=5.0):
+        if enabled:
+            self._record("output_on", channel)
+            self.outputs[channel] = True
+            raise RuntimeError("output response lost")
+        return super().set_output_enabled(channel, enabled, timeout_s=timeout_s)
+
+
 class InstrumentBoundaryTests(unittest.TestCase):
     def test_power_controller_follows_the_plan_on_and_reverses_off(self):
         recorder = CommandRecorder()
@@ -120,6 +131,108 @@ class InstrumentBoundaryTests(unittest.TestCase):
         self.assertFalse(analyzer.connected)
         self.assertFalse(supply.connected)
         self.assertEqual(session.state.value, "cleaned")
+
+    def test_power_on_failure_switches_off_the_channel_that_may_be_on(self):
+        """上电响应丢失时设备可能已经开启，失败通道必须进入回滚。"""
+        recorder = CommandRecorder()
+        supply = _EnableAckLostPowerSupply(recorder)
+        session = ManagedInstrumentSession(
+            SimulatedSignalGenerator(recorder),
+            SimulatedSpectrumAnalyzer(recorder=recorder),
+            supply,
+            ("CH1",),
+        )
+        session.validate()
+        session.connect()
+        session.prepare()
+
+        with self.assertRaisesRegex(RuntimeError, "output response lost"):
+            session.power_on()
+
+        self.assertFalse(supply.outputs["CH1"])
+        self.assertIn(("power_supply", "output_off", "CH1"), recorder.commands)
+        self.assertEqual(session.state, InstrumentState.CLEANED)
+
+    def test_unconfirmed_rollback_channel_is_retried_by_session_close(self):
+        """回滚关断失败的通道留在会话里，close() 会再次尝试。"""
+        recorder = CommandRecorder()
+        supply = _EnableAckLostPowerSupply(recorder)
+        session = ManagedInstrumentSession(
+            SimulatedSignalGenerator(recorder),
+            SimulatedSpectrumAnalyzer(recorder=recorder),
+            supply,
+            ("CH1",),
+        )
+        session.validate()
+        session.connect()
+        session.prepare()
+        supply.inject_failure("output_off", once=True)
+
+        with self.assertRaisesRegex(RuntimeError, "output response lost"):
+            session.power_on()
+
+        self.assertFalse(supply.outputs["CH1"])
+        off_channels = [
+            value
+            for device, action, value in recorder.commands
+            if device == "power_supply" and action == "output_off"
+        ]
+        self.assertEqual(off_channels, ["CH1", "CH1"])
+        self.assertEqual(session.state, InstrumentState.CLEANED)
+
+    def test_mark_powered_registers_channels_for_end_stage(self):
+        """适配器登记的计划通道由会话自己结算关闭，不依赖适配器内部状态。"""
+        recorder = CommandRecorder()
+        supply = SimulatedPowerSupply(recorder)
+        session = ManagedInstrumentSession(
+            SimulatedSignalGenerator(recorder),
+            SimulatedSpectrumAnalyzer(recorder=recorder),
+            supply,
+        )
+        session.validate()
+        session.connect()
+        session.prepare()
+        session.mark_powered(channels=("CH2", "CH1"))
+        session.start_measurement()
+
+        session.end_stage()
+
+        off_channels = [
+            value
+            for device, action, value in recorder.commands
+            if device == "power_supply" and action == "output_off"
+        ]
+        # 登记顺序就是上电顺序，结算按逆序关闭。
+        self.assertEqual(off_channels, ["CH1", "CH2"])
+        self.assertEqual(supply.outputs, {"CH1": False, "CH2": False})
+        self.assertEqual(session.state, InstrumentState.PREPARED)
+        session.close()
+
+    def test_mark_powered_without_channels_uses_the_session_sequence(self):
+        """没有显式通道时退回会话序列；这是迁移期兼容入口，不恢复角色顺序。"""
+        recorder = CommandRecorder()
+        supply = SimulatedPowerSupply(recorder)
+        session = ManagedInstrumentSession(
+            SimulatedSignalGenerator(recorder),
+            SimulatedSpectrumAnalyzer(recorder=recorder),
+            supply,
+            ("CH1", "CH2"),
+        )
+        session.validate()
+        session.connect()
+        session.prepare()
+        session.mark_powered()
+
+        session.end_stage()
+
+        off_channels = [
+            value
+            for device, action, value in recorder.commands
+            if device == "power_supply" and action == "output_off"
+        ]
+        self.assertEqual(off_channels, ["CH2", "CH1"])
+        self.assertEqual(session.state, InstrumentState.PREPARED)
+        session.close()
 
     def test_end_stage_settles_the_session_and_allows_reuse(self):
         """成功阶段结束回到 PREPARED：同一会话可直接开始下一阶段。"""

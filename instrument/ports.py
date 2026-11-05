@@ -166,8 +166,14 @@ class InstrumentSession(Protocol):
     def prepare(self, *, timeout_s: float = 30.0) -> None:
         """配置端口但保持 RF 和电源输出关闭。"""
 
-    def mark_powered(self) -> None:
-        """登记调用方已按显式通道计划打开输出；不重新执行任何输出动作。"""
+    def mark_powered(self, *, channels: Iterable[str] | None = None) -> None:
+        """登记调用方已按显式通道计划打开（或可能打开）输出。
+
+        不重新执行任何输出动作。``channels`` 是本次运行**可能已有输出**的物理
+        通道 token（按上电顺序）；省略时退回会话构造时的通道序列。实现必须把它
+        记录为后续 :meth:`end_stage` / ``close`` 的关断依据，而不是只改生命周期
+        状态。
+        """
 
     def end_stage(self, *, timeout_s: float = 30.0) -> None:
         """成功阶段结束后确认 RF/供电关闭并回到 ``prepared``，供下一阶段复用。

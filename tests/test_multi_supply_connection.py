@@ -329,7 +329,7 @@ class MultiSupplyConnectionTests(unittest.TestCase):
             self.assertEqual(port.close_all(close_rf=True), [])
 
         self.assertEqual(
-            port._last_emergency_power_off,
+            port._last_emergency_power_off_succeeded,
             [
                 (1, "DP8B1519/CH2"),
                 (1, "DP8B1519/CH1"),
@@ -349,7 +349,7 @@ class MultiSupplyConnectionTests(unittest.TestCase):
             self.assertEqual(port.close_all(close_rf=True), [])
 
         self.assertNotIn(SUPPLY_C, manager.opened_addresses)
-        for channel in port._last_emergency_power_off:
+        for channel in port._last_emergency_power_off_succeeded:
             self.assertIn(channel[1].split("/")[0], {"DP8B1519", "DP8B0950"})
 
     def test_measurement_path_uses_each_supply_channel(self):
@@ -589,7 +589,7 @@ class MultiSupplyConnectionTests(unittest.TestCase):
         self.assertIn(("write", ":OUTPut CH1,ON"), resource.commands)
         self.assertIn(("query", ":MEASure:VOLTage? CH1"), resource.commands)
         self.assertEqual(
-            port._last_emergency_power_off,
+            port._last_emergency_power_off_succeeded,
             [
                 (1, "DP8B1519/CH2"),
                 (1, "DP8B1519/CH1"),

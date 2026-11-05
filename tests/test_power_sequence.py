@@ -4,6 +4,7 @@ import unittest
 
 from application.errors import ErrorCategory
 from instrument.measurement_adapter import PortMeasurementAdapter
+from instrument.ports import InstrumentState
 from instrument.power_control import (
     PowerChannelStep,
     PowerControlError,
@@ -106,16 +107,41 @@ class PowerControllerSequenceTests(unittest.TestCase):
         with self.assertRaises(PowerOnControlError) as raised:
             controller.power_on()
 
-        # 只开启到失败项为止；没有开启 D。失败后逆序关闭已成功项。
+        # 只开启到失败项为止；没有开启 D。失败通道 C 的命令已经发出，可能已经
+        # 在设备侧生效，因此同样要尝试关闭；逆序为 C、B、A。
         self.assertEqual(
             [(channel, enabled) for channel, enabled, _timeout in supply.commands],
-            [("A", True), ("B", True), ("C", True), ("B", False), ("A", False)],
+            [
+                ("A", True),
+                ("B", True),
+                ("C", True),
+                ("C", False),
+                ("B", False),
+                ("A", False),
+            ],
         )
         self.assertEqual(
             [failure.action for failure in raised.exception.failures],
             ["C", "B"],
         )
         self.assertIs(raised.exception.category, ErrorCategory.MEASUREMENT)
+
+    def test_channel_left_on_after_failed_rollback_can_be_retried(self):
+        """关断失败的通道保留在控制器里，下一次关断只重试这些通道。"""
+        supply = _FakePowerSupply(fail_on={"B"}, fail_off={"B"})
+        controller = PowerController(supply, ["A", "B"])
+
+        with self.assertRaises(PowerOnControlError):
+            controller.power_on()
+
+        self.assertEqual(controller.remaining_channels, ("B",))
+        supply.fail_off = set()
+        self.assertEqual(controller.power_off(), ("B",))
+        self.assertEqual(controller.remaining_channels, ())
+        self.assertEqual(
+            [(channel, enabled) for channel, enabled, _timeout in supply.commands],
+            [("A", True), ("B", True), ("B", False), ("A", False), ("B", False)],
+        )
 
     def test_power_off_attempts_every_channel_after_one_failure(self):
         supply = _FakePowerSupply(fail_off={"B"})
@@ -277,6 +303,25 @@ class AdapterPlanTests(unittest.TestCase):
         self.assertNotIn(
             ("power_supply", "output_on", "S1/CH1"), recorder.commands
         )
+
+    def test_cancellation_before_first_channel_still_registers_the_group_for_cleanup(self):
+        """首个通道动作前取消也要让会话知道本组可能有输出，避免状态不一致。"""
+        session, recorder = self._session()
+        adapter = PortMeasurementAdapter(
+            session,
+            dut_power_plan=PowerGroupPlan.from_channels(["S1/CH1"]),
+            cancellation_check=lambda: (_ for _ in ()).throw(_Cancel("stop")),
+        )
+
+        with self.assertRaises(_Cancel):
+            adapter.power_on_sequence()
+
+        self.assertEqual(session.state, InstrumentState.POWERED)
+        self.assertNotIn(("power_supply", "output_on", "S1/CH1"), recorder.commands)
+        # 会话清理按登记的计划通道做幂等关断；取消前未真正上电也要关一次。
+        self.assertEqual(adapter.close_all(), [])
+        self.assertIn(("power_supply", "output_off", "S1/CH1"), recorder.commands)
+        self.assertEqual(session.state, InstrumentState.CLEANED)
 
     def test_stage_cleanup_closes_groups_in_reverse_global_order_once(self):
         session, recorder = self._session()

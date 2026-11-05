@@ -2,7 +2,8 @@
 
 本模块只接收 ``PowerSupplyPort`` 和**已经排好序**的物理通道 token，不读取配置、
 不持有 VISA 资源，也不认识 gate/drain 角色。顺序就是调用方给出的列表顺序：上电
-逐通道开启，关断按实际成功开启顺序逆序执行。
+逐通道开启，关断按本次尝试顺序逆序执行。上电命令一旦发出就把通道视为可能已有
+输出（响应丢失不等于设备没有动作），只有关闭命令成功返回后才解除这个标记。
 
 两组计划（DUT / 驱动功放）之间仍由适配器按阶段调用；本模块只负责一组内部的
 顺序、组间隔、失败停止与 best-effort 清理。
@@ -160,7 +161,12 @@ def _setting_values(value: object) -> tuple[float | None, float | None]:
 
 
 class PowerController:
-    """按调用方给出的物理通道顺序执行一组电源的上电与关断。"""
+    """按调用方给出的物理通道顺序执行一组电源的上电与关断。
+
+    控制器把“已经发出开启命令”的通道都视为**可能已上电**，而不是只认返回成功的
+    通道：设备可能已经执行了上电、但响应超时或在回程中断开。于是即使上电命令以
+    异常结束，该通道也会进入关断集合；只有关闭命令成功返回后才会从集合中移除。
+    """
 
     def __init__(
         self,
@@ -183,12 +189,32 @@ class PowerController:
         self.channel_labels = {
             str(token): str(text) for token, text in (channel_labels or {}).items()
         }
-        self._last_on_channels: tuple[str, ...] = ()
+        # 本次运行中可能已有输出的通道，按上电顺序保存。它是关断与重试的唯一依据。
+        self._on_channels: list[str] = []
+        # 本次运行真正发出过开启/关闭命令的通道；用于区分“没轮到”和“关掉了”。
+        self._attempted_channels: list[str] = []
+        self._power_attempted = False
 
     def channel_display(self, channel) -> str:
         """日志与失败记录里的通道名：``短标签/CHx``；没有登记时退回路由 token。"""
         token = str(channel)
         return self.channel_labels.get(token) or token
+
+    @property
+    def remaining_channels(self) -> tuple[str, ...]:
+        """本次已尝试、但尚未确认关闭的通道；供调用方登记重试。"""
+        return tuple(self._on_channels)
+
+    @property
+    def attempted_channels(self) -> tuple[str, ...]:
+        """本次已经发出过动作命令的通道，按发出顺序；用于保留未轮到的旧输出。"""
+        return tuple(self._attempted_channels)
+
+    def _track_on(self, channel: str) -> None:
+        if channel not in self._on_channels:
+            self._on_channels.append(channel)
+        if channel not in self._attempted_channels:
+            self._attempted_channels.append(channel)
 
     def power_on(
         self,
@@ -196,28 +222,35 @@ class PowerController:
         timeout_s: float = 10.0,
         check_cancelled: Callable[[], None] | None = None,
     ) -> tuple[str, ...]:
-        """按计划顺序逐个开启；成功后等待组间隔，失败则停止并逆序清理。"""
+        """按计划顺序逐个开启；成功后等待组间隔，失败则停止并逆序清理。
+
+        每次开启命令发出前先把通道登记为“可能已上电”。命令异常时，该通道与之前
+        已尝试的通道一起逆序关断；关断失败的通道保留在 :attr:`remaining_channels`。
+        """
+        self._power_attempted = True
         powered: list[str] = []
         for index, channel in enumerate(self.channels):
-            self._cancellation_guard(check_cancelled, powered, timeout_s)
+            self._cancellation_guard(check_cancelled, timeout_s)
+            self._track_on(channel)
             try:
                 self.power_supply.set_output_enabled(channel, True, timeout_s=timeout_s)
             except Exception as error:
                 failures = [FailureRecord(self.channel_display(channel), error)]
-                failures.extend(self._shutdown(powered, timeout_s=timeout_s))
+                failures.extend(
+                    self._shutdown(tuple(self._on_channels), timeout_s=timeout_s)
+                )
                 raise PowerOnControlError(
-                    "电源通道上电失败，已逆序尝试关闭本次已开启通道", failures
+                    "电源通道上电失败，已逆序尝试关闭本次可能已开启的通道", failures
                 ) from error
             logger.info("打开电源通道 %s", self.channel_display(channel))
             powered.append(channel)
-            self._cancellation_guard(check_cancelled, powered, timeout_s)
+            self._cancellation_guard(check_cancelled, timeout_s)
             if index < len(self.channels) - 1:
                 # 零间隔是显式的“不等待”，不制造一个无意义的 sleep 调用。
                 if self.inter_channel_delay_s > 0:
                     self.sleep_fn(self.inter_channel_delay_s)
-                    self._cancellation_guard(check_cancelled, powered, timeout_s)
-        self._last_on_channels = tuple(powered)
-        return self._last_on_channels
+                    self._cancellation_guard(check_cancelled, timeout_s)
+        return tuple(powered)
 
     def power_off(
         self,
@@ -225,13 +258,19 @@ class PowerController:
         timeout_s: float = 10.0,
         channels: Iterable[object] | None = None,
     ) -> tuple[str, ...]:
-        """按实际成功开启顺序逆序关断；单项失败不阻止其余通道。"""
+        """按实际尝试顺序逆序关断；单项失败不阻止其余通道。"""
         if channels is None:
-            targets = self._last_on_channels or self.channels
+            targets = tuple(self._on_channels) if self._power_attempted else self.channels
         else:
             targets = tuple(_channel_text(channel) for channel in channels)
+            if len(set(targets)) != len(targets):
+                duplicated = sorted(
+                    {token for token in targets if targets.count(token) > 1}
+                )
+                raise ValueError("供电通道不能重复: " + ", ".join(duplicated))
+        for channel in targets:
+            self._track_on(channel)
         failures = self._shutdown(targets, timeout_s=timeout_s)
-        self._last_on_channels = ()
         if failures:
             raise PowerControlError("供电安全掉电存在失败", failures) from cause_of(failures)
         return tuple(reversed(targets))
@@ -239,16 +278,17 @@ class PowerController:
     def _cancellation_guard(
         self,
         check_cancelled: Callable[[], None] | None,
-        powered: Iterable[str],
         timeout_s: float,
     ) -> None:
-        """取消检查；取消后先逆序关闭本次已开启通道，再保留原取消异常。"""
+        """取消检查；取消后先逆序关闭本次已尝试通道，再保留原取消异常。"""
         if check_cancelled is None:
             return
         try:
             check_cancelled()
         except Exception as cancellation:
-            failures = self._shutdown(tuple(powered), timeout_s=timeout_s)
+            failures = self._shutdown(
+                tuple(self._on_channels), timeout_s=timeout_s
+            )
             if failures:
                 detail = "; ".join(record.describe() for record in failures)
                 logger.error("取消后的电源通道关闭失败: %s", detail)
@@ -272,7 +312,11 @@ class PowerController:
         *,
         timeout_s: float,
     ) -> list[FailureRecord]:
-        """逆序逐项尝试关闭；一项失败不阻止其余项，返回全部失败。"""
+        """逆序逐项尝试关闭；一项失败不阻止其余项，返回全部失败。
+
+        只有关闭命令成功返回的通道才会从“可能已上电”集合中移除；失败通道保留，
+        供调用方在后续清理中重试。
+        """
         failures: list[FailureRecord] = []
         for channel in reversed(tuple(channels)):
             try:
@@ -283,6 +327,8 @@ class PowerController:
                 )
                 failures.append(FailureRecord(self.channel_display(channel), error))
             else:
+                if channel in self._on_channels:
+                    self._on_channels.remove(channel)
                 logger.info("关闭电源通道 %s", self.channel_display(channel))
         return failures
 

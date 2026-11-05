@@ -15,6 +15,17 @@ from .power_control import PowerController
 from .safety import InstrumentSafetyError, shutdown_instruments
 
 
+def _power_tokens(channels: Iterable[object]) -> tuple[str, ...]:
+    """把显式通道序列规范化成物理 token；拒绝空值与重复项。"""
+    tokens = tuple(str(channel) for channel in channels)
+    if any(not token.strip() for token in tokens):
+        raise ValueError("会话的供电通道不能为空")
+    if len(set(tokens)) != len(tokens):
+        duplicated = sorted({token for token in tokens if tokens.count(token) > 1})
+        raise ValueError("会话的供电通道不能重复: " + ", ".join(duplicated))
+    return tokens
+
+
 class InstrumentSessionError(CleanupError):
     """设备会话清理失败；``failures`` 逐项记录失败动作。"""
 
@@ -36,11 +47,7 @@ class ManagedInstrumentSession:
         self.power_supply = power_supply
         # 会话管理的是**物理通道序列**，不是角色映射。顺序只在显式传入计划时由
         # 计划决定；这里只保留一个可独立测试的生命周期级通道列表。
-        self.power_channels = tuple(str(channel) for channel in (power_channels or ()))
-        if any(not channel.strip() for channel in self.power_channels):
-            raise ValueError("会话的供电通道不能为空")
-        if len(set(self.power_channels)) != len(self.power_channels):
-            raise ValueError("会话的供电通道不能重复")
+        self.power_channels = _power_tokens(power_channels or ())
         # 路由 token -> 日志写法（``短标签/CHx``）：只影响日志与失败记录，不参与路由。
         self.power_channel_labels = dict(power_channel_labels or {})
         self.owns_signal_generator = owns_signal_generator
@@ -52,7 +59,8 @@ class ManagedInstrumentSession:
         self._attempted = []
         self._connected = []
         self._sleep_fn = sleep_fn
-        # 本次实际成功打开的输出；关断与生命周期确认都以它为准，不用角色反查。
+        # 本次已尝试、可能已有输出的物理通道；关断与生命周期确认都以它为准，
+        # 不用角色反查。只有关闭命令成功返回后才会从这里移除。
         self._powered_channels: tuple[str, ...] = ()
 
     def validate(self, *, timeout_s: float = 10.0) -> None:
@@ -101,13 +109,45 @@ class ManagedInstrumentSession:
                 raise error from cleanup_error
             raise
 
+    def _register_powered(self, channels: Iterable[object]) -> None:
+        """把**可能已有输出**的通道并入本次运行记录，保持首次开启顺序。"""
+        tokens = _power_tokens(channels)
+        merged = list(self._powered_channels)
+        for token in tokens:
+            if token not in merged:
+                merged.append(token)
+        self._powered_channels = tuple(merged)
+
+    def _sync_after_off(
+        self, attempted: Iterable[str], remaining: Iterable[str]
+    ) -> None:
+        """按关断结果更新记录：成功关闭的移除，未确认关闭的保留。
+
+        ``attempted`` 是本次真正发出过动作命令的通道，``remaining`` 是其中关闭
+        失败的通道。不在 ``attempted`` 里的旧通道代表“这一轮还没轮到”，必须原样
+        保留，不能因为不在本次计划里就忘记它们可能仍有输出。
+        """
+        attempted_set = set(attempted)
+        remaining_set = set(remaining)
+        kept = [
+            channel
+            for channel in self._powered_channels
+            if channel not in attempted_set or channel in remaining_set
+        ]
+        for channel in remaining:
+            if channel not in kept:
+                kept.append(channel)
+        self._powered_channels = tuple(kept)
+
     def power_on(self, *, channels: Iterable[str] | None = None,
                  inter_channel_delay_s: float = 0.0,
                  timeout_s: float = 10.0) -> None:
         """按物理通道序列逐个上电；失败会停止后续通道并逆序清理。
 
         会话只保留生命周期状态；通道顺序由调用方给出的序列决定，不接受
-        role/gate/drain 参数，也不从通道名推断顺序。
+        role/gate/drain 参数，也不从通道名推断顺序。上电命令发出后即视为
+        “可能已上电”：失败路径把未能确认关闭的通道保留在会话里，``close()``
+        或后续 ``power_off()`` 会重试关断。
         """
         if self.state not in (InstrumentState.PREPARED, InstrumentState.POWERED):
             raise ValueError(f"cannot power on from {self.state.value}")
@@ -121,38 +161,53 @@ class ManagedInstrumentSession:
         )
         try:
             powered = controller.power_on(timeout_s=timeout_s)
-            self._powered_channels = tuple(powered)
-            self.state = InstrumentState.POWERED
         except Exception as error:
+            self._sync_after_off(
+                controller.attempted_channels, controller.remaining_channels
+            )
             try:
                 self.close(timeout_s=timeout_s)
             except Exception as cleanup_error:
                 raise error from cleanup_error
             raise
+        self._register_powered(powered)
+        self.state = InstrumentState.POWERED
 
     def power_off(self, *, channels: Iterable[str] | None = None,
                   timeout_s: float = 10.0) -> None:
         if self.power_supply not in self._connected:
             return
-        targets = tuple(channels) if channels is not None else self._powered_channels
+        targets = (
+            tuple(channels)
+            if channels is not None
+            else tuple(self._powered_channels)
+        )
         if not targets:
             return
-        PowerController(
+        controller = PowerController(
             self.power_supply,
             targets,
             sleep_fn=self._sleep_fn,
             channel_labels=self.power_channel_labels,
-        ).power_off(timeout_s=timeout_s)
-        self._powered_channels = ()
+        )
+        try:
+            controller.power_off(timeout_s=timeout_s)
+        except Exception:
+            self._sync_after_off(targets, controller.remaining_channels)
+            raise
+        self._sync_after_off(targets, ())
 
-    def mark_powered(self) -> None:
-        """登记“输出已由调用方按显式通道计划打开”。
+    def mark_powered(self, *, channels: Iterable[str] | None = None) -> None:
+        """登记调用方已按显式通道计划打开（或可能打开）的输出。
 
-        通道顺序与失败回滚由适配器按计划执行；会话只保留生命周期状态，因此这里
-        不接受 roles/gate/drain 参数，也不重新执行任何输出动作。
+        适配器按计划执行通道顺序与失败回滚；会话只保存生命周期状态和本次运行
+        可能已有输出的物理通道，因此这里不接受 roles/gate/drain 参数，也不重新
+        执行任何输出动作。``channels`` 省略时退回会话构造时的通道序列；没有受管
+        通道就是“没有需要会话确认的输出”。
         """
         if self.state not in (InstrumentState.PREPARED, InstrumentState.POWERED):
             raise ValueError(f"cannot mark powered from {self.state.value}")
+        self._register_powered(self.power_channels if channels is None else channels)
         self.state = InstrumentState.POWERED
 
     def start_measurement(self) -> None:

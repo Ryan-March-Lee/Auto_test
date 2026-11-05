@@ -312,7 +312,7 @@ class MeasurementFactoryTests(unittest.TestCase):
 
             self.assertEqual(port.emergency_power_off_all(), [])
             self.assertEqual(
-                port._last_emergency_power_off,
+                port._last_emergency_power_off_succeeded,
                 [(0, "PS1/CH2"), (0, "PS1/CH1")],
             )
             commands = manager.resources[2].commands
@@ -340,7 +340,7 @@ class MeasurementFactoryTests(unittest.TestCase):
 
             self.assertEqual(port.emergency_power_off_all(), [])
             self.assertEqual(
-                port._last_emergency_power_off,
+                port._last_emergency_power_off_succeeded,
                 [(0, "PS1/CH2"), (0, "PS1/CH1")],
             )
             self.assertEqual(port.close_all(close_rf=True), [])
@@ -364,7 +364,7 @@ class MeasurementFactoryTests(unittest.TestCase):
 
             self.assertEqual(port.emergency_power_off_all(), [])
             self.assertEqual(
-                [channel for _index, channel in port._last_emergency_power_off],
+                [channel for _index, channel in port._last_emergency_power_off_succeeded],
                 ["PS1/CH2", "PS1/CH1"],
             )
             self.assertEqual(port.close_all(close_rf=True), [])

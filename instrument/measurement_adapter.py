@@ -78,9 +78,10 @@ class PortMeasurementAdapter:
         )
         self._session_cleaned = False
         self._active_power_groups: dict[str, tuple[str, ...]] = {}
-        # 组实际成功上电的先后顺序：收尾与阶段结算按它逆序关闭，先 DUT 后驱动功放。
+        # 组本次尝试上电的先后顺序：阶段结算按它逆序关闭，先 DUT 后驱动功放。
         self._powered_group_order: list[str] = []
-        self._last_emergency_power_off: list[tuple[int, str]] = []
+        # 急停成功关闭的通道；与 ``emergency_power_off_all`` 的返回值（失败项）区分。
+        self._last_emergency_power_off_succeeded: list[tuple[int, str]] = []
 
     def _validate_power_plans(self) -> None:
         overlap = set(self.dut_power_plan.tokens) & set(self.driver_power_plan.tokens)
@@ -147,9 +148,9 @@ class PortMeasurementAdapter:
     def end_stage(self, *, timeout_s: float = 30.0) -> None:
         """成功阶段结束后结算会话；失败时调用方必须关闭端口。
 
-        适配器是计划通道的唯一所有者：结算前按实际成功上电顺序的逆序关闭所有
-        活动电源组，再交给会话确认 RF 与生命周期。任一组关闭失败都不结算会话，
-        让协调器按异常阶段关闭端口。
+        适配器按本次尝试上电顺序的逆序关闭活动电源组；关断动作经会话执行，
+        因此会话保留“可能已上电”的通道集合。任一组关闭失败都不结算会话，
+        让协调器按异常阶段关闭端口，并可在后续 ``close_all()`` 里重试。
         """
         if self._session_cleaned:
             raise RuntimeError("instrument session has already been cleaned")
@@ -168,12 +169,19 @@ class PortMeasurementAdapter:
     def emergency_power_off_all(self, *, timeout_s: float = 5.0) -> list[BaseException]:
         """Switch off the explicitly configured channels before closing.
 
+        Returns the failures of the channels that could not be switched off.
+        ``_last_emergency_power_off_succeeded`` records the ``(supply index,
+        channel)`` pairs that did switch off, so a caller never has to read the
+        return value backwards: a non-empty return means "these channels still
+        need attention", an empty return means every configured channel was
+        switched off successfully.
+
         ``emergency_channels`` already carry the explicit ``supply_id/CHx`` token
         of each declared plan channel; the log shows the supply short label and
         the channel the operator has to confirm on the front panel.
         """
         errors = []
-        self._last_emergency_power_off = []
+        self._last_emergency_power_off_succeeded = []
         for index, channel in self.emergency_channels:
             try:
                 self.power_supply.set_output_enabled(channel, False, timeout_s=timeout_s)
@@ -184,7 +192,7 @@ class PortMeasurementAdapter:
                 errors.append(error)
             else:
                 logger.info("紧急关闭电源通道 %s", self._channel_display(channel))
-                self._last_emergency_power_off.append((index, channel))
+                self._last_emergency_power_off_succeeded.append((index, channel))
         return errors
 
     def _channel_display(self, channel) -> str:
@@ -237,14 +245,15 @@ class PortMeasurementAdapter:
         if plan.is_empty:
             return
         # 先登记整组计划：上电中途失败或取消时，后续清理仍会重试所有可能已有输出的
-        # 通道；控制器内部的 best-effort 回滚只是第一道清理，不是最后一道。
+        # 通道；控制器内部的 best-effort 回滚只是第一道清理，不是最后一道。会话
+        # 同步登记同样的通道，这样 close()/end_stage() 不依赖适配器内部状态。
         self._active_power_groups[group] = plan.tokens
         if group not in self._powered_group_order:
             self._powered_group_order.append(group)
+        self.session.mark_powered(channels=plan.tokens)
         powered = self._controller(plan).power_on(check_cancelled=self.cancellation_check)
         # 成功返回时只保留实际开启的通道（正常路径与计划相同）。
         self._active_power_groups[group] = powered
-        self.session.mark_powered()
 
     def power_off_driver(self) -> None:
         self._power_off_group("driver")
@@ -256,8 +265,9 @@ class PortMeasurementAdapter:
         channels = self._active_power_groups.get(group)
         if not channels:
             return
-        plan = self.driver_power_plan if group == "driver" else self.dut_power_plan
-        self._controller(plan, channels).power_off(timeout_s=timeout_s)
+        # 关断交给会话执行：会话同时维护“可能已上电”的全局集合，失败的通道会
+        # 留在集合里，供下一次清理重试，而不是只存在于这个适配器实例中。
+        self.session.power_off(channels=channels, timeout_s=timeout_s)
         self._active_power_groups.pop(group, None)
         if group in self._powered_group_order:
             self._powered_group_order.remove(group)
@@ -271,17 +281,17 @@ class PortMeasurementAdapter:
                 self.session.set_rf_enabled(False, timeout_s=timeout_s)
             except Exception as error:
                 errors.append(error)
-        for group in reversed(tuple(self._powered_group_order)):
-            try:
-                self._power_off_group(group, timeout_s=timeout_s)
-            except Exception as error:
-                errors.append(error)
+        # 会话按全局上电顺序的逆序关闭所有“可能已上电”的通道（先 DUT、后驱放，
+        # 组内再逆序）；不在这里重复遍历电源组，避免一次 close_all 里对同一通道
+        # 发起两轮关断。会话关闭失败时保留通道记录，下一次 close_all 会重试。
         try:
             self.session.close(emergency=True, timeout_s=timeout_s)
         except Exception as error:
             errors.append(error)
         else:
             self._session_cleaned = True
+            self._active_power_groups.clear()
+            self._powered_group_order.clear()
         return errors
 
     def safe_shutdown(self):

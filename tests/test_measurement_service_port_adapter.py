@@ -124,6 +124,19 @@ class MeasurementServicePortAdapterTests(unittest.TestCase):
             ["B", "A", "D", "C"],
         )
 
+    def test_emergency_power_off_returns_failures_and_records_only_confirmed_off(self):
+        """返回值只表示失败项；成功关闭的通道单独记录，避免把两者读反。"""
+        adapter, _session, _recorder = self.make_adapter()
+        adapter.power_supply.inject_failure("output_off", once=True)
+
+        errors = adapter.emergency_power_off_all()
+
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(
+            adapter._last_emergency_power_off_succeeded,
+            [(0, "A"), (0, "D"), (0, "C")],
+        )
+
     def test_emergency_log_names_the_short_label_and_keeps_the_routing_token(self):
         """急停日志写 ``短标签/CHx``；安全记录仍存路由 token，供程序再对一次。"""
         recorder = CommandRecorder()
@@ -153,7 +166,7 @@ class MeasurementServicePortAdapterTests(unittest.TestCase):
         self.assertIn("紧急关闭电源通道 现场 A 电源/CH2", captured.output[0])
         self.assertNotIn("DP8B1519/CH2", "\n".join(captured.output))
         self.assertEqual(
-            adapter._last_emergency_power_off,
+            adapter._last_emergency_power_off_succeeded,
             [(0, "DP8B1519/CH2"), (0, "DP8B1519/CH1")],
         )
 

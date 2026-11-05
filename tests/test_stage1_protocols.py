@@ -32,7 +32,7 @@ class MinimalInstrumentSession:
     def prepare(self, *, timeout_s=30.0):
         pass
 
-    def mark_powered(self):
+    def mark_powered(self, *, channels=None):
         pass
 
     def end_stage(self, *, timeout_s=30.0):

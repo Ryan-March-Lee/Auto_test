@@ -80,6 +80,40 @@ class ConnectionDiagramContentTests(unittest.TestCase):
         self.assertIn("驱动功放", diagrams.DIAGRAM_DEVICES["amplifier_test"])
 
 
+class ConnectionDiagramAssetTests(unittest.TestCase):
+    """电缆与仪器照片是运行时资源：文件必须存在，电缆按“接头不变形”切片。"""
+
+    def test_declared_pictures_exist(self):
+        names = {path.name for path in diagrams.PICTURE_FILES}
+        self.assertIn("cable.png", names)
+        self.assertIn("signal_source.png", names)
+        self.assertIn("spectrum_analyzer.png", names)
+        for path in diagrams.PICTURE_FILES:
+            with self.subTest(picture=path.name):
+                self.assertTrue(path.is_file(), f"缺少连接图图片: {path}")
+
+    def test_cable_pieces_stretch_only_the_middle(self):
+        wide = [length for _part, length in diagrams._cable_pieces(3.0, 0.1)]
+        self.assertEqual(len(wide), 3)
+        # 两端接头等长；加长间距只加长中段，接头不跟着拉长。
+        self.assertAlmostEqual(wide[0], wide[2], places=6)
+        self.assertGreater(wide[1], wide[0] * 2)
+
+    def test_short_span_scales_the_whole_cable(self):
+        narrow = [length for _part, length in diagrams._cable_pieces(0.2, 0.1)]
+        self.assertAlmostEqual(sum(narrow), 0.2, places=6)
+        self.assertAlmostEqual(narrow[0], narrow[2], places=6)
+
+    def test_module_draws_no_arrow_markers(self):
+        source = (
+            Path(__file__).resolve().parents[2]
+            / "presentation" / "qt" / "connection_diagrams.py"
+        ).read_text(encoding="utf-8-sig")
+        for marker in ("'r>'", '"r>"', "'>'"):
+            with self.subTest(marker=marker):
+                self.assertNotIn(marker, source)
+
+
 class ConnectionDiagramStyleTests(unittest.TestCase):
     def test_configure_diagram_style_is_idempotent(self):
         import matplotlib.pyplot as plt

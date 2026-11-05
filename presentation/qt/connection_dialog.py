@@ -18,6 +18,19 @@ from .theme import set_button_variant
 
 logger = get_logger(__name__)
 
+#: 对话框宽度（px）。高度按图形宽高比推算：连接图是横长的，固定 640 高会留下大块空白。
+_DIALOG_WIDTH = 920
+#: 图形下方的按钮行、边距与图注占用的高度（px）。
+_DIALOG_CHROME_HEIGHT = 78
+
+
+def _dialog_size(figure: Figure) -> tuple[int, int]:
+    """按图形宽高比给出对话框尺寸，宽图不被拉成一条细带、也不留大片空白。"""
+    figure_width = figure.get_figwidth() or 1.0
+    ratio = figure.get_figheight() / figure_width
+    height = int(_DIALOG_WIDTH * ratio) + _DIALOG_CHROME_HEIGHT
+    return _DIALOG_WIDTH, max(280, min(height, 640))
+
 
 def _diagram_factories(connection_diagram: Any) -> dict[str, Callable[[], Figure]]:
     """连接图类型 -> 显式实现方法；不使用方法名字符串路由。"""
@@ -59,8 +72,8 @@ class ConnectionDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("连接说明")
         self.setModal(True)
-        self.resize(880, 640)
         self.figure, self.unavailable_reason = build_diagram(diagram_type)
+        self.resize(*_dialog_size(self.figure))
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 14)
         layout.setSpacing(12)

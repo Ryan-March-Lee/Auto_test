@@ -12,6 +12,7 @@ from pathlib import Path
 
 from PySide6.QtGui import QImage, QImageReader
 
+from presentation.qt.connection_diagrams import CABLE_PICTURE_FILE, PICTURE_FILES
 from presentation.qt.device_cards import instrument_picture_path
 from presentation.qt.theme import WELCOME_BACKGROUND_FILE
 from presentation.qt.ui_loader import UI_DIRECTORY
@@ -76,6 +77,14 @@ class RuntimePictureBudgetTests(unittest.TestCase):
                     image.pixelColor(0, 0).alpha(), 0, f"{name} 的透明留白被填实"
                 )
 
+    def test_connection_diagram_pictures_are_runtime_assets(self):
+        self.assertTrue(CABLE_PICTURE_FILE.is_file())
+        for path in PICTURE_FILES:
+            with self.subTest(picture=path.relative_to(ROOT)):
+                self.assertFalse(QImage(str(path)).isNull(), f"QImage 无法读取: {path.name}")
+                self.assertEqual(QImageReader(str(path)).format(), b"png")
+                self.assertLessEqual(path.stat().st_size, 512 * KB)
+
     def test_welcome_background_is_a_photo_without_alpha(self):
         path = WELCOME_BACKGROUND_FILE
         self.assertTrue(path.is_file(), f"欢迎页背景不存在: {path}")
@@ -106,7 +115,7 @@ class RuntimePictureBudgetTests(unittest.TestCase):
         self.assertIn("assets", RELEASE_FILES)
         manifest = build_manifest(ROOT)
         self.assertIn("assets", manifest["release_files"])
-        runtime_files = [WELCOME_BACKGROUND_FILE] + [
+        runtime_files = [WELCOME_BACKGROUND_FILE, CABLE_PICTURE_FILE] + [
             INSTRUMENT_PICTURES / name for name in ROLE_PICTURES.values()
         ]
         for path in runtime_files:

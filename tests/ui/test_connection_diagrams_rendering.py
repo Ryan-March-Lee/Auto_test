@@ -1,7 +1,7 @@
 """连接示意图的真实渲染回归。
 
-真实调用 matplotlib 构建图形并保存 Base64，验证图元（文本、矩形、连线）与图片
-输出。运行环境无法渲染时自动跳过（见 ``tests/_rendering.py``）。
+真实调用 matplotlib 构建图形并保存 Base64，验证图元（文本、卡片、仪器照片与电缆图）
+与图片输出。运行环境无法渲染时自动跳过（见 ``tests/_rendering.py``）。
 """
 
 import base64
@@ -22,8 +22,9 @@ class ConnectionDiagramRenderingTests(unittest.TestCase):
                 self.assertIsInstance(figure, Figure)
                 (axis,) = figure.axes
                 self.assertEqual({text.get_text() for text in axis.texts}, set(expected_devices))
-                self.assertTrue(axis.patches, "设备方框未绘制")
-                self.assertTrue(axis.lines, "连线未绘制")
+                self.assertTrue(axis.patches, "设备卡片未绘制")
+                self.assertTrue(axis.images, "仪器照片与电缆图未绘制")
+                self.assertFalse(axis.lines, "箭头/连线应全部换成电缆图")
                 self.assertIn("→", axis.get_title())
 
     def test_save_figure_as_base64_renders_png(self):

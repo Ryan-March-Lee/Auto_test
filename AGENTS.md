@@ -28,9 +28,9 @@ The runner resolves the interpreter from `.env`, puts the Conda runtime director
 
 | Change surface | Command | What runs |
 | --- | --- | --- |
-| Only `presentation/qt` (widgets, layout, theme, page interaction) and no DTO/port signature change | `tools/run_tests.py --layer ui` | `tests/ui` (pure presentation) + all repository gates, ~40 s |
-| `presentation` plus real wiring (new page bound to application services) | `tools/run_tests.py --layer integration` | `tests/ui` + `tests/integration` (real windows/pages with real backend) + gates, ~60 s |
-| `application`, `domain`, `infrastructure`, `instrument`, `app`, `launcher.py`, `tools/` | `tools/run_tests.py` (full offline) | ~100 s |
+| Only `presentation/qt` (widgets, layout, theme, page interaction) and no DTO/port signature change | `tools/run_tests.py --layer ui` | `tests/ui` (pure presentation) + all repository gates, ~45 s |
+| `presentation` plus real wiring (new page bound to application services) | `tools/run_tests.py --layer integration` | `tests/ui` + `tests/integration` (real windows/pages with real backend) + gates, ~85 s |
+| `application`, `domain`, `infrastructure`, `instrument`, `app`, `launcher.py`, `tools/` | `tools/run_tests.py` (full offline) | ~150 s |
 | Dependencies, release, or anything before handing off | full suite + `launcher.py --check` + `launcher.py --validate-config` | — |
 
 Rules:
@@ -38,7 +38,8 @@ Rules:
 - A pure UI task must **not** run the full suite; `tools/run_tests.py --layer ui` is the expected verification.
 - Every scope still runs the repository gates (`tests/test_architecture_dependencies.py`, `test_presentation_boundaries.py`, `test_exception_taxonomy.py`, `test_static_quality_gate.py`, `test_runtime_dependency_contract.py`); `--layer ui`/`integration` run them before their tests, and `tests/test_test_runner_contract.py` keeps that order.
 - `tests/ui` may import only `presentation`, `application` DTO/ports and Qt; importing `app`/`infrastructure`/hardware fails `test_presentation_boundaries`. Real-backend UI scenarios belong in `tests/integration`.
-- If the boundary is unclear, or a DTO/port signature changed, run the full suite. `tools/run_tests.py --parallel` runs the full suite with pytest-xdist (~1 min).
+- Qt 离屏用例结束时要**销毁**顶层控件，不要只 `.close()`。`close()` 只隐藏控件，C++ 对象仍留在 `QApplication.allWidgets()` 里；后续的 `setStyleSheet`/`processEvents` 要为每个存活控件付代价，用例之间累积会让整轮耗时线性增长。现成写法见 `tests/integration/device_discovery/support.py` 的 `_destroy_widgets` 与 `tests/integration/test_main_window_flow.py` 的 `_destroy_window`：`close()` → `deleteLater()` → `sendPostedEvents(None, DeferredDelete)`。
+- If the boundary is unclear, or a DTO/port signature changed, run the full suite. `tools/run_tests.py --parallel` runs the full suite with pytest-xdist; 本机离屏 Qt 用例曾在 worker 里崩溃并让整轮挂起，默认验证仍用串行全量。
 
 Where a change belongs and which tests come first: visual changes stay in `presentation/qt`, business rules are added in `domain`/`application` with tests before Qt wiring, and hardware changes stay in `app`/`application`/`instrument`. `tests/test_presentation_boundaries.py` rejects new Qt imports of configuration business modules (`application.configuration_*`, `application.device_binding`, `domain.configuration.*`), cross-page type imports outside the root `pages.py`/`main_window.py`, page constructors that take another page or `*args`/`**kwargs`, and growth of `PageContext`.
 

@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import ast
+import functools
 from pathlib import Path
 
 #: 阶段一删除、永远不得复用的旧运行流程入口。
@@ -86,8 +87,13 @@ SINGLE_FINALIZATION_ENTRY_NAMES = (
 )
 
 
+@functools.lru_cache(maxsize=None)
 def parse_source(path: Path) -> ast.Module:
-    """按仓库约定（UTF-8 BOM 兼容）解析一个 Python 源文件。"""
+    """按仓库约定（UTF-8 BOM 兼容）解析一个 Python 源文件。
+
+    同一进程里多个门禁会反复扫描同一批生产源码（一轮全量约 20 次）。源文件在一次测试
+    运行内不会变化，因此按路径缓存 AST：门禁仍读的是当前文件内容，只是不再重复解析。
+    """
     return ast.parse(path.read_text(encoding="utf-8-sig"), str(path))
 
 

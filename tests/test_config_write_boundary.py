@@ -37,6 +37,7 @@ import ast
 import json
 import tempfile
 import unittest
+from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import ANY, patch
@@ -185,6 +186,7 @@ CONFIG_PATH_REFERENCE_SITES = {
 }
 
 
+@lru_cache(maxsize=None)
 def _tree(path):
     return ast.parse(path.read_text(encoding="utf-8-sig"), str(path))
 

@@ -1,5 +1,6 @@
 import ast
 import unittest
+from functools import lru_cache
 from pathlib import Path
 
 
@@ -85,6 +86,7 @@ MEASUREMENT_WORKERS = {
 }
 
 
+@lru_cache(maxsize=None)
 def _tree(path):
     return ast.parse(path.read_text(encoding="utf-8-sig"), str(path))
 

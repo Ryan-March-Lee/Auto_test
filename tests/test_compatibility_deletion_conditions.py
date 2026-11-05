@@ -16,6 +16,7 @@ import importlib
 import subprocess
 import sys
 import unittest
+from functools import lru_cache
 from pathlib import Path
 
 
@@ -96,6 +97,7 @@ def _relative(path):
     return path.relative_to(ROOT).as_posix()
 
 
+@lru_cache(maxsize=None)
 def _tree(path):
     return ast.parse(path.read_text(encoding="utf-8-sig"), str(path))
 

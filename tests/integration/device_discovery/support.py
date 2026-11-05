@@ -141,10 +141,25 @@ def _flush_deferred_deletes() -> None:
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
-def _teardown_panel(panel) -> None:
-    """停掉面板后立刻投递排队的删除；``panel`` 参数保证清理期间面板仍被持有。"""
-    panel.shutdown()
+def _destroy_widgets(*widgets) -> None:
+    """关闭并销毁顶层控件，再投递排队的删除。
+
+    ``close()`` 只隐藏控件，C++ 对象仍然存活。同一进程跑几百个离屏用例时，这些控件会一直
+    留在 ``QApplication.allWidgets()`` 里：下一次全应用 ``setStyleSheet`` 要为每个存活控件
+    重新 polish，``processEvents`` 也要逐个遍历，单用例耗时随之前用例数线性增长。清理时
+    真正 ``deleteLater`` 并立刻投递 ``DeferredDelete``，下一用例面对的就是干净的应用。
+    """
+    for widget in widgets:
+        widget.close()
+    for widget in widgets:
+        widget.deleteLater()
     _flush_deferred_deletes()
+
+
+def _teardown_panel(panel) -> None:
+    """停掉面板后关闭并销毁它；``panel`` 参数保证清理期间面板仍被持有。"""
+    panel.shutdown()
+    _destroy_widgets(panel)
 
 
 class DiscoveryPanelTestCase(unittest.TestCase):
@@ -252,10 +267,7 @@ class InstrumentSetupPageTestCase(unittest.TestCase):
         self.app.processEvents()
         self.connection = connection
         self.power_page = power_page
-        # LIFO：先关闭连接页与配置页（关闭连接页会停扫描/动画），最后投递排队的
-        # 卡片删除，避免 DeferredDelete 落到下一个用例的事件循环里。
-        self.addCleanup(_flush_deferred_deletes)
-        self.addCleanup(power_page.close)
-        self.addCleanup(page.close)
-        self.addCleanup(connection.close)
+        # LIFO：先关闭连接页与配置页（关闭连接页会停扫描/动画），再销毁它们并投递排队的
+        # 卡片删除，避免 DeferredDelete 与成百上千个存活控件落到下一个用例。
+        self.addCleanup(_destroy_widgets, connection, page, power_page)
         return page

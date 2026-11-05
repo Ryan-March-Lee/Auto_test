@@ -92,6 +92,20 @@ def _shared_application():
     return app
 
 
+def _destroy_window(window) -> None:
+    """关闭并销毁窗口，别把上百个控件留在应用里。
+
+    ``close()`` 只隐藏窗口：C++ 对象仍在 ``QApplication.allWidgets()`` 里，之后每次
+    全应用 ``setStyleSheet`` / ``processEvents`` 都要为它付代价。用例之间累积几百个
+    这样的窗口时，同一个离屏用例会从毫秒级涨到秒级。
+    """
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    window.close()
+    window.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
 @unittest.skipUnless(gui_dependencies_available(), "当前环境缺少完整 GUI 依赖")
 class MainWindowCoordinatorFlowTests(unittest.TestCase):
     @classmethod
@@ -131,7 +145,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
 
         # 构造窗口本身不应弹窗；构造后再安装对话框替身，保证失败路径可断言。
         window = MainWindow(paths=self.paths)
-        self.addCleanup(window.close)
+        self.addCleanup(_destroy_window, window)
         return window
 
     def _scan_and_select(self, window):
@@ -863,7 +877,7 @@ class MainWindowMigrationResidueFlowTests(unittest.TestCase):
         from presentation.qt.main_window import MainWindow
 
         window = MainWindow(paths=self.paths)
-        self.addCleanup(window.close)
+        self.addCleanup(_destroy_window, window)
         return window
 
     def test_driver_mode_switch_updates_the_amplifier_page_instruction(self):

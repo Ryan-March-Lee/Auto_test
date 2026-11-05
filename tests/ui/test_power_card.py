@@ -328,7 +328,7 @@ class PowerCardRenderTests(unittest.TestCase):
                     )
 
     def test_power_switch_body_follows_the_channel_state(self):
-        """圆形电源键：关闭是深灰金属面，点亮后转青白；采样点避开图标与内阴影。"""
+        """圆形电源键：关闭是深灰金属面，点亮后转绿；采样点避开图标与内阴影。"""
         layout = power_card_layout()
         for index, channel in enumerate(layout.channels):
             with self.subTest(channel=channel.channel):
@@ -347,7 +347,7 @@ class PowerCardRenderTests(unittest.TestCase):
                     TOKENS["power_switch_off"].lower(),
                 )
 
-    def test_lit_switch_emits_a_cyan_halo_outside_the_button(self):
+    def test_lit_switch_emits_a_green_halo_outside_the_button(self):
         layout = power_card_layout()
         channel = layout.channels[0]
         sample = (channel.switch.right() + 6.0, channel.switch.center().y())
@@ -359,7 +359,7 @@ class PowerCardRenderTests(unittest.TestCase):
         self.assertGreater(
             lit.green() - lit.red(),
             dark.green() - dark.red() + 5,
-            "辉光应偏青色，而不是把通道底色整体压暗",
+            "辉光应偏绿色，而不是把通道底色整体压暗",
         )
 
     def test_empty_code_still_draws_a_placeholder(self):

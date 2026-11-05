@@ -11,8 +11,8 @@
   ``voltage.value`` / ``voltage.protection`` / ``current.value`` /
   ``current.protection`` 一一对应；
 - **通道开关**：关闭时该通道整块降为灰色（``disabled_bg``），数值框、标签与开关
-  一起变灰；打开时恢复通道底色（左浅蓝、右浅琥珀），电源键同时点亮，
-  边框转白、底色转青、图标与四周泛起青色辉光。
+  一起变灰；打开时恢复通道底色（左浅蓝、右浅琥珀），电源键同时点亮：边框转白、
+  底色转绿、四周泛起绿色辉光，图标描边加粗并让圆环带一圈青色光。
 
 数值在本卡上只读：编辑仍走现有表单，卡片只显示一份快照。通道开关目前也只控制
 卡面显示，不改配置模型；页面通过 :attr:`PowerSupplyCard.channel_toggled` 决定之后
@@ -125,7 +125,7 @@ _TEXT_MUTED = QColor(TOKENS["text_muted"])
 _DISABLED_TEXT = QColor(TOKENS["disabled_text"])
 _PRIMARY = QColor(TOKENS["primary"])
 _WARNING = QColor(TOKENS["warning"])
-# 电源键：关闭是深灰金属面，点亮后转青白并向外发光；配色逐项来自 TOKENS。
+# 电源键：关闭是深灰金属面，点亮后转绿并向外发光；配色逐项来自 TOKENS。
 _SWITCH_BODY_OFF = QColor(TOKENS["power_switch_off"])
 _SWITCH_BORDER_OFF = QColor(TOKENS["power_switch_off_border"])
 _SWITCH_ICON_OFF = QColor(TOKENS["power_switch_icon_off"])
@@ -133,6 +133,7 @@ _SWITCH_BODY_ON = QColor(TOKENS["power_switch_on"])
 _SWITCH_BORDER_ON = QColor(TOKENS["power_switch_on_border"])
 _SWITCH_ICON_ON = QColor(TOKENS["power_switch_icon_on"])
 _SWITCH_GLOW = QColor(TOKENS["power_switch_glow"])
+_SWITCH_ICON_GLOW = QColor(TOKENS["power_switch_icon_glow"])
 _SWITCH_INSET = QColor(TOKENS["power_switch_inset"])
 
 
@@ -523,18 +524,23 @@ def _draw_power_icon(
     painter: QPainter,
     center: QPointF,
     size: float,
-    pen: QPen,
+    ring_pen: QPen,
+    stem_pen: QPen | None = None,
 ) -> None:
     """画一个电源符号：顶部留口的圆环 + 从缺口伸进圆心的竖线。
 
-    只描边不填充，线宽与尺寸都由调用方按按钮直径算好；离屏环境里不依赖字体，
-    因此和其它卡片图标一样在任何平台都能画出来。
+    圆环与竖线各用一支笔：参考实现里圆环描边 4px、竖线宽 8px（按钮 70px），
+    两者粗细不同，这里按同样的比例分别传入。只描边不填充，离屏环境里不依赖字体。
+    ``stem_pen`` 为 ``None`` 时只画圆环，用于只让圆环带光晕的场合。
     """
     radius = size / 2.0
     ring = QRectF(center.x() - radius, center.y() - radius, size, size)
     painter.setBrush(Qt.NoBrush)
-    painter.setPen(pen)
+    painter.setPen(ring_pen)
     painter.drawArc(ring, 120 * 16, 300 * 16)
+    if stem_pen is None:
+        return
+    painter.setPen(stem_pen)
     painter.drawLine(
         QPointF(center.x(), center.y() - radius * 1.32),
         QPointF(center.x(), center.y() - radius * 0.08),
@@ -546,7 +552,7 @@ def _paint_switch_glow(
     rect: QRectF,
     strength: float,
 ) -> None:
-    """按钮外侧的青色辉光：三层径向渐变由近及远淡出。
+    """按钮外侧的绿色辉光：三层径向渐变由近及远淡出。
 
     参考实现用多条 ``box-shadow`` 叠出 5/40/100px 的光晕；QPainter 里用不同半径、
     不同透明度的同心径向渐变等效表达，因此不依赖模糊滤镜，离屏渲染也一致。
@@ -579,7 +585,7 @@ def _paint_switch(
     focused: bool,
     pressed: bool,
 ) -> None:
-    """圆形电源键：关闭是深灰金属按钮，点亮后转青白并向外发光。
+    """圆形电源键：关闭是深灰金属按钮，点亮后转绿并向外发光。
 
     ``lit`` 是 0–1 的点亮进度，由控件在 500 ms 内插值，导出位图直接取 0 / 1；
     悬停只轻微提亮，按下沿用参考实现的行为——按键瞬间点亮、整体下移一点，
@@ -632,18 +638,24 @@ def _paint_switch(
     painter.drawEllipse(body)
 
     icon_size = rect.width() * 0.36
-    icon_pen = max(1.4, rect.width() * 0.046)
+    # 参考实现里圆环描边 4px、竖线宽 8px、发光 10px（按钮 70px）：按同一比例换算，
+    # 因此圆环比竖线细一倍，开启时圆环带一圈青色光。
+    ring_width = max(1.6, rect.width() * 0.057)
+    stem_width = max(2.4, rect.width() * 0.114)
     if glow_strength > 0.001:
-        for width_scale, alpha in ((2.4, 0.10), (1.6, 0.24)):
+        for width_scale, alpha in ((2.8, 0.10), (1.8, 0.24)):
             halo = QPen(
-                _with_alpha(_SWITCH_GLOW, alpha * glow_strength),
-                icon_pen * width_scale,
+                _with_alpha(_SWITCH_ICON_GLOW, alpha * glow_strength),
+                ring_width * width_scale,
             )
             halo.setCapStyle(Qt.RoundCap)
             _draw_power_icon(painter, rect.center(), icon_size, halo)
-    icon = QPen(_mix_color(_SWITCH_ICON_OFF, _SWITCH_ICON_ON, lit), icon_pen)
-    icon.setCapStyle(Qt.RoundCap)
-    _draw_power_icon(painter, rect.center(), icon_size, icon)
+    icon_color = _mix_color(_SWITCH_ICON_OFF, _SWITCH_ICON_ON, lit)
+    ring = QPen(icon_color, ring_width)
+    ring.setCapStyle(Qt.RoundCap)
+    stem = QPen(icon_color, stem_width)
+    stem.setCapStyle(Qt.RoundCap)
+    _draw_power_icon(painter, rect.center(), icon_size, ring, stem)
 
     if focused:
         painter.setBrush(Qt.NoBrush)
@@ -697,7 +709,7 @@ def _paint_power_card(
     for index, channel_layout in enumerate(layout.channels):
         channel = data.channels[index]
         # 先画开关再画文字与数值：按钮的辉光是装饰，数据与标题必须压在最上层，
-        # 否则青色光晕会把数值框和标题一起染色（参考实现里按钮 z-index 高于同级内容）。
+        # 否则绿色光晕会把数值框和标题一起染色（参考实现里按钮 z-index 高于同级内容）。
         _paint_switch(
             painter,
             channel_layout.switch,

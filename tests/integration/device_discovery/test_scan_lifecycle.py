@@ -20,7 +20,7 @@ from infrastructure.discovery.instrument_discovery import (
 from infrastructure.persistence.instrument_registry import InstrumentRegistry
 from presentation.qt.instrument_discovery_panel import BOX_STATE_BUSY, BOX_STATE_IDLE
 
-from .support import SMW_IDN, DiscoveryPanelTestCase, registry
+from .support import DP832A_IDN, SMW_IDN, DiscoveryPanelTestCase, registry
 
 
 class DiscoveryPanelTests(DiscoveryPanelTestCase):
@@ -42,6 +42,49 @@ class DiscoveryPanelTests(DiscoveryPanelTestCase):
         # 数量统计不再重复写进状态行：每张卡片自己写明登记与可用状态。
         self.assertEqual(panel.status_label.text(), "")
         self.assertFalse(panel.status_label.isVisible())
+
+    def test_cards_are_ordered_signal_generator_power_supplies_spectrum_analyzer_unknown(self):
+        """卡片顺序：信号源第一，频谱仪在已登记仪器最后，未登记设备在全部卡片最后。"""
+        panel = self.make_panel()
+
+        self.run_scan(panel)
+
+        # 演示网络恰好四类都有：SMW200A（信号源）、DP832A（电源）、4082F（频谱仪）、
+        # N9020A（未登记）。电源在中间，未登记设备仍然排最后。
+        self.assertEqual(
+            panel.card_headings(),
+            [
+                "SMW200A（105462）",
+                "DP832A（DP8B214901519）",
+                "4082F（QZNI000866）",
+                "未知设备 (N9020A)",
+            ],
+        )
+
+    def test_cards_without_signal_or_spectrum_keep_power_first_and_unknown_last(self):
+        """没有信号源与频谱仪时不做特判：电源排最前，未登记设备仍排最后。"""
+
+        def factory(_mode):
+            return build_scanner(
+                registry=registry(),
+                mode=SCAN_MODE_SIMULATED,
+                responses={
+                    ("192.168.1.102", 5555): DP832A_IDN,
+                    ("192.168.1.150", 5025): (
+                        "Keysight Technologies,N9020A,MY51234567,A.18.21"
+                    ),
+                },
+                timeout_s=0.02,
+            )
+
+        panel = self.make_panel(factory)
+
+        self.run_scan(panel)
+
+        self.assertEqual(
+            panel.card_headings(),
+            ["DP832A（DP8B214901519）", "未知设备 (N9020A)"],
+        )
 
     def test_cards_show_the_ip_on_its_own_gray_line(self):
         """IP 只写在卡片最下面那一行的灰色小字里，不混进设备码或型号。"""

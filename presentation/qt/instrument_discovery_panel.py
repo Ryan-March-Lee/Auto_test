@@ -23,6 +23,9 @@
   身份完全读不出来的地址也留一张卡片，但标记为“无法识别”，不允许被应用成测试角色。
 - 结果以卡片呈现（:mod:`presentation.qt.device_cards`）：点击卡片切换选中，卡片区
   按面板宽度自动换行、整组始终居中（不满一行时最后一行也居中），不再是一张横向表格。
+  **卡片顺序固定**（:func:`order_devices_for_cards`）：信号发生器排第一，电源等其它
+  已登记仪器在中间，频谱仪排在已登记仪器的最后；未登记与无法识别的设备始终排在全部
+  卡片最后。同一组内保持扫描结果原有顺序（多台电源按 IP 排）。
 
 版式：扫描行（扫描网段 / 扫描方式）在标题正下方居中，结果区在它下面。结果区**不画外框**
 （没有边框、没有底色），所以仪器卡片直接落在页面背景上。结果区里分成上下两块：上面是
@@ -158,6 +161,13 @@ SCAN_MODE_CHOICES: tuple[tuple[str, str], ...] = (
     (SCAN_MODE_SIMULATED, "模拟设备（离线演示）"),
     (SCAN_MODE_NETWORK, "真实网络扫描"),
 )
+# 卡片显示顺序（仪表配置页）：信号发生器固定在第一位，频谱仪固定在已登记仪器的最后，
+# 未登记与无法识别的设备始终排在全部卡片最后；其余已登记设备（电源等）落在中间。
+# 每一组内部保持扫描结果原有的顺序（稳定排序），所以多台电源按 IP 顺序排列。
+_CARD_ORDER_SIGNAL = 0
+_CARD_ORDER_OTHER_REGISTERED = 1
+_CARD_ORDER_SPECTRUM = 2
+_CARD_ORDER_NOT_REGISTERED = 3
 # 卡片网格的间距：列间留白由网格自己算，卡片本身不设外边距。
 _CARDS_SPACING = 10
 #: 排一列至少要的宽度：卡片可以收窄到 :data:`CARD_MIN_WIDTH`，但不能再窄。
@@ -292,6 +302,29 @@ def device_heading(device: Any) -> str:
 def device_applicable(device: Any) -> bool:
     """这台设备能否被应用：身份可解析，且设备表登记了固定测试角色。"""
     return bool(device.has_identity and canonical_role(device.known_role))
+
+
+def card_display_order_key(device: Any) -> int:
+    """卡片显示顺序的分组键：信号源第一，频谱仪在已登记仪器最后，未登记设备最后。
+
+    只有“已登记且登记了角色”的仪器才参与前三组的判定；未登记、无法识别以及已登记
+    但角色缺失的设备都不会被排到信号源或频谱仪的位置。频谱仪必须排在**所有**已登记
+    仪器之后，因此“已登记但既不是信号源也不是频谱仪”的设备（电源、没有角色的旧条目）
+    都归到中间一组。
+    """
+    if not getattr(device, "registered", False):
+        return _CARD_ORDER_NOT_REGISTERED
+    role = canonical_role(getattr(device, "known_role", None))
+    if role == "signal_generator":
+        return _CARD_ORDER_SIGNAL
+    if role == "spectrum_analyzer":
+        return _CARD_ORDER_SPECTRUM
+    return _CARD_ORDER_OTHER_REGISTERED
+
+
+def order_devices_for_cards(devices: Sequence[Any]) -> list[Any]:
+    """按仪表配置页的卡片顺序排列设备；同一组内保持传入顺序（稳定排序）。"""
+    return sorted(devices, key=card_display_order_key)
 
 
 def card_heading(device: Any, visitor_index: int = 0) -> str:
@@ -1444,7 +1477,9 @@ class InstrumentDiscoveryPanel(QWidget):
         deck_anchor = None
         if self.wait_stack.isVisible():
             deck_anchor = self.wait_stack.mapToGlobal(self.wait_stack.rect().center())
-        devices = list(result.devices)
+        # 卡片顺序在这里一次排定：信号源固定第一、频谱仪在已登记仪器最后、未登记设备
+        # 始终在最后。`self.devices`、`_rows`、发牌动画与提交顺序因此共用同一个次序。
+        devices = order_devices_for_cards(result.devices)
         self.devices = devices
         self.last_mode = getattr(result, "mode", self.current_mode())
         if not devices:

@@ -30,13 +30,13 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from application.configuration_authoring import DUT_CHANNEL_ROLES
 from domain.instruments.labels import supply_identity_text
 
 from .config_page_widgets import combo_box, spin_box
 from .config_projection import (
     DEFAULT_POWER_CHANNEL_VALUE,
     DRIVER_POWER_SOURCE_VALUES,
+    DUT_CHANNEL_ROLES,
     POWER_SUPPLY_ROLES,
     apply_power_choice,
     supply_option_label,

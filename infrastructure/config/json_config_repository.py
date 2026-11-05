@@ -33,15 +33,21 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Mapping
 
+from application.configuration_authoring import (
+    ConfigurationAuthoringError,
+    ConfigurationAuthoringService,
+    ConfigurationEditingDocument,
+    has_editing_section,
+)
 from application.ports.config_repository import (
     ConfigurationLoadResult,
     ConfigurationRepository as ConfigurationRepositoryPort,
     PathLike,
 )
 from domain.configuration.models import (
+    READABLE_SCHEMA_VERSIONS,
     RunConfiguration,
     RunResourceMapping,
-    SUPPORTED_SCHEMA_VERSION,
     TestPlan,
     validate_run_configuration,
 )
@@ -74,12 +80,14 @@ def load_combined_configuration(document: Mapping[str, Any]) -> ConfigurationLoa
     不匹配时，在返回结果中给出明确错误，不做任何旧格式推断。
     """
     errors: list[ConfigIssue] = []
-    if document.get("schema_version") != SUPPORTED_SCHEMA_VERSION:
+    root_version = document.get("schema_version")
+    readable = " 或 ".join(READABLE_SCHEMA_VERSIONS)
+    if root_version not in READABLE_SCHEMA_VERSIONS:
         errors.append(
             ConfigIssue(
                 "error",
                 "schema_version",
-                f"配置根节点 schema_version 必须是 {SUPPORTED_SCHEMA_VERSION}",
+                f"配置根节点 schema_version 必须是 {readable}，收到 {root_version!r}",
             )
         )
     plan_data = document.get("test_plan")
@@ -90,6 +98,34 @@ def load_combined_configuration(document: Mapping[str, Any]) -> ConfigurationLoa
     if not isinstance(mapping_data, Mapping):
         errors.append(ConfigIssue("error", "run_mapping", "缺少正式运行映射配置段"))
         mapping_data = {}
+    # 规则 18：组合配置的三处版本必须同值；拆分文件与运行快照没有根可比，不套这条。
+    for section, data in (("test_plan", plan_data), ("run_mapping", mapping_data)):
+        if root_version in READABLE_SCHEMA_VERSIONS and data.get(
+            "schema_version"
+        ) != root_version:
+            errors.append(
+                ConfigIssue(
+                    "error",
+                    f"{section}.schema_version",
+                    f"{section}.schema_version 必须与根节点一致（{root_version}）",
+                )
+            )
+    # 规则 17：1.1 组合文档的正式段必须等于“用编辑段重新编写”的结果。是否带编辑段
+    # 由 authoring 的统一判据回答（任一编辑段字段即可），不能只看某一个字段；拆分文件
+    # 与运行快照不经过本入口。
+    if root_version == READABLE_SCHEMA_VERSIONS[-1] and has_editing_section(document):
+        try:
+            stale = ConfigurationAuthoringService().stale_formal_sections(
+                ConfigurationEditingDocument.from_mapping(document)
+            )
+        except ConfigurationAuthoringError:
+            # 版本/遗留字段问题已由 authoring 自己的门禁报告；这里不把“旧配置”误报成
+            # “正式段过期”，读取仍按 1.0 只读路径继续。
+            stale = ()
+        for issue in stale:
+            errors.append(
+                ConfigIssue("error", issue.path, issue.message)
+            )
     configuration = RunConfiguration(
         TestPlan.from_dict(plan_data),
         RunResourceMapping.from_dict(mapping_data),

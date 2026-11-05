@@ -259,7 +259,8 @@ class ConfigFormStateReaderTests(unittest.TestCase):
             result['instruments']['power_supplies']['PS1']['channels']['CH1']['voltage']['protection_enabled']
         )
 
-    def test_power_supply_reader_writes_the_role_selected_in_the_ui(self):
+    def test_power_supply_reader_does_not_write_the_role_widget(self):
+        """步骤 6：通道 role 属于 1.0 只读兼容，控件选择不再进入保存文档。"""
         self.host.power_config_widgets = {
             'PS1': {
                 'channels': {
@@ -272,10 +273,10 @@ class ConfigFormStateReaderTests(unittest.TestCase):
         result = self.reader.read_power_supply_config()
 
         channels = result['instruments']['power_supplies']['PS1']['channels']
-        self.assertEqual(channels['CH1']['role'], 'drain')
-        self.assertEqual(channels['CH2']['role'], 'gate')
+        self.assertNotIn('role', channels['CH1'])
+        self.assertNotIn('role', channels['CH2'])
 
-    def test_power_supply_reader_keeps_existing_role_without_a_role_widget(self):
+    def test_power_supply_reader_drops_existing_role(self):
         self.config['instruments']['power_supplies']['PS1']['channels'] = {
             'CH1': {'role': 'drain'},
             'CH2': {'role': 'gate'},
@@ -292,8 +293,8 @@ class ConfigFormStateReaderTests(unittest.TestCase):
         result = self.reader.read_power_supply_config()
 
         channels = result['instruments']['power_supplies']['PS1']['channels']
-        self.assertEqual(channels['CH1']['role'], 'drain')
-        self.assertEqual(channels['CH2']['role'], 'gate')
+        self.assertNotIn('role', channels['CH1'])
+        self.assertNotIn('role', channels['CH2'])
 
     def test_power_supply_reader_does_not_invent_a_missing_role(self):
         """没有控件、配置里也没有角色时不得按 CH1/CH2 推断。"""
@@ -308,7 +309,7 @@ class ConfigFormStateReaderTests(unittest.TestCase):
         result = self.reader.read_power_supply_config()
 
         channels = result['instruments']['power_supplies']['PS1']['channels']
-        self.assertIsNone(channels['CH1']['role'])
+        self.assertNotIn('role', channels['CH1'])
 
     def test_power_assignment_reader_preserves_legacy_roles_and_channels(self):
         self.host.power_assignment_widgets = {
@@ -617,12 +618,16 @@ class CoordinatorConfigSaveTests(unittest.TestCase):
     def test_save_configuration_accepts_a_two_supply_assignment(self):
         """步骤 10：多电源指派已成为正式 schema，保存写出的 run_mapping 能通过正式校验。"""
         self.coordinator.config = {
+            "schema_version": "1.1",
             "test_frequencies": [2.4],
             "signal_source": {"start_power": -10.0, "stop_power": 0.0, "step": 1.0},
             "compression_point": {"type": "5dB"},
             "driver_mode": {"enabled": True, "power_source": "dc_supply"},
             "attenuator": {"type": "30dB"},
-            "dut_config": {"max_input_power": 30.0},
+            "dut_config": {
+                "max_input_power": 30.0,
+                "drain_channel": {"supply_id": "DP8B0885", "channel": "CH2"},
+            },
             "instruments": {
                 "signal_generator": {"address": "sim::sg", "model": "SG", "enabled": True},
                 "spectrum_analyzer": {"address": "sim::sa", "model": "SA", "enabled": True},
@@ -634,7 +639,10 @@ class CoordinatorConfigSaveTests(unittest.TestCase):
                         "device_key": "rigol technologies:dp8b214901519",
                         "address": "sim::ps1",
                         "enabled": True,
-                        "channels": {"CH1": {}, "CH2": {}},
+                        "channels": {
+                            "CH1": {"voltage": {"value": 5.0}, "current": {"value": 1.0}},
+                            "CH2": {"voltage": {"value": 28.0}, "current": {"value": 2.0}},
+                        },
                     },
                     "DP8B0885": {
                         "label": "DP8B0885",
@@ -643,7 +651,10 @@ class CoordinatorConfigSaveTests(unittest.TestCase):
                         "device_key": "rigol technologies:dp8b174400885",
                         "address": "sim::ps2",
                         "enabled": True,
-                        "channels": {"CH1": {}, "CH2": {}},
+                        "channels": {
+                            "CH1": {"voltage": {"value": 5.0}, "current": {"value": 1.0}},
+                            "CH2": {"voltage": {"value": 28.0}, "current": {"value": 2.0}},
+                        },
                     },
                 },
             },
@@ -652,10 +663,23 @@ class CoordinatorConfigSaveTests(unittest.TestCase):
                     "supplies": {
                         "gate": {"supply_id": "DP8B1519", "channel": ["CH1"]},
                         "drain": {"supply_id": "DP8B0885", "channel": ["CH2"]},
-                    }
+                    },
+                    "power_plan": {
+                        "power_sequence": [
+                            {"supply_id": "DP8B1519", "channel": "CH1"},
+                            {"supply_id": "DP8B0885", "channel": "CH2"},
+                        ],
+                        "inter_channel_delay_s": 2.0,
+                    },
                 },
                 "driver_amplifier": {
-                    "supplies": {"driver": {"supply_id": "DP8B0885", "channel": ["CH1"]}}
+                    "supplies": {"driver": {"supply_id": "DP8B0885", "channel": ["CH1"]}},
+                    "power_plan": {
+                        "power_sequence": [
+                            {"supply_id": "DP8B0885", "channel": "CH1"}
+                        ],
+                        "inter_channel_delay_s": 0.0,
+                    },
                 },
             },
         }
@@ -668,8 +692,11 @@ class CoordinatorConfigSaveTests(unittest.TestCase):
         power_supplies = written["run_mapping"]["instruments"]["power_supplies"]
         self.assertEqual(sorted(power_supplies), ["DP8B0885", "DP8B1519"])
         self.assertEqual(
-            [item["channel"] for item in written["run_mapping"]["dut_power_channels"]],
-            ["DP8B1519/CH1", "DP8B0885/CH2"],
+            written["run_mapping"]["dut_power_plan"]["power_sequence"],
+            [
+                {"supply_id": "DP8B1519", "channel": "CH1"},
+                {"supply_id": "DP8B0885", "channel": "CH2"},
+            ],
         )
         from domain.configuration.models import (
             RunConfiguration,

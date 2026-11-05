@@ -38,6 +38,7 @@ from application.run_service import (
     load_hardware_config,
     load_run_configuration,
 )
+from domain.configuration.models import require_current_schema_version
 from app.events import MessageEvent, ProgressEvent, RealtimeDataEvent
 from application.dto import (
     AmplifierMeasurementInputs,
@@ -280,6 +281,15 @@ def _ensure_domain_snapshot_is_intact(run_repository: Any, run_id: str) -> None:
         raise RunNotResumable(
             f"运行 {run_id} 的配置快照校验失败，拒绝连接仪器；"
             f"请重新创建运行: {details}"
+        )
+    # 规则 16：1.0 历史快照可查看已保存结果，但不能继续运行/连接仪器。
+    version_issues = require_current_schema_version(loaded.configuration)
+    if version_issues:
+        details = "; ".join(
+            f"{issue.path}: {issue.message}" for issue in version_issues
+        )
+        raise RunNotResumable(
+            f"运行 {run_id} 使用旧版配置，不能继续测量；请重新创建运行: {details}"
         )
 
 

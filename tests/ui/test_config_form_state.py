@@ -627,9 +627,7 @@ class PowerSupplyConnectionTests(unittest.TestCase):
 
         errors = ConfigFormState({}, widgets).validation_errors()
 
-        self.assertFalse(
-            [error for error in errors if "地址" in error or "通道" in error], errors
-        )
+        self.assertFalse([error for error in errors if "VISA 地址" in error], errors)
 
 
 if __name__ == "__main__":

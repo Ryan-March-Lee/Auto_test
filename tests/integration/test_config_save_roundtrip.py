@@ -32,12 +32,17 @@ class ConfigurationSaveRoundTripTests(unittest.TestCase):
     def test_save_configuration_writes_official_config_readable_by_repository(self):
         """配置页面保存出的文件无需转换即可被正式配置仓储读取。"""
         flat = {
+            "schema_version": "1.1",
             "test_frequencies": [2.4],
             "signal_source": {"start_power": -10.0, "stop_power": 0.0, "step": 1.0},
             "compression_point": {"type": "5dB"},
             "driver_mode": {"enabled": False},
             "attenuator": {"type": "30dB"},
-            "dut_config": {"max_input_power": 30.0, "power_supply_count": 1},
+            "dut_config": {
+                "max_input_power": 30.0,
+                "power_supply_count": 1,
+                "drain_channel": {"supply_id": "PS1", "channel": "CH2"},
+            },
             "instruments": {
                 "signal_generator": {"address": "sim::sg", "model": "SG", "enabled": True},
                 "spectrum_analyzer": {"address": "sim::sa", "model": "SA", "enabled": True},
@@ -57,10 +62,23 @@ class ConfigurationSaveRoundTripTests(unittest.TestCase):
                 },
             },
             "power_supply_assignment": {
-                "driver_amplifier": {"power_supply_count": 0, "supplies": {}},
+                "driver_amplifier": {
+                    "power_supply_count": 0,
+                    "supplies": {},
+                    "power_plan": {"power_sequence": [], "inter_channel_delay_s": 0.0},
+                },
                 "dut_amplifier": {
                     "power_supply_count": 1,
-                    "supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}},
+                    "supplies": {
+                        "carrier": {"supply_id": "PS1", "channel": ["CH1", "CH2"]}
+                    },
+                    "power_plan": {
+                        "power_sequence": [
+                            {"supply_id": "PS1", "channel": "CH1"},
+                            {"supply_id": "PS1", "channel": "CH2"},
+                        ],
+                        "inter_channel_delay_s": 2.0,
+                    },
                 },
             },
         }
@@ -81,7 +99,15 @@ class ConfigurationSaveRoundTripTests(unittest.TestCase):
 
         self.assertTrue(loaded.valid, loaded.validation.errors)
         self.assertEqual(
-            set(loaded.configuration.test_plan.dut_power_channels), {"gate", "drain"}
+            loaded.configuration.test_plan.drain_channel,
+            {"supply_id": "PS1", "channel": "CH2"},
+        )
+        self.assertEqual(
+            loaded.configuration.run_mapping.dut_power_plan["power_sequence"],
+            [
+                {"supply_id": "PS1", "channel": "CH1"},
+                {"supply_id": "PS1", "channel": "CH2"},
+            ],
         )
 
 

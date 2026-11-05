@@ -17,13 +17,35 @@ from domain.configuration.types import ConfigIssue, ConfigValidationResult
 
 
 PathLike = Union[str, os.PathLike[str]]
-SUPPORTED_SCHEMA_VERSION = "1.0"
+# 配置文档（根 config.json、test_plan、run_mapping）的唯一版本来源。写入只写
+# SUPPORTED_SCHEMA_VERSION；读取接受 READABLE_SCHEMA_VERSIONS（按旧→新排列）。
+# 其它 ``schema_version`` 轴（运行快照包装、manifest、设备表、迁移摘要、结果文件）
+# 各自定义，不引用这里的值。
+SUPPORTED_SCHEMA_VERSION = "1.1"
+READABLE_SCHEMA_VERSIONS = ("1.0", "1.1")
+# 旧角色化电源段的最后版本；1.0 只读，不能保存或创建新运行。
+LEGACY_SCHEMA_VERSION = READABLE_SCHEMA_VERSIONS[0]
 SUPPORTED_COMPRESSION_POINTS = {"1dB", "3dB", "5dB"}
 PLACEHOLDER_VALUES = {"", "无", "待填写", "<channel_name>", "<gate_or_drain_or_other>"}
 # 组内相邻两次通道开启之间的最大等待秒数（单位秒）。放在 domain 是因为它既是
 # 编辑文档的字段范围（v1.1 §6.8），也要被 domain 的 ``validate_power_plan`` 使用；
 # application 的 ``PowerPlan`` 值对象从本模块导入同一数值，全仓不出现第二份。
 MAX_INTER_CHANNEL_DELAY_S = 60.0
+# ``channel_settings`` 每条记录的完整字段集合（§6.1、§6.3）：路由两段平铺 + 工作值/
+# 保护值 + 单位。1.1 不得写通道 ``role`` / ``connection`` 或其他旧字段；这里既是
+# 写出前的形状判据，也用于拒绝任意未知字段。
+CHANNEL_SETTING_FIELDS = frozenset(
+    {
+        "supply_id",
+        "channel",
+        "voltage",
+        "current",
+        "voltage_protection",
+        "current_protection",
+        "unit_voltage",
+        "unit_current",
+    }
+)
 # 驱动功放（驱放）的供电方式：由本机直流电源供电，或由驱放自带电源（市电）供电。
 # 两种情况都处于驱放测试模式，区别只在驱动功放通道是否由本系统控制。
 DRIVER_POWER_DC = "dc_supply"
@@ -109,10 +131,21 @@ class TestPlan:
     attenuator_value: Optional[float] = None
     attenuator_unit: str = "dB"
     max_input_power: Optional[float] = None
+    # 1.0 只读兼容：角色键 -> 参数。1.1 不再写这个字段。
     dut_power_channels: Dict[str, PowerChannelPlan] = field(default_factory=dict)
+    # 1.1：漏极测量路由与每路由工作值/保护值。保持文档形状（两段路由对象与
+    # 平铺参数），由 :func:`validate_run_configuration` 做跨段判定；domain 不引入
+    # 第二份路由/计划值对象，application 的 ``PowerPlan`` 只负责编辑段的值对象。
+    drain_channel: Any = None
+    channel_settings: List[Any] = field(default_factory=list)
     driver_enabled: bool = False
     driver_power_source: Optional[str] = None
+    # 1.0 只读兼容：角色键 -> 参数。1.1 用 driver_channel_settings。
     driver_power_channels: Dict[str, PowerChannelPlan] = field(default_factory=dict)
+    driver_channel_settings: List[Any] = field(default_factory=list)
+    # 来源文档是否使用 1.0 的角色化电源字段。用于版本分派与 1.1 的“不得写旧字段”
+    # 判定；程序内直接构造的对象没有这个标记。
+    legacy_power_fields: bool = field(default=False, compare=False, repr=False)
     other_parameters: Dict[str, Any] = field(default_factory=dict)
     raw: Dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
@@ -141,6 +174,10 @@ class TestPlan:
             dut_power_channels=_channel_plans(
                 _first_mapping(dut, "power_roles", "power_channels") if isinstance(dut, Mapping) else {}
             ),
+            drain_channel=dut.get("drain_channel") if isinstance(dut, Mapping) else None,
+            channel_settings=_list_value(
+                dut.get("channel_settings", []) if isinstance(dut, Mapping) else []
+            ),
             driver_enabled=driver.get("enabled", False) if isinstance(driver, Mapping) else False,
             driver_power_source=(
                 driver.get("power_source") if isinstance(driver, Mapping) else None
@@ -148,11 +185,45 @@ class TestPlan:
             driver_power_channels=_channel_plans(
                 _first_mapping(driver, "power_roles", "power_channels") if isinstance(driver, Mapping) else {}
             ),
+            driver_channel_settings=_list_value(
+                driver.get("channel_settings", []) if isinstance(driver, Mapping) else []
+            ),
+            legacy_power_fields=_has_legacy_power_fields(dut, driver),
             other_parameters=_mapping_value(value.get("other_parameters", {})),
             raw=dict(value),
         )
 
     def to_dict(self) -> Dict[str, Any]:
+        """按版本写出正式测试方案。
+
+        1.0 是历史只读形状（角色键参数），只有 ``schema_version == "1.0"`` 的读取结果
+        才会再写成它；当前版本一律写 ``drain_channel`` / ``channel_settings``，绝不
+        重新输出 ``power_roles`` / ``power_channels``。
+        """
+        if self.schema_version == LEGACY_SCHEMA_VERSION:
+            dut: Dict[str, Any] = {
+                "max_input_power": self.max_input_power,
+                "power_roles": {name: channel.to_dict() for name, channel in self.dut_power_channels.items()},
+            }
+            driver_mode: Dict[str, Any] = {
+                "enabled": self.driver_enabled,
+                "power_source": self.driver_power_source,
+                "power_roles": {name: channel.to_dict() for name, channel in self.driver_power_channels.items()},
+            }
+        else:
+            dut = {
+                "max_input_power": self.max_input_power,
+                "drain_channel": _route_document(self.drain_channel),
+                "channel_settings": [dict(item) if isinstance(item, Mapping) else item for item in self.channel_settings],
+            }
+            driver_mode = {
+                "enabled": self.driver_enabled,
+                "power_source": self.driver_power_source,
+                "channel_settings": [
+                    dict(item) if isinstance(item, Mapping) else item
+                    for item in self.driver_channel_settings
+                ],
+            }
         return {
             "schema_version": self.schema_version,
             "template": self.template,
@@ -166,15 +237,8 @@ class TestPlan:
             },
             "compression_point": {"type": self.compression_point},
             "attenuator": {"value": self.attenuator_value, "unit": self.attenuator_unit},
-            "dut": {
-                "max_input_power": self.max_input_power,
-                "power_roles": {name: channel.to_dict() for name, channel in self.dut_power_channels.items()},
-            },
-            "driver_mode": {
-                "enabled": self.driver_enabled,
-                "power_source": self.driver_power_source,
-                "power_roles": {name: channel.to_dict() for name, channel in self.driver_power_channels.items()},
-            },
+            "dut": dut,
+            "driver_mode": driver_mode,
             "other_parameters": dict(self.other_parameters),
         }
 
@@ -323,8 +387,15 @@ class RunResourceMapping:
     power_supplies_declared: bool = field(default=False, compare=False, repr=False)
     driver_enabled: bool = False
     driver_power_source: Optional[str] = None
+    # 1.0 只读兼容：角色化通道清单。1.1 不再写这两个字段。
     driver_power_channels: List[ChannelMapping] = field(default_factory=list)
     dut_power_channels: List[ChannelMapping] = field(default_factory=list)
+    # 1.1：冻结的上电计划（``{power_sequence, inter_channel_delay_s}``）。顺序只在
+    # 编辑段可写，这里是创建运行时冻结的副本；形状由 validate_run_mapping 校验。
+    dut_power_plan: Any = None
+    driver_power_plan: Any = None
+    # 来源文档是否使用 1.0 的角色化电源字段（版本分派与“1.1 不得写旧字段”）。
+    legacy_power_fields: bool = field(default=False, compare=False, repr=False)
     notes: Optional[str] = None
     raw: Dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
@@ -334,6 +405,19 @@ class RunResourceMapping:
         instruments = instruments if isinstance(instruments, Mapping) else {}
         power_supplies = instruments.get(POWER_SUPPLIES_KEY)
         driver = value.get("driver_mode", {})
+        # 1.0 只读兼容：角色化通道清单是原字段。1.1 文档没有它，旧消费方（测量输入
+        # DTO、装配）仍按同一属性读取；这里从冻结的上电计划按顺序投影，role/connection
+        # 不再有语义，等步骤 7–9 改成直接消费物理路由后删除该投影。
+        dut_legacy = _channel_mappings(value.get("dut_power_channels", []))
+        if not dut_legacy:
+            dut_legacy = _plan_channel_mappings(value.get("dut_power_plan"))
+        driver_legacy = _channel_mappings(
+            driver.get("power_channels", []) if isinstance(driver, Mapping) else []
+        )
+        if not driver_legacy:
+            driver_legacy = _plan_channel_mappings(
+                driver.get("power_plan") if isinstance(driver, Mapping) else None
+            )
         return cls(
             schema_version=value.get("schema_version", ""),
             template=value.get("template", False),
@@ -353,8 +437,13 @@ class RunResourceMapping:
             driver_power_source=(
                 driver.get("power_source") if isinstance(driver, Mapping) else None
             ),
-            driver_power_channels=_channel_mappings(driver.get("power_channels", []) if isinstance(driver, Mapping) else []),
-            dut_power_channels=_channel_mappings(value.get("dut_power_channels", [])),
+            driver_power_channels=driver_legacy,
+            dut_power_channels=dut_legacy,
+            dut_power_plan=value.get("dut_power_plan"),
+            driver_power_plan=(
+                driver.get("power_plan") if isinstance(driver, Mapping) else None
+            ),
+            legacy_power_fields=_mapping_uses_legacy_power_fields(value, driver),
             notes=value.get("notes"),
             raw=dict(value),
         )
@@ -373,21 +462,37 @@ class RunResourceMapping:
             instruments[POWER_SUPPLIES_KEY] = {
                 supply_id: item.to_dict() for supply_id, item in self.power_supplies.items()
             }
-        return {
+        if self.schema_version == LEGACY_SCHEMA_VERSION:
+            driver_mode: Dict[str, Any] = {
+                "enabled": self.driver_enabled,
+                "power_source": self.driver_power_source,
+                "power_channels": [item.to_dict() for item in self.driver_power_channels],
+            }
+            dut_power_channels: List[Any] = [
+                item.to_dict() for item in self.dut_power_channels
+            ]
+        else:
+            driver_mode = {
+                "enabled": self.driver_enabled,
+                "power_source": self.driver_power_source,
+                "power_plan": _plan_document(self.driver_power_plan),
+            }
+            dut_power_channels = []
+        result: Dict[str, Any] = {
             "schema_version": self.schema_version,
             "template": self.template,
             "run_id": self.run_id,
             "run_datetime": self.run_datetime,
             "operator": self.operator,
             "instruments": instruments,
-            "driver_mode": {
-                "enabled": self.driver_enabled,
-                "power_source": self.driver_power_source,
-                "power_channels": [item.to_dict() for item in self.driver_power_channels],
-            },
-            "dut_power_channels": [item.to_dict() for item in self.dut_power_channels],
-            "notes": self.notes,
+            "driver_mode": driver_mode,
         }
+        if self.schema_version == LEGACY_SCHEMA_VERSION:
+            result["dut_power_channels"] = dut_power_channels
+        else:
+            result["dut_power_plan"] = _plan_document(self.dut_power_plan)
+        result["notes"] = self.notes
+        return result
 
     def declares_power_supplies(self) -> bool:
         """这份映射的电源段是否按新结构写。
@@ -456,13 +561,44 @@ def validate_test_plan(plan: Union[TestPlan, Mapping[str, Any]]) -> ConfigValida
         error("compression_point.type", "必须是 1dB、3dB 或 5dB")
     _number(plan.attenuator_value, "attenuator.value", error, non_negative=True)
     _number(plan.max_input_power, "dut.max_input_power", error)
-    if not plan.dut_power_channels:
-        error("dut.power_channels", "必须至少配置一个 DUT 电源通道")
-    _validate_channels(plan.dut_power_channels, "dut.power_channels", error)
-    _validate_channels(plan.driver_power_channels, "driver_mode.power_channels", error)
-    _validate_driver_mode(
-        plan.driver_enabled, plan.driver_power_source, plan.driver_power_channels, error
-    )
+    legacy = _is_legacy_plan(plan)
+    if legacy:
+        if not plan.dut_power_channels:
+            error("dut.power_channels", "必须至少配置一个 DUT 电源通道")
+        _validate_channels(plan.dut_power_channels, "dut.power_channels", error)
+        _validate_channels(plan.driver_power_channels, "driver_mode.power_channels", error)
+        _validate_driver_mode(
+            plan.driver_enabled,
+            plan.driver_power_source,
+            plan.driver_power_channels,
+            error,
+            path="driver_mode.power_channels",
+        )
+    else:
+        # 1.1 不能再写 1.0 的角色化电源字段：两套结构同时存在就没有唯一来源。
+        if "power_roles" in _mapping_value(plan.raw.get("dut")) or "power_channels" in _mapping_value(plan.raw.get("dut")):
+            error("dut.power_roles", "1.1 不再写 power_roles/power_channels；电源参数只写 channel_settings")
+        if "power_roles" in _mapping_value(plan.raw.get("driver_mode")) or "power_channels" in _mapping_value(plan.raw.get("driver_mode")):
+            error("driver_mode.power_roles", "1.1 不再写 power_roles/power_channels；电源参数只写 channel_settings")
+        for section_path, section in (
+            ("dut", _mapping_value(plan.raw.get("dut"))),
+            ("driver_mode", _mapping_value(plan.raw.get("driver_mode"))),
+        ):
+            raw_settings = section.get("channel_settings")
+            if raw_settings is not None and not isinstance(raw_settings, list):
+                error(f"{section_path}.channel_settings", "必须是列表")
+        _validate_channel_settings(plan.channel_settings, "dut.channel_settings", error)
+        _validate_channel_settings(
+            plan.driver_channel_settings, "driver_mode.channel_settings", error
+        )
+        _validate_route_shape(plan.drain_channel, "dut.drain_channel", error)
+        _validate_driver_mode(
+            plan.driver_enabled,
+            plan.driver_power_source,
+            plan.driver_channel_settings,
+            error,
+            path="driver_mode.channel_settings",
+        )
     return ConfigValidationResult(errors=errors, warnings=warnings)
 
 
@@ -489,22 +625,48 @@ def validate_run_mapping(mapping: Union[RunResourceMapping, Mapping[str, Any]]) 
         _required_text(instrument.model, f"instruments.{name}.model", error)
         _required_text(instrument.visa_address, f"instruments.{name}.visa_address", error)
     _validate_power_supplies(mapping, error)
-    _validate_mappings(mapping.dut_power_channels, "dut_power_channels", error)
-    _validate_mappings(mapping.driver_power_channels, "driver_mode.power_channels", error)
-    dut_channels = {item.channel for item in mapping.dut_power_channels}
-    driver_channels = {item.channel for item in mapping.driver_power_channels}
-    if not dut_channels:
-        error("dut_power_channels", "必须至少分配一个 DUT 电源通道")
-    overlap = dut_channels & driver_channels
-    if overlap:
-        error("power_channels", f"DUT 和驱动功放不能重复使用通道: {', '.join(sorted(overlap))}")
-    _validate_channel_routing(mapping, error)
-    _validate_driver_mode(
-        mapping.driver_enabled,
-        mapping.driver_power_source,
-        mapping.driver_power_channels,
-        error,
-    )
+    if _is_legacy_mapping(mapping):
+        _validate_mappings(mapping.dut_power_channels, "dut_power_channels", error)
+        _validate_mappings(mapping.driver_power_channels, "driver_mode.power_channels", error)
+        dut_channels = {item.channel for item in mapping.dut_power_channels}
+        driver_channels = {item.channel for item in mapping.driver_power_channels}
+        if not dut_channels:
+            error("dut_power_channels", "必须至少分配一个 DUT 电源通道")
+        overlap = dut_channels & driver_channels
+        if overlap:
+            error("power_channels", f"DUT 和驱动功放不能重复使用通道: {', '.join(sorted(overlap))}")
+        _validate_channel_routing(mapping, error)
+        _validate_driver_mode(
+            mapping.driver_enabled,
+            mapping.driver_power_source,
+            mapping.driver_power_channels,
+            error,
+            path="driver_mode.power_channels",
+        )
+    else:
+        if "dut_power_channels" in mapping.raw:
+            error("dut_power_channels", "1.1 不再写 dut_power_channels；上电顺序只写 dut_power_plan")
+        if "power_channels" in _mapping_value(mapping.raw.get("driver_mode")):
+            error("driver_mode.power_channels", "1.1 不再写 power_channels；上电顺序只写 power_plan")
+        dut_sequence = _validate_plan_document(
+            mapping.dut_power_plan, "dut_power_plan", error
+        )
+        driver_sequence = _validate_plan_document(
+            mapping.driver_power_plan, "driver_mode.power_plan", error
+        )
+        overlap = set(dut_sequence or ()) & set(driver_sequence or ())
+        if overlap:
+            error(
+                "driver_mode.power_plan.power_sequence",
+                "DUT 和驱动功放不能重复使用通道: "
+                + ", ".join(f"{supply_id}/{channel}" for supply_id, channel in sorted(overlap)),
+            )
+        _validate_driver_plan(
+            mapping.driver_enabled,
+            mapping.driver_power_source,
+            driver_sequence,
+            error,
+        )
     return ConfigValidationResult(errors=errors, warnings=warnings)
 
 
@@ -513,10 +675,45 @@ def validate_run_configuration(configuration: RunConfiguration) -> ConfigValidat
     mapping_result = validate_run_mapping(configuration.run_mapping)
     errors = plan_result.errors + mapping_result.errors
     warnings = plan_result.warnings + mapping_result.warnings
-    return ConfigValidationResult(
-        errors=errors,
-        warnings=warnings,
-    )
+    if _is_legacy_configuration(configuration):
+        # 1.0 只做结构/类型校验：跳过 v1.1 的电源计划、漏极与运行必填规则，只给一条
+        # warning。warning 不得升级为 error，否则历史配置打不开、启动器校验会误红。
+        warnings.append(
+            ConfigIssue(
+                "warning",
+                "schema_version",
+                "旧版电源计划：可查看，不能创建新运行；请先用迁移器升级到 "
+                f"{SUPPORTED_SCHEMA_VERSION}",
+            )
+        )
+    else:
+        errors.extend(_validate_current_power_configuration(configuration))
+    return ConfigValidationResult(errors=errors, warnings=warnings)
+
+
+def require_current_schema_version(
+    configuration: RunConfiguration,
+) -> List[ConfigIssue]:
+    """创建/继续运行前的版本门禁：两段都必须等于当前写入版本。
+
+    读取/查看/导出按 :data:`READABLE_SCHEMA_VERSIONS` 处理，1.0 的历史配置因此仍能
+    打开；本判据只在“要基于它创建或继续运行”时使用（v1.1 §6.12 规则 16）。
+    """
+    issues: List[ConfigIssue] = []
+    for section, version in (
+        ("test_plan.schema_version", configuration.test_plan.schema_version),
+        ("run_mapping.schema_version", configuration.run_mapping.schema_version),
+    ):
+        if version != SUPPORTED_SCHEMA_VERSION:
+            issues.append(
+                ConfigIssue(
+                    "error",
+                    section,
+                    f"旧版配置不能创建或继续运行，请先用迁移器升级到 "
+                    f"{SUPPORTED_SCHEMA_VERSION}；当前为 {version!r}",
+                )
+            )
+    return issues
 
 
 def validate_cable_loss_configuration(configuration: RunConfiguration) -> ConfigValidationResult:
@@ -575,6 +772,22 @@ def validate_driver_mapping_configuration(configuration: RunConfiguration) -> Co
             continue
         _required_text(instrument.visa_address, f"instruments.{name}.visa_address", error)
 
+    # 规则 14：驱放直流供电时，驱动映射运行也必须有可执行的上电顺序。1.0 只读，
+    # 不做该判据，交给创建运行的版本门禁。
+    if not _is_legacy_configuration(configuration):
+        sequence = _validate_plan_document(
+            mapping.driver_power_plan, "run_mapping.driver_mode.power_plan", error
+        )
+        if (
+            plan.driver_enabled is True
+            and plan.driver_power_source == DRIVER_POWER_DC
+            and not sequence
+        ):
+            error(
+                "run_mapping.driver_mode.power_plan.power_sequence",
+                "驱放使用直流电源时必须配置驱动功放上电顺序",
+            )
+
     return ConfigValidationResult(errors=errors, warnings=[])
 
 
@@ -600,6 +813,95 @@ def _first_mapping(value: Mapping[str, Any], *keys: str) -> Any:
         if key in value:
             return value[key]
     return {}
+
+
+def _has_legacy_power_fields(dut: Any, driver: Any) -> bool:
+    """正式测试方案来源文档是否使用 1.0 的角色化电源字段。"""
+    for section in (dut, driver):
+        if not isinstance(section, Mapping):
+            continue
+        if any(key in section for key in ("power_roles", "power_channels")):
+            return True
+    return False
+
+
+def _mapping_uses_legacy_power_fields(
+    value: Mapping[str, Any], driver: Any
+) -> bool:
+    """运行映射来源文档是否使用 1.0 的角色化通道清单。"""
+    if "dut_power_channels" in value:
+        return True
+    return isinstance(driver, Mapping) and "power_channels" in driver
+
+
+def _plan_channel_mappings(plan: Any) -> List["ChannelMapping"]:
+    """从 1.1 上电计划投影出旧的 ``ChannelMapping`` 清单（只读兼容）。
+
+    顺序就是冻结的上电顺序；``role`` / ``connection`` 已无业务含义，保持 ``None``。
+    消费方应只读取 ``channel``（``supply_id/CHx``），步骤 7–9 结束后这份投影会删除。
+    """
+    if not isinstance(plan, Mapping):
+        return []
+    sequence = plan.get("power_sequence")
+    if not isinstance(sequence, list):
+        return []
+    mappings: List[ChannelMapping] = []
+    for item in sequence:
+        if not isinstance(item, Mapping):
+            continue
+        supply_id = item.get("supply_id")
+        channel = item.get("channel")
+        if not isinstance(supply_id, str) or not isinstance(channel, str):
+            continue
+        mappings.append(ChannelMapping(channel=f"{supply_id}/{channel}"))
+    return mappings
+
+
+def _route_document(value: Any) -> Any:
+    """把一条路由收敛成 v1.1 的两段对象。
+
+    正式模型允许调用方直接传入路由值对象（例如 application 的 ``SupplyChannel``），
+    而 domain 不能反向依赖 application。``to_dict`` 必须只输出 JSON 原生类型，因此
+    这里按 ``supply_id`` / ``channel`` 两个属性投影，不猜其它字段。未知形状原样返回，
+    让正式校验报告问题。
+    """
+    if isinstance(value, Mapping):
+        return {"supply_id": value.get("supply_id"), "channel": value.get("channel")}
+    # application 的 ``DrainChannel`` 是“可选路由”包装：未配置时写 None，配置后
+    # 解包到内层路由。domain 不导入该类型，只按属性形状识别。
+    if hasattr(value, "route"):
+        inner = value.route
+        return None if inner is None else _route_document(inner)
+    supply_id = getattr(value, "supply_id", None)
+    channel = getattr(value, "channel", None)
+    if isinstance(supply_id, str) and isinstance(channel, str):
+        return {"supply_id": supply_id, "channel": channel}
+    return value
+
+
+def _plan_document(value: Any) -> Any:
+    """把一组上电计划收敛成 v1.1 的 ``{power_sequence, inter_channel_delay_s}``。
+
+    与 :func:`_route_document` 同理：值对象（例如 application 的 ``PowerPlan``）
+    不能直接进入 ``to_dict``，否则运行快照无法 JSON 序列化。顺序保持不变。
+    """
+    if isinstance(value, Mapping):
+        sequence = value.get("power_sequence")
+        return {
+            "power_sequence": (
+                [_route_document(item) for item in sequence]
+                if isinstance(sequence, (list, tuple))
+                else sequence
+            ),
+            "inter_channel_delay_s": value.get("inter_channel_delay_s"),
+        }
+    sequence = getattr(value, "power_sequence", None)
+    if sequence is not None:
+        return {
+            "power_sequence": [_route_document(item) for item in sequence],
+            "inter_channel_delay_s": getattr(value, "inter_channel_delay_s", None),
+        }
+    return value
 
 
 def _list_value(value: Any) -> List[Any]:
@@ -630,8 +932,272 @@ def _power_supply_mappings(value: Any) -> Dict[str, PowerSupplyMapping]:
 
 
 def _validate_version(value: Any, path: str, error: Any) -> None:
-    if value != SUPPORTED_SCHEMA_VERSION:
-        error(path, f"当前只支持 schema_version={SUPPORTED_SCHEMA_VERSION}")
+    if value not in READABLE_SCHEMA_VERSIONS:
+        if isinstance(value, str) and value > SUPPORTED_SCHEMA_VERSION:
+            error(
+                path,
+                f"配置由更新版本写入（{value}），请升级程序；"
+                f"当前支持 {SUPPORTED_SCHEMA_VERSION}",
+            )
+            return
+        expected = " 或 ".join(READABLE_SCHEMA_VERSIONS)
+        error(path, f"schema_version 必须是 {expected}，收到 {value!r}")
+
+
+def _is_legacy_plan(plan: TestPlan) -> bool:
+    """测试方案是否按 1.0 角色化电源段解释。
+
+    版本是唯一判据：``1.0`` 文档只读兼容；程序内直接构造（``raw`` 为空）且显式写了
+    旧字段的对象也按旧结构解释，避免尚未迁移的调用方突然被套上 1.1 的必填规则。
+    """
+    return plan.schema_version == LEGACY_SCHEMA_VERSION or (
+        not plan.raw and plan.legacy_power_fields
+    )
+
+
+def _is_legacy_mapping(mapping: RunResourceMapping) -> bool:
+    return mapping.schema_version == LEGACY_SCHEMA_VERSION or (
+        not mapping.raw and mapping.legacy_power_fields
+    )
+
+
+def _is_legacy_configuration(configuration: RunConfiguration) -> bool:
+    return _is_legacy_plan(configuration.test_plan) or _is_legacy_mapping(
+        configuration.run_mapping
+    )
+
+
+def _validate_route_shape(
+    value: Any,
+    path: str,
+    error: Any,
+    *,
+    allowed_extra: frozenset[str] = frozenset(),
+) -> Optional[tuple[str, str]]:
+    """校验一条两段路由（``{supply_id, channel}``），返回去空白后的路由。
+
+    ``allowed_extra`` 只给 ``channel_settings`` 用：那里的元素是“路由两段平铺 + 参数”，
+    允许的额外字段就是 :data:`CHANNEL_SETTING_FIELDS` 里的参数。纯路由（计划序列、
+    漏极引用）仍不接受额外键，``channel_settings`` 也不接受 ``role`` / ``connection``
+    或任何未知字段。
+    """
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        error(path, "供电路由必须是 {supply_id, channel} 对象")
+        return None
+    unknown = {
+        key
+        for key in value
+        if key not in {"supply_id", "channel"} and key not in allowed_extra
+    }
+    if unknown:
+        error(
+            path,
+            "供电路由不能包含额外字段: "
+            + "、".join(sorted(str(key) for key in unknown)),
+        )
+        return None
+    supply_id = value.get("supply_id")
+    channel = value.get("channel")
+    if (
+        not isinstance(supply_id, str)
+        or not supply_id.strip()
+        or "/" in supply_id
+        or not isinstance(channel, str)
+        or not channel.strip()
+        or "/" in channel
+    ):
+        error(path, "供电路由必须是非空且不含 '/' 的 supply_id 与 channel")
+        return None
+    return supply_id.strip(), channel.strip()
+
+
+def _validate_channel_settings(values: List[Any], path: str, error: Any) -> None:
+    """校验 ``channel_settings`` 的形状：平铺路由 + 参数，路由不得重复。
+
+    这里只回答“这条记录能不能被当成一条物理路由”；工作值是否可读由
+    :func:`_validate_current_power_configuration` 按上电顺序判定。
+    """
+    if not isinstance(values, list):
+        error(path, "必须是列表")
+        return
+    seen: set[tuple[str, str]] = set()
+    for index, item in enumerate(values):
+        item_path = f"{path}[{index}]"
+        route = _validate_route_shape(
+            item, item_path, error, allowed_extra=CHANNEL_SETTING_FIELDS
+        )
+        if route is None:
+            continue
+        if route in seen:
+            error(f"{item_path}.channel", f"通道重复分配: {route[0]}/{route[1]}")
+        seen.add(route)
+
+
+def _validate_plan_document(
+    value: Any, path: str, error: Any
+) -> Optional[tuple[tuple[str, str], ...]]:
+    """校验 1.1 冻结上电计划的形状，返回 ``((supply_id, channel), ...)``。
+
+    ``power_sequence`` 与 ``inter_channel_delay_s`` 必须同时出现；缺键按形状错误报告，
+    不用空序列/0.0 补全。顺序保留，重复路由与越界间隔一律失败。
+    """
+    if not isinstance(value, Mapping):
+        error(path, "上电计划必须是对象")
+        return None
+    unknown = {
+        key for key in value if key not in {"power_sequence", "inter_channel_delay_s"}
+    }
+    if unknown:
+        error(path, "不能包含未知字段: " + "、".join(sorted(str(key) for key in unknown)))
+    missing = [
+        key for key in ("power_sequence", "inter_channel_delay_s") if key not in value
+    ]
+    if missing:
+        for key in missing:
+            error(f"{path}.{key}", "缺少必需字段")
+        return None
+    sequence = value["power_sequence"]
+    if not isinstance(sequence, list):
+        error(f"{path}.power_sequence", "必须是列表")
+        return None
+    routes: List[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for index, item in enumerate(sequence):
+        item_path = f"{path}.power_sequence[{index}]"
+        route = _validate_route_shape(item, item_path, error)
+        if route is None:
+            continue
+        if route in seen:
+            error(f"{path}.power_sequence", f"同一物理通道不能重复: {route[0]}/{route[1]}")
+            continue
+        seen.add(route)
+        routes.append(route)
+    delay = value["inter_channel_delay_s"]
+    if not _is_finite_number(delay):
+        error(f"{path}.inter_channel_delay_s", "必须是有限数值（秒）")
+    elif float(delay) < 0 or float(delay) > MAX_INTER_CHANNEL_DELAY_S:
+        error(
+            f"{path}.inter_channel_delay_s",
+            f"必须在 0 到 {MAX_INTER_CHANNEL_DELAY_S:g} 秒之间",
+        )
+    return tuple(routes)
+
+
+def _validate_driver_plan(
+    enabled: Any, source: Any, sequence: Optional[tuple[tuple[str, str], ...]], error: Any
+) -> None:
+    """驱放冻结计划与 ``enabled``/``power_source`` 一致（规则 7 的正式段版本）。"""
+    if sequence is None:
+        return
+    if enabled is not True and sequence:
+        error("driver_mode.power_plan", "驱放测试模式关闭时不能配置驱动功放上电计划")
+    elif source == DRIVER_POWER_EXTERNAL and sequence:
+        error("driver_mode.power_plan", "驱放自带供电时不能配置本机电源上电顺序")
+    elif enabled is True and source == DRIVER_POWER_DC and not sequence:
+        error(
+            "driver_mode.power_plan.power_sequence",
+            "驱放使用直流电源时必须配置驱动功放上电顺序",
+        )
+
+
+def _settings_routes(
+    values: List[Any], path: str, error: Any
+) -> Dict[tuple[str, str], Dict[str, Any]]:
+    """把 ``channel_settings`` 读成路由表；重复与非法项已由形状校验报告。"""
+    routes: Dict[tuple[str, str], Dict[str, Any]] = {}
+    for index, item in enumerate(values):
+        if not isinstance(item, Mapping):
+            continue
+        route = _validate_route_shape(
+            item, f"{path}[{index}]", error, allowed_extra=CHANNEL_SETTING_FIELDS
+        )
+        if route is None:
+            continue
+        routes.setdefault(route, dict(item))
+    return routes
+
+
+def _validate_current_power_configuration(
+    configuration: RunConfiguration,
+) -> List[ConfigIssue]:
+    """v1.1 完整运行的电源/漏极规则（§6.12 规则 8–13）。"""
+    errors: List[ConfigIssue] = []
+
+    def error(path: str, message: str) -> None:
+        errors.append(ConfigIssue("error", path, message))
+
+    plan = configuration.test_plan
+    mapping = configuration.run_mapping
+    # 形状错误已由 validate_run_mapping 报告；这里只取序列，不重复报形状问题。
+    sequence = _validate_plan_document(
+        mapping.dut_power_plan, "run_mapping.dut_power_plan", lambda _path, _message: None
+    )
+    settings: Dict[tuple[str, str], Dict[str, Any]] = {}
+    for index, item in enumerate(plan.channel_settings):
+        if not isinstance(item, Mapping):
+            continue
+        # 形状与字段白名单已由 validate_test_plan 报告；这里只取路由，不重复报错。
+        route = _validate_route_shape(
+            item,
+            f"test_plan.dut.channel_settings[{index}]",
+            lambda _path, _message: None,
+            allowed_extra=CHANNEL_SETTING_FIELDS,
+        )
+        if route is None:
+            continue
+        settings.setdefault(route, {**item, "_index": index})
+
+    # 规则 8：主功放的 DUT 上电顺序不能为空。
+    if sequence is not None and not sequence:
+        error(
+            "run_mapping.dut_power_plan.power_sequence",
+            "主功放运行必须配置非空的 DUT 上电顺序",
+        )
+
+    # 规则 9：channel_settings 的路由集合必须等于序列路由集合。
+    if sequence is not None and set(sequence) != set(settings):
+        error(
+            "test_plan.dut.channel_settings",
+            "每个上电通道必须恰有一条通道参数，且不能有未上电的参数",
+        )
+
+    # 规则 10：序列里的每个路由都必须有可读的工作电压/电流。
+    if sequence is not None:
+        for route in sequence:
+            item = settings.get(route)
+            if item is None:
+                continue
+            index = item.get("_index", 0)
+            for field in ("voltage", "current"):
+                value = item.get(field)
+                if not _is_finite_number(value):
+                    error(
+                        f"test_plan.dut.channel_settings[{index}].{field}",
+                        "上电通道必须提供可读的工作值",
+                    )
+
+    # 规则 11/12：主功放必须恰有一个有效漏极，且在序列与通道参数里。
+    drain_path = "test_plan.dut.drain_channel"
+    drain = _validate_route_shape(plan.drain_channel, drain_path, error)
+    if plan.drain_channel is None:
+        error(drain_path, "主功放运行必须指定漏极通道（仅用于效率计算，不影响上电顺序）")
+    elif drain is not None:
+        if sequence is not None and drain not in set(sequence):
+            error(drain_path, "漏极通道必须包含在 DUT 上电顺序中")
+        if drain not in settings:
+            error(drain_path, "漏极通道必须提供通道参数（电压/电流）")
+        # 规则 13：漏极电源必须已在快照中登记，且地址非空。
+        supply = mapping.power_supplies.get(drain[0])
+        if supply is None:
+            error(
+                f"run_mapping.instruments.power_supplies.{drain[0]}",
+                "漏极通道引用的电源没有登记在运行映射中",
+            )
+        # 地址非空由 `_validate_power_supplies` 对每条已登记电源统一判定（同一路径），
+        # 不在这里重复报告。
+    return errors
 
 
 def _finite_list(values: List[Any], path: str, error: Any, *, positive: bool = False) -> None:
@@ -833,16 +1399,24 @@ def _validate_mappings(mappings: List[ChannelMapping], path: str, error: Any) ->
         _required_text(item.connection, f"{item_path}.connection", error)
 
 
-def _validate_driver_mode(enabled: Any, source: Any, channels: Any, error: Any) -> None:
+def _validate_driver_mode(
+    enabled: Any,
+    source: Any,
+    channels: Any,
+    error: Any,
+    *,
+    path: str = "driver_mode.power_channels",
+) -> None:
     """校验驱放模式与供电方式是否一致。
 
     驱放测试模式下，驱动功放既可以由本机直流电源供电（必须有驱动通道），也可以
     自带电源/市电供电（不得占用本机电源通道）。旧配置没有 ``power_source`` 时按
-    “是否有驱动通道”推断，保持旧快照仍可读取。
+    “是否有驱动通道”推断，保持旧快照仍可读取。``path`` 区分 1.0 的 ``power_channels``
+    与 1.1 的 ``channel_settings``，判据本身只有一份。
     """
     if enabled is not True:
         if channels:
-            error("driver_mode.power_channels", "驱放测试模式关闭时不能配置驱动功放通道")
+            error(path, "驱放测试模式关闭时不能配置驱动功放通道")
         if source not in (None, ""):
             error("driver_mode.power_source", "驱放测试模式关闭时不能指定供电方式")
         return
@@ -852,9 +1426,9 @@ def _validate_driver_mode(enabled: Any, source: Any, channels: Any, error: Any) 
         error("driver_mode.power_source", "必须是 dc_supply（直流电源）或 external_ac（自带供电）")
         return
     if source == DRIVER_POWER_DC and not channels:
-        error("driver_mode.power_channels", "驱放使用直流电源时必须配置驱动功放通道")
+        error(path, "驱放使用直流电源时必须配置驱动功放通道")
     if source == DRIVER_POWER_EXTERNAL and channels:
-        error("driver_mode.power_channels", "驱放自带供电时不能配置驱动功放通道")
+        error(path, "驱放自带供电时不能配置驱动功放通道")
 
 
 def _required_text(value: Any, path: str, error: Any) -> bool:

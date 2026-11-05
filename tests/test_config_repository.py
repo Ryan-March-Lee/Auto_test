@@ -67,7 +67,48 @@ class ConfigurationRepositoryTests(unittest.TestCase):
 
         self.assertTrue(result.valid, result.validation.errors)
         self.assertEqual(
-            set(result.configuration.test_plan.dut_power_channels), {"gate", "drain"}
+            result.configuration.test_plan.drain_channel,
+            {"supply_id": "DP8B1519", "channel": "CH2"},
+        )
+        self.assertEqual(
+            [
+                (item["supply_id"], item["channel"])
+                for item in result.configuration.test_plan.channel_settings
+            ],
+            [("DP8B1519", "CH1"), ("DP8B1519", "CH2")],
+        )
+
+    def test_hand_edited_formal_sections_are_reported_as_stale(self):
+        document = complete_combined_config()
+        document["test_plan"]["frequencies"]["values"] = [9.9]
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            result = ConfigurationRepository().load(path)
+
+        self.assertFalse(result.valid)
+        self.assertIn("test_plan", {issue.path for issue in result.validation.errors})
+
+    def test_stale_check_does_not_depend_on_a_single_editing_field(self):
+        """只要是带编辑段的 1.1 组合文件就比对，不能拿 test_frequencies 当开关。"""
+        document = complete_combined_config()
+        document.pop("test_frequencies")
+        document["test_plan"]["dut"]["channel_settings"] = []
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            result = ConfigurationRepository().load(path)
+
+        self.assertFalse(result.valid)
+        self.assertIn("test_plan", {issue.path for issue in result.validation.errors})
+        self.assertTrue(
+            any(
+                issue.path == "test_plan" and "正式段" in issue.message
+                for issue in result.validation.errors
+            ),
+            [issue.message for issue in result.validation.errors],
         )
 
 

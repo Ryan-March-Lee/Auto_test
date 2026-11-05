@@ -22,7 +22,11 @@ def complete_combined_config() -> dict:
             "compression_point": {"type": "5dB"},
             "driver_mode": {"enabled": False},
             "attenuator": {"type": "30dB"},
-            "dut_config": {"max_input_power": 30.0, "power_supply_count": 1},
+            "dut_config": {
+                "max_input_power": 30.0,
+                "power_supply_count": 1,
+                "drain_channel": {"supply_id": "DP8B1519", "channel": "CH2"},
+            },
             "instruments": {
                 "signal_generator": {"address": "sim::sg", "model": "SG", "enabled": True},
                 "spectrum_analyzer": {"address": "sim::sa", "model": "SA", "enabled": True},
@@ -42,15 +46,25 @@ def complete_combined_config() -> dict:
                 },
             },
             "power_supply_assignment": {
-                "driver_amplifier": {"power_supply_count": 0, "supplies": {}},
+                "driver_amplifier": {
+                    "power_supply_count": 0,
+                    "supplies": {},
+                    "power_plan": {"power_sequence": [], "inter_channel_delay_s": 0.0},
+                },
                 "dut_amplifier": {
                     "power_supply_count": 1,
                     "supplies": {
                         "carrier": {
                             "supply_id": "DP8B1519",
-                            "name": "DP8B1519",
                             "channel": ["CH1", "CH2"],
                         }
+                    },
+                    "power_plan": {
+                        "power_sequence": [
+                            {"supply_id": "DP8B1519", "channel": "CH1"},
+                            {"supply_id": "DP8B1519", "channel": "CH2"},
+                        ],
+                        "inter_channel_delay_s": 2.0,
                     },
                 },
             },

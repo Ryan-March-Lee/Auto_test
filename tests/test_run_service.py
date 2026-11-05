@@ -3,16 +3,19 @@
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
 from app.run_context import create_prepared_run, load_prepared_run
+from application.dto.amplifier_inputs import DrainChannel, PowerPlan, SupplyChannel
 from application.ports.config_repository import ConfigurationLoadResult
 from application.run_service import (
     RunNotDiscardable,
     RunNotResumable,
     RunSnapshot,
+    configuration_snapshot,
     create_run_snapshot,
     discard_unstarted_run,
     find_run_hardware_config,
@@ -21,9 +24,8 @@ from application.run_service import (
     inspect_run,
 )
 from domain.configuration.models import (
-    ChannelMapping,
     InstrumentMapping,
-    PowerChannelPlan,
+    PowerSupplyMapping,
     RunConfiguration,
     RunResourceMapping,
     TestPlan,
@@ -50,6 +52,7 @@ RUN_ID = "20261022T153000Z_a1b2c3d4"
 
 def _valid_configuration(*, start_power: float = -10.0) -> RunConfiguration:
     plan = TestPlan(
+        schema_version="1.1",
         frequencies=[2.2, 2.4],
         start_power=start_power,
         stop_power=0.0,
@@ -57,16 +60,41 @@ def _valid_configuration(*, start_power: float = -10.0) -> RunConfiguration:
         compression_point="5dB",
         attenuator_value=30.0,
         max_input_power=30.0,
-        dut_power_channels={"gate": PowerChannelPlan(role="gate", voltage=2.0, current=1.0)},
+        drain_channel={"supply_id": "PS", "channel": "CH1"},
+        channel_settings=[
+            {
+                "supply_id": "PS",
+                "channel": "CH1",
+                "voltage": 2.0,
+                "current": 1.0,
+                "voltage_protection": None,
+                "current_protection": None,
+                "unit_voltage": "V",
+                "unit_current": "A",
+            }
+        ],
         driver_enabled=False,
     )
     mapping = RunResourceMapping(
+        schema_version="1.1",
         instruments={
             "signal_generator": InstrumentMapping("SG", "sim::sg"),
             "spectrum_analyzer": InstrumentMapping("SA", "sim::sa"),
-            "power_supply": InstrumentMapping("PS", "sim::ps"),
         },
-        dut_power_channels=[ChannelMapping(channel="CH1", role="gate", connection="gate")],
+        power_supplies={
+            "PS": PowerSupplyMapping(
+                label="PS",
+                model="PS",
+                full_code="PS",
+                device_key="sim:ps",
+                visa_address="sim::ps",
+            )
+        },
+        dut_power_plan={
+            "power_sequence": [{"supply_id": "PS", "channel": "CH1"}],
+            "inter_channel_delay_s": 0.0,
+        },
+        driver_power_plan={"power_sequence": [], "inter_channel_delay_s": 0.0},
     )
     return RunConfiguration(test_plan=plan, run_mapping=mapping)
 
@@ -78,12 +106,17 @@ def _loaded(configuration: RunConfiguration) -> ConfigurationLoadResult:
 def _gui_config(*, start_power: float = -10.0) -> dict:
     """GUI 保存的组合配置（含正式 test_plan / run_mapping 段）。"""
     return author_official_configuration({
+        "schema_version": "1.1",
         "test_frequencies": [2.4],
         "signal_source": {"start_power": start_power, "stop_power": 0.0, "step": 1.0},
         "compression_point": {"type": "5dB"},
         "driver_mode": {"enabled": False},
         "attenuator": {"type": "30dB"},
-        "dut_config": {"max_input_power": 30.0, "power_supply_count": 1},
+        "dut_config": {
+            "max_input_power": 30.0,
+            "power_supply_count": 1,
+            "drain_channel": {"supply_id": "DP8B1519", "channel": "CH2"},
+        },
         "instruments": {
             "signal_generator": {"address": "sim::sg", "model": "SG", "enabled": True},
             "spectrum_analyzer": {"address": "sim::sa", "model": "SA", "enabled": True},
@@ -97,12 +130,10 @@ def _gui_config(*, start_power: float = -10.0) -> dict:
                     "enabled": True,
                     "channels": {
                         "CH1": {
-                            "role": "gate",
                             "voltage": {"value": 2.8},
                             "current": {"value": 0.1},
                         },
                         "CH2": {
-                            "role": "drain",
                             "voltage": {"value": 28.0},
                             "current": {"value": 2.0},
                         },
@@ -111,15 +142,25 @@ def _gui_config(*, start_power: float = -10.0) -> dict:
             },
         },
         "power_supply_assignment": {
-            "driver_amplifier": {"power_supply_count": 0, "supplies": {}},
+            "driver_amplifier": {
+                "power_supply_count": 0,
+                "supplies": {},
+                "power_plan": {"power_sequence": [], "inter_channel_delay_s": 0.0},
+            },
             "dut_amplifier": {
                 "power_supply_count": 1,
                 "supplies": {
                     "carrier": {
                         "supply_id": "DP8B1519",
-                        "name": "DP8B1519",
                         "channel": ["CH1", "CH2"],
                     }
+                },
+                "power_plan": {
+                    "power_sequence": [
+                        {"supply_id": "DP8B1519", "channel": "CH1"},
+                        {"supply_id": "DP8B1519", "channel": "CH2"},
+                    ],
+                    "inter_channel_delay_s": 2.0,
                 },
             },
         },
@@ -169,6 +210,43 @@ class CreateRunSnapshotTests(unittest.TestCase):
         self.assertEqual(payload["test_plan"]["frequencies"]["values"], [2.2, 2.4])
         # 现场接线不再是配置字段：快照里只冻结参数与仪器映射。
         self.assertNotIn("wiring", payload["run_mapping"])
+
+    def test_snapshot_serializes_route_and_plan_value_objects(self):
+        """正式模型直接持有路由/计划值对象时，快照仍必须是 JSON 原生形状。
+
+        domain 不能反向依赖 application，因此 ``to_dict`` 只按 ``supply_id`` /
+        ``channel`` 与 ``power_sequence`` / ``inter_channel_delay_s`` 投影；否则运行
+        仓储写盘会在 json 序列化阶段失败，而不是在装配前给出可读的配置错误。
+        """
+        route = SupplyChannel("PS", "CH1")
+        configuration = _valid_configuration()
+        configuration = RunConfiguration(
+            replace(
+                configuration.test_plan,
+                drain_channel=DrainChannel(route=route),
+            ),
+            replace(
+                configuration.run_mapping,
+                dut_power_plan=PowerPlan(power_sequence=(route,)),
+                driver_power_plan=PowerPlan(),
+            ),
+        )
+
+        payload = configuration_snapshot(configuration, run_id=RUN_ID)
+
+        json.dumps(payload)
+        self.assertEqual(
+            payload["test_plan"]["dut"]["drain_channel"],
+            {"supply_id": "PS", "channel": "CH1"},
+        )
+        self.assertEqual(
+            payload["run_mapping"]["dut_power_plan"]["power_sequence"],
+            [{"supply_id": "PS", "channel": "CH1"}],
+        )
+        self.assertEqual(
+            payload["run_mapping"]["driver_mode"]["power_plan"],
+            {"power_sequence": [], "inter_channel_delay_s": 0.0},
+        )
 
     def test_invalid_configuration_cannot_create_a_runnable_snapshot(self):
         invalid = ConfigurationLoadResult(
@@ -257,7 +335,8 @@ class CreateRunSnapshotTests(unittest.TestCase):
             "sim::sg",
         )
         self.assertEqual(
-            restored.configuration.run_mapping.dut_power_channels[0].connection, "gate"
+            restored.configuration.run_mapping.dut_power_plan["power_sequence"],
+            [{"supply_id": "PS", "channel": "CH1"}],
         )
 
     def test_load_rejects_unsupported_snapshot_schema(self):
@@ -542,7 +621,9 @@ class RunSnapshotIsolationTests(unittest.TestCase):
     def _hardware_config(self, *, start_power: float, address: str) -> dict:
         hardware = _gui_config(start_power=start_power)
         hardware["instruments"]["signal_generator"]["address"] = address
-        return hardware
+        # 修改编辑段后重新编写正式段：1.1 加载会比对两者，手改一份而留下旧派生段
+        # 应按“文件被改过”报告，而不是被当成一份可用的配置。
+        return author_official_configuration(hardware)
 
     def _create(self, run_id: str, *, start_power: float, address: str) -> RunSnapshot:
         return create_run_snapshot(

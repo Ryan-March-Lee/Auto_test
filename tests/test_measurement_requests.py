@@ -17,9 +17,8 @@ from application.dto import (
 from application.inputs import ResultInputReader
 from application.run_service import configuration_snapshot
 from domain.configuration.models import (
-    ChannelMapping,
     InstrumentMapping,
-    PowerChannelPlan,
+    PowerSupplyMapping,
     RunConfiguration,
     RunResourceMapping,
     TestPlan,
@@ -31,6 +30,7 @@ from tests.contract_doubles import RecordingStageRecorder
 def _valid_domain_snapshot(run_id: str) -> dict:
     """构造一份可通过完整运行校验的领域配置快照（供契约替身返回）。"""
     plan = TestPlan(
+        schema_version="1.1",
         frequencies=[2.4],
         start_power=-10.0,
         stop_power=0.0,
@@ -38,20 +38,41 @@ def _valid_domain_snapshot(run_id: str) -> dict:
         compression_point="5dB",
         attenuator_value=30.0,
         max_input_power=30.0,
-        dut_power_channels={
-            "gate": PowerChannelPlan(role="gate", voltage=2.0, current=1.0)
-        },
+        drain_channel={"supply_id": "PS", "channel": "CH1"},
+        channel_settings=[
+            {
+                "supply_id": "PS",
+                "channel": "CH1",
+                "voltage": 2.0,
+                "current": 1.0,
+                "voltage_protection": None,
+                "current_protection": None,
+                "unit_voltage": "V",
+                "unit_current": "A",
+            }
+        ],
         driver_enabled=False,
     )
     mapping = RunResourceMapping(
+        schema_version="1.1",
         instruments={
             "signal_generator": InstrumentMapping("SG", "sim::sg"),
             "spectrum_analyzer": InstrumentMapping("SA", "sim::sa"),
-            "power_supply": InstrumentMapping("PS", "sim::ps"),
         },
-        dut_power_channels=[
-            ChannelMapping(channel="CH1", role="gate", connection="gate")
-        ],
+        power_supplies={
+            "PS": PowerSupplyMapping(
+                label="PS",
+                model="PS",
+                full_code="PS",
+                device_key="sim:ps",
+                visa_address="sim::ps",
+            )
+        },
+        dut_power_plan={
+            "power_sequence": [{"supply_id": "PS", "channel": "CH1"}],
+            "inter_channel_delay_s": 0.0,
+        },
+        driver_power_plan={"power_sequence": [], "inter_channel_delay_s": 0.0},
     )
     return configuration_snapshot(RunConfiguration(plan, mapping), run_id=run_id)
 

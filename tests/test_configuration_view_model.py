@@ -67,12 +67,17 @@ def _bindings():
 def _config():
     """一份完整、可写出正式配置的编辑文档。"""
     return {
+        "schema_version": "1.1",
         "test_frequencies": [2.4],
         "signal_source": {"start_power": -10.0, "stop_power": 0.0, "step": 1.0},
         "compression_point": {"type": "5dB"},
         "driver_mode": {"enabled": False},
         "attenuator": {"type": "30dB"},
-        "dut_config": {"max_input_power": 30.0, "power_supply_count": 1},
+        "dut_config": {
+            "max_input_power": 30.0,
+            "power_supply_count": 1,
+            "drain_channel": {"supply_id": "DP8B1519", "channel": "CH2"},
+        },
         "instruments": {
             "signal_generator": {"address": "sim::sg", "enabled": True},
             "spectrum_analyzer": {"address": "sim::sa", "enabled": True},
@@ -86,12 +91,10 @@ def _config():
                     "enabled": True,
                     "channels": {
                         "CH1": {
-                            "role": "gate",
                             "voltage": {"value": 2.8},
                             "current": {"value": 0.1},
                         },
                         "CH2": {
-                            "role": "drain",
                             "voltage": {"value": 28.0},
                             "current": {"value": 2.0},
                         },
@@ -100,15 +103,25 @@ def _config():
             },
         },
         "power_supply_assignment": {
-            "driver_amplifier": {"power_supply_count": 0, "supplies": {}},
+            "driver_amplifier": {
+                "power_supply_count": 0,
+                "supplies": {},
+                "power_plan": {"power_sequence": [], "inter_channel_delay_s": 0.0},
+            },
             "dut_amplifier": {
                 "power_supply_count": 1,
                 "supplies": {
                     "carrier": {
                         "supply_id": "DP8B1519",
-                        "name": "DP8B1519",
                         "channel": ["CH1", "CH2"],
                     }
+                },
+                "power_plan": {
+                    "power_sequence": [
+                        {"supply_id": "DP8B1519", "channel": "CH1"},
+                        {"supply_id": "DP8B1519", "channel": "CH2"},
+                    ],
+                    "inter_channel_delay_s": 2.0,
                 },
             },
         },
@@ -455,7 +468,7 @@ class ConfigurationViewModelValidationTests(unittest.TestCase):
         self.assertEqual(action.kind, SAVE_CONFIGURATION)
         self.assertTrue(action.ok, action.validation.messages())
         document = action.to_document()
-        self.assertEqual(document["schema_version"], "1.0")
+        self.assertEqual(document["schema_version"], "1.1")
         self.assertIn("test_plan", document)
         self.assertIn("run_mapping", document)
         self.assertEqual(document["test_frequencies"], [2.4])

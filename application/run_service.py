@@ -28,6 +28,7 @@ from domain.configuration.models import (
     RunConfiguration,
     RunResourceMapping,
     TestPlan,
+    require_current_schema_version,
     validate_run_configuration,
 )
 from domain.configuration.types import ConfigValidationResult
@@ -136,6 +137,15 @@ def inspect_run(
         if not loaded.valid:
             raise RunIntegrityError(
                 "运行配置快照校验失败: " + _validation_details(loaded.validation)
+            )
+        # 规则 16：1.0 快照可查看已保存结果，但不能作为可恢复运行继续测量。
+        version_issues = require_current_schema_version(loaded.configuration)
+        if version_issues:
+            raise RunIntegrityError(
+                "运行使用旧版配置，不能继续测量: "
+                + _validation_details(
+                    ConfigValidationResult(errors=version_issues, warnings=[])
+                )
             )
         load_hardware_config(run_repository, run_id)
         _require_completed_stage_inputs(run_repository, manifest)
@@ -255,6 +265,14 @@ def create_run_snapshot(
     if not loaded.valid:
         raise ValueError(
             "运行配置校验失败，不能创建运行快照: " + _validation_details(loaded.validation)
+        )
+    # 规则 16：1.0 配置可查看/导出，但不能据此创建新运行；升级只能经迁移器。
+    version_issues = require_current_schema_version(loaded.configuration)
+    if version_issues:
+        raise ValueError(
+            "旧版配置不能创建运行快照: " + _validation_details(
+                ConfigValidationResult(errors=version_issues, warnings=[])
+            )
         )
     full_validation = validate_run_configuration(loaded.configuration)
     if not full_validation.valid:

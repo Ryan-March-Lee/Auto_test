@@ -15,9 +15,10 @@
   （``None`` 未填写 / ``True`` / ``False``），读取时不补默认值，模型不会替用户挑一台
   默认设备，也不会把空引用补成某台电源；
 - :meth:`ConfigurationDraft.from_document` / :meth:`ConfigurationDraft.to_document`
-  只转换配置编辑段（测试参数、供电分配、电源通道参数与设备绑定），不生成正式
-  ``test_plan`` / ``run_mapping``——那属于配置编写服务（步骤 4）。``schema_version``
-  同样由配置编写服务补齐，草稿不持有文件元数据。
+  只转换配置编辑段（测试参数、供电分配、电源通道参数、组上电计划、漏极与设备绑定），
+  不生成正式 ``test_plan`` / ``run_mapping``——那属于配置编写服务（步骤 4）。
+  ``schema_version`` 同样由配置编写服务补齐，草稿不持有文件元数据。上电计划与漏极
+  只原样读写，不推断顺序，也不按通道名猜漏极。
 
 设备绑定的读取边界：本模块只读取当前结构 ``device_bindings.{signal_generator,
 spectrum_analyzer,power_supplies}``。旧槽位绑定（``PS1`` 等）会留下警告，只有地址的
@@ -33,7 +34,12 @@ from types import MappingProxyType
 from typing import Any
 
 from application.configuration_editing import ValidationIssue, ValidationResult
-from application.dto.amplifier_inputs import PowerSweep, SupplyChannel
+from application.dto.amplifier_inputs import (
+    AmplifierInputError,
+    PowerPlan,
+    PowerSweep,
+    SupplyChannel,
+)
 from domain.configuration.rules import assignment_supply_id
 from domain.instruments.models import INSTRUMENT_ROLES
 from domain.measurement.values import Decibels, Frequency, PowerDbm
@@ -419,8 +425,13 @@ class ConfigurationDraft:
     driver_enabled: bool | None = None
     driver_power_source: str | None = None
     dut_supply_count: int | None = None
+    # 漏极只供效率计算读取，不参与排序/间隔/启停；缺失时保持 None。
+    drain_channel: SupplyChannel | None = None
     dut_assignments: tuple[PowerAssignmentDraft, ...] = ()
     driver_assignments: tuple[PowerAssignmentDraft, ...] = ()
+    # 组上电计划：None 表示来源文档没有该键；写出时按空计划规范形状补齐。
+    dut_power_plan: PowerPlan | None = None
+    driver_power_plan: PowerPlan | None = None
     power_supplies: tuple[PowerSupplyDraft, ...] = ()
     bindings: DeviceBindingsDraft = field(default_factory=DeviceBindingsDraft)
 
@@ -447,6 +458,9 @@ class ConfigurationDraft:
             "dut_supply_count",
             _optional_int(self.dut_supply_count, "PA 单元数量"),
         )
+        _require_optional(self.drain_channel, SupplyChannel, "漏极通道")
+        _require_optional(self.dut_power_plan, PowerPlan, "DUT 上电计划")
+        _require_optional(self.driver_power_plan, PowerPlan, "驱动功放上电计划")
         object.__setattr__(
             self,
             "dut_assignments",
@@ -538,13 +552,15 @@ class ConfigurationDraft:
         )
         max_dut_input_power = _read_max_input_power(document.get("dut_config"), issues)
         dut_supply_count = _read_dut_supply_count(document.get("dut_config"), issues)
+        drain_channel = _read_drain_channel(document.get("dut_config"), issues)
         driver_enabled, driver_power_source = _read_driver_mode(
             document.get("driver_mode"), issues
         )
         power_supplies = _read_power_supplies(document.get("instruments"), issues)
-        dut_assignments, driver_assignments = _read_assignments(
-            document.get("power_supply_assignment"), issues
-        )
+        assignments = document.get("power_supply_assignment")
+        dut_assignments, driver_assignments = _read_assignments(assignments, issues)
+        dut_power_plan = _read_power_plan(assignments, "dut_amplifier", issues)
+        driver_power_plan = _read_power_plan(assignments, "driver_amplifier", issues)
         device_bindings = _read_device_bindings(document, bindings, issues)
         unique_issues = _unique_issues(issues)
 
@@ -557,8 +573,11 @@ class ConfigurationDraft:
             driver_enabled=driver_enabled,
             driver_power_source=driver_power_source,
             dut_supply_count=dut_supply_count,
+            drain_channel=drain_channel,
             dut_assignments=dut_assignments,
             driver_assignments=driver_assignments,
+            dut_power_plan=dut_power_plan,
+            driver_power_plan=driver_power_plan,
             power_supplies=power_supplies,
             bindings=device_bindings,
         )
@@ -578,6 +597,16 @@ class ConfigurationDraft:
             if self.dut_supply_count is not None
             else len(self.dut_assignments)
         )
+        dut_config = {
+            "max_input_power": (
+                self.max_dut_input_power.dbm
+                if self.max_dut_input_power is not None
+                else None
+            ),
+            "power_supply_count": count,
+        }
+        if self.drain_channel is not None:
+            dut_config["drain_channel"] = self.drain_channel.to_document()
         return {
             "test_frequencies": [frequency.ghz for frequency in self.frequencies],
             "signal_source": _sweep_document(self.sweep),
@@ -586,14 +615,7 @@ class ConfigurationDraft:
             },
             "attenuator": {"type": _decibels_text(self.attenuator)},
             "driver_mode": _driver_mode_document(self),
-            "dut_config": {
-                "max_input_power": (
-                    self.max_dut_input_power.dbm
-                    if self.max_dut_input_power is not None
-                    else None
-                ),
-                "power_supply_count": count,
-            },
+            "dut_config": dut_config,
             "instruments": self._instrument_document(),
             "power_supply_assignment": self._assignment_document(),
             "device_bindings": self.bindings.to_mapping(),
@@ -622,22 +644,26 @@ class ConfigurationDraft:
         }
 
     def _assignment_document(self) -> dict[str, Any]:
-        return {
-            "driver_amplifier": {
-                "power_supply_count": len(self.driver_assignments),
-                "supplies": {
-                    assignment.slot: _assignment_entry(assignment)
-                    for assignment in self.driver_assignments
-                },
-            },
-            "dut_amplifier": {
-                "power_supply_count": len(self.dut_assignments),
-                "supplies": {
-                    assignment.slot: _assignment_entry(assignment)
-                    for assignment in self.dut_assignments
-                },
+        driver = {
+            "power_supply_count": len(self.driver_assignments),
+            "supplies": {
+                assignment.slot: _assignment_entry(assignment)
+                for assignment in self.driver_assignments
             },
         }
+        dut = {
+            "power_supply_count": len(self.dut_assignments),
+            "supplies": {
+                assignment.slot: _assignment_entry(assignment)
+                for assignment in self.dut_assignments
+            },
+        }
+        # 缺失的计划保持缺失：不把“还没有排序”伪装成一份空计划写回文档。
+        if self.driver_power_plan is not None:
+            driver["power_plan"] = self.driver_power_plan.to_document()
+        if self.dut_power_plan is not None:
+            dut["power_plan"] = self.dut_power_plan.to_document()
+        return {"driver_amplifier": driver, "dut_amplifier": dut}
 
 
 @dataclass(frozen=True)
@@ -874,6 +900,56 @@ def _read_dut_supply_count(
         )
         return None
     return raw
+
+
+def _read_drain_channel(
+    value: Any, issues: list[ValidationIssue]
+) -> SupplyChannel | None:
+    """读取 ``dut_config.drain_channel``；缺失与 ``null`` 都表示未配置漏极。"""
+    if value is None:
+        return None
+    section = _mapping(value, "dut_config", issues)
+    if "drain_channel" not in section:
+        return None
+    raw = section.get("drain_channel")
+    if raw is None:
+        return None
+    try:
+        return SupplyChannel.from_document(raw)
+    except (AmplifierInputError, TypeError, ValueError) as error:
+        issues.append(
+            _issue("dut_config.drain_channel", _CODE_INVALID_ASSIGNMENT, str(error))
+        )
+        return None
+
+
+def _read_power_plan(
+    assignments: Any, group: str, issues: list[ValidationIssue]
+) -> PowerPlan | None:
+    """读取一组的 ``power_plan``；键缺失时返回 ``None``（不推断顺序）。"""
+    section = _mapping(assignments, "power_supply_assignment", issues)
+    group_section = _mapping(section.get(group), f"power_supply_assignment.{group}", issues)
+    if "power_plan" not in group_section:
+        return None
+    path = f"power_supply_assignment.{group}.power_plan"
+    raw = group_section.get("power_plan")
+    if not isinstance(raw, Mapping):
+        issues.append(_issue(path, _CODE_INVALID_ASSIGNMENT, "上电计划必须是对象"))
+        return None
+    missing = [
+        key for key in ("power_sequence", "inter_channel_delay_s") if key not in raw
+    ]
+    if missing:
+        for key in missing:
+            issues.append(
+                _issue(f"{path}.{key}", _CODE_INVALID_ASSIGNMENT, "缺少必需字段")
+            )
+        return None
+    try:
+        return PowerPlan.from_document(raw)
+    except (AmplifierInputError, TypeError, ValueError) as error:
+        issues.append(_issue(path, _CODE_INVALID_ASSIGNMENT, str(error)))
+        return None
 
 
 def _read_driver_mode(

@@ -76,6 +76,47 @@ def complete_mapping():
     }
 
 
+def complete_current_plan():
+    """一份通过 v1.1 形状校验的当前版测试方案（单电源、两通道）。"""
+    return {
+        "schema_version": "1.1",
+        "template": False,
+        "plan_id": "plan-1",
+        "frequencies": {"values": [1.0, 1.2], "unit": "GHz"},
+        "signal_source": {"start_power": 0, "stop_power": 10, "step": 1, "unit": "dBm"},
+        "compression_point": {"type": "3dB"},
+        "attenuator": {"value": 30, "unit": "dB"},
+        "dut": {
+            "max_input_power": 15,
+            "drain_channel": {"supply_id": "PS1", "channel": "CH2"},
+            "channel_settings": [
+                {
+                    "supply_id": "PS1",
+                    "channel": "CH1",
+                    "voltage": 2.8,
+                    "current": 0.1,
+                    "voltage_protection": None,
+                    "current_protection": None,
+                    "unit_voltage": "V",
+                    "unit_current": "A",
+                },
+                {
+                    "supply_id": "PS1",
+                    "channel": "CH2",
+                    "voltage": 28.0,
+                    "current": 1.0,
+                    "voltage_protection": None,
+                    "current_protection": None,
+                    "unit_voltage": "V",
+                    "unit_current": "A",
+                },
+            ],
+        },
+        "driver_mode": {"enabled": False, "power_source": None, "channel_settings": []},
+        "other_parameters": {},
+    }
+
+
 class ConfigModelTests(unittest.TestCase):
     def test_cable_loss_does_not_require_amplifier_power_roles(self):
         plan = complete_plan()
@@ -257,6 +298,21 @@ class ConfigModelTests(unittest.TestCase):
             RunConfiguration(TestPlan.from_dict(plan), RunResourceMapping.from_dict(mapping))
         )
         self.assertTrue(result.valid, result.errors)
+
+    def test_channel_settings_rejects_legacy_and_unknown_fields(self):
+        """1.1 的 ``channel_settings`` 不接受 ``role`` / ``connection`` 或任意未知键。"""
+        for field in ("role", "connection", "mystery"):
+            with self.subTest(field=field):
+                plan = complete_current_plan()
+                plan["dut"]["channel_settings"][0][field] = "值"
+                result = validate_test_plan(plan)
+                self.assertIn(
+                    "dut.channel_settings[0]",
+                    {issue.path for issue in result.errors},
+                )
+
+    def test_channel_settings_accepts_the_frozen_shape(self):
+        self.assertTrue(validate_test_plan(complete_current_plan()).valid)
 
     def test_load_run_configuration_is_file_only(self):
         with tempfile.TemporaryDirectory() as directory:

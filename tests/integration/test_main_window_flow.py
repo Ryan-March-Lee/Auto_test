@@ -429,6 +429,13 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         saved["power_supply_assignment"]["driver_amplifier"] = {
             "power_supply_count": 1,
             "supplies": {"driver": {"supply_id": "DP8B0885", "channel": ["CH1", "CH2"]}},
+            "power_plan": {
+                "power_sequence": [
+                    {"supply_id": "DP8B0885", "channel": "CH1"},
+                    {"supply_id": "DP8B0885", "channel": "CH2"},
+                ],
+                "inter_channel_delay_s": 0.0,
+            },
         }
         self.config_path.write_text(json.dumps(saved), encoding="utf-8")
 
@@ -446,8 +453,11 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertEqual(mapping.power_supplies["DP8B0885"].full_code, "DP8B174400885")
         self.assertEqual(mapping.power_supplies["DP8B0885"].visa_address, "sim::ps2")
         self.assertEqual(
-            [(item.channel, item.role) for item in mapping.dut_power_channels],
-            [("DP8B1519/CH1", "gate"), ("DP8B1519/CH2", "drain")],
+            mapping.dut_power_plan["power_sequence"],
+            [
+                {"supply_id": "DP8B1519", "channel": "CH1"},
+                {"supply_id": "DP8B1519", "channel": "CH2"},
+            ],
         )
 
     def test_no_driver_mode_drops_a_saved_driver_assignment_and_still_creates_a_run(self):

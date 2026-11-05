@@ -28,6 +28,9 @@ from .config_form_bindings import binding_address, power_supply_bindings
 # 旧电源控件显示的通道角色词表（步骤 5 从 domain 收回）：它只是尚未拆走的控件选项，
 # 不参与校验、映射或上电；步骤 11/12 随独立电源页一起删除。
 POWER_SUPPLY_ROLES = ("gate", "drain")
+# 本机台架固定接线的控件初值（CH1 栅极、CH2 漏极）。它只是尚未拆走的旧电源控件的
+# 显示默认值，不参与校验、映射、上电或写回草稿；步骤 11/12 拆出电源页时删除。
+DUT_CHANNEL_ROLES = {"CH1": "gate", "CH2": "drain"}
 
 
 def parse_frequency_text(value: str) -> list[float] | None:
@@ -295,43 +298,17 @@ class ConfigFormState:
 
     def read_power_supply_config(self) -> dict:
         result = {}
-        configured = (
-            self.config.get("instruments", {})
-            if isinstance(self.config.get("instruments"), Mapping)
-            else {}
-        )
-        configured_supplies = (
-            configured.get("power_supplies", {})
-            if isinstance(configured.get("power_supplies"), Mapping)
-            else {}
-        )
         for name, supply in getattr(self.widgets, "power_config_widgets", {}).items():
-            existing_channels = _dict_copy(
-                _dict_copy(configured_supplies.get(name)).get("channels")
-            )
             channels = {}
             for channel, controls in supply.get("channels", {}).items():
+                # 步骤 6 起正式配置不再写通道 role；控件里的角色选择只是旧页面的
+                # 显示默认值，不能随保存重新进入 1.1 文档（步骤 11/12 删除该控件）。
                 channels[channel] = {
-                    "role": self._channel_role(controls, existing_channels, channel),
                     "voltage": {"value": self._value(controls["voltage"]), "protection": self._value(controls["voltage_protection"]), "protection_enabled": self._checked(controls["voltage_protection_enabled"])},
                     "current": {"value": self._value(controls["current"]), "protection": self._value(controls["current_protection"]), "protection_enabled": self._checked(controls["current_protection_enabled"])},
                 }
             result[name] = {"channels": channels}
         return {"instruments": {"power_supplies": result}} if result else {}
-
-    @staticmethod
-    def _channel_role(controls: Mapping[str, Any], existing_channels: Mapping[str, Any], channel: str) -> str | None:
-        """读控件里用户显式选择的供电角色。
-
-        角色是接线事实，不按通道名推断：控件缺失或值不可识别时只保留配置里
-        已有的合法角色，其余一律返回 ``None``，由正式校验在连接前报错。
-        """
-        role_widget = controls.get("role")
-        if role_widget is not None:
-            label = role_widget.currentText()
-            return label if label in POWER_SUPPLY_ROLES else None
-        existing = _dict_copy(existing_channels.get(channel)).get("role")
-        return existing if existing in POWER_SUPPLY_ROLES else None
 
     def read_power_assignment(self) -> dict:
         """按当前下拉框写出供电分配，引用主字段是 ``supply_id``。
@@ -361,7 +338,19 @@ class ConfigFormState:
         for index, (role, control) in enumerate(roles, 1):
             if index <= count:
                 supplies[role] = _assignment_entry(controls.get(control))
-        return {"power_supply_assignment": {"driver_amplifier": driver, "dut_amplifier": {"power_supply_count": count, "supplies": supplies}}}
+        # 上电顺序控件在步骤 11/12 才进入本页；在此之前保留已加载的计划，不能因为
+        # 页面还没有排序控件就把用户/迁移器写入的顺序丢掉。
+        existing = _dict_copy(self.config.get("power_supply_assignment"))
+        driver_plan = _dict_copy(existing.get("driver_amplifier")).get("power_plan")
+        dut_plan = _dict_copy(existing.get("dut_amplifier")).get("power_plan")
+        if isinstance(driver_plan, Mapping):
+            driver["power_plan"] = _dict_copy(driver_plan)
+        if isinstance(dut_plan, Mapping):
+            dut = {"power_supply_count": count, "supplies": supplies}
+            dut["power_plan"] = _dict_copy(dut_plan)
+        else:
+            dut = {"power_supply_count": count, "supplies": supplies}
+        return {"power_supply_assignment": {"driver_amplifier": driver, "dut_amplifier": dut}}
 
     def build_config(
         self, *, test_parameters: Mapping[str, Any] | None = None
@@ -389,6 +378,11 @@ class ConfigFormState:
             target = _dict_copy(config["instruments"]["power_supplies"].get(name))
             channels = _dict_copy(target.get("channels"))
             channels.update(copy.deepcopy(value.get("channels", {})))
+            # 1.1 正式文档不再包含通道 role：旧配置里的取值不能在“合并控件读数”时
+            # 被原样保留下来（步骤 11/12 删除角色控件后这段兼容也一起删除）。
+            for channel in channels.values():
+                if isinstance(channel, dict):
+                    channel.pop("role", None)
             target["channels"] = channels
             config["instruments"]["power_supplies"][name] = target
         assignment = self.read_power_assignment()

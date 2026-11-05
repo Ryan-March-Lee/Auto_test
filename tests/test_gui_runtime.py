@@ -25,16 +25,21 @@ from infrastructure.persistence.run_repository import RunRepository
 from application.configuration_authoring import author_official_configuration
 
 
-FIXTURE = Path(__file__).parent / "fixtures" / "config_driver_enabled_no_assignment.json"
+
 
 
 FULLY_VALID_CONFIG = author_official_configuration({
+    "schema_version": "1.1",
     "test_frequencies": [2.4],
     "signal_source": {"start_power": -10.0, "stop_power": 0.0, "step": 1.0},
     "compression_point": {"type": "5dB"},
     "driver_mode": {"enabled": False},
     "attenuator": {"type": "30dB"},
-    "dut_config": {"max_input_power": 30.0, "power_supply_count": 1},
+    "dut_config": {
+        "max_input_power": 30.0,
+        "power_supply_count": 1,
+        "drain_channel": {"supply_id": "PS1", "channel": "CH2"},
+    },
     "instruments": {
         "signal_generator": {"address": "sim::sg", "model": "SG", "enabled": True},
         "spectrum_analyzer": {"address": "sim::sa", "model": "SA", "enabled": True},
@@ -54,10 +59,21 @@ FULLY_VALID_CONFIG = author_official_configuration({
         },
     },
     "power_supply_assignment": {
-        "driver_amplifier": {"power_supply_count": 0, "supplies": {}},
+        "driver_amplifier": {
+            "power_supply_count": 0,
+            "supplies": {},
+            "power_plan": {"power_sequence": [], "inter_channel_delay_s": 0.0},
+        },
         "dut_amplifier": {
             "power_supply_count": 1,
-            "supplies": {"carrier": {"name": "PS1", "channel": ["CH1", "CH2"]}},
+            "supplies": {"carrier": {"supply_id": "PS1", "channel": ["CH1", "CH2"]}},
+            "power_plan": {
+                "power_sequence": [
+                    {"supply_id": "PS1", "channel": "CH1"},
+                    {"supply_id": "PS1", "channel": "CH2"},
+                ],
+                "inter_channel_delay_s": 2.0,
+            },
         },
     },
 })
@@ -422,8 +438,9 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
 
 class GuiRuntimePreparationTests(unittest.TestCase):
     def _write_config(self):
-        config = json.loads(FIXTURE.read_text(encoding="utf-8"))
-        config = author_official_configuration(config)
+        # 用一份完整配置作为“参数校验”的基线；旧的不完整 fixture 属于 1.0，
+        # 按步骤 6 的版本门禁不能再进入 authoring。
+        config = json.loads(json.dumps(FULLY_VALID_CONFIG))
         directory = tempfile.TemporaryDirectory()
         path = Path(directory.name) / "config.json"
         path.write_text(json.dumps(config), encoding="utf-8")
@@ -467,13 +484,18 @@ class GuiRuntimePreparationTests(unittest.TestCase):
         directory, path = self._write_fully_valid_config()
         try:
             config = json.loads(path.read_text(encoding="utf-8"))
-            # 去掉正式配置中的 DUT 电源角色：线损阶段专用校验不关心 DUT 角色，因此
-            # 仍然通过；完整运行校验会拒绝，旧兼容快照正是把这种配置当作“预检通过”。
-            config["test_plan"]["dut"]["power_roles"] = {}
-            config["run_mapping"]["dut_power_channels"] = []
+            # 去掉 DUT 的通道参数、漏极与上电顺序：线损阶段专用校验不关心这些，
+            # 因此仍然通过；完整运行校验会拒绝。
+            config["test_plan"]["dut"]["channel_settings"] = []
+            config["test_plan"]["dut"]["drain_channel"] = None
+            config["run_mapping"]["dut_power_plan"] = {
+                "power_sequence": [],
+                "inter_channel_delay_s": 0.0,
+            }
             config["power_supply_assignment"]["dut_amplifier"] = {
                 "power_supply_count": 0,
                 "supplies": {},
+                "power_plan": {"power_sequence": [], "inter_channel_delay_s": 0.0},
             }
             path.write_text(json.dumps(config), encoding="utf-8")
 

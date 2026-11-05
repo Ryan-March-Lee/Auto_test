@@ -40,12 +40,17 @@ RUN_ID = "20261022T153000Z_a1b2c3d4"
 def _fully_valid_gui_config() -> dict:
     """完整有效的 GUI 组合配置（驱动模式关闭，DUT 通道已确认接线）。"""
     return author_official_configuration({
+        "schema_version": "1.1",
         "test_frequencies": [2.4],
         "signal_source": {"start_power": -10.0, "stop_power": 0.0, "step": 1.0},
         "compression_point": {"type": "5dB"},
         "driver_mode": {"enabled": False},
         "attenuator": {"type": "30dB"},
-        "dut_config": {"max_input_power": 30.0, "power_supply_count": 1},
+        "dut_config": {
+            "max_input_power": 30.0,
+            "power_supply_count": 1,
+            "drain_channel": {"supply_id": "DP8B1519", "channel": "CH2"},
+        },
         "instruments": {
             "signal_generator": {"address": "sim::sg", "model": "SG", "enabled": True},
             "spectrum_analyzer": {"address": "sim::sa", "model": "SA", "enabled": True},
@@ -59,12 +64,10 @@ def _fully_valid_gui_config() -> dict:
                     "enabled": True,
                     "channels": {
                         "CH1": {
-                            "role": "gate",
                             "voltage": {"value": 2.8},
                             "current": {"value": 0.1},
                         },
                         "CH2": {
-                            "role": "drain",
                             "voltage": {"value": 28.0},
                             "current": {"value": 2.0},
                         },
@@ -86,10 +89,26 @@ def _fully_valid_gui_config() -> dict:
             }
         },
         "power_supply_assignment": {
-            "driver_amplifier": {"power_supply_count": 0, "supplies": {}},
+            "driver_amplifier": {
+                "power_supply_count": 0,
+                "supplies": {},
+                "power_plan": {"power_sequence": [], "inter_channel_delay_s": 0.0},
+            },
             "dut_amplifier": {
                 "power_supply_count": 1,
-                "supplies": {"carrier": {"name": "DP8B1519", "channel": ["CH1", "CH2"]}},
+                "supplies": {
+                    "carrier": {
+                        "supply_id": "DP8B1519",
+                        "channel": ["CH1", "CH2"],
+                    }
+                },
+                "power_plan": {
+                    "power_sequence": [
+                        {"supply_id": "DP8B1519", "channel": "CH1"},
+                        {"supply_id": "DP8B1519", "channel": "CH2"},
+                    ],
+                    "inter_channel_delay_s": 2.0,
+                },
             },
         },
     })
@@ -1067,8 +1086,8 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         self.assertEqual(page.pa_unit1_power_combo.currentText(), "DP8B1519")
         self.assertEqual(page.power_config_widgets["DP8B1519"]["channels"]["CH2"]["voltage"].value(), 28.0)
 
-    def test_config_page_makes_power_channel_roles_explicit(self):
-        """保存配置页时按控件当前选择写入显式角色，不再由装配层推导。"""
+    def test_config_page_build_config_does_not_write_channel_roles(self):
+        """步骤 6：通道 role 不再进入保存文档；控件默认值只是旧页面的显示状态。"""
         from presentation.qt.configuration_page import ConfigurationPage
 
         page = ConfigurationPage({})
@@ -1077,10 +1096,10 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         built = page.build_config()
 
         channels = built["instruments"]["power_supplies"]["DP8B1519"]["channels"]
-        self.assertEqual(channels["CH1"]["role"], "gate")
-        self.assertEqual(channels["CH2"]["role"], "drain")
+        self.assertNotIn("role", channels["CH1"])
+        self.assertNotIn("role", channels["CH2"])
 
-    def test_config_page_keeps_the_role_declared_in_the_configuration(self):
+    def test_config_page_keeps_the_role_declared_in_the_configuration_for_display_only(self):
         from presentation.qt.configuration_page import ConfigurationPage
 
         config = _fully_valid_gui_config()
@@ -1095,8 +1114,8 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         )
         built = page.build_config()
         channels = built["instruments"]["power_supplies"]["DP8B1519"]["channels"]
-        self.assertEqual(channels["CH1"]["role"], "drain")
-        self.assertEqual(channels["CH2"]["role"], "gate")
+        self.assertNotIn("role", channels["CH1"])
+        self.assertNotIn("role", channels["CH2"])
 
     def test_apply_config_clears_previous_values(self):
         from presentation.qt.configuration_page import ConfigurationPage

@@ -37,13 +37,13 @@ from __future__ import annotations
 import copy
 from typing import Any, Mapping
 
-from application.configuration_authoring import DUT_CHANNEL_ROLES
 from application.errors import ConfigurationError
 from domain.configuration.models import resolve_driver_power_source
 from domain.configuration.rules import assignment_supply_id
 from domain.instruments.labels import supply_display_label
 
 from .config_form_state import (
+    DUT_CHANNEL_ROLES,
     POWER_SUPPLY_ROLES,
     assignment_declared,
     parse_frequency_text,

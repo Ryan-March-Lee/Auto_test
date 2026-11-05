@@ -529,8 +529,7 @@ def _draw_power_icon(
 ) -> None:
     """画一个电源符号：顶部留口的圆环 + 从缺口伸进圆心的竖线。
 
-    圆环与竖线各用一支笔：参考实现里圆环描边 4px、竖线宽 8px（按钮 70px），
-    两者粗细不同，这里按同样的比例分别传入。只描边不填充，离屏环境里不依赖字体。
+    圆环与竖线各用一支笔，便于分别控制粗细；只描边不填充，离屏环境里不依赖字体。
     ``stem_pen`` 为 ``None`` 时只画圆环，用于只让圆环带光晕的场合。
     """
     radius = size / 2.0
@@ -638,10 +637,10 @@ def _paint_switch(
     painter.drawEllipse(body)
 
     icon_size = rect.width() * 0.36
-    # 参考实现里圆环描边 4px、竖线宽 8px、发光 10px（按钮 70px）：按同一比例换算，
-    # 因此圆环比竖线细一倍，开启时圆环带一圈青色光。
+    # 圆环按参考比例取按钮直径的 5.7%（70px 按钮上的 4px）；竖线在参考里是圆环的两倍宽，
+    # 但在卡片尺寸下显得笨重，这里收细到与圆环同宽，保留清晰的电源符号轮廓。
     ring_width = max(1.6, rect.width() * 0.057)
-    stem_width = max(2.4, rect.width() * 0.114)
+    stem_width = ring_width
     if glow_strength > 0.001:
         for width_scale, alpha in ((2.8, 0.10), (1.8, 0.24)):
             halo = QPen(

@@ -1,15 +1,16 @@
-"""步骤 7/8 测试：主功放正式输入模型的字段、单位、必填性、非法值处理与运行配置转换。
+"""步骤 7 测试：主功放正式输入模型的字段、单位、必填性、非法值处理与运行配置转换。
 
 覆盖四类契约：
 
 1. **字段与单位**：频率是 ``Frequency``（GHz）、功率扫描起始/终止是 ``PowerDbm``、
    步进是 ``Decibels``、压缩目标与衰减器是 ``Decibels``、DUT 限制是 ``PowerDbm``，
-   DUT 供电通道是显式的 ``supply_id + channel`` 路由。
-2. **必填性**：七个字段都必填，缺字段是构造期的 ``TypeError``（dataclass 语义），
+   DUT 供电是「有序路由计划 + 每路由通道参数 + 可选漏极」。
+2. **必填性**：字段都必填，缺字段是构造期的 ``TypeError``（dataclass 语义），
    显式传 ``None`` 是构造期的 ``AmplifierInputError``。
 3. **非法值处理**：空/重复频率、起始大于终止、非正步进、不支持的压缩目标、负衰减器、
-   非布尔驱动开关、空/重复/裸通道路由都抛 ``AmplifierInputError``，并且归类为配置失败。
-4. **不与旧字典形状绑定**：压缩目标允许值与测试方案 schema 同源；供电通道按电源分组；
+   非布尔驱动开关、空计划、缺参数、多余参数、漏极不在序列里都抛
+   ``AmplifierInputError``，并且归类为配置失败。
+4. **计划语义**：顺序原样保留，通道参数按物理路由索引，漏极精确指向一条路由；
    输入对象不可变，不提供字典键访问。
 
 验证方式：
@@ -27,6 +28,9 @@ from application.dto import (
     AMPLIFIER_COMPRESSION_TARGETS_DB,
     AmplifierInputError,
     AmplifierMeasurementInputs,
+    ChannelSetting,
+    DrainChannel,
+    PowerPlan,
     PowerSweep,
     SupplyChannel,
 )
@@ -35,8 +39,20 @@ from domain.configuration.models import SUPPORTED_COMPRESSION_POINTS
 from domain.measurement.values import Decibels, Frequency, PowerDbm
 
 
+def _route(supply_id="PS1", channel="CH1"):
+    return SupplyChannel(supply_id=supply_id, channel=channel)
+
+
+def _settings(*routes, voltage_v=28.0, current_a=1.0):
+    return {
+        route: ChannelSetting(voltage_v=voltage_v, current_a=current_a)
+        for route in routes
+    }
+
+
 def _inputs(**overrides):
     """构造一份合法的输入，按需覆盖单个字段。"""
+    routes = (_route("PS1", "CH1"), _route("PS1", "CH2"))
     values = {
         "frequencies": (Frequency.from_ghz(1.0), Frequency.from_ghz(2.4)),
         "sweep": PowerSweep(
@@ -46,10 +62,9 @@ def _inputs(**overrides):
         "attenuator": Decibels(10.0),
         "max_dut_input_power": PowerDbm(30.0),
         "driver_enabled": False,
-        "dut_power_channels": (
-            SupplyChannel(supply_id="PS1", channel="CH1"),
-            SupplyChannel(supply_id="PS1", channel="CH2"),
-        ),
+        "dut_power_plan": PowerPlan(power_sequence=routes),
+        "channel_settings": _settings(*routes),
+        "drain_channel": DrainChannel(route=routes[-1]),
     }
     values.update(overrides)
     return AmplifierMeasurementInputs(**values)
@@ -102,6 +117,93 @@ class SupplyChannelTests(unittest.TestCase):
                     SupplyChannel(supply_id=value, channel="CH1")
                 with self.assertRaises(AmplifierInputError):
                     SupplyChannel(supply_id="PS1", channel=value)
+
+
+class ChannelSettingTests(unittest.TestCase):
+    """每条物理路由的工作值/保护值；不携带顺序或角色。"""
+
+    def test_document_reads_work_and_protection_values(self):
+        setting = ChannelSetting.from_document(
+            {
+                "supply_id": "PS1",
+                "channel": "CH2",
+                "voltage": 28,
+                "current": 1.5,
+                "voltage_protection": 30,
+                "current_protection": 2,
+                "unit_voltage": "V",
+                "unit_current": "A",
+            }
+        )
+
+        self.assertEqual(setting.voltage_v, 28.0)
+        self.assertEqual(setting.current_a, 1.5)
+        self.assertEqual(setting.voltage_protection_v, 30.0)
+        self.assertEqual(setting.current_protection_a, 2.0)
+
+    def test_missing_work_value_is_rejected(self):
+        for missing in ("voltage", "current"):
+            with self.subTest(missing=missing):
+                document = {
+                    "supply_id": "PS1",
+                    "channel": "CH1",
+                    "voltage": 28,
+                    "current": 1,
+                }
+                del document[missing]
+                with self.assertRaises(AmplifierInputError):
+                    ChannelSetting.from_document(document)
+
+    def test_legacy_role_and_unknown_fields_are_rejected(self):
+        for extra in ({"role": "drain"}, {"connection": "PS1-CH1 -> DUT 栅极"}, {"bogus": 1}):
+            with self.subTest(extra=extra):
+                document = {
+                    "supply_id": "PS1",
+                    "channel": "CH1",
+                    "voltage": 28,
+                    "current": 1,
+                    **extra,
+                }
+                with self.assertRaises(AmplifierInputError):
+                    ChannelSetting.from_document(document)
+
+    def test_units_and_numeric_values_are_checked(self):
+        base = {"supply_id": "PS1", "channel": "CH1", "voltage": 28, "current": 1}
+        for overrides in (
+            {"unit_voltage": "mV"},
+            {"unit_current": "mA"},
+            {"voltage": "28V"},
+            {"current": True},
+            {"voltage": float("nan")},
+            {"current": float("inf")},
+        ):
+            with self.subTest(overrides=overrides):
+                with self.assertRaises(AmplifierInputError):
+                    ChannelSetting.from_document({**base, **overrides})
+
+    def test_current_may_be_zero_but_never_negative(self):
+        """与领域校验一致：电流允许 0，负数在直接构造与文档转换两条路径都失败。"""
+        self.assertEqual(
+            ChannelSetting(voltage_v=28.0, current_a=0.0).current_a, 0.0
+        )
+
+        for value in (-0.1, -1):
+            with self.subTest(current=value):
+                with self.assertRaises(AmplifierInputError) as raised:
+                    ChannelSetting(voltage_v=28.0, current_a=value)
+                self.assertIn("不能为负值", str(raised.exception))
+
+        base = {"supply_id": "PS1", "channel": "CH1", "voltage": 28, "current": 1}
+        for field in ("current", "current_protection"):
+            with self.subTest(field=field):
+                with self.assertRaises(AmplifierInputError):
+                    ChannelSetting.from_document({**base, field: -1})
+
+    def test_setting_is_immutable(self):
+        setting = ChannelSetting(voltage_v=28.0, current_a=1.0)
+
+        with self.assertRaises(FrozenInstanceError):
+            setting.voltage_v = 30.0
 
 
 class PowerSweepTests(unittest.TestCase):
@@ -165,17 +267,62 @@ class AmplifierMeasurementInputsTests(unittest.TestCase):
         self.assertEqual(inputs.max_dut_input_power, PowerDbm(30.0))
         self.assertFalse(inputs.driver_enabled)
         self.assertEqual(
-            [(item.supply_id, item.channel) for item in inputs.dut_power_channels],
-            [("PS1", "CH1"), ("PS1", "CH2")],
+            inputs.dut_power_plan.power_sequence,
+            (_route("PS1", "CH1"), _route("PS1", "CH2")),
+        )
+        self.assertEqual(inputs.drain_channel.route, _route("PS1", "CH2"))
+
+    def test_multiple_supplies_and_arbitrary_order_are_preserved(self):
+        order = (
+            _route("PS2", "CH2"),
+            _route("PS1", "CH1"),
+            _route("PS2", "CH1"),
+        )
+        settings = {
+            order[0]: ChannelSetting(voltage_v=5.0, current_a=0.1),
+            order[1]: ChannelSetting(voltage_v=28.0, current_a=1.0),
+            order[2]: ChannelSetting(voltage_v=3.3, current_a=0.2),
+        }
+        inputs = _inputs(
+            dut_power_plan=PowerPlan(power_sequence=order, inter_channel_delay_s=2.5),
+            channel_settings=settings,
+            drain_channel=DrainChannel(route=order[1]),
         )
 
-    def test_supplies_are_grouped_by_supply_id(self):
+        self.assertEqual(inputs.dut_power_plan.power_sequence, order)
+        self.assertEqual(inputs.dut_power_plan.inter_channel_delay_s, 2.5)
+        self.assertEqual(inputs.channel_settings[order[2]].voltage_v, 3.3)
+        self.assertEqual(
+            inputs.dut_supplies(), {"PS2": ("CH2", "CH1"), "PS1": ("CH1",)}
+        )
+
+    def test_drain_route_is_located_even_when_it_is_not_the_first_channel(self):
+        order = (_route("PS1", "CH1"), _route("PS2", "CH2"), _route("PS1", "CH2"))
         inputs = _inputs(
-            dut_power_channels=(
-                SupplyChannel(supply_id="PS1", channel="CH1"),
-                SupplyChannel(supply_id="PS2", channel="CH1"),
-                SupplyChannel(supply_id="PS1", channel="CH2"),
-            )
+            dut_power_plan=PowerPlan(power_sequence=order),
+            channel_settings=_settings(*order),
+            drain_channel=DrainChannel(route=_route("PS2", "CH2")),
+        )
+
+        self.assertTrue(inputs.drain_channel.is_configured)
+        self.assertEqual(inputs.drain_channel.route, _route("PS2", "CH2"))
+
+    def test_drain_is_optional_for_the_dto(self):
+        inputs = _inputs(drain_channel=DrainChannel())
+
+        self.assertFalse(inputs.drain_channel.is_configured)
+        self.assertIsNone(inputs.drain_channel.route)
+
+    def test_supplies_are_grouped_by_supply_id(self):
+        order = (
+            _route("PS1", "CH1"),
+            _route("PS2", "CH1"),
+            _route("PS1", "CH2"),
+        )
+        inputs = _inputs(
+            dut_power_plan=PowerPlan(power_sequence=order),
+            channel_settings=_settings(*order),
+            drain_channel=DrainChannel(),
         )
 
         supplies = inputs.dut_supplies()
@@ -186,6 +333,7 @@ class AmplifierMeasurementInputsTests(unittest.TestCase):
             supplies["PS1"] = ()
 
     def test_all_fields_are_required(self):
+        routes = (_route("PS1", "CH1"),)
         valid = {
             "frequencies": (Frequency.from_ghz(1.0),),
             "sweep": PowerSweep(
@@ -195,7 +343,9 @@ class AmplifierMeasurementInputsTests(unittest.TestCase):
             "attenuator": Decibels(10.0),
             "max_dut_input_power": PowerDbm(30.0),
             "driver_enabled": False,
-            "dut_power_channels": (SupplyChannel(supply_id="PS1", channel="CH1"),),
+            "dut_power_plan": PowerPlan(power_sequence=routes),
+            "channel_settings": _settings(*routes),
+            "drain_channel": DrainChannel(route=routes[0]),
         }
         for name in valid:
             with self.subTest(missing=name):
@@ -210,7 +360,9 @@ class AmplifierMeasurementInputsTests(unittest.TestCase):
             "compression_target",
             "attenuator",
             "max_dut_input_power",
-            "dut_power_channels",
+            "dut_power_plan",
+            "channel_settings",
+            "drain_channel",
         ):
             with self.subTest(field=name):
                 with self.assertRaises(AmplifierInputError):
@@ -269,32 +421,87 @@ class AmplifierMeasurementInputsTests(unittest.TestCase):
 
         self.assertTrue(_inputs(driver_enabled=True).driver_enabled)
 
-    def test_dut_power_channels_must_be_non_empty_and_unique(self):
+    def test_plan_must_be_non_empty_and_unique(self):
         with self.assertRaises(AmplifierInputError) as empty:
-            _inputs(dut_power_channels=())
+            _inputs(
+                dut_power_plan=PowerPlan.empty(),
+                channel_settings={},
+                drain_channel=DrainChannel(),
+            )
         self.assertIn("至少有一路", str(empty.exception))
 
-        with self.assertRaises(AmplifierInputError) as duplicate:
-            _inputs(
-                dut_power_channels=(
-                    SupplyChannel(supply_id="PS1", channel="CH1"),
-                    SupplyChannel(supply_id="PS1", channel="CH1"),
-                )
+        with self.assertRaises(AmplifierInputError):
+            PowerPlan(
+                power_sequence=(_route("PS1", "CH1"), _route("PS1", "CH1"))
             )
-        self.assertIn("重复分配", str(duplicate.exception))
 
         with self.assertRaises(AmplifierInputError):
-            _inputs(dut_power_channels=("PS1/CH1", {}))
+            PowerPlan(power_sequence=("PS1/CH1",))
+
+    def test_missing_channel_setting_is_rejected(self):
+        routes = (_route("PS1", "CH1"), _route("PS1", "CH2"))
+
+        with self.assertRaises(AmplifierInputError) as raised:
+            _inputs(
+                dut_power_plan=PowerPlan(power_sequence=routes),
+                channel_settings=_settings(routes[0]),
+                drain_channel=DrainChannel(route=routes[0]),
+            )
+
+        self.assertIn("缺少电压/电流设置", str(raised.exception))
+        self.assertIn("PS1/CH2", str(raised.exception))
+
+    def test_setting_outside_the_sequence_is_rejected(self):
+        routes = (_route("PS1", "CH1"),)
+        settings = _settings(*routes, _route("PS2", "CH1"))
+
+        with self.assertRaises(AmplifierInputError) as raised:
+            _inputs(
+                dut_power_plan=PowerPlan(power_sequence=routes),
+                channel_settings=settings,
+                drain_channel=DrainChannel(route=routes[0]),
+            )
+
+        self.assertIn("未列入上电顺序", str(raised.exception))
+
+    def test_channel_settings_must_be_keyed_by_routes_and_settings(self):
+        routes = (_route("PS1", "CH1"),)
+        with self.assertRaises(AmplifierInputError):
+            _inputs(channel_settings=[ChannelSetting(voltage_v=28, current_a=1)])
+        with self.assertRaises(AmplifierInputError):
+            _inputs(channel_settings={"PS1/CH1": ChannelSetting(voltage_v=28, current_a=1)})
+        with self.assertRaises(AmplifierInputError):
+            _inputs(channel_settings={routes[0]: {"voltage": 28, "current": 1}})
+
+    def test_drain_must_be_in_the_power_sequence(self):
+        routes = (_route("PS1", "CH1"), _route("PS1", "CH2"))
+
+        with self.assertRaises(AmplifierInputError) as raised:
+            _inputs(
+                dut_power_plan=PowerPlan(power_sequence=routes),
+                channel_settings=_settings(*routes),
+                drain_channel=DrainChannel(route=_route("PS2", "CH1")),
+            )
+
+        self.assertIn("不在给定的通道集合中", str(raised.exception))
 
     def test_same_channel_number_on_different_supplies_is_allowed(self):
+        order = (_route("PS1", "CH1"), _route("PS2", "CH1"))
         inputs = _inputs(
-            dut_power_channels=(
-                SupplyChannel(supply_id="PS1", channel="CH1"),
-                SupplyChannel(supply_id="PS2", channel="CH1"),
-            )
+            dut_power_plan=PowerPlan(power_sequence=order),
+            channel_settings=_settings(*order),
+            drain_channel=DrainChannel(route=order[0]),
         )
 
         self.assertEqual(inputs.dut_supplies(), {"PS1": ("CH1",), "PS2": ("CH1",)})
+
+    def test_channel_settings_are_immutable(self):
+        inputs = _inputs()
+
+        with self.assertRaises(TypeError):
+            inputs.channel_settings[_route("PS1", "CH1")] = ChannelSetting(
+                voltage_v=1.0, current_a=1.0
+            )
 
     def test_input_object_is_immutable(self):
         inputs = _inputs()
@@ -315,9 +522,6 @@ class AmplifierMeasurementInputsTests(unittest.TestCase):
 class RunConfigurationInputTests(unittest.TestCase):
     def _configuration(self):
         from domain.configuration.models import (
-            ChannelMapping,
-            InstrumentMapping,
-            PowerChannelPlan,
             RunConfiguration,
             RunResourceMapping,
             TestPlan,
@@ -333,18 +537,40 @@ class RunConfigurationInputTests(unittest.TestCase):
                 attenuator_value=30,
                 max_input_power=30.0,
                 driver_enabled=True,
-                dut_power_channels={
-                    "gate": PowerChannelPlan(role="gate", voltage=2.8),
-                    "drain": PowerChannelPlan(role="drain", voltage=28.0),
-                },
+                drain_channel={"supply_id": "PS1", "channel": "CH2"},
+                channel_settings=[
+                    {
+                        "supply_id": "PS1",
+                        "channel": "CH1",
+                        "voltage": 2.8,
+                        "current": 0.1,
+                        "voltage_protection": 1.0,
+                        "current_protection": 1.0,
+                        "unit_voltage": "V",
+                        "unit_current": "A",
+                    },
+                    {
+                        "supply_id": "PS1",
+                        "channel": "CH2",
+                        "voltage": 28.0,
+                        "current": 2.0,
+                        "voltage_protection": 30.0,
+                        "current_protection": 2.5,
+                        "unit_voltage": "V",
+                        "unit_current": "A",
+                    },
+                ],
             ),
             run_mapping=RunResourceMapping(
                 instruments={},
                 power_supplies={},
-                dut_power_channels=[
-                    ChannelMapping(channel="PS1/CH1", role="gate"),
-                    ChannelMapping(channel="PS1/CH2", role="drain"),
-                ],
+                dut_power_plan={
+                    "power_sequence": [
+                        {"supply_id": "PS1", "channel": "CH2"},
+                        {"supply_id": "PS1", "channel": "CH1"},
+                    ],
+                    "inter_channel_delay_s": 2.0,
+                },
             ),
         )
 
@@ -359,7 +585,14 @@ class RunConfigurationInputTests(unittest.TestCase):
         self.assertEqual(inputs.attenuator, Decibels(30.0))
         self.assertEqual(inputs.max_dut_input_power, PowerDbm(30.0))
         self.assertTrue(inputs.driver_enabled)
-        self.assertEqual(inputs.dut_supplies(), {"PS1": ("CH1", "CH2")})
+        self.assertEqual(
+            inputs.dut_power_plan.power_sequence,
+            (_route("PS1", "CH2"), _route("PS1", "CH1")),
+        )
+        self.assertEqual(inputs.dut_power_plan.inter_channel_delay_s, 2.0)
+        self.assertEqual(inputs.drain_channel.route, _route("PS1", "CH2"))
+        self.assertEqual(inputs.channel_settings[_route("PS1", "CH2")].voltage_v, 28.0)
+        self.assertEqual(inputs.dut_supplies(), {"PS1": ("CH2", "CH1")})
 
     def test_missing_run_configuration_fails_before_any_device_action(self):
         for value in (object(), None):
@@ -379,12 +612,12 @@ class RunConfigurationInputTests(unittest.TestCase):
         with self.assertRaises(AmplifierInputError):
             AmplifierMeasurementInputs.from_run_configuration(configuration)
 
-    def test_bare_channel_is_rejected_even_with_a_legacy_supply(self):
+    def test_legacy_role_based_configuration_is_not_used_to_infer_order(self):
+        """1.0 的 ``dut_power_channels`` 不再被读成上电顺序。"""
         from dataclasses import replace
 
         from domain.configuration.models import (
             ChannelMapping,
-            InstrumentMapping,
             RunResourceMapping,
         )
 
@@ -392,30 +625,63 @@ class RunConfigurationInputTests(unittest.TestCase):
         configuration = replace(
             configuration,
             run_mapping=RunResourceMapping(
-                instruments={"power_supply": InstrumentMapping(model="PS1")},
+                instruments={},
                 power_supplies={},
-                dut_power_channels=[ChannelMapping(channel="CH1", role="gate")],
+                dut_power_channels=[
+                    ChannelMapping(channel="PS1/CH1", role="gate"),
+                    ChannelMapping(channel="PS1/CH2", role="drain"),
+                ],
+            ),
+        )
+
+        with self.assertRaises(AmplifierInputError) as raised:
+            AmplifierMeasurementInputs.from_run_configuration(configuration)
+
+        self.assertIn("至少有一路", str(raised.exception))
+
+    def test_bare_channel_without_supply_identity_is_rejected(self):
+        """缺少电源身份的裸通道必须在正式输入转换边界失败。"""
+        from dataclasses import replace
+
+        from domain.configuration.models import RunResourceMapping
+
+        configuration = self._configuration()
+        configuration = replace(
+            configuration,
+            run_mapping=RunResourceMapping(
+                instruments={},
+                power_supplies={},
+                dut_power_plan={
+                    "power_sequence": [{"supply_id": "PS1", "channel": "  "}],
+                    "inter_channel_delay_s": 0.0,
+                },
+            ),
+            test_plan=replace(
+                configuration.test_plan,
+                channel_settings=[
+                    {"supply_id": "PS1", "channel": "  ", "voltage": 28, "current": 1}
+                ],
+                drain_channel={"supply_id": "PS1", "channel": "  "},
             ),
         )
 
         with self.assertRaises(AmplifierInputError):
             AmplifierMeasurementInputs.from_run_configuration(configuration)
 
-    def test_bare_channel_without_supply_identity_is_rejected(self):
-        """缺少电源身份的裸通道必须在正式输入转换边界失败。"""
-        configuration = self._configuration()
-        configuration.run_mapping.dut_power_channels[0] = type(
-            "Channel", (), {"channel": "CH1"}
-        )()
-
-        with self.assertRaises(AmplifierInputError):
-            AmplifierMeasurementInputs.from_run_configuration(configuration)
-
     def test_channel_without_a_name_is_rejected(self):
+        from dataclasses import replace
+
         configuration = self._configuration()
-        configuration.run_mapping.dut_power_channels[0] = type(
-            "Channel", (), {"channel": "  "}
-        )()
+        configuration = replace(
+            configuration,
+            test_plan=replace(
+                configuration.test_plan,
+                channel_settings=[
+                    {"supply_id": "PS1", "channel": "  ", "voltage": 28, "current": 1}
+                ],
+                drain_channel={"supply_id": "PS1", "channel": "  "},
+            ),
+        )
 
         with self.assertRaises(AmplifierInputError):
             AmplifierMeasurementInputs.from_run_configuration(configuration)
@@ -437,6 +703,9 @@ class AmplifierInputErrorTaxonomyTests(unittest.TestCase):
             "AMPLIFIER_COMPRESSION_TARGETS_DB",
             "AmplifierInputError",
             "AmplifierMeasurementInputs",
+            "ChannelSetting",
+            "DrainChannel",
+            "PowerPlan",
             "PowerSweep",
             "SupplyChannel",
         ):

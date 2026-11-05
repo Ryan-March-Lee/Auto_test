@@ -377,6 +377,7 @@ class PowerPlanExportTests(unittest.TestCase):
             "AMPLIFIER_COMPRESSION_TARGETS_DB",
             "AmplifierInputError",
             "AmplifierMeasurementInputs",
+            "ChannelSetting",
             "DrainChannel",
             "MAX_INTER_CHANNEL_DELAY_S",
             "PowerPlan",

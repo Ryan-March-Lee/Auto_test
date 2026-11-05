@@ -153,15 +153,34 @@ def amplifier_inputs(
     max_input_power_dbm: float = 100.0,
     driver_enabled: bool = False,
     supplies: tuple[tuple[str, str], ...] = (("PS1", "CH2"),),
+    voltage_v: float = 28.0,
+    current_a: float = 1.0,
 ):
     """构造主功放正式输入替身。
 
     技术债步骤 8 起，主功放用例只消费 :class:`AmplifierMeasurementInputs`；测试不再
-    拼历史配置字典。默认值对应“1 GHz、-20 dBm 单点扫描、1 dB 压缩、驱动关闭”。
+    拼历史配置字典。默认值对应“1 GHz、-20 dBm 单点扫描、1 dB 压缩、驱动关闭”，
+    供电按 ``supplies`` 的给定顺序形成上电计划，漏极取最后一条路由（步骤 10 起才
+    真正决定效率输入）。
     """
-    from application.dto import AmplifierMeasurementInputs, PowerSweep, SupplyChannel
+    from application.dto import (
+        AmplifierMeasurementInputs,
+        ChannelSetting,
+        DrainChannel,
+        PowerPlan,
+        PowerSweep,
+        SupplyChannel,
+    )
     from domain.measurement.values import Decibels, Frequency, PowerDbm
 
+    routes = tuple(
+        SupplyChannel(supply_id=supply_id, channel=channel)
+        for supply_id, channel in supplies
+    )
+    settings = {
+        route: ChannelSetting(voltage_v=voltage_v, current_a=current_a)
+        for route in routes
+    }
     return AmplifierMeasurementInputs(
         frequencies=(Frequency.from_ghz(frequency_ghz),),
         sweep=PowerSweep(
@@ -173,10 +192,9 @@ def amplifier_inputs(
         attenuator=Decibels(attenuator_db),
         max_dut_input_power=PowerDbm(max_input_power_dbm),
         driver_enabled=driver_enabled,
-        dut_power_channels=tuple(
-            SupplyChannel(supply_id=supply_id, channel=channel)
-            for supply_id, channel in supplies
-        ),
+        dut_power_plan=PowerPlan(power_sequence=routes),
+        channel_settings=settings,
+        drain_channel=DrainChannel(route=routes[-1] if routes else None),
     )
 
 

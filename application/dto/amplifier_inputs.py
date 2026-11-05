@@ -23,14 +23,17 @@
 | `attenuator` | `Decibels`（dB，非负） | 测试方案的衰减器设定 | 是 | 负值、非值对象 → `AmplifierInputError` |
 | `max_dut_input_power` | `PowerDbm`（dBm） | 测试方案的 DUT 输入功率限制 | 是 | 非值对象 → `AmplifierInputError`（不再默认“不限制”） |
 | `driver_enabled` | `bool` | 测试方案的驱动模式开关 | 是 | 非布尔值（含 `1`/`"yes"`）→ `AmplifierInputError` |
-| `dut_power_channels` | `tuple[SupplyChannel, ...]` | 运行映射里本机的 DUT 供电通道 | 是，非空 | 空集合、重复通道、电源标识或通道名为空/占位值/含 `/` → `AmplifierInputError` |
+| `dut_power_plan` | `PowerPlan` | 运行映射里冻结的 DUT 上电顺序与组间隔 | 是，非空 | 空序列、重复路由、非法路由、越界间隔 → `AmplifierInputError` |
+| `channel_settings` | `Mapping[SupplyChannel, ChannelSetting]` | 测试方案里每条 DUT 路由的工作值/保护值 | 是，且与序列集合完全相等 | 缺设置、多设置、非路由键、缺工作值 → `AmplifierInputError` |
+| `drain_channel` | `DrainChannel` | 测试方案的漏极测量路由（可选） | 是（可未配置） | 已配置但不在上电序列里 → `AmplifierInputError` |
 
 ``SupplyChannel`` 只接受显式路由（``supply_id + channel`` 或
 ``"<supply_id>/<channel>"``）：裸通道名（旧快照的 ``CH1``）不在这里被猜测成“唯一那台
 电源”。运行配置转换也只接受显式路由，不按单电源假设猜测设备。
 
-``PowerPlan`` / ``DrainChannel`` 是 v1.1 通道计划的值对象（步骤 4）：前者表达一组
-通道的有序上电顺序与组内间隔，后者表达可选的漏极测量路由。两者共用同一个
+``PowerPlan`` / ``DrainChannel`` / ``ChannelSetting`` 是 v1.1 通道计划的值对象
+（步骤 4/7）：计划表达一组通道的有序上电顺序与组内间隔，``ChannelSetting`` 为每条
+物理路由携带工作值/保护值，漏极表达可选的效率测量路由。它们共用同一个
 ``SupplyChannel`` 路由类型，不引入第二份路由实现；计划本身不判断绑定关系，也不强制
 DUT 必须有漏极。
 
@@ -50,6 +53,7 @@ from typing import Any
 
 from application.errors import ConfigurationError
 from domain.configuration.models import (
+    CHANNEL_SETTING_FIELDS,
     MAX_INTER_CHANNEL_DELAY_S,
     PLACEHOLDER_VALUES,
     SUPPORTED_COMPRESSION_POINTS,
@@ -60,6 +64,7 @@ __all__ = [
     "AMPLIFIER_COMPRESSION_TARGETS_DB",
     "AmplifierInputError",
     "AmplifierMeasurementInputs",
+    "ChannelSetting",
     "DrainChannel",
     "MAX_INTER_CHANNEL_DELAY_S",
     "PowerPlan",
@@ -112,6 +117,34 @@ def _require_value(value: Any, expected: type, label: str) -> Any:
             f"{label} 必须是 {expected.__name__}，收到 {type(value).__name__}"
         )
     return value
+
+
+def _finite_number(value: Any, label: str, *, non_negative: bool = False) -> float:
+    """把工作值/保护值收敛为有限浮点数；布尔值与文本一律拒绝。
+
+    ``non_negative`` 与领域校验的电流规则（``models.py`` 的
+    ``_validate_channels``）一致：电流可以是 0，但不能为负。电压没有这条限制，
+    因为领域契约没有要求电压非负。
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise AmplifierInputError(
+            f"{label} 必须是有限数值，收到 {type(value).__name__}"
+        )
+    number = float(value)
+    if not math.isfinite(number):
+        raise AmplifierInputError(f"{label} 必须是有限数值，收到 {value!r}")
+    if non_negative and number < 0:
+        raise AmplifierInputError(f"{label} 不能为负值，收到 {number:g}")
+    return number
+
+
+def _optional_finite_number(
+    value: Any, label: str, *, non_negative: bool = False
+) -> float | None:
+    """可空保护值：``None`` 保持未配置，其余按有限数值收敛。"""
+    if value is None:
+        return None
+    return _finite_number(value, label, non_negative=non_negative)
 
 
 @dataclass(frozen=True)
@@ -259,6 +292,80 @@ def _inter_channel_delay(value: Any) -> float:
 
 
 @dataclass(frozen=True)
+class ChannelSetting:
+    """一条物理路由的工作值/保护值；只承载参数，不承载顺序或角色。
+
+    ``channel_settings`` 按 ``SupplyChannel`` 索引，因此本对象不必再存路由。上电顺序
+    只由 :class:`PowerPlan` 决定；漏极也只是一条测量路由，不会因为某条设置“像漏极”
+    而改变启停。工作值与保护值必须是有限数值，电流（含电流保护值）按领域规则允许
+    0 但不能为负；保护值当前只保存、不下发（契约 §6.13），这里仍原样保留，避免 DTO
+    丢掉配置里已有的数值。
+    """
+
+    voltage_v: float
+    current_a: float
+    voltage_protection_v: float | None = None
+    current_protection_a: float | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "voltage_v", _finite_number(self.voltage_v, "通道工作电压")
+        )
+        object.__setattr__(
+            self,
+            "current_a",
+            _finite_number(self.current_a, "通道工作电流", non_negative=True),
+        )
+        object.__setattr__(
+            self,
+            "voltage_protection_v",
+            _optional_finite_number(self.voltage_protection_v, "通道电压保护值"),
+        )
+        object.__setattr__(
+            self,
+            "current_protection_a",
+            _optional_finite_number(
+                self.current_protection_a, "通道电流保护值", non_negative=True
+            ),
+        )
+
+    @classmethod
+    def from_document(cls, value: Any) -> "ChannelSetting":
+        """读取 ``channel_settings`` 的一条平铺记录（路由两段 + 参数）。
+
+        路由由调用方用 :meth:`SupplyChannel` 解析；这里只读参数并拒绝旧角色字段与
+        未知字段。``voltage`` / ``current`` 是必填工作值，保护值与单位可省略。
+        """
+        if not isinstance(value, Mapping):
+            raise AmplifierInputError(
+                f"通道参数必须是对象，收到 {type(value).__name__}"
+            )
+        unknown = {
+            key
+            for key in value
+            if key not in CHANNEL_SETTING_FIELDS
+        }
+        if unknown:
+            names = "、".join(sorted(str(key) for key in unknown))
+            raise AmplifierInputError(f"通道参数不能包含额外字段：{names}")
+        for field in ("voltage", "current"):
+            if field not in value:
+                raise AmplifierInputError(f"通道参数缺少 {field}")
+        for field, expected in (("unit_voltage", "V"), ("unit_current", "A")):
+            unit = value.get(field)
+            if unit is not None and unit != expected:
+                raise AmplifierInputError(
+                    f"通道参数的 {field} 必须是 {expected}，收到 {unit!r}"
+                )
+        return cls(
+            voltage_v=value["voltage"],
+            current_a=value["current"],
+            voltage_protection_v=value.get("voltage_protection"),
+            current_protection_a=value.get("current_protection"),
+        )
+
+
+@dataclass(frozen=True)
 class PowerPlan:
     """一组电源通道的有序上电计划。
 
@@ -312,6 +419,8 @@ class PowerPlan:
         """
         if value is None:
             return cls()
+        if isinstance(value, cls):
+            return value
         if not isinstance(value, Mapping):
             raise AmplifierInputError(
                 "power_plan 必须是对象，"
@@ -388,9 +497,12 @@ class DrainChannel:
         ``require_in_routes(available)``：调用方给出的集合是什么，就只检查是否在
         其中，不隐含“属于 DUT/已启用/在序列内”。
         """
-        drain = cls(
-            route=None if value is None else SupplyChannel.from_document(value)
-        )
+        if isinstance(value, cls):
+            drain = value
+        else:
+            drain = cls(
+                route=None if value is None else SupplyChannel.from_document(value)
+            )
         if available is not None:
             drain.require_in_routes(available)
         return drain
@@ -459,11 +571,21 @@ class PowerSweep:
 
 @dataclass(frozen=True, kw_only=True)
 class AmplifierMeasurementInputs:
-    """主功放测量的正式输入：频率、功率扫描、压缩目标、衰减器、DUT 限制、驱动模式与供电通道。
+    """主功放测量的正式输入：频率、功率扫描、压缩目标、衰减器、DUT 限制、驱动模式与供电计划。
 
     全部字段必填、构造即校验：主功放用例只消费本对象，不需要 ``Mapping[str, Any]``
     作为正式配置类型。运行标识、仪器端口、阶段记录器与校准输入（线损/驱动映射）
     属于运行契约，不在这里表达。
+
+    DUT 供电由三项组成，职责互不重叠：
+
+    - ``dut_power_plan``：**有序**物理路由与组间隔，顺序就是上电顺序；
+    - ``channel_settings``：按物理路由索引的工作值/保护值，是**无序集合**；
+    - ``drain_channel``：可选的漏极测量路由，只供效率计算读取，不参与排序或启停。
+
+    构造时要求两个集合完全一致：序列里的每条路由都必须有设置，设置里也不能出现
+    未列入序列的通道。这是 DTO 能安全消费“已校验计划”的最低保证；归属 DUT、绑定
+    与漏极必填等配置/运行规则仍由 domain 的正式校验负责。
     """
 
     frequencies: tuple[Frequency, ...]
@@ -472,7 +594,9 @@ class AmplifierMeasurementInputs:
     attenuator: Decibels
     max_dut_input_power: PowerDbm
     driver_enabled: bool
-    dut_power_channels: tuple[SupplyChannel, ...]
+    dut_power_plan: PowerPlan
+    channel_settings: Mapping[SupplyChannel, ChannelSetting]
+    drain_channel: DrainChannel
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "frequencies", self._frequencies(self.frequencies))
@@ -491,9 +615,26 @@ class AmplifierMeasurementInputs:
             raise AmplifierInputError(
                 f"驱动模式开关必须是布尔值，收到 {type(self.driver_enabled).__name__}"
             )
-        object.__setattr__(
-            self, "dut_power_channels", self._routed_channels(self.dut_power_channels)
-        )
+        plan = _require_value(self.dut_power_plan, PowerPlan, "DUT 上电计划")
+        if plan.is_empty:
+            raise AmplifierInputError(
+                "DUT 供电通道不能为空：主功放测量必须至少有一路 DUT 供电"
+            )
+        settings = _channel_settings(self.channel_settings)
+        sequence = plan.power_sequence
+        missing = [route for route in sequence if route not in settings]
+        if missing:
+            names = "、".join(route.token for route in missing)
+            raise AmplifierInputError(f"上电顺序中的通道缺少电压/电流设置：{names}")
+        extra = [route for route in settings if route not in sequence]
+        if extra:
+            names = "、".join(route.token for route in extra)
+            raise AmplifierInputError(f"通道参数包含未列入上电顺序的通道：{names}")
+        object.__setattr__(self, "channel_settings", settings)
+        drain = _require_value(self.drain_channel, DrainChannel, "漏极通道")
+        # 漏极只做成员判定：配置了就必须是本次上电序列里的物理通道。是否必须配置
+        # 属于主功放运行的校验（domain 规则 11），不在 DTO 里强制。
+        drain.require_in_routes(sequence)
 
     @classmethod
     def from_run_configuration(cls, configuration: Any) -> "AmplifierMeasurementInputs":
@@ -501,10 +642,11 @@ class AmplifierMeasurementInputs:
 
         只读取领域运行配置的**类型化字段**（``TestPlan`` / ``RunResourceMapping``），
         不读取历史测量字典的键名：测试方案提供频率、扫描、压缩目标、衰减器、DUT
-        输入限制与驱动模式，运行映射提供本机实际接线的 DUT 供电通道。
+        输入限制、通道参数与漏极，运行映射提供本机实际接线的有序 DUT 上电计划。
 
         非法或缺失字段统一收敛为 :class:`AmplifierInputError`，因此调用方可以在连接
-        任何仪器之前失败。运行映射只接受显式 ``supply_id/CHx`` 路由。
+        任何仪器之前失败。计划与通道参数只接受 v1.1 的两段路由对象；1.0 的
+        ``dut_power_channels`` / 角色字段不会被用来推断顺序。
         """
         plan = getattr(configuration, "test_plan", None)
         mapping = getattr(configuration, "run_mapping", None)
@@ -526,7 +668,15 @@ class AmplifierMeasurementInputs:
                 attenuator=Decibels(plan.attenuator_value),
                 max_dut_input_power=PowerDbm(plan.max_input_power),
                 driver_enabled=plan.driver_enabled,
-                dut_power_channels=_dut_power_channels(mapping),
+                dut_power_plan=PowerPlan.from_document(
+                    getattr(mapping, "dut_power_plan", None)
+                ),
+                channel_settings=_channel_settings_from_document(
+                    getattr(plan, "channel_settings", None)
+                ),
+                drain_channel=DrainChannel.from_document(
+                    getattr(plan, "drain_channel", None)
+                ),
             )
         except AmplifierInputError:
             raise
@@ -554,43 +704,66 @@ class AmplifierMeasurementInputs:
             seen.add(value.ghz)
         return frequencies
 
-    @staticmethod
-    def _routed_channels(values: Any) -> tuple[SupplyChannel, ...]:
-        if not isinstance(values, Iterable) or isinstance(values, (str, bytes, Mapping)):
-            raise AmplifierInputError(
-                f"DUT 供电通道必须是 SupplyChannel 序列，收到 {type(values).__name__}"
-            )
-        channels = tuple(values)
-        if not channels:
-            raise AmplifierInputError("DUT 供电通道不能为空：主功放测量必须至少有一路 DUT 供电")
-        seen: set[tuple[str, str]] = set()
-        for index, value in enumerate(channels):
-            _require_value(value, SupplyChannel, f"DUT 供电通道[{index}]")
-            key = (value.supply_id, value.channel)
-            if key in seen:
-                raise AmplifierInputError(
-                    f"DUT 供电通道重复分配：{value.supply_id}/{value.channel}"
-                )
-            seen.add(key)
-        return channels
-
     def dut_supplies(self) -> Mapping[str, tuple[str, ...]]:
-        """按电源分组的 DUT 通道：``{supply_id: (通道名, ...)}``，顺序按声明顺序。
+        """按电源分组的 DUT 通道：``{supply_id: (通道名, ...)}``，顺序按上电顺序。
 
-        同一台电源可以同时供 DUT 的多个通道（例如 gate 与 drain），分组是只读投影，
-        供测量逐通道读取电压/电流时使用。
+        同一台电源可以同时供 DUT 的多个通道；分组是只读投影，供测量逐通道读取
+        电压/电流时使用。步骤 10 起效率只读 ``drain_channel``，分组顺序不再影响
+        ``dc_power``。
         """
         grouped: dict[str, list[str]] = {}
-        for item in self.dut_power_channels:
+        for item in self.dut_power_plan.power_sequence:
             grouped.setdefault(item.supply_id, []).append(item.channel)
         return MappingProxyType({name: tuple(channels) for name, channels in grouped.items()})
 
 
-def _dut_power_channels(mapping: Any) -> tuple[SupplyChannel, ...]:
-    """把运行映射中的显式路由解析为供电通道。"""
-    return tuple(
-        SupplyChannel.from_routing(getattr(item, "channel", None))
-        for item in (getattr(mapping, "dut_power_channels", ()) or ())
-    )
+def _channel_settings(value: Any) -> Mapping[SupplyChannel, ChannelSetting]:
+    """把构造函数收到的 ``{SupplyChannel: ChannelSetting}`` 冻结成只读映射。"""
+    if not isinstance(value, Mapping):
+        raise AmplifierInputError(
+            "通道参数必须是 SupplyChannel 到 ChannelSetting 的映射，"
+            f"收到 {type(value).__name__}"
+        )
+    settings: dict[SupplyChannel, ChannelSetting] = {}
+    for route, setting in value.items():
+        if not isinstance(route, SupplyChannel):
+            raise AmplifierInputError(
+                "通道参数的键必须是 SupplyChannel，"
+                f"收到 {type(route).__name__}"
+            )
+        if not isinstance(setting, ChannelSetting):
+            raise AmplifierInputError(
+                f"通道 {route.token} 的参数必须是 ChannelSetting，"
+                f"收到 {type(setting).__name__}"
+            )
+        settings[route] = setting
+    return MappingProxyType(settings)
+
+
+def _channel_settings_from_document(values: Any) -> Mapping[SupplyChannel, ChannelSetting]:
+    """把 ``test_plan.dut.channel_settings`` 读成按路由索引的只读映射。"""
+    if not isinstance(values, (list, tuple)):
+        raise AmplifierInputError(
+            f"通道参数（channel_settings）必须是列表，收到 {type(values).__name__}"
+        )
+    settings: dict[SupplyChannel, ChannelSetting] = {}
+    for index, item in enumerate(values):
+        if not isinstance(item, Mapping):
+            raise AmplifierInputError(
+                f"channel_settings[{index}] 必须是对象，收到 {type(item).__name__}"
+            )
+        supply_id = item.get("supply_id")
+        channel = item.get("channel")
+        if not isinstance(supply_id, str) or not isinstance(channel, str):
+            raise AmplifierInputError(
+                f"channel_settings[{index}] 必须提供 supply_id 与 channel 两段路由"
+            )
+        route = SupplyChannel(supply_id=supply_id, channel=channel)
+        if route in settings:
+            raise AmplifierInputError(
+                f"channel_settings 不能重复：{route.token}（重复项见 [{index}]）"
+            )
+        settings[route] = ChannelSetting.from_document(item)
+    return MappingProxyType(settings)
 
 

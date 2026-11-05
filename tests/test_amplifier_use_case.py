@@ -8,9 +8,6 @@ from application.dto import AmplifierMeasurementInputs, AmplifierMeasurementRequ
 from application.measurements import AmplifierMeasurementUseCase
 from application.measurements.amplifier_test import AMPLIFIER_RESULT_PATH
 from domain.configuration.models import (
-    ChannelMapping,
-    InstrumentMapping,
-    PowerChannelPlan,
     RunConfiguration,
     RunResourceMapping,
     TestPlan,
@@ -97,15 +94,26 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
                 compression_point="1dB",
                 attenuator_value=10,
                 max_input_power=100,
-                dut_power_channels={
-                    "drain": PowerChannelPlan(role="drain", voltage=28)
-                },
+                drain_channel={"supply_id": "PS1", "channel": "CH2"},
+                channel_settings=[
+                    {
+                        "supply_id": "PS1",
+                        "channel": "CH2",
+                        "voltage": 28,
+                        "current": 1,
+                        "voltage_protection": 30,
+                        "current_protection": 2,
+                        "unit_voltage": "V",
+                        "unit_current": "A",
+                    }
+                ],
             ),
             run_mapping=RunResourceMapping(
-                instruments={
-                    "power_supply": InstrumentMapping(model="PS1")
+                instruments={},
+                dut_power_plan={
+                    "power_sequence": [{"supply_id": "PS1", "channel": "CH2"}],
+                    "inter_channel_delay_s": 0.0,
                 },
-                dut_power_channels=[ChannelMapping(channel="PS1/CH2", role="drain")],
             ),
         )
         request = _request(_Instrument())
@@ -132,6 +140,19 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
         self.assertEqual(use_case.inputs.sweep.step, Decibels(1))
         self.assertEqual(
             use_case.inputs.dut_supplies(), {"PS1": ("CH2",)}
+        )
+        self.assertEqual(
+            [route.token for route in use_case.inputs.dut_power_plan.power_sequence],
+            ["PS1/CH2"],
+        )
+        self.assertEqual(
+            use_case.inputs.drain_channel.route.token, "PS1/CH2"
+        )
+        self.assertEqual(
+            use_case.inputs.channel_settings[
+                next(iter(use_case.inputs.channel_settings))
+            ].current_a,
+            1.0,
         )
 
     def test_calculate_actual_power_delegates_to_pure_function(self):

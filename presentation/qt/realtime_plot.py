@@ -25,6 +25,29 @@ from .theme import TOKENS, set_button_variant
 
 logger = get_logger(__name__)
 
+
+class _DeferredCanvas(FigureCanvas):
+    """画布不可见时只记下“需要重画”，等真正显示出来再画。
+
+    页面切换会让隐藏的标签页跟着重排，matplotlib 的 ``draw_idle`` 会立刻排队
+    重画；一张四宫格图在这台机器上要三四百毫秒，正好落在“仪器排布”页的入场 /
+    返回动画里，把动画卡停。隐藏期间不排队，标签页第一次显示时再补一张，顺带
+    省掉启动时为看不见的图付出的绘制时间。
+    """
+
+    def draw_idle(self) -> None:
+        if not self.isVisible():
+            self._draw_pending = True
+            return
+        super().draw_idle()
+
+    def showEvent(self, event: Any) -> None:
+        super().showEvent(event)
+        if getattr(self, "_draw_pending", False):
+            # matplotlib 的 draw_idle 看到这个标志会直接返回，先清掉再排队。
+            self._draw_pending = False
+            super().draw_idle()
+
 # 中文字体：matplotlib 默认字体没有中文字形，标题必须显式指定，否则显示为方框。
 _CJK_FONT = {"family": "Microsoft YaHei"}
 _GRID_COLOR = TOKENS["table_grid"]
@@ -54,7 +77,7 @@ class RealTimePlotWidget(QWidget):
         # constrained layout 让四张图自动均分间距，避免紧贴边界或留出大块空白。
         self.figure = Figure(figsize=(6.4, 4.8), dpi=100, layout="constrained")
         self.figure.set_facecolor(TOKENS["surface"])
-        self.canvas = FigureCanvas(self.figure)
+        self.canvas = _DeferredCanvas(self.figure)
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QScrollArea.NoFrame)

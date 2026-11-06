@@ -47,6 +47,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -133,6 +134,10 @@ _GROUP_SLIDE = _DESIGN_HEIGHT - _GRID_TOP + 24.0
 
 #: 动画时长：与效果图一致的轻快节奏；点击可立即结束。
 _TRANSITION_MS = 700
+
+#: 顶部标题行在卡片动画**完全停下之后**才淡入的时长；返回时按下“上一步”立即隐藏。
+#: 不按动画进度提前淡入，卡片还在动的时候标题行绝不会出现。
+_HEADER_FADE_IN_MS = 160
 
 # ---- 配色与字体：全部来自统一主题令牌 -----------------------------------------
 _CANVAS = QColor(TOKENS["canvas"])
@@ -503,17 +508,38 @@ class _RackBoard(QWidget):
         )
 
     def _design_rect_from_global(self, rect: QRect) -> QRectF:
-        """把上一页卡片的全局矩形换算成画布坐标；拿不到位置时返回空矩形。"""
+        """把上一页卡片的全局矩形换算成画布坐标；拿不到位置时返回空矩形。
+
+        起点取自上一页卡片的屏幕位置，可能落在板子的可见区域之外，绘制时会被板子的
+        矩形裁掉——卡片顶部被裁时圆角变成一条平线，看起来就像顶上有一条长条压住了
+        卡片。这里把整张卡移回板子的可见区域（只移不缩），保证飞入/飞出的卡片始终
+        完整；设计画布本身在板子里居中，落在它上方的留白里并不会被裁，所以边界按
+        板子算而不是按设计画布算。留 2px 让描边不压在板子最外沿。
+        """
         if rect.isNull() or rect.isEmpty():
             return QRectF()
         scale, offset = self._transform()
         top_left = self.mapFromGlobal(rect.topLeft())
-        return QRectF(
+        design = QRectF(
             (top_left.x() - offset.x()) / scale,
             (top_left.y() - offset.y()) / scale,
             rect.width() / scale,
             rect.height() / scale,
         )
+        margin = 2.0 / scale
+        min_x = -offset.x() / scale + margin
+        min_y = -offset.y() / scale + margin
+        max_x = (self.width() - offset.x()) / scale - margin
+        max_y = (self.height() - offset.y()) / scale - margin
+        if design.left() < min_x:
+            design.moveLeft(min_x)
+        if design.top() < min_y:
+            design.moveTop(min_y)
+        if design.right() > max_x:
+            design.moveRight(max_x)
+        if design.bottom() > max_y:
+            design.moveBottom(max_y)
+        return design
 
     def _slot_rects(self) -> tuple[QRectF, ...]:
         return tuple(
@@ -1057,6 +1083,10 @@ class RackOverviewPage(QWidget):
 
     点“上一步”时播放同一段动画的反向画面：卡片沿入场路径飞回仪器选择页里的原位，
     播完才切回选择页；选择页保留本次扫描结果与勾选，用户可以直接改选后再次进入。
+
+    顶部的“仪器排布”标题行不参与卡片动画：入场动画完全停下之后才淡入，返回时
+    一按下“上一步”就隐藏，卡片飞入飞出的整段时间里标题与提示文字都不在画面上。
+    标题行始终占着布局位置，因此动画期间版面不会因为它的显隐而跳动。
     """
 
     next_requested = Signal()
@@ -1068,6 +1098,13 @@ class RackOverviewPage(QWidget):
         #: 返回动画正在播放：重复点击“上一步”不再重启动画，也不重复发信号。
         self._back_pending = False
         self._build_ui()
+        #: 标题行淡入：卡片动画停下之后才开始，时长短、只做一次。
+        self._header_animation = QVariantAnimation(self)
+        self._header_animation.setDuration(_HEADER_FADE_IN_MS)
+        self._header_animation.setEasingCurve(QEasingCurve.OutCubic)
+        self._header_animation.valueChanged.connect(self._set_header_opacity)
+        #: 本次入场还要等卡片落位后再显示标题行（动画结束前一直为假）。
+        self._header_pending = False
         self._connect_signals()
         self._sync_actions()
 
@@ -1087,7 +1124,10 @@ class RackOverviewPage(QWidget):
         root.addWidget(content, 100)
         root.addStretch(1)
 
-        header = QHBoxLayout()
+        header_row = QWidget()
+        header_row.setObjectName("rackOverviewHeader")
+        header = QHBoxLayout(header_row)
+        header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(16)
         self.title_label = QLabel("仪器排布")
         self.title_label.setProperty("role", "pageTitle")
@@ -1097,7 +1137,12 @@ class RackOverviewPage(QWidget):
         header.addWidget(self.title_label)
         header.addStretch(1)
         header.addWidget(self.hint_label, 1)
-        column.addLayout(header)
+        # 标题行常驻布局（避免动画中版面跳动），只淡入淡出：入场动画结束后出现，
+        # 返回一按下就隐藏。
+        self._header_effect = QGraphicsOpacityEffect(header_row)
+        self._header_effect.setOpacity(1.0)
+        header_row.setGraphicsEffect(self._header_effect)
+        column.addWidget(header_row)
 
         self.board = _RackBoard(self)
         column.addWidget(self.board, 1)
@@ -1117,6 +1162,7 @@ class RackOverviewPage(QWidget):
 
     def _connect_signals(self) -> None:
         self.board.state_changed.connect(self._sync_actions)
+        self.board.state_changed.connect(self._sync_header_visibility)
         self.board.exit_finished.connect(self._finish_back)
         self.back_btn.clicked.connect(self.request_back)
         self.next_btn.clicked.connect(self.request_next)
@@ -1126,11 +1172,24 @@ class RackOverviewPage(QWidget):
     def enter(self, entries: Iterable[RackCardEntry]) -> None:
         """按本次勾选的卡片重建页面并播放一次入场动画。"""
         self._back_pending = False
+        self._header_pending = False
+        self._header_animation.stop()
+        self._set_header_opacity(0.0)
         self.board.enter(entries)
+        if self.board.transition_running():
+            # 卡片还在飞：标题行留到动画结束（见 :meth:`_sync_header_visibility`）。
+            self._header_pending = True
+        else:
+            # 没有卡片可飞入：页面一出现就是最终版面，标题行不必再等。
+            self._set_header_opacity(1.0)
         self._sync_actions()
 
     def finish_transition(self) -> None:
+        leaving = self._back_pending
         self.board.finish_transition()
+        self._header_pending = False
+        self._header_animation.stop()
+        self._set_header_opacity(0.0 if leaving else 1.0)
 
     def transition_running(self) -> bool:
         return self.board.transition_running()
@@ -1169,6 +1228,10 @@ class RackOverviewPage(QWidget):
         if self._back_pending:
             return
         self._back_pending = True
+        self._header_pending = False
+        # 返回动画一开始就隐藏标题行：它是整段返回里最先消失的东西。
+        self._header_animation.stop()
+        self._set_header_opacity(0.0)
         self._sync_actions()
         if not self.board.start_exit():
             self._finish_back()
@@ -1178,6 +1241,8 @@ class RackOverviewPage(QWidget):
         if not self._back_pending:
             return
         self._back_pending = False
+        self._header_animation.stop()
+        self._set_header_opacity(0.0)
         self._sync_actions()
         self.back_requested.emit()
 
@@ -1211,6 +1276,31 @@ class RackOverviewPage(QWidget):
             if ready
             else "请先把全部电源拖入九宫格"
         )
+
+    # ---- 标题行显隐 -------------------------------------------------------
+
+    def header_opacity(self) -> float:
+        """顶部标题行的当前可见强度（``0`` 隐藏，``1`` 完全显示）。"""
+        return float(self._header_effect.opacity())
+
+    def _sync_header_visibility(self) -> None:
+        """入场动画完全停下后才淡入标题行；卡片还在动时绝不出现。"""
+        if (
+            self._header_pending
+            and not self._back_pending
+            and not self.board.transition_running()
+        ):
+            self._header_pending = False
+            self._start_header_fade_in()
+
+    def _start_header_fade_in(self) -> None:
+        self._header_animation.stop()
+        self._header_animation.setStartValue(self.header_opacity())
+        self._header_animation.setEndValue(1.0)
+        self._header_animation.start()
+
+    def _set_header_opacity(self, opacity: float) -> None:
+        self._header_effect.setOpacity(max(0.0, min(1.0, float(opacity))))
 
     # ---- 卡片入口 ---------------------------------------------------------
 

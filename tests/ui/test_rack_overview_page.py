@@ -11,7 +11,15 @@ import unittest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
-from PySide6.QtCore import QMimeData, QPointF, QRect, Qt
+from PySide6.QtCore import (
+    QMimeData,
+    QPoint,
+    QPointF,
+    QRect,
+    QSize,
+    Qt,
+    QVariantAnimation,
+)
 from PySide6.QtGui import QColor, QDropEvent, QImage, QPixmap
 from PySide6.QtWidgets import QApplication
 
@@ -151,6 +159,63 @@ class RackOverviewPageTests(unittest.TestCase):
     def test_back_button_label_is_previous_step(self):
         page = self._page()
         self.assertEqual(page.back_btn.text(), "上一步")
+
+    def test_header_stays_hidden_while_the_entry_animation_runs(self):
+        page = self._page()
+        self.assertEqual(page.header_opacity(), 0.0, "入场开始时不显示标题行")
+
+        page.board._animation.stop()
+        page.board._animation.setCurrentTime(650)
+        self.app.processEvents()
+        self.assertEqual(
+            page.header_opacity(), 0.0, "卡片还在飞入时标题行不能出现"
+        )
+
+    def test_header_fades_in_only_after_the_entry_animation_finishes(self):
+        page = self._page()
+        page.board._animation.stop()
+        page.board._animation.setCurrentTime(page.board._animation.duration())
+        self.app.processEvents()
+
+        self.assertEqual(
+            page._header_animation.state(),
+            QVariantAnimation.Running,
+            "卡片落位后标题行才开始淡入",
+        )
+        page._header_animation.setCurrentTime(rack._HEADER_FADE_IN_MS)
+        self.assertEqual(page.header_opacity(), 1.0, "淡入结束标题行完全显示")
+
+    def test_skipping_the_entry_animation_shows_the_header_immediately(self):
+        page = self._page()
+        page.finish_transition()
+        self.assertEqual(page.header_opacity(), 1.0)
+
+    def test_header_disappears_first_during_the_back_transition(self):
+        page = self._page()
+        page.finish_transition()
+        self.assertEqual(page.header_opacity(), 1.0)
+
+        page.request_back()
+
+        self.assertEqual(
+            page.header_opacity(), 0.0, "返回动画一开始标题行就已经消失"
+        )
+
+        page.finish_transition()
+        self.assertEqual(page.header_opacity(), 0.0, "返回完成后标题行不能闪回来")
+
+    def test_back_before_the_entry_finishes_does_not_flash_the_header(self):
+        page = self._page()
+        page.board._animation.stop()
+        page.board._animation.setCurrentTime(300)
+        self.app.processEvents()
+        self.assertEqual(page.header_opacity(), 0.0, "入场中途标题行还没出现")
+
+        page.request_back()
+
+        self.assertEqual(
+            page.header_opacity(), 0.0, "入场没播完就返回时标题行不能先闪出来"
+        )
 
     def test_back_button_plays_the_reverse_transition_before_emitting(self):
         page = self._page()
@@ -313,6 +378,42 @@ class RackOverviewPageTests(unittest.TestCase):
         self.assertEqual(entries[0].code, "DP8B1519")
         self.assertEqual(entries[0].start_rect_global.size(), card.size())
         self.assertFalse(entries[0].front.isNull())
+
+    def test_offscreen_start_rect_is_moved_back_inside_the_canvas(self):
+        """上一页卡片的位置高于板子时整张移回可见区域，否则卡片顶部会被裁平。"""
+        page = self._page()
+        board = page.board
+        scale, offset = board._transform()
+        above = QRect(
+            board.mapToGlobal(QPoint(0, -40)), QSize(CARD_WIDTH, CARD_HEIGHT)
+        )
+
+        design = board._design_rect_from_global(above)
+
+        self.assertGreaterEqual(
+            design.top(),
+            -offset.y() / scale,
+            "起点要移回板子的可见区域",
+        )
+        self.assertAlmostEqual(
+            design.height(),
+            CARD_HEIGHT / scale,
+            places=3,
+            msg="只移动，不缩小卡片",
+        )
+
+    def test_start_rect_inside_the_board_is_left_where_it_is(self):
+        page = self._page()
+        board = page.board
+        scale, offset = board._transform()
+        inside = QRect(
+            board.mapToGlobal(QPoint(100, 120)), QSize(CARD_WIDTH, CARD_HEIGHT)
+        )
+
+        design = board._design_rect_from_global(inside)
+
+        self.assertAlmostEqual(design.left(), (100 - offset.x()) / scale, places=3)
+        self.assertAlmostEqual(design.top(), (120 - offset.y()) / scale, places=3)
 
     def test_board_paints_static_and_transition_frames(self):
         page = self._page()

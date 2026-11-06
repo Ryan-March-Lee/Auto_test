@@ -168,7 +168,7 @@ def reset_control_widgets(widgets: Any) -> None:
 def _reset_power_supply_channels(widgets: Any) -> None:
     for record in getattr(widgets, "power_config_widgets", {}).values():
         for controls in record.get("channels", {}).values():
-            for key in ("voltage", "voltage_protection", "current", "current_protection"):
+            for key in ("voltage", "current"):
                 controls[key].setValue(DEFAULT_POWER_CHANNEL_VALUE)
             for key in ("voltage_protection_enabled", "current_protection_enabled"):
                 controls[key].setChecked(False)
@@ -228,9 +228,7 @@ def _apply_channel_widgets(controls: Mapping[str, Any], values: Mapping[str, Any
     current = current if isinstance(current, dict) else {}
     for key, value in (
         ("voltage", voltage.get("value")),
-        ("voltage_protection", voltage.get("protection")),
         ("current", current.get("value")),
-        ("current_protection", current.get("protection")),
     ):
         number = number_or_none(value)
         if number is not None:

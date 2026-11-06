@@ -177,10 +177,8 @@ class FakeForm:
                 "channels": {
                     channel: {
                         "voltage": _Value(),
-                        "voltage_protection": _Value(),
                         "voltage_protection_enabled": _Check(),
                         "current": _Value(),
-                        "current_protection": _Value(),
                         "current_protection_enabled": _Check(),
                     }
                     for channel in ("CH1", "CH2")
@@ -256,6 +254,41 @@ class ConfigProjectionTests(unittest.TestCase):
         projected["test_frequencies"].append(9.9)
         self.assertEqual(form.freq_edit.text(), "[2.4, 2.6]")
 
+    def test_projection_sets_the_protection_switches_without_threshold_widgets(self):
+        """保护阈值已改为自动推导，投影只恢复启用开关，不再有阈值输入框。"""
+        form = FakeForm(("DP8B1519",))
+
+        project_authoring_config(
+            form,
+            {
+                "instruments": {
+                    "power_supplies": {
+                        "DP8B1519": {
+                            "channels": {
+                                "CH1": {
+                                    "voltage": {
+                                        "value": 3.3,
+                                        "protection": 5.0,
+                                        "protection_enabled": True,
+                                    },
+                                    "current": {
+                                        "value": 0.5,
+                                        "protection_enabled": False,
+                                    },
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        )
+
+        channel = form.power_config_widgets["DP8B1519"]["channels"]["CH1"]
+        self.assertNotIn("voltage_protection", channel)
+        self.assertNotIn("current_protection", channel)
+        self.assertTrue(channel["voltage_protection_enabled"].isChecked())
+        self.assertFalse(channel["current_protection_enabled"].isChecked())
+
     def test_projection_does_not_restore_supply_selection_combos(self):
         """计划路由是器件电源选择的唯一来源，投影不再恢复任何按器件的下拉框。"""
         form = FakeForm()
@@ -280,14 +313,18 @@ class ConfigProjectionTests(unittest.TestCase):
         for record in form.power_config_widgets.values():
             for controls in record["channels"].values():
                 controls["voltage"].setValue(9.5)
-                controls["current_protection"].setValue(4.0)
+                controls["current"].setValue(4.0)
+                controls["voltage_protection_enabled"].setChecked(True)
+                controls["current_protection_enabled"].setChecked(True)
 
         reset_control_widgets(form)
 
         channel = form.power_config_widgets["DP8B1519"]["channels"]["CH1"]
-        for key in ("voltage", "current_protection"):
+        for key in ("voltage", "current"):
             with self.subTest(control=key):
                 self.assertEqual(channel[key].value(), DEFAULT_POWER_CHANNEL_VALUE)
+        self.assertFalse(channel["voltage_protection_enabled"].isChecked())
+        self.assertFalse(channel["current_protection_enabled"].isChecked())
 
     def test_projection_resets_before_applying(self):
         form = FakeForm()

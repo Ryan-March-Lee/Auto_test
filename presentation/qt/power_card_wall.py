@@ -24,6 +24,7 @@ from PySide6.QtCore import QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QPainter, QPixmap
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
+from .config_form_state import protection_threshold
 from .power_card import (
     CHANNEL_NAMES,
     POWER_CARD_HEIGHT,
@@ -73,19 +74,26 @@ def _channel_data(name: str, entry: Mapping[str, Any]) -> PowerChannelData:
     voltage = voltage if isinstance(voltage, Mapping) else {}
     current = channel.get("current")
     current = current if isinstance(current, Mapping) else {}
+    voltage_set = _number(voltage.get("value"))
+    current_set = _number(current.get("value"))
     return PowerChannelData(
         channel=name,
         # 配置里只有实际写出的通道才参与供电，另一路在卡面上保持关闭态。
         enabled=name in channels,
-        voltage_set=_number(voltage.get("value")),
-        voltage_protection=_number(voltage.get("protection")),
-        current_set=_number(current.get("value")),
-        current_protection=_number(current.get("protection")),
+        # 保护阈值由工作值按 110% 推导，与电源配置页保存的值保持一致。
+        voltage_set=voltage_set,
+        voltage_protection=protection_threshold(voltage_set),
+        current_set=current_set,
+        current_protection=protection_threshold(current_set),
     )
 
 
 def power_card_data(entry: Mapping[str, Any], supply_id: str) -> PowerSupplyCardData:
-    """把一条电源配置读成通道卡片数据；缺字段按关闭态与 0 显示。"""
+    """把一条电源配置读成通道卡片数据；缺字段按关闭态与 0 显示。
+
+    保护阈值不再读取配置里的旧值，而是按工作值 × 110% 推导，保证卡片与页面保存
+    出的配置一致。
+    """
     label = entry.get("label")
     code = label.strip() if isinstance(label, str) and label.strip() else supply_id
     return PowerSupplyCardData(

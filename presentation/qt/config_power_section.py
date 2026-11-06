@@ -17,10 +17,12 @@
 同一份候选，`(supply_id, channel)` 勾在哪一组就表示该通道给哪个器件上电；本模块不再
 提供按器件固定分配电源的下拉框。
 
-通道数值框的上下界（``_VOLTAGE_LIMITS`` / ``_CURRENT_LIMITS``）只约束输入框能填到
-哪里，比正式校验更严：界外的值由控件夹到界内，这里不报错也不改配置。重建标签页时
-「保留操作者刚填的参数」用到的合并规则也在这里（见 :func:`channel_map`），它只合并
-控件快照与配置条目，不判断字段语义。
+通道工作值的上下界（``_VOLTAGE_LIMITS`` / ``_CURRENT_LIMITS``）只约束输入框能填到
+哪里，比正式校验更严：界外的值由控件夹到界内，这里不报错也不改配置。保护阈值不在这里
+让用户填写：页面只保留“启用保护”开关，阈值由工作值按 110% 自动推导（见
+:func:`presentation.qt.config_form_state.protection_threshold`）。重建标签页时「保留
+操作者刚填的参数」用到的合并规则也在这里（见 :func:`channel_map`），它只合并控件快照
+与配置条目，不判断字段语义。
 """
 
 import math
@@ -237,18 +239,18 @@ def _add_power_tab(
         form.setHorizontalSpacing(10)
         form.setVerticalSpacing(6)
         form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        # 保护阈值不再是用户输入：勾选开关后由工作值按 110% 自动推导，页面上只保留
+        # “是否启用”。两个开关互相独立，可分别启用过压与过流保护。
         controls = {
             "voltage": spin_box(spin_value(voltage.get("value")), *_VOLTAGE_LIMITS),
-            "voltage_protection": spin_box(
-                spin_value(voltage.get("protection")), *_VOLTAGE_LIMITS
-            ),
-            "voltage_protection_enabled": QCheckBox("启用"),
+            "voltage_protection_enabled": QCheckBox("启用（自动 10%）"),
             "current": spin_box(spin_value(current.get("value")), *_CURRENT_LIMITS),
-            "current_protection": spin_box(
-                spin_value(current.get("protection")), *_CURRENT_LIMITS
-            ),
-            "current_protection_enabled": QCheckBox("启用"),
+            "current_protection_enabled": QCheckBox("启用（自动 10%）"),
         }
+        for checkbox_key in ("voltage_protection_enabled", "current_protection_enabled"):
+            controls[checkbox_key].setToolTip(
+                "勾选后保护阈值自动取比设定值高 10% 的值，无需手工填写。"
+            )
         controls["voltage_protection_enabled"].setChecked(
             voltage.get("protection_enabled") is True
         )
@@ -256,10 +258,8 @@ def _add_power_tab(
             current.get("protection_enabled") is True
         )
         form.addRow("电压 (V)", controls["voltage"])
-        form.addRow("保护电压 (V)", controls["voltage_protection"])
         form.addRow("电压保护", controls["voltage_protection_enabled"])
         form.addRow("电流 (A)", controls["current"])
-        form.addRow("保护电流 (A)", controls["current_protection"])
         form.addRow("电流保护", controls["current_protection_enabled"])
         page_layout.addWidget(box)
         record["channels"][channel] = controls

@@ -146,10 +146,8 @@ def _supply_channels(page, supply_id):
             channel: {
                 "role": _Combo(("gate", "drain")),
                 "voltage": _Value(),
-                "voltage_protection": _Value(),
                 "voltage_protection_enabled": _Check(),
                 "current": _Value(),
-                "current_protection": _Value(),
                 "current_protection_enabled": _Check(),
             }
             for channel in ("CH1", "CH2")

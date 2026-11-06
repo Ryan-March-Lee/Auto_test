@@ -64,13 +64,12 @@ class _WidgetHost:
     """控件宿主替身：ConfigFormState 只按属性名读取控件。"""
 
 
-def channel_widgets(voltage, voltage_protection, voltage_enabled, current, current_protection, current_enabled, role=None):
+def channel_widgets(voltage, voltage_enabled, current, current_enabled, role=None):
+    """一条通道的控件替身；保护阈值由工作值推导，控件里只有启用开关。"""
     controls = {
         'voltage': FakeValueWidget(voltage),
-        'voltage_protection': FakeValueWidget(voltage_protection),
         'voltage_protection_enabled': FakeCheckWidget(voltage_enabled),
         'current': FakeValueWidget(current),
-        'current_protection': FakeValueWidget(current_protection),
         'current_protection_enabled': FakeCheckWidget(current_enabled),
     }
     if role is not None:
@@ -256,7 +255,7 @@ class ConfigFormStateReaderTests(unittest.TestCase):
         self.host.power_config_widgets = {
             'PS1': {
                 'channels': {
-                    'CH1': channel_widgets(2.8, 3.0, True, 0.1, 0.2, False),
+                    'CH1': channel_widgets(2.8, True, 0.1, False),
                 }
             }
         }
@@ -267,6 +266,10 @@ class ConfigFormStateReaderTests(unittest.TestCase):
             result['instruments']['power_supplies']['PS1']['channels']['CH1']['voltage']['value'],
             2.8,
         )
+        self.assertEqual(
+            result['instruments']['power_supplies']['PS1']['channels']['CH1']['voltage']['protection'],
+            3.08,
+        )
         self.assertTrue(
             result['instruments']['power_supplies']['PS1']['channels']['CH1']['voltage']['protection_enabled']
         )
@@ -276,8 +279,8 @@ class ConfigFormStateReaderTests(unittest.TestCase):
         self.host.power_config_widgets = {
             'PS1': {
                 'channels': {
-                    'CH1': channel_widgets(2.8, 3.0, True, 0.1, 0.2, False, role='drain'),
-                    'CH2': channel_widgets(28.0, 30.0, True, 1.0, 2.0, True, role='gate'),
+                    'CH1': channel_widgets(2.8, True, 0.1, False, role='drain'),
+                    'CH2': channel_widgets(28.0, True, 1.0, True, role='gate'),
                 }
             }
         }
@@ -296,8 +299,8 @@ class ConfigFormStateReaderTests(unittest.TestCase):
         self.host.power_config_widgets = {
             'PS1': {
                 'channels': {
-                    'CH1': channel_widgets(2.8, 3.0, True, 0.1, 0.2, False),
-                    'CH2': channel_widgets(28.0, 30.0, True, 1.0, 2.0, True),
+                    'CH1': channel_widgets(2.8, True, 0.1, False),
+                    'CH2': channel_widgets(28.0, True, 1.0, True),
                 }
             }
         }
@@ -313,7 +316,7 @@ class ConfigFormStateReaderTests(unittest.TestCase):
         self.host.power_config_widgets = {
             'PS1': {
                 'channels': {
-                    'CH1': channel_widgets(2.8, 3.0, True, 0.1, 0.2, False),
+                    'CH1': channel_widgets(2.8, True, 0.1, False),
                 }
             }
         }
@@ -383,8 +386,8 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
         self.host.power_config_widgets = {
             'DP8B1519': {
                 'channels': {
-                    'CH1': channel_widgets(2.8, 3.0, True, 0.1, 0.2, False),
-                    'CH2': channel_widgets(28.0, 30.0, True, 1.0, 2.0, True),
+                    'CH1': channel_widgets(2.8, True, 0.1, False),
+                    'CH2': channel_widgets(28.0, True, 1.0, True),
                 }
             }
         }

@@ -25,6 +25,25 @@ from domain.instruments.models import INSTRUMENT_ROLES
 
 from .config_form_bindings import binding_address, power_supply_bindings
 
+#: 保护阈值相对工作值的比例：页面只让用户勾选是否启用，阈值自动取 110%。
+PROTECTION_RATIO = 1.1
+#: 保护阈值保留的小数位，与通道数值框的显示精度一致。
+PROTECTION_DECIMALS = 2
+
+
+def protection_threshold(value: Any) -> float:
+    """按工作值计算保护阈值：工作值 × 110%，保留两位小数。
+
+    保护阈值不再由用户填写，因此这里只有一条规则，读取配置与保存配置都走它。
+    非法或非有限值按 0 处理，与通道数值框的非法值回落口径一致。
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    number = float(value)
+    if not math.isfinite(number) or number < 0.0:
+        return 0.0
+    return round(number * PROTECTION_RATIO, PROTECTION_DECIMALS)
+
 
 def parse_frequency_text(value: str) -> list[float] | None:
     """安全解析频率列表；非法输入返回 ``None``，不会执行任意代码。"""
@@ -267,10 +286,24 @@ class ConfigFormState:
         for name, supply in getattr(self.widgets, "power_config_widgets", {}).items():
             channels = {}
             for channel, controls in supply.get("channels", {}).items():
-                # 1.1 正式配置不再写通道 role；电源表单也只保存工作值与保护值。
+                # 1.1 正式配置不再写通道 role；保护阈值由工作值推导，用户只勾选是否启用。
+                voltage = self._value(controls["voltage"])
+                current = self._value(controls["current"])
                 channels[channel] = {
-                    "voltage": {"value": self._value(controls["voltage"]), "protection": self._value(controls["voltage_protection"]), "protection_enabled": self._checked(controls["voltage_protection_enabled"])},
-                    "current": {"value": self._value(controls["current"]), "protection": self._value(controls["current_protection"]), "protection_enabled": self._checked(controls["current_protection_enabled"])},
+                    "voltage": {
+                        "value": voltage,
+                        "protection": protection_threshold(voltage),
+                        "protection_enabled": self._checked(
+                            controls["voltage_protection_enabled"]
+                        ),
+                    },
+                    "current": {
+                        "value": current,
+                        "protection": protection_threshold(current),
+                        "protection_enabled": self._checked(
+                            controls["current_protection_enabled"]
+                        ),
+                    },
                 }
             result[name] = {"channels": channels}
         return {"instruments": {"power_supplies": result}} if result else {}

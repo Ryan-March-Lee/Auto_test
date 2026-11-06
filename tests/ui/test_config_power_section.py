@@ -225,9 +225,7 @@ class PowerSectionBuildTests(unittest.TestCase):
 
         for key, limits in (
             ("voltage", (0.0, 50.0)),
-            ("voltage_protection", (0.0, 50.0)),
             ("current", (0.0, 10.0)),
-            ("current_protection", (0.0, 10.0)),
         ):
             with self.subTest(control=key):
                 self.assertEqual(
@@ -235,6 +233,18 @@ class PowerSectionBuildTests(unittest.TestCase):
                     limits,
                     "通道数值框的显示界由模块常量给出一处，不在建控件处各写一遍",
                 )
+
+    def test_channel_group_has_no_protection_value_boxes(self):
+        """保护阈值不再由用户填写：通道里只有工作值输入框与两个启用开关。"""
+        page = self.build()
+        channels = self.channels(page)
+
+        self.assertNotIn("voltage_protection", channels)
+        self.assertNotIn("current_protection", channels)
+        self.assertIn("voltage_protection_enabled", channels)
+        self.assertIn("current_protection_enabled", channels)
+        self.assertIn("10%", channels["voltage_protection_enabled"].text())
+        self.assertIn("10%", channels["current_protection_enabled"].text())
 
     def test_numbers_outside_the_display_limits_are_clamped(self):
         """界外的配置值由控件夹到界内：显示口径夹值，正式校验另行报告。"""

@@ -1,7 +1,7 @@
 """步骤 12：独立电源配置页的纯 UI 测试。
 
-覆盖独立创建、绑定状态展示、驱动模式派生、通道参数/上电计划/漏极回填、
-片段提交与校验消息。页面只消费配置文档与设备绑定，不启动完整参数页或真实后端。
+覆盖独立创建、驱动模式派生、通道参数/保护开关/上电计划/漏极回填、片段提交与
+校验消息。页面只消费配置文档与设备绑定，不启动完整参数页或真实后端。
 """
 
 import os
@@ -141,7 +141,7 @@ class PowerConfigurationPageTests(unittest.TestCase):
         )
         self.assertLess(
             page.card_wall.geometry().top(),
-            page.binding_group.geometry().top(),
+            page.power_section.geometry().top(),
             "卡片在表单上方",
         )
 
@@ -186,27 +186,17 @@ class PowerConfigurationPageTests(unittest.TestCase):
         self.assertFalse(page.read_only_notice.isVisibleTo(page))
         self.assertTrue(page.power_section.isEnabled())
 
-    def test_binding_status_lists_the_applied_supplies(self):
+    def test_the_page_has_no_device_binding_box(self):
+        """绑定只在上游“仪器配置”页确认，电源页不再显示绑定状态框。"""
         page = self.make_page()
 
-        text = page.binding_status_label.text()
+        self.assertFalse(hasattr(page, "binding_group"))
+        self.assertFalse(hasattr(page, "binding_status_label"))
 
-        self.assertIn("已绑定电源", text)
-        self.assertIn("DP8B1519", text)
-
-    def test_without_bindings_the_status_says_what_to_do(self):
-        page = PowerConfigurationPage({})
-        page.show()
-        self.app.processEvents()
-
-        self.assertIn("尚未绑定电源", page.binding_status_label.text())
-        self.assertIn("仪器配置", page.binding_status_label.text())
-
-    def test_applying_bindings_refreshes_the_status_and_options(self):
+    def test_applying_bindings_refreshes_the_power_options(self):
         page = self.make_page()
         page.apply_device_bindings(power_supply_bindings("DP8B1519", "DP8B0885"))
 
-        self.assertIn("DP8B0885", page.binding_status_label.text())
         self.assertEqual(
             page.dut_power_plan_editor.routes(),
             (
@@ -584,7 +574,7 @@ class PowerConfigurationPageTests(unittest.TestCase):
         self.assertFalse(page.is_dirty())
 
     def test_every_channel_parameter_edit_notifies_the_shared_session(self):
-        """电压/电流及保护值都算电源片段变化，统一会话才能汇总 dirty。"""
+        """电压/电流与两个保护开关都算电源片段变化，统一会话才能汇总 dirty。"""
         page = self.make_page()
         changes = []
         page.fragment_changed.connect(lambda: changes.append(True))
@@ -592,18 +582,43 @@ class PowerConfigurationPageTests(unittest.TestCase):
 
         for name, widget, value in (
             ("voltage", controls["voltage"], 5.0),
-            ("voltage_protection", controls["voltage_protection"], 6.0),
             ("current", controls["current"], 0.7),
-            ("current_protection", controls["current_protection"], 0.9),
         ):
             with self.subTest(name=name):
                 before = len(changes)
                 widget.setValue(value)
                 self.assertEqual(len(changes), before + 1)
 
-        before = len(changes)
-        controls["current_protection_enabled"].setChecked(True)
-        self.assertEqual(len(changes), before + 1)
+        for key in ("voltage_protection_enabled", "current_protection_enabled"):
+            with self.subTest(name=key):
+                before = len(changes)
+                controls[key].setChecked(not controls[key].isChecked())
+                self.assertEqual(len(changes), before + 1)
+
+    def test_protection_threshold_is_derived_from_the_work_value(self):
+        """用户只勾选是否启用保护，阈值自动取设定值的 110%。"""
+        page = self.make_page()
+        controls = page.power_config_widgets["DP8B1519"]["channels"]["CH1"]
+        controls["voltage"].setValue(10.0)
+        controls["current"].setValue(1.0)
+        controls["voltage_protection_enabled"].setChecked(True)
+        controls["current_protection_enabled"].setChecked(False)
+
+        channel = page.build_config()["instruments"]["power_supplies"][
+            "DP8B1519"
+        ]["channels"]["CH1"]
+
+        self.assertEqual(channel["voltage"]["protection"], 11.0)
+        self.assertTrue(channel["voltage"]["protection_enabled"])
+        self.assertEqual(channel["current"]["protection"], 1.1)
+        self.assertFalse(channel["current"]["protection_enabled"])
+
+    def test_channel_controls_have_no_protection_value_boxes(self):
+        page = self.make_page()
+        controls = page.power_config_widgets["DP8B1519"]["channels"]["CH1"]
+
+        self.assertNotIn("voltage_protection", controls)
+        self.assertNotIn("current_protection", controls)
 
     def test_backfill_does_not_report_a_user_edit(self):
         page = self.make_page()

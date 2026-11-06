@@ -1,10 +1,11 @@
 """独立电源配置页（``PowerConfigurationPage``）。
 
 页面以通道卡片为主视图：每台电源一张带蓝黄通道的卡片，按仪器排布页九宫格的
-相对位置摆在内容列顶部（:mod:`presentation.qt.power_card_wall`），原来的设备绑定、
-通道参数、上电计划与漏极表单整体接在卡片下方。进入本页时，排布页的电源卡片从
-屏幕原位展开成完整卡片（:mod:`presentation.qt.power_card_morph`），卡片墙与
-过渡层共用同一份卡片位置。
+相对位置摆在内容列顶部（:mod:`presentation.qt.power_card_wall`），通道参数、上电
+计划与漏极表单整体接在卡片下方。进入本页时，排布页的电源卡片从屏幕原位展开成完整
+卡片（:mod:`presentation.qt.power_card_morph`），卡片墙与过渡层共用同一份卡片位置。
+设备绑定信息不在本页显示：绑定只在上游“仪器配置”页确认，本页只消费它生成的电源
+集合。每个通道只保留“是否启用保护”的勾选，保护阈值由工作值按 110% 自动写入配置。
 
 电源参数、通道上电计划与效率测量漏极都归本页；测试参数、运行入口与
 设备发现仍属于 :mod:`presentation.qt.configuration_page` 与
@@ -36,7 +37,6 @@ from typing import Any, Mapping
 from PySide6.QtCore import QPoint, QRect, QRectF, Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
-    QGroupBox,
     QLabel,
     QScrollArea,
     QVBoxLayout,
@@ -47,7 +47,6 @@ from .config_form_adapter import ConfigurationFormAdapter
 from .config_form_bindings import (
     bound_power_supply_entries,
     effective_device_bindings,
-    power_supply_binding_problems,
     power_supply_bindings,
 )
 from .config_power_section import (
@@ -69,11 +68,11 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
     """独立电源配置页：通道参数、上电计划与漏极。
 
     页面通过 :meth:`build_fragment` 提交自己负责的片段，通过 :meth:`apply_config`
-    接收同一份编辑草稿中的电源字段；两种方向都不读写其它页面的控件。绑定状态由
-    构造时的配置与 :meth:`apply_device_bindings` 更新，驱动模式变化经
-    :meth:`set_test_mode` 转发给表单派生状态，并发出 ``driver_mode_changed`` 供
-    窗口刷新相关页面。驱放自带供电由“驱动功放上电计划为空”表达，页面没有单独的
-    供电方式控件。
+    接收同一份编辑草稿中的电源字段；两种方向都不读写其它页面的控件。设备绑定只作为
+    电源集合的来源，由 :meth:`apply_device_bindings` 刷新，页面不再显示绑定状态。
+    驱动模式变化经 :meth:`set_test_mode` 转发给表单派生状态，并发出
+    ``driver_mode_changed`` 供窗口刷新相关页面。驱放自带供电由“驱动功放上电计划为空”
+    表达，页面没有单独的供电方式控件。
     """
 
     validation_failed = Signal(str)
@@ -86,7 +85,6 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         QWidget.__init__(self, parent)
         self.config = config if isinstance(config, dict) else {}
         self.device_bindings = effective_device_bindings(self.config)
-        self.binding_problems = self._binding_problems_of(self.config)
         mode = self.config.get("driver_mode")
         mode = mode if isinstance(mode, dict) else {}
         self.test_mode_enabled = bool(mode.get("enabled", True))
@@ -105,7 +103,6 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         self.build_ui()
         self._connect_signals()
         self.update_driver_power_ui()
-        self._refresh_binding_status()
         self._dirty_baseline = copy.deepcopy(self.build_config(self.config))
         self.mark_clean()
 
@@ -136,26 +133,12 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         # 卡片视图是页面的主角：放在内容列最上方、水平居中，参数表单接在下面。
         self.card_wall = PowerCardWall(content)
         column.addWidget(self.card_wall)
-        column.addWidget(self._build_binding_widgets())
         self._build_power_widgets(column)
         column.addStretch(1)
         scroll.setWidget(content)
         root.addWidget(scroll, 1)
         self._refresh_card_wall()
         return self
-
-    def _build_binding_widgets(self) -> QGroupBox:
-        """设备绑定状态：只显示本次已应用电源，不在本页提供发现/扫描入口。"""
-        group = QGroupBox("设备绑定")
-        layout = QVBoxLayout(group)
-        layout.setSpacing(6)
-        self.binding_status_label = QLabel()
-        self.binding_status_label.setObjectName("powerBindingStatus")
-        self.binding_status_label.setProperty("role", "hint")
-        self.binding_status_label.setWordWrap(True)
-        layout.addWidget(self.binding_status_label)
-        self.binding_group = group
-        return group
 
     def _build_power_widgets(self, layout: Any) -> None:
         self.power_section = PowerFormSection(
@@ -174,7 +157,7 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
     def _wire_fragment_signals(self) -> None:
         """把任一电源字段的编辑都汇总成 ``fragment_changed``。
 
-        通道参数（电压/电流及保护值）在绑定变化重建标签页时会换成新控件，因此这里
+        通道参数（电压/电流及保护开关）在绑定变化重建标签页时会换成新控件，因此这里
         每次都先断开上一批连接、再按当前控件重新连接；否则重建之后修改通道参数不会
         通知共享会话，dirty 会漏掉电源片段。
         """
@@ -200,7 +183,7 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
 
         for supply in getattr(section, "power_config_widgets", {}).values():
             for controls in supply.get("channels", {}).values():
-                for key in ("voltage", "voltage_protection", "current", "current_protection"):
+                for key in ("voltage", "current"):
                     widget = controls.get(key)
                     if widget is not None and hasattr(widget, "valueChanged"):
                         hook(widget.valueChanged, notify)
@@ -385,7 +368,6 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             self.update_driver_power_ui()
         finally:
             self._silent = False
-        self._refresh_binding_status()
         self.driver_mode_changed.emit(enabled)
 
     def apply_device_bindings(self, bindings: Any) -> None:
@@ -395,35 +377,13 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         不挑默认电源，也不改写配置引用。
         """
         self.device_bindings = bindings if isinstance(bindings, Mapping) else {}
-        self.binding_problems = self._binding_problems_of({"device_bindings": self.device_bindings})
         self._silent = True
         try:
             self._rebuild_power_tabs(preserve=True)
         finally:
             self._silent = False
-        self._refresh_binding_status()
         self._refresh_card_wall()
         self._emit_fragment_changed()
-
-    # ---- 绑定状态 -----------------------------------------------------------
-
-    @staticmethod
-    def _binding_problems_of(config: Any) -> list[str]:
-        devices = config.get("device_bindings") if isinstance(config, Mapping) else None
-        return [
-            f"设备绑定不可用：{problem}"
-            for problem in power_supply_binding_problems(devices)
-        ]
-
-    def _refresh_binding_status(self) -> None:
-        supplies = list(power_supply_bindings(self.device_bindings))
-        if supplies:
-            text = "已绑定电源：" + "、".join(supplies)
-        else:
-            text = "尚未绑定电源：请先在“仪器配置”页查找并应用设备。"
-        if self.binding_problems:
-            text += "；" + "；".join(self.binding_problems)
-        self.binding_status_label.setText(text)
 
     # ---- 配置输入（只取本页负责的字段） ------------------------------------
 
@@ -533,9 +493,12 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         )
 
     def validate(self) -> bool:
-        """校验电源片段；错误经 ``validation_failed`` 交给统一状态行。"""
-        errors = list(self.binding_problems)
-        errors.extend(self.form_adapter.power_validation_errors(self.config))
+        """校验电源片段；错误经 ``validation_failed`` 交给统一状态行。
+
+        绑定记录在“仪器配置”页应用设备时已经由 application.device_binding 判定；本页
+        不再重复展示绑定问题，只校验通道参数、上电计划与漏极。
+        """
+        errors = list(self.form_adapter.power_validation_errors(self.config))
         return self.form_adapter.report_errors(errors)
 
     def apply_config(self, config: Any) -> None:
@@ -545,7 +508,6 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
                 "冻结配置必须是 JSON 对象（dict），无法确定性地回填电源配置页"
             )
         previous_bindings = self.device_bindings
-        previous_problems = self.binding_problems
         previous_test_mode = self.test_mode_enabled
         self._silent = True
         try:
@@ -572,17 +534,14 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
                 )
             except ConfigBackfillError:
                 self.device_bindings = previous_bindings
-                self.binding_problems = previous_problems
                 self.test_mode_enabled = previous_test_mode
                 self._rebuild_power_tabs(
                     sources=self._power_supply_sources(), preserve=False
                 )
                 raise
             self.config = projected
-            self.binding_problems = self._binding_problems_of(config)
             self.update_driver_power_ui()
             self.update_power_supply_options()
-            self._refresh_binding_status()
             self._refresh_card_wall()
             self.mark_clean()
         finally:
@@ -593,8 +552,8 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
     def set_read_only(self, reason: str | None) -> None:
         """按统一会话给出的版本结论切换只读态。
 
-        电源片段（通道参数、分配、计划与漏极）整体禁用；设备绑定状态仍显示，操作者
-        能看到当前文档与绑定情况。原因只由 authoring 的版本门禁给出，页面不识别
+        电源片段（通道参数、分配、计划与漏极）整体禁用；只读提示仍显示，操作者能看到
+        当前文档为什么不能保存。原因只由 authoring 的版本门禁给出，页面不识别
         ``schema_version``，也不自行尝试迁移。
         """
         reason = (reason or "").strip() or None

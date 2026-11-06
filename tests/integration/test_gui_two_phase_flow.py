@@ -1285,11 +1285,16 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         )
         channel = power.power_config_widgets["DP8B1519"]["channels"]["CH1"]
         self.assertEqual(channel["voltage"].value(), 3.3)
-        self.assertEqual(channel["voltage_protection"].value(), 5.0)
         self.assertTrue(channel["voltage_protection_enabled"].isChecked())
         self.assertEqual(channel["current"].value(), 0.5)
-        self.assertEqual(channel["current_protection"].value(), 1.0)
         self.assertTrue(channel["current_protection_enabled"].isChecked())
+        self.assertNotIn("voltage_protection", channel)
+        self.assertNotIn("current_protection", channel)
+        written = power.build_config()["instruments"]["power_supplies"][
+            "DP8B1519"
+        ]["channels"]["CH1"]
+        self.assertEqual(written["voltage"]["protection"], 3.63)
+        self.assertEqual(written["current"]["protection"], 0.55)
         self.assertEqual(
             power.driver_power_plan_editor.read_plan()["power_sequence"],
             [{"supply_id": "DP8B1519", "channel": "CH1"}],

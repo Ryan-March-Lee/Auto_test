@@ -96,8 +96,8 @@ class PowerCardWallTests(unittest.TestCase):
                 "label": "DP8B1519",
                 "channels": {
                     "CH1": {
-                        "voltage": {"value": 2.8, "protection": 1.2},
-                        "current": {"value": 0.1, "protection": 0.2},
+                        "voltage": {"value": 2.8},
+                        "current": {"value": 0.1},
                     }
                 },
             },
@@ -107,7 +107,8 @@ class PowerCardWallTests(unittest.TestCase):
         self.assertEqual(data.code, "DP8B1519")
         self.assertTrue(data.channel("CH1").enabled)
         self.assertAlmostEqual(data.channel("CH1").voltage_set, 2.8)
-        self.assertAlmostEqual(data.channel("CH1").voltage_protection, 1.2)
+        self.assertAlmostEqual(data.channel("CH1").voltage_protection, 3.08)
         self.assertAlmostEqual(data.channel("CH1").current_set, 0.1)
+        self.assertAlmostEqual(data.channel("CH1").current_protection, 0.11)
         self.assertFalse(data.channel("CH2").enabled)
         self.assertAlmostEqual(data.channel("CH2").voltage_set, 0.0)

@@ -11,6 +11,7 @@ from presentation.qt.config_form_bindings import POWER_SUPPLY_BINDINGS
 from presentation.qt.config_form_state import (
     ConfigFormState,
     parse_frequency_text,
+    protection_threshold,
 )
 
 
@@ -78,6 +79,38 @@ class ConfigFormStateTests(unittest.TestCase):
         self.assertEqual(parse_frequency_text("[1, 2.5]"), [1.0, 2.5])
         self.assertIsNone(parse_frequency_text("__import__('os').system('x')"))
         self.assertIsNone(parse_frequency_text("[1, 'bad']"))
+
+    def test_protection_threshold_is_110_percent_rounded_to_two_decimals(self):
+        """保护阈值只由工作值推导，用户不再手填。"""
+        self.assertEqual(protection_threshold(2.8), 3.08)
+        self.assertEqual(protection_threshold(0.1), 0.11)
+        self.assertEqual(protection_threshold(0), 0.0)
+        for value in (True, False, "2.8", None, float("nan"), float("inf"), -1.0):
+            with self.subTest(value=value):
+                self.assertEqual(protection_threshold(value), 0.0)
+
+    def test_power_supply_reader_derives_protection_from_the_work_value(self):
+        widgets = _form_widgets(
+            power_config_widgets={
+                "DP8B1519": {"channels": {"CH1": _channel_controls("gate")}}
+            }
+        )
+
+        channel = ConfigFormState({}, widgets).read_power_supply_config()[
+            "instruments"
+        ]["power_supplies"]["DP8B1519"]["channels"]["CH1"]
+
+        self.assertEqual(channel["voltage"], {
+            "value": 5.0,
+            "protection": 5.5,
+            "protection_enabled": True,
+        })
+        self.assertEqual(channel["current"], {
+            "value": 1.0,
+            "protection": 1.1,
+            "protection_enabled": True,
+        })
+        self.assertNotIn("role", channel)
 
     def test_build_preserves_unknown_fields_and_drops_legacy_wiring(self):
         widgets = type("Widgets", (), {})()
@@ -378,14 +411,12 @@ class _FormWidgets:
 
 
 def _channel_controls(role):
-    """一条通道的控件替身；供电角色是接线事实，由下拉框显式选择。"""
+    """一条通道的控件替身；保护阈值由工作值推导，控件里只有启用开关。"""
     return {
         "role": type("C", (), {"currentText": lambda self: role})(),
         "voltage": type("V", (), {"value": lambda self: 5.0})(),
-        "voltage_protection": type("V", (), {"value": lambda self: 6.0})(),
         "voltage_protection_enabled": type("B", (), {"isChecked": lambda self: True})(),
         "current": type("V", (), {"value": lambda self: 1.0})(),
-        "current_protection": type("V", (), {"value": lambda self: 1.2})(),
         "current_protection_enabled": type("B", (), {"isChecked": lambda self: True})(),
     }
 

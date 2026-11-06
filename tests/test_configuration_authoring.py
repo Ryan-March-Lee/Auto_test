@@ -256,9 +256,9 @@ class ConfigurationAuthoringTests(unittest.TestCase):
         walk(document)
 
     def test_externally_powered_driver_mode_keeps_the_driver_mapping(self):
-        """驱放自带供电：不占本机电源通道，但驱动映射照常生成并执行。"""
+        """驱放自带供电：驱动计划为空，不占本机电源通道，但驱动映射照常生成并执行。"""
         flat = _flat_config()
-        flat["driver_mode"] = {"enabled": True, "power_source": "external_ac"}
+        flat["driver_mode"] = {"enabled": True}
         flat["power_supply_assignment"]["driver_amplifier"] = {
             "power_supply_count": 0,
             "supplies": {},
@@ -267,22 +267,19 @@ class ConfigurationAuthoringTests(unittest.TestCase):
         document = author_official_configuration(flat)
 
         self.assertTrue(document["test_plan"]["driver_mode"]["enabled"])
-        self.assertEqual(
-            document["test_plan"]["driver_mode"]["power_source"], "external_ac"
-        )
+        self.assertNotIn("power_source", document["test_plan"]["driver_mode"])
         self.assertTrue(document["run_mapping"]["driver_mode"]["enabled"])
-        self.assertEqual(
-            document["run_mapping"]["driver_mode"]["power_source"], "external_ac"
-        )
+        self.assertNotIn("power_source", document["run_mapping"]["driver_mode"])
         self.assertEqual(
             document["run_mapping"]["driver_mode"]["power_plan"],
             {"power_sequence": [], "inter_channel_delay_s": 0.0},
         )
         self.assertTrue(validate_run_configuration(self._configuration(document)).valid)
 
-    def test_driver_mode_without_a_power_source_is_inferred_from_the_channels(self):
+    def test_driver_mode_does_not_write_a_power_source(self):
+        """旧 1.1 文档残留的 ``power_source`` 读取时忽略，写出时删除。"""
         flat = _flat_config()
-        flat["driver_mode"] = {"enabled": True}
+        flat["driver_mode"] = {"enabled": True, "power_source": "dc_supply"}
         flat["power_supply_assignment"]["driver_amplifier"] = {
             "power_supply_count": 1,
             "supplies": {
@@ -298,9 +295,9 @@ class ConfigurationAuthoringTests(unittest.TestCase):
         }
         document = author_official_configuration(flat)
 
-        self.assertEqual(
-            document["test_plan"]["driver_mode"]["power_source"], "dc_supply"
-        )
+        self.assertNotIn("power_source", document["driver_mode"])
+        self.assertNotIn("power_source", document["test_plan"]["driver_mode"])
+        self.assertNotIn("power_source", document["run_mapping"]["driver_mode"])
         self.assertEqual(
             document["run_mapping"]["driver_mode"]["power_plan"]["power_sequence"],
             [
@@ -384,7 +381,7 @@ class ConfigurationAuthoringTests(unittest.TestCase):
     def test_one_supply_may_power_driver_and_dut_on_different_channels(self):
         """同一台电源 CH1→驱放、CH2→DUT：计划路由唯一来源，不再需要固定分配。"""
         flat = _flat_config()
-        flat["driver_mode"] = {"enabled": True, "power_source": "dc_supply"}
+        flat["driver_mode"] = {"enabled": True}
         flat["power_supply_assignment"]["driver_amplifier"]["power_plan"] = {
             "power_sequence": [{"supply_id": "DP8B1519", "channel": "CH1"}],
             "inter_channel_delay_s": 0.0,
@@ -435,7 +432,7 @@ class ConfigurationAuthoringTests(unittest.TestCase):
     def test_two_supplies_assigned_to_two_groups_are_both_registered(self):
         """步骤 10：多电源指派不再被拒绝，DUT 与驱动功放各登记一台独立电源。"""
         flat = _flat_config()
-        flat["driver_mode"] = {"enabled": True, "power_source": "dc_supply"}
+        flat["driver_mode"] = {"enabled": True}
         flat["instruments"]["power_supplies"]["DP8B0885"] = _second_supply()
         flat["power_supply_assignment"]["driver_amplifier"] = {
             "power_supply_count": 1,
@@ -1029,7 +1026,7 @@ class AuthoringDocumentValidationTests(unittest.TestCase):
 
     def test_cross_group_plan_routes_are_rejected(self):
         document = self._plan_document()
-        document["driver_mode"] = {"enabled": True, "power_source": "dc_supply"}
+        document["driver_mode"] = {"enabled": True}
         document["instruments"]["power_supplies"]["DP8B0885"] = _second_supply()
         document["power_supply_assignment"]["driver_amplifier"] = {
             "power_supply_count": 1,

@@ -26,7 +26,6 @@
   },
   "driver_mode": {
     "enabled": false,
-    "power_source": null,
     "channel_settings": []
   },
   "other_parameters": {},

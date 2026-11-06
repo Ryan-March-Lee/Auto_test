@@ -181,9 +181,6 @@ class ConfigFormStateReaderTests(unittest.TestCase):
             [{"supply_id": "DP8B0885", "channel": "CH1"}],
             active=False,
         )
-        self.host.power_assignment_widgets = {
-            'driver_source': FakeComboWidget('直流电源'),
-        }
 
         result = self.reader.read_power_assignment()['power_supply_assignment']
 
@@ -203,8 +200,6 @@ class ConfigFormStateReaderTests(unittest.TestCase):
 
     def test_power_assignment_reader_is_silent_without_plan_editors(self):
         """参数页没有计划控件：不能把已保存的电源段改写成空段。"""
-        self.host.power_assignment_widgets = {}
-
         self.assertEqual(self.reader.read_power_assignment(), {})
 
     def test_instrument_reader_wraps_instruments_and_preserves_existing_fields(self):
@@ -249,7 +244,6 @@ class ConfigFormStateReaderTests(unittest.TestCase):
         self.host.compression_combo = FakeComboWidget('5dB')
         self.host.attenuator_combo = FakeComboWidget('30dB')
         self.host.test_mode_enabled = False
-        self.host.driver_power_source_combo = FakeComboWidget('自带供电')
 
         result = self.reader.read_test_parameters()
 
@@ -384,7 +378,6 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
         self.host.compression_combo = FakeComboWidget('5dB')
         self.host.attenuator_combo = FakeComboWidget('30dB')
         self.host.test_mode_enabled = False
-        self.host.driver_power_source_combo = FakeComboWidget('自带供电')
         self.host.max_input_power = FakeValueWidget(29.5)
         self.host.pa_unit_count_combo = FakeComboWidget('2')
         self.host.power_config_widgets = {
@@ -395,18 +388,13 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
                 }
             }
         }
-        # 真实页面上“驱放供电方式”下拉既是测试参数来源，也是电源分配里的同一控件。
-        self.host.driver_power_source_combo = FakeComboWidget('自带供电')
-        self.host.power_assignment_widgets = {
-            'driver_source': self.host.driver_power_source_combo,
-        }
+        # 驱放测试模式默认关闭，驱动计划此时不生效。
         self.host.dut_power_plan_editor = FakePlanEditor(
             [
                 {'supply_id': 'DP8B1519', 'channel': 'CH1'},
                 {'supply_id': 'DP8B0885', 'channel': 'CH2'},
             ]
         )
-        # 驱放测试模式默认关闭，驱动计划此时不生效。
         self.host.driver_power_plan_editor = FakePlanEditor(
             [{'supply_id': 'DP8B0885', 'channel': 'CH1'}], active=False
         )
@@ -496,21 +484,22 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
         self.assertEqual(driver['power_plan']['power_sequence'], [])
         self.assertEqual(set(driver), {'power_plan'})
 
-    def test_build_driver_enabled_with_external_power_keeps_the_mode(self):
-        """驱放自带供电：仍是有驱放测试，但不占本机电源。"""
+    def test_build_driver_enabled_with_an_empty_plan_keeps_the_mode(self):
+        """驱放自带供电：仍是有驱放测试，驱动计划保持为空。"""
         self.host.test_mode_enabled = True
-        self.host.driver_power_source_combo.value = '自带供电'
+        self.host.driver_power_plan_editor = FakePlanEditor(())
         result = self.coordinator.build_configuration_from_ui()
 
         self.assertTrue(result['driver_mode']['enabled'])
-        self.assertEqual(result['driver_mode']['power_source'], 'external_ac')
+        self.assertNotIn('power_source', result['driver_mode'])
         driver = result['power_supply_assignment']['driver_amplifier']
         self.assertEqual(driver['power_plan']['power_sequence'], [])
 
     def test_build_driver_enabled_with_dc_supply_writes_the_plan(self):
         self.host.test_mode_enabled = True
-        self.host.driver_power_source_combo.value = '直流电源'
-        self.host.driver_power_plan_editor.active = True
+        self.host.driver_power_plan_editor = FakePlanEditor(
+            [{'supply_id': 'DP8B0885', 'channel': 'CH1'}]
+        )
         result = self.coordinator.build_configuration_from_ui()
 
         driver = result['power_supply_assignment']['driver_amplifier']
@@ -518,7 +507,7 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
             driver['power_plan']['power_sequence'],
             [{'supply_id': 'DP8B0885', 'channel': 'CH1'}],
         )
-        self.assertEqual(result['driver_mode']['power_source'], 'dc_supply')
+        self.assertNotIn('power_source', result['driver_mode'])
 
     def test_build_does_not_mutate_the_stored_config(self):
         original = json.dumps(self.coordinator.config, sort_keys=True)
@@ -655,7 +644,7 @@ class CoordinatorConfigSaveTests(unittest.TestCase):
             "test_frequencies": [2.4],
             "signal_source": {"start_power": -10.0, "stop_power": 0.0, "step": 1.0},
             "compression_point": {"type": "5dB"},
-            "driver_mode": {"enabled": True, "power_source": "dc_supply"},
+            "driver_mode": {"enabled": True},
             "attenuator": {"type": "30dB"},
             "dut_config": {
                 "max_input_power": 30.0,

@@ -17,8 +17,7 @@
         "type": "5dB"
     },
     "driver_mode": {
-        "enabled": true,
-        "power_source": "external_ac"
+        "enabled": true
     },
     "attenuator": {
         "type": "40dB"
@@ -159,7 +158,6 @@
         },
         "driver_mode": {
             "enabled": true,
-            "power_source": "external_ac",
             "channel_settings": []
         },
         "other_parameters": {}
@@ -189,7 +187,6 @@
         },
         "driver_mode": {
             "enabled": true,
-            "power_source": "external_ac",
             "power_plan": {
                 "power_sequence": [],
                 "inter_channel_delay_s": 0.0

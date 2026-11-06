@@ -60,7 +60,7 @@ def _document():
         "signal_source": {"start_power": -38.0, "stop_power": -16.0, "step": 1.0},
         "compression_point": {"type": "5dB"},
         "attenuator": {"type": "40dB"},
-        "driver_mode": {"enabled": True, "power_source": "dc_supply"},
+        "driver_mode": {"enabled": True},
         "dut_config": {"max_input_power": 33.5, "power_supply_count": 1},
         "instruments": {
             "signal_generator": _instrument_entry(
@@ -162,7 +162,6 @@ class ConfigurationDraftModelTests(unittest.TestCase):
             attenuator=Decibels(40.0),
             max_dut_input_power=PowerDbm(33.5),
             driver_enabled=True,
-            driver_power_source="dc_supply",
             dut_supply_count=1,
             dut_power_plan=PowerPlan(
                 power_sequence=(
@@ -254,7 +253,6 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
         self.assertEqual(draft.attenuator, Decibels(40.0))
         self.assertEqual(draft.max_dut_input_power, PowerDbm(33.5))
         self.assertTrue(draft.driver_enabled)
-        self.assertEqual(draft.driver_power_source, "dc_supply")
         self.assertEqual(draft.dut_supply_count, 1)
         self.assertEqual(
             draft.dut_channels,
@@ -281,7 +279,7 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
         )
         self.assertEqual(document["compression_point"], {"type": "5dB"})
         self.assertEqual(document["attenuator"], {"type": "40dB"})
-        self.assertEqual(document["driver_mode"]["power_source"], "dc_supply")
+        self.assertEqual(document["driver_mode"], {"enabled": True})
         self.assertEqual(
             document["dut_config"],
             {"max_input_power": 33.5, "power_supply_count": 1},
@@ -323,6 +321,17 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
         # ``to_document`` 只输出编辑段；正式段与 schema 版本由配置编写服务补。
         for formal in ("test_plan", "run_mapping", "schema_version", "wiring"):
             self.assertNotIn(formal, document)
+
+    def test_retired_driver_power_source_is_ignored_and_dropped(self):
+        """旧 1.1 文档的 ``power_source`` 不再读入，保存时也不再写出。"""
+        document = _document()
+        document["driver_mode"] = {"enabled": True, "power_source": "external_ac"}
+
+        result = ConfigurationDraft.from_document(document)
+
+        self.assertTrue(result.valid, result.messages())
+        self.assertTrue(result.draft.driver_enabled)
+        self.assertNotIn("power_source", result.draft.to_document()["driver_mode"])
 
     def test_legacy_channel_role_is_ignored_without_touching_settings(self):
         """旧通道 ``role`` 读入即忽略，写出不再出现；工作值/保护值原样保留。"""
@@ -396,7 +405,6 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
         self.assertIsNone(result.draft.max_dut_input_power)
         self.assertIsNone(result.draft.dut_supply_count)
         self.assertIsNone(result.draft.driver_enabled)
-        self.assertIsNone(result.draft.driver_power_source)
         self.assertEqual(result.draft.dut_channels, ())
         self.assertEqual(result.draft.power_supplies, ())
         self.assertTrue(result.draft.bindings.is_empty())
@@ -418,7 +426,7 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
             "compression_point": {"type": "bad"},
             "attenuator": {"type": 40},
             "dut_config": {"max_input_power": "30", "power_supply_count": "5"},
-            "driver_mode": {"enabled": "yes", "power_source": 1},
+            "driver_mode": {"enabled": "yes"},
             "instruments": {
                 "power_supplies": {
                     "PSA": {
@@ -454,7 +462,6 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
         self.assertIsNone(result.draft.max_dut_input_power)
         self.assertIsNone(result.draft.dut_supply_count)
         self.assertIsNone(result.draft.driver_enabled)
-        self.assertIsNone(result.draft.driver_power_source)
         self.assertEqual(result.draft.dut_channels, ())
         channel = result.draft.power_supplies[0].channel("CH1")
         self.assertIsNone(channel.voltage)

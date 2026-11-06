@@ -191,7 +191,7 @@ def _page_forwarder(callback: Any) -> Any:
 
 
 def _build_power_configuration_page(context: PageContext) -> Any:
-    """独立电源配置页：电源参数、上电计划、驱放供电方式与漏极。"""
+    """独立电源配置页：电源参数、上电计划与漏极。"""
     page = context.build_power_configuration()
     page.bind_controller(context.controller)
     return page

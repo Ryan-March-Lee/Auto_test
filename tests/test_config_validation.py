@@ -29,16 +29,12 @@ class ConfigValidationTests(unittest.TestCase):
         with FIXTURE_PATH.open("r", encoding="utf-8") as config_file:
             cls.base_config = json.load(config_file)
 
-    def test_current_config_is_readable_and_only_has_known_warning(self):
+    def test_current_config_is_readable_without_a_driver_power_warning(self):
         result = validate_config(self.base_config)
         self.assertTrue(result.valid, result.errors)
-        self.assertTrue(any("按自带供电处理" in issue.message for issue in result.warnings))
-
-    def test_confirmed_external_driver_power_has_no_assignment_warning(self):
-        config = copy.deepcopy(self.base_config)
-        config["driver_mode"] = {"enabled": True, "power_source": "external_ac"}
-        result = validate_config(config)
-        self.assertFalse(any(issue.path == "driver_mode.power_source" for issue in result.warnings))
+        self.assertFalse(
+            any("供电方式" in issue.message for issue in result.warnings)
+        )
 
     def test_missing_top_level_section_is_error(self):
         config = copy.deepcopy(self.base_config)
@@ -215,7 +211,7 @@ class ConfigValidationTests(unittest.TestCase):
     def test_one_supply_may_feed_driver_and_dut_on_different_channels(self):
         """同一台电源 CH1 供驱放、CH2 供 DUT：计划是唯一来源，连接校验不要求两台。"""
         config = copy.deepcopy(self.base_config)
-        config["driver_mode"] = {"enabled": True, "power_source": "dc_supply"}
+        config["driver_mode"] = {"enabled": True}
         config["power_supply_assignment"]["dut_amplifier"]["power_plan"][
             "power_sequence"
         ] = [{"supply_id": "PS4", "channel": "CH2"}]
@@ -238,7 +234,7 @@ class ConfigValidationTests(unittest.TestCase):
     def test_same_physical_channel_for_dut_and_driver_is_error(self):
         """同一个 ``supply_id/CHx`` 不能同时接 DUT 与驱动功放（步骤 11）。"""
         config = copy.deepcopy(self.base_config)
-        config["driver_mode"] = {"enabled": True, "power_source": "dc_supply"}
+        config["driver_mode"] = {"enabled": True}
         config["power_supply_assignment"]["driver_amplifier"] = {
             "power_plan": {
                 "power_sequence": [

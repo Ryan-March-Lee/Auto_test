@@ -46,22 +46,10 @@ CHANNEL_SETTING_FIELDS = frozenset(
         "unit_current",
     }
 )
-# 驱动功放（驱放）的供电方式：由本机直流电源供电，或由驱放自带电源（市电）供电。
-# 两种情况都处于驱放测试模式，区别只在驱动功放通道是否由本系统控制。
-DRIVER_POWER_DC = "dc_supply"
-DRIVER_POWER_EXTERNAL = "external_ac"
-DRIVER_POWER_SOURCES = (DRIVER_POWER_DC, DRIVER_POWER_EXTERNAL)
 # 旧运行快照里单数电源条目的键；新快照只写 ``instruments.power_supplies``。
 LEGACY_POWER_SUPPLY_KEY = "power_supply"
 # 运行映射里电源集合的键。电源只有一个来源：写它就不能再写旧单数条目。
 POWER_SUPPLIES_KEY = "power_supplies"
-
-
-def resolve_driver_power_source(source: Any, *, driver_channels: Any) -> str:
-    """返回驱放供电方式；旧配置没有该字段时按是否配置驱动通道推断。"""
-    if source in DRIVER_POWER_SOURCES:
-        return str(source)
-    return DRIVER_POWER_DC if driver_channels else DRIVER_POWER_EXTERNAL
 
 
 @dataclass(frozen=True)
@@ -139,7 +127,6 @@ class TestPlan:
     drain_channel: Any = None
     channel_settings: List[Any] = field(default_factory=list)
     driver_enabled: bool = False
-    driver_power_source: Optional[str] = None
     # 1.0 只读兼容：角色键 -> 参数。1.1 用 driver_channel_settings。
     driver_power_channels: Dict[str, PowerChannelPlan] = field(default_factory=dict)
     driver_channel_settings: List[Any] = field(default_factory=list)
@@ -179,9 +166,6 @@ class TestPlan:
                 dut.get("channel_settings", []) if isinstance(dut, Mapping) else []
             ),
             driver_enabled=driver.get("enabled", False) if isinstance(driver, Mapping) else False,
-            driver_power_source=(
-                driver.get("power_source") if isinstance(driver, Mapping) else None
-            ),
             driver_power_channels=_channel_plans(
                 _first_mapping(driver, "power_roles", "power_channels") if isinstance(driver, Mapping) else {}
             ),
@@ -207,7 +191,6 @@ class TestPlan:
             }
             driver_mode: Dict[str, Any] = {
                 "enabled": self.driver_enabled,
-                "power_source": self.driver_power_source,
                 "power_roles": {name: channel.to_dict() for name, channel in self.driver_power_channels.items()},
             }
         else:
@@ -218,7 +201,6 @@ class TestPlan:
             }
             driver_mode = {
                 "enabled": self.driver_enabled,
-                "power_source": self.driver_power_source,
                 "channel_settings": [
                     dict(item) if isinstance(item, Mapping) else item
                     for item in self.driver_channel_settings
@@ -386,7 +368,6 @@ class RunResourceMapping:
     # 时也会在两种结构之间来回变形状。它只描述文档形状，不参与相等比较。
     power_supplies_declared: bool = field(default=False, compare=False, repr=False)
     driver_enabled: bool = False
-    driver_power_source: Optional[str] = None
     # 1.0 只读兼容：角色化通道清单。1.1 不再写这两个字段。
     driver_power_channels: List[ChannelMapping] = field(default_factory=list)
     dut_power_channels: List[ChannelMapping] = field(default_factory=list)
@@ -434,9 +415,6 @@ class RunResourceMapping:
             power_supplies=_power_supply_mappings(power_supplies),
             power_supplies_declared=POWER_SUPPLIES_KEY in instruments,
             driver_enabled=driver.get("enabled", False) if isinstance(driver, Mapping) else False,
-            driver_power_source=(
-                driver.get("power_source") if isinstance(driver, Mapping) else None
-            ),
             driver_power_channels=driver_legacy,
             dut_power_channels=dut_legacy,
             dut_power_plan=value.get("dut_power_plan"),
@@ -465,7 +443,6 @@ class RunResourceMapping:
         if self.schema_version == LEGACY_SCHEMA_VERSION:
             driver_mode: Dict[str, Any] = {
                 "enabled": self.driver_enabled,
-                "power_source": self.driver_power_source,
                 "power_channels": [item.to_dict() for item in self.driver_power_channels],
             }
             dut_power_channels: List[Any] = [
@@ -474,7 +451,6 @@ class RunResourceMapping:
         else:
             driver_mode = {
                 "enabled": self.driver_enabled,
-                "power_source": self.driver_power_source,
                 "power_plan": _plan_document(self.driver_power_plan),
             }
             dut_power_channels = []
@@ -569,7 +545,6 @@ def validate_test_plan(plan: Union[TestPlan, Mapping[str, Any]]) -> ConfigValida
         _validate_channels(plan.driver_power_channels, "driver_mode.power_channels", error)
         _validate_driver_mode(
             plan.driver_enabled,
-            plan.driver_power_source,
             plan.driver_power_channels,
             error,
             path="driver_mode.power_channels",
@@ -594,7 +569,6 @@ def validate_test_plan(plan: Union[TestPlan, Mapping[str, Any]]) -> ConfigValida
         _validate_route_shape(plan.drain_channel, "dut.drain_channel", error)
         _validate_driver_mode(
             plan.driver_enabled,
-            plan.driver_power_source,
             plan.driver_channel_settings,
             error,
             path="driver_mode.channel_settings",
@@ -638,7 +612,6 @@ def validate_run_mapping(mapping: Union[RunResourceMapping, Mapping[str, Any]]) 
         _validate_channel_routing(mapping, error)
         _validate_driver_mode(
             mapping.driver_enabled,
-            mapping.driver_power_source,
             mapping.driver_power_channels,
             error,
             path="driver_mode.power_channels",
@@ -663,7 +636,6 @@ def validate_run_mapping(mapping: Union[RunResourceMapping, Mapping[str, Any]]) 
             )
         _validate_driver_plan(
             mapping.driver_enabled,
-            mapping.driver_power_source,
             driver_sequence,
             error,
         )
@@ -757,8 +729,8 @@ def validate_driver_mapping_configuration(configuration: RunConfiguration) -> Co
     """校验驱动功放映射所需的最小配置。
 
     驱动映射只测量信号源到频谱仪之间的 RF 链路。驱动功放可能由
-    外部电源供电，因此不能把 DUT 供电通道或驱动功放电源分配作为本
-    测量的必填项。
+    自带电源供电，因此不能把 DUT 供电通道或驱动功放电源分配作为本
+    测量的必填项；驱动功放计划为空即表示自带供电，本系统不控制其电源。
     """
     errors: List[ConfigIssue] = []
     error = lambda path, message: errors.append(ConfigIssue("error", path, message))
@@ -781,21 +753,12 @@ def validate_driver_mapping_configuration(configuration: RunConfiguration) -> Co
             continue
         _required_text(instrument.visa_address, f"instruments.{name}.visa_address", error)
 
-    # 规则 14：驱放直流供电时，驱动映射运行也必须有可执行的上电顺序。1.0 只读，
-    # 不做该判据，交给创建运行的版本门禁。
+    # 驱放上电计划只校验形状：空序列表示驱放自带供电，不要求本机上电顺序。
+    # 1.0 只读，不做该判据，交给创建运行的版本门禁。
     if not _is_legacy_configuration(configuration):
-        sequence = _validate_plan_document(
+        _validate_plan_document(
             mapping.driver_power_plan, "run_mapping.driver_mode.power_plan", error
         )
-        if (
-            plan.driver_enabled is True
-            and plan.driver_power_source == DRIVER_POWER_DC
-            and not sequence
-        ):
-            error(
-                "run_mapping.driver_mode.power_plan.power_sequence",
-                "驱放使用直流电源时必须配置驱动功放上电顺序",
-            )
 
     return ConfigValidationResult(errors=errors, warnings=[])
 
@@ -1095,20 +1058,16 @@ def _validate_plan_document(
 
 
 def _validate_driver_plan(
-    enabled: Any, source: Any, sequence: Optional[tuple[tuple[str, str], ...]], error: Any
+    enabled: Any, sequence: Optional[tuple[tuple[str, str], ...]], error: Any
 ) -> None:
-    """驱放冻结计划与 ``enabled``/``power_source`` 一致（规则 7 的正式段版本）。"""
+    """驱放冻结计划与 ``enabled`` 一致（规则 7 的正式段版本）。
+
+    空序列是合法状态：它表示驱放由自带电源供电，本系统不控制其电源。
+    """
     if sequence is None:
         return
     if enabled is not True and sequence:
         error("driver_mode.power_plan", "驱放测试模式关闭时不能配置驱动功放上电计划")
-    elif source == DRIVER_POWER_EXTERNAL and sequence:
-        error("driver_mode.power_plan", "驱放自带供电时不能配置本机电源上电顺序")
-    elif enabled is True and source == DRIVER_POWER_DC and not sequence:
-        error(
-            "driver_mode.power_plan.power_sequence",
-            "驱放使用直流电源时必须配置驱动功放上电顺序",
-        )
 
 
 def _settings_routes(
@@ -1422,34 +1381,19 @@ def _validate_mappings(mappings: List[ChannelMapping], path: str, error: Any) ->
 
 def _validate_driver_mode(
     enabled: Any,
-    source: Any,
     channels: Any,
     error: Any,
     *,
     path: str = "driver_mode.power_channels",
 ) -> None:
-    """校验驱放模式与供电方式是否一致。
+    """校验驱放测试模式与驱动通道是否一致。
 
-    驱放测试模式下，驱动功放既可以由本机直流电源供电（必须有驱动通道），也可以
-    自带电源/市电供电（不得占用本机电源通道）。旧配置没有 ``power_source`` 时按
-    “是否有驱动通道”推断，保持旧快照仍可读取。``path`` 区分 1.0 的 ``power_channels``
-    与 1.1 的 ``channel_settings``，判据本身只有一份。
+    关闭驱放测试模式时不得配置驱动功放通道。开启时通道可有可无：通道为空表示驱放
+    自带供电（本系统不控制其电源），通道非空表示由本机直流电源供电。``path`` 区分
+    1.0 的 ``power_channels`` 与 1.1 的 ``channel_settings``，判据本身只有一份。
     """
-    if enabled is not True:
-        if channels:
-            error(path, "驱放测试模式关闭时不能配置驱动功放通道")
-        if source not in (None, ""):
-            error("driver_mode.power_source", "驱放测试模式关闭时不能指定供电方式")
-        return
-    if source in (None, ""):
-        return
-    if source not in DRIVER_POWER_SOURCES:
-        error("driver_mode.power_source", "必须是 dc_supply（直流电源）或 external_ac（自带供电）")
-        return
-    if source == DRIVER_POWER_DC and not channels:
-        error(path, "驱放使用直流电源时必须配置驱动功放通道")
-    if source == DRIVER_POWER_EXTERNAL and channels:
-        error(path, "驱放自带供电时不能配置驱动功放通道")
+    if enabled is not True and channels:
+        error(path, "驱放测试模式关闭时不能配置驱动功放通道")
 
 
 def _required_text(value: Any, path: str, error: Any) -> bool:

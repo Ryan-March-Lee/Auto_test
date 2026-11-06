@@ -10,7 +10,7 @@
 空配置基线。规则集中在这里，因此：
 
 - 配置页不再持有逐字段的类型容错/回填逻辑，只负责控件接线与用户意图转发；
-- 投影只认识配置编写文档的字段名，不读取旧字段别名，也不做旧格式推断；旧 `power_supply_assignment.*.supplies` / `power_supply_count` 不再参与投影（器件电源由计划路由决定），只有通道工作值、驱放供电方式与漏极仍从这里回填；
+- 投影只认识配置编写文档的字段名，不读取旧字段别名，也不做旧格式推断；旧 `power_supply_assignment.*.supplies` / `power_supply_count` 不再参与投影（器件电源由计划路由决定），只有通道工作值与漏极仍从这里回填；
 - ``instruments`` 不由控件编辑（仪器连接只来自设备发现结果），因此投影只携带它，
   不把它写到控件上；
 - 上电计划与漏极属于电源表单组件：投影只重置它们，实际回填由
@@ -34,7 +34,6 @@ import copy
 from typing import Any, Mapping
 
 from application.errors import ConfigurationError
-from domain.configuration.models import resolve_driver_power_source
 from domain.instruments.labels import supply_display_label
 
 from .config_form_state import parse_frequency_text
@@ -46,8 +45,6 @@ DEFAULT_SIGNAL_SOURCE = {"start_power": -38.0, "stop_power": -16.0, "step": 1.0}
 DEFAULT_COMPRESSION_TYPE = "5dB"
 DEFAULT_ATTENUATOR_TYPE = "40dB"
 DEFAULT_DRIVER_MODE_ENABLED = True
-DRIVER_POWER_SOURCE_LABELS = {"dc_supply": "直流电源", "external_ac": "自带供电"}
-DRIVER_POWER_SOURCE_VALUES = tuple(DRIVER_POWER_SOURCE_LABELS.values())
 DEFAULT_MAX_INPUT_POWER = 33.5
 DEFAULT_PA_UNIT_COUNT = "2"
 # 电源通道的空配置基线：重置时把工作值/保护值填成它，构建模块把非法或缺失的字段也显示
@@ -122,7 +119,6 @@ def project_authoring_config(widgets: Any, config: Any) -> dict[str, Any]:
     reset_control_widgets(widgets)
     _apply_test_parameter_widgets(widgets, config)
     _apply_power_supply_widgets(widgets, config.get("instruments"))
-    _apply_driver_power_source(widgets)
     return copy.deepcopy(config)
 
 
@@ -130,9 +126,9 @@ def project_power_config(widgets: Any, config: Any) -> dict[str, Any]:
     """把一份配置编写文档里的电源字段投影到独立电源页的控件。
 
     与 :func:`project_authoring_config` 的区别只在受控范围：测试参数与运行控件归
-    完整配置页，电源页只重置并回填通道参数、驱放供电方式与组计划（计划与漏极由电源
-    表单组件在同一入口回填）。两处共用的重置规则（通道基线、供电方式基线、计划清空）
-    只实现一次，避免独立页面与完整页面出现两套回填口径。
+    完整配置页，电源页只重置并回填通道参数与组计划（计划与漏极由电源表单组件在同一
+    入口回填）。两处共用的重置规则（通道基线、计划清空）只实现一次，避免独立页面与
+    完整页面出现两套回填口径。
 
     参数不是 JSON 对象时同样抛出 :class:`ConfigBackfillError`，与整份投影的失败
     语义一致。
@@ -143,14 +139,12 @@ def project_power_config(widgets: Any, config: Any) -> dict[str, Any]:
         )
     reset_power_controls(widgets)
     _apply_power_supply_widgets(widgets, config.get("instruments"))
-    _apply_driver_power_source(widgets)
     return copy.deepcopy(config)
 
 
 def reset_power_controls(widgets: Any) -> None:
     """把电源页受控控件重置到空配置基线（不触碰测试参数控件）。"""
     _reset_power_supply_channels(widgets)
-    _reset_driver_power_source(widgets)
     reset_plans = getattr(widgets, "reset_power_plans", None)
     if callable(reset_plans):
         # 计划与漏极属于独立电源表单；回填前一起回到空基线，避免旧勾选残留。
@@ -166,8 +160,6 @@ def reset_control_widgets(widgets: Any) -> None:
     set_combo(widgets.compression_combo, DEFAULT_COMPRESSION_TYPE)
     set_combo(widgets.attenuator_combo, DEFAULT_ATTENUATOR_TYPE)
     widgets.test_mode_enabled = DEFAULT_DRIVER_MODE_ENABLED
-    if hasattr(widgets, "driver_power_source_combo"):
-        set_combo(widgets.driver_power_source_combo, "直流电源")
     widgets.max_input_power.setValue(DEFAULT_MAX_INPUT_POWER)
     set_combo(widgets.pa_unit_count_combo, DEFAULT_PA_UNIT_COUNT)
     reset_power_controls(widgets)
@@ -180,14 +172,6 @@ def _reset_power_supply_channels(widgets: Any) -> None:
                 controls[key].setValue(DEFAULT_POWER_CHANNEL_VALUE)
             for key in ("voltage_protection_enabled", "current_protection_enabled"):
                 controls[key].setChecked(False)
-
-
-def _reset_driver_power_source(widgets: Any) -> None:
-    """把驱放供电方式重置为基线；上电计划由表单组件自己清空。"""
-    controls = getattr(widgets, "power_assignment_widgets", {})
-    combo = controls.get("driver_source") if controls else None
-    if combo is not None:
-        set_combo(combo, "直流电源")
 
 
 def _apply_test_parameter_widgets(widgets: Any, config: Mapping[str, Any]) -> None:
@@ -214,8 +198,6 @@ def _apply_test_parameter_widgets(widgets: Any, config: Mapping[str, Any]) -> No
     mode = config.get("driver_mode")
     mode = mode if isinstance(mode, dict) else {}
     widgets.test_mode_enabled = bool_or_default(mode.get("enabled"), DEFAULT_DRIVER_MODE_ENABLED)
-    if hasattr(widgets, "driver_power_source_combo"):
-        set_combo(widgets.driver_power_source_combo, {"dc_supply": "直流电源", "external_ac": "自带供电"}.get(mode.get("power_source"), "直流电源"))
     dut = config.get("dut_config")
     dut = dut if isinstance(dut, dict) else {}
     value = number_or_none(dut.get("max_input_power"))
@@ -260,55 +242,16 @@ def _apply_channel_widgets(controls: Mapping[str, Any], values: Mapping[str, Any
         controls[key].setChecked(bool_or_default(value, False))
 
 
-def driver_power_source_label(
-    power_source: Any = None, route_count: Any = None
-) -> str:
-    """驱放的供电方式（界面文本）：``driver_mode.power_source`` 优先，缺失时看计划。
-
-    配置页初次建页、``apply_config`` 回填与 ``set_test_mode`` 共用这一个推断，避免同一
-    份配置在两条路径上得到不同的供电方式——它连带决定驱动功放计划是否可用，也会被写回
-    ``driver_mode``。推断判据由 domain 的 :func:`resolve_driver_power_source` 定义
-    （旧配置没有 ``power_source`` 时按是否存在驱动计划路由推断），这里只把结果映射成
-    界面文案，不再保留第二份判据（步骤 13）。
-    """
-    count = number_or_none(route_count)
-    resolved = resolve_driver_power_source(
-        power_source, driver_channels=bool(count is not None and count > 0)
-    )
-    return DRIVER_POWER_SOURCE_LABELS[resolved]
-
-
-def _apply_driver_power_source(widgets: Any) -> None:
-    """投影驱放供电方式；上电计划由电源表单组件单独回填。
-
-    ``power_supply_assignment`` 现在只承载两组的 ``power_plan``，不再有“给器件固定
-    分配某台电源”的下拉框；这里只把页面算好的供电方式写到控件。
-    """
-    controls = getattr(widgets, "power_assignment_widgets", {})
-    if not controls:
-        return
-    if "driver_source" in controls:
-        # 供电方式由调用方按 :func:`driver_power_source_label` 算好后放在页面状态里
-        # （``driver_power_source``），投影只把它写到控件上，不另立一套推断。
-        set_combo(
-            controls["driver_source"],
-            getattr(widgets, "driver_power_source", None),
-        )
-
-
 __all__ = [
     "ConfigBackfillError",
     "DEFAULT_ATTENUATOR_TYPE",
     "DEFAULT_COMPRESSION_TYPE",
     "DEFAULT_DRIVER_MODE_ENABLED",
-    "DRIVER_POWER_SOURCE_LABELS",
-    "DRIVER_POWER_SOURCE_VALUES",
     "DEFAULT_MAX_INPUT_POWER",
     "DEFAULT_PA_UNIT_COUNT",
     "DEFAULT_POWER_CHANNEL_VALUE",
     "DEFAULT_SIGNAL_SOURCE",
     "DEFAULT_TEST_FREQUENCIES",
-    "driver_power_source_label",
     "project_authoring_config",
     "project_power_config",
     "reset_control_widgets",

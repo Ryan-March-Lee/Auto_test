@@ -251,7 +251,6 @@
           },
           "driver_mode": {
             "enabled": false,
-            "power_source": null,
             "channel_settings": []
           },
           "other_parameters": {}
@@ -289,7 +288,6 @@
           },
           "driver_mode": {
             "enabled": false,
-            "power_source": null,
             "power_plan": {
               "power_sequence": [],
               "inter_channel_delay_s": 0.0
@@ -618,7 +616,6 @@
           },
           "driver_mode": {
             "enabled": false,
-            "power_source": null,
             "channel_settings": []
           },
           "other_parameters": {}
@@ -663,7 +660,6 @@
           },
           "driver_mode": {
             "enabled": false,
-            "power_source": null,
             "power_plan": {
               "power_sequence": [],
               "inter_channel_delay_s": 0.0
@@ -701,8 +697,7 @@
           "type": "5dB"
         },
         "driver_mode": {
-          "enabled": true,
-          "power_source": "dc_supply"
+          "enabled": true
         },
         "attenuator": {
           "type": "30dB"
@@ -843,8 +838,7 @@
           "type": "5dB"
         },
         "driver_mode": {
-          "enabled": true,
-          "power_source": "dc_supply"
+          "enabled": true
         },
         "attenuator": {
           "type": "30dB"
@@ -1006,7 +1000,6 @@
           },
           "driver_mode": {
             "enabled": true,
-            "power_source": "dc_supply",
             "channel_settings": [
               {
                 "supply_id": "DP8B0885",
@@ -1062,7 +1055,6 @@
           },
           "driver_mode": {
             "enabled": true,
-            "power_source": "dc_supply",
             "power_plan": {
               "power_sequence": [
                 {
@@ -1105,8 +1097,7 @@
           "type": "5dB"
         },
         "driver_mode": {
-          "enabled": true,
-          "power_source": "external_ac"
+          "enabled": true
         },
         "attenuator": {
           "type": "30dB"
@@ -1209,8 +1200,7 @@
           "type": "5dB"
         },
         "driver_mode": {
-          "enabled": true,
-          "power_source": "external_ac"
+          "enabled": true
         },
         "attenuator": {
           "type": "30dB"
@@ -1341,7 +1331,6 @@
           },
           "driver_mode": {
             "enabled": true,
-            "power_source": "external_ac",
             "channel_settings": []
           },
           "other_parameters": {}
@@ -1379,7 +1368,6 @@
           },
           "driver_mode": {
             "enabled": true,
-            "power_source": "external_ac",
             "power_plan": {
               "power_sequence": [],
               "inter_channel_delay_s": 0.0
@@ -1403,7 +1391,7 @@
       }
     },
     {
-      "name": "driver_source_inferred_from_channels",
+      "name": "driver_plan_without_power_source",
       "input": {
         "test_frequencies": [
           2.4
@@ -1649,7 +1637,6 @@
           },
           "driver_mode": {
             "enabled": true,
-            "power_source": "dc_supply",
             "channel_settings": [
               {
                 "supply_id": "DP8B1519",
@@ -1698,7 +1685,6 @@
           },
           "driver_mode": {
             "enabled": true,
-            "power_source": "dc_supply",
             "power_plan": {
               "power_sequence": [
                 {
@@ -1922,7 +1908,6 @@
           },
           "driver_mode": {
             "enabled": false,
-            "power_source": null,
             "channel_settings": []
           },
           "other_parameters": {}
@@ -1952,7 +1937,6 @@
           },
           "driver_mode": {
             "enabled": false,
-            "power_source": null,
             "power_plan": {
               "power_sequence": [],
               "inter_channel_delay_s": 0.0
@@ -2221,7 +2205,6 @@
           },
           "driver_mode": {
             "enabled": false,
-            "power_source": null,
             "channel_settings": []
           },
           "other_parameters": {}
@@ -2259,7 +2242,6 @@
           },
           "driver_mode": {
             "enabled": false,
-            "power_source": null,
             "power_plan": {
               "power_sequence": [],
               "inter_channel_delay_s": 0.0
@@ -2512,7 +2494,6 @@
           },
           "driver_mode": {
             "enabled": false,
-            "power_source": null,
             "channel_settings": []
           },
           "other_parameters": {}
@@ -2550,7 +2531,6 @@
           },
           "driver_mode": {
             "enabled": false,
-            "power_source": null,
             "power_plan": {
               "power_sequence": [],
               "inter_channel_delay_s": 0.0
@@ -2818,7 +2798,6 @@
           },
           "driver_mode": {
             "enabled": false,
-            "power_source": null,
             "channel_settings": []
           },
           "other_parameters": {}
@@ -2856,7 +2835,6 @@
           },
           "driver_mode": {
             "enabled": false,
-            "power_source": null,
             "power_plan": {
               "power_sequence": [],
               "inter_channel_delay_s": 0.0
@@ -3126,7 +3104,6 @@
           },
           "driver_mode": {
             "enabled": false,
-            "power_source": null,
             "channel_settings": []
           },
           "other_parameters": {}
@@ -3164,7 +3141,6 @@
           },
           "driver_mode": {
             "enabled": false,
-            "power_source": null,
             "power_plan": {
               "power_sequence": [],
               "inter_channel_delay_s": 0.0
@@ -3452,7 +3428,6 @@
           },
           "driver_mode": {
             "enabled": false,
-            "power_source": null,
             "channel_settings": []
           },
           "other_parameters": {}
@@ -3490,7 +3465,6 @@
           },
           "driver_mode": {
             "enabled": false,
-            "power_source": null,
             "power_plan": {
               "power_sequence": [],
               "inter_channel_delay_s": 0.0
@@ -3586,7 +3560,6 @@
           },
           "driver_mode": {
             "enabled": false,
-            "power_source": null,
             "channel_settings": []
           },
           "other_parameters": {}
@@ -3616,7 +3589,6 @@
           },
           "driver_mode": {
             "enabled": false,
-            "power_source": null,
             "power_plan": {
               "power_sequence": [],
               "inter_channel_delay_s": 0.0
@@ -3663,7 +3635,6 @@
           },
           "driver_mode": {
             "enabled": false,
-            "power_source": null,
             "channel_settings": []
           },
           "other_parameters": {}
@@ -3693,7 +3664,6 @@
           },
           "driver_mode": {
             "enabled": false,
-            "power_source": null,
             "power_plan": {
               "power_sequence": [],
               "inter_channel_delay_s": 0.0
@@ -3743,7 +3713,6 @@
           },
           "driver_mode": {
             "enabled": false,
-            "power_source": null,
             "channel_settings": []
           },
           "other_parameters": {}
@@ -3773,7 +3742,6 @@
           },
           "driver_mode": {
             "enabled": false,
-            "power_source": null,
             "power_plan": {
               "power_sequence": [],
               "inter_channel_delay_s": 0.0

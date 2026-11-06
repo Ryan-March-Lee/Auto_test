@@ -7,11 +7,10 @@
 协调器/配置会话在后续接线中完成。
 
 页面与完整配置页共享同一份编辑草稿：本页的 :meth:`build_fragment` 只返回
-``instruments.power_supplies``、``power_supply_assignment``、
-``dut_config.drain_channel`` 与 ``driver_mode.power_source`` 这些电源字段，调用方把
-它们合并进草稿即可，不会覆盖另一页尚未保存的测试参数。:meth:`apply_config` 回填时
-也只触碰这些字段，绑定变化重建控件时保留操作者尚未提交的通道参数、上电顺序、间隔
-与漏极。
+``instruments.power_supplies``、``power_supply_assignment`` 与
+``dut_config.drain_channel`` 这些电源字段，调用方把它们合并进草稿即可，不会覆盖
+另一页尚未保存的测试参数。:meth:`apply_config` 回填时也只触碰这些字段，绑定变化
+重建控件时保留操作者尚未提交的通道参数、上电顺序、间隔与漏极。
 
 窗口用 :class:`presentation.qt.configuration_editor.ConfigurationEditor` 把本页与
 参数页装配成共享编辑状态，整份草稿的合并/校验/保存仍由
@@ -51,35 +50,22 @@ from .config_power_section import (
     PowerSupplySources,
     current_power_tab_key,
 )
-from .config_projection import ConfigBackfillError, driver_power_source_label
+from .config_projection import ConfigBackfillError
 from .pages import PageControllerBindingMixin
 from .theme import PAGE_CONTENT_MAX_WIDTH
 
 __all__ = ["PowerConfigurationPage"]
 
 
-def _plan_route_count(group: Any) -> int:
-    """一组上电计划里的路由数量；计划缺失或形状不对时为 0。
-
-    只用于判断“驱放是否占用本机电源”的显示与派生状态，不代替正式校验。
-    """
-    if not isinstance(group, Mapping):
-        return 0
-    plan = group.get("power_plan")
-    if not isinstance(plan, Mapping):
-        return 0
-    sequence = plan.get("power_sequence")
-    return len(sequence) if isinstance(sequence, (list, tuple)) else 0
-
-
 class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
-    """独立电源配置页：通道参数、上电计划、驱放供电方式与漏极。
+    """独立电源配置页：通道参数、上电计划与漏极。
 
     页面通过 :meth:`build_fragment` 提交自己负责的片段，通过 :meth:`apply_config`
     接收同一份编辑草稿中的电源字段；两种方向都不读写其它页面的控件。绑定状态由
     构造时的配置与 :meth:`apply_device_bindings` 更新，驱动模式变化经
     :meth:`set_test_mode` 转发给表单派生状态，并发出 ``driver_mode_changed`` 供
-    窗口刷新相关页面。
+    窗口刷新相关页面。驱放自带供电由“驱动功放上电计划为空”表达，页面没有单独的
+    供电方式控件。
     """
 
     validation_failed = Signal(str)
@@ -96,12 +82,6 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         mode = self.config.get("driver_mode")
         mode = mode if isinstance(mode, dict) else {}
         self.test_mode_enabled = bool(mode.get("enabled", True))
-        assignment = self.config.get("power_supply_assignment")
-        driver = assignment.get("driver_amplifier") if isinstance(assignment, dict) else {}
-        driver = driver if isinstance(driver, dict) else {}
-        self.driver_power_source = driver_power_source_label(
-            mode.get("power_source"), _plan_route_count(driver)
-        )
         self.power_section: PowerFormSection | None = None
         # 1.0 编辑文档只读：整段电源表单禁用，但页面本身与回退入口保持可用。
         self.read_only_reason: str | None = None
@@ -162,7 +142,6 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         self.power_section = PowerFormSection(
             sources=self._power_supply_sources(),
             choices=self._power_supply_choices(),
-            driver_power_source=self.driver_power_source,
             driver_plan_active=self._driver_plan_active(),
             dut_power_plan=self._power_plan_entry("dut_amplifier"),
             driver_power_plan=self._power_plan_entry("driver_amplifier"),
@@ -171,11 +150,6 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         layout.addWidget(self.power_section)
 
     def _connect_signals(self) -> None:
-        if self.power_section is None:
-            return
-        source = self.power_section.power_assignment_widgets.get("driver_source")
-        if source is not None and hasattr(source, "currentTextChanged"):
-            source.currentTextChanged.connect(self.on_driver_power_toggled)
         self._wire_fragment_signals()
 
     def _wire_fragment_signals(self) -> None:
@@ -234,21 +208,11 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
 
     # ---- 页面级派生状态 -----------------------------------------------------
 
-    def on_driver_power_toggled(self, _value: Any = None) -> None:
-        if self._silent:
-            # 回填/重置会程序化切换组合框；页面状态由 apply_config 按文档算出，
-            # 不能在这里被重置时的中间值（直流电源）覆盖。
-            return
-        self.driver_power_source = self.driver_power_source_combo.currentText()
-        self.update_driver_power_ui()
-        self._emit_fragment_changed()
-
     def update_driver_power_ui(self) -> None:
-        """驱放是否占用本机电源：关闭驱放或自带供电时禁用驱动计划。"""
-        enabled = self._driver_plan_active()
-        self.driver_power_hint.setVisible(self.test_mode_enabled and not enabled)
+        """按驱放测试模式刷新驱动计划的可见性与生效状态。"""
         if self.power_section is not None:
-            self.power_section.set_driver_plan_active(enabled)
+            self.power_section.driver_power_plan_box.setVisible(self.test_mode_enabled)
+            self.power_section.set_driver_plan_active(self.test_mode_enabled)
 
     def set_test_mode(self, enabled: bool) -> None:
         """设置欢迎页选择的驱放测试模式，并刷新依赖它的电源派生状态。
@@ -260,7 +224,6 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         self.test_mode_enabled = enabled
         self._silent = True
         try:
-            self.power_assignment_group.setVisible(enabled)
             self.update_driver_power_ui()
         finally:
             self._silent = False
@@ -339,11 +302,8 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         return dut.get("drain_channel") if isinstance(dut, dict) else None
 
     def _driver_plan_active(self) -> bool:
-        """驱放计划是否生效：只有本机直流供电的驱放测试模式才有上电顺序。"""
-        source = self.driver_power_source
-        if self.power_section is not None:
-            source = self.power_section.driver_power_source_combo.currentText()
-        return bool(self.test_mode_enabled and source == "直流电源")
+        """驱放计划是否生效：驱放测试模式开启时才有上电顺序。"""
+        return bool(self.test_mode_enabled)
 
     # ---- 电源表单组件委托 ---------------------------------------------------
 
@@ -426,25 +386,15 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             )
         previous_bindings = self.device_bindings
         previous_problems = self.binding_problems
-        previous_source = self.driver_power_source
         previous_test_mode = self.test_mode_enabled
         self._silent = True
         try:
             bindings = effective_device_bindings(config)
             mode = config.get("driver_mode")
             mode = mode if isinstance(mode, dict) else {}
-            assignment = config.get("power_supply_assignment")
-            assignment = assignment if isinstance(assignment, dict) else {}
-            driver = assignment.get("driver_amplifier")
-            driver = driver if isinstance(driver, dict) else {}
             self.device_bindings = bindings
             self.test_mode_enabled = bool(mode.get("enabled", True))
-            self.driver_power_source = driver_power_source_label(
-                mode.get("power_source"), _plan_route_count(driver)
-            )
-            driver_plan_active = (
-                bool(mode.get("enabled")) and self.driver_power_source == "直流电源"
-            )
+            driver_plan_active = self.test_mode_enabled
             instruments = config.get("instruments")
             supplies = (
                 instruments.get("power_supplies") if isinstance(instruments, dict) else {}
@@ -463,7 +413,6 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             except ConfigBackfillError:
                 self.device_bindings = previous_bindings
                 self.binding_problems = previous_problems
-                self.driver_power_source = previous_source
                 self.test_mode_enabled = previous_test_mode
                 self._rebuild_power_tabs(
                     sources=self._power_supply_sources(), preserve=False
@@ -524,26 +473,6 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
     @property
     def power_config_widgets(self):
         return self.power_section.power_config_widgets
-
-    @property
-    def power_assignment_group(self):
-        return self.power_section.power_assignment_group
-
-    @property
-    def power_assignment_widgets(self):
-        return self.power_section.power_assignment_widgets
-
-    @property
-    def driver_power_source_combo(self):
-        return self.power_section.driver_power_source_combo
-
-    @property
-    def driver_power_source_label(self):
-        return self.power_section.driver_power_source_label
-
-    @property
-    def driver_power_hint(self):
-        return self.power_section.driver_power_hint
 
     @property
     def power_plan_group(self):

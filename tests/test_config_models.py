@@ -112,7 +112,7 @@ def complete_current_plan():
                 },
             ],
         },
-        "driver_mode": {"enabled": False, "power_source": None, "channel_settings": []},
+        "driver_mode": {"enabled": False, "channel_settings": []},
         "other_parameters": {},
     }
 

@@ -350,7 +350,7 @@ class MigrationFixtureTests(unittest.TestCase):
     def test_remigration_keeps_confirmed_plans_and_stays_writable(self):
         """用户已确认顺序的 1.1 文档仍是可写盘的幂等路径。"""
         config = copy.deepcopy(self.result.config)
-        config["driver_mode"] = {"enabled": True, "power_source": "dc_supply"}
+        config["driver_mode"] = {"enabled": True}
         config["power_supply_assignment"]["dut_amplifier"]["power_plan"] = {
             "power_sequence": [{"supply_id": LABEL_ONE, "channel": "CH1"}],
             "inter_channel_delay_s": 0.5,
@@ -368,6 +368,32 @@ class MigrationFixtureTests(unittest.TestCase):
             again.config["power_supply_assignment"],
             config["power_supply_assignment"],
             "二次迁移不会清空已确认的计划",
+        )
+
+    def test_remigration_strips_a_retired_driver_power_source(self):
+        """已退役的驱放供电方式在二次迁移时删除，但已确认的计划原样保留。"""
+        config = copy.deepcopy(self.result.config)
+        config["driver_mode"] = {"enabled": True, "power_source": "external_ac"}
+        config["test_plan"]["driver_mode"]["power_source"] = "external_ac"
+        config["run_mapping"]["driver_mode"]["power_source"] = "external_ac"
+        config["power_supply_assignment"]["dut_amplifier"]["power_plan"] = {
+            "power_sequence": [{"supply_id": LABEL_ONE, "channel": "CH1"}],
+            "inter_channel_delay_s": 0.5,
+        }
+
+        again = migrate_legacy_power_supplies(config, self.registry)
+
+        self.assertTrue(again.writable)
+        self.assertNotIn("power_source", again.config["driver_mode"])
+        self.assertNotIn("power_source", again.config["test_plan"]["driver_mode"])
+        self.assertNotIn("power_source", again.config["run_mapping"]["driver_mode"])
+        self.assertEqual(
+            again.config["power_supply_assignment"]["dut_amplifier"]["power_plan"],
+            {
+                "power_sequence": [{"supply_id": LABEL_ONE, "channel": "CH1"}],
+                "inter_channel_delay_s": 0.5,
+            },
+            "删除退役字段不能顺手清空用户确认过的计划",
         )
 
     def test_partial_result_records_the_unresolved_reference_in_its_summary(self):

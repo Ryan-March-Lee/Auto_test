@@ -263,7 +263,7 @@ class ConfigurationTestParametersTests(unittest.TestCase):
                 "compression_point": {"type": "3dB"},
                 "attenuator": {"type": "40dB"},
                 "dut_config": {"max_input_power": 20, "power_supply_count": 2},
-                "driver_mode": {"enabled": True, "power_source": "dc_supply"},
+                "driver_mode": {"enabled": True},
             }
         )
 
@@ -276,7 +276,6 @@ class ConfigurationTestParametersTests(unittest.TestCase):
         self.assertEqual(parameters.max_dut_input_power, PowerDbm(20.0))
         self.assertEqual(parameters.dut_supply_count, 2)
         self.assertTrue(parameters.driver_enabled)
-        self.assertEqual(parameters.driver_power_source, "dc_supply")
 
     def test_from_document_keeps_invalid_values_missing(self):
         parameters, issues = ConfigurationTestParameters.from_document(
@@ -293,7 +292,7 @@ class ConfigurationTestParametersTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             ConfigurationTestParameters(dut_supply_count=True)
         with self.assertRaises(TypeError):
-            ConfigurationTestParameters(driver_power_source=42)  # type: ignore[arg-type]
+            ConfigurationTestParameters(driver_enabled="yes")  # type: ignore[arg-type]
 
     def test_update_replaces_only_the_test_parameters_section(self):
         view = _loaded()

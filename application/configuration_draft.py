@@ -381,7 +381,6 @@ class ConfigurationDraft:
     attenuator: Decibels | None = None
     max_dut_input_power: PowerDbm | None = None
     driver_enabled: bool | None = None
-    driver_power_source: str | None = None
     # 测试方案现场参数（页面下拉框），不驱动电源分配；缺失时写出阶段按 DUT 计划路由数回退。
     dut_supply_count: int | None = None
     # 漏极只供效率计算读取，不参与排序/间隔/启停；缺失时保持 None。
@@ -403,11 +402,6 @@ class ConfigurationDraft:
         _require_optional(self.max_dut_input_power, PowerDbm, "DUT 最大输入功率")
         object.__setattr__(
             self, "driver_enabled", _optional_bool(self.driver_enabled, "驱放模式开关")
-        )
-        object.__setattr__(
-            self,
-            "driver_power_source",
-            _optional_text(self.driver_power_source, "驱放供电方式"),
         )
         # 数量只做结构校验：页面提供 1–3 的下拉框，但旧配置可能记录更多电源，
         # 草稿不在这里复制范围规则，也不把旧值改写成页面默认值。
@@ -491,9 +485,7 @@ class ConfigurationDraft:
         max_dut_input_power = _read_max_input_power(document.get("dut_config"), issues)
         dut_supply_count = _read_dut_supply_count(document.get("dut_config"), issues)
         drain_channel = _read_drain_channel(document.get("dut_config"), issues)
-        driver_enabled, driver_power_source = _read_driver_mode(
-            document.get("driver_mode"), issues
-        )
+        driver_enabled = _read_driver_mode(document.get("driver_mode"), issues)
         power_supplies = _read_power_supplies(document.get("instruments"), issues)
         assignments = document.get("power_supply_assignment")
         dut_power_plan = _read_power_plan(assignments, "dut_amplifier", issues)
@@ -508,7 +500,6 @@ class ConfigurationDraft:
             attenuator=attenuator,
             max_dut_input_power=max_dut_input_power,
             driver_enabled=driver_enabled,
-            driver_power_source=driver_power_source,
             dut_supply_count=dut_supply_count,
             drain_channel=drain_channel,
             dut_power_plan=dut_power_plan,
@@ -877,21 +868,15 @@ def _read_power_plan(
         return None
 
 
-def _read_driver_mode(
-    value: Any, issues: list[ValidationIssue]
-) -> tuple[bool | None, str | None]:
+def _read_driver_mode(value: Any, issues: list[ValidationIssue]) -> bool | None:
     if value is None:
-        return None, None
+        return None
     section = _mapping(value, "driver_mode", issues)
     if not section:
-        return None, None
-    enabled = _optional_bool_field(
+        return None
+    return _optional_bool_field(
         section.get("enabled"), "driver_mode.enabled", issues
     )
-    source = _optional_text_field(
-        section.get("power_source"), "driver_mode.power_source", issues
-    )
-    return enabled, source
 
 
 def _read_power_supplies(
@@ -1118,10 +1103,7 @@ def _sweep_document(value: PowerSweep | None) -> dict[str, Any]:
 
 
 def _driver_mode_document(draft: ConfigurationDraft) -> dict[str, Any]:
-    document: dict[str, Any] = {"enabled": draft.driver_enabled}
-    if draft.driver_power_source is not None:
-        document["power_source"] = draft.driver_power_source
-    return document
+    return {"enabled": draft.driver_enabled}
 
 
 def _instrument_entry(binding: DeviceBindingDraft | None) -> dict[str, Any]:

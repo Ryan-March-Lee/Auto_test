@@ -193,7 +193,6 @@ class ConfigurationTestParameters:
     attenuator: Decibels | None = None
     max_dut_input_power: PowerDbm | None = None
     driver_enabled: bool | None = None
-    driver_power_source: str | None = None
     dut_supply_count: int | None = None
 
     def __post_init__(self) -> None:
@@ -206,7 +205,6 @@ class ConfigurationTestParameters:
             attenuator=self.attenuator,
             max_dut_input_power=self.max_dut_input_power,
             driver_enabled=self.driver_enabled,
-            driver_power_source=self.driver_power_source,
             dut_supply_count=self.dut_supply_count,
         )
 
@@ -224,7 +222,6 @@ class ConfigurationTestParameters:
             attenuator=draft.attenuator,
             max_dut_input_power=draft.max_dut_input_power,
             driver_enabled=draft.driver_enabled,
-            driver_power_source=draft.driver_power_source,
             dut_supply_count=draft.dut_supply_count,
         )
 
@@ -249,7 +246,6 @@ class ConfigurationTestParameters:
             "attenuator": self.attenuator,
             "max_dut_input_power": self.max_dut_input_power,
             "driver_enabled": self.driver_enabled,
-            "driver_power_source": self.driver_power_source,
             "dut_supply_count": self.dut_supply_count,
         }
 

@@ -18,7 +18,6 @@ from presentation.qt.config_projection import (
     DEFAULT_SIGNAL_SOURCE,
     DEFAULT_TEST_FREQUENCIES,
     ConfigBackfillError,
-    driver_power_source_label,
     project_authoring_config,
     reset_control_widgets,
 )
@@ -173,9 +172,6 @@ class FakeForm:
         self.attenuator_combo = _Combo(("30dB", "40dB"))
         self.pa_unit_count_combo = _Combo(("1", "2", "3"))
         self.test_mode_enabled = False
-        self.driver_power_source_combo = _Combo(("直流电源", "自带供电"))
-        # 页面算好的供电方式；投影只把它写到控件，不自己再推断一遍。
-        self.driver_power_source = "直流电源"
         self.power_config_widgets = {
             name: {
                 "channels": {
@@ -192,10 +188,6 @@ class FakeForm:
             }
             for name in supplies
         }
-        # 器件用哪台电源、哪个通道由计划路由决定，表单只剩供电方式一个下拉框。
-        self.power_assignment_widgets = {
-            "driver_source": _Combo(("直流电源", "自带供电")),
-        }
 
 
 class ConfigProjectionTests(unittest.TestCase):
@@ -208,7 +200,7 @@ class ConfigProjectionTests(unittest.TestCase):
                 "signal_source": {"start_power": -30.0, "stop_power": -5.0, "step": 0.5},
                 "compression_point": {"type": "3dB"},
                 "attenuator": {"type": "30dB"},
-                "driver_mode": {"enabled": True, "power_source": "dc_supply"},
+                "driver_mode": {"enabled": True},
                 "dut_config": {"max_input_power": 25.5, "power_supply_count": 3},
                 "instruments": {
                     "signal_generator": {"address": "sim::sg2", "enabled": False},
@@ -256,10 +248,6 @@ class ConfigProjectionTests(unittest.TestCase):
         self.assertEqual(channel["voltage"].value(), 3.3)
         self.assertEqual(channel["current"].value(), 0.5)
         self.assertTrue(form.test_mode_enabled)
-        self.assertEqual(form.driver_power_source_combo.currentText(), "直流电源")
-        self.assertEqual(
-            form.power_assignment_widgets["driver_source"].currentText(), "直流电源"
-        )
         # 仪器连接不由控件编辑：投影只把文档原样带回，交给页面与发现面板处理。
         self.assertEqual(
             projected["instruments"]["signal_generator"]["address"], "sim::sg2"
@@ -269,7 +257,7 @@ class ConfigProjectionTests(unittest.TestCase):
         self.assertEqual(form.freq_edit.text(), "[2.4, 2.6]")
 
     def test_projection_does_not_restore_supply_selection_combos(self):
-        """计划路由是器件电源选择的唯一来源，投影不再按旧分配恢复下拉框。"""
+        """计划路由是器件电源选择的唯一来源，投影不再恢复任何按器件的下拉框。"""
         form = FakeForm()
 
         project_authoring_config(
@@ -284,10 +272,7 @@ class ConfigProjectionTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual(set(form.power_assignment_widgets), {"driver_source"})
-        self.assertEqual(
-            form.power_assignment_widgets["driver_source"].currentText(), "直流电源"
-        )
+        self.assertFalse(hasattr(form, "power_assignment_widgets"))
 
     def test_reset_uses_the_shared_channel_baseline(self):
         """通道数值重置到空配置基线的值，与构建模块的非法值回落同源。"""
@@ -303,50 +288,6 @@ class ConfigProjectionTests(unittest.TestCase):
         for key in ("voltage", "current_protection"):
             with self.subTest(control=key):
                 self.assertEqual(channel[key].value(), DEFAULT_POWER_CHANNEL_VALUE)
-
-    def test_reset_returns_the_driver_source_to_the_baseline(self):
-        """重置是无状态的：上一次的供电方式选择不参与回填。"""
-        form = FakeForm()
-        form.power_assignment_widgets["driver_source"].setCurrentText("自带供电")
-
-        reset_control_widgets(form)
-
-        self.assertEqual(
-            form.power_assignment_widgets["driver_source"].currentText(), "直流电源"
-        )
-
-    def test_projection_uses_the_page_inferred_driver_source(self):
-        """供电方式由 :func:`driver_power_source_label` 算好，投影不另立一套推断。"""
-        form = FakeForm()
-        form.driver_power_source = "自带供电"
-
-        project_authoring_config(
-            form,
-            {
-                "driver_mode": {"enabled": True},
-                "power_supply_assignment": {
-                    "driver_amplifier": {
-                        "power_plan": {
-                            "power_sequence": [
-                                {"supply_id": "DP8B0885", "channel": "CH1"}
-                            ]
-                        }
-                    }
-                },
-            },
-        )
-
-        # 计划里有 1 条驱动路由，但页面推断是自带供电：投影必须听页面的。
-        self.assertEqual(
-            form.power_assignment_widgets["driver_source"].currentText(), "自带供电"
-        )
-
-    def test_driver_source_label_falls_back_to_the_plan_route_count(self):
-        """``power_source`` 缺失时按驱动计划的路由数推断，两条路径同源。"""
-        self.assertEqual(driver_power_source_label(None, 1), "直流电源")
-        self.assertEqual(driver_power_source_label(None, 0), "自带供电")
-        self.assertEqual(driver_power_source_label(None, None), "自带供电")
-        self.assertEqual(driver_power_source_label("external_ac", 1), "自带供电")
 
     def test_projection_resets_before_applying(self):
         form = FakeForm()

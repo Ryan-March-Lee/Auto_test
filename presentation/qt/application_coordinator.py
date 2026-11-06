@@ -359,9 +359,9 @@ class ApplicationCoordinator:
         """合并两页的片段：参数页先写，电源页只覆盖自己负责的字段。
 
         顺序固定为“参数页 → 电源页”：参数页拥有测试参数、PA 单元数量与设备连接，
-        电源页只把 ``instruments.power_supplies``、``power_supply_assignment``、
-        ``dut_config.drain_channel`` 与 ``driver_mode.power_source`` 合并进来，因此
-        两页尚未保存的编辑都不会被对方整段覆盖。
+        电源页只把 ``instruments.power_supplies``、``power_supply_assignment`` 与
+        ``dut_config.drain_channel`` 合并进来，因此两页尚未保存的编辑都不会被对方
+        整段覆盖。
         """
         page = self._require_config_page()
         config = page.build_config(self.config)

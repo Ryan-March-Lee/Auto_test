@@ -87,17 +87,9 @@ class ConfigFormStateTests(unittest.TestCase):
         widgets.power_step = type("V", (), {"value": lambda self: 1})()
         widgets.compression_combo = type("C", (), {"currentText": lambda self: "5dB"})()
         widgets.attenuator_combo = type("C", (), {"currentText": lambda self: "30dB"})()
-        widgets.driver_mode_check = type("B", (), {"isChecked": lambda self: False})()
         widgets.max_input_power = type("V", (), {"value": lambda self: 30})()
         widgets.pa_unit_count_combo = type("C", (), {"currentText": lambda self: "1"})()
         widgets.power_config_widgets = {}
-        widgets.power_assignment_widgets = {
-            "driver_enabled": type("B", (), {"isChecked": lambda self: False})(),
-            "driver_power": type("C", (), {"currentText": lambda self: "DP8B1519"})(),
-            "pa_unit1_power": type("C", (), {"currentText": lambda self: "DP8B1519"})(),
-            "pa_unit2_power": type("C", (), {"currentText": lambda self: "DP8B0885"})(),
-            "pa_unit3_power": type("C", (), {"currentText": lambda self: "DP8B1191"})(),
-        }
         # 仪器连接只来自设备发现结果：绑定记录就是唯一的地址来源，界面没有地址控件。
         widgets.device_bindings = {
             "signal_generator": {"visa_address": "TCPIP0::192.168.1.201::inst0::INSTR"},
@@ -364,8 +356,6 @@ class _FormWidgets:
         self.attenuator_combo = type("C", (), {"currentText": lambda self: "30dB"})()
         self.pa_unit_count_combo = _combo("1")
         self.test_mode_enabled = test_mode_enabled
-        source = "直流电源" if driver_supply_id else "自带供电"
-        self.driver_power_source_combo = type("C", (), {"currentText": lambda self: source})()
         self.device_bindings = bindings
         self.power_config_widgets = {
             supply_id: {

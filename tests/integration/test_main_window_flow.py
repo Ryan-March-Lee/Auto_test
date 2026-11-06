@@ -444,7 +444,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         """
         self._silence_dialogs()
         saved = _fully_valid_gui_config()
-        saved["driver_mode"] = {"enabled": True, "power_source": "dc_supply"}
+        saved["driver_mode"] = {"enabled": True}
         saved["instruments"]["power_supplies"]["DP8B0885"] = {
             "label": "DP8B0885",
             "model": "DP832A",
@@ -496,7 +496,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
     def test_no_driver_mode_drops_a_saved_driver_plan_and_still_creates_a_run(self):
         self._silence_dialogs()
         saved = _fully_valid_gui_config()
-        saved["driver_mode"] = {"enabled": True, "power_source": "dc_supply"}
+        saved["driver_mode"] = {"enabled": True}
         saved["power_supply_assignment"]["driver_amplifier"] = {
             "power_plan": {
                 "power_sequence": [{"supply_id": "DP8B1519", "channel": "CH1"}],
@@ -508,7 +508,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         window = self._window()
         window._enter_test_mode(False)
 
-        self.assertTrue(window.power_page.power_assignment_group.isHidden())
+        self.assertTrue(window.power_page.driver_power_plan_box.isHidden())
         self.assertEqual(
             window.power_page.build_config()["power_supply_assignment"][
                 "driver_amplifier"
@@ -521,18 +521,21 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIsNotNone(prepared)
         self.assertFalse(prepared.configuration.test_plan.driver_enabled)
 
-    def test_driver_mode_shows_the_box_with_the_inferred_external_power(self):
+    def test_driver_mode_shows_the_plan_box_and_empty_plan_means_external(self):
         self._silence_dialogs()
         window = self._window()
 
         window._enter_test_mode(True)
 
-        self.assertFalse(window.power_page.power_assignment_group.isHidden())
-        # 现场配置里没有本机驱动供电通道：按自带供电推断，不占用本机电源。
+        self.assertFalse(window.power_page.driver_power_plan_box.isHidden())
         self.assertEqual(
-            window.power_page.driver_power_source_combo.currentText(), "自带供电"
+            window.power_page.driver_power_plan_editor.read_plan()["power_sequence"],
+            [],
+            "现场配置没有本机驱动供电通道：计划留空即驱放自带供电",
         )
-        self.assertFalse(window.power_page.driver_power_hint.isHidden())
+        self.assertIn(
+            "自带供电", window.power_page.driver_power_plan_editor.status.text()
+        )
         self.assertIn(
             "驱动功放", window.amplifier_page.instruction_text.toPlainText()
         )
@@ -772,11 +775,11 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
 
         window._enter_test_mode(False)
         self.assertFalse(window.config_page.driver_mode_requested())
-        self.assertTrue(window.power_page.power_assignment_group.isHidden())
+        self.assertTrue(window.power_page.driver_power_plan_box.isHidden())
 
         window._enter_test_mode(True)
         self.assertTrue(window.config_page.driver_mode_requested())
-        self.assertFalse(window.power_page.power_assignment_group.isHidden())
+        self.assertFalse(window.power_page.driver_power_plan_box.isHidden())
 
     def test_create_run_freezes_the_run_and_updates_the_page(self):
         self._silence_dialogs()

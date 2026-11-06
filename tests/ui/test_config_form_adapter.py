@@ -135,16 +135,7 @@ def _page(config=None, *, supplies=("DP8B1519", "DP8B0885"), frequency="[1.0]"):
     page.attenuator_combo = _Combo(("30dB", "40dB"))
     page.pa_unit_count_combo = _Combo(("1", "2", "3"))
     page.test_mode_enabled = False
-    page.driver_power_source_combo = _Combo(("直流电源", "自带供电"))
-    page.driver_power_source = "直流电源"
     page.power_config_widgets = {}
-    page.power_assignment_widgets = {
-        "driver_source": _Combo(("直流电源", "自带供电")),
-        "driver_power": _Combo(supplies, data=supplies),
-        "pa_unit1_power": _Combo(supplies, data=supplies),
-        "pa_unit2_power": _Combo(supplies, data=supplies),
-        "pa_unit3_power": _Combo(supplies, data=supplies),
-    }
     return page
 
 

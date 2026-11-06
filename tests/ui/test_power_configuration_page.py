@@ -200,9 +200,9 @@ class PowerConfigurationPageTests(unittest.TestCase):
 
     # ---- 驱动模式 -----------------------------------------------------------
 
-    def test_driver_power_plan_follows_the_power_source(self):
+    def test_driver_power_plan_is_active_whenever_driver_mode_is_on(self):
         page = self.make_page(
-            driver_mode={"enabled": True, "power_source": "dc_supply"},
+            driver_mode={"enabled": True},
             power_supply_assignment={
                 "driver_amplifier": {
                     "power_plan": plan(("DP8B1519", "CH1")),
@@ -213,17 +213,8 @@ class PowerConfigurationPageTests(unittest.TestCase):
             },
         )
         page.set_test_mode(True)
-        self.assertEqual(page.driver_power_source_combo.currentText(), "直流电源")
         self.assertTrue(page.driver_power_plan_editor.isEnabled())
-        self.assertTrue(page.driver_power_hint.isHidden())
-
-        page.driver_power_source_combo.setCurrentText("自带供电")
-        self.assertFalse(page.driver_power_plan_editor.isEnabled())
-        self.assertTrue(page.driver_power_hint.isVisible())
-        self.assertEqual(page.build_config()["driver_mode"]["power_source"], "external_ac")
-
-        page.driver_power_source_combo.setCurrentText("直流电源")
-        self.assertTrue(page.driver_power_plan_editor.isEnabled())
+        self.assertNotIn("power_source", page.build_config()["driver_mode"])
 
         page.set_test_mode(False)
         self.assertFalse(page.driver_power_plan_editor.isEnabled())
@@ -238,12 +229,12 @@ class PowerConfigurationPageTests(unittest.TestCase):
         page.set_test_mode(True)
         self.assertEqual(changes[-1], True)
 
-    def test_no_driver_mode_hides_the_power_assignment_box(self):
+    def test_no_driver_mode_hides_the_driver_plan_box(self):
         page = self.make_page(driver_mode={"enabled": True})
 
         page.set_test_mode(False)
 
-        self.assertFalse(page.power_assignment_group.isVisible())
+        self.assertFalse(page.driver_power_plan_box.isVisible())
 
     # ---- 片段提交与回填 ----------------------------------------------------
 
@@ -369,7 +360,7 @@ class PowerConfigurationPageTests(unittest.TestCase):
         """同一台电源 CH1 供驱放、CH2 供 DUT：计划已经表达清楚，不需要固定分配。"""
         page = self.make_page(
             device_bindings=power_supply_bindings("DP8B1519"),
-            driver_mode={"enabled": True, "power_source": "dc_supply"},
+            driver_mode={"enabled": True},
             power_supply_assignment={
                 "driver_amplifier": {
                     "power_plan": plan(("DP8B1519", "CH1")),

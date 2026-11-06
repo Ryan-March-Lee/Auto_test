@@ -58,7 +58,6 @@ def _section(
     return PowerFormSection(
         sources=_source(*SUPPLIES),
         choices=_choices(*bound),
-        driver_power_source="直流电源",
         driver_plan_active=driver_plan_active,
         dut_power_plan=plans.get("dut"),
         driver_power_plan=plans.get("driver"),
@@ -162,12 +161,20 @@ class PowerPlanWidgetTests(unittest.TestCase):
         self.assertEqual(
             section.driver_power_plan_editor.read_active_plan(),
             {"power_sequence": [], "inter_channel_delay_s": 0.0},
-            "驱放自带供电时不能把本机电源计划写回",
+            "驱放模式关闭时不能把本机电源计划写回",
         )
         self.assertTrue(
             section.driver_power_plan_editor.read_plan()["power_sequence"],
-            "切回直流供电后仍保留界面上未提交的勾选",
+            "重新开启驱放模式后仍保留界面上未提交的勾选",
         )
+
+    def test_an_empty_driver_plan_is_the_external_power_state(self):
+        """驱动功放不勾任何通道就是自带供电，状态行不能提示“未确认”。"""
+        section = _section(driver_plan_active=True)
+
+        status = section.driver_power_plan_editor.status.text()
+        self.assertIn("自带供电", status)
+        self.assertNotIn("未确认", status)
 
 
 class DrainSelectionTests(unittest.TestCase):

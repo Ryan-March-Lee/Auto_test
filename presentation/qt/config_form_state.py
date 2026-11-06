@@ -259,30 +259,8 @@ class ConfigFormState:
         return result
 
     def _read_driver_mode(self, w: Any) -> dict:
-        """读取驱放测试模式与供电方式。
-
-        供电方式只在驱放测试模式下有意义：关闭时写回不带 ``power_source`` 的
-        ``{"enabled": False}``，避免保存出“关闭却又声明供电方式”的配置。
-        """
-        enabled = bool(getattr(w, "test_mode_enabled", False))
-        if not enabled:
-            return {"enabled": False}
-        source_widget = getattr(w, "driver_power_source_combo", None)
-        if source_widget is not None:
-            label = self._current(source_widget)
-            return {
-                "enabled": True,
-                "power_source": {"自带供电": "external_ac"}.get(label, "dc_supply"),
-            }
-        # 电源表单已拆到独立页面：参数页没有供电方式控件，不能把已保存的
-        # ``external_ac`` 默认改回 ``dc_supply``；来源只由回填基线保留。
-        existing = _dict_copy(self.config.get("driver_mode")).get("power_source")
-        return {
-            "enabled": True,
-            "power_source": (
-                existing if existing in ("dc_supply", "external_ac") else "dc_supply"
-            ),
-        }
+        """读取驱放测试模式；供电方式由驱动功放上电计划是否有路由表达。"""
+        return {"enabled": bool(getattr(w, "test_mode_enabled", False))}
 
     def read_power_supply_config(self) -> dict:
         result = {}
@@ -390,13 +368,6 @@ class ConfigFormState:
         assignment = self.read_power_assignment()
         if assignment:
             fragment["power_supply_assignment"] = assignment["power_supply_assignment"]
-        if getattr(self.widgets, "driver_power_source_combo", None) is not None:
-            # 驱放供电方式属于电源页的片段，但落在测试参数段 ``driver_mode`` 里。
-            # 片段只带 ``power_source``，``enabled`` 仍由参数页决定；合并方按字段合并，
-            # 不能用电源片段整段覆盖 ``driver_mode``。
-            source = self._read_driver_mode(self.widgets).get("power_source")
-            if source is not None:
-                fragment["driver_mode"] = {"power_source": source}
         if getattr(self.widgets, "drain_channel_combo", None) is not None:
             fragment["dut_config"] = {
                 "drain_channel": self.read_drain_channel(),
@@ -440,13 +411,6 @@ class ConfigFormState:
             config["power_supply_assignment"] = assignment["power_supply_assignment"]
         elif not _dict_copy(config.get("driver_mode")).get("enabled"):
             _clear_driver_power_plan(config)
-        if getattr(self.widgets, "driver_power_source_combo", None) is not None:
-            # 供电方式是否生效以页面当前的测试模式为准，而不是基线里的旧 ``enabled``。
-            read_mode = self._read_driver_mode(self.widgets)
-            if read_mode.get("enabled"):
-                mode = _dict_copy(config.get("driver_mode"))
-                mode["power_source"] = read_mode.get("power_source")
-                config["driver_mode"] = mode
         if getattr(self.widgets, "drain_channel_combo", None) is not None:
             dut = _dict_copy(config.get("dut_config"))
             dut["drain_channel"] = self.read_drain_channel()

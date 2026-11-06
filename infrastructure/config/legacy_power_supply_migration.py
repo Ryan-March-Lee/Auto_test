@@ -70,7 +70,6 @@ from application.configuration_authoring import (
 )
 from domain.configuration.rules import (
     ASSIGNMENT_GROUPS,
-    DRIVER_POWER_DC,
     assignment_supply_id,
 )
 from domain.instruments.models import (
@@ -768,8 +767,10 @@ def migrate_legacy_power_supplies(
         entry.old_key: entry for entry in entries if entry.status == STATUS_MIGRATED
     }
     # 已经是当前 1.1 且不含旧槽位/旧角色字段的文档原样返回：迁移必须可重复执行，也不能
-    # 把用户已经确认的顺序或漏极重写成空计划。
+    # 把用户已经确认的顺序或漏极重写成空计划。唯一例外是已退役的驱放供电方式：它不参与
+    # 计划判定，删掉它既不改写计划，又保证迁移输出总是干净的 1.1。
     if _is_current_clean_document(config):
+        _strip_driver_power_source(target)
         return LegacyMigrationResult(
             config=target,
             entries=tuple(entries),
@@ -804,6 +805,7 @@ def migrate_legacy_power_supplies(
     unresolved = _unresolved_references(target)
     plan_candidates = _plan_candidates(target)
     _strip_power_assignments(target)
+    _strip_driver_power_source(target)
 
     authored = _author_migrated_document(target)
 
@@ -1630,20 +1632,13 @@ def _unconfirmed_plan_paths(document: Mapping[str, Any]) -> Tuple[str, ...]:
 
     这类文档已经删除旧 ``supplies``，因此无法再区分“完整迁移但用户尚未排序”和
     “迁移本身缺来源、需要人工补全”。写盘门槛不能把后者当成完整迁移：DUT 计划是运行
-    就绪的必需项，驱动功放在直流供电时同样必须有计划；任一为空都要求先确认，而不是
-    返回 ``writable=True``。用户确认过的计划（非空）仍原样保留，不会被二次迁移清空。
+    就绪的必需项，为空时必须先确认，而不是返回 ``writable=True``。驱放计划不同：
+    空计划就是自带供电，是合法的完整状态，不要求确认。
     """
     paths: List[str] = []
     groups = _mapping(document.get("power_supply_assignment"))
     if not _plan_has_routes(groups.get("dut_amplifier")):
         paths.append("power_supply_assignment.dut_amplifier.power_plan")
-    driver_mode = _mapping(document.get("driver_mode"))
-    if (
-        driver_mode.get("enabled") is True
-        and driver_mode.get("power_source") == DRIVER_POWER_DC
-        and not _plan_has_routes(groups.get("driver_amplifier"))
-    ):
-        paths.append("power_supply_assignment.driver_amplifier.power_plan")
     return tuple(paths)
 
 
@@ -1661,6 +1656,21 @@ def _strip_power_assignments(target: Dict[str, Any]) -> None:
             continue
         group.pop("supplies", None)
         group.pop("power_supply_count", None)
+
+
+def _strip_driver_power_source(target: Dict[str, Any]) -> None:
+    """删除已退役的驱放供电方式（编辑段与两份正式段）。
+
+    1.1 不再保存该选择：驱动功放上电计划为空即表示自带供电，计划非空即表示由本机
+    直流电源供电。文档里残留的 ``power_source`` 只是旧版本的写盘结果，读取时忽略，
+    迁移或重新保存时删除。
+    """
+    sections = [target.get("driver_mode")]
+    for name in ("test_plan", "run_mapping"):
+        sections.append(_mapping(target.get(name)).get("driver_mode"))
+    for driver in sections:
+        if isinstance(driver, dict):
+            driver.pop("power_source", None)
 
 
 # --------------------------------------------------------------------------- 小工具

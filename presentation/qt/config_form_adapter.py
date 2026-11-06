@@ -173,7 +173,7 @@ class ConfigurationFormAdapter:
     ) -> dict[str, Any]:
         """把一份配置编写文档确定性地投影到控件，返回文档副本。
 
-        测试参数、通道参数与供电方式走 :func:`project_authoring_config`；组上电计划与
+        测试参数与通道参数走 :func:`project_authoring_config`；组上电计划与
         漏极属于独立电源表单，若控件提供 ``apply_power_plan_config``，就在同一入口里
         交给它，页面不需要再直接操作电源控件。
         """
@@ -191,8 +191,8 @@ class ConfigurationFormAdapter:
     ) -> dict[str, Any]:
         """把文档里的电源字段投影到独立电源页，返回文档副本。
 
-        测试参数不由本页回填；与整份回填共用 ``config_projection`` 的通道/供电方式
-        重置规则，计划与漏极仍交给表单组件的同一入口。
+        测试参数不由本页回填；与整份回填共用 ``config_projection`` 的通道重置规则，
+        计划与漏极仍交给表单组件的同一入口。
         """
         projected = project_power_config(self.widgets, config)
         apply_plans = getattr(self.widgets, "apply_power_plan_config", None)

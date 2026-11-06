@@ -119,13 +119,11 @@ _POWER_ISSUE_PATH_PREFIXES = (
     "run_mapping.instruments.power_supplies",
     "run_mapping.dut_power_plan",
     "run_mapping.driver_mode.power_plan",
-    "run_mapping.driver_mode.power_source",
     "test_plan.dut.drain_channel",
     "test_plan.dut.channel_settings",
     "test_plan.dut.power_channels",
     "test_plan.driver_mode.channel_settings",
     "test_plan.driver_mode.power_plan",
-    "test_plan.driver_mode.power_source",
 )
 
 
@@ -345,7 +343,7 @@ class ConfigurationAuthoringService:
     ) -> ValidationResult:
         """只返回独立电源页负责的正式校验问题。
 
-        电源页展示的必须只是它自己的字段（通道参数、上电计划、漏极与驱动供电方式）；
+        电源页展示的必须只是它自己的字段（通道参数、上电计划与漏极）；
         整份配置的其余问题归参数页。这样两个页面各报自己的一段，
         合起来仍是完整校验，不会把“测试频率非法”写成“电源配置校验失败”。
         """
@@ -497,8 +495,13 @@ def _strip_legacy_editing_fields(document: dict[str, Any]) -> None:
 
     1.1 不再给器件固定分配电源：``power_supply_assignment.<组>.supplies`` 与
     ``power_supply_count`` 只属于旧编辑段，上电计划才是唯一来源；通道 ``role`` 也只
-    属于 1.0 读取兼容。这里只改要写出的副本，不动调用方的文档。
+    属于 1.0 读取兼容。驱放供电方式（``driver_mode.power_source``）同理已退役：计划为
+    空即自带供电，计划非空即由本机直流电源供电，不再另存一份选择。这里只改要写出的
+    副本，不动调用方的文档。
     """
+    driver_mode = document.get("driver_mode")
+    if isinstance(driver_mode, dict):
+        driver_mode.pop("power_source", None)
     instruments = _mapping(document.get("instruments"))
     for supply in _mapping(instruments.get("power_supplies")).values():
         for channel in _mapping(_mapping(supply).get("channels")).values():
@@ -551,7 +554,6 @@ def _author_test_plan(document: Mapping[str, Any]) -> dict[str, Any]:
     attenuator = _mapping(document.get("attenuator"))
     dut_config = _mapping(document.get("dut_config"))
     driver_mode = _mapping(document.get("driver_mode"))
-    driver_routes = _power_plan_routes(document, "driver_amplifier")
     return {
         "schema_version": OFFICIAL_SCHEMA_VERSION,
         "template": False,
@@ -579,7 +581,6 @@ def _author_test_plan(document: Mapping[str, Any]) -> dict[str, Any]:
         },
         "driver_mode": {
             "enabled": bool(driver_mode.get("enabled")),
-            "power_source": _driver_power_source(document, driver_routes),
             "channel_settings": _author_channel_settings(document, "driver_amplifier"),
         },
         "other_parameters": {},
@@ -590,7 +591,6 @@ def _author_run_mapping(document: Mapping[str, Any]) -> dict[str, Any]:
     instruments = _mapping(document.get("instruments"))
     signal_generator = _mapping(instruments.get("signal_generator"))
     spectrum_analyzer = _mapping(instruments.get("spectrum_analyzer"))
-    driver_routes = _power_plan_routes(document, "driver_amplifier")
     return {
         "schema_version": OFFICIAL_SCHEMA_VERSION,
         "template": False,
@@ -604,7 +604,6 @@ def _author_run_mapping(document: Mapping[str, Any]) -> dict[str, Any]:
         },
         "driver_mode": {
             "enabled": bool(_mapping(document.get("driver_mode")).get("enabled")),
-            "power_source": _driver_power_source(document, driver_routes),
             "power_plan": _author_power_plan(document, "driver_amplifier"),
         },
         "dut_power_plan": _author_power_plan(document, "dut_amplifier"),
@@ -627,17 +626,6 @@ def _author_instrument_entry(instrument: Mapping[str, Any]) -> dict[str, Any]:
             instrument.get("address") if instrument.get("enabled", True) else None
         ),
     }
-
-
-def _driver_power_source(document: Mapping[str, Any], driver_routes: Any) -> str | None:
-    """显式供电方式优先；旧配置按驱动通道是否存在推断。"""
-    mode = _mapping(document.get("driver_mode"))
-    if not mode.get("enabled"):
-        return None
-    source = mode.get("power_source")
-    if source in ("dc_supply", "external_ac"):
-        return source
-    return "dc_supply" if driver_routes else "external_ac"
 
 
 def _author_power_plan(document: Mapping[str, Any], group: str) -> Any:

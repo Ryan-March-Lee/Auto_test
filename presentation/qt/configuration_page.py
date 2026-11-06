@@ -407,7 +407,7 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         真正的连接由协调器在后台完成，页面在这段时间里不应允许改参数、回上一步或
         再提交一次。窗口在动作结束（成功或失败）后调用 ``False`` 恢复控件。恢复的是
         进入前各自的可用状态，而不是一律启用：参数区里本来就被业务状态禁用的控件
-        （例如驱放供电只在直流电源时可编辑）必须保持原样，最终动作不能顺手把它们打开。
+        必须保持原样，最终动作不能顺手把它们打开。
         """
         active = bool(active)
         if active == self._finalizing:

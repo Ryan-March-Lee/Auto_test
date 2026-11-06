@@ -196,7 +196,6 @@ class PowerSectionBuildTests(unittest.TestCase):
                     "channels": {"CH1": {"voltage": {"value": 12.0}}},
                 }
             },
-            "driver_power_source": "直流电源",
         }
         arguments.update(overrides)
         build_power_section(page, layout, **arguments)
@@ -268,12 +267,12 @@ class PowerSectionBuildTests(unittest.TestCase):
         self.assertEqual(channels["voltage"].value(), DEFAULT_POWER_CHANNEL_VALUE)
         self.assertEqual(channels["current"].value(), DEFAULT_POWER_CHANNEL_VALUE)
 
-    def test_assignment_form_registers_only_the_driver_source(self):
-        """器件用哪台电源、哪个通道由计划路由决定，表单不再有固定分配下拉框。"""
+    def test_power_section_has_no_driver_source_control(self):
+        """驱放是否自带供电由驱动计划是否为空表达，电源分区不再提供该控件。"""
         page = self.build()
 
-        self.assertEqual(set(page.power_assignment_widgets), {"driver_source"})
-        self.assertEqual(page.driver_power_source_combo.currentText(), "直流电源")
+        self.assertFalse(hasattr(page, "driver_power_source_combo"))
+        self.assertFalse(hasattr(page, "power_assignment_widgets"))
 
     def test_tab_tooltip_omits_identity_parts_the_entry_does_not_have(self):
         """旧槽位条目没有序列号与设备键：标题与提示里只有它的旧键，不编造身份。"""

@@ -1290,7 +1290,6 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         self.assertEqual(channel["current"].value(), 0.5)
         self.assertEqual(channel["current_protection"].value(), 1.0)
         self.assertTrue(channel["current_protection_enabled"].isChecked())
-        self.assertEqual(power.driver_power_source_combo.currentText(), "直流电源")
         self.assertEqual(
             power.driver_power_plan_editor.read_plan()["power_sequence"],
             [{"supply_id": "DP8B1519", "channel": "CH1"}],

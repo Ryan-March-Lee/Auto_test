@@ -204,7 +204,7 @@ class PowerPlanValidationTests(unittest.TestCase):
     def test_one_supply_may_serve_driver_and_dut_on_different_channels(self):
         """同一台电源 CH1 供驱放、CH2 供 DUT：计划已经表达清楚，不需要固定分配。"""
         document = _document()
-        document["driver_mode"] = {"enabled": True, "power_source": "dc_supply"}
+        document["driver_mode"] = {"enabled": True}
         document["power_supply_assignment"]["dut_amplifier"]["power_plan"][
             "power_sequence"
         ] = [{"supply_id": "PS1", "channel": "CH2"}]
@@ -217,7 +217,7 @@ class PowerPlanValidationTests(unittest.TestCase):
 
     def test_same_physical_route_cannot_appear_in_both_groups(self):
         document = _document()
-        document["driver_mode"] = {"enabled": True, "power_source": "dc_supply"}
+        document["driver_mode"] = {"enabled": True}
         document["instruments"]["power_supplies"]["PS2"] = {
             "enabled": True,
             "channels": {"CH1": {}},
@@ -242,7 +242,7 @@ class PowerPlanValidationTests(unittest.TestCase):
             result.errors,
         )
 
-    def test_driver_plan_must_match_enabled_and_power_source(self):
+    def test_driver_plan_must_match_enabled(self):
         document = _document()
         document["driver_mode"] = {"enabled": False}
         document["power_supply_assignment"]["driver_amplifier"]["power_plan"][
@@ -255,22 +255,10 @@ class PowerPlanValidationTests(unittest.TestCase):
             "power_supply_assignment.driver_amplifier.power_plan", _paths(result)
         )
 
-    def test_external_driver_power_rejects_a_local_plan(self):
+    def test_empty_driver_plan_is_the_external_power_state(self):
+        """驱放上电顺序留空就是自带供电，不再要求另一份“供电方式”字段确认。"""
         document = _document()
-        document["driver_mode"] = {"enabled": True, "power_source": "external_ac"}
-        document["power_supply_assignment"]["driver_amplifier"]["power_plan"][
-            "power_sequence"
-        ] = [{"supply_id": "PS1", "channel": "CH1"}]
-
-        result = validate_power_plan(document)
-
-        self.assertTrue(
-            any("自带供电" in issue.message for issue in result.errors), result.errors
-        )
-
-    def test_dc_driver_power_requires_a_non_empty_plan(self):
-        document = _document()
-        document["driver_mode"] = {"enabled": True, "power_source": "dc_supply"}
+        document["driver_mode"] = {"enabled": True}
         document["power_supply_assignment"]["driver_amplifier"]["power_plan"] = {
             "power_sequence": [],
             "inter_channel_delay_s": 0.0,
@@ -278,10 +266,7 @@ class PowerPlanValidationTests(unittest.TestCase):
 
         result = validate_power_plan(document)
 
-        self.assertTrue(
-            any("必须配置驱动功放上电顺序" in issue.message for issue in result.errors),
-            result.errors,
-        )
+        self.assertTrue(result.valid, result.errors)
 
 
 class DrainReferenceTests(unittest.TestCase):
@@ -323,7 +308,7 @@ class DrainReferenceTests(unittest.TestCase):
 
     def test_drain_channel_may_not_be_a_driver_route(self):
         document = _document()
-        document["driver_mode"] = {"enabled": True, "power_source": "dc_supply"}
+        document["driver_mode"] = {"enabled": True}
         document["instruments"]["power_supplies"]["PS2"] = {
             "enabled": True,
             "channels": {"CH1": {}},

@@ -11,12 +11,7 @@ from collections.abc import Mapping
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from domain.configuration.types import ConfigIssue, ConfigValidationResult
-from domain.configuration.models import (
-    DRIVER_POWER_DC,
-    DRIVER_POWER_EXTERNAL,
-    DRIVER_POWER_SOURCES,
-    MAX_INTER_CHANNEL_DELAY_S,
-)
+from domain.configuration.models import MAX_INTER_CHANNEL_DELAY_S
 
 
 PathLike = Union[str, os.PathLike[str]]
@@ -197,16 +192,9 @@ def validate_config(config: Dict[str, Any]) -> ConfigValidationResult:
         _parse_db_value(require(attenuator, "type", "attenuator.type"), "attenuator.type", error, non_negative=True)
 
     driver_enabled = None
-    driver_power_source = None
     if "driver_mode" in present_sections:
         driver_mode = get_mapping(root.get("driver_mode"), "driver_mode")
         driver_enabled = require(driver_mode, "enabled", "driver_mode.enabled")
-        driver_power_source = driver_mode.get("power_source")
-        if driver_power_source not in (None, "") and driver_power_source not in DRIVER_POWER_SOURCES:
-            error(
-                "driver_mode.power_source",
-                "必须是 dc_supply（直流电源）或 external_ac（自带供电）",
-            )
     if not isinstance(driver_enabled, bool):
         if "driver_mode" in present_sections:
             error("driver_mode.enabled", "必须是布尔值")
@@ -234,15 +222,7 @@ def validate_config(config: Dict[str, Any]) -> ConfigValidationResult:
         )
         _validate_group_plan(plans, "dut_amplifier", power_supplies, error)
         _validate_plan_conflicts(plans, power_supplies, error)
-    if driver_enabled is True:
-        _validate_driver_power_source(
-            driver_power_source,
-            driver_plan_routes,
-            "power_supply_assignment.driver_amplifier",
-            error,
-            warning,
-        )
-    elif driver_enabled is False and driver_plan_routes:
+    if driver_enabled is False and driver_plan_routes:
         error(
             "power_supply_assignment.driver_amplifier.power_plan",
             "驱放测试模式关闭时不能配置驱动功放上电计划",
@@ -263,7 +243,7 @@ def validate_power_plan(config: Any) -> ConfigValidationResult:
       ``{supply_id, channel}`` 两段对象；
     - 引用有效性：每条路由指向已登记、已启用的电源，且该电源声明了该通道；
     - 跨组冲突：同一物理通道不能同时出现在 DUT 与驱动功放的计划里；
-    - 驱放一致性：驱放关闭或自带供电时不得有计划，直流供电时序列不能为空；
+    - 驱放一致性：驱放关闭时不得有计划；驱放开启时计划为空即自带供电，是合法状态；
     - 漏极：``dut_config.drain_channel`` 若给出，必须出现在 DUT 上电计划中。漏极是
       效率测量输入，不参与排序、间隔或启停；这里不要求每种配置都必须有漏极，主功放
       运行的必填性由运行校验负责。
@@ -318,23 +298,15 @@ def validate_power_plan(config: Any) -> ConfigValidationResult:
                     f"{supply_id}/{channel}",
                 )
 
-    # 规则 7：驱放计划与 enabled/power_source 一致。
+    # 规则 7：驱放计划与 enabled 一致。空计划表示驱放自带供电，是合法状态。
     driver_mode = config.get("driver_mode")
     driver_mode = driver_mode if isinstance(driver_mode, Mapping) else {}
     driver_enabled = driver_mode.get("enabled")
-    driver_source = driver_mode.get("power_source")
-    if "driver_amplifier" in plan_entries:
-        driver_path = "power_supply_assignment.driver_amplifier.power_plan"
-        if driver_enabled is not True and driver_entries:
-            error(driver_path, "驱放测试模式关闭时不能配置驱动功放上电计划")
-        elif driver_source == DRIVER_POWER_EXTERNAL and driver_entries:
-            error(driver_path, "驱放自带供电时不能配置本机电源上电顺序")
-        elif (
-            driver_enabled is True
-            and driver_source == DRIVER_POWER_DC
-            and not driver_entries
-        ):
-            error(driver_path, "驱放使用直流电源时必须配置驱动功放上电顺序")
+    if "driver_amplifier" in plan_entries and driver_enabled is not True and driver_entries:
+        error(
+            "power_supply_assignment.driver_amplifier.power_plan",
+            "驱放测试模式关闭时不能配置驱动功放上电计划",
+        )
 
     # 漏极是测量输入，不是上电角色；字段存在时才校验引用。
     dut_config = config.get("dut_config")
@@ -642,42 +614,6 @@ def _binding_entries(bindings: dict) -> List[Tuple[str, Any]]:
             continue
         entries.append((f"device_bindings.{role}", record))
     return entries
-
-
-def _validate_driver_power_source(
-    source: Any,
-    driver_plan_routes: Mapping[Tuple[str, str], str],
-    path: str,
-    error: Any,
-    warning: Any,
-) -> None:
-    """校验驱放测试模式下的供电方式与驱动功放上电计划是否一致。"""
-    if source == DRIVER_POWER_DC:
-        if not driver_plan_routes:
-            error(
-                f"{path}.power_plan",
-                "驱放使用直流电源时必须配置驱动功放电源和通道",
-            )
-        return
-    if source == DRIVER_POWER_EXTERNAL:
-        if driver_plan_routes:
-            error(
-                f"{path}.power_plan",
-                "驱放自带供电时不能配置本机直流电源分配",
-            )
-        return
-    # 旧配置没有声明供电方式：有计划按直流处理，没有计划按自带供电处理，
-    # 只提示用户重新保存以把它写成显式字段。
-    if not driver_plan_routes:
-        warning(
-            "driver_mode.power_source",
-            "驱放测试模式未声明供电方式，按自带供电处理；重新保存配置即可记录该选择",
-        )
-    else:
-        warning(
-            "driver_mode.power_source",
-            "驱放测试模式未声明供电方式，按直流电源处理；重新保存配置即可记录该选择",
-        )
 
 
 def _is_finite_number(value: Any) -> bool:

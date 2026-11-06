@@ -1,9 +1,9 @@
 """配置页电源分区的控件构建与独立电源表单。
 
-本模块构建配置页右栏的电源分区：按电源键分页的「电源详细配置」标签页、
-「驱动功放供电」方式选择，以及步骤 11 新增的「通道上电计划」与「效率测量」漏极选择。
-:class:`PowerFormSection` 把这几块控件收在一个独立组件里，页面只负责把它放进布局、
-转发页面级派生状态（驱放供电方式、测试模式）并按需回填。
+本模块构建配置页右栏的电源分区：按电源键分页的「电源详细配置」标签页，以及步骤 11
+新增的「通道上电计划」与「效率测量」漏极选择。:class:`PowerFormSection` 把这几块
+控件收在一个独立组件里，页面只负责把它放进布局、转发页面级派生状态（测试模式）并按需
+回填。驱放自带供电时不需要额外控件：驱动功放上电计划留空即表示本系统不控制其电源。
 
 页面传进来的输入都是显式声明的结构（见 :data:`PowerSupplySources` 与
 :data:`PowerSupplyChoices`）：键是电源键，值是配置条目里本模块要显示的字段，本模块不从
@@ -39,7 +39,6 @@ from domain.instruments.labels import supply_identity_text
 from .config_page_widgets import combo_box, spin_box
 from .config_projection import (
     DEFAULT_POWER_CHANNEL_VALUE,
-    DRIVER_POWER_SOURCE_VALUES,
     supply_option_label,
 )
 from .config_power_assignments import POWER_SUPPLY_CHANNELS, assignment_channels
@@ -148,9 +147,8 @@ def build_power_section(
     layout: Any,
     *,
     sources: PowerSupplySources,
-    driver_power_source: Any,
 ) -> None:
-    """构建电源详细配置与驱放供电方式，并把页面要读写的控件登记到 ``page``。
+    """构建电源详细配置，并把页面要读写的控件登记到 ``page``。
 
     电源使用哪个通道不再通过“给器件固定分配某台电源”的下拉框选择：上电计划里的
     路由 ``(supply_id, channel)`` 已经是唯一来源，计划候选由 :class:`PowerFormSection`
@@ -165,30 +163,6 @@ def build_power_section(
     rebuild_power_tabs(page, sources=sources, preserved={})
     detail_layout.addWidget(page.power_tabs)
     layout.addWidget(detail)
-
-    driver_box = QGroupBox("驱动功放供电")
-    form = QGridLayout(driver_box)
-    form.setHorizontalSpacing(10)
-    form.setVerticalSpacing(8)
-    form.setColumnMinimumWidth(0, 118)
-    page.power_assignment_group = driver_box
-    page.driver_power_source_combo = combo_box(
-        DRIVER_POWER_SOURCE_VALUES, str(driver_power_source)
-    )
-    page.driver_power_source_label = QLabel("驱放供电方式:")
-    page.driver_power_hint = QLabel(
-        "自带供电的驱放由外部供电设备供电，本系统不会控制其电源；"
-        "使用直流电源时，在下方“驱动功放”上电计划里勾选实际使用的通道。"
-    )
-    page.driver_power_hint.setWordWrap(True)
-    form.addWidget(page.driver_power_source_label, 0, 0)
-    form.addWidget(page.driver_power_source_combo, 0, 1)
-    form.addWidget(page.driver_power_hint, 1, 0, 1, 2)
-    form.setColumnStretch(1, 1)
-    layout.addWidget(driver_box)
-    page.power_assignment_widgets = {
-        "driver_source": page.driver_power_source_combo,
-    }
 
 
 def rebuild_power_tabs(
@@ -366,12 +340,21 @@ class PowerPlanEditor(QWidget):
     列表从上到下就是上电顺序；每一行的勾选状态表示该物理通道是否参与上电。
     控件只生成 ``{power_sequence, inter_channel_delay_s}`` 形状的计划，不判断路由是否
     属于本次分配、跨组是否重复或间隔是否超界——那些由正式校验报告。``active`` 为假
-    （驱放关闭或自带供电）时读取结果是空计划，避免页面留着上一次的勾选被写回。
+    （驱放关闭）时读取结果是空计划，避免页面留着上一次的勾选被写回。
+    ``empty_means_external`` 只影响状态文案：驱动功放不勾任何通道就是自带供电，
+    不是“尚未确认”。
     """
 
-    def __init__(self, *, active: bool = True, parent: Any = None) -> None:
+    def __init__(
+        self,
+        *,
+        active: bool = True,
+        empty_means_external: bool = False,
+        parent: Any = None,
+    ) -> None:
         super().__init__(parent)
         self._active = bool(active)
+        self._empty_means_external = bool(empty_means_external)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
@@ -543,6 +526,8 @@ class PowerPlanEditor(QWidget):
         )
         if not self._active:
             text = "本组不使用本机直流电源，上电顺序不生效。"
+        elif checked == 0 and self._empty_means_external:
+            text = "未选择通道：按驱放自带供电处理，本系统不控制其电源。"
         elif total == 0:
             text = "没有已分配的通道。"
         elif checked == 0:
@@ -557,10 +542,10 @@ class PowerPlanEditor(QWidget):
 class PowerFormSection(QWidget):
     """独立电源表单：通道参数、组上电计划与漏极选择。
 
-    组件自己保存控件，页面只负责把它放进布局、转发页面级派生状态（驱放是否使用直流
-    电源）并读取整份配置。上电计划是“哪些电源的哪些通道给哪个器件上电”的唯一来源，
+    组件自己保存控件，页面只负责把它放进布局、转发页面级派生状态（驱放测试模式是否
+    开启）并读取整份配置。上电计划是“哪些电源的哪些通道给哪个器件上电”的唯一来源，
     计划候选由已绑定电源及其声明通道生成；绑定变化时 :meth:`rebuild` 会保留操作者
-    尚未保存的通道参数、顺序、间隔与漏极。
+    尚未保存的通道参数、顺序、间隔与漏极。驱动功放自带供电时，驱动计划保持为空即可。
     """
 
     def __init__(
@@ -568,7 +553,6 @@ class PowerFormSection(QWidget):
         *,
         sources: PowerSupplySources,
         choices: PowerSupplyChoices,
-        driver_power_source: Any,
         driver_plan_active: bool = True,
         dut_power_plan: Any = None,
         driver_power_plan: Any = None,
@@ -577,7 +561,6 @@ class PowerFormSection(QWidget):
     ) -> None:
         super().__init__(parent)
         self._driver_plan_active = bool(driver_plan_active)
-        self._driver_power_source = driver_power_source
         # 计划候选：已绑定电源的声明通道（没有声明时回落到每台电源固定的 CH1/CH2）。
         # 两个编辑器的候选相同，器件归属由“勾在哪一组”决定。
         self._plan_routes = _candidate_routes(sources, choices)
@@ -592,7 +575,6 @@ class PowerFormSection(QWidget):
             self,
             layout,
             sources=sources,
-            driver_power_source=driver_power_source,
         )
         self._build_plan_widgets(layout)
         self._build_drain_widgets(layout)
@@ -615,8 +597,17 @@ class PowerFormSection(QWidget):
         dut_layout.addWidget(self.dut_power_plan_editor)
         driver_box = QGroupBox("驱动功放")
         driver_layout = QVBoxLayout(driver_box)
-        self.driver_power_plan_editor = PowerPlanEditor(active=self._driver_plan_active)
+        self.driver_power_plan_editor = PowerPlanEditor(
+            active=self._driver_plan_active, empty_means_external=True
+        )
+        driver_hint = QLabel(
+            "驱放自带供电时保持留空：本系统不会控制其电源；"
+            "由本机直流电源供电时，勾选并排序实际使用的通道。"
+        )
+        driver_hint.setProperty("role", "hint")
+        driver_hint.setWordWrap(True)
         driver_layout.addWidget(self.driver_power_plan_editor)
+        driver_layout.addWidget(driver_hint)
         self.power_plan_group = group
         self.driver_power_plan_box = driver_box
         outer.addWidget(dut_box)

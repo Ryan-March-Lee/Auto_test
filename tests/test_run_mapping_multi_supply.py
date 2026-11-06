@@ -265,7 +265,6 @@ class MultiSupplyMappingTests(unittest.TestCase):
         data = two_supply_mapping()
         data["driver_mode"] = {
             "enabled": True,
-            "power_source": "dc_supply",
             "power_channels": [
                 {"channel": "DP8B0885/CH2", "role": "driver", "connection": "驱动功放"}
             ],
@@ -283,7 +282,6 @@ class MultiSupplyMappingTests(unittest.TestCase):
         data = two_supply_mapping()
         data["driver_mode"] = {
             "enabled": True,
-            "power_source": "dc_supply",
             "power_channels": [
                 {"channel": "DP8B0885/CH1", "role": "driver", "connection": "驱动功放"}
             ],

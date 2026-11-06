@@ -153,11 +153,11 @@ class TestModeSelectionTests(unittest.TestCase):
     （本模块其余用例会导入 PySide6 并绘制按钮，但这里不需要）。
     """
 
-    def test_mode_selection_keeps_the_existing_power_source(self):
+    def test_mode_selection_keeps_other_driver_mode_keys(self):
         from presentation.qt.welcome_page import apply_test_mode
 
         config = {
-            "driver_mode": {"enabled": False, "power_source": "dc_supply"},
+            "driver_mode": {"enabled": False, "note": "keep"},
             "test_frequencies": [2.4],
         }
 
@@ -166,7 +166,7 @@ class TestModeSelectionTests(unittest.TestCase):
         # 返回并原地更新同一份配置副本：调用方随后交给配置页回填。
         self.assertIs(result, config)
         self.assertEqual(
-            config["driver_mode"], {"enabled": True, "power_source": "dc_supply"}
+            config["driver_mode"], {"enabled": True, "note": "keep"}
         )
         self.assertEqual(config["test_frequencies"], [2.4])
 

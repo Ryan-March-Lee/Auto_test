@@ -32,6 +32,7 @@ from presentation.qt.configuration_session import ConfigurationSession
 from presentation.qt.connection_dialog import ConnectionDialog
 from presentation.qt.instrument_setup_page import InstrumentSetupPage
 from presentation.qt.power_configuration_page import PowerConfigurationPage
+from presentation.qt.rack_overview_page import RackOverviewPage
 from presentation.qt.run_history_page import build_run_history_page
 from presentation.qt.history_view_model import HistoryViewModel
 from presentation.qt.measurement_state import MeasurementKind, MeasurementResultReference
@@ -191,7 +192,7 @@ class MainWindow(QMainWindow):
             self.configuration_session,
             scanner_factory=build_device_scanner_factory(self.paths),
         )
-        self.connection_page.next_requested.connect(self._open_configuration_page)
+        self.connection_page.next_requested.connect(self._open_rack_overview_page)
         self.connection_page.return_welcome_requested.connect(self._return_to_welcome)
         self.connection_page.log_message.connect(self.add_log_message)
         self.config_page.discovery_message.connect(self.connection_page.log_message.emit)
@@ -199,6 +200,10 @@ class MainWindow(QMainWindow):
             self.connection_page.discovery_panel
         )
         self.view_stack.insertWidget(1, self.connection_page)
+        self.rack_page = RackOverviewPage(self)
+        self.rack_page.next_requested.connect(self._open_configuration_page)
+        self.rack_page.back_requested.connect(self._return_to_connection_page)
+        self.view_stack.insertWidget(2, self.rack_page)
 
         central_layout = QVBoxLayout(central_widget)
         central_layout.setContentsMargins(0, 0, 0, 0)
@@ -231,6 +236,16 @@ class MainWindow(QMainWindow):
         self.connection_page.enter()
         self.view_stack.setCurrentWidget(self.connection_page)
         self._sync_status_panel_visibility()
+
+    def _open_rack_overview_page(self) -> None:
+        """仪表配置完成：先在“仪器排布”确认电源架位，再进入参数页。"""
+        cards = [
+            card
+            for card in self.connection_page.discovery_panel.cards()
+            if card.is_checked()
+        ]
+        self.view_stack.setCurrentWidget(self.rack_page)
+        self.rack_page.enter(RackOverviewPage.entries_from_cards(cards))
 
     def _open_configuration_page(self) -> None:
         """仪表配置完成：进入工作区；保存、创建运行与连接仪器都归参数页最终按钮。"""

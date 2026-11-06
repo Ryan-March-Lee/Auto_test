@@ -78,6 +78,7 @@ class CardPresentationTests(DiscoveryPanelTestCase):
         card = panel.card_for(heading)
         self.assertEqual(data.heading, heading)
         self.assertEqual(data.code, card.code_label.text())
+        self.assertEqual(data.role_key, "signal_generator")
         self.assertEqual(data.caption(), card.name_label.text())
         self.assertEqual(data.address, card.address_label.text())
         self.assertEqual(data.status, card.status_label.text())

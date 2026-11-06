@@ -1,0 +1,259 @@
+"""仪器排布页：入场动画、九宫格拖放与“下一步”门禁。
+
+本组用例是纯表现层测试：卡片正面用一份纯色位图代替真实照片，页面不读配置、不连接
+仪器。绘制用例只验证页面能完成静态与动画帧的绘制，不比较像素内容——外观由
+``theme`` 的令牌决定，行为契约在这里锁定。
+"""
+
+import os
+import unittest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtCore import QMimeData, QPointF, QRect, Qt
+from PySide6.QtGui import QColor, QDropEvent, QPixmap
+from PySide6.QtWidgets import QApplication
+
+from presentation.qt import rack_overview_page as rack
+from presentation.qt.device_cards import CARD_HEIGHT, CARD_WIDTH, InstrumentCardData
+from presentation.qt.device_cards import InstrumentCard
+from presentation.qt.rack_overview_page import RackCardEntry, RackOverviewPage
+
+
+def _front() -> QPixmap:
+    pixmap = QPixmap(CARD_WIDTH, CARD_HEIGHT)
+    pixmap.fill(QColor("#FFFFFF"))
+    return pixmap
+
+
+def _entries(power_codes=("DP8B1519", "DP8B0885"), *, sides=True, offset=0):
+    entries = [
+        RackCardEntry(
+            "power_supply",
+            code,
+            _front(),
+            QRect(120 + index * 40 + offset, 120 + offset, CARD_WIDTH, CARD_HEIGHT),
+        )
+        for index, code in enumerate(power_codes)
+    ]
+    if sides:
+        entries.append(
+            RackCardEntry(
+                "signal_generator",
+                "5462",
+                _front(),
+                QRect(120 + offset, 420 + offset, CARD_WIDTH, CARD_HEIGHT),
+            )
+        )
+        entries.append(
+            RackCardEntry(
+                "spectrum_analyzer",
+                "QZNI0866",
+                _front(),
+                QRect(900 + offset, 420 + offset, CARD_WIDTH, CARD_HEIGHT),
+            )
+        )
+    return entries
+
+
+class RackOverviewPageTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _page(self, entries=None):
+        page = RackOverviewPage()
+        page.resize(1180, 760)
+        page.show()
+        self.app.processEvents()
+        page.enter(_entries() if entries is None else entries)
+        self.addCleanup(page.close)
+        self.addCleanup(page.deleteLater)
+        return page
+
+    # ---- 动画与门禁 -------------------------------------------------------
+
+    def test_enter_starts_the_transition_and_disables_next(self):
+        page = self._page()
+        self.assertTrue(page.transition_running())
+        self.assertFalse(page.next_btn.isEnabled())
+
+        page.finish_transition()
+
+        self.assertFalse(page.transition_running())
+        self.assertFalse(page.next_btn.isEnabled(), "电源还没摆好，不能进入参数页")
+
+    def test_no_power_supplies_allows_next_after_the_transition(self):
+        page = self._page(_entries(power_codes=()))
+        page.finish_transition()
+
+        self.assertTrue(page.all_supplies_placed())
+        self.assertTrue(page.next_btn.isEnabled())
+
+    def test_every_power_supply_must_be_placed_before_next(self):
+        page = self._page()
+        page.finish_transition()
+        supplies = page.power_supply_ids()
+        self.assertEqual(len(supplies), 2)
+
+        page.place_supply(supplies[0], 0)
+        self.assertFalse(page.next_btn.isEnabled(), "只放一台还不够")
+
+        page.place_supply(supplies[1], 4)
+        self.assertTrue(page.all_supplies_placed())
+        self.assertTrue(page.next_btn.isEnabled())
+
+        page.unplace_supply(supplies[0])
+        self.assertFalse(page.next_btn.isEnabled(), "取回一台后要重新变灰")
+
+    def test_entering_again_resets_the_rack(self):
+        page = self._page()
+        page.finish_transition()
+        supply = page.power_supply_ids()[0]
+        page.place_supply(supply, 3)
+
+        page.enter(_entries(offset=20))
+        page.finish_transition()
+
+        self.assertEqual(page.slot_assignments(), {})
+        self.assertFalse(page.next_btn.isEnabled())
+
+    def test_next_emits_only_when_the_button_is_ready(self):
+        page = self._page()
+        emitted = []
+        page.next_requested.connect(lambda: emitted.append(True))
+
+        page.finish_transition()
+        page.next_btn.click()
+        self.assertEqual(emitted, [], "未摆好时点击不能推进")
+
+        for index, supply in enumerate(page.power_supply_ids()):
+            page.place_supply(supply, index)
+        page.next_btn.click()
+        self.assertEqual(emitted, [True])
+
+    def test_back_button_emits_regardless_of_placement(self):
+        page = self._page()
+        emitted = []
+        page.back_requested.connect(lambda: emitted.append(True))
+
+        page.back_btn.click()
+
+        self.assertEqual(emitted, [True])
+
+    # ---- 摆位规则 ---------------------------------------------------------
+
+    def test_placing_on_an_occupied_slot_swaps_the_two_supplies(self):
+        page = self._page()
+        first, second = page.power_supply_ids()
+        page.place_supply(first, 0)
+        page.place_supply(second, 1)
+
+        page.place_supply(first, 1)
+
+        self.assertEqual(page.slot_of(first), 1)
+        self.assertEqual(page.slot_of(second), 0)
+
+    def test_dropping_a_placed_supply_on_an_occupied_slot_swaps(self):
+        page = self._page()
+        first, second = page.power_supply_ids()
+        page.place_supply(first, 2)
+        page.place_supply(second, 5)
+        # 第二台还在格子里，第一台拖到第二台的格子：两台互换，不能把第二台挤掉。
+        page.place_supply(first, 5)
+        self.assertEqual(page.slot_of(first), 5)
+        self.assertEqual(page.slot_of(second), 2)
+
+    def test_placing_on_an_occupied_slot_from_the_tray_returns_the_occupant(self):
+        page = self._page()
+        first, second = page.power_supply_ids()
+        page.place_supply(first, 4)
+
+        page.place_supply(second, 4)
+
+        self.assertEqual(page.slot_of(second), 4)
+        self.assertIsNone(page.slot_of(first), "被占用的电源应退回托盘")
+
+    def test_drop_supply_accepts_slot_and_tray_targets(self):
+        page = self._page()
+        supply = page.power_supply_ids()[0]
+
+        self.assertTrue(page.drop_supply(supply, 7))
+        self.assertEqual(page.slot_of(supply), 7)
+
+        self.assertTrue(page.drop_supply(supply, -1))
+        self.assertIsNone(page.slot_of(supply))
+
+        self.assertFalse(page.drop_supply(supply, None), "落点不在本页时不改变状态")
+
+    def test_place_rejects_unknown_supply_and_out_of_range_slot(self):
+        page = self._page()
+        supply = page.power_supply_ids()[0]
+
+        with self.assertRaises(ValueError):
+            page.place_supply("NOT-A-SUPPLY", 0)
+        with self.assertRaises(ValueError):
+            page.place_supply(supply, rack._SLOT_COUNT)
+        with self.assertRaises(ValueError):
+            page.place_supply(supply, -1)
+
+    # ---- 拖放事件 ---------------------------------------------------------
+
+    def test_drop_event_places_the_supply_in_the_target_slot(self):
+        page = self._page()
+        page.finish_transition()
+        board = page.board
+        scale, offset = board._transform()
+        slot = board._slot_rects()[0]
+        point = QPointF(
+            offset.x() + slot.center().x() * scale,
+            offset.y() + slot.center().y() * scale,
+        )
+        mime = QMimeData()
+        mime.setData(rack.RACK_SUPPLY_MIME, "DP8B1519".encode("utf-8"))
+        event = QDropEvent(point, Qt.MoveAction, mime, Qt.LeftButton, Qt.NoModifier)
+
+        board.dropEvent(event)
+
+        self.assertEqual(page.slot_of("DP8B1519"), 0)
+
+    # ---- 卡片入口与绘制 ---------------------------------------------------
+
+    def test_entries_from_cards_uses_role_code_and_card_rect(self):
+        card = InstrumentCard(
+            InstrumentCardData(
+                "DP832A（DP8B1519）",
+                code="DP8B1519",
+                model="DP832A",
+                role="电源",
+                role_key="power_supply",
+                checkable=True,
+            )
+        )
+        card.resize(CARD_WIDTH, CARD_HEIGHT)
+
+        entries = RackOverviewPage.entries_from_cards([card])
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].role_key, "power_supply")
+        self.assertEqual(entries[0].code, "DP8B1519")
+        self.assertEqual(entries[0].start_rect_global.size(), card.size())
+        self.assertFalse(entries[0].front.isNull())
+
+    def test_board_paints_static_and_transition_frames(self):
+        page = self._page()
+        page.finish_transition()
+        self.assertFalse(page.grab().isNull(), "静态布局必须能画出来")
+
+        page.enter(_entries())
+        # 直接取一帧动画中间态，确认变形与滑入的绘制路径可用。
+        page.board._animation.stop()
+        page.board._running = True
+        page.board._progress = 0.4
+        page.board.update()
+        self.app.processEvents()
+        self.assertFalse(page.grab().isNull(), "动画中间帧必须能画出来")
+
+
+if __name__ == "__main__":
+    unittest.main()

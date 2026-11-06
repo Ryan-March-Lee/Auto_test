@@ -403,6 +403,9 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
 
         self._scan_and_select(window)
         window.connection_page.next_btn.click()
+        self.assertIs(window.view_stack.currentWidget(), window.rack_page)
+        window.rack_page.finish_transition()
+        window.rack_page.next_btn.click()
         self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
         self.assertIs(window.tab_widget.currentWidget(), window.config_page)
 
@@ -425,6 +428,9 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         window._enter_test_mode(True)
         self._scan_and_select(window)
         window.connection_page.next_btn.click()
+        self.assertIs(window.view_stack.currentWidget(), window.rack_page)
+        window.rack_page.finish_transition()
+        window.rack_page.next_btn.click()
         self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
 
         window.config_page.previous_step_btn.click()
@@ -433,6 +439,9 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         # 回到仪表配置页会清空上一次结果：必须重新查找并选择，不能沿用旧绑定直接推进。
         self._scan_and_select(window)
         window.connection_page.next_btn.click()
+        self.assertIs(window.view_stack.currentWidget(), window.rack_page)
+        window.rack_page.finish_transition()
+        window.rack_page.next_btn.click()
         self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
         self.assertIs(window.tab_widget.currentWidget(), window.config_page)
 

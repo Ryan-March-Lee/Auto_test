@@ -112,6 +112,7 @@ REGISTERED_PAGE_MODULES = frozenset(
         "configuration_page",
         "power_configuration_page",
         "instrument_setup_page",
+        "rack_overview_page",
         "cable_loss_page",
         "driver_mapping_page",
         "amplifier_page",

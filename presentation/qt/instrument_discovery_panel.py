@@ -2067,6 +2067,7 @@ class InstrumentDiscoveryPanel(QWidget):
                 code=code,
                 model=model,
                 role=role_label(role),
+                role_key=role,
                 # 最下面一行的灰色小字只写本次扫描到的 IP；地址会漂移，不参与身份。
                 address=str(getattr(device, "ip", "") or ""),
                 status=card_status_text(device),

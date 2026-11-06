@@ -593,6 +593,8 @@ class InstrumentCardData:
     - ``code``：第一行加粗放大的缩写设备码；
     - ``model``：型号，只出现在型号·角色那一行；
     - ``role``：测试角色的界面文案（如 ``电源``），已经是给人看的字，不是领域角色键；
+    - ``role_key``：同一角色的领域键（``signal_generator`` / ``power_supply`` 等）。
+      卡片本身不画它；页面按它区分“哪张卡是电源”，避免从显示文案反解析；
     - ``address``：最下面一行的连接地址（本次扫描到的 IP），没有时那一行留空；
     - ``status``：不可应用的原因，空串表示不显示；
     - ``checked``：构建这一份内容时这张卡是否选中；用户之后的选择仍由页面保存；
@@ -605,6 +607,7 @@ class InstrumentCardData:
     code: str = ""
     model: str = ""
     role: str = ""
+    role_key: str = ""
     address: str = ""
     status: str = ""
     checked: bool = False

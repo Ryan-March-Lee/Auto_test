@@ -25,6 +25,7 @@ from typing import Any, Iterable, Sequence
 
 from PySide6.QtCore import (
     QEasingCurve,
+    QEvent,
     QMimeData,
     QPoint,
     QPointF,
@@ -58,7 +59,12 @@ from PySide6.QtWidgets import (
 from domain.instruments.models import POWER_SUPPLY_ROLE
 
 from .card_assets import render_card_front
-from .device_cards import CARD_HEIGHT, CARD_WIDTH, InstrumentCardData
+from .device_cards import (
+    CARD_HEIGHT,
+    CARD_WIDTH,
+    InstrumentCardData,
+    card_row_plan,
+)
 from .theme import (
     CARD_RADIUS,
     PAGE_CONTENT_MAX_WIDTH,
@@ -143,8 +149,16 @@ _HEADER_FADE_IN_MS = 160
 _CANVAS = QColor(TOKENS["canvas"])
 _SURFACE = QColor(TOKENS["surface"])
 _INK = QColor(TOKENS["text"])
+_BORDER = QColor(TOKENS["border"])
 _PRIMARY = QColor(TOKENS["primary"])
 _PRIMARY_SOFT = QColor(TOKENS["primary_soft"])
+
+#: 电源卡缩小的最后一段把卡片位图淡出。卡片下边收拢到托盘芯片高度时，位图里剩下的
+#: 一截仪器图会被裁在芯片底边；淡掉之后动画终点与静止芯片完全一致，不会在结束时跳一下。
+_MORPH_IMAGE_FADE_START = 0.8
+
+#: 芯片里设备码的左右留白：静止芯片与缩小动画终点共用，两边文字位置因此完全一致。
+_CHIP_TEXT_INSET = 10.0
 
 #: 九宫格空位的虚线：与效果图一致的深色细虚线。
 _SLOT_PEN = QPen(_INK, 2.0, Qt.DashLine, Qt.RoundCap, Qt.RoundJoin)
@@ -174,6 +188,64 @@ def _rounded(rect: QRectF, radius: float = CARD_RADIUS) -> QPainterPath:
 
 def _lerp(start: float, end: float, t: float) -> float:
     return start + (end - start) * t
+
+
+def _morph_image_fade(progress: float) -> float:
+    """电源卡位图在缩小末段的剩余不透明度：1 完整、0 已淡出。
+
+    最后一段只留底色与设备码，卡片位图淡掉，动画终点因此与静止芯片逐像素一致。
+    """
+    if progress <= _MORPH_IMAGE_FADE_START:
+        return 1.0
+    span = 1.0 - _MORPH_IMAGE_FADE_START
+    return max(0.0, min(1.0, (1.0 - float(progress)) / span))
+
+
+def _morph_code_font(
+    chip_font: QFont,
+    card_font: QFont,
+    scale: float,
+    progress: float,
+    *,
+    reverse: bool = False,
+) -> QFont:
+    """缩小过程中设备码的字号。
+
+    起点按画布缩放折算：卡片那一端在屏幕上与真实卡片同大；芯片那一端直接用芯片字号，
+    与静止芯片的文字完全一致。``reverse`` 为真时是返回动画（芯片 → 卡片），两端交换，
+    因此在结果区页面上看到的字号与动画最后一帧仍然一致。
+    """
+    font = QFont(chip_font)
+    ratio = scale if scale > 0.0 else 1.0
+    card_size = card_font.pointSizeF() / ratio
+    chip_size = chip_font.pointSizeF()
+    font.setPointSizeF(
+        _lerp(chip_size, card_size, progress)
+        if reverse
+        else _lerp(card_size, chip_size, progress)
+    )
+    return font
+
+
+def _morph_code_rect(
+    rect: QRectF,
+    row: QRectF,
+    factor: float,
+    progress: float,
+    *,
+    reverse: bool = False,
+) -> QRectF:
+    """设备码在缩小过程中的绘制矩形：卡片上的那一行与芯片内的居中区域之间过渡。"""
+    card_rect = QRectF(
+        rect.x() + row.x() * factor,
+        rect.y() + row.y() * factor,
+        row.width() * factor,
+        row.height() * factor,
+    )
+    chip_rect = rect.adjusted(_CHIP_TEXT_INSET, 0.0, -_CHIP_TEXT_INSET, 0.0)
+    if reverse:
+        return _lerp_rect(chip_rect, card_rect, progress)
+    return _lerp_rect(card_rect, chip_rect, progress)
 
 
 def _lerp_rect(start: QRectF, end: QRectF, t: float) -> QRectF:
@@ -206,12 +278,18 @@ class RackCardEntry:
     ``start_rect_global`` 是点击“下一步”时该卡片在屏幕上的矩形（全局坐标）。页面在
     第一次绘制时把它换算到画布坐标，因此动画起点与结果区里看到的位置一致，不需要
     截取控件、也不依赖上一页的布局对象。
+
+    ``code_row`` 是设备码在卡片位图里的矩形（卡片坐标）。电源卡缩小时，页面按它在
+    卡片上的位置单独画出设备码，并把它平滑地送到芯片中心；位图本身不画设备码（见
+    :func:`presentation.qt.card_assets.render_card_front` 的 ``include_code``），
+    因此这行字不会随卡片一起缩小、也不会在动画结束时突然变大。
     """
 
     role_key: str
     code: str
     front: QPixmap
     start_rect_global: QRect
+    code_row: QRectF | None = None
 
 
 def _cable_source() -> tuple[QPixmap, QRectF] | None:
@@ -252,8 +330,10 @@ def _cable_asset() -> tuple[QPixmap, QRectF] | None:
 class _RackBoard(QWidget):
     """整张示意图的画布：变形动画、九宫格拖放与静态布局都在这里。
 
-    画布按 :data:`_DESIGN_WIDTH` × :data:`_DESIGN_HEIGHT` 设计坐标排版，再等比缩放
-    居中到控件内。鼠标、拖放坐标都先换算回设计坐标，因此缩放不影响命中区。
+    控件铺满整列内容，设计画布（:data:`_DESIGN_WIDTH` × :data:`_DESIGN_HEIGHT`）只是
+    其中由布局占出来的一块，见 :meth:`set_viewport`：设计坐标先等比缩放居中到视口，
+    鼠标、拖放坐标再换算回设计坐标，因此缩放不影响命中区。视口之外的上方留白也能画
+    卡片，上一页卡片飞进来/飞回去的位置才算得准。
     """
 
     state_changed = Signal()
@@ -270,6 +350,9 @@ class _RackBoard(QWidget):
         self._signal: RackCardEntry | None = None
         self._spectrum: RackCardEntry | None = None
         self._slot_of: dict[str, int] = {}
+        #: 设计画布在控件里的位置（控件坐标）。画布铺满整列内容，露出设计画布以外的
+        #: 留白，卡片从上一页飞进来时才能原样落在它原来的位置上（见 :meth:`set_viewport`）。
+        self._viewport = QRectF()
         self._progress = 1.0
         self._running = False
         #: 动画方向：``1`` 入场（选择页 → 排布），``-1`` 返回（排布 → 选择页）。
@@ -489,15 +572,29 @@ class _RackBoard(QWidget):
 
     # ---- 坐标换算 ---------------------------------------------------------
 
+    def set_viewport(self, rect: QRect) -> None:
+        """指定设计画布在控件里的位置：画布只占其中一块，控件可以比它大。
+
+        控件铺满整列内容，设计画布按布局占出来的那格居中排版。多出来的部分是透明留白，
+        卡片从上一页飞进来（或飞回去）时可以画到设计画布之外，入场第一帧与返回最后一帧
+        才能与仪器选择页里的卡片位置逐像素重合，不会因为“移回可见区域”而上下跳一下。
+        """
+        viewport = QRectF(rect)
+        if viewport == self._viewport:
+            return
+        self._viewport = viewport
+        self.update()
+
     def _transform(self) -> tuple[float, QPointF]:
-        width = float(self.width())
-        height = float(self.height())
+        rect = self._viewport if not self._viewport.isEmpty() else QRectF(self.rect())
+        width = float(rect.width())
+        height = float(rect.height())
         if width <= 0.0 or height <= 0.0:
             return 1.0, QPointF(0.0, 0.0)
         scale = min(width / _DESIGN_WIDTH, height / _DESIGN_HEIGHT)
         return scale, QPointF(
-            (width - _DESIGN_WIDTH * scale) / 2.0,
-            (height - _DESIGN_HEIGHT * scale) / 2.0,
+            rect.x() + (width - _DESIGN_WIDTH * scale) / 2.0,
+            rect.y() + (height - _DESIGN_HEIGHT * scale) / 2.0,
         )
 
     def _to_design(self, pos: QPoint) -> QPointF:
@@ -510,11 +607,11 @@ class _RackBoard(QWidget):
     def _design_rect_from_global(self, rect: QRect) -> QRectF:
         """把上一页卡片的全局矩形换算成画布坐标；拿不到位置时返回空矩形。
 
-        起点取自上一页卡片的屏幕位置，可能落在板子的可见区域之外，绘制时会被板子的
-        矩形裁掉——卡片顶部被裁时圆角变成一条平线，看起来就像顶上有一条长条压住了
-        卡片。这里把整张卡移回板子的可见区域（只移不缩），保证飞入/飞出的卡片始终
-        完整；设计画布本身在板子里居中，落在它上方的留白里并不会被裁，所以边界按
-        板子算而不是按设计画布算。留 2px 让描边不压在板子最外沿。
+        控件铺满整列内容（设计画布只是其中居中的一块，见 :meth:`set_viewport`），
+        上一页卡片的位置正常都落在控件的绘制范围内，换算结果就是它在屏幕上原来的
+        位置：入场第一帧与返回最后一帧都不会被挪动。只有卡片真的超出控件边缘时（窗口
+        改过尺寸、上一页滚动到很偏的位置）才把整张卡移回控件可见区域（只移不缩），
+        避免顶部被裁成一条平线；留 2px 让描边不压在控件最外沿。
         """
         if rect.isNull() or rect.isEmpty():
             return QRectF()
@@ -824,8 +921,8 @@ class _RackBoard(QWidget):
         随后淡入卡片正面，再沿入场路径飞回选择页。
         """
         fade = min(1.0, returned / 0.01)
+        font = _slot_font() if supply_id in self._slot_of else card_code_font()
         if fade < 1.0:
-            font = _slot_font() if supply_id in self._slot_of else card_code_font()
             painter.save()
             painter.setOpacity(1.0 - fade)
             self._paint_chip(
@@ -837,7 +934,15 @@ class _RackBoard(QWidget):
             painter.restore()
         painter.save()
         painter.setOpacity(fade)
-        self._paint_power_morph(painter, entry, start, end, returned)
+        self._paint_power_morph(
+            painter,
+            entry,
+            start,
+            end,
+            returned,
+            chip_font=font,
+            reverse=True,
+        )
         painter.restore()
 
     def _paint_exit_side_cards(self, painter: QPainter, progress: float) -> None:
@@ -873,29 +978,86 @@ class _RackBoard(QWidget):
         start: QRectF,
         end: QRectF,
         progress: float,
+        *,
+        chip_font: QFont | None = None,
+        reverse: bool = False,
     ) -> None:
-        """电源卡片：上边保持、下边随进度向上收拢，最后只剩设备码那一行。"""
+        """电源卡片：上边保持、下边随进度向上收拢，最后只剩设备码那一行。
+
+        卡片位图只负责卡片本身，设备码由页面单独画在它上面。这样设备码只从卡片上的
+        位置平滑移到芯片中心，不随卡片一起缩小：动画起点与真实卡片一致，终点与静止
+        芯片一致，中间没有字号跳变。位图在最后一小段淡出，卡片下边收拢到芯片高度时
+        不会留下一截被裁开的仪器图。轮廓始终是卡片原本的 1px 细边，不另描深色粗边。
+        """
         rect = _lerp_rect(start, end, progress)
         if rect.width() <= 0.0 or rect.height() <= 0.0:
             return
-        painter.save()
-        painter.setClipPath(_rounded(rect))
         ratio = float(entry.front.devicePixelRatio()) or 1.0
         natural_width = entry.front.width() / ratio
         natural_height = entry.front.height() / ratio
-        if natural_width > 0.0 and natural_height > 0.0:
-            factor = rect.width() / natural_width
-            draw = QRectF(
-                rect.x(),
-                rect.y(),
-                rect.width(),
-                natural_height * factor,
-            )
+        factor = rect.width() / natural_width if natural_width > 0.0 else 0.0
+        # 返回动画里 progress 是“已经回到卡片”的比例，位图淡出的方向要跟着反过来。
+        fade = _morph_image_fade(1.0 - progress if reverse else progress)
+
+        painter.save()
+        painter.setClipPath(_rounded(rect))
+        painter.fillPath(_rounded(rect), _SURFACE)
+        if natural_width > 0.0 and natural_height > 0.0 and fade > 0.0:
+            painter.setOpacity(painter.opacity() * fade)
+            draw = QRectF(rect.x(), rect.y(), rect.width(), natural_height * factor)
             _draw_pixmap(painter, entry.front, draw)
         painter.restore()
+
+        # 位图自己带 1px 边；淡出时由这一道同样的 1px 边接上，轮廓粗细始终不变。
+        painter.save()
         painter.setBrush(Qt.NoBrush)
-        painter.setPen(QPen(_INK, 2.0))
-        painter.drawRoundedRect(rect, CARD_RADIUS, CARD_RADIUS)
+        painter.setOpacity(painter.opacity() * (1.0 - fade))
+        painter.setPen(QPen(_BORDER, 1.0))
+        painter.drawPath(_rounded(rect, 0.5))
+        painter.restore()
+
+        self._paint_morph_code(
+            painter,
+            entry,
+            rect,
+            factor,
+            progress,
+            chip_font=chip_font or card_code_font(),
+            reverse=reverse,
+        )
+
+    def _paint_morph_code(
+        self,
+        painter: QPainter,
+        entry: RackCardEntry,
+        rect: QRectF,
+        factor: float,
+        progress: float,
+        *,
+        chip_font: QFont,
+        reverse: bool,
+    ) -> None:
+        """设备码：在卡片上的位置与芯片中心之间平滑过渡，字号同步过渡。"""
+        row = entry.code_row
+        if row is None or not entry.code or factor <= 0.0:
+            return
+        font = _morph_code_font(
+            chip_font,
+            card_code_font(),
+            self._transform()[0],
+            progress,
+            reverse=reverse,
+        )
+        text_rect = _morph_code_rect(rect, row, factor, progress, reverse=reverse)
+        painter.save()
+        painter.setFont(font)
+        painter.setPen(_INK)
+        painter.drawText(
+            text_rect,
+            int(Qt.AlignCenter),
+            _elided(font, entry.code, max(1.0, text_rect.width())),
+        )
+        painter.restore()
 
     def _paint_middle(self, painter: QPainter, offset: QPointF) -> None:
         painter.save()
@@ -939,17 +1101,25 @@ class _RackBoard(QWidget):
         text: str,
         font: QFont,
     ) -> None:
-        painter.setPen(QPen(_INK, 2.0))
-        painter.setBrush(_SURFACE)
-        painter.drawRoundedRect(rect, CARD_RADIUS, CARD_RADIUS)
+        """托盘/格位里的电源芯片：与卡片一样的 1px 细边，不描深色粗边。
+
+        缩小动画的终点画法与这里完全一致（底色、1px 边、设备码字号与留白），
+        所以动画交回静止画面时不会再跳一下。
+        """
+        painter.save()
+        painter.fillPath(_rounded(rect), _SURFACE)
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(QPen(_BORDER, 1.0))
+        painter.drawPath(_rounded(rect, 0.5))
         painter.setPen(_INK)
         painter.setFont(font)
-        inner = rect.adjusted(10.0, 0.0, -10.0, 0.0)
+        inner = rect.adjusted(_CHIP_TEXT_INSET, 0.0, -_CHIP_TEXT_INSET, 0.0)
         painter.drawText(
             inner,
             int(Qt.AlignCenter),
             _elided(font, text, inner.width()),
         )
+        painter.restore()
 
     def _paint_empty_slot(
         self, painter: QPainter, rect: QRectF, *, highlighted: bool
@@ -1144,8 +1314,19 @@ class RackOverviewPage(QWidget):
         header_row.setGraphicsEffect(self._header_effect)
         column.addWidget(header_row)
 
-        self.board = _RackBoard(self)
-        column.addWidget(self.board, 1)
+        # 画布铺满整列内容，设计画布只是其中由布局占出来的那一格（见 _board_slot）。
+        # 这样上一页卡片的位置（可能比设计画布高一点）仍落在画布的绘制范围里：入场第一
+        # 帧和返回最后一帧都不必把卡片挪回可见区域，位置不会在动画首尾跳一下。
+        self._content = content
+        self._board_slot = QWidget()
+        self._board_slot.setObjectName("rackOverviewBoardSlot")
+        self._board_slot.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        column.addWidget(self._board_slot, 1)
+
+        self.board = _RackBoard(content)
+        self.board.setGeometry(content.rect())
+        # 画布铺满整列内容：标题行与按钮必须盖在它上面，否则会被画布的底色挡住。
+        header_row.raise_()
 
         actions = QHBoxLayout()
         actions.setSpacing(10)
@@ -1159,6 +1340,37 @@ class RackOverviewPage(QWidget):
         actions.addStretch(1)
         actions.addWidget(self.next_btn)
         column.addLayout(actions)
+        self.back_btn.raise_()
+        self.next_btn.raise_()
+        self._board_slot.installEventFilter(self)
+
+    def eventFilter(self, watched: Any, event: Any) -> bool:
+        """布局给设计画布占出新的位置/尺寸时，同步画布控件与设计视口。"""
+        if watched is self._board_slot and event.type() in (
+            QEvent.Resize,
+            QEvent.Move,
+        ):
+            self._sync_board_geometry()
+        return super().eventFilter(watched, event)
+
+    def _sync_board_geometry(self) -> None:
+        self.board.setGeometry(self._content.rect())
+        slot = self._board_slot.geometry()
+        if slot.isEmpty() and self._content.width() > 0:
+            # 页面刚从隐藏变成当前页时，布局可能还没把占位控件摆出来；先跑一次布局，
+            # 免得第一帧按空视口（整块内容）排版、随后再跳回设计画布。
+            layout = self._content.layout()
+            if layout is not None:
+                layout.activate()
+            slot = self._board_slot.geometry()
+        # ``content.rect()`` 的原点就是控件原点，占位控件的几何（``content`` 坐标）
+        # 因此可以直接当作设计视口；画布与占位控件是兄弟，不能用 ``mapFrom``。
+        self.board.set_viewport(slot)
+
+    def showEvent(self, event: Any) -> None:
+        """页面刚显示时布局可能还没跑到占位控件：先按当前几何对齐一次再画第一帧。"""
+        super().showEvent(event)
+        self._sync_board_geometry()
 
     def _connect_signals(self) -> None:
         self.board.state_changed.connect(self._sync_actions)
@@ -1171,6 +1383,7 @@ class RackOverviewPage(QWidget):
 
     def enter(self, entries: Iterable[RackCardEntry]) -> None:
         """按本次勾选的卡片重建页面并播放一次入场动画。"""
+        self._sync_board_geometry()
         self._back_pending = False
         self._header_pending = False
         self._header_animation.stop()
@@ -1309,19 +1522,37 @@ class RackOverviewPage(QWidget):
         """把设备发现页勾选的卡片转成本页的进入条目。
 
         卡片正面用与真实卡片同源的 :func:`render_card_front` 按**选中态**渲染（白底、
-        黑字、彩色原图），与结果区里刚勾选的样子一致：动画第一帧不必再换一次外观，
-        卡片可以从选中态直接滑入本页。起始矩形取卡片当前的全局位置。这样页面不需要
-        截取控件，也不依赖结果区的布局对象。
+        黑字、彩色原图）。电源卡按卡片**当前尺寸**出图：结果区会把卡片收窄到
+        :data:`~presentation.qt.device_cards.CARD_MIN_WIDTH`，如果仍按理想宽度出图，
+        动画第一帧的字会先变小一次。起始矩形取卡片当前的全局位置，因此第一帧与结果区
+        里的卡片一致。两侧的仪器卡仍按设计尺寸出图，它们在页面里按固定宽高摆放，不能
+        被横向拉伸。
+
+        电源卡的设备码不画进位图，而是把这一行的位置交给页面：缩小动画里由页面单独
+        绘制这行字（见 :meth:`_RackBoard._paint_morph_code`），字号只从卡片字号平滑
+        过渡到芯片字号，不会跟着卡片一起缩小后再跳回去。
         """
         entries: list[RackCardEntry] = []
         for card in cards:
             data = getattr(card, "data", None)
             if not isinstance(data, InstrumentCardData):
                 continue
+            width = int(card.width()) or CARD_WIDTH
+            height = int(card.height()) or CARD_HEIGHT
+            selected = replace(data, checked=True)
+            power = data.role_key == POWER_SUPPLY_ROLE
+            # 电源卡要按真实尺寸出图：它直接缩进托盘芯片，位图不会被拉成别的宽高比。
+            # 两侧的仪器卡在页面里按固定设计尺寸摆放，仍按理想尺寸出图，避免被横向拉伸。
+            if not power:
+                width, height = CARD_WIDTH, CARD_HEIGHT
             front = render_card_front(
-                replace(data, checked=True),
+                selected,
+                width=width,
+                height=height,
                 device_pixel_ratio=float(card.devicePixelRatioF()) or 1.0,
+                include_code=not power,
             )
+            code_row = card_row_plan(selected, width, height).code if power else None
             top_left = card.mapToGlobal(QPoint(0, 0))
             entries.append(
                 RackCardEntry(
@@ -1329,6 +1560,7 @@ class RackOverviewPage(QWidget):
                     code=data.code or data.heading,
                     front=front,
                     start_rect_global=QRect(top_left, card.size()),
+                    code_row=code_row,
                 )
             )
         return entries

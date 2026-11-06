@@ -17,19 +17,26 @@ from PySide6.QtCore import (
     QPoint,
     QPointF,
     QRect,
+    QRectF,
     QSize,
     Qt,
     QVariantAnimation,
 )
-from PySide6.QtGui import QColor, QDropEvent, QImage, QPixmap
+from PySide6.QtGui import QColor, QDropEvent, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication
 
 from presentation.qt import rack_overview_page as rack
 from presentation.qt.card_assets import render_card_front
-from presentation.qt.device_cards import CARD_HEIGHT, CARD_WIDTH, InstrumentCardData
+from presentation.qt.device_cards import (
+    CARD_HEIGHT,
+    CARD_MIN_WIDTH,
+    CARD_WIDTH,
+    InstrumentCardData,
+    card_row_plan,
+)
 from presentation.qt.device_cards import InstrumentCard
 from presentation.qt.rack_overview_page import RackCardEntry, RackOverviewPage
-from presentation.qt.theme import TOKENS
+from presentation.qt.theme import TOKENS, card_code_font
 
 
 def _front() -> QPixmap:
@@ -382,17 +389,59 @@ class RackOverviewPageTests(unittest.TestCase):
         self.assertEqual(entries[0].start_rect_global.size(), card.size())
         self.assertFalse(entries[0].front.isNull())
         # 进入排布页的卡片保持选中态（白底、彩色原图），动画第一帧不再换一次外观。
-        expected = render_card_front(replace(card.data, checked=True))
+        # 电源卡的设备码交给页面单独绘制，位图里不再画一遍。
+        expected = render_card_front(
+            replace(card.data, checked=True),
+            width=card.width(),
+            height=card.height(),
+            include_code=False,
+        )
         image = entries[0].front.toImage()
         self.assertEqual(image, expected.toImage())
+        self.assertEqual(
+            entries[0].code_row,
+            card_row_plan(
+                replace(card.data, checked=True), card.width(), card.height()
+            ).code,
+            "设备码的位置要按卡片实际尺寸算，动画起点才能与真实卡片重合",
+        )
         self.assertEqual(
             image.pixelColor(12, CARD_HEIGHT // 2).name(),
             TOKENS["surface"].lower(),
             "进入排布页的卡片应是选中态的白底",
         )
 
+    def test_entries_from_cards_render_at_the_card_width(self):
+        """结果区把电源卡收窄后，动画第一帧仍按真实尺寸出图，字号不会先缩一次。"""
+        card = InstrumentCard(
+            InstrumentCardData(
+                "DP832A（DP8B1519）",
+                code="DP8B1519",
+                model="DP832A",
+                role="电源",
+                role_key="power_supply",
+                checkable=True,
+            )
+        )
+        card.setFixedWidth(CARD_MIN_WIDTH)
+        card.setFixedHeight(CARD_HEIGHT)
+
+        entries = RackOverviewPage.entries_from_cards([card])
+
+        front = entries[0].front
+        ratio = float(front.devicePixelRatio()) or 1.0
+        self.assertAlmostEqual(front.width() / ratio, CARD_MIN_WIDTH, places=3)
+        self.assertAlmostEqual(front.height() / ratio, CARD_HEIGHT, places=3)
+        expected = render_card_front(
+            replace(card.data, checked=True),
+            width=CARD_MIN_WIDTH,
+            height=CARD_HEIGHT,
+            include_code=False,
+        )
+        self.assertEqual(front.toImage(), expected.toImage())
+
     def test_offscreen_start_rect_is_moved_back_inside_the_canvas(self):
-        """上一页卡片的位置高于板子时整张移回可见区域，否则卡片顶部会被裁平。"""
+        """卡片真的超出画布控件时整张移回可见区域，否则卡片顶部会被裁平。"""
         page = self._page()
         board = page.board
         scale, offset = board._transform()
@@ -427,6 +476,40 @@ class RackOverviewPageTests(unittest.TestCase):
         self.assertAlmostEqual(design.left(), (100 - offset.x()) / scale, places=3)
         self.assertAlmostEqual(design.top(), (120 - offset.y()) / scale, places=3)
 
+    def test_the_board_covers_the_content_column(self):
+        """画布铺满整列内容，设计画布只占其中一块：卡片才画得进上方那块留白。"""
+        page = self._page()
+
+        self.assertEqual(page.board.geometry(), page._content.rect())
+        self.assertGreater(
+            page.board._viewport.top(),
+            0,
+            "设计画布上方必须留出可以画卡片的区域",
+        )
+
+    def test_a_card_above_the_design_canvas_keeps_its_screen_position(self):
+        """上一页卡片在标题行下方、设计画布上方时也不能被挪动。
+
+        这是入场第一帧与返回最后一帧的位置：只要这里被“移回可见区域”，动画开头和
+        结尾就会各跳一下（选择页的卡片比排布页的设计画布更靠上）。
+        """
+        page = self._page()
+        board = page.board
+        scale, offset = board._transform()
+        start = QRect(
+            board.mapToGlobal(QPoint(100, 10)), QSize(CARD_WIDTH, CARD_HEIGHT)
+        )
+
+        design = board._design_rect_from_global(start)
+
+        self.assertAlmostEqual(design.left(), (100 - offset.x()) / scale, places=3)
+        self.assertAlmostEqual(design.top(), (10 - offset.y()) / scale, places=3)
+        self.assertLess(
+            design.top(),
+            0,
+            "这张卡在起点上就位于设计画布上方的留白里",
+        )
+
     def test_board_paints_static_and_transition_frames(self):
         page = self._page()
         page.finish_transition()
@@ -450,6 +533,155 @@ class RackOverviewPageTests(unittest.TestCase):
         page.board.update()
         self.app.processEvents()
         self.assertFalse(page.grab().isNull(), "返回动画中间帧必须能画出来")
+
+    def test_power_morph_uses_the_card_border_instead_of_an_extra_outline(self):
+        """缩小动画只贴卡片自己的正面位图，不再沿轮廓补一圈深色粗边。"""
+        page = self._page()
+        front = QPixmap(CARD_WIDTH, CARD_HEIGHT)
+        front.fill(QColor("#FFFFFF"))
+        painter = QPainter(front)
+        try:
+            painter.setPen(QColor("#123456"))
+            painter.drawRect(1, 1, CARD_WIDTH - 3, CARD_HEIGHT - 3)
+        finally:
+            painter.end()
+        entry = RackCardEntry(
+            "power_supply",
+            "DP8B1519",
+            front,
+            QRect(0, 0, CARD_WIDTH, CARD_HEIGHT),
+        )
+        rect = QRectF(0.0, 0.0, float(CARD_WIDTH), float(CARD_HEIGHT))
+        image = QImage(CARD_WIDTH, CARD_HEIGHT, QImage.Format.Format_ARGB32)
+        image.fill(QColor(0, 0, 0, 0))
+        painter = QPainter(image)
+        try:
+            page.board._paint_power_morph(painter, entry, rect, rect, 0.0)
+        finally:
+            painter.end()
+
+        middle = CARD_HEIGHT // 2
+        self.assertEqual(
+            image.pixelColor(1, middle).name(),
+            "#123456",
+            "卡片左边应是位图自带的边框，而不是覆盖上去的描边",
+        )
+        self.assertNotEqual(
+            image.pixelColor(0, middle).name(),
+            QColor(TOKENS["text"]).name(),
+            "卡片轮廓外不应再有一圈深色粗描边",
+        )
+
+    def test_morph_code_font_matches_the_card_at_the_start_and_the_chip_at_the_end(self):
+        """设备码只在卡片字号与芯片字号之间过渡：两端都没有突然变大变小。"""
+        chip = card_code_font()
+        scale = 0.8
+
+        start = rack._morph_code_font(chip, card_code_font(), scale, 0.0)
+        self.assertAlmostEqual(
+            start.pointSizeF() * scale,
+            chip.pointSizeF(),
+            places=6,
+            msg="起点要等于真实卡片上的字号",
+        )
+        end = rack._morph_code_font(chip, card_code_font(), scale, 1.0)
+        self.assertAlmostEqual(
+            end.pointSizeF(), chip.pointSizeF(), places=6, msg="终点要等于静止芯片的字号"
+        )
+
+    def test_reverse_morph_code_font_goes_back_to_the_card_size(self):
+        """返回动画从芯片字号出发，结束时又是结果区卡片上的字号。"""
+        chip = card_code_font()
+        scale = 0.8
+
+        start = rack._morph_code_font(
+            chip, card_code_font(), scale, 0.0, reverse=True
+        )
+        self.assertAlmostEqual(start.pointSizeF(), chip.pointSizeF(), places=6)
+        end = rack._morph_code_font(
+            chip, card_code_font(), scale, 1.0, reverse=True
+        )
+        self.assertAlmostEqual(
+            end.pointSizeF() * scale,
+            card_code_font().pointSizeF(),
+            places=6,
+            msg="返回动画结束时必须回到卡片字号",
+        )
+
+    def test_morph_code_rect_ends_at_the_static_chip_text_area(self):
+        chip = QRectF(10.0, 20.0, 170.0, 80.0)
+        row = QRectF(9.0, 9.0, 172.0, 44.0)
+
+        text = rack._morph_code_rect(chip, row, 1.0, 1.0)
+        chip_text = chip.adjusted(
+            rack._CHIP_TEXT_INSET, 0.0, -rack._CHIP_TEXT_INSET, 0.0
+        )
+
+        self.assertEqual(
+            text,
+            chip_text,
+            "动画终点必须落在静止芯片的文字区域上",
+        )
+        self.assertEqual(
+            rack._morph_code_rect(chip, row, 1.0, 0.0, reverse=True),
+            chip_text,
+            "返回动画的起点同样落在静止芯片的文字区域上",
+        )
+
+    def test_morph_end_frame_matches_the_static_chip(self):
+        """动画最后一帧与静止芯片逐像素一致，交回静止画面时不会再跳一下。"""
+        page = self._page()
+        board = page.board
+        rect = QRectF(10.0, 20.0, 170.0, 80.0)
+        entry = RackCardEntry(
+            "power_supply",
+            "DP8B1519",
+            _front(),
+            QRect(0, 0, CARD_WIDTH, CARD_HEIGHT),
+            code_row=QRectF(9.0, 9.0, 172.0, 44.0),
+        )
+        size = QSize(200, 120)
+
+        def paint(callback) -> QImage:
+            image = QImage(size, QImage.Format.Format_ARGB32)
+            image.fill(QColor(0, 0, 0, 0))
+            painter = QPainter(image)
+            try:
+                callback(painter)
+            finally:
+                painter.end()
+            return image
+
+        morph = paint(
+            lambda painter: board._paint_power_morph(
+                painter, entry, rect, rect, 1.0
+            )
+        )
+        static = paint(
+            lambda painter: board._paint_chip(
+                painter, rect, "DP8B1519", card_code_font()
+            )
+        )
+
+        self.assertEqual(morph, static, "缩小动画的终点必须与托盘芯片完全一致")
+
+    def test_chip_border_is_the_card_border_not_a_dark_outline(self):
+        """动画结束后电源芯片也只留卡片原来的 1px 浅边，不把深色描边加回来。"""
+        page = self._page()
+        rect = QRectF(0.0, 0.0, 170.0, 80.0)
+        image = QImage(170, 80, QImage.Format.Format_ARGB32)
+        image.fill(QColor(0, 0, 0, 0))
+        painter = QPainter(image)
+        try:
+            page.board._paint_chip(painter, rect, "DP8B1519", card_code_font())
+        finally:
+            painter.end()
+
+        self.assertEqual(
+            image.pixelColor(85, 0).name(),
+            QColor(TOKENS["border"]).name(),
+            "芯片上边应是与卡片一致的 1px 浅色边",
+        )
 
 
 if __name__ == "__main__":

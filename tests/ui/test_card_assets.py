@@ -780,6 +780,21 @@ class CardFrontContentTests(unittest.TestCase):
         self.assertGreater(full.green() - full.red(), 100, "选中后恢复彩色")
         self.assertGreater(muted.lightness(), full.lightness(), "未选中时图片应变淡")
 
+    def test_a_front_without_code_leaves_the_code_row_blank(self):
+        """排布页的电源卡由页面单独画设备码，位图里的那一行必须是空的。"""
+        data = _plain_data()
+        row = card_code_rect()
+
+        with_code = render_card_front(data).toImage()
+        without_code = render_card_front(data, include_code=False).toImage()
+
+        self.assertGreater(_ink_count(with_code, row), 0, "正常正面要写出设备码")
+        self.assertEqual(
+            _ink_count(without_code, row),
+            0,
+            "include_code=False 时设备码那一行应保持空白",
+        )
+
     def test_the_front_matches_the_card_inside_the_border_at_every_width(self):
         """两种宽度、八种内容：边框以内逐像素一致（0 像素差异，留一点余量给抗锯齿）。"""
         picture = self.save_picture()

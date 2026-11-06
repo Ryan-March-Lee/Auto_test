@@ -309,12 +309,16 @@ def render_card_front(
     width: int = CARD_WIDTH,
     height: int = CARD_HEIGHT,
     device_pixel_ratio: float = 1.0,
+    include_code: bool = True,
 ) -> QPixmap:
     """按一份卡片数据画出完整正面：不需要控件，也不调用 ``QWidget.grab()``。
 
     ``width`` / ``height`` 只接受正整数；行位置由
     :func:`~presentation.qt.device_cards.card_row_plan` 给出，与真实卡片同源。必须在
     GUI 线程、``QApplication`` 之后调用（``QPixmap`` 的运行约束）。
+
+    ``include_code=False`` 用于“排布页”的电源卡：卡片缩小时设备码由页面单独绘制，
+    位图里不预先画一遍，避免同一行字出现两份、也避免字随卡片一起缩小。
     """
     width, height = card_size(width, height)
     plan = card_row_plan(data, width, height)
@@ -327,7 +331,8 @@ def render_card_front(
         card = QRectF(0.0, 0.0, float(width), float(height))
         painter.setClipPath(_rounded(card))
         _paint_surface(painter, data, card)
-        _paint_code(painter, data, plan)
+        if include_code:
+            _paint_code(painter, data, plan)
         _paint_picture(painter, data, plan)
         _paint_status(painter, data, plan)
         _paint_caption(painter, data, plan)

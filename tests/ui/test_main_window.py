@@ -471,6 +471,13 @@ class MainWindowAssemblyBoundaryTests(unittest.TestCase):
         ):
             self.assertIn(literal, self.source)
 
+    def test_rack_overview_receives_the_selected_test_mode(self):
+        """仪器排布页要知道欢迎页选的模式：无驱放测试的链路里不能出现 Driver。"""
+        self.assertIn(
+            "driver_enabled=self.coordinator.amplifier_driver_mode()",
+            self.source,
+        )
+
     def test_main_window_does_not_read_config_widgets(self):
         for widget in ("driver_mode_check", "freq_edit", "sg_address", "power_config_widgets"):
             self.assertNotIn(

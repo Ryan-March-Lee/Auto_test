@@ -404,6 +404,11 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self._scan_and_select(window)
         window.connection_page.next_btn.click()
         self.assertIs(window.view_stack.currentWidget(), window.rack_page)
+        self.assertEqual(
+            [label for label, _ in window.rack_page.board._amplifiers()],
+            ["Driver", "DUT"],
+            "有驱放测试的链路里 Driver 和 DUT 都要在",
+        )
         window.rack_page.finish_transition()
         window.rack_page.next_btn.click()
         self.assertIs(window.view_stack.currentWidget(), window.workspace_page)

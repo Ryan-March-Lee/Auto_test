@@ -241,13 +241,13 @@ class MainWindow(QMainWindow):
 
     def _open_rack_overview_page(self) -> None:
         """仪表配置完成：先在“仪器排布”确认电源架位，再进入参数页。"""
-        cards = [
-            card
-            for card in self.connection_page.discovery_panel.cards()
-            if card.is_checked()
-        ]
+        cards = [card for card in self.connection_page.discovery_panel.cards()
+                 if card.is_checked()]
         self.view_stack.setCurrentWidget(self.rack_page)
-        self.rack_page.enter(RackOverviewPage.entries_from_cards(cards))
+        entries = RackOverviewPage.entries_from_cards(cards)
+        self.rack_page.enter(
+            entries, driver_enabled=self.coordinator.amplifier_driver_mode()
+        )
 
     def _open_configuration_page(self) -> None:
         """仪表配置完成：进入工作区；保存、创建运行与连接仪器都归参数页最终按钮。"""

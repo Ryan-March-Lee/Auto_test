@@ -91,7 +91,8 @@ _DESIGN_HEIGHT = 664.0
 _CHIP_WIDTH = 170.0
 _CHIP_HEIGHT = 80.0
 _CHIP_GAP = 22.0
-_TRAY_TOP = 4.0
+#: 整块（托盘、九宫格、箭头）比原来的版面低一点，更靠近下面的测试链路。
+_TRAY_TOP = 44.0
 
 #: 九宫格：现场电源架的 3×3 摆位，每格最多一台电源。
 #: 空格虚线与缩小后的电源芯片同高，电源拖进格子时不会先换一个尺寸。
@@ -141,6 +142,14 @@ _DUT_RECT = QRectF(
     _AMP_HEIGHT,
 )
 
+#: 无驱放测试的链路：没有 Driver，唯一的主功放停在链路正中，两侧射频线等长。
+_SOLO_DUT_RECT = QRectF(
+    _CENTER_X - _AMP_WIDTH / 2.0,
+    _CHAIN_Y - _AMP_HEIGHT / 2.0,
+    _AMP_WIDTH,
+    _AMP_HEIGHT,
+)
+
 #: 卡片整体上滑的起点：至少让九宫格顶边落到画布下方。
 _GROUP_SLIDE = _DESIGN_HEIGHT - _GRID_TOP + 24.0
 
@@ -166,16 +175,12 @@ _MORPH_IMAGE_FADE_START = 0.8
 #: 芯片里设备码的左右留白：静止芯片与缩小动画终点共用，两边文字位置因此完全一致。
 _CHIP_TEXT_INSET = 10.0
 
+#: 拖拽跟手位图相对静止芯片的缩放：拿起电源时略微收小，放下时再回到格位大小。
+_DRAG_PREVIEW_SCALE = 0.9
+
 #: 九宫格空位的虚线：与效果图一致的深色细虚线。
 _SLOT_PEN = QPen(_INK, 2.0, Qt.DashLine, Qt.RoundCap, Qt.RoundJoin)
 _SLOT_PEN.setDashPattern([5.0, 4.0])
-
-
-def _slot_font() -> QFont:
-    """格子里的设备码：比卡片略小，保证九宫格三列在画布内排得下。"""
-    font = QFont(card_code_font())
-    font.setPointSizeF(14.0)
-    return font
 
 
 #: 功放三角里的器件名：与效果图一致的衬线字体，居中写在三角形重心上。
@@ -398,12 +403,24 @@ class _RackBoard(QWidget):
         self._press: tuple[str, QPoint] | None = None
         self._hover_target: int | None = None
         self._cable = _cable_asset()
+        #: 本次进入时的测试模式：无驱放测试的链路里没有 Driver，只留主功放。
+        self._driver_enabled = True
 
     # ---- 进入与动画 -------------------------------------------------------
 
-    def enter(self, entries: Iterable[RackCardEntry]) -> None:
-        """接收本次勾选的卡片并播放一次入场变形；每次进入都从托盘重新摆起。"""
+    def enter(
+        self,
+        entries: Iterable[RackCardEntry],
+        *,
+        driver_enabled: bool = True,
+    ) -> None:
+        """接收本次勾选的卡片并播放一次入场变形；每次进入都从托盘重新摆起。
+
+        ``driver_enabled`` 来自欢迎页选择的测试模式：无驱放测试没有驱动功放，
+        链路里只画一台主功放（DUT），信号源与频谱仪之间不再出现 Driver。
+        """
         self._animation.stop()
+        self._driver_enabled = bool(driver_enabled)
         self._entries = list(entries)
         self._power_ids = []
         self._signal = None
@@ -599,6 +616,10 @@ class _RackBoard(QWidget):
     def _code_of(self, supply_id: str) -> str:
         return supply_id
 
+    def _chip_font(self, supply_id: str) -> QFont:
+        """托盘与格位里的设备码共用卡片字号：电源放下前后字体大小不变。"""
+        return card_code_font()
+
     # ---- 坐标换算 ---------------------------------------------------------
 
     def set_viewport(self, rect: QRect) -> None:
@@ -703,7 +724,12 @@ class _RackBoard(QWidget):
         return self._tray_layout().get(supply_id)
 
     def _tray_band(self) -> QRectF:
-        return QRectF(8.0, 0.0, _DESIGN_WIDTH - 16.0, _GRID_TOP - 8.0)
+        return QRectF(
+            8.0,
+            _TRAY_TOP - 4.0,
+            _DESIGN_WIDTH - 16.0,
+            _GRID_TOP - _TRAY_TOP - 4.0,
+        )
 
     # ---- 拖放 -------------------------------------------------------------
 
@@ -778,18 +804,19 @@ class _RackBoard(QWidget):
             drag.setPixmap(pixmap)
             drag.setHotSpot(
                 QPoint(
-                    max(0, int(pos.x() - widget_rect.x())),
-                    max(0, int(pos.y() - widget_rect.y())),
+                    max(0, int((pos.x() - widget_rect.x()) * _DRAG_PREVIEW_SCALE)),
+                    max(0, int((pos.y() - widget_rect.y()) * _DRAG_PREVIEW_SCALE)),
                 )
             )
         drag.exec(Qt.MoveAction)
 
     def _render_chip(self, supply_id: str, rect: QRectF) -> QPixmap:
-        """把当前状态下的电源卡画成拖拽跟随位图；尺寸与屏幕上的卡一致。"""
+        """把当前状态下的电源卡画成拖拽跟随位图：比静止芯片略小，拿起时轻轻收一下。"""
         scale, _offset = self._transform()
         ratio = float(self.devicePixelRatioF()) or 1.0
-        width = max(1, int(round(rect.width() * scale * ratio)))
-        height = max(1, int(round(rect.height() * scale * ratio)))
+        preview = scale * _DRAG_PREVIEW_SCALE
+        width = max(1, int(round(rect.width() * preview * ratio)))
+        height = max(1, int(round(rect.height() * preview * ratio)))
         pixmap = QPixmap(width, height)
         pixmap.setDevicePixelRatio(ratio)
         pixmap.fill(Qt.transparent)
@@ -797,10 +824,13 @@ class _RackBoard(QWidget):
         try:
             painter.setRenderHint(QPainter.Antialiasing, True)
             painter.setRenderHint(QPainter.TextAntialiasing, True)
-            painter.scale(scale, scale)
-            font = _slot_font() if supply_id in self._slot_of else card_code_font()
-            self._paint_chip(painter, QRectF(0.0, 0.0, rect.width(), rect.height()),
-                             self._code_of(supply_id), font)
+            painter.scale(preview, preview)
+            self._paint_chip(
+                painter,
+                QRectF(0.0, 0.0, rect.width(), rect.height()),
+                self._code_of(supply_id),
+                self._chip_font(supply_id),
+            )
         finally:
             painter.end()
         return pixmap
@@ -878,11 +908,17 @@ class _RackBoard(QWidget):
                 )
             else:
                 self._paint_chip(
-                    painter, rect, self._code_of(occupant), _slot_font()
+                    painter,
+                    rect,
+                    self._code_of(occupant),
+                    self._chip_font(occupant),
                 )
         for supply_id, rect in self._tray_layout().items():
             self._paint_chip(
-                painter, rect, self._code_of(supply_id), card_code_font()
+                painter,
+                rect,
+                self._code_of(supply_id),
+                self._chip_font(supply_id),
             )
         if self._hover_target == -1:
             self._paint_tray_highlight(painter)
@@ -908,7 +944,10 @@ class _RackBoard(QWidget):
             start = self._design_rect_from_global(entry.start_rect_global)
             if start.isEmpty():
                 self._paint_chip(
-                    painter, end, self._code_of(supply_id), card_code_font()
+                    painter,
+                    end,
+                    self._code_of(supply_id),
+                    self._chip_font(supply_id),
                 )
                 continue
             self._paint_power_morph(painter, entry, start, end, progress)
@@ -950,7 +989,7 @@ class _RackBoard(QWidget):
         随后淡入卡片正面，再沿入场路径飞回选择页。
         """
         fade = min(1.0, returned / 0.01)
-        font = _slot_font() if supply_id in self._slot_of else card_code_font()
+        font = self._chip_font(supply_id)
         if fade < 1.0:
             painter.save()
             painter.setOpacity(1.0 - fade)
@@ -1188,12 +1227,21 @@ class _RackBoard(QWidget):
         painter.setBrush(_INK)
         painter.drawPath(path)
 
+    def _amplifiers(self) -> tuple[tuple[str, QRectF], ...]:
+        """本模式的功放链：有驱放时 Driver + DUT，无驱放时只留居中的 DUT。"""
+        if self._driver_enabled:
+            return (("Driver", _DRIVER_RECT), ("DUT", _DUT_RECT))
+        return (("DUT", _SOLO_DUT_RECT),)
+
     def _paint_chain(self, painter: QPainter) -> None:
-        self._paint_cable(painter, _CHAIN_LEFT, _DRIVER_RECT.left())
-        self._paint_cable(painter, _DRIVER_RECT.right(), _DUT_RECT.left())
-        self._paint_cable(painter, _DUT_RECT.right(), _CHAIN_RIGHT)
-        self._paint_amplifier(painter, _DRIVER_RECT, "Driver")
-        self._paint_amplifier(painter, _DUT_RECT, "DUT")
+        amplifiers = self._amplifiers()
+        left = _CHAIN_LEFT
+        for _label, rect in amplifiers:
+            self._paint_cable(painter, left, rect.left())
+            left = rect.right()
+        self._paint_cable(painter, left, _CHAIN_RIGHT)
+        for label, rect in amplifiers:
+            self._paint_amplifier(painter, rect, label)
 
     def _paint_cable(self, painter: QPainter, start_x: float, end_x: float) -> None:
         span = float(end_x) - float(start_x)
@@ -1277,7 +1325,7 @@ class RackOverviewPage(QWidget):
     播完才切回选择页；选择页保留本次扫描结果与勾选，用户可以直接改选后再次进入。
 
     顶部的“仪器排布”标题行不参与卡片动画：入场动画完全停下之后才淡入，返回时
-    一按下“上一步”就隐藏，卡片飞入飞出的整段时间里标题与提示文字都不在画面上。
+    一按下“上一步”就隐藏，卡片飞入飞出的整段时间里标题都不在画面上。
     标题行始终占着布局位置，因此动画期间版面不会因为它的显隐而跳动。
     """
 
@@ -1323,12 +1371,9 @@ class RackOverviewPage(QWidget):
         header.setSpacing(16)
         self.title_label = QLabel("仪器排布")
         self.title_label.setProperty("role", "pageTitle")
-        self.hint_label = QLabel()
-        self.hint_label.setProperty("role", "hint")
-        self.hint_label.setWordWrap(True)
+        header.addStretch(1)
         header.addWidget(self.title_label)
         header.addStretch(1)
-        header.addWidget(self.hint_label, 1)
         # 标题行常驻布局（避免动画中版面跳动），只淡入淡出：入场动画结束后出现，
         # 返回一按下就隐藏。
         self._header_effect = QGraphicsOpacityEffect(header_row)
@@ -1403,14 +1448,22 @@ class RackOverviewPage(QWidget):
 
     # ---- 进入 -------------------------------------------------------------
 
-    def enter(self, entries: Iterable[RackCardEntry]) -> None:
-        """按本次勾选的卡片重建页面并播放一次入场动画。"""
+    def enter(
+        self,
+        entries: Iterable[RackCardEntry],
+        *,
+        driver_enabled: bool = True,
+    ) -> None:
+        """按本次勾选的卡片重建页面并播放一次入场动画。
+
+        ``driver_enabled`` 是欢迎页选择的测试模式：无驱放测试的链路里不画 Driver。
+        """
         self._sync_board_geometry()
         self._back_pending = False
         self._header_pending = False
         self._header_animation.stop()
         self._set_header_opacity(0.0)
-        self.board.enter(entries)
+        self.board.enter(entries, driver_enabled=driver_enabled)
         if self.board.transition_running():
             # 卡片还在飞：标题行留到动画结束（见 :meth:`_sync_header_visibility`）。
             self._header_pending = True
@@ -1495,17 +1548,6 @@ class RackOverviewPage(QWidget):
         )
         self.next_btn.setEnabled(ready)
         self.back_btn.setEnabled(not self._back_pending)
-        if self._back_pending:
-            self.hint_label.setText("正在返回仪器选择页 …")
-        elif total == 0:
-            self.hint_label.setText("本次没有电源需要排布，可以直接进入下一步。")
-        elif placed == total:
-            self.hint_label.setText("电源已全部放到架子上，可以进入下一步。")
-        else:
-            self.hint_label.setText(
-                "把电源拖到九宫格中与现场一致的位置；"
-                f"还差 {total - placed} 台电源。"
-            )
         self.next_btn.setToolTip(
             "进入仪器配置，配置测试参数并完成仪器连接"
             if ready

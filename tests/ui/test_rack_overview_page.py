@@ -23,7 +23,7 @@ from PySide6.QtCore import (
     QVariantAnimation,
 )
 from PySide6.QtGui import QColor, QDropEvent, QImage, QPainter, QPixmap
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel
 
 from presentation.qt import rack_overview_page as rack
 from presentation.qt.card_assets import render_card_front
@@ -169,6 +169,33 @@ class RackOverviewPageTests(unittest.TestCase):
     def test_back_button_label_is_previous_step(self):
         page = self._page()
         self.assertEqual(page.back_btn.text(), "上一步")
+
+    def test_header_shows_only_the_centred_title(self):
+        """标题行只剩居中的“仪器排布”，不再显示拖放提示的灰字。"""
+        page = self._page()
+        header = page.title_label.parentWidget()
+
+        self.assertEqual(
+            header.findChildren(QLabel),
+            [page.title_label],
+            "标题行里除标题外不能再有提示文字",
+        )
+        self.app.processEvents()
+        self.assertAlmostEqual(
+            page.title_label.geometry().center().x(),
+            header.rect().center().x(),
+            delta=1,
+            msg="“仪器排布”四个字要水平居中",
+        )
+
+    def test_the_power_block_sits_close_above_the_chain(self):
+        """托盘、九宫格与箭头整体靠下，箭头贴近底部链路但不压上去。"""
+        arrow_bottom = rack._ARROW_TOP + rack._ARROW_HEIGHT
+        gap = rack._DUT_RECT.top() - arrow_bottom
+
+        self.assertGreater(gap, 0.0, "箭头不能压到下面的链路")
+        self.assertLessEqual(gap, 24.0, "箭头要靠近底部链路")
+        self.assertGreater(rack._TRAY_TOP, 0.0, "整块已经离开画布顶边")
 
     def test_header_stays_hidden_while_the_entry_animation_runs(self):
         page = self._page()
@@ -731,6 +758,79 @@ class RackOverviewPageTests(unittest.TestCase):
         self.assertAlmostEqual(text.center().y(), rect.center().y(), places=6)
         self.assertGreaterEqual(text.left(), rect.left())
         self.assertLessEqual(text.right(), rect.left() + rect.width() * 2.0 / 3.0)
+
+    def test_no_driver_mode_drops_the_driver_from_the_chain(self):
+        """无驱放测试没有驱动功放：链路里只留居中的 DUT，两侧射频线等长。"""
+        page = self._page()
+        page.finish_transition()
+        self.assertEqual(
+            [label for label, _ in page.board._amplifiers()], ["Driver", "DUT"]
+        )
+
+        page.enter(_entries(), driver_enabled=False)
+        page.finish_transition()
+
+        amplifiers = page.board._amplifiers()
+        self.assertEqual([label for label, _ in amplifiers], ["DUT"])
+        dut = amplifiers[0][1]
+        self.assertAlmostEqual(dut.center().x(), rack._CENTER_X, places=6)
+        self.assertAlmostEqual(
+            dut.left() - rack._CHAIN_LEFT,
+            rack._CHAIN_RIGHT - dut.right(),
+            places=6,
+            msg="没有 Driver 时两侧射频线仍要等长",
+        )
+
+    def test_drag_preview_is_smaller_than_the_resting_chip(self):
+        """拿起电源时跟手位图缩小一点，而不是比静止芯片更大。"""
+        page = self._page()
+        page.finish_transition()
+        board = page.board
+        supply = page.power_supply_ids()[0]
+        rect = board._chip_rect(supply)
+        scale, _offset = board._transform()
+
+        preview = board._render_chip(supply, rect)
+        ratio = float(preview.devicePixelRatio()) or 1.0
+        logical_width = preview.width() / ratio
+        logical_height = preview.height() / ratio
+
+        self.assertAlmostEqual(
+            logical_width,
+            rect.width() * scale * rack._DRAG_PREVIEW_SCALE,
+            delta=1.0,
+        )
+        self.assertAlmostEqual(
+            logical_height,
+            rect.height() * scale * rack._DRAG_PREVIEW_SCALE,
+            delta=1.0,
+        )
+        self.assertLess(logical_width, rect.width() * scale)
+        self.assertLess(rack._DRAG_PREVIEW_SCALE, 1.0)
+
+    def test_a_placed_supply_keeps_the_tray_code_size(self):
+        """电源放进格位后设备码仍用托盘的字号，不会明显变小。"""
+        page = self._page()
+        page.finish_transition()
+        board = page.board
+        supply = page.power_supply_ids()[0]
+        page.place_supply(supply, 0)
+
+        sizes = []
+        original = board._paint_chip
+
+        def record(painter, rect, text, font):
+            sizes.append(font.pointSizeF())
+            original(painter, rect, text, font)
+
+        board._paint_chip = record
+        try:
+            page.grab()
+        finally:
+            del board._paint_chip
+
+        self.assertTrue(sizes, "摆好电源后至少要画出格位与托盘的芯片")
+        self.assertEqual(set(sizes), {card_code_font().pointSizeF()})
 
 
 if __name__ == "__main__":

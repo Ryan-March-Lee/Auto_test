@@ -521,6 +521,21 @@ class InstrumentSetupPage(QWidget):
                 f"有 {state.legacy_binding_count} 台设备的连接沿用已保存的配置，未扫描确认"
             )
 
+    def resume(self) -> None:
+        """从仪器排布页返回：保留本次扫描结果与勾选，不重新查找。
+
+        回到本页不是新的一轮查找：本次扫描出的卡片、勾选与结果区版面都留在原处，
+        用户可以直接改选后再次点“下一步”。只有结果已经不在（例如先前被清空）时，
+        才退回 :meth:`enter` 的干净起点，避免界面停在没有结果的半状态。
+        """
+        panel = self.discovery_panel
+        if panel.box_state() != BOX_STATE_RESULTS:
+            self.enter()
+            return
+        self._set_header_hidden(True)
+        self._sync_actions()
+        self._fit_discovery_panel()
+
     # ---- 扫描框初值 -------------------------------------------------------
 
     def _default_scan_subnet(self, state: ConfigurationViewState) -> str | None:

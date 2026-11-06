@@ -202,7 +202,9 @@ class MainWindow(QMainWindow):
         self.view_stack.insertWidget(1, self.connection_page)
         self.rack_page = RackOverviewPage(self)
         self.rack_page.next_requested.connect(self._open_configuration_page)
-        self.rack_page.back_requested.connect(self._return_to_connection_page)
+        self.rack_page.back_requested.connect(
+            lambda: self._return_to_connection_page(keep_results=True)
+        )
         self.view_stack.insertWidget(2, self.rack_page)
 
         central_layout = QVBoxLayout(central_widget)
@@ -255,9 +257,12 @@ class MainWindow(QMainWindow):
         self._sync_status_panel_visibility()
         self._sync_finalize_entry()
 
-    def _return_to_connection_page(self) -> None:
-        """回上一步：重新扫描/更换设备；已填的测试参数留在内存里，回来时仍在。"""
-        self.connection_page.enter()
+    def _return_to_connection_page(self, *, keep_results: bool = False) -> None:
+        """回上一步：参数配置页重新查找；排布页保留本次选择结果（``keep_results``）。"""
+        if keep_results:
+            self.connection_page.resume()
+        else:
+            self.connection_page.enter()
         self.view_stack.setCurrentWidget(self.connection_page)
         self._sync_status_panel_visibility()
 

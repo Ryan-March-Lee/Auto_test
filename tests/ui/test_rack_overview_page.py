@@ -10,8 +10,9 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import numpy as np
 from PySide6.QtCore import QMimeData, QPointF, QRect, Qt
-from PySide6.QtGui import QColor, QDropEvent, QPixmap
+from PySide6.QtGui import QColor, QDropEvent, QImage, QPixmap
 from PySide6.QtWidgets import QApplication
 
 from presentation.qt import rack_overview_page as rack
@@ -54,6 +55,21 @@ def _entries(power_codes=("DP8B1519", "DP8B0885"), *, sides=True, offset=0):
             )
         )
     return entries
+
+
+def _image_difference(first: QImage, second: QImage) -> float:
+    """两张位图不一致的字节占比；只用来放过抗锯齿级差异。"""
+
+    def pixels(image: QImage) -> np.ndarray:
+        image = image.convertToFormat(QImage.Format.Format_RGBA8888)
+        raw = np.frombuffer(image.constBits(), dtype=np.uint8)
+        return raw.reshape(image.height(), image.bytesPerLine())[
+            :, : image.width() * 4
+        ].copy()
+
+    a = pixels(first)
+    b = pixels(second)
+    return float(np.count_nonzero(a != b)) / max(1, a.size)
 
 
 class RackOverviewPageTests(unittest.TestCase):
@@ -132,14 +148,72 @@ class RackOverviewPageTests(unittest.TestCase):
         page.next_btn.click()
         self.assertEqual(emitted, [True])
 
-    def test_back_button_emits_regardless_of_placement(self):
+    def test_back_button_label_is_previous_step(self):
+        page = self._page()
+        self.assertEqual(page.back_btn.text(), "上一步")
+
+    def test_back_button_plays_the_reverse_transition_before_emitting(self):
         page = self._page()
         emitted = []
         page.back_requested.connect(lambda: emitted.append(True))
+        page.finish_transition()
+        page.place_supply(page.power_supply_ids()[0], 0)
 
         page.back_btn.click()
 
+        self.assertTrue(page.transition_running(), "返回要先播反向动画")
+        self.assertEqual(emitted, [], "动画播完前不能切页")
+        self.assertFalse(page.next_btn.isEnabled(), "返回过程中不能再进入下一步")
+
+        page.finish_transition()
+
+        self.assertFalse(page.transition_running())
         self.assertEqual(emitted, [True])
+
+    def test_back_button_ignores_repeated_clicks_while_returning(self):
+        page = self._page()
+        emitted = []
+        page.back_requested.connect(lambda: emitted.append(True))
+        page.finish_transition()
+
+        page.back_btn.click()
+        page.back_btn.click()
+        page.finish_transition()
+
+        self.assertEqual(emitted, [True], "返回动画只播一次、只切一次页")
+
+    def test_back_animation_starts_at_the_rack_and_ends_at_the_selection_layout(self):
+        page = self._page()
+        page.finish_transition()
+
+        page.request_back()
+
+        board = page.board
+        self.assertEqual(board._direction, -1)
+        self.assertEqual(
+            board._progress,
+            1.0,
+            "返回动画的起点必须是排布页布局（入场进度 1），不能先跳到选择页布局",
+        )
+        self.assertEqual(board._animation.startValue(), 1.0)
+        self.assertEqual(board._animation.endValue(), 0.0)
+
+    def test_back_first_frame_is_exactly_the_layout_on_screen(self):
+        """点下“上一步”的第一帧不能跳：仍要看到点击前的排布画面。"""
+        page = self._page()
+        page.finish_transition()
+        page.place_supply(page.power_supply_ids()[0], 0)
+        self.app.processEvents()
+        before = page.board.grab().toImage()
+
+        page.request_back()
+
+        after = page.board.grab().toImage()
+        self.assertLess(
+            _image_difference(before, after),
+            0.002,
+            "返回动画第一帧必须与点击前的版面一致（只允许抗锯齿级差异）",
+        )
 
     # ---- 摆位规则 ---------------------------------------------------------
 
@@ -253,6 +327,16 @@ class RackOverviewPageTests(unittest.TestCase):
         page.board.update()
         self.app.processEvents()
         self.assertFalse(page.grab().isNull(), "动画中间帧必须能画出来")
+
+        # 反向动画的中间帧同样要能画出来（卡片从托盘/格位飞回选择页）。
+        page.finish_transition()
+        page.request_back()
+        page.board._animation.stop()
+        page.board._running = True
+        page.board._progress = 0.5
+        page.board.update()
+        self.app.processEvents()
+        self.assertFalse(page.grab().isNull(), "返回动画中间帧必须能画出来")
 
 
 if __name__ == "__main__":

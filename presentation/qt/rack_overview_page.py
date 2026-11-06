@@ -252,6 +252,8 @@ class _RackBoard(QWidget):
     """
 
     state_changed = Signal()
+    #: 反向动画播完（或没有可动画的卡片时立即发出）：页面据此离开本页。
+    exit_finished = Signal()
 
     def __init__(self, parent: Any = None) -> None:
         super().__init__(parent)
@@ -265,11 +267,15 @@ class _RackBoard(QWidget):
         self._slot_of: dict[str, int] = {}
         self._progress = 1.0
         self._running = False
+        #: 动画方向：``1`` 入场（选择页 → 排布），``-1`` 返回（排布 → 选择页）。
+        self._direction = 1
+        #: 一次返回动画正在进行；用它保证 ``exit_finished`` 只发一次。
+        self._exit_pending = False
+        #: 返回动画的起点：每台电源离开时的托盘/格位矩形（设计坐标）。
+        self._exit_chip_rects: dict[str, QRectF] = {}
         self._animation = QVariantAnimation(self)
-        self._animation.setStartValue(0.0)
-        self._animation.setEndValue(1.0)
         self._animation.setDuration(_TRANSITION_MS)
-        self._animation.setEasingCurve(QEasingCurve.OutCubic)
+        self._configure_animation(1)
         self._animation.valueChanged.connect(self._on_animation_value)
         self._animation.finished.connect(self._on_animation_finished)
         self._press: tuple[str, QPoint] | None = None
@@ -296,6 +302,10 @@ class _RackBoard(QWidget):
         self._slot_of.clear()
         self._press = None
         self._hover_target = None
+        self._direction = 1
+        self._exit_pending = False
+        self._exit_chip_rects.clear()
+        self._configure_animation(1)
         self._progress = 0.0
         self._running = bool(self._entries)
         if self._running:
@@ -305,10 +315,61 @@ class _RackBoard(QWidget):
         self._notify_state()
         self.update()
 
-    def finish_transition(self) -> None:
-        """立即结束入场动画，直接呈现最终布局（点击跳过与测试都用这个入口）。"""
+    def _configure_animation(self, direction: int) -> None:
+        """按方向设置动画端点与缓动。
+
+        返回方向从 ``1`` 走到 ``0``：``progress`` 始终表示“入场的进度”（0 = 选择页
+        布局，1 = 排布页布局），绘制返回画面时用 ``1 - progress`` 作为“已经退回”
+        的比例。路径与入场相反，缓动与入场一致（先快后慢），点下按钮立刻开始移动。
+        """
+        self._animation.stop()
+        if direction < 0:
+            self._animation.setStartValue(1.0)
+            self._animation.setEndValue(0.0)
+            self._animation.setEasingCurve(QEasingCurve.OutCubic)
+            return
+        self._animation.setStartValue(0.0)
+        self._animation.setEndValue(1.0)
+        self._animation.setEasingCurve(QEasingCurve.OutCubic)
+
+    def start_exit(self) -> bool:
+        """按入场动画的反向画面回到仪器选择页；没有卡片时返回 ``False``。
+
+        动画终点取每张卡片离开仪器选择页时的屏幕矩形（:attr:`RackCardEntry.
+        start_rect_global`），因此播完的那一刻卡片正好回到选择页里原来的位置。
+        电源从当前所在的托盘/格位起飞，已经摆进九宫格的电源不会被瞬间挪回托盘。
+        """
+        if not self._entries:
+            return False
+        if self._exit_pending:
+            return True
+        # 入场动画还没播完时先落定最终版面，再从那里反向起飞。
         if self._animation.state() == QVariantAnimation.Running:
             self._animation.stop()
+        self._set_progress(1.0)
+        self._exit_chip_rects = {
+            supply_id: rect
+            for supply_id in self._power_ids
+            if (rect := self._chip_rect(supply_id)) is not None
+        }
+        self._direction = -1
+        self._exit_pending = True
+        self._progress = 1.0
+        self._running = True
+        self._configure_animation(-1)
+        self._animation.start()
+        self._notify_state()
+        self.update()
+        return True
+
+    def finish_transition(self) -> None:
+        """立即结束当前动画：入场直接呈现最终布局，返回直接完成并离开本页。"""
+        if self._animation.state() == QVariantAnimation.Running:
+            self._animation.stop()
+        if self._direction < 0:
+            self._set_progress(0.0)
+            self._finish_exit()
+            return
         self._set_progress(1.0)
 
     def transition_running(self) -> bool:
@@ -318,11 +379,30 @@ class _RackBoard(QWidget):
         self._set_progress(float(value))
 
     def _on_animation_finished(self) -> None:
+        if self._direction < 0:
+            self._finish_exit()
+            return
         self._set_progress(1.0)
+
+    def _finish_exit(self) -> None:
+        """返回动画收尾：只发一次 ``exit_finished``，让页面切回仪器选择页。"""
+        if not self._exit_pending:
+            return
+        self._exit_pending = False
+        self._direction = 1
+        self._progress = 1.0
+        self._running = False
+        self._exit_chip_rects.clear()
+        self._notify_state()
+        self.update()
+        self.exit_finished.emit()
 
     def _set_progress(self, value: float) -> None:
         progress = max(0.0, min(1.0, float(value)))
-        running = progress < 1.0 and bool(self._entries)
+        if self._direction < 0:
+            running = progress > 0.0 and bool(self._entries)
+        else:
+            running = progress < 1.0 and bool(self._entries)
         changed = running != self._running or progress != self._progress
         self._progress = progress
         self._running = running
@@ -627,7 +707,10 @@ class _RackBoard(QWidget):
             painter.translate(offset)
             painter.scale(scale, scale)
             if self._running or self._progress < 1.0:
-                self._paint_transition(painter)
+                if self._direction < 0:
+                    self._paint_exit(painter)
+                else:
+                    self._paint_transition(painter)
             else:
                 self._paint_board(painter)
             painter.restore()
@@ -677,6 +760,79 @@ class _RackBoard(QWidget):
                 )
                 continue
             self._paint_power_morph(painter, entry, start, end, progress)
+
+    def _paint_exit(self, painter: QPainter) -> None:
+        """返回动画：沿入场路径反向回到仪器选择页。
+
+        ``_progress`` 从 1 走到 0，绘制时取 ``1 - _progress`` 作为“已经退回选择页”
+        的比例：中间示意图向下滑出，两侧卡片飞回选择页里的位置，电源卡片从当前
+        托盘/格位展开成完整的仪器卡片并沿原路飞回。
+        """
+        returned = 1.0 - self._progress
+        self._paint_middle(painter, QPointF(0.0, returned * _GROUP_SLIDE))
+        self._paint_exit_side_cards(painter, returned)
+        for supply_id in self._power_ids:
+            entry = self._power_entry(supply_id)
+            start = self._exit_chip_rects.get(supply_id)
+            if entry is None or start is None:
+                continue
+            end = self._design_rect_from_global(entry.start_rect_global)
+            if end.isEmpty():
+                continue
+            self._paint_exit_power(
+                painter, supply_id, entry, start, end, returned
+            )
+
+    def _paint_exit_power(
+        self,
+        painter: QPainter,
+        supply_id: str,
+        entry: RackCardEntry,
+        start: QRectF,
+        end: QRectF,
+        returned: float,
+    ) -> None:
+        """电源卡片从棋盘上的芯片展开成完整卡片。
+
+        点击“上一步”的第一瞬间仍按芯片画（否则芯片会突然变成一张卡片截图），
+        随后淡入卡片正面，再沿入场路径飞回选择页。
+        """
+        fade = min(1.0, returned / 0.01)
+        if fade < 1.0:
+            font = _slot_font() if supply_id in self._slot_of else card_code_font()
+            painter.save()
+            painter.setOpacity(1.0 - fade)
+            self._paint_chip(
+                painter,
+                _lerp_rect(start, end, returned),
+                self._code_of(supply_id),
+                font,
+            )
+            painter.restore()
+        painter.save()
+        painter.setOpacity(fade)
+        self._paint_power_morph(painter, entry, start, end, returned)
+        painter.restore()
+
+    def _paint_exit_side_cards(self, painter: QPainter, progress: float) -> None:
+        """信号源与频谱仪：从页面左右下角飞回选择页里的卡片矩形。"""
+        for entry, start in (
+            (self._signal, QRectF(_CARD_MARGIN, _CARD_TOP, CARD_WIDTH, CARD_HEIGHT)),
+            (
+                self._spectrum,
+                QRectF(
+                    _DESIGN_WIDTH - _CARD_MARGIN - CARD_WIDTH,
+                    _CARD_TOP,
+                    CARD_WIDTH,
+                    CARD_HEIGHT,
+                ),
+            ),
+        ):
+            if entry is None:
+                continue
+            end = self._design_rect_from_global(entry.start_rect_global)
+            rect = start if end.isEmpty() else _lerp_rect(start, end, progress)
+            _draw_pixmap(painter, entry.front, rect)
 
     def _power_entry(self, supply_id: str) -> RackCardEntry | None:
         for entry in self._entries:
@@ -898,6 +1054,9 @@ class RackOverviewPage(QWidget):
     :meth:`enter` 接收本次勾选的卡片（含它们在屏幕上的起始矩形），随后播放 700 ms
     动画；动画结束后电源卡停在顶部托盘，拖进九宫格才允许点“下一步”。格位状态只在
     本页内存里保存，不写配置、不影响电源配置页的标签页顺序。
+
+    点“上一步”时播放同一段动画的反向画面：卡片沿入场路径飞回仪器选择页里的原位，
+    播完才切回选择页；选择页保留本次扫描结果与勾选，用户可以直接改选后再次进入。
     """
 
     next_requested = Signal()
@@ -906,6 +1065,8 @@ class RackOverviewPage(QWidget):
     def __init__(self, parent: Any = None) -> None:
         super().__init__(parent)
         self.setObjectName("rackOverviewPage")
+        #: 返回动画正在播放：重复点击“上一步”不再重启动画，也不重复发信号。
+        self._back_pending = False
         self._build_ui()
         self._connect_signals()
         self._sync_actions()
@@ -943,8 +1104,8 @@ class RackOverviewPage(QWidget):
 
         actions = QHBoxLayout()
         actions.setSpacing(10)
-        self.back_btn = QPushButton("上一步：仪表配置")
-        self.back_btn.setToolTip("回到仪表配置页，重新扫描并选择本次测试使用的设备")
+        self.back_btn = QPushButton("上一步")
+        self.back_btn.setToolTip("回到仪器选择页，重新选择本次测试使用的设备")
         set_button_variant(self.back_btn, "secondary")
         self.next_btn = QPushButton("下一步")
         self.next_btn.setToolTip("进入仪器配置，配置测试参数并完成仪器连接")
@@ -956,13 +1117,15 @@ class RackOverviewPage(QWidget):
 
     def _connect_signals(self) -> None:
         self.board.state_changed.connect(self._sync_actions)
-        self.back_btn.clicked.connect(self.back_requested.emit)
+        self.board.exit_finished.connect(self._finish_back)
+        self.back_btn.clicked.connect(self.request_back)
         self.next_btn.clicked.connect(self.request_next)
 
     # ---- 进入 -------------------------------------------------------------
 
     def enter(self, entries: Iterable[RackCardEntry]) -> None:
         """按本次勾选的卡片重建页面并播放一次入场动画。"""
+        self._back_pending = False
         self.board.enter(entries)
         self._sync_actions()
 
@@ -997,6 +1160,27 @@ class RackOverviewPage(QWidget):
 
     # ---- 动作 -------------------------------------------------------------
 
+    def request_back(self) -> None:
+        """回上一步：按入场动画的反向画面退回本次的仪器选择页。
+
+        反向动画播完才真正离开本页；动画期间重复点击被忽略，避免把牌面重启一遍。
+        没有任何卡片时（直接进入本页的空结果）立即返回。
+        """
+        if self._back_pending:
+            return
+        self._back_pending = True
+        self._sync_actions()
+        if not self.board.start_exit():
+            self._finish_back()
+
+    def _finish_back(self) -> None:
+        """反向动画完成（或被跳过）：通知窗口切回仪器选择页。"""
+        if not self._back_pending:
+            return
+        self._back_pending = False
+        self._sync_actions()
+        self.back_requested.emit()
+
     def request_next(self) -> None:
         if self.next_btn.isEnabled():
             self.next_requested.emit()
@@ -1004,9 +1188,16 @@ class RackOverviewPage(QWidget):
     def _sync_actions(self) -> None:
         total = len(self.board.power_supply_ids())
         placed = self.board.placed_count()
-        ready = not self.board.transition_running() and placed == total
+        ready = (
+            not self._back_pending
+            and not self.board.transition_running()
+            and placed == total
+        )
         self.next_btn.setEnabled(ready)
-        if total == 0:
+        self.back_btn.setEnabled(not self._back_pending)
+        if self._back_pending:
+            self.hint_label.setText("正在返回仪器选择页 …")
+        elif total == 0:
             self.hint_label.setText("本次没有电源需要排布，可以直接进入下一步。")
         elif placed == total:
             self.hint_label.setText("电源已全部放到架子上，可以进入下一步。")

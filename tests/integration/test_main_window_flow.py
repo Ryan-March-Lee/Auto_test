@@ -445,6 +445,34 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
         self.assertIs(window.tab_widget.currentWidget(), window.config_page)
 
+    def test_rack_previous_step_returns_to_the_same_selection_result(self):
+        """仪器排布页的“上一步”回到本次选择结果，卡片与勾选都还在。"""
+        self._silence_dialogs()
+        window = self._window()
+
+        window._enter_test_mode(True)
+        panel = self._scan_and_select(window)
+        checked = {card.data.heading for card in panel.cards() if card.is_checked()}
+        self.assertTrue(checked, "用例前提：本次结果里至少勾选一台设备")
+
+        window.connection_page.next_btn.click()
+        self.assertIs(window.view_stack.currentWidget(), window.rack_page)
+        window.rack_page.finish_transition()
+
+        window.rack_page.back_btn.click()
+        # 反向动画播完前仍停在排布页。
+        self.assertIs(window.view_stack.currentWidget(), window.rack_page)
+        window.rack_page.finish_transition()
+
+        self.assertIs(window.view_stack.currentWidget(), window.connection_page)
+        self.assertEqual(panel.box_state(), "results", "返回后不能退回“查找设备”画面")
+        self.assertTrue(panel.cards(), "本次扫描出的卡片要留在结果区")
+        self.assertEqual(
+            {card.data.heading for card in panel.cards() if card.is_checked()},
+            checked,
+            "返回后勾选保持原样，用户可以直接改选再进入排布",
+        )
+
     def test_two_supplies_in_one_run_are_both_frozen_with_their_identity(self):
         """步骤 10：DUT 与驱动功放各用一台电源时，两台都进运行快照（各带身份）。
 

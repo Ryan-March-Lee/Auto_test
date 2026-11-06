@@ -1,27 +1,31 @@
-"""电源通道卡片：一张横卡表示一台电源的两个通道。
+"""电源通道卡片：一张横卡表示一台电源的两个通道，也是通道参数的唯一编辑面。
 
-这张卡是配置页「电源详细配置」的卡面资产，只有正面，不参与设备发现的发牌动画，
-因此没有牌背。卡面内容自上而下：
+这张卡只有正面，不参与设备发现的发牌动画，因此没有牌背。卡面内容自上而下：
 
 - **设备码缩写**：整张卡最上面的一行，等宽加粗字，只写 ``label``（``DP8B1519``）；
 - **两个通道**：左右各一半，每个通道顶部是一行“圆形电源键 + ``CH1`` / ``CH2``”，
   开关在左、标题在右，两者共用同一条基线；
-- **两个只读值**：每个通道第一行左右各一个，``VS``（电压设定）、``IS``（电流设定）；
-  设定值来自配置里的 ``voltage.value`` / ``current.value``；
+- **两个可编辑值**：每个通道第一行左右各一个，``VS``（电压设定）、``IS``（电流设定）；
+  数值框是真实的 ``QDoubleSpinBox``，启用的通道里可以直接输入，配置读写仍走页面/表单
+  Adapter，卡片不自己写文件；
 - **两个保护勾选框**：每个通道第二行左右各一个，左边电压保护、右边电流保护，
   勾选状态来自配置里的 ``voltage.protection_enabled`` /
-  ``current.protection_enabled``；卡面不再显示保护数值，阈值仍由表单按工作值的
+  ``current.protection_enabled``；卡面不再显示保护数值，阈值仍由配置读取按工作值的
   110% 推导；
 - **自动阈值提示**：通道底部一行小字说明“勾选后保护阈值自动 +10%”；
 - **通道开关**：关闭时该通道整块降为灰色（``disabled_bg``），数值框、勾选框、标签
   与开关一起变灰；打开时恢复通道底色（左浅蓝、右浅琥珀），电源键同时点亮：边框转白、
   底色转绿、四周泛起绿色辉光，图标描边加粗并让圆环带一圈青色光。
 
-数值在本卡上只读：编辑仍走现有表单，卡片只显示一份快照。两个保护勾选框是可点
-控件（:class:`ProtectionCheck`），点击只切换“是否启用保护”，不填阈值、不碰硬件；
-页面通过 :attr:`PowerSupplyCard.protection_toggled` 决定之后怎么处理这个动作。
-通道开关仍只控制卡面显示，不改配置模型；页面通过 :attr:`PowerSupplyCard.channel_toggled`
-决定之后要不要把它接到配置或硬件输出。
+通道开关是**本次编辑的启用状态**，不是持久配置：关闭只锁住该通道的 VS/IS 与保护
+勾选，不写回配置，也不影响上电计划；卡片的启用状态每次进入页面都从灰色开始。两个
+通道始终保留在配置里，保存时两条通道的当前值都会写出。
+
+卡片同时支持两种尺寸：``render_power_card`` 按 440×232 的原始逻辑尺寸导出静态
+位图，``PowerSupplyCard`` 则按卡片墙给的缩放比例设置控件尺寸；绘制统一在
+``painter.scale`` 之后按原始坐标进行，因此放大/缩小后的卡面与导出图同源。数值输入框、
+电源键与保护勾选框都是真实子控件，鼠标与键盘操作由 Qt 直接处理。身份详情（完整设备码、
+设备键）与数值提示放在悬浮提示里。
 
 **卡面与交互共用一份绘制**：:func:`render_power_card` 把同一个
 :func:`_paint_power_card` 画到透明位图上，所以导出的 PNG 预览与页面上的真实卡片
@@ -50,6 +54,7 @@ from typing import Any, Mapping
 from PySide6.QtCore import (
     QEasingCurve,
     QPointF,
+    QRect,
     QRectF,
     QSize,
     Qt,
@@ -67,8 +72,16 @@ from PySide6.QtGui import (
     QPixmap,
     QRadialGradient,
 )
-from PySide6.QtWidgets import QAbstractButton, QSizePolicy, QWidget
+from PySide6.QtWidgets import (
+    QAbstractButton,
+    QAbstractSpinBox,
+    QSizePolicy,
+    QWidget,
+)
 
+from domain.instruments.labels import supply_identity_text
+
+from .input_controls import KeyboardOnlyDoubleSpinBox
 from .theme import (
     CARD_RADIUS,
     TOKENS,
@@ -78,6 +91,7 @@ from .theme import (
 
 __all__ = [
     "CHANNEL_NAMES",
+    "CardValueField",
     "POWER_CARD_HEIGHT",
     "POWER_CARD_SIZE",
     "POWER_CARD_WIDTH",
@@ -120,6 +134,15 @@ _CELL_WIDTH = (_HALF_WIDTH - 2.0 * _PADDING - _ROW_GAP) / 2.0
 _BOX_WIDTH = _CELL_WIDTH - _LABEL_WIDTH - _LABEL_GAP
 #: 第一行只剩工作值：VS（电压设定）、IS（电流设定）。
 _VALUE_TEXTS = ("VS", "IS")
+#: 两个工作值的字段名，顺序与 :data:`_VALUE_TEXTS` 一致。
+VALUE_KINDS = ("voltage", "current")
+#: 卡面数值框的显示上下界：只约束输入框能填到哪里，正式校验的合法范围在 domain。
+VALUE_LIMITS = {
+    "voltage": (0.0, 50.0),
+    "current": (0.0, 10.0),
+}
+#: 数值框保留的小数位，与配置里保护阈值的显示精度一致。
+VALUE_DECIMALS = 2
 #: 第二行是保护勾选框，顺序也是卡面上的左右顺序：左电压、右电流。
 PROTECTION_KINDS = ("voltage", "current")
 _PROTECTION_TEXTS = ("电压保护", "电流保护")
@@ -181,9 +204,9 @@ class PowerChannelData:
 
     ``channel`` 只能是 ``CH1`` / ``CH2``；两个数值依次是电压设定、电流设定，单位
     分别是 V、A。保护阈值不再出现在卡面上，只保留“是否启用电压/电流保护”两个
-    状态，阈值仍由表单按工作值的 110% 推导。数值只做“有限且非负”的显示校验，
-    不在这里套用配置页的 0–50 V / 0–10 A 输入范围：那是输入控件的边界，不是卡面
-    资产的责任。
+    状态，阈值仍由配置读取按工作值的 110% 推导。数据类只做“有限且非负”的显示校验，
+    0–50 V / 0–10 A 的输入上下界由卡面输入控件（:class:`CardValueField`）约束，
+    不在数据快照里夹值。
     """
 
     channel: str
@@ -230,23 +253,43 @@ class PowerChannelData:
         self.protection_enabled(kind)
         return replace(self, **{f"{kind}_protection_enabled": enabled})
 
+    def with_value(self, kind: str, value: Any) -> "PowerChannelData":
+        """返回一份只改电压/电流设定值的新快照；非法值在这里就报错。"""
+        if kind not in VALUE_KINDS:
+            raise KeyError(f"工作值类型必须是 voltage / current，收到 {kind!r}")
+        number = _finite_non_negative(value, f"{self.channel} {kind}")
+        field = "voltage_set" if kind == "voltage" else "current_set"
+        return replace(self, **{field: number})
+
 
 @dataclass(frozen=True)
 class PowerSupplyCardData:
-    """一张电源通道卡片的全部内容：设备码缩写 + 两个通道。
+    """一张电源通道卡片的全部内容：设备码缩写 + 两个通道 + 身份详情。
 
     ``channels`` 可以按任意顺序传入，构造时会规整成 ``CH1``、``CH2`` 的左右
     顺序，因此调用方不必关心卡面从哪里开始画。两个通道缺一个、重复或名称不合法
     都会在这里报错，而不是画出一张缺一半的卡。
+
+    ``model`` / ``full_code`` / ``device_key`` 只用于悬浮提示里的身份详情（卡面放不下），
+    缺哪个就少显示哪一段；它们不参与路由或读写。
     """
 
     code: str
     channels: tuple[PowerChannelData, ...]
+    model: str | None = None
+    full_code: str | None = None
+    device_key: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.code, str):
             raise TypeError(f"设备码缩写必须是字符串，收到 {self.code!r}")
         object.__setattr__(self, "code", self.code.strip())
+        for field in ("model", "full_code", "device_key"):
+            value = getattr(self, field)
+            if value is not None and not isinstance(value, str):
+                raise TypeError(f"{field} 必须是字符串或 None，收到 {value!r}")
+            if isinstance(value, str):
+                object.__setattr__(self, field, value.strip() or None)
         channels = tuple(self.channels)
         if len(channels) != len(CHANNEL_NAMES):
             raise ValueError(
@@ -302,6 +345,19 @@ class PowerSupplyCardData:
             self,
             channels=tuple(
                 item.with_protection(kind, enabled) if item.channel == name else item
+                for item in self.channels
+            ),
+        )
+
+    def with_channel_value(
+        self, name: str, kind: str, value: Any
+    ) -> "PowerSupplyCardData":
+        """返回一份只改某个通道某种工作值的新快照（其余值原样保留）。"""
+        self.channel(name)
+        return replace(
+            self,
+            channels=tuple(
+                item.with_value(kind, value) if item.channel == name else item
                 for item in self.channels
             ),
         )
@@ -1021,7 +1077,7 @@ class ChannelSwitch(QAbstractButton):
         self.setFocusPolicy(Qt.StrongFocus)
         self.setCursor(Qt.PointingHandCursor)
         self.setAccessibleName(f"通道 {channel} 开关")
-        self.setAccessibleDescription("切换该通道在卡面上的启用状态")
+        self.setAccessibleDescription("启用后可编辑该通道的 VS/IS 与保护勾选")
 
     def sizeHint(self) -> QSize:
         return QSize(round(_SWITCH_DIAMETER), round(_SWITCH_DIAMETER))
@@ -1101,30 +1157,156 @@ class ProtectionCheck(QAbstractButton):
         self.focus_changed.emit(self.channel, self.kind, False)
 
 
+def _valid_scale(value: Any) -> float:
+    """缩放比例规整成正的有限数；拿不到时按 1.0 处理（只影响卡片显示尺寸）。"""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 1.0
+    if not math.isfinite(number) or number <= 0.0:
+        return 1.0
+    return number
+
+
+def _scaled_geometry(rect: QRectF, scale: float) -> QRect:
+    """把卡面逻辑矩形换算成控件几何；缩放后仍至少保留 1 像素命中区。"""
+    return QRect(
+        round(rect.x() * scale),
+        round(rect.y() * scale),
+        max(1, round(rect.width() * scale)),
+        max(1, round(rect.height() * scale)),
+    )
+
+
+class CardValueField(KeyboardOnlyDoubleSpinBox):
+    """卡面上的 VS / IS 输入框：外观与卡面数值框一致，只接受键盘输入。
+
+    数值框直接用 Qt 的浮点输入能力（选中、输入、方向键、焦点），外观由样式表按卡面
+    令牌画成白底细边、等宽加粗居中字。宽度不足以显示完整数字时仍可输入，显示与普通
+    数值框一致。缩放时字号、边框宽度和圆角一起按比例调整，保证缩小后的卡片仍能操作。
+    """
+
+    def __init__(
+        self,
+        channel: str,
+        kind: str,
+        *,
+        scale: float = 1.0,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        if channel not in CHANNEL_NAMES:
+            raise ValueError(f"通道必须是 {' / '.join(CHANNEL_NAMES)}，收到 {channel!r}")
+        if kind not in VALUE_KINDS:
+            raise ValueError(
+                f"工作值类型必须是 {' / '.join(VALUE_KINDS)}，收到 {kind!r}"
+            )
+        self.channel = channel
+        self.kind = kind
+        self._scale = _valid_scale(scale)
+        self.setObjectName("powerCardValue")
+        self.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self.setAlignment(Qt.AlignCenter)
+        self.setDecimals(VALUE_DECIMALS)
+        self.setRange(*VALUE_LIMITS[kind])
+        self.setSingleStep(0.1)
+        self.setKeyboardTracking(True)
+        self.setMinimumSize(0, 0)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        label = "VS 电压设定" if kind == "voltage" else "IS 电流设定"
+        unit = "V" if kind == "voltage" else "A"
+        self.setAccessibleName(f"通道 {channel} {label}")
+        self.setAccessibleDescription(f"范围 0–{VALUE_LIMITS[kind][1]:g} {unit}，两位小数")
+        self.setToolTip(
+            f"{channel} {label}（{unit}）\n"
+            f"范围 0–{VALUE_LIMITS[kind][1]:g}，两位小数；点击后可直接输入。"
+        )
+        self.set_scale(self._scale)
+
+    def set_scale(self, scale: float) -> None:
+        """按卡片缩放比例调整字体、边框和圆角。"""
+        scale = _valid_scale(scale)
+        self._scale = scale
+        font = QFont(card_code_font())
+        font.setPointSizeF(12.0 * scale)
+        self.setFont(font)
+        self.setStyleSheet(_value_field_style(self.channel, scale))
+
+
+def _value_field_style(channel: str, scale: float) -> str:
+    """数值框的卡面样式：与 ``_paint_value`` 的数值框同色同圆角，按缩放调整。"""
+    accent = TOKENS["primary"] if channel == "CH1" else TOKENS["warning"]
+    focus_background = (
+        TOKENS["primary_soft"] if channel == "CH1" else TOKENS["warning_soft"]
+    )
+    border = max(1, round(1.5 * scale))
+    radius = max(2, round(6.0 * scale))
+    return (
+        "QDoubleSpinBox {"
+        f" background-color: {TOKENS['surface']};"
+        f" border: {border}px solid {accent};"
+        f" border-radius: {radius}px;"
+        f" color: {TOKENS['text']};"
+        f" font-family: \"{TOKENS['font_mono']}\";"
+        f" font-size: {max(6, round(16.0 * scale))}px;"
+        " font-weight: 700;"
+        " padding: 0px;"
+        " min-height: 0px;"
+        f" selection-background-color: {TOKENS['primary']};"
+        " selection-color: #FFFFFF;"
+        "}"
+        " QDoubleSpinBox:focus {"
+        f" border: {border}px solid {accent};"
+        f" background-color: {focus_background};"
+        " padding: 0px;"
+        " min-height: 0px;"
+        " }"
+        " QDoubleSpinBox:disabled {"
+        f" background-color: {TOKENS['surface_alt']};"
+        f" border: {border}px solid {TOKENS['border_strong']};"
+        f" color: {TOKENS['disabled_text']};"
+        " }"
+        " QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {"
+        " width: 0px; height: 0px; border: none; background: transparent;"
+        " }"
+    )
+
+
 class PowerSupplyCard(QWidget):
-    """配置页的电源通道卡片：只读展示两个通道，开关与保护勾选框只改卡面状态。
+    """配置页的电源通道卡片：两个通道的开关、工作值与保护都在这张卡上编辑。
 
-    ``data`` 是构造时的快照；用户拨动通道开关或保护勾选框只更新本卡内部的快照，
-    不写配置、不碰硬件。页面通过 :attr:`channel_toggled` / :attr:`protection_toggled`
-    决定之后怎么处理这些动作。
+    通道开关是本次编辑的启用状态：关闭时整块灰显、VS/IS 与保护勾选不可操作；打开
+    后才可输入。开关状态不写配置、不影响上电计划，重新进入页面时从关闭开始。工作值
+    与保护开关是可编辑控件，卡片只更新内部快照并发信号，配置读写由页面/表单 Adapter
+    完成。
 
-    通道开关与四个保护勾选框都是可聚焦控件：``Tab`` 依次经过它们，``Space`` /
-    ``Enter`` 切换状态，鼠标点击同样有效。数值是只读的，不创建输入控件。
+    开关、两个数值框与四个保护勾选框都是可聚焦控件：``Tab`` 依次经过它们，``Space``
+    切换开关/勾选，数值框用键盘输入。卡片支持按比例缩放，缩放时所有子控件的几何与
+    字号一起调整；绘制统一在缩放后的坐标系里完成。
     """
 
     channel_toggled = Signal(str, bool)
     protection_toggled = Signal(str, str, bool)
+    value_changed = Signal(str, str, float)
 
     def __init__(
         self,
         data: PowerSupplyCardData,
         parent: QWidget | None = None,
+        *,
+        scale: float = 1.0,
     ) -> None:
         super().__init__(parent)
         if not isinstance(data, PowerSupplyCardData):
             raise TypeError(f"data 必须是 PowerSupplyCardData，收到 {data!r}")
+        self._scale = _valid_scale(scale)
         self.setObjectName("powerSupplyCard")
-        self.setFixedSize(POWER_CARD_SIZE)
+        self.setFixedSize(
+            QSize(
+                max(1, round(POWER_CARD_WIDTH * self._scale)),
+                max(1, round(POWER_CARD_HEIGHT * self._scale)),
+            )
+        )
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.setFocusPolicy(Qt.NoFocus)
         self._data = data
@@ -1142,49 +1324,68 @@ class PowerSupplyCard(QWidget):
         self._glow_animations: dict[str, QVariantAnimation] = {}
 
         self._switches: dict[str, ChannelSwitch] = {}
+        self._value_fields: dict[tuple[str, str], CardValueField] = {}
+        self._protection_checks: dict[tuple[str, str], ProtectionCheck] = {}
+
         for channel_layout in self._layout.channels:
-            switch = ChannelSwitch(channel_layout.channel, self)
-            switch.setChecked(data.channel(channel_layout.channel).enabled)
-            switch.setGeometry(channel_layout.switch.toRect())
+            name = channel_layout.channel
+            channel_data = data.channel(name)
+
+            switch = ChannelSwitch(name, self)
+            switch.setChecked(channel_data.enabled)
+            switch.setGeometry(_scaled_geometry(channel_layout.switch, self._scale))
             switch.toggled.connect(
-                lambda checked, name=channel_layout.channel: self._on_switch_toggled(
-                    name, checked
+                lambda checked, channel=name: self._on_switch_toggled(
+                    channel, checked
                 )
             )
             switch.hover_changed.connect(self._on_switch_hover)
             switch.focus_changed.connect(self._on_switch_focus)
             switch.pressed.connect(
-                lambda name=channel_layout.channel: self._on_switch_pressed(name)
+                lambda channel=name: self._on_switch_pressed(channel)
             )
             switch.released.connect(
-                lambda name=channel_layout.channel: self._on_switch_released(name)
+                lambda channel=name: self._on_switch_released(channel)
             )
-            self._switches[channel_layout.channel] = switch
+            self._switches[name] = switch
 
-        self._protection_checks: dict[tuple[str, str], ProtectionCheck] = {}
-        for channel_layout in self._layout.channels:
-            name = channel_layout.channel
-            channel_data = data.channel(name)
+            for kind, box_rect in zip(VALUE_KINDS, channel_layout.value_boxes):
+                field = CardValueField(name, kind, scale=self._scale, parent=self)
+                field.setValue(
+                    channel_data.voltage_set
+                    if kind == "voltage"
+                    else channel_data.current_set
+                )
+                field.setEnabled(channel_data.enabled)
+                field.setGeometry(_scaled_geometry(box_rect, self._scale))
+                field.valueChanged.connect(
+                    lambda value, channel=name, value_kind=kind: self._on_value_changed(
+                        channel, value_kind, value
+                    )
+                )
+                self._value_fields[(name, kind)] = field
+
             for kind, check_rect in zip(
                 PROTECTION_KINDS, channel_layout.protection_checks
             ):
                 check = ProtectionCheck(name, kind, self)
                 check.setChecked(channel_data.protection_enabled(kind))
                 check.setEnabled(channel_data.enabled)
-                check.setGeometry(check_rect.toRect())
+                check.setGeometry(_scaled_geometry(check_rect, self._scale))
                 check.toggled.connect(
-                    lambda checked, channel=name, kind=kind: (
-                        self._on_protection_toggled(channel, kind, checked)
+                    lambda checked, channel=name, check_kind=kind: (
+                        self._on_protection_toggled(channel, check_kind, checked)
                     )
                 )
                 check.hover_changed.connect(self._on_protection_hover)
                 check.focus_changed.connect(self._on_protection_focus)
                 self._protection_checks[(name, kind)] = check
 
-        # 焦点顺序按“通道开关 → 电压保护 → 电流保护”逐通道向后，鼠标与键盘一致。
-        order = []
+        # 焦点顺序按“通道开关 → VS → IS → 电压保护 → 电流保护”逐通道向后。
+        order: list[QAbstractButton | CardValueField] = []
         for name in CHANNEL_NAMES:
             order.append(self._switches[name])
+            order.extend(self._value_fields[(name, kind)] for kind in VALUE_KINDS)
             order.extend(
                 self._protection_checks[(name, kind)] for kind in PROTECTION_KINDS
             )
@@ -1192,10 +1393,43 @@ class PowerSupplyCard(QWidget):
             self.setTabOrder(previous, following)
         self._update_tooltips()
 
+    def set_scale(self, scale: float) -> None:
+        """按卡片墙给出的比例缩放整张卡（子控件几何、字号与卡面绘制一起变）。"""
+        scale = _valid_scale(scale)
+        width = max(1, round(POWER_CARD_WIDTH * scale))
+        height = max(1, round(POWER_CARD_HEIGHT * scale))
+        if abs(scale - self._scale) <= 1e-6 and self.width() == width:
+            return
+        self._scale = scale
+        self.setFixedSize(QSize(width, height))
+        for channel_layout in self._layout.channels:
+            name = channel_layout.channel
+            self._switches[name].setGeometry(
+                _scaled_geometry(channel_layout.switch, scale)
+            )
+            for kind, box_rect in zip(VALUE_KINDS, channel_layout.value_boxes):
+                field = self._value_fields[(name, kind)]
+                field.set_scale(scale)
+                field.setGeometry(_scaled_geometry(box_rect, scale))
+            for kind, check_rect in zip(
+                PROTECTION_KINDS, channel_layout.protection_checks
+            ):
+                self._protection_checks[(name, kind)].setGeometry(
+                    _scaled_geometry(check_rect, scale)
+                )
+        self.update()
+
+    @property
+    def scale(self) -> float:
+        return self._scale
+
     # ---------- 读取 ----------
 
     def sizeHint(self) -> QSize:
-        return QSize(POWER_CARD_WIDTH, POWER_CARD_HEIGHT)
+        return QSize(
+            max(1, round(POWER_CARD_WIDTH * self._scale)),
+            max(1, round(POWER_CARD_HEIGHT * self._scale)),
+        )
 
     @property
     def data(self) -> PowerSupplyCardData:
@@ -1213,6 +1447,26 @@ class PowerSupplyCard(QWidget):
         """某个通道此刻是否处于开启状态。"""
         return self.channel_switch(channel).isChecked()
 
+    def value_field(self, channel: str, kind: str) -> CardValueField:
+        """取某个通道的 VS / IS 输入框；不合法时抛 ``KeyError``。"""
+        field = self._value_fields.get((channel, kind))
+        if field is None:
+            raise KeyError(f"卡片里没有通道 {channel!r} 的 {kind!r} 输入框")
+        return field
+
+    def channel_value(self, channel: str, kind: str) -> float:
+        """某个通道当前的电压/电流设定值。"""
+        return float(self.value_field(channel, kind).value())
+
+    def channel_controls(self, channel: str) -> dict[str, Any]:
+        """一个通道的控件映射，形状与 :class:`ConfigFormState` 读取的表单一致。"""
+        return {
+            "voltage": self.value_field(channel, "voltage"),
+            "current": self.value_field(channel, "current"),
+            "voltage_protection_enabled": self.protection_check(channel, "voltage"),
+            "current_protection_enabled": self.protection_check(channel, "current"),
+        }
+
     def protection_check(self, channel: str, kind: str) -> ProtectionCheck:
         """取某个通道某种保护的透明命中控件；不合法时抛 ``KeyError``。"""
         check = self._protection_checks.get((channel, kind))
@@ -1227,7 +1481,7 @@ class PowerSupplyCard(QWidget):
     # ---------- 写入 ----------
 
     def set_data(self, data: PowerSupplyCardData) -> None:
-        """整张卡换一份快照；不触发 :attr:`channel_toggled` 或保护信号。"""
+        """整张卡换一份快照；不触发开关、保护或数值信号。"""
         if not isinstance(data, PowerSupplyCardData):
             raise TypeError(f"data 必须是 PowerSupplyCardData，收到 {data!r}")
         self._data = data
@@ -1239,6 +1493,16 @@ class PowerSupplyCard(QWidget):
                 switch.blockSignals(True)
                 switch.setChecked(channel.enabled)
                 switch.blockSignals(False)
+            for kind, value in (
+                ("voltage", channel.voltage_set),
+                ("current", channel.current_set),
+            ):
+                field = self._value_fields[(name, kind)]
+                if field.value() != value:
+                    field.blockSignals(True)
+                    field.setValue(value)
+                    field.blockSignals(False)
+                field.setEnabled(channel.enabled)
             for kind in PROTECTION_KINDS:
                 check = self._protection_checks[(name, kind)]
                 checked = channel.protection_enabled(kind)
@@ -1266,14 +1530,44 @@ class PowerSupplyCard(QWidget):
             switch.blockSignals(True)
             switch.setChecked(enabled)
             switch.blockSignals(False)
-            self._data = self._data.with_channel_enabled(channel, enabled)
-            for kind in PROTECTION_KINDS:
-                self._protection_checks[(channel, kind)].setEnabled(enabled)
+            self._apply_channel_enabled(channel, enabled)
             self._settle_glow(channel, 1.0 if enabled else 0.0)
+        if emit:
+            self.channel_toggled.emit(channel, enabled)
+
+    def reset_channel_switches(self) -> None:
+        """把所有通道回到“未启用”的本次编辑起点；不写配置、不发信号。"""
+        for name in CHANNEL_NAMES:
+            switch = self._switches[name]
+            if switch.isChecked():
+                switch.blockSignals(True)
+                switch.setChecked(False)
+                switch.blockSignals(False)
+            self._apply_channel_enabled(name, False)
+            self._settle_glow(name, 0.0)
+        self._update_tooltips()
+        self.update()
+
+    def set_value(
+        self,
+        channel: str,
+        kind: str,
+        value: Any,
+        *,
+        emit: bool = False,
+    ) -> None:
+        """程序化设置某个通道的工作值；默认不触发 ``value_changed``。"""
+        field = self.value_field(channel, kind)
+        number = _finite_non_negative(value, f"{channel} {kind}")
+        if field.value() != number:
+            field.blockSignals(True)
+            field.setValue(number)
+            field.blockSignals(False)
+            self._data = self._data.with_channel_value(channel, kind, number)
             self._update_tooltips()
             self.update()
         if emit:
-            self.channel_toggled.emit(channel, enabled)
+            self.value_changed.emit(channel, kind, number)
 
     def set_protection_enabled(
         self,
@@ -1334,14 +1628,21 @@ class PowerSupplyCard(QWidget):
     # ---------- 开关事件 ----------
 
     def _on_switch_toggled(self, channel: str, enabled: bool) -> None:
-        """用户拨动开关：只更新卡面快照，不写配置、不连硬件。"""
-        self._data = self._data.with_channel_enabled(channel, bool(enabled))
-        for kind in PROTECTION_KINDS:
-            self._protection_checks[(channel, kind)].setEnabled(bool(enabled))
+        """用户拨动开关：只切换本次编辑的启用状态，不写配置、不连硬件。"""
+        self._apply_channel_enabled(channel, bool(enabled))
         self._animate_glow(channel, bool(enabled))
         self._update_tooltips()
         self.update()
         self.channel_toggled.emit(channel, bool(enabled))
+
+    def _apply_channel_enabled(self, channel: str, enabled: bool) -> None:
+        """同步卡面快照与子控件的可用状态（不发信号）。"""
+        self._data = self._data.with_channel_enabled(channel, enabled)
+        for kind in VALUE_KINDS:
+            self._value_fields[(channel, kind)].setEnabled(enabled)
+        for kind in PROTECTION_KINDS:
+            self._protection_checks[(channel, kind)].setEnabled(enabled)
+        self._update_tooltips()
 
     def _on_switch_hover(self, channel: str, hovered: bool) -> None:
         self._hover_channel = channel if hovered else None
@@ -1363,13 +1664,20 @@ class PowerSupplyCard(QWidget):
     def _on_protection_toggled(
         self, channel: str, kind: str, enabled: bool
     ) -> None:
-        """用户勾选/取消保护：只更新卡面快照，不写配置、不碰硬件。"""
+        """用户勾选/取消保护：更新卡面快照并发信号，配置由页面读取。"""
         self._data = self._data.with_channel_protection(
             channel, kind, bool(enabled)
         )
         self._update_tooltips()
         self.update()
         self.protection_toggled.emit(channel, kind, bool(enabled))
+
+    def _on_value_changed(self, channel: str, kind: str, value: float) -> None:
+        """用户输入 VS / IS：更新卡面快照并发信号，配置由页面读取。"""
+        self._data = self._data.with_channel_value(channel, kind, value)
+        self._update_tooltips()
+        self.update()
+        self.value_changed.emit(channel, kind, float(value))
 
     def _on_protection_hover(
         self, channel: str, kind: str, hovered: bool
@@ -1386,15 +1694,21 @@ class PowerSupplyCard(QWidget):
     # ---------- 提示与绘制 ----------
 
     def _update_tooltips(self) -> None:
-        """悬浮提示补上卡面放不下的信息：每个缩写的含义、单位与通道状态。"""
+        """悬浮提示补上卡面放不下的信息：身份详情、单位、范围与通道状态。"""
+        identity = supply_identity_text(
+            self._data.code or None,
+            self._data.model,
+            self._data.full_code,
+            self._data.device_key,
+        )
         lines = [
-            self._data.code or "未识别电源",
-            "VS 电压设定 · IS 电流设定",
-            "勾选电压/电流保护后，阈值自动取比设定值高 10% 的值",
+            identity or "未识别电源",
+            "VS 电压设定（V） · IS 电流设定（A）",
+            "点击电源键启用通道后可编辑；保护阈值自动取比设定值高 10% 的值",
         ]
         for channel in self._data.channels:
             lines.append(
-                f"{channel.channel} {'开' if channel.enabled else '关'}："
+                f"{channel.channel} {'启用' if channel.enabled else '未启用'}："
                 f"VS {channel.voltage_set:.2f} V · IS {channel.current_set:.2f} A · "
                 f"电压保护 {'开' if channel.voltage_protection_enabled else '关'} · "
                 f"电流保护 {'开' if channel.current_protection_enabled else '关'}"
@@ -1404,8 +1718,10 @@ class PowerSupplyCard(QWidget):
         for channel in self._data.channels:
             switch = self._switches[channel.channel]
             switch.setToolTip(
-                f"{channel.channel} {'开' if channel.enabled else '关'}\n"
-                f"点击切换卡面显示状态（暂不写入配置）\n{text}"
+                f"{channel.channel} {'已启用' if channel.enabled else '未启用'}\n"
+                "点击启用后才能编辑该通道的 VS/IS 与保护勾选；\n"
+                "启用状态只在本次停留本页期间保留，不写入配置。\n"
+                f"{text}"
             )
             for kind in PROTECTION_KINDS:
                 label = "电压保护" if kind == "voltage" else "电流保护"
@@ -1419,6 +1735,12 @@ class PowerSupplyCard(QWidget):
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         try:
+            # 卡面按 440×232 的逻辑坐标绘制，再缩放到控件实际尺寸；用实际宽高比例
+            # 而不是四舍五入前的 scale，右/下边缘不会被裁掉半像素。
+            painter.scale(
+                self.width() / POWER_CARD_WIDTH,
+                self.height() / POWER_CARD_HEIGHT,
+            )
             _paint_power_card(
                 painter,
                 self._data,

@@ -128,7 +128,7 @@ class ConfigurationFormAdapter:
         return _test_parameter_snapshot(self.widgets, fragment)
 
     def read_power_channel_snapshot(self) -> dict[str, dict]:
-        """读取当前电源标签页的通道参数快照（重建标签页时保留用户刚填的值）。"""
+        """读取当前电源卡片的通道参数快照（重建卡片时保留用户刚填的值）。"""
         page_config = getattr(self.widgets, "config", None)
         fragment = ConfigFormState(page_config, self.widgets).read_power_supply_config()
         return fragment.get("instruments", {}).get("power_supplies", {}) or {}

@@ -107,7 +107,7 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         self._finalizing_enabled: dict[QWidget, bool] = {}
         # 设备身份绑定：信号源/频谱仪各一条（角色键），电源按 ``supply_id`` 多条
         # （``power_supplies``）。只记录本次勾选并写入的设备；IP 变化时按完整设备码重新识别，
-        # 不靠地址记忆。绑定是仪器连接的唯一来源；构建界面之前就要就位，电源标签页的
+        # 不靠地址记忆。绑定是仪器连接的唯一来源；构建界面之前就要就位，电源卡片的
         # 条目与上电计划候选都由它决定。
         self.device_bindings = effective_device_bindings(self.config)
         # 配置里原本就不可用的电源绑定：读入时会从可用集合里剔除，但必须在这里留下记录，
@@ -250,7 +250,7 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         唯一性、电源引用、地址/身份、同一台设备不重复与整批替换）都在
         :class:`application.device_binding.DeviceBindingService`；页面只把请求交给
         :meth:`ConfigurationViewModel.apply_device_selection`，再把返回的新绑定集合投影
-        到页面状态（绑定、电源标签页、分配选项）。
+        到页面状态（绑定、电源卡片、分配选项）。
 
         成功与失败都返回 :class:`application.device_binding.DeviceBindingResult`，并发出
         ``device_selection_finished(result, message)``：面板归连接页所有，本页不持有它，
@@ -551,7 +551,7 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         :class:`application.configuration_authoring.ConfigurationAuthoringService`
         生成，本页面不读取也不解释它们。
         """
-        # 先算绑定；本页不再重建电源标签页或分配选项——电源字段由独立电源页回填，
+        # 先算绑定；本页不再重建电源卡片或分配选项——电源字段由独立电源页回填，
         # 投影失败时只需恢复本页持有的绑定与问题清单。
         bindings = effective_device_bindings(config)
         previous_bindings = self.device_bindings

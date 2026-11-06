@@ -8,7 +8,7 @@ from typing import Any, Mapping
 
 __all__ = ["POWER_SUPPLY_CHANNELS", "assignment_channels"]
 
-# 每台电源固定两个通道：通道名既是配置里的键，也是标签页内通道分组框的标题。
+# 每台电源固定两个通道：通道名既是配置里的键，也是卡片通道标题。
 POWER_SUPPLY_CHANNELS = ("CH1", "CH2")
 
 

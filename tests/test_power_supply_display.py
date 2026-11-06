@@ -3,7 +3,7 @@
 固定的行为：
 
 - **显示文本只有一份实现**（:func:`domain.instruments.labels.supply_display_label`）：
-  电源标签页标题、分配下拉框与日志都用它；型号缺失、型号与标签相同（旧配置把槽位名填进
+  电源卡片、计划候选与日志都用它；型号缺失、型号与标签相同（旧配置把槽位名填进
   ``model``）时只显示标签；
 - **其它仪器只有一份实现**（:func:`domain.instruments.labels.instrument_display_label`）：
   显示成 ``型号（短标签）``（如 ``SMW200A（5462）``），型号在前——短标签只用来区分同型号的
@@ -41,7 +41,7 @@ from presentation.qt.config_projection import supply_option_label
 
 ROOT = Path(__file__).parents[1]
 PROJECTION_SOURCE = ROOT / "presentation" / "qt" / "config_projection.py"
-POWER_SECTION_SOURCE = ROOT / "presentation" / "qt" / "config_power_section.py"
+POWER_CARD_SOURCE = ROOT / "presentation" / "qt" / "power_card.py"
 PLAN_SOURCE = ROOT / "instrument" / "assembly_plan.py"
 ROUTING_SOURCE = ROOT / "instrument" / "power_routing.py"
 FACTORY_SOURCE = ROOT / "instrument" / "measurement_factory.py"
@@ -109,7 +109,7 @@ def _two_supply_config() -> dict:
 
 
 class DisplayLabelTests(unittest.TestCase):
-    """列表、标签页标题与下拉框上的 ``型号（缩写设备码）``。"""
+    """列表、计划候选与卡片提示上的 ``型号（缩写设备码）``。"""
 
     def test_label_and_model_are_shown_together(self):
         self.assertEqual(
@@ -140,7 +140,7 @@ class DisplayLabelTests(unittest.TestCase):
         self.assertEqual(supply_display_label(105462, "DP832A"), "DP832A（105462）")
 
     def test_display_text_is_shared_with_the_projection(self):
-        # 下拉框与标签页标题共用同一份规则：同一输入必须给出同一文本。
+        # 计划候选与卡片提示共用同一份规则：同一输入必须给出同一文本。
         for label, model in (
             ("DP8B1519", "DP832A"),
             ("DP8B1519", None),
@@ -356,12 +356,12 @@ class SharedImplementationTests(unittest.TestCase):
         self.assertIn("from domain.instruments.labels import supply_display_label", source)
         self.assertIn("return supply_display_label(supply_id, model)", source)
 
-    def test_power_tabs_use_the_shared_identity_text(self):
-        # 电源标签页的标题与提示由 ``config_power_section`` 构建（步骤 13 拆出），因此
-        # 门禁盯的是那个模块：身份文本仍然只有 ``supply_identity_text`` 一份实现。
-        source = POWER_SECTION_SOURCE.read_text(encoding="utf-8")
+    def test_power_cards_use_the_shared_identity_text(self):
+        # 电源卡片的悬浮提示由 ``power_card`` 构建：完整设备码与设备键仍只有
+        # ``supply_identity_text`` 一份实现，卡面本身只放缩写设备码。
+        source = POWER_CARD_SOURCE.read_text(encoding="utf-8")
         self.assertIn("from domain.instruments.labels import supply_identity_text", source)
-        self.assertIn("page.power_tabs.setTabToolTip(", source)
+        self.assertIn("supply_identity_text(", source)
 
     def test_measurement_factory_logs_the_identity_line(self):
         # 计划侧（步骤 15 拆出 ``instrument.assembly_plan``）：详情文本只算一次，

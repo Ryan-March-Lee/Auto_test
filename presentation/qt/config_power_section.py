@@ -1,28 +1,21 @@
-"""配置页电源分区的控件构建与独立电源表单。
+"""配置页电源分区的「通道上电计划」与「效率测量」控件。
 
-本模块构建配置页右栏的电源分区：按电源键分页的「电源详细配置」标签页，以及步骤 11
-新增的「通道上电计划」与「效率测量」漏极选择。:class:`PowerFormSection` 把这几块
-控件收在一个独立组件里，页面只负责把它放进布局、转发页面级派生状态（测试模式）并按需
-回填。驱放自带供电时不需要额外控件：驱动功放上电计划留空即表示本系统不控制其电源。
+电源通道参数不再在这里建表单：VS/IS、通道开关与保护勾选已经融合到卡片上
+（:mod:`presentation.qt.power_card` / :mod:`presentation.qt.power_card_wall`）。
+本模块只构建卡片下方的两块内容——按器件分组的「通道上电计划」与「效率测量」的
+漏极选择——:class:`PowerFormSection` 把它们收在一个独立组件里，页面只负责放进
+布局、转发页面级派生状态（测试模式）并按需回填。
 
 页面传进来的输入都是显式声明的结构（见 :data:`PowerSupplySources` 与
 :data:`PowerSupplyChoices`）：键是电源键，值是配置条目里本模块要显示的字段，本模块不从
-文件里另外取状态。这里只按字段位置读出要显示的数值，并把不正确的类型回落到与投影一致
-的缺省值（见 :func:`spin_value`）：那是显示口径，不是校验。本模块不校验配置、不迁移旧
-字段、不写配置、也不读文件；字段的回填仍归 :mod:`presentation.qt.config_projection`，
-正式配置编写归 :mod:`application.configuration_authoring`，正式校验在
+文件里另外取状态。器件电源的选择只由计划路由表达：每台电源声明（或默认）的通道构成
+两份计划编辑器的同一份候选，`(supply_id, channel)` 勾在哪一组就表示该通道给哪个器件
+上电；本模块不再提供按器件固定分配电源的下拉框。
+
+本模块不校验配置、不迁移旧字段、不写配置、也不读文件；字段的回填仍归
+:mod:`presentation.qt.config_projection`，正式配置编写归
+:mod:`application.configuration_authoring`，正式校验在
 :mod:`domain.configuration.rules` 与 :mod:`infrastructure.config.validation`。
-
-器件电源的选择只由计划路由表达：每台电源声明（或默认）的通道构成两份计划编辑器的
-同一份候选，`(supply_id, channel)` 勾在哪一组就表示该通道给哪个器件上电；本模块不再
-提供按器件固定分配电源的下拉框。
-
-通道工作值的上下界（``_VOLTAGE_LIMITS`` / ``_CURRENT_LIMITS``）只约束输入框能填到
-哪里，比正式校验更严：界外的值由控件夹到界内，这里不报错也不改配置。保护阈值不在这里
-让用户填写：页面只保留“启用保护”开关，阈值由工作值按 110% 自动推导（见
-:func:`presentation.qt.config_form_state.protection_threshold`）。重建标签页时「保留
-操作者刚填的参数」用到的合并规则也在这里（见 :func:`channel_map`），它只合并控件快照
-与配置条目，不判断字段语义。
 """
 
 import math
@@ -30,252 +23,53 @@ from typing import Any, Iterable, Mapping, TypedDict
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QFormLayout, QGridLayout, QGroupBox,
-    QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QTabWidget,
-    QVBoxLayout, QWidget,
+    QAbstractItemView,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
 )
 
 from application.dto.amplifier_inputs import MAX_INTER_CHANNEL_DELAY_S
-from domain.instruments.labels import supply_identity_text
 
-from .config_page_widgets import combo_box, spin_box
-from .config_projection import (
-    DEFAULT_POWER_CHANNEL_VALUE,
-    supply_option_label,
-)
+from .config_page_widgets import combo_box
 from .config_power_assignments import POWER_SUPPLY_CHANNELS, assignment_channels
 from .input_controls import KeyboardOnlyDoubleSpinBox
 
-# 通道数值框的显示上下界：只约束输入框能填到哪里。正式校验的合法范围在
-# domain.configuration.rules（只要求有限数值），因此界外的配置值在控件里被夹到界内，
-# 本模块不因此报错，也不改写配置。
-_VOLTAGE_LIMITS = (0.0, 50.0)
-_CURRENT_LIMITS = (0.0, 10.0)
-
-
-class ChannelDisplayFields(TypedDict, total=False):
-    """一个电源通道里本模块要显示的字段。
-
-    值原样取自配置条目，取值时的类型回落由 :func:`spin_value` 负责；它不是校验
-    清单：缺字段或类型不对只会显示成缺省值。通道不再声明供电角色，这里也没有该字段。
-    """
-
-    voltage: Mapping[str, Any]
-    current: Mapping[str, Any]
-
 
 class PowerSupplyEntry(TypedDict, total=False):
-    """一个电源标签页要显示的一条条目：身份字段 + 通道参数。
+    """一个电源条目里本模块要用的身份字段与通道声明。
 
-    身份字段只用于显示（缩写设备码、型号，提示里的完整设备码与设备键），缺哪个就少显示哪段。
+    身份字段只用于计划候选与显示（缩写设备码、型号、完整设备码、设备键），缺哪个
+    就少显示哪段；通道参数不在这里读取，通道控件已经融合到电源卡片上。
     """
 
     label: Any
     model: Any
     full_code: Any
     device_key: Any
-    channels: Mapping[str, ChannelDisplayFields]
+    channels: Mapping[str, Any]
 
 
 # 页面交给构建模块的两份输入（都是显式结构，不从控件或文件里再读）：
 # - ``sources``：电源键 -> 显示条目，键就是配置里的电源键（旧槽位是 ``PS1`` 这类旧键）。
 PowerSupplySources = Mapping[str, PowerSupplyEntry]
-# - ``choices``：计划候选与标签页显示用的已绑定电源，``supply_id -> 显示条目``。
+# - ``choices``：计划候选与卡面显示用的已绑定电源，``supply_id -> 显示条目``。
 PowerSupplyChoices = Mapping[str, Mapping[str, Any]]
 
 __all__ = [
-    "ChannelDisplayFields",
     "POWER_SUPPLY_CHANNELS",
     "PowerFormSection",
     "PowerPlanEditor",
     "PowerSupplyChoices",
     "PowerSupplyEntry",
     "PowerSupplySources",
-    "build_power_section",
-    "channel_map",
-    "current_power_tab_key",
-    "rebuild_power_tabs",
-    "spin_value",
 ]
-
-
-def spin_value(value: Any) -> float:
-    """通道数值只接受非 bool 的有限数字；其它类型（字符串/布尔/NaN）按缺省值处理。
-
-    配置页也用于回填冻结配置：类型不正确的字段不应让重建标签页崩溃，而应落到与投影
-    一致的默认值，交给正式校验报告。缺省值取自
-    :data:`presentation.qt.config_projection.DEFAULT_POWER_CHANNEL_VALUE`——投影重置
-    控件到空配置基线时用的也是这个数，因此“非法字段”与“配置没写这个字段”显示成同一个值。
-    """
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return DEFAULT_POWER_CHANNEL_VALUE
-    number = float(value)
-    return number if math.isfinite(number) else DEFAULT_POWER_CHANNEL_VALUE
-
-
-def _entry_channels(entry: Any) -> Mapping[str, Any]:
-    """取出一个电源条目的 ``通道 -> 参数`` 映射；不是对象或没有映射时返回空字典。
-
-    条目本身是一份完整电源配置（``{model, channels: {...}}``）。
-    """
-    channels = entry.get("channels") if isinstance(entry, dict) else None
-    return channels if isinstance(channels, dict) else {}
-
-
-def channel_map(source: Any, preserved: Any) -> dict:
-    """合并配置条目与重建前控件快照的通道参数，供重建标签页时建控件。
-
-    ``source`` 是这次要显示的配置条目，``preserved`` 是重建前从控件读到的同类条目
-    （``preserve=False`` 时为空）。两者合并的优先级是“**控件里刚填的 > 配置里的**”：
-
-    - 重建发生在保存之前（应用绑定、清除绑定、再次回填），操作者刚在控件里改过的参数
-      必须保留，否则刷新会把它悄悄改回旧配置值；``preserve=True`` 的整个目的就是这个。
-    - 配置里已有、但这次没有对应控件的通道仍从配置取（例如新绑定电源的缺省参数）。
-
-    因此 ``preserve=False`` 时 ``preserved`` 为空，结果就是配置本身；``preserve=True``
-    时控件快照优先。判定按 ``supply_id`` + 通道键，与标签页位置无关。
-    """
-    channels = dict(_entry_channels(source))
-    for channel, value in _entry_channels(preserved).items():
-        if isinstance(value, dict):
-            merged = dict(channels.get(channel) or {})
-            merged.update(value)
-            channels[channel] = merged
-    return channels
-
-
-def build_power_section(
-    page: Any,
-    layout: Any,
-    *,
-    sources: PowerSupplySources,
-) -> None:
-    """构建电源详细配置，并把页面要读写的控件登记到 ``page``。
-
-    电源使用哪个通道不再通过“给器件固定分配某台电源”的下拉框选择：上电计划里的
-    路由 ``(supply_id, channel)`` 已经是唯一来源，计划候选由 :class:`PowerFormSection`
-    自行按已绑定电源生成；``sources`` 是标签页要显示的电源条目。
-    """
-    detail = QGroupBox("电源详细配置")
-    detail_layout = QVBoxLayout(detail)
-    detail_layout.setContentsMargins(0, 0, 0, 0)
-    page.power_tabs = QTabWidget()
-    page.power_tabs.setObjectName("subTabs")
-    page.power_config_widgets = {}
-    rebuild_power_tabs(page, sources=sources, preserved={})
-    detail_layout.addWidget(page.power_tabs)
-    layout.addWidget(detail)
-
-
-def rebuild_power_tabs(
-    page: Any, *, sources: PowerSupplySources, preserved: Mapping[str, Any]
-) -> None:
-    """按电源键重建标签页，并用 ``preserved`` 保留操作者刚填的通道参数。
-
-    电源数量变化（应用/清除绑定、加载另一份配置）后重建，避免按位置把某一台设备的
-    参数写到另一台上。通道参数按**配置键**取回（不是按标签页位置），当前选中的标签页
-    也按**电源键**恢复：某台电源被移除或新增时，操作者仍然停在原来那台设备上。
-    ``preserved`` 为空是回填路径，以新配置为准，不沿用重建前的残留值。
-
-    页面入口已经确认电源分区存在（``PowerConfigurationPage._rebuild_power_tabs``），因此这里直接
-    使用 ``page.power_tabs``：分区不存在属于调用方的编程错误，不静默返回。
-    """
-    tabs = page.power_tabs
-    current_key = current_power_tab_key(page)
-    tabs.clear()
-    # 原地清空：页面或独立组件可能持有同一份映射的引用，重建不应把它换成新对象。
-    page.power_config_widgets.clear()
-    for key, source in sources.items():
-        source = source if isinstance(source, dict) else {}
-        _add_power_tab(page, key, source, channel_map(source, preserved.get(key)))
-    if current_key in page.power_config_widgets:
-        tabs.setCurrentIndex(tabs.indexOf(page.power_config_widgets[current_key]["page"]))
-
-
-def current_power_tab_key(page: Any) -> str | None:
-    """当前选中电源标签页的电源键；没有标签页时返回 ``None``。"""
-    tabs = page.power_tabs
-    if not tabs.count():
-        return None
-    index = tabs.currentIndex()
-    for key, record in page.power_config_widgets.items():
-        if record.get("page") is tabs.widget(index):
-            return key
-    return None
-
-
-def _add_power_tab(
-    page: Any,
-    key: str,
-    source: Mapping[str, Any],
-    channels: Mapping[str, Any],
-) -> None:
-    """为一条电源配置建一个标签页；标题是型号加缩写设备码（``DP832A（DP8B1519）``）。
-
-    标签页按配置键（``supply_id``）建，标题只用于显示：设备数量与身份都来自配置与
-    当前绑定，没有固定的四个槽位页。
-
-    标签页的悬浮提示给**详情与审计**：型号（缩写设备码）、完整设备码与设备键（见
-    :func:`domain.instruments.labels.supply_identity_text`）。卡面上只放型号与缩写码，
-    因为标题栏很窄；追溯时把指针停在标签页上就能读到完整设备码。旧槽位条目没有完整设备码，
-    提示里就只有它的旧键（``PS1``），不推导一个不存在的缩写码。
-    """
-    page_widget = QWidget()
-    page_layout = QVBoxLayout(page_widget)
-    page_layout.setSpacing(10)
-    record = {"channels": {}, "page": page_widget}
-    for channel in POWER_SUPPLY_CHANNELS:
-        value = channels.get(channel, {})
-        if not isinstance(value, dict):
-            value = {}
-        voltage = value.get("voltage", {})
-        current = value.get("current", {})
-        if not isinstance(voltage, dict):
-            voltage = {}
-        if not isinstance(current, dict):
-            current = {}
-        box = QGroupBox(f"通道 {channel}")
-        form = QFormLayout(box)
-        form.setHorizontalSpacing(10)
-        form.setVerticalSpacing(6)
-        form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        # 保护阈值不再是用户输入：勾选开关后由工作值按 110% 自动推导，页面上只保留
-        # “是否启用”。两个开关互相独立，可分别启用过压与过流保护。
-        controls = {
-            "voltage": spin_box(spin_value(voltage.get("value")), *_VOLTAGE_LIMITS),
-            "voltage_protection_enabled": QCheckBox("启用（自动 10%）"),
-            "current": spin_box(spin_value(current.get("value")), *_CURRENT_LIMITS),
-            "current_protection_enabled": QCheckBox("启用（自动 10%）"),
-        }
-        for checkbox_key in ("voltage_protection_enabled", "current_protection_enabled"):
-            controls[checkbox_key].setToolTip(
-                "勾选后保护阈值自动取比设定值高 10% 的值，无需手工填写。"
-            )
-        controls["voltage_protection_enabled"].setChecked(
-            voltage.get("protection_enabled") is True
-        )
-        controls["current_protection_enabled"].setChecked(
-            current.get("protection_enabled") is True
-        )
-        form.addRow("电压 (V)", controls["voltage"])
-        form.addRow("电压保护", controls["voltage_protection_enabled"])
-        form.addRow("电流 (A)", controls["current"])
-        form.addRow("电流保护", controls["current_protection_enabled"])
-        page_layout.addWidget(box)
-        record["channels"][channel] = controls
-    title = supply_option_label(source.get("label") or key, source.get("model"))
-    index = page.power_tabs.addTab(page_widget, title)
-    # 详情/审计文本与标题同源：型号（缩写设备码）+ 完整设备码 + 设备键，缺哪个就少哪段。
-    page.power_tabs.setTabToolTip(
-        index,
-        supply_identity_text(
-            source.get("label") or key,
-            source.get("model"),
-            source.get("full_code"),
-            source.get("device_key"),
-        ),
-    )
-    page.power_config_widgets[key] = record
 
 
 # ---------------------------------------------------------------------------
@@ -540,12 +334,14 @@ class PowerPlanEditor(QWidget):
 
 
 class PowerFormSection(QWidget):
-    """独立电源表单：通道参数、组上电计划与漏极选择。
+    """独立电源表单：组上电计划与漏极选择。
 
     组件自己保存控件，页面只负责把它放进布局、转发页面级派生状态（驱放测试模式是否
     开启）并读取整份配置。上电计划是“哪些电源的哪些通道给哪个器件上电”的唯一来源，
     计划候选由已绑定电源及其声明通道生成；绑定变化时 :meth:`rebuild` 会保留操作者
-    尚未保存的通道参数、顺序、间隔与漏极。驱动功放自带供电时，驱动计划保持为空即可。
+    尚未保存的顺序、间隔与漏极。驱动功放自带供电时，驱动计划保持为空即可。
+
+    通道参数（VS/IS、保护）不在这里：它们已经融合到上方的电源卡片。
     """
 
     def __init__(
@@ -571,11 +367,6 @@ class PowerFormSection(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
-        build_power_section(
-            self,
-            layout,
-            sources=sources,
-        )
         self._build_plan_widgets(layout)
         self._build_drain_widgets(layout)
         self._connect_assignment_signals()
@@ -710,25 +501,6 @@ class PowerFormSection(QWidget):
         self.driver_power_plan_editor.set_active(self._driver_plan_active)
         self.driver_power_plan_editor.refresh(self._plan_routes, plan=driver_plan)
         self._set_drain_routes(self._drain_candidates(self._plan_routes), drain)
-
-    def rebuild(
-        self,
-        *,
-        sources: PowerSupplySources,
-        preserved_channels: Mapping[str, Any],
-        preserve: bool,
-    ) -> None:
-        """按新电源集合重建标签页，并按需保留操作者尚未保存的计划与漏极。"""
-        dut_plan = self.dut_power_plan_editor.read_plan() if preserve else None
-        driver_plan = self.driver_power_plan_editor.read_plan() if preserve else None
-        drain = self.read_drain_channel() if preserve else None
-        rebuild_power_tabs(self, sources=sources, preserved=preserved_channels)
-        self.refresh_plan_routes(
-            preserve=False,
-            dut_plan=dut_plan,
-            driver_plan=driver_plan,
-            drain=drain,
-        )
 
     # ---- 回填 ---------------------------------------------------------------
     def apply_power_plan_config(

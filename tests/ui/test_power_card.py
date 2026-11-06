@@ -26,7 +26,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtGui import QColor  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
+from PySide6.QtWidgets import QAbstractSpinBox, QApplication, QWidget  # noqa: E402
 
 from presentation.qt.power_card import (  # noqa: E402
     CHANNEL_NAMES,
@@ -58,6 +58,9 @@ def _data(
 ) -> PowerSupplyCardData:
     return PowerSupplyCardData(
         code="DP8B1519",
+        model="DP832A",
+        full_code="SN-1519",
+        device_key="rigol technologies:dp8b1519",
         channels=(
             PowerChannelData(
                 "CH1",
@@ -556,6 +559,73 @@ class PowerSupplyCardWidgetTests(unittest.TestCase):
                         round(rect.height()),
                     ),
                 )
+            for kind, rect in zip(("voltage", "current"), channel.value_boxes):
+                field = card.value_field(channel.channel, kind)
+                self.assertIs(field.parent(), card)
+                self.assertEqual(
+                    (
+                        field.geometry().x(),
+                        field.geometry().y(),
+                        field.geometry().width(),
+                        field.geometry().height(),
+                    ),
+                    (
+                        round(rect.x()),
+                        round(rect.y()),
+                        round(rect.width()),
+                        round(rect.height()),
+                    ),
+                )
+
+    def test_value_fields_use_the_channel_display_limits(self):
+        card = self.widget()
+
+        for kind, limits in (("voltage", (0.0, 50.0)), ("current", (0.0, 10.0))):
+            with self.subTest(kind=kind):
+                field = card.value_field("CH1", kind)
+                self.assertEqual((field.minimum(), field.maximum()), limits)
+                self.assertEqual(field.decimals(), 2)
+                self.assertEqual(
+                    field.buttonSymbols(), QAbstractSpinBox.ButtonSymbols.NoButtons
+                )
+
+    def test_value_fields_follow_the_card_scale(self):
+        card = self.widget()
+        card.set_scale(0.8)
+        layout = power_card_layout()
+
+        self.assertEqual(
+            (card.width(), card.height()),
+            (round(POWER_CARD_WIDTH * 0.8), round(POWER_CARD_HEIGHT * 0.8)),
+        )
+        box = layout.channels[0].value_boxes[0]
+        field = card.value_field("CH1", "voltage")
+        self.assertEqual(field.geometry().x(), round(box.x() * 0.8))
+        self.assertEqual(field.geometry().width(), round(box.width() * 0.8))
+        self.assertIsInstance(card.channel_controls("CH1"), dict)
+
+    def test_editing_a_value_changes_the_snapshot_and_emits(self):
+        card = self.widget()
+        events: list[tuple[str, str, float]] = []
+        card.value_changed.connect(lambda *args: events.append(args))
+        field = card.value_field("CH1", "voltage")
+        field.setValue(7.5)
+
+        self.assertAlmostEqual(card.data.channel("CH1").voltage_set, 7.5)
+        self.assertEqual(events, [("CH1", "voltage", 7.5)])
+        self.assertAlmostEqual(card.channel_value("CH1", "voltage"), 7.5)
+
+    def test_set_data_syncs_values_without_emitting(self):
+        card = self.widget()
+        events: list[tuple[str, str, float]] = []
+        card.value_changed.connect(lambda *args: events.append(args))
+
+        card.set_data(_data(ch2=False))
+
+        self.assertEqual(events, [])
+        self.assertAlmostEqual(card.channel_value("CH2", "voltage"), 5.0)
+        self.assertFalse(card.channel_enabled("CH2"))
+        self.assertFalse(card.value_field("CH2", "voltage").isEnabled())
 
     def test_clicking_a_switch_toggles_only_that_channel(self):
         card = self.widget()
@@ -571,6 +641,7 @@ class PowerSupplyCardWidgetTests(unittest.TestCase):
         self.assertFalse(card.channel_enabled("CH1"))
         self.assertTrue(card.channel_enabled("CH2"))
         self.assertFalse(card.data.channel("CH1").enabled)
+        self.assertFalse(card.value_field("CH1", "voltage").isEnabled())
 
     def test_clicking_a_protection_check_toggles_only_that_flag(self):
         card = self.widget()
@@ -611,13 +682,16 @@ class PowerSupplyCardWidgetTests(unittest.TestCase):
     def test_closed_channel_disables_its_protection_checks(self):
         card = self.widget()
         check = card.protection_check("CH2", "voltage")
+        field = card.value_field("CH2", "voltage")
         switch = card.channel_switch("CH2")
 
         QTest.mouseClick(switch, Qt.LeftButton, pos=switch.rect().center())
         self.assertFalse(check.isEnabled())
+        self.assertFalse(field.isEnabled())
         self.assertFalse(check.hasFocus())
         card.set_channel_enabled("CH2", True)
         self.assertTrue(check.isEnabled())
+        self.assertTrue(field.isEnabled())
 
     def test_programmatic_set_is_silent_unless_asked_to_emit(self):
         card = self.widget()
@@ -668,16 +742,20 @@ class PowerSupplyCardWidgetTests(unittest.TestCase):
         self.assertFalse(card.channel_protection("CH1", "voltage"))
         self.assertTrue(card.channel_protection("CH1", "current"))
 
-    def test_tooltips_explain_read_only_values_and_the_temporary_switches(self):
+    def test_tooltips_explain_units_ranges_and_the_edit_boundary(self):
         card = self.widget()
 
         self.assertIn("VS 12.00 V", card.toolTip())
         self.assertIn("VS 电压设定", card.toolTip())
+        self.assertIn("SN-1519", card.toolTip(), "身份详情放在卡面悬浮提示里")
         self.assertIn(
-            "暂不写入配置",
+            "不写入配置",
             card.channel_switch("CH1").toolTip(),
-            "通道开关只改卡面时必须把边界说清楚",
+            "通道开关只是本次编辑的启用状态，必须把边界说清楚",
         )
+        field_tip = card.value_field("CH1", "voltage").toolTip()
+        self.assertIn("CH1", field_tip)
+        self.assertIn("0–50", field_tip)
         protection_tip = card.protection_check("CH1", "voltage").toolTip()
         self.assertIn("电压保护", protection_tip)
         self.assertIn("高 10%", protection_tip)

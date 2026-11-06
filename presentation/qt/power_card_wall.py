@@ -1,19 +1,21 @@
 """电源配置页的卡片视图（``PowerCardWall``）。
 
 电源配置页以通道卡片为主视图：每台电源一张 440×232 的通道卡片（左 CH1 浅蓝、
-右 CH2 浅琥珀），卡片按仪器排布页九宫格里的相对位置摆放在页面中央，参数表单
-接在卡片下方。这里只负责卡片的排版与绘制，卡片数据来自页面读取的配置片段。
+右 CH2 浅琥珀），卡片按仪器排布页九宫格里的相对位置摆放在页面中央。上电计划与
+漏极表单接在卡片下方；通道参数本身只在这一张卡上编辑。
+
+**真实控件**：卡片墙直接承载 :class:`presentation.qt.power_card.PowerSupplyCard`
+子控件（不是位图 + 坐标命中）。通道开关、VS/IS 输入框与保护勾选框都由 Qt 处理
+鼠标、键盘与焦点，卡片墙只负责按格位摆位、按可用宽度等比缩放并转发信号。
 
 **相对位置**：仪器排布页把电源拖进 3×3 格子，格位下标从左上开始、先行后列。
 本控件保留这些格位的行列关系：卡片只按被占用格子的外接矩形排版，空行/空列被
 收掉，因此“左上角那台电源”在卡片视图里仍然在左上角。卡片数量多到一屏放不下时，
-整块按可用宽度等比缩小，相对位置不变。
+整块按可用宽度等比缩小，相对位置不变；卡片缩放时子控件几何与字号一起调整。
 
-**绘制与交互**：卡片没有子控件，全部由
-:func:`presentation.qt.power_card.render_power_card` 出图后缩放到格子里；这样它和
-导出预览、交互卡片共用同一份卡面。两个保护勾选框没有真实子控件，点击由本控件把
-鼠标位置换算回卡面逻辑坐标后命中，再发出 ``protection_toggled``。控件本身必须创建
-在 GUI 线程、``QApplication`` 之后。
+**编辑状态**：通道开关只表示本次停留本页的编辑启用状态，不写配置。页面重建卡片
+（应用绑定、回填配置）时，``preserve_edit_state=True`` 会保留同一台电源当前的
+开关、数值与保护状态；``False`` 则完全按传入数据重建。控件本身不读写配置文档。
 """
 
 from __future__ import annotations
@@ -22,8 +24,8 @@ import math
 from dataclasses import dataclass, replace
 from typing import Any, Iterable, Mapping
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QPainter, QPixmap
+from PySide6.QtCore import QRectF, QSize, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from .power_card import (
@@ -31,10 +33,10 @@ from .power_card import (
     POWER_CARD_HEIGHT,
     POWER_CARD_WIDTH,
     PROTECTION_KINDS,
+    VALUE_KINDS,
     PowerChannelData,
+    PowerSupplyCard,
     PowerSupplyCardData,
-    power_card_layout,
-    render_power_card,
 )
 
 __all__ = ["PowerCardCell", "PowerCardWall", "power_card_data"]
@@ -79,55 +81,82 @@ def _channel_data(name: str, entry: Mapping[str, Any]) -> PowerChannelData:
     current = current if isinstance(current, Mapping) else {}
     return PowerChannelData(
         channel=name,
-        # 配置里只有实际写出的通道才参与供电，另一路在卡面上保持关闭态。
-        enabled=name in channels,
+        # 两个通道始终保留；配置里缺少这条通道时按 0 显示，交给页面决定编辑状态。
+        enabled=True,
         voltage_set=_number(voltage.get("value")),
         current_set=_number(current.get("value")),
-        # 卡面只保留“是否启用保护”；阈值仍由表单按 110% 推导，不在这里显示。
+        # 卡面只保留“是否启用保护”；阈值仍由配置读取按 110% 推导，不在这里显示。
         voltage_protection_enabled=voltage.get("protection_enabled") is True,
         current_protection_enabled=current.get("protection_enabled") is True,
     )
 
 
 def power_card_data(entry: Mapping[str, Any], supply_id: str) -> PowerSupplyCardData:
-    """把一条电源配置读成通道卡片数据；缺字段按关闭态与 0 显示。
+    """把一条电源配置读成通道卡片数据；缺字段按 0 与未勾选保护显示。
 
-    卡面只读工作值与两个保护开关，不再显示保护阈值；阈值仍由表单按 110% 推导，
-    因此这里只判断 ``protection_enabled`` 是否为 ``True``。
+    两个通道都会出现在卡面上（配置里没有的通道显示 0），通道是否可编辑由页面在
+    重建卡片时统一决定的“本次启用状态”控制，不从配置里的键是否存在推导。
     """
     label = entry.get("label")
     code = label.strip() if isinstance(label, str) and label.strip() else supply_id
+    model = entry.get("model")
+    full_code = entry.get("full_code")
+    device_key = entry.get("device_key")
     return PowerSupplyCardData(
         code=code,
+        model=model if isinstance(model, str) else None,
+        full_code=full_code if isinstance(full_code, str) else None,
+        device_key=device_key if isinstance(device_key, str) else None,
         channels=tuple(_channel_data(name, entry) for name in CHANNEL_NAMES),
     )
 
 
+def _merge_edit_state(
+    incoming: PowerSupplyCardData, current: PowerSupplyCardData
+) -> PowerSupplyCardData:
+    """把卡片上尚未回填的编辑状态覆盖到新数据上（重建卡片时保留用户输入）。"""
+    merged = incoming
+    for name in CHANNEL_NAMES:
+        old = current.channel(name)
+        merged = merged.with_channel_enabled(name, old.enabled)
+        for kind, value in (
+            ("voltage", old.voltage_set),
+            ("current", old.current_set),
+        ):
+            merged = merged.with_channel_value(name, kind, value)
+        for kind in PROTECTION_KINDS:
+            merged = merged.with_channel_protection(
+                name, kind, old.protection_enabled(kind)
+            )
+    return merged
+
+
 class PowerCardWall(QWidget):
-    """按九宫格相对位置摆放通道卡片的画布。
+    """按九宫格相对位置摆放交互式电源卡片的画布。
 
     ``set_cards`` 接收 ``(supply_id, data)`` 与可选的 ``slots`` 映射；没有格位信息
-    的电源按传入顺序补进空位。控件没有子控件，卡片由 :meth:`paintEvent` 直接从
-    位图绘制，因此在任何缩放比例下都不会出现控件自身背景透出来的缝。
+    的电源按传入顺序补进空位。卡片是真实子控件，缩放由 :meth:`PowerSupplyCard.set_scale`
+    完成，因此三列放不下时点击位置、输入焦点与字号都跟着缩放。
 
-    卡面仍是位图，只有两个保护勾选框可点：按下时按卡面布局把鼠标位置换算回逻辑
-    坐标，命中后发出 :attr:`protection_toggled`，由页面决定是否写回表单。卡片被
-    等比缩小后命中区跟着缩放，因此三列放不下时点击位置仍然准确。
+    卡片上的通道开关、工作值与保护变化通过信号转给页面；本控件只同步自己的卡片
+    快照，不写配置。
     """
 
+    #: ``(supply_id, channel, enabled)``：本次编辑的通道启用状态。
+    channel_toggled = Signal(str, str, bool)
     #: ``(supply_id, channel, kind, enabled)``；``kind`` 是 ``voltage`` / ``current``。
     protection_toggled = Signal(str, str, str, bool)
+    #: ``(supply_id, channel, kind, value)``：VS / IS 输入。
+    value_changed = Signal(str, str, str, float)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("powerCardWall")
-        self.setMouseTracking(True)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._cells: list[PowerCardCell] = []
         self._rects: dict[str, QRectF] = {}
-        self._pixmaps: dict[tuple[str, PowerSupplyCardData], QPixmap] = {}
+        self._cards: dict[str, PowerSupplyCard] = {}
         self._paint_enabled = True
-        self._card_layout = power_card_layout()
 
     # ---- 内容 ---------------------------------------------------------------
 
@@ -135,8 +164,15 @@ class PowerCardWall(QWidget):
         self,
         cards: Iterable[tuple[str, PowerSupplyCardData]],
         slots: Mapping[str, int] | None = None,
+        *,
+        preserve_edit_state: bool = False,
     ) -> None:
-        """替换整墙卡片；``slots`` 缺省时按九宫格顺序补齐。"""
+        """替换整墙卡片；``slots`` 缺省时按九宫格顺序补齐。
+
+        ``preserve_edit_state=True`` 用于绑定/格位变化后的重建：同一台电源的本次
+        启用状态、VS/IS 与保护勾选覆盖到新数据上，未提交的编辑不会丢。回填配置时
+        用 ``False``，以传入数据为准。
+        """
         entries = list(cards)
         slot_of = dict(slots or {})
         used = {slot_of.get(supply_id) for supply_id, _data in entries}
@@ -148,23 +184,73 @@ class PowerCardWall(QWidget):
                 next_slot += 1
             slot_of[supply_id] = next_slot
             used.add(next_slot)
-        self._cells = [
-            PowerCardCell(
-                supply_id=supply_id,
-                data=data,
-                slot=int(slot_of[supply_id]) if slot_of[supply_id] is not None else 0,
-            )
-            for supply_id, data in entries
-        ]
-        self._pixmaps = {
-            key: value
-            for key, value in self._pixmaps.items()
-            if key[0] in {cell.supply_id for cell in self._cells}
+
+        current = {
+            supply_id: card.data for supply_id, card in self._cards.items()
         }
+        cells: list[PowerCardCell] = []
+        active: set[str] = set()
+        for supply_id, data in entries:
+            if preserve_edit_state and supply_id in current:
+                data = _merge_edit_state(data, current[supply_id])
+            index = slot_of.get(supply_id)
+            cells.append(
+                PowerCardCell(
+                    supply_id=supply_id,
+                    data=data,
+                    slot=int(index) if index is not None else 0,
+                )
+            )
+            active.add(supply_id)
+
+        for supply_id in set(self._cards) - active:
+            card = self._cards.pop(supply_id)
+            card.hide()
+            card.deleteLater()
+
+        for cell in cells:
+            card = self._cards.get(cell.supply_id)
+            if card is None:
+                card = PowerSupplyCard(cell.data, self)
+                card.channel_toggled.connect(
+                    lambda channel, enabled, supply=cell.supply_id: (
+                        self._on_card_channel(supply, channel, enabled)
+                    )
+                )
+                card.protection_toggled.connect(
+                    lambda channel, kind, enabled, supply=cell.supply_id: (
+                        self._on_card_protection(supply, channel, kind, enabled)
+                    )
+                )
+                card.value_changed.connect(
+                    lambda channel, kind, value, supply=cell.supply_id: (
+                        self._on_card_value(supply, channel, kind, value)
+                    )
+                )
+                self._cards[cell.supply_id] = card
+            else:
+                card.set_data(cell.data)
+            card.setVisible(self._paint_enabled)
+        self._cells = cells
         self.refresh_layout()
 
     def cards(self) -> tuple[PowerCardCell, ...]:
         return tuple(self._cells)
+
+    def supply_card(self, supply_id: str) -> PowerSupplyCard | None:
+        """取某台电源的卡片控件；没有这张卡时返回 ``None``。"""
+        return self._cards.get(supply_id)
+
+    def control_records(self) -> dict[str, dict[str, Any]]:
+        """按 ``ConfigFormState`` 的读取形状给出每台电源的通道控件。"""
+        records: dict[str, dict[str, Any]] = {}
+        for supply_id, card in self._cards.items():
+            records[supply_id] = {
+                "channels": {
+                    name: card.channel_controls(name) for name in CHANNEL_NAMES
+                }
+            }
+        return records
 
     def set_protection(
         self,
@@ -173,27 +259,51 @@ class PowerCardWall(QWidget):
         kind: str,
         enabled: bool,
     ) -> bool:
-        """只改某张卡某个通道的保护开关；没有这张卡或状态未变时返回 ``False``。
-
-        页面在用户点击卡面勾选框（或下方表单勾选框）时调用，避免整墙重读配置。
-        卡片的保护阈值不在卡面上，因此只需失效这一张卡的位图缓存。
-        """
+        """只改某张卡某个通道的保护开关；没有这张卡或状态未变时返回 ``False``。"""
         if not isinstance(enabled, bool):
             raise TypeError("enabled 必须是 bool")
+        card = self._cards.get(supply_id)
+        if card is None:
+            return False
+        if card.channel_protection(channel, kind) == enabled:
+            return False
+        card.set_protection_enabled(channel, kind, enabled)
+        self._sync_cell(supply_id, card.data)
+        return True
+
+    def reset_channel_switches(self) -> None:
+        """把所有卡片的通道开关回到未启用；不发配置变更信号。"""
+        for supply_id, card in self._cards.items():
+            card.reset_channel_switches()
+            self._sync_cell(supply_id, card.data)
+
+    def _sync_cell(self, supply_id: str, data: PowerSupplyCardData) -> None:
         for index, cell in enumerate(self._cells):
-            if cell.supply_id != supply_id:
-                continue
-            current = cell.data.channel(channel).protection_enabled(kind)
-            if current == enabled:
-                return False
-            self._pixmaps.pop((supply_id, cell.data), None)
-            self._cells[index] = replace(
-                cell,
-                data=cell.data.with_channel_protection(channel, kind, enabled),
-            )
-            self.update()
-            return True
-        return False
+            if cell.supply_id == supply_id:
+                self._cells[index] = replace(cell, data=data)
+                return
+
+    def _on_card_channel(self, supply_id: str, channel: str, enabled: bool) -> None:
+        card = self._cards.get(supply_id)
+        if card is not None:
+            self._sync_cell(supply_id, card.data)
+        self.channel_toggled.emit(supply_id, channel, bool(enabled))
+
+    def _on_card_protection(
+        self, supply_id: str, channel: str, kind: str, enabled: bool
+    ) -> None:
+        card = self._cards.get(supply_id)
+        if card is not None:
+            self._sync_cell(supply_id, card.data)
+        self.protection_toggled.emit(supply_id, channel, kind, bool(enabled))
+
+    def _on_card_value(
+        self, supply_id: str, channel: str, kind: str, value: float
+    ) -> None:
+        card = self._cards.get(supply_id)
+        if card is not None:
+            self._sync_cell(supply_id, card.data)
+        self.value_changed.emit(supply_id, channel, kind, float(value))
 
     def is_empty(self) -> bool:
         return not self._cells
@@ -202,6 +312,13 @@ class PowerCardWall(QWidget):
         """卡片在墙坐标里的矩形；没有这张卡片时返回 ``None``。"""
         return self._rects.get(supply_id)
 
+    def card_widget_rect(self, supply_id: str) -> QRectF | None:
+        """卡片控件的实际整数几何；展开动画用它作为终点，避免亚像素错位。"""
+        card = self._cards.get(supply_id)
+        if card is None:
+            return None
+        return QRectF(card.geometry())
+
     def card_rects(self) -> dict[str, QRectF]:
         return dict(self._rects)
 
@@ -209,11 +326,13 @@ class PowerCardWall(QWidget):
         return self._paint_enabled
 
     def set_paint_enabled(self, enabled: bool) -> None:
-        """动画覆盖层接管卡面时暂停自绘；布局占位保持不变。"""
+        """动画覆盖层接管卡面时暂停显示卡片；布局占位保持不变。"""
         enabled = bool(enabled)
         if enabled == self._paint_enabled:
             return
         self._paint_enabled = enabled
+        for card in self._cards.values():
+            card.setVisible(enabled)
         self.update()
 
     # ---- 布局 ---------------------------------------------------------------
@@ -267,6 +386,13 @@ class PowerCardWall(QWidget):
         if pixels != self.minimumHeight() or pixels != self.maximumHeight():
             self.setMinimumHeight(pixels)
             self.setMaximumHeight(pixels)
+        for supply_id, rect in self._rects.items():
+            card = self._cards.get(supply_id)
+            if card is None or rect.isEmpty():
+                continue
+            card.set_scale(rect.width() / POWER_CARD_WIDTH)
+            card.setGeometry(rect.toRect())
+            card.setVisible(self._paint_enabled)
         self.updateGeometry()
         self.update()
 
@@ -289,124 +415,15 @@ class PowerCardWall(QWidget):
         super().resizeEvent(event)
         self.refresh_layout()
 
-    # ---- 交互 ---------------------------------------------------------------
-
-    def _logical_point(self, target: QRectF, position: QPointF) -> QPointF | None:
-        """把墙坐标换算成 440×232 卡面坐标；位置不在这张卡里时返回 ``None``。"""
-        if target.isEmpty() or not target.contains(position):
-            return None
-        scale_x = target.width() / POWER_CARD_WIDTH
-        scale_y = target.height() / POWER_CARD_HEIGHT
-        if scale_x <= 0.0 or scale_y <= 0.0:
-            return None
-        return QPointF(
-            (position.x() - target.x()) / scale_x,
-            (position.y() - target.y()) / scale_y,
-        )
-
-    def _hit_protection(
-        self, position: QPointF
-    ) -> tuple[PowerCardCell, str, str] | None:
-        """命中哪张卡、哪个通道、哪种保护的勾选框；没命中时返回 ``None``。
-
-        关闭的通道不接收点击：卡面上它的勾选框整组是灰的，点击不应该悄悄改配置。
-        """
-        for cell in self._cells:
-            target = self._rects.get(cell.supply_id)
-            if target is None:
-                continue
-            logical = self._logical_point(target, position)
-            if logical is None:
-                continue
-            for channel_layout in self._card_layout.channels:
-                channel = cell.data.channel(channel_layout.channel)
-                if not channel.enabled:
-                    continue
-                for kind, check_rect in zip(
-                    PROTECTION_KINDS, channel_layout.protection_checks
-                ):
-                    if check_rect.contains(logical):
-                        return cell, channel_layout.channel, kind
-            return None
-        return None
-
-    def mouseMoveEvent(self, event) -> None:
-        hit = self._hit_protection(event.position())
-        if hit is None:
-            self.setCursor(Qt.ArrowCursor)
-            self.setToolTip("")
-        else:
-            cell, channel, kind = hit
-            label = "电压保护" if kind == "voltage" else "电流保护"
-            self.setCursor(Qt.PointingHandCursor)
-            self.setToolTip(
-                f"{cell.supply_id} {channel} {label}："
-                "勾选后保护阈值自动取比设定值高 10% 的值。"
-            )
-        super().mouseMoveEvent(event)
-
-    def leaveEvent(self, event) -> None:
-        self.setCursor(Qt.ArrowCursor)
-        self.setToolTip("")
-        super().leaveEvent(event)
-
-    def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton:
-            hit = self._hit_protection(event.position())
-            if hit is not None:
-                cell, channel, kind = hit
-                enabled = not cell.data.channel(channel).protection_enabled(kind)
-                self.protection_toggled.emit(
-                    cell.supply_id, channel, kind, enabled
-                )
-                event.accept()
-                return
-        super().mousePressEvent(event)
-
     # ---- 绘制 ---------------------------------------------------------------
 
-    def _pixmap(self, cell: PowerCardCell) -> QPixmap:
-        key = (cell.supply_id, cell.data)
-        pixmap = self._pixmaps.get(key)
-        if pixmap is None:
-            pixmap = render_power_card(
-                cell.data,
-                device_pixel_ratio=float(self.devicePixelRatioF()) or 1.0,
-            )
-            self._pixmaps[key] = pixmap
-        return pixmap
-
     def card_pixmap(self, supply_id: str) -> QPixmap:
-        """某台电源的通道卡面；没有这张卡片时返回空位图。"""
-        for cell in self._cells:
-            if cell.supply_id == supply_id:
-                return self._pixmap(cell)
-        return QPixmap()
+        """某台电源的通道卡面快照；没有这张卡片时返回空位图。
 
-    @staticmethod
-    def _draw_pixmap(painter: QPainter, pixmap: QPixmap, target: QRectF) -> None:
-        ratio = float(pixmap.devicePixelRatio()) or 1.0
-        width = pixmap.width() / ratio
-        height = pixmap.height() / ratio
-        if width <= 0.0 or height <= 0.0 or target.isEmpty():
-            return
-        painter.save()
-        painter.translate(target.topLeft())
-        painter.scale(target.width() / width, target.height() / height)
-        painter.drawPixmap(QPointF(0.0, 0.0), pixmap)
-        painter.restore()
-
-    def paintEvent(self, event) -> None:
-        if not self._paint_enabled or not self._cells:
-            return
-        painter = QPainter(self)
-        try:
-            painter.setRenderHint(QPainter.Antialiasing, True)
-            painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-            for cell in self._cells:
-                rect = self._rects.get(cell.supply_id)
-                if rect is None or rect.isEmpty():
-                    continue
-                self._draw_pixmap(painter, self._pixmap(cell), rect)
-        finally:
-            painter.end()
+        展开动画从当前真实控件取图，因此动画最后一帧与页面上的卡片（包括输入框、
+        开关和勾选状态）逐像素一致。
+        """
+        card = self._cards.get(supply_id)
+        if card is None:
+            return QPixmap()
+        return card.grab()

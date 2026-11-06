@@ -1,12 +1,17 @@
 """独立电源配置页（``PowerConfigurationPage``）。
 
 页面以通道卡片为主视图：每台电源一张带蓝黄通道的卡片，按仪器排布页九宫格的
-相对位置摆在内容列顶部（:mod:`presentation.qt.power_card_wall`），通道参数、上电
-计划与漏极表单整体接在卡片下方。进入本页时，排布页的电源卡片从屏幕原位展开成完整
-卡片（:mod:`presentation.qt.power_card_morph`），卡片墙与过渡层共用同一份卡片位置。
+相对位置摆在内容列顶部（:mod:`presentation.qt.power_card_wall`），上电计划与漏极
+表单接在卡片下方。进入本页时，排布页的电源卡片从屏幕原位展开成完整卡片
+（:mod:`presentation.qt.power_card_morph`），卡片墙与过渡层共用同一份卡片位置。
 设备绑定信息不在本页显示：绑定只在上游“仪器配置”页确认，本页只消费它生成的电源
-集合。每个通道只保留“是否启用保护”的勾选，保护阈值由工作值按 110% 自动写入配置；
-卡片上的电压/电流保护勾选框可点击，点击写回下方表单的同一开关，不直接改配置文档。
+集合。
+
+卡片是通道参数的唯一编辑面：通道开关是本次停留本页的编辑启用状态（每次进页面
+从灰色开始，不写配置、不影响计划），点击后该通道的 VS/IS 输入框与保护勾选才可
+操作；工作值与保护勾选直接进入配置片段，保护阈值仍由工作值按 110% 自动推导。
+两个通道始终保留在配置里，卡片下方的「通道上电计划」与「效率测量」不属于通道
+参数。
 
 电源参数、通道上电计划与效率测量漏极都归本页；测试参数、运行入口与
 设备发现仍属于 :mod:`presentation.qt.configuration_page` 与
@@ -18,7 +23,7 @@
 ``instruments.power_supplies``、``power_supply_assignment`` 与
 ``dut_config.drain_channel`` 这些电源字段，调用方把它们合并进草稿即可，不会覆盖
 另一页尚未保存的测试参数。:meth:`apply_config` 回填时也只触碰这些字段，绑定变化
-重建控件时保留操作者尚未提交的通道参数、上电顺序、间隔与漏极。
+重建卡片时保留操作者尚未提交的工作值、保护勾选、上电顺序、间隔与漏极。
 
 窗口用 :class:`presentation.qt.configuration_editor.ConfigurationEditor` 把本页与
 参数页装配成共享编辑状态，整份草稿的合并/校验/保存仍由
@@ -54,11 +59,10 @@ from .config_power_section import (
     PowerFormSection,
     PowerSupplyChoices,
     PowerSupplySources,
-    current_power_tab_key,
 )
 from .config_projection import ConfigBackfillError
 from .pages import PageControllerBindingMixin
-from .power_card import CHANNEL_NAMES, PROTECTION_KINDS
+from .power_card import CHANNEL_NAMES
 from .power_card_morph import PowerCardMorphItem, PowerCardMorphOverlay
 from .power_card_wall import PowerCardWall, power_card_data
 from .theme import PAGE_CONTENT_MAX_WIDTH
@@ -159,19 +163,15 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             self.card_wall.protection_toggled.connect(
                 self._on_card_protection_toggled
             )
+            self.card_wall.value_changed.connect(self._on_card_value_changed)
 
     def _wire_fragment_signals(self) -> None:
-        """把任一电源字段的编辑都汇总成 ``fragment_changed``。
+        """把电源字段的编辑汇总成 ``fragment_changed``。
 
-        通道参数（电压/电流及保护开关）在绑定变化重建标签页时会换成新控件，因此这里
-        每次都先断开上一批连接、再按当前控件重新连接；否则重建之后修改通道参数不会
-        通知共享会话，dirty 会漏掉电源片段。
+        卡片上的 VS/IS 与保护勾选由 :class:`PowerCardWall` 的专用信号直接汇总（见
+        :meth:`_connect_signals`）；这里只接卡片下方的计划与漏极控件。计划列表不会
+        因绑定重建而换对象，因此不需要像旧标签页那样每次重连。
         """
-        for signal, slot in self._fragment_signal_connections:
-            try:
-                signal.disconnect(slot)
-            except (RuntimeError, TypeError):
-                pass
         self._fragment_signal_connections = []
         section = self.power_section
         if section is None:
@@ -187,26 +187,6 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         def notify(*_args: Any) -> None:
             self._emit_fragment_changed()
 
-        for supply_id, supply in getattr(
-            section, "power_config_widgets", {}
-        ).items():
-            for channel, controls in supply.get("channels", {}).items():
-                for key in ("voltage", "current"):
-                    widget = controls.get(key)
-                    if widget is not None and hasattr(widget, "valueChanged"):
-                        hook(widget.valueChanged, notify)
-                for key, kind in (
-                    ("voltage_protection_enabled", "voltage"),
-                    ("current_protection_enabled", "current"),
-                ):
-                    widget = controls.get(key)
-                    if widget is not None and hasattr(widget, "toggled"):
-                        hook(
-                            widget.toggled,
-                            self._protection_notifier(
-                                str(supply_id), str(channel), kind
-                            ),
-                        )
         for editor in (section.dut_power_plan_editor, section.driver_power_plan_editor):
             hook(editor.list.itemChanged, notify)
             hook(editor.delay_spin.valueChanged, notify)
@@ -217,16 +197,25 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         if not self._silent:
             self.fragment_changed.emit()
 
-    def _protection_notifier(self, supply_id: str, channel: str, kind: str):
-        """表单保护开关的槽：同步卡面勾选框，再把这次编辑计入 dirty。"""
-        def notify(checked: bool) -> None:
-            if self.card_wall is not None:
-                self.card_wall.set_protection(
-                    supply_id, channel, kind, bool(checked)
-                )
-            self._emit_fragment_changed()
+    def _on_card_protection_toggled(
+        self,
+        _supply_id: str,
+        _channel: str,
+        _kind: str,
+        _enabled: bool,
+    ) -> None:
+        """卡面保护勾选变化：卡片已保存新状态，这里只计入 dirty。"""
+        self._emit_fragment_changed()
 
-        return notify
+    def _on_card_value_changed(
+        self,
+        _supply_id: str,
+        _channel: str,
+        _kind: str,
+        _value: float,
+    ) -> None:
+        """卡面 VS/IS 变化：卡片已保存新值，这里只计入 dirty。"""
+        self._emit_fragment_changed()
 
     # ---- 表单 Adapter -------------------------------------------------------
 
@@ -257,82 +246,32 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
                 if 0 <= value < 9:
                     cleaned[str(supply_id)] = value
         self._rack_slots = cleaned
-        self._refresh_card_wall()
+        self._refresh_card_wall(preserve_edit_state=True)
 
     def _card_cards(self) -> list[tuple[str, Any]]:
-        """当前配置里每台电源的卡片数据；顺序与表单标签页一致。
+        """当前配置里每台电源的卡片数据；两个通道都显示。
 
-        保护勾选框以表单当前状态为准：绑定变化或回填会重建表单，重建前操作者
-        尚未保存的保护开关必须继续显示在卡面上。工作值仍按配置快照显示。
+        通道开关是本次编辑的启用状态，重组卡片时统一从“未启用”开始；已有卡片需要
+        保留用户输入时由 :meth:`_refresh_card_wall` 的 ``preserve_edit_state`` 负责。
         """
-        sources = self._power_supply_sources()
-        snapshot: Mapping[str, Any] = {}
-        if self.power_section is not None:
-            snapshot = self.form_adapter.read_power_channel_snapshot()
         cards: list[tuple[str, Any]] = []
-        for supply_id, entry in sources.items():
+        for supply_id, entry in self._power_supply_sources().items():
             data = power_card_data(entry, supply_id)
-            live = snapshot.get(supply_id)
-            channels = live.get("channels") if isinstance(live, Mapping) else None
-            if isinstance(channels, Mapping):
-                for channel, block in channels.items():
-                    if channel not in CHANNEL_NAMES or not isinstance(block, Mapping):
-                        continue
-                    for kind in PROTECTION_KINDS:
-                        values = block.get(kind)
-                        if not isinstance(values, Mapping):
-                            continue
-                        data = data.with_channel_protection(
-                            channel,
-                            kind,
-                            values.get("protection_enabled") is True,
-                        )
+            for name in CHANNEL_NAMES:
+                data = data.with_channel_enabled(name, False)
             cards.append((supply_id, data))
         return cards
 
-    def _refresh_card_wall(self) -> None:
+    def _refresh_card_wall(self, *, preserve_edit_state: bool = False) -> None:
         """按当前配置与排布结果重画卡片墙；没有电源时整块高度收为 0。"""
         wall = self.card_wall
         if wall is None:
             return
-        wall.set_cards(self._card_cards(), self._rack_slots)
-
-    def _on_card_protection_toggled(
-        self,
-        supply_id: str,
-        channel: str,
-        kind: str,
-        enabled: bool,
-    ) -> None:
-        """卡面勾选框被点击：写回下方表单的同一个开关。
-
-        配置写入仍走表单读数，卡面不直接改配置文档；表单的 ``toggled`` 信号会同步
-        卡面并计入 dirty。只读、收尾或卡片过渡期间不接收点击。
-        """
-        if (
-            self._card_morph is not None
-            or bool(self.read_only_reason)
-            or self._finalizing
-        ):
-            return
-        section = self.power_section
-        if section is None:
-            return
-        supply = getattr(section, "power_config_widgets", {}).get(supply_id)
-        controls = supply.get("channels", {}).get(channel) if isinstance(supply, Mapping) else None
-        widget = (
-            controls.get(f"{kind}_protection_enabled")
-            if isinstance(controls, Mapping)
-            else None
+        wall.set_cards(
+            self._card_cards(),
+            self._rack_slots,
+            preserve_edit_state=preserve_edit_state,
         )
-        if widget is None:
-            return
-        widget.setChecked(bool(enabled))
-        # 状态没变时 setChecked 不发信号，这里仍同步一次卡面，避免卡面停在旧值。
-        if self.card_wall is not None:
-            self.card_wall.set_protection(
-                supply_id, channel, kind, bool(enabled)
-            )
 
     def play_card_morph(self, start_rects: Any) -> bool:
         """从排布页卡片的屏幕位置展开成卡片；返回是否真的播放了动画。
@@ -373,7 +312,9 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
                 start = next(
                     (starts[name] for name in names if name in starts), None
                 )
-            target = wall.card_rect(cell.supply_id)
+            target = wall.card_widget_rect(cell.supply_id)
+            if target is None:
+                target = wall.card_rect(cell.supply_id)
             if start is None or target is None or target.isEmpty():
                 continue
             top_left = self.mapFromGlobal(start.topLeft())
@@ -448,6 +389,12 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         if self._card_morph is not None:
             self._card_morph.setGeometry(self.rect())
 
+    def showEvent(self, event: Any) -> None:
+        """每次进入电源页都让通道从“未启用”开始。"""
+        super().showEvent(event)
+        if self.card_wall is not None:
+            self.card_wall.reset_channel_switches()
+
     def set_test_mode(self, enabled: bool) -> None:
         """设置欢迎页选择的驱放测试模式，并刷新依赖它的电源派生状态。
 
@@ -464,7 +411,7 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         self.driver_mode_changed.emit(enabled)
 
     def apply_device_bindings(self, bindings: Any) -> None:
-        """用新的设备绑定刷新电源选项与标签页，保留尚未提交的编辑。
+        """用新的设备绑定刷新电源选项与卡片，保留尚未提交的编辑。
 
         绑定写入仍由仪器设置页经配置会话完成；本页只接收结果，不自己扫描设备、
         不挑默认电源，也不改写配置引用。
@@ -472,16 +419,16 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         self.device_bindings = bindings if isinstance(bindings, Mapping) else {}
         self._silent = True
         try:
-            self._rebuild_power_tabs(preserve=True)
+            self._refresh_power_plans(preserve=True)
         finally:
             self._silent = False
-        self._refresh_card_wall()
+        self._refresh_card_wall(preserve_edit_state=True)
         self._emit_fragment_changed()
 
     # ---- 配置输入（只取本页负责的字段） ------------------------------------
 
     def _power_supply_sources(self, supplies: Any = None) -> PowerSupplySources:
-        """电源标签页条目：配置里已有的键 + 本次已绑定的 ``supply_id``。"""
+        """电源卡片条目：配置里已有的键 + 本次已绑定的 ``supply_id``。"""
         if supplies is None:
             instruments = self.config.get("instruments")
             instruments = instruments if isinstance(instruments, dict) else {}
@@ -519,28 +466,14 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
 
     # ---- 电源表单组件委托 ---------------------------------------------------
 
-    def _rebuild_power_tabs(self, *, sources: Any = None, preserve: bool = True) -> None:
+    def _refresh_power_plans(self, *, sources: Any = None, preserve: bool = True) -> None:
+        """按当前电源集合刷新计划候选；计划与漏极本身由组件按需保留。"""
         if self.power_section is None:
             return
         current_sources = self._power_supply_sources() if sources is None else sources
-        self.power_section.rebuild(
-            sources=current_sources,
-            preserved_channels=(
-                self.form_adapter.read_power_channel_snapshot() if preserve else {}
-            ),
-            preserve=preserve,
-        )
         self.power_section.set_power_choices(
             current_sources, self._power_supply_choices()
         )
-        # 重建会把通道控件换成新对象：旧连接随控件一起失效，必须按新控件重连。
-        self._wire_fragment_signals()
-        self._refresh_card_wall()
-
-    def _current_power_tab_key(self) -> str | None:
-        if self.power_section is None:
-            return None
-        return current_power_tab_key(self.power_section)
 
     def update_power_supply_options(self) -> None:
         """刷新计划候选：只保留当前绑定，失效路由留在计划里交给校验。"""
@@ -617,10 +550,11 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             if not isinstance(supplies, dict):
                 supplies = {}
             try:
-                self._rebuild_power_tabs(
+                self._refresh_power_plans(
                     sources=self._power_supply_sources(supplies),
                     preserve=False,
                 )
+                self._refresh_card_wall()
                 projected = self.form_adapter.apply_power_configuration(
                     config,
                     driver_plan_active=driver_plan_active,
@@ -628,9 +562,10 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             except ConfigBackfillError:
                 self.device_bindings = previous_bindings
                 self.test_mode_enabled = previous_test_mode
-                self._rebuild_power_tabs(
+                self._refresh_power_plans(
                     sources=self._power_supply_sources(), preserve=False
                 )
+                self._refresh_card_wall()
                 raise
             self.config = projected
             self.update_driver_power_ui()
@@ -686,12 +621,15 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
     # ---- 控件只读入口（表单组件持有，页面不重复保存） ----------------------
 
     @property
-    def power_tabs(self):
-        return self.power_section.power_tabs
-
-    @property
     def power_config_widgets(self):
-        return self.power_section.power_config_widgets
+        """按 ``ConfigFormState`` 的读取形状暴露卡片上的通道控件。
+
+        卡片是通道参数的唯一编辑面；这里只把每台电源的控件映射交给表单 Adapter，
+        页面不再另外保存一份表单控件。
+        """
+        if self.card_wall is None:
+            return {}
+        return self.card_wall.control_records()
 
     @property
     def power_plan_group(self):

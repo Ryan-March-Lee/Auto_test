@@ -1,7 +1,8 @@
 """步骤 11：独立电源表单的纯 UI 测试。
 
-覆盖组上电计划的排序、启用勾选、组间隔、漏极选择、文档回填，以及绑定变化重建控件
-时保留尚未提交的编辑。测试只构造 ``PowerFormSection`` 与它的控件，不启动整个配置页。
+覆盖组上电计划的排序、启用勾选、组间隔、漏极选择、文档回填，以及绑定变化刷新
+候选时保留尚未提交的计划与漏极。测试只构造 ``PowerFormSection`` 与它的控件，不启动
+整个配置页；通道参数已融合到电源卡片，不在本组件里。
 """
 
 import os
@@ -339,33 +340,25 @@ class PowerFormRebuildTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_rebuild_keeps_uncommitted_channels_plan_and_drain(self):
+    def test_set_power_choices_keeps_uncommitted_plan_and_drain(self):
         section = _section(
             plans={"dut": _plan(("DP8B0885", "CH2"), ("DP8B1519", "CH1"), delay=2.0)},
             drain={"supply_id": "DP8B0885", "channel": "CH2"},
+            bound=("DP8B1519", "DP8B0885"),
         )
-        section.power_config_widgets["DP8B0885"]["channels"]["CH1"]["voltage"].setValue(12.5)
         _check(section.dut_power_plan_editor, ("DP8B1519", "CH2"), True)
         section.dut_power_plan_editor.list.setCurrentRow(0)
         section.dut_power_plan_editor.move_current(1)
-        preserved_channels = ConfigFormState({}, section).read_power_supply_config()[
-            "instruments"
-        ]["power_supplies"]
         expected_plan = section.dut_power_plan_editor.read_plan()
         expected_drain = section.read_drain_channel()
 
-        section.rebuild(
-            sources=_source(*SUPPLIES),
-            preserved_channels=preserved_channels,
-            preserve=True,
-        )
+        section.set_power_choices(_source(*SUPPLIES), _choices(*SUPPLIES))
 
         self.assertEqual(
-            section.power_config_widgets["DP8B0885"]["channels"]["CH1"]["voltage"].value(),
-            12.5,
-            "绑定变化重建标签页时保留操作者刚填的通道参数",
+            section.dut_power_plan_editor.read_plan(),
+            expected_plan,
+            "绑定变化刷新候选时保留操作者尚未保存的上电计划",
         )
-        self.assertEqual(section.dut_power_plan_editor.read_plan(), expected_plan)
         self.assertEqual(section.read_drain_channel(), expected_drain)
 
 

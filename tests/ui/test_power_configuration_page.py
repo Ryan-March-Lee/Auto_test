@@ -14,12 +14,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from presentation.qt.config_projection import ConfigBackfillError
-from presentation.qt.power_card import (
-    CHANNEL_NAMES,
-    POWER_CARD_WIDTH,
-    PROTECTION_KINDS,
-    power_card_layout,
-)
+from presentation.qt.power_card import CHANNEL_NAMES
 from presentation.qt.power_configuration_page import PowerConfigurationPage
 
 
@@ -142,11 +137,13 @@ class PowerConfigurationPageTests(unittest.TestCase):
 
         self.assertIsInstance(page, PowerConfigurationPage)
         self.assertIsNotNone(page.power_section)
-        self.assertEqual(page.power_tabs.count(), 1)
-        self.assertIn("DP8B1519", page.power_tabs.tabText(0))
+        self.assertFalse(hasattr(page, "power_tabs"), "电源详细配置标签页已删除")
+        self.assertEqual(
+            [cell.supply_id for cell in page.card_wall.cards()], ["DP8B1519"]
+        )
 
     def test_the_card_view_is_the_main_area_above_the_form(self):
-        """页面以通道卡片为主：卡片在内容列顶部，参数表单接在下面。"""
+        """页面以通道卡片为主：卡片在内容列顶部，上电计划接在下面。"""
         page = self.make_page()
 
         self.assertIsNotNone(page.card_wall)
@@ -159,22 +156,39 @@ class PowerConfigurationPageTests(unittest.TestCase):
             "卡片在表单上方",
         )
 
-    def _card_check_position(self, page, supply_id, channel, kind) -> QPoint:
-        """卡面勾选框在卡片墙坐标里的中心点（按当前缩放换算）。"""
-        rect = page.card_wall.card_rect(supply_id)
-        self.assertIsNotNone(rect)
-        channel_index = CHANNEL_NAMES.index(channel)
-        kind_index = PROTECTION_KINDS.index(kind)
-        check = power_card_layout().channels[channel_index].protection_checks[
-            kind_index
-        ]
-        scale = rect.width() / POWER_CARD_WIDTH
-        return rect.topLeft().toPoint() + (check.center() * scale).toPoint()
+    def _card(self, page):
+        return page.card_wall.supply_card("DP8B1519")
 
     def _channel_controls(self, page, channel: str = "CH1"):
-        return page.power_section.power_config_widgets["DP8B1519"]["channels"][
-            channel
-        ]
+        return page.power_config_widgets["DP8B1519"]["channels"][channel]
+
+    def test_all_channels_start_disabled_on_page_entry(self):
+        page = self.make_page()
+        card = self._card(page)
+
+        for channel in CHANNEL_NAMES:
+            with self.subTest(channel=channel):
+                self.assertFalse(card.channel_enabled(channel))
+                self.assertFalse(
+                    card.value_field(channel, "voltage").isEnabled()
+                )
+                self.assertFalse(
+                    card.protection_check(channel, "voltage").isEnabled()
+                )
+
+    def test_clicking_the_power_switch_enables_editing_without_dirtying(self):
+        page = self.make_page()
+        card = self._card(page)
+        changes: list[bool] = []
+        page.fragment_changed.connect(lambda: changes.append(True))
+        switch = card.channel_switch("CH1")
+
+        QTest.mouseClick(switch, Qt.LeftButton, pos=switch.rect().center())
+
+        self.assertTrue(card.channel_enabled("CH1"))
+        self.assertTrue(card.value_field("CH1", "voltage").isEnabled())
+        self.assertEqual(changes, [], "启用状态不落配置，不算编辑")
+        self.assertFalse(page.is_dirty())
 
     def test_card_wall_protection_checks_read_the_configuration(self):
         config = valid_config()
@@ -193,50 +207,59 @@ class PowerConfigurationPageTests(unittest.TestCase):
         self.assertTrue(data.channel_protection("CH1", "voltage"))
         self.assertFalse(data.channel_protection("CH1", "current"))
 
-    def test_clicking_a_card_protection_check_writes_the_form_switch(self):
+    def test_clicking_a_card_protection_check_updates_the_config_and_dirty(self):
         page = self.make_page()
-        controls = self._channel_controls(page)
-        switch = controls["voltage_protection_enabled"]
+        card = self._card(page)
+        card.set_channel_enabled("CH1", True)
         changes: list[bool] = []
         page.fragment_changed.connect(lambda: changes.append(True))
-        self.assertFalse(switch.isChecked())
 
-        QTest.mouseClick(
-            page.card_wall,
-            Qt.LeftButton,
-            pos=self._card_check_position(
-                page, "DP8B1519", "CH1", "voltage"
-            ),
-        )
+        check = card.protection_check("CH1", "voltage")
+        QTest.mouseClick(check, Qt.LeftButton, pos=check.rect().center())
 
-        self.assertTrue(switch.isChecked())
+        self.assertTrue(card.channel_protection("CH1", "voltage"))
         self.assertTrue(
-            page.card_wall.cards()[0].data.channel_protection("CH1", "voltage")
+            page.build_config()["instruments"]["power_supplies"]["DP8B1519"][
+                "channels"
+            ]["CH1"]["voltage"]["protection_enabled"]
         )
-        self.assertEqual(changes, [True], "卡面点击要计入 dirty")
+        self.assertEqual(changes, [True], "卡面勾选要计入 dirty")
 
-    def test_toggling_the_form_protection_switch_updates_the_card(self):
+    def test_editing_a_card_value_writes_the_config_and_marks_dirty(self):
         page = self.make_page()
-        controls = self._channel_controls(page)
-        self.assertFalse(
-            page.card_wall.cards()[0].data.channel_protection("CH1", "current")
-        )
+        card = self._card(page)
+        card.set_channel_enabled("CH1", True)
 
-        controls["current_protection_enabled"].setChecked(True)
+        card.value_field("CH1", "voltage").setValue(7.5)
 
-        self.assertTrue(
-            page.card_wall.cards()[0].data.channel_protection("CH1", "current")
-        )
+        channel = page.build_config()["instruments"]["power_supplies"]["DP8B1519"][
+            "channels"
+        ]["CH1"]
+        self.assertEqual(channel["voltage"]["value"], 7.5)
+        self.assertEqual(channel["voltage"]["protection"], 8.25)
+        self.assertTrue(page.is_dirty())
+
+    def test_leaving_and_reentering_the_page_resets_the_channel_switches(self):
+        page = self.make_page()
+        card = self._card(page)
+        card.set_channel_enabled("CH1", True)
+
+        page.hide()
+        page.show()
+        self.app.processEvents()
+
+        self.assertFalse(self._card(page).channel_enabled("CH1"))
 
     def test_read_only_or_morphing_page_does_not_toggle_from_the_card(self):
         page = self.make_page()
-        controls = self._channel_controls(page)
-        position = self._card_check_position(page, "DP8B1519", "CH1", "voltage")
+        card = self._card(page)
+        card.set_channel_enabled("CH1", True)
+        check = card.protection_check("CH1", "voltage")
 
         page.set_read_only("1.0 配置只能查看")
         self.assertFalse(page.card_wall.isEnabled())
-        QTest.mouseClick(page.card_wall, Qt.LeftButton, pos=position)
-        self.assertFalse(controls["voltage_protection_enabled"].isChecked())
+        QTest.mouseClick(check, Qt.LeftButton, pos=check.rect().center())
+        self.assertFalse(card.protection_check("CH1", "voltage").isChecked())
 
         page.set_read_only(None)
         self.assertTrue(page.card_wall.isEnabled())
@@ -245,8 +268,8 @@ class PowerConfigurationPageTests(unittest.TestCase):
             {"DP8B1519": QRect(start.x(), start.y(), 170, 80)}
         )
         self.assertFalse(page.card_wall.isEnabled(), "过渡中不接受卡面点击")
-        QTest.mouseClick(page.card_wall, Qt.LeftButton, pos=position)
-        self.assertFalse(controls["voltage_protection_enabled"].isChecked())
+        QTest.mouseClick(check, Qt.LeftButton, pos=check.rect().center())
+        self.assertFalse(card.protection_check("CH1", "voltage").isChecked())
         page.finish_card_morph()
         self.assertTrue(page.card_wall.isEnabled())
 
@@ -312,9 +335,9 @@ class PowerConfigurationPageTests(unittest.TestCase):
             ),
             "计划候选是每台已绑定电源声明（或默认）的全部通道",
         )
-        self.assertEqual(page.power_tabs.count(), 2)
+        self.assertEqual(len(page.card_wall.cards()), 2)
 
-    def test_power_tabs_are_titled_with_the_label_and_model(self):
+    def test_cards_show_each_supply_code_and_identity_tooltip(self):
         page = PowerConfigurationPage(
             {
                 "instruments": {
@@ -329,11 +352,12 @@ class PowerConfigurationPageTests(unittest.TestCase):
         page.show()
         self.app.processEvents()
 
-        titles = [
-            page.power_tabs.tabText(index) for index in range(page.power_tabs.count())
-        ]
-        self.assertEqual(titles, ["DP832A（DP8B1519）", "DP832A（DP8B0885）"])
+        self.assertEqual(
+            [cell.data.code for cell in page.card_wall.cards()],
+            ["DP8B1519", "DP8B0885"],
+        )
         self.assertEqual(set(page.power_config_widgets), {"DP8B1519", "DP8B0885"})
+        self.assertIn("DP832A", page.card_wall.supply_card("DP8B1519").toolTip())
 
     # ---- 驱动模式 -----------------------------------------------------------
 

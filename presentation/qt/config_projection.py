@@ -47,9 +47,9 @@ DEFAULT_ATTENUATOR_TYPE = "40dB"
 DEFAULT_DRIVER_MODE_ENABLED = True
 DEFAULT_MAX_INPUT_POWER = 33.5
 DEFAULT_PA_UNIT_COUNT = "2"
-# 电源通道的空配置基线：重置时把工作值/保护值填成它，构建模块把非法或缺失的字段也显示
-# 成它（见 :func:`presentation.qt.config_power_section.spin_value`），因此“没写这个字段”
-# 与“字段类型不对”在页面上是同一个显示值，规则只有一处。
+# 电源通道的空配置基线：重置时把工作值/保护值填成它，卡片输入框也把非法或缺失的字段
+# 显示成它（见 :func:`presentation.qt.power_card.PowerSupplyCard.set_data`），因此“没写
+# 这个字段”与“字段类型不对”在页面上是同一个显示值，规则只有一处。
 DEFAULT_POWER_CHANNEL_VALUE = 0.0
 
 
@@ -90,7 +90,7 @@ def supply_option_label(supply_id: str, model: Any = None) -> str:
     设备身份。
 
     显示规则只有一份实现（:func:`domain.instruments.labels.supply_display_label`）：电源
-    标签页标题、日志与身份文本都用它，不在这里另写一套格式；缩写码缺失时也不会从型号或
+    显示文本、日志与身份文本都用它，不在这里另写一套格式；缩写码缺失时也不会从型号或
     完整设备码推导出一个看起来像 ``supply_id`` 的字符串。
     """
     return supply_display_label(supply_id, model)

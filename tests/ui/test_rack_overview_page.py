@@ -683,6 +683,55 @@ class RackOverviewPageTests(unittest.TestCase):
             "芯片上边应是与卡片一致的 1px 浅色边",
         )
 
+    # ---- 链路几何与功放标签 -----------------------------------------------
+
+    def test_empty_slots_are_the_size_of_the_shrunk_power_chip(self):
+        """九宫格的虚线框和托盘里的电源芯片一样大，电源放进去不会换尺寸。"""
+        page = self._page()
+        page.finish_transition()
+        supply = page.power_supply_ids()[0]
+        slot = page.board._slot_rects()[0]
+        chip = page.board._tray_layout()[supply]
+
+        self.assertEqual(slot.size(), chip.size())
+        self.assertAlmostEqual(slot.height(), rack._CHIP_HEIGHT, places=6)
+
+    def test_the_three_rf_cables_are_equally_long(self):
+        """信号源—Driver、Driver—DUT、DUT—频谱仪三段线等长，四件仪器大致等距。"""
+        left = rack._DRIVER_RECT.left() - rack._CHAIN_LEFT
+        middle = rack._DUT_RECT.left() - rack._DRIVER_RECT.right()
+        right = rack._CHAIN_RIGHT - rack._DUT_RECT.right()
+
+        self.assertAlmostEqual(left, middle, places=6)
+        self.assertAlmostEqual(middle, right, places=6)
+        self.assertGreater(
+            middle, 120.0, "中间要给射频线留出完整一段，不能只剩两个接头"
+        )
+
+    def test_amplifier_triangles_are_not_stretched_sideways(self):
+        self.assertLessEqual(
+            rack._AMP_WIDTH,
+            rack._AMP_HEIGHT + 4.0,
+            "三角宽高应接近，不能横向拉长",
+        )
+
+    def test_amplifier_label_is_centred_in_the_triangle_in_times_new_roman(self):
+        rect = QRectF(100.0, 200.0, rack._AMP_WIDTH, rack._AMP_HEIGHT)
+        text = rack._amplifier_text_rect(rect)
+        font = rack._amplifier_font()
+
+        self.assertEqual(font.families()[0], "Times New Roman")
+        self.assertTrue(font.bold())
+        self.assertAlmostEqual(
+            text.center().x(),
+            rect.left() + rect.width() / 3.0,
+            places=6,
+            msg="文字中心应落在三角形重心的横坐标上",
+        )
+        self.assertAlmostEqual(text.center().y(), rect.center().y(), places=6)
+        self.assertGreaterEqual(text.left(), rect.left())
+        self.assertLessEqual(text.right(), rect.left() + rect.width() * 2.0 / 3.0)
+
 
 if __name__ == "__main__":
     unittest.main()

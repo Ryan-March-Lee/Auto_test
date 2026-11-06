@@ -94,10 +94,11 @@ _CHIP_GAP = 22.0
 _TRAY_TOP = 4.0
 
 #: 九宫格：现场电源架的 3×3 摆位，每格最多一台电源。
+#: 空格虚线与缩小后的电源芯片同高，电源拖进格子时不会先换一个尺寸。
 _SLOT_COLUMNS = 3
 _SLOT_ROWS = 3
 _SLOT_COUNT = _SLOT_COLUMNS * _SLOT_ROWS
-_SLOT_HEIGHT = 68.0
+_SLOT_HEIGHT = _CHIP_HEIGHT
 _SLOT_H_GAP = _CHIP_GAP
 _SLOT_V_GAP = 12.0
 _GRID_TOP = _TRAY_TOP + _CHIP_HEIGHT + 26.0
@@ -116,20 +117,25 @@ _CARD_MARGIN = 24.0
 _CARD_TOP = _DESIGN_HEIGHT - 8.0 - CARD_HEIGHT
 _CHAIN_Y = _CARD_TOP + CARD_HEIGHT / 2.0
 
-#: 两个功放三角：Driver 在左、DUT 在右，成对居中；中间留一段短电缆。
-_AMP_WIDTH = 116.0
+#: 两个功放三角：Driver 在左、DUT 在右，横向不再拉长（宽高接近）。
+#: 三段射频线等长：信号源—Driver、Driver—DUT、DUT—频谱仪；四件仪器因此大致等距，
+#: 中间那段也有足够的长度把射频线完整画出来。
+_AMP_WIDTH = 88.0
 _AMP_HEIGHT = 86.0
-_AMP_GAP = 20.0
 
 _CENTER_X = _DESIGN_WIDTH / 2.0
 _CHAIN_LEFT = _CARD_MARGIN + CARD_WIDTH
 _CHAIN_RIGHT = _DESIGN_WIDTH - _CARD_MARGIN - CARD_WIDTH
-_AMP_PAIR_LEFT = _CENTER_X - (_AMP_WIDTH * 2.0 + _AMP_GAP) / 2.0
+_CHAIN_SPAN = _CHAIN_RIGHT - _CHAIN_LEFT
+_AMP_GAP = (_CHAIN_SPAN - _AMP_WIDTH * 2.0) / 3.0
 _DRIVER_RECT = QRectF(
-    _AMP_PAIR_LEFT, _CHAIN_Y - _AMP_HEIGHT / 2.0, _AMP_WIDTH, _AMP_HEIGHT
+    _CHAIN_LEFT + _AMP_GAP,
+    _CHAIN_Y - _AMP_HEIGHT / 2.0,
+    _AMP_WIDTH,
+    _AMP_HEIGHT,
 )
 _DUT_RECT = QRectF(
-    _AMP_PAIR_LEFT + _AMP_WIDTH + _AMP_GAP,
+    _DRIVER_RECT.right() + _AMP_GAP,
     _CHAIN_Y - _AMP_HEIGHT / 2.0,
     _AMP_WIDTH,
     _AMP_HEIGHT,
@@ -170,6 +176,29 @@ def _slot_font() -> QFont:
     font = QFont(card_code_font())
     font.setPointSizeF(14.0)
     return font
+
+
+#: 功放三角里的器件名：与效果图一致的衬线字体，居中写在三角形重心上。
+_AMP_FONT_FAMILIES = ("Times New Roman", "Liberation Serif", "DejaVu Serif")
+_AMP_FONT_SIZE = 13.0
+
+
+def _amplifier_font() -> QFont:
+    font = QFont()
+    font.setFamilies(list(_AMP_FONT_FAMILIES))
+    font.setStyleHint(QFont.StyleHint.Serif)
+    font.setPointSizeF(_AMP_FONT_SIZE)
+    font.setBold(True)
+    return font
+
+
+def _amplifier_text_rect(rect: QRectF) -> QRectF:
+    """器件名在三角里的绘制区域：以三角形重心（横向 1/3 处）为文字中心。
+
+    指向右侧的等腰三角，肉眼看最居中的位置是重心而不是外接矩形的中心：文字区域
+    取左起 2/3 宽，中心正好落在重心的横坐标上，长一点的 ``Driver`` 也不会顶到右尖角。
+    """
+    return QRectF(rect.left(), rect.top(), rect.width() * 2.0 / 3.0, rect.height())
 
 
 def _elided(font: QFont, text: str, width: float) -> str:
@@ -1231,17 +1260,10 @@ class _RackBoard(QWidget):
         painter.setPen(outline)
         painter.drawPath(path)
         painter.setPen(_INK)
-        font = QFont(card_code_font())
-        font.setPointSizeF(13.0)
-        font.setBold(True)
-        painter.setFont(font)
-        text_rect = QRectF(
-            rect.left() + 10.0,
-            rect.top(),
-            rect.width() - 16.0,
-            rect.height(),
+        painter.setFont(_amplifier_font())
+        painter.drawText(
+            _amplifier_text_rect(rect), int(Qt.AlignCenter), label
         )
-        painter.drawText(text_rect, int(Qt.AlignCenter), label)
 
 
 class RackOverviewPage(QWidget):

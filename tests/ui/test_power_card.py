@@ -4,11 +4,12 @@
 
 - :class:`PowerCardDataTests`：两个通道、通道顺序、两个工作值必须是有限非负数，
   两个保护开关必须是 bool；
-- :class:`PowerCardLayoutTests`：440×232 卡面里每个开关、数值框与勾选框都在自己的
-  通道内；第一行是 ``VS / IS``，第二行是电压保护、电流保护两个勾选框，底部一行
-  自动阈值提示；
+- :class:`PowerCardLayoutTests`：卡面里每个开关、数值框与勾选框都在自己的通道内；
+  通道底色从卡片顶边铺到卡底，两个开关贴住左右上角，设备码铭牌在顶部正中；第一行是
+  ``VS / IS``，第二行是左右两个勾选框（文字都写「10%保护」，左右位置区分电压/电流），
+  卡片到勾选行结束，没有底部说明行；
 - :class:`PowerCardRenderTests`：导出的位图与页面控件共用一份绘制，开启/关闭的
-  通道底色、数值框、勾选框、提示与圆形电源键都按状态变化；
+  通道底色、数值框、勾选框与圆形电源键都按状态变化；
 - :class:`PowerSupplyCardWidgetTests`：通道开关与保护勾选框可点击、可键盘操作、
   只改卡面状态，并且程序化设置与整卡换数据都不会悄悄发信号。
 
@@ -197,7 +198,7 @@ class PowerCardDataTests(unittest.TestCase):
 
 
 class PowerCardLayoutTests(unittest.TestCase):
-    """卡面几何：440×232，两个通道各占一半，值、勾选框与提示都落在自己的通道里。"""
+    """卡面几何：两个通道各占一半，值、勾选框与提示都落在自己的通道里。"""
 
     def test_channels_split_the_card_into_two_halves(self):
         layout = power_card_layout()
@@ -211,19 +212,15 @@ class PowerCardLayoutTests(unittest.TestCase):
         self.assertAlmostEqual(first.panel.width(), POWER_CARD_WIDTH / 2.0)
         self.assertAlmostEqual(first.panel.right(), second.panel.left())
         self.assertAlmostEqual(first.panel.top(), second.panel.top())
+        # 通道底色从卡片顶边一直铺到卡底：删掉 CH1/CH2 后不再留标题带。
+        for channel in layout.channels:
+            self.assertAlmostEqual(channel.panel.top(), layout.card.top())
+            self.assertAlmostEqual(channel.panel.bottom(), layout.card.bottom())
 
     def test_each_channel_controls_are_inside_its_panel_and_do_not_overlap(self):
         for channel in power_card_layout().channels:
             with self.subTest(channel=channel.channel):
-                self.assertTrue(channel.panel.contains(channel.label))
                 self.assertTrue(channel.panel.contains(channel.switch))
-                self.assertTrue(channel.panel.contains(channel.hint))
-                self.assertLessEqual(channel.switch.right(), channel.label.left())
-                self.assertEqual(
-                    channel.switch.center().y(),
-                    channel.label.center().y(),
-                    "开关与通道标题必须处在同一行",
-                )
                 self.assertEqual(len(channel.value_labels), 2)
                 self.assertEqual(len(channel.value_boxes), 2)
                 self.assertEqual(len(channel.protection_checks), 2)
@@ -236,9 +233,6 @@ class PowerCardLayoutTests(unittest.TestCase):
                     self.assertEqual(label.center().y(), box.center().y())
                 self.assertLessEqual(
                     channel.switch.bottom(), channel.value_boxes[0].top()
-                )
-                self.assertLessEqual(
-                    channel.label.bottom(), channel.value_boxes[0].top()
                 )
                 for index, (check, indicator, label_rect) in enumerate(
                     zip(
@@ -267,8 +261,10 @@ class PowerCardLayoutTests(unittest.TestCase):
                     channel.value_boxes[0].bottom(),
                     channel.protection_checks[0].top(),
                 )
+                # 保护勾选是卡片最下面一行：删掉灰字后下沿仍留在卡内。
                 self.assertLessEqual(
-                    channel.protection_checks[0].bottom(), channel.hint.top()
+                    channel.protection_checks[0].bottom(),
+                    channel.panel.bottom(),
                 )
 
     def test_values_are_arranged_vs_then_is(self):
@@ -290,20 +286,30 @@ class PowerCardLayoutTests(unittest.TestCase):
                     channel.protection_indicators[1].center().y(),
                 )
 
-    def test_switch_and_label_form_one_centred_row(self):
-        """开关在左、标题在右，两者作为一整组在通道里居中。"""
+    def test_switches_sit_at_the_outer_top_corners(self):
+        """两个电源键分别贴住左右上角，顶部正中留给设备码铭牌。"""
+        layout = power_card_layout()
+        first, second = layout.channels
+
+        self.assertEqual(first.switch.center().y(), second.switch.center().y())
+        self.assertAlmostEqual(first.switch.left(), first.panel.left() + 12.0)
+        self.assertAlmostEqual(second.switch.right(), second.panel.right() - 12.0)
+        self.assertAlmostEqual(
+            first.switch.center().y(),
+            layout.title.center().y(),
+            msg="电源键与设备码铭牌共用同一条水平中线",
+        )
+        self.assertLess(first.switch.right(), layout.title.left())
+        self.assertLess(layout.title.right(), second.switch.left())
+        self.assertLessEqual(first.switch.width(), first.panel.width() / 3.0)
+        self.assertAlmostEqual(
+            layout.title.center().x(), layout.card.center().x(), msg="铭牌水平居中"
+        )
+
+    def test_card_has_no_channel_label_geometry(self):
+        """``CH1`` / ``CH2`` 字样已从卡面删除：通道布局里不再有标题框。"""
         for channel in power_card_layout().channels:
-            with self.subTest(channel=channel.channel):
-                self.assertLess(channel.switch.right(), channel.label.left())
-                self.assertAlmostEqual(
-                    (channel.switch.left() + channel.label.right()) / 2.0,
-                    channel.panel.center().x(),
-                )
-                self.assertAlmostEqual(
-                    channel.switch.center().y(),
-                    channel.label.center().y(),
-                )
-                self.assertLessEqual(channel.switch.width(), channel.panel.width() / 3.0)
+            self.assertFalse(hasattr(channel, "label"))
 
 
 class PowerCardRenderTests(unittest.TestCase):
@@ -439,7 +445,8 @@ class PowerCardRenderTests(unittest.TestCase):
                         TOKENS["surface"].lower(),
                     )
 
-    def test_protection_labels_and_hint_draw_ink(self):
+    def test_protection_labels_draw_ink(self):
+        """四个勾选框右侧都画「10%保护」，卡面不再有底部灰字。"""
         image = render_power_card(_data()).toImage()
         for channel in power_card_layout().channels:
             for label_rect in channel.protection_labels:
@@ -447,13 +454,12 @@ class PowerCardRenderTests(unittest.TestCase):
                     self.assertGreater(
                         _ink_count(image, label_rect.adjusted(2.0, 2.0, -2.0, -2.0)),
                         0,
-                        "勾选框右侧应画出“电压保护”/“电流保护”",
+                        "勾选框右侧应画出「10%保护」",
                     )
-            self.assertGreater(
-                _ink_count(image, channel.hint),
-                0,
-                "通道底部应画出自动阈值提示",
-            )
+        self.assertFalse(
+            hasattr(power_card_layout().channels[0], "hint"),
+            "底部自动阈值提示行已删除",
+        )
 
     def test_power_switch_body_follows_the_channel_state(self):
         """圆形电源键：关闭是深灰金属面，点亮后转绿；采样点避开图标与内阴影。"""
@@ -491,13 +497,20 @@ class PowerCardRenderTests(unittest.TestCase):
         )
 
     def test_empty_code_still_draws_a_placeholder(self):
-        data = PowerSupplyCardData(code="", channels=_data().channels)
-        image = render_power_card(data).toImage()
+        """没有设备码时铭牌里画占位横线，而不是留下一块空白牌。"""
+        badge = power_card_layout().title
+        inner = badge.adjusted(14.0, 12.0, -14.0, -12.0)
+        placeholder = render_power_card(
+            PowerSupplyCardData(code="", channels=_data().channels)
+        ).toImage()
+        named = render_power_card(_data()).toImage()
 
-        self.assertGreater(
-            _ink_count(image, power_card_layout().title.toRect()),
-            0,
-            "没有设备码时画占位横线，而不是留下一整条空白标题带",
+        placeholder_ink = _ink_count(placeholder, inner)
+        self.assertGreater(placeholder_ink, 0)
+        self.assertLess(
+            placeholder_ink,
+            _ink_count(named, inner),
+            "占位横线不应画出完整设备码的墨量",
         )
 
 

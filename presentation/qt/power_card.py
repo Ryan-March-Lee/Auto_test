@@ -2,18 +2,19 @@
 
 这张卡只有正面，不参与设备发现的发牌动画，因此没有牌背。卡面内容自上而下：
 
-- **设备码缩写**：整张卡最上面的一行，等宽加粗字，只写 ``label``（``DP8B1519``）；
-- **两个通道**：左右各一半，每个通道顶部是一行“圆形电源键 + ``CH1`` / ``CH2``”，
-  开关在左、标题在右，两者共用同一条基线；
+- **设备码铭牌**：顶部正中的白色圆角牌，等宽加粗字只写 ``label``（``DP8B1519``），
+  压住左右两半的分界线；
+- **两个通道**：左右各一半，通道底色从卡片顶边一直铺到卡底，两个圆形电源键分别贴住
+  左右上角；卡面不再写 ``CH1`` / ``CH2``，通道身份只由左右位置、底色和悬浮提示表达；
 - **两个可编辑值**：每个通道第一行左右各一个，``VS``（电压设定）、``IS``（电流设定）；
   数值框是真实的 ``QDoubleSpinBox``，启用的通道里可以直接输入，配置读写仍走页面/表单
   Adapter，卡片不自己写文件；
-- **两个保护勾选框**：每个通道第二行左右各一个，左边电压保护、右边电流保护，
-  勾选状态来自配置里的 ``voltage.protection_enabled`` /
-  ``current.protection_enabled``；卡面不再显示保护数值，阈值仍由配置读取按工作值的
-  110% 推导；
-- **自动阈值提示**：通道底部一行小字说明“勾选后保护阈值自动 +10%”；
-- **通道开关**：关闭时该通道整块降为灰色（``disabled_bg``），数值框、勾选框、标签
+- **两个保护勾选框**：每个通道第二行左右各一个，左边电压保护、右边电流保护；
+  两个勾选框的卡面文字统一是「10%保护」——左右位置（分别压在 VS / IS 数值框下方）
+  和悬浮提示区分电压/电流，勾选状态来自配置里的 ``voltage.protection_enabled`` /
+  ``current.protection_enabled``；卡面不再显示保护数值，也不再有底部那行说明文字，
+  阈值仍由配置读取按工作值的 110% 推导；
+- **通道开关**：关闭时该通道整块降为灰色（``disabled_bg``），数值框、勾选框、文案
   与开关一起变灰；打开时恢复通道底色（左浅蓝、右浅琥珀），电源键同时点亮：边框转白、
   底色转绿、四周泛起绿色辉光，图标描边加粗并让圆环带一圈青色光。
 
@@ -21,7 +22,7 @@
 勾选，不写回配置，也不影响上电计划；卡片的启用状态每次进入页面都从灰色开始。两个
 通道始终保留在配置里，保存时两条通道的当前值都会写出。
 
-卡片同时支持两种尺寸：``render_power_card`` 按 440×232 的原始逻辑尺寸导出静态
+卡片同时支持两种尺寸：``render_power_card`` 按 440×166 的原始逻辑尺寸导出静态
 位图，``PowerSupplyCard`` 则按卡片墙给的缩放比例设置控件尺寸；绘制统一在
 ``painter.scale`` 之后按原始坐标进行，因此放大/缩小后的卡面与导出图同源。数值输入框、
 电源键与保护勾选框都是真实子控件，鼠标与键盘操作由 Qt 直接处理。身份详情（完整设备码、
@@ -34,12 +35,12 @@
 则直接取终态。
 
 **尺寸与字体**：卡片固定为 :data:`POWER_CARD_WIDTH` × :data:`POWER_CARD_HEIGHT`
-（440×232，约 1.9:1），圆角取 :data:`presentation.qt.theme.CARD_RADIUS`，与设备
-发现卡片同值；圆形电源键的直径按卡片高度取比例（:data:`_SWITCH_DIAMETER`），
-卡片改尺寸时开关跟着缩放。字体系列取自 :func:`presentation.qt.theme.card_code_font`，
-只改字号，不再另起一套字体。
-颜色全部来自 :data:`presentation.qt.theme.TOKENS`，其中包括为两个通道新增的
-``channel_cool`` / ``channel_warm`` 两个浅底色与 ``power_switch_*`` 一组开关色。
+（440×166，约 2.7:1），圆角取 :data:`presentation.qt.theme.CARD_RADIUS`，与设备
+发现卡片同值；圆形电源键的直径与改版前一致（42），卡片变矮后仍是容易点中的目标，
+卡片再缩放时开关跟着缩放。字体系列取自 :func:`presentation.qt.theme.card_code_font`，
+只改字号，不再另起一套字体。颜色全部来自 :data:`presentation.qt.theme.TOKENS`，
+其中包括两个通道新增的 ``channel_cool`` / ``channel_warm`` 两个浅底色与
+``power_switch_*`` 一组开关色。
 
 **运行约束**：位图用 ``QPixmap`` 绘制，必须在创建 ``QApplication`` 之后、在 GUI
 线程里调用。卡片控件本身也只在 GUI 线程中使用。
@@ -109,28 +110,34 @@ __all__ = [
 #: 电源固定两个通道，顺序也是卡面上的左右顺序：左边 CH1，右边 CH2。
 CHANNEL_NAMES = ("CH1", "CH2")
 
-#: 卡片逻辑尺寸：440×232，约 1.9:1，正好放进配置页右栏。
+#: 卡片逻辑尺寸：440×166，约 2.7:1，正好放进配置页右栏。
 POWER_CARD_WIDTH = 440
-POWER_CARD_HEIGHT = 232
+POWER_CARD_HEIGHT = 166
 POWER_CARD_SIZE = QSize(POWER_CARD_WIDTH, POWER_CARD_HEIGHT)
 
 # ---- 卡面几何：所有位置都由这一组常量算出，绘制与控件命中区共用 -----------------
-_TITLE_HEIGHT = 64.0
 _PADDING = 14.0
 _HALF_WIDTH = POWER_CARD_WIDTH / 2.0
-# 圆形电源键：直径按卡片高度取 18%，与参考实现里 70px 按钮 / 约 390px 卡面的比例接近；
-# 卡片尺寸变化时开关跟着缩放，不另写死像素。开关与通道标题同处一行，开关在左。
-_SWITCH_DIAMETER = round(POWER_CARD_HEIGHT * 0.18, 1)
-_GRID_TOP = 130.0
-_SWITCH_CENTER_Y = (_TITLE_HEIGHT + _GRID_TOP) / 2.0
-_SWITCH_LABEL_GAP = 8.0
-_SWITCH_LABEL_WIDTH = 46.0
-_ROW_HEIGHT = 38.0
-_ROW_GAP = 10.0
-_BOX_HEIGHT = 28.0
+# 圆形电源键贴住左右上角：直径与改版前一致（42），卡片变矮后仍是容易点中的目标。
+# 卡片尺寸变化时开关跟着缩放，不另写死像素。
+_SWITCH_DIAMETER = 42.0
+#: 电源键到卡片外沿的距离（左通道取左、右通道取右）以及到顶边的距离。
+_SWITCH_INSET_X = 12.0
+_SWITCH_INSET_Y = 10.0
+# 设备码铭牌：顶部正中的白色圆角牌，宽度足够放下 8 位等宽设备码而不被省略。
+_TITLE_WIDTH = 148.0
+_TITLE_HEIGHT = 46.0
+_TITLE_TOP = 8.0
+#: ``VS`` / ``IS`` 一行的顶边：铭牌与电源键让出的空行删除后，工作值直接上移。
+_GRID_TOP = 72.0
+_ROW_HEIGHT = 34.0
+_ROW_GAP = 14.0
+_BOX_HEIGHT = 30.0
 _LABEL_WIDTH = 24.0
 _LABEL_GAP = 4.0
-_CELL_WIDTH = (_HALF_WIDTH - 2.0 * _PADDING - _ROW_GAP) / 2.0
+#: 同一行两个格子之间的横向间距；与纵向的 :data:`_ROW_GAP` 分开取值。
+_CELL_GAP = 10.0
+_CELL_WIDTH = (_HALF_WIDTH - 2.0 * _PADDING - _CELL_GAP) / 2.0
 _BOX_WIDTH = _CELL_WIDTH - _LABEL_WIDTH - _LABEL_GAP
 #: 第一行只剩工作值：VS（电压设定）、IS（电流设定）。
 _VALUE_TEXTS = ("VS", "IS")
@@ -145,14 +152,15 @@ VALUE_LIMITS = {
 VALUE_DECIMALS = 2
 #: 第二行是保护勾选框，顺序也是卡面上的左右顺序：左电压、右电流。
 PROTECTION_KINDS = ("voltage", "current")
-_PROTECTION_TEXTS = ("电压保护", "电流保护")
+#: 四个勾选框的卡面文字统一写「10%保护」：电压/电流的区分交给左右位置（分别压在
+#: VS / IS 数值框下方）与悬浮提示，卡面不再出现“电压/电流”字样，也不再有底部说明行。
+_PROTECTION_TEXTS = ("10%保护", "10%保护")
+#: 保护勾选框一行比工作值一行矮一点，让整张卡在底部收得干净。
+_PROTECTION_ROW_HEIGHT = 30.0
 #: 勾选框方块固定 14 逻辑像素，并与上一行的 ``VS`` / ``IS`` 标签共用同一条中线；
-#: 文字从数值框的左边缘开始，因此“电压保护”与“12.00”左对齐。
+#: 文字从数值框的左边缘开始，因此「10%保护」与「12.00」左对齐。
 _INDICATOR_SIZE = 14.0
 _INDICATOR_INSET = (_LABEL_WIDTH - _INDICATOR_SIZE) / 2.0
-_HINT_TEXT = "勾选后保护阈值自动 +10%"
-_HINT_TOP = _GRID_TOP + 2.0 * _ROW_HEIGHT + _ROW_GAP + 2.0
-_HINT_HEIGHT = 12.0
 
 # ---- 配色：全部来自 TOKENS，关闭态只换 token，不另造一套灰 ----------------------
 _SURFACE = QColor(TOKENS["surface"])
@@ -368,11 +376,10 @@ class PowerSupplyCardData:
 
 @dataclass(frozen=True)
 class PowerChannelLayout:
-    """一个通道在卡面坐标系里的位置：面板、标题、开关、两个值、两个勾选框与提示。"""
+    """一个通道在卡面坐标系里的位置：面板、开关、两个值与两个勾选框。"""
 
     channel: str
     panel: QRectF
-    label: QRectF
     switch: QRectF
     value_labels: tuple[QRectF, ...]
     value_boxes: tuple[QRectF, ...]
@@ -382,15 +389,14 @@ class PowerChannelLayout:
     protection_indicators: tuple[QRectF, ...]
     #: 两个保护勾选框的文字区，左边缘与上一行数值框对齐。
     protection_labels: tuple[QRectF, ...]
-    #: 通道底部“勾选后保护阈值自动 +10%”的一行小字。
-    hint: QRectF
 
 
 @dataclass(frozen=True)
 class PowerCardLayout:
-    """整张卡片的几何：卡片、标题带与左右两个通道。"""
+    """整张卡片的几何：卡片、设备码铭牌与左右两个通道。"""
 
     card: QRectF
+    #: 顶部正中设备码铭牌的矩形（不再是一条通栏标题带）。
     title: QRectF
     channels: tuple[PowerChannelLayout, ...]
 
@@ -399,39 +405,40 @@ def power_card_layout() -> PowerCardLayout:
     """算出整张卡片的几何；绘制、命中区与测试都读这一份结果。
 
     卡片尺寸固定，因此不需要宽高参数。左右通道按 :data:`CHANNEL_NAMES` 的顺序
-    排列；每个通道顶部是“开关在左、标题在右”的一行，第一行是 ``VS / IS`` 两个
-    工作值，第二行是电压保护、电流保护两个勾选框，底部一行小字提示自动阈值。
+    排列，通道底色从卡片顶边铺到底边：每个通道的圆形电源键贴住自己外侧的上角，
+    工作值与保护勾选框依次往下排，保护勾选框是卡片最下面一行。
     """
     card = QRectF(0.0, 0.0, float(POWER_CARD_WIDTH), float(POWER_CARD_HEIGHT))
-    title = QRectF(0.0, 0.0, float(POWER_CARD_WIDTH), _TITLE_HEIGHT)
+    title = QRectF(
+        (POWER_CARD_WIDTH - _TITLE_WIDTH) / 2.0,
+        _TITLE_TOP,
+        _TITLE_WIDTH,
+        _TITLE_HEIGHT,
+    )
     channels: list[PowerChannelLayout] = []
     for index, name in enumerate(CHANNEL_NAMES):
         left = index * _HALF_WIDTH
         panel = QRectF(
             left,
-            _TITLE_HEIGHT,
+            0.0,
             _HALF_WIDTH,
-            float(POWER_CARD_HEIGHT) - _TITLE_HEIGHT,
+            float(POWER_CARD_HEIGHT),
         )
-        # 开关 + 标题当作一整组在通道里居中；标题框只放“小色点 + CH1/CH2”，
-        # 宽度按最宽的三个等宽字预留，绘制时再按实际字宽在框内居中。
-        row_width = _SWITCH_DIAMETER + _SWITCH_LABEL_GAP + _SWITCH_LABEL_WIDTH
+        # 电源键贴住本通道的外侧上角：左通道靠左，右通道靠右，两个键的水平线一致。
+        if index == 0:
+            switch_x = left + _SWITCH_INSET_X
+        else:
+            switch_x = left + _HALF_WIDTH - _SWITCH_INSET_X - _SWITCH_DIAMETER
         switch = QRectF(
-            left + (_HALF_WIDTH - row_width) / 2.0,
-            _SWITCH_CENTER_Y - _SWITCH_DIAMETER / 2.0,
+            switch_x,
+            _SWITCH_INSET_Y,
             _SWITCH_DIAMETER,
-            _SWITCH_DIAMETER,
-        )
-        label = QRectF(
-            switch.right() + _SWITCH_LABEL_GAP,
-            switch.top(),
-            _SWITCH_LABEL_WIDTH,
             _SWITCH_DIAMETER,
         )
         value_labels: list[QRectF] = []
         value_boxes: list[QRectF] = []
         for value_index in range(len(_VALUE_TEXTS)):
-            cell_x = left + _PADDING + value_index * (_CELL_WIDTH + _ROW_GAP)
+            cell_x = left + _PADDING + value_index * (_CELL_WIDTH + _CELL_GAP)
             cell_y = _GRID_TOP
             value_labels.append(
                 QRectF(cell_x, cell_y, _LABEL_WIDTH, _ROW_HEIGHT)
@@ -448,16 +455,16 @@ def power_card_layout() -> PowerCardLayout:
         protection_indicators: list[QRectF] = []
         protection_labels: list[QRectF] = []
         for protection_index in range(len(PROTECTION_KINDS)):
-            cell_x = left + _PADDING + protection_index * (_CELL_WIDTH + _ROW_GAP)
+            cell_x = left + _PADDING + protection_index * (_CELL_WIDTH + _CELL_GAP)
             cell_y = _GRID_TOP + _ROW_HEIGHT + _ROW_GAP
             protection_checks.append(
-                QRectF(cell_x, cell_y, _CELL_WIDTH, _ROW_HEIGHT)
+                QRectF(cell_x, cell_y, _CELL_WIDTH, _PROTECTION_ROW_HEIGHT)
             )
             # 方块与上一行 ``VS`` / ``IS`` 标签同一条中线；文字与数值框左对齐。
             protection_indicators.append(
                 QRectF(
                     cell_x + _INDICATOR_INSET,
-                    cell_y + (_ROW_HEIGHT - _INDICATOR_SIZE) / 2.0,
+                    cell_y + (_PROTECTION_ROW_HEIGHT - _INDICATOR_SIZE) / 2.0,
                     _INDICATOR_SIZE,
                     _INDICATOR_SIZE,
                 )
@@ -467,27 +474,19 @@ def power_card_layout() -> PowerCardLayout:
                     cell_x + _LABEL_WIDTH + _LABEL_GAP,
                     cell_y,
                     _BOX_WIDTH,
-                    _ROW_HEIGHT,
+                    _PROTECTION_ROW_HEIGHT,
                 )
             )
-        hint = QRectF(
-            left + _PADDING,
-            _HINT_TOP,
-            _HALF_WIDTH - 2.0 * _PADDING,
-            _HINT_HEIGHT,
-        )
         channels.append(
             PowerChannelLayout(
                 channel=name,
                 panel=panel,
-                label=label,
                 switch=switch,
                 value_labels=tuple(value_labels),
                 value_boxes=tuple(value_boxes),
                 protection_checks=tuple(protection_checks),
                 protection_indicators=tuple(protection_indicators),
                 protection_labels=tuple(protection_labels),
-                hint=hint,
             )
         )
     return PowerCardLayout(card=card, title=title, channels=tuple(channels))
@@ -503,13 +502,6 @@ def _rounded(rect: QRectF, inset: float = 0.0) -> QPainterPath:
     path = QPainterPath()
     path.addRoundedRect(adjusted, radius, radius)
     return path
-
-
-def _channel_label_font() -> QFont:
-    """通道标题 ``CH1`` / ``CH2``：比设备码小一号，仍用等宽加粗。"""
-    font = QFont(card_code_font())
-    font.setPointSizeF(10.5)
-    return font
 
 
 def _value_label_font() -> QFont:
@@ -534,13 +526,6 @@ def _protection_font() -> QFont:
     return font
 
 
-def _hint_font() -> QFont:
-    """通道底部的自动阈值提示：8pt 常规字重。"""
-    font = QFont(card_status_font())
-    font.setPointSizeF(8.0)
-    return font
-
-
 def _accent(index: int) -> QColor:
     """通道强调色：左边主色，右边警告色。"""
     return _PRIMARY if index == 0 else _WARNING
@@ -553,17 +538,43 @@ def _panel_fill(index: int, enabled: bool) -> QColor:
     return _COOL if index == 0 else _WARM
 
 
+def _rounded_rect(rect: QRectF, radius: float) -> QPainterPath:
+    """任意圆角矩形轮廓；铭牌与投影用同一个半径族。"""
+    path = QPainterPath()
+    path.addRoundedRect(rect, radius, radius)
+    return path
+
+
 def _paint_title(painter: QPainter, data: PowerSupplyCardData, rect: QRectF) -> None:
-    """设备码缩写：一行等宽加粗字，居中；过长时右侧省略。"""
-    text = data.code or "—"
+    """设备码铭牌：顶部正中的白色圆角牌，压住左右两半的分界线。
+
+    牌面比通道底色亮，设备码因此不会被两半的蓝/黄底色染色；外沿叠两层极淡的
+    ``text`` 色圆角矩形当投影，不依赖模糊滤镜，离屏渲染与页面显示一致。
+    """
+    radius = 12.0
     painter.save()
-    painter.setFont(card_code_font())
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    painter.setPen(Qt.NoPen)
+    for grow, alpha in ((3.0, 0.045), (1.6, 0.070)):
+        shadow = rect.adjusted(-grow, -grow + 2.0, grow, grow + 2.0)
+        painter.fillPath(
+            _rounded_rect(shadow, radius + grow),
+            _with_alpha(_TEXT, alpha),
+        )
+    plate = _rounded_rect(rect, radius)
+    painter.fillPath(plate, _SURFACE)
+    painter.setBrush(Qt.NoBrush)
+    painter.setPen(QPen(_BORDER, 1.0))
+    painter.drawPath(plate)
+
+    font = card_code_font()
+    painter.setFont(font)
     painter.setPen(_TEXT if data.code else _TEXT_MUTED)
-    metrics = QFontMetricsF(card_code_font())
-    available = max(0.0, rect.width() - 2.0 * _PADDING)
-    elided = metrics.elidedText(text, Qt.ElideRight, available)
+    metrics = QFontMetricsF(font)
+    available = max(0.0, rect.width() - 20.0)
+    elided = metrics.elidedText(data.code or "—", Qt.ElideRight, available)
     painter.drawText(
-        rect.adjusted(_PADDING, 0.0, -_PADDING, 0.0),
+        rect.adjusted(10.0, 0.0, -10.0, 0.0),
         int(Qt.AlignCenter),
         elided,
     )
@@ -583,48 +594,6 @@ def _paint_channel_panel(
     painter.fillRect(
         QRectF(layout.panel.left(), layout.panel.top(), layout.panel.width(), 2.0),
         accent,
-    )
-    painter.restore()
-
-
-def _paint_channel_label(
-    painter: QPainter,
-    layout: PowerChannelLayout,
-    index: int,
-    enabled: bool,
-) -> None:
-    """通道标题：一个小色点 + ``CH1`` / ``CH2``，与开关并排、在标题框内居中。"""
-    font = _channel_label_font()
-    metrics = QFontMetricsF(font)
-    text = layout.channel
-    dot = 6.0
-    gap = 6.0
-    text_width = metrics.horizontalAdvance(text)
-    total = dot + gap + text_width
-    start = layout.label.center().x() - total / 2.0
-    color = _accent(index) if enabled else _TEXT_MUTED
-    painter.save()
-    painter.setPen(Qt.NoPen)
-    painter.setBrush(color)
-    painter.drawEllipse(
-        QRectF(
-            start,
-            layout.label.center().y() - dot / 2.0,
-            dot,
-            dot,
-        )
-    )
-    painter.setFont(font)
-    painter.setPen(color)
-    painter.drawText(
-        QRectF(
-            start + dot + gap,
-            layout.label.top(),
-            text_width + 2.0,
-            layout.label.height(),
-        ),
-        int(Qt.AlignLeft | Qt.AlignVCenter),
-        text,
     )
     painter.restore()
 
@@ -749,15 +718,6 @@ def _paint_protection(
         int(Qt.AlignLeft | Qt.AlignVCenter),
         label,
     )
-    painter.restore()
-
-
-def _paint_hint(painter: QPainter, rect: QRectF, enabled: bool) -> None:
-    """通道底部的自动阈值提示：一行灰色小字，关闭通道时同样降到禁用色。"""
-    painter.save()
-    painter.setFont(_hint_font())
-    painter.setPen(_TEXT_MUTED if enabled else _DISABLED_TEXT)
-    painter.drawText(rect, int(Qt.AlignCenter), _HINT_TEXT)
     painter.restore()
 
 
@@ -949,18 +909,9 @@ def _paint_power_card(
         channel = data.channels[index]
         _paint_channel_panel(painter, channel_layout, index, channel.enabled)
 
-    # 标题带下边线与左右通道分隔线：两条都是 1px，压在通道底色上。
+    # 左右通道分隔线：1px，从卡片顶边一直压到卡底；顶部中间由设备码铭牌盖住。
     painter.fillRect(
-        QRectF(0.0, _TITLE_HEIGHT - 1.0, float(POWER_CARD_WIDTH), 1.0),
-        _BORDER,
-    )
-    painter.fillRect(
-        QRectF(
-            _HALF_WIDTH,
-            _TITLE_HEIGHT,
-            1.0,
-            float(POWER_CARD_HEIGHT) - _TITLE_HEIGHT,
-        ),
+        QRectF(_HALF_WIDTH, 0.0, 1.0, float(POWER_CARD_HEIGHT)),
         _BORDER,
     )
 
@@ -968,8 +919,8 @@ def _paint_power_card(
 
     for index, channel_layout in enumerate(layout.channels):
         channel = data.channels[index]
-        # 先画开关再画文字与数值：按钮的辉光是装饰，数据与标题必须压在最上层，
-        # 否则绿色光晕会把数值框和标题一起染色（参考实现里按钮 z-index 高于同级内容）。
+        # 先画开关再画文字与数值：按钮的辉光是装饰，数据必须压在最上层，
+        # 否则绿色光晕会把数值框一起染色（参考实现里按钮 z-index 高于同级内容）。
         _paint_switch(
             painter,
             channel_layout.switch,
@@ -981,7 +932,6 @@ def _paint_power_card(
             focused=focus_channel == channel.channel,
             pressed=pressed_channel == channel.channel,
         )
-        _paint_channel_label(painter, channel_layout, index, channel.enabled)
         values = (channel.voltage_set, channel.current_set)
         for value_index, (label_rect, box_rect) in enumerate(
             zip(channel_layout.value_labels, channel_layout.value_boxes)
@@ -1007,7 +957,6 @@ def _paint_power_card(
                 hovered=hover_protection == (channel.channel, kind),
                 focused=focus_protection == (channel.channel, kind),
             )
-        _paint_hint(painter, channel_layout.hint, channel.enabled)
 
     painter.setBrush(Qt.NoBrush)
     painter.setPen(QPen(_BORDER, 1.0))
@@ -1134,7 +1083,7 @@ class ProtectionCheck(QAbstractButton):
         self.setAccessibleDescription("勾选后保护阈值自动取比设定值高 10% 的值")
 
     def sizeHint(self) -> QSize:
-        return QSize(round(_CELL_WIDTH), round(_ROW_HEIGHT))
+        return QSize(round(_CELL_WIDTH), round(_PROTECTION_ROW_HEIGHT))
 
     def paintEvent(self, event) -> None:
         # 外观由父卡片统一画；这里只接受事件，不留下任何控件自己的底色。
@@ -1703,6 +1652,7 @@ class PowerSupplyCard(QWidget):
         )
         lines = [
             identity or "未识别电源",
+            "左侧 CH1 · 右侧 CH2；卡面不再标注通道号，位置与底色即通道",
             "VS 电压设定（V） · IS 电流设定（A）",
             "点击电源键启用通道后可编辑；保护阈值自动取比设定值高 10% 的值",
         ]

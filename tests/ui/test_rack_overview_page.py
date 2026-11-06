@@ -164,7 +164,33 @@ class RackOverviewPageTests(unittest.TestCase):
         for index, supply in enumerate(page.power_supply_ids()):
             page.place_supply(supply, index)
         page.next_btn.click()
+        self.assertEqual(emitted, [], "淡出动画结束前还不能切页")
+        page.finish_transition()
         self.assertEqual(emitted, [True])
+
+    def test_next_fades_out_everything_but_the_power_tiles(self):
+        """点“下一步”先淡出其余内容：卡片位置不变，淡出结束才切页。"""
+        page = self._page()
+        page.finish_transition()
+        supplies = page.power_supply_ids()
+        for index, supply in enumerate(supplies):
+            page.place_supply(supply, index)
+
+        rects = page.power_tile_rects_global()
+        self.assertEqual(set(rects), set(supplies))
+        for rect in rects.values():
+            self.assertFalse(rect.isEmpty())
+
+        page.next_btn.click()
+        self.assertTrue(page.next_transition_running())
+
+        page._set_next_progress(0.5)
+        self.assertAlmostEqual(page.board._finish_progress, 0.5)
+        self.assertAlmostEqual(page.header_opacity(), 0.5)
+        self.assertEqual(page.power_tile_rects_global(), rects, "卡片不能挪位")
+
+        page.finish_transition()
+        self.assertFalse(page.next_transition_running())
 
     def test_back_button_label_is_previous_step(self):
         page = self._page()
@@ -599,34 +625,34 @@ class RackOverviewPageTests(unittest.TestCase):
             "卡片轮廓外不应再有一圈深色粗描边",
         )
 
-    def test_morph_code_font_matches_the_card_at_the_start_and_the_chip_at_the_end(self):
-        """设备码只在卡片字号与芯片字号之间过渡：两端都没有突然变大变小。"""
-        chip = card_code_font()
+    def test_morph_code_font_matches_the_card_at_the_start_and_the_tile_at_the_end(self):
+        """设备码只在卡片字号与卡片字号之间过渡：两端都没有突然变大变小。"""
+        tile = card_code_font()
         scale = 0.8
 
-        start = rack._morph_code_font(chip, card_code_font(), scale, 0.0)
+        start = rack._morph_code_font(tile, card_code_font(), scale, 0.0)
         self.assertAlmostEqual(
             start.pointSizeF() * scale,
-            chip.pointSizeF(),
+            tile.pointSizeF(),
             places=6,
             msg="起点要等于真实卡片上的字号",
         )
-        end = rack._morph_code_font(chip, card_code_font(), scale, 1.0)
+        end = rack._morph_code_font(tile, card_code_font(), scale, 1.0)
         self.assertAlmostEqual(
-            end.pointSizeF(), chip.pointSizeF(), places=6, msg="终点要等于静止芯片的字号"
+            end.pointSizeF(), tile.pointSizeF(), places=6, msg="终点要等于静止卡片的字号"
         )
 
     def test_reverse_morph_code_font_goes_back_to_the_card_size(self):
-        """返回动画从芯片字号出发，结束时又是结果区卡片上的字号。"""
-        chip = card_code_font()
+        """返回动画从卡片字号出发，结束时又是结果区卡片上的字号。"""
+        tile = card_code_font()
         scale = 0.8
 
         start = rack._morph_code_font(
-            chip, card_code_font(), scale, 0.0, reverse=True
+            tile, card_code_font(), scale, 0.0, reverse=True
         )
-        self.assertAlmostEqual(start.pointSizeF(), chip.pointSizeF(), places=6)
+        self.assertAlmostEqual(start.pointSizeF(), tile.pointSizeF(), places=6)
         end = rack._morph_code_font(
-            chip, card_code_font(), scale, 1.0, reverse=True
+            tile, card_code_font(), scale, 1.0, reverse=True
         )
         self.assertAlmostEqual(
             end.pointSizeF() * scale,
@@ -635,28 +661,28 @@ class RackOverviewPageTests(unittest.TestCase):
             msg="返回动画结束时必须回到卡片字号",
         )
 
-    def test_morph_code_rect_ends_at_the_static_chip_text_area(self):
-        chip = QRectF(10.0, 20.0, 170.0, 80.0)
+    def test_morph_code_rect_ends_at_the_static_tile_text_area(self):
+        tile = QRectF(10.0, 20.0, 170.0, 80.0)
         row = QRectF(9.0, 9.0, 172.0, 44.0)
 
-        text = rack._morph_code_rect(chip, row, 1.0, 1.0)
-        chip_text = chip.adjusted(
-            rack._CHIP_TEXT_INSET, 0.0, -rack._CHIP_TEXT_INSET, 0.0
+        text = rack._morph_code_rect(tile, row, 1.0, 1.0)
+        tile_text = tile.adjusted(
+            rack._TILE_TEXT_INSET, 0.0, -rack._TILE_TEXT_INSET, 0.0
         )
 
         self.assertEqual(
             text,
-            chip_text,
-            "动画终点必须落在静止芯片的文字区域上",
+            tile_text,
+            "动画终点必须落在静止卡片的文字区域上",
         )
         self.assertEqual(
-            rack._morph_code_rect(chip, row, 1.0, 0.0, reverse=True),
-            chip_text,
-            "返回动画的起点同样落在静止芯片的文字区域上",
+            rack._morph_code_rect(tile, row, 1.0, 0.0, reverse=True),
+            tile_text,
+            "返回动画的起点同样落在静止卡片的文字区域上",
         )
 
-    def test_morph_end_frame_matches_the_static_chip(self):
-        """动画最后一帧与静止芯片逐像素一致，交回静止画面时不会再跳一下。"""
+    def test_morph_end_frame_matches_the_static_tile(self):
+        """动画最后一帧与静止卡片逐像素一致，交回静止画面时不会再跳一下。"""
         page = self._page()
         board = page.board
         rect = QRectF(10.0, 20.0, 170.0, 80.0)
@@ -685,43 +711,43 @@ class RackOverviewPageTests(unittest.TestCase):
             )
         )
         static = paint(
-            lambda painter: board._paint_chip(
+            lambda painter: board._paint_tile(
                 painter, rect, "DP8B1519", card_code_font()
             )
         )
 
-        self.assertEqual(morph, static, "缩小动画的终点必须与托盘芯片完全一致")
+        self.assertEqual(morph, static, "缩小动画的终点必须与托盘卡片完全一致")
 
-    def test_chip_border_is_the_card_border_not_a_dark_outline(self):
-        """动画结束后电源芯片也只留卡片原来的 1px 浅边，不把深色描边加回来。"""
+    def test_tile_border_is_the_card_border_not_a_dark_outline(self):
+        """动画结束后电源卡片也只留卡片原来的 1px 浅边，不把深色描边加回来。"""
         page = self._page()
         rect = QRectF(0.0, 0.0, 170.0, 80.0)
         image = QImage(170, 80, QImage.Format.Format_ARGB32)
         image.fill(QColor(0, 0, 0, 0))
         painter = QPainter(image)
         try:
-            page.board._paint_chip(painter, rect, "DP8B1519", card_code_font())
+            page.board._paint_tile(painter, rect, "DP8B1519", card_code_font())
         finally:
             painter.end()
 
         self.assertEqual(
             image.pixelColor(85, 0).name(),
             QColor(TOKENS["border"]).name(),
-            "芯片上边应是与卡片一致的 1px 浅色边",
+            "卡片上边应是与卡片一致的 1px 浅色边",
         )
 
     # ---- 链路几何与功放标签 -----------------------------------------------
 
-    def test_empty_slots_are_the_size_of_the_shrunk_power_chip(self):
-        """九宫格的虚线框和托盘里的电源芯片一样大，电源放进去不会换尺寸。"""
+    def test_empty_slots_are_the_size_of_the_shrunk_power_tile(self):
+        """九宫格的虚线框和托盘里的电源卡片一样大，电源放进去不会换尺寸。"""
         page = self._page()
         page.finish_transition()
         supply = page.power_supply_ids()[0]
         slot = page.board._slot_rects()[0]
-        chip = page.board._tray_layout()[supply]
+        tile = page.board._tray_layout()[supply]
 
-        self.assertEqual(slot.size(), chip.size())
-        self.assertAlmostEqual(slot.height(), rack._CHIP_HEIGHT, places=6)
+        self.assertEqual(slot.size(), tile.size())
+        self.assertAlmostEqual(slot.height(), rack._TILE_HEIGHT, places=6)
 
     def test_the_three_rf_cables_are_equally_long(self):
         """信号源—Driver、Driver—DUT、DUT—频谱仪三段线等长，四件仪器大致等距。"""
@@ -781,16 +807,16 @@ class RackOverviewPageTests(unittest.TestCase):
             msg="没有 Driver 时两侧射频线仍要等长",
         )
 
-    def test_drag_preview_is_smaller_than_the_resting_chip(self):
-        """拿起电源时跟手位图缩小一点，而不是比静止芯片更大。"""
+    def test_drag_preview_is_smaller_than_the_resting_tile(self):
+        """拿起电源时跟手位图缩小一点，而不是比静止卡片更大。"""
         page = self._page()
         page.finish_transition()
         board = page.board
         supply = page.power_supply_ids()[0]
-        rect = board._chip_rect(supply)
+        rect = board._tile_rect(supply)
         scale, _offset = board._transform()
 
-        preview = board._render_chip(supply, rect)
+        preview = board._render_tile(supply, rect)
         ratio = float(preview.devicePixelRatio()) or 1.0
         logical_width = preview.width() / ratio
         logical_height = preview.height() / ratio
@@ -817,19 +843,19 @@ class RackOverviewPageTests(unittest.TestCase):
         page.place_supply(supply, 0)
 
         sizes = []
-        original = board._paint_chip
+        original = board._paint_tile
 
         def record(painter, rect, text, font):
             sizes.append(font.pointSizeF())
             original(painter, rect, text, font)
 
-        board._paint_chip = record
+        board._paint_tile = record
         try:
             page.grab()
         finally:
-            del board._paint_chip
+            del board._paint_tile
 
-        self.assertTrue(sizes, "摆好电源后至少要画出格位与托盘的芯片")
+        self.assertTrue(sizes, "摆好电源后至少要画出格位与托盘的卡片")
         self.assertEqual(set(sizes), {card_code_font().pointSizeF()})
 
 

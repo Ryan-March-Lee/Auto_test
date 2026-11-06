@@ -9,7 +9,7 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, QRect, Qt
 from PySide6.QtWidgets import QApplication
 
 from presentation.qt.config_projection import ConfigBackfillError
@@ -130,6 +130,48 @@ class PowerConfigurationPageTests(unittest.TestCase):
         self.assertIsNotNone(page.power_section)
         self.assertEqual(page.power_tabs.count(), 1)
         self.assertIn("DP8B1519", page.power_tabs.tabText(0))
+
+    def test_the_card_view_is_the_main_area_above_the_form(self):
+        """页面以通道卡片为主：卡片在内容列顶部，参数表单接在下面。"""
+        page = self.make_page()
+
+        self.assertIsNotNone(page.card_wall)
+        self.assertEqual(
+            [cell.supply_id for cell in page.card_wall.cards()], ["DP8B1519"]
+        )
+        self.assertLess(
+            page.card_wall.geometry().top(),
+            page.binding_group.geometry().top(),
+            "卡片在表单上方",
+        )
+
+    def test_rack_slots_decide_the_cards_relative_positions(self):
+        """排布页的九宫格格位决定卡片在页面上的相对位置。"""
+        page = self.make_page()
+        page.apply_device_bindings(power_supply_bindings("DP8B1519", "DP8B0885"))
+        page.set_rack_slots({"DP8B1519": 0, "DP8B0885": 4})
+
+        first = page.card_wall.card_rect("DP8B1519")
+        second = page.card_wall.card_rect("DP8B0885")
+        self.assertLess(first.x(), second.x())
+        self.assertLess(first.y(), second.y())
+
+    def test_the_card_morph_runs_between_the_rack_tiles_and_the_wall(self):
+        page = self.make_page()
+        start = page.mapToGlobal(QPoint(240, 420))
+        starts = {"DP8B1519": QRect(start.x(), start.y(), 170, 80)}
+
+        self.assertTrue(page.play_card_morph(starts))
+        self.assertTrue(page.card_morph_running())
+        overlay = page._card_morph
+        self.assertEqual(
+            [item.supply_id for item in overlay.items()], ["DP8B1519"]
+        )
+
+        page.finish_card_morph()
+
+        self.assertFalse(page.card_morph_running())
+        self.assertTrue(page.card_wall.paint_enabled(), "交接后卡片墙恢复自绘")
 
     def test_a_read_only_document_disables_the_power_form_and_shows_the_reason(self):
         page = self.make_page()

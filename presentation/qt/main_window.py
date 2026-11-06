@@ -250,19 +250,19 @@ class MainWindow(QMainWindow):
         )
 
     def _open_configuration_page(self) -> None:
-        """仪表配置完成：进入工作区；保存、创建运行与连接仪器都归参数页最终按钮。"""
+        """排布完成：进电源配置页，把排布页的电源卡片展开成通道卡片。"""
         self.coordinator.begin_configuration()
-        self.tab_widget.setCurrentIndex(0)
+        self.power_page.set_rack_slots(self.rack_page.slot_assignments())
+        self.tab_widget.setCurrentIndex(self.tab_widget.indexOf(self.power_page))
         self.view_stack.setCurrentWidget(self.workspace_page)
         self._sync_status_panel_visibility()
         self._sync_finalize_entry()
+        self.power_page.play_card_morph(self.rack_page.power_tile_rects_global())
 
     def _return_to_connection_page(self, *, keep_results: bool = False) -> None:
         """回上一步：参数配置页重新查找；排布页保留本次选择结果（``keep_results``）。"""
-        if keep_results:
-            self.connection_page.resume()
-        else:
-            self.connection_page.enter()
+        enter = self.connection_page.resume if keep_results else self.connection_page.enter
+        enter()
         self.view_stack.setCurrentWidget(self.connection_page)
         self._sync_status_panel_visibility()
 

@@ -1,5 +1,11 @@
 """独立电源配置页（``PowerConfigurationPage``）。
 
+页面以通道卡片为主视图：每台电源一张带蓝黄通道的卡片，按仪器排布页九宫格的
+相对位置摆在内容列顶部（:mod:`presentation.qt.power_card_wall`），原来的设备绑定、
+通道参数、上电计划与漏极表单整体接在卡片下方。进入本页时，排布页的电源卡片从
+屏幕原位展开成完整卡片（:mod:`presentation.qt.power_card_morph`），卡片墙与
+过渡层共用同一份卡片位置。
+
 电源参数、通道上电计划与效率测量漏极都归本页；测试参数、运行入口与
 设备发现仍属于 :mod:`presentation.qt.configuration_page` 与
 :mod:`presentation.qt.instrument_setup_page`。页面只把控件组合成显式的电源片段，
@@ -27,7 +33,7 @@ from __future__ import annotations
 import copy
 from typing import Any, Mapping
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QPoint, QRect, QRectF, Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QGroupBox,
@@ -52,6 +58,8 @@ from .config_power_section import (
 )
 from .config_projection import ConfigBackfillError
 from .pages import PageControllerBindingMixin
+from .power_card_morph import PowerCardMorphItem, PowerCardMorphOverlay
+from .power_card_wall import PowerCardWall, power_card_data
 from .theme import PAGE_CONTENT_MAX_WIDTH
 
 __all__ = ["PowerConfigurationPage"]
@@ -89,6 +97,11 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         self._silent = False
         self._finalizing = False
         self._fragment_signal_connections: list[tuple[Any, Any]] = []
+        #: 仪器排布页的九宫格结果（``supply_id -> 格位下标``），卡片视图按它排相对位置。
+        self._rack_slots: dict[str, int] = {}
+        #: 卡片 → 排布页的过渡覆盖层；不在过渡中时为 ``None``。
+        self._card_morph: PowerCardMorphOverlay | None = None
+        self.card_wall: PowerCardWall | None = None
         self.build_ui()
         self._connect_signals()
         self.update_driver_power_ui()
@@ -107,10 +120,12 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+        self._scroll = scroll
         content = QWidget()
         content.setMaximumWidth(PAGE_CONTENT_MAX_WIDTH)
         column = QVBoxLayout(content)
-        column.setContentsMargins(0, 0, 4, 0)
+        # 顶部留一点呼吸：卡片不贴住标签栏。
+        column.setContentsMargins(0, 8, 4, 0)
         column.setSpacing(12)
         self.read_only_notice = QLabel()
         self.read_only_notice.setObjectName("powerReadOnlyNotice")
@@ -118,11 +133,15 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         self.read_only_notice.setWordWrap(True)
         self.read_only_notice.setVisible(False)
         column.addWidget(self.read_only_notice)
+        # 卡片视图是页面的主角：放在内容列最上方、水平居中，参数表单接在下面。
+        self.card_wall = PowerCardWall(content)
+        column.addWidget(self.card_wall)
         column.addWidget(self._build_binding_widgets())
         self._build_power_widgets(column)
         column.addStretch(1)
         scroll.setWidget(content)
         root.addWidget(scroll, 1)
+        self._refresh_card_wall()
         return self
 
     def _build_binding_widgets(self) -> QGroupBox:
@@ -214,6 +233,145 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             self.power_section.driver_power_plan_box.setVisible(self.test_mode_enabled)
             self.power_section.set_driver_plan_active(self.test_mode_enabled)
 
+    # ---- 卡片视图 -----------------------------------------------------------
+
+    def set_rack_slots(self, slots: Any) -> None:
+        """接收仪器排布页的九宫格结果，卡片按同一相对位置摆放。"""
+        cleaned: dict[str, int] = {}
+        if isinstance(slots, Mapping):
+            for supply_id, index in slots.items():
+                try:
+                    value = int(index)
+                except (TypeError, ValueError):
+                    continue
+                if 0 <= value < 9:
+                    cleaned[str(supply_id)] = value
+        self._rack_slots = cleaned
+        self._refresh_card_wall()
+
+    def _card_cards(self) -> list[tuple[str, Any]]:
+        """当前配置里每台电源的卡片数据；顺序与表单标签页一致。"""
+        return [
+            (supply_id, power_card_data(entry, supply_id))
+            for supply_id, entry in self._power_supply_sources().items()
+        ]
+
+    def _refresh_card_wall(self) -> None:
+        """按当前配置与排布结果重画卡片墙；没有电源时整块高度收为 0。"""
+        wall = self.card_wall
+        if wall is None:
+            return
+        wall.set_cards(self._card_cards(), self._rack_slots)
+
+    def play_card_morph(self, start_rects: Any) -> bool:
+        """从排布页卡片的屏幕位置展开成卡片；返回是否真的播放了动画。
+
+        ``start_rects`` 是 ``supply_id -> 全局 QRect``。页面必须已经是当前页并完成
+        布局；拿不到卡片或起点时直接显示静止卡片墙（返回 ``False``）。
+        """
+        wall = self.card_wall
+        if wall is None or wall.is_empty() or not isinstance(start_rects, Mapping):
+            return False
+        starts = {
+            str(supply_id): rect
+            for supply_id, rect in start_rects.items()
+            if isinstance(rect, QRect) and not rect.isEmpty()
+        }
+        if not starts:
+            return False
+        # 卡片墙在内容最上方：先把滚动条收回顶部，动画终点才和屏幕上的卡片对齐。
+        self._scroll.verticalScrollBar().setValue(0)
+        self._scroll.horizontalScrollBar().setValue(0)
+        self._settle_card_layout()
+        # 排布页的卡片写的是设备发现卡片上的缩写码/完整码；电源配置的键是
+        # supply_id。两边在旧设备表里可能只差一个 full_code，这里按身份别名对上，
+        # 不让一张已经摆好的卡片因为编码来源不同而丢掉动画。
+        aliases: dict[str, set[str]] = {}
+        for supply_id, entry in self._power_supply_sources().items():
+            names = {str(supply_id)}
+            for field in ("label", "full_code"):
+                value = entry.get(field) if isinstance(entry, Mapping) else None
+                if isinstance(value, str) and value.strip():
+                    names.add(value.strip())
+            aliases[str(supply_id)] = names
+        items: list[PowerCardMorphItem] = []
+        for cell in wall.cards():
+            start = starts.get(cell.supply_id)
+            if start is None:
+                names = aliases.get(cell.supply_id, {cell.supply_id})
+                start = next(
+                    (starts[name] for name in names if name in starts), None
+                )
+            target = wall.card_rect(cell.supply_id)
+            if start is None or target is None or target.isEmpty():
+                continue
+            top_left = self.mapFromGlobal(start.topLeft())
+            mapped = wall.mapTo(self, QPoint(round(target.x()), round(target.y())))
+            items.append(
+                PowerCardMorphItem(
+                    supply_id=cell.supply_id,
+                    code=cell.data.code or cell.supply_id,
+                    start=QRectF(
+                        float(top_left.x()),
+                        float(top_left.y()),
+                        float(start.width()),
+                        float(start.height()),
+                    ),
+                    target=QRectF(
+                        float(mapped.x()),
+                        float(mapped.y()),
+                        target.width(),
+                        target.height(),
+                    ),
+                    pixmap=wall.card_pixmap(cell.supply_id),
+                )
+            )
+        if not items:
+            return False
+        self.finish_card_morph()
+        wall.set_paint_enabled(False)
+        overlay = PowerCardMorphOverlay(self, items)
+        overlay.setGeometry(self.rect())
+        overlay.finished.connect(lambda: self._finish_card_morph_overlay(overlay))
+        self._card_morph = overlay
+        overlay.start()
+        return True
+
+    def card_morph_running(self) -> bool:
+        return self._card_morph is not None
+
+    def finish_card_morph(self) -> None:
+        """立即结束过渡；没有过渡时什么也不做。"""
+        overlay = self._card_morph
+        if overlay is not None:
+            overlay.finish_now()
+
+    def _finish_card_morph_overlay(self, overlay: PowerCardMorphOverlay) -> None:
+        if self._card_morph is not overlay:
+            return
+        self._card_morph = None
+        if self.card_wall is not None:
+            self.card_wall.set_paint_enabled(True)
+        overlay.deleteLater()
+
+    def _settle_card_layout(self) -> None:
+        """强制跑一次内容列布局，确保卡片墙已有真实宽度与位置。"""
+        wall = self.card_wall
+        if wall is None:
+            return
+        layout = self.layout()
+        if layout is not None:
+            layout.activate()
+        parent = wall.parentWidget()
+        if parent is not None and parent.layout() is not None:
+            parent.layout().activate()
+        wall.refresh_layout()
+
+    def resizeEvent(self, event: Any) -> None:
+        super().resizeEvent(event)
+        if self._card_morph is not None:
+            self._card_morph.setGeometry(self.rect())
+
     def set_test_mode(self, enabled: bool) -> None:
         """设置欢迎页选择的驱放测试模式，并刷新依赖它的电源派生状态。
 
@@ -244,6 +402,7 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         finally:
             self._silent = False
         self._refresh_binding_status()
+        self._refresh_card_wall()
         self._emit_fragment_changed()
 
     # ---- 绑定状态 -----------------------------------------------------------
@@ -323,6 +482,7 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         )
         # 重建会把通道控件换成新对象：旧连接随控件一起失效，必须按新控件重连。
         self._wire_fragment_signals()
+        self._refresh_card_wall()
 
     def _current_power_tab_key(self) -> str | None:
         if self.power_section is None:
@@ -423,6 +583,7 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             self.update_driver_power_ui()
             self.update_power_supply_options()
             self._refresh_binding_status()
+            self._refresh_card_wall()
             self.mark_clean()
         finally:
             self._silent = False

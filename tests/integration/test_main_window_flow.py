@@ -411,8 +411,11 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         )
         window.rack_page.finish_transition()
         window.rack_page.next_btn.click()
+        # 排布页先把除电源卡片外的内容淡出，再进电源配置页展开通道卡片。
+        window.rack_page.finish_transition()
         self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
-        self.assertIs(window.tab_widget.currentWidget(), window.config_page)
+        self.assertIs(window.tab_widget.currentWidget(), window.power_page)
+        window.power_page.finish_card_morph()
 
     def test_connection_page_is_not_a_tab_and_hides_the_status_panel(self):
         """仪器连接配置页占满整个界面：既不在标签栏里，也不显示进度与日志。"""
@@ -436,7 +439,9 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIs(window.view_stack.currentWidget(), window.rack_page)
         window.rack_page.finish_transition()
         window.rack_page.next_btn.click()
+        window.rack_page.finish_transition()
         self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
+        window.power_page.finish_card_morph()
 
         window.config_page.previous_step_btn.click()
         self.assertIs(window.view_stack.currentWidget(), window.connection_page)
@@ -447,8 +452,10 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIs(window.view_stack.currentWidget(), window.rack_page)
         window.rack_page.finish_transition()
         window.rack_page.next_btn.click()
+        window.rack_page.finish_transition()
         self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
-        self.assertIs(window.tab_widget.currentWidget(), window.config_page)
+        self.assertIs(window.tab_widget.currentWidget(), window.power_page)
+        window.power_page.finish_card_morph()
 
     def test_rack_previous_step_returns_to_the_same_selection_result(self):
         """仪器排布页的“上一步”回到本次选择结果，卡片与勾选都还在。"""

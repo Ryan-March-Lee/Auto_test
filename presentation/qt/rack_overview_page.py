@@ -12,6 +12,10 @@
 也不改变“电源配置”页的标签页顺序——它只帮助操作者在进入电源参数前把软件画面与现场
 对上。拖到已占用的格子会交换两台电源；拖回顶部托盘会把电源从格子里取出。
 
+点“下一步”时，本页先把除电源卡片以外的内容淡出，再把卡片的屏幕位置交给电源配置页；
+那边由 :class:`presentation.qt.power_card_morph.PowerCardMorphOverlay` 把卡片展开成
+带蓝黄通道的通道卡片，落到按同一九宫格相对位置摆放的卡片墙上。
+
 页面只依赖表现层：卡片正面由
 :func:`presentation.qt.card_assets.render_card_front` 按同一份
 ``InstrumentCardData`` 渲染，本页不截取控件，也不读写配置或连接仪器。
@@ -88,22 +92,22 @@ _DESIGN_WIDTH = 1120.0
 _DESIGN_HEIGHT = 664.0
 
 #: 顶部电源托盘：三张窄卡；三台电源时与九宫格的三列同宽同列，向下拖正好落到同一列。
-_CHIP_WIDTH = 170.0
-_CHIP_HEIGHT = 80.0
-_CHIP_GAP = 22.0
+_TILE_WIDTH = 170.0
+_TILE_HEIGHT = 80.0
+_TILE_GAP = 22.0
 #: 整块（托盘、九宫格、箭头）比原来的版面低一点，更靠近下面的测试链路。
 _TRAY_TOP = 44.0
 
 #: 九宫格：现场电源架的 3×3 摆位，每格最多一台电源。
-#: 空格虚线与缩小后的电源芯片同高，电源拖进格子时不会先换一个尺寸。
+#: 空格虚线与缩小后的电源卡片同高，电源拖进格子时不会先换一个尺寸。
 _SLOT_COLUMNS = 3
 _SLOT_ROWS = 3
 _SLOT_COUNT = _SLOT_COLUMNS * _SLOT_ROWS
-_SLOT_HEIGHT = _CHIP_HEIGHT
-_SLOT_H_GAP = _CHIP_GAP
+_SLOT_HEIGHT = _TILE_HEIGHT
+_SLOT_H_GAP = _TILE_GAP
 _SLOT_V_GAP = 12.0
-_GRID_TOP = _TRAY_TOP + _CHIP_HEIGHT + 26.0
-_GRID_WIDTH = _SLOT_COLUMNS * _CHIP_WIDTH + (_SLOT_COLUMNS - 1) * _SLOT_H_GAP
+_GRID_TOP = _TRAY_TOP + _TILE_HEIGHT + 26.0
+_GRID_WIDTH = _SLOT_COLUMNS * _TILE_WIDTH + (_SLOT_COLUMNS - 1) * _SLOT_H_GAP
 _GRID_LEFT = (_DESIGN_WIDTH - _GRID_WIDTH) / 2.0
 
 #: 向下箭头：从九宫格指向 DUT，表示架子给功放供电。
@@ -156,6 +160,9 @@ _GROUP_SLIDE = _DESIGN_HEIGHT - _GRID_TOP + 24.0
 #: 动画时长：与效果图一致的轻快节奏；点击可立即结束。
 _TRANSITION_MS = 700
 
+#: 点“下一步”后把除电源卡片以外的内容淡出，再切到电源配置页。
+_FINISH_MS = 260
+
 #: 顶部标题行在卡片动画**完全停下之后**才淡入的时长；返回时按下“上一步”立即隐藏。
 #: 不按动画进度提前淡入，卡片还在动的时候标题行绝不会出现。
 _HEADER_FADE_IN_MS = 160
@@ -168,14 +175,14 @@ _BORDER = QColor(TOKENS["border"])
 _PRIMARY = QColor(TOKENS["primary"])
 _PRIMARY_SOFT = QColor(TOKENS["primary_soft"])
 
-#: 电源卡缩小的最后一段把卡片位图淡出。卡片下边收拢到托盘芯片高度时，位图里剩下的
-#: 一截仪器图会被裁在芯片底边；淡掉之后动画终点与静止芯片完全一致，不会在结束时跳一下。
+#: 电源卡缩小的最后一段把卡片位图淡出。卡片下边收拢到托盘卡片高度时，位图里剩下的
+#: 一截仪器图会被裁在卡片底边；淡掉之后动画终点与静止卡片完全一致，不会在结束时跳一下。
 _MORPH_IMAGE_FADE_START = 0.8
 
-#: 芯片里设备码的左右留白：静止芯片与缩小动画终点共用，两边文字位置因此完全一致。
-_CHIP_TEXT_INSET = 10.0
+#: 卡片里设备码的左右留白：静止卡片与缩小动画终点共用，两边文字位置因此完全一致。
+_TILE_TEXT_INSET = 10.0
 
-#: 拖拽跟手位图相对静止芯片的缩放：拿起电源时略微收小，放下时再回到格位大小。
+#: 拖拽跟手位图相对静止卡片的缩放：拿起电源时略微收小，放下时再回到格位大小。
 _DRAG_PREVIEW_SCALE = 0.9
 
 #: 九宫格空位的虚线：与效果图一致的深色细虚线。
@@ -227,7 +234,7 @@ def _lerp(start: float, end: float, t: float) -> float:
 def _morph_image_fade(progress: float) -> float:
     """电源卡位图在缩小末段的剩余不透明度：1 完整、0 已淡出。
 
-    最后一段只留底色与设备码，卡片位图淡掉，动画终点因此与静止芯片逐像素一致。
+    最后一段只留底色与设备码，卡片位图淡掉，动画终点因此与静止卡片逐像素一致。
     """
     if progress <= _MORPH_IMAGE_FADE_START:
         return 1.0
@@ -236,7 +243,7 @@ def _morph_image_fade(progress: float) -> float:
 
 
 def _morph_code_font(
-    chip_font: QFont,
+    tile_font: QFont,
     card_font: QFont,
     scale: float,
     progress: float,
@@ -245,18 +252,19 @@ def _morph_code_font(
 ) -> QFont:
     """缩小过程中设备码的字号。
 
-    起点按画布缩放折算：卡片那一端在屏幕上与真实卡片同大；芯片那一端直接用芯片字号，
-    与静止芯片的文字完全一致。``reverse`` 为真时是返回动画（芯片 → 卡片），两端交换，
-    因此在结果区页面上看到的字号与动画最后一帧仍然一致。
+    起点按画布缩放折算：结果区卡片那一端在屏幕上与真实卡片同大；格位卡片那一端直接
+    用格位卡片的字号，与静止卡片的文字完全一致。``reverse`` 为真时是返回动画
+    （格位卡片 → 结果区卡片），两端交换，因此在结果区页面上看到的字号与动画最后一帧
+    仍然一致。
     """
-    font = QFont(chip_font)
+    font = QFont(tile_font)
     ratio = scale if scale > 0.0 else 1.0
     card_size = card_font.pointSizeF() / ratio
-    chip_size = chip_font.pointSizeF()
+    tile_size = tile_font.pointSizeF()
     font.setPointSizeF(
-        _lerp(chip_size, card_size, progress)
+        _lerp(tile_size, card_size, progress)
         if reverse
-        else _lerp(card_size, chip_size, progress)
+        else _lerp(card_size, tile_size, progress)
     )
     return font
 
@@ -269,17 +277,17 @@ def _morph_code_rect(
     *,
     reverse: bool = False,
 ) -> QRectF:
-    """设备码在缩小过程中的绘制矩形：卡片上的那一行与芯片内的居中区域之间过渡。"""
+    """设备码在缩小过程中的绘制矩形：卡片上的那一行与格位卡片内的居中区域之间过渡。"""
     card_rect = QRectF(
         rect.x() + row.x() * factor,
         rect.y() + row.y() * factor,
         row.width() * factor,
         row.height() * factor,
     )
-    chip_rect = rect.adjusted(_CHIP_TEXT_INSET, 0.0, -_CHIP_TEXT_INSET, 0.0)
+    tile_rect = rect.adjusted(_TILE_TEXT_INSET, 0.0, -_TILE_TEXT_INSET, 0.0)
     if reverse:
-        return _lerp_rect(chip_rect, card_rect, progress)
-    return _lerp_rect(card_rect, chip_rect, progress)
+        return _lerp_rect(tile_rect, card_rect, progress)
+    return _lerp_rect(card_rect, tile_rect, progress)
 
 
 def _lerp_rect(start: QRectF, end: QRectF, t: float) -> QRectF:
@@ -314,7 +322,7 @@ class RackCardEntry:
     截取控件、也不依赖上一页的布局对象。
 
     ``code_row`` 是设备码在卡片位图里的矩形（卡片坐标）。电源卡缩小时，页面按它在
-    卡片上的位置单独画出设备码，并把它平滑地送到芯片中心；位图本身不画设备码（见
+    卡片上的位置单独画出设备码，并把它平滑地送到卡片中心；位图本身不画设备码（见
     :func:`presentation.qt.card_assets.render_card_front` 的 ``include_code``），
     因此这行字不会随卡片一起缩小、也不会在动画结束时突然变大。
     """
@@ -394,7 +402,7 @@ class _RackBoard(QWidget):
         #: 一次返回动画正在进行；用它保证 ``exit_finished`` 只发一次。
         self._exit_pending = False
         #: 返回动画的起点：每台电源离开时的托盘/格位矩形（设计坐标）。
-        self._exit_chip_rects: dict[str, QRectF] = {}
+        self._exit_tile_rects: dict[str, QRectF] = {}
         self._animation = QVariantAnimation(self)
         self._animation.setDuration(_TRANSITION_MS)
         self._configure_animation(1)
@@ -405,6 +413,8 @@ class _RackBoard(QWidget):
         self._cable = _cable_asset()
         #: 本次进入时的测试模式：无驱放测试的链路里没有 Driver，只留主功放。
         self._driver_enabled = True
+        #: 点“下一步”后的淡出进度（0 静止 → 1 只剩电源卡片），由页面驱动。
+        self._finish_progress = 0.0
 
     # ---- 进入与动画 -------------------------------------------------------
 
@@ -420,6 +430,7 @@ class _RackBoard(QWidget):
         链路里只画一台主功放（DUT），信号源与频谱仪之间不再出现 Driver。
         """
         self._animation.stop()
+        self._finish_progress = 0.0
         self._driver_enabled = bool(driver_enabled)
         self._entries = list(entries)
         self._power_ids = []
@@ -438,7 +449,7 @@ class _RackBoard(QWidget):
         self._hover_target = None
         self._direction = 1
         self._exit_pending = False
-        self._exit_chip_rects.clear()
+        self._exit_tile_rects.clear()
         self._configure_animation(1)
         self._progress = 0.0
         self._running = bool(self._entries)
@@ -481,10 +492,10 @@ class _RackBoard(QWidget):
         if self._animation.state() == QVariantAnimation.Running:
             self._animation.stop()
         self._set_progress(1.0)
-        self._exit_chip_rects = {
+        self._exit_tile_rects = {
             supply_id: rect
             for supply_id in self._power_ids
-            if (rect := self._chip_rect(supply_id)) is not None
+            if (rect := self._tile_rect(supply_id)) is not None
         }
         self._direction = -1
         self._exit_pending = True
@@ -495,6 +506,34 @@ class _RackBoard(QWidget):
         self._notify_state()
         self.update()
         return True
+
+    def set_finish_progress(self, value: float) -> None:
+        """整页共用的淡出进度：排布页的页头、按钮与画布同时使用。"""
+        self._finish_progress = max(0.0, min(1.0, float(value)))
+        self.update()
+
+    def tile_rects_global(self) -> dict[str, QRect]:
+        """每台电源卡片当前在屏幕上的矩形；离开本页时作为卡片动画的起点。"""
+        scale, offset = self._transform()
+        rects: dict[str, QRect] = {}
+        for supply_id in self._power_ids:
+            rect = self._tile_rect(supply_id)
+            if rect is None:
+                continue
+            top_left = self.mapToGlobal(
+                QPoint(
+                    round(offset.x() + rect.x() * scale),
+                    round(offset.y() + rect.y() * scale),
+                )
+            )
+            rects[supply_id] = QRect(
+                top_left,
+                QPoint(
+                    top_left.x() + max(1, round(rect.width() * scale)),
+                    top_left.y() + max(1, round(rect.height() * scale)),
+                ),
+            )
+        return rects
 
     def finish_transition(self) -> None:
         """立即结束当前动画：入场直接呈现最终布局，返回直接完成并离开本页。"""
@@ -526,7 +565,7 @@ class _RackBoard(QWidget):
         self._direction = 1
         self._progress = 1.0
         self._running = False
-        self._exit_chip_rects.clear()
+        self._exit_tile_rects.clear()
         self._notify_state()
         self.update()
         self.exit_finished.emit()
@@ -616,7 +655,7 @@ class _RackBoard(QWidget):
     def _code_of(self, supply_id: str) -> str:
         return supply_id
 
-    def _chip_font(self, supply_id: str) -> QFont:
+    def _tile_font(self, supply_id: str) -> QFont:
         """托盘与格位里的设备码共用卡片字号：电源放下前后字体大小不变。"""
         return card_code_font()
 
@@ -691,9 +730,9 @@ class _RackBoard(QWidget):
     def _slot_rects(self) -> tuple[QRectF, ...]:
         return tuple(
             QRectF(
-                _GRID_LEFT + column * (_CHIP_WIDTH + _SLOT_H_GAP),
+                _GRID_LEFT + column * (_TILE_WIDTH + _SLOT_H_GAP),
                 _GRID_TOP + row * (_SLOT_HEIGHT + _SLOT_V_GAP),
-                _CHIP_WIDTH,
+                _TILE_WIDTH,
                 _SLOT_HEIGHT,
             )
             for row in range(_SLOT_ROWS)
@@ -705,19 +744,19 @@ class _RackBoard(QWidget):
         unplaced = [key for key in self._power_ids if key not in self._slot_of]
         if not unplaced:
             return {}
-        total = len(unplaced) * _CHIP_WIDTH + (len(unplaced) - 1) * _CHIP_GAP
+        total = len(unplaced) * _TILE_WIDTH + (len(unplaced) - 1) * _TILE_GAP
         left = (_DESIGN_WIDTH - total) / 2.0
         return {
             key: QRectF(
-                left + index * (_CHIP_WIDTH + _CHIP_GAP),
+                left + index * (_TILE_WIDTH + _TILE_GAP),
                 _TRAY_TOP,
-                _CHIP_WIDTH,
-                _CHIP_HEIGHT,
+                _TILE_WIDTH,
+                _TILE_HEIGHT,
             )
             for index, key in enumerate(unplaced)
         }
 
-    def _chip_rect(self, supply_id: str) -> QRectF | None:
+    def _tile_rect(self, supply_id: str) -> QRectF | None:
         index = self._slot_of.get(supply_id)
         if index is not None:
             return self._slot_rects()[index]
@@ -734,6 +773,9 @@ class _RackBoard(QWidget):
     # ---- 拖放 -------------------------------------------------------------
 
     def mousePressEvent(self, event: Any) -> None:
+        if self._finish_progress > 0.0:
+            event.accept()
+            return
         if self._running:
             self.finish_transition()
             event.accept()
@@ -741,7 +783,7 @@ class _RackBoard(QWidget):
         if event.button() != Qt.LeftButton:
             super().mousePressEvent(event)
             return
-        supply_id = self._chip_at(event.position().toPoint())
+        supply_id = self._tile_at(event.position().toPoint())
         if supply_id is None:
             super().mousePressEvent(event)
             return
@@ -752,7 +794,7 @@ class _RackBoard(QWidget):
         if self._press is None:
             hovering = (
                 not self._running
-                and self._chip_at(event.position().toPoint()) is not None
+                and self._tile_at(event.position().toPoint()) is not None
             )
             self.setCursor(Qt.OpenHandCursor if hovering else Qt.ArrowCursor)
             super().mouseMoveEvent(event)
@@ -770,10 +812,10 @@ class _RackBoard(QWidget):
         self._press = None
         super().mouseReleaseEvent(event)
 
-    def _chip_at(self, pos: QPoint) -> str | None:
+    def _tile_at(self, pos: QPoint) -> str | None:
         point = self._to_design(pos)
         for supply_id in self._power_ids:
-            rect = self._chip_rect(supply_id)
+            rect = self._tile_rect(supply_id)
             if rect is not None and rect.contains(point):
                 return supply_id
         return None
@@ -785,7 +827,7 @@ class _RackBoard(QWidget):
         return None
 
     def _begin_drag(self, supply_id: str, pos: QPoint) -> None:
-        rect = self._chip_rect(supply_id)
+        rect = self._tile_rect(supply_id)
         if rect is None:
             return
         scale, offset = self._transform()
@@ -795,7 +837,7 @@ class _RackBoard(QWidget):
             rect.width() * scale,
             rect.height() * scale,
         )
-        pixmap = self._render_chip(supply_id, rect)
+        pixmap = self._render_tile(supply_id, rect)
         mime = QMimeData()
         mime.setData(RACK_SUPPLY_MIME, supply_id.encode("utf-8"))
         drag = QDrag(self)
@@ -810,8 +852,8 @@ class _RackBoard(QWidget):
             )
         drag.exec(Qt.MoveAction)
 
-    def _render_chip(self, supply_id: str, rect: QRectF) -> QPixmap:
-        """把当前状态下的电源卡画成拖拽跟随位图：比静止芯片略小，拿起时轻轻收一下。"""
+    def _render_tile(self, supply_id: str, rect: QRectF) -> QPixmap:
+        """把当前状态下的电源卡画成拖拽跟随位图：比静止卡片略小，拿起时轻轻收一下。"""
         scale, _offset = self._transform()
         ratio = float(self.devicePixelRatioF()) or 1.0
         preview = scale * _DRAG_PREVIEW_SCALE
@@ -825,11 +867,11 @@ class _RackBoard(QWidget):
             painter.setRenderHint(QPainter.Antialiasing, True)
             painter.setRenderHint(QPainter.TextAntialiasing, True)
             painter.scale(preview, preview)
-            self._paint_chip(
+            self._paint_tile(
                 painter,
                 QRectF(0.0, 0.0, rect.width(), rect.height()),
                 self._code_of(supply_id),
-                self._chip_font(supply_id),
+                self._tile_font(supply_id),
             )
         finally:
             painter.end()
@@ -888,7 +930,9 @@ class _RackBoard(QWidget):
             painter.save()
             painter.translate(offset)
             painter.scale(scale, scale)
-            if self._running or self._progress < 1.0:
+            if self._finish_progress > 0.0:
+                self._paint_finish(painter)
+            elif self._running or self._progress < 1.0:
                 if self._direction < 0:
                     self._paint_exit(painter)
                 else:
@@ -900,31 +944,49 @@ class _RackBoard(QWidget):
             painter.end()
 
     def _paint_board(self, painter: QPainter) -> None:
+        self._paint_chrome(painter, 1.0)
+        self._paint_tiles(painter)
+
+    def _paint_finish(self, painter: QPainter) -> None:
+        """去电源配置页的淡出：只留卡片，其余内容随进度淡到画布底。"""
+        self._paint_chrome(painter, 1.0 - self._finish_progress)
+        self._paint_tiles(painter)
+
+    def _paint_tiles(self, painter: QPainter) -> None:
         for index, rect in enumerate(self._slot_rects()):
             occupant = self._occupant(index)
-            if occupant is None:
-                self._paint_empty_slot(
-                    painter, rect, highlighted=self._hover_target == index
-                )
-            else:
-                self._paint_chip(
+            if occupant is not None:
+                self._paint_tile(
                     painter,
                     rect,
                     self._code_of(occupant),
-                    self._chip_font(occupant),
+                    self._tile_font(occupant),
                 )
         for supply_id, rect in self._tray_layout().items():
-            self._paint_chip(
+            self._paint_tile(
                 painter,
                 rect,
                 self._code_of(supply_id),
-                self._chip_font(supply_id),
+                self._tile_font(supply_id),
             )
+
+    def _paint_chrome(self, painter: QPainter, opacity: float) -> None:
+        opacity = max(0.0, min(1.0, float(opacity)))
+        if opacity <= 0.001:
+            return
+        painter.save()
+        painter.setOpacity(opacity)
+        for index, rect in enumerate(self._slot_rects()):
+            if self._occupant(index) is None:
+                self._paint_empty_slot(
+                    painter, rect, highlighted=self._hover_target == index
+                )
         if self._hover_target == -1:
             self._paint_tray_highlight(painter)
         self._paint_arrow(painter)
         self._paint_chain(painter)
         self._paint_side_cards(painter)
+        painter.restore()
 
     def _paint_transition(self, painter: QPainter) -> None:
         progress = self._progress
@@ -943,11 +1005,11 @@ class _RackBoard(QWidget):
                 continue
             start = self._design_rect_from_global(entry.start_rect_global)
             if start.isEmpty():
-                self._paint_chip(
+                self._paint_tile(
                     painter,
                     end,
                     self._code_of(supply_id),
-                    self._chip_font(supply_id),
+                    self._tile_font(supply_id),
                 )
                 continue
             self._paint_power_morph(painter, entry, start, end, progress)
@@ -964,7 +1026,7 @@ class _RackBoard(QWidget):
         self._paint_exit_side_cards(painter, returned)
         for supply_id in self._power_ids:
             entry = self._power_entry(supply_id)
-            start = self._exit_chip_rects.get(supply_id)
+            start = self._exit_tile_rects.get(supply_id)
             if entry is None or start is None:
                 continue
             end = self._design_rect_from_global(entry.start_rect_global)
@@ -983,17 +1045,17 @@ class _RackBoard(QWidget):
         end: QRectF,
         returned: float,
     ) -> None:
-        """电源卡片从棋盘上的芯片展开成完整卡片。
+        """电源卡片从格位里的收拢态展开成完整卡片。
 
-        点击“上一步”的第一瞬间仍按芯片画（否则芯片会突然变成一张卡片截图），
+        点击“上一步”的第一瞬间仍按收拢卡片画（否则会突然变成一张完整卡片截图），
         随后淡入卡片正面，再沿入场路径飞回选择页。
         """
         fade = min(1.0, returned / 0.01)
-        font = self._chip_font(supply_id)
+        font = self._tile_font(supply_id)
         if fade < 1.0:
             painter.save()
             painter.setOpacity(1.0 - fade)
-            self._paint_chip(
+            self._paint_tile(
                 painter,
                 _lerp_rect(start, end, returned),
                 self._code_of(supply_id),
@@ -1008,7 +1070,7 @@ class _RackBoard(QWidget):
             start,
             end,
             returned,
-            chip_font=font,
+            tile_font=font,
             reverse=True,
         )
         painter.restore()
@@ -1047,15 +1109,16 @@ class _RackBoard(QWidget):
         end: QRectF,
         progress: float,
         *,
-        chip_font: QFont | None = None,
+        tile_font: QFont | None = None,
         reverse: bool = False,
     ) -> None:
         """电源卡片：上边保持、下边随进度向上收拢，最后只剩设备码那一行。
 
         卡片位图只负责卡片本身，设备码由页面单独画在它上面。这样设备码只从卡片上的
-        位置平滑移到芯片中心，不随卡片一起缩小：动画起点与真实卡片一致，终点与静止
-        芯片一致，中间没有字号跳变。位图在最后一小段淡出，卡片下边收拢到芯片高度时
-        不会留下一截被裁开的仪器图。轮廓始终是卡片原本的 1px 细边，不另描深色粗边。
+        位置平滑移到收拢卡片的中心，不随卡片一起缩小：动画起点与结果区的真实卡片一致，
+        终点与格位里的静止卡片一致，中间没有字号跳变。位图在最后一小段淡出，卡片下边
+        收拢到收拢卡片高度时不会留下一截被裁开的仪器图。轮廓始终是卡片原本的 1px 细边，
+        不另描深色粗边。
         """
         rect = _lerp_rect(start, end, progress)
         if rect.width() <= 0.0 or rect.height() <= 0.0:
@@ -1090,7 +1153,7 @@ class _RackBoard(QWidget):
             rect,
             factor,
             progress,
-            chip_font=chip_font or card_code_font(),
+            tile_font=tile_font or card_code_font(),
             reverse=reverse,
         )
 
@@ -1102,15 +1165,15 @@ class _RackBoard(QWidget):
         factor: float,
         progress: float,
         *,
-        chip_font: QFont,
+        tile_font: QFont,
         reverse: bool,
     ) -> None:
-        """设备码：在卡片上的位置与芯片中心之间平滑过渡，字号同步过渡。"""
+        """设备码：在卡片上的位置与收拢卡片中心之间平滑过渡，字号同步过渡。"""
         row = entry.code_row
         if row is None or not entry.code or factor <= 0.0:
             return
         font = _morph_code_font(
-            chip_font,
+            tile_font,
             card_code_font(),
             self._transform()[0],
             progress,
@@ -1162,14 +1225,14 @@ class _RackBoard(QWidget):
                     rect = _lerp_rect(start, target, progress)
             _draw_pixmap(painter, entry.front, rect)
 
-    def _paint_chip(
+    def _paint_tile(
         self,
         painter: QPainter,
         rect: QRectF,
         text: str,
         font: QFont,
     ) -> None:
-        """托盘/格位里的电源芯片：与卡片一样的 1px 细边，不描深色粗边。
+        """托盘/格位里的电源卡片：与完整卡片一样的 1px 细边，不描深色粗边。
 
         缩小动画的终点画法与这里完全一致（底色、1px 边、设备码字号与留白），
         所以动画交回静止画面时不会再跳一下。
@@ -1181,7 +1244,7 @@ class _RackBoard(QWidget):
         painter.drawPath(_rounded(rect, 0.5))
         painter.setPen(_INK)
         painter.setFont(font)
-        inner = rect.adjusted(_CHIP_TEXT_INSET, 0.0, -_CHIP_TEXT_INSET, 0.0)
+        inner = rect.adjusted(_TILE_TEXT_INSET, 0.0, -_TILE_TEXT_INSET, 0.0)
         painter.drawText(
             inner,
             int(Qt.AlignCenter),
@@ -1337,7 +1400,14 @@ class RackOverviewPage(QWidget):
         self.setObjectName("rackOverviewPage")
         #: 返回动画正在播放：重复点击“上一步”不再重启动画，也不重复发信号。
         self._back_pending = False
+        #: 去电源配置页的淡出正在播放：结束时只发一次 ``next_requested``。
+        self._next_pending = False
         self._build_ui()
+        self._next_animation = QVariantAnimation(self)
+        self._next_animation.setDuration(_FINISH_MS)
+        self._next_animation.setEasingCurve(QEasingCurve.OutCubic)
+        self._next_animation.valueChanged.connect(self._set_next_progress)
+        self._next_animation.finished.connect(self._finish_next)
         #: 标题行淡入：卡片动画停下之后才开始，时长短、只做一次。
         self._header_animation = QVariantAnimation(self)
         self._header_animation.setDuration(_HEADER_FADE_IN_MS)
@@ -1395,20 +1465,25 @@ class RackOverviewPage(QWidget):
         # 画布铺满整列内容：标题行与按钮必须盖在它上面，否则会被画布的底色挡住。
         header_row.raise_()
 
-        actions = QHBoxLayout()
+        self._actions_row = QWidget()
+        self._actions_row.setObjectName("rackOverviewActions")
+        actions = QHBoxLayout(self._actions_row)
+        actions.setContentsMargins(0, 0, 0, 0)
         actions.setSpacing(10)
         self.back_btn = QPushButton("上一步")
         self.back_btn.setToolTip("回到仪器选择页，重新选择本次测试使用的设备")
         set_button_variant(self.back_btn, "secondary")
         self.next_btn = QPushButton("下一步")
-        self.next_btn.setToolTip("进入仪器配置，配置测试参数并完成仪器连接")
+        self.next_btn.setToolTip("进入电源配置，给每台电源分配通道")
         set_button_variant(self.next_btn, "primary")
         actions.addWidget(self.back_btn)
         actions.addStretch(1)
         actions.addWidget(self.next_btn)
-        column.addLayout(actions)
-        self.back_btn.raise_()
-        self.next_btn.raise_()
+        column.addWidget(self._actions_row)
+        self._actions_row.raise_()
+        self._actions_effect = QGraphicsOpacityEffect(self._actions_row)
+        self._actions_effect.setOpacity(1.0)
+        self._actions_row.setGraphicsEffect(self._actions_effect)
         self._board_slot.installEventFilter(self)
 
     def eventFilter(self, watched: Any, event: Any) -> bool:
@@ -1460,6 +1535,9 @@ class RackOverviewPage(QWidget):
         """
         self._sync_board_geometry()
         self._back_pending = False
+        self._next_pending = False
+        self._next_animation.stop()
+        self._actions_effect.setOpacity(1.0)
         self._header_pending = False
         self._header_animation.stop()
         self._set_header_opacity(0.0)
@@ -1473,6 +1551,11 @@ class RackOverviewPage(QWidget):
         self._sync_actions()
 
     def finish_transition(self) -> None:
+        if self._next_pending:
+            self._next_animation.stop()
+            self._set_next_progress(1.0)
+            self._finish_next()
+            return
         leaving = self._back_pending
         self.board.finish_transition()
         self._header_pending = False
@@ -1513,7 +1596,7 @@ class RackOverviewPage(QWidget):
         反向动画播完才真正离开本页；动画期间重复点击被忽略，避免把牌面重启一遍。
         没有任何卡片时（直接进入本页的空结果）立即返回。
         """
-        if self._back_pending:
+        if self._back_pending or self._next_pending:
             return
         self._back_pending = True
         self._header_pending = False
@@ -1535,21 +1618,64 @@ class RackOverviewPage(QWidget):
         self.back_requested.emit()
 
     def request_next(self) -> None:
-        if self.next_btn.isEnabled():
-            self.next_requested.emit()
+        """去电源配置页：除电源卡片外先淡出，再切页播放卡片展开。
+
+        没有电源时没有可展开的卡片，直接切页。
+        """
+        if not self.next_btn.isEnabled() or self._next_pending:
+            return
+        if not self.board.power_supply_ids():
+            self._next_pending = True
+            self._finish_next()
+            return
+        self._next_pending = True
+        self._header_pending = False
+        self._header_animation.stop()
+        self._sync_actions()
+        self._next_animation.stop()
+        self._next_animation.setStartValue(0.0)
+        self._next_animation.setEndValue(1.0)
+        self._next_animation.start()
+
+    def power_tile_rects_global(self) -> dict[str, QRect]:
+        """离开本页时每台电源卡片的屏幕矩形；电源卡片动画从这里起飞。"""
+        return self.board.tile_rects_global()
+
+    def next_transition_running(self) -> bool:
+        """去电源配置页的淡出是否仍在播放。"""
+        return self._next_pending
+
+    def _set_next_progress(self, value: Any) -> None:
+        progress = max(0.0, min(1.0, float(value)))
+        self.board.set_finish_progress(progress)
+        self._set_header_opacity(1.0 - progress)
+        self._actions_effect.setOpacity(1.0 - progress)
+
+    def _finish_next(self) -> None:
+        """淡出播完（或被跳过）：只发一次 ``next_requested``。"""
+        if not self._next_pending:
+            return
+        self._next_pending = False
+        self._next_animation.stop()
+        self.board.set_finish_progress(1.0)
+        self._set_header_opacity(0.0)
+        self._actions_effect.setOpacity(0.0)
+        self._sync_actions()
+        self.next_requested.emit()
 
     def _sync_actions(self) -> None:
         total = len(self.board.power_supply_ids())
         placed = self.board.placed_count()
         ready = (
             not self._back_pending
+            and not self._next_pending
             and not self.board.transition_running()
             and placed == total
         )
         self.next_btn.setEnabled(ready)
-        self.back_btn.setEnabled(not self._back_pending)
+        self.back_btn.setEnabled(not self._back_pending and not self._next_pending)
         self.next_btn.setToolTip(
-            "进入仪器配置，配置测试参数并完成仪器连接"
+            "进入电源配置，给每台电源分配通道"
             if ready
             else "请先把全部电源拖入九宫格"
         )
@@ -1594,7 +1720,7 @@ class RackOverviewPage(QWidget):
 
         电源卡的设备码不画进位图，而是把这一行的位置交给页面：缩小动画里由页面单独
         绘制这行字（见 :meth:`_RackBoard._paint_morph_code`），字号只从卡片字号平滑
-        过渡到芯片字号，不会跟着卡片一起缩小后再跳回去。
+        过渡到卡片字号，不会跟着卡片一起缩小后再跳回去。
         """
         entries: list[RackCardEntry] = []
         for card in cards:
@@ -1605,7 +1731,7 @@ class RackOverviewPage(QWidget):
             height = int(card.height()) or CARD_HEIGHT
             selected = replace(data, checked=True)
             power = data.role_key == POWER_SUPPLY_ROLE
-            # 电源卡要按真实尺寸出图：它直接缩进托盘芯片，位图不会被拉成别的宽高比。
+            # 电源卡要按真实尺寸出图：它直接缩进托盘卡片，位图不会被拉成别的宽高比。
             # 两侧的仪器卡在页面里按固定设计尺寸摆放，仍按理想尺寸出图，避免被横向拉伸。
             if not power:
                 width, height = CARD_WIDTH, CARD_HEIGHT

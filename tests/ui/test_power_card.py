@@ -1,15 +1,16 @@
-"""电源通道卡片：数据、几何、绘制与两个通道开关。
+"""电源通道卡片：数据、几何、绘制、通道开关与两个保护勾选框。
 
 卡片是配置页的电源卡面资产，只有正面。这里锁住四类契约：
 
-- :class:`PowerCardDataTests`：两个通道、通道顺序、四个值必须是有限非负数；
-- :class:`PowerCardLayoutTests`：440×232 卡面里每个开关和数值框都在自己的通道内，
-  开关与 ``CH1`` / ``CH2`` 同处一行（开关在左），数值按 ``VS / VL`` 再 ``IS / IL``
-  排成两行两列；
+- :class:`PowerCardDataTests`：两个通道、通道顺序、两个工作值必须是有限非负数，
+  两个保护开关必须是 bool；
+- :class:`PowerCardLayoutTests`：440×232 卡面里每个开关、数值框与勾选框都在自己的
+  通道内；第一行是 ``VS / IS``，第二行是电压保护、电流保护两个勾选框，底部一行
+  自动阈值提示；
 - :class:`PowerCardRenderTests`：导出的位图与页面控件共用一份绘制，开启/关闭的
-  通道底色、数值框、标题与圆形电源键都按状态变化；
-- :class:`PowerSupplyCardWidgetTests`：开关可点击、可键盘操作、只改卡面状态，
-  并且程序化设置与整卡换数据都不会悄悄发信号。
+  通道底色、数值框、勾选框、提示与圆形电源键都按状态变化；
+- :class:`PowerSupplyCardWidgetTests`：通道开关与保护勾选框可点击、可键盘操作、
+  只改卡面状态，并且程序化设置与整卡换数据都不会悄悄发信号。
 
 测试用离屏平台；字体在离屏环境里可能退化成方框，但绘制路径、颜色与命中区不受
 影响，因此断言看几何、颜色和状态，不比对具体字形。
@@ -31,6 +32,7 @@ from presentation.qt.power_card import (  # noqa: E402
     CHANNEL_NAMES,
     POWER_CARD_HEIGHT,
     POWER_CARD_WIDTH,
+    PROTECTION_KINDS,
     PowerChannelData,
     PowerSupplyCard,
     PowerSupplyCardData,
@@ -45,7 +47,15 @@ def _application():
     return QApplication.instance() or QApplication([])
 
 
-def _data(*, ch1: bool = True, ch2: bool = True) -> PowerSupplyCardData:
+def _data(
+    *,
+    ch1: bool = True,
+    ch2: bool = True,
+    ch1_voltage: bool = True,
+    ch1_current: bool = True,
+    ch2_voltage: bool = False,
+    ch2_current: bool = True,
+) -> PowerSupplyCardData:
     return PowerSupplyCardData(
         code="DP8B1519",
         channels=(
@@ -53,17 +63,17 @@ def _data(*, ch1: bool = True, ch2: bool = True) -> PowerSupplyCardData:
                 "CH1",
                 enabled=ch1,
                 voltage_set=12.0,
-                voltage_protection=13.0,
                 current_set=1.5,
-                current_protection=2.0,
+                voltage_protection_enabled=ch1_voltage,
+                current_protection_enabled=ch1_current,
             ),
             PowerChannelData(
                 "CH2",
                 enabled=ch2,
                 voltage_set=5.0,
-                voltage_protection=5.5,
                 current_set=0.8,
-                current_protection=1.0,
+                voltage_protection_enabled=ch2_voltage,
+                current_protection_enabled=ch2_current,
             ),
         ),
     )
@@ -89,7 +99,7 @@ def _ink_count(image, rect) -> int:
 
 
 class PowerCardDataTests(unittest.TestCase):
-    """卡片数据只接受两个通道、四个有限非负值。"""
+    """卡片数据只接受两个通道、两个有限非负工作值与两个 bool 保护开关。"""
 
     def test_channels_are_normalised_to_ch1_then_ch2(self):
         data = PowerSupplyCardData(
@@ -121,12 +131,7 @@ class PowerCardDataTests(unittest.TestCase):
                     PowerSupplyCardData(code="DP8B1519", channels=channels)
 
     def test_channel_values_must_be_finite_and_non_negative(self):
-        for field in (
-            "voltage_set",
-            "voltage_protection",
-            "current_set",
-            "current_protection",
-        ):
+        for field in ("voltage_set", "current_set"):
             for bad in (True, "5", None):
                 with self.subTest(field=field, bad=bad):
                     with self.assertRaises(TypeError):
@@ -134,6 +139,16 @@ class PowerCardDataTests(unittest.TestCase):
             for bad in (float("nan"), float("inf"), -0.1):
                 with self.subTest(field=field, bad=bad):
                     with self.assertRaises(ValueError):
+                        PowerChannelData("CH1", **{field: bad})
+
+    def test_protection_flags_must_be_bool(self):
+        for field in (
+            "voltage_protection_enabled",
+            "current_protection_enabled",
+        ):
+            for bad in (1, "yes", None):
+                with self.subTest(field=field, bad=bad):
+                    with self.assertRaises(TypeError):
                         PowerChannelData("CH1", **{field: bad})
 
     def test_with_channel_enabled_copies_only_the_switch_state(self):
@@ -146,18 +161,40 @@ class PowerCardDataTests(unittest.TestCase):
         self.assertEqual(
             updated.channel("CH2").voltage_set,
             data.channel("CH2").voltage_set,
-            "关闭通道只改开关，不改四个值",
+        )
+        self.assertEqual(
+            updated.channel("CH2").protection_enabled("current"),
+            data.channel("CH2").protection_enabled("current"),
+            "关闭通道只改开关，不改工作值与保护状态",
         )
 
-    def test_unknown_channel_is_a_key_error(self):
+    def test_with_channel_protection_copies_only_that_flag(self):
+        data = _data()
+        updated = data.with_channel_protection("CH1", "voltage", False)
+
+        self.assertFalse(updated.channel_protection("CH1", "voltage"))
+        self.assertTrue(updated.channel_protection("CH1", "current"))
+        self.assertEqual(updated.channel("CH1").voltage_set, 12.0)
+        self.assertTrue(data.channel_protection("CH1", "voltage"), "原快照不变")
+        self.assertEqual(
+            updated.channel("CH2"),
+            data.channel("CH2"),
+            "只改一个通道的一种保护",
+        )
+
+    def test_unknown_channel_or_kind_is_a_key_error(self):
         with self.assertRaises(KeyError):
             _data().channel("CH3")
         with self.assertRaises(KeyError):
             _data().with_channel_enabled("CH3", False)
+        with self.assertRaises(KeyError):
+            _data().channel_protection("CH1", "power")
+        with self.assertRaises(KeyError):
+            _data().with_channel_protection("CH1", "power", True)
 
 
 class PowerCardLayoutTests(unittest.TestCase):
-    """卡面几何：440×232，两个通道各占一半，开关与四个值都落在自己的通道里。"""
+    """卡面几何：440×232，两个通道各占一半，值、勾选框与提示都落在自己的通道里。"""
 
     def test_channels_split_the_card_into_two_halves(self):
         layout = power_card_layout()
@@ -177,12 +214,18 @@ class PowerCardLayoutTests(unittest.TestCase):
             with self.subTest(channel=channel.channel):
                 self.assertTrue(channel.panel.contains(channel.label))
                 self.assertTrue(channel.panel.contains(channel.switch))
+                self.assertTrue(channel.panel.contains(channel.hint))
                 self.assertLessEqual(channel.switch.right(), channel.label.left())
                 self.assertEqual(
                     channel.switch.center().y(),
                     channel.label.center().y(),
                     "开关与通道标题必须处在同一行",
                 )
+                self.assertEqual(len(channel.value_labels), 2)
+                self.assertEqual(len(channel.value_boxes), 2)
+                self.assertEqual(len(channel.protection_checks), 2)
+                self.assertEqual(len(channel.protection_indicators), 2)
+                self.assertEqual(len(channel.protection_labels), 2)
                 for label, box in zip(channel.value_labels, channel.value_boxes):
                     self.assertTrue(channel.panel.contains(label))
                     self.assertTrue(channel.panel.contains(box))
@@ -194,20 +237,55 @@ class PowerCardLayoutTests(unittest.TestCase):
                 self.assertLessEqual(
                     channel.label.bottom(), channel.value_boxes[0].top()
                 )
-                for previous, following in zip(
-                    channel.value_boxes[0:2], channel.value_boxes[2:4]
+                for index, (check, indicator, label_rect) in enumerate(
+                    zip(
+                        channel.protection_checks,
+                        channel.protection_indicators,
+                        channel.protection_labels,
+                    )
                 ):
-                    self.assertLessEqual(previous.bottom(), following.top())
+                    self.assertTrue(channel.panel.contains(check))
+                    self.assertTrue(check.contains(indicator))
+                    self.assertTrue(check.contains(label_rect))
+                    self.assertLessEqual(
+                        indicator.right(), label_rect.left(), "文字必须留在方块右侧"
+                    )
+                    self.assertAlmostEqual(
+                        indicator.center().x(),
+                        channel.value_labels[index].center().x(),
+                        msg="勾选框方块与上一行 VS / IS 标签同一条中线",
+                    )
+                    self.assertAlmostEqual(
+                        label_rect.left(),
+                        channel.value_boxes[index].left(),
+                        msg="勾选框文字与上一行数值框左对齐",
+                    )
+                self.assertLessEqual(
+                    channel.value_boxes[0].bottom(),
+                    channel.protection_checks[0].top(),
+                )
+                self.assertLessEqual(
+                    channel.protection_checks[0].bottom(), channel.hint.top()
+                )
 
-    def test_values_are_arranged_vs_vl_then_is_il(self):
+    def test_values_are_arranged_vs_then_is(self):
         channel = power_card_layout().channels[0]
         labels = channel.value_labels
 
-        self.assertEqual(len(labels), 4)
+        self.assertEqual(len(labels), 2)
         self.assertLess(labels[0].center().x(), labels[1].center().x())
         self.assertEqual(labels[0].center().y(), labels[1].center().y())
-        self.assertLess(labels[0].center().y(), labels[2].center().y())
-        self.assertLess(labels[2].center().x(), labels[3].center().x())
+
+    def test_protection_checks_are_on_one_row(self):
+        for channel in power_card_layout().channels:
+            with self.subTest(channel=channel.channel):
+                first, second = channel.protection_checks
+                self.assertLess(first.center().x(), second.center().x())
+                self.assertEqual(first.center().y(), second.center().y())
+                self.assertEqual(
+                    channel.protection_indicators[0].center().y(),
+                    channel.protection_indicators[1].center().y(),
+                )
 
     def test_switch_and_label_form_one_centred_row(self):
         """开关在左、标题在右，两者作为一整组在通道里居中。"""
@@ -226,7 +304,7 @@ class PowerCardLayoutTests(unittest.TestCase):
 
 
 class PowerCardRenderTests(unittest.TestCase):
-    """导出的卡面：尺寸、透明底、开启/关闭配色与四个值都按数据变化。"""
+    """导出的卡面：尺寸、透明底、开启/关闭配色、两个值与两个勾选框都按数据变化。"""
 
     @classmethod
     def setUpClass(cls):
@@ -316,7 +394,7 @@ class PowerCardRenderTests(unittest.TestCase):
         )
 
     def test_every_value_box_draws_its_value(self):
-        """四个值都必须真的画出来；离屏环境字体可能退化成方框，因此只数墨迹。"""
+        """两个工作值都必须真的画出来；离屏环境字体可能退化成方框，因此只数墨迹。"""
         image = render_power_card(_data()).toImage()
         for channel in power_card_layout().channels:
             for index, box in enumerate(channel.value_boxes):
@@ -324,8 +402,55 @@ class PowerCardRenderTests(unittest.TestCase):
                     self.assertGreater(
                         _ink_count(image, box.adjusted(2.0, 2.0, -2.0, -2.0)),
                         0,
-                        "数值框里应该画出四位值之一，而不是空框",
+                        "数值框里应该画出两个工作值之一，而不是空框",
                     )
+
+    def test_protection_indicators_show_checked_state(self):
+        """勾选后方块用通道强调色填满，未勾选只留白底描边。"""
+        layout = power_card_layout()
+        for index, channel in enumerate(layout.channels):
+            for kind_index, indicator in enumerate(channel.protection_indicators):
+                with self.subTest(channel=channel.channel, kind=kind_index):
+                    sample = (indicator.left() + 4.0, indicator.top() + 4.0)
+                    checked = _data(
+                        ch1_voltage=True,
+                        ch1_current=True,
+                        ch2_voltage=True,
+                        ch2_current=True,
+                    )
+                    unchecked = _data(
+                        ch1_voltage=False,
+                        ch1_current=False,
+                        ch2_voltage=False,
+                        ch2_current=False,
+                    )
+                    expected = (
+                        TOKENS["primary"] if index == 0 else TOKENS["warning"]
+                    ).lower()
+                    self.assertEqual(
+                        _color_at(render_power_card(checked), *sample).name(),
+                        expected,
+                    )
+                    self.assertEqual(
+                        _color_at(render_power_card(unchecked), *sample).name(),
+                        TOKENS["surface"].lower(),
+                    )
+
+    def test_protection_labels_and_hint_draw_ink(self):
+        image = render_power_card(_data()).toImage()
+        for channel in power_card_layout().channels:
+            for label_rect in channel.protection_labels:
+                with self.subTest(channel=channel.channel, rect=label_rect):
+                    self.assertGreater(
+                        _ink_count(image, label_rect.adjusted(2.0, 2.0, -2.0, -2.0)),
+                        0,
+                        "勾选框右侧应画出“电压保护”/“电流保护”",
+                    )
+            self.assertGreater(
+                _ink_count(image, channel.hint),
+                0,
+                "通道底部应画出自动阈值提示",
+            )
 
     def test_power_switch_body_follows_the_channel_state(self):
         """圆形电源键：关闭是深灰金属面，点亮后转绿；采样点避开图标与内阴影。"""
@@ -374,7 +499,7 @@ class PowerCardRenderTests(unittest.TestCase):
 
 
 class PowerSupplyCardWidgetTests(unittest.TestCase):
-    """真实控件：开关可点击/可键盘操作，只改卡面状态，不发多余信号。"""
+    """真实控件：开关与保护勾选框可点击/可键盘操作，只改卡面状态，不发多余信号。"""
 
     @classmethod
     def setUpClass(cls):
@@ -391,7 +516,7 @@ class PowerSupplyCardWidgetTests(unittest.TestCase):
         self.application.processEvents()
         return card
 
-    def test_widget_has_the_designed_size_and_switch_geometry(self):
+    def test_widget_has_the_designed_size_and_control_geometry(self):
         card = self.widget()
         layout = power_card_layout()
 
@@ -414,6 +539,23 @@ class PowerSupplyCardWidgetTests(unittest.TestCase):
                     round(channel.switch.height()),
                 ),
             )
+            for kind, rect in zip(PROTECTION_KINDS, channel.protection_checks):
+                check = card.protection_check(channel.channel, kind)
+                self.assertIs(check.parent(), card)
+                self.assertEqual(
+                    (
+                        check.geometry().x(),
+                        check.geometry().y(),
+                        check.geometry().width(),
+                        check.geometry().height(),
+                    ),
+                    (
+                        round(rect.x()),
+                        round(rect.y()),
+                        round(rect.width()),
+                        round(rect.height()),
+                    ),
+                )
 
     def test_clicking_a_switch_toggles_only_that_channel(self):
         card = self.widget()
@@ -430,7 +572,22 @@ class PowerSupplyCardWidgetTests(unittest.TestCase):
         self.assertTrue(card.channel_enabled("CH2"))
         self.assertFalse(card.data.channel("CH1").enabled)
 
-    def test_keyboard_space_toggles_and_tab_moves_between_channels(self):
+    def test_clicking_a_protection_check_toggles_only_that_flag(self):
+        card = self.widget()
+        events: list[tuple[str, str, bool]] = []
+        card.protection_toggled.connect(
+            lambda channel, kind, enabled: events.append((channel, kind, enabled))
+        )
+        check = card.protection_check("CH1", "voltage")
+
+        QTest.mouseClick(check, Qt.LeftButton, pos=check.rect().center())
+
+        self.assertEqual(events, [("CH1", "voltage", False)])
+        self.assertFalse(card.channel_protection("CH1", "voltage"))
+        self.assertTrue(card.channel_protection("CH1", "current"))
+        self.assertFalse(card.data.channel_protection("CH1", "voltage"))
+
+    def test_keyboard_space_toggles_and_tab_moves_between_controls(self):
         card = self.widget()
         switch = card.channel_switch("CH1")
         switch.setFocus()
@@ -441,37 +598,77 @@ class PowerSupplyCardWidgetTests(unittest.TestCase):
         self.assertFalse(card.channel_enabled("CH1"))
         self.assertTrue(switch.hasFocus())
 
+    def test_keyboard_space_toggles_a_protection_check(self):
+        card = self.widget()
+        check = card.protection_check("CH2", "current")
+        check.setFocus()
+        self.application.processEvents()
+
+        QTest.keyClick(check, Qt.Key_Space)
+
+        self.assertFalse(card.channel_protection("CH2", "current"))
+
+    def test_closed_channel_disables_its_protection_checks(self):
+        card = self.widget()
+        check = card.protection_check("CH2", "voltage")
+        switch = card.channel_switch("CH2")
+
+        QTest.mouseClick(switch, Qt.LeftButton, pos=switch.rect().center())
+        self.assertFalse(check.isEnabled())
+        self.assertFalse(check.hasFocus())
+        card.set_channel_enabled("CH2", True)
+        self.assertTrue(check.isEnabled())
+
     def test_programmatic_set_is_silent_unless_asked_to_emit(self):
         card = self.widget()
-        events: list[tuple[str, bool]] = []
+        toggle_events: list[tuple[str, bool]] = []
+        protection_events: list[tuple[str, str, bool]] = []
         card.channel_toggled.connect(
-            lambda channel, enabled: events.append((channel, enabled))
+            lambda channel, enabled: toggle_events.append((channel, enabled))
+        )
+        card.protection_toggled.connect(
+            lambda channel, kind, enabled: protection_events.append(
+                (channel, kind, enabled)
+            )
         )
 
         card.set_channel_enabled("CH2", False)
-        self.assertEqual(events, [])
+        card.set_protection_enabled("CH2", "voltage", True)
+        self.assertEqual(toggle_events, [])
+        self.assertEqual(protection_events, [])
         self.assertFalse(card.channel_enabled("CH2"))
-        self.assertFalse(card.data.channel("CH2").enabled)
+        self.assertTrue(card.channel_protection("CH2", "voltage"))
 
         card.set_channel_enabled("CH2", True, emit=True)
-        self.assertEqual(events, [("CH2", True)])
+        card.set_protection_enabled("CH2", "voltage", False, emit=True)
+        self.assertEqual(toggle_events, [("CH2", True)])
+        self.assertEqual(protection_events, [("CH2", "voltage", False)])
         self.assertTrue(card.channel_enabled("CH2"))
+        self.assertFalse(card.channel_protection("CH2", "voltage"))
 
-    def test_set_data_updates_switches_without_emitting_toggles(self):
+    def test_set_data_updates_switches_and_checks_without_emitting(self):
         card = self.widget()
-        events: list[tuple[str, bool]] = []
+        toggle_events: list[tuple[str, bool]] = []
+        protection_events: list[tuple[str, str, bool]] = []
         card.channel_toggled.connect(
-            lambda channel, enabled: events.append((channel, enabled))
+            lambda channel, enabled: toggle_events.append((channel, enabled))
+        )
+        card.protection_toggled.connect(
+            lambda channel, kind, enabled: protection_events.append(
+                (channel, kind, enabled)
+            )
         )
 
-        card.set_data(_data(ch2=False))
+        card.set_data(_data(ch2=False, ch1_voltage=False))
 
-        self.assertEqual(events, [])
+        self.assertEqual(toggle_events, [])
+        self.assertEqual(protection_events, [])
         self.assertTrue(card.channel_enabled("CH1"))
         self.assertFalse(card.channel_enabled("CH2"))
-        self.assertFalse(card.data.channel("CH2").enabled)
+        self.assertFalse(card.channel_protection("CH1", "voltage"))
+        self.assertTrue(card.channel_protection("CH1", "current"))
 
-    def test_tooltips_explain_read_only_values_and_the_temporary_switch(self):
+    def test_tooltips_explain_read_only_values_and_the_temporary_switches(self):
         card = self.widget()
 
         self.assertIn("VS 12.00 V", card.toolTip())
@@ -479,8 +676,11 @@ class PowerSupplyCardWidgetTests(unittest.TestCase):
         self.assertIn(
             "暂不写入配置",
             card.channel_switch("CH1").toolTip(),
-            "开关只改卡面时必须把边界说清楚",
+            "通道开关只改卡面时必须把边界说清楚",
         )
+        protection_tip = card.protection_check("CH1", "voltage").toolTip()
+        self.assertIn("电压保护", protection_tip)
+        self.assertIn("高 10%", protection_tip)
 
     def test_widget_paints_the_same_channel_colours_as_the_export(self):
         card = self.widget()

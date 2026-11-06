@@ -5,12 +5,15 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from presentation.qt.power_card import (
     POWER_CARD_HEIGHT,
     POWER_CARD_WIDTH,
     PowerSupplyCardData,
+    power_card_layout,
 )
 from presentation.qt.power_card_wall import PowerCardWall, power_card_data
 
@@ -32,7 +35,13 @@ class PowerCardWallTests(unittest.TestCase):
         wall.resize(1000, 232)
         wall.show()
         self.app.processEvents()
+        self.addCleanup(self._destroy_widget, wall)
         return wall
+
+    def _destroy_widget(self, widget) -> None:
+        widget.close()
+        widget.deleteLater()
+        self.app.sendPostedEvents(None, QEvent.DeferredDelete)
 
     def test_cards_on_the_same_row_keep_their_left_to_right_order(self):
         wall = self.make_wall()
@@ -96,8 +105,8 @@ class PowerCardWallTests(unittest.TestCase):
                 "label": "DP8B1519",
                 "channels": {
                     "CH1": {
-                        "voltage": {"value": 2.8},
-                        "current": {"value": 0.1},
+                        "voltage": {"value": 2.8, "protection_enabled": True},
+                        "current": {"value": 0.1, "protection_enabled": False},
                     }
                 },
             },
@@ -107,8 +116,85 @@ class PowerCardWallTests(unittest.TestCase):
         self.assertEqual(data.code, "DP8B1519")
         self.assertTrue(data.channel("CH1").enabled)
         self.assertAlmostEqual(data.channel("CH1").voltage_set, 2.8)
-        self.assertAlmostEqual(data.channel("CH1").voltage_protection, 3.08)
         self.assertAlmostEqual(data.channel("CH1").current_set, 0.1)
-        self.assertAlmostEqual(data.channel("CH1").current_protection, 0.11)
+        self.assertTrue(data.channel_protection("CH1", "voltage"))
+        self.assertFalse(data.channel_protection("CH1", "current"))
         self.assertFalse(data.channel("CH2").enabled)
         self.assertAlmostEqual(data.channel("CH2").voltage_set, 0.0)
+
+    def test_missing_protection_flags_are_unchecked(self):
+        data = power_card_data(
+            {
+                "label": "DP8B1519",
+                "channels": {
+                    "CH1": {
+                        "voltage": {"value": 2.8, "protection_enabled": None},
+                        "current": {"value": 0.1},
+                    }
+                },
+            },
+            "DP8B1519",
+        )
+
+        self.assertFalse(data.channel_protection("CH1", "voltage"))
+        self.assertFalse(data.channel_protection("CH1", "current"))
+
+    def test_set_protection_updates_only_that_card(self):
+        wall = self.make_wall()
+        wall.set_cards(
+            [("A", _card("A")), ("B", _card("B"))], {"A": 0, "B": 1}
+        )
+
+        self.assertTrue(wall.set_protection("A", "CH1", "voltage", True))
+        self.assertFalse(wall.set_protection("A", "CH1", "voltage", True))
+        cards = {cell.supply_id: cell.data for cell in wall.cards()}
+        self.assertTrue(cards["A"].channel_protection("CH1", "voltage"))
+        self.assertFalse(cards["B"].channel_protection("CH1", "voltage"))
+        self.assertFalse(wall.set_protection("C", "CH1", "voltage", True))
+
+    def test_clicking_a_protection_check_emits_the_next_state(self):
+        wall = self.make_wall()
+        wall.set_cards([("A", _card("A"))], {"A": 0})
+        events: list[tuple[str, str, str, bool]] = []
+        wall.protection_toggled.connect(
+            lambda *args: events.append(args)
+        )
+        rect = wall.card_rect("A")
+        check = power_card_layout().channels[0].protection_checks[0]
+        scale = rect.width() / POWER_CARD_WIDTH
+        position = rect.topLeft().toPoint() + (check.center() * scale).toPoint()
+
+        QTest.mouseClick(wall, Qt.LeftButton, pos=position)
+
+        self.assertEqual(events, [("A", "CH1", "voltage", True)])
+
+    def test_protection_hit_test_follows_the_scaled_card(self):
+        wall = self.make_wall()
+        wall.set_cards([("A", _card("A"))], {"A": 0})
+        events: list[tuple[str, str, str, bool]] = []
+        wall.protection_toggled.connect(lambda *args: events.append(args))
+        wall.resize(300, 232)
+        self.app.processEvents()
+        rect = wall.card_rect("A")
+        self.assertLess(rect.width(), POWER_CARD_WIDTH, "窄窗口里卡片应缩小")
+        check = power_card_layout().channels[0].protection_checks[1]
+        scale = rect.width() / POWER_CARD_WIDTH
+        position = rect.topLeft().toPoint() + (check.center() * scale).toPoint()
+
+        QTest.mouseClick(wall, Qt.LeftButton, pos=position)
+
+        self.assertEqual(events, [("A", "CH1", "current", True)])
+
+    def test_clicking_an_off_channel_check_does_nothing(self):
+        wall = self.make_wall()
+        wall.set_cards([("A", _card("A"))], {"A": 0})
+        events: list[tuple[str, str, str, bool]] = []
+        wall.protection_toggled.connect(lambda *args: events.append(args))
+        rect = wall.card_rect("A")
+        check = power_card_layout().channels[1].protection_checks[0]
+        scale = rect.width() / POWER_CARD_WIDTH
+        position = rect.topLeft().toPoint() + (check.center() * scale).toPoint()
+
+        QTest.mouseClick(wall, Qt.LeftButton, pos=position)
+
+        self.assertEqual(events, [])

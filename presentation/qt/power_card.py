@@ -6,17 +6,22 @@
 - **设备码缩写**：整张卡最上面的一行，等宽加粗字，只写 ``label``（``DP8B1519``）；
 - **两个通道**：左右各一半，每个通道顶部是一行“圆形电源键 + ``CH1`` / ``CH2``”，
   开关在左、标题在右，两者共用同一条基线；
-- **四个只读值**：每个通道两行两列，``VS``（电压设定）、``VL``（电压保护）、
-  ``IS``（电流设定）、``IL``（电流保护）；设定值来自配置里的
-  ``voltage.value`` / ``current.value``，保护值由工作值按 110% 推导（页面只保留
-  启用开关）；
-- **通道开关**：关闭时该通道整块降为灰色（``disabled_bg``），数值框、标签与开关
-  一起变灰；打开时恢复通道底色（左浅蓝、右浅琥珀），电源键同时点亮：边框转白、
+- **两个只读值**：每个通道第一行左右各一个，``VS``（电压设定）、``IS``（电流设定）；
+  设定值来自配置里的 ``voltage.value`` / ``current.value``；
+- **两个保护勾选框**：每个通道第二行左右各一个，左边电压保护、右边电流保护，
+  勾选状态来自配置里的 ``voltage.protection_enabled`` /
+  ``current.protection_enabled``；卡面不再显示保护数值，阈值仍由表单按工作值的
+  110% 推导；
+- **自动阈值提示**：通道底部一行小字说明“勾选后保护阈值自动 +10%”；
+- **通道开关**：关闭时该通道整块降为灰色（``disabled_bg``），数值框、勾选框、标签
+  与开关一起变灰；打开时恢复通道底色（左浅蓝、右浅琥珀），电源键同时点亮：边框转白、
   底色转绿、四周泛起绿色辉光，图标描边加粗并让圆环带一圈青色光。
 
-数值在本卡上只读：编辑仍走现有表单，卡片只显示一份快照。通道开关目前也只控制
-卡面显示，不改配置模型；页面通过 :attr:`PowerSupplyCard.channel_toggled` 决定之后
-要不要把它接到配置或硬件输出。
+数值在本卡上只读：编辑仍走现有表单，卡片只显示一份快照。两个保护勾选框是可点
+控件（:class:`ProtectionCheck`），点击只切换“是否启用保护”，不填阈值、不碰硬件；
+页面通过 :attr:`PowerSupplyCard.protection_toggled` 决定之后怎么处理这个动作。
+通道开关仍只控制卡面显示，不改配置模型；页面通过 :attr:`PowerSupplyCard.channel_toggled`
+决定之后要不要把它接到配置或硬件输出。
 
 **卡面与交互共用一份绘制**：:func:`render_power_card` 把同一个
 :func:`_paint_power_card` 画到透明位图上，所以导出的 PNG 预览与页面上的真实卡片
@@ -68,6 +73,7 @@ from .theme import (
     CARD_RADIUS,
     TOKENS,
     card_code_font,
+    card_status_font,
 )
 
 __all__ = [
@@ -75,11 +81,13 @@ __all__ = [
     "POWER_CARD_HEIGHT",
     "POWER_CARD_SIZE",
     "POWER_CARD_WIDTH",
+    "PROTECTION_KINDS",
     "PowerCardLayout",
     "PowerChannelData",
     "PowerChannelLayout",
     "PowerSupplyCard",
     "PowerSupplyCardData",
+    "ProtectionCheck",
     "power_card_layout",
     "render_power_card",
 ]
@@ -110,7 +118,18 @@ _LABEL_WIDTH = 24.0
 _LABEL_GAP = 4.0
 _CELL_WIDTH = (_HALF_WIDTH - 2.0 * _PADDING - _ROW_GAP) / 2.0
 _BOX_WIDTH = _CELL_WIDTH - _LABEL_WIDTH - _LABEL_GAP
-_VALUE_TEXTS = ("VS", "VL", "IS", "IL")
+#: 第一行只剩工作值：VS（电压设定）、IS（电流设定）。
+_VALUE_TEXTS = ("VS", "IS")
+#: 第二行是保护勾选框，顺序也是卡面上的左右顺序：左电压、右电流。
+PROTECTION_KINDS = ("voltage", "current")
+_PROTECTION_TEXTS = ("电压保护", "电流保护")
+#: 勾选框方块固定 14 逻辑像素，并与上一行的 ``VS`` / ``IS`` 标签共用同一条中线；
+#: 文字从数值框的左边缘开始，因此“电压保护”与“12.00”左对齐。
+_INDICATOR_SIZE = 14.0
+_INDICATOR_INSET = (_LABEL_WIDTH - _INDICATOR_SIZE) / 2.0
+_HINT_TEXT = "勾选后保护阈值自动 +10%"
+_HINT_TOP = _GRID_TOP + 2.0 * _ROW_HEIGHT + _ROW_GAP + 2.0
+_HINT_HEIGHT = 12.0
 
 # ---- 配色：全部来自 TOKENS，关闭态只换 token，不另造一套灰 ----------------------
 _SURFACE = QColor(TOKENS["surface"])
@@ -158,39 +177,58 @@ def _finite_non_negative(value: Any, name: str) -> float:
 
 @dataclass(frozen=True)
 class PowerChannelData:
-    """一个电源通道在卡面上的快照：开关状态 + 四个只读值。
+    """一个电源通道在卡面上的快照：开关状态 + 两个工作值 + 两个保护开关。
 
-    ``channel`` 只能是 ``CH1`` / ``CH2``；四个值依次是电压设定、电压保护、电流
-    设定、电流保护，单位分别是 V、V、A、A。保护值由调用方按工作值的 110% 推导，
-    这里只负责显示。数值只做“有限且非负”的显示校验，不在这里套用配置页的
-    0–50 V / 0–10 A 输入范围：那是输入控件的边界，不是卡面资产的责任。
+    ``channel`` 只能是 ``CH1`` / ``CH2``；两个数值依次是电压设定、电流设定，单位
+    分别是 V、A。保护阈值不再出现在卡面上，只保留“是否启用电压/电流保护”两个
+    状态，阈值仍由表单按工作值的 110% 推导。数值只做“有限且非负”的显示校验，
+    不在这里套用配置页的 0–50 V / 0–10 A 输入范围：那是输入控件的边界，不是卡面
+    资产的责任。
     """
 
     channel: str
     enabled: bool = True
     voltage_set: float = 0.0
-    voltage_protection: float = 0.0
     current_set: float = 0.0
-    current_protection: float = 0.0
+    voltage_protection_enabled: bool = False
+    current_protection_enabled: bool = False
 
     def __post_init__(self) -> None:
         if self.channel not in CHANNEL_NAMES:
             raise ValueError(
                 f"通道必须是 {' / '.join(CHANNEL_NAMES)}，收到 {self.channel!r}"
             )
-        if not isinstance(self.enabled, bool):
-            raise TypeError(f"通道 {self.channel} 的 enabled 必须是 bool")
+        for field, label in (
+            ("enabled", "enabled"),
+            ("voltage_protection_enabled", "电压保护"),
+            ("current_protection_enabled", "电流保护"),
+        ):
+            if not isinstance(getattr(self, field), bool):
+                raise TypeError(f"通道 {self.channel} 的 {label} 必须是 bool")
         for field, label in (
             ("voltage_set", "电压设定"),
-            ("voltage_protection", "电压保护"),
             ("current_set", "电流设定"),
-            ("current_protection", "电流保护"),
         ):
             object.__setattr__(
                 self,
                 field,
                 _finite_non_negative(getattr(self, field), f"{self.channel} {label}"),
             )
+
+    def protection_enabled(self, kind: str) -> bool:
+        """某种保护的启用状态；``kind`` 只能是 ``voltage`` / ``current``。"""
+        if kind == "voltage":
+            return self.voltage_protection_enabled
+        if kind == "current":
+            return self.current_protection_enabled
+        raise KeyError(f"保护类型必须是 voltage / current，收到 {kind!r}")
+
+    def with_protection(self, kind: str, enabled: bool) -> "PowerChannelData":
+        """返回一份只改某种保护开关的新快照。"""
+        if not isinstance(enabled, bool):
+            raise TypeError("enabled 必须是 bool")
+        self.protection_enabled(kind)
+        return replace(self, **{f"{kind}_protection_enabled": enabled})
 
 
 @dataclass(frozen=True)
@@ -249,13 +287,32 @@ class PowerSupplyCardData:
             ),
         )
 
+    def channel_protection(self, name: str, kind: str) -> bool:
+        """某个通道某种保护的启用状态；名称/类型不合法时抛 ``KeyError``。"""
+        return self.channel(name).protection_enabled(kind)
+
+    def with_channel_protection(
+        self, name: str, kind: str, enabled: bool
+    ) -> "PowerSupplyCardData":
+        """返回一份只改某个通道某种保护开关的新快照（其余值原样保留）。"""
+        if not isinstance(enabled, bool):
+            raise TypeError("enabled 必须是 bool")
+        self.channel(name)
+        return replace(
+            self,
+            channels=tuple(
+                item.with_protection(kind, enabled) if item.channel == name else item
+                for item in self.channels
+            ),
+        )
+
 
 # ---- 几何 ------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class PowerChannelLayout:
-    """一个通道在卡面坐标系里的位置：面板、标题、开关、四个标签与数值框。"""
+    """一个通道在卡面坐标系里的位置：面板、标题、开关、两个值、两个勾选框与提示。"""
 
     channel: str
     panel: QRectF
@@ -263,6 +320,14 @@ class PowerChannelLayout:
     switch: QRectF
     value_labels: tuple[QRectF, ...]
     value_boxes: tuple[QRectF, ...]
+    #: 两个保护勾选框的整块命中区（方块 + 文字），顺序是电压、电流。
+    protection_checks: tuple[QRectF, ...]
+    #: 两个保护勾选框的方块本身，绘制与焦点框用它。
+    protection_indicators: tuple[QRectF, ...]
+    #: 两个保护勾选框的文字区，左边缘与上一行数值框对齐。
+    protection_labels: tuple[QRectF, ...]
+    #: 通道底部“勾选后保护阈值自动 +10%”的一行小字。
+    hint: QRectF
 
 
 @dataclass(frozen=True)
@@ -278,8 +343,8 @@ def power_card_layout() -> PowerCardLayout:
     """算出整张卡片的几何；绘制、命中区与测试都读这一份结果。
 
     卡片尺寸固定，因此不需要宽高参数。左右通道按 :data:`CHANNEL_NAMES` 的顺序
-    排列；每个通道顶部是“开关在左、标题在右”的一行，四个值按 ``VS / VL / IS / IL``
-    的顺序排成两行两列。
+    排列；每个通道顶部是“开关在左、标题在右”的一行，第一行是 ``VS / IS`` 两个
+    工作值，第二行是电压保护、电流保护两个勾选框，底部一行小字提示自动阈值。
     """
     card = QRectF(0.0, 0.0, float(POWER_CARD_WIDTH), float(POWER_CARD_HEIGHT))
     title = QRectF(0.0, 0.0, float(POWER_CARD_WIDTH), _TITLE_HEIGHT)
@@ -310,10 +375,8 @@ def power_card_layout() -> PowerCardLayout:
         value_labels: list[QRectF] = []
         value_boxes: list[QRectF] = []
         for value_index in range(len(_VALUE_TEXTS)):
-            column = value_index % 2
-            row = value_index // 2
-            cell_x = left + _PADDING + column * (_CELL_WIDTH + _ROW_GAP)
-            cell_y = _GRID_TOP + row * (_ROW_HEIGHT + _ROW_GAP)
+            cell_x = left + _PADDING + value_index * (_CELL_WIDTH + _ROW_GAP)
+            cell_y = _GRID_TOP
             value_labels.append(
                 QRectF(cell_x, cell_y, _LABEL_WIDTH, _ROW_HEIGHT)
             )
@@ -325,6 +388,38 @@ def power_card_layout() -> PowerCardLayout:
                     _BOX_HEIGHT,
                 )
             )
+        protection_checks: list[QRectF] = []
+        protection_indicators: list[QRectF] = []
+        protection_labels: list[QRectF] = []
+        for protection_index in range(len(PROTECTION_KINDS)):
+            cell_x = left + _PADDING + protection_index * (_CELL_WIDTH + _ROW_GAP)
+            cell_y = _GRID_TOP + _ROW_HEIGHT + _ROW_GAP
+            protection_checks.append(
+                QRectF(cell_x, cell_y, _CELL_WIDTH, _ROW_HEIGHT)
+            )
+            # 方块与上一行 ``VS`` / ``IS`` 标签同一条中线；文字与数值框左对齐。
+            protection_indicators.append(
+                QRectF(
+                    cell_x + _INDICATOR_INSET,
+                    cell_y + (_ROW_HEIGHT - _INDICATOR_SIZE) / 2.0,
+                    _INDICATOR_SIZE,
+                    _INDICATOR_SIZE,
+                )
+            )
+            protection_labels.append(
+                QRectF(
+                    cell_x + _LABEL_WIDTH + _LABEL_GAP,
+                    cell_y,
+                    _BOX_WIDTH,
+                    _ROW_HEIGHT,
+                )
+            )
+        hint = QRectF(
+            left + _PADDING,
+            _HINT_TOP,
+            _HALF_WIDTH - 2.0 * _PADDING,
+            _HINT_HEIGHT,
+        )
         channels.append(
             PowerChannelLayout(
                 channel=name,
@@ -333,6 +428,10 @@ def power_card_layout() -> PowerCardLayout:
                 switch=switch,
                 value_labels=tuple(value_labels),
                 value_boxes=tuple(value_boxes),
+                protection_checks=tuple(protection_checks),
+                protection_indicators=tuple(protection_indicators),
+                protection_labels=tuple(protection_labels),
+                hint=hint,
             )
         )
     return PowerCardLayout(card=card, title=title, channels=tuple(channels))
@@ -358,7 +457,7 @@ def _channel_label_font() -> QFont:
 
 
 def _value_label_font() -> QFont:
-    """四个值的缩写 ``VS`` / ``VL`` / ``IS`` / ``IL``：10pt 等宽加粗。"""
+    """两个值的缩写 ``VS`` / ``IS``：10pt 等宽加粗。"""
     font = QFont(card_code_font())
     font.setPointSizeF(10.0)
     return font
@@ -368,6 +467,21 @@ def _value_font() -> QFont:
     """数值本身：12pt 等宽加粗，保证 ``50.00`` 这类五位数也放得下。"""
     font = QFont(card_code_font())
     font.setPointSizeF(12.0)
+    return font
+
+
+def _protection_font() -> QFont:
+    """勾选框文字“电压保护”“电流保护”：9pt 中等字重，用界面字体保证中文清晰。"""
+    font = QFont(card_status_font())
+    font.setPointSizeF(9.0)
+    font.setWeight(QFont.Weight.DemiBold)
+    return font
+
+
+def _hint_font() -> QFont:
+    """通道底部的自动阈值提示：8pt 常规字重。"""
+    font = QFont(card_status_font())
+    font.setPointSizeF(8.0)
     return font
 
 
@@ -498,6 +612,96 @@ def _paint_value(
         int(Qt.AlignCenter),
         text,
     )
+    painter.restore()
+
+
+def _paint_protection(
+    painter: QPainter,
+    label_rect: QRectF,
+    indicator_rect: QRectF,
+    label: str,
+    checked: bool,
+    index: int,
+    enabled: bool,
+    *,
+    hovered: bool,
+    focused: bool,
+) -> None:
+    """一个保护勾选框：左侧方块 + 右侧文字；关闭通道时整组降到禁用色。
+
+    方块用通道强调色填满表示已勾选，未勾选只画描边；悬停只提亮描边，焦点在方块
+    外侧画一圈主色框，键盘用户能看出当前停在哪个勾选框上。
+    """
+    painter.save()
+    accent = _accent(index)
+    text_color = _TEXT if enabled else _DISABLED_TEXT
+    if checked:
+        fill = accent if enabled else _BORDER_STRONG
+        border = fill
+    else:
+        fill = _SURFACE if enabled else _SURFACE_ALT
+        border = accent if hovered and enabled else _BORDER_STRONG
+    pen_width = 1.5 if enabled else 1.0
+    inset = pen_width / 2.0
+    box = indicator_rect.adjusted(inset, inset, -inset, -inset)
+    painter.setBrush(fill)
+    painter.setPen(QPen(border, pen_width))
+    painter.drawRoundedRect(box, 3.0, 3.0)
+
+    if checked:
+        tick = QPainterPath(
+            QPointF(
+                indicator_rect.left() + indicator_rect.width() * 0.26,
+                indicator_rect.top() + indicator_rect.height() * 0.52,
+            )
+        )
+        tick.lineTo(
+            QPointF(
+                indicator_rect.left() + indicator_rect.width() * 0.43,
+                indicator_rect.top() + indicator_rect.height() * 0.70,
+            )
+        )
+        tick.lineTo(
+            QPointF(
+                indicator_rect.left() + indicator_rect.width() * 0.75,
+                indicator_rect.top() + indicator_rect.height() * 0.33,
+            )
+        )
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(
+            QPen(
+                QColor("#FFFFFF") if enabled else _SURFACE,
+                1.9,
+                Qt.SolidLine,
+                Qt.RoundCap,
+                Qt.RoundJoin,
+            )
+        )
+        painter.drawPath(tick)
+
+    if focused:
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(QPen(_PRIMARY, 1.5))
+        painter.drawRoundedRect(
+            indicator_rect.adjusted(-2.5, -2.5, 2.5, 2.5), 4.0, 4.0
+        )
+
+    painter.setFont(_protection_font())
+    painter.setPen(text_color)
+    painter.drawText(
+        label_rect,
+        int(Qt.AlignLeft | Qt.AlignVCenter),
+        label,
+    )
+    painter.restore()
+
+
+def _paint_hint(painter: QPainter, rect: QRectF, enabled: bool) -> None:
+    """通道底部的自动阈值提示：一行灰色小字，关闭通道时同样降到禁用色。"""
+    painter.save()
+    painter.setFont(_hint_font())
+    painter.setPen(_TEXT_MUTED if enabled else _DISABLED_TEXT)
+    painter.drawText(rect, int(Qt.AlignCenter), _HINT_TEXT)
     painter.restore()
 
 
@@ -669,6 +873,8 @@ def _paint_power_card(
     hover_channel: str | None = None,
     focus_channel: str | None = None,
     pressed_channel: str | None = None,
+    hover_protection: tuple[str, str] | None = None,
+    focus_protection: tuple[str, str] | None = None,
     glow: Mapping[str, float] | None = None,
 ) -> None:
     """把整张卡画到 ``painter`` 上；控件与导出位图共用这一份绘制。
@@ -720,12 +926,7 @@ def _paint_power_card(
             pressed=pressed_channel == channel.channel,
         )
         _paint_channel_label(painter, channel_layout, index, channel.enabled)
-        values = (
-            channel.voltage_set,
-            channel.voltage_protection,
-            channel.current_set,
-            channel.current_protection,
-        )
+        values = (channel.voltage_set, channel.current_set)
         for value_index, (label_rect, box_rect) in enumerate(
             zip(channel_layout.value_labels, channel_layout.value_boxes)
         ):
@@ -738,6 +939,19 @@ def _paint_power_card(
                 index,
                 channel.enabled,
             )
+        for kind_index, kind in enumerate(PROTECTION_KINDS):
+            _paint_protection(
+                painter,
+                channel_layout.protection_labels[kind_index],
+                channel_layout.protection_indicators[kind_index],
+                _PROTECTION_TEXTS[kind_index],
+                channel.protection_enabled(kind),
+                index,
+                channel.enabled,
+                hovered=hover_protection == (channel.channel, kind),
+                focused=focus_protection == (channel.channel, kind),
+            )
+        _paint_hint(painter, channel_layout.hint, channel.enabled)
 
     painter.setBrush(Qt.NoBrush)
     painter.setPen(QPen(_BORDER, 1.0))
@@ -833,17 +1047,73 @@ class ChannelSwitch(QAbstractButton):
         self.focus_changed.emit(self.channel, False)
 
 
+class ProtectionCheck(QAbstractButton):
+    """保护勾选框的透明命中区：外观由父卡片按勾选状态绘制。
+
+    与 :class:`ChannelSwitch` 一样保留 Qt 的键盘焦点、``Space`` 激活与无障碍语义。
+    ``kind`` 只能是 ``voltage`` / ``current``；控件本身不画像素。
+    """
+
+    hover_changed = Signal(str, str, bool)
+    focus_changed = Signal(str, str, bool)
+
+    def __init__(
+        self, channel: str, kind: str, parent: QWidget | None = None
+    ) -> None:
+        super().__init__(parent)
+        if channel not in CHANNEL_NAMES:
+            raise ValueError(f"通道必须是 {' / '.join(CHANNEL_NAMES)}，收到 {channel!r}")
+        if kind not in PROTECTION_KINDS:
+            raise ValueError(
+                f"保护类型必须是 {' / '.join(PROTECTION_KINDS)}，收到 {kind!r}"
+            )
+        self.channel = channel
+        self.kind = kind
+        self.setCheckable(True)
+        self.setAutoExclusive(False)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setCursor(Qt.PointingHandCursor)
+        label = "电压保护" if kind == "voltage" else "电流保护"
+        self.setAccessibleName(f"通道 {channel} {label}")
+        self.setAccessibleDescription("勾选后保护阈值自动取比设定值高 10% 的值")
+
+    def sizeHint(self) -> QSize:
+        return QSize(round(_CELL_WIDTH), round(_ROW_HEIGHT))
+
+    def paintEvent(self, event) -> None:
+        # 外观由父卡片统一画；这里只接受事件，不留下任何控件自己的底色。
+        event.accept()
+
+    def enterEvent(self, event) -> None:
+        super().enterEvent(event)
+        self.hover_changed.emit(self.channel, self.kind, True)
+
+    def leaveEvent(self, event) -> None:
+        super().leaveEvent(event)
+        self.hover_changed.emit(self.channel, self.kind, False)
+
+    def focusInEvent(self, event) -> None:
+        super().focusInEvent(event)
+        self.focus_changed.emit(self.channel, self.kind, True)
+
+    def focusOutEvent(self, event) -> None:
+        super().focusOutEvent(event)
+        self.focus_changed.emit(self.channel, self.kind, False)
+
+
 class PowerSupplyCard(QWidget):
-    """配置页的电源通道卡片：只读展示两个通道，开关只改变卡面状态。
+    """配置页的电源通道卡片：只读展示两个通道，开关与保护勾选框只改卡面状态。
 
-    ``data`` 是构造时的快照；用户拨动开关只更新本卡内部的 enabled 状态，不写配置、
-    不碰硬件。页面通过 :attr:`channel_toggled` 决定之后怎么处理这个动作。
+    ``data`` 是构造时的快照；用户拨动通道开关或保护勾选框只更新本卡内部的快照，
+    不写配置、不碰硬件。页面通过 :attr:`channel_toggled` / :attr:`protection_toggled`
+    决定之后怎么处理这些动作。
 
-    两个开关是真正的可聚焦控件：``Tab`` 在两个通道之间切换，``Space`` / ``Enter``
-    切换状态，鼠标点击同样有效。数值是只读的，不创建输入控件。
+    通道开关与四个保护勾选框都是可聚焦控件：``Tab`` 依次经过它们，``Space`` /
+    ``Enter`` 切换状态，鼠标点击同样有效。数值是只读的，不创建输入控件。
     """
 
     channel_toggled = Signal(str, bool)
+    protection_toggled = Signal(str, str, bool)
 
     def __init__(
         self,
@@ -862,6 +1132,8 @@ class PowerSupplyCard(QWidget):
         self._hover_channel: str | None = None
         self._focus_channel: str | None = None
         self._pressed_channel: str | None = None
+        self._hover_protection: tuple[str, str] | None = None
+        self._focus_protection: tuple[str, str] | None = None
         # 每个通道的点亮进度（0–1）：控件用它播过渡，导出的位图则只取终态。
         self._glow: dict[str, float] = {
             name: 1.0 if data.channel(name).enabled else 0.0
@@ -888,7 +1160,36 @@ class PowerSupplyCard(QWidget):
                 lambda name=channel_layout.channel: self._on_switch_released(name)
             )
             self._switches[channel_layout.channel] = switch
-        self.setTabOrder(self._switches["CH1"], self._switches["CH2"])
+
+        self._protection_checks: dict[tuple[str, str], ProtectionCheck] = {}
+        for channel_layout in self._layout.channels:
+            name = channel_layout.channel
+            channel_data = data.channel(name)
+            for kind, check_rect in zip(
+                PROTECTION_KINDS, channel_layout.protection_checks
+            ):
+                check = ProtectionCheck(name, kind, self)
+                check.setChecked(channel_data.protection_enabled(kind))
+                check.setEnabled(channel_data.enabled)
+                check.setGeometry(check_rect.toRect())
+                check.toggled.connect(
+                    lambda checked, channel=name, kind=kind: (
+                        self._on_protection_toggled(channel, kind, checked)
+                    )
+                )
+                check.hover_changed.connect(self._on_protection_hover)
+                check.focus_changed.connect(self._on_protection_focus)
+                self._protection_checks[(name, kind)] = check
+
+        # 焦点顺序按“通道开关 → 电压保护 → 电流保护”逐通道向后，鼠标与键盘一致。
+        order = []
+        for name in CHANNEL_NAMES:
+            order.append(self._switches[name])
+            order.extend(
+                self._protection_checks[(name, kind)] for kind in PROTECTION_KINDS
+            )
+        for previous, following in zip(order, order[1:]):
+            self.setTabOrder(previous, following)
         self._update_tooltips()
 
     # ---------- 读取 ----------
@@ -912,22 +1213,41 @@ class PowerSupplyCard(QWidget):
         """某个通道此刻是否处于开启状态。"""
         return self.channel_switch(channel).isChecked()
 
+    def protection_check(self, channel: str, kind: str) -> ProtectionCheck:
+        """取某个通道某种保护的透明命中控件；不合法时抛 ``KeyError``。"""
+        check = self._protection_checks.get((channel, kind))
+        if check is None:
+            raise KeyError(f"卡片里没有通道 {channel!r} 的 {kind!r} 保护勾选框")
+        return check
+
+    def channel_protection(self, channel: str, kind: str) -> bool:
+        """某个通道某种保护此刻是否启用。"""
+        return self.protection_check(channel, kind).isChecked()
+
     # ---------- 写入 ----------
 
     def set_data(self, data: PowerSupplyCardData) -> None:
-        """整张卡换一份快照；不触发 :attr:`channel_toggled`。"""
+        """整张卡换一份快照；不触发 :attr:`channel_toggled` 或保护信号。"""
         if not isinstance(data, PowerSupplyCardData):
             raise TypeError(f"data 必须是 PowerSupplyCardData，收到 {data!r}")
         self._data = data
         for channel_layout in self._layout.channels:
             name = channel_layout.channel
+            channel = data.channel(name)
             switch = self._switches[name]
-            enabled = data.channel(name).enabled
-            if switch.isChecked() != enabled:
+            if switch.isChecked() != channel.enabled:
                 switch.blockSignals(True)
-                switch.setChecked(enabled)
+                switch.setChecked(channel.enabled)
                 switch.blockSignals(False)
-            self._settle_glow(name, 1.0 if enabled else 0.0)
+            for kind in PROTECTION_KINDS:
+                check = self._protection_checks[(name, kind)]
+                checked = channel.protection_enabled(kind)
+                if check.isChecked() != checked:
+                    check.blockSignals(True)
+                    check.setChecked(checked)
+                    check.blockSignals(False)
+                check.setEnabled(channel.enabled)
+            self._settle_glow(name, 1.0 if channel.enabled else 0.0)
         self._update_tooltips()
         self.update()
 
@@ -947,11 +1267,37 @@ class PowerSupplyCard(QWidget):
             switch.setChecked(enabled)
             switch.blockSignals(False)
             self._data = self._data.with_channel_enabled(channel, enabled)
+            for kind in PROTECTION_KINDS:
+                self._protection_checks[(channel, kind)].setEnabled(enabled)
             self._settle_glow(channel, 1.0 if enabled else 0.0)
             self._update_tooltips()
             self.update()
         if emit:
             self.channel_toggled.emit(channel, enabled)
+
+    def set_protection_enabled(
+        self,
+        channel: str,
+        kind: str,
+        enabled: bool,
+        *,
+        emit: bool = False,
+    ) -> None:
+        """程序化设置某个保护勾选框；``emit=True`` 时仍发一次信号。"""
+        if not isinstance(enabled, bool):
+            raise TypeError("enabled 必须是 bool")
+        check = self.protection_check(channel, kind)
+        if check.isChecked() != enabled:
+            check.blockSignals(True)
+            check.setChecked(enabled)
+            check.blockSignals(False)
+            self._data = self._data.with_channel_protection(
+                channel, kind, enabled
+            )
+            self._update_tooltips()
+            self.update()
+        if emit:
+            self.protection_toggled.emit(channel, kind, enabled)
 
     # ---------- 点亮过渡 ----------
 
@@ -990,6 +1336,8 @@ class PowerSupplyCard(QWidget):
     def _on_switch_toggled(self, channel: str, enabled: bool) -> None:
         """用户拨动开关：只更新卡面快照，不写配置、不连硬件。"""
         self._data = self._data.with_channel_enabled(channel, bool(enabled))
+        for kind in PROTECTION_KINDS:
+            self._protection_checks[(channel, kind)].setEnabled(bool(enabled))
         self._animate_glow(channel, bool(enabled))
         self._update_tooltips()
         self.update()
@@ -1012,19 +1360,44 @@ class PowerSupplyCard(QWidget):
             self._pressed_channel = None
         self.update()
 
+    def _on_protection_toggled(
+        self, channel: str, kind: str, enabled: bool
+    ) -> None:
+        """用户勾选/取消保护：只更新卡面快照，不写配置、不碰硬件。"""
+        self._data = self._data.with_channel_protection(
+            channel, kind, bool(enabled)
+        )
+        self._update_tooltips()
+        self.update()
+        self.protection_toggled.emit(channel, kind, bool(enabled))
+
+    def _on_protection_hover(
+        self, channel: str, kind: str, hovered: bool
+    ) -> None:
+        self._hover_protection = (channel, kind) if hovered else None
+        self.update()
+
+    def _on_protection_focus(
+        self, channel: str, kind: str, focused: bool
+    ) -> None:
+        self._focus_protection = (channel, kind) if focused else None
+        self.update()
+
     # ---------- 提示与绘制 ----------
 
     def _update_tooltips(self) -> None:
         """悬浮提示补上卡面放不下的信息：每个缩写的含义、单位与通道状态。"""
         lines = [
             self._data.code or "未识别电源",
-            "VS 电压设定 · VL 电压保护 · IS 电流设定 · IL 电流保护",
+            "VS 电压设定 · IS 电流设定",
+            "勾选电压/电流保护后，阈值自动取比设定值高 10% 的值",
         ]
         for channel in self._data.channels:
             lines.append(
                 f"{channel.channel} {'开' if channel.enabled else '关'}："
-                f"VS {channel.voltage_set:.2f} V · VL {channel.voltage_protection:.2f} V · "
-                f"IS {channel.current_set:.2f} A · IL {channel.current_protection:.2f} A"
+                f"VS {channel.voltage_set:.2f} V · IS {channel.current_set:.2f} A · "
+                f"电压保护 {'开' if channel.voltage_protection_enabled else '关'} · "
+                f"电流保护 {'开' if channel.current_protection_enabled else '关'}"
             )
         text = "\n".join(lines)
         self.setToolTip(text)
@@ -1034,6 +1407,14 @@ class PowerSupplyCard(QWidget):
                 f"{channel.channel} {'开' if channel.enabled else '关'}\n"
                 f"点击切换卡面显示状态（暂不写入配置）\n{text}"
             )
+            for kind in PROTECTION_KINDS:
+                label = "电压保护" if kind == "voltage" else "电流保护"
+                check = self._protection_checks[(channel.channel, kind)]
+                check.setToolTip(
+                    f"{channel.channel} {label}\n"
+                    "勾选后保护阈值自动取比设定值高 10% 的值，无需手工填写。\n"
+                    f"{'点击取消' if channel.protection_enabled(kind) else '点击启用'}"
+                )
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
@@ -1044,6 +1425,8 @@ class PowerSupplyCard(QWidget):
                 hover_channel=self._hover_channel,
                 focus_channel=self._focus_channel,
                 pressed_channel=self._pressed_channel,
+                hover_protection=self._hover_protection,
+                focus_protection=self._focus_protection,
                 glow=self._glow,
             )
         finally:

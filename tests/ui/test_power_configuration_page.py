@@ -9,10 +9,17 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QPoint, QRect, Qt
+from PySide6.QtCore import QEvent, QPoint, QRect, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from presentation.qt.config_projection import ConfigBackfillError
+from presentation.qt.power_card import (
+    CHANNEL_NAMES,
+    POWER_CARD_WIDTH,
+    PROTECTION_KINDS,
+    power_card_layout,
+)
 from presentation.qt.power_configuration_page import PowerConfigurationPage
 
 
@@ -117,9 +124,16 @@ class PowerConfigurationPageTests(unittest.TestCase):
         config = valid_config()
         config.update(extra)
         page = PowerConfigurationPage(config)
+        page.resize(1100, 900)
         page.show()
         self.app.processEvents()
+        self.addCleanup(self._destroy_page, page)
         return page
+
+    def _destroy_page(self, page) -> None:
+        page.close()
+        page.deleteLater()
+        self.app.sendPostedEvents(None, QEvent.DeferredDelete)
 
     # ---- 独立创建与绑定状态 ------------------------------------------------
 
@@ -144,6 +158,97 @@ class PowerConfigurationPageTests(unittest.TestCase):
             page.power_section.geometry().top(),
             "卡片在表单上方",
         )
+
+    def _card_check_position(self, page, supply_id, channel, kind) -> QPoint:
+        """卡面勾选框在卡片墙坐标里的中心点（按当前缩放换算）。"""
+        rect = page.card_wall.card_rect(supply_id)
+        self.assertIsNotNone(rect)
+        channel_index = CHANNEL_NAMES.index(channel)
+        kind_index = PROTECTION_KINDS.index(kind)
+        check = power_card_layout().channels[channel_index].protection_checks[
+            kind_index
+        ]
+        scale = rect.width() / POWER_CARD_WIDTH
+        return rect.topLeft().toPoint() + (check.center() * scale).toPoint()
+
+    def _channel_controls(self, page, channel: str = "CH1"):
+        return page.power_section.power_config_widgets["DP8B1519"]["channels"][
+            channel
+        ]
+
+    def test_card_wall_protection_checks_read_the_configuration(self):
+        config = valid_config()
+        channel = config["instruments"]["power_supplies"]["DP8B1519"]["channels"][
+            "CH1"
+        ]
+        channel["voltage"]["protection_enabled"] = True
+        channel["current"]["protection_enabled"] = False
+        page = PowerConfigurationPage(config)
+        page.resize(1100, 900)
+        page.show()
+        self.app.processEvents()
+        self.addCleanup(self._destroy_page, page)
+
+        data = page.card_wall.cards()[0].data
+        self.assertTrue(data.channel_protection("CH1", "voltage"))
+        self.assertFalse(data.channel_protection("CH1", "current"))
+
+    def test_clicking_a_card_protection_check_writes_the_form_switch(self):
+        page = self.make_page()
+        controls = self._channel_controls(page)
+        switch = controls["voltage_protection_enabled"]
+        changes: list[bool] = []
+        page.fragment_changed.connect(lambda: changes.append(True))
+        self.assertFalse(switch.isChecked())
+
+        QTest.mouseClick(
+            page.card_wall,
+            Qt.LeftButton,
+            pos=self._card_check_position(
+                page, "DP8B1519", "CH1", "voltage"
+            ),
+        )
+
+        self.assertTrue(switch.isChecked())
+        self.assertTrue(
+            page.card_wall.cards()[0].data.channel_protection("CH1", "voltage")
+        )
+        self.assertEqual(changes, [True], "卡面点击要计入 dirty")
+
+    def test_toggling_the_form_protection_switch_updates_the_card(self):
+        page = self.make_page()
+        controls = self._channel_controls(page)
+        self.assertFalse(
+            page.card_wall.cards()[0].data.channel_protection("CH1", "current")
+        )
+
+        controls["current_protection_enabled"].setChecked(True)
+
+        self.assertTrue(
+            page.card_wall.cards()[0].data.channel_protection("CH1", "current")
+        )
+
+    def test_read_only_or_morphing_page_does_not_toggle_from_the_card(self):
+        page = self.make_page()
+        controls = self._channel_controls(page)
+        position = self._card_check_position(page, "DP8B1519", "CH1", "voltage")
+
+        page.set_read_only("1.0 配置只能查看")
+        self.assertFalse(page.card_wall.isEnabled())
+        QTest.mouseClick(page.card_wall, Qt.LeftButton, pos=position)
+        self.assertFalse(controls["voltage_protection_enabled"].isChecked())
+
+        page.set_read_only(None)
+        self.assertTrue(page.card_wall.isEnabled())
+        start = page.mapToGlobal(QPoint(240, 420))
+        page.play_card_morph(
+            {"DP8B1519": QRect(start.x(), start.y(), 170, 80)}
+        )
+        self.assertFalse(page.card_wall.isEnabled(), "过渡中不接受卡面点击")
+        QTest.mouseClick(page.card_wall, Qt.LeftButton, pos=position)
+        self.assertFalse(controls["voltage_protection_enabled"].isChecked())
+        page.finish_card_morph()
+        self.assertTrue(page.card_wall.isEnabled())
 
     def test_rack_slots_decide_the_cards_relative_positions(self):
         """排布页的九宫格格位决定卡片在页面上的相对位置。"""

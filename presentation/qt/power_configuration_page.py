@@ -5,7 +5,8 @@
 计划与漏极表单整体接在卡片下方。进入本页时，排布页的电源卡片从屏幕原位展开成完整
 卡片（:mod:`presentation.qt.power_card_morph`），卡片墙与过渡层共用同一份卡片位置。
 设备绑定信息不在本页显示：绑定只在上游“仪器配置”页确认，本页只消费它生成的电源
-集合。每个通道只保留“是否启用保护”的勾选，保护阈值由工作值按 110% 自动写入配置。
+集合。每个通道只保留“是否启用保护”的勾选，保护阈值由工作值按 110% 自动写入配置；
+卡片上的电压/电流保护勾选框可点击，点击写回下方表单的同一开关，不直接改配置文档。
 
 电源参数、通道上电计划与效率测量漏极都归本页；测试参数、运行入口与
 设备发现仍属于 :mod:`presentation.qt.configuration_page` 与
@@ -57,6 +58,7 @@ from .config_power_section import (
 )
 from .config_projection import ConfigBackfillError
 from .pages import PageControllerBindingMixin
+from .power_card import CHANNEL_NAMES, PROTECTION_KINDS
 from .power_card_morph import PowerCardMorphItem, PowerCardMorphOverlay
 from .power_card_wall import PowerCardWall, power_card_data
 from .theme import PAGE_CONTENT_MAX_WIDTH
@@ -153,6 +155,10 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
 
     def _connect_signals(self) -> None:
         self._wire_fragment_signals()
+        if self.card_wall is not None:
+            self.card_wall.protection_toggled.connect(
+                self._on_card_protection_toggled
+            )
 
     def _wire_fragment_signals(self) -> None:
         """把任一电源字段的编辑都汇总成 ``fragment_changed``。
@@ -181,16 +187,26 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         def notify(*_args: Any) -> None:
             self._emit_fragment_changed()
 
-        for supply in getattr(section, "power_config_widgets", {}).values():
-            for controls in supply.get("channels", {}).values():
+        for supply_id, supply in getattr(
+            section, "power_config_widgets", {}
+        ).items():
+            for channel, controls in supply.get("channels", {}).items():
                 for key in ("voltage", "current"):
                     widget = controls.get(key)
                     if widget is not None and hasattr(widget, "valueChanged"):
                         hook(widget.valueChanged, notify)
-                for key in ("voltage_protection_enabled", "current_protection_enabled"):
+                for key, kind in (
+                    ("voltage_protection_enabled", "voltage"),
+                    ("current_protection_enabled", "current"),
+                ):
                     widget = controls.get(key)
                     if widget is not None and hasattr(widget, "toggled"):
-                        hook(widget.toggled, notify)
+                        hook(
+                            widget.toggled,
+                            self._protection_notifier(
+                                str(supply_id), str(channel), kind
+                            ),
+                        )
         for editor in (section.dut_power_plan_editor, section.driver_power_plan_editor):
             hook(editor.list.itemChanged, notify)
             hook(editor.delay_spin.valueChanged, notify)
@@ -200,6 +216,17 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         """只在用户编辑时发出变更通知；回填与重建不算编辑。"""
         if not self._silent:
             self.fragment_changed.emit()
+
+    def _protection_notifier(self, supply_id: str, channel: str, kind: str):
+        """表单保护开关的槽：同步卡面勾选框，再把这次编辑计入 dirty。"""
+        def notify(checked: bool) -> None:
+            if self.card_wall is not None:
+                self.card_wall.set_protection(
+                    supply_id, channel, kind, bool(checked)
+                )
+            self._emit_fragment_changed()
+
+        return notify
 
     # ---- 表单 Adapter -------------------------------------------------------
 
@@ -233,11 +260,35 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         self._refresh_card_wall()
 
     def _card_cards(self) -> list[tuple[str, Any]]:
-        """当前配置里每台电源的卡片数据；顺序与表单标签页一致。"""
-        return [
-            (supply_id, power_card_data(entry, supply_id))
-            for supply_id, entry in self._power_supply_sources().items()
-        ]
+        """当前配置里每台电源的卡片数据；顺序与表单标签页一致。
+
+        保护勾选框以表单当前状态为准：绑定变化或回填会重建表单，重建前操作者
+        尚未保存的保护开关必须继续显示在卡面上。工作值仍按配置快照显示。
+        """
+        sources = self._power_supply_sources()
+        snapshot: Mapping[str, Any] = {}
+        if self.power_section is not None:
+            snapshot = self.form_adapter.read_power_channel_snapshot()
+        cards: list[tuple[str, Any]] = []
+        for supply_id, entry in sources.items():
+            data = power_card_data(entry, supply_id)
+            live = snapshot.get(supply_id)
+            channels = live.get("channels") if isinstance(live, Mapping) else None
+            if isinstance(channels, Mapping):
+                for channel, block in channels.items():
+                    if channel not in CHANNEL_NAMES or not isinstance(block, Mapping):
+                        continue
+                    for kind in PROTECTION_KINDS:
+                        values = block.get(kind)
+                        if not isinstance(values, Mapping):
+                            continue
+                        data = data.with_channel_protection(
+                            channel,
+                            kind,
+                            values.get("protection_enabled") is True,
+                        )
+            cards.append((supply_id, data))
+        return cards
 
     def _refresh_card_wall(self) -> None:
         """按当前配置与排布结果重画卡片墙；没有电源时整块高度收为 0。"""
@@ -245,6 +296,43 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         if wall is None:
             return
         wall.set_cards(self._card_cards(), self._rack_slots)
+
+    def _on_card_protection_toggled(
+        self,
+        supply_id: str,
+        channel: str,
+        kind: str,
+        enabled: bool,
+    ) -> None:
+        """卡面勾选框被点击：写回下方表单的同一个开关。
+
+        配置写入仍走表单读数，卡面不直接改配置文档；表单的 ``toggled`` 信号会同步
+        卡面并计入 dirty。只读、收尾或卡片过渡期间不接收点击。
+        """
+        if (
+            self._card_morph is not None
+            or bool(self.read_only_reason)
+            or self._finalizing
+        ):
+            return
+        section = self.power_section
+        if section is None:
+            return
+        supply = getattr(section, "power_config_widgets", {}).get(supply_id)
+        controls = supply.get("channels", {}).get(channel) if isinstance(supply, Mapping) else None
+        widget = (
+            controls.get(f"{kind}_protection_enabled")
+            if isinstance(controls, Mapping)
+            else None
+        )
+        if widget is None:
+            return
+        widget.setChecked(bool(enabled))
+        # 状态没变时 setChecked 不发信号，这里仍同步一次卡面，避免卡面停在旧值。
+        if self.card_wall is not None:
+            self.card_wall.set_protection(
+                supply_id, channel, kind, bool(enabled)
+            )
 
     def play_card_morph(self, start_rects: Any) -> bool:
         """从排布页卡片的屏幕位置展开成卡片；返回是否真的播放了动画。
@@ -313,6 +401,8 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             return False
         self.finish_card_morph()
         wall.set_paint_enabled(False)
+        # 过渡覆盖层鼠标穿透，底层卡片墙若仍可点就会在动画中改配置。
+        wall.setEnabled(False)
         overlay = PowerCardMorphOverlay(self, items)
         overlay.setGeometry(self.rect())
         overlay.finished.connect(lambda: self._finish_card_morph_overlay(overlay))
@@ -335,6 +425,9 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         self._card_morph = None
         if self.card_wall is not None:
             self.card_wall.set_paint_enabled(True)
+            self.card_wall.setEnabled(
+                not self._finalizing and not bool(self.read_only_reason)
+            )
         overlay.deleteLater()
 
     def _settle_card_layout(self) -> None:
@@ -568,6 +661,12 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         if self.power_section is not None:
             self.power_section.setEnabled(
                 not self._finalizing and not bool(self.read_only_reason)
+            )
+        if self.card_wall is not None:
+            self.card_wall.setEnabled(
+                not self._finalizing
+                and not bool(self.read_only_reason)
+                and self._card_morph is None
             )
 
     def set_finalizing(self, active: bool) -> None:

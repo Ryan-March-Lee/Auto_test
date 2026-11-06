@@ -17,6 +17,11 @@
 卡片只负责显示与选中状态，不知道扫描结果的数据结构：选择、应用与校验仍由
 :class:`presentation.qt.instrument_discovery_panel.InstrumentDiscoveryPanel` 负责。
 
+**选中状态只用底色、文字色与仪器图表达**：未选中的可勾选卡片是灰底、型号·角色灰字、
+仪器图去色变淡；选中后换成白底黑字与彩色原图，两种状态的边框都是 1px（见
+:func:`card_border_width`）。不可应用的卡片沿用未选中的灰底灰字，但它不参与选中，
+仪器图保持彩色原样。
+
 **卡片内容是一份纯数据**（:class:`InstrumentCardData`）：面板从扫描结果算出“第一行写
 什么、图片用哪张、状态说明是什么”，把这份数据同时交给真实卡片
 （:class:`InstrumentCard`）和之后的动画资产；卡片与动画因此读同一份内容，动画不必回头
@@ -73,6 +78,7 @@ __all__ = [
     "CARD_MIN_WIDTH",
     "CARD_PICTURE_HEIGHT",
     "CARD_PICTURE_MARGIN",
+    "CARD_PICTURE_MUTED_OPACITY",
     "CARD_WIDTH",
     "INSTRUMENT_PICTURE_DIR",
     "CardRowPlan",
@@ -120,6 +126,9 @@ CARD_CONTENT_SPACING = 8
 CARD_PICTURE_HEIGHT = 104
 #: 图片不描边、不垫底板，只留一点内缩，让照片不贴到卡片边上。
 CARD_PICTURE_MARGIN = 4
+#: 未选中（可勾选）卡片上的仪器图：先去色，再按这个不透明度叠在卡片底色上。
+#: 选中后恢复彩色原图，图片因此也成为“这张卡选没选中”的提示之一。
+CARD_PICTURE_MUTED_OPACITY = 0.55
 #: 设备码标签固定两行高度：加粗放大的等宽字下长序列号会折行，卡片高度因此保持不变。
 CARD_CODE_HEIGHT = 56
 #: 地址行固定一行高度：有地址时写 IP，没有地址时那一行留空，卡片高度不变。
@@ -293,13 +302,25 @@ def _content_rect(image: QImage) -> QRectF:
 
 @dataclass(frozen=True)
 class InstrumentPicture:
-    """一张已解码的仪器图，以及它的仪器主体在图中占的位置（原图像素坐标）。"""
+    """一张已解码的仪器图，以及它的仪器主体在图中占的位置（原图像素坐标）。
+
+    ``muted_pixmap`` 是同一张图的去色版本（保留原图的透明边缘），供未选中的卡片
+    使用；没有图片或不需要去色时为 ``None``。两者共享同一份主体包围盒，因此去色
+    只改变颜色，不改变仪器在卡片上的大小与落点。
+    """
 
     pixmap: QPixmap
     content: QRectF
+    muted_pixmap: QPixmap | None = None
 
     def is_empty(self) -> bool:
         return self.pixmap.isNull()
+
+    def display_pixmap(self, muted: bool = False) -> QPixmap:
+        """要画的那张位图：``muted`` 为真且去色版本可用时返回去色版，否则返回原图。"""
+        if muted and self.muted_pixmap is not None and not self.muted_pixmap.isNull():
+            return self.muted_pixmap
+        return self.pixmap
 
     def source_rect(self) -> QRectF:
         """要从原图里取的那一块（原图像素坐标）：仪器主体，没有图片时为空。"""
@@ -310,8 +331,32 @@ class InstrumentPicture:
         return self.content
 
 
+def _desaturated_pixmap(pixmap: QPixmap) -> QPixmap:
+    """把位图去色、保留原来的透明边缘。
+
+    直接 ``convertToFormat(Format_Grayscale8)`` 会丢掉 alpha 通道（抠图照片的透明留白
+    会变成黑底），所以先转成灰度的不透明图，再用 ``DestinationIn`` 把原图的 alpha
+    乘回去。整个过程都在 Qt 里做，不在 Python 里逐像素处理大图。
+    """
+    image = pixmap.toImage()
+    if image.isNull():
+        return QPixmap()
+    gray = image.convertToFormat(QImage.Format_Grayscale8).convertToFormat(
+        QImage.Format_ARGB32
+    )
+    painter = QPainter(gray)
+    try:
+        painter.setCompositionMode(QPainter.CompositionMode_DestinationIn)
+        painter.drawImage(0, 0, image)
+    finally:
+        painter.end()
+    muted = QPixmap.fromImage(gray)
+    muted.setDevicePixelRatio(pixmap.devicePixelRatio())
+    return muted
+
+
 class _PictureCache:
-    """按文件路径缓存已解码的原图与它的主体边界；键是 ``(路径, 文件大小, 修改时间)``。"""
+    """按文件路径缓存已解码的原图、去色版与它的主体边界；键是 ``(路径, 文件大小, 修改时间)``。"""
 
     def __init__(self) -> None:
         self._items: dict[tuple[str, int, int], InstrumentPicture] = {}
@@ -328,7 +373,9 @@ class _PictureCache:
         if cached is not None:
             return cached
         picture = QPixmap(str(path))
-        picture_entry = InstrumentPicture(picture, _content_rect(picture.toImage()))
+        image = picture.toImage()
+        muted = _desaturated_pixmap(picture) if not picture.isNull() else None
+        picture_entry = InstrumentPicture(picture, _content_rect(image), muted)
         self._items[key] = picture_entry
         return picture_entry
 
@@ -382,9 +429,9 @@ def card_inner_rect(
 ) -> QRectF:
     """卡片内容区（卡片坐标）：扣掉描边与内容边距后的那一块。
 
-    ``border`` 是描边宽度，默认取未选中时的 :data:`CARD_BORDER_WIDTH`（1px）。行计划
-    固定用它，不跟着选中状态变：样式表把边框加粗到 2px 时，多出来的那 1px 压在内容区
-    的留白上，不改变每一行的位置（见 :func:`card_border_width`）。
+    ``border`` 是描边宽度，默认取 :data:`CARD_BORDER_WIDTH`（1px）。行计划固定用它，
+    不跟着选中状态变：卡片任何状态的描边都是这 1px，每一行的位置因此不会因为选中而移动
+    （见 :func:`card_border_width`）。
     """
     left, top, right, bottom = CARD_CONTENT_MARGINS
     return QRectF(
@@ -505,6 +552,7 @@ class InstrumentImage(QWidget):
     def __init__(self, parent: Any = None) -> None:
         super().__init__(parent)
         self._picture = InstrumentPicture(QPixmap(), QRectF())
+        self._muted = False
         self.setFixedHeight(CARD_PICTURE_HEIGHT)
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -512,6 +560,17 @@ class InstrumentImage(QWidget):
     def set_picture(self, path: Path | None) -> None:
         self._picture = instrument_picture(path)
         self.update()
+
+    def set_muted(self, muted: bool) -> None:
+        """去色并变淡（未选中卡片）；选中后由卡片调回彩色原图。"""
+        muted = bool(muted)
+        if muted == self._muted:
+            return
+        self._muted = muted
+        self.update()
+
+    def is_muted(self) -> bool:
+        return self._muted
 
     def has_picture(self) -> bool:
         return not self._picture.is_empty()
@@ -532,8 +591,9 @@ class InstrumentImage(QWidget):
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
         # 图片直接画在卡片本色上：底板与描边都由样式表关掉，这里只画仪器图；
-        # 只画主体那一块，等比缩放并居中。
-        picture = self._picture.pixmap
+        # 只画主体那一块，等比缩放并居中。未选中时先换成去色版并降低不透明度，
+        # 选中后恢复彩色原图（与动画正面用同一份去色位图、同一个不透明度）。
+        picture = self._picture.display_pixmap(self._muted)
         if picture.isNull():
             # 没有对应图片时不画任何图形，只留一行淡字，避免看起来像加载失败。
             # 颜色取界面里的浅灰令牌：动画正面（presentation.qt.card_assets）用同一个值，
@@ -545,6 +605,8 @@ class InstrumentImage(QWidget):
         source = self.source_rect()
         if destination.isEmpty() or source.isEmpty():
             return
+        if self._muted:
+            painter.setOpacity(CARD_PICTURE_MUTED_OPACITY)
         painter.drawPixmap(destination, picture, source)
 
 
@@ -627,15 +689,13 @@ class InstrumentCardData:
 
 
 def card_border_width(data: InstrumentCardData) -> int:
-    """卡片描边的宽度（像素）：选中时样式表把边框加粗到 2px。
+    """卡片描边的宽度（像素）：所有状态都是 :data:`CARD_BORDER_WIDTH`（1px）。
 
-    这个值只影响**画出来的那道边框**：2px 的边框向卡片内部多压 1px，压住的是内容区的
-    留白，不改变每一行的位置（行位置始终按 :data:`CARD_BORDER_WIDTH` 计算，见
-    :func:`card_row_plan`）。这样同一张卡片在选中/取消时文字不会跳动——Qt 只在第一次
-    应用样式表时按边框粗细调整内容边距，之后切换选中并不会重排，行计划因此不能跟着它走。
+    选中不再把边框加粗：选中与未选中的区别放在卡片底色、文字色与仪器图（去色/彩色）
+    上，边框始终是 1px。这样切换选中不会改变内容边距，行位置自然不跳动。参数仍然保留，
+    因为动画正面与真实卡片都按同一份卡片数据问这道边框宽度。
     """
-    checked = bool(data.checked) and bool(data.checkable)
-    return 2 if checked else CARD_BORDER_WIDTH
+    return CARD_BORDER_WIDTH
 
 
 @dataclass(frozen=True)
@@ -879,8 +939,8 @@ class InstrumentCard(QFrame):
         会重新折行，所以这里也随 ``resizeEvent`` 重算。
 
         布局边距按“计划的内容区减去控件自己的内容边距”反算：Qt 只在第一次应用样式表时
-        按边框粗细设置内容边距，选中/取消之后不会再改它，直接套用会让行位置随选中状态
-        漂移 1px。
+        按边框粗细设置内容边距，之后重新应用样式表不会改它；直接套用会让行位置与行计划
+        差 1px。
         """
         if not getattr(self, "_row_plan_ready", False):
             return
@@ -954,10 +1014,16 @@ class InstrumentCard(QFrame):
 
     def _apply_check_state(self) -> None:
         self.setProperty("checked", self._checked)
-        style = self.style()
-        if style is not None:
-            style.unpolish(self)
-            style.polish(self)
+        # 型号·角色的文字色也跟着选中走。Qt 不会在父控件的动态属性变化时重算子控件的
+        # 后代选择器，所以这里把同一个属性也写在标签上，并单独重装它的样式。
+        self.name_label.setProperty("checked", self._checked)
+        # 未选中的可勾选卡片把仪器图去色变淡，选中后恢复彩色；不可应用的卡片保持原图。
+        self.image.set_muted(self._checkable and not self._checked)
+        for widget in (self, self.name_label):
+            style = widget.style()
+            if style is not None:
+                style.unpolish(widget)
+                style.polish(widget)
         self.update()
 
     def set_status(self, text: str) -> None:

@@ -17,8 +17,9 @@
 - 图片按“仪器主体包围盒等比放进图片区”的规则，与 ``InstrumentImage`` 共用
   :func:`~presentation.qt.device_cards.picture_target_rect` 与
   :func:`~presentation.qt.device_cards.instrument_picture`；
-- 选中、不可应用与空字段的颜色/留白与卡片样式表一致：选中铺极浅主色并描主色边，
-  不可应用的整块降到更浅的表面色，空状态/空地址不画字。
+- 选中、不可应用与空字段的颜色/留白与卡片样式表一致：未选中的可勾选卡片是灰底、
+  型号·角色灰字、仪器图去色变淡；选中后换成白底黑字与彩色原图，两种状态的描边都是
+  1px；不可应用的整块沿用未选中的灰底灰字，但不参与选中，图片保持原样。
 
 它**不是**控件：没有父控件、没有信号，也不吃鼠标或键盘。位图按逻辑尺寸
 （:data:`~presentation.qt.device_cards.CARD_WIDTH` ×
@@ -66,6 +67,7 @@ from PySide6.QtGui import (
 from .device_cards import (
     CARD_HEIGHT,
     CARD_PICTURE_MARGIN,
+    CARD_PICTURE_MUTED_OPACITY,
     CARD_WIDTH,
     CardRowPlan,
     InstrumentCardData,
@@ -101,8 +103,6 @@ CARD_ASSET_SHADOW_MARGIN = 12
 
 _SURFACE = QColor(TOKENS["surface"])
 _SURFACE_ALT = QColor(TOKENS["surface_alt"])
-_PRIMARY = QColor(TOKENS["primary"])
-_PRIMARY_SOFT = QColor(TOKENS["primary_soft"])
 _BORDER = QColor(TOKENS["border"])
 _TEXT = QColor(TOKENS["text"])
 _TEXT_SECONDARY = QColor(TOKENS["text_secondary"])
@@ -188,18 +188,16 @@ def _checked(data: InstrumentCardData) -> bool:
     return bool(data.checked) and bool(data.checkable)
 
 
+def _muted(data: InstrumentCardData) -> bool:
+    """仪器图是否去色变淡：未选中但可勾选。选中与不可应用的卡片都画彩色原图。"""
+    return bool(data.checkable) and not _checked(data)
+
+
 def _paint_surface(painter: QPainter, data: InstrumentCardData, card: QRectF) -> None:
-    """卡片底色与描边：选中、不可应用与普通三种外观与样式表一致。"""
+    """卡片底色与描边：选中是白底，未选中与不可应用都是灰底，描边一律 1px。"""
     stroke = float(card_border_width(data))
-    if _checked(data):
-        painter.fillPath(_rounded(card), _PRIMARY_SOFT)
-        _stroke(painter, card, _PRIMARY, stroke)
-    elif data.checkable:
-        painter.fillPath(_rounded(card), _SURFACE)
-        _stroke(painter, card, _BORDER, stroke)
-    else:
-        painter.fillPath(_rounded(card), _SURFACE_ALT)
-        _stroke(painter, card, _BORDER, stroke)
+    painter.fillPath(_rounded(card), _SURFACE if _checked(data) else _SURFACE_ALT)
+    _stroke(painter, card, _BORDER, stroke)
 
 
 def _paint_code(painter: QPainter, data: InstrumentCardData, plan: CardRowPlan) -> None:
@@ -243,7 +241,12 @@ def _paint_picture(
     target = picture_target_rect(source, area, CARD_PICTURE_MARGIN)
     if target.isEmpty():
         return
-    painter.drawPixmap(target, picture.pixmap, source)
+    muted = _muted(data)
+    painter.save()
+    if muted:
+        painter.setOpacity(CARD_PICTURE_MUTED_OPACITY)
+    painter.drawPixmap(target, picture.display_pixmap(muted), source)
+    painter.restore()
 
 
 def _paint_status(painter: QPainter, data: InstrumentCardData, plan: CardRowPlan) -> None:
@@ -273,7 +276,7 @@ def _paint_caption(painter: QPainter, data: InstrumentCardData, plan: CardRowPla
     painter.save()
     painter.setClipRect(row)
     painter.setFont(card_caption_font())
-    painter.setPen(_TEXT if data.checkable else _TEXT_SECONDARY)
+    painter.setPen(_TEXT if _checked(data) else _TEXT_SECONDARY)
     painter.drawText(
         row.toAlignedRect(),
         int(Qt.AlignHCenter | Qt.AlignVCenter),

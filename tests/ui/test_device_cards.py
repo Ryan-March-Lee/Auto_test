@@ -258,6 +258,32 @@ class CardFromDataTests(unittest.TestCase):
         card.set_checked(False)
         self.assertFalse(card.data.checked)
 
+    def test_the_picture_is_muted_until_the_card_is_checked(self):
+        """选中状态也影响仪器图：未选中去色变淡，选中恢复彩色原图。"""
+        data = InstrumentCardData(
+            "DP832A（DP8B1519）", code="DP8B1519", picture_path=self.picture()
+        )
+        card = InstrumentCard(data)
+
+        self.assertTrue(card.image.is_muted(), "未选中的可勾选卡片图片去色")
+        card.set_checked(True)
+        self.assertFalse(card.image.is_muted(), "选中后恢复彩色")
+        card.set_checked(False)
+        self.assertTrue(card.image.is_muted(), "取消选中后又去色")
+
+    def test_an_unapplicable_card_keeps_its_picture_in_colour(self):
+        card = InstrumentCard(
+            InstrumentCardData(
+                "N9020A（MY51234567）",
+                code="MY51234567",
+                status="未登记 · 不能应用",
+                checkable=False,
+                picture_path=self.picture(),
+            )
+        )
+
+        self.assertFalse(card.image.is_muted(), "不可应用的卡片不参与选中，图片保持彩色")
+
     def test_an_unchecked_card_starts_unchecked_and_empty_lines_stay_hidden(self):
         card = InstrumentCard(InstrumentCardData("未识别设备 #1", code="未识别 #1"))
 

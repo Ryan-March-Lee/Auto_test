@@ -7,6 +7,7 @@
 
 import os
 import unittest
+from dataclasses import replace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -24,9 +25,11 @@ from PySide6.QtGui import QColor, QDropEvent, QImage, QPixmap
 from PySide6.QtWidgets import QApplication
 
 from presentation.qt import rack_overview_page as rack
+from presentation.qt.card_assets import render_card_front
 from presentation.qt.device_cards import CARD_HEIGHT, CARD_WIDTH, InstrumentCardData
 from presentation.qt.device_cards import InstrumentCard
 from presentation.qt.rack_overview_page import RackCardEntry, RackOverviewPage
+from presentation.qt.theme import TOKENS
 
 
 def _front() -> QPixmap:
@@ -378,6 +381,15 @@ class RackOverviewPageTests(unittest.TestCase):
         self.assertEqual(entries[0].code, "DP8B1519")
         self.assertEqual(entries[0].start_rect_global.size(), card.size())
         self.assertFalse(entries[0].front.isNull())
+        # 进入排布页的卡片保持选中态（白底、彩色原图），动画第一帧不再换一次外观。
+        expected = render_card_front(replace(card.data, checked=True))
+        image = entries[0].front.toImage()
+        self.assertEqual(image, expected.toImage())
+        self.assertEqual(
+            image.pixelColor(12, CARD_HEIGHT // 2).name(),
+            TOKENS["surface"].lower(),
+            "进入排布页的卡片应是选中态的白底",
+        )
 
     def test_offscreen_start_rect_is_moved_back_inside_the_canvas(self):
         """上一页卡片的位置高于板子时整张移回可见区域，否则卡片顶部会被裁平。"""

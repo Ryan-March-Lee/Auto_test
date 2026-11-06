@@ -38,6 +38,7 @@ from presentation.qt.card_assets import (  # noqa: E402
     render_card_front,
 )
 from presentation.qt.device_cards import (  # noqa: E402
+    CARD_BORDER_WIDTH,
     CARD_CONTENT_SPACING,
     CARD_HEIGHT,
     CARD_MIN_WIDTH,
@@ -110,7 +111,12 @@ def _subject_box(image: QImage) -> tuple[float, float, float, float] | None:
 
 
 def _is_white(colour: QColor) -> bool:
-    return colour.red() > 250 and colour.green() > 250 and colour.blue() > 250
+    """白底、页面底色与卡片的浅灰底都不算“墨”。
+
+    卡片未选中时是 ``surface_alt``（#FAFBFC），比纯白略暗一点点；把它也当作空白，
+    ``_ink_count`` 才能继续回答“这一行有没有画字”。
+    """
+    return colour.lightness() >= 249
 
 
 def _ink_count(image: QImage, rect) -> int:
@@ -242,22 +248,24 @@ class CardAssetBasicsTests(unittest.TestCase):
 
         # 取内容区左边缘里的一个点：不会落在文字或图片上。
         sample = (float(card_inner_rect().left()) + 2.0, CARD_HEIGHT / 2.0)
-        self.assertEqual(_color_at(plain, *sample).name(), TOKENS["surface"].lower())
-        self.assertEqual(
-            _color_at(checked, *sample).name(), TOKENS["primary_soft"].lower()
-        )
+        # 未选中与不可应用都是灰底，选中换成白底。
+        self.assertEqual(_color_at(plain, *sample).name(), TOKENS["surface_alt"].lower())
+        self.assertEqual(_color_at(checked, *sample).name(), TOKENS["surface"].lower())
         self.assertEqual(
             _color_at(disabled, *sample).name(), TOKENS["surface_alt"].lower()
         )
 
-        # 选中时描主色边；普通卡片描浅灰边（与样式表的两条规则一致）。
-        self.assertEqual(
-            _color_at(checked, 0.5, CARD_HEIGHT / 2.0).name(),
-            TOKENS["primary"].lower(),
-        )
-        self.assertEqual(
-            _color_at(plain, 0.0, CARD_HEIGHT / 2.0).name(), TOKENS["border"].lower()
-        )
+        # 三种状态的描边都是同一道 1px 浅灰边：选中不再加粗、也不换成主色。
+        for name, pixmap in (
+            ("plain", plain),
+            ("checked", checked),
+            ("disabled", disabled),
+        ):
+            with self.subTest(state=name):
+                self.assertEqual(
+                    _color_at(pixmap, 0.0, CARD_HEIGHT / 2.0).name(),
+                    TOKENS["border"].lower(),
+                )
 
     def test_high_dpi_only_adds_pixels_and_keeps_the_logical_layout(self):
         data = _plain_data()
@@ -512,18 +520,18 @@ class CardRowPlanTests(unittest.TestCase):
         )
 
     def test_selecting_a_card_does_not_move_its_rows(self):
-        """选中只把描边加粗到 2px（向内容区多压 1px），每一行的位置不变。"""
+        """选中只换底色、文字色与图片，描边始终 1px，每一行的位置不变。"""
         plain = card_row_plan(_plain_data())
         checked = card_row_plan(
             InstrumentCardData("h", code="DP8B1519", address="192.168.1.102", checked=True)
         )
 
-        self.assertEqual(card_border_width(_plain_data()), 1)
+        self.assertEqual(card_border_width(_plain_data()), CARD_BORDER_WIDTH)
         self.assertEqual(
             card_border_width(
                 InstrumentCardData("h", code="DP8B1519", checked=True)
             ),
-            2,
+            CARD_BORDER_WIDTH,
         )
         for name in ("inner", "code", "picture", "caption", "address"):
             with self.subTest(row=name):
@@ -715,6 +723,8 @@ class CardFrontContentTests(unittest.TestCase):
             model="DP832A",
             role="电源",
             picture_path=picture,
+            # 选中态画彩色原图，才找得到彩色仪器主体；落点与选中与否无关。
+            checked=True,
         )
         card = self.card_geometry(data)
         front = render_card_front(data).toImage()
@@ -747,6 +757,28 @@ class CardFrontContentTests(unittest.TestCase):
             0,
             "没有图片时图片区仍要写出占位文字",
         )
+
+    def test_an_unchecked_card_desaturates_the_picture_and_checking_restores_it(self):
+        """未选中的可勾选卡片把仪器图去色变淡；选中后恢复彩色原图。"""
+        picture = self.save_picture()
+        data = InstrumentCardData("h", code="A", picture_path=picture)
+        checked = InstrumentCardData(
+            "h", code="A", picture_path=picture, checked=True
+        )
+
+        area = card_picture_rect()
+        point = (area.center().x(), area.center().y())
+        muted = _color_at(render_card_front(data), *point)
+        full = _color_at(render_card_front(checked), *point)
+
+        self.assertLessEqual(
+            max(muted.red(), muted.green(), muted.blue())
+            - min(muted.red(), muted.green(), muted.blue()),
+            12,
+            "未选中时仪器图应去色",
+        )
+        self.assertGreater(full.green() - full.red(), 100, "选中后恢复彩色")
+        self.assertGreater(muted.lightness(), full.lightness(), "未选中时图片应变淡")
 
     def test_the_front_matches_the_card_inside_the_border_at_every_width(self):
         """两种宽度、八种内容：边框以内逐像素一致（0 像素差异，留一点余量给抗锯齿）。"""

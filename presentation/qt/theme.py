@@ -518,11 +518,13 @@ QFrame#discoveryResultsBox {
 /* ===== 设备卡片（“仪表配置”页的发现结果） =====
    一台仪器一张卡片，自上而下读：第一行加粗放大的设备码缩写、仪器图、型号·角色、
    最下面一行的灰色 IP 地址。
-   图片直接贴在卡片本色上，不垫底板也不描边。卡片可点击选中：选中时整块描主色并
-   铺一层极浅的主色底，与“只悬停”区分得开；不可应用的卡片整块降低对比度，并在
-   卡片里写明原因。 */
+   图片直接贴在卡片本色上，不垫底板也不描边。卡片可点击选中，选中状态只用底色、
+   文字色与仪器图表达：未选中是灰底、型号·角色灰字（仪器图另由
+   ``device_cards.InstrumentImage`` 去色变淡），选中后换白底黑字与彩色原图；两种状态
+   的描边都是 1px，选中不再加粗边框。不可应用的卡片沿用未选中的灰底灰字，但它不可选，
+   仪器图保持彩色。 */
 QFrame#instrumentCard {
-    background-color: $surface;
+    background-color: $surface_alt;
     border: 1px solid $border;
     border-radius: $radius_card;
 }
@@ -530,8 +532,8 @@ QFrame#instrumentCard:hover {
     border-color: $border_strong;
 }
 QFrame#instrumentCard[checked="true"] {
-    background-color: $primary_soft;
-    border: 2px solid $primary;
+    background-color: $surface;
+    border: 1px solid $border;
 }
 QFrame#instrumentCard[enabled-state="false"] {
     background-color: $surface_alt;
@@ -542,9 +544,12 @@ QWidget#instrumentCardImage {
     border: none;
 }
 QLabel#instrumentCardName {
-    color: $text;
+    color: $text_secondary;
     font-size: $font_card_name;
     font-weight: 600;
+}
+QLabel#instrumentCardName[checked="true"] {
+    color: $text;
 }
 QLabel#instrumentCardCode {
     background: transparent;
@@ -562,9 +567,6 @@ QLabel#instrumentCardAddress {
 QLabel#instrumentCardStatus {
     color: $warning;
     font-size: $font_small;
-}
-QFrame#instrumentCard[enabled-state="false"] QLabel#instrumentCardName {
-    color: $text_secondary;
 }
 QScrollArea#instrumentCardArea {
     background: transparent;

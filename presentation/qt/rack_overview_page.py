@@ -1308,9 +1308,10 @@ class RackOverviewPage(QWidget):
     def entries_from_cards(cls, cards: Sequence[Any]) -> list[RackCardEntry]:
         """把设备发现页勾选的卡片转成本页的进入条目。
 
-        卡片正面用与真实卡片同源的 :func:`render_card_front` 渲染（去掉选中态的高亮，
-        保留“可应用”的白底样式，与效果图里白底灰边的卡片一致），起始矩形取卡片当前的
-        全局位置。这样页面不需要截取控件，也不依赖结果区的布局对象。
+        卡片正面用与真实卡片同源的 :func:`render_card_front` 按**选中态**渲染（白底、
+        黑字、彩色原图），与结果区里刚勾选的样子一致：动画第一帧不必再换一次外观，
+        卡片可以从选中态直接滑入本页。起始矩形取卡片当前的全局位置。这样页面不需要
+        截取控件，也不依赖结果区的布局对象。
         """
         entries: list[RackCardEntry] = []
         for card in cards:
@@ -1318,7 +1319,7 @@ class RackOverviewPage(QWidget):
             if not isinstance(data, InstrumentCardData):
                 continue
             front = render_card_front(
-                replace(data, checked=False),
+                replace(data, checked=True),
                 device_pixel_ratio=float(card.devicePixelRatioF()) or 1.0,
             )
             top_left = card.mapToGlobal(QPoint(0, 0))

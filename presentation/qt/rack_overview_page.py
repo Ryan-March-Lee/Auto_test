@@ -1562,6 +1562,21 @@ class RackOverviewPage(QWidget):
         self._header_animation.stop()
         self._set_header_opacity(0.0 if leaving else 1.0)
 
+    def restore_after_next(self) -> None:
+        """从电源配置页返回：撤销“去下一步”的淡出，保留九宫格与卡片位置。
+
+        排布页实例一直活着，格位、已摆放的卡片和入场动画的终态都不需要重建；这里
+        只把 ``finish`` 进度与标题/动作行的透明度恢复成离开前的样子。
+        """
+        self._next_pending = False
+        self._header_pending = False
+        self._next_animation.stop()
+        self._header_animation.stop()
+        self.board.set_finish_progress(0.0)
+        self._set_header_opacity(1.0)
+        self._actions_effect.setOpacity(1.0)
+        self._sync_actions()
+
     def transition_running(self) -> bool:
         return self.board.transition_running()
 

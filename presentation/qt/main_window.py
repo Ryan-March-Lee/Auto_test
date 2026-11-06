@@ -151,6 +151,9 @@ class MainWindow(QMainWindow):
         self.tab_widget.setDocumentMode(True)
         left_layout.addWidget(self.tab_widget)
         self._register_pages()
+        # 电源配置是整屏步骤：在标签页之外创建，进入工作区前单独切页；参数页与它由
+        # 同一个编辑器装配成共享草稿。
+        self.power_page = self.create_power_page()
         # 页面一建好就对齐只读态：绕过欢迎页也不能先呈现为可编辑。
         self.configuration_editor.set_read_only(
             self.coordinator.editing_read_only_reason()
@@ -206,6 +209,9 @@ class MainWindow(QMainWindow):
             lambda: self._return_to_connection_page(keep_results=True)
         )
         self.view_stack.insertWidget(2, self.rack_page)
+        self.power_page.back_requested.connect(self._return_to_rack_page)
+        self.power_page.next_requested.connect(self._open_workspace_configuration)
+        self.view_stack.insertWidget(3, self.power_page)
 
         central_layout = QVBoxLayout(central_widget)
         central_layout.setContentsMargins(0, 0, 0, 0)
@@ -250,14 +256,32 @@ class MainWindow(QMainWindow):
         )
 
     def _open_configuration_page(self) -> None:
-        """排布完成：进电源配置页，把排布页的电源卡片展开成通道卡片。"""
+        """排布完成：进整屏电源配置页，把排布页的电源卡片展开成通道卡片。"""
         self.coordinator.begin_configuration()
         self.power_page.set_rack_slots(self.rack_page.slot_assignments())
-        self.tab_widget.setCurrentIndex(self.tab_widget.indexOf(self.power_page))
-        self.view_stack.setCurrentWidget(self.workspace_page)
+        self.view_stack.setCurrentWidget(self.power_page)
         self._sync_status_panel_visibility()
         self._sync_finalize_entry()
         self.power_page.play_card_morph(self.rack_page.power_tile_rects_global())
+
+    def _open_workspace_configuration(self) -> None:
+        """电源配置完成：回工作区的“仪器配置”标签页，继续参数与连接。
+
+        电源配置本身是整屏步骤，不占标签；工作区的标签栏与右侧状态面板到这里才
+        重新出现。
+        """
+        self.tab_widget.setCurrentIndex(self.tab_widget.indexOf(self.config_page))
+        self.view_stack.setCurrentWidget(self.workspace_page)
+        self._sync_status_panel_visibility()
+        self._sync_finalize_entry()
+
+    def _return_to_rack_page(self) -> None:
+        """电源配置页“上一步”：回仪器排布页，保留已摆放的格位与卡片。"""
+        self.power_page.finish_card_morph()
+        self.rack_page.restore_after_next()
+        self.view_stack.setCurrentWidget(self.rack_page)
+        self._sync_status_panel_visibility()
+        self._sync_finalize_entry()
 
     def _return_to_connection_page(self, *, keep_results: bool = False) -> None:
         """回上一步：参数配置页重新查找；排布页保留本次选择结果（``keep_results``）。"""
@@ -278,7 +302,11 @@ class MainWindow(QMainWindow):
             self.view_stack.setCurrentWidget(self.welcome_page)
 
     def _register_pages(self):
-        """构造页面并登记 tab；测量页面通过共享 controller 连接。"""
+        """构造标签页并登记；测量页面通过共享 controller 连接。
+
+        电源配置不在标签页里：它由 :meth:`create_power_page` 单独创建，作为排布页
+        之后的整屏步骤。
+        """
         context = PageContext(
             controller=self.measurement_controller,
             config_path_provider=self.coordinator.measurement_config_path,
@@ -295,7 +323,6 @@ class MainWindow(QMainWindow):
             amplifier_realtime_data_callback=self.coordinator.store_realtime_data,
             clear_realtime_callback=self.clear_real_time_data,
             build_configuration=self.create_config_tab,
-            build_power_configuration=self.create_power_configuration_tab,
             build_visualization=self.create_visualization_tab,
             build_run_history=self.create_run_history_tab,
         )
@@ -383,18 +410,23 @@ class MainWindow(QMainWindow):
         self.coordinator.bind_config_page(tab)
         return tab
 
-    def create_power_configuration_tab(self):
-        """创建独立电源配置选项卡，并把它接入共享编辑状态。"""
-        tab = PowerConfigurationPage(self.config, self)
-        self.power_page = tab
-        self.coordinator.bind_power_page(tab)
+    def create_power_page(self):
+        """创建整屏电源配置页，并把它接入共享编辑状态。
+
+        电源配置是排布页之后的整屏步骤，不再登记进工作区标签栏；它和参数页仍由
+        同一个 :class:`ConfigurationEditor` 装配成一份共享草稿。
+        """
+        page = PowerConfigurationPage(self.config, self)
+        self.power_page = page
+        page.bind_controller(self.measurement_controller)
+        self.coordinator.bind_power_page(page)
         self.configuration_editor = ConfigurationEditor(
             self.config_page,
-            tab,
+            page,
             log=self.add_log_message,
             driver_mode_changed=self._refresh_amplifier_instruction_text,
         )
-        return tab
+        return page
 
     def create_visualization_tab(self):
         """创建数据可视化选项卡（浏览历史结果与生成报告副本）"""
@@ -467,7 +499,7 @@ class MainWindow(QMainWindow):
             self._restore_config_page()
 
     def _restore_config_page(self):
-        """恢复参数/电源页控件并按协调器状态同步最终按钮语义。"""
+        """恢复参数页控件并按协调器状态同步最终按钮语义。"""
         editor = getattr(self, "configuration_editor", None)
         if editor is not None:
             editor.set_finalizing(False)

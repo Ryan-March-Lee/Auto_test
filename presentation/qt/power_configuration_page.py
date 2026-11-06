@@ -1,11 +1,15 @@
-"""独立电源配置页（``PowerConfigurationPage``）。
+"""独立电源配置页（``PowerConfigurationPage``），是配置流程里的整屏步骤，不是标签页。
 
-页面以通道卡片为主视图：每台电源一张带蓝黄通道的卡片，按仪器排布页九宫格的
-相对位置摆在内容列顶部（:mod:`presentation.qt.power_card_wall`），上电计划与漏极
-表单接在卡片下方。进入本页时，排布页的电源卡片从屏幕原位展开成完整卡片
-（:mod:`presentation.qt.power_card_morph`），卡片墙与过渡层共用同一份卡片位置。
-设备绑定信息不在本页显示：绑定只在上游“仪器配置”页确认，本页只消费它生成的电源
-集合。
+页面以通道卡片为主视图：顶部是居中加粗的大标题“电源配置”（与“仪器排布”同一套
+``pageTitle``），中间是卡片墙——每台电源一张带蓝黄通道的卡片，按仪器排布页九宫格的
+相对位置摆放（:mod:`presentation.qt.power_card_wall`），上电计划与漏极表单接在卡片
+下方。进入本页时，排布页的电源卡片从屏幕原位展开成完整卡片
+（:mod:`presentation.qt.power_card_morph`），卡片落位后标题、表单与底部导航再淡入；
+卡片墙与过渡层共用同一份卡片位置。设备绑定信息不在本页显示：绑定只在上游
+“仪器配置”页确认，本页只消费它生成的电源集合。
+
+底部“上一步”回仪器排布页（格位与卡片位置原样保留），“下一步”进入工作区的
+“仪器配置”标签页；页面只发信号，切页由主窗口完成。
 
 卡片是通道参数的唯一编辑面：通道开关是本次停留本页的编辑启用状态（每次进页面
 从灰色开始，不写配置、不影响计划），点击后该通道的 VS/IS 输入框与保护勾选才可
@@ -40,10 +44,21 @@ from __future__ import annotations
 import copy
 from typing import Any, Mapping
 
-from PySide6.QtCore import QPoint, QRect, QRectF, Qt, Signal
+from PySide6.QtCore import (
+    QEasingCurve,
+    QPoint,
+    QRect,
+    QRectF,
+    Qt,
+    QVariantAnimation,
+    Signal,
+)
 from PySide6.QtWidgets import (
     QFrame,
+    QGraphicsOpacityEffect,
+    QHBoxLayout,
     QLabel,
+    QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
@@ -65,9 +80,12 @@ from .pages import PageControllerBindingMixin
 from .power_card import CHANNEL_NAMES
 from .power_card_morph import PowerCardMorphItem, PowerCardMorphOverlay
 from .power_card_wall import PowerCardWall, power_card_data
-from .theme import PAGE_CONTENT_MAX_WIDTH
+from .theme import PAGE_CONTENT_MAX_WIDTH, set_button_variant
 
 __all__ = ["PowerConfigurationPage"]
+
+#: 卡片落位后标题、表单与底部导航的淡入时长；比卡片展开短，收尾不拖沓。
+_INTRO_FADE_MS = 180
 
 
 class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
@@ -85,6 +103,10 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
     driver_mode_changed = Signal(bool)
     #: 任一电源字段变化时发出；统一会话用它汇总 dirty（步骤 13 接线）。
     fragment_changed = Signal()
+    #: 底部“上一步”：回仪器排布页；切页由主窗口完成。
+    back_requested = Signal()
+    #: 底部“下一步”：进入工作区的“仪器配置”标签页；切页由主窗口完成。
+    next_requested = Signal()
 
     def __init__(self, config: Any = None, parent: Any = None) -> None:
         PageControllerBindingMixin.__init__(self)
@@ -105,6 +127,9 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         self._rack_slots: dict[str, int] = {}
         #: 卡片 → 排布页的过渡覆盖层；不在过渡中时为 ``None``。
         self._card_morph: PowerCardMorphOverlay | None = None
+        #: 过渡结束时直接显示标题/表单/导航（测试与“跳过动画”路径用）。
+        self._skip_intro_fade = False
+        self._intro_opacity = 1.0
         self.card_wall: PowerCardWall | None = None
         self.build_ui()
         self._connect_signals()
@@ -117,32 +142,89 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
     def build_ui(self) -> Any:
         """按页面协议构建并返回本页根 widget。"""
         root = QVBoxLayout(self)
-        root.setContentsMargins(0, 4, 0, 0)
-        root.setSpacing(10)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        content = QWidget()
+        content.setMaximumWidth(PAGE_CONTENT_MAX_WIDTH)
+        column = QVBoxLayout(content)
+        column.setContentsMargins(24, 12, 24, 16)
+        column.setSpacing(10)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addStretch(1)
+        row.addWidget(content, 100)
+        row.addStretch(1)
+        root.addLayout(row, 1)
+
+        # 顶部标题：和“仪器排布”同一套大字号居中标题；占着布局位置，只做淡入淡出，
+        # 过渡期间版面不会因为标题出现而跳动。
+        self._header_row = QWidget()
+        header = QHBoxLayout(self._header_row)
+        header.setContentsMargins(0, 0, 0, 0)
+        self.title_label = QLabel("电源配置")
+        self.title_label.setProperty("role", "pageTitle")
+        header.addStretch(1)
+        header.addWidget(self.title_label)
+        header.addStretch(1)
+        self._header_effect = QGraphicsOpacityEffect(self._header_row)
+        self._header_effect.setOpacity(1.0)
+        self._header_row.setGraphicsEffect(self._header_effect)
+        column.addWidget(self._header_row)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
         self._scroll = scroll
-        content = QWidget()
-        content.setMaximumWidth(PAGE_CONTENT_MAX_WIDTH)
-        column = QVBoxLayout(content)
-        # 顶部留一点呼吸：卡片不贴住标签栏。
-        column.setContentsMargins(0, 8, 4, 0)
-        column.setSpacing(12)
+        body = QWidget()
+        inner = QVBoxLayout(body)
+        # 顶部不留额外呼吸：标题行已经在卡片上方。
+        inner.setContentsMargins(0, 0, 4, 0)
+        inner.setSpacing(12)
         self.read_only_notice = QLabel()
         self.read_only_notice.setObjectName("powerReadOnlyNotice")
         self.read_only_notice.setProperty("tone", "warning")
         self.read_only_notice.setWordWrap(True)
         self.read_only_notice.setVisible(False)
-        column.addWidget(self.read_only_notice)
+        inner.addWidget(self.read_only_notice)
         # 卡片视图是页面的主角：放在内容列最上方、水平居中，参数表单接在下面。
-        self.card_wall = PowerCardWall(content)
-        column.addWidget(self.card_wall)
-        self._build_power_widgets(column)
-        column.addStretch(1)
-        scroll.setWidget(content)
-        root.addWidget(scroll, 1)
+        self.card_wall = PowerCardWall(body)
+        inner.addWidget(self.card_wall)
+        self._build_power_widgets(inner)
+        inner.addStretch(1)
+        scroll.setWidget(body)
+        column.addWidget(scroll, 1)
+
+        # 底部导航与排布页同形：左侧次要“上一步”，右侧主操作“下一步”。
+        self._footer_row = QWidget()
+        footer = QHBoxLayout(self._footer_row)
+        footer.setContentsMargins(0, 0, 0, 0)
+        footer.setSpacing(10)
+        self.back_btn = QPushButton("上一步")
+        self.back_btn.setToolTip("回到仪器排布页，保留本次电源架位")
+        set_button_variant(self.back_btn, "secondary")
+        self.next_btn = QPushButton("下一步")
+        self.next_btn.setToolTip("进入仪器配置，设置测试参数并连接仪器")
+        set_button_variant(self.next_btn, "primary")
+        footer.addWidget(self.back_btn)
+        footer.addStretch(1)
+        footer.addWidget(self.next_btn)
+        self._footer_effect = QGraphicsOpacityEffect(self._footer_row)
+        self._footer_effect.setOpacity(1.0)
+        self._footer_row.setGraphicsEffect(self._footer_effect)
+        column.addWidget(self._footer_row)
+
+        self._intro_animation = QVariantAnimation(self)
+        self._intro_animation.setDuration(_INTRO_FADE_MS)
+        self._intro_animation.setEasingCurve(QEasingCurve.OutCubic)
+        self._intro_animation.setStartValue(0.0)
+        self._intro_animation.setEndValue(1.0)
+        self._intro_animation.valueChanged.connect(self._set_intro_opacity)
+        self._intro_animation.finished.connect(self._on_intro_finished)
+
+        self.back_btn.clicked.connect(self.back_requested.emit)
+        self.next_btn.clicked.connect(self.next_requested.emit)
         self._refresh_card_wall()
         return self
 
@@ -155,6 +237,10 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             driver_power_plan=self._power_plan_entry("driver_amplifier"),
             drain_channel=self._drain_channel_entry(),
         )
+        # 卡片落位后表单再淡入；效果只作用于表单，不挡卡片墙的绘制。
+        self._section_effect = QGraphicsOpacityEffect(self.power_section)
+        self._section_effect.setOpacity(1.0)
+        self.power_section.setGraphicsEffect(self._section_effect)
         layout.addWidget(self.power_section)
 
     def _connect_signals(self) -> None:
@@ -277,10 +363,13 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         """从排布页卡片的屏幕位置展开成卡片；返回是否真的播放了动画。
 
         ``start_rects`` 是 ``supply_id -> 全局 QRect``。页面必须已经是当前页并完成
-        布局；拿不到卡片或起点时直接显示静止卡片墙（返回 ``False``）。
+        布局；拿不到卡片或起点时直接显示静止卡片墙与标题/表单（返回 ``False``）。
+        真正播放时先把标题、表单与底部导航藏起来，覆盖层只画卡片；落位后再淡入，
+        因此画面先在卡片墙上收住，再出现“电源配置”标题和下方表单。
         """
         wall = self.card_wall
         if wall is None or wall.is_empty() or not isinstance(start_rects, Mapping):
+            self._set_intro_visible(True)
             return False
         starts = {
             str(supply_id): rect
@@ -288,6 +377,7 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             if isinstance(rect, QRect) and not rect.isEmpty()
         }
         if not starts:
+            self._set_intro_visible(True)
             return False
         # 卡片墙在内容最上方：先把滚动条收回顶部，动画终点才和屏幕上的卡片对齐。
         self._scroll.verticalScrollBar().setValue(0)
@@ -339,8 +429,10 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
                 )
             )
         if not items:
+            self._set_intro_visible(True)
             return False
         self.finish_card_morph()
+        self._set_intro_visible(False)
         wall.set_paint_enabled(False)
         # 过渡覆盖层鼠标穿透，底层卡片墙若仍可点就会在动画中改配置。
         wall.setEnabled(False)
@@ -351,14 +443,53 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         overlay.start()
         return True
 
+    # ---- 标题 / 表单 / 导航的入场 ------------------------------------------
+
+    def _set_intro_opacity(self, value: Any) -> None:
+        opacity = max(0.0, min(1.0, float(value)))
+        self._intro_opacity = opacity
+        for effect in (
+            self._header_effect,
+            self._section_effect,
+            self._footer_effect,
+        ):
+            effect.setOpacity(opacity)
+
+    def _set_intro_visible(self, visible: bool) -> None:
+        """直接显示或藏起标题/表单/导航；藏起时仍占布局，卡片位置不会跳。"""
+        self._intro_animation.stop()
+        self._set_intro_opacity(1.0 if visible else 0.0)
+        self._set_navigation_enabled(bool(visible))
+
+    def _set_navigation_enabled(self, enabled: bool) -> None:
+        self.back_btn.setEnabled(enabled)
+        self.next_btn.setEnabled(enabled)
+
+    def _play_intro(self) -> None:
+        self._intro_animation.stop()
+        self._set_navigation_enabled(False)
+        self._set_intro_opacity(0.0)
+        self._intro_animation.start()
+
+    def _on_intro_finished(self) -> None:
+        self._set_intro_opacity(1.0)
+        self._set_navigation_enabled(True)
+
+    def intro_visible(self) -> bool:
+        """标题、表单与底部导航是否已经完全显示（过渡结束）。"""
+        return self._intro_opacity >= 1.0 - 1e-9
+
     def card_morph_running(self) -> bool:
         return self._card_morph is not None
 
     def finish_card_morph(self) -> None:
-        """立即结束过渡；没有过渡时什么也不做。"""
+        """立即结束过渡（含标题/表单淡入）；没有过渡时只把入场收尾。"""
         overlay = self._card_morph
         if overlay is not None:
+            self._skip_intro_fade = True
             overlay.finish_now()
+            return
+        self._set_intro_visible(True)
 
     def _finish_card_morph_overlay(self, overlay: PowerCardMorphOverlay) -> None:
         if self._card_morph is not overlay:
@@ -370,6 +501,11 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
                 not self._finalizing and not bool(self.read_only_reason)
             )
         overlay.deleteLater()
+        if self._skip_intro_fade:
+            self._skip_intro_fade = False
+            self._set_intro_visible(True)
+        else:
+            self._play_intro()
 
     def _settle_card_layout(self) -> None:
         """强制跑一次内容列布局，确保卡片墙已有真实宽度与位置。"""

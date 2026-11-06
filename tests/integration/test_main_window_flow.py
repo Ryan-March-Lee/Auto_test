@@ -411,11 +411,24 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         )
         window.rack_page.finish_transition()
         window.rack_page.next_btn.click()
-        # 排布页先把除电源卡片外的内容淡出，再进电源配置页展开通道卡片。
+        # 排布页先把除电源卡片外的内容淡出，再进整屏电源配置页展开通道卡片。
         window.rack_page.finish_transition()
-        self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
-        self.assertIs(window.tab_widget.currentWidget(), window.power_page)
+        self.assertIs(window.view_stack.currentWidget(), window.power_page)
+        self.assertNotIn(
+            "电源配置",
+            [
+                window.tab_widget.tabText(index)
+                for index in range(window.tab_widget.count())
+            ],
+            "电源配置已经是整屏步骤，不再是标签页",
+        )
         window.power_page.finish_card_morph()
+        self.assertTrue(window.power_page.intro_visible())
+
+        # 电源配置的下一步才进入工作区的“仪器配置”标签页。
+        window.power_page.next_btn.click()
+        self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
+        self.assertIs(window.tab_widget.currentWidget(), window.config_page)
 
     def test_connection_page_is_not_a_tab_and_hides_the_status_panel(self):
         """仪器连接配置页占满整个界面：既不在标签栏里，也不显示进度与日志。"""
@@ -440,8 +453,10 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         window.rack_page.finish_transition()
         window.rack_page.next_btn.click()
         window.rack_page.finish_transition()
-        self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
+        self.assertIs(window.view_stack.currentWidget(), window.power_page)
         window.power_page.finish_card_morph()
+        window.power_page.next_btn.click()
+        self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
 
         window.config_page.previous_step_btn.click()
         self.assertIs(window.view_stack.currentWidget(), window.connection_page)
@@ -453,9 +468,11 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         window.rack_page.finish_transition()
         window.rack_page.next_btn.click()
         window.rack_page.finish_transition()
-        self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
-        self.assertIs(window.tab_widget.currentWidget(), window.power_page)
+        self.assertIs(window.view_stack.currentWidget(), window.power_page)
         window.power_page.finish_card_morph()
+        window.power_page.next_btn.click()
+        self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
+        self.assertIs(window.tab_widget.currentWidget(), window.config_page)
 
     def test_rack_previous_step_returns_to_the_same_selection_result(self):
         """仪器排布页的“上一步”回到本次选择结果，卡片与勾选都还在。"""
@@ -659,22 +676,28 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIn("run_mapping", saved)
         self.assertIn("test_plan", window.config)
 
-    def test_power_configuration_page_is_a_tab_in_the_shared_editor(self):
+    def test_power_configuration_page_is_a_full_screen_step_in_the_shared_editor(self):
         self._silence_dialogs()
         window = self._window()
 
-        self.assertIs(window.power_page, window.pages["power_configuration"])
-        self.assertIn("电源配置", [
-            window.tab_widget.tabText(index)
+        self.assertIs(window.power_page, window.configuration_editor.power_page)
+        self.assertNotIn(window.power_page, [
+            window.tab_widget.widget(index)
             for index in range(window.tab_widget.count())
         ])
+        self.assertNotIn("power_configuration", window.pages)
         self.assertEqual(
             window.configuration_editor.pages(),
             [window.config_page, window.power_page],
         )
+        self.assertIs(
+            window.power_page.parent(),
+            window.view_stack,
+            "电源配置页挂在整屏页面堆栈里",
+        )
 
-    def test_unsaved_power_edit_survives_tab_switching_and_saves_once(self):
-        """两页往返不丢未保存修改；一次保存把整份草稿写入同一文件。"""
+    def test_unsaved_power_edit_survives_step_switching_and_saves_once(self):
+        """电源页与工作区往返不丢未保存修改；一次保存把整份草稿写入同一文件。"""
         self._silence_dialogs()
         window = self._window()
         window._enter_test_mode(False)
@@ -682,14 +705,11 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         channel["voltage"].setValue(7.5)
         self.assertTrue(window.configuration_editor.is_dirty())
 
-        window.tab_widget.setCurrentIndex(
-            window.tab_widget.indexOf(window.power_page)
-        )
+        window._open_configuration_page()
+        window.power_page.finish_card_morph()
+        window.power_page.next_btn.click()
         self.app.processEvents()
-        window.tab_widget.setCurrentIndex(
-            window.tab_widget.indexOf(window.config_page)
-        )
-        self.app.processEvents()
+        self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
         self.assertEqual(
             window.power_page.power_config_widgets["DP8B1519"]["channels"]["CH1"][
                 "voltage"

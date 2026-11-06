@@ -145,7 +145,6 @@ PAGE_CONTEXT_FIELDS = (
     "amplifier_realtime_data_callback",
     "clear_realtime_callback",
     "build_configuration",
-    "build_power_configuration",
     "build_visualization",
     "build_run_history",
 )

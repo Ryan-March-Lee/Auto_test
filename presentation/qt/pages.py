@@ -2,7 +2,8 @@
 
 本模块是页面注册的唯一位置：``PAGE_DEFINITIONS`` 固定用户可见顺序，``PageContext``
 提供页面构造所需的窄接口，``PageControllerBindingMixin`` 统一 controller 事件的连接
-与解除。窗口只按契约构造页面并登记到标签页，不持有页面内部状态。
+与解除。窗口只按契约构造页面并登记到标签页；电源配置是整屏步骤，由窗口在注册表
+之外创建（它仍与参数页共用同一个编辑器），窗口不持有页面内部状态。
 
 这里的契约不导入 Qt、worker、装配层或测量服务，因此页面可以用纯 Python 替身
 controller 单独测试；每个页面把自己的 signal 连接与解除放在自己的生命周期里。
@@ -165,7 +166,6 @@ class PageContext:
     amplifier_realtime_data_callback: Callable[[Any], Any]
     clear_realtime_callback: Callable[[], Any]
     build_configuration: Callable[[], Any]
-    build_power_configuration: Callable[[], Any]
     build_visualization: Callable[[], Any]
     build_run_history: Callable[[], Any]
 
@@ -188,13 +188,6 @@ def _page_forwarder(callback: Any) -> Any:
     if callback is None:
         return None
     return lambda *args, **kwargs: callback(*args, **kwargs)
-
-
-def _build_power_configuration_page(context: PageContext) -> Any:
-    """独立电源配置页：电源参数、上电计划与漏极。"""
-    page = context.build_power_configuration()
-    page.bind_controller(context.controller)
-    return page
 
 
 def _build_cable_loss_page(context: PageContext) -> Any:
@@ -257,7 +250,6 @@ def _build_amplifier_page(context: PageContext) -> Any:
 
 PAGE_DEFINITIONS = (
     PageDefinition("configuration", "仪器配置", lambda context: context.build_configuration()),
-    PageDefinition("power_configuration", "电源配置", _build_power_configuration_page),
     PageDefinition("cable_loss", "线损测量", _build_cable_loss_page),
     PageDefinition("driver_mapping", "驱动映射", _build_driver_mapping_page),
     PageDefinition("amplifier", "功放测试", _build_amplifier_page),

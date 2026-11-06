@@ -156,6 +156,48 @@ class PowerConfigurationPageTests(unittest.TestCase):
             "卡片在表单上方",
         )
 
+    def test_the_page_has_a_centered_power_configuration_title(self):
+        """整屏步骤页：顶部是“电源配置”大标题，不是标签页。"""
+        page = self.make_page()
+
+        self.assertEqual(page.title_label.text(), "电源配置")
+        self.assertEqual(page.title_label.property("role"), "pageTitle")
+        self.assertAlmostEqual(
+            page.title_label.mapTo(page, QPoint(0, 0)).x()
+            + page.title_label.width() / 2.0,
+            page.rect().center().x(),
+            delta=2.0,
+            msg="标题在页面里水平居中",
+        )
+
+    def test_footer_buttons_emit_navigation_signals(self):
+        page = self.make_page()
+        events: list[str] = []
+        page.back_requested.connect(lambda: events.append("back"))
+        page.next_requested.connect(lambda: events.append("next"))
+
+        QTest.mouseClick(page.back_btn, Qt.LeftButton)
+        QTest.mouseClick(page.next_btn, Qt.LeftButton)
+
+        self.assertEqual(events, ["back", "next"])
+
+    def test_card_morph_hides_then_reveals_the_title_and_form(self):
+        """卡片展开期间标题/表单/导航先藏起来，落位后再次出现。"""
+        page = self.make_page()
+        start = QRect(40, 40, 170, 80)
+
+        self.assertTrue(page.play_card_morph({"DP8B1519": start}))
+        self.assertTrue(page.card_morph_running())
+        self.assertFalse(page.intro_visible())
+        self.assertFalse(page.next_btn.isEnabled())
+
+        page.finish_card_morph()
+
+        self.assertFalse(page.card_morph_running())
+        self.assertTrue(page.intro_visible())
+        self.assertTrue(page.next_btn.isEnabled())
+        self.assertTrue(page.card_wall.paint_enabled())
+
     def _card(self, page):
         return page.card_wall.supply_card("DP8B1519")
 

@@ -1,12 +1,12 @@
 """电源配置页的卡片视图（``PowerCardWall``）。
 
 电源配置页以通道卡片为主视图：每台电源一张 440×166 的通道卡片（左 CH1 浅蓝、
-右 CH2 浅琥珀；两个通道的电源键分别贴住左右上角，设备码在顶部正中的白色铭牌上），
-卡片按仪器排布页九宫格里的相对位置摆放在页面中央。上电计划与漏极表单接在卡片下方；
-通道参数本身只在这一张卡上编辑。
+右 CH2 浅琥珀；两个通道的 OFF / Driver / DUT 竖直滚筒分别贴住左右上角，设备码在
+顶部正中的白色铭牌上），卡片按仪器排布页九宫格里的相对位置摆放在页面中央。上电
+计划与漏极表单接在卡片下方；通道参数本身只在这一张卡上编辑。
 
 **真实控件**：卡片墙直接承载 :class:`presentation.qt.power_card.PowerSupplyCard`
-子控件（不是位图 + 坐标命中）。通道开关、VS/IS 输入框与保护勾选框都由 Qt 处理
+子控件（不是位图 + 坐标命中）。角色滚筒、VS/IS 输入框与保护勾选框都由 Qt 处理
 鼠标、键盘与焦点，卡片墙只负责按格位摆位、按可用宽度等比缩放并转发信号。
 
 **相对位置**：仪器排布页把电源拖进 3×3 格子，格位下标从左上开始、先行后列。
@@ -14,9 +14,15 @@
 收掉，因此“左上角那台电源”在卡片视图里仍然在左上角。卡片数量多到一屏放不下时，
 整块按可用宽度等比缩小，相对位置不变；卡片缩放时子控件几何与字号一起调整。
 
-**编辑状态**：通道开关只表示本次停留本页的编辑启用状态，不写配置。页面重建卡片
+**间距与投影**：同排卡片之间留 22 的逻辑间距，多张卡并排时不挤在一起。卡片是
+真实子控件，投影只能由本控件在卡片下面画（:meth:`PowerCardWall.paintEvent`）：
+三层圆角矩形由内到外叠出柔和阴影，墙上下各留 8 的投影空间，避免阴影被边界裁掉。
+展开动画接管卡面时（``set_paint_enabled(False)``）不再画静态投影。
+
+**角色状态**：滚筒档位由页面按两份 ``power_plan`` 回填，换档后页面再把路由写回
+计划；本控件只保存卡片快照并发 ``channel_mode_changed``，不写配置。页面重建卡片
 （应用绑定、回填配置）时，``preserve_edit_state=True`` 会保留同一台电源当前的
-开关、数值与保护状态；``False`` 则完全按传入数据重建。控件本身不读写配置文档。
+角色、数值与保护状态；``False`` 则完全按传入数据重建。控件本身不读写配置文档。
 """
 
 from __future__ import annotations
@@ -25,13 +31,14 @@ import math
 from dataclasses import dataclass, replace
 from typing import Any, Iterable, Mapping
 
-from PySide6.QtCore import QRectF, QSize, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QRectF, QSize, Signal, Qt
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from .power_card import (
     CHANNEL_NAMES,
     POWER_CARD_HEIGHT,
+    POWER_CARD_RADIUS,
     POWER_CARD_WIDTH,
     PROTECTION_KINDS,
     VALUE_KINDS,
@@ -43,10 +50,14 @@ from .power_card import (
 __all__ = ["PowerCardCell", "PowerCardWall", "power_card_data"]
 
 #: 卡片之间的间距（逻辑像素）。卡片本身缩小时间距不缩，保持卡片轮廓清晰。
-_CARD_GAP = 18.0
+_CARD_GAP = 22.0
 
 #: 卡片墙左右留白：不贴住内容列边缘。
 _SIDE_MARGIN = 16.0
+
+#: 卡片投影在墙坐标里占的额外留白：卡片控件是子控件，投影只能由墙自己画，
+#: 上下留一点空间，柔和阴影才不会被墙的边界裁掉。
+_SHADOW_PAD = 8.0
 
 #: 九宫格列数，与仪器排布页一致。
 _SLOT_COLUMNS = 3
@@ -54,7 +65,7 @@ _SLOT_COLUMNS = 3
 
 @dataclass(frozen=True)
 class PowerCardCell:
-    """一张通道卡片在墙上的位置：电源键、数据与格位下标。"""
+    """一张通道卡片在墙上的位置：供电角色、数据与格位下标。"""
 
     supply_id: str
     data: PowerSupplyCardData
@@ -82,8 +93,8 @@ def _channel_data(name: str, entry: Mapping[str, Any]) -> PowerChannelData:
     current = current if isinstance(current, Mapping) else {}
     return PowerChannelData(
         channel=name,
-        # 两个通道始终保留；配置里缺少这条通道时按 0 显示，交给页面决定编辑状态。
-        enabled=True,
+        # 两个通道始终保留；角色由页面按上电计划回填，缺省是 OFF。
+        mode="off",
         voltage_set=_number(voltage.get("value")),
         current_set=_number(current.get("value")),
         # 卡面只保留“是否启用保护”；阈值仍由配置读取按 110% 推导，不在这里显示。
@@ -119,7 +130,7 @@ def _merge_edit_state(
     merged = incoming
     for name in CHANNEL_NAMES:
         old = current.channel(name)
-        merged = merged.with_channel_enabled(name, old.enabled)
+        merged = merged.with_channel_mode(name, old.mode)
         for kind, value in (
             ("voltage", old.voltage_set),
             ("current", old.current_set),
@@ -139,12 +150,12 @@ class PowerCardWall(QWidget):
     的电源按传入顺序补进空位。卡片是真实子控件，缩放由 :meth:`PowerSupplyCard.set_scale`
     完成，因此三列放不下时点击位置、输入焦点与字号都跟着缩放。
 
-    卡片上的通道开关、工作值与保护变化通过信号转给页面；本控件只同步自己的卡片
+    卡片上的供电角色、工作值与保护变化通过信号转给页面；本控件只同步自己的卡片
     快照，不写配置。
     """
 
-    #: ``(supply_id, channel, enabled)``：本次编辑的通道启用状态。
-    channel_toggled = Signal(str, str, bool)
+    #: ``(supply_id, channel, mode)``：供电角色，``mode`` 是 ``off`` / ``driver`` / ``dut``。
+    channel_mode_changed = Signal(str, str, str)
     #: ``(supply_id, channel, kind, enabled)``；``kind`` 是 ``voltage`` / ``current``。
     protection_toggled = Signal(str, str, str, bool)
     #: ``(supply_id, channel, kind, value)``：VS / IS 输入。
@@ -158,6 +169,7 @@ class PowerCardWall(QWidget):
         self._rects: dict[str, QRectF] = {}
         self._cards: dict[str, PowerSupplyCard] = {}
         self._paint_enabled = True
+        self._driver_available = True
 
     # ---- 内容 ---------------------------------------------------------------
 
@@ -209,13 +221,13 @@ class PowerCardWall(QWidget):
             card.hide()
             card.deleteLater()
 
-        for cell in cells:
+        for index, cell in enumerate(cells):
             card = self._cards.get(cell.supply_id)
             if card is None:
                 card = PowerSupplyCard(cell.data, self)
-                card.channel_toggled.connect(
-                    lambda channel, enabled, supply=cell.supply_id: (
-                        self._on_card_channel(supply, channel, enabled)
+                card.channel_mode_changed.connect(
+                    lambda channel, mode, supply=cell.supply_id: (
+                        self._on_card_mode(supply, channel, mode)
                     )
                 )
                 card.protection_toggled.connect(
@@ -231,6 +243,11 @@ class PowerCardWall(QWidget):
                 self._cards[cell.supply_id] = card
             else:
                 card.set_data(cell.data)
+            card.set_driver_available(self._driver_available)
+            # Driver 不可用时卡片会把 driver 规整成 off；墙面快照跟上，避免
+            # ``cards()`` 与真实控件各说一套。
+            if card.data != cell.data:
+                cells[index] = replace(cell, data=card.data)
             card.setVisible(self._paint_enabled)
         self._cells = cells
         self.refresh_layout()
@@ -272,11 +289,49 @@ class PowerCardWall(QWidget):
         self._sync_cell(supply_id, card.data)
         return True
 
-    def reset_channel_switches(self) -> None:
-        """把所有卡片的通道开关回到未启用；不发配置变更信号。"""
+    def set_channel_mode(self, supply_id: str, channel: str, mode: str) -> bool:
+        """只改某张卡某个通道的供电角色；没有这张卡或状态未变时返回 ``False``。"""
+        card = self._cards.get(supply_id)
+        if card is None:
+            return False
+        if mode == "driver" and not self._driver_available:
+            mode = "off"
+        if card.channel_mode(channel) == mode:
+            return False
+        card.set_channel_mode(channel, mode, animate=False)
+        self._sync_cell(supply_id, card.data)
+        return True
+
+    def set_channel_modes(self, modes: Mapping[tuple[str, str], str]) -> None:
+        """按 ``(supply_id, channel) -> mode`` 批量同步卡片；不发信号。"""
         for supply_id, card in self._cards.items():
-            card.reset_channel_switches()
+            for name in CHANNEL_NAMES:
+                mode = modes.get((supply_id, name), "off")
+                if mode == "driver" and not self._driver_available:
+                    mode = "off"
+                if card.channel_mode(name) != mode:
+                    card.set_channel_mode(name, mode, animate=False)
             self._sync_cell(supply_id, card.data)
+
+    def set_driver_available(self, available: bool) -> None:
+        """驱放测试模式开关：Driver 档是否可选；不发配置变更信号。"""
+        available = bool(available)
+        if available == self._driver_available:
+            return
+        self._driver_available = available
+        for supply_id, card in self._cards.items():
+            card.set_driver_available(available)
+            self._sync_cell(supply_id, card.data)
+
+    def reset_channel_modes(self) -> None:
+        """把所有卡片的通道角色回到 OFF；不发配置变更信号。"""
+        for supply_id, card in self._cards.items():
+            card.reset_channel_modes()
+            self._sync_cell(supply_id, card.data)
+
+    def reset_channel_switches(self) -> None:
+        """兼容旧名字：把所有卡片的通道角色回到 OFF。"""
+        self.reset_channel_modes()
 
     def _sync_cell(self, supply_id: str, data: PowerSupplyCardData) -> None:
         for index, cell in enumerate(self._cells):
@@ -284,11 +339,11 @@ class PowerCardWall(QWidget):
                 self._cells[index] = replace(cell, data=data)
                 return
 
-    def _on_card_channel(self, supply_id: str, channel: str, enabled: bool) -> None:
+    def _on_card_mode(self, supply_id: str, channel: str, mode: str) -> None:
         card = self._cards.get(supply_id)
         if card is not None:
             self._sync_cell(supply_id, card.data)
-        self.channel_toggled.emit(supply_id, channel, bool(enabled))
+        self.channel_mode_changed.emit(supply_id, channel, mode)
 
     def _on_card_protection(
         self, supply_id: str, channel: str, kind: str, enabled: bool
@@ -361,7 +416,8 @@ class PowerCardWall(QWidget):
         total_width = (
             column_count * card_width + (column_count - 1) * _CARD_GAP
         )
-        total_height = row_count * card_height + (row_count - 1) * _CARD_GAP
+        content_height = row_count * card_height + (row_count - 1) * _CARD_GAP
+        total_height = content_height + 2.0 * _SHADOW_PAD
         left = (float(width) - total_width) / 2.0
         rects: dict[str, QRectF] = {}
         for cell in self._cells:
@@ -369,7 +425,7 @@ class PowerCardWall(QWidget):
             column = cell.slot % _SLOT_COLUMNS - min_col
             rects[cell.supply_id] = QRectF(
                 left + column * (card_width + _CARD_GAP),
-                row * (card_height + _CARD_GAP),
+                _SHADOW_PAD + row * (card_height + _CARD_GAP),
                 card_width,
                 card_height,
             )
@@ -428,3 +484,35 @@ class PowerCardWall(QWidget):
         if card is None:
             return QPixmap()
         return card.grab()
+
+    def paintEvent(self, event) -> None:
+        """先给每张卡片画一层柔和投影，卡片控件随后盖在上面。
+
+        卡片是真实子控件，投影不能由卡片自己画（会被卡片矩形裁掉），也不能用
+        ``QGraphicsDropShadowEffect``（每张卡一份离屏渲染，缩放和重排时很贵）。这里
+        用三层圆角矩形由内到外叠出投影，颜色与页面阴影同族，代价只有几次填充。
+        """
+        if not self._paint_enabled or not self._rects:
+            return
+        painter = QPainter(self)
+        try:
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            painter.setPen(Qt.NoPen)
+            for rect in self._rects.values():
+                self._paint_card_shadow(painter, rect)
+        finally:
+            painter.end()
+
+    def _paint_card_shadow(self, painter: QPainter, rect: QRectF) -> None:
+        radius = POWER_CARD_RADIUS * (rect.width() / POWER_CARD_WIDTH)
+        shadow = QColor(15, 23, 42)
+        for grow, drop, alpha in (
+            (1.5, 1.0, 0.05),
+            (3.0, 2.0, 0.04),
+            (4.5, 3.0, 0.03),
+        ):
+            shadow.setAlphaF(alpha)
+            spread = rect.adjusted(-grow, -grow + drop, grow, grow + drop)
+            path = QPainterPath()
+            path.addRoundedRect(spread, radius + grow, radius + grow)
+            painter.fillPath(path, shadow)

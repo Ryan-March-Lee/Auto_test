@@ -4,43 +4,54 @@
 
 - **设备码铭牌**：顶部正中的白色圆角牌，等宽加粗字只写 ``label``（``DP8B1519``），
   压住左右两半的分界线；
-- **两个通道**：左右各一半，通道底色从卡片顶边一直铺到卡底，两个圆形电源键分别贴住
-  左右上角；卡面不再写 ``CH1`` / ``CH2``，通道身份只由左右位置、底色和悬浮提示表达；
+- **两个通道**：左右各一半，通道底色从卡片顶边一直铺到卡底；卡面不再写
+  ``CH1`` / ``CH2``，通道身份只由左右位置、底色和悬浮提示表达；
+- **供电角色滚筒**：每个通道贴外侧上角一个 84×64 的深色竖直滚筒，三档
+  ``OFF`` / ``Driver`` / ``DUT`` 像老虎机一样上下滚动。``OFF`` 关闭通道，
+  ``Driver`` 表示该通道给驱放供电，``DUT`` 表示给功放供电；当前档位居中放大、
+  白色发光，上下相邻档位缩小、变暗并带柔化，红色指示点与玻璃高光保留参考实现的
+  质感。滚筒只响应点击循环（不响应滚轮），键盘 ``Space`` / ``Enter`` 同样循环；
 - **两个可编辑值**：每个通道第一行左右各一个，``VS``（电压设定）、``IS``（电流设定）；
-  数值框是真实的 ``QDoubleSpinBox``，启用的通道里可以直接输入，配置读写仍走页面/表单
-  Adapter，卡片不自己写文件；
+  数值框是真实的 ``QDoubleSpinBox``，``Driver`` / ``DUT`` 档位下可以直接输入，配置
+  读写仍走页面/表单 Adapter，卡片不自己写文件；
 - **两个保护勾选框**：每个通道第二行左右各一个，左边电压保护、右边电流保护；
   两个勾选框的卡面文字统一是「10%保护」——左右位置（分别压在 VS / IS 数值框下方）
   和悬浮提示区分电压/电流，勾选状态来自配置里的 ``voltage.protection_enabled`` /
   ``current.protection_enabled``；卡面不再显示保护数值，也不再有底部那行说明文字，
-  阈值仍由配置读取按工作值的 110% 推导；
-- **通道开关**：关闭时该通道整块降为灰色（``disabled_bg``），数值框、勾选框、文案
-  与开关一起变灰；打开时恢复通道底色（左浅蓝、右浅琥珀），电源键同时点亮：边框转白、
-  底色转绿、四周泛起绿色辉光，图标描边加粗并让圆环带一圈青色光。
+  阈值仍由配置读取按工作值的 110% 推导。
 
-通道开关是**本次编辑的启用状态**，不是持久配置：关闭只锁住该通道的 VS/IS 与保护
-勾选，不写回配置，也不影响上电计划；卡片的启用状态每次进入页面都从灰色开始。两个
-通道始终保留在配置里，保存时两条通道的当前值都会写出。
+**档位就是上电角色**：``Driver`` / ``DUT`` 不只是显示标注，页面会把该通道同步勾进
+``power_supply_assignment.driver_amplifier`` / ``dut_amplifier`` 的 ``power_plan``；
+``OFF`` 同时从两份计划里移除。角色因此仍由现有计划结构表达，不新增通道字段。一个
+通道只能属于一份计划；页面在卡片与计划编辑器之间做双向同步。``OFF`` 时该通道整块
+降为灰色（``disabled_bg``），数值框与勾选框一起禁用；``Driver`` / ``DUT`` 时恢复
+通道底色（左浅蓝、右浅琥珀）。驱放测试模式关闭时 ``Driver`` 档被禁用，循环会跳过它。
 
 卡片同时支持两种尺寸：``render_power_card`` 按 440×166 的原始逻辑尺寸导出静态
 位图，``PowerSupplyCard`` 则按卡片墙给的缩放比例设置控件尺寸；绘制统一在
 ``painter.scale`` 之后按原始坐标进行，因此放大/缩小后的卡面与导出图同源。数值输入框、
-电源键与保护勾选框都是真实子控件，鼠标与键盘操作由 Qt 直接处理。身份详情（完整设备码、
-设备键）与数值提示放在悬浮提示里。
+角色滚筒与保护勾选框都是真实子控件，鼠标与键盘操作由 Qt 直接处理。身份详情（完整
+设备码、设备键）与数值提示放在悬浮提示里。
 
 **卡面与交互共用一份绘制**：:func:`render_power_card` 把同一个
 :func:`_paint_power_card` 画到透明位图上，所以导出的 PNG 预览与页面上的真实卡片
-逐像素同源；开关的悬停、按下与键盘焦点也由这份绘制按状态参数画出来，不看控件
-截图。开关的点亮/熄灭由 0–1 的进度值驱动，控件在 500 ms 内插值重绘，导出位图
-则直接取终态。
+逐像素同源；滚筒的悬停、按下、焦点与滚动位置也由这份绘制按状态参数画出来，不看
+控件截图。用户换档时控件在 700 ms 内按 ``OutExpo`` 插值重绘，导出位图直接取终态。
 
 **尺寸与字体**：卡片固定为 :data:`POWER_CARD_WIDTH` × :data:`POWER_CARD_HEIGHT`
-（440×166，约 2.7:1），圆角取 :data:`presentation.qt.theme.CARD_RADIUS`，与设备
-发现卡片同值；圆形电源键的直径与改版前一致（42），卡片变矮后仍是容易点中的目标，
-卡片再缩放时开关跟着缩放。字体系列取自 :func:`presentation.qt.theme.card_code_font`，
-只改字号，不再另起一套字体。颜色全部来自 :data:`presentation.qt.theme.TOKENS`，
-其中包括两个通道新增的 ``channel_cool`` / ``channel_warm`` 两个浅底色与
-``power_switch_*`` 一组开关色。
+（440×166，约 2.7:1），圆角取 :data:`POWER_CARD_RADIUS`（12，比通用卡片更圆，
+在 440 宽的卡面上能看出轮廓）；角色滚筒 84×64，三档每行约 21 px，当前档字 12.5 px，
+卡片缩放时滚筒与字号一起缩放。字体系列取自
+:func:`presentation.qt.theme.card_status_font` 与
+:func:`presentation.qt.theme.card_code_font`。颜色全部来自
+:data:`presentation.qt.theme.TOKENS`，其中包括两个通道的 ``channel_cool`` /
+``channel_warm`` 与 ``mode_selector_*`` 一组滚筒色。
+
+**通道色块**：两个通道各有一块内缩 5、中央留 10 白缝的圆角色块（见
+:data:`_PANEL_INSET` / :data:`_PANEL_GAP`）。色块带一层很浅的纵向渐变和贴缝一侧的
+内阴影，顶部强调线裁在圆角里；卡面因此不再画中央分隔线——两台通道的区分交给两块
+实色之间的白缝，而不是一条 1px 描边。关闭的通道整块换成 ``disabled_bg``，白缝仍然
+保留。
 
 **运行约束**：位图用 ``QPixmap`` 绘制，必须在创建 ``QApplication`` 之后、在 GUI
 线程里调用。卡片控件本身也只在 GUI 线程中使用。
@@ -65,8 +76,10 @@ from PySide6.QtCore import (
 from PySide6.QtGui import (
     QBrush,
     QColor,
+    QConicalGradient,
     QFont,
     QFontMetricsF,
+    QLinearGradient,
     QPainter,
     QPainterPath,
     QPen,
@@ -84,16 +97,18 @@ from domain.instruments.labels import supply_identity_text
 
 from .input_controls import KeyboardOnlyDoubleSpinBox
 from .theme import (
-    CARD_RADIUS,
     TOKENS,
     card_code_font,
     card_status_font,
 )
 
 __all__ = [
+    "CHANNEL_MODES",
     "CHANNEL_NAMES",
     "CardValueField",
+    "ChannelModeSelector",
     "POWER_CARD_HEIGHT",
+    "POWER_CARD_RADIUS",
     "POWER_CARD_SIZE",
     "POWER_CARD_WIDTH",
     "PROTECTION_KINDS",
@@ -110,25 +125,44 @@ __all__ = [
 #: 电源固定两个通道，顺序也是卡面上的左右顺序：左边 CH1，右边 CH2。
 CHANNEL_NAMES = ("CH1", "CH2")
 
+#: 通道供电角色，顺序就是滚筒从上到下的档位顺序；循环切换也按这个顺序。
+CHANNEL_MODES = ("off", "driver", "dut")
+CHANNEL_MODE_LABELS = {
+    "off": "OFF",
+    "driver": "Driver",
+    "dut": "DUT",
+}
+
 #: 卡片逻辑尺寸：440×166，约 2.7:1，正好放进配置页右栏。
 POWER_CARD_WIDTH = 440
 POWER_CARD_HEIGHT = 166
 POWER_CARD_SIZE = QSize(POWER_CARD_WIDTH, POWER_CARD_HEIGHT)
 
+#: 卡片圆角：比通用卡片（``theme.CARD_RADIUS`` = 8）更大，440 宽的卡面才看得出轮廓。
+POWER_CARD_RADIUS = 12.0
+#: 通道色块到卡片外沿的内缩；两块色块之间因此留下 :data:`_PANEL_GAP` 宽的白缝。
+_PANEL_INSET = 5.0
+#: 两块通道色块中央的白缝宽度；通道区分靠这条缝，卡面不再画 1px 分隔线。
+_PANEL_GAP = 10.0
+#: 通道色块的圆角；比卡片圆角小 2，内缩后与卡片轮廓平行。
+_PANEL_RADIUS = 10.0
+
 # ---- 卡面几何：所有位置都由这一组常量算出，绘制与控件命中区共用 -----------------
 _PADDING = 14.0
 _HALF_WIDTH = POWER_CARD_WIDTH / 2.0
-# 圆形电源键贴住左右上角：直径与改版前一致（42），卡片变矮后仍是容易点中的目标。
-# 卡片尺寸变化时开关跟着缩放，不另写死像素。
-_SWITCH_DIAMETER = 42.0
-#: 电源键到卡片外沿的距离（左通道取左、右通道取右）以及到顶边的距离。
-_SWITCH_INSET_X = 12.0
-_SWITCH_INSET_Y = 10.0
+# 供电角色滚筒：贴住左右外侧上角。84×64 正好落在 VS/IS 行（y=72）上方，
+# 三档每行约 21.3 逻辑像素，当前档字 12.5px，Driver/DUT 能完整放下。
+_SELECTOR_WIDTH = 84.0
+_SELECTOR_HEIGHT = 64.0
+_SELECTOR_TOP = 6.0
+_SELECTOR_INSET_X = 12.0
+_SELECTOR_RADIUS = 11.0
+_SELECTOR_ROW_HEIGHT = _SELECTOR_HEIGHT / 3.0
 # 设备码铭牌：顶部正中的白色圆角牌，宽度足够放下 8 位等宽设备码而不被省略。
 _TITLE_WIDTH = 148.0
 _TITLE_HEIGHT = 46.0
 _TITLE_TOP = 8.0
-#: ``VS`` / ``IS`` 一行的顶边：铭牌与电源键让出的空行删除后，工作值直接上移。
+#: ``VS`` / ``IS`` 一行的顶边：铭牌与角色滚筒让出的空行删除后，工作值直接上移。
 _GRID_TOP = 72.0
 _ROW_HEIGHT = 34.0
 _ROW_GAP = 14.0
@@ -175,16 +209,17 @@ _TEXT_MUTED = QColor(TOKENS["text_muted"])
 _DISABLED_TEXT = QColor(TOKENS["disabled_text"])
 _PRIMARY = QColor(TOKENS["primary"])
 _WARNING = QColor(TOKENS["warning"])
-# 电源键：关闭是深灰金属面，点亮后转绿并向外发光；配色逐项来自 TOKENS。
-_SWITCH_BODY_OFF = QColor(TOKENS["power_switch_off"])
-_SWITCH_BORDER_OFF = QColor(TOKENS["power_switch_off_border"])
-_SWITCH_ICON_OFF = QColor(TOKENS["power_switch_icon_off"])
-_SWITCH_BODY_ON = QColor(TOKENS["power_switch_on"])
-_SWITCH_BORDER_ON = QColor(TOKENS["power_switch_on_border"])
-_SWITCH_ICON_ON = QColor(TOKENS["power_switch_icon_on"])
-_SWITCH_GLOW = QColor(TOKENS["power_switch_glow"])
-_SWITCH_ICON_GLOW = QColor(TOKENS["power_switch_icon_glow"])
-_SWITCH_INSET = QColor(TOKENS["power_switch_inset"])
+# 角色滚筒：深色玻璃槽体、金属拉丝底、红色指示点；当前档白字，邻档灰字。
+_SELECTOR_BODY = QColor(TOKENS["mode_selector_body"])
+_SELECTOR_BODY_BOTTOM = QColor(TOKENS["mode_selector_body_bottom"])
+_SELECTOR_METAL = QColor(TOKENS["mode_selector_metal"])
+_SELECTOR_METAL_DARK = QColor(TOKENS["mode_selector_metal_dark"])
+_SELECTOR_BORDER = QColor(TOKENS["mode_selector_border"])
+_SELECTOR_BORDER_HOVER = QColor(TOKENS["mode_selector_border_hover"])
+_SELECTOR_ACCENT = QColor(TOKENS["mode_selector_accent"])
+_SELECTOR_TEXT = QColor(TOKENS["mode_selector_text"])
+_SELECTOR_TEXT_IDLE = QColor(TOKENS["mode_selector_text_idle"])
+_SELECTOR_FOCUS = QColor(TOKENS["mode_selector_focus"])
 
 
 # ---- 数据 ------------------------------------------------------------------
@@ -208,13 +243,16 @@ def _finite_non_negative(value: Any, name: str) -> float:
 
 @dataclass(frozen=True)
 class PowerChannelData:
-    """一个电源通道在卡面上的快照：开关状态 + 两个工作值 + 两个保护开关。
+    """一个电源通道在卡面上的快照：供电角色 + 两个工作值 + 两个保护开关。
 
-    ``channel`` 只能是 ``CH1`` / ``CH2``；两个数值依次是电压设定、电流设定，单位
-    分别是 V、A。保护阈值不再出现在卡面上，只保留“是否启用电压/电流保护”两个
-    状态，阈值仍由配置读取按工作值的 110% 推导。数据类只做“有限且非负”的显示校验，
-    0–50 V / 0–10 A 的输入上下界由卡面输入控件（:class:`CardValueField`）约束，
-    不在数据快照里夹值。
+    ``channel`` 只能是 ``CH1`` / ``CH2``；``mode`` 是 ``off`` / ``driver`` /
+    ``dut``，分别表示通道关闭、给驱放供电、给功放供电。``enabled`` 保留为派生
+    字段（``mode != "off"``），旧调用方仍可读；构造时如果 ``enabled=False``，
+    ``mode`` 会被规整成 ``off``，两者不会出现矛盾状态。两个数值依次是电压设定、
+    电流设定，单位分别是 V、A。保护阈值不再出现在卡面上，只保留“是否启用电压/
+    电流保护”两个状态，阈值仍由配置读取按工作值的 110% 推导。数据类只做
+    “有限且非负”的显示校验，0–50 V / 0–10 A 的输入上下界由卡面输入控件
+    （:class:`CardValueField`）约束，不在数据快照里夹值。
     """
 
     channel: str
@@ -223,11 +261,16 @@ class PowerChannelData:
     current_set: float = 0.0
     voltage_protection_enabled: bool = False
     current_protection_enabled: bool = False
+    mode: str = "driver"
 
     def __post_init__(self) -> None:
         if self.channel not in CHANNEL_NAMES:
             raise ValueError(
                 f"通道必须是 {' / '.join(CHANNEL_NAMES)}，收到 {self.channel!r}"
+            )
+        if self.mode not in CHANNEL_MODES:
+            raise ValueError(
+                f"通道角色必须是 {' / '.join(CHANNEL_MODES)}，收到 {self.mode!r}"
             )
         for field, label in (
             ("enabled", "enabled"),
@@ -245,6 +288,10 @@ class PowerChannelData:
                 field,
                 _finite_non_negative(getattr(self, field), f"{self.channel} {label}"),
             )
+        # ``enabled`` 与 ``mode`` 只保留一份真值：关闭就是 off，开启时保留角色。
+        mode = "off" if not self.enabled else self.mode
+        object.__setattr__(self, "mode", mode)
+        object.__setattr__(self, "enabled", mode != "off")
 
     def protection_enabled(self, kind: str) -> bool:
         """某种保护的启用状态；``kind`` 只能是 ``voltage`` / ``current``。"""
@@ -253,6 +300,14 @@ class PowerChannelData:
         if kind == "current":
             return self.current_protection_enabled
         raise KeyError(f"保护类型必须是 voltage / current，收到 {kind!r}")
+
+    def with_mode(self, mode: str) -> "PowerChannelData":
+        """返回一份只改供电角色的新快照；``off`` 同时把 ``enabled`` 置为假。"""
+        if mode not in CHANNEL_MODES:
+            raise ValueError(
+                f"通道角色必须是 {' / '.join(CHANNEL_MODES)}，收到 {mode!r}"
+            )
+        return replace(self, mode=mode, enabled=mode != "off")
 
     def with_protection(self, kind: str, enabled: bool) -> "PowerChannelData":
         """返回一份只改某种保护开关的新快照。"""
@@ -326,14 +381,26 @@ class PowerSupplyCardData:
         raise KeyError(f"卡片里没有通道 {name!r}")
 
     def with_channel_enabled(self, name: str, enabled: bool) -> "PowerSupplyCardData":
-        """返回一份只改某个通道开关状态的新快照（其余值原样保留）。"""
+        """兼容旧调用：``True`` 保留已有角色（原本是 off 时给 ``driver``）。"""
         if not isinstance(enabled, bool):
             raise TypeError("enabled 必须是 bool")
+        current = self.channel(name)
+        mode = current.mode if enabled and current.mode != "off" else "off"
+        if enabled and mode == "off":
+            mode = "driver"
+        return self.with_channel_mode(name, mode)
+
+    def with_channel_mode(self, name: str, mode: str) -> "PowerSupplyCardData":
+        """返回一份只改某个通道供电角色的新快照（其余值原样保留）。"""
+        if mode not in CHANNEL_MODES:
+            raise ValueError(
+                f"通道角色必须是 {' / '.join(CHANNEL_MODES)}，收到 {mode!r}"
+            )
         self.channel(name)
         return replace(
             self,
             channels=tuple(
-                replace(item, enabled=enabled) if item.channel == name else item
+                item.with_mode(mode) if item.channel == name else item
                 for item in self.channels
             ),
         )
@@ -376,11 +443,15 @@ class PowerSupplyCardData:
 
 @dataclass(frozen=True)
 class PowerChannelLayout:
-    """一个通道在卡面坐标系里的位置：面板、开关、两个值与两个勾选框。"""
+    """一个通道在卡面坐标系里的位置：面板、角色滚筒、两个值与两个勾选框。"""
 
     channel: str
+    #: 通道整块命中区（半个卡片），滚筒控件与编辑控件都落在里面。
     panel: QRectF
-    switch: QRectF
+    #: 实际绘制的圆角色块：从 :attr:`panel` 内缩 5，两块之间留 10 白缝。
+    panel_surface: QRectF
+    #: 供电角色滚筒（OFF / Driver / DUT）的卡面矩形，也是透明命中区。
+    mode_selector: QRectF
     value_labels: tuple[QRectF, ...]
     value_boxes: tuple[QRectF, ...]
     #: 两个保护勾选框的整块命中区（方块 + 文字），顺序是电压、电流。
@@ -405,8 +476,10 @@ def power_card_layout() -> PowerCardLayout:
     """算出整张卡片的几何；绘制、命中区与测试都读这一份结果。
 
     卡片尺寸固定，因此不需要宽高参数。左右通道按 :data:`CHANNEL_NAMES` 的顺序
-    排列，通道底色从卡片顶边铺到底边：每个通道的圆形电源键贴住自己外侧的上角，
-    工作值与保护勾选框依次往下排，保护勾选框是卡片最下面一行。
+    排列，每个通道的角色滚筒贴住自己外侧的上角，工作值与保护勾选框依次往下排，
+    保护勾选框是卡片最下面一行。:attr:`PowerChannelLayout.panel` 是半个卡片的
+    命中区；真正画出来的圆角色块是内缩 5、中央留 10 白缝的
+    :attr:`PowerChannelLayout.panel_surface`。
     """
     card = QRectF(0.0, 0.0, float(POWER_CARD_WIDTH), float(POWER_CARD_HEIGHT))
     title = QRectF(
@@ -424,16 +497,22 @@ def power_card_layout() -> PowerCardLayout:
             _HALF_WIDTH,
             float(POWER_CARD_HEIGHT),
         )
-        # 电源键贴住本通道的外侧上角：左通道靠左，右通道靠右，两个键的水平线一致。
+        panel_surface = QRectF(
+            left + _PANEL_INSET,
+            _PANEL_INSET,
+            _HALF_WIDTH - _PANEL_INSET - _PANEL_GAP / 2.0,
+            float(POWER_CARD_HEIGHT) - 2.0 * _PANEL_INSET,
+        )
+        # 滚筒贴住本通道的外侧上角：左通道靠左，右通道靠右，两个滚筒的水平线一致。
         if index == 0:
-            switch_x = left + _SWITCH_INSET_X
+            selector_x = left + _SELECTOR_INSET_X
         else:
-            switch_x = left + _HALF_WIDTH - _SWITCH_INSET_X - _SWITCH_DIAMETER
-        switch = QRectF(
-            switch_x,
-            _SWITCH_INSET_Y,
-            _SWITCH_DIAMETER,
-            _SWITCH_DIAMETER,
+            selector_x = left + _HALF_WIDTH - _SELECTOR_INSET_X - _SELECTOR_WIDTH
+        mode_selector = QRectF(
+            selector_x,
+            _SELECTOR_TOP,
+            _SELECTOR_WIDTH,
+            _SELECTOR_HEIGHT,
         )
         value_labels: list[QRectF] = []
         value_boxes: list[QRectF] = []
@@ -481,7 +560,8 @@ def power_card_layout() -> PowerCardLayout:
             PowerChannelLayout(
                 channel=name,
                 panel=panel,
-                switch=switch,
+                panel_surface=panel_surface,
+                mode_selector=mode_selector,
                 value_labels=tuple(value_labels),
                 value_boxes=tuple(value_boxes),
                 protection_checks=tuple(protection_checks),
@@ -496,9 +576,9 @@ def power_card_layout() -> PowerCardLayout:
 
 
 def _rounded(rect: QRectF, inset: float = 0.0) -> QPainterPath:
-    """卡片轮廓：圆角与设备发现卡片同值；``inset`` 用于把描边画在轮廓以内。"""
+    """卡片轮廓：圆角取电源卡自己的半径；``inset`` 用于把描边画在轮廓以内。"""
     adjusted = rect.adjusted(inset, inset, -inset, -inset)
-    radius = max(1.0, CARD_RADIUS - inset)
+    radius = max(1.0, POWER_CARD_RADIUS - inset)
     path = QPainterPath()
     path.addRoundedRect(adjusted, radius, radius)
     return path
@@ -587,14 +667,45 @@ def _paint_channel_panel(
     index: int,
     enabled: bool,
 ) -> None:
-    """通道底色与顶部强调线：关闭时整块灰化。"""
+    """通道圆角色块：内缩、浅纵向渐变、顶部强调线与贴缝内阴影。
+
+    两块色块之间是卡片的白色底面（:data:`_PANEL_GAP`），不再画 1px 分隔线；关闭的
+    通道整块换成 ``disabled_bg``，白缝与圆角保持原样。
+    """
+    surface = layout.panel_surface
+    path = _rounded_rect(surface, _PANEL_RADIUS)
     painter.save()
-    painter.fillRect(layout.panel, _panel_fill(index, enabled))
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    painter.setClipPath(path)
+    fill = _panel_fill(index, enabled)
+    gradient = QLinearGradient(surface.topLeft(), surface.bottomLeft())
+    # 渐变只压在上半张，下半张保持纯底色：卡面缩放或高 DPI 取色时颜色稳定。
+    gradient.setColorAt(0.0, _mix_color(fill, _SURFACE, 0.55 if enabled else 0.35))
+    gradient.setColorAt(0.55, fill)
+    gradient.setColorAt(1.0, fill)
+    painter.fillPath(path, QBrush(gradient))
+    # 顶部强调线裁在色块圆角里，左右两端跟着圆角收进去。
     accent = _accent(index) if enabled else _BORDER_STRONG
     painter.fillRect(
-        QRectF(layout.panel.left(), layout.panel.top(), layout.panel.width(), 2.0),
+        QRectF(surface.left(), surface.top(), surface.width(), 2.0),
         accent,
     )
+    # 贴缝一侧的内阴影：白缝看起来把两块色块切开，而不是并排贴在卡面上。
+    seam_width = 8.0
+    alpha = 0.10 if enabled else 0.06
+    if index == 0:
+        seam = QLinearGradient(
+            surface.right() - seam_width, 0.0, surface.right(), 0.0
+        )
+        seam.setColorAt(0.0, _with_alpha(_TEXT, 0.0))
+        seam.setColorAt(1.0, _with_alpha(_TEXT, alpha))
+    else:
+        seam = QLinearGradient(
+            surface.left() + seam_width, 0.0, surface.left(), 0.0
+        )
+        seam.setColorAt(0.0, _with_alpha(_TEXT, 0.0))
+        seam.setColorAt(1.0, _with_alpha(_TEXT, alpha))
+    painter.fillRect(surface, QBrush(seam))
     painter.restore()
 
 
@@ -739,146 +850,221 @@ def _with_alpha(color: QColor, alpha: float) -> QColor:
     return tinted
 
 
-def _draw_power_icon(
-    painter: QPainter,
-    center: QPointF,
-    size: float,
-    ring_pen: QPen,
-    stem_pen: QPen | None = None,
-) -> None:
-    """画一个电源符号：顶部留口的圆环 + 从缺口伸进圆心的竖线。
-
-    圆环与竖线各用一支笔，便于分别控制粗细；只描边不填充，离屏环境里不依赖字体。
-    ``stem_pen`` 为 ``None`` 时只画圆环，用于只让圆环带光晕的场合。
-    """
-    radius = size / 2.0
-    ring = QRectF(center.x() - radius, center.y() - radius, size, size)
-    painter.setBrush(Qt.NoBrush)
-    painter.setPen(ring_pen)
-    painter.drawArc(ring, 120 * 16, 300 * 16)
-    if stem_pen is None:
-        return
-    painter.setPen(stem_pen)
-    painter.drawLine(
-        QPointF(center.x(), center.y() - radius * 1.32),
-        QPointF(center.x(), center.y() - radius * 0.08),
-    )
+def _selector_label_font(active: bool) -> QFont:
+    """滚筒档位文字：当前档更大更重，邻档缩小；字距收紧接近参考的 Inter。"""
+    font = QFont(card_status_font())
+    font.setPointSizeF(9.4 if active else 6.5)
+    font.setWeight(QFont.Weight.Black if active else QFont.Weight.DemiBold)
+    font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, -0.2)
+    return font
 
 
-def _paint_switch_glow(
+def _selector_index_font(active: bool) -> QFont:
+    """档位上方的小编号：当前档红色，邻档灰暗。"""
+    font = QFont(card_code_font())
+    font.setPointSizeF(4.8 if active else 3.8)
+    font.setWeight(QFont.Weight.Bold)
+    return font
+
+
+def _paint_mode_selector(
     painter: QPainter,
     rect: QRectF,
-    strength: float,
-) -> None:
-    """按钮外侧的绿色辉光：三层径向渐变由近及远淡出。
-
-    参考实现用多条 ``box-shadow`` 叠出 5/40/100px 的光晕；QPainter 里用不同半径、
-    不同透明度的同心径向渐变等效表达，因此不依赖模糊滤镜，离屏渲染也一致。
-    """
-    if strength <= 0.001:
-        return
-    center = rect.center()
-    radius = rect.width() / 2.0
-    painter.save()
-    painter.setPen(Qt.NoPen)
-    for spread, alpha in ((1.5, 0.34), (2.3, 0.16), (3.3, 0.08)):
-        outer = radius * spread
-        edge = radius / outer
-        gradient = QRadialGradient(center, outer)
-        gradient.setColorAt(0.0, _with_alpha(_SWITCH_GLOW, 0.0))
-        gradient.setColorAt(max(0.0, edge - 0.02), _with_alpha(_SWITCH_GLOW, 0.0))
-        gradient.setColorAt(edge, _with_alpha(_SWITCH_GLOW, alpha * strength))
-        gradient.setColorAt(1.0, _with_alpha(_SWITCH_GLOW, 0.0))
-        painter.setBrush(QBrush(gradient))
-        painter.drawEllipse(center, outer, outer)
-    painter.restore()
-
-
-def _paint_switch(
-    painter: QPainter,
-    rect: QRectF,
+    mode: str,
     *,
-    lit: float,
-    hovered: bool,
-    focused: bool,
-    pressed: bool,
+    position: float | None = None,
+    hovered: bool = False,
+    focused: bool = False,
+    pressed: bool = False,
+    driver_available: bool = True,
 ) -> None:
-    """圆形电源键：关闭是深灰金属按钮，点亮后转绿并向外发光。
+    """竖直老虎机滚筒：OFF / Driver / DUT 三档上下滚动。
 
-    ``lit`` 是 0–1 的点亮进度，由控件在 500 ms 内插值，导出位图直接取 0 / 1；
-    悬停只轻微提亮，按下沿用参考实现的行为——按键瞬间点亮、整体下移一点，
-    焦点环画在按钮外侧，键盘用户能看出当前在哪个通道上。
+    外观按参考实现复刻：深色槽体、金属拉丝底、红色指示点、玻璃高光、内阴影。
+    参考里三档绕圆心旋转，这里改成竖直方向的滚筒——当前档居中放大、白色发光，
+    上下档缩小、变暗并柔化，滚动时连续插值。``position`` 是连续档位（0=OFF，
+    1=Driver，2=DUT），不传时取 ``mode`` 的终态；导出位图因此总是画最终样子。
+    ``driver_available=False`` 时 Driver 档被划掉，循环也会跳过它。
     """
-    lit = 1.0 if pressed else min(1.0, max(0.0, float(lit)))
-    if pressed:
-        rect = rect.translated(0.0, rect.height() * 0.05)
-    glow_strength = lit
-    if hovered and lit > 0.0:
-        glow_strength = min(1.0, lit + 0.12)
+    if mode not in CHANNEL_MODES:
+        raise ValueError(
+            f"通道角色必须是 {' / '.join(CHANNEL_MODES)}，收到 {mode!r}"
+        )
+    index = CHANNEL_MODES.index(mode)
+    position = float(index) if position is None else float(position)
+    slot = rect.adjusted(0.75, 0.75, -0.75, -0.75)
+    radius = _SELECTOR_RADIUS
+    path = _rounded_rect(slot, radius)
 
     painter.save()
     painter.setRenderHint(QPainter.Antialiasing, True)
-    _paint_switch_glow(painter, rect, glow_strength)
+    painter.setRenderHint(QPainter.TextAntialiasing, True)
 
-    border = max(1.5, rect.width() * 0.05)
-    body = rect.adjusted(border / 2.0, border / 2.0, -border / 2.0, -border / 2.0)
-    body_path = QPainterPath()
-    body_path.addEllipse(body)
+    # 卡面上的柔和外阴影：滚筒是深色实体，需要一点落影才不像贴纸。
+    for grow, alpha in ((1.5, 0.12), (3.0, 0.07), (4.5, 0.035)):
+        shadow = _rounded_rect(
+            rect.adjusted(-grow, -grow + 1.0, grow, grow + 1.0),
+            radius + grow,
+        )
+        painter.fillPath(shadow, _with_alpha(QColor("#0F172A"), alpha))
 
-    fill = _mix_color(_SWITCH_BODY_OFF, _SWITCH_BODY_ON, lit)
-    if hovered:
-        fill = fill.lighter(107)
-    painter.setPen(Qt.NoPen)
-    painter.setBrush(QBrush(fill))
-    painter.drawPath(body_path)
+    body = QLinearGradient(slot.topLeft(), slot.bottomLeft())
+    body.setColorAt(0.0, _SELECTOR_BODY.lighter(118))
+    body.setColorAt(0.45, _SELECTOR_BODY)
+    body.setColorAt(1.0, _SELECTOR_BODY_BOTTOM)
+    painter.fillPath(path, QBrush(body))
 
-    # 内阴影与内发光都裁在按钮圆形里：关闭时边缘压暗（inset 阴影），
-    # 点亮时边缘泛青（inset 光晕），与参考实现的多层 inset box-shadow 对应。
     painter.save()
-    painter.setClipPath(body_path)
-    if lit < 0.999:
-        inset = QRadialGradient(body.center(), body.width() / 2.0)
-        inset.setColorAt(0.0, _with_alpha(_SWITCH_INSET, 0.0))
-        inset.setColorAt(0.70, _with_alpha(_SWITCH_INSET, 0.0))
-        inset.setColorAt(1.0, _with_alpha(_SWITCH_INSET, 0.55 * (1.0 - lit)))
-        painter.fillPath(body_path, QBrush(inset))
-    if lit > 0.001:
-        inner = QRadialGradient(body.center(), body.width() / 2.0)
-        inner.setColorAt(0.0, _with_alpha(_SWITCH_GLOW, 0.0))
-        inner.setColorAt(0.52, _with_alpha(_SWITCH_GLOW, 0.0))
-        inner.setColorAt(0.88, _with_alpha(_SWITCH_GLOW, 0.30 * lit))
-        inner.setColorAt(1.0, _with_alpha(_SWITCH_GLOW, 0.62 * lit))
-        painter.fillPath(body_path, QBrush(inner))
+    painter.setClipPath(path)
+    # 金属拉丝：参考实现是右侧一个重复锥形渐变的圆盘，这里用同心的锥形色带
+    # 从槽体右侧扫过，只保留很低的对比度，避免抢走档位文字。
+    disc_center = QPointF(slot.right() + slot.width() * 0.55, slot.center().y())
+    cone = QConicalGradient(disc_center, 0.0)
+    for step in range(36):
+        tone = _SELECTOR_METAL if step % 2 == 0 else _SELECTOR_METAL_DARK
+        cone.setColorAt(step / 36.0, tone)
+    cone.setColorAt(1.0, _SELECTOR_METAL)
+    painter.setOpacity(0.55)
+    painter.fillRect(slot, QBrush(cone))
+    painter.setOpacity(1.0)
+
+    # 上下边缘的暗角：档位在进出槽体时逐渐没入黑暗，像真的滚筒。
+    edge = QLinearGradient(slot.topLeft(), slot.bottomLeft())
+    edge.setColorAt(0.0, QColor(0, 0, 0, 215))
+    edge.setColorAt(0.18, QColor(0, 0, 0, 0))
+    edge.setColorAt(0.82, QColor(0, 0, 0, 0))
+    edge.setColorAt(1.0, QColor(0, 0, 0, 215))
+    painter.fillRect(slot, QBrush(edge))
+
+    # 三档沿竖直方向排布；position 连续变化时逐帧插值。用 -2..4 覆盖滚动时的
+    # 上下越界档位，取模后仍然只画三档，因此 2→0 的循环没有视觉跳跃。
+    if pressed:
+        painter.translate(0.0, 0.8)
+    row_height = _SELECTOR_ROW_HEIGHT
+    text_center_x = slot.center().x() + 7.0
+    text_width = slot.width() - 24.0
+    for step in range(-2, 5):
+        step_mode = CHANNEL_MODES[step % len(CHANNEL_MODES)]
+        offset = step - position
+        distance = abs(offset)
+        if distance > 2.25:
+            continue
+        emphasis = max(0.0, 1.0 - distance)
+        active = emphasis > 0.55
+        alpha = 0.10 + 0.90 * (emphasis ** 1.45)
+        if step_mode == "driver" and not driver_available:
+            alpha *= 0.28
+        scale_x = 1.0 - 0.08 * min(distance, 2.0)
+        scale_y = 1.0 - 0.20 * min(distance, 2.0)
+        center_y = slot.center().y() + offset * row_height
+        if abs(center_y - slot.center().y()) > slot.height() * 0.62:
+            continue
+
+        painter.save()
+        painter.translate(text_center_x, center_y)
+        painter.scale(scale_x, scale_y)
+        block = QRectF(-text_width / 2.0, -row_height / 2.0, text_width, row_height)
+
+        # 小号编号：参考实现的 .num，当前档红色、邻档灰暗。
+        number = f"0{CHANNEL_MODES.index(step_mode) + 1}"
+        number_font = _selector_index_font(active)
+        painter.setFont(number_font)
+        painter.setOpacity(alpha * (1.0 if active else 0.55))
+        painter.setPen(
+            _SELECTOR_ACCENT if active else _SELECTOR_TEXT_IDLE
+        )
+        painter.drawText(
+            QRectF(block.left(), block.top() + 1.0, block.width(), 7.0),
+            int(Qt.AlignHCenter | Qt.AlignTop),
+            number,
+        )
+
+        label = CHANNEL_MODE_LABELS[step_mode]
+        label_font = _selector_label_font(active)
+        painter.setFont(label_font)
+        label_rect = QRectF(
+            block.left(),
+            block.top() + (7.5 if active else 6.0),
+            block.width(),
+            block.height() - 7.0,
+        )
+        label_color = _SELECTOR_TEXT if active else _SELECTOR_TEXT_IDLE
+        if active:
+            # 当前档的柔光：参考实现的 text-shadow: 0 0 20px rgba(255,255,255,.2)。
+            painter.setOpacity(alpha * 0.18)
+            painter.setPen(label_color)
+            for dx, dy in ((0.0, 1.4), (1.2, 0.0), (-1.2, 0.0)):
+                painter.drawText(
+                    label_rect.translated(dx, dy),
+                    int(Qt.AlignHCenter | Qt.AlignVCenter),
+                    label,
+                )
+        # 邻档用多次微偏移叠出柔化；当前档只画一次，保持锐利。
+        copies = 1 if active else 3
+        painter.setPen(label_color)
+        for copy in range(copies):
+            painter.setOpacity(
+                alpha * (1.0 if active else 0.42)
+            )
+            dx = 0.0 if copies == 1 else (copy - 1) * 0.8
+            painter.drawText(
+                label_rect.translated(dx, 0.0),
+                int(Qt.AlignHCenter | Qt.AlignVCenter),
+                label,
+            )
+        if step_mode == "driver" and not driver_available:
+            painter.setOpacity(0.75)
+            painter.setPen(QPen(_SELECTOR_TEXT_IDLE, 1.0))
+            strike = QRectF(
+                block.left() + block.width() * 0.14,
+                block.center().y() + 2.0,
+                block.width() * 0.72,
+                1.0,
+            )
+            painter.drawLine(
+                QPointF(strike.left(), strike.center().y()),
+                QPointF(strike.right(), strike.center().y()),
+            )
+        painter.restore()
+
+    # 玻璃高光：135° 白色高光 → 透明 → 右下压暗，压在文字和暗角之上。
+    glass = QLinearGradient(slot.topLeft(), slot.bottomRight())
+    glass.setColorAt(0.0, QColor(255, 255, 255, 30))
+    glass.setColorAt(0.50, QColor(255, 255, 255, 0))
+    glass.setColorAt(1.0, QColor(0, 0, 0, 70))
+    painter.fillPath(path, QBrush(glass))
     painter.restore()
 
     painter.setBrush(Qt.NoBrush)
-    painter.setPen(QPen(_mix_color(_SWITCH_BORDER_OFF, _SWITCH_BORDER_ON, lit), border))
-    painter.drawEllipse(body)
+    painter.setPen(
+        QPen(
+            _SELECTOR_BORDER_HOVER if hovered else _SELECTOR_BORDER,
+            1.4,
+        )
+    )
+    painter.drawPath(_rounded_rect(slot, radius))
 
-    icon_size = rect.width() * 0.36
-    # 圆环按参考比例取按钮直径的 5.7%（70px 按钮上的 4px）；竖线在参考里是圆环的两倍宽，
-    # 但在卡片尺寸下显得笨重，这里收细到与圆环同宽，保留清晰的电源符号轮廓。
-    ring_width = max(1.6, rect.width() * 0.057)
-    stem_width = ring_width
-    if glow_strength > 0.001:
-        for width_scale, alpha in ((2.8, 0.10), (1.8, 0.24)):
-            halo = QPen(
-                _with_alpha(_SWITCH_ICON_GLOW, alpha * glow_strength),
-                ring_width * width_scale,
-            )
-            halo.setCapStyle(Qt.RoundCap)
-            _draw_power_icon(painter, rect.center(), icon_size, halo)
-    icon_color = _mix_color(_SWITCH_ICON_OFF, _SWITCH_ICON_ON, lit)
-    ring = QPen(icon_color, ring_width)
-    ring.setCapStyle(Qt.RoundCap)
-    stem = QPen(icon_color, stem_width)
-    stem.setCapStyle(Qt.RoundCap)
-    _draw_power_icon(painter, rect.center(), icon_size, ring, stem)
+    # 左侧红色指示点：参考实现 ::before 的 6px 圆点 + 三层辉光。
+    dot = QPointF(slot.left() + 10.0, slot.center().y())
+    for glow_radius, alpha in ((9.0, 0.10), (6.0, 0.18), (4.0, 0.32)):
+        glow = QRadialGradient(dot, glow_radius)
+        glow.setColorAt(0.0, _with_alpha(_SELECTOR_ACCENT, alpha))
+        glow.setColorAt(1.0, _with_alpha(_SELECTOR_ACCENT, 0.0))
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(glow))
+        painter.drawEllipse(dot, glow_radius, glow_radius)
+    painter.setBrush(_SELECTOR_ACCENT)
+    painter.setPen(Qt.NoPen)
+    painter.drawEllipse(dot, 2.2, 2.2)
+    painter.setBrush(_with_alpha(QColor("#FFFFFF"), 0.75))
+    painter.drawEllipse(dot - QPointF(0.6, 0.6), 0.7, 0.7)
 
     if focused:
         painter.setBrush(Qt.NoBrush)
-        painter.setPen(QPen(_PRIMARY, 2.0))
-        painter.drawEllipse(rect.adjusted(-3.5, -3.5, 3.5, 3.5))
+        painter.setPen(QPen(_SELECTOR_FOCUS, 1.4))
+        painter.drawPath(
+            _rounded_rect(rect.adjusted(2.0, 2.0, -2.0, -2.0), radius - 1.0)
+        )
     painter.restore()
 
 
@@ -886,17 +1072,18 @@ def _paint_power_card(
     painter: QPainter,
     data: PowerSupplyCardData,
     *,
-    hover_channel: str | None = None,
-    focus_channel: str | None = None,
-    pressed_channel: str | None = None,
+    reel_positions: Mapping[str, float] | None = None,
+    hover_selector: str | None = None,
+    focus_selector: str | None = None,
+    pressed_selector: str | None = None,
+    driver_available: bool = True,
     hover_protection: tuple[str, str] | None = None,
     focus_protection: tuple[str, str] | None = None,
-    glow: Mapping[str, float] | None = None,
 ) -> None:
     """把整张卡画到 ``painter`` 上；控件与导出位图共用这一份绘制。
 
-    ``glow`` 是“通道 -> 点亮进度（0–1）”，控件用它播 500 ms 的亮灭过渡；不传时
-    取数据的终态（开 = 1、关 = 0），导出位图因此总是画最终样子。
+    ``reel_positions`` 是“通道 -> 连续档位（0=OFF，1=Driver，2=DUT）”，控件用它播
+    700 ms 的滚筒滚动；不传时取数据的终态，导出位图因此总是画最终样子。
     """
     layout = power_card_layout()
     painter.save()
@@ -909,28 +1096,21 @@ def _paint_power_card(
         channel = data.channels[index]
         _paint_channel_panel(painter, channel_layout, index, channel.enabled)
 
-    # 左右通道分隔线：1px，从卡片顶边一直压到卡底；顶部中间由设备码铭牌盖住。
-    painter.fillRect(
-        QRectF(_HALF_WIDTH, 0.0, 1.0, float(POWER_CARD_HEIGHT)),
-        _BORDER,
-    )
+    # 两块色块之间是卡片白底（白缝），不再画中央分隔线；顶部正中由设备码铭牌盖住。
 
     _paint_title(painter, data, layout.title)
 
     for index, channel_layout in enumerate(layout.channels):
         channel = data.channels[index]
-        # 先画开关再画文字与数值：按钮的辉光是装饰，数据必须压在最上层，
-        # 否则绿色光晕会把数值框一起染色（参考实现里按钮 z-index 高于同级内容）。
-        _paint_switch(
+        _paint_mode_selector(
             painter,
-            channel_layout.switch,
-            lit=(glow or {}).get(
-                channel.channel,
-                1.0 if channel.enabled else 0.0,
-            ),
-            hovered=hover_channel == channel.channel,
-            focused=focus_channel == channel.channel,
-            pressed=pressed_channel == channel.channel,
+            channel_layout.mode_selector,
+            channel.mode,
+            position=(reel_positions or {}).get(channel.channel),
+            hovered=hover_selector == channel.channel,
+            focused=focus_selector == channel.channel,
+            pressed=pressed_selector == channel.channel,
+            driver_available=driver_available,
         )
         values = (channel.voltage_set, channel.current_set)
         for value_index, (label_rect, box_rect) in enumerate(
@@ -979,11 +1159,13 @@ def render_power_card(
     data: PowerSupplyCardData,
     *,
     device_pixel_ratio: float = 1.0,
+    driver_available: bool = True,
 ) -> QPixmap:
     """按一份卡片数据渲染完整正面（透明底，不含投影），用于预览或静态导出。
 
     逻辑尺寸始终是 :data:`POWER_CARD_WIDTH` × :data:`POWER_CARD_HEIGHT`；高 DPI 只
-    放大物理像素。必须在 GUI 线程、创建 ``QApplication`` 之后调用。
+    放大物理像素。``driver_available`` 控制 Driver 档是否可读（只影响滚筒外观，
+    不改数据）。必须在 GUI 线程、创建 ``QApplication`` 之后调用。
     """
     if not isinstance(data, PowerSupplyCardData):
         raise TypeError(f"data 必须是 PowerSupplyCardData，收到 {data!r}")
@@ -996,7 +1178,7 @@ def render_power_card(
     pixmap.setDevicePixelRatio(ratio)
     painter = QPainter(pixmap)
     try:
-        _paint_power_card(painter, data)
+        _paint_power_card(painter, data, driver_available=driver_available)
     finally:
         painter.end()
     return pixmap
@@ -1005,35 +1187,68 @@ def render_power_card(
 # ---- 控件 ------------------------------------------------------------------
 
 
-class ChannelSwitch(QAbstractButton):
-    """通道开关的透明命中区：真正的外观由父卡片按状态绘制。
+class ChannelModeSelector(QWidget):
+    """通道供电角色滚筒的透明命中区：外观由父卡片统一绘制。
 
-    用 ``QAbstractButton`` 而不是自绘命中矩形，是为了保留 Qt 的键盘焦点、
-    ``Space`` 激活、``pressed`` / ``released`` 与无障碍语义；控件本身不画任何
-    像素，卡面因此仍由 :func:`_paint_power_card` 这一份绘制决定。
+    控件保留 Qt 的键盘焦点与无障碍语义；点击一次按
+    ``OFF → Driver → DUT → OFF`` 循环，``Space`` / ``Enter`` 同样循环。滚轮不切换
+    档位——它留给页面滚动，避免鼠标经过卡片时误改配置。控件本身不画像素，卡面
+    因此仍由 :func:`_paint_power_card` 这一份绘制决定。
     """
 
+    cycle_requested = Signal(str)
     hover_changed = Signal(str, bool)
     focus_changed = Signal(str, bool)
+    pressed_changed = Signal(str, bool)
 
     def __init__(self, channel: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         if channel not in CHANNEL_NAMES:
             raise ValueError(f"通道必须是 {' / '.join(CHANNEL_NAMES)}，收到 {channel!r}")
         self.channel = channel
-        self.setCheckable(True)
-        self.setAutoExclusive(False)
+        self._pressed = False
         self.setFocusPolicy(Qt.StrongFocus)
         self.setCursor(Qt.PointingHandCursor)
-        self.setAccessibleName(f"通道 {channel} 开关")
-        self.setAccessibleDescription("启用后可编辑该通道的 VS/IS 与保护勾选")
+        self.setAccessibleName(f"通道 {channel} 供电角色")
+        self.setAccessibleDescription(
+            "点击循环 OFF、Driver、DUT；OFF 关闭通道，Driver 给驱放供电，"
+            "DUT 给功放供电。切换会同步下方上电计划。"
+        )
 
     def sizeHint(self) -> QSize:
-        return QSize(round(_SWITCH_DIAMETER), round(_SWITCH_DIAMETER))
+        return QSize(round(_SELECTOR_WIDTH), round(_SELECTOR_HEIGHT))
 
     def paintEvent(self, event) -> None:
         # 外观由父卡片统一画；这里只接受事件，不留下任何控件自己的底色。
         event.accept()
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self._pressed = True
+            self.pressed_changed.emit(self.channel, True)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton and self._pressed:
+            self._pressed = False
+            self.pressed_changed.emit(self.channel, False)
+            if self.rect().contains(event.position().toPoint()):
+                self.cycle_requested.emit(self.channel)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        if event.isAutoRepeat():
+            event.accept()
+            return
+        if event.key() in (Qt.Key_Space, Qt.Key_Return, Qt.Key_Enter):
+            self.cycle_requested.emit(self.channel)
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def enterEvent(self, event) -> None:
         super().enterEvent(event)
@@ -1055,8 +1270,8 @@ class ChannelSwitch(QAbstractButton):
 class ProtectionCheck(QAbstractButton):
     """保护勾选框的透明命中区：外观由父卡片按勾选状态绘制。
 
-    与 :class:`ChannelSwitch` 一样保留 Qt 的键盘焦点、``Space`` 激活与无障碍语义。
-    ``kind`` 只能是 ``voltage`` / ``current``；控件本身不画像素。
+    与 :class:`ChannelModeSelector` 一样保留 Qt 的键盘焦点、``Space`` 激活与
+    无障碍语义。``kind`` 只能是 ``voltage`` / ``current``；控件本身不画像素。
     """
 
     hover_changed = Signal(str, str, bool)
@@ -1222,19 +1437,20 @@ def _value_field_style(channel: str, scale: float) -> str:
 
 
 class PowerSupplyCard(QWidget):
-    """配置页的电源通道卡片：两个通道的开关、工作值与保护都在这张卡上编辑。
+    """配置页的电源通道卡片：两个通道的角色滚筒、工作值与保护都在这张卡上编辑。
 
-    通道开关是本次编辑的启用状态：关闭时整块灰显、VS/IS 与保护勾选不可操作；打开
-    后才可输入。开关状态不写配置、不影响上电计划，重新进入页面时从关闭开始。工作值
-    与保护开关是可编辑控件，卡片只更新内部快照并发信号，配置读写由页面/表单 Adapter
-    完成。
+    每个通道贴外侧上角一个 84×64 的深色竖直滚筒，档位 ``OFF`` / ``Driver`` /
+    ``DUT`` 点击循环。``OFF`` 时整块灰显、VS/IS 与保护勾选不可操作；``Driver`` /
+    ``DUT`` 时恢复通道底色并可编辑。档位变化只更新卡片内部快照并发信号，由页面
+    同步到下方两份上电计划；卡片本身不写配置。
 
-    开关、两个数值框与四个保护勾选框都是可聚焦控件：``Tab`` 依次经过它们，``Space``
-    切换开关/勾选，数值框用键盘输入。卡片支持按比例缩放，缩放时所有子控件的几何与
-    字号一起调整；绘制统一在缩放后的坐标系里完成。
+    滚筒、两个数值框与四个保护勾选框都是可聚焦控件：``Tab`` 依次经过它们，
+    ``Space`` / ``Enter`` 循环滚筒档位、``Space`` 切换保护勾选，数值框用键盘输入。
+    卡片支持按比例缩放，缩放时所有子控件的几何与字号一起调整；绘制统一在缩放后的
+    坐标系里完成。
     """
 
-    channel_toggled = Signal(str, bool)
+    channel_mode_changed = Signal(str, str)
     protection_toggled = Signal(str, str, bool)
     value_changed = Signal(str, str, float)
 
@@ -1260,19 +1476,21 @@ class PowerSupplyCard(QWidget):
         self.setFocusPolicy(Qt.NoFocus)
         self._data = data
         self._layout = power_card_layout()
-        self._hover_channel: str | None = None
-        self._focus_channel: str | None = None
-        self._pressed_channel: str | None = None
+        self._hover_selector: str | None = None
+        self._focus_selector: str | None = None
+        self._pressed_selector: str | None = None
         self._hover_protection: tuple[str, str] | None = None
         self._focus_protection: tuple[str, str] | None = None
-        # 每个通道的点亮进度（0–1）：控件用它播过渡，导出的位图则只取终态。
-        self._glow: dict[str, float] = {
-            name: 1.0 if data.channel(name).enabled else 0.0
+        self._driver_available = True
+        # 每个通道的连续档位：0=OFF、1=Driver、2=DUT；用户换档时在 700 ms 内插值。
+        self._reel_positions: dict[str, float] = {
+            name: float(CHANNEL_MODES.index(data.channel(name).mode))
             for name in CHANNEL_NAMES
         }
-        self._glow_animations: dict[str, QVariantAnimation] = {}
+        self._reel_animations: dict[str, QVariantAnimation] = {}
+        self._reel_targets: dict[str, int] = {}
 
-        self._switches: dict[str, ChannelSwitch] = {}
+        self._selectors: dict[str, ChannelModeSelector] = {}
         self._value_fields: dict[tuple[str, str], CardValueField] = {}
         self._protection_checks: dict[tuple[str, str], ProtectionCheck] = {}
 
@@ -1280,23 +1498,15 @@ class PowerSupplyCard(QWidget):
             name = channel_layout.channel
             channel_data = data.channel(name)
 
-            switch = ChannelSwitch(name, self)
-            switch.setChecked(channel_data.enabled)
-            switch.setGeometry(_scaled_geometry(channel_layout.switch, self._scale))
-            switch.toggled.connect(
-                lambda checked, channel=name: self._on_switch_toggled(
-                    channel, checked
-                )
+            selector = ChannelModeSelector(name, self)
+            selector.setGeometry(
+                _scaled_geometry(channel_layout.mode_selector, self._scale)
             )
-            switch.hover_changed.connect(self._on_switch_hover)
-            switch.focus_changed.connect(self._on_switch_focus)
-            switch.pressed.connect(
-                lambda channel=name: self._on_switch_pressed(channel)
-            )
-            switch.released.connect(
-                lambda channel=name: self._on_switch_released(channel)
-            )
-            self._switches[name] = switch
+            selector.cycle_requested.connect(self._on_selector_cycle)
+            selector.hover_changed.connect(self._on_selector_hover)
+            selector.focus_changed.connect(self._on_selector_focus)
+            selector.pressed_changed.connect(self._on_selector_pressed)
+            self._selectors[name] = selector
 
             for kind, box_rect in zip(VALUE_KINDS, channel_layout.value_boxes):
                 field = CardValueField(name, kind, scale=self._scale, parent=self)
@@ -1330,10 +1540,10 @@ class PowerSupplyCard(QWidget):
                 check.focus_changed.connect(self._on_protection_focus)
                 self._protection_checks[(name, kind)] = check
 
-        # 焦点顺序按“通道开关 → VS → IS → 电压保护 → 电流保护”逐通道向后。
-        order: list[QAbstractButton | CardValueField] = []
+        # 焦点顺序按“角色滚筒 → VS → IS → 电压保护 → 电流保护”逐通道向后。
+        order: list[QWidget] = []
         for name in CHANNEL_NAMES:
-            order.append(self._switches[name])
+            order.append(self._selectors[name])
             order.extend(self._value_fields[(name, kind)] for kind in VALUE_KINDS)
             order.extend(
                 self._protection_checks[(name, kind)] for kind in PROTECTION_KINDS
@@ -1353,8 +1563,8 @@ class PowerSupplyCard(QWidget):
         self.setFixedSize(QSize(width, height))
         for channel_layout in self._layout.channels:
             name = channel_layout.channel
-            self._switches[name].setGeometry(
-                _scaled_geometry(channel_layout.switch, scale)
+            self._selectors[name].setGeometry(
+                _scaled_geometry(channel_layout.mode_selector, scale)
             )
             for kind, box_rect in zip(VALUE_KINDS, channel_layout.value_boxes):
                 field = self._value_fields[(name, kind)]
@@ -1382,19 +1592,23 @@ class PowerSupplyCard(QWidget):
 
     @property
     def data(self) -> PowerSupplyCardData:
-        """卡片此刻显示的快照（开关状态已随用户操作更新）。"""
+        """卡片此刻显示的快照（角色档位已随用户操作更新）。"""
         return self._data
 
-    def channel_switch(self, channel: str) -> ChannelSwitch:
-        """取某个通道的透明命中控件；名称不合法时抛 ``KeyError``。"""
-        switch = self._switches.get(channel)
-        if switch is None:
+    def channel_mode_selector(self, channel: str) -> ChannelModeSelector:
+        """取某个通道的角色滚筒命中控件；名称不合法时抛 ``KeyError``。"""
+        selector = self._selectors.get(channel)
+        if selector is None:
             raise KeyError(f"卡片里没有通道 {channel!r}")
-        return switch
+        return selector
+
+    def channel_mode(self, channel: str) -> str:
+        """某个通道此刻的供电角色：``off`` / ``driver`` / ``dut``。"""
+        return self._data.channel(channel).mode
 
     def channel_enabled(self, channel: str) -> bool:
-        """某个通道此刻是否处于开启状态。"""
-        return self.channel_switch(channel).isChecked()
+        """某个通道此刻是否处于开启状态（``driver`` / ``dut`` 都算开启）。"""
+        return self.channel_mode(channel) != "off"
 
     def value_field(self, channel: str, kind: str) -> CardValueField:
         """取某个通道的 VS / IS 输入框；不合法时抛 ``KeyError``。"""
@@ -1430,18 +1644,14 @@ class PowerSupplyCard(QWidget):
     # ---------- 写入 ----------
 
     def set_data(self, data: PowerSupplyCardData) -> None:
-        """整张卡换一份快照；不触发开关、保护或数值信号。"""
+        """整张卡换一份快照；不触发角色、保护或数值信号。"""
         if not isinstance(data, PowerSupplyCardData):
             raise TypeError(f"data 必须是 PowerSupplyCardData，收到 {data!r}")
         self._data = data
         for channel_layout in self._layout.channels:
             name = channel_layout.channel
             channel = data.channel(name)
-            switch = self._switches[name]
-            if switch.isChecked() != channel.enabled:
-                switch.blockSignals(True)
-                switch.setChecked(channel.enabled)
-                switch.blockSignals(False)
+            self._set_reel_position(name, CHANNEL_MODES.index(channel.mode))
             for kind, value in (
                 ("voltage", channel.voltage_set),
                 ("current", channel.current_set),
@@ -1460,9 +1670,28 @@ class PowerSupplyCard(QWidget):
                     check.setChecked(checked)
                     check.blockSignals(False)
                 check.setEnabled(channel.enabled)
-            self._settle_glow(name, 1.0 if channel.enabled else 0.0)
         self._update_tooltips()
         self.update()
+
+    def set_channel_mode(
+        self,
+        channel: str,
+        mode: str,
+        *,
+        emit: bool = False,
+        animate: bool = True,
+    ) -> None:
+        """程序化设置某个通道的供电角色；默认不播动画、不发信号。"""
+        if mode not in CHANNEL_MODES:
+            raise ValueError(
+                f"通道角色必须是 {' / '.join(CHANNEL_MODES)}，收到 {mode!r}"
+            )
+        self.channel_mode_selector(channel)
+        if self._data.channel(channel).mode != mode:
+            self._data = self._data.with_channel_mode(channel, mode)
+            self._apply_channel_mode(channel, mode, animate=animate)
+        if emit:
+            self.channel_mode_changed.emit(channel, mode)
 
     def set_channel_enabled(
         self,
@@ -1471,31 +1700,37 @@ class PowerSupplyCard(QWidget):
         *,
         emit: bool = False,
     ) -> None:
-        """程序化设置某个通道的开关；``emit=True`` 时仍发一次信号。"""
+        """兼容旧调用：``True`` 保留已有角色（原本是 off 时给 ``driver``）。"""
         if not isinstance(enabled, bool):
             raise TypeError("enabled 必须是 bool")
-        switch = self.channel_switch(channel)
-        if switch.isChecked() != enabled:
-            switch.blockSignals(True)
-            switch.setChecked(enabled)
-            switch.blockSignals(False)
-            self._apply_channel_enabled(channel, enabled)
-            self._settle_glow(channel, 1.0 if enabled else 0.0)
-        if emit:
-            self.channel_toggled.emit(channel, enabled)
+        current = self._data.channel(channel).mode
+        if not enabled:
+            mode = "off"
+        elif current == "off":
+            mode = "driver"
+        else:
+            mode = current
+        self.set_channel_mode(channel, mode, emit=emit)
 
-    def reset_channel_switches(self) -> None:
-        """把所有通道回到“未启用”的本次编辑起点；不写配置、不发信号。"""
-        for name in CHANNEL_NAMES:
-            switch = self._switches[name]
-            if switch.isChecked():
-                switch.blockSignals(True)
-                switch.setChecked(False)
-                switch.blockSignals(False)
-            self._apply_channel_enabled(name, False)
-            self._settle_glow(name, 0.0)
+    def set_driver_available(self, available: bool) -> None:
+        """驱放测试模式关闭时把 Driver 档从循环里拿掉，并清掉已选 Driver。"""
+        available = bool(available)
+        self._driver_available = available
+        if not available:
+            for name in CHANNEL_NAMES:
+                if self._data.channel(name).mode == "driver":
+                    self.set_channel_mode(name, "off", animate=False)
         self._update_tooltips()
         self.update()
+
+    def reset_channel_modes(self) -> None:
+        """把所有通道回到 OFF；不写配置、不发信号。"""
+        for name in CHANNEL_NAMES:
+            self.set_channel_mode(name, "off", animate=False)
+
+    def reset_channel_switches(self) -> None:
+        """兼容旧名字：把所有通道回到 OFF。"""
+        self.reset_channel_modes()
 
     def set_value(
         self,
@@ -1542,72 +1777,92 @@ class PowerSupplyCard(QWidget):
         if emit:
             self.protection_toggled.emit(channel, kind, enabled)
 
-    # ---------- 点亮过渡 ----------
+    # ---------- 滚筒动画 ----------
 
-    def _settle_glow(self, channel: str, value: float) -> None:
-        """把某个通道的点亮进度直接定到终态；程序化路径不播过渡动画。"""
-        animation = self._glow_animations.get(channel)
+    def _set_reel_position(self, channel: str, index: int) -> None:
+        """把某个通道的滚筒直接定到某一档；程序化路径不播滚动动画。"""
+        animation = self._reel_animations.get(channel)
         if animation is not None:
             animation.stop()
-        self._glow[channel] = min(1.0, max(0.0, float(value)))
+        self._reel_positions[channel] = float(index)
         self.update()
 
-    def _animate_glow(self, channel: str, enabled: bool) -> None:
-        """用户拨动后播放 500 ms 的点亮/熄灭，与参考实现的 ``transition`` 同长。"""
-        animation = self._glow_animations.get(channel)
+    def _animate_reel(self, channel: str, mode: str) -> None:
+        """用户换档后按参考实现的 700 ms / OutExpo 滚动，方向始终向上。"""
+        target_index = CHANNEL_MODES.index(mode)
+        current = self._reel_positions.get(channel, float(target_index))
+        count = len(CHANNEL_MODES)
+        delta = (target_index - (current % count)) % count
+        if delta < 1e-6:
+            self._set_reel_position(channel, target_index)
+            return
+        target_raw = current + delta
+
+        animation = self._reel_animations.get(channel)
         if animation is None:
             animation = QVariantAnimation(self)
-            animation.setDuration(500)
-            animation.setEasingCurve(QEasingCurve.InOutQuad)
+            animation.setDuration(700)
+            animation.setEasingCurve(QEasingCurve.OutExpo)
             animation.valueChanged.connect(
-                lambda value, name=channel: self._on_glow_changed(name, value)
+                lambda value, name=channel: self._on_reel_value(name, value)
             )
-            self._glow_animations[channel] = animation
+            animation.finished.connect(
+                lambda name=channel: self._on_reel_finished(name)
+            )
+            self._reel_animations[channel] = animation
+        self._reel_targets[channel] = target_index
         animation.stop()
-        # 按下时按钮已经点亮（参考实现的 :active 状态），所以从 1 开始：
-        # 打开时不会先灭再亮，关闭时才走完整的 1 → 0 过渡。
-        animation.setStartValue(1.0)
-        animation.setEndValue(1.0 if enabled else 0.0)
+        animation.setStartValue(current)
+        animation.setEndValue(target_raw)
         animation.start()
 
-    def _on_glow_changed(self, channel: str, value: Any) -> None:
-        self._glow[channel] = min(1.0, max(0.0, float(value)))
+    def _on_reel_value(self, channel: str, value: Any) -> None:
+        self._reel_positions[channel] = float(value)
         self.update()
 
-    # ---------- 开关事件 ----------
-
-    def _on_switch_toggled(self, channel: str, enabled: bool) -> None:
-        """用户拨动开关：只切换本次编辑的启用状态，不写配置、不连硬件。"""
-        self._apply_channel_enabled(channel, bool(enabled))
-        self._animate_glow(channel, bool(enabled))
-        self._update_tooltips()
+    def _on_reel_finished(self, channel: str) -> None:
+        target = self._reel_targets.get(channel, 0)
+        self._reel_positions[channel] = float(target)
         self.update()
-        self.channel_toggled.emit(channel, bool(enabled))
 
-    def _apply_channel_enabled(self, channel: str, enabled: bool) -> None:
+    # ---------- 滚筒事件 ----------
+
+    def _on_selector_cycle(self, channel: str) -> None:
+        """点击档位：按 OFF → Driver → DUT → OFF 循环；Driver 禁用时跳过。"""
+        available = [
+            mode
+            for mode in CHANNEL_MODES
+            if mode != "driver" or self._driver_available
+        ]
+        current = self._data.channel(channel).mode
+        current_index = available.index(current) if current in available else -1
+        next_mode = available[(current_index + 1) % len(available)]
+        self.set_channel_mode(channel, next_mode, emit=True, animate=True)
+
+    def _apply_channel_mode(self, channel: str, mode: str, *, animate: bool) -> None:
         """同步卡面快照与子控件的可用状态（不发信号）。"""
-        self._data = self._data.with_channel_enabled(channel, enabled)
+        enabled = mode != "off"
         for kind in VALUE_KINDS:
             self._value_fields[(channel, kind)].setEnabled(enabled)
         for kind in PROTECTION_KINDS:
             self._protection_checks[(channel, kind)].setEnabled(enabled)
+        if animate and self.isVisible():
+            self._animate_reel(channel, mode)
+        else:
+            self._set_reel_position(channel, CHANNEL_MODES.index(mode))
         self._update_tooltips()
-
-    def _on_switch_hover(self, channel: str, hovered: bool) -> None:
-        self._hover_channel = channel if hovered else None
         self.update()
 
-    def _on_switch_focus(self, channel: str, focused: bool) -> None:
-        self._focus_channel = channel if focused else None
+    def _on_selector_hover(self, channel: str, hovered: bool) -> None:
+        self._hover_selector = channel if hovered else None
         self.update()
 
-    def _on_switch_pressed(self, channel: str) -> None:
-        self._pressed_channel = channel
+    def _on_selector_focus(self, channel: str, focused: bool) -> None:
+        self._focus_selector = channel if focused else None
         self.update()
 
-    def _on_switch_released(self, channel: str) -> None:
-        if self._pressed_channel == channel:
-            self._pressed_channel = None
+    def _on_selector_pressed(self, channel: str, pressed: bool) -> None:
+        self._pressed_selector = channel if pressed else None
         self.update()
 
     def _on_protection_toggled(
@@ -1643,7 +1898,7 @@ class PowerSupplyCard(QWidget):
     # ---------- 提示与绘制 ----------
 
     def _update_tooltips(self) -> None:
-        """悬浮提示补上卡面放不下的信息：身份详情、单位、范围与通道状态。"""
+        """悬浮提示补上卡面放不下的信息：身份详情、单位、范围与通道角色。"""
         identity = supply_identity_text(
             self._data.code or None,
             self._data.model,
@@ -1653,12 +1908,13 @@ class PowerSupplyCard(QWidget):
         lines = [
             identity or "未识别电源",
             "左侧 CH1 · 右侧 CH2；卡面不再标注通道号，位置与底色即通道",
-            "VS 电压设定（V） · IS 电流设定（A）",
-            "点击电源键启用通道后可编辑；保护阈值自动取比设定值高 10% 的值",
+            "点击 OFF / Driver / DUT 滚筒切换供电角色：OFF 关闭通道，"
+            "Driver 给驱放供电，DUT 给功放供电",
+            "档位会同步下方上电计划；VS 电压设定（V） · IS 电流设定（A）",
         ]
         for channel in self._data.channels:
             lines.append(
-                f"{channel.channel} {'启用' if channel.enabled else '未启用'}："
+                f"{channel.channel} {CHANNEL_MODE_LABELS[channel.mode]}："
                 f"VS {channel.voltage_set:.2f} V · IS {channel.current_set:.2f} A · "
                 f"电压保护 {'开' if channel.voltage_protection_enabled else '关'} · "
                 f"电流保护 {'开' if channel.current_protection_enabled else '关'}"
@@ -1666,12 +1922,18 @@ class PowerSupplyCard(QWidget):
         text = "\n".join(lines)
         self.setToolTip(text)
         for channel in self._data.channels:
-            switch = self._switches[channel.channel]
-            switch.setToolTip(
-                f"{channel.channel} {'已启用' if channel.enabled else '未启用'}\n"
-                "点击启用后才能编辑该通道的 VS/IS 与保护勾选；\n"
-                "启用状态只在本次停留本页期间保留，不写入配置。\n"
-                f"{text}"
+            selector = self._selectors[channel.channel]
+            driver_note = (
+                ""
+                if self._driver_available
+                else "\n当前驱放测试模式关闭，Driver 档不可选。"
+            )
+            selector.setToolTip(
+                f"{channel.channel} 当前 {CHANNEL_MODE_LABELS[channel.mode]}\n"
+                "点击循环 OFF → Driver → DUT → OFF；"
+                "OFF 关闭通道，Driver 给驱放供电，DUT 给功放供电。\n"
+                "档位会写入下方对应的上电计划。"
+                f"{driver_note}\n{text}"
             )
             for kind in PROTECTION_KINDS:
                 label = "电压保护" if kind == "voltage" else "电流保护"
@@ -1685,7 +1947,7 @@ class PowerSupplyCard(QWidget):
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         try:
-            # 卡面按 440×232 的逻辑坐标绘制，再缩放到控件实际尺寸；用实际宽高比例
+            # 卡面按 440×166 的逻辑坐标绘制，再缩放到控件实际尺寸；用实际宽高比例
             # 而不是四舍五入前的 scale，右/下边缘不会被裁掉半像素。
             painter.scale(
                 self.width() / POWER_CARD_WIDTH,
@@ -1694,12 +1956,13 @@ class PowerSupplyCard(QWidget):
             _paint_power_card(
                 painter,
                 self._data,
-                hover_channel=self._hover_channel,
-                focus_channel=self._focus_channel,
-                pressed_channel=self._pressed_channel,
+                reel_positions=self._reel_positions,
+                hover_selector=self._hover_selector,
+                focus_selector=self._focus_selector,
+                pressed_selector=self._pressed_selector,
+                driver_available=self._driver_available,
                 hover_protection=self._hover_protection,
                 focus_protection=self._focus_protection,
-                glow=self._glow,
             )
         finally:
             painter.end()

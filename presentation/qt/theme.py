@@ -93,17 +93,18 @@ TOKENS = {
     # 左右两半并排时能一眼分开；关闭态改用 disabled_bg，不另造灰色。
     "channel_cool": "#DBEAFE",
     "channel_warm": "#FEF3C7",
-    # 电源通道卡片的圆形电源键：关闭是深灰金属按钮；按下后底色转绿、四周泛起绿色辉光，
-    # 图标描边加粗并带一圈青色光。图标、描边、内阴影与辉光都从这些令牌取色。
-    "power_switch_off": "#636363",
-    "power_switch_off_border": "#7E7E7E",
-    "power_switch_icon_off": "#303030",
-    "power_switch_on": "#88DB96",
-    "power_switch_on_border": "#FFFFFF",
-    "power_switch_icon_on": "#FFFFFF",
-    "power_switch_glow": "#96FFC2",
-    "power_switch_icon_glow": "#97F3FF",
-    "power_switch_inset": "#020202",
+    # 电源通道卡片的 OFF / Driver / DUT 竖直滚筒：深色玻璃槽体、金属拉丝底、
+    # 红色指示点、白色当前档。浅色卡面上的深色槽体正是参考实现的对比来源。
+    "mode_selector_body": "#111111",
+    "mode_selector_body_bottom": "#0A0A0A",
+    "mode_selector_metal": "#252525",
+    "mode_selector_metal_dark": "#1A1A1A",
+    "mode_selector_border": "#343434",
+    "mode_selector_border_hover": "#4A4A4A",
+    "mode_selector_accent": "#FF3E3E",
+    "mode_selector_text": "#FFFFFF",
+    "mode_selector_text_idle": "#7A7A7A",
+    "mode_selector_focus": "#93C5FD",
     "danger": "#DC2626",
     "danger_hover": "#B91C1C",
     "danger_pressed": "#991B1B",

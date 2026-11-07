@@ -204,33 +204,124 @@ class PowerConfigurationPageTests(unittest.TestCase):
     def _channel_controls(self, page, channel: str = "CH1"):
         return page.power_config_widgets["DP8B1519"]["channels"][channel]
 
-    def test_all_channels_start_disabled_on_page_entry(self):
+    def test_channels_show_the_roles_saved_in_power_plans(self):
         page = self.make_page()
         card = self._card(page)
 
         for channel in CHANNEL_NAMES:
             with self.subTest(channel=channel):
-                self.assertFalse(card.channel_enabled(channel))
-                self.assertFalse(
+                self.assertEqual(card.channel_mode(channel), "dut")
+                self.assertTrue(card.channel_enabled(channel))
+                self.assertTrue(
                     card.value_field(channel, "voltage").isEnabled()
                 )
-                self.assertFalse(
+                self.assertTrue(
                     card.protection_check(channel, "voltage").isEnabled()
                 )
 
-    def test_clicking_the_power_switch_enables_editing_without_dirtying(self):
+    def test_clicking_the_reel_updates_both_plans_and_marks_dirty(self):
         page = self.make_page()
         card = self._card(page)
         changes: list[bool] = []
         page.fragment_changed.connect(lambda: changes.append(True))
-        switch = card.channel_switch("CH1")
+        selector = card.channel_mode_selector("CH1")
+        self.assertEqual(card.channel_mode("CH1"), "dut")
 
-        QTest.mouseClick(switch, Qt.LeftButton, pos=switch.rect().center())
+        # DUT → OFF：两份计划里都不再出现 CH1。
+        QTest.mouseClick(selector, Qt.LeftButton, pos=selector.rect().center())
 
-        self.assertTrue(card.channel_enabled("CH1"))
-        self.assertTrue(card.value_field("CH1", "voltage").isEnabled())
-        self.assertEqual(changes, [], "启用状态不落配置，不算编辑")
-        self.assertFalse(page.is_dirty())
+        self.assertEqual(card.channel_mode("CH1"), "off")
+        assignment = page.build_config()["power_supply_assignment"]
+        for group in ("dut_amplifier", "driver_amplifier"):
+            routes = {
+                (item["supply_id"], item["channel"])
+                for item in assignment[group]["power_plan"]["power_sequence"]
+            }
+            self.assertNotIn(("DP8B1519", "CH1"), routes)
+        self.assertEqual(changes, [True], "换档写计划，必须计入 dirty")
+        self.assertTrue(page.is_dirty())
+
+    def test_reel_cycle_skips_driver_when_driver_mode_is_off(self):
+        page = self.make_page()
+        card = self._card(page)
+        selector = card.channel_mode_selector("CH2")
+
+        # 当前 DUT；Driver 不可用，循环只走 DUT → OFF → DUT。
+        QTest.mouseClick(selector, Qt.LeftButton, pos=selector.rect().center())
+        self.assertEqual(card.channel_mode("CH2"), "off")
+        QTest.mouseClick(selector, Qt.LeftButton, pos=selector.rect().center())
+        self.assertEqual(card.channel_mode("CH2"), "dut")
+
+    def test_selecting_driver_writes_the_driver_plan(self):
+        config = valid_config()
+        config["driver_mode"] = {"enabled": True}
+        config["power_supply_assignment"]["dut_amplifier"]["power_plan"] = plan()
+        page = PowerConfigurationPage(config)
+        page.resize(1100, 900)
+        page.show()
+        self.app.processEvents()
+        self.addCleanup(self._destroy_page, page)
+        card = self._card(page)
+        selector = card.channel_mode_selector("CH1")
+        self.assertEqual(card.channel_mode("CH1"), "off")
+
+        QTest.mouseClick(selector, Qt.LeftButton, pos=selector.rect().center())
+
+        self.assertEqual(card.channel_mode("CH1"), "driver")
+        assignment = page.build_config()["power_supply_assignment"]
+        driver_routes = {
+            (item["supply_id"], item["channel"])
+            for item in assignment["driver_amplifier"]["power_plan"][
+                "power_sequence"
+            ]
+        }
+        dut_routes = {
+            (item["supply_id"], item["channel"])
+            for item in assignment["dut_amplifier"]["power_plan"]["power_sequence"]
+        }
+        self.assertIn(("DP8B1519", "CH1"), driver_routes)
+        self.assertNotIn(("DP8B1519", "CH1"), dut_routes)
+
+    def test_checking_a_plan_row_updates_the_card_role(self):
+        page = self.make_page()
+        card = self._card(page)
+        # 先把 CH1 从 DUT 计划里移除，让卡片回到 OFF。
+        page.power_section.dut_power_plan_editor.set_route_checked(
+            ("DP8B1519", "CH1"), False
+        )
+        self.app.processEvents()
+        self.assertEqual(card.channel_mode("CH1"), "off")
+
+        page.power_section.dut_power_plan_editor.set_route_checked(
+            ("DP8B1519", "CH1"), True
+        )
+        self.app.processEvents()
+
+        self.assertEqual(card.channel_mode("CH1"), "dut")
+
+    def test_checking_a_route_in_one_plan_unchecks_the_other(self):
+        config = valid_config()
+        config["driver_mode"] = {"enabled": True}
+        page = PowerConfigurationPage(config)
+        page.resize(1100, 900)
+        page.show()
+        self.app.processEvents()
+        self.addCleanup(self._destroy_page, page)
+        card = self._card(page)
+
+        page.power_section.driver_power_plan_editor.set_route_checked(
+            ("DP8B1519", "CH1"), True
+        )
+        self.app.processEvents()
+
+        self.assertEqual(card.channel_mode("CH1"), "driver")
+        dut_routes = {
+            (item["supply_id"], item["channel"])
+            for item in page.power_section.dut_power_plan_editor.read_plan()[
+                "power_sequence"
+            ]
+        }
+        self.assertNotIn(("DP8B1519", "CH1"), dut_routes)
 
     def test_card_wall_protection_checks_read_the_configuration(self):
         config = valid_config()
@@ -252,7 +343,7 @@ class PowerConfigurationPageTests(unittest.TestCase):
     def test_clicking_a_card_protection_check_updates_the_config_and_dirty(self):
         page = self.make_page()
         card = self._card(page)
-        card.set_channel_enabled("CH1", True)
+        card.set_channel_mode("CH1", "dut")
         changes: list[bool] = []
         page.fragment_changed.connect(lambda: changes.append(True))
 
@@ -270,7 +361,7 @@ class PowerConfigurationPageTests(unittest.TestCase):
     def test_editing_a_card_value_writes_the_config_and_marks_dirty(self):
         page = self.make_page()
         card = self._card(page)
-        card.set_channel_enabled("CH1", True)
+        card.set_channel_mode("CH1", "dut")
 
         card.value_field("CH1", "voltage").setValue(7.5)
 
@@ -281,21 +372,25 @@ class PowerConfigurationPageTests(unittest.TestCase):
         self.assertEqual(channel["voltage"]["protection"], 8.25)
         self.assertTrue(page.is_dirty())
 
-    def test_leaving_and_reentering_the_page_resets_the_channel_switches(self):
+    def test_roles_survive_leaving_and_reentering_the_page(self):
         page = self.make_page()
         card = self._card(page)
-        card.set_channel_enabled("CH1", True)
+        selector = card.channel_mode_selector("CH1")
+        # DUT → OFF：真实点击会同时把 CH1 从计划里移除。
+        QTest.mouseClick(selector, Qt.LeftButton, pos=selector.rect().center())
+        self.assertEqual(card.channel_mode("CH1"), "off")
 
         page.hide()
         page.show()
         self.app.processEvents()
 
-        self.assertFalse(self._card(page).channel_enabled("CH1"))
+        self.assertEqual(self._card(page).channel_mode("CH1"), "off")
+        self.assertEqual(self._card(page).channel_mode("CH2"), "dut")
 
     def test_read_only_or_morphing_page_does_not_toggle_from_the_card(self):
         page = self.make_page()
         card = self._card(page)
-        card.set_channel_enabled("CH1", True)
+        card.set_channel_mode("CH1", "dut")
         check = card.protection_check("CH1", "voltage")
 
         page.set_read_only("1.0 配置只能查看")

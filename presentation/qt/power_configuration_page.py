@@ -11,11 +11,13 @@
 底部“上一步”回仪器排布页（格位与卡片位置原样保留），“下一步”进入工作区的
 “仪器配置”标签页；页面只发信号，切页由主窗口完成。
 
-卡片是通道参数的唯一编辑面：通道开关是本次停留本页的编辑启用状态（每次进页面
-从灰色开始，不写配置、不影响计划），点击后该通道的 VS/IS 输入框与保护勾选才可
-操作；工作值与保护勾选直接进入配置片段，保护阈值仍由工作值按 110% 自动推导。
-两个通道始终保留在配置里，卡片下方的「通道上电计划」与「效率测量」不属于通道
-参数。
+卡片是通道参数的唯一编辑面：每个通道上角的竖直滚筒写 ``OFF`` / ``Driver`` / ``DUT``，
+表示该通道关闭、给驱放供电、给功放供电。换档会同步勾选/取消下方
+``driver_amplifier`` / ``dut_amplifier`` 的 ``power_plan`` 路由，因此档位不是临时
+显示状态，而是由现有计划结构持久化；进入页面时按已保存计划回显档位。``OFF`` 时该
+通道的 VS/IS 输入框与保护勾选不可操作。工作值与保护勾选直接进入配置片段，保护阈值
+仍由工作值按 110% 自动推导。两个通道始终保留在配置里，卡片下方的「通道上电计划」与
+「效率测量」不属于通道参数。
 
 电源参数、通道上电计划与效率测量漏极都归本页；测试参数、运行入口与
 设备发现仍属于 :mod:`presentation.qt.configuration_page` 与
@@ -96,7 +98,8 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
     电源集合的来源，由 :meth:`apply_device_bindings` 刷新，页面不再显示绑定状态。
     驱动模式变化经 :meth:`set_test_mode` 转发给表单派生状态，并发出
     ``driver_mode_changed`` 供窗口刷新相关页面。驱放自带供电由“驱动功放上电计划为空”
-    表达，页面没有单独的供电方式控件。
+    表达，页面没有单独的供电方式控件。卡片滚筒与两份计划双向同步：换档写计划，
+    计划勾选变化回写滚筒；同一物理通道在一组里勾选时会自动取消另一组。
     """
 
     validation_failed = Signal(str)
@@ -121,6 +124,8 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         self.read_only_reason: str | None = None
         # 回填/重建期间控件会连续发出 valueChanged；那是程序写入，不是用户编辑。
         self._silent = False
+        # 卡片角色与下方上电计划互相同步时置真，避免 itemChanged 递归。
+        self._syncing_modes = False
         self._finalizing = False
         self._fragment_signal_connections: list[tuple[Any, Any]] = []
         #: 仪器排布页的九宫格结果（``supply_id -> 格位下标``），卡片视图按它排相对位置。
@@ -246,6 +251,9 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
     def _connect_signals(self) -> None:
         self._wire_fragment_signals()
         if self.card_wall is not None:
+            self.card_wall.channel_mode_changed.connect(
+                self._on_card_mode_changed
+            )
             self.card_wall.protection_toggled.connect(
                 self._on_card_protection_toggled
             )
@@ -273,8 +281,14 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         def notify(*_args: Any) -> None:
             self._emit_fragment_changed()
 
-        for editor in (section.dut_power_plan_editor, section.driver_power_plan_editor):
-            hook(editor.list.itemChanged, notify)
+        for group, editor in (
+            ("dut", section.dut_power_plan_editor),
+            ("driver", section.driver_power_plan_editor),
+        ):
+            hook(
+                editor.list.itemChanged,
+                lambda item, name=group: self._on_plan_item_changed(name, item),
+            )
             hook(editor.delay_spin.valueChanged, notify)
         hook(section.drain_channel_combo.currentIndexChanged, notify)
 
@@ -303,6 +317,124 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         """卡面 VS/IS 变化：卡片已保存新值，这里只计入 dirty。"""
         self._emit_fragment_changed()
 
+    # ---- 供电角色 <-> 上电计划 ----------------------------------------------
+
+    @staticmethod
+    def _plan_route_set(plan: Any) -> set[tuple[str, str]]:
+        """把一份 ``power_plan`` 读成 ``(supply_id, channel)`` 集合。"""
+        if not isinstance(plan, Mapping):
+            return set()
+        sequence = plan.get("power_sequence")
+        if not isinstance(sequence, (list, tuple)):
+            return set()
+        routes: set[tuple[str, str]] = set()
+        for item in sequence:
+            if not isinstance(item, Mapping):
+                continue
+            supply_id = item.get("supply_id")
+            channel = item.get("channel")
+            if isinstance(supply_id, str) and isinstance(channel, str):
+                supply_id, channel = supply_id.strip(), channel.strip()
+                if supply_id and channel:
+                    routes.add((supply_id, channel))
+        return routes
+
+    def _planned_modes(self) -> dict[tuple[str, str], str]:
+        """按两份上电计划给出每个通道的档位；同一路由同时出现时 DUT 优先。"""
+        section = self.power_section
+        if section is not None:
+            driver = (
+                self._plan_route_set(section.driver_power_plan_editor.read_plan())
+                if self._driver_plan_active()
+                else set()
+            )
+            dut = self._plan_route_set(section.dut_power_plan_editor.read_plan())
+        else:
+            driver = (
+                self._plan_route_set(self._power_plan_entry("driver_amplifier"))
+                if self._driver_plan_active()
+                else set()
+            )
+            dut = self._plan_route_set(self._power_plan_entry("dut_amplifier"))
+        modes: dict[tuple[str, str], str] = {}
+        for supply_id in self._power_supply_sources():
+            for name in CHANNEL_NAMES:
+                route = (supply_id, name)
+                if route in dut:
+                    modes[route] = "dut"
+                elif route in driver:
+                    modes[route] = "driver"
+                else:
+                    modes[route] = "off"
+        return modes
+
+    def _sync_cards_from_plans(self) -> None:
+        """把两份计划的路由状态回写到卡片滚筒；不发信号。"""
+        if self.card_wall is not None:
+            self.card_wall.set_channel_modes(self._planned_modes())
+
+    def _on_card_mode_changed(
+        self, supply_id: str, channel: str, mode: str
+    ) -> None:
+        """卡面滚筒换档：同步勾选下方对应计划，再计入 dirty。"""
+        if self._syncing_modes:
+            return
+        section = self.power_section
+        if section is None:
+            self._emit_fragment_changed()
+            return
+        route = (supply_id, channel)
+        was_silent = self._silent
+        self._silent = True
+        self._syncing_modes = True
+        try:
+            driver = section.driver_power_plan_editor
+            dut = section.dut_power_plan_editor
+            if mode == "driver" and self._driver_plan_active():
+                dut.set_route_checked(route, False)
+                driver.set_route_checked(route, True)
+            elif mode == "dut":
+                driver.set_route_checked(route, False)
+                dut.set_route_checked(route, True)
+            else:
+                driver.set_route_checked(route, False)
+                dut.set_route_checked(route, False)
+            # 计划里可能没有这条路由候选（例如电源刚解绑）；以计划实际状态为准
+            # 回写卡片，避免滚筒停留在一个没有落库的档位。
+            self._sync_cards_from_plans()
+        finally:
+            self._syncing_modes = False
+            self._silent = was_silent
+        self._emit_fragment_changed()
+
+    def _on_plan_item_changed(self, group: str, item: Any) -> None:
+        """计划编辑器勾选变化：互斥地清掉另一组，并同步卡片滚筒。"""
+        if self._syncing_modes:
+            return
+        route = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(route, (tuple, list)) or len(route) != 2:
+            return
+        checked = item.checkState() == Qt.CheckState.Checked
+        section = self.power_section
+        if section is None:
+            return
+        was_silent = self._silent
+        self._silent = True
+        self._syncing_modes = True
+        try:
+            if checked:
+                other = (
+                    section.driver_power_plan_editor
+                    if group == "dut"
+                    else section.dut_power_plan_editor
+                )
+                other.set_route_checked(route, False)
+            self._sync_cards_from_plans()
+        finally:
+            self._syncing_modes = False
+            self._silent = was_silent
+        self._emit_fragment_changed()
+
     # ---- 表单 Adapter -------------------------------------------------------
 
     @property
@@ -317,6 +449,14 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         if self.power_section is not None:
             self.power_section.driver_power_plan_box.setVisible(self.test_mode_enabled)
             self.power_section.set_driver_plan_active(self.test_mode_enabled)
+        if self.card_wall is not None:
+            was_silent = self._silent
+            self._silent = True
+            try:
+                self.card_wall.set_driver_available(self.test_mode_enabled)
+                self._sync_cards_from_plans()
+            finally:
+                self._silent = was_silent
 
     # ---- 卡片视图 -----------------------------------------------------------
 
@@ -335,16 +475,19 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         self._refresh_card_wall(preserve_edit_state=True)
 
     def _card_cards(self) -> list[tuple[str, Any]]:
-        """当前配置里每台电源的卡片数据；两个通道都显示。
+        """当前配置里每台电源的卡片数据；两个通道都显示，档位按上电计划回填。
 
-        通道开关是本次编辑的启用状态，重组卡片时统一从“未启用”开始；已有卡片需要
-        保留用户输入时由 :meth:`_refresh_card_wall` 的 ``preserve_edit_state`` 负责。
+        卡片不再在每次进入页面时统一从 OFF 开始：已经写进 ``driver_amplifier`` /
+        ``dut_amplifier`` 计划的路由会显示对应档位，其余通道为 OFF。
         """
+        modes = self._planned_modes()
         cards: list[tuple[str, Any]] = []
         for supply_id, entry in self._power_supply_sources().items():
             data = power_card_data(entry, supply_id)
             for name in CHANNEL_NAMES:
-                data = data.with_channel_enabled(name, False)
+                data = data.with_channel_mode(
+                    name, modes.get((supply_id, name), "off")
+                )
             cards.append((supply_id, data))
         return cards
 
@@ -526,10 +669,10 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             self._card_morph.setGeometry(self.rect())
 
     def showEvent(self, event: Any) -> None:
-        """每次进入电源页都让通道从“未启用”开始。"""
+        """每次进入电源页按当前计划回显通道档位。"""
         super().showEvent(event)
         if self.card_wall is not None:
-            self.card_wall.reset_channel_switches()
+            self._sync_cards_from_plans()
 
     def set_test_mode(self, enabled: bool) -> None:
         """设置欢迎页选择的驱放测试模式，并刷新依赖它的电源派生状态。
@@ -559,6 +702,7 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         finally:
             self._silent = False
         self._refresh_card_wall(preserve_edit_state=True)
+        self._sync_cards_from_plans()
         self._emit_fragment_changed()
 
     # ---- 配置输入（只取本页负责的字段） ------------------------------------
@@ -639,6 +783,7 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             self.power_section.apply_power_plan_config(
                 config, driver_plan_active=driver_plan_active
             )
+        self._sync_cards_from_plans()
 
     # ---- 读写 ---------------------------------------------------------------
 
@@ -707,6 +852,7 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             self.update_driver_power_ui()
             self.update_power_supply_options()
             self._refresh_card_wall()
+            self._sync_cards_from_plans()
             self.mark_clean()
         finally:
             self._silent = False

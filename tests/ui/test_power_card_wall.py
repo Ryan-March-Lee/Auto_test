@@ -33,7 +33,7 @@ def _card(code: str, *, enabled: bool = True) -> PowerSupplyCardData:
         code,
     )
     for name in ("CH1", "CH2"):
-        data = data.with_channel_enabled(name, enabled)
+        data = data.with_channel_mode(name, "driver" if enabled else "off")
     return data
 
 
@@ -71,6 +71,34 @@ class PowerCardWallTests(unittest.TestCase):
         self.assertEqual(first.size(), second.size())
         self.assertAlmostEqual(first.width(), POWER_CARD_WIDTH)
         self.assertAlmostEqual(first.height(), POWER_CARD_HEIGHT)
+        self.assertAlmostEqual(
+            second.x() - (first.x() + first.width()),
+            22.0,
+            msg="多张卡片之间留 22 的逻辑间距",
+        )
+
+    def test_wall_paints_a_soft_shadow_behind_each_card(self):
+        """卡片是子控件，投影只能由墙画在卡片下面；动画接管时不再画。"""
+        wall = self.make_wall()
+        wall.set_cards([("A", _card("A"))], {"A": 0})
+        rect = wall.card_rect("A")
+        probe = (round(rect.center().x()), round(rect.bottom() + 2))
+
+        image = wall.grab().toImage()
+        background = image.pixelColor(1, 1)
+        shadowed = image.pixelColor(*probe)
+        self.assertLess(
+            sum(shadowed.getRgb()[:3]),
+            sum(background.getRgb()[:3]),
+            "卡片下沿外应有比页面底色更深的柔和投影",
+        )
+
+        wall.set_paint_enabled(False)
+        self.app.processEvents()
+        hidden = wall.grab().toImage().pixelColor(*probe)
+        self.assertEqual(
+            hidden.getRgb(), background.getRgb(), "展开动画接管卡面时不留下静态投影"
+        )
 
     def test_diagonal_slots_keep_the_grid_relationship_and_shrink_to_fit(self):
         wall = self.make_wall()
@@ -130,12 +158,14 @@ class PowerCardWallTests(unittest.TestCase):
         )
 
         self.assertEqual(data.code, "DP8B1519")
-        self.assertTrue(data.channel("CH1").enabled)
+        self.assertEqual(data.channel("CH1").mode, "off")
         self.assertAlmostEqual(data.channel("CH1").voltage_set, 2.8)
         self.assertAlmostEqual(data.channel("CH1").current_set, 0.1)
         self.assertTrue(data.channel_protection("CH1", "voltage"))
         self.assertFalse(data.channel_protection("CH1", "current"))
-        self.assertTrue(data.channel("CH2").enabled, "两个通道始终保留在卡面上")
+        self.assertEqual(
+            data.channel("CH2").mode, "off", "两个通道始终保留在卡面上"
+        )
         self.assertAlmostEqual(data.channel("CH2").voltage_set, 0.0)
 
     def test_missing_protection_flags_are_unchecked(self):
@@ -186,7 +216,7 @@ class PowerCardWallTests(unittest.TestCase):
 
     def test_clicking_an_off_channel_check_does_nothing(self):
         wall = self.make_wall()
-        data = _card("A").with_channel_enabled("CH2", False)
+        data = _card("A").with_channel_mode("CH2", "off")
         wall.set_cards([("A", data)], {"A": 0})
         events: list[tuple[str, str, str, bool]] = []
         wall.protection_toggled.connect(lambda *args: events.append(args))
@@ -210,20 +240,21 @@ class PowerCardWallTests(unittest.TestCase):
             wall.cards()[0].data.channel("CH1").voltage_set, 7.5
         )
 
-    def test_toggling_a_card_switch_emits_only_the_edit_state(self):
+    def test_clicking_a_card_reel_emits_the_new_role(self):
         wall = self.make_wall()
         wall.set_cards([("A", _card("A", enabled=False))], {"A": 0})
-        channel_events: list[tuple[str, str, bool]] = []
+        mode_events: list[tuple[str, str, str]] = []
         value_events: list[tuple[str, str, str, float]] = []
-        wall.channel_toggled.connect(lambda *args: channel_events.append(args))
+        wall.channel_mode_changed.connect(lambda *args: mode_events.append(args))
         wall.value_changed.connect(lambda *args: value_events.append(args))
         card = wall.supply_card("A")
-        switch = card.channel_switch("CH1")
+        selector = card.channel_mode_selector("CH1")
 
-        QTest.mouseClick(switch, Qt.LeftButton, pos=switch.rect().center())
+        QTest.mouseClick(selector, Qt.LeftButton, pos=selector.rect().center())
 
-        self.assertEqual(channel_events, [("A", "CH1", True)])
-        self.assertEqual(value_events, [], "启用通道不是数值编辑")
+        self.assertEqual(mode_events, [("A", "CH1", "driver")])
+        self.assertEqual(value_events, [], "换档不是数值编辑")
+        self.assertEqual(card.channel_mode("CH1"), "driver")
 
     def test_card_pixmap_is_a_snapshot_of_the_real_card(self):
         wall = self.make_wall()
@@ -277,21 +308,21 @@ class PowerCardWallTests(unittest.TestCase):
         wall = self.make_wall()
         wall.set_cards([("A", _card("A", enabled=False))], {"A": 0})
         card = wall.supply_card("A")
-        card.set_channel_enabled("CH1", True)
+        card.set_channel_mode("CH1", "dut")
         card.set_value("CH1", "voltage", 9.0)
 
         wall.set_cards(
             [("A", _card("A", enabled=False))], {"A": 0}, preserve_edit_state=True
         )
         preserved = wall.supply_card("A")
-        self.assertTrue(preserved.channel_enabled("CH1"))
+        self.assertEqual(preserved.channel_mode("CH1"), "dut")
         self.assertAlmostEqual(preserved.channel_value("CH1", "voltage"), 9.0)
 
         wall.set_cards(
             [("A", _card("A", enabled=False))], {"A": 0}, preserve_edit_state=False
         )
         discarded = wall.supply_card("A")
-        self.assertFalse(discarded.channel_enabled("CH1"))
+        self.assertEqual(discarded.channel_mode("CH1"), "off")
         self.assertAlmostEqual(discarded.channel_value("CH1", "voltage"), 2.5)
 
 

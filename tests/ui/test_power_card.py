@@ -1,16 +1,16 @@
-"""电源通道卡片：数据、几何、绘制、通道开关与两个保护勾选框。
+"""电源通道卡片：数据、几何、绘制、角色滚筒与两个保护勾选框。
 
 卡片是配置页的电源卡面资产，只有正面。这里锁住四类契约：
 
-- :class:`PowerCardDataTests`：两个通道、通道顺序、两个工作值必须是有限非负数，
-  两个保护开关必须是 bool；
-- :class:`PowerCardLayoutTests`：卡面里每个开关、数值框与勾选框都在自己的通道内；
-  通道底色从卡片顶边铺到卡底，两个开关贴住左右上角，设备码铭牌在顶部正中；第一行是
+- :class:`PowerCardDataTests`：两个通道、OFF/Driver/DUT 角色、两个工作值必须是
+  有限非负数，两个保护开关必须是 bool；
+- :class:`PowerCardLayoutTests`：卡面里每个角色滚筒、数值框与勾选框都在自己的通道内；
+  通道底色从卡片顶边铺到卡底，两个滚筒贴住左右上角，设备码铭牌在顶部正中；第一行是
   ``VS / IS``，第二行是左右两个勾选框（文字都写「10%保护」，左右位置区分电压/电流），
   卡片到勾选行结束，没有底部说明行；
-- :class:`PowerCardRenderTests`：导出的位图与页面控件共用一份绘制，开启/关闭的
-  通道底色、数值框、勾选框与圆形电源键都按状态变化；
-- :class:`PowerSupplyCardWidgetTests`：通道开关与保护勾选框可点击、可键盘操作、
+- :class:`PowerCardRenderTests`：导出的位图与页面控件共用一份绘制，OFF/Driver/DUT
+  的通道底色、数值框、勾选框与深色滚筒都按状态变化；
+- :class:`PowerSupplyCardWidgetTests`：角色滚筒与保护勾选框可点击、可键盘操作、
   只改卡面状态，并且程序化设置与整卡换数据都不会悄悄发信号。
 
 测试用离屏平台；字体在离屏环境里可能退化成方框，但绘制路径、颜色与命中区不受
@@ -30,6 +30,7 @@ from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QAbstractSpinBox, QApplication, QWidget  # noqa: E402
 
 from presentation.qt.power_card import (  # noqa: E402
+    CHANNEL_MODES,
     CHANNEL_NAMES,
     POWER_CARD_HEIGHT,
     POWER_CARD_WIDTH,
@@ -155,22 +156,36 @@ class PowerCardDataTests(unittest.TestCase):
                     with self.assertRaises(TypeError):
                         PowerChannelData("CH1", **{field: bad})
 
-    def test_with_channel_enabled_copies_only_the_switch_state(self):
+    def test_channel_mode_and_enabled_stay_consistent(self):
         data = _data()
-        updated = data.with_channel_enabled("CH2", False)
+        updated = data.with_channel_mode("CH2", "dut")
+        off = updated.with_channel_mode("CH2", "off")
+        compat = off.with_channel_enabled("CH2", True)
 
-        self.assertIsNot(data, updated)
-        self.assertTrue(data.channel("CH2").enabled)
-        self.assertFalse(updated.channel("CH2").enabled)
+        self.assertEqual(data.channel("CH2").mode, "driver")
+        self.assertEqual(updated.channel("CH2").mode, "dut")
+        self.assertTrue(updated.channel("CH2").enabled)
+        self.assertEqual(off.channel("CH2").mode, "off")
+        self.assertFalse(off.channel("CH2").enabled)
+        self.assertEqual(compat.channel("CH2").mode, "driver")
         self.assertEqual(
             updated.channel("CH2").voltage_set,
             data.channel("CH2").voltage_set,
+            "换档只改角色，不改工作值",
         )
         self.assertEqual(
             updated.channel("CH2").protection_enabled("current"),
             data.channel("CH2").protection_enabled("current"),
-            "关闭通道只改开关，不改工作值与保护状态",
+            "换档只改角色，不改保护状态",
         )
+
+    def test_channel_mode_must_be_off_driver_or_dut(self):
+        for bad in ("on", "DUT", "", None):
+            with self.subTest(mode=bad):
+                with self.assertRaises(ValueError):
+                    PowerChannelData("CH1", mode=bad)
+        with self.assertRaises(ValueError):
+            _data().with_channel_mode("CH1", "on")
 
     def test_with_channel_protection_copies_only_that_flag(self):
         data = _data()
@@ -190,7 +205,7 @@ class PowerCardDataTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             _data().channel("CH3")
         with self.assertRaises(KeyError):
-            _data().with_channel_enabled("CH3", False)
+            _data().with_channel_mode("CH3", "off")
         with self.assertRaises(KeyError):
             _data().channel_protection("CH1", "power")
         with self.assertRaises(KeyError):
@@ -209,18 +224,52 @@ class PowerCardLayoutTests(unittest.TestCase):
         first, second = layout.channels
         self.assertEqual(first.channel, "CH1")
         self.assertEqual(second.channel, "CH2")
+        # ``panel`` 仍是半个卡片的命中区。
         self.assertAlmostEqual(first.panel.width(), POWER_CARD_WIDTH / 2.0)
         self.assertAlmostEqual(first.panel.right(), second.panel.left())
         self.assertAlmostEqual(first.panel.top(), second.panel.top())
-        # 通道底色从卡片顶边一直铺到卡底：删掉 CH1/CH2 后不再留标题带。
         for channel in layout.channels:
             self.assertAlmostEqual(channel.panel.top(), layout.card.top())
             self.assertAlmostEqual(channel.panel.bottom(), layout.card.bottom())
 
+    def test_channel_surfaces_are_inset_blocks_with_a_white_seam(self):
+        """通道底色是内缩 5 的圆角色块，两块之间留 10 宽白缝。"""
+        layout = power_card_layout()
+        first, second = layout.channels
+
+        for channel in layout.channels:
+            with self.subTest(channel=channel.channel):
+                self.assertTrue(channel.panel.contains(channel.panel_surface))
+                self.assertAlmostEqual(channel.panel_surface.width(), 210.0)
+                self.assertAlmostEqual(
+                    channel.panel_surface.height(), POWER_CARD_HEIGHT - 10.0
+                )
+        self.assertAlmostEqual(
+            first.panel_surface.left(), first.panel.left() + 5.0
+        )
+        self.assertAlmostEqual(
+            second.panel_surface.right(), second.panel.right() - 5.0
+        )
+        self.assertAlmostEqual(first.panel_surface.top(), 5.0)
+        self.assertAlmostEqual(
+            first.panel_surface.bottom(), POWER_CARD_HEIGHT - 5.0
+        )
+        seam = second.panel_surface.left() - first.panel_surface.right()
+        self.assertAlmostEqual(seam, 10.0, msg="中央白缝宽 10")
+        self.assertAlmostEqual(
+            first.panel_surface.center().x(),
+            POWER_CARD_WIDTH / 4.0,
+            msg="左右色块各自在半个卡片里居中",
+        )
+
     def test_each_channel_controls_are_inside_its_panel_and_do_not_overlap(self):
         for channel in power_card_layout().channels:
             with self.subTest(channel=channel.channel):
-                self.assertTrue(channel.panel.contains(channel.switch))
+                self.assertTrue(channel.panel.contains(channel.mode_selector))
+                self.assertTrue(
+                    channel.panel_surface.contains(channel.mode_selector),
+                    "滚筒落在真正画出来的圆角色块里",
+                )
                 self.assertEqual(len(channel.value_labels), 2)
                 self.assertEqual(len(channel.value_boxes), 2)
                 self.assertEqual(len(channel.protection_checks), 2)
@@ -229,10 +278,12 @@ class PowerCardLayoutTests(unittest.TestCase):
                 for label, box in zip(channel.value_labels, channel.value_boxes):
                     self.assertTrue(channel.panel.contains(label))
                     self.assertTrue(channel.panel.contains(box))
+                    self.assertTrue(channel.panel_surface.contains(label))
+                    self.assertTrue(channel.panel_surface.contains(box))
                     self.assertLessEqual(label.right(), box.left())
                     self.assertEqual(label.center().y(), box.center().y())
                 self.assertLessEqual(
-                    channel.switch.bottom(), channel.value_boxes[0].top()
+                    channel.mode_selector.bottom(), channel.value_boxes[0].top()
                 )
                 for index, (check, indicator, label_rect) in enumerate(
                     zip(
@@ -242,6 +293,7 @@ class PowerCardLayoutTests(unittest.TestCase):
                     )
                 ):
                     self.assertTrue(channel.panel.contains(check))
+                    self.assertTrue(channel.panel_surface.contains(check))
                     self.assertTrue(check.contains(indicator))
                     self.assertTrue(check.contains(label_rect))
                     self.assertLessEqual(
@@ -286,22 +338,31 @@ class PowerCardLayoutTests(unittest.TestCase):
                     channel.protection_indicators[1].center().y(),
                 )
 
-    def test_switches_sit_at_the_outer_top_corners(self):
-        """两个电源键分别贴住左右上角，顶部正中留给设备码铭牌。"""
+    def test_mode_selectors_sit_at_the_outer_top_corners(self):
+        """两个竖直滚筒分别贴住左右上角，顶部正中留给设备码铭牌。"""
         layout = power_card_layout()
         first, second = layout.channels
 
-        self.assertEqual(first.switch.center().y(), second.switch.center().y())
-        self.assertAlmostEqual(first.switch.left(), first.panel.left() + 12.0)
-        self.assertAlmostEqual(second.switch.right(), second.panel.right() - 12.0)
-        self.assertAlmostEqual(
-            first.switch.center().y(),
-            layout.title.center().y(),
-            msg="电源键与设备码铭牌共用同一条水平中线",
+        self.assertEqual(
+            first.mode_selector.center().y(), second.mode_selector.center().y()
         )
-        self.assertLess(first.switch.right(), layout.title.left())
-        self.assertLess(layout.title.right(), second.switch.left())
-        self.assertLessEqual(first.switch.width(), first.panel.width() / 3.0)
+        self.assertAlmostEqual(
+            first.mode_selector.left(), first.panel.left() + 12.0
+        )
+        self.assertAlmostEqual(
+            second.mode_selector.right(), second.panel.right() - 12.0
+        )
+        self.assertAlmostEqual(first.mode_selector.width(), 84.0)
+        self.assertAlmostEqual(first.mode_selector.height(), 64.0)
+        self.assertAlmostEqual(first.mode_selector.top(), 6.0)
+        self.assertGreaterEqual(first.mode_selector.bottom(), 60.0)
+        self.assertLess(first.mode_selector.right(), layout.title.left())
+        self.assertLess(layout.title.right(), second.mode_selector.left())
+        self.assertGreater(
+            first.mode_selector.center().y(),
+            layout.title.center().y() - 4.0,
+            "滚筒比铭牌更高，中心略低于铭牌中线",
+        )
         self.assertAlmostEqual(
             layout.title.center().x(), layout.card.center().x(), msg="铭牌水平居中"
         )
@@ -363,9 +424,12 @@ class PowerCardRenderTests(unittest.TestCase):
 
     def test_open_channel_uses_the_channel_tint_and_closed_channel_is_grey(self):
         layout = power_card_layout()
-        open_left = layout.channels[0].panel.left() + 8.0
-        open_right = layout.channels[1].panel.left() + 8.0
-        sample_y = layout.channels[0].panel.bottom() - 6.0
+        first_surface = layout.channels[0].panel_surface
+        second_surface = layout.channels[1].panel_surface
+        # 取色点放在色块外沿一侧、下半张：避开中央白缝的贴缝阴影与顶部渐变。
+        open_left = first_surface.left() + 8.0
+        open_right = second_surface.right() - 8.0
+        sample_y = first_surface.bottom() - 6.0
 
         both_on = render_power_card(_data())
         self.assertEqual(
@@ -375,6 +439,11 @@ class PowerCardRenderTests(unittest.TestCase):
         self.assertEqual(
             _color_at(both_on, open_right, sample_y).name(),
             TOKENS["channel_warm"].lower(),
+        )
+        self.assertEqual(
+            _color_at(both_on, POWER_CARD_WIDTH / 2.0, sample_y).name(),
+            TOKENS["surface"].lower(),
+            "两块色块之间是卡片白底（白缝）",
         )
 
         ch2_off = render_power_card(_data(ch2=False))
@@ -461,39 +530,57 @@ class PowerCardRenderTests(unittest.TestCase):
             "底部自动阈值提示行已删除",
         )
 
-    def test_power_switch_body_follows_the_channel_state(self):
-        """圆形电源键：关闭是深灰金属面，点亮后转绿；采样点避开图标与内阴影。"""
+    def test_mode_selector_draws_a_dark_slot_and_red_accent(self):
+        """深色槽体与左侧红色指示点来自参考实现；两种通道都保留。"""
         layout = power_card_layout()
-        for index, channel in enumerate(layout.channels):
+        for channel in layout.channels:
             with self.subTest(channel=channel.channel):
-                sample = (
-                    channel.switch.center().x(),
-                    channel.switch.center().y() + channel.switch.height() * 0.06,
+                rect = channel.mode_selector
+                # 取槽体右下角：避开当前档白字与左侧红点。
+                body = _color_at(
+                    render_power_card(_data()),
+                    rect.right() - 5.0,
+                    rect.bottom() - 5.0,
                 )
-                both_on = _data()
-                one_off = _data(ch1=index != 0, ch2=index != 1)
-                self.assertEqual(
-                    _color_at(render_power_card(both_on), *sample).name(),
-                    TOKENS["power_switch_on"].lower(),
+                self.assertLess(
+                    body.lightness(),
+                    60,
+                    "槽体应是深色玻璃，而不是通道浅底色",
                 )
-                self.assertEqual(
-                    _color_at(render_power_card(one_off), *sample).name(),
-                    TOKENS["power_switch_off"].lower(),
+                dot = _color_at(
+                    render_power_card(_data()),
+                    rect.left() + 10.0,
+                    rect.center().y(),
                 )
+                self.assertGreater(dot.red(), dot.green() + 40)
+                self.assertGreater(dot.red(), dot.blue() + 40)
 
-    def test_lit_switch_emits_a_green_halo_outside_the_button(self):
-        layout = power_card_layout()
-        channel = layout.channels[0]
-        sample = (channel.switch.right() + 6.0, channel.switch.center().y())
+    def test_mode_selector_changes_with_the_channel_mode(self):
+        """OFF / Driver / DUT 三档画出的滚筒内容不同。"""
+        rect = power_card_layout().channels[0].mode_selector.toRect()
+        images = []
+        for mode in CHANNEL_MODES:
+            data = _data().with_channel_mode("CH1", mode)
+            image = render_power_card(data).toImage()
+            images.append(image.copy(rect))
+        for index in range(len(images)):
+            for other in range(index + 1, len(images)):
+                with self.subTest(first=CHANNEL_MODES[index], second=CHANNEL_MODES[other]):
+                    self.assertNotEqual(
+                        images[index],
+                        images[other],
+                        "不同档位的滚筒画面必须不同",
+                    )
 
-        lit = _color_at(render_power_card(_data()), *sample)
-        dark = _color_at(render_power_card(_data(ch1=False)), *sample)
-
-        self.assertNotEqual(lit.name(), dark.name(), "点亮后按钮外侧应有辉光")
-        self.assertGreater(
-            lit.green() - lit.red(),
-            dark.green() - dark.red() + 5,
-            "辉光应偏绿色，而不是把通道底色整体压暗",
+    def test_driver_label_is_dimmed_when_driver_mode_is_unavailable(self):
+        """驱放测试模式关闭时 Driver 档被划掉；同一份数据只改可选状态。"""
+        rect = power_card_layout().channels[0].mode_selector.toRect()
+        available = render_power_card(_data(), driver_available=True).toImage()
+        unavailable = render_power_card(_data(), driver_available=False).toImage()
+        self.assertNotEqual(
+            available.copy(rect),
+            unavailable.copy(rect),
+            "Driver 不可选时滚筒外观必须变化",
         )
 
     def test_empty_code_still_draws_a_placeholder(self):
@@ -539,20 +626,20 @@ class PowerSupplyCardWidgetTests(unittest.TestCase):
         self.assertEqual(card.size().width(), POWER_CARD_WIDTH)
         self.assertEqual(card.size().height(), POWER_CARD_HEIGHT)
         for channel in layout.channels:
-            switch = card.channel_switch(channel.channel)
-            self.assertIs(switch.parent(), card)
+            selector = card.channel_mode_selector(channel.channel)
+            self.assertIs(selector.parent(), card)
             self.assertEqual(
                 (
-                    switch.geometry().x(),
-                    switch.geometry().y(),
-                    switch.geometry().width(),
-                    switch.geometry().height(),
+                    selector.geometry().x(),
+                    selector.geometry().y(),
+                    selector.geometry().width(),
+                    selector.geometry().height(),
                 ),
                 (
-                    round(channel.switch.x()),
-                    round(channel.switch.y()),
-                    round(channel.switch.width()),
-                    round(channel.switch.height()),
+                    round(channel.mode_selector.x()),
+                    round(channel.mode_selector.y()),
+                    round(channel.mode_selector.width()),
+                    round(channel.mode_selector.height()),
                 ),
             )
             for kind, rect in zip(PROTECTION_KINDS, channel.protection_checks):
@@ -640,21 +727,57 @@ class PowerSupplyCardWidgetTests(unittest.TestCase):
         self.assertFalse(card.channel_enabled("CH2"))
         self.assertFalse(card.value_field("CH2", "voltage").isEnabled())
 
-    def test_clicking_a_switch_toggles_only_that_channel(self):
+    def test_clicking_the_reel_cycles_only_that_channel(self):
         card = self.widget()
-        events: list[tuple[str, bool]] = []
-        card.channel_toggled.connect(
-            lambda channel, enabled: events.append((channel, enabled))
+        events: list[tuple[str, str]] = []
+        card.channel_mode_changed.connect(
+            lambda channel, mode: events.append((channel, mode))
         )
-        switch = card.channel_switch("CH1")
+        selector = card.channel_mode_selector("CH1")
+        self.assertEqual(card.channel_mode("CH1"), "driver")
 
-        QTest.mouseClick(switch, Qt.LeftButton, pos=switch.rect().center())
+        QTest.mouseClick(selector, Qt.LeftButton, pos=selector.rect().center())
+        self.assertEqual(events, [("CH1", "dut")])
+        self.assertEqual(card.channel_mode("CH1"), "dut")
 
-        self.assertEqual(events, [("CH1", False)])
-        self.assertFalse(card.channel_enabled("CH1"))
-        self.assertTrue(card.channel_enabled("CH2"))
-        self.assertFalse(card.data.channel("CH1").enabled)
+        QTest.mouseClick(selector, Qt.LeftButton, pos=selector.rect().center())
+        self.assertEqual(events, [("CH1", "dut"), ("CH1", "off")])
+        self.assertEqual(card.channel_mode("CH1"), "off")
+        self.assertEqual(card.channel_mode("CH2"), "driver")
         self.assertFalse(card.value_field("CH1", "voltage").isEnabled())
+
+        QTest.mouseClick(selector, Qt.LeftButton, pos=selector.rect().center())
+        self.assertEqual(
+            events, [("CH1", "dut"), ("CH1", "off"), ("CH1", "driver")]
+        )
+        self.assertTrue(card.value_field("CH1", "voltage").isEnabled())
+
+    def test_driver_mode_unavailable_turns_driver_channels_off_and_skips_the_stop(self):
+        card = self.widget()
+        self.assertEqual(card.channel_mode("CH1"), "driver")
+
+        card.set_driver_available(False)
+        self.assertEqual(card.channel_mode("CH1"), "off")
+        self.assertFalse(card.value_field("CH1", "voltage").isEnabled())
+
+        selector = card.channel_mode_selector("CH1")
+        QTest.mouseClick(selector, Qt.LeftButton, pos=selector.rect().center())
+        self.assertEqual(card.channel_mode("CH1"), "dut")
+        QTest.mouseClick(selector, Qt.LeftButton, pos=selector.rect().center())
+        self.assertEqual(card.channel_mode("CH1"), "off")
+
+    def test_reel_animation_moves_continuously_before_settling(self):
+        card = self.widget()
+        selector = card.channel_mode_selector("CH1")
+
+        QTest.mouseClick(selector, Qt.LeftButton, pos=selector.rect().center())
+        QTest.qWait(100)
+
+        self.assertGreater(card._reel_positions["CH1"], 1.0)
+        self.assertLess(card._reel_positions["CH1"], 2.0)
+
+        QTest.qWait(900)
+        self.assertEqual(card._reel_positions["CH1"], 2.0)
 
     def test_clicking_a_protection_check_toggles_only_that_flag(self):
         card = self.widget()
@@ -671,16 +794,16 @@ class PowerSupplyCardWidgetTests(unittest.TestCase):
         self.assertTrue(card.channel_protection("CH1", "current"))
         self.assertFalse(card.data.channel_protection("CH1", "voltage"))
 
-    def test_keyboard_space_toggles_and_tab_moves_between_controls(self):
+    def test_keyboard_space_cycles_and_keeps_focus(self):
         card = self.widget()
-        switch = card.channel_switch("CH1")
-        switch.setFocus()
+        selector = card.channel_mode_selector("CH1")
+        selector.setFocus()
         self.application.processEvents()
 
-        QTest.keyClick(switch, Qt.Key_Space)
+        QTest.keyClick(selector, Qt.Key_Space)
 
-        self.assertFalse(card.channel_enabled("CH1"))
-        self.assertTrue(switch.hasFocus())
+        self.assertEqual(card.channel_mode("CH1"), "dut")
+        self.assertTrue(selector.hasFocus())
 
     def test_keyboard_space_toggles_a_protection_check(self):
         card = self.widget()
@@ -692,26 +815,29 @@ class PowerSupplyCardWidgetTests(unittest.TestCase):
 
         self.assertFalse(card.channel_protection("CH2", "current"))
 
-    def test_closed_channel_disables_its_protection_checks(self):
+    def test_off_channel_disables_its_protection_checks(self):
         card = self.widget()
         check = card.protection_check("CH2", "voltage")
         field = card.value_field("CH2", "voltage")
-        switch = card.channel_switch("CH2")
+        selector = card.channel_mode_selector("CH2")
 
-        QTest.mouseClick(switch, Qt.LeftButton, pos=switch.rect().center())
+        # CH2 默认 Driver；点两次到 OFF。
+        QTest.mouseClick(selector, Qt.LeftButton, pos=selector.rect().center())
+        QTest.mouseClick(selector, Qt.LeftButton, pos=selector.rect().center())
+        self.assertEqual(card.channel_mode("CH2"), "off")
         self.assertFalse(check.isEnabled())
         self.assertFalse(field.isEnabled())
         self.assertFalse(check.hasFocus())
-        card.set_channel_enabled("CH2", True)
+        card.set_channel_mode("CH2", "dut")
         self.assertTrue(check.isEnabled())
         self.assertTrue(field.isEnabled())
 
-    def test_programmatic_set_is_silent_unless_asked_to_emit(self):
+    def test_programmatic_mode_set_is_silent_unless_asked_to_emit(self):
         card = self.widget()
-        toggle_events: list[tuple[str, bool]] = []
+        mode_events: list[tuple[str, str]] = []
         protection_events: list[tuple[str, str, bool]] = []
-        card.channel_toggled.connect(
-            lambda channel, enabled: toggle_events.append((channel, enabled))
+        card.channel_mode_changed.connect(
+            lambda channel, mode: mode_events.append((channel, mode))
         )
         card.protection_toggled.connect(
             lambda channel, kind, enabled: protection_events.append(
@@ -719,26 +845,26 @@ class PowerSupplyCardWidgetTests(unittest.TestCase):
             )
         )
 
-        card.set_channel_enabled("CH2", False)
+        card.set_channel_mode("CH2", "off")
         card.set_protection_enabled("CH2", "voltage", True)
-        self.assertEqual(toggle_events, [])
+        self.assertEqual(mode_events, [])
         self.assertEqual(protection_events, [])
         self.assertFalse(card.channel_enabled("CH2"))
         self.assertTrue(card.channel_protection("CH2", "voltage"))
 
-        card.set_channel_enabled("CH2", True, emit=True)
+        card.set_channel_mode("CH2", "dut", emit=True)
         card.set_protection_enabled("CH2", "voltage", False, emit=True)
-        self.assertEqual(toggle_events, [("CH2", True)])
+        self.assertEqual(mode_events, [("CH2", "dut")])
         self.assertEqual(protection_events, [("CH2", "voltage", False)])
         self.assertTrue(card.channel_enabled("CH2"))
         self.assertFalse(card.channel_protection("CH2", "voltage"))
 
-    def test_set_data_updates_switches_and_checks_without_emitting(self):
+    def test_set_data_updates_modes_and_checks_without_emitting(self):
         card = self.widget()
-        toggle_events: list[tuple[str, bool]] = []
+        mode_events: list[tuple[str, str]] = []
         protection_events: list[tuple[str, str, bool]] = []
-        card.channel_toggled.connect(
-            lambda channel, enabled: toggle_events.append((channel, enabled))
+        card.channel_mode_changed.connect(
+            lambda channel, mode: mode_events.append((channel, mode))
         )
         card.protection_toggled.connect(
             lambda channel, kind, enabled: protection_events.append(
@@ -748,24 +874,23 @@ class PowerSupplyCardWidgetTests(unittest.TestCase):
 
         card.set_data(_data(ch2=False, ch1_voltage=False))
 
-        self.assertEqual(toggle_events, [])
+        self.assertEqual(mode_events, [])
         self.assertEqual(protection_events, [])
-        self.assertTrue(card.channel_enabled("CH1"))
-        self.assertFalse(card.channel_enabled("CH2"))
+        self.assertEqual(card.channel_mode("CH1"), "driver")
+        self.assertEqual(card.channel_mode("CH2"), "off")
         self.assertFalse(card.channel_protection("CH1", "voltage"))
         self.assertTrue(card.channel_protection("CH1", "current"))
 
-    def test_tooltips_explain_units_ranges_and_the_edit_boundary(self):
+    def test_tooltips_explain_units_ranges_and_the_role_boundary(self):
         card = self.widget()
 
         self.assertIn("VS 12.00 V", card.toolTip())
         self.assertIn("VS 电压设定", card.toolTip())
         self.assertIn("SN-1519", card.toolTip(), "身份详情放在卡面悬浮提示里")
-        self.assertIn(
-            "不写入配置",
-            card.channel_switch("CH1").toolTip(),
-            "通道开关只是本次编辑的启用状态，必须把边界说清楚",
-        )
+        selector_tip = card.channel_mode_selector("CH1").toolTip()
+        self.assertIn("Driver", selector_tip)
+        self.assertIn("DUT", selector_tip)
+        self.assertIn("上电计划", selector_tip)
         field_tip = card.value_field("CH1", "voltage").toolTip()
         self.assertIn("CH1", field_tip)
         self.assertIn("0–50", field_tip)
@@ -777,12 +902,12 @@ class PowerSupplyCardWidgetTests(unittest.TestCase):
         card = self.widget()
         layout = power_card_layout()
         sample_left = (
-            layout.channels[0].panel.left() + 8.0,
-            layout.channels[0].panel.bottom() - 6.0,
+            layout.channels[0].panel_surface.left() + 8.0,
+            layout.channels[0].panel_surface.bottom() - 6.0,
         )
         sample_right = (
-            layout.channels[1].panel.left() + 8.0,
-            layout.channels[1].panel.bottom() - 6.0,
+            layout.channels[1].panel_surface.right() - 8.0,
+            layout.channels[1].panel_surface.bottom() - 6.0,
         )
 
         grabbed = card.grab().toImage()

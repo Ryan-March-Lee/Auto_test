@@ -596,13 +596,50 @@ class PowerConfigurationPageTests(unittest.TestCase):
         self.assertEqual(
             page.read_drain_channel(),
             {"supply_id": "DP8B1519", "channel": "CH1"},
-            "现有运行链路取第一个已上电的 Cal. 通道作为漏极",
+            "单漏极兼容视图取第一个已上电的 Cal. 通道",
         )
-        self.assertEqual(changes, [True], "只有第一次标记换了漏极")
+        self.assertEqual(
+            page.read_drain_channels(),
+            [
+                {"supply_id": "DP8B1519", "channel": "CH1"},
+                {"supply_id": "DP8B1519", "channel": "CH2"},
+            ],
+            "多选 Cal. 完整写进漏极集合",
+        )
+        self.assertEqual(changes, [True, True], "每次 Cal. 标记变化都写配置并计入 dirty")
         self.assertTrue(page.is_dirty())
         self.assertEqual(
             page.build_fragment()["dut_config"]["drain_channel"],
+            [
+                {"supply_id": "DP8B1519", "channel": "CH1"},
+                {"supply_id": "DP8B1519", "channel": "CH2"},
+            ],
+            "多条漏极按路由列表写出，运行阶段求和",
+        )
+
+    def test_a_multi_drain_document_marks_every_cal_channel_and_round_trips(self):
+        page = self.make_page()
+        config = valid_config()
+        config["dut_config"]["drain_channel"] = [
             {"supply_id": "DP8B1519", "channel": "CH1"},
+            {"supply_id": "DP8B1519", "channel": "CH2"},
+        ]
+
+        page.apply_config(config)
+
+        card = self._card(page)
+        self.assertTrue(card.channel_efficiency_calibration("CH1"))
+        self.assertTrue(card.channel_efficiency_calibration("CH2"))
+        self.assertEqual(
+            page.read_drain_channels(),
+            [
+                {"supply_id": "DP8B1519", "channel": "CH1"},
+                {"supply_id": "DP8B1519", "channel": "CH2"},
+            ],
+        )
+        self.assertEqual(
+            page.build_fragment()["dut_config"]["drain_channel"],
+            config["dut_config"]["drain_channel"],
         )
 
     def test_calibration_survives_a_card_wall_rebuild(self):

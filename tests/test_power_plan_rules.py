@@ -278,6 +278,44 @@ class DrainReferenceTests(unittest.TestCase):
         document["dut_config"]["drain_channel"] = None
         self.assertTrue(validate_power_plan(document).valid)
 
+    def test_multiple_drains_are_valid_when_all_are_dut_routes(self):
+        document = _document()
+        document["dut_config"]["drain_channel"] = [
+            {"supply_id": "PS1", "channel": "CH1"},
+            {"supply_id": "PS1", "channel": "CH2"},
+        ]
+
+        self.assertTrue(validate_power_plan(document).valid)
+
+    def test_each_drain_route_is_checked_and_the_bad_one_is_located(self):
+        document = _document()
+        document["dut_config"]["drain_channel"] = [
+            {"supply_id": "PS1", "channel": "CH1"},
+            {"supply_id": "PS1", "channel": "CH9"},
+        ]
+
+        result = validate_power_plan(document)
+
+        self.assertIn("dut_config.drain_channel[1]", _paths(result))
+
+    def test_duplicate_drain_routes_are_rejected(self):
+        document = _document()
+        document["dut_config"]["drain_channel"] = [
+            {"supply_id": "PS1", "channel": "CH2"},
+            {"supply_id": "PS1", "channel": "CH2"},
+        ]
+
+        result = validate_power_plan(document)
+
+        self.assertTrue(
+            any(
+                issue.path == "dut_config.drain_channel[1]"
+                and "重复" in issue.message
+                for issue in result.errors
+            ),
+            result.errors,
+        )
+
     def test_drain_must_be_an_assigned_dut_route(self):
         document = _document()
         document["dut_config"]["drain_channel"] = {

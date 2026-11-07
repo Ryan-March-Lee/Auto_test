@@ -432,9 +432,10 @@ class AmplifierMeasurementService(_Service):
     读取历史配置字典，频率、扫描点、压缩目标、衰减器、DUT 输入限制、驱动模式与供电
     通道全部来自同一对象的类型化字段。
 
-    效率计算只读用户指定的漏极路由（步骤 10）：``drain_channel`` 的电压 × 电流就是
-    ``dc_power``，其余 DUT 通道仍逐通道采样并写入 ``voltages`` / ``currents``，但不
-    计入效率。漏极不参与上电、间隔或关断，只是测量数据来源。
+    效率计算只读用户指定的漏极路由（步骤 10）：每条漏极的电压 × 电流相加得到
+    ``dc_power``（多漏极就是把多台漏极的直流功率求和），其余 DUT 通道仍逐通道采样
+    并写入 ``voltages`` / ``currents``，但不计入效率。漏极不参与上电、间隔或关断，
+    只是测量数据来源。
     """
 
     measurement_type = "amplifier_measurement"
@@ -447,13 +448,13 @@ class AmplifierMeasurementService(_Service):
                 "AmplifierMeasurementService 输入必须是 AmplifierMeasurementInputs，"
                 f"收到 {type(inputs).__name__}"
             )
-        # 主功放测量需要效率，因此漏极不能缺失。配置/运行校验（domain）已经在
+        # 主功放测量需要效率，因此至少要有一条漏极。配置/运行校验（domain）已经在
         # 创建运行前拦截；这里再守一道，保证直接构造服务时也不会静默把 dc_power 算成
         # 0。漏极只用于读数，不会因此改变上电序列。
         if not inputs.drain_channel.is_configured:
             raise AmplifierInputError(
-                "主功放测量必须指定漏极通道（drain_channel）："
-                "效率计算只读取该物理通道的电压/电流"
+                "主功放测量必须指定至少一个漏极通道（drain_channel）："
+                "效率计算读取这些物理通道的电压/电流并求和"
             )
         self.inputs = inputs
         super().__init__(inputs, instrument, **kwargs)
@@ -496,13 +497,14 @@ class AmplifierMeasurementService(_Service):
         self.inst_ctrl.set_center_frequency(frequency)
         self.inst_ctrl.set_span(10)
         supplies = self.inputs.dut_supplies()
-        # 效率只读用户指定的漏极路由（来自冻结的 test_plan.drain_channel）。其它 DUT
-        # 通道照常逐通道采样并写入结果，但不再参与 dc_power 求和。
-        drain_route = self.inputs.drain_channel.route
-        if drain_route is None:  # 构造阶段已拒绝；保留防御，避免静默算出 0 效率
+        # 效率只读用户指定的漏极路由（来自冻结的 test_plan.drain_channel）。多条
+        # 漏极各自取电压 × 电流后相加；其它 DUT 通道照常逐通道采样并写入结果，但
+        # 不参与 dc_power 求和。
+        drain_routes = frozenset(self.inputs.drain_channel.routes)
+        if not drain_routes:  # 构造阶段已拒绝；保留防御，避免静默算出 0 效率
             raise AmplifierInputError(
-                "主功放测量必须指定漏极通道（drain_channel）："
-                "效率计算只读取该物理通道的电压/电流"
+                "主功放测量必须指定至少一个漏极通道（drain_channel）："
+                "效率计算读取这些物理通道的电压/电流并求和"
             )
         data = {"input_power_dut": [], "output_power_dut": [], "gain": [], "sg_power": [],
                 "voltages": [], "currents": [], "dc_power": [], "efficiency": []}
@@ -537,8 +539,7 @@ class AmplifierMeasurementService(_Service):
                     attenuator_value,
                 )
                 voltage, current = {}, {}
-                drain_voltage: float | None = None
-                drain_current: float | None = None
+                drain_power: dict[SupplyChannel, float] = {}
                 for supply_id, channels in supplies.items():
                     for channel in channels:
                         route = SupplyChannel(supply_id=supply_id, channel=channel)
@@ -550,17 +551,18 @@ class AmplifierMeasurementService(_Service):
                         key = f"{supply_id}_{channel}"
                         voltage[key] = measured_voltage
                         current[key] = measured_current
-                        if route == drain_route:
-                            drain_voltage = measured_voltage
-                            drain_current = measured_current
-                # dc_power 的语义已收窄为「漏极直流功率」：其余通道只进结果列。
-                if drain_voltage is None or drain_current is None:
+                        if route in drain_routes:
+                            drain_power[route] = measured_voltage * measured_current
+                # dc_power 的语义是「全部漏极的直流功率之和」：其余通道只进结果列。
+                missing = drain_routes.difference(drain_power)
+                if missing:
+                    tokens = "、".join(sorted(route.token for route in missing))
                     raise AmplifierInputError(
-                        "漏极通道 {route} 不在此次 DUT 采样通道中，无法计算效率".format(
-                            route=drain_route.token
+                        "漏极通道 {routes} 不在此次 DUT 采样通道中，无法计算效率".format(
+                            routes=tokens
                         )
                     )
-                dc_power = drain_voltage * drain_current
+                dc_power = sum(drain_power.values())
                 gain = calculate_gain(output, dut_input)
                 efficiency = calculate_efficiency(output, PowerWatt(dc_power))
                 data["sg_power"].append(sg_power.dbm)

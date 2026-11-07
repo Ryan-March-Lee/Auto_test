@@ -308,6 +308,33 @@ class DrainChannelTests(unittest.TestCase):
             drain.to_document(), {"supply_id": "PS1", "channel": "CH2"}
         )
 
+    def test_multiple_routes_round_trip_as_a_list(self):
+        drain = DrainChannel.from_document(
+            [
+                {"supply_id": "PS1", "channel": "CH2"},
+                {"supply_id": "PS2", "channel": "CH1"},
+            ]
+        )
+
+        self.assertTrue(drain.is_configured)
+        self.assertEqual(drain.route, _route("PS1", "CH2"), "兼容视图取第一条")
+        self.assertEqual(
+            drain.routes, (_route("PS1", "CH2"), _route("PS2", "CH1"))
+        )
+        self.assertEqual(
+            drain.to_document(),
+            [
+                {"supply_id": "PS1", "channel": "CH2"},
+                {"supply_id": "PS2", "channel": "CH1"},
+            ],
+        )
+
+    def test_duplicate_drain_routes_are_rejected(self):
+        with self.assertRaises(AmplifierInputError):
+            DrainChannel(
+                routes=(_route("PS1", "CH2"), _route("PS1", "CH2"))
+            )
+
     def test_parsing_does_not_imply_membership_validation(self):
         """解析只做形状；归属判断必须由调用方显式调用 require_in_routes。"""
         drain = DrainChannel.from_document(

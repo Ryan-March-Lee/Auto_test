@@ -13,9 +13,9 @@
 
 卡片是通道参数的唯一编辑面：每个通道上角的竖直滚筒写 ``OFF`` / ``Driver`` / ``DUT``，
 表示该通道关闭、给驱放供电、给功放供电。滚筒靠卡面中央的一侧还有 ``Cal.`` 效率
-计算标记：按下表示该通道参与效率计算，两个通道可以同时标记，它不改变供电角色、
-上电顺序或通道开关；现有运行链路仍只接受一个漏极，因此页面把第一个已上电的标记
-通道同步成 ``dut_config.drain_channel``。换档会同步勾选/取消下方
+计算标记：按下表示该通道参与效率计算，多个通道可以同时标记，它不改变供电角色、
+上电顺序或通道开关；页面把所有已上电的标记通道同步成 ``dut_config.drain_channel``
+（单条写对象，多条写列表），运行阶段把各漏极的直流功率相加。换档会同步勾选/取消下方
 ``driver_amplifier`` / ``dut_amplifier`` 的 ``power_plan`` 路由，因此档位不是临时
 显示状态，而是由现有计划结构持久化。每次选择测试模式后的第一次进入（:meth:`enter`）
 从初始值开始：所有通道 ``OFF``、VS/IS 为 0、保护未勾选、间隔 2s，两份计划与漏极清空；
@@ -41,8 +41,8 @@
 不持有另一页的实例，也不写文件。
 
 ``Cal.`` 标记是效率计算通道的唯一界面；漏极不再是上电角色的替代品，也不参与排序、
-间隔或安全关断。多选会保留在页面状态与 :meth:`read_efficiency_calibration_channels`
-里，供后续多通道效率计算接入；当前正式配置仍写单个漏极。
+间隔或安全关断。多选会完整写进正式配置：单条漏极仍写对象以兼容旧文档，多条写路由
+列表，运行阶段按各自的电压 × 电流求和计算效率。
 """
 
 from __future__ import annotations
@@ -108,15 +108,16 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
     ``driver_mode_changed`` 供窗口刷新相关页面。驱放自带供电由“驱动功放上电计划为空”
     表达，页面没有单独的供电方式控件。卡片滚筒与两份计划双向同步：换档写计划，
     计划勾选变化回写滚筒；同一物理通道在一组里勾选时会自动取消另一组。效率计算
-    通道由卡面 ``Cal.`` 标记选择，页面再把第一个已上电的标记通道写成现有运行链路
-    需要的单个 ``drain_channel``。
+    通道由卡面 ``Cal.`` 标记选择，页面把所有已上电的标记通道写成运行链路读取的
+    漏极集合；单条写兼容对象，多条写路由列表。
     """
 
     validation_failed = Signal(str)
     driver_mode_changed = Signal(bool)
     #: ``(supply_id, channel, marked)``：效率计算标记变化。标记是页面上唯一的选择
-    #: 入口；第一个已上电的标记通道会同步成现有运行链路的单个 ``drain_channel``，
-    #: 因此真的换了漏极时页面计入 dirty。
+    #: 入口；所有已上电的标记通道会同步成运行链路的漏极集合，多条在测量时求和，
+    #: 第一条仍作为 ``read_drain_channel`` 的单漏极兼容视图。
+    #: 标记变化本身会写进配置，因此每次真实切换都计入 dirty。
     efficiency_calibration_changed = Signal(str, str, bool)
     #: 任一电源字段变化时发出；统一会话用它汇总 dirty（步骤 13 接线）。
     fragment_changed = Signal()
@@ -250,7 +251,7 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         self.back_btn.clicked.connect(self.back_requested.emit)
         self.next_btn.clicked.connect(self.next_requested.emit)
         self._refresh_card_wall()
-        # 构造页面时把文档里的单个漏极显示成对应通道的 Cal. 标记；隐藏的兼容漏极
+        # 构造页面时把文档里的漏极（单条或列表）显示成对应通道的 Cal. 标记；隐藏的兼容漏极
         # 随后由 Cal. 标记同步，运行校验与保存仍读到同一个路由。
         self._apply_legacy_drain_to_calibration()
         return self
@@ -345,10 +346,11 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
     def _on_card_efficiency_calibration_toggled(
         self, supply_id: str, channel: str, marked: bool
     ) -> None:
-        """卡面 ``Cal.`` 标记变化：同步兼容漏极，并把页面级测量选择转发出去。"""
-        if self._sync_legacy_drain_from_calibration():
-            # 漏极属于配置字段；标记变化真的换了漏极时要计入 dirty。
-            self._emit_fragment_changed()
+        """卡面 ``Cal.`` 标记变化：同步漏极集合并把页面级测量选择转发出去。"""
+        self._sync_legacy_drain_from_calibration()
+        # Cal. 标记本身会写进 ``dut_config.drain_channel``（可能多条），因此任何
+        # 标记变化都属于配置编辑；不再只在“第一个漏极”变化时才算 dirty。
+        self._emit_fragment_changed()
         self.efficiency_calibration_changed.emit(
             supply_id, channel, bool(marked)
         )
@@ -553,42 +555,52 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         modes = self._planned_modes()
         wall.set_channel_modes(modes)
         wall.set_channel_power_settings(self._channel_power_settings(modes))
-        # 现有运行链路只接受一个漏极：Cal. 标记是界面唯一的效率计算选择，这里把
-        # 第一个已上电的标记通道写进隐藏的兼容漏极状态。计划同步不清空没有 Cal.
-        # 对应的旧值，文档里显式写下的无效漏极仍交给正式校验报告。
+        # 现有运行链路读取漏极集合：Cal. 标记是界面唯一的效率计算选择，这里把
+        # 所有已上电的标记通道写进隐藏的兼容漏极状态。多条漏极在运行阶段把各自的
+        # 直流功率相加。计划同步不清空没有 Cal. 对应的旧值，文档里显式写下的无效
+        # 漏极仍交给正式校验报告。
         self._sync_legacy_drain_from_calibration(clear=False)
 
-    def _calibration_drain_route(self) -> tuple[str, str] | None:
-        """Cal. 标记里第一个同时属于 DUT 上电计划的物理路由。"""
+    def _calibration_drain_routes(self) -> tuple[tuple[str, str], ...]:
+        """Cal. 标记里所有同时属于 DUT 上电计划的物理路由，按卡片顺序。"""
         wall = self.card_wall
         if wall is None:
-            return None
+            return ()
         dut_routes = set(self._group_plan_routes("dut"))
-        for route in wall.efficiency_calibration_channels():
-            if route in dut_routes:
-                return route
-        return None
+        return tuple(
+            route
+            for route in wall.efficiency_calibration_channels()
+            if route in dut_routes
+        )
 
     def _sync_legacy_drain_from_calibration(self, *, clear: bool = True) -> bool:
-        """把隐藏的 ``drain_channel`` 对齐到 Cal. 标记；返回是否发生变化。"""
+        """把隐藏的漏极集合对齐到 Cal. 标记；返回是否发生变化。"""
         section = self.power_section
         if section is None:
             return False
-        return section.select_drain_route(
-            self._calibration_drain_route(), clear=clear
+        return section.select_drain_routes(
+            self._calibration_drain_routes(), clear=clear
         )
 
     def _apply_legacy_drain_to_calibration(self) -> None:
         """回填配置时把文档里的漏极显示成对应通道的 Cal. 标记。"""
         wall = self.card_wall
         drain = self._drain_channel_entry()
-        if wall is None or not isinstance(drain, Mapping):
+        if wall is None or drain is None:
             return
-        supply_id = drain.get("supply_id")
-        channel = drain.get("channel")
-        if not isinstance(supply_id, str) or not isinstance(channel, str):
+        if isinstance(drain, dict):
+            drains = (drain,)
+        elif isinstance(drain, (list, tuple)):
+            drains = drain
+        else:
             return
-        wall.set_efficiency_calibration(supply_id, channel, True)
+        for item in drains:
+            if not isinstance(item, dict):
+                continue
+            supply_id = item.get("supply_id")
+            channel = item.get("channel")
+            if isinstance(supply_id, str) and isinstance(channel, str):
+                wall.set_efficiency_calibration(supply_id, channel, True)
 
     def _on_card_mode_changed(
         self, supply_id: str, channel: str, mode: str
@@ -1071,18 +1083,24 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         return list(self._power_supply_choices())
 
     def read_drain_channel(self) -> dict[str, str] | None:
-        """当前漏极选择的物理路由；未选择时返回 ``None``。"""
+        """第一条漏极的兼容视图；未选择时返回 ``None``。"""
         if self.power_section is None:
             return None
         return self.power_section.read_drain_channel()
+
+    def read_drain_channels(self) -> list[dict[str, str]]:
+        """当前漏极集合；多漏极按卡片顺序返回，未配置时是空列表。"""
+        if self.power_section is None:
+            return []
+        return self.power_section.read_drain_channels()
 
     def read_efficiency_calibration_channels(
         self,
     ) -> tuple[tuple[str, str], ...]:
         """当前被 ``Cal.`` 标记为效率计算通道的物理路由，按卡片顺序排列。
 
-        这是本页的测量选择，可以多选；它不写入配置片段，也不改变上电计划或
-        漏极选择。没有卡片墙时返回空元组。
+        这是本页的测量选择，可以多选；它写进 ``dut_config.drain_channel``，但不会
+        改变上电计划。没有卡片墙时返回空元组。
         """
         if self.card_wall is None:
             return ()

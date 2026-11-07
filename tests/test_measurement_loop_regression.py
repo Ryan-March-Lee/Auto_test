@@ -219,6 +219,37 @@ class DrainEfficiencyTests(unittest.TestCase):
             ],
         )
 
+    def test_multiple_drains_sum_their_dc_power(self):
+        instrument = FakeChannelMeasurementInstrument(self.VOLTAGES, self.CURRENTS)
+        inputs = replace(
+            amplifier_inputs(
+                supplies=self.SUPPLIES,
+                drain=("PS1", "CH2"),
+                start_power_dbm=0.0,
+                stop_power_dbm=0.0,
+                attenuator_db=0.0,
+            ),
+            drain_channel=DrainChannel.from_document(
+                [
+                    {"supply_id": "PS1", "channel": "CH1"},
+                    {"supply_id": "PS1", "channel": "CH2"},
+                ]
+            ),
+        )
+        service = make_service(
+            instrument=instrument,
+            inputs=inputs,
+        )
+
+        sweep = service.perform_power_sweep(1.0)["sweep_data"]
+
+        # CH1: 30 V × 0.1 A = 3 W；CH2: 20 V × 2 A = 40 W；两条漏极求和为 43 W。
+        self.assertEqual(sweep["dc_power"], [43.0])
+        self.assertAlmostEqual(sweep["efficiency"][0], 0.1 / 43.0 * 100.0)
+        self.assertEqual(
+            sweep["voltages"][0], {"PS1_CH1": 30.0, "PS1_CH2": 20.0}
+        )
+
     def test_changing_power_order_does_not_change_the_efficiency_input(self):
         _, forward = self._sweep(self.SUPPLIES, ("PS1", "CH2"))
         _, reversed_order = self._sweep(

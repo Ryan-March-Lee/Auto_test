@@ -172,6 +172,24 @@ class ConfigurationAuthoringTests(unittest.TestCase):
             [("DP8B1519", "CH1"), ("DP8B1519", "CH2")],
         )
 
+    def test_authored_configuration_accepts_multiple_drains(self):
+        flat = _flat_config()
+        flat["dut_config"]["drain_channel"] = [
+            {"supply_id": "DP8B1519", "channel": "CH1"},
+            {"supply_id": "DP8B1519", "channel": "CH2"},
+        ]
+        document = author_official_configuration(flat)
+        configuration = self._configuration(document)
+
+        self.assertTrue(validate_run_configuration(configuration).valid)
+        self.assertEqual(
+            configuration.test_plan.drain_channel,
+            [
+                {"supply_id": "DP8B1519", "channel": "CH1"},
+                {"supply_id": "DP8B1519", "channel": "CH2"},
+            ],
+        )
+
     def test_run_mapping_freezes_instrument_identity(self):
         """信号源与频谱仪的快照条目冻结缩写码、完整设备码、设备键与地址。"""
         flat = _flat_config()

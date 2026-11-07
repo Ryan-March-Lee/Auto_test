@@ -196,7 +196,7 @@ class TestPlan:
         else:
             dut = {
                 "max_input_power": self.max_input_power,
-                "drain_channel": _route_document(self.drain_channel),
+                "drain_channel": _drain_document(self.drain_channel),
                 "channel_settings": [dict(item) if isinstance(item, Mapping) else item for item in self.channel_settings],
             }
             driver_mode = {
@@ -566,7 +566,7 @@ def validate_test_plan(plan: Union[TestPlan, Mapping[str, Any]]) -> ConfigValida
         _validate_channel_settings(
             plan.driver_channel_settings, "driver_mode.channel_settings", error
         )
-        _validate_route_shape(plan.drain_channel, "dut.drain_channel", error)
+        _validate_drain_routes(plan.drain_channel, "dut.drain_channel", error)
         _validate_driver_mode(
             plan.driver_enabled,
             plan.driver_channel_settings,
@@ -851,6 +851,29 @@ def _route_document(value: Any) -> Any:
     return value
 
 
+def _drain_document(value: Any) -> Any:
+    """把漏极字段收敛成 JSON 原生形状：``None``、单条路由对象或路由对象列表。
+
+    ``drain_channel`` 兼容两种文档形状：旧配置写单条路由，配置页多选漏极时写列表。
+    值对象（例如 application 的 ``DrainChannel``）按 ``routes`` 展开；单元素列表仍
+    写成单条对象，保持旧文档与黄金样例的原样形状。
+    """
+    if isinstance(value, (list, tuple)):
+        documents = [_route_document(item) for item in value]
+        return _single_or_list(documents)
+    routes = getattr(value, "routes", None)
+    if routes is not None and not isinstance(value, (str, bytes, Mapping)):
+        documents = [_route_document(item) for item in routes]
+        return _single_or_list(documents)
+    return _route_document(value)
+
+
+def _single_or_list(documents: list[Any]) -> Any:
+    if not documents:
+        return None
+    return documents[0] if len(documents) == 1 else documents
+
+
 def _plan_document(value: Any) -> Any:
     """把一组上电计划收敛成 v1.1 的 ``{power_sequence, inter_channel_delay_s}``。
 
@@ -983,6 +1006,40 @@ def _validate_route_shape(
         error(path, "供电路由必须是非空且不含 '/' 的 supply_id 与 channel")
         return None
     return supply_id.strip(), channel.strip()
+
+
+def _validate_drain_routes(
+    value: Any,
+    path: str,
+    error: Any,
+) -> tuple[tuple[tuple[str, str], str], ...]:
+    """校验漏极字段的形状，返回 ``((supply_id, channel), 字段路径), ...``。
+
+    ``drain_channel`` 既接受单条 ``{supply_id, channel}`` 对象（旧配置），也接受
+    对象列表（配置页多选 ``Cal.`` 时写出的形状）。``None`` 与空列表都表示未配置；
+    重复路由会让直流功率重复计算，因此按错误报告。
+    """
+    if value is None:
+        return ()
+    if isinstance(value, Mapping):
+        items = ((value, path),)
+    elif isinstance(value, (list, tuple)):
+        items = tuple((item, f"{path}[{index}]") for index, item in enumerate(value))
+    else:
+        error(path, "漏极通道必须是 {supply_id, channel} 对象或对象列表")
+        return ()
+    routes: list[tuple[tuple[str, str], str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item, item_path in items:
+        route = _validate_route_shape(item, item_path, error)
+        if route is None:
+            continue
+        if route in seen:
+            error(item_path, "漏极通道不能重复")
+            continue
+        seen.add(route)
+        routes.append((route, item_path))
+    return tuple(routes)
 
 
 def _validate_channel_settings(values: List[Any], path: str, error: Any) -> None:
@@ -1154,16 +1211,21 @@ def _validate_current_power_configuration(
                         "上电通道必须提供可读的工作值",
                     )
 
-    # 规则 11/12：主功放必须恰有一个有效漏极，且在序列与通道参数里。
+    # 规则 11/12：主功放必须至少有一个有效漏极，且全部在序列与通道参数里。
+    # 文档形状既可以是单条两段路由，也可以是路由列表（配置页多选时写出列表）：
+    # 多漏极各自读取电压/电流，效率按它们之和计算。
     drain_path = "test_plan.dut.drain_channel"
-    drain = _validate_route_shape(plan.drain_channel, drain_path, error)
-    if plan.drain_channel is None:
-        error(drain_path, "主功放运行必须指定漏极通道（仅用于效率计算，不影响上电顺序）")
-    elif drain is not None:
+    drains = _validate_drain_routes(plan.drain_channel, drain_path, error)
+    if not drains:
+        error(
+            drain_path,
+            "主功放运行必须指定至少一个漏极通道（仅用于效率计算，不影响上电顺序）",
+        )
+    for drain, drain_item_path in drains:
         if sequence is not None and drain not in set(sequence):
-            error(drain_path, "漏极通道必须包含在 DUT 上电顺序中")
+            error(drain_item_path, "漏极通道必须包含在 DUT 上电顺序中")
         if drain not in settings:
-            error(drain_path, "漏极通道必须提供通道参数（电压/电流）")
+            error(drain_item_path, "漏极通道必须提供通道参数（电压/电流）")
         # 规则 13：漏极电源必须已在快照中登记，且地址非空。
         supply = mapping.power_supplies.get(drain[0])
         if supply is None:

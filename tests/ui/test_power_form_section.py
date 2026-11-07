@@ -220,6 +220,73 @@ class DrainSelectionTests(unittest.TestCase):
         ]
         self.assertIn(("DP8B0885", "CH2"), options)
 
+    def test_multiple_drains_are_read_in_order_and_the_first_is_the_compat_view(self):
+        section = _section(
+            plans={"dut": _plan(("DP8B0885", "CH1"), ("DP8B0885", "CH2"))},
+            drain=[
+                {"supply_id": "DP8B0885", "channel": "CH2"},
+                {"supply_id": "DP8B0885", "channel": "CH1"},
+            ],
+        )
+        self.addCleanup(section.deleteLater)
+
+        self.assertEqual(
+            section.read_drain_channels(),
+            [
+                {"supply_id": "DP8B0885", "channel": "CH2"},
+                {"supply_id": "DP8B0885", "channel": "CH1"},
+            ],
+        )
+        self.assertEqual(
+            section.read_drain_channel(),
+            {"supply_id": "DP8B0885", "channel": "CH2"},
+        )
+
+    def test_selecting_multiple_drains_replaces_the_set(self):
+        section = _section(plans={"dut": _plan(("DP8B0885", "CH1"), ("DP8B0885", "CH2"))})
+        self.addCleanup(section.deleteLater)
+
+        self.assertTrue(
+            section.select_drain_routes(
+                (("DP8B0885", "CH1"), ("DP8B0885", "CH2"))
+            )
+        )
+        self.assertEqual(
+            section.read_drain_channels(),
+            [
+                {"supply_id": "DP8B0885", "channel": "CH1"},
+                {"supply_id": "DP8B0885", "channel": "CH2"},
+            ],
+        )
+        self.assertTrue(section.select_drain_routes(()), "没有标记时要能清空")
+        self.assertEqual(section.read_drain_channels(), [])
+
+    def test_an_invalid_multi_drain_stays_visible_for_validation(self):
+        section = _section(
+            plans={"dut": _plan(("DP8B0885", "CH1"))},
+            drain=[
+                {"supply_id": "DP8B0885", "channel": "CH1"},
+                {"supply_id": "DP8B9999", "channel": "CH4"},
+            ],
+        )
+        self.addCleanup(section.deleteLater)
+
+        self.assertEqual(
+            section.read_drain_channels(),
+            [
+                {"supply_id": "DP8B0885", "channel": "CH1"},
+                {"supply_id": "DP8B9999", "channel": "CH4"},
+            ],
+            "无效漏极不能被静默清空，交给正式校验",
+        )
+        self.assertTrue(
+            any(
+                "无效" in section.drain_channel_combo.itemText(index)
+                for index in range(section.drain_channel_combo.count())
+            ),
+            "无效漏极要留在候选里交给正式校验",
+        )
+
     def test_an_unset_drain_reads_as_none(self):
         section = _section()
         self.addCleanup(section.deleteLater)
@@ -301,6 +368,25 @@ class PowerPlanBackfillTests(unittest.TestCase):
         self.assertEqual(
             section.read_drain_channel(),
             {"supply_id": "DP8B1519", "channel": "CH1"},
+        )
+
+    def test_reading_the_form_writes_all_drains_as_a_list(self):
+        section = _section(
+            plans={"dut": _plan(("DP8B0885", "CH1"), ("DP8B0885", "CH2"))},
+            drain=[
+                {"supply_id": "DP8B0885", "channel": "CH1"},
+                {"supply_id": "DP8B0885", "channel": "CH2"},
+            ],
+        )
+        self.addCleanup(section.deleteLater)
+        state = ConfigFormState({}, section)
+
+        self.assertEqual(
+            state.read_power_fragment()["dut_config"]["drain_channel"],
+            [
+                {"supply_id": "DP8B0885", "channel": "CH1"},
+                {"supply_id": "DP8B0885", "channel": "CH2"},
+            ],
         )
 
     def test_reading_the_form_writes_plans_and_not_supply_lists(self):

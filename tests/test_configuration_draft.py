@@ -276,6 +276,25 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
             "rigol technologies:dp8b214901519",
         )
 
+    def test_multiple_drains_round_trip_as_a_route_list(self):
+        document = _document()
+        document["dut_config"]["drain_channel"] = [
+            {"supply_id": "PSA", "channel": "CH1"},
+            {"supply_id": "PSA", "channel": "CH2"},
+        ]
+
+        result = ConfigurationDraft.from_document(document)
+
+        self.assertTrue(result.valid, result.messages())
+        self.assertEqual(
+            result.draft.drain_channels,
+            (SupplyChannel("PSA", "CH1"), SupplyChannel("PSA", "CH2")),
+        )
+        self.assertEqual(
+            result.draft.to_document()["dut_config"]["drain_channel"],
+            document["dut_config"]["drain_channel"],
+        )
+
     def test_document_round_trip_keeps_current_key_shape(self):
         first = ConfigurationDraft.from_document(_document())
         document = first.draft.to_document()

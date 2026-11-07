@@ -26,7 +26,8 @@
 - 用户显式选择的上电顺序、组间隔与漏极引用**原样**搬运到正式段：编辑段的
   ``power_supply_assignment.<group>.power_plan`` 冻结为 ``run_mapping`` 的
   ``dut_power_plan`` / ``driver_mode.power_plan``，``dut_config.drain_channel`` 写成
-  ``test_plan.dut.drain_channel``。本服务不推断角色/顺序，也不按 ``CH1``/``CH2`` 猜漏极。
+  ``test_plan.dut.drain_channel``（单条写对象、多条写列表，多漏极在测量时求和）。
+  本服务不推断角色/顺序，也不按 ``CH1``/``CH2`` 猜漏极。
 - 1.1 正式段不再写通道 ``role``、``power_roles``、``power_channels``、``connection``
   与 ``dut_power_channels``；每路由工作值/保护值只写 ``channel_settings``（无序集合）。
 - authoring 同时是**版本门禁**：输入缺失版本（新建草稿）或等于当前版本才允许保存；
@@ -575,7 +576,8 @@ def _author_test_plan(document: Mapping[str, Any]) -> dict[str, Any]:
         },
         "dut": {
             "max_input_power": dut_config.get("max_input_power"),
-            # 漏极是用户配置的测量引用，原样冻结；authoring 不按通道名推断。
+            # 漏极是用户配置的测量引用，原样冻结（单条对象或路由列表）；authoring
+            # 不按通道名推断，也不把多漏极拆开。
             "drain_channel": copy.deepcopy(dut_config.get("drain_channel")),
             "channel_settings": _author_channel_settings(document, "dut_amplifier"),
         },

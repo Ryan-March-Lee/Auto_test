@@ -161,6 +161,15 @@ def _require_unique(values: Iterable[str], label: str) -> None:
         seen.add(value)
 
 
+def _require_unique_objects(values: Iterable[Any], label: str) -> None:
+    seen: list[Any] = []
+    for value in values:
+        if value in seen:
+            token = getattr(value, "token", value)
+            raise ValueError(f"{label} 不能重复：{token!r}")
+        seen.append(value)
+
+
 def _binding_pairs(
     values: Any,
 ) -> tuple[tuple[str, "DeviceBindingDraft"], ...]:
@@ -393,8 +402,9 @@ class ConfigurationDraft:
     driver_enabled: bool | None = None
     # 测试方案现场参数（页面下拉框），不驱动电源分配；缺失时写出阶段按 DUT 计划路由数回退。
     dut_supply_count: int | None = None
-    # 漏极只供效率计算读取，不参与排序/间隔/启停；缺失时保持 None。
-    drain_channel: SupplyChannel | None = None
+    # 漏极只供效率计算读取，不参与排序/间隔/启停；空元组表示未配置。
+    # 可以有多条：运行阶段把每条漏极的直流功率相加。
+    drain_channels: tuple[SupplyChannel, ...] = ()
     # 组上电计划：None 表示来源文档没有该键；写出时按空计划规范形状补齐。
     # 计划同时是“哪些电源的哪些通道给哪个器件上电”的唯一来源，不再另存固定分配表。
     dut_power_plan: PowerPlan | None = None
@@ -420,7 +430,9 @@ class ConfigurationDraft:
             "dut_supply_count",
             _optional_int(self.dut_supply_count, "PA 单元数量"),
         )
-        _require_optional(self.drain_channel, SupplyChannel, "漏极通道")
+        drain_channels = _tuple_of(self.drain_channels, SupplyChannel, "漏极通道")
+        object.__setattr__(self, "drain_channels", drain_channels)
+        _require_unique_objects(drain_channels, "漏极通道")
         _require_optional(self.dut_power_plan, PowerPlan, "DUT 上电计划")
         _require_optional(self.driver_power_plan, PowerPlan, "驱动功放上电计划")
         object.__setattr__(
@@ -494,7 +506,7 @@ class ConfigurationDraft:
         )
         max_dut_input_power = _read_max_input_power(document.get("dut_config"), issues)
         dut_supply_count = _read_dut_supply_count(document.get("dut_config"), issues)
-        drain_channel = _read_drain_channel(document.get("dut_config"), issues)
+        drain_channels = _read_drain_channels(document.get("dut_config"), issues)
         driver_enabled = _read_driver_mode(document.get("driver_mode"), issues)
         power_supplies = _read_power_supplies(document.get("instruments"), issues)
         assignments = document.get("power_supply_assignment")
@@ -511,7 +523,7 @@ class ConfigurationDraft:
             max_dut_input_power=max_dut_input_power,
             driver_enabled=driver_enabled,
             dut_supply_count=dut_supply_count,
-            drain_channel=drain_channel,
+            drain_channels=drain_channels,
             dut_power_plan=dut_power_plan,
             driver_power_plan=driver_power_plan,
             power_supplies=power_supplies,
@@ -543,8 +555,12 @@ class ConfigurationDraft:
             ),
             "power_supply_count": count,
         }
-        if self.drain_channel is not None:
-            dut_config["drain_channel"] = self.drain_channel.to_document()
+        if self.drain_channels:
+            documents = [route.to_document() for route in self.drain_channels]
+            # 单漏极继续写旧文档的单条对象；多漏极才写列表。
+            dut_config["drain_channel"] = (
+                documents[0] if len(documents) == 1 else documents
+            )
         return {
             "test_frequencies": [frequency.ghz for frequency in self.frequencies],
             "signal_source": _sweep_document(self.sweep),
@@ -828,25 +844,52 @@ def _read_dut_supply_count(
     return raw
 
 
-def _read_drain_channel(
+def _read_drain_channels(
     value: Any, issues: list[ValidationIssue]
-) -> SupplyChannel | None:
-    """读取 ``dut_config.drain_channel``；缺失与 ``null`` 都表示未配置漏极。"""
+) -> tuple[SupplyChannel, ...]:
+    """读取 ``dut_config.drain_channel``；缺失、``null`` 与空列表都表示未配置。
+
+    文档兼容单条两段路由与路由列表两种形状；多漏极按书写顺序保存，运行阶段把
+    各自直流功率相加。任何一项形状非法都记录问题并跳过该项，不让整份草稿失败。
+    """
     if value is None:
-        return None
+        return ()
     section = _mapping(value, "dut_config", issues)
     if "drain_channel" not in section:
-        return None
+        return ()
     raw = section.get("drain_channel")
     if raw is None:
-        return None
-    try:
-        return SupplyChannel.from_document(raw)
-    except (AmplifierInputError, TypeError, ValueError) as error:
-        issues.append(
-            _issue("dut_config.drain_channel", _CODE_INVALID_ASSIGNMENT, str(error))
+        return ()
+    if isinstance(raw, Mapping):
+        items = ((raw, "dut_config.drain_channel"),)
+    elif isinstance(raw, (list, tuple)):
+        items = tuple(
+            (item, f"dut_config.drain_channel[{index}]")
+            for index, item in enumerate(raw)
         )
-        return None
+    else:
+        issues.append(
+            _issue(
+                "dut_config.drain_channel",
+                _CODE_INVALID_ASSIGNMENT,
+                "漏极通道必须是 {supply_id, channel} 对象或对象列表",
+            )
+        )
+        return ()
+    routes: list[SupplyChannel] = []
+    for item, path in items:
+        try:
+            route = SupplyChannel.from_document(item)
+        except (AmplifierInputError, TypeError, ValueError) as error:
+            issues.append(_issue(path, _CODE_INVALID_ASSIGNMENT, str(error)))
+            continue
+        if route in routes:
+            issues.append(
+                _issue(path, _CODE_INVALID_ASSIGNMENT, f"漏极通道不能重复：{route.token}")
+            )
+            continue
+        routes.append(route)
+    return tuple(routes)
 
 
 def _read_power_plan(

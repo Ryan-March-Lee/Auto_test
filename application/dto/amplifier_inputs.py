@@ -25,7 +25,7 @@
 | `driver_enabled` | `bool` | 测试方案的驱动模式开关 | 是 | 非布尔值（含 `1`/`"yes"`）→ `AmplifierInputError` |
 | `dut_power_plan` | `PowerPlan` | 运行映射里冻结的 DUT 上电顺序与组间隔 | 是，非空 | 空序列、重复路由、非法路由、越界间隔 → `AmplifierInputError` |
 | `channel_settings` | `Mapping[SupplyChannel, ChannelSetting]` | 测试方案里每条 DUT 路由的工作值/保护值 | 是，且与序列集合完全相等 | 缺设置、多设置、非路由键、缺工作值 → `AmplifierInputError` |
-| `drain_channel` | `DrainChannel` | 测试方案的漏极测量路由（可选） | 可选，但主功放测量服务构造时要求已配置 | 已配置但不在上电序列里 → `AmplifierInputError` |
+| `drain_channel` | `DrainChannel` | 测试方案的漏极测量路由集合（可选，可多条） | 可选，但主功放测量服务构造时要求至少一条 | 已配置但不在上电序列里、重复路由 → `AmplifierInputError` |
 
 ``SupplyChannel`` 只接受显式路由（``supply_id + channel`` 或
 ``"<supply_id>/<channel>"``）：裸通道名（旧快照的 ``CH1``）不在这里被猜测成“唯一那台
@@ -33,7 +33,7 @@
 
 ``PowerPlan`` / ``DrainChannel`` / ``ChannelSetting`` 是 v1.1 通道计划的值对象
 （步骤 4/7）：计划表达一组通道的有序上电顺序与组内间隔，``ChannelSetting`` 为每条
-物理路由携带工作值/保护值，漏极表达可选的效率测量路由。它们共用同一个
+物理路由携带工作值/保护值，漏极表达可选的效率测量路由集合。它们共用同一个
 ``SupplyChannel`` 路由类型，不引入第二份路由实现；计划本身不判断绑定关系，也不强制
 DUT 必须有漏极。
 
@@ -464,18 +464,23 @@ class PowerPlan:
 
 @dataclass(frozen=True)
 class DrainChannel:
-    """效率计算使用的漏极路由；它不是上电计划的一部分。
+    """效率计算使用的漏极路由集合；它不是上电计划的一部分。
 
-    漏极是**可选**测量输入：线损、驱动映射等不需要效率的测量不配置它（``None``）。
-    只要配置了，就必须指向本次配置里真实存在的物理通道；值对象只提供显式的
+    漏极是**可选**测量输入：线损、驱动映射等不需要效率的测量不配置它（空集合）。
+    可以配置一条或多条物理通道，效率计算把它们各自的直流功率相加。只要配置了，
+    每条路由都必须指向本次配置里真实存在的物理通道；值对象只提供显式的
     :meth:`require_in_routes` 成员判定，完整的有效性判定链（属于 DUT、在启用序列
     与 ``channel_settings`` 中、电源已登记并启用）属于步骤 5 的配置/运行校验。是否
     必须配置属于“主功放运行”的校验，不在值对象里强制：DTO 可被不需要效率的场景
-    复用，而 :class:`AmplifierMeasurementService` 在构造时要求漏极已配置，缺失即抛
-    ``AmplifierInputError``。漏极不参与排序、间隔、启停或安全关断。
+    复用，而 :class:`AmplifierMeasurementService` 在构造时要求至少有一条漏极，缺失
+    即抛 ``AmplifierInputError``。漏极不参与排序、间隔、启停或安全关断。
+
+    ``route`` 保留为第一条漏极的兼容视图（旧代码与单漏极配置只需它）；完整集合
+    从 :attr:`routes` 读取，顺序就是配置里的书写顺序。
     """
 
     route: SupplyChannel | None = None
+    routes: tuple[SupplyChannel, ...] = ()
 
     def __post_init__(self) -> None:
         if self.route is not None and not isinstance(self.route, SupplyChannel):
@@ -483,10 +488,33 @@ class DrainChannel:
                 "漏极路由必须是 SupplyChannel 或 None，"
                 f"收到 {type(self.route).__name__}"
             )
+        if isinstance(self.routes, (str, bytes)) or not isinstance(
+            self.routes, Iterable
+        ):
+            raise AmplifierInputError(
+                "漏极路由集合必须是 SupplyChannel 序列，"
+                f"收到 {type(self.routes).__name__}"
+            )
+        normalized: list[SupplyChannel] = []
+        if self.route is not None:
+            normalized.append(self.route)
+        for item in self.routes:
+            if not isinstance(item, SupplyChannel):
+                raise AmplifierInputError(
+                    "漏极路由集合只能包含 SupplyChannel，"
+                    f"收到 {type(item).__name__}"
+                )
+            if item in normalized:
+                raise AmplifierInputError(f"漏极通道不能重复：{item.token}")
+            normalized.append(item)
+        object.__setattr__(self, "routes", tuple(normalized))
+        # 单漏极兼容视图永远指向第一条；多漏极时旧代码仍能拿它做“首个漏极”判断。
+        if self.route is None and normalized:
+            object.__setattr__(self, "route", normalized[0])
 
     @property
     def is_configured(self) -> bool:
-        return self.route is not None
+        return bool(self.routes)
 
     @classmethod
     def from_document(
@@ -495,7 +523,10 @@ class DrainChannel:
         *,
         available: Iterable[SupplyChannel] | None = None,
     ) -> "DrainChannel":
-        """读取 ``drain_channel``；``None`` 表示未配置。
+        """读取 ``drain_channel``；``None`` 或空列表表示未配置。
+
+        文档既可以写单条两段路由对象，也可以写路由对象列表（配置页多选 ``Cal.``
+        时写出列表）；两种形状都收敛为同一条 :attr:`routes` 集合。
 
         只做形状解析：漏极是否真属于“本次配置的通道”需要完整配置（分组、序列、
         ``channel_settings`` 与绑定），属于步骤 5 的配置/运行校验，不在这里猜。
@@ -506,34 +537,42 @@ class DrainChannel:
         """
         if isinstance(value, cls):
             drain = value
-        else:
+        elif value is None:
+            drain = cls()
+        elif isinstance(value, (list, tuple)):
             drain = cls(
-                route=None if value is None else SupplyChannel.from_document(value)
+                routes=tuple(SupplyChannel.from_document(item) for item in value)
             )
+        else:
+            drain = cls(route=SupplyChannel.from_document(value))
         if available is not None:
             drain.require_in_routes(available)
         return drain
 
-    def to_document(self) -> dict[str, str] | None:
-        """未配置写 ``None``；已配置写两段路由对象，不写拼接串。"""
-        return None if self.route is None else self.route.to_document()
+    def to_document(self) -> dict[str, str] | list[dict[str, str]] | None:
+        """未配置写 ``None``；单漏极写两段路由对象，多漏极写对象列表。"""
+        if not self.routes:
+            return None
+        documents = [route.to_document() for route in self.routes]
+        return documents[0] if len(documents) == 1 else documents
 
     def require_in_routes(
         self, routes: Iterable[SupplyChannel]
     ) -> "DrainChannel":
-        """已配置的漏极必须出现在给定路由集合里；本方法只回答“在不在”。
+        """已配置的每条漏极都必须出现在给定路由集合里；本方法只回答“在不在”。
 
         它不判断该集合是否属于 DUT、是否已绑定、是否在 ``power_sequence`` 或
         ``channel_settings`` 中——那些是完整配置校验的职责（§6.9 判定链）。未配置
         漏极时直接返回，不做任何要求。
         """
-        if self.route is None:
+        if not self.routes:
             return self
         members = _route_members(routes, "给定通道集合")
-        if self.route not in members:
-            raise AmplifierInputError(
-                f"漏极通道 {self.route.token} 不在给定的通道集合中"
-            )
+        for route in self.routes:
+            if route not in members:
+                raise AmplifierInputError(
+                    f"漏极通道 {route.token} 不在给定的通道集合中"
+                )
         return self
 
 
@@ -588,8 +627,9 @@ class AmplifierMeasurementInputs:
 
     - ``dut_power_plan``：**有序**物理路由与组间隔，顺序就是上电顺序；
     - ``channel_settings``：按物理路由索引的工作值/保护值，是**无序集合**；
-    - ``drain_channel``：可选的漏极测量路由，只供效率计算读取，不参与排序或启停；
-      主功放测量服务在构造时另行要求它已配置。
+    - ``drain_channel``：可选的漏极测量路由集合，只供效率计算读取，不参与排序或启停；
+      可以配置多条，运行阶段把各自的直流功率相加；主功放测量服务在构造时另行要求
+      至少配置一条。
 
     构造时要求两个集合完全一致：序列里的每条路由都必须有设置，设置里也不能出现
     未列入序列的通道。这是 DTO 能安全消费“已校验计划”的最低保证；归属 DUT、绑定

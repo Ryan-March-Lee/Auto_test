@@ -366,11 +366,24 @@ class ConfigFormState:
             return reader()
         return _dict_copy(existing) if isinstance(existing, Mapping) else None
 
+    def read_drain_channels(self) -> list[dict]:
+        """读取漏极集合；单漏极配置也返回只含一条的列表。
+
+        优先使用组件提供的多漏极读数；旧替身只有单选下拉框时按一条处理。
+        """
+        reader = getattr(self.widgets, "read_drain_channels", None)
+        if callable(reader):
+            routes = reader()
+            return [dict(route) for route in routes] if routes else []
+        single = self.read_drain_channel()
+        return [single] if single is not None else []
+
     def read_drain_channel(self) -> dict | None:
-        """读取漏极选择；未选择或控件缺失时返回 ``None``。
+        """读取第一条漏极选择；未选择或控件缺失时返回 ``None``。
 
         漏极是独立的测量路由，不参与分配与上电；这里只从控件的 ``itemData`` 读两段
-        路由，不把显示文本或通道名当成路由身份。
+        路由，不把显示文本或通道名当成路由身份。多漏极的完整集合见
+        :meth:`read_drain_channels`。
         """
         combo = getattr(self.widgets, "drain_channel_combo", None)
         if combo is None:
@@ -392,11 +405,19 @@ class ConfigFormState:
             return None
         return {"supply_id": supply_id, "channel": channel}
 
+    def _drain_channel_document(self) -> Any:
+        """配置文档里的漏极形状：未配置写 ``None``，单漏极写对象，多漏极写列表。"""
+        routes = self.read_drain_channels()
+        if not routes:
+            return None
+        return routes[0] if len(routes) == 1 else routes
+
     def read_power_fragment(self) -> dict:
         """只读出电源相关的配置片段（独立电源页提交给统一会话的形状）。
 
         片段只含本页拥有的字段：``instruments.power_supplies``（通道参数）、
-        ``power_supply_assignment``（两组上电计划）和 ``dut_config.drain_channel``。
+        ``power_supply_assignment``（两组上电计划）和 ``dut_config.drain_channel``
+        （单漏极写对象，多漏极写列表）。
         测试参数、设备地址与身份不在这里读取，页面之间因此不需要互相持有控件。
         没有对应控件时该段缺席，而不是写成空段——由调用方决定是否保留基线值。
         """
@@ -409,7 +430,7 @@ class ConfigFormState:
             fragment["power_supply_assignment"] = assignment["power_supply_assignment"]
         if getattr(self.widgets, "drain_channel_combo", None) is not None:
             fragment["dut_config"] = {
-                "drain_channel": self.read_drain_channel(),
+                "drain_channel": self._drain_channel_document(),
             }
         return fragment
 
@@ -452,7 +473,7 @@ class ConfigFormState:
             _clear_driver_power_plan(config)
         if getattr(self.widgets, "drain_channel_combo", None) is not None:
             dut = _dict_copy(config.get("dut_config"))
-            dut["drain_channel"] = self.read_drain_channel()
+            dut["drain_channel"] = self._drain_channel_document()
             config["dut_config"] = dut
         return config
 
@@ -488,7 +509,7 @@ class ConfigFormState:
         dut["max_input_power"] = self._value(w.max_input_power)
         dut["power_supply_count"] = int(self._current(w.pa_unit_count_combo))
         if getattr(w, "drain_channel_combo", None) is not None:
-            dut["drain_channel"] = self.read_drain_channel()
+            dut["drain_channel"] = self._drain_channel_document()
         config["dut_config"] = dut
         fragment = self.read_power_supply_config()
         for name, value in fragment.get("instruments", {}).get("power_supplies", {}).items():

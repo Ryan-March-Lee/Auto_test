@@ -245,8 +245,9 @@ def validate_power_plan(config: Any) -> ConfigValidationResult:
     - 跨组冲突：同一物理通道不能同时出现在 DUT 与驱动功放的计划里；
     - 驱放一致性：驱放关闭时不得有计划；驱放开启时计划为空即自带供电，是合法状态；
     - 漏极：``dut_config.drain_channel`` 若给出，必须出现在 DUT 上电计划中。漏极是
-      效率测量输入，不参与排序、间隔或启停；这里不要求每种配置都必须有漏极，主功放
-      运行的必填性由运行校验负责。
+      效率测量输入，可以是单条路由或路由列表；多条时运行阶段把各自直流功率相加。
+      漏极不参与排序、间隔或启停；这里不要求每种配置都必须有漏极，主功放运行的
+      必填性由运行校验负责。
 
     **过渡行为**：编写器尚未写出 ``power_plan`` 键时（迁移产物或旧编辑段），本次跳过
     该组的顺序检查，只保留其它检查；一旦写了 ``power_plan``（包括空计划），就按完整
@@ -308,24 +309,37 @@ def validate_power_plan(config: Any) -> ConfigValidationResult:
             "驱放测试模式关闭时不能配置驱动功放上电计划",
         )
 
-    # 漏极是测量输入，不是上电角色；字段存在时才校验引用。
+    # 漏极是测量输入，不是上电角色；字段存在时才校验引用。单条路由与路由列表
+    # 都接受：多漏极各自求和，但每一条都必须指向 DUT 上电计划里的物理通道。
     dut_config = config.get("dut_config")
     if isinstance(dut_config, Mapping) and "drain_channel" in dut_config:
-        drain_value = dut_config.get("drain_channel")
-        if drain_value is not None:
-            drain_path = "dut_config.drain_channel"
-            drain = _parse_plan_route(drain_value, drain_path, error)
-            if drain is not None:
-                if dut_entries is not None:
-                    if drain not in {
-                        (supply_id, channel)
-                        for supply_id, channel, _item in dut_entries
-                    }:
-                        error(drain_path, "漏极必须包含在 DUT 上电顺序中")
-                else:
-                    # 计划尚未写出时没有可比较的顺序；运行校验仍会要求漏极属于 DUT
-                    # 计划，这里只保留形状与引用检查。
-                    _validate_plan_routes(((drain[0], drain[1], drain_path),), supplies, error)
+        drain_path = "dut_config.drain_channel"
+        drains = _parse_plan_routes(
+            dut_config.get("drain_channel"), drain_path, error
+        )
+        allowed = (
+            {
+                (supply_id, channel)
+                for supply_id, channel, _item in dut_entries
+            }
+            if dut_entries is not None
+            else None
+        )
+        seen: set[Tuple[str, str]] = set()
+        for drain, item_path in drains:
+            if drain in seen:
+                error(item_path, "漏极通道不能重复")
+                continue
+            seen.add(drain)
+            if allowed is not None:
+                if drain not in allowed:
+                    error(item_path, "漏极必须包含在 DUT 上电顺序中")
+            else:
+                # 计划尚未写出时没有可比较的顺序；运行校验仍会要求漏极属于 DUT
+                # 计划，这里只保留形状与引用检查。
+                _validate_plan_routes(
+                    ((drain[0], drain[1], item_path),), supplies, error
+                )
 
     return ConfigValidationResult(errors=_unique_issues(errors), warnings=[])
 
@@ -513,6 +527,33 @@ def _parse_plan_route(value: Any, path: str, error: Any) -> Optional[Tuple[str, 
         error(path, "供电路由必须是非空且不含 '/' 的 supply_id 与 channel")
         return None
     return supply_id.strip(), channel.strip()
+
+
+def _parse_plan_routes(
+    value: Any, path: str, error: Any
+) -> Tuple[Tuple[Tuple[str, str], str], ...]:
+    """解析漏极字段：单条两段路由或路由对象列表，返回 ``(路由, 字段路径)`` 元组。
+
+    ``None`` 与空列表表示未配置。其它形状（拼接串、标量、混合数组）按非法形状
+    报告；单条解析仍复用 :func:`_parse_plan_route`。
+    """
+    if value is None:
+        return ()
+    if isinstance(value, Mapping):
+        items: Tuple[Tuple[Any, str], ...] = ((value, path),)
+    elif isinstance(value, (list, tuple)):
+        items = tuple(
+            (item, f"{path}[{index}]") for index, item in enumerate(value)
+        )
+    else:
+        error(path, "漏极通道必须是 {supply_id, channel} 对象或对象列表")
+        return ()
+    parsed: list[Tuple[Tuple[str, str], str]] = []
+    for item, item_path in items:
+        route = _parse_plan_route(item, item_path, error)
+        if route is not None:
+            parsed.append((route, item_path))
+    return tuple(parsed)
 
 
 def _validate_plan_routes(

@@ -2,13 +2,13 @@
 
 卡片是配置页的电源卡面资产，只有正面。这里锁住四类契约：
 
-- :class:`PowerCardDataTests`：两个通道、OFF/Driver/DUT 角色、两个工作值必须是
+- :class:`PowerCardDataTests`：两个通道、OFF/DUT/Driver 角色、两个工作值必须是
   有限非负数，两个保护开关必须是 bool；
 - :class:`PowerCardLayoutTests`：卡面里每个角色滚筒、数值框与勾选框都在自己的通道内；
   通道底色从卡片顶边铺到卡底，两个滚筒贴住左右上角，设备码铭牌在顶部正中；第一行是
   ``VS / IS``，第二行是左右两个勾选框（文字都写「10%保护」，左右位置区分电压/电流），
   卡片到勾选行结束，没有底部说明行；
-- :class:`PowerCardRenderTests`：导出的位图与页面控件共用一份绘制，OFF/Driver/DUT
+- :class:`PowerCardRenderTests`：导出的位图与页面控件共用一份绘制，OFF/DUT/Driver
   的通道底色、数值框、勾选框与深色滚筒都按状态变化；
 - :class:`PowerSupplyCardWidgetTests`：角色滚筒与保护勾选框可点击、可键盘操作、
   只改卡面状态，并且程序化设置与整卡换数据都不会悄悄发信号。
@@ -353,9 +353,9 @@ class PowerCardLayoutTests(unittest.TestCase):
             second.mode_selector.right(), second.panel.right() - 12.0
         )
         self.assertAlmostEqual(first.mode_selector.width(), 84.0)
-        self.assertAlmostEqual(first.mode_selector.height(), 64.0)
+        self.assertAlmostEqual(first.mode_selector.height(), 56.0)
         self.assertAlmostEqual(first.mode_selector.top(), 6.0)
-        self.assertGreaterEqual(first.mode_selector.bottom(), 60.0)
+        self.assertAlmostEqual(first.mode_selector.bottom(), 62.0)
         self.assertLess(first.mode_selector.right(), layout.title.left())
         self.assertLess(layout.title.right(), second.mode_selector.left())
         self.assertGreater(
@@ -556,7 +556,7 @@ class PowerCardRenderTests(unittest.TestCase):
                 self.assertGreater(dot.red(), dot.blue() + 40)
 
     def test_mode_selector_changes_with_the_channel_mode(self):
-        """OFF / Driver / DUT 三档画出的滚筒内容不同。"""
+        """OFF / DUT / Driver 三档画出的滚筒内容不同。"""
         rect = power_card_layout().channels[0].mode_selector.toRect()
         images = []
         for mode in CHANNEL_MODES:
@@ -733,24 +733,30 @@ class PowerSupplyCardWidgetTests(unittest.TestCase):
         card.channel_mode_changed.connect(
             lambda channel, mode: events.append((channel, mode))
         )
+        card.set_channel_mode("CH1", "off")
         selector = card.channel_mode_selector("CH1")
-        self.assertEqual(card.channel_mode("CH1"), "driver")
+        self.assertEqual(card.channel_mode("CH1"), "off")
 
+        # 点一下切到 DUT：通道开启，但还不碰驱放计划。
         QTest.mouseClick(selector, Qt.LeftButton, pos=selector.rect().center())
         self.assertEqual(events, [("CH1", "dut")])
         self.assertEqual(card.channel_mode("CH1"), "dut")
+        self.assertTrue(card.value_field("CH1", "voltage").isEnabled())
 
+        # 点两下切到 Driver。
         QTest.mouseClick(selector, Qt.LeftButton, pos=selector.rect().center())
-        self.assertEqual(events, [("CH1", "dut"), ("CH1", "off")])
+        self.assertEqual(events, [("CH1", "dut"), ("CH1", "driver")])
+        self.assertEqual(card.channel_mode("CH1"), "driver")
+        self.assertEqual(card.channel_mode("CH2"), "driver")
+
+        # 第三下回到 OFF，其余通道不受影响。
+        QTest.mouseClick(selector, Qt.LeftButton, pos=selector.rect().center())
+        self.assertEqual(
+            events, [("CH1", "dut"), ("CH1", "driver"), ("CH1", "off")]
+        )
         self.assertEqual(card.channel_mode("CH1"), "off")
         self.assertEqual(card.channel_mode("CH2"), "driver")
         self.assertFalse(card.value_field("CH1", "voltage").isEnabled())
-
-        QTest.mouseClick(selector, Qt.LeftButton, pos=selector.rect().center())
-        self.assertEqual(
-            events, [("CH1", "dut"), ("CH1", "off"), ("CH1", "driver")]
-        )
-        self.assertTrue(card.value_field("CH1", "voltage").isEnabled())
 
     def test_driver_mode_unavailable_turns_driver_channels_off_and_skips_the_stop(self):
         card = self.widget()
@@ -768,16 +774,18 @@ class PowerSupplyCardWidgetTests(unittest.TestCase):
 
     def test_reel_animation_moves_continuously_before_settling(self):
         card = self.widget()
+        self.assertEqual(card.channel_mode("CH1"), "driver")
         selector = card.channel_mode_selector("CH1")
 
+        # Driver（第 2 档）→ OFF（第 0 档）：滚筒向上滚一档后取模回到 OFF。
         QTest.mouseClick(selector, Qt.LeftButton, pos=selector.rect().center())
         QTest.qWait(100)
 
-        self.assertGreater(card._reel_positions["CH1"], 1.0)
-        self.assertLess(card._reel_positions["CH1"], 2.0)
+        self.assertGreater(card._reel_positions["CH1"], 2.0)
+        self.assertLess(card._reel_positions["CH1"], 3.0)
 
         QTest.qWait(900)
-        self.assertEqual(card._reel_positions["CH1"], 2.0)
+        self.assertEqual(card._reel_positions["CH1"], 0.0)
 
     def test_clicking_a_protection_check_toggles_only_that_flag(self):
         card = self.widget()
@@ -802,7 +810,7 @@ class PowerSupplyCardWidgetTests(unittest.TestCase):
 
         QTest.keyClick(selector, Qt.Key_Space)
 
-        self.assertEqual(card.channel_mode("CH1"), "dut")
+        self.assertEqual(card.channel_mode("CH1"), "off")
         self.assertTrue(selector.hasFocus())
 
     def test_keyboard_space_toggles_a_protection_check(self):
@@ -821,8 +829,7 @@ class PowerSupplyCardWidgetTests(unittest.TestCase):
         field = card.value_field("CH2", "voltage")
         selector = card.channel_mode_selector("CH2")
 
-        # CH2 默认 Driver；点两次到 OFF。
-        QTest.mouseClick(selector, Qt.LeftButton, pos=selector.rect().center())
+        # CH2 默认 Driver；点一下到 OFF。
         QTest.mouseClick(selector, Qt.LeftButton, pos=selector.rect().center())
         self.assertEqual(card.channel_mode("CH2"), "off")
         self.assertFalse(check.isEnabled())

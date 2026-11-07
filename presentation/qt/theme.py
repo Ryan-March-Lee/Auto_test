@@ -93,7 +93,7 @@ TOKENS = {
     # 左右两半并排时能一眼分开；关闭态改用 disabled_bg，不另造灰色。
     "channel_cool": "#DBEAFE",
     "channel_warm": "#FEF3C7",
-    # 电源通道卡片的 OFF / Driver / DUT 竖直滚筒：深色玻璃槽体、金属拉丝底、
+    # 电源通道卡片的 OFF / DUT / Driver 竖直滚筒：深色玻璃槽体、金属拉丝底、
     # 红色指示点、白色当前档。浅色卡面上的深色槽体正是参考实现的对比来源。
     "mode_selector_body": "#111111",
     "mode_selector_body_bottom": "#0A0A0A",

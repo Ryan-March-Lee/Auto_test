@@ -265,6 +265,9 @@ class PowerConfigurationPageTests(unittest.TestCase):
         selector = card.channel_mode_selector("CH1")
         self.assertEqual(card.channel_mode("CH1"), "off")
 
+        # 点一下先到 DUT，再点一下才到 Driver（循环是 OFF → DUT → Driver）。
+        QTest.mouseClick(selector, Qt.LeftButton, pos=selector.rect().center())
+        self.assertEqual(card.channel_mode("CH1"), "dut")
         QTest.mouseClick(selector, Qt.LeftButton, pos=selector.rect().center())
 
         self.assertEqual(card.channel_mode("CH1"), "driver")

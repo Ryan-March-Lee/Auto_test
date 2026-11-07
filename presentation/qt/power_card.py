@@ -6,11 +6,13 @@
   压住左右两半的分界线；
 - **两个通道**：左右各一半，通道底色从卡片顶边一直铺到卡底；卡面不再写
   ``CH1`` / ``CH2``，通道身份只由左右位置、底色和悬浮提示表达；
-- **供电角色滚筒**：每个通道贴外侧上角一个 84×64 的深色竖直滚筒，三档
-  ``OFF`` / ``Driver`` / ``DUT`` 像老虎机一样上下滚动。``OFF`` 关闭通道，
-  ``Driver`` 表示该通道给驱放供电，``DUT`` 表示给功放供电；当前档位居中放大、
+- **供电角色滚筒**：每个通道贴外侧上角一个 84×56 的深色竖直滚筒，三档
+  ``OFF`` / ``DUT`` / ``Driver`` 像老虎机一样上下滚动。``OFF`` 关闭通道，
+  ``DUT`` 表示该通道给功放供电，``Driver`` 表示给驱放供电；当前档位居中放大、
   白色发光，上下相邻档位缩小、变暗并带柔化，红色指示点与玻璃高光保留参考实现的
-  质感。滚筒只响应点击循环（不响应滚轮），键盘 ``Space`` / ``Enter`` 同样循环；
+  质感。滚筒只响应点击循环（不响应滚轮），点一下到下一档、第三下回到 ``OFF``，
+  即 ``OFF → DUT → Driver → OFF``；键盘 ``Space`` / ``Enter`` 同样循环。档位文字
+  不再带 01/02/03 编号，整行垂直居中并向左侧红点靠拢；
 - **两个可编辑值**：每个通道第一行左右各一个，``VS``（电压设定）、``IS``（电流设定）；
   数值框是真实的 ``QDoubleSpinBox``，``Driver`` / ``DUT`` 档位下可以直接输入，配置
   读写仍走页面/表单 Adapter，卡片不自己写文件；
@@ -40,8 +42,8 @@
 
 **尺寸与字体**：卡片固定为 :data:`POWER_CARD_WIDTH` × :data:`POWER_CARD_HEIGHT`
 （440×166，约 2.7:1），圆角取 :data:`POWER_CARD_RADIUS`（12，比通用卡片更圆，
-在 440 宽的卡面上能看出轮廓）；角色滚筒 84×64，三档每行约 21 px，当前档字 12.5 px，
-卡片缩放时滚筒与字号一起缩放。字体系列取自
+在 440 宽的卡面上能看出轮廓）；角色滚筒 84×56，三档每行约 18.7 px，当前档字
+约 14.7 px，卡片缩放时滚筒与字号一起缩放。字体系列取自
 :func:`presentation.qt.theme.card_status_font` 与
 :func:`presentation.qt.theme.card_code_font`。颜色全部来自
 :data:`presentation.qt.theme.TOKENS`，其中包括两个通道的 ``channel_cool`` /
@@ -125,8 +127,9 @@ __all__ = [
 #: 电源固定两个通道，顺序也是卡面上的左右顺序：左边 CH1，右边 CH2。
 CHANNEL_NAMES = ("CH1", "CH2")
 
-#: 通道供电角色，顺序就是滚筒从上到下的档位顺序；循环切换也按这个顺序。
-CHANNEL_MODES = ("off", "driver", "dut")
+#: 通道供电角色，顺序既是滚筒从上到下的档位顺序，也是点击切换顺序：
+#: 点一下切到下一档，第三下回到 OFF，滚筒随之向上滚一档。
+CHANNEL_MODES = ("off", "dut", "driver")
 CHANNEL_MODE_LABELS = {
     "off": "OFF",
     "driver": "Driver",
@@ -150,10 +153,11 @@ _PANEL_RADIUS = 10.0
 # ---- 卡面几何：所有位置都由这一组常量算出，绘制与控件命中区共用 -----------------
 _PADDING = 14.0
 _HALF_WIDTH = POWER_CARD_WIDTH / 2.0
-# 供电角色滚筒：贴住左右外侧上角。84×64 正好落在 VS/IS 行（y=72）上方，
-# 三档每行约 21.3 逻辑像素，当前档字 12.5px，Driver/DUT 能完整放下。
+# 供电角色滚筒：贴住左右外侧上角。去掉档位编号后不再需要给编号留一行，
+# 高度从 64 收到 56，仍落在 VS/IS 行（y=72）上方；三档每行约 18.7 逻辑像素，
+# 当前档字约 14.7px，Driver/DUT 只占一行并垂直居中。
 _SELECTOR_WIDTH = 84.0
-_SELECTOR_HEIGHT = 64.0
+_SELECTOR_HEIGHT = 56.0
 _SELECTOR_TOP = 6.0
 _SELECTOR_INSET_X = 12.0
 _SELECTOR_RADIUS = 11.0
@@ -450,7 +454,7 @@ class PowerChannelLayout:
     panel: QRectF
     #: 实际绘制的圆角色块：从 :attr:`panel` 内缩 5，两块之间留 10 白缝。
     panel_surface: QRectF
-    #: 供电角色滚筒（OFF / Driver / DUT）的卡面矩形，也是透明命中区。
+    #: 供电角色滚筒（OFF / DUT / Driver）的卡面矩形，也是透明命中区。
     mode_selector: QRectF
     value_labels: tuple[QRectF, ...]
     value_boxes: tuple[QRectF, ...]
@@ -853,17 +857,9 @@ def _with_alpha(color: QColor, alpha: float) -> QColor:
 def _selector_label_font(active: bool) -> QFont:
     """滚筒档位文字：当前档更大更重，邻档缩小；字距收紧接近参考的 Inter。"""
     font = QFont(card_status_font())
-    font.setPointSizeF(9.4 if active else 6.5)
+    font.setPointSizeF(11.0 if active else 7.2)
     font.setWeight(QFont.Weight.Black if active else QFont.Weight.DemiBold)
     font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, -0.2)
-    return font
-
-
-def _selector_index_font(active: bool) -> QFont:
-    """档位上方的小编号：当前档红色，邻档灰暗。"""
-    font = QFont(card_code_font())
-    font.setPointSizeF(4.8 if active else 3.8)
-    font.setWeight(QFont.Weight.Bold)
     return font
 
 
@@ -878,13 +874,16 @@ def _paint_mode_selector(
     pressed: bool = False,
     driver_available: bool = True,
 ) -> None:
-    """竖直老虎机滚筒：OFF / Driver / DUT 三档上下滚动。
+    """竖直老虎机滚筒：OFF / DUT / Driver 三档上下滚动。
 
     外观按参考实现复刻：深色槽体、金属拉丝底、红色指示点、玻璃高光、内阴影。
     参考里三档绕圆心旋转，这里改成竖直方向的滚筒——当前档居中放大、白色发光，
-    上下档缩小、变暗并柔化，滚动时连续插值。``position`` 是连续档位（0=OFF，
-    1=Driver，2=DUT），不传时取 ``mode`` 的终态；导出位图因此总是画最终样子。
-    ``driver_available=False`` 时 Driver 档被划掉，循环也会跳过它。
+    上下档缩小、变暗并柔化，滚动时连续插值。``position`` 是显示顺序的连续档位
+    （0=OFF，1=DUT，2=Driver），不传时取 ``mode`` 的终态；导出位图因此总是画最终
+    样子。点击取下一档、滚筒向上滚一档，因此显示顺序就是 :data:`CHANNEL_MODES`
+    的顺序：OFF → DUT → Driver → OFF。档位文字不带编号，只占一行、垂直居中，
+    并整体向左侧红点靠拢。``driver_available=False`` 时 Driver 档被划掉，循环
+    也会跳过它。
     """
     if mode not in CHANNEL_MODES:
         raise ValueError(
@@ -941,8 +940,9 @@ def _paint_mode_selector(
     if pressed:
         painter.translate(0.0, 0.8)
     row_height = _SELECTOR_ROW_HEIGHT
-    text_center_x = slot.center().x() + 7.0
-    text_width = slot.width() - 24.0
+    # 文字整体向左侧红点靠拢：中心只比槽体中轴偏右 1 像素，左边缘贴近指示点辉光。
+    text_center_x = slot.center().x() + 1.0
+    text_width = slot.width() - 22.0
     for step in range(-2, 5):
         step_mode = CHANNEL_MODES[step % len(CHANNEL_MODES)]
         offset = step - position
@@ -965,29 +965,11 @@ def _paint_mode_selector(
         painter.scale(scale_x, scale_y)
         block = QRectF(-text_width / 2.0, -row_height / 2.0, text_width, row_height)
 
-        # 小号编号：参考实现的 .num，当前档红色、邻档灰暗。
-        number = f"0{CHANNEL_MODES.index(step_mode) + 1}"
-        number_font = _selector_index_font(active)
-        painter.setFont(number_font)
-        painter.setOpacity(alpha * (1.0 if active else 0.55))
-        painter.setPen(
-            _SELECTOR_ACCENT if active else _SELECTOR_TEXT_IDLE
-        )
-        painter.drawText(
-            QRectF(block.left(), block.top() + 1.0, block.width(), 7.0),
-            int(Qt.AlignHCenter | Qt.AlignTop),
-            number,
-        )
-
+        # 档位文字不再带 01/02/03 编号，整行只放一个标签并垂直居中。
         label = CHANNEL_MODE_LABELS[step_mode]
         label_font = _selector_label_font(active)
         painter.setFont(label_font)
-        label_rect = QRectF(
-            block.left(),
-            block.top() + (7.5 if active else 6.0),
-            block.width(),
-            block.height() - 7.0,
-        )
+        label_rect = block
         label_color = _SELECTOR_TEXT if active else _SELECTOR_TEXT_IDLE
         if active:
             # 当前档的柔光：参考实现的 text-shadow: 0 0 20px rgba(255,255,255,.2)。
@@ -1015,15 +997,10 @@ def _paint_mode_selector(
         if step_mode == "driver" and not driver_available:
             painter.setOpacity(0.75)
             painter.setPen(QPen(_SELECTOR_TEXT_IDLE, 1.0))
-            strike = QRectF(
-                block.left() + block.width() * 0.14,
-                block.center().y() + 2.0,
-                block.width() * 0.72,
-                1.0,
-            )
+            strike_y = block.center().y()
             painter.drawLine(
-                QPointF(strike.left(), strike.center().y()),
-                QPointF(strike.right(), strike.center().y()),
+                QPointF(block.left() + block.width() * 0.14, strike_y),
+                QPointF(block.left() + block.width() * 0.86, strike_y),
             )
         painter.restore()
 
@@ -1082,7 +1059,7 @@ def _paint_power_card(
 ) -> None:
     """把整张卡画到 ``painter`` 上；控件与导出位图共用这一份绘制。
 
-    ``reel_positions`` 是“通道 -> 连续档位（0=OFF，1=Driver，2=DUT）”，控件用它播
+    ``reel_positions`` 是“通道 -> 显示顺序的连续档位（0=OFF，1=DUT，2=Driver）”，控件用它播
     700 ms 的滚筒滚动；不传时取数据的终态，导出位图因此总是画最终样子。
     """
     layout = power_card_layout()
@@ -1191,7 +1168,7 @@ class ChannelModeSelector(QWidget):
     """通道供电角色滚筒的透明命中区：外观由父卡片统一绘制。
 
     控件保留 Qt 的键盘焦点与无障碍语义；点击一次按
-    ``OFF → Driver → DUT → OFF`` 循环，``Space`` / ``Enter`` 同样循环。滚轮不切换
+    ``OFF → DUT → Driver → OFF`` 循环，``Space`` / ``Enter`` 同样循环。滚轮不切换
     档位——它留给页面滚动，避免鼠标经过卡片时误改配置。控件本身不画像素，卡面
     因此仍由 :func:`_paint_power_card` 这一份绘制决定。
     """
@@ -1211,8 +1188,8 @@ class ChannelModeSelector(QWidget):
         self.setCursor(Qt.PointingHandCursor)
         self.setAccessibleName(f"通道 {channel} 供电角色")
         self.setAccessibleDescription(
-            "点击循环 OFF、Driver、DUT；OFF 关闭通道，Driver 给驱放供电，"
-            "DUT 给功放供电。切换会同步下方上电计划。"
+            "点击循环 OFF、DUT、Driver；OFF 关闭通道，DUT 给功放供电，"
+            "Driver 给驱放供电。切换会同步下方上电计划。"
         )
 
     def sizeHint(self) -> QSize:
@@ -1482,7 +1459,7 @@ class PowerSupplyCard(QWidget):
         self._hover_protection: tuple[str, str] | None = None
         self._focus_protection: tuple[str, str] | None = None
         self._driver_available = True
-        # 每个通道的连续档位：0=OFF、1=Driver、2=DUT；用户换档时在 700 ms 内插值。
+        # 每个通道的连续档位：0=OFF、1=DUT、2=Driver；用户换档时在 700 ms 内插值。
         self._reel_positions: dict[str, float] = {
             name: float(CHANNEL_MODES.index(data.channel(name).mode))
             for name in CHANNEL_NAMES
@@ -1792,6 +1769,8 @@ class PowerSupplyCard(QWidget):
         target_index = CHANNEL_MODES.index(mode)
         current = self._reel_positions.get(channel, float(target_index))
         count = len(CHANNEL_MODES)
+        # 显示顺序与点击顺序一致（OFF → DUT → Driver）；滚筒向上滚一档，
+        # 位置加一，下一档从槽体下方进入中心。
         delta = (target_index - (current % count)) % count
         if delta < 1e-6:
             self._set_reel_position(channel, target_index)
@@ -1828,7 +1807,7 @@ class PowerSupplyCard(QWidget):
     # ---------- 滚筒事件 ----------
 
     def _on_selector_cycle(self, channel: str) -> None:
-        """点击档位：按 OFF → Driver → DUT → OFF 循环；Driver 禁用时跳过。"""
+        """点击档位：按 OFF → DUT → Driver → OFF 循环；Driver 禁用时跳过。"""
         available = [
             mode
             for mode in CHANNEL_MODES
@@ -1908,8 +1887,8 @@ class PowerSupplyCard(QWidget):
         lines = [
             identity or "未识别电源",
             "左侧 CH1 · 右侧 CH2；卡面不再标注通道号，位置与底色即通道",
-            "点击 OFF / Driver / DUT 滚筒切换供电角色：OFF 关闭通道，"
-            "Driver 给驱放供电，DUT 给功放供电",
+            "点击 OFF / DUT / Driver 滚筒切换供电角色：OFF 关闭通道，"
+            "DUT 给功放供电，Driver 给驱放供电",
             "档位会同步下方上电计划；VS 电压设定（V） · IS 电流设定（A）",
         ]
         for channel in self._data.channels:
@@ -1930,8 +1909,8 @@ class PowerSupplyCard(QWidget):
             )
             selector.setToolTip(
                 f"{channel.channel} 当前 {CHANNEL_MODE_LABELS[channel.mode]}\n"
-                "点击循环 OFF → Driver → DUT → OFF；"
-                "OFF 关闭通道，Driver 给驱放供电，DUT 给功放供电。\n"
+                "点击循环 OFF → DUT → Driver → OFF；"
+                "OFF 关闭通道，DUT 给功放供电，Driver 给驱放供电。\n"
                 "档位会写入下方对应的上电计划。"
                 f"{driver_note}\n{text}"
             )

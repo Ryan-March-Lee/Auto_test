@@ -252,9 +252,9 @@ class PowerCardWallTests(unittest.TestCase):
 
         QTest.mouseClick(selector, Qt.LeftButton, pos=selector.rect().center())
 
-        self.assertEqual(mode_events, [("A", "CH1", "driver")])
+        self.assertEqual(mode_events, [("A", "CH1", "dut")])
         self.assertEqual(value_events, [], "换档不是数值编辑")
-        self.assertEqual(card.channel_mode("CH1"), "driver")
+        self.assertEqual(card.channel_mode("CH1"), "dut")
 
     def test_card_pixmap_is_a_snapshot_of_the_real_card(self):
         wall = self.make_wall()

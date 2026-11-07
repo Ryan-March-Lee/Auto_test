@@ -50,7 +50,6 @@ class Worker:
         self.kind = kind
         self.start_calls = 0
         self.stop_calls = 0
-        self.cancel_calls = 0
         self.emergency_stop_calls = 0
         self.continue_calls = 0
         self.wait_result = True
@@ -60,9 +59,6 @@ class Worker:
 
     def stop(self):
         self.stop_calls += 1
-
-    def cancel(self):
-        self.cancel_calls += 1
 
     def emergency_stop(self):
         self.emergency_stop_calls += 1
@@ -215,27 +211,14 @@ class MeasurementControllerTests(unittest.TestCase):
         worker.signals.stopped.emit("用户停止")
         self.assertEqual(self.controller.state.status, MeasurementStatus.EMERGENCY_STOPPED)
 
-    def test_cancel_is_distinct_from_stop_and_emergency_stop(self):
-        command = MeasurementCommand("config.json", _PREPARED_RUN)
-        self.assertTrue(self.controller.start_amplifier(command))
-        worker = self.workers[-1]
-        self.assertTrue(self.controller.cancel())
-        self.assertEqual(worker.cancel_calls, 1)
-        self.assertEqual(worker.stop_calls, 0)
-        self.assertEqual(worker.emergency_stop_calls, 0)
-        self.assertEqual(self.controller.state.view_state.stop_reason, "任务已取消")
-        worker.signals.stopped.emit("任务已取消")
-        self.assertEqual(self.controller.state.status, MeasurementStatus.CANCELLED)
-
     def test_stop_intent_wins_over_late_worker_finished_event(self):
-        for request, expected_reason in ((self.controller.stop, "用户停止"), (self.controller.cancel, "任务已取消")):
-            self.assertTrue(self.controller.start_amplifier(MeasurementCommand("config.json", _PREPARED_RUN)))
-            worker = self.workers[-1]
-            self.assertTrue(request())
-            worker.signals.result.emit({"value": 1})
-            worker.signals.finished.emit()
-            self.assertEqual(self.controller.state.status, MeasurementStatus.CANCELLED)
-            self.assertEqual(self.controller.state.view_state.stop_reason, expected_reason)
+        self.assertTrue(self.controller.start_amplifier(MeasurementCommand("config.json", _PREPARED_RUN)))
+        worker = self.workers[-1]
+        self.assertTrue(self.controller.stop())
+        worker.signals.result.emit({"value": 1})
+        worker.signals.finished.emit()
+        self.assertEqual(self.controller.state.status, MeasurementStatus.CANCELLED)
+        self.assertEqual(self.controller.state.view_state.stop_reason, "用户停止")
 
     def test_termination_does_not_emit_finished(self):
         events = []
@@ -388,13 +371,13 @@ class MeasurementControllerTests(unittest.TestCase):
 
         self.assertTrue(controller.start_amplifier(command))
 
-    def test_cancel_signal_cleans_worker_and_allows_restart(self):
+    def test_stopped_signal_cleans_worker_and_allows_restart(self):
         command = MeasurementCommand("config.json", _PREPARED_RUN)
         self.assertTrue(self.controller.start_driver_mapping(command))
-        self.workers[-1].signals.stopped.emit("任务已取消")
+        self.workers[-1].signals.stopped.emit("用户停止")
 
         self.assertEqual(self.controller.state.status, MeasurementStatus.CANCELLED)
-        self.assertEqual(self.controller.state.view_state.stop_reason, "任务已取消")
+        self.assertEqual(self.controller.state.view_state.stop_reason, "用户停止")
         self.assertIsNone(self.controller.current_worker)
         self.assertTrue(self.controller.start_amplifier(command))
 

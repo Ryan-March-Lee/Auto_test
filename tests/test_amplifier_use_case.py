@@ -1,4 +1,5 @@
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -221,6 +222,91 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
             use_case.measure_all_frequencies()
 
         self.assertEqual(instrument.measured, 0)
+
+    def test_stop_saves_only_frequencies_that_finished_the_sweep(self):
+        token = CancellationToken()
+
+        class _StoppingInstrument(_Instrument):
+            def measure_power_with_average(self):
+                value = super().measure_power_with_average()
+                if self.measured == 1:
+                    token.request_stop(reason="用户停止")
+                return value
+
+        inputs = replace(
+            amplifier_inputs(),
+            frequencies=(Frequency.from_ghz(1.0), Frequency.from_ghz(2.0)),
+        )
+        losses = {
+            "1.0": {"cable1": 0.0, "cable2": 0.0, "cable3": 0.0, "cable4": 0.0},
+            "2.0": {"cable1": 0.0, "cable2": 0.0, "cable3": 0.0, "cable4": 0.0},
+        }
+        recorder = RecordingStageRecorder("run-amplifier")
+        request = replace(
+            _request(
+                _StoppingInstrument(),
+                token=token,
+                recorder=recorder,
+                reader=MappingInputReader(cable_loss={"cable_losses": losses}),
+            ),
+            inputs=inputs,
+        )
+        use_case = AmplifierMeasurementUseCase(request, sleep_fn=lambda _: None)
+
+        with self.assertRaises(MeasurementCancelled):
+            use_case.measure_all_frequencies()
+
+        self.assertEqual(len(recorder.partials), 1)
+        stage, payload, path = recorder.partials[0]
+        self.assertEqual(stage, STAGE_AMPLIFIER)
+        self.assertEqual(path, "results/amplifier_partial.json")
+        self.assertEqual(payload["status"], "cancelled")
+        self.assertEqual(set(payload["results"]), {"1.0"})
+        self.assertEqual(use_case.last_partial_result.status.value, "cancelled")
+        self.assertEqual(len(use_case.last_partial_result.frequencies), 1)
+        self.assertIn((STAGE_AMPLIFIER, "用户停止"), recorder.cancelled)
+
+    def test_unexpected_partial_save_failure_still_cancels_the_stage(self):
+        """部分结果保存抛出意外异常时，阶段仍必须落到 cancelled，不能停在 running。"""
+        token = CancellationToken()
+
+        class _FailingPartialRecorder(RecordingStageRecorder):
+            def save_partial(self, *args, **kwargs):
+                raise RuntimeError("partial registry down")
+
+        class _StoppingInstrument(_Instrument):
+            def measure_power_with_average(self):
+                value = super().measure_power_with_average()
+                if self.measured == 1:
+                    token.request_stop(reason="用户停止")
+                return value
+
+        inputs = replace(
+            amplifier_inputs(),
+            frequencies=(Frequency.from_ghz(1.0), Frequency.from_ghz(2.0)),
+        )
+        losses = {
+            "1.0": {"cable1": 0.0, "cable2": 0.0, "cable3": 0.0, "cable4": 0.0},
+            "2.0": {"cable1": 0.0, "cable2": 0.0, "cable3": 0.0, "cable4": 0.0},
+        }
+        recorder = _FailingPartialRecorder("run-amplifier")
+        request = replace(
+            _request(
+                _StoppingInstrument(),
+                token=token,
+                recorder=recorder,
+                reader=MappingInputReader(cable_loss={"cable_losses": losses}),
+            ),
+            inputs=inputs,
+        )
+        use_case = AmplifierMeasurementUseCase(request, sleep_fn=lambda _: None)
+
+        with self.assertRaisesRegex(RuntimeError, "partial registry down"):
+            use_case.measure_all_frequencies()
+
+        self.assertIn((STAGE_AMPLIFIER, "用户停止"), recorder.cancelled)
+        self.assertEqual(recorder.failed, [])
+        self.assertIsNone(use_case.last_partial_result)
 
 
 if __name__ == "__main__":

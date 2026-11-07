@@ -96,9 +96,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         self.cable_loss_btn.clicked.connect(self.start_measurement)
         self.load_cable_results_btn.clicked.connect(self.load_result_requested.emit)
         self.stop_cable_loss_btn.clicked.connect(self.stop_measurement)
-        self.cancel_cable_loss_btn = QPushButton("取消")
-        set_button_variant(self.cancel_cable_loss_btn, "secondary")
-        self.cancel_cable_loss_btn.clicked.connect(self.cancel_measurement)
         self.continue_cable_loss_btn.clicked.connect(self.continue_measurement)
         # 接线说明只保留连接图入口：测试者已知道仪器怎么接，按钮只用于防止忘记。
         self.show_path1_btn = QPushButton("查看路径1连接图")
@@ -112,15 +109,13 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
             {
                 MeasurementAction.START: self.cable_loss_btn,
                 MeasurementAction.STOP: self.stop_cable_loss_btn,
-                MeasurementAction.CANCEL: self.cancel_cable_loss_btn,
                 MeasurementAction.CONTINUE: self.continue_cable_loss_btn,
             },
         )
         self.controls.show_idle()
         control_layout.addWidget(self.cable_loss_btn, 0, 0)
         control_layout.addWidget(self.stop_cable_loss_btn, 0, 1)
-        control_layout.addWidget(self.continue_cable_loss_btn, 1, 0)
-        control_layout.addWidget(self.cancel_cable_loss_btn, 1, 1)
+        control_layout.addWidget(self.continue_cable_loss_btn, 1, 0, 1, 2)
         control_layout.addWidget(self.load_cable_results_btn, 2, 0, 1, 2)
         control_layout.addWidget(self.show_path1_btn, 3, 0)
         control_layout.addWidget(self.show_path2_btn, 3, 1)
@@ -192,10 +187,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         if self.controller is not None:
             self.controller.stop()
 
-    def cancel_measurement(self) -> None:
-        if self.controller is not None:
-            self.controller.cancel()
-
     def continue_measurement(self) -> None:
         if self.controller is not None:
             self.controller.continue_cable_loss()
@@ -212,7 +203,7 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
             self.controller.continue_cable_loss()
         else:
             self.controller.stop()
-            self._log_callback("线损测量已取消")
+            self._log_callback("线损测量已停止")
 
     def _on_state_changed(self, state: Any) -> None:
         self.controls.apply(state)
@@ -228,7 +219,7 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         if not self._archival_is_for_this_page():
             return
         self.controls.show_idle()
-        self._archival_test_stopped(reason)
+        self._archival_test_stopped(reason, self._partial_result_path())
         self._log_callback(f"测量已停止: {reason}")
         self._progress_callback(0)
 

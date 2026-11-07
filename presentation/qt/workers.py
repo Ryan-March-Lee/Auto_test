@@ -87,15 +87,6 @@ class BaseWorker(QThread):
         if self._service is not None:
             self._service.stop_measurement()
 
-    def cancel(self) -> None:
-        if not self._request_termination(StopIntent.CANCEL, "任务已取消"):
-            return
-        if self._service is not None:
-            cancel = getattr(self._service, "cancel_measurement", None)
-            if cancel is None:
-                raise RuntimeError("测量服务不支持取消")
-            cancel()
-
     def emergency_stop(self) -> None:
         if not self._request_termination(StopIntent.EMERGENCY_STOP, "紧急停止"):
             return
@@ -113,13 +104,15 @@ class BaseWorker(QThread):
             if emergency_stop is None:
                 raise RuntimeError("测量服务不支持紧急停止")
             emergency_stop()
-        elif self._termination_intent is StopIntent.CANCEL:
-            cancel = getattr(self._service, "cancel_measurement", None)
-            if cancel is None:
-                raise RuntimeError("测量服务不支持取消")
-            cancel()
         else:
             self._service.stop_measurement()
+
+    def _emit_stopped(self, reason: str) -> None:
+        """先交出停止前保存的部分结果（如果有），再报告停止。"""
+        partial = getattr(self._service, "last_partial_result", None)
+        if partial is not None:
+            self.signals.result.emit(partial)
+        self.signals.stopped.emit(reason)
 
     def emit_message(self, message: str) -> None:
         self.signals.message.emit(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
@@ -135,9 +128,15 @@ class BaseWorker(QThread):
 
     def _failed(self, label: str, error: Exception) -> None:
         if isinstance(error, MeasurementCancelled):
-            self.signals.stopped.emit(error.reason)
-        else:
-            self.signals.error.emit(f"{label}: {error}")
+            self._emit_stopped(error.reason)
+            return
+        if self._termination_intent is not None:
+            # 用户已经请求停止：停止后的次生异常（例如部分结果保存失败）不得把
+            # “已停止”改写成“测量失败”。异常详情写入运行日志，终态仍是停止。
+            self.emit_message(f"{label}: {error}")
+            self._emit_stopped(self.stop_reason)
+            return
+        self.signals.error.emit(f"{label}: {error}")
 
     def _construction_failed(self, error: Exception) -> None:
         self.signals.error.emit(f"应用用例构造失败: {error}")
@@ -206,7 +205,7 @@ class InstrumentWorker(BaseWorker):
             self.measurement_port = controller
             if self._stop_requested:
                 self._close_own_port(controller)
-                self.signals.stopped.emit(self.stop_reason)
+                self._emit_stopped(self.stop_reason)
                 return
             self.signals.progress.emit(75)
             self.sleep_fn(1)
@@ -251,7 +250,7 @@ class CableLossWorker(BaseWorker):
                 # 校验通过后、装配测量用例前再次检查停止意图：应用组装层可能连接仪器，
                 # 因此停止请求必须在这里拦下，而不是等到组装完成。
                 if self._stop_requested:
-                    self.signals.stopped.emit(self.stop_reason)
+                    self._emit_stopped(self.stop_reason)
                     return
                 self._service = create_measurement(prepared_run=prepared,
                     progress_callback=self.signals.progress.emit, message_callback=self.signals.message.emit,
@@ -262,18 +261,18 @@ class CableLossWorker(BaseWorker):
                 return
             if self._stop_requested:
                 self._stop_service()
-                self.signals.stopped.emit(self.stop_reason)
+                self._emit_stopped(self.stop_reason)
                 return
             self._service.set_step_pause_callback(self.signals.step_pause.emit)
             self._service.measure_all_frequencies()
             self._waiting_for_continue = True
             if self._stop_requested:
-                self.signals.stopped.emit(self.stop_reason)
+                self._emit_stopped(self.stop_reason)
                 return
             self._continue_event.wait()
             self._waiting_for_continue = False
             if self._stop_requested:
-                self.signals.stopped.emit(self.stop_reason)
+                self._emit_stopped(self.stop_reason)
                 return
             self._service.continue_to_step2()
             result = getattr(self._service, "last_result", None)
@@ -297,10 +296,6 @@ class CableLossWorker(BaseWorker):
 
     def stop(self) -> None:
         super().stop()
-        self._continue_event.set()
-
-    def cancel(self) -> None:
-        super().cancel()
         self._continue_event.set()
 
     def emergency_stop(self) -> None:
@@ -332,14 +327,14 @@ class DriverMappingWorker(BaseWorker):
         try:
             self.emit_message(start_message)
             if self._stop_requested:
-                self.signals.stopped.emit(self.stop_reason)
+                self._emit_stopped(self.stop_reason)
                 return
             try:
                 create_measurement = self.measurement_factory or self._default_factory(factory_name)
                 # 缺少运行契约时明确失败，绝不在 worker 内隐式创建运行。
                 prepared = require_prepared_run(self.prepared_run, "驱动映射测量")
                 if self._stop_requested:
-                    self.signals.stopped.emit(self.stop_reason)
+                    self._emit_stopped(self.stop_reason)
                     return
                 self._service = create_measurement(prepared_run=prepared,
                     progress_callback=self.signals.progress.emit, message_callback=self.signals.message.emit,
@@ -350,7 +345,7 @@ class DriverMappingWorker(BaseWorker):
                 return
             if self._stop_requested:
                 self._stop_service()
-                self.signals.stopped.emit(self.stop_reason)
+                self._emit_stopped(self.stop_reason)
                 return
             self._service.measure_all_frequencies()
             result = getattr(self._service, "last_result", None)
@@ -387,14 +382,14 @@ class AmplifierWorker(BaseWorker):
         try:
             self.emit_message("开始主功放测量...")
             if self._stop_requested:
-                self.signals.stopped.emit(self.stop_reason)
+                self._emit_stopped(self.stop_reason)
                 return
             try:
                 create_measurement = self.measurement_factory or self._default_factory("create_amplifier_measurement")
                 # 缺少运行契约时明确失败，绝不在 worker 内隐式创建运行。
                 prepared = require_prepared_run(self.prepared_run, "主功放测量")
                 if self._stop_requested:
-                    self.signals.stopped.emit(self.stop_reason)
+                    self._emit_stopped(self.stop_reason)
                     return
                 self._service = create_measurement(prepared_run=prepared,
                     progress_callback=self.signals.progress.emit, message_callback=self.signals.message.emit,
@@ -405,7 +400,7 @@ class AmplifierWorker(BaseWorker):
                 return
             if self._stop_requested:
                 self._stop_service()
-                self.signals.stopped.emit(self.stop_reason)
+                self._emit_stopped(self.stop_reason)
                 return
             self._service.measure_all_frequencies()
             result = getattr(self._service, "last_result", None)

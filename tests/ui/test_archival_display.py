@@ -2,6 +2,7 @@
 
 import os
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -301,6 +302,23 @@ class AmplifierPageArchivalLogTests(unittest.TestCase):
 
         self.assertIn("已停止", _log_text(self.logs))
         self.assertIn("用户停止", _log_text(self.logs))
+
+    def test_stopped_summary_reports_the_saved_partial_result_path(self):
+        partial_path = f"{RUN_DIRECTORY}/results/amplifier_partial.json"
+        self.controller.state.view_state = SimpleNamespace(
+            result=SimpleNamespace(
+                value=SimpleNamespace(
+                    result_reference={"archive_path": partial_path}
+                )
+            )
+        )
+        self.page.start_measurement()
+        self.logs.clear()
+
+        self.controller.signals.stopped.emit("用户停止")
+
+        self.assertIn("已保存部分结果", _log_text(self.logs))
+        self.assertIn(partial_path, _log_text(self.logs))
 
     def test_outcome_that_is_not_a_formal_dto_is_reported(self):
         self.page.start_measurement()

@@ -103,7 +103,7 @@ def _result_entries(manifest: RunManifest) -> tuple[tuple[str, str | None], ...]
     只纳入真正属于阶段结果的路径：
 
     - 每个 ``completed`` 阶段登记的 ``record.result``；
-    - 登记到某个已知阶段名下的 ``outputs``（主功放拆分结果文件）。
+    - 登记到某个已知阶段名下的 ``outputs``（主功放拆分结果文件、用户停止时的部分结果）。
 
     ``inputs/hardware_config.json`` 等非阶段结果输入不在其中，因此不能被当作
     历史结果读取或导出。
@@ -121,6 +121,15 @@ def _result_entries(manifest: RunManifest) -> tuple[tuple[str, str | None], ...]
             seen.add(reference.path)
             entries.append((reference.path, reference.stage))
     return tuple(entries)
+
+
+def _formal_result_count(manifest: RunManifest) -> int:
+    """已登记为阶段正式结果的阶段数。
+
+    部分结果与拆分产物虽然可以在历史里查看，但不是正式阶段结果，不能计入
+    “正式结果”数量；只有真正进入 ``completed`` 的阶段才有一条 ``record.result``。
+    """
+    return sum(1 for record in manifest.stages.values() if record.result is not None)
 
 
 class FileRunHistoryRepository(RunHistoryRepository):
@@ -259,7 +268,7 @@ class FileRunHistoryRepository(RunHistoryRepository):
                 for record in manifest.stages.values()
                 if record.status in _FINISHED_STAGE_STATUSES
             ),
-            result_count=len(_result_entries(manifest)),
+            result_count=_formal_result_count(manifest),
             problem=inspection.problem,
         )
 

@@ -20,6 +20,7 @@ self._archival_try_start(
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Callable
 
 from .archival_status import (
@@ -30,8 +31,8 @@ from .archival_status import (
     summarize_archival_missing,
     summarize_archival_running,
     summarize_archival_saving,
-    summarize_test_cancelled,
     summarize_test_failure,
+    summarize_test_stopped,
 )
 from .measurement_state import MeasurementKind
 
@@ -164,14 +165,32 @@ class ArchivalPageMixin:
             summarize_test_failure(self._archival_kind, message)
         )
 
-    def _archival_test_stopped(self, reason: str) -> None:
-        """取消、用户停止或紧急停止：本次没有归档结果。"""
+    def _archival_test_stopped(self, reason: str, partial_path: str | None = None) -> None:
+        """停止或紧急停止：本次没有归档结果；有部分结果时说明保存位置。"""
         self._archival_pending = False
         self._archival_saving = False
         self._archival_terminal_events += 1
         self._show_archival_summary(
-            summarize_test_cancelled(self._archival_kind, reason)
+            summarize_test_stopped(self._archival_kind, reason, partial_path)
         )
+
+    def _partial_result_path(self) -> str | None:
+        """从 controller 的停止状态里取本次保存的部分结果路径。
+
+        停止事件到达时，``result`` 信号已经把部分结果交给页面；这里只读状态，
+        不触发任何文件访问。
+        """
+        controller = self.controller
+        if controller is None:
+            return None
+        view = getattr(getattr(controller, "state", None), "view_state", None)
+        reference = getattr(view, "result", None)
+        value = getattr(reference, "value", None)
+        references = getattr(value, "result_reference", None)
+        if not isinstance(references, Mapping):
+            return None
+        path = references.get("archive_path")
+        return path.strip() if isinstance(path, str) and path.strip() else None
 
     def _archival_test_finished(self) -> None:
         """测试完成：已收到归档结果时保留；否则如实提示“状态未知”。"""

@@ -10,13 +10,14 @@ from pathlib import Path
 from typing import Any, Callable
 
 import domain.measurement.calculations as measurement_calculations
-from app.cancellation import CancellationToken, MeasurementCancelled
+from app.cancellation import CancellationMode, CancellationToken, MeasurementCancelled
 from application.archival_service import ArchivalOutcome, archive_completed_stage
 from application.dto import (
     AmplifierMeasurementInputs,
     AmplifierMeasurementRequest,
     AmplifierMeasurementResult,
     MeasurementResult,
+    MeasurementStatus,
 )
 from application.errors import ConfigurationError
 from application.measurements.services import AmplifierMeasurementService
@@ -118,6 +119,8 @@ class AmplifierMeasurementUseCase:
         )
         self.measurement_results: dict[str, Any] = {}
         self.last_result: MeasurementResult | None = None
+        self.last_partial_result: MeasurementResult | None = None
+        self._partial_saved = False
 
     @property
     def last_cleanup_record(self) -> CleanupRecord | None:
@@ -126,9 +129,6 @@ class AmplifierMeasurementUseCase:
 
     def stop_measurement(self) -> None:
         self._token.request_stop(reason="用户停止")
-
-    def cancel_measurement(self) -> None:
-        self._token.request_cancel(reason="任务已取消")
 
     def emergency_stop(self) -> None:
         self._token.request_emergency_stop(reason="紧急停止")
@@ -165,11 +165,48 @@ class AmplifierMeasurementUseCase:
             self.last_result = result
             return result
         except MeasurementCancelled as error:
-            self._record_cancel(getattr(error, "reason", None) or "测量已取消")
+            try:
+                if error.mode is CancellationMode.STOP:
+                    self._save_partial(error.reason)
+            finally:
+                # 停止必须是确定的终态：部分结果保存（含意外异常）不得让阶段
+                # 停留在 running，也不得改动“本次已停止”的语义。
+                self._record_cancel(getattr(error, "reason", None) or "测量已取消")
             raise
         except Exception as error:  # 任何测量失败都要登记阶段失败后原样上抛
             self._record_failure(error)
             raise
+
+    def _save_partial(self, reason: str) -> None:
+        """保存停止前已经完整扫完的频点。
+
+        可预期的持久化失败（I/O、数据契约）只记录日志，停止照常成立；其余异常原样
+        上抛，由调用点的 ``finally`` 保证阶段已经落到 ``cancelled``。
+        """
+        if self._partial_saved or not self._stage_open:
+            return
+        try:
+            payload = self._service.partial_payload()
+            result = AmplifierMeasurementResult.from_service_payload(
+                payload,
+                run_id=self.run_id,
+                status=MeasurementStatus.CANCELLED,
+                termination={"intent": "stop", "reason": reason or "用户停止"},
+            )
+            if not result.frequencies:
+                logger.info("停止时没有完整的主功放频点，未保存部分结果")
+                return
+            reference = self.stage_recorder.save_partial(
+                STAGE_AMPLIFIER,
+                result.to_dict(),
+                description="用户停止时保存的部分结果",
+            )
+            self.last_partial_result = result.with_saved_result(
+                archive_path=str(Path(self.run_directory) / reference.path)
+            )
+            self._partial_saved = True
+        except (OSError, TypeError, ValueError):
+            logger.exception("保存主功放部分结果失败")
 
     # -- 运行契约：校准输入 ------------------------------------------------
 

@@ -89,8 +89,10 @@ class RunHistoryState(str, Enum):
 class RunHistoryEntry:
     """一次运行在历史列表中的只读摘要。
 
-    ``result_count`` 是该运行可浏览的阶段结果数量；``INVALID`` 运行的阶段与结果
-    计数固定为 0，并通过 ``problem`` 说明判定为损坏/缺失的原因。
+    ``result_count`` 是该运行已登记**正式阶段结果**的数量（``completed`` 阶段的
+    ``record.result``）；用户停止时保存的部分结果与拆分产物可以在结果列表里查看，
+    但不计入正式结果。``INVALID`` 运行的阶段与结果计数固定为 0，并通过 ``problem``
+    说明判定为损坏/缺失的原因。
     """
 
     run_id: str

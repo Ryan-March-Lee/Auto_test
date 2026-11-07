@@ -391,14 +391,20 @@ class CableLossMeasurementResult(MeasurementResult):
 
     @classmethod
     def from_service_payload(
-        cls, payload: Mapping[str, Any], *, run_id: str
+        cls,
+        payload: Mapping[str, Any],
+        *,
+        run_id: str,
+        status: MeasurementStatus | str | None = None,
+        termination: Mapping[str, Any] | None = None,
     ) -> "CableLossMeasurementResult":
         """把线损服务载荷转换为正式结果（服务载荷仍是本层唯一入口）。"""
         if not isinstance(payload, Mapping):
             raise ValueError("线损测量结果载荷必须是映射")
         return cls(
             run_id=run_id,
-            status=_service_status(payload.get("status")),
+            status=_service_status(payload.get("status")) if status is None else status,
+            termination=termination,
             attenuator_value=_float_or_none(payload.get("attenuator_value")),
             points=_cable_loss_rows(payload.get("cable_losses")),
         )
@@ -463,13 +469,19 @@ class DriverPowerMappingMeasurementResult(MeasurementResult):
 
     @classmethod
     def from_service_payload(
-        cls, payload: Mapping[str, Any], *, run_id: str
+        cls,
+        payload: Mapping[str, Any],
+        *,
+        run_id: str,
+        status: MeasurementStatus | str | None = None,
+        termination: Mapping[str, Any] | None = None,
     ) -> "DriverPowerMappingMeasurementResult":
         if not isinstance(payload, Mapping):
             raise ValueError("驱动映射结果载荷必须是映射")
         return cls(
             run_id=run_id,
-            status=_service_status(payload.get("status")),
+            status=_service_status(payload.get("status")) if status is None else status,
+            termination=termination,
             points=_power_mapping_points(payload.get("power_mapping")),
         )
 
@@ -544,13 +556,19 @@ class AmplifierMeasurementResult(MeasurementResult):
 
     @classmethod
     def from_service_payload(
-        cls, payload: Mapping[str, Any], *, run_id: str
+        cls,
+        payload: Mapping[str, Any],
+        *,
+        run_id: str,
+        status: MeasurementStatus | str | None = None,
+        termination: Mapping[str, Any] | None = None,
     ) -> "AmplifierMeasurementResult":
         if not isinstance(payload, Mapping):
             raise ValueError("主功放结果载荷必须是映射")
         return cls(
             run_id=run_id,
-            status=_service_status(payload.get("status")),
+            status=_service_status(payload.get("status")) if status is None else status,
+            termination=termination,
             frequencies=_amplifier_frequencies_from_service(payload.get("results")),
             configuration_snapshot=payload.get("configuration_snapshot", {}),
         )

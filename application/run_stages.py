@@ -36,6 +36,7 @@ from domain.run.models import (
     StageStatus,
     TERMINAL_RUN_STATUSES,
     TERMINAL_STAGE_STATUSES,
+    default_partial_stage_result_path,
     default_stage_result_path,
 )
 
@@ -210,6 +211,55 @@ class RunStageRecorder:
             for written_path in written:
                 self._discard_quietly(written_path)
             raise
+        return reference
+
+    def save_partial(
+        self,
+        stage: str,
+        payload: Any,
+        *,
+        result_path: str | None = None,
+        description: str | None = None,
+        now: datetime | None = None,
+    ) -> FileReference:
+        """保存用户停止时已完成的部分结果，但不把阶段标记为完成。
+
+        部分结果写在 ``results/`` 下并登记为输出，阶段随后仍由 :meth:`cancel`
+        标记为 ``cancelled``。因此：
+
+        - 后续阶段的 :meth:`verified_result_path` 不会接受它（阶段不是 completed）；
+        - 历史浏览仍能按运行 manifest 登记找到它；
+        - 它不会覆盖阶段正式结果路径，也不会生成 CSV/报告。
+
+        写入或登记失败会原样抛出，由用例决定是否降级为日志；停止流程不能因此被
+        掩盖。写入与登记是一个提交边界：登记没有成功时尽力删除刚写入的文件，避免
+        留下“历史列表看不到的半截部分结果”。
+        """
+        path = (
+            result_path
+            if result_path is not None
+            else default_partial_stage_result_path(stage)
+        )
+        if path is None:
+            raise ValueError(f"阶段 {stage} 没有固定的部分结果路径")
+        relative = self.repository.write_run_json(
+            self.run_id, path, payload, overwrite=True
+        )
+        registered = False
+        try:
+            reference = self.repository.register_file(
+                self.run_id,
+                relative,
+                stage=stage,
+                description=description,
+                now=now,
+            )
+            registered = True
+        finally:
+            # 登记是“部分结果已保存”的唯一判据；任何失败（含意外异常）都要回滚
+            # 这次写入，但不得吞掉异常本身。
+            if not registered:
+                self._discard_quietly(relative)
         return reference
 
     def skip(self, stage: str, *, note: str | None = None, now: datetime | None = None) -> RunManifest:

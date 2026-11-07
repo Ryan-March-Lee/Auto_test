@@ -252,6 +252,7 @@ class CableLossService(_Service):
         super().__init__(_mapping_config(config), instrument, **kwargs)
         self.attenuator_value = Decibels.parse(config["attenuator"]["type"])
         self._path1_losses: dict[float, float] = {}
+        self._path2_losses: dict[float, float] = {}
 
     def measure_path_loss(self, frequency: float) -> float:
         self._check_cancelled()
@@ -272,6 +273,32 @@ class CableLossService(_Service):
         """Return the path-1 measurements collected so far."""
         return dict(self._path1_losses)
 
+    def partial_payload(self) -> dict[str, Any]:
+        """停止时返回已经完整测完两条路径的频点。
+
+        线损只有在同一频点的路径 1 与路径 2 都完成后才有正式线缆损耗；停在
+        路径 1 或路径 2 中途时，没有完整频点就返回空 ``cable_losses``。
+        """
+        frequencies = tuple(
+            Frequency.from_ghz(value) for value in self.config["test_frequencies"]
+        )
+        losses = CableLossTable(
+            {
+                frequency: calculate_cable_losses(
+                    Decibels(self._path1_losses[frequency.ghz]),
+                    Decibels(self._path2_losses[frequency.ghz]),
+                    self.attenuator_value,
+                )
+                for frequency in frequencies
+                if frequency.ghz in self._path1_losses
+                and frequency.ghz in self._path2_losses
+            }
+        )
+        return {
+            "attenuator_value": self.attenuator_value.db,
+            "cable_losses": losses.to_document(),
+        }
+
     def cleanup(self) -> CleanupRecord:
         """Expose the common safety cleanup boundary to application callers."""
         return self._cleanup()
@@ -281,13 +308,14 @@ class CableLossService(_Service):
             Frequency.from_ghz(value) for value in self.config["test_frequencies"]
         )
         path1: dict[float, float] = dict(self._path1_losses)
-        path2: dict[float, float] = {}
+        path2: dict[float, float] = dict(self._path2_losses)
         waiting_for_path2 = False
         try:
             if not path1:
                 _publish(self.event_sink, CheckpointEvent(self.run_id, checkpoint="path1", prompt="请连接路径1"))
                 for index, frequency in enumerate(frequencies):
                     path1[frequency.ghz] = self.measure_path_loss(frequency.ghz)
+                    self._path1_losses = dict(path1)
                     profile = calculate_cable_losses(
                         Decibels(path1[frequency.ghz]),
                         Decibels(path1[frequency.ghz]),
@@ -307,7 +335,6 @@ class CableLossService(_Service):
                         ),
                     )
                     self._progress((index + 1) / (2 * len(frequencies)), "path1")
-                self._path1_losses = dict(path1)
             if not path2_confirmed:
                 waiting_for_path2 = True
                 _publish(self.event_sink, CheckpointEvent(self.run_id, checkpoint="path2", prompt="请连接路径2"))
@@ -317,6 +344,7 @@ class CableLossService(_Service):
             # 当成新的弹窗请求，而路径2测量已经开始执行。
             for index, frequency in enumerate(frequencies):
                 path2[frequency.ghz] = self.measure_path_loss(frequency.ghz)
+                self._path2_losses = dict(path2)
                 profile = calculate_cable_losses(
                     Decibels(path1[frequency.ghz]),
                     Decibels(path2[frequency.ghz]),
@@ -369,13 +397,19 @@ class DriverPowerMappingService(_Service):
         # 服务只保留解析后的表，不再同时持有原始文档副本。
         self.loss_table = _loss_table(loss_data)
         self.attenuator_value = Decibels.parse(config["attenuator"]["type"])
+        # 每个完整频点的映射；停止时只保存已经完整扫完的频点。
+        self._mapping: dict[str, dict[str, float]] = {}
+
+    def partial_payload(self) -> dict[str, Any]:
+        """返回已经完整扫完的驱动映射频点。"""
+        return {"power_mapping": {key: dict(value) for key, value in self._mapping.items()}}
 
     @classmethod
     def required_capabilities(cls, config: Mapping[str, Any]) -> tuple[str, ...]:
         return SIGNAL_MEASUREMENT_CAPABILITIES + DRIVER_POWER_CAPABILITIES
 
     def run(self) -> dict[str, Any]:
-        mapping: dict[str, dict[str, float]] = {}
+        mapping = self._mapping
         try:
             self.inst_ctrl.setup_driver_amplifier_power()
             self.inst_ctrl.power_on_driver()
@@ -469,6 +503,15 @@ class AmplifierMeasurementService(_Service):
         self.attenuator_value = inputs.attenuator
         self.compression_value = inputs.compression_target
         self.configuration_snapshot = dict(configuration_snapshot or {})
+        # 完整频点的结果；停止时只保存已经完整扫完的频点。
+        self._results: dict[str, Any] = {}
+
+    def partial_payload(self) -> dict[str, Any]:
+        """返回已经完整扫完的主功放频点结果。"""
+        return {
+            "results": dict(self._results),
+            "configuration_snapshot": dict(self.configuration_snapshot),
+        }
 
     @classmethod
     def required_capabilities(cls, inputs: Any) -> tuple[str, ...]:
@@ -599,7 +642,7 @@ class AmplifierMeasurementService(_Service):
                 "compression_achieved": result.compression_achieved}
 
     def run(self) -> dict[str, Any]:
-        results: dict[str, Any] = {}
+        results = self._results
         try:
             if self.inputs.driver_enabled:
                 self.inst_ctrl.setup_driver_amplifier_power()

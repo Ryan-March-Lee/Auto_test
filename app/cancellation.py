@@ -8,7 +8,6 @@ from threading import Event, Lock
 
 class CancellationMode(str, Enum):
     STOP = "stop"
-    CANCEL = "cancel"
     EMERGENCY_STOP = "emergency_stop"
     NORMAL = "stop"
     EMERGENCY = "emergency_stop"
@@ -64,10 +63,6 @@ class CancellationToken:
 
     def request_stop(self, *, reason: str | None = None) -> None:
         self.cancel(CancellationMode.STOP, reason=reason)
-
-    def request_cancel(self, *, reason: str | None = None) -> None:
-        """请求尽快结束用户已不再需要的任务。"""
-        self.cancel(CancellationMode.CANCEL, reason=reason)
 
     def request_emergency_stop(self, *, reason: str | None = None) -> None:
         self.cancel(CancellationMode.EMERGENCY_STOP, reason=reason)

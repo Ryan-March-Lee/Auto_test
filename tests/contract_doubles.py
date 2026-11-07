@@ -92,6 +92,7 @@ class RecordingStageRecorder:
         self.failed: list[tuple[str, str]] = []
         self.cancelled: list[tuple[str, str | None]] = []
         self.skipped: list[tuple[str, str | None]] = []
+        self.partials: list[tuple[str, Any, str]] = []
         self.verified: list[str] = []
         self.completed_runs = 0
 
@@ -120,6 +121,19 @@ class RecordingStageRecorder:
     def cancel(self, stage: str, reason: str | None = None, *, now: Any = None) -> None:
         self.cancelled.append((stage, reason))
 
+    def save_partial(
+        self,
+        stage: str,
+        payload: Any,
+        *,
+        result_path: str | None = None,
+        description: str | None = None,
+        now: Any = None,
+    ) -> Any:
+        path = result_path or f"results/{stage}_partial.json"
+        self.partials.append((stage, payload, path))
+        return SimpleNamespace(path=path)
+
     def skip(self, stage: str, *, note: str | None = None, now: Any = None) -> None:
         self.skipped.append((stage, note))
 
@@ -140,6 +154,10 @@ class RecordingStageRecorder:
     def result_paths(self) -> dict[str, str]:
         """返回本次测试写入的阶段结果路径（阶段 → 相对路径）。"""
         return {stage: details["result_path"] for stage, _payload, details in self.completed}
+
+    def partial_paths(self) -> dict[str, str]:
+        """返回本次测试写入的部分结果路径（阶段 → 相对路径）。"""
+        return {stage: path for stage, _payload, path in self.partials}
 
 
 def amplifier_inputs(

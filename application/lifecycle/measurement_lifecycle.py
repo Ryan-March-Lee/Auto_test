@@ -10,7 +10,6 @@ from application.dto.measurement_results import MeasurementStatus
 
 class StopIntent(str, Enum):
     STOP = "stop"
-    CANCEL = "cancel"
     EMERGENCY_STOP = "emergency_stop"
     NORMAL = "stop"
     EMERGENCY = "emergency_stop"
@@ -94,18 +93,6 @@ class MeasurementLifecycle:
             return MeasurementLifecycle(self.status, intent, reason, self.error)
         state = self.transition(MeasurementStatus.STOPPING, reason=reason)
         return MeasurementLifecycle(state.status, intent, reason, state.error)
-
-    def request_cancel(self, reason: str) -> "MeasurementLifecycle":
-        if not reason.strip():
-            raise ValueError("取消原因不能为空")
-        if self.stop_intent is StopIntent.EMERGENCY_STOP:
-            return self
-        if self.stop_intent is StopIntent.STOP:
-            return self
-        if self.status is MeasurementStatus.STOPPING:
-            return MeasurementLifecycle(self.status, StopIntent.CANCEL, reason, self.error)
-        state = self.transition(MeasurementStatus.STOPPING, reason=reason)
-        return MeasurementLifecycle(state.status, StopIntent.CANCEL, reason, state.error)
 
     def worker_stopped(self, reason: str = "") -> "MeasurementLifecycle":
         intent = self.stop_intent or StopIntent.NORMAL

@@ -99,9 +99,9 @@ class AmplifierPage(
         self.amplifier_test_btn = QPushButton("开始功放测试")
         set_button_variant(self.amplifier_test_btn, "primary")
         self.amplifier_test_btn.clicked.connect(self.start_measurement)
-        self.cancel_btn = QPushButton("取消")
-        set_button_variant(self.cancel_btn, "secondary")
-        self.cancel_btn.clicked.connect(self.cancel_measurement)
+        self.stop_btn = QPushButton("停止测量")
+        set_button_variant(self.stop_btn, "secondary")
+        self.stop_btn.clicked.connect(self.stop_measurement)
         self.emergency_stop_btn = QPushButton("紧急停止")
         set_button_variant(self.emergency_stop_btn, "danger")
         self.emergency_stop_btn.clicked.connect(self.emergency_stop_measurement)
@@ -112,16 +112,16 @@ class AmplifierPage(
             MeasurementKind.AMPLIFIER,
             {
                 MeasurementAction.START: self.amplifier_test_btn,
-                MeasurementAction.CANCEL: self.cancel_btn,
+                MeasurementAction.STOP: self.stop_btn,
                 MeasurementAction.EMERGENCY_STOP: self.emergency_stop_btn,
             },
         )
         self.controls.show_idle()
-        # 测量控制按钮横向排列在同一行，减少纵向占用面积；连接图入口单独占下一行。
+        # 测量控制按钮横向排列在同一行，连接图入口单独占下一行。
         for column, button in enumerate(
             (
                 self.amplifier_test_btn,
-                self.cancel_btn,
+                self.stop_btn,
                 self.emergency_stop_btn,
             )
         ):
@@ -206,10 +206,6 @@ class AmplifierPage(
         if self.controller is not None:
             self.controller.stop()
 
-    def cancel_measurement(self) -> None:
-        if self.controller is not None:
-            self.controller.cancel()
-
     def emergency_stop_measurement(self) -> None:
         if self.controller is None:
             return
@@ -271,7 +267,7 @@ class AmplifierPage(
             return
         self.controls.show_idle()
         self._progress_callback(0)
-        self._archival_test_stopped(reason)
+        self._archival_test_stopped(reason, self._partial_result_path())
         self._log_callback(f"测量已停止: {reason}")
 
     def _on_finished(self) -> None:

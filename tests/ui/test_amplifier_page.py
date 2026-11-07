@@ -194,7 +194,7 @@ class AmplifierPageTests(unittest.TestCase):
             frozenset(
                 {
                     MeasurementAction.START,
-                    MeasurementAction.CANCEL,
+                    MeasurementAction.STOP,
                     MeasurementAction.EMERGENCY_STOP,
                 }
             ),
@@ -203,12 +203,12 @@ class AmplifierPageTests(unittest.TestCase):
             "kind": MeasurementKind.AMPLIFIER, "is_active": True,
         })())
         self.assertFalse(self.page.amplifier_test_btn.isEnabled())
-        self.assertTrue(self.page.cancel_btn.isEnabled())
+        self.assertTrue(self.page.stop_btn.isEnabled())
         self.assertTrue(self.page.emergency_stop_btn.isEnabled())
 
         self.controller.signals.finished.emit()
         self.assertTrue(self.page.amplifier_test_btn.isEnabled())
-        self.assertFalse(self.page.cancel_btn.isEnabled())
+        self.assertFalse(self.page.stop_btn.isEnabled())
         self.assertFalse(self.page.emergency_stop_btn.isEnabled())
 
     def test_control_buttons_share_one_row(self):
@@ -216,7 +216,7 @@ class AmplifierPageTests(unittest.TestCase):
         page.resize(1200, 800)
         page.show()
         self.app.processEvents()
-        buttons = (page.amplifier_test_btn, page.cancel_btn, page.emergency_stop_btn)
+        buttons = (page.amplifier_test_btn, page.stop_btn, page.emergency_stop_btn)
         tops = {button.geometry().top() for button in buttons}
         self.assertEqual(len(tops), 1)
         lefts = [button.geometry().left() for button in buttons]

@@ -63,9 +63,10 @@ def _request(
     events=None,
     token=None,
     repository=None,
+    frequencies=(1.0,),
 ):
     configuration = {
-        "test_frequencies": [1.0],
+        "test_frequencies": list(frequencies),
         "attenuator": {"type": "10dB"},
         "signal_source": {"start_power": -20, "stop_power": -20, "step": 1},
     }
@@ -162,6 +163,74 @@ class DriverPowerMappingUseCaseTests(unittest.TestCase):
         self.assertEqual(instrument.measured, 0)
         self.assertEqual(instrument.driver_off_calls, 1)
         self.assertEqual(instrument.rf_off_calls, 0)
+
+    def test_stop_saves_only_frequencies_that_finished_the_sweep(self):
+        token = CancellationToken()
+
+        class _StoppingInstrument(_Instrument):
+            def measure_power_with_average(self):
+                value = super().measure_power_with_average()
+                if self.measured == 1:
+                    token.request_stop(reason="用户停止")
+                return value
+
+        instrument = _StoppingInstrument()
+        recorder = RecordingStageRecorder("run-mapping")
+        use_case = DriverPowerMappingUseCase(
+            _request(
+                instrument,
+                token=token,
+                recorder=recorder,
+                frequencies=(1.0, 2.0),
+            ),
+            sleep_fn=lambda _: None,
+        )
+
+        with self.assertRaises(MeasurementCancelled):
+            use_case.measure_all_frequencies()
+
+        self.assertEqual(len(recorder.partials), 1)
+        stage, payload, path = recorder.partials[0]
+        self.assertEqual(stage, STAGE_DRIVER_MAPPING)
+        self.assertEqual(path, "results/driver_mapping_partial.json")
+        self.assertEqual(payload["status"], "cancelled")
+        self.assertEqual(set(payload["power_mapping"]), {"1.0"})
+        self.assertEqual(use_case.last_partial_result.status.value, "cancelled")
+        self.assertEqual(len(use_case.last_partial_result.points), 1)
+        self.assertIn((STAGE_DRIVER_MAPPING, "用户停止"), recorder.cancelled)
+
+    def test_unexpected_partial_save_failure_still_cancels_the_stage(self):
+        """部分结果保存抛出意外异常时，阶段仍必须落到 cancelled，不能停在 running。"""
+        token = CancellationToken()
+
+        class _FailingPartialRecorder(RecordingStageRecorder):
+            def save_partial(self, *args, **kwargs):
+                raise RuntimeError("partial registry down")
+
+        class _StoppingInstrument(_Instrument):
+            def measure_power_with_average(self):
+                value = super().measure_power_with_average()
+                if self.measured == 1:
+                    token.request_stop(reason="用户停止")
+                return value
+
+        recorder = _FailingPartialRecorder("run-mapping")
+        use_case = DriverPowerMappingUseCase(
+            _request(
+                _StoppingInstrument(),
+                token=token,
+                recorder=recorder,
+                frequencies=(1.0, 2.0),
+            ),
+            sleep_fn=lambda _: None,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "partial registry down"):
+            use_case.measure_all_frequencies()
+
+        self.assertIn((STAGE_DRIVER_MAPPING, "用户停止"), recorder.cancelled)
+        self.assertEqual(recorder.failed, [])
+        self.assertIsNone(use_case.last_partial_result)
 
 
 if __name__ == "__main__":

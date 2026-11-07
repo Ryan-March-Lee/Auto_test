@@ -67,6 +67,23 @@ STAGE_RESULT_PATHS: Mapping[str, str] = MappingProxyType(
     }
 )
 
+# 用户主动停止时保存的部分结果。它不是阶段正式结果：阶段仍标记为 cancelled，
+# 因此后续阶段不会把它当作校准输入；它只作为 ``results/`` 下的输出登记，供历史页
+# 查看和导出。
+PARTIAL_STAGE_RESULT_PATHS: Mapping[str, str] = MappingProxyType(
+    {
+        STAGE_CABLE_LOSS: RESULTS_DIRNAME + "/cable_loss_partial.json",
+        STAGE_DRIVER_MAPPING: RESULTS_DIRNAME + "/driver_mapping_partial.json",
+        STAGE_AMPLIFIER: RESULTS_DIRNAME + "/amplifier_partial.json",
+    }
+)
+
+
+def default_partial_stage_result_path(stage: str) -> str | None:
+    """返回阶段停止时部分结果的固定路径；未知阶段返回 ``None``。"""
+    return PARTIAL_STAGE_RESULT_PATHS.get(stage)
+
+
 _UNCHANGED: Any = object()
 
 
@@ -1076,6 +1093,7 @@ __all__ = [
     "INPUTS_DIRNAME",
     "MANIFEST_FILENAME",
     "MANIFEST_SCHEMA_VERSION",
+    "PARTIAL_STAGE_RESULT_PATHS",
     "RESULTS_DIRNAME",
     "RUNS_DIRNAME",
     "RUN_ID_PATTERN",
@@ -1097,6 +1115,7 @@ __all__ = [
     "coerce_status",
     "default_artifact_path",
     "default_manifest",
+    "default_partial_stage_result_path",
     "default_stage_result_path",
     "generate_run_id",
     "is_relative_path",

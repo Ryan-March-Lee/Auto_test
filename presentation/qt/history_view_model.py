@@ -129,7 +129,7 @@ _RUN_STATUS_LABELS = {
     RunStatus.RUNNING: "进行中",
     RunStatus.COMPLETED: "已完成",
     RunStatus.FAILED: "失败",
-    RunStatus.CANCELLED: "已取消",
+    RunStatus.CANCELLED: "已停止",
     RunStatus.INTERRUPTED: "已中断",
 }
 _RUN_STATE_LABELS = {

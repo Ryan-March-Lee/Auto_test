@@ -202,10 +202,10 @@ class CableLossServiceCleanupRecordTests(unittest.TestCase):
         self.assertEqual(record.resources, CleanupStepStatus.FAILED)
         self.assertIn("close", record.errors)
 
-    def test_cancelled_run_still_produces_a_cleanup_record(self):
+    def test_stopped_run_still_produces_a_cleanup_record(self):
         instrument = _NormalInstrument()
         token = CancellationToken()
-        token.request_cancel(reason="任务已取消")
+        token.request_stop(reason="用户停止")
         service = _make_service(instrument, cancellation_token=token)
 
         with self.assertRaises(MeasurementCancelled):

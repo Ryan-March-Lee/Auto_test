@@ -239,7 +239,6 @@ class DriverMappingPageTests(unittest.TestCase):
                 {
                     MeasurementAction.START,
                     MeasurementAction.STOP,
-                    MeasurementAction.CANCEL,
                     MeasurementAction.EMERGENCY_STOP,
                 }
             ),
@@ -249,13 +248,11 @@ class DriverMappingPageTests(unittest.TestCase):
         )
         self.assertFalse(self.page.driver_mapping_btn.isEnabled())
         self.assertTrue(self.page.driver_stop_btn.isEnabled())
-        self.assertTrue(self.page.driver_cancel_btn.isEnabled())
         self.assertTrue(self.page.driver_emergency_stop_btn.isEnabled())
 
         self.controller.signals.stopped.emit("用户停止")
         self.assertTrue(self.page.driver_mapping_btn.isEnabled())
         self.assertFalse(self.page.driver_stop_btn.isEnabled())
-        self.assertFalse(self.page.driver_cancel_btn.isEnabled())
         self.assertFalse(self.page.driver_emergency_stop_btn.isEnabled())
 
     def test_other_measurement_terminal_events_are_ignored(self):
@@ -290,7 +287,6 @@ class DriverMappingPageTests(unittest.TestCase):
         buttons = (
             page.driver_mapping_btn,
             page.driver_stop_btn,
-            page.driver_cancel_btn,
             page.driver_emergency_stop_btn,
         )
         tops = {button.geometry().top() for button in buttons}

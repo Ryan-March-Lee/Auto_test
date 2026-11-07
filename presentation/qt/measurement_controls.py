@@ -25,7 +25,6 @@ class MeasurementAction(str, Enum):
 
     START = "start"
     STOP = "stop"
-    CANCEL = "cancel"
     EMERGENCY_STOP = "emergency_stop"
     CONTINUE = "continue"
 
@@ -122,7 +121,6 @@ class MeasurementControlPresenter:
             return self._availability({MeasurementAction.START})
         enabled = {
             MeasurementAction.STOP,
-            MeasurementAction.CANCEL,
             MeasurementAction.EMERGENCY_STOP,
         }
         if status is MeasurementStatus.WAITING_FOR_CONTINUE:

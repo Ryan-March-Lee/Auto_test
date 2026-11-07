@@ -49,8 +49,8 @@ class _Repository:
         return SimpleNamespace(run_directory=Path("saved-run"))
 
 
-def _request(instrument, *, events=None, token=None, repository=None, recorder=None):
-    configuration = {"test_frequencies": [1.0], "attenuator": {"type": "10dB"}}
+def _request(instrument, *, events=None, token=None, repository=None, recorder=None, frequencies=(1.0,)):
+    configuration = {"test_frequencies": list(frequencies), "attenuator": {"type": "10dB"}}
     return CableLossMeasurementRequest(
         configuration=configuration,
         context=SimpleNamespace(run_id="run-cable"),
@@ -281,6 +281,82 @@ class CableLossUseCaseTests(unittest.TestCase):
 
         self.assertEqual(instrument.measured, 0)
         self.assertEqual(instrument.close_calls, 1)
+
+    def test_stop_saves_only_the_frequencies_with_both_paths(self):
+        token = CancellationToken()
+
+        class _StoppingInstrument(_Instrument):
+            def measure_power_with_average(self):
+                value = super().measure_power_with_average()
+                if self.measured == 3:  # path1 两个频点 + path2 第一个频点
+                    token.request_stop(reason="用户停止")
+                return value
+
+        instrument = _StoppingInstrument()
+        recorder = RecordingStageRecorder("run-cable")
+        use_case = CableLossUseCase(
+            _request(
+                instrument,
+                token=token,
+                recorder=recorder,
+                frequencies=(1.0, 2.0),
+            ),
+            sleep_fn=lambda _: None,
+        )
+        use_case.measure_all_frequencies()
+
+        with self.assertRaises(MeasurementCancelled):
+            use_case.continue_to_step2()
+
+        self.assertEqual(len(recorder.partials), 1)
+        stage, payload, path = recorder.partials[0]
+        self.assertEqual(stage, STAGE_CABLE_LOSS)
+        self.assertEqual(path, "results/cable_loss_partial.json")
+        self.assertEqual(payload["status"], "cancelled")
+        self.assertEqual(payload["termination"]["intent"], "stop")
+        self.assertEqual(set(payload["cable_losses"]), {"1.0"})
+        self.assertEqual(use_case.last_partial_result.status.value, "cancelled")
+        self.assertEqual(len(use_case.last_partial_result.points), 1)
+        self.assertIn(
+            (STAGE_CABLE_LOSS, "用户停止"),
+            recorder.cancelled,
+        )
+
+    def test_unexpected_partial_save_failure_still_cancels_the_stage(self):
+        """部分结果保存抛出意外异常时，停止语义与终态都不改变。"""
+        token = CancellationToken()
+
+        class _FailingPartialRecorder(RecordingStageRecorder):
+            def save_partial(self, *args, **kwargs):
+                raise RuntimeError("partial registry down")
+
+        class _StoppingInstrument(_Instrument):
+            def measure_power_with_average(self):
+                value = super().measure_power_with_average()
+                if self.measured == 3:  # path1 两个频点 + path2 第一个频点
+                    token.request_stop(reason="用户停止")
+                return value
+
+        recorder = _FailingPartialRecorder("run-cable")
+        use_case = CableLossUseCase(
+            _request(
+                _StoppingInstrument(),
+                token=token,
+                recorder=recorder,
+                frequencies=(1.0, 2.0),
+            ),
+            sleep_fn=lambda _: None,
+        )
+        use_case.measure_all_frequencies()
+
+        with self.assertRaisesRegex(RuntimeError, "partial registry down"):
+            use_case.continue_to_step2()
+
+        self.assertIn((STAGE_CABLE_LOSS, "用户停止"), recorder.cancelled)
+        self.assertIsNone(use_case.last_partial_result)
+        # 停止后的用例已经结束，不能继续。
+        with self.assertRaisesRegex(RuntimeError, "已经结束"):
+            use_case.continue_to_step2()
 
 
 if __name__ == "__main__":

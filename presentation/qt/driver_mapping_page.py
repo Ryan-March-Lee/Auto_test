@@ -96,9 +96,6 @@ class DriverMappingPage(
         self.driver_mapping_btn = QPushButton("开始驱动映射")
         set_button_variant(self.driver_mapping_btn, "primary")
         self.driver_mapping_btn.clicked.connect(self.start_measurement)
-        self.driver_cancel_btn = QPushButton("取消")
-        set_button_variant(self.driver_cancel_btn, "secondary")
-        self.driver_cancel_btn.clicked.connect(self.cancel_measurement)
         self.driver_stop_btn = QPushButton("停止测量")
         set_button_variant(self.driver_stop_btn, "secondary")
         self.driver_stop_btn.clicked.connect(self.stop_measurement)
@@ -113,7 +110,6 @@ class DriverMappingPage(
             {
                 MeasurementAction.START: self.driver_mapping_btn,
                 MeasurementAction.STOP: self.driver_stop_btn,
-                MeasurementAction.CANCEL: self.driver_cancel_btn,
                 MeasurementAction.EMERGENCY_STOP: self.driver_emergency_stop_btn,
             },
         )
@@ -123,12 +119,11 @@ class DriverMappingPage(
             (
                 self.driver_mapping_btn,
                 self.driver_stop_btn,
-                self.driver_cancel_btn,
                 self.driver_emergency_stop_btn,
             )
         ):
             control_layout.addWidget(button, 0, column)
-        control_layout.addWidget(self.show_driver_diagram_btn, 1, 0, 1, 4)
+        control_layout.addWidget(self.show_driver_diagram_btn, 1, 0, 1, 3)
         left_layout.addWidget(control_group)
         left_layout.addStretch(1)
         self.control_panel = left_panel
@@ -183,10 +178,6 @@ class DriverMappingPage(
     def stop_measurement(self) -> None:
         if self.controller is not None:
             self.controller.stop()
-
-    def cancel_measurement(self) -> None:
-        if self.controller is not None:
-            self.controller.cancel()
 
     def emergency_stop_measurement(self) -> None:
         if self.controller is None:
@@ -275,7 +266,7 @@ class DriverMappingPage(
         if not self._archival_is_for_this_page():
             return
         self.controls.show_idle()
-        self._archival_test_stopped(reason)
+        self._archival_test_stopped(reason, self._partial_result_path())
         self._log_callback(f"测量已停止: {reason}")
         self._progress_callback(0)
 

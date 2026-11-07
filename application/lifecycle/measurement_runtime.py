@@ -33,8 +33,6 @@ class MeasurementRuntimeCoordinator:
         intent = self.stop_intent or StopIntent.STOP
         if intent is StopIntent.EMERGENCY_STOP:
             return RuntimeDecision(MeasurementStatus.EMERGENCY_STOPPED, reason or "紧急停止")
-        if intent is StopIntent.CANCEL:
-            return RuntimeDecision(MeasurementStatus.CANCELLED, reason or "任务已取消")
         return RuntimeDecision(MeasurementStatus.CANCELLED, reason or "用户停止")
 
     def finished(self, result: Any) -> RuntimeDecision:

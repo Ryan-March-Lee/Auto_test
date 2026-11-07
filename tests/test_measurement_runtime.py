@@ -17,16 +17,12 @@ class MeasurementRuntimeCoordinatorTests(unittest.TestCase):
         self.assertEqual(decision.status, MeasurementStatus.FAILED)
         self.assertEqual(decision.error, "worker 完成但未提供测量结果")
 
-    def test_cancel_and_stop_keep_distinct_reasons(self):
-        for intent, reason in (
-            (StopIntent.STOP, "用户停止"),
-            (StopIntent.CANCEL, "任务已取消"),
-        ):
-            runtime = MeasurementRuntimeCoordinator()
-            runtime.request(intent)
-            decision = runtime.stopped()
-            self.assertEqual(decision.status, MeasurementStatus.CANCELLED)
-            self.assertEqual(decision.reason, reason)
+    def test_stop_reason_is_user_stop(self):
+        runtime = MeasurementRuntimeCoordinator()
+        runtime.request(StopIntent.STOP)
+        decision = runtime.stopped()
+        self.assertEqual(decision.status, MeasurementStatus.CANCELLED)
+        self.assertEqual(decision.reason, "用户停止")
 
 
 if __name__ == "__main__":

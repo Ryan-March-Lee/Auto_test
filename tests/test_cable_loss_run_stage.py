@@ -12,18 +12,20 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from app.cancellation import CancellationToken, MeasurementCancelled
 from app.gui_runtime import create_cable_loss_measurement, prepare_configuration
 from application.dto import CableLossMeasurementRequest
 from application.measurements import CableLossUseCase
-from application.run_stages import RunStageRecorder
+from application.run_stages import RunStageRecorder, StageInputUnavailable
 from domain.run.models import (
     CABLE_LOSS_INPUT_PATH,
     RunStatus,
     StageStatus,
 )
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
+from infrastructure.persistence.run_history_repository import FileRunHistoryRepository
 from infrastructure.persistence.run_repository import RunRepository
 from application.configuration_authoring import author_official_configuration
 from tests.fakes import safety_cleanup_for
@@ -316,6 +318,61 @@ class CableLossRunStageTests(unittest.TestCase):
         self.assertFalse((layout.run_directory / CABLE_LOSS_INPUT_PATH).exists())
         self.assertEqual(manifest.stage("cable_loss").status, StageStatus.CANCELLED)
         self.assertEqual(manifest.inputs, ())
+
+    def test_save_partial_keeps_an_output_after_the_stage_is_cancelled(self):
+        layout = self._create_run()
+        recorder = RunStageRecorder(self.repository, RUN_ID)
+        recorder.start("cable_loss", now=CREATED_AT)
+        payload = {
+            "status": "cancelled",
+            "termination": {"intent": "stop", "reason": "用户停止"},
+            "cable_losses": {"1.0": {"cable1": 0.1, "cable2": 0.2, "cable3": 0.3, "cable4": 0.4}},
+        }
+
+        reference = recorder.save_partial("cable_loss", payload, now=CREATED_AT)
+        manifest = recorder.cancel("cable_loss", "用户停止", now=CREATED_AT)
+
+        self.assertEqual(reference.path, "results/cable_loss_partial.json")
+        self.assertTrue((layout.run_directory / reference.path).is_file())
+        self.assertEqual(manifest.stage("cable_loss").status, StageStatus.CANCELLED)
+        self.assertIsNone(manifest.stage("cable_loss").result)
+        self.assertIn(reference.path, [item.path for item in manifest.outputs])
+        # 部分结果不是正式输入：阶段不是 completed，verified_result_path 仍拒绝。
+        with self.assertRaises(StageInputUnavailable):
+            recorder.verified_result_path("cable_loss")
+
+        history = FileRunHistoryRepository(runs=self.repository)
+        entries = history.list_results(RUN_ID)
+        self.assertIn(
+            reference.path,
+            [entry.result_id for entry in entries],
+        )
+        self.assertEqual(history.load(RUN_ID, reference.path)["status"], "cancelled")
+        # 部分结果可以查看，但不是正式结果：历史列表的正式结果计数保持 0。
+        [entry] = [item for item in history.list_runs() if item.run_id == RUN_ID]
+        self.assertEqual(entry.result_count, 0)
+
+    def test_save_partial_discards_the_file_when_registration_fails(self):
+        """登记失败时不得留下历史列表看不到的半截部分结果。"""
+        layout = self._create_run()
+        recorder = RunStageRecorder(self.repository, RUN_ID)
+        recorder.start("cable_loss", now=CREATED_AT)
+        target = layout.run_directory / "results" / "cable_loss_partial.json"
+
+        with patch.object(
+            self.repository, "register_file", side_effect=OSError("registry down")
+        ):
+            with self.assertRaises(OSError):
+                recorder.save_partial(
+                    "cable_loss", {"status": "cancelled"}, now=CREATED_AT
+                )
+
+        self.assertFalse(target.exists())
+        manifest = self.repository.load_manifest(RUN_ID)
+        self.assertNotIn(
+            "results/cable_loss_partial.json",
+            [item.path for item in manifest.outputs],
+        )
 
     def test_run_contract_never_touches_the_compatibility_copy_api(self):
         layout = self._create_run()

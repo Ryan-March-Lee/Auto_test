@@ -205,7 +205,6 @@ class CableLossPageTests(unittest.TestCase):
                 {
                     MeasurementAction.START,
                     MeasurementAction.STOP,
-                    MeasurementAction.CANCEL,
                     MeasurementAction.CONTINUE,
                 }
             ),
@@ -219,13 +218,11 @@ class CableLossPageTests(unittest.TestCase):
         )())
         self.assertFalse(self.page.cable_loss_btn.isEnabled())
         self.assertTrue(self.page.stop_cable_loss_btn.isEnabled())
-        self.assertTrue(self.page.cancel_cable_loss_btn.isEnabled())
         self.assertTrue(self.page.continue_cable_loss_btn.isEnabled())
 
         self.controller.signals.stopped.emit("用户停止")
         self.assertTrue(self.page.cable_loss_btn.isEnabled())
         self.assertFalse(self.page.stop_cable_loss_btn.isEnabled())
-        self.assertFalse(self.page.cancel_cable_loss_btn.isEnabled())
         self.assertFalse(self.page.continue_cable_loss_btn.isEnabled())
 
     def test_non_formal_result_is_reported_and_not_displayed(self):

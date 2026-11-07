@@ -406,6 +406,68 @@ class GuiWorkerTests(unittest.TestCase):
         self.assertFalse(service.measure_called.is_set())
         self.assertEqual(stopped, ["用户停止"])
 
+    def test_stopped_worker_emits_the_saved_partial_result_before_stopped(self):
+        service = _AmplifierService()
+        service.last_partial_result = {"status": "cancelled", "results": {"1.0": {}}}
+        worker = AmplifierWorker(
+            prepared_run=self._contract_run(),
+            sleep_fn=lambda _: None,
+        )
+        events = []
+        worker.signals.result.connect(lambda value: events.append(("result", value)))
+        worker.signals.stopped.connect(
+            lambda reason: events.append(("stopped", reason))
+        )
+
+        def create_and_stop(*_args, **_kwargs):
+            worker.stop()
+            return service
+
+        with patch(
+            "app.gui_runtime.create_amplifier_measurement", side_effect=create_and_stop
+        ):
+            worker.run()
+
+        self.assertEqual(
+            events,
+            [
+                ("result", service.last_partial_result),
+                ("stopped", "用户停止"),
+            ],
+        )
+
+    def test_secondary_failure_after_stop_stays_a_stop(self):
+        """停止后保存/清理的次生异常不得把终态改写成“测量失败”。"""
+
+        class _StoppingThenFailing:
+            def __init__(self):
+                self.last_result = None
+
+            def stop_measurement(self):
+                pass
+
+            def measure_all_frequencies(self):
+                worker.stop()
+                raise RuntimeError("partial registry down")
+
+        service = _StoppingThenFailing()
+        worker = DriverMappingWorker(
+            prepared_run=self._contract_run(),
+            sleep_fn=lambda _: None,
+            measurement_factory=lambda *_args, **_kwargs: service,
+        )
+        events = []
+        messages = []
+        worker.signals.error.connect(lambda text: events.append(("error", text)))
+        worker.signals.stopped.connect(
+            lambda reason: events.append(("stopped", reason))
+        )
+        worker.signals.message.connect(messages.append)
+
+        worker.run()
+
+        self.assertEqual(events, [("stopped", "用户停止")])
+        self.assertTrue(any("partial registry down" in text for text in messages))
 
     def test_instrument_worker_closes_port_if_handoff_fails(self):
         class _Port:

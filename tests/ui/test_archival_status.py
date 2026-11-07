@@ -19,8 +19,8 @@ from presentation.qt.archival_status import (
     summarize_archival_missing,
     summarize_archival_running,
     summarize_archival_saving,
-    summarize_test_cancelled,
     summarize_test_failure,
+    summarize_test_stopped,
 )
 from presentation.qt.measurement_state import MeasurementKind
 
@@ -133,7 +133,7 @@ class ArchivalSummaryTests(unittest.TestCase):
         self.assertIs(outcome.archive_status, ArchivalStatus.NOT_APPLICABLE)
         summary = summarize_archival(outcome)
 
-        self.assertIn("已取消", summary.headline)
+        self.assertIn("已停止", summary.headline)
         self.assertEqual(summary.tone, TONE_WARNING)
 
     def test_failed_archive_distinguishes_saved_and_missing_results(self):
@@ -209,11 +209,21 @@ class ArchivalFallbackSummaryTests(unittest.TestCase):
 
         self.assertIn("未提供失败原因", summary.detail)
 
-    def test_cancelled_summary_carries_the_stop_reason(self):
-        summary = summarize_test_cancelled(MeasurementKind.DRIVER_MAPPING, "任务已取消")
+    def test_stopped_summary_carries_the_stop_reason(self):
+        summary = summarize_test_stopped(MeasurementKind.DRIVER_MAPPING, "用户停止")
 
         self.assertEqual(summary.tone, TONE_WARNING)
-        self.assertIn("任务已取消", summary.detail)
+        self.assertIn("用户停止", summary.detail)
+
+    def test_stopped_summary_reports_a_saved_partial_result(self):
+        summary = summarize_test_stopped(
+            MeasurementKind.DRIVER_MAPPING,
+            "用户停止",
+            "C:/runs/run/results/driver_mapping_partial.json",
+        )
+
+        self.assertIn("已保存部分结果", summary.headline)
+        self.assertIn("driver_mapping_partial.json", summary.detail)
 
     def test_unknown_measurement_kind_is_rejected(self):
         with self.assertRaises(ValueError):

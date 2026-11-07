@@ -771,32 +771,53 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertFalse(window.configuration_editor.is_dirty())
 
     def test_applying_devices_refreshes_the_power_page_options(self):
+        """绑定回写刷新电源页；首次进入电源页也不能把新绑定退回旧配置。
+
+        回归：排布三台电源后点击“下一步”，首次进入的字段重置曾经用页面里尚未更新
+        的配置副本重建绑定，结果只剩保存配置里的那一台。
+        """
         from application.device_binding import ApplyDeviceSelectionRequest
 
         self._silence_dialogs()
         window = self._window()
+        supplies = (
+            ("DP8B1519", "DP8B214901519"),
+            ("DP8B0885", "DP8B174400885"),
+            ("DP8B1234", "DP8B174401234"),
+        )
 
         result = window.config_page.apply_device_selection(
             ApplyDeviceSelectionRequest.from_assignments(
                 [
                     {
                         "role": "power_supply",
-                        "supply_id": "DP8B0885",
-                        "address": "TCPIP0::192.168.1.108::inst0::INSTR",
+                        "supply_id": supply_id,
+                        "address": f"TCPIP0::192.168.1.{index}::inst0::INSTR",
                         "vendor": "RIGOL TECHNOLOGIES",
                         "model": "DP832A",
-                        "full_code": "DP8B174400885",
-                        "device_key": "rigol technologies:dp8b174400885",
+                        "full_code": full_code,
+                        "device_key": f"rigol technologies:{full_code.casefold()}",
                     }
+                    for index, (supply_id, full_code) in enumerate(supplies, 1)
                 ]
             )
         )
 
         self.assertTrue(result.ok)
-        self.assertEqual(
-            window.power_page.get_enabled_power_supplies(), ["DP8B0885"]
+        expected = [supply_id for supply_id, _full_code in supplies]
+        self.assertEqual(window.power_page.get_enabled_power_supplies(), expected)
+        for supply_id in expected:
+            self.assertIn(supply_id, window.power_page.power_config_widgets)
+
+        window.power_page.enter()
+        window.power_page.set_rack_slots(
+            {supply_id: index for index, supply_id in enumerate(expected)}
         )
-        self.assertIn("DP8B0885", window.power_page.power_config_widgets)
+
+        self.assertEqual(
+            [cell.supply_id for cell in window.power_page.card_wall.cards()],
+            expected,
+        )
 
     def test_rebinding_power_supplies_keeps_unsaved_power_edits(self):
         """绑定回写是派生刷新：仍有效的未保存通道/计划/漏极编辑必须保留。"""

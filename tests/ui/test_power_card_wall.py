@@ -226,6 +226,41 @@ class PowerCardWallTests(unittest.TestCase):
 
         self.assertEqual(events, [])
 
+    def test_clicking_calibration_emits_with_the_supply_id(self):
+        wall = self.make_wall()
+        wall.set_cards([("A", _card("A"))], {"A": 0})
+        events: list[tuple[str, str, bool]] = []
+        wall.efficiency_calibration_toggled.connect(
+            lambda *args: events.append(args)
+        )
+        card = wall.supply_card("A")
+        ch1 = card.calibration_toggle("CH1")
+        ch2 = card.calibration_toggle("CH2")
+
+        QTest.mouseClick(ch1, Qt.LeftButton, pos=ch1.rect().center())
+        QTest.mouseClick(ch2, Qt.LeftButton, pos=ch2.rect().center())
+
+        self.assertEqual(events, [("A", "CH1", True), ("A", "CH2", True)])
+        self.assertEqual(
+            wall.efficiency_calibration_channels(), (("A", "CH1"), ("A", "CH2"))
+        )
+        self.assertTrue(
+            wall.cards()[0].data.channel_efficiency_calibration("CH1")
+        )
+
+    def test_set_efficiency_calibration_updates_only_that_card(self):
+        wall = self.make_wall()
+        wall.set_cards(
+            [("A", _card("A")), ("B", _card("B"))], {"A": 0, "B": 1}
+        )
+
+        self.assertTrue(wall.set_efficiency_calibration("A", "CH1", True))
+        self.assertFalse(wall.set_efficiency_calibration("A", "CH1", True))
+        cards = {cell.supply_id: cell.data for cell in wall.cards()}
+        self.assertTrue(cards["A"].channel_efficiency_calibration("CH1"))
+        self.assertFalse(cards["B"].channel_efficiency_calibration("CH1"))
+        self.assertEqual(wall.efficiency_calibration_channels(), (("A", "CH1"),))
+
     def test_editing_a_card_value_emits_and_updates_the_wall_snapshot(self):
         wall = self.make_wall()
         wall.set_cards([("A", _card("A"))], {"A": 0})
@@ -343,6 +378,7 @@ class PowerCardWallTests(unittest.TestCase):
         card = wall.supply_card("A")
         card.set_channel_mode("CH1", "dut")
         card.set_value("CH1", "voltage", 9.0)
+        card.set_efficiency_calibration("CH1", True)
 
         wall.set_cards(
             [("A", _card("A", enabled=False))], {"A": 0}, preserve_edit_state=True
@@ -350,6 +386,7 @@ class PowerCardWallTests(unittest.TestCase):
         preserved = wall.supply_card("A")
         self.assertEqual(preserved.channel_mode("CH1"), "dut")
         self.assertAlmostEqual(preserved.channel_value("CH1", "voltage"), 9.0)
+        self.assertTrue(preserved.channel_efficiency_calibration("CH1"))
 
         wall.set_cards(
             [("A", _card("A", enabled=False))], {"A": 0}, preserve_edit_state=False
@@ -357,6 +394,7 @@ class PowerCardWallTests(unittest.TestCase):
         discarded = wall.supply_card("A")
         self.assertEqual(discarded.channel_mode("CH1"), "off")
         self.assertAlmostEqual(discarded.channel_value("CH1", "voltage"), 2.5)
+        self.assertFalse(discarded.channel_efficiency_calibration("CH1"))
 
 
 if __name__ == "__main__":

@@ -3,12 +3,13 @@
 电源配置页以通道卡片为主视图：每台电源一张 440×186 的通道卡片（左 CH1 浅蓝、
 右 CH2 浅琥珀；两个通道的 OFF / DUT / Driver 竖直滚筒分别贴住左右上角，设备码在
 顶部正中的白色铭牌上；最下面一行是上电顺序与间隔），卡片按仪器排布页九宫格里的
-相对位置摆放在页面中央。卡片下方只剩效率测量的漏极选择；通道参数、上电角色与
-顺序本身只在这一张卡上编辑。
+相对位置摆放在页面中央。卡片下方不再有表单；通道参数、上电角色、顺序与 ``Cal.``
+效率计算标记都只在这一张卡上编辑。
 
 **真实控件**：卡片墙直接承载 :class:`presentation.qt.power_card.PowerSupplyCard`
-子控件（不是位图 + 坐标命中）。角色滚筒、VS/IS 输入框与保护勾选框都由 Qt 处理
-鼠标、键盘与焦点，卡片墙只负责按格位摆位、按可用宽度等比缩放并转发信号。
+子控件（不是位图 + 坐标命中）。角色滚筒、``Cal.`` 效率计算标记、VS/IS 输入框与
+保护勾选框都由 Qt 处理鼠标、键盘与焦点，卡片墙只负责按格位摆位、按可用宽度等比
+缩放并转发信号。
 
 **相对位置**：仪器排布页把电源拖进 3×3 格子，格位下标从左上开始、先行后列。
 本控件保留这些格位的行列关系：卡片只按被占用格子的外接矩形排版，空行/空列被
@@ -149,6 +150,9 @@ def _merge_edit_state(
             merged = merged.with_channel_protection(
                 name, kind, old.protection_enabled(kind)
             )
+        merged = merged.with_channel_efficiency_calibration(
+            name, old.efficiency_calibration_enabled
+        )
         # 顺序由页面按计划重算，只有间隔是卡面上尚未回填的编辑值。
         setting = merged.channel(name)
         merged = merged.with_channel_power(
@@ -175,6 +179,8 @@ class PowerCardWall(QWidget):
     channel_mode_changed = Signal(str, str, str)
     #: ``(supply_id, channel, kind, enabled)``；``kind`` 是 ``voltage`` / ``current``。
     protection_toggled = Signal(str, str, str, bool)
+    #: ``(supply_id, channel, marked)``：效率计算标记，可多选。
+    efficiency_calibration_toggled = Signal(str, str, bool)
     #: ``(supply_id, channel, kind, value)``：VS / IS 输入。
     value_changed = Signal(str, str, str, float)
     #: ``(supply_id, channel, order)``：卡面上电顺序下拉框的新位置。
@@ -204,8 +210,8 @@ class PowerCardWall(QWidget):
         """替换整墙卡片；``slots`` 缺省时按九宫格顺序补齐。
 
         ``preserve_edit_state=True`` 用于绑定/格位变化后的重建：同一台电源的本次
-        启用状态、VS/IS 与保护勾选覆盖到新数据上，未提交的编辑不会丢。回填配置时
-        用 ``False``，以传入数据为准。
+        启用状态、VS/IS、保护勾选、``Cal.`` 标记与上电间隔覆盖到新数据上，未提交的
+        编辑不会丢。回填配置时用 ``False``，以传入数据为准。
         """
         entries = list(cards)
         slot_of = dict(slots or {})
@@ -256,6 +262,11 @@ class PowerCardWall(QWidget):
                         self._on_card_protection(supply, channel, kind, enabled)
                     )
                 )
+                card.efficiency_calibration_toggled.connect(
+                    lambda channel, marked, supply=cell.supply_id: (
+                        self._on_card_calibration(supply, channel, marked)
+                    )
+                )
                 card.value_changed.connect(
                     lambda channel, kind, value, supply=cell.supply_id: (
                         self._on_card_value(supply, channel, kind, value)
@@ -285,6 +296,15 @@ class PowerCardWall(QWidget):
 
     def cards(self) -> tuple[PowerCardCell, ...]:
         return tuple(self._cells)
+
+    def efficiency_calibration_channels(self) -> tuple[tuple[str, str], ...]:
+        """当前被标记为效率计算通道的 ``(supply_id, channel)``，按卡片顺序。"""
+        routes: list[tuple[str, str]] = []
+        for cell in self._cells:
+            for name in CHANNEL_NAMES:
+                if cell.data.channel_efficiency_calibration(name):
+                    routes.append((cell.supply_id, name))
+        return tuple(routes)
 
     def supply_card(self, supply_id: str) -> PowerSupplyCard | None:
         """取某台电源的卡片控件；没有这张卡时返回 ``None``。"""
@@ -317,6 +337,24 @@ class PowerCardWall(QWidget):
         if card.channel_protection(channel, kind) == enabled:
             return False
         card.set_protection_enabled(channel, kind, enabled)
+        self._sync_cell(supply_id, card.data)
+        return True
+
+    def set_efficiency_calibration(
+        self,
+        supply_id: str,
+        channel: str,
+        marked: bool,
+    ) -> bool:
+        """只改某张卡某个通道的效率计算标记；状态未变时返回 ``False``。"""
+        if not isinstance(marked, bool):
+            raise TypeError("marked 必须是 bool")
+        card = self._cards.get(supply_id)
+        if card is None:
+            return False
+        if card.channel_efficiency_calibration(channel) == marked:
+            return False
+        card.set_efficiency_calibration(channel, marked)
         self._sync_cell(supply_id, card.data)
         return True
 
@@ -397,6 +435,16 @@ class PowerCardWall(QWidget):
         if card is not None:
             self._sync_cell(supply_id, card.data)
         self.protection_toggled.emit(supply_id, channel, kind, bool(enabled))
+
+    def _on_card_calibration(
+        self, supply_id: str, channel: str, marked: bool
+    ) -> None:
+        card = self._cards.get(supply_id)
+        if card is not None:
+            self._sync_cell(supply_id, card.data)
+        self.efficiency_calibration_toggled.emit(
+            supply_id, channel, bool(marked)
+        )
 
     def _on_card_value(
         self, supply_id: str, channel: str, kind: str, value: float

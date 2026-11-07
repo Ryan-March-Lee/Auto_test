@@ -2,9 +2,9 @@
 
 页面以通道卡片为主视图：顶部是居中加粗的大标题“电源配置”（与“仪器排布”同一套
 ``pageTitle``），中间是卡片墙——每台电源一张带蓝黄通道的卡片，按仪器排布页九宫格的
-相对位置摆放（:mod:`presentation.qt.power_card_wall`），效率测量的漏极选择接在卡片
-下方。进入本页时，排布页的电源卡片从屏幕原位展开成完整卡片
-（:mod:`presentation.qt.power_card_morph`），卡片落位后标题、表单与底部导航再淡入；
+相对位置摆放（:mod:`presentation.qt.power_card_wall`），卡片下方不再有表单。
+进入本页时，排布页的电源卡片从屏幕原位展开成完整卡片
+（:mod:`presentation.qt.power_card_morph`），卡片落位后标题与底部导航再淡入；
 卡片墙与过渡层共用同一份卡片位置。设备绑定信息不在本页显示：绑定只在上游
 “仪器配置”页确认，本页只消费它生成的电源集合。
 
@@ -12,16 +12,18 @@
 “仪器配置”标签页；页面只发信号，切页由主窗口完成。
 
 卡片是通道参数的唯一编辑面：每个通道上角的竖直滚筒写 ``OFF`` / ``Driver`` / ``DUT``，
-表示该通道关闭、给驱放供电、给功放供电。换档会同步勾选/取消下方
+表示该通道关闭、给驱放供电、给功放供电。滚筒靠卡面中央的一侧还有 ``Cal.`` 效率
+计算标记：按下表示该通道参与效率计算，两个通道可以同时标记，它不改变供电角色、
+上电顺序或通道开关；现有运行链路仍只接受一个漏极，因此页面把第一个已上电的标记
+通道同步成 ``dut_config.drain_channel``。换档会同步勾选/取消下方
 ``driver_amplifier`` / ``dut_amplifier`` 的 ``power_plan`` 路由，因此档位不是临时
 显示状态，而是由现有计划结构持久化。每次选择测试模式后的第一次进入（:meth:`enter`）
 从初始值开始：所有通道 ``OFF``、VS/IS 为 0、保护未勾选、间隔 2s，两份计划与漏极清空；
 本次会话内从排布页返回再进入则保留已填参数。``OFF`` 时该通道的 VS/IS 输入框与保护
 勾选不可操作。工作值与保护勾选直接进入配置片段，保护阈值仍由工作值按 110% 自动
-推导。两个通道始终保留在配置里，上电角色、顺序与每通道间隔都在卡片上设置，卡片
-下方只剩「效率测量」的漏极选择。
+推导。两个通道始终保留在配置里，上电角色、顺序与每通道间隔都在卡片上设置。
 
-电源参数、通道上电计划与效率测量漏极都归本页；测试参数、运行入口与
+电源参数、通道上电计划与兼容漏极都归本页；测试参数、运行入口与
 设备发现仍属于 :mod:`presentation.qt.configuration_page` 与
 :mod:`presentation.qt.instrument_setup_page`。页面只把控件组合成显式的电源片段，
 不写文件、不连接仪器、不导入基础设施或硬件模块；统一保存、版本门禁与运行冻结由
@@ -31,16 +33,16 @@
 ``instruments.power_supplies``、``power_supply_assignment`` 与
 ``dut_config.drain_channel`` 这些电源字段，调用方把它们合并进草稿即可，不会覆盖
 另一页尚未保存的测试参数。:meth:`apply_config` 回填时也只触碰这些字段，绑定变化
-重建卡片时保留操作者尚未提交的工作值、保护勾选、上电顺序、间隔与漏极。
+重建卡片时保留操作者尚未提交的工作值、保护勾选、上电顺序、间隔与 Cal. 标记。
 
 窗口用 :class:`presentation.qt.configuration_editor.ConfigurationEditor` 把本页与
 参数页装配成共享编辑状态，整份草稿的合并/校验/保存仍由
 :class:`presentation.qt.application_coordinator.ApplicationCoordinator` 完成；页面
 不持有另一页的实例，也不写文件。
 
-漏极候选只来自有效 DUT 物理通道（已有 DUT 计划时限定在计划内，计划尚未生成时退回
-全部候选通道），页面上明确写出“漏极仅用于效率测量，不影响上电顺序”。漏极不是上电
-通道角色，也不参与排序、间隔或安全关断。
+``Cal.`` 标记是效率计算通道的唯一界面；漏极不再是上电角色的替代品，也不参与排序、
+间隔或安全关断。多选会保留在页面状态与 :meth:`read_efficiency_calibration_channels`
+里，供后续多通道效率计算接入；当前正式配置仍写单个漏极。
 """
 
 from __future__ import annotations
@@ -97,7 +99,7 @@ _INTRO_FADE_MS = 180
 
 
 class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
-    """独立电源配置页：通道参数、上电计划与漏极。
+    """独立电源配置页：通道参数、上电计划与 Cal. 效率计算标记。
 
     页面通过 :meth:`build_fragment` 提交自己负责的片段，通过 :meth:`apply_config`
     接收同一份编辑草稿中的电源字段；两种方向都不读写其它页面的控件。设备绑定只作为
@@ -105,11 +107,17 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
     驱动模式变化经 :meth:`set_test_mode` 转发给表单派生状态，并发出
     ``driver_mode_changed`` 供窗口刷新相关页面。驱放自带供电由“驱动功放上电计划为空”
     表达，页面没有单独的供电方式控件。卡片滚筒与两份计划双向同步：换档写计划，
-    计划勾选变化回写滚筒；同一物理通道在一组里勾选时会自动取消另一组。
+    计划勾选变化回写滚筒；同一物理通道在一组里勾选时会自动取消另一组。效率计算
+    通道由卡面 ``Cal.`` 标记选择，页面再把第一个已上电的标记通道写成现有运行链路
+    需要的单个 ``drain_channel``。
     """
 
     validation_failed = Signal(str)
     driver_mode_changed = Signal(bool)
+    #: ``(supply_id, channel, marked)``：效率计算标记变化。标记是页面上唯一的选择
+    #: 入口；第一个已上电的标记通道会同步成现有运行链路的单个 ``drain_channel``，
+    #: 因此真的换了漏极时页面计入 dirty。
+    efficiency_calibration_changed = Signal(str, str, bool)
     #: 任一电源字段变化时发出；统一会话用它汇总 dirty（步骤 13 接线）。
     fragment_changed = Signal()
     #: 底部“上一步”：回仪器排布页；切页由主窗口完成。
@@ -242,9 +250,14 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         self.back_btn.clicked.connect(self.back_requested.emit)
         self.next_btn.clicked.connect(self.next_requested.emit)
         self._refresh_card_wall()
+        # 构造页面时把文档里的单个漏极显示成对应通道的 Cal. 标记；隐藏的兼容漏极
+        # 随后由 Cal. 标记同步，运行校验与保存仍读到同一个路由。
+        self._apply_legacy_drain_to_calibration()
         return self
 
-    def _build_power_widgets(self, layout: Any) -> None:
+    def _build_power_widgets(self, layout: Any = None) -> None:
+        # 卡片下方的「效率测量」框已删除；计划状态与兼容漏极留在页面对象里，
+        # 不进入布局，卡片墙下面因此不再有任何表单。
         self.power_section = PowerFormSection(
             sources=self._power_supply_sources(),
             choices=self._power_supply_choices(),
@@ -252,12 +265,9 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             dut_power_plan=self._power_plan_entry("dut_amplifier"),
             driver_power_plan=self._power_plan_entry("driver_amplifier"),
             drain_channel=self._drain_channel_entry(),
+            parent=self,
         )
-        # 卡片落位后表单再淡入；效果只作用于表单，不挡卡片墙的绘制。
-        self._section_effect = QGraphicsOpacityEffect(self.power_section)
-        self._section_effect.setOpacity(1.0)
-        self.power_section.setGraphicsEffect(self._section_effect)
-        layout.addWidget(self.power_section)
+        self.power_section.setVisible(False)
 
     def _connect_signals(self) -> None:
         self._wire_fragment_signals()
@@ -267,6 +277,9 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             )
             self.card_wall.protection_toggled.connect(
                 self._on_card_protection_toggled
+            )
+            self.card_wall.efficiency_calibration_toggled.connect(
+                self._on_card_efficiency_calibration_toggled
             )
             self.card_wall.value_changed.connect(self._on_card_value_changed)
             self.card_wall.channel_order_changed.connect(
@@ -328,6 +341,17 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
     ) -> None:
         """卡面保护勾选变化：卡片已保存新状态，这里只计入 dirty。"""
         self._emit_fragment_changed()
+
+    def _on_card_efficiency_calibration_toggled(
+        self, supply_id: str, channel: str, marked: bool
+    ) -> None:
+        """卡面 ``Cal.`` 标记变化：同步兼容漏极，并把页面级测量选择转发出去。"""
+        if self._sync_legacy_drain_from_calibration():
+            # 漏极属于配置字段；标记变化真的换了漏极时要计入 dirty。
+            self._emit_fragment_changed()
+        self.efficiency_calibration_changed.emit(
+            supply_id, channel, bool(marked)
+        )
 
     def _on_card_value_changed(
         self,
@@ -529,6 +553,42 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         modes = self._planned_modes()
         wall.set_channel_modes(modes)
         wall.set_channel_power_settings(self._channel_power_settings(modes))
+        # 现有运行链路只接受一个漏极：Cal. 标记是界面唯一的效率计算选择，这里把
+        # 第一个已上电的标记通道写进隐藏的兼容漏极状态。计划同步不清空没有 Cal.
+        # 对应的旧值，文档里显式写下的无效漏极仍交给正式校验报告。
+        self._sync_legacy_drain_from_calibration(clear=False)
+
+    def _calibration_drain_route(self) -> tuple[str, str] | None:
+        """Cal. 标记里第一个同时属于 DUT 上电计划的物理路由。"""
+        wall = self.card_wall
+        if wall is None:
+            return None
+        dut_routes = set(self._group_plan_routes("dut"))
+        for route in wall.efficiency_calibration_channels():
+            if route in dut_routes:
+                return route
+        return None
+
+    def _sync_legacy_drain_from_calibration(self, *, clear: bool = True) -> bool:
+        """把隐藏的 ``drain_channel`` 对齐到 Cal. 标记；返回是否发生变化。"""
+        section = self.power_section
+        if section is None:
+            return False
+        return section.select_drain_route(
+            self._calibration_drain_route(), clear=clear
+        )
+
+    def _apply_legacy_drain_to_calibration(self) -> None:
+        """回填配置时把文档里的漏极显示成对应通道的 Cal. 标记。"""
+        wall = self.card_wall
+        drain = self._drain_channel_entry()
+        if wall is None or not isinstance(drain, Mapping):
+            return
+        supply_id = drain.get("supply_id")
+        channel = drain.get("channel")
+        if not isinstance(supply_id, str) or not isinstance(channel, str):
+            return
+        wall.set_efficiency_calibration(supply_id, channel, True)
 
     def _on_card_mode_changed(
         self, supply_id: str, channel: str, mode: str
@@ -759,7 +819,6 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         self._intro_opacity = opacity
         for effect in (
             self._header_effect,
-            self._section_effect,
             self._footer_effect,
         ):
             effect.setOpacity(opacity)
@@ -859,8 +918,18 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
 
         通道工作值与保护回到 0、间隔回到 2s，两份计划的成员清空，漏极回到未指定；
         测试参数、仪器身份与设备绑定原样保留，因此回填后只是“电源设置是新的”。
+
+        设备绑定必须以页面**当前**持有的集合为准，不能照抄 ``self.config``：本次会话
+        刚扫描并应用的电源可能还没有写进配置副本，照抄旧配置会把新增的电源重新过滤
+        掉，表现为“排布了三台、进入电源页只剩一台”。``self.config`` 也因此只用来
+        保留测试参数与仪器身份，绑定集合在返回前被替换成当前值。
         """
         config = copy.deepcopy(self.config)
+        bindings = self.device_bindings
+        if isinstance(bindings, Mapping) and bindings:
+            config["device_bindings"] = copy.deepcopy(bindings)
+        else:
+            config.pop("device_bindings", None)
         instruments = config.get("instruments")
         supplies = (
             instruments.get("power_supplies")
@@ -1007,6 +1076,18 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             return None
         return self.power_section.read_drain_channel()
 
+    def read_efficiency_calibration_channels(
+        self,
+    ) -> tuple[tuple[str, str], ...]:
+        """当前被 ``Cal.`` 标记为效率计算通道的物理路由，按卡片顺序排列。
+
+        这是本页的测量选择，可以多选；它不写入配置片段，也不改变上电计划或
+        漏极选择。没有卡片墙时返回空元组。
+        """
+        if self.card_wall is None:
+            return ()
+        return self.card_wall.efficiency_calibration_channels()
+
     def reset_power_plans(self) -> None:
         if self.power_section is not None:
             self.power_section.reset_power_plans()
@@ -1091,6 +1172,7 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             self.update_driver_power_ui()
             self.update_power_supply_options()
             self._refresh_card_wall()
+            self._apply_legacy_drain_to_calibration()
             self._sync_cards_from_plans()
             self.mark_clean()
         finally:
@@ -1159,10 +1241,6 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
     @property
     def driver_power_plan_editor(self):
         return self.power_section.driver_power_plan_editor
-
-    @property
-    def drain_channel_group(self):
-        return self.power_section.drain_channel_group
 
     @property
     def drain_channel_combo(self):

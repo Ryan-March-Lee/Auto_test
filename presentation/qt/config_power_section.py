@@ -1,11 +1,12 @@
-"""配置页电源分区的「效率测量」控件与不可见的上电计划状态。
+"""电源分区的不可见计划状态与兼容漏极状态。
 
 电源通道参数不再在这里建表单：VS/IS、角色滚筒与保护勾选已经融合到卡片上
 （:mod:`presentation.qt.power_card` / :mod:`presentation.qt.power_card_wall`）。
 上电角色与上电顺序也已经在卡片上编辑，因此卡片下方不再有“通道上电计划”两块设置
-框；本模块只构建“效率测量”的漏极选择，并用 :class:`PowerPlanState` 保存两份计划
-的成员与顺序，供页面回填/提交和漏极候选使用。:class:`PowerFormSection` 把它们收在
-一个独立组件里，页面只负责放进布局、转发页面级派生状态（测试模式）并按需回填。
+框；本模块不再构建任何可见的电源表单，只保留 :class:`PowerPlanState` 的计划状态
+和一个隐藏的兼容漏极下拉框。``Cal.`` 标记是效率计算通道的唯一界面，页面把第一个
+已上电的标记通道写进现有运行链路。:class:`PowerFormSection` 把它们收在
+一个不可见的状态对象里，页面只负责创建它、转发页面级派生状态（测试模式）并按需回填。
 
 页面传进来的输入都是显式声明的结构（见 :data:`PowerSupplySources` 与
 :data:`PowerSupplyChoices`）：键是电源键，值是配置条目里本模块要显示的字段，本模块不从
@@ -22,13 +23,7 @@
 from typing import Any, Iterable, Mapping, TypedDict
 
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtWidgets import (
-    QGridLayout,
-    QGroupBox,
-    QLabel,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QWidget
 
 from .config_page_widgets import combo_box
 from .config_power_assignments import POWER_SUPPLY_CHANNELS, assignment_channels
@@ -234,11 +229,12 @@ class PowerPlanState(QObject):
 
 
 class PowerFormSection(QWidget):
-    """独立电源表单：只剩效率测量的漏极选择。
+    """不可见的电源状态容器：两份计划状态 + 兼容单漏极状态。
 
-    上电角色、顺序与每通道间隔都在卡片上编辑，本组件不再构建“通道上电计划”
-    控件；两份 :class:`PowerPlanState` 仍保存计划状态，页面通过
-    :attr:`plan_changed` 同步卡片，漏极候选仍只来自 DUT 计划。
+    上电角色、顺序与每通道间隔都在卡片上编辑，``Cal.`` 标记是效率计算通道的唯一
+    界面；本组件不再构建任何可见的电源表单。两份 :class:`PowerPlanState` 仍保存
+    计划状态，页面通过 :attr:`plan_changed` 同步卡片；隐藏的漏极下拉框只用于把
+    第一个已上电的 ``Cal.`` 通道写进现有运行链路。
     """
 
     #: ``(group, supply_id, channel, checked)``：计划成员变化，页面据此同步卡片。
@@ -267,10 +263,13 @@ class PowerFormSection(QWidget):
         self.driver_power_plan_editor = PowerPlanState(
             active=self._driver_plan_active, parent=self
         )
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(12)
-        self._build_drain_widgets(layout)
+        # 兼容现有运行链路的单个漏极：不再有可见的「效率测量」框，只保留一个
+        # 隐藏下拉框。页面把第一个已上电的 ``Cal.`` 标记通道写进这里，供
+        # ``ConfigFormState`` 继续读出 ``dut_config.drain_channel``。
+        self.drain_channel_combo = combo_box()
+        self.drain_channel_combo.setParent(self)
+        self.drain_channel_combo.setObjectName("powerDrainCompatibility")
+        self.drain_channel_combo.setVisible(False)
         self._connect_assignment_signals()
         self.refresh_plan_routes(
             preserve=False,
@@ -279,30 +278,27 @@ class PowerFormSection(QWidget):
             drain=drain_channel,
         )
 
-    # ---- 构建 ---------------------------------------------------------------
-    def _build_drain_widgets(self, layout: Any) -> None:
-        group = QGroupBox("效率测量")
-        form = QGridLayout(group)
-        form.setHorizontalSpacing(10)
-        form.setVerticalSpacing(6)
-        form.setColumnMinimumWidth(0, 118)
-        label = QLabel("漏极通道:")
-        self.drain_channel_combo = combo_box()
-        self.drain_channel_combo.setToolTip(
-            "漏极必须是卡片上拨到 DUT 的通道；只用于效率计算的电压/电流读取，"
-            "不参与上电顺序、间隔或安全关断。"
+    def select_drain_route(self, route: Any, *, clear: bool = True) -> bool:
+        """把隐藏的兼容漏极指向给定路由；路由不在 DUT 计划内时忽略。
+
+        返回是否真的改变了当前选择。页面只从 ``Cal.`` 标记里挑“已上电且已标记”的
+        第一个通道传进来；``route=None`` 表示当前没有可用标记，``clear=False`` 时
+        保留原值（用于回填/计划同步，避免把文档里显式写下的无效漏极静默清空）。
+        """
+        route = _route(route)
+        current = _route(self.read_drain_channel())
+        if route == current:
+            return False
+        if route is None and not clear:
+            return False
+        allowed = self._drain_candidates(self._plan_routes)
+        if route is not None and route not in allowed:
+            return False
+        self._set_drain_routes(
+            allowed,
+            None if route is None else {"supply_id": route[0], "channel": route[1]},
         )
-        hint = QLabel(
-            "漏极必须是卡片上拨到 DUT 的通道，仅用于效率测量，不影响上电顺序。"
-        )
-        hint.setProperty("role", "hint")
-        hint.setWordWrap(True)
-        form.addWidget(label, 0, 0)
-        form.addWidget(self.drain_channel_combo, 0, 1)
-        form.addWidget(hint, 1, 0, 1, 2)
-        form.setColumnStretch(1, 1)
-        self.drain_channel_group = group
-        layout.addWidget(group)
+        return True
 
     def _connect_assignment_signals(self) -> None:
         # 卡片换档写计划时，成员变化要把卡片与漏极候选重新对齐；页面再据此计入

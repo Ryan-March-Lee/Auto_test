@@ -3,15 +3,15 @@
 卡片是配置页的电源卡面资产，只有正面。这里锁住四类契约：
 
 - :class:`PowerCardDataTests`：两个通道、OFF/DUT/Driver 角色、两个工作值必须是
-  有限非负数，两个保护开关必须是 bool；
-- :class:`PowerCardLayoutTests`：卡面里每个角色滚筒、数值框与勾选框都在自己的通道内；
-  通道底色从卡片顶边铺到卡底，两个滚筒贴住左右上角，设备码铭牌在顶部正中；第一行是
-  ``VS / IS``，第二行是左右两个勾选框（文字都写「10%保护」，左右位置区分电压/电流），
-  卡片到勾选行结束，没有底部说明行；
+  有限非负数，两个保护开关与 ``Cal.`` 效率计算标记必须是 bool；
+- :class:`PowerCardLayoutTests`：卡面里每个角色滚筒、``Cal.`` 标记、数值框与勾选框
+  都在自己的通道内；通道底色从卡片顶边铺到卡底，两个滚筒贴住左右上角，设备码铭牌
+  在顶部正中；第一行是 ``VS / IS``，第二行是左右两个勾选框（文字都写「10%保护」，
+  左右位置区分电压/电流），卡片到勾选行结束，没有底部说明行；
 - :class:`PowerCardRenderTests`：导出的位图与页面控件共用一份绘制，OFF/DUT/Driver
-  的通道底色、数值框、勾选框与深色滚筒都按状态变化；
-- :class:`PowerSupplyCardWidgetTests`：角色滚筒与保护勾选框可点击、可键盘操作、
-  只改卡面状态，并且程序化设置与整卡换数据都不会悄悄发信号。
+  的通道底色、数值框、勾选框、深色滚筒与 ``Cal.`` 标记都按状态变化；
+- :class:`PowerSupplyCardWidgetTests`：角色滚筒、``Cal.`` 标记与保护勾选框可点击、
+  可键盘操作、只改卡面状态，并且程序化设置与整卡换数据都不会悄悄发信号。
 
 测试用离屏平台；字体在离屏环境里可能退化成方框，但绘制路径、颜色与命中区不受
 影响，因此断言看几何、颜色和状态，不比对具体字形。
@@ -59,6 +59,8 @@ def _data(
     ch1_current: bool = True,
     ch2_voltage: bool = False,
     ch2_current: bool = True,
+    ch1_cal: bool = False,
+    ch2_cal: bool = False,
 ) -> PowerSupplyCardData:
     return PowerSupplyCardData(
         code="DP8B1519",
@@ -73,6 +75,7 @@ def _data(
                 current_set=1.5,
                 voltage_protection_enabled=ch1_voltage,
                 current_protection_enabled=ch1_current,
+                efficiency_calibration_enabled=ch1_cal,
             ),
             PowerChannelData(
                 "CH2",
@@ -81,6 +84,7 @@ def _data(
                 current_set=0.8,
                 voltage_protection_enabled=ch2_voltage,
                 current_protection_enabled=ch2_current,
+                efficiency_calibration_enabled=ch2_cal,
             ),
         ),
     )
@@ -230,6 +234,26 @@ class PowerCardDataTests(unittest.TestCase):
             data.channel("CH2"),
             "只改一个通道的一种保护",
         )
+
+    def test_efficiency_calibration_is_independent_per_channel(self):
+        data = _data()
+        self.assertFalse(data.channel_efficiency_calibration("CH1"))
+        self.assertFalse(data.channel_efficiency_calibration("CH2"))
+
+        updated = data.with_channel_efficiency_calibration("CH1", True)
+
+        self.assertTrue(updated.channel_efficiency_calibration("CH1"))
+        self.assertFalse(updated.channel_efficiency_calibration("CH2"))
+        self.assertFalse(data.channel_efficiency_calibration("CH1"), "原快照不变")
+        self.assertTrue(updated.channel("CH1").enabled, "不改变通道开关")
+
+    def test_efficiency_calibration_must_be_bool(self):
+        for bad in ("yes", 1, None):
+            with self.subTest(value=bad):
+                with self.assertRaises(TypeError):
+                    PowerChannelData("CH1", efficiency_calibration_enabled=bad)
+                with self.assertRaises(TypeError):
+                    _data().with_channel_efficiency_calibration("CH1", bad)
 
     def test_unknown_channel_or_kind_is_a_key_error(self):
         with self.assertRaises(KeyError):
@@ -455,6 +479,41 @@ class PowerCardLayoutTests(unittest.TestCase):
         for channel in power_card_layout().channels:
             self.assertFalse(hasattr(channel, "label"))
 
+    def test_calibration_toggle_sits_between_the_reel_and_the_title(self):
+        """``Cal.`` 贴在滚筒朝卡面中央的一侧，两个通道镜像对称。"""
+        layout = power_card_layout()
+        first, second = layout.channels
+
+        self.assertAlmostEqual(
+            first.calibration_toggle.center().y(),
+            first.mode_selector.center().y(),
+        )
+        self.assertAlmostEqual(
+            first.calibration_toggle.center().y(),
+            second.calibration_toggle.center().y(),
+        )
+        self.assertAlmostEqual(
+            first.calibration_toggle.left(),
+            first.mode_selector.right() + 8.0,
+        )
+        self.assertAlmostEqual(
+            second.calibration_toggle.right(),
+            second.mode_selector.left() - 8.0,
+        )
+        self.assertLess(first.calibration_toggle.right(), layout.title.left())
+        self.assertGreater(second.calibration_toggle.left(), layout.title.right())
+        for channel in layout.channels:
+            with self.subTest(channel=channel.channel):
+                self.assertTrue(channel.panel.contains(channel.calibration_toggle))
+                self.assertTrue(
+                    channel.panel_surface.contains(channel.calibration_toggle)
+                )
+                self.assertFalse(
+                    channel.calibration_toggle.intersects(channel.mode_selector)
+                )
+                self.assertAlmostEqual(channel.calibration_toggle.width(), 36.0)
+                self.assertAlmostEqual(channel.calibration_toggle.height(), 22.0)
+
 
 class PowerCardRenderTests(unittest.TestCase):
     """导出的卡面：尺寸、透明底、开启/关闭配色、两个值与两个勾选框都按数据变化。"""
@@ -612,6 +671,35 @@ class PowerCardRenderTests(unittest.TestCase):
             hasattr(power_card_layout().channels[0], "hint"),
             "底部自动阈值提示行已删除",
         )
+
+    def test_calibration_toggle_fills_with_the_channel_accent_when_marked(self):
+        """``Cal.`` 未标记是白底灰字，标记后用通道强调色填满。"""
+        layout = power_card_layout()
+        marked = _data(ch1_cal=True, ch2_cal=True)
+        unmarked = _data()
+        for index, channel in enumerate(layout.channels):
+            with self.subTest(channel=channel.channel):
+                rect = channel.calibration_toggle
+                sample = (rect.left() + 4.0, rect.center().y())
+                on = _color_at(render_power_card(marked), *sample)
+                off = _color_at(render_power_card(unmarked), *sample)
+                self.assertGreater(
+                    min(off.red(), off.green(), off.blue()),
+                    235,
+                    "未标记时是浅色底",
+                )
+                if index == 0:
+                    self.assertGreater(
+                        on.blue(),
+                        on.red() + 40,
+                        "CH1 标记后用主色蓝填充",
+                    )
+                else:
+                    self.assertGreater(
+                        on.red(),
+                        on.blue() + 40,
+                        "CH2 标记后用警告色琥珀填充",
+                    )
 
     def test_mode_selector_draws_a_dark_slot_and_red_accent(self):
         """深色槽体与左侧红色指示点来自参考实现；两种通道都保留。"""
@@ -928,6 +1016,97 @@ class PowerSupplyCardWidgetTests(unittest.TestCase):
         self.assertEqual(card.channel_power_order("CH1"), 2)
         self.assertAlmostEqual(card.channel_power_delay("CH1"), 4.0)
         self.assertEqual(events, [])
+
+    def test_calibration_toggle_geometry_follows_the_card(self):
+        card = self.widget()
+        layout = power_card_layout()
+        for channel in layout.channels:
+            with self.subTest(channel=channel.channel):
+                toggle = card.calibration_toggle(channel.channel)
+                rect = channel.calibration_toggle
+                self.assertIs(toggle.parent(), card)
+                self.assertEqual(
+                    (
+                        toggle.geometry().x(),
+                        toggle.geometry().y(),
+                        toggle.geometry().width(),
+                        toggle.geometry().height(),
+                    ),
+                    (
+                        round(rect.x()),
+                        round(rect.y()),
+                        round(rect.width()),
+                        round(rect.height()),
+                    ),
+                )
+                self.assertTrue(toggle.isEnabled())
+                self.assertFalse(toggle.isChecked())
+
+    def test_clicking_calibration_marks_multiple_channels(self):
+        card = self.widget()
+        events: list[tuple[str, bool]] = []
+        card.efficiency_calibration_toggled.connect(
+            lambda channel, marked: events.append((channel, marked))
+        )
+
+        ch1 = card.calibration_toggle("CH1")
+        ch2 = card.calibration_toggle("CH2")
+        QTest.mouseClick(ch1, Qt.LeftButton, pos=ch1.rect().center())
+        QTest.mouseClick(ch2, Qt.LeftButton, pos=ch2.rect().center())
+
+        self.assertEqual(events, [("CH1", True), ("CH2", True)])
+        self.assertTrue(card.channel_efficiency_calibration("CH1"))
+        self.assertTrue(card.channel_efficiency_calibration("CH2"))
+        self.assertTrue(
+            card.data.channel_efficiency_calibration("CH1")
+            and card.data.channel_efficiency_calibration("CH2")
+        )
+
+    def test_keyboard_space_toggles_calibration(self):
+        card = self.widget()
+        toggle = card.calibration_toggle("CH1")
+        toggle.setFocus()
+        self.application.processEvents()
+
+        QTest.keyClick(toggle, Qt.Key_Space)
+
+        self.assertTrue(card.channel_efficiency_calibration("CH1"))
+        self.assertTrue(toggle.hasFocus())
+
+    def test_calibration_is_disabled_while_the_channel_is_off(self):
+        card = self.widget()
+
+        card.set_channel_mode("CH1", "off")
+
+        self.assertFalse(card.calibration_toggle("CH1").isEnabled())
+        self.assertTrue(card.calibration_toggle("CH2").isEnabled())
+
+    def test_calibration_animates_before_settling(self):
+        card = self.widget()
+        toggle = card.calibration_toggle("CH1")
+
+        QTest.mouseClick(toggle, Qt.LeftButton, pos=toggle.rect().center())
+        QTest.qWait(60)
+        self.assertGreater(card._calibration_progress["CH1"], 0.0)
+        self.assertLess(card._calibration_progress["CH1"], 1.0)
+
+        QTest.qWait(350)
+        self.assertEqual(card._calibration_progress["CH1"], 1.0)
+
+    def test_set_data_syncs_calibration_without_emitting(self):
+        card = self.widget()
+        events: list[tuple[str, bool]] = []
+        card.efficiency_calibration_toggled.connect(
+            lambda channel, marked: events.append((channel, marked))
+        )
+
+        card.set_data(_data(ch1_cal=True, ch2_cal=False))
+
+        self.assertEqual(events, [])
+        self.assertTrue(card.channel_efficiency_calibration("CH1"))
+        self.assertFalse(card.channel_efficiency_calibration("CH2"))
+        self.assertEqual(card._calibration_progress["CH1"], 1.0)
+        self.assertEqual(card._calibration_progress["CH2"], 0.0)
 
     def test_clicking_a_protection_check_toggles_only_that_flag(self):
         card = self.widget()

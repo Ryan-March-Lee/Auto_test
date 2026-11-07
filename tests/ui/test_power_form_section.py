@@ -1,9 +1,9 @@
 """步骤 11：独立电源表单的纯 UI 测试。
 
-覆盖组上电计划的成员/顺序、漏极选择、文档回填，以及绑定变化刷新候选时保留尚未
-提交的计划与漏极。计划不再有独立的编辑框：成员与顺序都由卡片设置，这里只验证
-``PowerPlanState`` 的读数与页面依赖的信号。测试只构造 ``PowerFormSection`` 与它的
-控件，不启动整个配置页；通道参数已融合到电源卡片，不在本组件里。
+覆盖组上电计划的成员/顺序、隐藏的兼容漏极状态、文档回填，以及绑定变化刷新候选时
+保留尚未提交的计划与漏极。计划不再有独立的编辑框：成员与顺序都由卡片设置，这里只
+验证 ``PowerPlanState`` 的读数与页面依赖的信号。测试只构造 ``PowerFormSection``
+与它的内部状态，不启动整个配置页；通道参数已融合到电源卡片，可见控件归卡片。
 """
 
 import os
@@ -78,11 +78,13 @@ class PowerSectionLayoutTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_the_section_only_builds_the_drain_box(self):
+    def test_the_section_has_no_visible_controls(self):
         section = _section()
         self.addCleanup(section.deleteLater)
 
-        self.assertTrue(hasattr(section, "drain_channel_group"))
+        self.assertFalse(hasattr(section, "drain_channel_group"))
+        self.assertTrue(hasattr(section, "drain_channel_combo"))
+        self.assertFalse(section.drain_channel_combo.isVisibleTo(section))
         self.assertFalse(hasattr(section, "power_plan_group"))
         self.assertFalse(hasattr(section, "driver_power_plan_box"))
         for editor in (

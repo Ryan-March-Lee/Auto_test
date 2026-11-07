@@ -13,6 +13,11 @@
   质感。滚筒只响应点击循环（不响应滚轮），点一下到下一档、第三下回到 ``OFF``，
   即 ``OFF → DUT → Driver → OFF``；键盘 ``Space`` / ``Enter`` 同样循环。档位文字
   不再带 01/02/03 编号，整行垂直居中并向左侧红点靠拢；
+- **``Cal.`` 效率计算标记**：滚筒靠卡面中央的一侧一个 ``Cal.`` 圆角小开关，按下表示
+  该通道参与效率计算；两个通道可各自独立标记，也可以同时标记。未启用时是白底细边、
+  灰字，启用后填满通道强调色、白字并带一圈柔和辉光，切换时播放 240 ms 的填充与
+  轻微弹跳。它不改变供电角色、上电顺序或通道开关；页面会把第一个已上电的标记
+  通道写成现有运行链路的单个漏极；
 - **两个可编辑值**：每个通道第一行左右各一个，``VS``（电压设定）、``IS``（电流设定）；
   数值框是真实的 ``QDoubleSpinBox``，``Driver`` / ``DUT`` 档位下可以直接输入，配置
   读写仍走页面/表单 Adapter，卡片不自己写文件；
@@ -121,6 +126,7 @@ __all__ = [
     "CardOrderCombo",
     "CardValueField",
     "ChannelModeSelector",
+    "EfficiencyCalibrationToggle",
     "POWER_CARD_HEIGHT",
     "POWER_CARD_RADIUS",
     "POWER_CARD_SIZE",
@@ -175,6 +181,13 @@ _SELECTOR_TOP = 12.0
 _SELECTOR_INSET_X = 12.0
 _SELECTOR_RADIUS = 11.0
 _SELECTOR_ROW_HEIGHT = _SELECTOR_HEIGHT / 3.0
+#: ``Cal.`` 效率计算标记：贴在角色滚筒靠卡面中央的一侧，与滚筒同一条中线。
+#: 左右两侧各留 8 的间距，正好落在滚筒与顶部设备码铭牌之间。
+_CALIBRATION_WIDTH = 36.0
+_CALIBRATION_HEIGHT = 22.0
+_CALIBRATION_GAP = 8.0
+_CALIBRATION_RADIUS = 11.0
+_CALIBRATION_TOP = _SELECTOR_TOP + (_SELECTOR_HEIGHT - _CALIBRATION_HEIGHT) / 2.0
 # 设备码铭牌：顶部正中的白色圆角牌，宽度足够放下 8 位等宽设备码而不被省略。
 _TITLE_WIDTH = 148.0
 _TITLE_HEIGHT = 46.0
@@ -291,8 +304,9 @@ class PowerChannelData:
     字段（``mode != "off"``），旧调用方仍可读；构造时如果 ``enabled=False``，
     ``mode`` 会被规整成 ``off``，两者不会出现矛盾状态。两个数值依次是电压设定、
     电流设定，单位分别是 V、A。保护阈值不再出现在卡面上，只保留“是否启用电压/
-    电流保护”两个状态，阈值仍由配置读取按工作值的 110% 推导。数据类只做
-    “有限且非负”的显示校验，0–50 V / 0–10 A 的输入上下界由卡面输入控件
+    电流保护”两个状态，阈值仍由配置读取按工作值的 110% 推导。``efficiency_calibration_enabled``
+    是卡面 ``Cal.`` 开关的效率计算标记，与通道开关无关，两个通道可以同时为真。
+    数据类只做“有限且非负”的显示校验，0–50 V / 0–10 A 的输入上下界由卡面输入控件
     （:class:`CardValueField`）约束，不在数据快照里夹值。
     """
 
@@ -302,6 +316,8 @@ class PowerChannelData:
     current_set: float = 0.0
     voltage_protection_enabled: bool = False
     current_protection_enabled: bool = False
+    #: 是否标记为效率计算通道；两个通道可以同时为真。
+    efficiency_calibration_enabled: bool = False
     mode: str = "driver"
     #: 本通道在其上电计划里的 1-based 位置；不在计划里时为 ``None``。
     power_order: int | None = None
@@ -323,6 +339,7 @@ class PowerChannelData:
             ("enabled", "enabled"),
             ("voltage_protection_enabled", "电压保护"),
             ("current_protection_enabled", "电流保护"),
+            ("efficiency_calibration_enabled", "效率计算标记"),
         ):
             if not isinstance(getattr(self, field), bool):
                 raise TypeError(f"通道 {self.channel} 的 {label} 必须是 bool")
@@ -397,6 +414,12 @@ class PowerChannelData:
         number = _finite_non_negative(value, f"{self.channel} {kind}")
         field = "voltage_set" if kind == "voltage" else "current_set"
         return replace(self, **{field: number})
+
+    def with_efficiency_calibration(self, enabled: bool) -> "PowerChannelData":
+        """返回一份只改效率计算标记的新快照；不改供电角色与通道开关。"""
+        if not isinstance(enabled, bool):
+            raise TypeError("enabled 必须是 bool")
+        return replace(self, efficiency_calibration_enabled=enabled)
 
     def with_power_role(
         self, order: int | None, count: int, delay: Any
@@ -549,6 +572,27 @@ class PowerSupplyCardData:
             ),
         )
 
+    def channel_efficiency_calibration(self, name: str) -> bool:
+        """某个通道是否被标记为效率计算通道。"""
+        return self.channel(name).efficiency_calibration_enabled
+
+    def with_channel_efficiency_calibration(
+        self, name: str, enabled: bool
+    ) -> "PowerSupplyCardData":
+        """返回一份只改某个通道效率计算标记的新快照。"""
+        if not isinstance(enabled, bool):
+            raise TypeError("enabled 必须是 bool")
+        self.channel(name)
+        return replace(
+            self,
+            channels=tuple(
+                item.with_efficiency_calibration(enabled)
+                if item.channel == name
+                else item
+                for item in self.channels
+            ),
+        )
+
 
 # ---- 几何 ------------------------------------------------------------------
 
@@ -564,6 +608,8 @@ class PowerChannelLayout:
     panel_surface: QRectF
     #: 供电角色滚筒（OFF / DUT / Driver）的卡面矩形，也是透明命中区。
     mode_selector: QRectF
+    #: ``Cal.`` 效率计算标记的整块命中区：贴在滚筒靠卡面中央的一侧。
+    calibration_toggle: QRectF
     value_labels: tuple[QRectF, ...]
     value_boxes: tuple[QRectF, ...]
     #: 两个保护勾选框的整块命中区（方块 + 文字），顺序是电压、电流。
@@ -630,6 +676,18 @@ def power_card_layout() -> PowerCardLayout:
             _SELECTOR_WIDTH,
             _SELECTOR_HEIGHT,
         )
+        # ``Cal.`` 标记贴在滚筒朝卡面中央的一侧，与滚筒同一条水平中线；
+        # 位置由滚筒外沿算出，左右两个通道因此镜像对称。
+        if index == 0:
+            calibration_x = mode_selector.right() + _CALIBRATION_GAP
+        else:
+            calibration_x = mode_selector.left() - _CALIBRATION_GAP - _CALIBRATION_WIDTH
+        calibration_toggle = QRectF(
+            calibration_x,
+            _CALIBRATION_TOP,
+            _CALIBRATION_WIDTH,
+            _CALIBRATION_HEIGHT,
+        )
         value_labels: list[QRectF] = []
         value_boxes: list[QRectF] = []
         for value_index in range(len(_VALUE_TEXTS)):
@@ -693,6 +751,7 @@ def power_card_layout() -> PowerCardLayout:
                 panel=panel,
                 panel_surface=panel_surface,
                 mode_selector=mode_selector,
+                calibration_toggle=calibration_toggle,
                 value_labels=tuple(value_labels),
                 value_boxes=tuple(value_boxes),
                 protection_checks=tuple(protection_checks),
@@ -736,6 +795,14 @@ def _protection_font() -> QFont:
     font = QFont(card_status_font())
     font.setPointSizeF(9.0)
     font.setWeight(QFont.Weight.DemiBold)
+    return font
+
+
+def _calibration_font() -> QFont:
+    """``Cal.`` 标记：8.5pt 等宽加粗，放在 36×22 的小圆角矩形里仍清晰。"""
+    font = QFont(card_code_font())
+    font.setPointSizeF(8.5)
+    font.setWeight(QFont.Weight.Bold)
     return font
 
 
@@ -992,6 +1059,100 @@ def _paint_protection(
     painter.restore()
 
 
+def _paint_calibration_toggle(
+    painter: QPainter,
+    rect: QRectF,
+    *,
+    marked: bool,
+    enabled: bool,
+    index: int,
+    progress: float | None = None,
+    hovered: bool = False,
+    focused: bool = False,
+    pressed: bool = False,
+) -> None:
+    """``Cal.`` 效率计算标记：白底细边的圆角小开关，按下后填色并发光。
+
+    ``progress`` 是 0–1 的显示进度：控件切换时由卡片在 240 ms 内插值，导出位图
+    不传时直接取终态。进度进行中会带一点轻微放大再回落，颜色、描边与辉光强度
+    都按同一个进度连续变化；通道 ``OFF`` 时开关禁用，但已经标记的状态仍以灰阶
+    保留，重新打开通道后恢复强调色。
+    """
+    value = 1.0 if marked else 0.0
+    if progress is not None:
+        value = min(1.0, max(0.0, float(progress)))
+    accent = _accent(index) if enabled else _BORDER_STRONG
+    idle_fill = _SURFACE if enabled else _SURFACE_ALT
+    hover_fill = _mix_color(idle_fill, accent, 0.12)
+    active_fill = accent if enabled else _BORDER_STRONG
+    idle_text = accent if hovered and enabled else (
+        _TEXT_MUTED if enabled else _DISABLED_TEXT
+    )
+    active_text = QColor("#FFFFFF") if enabled else _SURFACE
+    idle_border = accent if hovered and enabled else _BORDER_STRONG
+    active_border = _mix_color(accent, QColor("#FFFFFF"), 0.28)
+    fill = hover_fill if pressed and value < 0.5 else idle_fill
+    fill_top = _mix_color(fill, active_fill.lighter(112), value)
+    fill_bottom = _mix_color(fill, active_fill.darker(112), value)
+    border = _mix_color(idle_border, active_border, value)
+    text_color = _mix_color(idle_text, active_text, value)
+    pen_width = 1.0 + 0.3 * (value if enabled else 0.0)
+    pulse = math.sin(math.pi * value) if 0.0 < value < 1.0 else 0.0
+    scale = 1.0 + 0.05 * pulse
+    if pressed:
+        scale *= 0.97
+
+    painter.save()
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    painter.setRenderHint(QPainter.TextAntialiasing, True)
+    if abs(scale - 1.0) > 1e-6:
+        painter.translate(rect.center())
+        painter.scale(scale, scale)
+        painter.translate(-rect.center())
+
+    # 外圈辉光：只随标记进度出现，越接近启用越亮，不额外画常驻阴影。
+    if value > 0.01 and enabled:
+        for grow, alpha in ((1.4, 0.20), (2.8, 0.12), (4.2, 0.06)):
+            glow = _rounded_rect(
+                rect.adjusted(-grow, -grow, grow, grow),
+                _CALIBRATION_RADIUS + grow,
+            )
+            painter.fillPath(glow, _with_alpha(accent, alpha * value))
+
+    inset = pen_width / 2.0
+    body = rect.adjusted(inset, inset, -inset, -inset)
+    path = _rounded_rect(body, _CALIBRATION_RADIUS - inset)
+    gradient = QLinearGradient(body.topLeft(), body.bottomLeft())
+    gradient.setColorAt(0.0, fill_top)
+    gradient.setColorAt(1.0, fill_bottom)
+    painter.fillPath(path, QBrush(gradient))
+    painter.setBrush(Qt.NoBrush)
+    painter.setPen(QPen(border, pen_width))
+    painter.drawPath(path)
+
+    # 启用态顶部一条很淡的高光，圆角小片的玻璃质感与滚筒同一族。
+    if value > 0.01 and enabled:
+        painter.save()
+        painter.setClipPath(path)
+        highlight = QRectF(body.left(), body.top(), body.width(), 1.0)
+        painter.fillRect(highlight, _with_alpha(QColor("#FFFFFF"), 0.30 * value))
+        painter.restore()
+
+    if focused:
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(QPen(_PRIMARY, 1.5))
+        painter.drawRoundedRect(
+            rect.adjusted(-2.5, -2.5, 2.5, 2.5),
+            _CALIBRATION_RADIUS + 2.0,
+            _CALIBRATION_RADIUS + 2.0,
+        )
+
+    painter.setFont(_calibration_font())
+    painter.setPen(text_color)
+    painter.drawText(rect, int(Qt.AlignCenter), "Cal.")
+    painter.restore()
+
+
 def _mix_color(start: QColor, end: QColor, amount: float) -> QColor:
     """按 0–1 的比例混合两种颜色；比例越界时夹到端点。"""
     ratio = min(1.0, max(0.0, float(amount)))
@@ -1212,11 +1373,16 @@ def _paint_power_card(
     driver_available: bool = True,
     hover_protection: tuple[str, str] | None = None,
     focus_protection: tuple[str, str] | None = None,
+    calibration_progress: Mapping[str, float] | None = None,
+    hover_calibration: str | None = None,
+    focus_calibration: str | None = None,
+    pressed_calibration: str | None = None,
 ) -> None:
     """把整张卡画到 ``painter`` 上；控件与导出位图共用这一份绘制。
 
     ``reel_positions`` 是“通道 -> 显示顺序的连续档位（0=OFF，1=DUT，2=Driver）”，控件用它播
     700 ms 的滚筒滚动；不传时取数据的终态，导出位图因此总是画最终样子。
+    ``calibration_progress`` 同理是“通道 -> 0–1 的标记进度”，不传时按数据终态。
     """
     layout = power_card_layout()
     painter.save()
@@ -1244,6 +1410,17 @@ def _paint_power_card(
             focused=focus_selector == channel.channel,
             pressed=pressed_selector == channel.channel,
             driver_available=driver_available,
+        )
+        _paint_calibration_toggle(
+            painter,
+            channel_layout.calibration_toggle,
+            marked=channel.efficiency_calibration_enabled,
+            enabled=channel.enabled,
+            index=index,
+            progress=(calibration_progress or {}).get(channel.channel),
+            hovered=hover_calibration == channel.channel,
+            focused=focus_calibration == channel.channel,
+            pressed=pressed_calibration == channel.channel,
         )
         values = (channel.voltage_set, channel.current_set)
         for value_index, (label_rect, box_rect) in enumerate(
@@ -1469,6 +1646,56 @@ class ProtectionCheck(QAbstractButton):
     def focusOutEvent(self, event) -> None:
         super().focusOutEvent(event)
         self.focus_changed.emit(self.channel, self.kind, False)
+
+
+class EfficiencyCalibrationToggle(QAbstractButton):
+    """``Cal.`` 效率计算标记的透明命中区：外观由父卡片按标记状态绘制。
+
+    与 :class:`ProtectionCheck` 一样是真实的 ``QAbstractButton``：保留键盘焦点、
+    ``Space`` 激活与无障碍语义，控件本身不画像素。两个通道的标记互相独立，
+    可以同时启用；它不改变通道开关或供电角色。
+    """
+
+    hover_changed = Signal(str, bool)
+    focus_changed = Signal(str, bool)
+
+    def __init__(self, channel: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        if channel not in CHANNEL_NAMES:
+            raise ValueError(f"通道必须是 {' / '.join(CHANNEL_NAMES)}，收到 {channel!r}")
+        self.channel = channel
+        self.setCheckable(True)
+        self.setAutoExclusive(False)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setAccessibleName(f"通道 {channel} 效率计算标记")
+        self.setAccessibleDescription(
+            "按下表示该通道参与效率计算；两个通道可以同时标记。"
+            "标记不改变供电角色、上电顺序或通道开关。"
+        )
+
+    def sizeHint(self) -> QSize:
+        return QSize(round(_CALIBRATION_WIDTH), round(_CALIBRATION_HEIGHT))
+
+    def paintEvent(self, event) -> None:
+        # 外观由父卡片统一画；这里只接受事件，不留下任何控件自己的底色。
+        event.accept()
+
+    def enterEvent(self, event) -> None:
+        super().enterEvent(event)
+        self.hover_changed.emit(self.channel, True)
+
+    def leaveEvent(self, event) -> None:
+        super().leaveEvent(event)
+        self.hover_changed.emit(self.channel, False)
+
+    def focusInEvent(self, event) -> None:
+        super().focusInEvent(event)
+        self.focus_changed.emit(self.channel, True)
+
+    def focusOutEvent(self, event) -> None:
+        super().focusOutEvent(event)
+        self.focus_changed.emit(self.channel, False)
 
 
 def _valid_scale(value: Any) -> float:
@@ -1709,18 +1936,21 @@ class PowerSupplyCard(QWidget):
     """配置页的电源通道卡片：两个通道的角色滚筒、工作值与保护都在这张卡上编辑。
 
     每个通道贴外侧上角一个 84×40 的深色竖直滚筒，档位 ``OFF`` / ``DUT`` /
-    ``Driver`` 点击循环。``OFF`` 时整块灰显、VS/IS、保护勾选、顺序与间隔都不可
-    操作；``DUT`` / ``Driver`` 时恢复通道底色并可编辑。档位变化只更新卡片内部
-    快照并发信号，由页面同步到下方两份上电计划；卡片本身不写配置。
+    ``Driver`` 点击循环；滚筒靠卡面中央的一侧还有 ``Cal.`` 效率计算标记，按下后
+    填满通道强调色并发光。``OFF`` 时整块灰显、VS/IS、保护勾选、``Cal.``、顺序与
+    间隔都不可操作；``DUT`` / ``Driver`` 时恢复通道底色并可编辑。档位变化只更新
+    卡片内部快照并发信号，由页面同步到下方两份上电计划；卡片本身不写配置。
 
-    滚筒、两个数值框、四个保护勾选框以及最下面一行的顺序下拉框和间隔输入框都是
-    可聚焦控件：``Tab`` 依次经过它们，``Space`` / ``Enter`` 循环滚筒档位、
-    ``Space`` 切换保护勾选，数值框用键盘输入。卡片支持按比例缩放，缩放时所有
-    子控件的几何与字号一起调整；绘制统一在缩放后的坐标系里完成。
+    滚筒、``Cal.`` 标记、两个数值框、四个保护勾选框以及最下面一行的顺序下拉框和
+    间隔输入框都是可聚焦控件：``Tab`` 依次经过它们，``Space`` / ``Enter`` 循环滚筒
+    档位、``Space`` 切换保护勾选或 ``Cal.`` 标记，数值框用键盘输入。卡片支持按比例
+    缩放，缩放时所有子控件的几何与字号一起调整；绘制统一在缩放后的坐标系里完成。
     """
 
     channel_mode_changed = Signal(str, str)
     protection_toggled = Signal(str, str, bool)
+    #: ``(channel, marked)``：效率计算标记被用户按下或取消。
+    efficiency_calibration_toggled = Signal(str, bool)
     value_changed = Signal(str, str, float)
     #: ``(channel, order)``：用户在顺序下拉框里选了新的 1-based 位置。
     power_order_changed = Signal(str, int)
@@ -1754,6 +1984,9 @@ class PowerSupplyCard(QWidget):
         self._pressed_selector: str | None = None
         self._hover_protection: tuple[str, str] | None = None
         self._focus_protection: tuple[str, str] | None = None
+        self._hover_calibration: str | None = None
+        self._focus_calibration: str | None = None
+        self._pressed_calibration: str | None = None
         self._driver_available = True
         # 每个通道的连续档位：0=OFF、1=DUT、2=Driver；用户换档时在 700 ms 内插值。
         self._reel_positions: dict[str, float] = {
@@ -1762,8 +1995,17 @@ class PowerSupplyCard(QWidget):
         }
         self._reel_animations: dict[str, QVariantAnimation] = {}
         self._reel_targets: dict[str, int] = {}
+        #: 每个通道 ``Cal.`` 标记的显示进度（0=未标记，1=已标记）。
+        self._calibration_progress: dict[str, float] = {
+            name: 1.0
+            if data.channel(name).efficiency_calibration_enabled
+            else 0.0
+            for name in CHANNEL_NAMES
+        }
+        self._calibration_animations: dict[str, QVariantAnimation] = {}
 
         self._selectors: dict[str, ChannelModeSelector] = {}
+        self._calibration_toggles: dict[str, EfficiencyCalibrationToggle] = {}
         self._value_fields: dict[tuple[str, str], CardValueField] = {}
         self._protection_checks: dict[tuple[str, str], ProtectionCheck] = {}
         self._order_combos: dict[str, CardOrderCombo] = {}
@@ -1782,6 +2024,27 @@ class PowerSupplyCard(QWidget):
             selector.focus_changed.connect(self._on_selector_focus)
             selector.pressed_changed.connect(self._on_selector_pressed)
             self._selectors[name] = selector
+
+            calibration = EfficiencyCalibrationToggle(name, self)
+            calibration.setChecked(channel_data.efficiency_calibration_enabled)
+            calibration.setEnabled(channel_data.enabled)
+            calibration.setGeometry(
+                _scaled_geometry(channel_layout.calibration_toggle, self._scale)
+            )
+            calibration.toggled.connect(
+                lambda marked, channel=name: self._on_calibration_toggled(
+                    channel, marked
+                )
+            )
+            calibration.hover_changed.connect(self._on_calibration_hover)
+            calibration.focus_changed.connect(self._on_calibration_focus)
+            calibration.pressed.connect(
+                lambda channel=name: self._on_calibration_pressed(channel, True)
+            )
+            calibration.released.connect(
+                lambda channel=name: self._on_calibration_pressed(channel, False)
+            )
+            self._calibration_toggles[name] = calibration
 
             for kind, box_rect in zip(VALUE_KINDS, channel_layout.value_boxes):
                 field = CardValueField(name, kind, scale=self._scale, parent=self)
@@ -1838,11 +2101,12 @@ class PowerSupplyCard(QWidget):
             self._delay_fields[name] = delay_field
             self._apply_power_setting(name)
 
-        # 焦点顺序按“角色滚筒 → VS → IS → 电压保护 → 电流保护 → 顺序 → 间隔”
+        # 焦点顺序按“角色滚筒 → Cal. 标记 → VS → IS → 电压保护 → 电流保护 → 顺序 → 间隔”
         # 逐通道向后。
         order: list[QWidget] = []
         for name in CHANNEL_NAMES:
             order.append(self._selectors[name])
+            order.append(self._calibration_toggles[name])
             order.extend(self._value_fields[(name, kind)] for kind in VALUE_KINDS)
             order.extend(
                 self._protection_checks[(name, kind)] for kind in PROTECTION_KINDS
@@ -1866,6 +2130,9 @@ class PowerSupplyCard(QWidget):
             name = channel_layout.channel
             self._selectors[name].setGeometry(
                 _scaled_geometry(channel_layout.mode_selector, scale)
+            )
+            self._calibration_toggles[name].setGeometry(
+                _scaled_geometry(channel_layout.calibration_toggle, scale)
             )
             for kind, box_rect in zip(VALUE_KINDS, channel_layout.value_boxes):
                 field = self._value_fields[(name, kind)]
@@ -1916,6 +2183,17 @@ class PowerSupplyCard(QWidget):
     def channel_mode(self, channel: str) -> str:
         """某个通道此刻的供电角色：``off`` / ``driver`` / ``dut``。"""
         return self._data.channel(channel).mode
+
+    def calibration_toggle(self, channel: str) -> EfficiencyCalibrationToggle:
+        """取某个通道的 ``Cal.`` 效率计算标记控件；名称不合法时抛 ``KeyError``。"""
+        toggle = self._calibration_toggles.get(channel)
+        if toggle is None:
+            raise KeyError(f"卡片里没有通道 {channel!r} 的 Cal. 标记")
+        return toggle
+
+    def channel_efficiency_calibration(self, channel: str) -> bool:
+        """某个通道当前是否被标记为效率计算通道。"""
+        return bool(self.calibration_toggle(channel).isChecked())
 
     def channel_enabled(self, channel: str) -> bool:
         """某个通道此刻是否处于开启状态（``driver`` / ``dut`` 都算开启）。"""
@@ -2006,6 +2284,14 @@ class PowerSupplyCard(QWidget):
                     check.setChecked(checked)
                     check.blockSignals(False)
                 check.setEnabled(channel.enabled)
+            calibration = self._calibration_toggles[name]
+            marked = channel.efficiency_calibration_enabled
+            if calibration.isChecked() != marked:
+                calibration.blockSignals(True)
+                calibration.setChecked(marked)
+                calibration.blockSignals(False)
+            calibration.setEnabled(channel.enabled)
+            self._set_calibration_progress(name, marked)
             self._apply_power_setting(name)
         self._update_tooltips()
         self.update()
@@ -2184,6 +2470,34 @@ class PowerSupplyCard(QWidget):
         if emit:
             self.protection_toggled.emit(channel, kind, enabled)
 
+    def set_efficiency_calibration(
+        self,
+        channel: str,
+        marked: bool,
+        *,
+        emit: bool = False,
+        animate: bool = False,
+    ) -> None:
+        """程序化设置某个通道的效率计算标记；默认直接到终态、不发信号。"""
+        if not isinstance(marked, bool):
+            raise TypeError("marked 必须是 bool")
+        toggle = self.calibration_toggle(channel)
+        if toggle.isChecked() != marked:
+            toggle.blockSignals(True)
+            toggle.setChecked(marked)
+            toggle.blockSignals(False)
+            self._data = self._data.with_channel_efficiency_calibration(
+                channel, marked
+            )
+            if animate and self.isVisible():
+                self._animate_calibration(channel, marked)
+            else:
+                self._set_calibration_progress(channel, marked)
+            self._update_tooltips()
+            self.update()
+        if emit:
+            self.efficiency_calibration_toggled.emit(channel, marked)
+
     # ---------- 滚筒动画 ----------
 
     def _set_reel_position(self, channel: str, index: int) -> None:
@@ -2234,6 +2548,49 @@ class PowerSupplyCard(QWidget):
         self._reel_positions[channel] = float(target)
         self.update()
 
+    # ---------- Cal. 标记动画 ----------
+
+    def _set_calibration_progress(self, channel: str, marked: bool) -> None:
+        """把某个通道的标记进度直接定到终态；程序化回填不播动画。"""
+        animation = self._calibration_animations.get(channel)
+        if animation is not None:
+            animation.stop()
+        self._calibration_progress[channel] = 1.0 if marked else 0.0
+        self.update()
+
+    def _animate_calibration(self, channel: str, marked: bool) -> None:
+        """用户按下标记后 240 ms 内连续完成颜色填充与轻微弹跳。"""
+        target = 1.0 if marked else 0.0
+        current = self._calibration_progress.get(channel, target)
+        if abs(current - target) < 1e-6:
+            self._set_calibration_progress(channel, marked)
+            return
+        animation = self._calibration_animations.get(channel)
+        if animation is None:
+            animation = QVariantAnimation(self)
+            animation.setDuration(240)
+            animation.setEasingCurve(QEasingCurve.OutCubic)
+            animation.valueChanged.connect(
+                lambda value, name=channel: self._on_calibration_value(name, value)
+            )
+            animation.finished.connect(
+                lambda name=channel: self._on_calibration_finished(name)
+            )
+            self._calibration_animations[channel] = animation
+        animation.stop()
+        animation.setStartValue(current)
+        animation.setEndValue(target)
+        animation.start()
+
+    def _on_calibration_value(self, channel: str, value: Any) -> None:
+        self._calibration_progress[channel] = float(value)
+        self.update()
+
+    def _on_calibration_finished(self, channel: str) -> None:
+        marked = self._data.channel(channel).efficiency_calibration_enabled
+        self._calibration_progress[channel] = 1.0 if marked else 0.0
+        self.update()
+
     # ---------- 滚筒事件 ----------
 
     def _on_selector_cycle(self, channel: str) -> None:
@@ -2255,6 +2612,7 @@ class PowerSupplyCard(QWidget):
             self._value_fields[(channel, kind)].setEnabled(enabled)
         for kind in PROTECTION_KINDS:
             self._protection_checks[(channel, kind)].setEnabled(enabled)
+        self._calibration_toggles[channel].setEnabled(enabled)
         count = self._data.channel(channel).power_order_count
         self._order_combos[channel].setEnabled(enabled and count > 0)
         self._delay_fields[channel].setEnabled(enabled)
@@ -2307,6 +2665,28 @@ class PowerSupplyCard(QWidget):
         self._focus_protection = (channel, kind) if focused else None
         self.update()
 
+    def _on_calibration_toggled(self, channel: str, marked: bool) -> None:
+        """用户按下/取消 ``Cal.``：更新快照、播放动效并发信号，配置由页面决定。"""
+        self._data = self._data.with_channel_efficiency_calibration(
+            channel, bool(marked)
+        )
+        self._animate_calibration(channel, bool(marked))
+        self._update_tooltips()
+        self.update()
+        self.efficiency_calibration_toggled.emit(channel, bool(marked))
+
+    def _on_calibration_hover(self, channel: str, hovered: bool) -> None:
+        self._hover_calibration = channel if hovered else None
+        self.update()
+
+    def _on_calibration_focus(self, channel: str, focused: bool) -> None:
+        self._focus_calibration = channel if focused else None
+        self.update()
+
+    def _on_calibration_pressed(self, channel: str, pressed: bool) -> None:
+        self._pressed_calibration = channel if pressed else None
+        self.update()
+
     # ---------- 提示与绘制 ----------
 
     def _update_tooltips(self) -> None:
@@ -2322,6 +2702,8 @@ class PowerSupplyCard(QWidget):
             "左侧 CH1 · 右侧 CH2；卡面不再标注通道号，位置与底色即通道",
             "点击 OFF / DUT / Driver 滚筒切换供电角色：OFF 关闭通道，"
             "DUT 给功放供电，Driver 给驱放供电",
+            "Cal. 是效率计算标记，可多选；它不改变供电角色、上电顺序或通道开关，"
+            "第一个已上电的标记通道会作为当前运行链路的漏极",
             "档位会同步下方上电计划；VS 电压设定（V） · IS 电流设定（A） · "
             "顺序/间隔决定该通道的上电位置与等待时间",
         ]
@@ -2333,12 +2715,15 @@ class PowerSupplyCard(QWidget):
                 )
             else:
                 power_text = "未参与上电"
+            calibration_text = (
+                "效率计算 开" if channel.efficiency_calibration_enabled else "效率计算 关"
+            )
             lines.append(
                 f"{channel.channel} {CHANNEL_MODE_LABELS[channel.mode]}："
                 f"VS {channel.voltage_set:.2f} V · IS {channel.current_set:.2f} A · "
                 f"电压保护 {'开' if channel.voltage_protection_enabled else '关'} · "
                 f"电流保护 {'开' if channel.current_protection_enabled else '关'} · "
-                f"{power_text}"
+                f"{calibration_text} · {power_text}"
             )
         text = "\n".join(lines)
         self.setToolTip(text)
@@ -2364,6 +2749,14 @@ class PowerSupplyCard(QWidget):
                     "勾选后保护阈值自动取比设定值高 10% 的值，无需手工填写。\n"
                     f"{'点击取消' if channel.protection_enabled(kind) else '点击启用'}"
                 )
+            calibration = self._calibration_toggles[channel.channel]
+            calibration.setToolTip(
+                f"{channel.channel} 效率计算标记（Cal.）\n"
+                "按下表示该通道参与效率计算；两个通道可以同时标记。\n"
+                "不改变供电角色、上电顺序或通道开关；第一个已上电的标记通道"
+                "会作为当前运行链路的漏极。\n"
+                f"{'点击取消标记' if channel.efficiency_calibration_enabled else '点击标记'}"
+            )
             combo = self._order_combos[channel.channel]
             if channel.power_order is not None:
                 order_text = (
@@ -2400,6 +2793,10 @@ class PowerSupplyCard(QWidget):
                 driver_available=self._driver_available,
                 hover_protection=self._hover_protection,
                 focus_protection=self._focus_protection,
+                calibration_progress=self._calibration_progress,
+                hover_calibration=self._hover_calibration,
+                focus_calibration=self._focus_calibration,
+                pressed_calibration=self._pressed_calibration,
             )
         finally:
             painter.end()

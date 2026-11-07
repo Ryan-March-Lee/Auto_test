@@ -142,19 +142,17 @@ class PowerConfigurationPageTests(unittest.TestCase):
             [cell.supply_id for cell in page.card_wall.cards()], ["DP8B1519"]
         )
 
-    def test_the_card_view_is_the_main_area_above_the_form(self):
-        """页面以通道卡片为主：卡片在内容列顶部，上电计划接在下面。"""
+    def test_the_card_view_is_the_main_area_and_has_no_form_below_it(self):
+        """页面以通道卡片为主：卡片下方不再有「效率测量」表单。"""
         page = self.make_page()
 
         self.assertIsNotNone(page.card_wall)
         self.assertEqual(
             [cell.supply_id for cell in page.card_wall.cards()], ["DP8B1519"]
         )
-        self.assertLess(
-            page.card_wall.geometry().top(),
-            page.power_section.geometry().top(),
-            "卡片在表单上方",
-        )
+        self.assertFalse(page.power_section.isVisibleTo(page))
+        self.assertFalse(page.drain_channel_combo.isVisibleTo(page))
+        self.assertFalse(hasattr(page, "drain_channel_group"))
 
     def test_the_page_has_a_centered_power_configuration_title(self):
         """整屏步骤页：顶部是“电源配置”大标题，不是标签页。"""
@@ -567,6 +565,85 @@ class PowerConfigurationPageTests(unittest.TestCase):
         )
         self.assertEqual(changes, [True], "卡面勾选要计入 dirty")
 
+    def test_calibration_marks_multiple_channels_and_drives_the_legacy_drain(self):
+        page = self.make_page()
+        config = valid_config()
+        config["dut_config"].pop("drain_channel", None)
+        page.apply_config(config)
+        card = self._card(page)
+        events: list[tuple[str, str, bool]] = []
+        page.efficiency_calibration_changed.connect(
+            lambda *args: events.append(args)
+        )
+        changes: list[bool] = []
+        page.fragment_changed.connect(lambda: changes.append(True))
+
+        for channel in CHANNEL_NAMES:
+            toggle = card.calibration_toggle(channel)
+            QTest.mouseClick(toggle, Qt.LeftButton, pos=toggle.rect().center())
+
+        self.assertEqual(
+            events,
+            [
+                ("DP8B1519", "CH1", True),
+                ("DP8B1519", "CH2", True),
+            ],
+        )
+        self.assertEqual(
+            page.read_efficiency_calibration_channels(),
+            (("DP8B1519", "CH1"), ("DP8B1519", "CH2")),
+        )
+        self.assertEqual(
+            page.read_drain_channel(),
+            {"supply_id": "DP8B1519", "channel": "CH1"},
+            "现有运行链路取第一个已上电的 Cal. 通道作为漏极",
+        )
+        self.assertEqual(changes, [True], "只有第一次标记换了漏极")
+        self.assertTrue(page.is_dirty())
+        self.assertEqual(
+            page.build_fragment()["dut_config"]["drain_channel"],
+            {"supply_id": "DP8B1519", "channel": "CH1"},
+        )
+
+    def test_calibration_survives_a_card_wall_rebuild(self):
+        page = self.make_page()
+        card = self._card(page)
+        toggle = card.calibration_toggle("CH1")
+        QTest.mouseClick(toggle, Qt.LeftButton, pos=toggle.rect().center())
+
+        page.set_rack_slots({"DP8B1519": 4})
+        page.apply_device_bindings(power_supply_bindings("DP8B1519"))
+
+        rebuilt = self._card(page)
+        self.assertTrue(
+            rebuilt.channel_efficiency_calibration("CH1"),
+            "格位/绑定重建保留尚未提交的 Cal. 标记",
+        )
+        self.assertTrue(
+            rebuilt.channel_efficiency_calibration("CH2"),
+            "配置里已有漏极对应的标记也保留",
+        )
+        self.assertEqual(
+            page.read_efficiency_calibration_channels(),
+            (("DP8B1519", "CH1"), ("DP8B1519", "CH2")),
+        )
+        self.assertEqual(
+            page.read_drain_channel(),
+            {"supply_id": "DP8B1519", "channel": "CH1"},
+        )
+
+    def test_calibration_resets_with_the_rest_of_the_power_page(self):
+        page = self.make_page()
+        card = self._card(page)
+        toggle = card.calibration_toggle("CH1")
+        QTest.mouseClick(toggle, Qt.LeftButton, pos=toggle.rect().center())
+        self.assertTrue(card.channel_efficiency_calibration("CH1"))
+
+        page.set_test_mode(True)
+        page.enter()
+
+        self.assertEqual(page.read_efficiency_calibration_channels(), ())
+
     def test_editing_a_card_value_writes_the_config_and_marks_dirty(self):
         page = self.make_page()
         card = self._card(page)
@@ -682,6 +759,33 @@ class PowerConfigurationPageTests(unittest.TestCase):
             "计划候选是每台已绑定电源声明（或默认）的全部通道",
         )
         self.assertEqual(len(page.card_wall.cards()), 2)
+
+    def test_first_enter_keeps_newly_bound_supplies(self):
+        """首次进入重置电源字段时不能把刚扫描到的绑定退回旧配置。
+
+        回归：``enter`` 曾经用页面里尚未更新的配置副本重建绑定，排布了三台电源，
+        进入电源页却只剩保存配置里的那一台。
+        """
+        page = self.make_page()
+        page.apply_device_bindings(
+            power_supply_bindings("DP8B1519", "DP8B0885", "DP8B1234")
+        )
+
+        page.enter()
+        page.set_rack_slots(
+            {"DP8B1519": 0, "DP8B0885": 1, "DP8B1234": 2}
+        )
+
+        self.assertEqual(
+            [cell.supply_id for cell in page.card_wall.cards()],
+            ["DP8B1519", "DP8B0885", "DP8B1234"],
+        )
+        fragment = page.build_fragment()
+        self.assertEqual(
+            set(fragment["instruments"]["power_supplies"]),
+            {"DP8B1519", "DP8B0885", "DP8B1234"},
+            "提交片段也必须包含本次会话新绑定的电源",
+        )
 
     def test_cards_show_each_supply_code_and_identity_tooltip(self):
         page = PowerConfigurationPage(

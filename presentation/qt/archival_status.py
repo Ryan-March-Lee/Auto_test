@@ -1,8 +1,8 @@
-"""把结构化归档结果转成页面文案与动作状态。
+"""把结构化归档结果转成运行日志文案。
 
 本模块是纯 Python：不依赖 Qt、不读取文件、不判断路径是否存在，也不拼接导出规则。
-页面只把 :class:`ArchivalSummary` 写成文案，并据此启用“打开结果目录/报告”按钮；
-产物是否可用由应用层归档服务与 manifest 决定。
+测量页只把 :class:`ArchivalSummary` 写成一条运行日志，并附上所在运行目录；历史页的
+“打开运行目录/报告”走应用层的位置入口，产物是否可用由归档服务与 manifest 决定。
 
 对照重构计划步骤 6，四类状态各有独立提示：
 
@@ -52,13 +52,12 @@ _DELIVERABLE_KINDS = frozenset({ArtifactKind.CSV.value, ArtifactKind.REPORT.valu
 
 @dataclass(frozen=True)
 class ArchivalSummary:
-    """页面显示一次归档结果所需的全部信息。"""
+    """运行日志显示一次归档结果所需的全部信息。"""
 
     headline: str
     detail: str
     tone: str = TONE_INFO
     run_id: str | None = None
-    report_path: str | None = None
 
     def __post_init__(self) -> None:
         for name in ("headline", "detail"):
@@ -71,27 +70,12 @@ class ArchivalSummary:
             not isinstance(self.run_id, str) or not self.run_id.strip()
         ):
             raise ValueError("归档提示的运行 ID 必须是非空字符串")
-        if self.report_path is not None:
-            if self.run_id is None:
-                raise ValueError("只有定位到运行时才允许提供报告位置")
-            if not isinstance(self.report_path, str) or not self.report_path.strip():
-                raise ValueError("报告位置必须是非空字符串")
-
-    @property
-    def can_open_location(self) -> bool:
-        """是否可以提供“打开结果目录”：只有一个已定位的运行才可以。"""
-        return self.run_id is not None
-
-    @property
-    def can_open_report(self) -> bool:
-        """是否可以提供“打开测试报告”：只有已生成的报告才可以。"""
-        return self.run_id is not None and self.report_path is not None
 
 
 def summarize_archival(outcome: ArchivalOutcome) -> ArchivalSummary:
-    """把一次归档结果转成页面文案。
+    """把一次归档结果转成运行日志文案。
 
-    ``outcome`` 必须是正式归档 DTO；页面据此生成文案，不再自行判断产物是否可用。
+    ``outcome`` 必须是正式归档 DTO；页面据此生成日志，不再自行判断产物是否可用。
     """
     if not isinstance(outcome, ArchivalOutcome):
         raise TypeError(
@@ -146,7 +130,6 @@ def _summarize_completed(
             detail=f"运行 {run_id}：{lines}。",
             tone=TONE_SUCCESS,
             run_id=run_id,
-            report_path=_completed_report_path(outcome),
         )
     if status is ArchivalStatus.PENDING:
         return ArchivalSummary(
@@ -163,7 +146,6 @@ def _summarize_completed(
         ),
         tone=TONE_WARNING,
         run_id=run_id,
-        report_path=_completed_report_path(outcome),
     )
 
 
@@ -255,13 +237,6 @@ def _artifact_label(kind: ArtifactKind | str) -> str:
     if value not in _DELIVERABLE_KINDS:
         raise ValueError(f"归档展示只支持 CSV 与测试报告，收到: {value!r}")
     return _ARTIFACT_LABELS[value]
-
-
-def _completed_report_path(outcome: ArchivalOutcome) -> str | None:
-    report = outcome.report
-    if report.status is ArtifactStatus.COMPLETED:
-        return report.path
-    return None
 
 
 __all__ = [

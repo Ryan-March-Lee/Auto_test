@@ -141,9 +141,6 @@ class DriverMappingPage(
         ):
             control_layout.addWidget(button)
         left_layout.addWidget(control_group)
-
-        self.archival_view = self._create_archival_view()
-        left_layout.addWidget(self.archival_view)
         left_layout.addStretch(1)
         self.control_panel = left_panel
         layout.addWidget(left_panel)

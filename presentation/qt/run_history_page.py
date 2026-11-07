@@ -27,7 +27,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from PySide6.QtCore import QSignalBlocker
+from PySide6.QtCore import QSignalBlocker, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QFileDialog,
     QGroupBox,
@@ -53,6 +54,7 @@ from application.ports.gui_data_service import (
     ResultExportServicePort,
     RunHistoryServicePort,
 )
+from domain.run.models import ArtifactKind
 
 from .history_view_model import (
     HistoryRow,
@@ -82,9 +84,9 @@ class RunHistoryPageState:
 
     页面不再在刷新、选中与读取失败分支里各自调用 ``setVisible`` / ``setEnabled``：
     这些分支只更新两张表格的数据，再交给 :meth:`RunHistoryPage.render_state` 一次渲染。
-    状态对象因此只保留驱动外观所需的事实（行数与当前选中的运行），行内展示文本与
-    “能否重新生成”仍由视图模型给出。以后增加淡入、禁用或局部过渡时只改渲染入口，
-    不需要追踪每个回调。
+    状态对象因此只保留驱动外观所需的事实（行数与当前选中的运行），行内展示文本、
+    “能否重新生成”与“能否打开目录/报告”仍由视图模型给出。以后增加淡入、禁用或
+    局部过渡时只改渲染入口，不需要追踪每个回调。
     """
 
     run_count: int = 0
@@ -115,6 +117,16 @@ class RunHistoryPageState:
     def can_regenerate(self) -> bool:
         """选中的运行是否有可重新生成的失败产物。"""
         return self.selected_run is not None and self.selected_run.can_regenerate
+
+    @property
+    def can_open_directory(self) -> bool:
+        """选中的运行是否允许打开运行目录。"""
+        return self.selected_run is not None and self.selected_run.can_open_directory
+
+    @property
+    def can_open_report(self) -> bool:
+        """选中的运行是否已生成可打开的测试报告。"""
+        return self.selected_run is not None and self.selected_run.can_open_report
 
 
 class RunHistoryPage(QWidget):
@@ -167,6 +179,15 @@ class RunHistoryPage(QWidget):
         self.run_empty_hint.setObjectName("emptyHint")
         run_layout.addWidget(self.run_empty_hint)
         run_actions = QHBoxLayout()
+        run_actions.setSpacing(10)
+        self.open_run_dir_button = QPushButton("打开运行目录")
+        set_button_variant(self.open_run_dir_button, "secondary")
+        self.open_run_dir_button.clicked.connect(self.open_run_directory)
+        run_actions.addWidget(self.open_run_dir_button)
+        self.open_report_button = QPushButton("打开测试报告")
+        set_button_variant(self.open_report_button, "secondary")
+        self.open_report_button.clicked.connect(self.open_test_report)
+        run_actions.addWidget(self.open_report_button)
         run_actions.addStretch(1)
         run_refresh_button = QPushButton("刷新历史运行")
         set_button_variant(run_refresh_button, "secondary")
@@ -246,7 +267,7 @@ class RunHistoryPage(QWidget):
     def render_state(
         self, state: RunHistoryPageState | None = None
     ) -> RunHistoryPageState:
-        """页面可见状态的唯一渲染入口：空表说明与“重新生成”按钮都在这里更新。
+        """页面可见状态的唯一渲染入口：空表说明与运行动作按钮都在这里更新。
 
         不传 ``state`` 时先把两张表格的当前行同步给视图模型，再从表格与视图模型取
         当前快照（越界选择会一并清空），因此在刷新、选中变化与读取失败之后都走同一条
@@ -261,7 +282,16 @@ class RunHistoryPage(QWidget):
         self.run_empty_hint.setVisible(state.run_list_empty)
         self.result_empty_hint.setVisible(state.result_list_empty)
         self.regenerate_button.setEnabled(state.can_regenerate)
+        location_ready = self._location_service_ready()
+        self.open_run_dir_button.setEnabled(state.can_open_directory and location_ready)
+        self.open_report_button.setEnabled(state.can_open_report and location_ready)
         return state
+
+    def _location_service_ready(self) -> bool:
+        """历史运行服务是否装配了位置入口；没有时只禁用打开动作，不影响列表与导出。"""
+        return self.run_service is not None and callable(
+            getattr(self.run_service, "run_directory", None)
+        ) and callable(getattr(self.run_service, "artifact_location", None))
 
     def _sync_selection_from_tables(self) -> None:
         """把两张表格的当前行写回视图模型；空表或越界行会清空对应选择。"""
@@ -353,6 +383,63 @@ class RunHistoryPage(QWidget):
         if row is None:
             QMessageBox.warning(self, "导出副本", "请先选择要导出的结果")
         return row
+
+    # -- 打开运行目录 / 测试报告 --------------------------------------------
+
+    def open_run_directory(self) -> bool:
+        """打开选中历史运行的目录；路径由应用层位置入口解析。"""
+        row = self.selected_run_row()
+        if row is None:
+            return False
+        if not row.can_open_directory:
+            QMessageBox.warning(
+                self,
+                "无法打开",
+                f"运行 {row.run_id} {row.state_text}，不能打开运行目录",
+            )
+            return False
+        return self._open_location(row.run_id, None, "运行目录")
+
+    def open_test_report(self) -> bool:
+        """打开选中历史运行已生成的测试报告。"""
+        row = self.selected_run_row()
+        if row is None:
+            return False
+        if not row.can_open_report:
+            QMessageBox.warning(
+                self,
+                "无法打开",
+                f"运行 {row.run_id} 没有已生成的测试报告",
+            )
+            return False
+        return self._open_location(row.run_id, ArtifactKind.REPORT, "测试报告")
+
+    def _open_location(self, run_id: str, kind: ArtifactKind | None, label: str) -> bool:
+        """把应用层给出的本地位置交给系统打开；页面不拼路径、不判断文件。"""
+        service = self.run_service
+        if not self._location_service_ready():
+            self.log_callback(f"未装配历史运行位置入口，无法打开{label}")
+            QMessageBox.warning(self, "无法打开", f"未装配历史运行位置入口，无法打开{label}")
+            return False
+        try:
+            if kind is None:
+                target = service.run_directory(run_id)
+            else:
+                target = service.artifact_location(run_id, kind)
+        except (OSError, ValueError, RuntimeError) as error:
+            self.log_callback(f"无法定位{label}: {error}")
+            QMessageBox.warning(self, "无法打开", f"无法定位{label}: {error}")
+            return False
+        if not isinstance(target, str) or not target.strip():
+            self.log_callback(f"运行 {run_id} 没有可打开的{label}")
+            QMessageBox.warning(self, "无法打开", f"运行 {run_id} 没有可打开的{label}")
+            return False
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(target)):
+            self.log_callback(f"系统无法打开{label}: {target}")
+            QMessageBox.warning(self, "无法打开", f"系统无法打开{label}: {target}")
+            return False
+        self.log_callback(f"已打开{label}: {target}")
+        return True
 
     # -- 重新生成失败产物 ---------------------------------------------------
 

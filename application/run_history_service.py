@@ -24,7 +24,8 @@ from __future__ import annotations
 from application.archival_service import ResultArchivalService
 from application.dto.archival import ArchivalOutcome, ArchivalRequest
 from application.dto.run_history import RunHistorySummary
-from application.ports.gui_data_service import RunArchiveStatusPort
+from application.ports.gui_data_service import RunArchiveStatusPort, RunLocationPort
+from domain.run.models import ArtifactKind
 
 
 class RunHistoryRequestError(ValueError):
@@ -39,13 +40,22 @@ class RunHistoryService:
         *,
         statuses: RunArchiveStatusPort,
         archival: ResultArchivalService | None = None,
+        locations: RunLocationPort | None = None,
     ) -> None:
         if not callable(getattr(statuses, "list_run_summaries", None)):
             raise TypeError("历史运行服务需要状态端口提供 list_run_summaries()")
         if archival is not None and not callable(getattr(archival, "archive", None)):
             raise TypeError("历史运行服务的归档入口必须提供 archive()")
+        if locations is not None and (
+            not callable(getattr(locations, "run_directory", None))
+            or not callable(getattr(locations, "artifact_location", None))
+        ):
+            raise TypeError(
+                "历史运行服务的位置入口必须提供 run_directory() 与 artifact_location()"
+            )
         self.statuses = statuses
         self.archival = archival
+        self.locations = locations
 
     # -- 查询 ---------------------------------------------------------------
 
@@ -84,6 +94,38 @@ class RunHistoryService:
             raise RunHistoryRequestError(
                 f"运行 {summary.run_id} 的产物重新生成失败: {error}"
             ) from error
+
+    # -- 位置定位 -----------------------------------------------------------
+
+    def run_directory(self, run_id: str) -> str:
+        """返回历史运行的本地目录；只接受历史列表中可浏览的运行。"""
+        summary = self._require_run(run_id)
+        if self.locations is None:
+            raise RunHistoryRequestError("未装配运行位置入口，无法打开运行目录")
+        try:
+            target = self.locations.run_directory(summary.run_id)
+        except (OSError, ValueError) as error:
+            raise RunHistoryRequestError(
+                f"运行 {summary.run_id} 的目录不可用: {error}"
+            ) from error
+        if not isinstance(target, str) or not target.strip():
+            raise RunHistoryRequestError(f"运行 {summary.run_id} 没有可打开的目录")
+        return target
+
+    def artifact_location(self, run_id: str, kind: ArtifactKind) -> str | None:
+        """返回历史运行中某类交付产物的本地位置；没有可用产物时返回 ``None``。"""
+        summary = self._require_run(run_id)
+        if not isinstance(kind, ArtifactKind):
+            raise RunHistoryRequestError(f"未知的交付产物类型: {kind!r}")
+        if self.locations is None:
+            raise RunHistoryRequestError("未装配运行位置入口，无法打开交付产物")
+        try:
+            target = self.locations.artifact_location(summary.run_id, kind)
+        except (OSError, ValueError) as error:
+            raise RunHistoryRequestError(
+                f"运行 {summary.run_id} 的{kind.value}产物位置不可用: {error}"
+            ) from error
+        return target if isinstance(target, str) and target.strip() else None
 
     def _require_run(self, run_id: str) -> RunHistorySummary:
         """确认 ``run_id`` 是历史列表中可用的一次运行。"""

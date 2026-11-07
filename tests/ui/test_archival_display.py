@@ -1,4 +1,4 @@
-"""步骤 6：主测试页面显示归档结果（离屏 Qt 页面行为）。"""
+"""归档结果只写运行日志，不再占用测量页面的分组框（离屏 Qt 页面行为）。"""
 
 import os
 import unittest
@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QDialog, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QGroupBox, QWidget
 
 from application.dto.archival import (
     ArchivalOutcome,
@@ -16,7 +16,6 @@ from application.dto.archival import (
 from domain.run.models import ArtifactKind
 from presentation.qt.amplifier_page import AmplifierPage
 from presentation.qt.archival_status import TONE_SUCCESS, TONE_WARNING
-from presentation.qt.archival_view import ArchivalStatusView
 from presentation.qt.cable_loss_page import CableLossPage
 from presentation.qt.driver_mapping_page import DriverMappingPage
 from presentation.qt.measurement_controller import MeasurementController
@@ -27,8 +26,10 @@ from tests.contract_doubles import contract_run
 
 
 RUN_ID = "20260101T000000Z_deadbeef"
+OTHER_RUN_ID = "20260102T000000Z_0ther0id"
 CSV_PATH = "artifacts/amplifier.csv"
 REPORT_PATH = "artifacts/amplifier_report.html"
+RUN_DIRECTORY = f"D:/runs/{RUN_ID}"
 
 # 测量命令在构造期就要求有效运行契约（D1/D10）；本文件只验证归档展示，替身只提供契约。
 _PREPARED_RUN = contract_run(RUN_ID)
@@ -139,22 +140,17 @@ def _amplifier_outcome(
     )
 
 
-class _PublishedArchival:
-    """页面测试共用的观察器：记录归档文案、按钮状态与打开位置调用。"""
-
-    def __init__(self, page, locations=None):
-        self.page = page
-        self.locations = locations if locations is not None else []
-
-    @property
-    def view(self) -> ArchivalStatusView:
-        return self.page.archival_view
-
-    def headline(self):
-        return self.view.headline_label.text()
-
-    def detail(self):
-        return self.view.detail_label.text()
+def _partial_outcome(stage: str, result_path: str) -> ArchivalOutcome:
+    return ArchivalOutcome(
+        run_id=RUN_ID,
+        stage=stage,
+        test_status=ArchivalTestStatus.PARTIAL,
+        formal_result_path=result_path,
+        artifacts=(
+            ArchivedArtifact.not_applicable(ArtifactKind.CSV),
+            ArchivedArtifact.not_applicable(ArtifactKind.REPORT),
+        ),
+    )
 
 
 def _location_provider(locations):
@@ -162,102 +158,54 @@ def _location_provider(locations):
 
     def provider(run_id, relative_path=None):
         locations.append((run_id, relative_path))
-        return f"/runs/{run_id}/{relative_path or ''}"
+        return f"D:/runs/{run_id}/{relative_path or ''}"
 
     return provider
 
 
-class ArchivalStatusViewTests(unittest.TestCase):
+def _log_text(logs) -> str:
+    return "\n".join(logs)
+
+
+def _group_titles(page) -> list[str]:
+    return [box.title() for box in page.findChildren(QGroupBox)]
+
+
+class MeasurementPagesHaveNoArchiveBoxTests(unittest.TestCase):
+    """三个测量页都不再保留“归档结果”分组框。"""
+
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_actions_are_disabled_until_a_located_summary_arrives(self):
-        view = ArchivalStatusView()
-        self.assertFalse(view.open_location_btn.isEnabled())
-        self.assertFalse(view.open_report_btn.isEnabled())
-        self.assertIn("尚未执行归档", view.headline_label.text())
-
-    def test_actions_follow_the_summary_and_use_the_injected_provider(self):
-        locations = []
-
-        def provider(run_id, relative_path=None):
-            locations.append((run_id, relative_path))
-            return f"/runs/{run_id}/{relative_path or ''}"
-
-        view = ArchivalStatusView(location_provider=provider)
-        from presentation.qt.archival_status import summarize_archival
-
-        view.show_summary(summarize_archival(_amplifier_outcome()))
-        self.assertTrue(view.open_location_btn.isEnabled())
-        self.assertTrue(view.open_report_btn.isEnabled())
-
-        with patch(
-            "presentation.qt.archival_view.QDesktopServices.openUrl", return_value=True
-        ) as open_url:
-            self.assertTrue(view.open_report())
-            self.assertTrue(view.open_location())
-
-        self.assertEqual(open_url.call_count, 2)
-        self.assertEqual(
-            locations,
-            [(RUN_ID, REPORT_PATH), (RUN_ID, None)],
+    def test_archive_group_box_is_removed_from_all_measurement_pages(self):
+        pages = (
+            CableLossPage(
+                config_path_provider=lambda: "config.json",
+                run_provider=lambda: _run(),
+                connection_dialog_factory=lambda *_: Dialog(),
+            ),
+            DriverMappingPage(
+                config_path_provider=lambda: "config.json",
+                run_provider=lambda: _run(),
+                connection_dialog_factory=lambda *_: Dialog(),
+                plot_widget_factory=lambda parent: Plot(parent),
+            ),
+            AmplifierPage(
+                config_path_provider=lambda: "config.json",
+                run_provider=lambda: _run(),
+                driver_mode_provider=lambda: True,
+                connection_dialog_factory=lambda *_: Dialog(),
+                plot_widget_factory=lambda parent: Plot(parent),
+            ),
         )
-
-    def test_unavailable_location_is_reported_without_opening_anything(self):
-        logs = []
-        view = ArchivalStatusView(
-            location_provider=lambda _run_id, _path=None: None,
-            log_callback=logs.append,
-        )
-        from presentation.qt.archival_status import summarize_archival
-
-        view.show_summary(summarize_archival(_amplifier_outcome()))
-        with patch(
-            "presentation.qt.archival_view.QDesktopServices.openUrl"
-        ) as open_url:
-            self.assertFalse(view.open_location())
-
-        open_url.assert_not_called()
-        self.assertEqual(len(logs), 1)
-        self.assertIn(RUN_ID, logs[0])
-
-    def test_dynamic_text_is_never_rendered_as_rich_text(self):
-        from PySide6.QtCore import Qt
-
-        from presentation.qt.archival_status import summarize_test_failure
-
-        view = ArchivalStatusView(location_provider=lambda _run_id, _path=None: "/tmp")
-        summary = summarize_test_failure(MeasurementKind.AMPLIFIER, "<b>仪器</b> & 无响应")
-
-        view.show_summary(summary)
-
-        self.assertEqual(view.headline_label.textFormat(), Qt.TextFormat.PlainText)
-        self.assertEqual(view.detail_label.textFormat(), Qt.TextFormat.PlainText)
-        self.assertIn("<b>仪器</b> & 无响应", view.detail_label.text())
-
-    def test_actions_of_another_run_are_not_offered(self):
-        locations = []
-        view = ArchivalStatusView(
-            location_provider=_location_provider(locations),
-            current_run_id_provider=lambda: "20260102T000000Z_0ther0id",
-        )
-        from presentation.qt.archival_status import summarize_archival
-
-        view.show_summary(summarize_archival(_amplifier_outcome()))
-
-        self.assertFalse(view.open_location_btn.isEnabled())
-        self.assertFalse(view.open_report_btn.isEnabled())
-        with patch(
-            "presentation.qt.archival_view.QDesktopServices.openUrl"
-        ) as open_url:
-            self.assertFalse(view.open_location())
-
-        open_url.assert_not_called()
-        self.assertEqual(locations, [])
+        for page in pages:
+            with self.subTest(page=type(page).__name__):
+                self.assertNotIn("归档结果", _group_titles(page))
+                self.assertFalse(hasattr(page, "archival_view"))
 
 
-class AmplifierPageArchivalTests(unittest.TestCase):
+class AmplifierPageArchivalLogTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
@@ -265,6 +213,7 @@ class AmplifierPageArchivalTests(unittest.TestCase):
     def setUp(self):
         self.controller = Controller()
         self.locations = []
+        self.logs = []
         self.run = _run()
         self.page = AmplifierPage(
             config_path_provider=lambda: "config.json",
@@ -272,17 +221,18 @@ class AmplifierPageArchivalTests(unittest.TestCase):
             driver_mode_provider=lambda: True,
             connection_dialog_factory=lambda *_: Dialog(),
             plot_widget_factory=lambda parent: Plot(parent),
+            log_callback=self.logs.append,
             error_callback=lambda _message: None,
             archival_location_provider=_location_provider(self.locations),
+            archival_run_id_provider=lambda: self.run.run_id,
         )
-        self.state = _PublishedArchival(self.page, self.locations)
         self.page.bind_controller(self.controller)
 
     def test_start_announces_automatic_archival(self):
         self.page.start_measurement()
 
-        self.assertIn("自动归档", self.state.headline())
-        self.assertFalse(self.state.view.open_location_btn.isEnabled())
+        self.assertIn("测量结束后将自动归档结果", _log_text(self.logs))
+        self.assertEqual(self.locations, [])
 
     def test_progress_until_scan_end_promises_saving_and_generation(self):
         self.page.start_measurement()
@@ -293,96 +243,82 @@ class AmplifierPageArchivalTests(unittest.TestCase):
         )()
 
         self.controller.signals.progress.emit(60)
-        self.assertIn("测量结束后将自动归档结果", self.state.headline())
+        self.assertNotIn("正在保存结果", _log_text(self.logs))
 
         self.controller.signals.progress.emit(100)
-        self.assertIn("正在保存结果", self.state.headline())
-        self.assertFalse(self.state.view.open_location_btn.isEnabled())
+        self.assertIn("正在保存结果", _log_text(self.logs))
 
-    def test_completed_outcome_shows_success_and_enables_actions(self):
+    def test_completed_outcome_logs_success_and_the_run_directory(self):
         self.controller.signals.archival.emit(_amplifier_outcome())
 
-        self.assertIn("已自动归档", self.state.headline())
-        self.assertEqual(self.state.view.summary.tone, TONE_SUCCESS)
-        self.assertIn(RUN_ID, self.state.detail())
-        self.assertTrue(self.state.view.open_location_btn.isEnabled())
-        self.assertTrue(self.state.view.open_report_btn.isEnabled())
+        text = _log_text(self.logs)
+        self.assertIn("主功放结果已自动归档", text)
+        self.assertIn(CSV_PATH, text)
+        self.assertIn(REPORT_PATH, text)
+        self.assertIn(f"结果目录：{RUN_DIRECTORY}", text)
+        self.assertEqual(self.page._archival_summary.tone, TONE_SUCCESS)
 
-        with patch(
-            "presentation.qt.archival_view.QDesktopServices.openUrl", return_value=True
-        ):
-            self.state.view.open_report_btn.click()
-        self.assertEqual(self.state.locations, [(RUN_ID, REPORT_PATH)])
-
-    def test_failed_artifact_keeps_a_misleading_success_away(self):
+    def test_failed_artifact_logs_a_warning_instead_of_success(self):
         self.controller.signals.archival.emit(
             _amplifier_outcome(csv=ArchivedArtifact.failed(ArtifactKind.CSV, "写入失败"))
         )
 
-        self.assertIn("部分", self.state.headline())
-        self.assertEqual(self.state.view.summary.tone, TONE_WARNING)
-        self.assertIn(RUN_ID, self.state.detail())
-        # 报告本身已生成完成，仍然可以打开；失败的是 CSV。
-        self.assertTrue(self.state.view.open_report_btn.isEnabled())
+        text = _log_text(self.logs)
+        self.assertIn("[归档警告]", text)
+        self.assertIn("部分", text)
+        self.assertIn("写入失败", text)
+        self.assertEqual(self.page._archival_summary.tone, TONE_WARNING)
 
     def test_outcome_of_another_stage_is_ignored(self):
-        other = ArchivalOutcome(
-            run_id=RUN_ID,
-            stage="cable_loss",
-            test_status=ArchivalTestStatus.PARTIAL,
-            formal_result_path="inputs/cable_loss.json",
-            artifacts=(
-                ArchivedArtifact.not_applicable(ArtifactKind.CSV),
-                ArchivedArtifact.not_applicable(ArtifactKind.REPORT),
-            ),
+        self.controller.signals.archival.emit(
+            _partial_outcome("cable_loss", "inputs/cable_loss.json")
         )
-        self.controller.signals.archival.emit(other)
 
-        self.assertIn("尚未执行归档", self.state.headline())
+        self.assertIsNone(self.page._archival_summary)
+        self.assertEqual(self.logs, [])
 
     def test_finished_without_outcome_reports_unknown_status(self):
         self.page.start_measurement()
+        self.logs.clear()
         self.controller.signals.finished.emit()
 
-        self.assertIn("未收到归档结果", self.state.headline())
-        self.assertEqual(self.state.view.summary.tone, TONE_WARNING)
-        self.assertIn(RUN_ID, self.state.detail())
+        self.assertIn("未收到归档结果", _log_text(self.logs))
+        self.assertEqual(self.page._archival_summary.tone, TONE_WARNING)
+        self.assertIn(RUN_ID, self.page._archival_summary.detail)
         self.assertFalse(self.page._archival_pending)
 
     def test_error_and_stop_show_distinct_prompts(self):
         self.page.start_measurement()
         self.controller.signals.error.emit("仪器无响应")
 
-        self.assertIn("测试异常", self.state.headline())
-        self.assertIn("仪器无响应", self.state.detail())
+        self.assertIn("[归档错误]", _log_text(self.logs))
+        self.assertIn("仪器无响应", _log_text(self.logs))
         self.assertFalse(self.page._archival_pending)
 
+        self.logs.clear()
         self.page.start_measurement()
         self.controller.signals.stopped.emit("用户停止")
 
-        self.assertIn("已停止", self.state.headline())
-        self.assertIn("用户停止", self.state.detail())
+        self.assertIn("已停止", _log_text(self.logs))
+        self.assertIn("用户停止", _log_text(self.logs))
 
     def test_outcome_that_is_not_a_formal_dto_is_reported(self):
-        logs = []
-        self.page._log_callback = logs.append
-        self.page.archival_view._log_callback = logs.append
         self.page.start_measurement()
+        self.logs.clear()
         bogus = type("Outcome", (), {"stage": "amplifier"})()
         self.controller.signals.archival.emit(bogus)
 
-        self.assertIn("未收到归档结果", self.state.headline())
-        self.assertTrue(any("归档结果无法显示" in line for line in logs))
+        self.assertIn("未收到归档结果", _log_text(self.logs))
+        self.assertTrue(any("归档结果无法显示" in line for line in self.logs))
 
-    def test_start_rejected_by_controller_leaves_no_waiting_appearance(self):
+    def test_start_rejected_by_controller_leaves_no_waiting_log(self):
         self.controller.start_result = False
 
         self.page.start_measurement()
 
-        # controller 拒绝启动时不能显示“结束后将自动归档”。
-        self.assertIn("尚未执行归档", self.state.headline())
+        self.assertNotIn("自动归档", _log_text(self.logs))
+        self.assertIsNone(self.page._archival_summary)
         self.assertFalse(self.page._archival_pending)
-        self.assertFalse(self.state.view.open_location_btn.isEnabled())
 
     def test_start_failure_reported_by_controller_is_not_overwritten(self):
         self.controller.start_error = "用例构造失败: 缺少驱动映射输入"
@@ -390,33 +326,35 @@ class AmplifierPageArchivalTests(unittest.TestCase):
         self.page.start_measurement()
 
         # controller 先发出 error 再返回 False：拒绝启动的中性提示不能覆盖失败原因。
-        self.assertIn("测试异常", self.state.headline())
-        self.assertIn("用例构造失败", self.state.detail())
+        self.assertIn("测试异常", _log_text(self.logs))
+        self.assertIn("用例构造失败", _log_text(self.logs))
         self.assertFalse(self.page._archival_pending)
 
-    def test_rejected_start_keeps_the_previous_result_visible(self):
+    def test_rejected_start_keeps_the_previous_result_in_the_log(self):
         self.controller.signals.archival.emit(_amplifier_outcome())
+        self.logs.clear()
         self.controller.start_result = False
 
         self.page.start_measurement()
 
         # 上一次测量的归档结果仍然成立，不能被一次被拒绝的启动清零。
-        self.assertIn("已自动归档", self.state.headline())
+        self.assertIsNotNone(self.page._archival_summary)
+        self.assertIn("主功放测试未能启动", _log_text(self.logs))
         self.assertFalse(self.page._archival_pending)
 
-    def test_switching_run_drops_the_summary_of_the_previous_run(self):
+    def test_switching_run_clears_the_previous_summary(self):
         self.page.start_measurement()
         self.controller.signals.archival.emit(_amplifier_outcome())
-        self.assertIn("已自动归档", self.state.headline())
+        self.logs.clear()
 
-        self.run = _run("20260102T000000Z_0ther0id")
+        self.run = _run(OTHER_RUN_ID)
         self.page.on_activated()
 
-        self.assertIn("尚未执行归档", self.state.headline())
-        self.assertFalse(self.state.view.open_location_btn.isEnabled())
+        self.assertIsNone(self.page._archival_summary)
+        self.assertIn("已清除运行", _log_text(self.logs))
 
 
-class CableLossPageArchivalTests(unittest.TestCase):
+class CableLossPageArchivalLogTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
@@ -424,45 +362,37 @@ class CableLossPageArchivalTests(unittest.TestCase):
     def setUp(self):
         self.controller = Controller()
         self.logs = []
-        self.locations = []
         self.page = CableLossPage(
             config_path_provider=lambda: "config.json",
             run_provider=lambda: _run(),
             connection_dialog_factory=lambda *_: Dialog(),
             log_callback=self.logs.append,
             error_callback=lambda _message: None,
-            archival_location_provider=_location_provider(self.locations),
+            archival_location_provider=_location_provider([]),
+            archival_run_id_provider=lambda: RUN_ID,
         )
-        self.state = _PublishedArchival(self.page, self.locations)
         self.page.bind_controller(self.controller)
 
-    def test_stage_archive_is_announced_as_not_needing_deliverables(self):
-        outcome = ArchivalOutcome(
-            run_id=RUN_ID,
-            stage="cable_loss",
-            test_status=ArchivalTestStatus.PARTIAL,
-            formal_result_path="inputs/cable_loss.json",
-            artifacts=(
-                ArchivedArtifact.not_applicable(ArtifactKind.CSV),
-                ArchivedArtifact.not_applicable(ArtifactKind.REPORT),
-            ),
-        )
+    def test_stage_archive_is_announced_without_deliverables(self):
         self.page.start_measurement()
-        self.controller.signals.archival.emit(outcome)
+        self.controller.signals.archival.emit(
+            _partial_outcome("cable_loss", "inputs/cable_loss.json")
+        )
 
-        self.assertIn("阶段结果已自动归档", self.state.headline())
-        self.assertFalse(self.state.view.open_report_btn.isEnabled())
-        self.assertTrue(self.state.view.open_location_btn.isEnabled())
+        text = _log_text(self.logs)
+        self.assertIn("阶段结果已自动归档", text)
+        self.assertIn("inputs/cable_loss.json", text)
+        self.assertIn(f"结果目录：{RUN_DIRECTORY}", text)
 
-    def test_loading_a_historical_result_clears_the_archive_panel(self):
+    def test_loading_a_historical_result_clears_the_archive_summary(self):
         self.page.start_measurement()
         self.page.show_loaded_result(
             type("Reference", (), {"kind": MeasurementKind.CABLE_LOSS, "value": None})()
         )
 
-        self.assertIn("尚未执行归档", self.state.headline())
+        self.assertIsNone(self.page._archival_summary)
 
-    def test_start_while_another_measurement_runs_keeps_the_panel_neutral(self):
+    def test_start_while_another_measurement_runs_keeps_the_page_neutral(self):
         self.controller.state = type(
             "State",
             (),
@@ -472,27 +402,26 @@ class CableLossPageArchivalTests(unittest.TestCase):
         self.page.start_measurement()
 
         self.assertEqual(self.controller.calls, [])
-        self.assertIn("尚未执行归档", self.state.headline())
+        self.assertIsNone(self.page._archival_summary)
         self.assertIn("已有测量正在运行", self.logs)
 
-    def test_rejected_start_does_not_leave_a_waiting_appearance(self):
+    def test_rejected_start_does_not_leave_a_waiting_log(self):
         self.controller.start_result = False
 
         self.page.start_measurement()
 
-        self.assertIn("尚未执行归档", self.state.headline())
+        self.assertIsNone(self.page._archival_summary)
         self.assertFalse(self.page._archival_pending)
         self.assertIn("线损测量未能启动，未开始测量", self.logs)
 
 
-class DriverMappingPageArchivalTests(unittest.TestCase):
+class DriverMappingPageArchivalLogTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
         self.controller = Controller()
-        self.locations = []
         self.logs = []
         self.page = DriverMappingPage(
             config_path_provider=lambda: "config.json",
@@ -501,35 +430,28 @@ class DriverMappingPageArchivalTests(unittest.TestCase):
             plot_widget_factory=lambda parent: Plot(parent),
             log_callback=self.logs.append,
             error_callback=lambda _message: None,
-            archival_location_provider=_location_provider(self.locations),
+            archival_location_provider=_location_provider([]),
+            archival_run_id_provider=lambda: RUN_ID,
         )
-        self.state = _PublishedArchival(self.page, self.locations)
         self.page.bind_controller(self.controller)
 
-    def test_success_and_failure_prompts_are_displayed(self):
-        outcome = ArchivalOutcome(
-            run_id=RUN_ID,
-            stage="driver_mapping",
-            test_status=ArchivalTestStatus.PARTIAL,
-            formal_result_path="inputs/driver_mapping.json",
-            artifacts=(
-                ArchivedArtifact.not_applicable(ArtifactKind.CSV),
-                ArchivedArtifact.not_applicable(ArtifactKind.REPORT),
-            ),
+    def test_success_and_failure_prompts_are_logged(self):
+        self.controller.signals.archival.emit(
+            _partial_outcome("driver_mapping", "inputs/driver_mapping.json")
         )
-        self.controller.signals.archival.emit(outcome)
-        self.assertIn("阶段结果已自动归档", self.state.headline())
+        self.assertIn("阶段结果已自动归档", _log_text(self.logs))
 
+        self.logs.clear()
         self.controller.signals.error.emit("扫描失败")
-        self.assertIn("测试异常", self.state.headline())
-        self.assertIn("扫描失败", self.state.detail())
+        self.assertIn("测试异常", _log_text(self.logs))
+        self.assertIn("扫描失败", _log_text(self.logs))
 
-    def test_start_rejected_by_controller_leaves_no_waiting_appearance(self):
+    def test_start_rejected_by_controller_leaves_no_waiting_log(self):
         self.controller.start_result = False
 
         self.page.start_measurement()
 
-        self.assertIn("尚未执行归档", self.state.headline())
+        self.assertIsNone(self.page._archival_summary)
         self.assertFalse(self.page._archival_pending)
         self.assertIn("驱动映射测试未能启动，未开始测量", self.logs)
 
@@ -542,8 +464,7 @@ class DriverMappingPageArchivalTests(unittest.TestCase):
         )()
 
         self.controller.signals.progress.emit(100)
-        self.assertIn("正在保存结果", self.state.headline())
-        self.assertFalse(self.state.view.open_location_btn.isEnabled())
+        self.assertIn("正在保存结果", _log_text(self.logs))
 
 
 class WorkerArchivalForwardingTests(unittest.TestCase):
@@ -640,16 +561,7 @@ class ControllerArchivalForwardingTests(unittest.TestCase):
         self.assertEqual(self.received, [amplifier_outcome])
 
         self.workers[-1].signals.archival.emit(
-            ArchivalOutcome(
-                run_id=RUN_ID,
-                stage="cable_loss",
-                test_status=ArchivalTestStatus.PARTIAL,
-                formal_result_path="inputs/cable_loss.json",
-                artifacts=(
-                    ArchivedArtifact.not_applicable(ArtifactKind.CSV),
-                    ArchivedArtifact.not_applicable(ArtifactKind.REPORT),
-                ),
-            )
+            _partial_outcome("cable_loss", "inputs/cable_loss.json")
         )
         self.assertEqual(len(self.received), 1)
 

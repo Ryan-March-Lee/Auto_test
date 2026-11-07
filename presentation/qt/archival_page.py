@@ -2,13 +2,12 @@
 
 三个测量页面的“等待归档 / 正在保存 / 展示结果 / 终止事件”完全同构，差异只有测量
 类型。本模块只保留这份状态机，让页面不再各写一套：任何页面都不读文件、不判断产物
-是否存在，也不拼接导出规则，只把状态 DTO 交给 :class:`ArchivalStatusView` 显示。
+是否存在，也不拼接导出规则，只把状态 DTO 写成运行日志。
 
 页面使用顺序：
 
 ```python
 self._setup_archival(kind, location_provider=..., run_id_provider=...)
-self.archival_view = self._create_archival_view()   # build_ui 中
 ...
 self._archival_try_start(
     lambda: controller.start_xxx(command), "……未能启动"
@@ -24,6 +23,8 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from .archival_status import (
+    TONE_ERROR,
+    TONE_WARNING,
     ArchivalSummary,
     summarize_archival,
     summarize_archival_missing,
@@ -32,16 +33,15 @@ from .archival_status import (
     summarize_test_cancelled,
     summarize_test_failure,
 )
-from .archival_view import ArchivalStatusView
 from .measurement_state import MeasurementKind
 
 
 class ArchivalPageMixin:
     """把归档状态机从三个测量页面收拢到一处。
 
-    页面负责按钮、表格和接线确认；本类只负责归档分组的状态与文案。页面必须在
-    ``build_ui`` 之前调用 :meth:`_setup_archival`，并在 ``build_ui`` 中用
-    :meth:`_create_archival_view` 创建控件。
+    页面负责按钮、表格和接线确认；本类只负责归档状态与日志文案。页面必须在
+    ``build_ui`` 之前调用 :meth:`_setup_archival`，归档结果只写运行日志，不再创建
+    页面内的归档分组控件。
     """
 
     def _setup_archival(
@@ -71,14 +71,8 @@ class ArchivalPageMixin:
         self._archival_saving = False
         # 已显示的终端归档提示计数：用于判断“启动被拒”时是否已经有失败文案。
         self._archival_terminal_events = 0
-
-    def _create_archival_view(self) -> ArchivalStatusView:
-        """创建页面共用的归档分组控件。"""
-        return ArchivalStatusView(
-            location_provider=self._archival_location_provider,
-            log_callback=self._log_callback,
-            current_run_id_provider=self._current_run_id,
-        )
+        # 最近一次归档提示只用于切运行时的清理判断；页面不再持有归档控件。
+        self._archival_summary: ArchivalSummary | None = None
 
     # -- controller 事件 ---------------------------------------------------
 
@@ -193,32 +187,60 @@ class ArchivalPageMixin:
     # -- 运行切换 -----------------------------------------------------------
 
     def on_activated(self) -> None:
-        """页面可见时丢弃属于其他运行的旧摘要，避免留下打不开的快捷入口。"""
+        """页面可见时清理属于其他运行的旧摘要，避免日志里的保存位置指向旧运行。"""
         self._drop_archival_of_another_run()
         super().on_activated()
 
     def _drop_archival_of_another_run(self) -> None:
-        summary = getattr(self.archival_view, "summary", None)
+        summary = self._archival_summary
         if summary is None or summary.run_id is None:
             return
         current = self._current_run_id()
         if current == summary.run_id:
             return
-        self._archival_pending = False
-        self._archival_saving = False
-        self.archival_view.clear()
+        self._clear_archival_summary()
         if current is None:
             reason = f"当前没有运行，已清除运行 {summary.run_id} 的归档结果显示"
         else:
             reason = f"当前运行已切换为 {current}，已清除运行 {summary.run_id} 的归档结果显示"
         self._log_callback(f"{reason}；历史运行请在“历史运行”页查看")
 
+    def _clear_archival_summary(self) -> None:
+        """清空最近一次归档提示，不写日志（页面清空结果时由调用方决定文案）。"""
+        self._archival_summary = None
+        self._archival_pending = False
+        self._archival_saving = False
+
     # -- 内部 ---------------------------------------------------------------
 
     def _show_archival_summary(self, summary: ArchivalSummary) -> None:
-        """把一条归档提示写到页面控件和日志里。"""
-        self.archival_view.show_summary(summary)
-        self._log_callback(f"{summary.headline}：{summary.detail}")
+        """把一条归档提示写成运行日志；保存位置只在这里说明，页面上不再保留归档框。"""
+        self._archival_summary = summary
+        message = f"{summary.headline}：{summary.detail}"
+        location = self._archival_directory(summary.run_id)
+        if location is not None and location not in message:
+            message = f"{message} 结果目录：{location}"
+        if summary.tone == TONE_WARNING:
+            message = f"[归档警告] {message}"
+        elif summary.tone == TONE_ERROR:
+            message = f"[归档错误] {message}"
+        self._log_callback(message)
+
+    def _archival_directory(self, run_id: str | None) -> str | None:
+        """解析本次结果的运行目录；只用于日志定位，失败时不改变归档状态。"""
+        if run_id is None:
+            return None
+        provider = self._archival_location_provider
+        if provider is None:
+            return None
+        current = self._current_run_id()
+        if current is not None and current != run_id:
+            return None
+        try:
+            target = provider(run_id, None)
+        except (OSError, ValueError):
+            return None
+        return target if isinstance(target, str) and target.strip() else None
 
     def _current_run_id(self) -> str | None:
         """当前运行 ID，仅用于状态文案；不触发任何检查或对话框。"""

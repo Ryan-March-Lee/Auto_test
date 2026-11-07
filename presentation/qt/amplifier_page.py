@@ -136,10 +136,6 @@ class AmplifierPage(
             control_layout.addWidget(button)
         left_layout.addWidget(control_group)
 
-        # 归档结果紧跟测量控制：测试结束后用户在当前页面即可确认结果是否已保存。
-        self.archival_view = self._create_archival_view()
-        left_layout.addWidget(self.archival_view)
-
         result_group = QGroupBox("测量结果")
         result_layout = QVBoxLayout(result_group)
         self.result_table = QTableWidget()

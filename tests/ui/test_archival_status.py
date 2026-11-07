@@ -62,9 +62,6 @@ class ArchivalSummaryTests(unittest.TestCase):
         self.assertIn(RUN_ID, summary.detail)
         self.assertIn(CSV_PATH, summary.detail)
         self.assertIn(REPORT_PATH, summary.detail)
-        self.assertEqual(summary.report_path, REPORT_PATH)
-        self.assertTrue(summary.can_open_location)
-        self.assertTrue(summary.can_open_report)
 
     def test_failed_artifact_keeps_the_run_id_and_the_report(self):
         outcome = _amplifier_outcome(
@@ -79,7 +76,6 @@ class ArchivalSummaryTests(unittest.TestCase):
         self.assertIn("磁盘空间不足", summary.detail)
         self.assertIn(RUN_ID, summary.detail)
         self.assertIn("重新生成", summary.detail)
-        self.assertEqual(summary.report_path, REPORT_PATH)
 
     def test_all_artifacts_failed_still_points_at_the_run(self):
         outcome = _amplifier_outcome(
@@ -90,9 +86,7 @@ class ArchivalSummaryTests(unittest.TestCase):
         summary = summarize_archival(outcome)
 
         self.assertEqual(summary.tone, TONE_WARNING)
-        self.assertEqual(summary.report_path, None)
-        self.assertTrue(summary.can_open_location)
-        self.assertFalse(summary.can_open_report)
+        self.assertIn("重新生成", summary.detail)
 
     def test_pending_artifacts_report_that_generation_continues(self):
         outcome = _amplifier_outcome(
@@ -105,7 +99,6 @@ class ArchivalSummaryTests(unittest.TestCase):
 
         self.assertEqual(summary.tone, TONE_INFO)
         self.assertIn("仍在生成", summary.headline)
-        self.assertFalse(summary.can_open_report)
 
     def test_stage_only_run_is_archived_without_deliverables(self):
         outcome = ArchivalOutcome(
@@ -125,8 +118,6 @@ class ArchivalSummaryTests(unittest.TestCase):
         self.assertIn("阶段结果已自动归档", summary.headline)
         self.assertIn("inputs/cable_loss.json", summary.detail)
         self.assertIn(RUN_ID, summary.detail)
-        self.assertFalse(summary.can_open_report)
-        self.assertTrue(summary.can_open_location)
 
     def test_cancelled_archive_has_no_artifacts_and_no_report(self):
         outcome = ArchivalOutcome(
@@ -144,7 +135,6 @@ class ArchivalSummaryTests(unittest.TestCase):
 
         self.assertIn("已取消", summary.headline)
         self.assertEqual(summary.tone, TONE_WARNING)
-        self.assertFalse(summary.can_open_report)
 
     def test_failed_archive_distinguishes_saved_and_missing_results(self):
         without_result = ArchivalOutcome(
@@ -187,7 +177,6 @@ class ArchivalFallbackSummaryTests(unittest.TestCase):
         self.assertEqual(summary.tone, TONE_INFO)
         self.assertIn("自动归档", summary.headline)
         self.assertIn("无需再手动导出", summary.detail)
-        self.assertFalse(summary.can_open_location)
 
     def test_saving_summary_says_the_result_is_still_being_written(self):
         summary = summarize_archival_saving(MeasurementKind.CABLE_LOSS)
@@ -195,7 +184,6 @@ class ArchivalFallbackSummaryTests(unittest.TestCase):
         self.assertEqual(summary.tone, TONE_INFO)
         self.assertIn("正在保存结果", summary.headline)
         self.assertIn("自动更新", summary.detail)
-        self.assertFalse(summary.can_open_location)
 
     def test_missing_outcome_keeps_the_run_identifiable(self):
         summary = summarize_archival_missing(MeasurementKind.CABLE_LOSS, RUN_ID)
@@ -203,13 +191,11 @@ class ArchivalFallbackSummaryTests(unittest.TestCase):
         self.assertEqual(summary.tone, TONE_WARNING)
         self.assertIn("未收到归档结果", summary.headline)
         self.assertIn(RUN_ID, summary.detail)
-        self.assertTrue(summary.can_open_location)
 
     def test_missing_outcome_without_run_id_says_status_unknown(self):
         summary = summarize_archival_missing(MeasurementKind.CABLE_LOSS, None)
 
         self.assertIn("状态未知", summary.detail)
-        self.assertFalse(summary.can_open_location)
 
     def test_failure_summary_carries_the_reason(self):
         summary = summarize_test_failure(MeasurementKind.AMPLIFIER, "仪器无响应")
@@ -217,7 +203,6 @@ class ArchivalFallbackSummaryTests(unittest.TestCase):
         self.assertEqual(summary.tone, TONE_ERROR)
         self.assertIn("本次未归档结果", summary.headline)
         self.assertIn("仪器无响应", summary.detail)
-        self.assertFalse(summary.can_open_location)
 
     def test_failure_summary_never_shows_an_empty_reason(self):
         summary = summarize_test_failure(MeasurementKind.AMPLIFIER, "   ")
@@ -229,7 +214,6 @@ class ArchivalFallbackSummaryTests(unittest.TestCase):
 
         self.assertEqual(summary.tone, TONE_WARNING)
         self.assertIn("任务已取消", summary.detail)
-        self.assertFalse(summary.can_open_location)
 
     def test_unknown_measurement_kind_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -241,9 +225,7 @@ class ArchivalFallbackSummaryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ArchivalSummary(headline="标题", detail="说明", tone="purple")
         with self.assertRaises(ValueError):
-            ArchivalSummary(
-                headline="标题", detail="说明", report_path=REPORT_PATH
-            )
+            ArchivalSummary(headline="标题", detail="说明", run_id="  ")
 
 
 if __name__ == "__main__":

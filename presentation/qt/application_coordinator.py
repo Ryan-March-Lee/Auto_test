@@ -864,7 +864,7 @@ class ApplicationCoordinator:
             return bool(page.driver_mode_requested())
         return False
 
-    # ---- 自动归档结果的定位（供页面“打开结果目录/报告”） ----
+    # ---- 自动归档结果的定位（供测量日志与“打开结果目录/报告”） ----
 
     def current_run_id(self) -> str | None:
         """当前运行 ID；纯查询，不检查仪器连接、不弹窗。
@@ -881,9 +881,9 @@ class ApplicationCoordinator:
     ) -> str | None:
         """返回归档结果的本地位置：默认运行目录，给定产物相对路径时返回该文件。
 
-        只服务“打开结果目录/测试报告”这类展示动作：运行必须与当前运行一致，
-        相对路径必须是归档契约里的运行目录内产物路径。本方法不读取文件内容、
-        不判断产物是否可用；产物状态由归档服务与 manifest 决定。
+        只服务运行日志定位与“打开结果目录/测试报告”这类展示动作：运行必须与当前
+        运行一致，相对路径必须是归档契约里的运行目录内产物路径。本方法不读取文件
+        内容、不判断产物是否可用；产物状态由归档服务与 manifest 决定。
         """
         run = self.prepared_run
         if run is None or getattr(run, "run_id", None) != run_id:

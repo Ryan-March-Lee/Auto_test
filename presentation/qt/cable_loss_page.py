@@ -74,7 +74,7 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         layout.setContentsMargins(0, 4, 0, 0)
         layout.setSpacing(12)
 
-        # 左侧窄栏：连接说明、测量控制、归档结果；右侧整块留给结果表。
+        # 左侧窄栏：连接说明、测量控制；右侧整块留给结果表。
         left_panel = QWidget()
         left_panel.setMinimumWidth(420)
         left_panel.setMaximumWidth(520)
@@ -147,9 +147,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         control_layout.setColumnStretch(0, 1)
         control_layout.setColumnStretch(1, 1)
         left_layout.addWidget(control_group)
-
-        self.archival_view = self._create_archival_view()
-        left_layout.addWidget(self.archival_view)
         left_layout.addStretch(1)
         layout.addWidget(left_panel)
 
@@ -265,9 +262,7 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
 
     def clear_results(self) -> None:
         self.cable_loss_table.setRowCount(0)
-        self.archival_view.clear()
-        self._archival_pending = False
-        self._archival_saving = False
+        self._clear_archival_summary()
         self._sync_empty_hint()
         self._log_callback("已清空上一次线损测量结果")
 

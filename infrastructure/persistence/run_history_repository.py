@@ -47,6 +47,7 @@ from application.ports.run_history import (
 )
 from application.ports.run_repository import RunRepositoryPort
 from domain.run.models import (
+    ArtifactKind,
     ArtifactRecord,
     ArtifactStatus,
     FileReference,
@@ -177,6 +178,33 @@ class FileRunHistoryRepository(RunHistoryRepository):
     def read_bytes(self, run_id: str, result_id: str) -> bytes:
         target = self._verified_target(run_id, result_id)
         return target.read_bytes()
+
+    # -- 位置定位 -----------------------------------------------------------
+
+    def run_directory(self, run_id: str) -> str:
+        """返回已登记运行的本地目录，沿用历史读取的目录边界校验。"""
+        return str(self._run_directory(run_id))
+
+    def artifact_location(self, run_id: str, kind: ArtifactKind) -> str | None:
+        """返回已登记运行中某类已完成交付产物的本地位置。
+
+        只读取 manifest 的产物记录，不重算摘要，也不把失败/待生成产物当成可打开目标；
+        目标仍按运行目录边界校验，页面只负责把该位置交给系统打开。
+        """
+        if not isinstance(kind, ArtifactKind):
+            raise ValueError(f"未知的交付产物类型: {kind!r}")
+        manifest = self._manifest(run_id)
+        for record in manifest.artifacts:
+            if (
+                record.kind is not kind
+                or record.status is not ArtifactStatus.COMPLETED
+                or record.path is None
+            ):
+                continue
+            target = self._join(run_id, record.path)
+            self.runs.layout(run_id).relative_path(target)
+            return str(target)
+        return None
 
     # -- 内部工具 -----------------------------------------------------------
 

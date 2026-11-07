@@ -342,6 +342,20 @@ class RunHistoryServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(RunHistoryRequestError, "未装配归档服务"):
             service.regenerate_failed_artifacts(RUN_ID)
 
+    def test_location_actions_require_a_location_port(self):
+        service = RunHistoryService(statuses=StaticStatusPort([_summary()]))
+
+        with self.assertRaisesRegex(RunHistoryRequestError, "未装配运行位置入口"):
+            service.run_directory(RUN_ID)
+        with self.assertRaisesRegex(RunHistoryRequestError, "未装配运行位置入口"):
+            service.artifact_location(RUN_ID, ArtifactKind.REPORT)
+
+    def test_location_actions_reject_runs_outside_the_history(self):
+        service = RunHistoryService(statuses=StaticStatusPort([_summary()]))
+
+        with self.assertRaisesRegex(RunHistoryRequestError, "不在历史列表中"):
+            service.run_directory(OTHER_RUN_ID)
+
     def test_archive_contract_errors_become_history_request_errors(self):
         class BrokenArchival:
             def archive(self, request, *, retry_failed=False, now=None):
@@ -724,6 +738,7 @@ class RunHistoryPageTests(unittest.TestCase):
             archival=ResultArchivalService(
                 runs=self.runs, generator=ArchiveArtifactGenerator(self.runs)
             ),
+            locations=self.history,
         )
         return RunHistoryPage(
             history=HistoryViewModel(query, runs=service),
@@ -764,6 +779,37 @@ class RunHistoryPageTests(unittest.TestCase):
 
         page.run_table.setCurrentCell(0, 0)
         self.assertTrue(page.regenerate_button.isEnabled())
+
+    def test_page_opens_the_selected_run_directory_and_report(self):
+        """历史页承接“打开运行目录/报告”：页面只消费应用层给出的位置。"""
+        self._complete_amplifier_run()
+        self._archive(ArchiveArtifactGenerator(self.runs))
+        page = self._page()
+        page.run_table.setCurrentCell(0, 0)
+
+        self.assertTrue(page.open_run_dir_button.isEnabled())
+        self.assertTrue(page.open_report_button.isEnabled())
+        with patch(
+            "presentation.qt.run_history_page.QDesktopServices.openUrl",
+            return_value=True,
+        ) as open_url:
+            self.assertTrue(page.open_run_directory())
+            self.assertTrue(page.open_test_report())
+
+        opened = [Path(call.args[0].toLocalFile()) for call in open_url.call_args_list]
+        run_directory = self.runs.layout(RUN_ID).run_directory
+        self.assertEqual(opened[0], run_directory)
+        self.assertEqual(opened[1], run_directory / "artifacts" / "amplifier_report.html")
+
+    def test_page_without_report_disables_the_report_action(self):
+        self._complete_cable_loss_run()
+        page = self._page()
+        page.run_table.setCurrentCell(0, 0)
+
+        self.assertTrue(page.open_run_dir_button.isEnabled())
+        self.assertFalse(page.open_report_button.isEnabled())
+        self.assertFalse(page.open_test_report())
+        self.warning_dialog.assert_called_once()
 
     def test_refresh_updates_the_run_and_result_tables_together(self):
         """测量完成后调用一次 refresh()，两张表都要更新，不能只更新结果表。"""

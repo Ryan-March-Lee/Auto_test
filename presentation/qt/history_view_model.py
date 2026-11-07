@@ -175,6 +175,10 @@ class RunHistoryRow:
     artifact_text: str
     problem_text: str = ""
     can_regenerate: bool = False
+    # 打开动作只跟随“运行可用 + 产物已生成且文件仍在”，页面据此启用按钮；
+    # 真正的路径解析由应用层的位置入口完成。
+    can_open_directory: bool = False
+    can_open_report: bool = False
 
     @classmethod
     def from_summary(cls, summary: RunHistorySummary) -> "RunHistoryRow":
@@ -191,6 +195,8 @@ class RunHistoryRow:
             artifact_text=_artifact_text(summary),
             problem_text=_problem_text(summary),
             can_regenerate=summary.can_regenerate,
+            can_open_directory=summary.browsable,
+            can_open_report=_completed_report_available(summary),
         )
 
     @property
@@ -229,6 +235,16 @@ def _artifact_text(summary: RunHistorySummary) -> str:
     if not summary.artifacts:
         return "无交付产物"
     return "、".join(_artifact_entry_text(item) for item in summary.artifacts)
+
+
+def _completed_report_available(summary: RunHistorySummary) -> bool:
+    """历史页能否打开测试报告：报告已生成且文件没有被标记为缺失。"""
+    return any(
+        artifact.kind is ArtifactKind.REPORT
+        and artifact.status is ArtifactStatus.COMPLETED
+        and not artifact.missing
+        for artifact in summary.artifacts
+    )
 
 
 def _artifact_entry_text(item: RunArtifactSummary) -> str:

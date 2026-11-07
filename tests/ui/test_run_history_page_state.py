@@ -53,7 +53,13 @@ _STATE_WRITE_OWNERS = frozenset(
 # 这三个控件的值随状态变化（而不是随结构生成）：只允许渲染入口写它们，
 # 比“整个 _build_ui 都放行”更精确。
 _DYNAMIC_STATE_WIDGETS = frozenset(
-    {"self.run_empty_hint", "self.result_empty_hint", "self.regenerate_button"}
+    {
+        "self.run_empty_hint",
+        "self.result_empty_hint",
+        "self.regenerate_button",
+        "self.open_run_dir_button",
+        "self.open_report_button",
+    }
 )
 
 
@@ -93,7 +99,9 @@ class _StubExport:
         raise AssertionError("状态测试不导出")
 
 
-def _summary(*, can_regenerate: bool = True) -> RunHistorySummary:
+def _summary(
+    *, can_regenerate: bool = True, report_completed: bool = False
+) -> RunHistorySummary:
     artifacts = ()
     if can_regenerate:
         artifacts = (
@@ -103,6 +111,15 @@ def _summary(*, can_regenerate: bool = True) -> RunHistorySummary:
                 source_result=AMPLIFIER_RESULT_PATH,
                 stage=STAGE_AMPLIFIER,
                 error="磁盘已满",
+            ),
+        )
+    if report_completed:
+        artifacts = artifacts + (
+            RunArtifactSummary(
+                ArtifactKind.REPORT,
+                ArtifactStatus.COMPLETED,
+                source_result=AMPLIFIER_RESULT_PATH,
+                stage=STAGE_AMPLIFIER,
             ),
         )
     return RunHistorySummary(
@@ -216,6 +233,21 @@ class RunHistoryPageStateTests(unittest.TestCase):
             .can_regenerate
         )
 
+    def test_open_actions_follow_the_selected_run(self):
+        row = RunHistoryRow.from_summary(
+            _summary(can_regenerate=False, report_completed=True)
+        )
+        state = RunHistoryPageState(selected_run=row)
+
+        self.assertTrue(state.can_open_directory)
+        self.assertTrue(state.can_open_report)
+
+        no_report = RunHistoryPageState(
+            selected_run=RunHistoryRow.from_summary(_summary(can_regenerate=False))
+        )
+        self.assertTrue(no_report.can_open_directory)
+        self.assertFalse(no_report.can_open_report)
+
 
 class RunHistoryPageRenderingTests(unittest.TestCase):
     """页面只有 ``render_state`` 一条可见状态写入路径。"""
@@ -232,6 +264,8 @@ class RunHistoryPageRenderingTests(unittest.TestCase):
         self.assertFalse(page.run_empty_hint.isHidden())
         self.assertFalse(page.result_empty_hint.isHidden())
         self.assertFalse(page.regenerate_button.isEnabled())
+        self.assertFalse(page.open_run_dir_button.isEnabled())
+        self.assertFalse(page.open_report_button.isEnabled())
 
     def test_refresh_renders_rows_and_selection_enables_regeneration(self):
         page = _page(summaries=[_summary()])

@@ -56,7 +56,12 @@ def build_gui_data_service(
         JsonConfigurationAdapter(config_path or paths),
         query,
         ResultExportAdapter(query, paths),
-        run_history=RunHistoryService(statuses=run_history, archival=archival),
+        run_history=RunHistoryService(
+            statuses=run_history,
+            archival=archival,
+            # 同一运行目录仓储同时提供只读位置：历史页的“打开运行目录/报告”不自行拼路径。
+            locations=run_history,
+        ),
     )
 
 

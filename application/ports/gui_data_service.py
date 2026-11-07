@@ -10,6 +10,7 @@ from application.dto.archival import ArchivalOutcome
 from application.dto.export_requests import ExportOutcome, ExportRequest
 from application.dto.measurement_results import MeasurementResult
 from application.dto.run_history import RunHistorySummary
+from domain.run.models import ArtifactKind
 
 
 # 历史结果只来自正式运行目录；旧全局兼容副本已不再参与历史查看。
@@ -104,8 +105,24 @@ class RunArchiveStatusPort(Protocol):
         ...
 
 
+class RunLocationPort(Protocol):
+    """历史运行的只读位置入口。
+
+    只把已登记运行的位置交给界面，不读取文件内容，也不判断产物是否可打开；页面据此
+    触发“打开运行目录/测试报告”，不自行拼接运行目录或产物路径。
+    """
+
+    def run_directory(self, run_id: str) -> str:
+        """返回已登记运行的本地目录。"""
+        ...
+
+    def artifact_location(self, run_id: str, kind: ArtifactKind) -> str | None:
+        """返回已登记运行中某类交付产物的本地位置；没有该产物时返回 ``None``。"""
+        ...
+
+
 class RunHistoryServicePort(Protocol):
-    """历史运行管理的应用用例入口（查询 + 失败产物重新生成）。"""
+    """历史运行管理的应用用例入口（查询 + 失败产物重新生成 + 位置定位）。"""
 
     def list_runs(self) -> tuple[RunHistorySummary, ...]:
         """返回历史运行摘要列表。"""
@@ -117,6 +134,14 @@ class RunHistoryServicePort(Protocol):
         只接受历史列表中的 ``run_id``；运行不可用、没有失败产物或归档失败时抛出
         ``application.run_history_service.RunHistoryRequestError``。
         """
+        ...
+
+    def run_directory(self, run_id: str) -> str:
+        """返回历史运行的本地目录；未装配位置入口或运行不可用时明确失败。"""
+        ...
+
+    def artifact_location(self, run_id: str, kind: ArtifactKind) -> str | None:
+        """返回历史运行中某类交付产物的本地位置；没有可用产物时返回 ``None``。"""
         ...
 
 

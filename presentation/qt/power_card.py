@@ -6,7 +6,7 @@
   压住左右两半的分界线；
 - **两个通道**：左右各一半，通道底色从卡片顶边一直铺到卡底；卡面不再写
   ``CH1`` / ``CH2``，通道身份只由左右位置、底色和悬浮提示表达；
-- **供电角色滚筒**：每个通道贴外侧上角一个 84×48 的深色竖直滚筒，三档
+- **供电角色滚筒**：每个通道贴外侧上角一个 84×40 的深色竖直滚筒，三档
   ``OFF`` / ``DUT`` / ``Driver`` 像老虎机一样上下滚动。``OFF`` 关闭通道，
   ``DUT`` 表示该通道给功放供电，``Driver`` 表示给驱放供电；当前档位居中放大、
   白色发光，上下相邻档位缩小、变暗并带柔化，红色指示点与玻璃高光保留参考实现的
@@ -45,8 +45,8 @@
 
 **尺寸与字体**：卡片固定为 :data:`POWER_CARD_WIDTH` × :data:`POWER_CARD_HEIGHT`
 （440×186），圆角取 :data:`POWER_CARD_RADIUS`（12，比通用卡片更圆，
-在 440 宽的卡面上能看出轮廓）；角色滚筒 84×48，三档每行 16 px，当前档字
-约 14 px，卡片缩放时滚筒与字号一起缩放。字体系列取自
+在 440 宽的卡面上能看出轮廓）；角色滚筒 84×40，三档每行约 13.3 px，当前档字
+约 12 px，卡片缩放时滚筒与字号一起缩放。字体系列取自
 :func:`presentation.qt.theme.card_status_font` 与
 :func:`presentation.qt.theme.card_code_font`。颜色全部来自
 :data:`presentation.qt.theme.TOKENS`，其中包括两个通道的 ``channel_cool`` /
@@ -165,11 +165,13 @@ _PANEL_RADIUS = 10.0
 # ---- 卡面几何：所有位置都由这一组常量算出，绘制与控件命中区共用 -----------------
 _PADDING = 14.0
 _HALF_WIDTH = POWER_CARD_WIDTH / 2.0
-# 供电角色滚筒：贴住左右外侧上角。去掉档位编号后再压扁一档，高度 48，
-# 仍落在 VS/IS 行（y=72）上方；三档每行 16 逻辑像素，当前档字约 14px。
+# 供电角色滚筒：贴住左右外侧上角。再压扁一档到 40 高，并把顶边下移到 12：
+# 色块顶边的强调线在 y=5–7，滚筒自身还有向上约 4.5 的外阴影，顶边留在 6 会把
+# 那条色条盖掉；下移后色条完整露出，滚筒底边 52 仍在 VS/IS 行（y=72）上方。
+# 三档每行约 13.3 逻辑像素，当前档字约 12px。
 _SELECTOR_WIDTH = 84.0
-_SELECTOR_HEIGHT = 48.0
-_SELECTOR_TOP = 6.0
+_SELECTOR_HEIGHT = 40.0
+_SELECTOR_TOP = 12.0
 _SELECTOR_INSET_X = 12.0
 _SELECTOR_RADIUS = 11.0
 _SELECTOR_ROW_HEIGHT = _SELECTOR_HEIGHT / 3.0
@@ -180,12 +182,14 @@ _TITLE_TOP = 8.0
 #: ``VS`` / ``IS`` 一行的顶边：铭牌与角色滚筒让出的空行删除后，工作值直接上移。
 _GRID_TOP = 72.0
 _ROW_HEIGHT = 34.0
-#: 工作值行与保护行之间只留 6：保护勾选框贴紧设置框。
-_ROW_GAP = 6.0
+#: 工作值行与保护行之间不留空行：保护勾选紧贴 VS/IS，视觉上属于同一组设置。
+_VALUE_PROTECTION_GAP = 0.0
+#: 保护行与最下面的顺序/间隔行之间留足距离，把两组设置分开。
+_PROTECTION_SETTING_GAP = 16.0
 _BOX_HEIGHT = 30.0
 _LABEL_WIDTH = 24.0
 _LABEL_GAP = 4.0
-#: 同一行两个格子之间的横向间距；与纵向的 :data:`_ROW_GAP` 分开取值。
+#: 同一行两个格子之间的横向间距；与纵向的行间距分开取值。
 _CELL_GAP = 10.0
 _CELL_WIDTH = (_HALF_WIDTH - 2.0 * _PADDING - _CELL_GAP) / 2.0
 _BOX_WIDTH = _CELL_WIDTH - _LABEL_WIDTH - _LABEL_GAP
@@ -205,14 +209,18 @@ PROTECTION_KINDS = ("voltage", "current")
 #: 四个勾选框的卡面文字统一写「10%保护」：电压/电流的区分交给左右位置（分别压在
 #: VS / IS 数值框下方）与悬浮提示，卡面不再出现“电压/电流”字样，也不再有底部说明行。
 _PROTECTION_TEXTS = ("10%保护", "10%保护")
-#: 保护勾选框一行比工作值一行矮一点，让整张卡在底部收得干净。
-_PROTECTION_ROW_HEIGHT = 30.0
-#: 最下面一行：左边上电顺序、右边上电间隔；行高与保护行一致。
+#: 保护勾选框一行比工作值一行矮一点，紧贴 VS/IS 行时仍留出文字高度。
+_PROTECTION_ROW_HEIGHT = 26.0
+#: 最下面一行：左边上电顺序、右边上电间隔；行高保持 30。
 _SETTING_ROW_HEIGHT = 30.0
 #: 顺序/间隔控件本身比行矮 2，和数值框的纵向留白一致。
 _SETTING_BOX_HEIGHT = 28.0
 _SETTING_TOP = (
-    _GRID_TOP + _ROW_HEIGHT + _ROW_GAP + _PROTECTION_ROW_HEIGHT + _ROW_GAP
+    _GRID_TOP
+    + _ROW_HEIGHT
+    + _VALUE_PROTECTION_GAP
+    + _PROTECTION_ROW_HEIGHT
+    + _PROTECTION_SETTING_GAP
 )
 #: 勾选框方块固定 14 逻辑像素，并与上一行的 ``VS`` / ``IS`` 标签共用同一条中线；
 #: 文字从数值框的左边缘开始，因此「10%保护」与「12.00」左对齐。
@@ -643,7 +651,7 @@ def power_card_layout() -> PowerCardLayout:
         protection_labels: list[QRectF] = []
         for protection_index in range(len(PROTECTION_KINDS)):
             cell_x = left + _PADDING + protection_index * (_CELL_WIDTH + _CELL_GAP)
-            cell_y = _GRID_TOP + _ROW_HEIGHT + _ROW_GAP
+            cell_y = _GRID_TOP + _ROW_HEIGHT + _VALUE_PROTECTION_GAP
             protection_checks.append(
                 QRectF(cell_x, cell_y, _CELL_WIDTH, _PROTECTION_ROW_HEIGHT)
             )
@@ -1005,7 +1013,7 @@ def _with_alpha(color: QColor, alpha: float) -> QColor:
 def _selector_label_font(active: bool) -> QFont:
     """滚筒档位文字：当前档更大更重，邻档缩小；字距收紧接近参考的 Inter。"""
     font = QFont(card_status_font())
-    font.setPointSizeF(10.5 if active else 7.0)
+    font.setPointSizeF(9.0 if active else 6.0)
     font.setWeight(QFont.Weight.Black if active else QFont.Weight.DemiBold)
     font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, -0.2)
     return font
@@ -1700,7 +1708,7 @@ class CardDelayField(KeyboardOnlyDoubleSpinBox):
 class PowerSupplyCard(QWidget):
     """配置页的电源通道卡片：两个通道的角色滚筒、工作值与保护都在这张卡上编辑。
 
-    每个通道贴外侧上角一个 84×48 的深色竖直滚筒，档位 ``OFF`` / ``DUT`` /
+    每个通道贴外侧上角一个 84×40 的深色竖直滚筒，档位 ``OFF`` / ``DUT`` /
     ``Driver`` 点击循环。``OFF`` 时整块灰显、VS/IS、保护勾选、顺序与间隔都不可
     操作；``DUT`` / ``Driver`` 时恢复通道底色并可编辑。档位变化只更新卡片内部
     快照并发信号，由页面同步到下方两份上电计划；卡片本身不写配置。

@@ -285,29 +285,17 @@ class PowerConfigurationPageTests(unittest.TestCase):
         self.assertIn(("DP8B1519", "CH1"), driver_routes)
         self.assertNotIn(("DP8B1519", "CH1"), dut_routes)
 
-    def test_cards_show_the_plan_order_and_group_delay(self):
+    def test_cards_show_the_plan_order_and_default_delay(self):
         page = self.make_page()
         card = self._card(page)
 
         self.assertEqual(card.channel_power_order("CH1"), 1)
         self.assertEqual(card.channel_power_order("CH2"), 2)
         self.assertEqual(card.order_combo("CH1").count(), 2)
-        self.assertAlmostEqual(card.channel_power_delay("CH1"), 1.0)
-
-    def test_zero_group_delay_falls_back_to_the_two_second_default(self):
-        config = valid_config()
-        config["power_supply_assignment"]["dut_amplifier"]["power_plan"] = plan(
-            ("DP8B1519", "CH1"), ("DP8B1519", "CH2"), delay=0.0
-        )
-        page = PowerConfigurationPage(config)
-        page.resize(1100, 900)
-        page.show()
-        self.app.processEvents()
-        self.addCleanup(self._destroy_page, page)
-
-        card = self._card(page)
         self.assertAlmostEqual(
-            card.channel_power_delay("CH1"), DEFAULT_POWER_ON_DELAY_S
+            card.channel_power_delay("CH1"),
+            DEFAULT_POWER_ON_DELAY_S,
+            msg="组默认间隔不再参与回落，未单独设置的通道统一 2s",
         )
 
     def test_selecting_order_on_the_card_reorders_the_plan(self):
@@ -379,13 +367,16 @@ class PowerConfigurationPageTests(unittest.TestCase):
         ]["channels"]["CH1"]
         self.assertEqual(channel["power_on_delay_s"], 3.5)
 
-    def test_group_default_delay_updates_unedited_channels(self):
+    def test_edited_channel_delay_does_not_leak_to_the_other_channel(self):
         page = self.make_page()
-        page.power_section.dut_power_plan_editor.delay_spin.setValue(5.0)
-
         card = self._card(page)
+
+        card.delay_field("CH1").setValue(5.0)
+
         self.assertAlmostEqual(card.channel_power_delay("CH1"), 5.0)
-        self.assertAlmostEqual(card.channel_power_delay("CH2"), 5.0)
+        self.assertAlmostEqual(
+            card.channel_power_delay("CH2"), DEFAULT_POWER_ON_DELAY_S
+        )
 
     def test_an_off_channel_has_the_order_and_delay_disabled(self):
         config = valid_config()
@@ -649,11 +640,11 @@ class PowerConfigurationPageTests(unittest.TestCase):
             },
         )
         page.set_test_mode(True)
-        self.assertTrue(page.driver_power_plan_editor.isEnabled())
+        self.assertTrue(page.driver_power_plan_editor.is_active)
         self.assertNotIn("power_source", page.build_config()["driver_mode"])
 
         page.set_test_mode(False)
-        self.assertFalse(page.driver_power_plan_editor.isEnabled())
+        self.assertFalse(page.driver_power_plan_editor.is_active)
 
     def test_driver_mode_emits_change_signal(self):
         page = self.make_page()
@@ -665,12 +656,16 @@ class PowerConfigurationPageTests(unittest.TestCase):
         page.set_test_mode(True)
         self.assertEqual(changes[-1], True)
 
-    def test_no_driver_mode_hides_the_driver_plan_box(self):
+    def test_no_driver_mode_writes_an_empty_driver_plan(self):
         page = self.make_page(driver_mode={"enabled": True})
 
         page.set_test_mode(False)
 
-        self.assertFalse(page.driver_power_plan_box.isVisible())
+        self.assertFalse(hasattr(page, "driver_power_plan_box"))
+        self.assertEqual(
+            page.driver_power_plan_editor.read_active_plan()["power_sequence"],
+            [],
+        )
 
     # ---- 片段提交与回填 ----------------------------------------------------
 
@@ -724,7 +719,8 @@ class PowerConfigurationPageTests(unittest.TestCase):
         )
         self.assertEqual(
             page.dut_power_plan_editor.read_plan(),
-            plan(("DP8B1519", "CH1"), ("DP8B1519", "CH2"), delay=1.0),
+            plan(("DP8B1519", "CH1"), ("DP8B1519", "CH2")),
+            "组默认间隔不再参与编辑，计划读回为 0.0",
         )
         self.assertEqual(
             page.read_drain_channel(),

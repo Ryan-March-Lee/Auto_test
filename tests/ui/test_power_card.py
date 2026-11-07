@@ -369,7 +369,7 @@ class PowerCardLayoutTests(unittest.TestCase):
 
         self.assertAlmostEqual(
             channel.power_labels[0].top(),
-            channel.protection_checks[0].bottom() + 6.0,
+            channel.protection_checks[0].bottom() + 16.0,
         )
         self.assertAlmostEqual(channel.power_controls[0].height(), 28.0)
         self.assertLess(
@@ -377,6 +377,24 @@ class PowerCardLayoutTests(unittest.TestCase):
         )
         self.assertGreater(
             channel.power_controls[1].left(), channel.power_controls[0].right()
+        )
+
+    def test_protection_row_is_attached_to_the_value_row(self):
+        """10%保护紧贴 VS/IS，不再落在工作值行与顺序/间隔行的正中间。"""
+        channel = power_card_layout().channels[0]
+
+        self.assertAlmostEqual(
+            channel.protection_checks[0].top(),
+            channel.value_labels[0].bottom(),
+        )
+        self.assertAlmostEqual(channel.protection_checks[0].height(), 26.0)
+        self.assertLess(
+            channel.protection_checks[0].center().y(),
+            (
+                channel.value_labels[0].center().y()
+                + channel.power_labels[0].center().y()
+            )
+            / 2.0,
         )
 
     def test_values_are_arranged_vs_then_is(self):
@@ -413,15 +431,20 @@ class PowerCardLayoutTests(unittest.TestCase):
             second.mode_selector.right(), second.panel.right() - 12.0
         )
         self.assertAlmostEqual(first.mode_selector.width(), 84.0)
-        self.assertAlmostEqual(first.mode_selector.height(), 48.0)
-        self.assertAlmostEqual(first.mode_selector.top(), 6.0)
-        self.assertAlmostEqual(first.mode_selector.bottom(), 54.0)
+        self.assertAlmostEqual(first.mode_selector.height(), 40.0)
+        self.assertAlmostEqual(first.mode_selector.top(), 12.0)
+        self.assertAlmostEqual(first.mode_selector.bottom(), 52.0)
+        self.assertGreater(
+            first.mode_selector.top(),
+            7.0,
+            "滚筒顶边（含外阴影）要让开色块顶边 y=5–7 的强调色条",
+        )
         self.assertLess(first.mode_selector.right(), layout.title.left())
         self.assertLess(layout.title.right(), second.mode_selector.left())
         self.assertGreater(
             first.mode_selector.center().y(),
             layout.title.center().y() - 4.0,
-            "滚筒比铭牌更高，中心略低于铭牌中线",
+            "滚筒中心与铭牌中线大致同高",
         )
         self.assertAlmostEqual(
             layout.title.center().x(), layout.card.center().x(), msg="铭牌水平居中"

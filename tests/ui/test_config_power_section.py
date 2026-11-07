@@ -1,10 +1,11 @@
 """电源分区（上电计划 + 漏极）与卡片分工的边界测试。
 
-通道参数已经融合到电源卡片：``config_power_section`` 只构建卡片下方的计划与漏极，
-通道输入控件归 ``power_card`` / ``power_card_wall``。本模块锁住三件事：
+通道参数已经融合到电源卡片：``config_power_section`` 只构建卡片下方的漏极，上电
+计划只保留不可见状态，通道输入控件归 ``power_card`` / ``power_card_wall``。本模块
+锁住三件事：
 
 - 页面交给构建模块的输入仍是显式声明的类型；
-- 电源分区不再创建通道参数表单或标签页；
+- 电源分区不再创建通道参数表单、标签页或上电计划设置框；
 - 页面只组合、卡片只做卡面，通道控件的唯一归属是可静态检查的。
 """
 
@@ -133,7 +134,7 @@ class PowerSectionInputContractTests(unittest.TestCase):
 
 
 class PowerSectionWidgetsTests(unittest.TestCase):
-    """电源分区只剩上电计划与漏极，不再创建通道参数表单。"""
+    """电源分区只剩漏极，计划状态无界面，不再创建通道参数表单。"""
 
     @classmethod
     def setUpClass(cls):
@@ -153,13 +154,17 @@ class PowerSectionWidgetsTests(unittest.TestCase):
         self.addCleanup(widget.deleteLater)
         return widget
 
-    def test_the_section_builds_plans_and_drain_only(self):
+    def test_the_section_builds_the_drain_box_only(self):
         widget = self.section()
 
-        self.assertTrue(hasattr(widget, "power_plan_group"))
         self.assertTrue(hasattr(widget, "drain_channel_group"))
+        self.assertFalse(hasattr(widget, "power_plan_group"))
+        self.assertFalse(hasattr(widget, "driver_power_plan_box"))
         self.assertFalse(hasattr(widget, "power_tabs"))
         self.assertFalse(hasattr(widget, "power_config_widgets"))
+        # 计划状态仍保留，供页面回填/提交与漏极候选使用，但不是控件。
+        self.assertFalse(hasattr(widget.dut_power_plan_editor, "list"))
+        self.assertFalse(hasattr(widget.dut_power_plan_editor, "delay_spin"))
 
     def test_plan_candidates_are_the_bound_supply_channels(self):
         widget = self.section()

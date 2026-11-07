@@ -574,7 +574,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         window = self._window()
         window._enter_test_mode(False)
 
-        self.assertTrue(window.power_page.driver_power_plan_box.isHidden())
+        self.assertFalse(window.power_page.driver_power_plan_editor.is_active)
         self.assertEqual(
             window.power_page.build_config()["power_supply_assignment"][
                 "driver_amplifier"
@@ -587,20 +587,17 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIsNotNone(prepared)
         self.assertFalse(prepared.configuration.test_plan.driver_enabled)
 
-    def test_driver_mode_shows_the_plan_box_and_empty_plan_means_external(self):
+    def test_driver_mode_activates_an_empty_plan_meaning_external_power(self):
         self._silence_dialogs()
         window = self._window()
 
         window._enter_test_mode(True)
 
-        self.assertFalse(window.power_page.driver_power_plan_box.isHidden())
+        self.assertTrue(window.power_page.driver_power_plan_editor.is_active)
         self.assertEqual(
             window.power_page.driver_power_plan_editor.read_plan()["power_sequence"],
             [],
             "现场配置没有本机驱动供电通道：计划留空即驱放自带供电",
-        )
-        self.assertIn(
-            "自带供电", window.power_page.driver_power_plan_editor.status.text()
         )
         self.assertIn(
             "驱动功放", window.amplifier_page.instruction_text.toPlainText()
@@ -770,7 +767,9 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         power.power_config_widgets["DP8B1519"]["channels"]["CH1"][
             "current_protection_enabled"
         ].setChecked(True)
-        power.dut_power_plan_editor.delay_spin.setValue(1.5)
+        power.power_config_widgets["DP8B1519"]["channels"]["CH1"][
+            "power_on_delay"
+        ].setValue(1.5)
         expected_plan = power.dut_power_plan_editor.read_plan()
         expected_drain = power.read_drain_channel()
         self.assertTrue(window.configuration_editor.is_dirty())
@@ -805,6 +804,13 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertTrue(channel["current_protection_enabled"].isChecked())
         self.assertEqual(power.dut_power_plan_editor.read_plan(), expected_plan)
         self.assertEqual(power.read_drain_channel(), expected_drain)
+        self.assertEqual(
+            power.power_config_widgets["DP8B1519"]["channels"]["CH1"][
+                "power_on_delay"
+            ].value(),
+            1.5,
+            "绑定回写不能把卡面尚未提交的通道间隔覆盖掉",
+        )
         self.assertEqual(
             power.get_enabled_power_supplies(), ["DP8B1519", "DP8B0885"]
         )
@@ -844,11 +850,11 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
 
         window._enter_test_mode(False)
         self.assertFalse(window.config_page.driver_mode_requested())
-        self.assertTrue(window.power_page.driver_power_plan_box.isHidden())
+        self.assertFalse(window.power_page.driver_power_plan_editor.is_active)
 
         window._enter_test_mode(True)
         self.assertTrue(window.config_page.driver_mode_requested())
-        self.assertFalse(window.power_page.driver_power_plan_box.isHidden())
+        self.assertTrue(window.power_page.driver_power_plan_editor.is_active)
 
     def test_create_run_freezes_the_run_and_updates_the_page(self):
         self._silence_dialogs()

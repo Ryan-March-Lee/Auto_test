@@ -318,9 +318,9 @@ class ConfigFormState:
         """写出两组的通道上电计划（``power_plan``）。
 
         计划是“哪些电源的哪些通道给哪个器件上电”的唯一来源：这里不再读取按器件选择
-        电源的下拉框，也不写 ``supplies`` / ``power_supply_count``。每组的计划读自计划
-        控件；没有计划控件的旧表单沿用配置里已有的计划，不能因为页面尚未接入排序控件
-        就把用户写入的顺序丢掉。
+        电源的下拉框，也不写 ``supplies`` / ``power_supply_count``。每组的计划读自电源
+        页的计划状态；没有计划状态的旧表单沿用配置里已有的计划，不能因为页面尚未接入
+        排序状态就把用户写入的顺序丢掉。
         """
         existing = _dict_copy(self.config.get("power_supply_assignment"))
         driver_existing = _dict_copy(existing.get("driver_amplifier"))

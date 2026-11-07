@@ -1,8 +1,9 @@
 """步骤 11：独立电源表单的纯 UI 测试。
 
-覆盖组上电计划的排序、启用勾选、组间隔、漏极选择、文档回填，以及绑定变化刷新
-候选时保留尚未提交的计划与漏极。测试只构造 ``PowerFormSection`` 与它的控件，不启动
-整个配置页；通道参数已融合到电源卡片，不在本组件里。
+覆盖组上电计划的成员/顺序、漏极选择、文档回填，以及绑定变化刷新候选时保留尚未
+提交的计划与漏极。计划不再有独立的编辑框：成员与顺序都由卡片设置，这里只验证
+``PowerPlanState`` 的读数与页面依赖的信号。测试只构造 ``PowerFormSection`` 与它的
+控件，不启动整个配置页；通道参数已融合到电源卡片，不在本组件里。
 """
 
 import os
@@ -10,7 +11,6 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from presentation.qt.config_form_state import ConfigFormState
@@ -47,6 +47,13 @@ def _plan(*routes, delay=0.0):
     }
 
 
+def _routes(editor):
+    return tuple(
+        (item["supply_id"], item["channel"])
+        for item in editor.read_plan()["power_sequence"]
+    )
+
+
 def _section(
     *,
     plans=None,
@@ -66,89 +73,106 @@ def _section(
     )
 
 
-def _check(editor, route, checked=True):
-    for row in range(editor.list.count()):
-        item = editor.list.item(row)
-        if item.data(Qt.ItemDataRole.UserRole) == tuple(route):
-            item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
-            return
-    raise AssertionError(f"计划列表里没有路由 {route}")
-
-
-class PowerPlanWidgetTests(unittest.TestCase):
+class PowerSectionLayoutTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_the_list_order_is_the_power_on_order(self):
+    def test_the_section_only_builds_the_drain_box(self):
+        section = _section()
+        self.addCleanup(section.deleteLater)
+
+        self.assertTrue(hasattr(section, "drain_channel_group"))
+        self.assertFalse(hasattr(section, "power_plan_group"))
+        self.assertFalse(hasattr(section, "driver_power_plan_box"))
+        for editor in (
+            section.dut_power_plan_editor,
+            section.driver_power_plan_editor,
+        ):
+            self.assertFalse(hasattr(editor, "list"))
+            self.assertFalse(hasattr(editor, "status"))
+            self.assertFalse(hasattr(editor, "delay_spin"))
+
+
+class PowerPlanStateTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_the_plan_order_is_the_power_on_order(self):
         section = _section(
             plans={"dut": _plan(("DP8B0885", "CH2"), ("DP8B1519", "CH1"), delay=2.5)}
         )
+        self.addCleanup(section.deleteLater)
         editor = section.dut_power_plan_editor
 
         self.assertEqual(
-            editor.routes(),
-            (
-                ("DP8B0885", "CH2"),
-                ("DP8B1519", "CH1"),
-                ("DP8B1519", "CH2"),
-                ("DP8B0885", "CH1"),
-                ("DP8B0950", "CH1"),
-                ("DP8B0950", "CH2"),
-            ),
-            "计划里的顺序先显示，未出现在计划里的候选路由按绑定顺序补在后面",
+            editor.checked_routes(),
+            (("DP8B0885", "CH2"), ("DP8B1519", "CH1")),
+            "计划里的顺序就是上电顺序",
         )
-        self.assertAlmostEqual(editor.read_plan()["inter_channel_delay_s"], 2.5)
+        self.assertEqual(
+            editor.routes()[:2],
+            (("DP8B0885", "CH2"), ("DP8B1519", "CH1")),
+            "计划里的路由先按顺序显示",
+        )
+        self.assertAlmostEqual(editor.read_plan()["inter_channel_delay_s"], 0.0)
 
-        editor.list.setCurrentRow(0)
-        editor.move_current(1)
+        self.assertTrue(editor.set_route_order(("DP8B0885", "CH2"), 2))
 
         self.assertEqual(
-            [
-                (item["supply_id"], item["channel"])
-                for item in editor.read_plan()["power_sequence"]
-            ],
-            [("DP8B1519", "CH1"), ("DP8B0885", "CH2")],
-            "移动一行后读出的上电顺序随之改变",
+            _routes(editor),
+            (("DP8B1519", "CH1"), ("DP8B0885", "CH2")),
+            "重排后读出的上电顺序随之改变",
         )
+        self.assertFalse(editor.set_route_order(("DP8B0950", "CH1"), 1))
 
-    def test_unchecked_channels_are_not_part_of_the_plan(self):
+    def test_membership_is_added_at_the_end_and_removed_without_reordering(self):
         section = _section(
             plans={"dut": _plan(("DP8B1519", "CH1"), ("DP8B1519", "CH2"))}
         )
+        self.addCleanup(section.deleteLater)
         editor = section.dut_power_plan_editor
 
-        _check(editor, ("DP8B1519", "CH2"), False)
-        _check(editor, ("DP8B0885", "CH1"), True)
-
+        self.assertTrue(editor.set_route_checked(("DP8B0885", "CH1"), True))
         self.assertEqual(
-            [
-                (item["supply_id"], item["channel"])
-                for item in editor.read_plan()["power_sequence"]
-            ],
-            [("DP8B1519", "CH1"), ("DP8B0885", "CH1")],
-            "启用开关只把勾选的路由写进上电序列",
+            editor.checked_routes(),
+            (
+                ("DP8B1519", "CH1"),
+                ("DP8B1519", "CH2"),
+                ("DP8B0885", "CH1"),
+            ),
+            "新加入的通道追加到计划末尾",
         )
 
-    def test_a_missing_plan_starts_with_every_candidate_disabled(self):
+        self.assertTrue(editor.set_route_checked(("DP8B1519", "CH1"), False))
+        self.assertEqual(
+            editor.checked_routes(),
+            (("DP8B1519", "CH2"), ("DP8B0885", "CH1")),
+            "移出一条路由时其余路由保持相对顺序",
+        )
+        self.assertFalse(editor.set_route_checked(("DP8B9999", "CH1"), True))
+
+    def test_a_missing_plan_starts_empty(self):
         section = _section()
+        self.addCleanup(section.deleteLater)
 
         self.assertEqual(
             section.dut_power_plan_editor.read_plan()["power_sequence"],
             [],
-            "尚未确认顺序时不能把候选路由自动勾上",
+            "尚未确认顺序时不能把候选路由自动加入",
         )
-        self.assertIn("未确认", section.dut_power_plan_editor.status.text())
 
-    def test_the_status_line_reports_incomplete_and_ready_plans(self):
-        section = _section(bound=("DP8B1519",))
-        editor = section.dut_power_plan_editor
+    def test_membership_change_emits_once(self):
+        section = _section()
+        self.addCleanup(section.deleteLater)
+        events = []
+        section.plan_changed.connect(lambda *args: events.append(args))
 
-        _check(editor, ("DP8B1519", "CH1"))
-        self.assertIn("未完成", editor.status.text())
+        section.dut_power_plan_editor.set_route_checked(("DP8B1519", "CH1"), True)
+        section.dut_power_plan_editor.set_route_checked(("DP8B1519", "CH1"), True)
 
-        _check(editor, ("DP8B1519", "CH2"))
-        self.assertIn("就绪", editor.status.text())
+        self.assertEqual(events, [("dut", "DP8B1519", "CH1", True)])
 
     def test_inactive_driver_group_reads_an_empty_plan(self):
         section = _section(
@@ -157,25 +181,19 @@ class PowerPlanWidgetTests(unittest.TestCase):
             },
             driver_plan_active=False,
         )
-        section.driver_power_plan_editor.set_route_checked(("DP8B0950", "CH1"), True)
+        self.addCleanup(section.deleteLater)
+        editor = section.driver_power_plan_editor
+        editor.set_route_checked(("DP8B0950", "CH1"), True)
 
         self.assertEqual(
-            section.driver_power_plan_editor.read_active_plan(),
+            editor.read_active_plan(),
             {"power_sequence": [], "inter_channel_delay_s": 0.0},
             "驱放模式关闭时不能把本机电源计划写回",
         )
         self.assertTrue(
-            section.driver_power_plan_editor.read_plan()["power_sequence"],
-            "重新开启驱放模式后仍保留界面上未提交的勾选",
+            editor.read_plan()["power_sequence"],
+            "重新开启驱放模式后仍保留界面上未提交的成员",
         )
-
-    def test_an_empty_driver_plan_is_the_external_power_state(self):
-        """驱动功放不勾任何通道就是自带供电，状态行不能提示“未确认”。"""
-        section = _section(driver_plan_active=True)
-
-        status = section.driver_power_plan_editor.status.text()
-        self.assertIn("自带供电", status)
-        self.assertNotIn("未确认", status)
 
 
 class DrainSelectionTests(unittest.TestCase):
@@ -188,6 +206,7 @@ class DrainSelectionTests(unittest.TestCase):
             plans={"dut": _plan(("DP8B0885", "CH2"))},
             drain={"supply_id": "DP8B0885", "channel": "CH2"},
         )
+        self.addCleanup(section.deleteLater)
 
         self.assertEqual(
             section.read_drain_channel(),
@@ -201,11 +220,13 @@ class DrainSelectionTests(unittest.TestCase):
 
     def test_an_unset_drain_reads_as_none(self):
         section = _section()
+        self.addCleanup(section.deleteLater)
 
         self.assertIsNone(section.read_drain_channel())
 
     def test_an_invalid_existing_drain_stays_visible_for_validation(self):
         section = _section(drain={"supply_id": "DP8B9999", "channel": "CH1"})
+        self.addCleanup(section.deleteLater)
 
         self.assertEqual(
             section.read_drain_channel(),
@@ -218,6 +239,7 @@ class DrainSelectionTests(unittest.TestCase):
         section = _section(
             plans={"dut": _plan(("DP8B0885", "CH2"))},
         )
+        self.addCleanup(section.deleteLater)
 
         options = [
             section.drain_channel_combo.itemData(index)
@@ -226,18 +248,19 @@ class DrainSelectionTests(unittest.TestCase):
 
         self.assertEqual(options, [("DP8B0885", "CH2")])
 
-    def test_unchecking_the_drain_channel_keeps_it_visible_as_invalid(self):
+    def test_removing_the_drain_channel_keeps_it_visible_as_invalid(self):
         section = _section(
             plans={"dut": _plan(("DP8B0885", "CH2"), ("DP8B1519", "CH1"))},
             drain={"supply_id": "DP8B0885", "channel": "CH2"},
         )
+        self.addCleanup(section.deleteLater)
 
-        _check(section.dut_power_plan_editor, ("DP8B0885", "CH2"), False)
+        section.dut_power_plan_editor.set_route_checked(("DP8B0885", "CH2"), False)
 
         self.assertEqual(
             section.read_drain_channel(),
             {"supply_id": "DP8B0885", "channel": "CH2"},
-            "取消勾选不静默清空漏极，保留旧值交给校验",
+            "移出计划不静默清空漏极，保留旧值交给校验",
         )
         self.assertIn("无效", section.drain_channel_combo.currentText())
 
@@ -247,8 +270,9 @@ class PowerPlanBackfillTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_apply_config_backfills_order_interval_and_drain(self):
+    def test_apply_config_backfills_order_and_drain(self):
         section = _section()
+        self.addCleanup(section.deleteLater)
         document = {
             "power_supply_assignment": {
                 "dut_amplifier": {
@@ -264,10 +288,14 @@ class PowerPlanBackfillTests(unittest.TestCase):
 
         plan = section.dut_power_plan_editor.read_plan()
         self.assertEqual(
-            [(item["supply_id"], item["channel"]) for item in plan["power_sequence"]],
-            [("DP8B0885", "CH2"), ("DP8B1519", "CH1")],
+            _routes(section.dut_power_plan_editor),
+            (("DP8B0885", "CH2"), ("DP8B1519", "CH1")),
         )
-        self.assertAlmostEqual(plan["inter_channel_delay_s"], 1.5)
+        self.assertEqual(
+            plan["inter_channel_delay_s"],
+            0.0,
+            "组默认间隔不再由编辑器写入",
+        )
         self.assertEqual(
             section.read_drain_channel(),
             {"supply_id": "DP8B1519", "channel": "CH1"},
@@ -276,6 +304,7 @@ class PowerPlanBackfillTests(unittest.TestCase):
     def test_reading_the_form_writes_plans_and_not_supply_lists(self):
         """计划是唯一来源：读回只剩 ``power_plan``，不再补按器件固定分配的表。"""
         section = _section(plans={"dut": _plan(("DP8B1519", "CH1"))})
+        self.addCleanup(section.deleteLater)
         config = {
             "power_supply_assignment": {
                 "dut_amplifier": {
@@ -299,6 +328,7 @@ class PowerPlanBackfillTests(unittest.TestCase):
     def test_candidates_are_the_channels_of_every_bound_supply(self):
         """候选来自绑定集合，不默认展开整台电源以外的通道，也不按 PA 单元裁剪。"""
         section = _section(bound=("DP8B1519", "DP8B0885"))
+        self.addCleanup(section.deleteLater)
 
         self.assertEqual(
             section.dut_power_plan_editor.routes(),
@@ -324,6 +354,7 @@ class PowerPlanBackfillTests(unittest.TestCase):
             },
             driver_plan_active=True,
         )
+        self.addCleanup(section.deleteLater)
 
         self.assertEqual(
             section.dut_power_plan_editor.read_plan()["power_sequence"],
@@ -346,9 +377,9 @@ class PowerFormRebuildTests(unittest.TestCase):
             drain={"supply_id": "DP8B0885", "channel": "CH2"},
             bound=("DP8B1519", "DP8B0885"),
         )
-        _check(section.dut_power_plan_editor, ("DP8B1519", "CH2"), True)
-        section.dut_power_plan_editor.list.setCurrentRow(0)
-        section.dut_power_plan_editor.move_current(1)
+        self.addCleanup(section.deleteLater)
+        section.dut_power_plan_editor.set_route_checked(("DP8B1519", "CH2"), True)
+        section.dut_power_plan_editor.set_route_order(("DP8B1519", "CH2"), 1)
         expected_plan = section.dut_power_plan_editor.read_plan()
         expected_drain = section.read_drain_channel()
 

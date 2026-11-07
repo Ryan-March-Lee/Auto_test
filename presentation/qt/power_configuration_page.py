@@ -2,7 +2,7 @@
 
 页面以通道卡片为主视图：顶部是居中加粗的大标题“电源配置”（与“仪器排布”同一套
 ``pageTitle``），中间是卡片墙——每台电源一张带蓝黄通道的卡片，按仪器排布页九宫格的
-相对位置摆放（:mod:`presentation.qt.power_card_wall`），上电计划与漏极表单接在卡片
+相对位置摆放（:mod:`presentation.qt.power_card_wall`），效率测量的漏极选择接在卡片
 下方。进入本页时，排布页的电源卡片从屏幕原位展开成完整卡片
 （:mod:`presentation.qt.power_card_morph`），卡片落位后标题、表单与底部导航再淡入；
 卡片墙与过渡层共用同一份卡片位置。设备绑定信息不在本页显示：绑定只在上游
@@ -16,8 +16,8 @@
 ``driver_amplifier`` / ``dut_amplifier`` 的 ``power_plan`` 路由，因此档位不是临时
 显示状态，而是由现有计划结构持久化；进入页面时按已保存计划回显档位。``OFF`` 时该
 通道的 VS/IS 输入框与保护勾选不可操作。工作值与保护勾选直接进入配置片段，保护阈值
-仍由工作值按 110% 自动推导。两个通道始终保留在配置里，卡片下方的「通道上电计划」与
-「效率测量」不属于通道参数。
+仍由工作值按 110% 自动推导。两个通道始终保留在配置里，上电角色、顺序与每通道间隔
+都在卡片上设置，卡片下方只剩「效率测量」的漏极选择。
 
 电源参数、通道上电计划与效率测量漏极都归本页；测试参数、运行入口与
 设备发现仍属于 :mod:`presentation.qt.configuration_page` 与
@@ -267,13 +267,19 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             self.card_wall.channel_delay_changed.connect(
                 self._on_card_delay_changed
             )
+        if self.power_section is not None:
+            # 计划成员变化可能来自卡片，也可能来自程序化同步；页面统一处理两组互斥
+            # 与卡片回写。计划本身不再有下方列表控件。
+            self.power_section.plan_changed.connect(
+                self._on_plan_membership_changed
+            )
 
     def _wire_fragment_signals(self) -> None:
         """把电源字段的编辑汇总成 ``fragment_changed``。
 
         卡片上的 VS/IS 与保护勾选由 :class:`PowerCardWall` 的专用信号直接汇总（见
-        :meth:`_connect_signals`）；这里只接卡片下方的计划与漏极控件。计划列表不会
-        因绑定重建而换对象，因此不需要像旧标签页那样每次重连。
+        :meth:`_connect_signals`）；这里只接计划顺序与漏极控件。计划对象不会因绑定
+        重建而换对象，因此不需要像旧标签页那样每次重连。
         """
         self._fragment_signal_connections = []
         section = self.power_section
@@ -295,16 +301,8 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             ("driver", section.driver_power_plan_editor),
         ):
             hook(
-                editor.list.itemChanged,
-                lambda item, name=group: self._on_plan_item_changed(name, item),
-            )
-            hook(
                 editor.order_changed,
                 lambda name=group: self._on_plan_order_changed(name),
-            )
-            hook(
-                editor.delay_spin.valueChanged,
-                lambda _value, name=group: self._on_plan_delay_changed(name),
             )
         hook(section.drain_channel_combo.currentIndexChanged, notify)
 
@@ -394,17 +392,6 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         return tuple(routes)
 
     @staticmethod
-    def _plan_delay(plan: Any) -> float:
-        """计划里的组默认间隔；非法值按 0 处理。"""
-        value = plan.get("inter_channel_delay_s") if isinstance(plan, Mapping) else None
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            return 0.0
-        seconds = float(value)
-        if not math.isfinite(seconds) or seconds < 0:
-            return 0.0
-        return seconds
-
-    @staticmethod
     def _entry_channel_delay(entry: Any, channel: str) -> float | None:
         """配置里显式写下的通道上电间隔；没有或非法时返回 ``None``。"""
         channels = entry.get("channels") if isinstance(entry, Mapping) else None
@@ -421,8 +408,8 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             return None
         return seconds
 
-    def _group_plan_state(self, group: str) -> tuple[tuple[tuple[str, str], ...], float]:
-        """一组当前生效的计划路由与默认间隔（读控件里的未提交状态）。"""
+    def _group_plan_routes(self, group: str) -> tuple[tuple[str, str], ...]:
+        """一组当前生效的计划路由（读状态里的未提交成员）。"""
         section = self.power_section
         if section is not None:
             editor = (
@@ -431,51 +418,49 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
                 else section.driver_power_plan_editor
             )
             if group == "driver" and not self._driver_plan_active():
-                return (), 0.0
+                return ()
             plan = editor.read_plan()
         else:
             plan = self._power_plan_entry(
                 "dut_amplifier" if group == "dut" else "driver_amplifier"
             )
-        return self._plan_route_list(plan), self._plan_delay(plan)
+        return self._plan_route_list(plan)
 
     def _channel_power_settings(
         self, modes: Mapping[tuple[str, str], str]
     ) -> dict[tuple[str, str], tuple[int | None, int, float]]:
-        """每个通道的上电顺序/可选顺序数/间隔；顺序来自其所在计划。"""
-        dut_routes, dut_delay = self._group_plan_state("dut")
-        driver_routes, driver_delay = self._group_plan_state("driver")
+        """每个通道的上电顺序/可选顺序数/间隔；顺序来自其所在计划。
+
+        组默认间隔不再参与回落：通道有自己的 ``power_on_delay_s`` 就用它，否则
+        统一用卡面缺省的 2s。
+        """
+        dut_routes = self._group_plan_routes("dut")
+        driver_routes = self._group_plan_routes("driver")
         settings: dict[tuple[str, str], tuple[int | None, int, float]] = {}
         for supply_id, entry in self._power_supply_sources().items():
             for name in CHANNEL_NAMES:
                 route = (supply_id, name)
                 mode = modes.get(route, "off")
                 if mode == "dut":
-                    routes, group_delay = dut_routes, dut_delay
+                    routes = dut_routes
                 elif mode == "driver":
-                    routes, group_delay = driver_routes, driver_delay
+                    routes = driver_routes
                 else:
-                    routes, group_delay = (), 0.0
+                    routes = ()
                 explicit = self._edited_delays.get(route)
                 if explicit is None:
                     explicit = self._entry_channel_delay(entry, name)
-                # 计划里没有单独设置间隔时，沿用组的默认值；组默认还是 0，
-                # 就用卡面缺省的 2s。
-                fallback = (
-                    group_delay if group_delay > 0 else DEFAULT_POWER_ON_DELAY_S
+                delay = (
+                    explicit
+                    if explicit is not None
+                    else DEFAULT_POWER_ON_DELAY_S
                 )
                 if route in routes:
                     order = routes.index(route) + 1
                     count = len(routes)
-                    delay = explicit if explicit is not None else fallback
                 else:
                     order = None
                     count = 0
-                    delay = (
-                        explicit
-                        if explicit is not None
-                        else DEFAULT_POWER_ON_DELAY_S
-                    )
                 settings[route] = (order, count, delay)
         return settings
 
@@ -571,17 +556,16 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             self._silent = was_silent
         self._emit_fragment_changed()
 
-    def _on_plan_item_changed(self, group: str, item: Any) -> None:
-        """计划编辑器勾选变化：互斥地清掉另一组，并同步卡片滚筒。"""
+    def _on_plan_membership_changed(
+        self, group: str, supply_id: str, channel: str, checked: bool
+    ) -> None:
+        """计划成员变化：互斥地清掉另一组，并同步卡片滚筒。"""
         if self._syncing_modes:
             return
-        route = item.data(Qt.ItemDataRole.UserRole)
-        if not isinstance(route, (tuple, list)) or len(route) != 2:
-            return
-        checked = item.checkState() == Qt.CheckState.Checked
         section = self.power_section
         if section is None:
             return
+        route = (supply_id, channel)
         was_silent = self._silent
         self._silent = True
         self._syncing_modes = True
@@ -606,13 +590,6 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         self._sync_cards_from_plans()
         self._emit_fragment_changed()
 
-    def _on_plan_delay_changed(self, group: str) -> None:
-        """组默认间隔变化：只影响没有单独间隔的通道，重新同步卡片。"""
-        if self._syncing_modes:
-            return
-        self._sync_cards_from_plans()
-        self._emit_fragment_changed()
-
     # ---- 表单 Adapter -------------------------------------------------------
 
     @property
@@ -623,9 +600,8 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
     # ---- 页面级派生状态 -----------------------------------------------------
 
     def update_driver_power_ui(self) -> None:
-        """按驱放测试模式刷新驱动计划的可见性与生效状态。"""
+        """按驱放测试模式刷新驱动计划的生效状态。"""
         if self.power_section is not None:
-            self.power_section.driver_power_plan_box.setVisible(self.test_mode_enabled)
             self.power_section.set_driver_plan_active(self.test_mode_enabled)
         if self.card_wall is not None:
             was_silent = self._silent
@@ -1096,14 +1072,6 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         if self.card_wall is None:
             return {}
         return self.card_wall.control_records()
-
-    @property
-    def power_plan_group(self):
-        return self.power_section.power_plan_group
-
-    @property
-    def driver_power_plan_box(self):
-        return self.power_section.driver_power_plan_box
 
     @property
     def dut_power_plan_editor(self):

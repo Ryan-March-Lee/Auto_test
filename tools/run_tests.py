@@ -147,7 +147,14 @@ def build_plan(
         steps.append(Step("并行离线测试", parallel_arguments(workers)))
         steps.append(Step("串行补跑", unit_arguments(*PARALLEL_SERIAL_MODULES)))
     else:
-        steps.append(Step("全量离线测试", discover_arguments("tests")))
+        # 全量也以仓库根为顶层目录。若只给 ``-s tests``，unittest 会把
+        # ``tests/integration`` 导入成 ``integration.*``，而测试文件内部又导入
+        # ``tests.integration.*``；同名模块的两份副本会让 Qt 线程/单例状态错位
+        # （``test_previous_step_returns_to_the_connection_page`` 曾在第二次扫描
+        # 的 ``worker.wait()`` 处 access violation）。
+        steps.append(
+            Step("全量离线测试", discover_arguments("tests", top_level=True))
+        )
     return tuple(steps)
 
 

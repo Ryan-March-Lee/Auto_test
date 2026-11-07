@@ -50,7 +50,24 @@ class TestRunnerPlanTests(unittest.TestCase):
     def test_default_layer_is_the_full_offline_suite(self):
         plan = build_plan()
         self.assertEqual(_labels(plan)[-1], "全量离线测试")
-        self.assertEqual(plan[-1].arguments[-5:], ("-s", "tests", "-p", "test_*.py", "-v"))
+        # 全量发现也必须以仓库根为顶层目录（``-t .``）：否则 tests/integration
+        # 会以 integration.* 导入，与测试文件里的 tests.integration.* 形成两份
+        # 同名模块，Qt 线程清理时会出现 access violation。
+        self.assertEqual(
+            plan[-1].arguments,
+            (
+                "-m",
+                "unittest",
+                "discover",
+                "-s",
+                "tests",
+                "-t",
+                ".",
+                "-p",
+                "test_*.py",
+                "-v",
+            ),
+        )
         self.assertNotIn("--parallel", _flatten(plan))
 
     def test_a_ui_change_runs_all_gates_and_only_the_presentation_tests(self):

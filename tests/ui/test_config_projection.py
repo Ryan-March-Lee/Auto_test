@@ -12,11 +12,14 @@ from pathlib import Path
 from presentation.qt.config_projection import (
     DEFAULT_ATTENUATOR_TYPE,
     DEFAULT_COMPRESSION_TYPE,
+    DEFAULT_FREQUENCY_EXTRA_TEXT,
+    DEFAULT_FREQUENCY_START,
+    DEFAULT_FREQUENCY_STEP,
+    DEFAULT_FREQUENCY_STOP,
     DEFAULT_MAX_INPUT_POWER,
     DEFAULT_PA_UNIT_COUNT,
     DEFAULT_POWER_CHANNEL_VALUE,
     DEFAULT_SIGNAL_SOURCE,
-    DEFAULT_TEST_FREQUENCIES,
     ConfigBackfillError,
     project_authoring_config,
     reset_control_widgets,
@@ -163,7 +166,11 @@ class FakeForm:
     """配置页控件的最小读取/写入协议替身。"""
 
     def __init__(self, supplies=("DP8B1519", "DP8B0885")):
-        self.freq_edit = _Text()
+        self.freq_start = _Value()
+        self.freq_stop = _Value()
+        self.freq_step = _Value()
+        self.freq_extra = _Text()
+        self.frequency_import_error = None
         self.start_power = _Value()
         self.stop_power = _Value()
         self.power_step = _Value()
@@ -237,7 +244,11 @@ class ConfigProjectionTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual(form.freq_edit.text(), "[2.4, 2.6]")
+        self.assertEqual(form.freq_start.value(), 2.4)
+        self.assertEqual(form.freq_stop.value(), 2.6)
+        self.assertEqual(form.freq_step.value(), 0.2)
+        self.assertEqual(form.freq_extra.text(), "")
+        self.assertIsNone(form.frequency_import_error)
         self.assertEqual(form.start_power.value(), -30.0)
         self.assertEqual(form.compression_combo.currentText(), "3dB")
         self.assertEqual(form.pa_unit_count_combo.currentText(), "3")
@@ -252,7 +263,7 @@ class ConfigProjectionTests(unittest.TestCase):
         )
         # 返回值是独立副本：调用方持有自己的文档，不与控件或入参共享结构。
         projected["test_frequencies"].append(9.9)
-        self.assertEqual(form.freq_edit.text(), "[2.4, 2.6]")
+        self.assertEqual(form.freq_stop.value(), 2.6)
 
     def test_projection_sets_the_protection_switches_without_threshold_widgets(self):
         """保护阈值已改为自动推导，投影只恢复启用开关，不再有阈值输入框。"""
@@ -341,12 +352,31 @@ class ConfigProjectionTests(unittest.TestCase):
 
         project_authoring_config(form, {})
 
-        self.assertEqual(form.freq_edit.text(), str(list(DEFAULT_TEST_FREQUENCIES)))
+        self.assertEqual(form.freq_start.value(), DEFAULT_FREQUENCY_START)
+        self.assertEqual(form.freq_stop.value(), DEFAULT_FREQUENCY_STOP)
+        self.assertEqual(form.freq_step.value(), DEFAULT_FREQUENCY_STEP)
+        self.assertEqual(form.freq_extra.text(), DEFAULT_FREQUENCY_EXTRA_TEXT)
+        self.assertIsNone(form.frequency_import_error)
         self.assertEqual(form.start_power.value(), DEFAULT_SIGNAL_SOURCE["start_power"])
         self.assertEqual(form.compression_combo.currentText(), DEFAULT_COMPRESSION_TYPE)
         self.assertEqual(form.attenuator_combo.currentText(), DEFAULT_ATTENUATOR_TYPE)
         self.assertEqual(form.pa_unit_count_combo.currentText(), DEFAULT_PA_UNIT_COUNT)
         self.assertEqual(form.max_input_power.value(), DEFAULT_MAX_INPUT_POWER)
+
+    def test_non_uniform_frequencies_are_loaded_as_an_error_state(self):
+        """非等步长旧列表不做兼容拆分：控件只做展示，页面凭错误状态禁止保存。"""
+        form = FakeForm()
+
+        project_authoring_config(
+            form,
+            {"test_frequencies": [4.0, 4.4, 4.8, 5.2, 5.6, 5.8]},
+        )
+
+        self.assertIn("不是严格等步长", form.frequency_import_error)
+        self.assertIn("5.8", form.frequency_import_error)
+        self.assertEqual(form.freq_start.value(), 4.0)
+        self.assertEqual(form.freq_stop.value(), 5.8)
+        self.assertEqual(form.freq_step.value(), 0.4)
 
     def test_legacy_field_names_are_ignored(self):
         """投影只认识编写文档字段：旧字段别名不会被当成配置来源。"""
@@ -361,7 +391,10 @@ class ConfigProjectionTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual(form.freq_edit.text(), str(list(DEFAULT_TEST_FREQUENCIES)))
+        self.assertEqual(form.freq_start.value(), DEFAULT_FREQUENCY_START)
+        self.assertEqual(form.freq_stop.value(), DEFAULT_FREQUENCY_STOP)
+        self.assertEqual(form.freq_step.value(), DEFAULT_FREQUENCY_STEP)
+        self.assertEqual(form.freq_extra.text(), DEFAULT_FREQUENCY_EXTRA_TEXT)
         self.assertEqual(form.start_power.value(), DEFAULT_SIGNAL_SOURCE["start_power"])
 
     def test_non_mapping_payloads_are_rejected(self):

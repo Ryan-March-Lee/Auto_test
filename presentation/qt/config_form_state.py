@@ -14,7 +14,6 @@
 返回的消息。上电计划的判据只由 domain 定义（步骤 13 收口），这里不再保留页面副本。
 """
 
-import ast
 import copy
 import math
 from typing import Any, Mapping
@@ -23,6 +22,11 @@ from application.errors import ConfigurationError
 from domain.instruments.models import INSTRUMENT_ROLES
 
 from .config_form_bindings import binding_address, power_supply_bindings
+from .frequency_sweep import (
+    FrequencySweepError,
+    generate_frequencies,
+    parse_extra_frequencies,
+)
 
 #: 保护阈值相对工作值的比例：页面只让用户勾选是否启用，阈值自动取 110%。
 PROTECTION_RATIO = 1.1
@@ -42,25 +46,6 @@ def protection_threshold(value: Any) -> float:
     if not math.isfinite(number) or number < 0.0:
         return 0.0
     return round(number * PROTECTION_RATIO, PROTECTION_DECIMALS)
-
-
-def parse_frequency_text(value: str) -> list[float] | None:
-    """安全解析频率列表；非法输入返回 ``None``，不会执行任意代码。"""
-    try:
-        parsed = ast.literal_eval(value)
-    except (SyntaxError, ValueError, TypeError):
-        return None
-    if not isinstance(parsed, (list, tuple)) or not parsed:
-        return None
-    result = []
-    for item in parsed:
-        if isinstance(item, bool) or not isinstance(item, (int, float)):
-            return None
-        number = float(item)
-        if not math.isfinite(number):
-            return None
-        result.append(number)
-    return result
 
 
 def _dict_copy(value: Any) -> dict:
@@ -203,12 +188,39 @@ class ConfigFormState:
         动作不需要第二份校验入口，也不会把电源故障写进本页。
         """
         errors = []
-        if parse_frequency_text(self._text(self.widgets.freq_edit)) is None:
-            errors.append("测试频率必须是非空数字列表")
+        frequency_error = self.frequency_error()
+        if frequency_error:
+            errors.append(frequency_error)
         errors.extend(
             _formal_validation_errors(self.build_config(), scope="parameters")
         )
         return errors
+
+    def frequency_error(self) -> str | None:
+        """返回当前频率扫描读数或加载状态的用户错误；合法时返回 ``None``。
+
+        加载错误优先于控件读数：非等步长的旧列表虽然被放进了控件做展示，但在用户
+        重新输入扫描参数之前不能被当成可保存的配置。
+        """
+        imported = getattr(self.widgets, "frequency_import_error", None)
+        if imported:
+            return str(imported)
+        try:
+            self.frequency_values()
+        except FrequencySweepError as failure:
+            return str(failure)
+        return None
+
+    def frequency_values(self) -> tuple[float, ...]:
+        """按控件读数生成频点列表；非法参数抛出 :class:`FrequencySweepError`。"""
+        w = self.widgets
+        extras = parse_extra_frequencies(self._text(w.freq_extra))
+        return generate_frequencies(
+            self._value(w.freq_start),
+            self._value(w.freq_stop),
+            self._value(w.freq_step),
+            extras,
+        )
 
     def formal_validation_errors(self) -> list[str]:
         """按整张表单做正式校验（含设备连接与电源段）。
@@ -261,9 +273,13 @@ class ConfigFormState:
     def read_test_parameters(self) -> dict:
         w = self.widgets
         result = {}
-        frequencies = parse_frequency_text(self._text(w.freq_edit))
-        if frequencies is not None:
-            result["test_frequencies"] = frequencies
+        if not getattr(w, "frequency_import_error", None):
+            try:
+                frequencies = self.frequency_values()
+            except FrequencySweepError:
+                pass
+            else:
+                result["test_frequencies"] = list(frequencies)
         result.update({
             "signal_source": {
                 "start_power": self._value(w.start_power),

@@ -31,17 +31,27 @@
 from __future__ import annotations
 
 import copy
+import math
 from typing import Any, Mapping
 
 from application.errors import ConfigurationError
 from application.dto.amplifier_inputs import DEFAULT_POWER_ON_DELAY_S
 from domain.instruments.labels import supply_display_label
 
-from .config_form_state import parse_frequency_text
+from .frequency_sweep import (
+    DEFAULT_FREQUENCY_EXTRA_TEXT,
+    DEFAULT_FREQUENCY_START,
+    DEFAULT_FREQUENCY_STEP,
+    DEFAULT_FREQUENCY_STOP,
+    DEFAULT_TEST_FREQUENCIES,
+    FrequencySweepError,
+    best_effort_sweep,
+    format_frequency,
+    sweep_from_frequencies,
+)
 
 # 配置页受控控件的空配置基线。``project_authoring_config()`` 先把控件重置到这些默认值，
 # 再逐字段投影配置编写文档，从而保证投影结果与直接用同一份文档构造页面的结果一致。
-DEFAULT_TEST_FREQUENCIES = [4.0, 4.4, 4.8, 5.2, 5.6, 5.8]
 DEFAULT_SIGNAL_SOURCE = {"start_power": -38.0, "stop_power": -16.0, "step": 1.0}
 DEFAULT_COMPRESSION_TYPE = "5dB"
 DEFAULT_ATTENUATOR_TYPE = "40dB"
@@ -152,9 +162,60 @@ def reset_power_controls(widgets: Any) -> None:
         reset_plans()
 
 
+def reset_frequency_fields(widgets: Any) -> None:
+    """把频率扫描控件重置到空配置基线，并清除加载错误。"""
+    widgets.freq_start.setValue(DEFAULT_FREQUENCY_START)
+    widgets.freq_stop.setValue(DEFAULT_FREQUENCY_STOP)
+    widgets.freq_step.setValue(DEFAULT_FREQUENCY_STEP)
+    widgets.freq_extra.setText(DEFAULT_FREQUENCY_EXTRA_TEXT)
+    widgets.frequency_import_error = None
+
+
+def apply_frequency_fields(widgets: Any, frequencies: Any) -> None:
+    """把配置文档里的 ``test_frequencies`` 投影到扫描控件。
+
+    严格等步长列表才能被扫描参数完整表达；否则控件只做只读展示用的“尽力摆放”，
+    同时在 ``frequency_import_error`` 上留下错误，页面据此禁止保存。这里不拆分旧
+    列表、不猜步长，避免把一份不等步长配置静默改写成另一组频点。
+    """
+    if not isinstance(frequencies, (list, tuple)) or not frequencies:
+        reset_frequency_fields(widgets)
+        widgets.frequency_import_error = "测试频率必须是非空数字列表"
+        return
+    if not all(
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(float(value))
+        and float(value) > 0
+        for value in frequencies
+    ):
+        reset_frequency_fields(widgets)
+        widgets.frequency_import_error = "测试频率必须都是大于 0 的有限数值"
+        return
+    try:
+        start, stop, step = sweep_from_frequencies(frequencies)
+    except FrequencySweepError:
+        start, stop, step = best_effort_sweep(frequencies)
+        values = "，".join(format_frequency(value) for value in frequencies)
+        widgets.freq_start.setValue(start)
+        widgets.freq_stop.setValue(stop)
+        widgets.freq_step.setValue(step)
+        widgets.freq_extra.setText("")
+        widgets.frequency_import_error = (
+            "配置中的测试频率不是严格等步长序列，无法用起始/结束/步长表示："
+            f"{values}；请重新输入扫描参数，不在网格上的频点请写入增补"
+        )
+        return
+    widgets.freq_start.setValue(start)
+    widgets.freq_stop.setValue(stop)
+    widgets.freq_step.setValue(step)
+    widgets.freq_extra.setText("")
+    widgets.frequency_import_error = None
+
+
 def reset_control_widgets(widgets: Any) -> None:
     """把所有受控控件重置到空配置基线，消除上一次运行的残留值。"""
-    widgets.freq_edit.setText(str(list(DEFAULT_TEST_FREQUENCIES)))
+    reset_frequency_fields(widgets)
     widgets.start_power.setValue(DEFAULT_SIGNAL_SOURCE["start_power"])
     widgets.stop_power.setValue(DEFAULT_SIGNAL_SOURCE["stop_power"])
     widgets.power_step.setValue(DEFAULT_SIGNAL_SOURCE["step"])
@@ -179,10 +240,10 @@ def _reset_power_supply_channels(widgets: Any) -> None:
 
 
 def _apply_test_parameter_widgets(widgets: Any, config: Mapping[str, Any]) -> None:
-    frequencies = config.get("test_frequencies")
-    # 复用频率解析规则：非列表、空列表或含非法元素时保持基线默认值。
-    if isinstance(frequencies, list) and parse_frequency_text(repr(frequencies)) is not None:
-        widgets.freq_edit.setText(str(frequencies))
+    # 键缺席时保留空配置基线；键存在但值非法/不等步长时由 apply_frequency_fields
+    # 写入错误状态，页面据此禁止保存。
+    if "test_frequencies" in config:
+        apply_frequency_fields(widgets, config.get("test_frequencies"))
     signal_source = config.get("signal_source")
     signal_source = signal_source if isinstance(signal_source, dict) else {}
     for widget, key in (
@@ -255,14 +316,20 @@ __all__ = [
     "DEFAULT_ATTENUATOR_TYPE",
     "DEFAULT_COMPRESSION_TYPE",
     "DEFAULT_DRIVER_MODE_ENABLED",
+    "DEFAULT_FREQUENCY_EXTRA_TEXT",
+    "DEFAULT_FREQUENCY_START",
+    "DEFAULT_FREQUENCY_STEP",
+    "DEFAULT_FREQUENCY_STOP",
     "DEFAULT_MAX_INPUT_POWER",
     "DEFAULT_PA_UNIT_COUNT",
     "DEFAULT_POWER_CHANNEL_VALUE",
     "DEFAULT_SIGNAL_SOURCE",
     "DEFAULT_TEST_FREQUENCIES",
+    "apply_frequency_fields",
     "project_authoring_config",
     "project_power_config",
     "reset_control_widgets",
+    "reset_frequency_fields",
     "reset_power_controls",
     "supply_option_label",
 ]

@@ -479,7 +479,7 @@ class MainWindowAssemblyBoundaryTests(unittest.TestCase):
         )
 
     def test_main_window_does_not_read_config_widgets(self):
-        for widget in ("driver_mode_check", "freq_edit", "sg_address", "power_config_widgets"):
+        for widget in ("driver_mode_check", "freq_start", "freq_stop", "freq_step", "freq_extra", "sg_address", "power_config_widgets"):
             self.assertNotIn(
                 widget, self.source,
                 f"主窗口不得直接读取配置控件 {widget}；应使用配置页的窄接口",

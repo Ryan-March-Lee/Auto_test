@@ -31,6 +31,11 @@
 写进视图模型、再按它返回的状态渲染（运行状态文案、绑定集合）；电源片段由独立电源页
 提交，窗口用 :class:`presentation.qt.configuration_editor.ConfigurationEditor` 统一
 回填/切换模式/汇总 dirty，协调器负责合并整份草稿与最终校验（步骤 13）。
+
+测试频率不再逐点输入：页面提供“起始/结束/步长/增补”四个控件，由
+:mod:`presentation.qt.frequency_sweep` 生成配置文档仍使用的 ``test_frequencies``
+列表。结束频率必须落在步长上；旧配置里非等步长的列表不做兼容拆分，页面保留原列表
+并禁止保存，直到用户重新输入合法扫描参数。
 """
 
 import copy
@@ -59,16 +64,26 @@ from .config_projection import (
     DEFAULT_ATTENUATOR_TYPE,
     DEFAULT_COMPRESSION_TYPE,
     DEFAULT_DRIVER_MODE_ENABLED,
+    DEFAULT_FREQUENCY_EXTRA_TEXT,
+    DEFAULT_FREQUENCY_START,
+    DEFAULT_FREQUENCY_STEP,
+    DEFAULT_FREQUENCY_STOP,
     DEFAULT_MAX_INPUT_POWER,
     DEFAULT_PA_UNIT_COUNT,
     DEFAULT_SIGNAL_SOURCE,
-    DEFAULT_TEST_FREQUENCIES,
     ConfigBackfillError,
+    apply_frequency_fields,
 )
 from .config_page_widgets import build_action_bar, combo_box, spin_box
+from .frequency_sweep import (
+    FrequencySweepError,
+    format_frequency,
+    generate_frequencies,
+    parse_extra_frequencies,
+)
 from .instrument_discovery_panel import role_label
 from .pages import PageControllerBindingMixin
-from .theme import PAGE_CONTENT_MAX_WIDTH, set_button_variant
+from .theme import PAGE_CONTENT_MAX_WIDTH, set_button_variant, set_tone
 
 __all__ = [
     "ConfigBackfillError",
@@ -110,12 +125,18 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         # 配置里原本就不可用的电源绑定：读入时会从可用集合里剔除，但必须在这里留下记录，
         # 由界面提示并在保存/运行校验时明确报错——否则它们会表现为“电源莫名消失”。
         self.binding_problems = self._binding_problems_of(self.config)
+        # 频率扫描控件与旧配置的只读展示状态：非等步长列表会在这里留下错误，页面禁止
+        # 保存，直到用户重新输入合法的起始/结束/步长/增补。
+        self.frequency_import_error: str | None = None
         # 页面业务状态由 application 的视图模型持有（步骤 6）：测试参数、设备绑定、运行
         # 状态与 dirty 都在那里；设备选择的业务规则仍只在 DeviceBindingService（步骤 5）。
         self.view_model = ConfigurationViewModel()
         self.view_model.load(self.config, bindings=self.device_bindings)
         self.build_ui()
+        if "test_frequencies" in self.config:
+            apply_frequency_fields(self, self.config.get("test_frequencies"))
         self._connect_signals()
+        self._refresh_frequency_preview()
         # 基线用组装结果而不是原始文档：旧配置迁移、绑定写入的启用状态都属于页面自身的
         # 规范化结果，刚打开的页面不应显示为“已修改”。
         self._dirty_baseline = copy.deepcopy(self.build_config(self.config))
@@ -191,7 +212,28 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         form.setColumnStretch(3, 1)
         test = self.config.get("signal_source", {})
         if not isinstance(test, dict): test = {}
-        self.freq_edit = QLineEdit(str(self.config.get("test_frequencies", DEFAULT_TEST_FREQUENCIES)))
+        self.freq_start = spin_box(
+            DEFAULT_FREQUENCY_START, 0.0, 1000.0, decimals=6, single_step=0.1
+        )
+        self.freq_start.setToolTip("频率扫描起始值，单位 GHz")
+        self.freq_stop = spin_box(
+            DEFAULT_FREQUENCY_STOP, 0.0, 1000.0, decimals=6, single_step=0.1
+        )
+        self.freq_stop.setToolTip("结束频率是扫描上限，必须等于 起始频率 + 整数 × 步长")
+        self.freq_step = spin_box(
+            DEFAULT_FREQUENCY_STEP, 0.000001, 1000.0, decimals=6, single_step=0.1
+        )
+        self.freq_step.setToolTip("相邻频点的间隔，单位 GHz")
+        self.freq_extra = QLineEdit(DEFAULT_FREQUENCY_EXTRA_TEXT)
+        self.freq_extra.setPlaceholderText("例如 5.8, 6.2（可留空）")
+        self.freq_extra.setToolTip(
+            "不在扫描网格上的频点，用逗号或空格分隔；可以落在起始/结束范围之外"
+        )
+        self.freq_extra.setMaximumWidth(200)
+        self.freq_preview = QLabel()
+        self.freq_preview.setProperty("role", "note")
+        self.freq_preview.setWordWrap(True)
+        self.freq_preview.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.start_power = spin_box(test.get("start_power", DEFAULT_SIGNAL_SOURCE["start_power"]), -50, 20)
         self.stop_power = spin_box(test.get("stop_power", DEFAULT_SIGNAL_SOURCE["stop_power"]), -50, 20)
         self.power_step = spin_box(test.get("step", DEFAULT_SIGNAL_SOURCE["step"]), 0.1, 5)
@@ -208,19 +250,32 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         if not isinstance(dut, dict): dut = {}
         self.max_input_power = spin_box(dut.get("max_input_power", DEFAULT_MAX_INPUT_POWER), 0, 50)
         self.pa_unit_count_combo = combo_box(("1", "2", "3"), str(dut.get("power_supply_count", DEFAULT_PA_UNIT_COUNT)))
-        parameter_rows = (("测试频率 (GHz)", self.freq_edit), ("起始功率 (dBm)", self.start_power),
-                          ("结束功率 (dBm)", self.stop_power), ("功率步长 (dB)", self.power_step),
+        frequency_rows = (
+            ("起始频率 (GHz)", self.freq_start, "结束频率 (GHz)", self.freq_stop),
+            ("频率步长 (GHz)", self.freq_step, "增补频点 (GHz)", self.freq_extra),
+        )
+        for row, (left_label, left_widget, right_label, right_widget) in enumerate(
+            frequency_rows
+        ):
+            for column, (label, widget) in enumerate(
+                ((left_label, left_widget), (right_label, right_widget))
+            ):
+                field_label = QLabel(label)
+                field_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                form.addWidget(field_label, row, column * 2)
+                form.addWidget(widget, row, column * 2 + 1)
+        form.addWidget(self.freq_preview, 2, 0, 1, 4)
+        parameter_rows = (("起始功率 (dBm)", self.start_power),
+                          ("结束功率 (dBm)", self.stop_power),
+                          ("功率步长 (dB)", self.power_step),
                           ("压缩点", self.compression_combo), ("衰减器", self.attenuator_combo),
                           ("DUT最大输入功率 (dBm)", self.max_input_power), ("PA单元数量", self.pa_unit_count_combo))
-        for index, (label, widget) in enumerate(parameter_rows):
-            row, column = divmod(index, 2)
+        for offset, (label, widget) in enumerate(parameter_rows):
+            row, column = divmod(offset, 2)
             field_label = QLabel(label)
             field_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            form.addWidget(field_label, row, column * 2)
-            form.addWidget(widget, row, column * 2 + 1)
-        freq_hint = QLabel("测试频率以 GHz 为单位，用逗号分隔多个频点。")
-        freq_hint.setProperty("role", "hint")
-        form.addWidget(freq_hint, 4, 0, 1, 4)
+            form.addWidget(field_label, row + 3, column * 2)
+            form.addWidget(widget, row + 3, column * 2 + 1)
         page_column.addWidget(params)
         # 运行入口紧随测试参数，保存与返回放在页面底部固定操作栏。
         self._build_run_widgets(page_column)
@@ -348,6 +403,54 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         self.load_run_btn.clicked.connect(self.request_load_run)
         self.return_welcome_btn.clicked.connect(self.return_welcome_requested.emit)
         self.previous_step_btn.clicked.connect(self.connection_step_requested.emit)
+        for widget in (self.freq_start, self.freq_stop, self.freq_step):
+            widget.valueChanged.connect(self._on_frequency_changed)
+        self.freq_extra.textChanged.connect(self._on_frequency_changed)
+
+    def _on_frequency_changed(self, *_args) -> None:
+        """用户改动了任一频率字段：清除加载错误并刷新预览。"""
+        self.frequency_import_error = None
+        self._refresh_frequency_preview()
+
+    @staticmethod
+    def _frequency_list_text(values, limit: int = 24) -> str:
+        """把频点列表压成一行预览；过长的列表只显示首尾并注明总数。"""
+        if len(values) <= limit:
+            return "，".join(format_frequency(value) for value in values)
+        head = "，".join(format_frequency(value) for value in values[: limit - 4])
+        tail = "，".join(format_frequency(value) for value in values[-3:])
+        return f"{head}，…，{tail}"
+
+    def _refresh_frequency_preview(self) -> None:
+        """刷新频率预览：合法时显示生成结果，非法时显示具体原因。"""
+        error = self.frequency_import_error
+        extras: tuple[float, ...] = ()
+        if not error:
+            try:
+                extras = parse_extra_frequencies(self.freq_extra.text())
+                values = generate_frequencies(
+                    self.freq_start.value(),
+                    self.freq_stop.value(),
+                    self.freq_step.value(),
+                    extras,
+                )
+            except FrequencySweepError as failure:
+                error = str(failure)
+        if error:
+            prefix = "" if self.frequency_import_error else "无法生成频点："
+            self.freq_preview.setText(f"{prefix}{error}")
+            if self.freq_preview.property("tone") != "warning":
+                set_tone(self.freq_preview, "warning")
+            return
+        text = (
+            f"共 {len(values)} 个频点："
+            f"{self._frequency_list_text(values)}"
+        )
+        if extras:
+            text += "（含增补 " + "，".join(format_frequency(value) for value in extras) + "）"
+        self.freq_preview.setText(text)
+        if self.freq_preview.property("tone") != "muted":
+            set_tone(self.freq_preview, "muted")
 
     def request_save(self):
         if self.read_only_reason:
@@ -561,6 +664,7 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
             self.binding_problems = previous_problems
             raise
         self.config = projected
+        self._refresh_frequency_preview()
         self.binding_problems = self._binding_problems_of(config)
         # 面板归连接页所有：窗口在回填后调用 ``InstrumentSetupPage.enter()``，由它按新的
         # 只读视图重置面板；本页只在日志里报告读入时就不可用的绑定。

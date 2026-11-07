@@ -122,11 +122,23 @@ def _bindings(*supply_ids):
     return result
 
 
-def _page(config=None, *, supplies=("DP8B1519", "DP8B0885"), frequency="[1.0]"):
+def _page(
+    config=None,
+    *,
+    supplies=("DP8B1519", "DP8B0885"),
+    start_frequency=1.0,
+    stop_frequency=1.0,
+    step=0.4,
+    extra="",
+):
     page = type("Page", (), {})()
     page.config = config if isinstance(config, dict) else {}
     page.device_bindings = _bindings(*supplies)
-    page.freq_edit = _Text(frequency)
+    page.freq_start = _Value(start_frequency)
+    page.freq_stop = _Value(stop_frequency)
+    page.freq_step = _Value(step)
+    page.freq_extra = _Text(extra)
+    page.frequency_import_error = None
     page.start_power = _Value(-10.0)
     page.stop_power = _Value(0.0)
     page.power_step = _Value(1.0)
@@ -182,17 +194,17 @@ class ConfigurationFormAdapterReadTests(unittest.TestCase):
         self.assertEqual(parameters.dut_supply_count, 1)
 
     def test_invalid_frequency_is_not_replaced_by_the_previous_reading(self):
-        page = _page({"test_frequencies": [9.9]}, frequency="not-a-frequency")
+        page = _page({"test_frequencies": [9.9]}, extra="not-a-frequency")
         adapter = ConfigurationFormAdapter(page)
 
         parameters = adapter.read_test_parameters()
 
         # 旧值属于基线，不是这次控件读到的新值；页面校验仍按原文案报告。
         self.assertEqual(parameters.frequencies, ())
-        self.assertFalse(adapter.report_errors(["测试频率必须是非空数字列表"]))
+        self.assertFalse(adapter.report_errors(["增补频点必须是数字"]))
 
     def test_read_form_returns_the_document_and_snapshot_from_one_reading(self):
-        page = _page({"test_frequencies": [9.9]}, frequency="not-a-frequency")
+        page = _page({"test_frequencies": [9.9]}, extra="not-a-frequency")
         adapter = ConfigurationFormAdapter(page)
 
         reading = adapter.read_form()
@@ -219,7 +231,10 @@ class ConfigurationFormAdapterWriteTests(unittest.TestCase):
         )
 
         self.assertEqual(projected["test_frequencies"], [3.5])
-        self.assertEqual(page.freq_edit.text(), "[3.5]")
+        self.assertEqual(page.freq_start.value(), 3.5)
+        self.assertEqual(page.freq_stop.value(), 3.5)
+        self.assertEqual(page.freq_step.value(), 0.4)
+        self.assertEqual(page.freq_extra.text(), "")
         self.assertEqual(page.compression_combo.currentText(), "3dB")
         self.assertEqual(page.pa_unit_count_combo.currentText(), "2")
         self.assertEqual(adapter.read_configuration()["test_frequencies"], [3.5])
@@ -255,12 +270,13 @@ class ConfigurationFormAdapterErrorTests(unittest.TestCase):
         self.assertEqual(messages, [])
 
     def test_validation_errors_are_the_page_visible_messages(self):
-        page = _page(frequency="not-a-frequency")
+        page = _page()
+        page.freq_extra.setText("not-a-frequency")
         adapter = ConfigurationFormAdapter(page)
 
         errors = adapter.validation_errors()
 
-        self.assertIn("测试频率必须是非空数字列表", errors)
+        self.assertIn("增补频点", errors[0])
 
 
 class ConfigurationFormAdapterBoundaryTests(unittest.TestCase):

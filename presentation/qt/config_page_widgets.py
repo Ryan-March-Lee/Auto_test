@@ -15,10 +15,16 @@ from .theme import set_button_variant
 _SPIN_BOX_MAXIMUM_WIDTH = 140
 
 
-def spin_box(value, minimum, maximum):
-    """建一个带范围的浮点数值框；宽度按配置页表单固定，避免长数字撑开列宽。"""
+def spin_box(value, minimum, maximum, *, decimals=2, single_step=1.0):
+    """建一个带范围的浮点数值框；宽度按配置页表单固定，避免长数字撑开列宽。
+
+    ``decimals`` 与 ``single_step`` 由调用点声明：频率需要 kHz 级精度，功率沿用
+    原来的两位小数与 1 单位步进。默认值保持既有调用点的显示行为。
+    """
     widget = KeyboardOnlyDoubleSpinBox()
     widget.setRange(minimum, maximum)
+    widget.setDecimals(decimals)
+    widget.setSingleStep(single_step)
     widget.setValue(float(value))
     widget.setMaximumWidth(_SPIN_BOX_MAXIMUM_WIDTH)
     return widget

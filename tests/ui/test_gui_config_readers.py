@@ -167,6 +167,11 @@ class ConfigFormStateReaderTests(unittest.TestCase):
                 },
             },
         }
+        self.host.freq_start = FakeValueWidget(1.0)
+        self.host.freq_stop = FakeValueWidget(1.0)
+        self.host.freq_step = FakeValueWidget(0.4)
+        self.host.freq_extra = FakeTextWidget('')
+        self.host.frequency_import_error = None
         self.reader = ConfigFormState(self.config, self.host)
 
     def test_power_assignment_reader_writes_plans_only(self):
@@ -236,7 +241,7 @@ class ConfigFormStateReaderTests(unittest.TestCase):
         self.assertFalse(instruments['power_supplies']['PS1']['enabled'])
 
     def test_test_parameter_reader_keeps_invalid_frequency_out_of_fragment(self):
-        self.host.freq_edit = FakeTextWidget('not-a-list')
+        self.host.freq_extra = FakeTextWidget('not-a-frequency')
         self.host.start_power = FakeValueWidget(-10)
         self.host.stop_power = FakeValueWidget(10)
         self.host.power_step = FakeValueWidget(1)
@@ -374,7 +379,11 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
                 },
             },
         }
-        self.host.freq_edit = FakeTextWidget('[1.0, 2.0]')
+        self.host.freq_start = FakeValueWidget(1.0)
+        self.host.freq_stop = FakeValueWidget(2.0)
+        self.host.freq_step = FakeValueWidget(1.0)
+        self.host.freq_extra = FakeTextWidget('')
+        self.host.frequency_import_error = None
         self.host.start_power = FakeValueWidget(-10)
         self.host.stop_power = FakeValueWidget(10)
         self.host.power_step = FakeValueWidget(1)
@@ -454,7 +463,7 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
         self.assertFalse(result['driver_mode']['enabled'])
 
     def test_build_invalid_frequency_preserves_old_value(self):
-        self.host.freq_edit = FakeTextWidget('not-a-list')
+        self.host.freq_extra = FakeTextWidget('not-a-frequency')
         result = self.coordinator.build_configuration_from_ui()
 
         self.assertEqual(result['test_frequencies'], [1.0])

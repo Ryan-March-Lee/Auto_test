@@ -694,7 +694,10 @@ class ProductionDependencyTests(unittest.TestCase):
         tree = _tree(COORDINATOR_SOURCE)
         for widget in (
             "driver_power_source_combo",
-            "freq_edit",
+            "freq_start",
+            "freq_stop",
+            "freq_step",
+            "freq_extra",
             "sg_address",
             "power_config_widgets",
             "power_assignment_widgets",

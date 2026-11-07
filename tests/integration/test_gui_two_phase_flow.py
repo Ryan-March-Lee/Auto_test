@@ -1087,7 +1087,10 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         page.apply_config(frozen)
         power.apply_config(frozen)
 
-        self.assertEqual(page.freq_edit.text(), "[2.4, 2.6]")
+        self.assertEqual(page.freq_start.value(), 2.4)
+        self.assertEqual(page.freq_stop.value(), 2.6)
+        self.assertEqual(page.freq_step.value(), 0.2)
+        self.assertEqual(page.freq_extra.text(), "")
         self.assertFalse(page.driver_mode_requested())
         built = page.build_config()["instruments"]
         self.assertEqual(built["signal_generator"]["address"], "sim::sg")
@@ -1162,7 +1165,10 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         # 空配置既没有可连接的电源，也没有电源条目或标签页留下上一份配置的参数。
         self.assertEqual(built["power_supplies"], {})
         self.assertEqual(power.power_config_widgets, {})
-        self.assertEqual(page.freq_edit.text(), "[4.0, 4.4, 4.8, 5.2, 5.6, 5.8]")
+        self.assertEqual(page.freq_start.value(), 4.0)
+        self.assertEqual(page.freq_stop.value(), 5.6)
+        self.assertEqual(page.freq_step.value(), 0.4)
+        self.assertEqual(page.freq_extra.text(), "5.8")
         self.assertEqual(page.start_power.value(), -38.0)
         self.assertEqual(page.stop_power.value(), -16.0)
         self.assertEqual(page.power_step.value(), 1.0)
@@ -1263,7 +1269,10 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         page.apply_config(frozen)
         power.apply_config(frozen)
 
-        self.assertEqual(page.freq_edit.text(), "[2.4, 2.6]")
+        self.assertEqual(page.freq_start.value(), 2.4)
+        self.assertEqual(page.freq_stop.value(), 2.6)
+        self.assertEqual(page.freq_step.value(), 0.2)
+        self.assertEqual(page.freq_extra.text(), "")
         self.assertEqual(page.start_power.value(), -30.0)
         self.assertEqual(page.stop_power.value(), -5.0)
         self.assertEqual(page.power_step.value(), 0.5)
@@ -1322,7 +1331,11 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         page.apply_config(partial)
         power.apply_config(partial)
 
-        self.assertEqual(page.freq_edit.text(), rebuilt.freq_edit.text())
+        self.assertEqual(page.freq_start.value(), rebuilt.freq_start.value())
+        self.assertEqual(page.freq_stop.value(), rebuilt.freq_stop.value())
+        self.assertEqual(page.freq_step.value(), rebuilt.freq_step.value())
+        self.assertEqual(page.freq_extra.text(), rebuilt.freq_extra.text())
+        self.assertEqual(page.frequency_import_error, rebuilt.frequency_import_error)
         self.assertEqual(page.start_power.value(), rebuilt.start_power.value())
         self.assertEqual(
             page.compression_combo.currentText(), rebuilt.compression_combo.currentText()
@@ -1383,7 +1396,10 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         # 字符串不是合法文本值：布尔回落默认，数字回落基线。仪器连接信息不由控件
         # 编辑，也不在这里做类型容错，留给正式校验在连接前明确报告。
         self.assertTrue(page.driver_mode_requested())
-        self.assertEqual(page.freq_edit.text(), "[4.0, 4.4, 4.8, 5.2, 5.6, 5.8]")
+        self.assertEqual(page.freq_start.value(), 4.0)
+        self.assertEqual(page.freq_stop.value(), 5.6)
+        self.assertEqual(page.freq_step.value(), 0.4)
+        self.assertEqual(page.freq_extra.text(), "5.8")
         self.assertEqual(page.pa_unit_count_combo.currentText(), "2")
         self.assertEqual(page.max_input_power.value(), 33.5)
         channel = power.power_config_widgets["PS1"]["channels"]["CH1"]
@@ -1398,9 +1414,12 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         for bad in (None, "not-a-list", [], ["bad"], [True], [float("nan")], [[]]):
             with self.subTest(bad=bad):
                 page.apply_config({"test_frequencies": bad})
-                self.assertEqual(
-                    page.freq_edit.text(), "[4.0, 4.4, 4.8, 5.2, 5.6, 5.8]"
-                )
+                self.assertEqual(page.freq_start.value(), 4.0)
+                self.assertEqual(page.freq_stop.value(), 5.6)
+                self.assertEqual(page.freq_step.value(), 0.4)
+                self.assertEqual(page.freq_extra.text(), "5.8")
+                self.assertTrue(page.frequency_import_error)
+                self.assertFalse(page.validate())
 
 
 class FrozenSnapshotValidationBoundaryTests(unittest.TestCase):

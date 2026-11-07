@@ -658,7 +658,8 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIs(window.view_stack.currentWidget(), window.welcome_page)
 
         window._enter_test_mode(False)
-        window.config_page.freq_edit.setText("[9.0]")
+        window.config_page.freq_start.setValue(9.0)
+        window.config_page.freq_stop.setValue(9.0)
         window._return_to_welcome()
         dialogs["question"].assert_called_once()
         self.assertIs(window.view_stack.currentWidget(), window.welcome_page)

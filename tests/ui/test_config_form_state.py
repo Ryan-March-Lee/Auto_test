@@ -10,7 +10,6 @@ from domain.configuration.rules import assignment_supply_id
 from presentation.qt.config_form_bindings import POWER_SUPPLY_BINDINGS
 from presentation.qt.config_form_state import (
     ConfigFormState,
-    parse_frequency_text,
     protection_threshold,
 )
 
@@ -48,11 +47,16 @@ def _form_widgets(**attributes):
     ``AttributeError``（不是要被吞掉的配置错误）。
     """
     widgets = type("Widgets", (), {})()
-    widgets.freq_edit = _Text("[1.0]")
+    widgets.freq_start = type("V", (), {"value": lambda self: 1.0})()
+    widgets.freq_stop = type("V", (), {"value": lambda self: 1.0})()
+    widgets.freq_step = type("V", (), {"value": lambda self: 0.4})()
+    widgets.freq_extra = _Text("")
+    widgets.frequency_import_error = None
     widgets.start_power = type("V", (), {"value": lambda self: -10.0})()
     widgets.stop_power = type("V", (), {"value": lambda self: 0.0})()
     widgets.power_step = type("V", (), {"value": lambda self: 1.0})()
     widgets.max_input_power = type("V", (), {"value": lambda self: 30.0})()
+    widgets.pa_unit_count_combo = type("C", (), {"currentText": lambda self: "1"})()
     widgets.compression_combo = type("C", (), {"currentText": lambda self: "5dB"})()
     widgets.attenuator_combo = type("C", (), {"currentText": lambda self: "30dB"})()
     widgets.test_mode_enabled = False
@@ -75,10 +79,30 @@ def bound_supplies(*supply_ids):
 
 
 class ConfigFormStateTests(unittest.TestCase):
-    def test_frequency_parser_accepts_numbers_without_eval(self):
-        self.assertEqual(parse_frequency_text("[1, 2.5]"), [1.0, 2.5])
-        self.assertIsNone(parse_frequency_text("__import__('os').system('x')"))
-        self.assertIsNone(parse_frequency_text("[1, 'bad']"))
+    def test_frequency_reader_generates_the_sweep(self):
+        widgets = _form_widgets()
+        state = ConfigFormState({}, widgets)
+
+        self.assertEqual(state.frequency_values(), (1.0,))
+        self.assertIsNone(state.frequency_error())
+        self.assertEqual(state.read_test_parameters()["test_frequencies"], [1.0])
+
+    def test_frequency_reader_reports_an_endpoint_outside_the_step_grid(self):
+        widgets = _form_widgets()
+        widgets.freq_stop = type("V", (), {"value": lambda self: 1.1})()
+        state = ConfigFormState({}, widgets)
+
+        self.assertIn("结束频率必须落在步长上", state.frequency_error())
+        self.assertNotIn("test_frequencies", state.read_test_parameters())
+
+    def test_loaded_non_uniform_frequencies_block_saving(self):
+        widgets = _form_widgets()
+        widgets.frequency_import_error = "配置中的测试频率不是严格等步长序列"
+        state = ConfigFormState({}, widgets)
+
+        self.assertEqual(state.frequency_error(), "配置中的测试频率不是严格等步长序列")
+        self.assertNotIn("test_frequencies", state.read_test_parameters())
+        self.assertIn("不是严格等步长", state.validation_errors()[0])
 
     def test_protection_threshold_is_110_percent_rounded_to_two_decimals(self):
         """保护阈值只由工作值推导，用户不再手填。"""
@@ -114,7 +138,11 @@ class ConfigFormStateTests(unittest.TestCase):
 
     def test_build_preserves_unknown_fields_and_drops_legacy_wiring(self):
         widgets = type("Widgets", (), {})()
-        widgets.freq_edit = _Text("[1, 2]")
+        widgets.freq_start = type("V", (), {"value": lambda self: 1.0})()
+        widgets.freq_stop = type("V", (), {"value": lambda self: 2.0})()
+        widgets.freq_step = type("V", (), {"value": lambda self: 1.0})()
+        widgets.freq_extra = _Text("")
+        widgets.frequency_import_error = None
         widgets.start_power = type("V", (), {"value": lambda self: -10})()
         widgets.stop_power = type("V", (), {"value": lambda self: 10})()
         widgets.power_step = type("V", (), {"value": lambda self: 1})()
@@ -380,7 +408,11 @@ class _FormWidgets:
     """
 
     def __init__(self, *, test_mode_enabled, supply_id, bindings, driver_supply_id=None):
-        self.freq_edit = _Text("[2.4]")
+        self.freq_start = type("V", (), {"value": lambda self: 2.4})()
+        self.freq_stop = type("V", (), {"value": lambda self: 2.4})()
+        self.freq_step = type("V", (), {"value": lambda self: 0.4})()
+        self.freq_extra = _Text("")
+        self.frequency_import_error = None
         self.start_power = type("V", (), {"value": lambda self: -10.0})()
         self.stop_power = type("V", (), {"value": lambda self: 0.0})()
         self.power_step = type("V", (), {"value": lambda self: 1.0})()

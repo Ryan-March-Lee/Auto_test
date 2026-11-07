@@ -176,11 +176,40 @@ class ConfigurationPageTests(unittest.TestCase):
             {"supply_id": "DP8B1519", "channel": "CH1"},
         )
 
+    def test_frequency_sweep_controls_generate_the_saved_list(self):
+        page = self.make_page()
+
+        page.freq_start.setValue(2.3)
+        page.freq_stop.setValue(2.5)
+        page.freq_step.setValue(0.1)
+        page.freq_extra.setText("2.4")
+
+        self.assertEqual(
+            page.build_config()["test_frequencies"], [2.3, 2.4, 2.5]
+        )
+        self.assertIn("3 个频点", page.freq_preview.text())
+
+    def test_non_uniform_loaded_frequencies_are_rejected_without_rewriting_the_list(self):
+        config = {
+            "test_frequencies": [4.0, 4.4, 4.8, 5.2, 5.6, 5.8],
+            "instruments": {"power_supplies": {}},
+        }
+        page = ConfigurationPage(config)
+        page.show()
+        self.app.processEvents()
+
+        self.assertIn("不是严格等步长", page.freq_preview.text())
+        self.assertFalse(page.validate())
+        # 原列表仍留在基线文档里，页面没有把它猜成另一组频点。
+        self.assertEqual(
+            page.build_config()["test_frequencies"], config["test_frequencies"]
+        )
+
     def test_invalid_frequency_prevents_save_request(self):
         page = self.make_page()
         calls = []
         page.save_requested.connect(lambda: calls.append(True))
-        page.freq_edit.setText("not-a-list")
+        page.freq_extra.setText("not-a-number")
         page.request_save()
         self.assertEqual(calls, [])
 
@@ -482,11 +511,13 @@ class ConfigurationPageViewModelTests(unittest.TestCase):
         page = self.make_page()
         self.assertFalse(page.is_dirty())
 
-        page.freq_edit.setText("[2.4, 5.8]")
+        page.freq_start.setValue(2.4)
+        page.freq_stop.setValue(2.6)
+        page.freq_step.setValue(0.2)
         self.assertTrue(page.is_dirty())
         self.assertEqual(
             [frequency.ghz for frequency in page.view_model.state.draft.frequencies],
-            [2.4, 5.8],
+            [2.4, 2.6],
         )
 
         page.mark_clean()
@@ -495,7 +526,7 @@ class ConfigurationPageViewModelTests(unittest.TestCase):
 
     def test_invalid_frequency_is_reported_by_the_page_and_does_not_guess(self):
         page = self.make_page()
-        page.freq_edit.setText("not-a-frequency")
+        page.freq_extra.setText("not-a-frequency")
 
         self.assertFalse(page.validate())
 
@@ -550,7 +581,7 @@ class ConfigurationPageViewModelTests(unittest.TestCase):
 
     def test_backfill_resets_the_view_model_to_a_clean_state(self):
         page = self.make_page()
-        page.freq_edit.setText("[9.9]")
+        page.freq_start.setValue(9.9)
         self.assertTrue(page.is_dirty())
 
         page.apply_config(
@@ -561,6 +592,10 @@ class ConfigurationPageViewModelTests(unittest.TestCase):
         )
 
         self.assertFalse(page.is_dirty())
+        self.assertEqual(page.freq_start.value(), 3.5)
+        self.assertEqual(page.freq_stop.value(), 3.5)
+        self.assertEqual(page.freq_step.value(), 0.4)
+        self.assertEqual(page.freq_extra.text(), "")
         state = page.view_model.state
         self.assertEqual([frequency.ghz for frequency in state.draft.frequencies], [3.5])
         self.assertFalse(state.dirty)

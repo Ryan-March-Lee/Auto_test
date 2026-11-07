@@ -1,7 +1,7 @@
 {
     "test_frequencies": [
         2.2,
-        2.4,
+        2.6,
         3.0
     ],
     "signal_source": {
@@ -157,7 +157,7 @@
         "frequencies": {
             "values": [
                 2.2,
-                2.4,
+                2.6,
                 3.0
             ],
             "unit": "GHz"

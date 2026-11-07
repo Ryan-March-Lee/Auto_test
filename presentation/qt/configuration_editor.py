@@ -74,12 +74,10 @@ class ConfigurationEditor:
         power_page: Any | None = None,
         *,
         log: Callable[[str], Any] | None = None,
-        driver_mode_changed: Callable[[bool], Any] | None = None,
     ) -> None:
         self.config_page = config_page
         self.power_page = power_page
         self._log = log
-        self._driver_mode_changed = driver_mode_changed
         self.read_only_reason: str | None = None
         self._connect()
 
@@ -100,8 +98,6 @@ class ConfigurationEditor:
             return
         page.device_selection_finished.connect(self._refresh_power_bindings)
         power.validation_failed.connect(self._report_power_error)
-        if self._driver_mode_changed is not None:
-            power.driver_mode_changed.connect(self._driver_mode_changed)
 
     def _report_power_error(self, message: str) -> None:
         if self._log is not None:

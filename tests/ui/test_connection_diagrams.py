@@ -52,12 +52,11 @@ class ConnectionDiagramContentTests(unittest.TestCase):
         self.assertEqual(set(diagrams.DIAGRAM_TITLES), set(EXPECTED_CHAINS))
         for key, chain in EXPECTED_CHAINS.items():
             with self.subTest(diagram=key):
-                # 设备顺序即接线顺序。
+                # 设备顺序即接线顺序；标题只写这是哪张图，链路文字由图片承担。
                 self.assertEqual(list(diagrams.DIAGRAM_DEVICES[key]), chain)
                 lines = diagrams.DIAGRAM_TITLES[key].split("\n")
-                self.assertEqual(len(lines), 2)
+                self.assertEqual(len(lines), 1)
                 self.assertIn("连接图", lines[0])
-                self.assertEqual(lines[1], " → ".join(chain))
 
     def test_diagram_device_positions_are_pinned(self):
         expected_positions = {

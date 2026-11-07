@@ -231,7 +231,9 @@ class AmplifierPageTests(unittest.TestCase):
         page.show()
         self.app.processEvents()
         titles = [box.title() for box in page.control_panel.findChildren(QGroupBox)]
-        self.assertEqual(titles, ["连接说明", "测量控制", "测量结果"])
+        self.assertEqual(titles, ["测量控制", "测量结果"])
+        # 接线说明只保留连接图按钮，按钮归入测量控制。
+        self.assertEqual(page.show_amp_diagram_btn.parent().title(), "测量控制")
         self.assertLessEqual(page.control_panel.width(), 520)
         self.assertLess(
             page.control_panel.x() + page.control_panel.width(),
@@ -245,16 +247,18 @@ class AmplifierPageTests(unittest.TestCase):
         self.assertEqual(self.controller.signals.result.slots, [])
         self.page.close()
 
-    def test_instruction_text_follows_the_explicit_driver_mode(self):
-        """配置页切换驱动模式时显式传入状态，运行契约仍是默认来源。"""
-        self.page.update_instruction_text(False)
-        self.assertNotIn("驱动功放", self.page.instruction_text.toPlainText())
-        self.page.update_instruction_text(True)
-        self.assertIn("驱动功放", self.page.instruction_text.toPlainText())
+    def test_connection_diagram_follows_the_driver_mode(self):
+        opened = []
+        self.page._connection_dialog_factory = lambda diagram_type, _parent: (
+            opened.append(diagram_type) or Dialog()
+        )
 
+        self.page._driver_mode_provider = lambda: True
+        self.page.show_connection_diagram()
         self.page._driver_mode_provider = lambda: False
-        self.page.update_instruction_text()
-        self.assertNotIn("驱动功放", self.page.instruction_text.toPlainText())
+        self.page.show_connection_diagram()
+
+        self.assertEqual(opened, ["amplifier_test", "amplifier_test_no_driver"])
 
 
 if __name__ == "__main__":

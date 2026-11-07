@@ -239,6 +239,16 @@ class CableLossPageTests(unittest.TestCase):
         self.assertEqual(self.page.cable_loss_table.rowCount(), 0)
         self.assertEqual(self.errors, ["线损测量结果不是正式结果模型，无法显示"])
 
+    def test_connection_diagram_buttons_live_in_measurement_controls(self):
+        """接线说明只剩连接图入口：页面上不再有线路文字。"""
+        from PySide6.QtWidgets import QGroupBox, QTextEdit
+
+        titles = [box.title() for box in self.page.findChildren(QGroupBox)]
+        self.assertEqual(titles, ["测量控制", "测量结果"])
+        self.assertEqual(self.page.show_path1_btn.parent().title(), "测量控制")
+        self.assertEqual(self.page.show_path2_btn.parent().title(), "测量控制")
+        self.assertEqual(self.page.findChildren(QTextEdit), [])
+
 
 if __name__ == "__main__":
     unittest.main()

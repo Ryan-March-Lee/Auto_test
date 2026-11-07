@@ -25,7 +25,7 @@ class ConnectionDiagramRenderingTests(unittest.TestCase):
                 self.assertTrue(axis.patches, "设备卡片未绘制")
                 self.assertTrue(axis.images, "仪器照片与电缆图未绘制")
                 self.assertFalse(axis.lines, "箭头/连线应全部换成电缆图")
-                self.assertIn("→", axis.get_title())
+                self.assertIn("连接图", axis.get_title())
 
     def test_save_figure_as_base64_renders_png(self):
         payload = ConnectionDiagram.save_figure_as_base64(

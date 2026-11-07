@@ -307,7 +307,9 @@ class DriverMappingPageTests(unittest.TestCase):
         page.show()
         self.app.processEvents()
         titles = [box.title() for box in page.control_panel.findChildren(QGroupBox)]
-        self.assertEqual(titles, ["连接说明", "测量控制"])
+        self.assertEqual(titles, ["测量控制"])
+        # 接线说明只保留连接图按钮，按钮归入测量控制。
+        self.assertEqual(page.show_driver_diagram_btn.parent().title(), "测量控制")
         self.assertLessEqual(page.control_panel.width(), 430)
         self.assertLess(
             page.control_panel.x() + page.control_panel.width(),

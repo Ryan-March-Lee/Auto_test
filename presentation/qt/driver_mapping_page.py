@@ -5,14 +5,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Callable
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QMessageBox,
     QPushButton,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -81,7 +80,8 @@ class DriverMappingPage(
         layout.setContentsMargins(0, 4, 0, 0)
         layout.setSpacing(12)
 
-        # 左侧只放连接说明和测量控制，宽度固定为窄栏；右侧整块留给四张图。
+        # 左侧只放测量控制，宽度固定为窄栏；右侧整块留给四张图。
+        # 接线说明只保留连接图入口：测试者已知道仪器怎么接，按钮只用于防止忘记。
         left_panel = QWidget()
         left_panel.setMinimumWidth(400)
         left_panel.setMaximumWidth(430)
@@ -89,27 +89,10 @@ class DriverMappingPage(
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(12)
 
-        instruction_group = QGroupBox("连接说明")
-        instruction_layout = QVBoxLayout(instruction_group)
-        instruction_layout.setSpacing(10)
-        instruction_text = QTextEdit()
-        instruction_text.setMaximumHeight(96)
-        instruction_text.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        instruction_text.setReadOnly(True)
-        instruction_text.setHtml(
-            "<p><b>驱动功放映射测量连接说明</b></p>"
-            "<p>信号源 → 线缆① → 驱动功放 → 线缆③ → 衰减器 → 线缆② → 频谱仪</p>"
-        )
-        instruction_layout.addWidget(instruction_text)
-        self.show_driver_diagram_btn = QPushButton("查看连接图")
-        set_button_variant(self.show_driver_diagram_btn, "secondary")
-        self.show_driver_diagram_btn.clicked.connect(self.show_connection_diagram)
-        instruction_layout.addWidget(self.show_driver_diagram_btn)
-        left_layout.addWidget(instruction_group)
-
         control_group = QGroupBox("测量控制")
-        control_layout = QHBoxLayout(control_group)
-        control_layout.setSpacing(8)
+        control_layout = QGridLayout(control_group)
+        control_layout.setHorizontalSpacing(8)
+        control_layout.setVerticalSpacing(8)
         self.driver_mapping_btn = QPushButton("开始驱动映射")
         set_button_variant(self.driver_mapping_btn, "primary")
         self.driver_mapping_btn.clicked.connect(self.start_measurement)
@@ -122,6 +105,9 @@ class DriverMappingPage(
         self.driver_emergency_stop_btn = QPushButton("紧急停止")
         set_button_variant(self.driver_emergency_stop_btn, "danger")
         self.driver_emergency_stop_btn.clicked.connect(self.emergency_stop_measurement)
+        self.show_driver_diagram_btn = QPushButton("查看连接图")
+        set_button_variant(self.show_driver_diagram_btn, "secondary")
+        self.show_driver_diagram_btn.clicked.connect(self.show_connection_diagram)
         self.controls = MeasurementControlPresenter(
             MeasurementKind.DRIVER_MAPPING,
             {
@@ -132,14 +118,17 @@ class DriverMappingPage(
             },
         )
         self.controls.show_idle()
-        # 测量控制按钮横向排列在同一行，减少纵向占用面积。
-        for button in (
-            self.driver_mapping_btn,
-            self.driver_stop_btn,
-            self.driver_cancel_btn,
-            self.driver_emergency_stop_btn,
+        # 测量控制按钮横向排列在同一行，减少纵向占用面积；连接图入口单独占下一行。
+        for column, button in enumerate(
+            (
+                self.driver_mapping_btn,
+                self.driver_stop_btn,
+                self.driver_cancel_btn,
+                self.driver_emergency_stop_btn,
+            )
         ):
-            control_layout.addWidget(button)
+            control_layout.addWidget(button, 0, column)
+        control_layout.addWidget(self.show_driver_diagram_btn, 1, 0, 1, 4)
         left_layout.addWidget(control_group)
         left_layout.addStretch(1)
         self.control_panel = left_panel

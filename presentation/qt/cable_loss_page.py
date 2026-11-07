@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Callable
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QDialog,
     QGridLayout,
@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -74,41 +73,13 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         layout.setContentsMargins(0, 4, 0, 0)
         layout.setSpacing(12)
 
-        # 左侧窄栏：连接说明、测量控制；右侧整块留给结果表。
+        # 左侧窄栏只放测量控制；右侧整块留给结果表。接线说明只由连接图承担。
         left_panel = QWidget()
         left_panel.setMinimumWidth(420)
         left_panel.setMaximumWidth(520)
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(12)
-
-        instruction_group = QGroupBox("连接说明")
-        instruction_layout = QVBoxLayout(instruction_group)
-        instruction_layout.setSpacing(10)
-        instruction_text = QTextEdit()
-        instruction_text.setMaximumHeight(158)
-        instruction_text.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        instruction_text.setReadOnly(True)
-        instruction_text.setHtml("""
-        <p><b>线损测量连接说明</b></p>
-        <p><b>步骤1 · 路径1测量</b><br>信号源 → 线缆① → 衰减器 → 线缆② → 频谱仪</p>
-        <p><b>步骤2 · 路径2测量</b><br>信号源 → 线缆① → 线缆③ → 线缆④ → 衰减器 → 线缆② → 频谱仪</p>
-        <p style="color: #B91C1C;"><b>注意：</b>每个步骤会提示您重新连接线缆，请按提示操作</p>
-        """)
-        instruction_layout.addWidget(instruction_text)
-        diagram_layout = QHBoxLayout()
-        diagram_layout.setSpacing(10)
-        self.show_path1_btn = QPushButton("查看路径1连接图")
-        self.show_path2_btn = QPushButton("查看路径2连接图")
-        set_button_variant(self.show_path1_btn, "secondary")
-        set_button_variant(self.show_path2_btn, "secondary")
-        self.show_path1_btn.clicked.connect(lambda: self._show_diagram("cable_loss_path1"))
-        self.show_path2_btn.clicked.connect(lambda: self._show_diagram("cable_loss_path2"))
-        diagram_layout.addWidget(self.show_path1_btn)
-        diagram_layout.addWidget(self.show_path2_btn)
-        diagram_layout.addStretch(1)
-        instruction_layout.addLayout(diagram_layout)
-        left_layout.addWidget(instruction_group)
 
         control_group = QGroupBox("测量控制")
         control_layout = QGridLayout(control_group)
@@ -129,6 +100,13 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         set_button_variant(self.cancel_cable_loss_btn, "secondary")
         self.cancel_cable_loss_btn.clicked.connect(self.cancel_measurement)
         self.continue_cable_loss_btn.clicked.connect(self.continue_measurement)
+        # 接线说明只保留连接图入口：测试者已知道仪器怎么接，按钮只用于防止忘记。
+        self.show_path1_btn = QPushButton("查看路径1连接图")
+        self.show_path2_btn = QPushButton("查看路径2连接图")
+        set_button_variant(self.show_path1_btn, "secondary")
+        set_button_variant(self.show_path2_btn, "secondary")
+        self.show_path1_btn.clicked.connect(lambda: self._show_diagram("cable_loss_path1"))
+        self.show_path2_btn.clicked.connect(lambda: self._show_diagram("cable_loss_path2"))
         self.controls = MeasurementControlPresenter(
             MeasurementKind.CABLE_LOSS,
             {
@@ -144,6 +122,8 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         control_layout.addWidget(self.continue_cable_loss_btn, 1, 0)
         control_layout.addWidget(self.cancel_cable_loss_btn, 1, 1)
         control_layout.addWidget(self.load_cable_results_btn, 2, 0, 1, 2)
+        control_layout.addWidget(self.show_path1_btn, 3, 0)
+        control_layout.addWidget(self.show_path2_btn, 3, 1)
         control_layout.setColumnStretch(0, 1)
         control_layout.setColumnStretch(1, 1)
         left_layout.addWidget(control_group)

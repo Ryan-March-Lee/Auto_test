@@ -644,9 +644,6 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
             [],
             "现场配置没有本机驱动供电通道：计划留空即驱放自带供电",
         )
-        self.assertIn(
-            "驱动功放", window.amplifier_page.instruction_text.toPlainText()
-        )
 
     def test_return_to_welcome_confirms_only_when_configuration_is_dirty(self):
         dialogs = self._silence_dialogs()
@@ -1027,15 +1024,6 @@ class MainWindowMigrationResidueFlowTests(unittest.TestCase):
         window = MainWindow(paths=self.paths)
         self.addCleanup(_destroy_window, window)
         return window
-
-    def test_driver_mode_switch_updates_the_amplifier_page_instruction(self):
-        window = self._window()
-
-        window.config_page.driver_mode_changed.emit(True)
-        self.assertIn("驱动功放", window.amplifier_page.instruction_text.toPlainText())
-
-        window.config_page.driver_mode_changed.emit(False)
-        self.assertNotIn("驱动功放", window.amplifier_page.instruction_text.toPlainText())
 
 
 if __name__ == "__main__":

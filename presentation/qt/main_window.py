@@ -407,7 +407,6 @@ class MainWindow(QMainWindow):
         tab.validation_failed.connect(
             lambda message: self.add_log_message(f"配置校验失败: {message}")
         )
-        tab.driver_mode_changed.connect(self._refresh_amplifier_instruction_text)
         self.config_page = tab
         self.coordinator.bind_config_page(tab)
         return tab
@@ -426,7 +425,6 @@ class MainWindow(QMainWindow):
             self.config_page,
             page,
             log=self.add_log_message,
-            driver_mode_changed=self._refresh_amplifier_instruction_text,
         )
         return page
 
@@ -586,16 +584,6 @@ class MainWindow(QMainWindow):
         """测量结束后刷新历史运行与结果列表：页面自己容忍读取失败。"""
         page = getattr(self, "run_history_page", None)
         return None if page is None else page.refresh()
-
-    def _refresh_amplifier_instruction_text(self, driver_enabled):
-        """驱动模式变化后刷新功放页连接说明。
-
-        说明文本归功放页面所有（``AmplifierPage.update_instruction_text``），窗口只把
-        配置页的意图转发过去；配置页总是先于其他页面登记，取页面时允许尚未登记。
-        """
-        page = getattr(self, "pages", {}).get("amplifier")
-        if page is not None:
-            page.update_instruction_text(driver_enabled)
 
     def clear_real_time_data(self):
         """清除实时测量的历史数据（两个实时测量页面都提供同名缓存入口）。"""

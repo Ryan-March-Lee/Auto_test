@@ -502,7 +502,7 @@ class MainWindowMigrationResidueTests(unittest.TestCase):
         raise AssertionError(f"main_window.py 中未找到 {name}")
 
     def test_dead_instruction_text_implementation_is_gone(self):
-        # 旧实现写的是窗口自己并不存在的 instruction_text 控件，说明文本归功放页面。
+        # 测量页的线路文字说明已删除，窗口不再需要转发任何说明文本。
         methods = {
             node.name
             for node in self.tree.body if isinstance(node, ast.FunctionDef)
@@ -513,18 +513,9 @@ class MainWindowMigrationResidueTests(unittest.TestCase):
             if isinstance(node, ast.FunctionDef)
         }
         self.assertNotIn("update_amplifier_instruction_text", methods)
+        self.assertNotIn("_refresh_amplifier_instruction_text", methods)
         self.assertNotIn("self.instruction_text", self.source)
-
-    def test_driver_mode_change_refreshes_the_amplifier_page(self):
-        self.assertIn(
-            "tab.driver_mode_changed.connect(self._refresh_amplifier_instruction_text)",
-            self.source,
-            "驱动模式变化必须接到功放页的连接说明刷新",
-        )
-        method = self._method("_refresh_amplifier_instruction_text")
-        segment = ast.get_source_segment(self.source, method)
-        self.assertIn('pages", {}).get("amplifier")', segment)
-        self.assertIn("update_instruction_text(driver_enabled)", segment)
+        self.assertNotIn("driver_mode_changed", self.source)
 
     def test_cable_loss_result_loading_declares_its_expected_failures(self):
         method = self._method("_load_cable_loss_result")

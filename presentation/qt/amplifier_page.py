@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Callable
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -84,7 +83,8 @@ class AmplifierPage(
         layout.setContentsMargins(0, 4, 0, 0)
         layout.setSpacing(12)
 
-        # 左侧窄栏：连接说明、测量控制、测量结果；右侧整块留给四张图。
+        # 左侧窄栏：测量控制、测量结果；右侧整块留给四张图。
+        # 接线说明只保留连接图入口：测试者已知道仪器怎么接，按钮只用于防止忘记。
         left_panel = QWidget()
         left_panel.setMinimumWidth(420)
         left_panel.setMaximumWidth(520)
@@ -92,23 +92,10 @@ class AmplifierPage(
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(12)
 
-        instruction_group = QGroupBox("连接说明")
-        instruction_layout = QVBoxLayout(instruction_group)
-        instruction_layout.setSpacing(10)
-        self.instruction_text = QTextEdit()
-        self.instruction_text.setMaximumHeight(112)
-        self.instruction_text.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.instruction_text.setReadOnly(True)
-        instruction_layout.addWidget(self.instruction_text)
-        self.show_amp_diagram_btn = QPushButton("查看连接图")
-        set_button_variant(self.show_amp_diagram_btn, "secondary")
-        self.show_amp_diagram_btn.clicked.connect(self.show_connection_diagram)
-        instruction_layout.addWidget(self.show_amp_diagram_btn)
-        left_layout.addWidget(instruction_group)
-
         control_group = QGroupBox("测量控制")
-        control_layout = QHBoxLayout(control_group)
-        control_layout.setSpacing(8)
+        control_layout = QGridLayout(control_group)
+        control_layout.setHorizontalSpacing(8)
+        control_layout.setVerticalSpacing(8)
         self.amplifier_test_btn = QPushButton("开始功放测试")
         set_button_variant(self.amplifier_test_btn, "primary")
         self.amplifier_test_btn.clicked.connect(self.start_measurement)
@@ -118,6 +105,9 @@ class AmplifierPage(
         self.emergency_stop_btn = QPushButton("紧急停止")
         set_button_variant(self.emergency_stop_btn, "danger")
         self.emergency_stop_btn.clicked.connect(self.emergency_stop_measurement)
+        self.show_amp_diagram_btn = QPushButton("查看连接图")
+        set_button_variant(self.show_amp_diagram_btn, "secondary")
+        self.show_amp_diagram_btn.clicked.connect(self.show_connection_diagram)
         self.controls = MeasurementControlPresenter(
             MeasurementKind.AMPLIFIER,
             {
@@ -127,13 +117,16 @@ class AmplifierPage(
             },
         )
         self.controls.show_idle()
-        # 测量控制按钮横向排列在同一行，减少纵向占用面积。
-        for button in (
-            self.amplifier_test_btn,
-            self.cancel_btn,
-            self.emergency_stop_btn,
+        # 测量控制按钮横向排列在同一行，减少纵向占用面积；连接图入口单独占下一行。
+        for column, button in enumerate(
+            (
+                self.amplifier_test_btn,
+                self.cancel_btn,
+                self.emergency_stop_btn,
+            )
         ):
-            control_layout.addWidget(button)
+            control_layout.addWidget(button, 0, column)
+        control_layout.addWidget(self.show_amp_diagram_btn, 1, 0, 1, 3)
         left_layout.addWidget(control_group)
 
         result_group = QGroupBox("测量结果")
@@ -163,7 +156,6 @@ class AmplifierPage(
             if signal is not None:
                 signal.connect(slot)
         layout.addWidget(self.amplifier_plot_widget, 1)
-        self.update_instruction_text()
         return self
 
     def _connect_controller_signals(self, controller: Any) -> None:
@@ -176,26 +168,6 @@ class AmplifierPage(
         self._connect_signal(signals.error, self._on_error)
         self._connect_signal(signals.stopped, self._on_stopped)
         self._connect_signal(signals.finished, self._on_finished)
-
-    def update_instruction_text(self, driver_enabled: bool | None = None) -> None:
-        """按驱动模式刷新连接说明。
-
-        ``driver_enabled`` 不传时取运行契约中的驱动模式；配置页切换驱动模式时直接传入
-        复选框状态，用户在创建运行前也能看到对应的接线说明。
-        """
-        if driver_enabled is None:
-            driver_enabled = self._driver_mode_provider()
-        if driver_enabled:
-            text = (
-                "<p><b>主功放测试连接说明</b></p>"
-                "<p>信号源 → 线缆① → 驱动功放 → 线缆③ → 主功放 → 线缆④ → 衰减器 → 线缆② → 频谱仪</p>"
-            )
-        else:
-            text = (
-                "<p><b>主功放测试连接说明（无驱动模式）</b></p>"
-                "<p>信号源 → 线缆① → 主功放 → 线缆④ → 衰减器 → 线缆② → 频谱仪</p>"
-            )
-        self.instruction_text.setHtml(text)
 
     def start_measurement(self) -> None:
         # controller 只在 prepare 时读取一次：决策携带检查过的那个对象，接线对话框
@@ -222,8 +194,7 @@ class AmplifierPage(
         )
 
     def _confirm_start_connection(self) -> bool:
-        """按驱动模式刷新说明并显示连接图，接受才算完成接线确认。"""
-        self.update_instruction_text()
+        """按驱动模式选择连接图，接受才算完成接线确认。"""
         diagram = (
             "amplifier_test"
             if self._driver_mode_provider()

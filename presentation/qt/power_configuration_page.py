@@ -14,10 +14,12 @@
 卡片是通道参数的唯一编辑面：每个通道上角的竖直滚筒写 ``OFF`` / ``Driver`` / ``DUT``，
 表示该通道关闭、给驱放供电、给功放供电。换档会同步勾选/取消下方
 ``driver_amplifier`` / ``dut_amplifier`` 的 ``power_plan`` 路由，因此档位不是临时
-显示状态，而是由现有计划结构持久化；进入页面时按已保存计划回显档位。``OFF`` 时该
-通道的 VS/IS 输入框与保护勾选不可操作。工作值与保护勾选直接进入配置片段，保护阈值
-仍由工作值按 110% 自动推导。两个通道始终保留在配置里，上电角色、顺序与每通道间隔
-都在卡片上设置，卡片下方只剩「效率测量」的漏极选择。
+显示状态，而是由现有计划结构持久化。每次选择测试模式后的第一次进入（:meth:`enter`）
+从初始值开始：所有通道 ``OFF``、VS/IS 为 0、保护未勾选、间隔 2s，两份计划与漏极清空；
+本次会话内从排布页返回再进入则保留已填参数。``OFF`` 时该通道的 VS/IS 输入框与保护
+勾选不可操作。工作值与保护勾选直接进入配置片段，保护阈值仍由工作值按 110% 自动
+推导。两个通道始终保留在配置里，上电角色、顺序与每通道间隔都在卡片上设置，卡片
+下方只剩「效率测量」的漏极选择。
 
 电源参数、通道上电计划与效率测量漏极都归本页；测试参数、运行入口与
 设备发现仍属于 :mod:`presentation.qt.configuration_page` 与
@@ -78,7 +80,10 @@ from .config_power_section import (
     PowerSupplyChoices,
     PowerSupplySources,
 )
-from .config_projection import ConfigBackfillError
+from .config_projection import (
+    DEFAULT_POWER_CHANNEL_VALUE,
+    ConfigBackfillError,
+)
 from .pages import PageControllerBindingMixin
 from .power_card import CHANNEL_NAMES, DEFAULT_POWER_ON_DELAY_S
 from .power_card_morph import PowerCardMorphItem, PowerCardMorphOverlay
@@ -127,6 +132,9 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         self._silent = False
         # 卡片角色与下方上电计划互相同步时置真，避免 itemChanged 递归。
         self._syncing_modes = False
+        #: 下一次进入页面时是否把电源字段恢复成初始值。选择测试模式（载入上次保存的
+        #: 配置）后置真；首次进入消费一次，本次会话内再返回不重复清空。
+        self._entry_reset_pending = True
         #: 卡面上尚未提交的通道上电间隔；计划/绑定刷新时用它覆盖配置里的旧值。
         self._edited_delays: dict[tuple[str, str], float] = {}
         self._finalizing = False
@@ -631,9 +639,8 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
     def _card_cards(self) -> list[tuple[str, Any]]:
         """当前配置里每台电源的卡片数据；两个通道都显示，档位按上电计划回填。
 
-        卡片不再在每次进入页面时统一从 OFF 开始：已经写进 ``driver_amplifier`` /
-        ``dut_amplifier`` 计划的路由会显示对应档位，其余通道为 OFF。卡面最下面一行的
-        上电顺序/间隔也从两份计划与通道配置回填。
+        进入页面时（:meth:`enter`）会先清掉上一次保存的通道字段，因此这里看到的是
+        本次会话的编辑状态；没有计划路由的通道为 OFF。
         """
         modes = self._planned_modes()
         settings = self._channel_power_settings(modes)
@@ -827,8 +834,73 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         if self._card_morph is not None:
             self._card_morph.setGeometry(self.rect())
 
+    # ---- 进入页面 -----------------------------------------------------------
+
+    def enter(self) -> None:
+        """进入本页；新测试会话的第一次进入从电源初始值开始。
+
+        选择测试模式时载入的配置可能带着上一次保存的通道角色、工作值、保护与间隔。
+        首次进入把本页字段整体恢复成初始值（``OFF`` / 0 / 未勾选 / 2s，两份计划与
+        漏极清空）；本次会话内点“上一步”回排布页再进来不再重置，已经填好的参数不会
+        丢。只读文档保持文档原样，不回填也不改写。
+        """
+        if self._entry_reset_pending:
+            self._entry_reset_pending = False
+            if self.read_only_reason is None:
+                self.reset_to_defaults()
+        self._sync_cards_from_plans()
+
+    def reset_to_defaults(self) -> None:
+        """把本页负责的电源字段恢复成初始值；设备身份与绑定保持不变。"""
+        self.apply_config(self._default_power_config())
+
+    def _default_power_config(self) -> dict[str, Any]:
+        """复制当前配置，并把本页负责的字段写成卡片初始值。
+
+        通道工作值与保护回到 0、间隔回到 2s，两份计划的成员清空，漏极回到未指定；
+        测试参数、仪器身份与设备绑定原样保留，因此回填后只是“电源设置是新的”。
+        """
+        config = copy.deepcopy(self.config)
+        instruments = config.get("instruments")
+        supplies = (
+            instruments.get("power_supplies")
+            if isinstance(instruments, dict)
+            else None
+        )
+        if isinstance(supplies, dict):
+            for entry in supplies.values():
+                if not isinstance(entry, dict):
+                    continue
+                channels = entry.get("channels")
+                if not isinstance(channels, dict):
+                    continue
+                for channel in channels.values():
+                    if not isinstance(channel, dict):
+                        continue
+                    for kind in ("voltage", "current"):
+                        block = channel.get(kind)
+                        block = dict(block) if isinstance(block, dict) else {}
+                        block["value"] = DEFAULT_POWER_CHANNEL_VALUE
+                        block["protection"] = DEFAULT_POWER_CHANNEL_VALUE
+                        block["protection_enabled"] = False
+                        channel[kind] = block
+                    channel["power_on_delay_s"] = DEFAULT_POWER_ON_DELAY_S
+        assignment = config.get("power_supply_assignment")
+        if isinstance(assignment, dict):
+            for group in ("driver_amplifier", "dut_amplifier"):
+                block = assignment.get(group)
+                if isinstance(block, dict):
+                    block["power_plan"] = {
+                        "power_sequence": [],
+                        "inter_channel_delay_s": 0.0,
+                    }
+        dut = config.get("dut_config")
+        if isinstance(dut, dict):
+            dut["drain_channel"] = None
+        return config
+
     def showEvent(self, event: Any) -> None:
-        """每次进入电源页按当前计划回显通道档位。"""
+        """每次显示电源页按当前计划回显通道档位（清空时机见 :meth:`enter`）。"""
         super().showEvent(event)
         if self.card_wall is not None:
             self._sync_cards_from_plans()
@@ -838,9 +910,13 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
 
         只改派生状态与可见性；干净基线由共享会话在加载/保存成功时统一重置。这里
         直接 ``mark_clean()`` 会把操作者尚未保存的电源修改悄悄变成“已保存”。
+
+        每次重新选择测试模式都会载入上一次保存的配置，因此下一次进入电源页要先
+        回到初始值；本次会话内已经填好的参数由 :meth:`enter` 只消费一次。
         """
         enabled = bool(enabled)
         self.test_mode_enabled = enabled
+        self._entry_reset_pending = True
         self._silent = True
         try:
             self.update_driver_power_ui()
@@ -976,6 +1052,9 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         previous_bindings = self.device_bindings
         previous_test_mode = self.test_mode_enabled
         self._edited_delays.clear()
+        # 回填的是明确的文档（载入运行、回滚或初始值），不再排队一次“进入清空”；
+        # 测试模式选择随后由 :meth:`set_test_mode` 重新排队。
+        self._entry_reset_pending = False
         self._silent = True
         try:
             bindings = effective_device_bindings(config)

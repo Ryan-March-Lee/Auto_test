@@ -258,6 +258,8 @@ class MainWindow(QMainWindow):
     def _open_configuration_page(self) -> None:
         """排布完成：进整屏电源配置页，把排布页的电源卡片展开成通道卡片。"""
         self.coordinator.begin_configuration()
+        # 新测试会话的第一次进入从电源初始值开始；本次会话内返回再进入保留已填参数。
+        self.power_page.enter()
         self.power_page.set_rack_slots(self.rack_page.slot_assignments())
         self.view_stack.setCurrentWidget(self.power_page)
         self._sync_status_panel_visibility()

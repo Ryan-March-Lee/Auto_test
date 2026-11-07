@@ -430,6 +430,51 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
         self.assertIs(window.tab_widget.currentWidget(), window.config_page)
 
+    def test_first_entry_to_the_power_step_starts_from_default_channels(self):
+        """上次保存的电源配置不再带入页面：首次进入全是 OFF / 0 / 2s。"""
+        from presentation.qt.power_card import DEFAULT_POWER_ON_DELAY_S
+
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(False)
+        self.assertEqual(
+            window.power_page.card_wall.supply_card("DP8B1519").channel_mode("CH1"),
+            "dut",
+            "用例前提：保存的配置里 CH1/CH2 都是 DUT",
+        )
+
+        window._open_configuration_page()
+        window.power_page.finish_card_morph()
+
+        card = window.power_page.card_wall.supply_card("DP8B1519")
+        self.assertIsNotNone(card)
+        for channel in ("CH1", "CH2"):
+            with self.subTest(channel=channel):
+                self.assertEqual(card.channel_mode(channel), "off")
+                self.assertEqual(
+                    card.value_field(channel, "voltage").value(), 0.0
+                )
+                self.assertEqual(
+                    card.value_field(channel, "current").value(), 0.0
+                )
+                self.assertFalse(
+                    card.protection_check(channel, "voltage").isChecked()
+                )
+                self.assertFalse(
+                    card.protection_check(channel, "current").isChecked()
+                )
+                self.assertAlmostEqual(
+                    card.channel_power_delay(channel),
+                    DEFAULT_POWER_ON_DELAY_S,
+                )
+        self.assertIsNone(window.power_page.read_drain_channel())
+        self.assertEqual(
+            window.power_page.build_config()["power_supply_assignment"][
+                "dut_amplifier"
+            ]["power_plan"]["power_sequence"],
+            [],
+        )
+
     def test_connection_page_is_not_a_tab_and_hides_the_status_panel(self):
         """仪器连接配置页占满整个界面：既不在标签栏里，也不显示进度与日志。"""
         self._silence_dialogs()
@@ -698,12 +743,12 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self._silence_dialogs()
         window = self._window()
         window._enter_test_mode(False)
+        window._open_configuration_page()
+        window.power_page.finish_card_morph()
         channel = window.power_page.power_config_widgets["DP8B1519"]["channels"]["CH1"]
         channel["voltage"].setValue(7.5)
         self.assertTrue(window.configuration_editor.is_dirty())
 
-        window._open_configuration_page()
-        window.power_page.finish_card_morph()
         window.power_page.next_btn.click()
         self.app.processEvents()
         self.assertIs(window.view_stack.currentWidget(), window.workspace_page)

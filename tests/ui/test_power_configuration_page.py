@@ -219,6 +219,86 @@ class PowerConfigurationPageTests(unittest.TestCase):
                     card.protection_check(channel, "voltage").isEnabled()
                 )
 
+    def test_first_enter_ignores_saved_power_channels_and_plans(self):
+        """每次选择测试模式后的第一次进入：角色/工作值/保护/间隔全回到初始值。"""
+        config = valid_config()
+        channel = config["instruments"]["power_supplies"]["DP8B1519"][
+            "channels"
+        ]["CH1"]
+        channel["voltage"]["protection_enabled"] = True
+        channel["current"]["protection_enabled"] = True
+        channel["power_on_delay_s"] = 5.0
+        page = PowerConfigurationPage(config)
+        page.resize(1100, 900)
+        page.show()
+        self.app.processEvents()
+        self.addCleanup(self._destroy_page, page)
+
+        page.enter()
+
+        card = self._card(page)
+        for channel in CHANNEL_NAMES:
+            with self.subTest(channel=channel):
+                self.assertEqual(card.channel_mode(channel), "off")
+                self.assertFalse(card.channel_enabled(channel))
+                self.assertEqual(
+                    card.value_field(channel, "voltage").value(), 0.0
+                )
+                self.assertEqual(
+                    card.value_field(channel, "current").value(), 0.0
+                )
+                self.assertFalse(
+                    card.protection_check(channel, "voltage").isChecked()
+                )
+                self.assertFalse(
+                    card.protection_check(channel, "current").isChecked()
+                )
+                self.assertAlmostEqual(
+                    card.channel_power_delay(channel),
+                    DEFAULT_POWER_ON_DELAY_S,
+                    msg="未设置的通道间隔统一回到 2s",
+                )
+        self.assertIsNone(page.read_drain_channel())
+        assignment = page.build_config()["power_supply_assignment"]
+        for group in ("dut_amplifier", "driver_amplifier"):
+            with self.subTest(group=group):
+                self.assertEqual(
+                    assignment[group]["power_plan"]["power_sequence"], []
+                )
+
+    def test_returning_to_the_page_keeps_in_session_edits(self):
+        """本次会话内回排布页再进来：已填的角色/电压不被清空。"""
+        page = self.make_page()
+        page.enter()
+        card = self._card(page)
+        selector = card.channel_mode_selector("CH1")
+
+        QTest.mouseClick(selector, Qt.LeftButton, pos=selector.rect().center())
+        card.value_field("CH1", "voltage").setValue(3.3)
+
+        page.enter()
+
+        self.assertEqual(card.channel_mode("CH1"), "dut")
+        self.assertAlmostEqual(card.value_field("CH1", "voltage").value(), 3.3)
+
+    def test_selecting_the_test_mode_again_restarts_from_defaults(self):
+        """重新选择测试模式等于重新载入配置，下一次进入必须再清空。"""
+        page = self.make_page()
+        page.enter()
+        card = self._card(page)
+        selector = card.channel_mode_selector("CH1")
+        QTest.mouseClick(selector, Qt.LeftButton, pos=selector.rect().center())
+        self.assertEqual(card.channel_mode("CH1"), "dut")
+
+        page.set_test_mode(True)
+        page.enter()
+
+        self.assertEqual(card.channel_mode("CH1"), "off")
+        self.assertAlmostEqual(card.value_field("CH1", "voltage").value(), 0.0)
+        self.assertAlmostEqual(
+            card.channel_power_delay("CH1"), DEFAULT_POWER_ON_DELAY_S
+        )
+
     def test_clicking_the_reel_updates_both_plans_and_marks_dirty(self):
         page = self.make_page()
         card = self._card(page)

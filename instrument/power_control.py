@@ -76,6 +76,8 @@ class PowerChannelStep:
     channel: str
     voltage_v: float | None = None
     current_a: float | None = None
+    #: 本通道开启后到下一条上电命令的等待秒数；``None`` 表示沿用组间隔。
+    power_on_delay_s: float | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "channel", _channel_text(self.channel))
@@ -91,6 +93,12 @@ class PowerChannelStep:
             if not math.isfinite(number):
                 raise ValueError(f"{field_name} 必须是有限数值，收到 {value!r}")
             object.__setattr__(self, field_name, number)
+        if self.power_on_delay_s is not None:
+            object.__setattr__(
+                self,
+                "power_on_delay_s",
+                _delay_seconds(self.power_on_delay_s),
+            )
 
 
 @dataclass(frozen=True)
@@ -174,6 +182,7 @@ class PowerController:
         channels: Iterable[object],
         *,
         inter_channel_delay_s: float = 0.0,
+        channel_delays_s: Mapping[str, float] | None = None,
         sleep_fn: Callable[[float], None] | None = None,
         channel_labels: Mapping[str, str] | None = None,
     ):
@@ -184,6 +193,12 @@ class PowerController:
         self.power_supply = power_supply
         self.channels = tokens
         self.inter_channel_delay_s = _delay_seconds(inter_channel_delay_s)
+        #: 逐通道间隔：有值就覆盖组间隔；只保留本控制器实际会开启的通道。
+        self.channel_delays_s = {
+            str(name): _delay_seconds(value)
+            for name, value in (channel_delays_s or {}).items()
+            if str(name) in tokens
+        }
         self.sleep_fn = sleep_fn or time.sleep
         # token -> 日志写法（``短标签/CHx``）：只影响日志与失败记录，不参与路由。
         self.channel_labels = {
@@ -246,9 +261,13 @@ class PowerController:
             powered.append(channel)
             self._cancellation_guard(check_cancelled, timeout_s)
             if index < len(self.channels) - 1:
-                # 零间隔是显式的“不等待”，不制造一个无意义的 sleep 调用。
-                if self.inter_channel_delay_s > 0:
-                    self.sleep_fn(self.inter_channel_delay_s)
+                # 逐通道间隔优先；没有单独值时用组间隔。零间隔是显式的
+                # “不等待”，不制造一个无意义的 sleep 调用。
+                delay = self.channel_delays_s.get(channel)
+                if delay is None:
+                    delay = self.inter_channel_delay_s
+                if delay > 0:
+                    self.sleep_fn(delay)
                     self._cancellation_guard(check_cancelled, timeout_s)
         return tuple(powered)
 

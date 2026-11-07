@@ -65,12 +65,18 @@ __all__ = [
     "AmplifierInputError",
     "AmplifierMeasurementInputs",
     "ChannelSetting",
+    "DEFAULT_POWER_ON_DELAY_S",
     "DrainChannel",
     "MAX_INTER_CHANNEL_DELAY_S",
     "PowerPlan",
     "PowerSweep",
     "SupplyChannel",
 ]
+
+
+#: 卡面/编辑文档没有单独设置通道上电间隔时的缺省值（秒）。
+#: 旧配置仍可用组级 ``inter_channel_delay_s`` 覆盖它；通道显式值优先。
+DEFAULT_POWER_ON_DELAY_S = 2.0
 
 
 class AmplifierInputError(ConfigurationError):

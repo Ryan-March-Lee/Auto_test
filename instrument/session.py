@@ -141,6 +141,7 @@ class ManagedInstrumentSession:
 
     def power_on(self, *, channels: Iterable[str] | None = None,
                  inter_channel_delay_s: float = 0.0,
+                 channel_delays_s: Mapping[str, float] | None = None,
                  timeout_s: float = 10.0) -> None:
         """按物理通道序列逐个上电；失败会停止后续通道并逆序清理。
 
@@ -156,6 +157,7 @@ class ManagedInstrumentSession:
             self.power_supply,
             targets,
             inter_channel_delay_s=inter_channel_delay_s,
+            channel_delays_s=channel_delays_s,
             sleep_fn=self._sleep_fn,
             channel_labels=self.power_channel_labels,
         )

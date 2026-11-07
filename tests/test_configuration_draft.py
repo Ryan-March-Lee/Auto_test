@@ -20,7 +20,12 @@ from application.configuration_draft import (
     PowerSupplyDraft,
 )
 from application.configuration_editing import ValidationIssue, ValidationResult
-from application.dto.amplifier_inputs import PowerPlan, PowerSweep, SupplyChannel
+from application.dto.amplifier_inputs import (
+    MAX_INTER_CHANNEL_DELAY_S,
+    PowerPlan,
+    PowerSweep,
+    SupplyChannel,
+)
 from domain.measurement.values import Decibels, Frequency, PowerDbm
 
 
@@ -223,6 +228,12 @@ class ConfigurationDraftModelTests(unittest.TestCase):
             ConfigurationDraft(driver_enabled="yes")
         with self.assertRaises(TypeError):
             PowerChannelDraft(channel="CH1", voltage_protection_enabled=1)
+        with self.assertRaises(ValueError):
+            PowerChannelDraft(
+                channel="CH1", power_on_delay_s=MAX_INTER_CHANNEL_DELAY_S + 1
+            )
+        with self.assertRaises(ValueError):
+            PowerChannelDraft(channel="CH1", power_on_delay_s=-1)
         # 直接构造与文档读取对数值有效性的要求一致：非有限值不能进草稿。
         for value in (float("nan"), float("inf"), float("-inf")):
             with self.assertRaises(ValueError):
@@ -321,6 +332,53 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
         # ``to_document`` 只输出编辑段；正式段与 schema 版本由配置编写服务补。
         for formal in ("test_plan", "run_mapping", "schema_version", "wiring"):
             self.assertNotIn(formal, document)
+
+    def test_channel_power_on_delay_round_trips(self):
+        document = _document()
+        document["instruments"]["power_supplies"]["PSA"]["channels"]["CH1"][
+            "power_on_delay_s"
+        ] = 4.5
+
+        result = ConfigurationDraft.from_document(document)
+
+        self.assertTrue(result.valid, result.messages())
+        self.assertEqual(
+            result.draft.power_supplies[0].channel("CH1").power_on_delay_s, 4.5
+        )
+        written = result.draft.to_document()["instruments"]["power_supplies"][
+            "PSA"
+        ]["channels"]["CH1"]
+        self.assertEqual(written["power_on_delay_s"], 4.5)
+
+    def test_invalid_channel_power_on_delay_is_reported_and_dropped(self):
+        for bad in ("2", None, -1, MAX_INTER_CHANNEL_DELAY_S + 1, True):
+            with self.subTest(delay=bad):
+                document = _document()
+                if bad is None:
+                    # 缺失不是错误：旧配置没有这个字段时保持不写。
+                    document["instruments"]["power_supplies"]["PSA"][
+                        "channels"
+                    ]["CH1"].pop("power_on_delay_s", None)
+                    result = ConfigurationDraft.from_document(document)
+                    self.assertTrue(result.valid, result.messages())
+                    self.assertIsNone(
+                        result.draft.power_supplies[0]
+                        .channel("CH1")
+                        .power_on_delay_s
+                    )
+                    continue
+                document["instruments"]["power_supplies"]["PSA"]["channels"][
+                    "CH1"
+                ]["power_on_delay_s"] = bad
+                result = ConfigurationDraft.from_document(document)
+                self.assertFalse(result.valid)
+                self.assertIsNone(
+                    result.draft.power_supplies[0].channel("CH1").power_on_delay_s
+                )
+                written = result.draft.to_document()["instruments"][
+                    "power_supplies"
+                ]["PSA"]["channels"]["CH1"]
+                self.assertNotIn("power_on_delay_s", written)
 
     def test_retired_driver_power_source_is_ignored_and_dropped(self):
         """旧 1.1 文档的 ``power_source`` 不再读入，保存时也不再写出。"""

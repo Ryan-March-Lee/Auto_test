@@ -217,6 +217,19 @@ class ChannelRoutingTests(unittest.TestCase):
         )
         self.assertEqual(routing.dut_power_plan.inter_channel_delay_s, 3.0)
 
+    def test_channel_power_on_delay_is_read_from_the_channel_config(self):
+        configs = _power_configs()
+        configs["DP8B1519"]["channels"]["CH1"]["power_on_delay_s"] = 0.75
+        _resolution, routing = _routing(configs, driver=None)
+
+        self.assertEqual(
+            routing.dut_power_plan.channels[0].power_on_delay_s, 0.75
+        )
+        self.assertIsNone(
+            routing.dut_power_plan.channels[1].power_on_delay_s,
+            "没有单独值的通道保持 None，控制器回落到组间隔",
+        )
+
     def test_emergency_order_is_the_reverse_of_the_global_power_on_order(self):
         _resolution, routing = _routing()
 

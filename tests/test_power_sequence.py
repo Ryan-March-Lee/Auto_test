@@ -74,6 +74,38 @@ class PowerControllerSequenceTests(unittest.TestCase):
             [("S1/CH2", True), ("S2/CH1", True), ("S1/CH1", True)],
         )
 
+    def test_per_channel_delays_override_the_group_interval(self):
+        events = []
+        controller = PowerController(
+            _FakePowerSupply(events=events),
+            ["A", "B", "C"],
+            inter_channel_delay_s=5.0,
+            channel_delays_s={"A": 0.5},
+            sleep_fn=lambda seconds: events.append(("sleep", seconds)),
+        )
+
+        controller.power_on()
+
+        self.assertEqual(
+            events,
+            [
+                ("on", "A"),
+                ("sleep", 0.5),
+                ("on", "B"),
+                ("sleep", 5.0),
+                ("on", "C"),
+            ],
+            "A 用通道自己的 0.5s，B 没有单独值就回落到组的 5s，C 是最后一档不等待",
+        )
+
+    def test_power_channel_step_validates_its_delay(self):
+        step = PowerChannelStep("A", power_on_delay_s=2)
+        self.assertEqual(step.power_on_delay_s, 2.0)
+        for bad in (-1, 61):
+            with self.subTest(delay=bad):
+                with self.assertRaises(ValueError):
+                    PowerChannelStep("A", power_on_delay_s=bad)
+
     def test_single_channel_plan_never_waits(self):
         events = []
         controller = PowerController(

@@ -44,6 +44,7 @@
 from __future__ import annotations
 
 import copy
+import math
 from typing import Any, Mapping
 
 from PySide6.QtCore import (
@@ -79,7 +80,7 @@ from .config_power_section import (
 )
 from .config_projection import ConfigBackfillError
 from .pages import PageControllerBindingMixin
-from .power_card import CHANNEL_NAMES
+from .power_card import CHANNEL_NAMES, DEFAULT_POWER_ON_DELAY_S
 from .power_card_morph import PowerCardMorphItem, PowerCardMorphOverlay
 from .power_card_wall import PowerCardWall, power_card_data
 from .theme import PAGE_CONTENT_MAX_WIDTH, set_button_variant
@@ -126,6 +127,8 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         self._silent = False
         # 卡片角色与下方上电计划互相同步时置真，避免 itemChanged 递归。
         self._syncing_modes = False
+        #: 卡面上尚未提交的通道上电间隔；计划/绑定刷新时用它覆盖配置里的旧值。
+        self._edited_delays: dict[tuple[str, str], float] = {}
         self._finalizing = False
         self._fragment_signal_connections: list[tuple[Any, Any]] = []
         #: 仪器排布页的九宫格结果（``supply_id -> 格位下标``），卡片视图按它排相对位置。
@@ -258,6 +261,12 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
                 self._on_card_protection_toggled
             )
             self.card_wall.value_changed.connect(self._on_card_value_changed)
+            self.card_wall.channel_order_changed.connect(
+                self._on_card_order_changed
+            )
+            self.card_wall.channel_delay_changed.connect(
+                self._on_card_delay_changed
+            )
 
     def _wire_fragment_signals(self) -> None:
         """把电源字段的编辑汇总成 ``fragment_changed``。
@@ -289,7 +298,14 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
                 editor.list.itemChanged,
                 lambda item, name=group: self._on_plan_item_changed(name, item),
             )
-            hook(editor.delay_spin.valueChanged, notify)
+            hook(
+                editor.order_changed,
+                lambda name=group: self._on_plan_order_changed(name),
+            )
+            hook(
+                editor.delay_spin.valueChanged,
+                lambda _value, name=group: self._on_plan_delay_changed(name),
+            )
         hook(section.drain_channel_combo.currentIndexChanged, notify)
 
     def _emit_fragment_changed(self) -> None:
@@ -317,7 +333,151 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         """卡面 VS/IS 变化：卡片已保存新值，这里只计入 dirty。"""
         self._emit_fragment_changed()
 
+    def _on_card_order_changed(
+        self, supply_id: str, channel: str, order: int
+    ) -> None:
+        """卡面顺序下拉框：把该路由移动到所在计划的指定位置。"""
+        section = self.power_section
+        if section is None:
+            self._sync_cards_from_plans()
+            return
+        route = (supply_id, channel)
+        mode = self._planned_modes().get(route, "off")
+        if mode not in ("dut", "driver"):
+            self._sync_cards_from_plans()
+            return
+        editor = (
+            section.dut_power_plan_editor
+            if mode == "dut"
+            else section.driver_power_plan_editor
+        )
+        if editor.set_route_order(route, order):
+            # 编辑器随后发出 order_changed，由页面统一同步卡片并计入 dirty。
+            return
+        # 计划已经变化（例如通道刚被移出）：把下拉框拉回实际位置。
+        self._sync_cards_from_plans()
+
+    def _on_card_delay_changed(
+        self, supply_id: str, channel: str, delay: float
+    ) -> None:
+        """卡面间隔变化：记住未提交值并计入 dirty。
+
+        计划顺序或组默认间隔随后触发同步时，这个值优先于配置里的旧值，
+        不会把用户刚输入的间隔覆盖回旧值。
+        """
+        self._edited_delays[(supply_id, channel)] = float(delay)
+        self._emit_fragment_changed()
+
     # ---- 供电角色 <-> 上电计划 ----------------------------------------------
+
+    @staticmethod
+    def _plan_route_list(plan: Any) -> tuple[tuple[str, str], ...]:
+        """把一份 ``power_plan`` 读成有序路由元组（忽略非法项）。"""
+        if not isinstance(plan, Mapping):
+            return ()
+        sequence = plan.get("power_sequence")
+        if not isinstance(sequence, (list, tuple)):
+            return ()
+        routes: list[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for item in sequence:
+            if not isinstance(item, Mapping):
+                continue
+            supply_id = item.get("supply_id")
+            channel = item.get("channel")
+            if not isinstance(supply_id, str) or not isinstance(channel, str):
+                continue
+            route = (supply_id.strip(), channel.strip())
+            if all(route) and route not in seen:
+                seen.add(route)
+                routes.append(route)
+        return tuple(routes)
+
+    @staticmethod
+    def _plan_delay(plan: Any) -> float:
+        """计划里的组默认间隔；非法值按 0 处理。"""
+        value = plan.get("inter_channel_delay_s") if isinstance(plan, Mapping) else None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return 0.0
+        seconds = float(value)
+        if not math.isfinite(seconds) or seconds < 0:
+            return 0.0
+        return seconds
+
+    @staticmethod
+    def _entry_channel_delay(entry: Any, channel: str) -> float | None:
+        """配置里显式写下的通道上电间隔；没有或非法时返回 ``None``。"""
+        channels = entry.get("channels") if isinstance(entry, Mapping) else None
+        record = channels.get(channel) if isinstance(channels, Mapping) else None
+        value = (
+            record.get("power_on_delay_s")
+            if isinstance(record, Mapping)
+            else None
+        )
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        seconds = float(value)
+        if not math.isfinite(seconds) or seconds < 0:
+            return None
+        return seconds
+
+    def _group_plan_state(self, group: str) -> tuple[tuple[tuple[str, str], ...], float]:
+        """一组当前生效的计划路由与默认间隔（读控件里的未提交状态）。"""
+        section = self.power_section
+        if section is not None:
+            editor = (
+                section.dut_power_plan_editor
+                if group == "dut"
+                else section.driver_power_plan_editor
+            )
+            if group == "driver" and not self._driver_plan_active():
+                return (), 0.0
+            plan = editor.read_plan()
+        else:
+            plan = self._power_plan_entry(
+                "dut_amplifier" if group == "dut" else "driver_amplifier"
+            )
+        return self._plan_route_list(plan), self._plan_delay(plan)
+
+    def _channel_power_settings(
+        self, modes: Mapping[tuple[str, str], str]
+    ) -> dict[tuple[str, str], tuple[int | None, int, float]]:
+        """每个通道的上电顺序/可选顺序数/间隔；顺序来自其所在计划。"""
+        dut_routes, dut_delay = self._group_plan_state("dut")
+        driver_routes, driver_delay = self._group_plan_state("driver")
+        settings: dict[tuple[str, str], tuple[int | None, int, float]] = {}
+        for supply_id, entry in self._power_supply_sources().items():
+            for name in CHANNEL_NAMES:
+                route = (supply_id, name)
+                mode = modes.get(route, "off")
+                if mode == "dut":
+                    routes, group_delay = dut_routes, dut_delay
+                elif mode == "driver":
+                    routes, group_delay = driver_routes, driver_delay
+                else:
+                    routes, group_delay = (), 0.0
+                explicit = self._edited_delays.get(route)
+                if explicit is None:
+                    explicit = self._entry_channel_delay(entry, name)
+                # 计划里没有单独设置间隔时，沿用组的默认值；组默认还是 0，
+                # 就用卡面缺省的 2s。
+                fallback = (
+                    group_delay if group_delay > 0 else DEFAULT_POWER_ON_DELAY_S
+                )
+                if route in routes:
+                    order = routes.index(route) + 1
+                    count = len(routes)
+                    delay = explicit if explicit is not None else fallback
+                else:
+                    order = None
+                    count = 0
+                    delay = (
+                        explicit
+                        if explicit is not None
+                        else DEFAULT_POWER_ON_DELAY_S
+                    )
+                settings[route] = (order, count, delay)
+        return settings
 
     @staticmethod
     def _plan_route_set(plan: Any) -> set[tuple[str, str]]:
@@ -369,9 +529,13 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         return modes
 
     def _sync_cards_from_plans(self) -> None:
-        """把两份计划的路由状态回写到卡片滚筒；不发信号。"""
-        if self.card_wall is not None:
-            self.card_wall.set_channel_modes(self._planned_modes())
+        """把两份计划的路由状态与顺序/间隔回写到卡片；不发信号。"""
+        wall = self.card_wall
+        if wall is None:
+            return
+        modes = self._planned_modes()
+        wall.set_channel_modes(modes)
+        wall.set_channel_power_settings(self._channel_power_settings(modes))
 
     def _on_card_mode_changed(
         self, supply_id: str, channel: str, mode: str
@@ -435,6 +599,20 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             self._silent = was_silent
         self._emit_fragment_changed()
 
+    def _on_plan_order_changed(self, group: str) -> None:
+        """计划列表被上移/下移或卡面下拉框重排：同步卡片并计入 dirty。"""
+        if self._syncing_modes:
+            return
+        self._sync_cards_from_plans()
+        self._emit_fragment_changed()
+
+    def _on_plan_delay_changed(self, group: str) -> None:
+        """组默认间隔变化：只影响没有单独间隔的通道，重新同步卡片。"""
+        if self._syncing_modes:
+            return
+        self._sync_cards_from_plans()
+        self._emit_fragment_changed()
+
     # ---- 表单 Adapter -------------------------------------------------------
 
     @property
@@ -478,16 +656,21 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         """当前配置里每台电源的卡片数据；两个通道都显示，档位按上电计划回填。
 
         卡片不再在每次进入页面时统一从 OFF 开始：已经写进 ``driver_amplifier`` /
-        ``dut_amplifier`` 计划的路由会显示对应档位，其余通道为 OFF。
+        ``dut_amplifier`` 计划的路由会显示对应档位，其余通道为 OFF。卡面最下面一行的
+        上电顺序/间隔也从两份计划与通道配置回填。
         """
         modes = self._planned_modes()
+        settings = self._channel_power_settings(modes)
         cards: list[tuple[str, Any]] = []
         for supply_id, entry in self._power_supply_sources().items():
             data = power_card_data(entry, supply_id)
             for name in CHANNEL_NAMES:
-                data = data.with_channel_mode(
-                    name, modes.get((supply_id, name), "off")
+                route = (supply_id, name)
+                data = data.with_channel_mode(name, modes.get(route, "off"))
+                order, count, delay = settings.get(
+                    route, (None, 0, DEFAULT_POWER_ON_DELAY_S)
                 )
+                data = data.with_channel_power(name, order, count, delay)
             cards.append((supply_id, data))
         return cards
 
@@ -816,6 +999,7 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             )
         previous_bindings = self.device_bindings
         previous_test_mode = self.test_mode_enabled
+        self._edited_delays.clear()
         self._silent = True
         try:
             bindings = effective_device_bindings(config)

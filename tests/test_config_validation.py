@@ -68,6 +68,24 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertIn("signal_source.start_power", paths)
         self.assertIn("instruments.power_supplies.PS4.channels.CH1.voltage.value", paths)
 
+    def test_channel_power_on_delay_must_be_in_range(self):
+        for bad in (-0.1, 61):
+            with self.subTest(delay=bad):
+                config = copy.deepcopy(self.base_config)
+                config["instruments"]["power_supplies"]["PS4"]["channels"]["CH1"][
+                    "power_on_delay_s"
+                ] = bad
+                result = validate_config(config)
+                self.assertIn(
+                    "instruments.power_supplies.PS4.channels.CH1.power_on_delay_s",
+                    {issue.path for issue in result.errors},
+                )
+        config = copy.deepcopy(self.base_config)
+        config["instruments"]["power_supplies"]["PS4"]["channels"]["CH1"][
+            "power_on_delay_s"
+        ] = 2.0
+        self.assertTrue(validate_config(config).valid)
+
     def test_missing_section_does_not_duplicate_nested_errors(self):
         config = copy.deepcopy(self.base_config)
         del config["signal_source"]

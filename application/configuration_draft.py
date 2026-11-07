@@ -36,6 +36,7 @@ from typing import Any
 from application.configuration_editing import ValidationIssue, ValidationResult
 from application.dto.amplifier_inputs import (
     AmplifierInputError,
+    MAX_INTER_CHANNEL_DELAY_S,
     PowerPlan,
     PowerSweep,
     SupplyChannel,
@@ -332,6 +333,8 @@ class PowerChannelDraft:
     current: float | None = None
     current_protection: float | None = None
     current_protection_enabled: bool | None = None
+    #: 本通道开启后到下一条上电命令的等待秒数；``None`` 表示文档没有写。
+    power_on_delay_s: float | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "channel", _text(self.channel, "通道名"))
@@ -340,11 +343,18 @@ class PowerChannelDraft:
             "voltage_protection",
             "current",
             "current_protection",
+            "power_on_delay_s",
         ):
             object.__setattr__(self, name, _optional_number(getattr(self, name), name))
         for name in ("voltage_protection_enabled", "current_protection_enabled"):
             object.__setattr__(
                 self, name, _optional_bool(getattr(self, name), name)
+            )
+        delay = self.power_on_delay_s
+        if delay is not None and (delay < 0 or delay > MAX_INTER_CHANNEL_DELAY_S):
+            raise ValueError(
+                f"上电间隔必须在 0 到 {MAX_INTER_CHANNEL_DELAY_S:g} 秒之间，"
+                f"收到 {delay}s"
             )
 
 
@@ -941,9 +951,36 @@ def _read_channels(
                 current=current_value,
                 current_protection=current_protection,
                 current_protection_enabled=current_enabled,
+                power_on_delay_s=_read_channel_delay(
+                    channel.get("power_on_delay_s"),
+                    f"{channel_path}.power_on_delay_s",
+                    issues,
+                ),
             )
         )
     return tuple(channels)
+
+
+def _read_channel_delay(
+    value: Any, path: str, issues: list[ValidationIssue]
+) -> float | None:
+    """读取通道上电间隔；缺失保持 ``None``，非法值记问题后按缺失处理。"""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        issues.append(_issue(path, _CODE_INVALID_NUMBER, "必须是有限数值（秒）"))
+        return None
+    seconds = float(value)
+    if not math.isfinite(seconds) or seconds < 0 or seconds > MAX_INTER_CHANNEL_DELAY_S:
+        issues.append(
+            _issue(
+                path,
+                _CODE_INVALID_NUMBER,
+                f"必须在 0 到 {MAX_INTER_CHANNEL_DELAY_S:g} 秒之间",
+            )
+        )
+        return None
+    return seconds
 
 
 def _read_channel_setting(
@@ -1127,7 +1164,7 @@ def _instrument_entry(binding: DeviceBindingDraft | None) -> dict[str, Any]:
 
 
 def _channel_document(channel: PowerChannelDraft) -> dict[str, Any]:
-    return {
+    document: dict[str, Any] = {
         "voltage": {
             "value": channel.voltage,
             "protection": channel.voltage_protection,
@@ -1139,6 +1176,9 @@ def _channel_document(channel: PowerChannelDraft) -> dict[str, Any]:
             "protection_enabled": channel.current_protection_enabled,
         },
     }
+    if channel.power_on_delay_s is not None:
+        document["power_on_delay_s"] = channel.power_on_delay_s
+    return document
 
 
 def _power_supply_entry(

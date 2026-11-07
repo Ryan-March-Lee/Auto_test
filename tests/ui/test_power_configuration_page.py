@@ -14,7 +14,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from presentation.qt.config_projection import ConfigBackfillError
-from presentation.qt.power_card import CHANNEL_NAMES
+from presentation.qt.power_card import CHANNEL_NAMES, DEFAULT_POWER_ON_DELAY_S
 from presentation.qt.power_configuration_page import PowerConfigurationPage
 
 
@@ -284,6 +284,141 @@ class PowerConfigurationPageTests(unittest.TestCase):
         }
         self.assertIn(("DP8B1519", "CH1"), driver_routes)
         self.assertNotIn(("DP8B1519", "CH1"), dut_routes)
+
+    def test_cards_show_the_plan_order_and_group_delay(self):
+        page = self.make_page()
+        card = self._card(page)
+
+        self.assertEqual(card.channel_power_order("CH1"), 1)
+        self.assertEqual(card.channel_power_order("CH2"), 2)
+        self.assertEqual(card.order_combo("CH1").count(), 2)
+        self.assertAlmostEqual(card.channel_power_delay("CH1"), 1.0)
+
+    def test_zero_group_delay_falls_back_to_the_two_second_default(self):
+        config = valid_config()
+        config["power_supply_assignment"]["dut_amplifier"]["power_plan"] = plan(
+            ("DP8B1519", "CH1"), ("DP8B1519", "CH2"), delay=0.0
+        )
+        page = PowerConfigurationPage(config)
+        page.resize(1100, 900)
+        page.show()
+        self.app.processEvents()
+        self.addCleanup(self._destroy_page, page)
+
+        card = self._card(page)
+        self.assertAlmostEqual(
+            card.channel_power_delay("CH1"), DEFAULT_POWER_ON_DELAY_S
+        )
+
+    def test_selecting_order_on_the_card_reorders_the_plan(self):
+        page = self.make_page()
+        card = self._card(page)
+        changes: list[bool] = []
+        page.fragment_changed.connect(lambda: changes.append(True))
+
+        card.order_combo("CH1").setCurrentIndex(1)
+
+        plan_document = page.build_config()["power_supply_assignment"][
+            "dut_amplifier"
+        ]["power_plan"]
+        self.assertEqual(
+            [
+                (item["supply_id"], item["channel"])
+                for item in plan_document["power_sequence"]
+            ],
+            [("DP8B1519", "CH2"), ("DP8B1519", "CH1")],
+        )
+        self.assertEqual(card.channel_power_order("CH1"), 2)
+        self.assertEqual(card.channel_power_order("CH2"), 1)
+        self.assertEqual(changes, [True])
+        self.assertTrue(page.is_dirty())
+
+    def test_moving_an_order_up_on_the_card_reorders_the_plan(self):
+        page = self.make_page()
+        card = self._card(page)
+
+        card.order_combo("CH2").setCurrentIndex(0)
+
+        plan_document = page.build_config()["power_supply_assignment"][
+            "dut_amplifier"
+        ]["power_plan"]
+        self.assertEqual(
+            [
+                (item["supply_id"], item["channel"])
+                for item in plan_document["power_sequence"]
+            ],
+            [("DP8B1519", "CH2"), ("DP8B1519", "CH1")],
+        )
+        self.assertEqual(card.channel_power_order("CH2"), 1)
+
+    def test_editing_the_delay_on_the_card_writes_the_channel_config(self):
+        page = self.make_page()
+        card = self._card(page)
+        changes: list[bool] = []
+        page.fragment_changed.connect(lambda: changes.append(True))
+
+        card.delay_field("CH1").setValue(3.5)
+
+        channel = page.build_config()["instruments"]["power_supplies"][
+            "DP8B1519"
+        ]["channels"]["CH1"]
+        self.assertEqual(channel["power_on_delay_s"], 3.5)
+        self.assertEqual(changes, [True])
+        self.assertTrue(page.is_dirty())
+
+    def test_delay_edit_survives_a_plan_reorder(self):
+        page = self.make_page()
+        card = self._card(page)
+
+        card.delay_field("CH1").setValue(3.5)
+        card.order_combo("CH1").setCurrentIndex(1)
+
+        self.assertAlmostEqual(card.channel_power_delay("CH1"), 3.5)
+        channel = page.build_config()["instruments"]["power_supplies"][
+            "DP8B1519"
+        ]["channels"]["CH1"]
+        self.assertEqual(channel["power_on_delay_s"], 3.5)
+
+    def test_group_default_delay_updates_unedited_channels(self):
+        page = self.make_page()
+        page.power_section.dut_power_plan_editor.delay_spin.setValue(5.0)
+
+        card = self._card(page)
+        self.assertAlmostEqual(card.channel_power_delay("CH1"), 5.0)
+        self.assertAlmostEqual(card.channel_power_delay("CH2"), 5.0)
+
+    def test_an_off_channel_has_the_order_and_delay_disabled(self):
+        config = valid_config()
+        config["power_supply_assignment"]["dut_amplifier"]["power_plan"] = plan(
+            ("DP8B1519", "CH2"), delay=1.0
+        )
+        page = PowerConfigurationPage(config)
+        page.resize(1100, 900)
+        page.show()
+        self.app.processEvents()
+        self.addCleanup(self._destroy_page, page)
+
+        card = self._card(page)
+        self.assertEqual(card.channel_mode("CH1"), "off")
+        self.assertFalse(card.order_combo("CH1").isEnabled())
+        self.assertFalse(card.delay_field("CH1").isEnabled())
+        self.assertIsNone(card.channel_power_order("CH1"))
+        self.assertAlmostEqual(
+            card.channel_power_delay("CH1"), DEFAULT_POWER_ON_DELAY_S
+        )
+
+    def test_apply_config_backfills_an_explicit_delay(self):
+        config = valid_config()
+        config["instruments"]["power_supplies"]["DP8B1519"]["channels"]["CH1"][
+            "power_on_delay_s"
+        ] = 4.0
+        page = PowerConfigurationPage(config)
+        page.resize(1100, 900)
+        page.show()
+        self.app.processEvents()
+        self.addCleanup(self._destroy_page, page)
+
+        self.assertAlmostEqual(self._card(page).channel_power_delay("CH1"), 4.0)
 
     def test_checking_a_plan_row_updates_the_card_role(self):
         page = self.make_page()

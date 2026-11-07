@@ -34,6 +34,7 @@ import copy
 from typing import Any, Mapping
 
 from application.errors import ConfigurationError
+from application.dto.amplifier_inputs import DEFAULT_POWER_ON_DELAY_S
 from domain.instruments.labels import supply_display_label
 
 from .config_form_state import parse_frequency_text
@@ -172,6 +173,9 @@ def _reset_power_supply_channels(widgets: Any) -> None:
                 controls[key].setValue(DEFAULT_POWER_CHANNEL_VALUE)
             for key in ("voltage_protection_enabled", "current_protection_enabled"):
                 controls[key].setChecked(False)
+            delay_control = controls.get("power_on_delay")
+            if delay_control is not None:
+                delay_control.setValue(DEFAULT_POWER_ON_DELAY_S)
 
 
 def _apply_test_parameter_widgets(widgets: Any, config: Mapping[str, Any]) -> None:
@@ -238,6 +242,12 @@ def _apply_channel_widgets(controls: Mapping[str, Any], values: Mapping[str, Any
         ("current_protection_enabled", current.get("protection_enabled")),
     ):
         controls[key].setChecked(bool_or_default(value, False))
+    delay_control = controls.get("power_on_delay")
+    if delay_control is not None:
+        delay = number_or_none(values.get("power_on_delay_s"))
+        delay_control.setValue(
+            DEFAULT_POWER_ON_DELAY_S if delay is None else max(0.0, delay)
+        )
 
 
 __all__ = [

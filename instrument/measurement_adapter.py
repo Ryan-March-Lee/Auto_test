@@ -93,10 +93,16 @@ class PortMeasurementAdapter:
     def _controller(
         self, plan: PowerGroupPlan, channels: Iterable[str] | None = None
     ) -> PowerController:
+        delays = {
+            step.channel: step.power_on_delay_s
+            for step in plan.channels
+            if step.power_on_delay_s is not None
+        }
         return PowerController(
             self.power_supply,
             tuple(channels) if channels is not None else plan.tokens,
             inter_channel_delay_s=plan.inter_channel_delay_s,
+            channel_delays_s=delays,
             sleep_fn=self.sleep_fn,
             channel_labels=self.power_channel_labels,
         )

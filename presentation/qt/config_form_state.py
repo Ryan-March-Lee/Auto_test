@@ -289,7 +289,7 @@ class ConfigFormState:
                 # 1.1 正式配置不再写通道 role；保护阈值由工作值推导，用户只勾选是否启用。
                 voltage = self._value(controls["voltage"])
                 current = self._value(controls["current"])
-                channels[channel] = {
+                channel_config = {
                     "voltage": {
                         "value": voltage,
                         "protection": protection_threshold(voltage),
@@ -305,6 +305,12 @@ class ConfigFormState:
                         ),
                     },
                 }
+                delay_control = controls.get("power_on_delay")
+                if delay_control is not None:
+                    channel_config["power_on_delay_s"] = float(
+                        delay_control.value()
+                    )
+                channels[channel] = channel_config
             result[name] = {"channels": channels}
         return {"instruments": {"power_supplies": result}} if result else {}
 

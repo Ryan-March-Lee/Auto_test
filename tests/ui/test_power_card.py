@@ -29,6 +29,8 @@ from PySide6.QtGui import QColor  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QAbstractSpinBox, QApplication, QWidget  # noqa: E402
 
+from application.dto.amplifier_inputs import MAX_INTER_CHANNEL_DELAY_S  # noqa: E402
+
 from presentation.qt.power_card import (  # noqa: E402
     CHANNEL_MODES,
     CHANNEL_NAMES,
@@ -187,6 +189,34 @@ class PowerCardDataTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             _data().with_channel_mode("CH1", "on")
 
+    def test_power_setting_defaults_to_two_seconds_and_no_order(self):
+        channel = _data().channel("CH1")
+
+        self.assertIsNone(channel.power_order)
+        self.assertEqual(channel.power_order_count, 0)
+        self.assertEqual(channel.power_delay_s, 2.0)
+
+    def test_power_setting_updates_only_the_selected_channel(self):
+        data = _data().with_channel_power("CH1", 2, 3, 4.5)
+
+        self.assertEqual(data.channel("CH1").power_order, 2)
+        self.assertEqual(data.channel("CH1").power_order_count, 3)
+        self.assertEqual(data.channel("CH1").power_delay_s, 4.5)
+        self.assertIsNone(data.channel("CH2").power_order)
+        self.assertEqual(data.channel("CH2").power_delay_s, 2.0)
+
+    def test_power_setting_rejects_invalid_order_or_delay(self):
+        for order in (0, -1, 4):
+            with self.subTest(order=order):
+                with self.assertRaises(ValueError):
+                    _data().with_channel_power("CH1", order, 3, 2.0)
+        with self.assertRaises(ValueError):
+            _data().with_channel_power("CH1", None, -1, 2.0)
+        for delay in (-0.1, MAX_INTER_CHANNEL_DELAY_S + 1):
+            with self.subTest(delay=delay):
+                with self.assertRaises(ValueError):
+                    _data().with_channel_power("CH1", 1, 3, delay)
+
     def test_with_channel_protection_copies_only_that_flag(self):
         data = _data()
         updated = data.with_channel_protection("CH1", "voltage", False)
@@ -275,6 +305,8 @@ class PowerCardLayoutTests(unittest.TestCase):
                 self.assertEqual(len(channel.protection_checks), 2)
                 self.assertEqual(len(channel.protection_indicators), 2)
                 self.assertEqual(len(channel.protection_labels), 2)
+                self.assertEqual(len(channel.power_labels), 2)
+                self.assertEqual(len(channel.power_controls), 2)
                 for label, box in zip(channel.value_labels, channel.value_boxes):
                     self.assertTrue(channel.panel.contains(label))
                     self.assertTrue(channel.panel.contains(box))
@@ -313,11 +345,39 @@ class PowerCardLayoutTests(unittest.TestCase):
                     channel.value_boxes[0].bottom(),
                     channel.protection_checks[0].top(),
                 )
-                # 保护勾选是卡片最下面一行：删掉灰字后下沿仍留在卡内。
+                # 保护勾选紧贴数值行，最下面是顺序/间隔一行。
                 self.assertLessEqual(
                     channel.protection_checks[0].bottom(),
+                    channel.power_labels[0].top(),
+                )
+                for label, control in zip(
+                    channel.power_labels, channel.power_controls
+                ):
+                    self.assertTrue(channel.panel.contains(label))
+                    self.assertTrue(channel.panel.contains(control))
+                    self.assertTrue(channel.panel_surface.contains(label))
+                    self.assertTrue(channel.panel_surface.contains(control))
+                    self.assertLessEqual(label.right(), control.left())
+                    self.assertAlmostEqual(label.center().y(), control.center().y())
+                self.assertLessEqual(
+                    channel.power_controls[0].bottom(),
                     channel.panel.bottom(),
                 )
+
+    def test_power_row_sits_below_the_protection_row(self):
+        channel = power_card_layout().channels[0]
+
+        self.assertAlmostEqual(
+            channel.power_labels[0].top(),
+            channel.protection_checks[0].bottom() + 6.0,
+        )
+        self.assertAlmostEqual(channel.power_controls[0].height(), 28.0)
+        self.assertLess(
+            channel.power_controls[1].left(), channel.panel.right()
+        )
+        self.assertGreater(
+            channel.power_controls[1].left(), channel.power_controls[0].right()
+        )
 
     def test_values_are_arranged_vs_then_is(self):
         channel = power_card_layout().channels[0]
@@ -353,9 +413,9 @@ class PowerCardLayoutTests(unittest.TestCase):
             second.mode_selector.right(), second.panel.right() - 12.0
         )
         self.assertAlmostEqual(first.mode_selector.width(), 84.0)
-        self.assertAlmostEqual(first.mode_selector.height(), 56.0)
+        self.assertAlmostEqual(first.mode_selector.height(), 48.0)
         self.assertAlmostEqual(first.mode_selector.top(), 6.0)
-        self.assertAlmostEqual(first.mode_selector.bottom(), 62.0)
+        self.assertAlmostEqual(first.mode_selector.bottom(), 54.0)
         self.assertLess(first.mode_selector.right(), layout.title.left())
         self.assertLess(layout.title.right(), second.mode_selector.left())
         self.assertGreater(
@@ -786,6 +846,65 @@ class PowerSupplyCardWidgetTests(unittest.TestCase):
 
         QTest.qWait(900)
         self.assertEqual(card._reel_positions["CH1"], 0.0)
+
+    def test_power_row_shows_order_and_delay_and_emits_changes(self):
+        card = self.widget()
+        order_events: list[tuple[str, int]] = []
+        delay_events: list[tuple[str, float]] = []
+        card.power_order_changed.connect(
+            lambda channel, order: order_events.append((channel, order))
+        )
+        card.power_delay_changed.connect(
+            lambda channel, delay: delay_events.append((channel, delay))
+        )
+        card.set_channel_power("CH1", 2, 3, 2.5)
+
+        combo = card.order_combo("CH1")
+        field = card.delay_field("CH1")
+        self.assertEqual(combo.count(), 3)
+        self.assertEqual(
+            [combo.itemData(index) for index in range(combo.count())],
+            [1, 2, 3],
+        )
+        self.assertEqual(card.channel_power_order("CH1"), 2)
+        self.assertAlmostEqual(card.channel_power_delay("CH1"), 2.5)
+
+        combo.setCurrentIndex(0)
+        self.assertEqual(order_events, [("CH1", 1)])
+        self.assertEqual(card.channel_power_order("CH1"), 1)
+
+        field.setValue(4.0)
+        self.assertEqual(delay_events, [("CH1", 4.0)])
+        self.assertAlmostEqual(card.channel_power_delay("CH1"), 4.0)
+
+    def test_power_row_is_disabled_when_the_channel_is_off_or_has_no_plan(self):
+        card = self.widget()
+        card.set_channel_power("CH1", 1, 3, 2.0)
+        self.assertTrue(card.order_combo("CH1").isEnabled())
+        self.assertTrue(card.delay_field("CH1").isEnabled())
+
+        card.set_channel_mode("CH1", "off")
+        self.assertFalse(card.order_combo("CH1").isEnabled())
+        self.assertFalse(card.delay_field("CH1").isEnabled())
+
+        # CH2 仍在 Driver 档，但不在任何计划里：顺序无意义，间隔仍可设置。
+        self.assertEqual(card.channel_mode("CH2"), "driver")
+        self.assertFalse(card.order_combo("CH2").isEnabled())
+        self.assertTrue(card.delay_field("CH2").isEnabled())
+
+    def test_set_data_backfills_the_power_row_without_emitting(self):
+        card = self.widget()
+        events: list[tuple[str, int]] = []
+        card.power_order_changed.connect(
+            lambda channel, order: events.append((channel, order))
+        )
+        data = _data().with_channel_power("CH1", 2, 3, 4.0)
+
+        card.set_data(data)
+
+        self.assertEqual(card.channel_power_order("CH1"), 2)
+        self.assertAlmostEqual(card.channel_power_delay("CH1"), 4.0)
+        self.assertEqual(events, [])
 
     def test_clicking_a_protection_check_toggles_only_that_flag(self):
         card = self.widget()

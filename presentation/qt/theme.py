@@ -38,6 +38,7 @@ __all__ = [
     "LABEL_ROLES",
     "PAGE_CONTENT_MAX_WIDTH",
     "CARD_RADIUS",
+    "ASSETS_DIR",
     "build_palette",
     "build_stylesheet",
     "base_font",

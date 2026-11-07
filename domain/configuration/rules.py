@@ -703,6 +703,17 @@ def _validate_power_supply(name: str, supply_config: Any, error: Any, warning: A
                     setting_path,
                     "保护已启用但工作值大于保护值；请确认该仪器保护参数的单位和语义。",
                 )
+        delay = channel_config.get("power_on_delay_s")
+        if delay is not None:
+            delay_path = f"{channel_path}.power_on_delay_s"
+            seconds = _validate_finite_number(
+                delay, delay_path, error, non_negative=True
+            )
+            if seconds is not None and seconds > MAX_INTER_CHANNEL_DELAY_S:
+                error(
+                    delay_path,
+                    f"必须在 0 到 {MAX_INTER_CHANNEL_DELAY_S:g} 秒之间",
+                )
 
 
 def _validate_finite_number(value: Any, path: str, error: Any, *, non_negative: bool = False) -> Optional[float]:

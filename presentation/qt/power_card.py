@@ -6,7 +6,7 @@
   压住左右两半的分界线；
 - **两个通道**：左右各一半，通道底色从卡片顶边一直铺到卡底；卡面不再写
   ``CH1`` / ``CH2``，通道身份只由左右位置、底色和悬浮提示表达；
-- **供电角色滚筒**：每个通道贴外侧上角一个 84×56 的深色竖直滚筒，三档
+- **供电角色滚筒**：每个通道贴外侧上角一个 84×48 的深色竖直滚筒，三档
   ``OFF`` / ``DUT`` / ``Driver`` 像老虎机一样上下滚动。``OFF`` 关闭通道，
   ``DUT`` 表示该通道给功放供电，``Driver`` 表示给驱放供电；当前档位居中放大、
   白色发光，上下相邻档位缩小、变暗并带柔化，红色指示点与玻璃高光保留参考实现的
@@ -20,7 +20,10 @@
   两个勾选框的卡面文字统一是「10%保护」——左右位置（分别压在 VS / IS 数值框下方）
   和悬浮提示区分电压/电流，勾选状态来自配置里的 ``voltage.protection_enabled`` /
   ``current.protection_enabled``；卡面不再显示保护数值，也不再有底部那行说明文字，
-  阈值仍由配置读取按工作值的 110% 推导。
+  阈值仍由配置读取按工作值的 110% 推导。保护行紧贴工作值行；
+- **上电顺序 / 间隔**：最下面一行，左边下拉框选择本通道在其上电计划里的位置，
+  右边输入该通道开启后到下一条上电命令的等待秒数（缺省 2s）。不在计划里的通道
+  这一行禁用。
 
 **档位就是上电角色**：``Driver`` / ``DUT`` 不只是显示标注，页面会把该通道同步勾进
 ``power_supply_assignment.driver_amplifier`` / ``dut_amplifier`` 的 ``power_plan``；
@@ -29,7 +32,7 @@
 降为灰色（``disabled_bg``），数值框与勾选框一起禁用；``Driver`` / ``DUT`` 时恢复
 通道底色（左浅蓝、右浅琥珀）。驱放测试模式关闭时 ``Driver`` 档被禁用，循环会跳过它。
 
-卡片同时支持两种尺寸：``render_power_card`` 按 440×166 的原始逻辑尺寸导出静态
+卡片同时支持两种尺寸：``render_power_card`` 按 440×186 的原始逻辑尺寸导出静态
 位图，``PowerSupplyCard`` 则按卡片墙给的缩放比例设置控件尺寸；绘制统一在
 ``painter.scale`` 之后按原始坐标进行，因此放大/缩小后的卡面与导出图同源。数值输入框、
 角色滚筒与保护勾选框都是真实子控件，鼠标与键盘操作由 Qt 直接处理。身份详情（完整
@@ -41,9 +44,9 @@
 控件截图。用户换档时控件在 700 ms 内按 ``OutExpo`` 插值重绘，导出位图直接取终态。
 
 **尺寸与字体**：卡片固定为 :data:`POWER_CARD_WIDTH` × :data:`POWER_CARD_HEIGHT`
-（440×166，约 2.7:1），圆角取 :data:`POWER_CARD_RADIUS`（12，比通用卡片更圆，
-在 440 宽的卡面上能看出轮廓）；角色滚筒 84×56，三档每行约 18.7 px，当前档字
-约 14.7 px，卡片缩放时滚筒与字号一起缩放。字体系列取自
+（440×186），圆角取 :data:`POWER_CARD_RADIUS`（12，比通用卡片更圆，
+在 440 宽的卡面上能看出轮廓）；角色滚筒 84×48，三档每行 16 px，当前档字
+约 14 px，卡片缩放时滚筒与字号一起缩放。字体系列取自
 :func:`presentation.qt.theme.card_status_font` 与
 :func:`presentation.qt.theme.card_code_font`。颜色全部来自
 :data:`presentation.qt.theme.TOKENS`，其中包括两个通道的 ``channel_cool`` /
@@ -97,8 +100,14 @@ from PySide6.QtWidgets import (
 
 from domain.instruments.labels import supply_identity_text
 
-from .input_controls import KeyboardOnlyDoubleSpinBox
+from application.dto.amplifier_inputs import (
+    DEFAULT_POWER_ON_DELAY_S,
+    MAX_INTER_CHANNEL_DELAY_S,
+)
+
+from .input_controls import KeyboardOnlyDoubleSpinBox, WheelSafeComboBox
 from .theme import (
+    ASSETS_DIR,
     TOKENS,
     card_code_font,
     card_status_font,
@@ -107,6 +116,9 @@ from .theme import (
 __all__ = [
     "CHANNEL_MODES",
     "CHANNEL_NAMES",
+    "DEFAULT_POWER_ON_DELAY_S",
+    "CardDelayField",
+    "CardOrderCombo",
     "CardValueField",
     "ChannelModeSelector",
     "POWER_CARD_HEIGHT",
@@ -136,9 +148,9 @@ CHANNEL_MODE_LABELS = {
     "dut": "DUT",
 }
 
-#: 卡片逻辑尺寸：440×166，约 2.7:1，正好放进配置页右栏。
+#: 卡片逻辑尺寸：440×186，在通道行下多留一行“上电顺序 / 间隔”。
 POWER_CARD_WIDTH = 440
-POWER_CARD_HEIGHT = 166
+POWER_CARD_HEIGHT = 186
 POWER_CARD_SIZE = QSize(POWER_CARD_WIDTH, POWER_CARD_HEIGHT)
 
 #: 卡片圆角：比通用卡片（``theme.CARD_RADIUS`` = 8）更大，440 宽的卡面才看得出轮廓。
@@ -153,11 +165,10 @@ _PANEL_RADIUS = 10.0
 # ---- 卡面几何：所有位置都由这一组常量算出，绘制与控件命中区共用 -----------------
 _PADDING = 14.0
 _HALF_WIDTH = POWER_CARD_WIDTH / 2.0
-# 供电角色滚筒：贴住左右外侧上角。去掉档位编号后不再需要给编号留一行，
-# 高度从 64 收到 56，仍落在 VS/IS 行（y=72）上方；三档每行约 18.7 逻辑像素，
-# 当前档字约 14.7px，Driver/DUT 只占一行并垂直居中。
+# 供电角色滚筒：贴住左右外侧上角。去掉档位编号后再压扁一档，高度 48，
+# 仍落在 VS/IS 行（y=72）上方；三档每行 16 逻辑像素，当前档字约 14px。
 _SELECTOR_WIDTH = 84.0
-_SELECTOR_HEIGHT = 56.0
+_SELECTOR_HEIGHT = 48.0
 _SELECTOR_TOP = 6.0
 _SELECTOR_INSET_X = 12.0
 _SELECTOR_RADIUS = 11.0
@@ -169,7 +180,8 @@ _TITLE_TOP = 8.0
 #: ``VS`` / ``IS`` 一行的顶边：铭牌与角色滚筒让出的空行删除后，工作值直接上移。
 _GRID_TOP = 72.0
 _ROW_HEIGHT = 34.0
-_ROW_GAP = 14.0
+#: 工作值行与保护行之间只留 6：保护勾选框贴紧设置框。
+_ROW_GAP = 6.0
 _BOX_HEIGHT = 30.0
 _LABEL_WIDTH = 24.0
 _LABEL_GAP = 4.0
@@ -195,6 +207,13 @@ PROTECTION_KINDS = ("voltage", "current")
 _PROTECTION_TEXTS = ("10%保护", "10%保护")
 #: 保护勾选框一行比工作值一行矮一点，让整张卡在底部收得干净。
 _PROTECTION_ROW_HEIGHT = 30.0
+#: 最下面一行：左边上电顺序、右边上电间隔；行高与保护行一致。
+_SETTING_ROW_HEIGHT = 30.0
+#: 顺序/间隔控件本身比行矮 2，和数值框的纵向留白一致。
+_SETTING_BOX_HEIGHT = 28.0
+_SETTING_TOP = (
+    _GRID_TOP + _ROW_HEIGHT + _ROW_GAP + _PROTECTION_ROW_HEIGHT + _ROW_GAP
+)
 #: 勾选框方块固定 14 逻辑像素，并与上一行的 ``VS`` / ``IS`` 标签共用同一条中线；
 #: 文字从数值框的左边缘开始，因此「10%保护」与「12.00」左对齐。
 _INDICATOR_SIZE = 14.0
@@ -245,6 +264,16 @@ def _finite_non_negative(value: Any, name: str) -> float:
     return number
 
 
+def _power_delay(value: Any) -> float:
+    """上电间隔：有限、非负且不超过计划间隔的统一上限。"""
+    number = _finite_non_negative(value, "上电间隔")
+    if number > MAX_INTER_CHANNEL_DELAY_S:
+        raise ValueError(
+            f"上电间隔不能超过 {MAX_INTER_CHANNEL_DELAY_S:g}s，收到 {number}s"
+        )
+    return number
+
+
 @dataclass(frozen=True)
 class PowerChannelData:
     """一个电源通道在卡面上的快照：供电角色 + 两个工作值 + 两个保护开关。
@@ -266,6 +295,12 @@ class PowerChannelData:
     voltage_protection_enabled: bool = False
     current_protection_enabled: bool = False
     mode: str = "driver"
+    #: 本通道在其上电计划里的 1-based 位置；不在计划里时为 ``None``。
+    power_order: int | None = None
+    #: 所在计划的路由总数；决定顺序下拉框的选项数量，``0`` 表示不参与上电。
+    power_order_count: int = 0
+    #: 本通道上电后等待多少秒再发下一条上电命令；缺省 2s。
+    power_delay_s: float = DEFAULT_POWER_ON_DELAY_S
 
     def __post_init__(self) -> None:
         if self.channel not in CHANNEL_NAMES:
@@ -296,6 +331,33 @@ class PowerChannelData:
         mode = "off" if not self.enabled else self.mode
         object.__setattr__(self, "mode", mode)
         object.__setattr__(self, "enabled", mode != "off")
+        if (
+            isinstance(self.power_order_count, bool)
+            or not isinstance(self.power_order_count, int)
+            or self.power_order_count < 0
+        ):
+            raise ValueError(
+                f"通道 {self.channel} 的上电顺序总数必须是非负整数，"
+                f"收到 {self.power_order_count!r}"
+            )
+        if self.power_order is not None:
+            if (
+                isinstance(self.power_order, bool)
+                or not isinstance(self.power_order, int)
+                or self.power_order < 1
+            ):
+                raise ValueError(
+                    f"通道 {self.channel} 的上电顺序必须是正整数或 None，"
+                    f"收到 {self.power_order!r}"
+                )
+            if self.power_order > self.power_order_count:
+                raise ValueError(
+                    f"通道 {self.channel} 的上电顺序 {self.power_order} "
+                    f"超出计划路由数 {self.power_order_count}"
+                )
+        object.__setattr__(
+            self, "power_delay_s", _power_delay(self.power_delay_s)
+        )
 
     def protection_enabled(self, kind: str) -> bool:
         """某种保护的启用状态；``kind`` 只能是 ``voltage`` / ``current``。"""
@@ -327,6 +389,25 @@ class PowerChannelData:
         number = _finite_non_negative(value, f"{self.channel} {kind}")
         field = "voltage_set" if kind == "voltage" else "current_set"
         return replace(self, **{field: number})
+
+    def with_power_role(
+        self, order: int | None, count: int, delay: Any
+    ) -> "PowerChannelData":
+        """同时更新上电顺序、可选顺序数与上电间隔。"""
+        return replace(
+            self,
+            power_order=order,
+            power_order_count=count,
+            power_delay_s=delay,
+        )
+
+    def with_power_order(self, order: int | None) -> "PowerChannelData":
+        """只改上电顺序，保留计划路由数与间隔。"""
+        return replace(self, power_order=order)
+
+    def with_power_delay(self, delay: Any) -> "PowerChannelData":
+        """只改上电间隔，保留顺序与计划路由数。"""
+        return replace(self, power_delay_s=delay)
 
 
 @dataclass(frozen=True)
@@ -409,6 +490,25 @@ class PowerSupplyCardData:
             ),
         )
 
+    def with_channel_power(
+        self,
+        name: str,
+        order: int | None,
+        count: int,
+        delay: Any,
+    ) -> "PowerSupplyCardData":
+        """返回一份只改某个通道上电顺序/可选顺序数/间隔的新快照。"""
+        self.channel(name)
+        return replace(
+            self,
+            channels=tuple(
+                item.with_power_role(order, count, delay)
+                if item.channel == name
+                else item
+                for item in self.channels
+            ),
+        )
+
     def channel_protection(self, name: str, kind: str) -> bool:
         """某个通道某种保护的启用状态；名称/类型不合法时抛 ``KeyError``。"""
         return self.channel(name).protection_enabled(kind)
@@ -464,6 +564,10 @@ class PowerChannelLayout:
     protection_indicators: tuple[QRectF, ...]
     #: 两个保护勾选框的文字区，左边缘与上一行数值框对齐。
     protection_labels: tuple[QRectF, ...]
+    #: 最下面一行的两个标签：左边「顺序」、右边「间隔」。
+    power_labels: tuple[QRectF, ...]
+    #: 最下面一行的两个控件：上电顺序下拉框、上电间隔数值框。
+    power_controls: tuple[QRectF, ...]
 
 
 @dataclass(frozen=True)
@@ -481,8 +585,8 @@ def power_card_layout() -> PowerCardLayout:
 
     卡片尺寸固定，因此不需要宽高参数。左右通道按 :data:`CHANNEL_NAMES` 的顺序
     排列，每个通道的角色滚筒贴住自己外侧的上角，工作值与保护勾选框依次往下排，
-    保护勾选框是卡片最下面一行。:attr:`PowerChannelLayout.panel` 是半个卡片的
-    命中区；真正画出来的圆角色块是内缩 5、中央留 10 白缝的
+    最下面是上电顺序/间隔；保护行紧贴工作值行。:attr:`PowerChannelLayout.panel` 是
+    半个卡片的命中区；真正画出来的圆角色块是内缩 5、中央留 10 白缝的
     :attr:`PowerChannelLayout.panel_surface`。
     """
     card = QRectF(0.0, 0.0, float(POWER_CARD_WIDTH), float(POWER_CARD_HEIGHT))
@@ -560,6 +664,21 @@ def power_card_layout() -> PowerCardLayout:
                     _PROTECTION_ROW_HEIGHT,
                 )
             )
+        power_labels: list[QRectF] = []
+        power_controls: list[QRectF] = []
+        for setting_index in range(2):
+            cell_x = left + _PADDING + setting_index * (_CELL_WIDTH + _CELL_GAP)
+            power_labels.append(
+                QRectF(cell_x, _SETTING_TOP, _LABEL_WIDTH, _SETTING_ROW_HEIGHT)
+            )
+            power_controls.append(
+                QRectF(
+                    cell_x + _LABEL_WIDTH + _LABEL_GAP,
+                    _SETTING_TOP + (_SETTING_ROW_HEIGHT - _SETTING_BOX_HEIGHT) / 2.0,
+                    _BOX_WIDTH,
+                    _SETTING_BOX_HEIGHT,
+                )
+            )
         channels.append(
             PowerChannelLayout(
                 channel=name,
@@ -571,6 +690,8 @@ def power_card_layout() -> PowerCardLayout:
                 protection_checks=tuple(protection_checks),
                 protection_indicators=tuple(protection_indicators),
                 protection_labels=tuple(protection_labels),
+                power_labels=tuple(power_labels),
+                power_controls=tuple(power_controls),
             )
         )
     return PowerCardLayout(card=card, title=title, channels=tuple(channels))
@@ -755,6 +876,33 @@ def _paint_value(
     painter.restore()
 
 
+def _paint_power_setting(
+    painter: QPainter,
+    box_rect: QRectF,
+    text: str,
+    index: int,
+    enabled: bool,
+) -> None:
+    """最下面一行的顺序/间隔框：导出位图上画出与真实控件同形的框与值。
+
+    页面上的真实下拉框/数值框会盖在这块绘制之上；导出位图没有控件，因此由这里
+    补上同样的白底、强调色描边与居中文字。
+    """
+    painter.save()
+    pen_width = 1.5 if enabled else 1.0
+    inset = pen_width / 2.0
+    box = box_rect.adjusted(inset, inset, -inset, -inset)
+    painter.setBrush(_SURFACE if enabled else _SURFACE_ALT)
+    painter.setPen(
+        QPen(_accent(index) if enabled else _BORDER_STRONG, pen_width)
+    )
+    painter.drawRoundedRect(box, 6.0, 6.0)
+    painter.setFont(_value_font())
+    painter.setPen(_TEXT if enabled else _DISABLED_TEXT)
+    painter.drawText(box_rect, int(Qt.AlignCenter), text)
+    painter.restore()
+
+
 def _paint_protection(
     painter: QPainter,
     label_rect: QRectF,
@@ -857,7 +1005,7 @@ def _with_alpha(color: QColor, alpha: float) -> QColor:
 def _selector_label_font(active: bool) -> QFont:
     """滚筒档位文字：当前档更大更重，邻档缩小；字距收紧接近参考的 Inter。"""
     font = QFont(card_status_font())
-    font.setPointSizeF(11.0 if active else 7.2)
+    font.setPointSizeF(10.5 if active else 7.0)
     font.setWeight(QFont.Weight.Black if active else QFont.Weight.DemiBold)
     font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, -0.2)
     return font
@@ -1113,6 +1261,23 @@ def _paint_power_card(
                 channel.enabled,
                 hovered=hover_protection == (channel.channel, kind),
                 focused=focus_protection == (channel.channel, kind),
+            )
+        # 最下面一行的两个标签；下拉框与间隔输入框是真实子控件，自己绘制框体。
+        painter.setFont(_protection_font())
+        painter.setPen(_TEXT if channel.enabled else _DISABLED_TEXT)
+        for label_rect, text in zip(channel_layout.power_labels, ("顺序", "间隔")):
+            painter.drawText(label_rect, int(Qt.AlignCenter), text)
+        order_text = (
+            str(channel.power_order)
+            if channel.power_order is not None
+            else "—"
+        )
+        for box_rect, text in zip(
+            channel_layout.power_controls,
+            (order_text, f"{channel.power_delay_s:.2f}"),
+        ):
+            _paint_power_setting(
+                painter, box_rect, text, index, channel.enabled
             )
 
     painter.setBrush(Qt.NoBrush)
@@ -1413,23 +1578,146 @@ def _value_field_style(channel: str, scale: float) -> str:
     )
 
 
+def _order_combo_style(channel: str, scale: float) -> str:
+    """上电顺序下拉框：与通道数值框同色细边，按卡片缩放调整字号与圆角。"""
+    accent = TOKENS["primary"] if channel == "CH1" else TOKENS["warning"]
+    focus_background = (
+        TOKENS["primary_soft"] if channel == "CH1" else TOKENS["warning_soft"]
+    )
+    border = max(1, round(1.5 * scale))
+    radius = max(2, round(6.0 * scale))
+    arrow = (ASSETS_DIR / "chevron-down.svg").as_posix()
+    arrow_muted = (ASSETS_DIR / "chevron-down-muted.svg").as_posix()
+    arrow_size = max(6, round(9.0 * scale))
+    return (
+        "QComboBox {"
+        f" background-color: {TOKENS['surface']};"
+        f" border: {border}px solid {accent};"
+        f" border-radius: {radius}px;"
+        f" color: {TOKENS['text']};"
+        f" font-size: {max(7, round(13.0 * scale))}px;"
+        " font-weight: 600;"
+        " padding: 0px 13px 0px 4px;"
+        " min-height: 0px;"
+        "}"
+        " QComboBox:focus {"
+        f" border: {border}px solid {accent};"
+        f" background-color: {focus_background};"
+        " }"
+        " QComboBox:disabled {"
+        f" background-color: {TOKENS['surface_alt']};"
+        f" border: {border}px solid {TOKENS['border_strong']};"
+        f" color: {TOKENS['disabled_text']};"
+        " }"
+        " QComboBox::drop-down {"
+        " width: 12px; border: none; background: transparent;"
+        " }"
+        " QComboBox::down-arrow {"
+        f" image: url({arrow}); width: {arrow_size}px; height: {arrow_size}px;"
+        " }"
+        " QComboBox::down-arrow:disabled {"
+        f" image: url({arrow_muted});"
+        " }"
+    )
+
+
+class CardOrderCombo(WheelSafeComboBox):
+    """卡面上的上电顺序下拉框：只列 1..N，滚轮不会误改顺序。"""
+
+    def __init__(
+        self,
+        channel: str,
+        *,
+        scale: float = 1.0,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        if channel not in CHANNEL_NAMES:
+            raise ValueError(f"通道必须是 {' / '.join(CHANNEL_NAMES)}，收到 {channel!r}")
+        self.channel = channel
+        self._scale = _valid_scale(scale)
+        self.setObjectName("powerCardOrder")
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setMinimumSize(0, 0)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        self.setAccessibleName(f"通道 {channel} 上电顺序")
+        self.setAccessibleDescription(
+            "选择本通道在上电计划里的位置；1 表示最先上电。"
+            "只有参与上电的通道可以修改。"
+        )
+        self.set_scale(self._scale)
+
+    def set_scale(self, scale: float) -> None:
+        scale = _valid_scale(scale)
+        self._scale = scale
+        font = QFont(card_status_font())
+        font.setPointSizeF(9.0 * scale)
+        font.setWeight(QFont.Weight.DemiBold)
+        self.setFont(font)
+        self.setStyleSheet(_order_combo_style(self.channel, scale))
+
+
+class CardDelayField(KeyboardOnlyDoubleSpinBox):
+    """卡面上的上电间隔输入框：单位秒，两位小数，只接受键盘输入。"""
+
+    def __init__(
+        self,
+        channel: str,
+        *,
+        scale: float = 1.0,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        if channel not in CHANNEL_NAMES:
+            raise ValueError(f"通道必须是 {' / '.join(CHANNEL_NAMES)}，收到 {channel!r}")
+        self.channel = channel
+        self._scale = _valid_scale(scale)
+        self.setObjectName("powerCardDelay")
+        self.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self.setAlignment(Qt.AlignCenter)
+        self.setDecimals(2)
+        self.setRange(0.0, MAX_INTER_CHANNEL_DELAY_S)
+        self.setSingleStep(0.5)
+        self.setKeyboardTracking(True)
+        self.setMinimumSize(0, 0)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        self.setAccessibleName(f"通道 {channel} 上电间隔")
+        self.setAccessibleDescription(
+            f"范围 0–{MAX_INTER_CHANNEL_DELAY_S:g} 秒，两位小数；"
+            "通道开启后等待这么久再发下一条上电命令。"
+        )
+        self.set_scale(self._scale)
+
+    def set_scale(self, scale: float) -> None:
+        scale = _valid_scale(scale)
+        self._scale = scale
+        font = QFont(card_code_font())
+        font.setPointSizeF(11.0 * scale)
+        self.setFont(font)
+        self.setStyleSheet(_value_field_style(self.channel, scale))
+
+
 class PowerSupplyCard(QWidget):
     """配置页的电源通道卡片：两个通道的角色滚筒、工作值与保护都在这张卡上编辑。
 
-    每个通道贴外侧上角一个 84×64 的深色竖直滚筒，档位 ``OFF`` / ``Driver`` /
-    ``DUT`` 点击循环。``OFF`` 时整块灰显、VS/IS 与保护勾选不可操作；``Driver`` /
-    ``DUT`` 时恢复通道底色并可编辑。档位变化只更新卡片内部快照并发信号，由页面
-    同步到下方两份上电计划；卡片本身不写配置。
+    每个通道贴外侧上角一个 84×48 的深色竖直滚筒，档位 ``OFF`` / ``DUT`` /
+    ``Driver`` 点击循环。``OFF`` 时整块灰显、VS/IS、保护勾选、顺序与间隔都不可
+    操作；``DUT`` / ``Driver`` 时恢复通道底色并可编辑。档位变化只更新卡片内部
+    快照并发信号，由页面同步到下方两份上电计划；卡片本身不写配置。
 
-    滚筒、两个数值框与四个保护勾选框都是可聚焦控件：``Tab`` 依次经过它们，
-    ``Space`` / ``Enter`` 循环滚筒档位、``Space`` 切换保护勾选，数值框用键盘输入。
-    卡片支持按比例缩放，缩放时所有子控件的几何与字号一起调整；绘制统一在缩放后的
-    坐标系里完成。
+    滚筒、两个数值框、四个保护勾选框以及最下面一行的顺序下拉框和间隔输入框都是
+    可聚焦控件：``Tab`` 依次经过它们，``Space`` / ``Enter`` 循环滚筒档位、
+    ``Space`` 切换保护勾选，数值框用键盘输入。卡片支持按比例缩放，缩放时所有
+    子控件的几何与字号一起调整；绘制统一在缩放后的坐标系里完成。
     """
 
     channel_mode_changed = Signal(str, str)
     protection_toggled = Signal(str, str, bool)
     value_changed = Signal(str, str, float)
+    #: ``(channel, order)``：用户在顺序下拉框里选了新的 1-based 位置。
+    power_order_changed = Signal(str, int)
+    #: ``(channel, seconds)``：上电间隔被修改。
+    power_delay_changed = Signal(str, float)
 
     def __init__(
         self,
@@ -1470,6 +1758,8 @@ class PowerSupplyCard(QWidget):
         self._selectors: dict[str, ChannelModeSelector] = {}
         self._value_fields: dict[tuple[str, str], CardValueField] = {}
         self._protection_checks: dict[tuple[str, str], ProtectionCheck] = {}
+        self._order_combos: dict[str, CardOrderCombo] = {}
+        self._delay_fields: dict[str, CardDelayField] = {}
 
         for channel_layout in self._layout.channels:
             name = channel_layout.channel
@@ -1517,7 +1807,31 @@ class PowerSupplyCard(QWidget):
                 check.focus_changed.connect(self._on_protection_focus)
                 self._protection_checks[(name, kind)] = check
 
-        # 焦点顺序按“角色滚筒 → VS → IS → 电压保护 → 电流保护”逐通道向后。
+            order_combo = CardOrderCombo(name, scale=self._scale, parent=self)
+            order_combo.setGeometry(
+                _scaled_geometry(channel_layout.power_controls[0], self._scale)
+            )
+            order_combo.currentIndexChanged.connect(
+                lambda index, channel=name: self._on_power_order_selected(
+                    channel, index
+                )
+            )
+            self._order_combos[name] = order_combo
+
+            delay_field = CardDelayField(name, scale=self._scale, parent=self)
+            delay_field.setGeometry(
+                _scaled_geometry(channel_layout.power_controls[1], self._scale)
+            )
+            delay_field.valueChanged.connect(
+                lambda value, channel=name: self._on_power_delay_changed(
+                    channel, value
+                )
+            )
+            self._delay_fields[name] = delay_field
+            self._apply_power_setting(name)
+
+        # 焦点顺序按“角色滚筒 → VS → IS → 电压保护 → 电流保护 → 顺序 → 间隔”
+        # 逐通道向后。
         order: list[QWidget] = []
         for name in CHANNEL_NAMES:
             order.append(self._selectors[name])
@@ -1525,6 +1839,8 @@ class PowerSupplyCard(QWidget):
             order.extend(
                 self._protection_checks[(name, kind)] for kind in PROTECTION_KINDS
             )
+            order.append(self._order_combos[name])
+            order.append(self._delay_fields[name])
         for previous, following in zip(order, order[1:]):
             self.setTabOrder(previous, following)
         self._update_tooltips()
@@ -1553,6 +1869,16 @@ class PowerSupplyCard(QWidget):
                 self._protection_checks[(name, kind)].setGeometry(
                     _scaled_geometry(check_rect, scale)
                 )
+            order_combo = self._order_combos[name]
+            order_combo.set_scale(scale)
+            order_combo.setGeometry(
+                _scaled_geometry(channel_layout.power_controls[0], scale)
+            )
+            delay_field = self._delay_fields[name]
+            delay_field.set_scale(scale)
+            delay_field.setGeometry(
+                _scaled_geometry(channel_layout.power_controls[1], scale)
+            )
         self.update()
 
     @property
@@ -1598,6 +1924,29 @@ class PowerSupplyCard(QWidget):
         """某个通道当前的电压/电流设定值。"""
         return float(self.value_field(channel, kind).value())
 
+    def order_combo(self, channel: str) -> CardOrderCombo:
+        """取某个通道的上电顺序下拉框；不合法时抛 ``KeyError``。"""
+        combo = self._order_combos.get(channel)
+        if combo is None:
+            raise KeyError(f"卡片里没有通道 {channel!r} 的上电顺序下拉框")
+        return combo
+
+    def delay_field(self, channel: str) -> CardDelayField:
+        """取某个通道的上电间隔输入框；不合法时抛 ``KeyError``。"""
+        field = self._delay_fields.get(channel)
+        if field is None:
+            raise KeyError(f"卡片里没有通道 {channel!r} 的上电间隔输入框")
+        return field
+
+    def channel_power_order(self, channel: str) -> int | None:
+        """某个通道当前选择的上电顺序（1-based）；不参与上电时为 ``None``。"""
+        data = self.order_combo(channel).currentData()
+        return data if isinstance(data, int) else None
+
+    def channel_power_delay(self, channel: str) -> float:
+        """某个通道当前的上电间隔（秒）。"""
+        return float(self.delay_field(channel).value())
+
     def channel_controls(self, channel: str) -> dict[str, Any]:
         """一个通道的控件映射，形状与 :class:`ConfigFormState` 读取的表单一致。"""
         return {
@@ -1605,6 +1954,8 @@ class PowerSupplyCard(QWidget):
             "current": self.value_field(channel, "current"),
             "voltage_protection_enabled": self.protection_check(channel, "voltage"),
             "current_protection_enabled": self.protection_check(channel, "current"),
+            "power_order": self.order_combo(channel),
+            "power_on_delay": self.delay_field(channel),
         }
 
     def protection_check(self, channel: str, kind: str) -> ProtectionCheck:
@@ -1647,8 +1998,79 @@ class PowerSupplyCard(QWidget):
                     check.setChecked(checked)
                     check.blockSignals(False)
                 check.setEnabled(channel.enabled)
+            self._apply_power_setting(name)
         self._update_tooltips()
         self.update()
+
+    def set_channel_power(
+        self,
+        channel: str,
+        order: int | None,
+        count: int,
+        delay: Any,
+        *,
+        emit: bool = False,
+    ) -> None:
+        """程序化设置某个通道的上电顺序/顺序总数/间隔；默认不发信号。"""
+        self._data = self._data.with_channel_power(channel, order, count, delay)
+        self._apply_power_setting(channel)
+        self._update_tooltips()
+        self.update()
+        if emit:
+            if order is not None:
+                self.power_order_changed.emit(channel, order)
+            self.power_delay_changed.emit(channel, float(self.channel_power_delay(channel)))
+
+    def _apply_power_setting(self, channel: str) -> None:
+        """把当前快照里的顺序选项与间隔写进控件；不读配置、不发信号。"""
+        setting = self._data.channel(channel)
+        order = setting.power_order
+        count = setting.power_order_count
+        delay = setting.power_delay_s
+        combo = self._order_combos[channel]
+        field = self._delay_fields[channel]
+        combo.blockSignals(True)
+        combo.clear()
+        if count > 0:
+            for value in range(1, count + 1):
+                combo.addItem(str(value), value)
+            index = (order - 1) if order is not None else 0
+            combo.setCurrentIndex(max(0, min(count - 1, index)))
+        else:
+            combo.addItem("—", None)
+            combo.setCurrentIndex(0)
+        combo.blockSignals(False)
+        enabled = self._data.channel(channel).enabled
+        combo.setEnabled(enabled and count > 0)
+        if field.value() != float(delay):
+            field.blockSignals(True)
+            field.setValue(float(delay))
+            field.blockSignals(False)
+        field.setEnabled(enabled)
+
+    def _on_power_order_selected(self, channel: str, index: int) -> None:
+        """顺序下拉框被用户改选：更新快照并转发给页面重排计划。"""
+        order = self._order_combos[channel].itemData(index)
+        if not isinstance(order, int):
+            return
+        current = self._data.channel(channel)
+        self._data = self._data.with_channel_power(
+            channel, order, current.power_order_count, current.power_delay_s
+        )
+        self._update_tooltips()
+        self.power_order_changed.emit(channel, order)
+
+    def _on_power_delay_changed(self, channel: str, value: Any) -> None:
+        """间隔输入框被用户修改：更新快照并计入页面 dirty。"""
+        current = self._data.channel(channel)
+        self._data = self._data.with_channel_power(
+            channel,
+            current.power_order,
+            current.power_order_count,
+            value,
+        )
+        self._update_tooltips()
+        self.power_delay_changed.emit(channel, float(value))
 
     def set_channel_mode(
         self,
@@ -1825,6 +2247,9 @@ class PowerSupplyCard(QWidget):
             self._value_fields[(channel, kind)].setEnabled(enabled)
         for kind in PROTECTION_KINDS:
             self._protection_checks[(channel, kind)].setEnabled(enabled)
+        count = self._data.channel(channel).power_order_count
+        self._order_combos[channel].setEnabled(enabled and count > 0)
+        self._delay_fields[channel].setEnabled(enabled)
         if animate and self.isVisible():
             self._animate_reel(channel, mode)
         else:
@@ -1889,14 +2314,23 @@ class PowerSupplyCard(QWidget):
             "左侧 CH1 · 右侧 CH2；卡面不再标注通道号，位置与底色即通道",
             "点击 OFF / DUT / Driver 滚筒切换供电角色：OFF 关闭通道，"
             "DUT 给功放供电，Driver 给驱放供电",
-            "档位会同步下方上电计划；VS 电压设定（V） · IS 电流设定（A）",
+            "档位会同步下方上电计划；VS 电压设定（V） · IS 电流设定（A） · "
+            "顺序/间隔决定该通道的上电位置与等待时间",
         ]
         for channel in self._data.channels:
+            if channel.power_order is not None:
+                power_text = (
+                    f"上电第 {channel.power_order}/{channel.power_order_count} 位 · "
+                    f"间隔 {channel.power_delay_s:.2f}s"
+                )
+            else:
+                power_text = "未参与上电"
             lines.append(
                 f"{channel.channel} {CHANNEL_MODE_LABELS[channel.mode]}："
                 f"VS {channel.voltage_set:.2f} V · IS {channel.current_set:.2f} A · "
                 f"电压保护 {'开' if channel.voltage_protection_enabled else '关'} · "
-                f"电流保护 {'开' if channel.current_protection_enabled else '关'}"
+                f"电流保护 {'开' if channel.current_protection_enabled else '关'} · "
+                f"{power_text}"
             )
         text = "\n".join(lines)
         self.setToolTip(text)
@@ -1922,11 +2356,27 @@ class PowerSupplyCard(QWidget):
                     "勾选后保护阈值自动取比设定值高 10% 的值，无需手工填写。\n"
                     f"{'点击取消' if channel.protection_enabled(kind) else '点击启用'}"
                 )
+            combo = self._order_combos[channel.channel]
+            if channel.power_order is not None:
+                order_text = (
+                    f"当前第 {channel.power_order} 位（共 "
+                    f"{channel.power_order_count} 位）"
+                )
+            else:
+                order_text = "当前不参与上电"
+            combo.setToolTip(
+                f"{channel.channel} 上电顺序\n{order_text}\n"
+                "选择 1..N 调整本通道在计划里的位置；1 表示最先上电。"
+            )
+            self._delay_fields[channel.channel].setToolTip(
+                f"{channel.channel} 上电间隔（s）\n"
+                "本通道开启后等待这么久，再向下一个仪器发送上电命令；缺省 2s。"
+            )
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         try:
-            # 卡面按 440×166 的逻辑坐标绘制，再缩放到控件实际尺寸；用实际宽高比例
+            # 卡面按 440×186 的逻辑坐标绘制，再缩放到控件实际尺寸；用实际宽高比例
             # 而不是四舍五入前的 scale，右/下边缘不会被裁掉半像素。
             painter.scale(
                 self.width() / POWER_CARD_WIDTH,

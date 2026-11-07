@@ -327,12 +327,19 @@ def _supply_visual_names(power_configs: Mapping[str, Any]) -> dict[str, list[str
 
 def _channel_settings(channel_config: Mapping[str, Any], token: str) -> dict[str, float]:
     try:
-        return {
+        settings: dict[str, float] = {
             "voltage_v": float(channel_config["voltage"]["value"]),
             "current_a": float(channel_config["current"]["value"]),
         }
     except (KeyError, TypeError, ValueError) as error:
         raise ValueError(f"电源通道缺少有效的电压/电流设置: {token}") from error
+    raw_delay = channel_config.get("power_on_delay_s")
+    if raw_delay is not None:
+        try:
+            settings["power_on_delay_s"] = float(raw_delay)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"电源通道的上电间隔无效: {token}") from error
+    return settings
 
 
 def _emergency_channels(

@@ -256,6 +256,37 @@ class PowerCardWallTests(unittest.TestCase):
         self.assertEqual(value_events, [], "换档不是数值编辑")
         self.assertEqual(card.channel_mode("CH1"), "dut")
 
+    def test_power_row_emits_order_and_delay_with_the_supply_id(self):
+        wall = self.make_wall()
+        wall.set_cards([("A", _card("A"))], {"A": 0})
+        order_events: list[tuple[str, str, int]] = []
+        delay_events: list[tuple[str, str, float]] = []
+        wall.channel_order_changed.connect(lambda *args: order_events.append(args))
+        wall.channel_delay_changed.connect(lambda *args: delay_events.append(args))
+        wall.set_channel_power_settings({("A", "CH1"): (1, 2, 2.0)})
+        card = wall.supply_card("A")
+
+        card.order_combo("CH1").setCurrentIndex(1)
+        card.delay_field("CH1").setValue(3.5)
+
+        self.assertEqual(order_events, [("A", "CH1", 2)])
+        self.assertEqual(delay_events, [("A", "CH1", 3.5)])
+        self.assertEqual(card.channel_power_order("CH1"), 2)
+        self.assertAlmostEqual(card.channel_power_delay("CH1"), 3.5)
+
+    def test_rebuilding_preserves_the_uncommitted_delay(self):
+        wall = self.make_wall()
+        wall.set_cards([("A", _card("A"))], {"A": 0})
+        wall.supply_card("A").delay_field("CH1").setValue(4.0)
+
+        wall.set_cards(
+            [("A", _card("A"))], {"A": 0}, preserve_edit_state=True
+        )
+
+        self.assertAlmostEqual(
+            wall.supply_card("A").channel_power_delay("CH1"), 4.0
+        )
+
     def test_card_pixmap_is_a_snapshot_of_the_real_card(self):
         wall = self.make_wall()
         wall.set_cards([("A", _card("A"))], {"A": 0})
@@ -299,6 +330,8 @@ class PowerCardWallTests(unittest.TestCase):
                 "current",
                 "voltage_protection_enabled",
                 "current_protection_enabled",
+                "power_order",
+                "power_on_delay",
             },
         )
         self.assertAlmostEqual(controls["voltage"].value(), 2.5)

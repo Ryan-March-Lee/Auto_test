@@ -21,7 +21,7 @@
 import math
 from typing import Any, Iterable, Mapping, TypedDict
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QGridLayout,
@@ -137,7 +137,12 @@ class PowerPlanEditor(QWidget):
     （驱放关闭）时读取结果是空计划，避免页面留着上一次的勾选被写回。
     ``empty_means_external`` 只影响状态文案：驱动功放不勾任何通道就是自带供电，
     不是“尚未确认”。
+
+    列表顺序变化（上移/下移或卡面下拉框）会发出 :attr:`order_changed`，页面据此
+    把新的顺序同步回卡片并计入 dirty。
     """
+
+    order_changed = Signal()
 
     def __init__(
         self,
@@ -171,13 +176,17 @@ class PowerPlanEditor(QWidget):
         move_row.addStretch(1)
         delay_row = QHBoxLayout()
         delay_row.setSpacing(8)
-        delay_label = QLabel("通道间隔 (s):")
+        delay_label = QLabel("默认间隔 (s):")
         self.delay_spin = KeyboardOnlyDoubleSpinBox()
         self.delay_spin.setObjectName("powerPlanDelay")
         self.delay_spin.setRange(0.0, MAX_INTER_CHANNEL_DELAY_S)
         self.delay_spin.setDecimals(2)
         self.delay_spin.setSingleStep(0.5)
         self.delay_spin.setMaximumWidth(140)
+        self.delay_spin.setToolTip(
+            "未在卡面上单独设置上电间隔的通道使用这个默认值；"
+            "卡面没有单独值且这里为 0 时，卡面按 2 秒显示并在保存后写入通道配置。"
+        )
         delay_row.addWidget(delay_label)
         delay_row.addWidget(self.delay_spin)
         delay_row.addStretch(1)
@@ -255,16 +264,68 @@ class PowerPlanEditor(QWidget):
                 return True
         return False
 
+    def checked_routes(self) -> tuple[tuple[str, str], ...]:
+        """按列表顺序返回已勾选的路由；它同时就是上电顺序。"""
+        routes: list[tuple[str, str]] = []
+        for row in range(self.list.count()):
+            item = self.list.item(row)
+            if item.checkState() != Qt.CheckState.Checked:
+                continue
+            route = _route(item.data(_ROUTE_ROLE))
+            if route is not None:
+                routes.append(route)
+        return tuple(routes)
+
+    def set_route_order(self, route: Any, order: int) -> bool:
+        """把已勾选路由移动到 1-based 的 ``order`` 位置；无效时返回 ``False``。"""
+        target = _route(route)
+        if target is None:
+            return False
+        rows = [
+            row
+            for row in range(self.list.count())
+            if self.list.item(row).checkState() == Qt.CheckState.Checked
+        ]
+        routes = [
+            _route(self.list.item(row).data(_ROUTE_ROLE)) for row in rows
+        ]
+        if target not in routes:
+            return False
+        if isinstance(order, bool) or not isinstance(order, int):
+            return False
+        if order < 1 or order > len(routes):
+            return False
+        current = routes.index(target)
+        if current == order - 1:
+            return True
+        row_current = rows[current]
+        row_target = rows[order - 1]
+        item = self.list.takeItem(row_current)
+        if row_current < row_target:
+            row_target -= 1
+        if order - 1 > current:
+            row_target += 1
+        self.list.insertItem(row_target, item)
+        self.list.setCurrentRow(row_target)
+        self._update_move_buttons()
+        self.order_changed.emit()
+        return True
+
     def move_row(self, row: int, delta: int) -> int:
         """把第 ``row`` 行移动 ``delta`` 位，返回移动后的行号。"""
         count = self.list.count()
         target = row + delta
         if row < 0 or row >= count or target < 0 or target >= count:
             return row
+        item = self.list.item(row)
+        was_checked = item.checkState() == Qt.CheckState.Checked
         item = self.list.takeItem(row)
         self.list.insertItem(target, item)
         self.list.setCurrentRow(target)
         self._update_move_buttons()
+        # 只有已勾选的行参与上电顺序；移动未勾选行不改变计划，也不计入 dirty。
+        if was_checked:
+            self.order_changed.emit()
         return target
 
     def move_current(self, delta: int) -> int:

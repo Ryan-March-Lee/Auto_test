@@ -1,9 +1,10 @@
 """电源配置页的卡片视图（``PowerCardWall``）。
 
-电源配置页以通道卡片为主视图：每台电源一张 440×166 的通道卡片（左 CH1 浅蓝、
+电源配置页以通道卡片为主视图：每台电源一张 440×186 的通道卡片（左 CH1 浅蓝、
 右 CH2 浅琥珀；两个通道的 OFF / DUT / Driver 竖直滚筒分别贴住左右上角，设备码在
-顶部正中的白色铭牌上），卡片按仪器排布页九宫格里的相对位置摆放在页面中央。上电
-计划与漏极表单接在卡片下方；通道参数本身只在这一张卡上编辑。
+顶部正中的白色铭牌上；最下面一行是上电顺序与间隔），卡片按仪器排布页九宫格里的
+相对位置摆放在页面中央。上电计划与漏极表单接在卡片下方；通道参数本身只在这一张
+卡上编辑。
 
 **真实控件**：卡片墙直接承载 :class:`presentation.qt.power_card.PowerSupplyCard`
 子控件（不是位图 + 坐标命中）。角色滚筒、VS/IS 输入框与保护勾选框都由 Qt 处理
@@ -37,6 +38,7 @@ from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from .power_card import (
     CHANNEL_NAMES,
+    DEFAULT_POWER_ON_DELAY_S,
     POWER_CARD_HEIGHT,
     POWER_CARD_RADIUS,
     POWER_CARD_WIDTH,
@@ -91,6 +93,12 @@ def _channel_data(name: str, entry: Mapping[str, Any]) -> PowerChannelData:
     voltage = voltage if isinstance(voltage, Mapping) else {}
     current = channel.get("current")
     current = current if isinstance(current, Mapping) else {}
+    raw_delay = channel.get("power_on_delay_s")
+    delay = (
+        DEFAULT_POWER_ON_DELAY_S
+        if raw_delay is None
+        else _number(raw_delay, DEFAULT_POWER_ON_DELAY_S)
+    )
     return PowerChannelData(
         channel=name,
         # 两个通道始终保留；角色由页面按上电计划回填，缺省是 OFF。
@@ -100,6 +108,7 @@ def _channel_data(name: str, entry: Mapping[str, Any]) -> PowerChannelData:
         # 卡面只保留“是否启用保护”；阈值仍由配置读取按 110% 推导，不在这里显示。
         voltage_protection_enabled=voltage.get("protection_enabled") is True,
         current_protection_enabled=current.get("protection_enabled") is True,
+        power_delay_s=delay,
     )
 
 
@@ -140,6 +149,14 @@ def _merge_edit_state(
             merged = merged.with_channel_protection(
                 name, kind, old.protection_enabled(kind)
             )
+        # 顺序由页面按计划重算，只有间隔是卡面上尚未回填的编辑值。
+        setting = merged.channel(name)
+        merged = merged.with_channel_power(
+            name,
+            setting.power_order,
+            setting.power_order_count,
+            old.power_delay_s,
+        )
     return merged
 
 
@@ -160,6 +177,10 @@ class PowerCardWall(QWidget):
     protection_toggled = Signal(str, str, str, bool)
     #: ``(supply_id, channel, kind, value)``：VS / IS 输入。
     value_changed = Signal(str, str, str, float)
+    #: ``(supply_id, channel, order)``：卡面上电顺序下拉框的新位置。
+    channel_order_changed = Signal(str, str, int)
+    #: ``(supply_id, channel, seconds)``：卡面上电间隔。
+    channel_delay_changed = Signal(str, str, float)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -240,6 +261,16 @@ class PowerCardWall(QWidget):
                         self._on_card_value(supply, channel, kind, value)
                     )
                 )
+                card.power_order_changed.connect(
+                    lambda channel, order, supply=cell.supply_id: (
+                        self._on_card_order(supply, channel, order)
+                    )
+                )
+                card.power_delay_changed.connect(
+                    lambda channel, delay, supply=cell.supply_id: (
+                        self._on_card_delay(supply, channel, delay)
+                    )
+                )
                 self._cards[cell.supply_id] = card
             else:
                 card.set_data(cell.data)
@@ -313,6 +344,20 @@ class PowerCardWall(QWidget):
                     card.set_channel_mode(name, mode, animate=False)
             self._sync_cell(supply_id, card.data)
 
+    def set_channel_power_settings(
+        self,
+        settings: Mapping[tuple[str, str], tuple[int | None, int, float]],
+    ) -> None:
+        """按 ``(supply_id, channel) -> (order, count, delay)`` 批量同步卡片。"""
+        for supply_id, card in self._cards.items():
+            for name in CHANNEL_NAMES:
+                order, count, delay = settings.get(
+                    (supply_id, name),
+                    (None, 0, DEFAULT_POWER_ON_DELAY_S),
+                )
+                card.set_channel_power(name, order, count, delay)
+            self._sync_cell(supply_id, card.data)
+
     def set_driver_available(self, available: bool) -> None:
         """驱放测试模式开关：Driver 档是否可选；不发配置变更信号。"""
         available = bool(available)
@@ -360,6 +405,22 @@ class PowerCardWall(QWidget):
         if card is not None:
             self._sync_cell(supply_id, card.data)
         self.value_changed.emit(supply_id, channel, kind, float(value))
+
+    def _on_card_order(
+        self, supply_id: str, channel: str, order: int
+    ) -> None:
+        card = self._cards.get(supply_id)
+        if card is not None:
+            self._sync_cell(supply_id, card.data)
+        self.channel_order_changed.emit(supply_id, channel, int(order))
+
+    def _on_card_delay(
+        self, supply_id: str, channel: str, delay: float
+    ) -> None:
+        card = self._cards.get(supply_id)
+        if card is not None:
+            self._sync_cell(supply_id, card.data)
+        self.channel_delay_changed.emit(supply_id, channel, float(delay))
 
     def is_empty(self) -> bool:
         return not self._cells

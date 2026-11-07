@@ -93,16 +93,6 @@ class ScpiSpectrumAnalyzerDriver(ScpiDriverBase):
             )
         return value
 
-    def configure_bandwidth_hz(self, bandwidth_hz: float, *, timeout_s: float = 5.0) -> None:
-        """Legacy port alias: bandwidth is the analyzer frequency span."""
-        self.set_span_hz(bandwidth_hz, timeout_s=timeout_s)
-
-    def configure_center_frequency_hz(self, frequency_hz: float, *, timeout_s: float = 5.0) -> None:
-        self.set_center_frequency_hz(frequency_hz, timeout_s=timeout_s)
-
-    def measure_power_dbm(self, *, timeout_s: float = 10.0) -> float:
-        return self.measure_peak_power_dbm(timeout_s=timeout_s)
-
     @staticmethod
     def _validate_limits(
         name: str, limits: tuple[float | None, float | None]

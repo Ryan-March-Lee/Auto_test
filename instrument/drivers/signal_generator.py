@@ -130,7 +130,3 @@ class SignalGeneratorDriver(ScpiDriverBase):
     @classmethod
     def _optional_bound(cls, value: float | None, name: str) -> float | None:
         return None if value is None else cls._finite_bound(value, name)
-
-
-# Backward-compatible import path and runtime class name.
-ScpiSignalGeneratorDriver = SignalGeneratorDriver

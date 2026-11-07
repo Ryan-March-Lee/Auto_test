@@ -293,8 +293,8 @@ class DrainChannelTests(unittest.TestCase):
         self.assertIsNone(drain.to_document())
         self.assertEqual(DrainChannel.from_document(None), drain)
         self.assertEqual(drain.require_in_routes([]), drain)
-        self.assertIsNone(
-            drain.require_in_routes([_route("PS1", "CH1")]).route
+        self.assertEqual(
+            drain.require_in_routes([_route("PS1", "CH1")]).routes, ()
         )
 
     def test_document_round_trip_keeps_the_route(self):
@@ -303,7 +303,7 @@ class DrainChannelTests(unittest.TestCase):
         )
 
         self.assertTrue(drain.is_configured)
-        self.assertEqual(drain.route, _route("PS1", "CH2"))
+        self.assertEqual(drain.routes, (_route("PS1", "CH2"),))
         self.assertEqual(
             drain.to_document(), {"supply_id": "PS1", "channel": "CH2"}
         )
@@ -317,7 +317,6 @@ class DrainChannelTests(unittest.TestCase):
         )
 
         self.assertTrue(drain.is_configured)
-        self.assertEqual(drain.route, _route("PS1", "CH2"), "兼容视图取第一条")
         self.assertEqual(
             drain.routes, (_route("PS1", "CH2"), _route("PS2", "CH1"))
         )
@@ -341,7 +340,7 @@ class DrainChannelTests(unittest.TestCase):
             {"supply_id": "PS9", "channel": "CH4"}
         )
 
-        self.assertEqual(drain.route, _route("PS9", "CH4"))
+        self.assertEqual(drain.routes, (_route("PS9", "CH4"),))
         with self.assertRaises(AmplifierInputError):
             drain.require_in_routes((_route("PS1", "CH1"),))
 
@@ -351,7 +350,7 @@ class DrainChannelTests(unittest.TestCase):
         accepted = DrainChannel.from_document(
             {"supply_id": "PS2", "channel": "CH2"}, available=available
         )
-        self.assertEqual(accepted.route, _route("PS2", "CH2"))
+        self.assertEqual(accepted.routes, (_route("PS2", "CH2"),))
 
         with self.assertRaises(AmplifierInputError):
             DrainChannel.from_document(
@@ -359,11 +358,11 @@ class DrainChannelTests(unittest.TestCase):
             )
         with self.assertRaises(AmplifierInputError):
             DrainChannel(
-                route=_route("PS2", "CH1")
+                routes=(_route("PS2", "CH1"),)
             ).require_in_routes(available)
 
     def test_given_routes_must_be_a_route_collection(self):
-        drain = DrainChannel(route=_route("PS1", "CH1"))
+        drain = DrainChannel(routes=(_route("PS1", "CH1"),))
 
         for value in ("PS1/CH1", {"supply_id": "PS1", "channel": "CH1"}, 1):
             with self.subTest(value=type(value).__name__):
@@ -383,17 +382,17 @@ class DrainChannelTests(unittest.TestCase):
                 with self.assertRaises(AmplifierInputError):
                     DrainChannel.from_document(value)
 
-    def test_route_field_requires_supply_channel_or_none(self):
+    def test_route_collection_requires_supply_channels(self):
         with self.assertRaises(AmplifierInputError):
-            DrainChannel(route={"supply_id": "PS1", "channel": "CH1"})
+            DrainChannel(routes=({"supply_id": "PS1", "channel": "CH1"},))
         with self.assertRaises(AmplifierInputError):
-            DrainChannel(route="PS1/CH1")
+            DrainChannel(routes=("PS1/CH1",))
 
     def test_drain_is_immutable(self):
-        drain = DrainChannel(route=_route("PS1", "CH1"))
+        drain = DrainChannel(routes=(_route("PS1", "CH1"),))
 
         with self.assertRaises(FrozenInstanceError):
-            drain.route = None
+            drain.routes = ()
 
 
 class PowerPlanExportTests(unittest.TestCase):

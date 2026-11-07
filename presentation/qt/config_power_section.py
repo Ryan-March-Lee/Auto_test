@@ -1,11 +1,11 @@
-"""电源分区的不可见计划状态与兼容漏极状态。
+"""电源分区的不可见计划状态与漏极路由状态。
 
 电源通道参数不再在这里建表单：VS/IS、角色滚筒与保护勾选已经融合到卡片上
 （:mod:`presentation.qt.power_card` / :mod:`presentation.qt.power_card_wall`）。
 上电角色与上电顺序也已经在卡片上编辑，因此卡片下方不再有“通道上电计划”两块设置
 框；本模块不再构建任何可见的电源表单，只保留 :class:`PowerPlanState` 的计划状态
-和一个隐藏的兼容漏极状态。``Cal.`` 标记是效率计算通道的唯一界面，页面把所有
-已上电的标记通道写进漏极集合；隐藏下拉框只显示第一条，作为单漏极兼容视图。
+和一份漏极路由状态。``Cal.`` 标记是效率计算通道的唯一界面，页面把所有已上电的
+标记通道写进漏极集合。
 :class:`PowerFormSection` 把它们收在一个不可见的状态对象里，页面只负责创建它、
 转发页面级派生状态（测试模式）并按需回填。
 
@@ -26,7 +26,6 @@ from typing import Any, Iterable, Mapping, TypedDict
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QWidget
 
-from .config_page_widgets import combo_box
 from .config_power_assignments import POWER_SUPPLY_CHANNELS, assignment_channels
 
 
@@ -64,9 +63,6 @@ __all__ = [
 # 组上电计划状态与漏极：独立电源表单的状态与控件
 # ---------------------------------------------------------------------------
 
-_UNSET_DRAIN_LABEL = "（未指定）"
-
-
 def _route(value: Any) -> tuple[str, str] | None:
     """把两段路由对象（或内部 ``(supply_id, channel)``）读成内部路由元组。"""
     if isinstance(value, (tuple, list)) and len(value) == 2:
@@ -97,10 +93,6 @@ def _drain_route_list(value: Any) -> tuple[tuple[str, str], ...]:
             seen.add(route)
             ordered.append(route)
     return tuple(ordered)
-
-
-def _route_text(route: tuple[str, str]) -> str:
-    return f"{route[0]} / {route[1]}"
 
 
 def _ordered_routes(routes: Iterable[Any]) -> tuple[tuple[str, str], ...]:
@@ -245,12 +237,11 @@ class PowerPlanState(QObject):
 
 
 class PowerFormSection(QWidget):
-    """不可见的电源状态容器：两份计划状态 + 兼容漏极状态。
+    """不可见的电源状态容器：两份计划状态与漏极路由状态。
 
     上电角色、顺序与每通道间隔都在卡片上编辑，``Cal.`` 标记是效率计算通道的唯一
     界面；本组件不再构建任何可见的电源表单。两份 :class:`PowerPlanState` 仍保存
-    计划状态，页面通过 :attr:`plan_changed` 同步卡片；隐藏的漏极状态保存全部
-    已标记路由，隐藏下拉框只提供第一条的单漏极兼容视图。
+    计划状态，页面通过 :attr:`plan_changed` 同步卡片；漏极状态保存全部已标记路由。
     """
 
     #: ``(group, supply_id, channel, checked)``：计划成员变化，页面据此同步卡片。
@@ -272,21 +263,12 @@ class PowerFormSection(QWidget):
         # 计划候选：已绑定电源的声明通道（没有声明时回落到每台电源固定的 CH1/CH2）。
         # 两个状态使用同一份候选，器件归属由卡片滚筒决定。
         self._plan_routes = _candidate_routes(sources, choices)
-        # DUT 计划是否已经在文档里出现（含显式空计划）。未出现时漏极候选退回全部
-        # 候选路由；出现后（包括卡片上开始选 DUT 后）就只能从计划里选择。
-        self._dut_plan_defined = False
         self.dut_power_plan_editor = PowerPlanState(active=True, parent=self)
         self.driver_power_plan_editor = PowerPlanState(
             active=self._driver_plan_active, parent=self
         )
-        # 兼容现有运行链路的漏极：不再有可见的「效率测量」框，只保留一个隐藏
-        # 下拉框作为单漏极兼容视图。真正的状态是 ``_drain_routes``：页面把卡面
-        # 所有已上电的 ``Cal.`` 标记通道写进这里，多漏极在运行阶段求和。
+        # 漏极状态由卡面 ``Cal.`` 标记驱动；多漏极在运行阶段求和。
         self._drain_routes: tuple[tuple[str, str], ...] = ()
-        self.drain_channel_combo = combo_box()
-        self.drain_channel_combo.setParent(self)
-        self.drain_channel_combo.setObjectName("powerDrainCompatibility")
-        self.drain_channel_combo.setVisible(False)
         self._connect_assignment_signals()
         self.refresh_plan_routes(
             preserve=False,
@@ -295,16 +277,8 @@ class PowerFormSection(QWidget):
             drain=drain_channel,
         )
 
-    def select_drain_route(self, route: Any, *, clear: bool = True) -> bool:
-        """把隐藏的兼容漏极指向给定路由；路由不在 DUT 计划内时忽略。
-
-        这是 :meth:`select_drain_routes` 的单路由包装，返回是否真的改变了当前选择。
-        """
-        target = _route(route)
-        return self.select_drain_routes(() if target is None else (target,), clear=clear)
-
     def select_drain_routes(self, routes: Any, *, clear: bool = True) -> bool:
-        """把隐藏的漏极状态指向给定路由集合；不在 DUT 计划内的路由忽略。
+        """把漏极状态指向给定路由集合。
 
         返回是否真的改变了当前选择。页面把所有已上电且已标记 ``Cal.`` 的通道按卡片
         顺序传进来；``routes`` 为空表示当前没有可用标记，``clear=False`` 时保留原值
@@ -315,18 +289,13 @@ class PowerFormSection(QWidget):
         if not targets:
             if not clear or not current:
                 return False
-        allowed = self._drain_candidates(self._plan_routes)
-        filtered = tuple(route for route in targets if route in allowed)
-        if targets and not filtered:
+        if targets == current:
             return False
-        if filtered == current:
-            return False
-        self._set_drain_routes(allowed, filtered)
+        self._set_drain_routes(targets)
         return True
 
     def _connect_assignment_signals(self) -> None:
-        # 卡片换档写计划时，成员变化要把卡片与漏极候选重新对齐；页面再据此计入
-        # dirty。顺序变化由页面的 order_changed 连接处理。
+        # 卡片换档写计划时，成员变化通知页面同步卡片；顺序变化由页面单独处理。
         for group, editor in (
             ("dut", self.dut_power_plan_editor),
             ("driver", self.driver_power_plan_editor),
@@ -340,20 +309,7 @@ class PowerFormSection(QWidget):
     def _on_plan_membership(
         self, group: str, supply_id: str, channel: str, checked: bool
     ) -> None:
-        if group == "dut":
-            if checked:
-                # 卡片一旦选了 DUT，计划就从“未确认”进入“已配置”，此后取消全部
-                # 选择仍按空计划处理，不能把漏极候选退回全部候选通道。
-                self._dut_plan_defined = True
-            self._update_drain_candidates()
         self.plan_changed.emit(group, supply_id, channel, bool(checked))
-
-    def _update_drain_candidates(self) -> None:
-        plan_routes = _plan_routes(self.dut_power_plan_editor.read_plan())
-        candidates = (
-            plan_routes if self._dut_plan_defined else self.dut_power_plan_editor.routes()
-        )
-        self._set_drain_routes(candidates, self.read_drain_channels())
 
     # ---- 页面级派生状态 -----------------------------------------------------
     def set_power_choices(
@@ -374,21 +330,7 @@ class PowerFormSection(QWidget):
         self.driver_power_plan_editor.set_active(active)
         self.refresh_plan_routes(preserve=True)
 
-    # ---- 路由与计划 ---------------------------------------------------------
-    def _drain_candidates(
-        self, routes: tuple[tuple[str, str], ...]
-    ) -> tuple[tuple[str, str], ...]:
-        """漏极候选：有计划时只允许计划里参与上电的通道，否则退回全部候选路由。
-
-        “有计划”包括显式的空计划（:attr:`_dut_plan_defined`）；空计划没有任何可测量
-        的已启用通道，漏极只能保持未指定或显示旧值（由正式校验报告）。计划还没生成
-        时先列所有已绑定通道，让操作者可以先选漏极，保存时会因“漏极必须包含在 DUT
-        上电顺序中”被正式校验阻断。
-        """
-        if self._dut_plan_defined:
-            return _plan_routes(self.dut_power_plan_editor.read_plan())
-        return routes
-
+    # ---- 计划 ---------------------------------------------------------------
     def refresh_plan_routes(
         self,
         *,
@@ -407,12 +349,10 @@ class PowerFormSection(QWidget):
             dut_plan = self.dut_power_plan_editor.read_plan()
             driver_plan = self.driver_power_plan_editor.read_plan()
             drain = self.read_drain_channels()
-        else:
-            self._dut_plan_defined = dut_plan is not None
         self.dut_power_plan_editor.refresh(self._plan_routes, plan=dut_plan)
         self.driver_power_plan_editor.set_active(self._driver_plan_active)
         self.driver_power_plan_editor.refresh(self._plan_routes, plan=driver_plan)
-        self._set_drain_routes(self._drain_candidates(self._plan_routes), drain)
+        self._set_drain_routes(drain)
 
     # ---- 回填 ---------------------------------------------------------------
     def apply_power_plan_config(
@@ -429,55 +369,21 @@ class PowerFormSection(QWidget):
         assignment = assignment if isinstance(assignment, Mapping) else {}
         dut_plan = _group_plan(assignment, "dut_amplifier")
         driver_plan = _group_plan(assignment, "driver_amplifier")
-        self._dut_plan_defined = dut_plan is not None
         self.dut_power_plan_editor.refresh(self._plan_routes, plan=dut_plan)
         self.driver_power_plan_editor.set_active(self._driver_plan_active)
         self.driver_power_plan_editor.refresh(self._plan_routes, plan=driver_plan)
-        self._set_drain_routes(
-            self._drain_candidates(self._plan_routes), _document_drain(config)
-        )
+        self._set_drain_routes(_document_drain(config))
 
     def reset_power_plans(self) -> None:
         """回到空计划基线；回填投影开始前调用，保证不留上一次的选择。"""
-        self._dut_plan_defined = False
         self.dut_power_plan_editor.reset()
         self.driver_power_plan_editor.reset()
-        self._set_drain_routes((), None)
+        self._set_drain_routes(())
 
     # ---- 漏极 ---------------------------------------------------------------
-    def _set_drain_routes(
-        self, routes: Iterable[tuple[str, str]], current: Any
-    ) -> None:
-        """重建漏极候选与当前选择；``current`` 可以是单条路由或路由列表。
-
-        隐藏下拉框只显示第一条（单漏极兼容视图）；完整选择保存在
-        :attr:`_drain_routes`，供配置写出与运行阶段求和。
-        """
-        current_routes = _drain_route_list(current)
-        self._drain_routes = current_routes
-        current_route = current_routes[0] if current_routes else None
-        combo = self.drain_channel_combo
-        combo.blockSignals(True)
-        combo.clear()
-        combo.addItem(_UNSET_DRAIN_LABEL, None)
-        known: list[tuple[str, str]] = []
-        for route in routes:
-            if route not in known:
-                known.append(route)
-                combo.addItem(_route_text(route), route)
-        # 文档里显式写了、但已不在当前候选里的漏极仍显示出来，交给正式校验报告；
-        # 静默清空会让一份无效配置看起来像是“用户刚取消了漏极”。
-        for route in current_routes:
-            if route not in known:
-                known.append(route)
-                combo.addItem(f"{_route_text(route)}（无效）", route)
-        target = 0
-        for index in range(combo.count()):
-            if _route(combo.itemData(index)) == current_route:
-                target = index
-                break
-        combo.setCurrentIndex(target)
-        combo.blockSignals(False)
+    def _set_drain_routes(self, current: Any) -> None:
+        """保存漏极路由；无效路由保留给正式校验处理。"""
+        self._drain_routes = _drain_route_list(current)
 
     def read_drain_channels(self) -> list[dict[str, str]]:
         """当前漏极集合；多漏极按页面写入顺序返回，未配置时是空列表。"""
@@ -485,14 +391,6 @@ class PowerFormSection(QWidget):
             {"supply_id": supply_id, "channel": channel}
             for supply_id, channel in self._drain_routes
         ]
-
-    def read_drain_channel(self) -> dict[str, str] | None:
-        """第一条漏极的兼容视图；未配置时返回 ``None``。"""
-        if not self._drain_routes:
-            return None
-        supply_id, channel = self._drain_routes[0]
-        return {"supply_id": supply_id, "channel": channel}
-
 
 def _group_plan(assignment: Mapping[str, Any], group: str) -> Any:
     block = assignment.get(group)

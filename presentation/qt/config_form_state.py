@@ -1,7 +1,6 @@
 """纯 Python 配置表单状态适配器。
 
-该模块只依赖控件的最小读取协议（``text``、``value``、``isChecked`` 和 ``currentText``；
-漏极下拉框另外要求 ``currentIndex`` + ``itemData``，业务值只从那里读），以及页面
+该模块只依赖控件的最小读取协议（``text``、``value``、``isChecked`` 和 ``currentText``），以及页面
 持有的 ``device_bindings``（仪器连接的唯一来源），因此可以在没有 QApplication 的情况下
 测试配置组装。
 
@@ -369,41 +368,13 @@ class ConfigFormState:
     def read_drain_channels(self) -> list[dict]:
         """读取漏极集合；单漏极配置也返回只含一条的列表。
 
-        优先使用组件提供的多漏极读数；旧替身只有单选下拉框时按一条处理。
+        从电源页读取完整的漏极路由集合。
         """
         reader = getattr(self.widgets, "read_drain_channels", None)
-        if callable(reader):
-            routes = reader()
-            return [dict(route) for route in routes] if routes else []
-        single = self.read_drain_channel()
-        return [single] if single is not None else []
-
-    def read_drain_channel(self) -> dict | None:
-        """读取第一条漏极选择；未选择或控件缺失时返回 ``None``。
-
-        漏极是独立的测量路由，不参与分配与上电；这里只从控件的 ``itemData`` 读两段
-        路由，不把显示文本或通道名当成路由身份。多漏极的完整集合见
-        :meth:`read_drain_channels`。
-        """
-        combo = getattr(self.widgets, "drain_channel_combo", None)
-        if combo is None:
-            return None
-        index_of = getattr(combo, "currentIndex", None)
-        index = index_of() if callable(index_of) else -1
-        item_data = getattr(combo, "itemData", None)
-        data = item_data(index) if callable(item_data) and isinstance(index, int) and index >= 0 else None
-        if isinstance(data, Mapping):
-            supply_id, channel = data.get("supply_id"), data.get("channel")
-        elif isinstance(data, (list, tuple)) and len(data) == 2:
-            supply_id, channel = data
-        else:
-            return None
-        if not isinstance(supply_id, str) or not isinstance(channel, str):
-            return None
-        supply_id, channel = supply_id.strip(), channel.strip()
-        if not supply_id or not channel:
-            return None
-        return {"supply_id": supply_id, "channel": channel}
+        if not callable(reader):
+            return []
+        routes = reader()
+        return [dict(route) for route in routes] if routes else []
 
     def _drain_channel_document(self) -> Any:
         """配置文档里的漏极形状：未配置写 ``None``，单漏极写对象，多漏极写列表。"""
@@ -428,7 +399,7 @@ class ConfigFormState:
         assignment = self.read_power_assignment()
         if assignment:
             fragment["power_supply_assignment"] = assignment["power_supply_assignment"]
-        if getattr(self.widgets, "drain_channel_combo", None) is not None:
+        if callable(getattr(self.widgets, "read_drain_channels", None)):
             fragment["dut_config"] = {
                 "drain_channel": self._drain_channel_document(),
             }
@@ -471,7 +442,7 @@ class ConfigFormState:
             config["power_supply_assignment"] = assignment["power_supply_assignment"]
         elif not _dict_copy(config.get("driver_mode")).get("enabled"):
             _clear_driver_power_plan(config)
-        if getattr(self.widgets, "drain_channel_combo", None) is not None:
+        if callable(getattr(self.widgets, "read_drain_channels", None)):
             dut = _dict_copy(config.get("dut_config"))
             dut["drain_channel"] = self._drain_channel_document()
             config["dut_config"] = dut
@@ -508,7 +479,7 @@ class ConfigFormState:
         dut = _dict_copy(config.get("dut_config"))
         dut["max_input_power"] = self._value(w.max_input_power)
         dut["power_supply_count"] = int(self._current(w.pa_unit_count_combo))
-        if getattr(w, "drain_channel_combo", None) is not None:
+        if callable(getattr(w, "read_drain_channels", None)):
             dut["drain_channel"] = self._drain_channel_document()
         config["dut_config"] = dut
         fragment = self.read_power_supply_config()

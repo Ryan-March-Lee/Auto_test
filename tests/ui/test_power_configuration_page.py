@@ -151,7 +151,7 @@ class PowerConfigurationPageTests(unittest.TestCase):
             [cell.supply_id for cell in page.card_wall.cards()], ["DP8B1519"]
         )
         self.assertFalse(page.power_section.isVisibleTo(page))
-        self.assertFalse(page.drain_channel_combo.isVisibleTo(page))
+        self.assertFalse(hasattr(page, "drain_channel_combo"))
         self.assertFalse(hasattr(page, "drain_channel_group"))
 
     def test_the_page_has_a_centered_power_configuration_title(self):
@@ -256,7 +256,7 @@ class PowerConfigurationPageTests(unittest.TestCase):
                     DEFAULT_POWER_ON_DELAY_S,
                     msg="未设置的通道间隔统一回到 2s",
                 )
-        self.assertIsNone(page.read_drain_channel())
+        self.assertEqual(page.read_drain_channels(), [])
         assignment = page.build_config()["power_supply_assignment"]
         for group in ("dut_amplifier", "driver_amplifier"):
             with self.subTest(group=group):
@@ -565,7 +565,7 @@ class PowerConfigurationPageTests(unittest.TestCase):
         )
         self.assertEqual(changes, [True], "卡面勾选要计入 dirty")
 
-    def test_calibration_marks_multiple_channels_and_drives_the_legacy_drain(self):
+    def test_calibration_marks_multiple_channels_and_sets_drain_routes(self):
         page = self.make_page()
         config = valid_config()
         config["dut_config"].pop("drain_channel", None)
@@ -592,11 +592,6 @@ class PowerConfigurationPageTests(unittest.TestCase):
         self.assertEqual(
             page.read_efficiency_calibration_channels(),
             (("DP8B1519", "CH1"), ("DP8B1519", "CH2")),
-        )
-        self.assertEqual(
-            page.read_drain_channel(),
-            {"supply_id": "DP8B1519", "channel": "CH1"},
-            "单漏极兼容视图取第一个已上电的 Cal. 通道",
         )
         self.assertEqual(
             page.read_drain_channels(),
@@ -665,8 +660,12 @@ class PowerConfigurationPageTests(unittest.TestCase):
             (("DP8B1519", "CH1"), ("DP8B1519", "CH2")),
         )
         self.assertEqual(
-            page.read_drain_channel(),
-            {"supply_id": "DP8B1519", "channel": "CH1"},
+            page.read_drain_channels(),
+            [
+                {"supply_id": "DP8B1519", "channel": "CH1"},
+                {"supply_id": "DP8B1519", "channel": "CH2"},
+            ],
+            "重建后漏极集合与 Cal. 标记保持一致",
         )
 
     def test_calibration_resets_with_the_rest_of_the_power_page(self):
@@ -944,8 +943,8 @@ class PowerConfigurationPageTests(unittest.TestCase):
             "组默认间隔不再参与编辑，计划读回为 0.0",
         )
         self.assertEqual(
-            page.read_drain_channel(),
-            {"supply_id": "DP8B1519", "channel": "CH2"},
+            page.read_drain_channels(),
+            [{"supply_id": "DP8B1519", "channel": "CH2"}],
         )
 
     def test_apply_config_reports_invalid_payload(self):
@@ -975,7 +974,7 @@ class PowerConfigurationPageTests(unittest.TestCase):
         )
         page.power_config_widgets["DP8B0885"]["channels"]["CH1"]["voltage"].setValue(12.5)
         expected_plan = page.dut_power_plan_editor.read_plan()
-        expected_drain = page.read_drain_channel()
+        expected_drain = page.read_drain_channels()
 
         page.apply_device_bindings(power_supply_bindings("DP8B1519", "DP8B0885"))
 
@@ -984,7 +983,7 @@ class PowerConfigurationPageTests(unittest.TestCase):
             12.5,
         )
         self.assertEqual(page.dut_power_plan_editor.read_plan(), expected_plan)
-        self.assertEqual(page.read_drain_channel(), expected_drain)
+        self.assertEqual(page.read_drain_channels(), expected_drain)
 
     # ---- 计划候选 ----------------------------------------------------------
 
@@ -1078,16 +1077,11 @@ class PowerConfigurationPageTests(unittest.TestCase):
         page = self.make_page()
 
         self.assertEqual(
-            page.read_drain_channel(),
-            {"supply_id": "DP8B1519", "channel": "CH2"},
+            page.read_drain_channels(),
+            [{"supply_id": "DP8B1519", "channel": "CH2"}],
         )
-        options = [
-            page.drain_channel_combo.itemData(index)
-            for index in range(page.drain_channel_combo.count())
-        ]
-        self.assertIn(("DP8B1519", "CH2"), options)
 
-    def test_an_invalid_existing_drain_stays_visible_for_validation(self):
+    def test_an_invalid_existing_drain_is_preserved_for_validation(self):
         page = self.make_page(
             dut_config={
                 "power_supply_count": 1,
@@ -1096,31 +1090,10 @@ class PowerConfigurationPageTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            page.read_drain_channel(),
-            {"supply_id": "DP8B9999", "channel": "CH1"},
-            "不在当前候选里的漏极不能被静默清空",
+            page.read_drain_channels(),
+            [{"supply_id": "DP8B9999", "channel": "CH1"}],
+            "不在当前电源集合里的漏极不能被静默清空",
         )
-        self.assertIn("无效", page.drain_channel_combo.currentText())
-
-    def test_drain_options_are_limited_to_the_active_plan(self):
-        page = self.make_page(
-            device_bindings=power_supply_bindings("DP8B1519", "DP8B0885"),
-            power_supply_assignment={
-                "dut_amplifier": {
-                    "power_plan": plan(("DP8B0885", "CH2")),
-                }
-            },
-            dut_config={
-                "power_supply_count": 2,
-                "drain_channel": {"supply_id": "DP8B0885", "channel": "CH2"},
-            },
-        )
-
-        options = [
-            page.drain_channel_combo.itemData(index)
-            for index in range(1, page.drain_channel_combo.count())
-        ]
-        self.assertEqual(options, [("DP8B0885", "CH2")])
 
     # ---- 校验消息 ----------------------------------------------------------
 

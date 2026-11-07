@@ -166,14 +166,14 @@ class PowerCardDataTests(unittest.TestCase):
         data = _data()
         updated = data.with_channel_mode("CH2", "dut")
         off = updated.with_channel_mode("CH2", "off")
-        compat = off.with_channel_enabled("CH2", True)
+        enabled = off.with_channel_mode("CH2", "driver")
 
         self.assertEqual(data.channel("CH2").mode, "driver")
         self.assertEqual(updated.channel("CH2").mode, "dut")
         self.assertTrue(updated.channel("CH2").enabled)
         self.assertEqual(off.channel("CH2").mode, "off")
         self.assertFalse(off.channel("CH2").enabled)
-        self.assertEqual(compat.channel("CH2").mode, "driver")
+        self.assertEqual(enabled.channel("CH2").mode, "driver")
         self.assertEqual(
             updated.channel("CH2").voltage_set,
             data.channel("CH2").voltage_set,

@@ -1,23 +1,10 @@
-"""步骤 13：页面命名与模块边界的兼容契约。
-
-新名称是唯一实现：``ConfigurationPage`` / ``InstrumentDiscoveryPanel`` /
-``InstrumentSetupPage`` 分别在新的领域模块里定义，旧模块与旧类名只做再导出。
-本组用例固定三件事：
-
-- 新模块是实现的所在地，旧模块不再声明同名页面类；
-- 旧模块导出的名称与新模块是同一个对象，兼容期不会分叉出第二份实现；
-- 窗口装配只导入新模块，发现面板的发牌字段使用新名称 ``deal_animation``，
-  ``deal_layer`` 只是兼容属性。
-"""
+"""页面名称和模块边界：只保留当前的规范入口。"""
 
 import ast
 import unittest
 from pathlib import Path
 
-from presentation.qt.config_page import ConfigPage
 from presentation.qt.configuration_page import ConfigurationPage
-from presentation.qt.connection_page import ConnectionPage
-from presentation.qt.device_discovery_panel import DeviceDiscoveryPanel
 from presentation.qt.instrument_discovery_panel import (
     InstrumentDiscoveryPanel,
     _USE_SCREENSHOT_FRONTS,
@@ -59,25 +46,17 @@ class PageNamingTests(unittest.TestCase):
             _class_names(QT_ROOT / "instrument_setup_page.py"),
         )
 
-    def test_old_names_are_the_same_objects(self):
-        self.assertIs(ConfigPage, ConfigurationPage)
-        self.assertIs(DeviceDiscoveryPanel, InstrumentDiscoveryPanel)
-        self.assertIs(ConnectionPage, InstrumentSetupPage)
-
-    def test_old_modules_only_reexport_the_new_implementations(self):
-        for old_name, old_class, new_class in (
-            ("config_page.py", "ConfigPage", "ConfigurationPage"),
-            (
-                "device_discovery_panel.py",
-                "DeviceDiscoveryPanel",
-                "InstrumentDiscoveryPanel",
-            ),
-            ("connection_page.py", "ConnectionPage", "InstrumentSetupPage"),
+    def test_old_page_modules_and_class_aliases_are_removed(self):
+        for old_name in (
+            "config_page.py",
+            "connection_page.py",
+            "device_discovery_panel.py",
         ):
             with self.subTest(module=old_name):
-                classes = _class_names(QT_ROOT / old_name)
-                self.assertNotIn(old_class, classes)
-                self.assertNotIn(new_class, classes)
+                self.assertFalse((QT_ROOT / old_name).exists())
+        self.assertFalse(hasattr(ConfigurationPage, "ConfigPage"))
+        self.assertFalse(hasattr(InstrumentSetupPage, "ConnectionPage"))
+        self.assertFalse(hasattr(InstrumentDiscoveryPanel, "DeviceDiscoveryPanel"))
 
     def test_window_assembly_imports_the_new_modules(self):
         source = (QT_ROOT / "main_window.py").read_text(encoding="utf-8-sig")
@@ -86,24 +65,18 @@ class PageNamingTests(unittest.TestCase):
         self.assertNotIn("from presentation.qt.config_page import", source)
         self.assertNotIn("from presentation.qt.connection_page import", source)
 
-    def test_deal_layer_is_only_a_compatibility_alias(self):
+    def test_discovery_panel_exposes_only_the_current_animation_field(self):
         panel_source = (QT_ROOT / "instrument_discovery_panel.py").read_text(
             encoding="utf-8-sig"
         )
         self.assertIn("self.deal_animation = CardDealAnimation", panel_source)
-        self.assertIn("def deal_layer", panel_source)
+        self.assertNotIn("def deal_layer", panel_source)
+        self.assertFalse(hasattr(InstrumentDiscoveryPanel, "deal_layer"))
         self.assertIsInstance(_USE_SCREENSHOT_FRONTS, bool)
 
     def test_repository_code_uses_the_new_animation_field_name(self):
-        """兼容属性只留给外部调用方：仓库内代码一律访问 ``deal_animation``。
-
-        ``tools/manual_acceptance.py`` 是项目自己维护的验收脚本，不能继续依赖
-        旧字段名，否则兼容属性会悄悄变成事实上的第二套名称。
-        """
-        allowed = {
-            QT_ROOT / "instrument_discovery_panel.py",  # 兼容属性定义处
-            QT_ROOT / "device_discovery_panel.py",  # 兼容模块的说明文字
-        }
+        """生产代码和项目工具统一使用 ``deal_animation``。"""
+        allowed = {QT_ROOT / "instrument_discovery_panel.py"}
         offenders = []
         for base in (QT_ROOT, ROOT / "tools"):
             for path in sorted(base.rglob("*.py")):
@@ -115,7 +88,7 @@ class PageNamingTests(unittest.TestCase):
         self.assertEqual(
             offenders,
             [],
-            "仓库内代码应访问 deal_animation，deal_layer 只作为兼容属性: "
+            "仓库内代码应访问 deal_animation: "
             + "; ".join(offenders),
         )
         acceptance = (ROOT / "tools" / "manual_acceptance.py").read_text(

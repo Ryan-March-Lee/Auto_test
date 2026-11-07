@@ -7,7 +7,6 @@ from .spectrum_analyzer_actions import (
     SpectrumAnalyzerActions,
     SpectrumAnalyzerOptionalBandwidthDriver,
 )
-from .spectrum_analyzer_port_adapter import SpectrumAnalyzerLegacyPort, SpectrumAnalyzerPortAdapter
 from .power_supply_actions import PowerSupplyActions
 
 __all__ = [
@@ -17,7 +16,5 @@ __all__ = [
     "SpectrumAnalyzerActions",
     "SpectrumAnalyzerActionDriver",
     "SpectrumAnalyzerOptionalBandwidthDriver",
-    "SpectrumAnalyzerPortAdapter",
-    "SpectrumAnalyzerLegacyPort",
     "PowerSupplyActions",
 ]

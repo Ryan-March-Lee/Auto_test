@@ -3,7 +3,6 @@ import math
 
 from instrument.drivers import (
     ScpiPowerSupplyDriver,
-    ScpiSignalGeneratorDriver,
     SignalGeneratorDriver,
     ScpiSpectrumAnalyzerDriver,
     SpectrumAnalyzerDeviceError,
@@ -16,20 +15,19 @@ from instrument.action import (
     PowerSupplyActions,
     SignalGeneratorActions,
     SpectrumAnalyzerActions,
-    SpectrumAnalyzerPortAdapter,
 )
 from instrument.signal_generator_factory import create_signal_generator_driver
 
 
 class InstrumentDriverTests(unittest.TestCase):
     def test_drivers_implement_the_declared_ports(self):
-        self.assertIsInstance(ScpiSignalGeneratorDriver(MockScpiTransport()), SignalGeneratorPort)
+        self.assertIsInstance(SignalGeneratorDriver(MockScpiTransport()), SignalGeneratorPort)
         self.assertIsInstance(ScpiSpectrumAnalyzerDriver(MockScpiTransport()), SpectrumAnalyzerPort)
         self.assertIsInstance(ScpiPowerSupplyDriver(MockScpiTransport()), PowerSupplyPort)
 
     def test_signal_generator_formats_units_and_enforces_rf_state(self):
         transport = MockScpiTransport()
-        driver = ScpiSignalGeneratorDriver(transport)
+        driver = SignalGeneratorDriver(transport)
         driver.connect()
         driver.set_frequency_hz(1e9)
         driver.set_power_dbm(-10.5)
@@ -42,7 +40,7 @@ class InstrumentDriverTests(unittest.TestCase):
 
     def test_signal_generator_rejects_invalid_frequency_before_write(self):
         transport = MockScpiTransport()
-        driver = ScpiSignalGeneratorDriver(transport)
+        driver = SignalGeneratorDriver(transport)
         driver.connect()
         with self.assertRaises(ValueError):
             driver.set_frequency_hz(0)
@@ -101,8 +99,7 @@ class InstrumentDriverTests(unittest.TestCase):
         self.assertEqual(driver.max_power_dbm, 5)
         self.assertEqual(transport.operations, [])
 
-    def test_signal_generator_public_name_and_legacy_alias(self):
-        self.assertIs(SignalGeneratorDriver, ScpiSignalGeneratorDriver)
+    def test_signal_generator_public_name(self):
         self.assertEqual(SignalGeneratorDriver.__name__, "SignalGeneratorDriver")
 
     def test_signal_generator_action_delegates_without_scpi_knowledge(self):
@@ -123,7 +120,7 @@ class InstrumentDriverTests(unittest.TestCase):
         driver = ScpiSpectrumAnalyzerDriver(transport)
         driver.connect()
         driver.set_center_frequency_hz(2.4e9)
-        driver.configure_bandwidth_hz(1e6)
+        driver.set_span_hz(1e6)
         self.assertEqual(driver.measure_peak_power_dbm(), -23.75)
         self.assertEqual(
             transport.writes,
@@ -154,15 +151,6 @@ class InstrumentDriverTests(unittest.TestCase):
         actions.close()
         self.assertTrue(transport.closed)
 
-    def test_spectrum_analyzer_action_adapts_legacy_port_explicitly(self):
-        transport = MockScpiTransport({"CALC:MARK1:Y?": "-6.5"})
-        driver = ScpiSpectrumAnalyzerDriver(transport)
-        actions = SpectrumAnalyzerActions(SpectrumAnalyzerPortAdapter(driver))
-        actions.connect()
-        actions.set_center_frequency_hz(1e9)
-        actions.set_span_hz(2e6)
-        self.assertEqual(actions.measure_peak_power_dbm(), -6.5)
-
     def test_spectrum_analyzer_rejects_bad_reading_and_unconfigured_measurement(self):
         transport = MockScpiTransport({"CALC:MARK1:Y?": "not-a-number"})
         driver = ScpiSpectrumAnalyzerDriver(transport)
@@ -170,7 +158,7 @@ class InstrumentDriverTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             driver.measure_peak_power_dbm()
         driver.set_center_frequency_hz(1e9)
-        driver.configure_bandwidth_hz(1000)
+        driver.set_span_hz(1000)
         with self.assertRaisesRegex(ValueError, "非数字"):
             driver.measure_peak_power_dbm()
 
@@ -243,18 +231,18 @@ class InstrumentDriverTests(unittest.TestCase):
         transport = MockScpiTransport({"CALC:MARK1:Y?": "-10"})
         driver = ScpiSpectrumAnalyzerDriver(transport)
         driver.connect()
-        driver.configure_bandwidth_hz(1000)
+        driver.set_span_hz(1000)
         with self.assertRaises(RuntimeError):
-            driver.measure_power_dbm()
-        driver.configure_center_frequency_hz(1e9)
-        self.assertEqual(driver.measure_power_dbm(), -10.0)
+            driver.measure_peak_power_dbm()
+        driver.set_center_frequency_hz(1e9)
+        self.assertEqual(driver.measure_peak_power_dbm(), -10.0)
 
     def test_driver_preserves_query_failures_from_transport(self):
         transport = MockScpiTransport()
         driver = ScpiSpectrumAnalyzerDriver(transport)
         driver.connect()
-        driver.configure_center_frequency_hz(1e9)
-        driver.configure_bandwidth_hz(1000)
+        driver.set_center_frequency_hz(1e9)
+        driver.set_span_hz(1000)
         with self.assertRaisesRegex(ScpiTransportError, "未配置 SCPI 查询响应"):
             driver.measure_peak_power_dbm()
 
@@ -433,7 +421,7 @@ class InstrumentDriverTests(unittest.TestCase):
 
     def test_signal_generator_close_turns_rf_off_before_closing_transport(self):
         transport = MockScpiTransport()
-        driver = ScpiSignalGeneratorDriver(transport)
+        driver = SignalGeneratorDriver(transport)
         driver.connect()
         driver.set_frequency_hz(1e9)
         driver.set_rf_enabled(True)
@@ -444,7 +432,7 @@ class InstrumentDriverTests(unittest.TestCase):
 
     def test_signal_generator_keeps_transport_open_when_rf_off_fails(self):
         transport = MockScpiTransport(fail_on_write="OUTP:STAT OFF")
-        driver = ScpiSignalGeneratorDriver(transport)
+        driver = SignalGeneratorDriver(transport)
         driver.connect()
         driver.set_frequency_hz(1e9)
         driver.set_rf_enabled(True)
@@ -459,7 +447,7 @@ class InstrumentDriverTests(unittest.TestCase):
 
     def test_operation_timeout_is_applied_to_transport(self):
         transport = MockScpiTransport()
-        driver = ScpiSignalGeneratorDriver(transport)
+        driver = SignalGeneratorDriver(transport)
         driver.connect(timeout_s=2.5)
         self.assertEqual(transport.timeout_s, 2.5)
         driver.set_frequency_hz(1e9, timeout_s=1.25)

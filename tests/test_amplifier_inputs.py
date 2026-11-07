@@ -64,7 +64,7 @@ def _inputs(**overrides):
         "driver_enabled": False,
         "dut_power_plan": PowerPlan(power_sequence=routes),
         "channel_settings": _settings(*routes),
-        "drain_channel": DrainChannel(route=routes[-1]),
+        "drain_channel": DrainChannel(routes=(routes[-1],)),
     }
     values.update(overrides)
     return AmplifierMeasurementInputs(**values)
@@ -270,7 +270,9 @@ class AmplifierMeasurementInputsTests(unittest.TestCase):
             inputs.dut_power_plan.power_sequence,
             (_route("PS1", "CH1"), _route("PS1", "CH2")),
         )
-        self.assertEqual(inputs.drain_channel.route, _route("PS1", "CH2"))
+        self.assertEqual(
+            inputs.drain_channel.routes, (_route("PS1", "CH2"),)
+        )
 
     def test_multiple_supplies_and_arbitrary_order_are_preserved(self):
         order = (
@@ -286,7 +288,7 @@ class AmplifierMeasurementInputsTests(unittest.TestCase):
         inputs = _inputs(
             dut_power_plan=PowerPlan(power_sequence=order, inter_channel_delay_s=2.5),
             channel_settings=settings,
-            drain_channel=DrainChannel(route=order[1]),
+            drain_channel=DrainChannel(routes=(order[1],)),
         )
 
         self.assertEqual(inputs.dut_power_plan.power_sequence, order)
@@ -301,17 +303,19 @@ class AmplifierMeasurementInputsTests(unittest.TestCase):
         inputs = _inputs(
             dut_power_plan=PowerPlan(power_sequence=order),
             channel_settings=_settings(*order),
-            drain_channel=DrainChannel(route=_route("PS2", "CH2")),
+            drain_channel=DrainChannel(routes=(_route("PS2", "CH2"),)),
         )
 
         self.assertTrue(inputs.drain_channel.is_configured)
-        self.assertEqual(inputs.drain_channel.route, _route("PS2", "CH2"))
+        self.assertEqual(
+            inputs.drain_channel.routes, (_route("PS2", "CH2"),)
+        )
 
     def test_drain_is_optional_for_the_dto(self):
         inputs = _inputs(drain_channel=DrainChannel())
 
         self.assertFalse(inputs.drain_channel.is_configured)
-        self.assertIsNone(inputs.drain_channel.route)
+        self.assertEqual(inputs.drain_channel.routes, ())
 
     def test_supplies_are_grouped_by_supply_id(self):
         order = (
@@ -345,7 +349,7 @@ class AmplifierMeasurementInputsTests(unittest.TestCase):
             "driver_enabled": False,
             "dut_power_plan": PowerPlan(power_sequence=routes),
             "channel_settings": _settings(*routes),
-            "drain_channel": DrainChannel(route=routes[0]),
+            "drain_channel": DrainChannel(routes=(routes[0],)),
         }
         for name in valid:
             with self.subTest(missing=name):
@@ -445,7 +449,7 @@ class AmplifierMeasurementInputsTests(unittest.TestCase):
             _inputs(
                 dut_power_plan=PowerPlan(power_sequence=routes),
                 channel_settings=_settings(routes[0]),
-                drain_channel=DrainChannel(route=routes[0]),
+                drain_channel=DrainChannel(routes=(routes[0],)),
             )
 
         self.assertIn("缺少电压/电流设置", str(raised.exception))
@@ -459,7 +463,7 @@ class AmplifierMeasurementInputsTests(unittest.TestCase):
             _inputs(
                 dut_power_plan=PowerPlan(power_sequence=routes),
                 channel_settings=settings,
-                drain_channel=DrainChannel(route=routes[0]),
+                drain_channel=DrainChannel(routes=(routes[0],)),
             )
 
         self.assertIn("未列入上电顺序", str(raised.exception))
@@ -480,7 +484,7 @@ class AmplifierMeasurementInputsTests(unittest.TestCase):
             _inputs(
                 dut_power_plan=PowerPlan(power_sequence=routes),
                 channel_settings=_settings(*routes),
-                drain_channel=DrainChannel(route=_route("PS2", "CH1")),
+                drain_channel=DrainChannel(routes=(_route("PS2", "CH1"),)),
             )
 
         self.assertIn("不在给定的通道集合中", str(raised.exception))
@@ -490,7 +494,7 @@ class AmplifierMeasurementInputsTests(unittest.TestCase):
         inputs = _inputs(
             dut_power_plan=PowerPlan(power_sequence=order),
             channel_settings=_settings(*order),
-            drain_channel=DrainChannel(route=order[0]),
+            drain_channel=DrainChannel(routes=(order[0],)),
         )
 
         self.assertEqual(inputs.dut_supplies(), {"PS1": ("CH1",), "PS2": ("CH1",)})
@@ -590,7 +594,9 @@ class RunConfigurationInputTests(unittest.TestCase):
             (_route("PS1", "CH2"), _route("PS1", "CH1")),
         )
         self.assertEqual(inputs.dut_power_plan.inter_channel_delay_s, 2.0)
-        self.assertEqual(inputs.drain_channel.route, _route("PS1", "CH2"))
+        self.assertEqual(
+            inputs.drain_channel.routes, (_route("PS1", "CH2"),)
+        )
         self.assertEqual(inputs.channel_settings[_route("PS1", "CH2")].voltage_v, 28.0)
         self.assertEqual(inputs.dut_supplies(), {"PS1": ("CH2", "CH1")})
 

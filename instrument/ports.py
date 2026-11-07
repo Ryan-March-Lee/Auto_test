@@ -70,14 +70,14 @@ class SpectrumAnalyzerPort(Protocol):
     def connect(self, *, timeout_s: float = 10.0) -> None:
         """连接设备；超时或连接失败抛出异常。"""
 
-    def configure_center_frequency_hz(self, frequency_hz: float, *, timeout_s: float = 5.0) -> None:
+    def set_center_frequency_hz(self, frequency_hz: float, *, timeout_s: float = 5.0) -> None:
         """设置中心频率；要求已连接，frequency_hz 必须为正数。"""
 
-    def configure_bandwidth_hz(self, bandwidth_hz: float, *, timeout_s: float = 5.0) -> None:
-        """设置测量带宽；要求已连接，bandwidth_hz 必须为正数。"""
+    def set_span_hz(self, span_hz: float, *, timeout_s: float = 5.0) -> None:
+        """设置频率跨度；要求已连接，span_hz 必须为正数。"""
 
-    def measure_power_dbm(self, *, timeout_s: float = 10.0) -> float:
-        """读取功率；要求已连接并完成配置，读数失败抛出异常。"""
+    def measure_peak_power_dbm(self, *, timeout_s: float = 10.0) -> float:
+        """读取峰值功率；要求已连接并完成配置，读数失败抛出异常。"""
 
     def close(self, *, timeout_s: float = 5.0) -> None:
         """关闭连接；实现应幂等。"""

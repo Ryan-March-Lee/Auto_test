@@ -23,7 +23,7 @@
 勾选不可操作。工作值与保护勾选直接进入配置片段，保护阈值仍由工作值按 110% 自动
 推导。两个通道始终保留在配置里，上电角色、顺序与每通道间隔都在卡片上设置。
 
-电源参数、通道上电计划与兼容漏极都归本页；测试参数、运行入口与
+电源参数、通道上电计划与漏极路由都归本页；测试参数、运行入口与
 设备发现仍属于 :mod:`presentation.qt.configuration_page` 与
 :mod:`presentation.qt.instrument_setup_page`。页面只把控件组合成显式的电源片段，
 不写文件、不连接仪器、不导入基础设施或硬件模块；统一保存、版本门禁与运行冻结由
@@ -108,15 +108,15 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
     ``driver_mode_changed`` 供窗口刷新相关页面。驱放自带供电由“驱动功放上电计划为空”
     表达，页面没有单独的供电方式控件。卡片滚筒与两份计划双向同步：换档写计划，
     计划勾选变化回写滚筒；同一物理通道在一组里勾选时会自动取消另一组。效率计算
-    通道由卡面 ``Cal.`` 标记选择，页面把所有已上电的标记通道写成运行链路读取的
-    漏极集合；单条写兼容对象，多条写路由列表。
+    通道由卡面 ``Cal.`` 标记选择，页面把所有已上电的标记通道写成漏极路由集合；单条
+    写对象，多条写路由列表。
     """
 
     validation_failed = Signal(str)
     driver_mode_changed = Signal(bool)
     #: ``(supply_id, channel, marked)``：效率计算标记变化。标记是页面上唯一的选择
     #: 入口；所有已上电的标记通道会同步成运行链路的漏极集合，多条在测量时求和，
-    #: 第一条仍作为 ``read_drain_channel`` 的单漏极兼容视图。
+    #: 路由集合与 Cal. 标记一一同步，并写入配置。
     #: 标记变化本身会写进配置，因此每次真实切换都计入 dirty。
     efficiency_calibration_changed = Signal(str, str, bool)
     #: 任一电源字段变化时发出；统一会话用它汇总 dirty（步骤 13 接线）。
@@ -251,13 +251,12 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         self.back_btn.clicked.connect(self.back_requested.emit)
         self.next_btn.clicked.connect(self.next_requested.emit)
         self._refresh_card_wall()
-        # 构造页面时把文档里的漏极（单条或列表）显示成对应通道的 Cal. 标记；隐藏的兼容漏极
-        # 随后由 Cal. 标记同步，运行校验与保存仍读到同一个路由。
-        self._apply_legacy_drain_to_calibration()
+        # 构造页面时把文档里的漏极（单条或列表）投影成对应通道的 Cal. 标记。
+        self._apply_drain_routes_to_calibration()
         return self
 
     def _build_power_widgets(self, layout: Any = None) -> None:
-        # 卡片下方的「效率测量」框已删除；计划状态与兼容漏极留在页面对象里，
+        # 卡片下方的「效率测量」框已删除；计划与漏极状态留在页面对象里，
         # 不进入布局，卡片墙下面因此不再有任何表单。
         self.power_section = PowerFormSection(
             sources=self._power_supply_sources(),
@@ -300,7 +299,7 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         """把电源字段的编辑汇总成 ``fragment_changed``。
 
         卡片上的 VS/IS 与保护勾选由 :class:`PowerCardWall` 的专用信号直接汇总（见
-        :meth:`_connect_signals`）；这里只接计划顺序与漏极控件。计划对象不会因绑定
+        :meth:`_connect_signals`）；这里只接计划顺序信号。计划对象不会因绑定
         重建而换对象，因此不需要像旧标签页那样每次重连。
         """
         self._fragment_signal_connections = []
@@ -315,9 +314,6 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             connect(slot)
             self._fragment_signal_connections.append((signal, slot))
 
-        def notify(*_args: Any) -> None:
-            self._emit_fragment_changed()
-
         for group, editor in (
             ("dut", section.dut_power_plan_editor),
             ("driver", section.driver_power_plan_editor),
@@ -326,7 +322,6 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
                 editor.order_changed,
                 lambda name=group: self._on_plan_order_changed(name),
             )
-        hook(section.drain_channel_combo.currentIndexChanged, notify)
 
     def _emit_fragment_changed(self) -> None:
         """只在用户编辑时发出变更通知；回填与重建不算编辑。"""
@@ -347,7 +342,7 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         self, supply_id: str, channel: str, marked: bool
     ) -> None:
         """卡面 ``Cal.`` 标记变化：同步漏极集合并把页面级测量选择转发出去。"""
-        self._sync_legacy_drain_from_calibration()
+        self._sync_drain_routes_from_calibration()
         # Cal. 标记本身会写进 ``dut_config.drain_channel``（可能多条），因此任何
         # 标记变化都属于配置编辑；不再只在“第一个漏极”变化时才算 dirty。
         self._emit_fragment_changed()
@@ -556,10 +551,10 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         wall.set_channel_modes(modes)
         wall.set_channel_power_settings(self._channel_power_settings(modes))
         # 现有运行链路读取漏极集合：Cal. 标记是界面唯一的效率计算选择，这里把
-        # 所有已上电的标记通道写进隐藏的兼容漏极状态。多条漏极在运行阶段把各自的
-        # 直流功率相加。计划同步不清空没有 Cal. 对应的旧值，文档里显式写下的无效
+        # 所有已上电的标记通道写进漏极状态。多条漏极在运行阶段把各自的直流功率
+        # 相加。计划同步不清空没有 Cal. 对应的值，文档里显式写下的无效
         # 漏极仍交给正式校验报告。
-        self._sync_legacy_drain_from_calibration(clear=False)
+        self._sync_drain_routes_from_calibration(clear=False)
 
     def _calibration_drain_routes(self) -> tuple[tuple[str, str], ...]:
         """Cal. 标记里所有同时属于 DUT 上电计划的物理路由，按卡片顺序。"""
@@ -573,8 +568,8 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             if route in dut_routes
         )
 
-    def _sync_legacy_drain_from_calibration(self, *, clear: bool = True) -> bool:
-        """把隐藏的漏极集合对齐到 Cal. 标记；返回是否发生变化。"""
+    def _sync_drain_routes_from_calibration(self, *, clear: bool = True) -> bool:
+        """把漏极集合对齐到 Cal. 标记；返回是否发生变化。"""
         section = self.power_section
         if section is None:
             return False
@@ -582,8 +577,8 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             self._calibration_drain_routes(), clear=clear
         )
 
-    def _apply_legacy_drain_to_calibration(self) -> None:
-        """回填配置时把文档里的漏极显示成对应通道的 Cal. 标记。"""
+    def _apply_drain_routes_to_calibration(self) -> None:
+        """回填配置时把文档里的漏极投影成对应通道的 Cal. 标记。"""
         wall = self.card_wall
         drain = self._drain_channel_entry()
         if wall is None or drain is None:
@@ -1082,12 +1077,6 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
     def get_enabled_power_supplies(self) -> list[str]:
         return list(self._power_supply_choices())
 
-    def read_drain_channel(self) -> dict[str, str] | None:
-        """第一条漏极的兼容视图；未选择时返回 ``None``。"""
-        if self.power_section is None:
-            return None
-        return self.power_section.read_drain_channel()
-
     def read_drain_channels(self) -> list[dict[str, str]]:
         """当前漏极集合；多漏极按卡片顺序返回，未配置时是空列表。"""
         if self.power_section is None:
@@ -1190,7 +1179,7 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
             self.update_driver_power_ui()
             self.update_power_supply_options()
             self._refresh_card_wall()
-            self._apply_legacy_drain_to_calibration()
+            self._apply_drain_routes_to_calibration()
             self._sync_cards_from_plans()
             self.mark_clean()
         finally:
@@ -1259,7 +1248,3 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
     @property
     def driver_power_plan_editor(self):
         return self.power_section.driver_power_plan_editor
-
-    @property
-    def drain_channel_combo(self):
-        return self.power_section.drain_channel_combo

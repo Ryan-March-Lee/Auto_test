@@ -2,8 +2,8 @@
 
 本模块是配置页控件的**唯一读写边界**：页面只登记控件与连接信号，控件的文本/数值/
 业务值读取、整份配置文档的组装、回填投影与错误提示都由这里完成。它依赖的是控件的
-最小协议（``text``、``value``、``isChecked``、``currentText``；漏极下拉框另外要求
-``currentIndex`` + ``itemData``），不直接依赖 PySide6，因此可以用控件替身测试。
+最小协议（``text``、``value``、``isChecked``、``currentText``），不直接依赖 PySide6，
+因此可以用控件替身测试。
 
 职责边界：
 
@@ -11,7 +11,7 @@
   :mod:`presentation.qt.config_projection` 的实现，本模块只按页面的调用顺序把它们
   组合起来；不改写字段语义、不挑默认设备、不生成正式 ``test_plan`` / ``run_mapping``。
 - 器件电源的选择不在本模块：上电计划里的 ``(supply_id, channel)`` 路由是唯一来源，
-  下拉框只用来选漏极，业务值仍从 ``itemData`` 读取。
+  漏极路由同样由计划与卡面 ``Cal.`` 标记决定。
 - 设备绑定与正式配置业务规则分别在 :mod:`application.device_binding` 与
   :mod:`application.configuration_authoring`；本模块不包含这些规则。
 - 错误显示只把已得到的用户文案合并后交给页面的错误通道，不重新解释业务判据。

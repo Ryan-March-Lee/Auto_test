@@ -53,7 +53,7 @@ from domain.instruments.labels import IDENTITY_MISMATCHED, supply_identity_verdi
 from infrastructure.logging.app_logging import get_logger
 
 from .assembly_plan import hardware_assembly_plan
-from .drivers import ScpiPowerSupplyDriver, ScpiSignalGeneratorDriver, ScpiSpectrumAnalyzerDriver
+from .drivers import ScpiPowerSupplyDriver, SignalGeneratorDriver, ScpiSpectrumAnalyzerDriver
 from .measurement_adapter import PortMeasurementAdapter
 from .power_control import PowerGroupPlan
 from .session import ManagedInstrumentSession
@@ -364,7 +364,7 @@ def _create_hardware_measurement_port(hardware_config_path: str, *, recorder=Non
                 VisaScpiTransport(resource, recorder=recorder)
             )
 
-        signal = ScpiSignalGeneratorDriver(
+        signal = SignalGeneratorDriver(
             VisaScpiTransport(signal_resource, recorder=recorder),
             min_frequency_hz=plan.signal.min_frequency_hz,
             max_frequency_hz=plan.signal.max_frequency_hz,

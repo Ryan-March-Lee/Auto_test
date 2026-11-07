@@ -134,7 +134,7 @@ class PowerSectionInputContractTests(unittest.TestCase):
 
 
 class PowerSectionWidgetsTests(unittest.TestCase):
-    """电源分区不再有可见控件，计划状态与兼容漏极保留在不可见状态里。"""
+    """电源分区不再有可见控件，计划和漏极路由保留在不可见状态里。"""
 
     @classmethod
     def setUpClass(cls):
@@ -158,13 +158,12 @@ class PowerSectionWidgetsTests(unittest.TestCase):
         widget = self.section()
 
         self.assertFalse(hasattr(widget, "drain_channel_group"))
-        self.assertTrue(hasattr(widget, "drain_channel_combo"))
-        self.assertFalse(widget.drain_channel_combo.isVisibleTo(widget))
+        self.assertFalse(hasattr(widget, "drain_channel_combo"))
         self.assertFalse(hasattr(widget, "power_plan_group"))
         self.assertFalse(hasattr(widget, "driver_power_plan_box"))
         self.assertFalse(hasattr(widget, "power_tabs"))
         self.assertFalse(hasattr(widget, "power_config_widgets"))
-        # 计划状态仍保留，供页面回填/提交与兼容漏极使用，但不是控件。
+        # 计划状态仍保留，供页面回填与提交，但不是控件。
         self.assertFalse(hasattr(widget.dut_power_plan_editor, "list"))
         self.assertFalse(hasattr(widget.dut_power_plan_editor, "delay_spin"))
 

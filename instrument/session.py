@@ -93,9 +93,9 @@ class ManagedInstrumentSession:
         try:
             if frequency_hz is not None:
                 self.signal_generator.set_frequency_hz(frequency_hz, timeout_s=timeout_s)
-                self.spectrum_analyzer.configure_center_frequency_hz(frequency_hz, timeout_s=timeout_s)
+                self.spectrum_analyzer.set_center_frequency_hz(frequency_hz, timeout_s=timeout_s)
             if bandwidth_hz is not None:
-                self.spectrum_analyzer.configure_bandwidth_hz(bandwidth_hz, timeout_s=timeout_s)
+                self.spectrum_analyzer.set_span_hz(bandwidth_hz, timeout_s=timeout_s)
             # Drivers use this flag to guard RF enable.  Preparation is a
             # lifecycle state even when the caller leaves optional frequency
             # and bandwidth configuration to a later measurement step.

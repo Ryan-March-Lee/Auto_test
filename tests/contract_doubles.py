@@ -200,7 +200,9 @@ def amplifier_inputs(
         driver_enabled=driver_enabled,
         dut_power_plan=PowerPlan(power_sequence=routes),
         channel_settings=settings,
-        drain_channel=DrainChannel(route=drain_route),
+        drain_channel=DrainChannel(
+            routes=(drain_route,) if drain_route is not None else ()
+        ),
     )
 
 

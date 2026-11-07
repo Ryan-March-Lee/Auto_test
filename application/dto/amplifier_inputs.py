@@ -475,19 +475,12 @@ class DrainChannel:
     复用，而 :class:`AmplifierMeasurementService` 在构造时要求至少有一条漏极，缺失
     即抛 ``AmplifierInputError``。漏极不参与排序、间隔、启停或安全关断。
 
-    ``route`` 保留为第一条漏极的兼容视图（旧代码与单漏极配置只需它）；完整集合
-    从 :attr:`routes` 读取，顺序就是配置里的书写顺序。
+    路由集合的顺序就是配置里的书写顺序。
     """
 
-    route: SupplyChannel | None = None
     routes: tuple[SupplyChannel, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.route is not None and not isinstance(self.route, SupplyChannel):
-            raise AmplifierInputError(
-                "漏极路由必须是 SupplyChannel 或 None，"
-                f"收到 {type(self.route).__name__}"
-            )
         if isinstance(self.routes, (str, bytes)) or not isinstance(
             self.routes, Iterable
         ):
@@ -496,8 +489,6 @@ class DrainChannel:
                 f"收到 {type(self.routes).__name__}"
             )
         normalized: list[SupplyChannel] = []
-        if self.route is not None:
-            normalized.append(self.route)
         for item in self.routes:
             if not isinstance(item, SupplyChannel):
                 raise AmplifierInputError(
@@ -508,9 +499,6 @@ class DrainChannel:
                 raise AmplifierInputError(f"漏极通道不能重复：{item.token}")
             normalized.append(item)
         object.__setattr__(self, "routes", tuple(normalized))
-        # 单漏极兼容视图永远指向第一条；多漏极时旧代码仍能拿它做“首个漏极”判断。
-        if self.route is None and normalized:
-            object.__setattr__(self, "route", normalized[0])
 
     @property
     def is_configured(self) -> bool:
@@ -544,7 +532,7 @@ class DrainChannel:
                 routes=tuple(SupplyChannel.from_document(item) for item in value)
             )
         else:
-            drain = cls(route=SupplyChannel.from_document(value))
+            drain = cls(routes=(SupplyChannel.from_document(value),))
         if available is not None:
             drain.require_in_routes(available)
         return drain
@@ -817,5 +805,4 @@ def _channel_settings_from_document(values: Any) -> Mapping[SupplyChannel, Chann
             )
         settings[route] = ChannelSetting.from_document(item)
     return MappingProxyType(settings)
-
 

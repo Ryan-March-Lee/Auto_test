@@ -496,16 +496,6 @@ class PowerSupplyCardData:
                 return item
         raise KeyError(f"卡片里没有通道 {name!r}")
 
-    def with_channel_enabled(self, name: str, enabled: bool) -> "PowerSupplyCardData":
-        """兼容旧调用：``True`` 保留已有角色（原本是 off 时给 ``driver``）。"""
-        if not isinstance(enabled, bool):
-            raise TypeError("enabled 必须是 bool")
-        current = self.channel(name)
-        mode = current.mode if enabled and current.mode != "off" else "off"
-        if enabled and mode == "off":
-            mode = "driver"
-        return self.with_channel_mode(name, mode)
-
     def with_channel_mode(self, name: str, mode: str) -> "PowerSupplyCardData":
         """返回一份只改某个通道供电角色的新快照（其余值原样保留）。"""
         if mode not in CHANNEL_MODES:
@@ -2386,25 +2376,6 @@ class PowerSupplyCard(QWidget):
         if emit:
             self.channel_mode_changed.emit(channel, mode)
 
-    def set_channel_enabled(
-        self,
-        channel: str,
-        enabled: bool,
-        *,
-        emit: bool = False,
-    ) -> None:
-        """兼容旧调用：``True`` 保留已有角色（原本是 off 时给 ``driver``）。"""
-        if not isinstance(enabled, bool):
-            raise TypeError("enabled 必须是 bool")
-        current = self._data.channel(channel).mode
-        if not enabled:
-            mode = "off"
-        elif current == "off":
-            mode = "driver"
-        else:
-            mode = current
-        self.set_channel_mode(channel, mode, emit=emit)
-
     def set_driver_available(self, available: bool) -> None:
         """驱放测试模式关闭时把 Driver 档从循环里拿掉，并清掉已选 Driver。"""
         available = bool(available)
@@ -2420,10 +2391,6 @@ class PowerSupplyCard(QWidget):
         """把所有通道回到 OFF；不写配置、不发信号。"""
         for name in CHANNEL_NAMES:
             self.set_channel_mode(name, "off", animate=False)
-
-    def reset_channel_switches(self) -> None:
-        """兼容旧名字：把所有通道回到 OFF。"""
-        self.reset_channel_modes()
 
     def set_value(
         self,

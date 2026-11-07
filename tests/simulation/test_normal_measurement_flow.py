@@ -5,10 +5,10 @@ from pathlib import Path
 
 from infrastructure.config.json_io import load_config_file
 from instrument.ports import InstrumentState
+from instrument.session import ManagedInstrumentSession
 from instrument.simulation import (
     CommandRecorder,
     RecordedSequence,
-    SafetyInstrumentSession,
     SimulatedPowerSupply,
     SimulatedSignalGenerator,
     SimulatedSpectrumAnalyzer,
@@ -43,7 +43,7 @@ class NormalSimulatedMeasurementFlowTests(unittest.TestCase):
                 readings=(-30.0, -25.0), recorder=recorder
             )
             power_supply = SimulatedPowerSupply(recorder)
-            session = SafetyInstrumentSession(
+            session = ManagedInstrumentSession(
                 signal_generator,
                 spectrum_analyzer,
                 power_supply,
@@ -77,7 +77,7 @@ class NormalSimulatedMeasurementFlowTests(unittest.TestCase):
             self.assertEqual(session.state, InstrumentState.MEASURING)
             session.set_rf_enabled(True)
             self.assertTrue(signal_generator.rf_enabled)
-            readings = [spectrum_analyzer.measure_power_dbm() for _ in range(2)]
+            readings = [spectrum_analyzer.measure_peak_power_dbm() for _ in range(2)]
             self.assertEqual(readings, [-30.0, -25.0])
 
             result = {

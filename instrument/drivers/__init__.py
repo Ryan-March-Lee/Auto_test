@@ -1,8 +1,7 @@
 """Offline-testable SCPI instrument drivers."""
 
 from .power_supply import ScpiPowerSupplyDriver
-PowerSupplyDriver = ScpiPowerSupplyDriver
-from .signal_generator import ScpiSignalGeneratorDriver, SignalGeneratorDriver
+from .signal_generator import SignalGeneratorDriver
 from .spectrum_analyzer import (
     ScpiSpectrumAnalyzerDriver,
     SpectrumAnalyzerDeviceError,
@@ -11,8 +10,6 @@ from .spectrum_analyzer import (
 
 __all__ = [
     "ScpiPowerSupplyDriver",
-    "PowerSupplyDriver",
-    "ScpiSignalGeneratorDriver",
     "SignalGeneratorDriver",
     "ScpiSpectrumAnalyzerDriver",
     "SpectrumAnalyzerMeasurementError",

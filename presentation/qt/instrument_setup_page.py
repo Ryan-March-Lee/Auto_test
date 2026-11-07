@@ -1,8 +1,6 @@
 """仪器设置页（``InstrumentSetupPage``）：欢迎页选择测试模式之后的第一个整屏页面。
 
-模块、页面类与 ``.ui`` 骨架都使用领域名称“instrument setup”。旧名称
-``connection_page`` / ``ConnectionPage`` 仍在兼容期内由
-``presentation.qt.connection_page`` 再导出；新代码应直接导入本模块。
+模块、页面类与 ``.ui`` 骨架都使用领域名称“instrument setup”。
 
 本页只做一件事：扫描网段、勾选本次测试使用的仪器，并在点“下一步”时把所选设备的
 当前地址与设备身份（完整设备码）写进配置里的设备绑定。写入边界与派生界面（电源卡片、
@@ -570,9 +568,4 @@ class InstrumentSetupPage(QWidget):
             self.log_message.emit("设备扫描线程未能在关闭期限内停止")
 
 
-__all__ = ["ConnectionPage", "InstrumentSetupPage"]
-
-
-#: 兼容期旧类名（计划步骤 13）。新代码使用 :class:`InstrumentSetupPage`；旧名称在
-#: ``presentation.qt.connection_page`` 的兼容模块和本模块同时可用，迁移完成后删除。
-ConnectionPage = InstrumentSetupPage
+__all__ = ["InstrumentSetupPage"]

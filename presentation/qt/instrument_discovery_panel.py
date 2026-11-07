@@ -1,9 +1,7 @@
 """仪器发现面板（``InstrumentDiscoveryPanel``）：扫描网段、以卡片展示发现结果并选择
 本次测试所需设备。
 
-模块与面板类都使用领域名称“instrument discovery”。旧名称
-``device_discovery_panel`` / ``DeviceDiscoveryPanel`` 仍在兼容期内由
-``presentation.qt.device_discovery_panel`` 再导出；新代码应直接导入本模块。
+模块与面板类都使用领域名称“instrument discovery”。
 
 边界：
 
@@ -128,7 +126,6 @@ from .card_deal_animation import (
     CardDealAnimation,
     CardDealItem,
 )
-# 兼容期再导出：旧 ``device_discovery_panel`` 模块仍从本模块的 ``__all__`` 取这个名字。
 from .config_form_bindings import binding_device_key  # noqa: F401
 from .device_cards import (
     CARD_HEIGHT,
@@ -555,15 +552,6 @@ class InstrumentDiscoveryPanel(QWidget):
     def animation_overlay(self) -> AnimationOverlay | None:
         """当前挂着的页面级覆盖层；面板单独使用时为 ``None``。"""
         return self._animation_overlay
-
-    @property
-    def deal_layer(self) -> CardDealAnimation:
-        """兼容期旧字段名；新代码使用 :attr:`deal_animation`。"""
-        return self.deal_animation
-
-    @deal_layer.setter
-    def deal_layer(self, value: CardDealAnimation) -> None:
-        self.deal_animation = value
 
     def hideEvent(self, event):  # noqa: N802 - Qt 覆盖方法
         """面板被藏起来：收掉正在播的发牌，恢复卡片与流程。
@@ -2387,7 +2375,6 @@ __all__ = [
     "BOX_STATE_BUSY",
     "BOX_STATE_IDLE",
     "BOX_STATE_RESULTS",
-    "DeviceDiscoveryPanel",
     "DiscoveryPhase",
     "InstrumentDiscoveryPanel",
     "DiscoveryWorker",
@@ -2404,8 +2391,3 @@ __all__ = [
     "role_label",
     "subnet_from_address",
 ]
-
-
-#: 兼容期旧类名（计划步骤 13）。新代码使用 :class:`InstrumentDiscoveryPanel`；旧名称在
-#: ``presentation.qt.device_discovery_panel`` 的兼容模块和本模块同时可用，迁移完成后删除。
-DeviceDiscoveryPanel = InstrumentDiscoveryPanel

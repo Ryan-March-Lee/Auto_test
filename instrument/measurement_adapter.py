@@ -110,7 +110,7 @@ class PortMeasurementAdapter:
     def set_frequency(self, frequency_ghz: float, *, timeout_s: float = 5.0) -> None:
         frequency_hz = float(frequency_ghz) * 1e9
         self.signal_generator.set_frequency_hz(frequency_hz, timeout_s=timeout_s)
-        self.spectrum_analyzer.configure_center_frequency_hz(frequency_hz, timeout_s=timeout_s)
+        self.spectrum_analyzer.set_center_frequency_hz(frequency_hz, timeout_s=timeout_s)
 
     def set_power(self, power_dbm: float, *, timeout_s: float = 5.0) -> None:
         was_enabled = bool(self.signal_generator.rf_enabled)
@@ -123,13 +123,13 @@ class PortMeasurementAdapter:
             self.signal_generator.set_rf_enabled(True, timeout_s=timeout_s)
 
     def set_center_frequency(self, frequency_ghz: float, *, timeout_s: float = 5.0) -> None:
-        self.spectrum_analyzer.configure_center_frequency_hz(float(frequency_ghz) * 1e9, timeout_s=timeout_s)
+        self.spectrum_analyzer.set_center_frequency_hz(float(frequency_ghz) * 1e9, timeout_s=timeout_s)
 
     def set_span(self, span_mhz: float, *, timeout_s: float = 5.0) -> None:
-        self.spectrum_analyzer.configure_bandwidth_hz(float(span_mhz) * 1e6, timeout_s=timeout_s)
+        self.spectrum_analyzer.set_span_hz(float(span_mhz) * 1e6, timeout_s=timeout_s)
 
     def measure_power_with_average(self, *, timeout_s: float = 10.0) -> float:
-        return self.spectrum_analyzer.measure_power_dbm(timeout_s=timeout_s)
+        return self.spectrum_analyzer.measure_peak_power_dbm(timeout_s=timeout_s)
 
     def rf_output_on(self, *, timeout_s: float = 5.0) -> None:
         self.session.set_rf_enabled(True, timeout_s=timeout_s)

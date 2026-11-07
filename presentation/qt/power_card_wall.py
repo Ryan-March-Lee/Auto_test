@@ -412,10 +412,6 @@ class PowerCardWall(QWidget):
             card.reset_channel_modes()
             self._sync_cell(supply_id, card.data)
 
-    def reset_channel_switches(self) -> None:
-        """兼容旧名字：把所有卡片的通道角色回到 OFF。"""
-        self.reset_channel_modes()
-
     def _sync_cell(self, supply_id: str, data: PowerSupplyCardData) -> None:
         for index, cell in enumerate(self._cells):
             if cell.supply_id == supply_id:

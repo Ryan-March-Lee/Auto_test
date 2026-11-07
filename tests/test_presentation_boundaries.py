@@ -123,10 +123,6 @@ REGISTERED_PAGE_MODULES = frozenset(
 )
 PAGE_ASSEMBLY_PATHS = frozenset({"main_window.py", "pages.py"})
 
-# 步骤 13 的命名迁移兼容期：这些旧模块只再导出新模块的页面类型，不再承载实现。
-# 它们允许导入新页面模块（否则兼容入口无法工作），迁移完成后随旧模块一起删除。
-COMPATIBILITY_PAGE_MODULES = frozenset({"config_page.py", "connection_page.py"})
-
 # 页面构造的唯一上下文。新增页面动作应经 ViewModel/Application facade 与页面自己的
 # 一个信号完成，不得把新回调塞进 PageContext；确需调整契约时先更新分层规则文档。
 PAGE_CONTEXT_FIELDS = (
@@ -672,8 +668,6 @@ class LongTermChangeBoundaryTests(unittest.TestCase):
         violations = []
         for path in sorted(QT_ROOT.rglob("*.py")):
             if _is_page_assembly_module(path):
-                continue
-            if _module_relative_path(path) in COMPATIBILITY_PAGE_MODULES:
                 continue
             imported = _imported_page_modules(_tree(path))
             if imported:

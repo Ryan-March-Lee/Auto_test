@@ -467,7 +467,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
                     card.channel_power_delay(channel),
                     DEFAULT_POWER_ON_DELAY_S,
                 )
-        self.assertIsNone(window.power_page.read_drain_channel())
+        self.assertEqual(window.power_page.read_drain_channels(), [])
         self.assertEqual(
             window.power_page.build_config()["power_supply_assignment"][
                 "dut_amplifier"
@@ -837,7 +837,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
             "power_on_delay"
         ].setValue(1.5)
         expected_plan = power.dut_power_plan_editor.read_plan()
-        expected_drain = power.read_drain_channel()
+        expected_drain = power.read_drain_channels()
         self.assertTrue(window.configuration_editor.is_dirty())
 
         window.config_page.apply_device_selection(
@@ -869,7 +869,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertEqual(channel["voltage"].value(), 7.5)
         self.assertTrue(channel["current_protection_enabled"].isChecked())
         self.assertEqual(power.dut_power_plan_editor.read_plan(), expected_plan)
-        self.assertEqual(power.read_drain_channel(), expected_drain)
+        self.assertEqual(power.read_drain_channels(), expected_drain)
         self.assertEqual(
             power.power_config_widgets["DP8B1519"]["channels"]["CH1"][
                 "power_on_delay"

@@ -328,26 +328,17 @@ class ProductionDependencyTests(unittest.TestCase):
             "config_validation",
             "infrastructure.persistence.json_config_repository",
         }
-        compatibility = {
-            ROOT / "infrastructure" / "persistence" / "json_config_repository.py",
-        }
         violations = []
         for source_path in _production_sources():
-            if source_path in compatibility:
-                continue
             for module, _alias, _name in _imported_modules(_tree(source_path)):
                 if module in forbidden:
                     violations.append(f"{source_path.relative_to(ROOT)} imports {module}")
         self.assertEqual(violations, [])
 
-    def test_configuration_legacy_persistence_path_is_reexport_only(self):
-        source_path = ROOT / "infrastructure" / "persistence" / "json_config_repository.py"
-        definitions = {
-            node.name
-            for node in _tree(source_path).body
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-        }
-        self.assertEqual(definitions, set())
+    def test_configuration_legacy_persistence_path_is_removed(self):
+        self.assertFalse(
+            (ROOT / "infrastructure" / "persistence" / "json_config_repository.py").exists()
+        )
 
     def test_persistence_implementations_have_one_infrastructure_boundary(self):
         result_adapter_path = ROOT / "infrastructure" / "persistence" / "result_repository.py"
@@ -382,7 +373,6 @@ class ProductionDependencyTests(unittest.TestCase):
             history_path.exists(),
             "步骤 6 已删除旧的全局历史仓储，历史查看不得再扫描 test_results 根目录",
         )
-        self.assertTrue((ROOT / "infrastructure" / "persistence" / "json_config_repository.py").is_file())
         self.assertTrue((ROOT / "infrastructure" / "persistence" / "json_result_repository.py").is_file())
 
     def test_configuration_page_owns_configuration_ui(self):

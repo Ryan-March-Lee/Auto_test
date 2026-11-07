@@ -1,8 +1,6 @@
 """配置页面及其控件联动（``ConfigurationPage``）。
 
-模块与页面类都使用领域名称“configuration”。旧名称 ``config_page`` /
-``ConfigPage`` 仍在兼容期内由 ``presentation.qt.config_page`` 再导出；新代码应直接
-从本模块导入。
+模块与页面类都使用领域名称“configuration”。
 
 页面拥有配置控件，窗口只通过信号协调保存和连接。该模块只负责控件组合、用户意图
 转发和派生界面状态（驱动模式）；电源参数、通道上电计划与漏极已移入
@@ -74,7 +72,6 @@ from .theme import PAGE_CONTENT_MAX_WIDTH, set_button_variant
 
 __all__ = [
     "ConfigBackfillError",
-    "ConfigPage",
     "ConfigurationPage",
 ]
 
@@ -574,8 +571,3 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         built = self.build_config(self.config)
         self._dirty_baseline = copy.deepcopy(built)
         self.view_model.load(built, bindings=self.device_bindings)
-
-
-#: 兼容期旧类名（计划步骤 13）。新代码使用 :class:`ConfigurationPage`；旧名称在
-#: ``presentation.qt.config_page`` 的兼容模块和本模块同时可用，迁移完成后再删除。
-ConfigPage = ConfigurationPage

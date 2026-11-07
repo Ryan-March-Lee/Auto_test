@@ -148,23 +148,17 @@ class SimulatedSpectrumAnalyzer(_SimulatedDevice):
         self._command("connect")
         self.connected = True
 
-    def configure_center_frequency_hz(self, frequency_hz, *, timeout_s=5.0):
+    def set_center_frequency_hz(self, frequency_hz, *, timeout_s=5.0):
         self._command("center_frequency_hz", frequency_hz)
         if not self.connected or frequency_hz <= 0:
             raise ValueError("analyzer must be connected and frequency positive")
         self.configured = True
 
-    def configure_bandwidth_hz(self, bandwidth_hz, *, timeout_s=5.0):
-        self._command("bandwidth_hz", bandwidth_hz)
-        if not self.connected or bandwidth_hz <= 0:
-            raise ValueError("analyzer must be connected and bandwidth positive")
-        self.configured = True
-
-    def set_center_frequency_hz(self, frequency_hz, *, timeout_s=5.0):
-        self.configure_center_frequency_hz(frequency_hz, timeout_s=timeout_s)
-
     def set_span_hz(self, span_hz, *, timeout_s=5.0):
-        self.configure_bandwidth_hz(span_hz, timeout_s=timeout_s)
+        self._command("span_hz", span_hz)
+        if not self.connected or span_hz <= 0:
+            raise ValueError("analyzer must be connected and span positive")
+        self.configured = True
 
     def set_resolution_bandwidth_hz(self, bandwidth_hz, *, timeout_s=5.0):
         self._command("resolution_bandwidth_hz", bandwidth_hz)
@@ -176,10 +170,12 @@ class SimulatedSpectrumAnalyzer(_SimulatedDevice):
         if not self.connected or bandwidth_hz <= 0:
             raise ValueError("analyzer must be connected and video bandwidth positive")
 
-    def measure_power_dbm(self, *, timeout_s=10.0):
-        self._command("measure_power_dbm")
-        if self.failure_injector.should_fail("measure_power_dbm", phase="query"):
-            raise RuntimeError("simulated spectrum_analyzer query failure: measure_power_dbm")
+    def measure_peak_power_dbm(self, *, timeout_s=10.0):
+        self._command("measure_peak_power_dbm")
+        if self.failure_injector.should_fail("measure_peak_power_dbm", phase="query"):
+            raise RuntimeError(
+                "simulated spectrum_analyzer query failure: measure_peak_power_dbm"
+            )
         if not self.connected or not self.configured:
             raise RuntimeError("analyzer must be connected and configured")
         if not self.readings:
@@ -192,9 +188,6 @@ class SimulatedSpectrumAnalyzer(_SimulatedDevice):
             value = self.readings[min(self.read_index, len(self.readings) - 1)]
         self.read_index += 1
         return float(value)
-
-    def measure_peak_power_dbm(self, *, timeout_s=10.0):
-        return self.measure_power_dbm(timeout_s=timeout_s)
 
     def close(self, *, timeout_s=5.0):
         if self.connected:
@@ -342,9 +335,3 @@ class RecordedSequence:
         if not isinstance(commands, list) or any(not isinstance(item, list) or len(item) != 3 for item in commands):
             raise ValueError("invalid recorded command sequence")
         return cls([tuple(item) for item in commands])
-
-
-# 迁移期兼容名称。正式实现位于 instrument.session，仿真设备仍可直接注入。
-from .session import ManagedInstrumentSession
-
-SafetyInstrumentSession = ManagedInstrumentSession

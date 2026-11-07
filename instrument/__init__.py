@@ -19,7 +19,6 @@ from .simulation import (
     SimulatedSignalGenerator,
     SimulatedSpectrumAnalyzer,
 )
-SafetyInstrumentSession = ManagedInstrumentSession
 from .transport import (
     MockScpiTransport,
     ScpiTransport,
@@ -29,8 +28,6 @@ from .transport import (
 )
 from .drivers import (
     ScpiPowerSupplyDriver,
-    PowerSupplyDriver,
-    ScpiSignalGeneratorDriver,
     SignalGeneratorDriver,
     ScpiSpectrumAnalyzerDriver,
 )
@@ -40,7 +37,6 @@ from .action import (
     PowerSupplyActions,
     SignalGeneratorActions,
     SpectrumAnalyzerActions,
-    SpectrumAnalyzerPortAdapter,
 )
 from .signal_generator_factory import create_signal_generator_driver
 from .flow import (
@@ -66,7 +62,6 @@ __all__ = [
     "CommandRecorder",
     "FailureInjector",
     "RecordedSequence",
-    "SafetyInstrumentSession",
     "SimulatedPowerSupply",
     "SimulatedSignalGenerator",
     "SimulatedSpectrumAnalyzer",
@@ -76,13 +71,10 @@ __all__ = [
     "ScpiTransportTimeoutError",
     "VisaScpiTransport",
     "ScpiPowerSupplyDriver",
-    "PowerSupplyDriver",
-    "ScpiSignalGeneratorDriver",
     "SignalGeneratorDriver",
     "ScpiSpectrumAnalyzerDriver",
     "SignalGeneratorActions",
     "SpectrumAnalyzerActions",
-    "SpectrumAnalyzerPortAdapter",
     "PowerSupplyActions",
     "ActionContext",
     "ActionLogger",

@@ -69,7 +69,6 @@ class ConfigurationPageTests(unittest.TestCase):
             "power_config_widgets",
             "power_assignment_group",
             "dut_power_plan_editor",
-            "drain_channel_combo",
         ):
             with self.subTest(name=name):
                 self.assertFalse(hasattr(page, name))

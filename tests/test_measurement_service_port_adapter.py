@@ -1,12 +1,12 @@
 import unittest
 
 from instrument.measurement_adapter import PortMeasurementAdapter
+from instrument.session import ManagedInstrumentSession
 from application.measurements.services import DriverPowerMappingService
 from instrument.flow.cleanup import SafetyCleanupAdapter
 from instrument.power_control import PowerChannelStep, PowerGroupPlan
 from instrument.simulation import (
     CommandRecorder,
-    SafetyInstrumentSession,
     SimulatedPowerSupply,
     SimulatedSignalGenerator,
     SimulatedSpectrumAnalyzer,
@@ -23,7 +23,7 @@ class MeasurementServicePortAdapterTests(unittest.TestCase):
         sg = SimulatedSignalGenerator(recorder)
         sa = SimulatedSpectrumAnalyzer(readings=(-30.0,), recorder=recorder)
         ps = SimulatedPowerSupply(recorder)
-        session = SafetyInstrumentSession(sg, sa, ps, ("A", "B"))
+        session = ManagedInstrumentSession(sg, sa, ps, ("A", "B"))
         session.validate()
         session.connect()
         session.prepare(frequency_hz=1e9, bandwidth_hz=10e6)
@@ -77,7 +77,7 @@ class MeasurementServicePortAdapterTests(unittest.TestCase):
 
     def test_measurement_service_failure_still_closes_session(self):
         adapter, session, recorder = self.make_adapter()
-        adapter.spectrum_analyzer.inject_failure("measure_power_dbm", phase="query")
+        adapter.spectrum_analyzer.inject_failure("measure_peak_power_dbm", phase="query")
         with self.assertRaises(RuntimeError):
             DriverPowerMappingService(
                 {
@@ -140,7 +140,7 @@ class MeasurementServicePortAdapterTests(unittest.TestCase):
     def test_emergency_log_names_the_short_label_and_keeps_the_routing_token(self):
         """急停日志写 ``短标签/CHx``；安全记录仍存路由 token，供程序再对一次。"""
         recorder = CommandRecorder()
-        session = SafetyInstrumentSession(
+        session = ManagedInstrumentSession(
             SimulatedSignalGenerator(recorder),
             SimulatedSpectrumAnalyzer(recorder=recorder),
             SimulatedPowerSupply(recorder),
@@ -172,7 +172,7 @@ class MeasurementServicePortAdapterTests(unittest.TestCase):
 
     def test_driver_and_dut_power_channels_must_not_overlap(self):
         recorder = CommandRecorder()
-        session = SafetyInstrumentSession(
+        session = ManagedInstrumentSession(
             SimulatedSignalGenerator(recorder),
             SimulatedSpectrumAnalyzer(recorder=recorder),
             SimulatedPowerSupply(recorder),

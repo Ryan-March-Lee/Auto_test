@@ -223,7 +223,7 @@ class CreateRunSnapshotTests(unittest.TestCase):
         configuration = RunConfiguration(
             replace(
                 configuration.test_plan,
-                drain_channel=DrainChannel(route=route),
+                drain_channel=DrainChannel(routes=(route,)),
             ),
             replace(
                 configuration.run_mapping,

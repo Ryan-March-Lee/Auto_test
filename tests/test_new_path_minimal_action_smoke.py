@@ -53,13 +53,13 @@ class FakeDriver:
         self.transport.write(f"OUTP:STAT {'ON' if enabled else 'OFF'}")
         self.rf_enabled = enabled
 
-    def configure_center_frequency_hz(self, value, *, timeout_s):
+    def set_center_frequency_hz(self, value, *, timeout_s):
         self.transport.write(f"FREQ:CENT {value:g}")
 
-    def configure_bandwidth_hz(self, value, *, timeout_s):
+    def set_span_hz(self, value, *, timeout_s):
         self.transport.write(f"FREQ:SPAN {value:g}")
 
-    def measure_power_dbm(self, *, timeout_s):
+    def measure_peak_power_dbm(self, *, timeout_s):
         self.transport.write("CALC:MARK1:MAX")
         return float(self.transport.query("CALC:MARK1:Y?"))
 
@@ -89,10 +89,10 @@ class FakePort:
 
     def set_frequency(self, value, *, timeout_s):
         self.signal_generator.set_frequency_hz(value * 1e9, timeout_s=timeout_s)
-        self.spectrum_analyzer.configure_center_frequency_hz(value * 1e9, timeout_s=timeout_s)
+        self.spectrum_analyzer.set_center_frequency_hz(value * 1e9, timeout_s=timeout_s)
 
     def set_span(self, value, *, timeout_s):
-        self.spectrum_analyzer.configure_bandwidth_hz(value * 1e6, timeout_s=timeout_s)
+        self.spectrum_analyzer.set_span_hz(value * 1e6, timeout_s=timeout_s)
 
     def set_power(self, value, *, timeout_s):
         self.signal_generator.set_power_dbm(value, timeout_s=timeout_s)
@@ -109,7 +109,7 @@ class FakePort:
     def measure_power_with_average(self, *, timeout_s):
         if self.measurement_error:
             raise self.measurement_error
-        return self.spectrum_analyzer.measure_power_dbm(timeout_s=timeout_s)
+        return self.spectrum_analyzer.measure_peak_power_dbm(timeout_s=timeout_s)
 
     def emergency_power_off_all(self, *, timeout_s):
         self._last_emergency_power_off_succeeded = []

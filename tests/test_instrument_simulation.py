@@ -1,12 +1,12 @@
 import unittest
 
 from instrument.ports import InstrumentState
+from instrument.session import ManagedInstrumentSession
 from instrument.action import SpectrumAnalyzerActions
 from instrument.simulation import (
     CommandRecorder,
     FailureInjector,
     RecordedSequence,
-    SafetyInstrumentSession,
     SimulatedPowerSupply,
     SimulatedSignalGenerator,
     SimulatedSpectrumAnalyzer,
@@ -19,7 +19,7 @@ class SimulationLifecycleTests(unittest.TestCase):
         self.sg = SimulatedSignalGenerator(self.recorder)
         self.sa = SimulatedSpectrumAnalyzer((-30.0, -25.0), self.recorder)
         self.ps = SimulatedPowerSupply(self.recorder)
-        self.session = SafetyInstrumentSession(
+        self.session = ManagedInstrumentSession(
             self.sg, self.sa, self.ps, ("A", "B")
         )
 
@@ -33,8 +33,8 @@ class SimulationLifecycleTests(unittest.TestCase):
         self.session.power_on()
         self.session.start_measurement()
         self.session.set_rf_enabled(True)
-        self.assertEqual(self.sa.measure_power_dbm(), -30.0)
-        self.assertEqual(self.sa.measure_power_dbm(), -25.0)
+        self.assertEqual(self.sa.measure_peak_power_dbm(), -30.0)
+        self.assertEqual(self.sa.measure_peak_power_dbm(), -25.0)
         self.session.close()
         actions = [(device, action, value) for device, action, value in self.recorder.commands]
         rf_off = actions.index(("signal_generator", "rf_off", None))
@@ -86,7 +86,7 @@ class SimulationLifecycleTests(unittest.TestCase):
 
     def test_duplicate_power_channels_are_rejected_before_connect(self):
         with self.assertRaisesRegex(ValueError, "不能重复"):
-            SafetyInstrumentSession(self.sg, self.sa, self.ps, ("A", "A"))
+            ManagedInstrumentSession(self.sg, self.sa, self.ps, ("A", "A"))
         self.assertEqual(self.recorder.commands, [])
 
     def test_rf_off_failure_keeps_signal_generator_open_for_retry(self):
@@ -141,9 +141,9 @@ class SimulationLifecycleTests(unittest.TestCase):
     def test_setting_reading_and_shutdown_failures_are_injectable_and_cleanup_continues(self):
         self._prepare()
         self.session.power_on()
-        self.sa.fail_on = "measure_power_dbm"
+        self.sa.fail_on = "measure_peak_power_dbm"
         with self.assertRaisesRegex(RuntimeError, "spectrum analyzer failure"):
-            self.sa.measure_power_dbm()
+            self.sa.measure_peak_power_dbm()
         self.ps.fail_on = "output_off"
         with self.assertRaisesRegex(RuntimeError, "cleanup failed"):
             self.session.close()
@@ -192,9 +192,9 @@ class SimulationLifecycleTests(unittest.TestCase):
         self.session.power_on()
         self.session.start_measurement()
         self.session.set_rf_enabled(True)
-        self.sa.inject_failure("measure_power_dbm", phase="query")
+        self.sa.inject_failure("measure_peak_power_dbm", phase="query")
         with self.assertRaisesRegex(RuntimeError, "query failure"):
-            self.sa.measure_power_dbm()
+            self.sa.measure_peak_power_dbm()
 
         self.session.close()
         self.assertFalse(self.sg.rf_enabled)
@@ -274,8 +274,8 @@ class SimulationLifecycleTests(unittest.TestCase):
         sg.prepared = True
         sg.set_power_dbm(10.0)
         sa.connect()
-        sa.configure_center_frequency_hz(1e9)
-        self.assertEqual(sa.measure_power_dbm(), 7.0)
+        sa.set_center_frequency_hz(1e9)
+        self.assertEqual(sa.measure_peak_power_dbm(), 7.0)
         ps.connect()
         ps.set_output_enabled("A", True)
         self.assertEqual(ps.read_voltage("A"), 2.8)
@@ -293,7 +293,7 @@ class SimulationLifecycleTests(unittest.TestCase):
         self.recorder.commands = [
             ("power_supply", "set_voltage", ("A", 2.8)),
             ("power_supply", "output_on", "A"),
-            ("spectrum_analyzer", "measure_power_dbm", None),
+            ("spectrum_analyzer", "measure_peak_power_dbm", None),
             ("power_supply", "output_on", "B"),
         ]
         sequence = RecordedSequence.from_recorder(self.recorder)
@@ -304,7 +304,7 @@ class SimulationLifecycleTests(unittest.TestCase):
         )
         sequence.assert_action_order(
             ("power_supply", "output_on"),
-            ("spectrum_analyzer", "measure_power_dbm"),
+            ("spectrum_analyzer", "measure_peak_power_dbm"),
         )
 
         with self.assertRaisesRegex(AssertionError, "nearby commands"):
@@ -344,11 +344,11 @@ class SimulationLifecycleTests(unittest.TestCase):
         self.assertFalse(self.sg.connected)
 
         self.sa.connect()
-        self.sa.configure_center_frequency_hz(1e9)
-        self.sa.inject_failure("measure_power_dbm", phase="query")
+        self.sa.set_center_frequency_hz(1e9)
+        self.sa.inject_failure("measure_peak_power_dbm", phase="query")
         with self.assertRaisesRegex(RuntimeError, "query failure"):
-            self.sa.measure_power_dbm()
-        self.assertEqual(self.sa.measure_power_dbm(), -30.0)
+            self.sa.measure_peak_power_dbm()
+        self.assertEqual(self.sa.measure_peak_power_dbm(), -30.0)
 
     def test_failure_injector_rejects_unknown_phase(self):
         with self.assertRaises(ValueError):

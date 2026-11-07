@@ -146,7 +146,7 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
             ["PS1/CH2"],
         )
         self.assertEqual(
-            use_case.inputs.drain_channel.route.token, "PS1/CH2"
+            use_case.inputs.drain_channel.routes[0].token, "PS1/CH2"
         )
         self.assertEqual(
             use_case.inputs.channel_settings[

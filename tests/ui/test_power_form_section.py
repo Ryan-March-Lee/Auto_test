@@ -1,6 +1,6 @@
 """步骤 11：独立电源表单的纯 UI 测试。
 
-覆盖组上电计划的成员/顺序、隐藏的兼容漏极状态、文档回填，以及绑定变化刷新候选时
+覆盖组上电计划的成员/顺序、漏极路由状态、文档回填，以及绑定变化刷新候选时
 保留尚未提交的计划与漏极。计划不再有独立的编辑框：成员与顺序都由卡片设置，这里只
 验证 ``PowerPlanState`` 的读数与页面依赖的信号。测试只构造 ``PowerFormSection``
 与它的内部状态，不启动整个配置页；通道参数已融合到电源卡片，可见控件归卡片。
@@ -83,8 +83,7 @@ class PowerSectionLayoutTests(unittest.TestCase):
         self.addCleanup(section.deleteLater)
 
         self.assertFalse(hasattr(section, "drain_channel_group"))
-        self.assertTrue(hasattr(section, "drain_channel_combo"))
-        self.assertFalse(section.drain_channel_combo.isVisibleTo(section))
+        self.assertFalse(hasattr(section, "drain_channel_combo"))
         self.assertFalse(hasattr(section, "power_plan_group"))
         self.assertFalse(hasattr(section, "driver_power_plan_box"))
         for editor in (
@@ -211,16 +210,11 @@ class DrainSelectionTests(unittest.TestCase):
         self.addCleanup(section.deleteLater)
 
         self.assertEqual(
-            section.read_drain_channel(),
-            {"supply_id": "DP8B0885", "channel": "CH2"},
+            section.read_drain_channels(),
+            [{"supply_id": "DP8B0885", "channel": "CH2"}],
         )
-        options = [
-            section.drain_channel_combo.itemData(index)
-            for index in range(section.drain_channel_combo.count())
-        ]
-        self.assertIn(("DP8B0885", "CH2"), options)
 
-    def test_multiple_drains_are_read_in_order_and_the_first_is_the_compat_view(self):
+    def test_multiple_drains_are_read_in_order(self):
         section = _section(
             plans={"dut": _plan(("DP8B0885", "CH1"), ("DP8B0885", "CH2"))},
             drain=[
@@ -236,10 +230,6 @@ class DrainSelectionTests(unittest.TestCase):
                 {"supply_id": "DP8B0885", "channel": "CH2"},
                 {"supply_id": "DP8B0885", "channel": "CH1"},
             ],
-        )
-        self.assertEqual(
-            section.read_drain_channel(),
-            {"supply_id": "DP8B0885", "channel": "CH2"},
         )
 
     def test_selecting_multiple_drains_replaces_the_set(self):
@@ -261,7 +251,7 @@ class DrainSelectionTests(unittest.TestCase):
         self.assertTrue(section.select_drain_routes(()), "没有标记时要能清空")
         self.assertEqual(section.read_drain_channels(), [])
 
-    def test_an_invalid_multi_drain_stays_visible_for_validation(self):
+    def test_an_invalid_multi_drain_is_preserved_for_validation(self):
         section = _section(
             plans={"dut": _plan(("DP8B0885", "CH1"))},
             drain=[
@@ -279,45 +269,24 @@ class DrainSelectionTests(unittest.TestCase):
             ],
             "无效漏极不能被静默清空，交给正式校验",
         )
-        self.assertTrue(
-            any(
-                "无效" in section.drain_channel_combo.itemText(index)
-                for index in range(section.drain_channel_combo.count())
-            ),
-            "无效漏极要留在候选里交给正式校验",
-        )
 
-    def test_an_unset_drain_reads_as_none(self):
+    def test_an_unset_drain_reads_as_an_empty_route_list(self):
         section = _section()
         self.addCleanup(section.deleteLater)
 
-        self.assertIsNone(section.read_drain_channel())
+        self.assertEqual(section.read_drain_channels(), [])
 
-    def test_an_invalid_existing_drain_stays_visible_for_validation(self):
+    def test_an_invalid_existing_drain_is_preserved_for_validation(self):
         section = _section(drain={"supply_id": "DP8B9999", "channel": "CH1"})
         self.addCleanup(section.deleteLater)
 
         self.assertEqual(
-            section.read_drain_channel(),
-            {"supply_id": "DP8B9999", "channel": "CH1"},
-            "不在当前候选里的漏极不能被静默清空",
+            section.read_drain_channels(),
+            [{"supply_id": "DP8B9999", "channel": "CH1"}],
+            "不在当前候选里的漏极仍保留给正式校验",
         )
-        self.assertIn("无效", section.drain_channel_combo.currentText())
 
-    def test_drain_options_are_limited_to_the_active_plan(self):
-        section = _section(
-            plans={"dut": _plan(("DP8B0885", "CH2"))},
-        )
-        self.addCleanup(section.deleteLater)
-
-        options = [
-            section.drain_channel_combo.itemData(index)
-            for index in range(1, section.drain_channel_combo.count())
-        ]
-
-        self.assertEqual(options, [("DP8B0885", "CH2")])
-
-    def test_removing_the_drain_channel_keeps_it_visible_as_invalid(self):
+    def test_removing_a_route_from_the_plan_preserves_the_drain_for_validation(self):
         section = _section(
             plans={"dut": _plan(("DP8B0885", "CH2"), ("DP8B1519", "CH1"))},
             drain={"supply_id": "DP8B0885", "channel": "CH2"},
@@ -327,11 +296,10 @@ class DrainSelectionTests(unittest.TestCase):
         section.dut_power_plan_editor.set_route_checked(("DP8B0885", "CH2"), False)
 
         self.assertEqual(
-            section.read_drain_channel(),
-            {"supply_id": "DP8B0885", "channel": "CH2"},
-            "移出计划不静默清空漏极，保留旧值交给校验",
+            section.read_drain_channels(),
+            [{"supply_id": "DP8B0885", "channel": "CH2"}],
+            "移出计划不静默清空漏极，保留原值交给校验",
         )
-        self.assertIn("无效", section.drain_channel_combo.currentText())
 
 
 class PowerPlanBackfillTests(unittest.TestCase):
@@ -366,8 +334,8 @@ class PowerPlanBackfillTests(unittest.TestCase):
             "组默认间隔不再由编辑器写入",
         )
         self.assertEqual(
-            section.read_drain_channel(),
-            {"supply_id": "DP8B1519", "channel": "CH1"},
+            section.read_drain_channels(),
+            [{"supply_id": "DP8B1519", "channel": "CH1"}],
         )
 
     def test_reading_the_form_writes_all_drains_as_a_list(self):
@@ -469,7 +437,7 @@ class PowerFormRebuildTests(unittest.TestCase):
         section.dut_power_plan_editor.set_route_checked(("DP8B1519", "CH2"), True)
         section.dut_power_plan_editor.set_route_order(("DP8B1519", "CH2"), 1)
         expected_plan = section.dut_power_plan_editor.read_plan()
-        expected_drain = section.read_drain_channel()
+        expected_drain = section.read_drain_channels()
 
         section.set_power_choices(_source(*SUPPLIES), _choices(*SUPPLIES))
 
@@ -478,7 +446,7 @@ class PowerFormRebuildTests(unittest.TestCase):
             expected_plan,
             "绑定变化刷新候选时保留操作者尚未保存的上电计划",
         )
-        self.assertEqual(section.read_drain_channel(), expected_drain)
+        self.assertEqual(section.read_drain_channels(), expected_drain)
 
 
 if __name__ == "__main__":

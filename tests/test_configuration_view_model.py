@@ -263,7 +263,7 @@ class ConfigurationTestParametersTests(unittest.TestCase):
                 "compression_point": {"type": "3dB"},
                 "attenuator": {"type": "40dB"},
                 "dut_config": {"max_input_power": 20, "power_supply_count": 2},
-                "driver_mode": {"enabled": True},
+                "driver_mode": {"enabled": True, "estimated_gain_db": 20.5},
             }
         )
 
@@ -276,6 +276,7 @@ class ConfigurationTestParametersTests(unittest.TestCase):
         self.assertEqual(parameters.max_dut_input_power, PowerDbm(20.0))
         self.assertEqual(parameters.dut_supply_count, 2)
         self.assertTrue(parameters.driver_enabled)
+        self.assertEqual(parameters.driver_gain_estimate, Decibels(20.5))
 
     def test_from_document_keeps_invalid_values_missing(self):
         parameters, issues = ConfigurationTestParameters.from_document(
@@ -535,6 +536,23 @@ class ConfigurationViewModelValidationTests(unittest.TestCase):
             "channels"
         ]["CH2"]
         self.assertEqual(set(channel), {"voltage", "current"})
+
+    def test_driver_gain_estimate_survives_form_parameter_updates(self):
+        document = _config()
+        document["driver_mode"] = {"enabled": True, "estimated_gain_db": 20.5}
+        view = _loaded(document)
+
+        # 表单读数还没有专门的增益控件：更新测试参数不能顺手清掉已保存的增益。
+        view.update_test_parameters(
+            ConfigurationTestParameters.from_draft(view.draft)
+        )
+        action = view.save()
+
+        self.assertTrue(action.ok, action.validation.messages())
+        self.assertEqual(
+            action.to_document()["test_plan"]["driver_mode"]["estimated_gain_db"],
+            20.5,
+        )
 
     def test_action_rejects_unknown_kinds(self):
         with self.assertRaises(ValueError):

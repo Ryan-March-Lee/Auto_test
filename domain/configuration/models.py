@@ -27,6 +27,25 @@ READABLE_SCHEMA_VERSIONS = ("1.0", "1.1")
 LEGACY_SCHEMA_VERSION = READABLE_SCHEMA_VERSIONS[0]
 SUPPORTED_COMPRESSION_POINTS = {"1dB", "3dB", "5dB"}
 PLACEHOLDER_VALUES = {"", "无", "待填写", "<channel_name>", "<gate_or_drain_or_other>"}
+# 起止功率的语义标记（v1.1 新保存的配置）：``signal_source.start_power`` /
+# ``stop_power`` / ``step`` 表示**主功放（DUT）输入功率**，不再是信号源输出功率。
+# 旧配置没有这个标记，加载时只提示用户确认并按新语义重新保存；不根据历史数值猜测
+# 原功率范围是源功率还是 DUT 输入功率。``driver_mode.estimated_gain_db`` 是同一套
+# 新语义的一部分：驱动功放预估增益，单位 dB，单一全局值。
+INPUT_POWER_REFERENCE = "dut_input"
+SIGNAL_SOURCE_REFERENCE_FIELD = "power_reference"
+DRIVER_GAIN_FIELD = "estimated_gain_db"
+# 旧配置缺少语义标记时的加载提示：只提示，不阻断读取，用户可以在配置页核对后保存。
+POWER_REFERENCE_LEGACY_WARNING = (
+    "旧配置未声明功率范围语义：起止功率可能表示信号源输出功率；"
+    "请确认现在按“主功放输入功率”填写并重新保存配置（重新保存前不能创建运行）"
+)
+# 未确认语义的配置不允许创建运行或构造正式输入：直接当作 DUT 输入功率可能改变
+# 实际驱动电平，属于“根据历史数值猜测”，必须由用户显式保存确认。
+POWER_REFERENCE_UNCONFIRMED_MESSAGE = (
+    "配置未确认功率范围语义：旧配置的起止功率可能表示信号源输出功率；"
+    "请按“主功放输入功率”核对并重新保存配置后再运行"
+)
 # 组内相邻两次通道开启之间的最大等待秒数（单位秒）。放在 domain 是因为它既是
 # 编辑文档的字段范围（v1.1 §6.8），也要被 domain 的 ``validate_power_plan`` 使用；
 # application 的 ``PowerPlan`` 值对象从本模块导入同一数值，全仓不出现第二份。
@@ -104,7 +123,15 @@ class PowerChannelPlan:
 
 @dataclass(frozen=True)
 class TestPlan:
-    """稳定的测试方法和参数。"""
+    """稳定的测试方法和参数。
+
+    功率扫描字段的语义（v1.1 起）：``start_power`` / ``stop_power`` / ``power_step``
+    表示**主功放输入功率**范围与目标输入功率网格间隔，不是信号源输出功率。新保存的
+    配置在 ``signal_source.power_reference`` 写入 :data:`INPUT_POWER_REFERENCE`；
+    缺少该标记的旧配置仍可读取，但校验只给出兼容提示，不按历史数值猜测或换算。
+    ``driver_gain_estimate_db`` 是驱动功放的全局预估增益（dB），用于驱动映射的起点
+    推算；驱动关闭时允许为空。
+    """
 
     schema_version: str = SUPPORTED_SCHEMA_VERSION
     template: bool = False
@@ -115,6 +142,7 @@ class TestPlan:
     stop_power: Optional[float] = None
     power_step: Optional[float] = None
     power_unit: str = "dBm"
+    power_reference: Optional[str] = None
     compression_point: Optional[str] = None
     attenuator_value: Optional[float] = None
     attenuator_unit: str = "dB"
@@ -127,6 +155,8 @@ class TestPlan:
     drain_channel: Any = None
     channel_settings: List[Any] = field(default_factory=list)
     driver_enabled: bool = False
+    # 驱动功放全局预估增益（dB）。驱动关闭时允许为空；是否必填由运行前置校验决定。
+    driver_gain_estimate_db: Optional[float] = None
     # 1.0 只读兼容：角色键 -> 参数。1.1 用 driver_channel_settings。
     driver_power_channels: Dict[str, PowerChannelPlan] = field(default_factory=dict)
     driver_channel_settings: List[Any] = field(default_factory=list)
@@ -154,6 +184,11 @@ class TestPlan:
             stop_power=signal_source.get("stop_power") if isinstance(signal_source, Mapping) else None,
             power_step=signal_source.get("step") if isinstance(signal_source, Mapping) else None,
             power_unit=signal_source.get("unit", "dBm") if isinstance(signal_source, Mapping) else "dBm",
+            power_reference=(
+                signal_source.get(SIGNAL_SOURCE_REFERENCE_FIELD)
+                if isinstance(signal_source, Mapping)
+                else None
+            ),
             compression_point=compression.get("type") if isinstance(compression, Mapping) else None,
             attenuator_value=attenuator.get("value") if isinstance(attenuator, Mapping) else None,
             attenuator_unit=attenuator.get("unit", "dB") if isinstance(attenuator, Mapping) else "dB",
@@ -166,6 +201,9 @@ class TestPlan:
                 dut.get("channel_settings", []) if isinstance(dut, Mapping) else []
             ),
             driver_enabled=driver.get("enabled", False) if isinstance(driver, Mapping) else False,
+            driver_gain_estimate_db=(
+                driver.get(DRIVER_GAIN_FIELD) if isinstance(driver, Mapping) else None
+            ),
             driver_power_channels=_channel_plans(
                 _first_mapping(driver, "power_roles", "power_channels") if isinstance(driver, Mapping) else {}
             ),
@@ -193,6 +231,11 @@ class TestPlan:
                 "enabled": self.driver_enabled,
                 "power_roles": {name: channel.to_dict() for name, channel in self.driver_power_channels.items()},
             }
+            if (
+                self.driver_gain_estimate_db is not None
+                and self.schema_version != LEGACY_SCHEMA_VERSION
+            ):
+                driver_mode[DRIVER_GAIN_FIELD] = self.driver_gain_estimate_db
         else:
             dut = {
                 "max_input_power": self.max_input_power,
@@ -206,17 +249,25 @@ class TestPlan:
                     for item in self.driver_channel_settings
                 ],
             }
+            if self.driver_gain_estimate_db is not None:
+                driver_mode[DRIVER_GAIN_FIELD] = self.driver_gain_estimate_db
+        signal_source = {
+            "start_power": self.start_power,
+            "stop_power": self.stop_power,
+            "step": self.power_step,
+            "unit": self.power_unit,
+        }
+        if (
+            self.power_reference is not None
+            and self.schema_version != LEGACY_SCHEMA_VERSION
+        ):
+            signal_source[SIGNAL_SOURCE_REFERENCE_FIELD] = self.power_reference
         return {
             "schema_version": self.schema_version,
             "template": self.template,
             "plan_id": self.plan_id,
             "frequencies": {"values": list(self.frequencies), "unit": self.frequency_unit},
-            "signal_source": {
-                "start_power": self.start_power,
-                "stop_power": self.stop_power,
-                "step": self.power_step,
-                "unit": self.power_unit,
-            },
+            "signal_source": signal_source,
             "compression_point": {"type": self.compression_point},
             "attenuator": {"value": self.attenuator_value, "unit": self.attenuator_unit},
             "dut": dut,
@@ -521,6 +572,13 @@ def validate_test_plan(plan: Union[TestPlan, Mapping[str, Any]]) -> ConfigValida
         error("template", "模板不能直接作为正式运行方案")
     if not isinstance(plan.driver_enabled, bool):
         error("driver_mode.enabled", "必须是布尔值")
+    _validate_power_reference(plan, error, warnings.append)
+    if plan.driver_gain_estimate_db is not None:
+        _number(
+            plan.driver_gain_estimate_db,
+            f"driver_mode.{DRIVER_GAIN_FIELD}",
+            error,
+        )
     _finite_list(plan.frequencies, "frequencies.values", error, positive=True)
     if not plan.frequencies:
         error("frequencies.values", "必须是非空列表")
@@ -937,6 +995,52 @@ def _validate_version(value: Any, path: str, error: Any) -> None:
             return
         expected = " 或 ".join(READABLE_SCHEMA_VERSIONS)
         error(path, f"schema_version 必须是 {expected}，收到 {value!r}")
+
+
+def _validate_power_reference(
+    plan: TestPlan, error: Any, warning: Any
+) -> None:
+    """校验起止功率的语义标记，并给旧配置一条可识别的兼容提示。
+
+    v1.1 新保存的配置必须声明 ``signal_source.power_reference == "dut_input"``。
+    旧配置缺少该键时只提示，不按历史数值猜测或换算；用户确认后重新保存即写入新语义。
+    1.0 文档已有迁移提示，这里不重复。
+    """
+    reference = plan.power_reference
+    path = f"signal_source.{SIGNAL_SOURCE_REFERENCE_FIELD}"
+    if reference is None:
+        if plan.schema_version != LEGACY_SCHEMA_VERSION:
+            warning(ConfigIssue("warning", path, POWER_REFERENCE_LEGACY_WARNING))
+        return
+    if reference != INPUT_POWER_REFERENCE:
+        error(
+            path,
+            f"功率范围语义必须是 {INPUT_POWER_REFERENCE!r}（主功放输入功率），"
+            f"收到 {reference!r}",
+        )
+
+
+def power_reference_confirmation_error(plan: Any) -> Optional[str]:
+    """执行前门禁：返回“功率范围语义尚未确认”的说明，已确认时返回 ``None``。
+
+    读取可以容忍缺少标记（旧配置只给兼容提示），但**创建运行**和**构造主功放正式
+    输入**不能：起止功率可能是信号源输出功率，直接当成 DUT 输入功率会改变实际驱动
+    电平。由于版本号无法区分“旧 1.1 文档”和“新写出但缺字段的 1.1 文档”，这里只按
+    标记本身判定——两者都必须由用户重新保存确认，保存时 authoring 会写入
+    :data:`INPUT_POWER_REFERENCE`。
+
+    参数只要求带 ``power_reference`` 属性；调用方传入非测试方案对象时按“未确认”
+    处理，不在这里抛类型错误。
+    """
+    reference = getattr(plan, "power_reference", None)
+    if reference == INPUT_POWER_REFERENCE:
+        return None
+    if reference is None:
+        return POWER_REFERENCE_UNCONFIRMED_MESSAGE
+    return (
+        f"功率范围语义无效：只支持 {INPUT_POWER_REFERENCE!r}（主功放输入功率），"
+        f"收到 {reference!r}；请重新保存配置后再运行"
+    )
 
 
 def _is_legacy_plan(plan: TestPlan) -> bool:

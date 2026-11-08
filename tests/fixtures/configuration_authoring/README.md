@@ -16,6 +16,9 @@
   `dut_power_channels` / `driver_mode.power_channels`；
 - 编辑段的通道 `role` 与旧槽位 `name` 引用不再进入 1.1 文档；1.0 输入由 authoring
   版本门禁拒绝（见 `tests/test_configuration_authoring.py` 的门禁用例）。
+- 步骤 2 起，保存时在编辑段与正式段同时写入主功放输入功率语义标记
+  `signal_source.power_reference = "dut_input"`；`driver_mode.estimated_gain_db`
+  缺失时补 `null`，已填写数值原样保留。
 
 用例覆盖：最小表单、两电源拆分通道、驱放与 DUT 各一台电源、驱放自带供电（空计划）、
 驱动计划（非空）、未绑定电源引用、重复物理通道、未知物理通道、仪器身份缺失与未启用、

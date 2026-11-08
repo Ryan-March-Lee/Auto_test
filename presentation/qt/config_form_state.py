@@ -280,12 +280,18 @@ class ConfigFormState:
                 pass
             else:
                 result["test_frequencies"] = list(frequencies)
+        signal_source = {
+            "start_power": self._value(w.start_power),
+            "stop_power": self._value(w.stop_power),
+            "step": self._value(w.power_step),
+        }
+        # 功率语义标记不是页面可编辑字段：基线里有就原样保留（新配置），没有也保持缺失
+        # （旧配置）。是否写入新语义只由保存边界决定，不能在每次读数时悄悄改写。
+        existing_source = _dict_copy(self.config.get("signal_source"))
+        if "power_reference" in existing_source:
+            signal_source["power_reference"] = existing_source.get("power_reference")
         result.update({
-            "signal_source": {
-                "start_power": self._value(w.start_power),
-                "stop_power": self._value(w.stop_power),
-                "step": self._value(w.power_step),
-            },
+            "signal_source": signal_source,
             "compression_point": {"type": self._current(w.compression_combo)},
             "attenuator": {"type": self._current(w.attenuator_combo)},
             "driver_mode": self._read_driver_mode(w),
@@ -293,8 +299,17 @@ class ConfigFormState:
         return result
 
     def _read_driver_mode(self, w: Any) -> dict:
-        """读取驱放测试模式；供电方式由驱动功放上电计划是否有路由表达。"""
-        return {"enabled": bool(getattr(w, "test_mode_enabled", False))}
+        """读取驱放测试模式；供电方式由驱动功放上电计划是否有路由表达。
+
+        ``estimated_gain_db`` 是测试配置里的全局驱动增益预估。步骤 2 尚未提供对应
+        控件，因此从基线文档原样保留；没有该键时保持缺失，由配置编写服务在保存时
+        补齐新语义占位键。
+        """
+        mode: dict = {"enabled": bool(getattr(w, "test_mode_enabled", False))}
+        existing = _dict_copy(self.config.get("driver_mode"))
+        if "estimated_gain_db" in existing:
+            mode["estimated_gain_db"] = existing.get("estimated_gain_db")
+        return mode
 
     def read_power_supply_config(self) -> dict:
         result = {}

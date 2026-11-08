@@ -325,5 +325,81 @@ class ConfigModelTests(unittest.TestCase):
             self.assertEqual(configuration.run_mapping.run_id, "run-1")
 
 
+class PowerSemanticsTests(unittest.TestCase):
+    """步骤 2：起止功率表示主功放输入功率，驱动增益是全局 dB 值。"""
+
+    def test_old_plan_without_the_marker_is_readable_with_a_compatibility_warning(self):
+        plan = complete_current_plan()
+
+        result = validate_test_plan(plan)
+
+        self.assertTrue(result.valid, result.errors)
+        self.assertTrue(
+            any(
+                issue.level == "warning"
+                and issue.path == "signal_source.power_reference"
+                and "主功放输入功率" in issue.message
+                for issue in result.warnings
+            ),
+            result.warnings,
+        )
+
+    def test_new_power_reference_is_accepted_without_the_compatibility_warning(self):
+        plan = complete_current_plan()
+        plan["signal_source"]["power_reference"] = "dut_input"
+
+        result = validate_test_plan(plan)
+
+        self.assertTrue(result.valid, result.errors)
+        self.assertFalse(
+            any(
+                issue.path == "signal_source.power_reference"
+                for issue in result.warnings
+            )
+        )
+
+    def test_unknown_power_reference_is_rejected(self):
+        for value in ("source_output", "", 1, True):
+            with self.subTest(value=value):
+                plan = complete_current_plan()
+                plan["signal_source"]["power_reference"] = value
+                result = validate_test_plan(plan)
+
+                self.assertFalse(result.valid)
+                self.assertIn(
+                    "signal_source.power_reference",
+                    {issue.path for issue in result.errors},
+                )
+
+    def test_driver_gain_estimate_accepts_finite_db_and_rejects_other_values(self):
+        valid = complete_current_plan()
+        valid["signal_source"]["power_reference"] = "dut_input"
+        valid["driver_mode"]["estimated_gain_db"] = 20.5
+        self.assertTrue(validate_test_plan(valid).valid)
+
+        for value in (float("nan"), float("inf"), float("-inf"), "20dB", True):
+            with self.subTest(value=value):
+                plan = complete_current_plan()
+                plan["signal_source"]["power_reference"] = "dut_input"
+                plan["driver_mode"]["estimated_gain_db"] = value
+                result = validate_test_plan(plan)
+
+                self.assertFalse(result.valid)
+                self.assertIn(
+                    "driver_mode.estimated_gain_db",
+                    {issue.path for issue in result.errors},
+                )
+
+    def test_plan_round_trip_keeps_the_new_fields(self):
+        plan = complete_current_plan()
+        plan["signal_source"]["power_reference"] = "dut_input"
+        plan["driver_mode"]["estimated_gain_db"] = 20.5
+
+        again = TestPlan.from_dict(TestPlan.from_dict(plan).to_dict())
+
+        self.assertEqual(again.power_reference, "dut_input")
+        self.assertEqual(again.driver_gain_estimate_db, 20.5)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -207,7 +207,7 @@ def amplifier_inputs(
     }
     return AmplifierMeasurementInputs(
         frequencies=(Frequency.from_ghz(frequency_ghz),),
-        sweep=PowerSweep(
+        input_power_sweep=PowerSweep(
             start=PowerDbm(start_power_dbm),
             stop=PowerDbm(stop_power_dbm),
             step=Decibels(step_db),

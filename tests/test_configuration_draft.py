@@ -301,15 +301,27 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
         second = ConfigurationDraft.from_document(document)
 
         self.assertTrue(second.valid, second.messages())
-        self.assertEqual(second.draft, first.draft)
+        # 写出时补上新功率语义标记；草稿其余字段原样往返。
+        self.assertEqual(
+            second.draft,
+            replace(first.draft, power_reference="dut_input"),
+        )
         self.assertEqual(document["test_frequencies"], [2.4, 5.8])
         self.assertEqual(
             document["signal_source"],
-            {"start_power": -38.0, "stop_power": -16.0, "step": 1.0},
+            {
+                "start_power": -38.0,
+                "stop_power": -16.0,
+                "step": 1.0,
+                "power_reference": "dut_input",
+            },
         )
         self.assertEqual(document["compression_point"], {"type": "5dB"})
         self.assertEqual(document["attenuator"], {"type": "40dB"})
-        self.assertEqual(document["driver_mode"], {"enabled": True})
+        self.assertEqual(
+            document["driver_mode"],
+            {"enabled": True, "estimated_gain_db": None},
+        )
         self.assertEqual(
             document["dut_config"],
             {"max_input_power": 33.5, "power_supply_count": 1},
@@ -490,7 +502,12 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
         self.assertEqual(document["test_frequencies"], [])
         self.assertEqual(
             document["signal_source"],
-            {"start_power": None, "stop_power": None, "step": None},
+            {
+                "start_power": None,
+                "stop_power": None,
+                "step": None,
+                "power_reference": "dut_input",
+            },
         )
         self.assertEqual(document["compression_point"], {"type": None})
         self.assertEqual(document["attenuator"], {"type": None})
@@ -698,6 +715,48 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
             result.messages(),
         )
         self.assertTrue(result.draft.bindings.is_empty())
+
+    def test_power_reference_and_driver_gain_round_trip(self):
+        document = _document()
+        document["signal_source"]["power_reference"] = "dut_input"
+        document["driver_mode"]["estimated_gain_db"] = 20.5
+
+        result = ConfigurationDraft.from_document(document)
+
+        self.assertTrue(result.valid, result.messages())
+        self.assertEqual(result.draft.power_reference, "dut_input")
+        self.assertEqual(result.draft.driver_gain_estimate, Decibels(20.5))
+        written = result.draft.to_document()
+        self.assertEqual(written["signal_source"]["power_reference"], "dut_input")
+        self.assertEqual(written["driver_mode"]["estimated_gain_db"], 20.5)
+
+    def test_unknown_power_reference_is_reported_and_not_reinterpreted(self):
+        document = _document()
+        document["signal_source"]["power_reference"] = "source_output"
+
+        result = ConfigurationDraft.from_document(document)
+
+        self.assertFalse(result.valid)
+        self.assertIn(
+            "signal_source.power_reference",
+            {issue.path for issue in result.errors},
+        )
+        self.assertIsNone(result.draft.power_reference)
+        self.assertIsNone(result.draft.sweep)
+
+    def test_invalid_driver_gain_is_reported_and_dropped(self):
+        for value in ("20dB", float("nan"), True):
+            with self.subTest(value=value):
+                document = _document()
+                document["driver_mode"]["estimated_gain_db"] = value
+                result = ConfigurationDraft.from_document(document)
+
+                self.assertFalse(result.valid, value)
+                self.assertIn(
+                    "driver_mode.estimated_gain_db",
+                    {issue.path for issue in result.errors},
+                )
+                self.assertIsNone(result.draft.driver_gain_estimate)
 
     def test_caller_can_supply_already_normalized_bindings(self):
         bindings = {

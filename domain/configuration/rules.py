@@ -11,7 +11,13 @@ from collections.abc import Mapping
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from domain.configuration.types import ConfigIssue, ConfigValidationResult
-from domain.configuration.models import MAX_INTER_CHANNEL_DELAY_S
+from domain.configuration.models import (
+    DRIVER_GAIN_FIELD,
+    INPUT_POWER_REFERENCE,
+    MAX_INTER_CHANNEL_DELAY_S,
+    POWER_REFERENCE_LEGACY_WARNING,
+    SIGNAL_SOURCE_REFERENCE_FIELD,
+)
 
 
 PathLike = Union[str, os.PathLike[str]]
@@ -176,6 +182,15 @@ def validate_config(config: Dict[str, Any]) -> ConfigValidationResult:
         number(require(signal_source, "step", "signal_source.step"), "signal_source.step", positive=True)
         if start_power is not None and stop_power is not None and start_power > stop_power:
             error("signal_source", "start_power 不能大于 stop_power")
+        reference = signal_source.get(SIGNAL_SOURCE_REFERENCE_FIELD)
+        reference_path = f"signal_source.{SIGNAL_SOURCE_REFERENCE_FIELD}"
+        if reference is None:
+            warning(reference_path, POWER_REFERENCE_LEGACY_WARNING)
+        elif reference != INPUT_POWER_REFERENCE:
+            error(
+                reference_path,
+                f"必须是 {INPUT_POWER_REFERENCE!r}（主功放输入功率），收到 {reference!r}",
+            )
 
     compression_value = None
     if "compression_point" in present_sections:
@@ -198,6 +213,12 @@ def validate_config(config: Dict[str, Any]) -> ConfigValidationResult:
     if not isinstance(driver_enabled, bool):
         if "driver_mode" in present_sections:
             error("driver_mode.enabled", "必须是布尔值")
+    if "driver_mode" in present_sections:
+        gain = driver_mode.get(DRIVER_GAIN_FIELD)
+        if gain is not None:
+            _validate_finite_number(
+                gain, f"driver_mode.{DRIVER_GAIN_FIELD}", error
+            )
 
     if "dut_config" in present_sections:
         dut_config = get_mapping(root.get("dut_config"), "dut_config")

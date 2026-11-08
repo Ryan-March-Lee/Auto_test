@@ -92,6 +92,7 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
                 start_power=-20,
                 stop_power=-20,
                 power_step=1,
+                power_reference="dut_input",
                 compression_point="1dB",
                 attenuator_value=10,
                 max_input_power=100,
@@ -136,9 +137,9 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
             [item.ghz for item in use_case.inputs.frequencies], [1.0]
         )
         self.assertEqual(use_case.inputs.attenuator, Decibels.parse("10dB"))
-        self.assertEqual(use_case.inputs.sweep.start, PowerDbm(-20))
-        self.assertEqual(use_case.inputs.sweep.stop, PowerDbm(-20))
-        self.assertEqual(use_case.inputs.sweep.step, Decibels(1))
+        self.assertEqual(use_case.inputs.input_power_sweep.start, PowerDbm(-20))
+        self.assertEqual(use_case.inputs.input_power_sweep.stop, PowerDbm(-20))
+        self.assertEqual(use_case.inputs.input_power_sweep.step, Decibels(1))
         self.assertEqual(
             use_case.inputs.dut_supplies(), {"PS1": ("CH2",)}
         )

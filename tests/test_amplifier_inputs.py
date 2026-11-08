@@ -55,7 +55,7 @@ def _inputs(**overrides):
     routes = (_route("PS1", "CH1"), _route("PS1", "CH2"))
     values = {
         "frequencies": (Frequency.from_ghz(1.0), Frequency.from_ghz(2.4)),
-        "sweep": PowerSweep(
+        "input_power_sweep": PowerSweep(
             start=PowerDbm(-20.0), stop=PowerDbm(0.0), step=Decibels(1.0)
         ),
         "compression_target": Decibels(1.0),
@@ -260,8 +260,8 @@ class AmplifierMeasurementInputsTests(unittest.TestCase):
             [item.ghz for item in inputs.frequencies], [1.0, 2.4]
         )
         self.assertIsInstance(inputs.frequencies[0], Frequency)
-        self.assertEqual(inputs.sweep.start, PowerDbm(-20.0))
-        self.assertEqual(inputs.sweep.step, Decibels(1.0))
+        self.assertEqual(inputs.input_power_sweep.start, PowerDbm(-20.0))
+        self.assertEqual(inputs.input_power_sweep.step, Decibels(1.0))
         self.assertEqual(inputs.compression_target, Decibels(1.0))
         self.assertEqual(inputs.attenuator, Decibels(10.0))
         self.assertEqual(inputs.max_dut_input_power, PowerDbm(30.0))
@@ -340,7 +340,7 @@ class AmplifierMeasurementInputsTests(unittest.TestCase):
         routes = (_route("PS1", "CH1"),)
         valid = {
             "frequencies": (Frequency.from_ghz(1.0),),
-            "sweep": PowerSweep(
+            "input_power_sweep": PowerSweep(
                 start=PowerDbm(-20.0), stop=PowerDbm(0.0), step=Decibels(1.0)
             ),
             "compression_target": Decibels(1.0),
@@ -360,7 +360,7 @@ class AmplifierMeasurementInputsTests(unittest.TestCase):
     def test_explicit_none_is_rejected(self):
         for name in (
             "frequencies",
-            "sweep",
+            "input_power_sweep",
             "compression_target",
             "attenuator",
             "max_dut_input_power",
@@ -517,7 +517,7 @@ class AmplifierMeasurementInputsTests(unittest.TestCase):
     def test_invalid_input_fails_at_construction(self):
         """非法输入在构造期失败：不依赖任何设备动作或运行目录。"""
         with self.assertRaises(AmplifierInputError):
-            _inputs(sweep={"start_power": -20, "stop_power": 0, "step": 1})
+            _inputs(input_power_sweep={"start_power": -20, "stop_power": 0, "step": 1})
 
         with self.assertRaises(AmplifierInputError):
             _inputs(max_dut_input_power="30dBm")
@@ -537,10 +537,12 @@ class RunConfigurationInputTests(unittest.TestCase):
                 start_power=-20.0,
                 stop_power=0.0,
                 power_step=1.0,
+                power_reference="dut_input",
                 compression_point="3dB",
                 attenuator_value=30,
                 max_input_power=30.0,
                 driver_enabled=True,
+                driver_gain_estimate_db=20.5,
                 drain_channel={"supply_id": "PS1", "channel": "CH2"},
                 channel_settings=[
                     {
@@ -582,13 +584,14 @@ class RunConfigurationInputTests(unittest.TestCase):
         inputs = AmplifierMeasurementInputs.from_run_configuration(self._configuration())
 
         self.assertEqual([item.ghz for item in inputs.frequencies], [1.0, 2.4])
-        self.assertEqual(inputs.sweep.start, PowerDbm(-20.0))
-        self.assertEqual(inputs.sweep.stop, PowerDbm(0.0))
-        self.assertEqual(inputs.sweep.step, Decibels(1.0))
+        self.assertEqual(inputs.input_power_sweep.start, PowerDbm(-20.0))
+        self.assertEqual(inputs.input_power_sweep.stop, PowerDbm(0.0))
+        self.assertEqual(inputs.input_power_sweep.step, Decibels(1.0))
         self.assertEqual(inputs.compression_target, Decibels(3.0))
         self.assertEqual(inputs.attenuator, Decibels(30.0))
         self.assertEqual(inputs.max_dut_input_power, PowerDbm(30.0))
         self.assertTrue(inputs.driver_enabled)
+        self.assertEqual(inputs.driver_gain_estimate, Decibels(20.5))
         self.assertEqual(
             inputs.dut_power_plan.power_sequence,
             (_route("PS1", "CH2"), _route("PS1", "CH1")),
@@ -599,6 +602,45 @@ class RunConfigurationInputTests(unittest.TestCase):
         )
         self.assertEqual(inputs.channel_settings[_route("PS1", "CH2")].voltage_v, 28.0)
         self.assertEqual(inputs.dut_supplies(), {"PS1": ("CH2", "CH1")})
+
+    def test_unconfirmed_power_range_semantics_is_rejected(self):
+        """旧配置未确认功率语义时，不能进入正式输入构造。"""
+        from dataclasses import replace
+
+        configuration = self._configuration()
+        configuration = replace(
+            configuration,
+            test_plan=replace(configuration.test_plan, power_reference=None),
+        )
+
+        with self.assertRaises(AmplifierInputError) as raised:
+            AmplifierMeasurementInputs.from_run_configuration(configuration)
+
+        self.assertIn("功率范围语义", str(raised.exception))
+
+    def test_unknown_power_range_semantics_is_rejected(self):
+        from dataclasses import replace
+
+        configuration = self._configuration()
+        configuration = replace(
+            configuration,
+            test_plan=replace(
+                configuration.test_plan, power_reference="source_output"
+            ),
+        )
+
+        with self.assertRaises(AmplifierInputError) as raised:
+            AmplifierMeasurementInputs.from_run_configuration(configuration)
+
+        self.assertIn("source_output", str(raised.exception))
+
+    def test_driver_gain_estimate_is_optional_and_type_checked(self):
+        inputs = _inputs(driver_gain_estimate=Decibels(20.5))
+        self.assertEqual(inputs.driver_gain_estimate, Decibels(20.5))
+        self.assertIsNone(_inputs().driver_gain_estimate)
+
+        with self.assertRaises(AmplifierInputError):
+            _inputs(driver_gain_estimate=20.5)
 
     def test_missing_run_configuration_fails_before_any_device_action(self):
         for value in (object(), None):
@@ -711,6 +753,7 @@ class AmplifierInputErrorTaxonomyTests(unittest.TestCase):
             "AmplifierMeasurementInputs",
             "ChannelSetting",
             "DrainChannel",
+            "INPUT_POWER_REFERENCE",
             "PowerPlan",
             "PowerSweep",
             "SupplyChannel",

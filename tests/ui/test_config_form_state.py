@@ -104,6 +104,43 @@ class ConfigFormStateTests(unittest.TestCase):
         self.assertNotIn("test_frequencies", state.read_test_parameters())
         self.assertIn("不是严格等步长", state.validation_errors()[0])
 
+    def test_power_reference_marker_is_preserved_without_being_rewritten(self):
+        widgets = _form_widgets()
+        new_state = ConfigFormState(
+            {
+                "signal_source": {
+                    "start_power": -12.0,
+                    "stop_power": 0.0,
+                    "step": 1.0,
+                    "power_reference": "dut_input",
+                }
+            },
+            widgets,
+        )
+        old_state = ConfigFormState({}, widgets)
+
+        self.assertEqual(
+            new_state.read_test_parameters()["signal_source"]["power_reference"],
+            "dut_input",
+        )
+        self.assertNotIn(
+            "power_reference",
+            old_state.read_test_parameters()["signal_source"],
+        )
+
+    def test_driver_gain_estimate_is_preserved_until_the_ui_exposes_it(self):
+        widgets = _form_widgets()
+        widgets.test_mode_enabled = True
+        state = ConfigFormState(
+            {"driver_mode": {"enabled": True, "estimated_gain_db": 20.5}},
+            widgets,
+        )
+
+        mode = state.read_test_parameters()["driver_mode"]
+
+        self.assertTrue(mode["enabled"])
+        self.assertEqual(mode["estimated_gain_db"], 20.5)
+
     def test_protection_threshold_is_110_percent_rounded_to_two_decimals(self):
         """保护阈值只由工作值推导，用户不再手填。"""
         self.assertEqual(protection_threshold(2.8), 3.08)

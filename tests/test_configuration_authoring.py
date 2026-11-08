@@ -324,6 +324,50 @@ class ConfigurationAuthoringTests(unittest.TestCase):
             ],
         )
 
+    def test_save_stamps_main_amplifier_input_power_semantics(self):
+        document = author_official_configuration(_flat_config())
+
+        self.assertEqual(
+            document["signal_source"]["power_reference"], "dut_input"
+        )
+        self.assertEqual(
+            document["test_plan"]["signal_source"]["power_reference"],
+            "dut_input",
+        )
+        self.assertIn("estimated_gain_db", document["driver_mode"])
+        self.assertIsNone(document["driver_mode"]["estimated_gain_db"])
+        self.assertIn(
+            "estimated_gain_db", document["test_plan"]["driver_mode"]
+        )
+
+    def test_driver_gain_estimate_is_frozen_into_the_test_plan(self):
+        flat = _flat_config()
+        flat["driver_mode"] = {"enabled": True, "estimated_gain_db": 20.5}
+
+        document = author_official_configuration(flat)
+
+        self.assertEqual(
+            document["test_plan"]["driver_mode"]["estimated_gain_db"], 20.5
+        )
+        self.assertEqual(document["driver_mode"]["estimated_gain_db"], 20.5)
+        self.assertTrue(validate_run_configuration(self._configuration(document)).valid)
+
+    def test_old_formal_sections_without_the_new_fields_are_not_stale(self):
+        document = author_official_configuration(_flat_config())
+        # 模拟步骤 2 之前保存的 1.1 文档：编辑段与正式段都没有新语义字段。
+        for section in (
+            document,
+            document["test_plan"],
+        ):
+            section.get("signal_source", {}).pop("power_reference", None)
+            section.get("driver_mode", {}).pop("estimated_gain_db", None)
+
+        stale = ConfigurationAuthoringService().stale_formal_sections(
+            ConfigurationEditingDocument.from_mapping(document)
+        )
+
+        self.assertEqual(stale, ())
+
     def test_authoring_does_not_mutate_the_input(self):
         flat = _flat_config()
         original = copy.deepcopy(flat)

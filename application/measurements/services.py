@@ -551,8 +551,8 @@ class AmplifierMeasurementService(_Service):
             )
         data = {"input_power_dut": [], "output_power_dut": [], "gain": [], "sg_power": [],
                 "voltages": [], "currents": [], "dc_power": [], "efficiency": []}
-        # ``PowerSweep.points()``：stop 是扫描上限，非整步时不生成越过终点的点。
-        points = self.inputs.sweep.points()
+        # ``PowerSweep.points()``：stop 是目标输入功率上限，非整步时不生成越过终点的点。
+        points = self.inputs.input_power_sweep.points()
         self.inst_ctrl.rf_output_on()
         try:
             for index, sg_power in enumerate(points):

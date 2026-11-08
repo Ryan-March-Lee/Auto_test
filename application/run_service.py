@@ -28,6 +28,7 @@ from domain.configuration.models import (
     RunConfiguration,
     RunResourceMapping,
     TestPlan,
+    power_reference_confirmation_error,
     require_current_schema_version,
     validate_run_configuration,
 )
@@ -235,13 +236,17 @@ def create_run_snapshot(
 ) -> RunSnapshot:
     """校验配置并创建运行快照，失败时不产生可运行的运行目录。
 
-    创建完整运行必须同时通过两层校验：
+    创建完整运行必须同时通过三层校验：
 
     1. 调用方加载结果 ``loaded.valid``（可能包含文件格式/legacy 转换错误）。
     2. 领域层的完整运行校验 :func:`validate_run_configuration`。
+    3. 功率范围语义已确认（``signal_source.power_reference == "dut_input"``）。
 
-    因此阶段专用校验（线损、驱动映射）通过但完整运行校验失败的配置，仍会被
-    拒绝，不会留下半成品运行目录，也不会被后续阶段误当作可运行运行。
+    第 3 层是运行门禁而不是读取错误：缺少语义标记的旧配置仍可加载并显示兼容提示，
+    但在用户按“主功放输入功率”核对并重新保存前不能创建运行，避免把含义不明的历史
+    功率当作 DUT 输入功率。因此阶段专用校验（线损、驱动映射）通过但完整运行校验
+    失败的配置，仍会被拒绝，不会留下半成品运行目录，也不会被后续阶段误当作可运行
+    运行。
 
     ``hardware_config`` 是**必需参数**：本次运行用于装配硬件端口的完整配置
     （旧版组合格式）。它会被冻结为 ``inputs/hardware_config.json`` 并登记到
@@ -278,6 +283,16 @@ def create_run_snapshot(
     if not full_validation.valid:
         raise ValueError(
             "完整运行配置校验失败，不能创建运行快照: " + _validation_details(full_validation)
+        )
+    # 功率范围语义是运行级门禁，不是读取级错误：旧配置仍可打开并显示兼容提示，
+    # 但在用户按“主功放输入功率”核对并重新保存前，不能创建运行。这样既保留旧配置的
+    # 可读性，又不会把含义不明的历史功率当作 DUT 输入功率送进硬件。
+    semantics_issue = power_reference_confirmation_error(
+        loaded.configuration.test_plan
+    )
+    if semantics_issue is not None:
+        raise ValueError(
+            "完整运行配置校验失败，不能创建运行快照: " + semantics_issue
         )
     created_at = utc_now_iso(now)
     payload = configuration_snapshot(

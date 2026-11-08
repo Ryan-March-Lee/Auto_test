@@ -30,6 +30,10 @@
   本服务不推断角色/顺序，也不按 ``CH1``/``CH2`` 猜漏极。
 - 1.1 正式段不再写通道 ``role``、``power_roles``、``power_channels``、``connection``
   与 ``dut_power_channels``；每路由工作值/保护值只写 ``channel_settings``（无序集合）。
+- 起止功率是新语义**主功放输入功率**：保存时在编辑段与正式段同时写入
+  ``signal_source.power_reference = "dut_input"``，并保留/补齐
+  ``driver_mode.estimated_gain_db``。旧配置缺少该标记时不会被自动换算，读取只给
+  兼容提示；保存即表示用户确认新语义。
 - authoring 同时是**版本门禁**：输入缺失版本（新建草稿）或等于当前版本才允许保存；
   1.0、更高版本，以及“无版本但含 1.0 遗留电源字段”的文档一律拒绝。旧配置只能先经
   迁移器升级（§6.11.3、§6.14），authoring 不做隐式升级。
@@ -59,9 +63,12 @@ from application.configuration_draft import ConfigurationDraft
 from application.configuration_editing import ValidationIssue, ValidationResult
 from application.errors import ConfigurationError
 from domain.configuration.models import (
+    DRIVER_GAIN_FIELD,
+    INPUT_POWER_REFERENCE,
     LEGACY_SCHEMA_VERSION,
     RunConfiguration,
     RunResourceMapping,
+    SIGNAL_SOURCE_REFERENCE_FIELD,
     SUPPORTED_SCHEMA_VERSION,
     TestPlan,
     validate_run_configuration,
@@ -234,6 +241,7 @@ class ConfigurationAuthoringService:
         values = document.to_mapping()
         _require_saveable_document(values)
         _strip_legacy_editing_fields(values)
+        _stamp_power_semantics(values)
         values["schema_version"] = OFFICIAL_SCHEMA_VERSION
         values["test_plan"] = _author_test_plan(values)
         values["run_mapping"] = _author_run_mapping(values)
@@ -491,6 +499,27 @@ def _legacy_power_field_path(document: Mapping[str, Any]) -> str | None:
     return None
 
 
+def _stamp_power_semantics(document: dict[str, Any]) -> None:
+    """给新保存的编辑段写上新功率语义标记与全局驱动增益占位键。
+
+    - ``signal_source.power_reference`` 固定写成 :data:`INPUT_POWER_REFERENCE`：从这一
+      次保存起，起止功率表示主功放输入功率；旧配置不会被读取时自动换算，保存是用户
+      确认新语义的动作。
+    - ``driver_mode.estimated_gain_db`` 缺失时补 ``None``。驱动关闭时该值不是必填项，
+      但显式写键让“这份配置已按新语义保存”有稳定形状；用户填写的数值原样保留。
+    """
+    signal_source = document.get("signal_source")
+    if not isinstance(signal_source, dict):
+        signal_source = {}
+        document["signal_source"] = signal_source
+    signal_source[SIGNAL_SOURCE_REFERENCE_FIELD] = INPUT_POWER_REFERENCE
+    driver_mode = document.get("driver_mode")
+    if not isinstance(driver_mode, dict):
+        driver_mode = {}
+        document["driver_mode"] = driver_mode
+    driver_mode.setdefault(DRIVER_GAIN_FIELD, None)
+
+
 def _strip_legacy_editing_fields(document: dict[str, Any]) -> None:
     """把 1.1 编辑段里残留的旧字段从写出内容中剥离。
 
@@ -531,6 +560,14 @@ def _normalized_section(value: Any, section: str) -> Any:
             data.pop(key, None)
         return data
     if section == "test_plan":
+        # 新功率语义标记与驱动增益是“保存时写入的派生元数据”：旧 1.1 文档没有它们，
+        # 重新编写时会被补上，不能因此把一份完好旧配置判成“正式段被手改”。
+        source = data.get("signal_source")
+        if isinstance(source, dict):
+            source.pop(SIGNAL_SOURCE_REFERENCE_FIELD, None)
+        driver = data.get("driver_mode")
+        if isinstance(driver, dict):
+            driver.pop(DRIVER_GAIN_FIELD, None)
         for block, key in (
             (data.get("dut"), "channel_settings"),
             (data.get("driver_mode"), "channel_settings"),
@@ -568,6 +605,9 @@ def _author_test_plan(document: Mapping[str, Any]) -> dict[str, Any]:
             "stop_power": signal_source.get("stop_power"),
             "step": signal_source.get("step"),
             "unit": "dBm",
+            "power_reference": signal_source.get(
+                SIGNAL_SOURCE_REFERENCE_FIELD, INPUT_POWER_REFERENCE
+            ),
         },
         "compression_point": {"type": compression.get("type")},
         "attenuator": {
@@ -583,6 +623,7 @@ def _author_test_plan(document: Mapping[str, Any]) -> dict[str, Any]:
         },
         "driver_mode": {
             "enabled": bool(driver_mode.get("enabled")),
+            "estimated_gain_db": driver_mode.get(DRIVER_GAIN_FIELD),
             "channel_settings": _author_channel_settings(document, "driver_amplifier"),
         },
         "other_parameters": {},

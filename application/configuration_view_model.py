@@ -183,8 +183,9 @@ class ConfigurationTestParameters:
     """配置页“测试参数”一组的显式快照（控件读数的类型化结果）。
 
     它是 :class:`ConfigurationDraft` 的测试参数子集：频率、扫描、压缩点、衰减器、DUT
-    输入上限、驱放模式与 PA 单元数量。字段语义与判据都由草稿定义——构造时借用
-    :class:`ConfigurationDraft` 的校验，避免在视图模型里复制第二套类型/范围规则。
+    输入上限、驱放模式、驱动功放预估增益与 PA 单元数量。字段语义与判据都由草稿定义
+    ——构造时借用 :class:`ConfigurationDraft` 的校验，避免在视图模型里复制第二套类型/
+    范围规则。
     """
 
     frequencies: tuple[Frequency, ...] = ()
@@ -193,6 +194,7 @@ class ConfigurationTestParameters:
     attenuator: Decibels | None = None
     max_dut_input_power: PowerDbm | None = None
     driver_enabled: bool | None = None
+    driver_gain_estimate: Decibels | None = None
     dut_supply_count: int | None = None
 
     def __post_init__(self) -> None:
@@ -205,6 +207,7 @@ class ConfigurationTestParameters:
             attenuator=self.attenuator,
             max_dut_input_power=self.max_dut_input_power,
             driver_enabled=self.driver_enabled,
+            driver_gain_estimate=self.driver_gain_estimate,
             dut_supply_count=self.dut_supply_count,
         )
 
@@ -222,6 +225,7 @@ class ConfigurationTestParameters:
             attenuator=draft.attenuator,
             max_dut_input_power=draft.max_dut_input_power,
             driver_enabled=draft.driver_enabled,
+            driver_gain_estimate=draft.driver_gain_estimate,
             dut_supply_count=draft.dut_supply_count,
         )
 
@@ -246,6 +250,7 @@ class ConfigurationTestParameters:
             "attenuator": self.attenuator,
             "max_dut_input_power": self.max_dut_input_power,
             "driver_enabled": self.driver_enabled,
+            "driver_gain_estimate": self.driver_gain_estimate,
             "dut_supply_count": self.dut_supply_count,
         }
 

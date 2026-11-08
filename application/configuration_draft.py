@@ -8,6 +8,9 @@
 
 - 频率、功率扫描、压缩点、衰减器与 DUT 输入限制优先复用 domain 值对象
   （``Frequency`` / ``PowerSweep`` / ``Decibels`` / ``PowerDbm``），单位由类型表达；
+- 起止功率表示**主功放输入功率**：``power_reference`` 只接受 ``None``（旧配置）或
+  ``"dut_input"``，写出时统一写新语义；``driver_gain_estimate`` 是驱动功放全局预估
+  增益（``Decibels | None``），缺失不折叠成 0；
 - 集合字段使用 ``tuple``，设备绑定按“角色 + 名称到记录的键值对”保存受控副本，
   外部不能通过属性随意改写内部状态；
 - 缺失值用 ``None`` / 空元组明确表示，非法类型与无法解析的文本由
@@ -36,6 +39,7 @@ from typing import Any
 from application.configuration_editing import ValidationIssue, ValidationResult
 from application.dto.amplifier_inputs import (
     AmplifierInputError,
+    INPUT_POWER_REFERENCE,
     MAX_INTER_CHANNEL_DELAY_S,
     PowerPlan,
     PowerSweep,
@@ -396,10 +400,14 @@ class ConfigurationDraft:
 
     frequencies: tuple[Frequency, ...] = ()
     sweep: PowerSweep | None = None
+    # 起止功率的语义标记；None 表示来源文档没有声明（旧配置），写回时固定写新语义。
+    power_reference: str | None = None
     compression_target: Decibels | None = None
     attenuator: Decibels | None = None
     max_dut_input_power: PowerDbm | None = None
     driver_enabled: bool | None = None
+    # 驱动功放全局预估增益（dB）；None 表示尚未填写，不折叠成 0。
+    driver_gain_estimate: Decibels | None = None
     # 测试方案现场参数（页面下拉框），不驱动电源分配；缺失时写出阶段按 DUT 计划路由数回退。
     dut_supply_count: int | None = None
     # 漏极只供效率计算读取，不参与排序/间隔/启停；空元组表示未配置。
@@ -417,11 +425,25 @@ class ConfigurationDraft:
             self, "frequencies", _tuple_of(self.frequencies, Frequency, "测试频率")
         )
         _require_optional(self.sweep, PowerSweep, "功率扫描参数")
+        if self.power_reference is not None:
+            if not isinstance(self.power_reference, str):
+                raise TypeError(
+                    f"功率范围语义标记必须是字符串或 None，"
+                    f"收到 {type(self.power_reference).__name__}"
+                )
+            if self.power_reference != INPUT_POWER_REFERENCE:
+                raise ValueError(
+                    f"功率范围语义标记必须是 {INPUT_POWER_REFERENCE!r}，"
+                    f"收到 {self.power_reference!r}"
+                )
         _require_optional(self.compression_target, Decibels, "压缩点")
         _require_optional(self.attenuator, Decibels, "衰减器")
         _require_optional(self.max_dut_input_power, PowerDbm, "DUT 最大输入功率")
         object.__setattr__(
             self, "driver_enabled", _optional_bool(self.driver_enabled, "驱放模式开关")
+        )
+        _require_optional(
+            self.driver_gain_estimate, Decibels, "驱动功放预估增益"
         )
         # 数量只做结构校验：页面提供 1–3 的下拉框，但旧配置可能记录更多电源，
         # 草稿不在这里复制范围规则，也不把旧值改写成页面默认值。
@@ -498,6 +520,12 @@ class ConfigurationDraft:
 
         frequencies = _read_frequencies(document.get("test_frequencies"), issues)
         sweep = _read_sweep(document.get("signal_source"), issues)
+        power_reference, reference_valid = _read_power_reference(
+            document.get("signal_source"), issues
+        )
+        if not reference_valid:
+            # 声明了不认识的功率语义时不能保留扫描参数：那会把旧数值静默当成新语义。
+            sweep = None
         compression_target = _read_decibels(
             document.get("compression_point"), "compression_point.type", issues
         )
@@ -508,6 +536,9 @@ class ConfigurationDraft:
         dut_supply_count = _read_dut_supply_count(document.get("dut_config"), issues)
         drain_channels = _read_drain_channels(document.get("dut_config"), issues)
         driver_enabled = _read_driver_mode(document.get("driver_mode"), issues)
+        driver_gain_estimate = _read_driver_gain(
+            document.get("driver_mode"), issues
+        )
         power_supplies = _read_power_supplies(document.get("instruments"), issues)
         assignments = document.get("power_supply_assignment")
         dut_power_plan = _read_power_plan(assignments, "dut_amplifier", issues)
@@ -518,10 +549,12 @@ class ConfigurationDraft:
         draft = cls(
             frequencies=frequencies,
             sweep=sweep,
+            power_reference=power_reference,
             compression_target=compression_target,
             attenuator=attenuator,
             max_dut_input_power=max_dut_input_power,
             driver_enabled=driver_enabled,
+            driver_gain_estimate=driver_gain_estimate,
             dut_supply_count=dut_supply_count,
             drain_channels=drain_channels,
             dut_power_plan=dut_power_plan,
@@ -563,7 +596,7 @@ class ConfigurationDraft:
             )
         return {
             "test_frequencies": [frequency.ghz for frequency in self.frequencies],
-            "signal_source": _sweep_document(self.sweep),
+            "signal_source": _sweep_document(self.sweep, self.power_reference),
             "compression_point": {
                 "type": _decibels_text(self.compression_target)
             },
@@ -775,6 +808,71 @@ def _read_sweep(
         )
     except (TypeError, ValueError) as error:
         issues.append(_issue("signal_source", _CODE_INVALID_SWEEP, str(error)))
+        return None
+
+
+def _read_power_reference(
+    value: Any, issues: list[ValidationIssue]
+) -> tuple[str | None, bool]:
+    """读取起止功率的语义标记，返回 ``(标记, 是否合法)``。
+
+    缺失表示旧配置（标记为 ``None``，视为可继续读取）；出现但无法识别时返回
+    ``(None, False)``，调用方必须丢弃扫描参数，不能把历史数值按新语义重写。
+    """
+    if value is None:
+        return None, True
+    section = _mapping(value, "signal_source", issues)
+    raw = section.get("power_reference")
+    if raw is None:
+        return None, True
+    if not isinstance(raw, str):
+        issues.append(
+            _issue(
+                "signal_source.power_reference",
+                _CODE_INVALID_TYPE,
+                "功率范围语义标记必须是字符串",
+            )
+        )
+        return None, False
+    if raw != INPUT_POWER_REFERENCE:
+        issues.append(
+            _issue(
+                "signal_source.power_reference",
+                _CODE_INVALID_SWEEP,
+                f"功率范围语义必须是 {INPUT_POWER_REFERENCE!r}（主功放输入功率），"
+                f"收到 {raw!r}",
+            )
+        )
+        return None, False
+    return raw, True
+
+
+def _read_driver_gain(
+    value: Any, issues: list[ValidationIssue]
+) -> Decibels | None:
+    """读取 ``driver_mode.estimated_gain_db``；缺失保持 None，非法值报问题。"""
+    if value is None:
+        return None
+    section = _mapping(value, "driver_mode", issues)
+    if "estimated_gain_db" not in section:
+        return None
+    number = _finite_number(
+        section.get("estimated_gain_db"),
+        "driver_mode.estimated_gain_db",
+        issues,
+    )
+    if number is None:
+        return None
+    try:
+        return Decibels(number)
+    except (TypeError, ValueError) as error:
+        issues.append(
+            _issue(
+                "driver_mode.estimated_gain_db",
+                _CODE_INVALID_NUMBER,
+                str(error),
+            )
+        )
         return None
 
 
@@ -1172,18 +1270,31 @@ def _decibels_text(value: Decibels | None) -> str | None:
     return f"{value.db:g}dB"
 
 
-def _sweep_document(value: PowerSweep | None) -> dict[str, Any]:
-    if value is None:
-        return {"start_power": None, "stop_power": None, "step": None}
-    return {
-        "start_power": value.start.dbm,
-        "stop_power": value.stop.dbm,
-        "step": value.step.db,
+def _sweep_document(
+    value: PowerSweep | None, power_reference: str | None
+) -> dict[str, Any]:
+    # 新保存的编辑段一律声明主功放输入功率语义；旧文档被读取后重新保存时也写新语义，
+    # 不根据历史数值猜测或换算原功率范围。
+    document: dict[str, Any] = {
+        "start_power": None if value is None else value.start.dbm,
+        "stop_power": None if value is None else value.stop.dbm,
+        "step": None if value is None else value.step.db,
+        "power_reference": (
+            power_reference if power_reference is not None else INPUT_POWER_REFERENCE
+        ),
     }
+    return document
 
 
 def _driver_mode_document(draft: ConfigurationDraft) -> dict[str, Any]:
-    return {"enabled": draft.driver_enabled}
+    return {
+        "enabled": draft.driver_enabled,
+        "estimated_gain_db": (
+            draft.driver_gain_estimate.db
+            if draft.driver_gain_estimate is not None
+            else None
+        ),
+    }
 
 
 def _instrument_entry(binding: DeviceBindingDraft | None) -> dict[str, Any]:

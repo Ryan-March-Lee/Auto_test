@@ -22,11 +22,12 @@
 | 字段 | 类型（单位） | 来源 | 必填 | 非法值处理 |
 | --- | --- | --- | --- | --- |
 | `frequencies` | `tuple[Frequency, ...]`（内部 GHz） | 测试方案的频率列表 | 是，非空 | 空列表、重复频率、非 `Frequency` 值 → `AmplifierInputError` |
-| `sweep` | `PowerSweep`（起始/终止 dBm，步进 dB） | 测试方案的信号源扫描参数 | 是 | 起始大于终止、步进非正、非值对象 → `AmplifierInputError` |
+| `input_power_sweep` | `PowerSweep`（起始/终止 dBm，步进 dB） | 测试方案的**主功放输入功率**扫描参数 | 是 | 起始大于终止、步进非正、非值对象 → `AmplifierInputError` |
 | `compression_target` | `Decibels`（dB） | 测试方案的压缩点要求（1/3/5 dB） | 是 | 不在 `AMPLIFIER_COMPRESSION_TARGETS_DB` 内 → `AmplifierInputError` |
 | `attenuator` | `Decibels`（dB，非负） | 测试方案的衰减器设定 | 是 | 负值、非值对象 → `AmplifierInputError` |
 | `max_dut_input_power` | `PowerDbm`（dBm） | 测试方案的 DUT 输入功率限制 | 是 | 非值对象 → `AmplifierInputError`（不再默认“不限制”） |
 | `driver_enabled` | `bool` | 测试方案的驱动模式开关 | 是 | 非布尔值（含 `1`/`"yes"`）→ `AmplifierInputError` |
+| `driver_gain_estimate` | `Decibels | None`（dB） | 测试方案的驱动功放全局预估增益 | 否 | 非 `Decibels` 值 → `AmplifierInputError` |
 | `dut_power_plan` | `PowerPlan` | 运行映射里冻结的 DUT 上电顺序与组间隔 | 是，非空 | 空序列、重复路由、非法路由、越界间隔 → `AmplifierInputError` |
 | `channel_settings` | `Mapping[SupplyChannel, ChannelSetting]` | 测试方案里每条 DUT 路由的工作值/保护值 | 是，且与序列集合完全相等 | 缺设置、多设置、非路由键、缺工作值 → `AmplifierInputError` |
 | `drain_channel` | `DrainChannel` | 测试方案的漏极测量路由集合（可选，可多条） | 可选，但主功放测量服务构造时要求至少一条 | 已配置但不在上电序列里、重复路由 → `AmplifierInputError` |
@@ -58,9 +59,11 @@ from typing import Any
 from application.errors import ConfigurationError
 from domain.configuration.models import (
     CHANNEL_SETTING_FIELDS,
+    INPUT_POWER_REFERENCE,
     MAX_INTER_CHANNEL_DELAY_S,
     PLACEHOLDER_VALUES,
     SUPPORTED_COMPRESSION_POINTS,
+    power_reference_confirmation_error,
 )
 from domain.measurement.values import Decibels, Frequency, PowerDbm
 
@@ -71,6 +74,7 @@ __all__ = [
     "ChannelSetting",
     "DEFAULT_POWER_ON_DELAY_S",
     "DrainChannel",
+    "INPUT_POWER_REFERENCE",
     "MAX_INTER_CHANNEL_DELAY_S",
     "PowerPlan",
     "PowerSweep",
@@ -581,11 +585,11 @@ def _sweep_endpoint_tolerance(start: float, stop: float, step: float) -> float:
 
 @dataclass(frozen=True)
 class PowerSweep:
-    """信号源功率扫描参数：起始功率、终止功率与步进。
+    """主功放输入功率扫描参数：起始功率、终止功率与步进。
 
-    起始/终止是绝对功率（dBm），步进是相对增量（dB）；三者都不接受裸数值，
-    避免“把步进当成绝对功率”这类单位混用。``stop`` 是扫描上限，非整步时
-    不额外插入终点。
+    起始/终止是**主功放（DUT）输入功率**的绝对功率（dBm），步进是目标输入功率
+    网格的相对增量（dB）；三者都不接受裸数值，避免“把步进当成绝对功率”这类单位
+    混用。``stop`` 是扫描上限，非整步时不额外插入终点。
     """
 
     start: PowerDbm
@@ -673,9 +677,12 @@ def target_input_power_grid(
 class AmplifierMeasurementInputs:
     """主功放测量的正式输入：频率、功率扫描、压缩目标、衰减器、DUT 限制、驱动模式与供电计划。
 
-    全部字段必填、构造即校验：主功放用例只消费本对象，不需要 ``Mapping[str, Any]``
-    作为正式配置类型。运行标识、仪器端口、阶段记录器与校准输入（线损/驱动映射）
-    属于运行契约，不在这里表达。
+    除可选的驱动功放预估增益外，全部字段必填、构造即校验：主功放用例只消费本对象，
+    不需要 ``Mapping[str, Any]`` 作为正式配置类型。运行标识、仪器端口、阶段记录器与
+    校准输入（线损/驱动映射）属于运行契约，不在这里表达。
+
+    ``input_power_sweep`` 表示**主功放（DUT）输入功率**的目标范围，不是信号源输出
+    功率；``driver_gain_estimate`` 是驱动功放的全局预估增益（dB），驱动关闭时允许为空。
 
     DUT 供电由三项组成，职责互不重叠：
 
@@ -691,7 +698,7 @@ class AmplifierMeasurementInputs:
     """
 
     frequencies: tuple[Frequency, ...]
-    sweep: PowerSweep
+    input_power_sweep: PowerSweep
     compression_target: Decibels
     attenuator: Decibels
     max_dut_input_power: PowerDbm
@@ -699,10 +706,12 @@ class AmplifierMeasurementInputs:
     dut_power_plan: PowerPlan
     channel_settings: Mapping[SupplyChannel, ChannelSetting]
     drain_channel: DrainChannel
+    # 驱动功放全局预估增益（dB）；驱动关闭时可以为空。是否必填由运行前置校验决定。
+    driver_gain_estimate: Decibels | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "frequencies", self._frequencies(self.frequencies))
-        _require_value(self.sweep, PowerSweep, "功率扫描参数")
+        _require_value(self.input_power_sweep, PowerSweep, "主功放输入功率扫描参数")
         target = _require_value(self.compression_target, Decibels, "压缩目标")
         if target.db not in AMPLIFIER_COMPRESSION_TARGETS_DB:
             allowed = "、".join(f"{value}dB" for value in sorted(AMPLIFIER_COMPRESSION_TARGETS_DB))
@@ -716,6 +725,10 @@ class AmplifierMeasurementInputs:
         if not isinstance(self.driver_enabled, bool):
             raise AmplifierInputError(
                 f"驱动模式开关必须是布尔值，收到 {type(self.driver_enabled).__name__}"
+            )
+        if self.driver_gain_estimate is not None:
+            _require_value(
+                self.driver_gain_estimate, Decibels, "驱动功放预估增益"
             )
         plan = _require_value(self.dut_power_plan, PowerPlan, "DUT 上电计划")
         if plan.is_empty:
@@ -756,12 +769,17 @@ class AmplifierMeasurementInputs:
             raise AmplifierInputError(
                 "主功放正式输入必须来自运行配置：缺少 test_plan 或 run_mapping"
             )
+        # 未确认功率范围语义的配置不能进入正式测量：旧数值可能是信号源输出功率，
+        # 直接当作 DUT 输入功率会改变实际驱动电平，必须在硬件动作前失败。
+        unconfirmed = power_reference_confirmation_error(plan)
+        if unconfirmed is not None:
+            raise AmplifierInputError(unconfirmed)
         try:
             return cls(
                 frequencies=tuple(
                     Frequency.from_ghz(value) for value in plan.frequencies
                 ),
-                sweep=PowerSweep(
+                input_power_sweep=PowerSweep(
                     start=PowerDbm(plan.start_power),
                     stop=PowerDbm(plan.stop_power),
                     step=Decibels(plan.power_step),
@@ -770,6 +788,11 @@ class AmplifierMeasurementInputs:
                 attenuator=Decibels(plan.attenuator_value),
                 max_dut_input_power=PowerDbm(plan.max_input_power),
                 driver_enabled=plan.driver_enabled,
+                driver_gain_estimate=(
+                    Decibels(plan.driver_gain_estimate_db)
+                    if plan.driver_gain_estimate_db is not None
+                    else None
+                ),
                 dut_power_plan=PowerPlan.from_document(
                     getattr(mapping, "dut_power_plan", None)
                 ),

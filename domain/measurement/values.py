@@ -26,7 +26,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
@@ -44,6 +44,9 @@ __all__ = [
     "CableLossProfile",
     "CableLossTable",
     "DriverOutputTable",
+    "DRIVER_OUTPUT_TOLERANCE_DB",
+    "DriverCurve",
+    "DriverCurveTarget",
     "CompressionPoint",
     "CompressionResult",
 ]
@@ -60,6 +63,11 @@ _CABLE_FIELDS = (
 
 # ``parse()`` 接受的频率单位后缀及其到 GHz 的除数；GHz 是缺省单位，与 JSON 频率键一致。
 _FREQUENCY_UNITS = (("ghz", 1.0), ("mhz", 1e3), ("hz", 1e9))
+
+# 驱放曲线反查的数值容差（dB）。输出功率必须随源功率严格递增；差值非正且不超过
+# 该容差时视为重复点或浮点平台，超过则报告为下降。该容差只用于错误分类与诊断，
+# 绝不放行负斜率区间，也不扩大或收缩反查的覆盖边界。
+DRIVER_OUTPUT_TOLERANCE_DB = 1e-9
 
 
 class MeasurementValueError(ValueError):
@@ -130,6 +138,43 @@ def _power_key(key: Any, label: str) -> float:
     if isinstance(key, str):
         return _text_number(key.strip(), label, key)
     return _number(key, label)
+
+
+def _power_pair_sequence(
+    frequency: Frequency, pairs: Any, label: str
+) -> tuple[tuple[PowerDbm, PowerDbm], ...]:
+    """把驱放映射点序列收敛为 ``(源功率, 补偿后输出功率)`` 值对象对。
+
+    只做形状与单位收敛，不排序、不校验单调性；曲线/表格各自在构造时决定
+    是否允许乱序以及如何验证。
+    """
+    if isinstance(pairs, (str, bytes, Mapping)):
+        raise TypeError(f"{label} {frequency.key} GHz 的映射点必须是序列")
+    try:
+        items = tuple(pairs)
+    except TypeError:
+        raise TypeError(
+            f"{label} {frequency.key} GHz 的映射点必须是序列"
+        ) from None
+    validated = []
+    for index, pair in enumerate(items):
+        if isinstance(pair, (str, bytes, Mapping)):
+            raise TypeError(
+                f"{label} {frequency.key} GHz 第 {index} 个点必须是 (输入功率, 输出功率)"
+            )
+        try:
+            input_power, output_power = pair
+        except (TypeError, ValueError):
+            raise TypeError(
+                f"{label} {frequency.key} GHz 第 {index} 个点必须是 (输入功率, 输出功率)"
+            ) from None
+        validated.append(
+            (
+                _require(input_power, PowerDbm, f"{label}输入功率"),
+                _require(output_power, PowerDbm, f"{label}输出功率"),
+            )
+        )
+    return tuple(validated)
 
 
 @dataclass(frozen=True, order=True)
@@ -490,33 +535,7 @@ class DriverOutputTable:
     def _require_pairs(
         frequency: Frequency, pairs: Any
     ) -> tuple[tuple[PowerDbm, PowerDbm], ...]:
-        if isinstance(pairs, (str, bytes, Mapping)):
-            raise TypeError(f"驱动映射 {frequency.key} GHz 的映射点必须是序列")
-        try:
-            items = tuple(pairs)
-        except TypeError:
-            raise TypeError(
-                f"驱动映射 {frequency.key} GHz 的映射点必须是序列"
-            ) from None
-        validated = []
-        for index, pair in enumerate(items):
-            if isinstance(pair, (str, bytes, Mapping)):
-                raise TypeError(
-                    f"驱动映射 {frequency.key} GHz 第 {index} 个点必须是 (输入功率, 输出功率)"
-                )
-            try:
-                input_power, output_power = pair
-            except (TypeError, ValueError):
-                raise TypeError(
-                    f"驱动映射 {frequency.key} GHz 第 {index} 个点必须是 (输入功率, 输出功率)"
-                ) from None
-            validated.append(
-                (
-                    _require(input_power, PowerDbm, "驱动映射输入功率"),
-                    _require(output_power, PowerDbm, "驱动映射输出功率"),
-                )
-            )
-        return tuple(validated)
+        return _power_pair_sequence(frequency, pairs, "驱动映射")
 
     @classmethod
     def from_mapping(
@@ -594,6 +613,134 @@ class DriverOutputTable:
 
     def __len__(self) -> int:
         return len(self.points)
+
+
+@dataclass(frozen=True)
+class DriverCurveTarget:
+    """驱动曲线对一个目标 DUT 输入功率的反查结果。
+
+    ``target_input`` 是正式测试的目标输入功率；``source_power`` 是反解出的信号源
+    设定；``driver_output`` 是该源功率在分段线性曲线上对应的驱放输出功率（即正式
+    测试采用的 ``input_power_dut``）。
+    """
+
+    target_input: PowerDbm
+    source_power: PowerDbm
+    driver_output: PowerDbm
+
+    def __post_init__(self) -> None:
+        _require(self.target_input, PowerDbm, "target_input")
+        _require(self.source_power, PowerDbm, "source_power")
+        _require(self.driver_output, PowerDbm, "driver_output")
+
+
+def _ordered_curve_points(
+    frequency: Frequency,
+    pairs: tuple[tuple[PowerDbm, PowerDbm], ...],
+) -> tuple[tuple[PowerDbm, PowerDbm], ...]:
+    """按源功率排序并校验曲线可反查；错误信息必须带频率和具体区间。"""
+    ordered = sorted(pairs, key=lambda pair: pair[0].dbm)
+    previous: tuple[PowerDbm, PowerDbm] | None = None
+    for source, output in ordered:
+        if previous is None:
+            previous = (source, output)
+            continue
+        previous_source, previous_output = previous
+        if source.dbm == previous_source.dbm:
+            raise MeasurementValueError(
+                f"驱动曲线 {frequency.key} GHz 的源功率 {source.dbm} dBm 重复；"
+                "同一频点的源功率必须唯一，排序不能掩盖重复点"
+            )
+        interval = f"[{previous_source.dbm}, {source.dbm}] dBm"
+        difference = output.dbm - previous_output.dbm
+        if difference <= 0.0:
+            if abs(difference) <= DRIVER_OUTPUT_TOLERANCE_DB:
+                raise MeasurementValueError(
+                    f"驱动曲线 {frequency.key} GHz 在 {interval} 的输出功率重复或近似平台："
+                    f"{previous_output.dbm} dBm -> {output.dbm} dBm，"
+                    "差值在容差内无法唯一反查"
+                )
+            raise MeasurementValueError(
+                f"驱动曲线 {frequency.key} GHz 在 {interval} 的输出功率随源功率下降："
+                f"{previous_output.dbm} dBm -> {output.dbm} dBm，不能用于反查"
+            )
+        previous = (source, output)
+    return tuple(ordered)
+
+
+@dataclass(frozen=True)
+class DriverCurve:
+    """单个频点的驱放曲线：信号源输出功率 -> 补偿后的驱放输出功率。
+
+    构造即校验，任何不可反查的曲线都不会进入正式测试：
+
+    - 原始点按源功率升序排序；同一频点的源功率必须唯一，重复点直接拒绝；
+    - 输出功率必须随源功率严格递增；差值非正且不超过
+      :data:`DRIVER_OUTPUT_TOLERANCE_DB` 时按重复点/浮点平台拒绝，超过则按下降
+      拒绝。容差只参与错误分类，绝不放行负斜率区间；
+    - 非单调区段给出具体频率与源功率区间，不允许用排序掩盖。
+
+    反查使用分段线性插值：目标 DUT 输入功率落在两个实测输出之间时，按同一比例
+    得到源功率与插值点的驱放输出。目标超出实测输出覆盖范围时拒绝，绝不外推。
+    """
+
+    frequency: Frequency
+    points: tuple[tuple[PowerDbm, PowerDbm], ...]
+
+    def __post_init__(self) -> None:
+        frequency = _require(self.frequency, Frequency, "驱动曲线频率")
+        pairs = _power_pair_sequence(frequency, self.points, "驱动曲线")
+        if not pairs:
+            raise MeasurementValueError(
+                f"驱动曲线 {frequency.key} GHz 没有有效映射点"
+            )
+        object.__setattr__(self, "frequency", frequency)
+        object.__setattr__(
+            self, "points", _ordered_curve_points(frequency, pairs)
+        )
+
+    def reverse_interpolate(self, target_input: PowerDbm) -> DriverCurveTarget:
+        """把目标 DUT 输入功率反解为源功率，并同时返回该点的驱放输出。
+
+        目标恰好命中某个实测输出时返回该实测点的源功率与输出；落在两个实测点
+        之间时按输出功率做分段线性反插值。目标在实测输出覆盖范围之外时抛
+        :class:`MeasurementValueError`，不使用端点值外推。
+        """
+        target = _require(target_input, PowerDbm, "target_input")
+        points = self.points
+        low = points[0][1].dbm
+        high = points[-1][1].dbm
+        if target.dbm < low or target.dbm > high:
+            raise MeasurementValueError(
+                f"驱动曲线 {self.frequency.key} GHz 的目标输入功率 "
+                f"{target.dbm} dBm 超出实测输出覆盖范围 "
+                f"[{low}, {high}] dBm，禁止外推"
+            )
+        for (source_low, output_low), (source_high, output_high) in zip(
+            points, points[1:]
+        ):
+            if target.dbm < output_low.dbm or target.dbm > output_high.dbm:
+                continue
+            if target.dbm == output_low.dbm:
+                return DriverCurveTarget(target, source_low, output_low)
+            if target.dbm == output_high.dbm:
+                return DriverCurveTarget(target, source_high, output_high)
+            span = output_high.dbm - output_low.dbm
+            ratio = (target.dbm - output_low.dbm) / span
+            source_power = source_low.dbm + ratio * (source_high.dbm - source_low.dbm)
+            # 构造时已拒绝非正增量，因此区间内的目标就是该段的驱放输出；
+            # 不返回实测端点、不做容差吸附，保证反查结果可逐点复算。
+            return DriverCurveTarget(target, PowerDbm(source_power), target)
+
+        # 单点曲线：覆盖边界已保证目标与唯一实测输出一致。
+        source_only, output_only = points[0]
+        return DriverCurveTarget(target, source_only, output_only)
+
+    def reverse_interpolate_targets(
+        self, targets: Iterable[PowerDbm]
+    ) -> tuple[DriverCurveTarget, ...]:
+        """按给定顺序反查多个目标输入功率；目标网格的唯一性由调用方保证。"""
+        return tuple(self.reverse_interpolate(target) for target in targets)
 
 
 @dataclass(frozen=True)

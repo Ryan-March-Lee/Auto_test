@@ -20,9 +20,11 @@ import unittest
 
 from application.dto import (
     DRIVER_MAPPING_SCHEMA_VERSION,
+    DriverMappingInput,
     DriverMappingRawPoint,
     DriverMappingTargetPoint,
     DriverPowerMappingMeasurementResult,
+    MeasurementResult,
     measurement_result_from_document,
 )
 
@@ -103,6 +105,69 @@ class DriverMappingResultDocumentTests(unittest.TestCase):
         )
 
         self.assertEqual(point.gain_db, 30.0)
+
+
+class DriverMappingInputTests(unittest.TestCase):
+    """正式输入边界：目标网格是主视图，原始点只随输入携带供审计。"""
+
+    def test_input_exposes_the_target_grid_as_its_primary_view(self):
+        result = measurement_result_from_document(_document())
+
+        driver_input = DriverMappingInput.from_result(result)
+
+        self.assertEqual(
+            driver_input.target_mapping(), {"2.4": {12.0: (-17.5, 12.0)}}
+        )
+        self.assertEqual(
+            driver_input.raw_mapping(), {"2.4": {"-20.0": 10.0, "-15.0": 14.5}}
+        )
+
+    def test_empty_target_grid_cannot_be_a_formal_input(self):
+        result = measurement_result_from_document(_document(target_mapping={}))
+
+        with self.assertRaisesRegex(ValueError, "目标网格"):
+            DriverMappingInput.from_result(result)
+
+    def test_target_frequency_without_raw_points_is_rejected(self):
+        result = measurement_result_from_document(_document())
+
+        with self.assertRaisesRegex(ValueError, "缺少原始实测点"):
+            DriverMappingInput(
+                raw_points=result.raw_points,
+                target_points=(
+                    DriverMappingTargetPoint(
+                        frequency_ghz="5.8",
+                        target_input_power_dbm=12.0,
+                        source_power_dbm=-17.5,
+                        driver_output_power_dbm=12.0,
+                    ),
+                ),
+            )
+
+    def test_target_source_power_outside_the_raw_curve_is_rejected(self):
+        result = measurement_result_from_document(_document())
+
+        with self.assertRaisesRegex(ValueError, "超出原始映射覆盖范围"):
+            DriverMappingInput(
+                raw_points=result.raw_points,
+                target_points=(
+                    DriverMappingTargetPoint(
+                        frequency_ghz="2.4",
+                        target_input_power_dbm=12.0,
+                        source_power_dbm=-25.0,
+                        driver_output_power_dbm=12.0,
+                    ),
+                ),
+            )
+
+    def test_input_requires_a_driver_mapping_result(self):
+        with self.assertRaisesRegex(ValueError, "driver_power_mapping"):
+            DriverMappingInput.from_result(
+                MeasurementResult(
+                    measurement_type="cable_loss",
+                    run_id="driver-run",
+                )
+            )
 
 
 class DriverMappingResultRejectionTests(unittest.TestCase):
@@ -266,6 +331,19 @@ class ServicePayloadConversionTests(unittest.TestCase):
                     "power_mapping": {"2.4": {"-20.0": 10.0}},
                 },
                 run_id="driver-run",
+            )
+
+    def test_service_payload_must_carry_raw_points(self):
+        with self.assertRaisesRegex(ValueError, "原始映射点"):
+            DriverPowerMappingMeasurementResult.from_service_payload(
+                {"target_mapping": _document()["target_mapping"]},
+                run_id="driver-run",
+            )
+
+    def test_null_legacy_service_mapping_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "power_mapping"):
+            DriverPowerMappingMeasurementResult.from_service_payload(
+                {"power_mapping": None}, run_id="driver-run"
             )
 
     def test_target_point_type_is_explicit(self):

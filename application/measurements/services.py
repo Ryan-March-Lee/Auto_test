@@ -47,6 +47,7 @@ from application.dto.amplifier_inputs import (
     AmplifierMeasurementInputs,
     SupplyChannel,
 )
+from application.dto.measurement_results import DriverMappingInput
 from domain.measurement.calculations import (
     calculate_cable_losses,
     calculate_compression_result,
@@ -59,7 +60,6 @@ from domain.measurement.calculations import (
 from domain.measurement.values import (
     CableLossTable,
     Decibels,
-    DriverOutputTable,
     Frequency,
     Percent,
     PowerDbm,
@@ -475,7 +475,8 @@ class AmplifierMeasurementService(_Service):
     measurement_type = "amplifier_measurement"
 
     def __init__(self, inputs: AmplifierMeasurementInputs, instrument: MeasurementInstrumentPort,
-                 loss_data: Mapping[str, Any], driver_mapping: Mapping[str, Any] | None = None,
+                 loss_data: Mapping[str, Any],
+                 driver_input: DriverMappingInput | None = None,
                  *, configuration_snapshot: Mapping[str, Any] | None = None, **kwargs: Any):
         if not isinstance(inputs, AmplifierMeasurementInputs):
             raise TypeError(
@@ -495,11 +496,9 @@ class AmplifierMeasurementService(_Service):
         # 校准输入在构造阶段收敛为值对象，缺字段或错误单位不会等到扫描中途才暴露；
         # 服务只保留解析后的表，不再同时持有原始文档副本。
         self.loss_table = _loss_table(loss_data)
-        self.driver_table = (
-            DriverOutputTable.from_mapping(driver_mapping, source="驱动映射输入")
-            if driver_mapping
-            else None
-        )
+        # 驱动模式只消费目标网格（目标 DUT 输入 -> 源功率 + 插值驱放输出）；
+        # 原始曲线留在结果文档中供审计，不再参与主功放扫描。
+        self.driver_input = driver_input
         self.attenuator_value = inputs.attenuator
         self.compression_value = inputs.compression_target
         self.configuration_snapshot = dict(configuration_snapshot or {})
@@ -551,18 +550,51 @@ class AmplifierMeasurementService(_Service):
             )
         data = {"input_power_dut": [], "output_power_dut": [], "gain": [], "sg_power": [],
                 "voltages": [], "currents": [], "dc_power": [], "efficiency": []}
-        # ``PowerSweep.points()``：stop 是目标输入功率上限，非整步时不生成越过终点的点。
-        points = self.inputs.input_power_sweep.points()
+        # 驱动模式：正式扫描直接按目标网格执行，源功率和 DUT 输入功率都来自映射
+        # 结果，不再对原始曲线做二次插值。无驱动模式仍走现有源功率扫描路径
+        # （步骤 8 会把无驱动模式也切换为目标输入功率语义）。
+        if self.driver_input is None:
+            scan_points = tuple(
+                (point, None, None)
+                for point in self.inputs.input_power_sweep.points()
+            )
+        else:
+            targets = sorted(
+                (
+                    point
+                    for point in self.driver_input.target_points
+                    if Frequency.from_document_key(point.frequency_ghz)
+                    == frequency_value
+                ),
+                key=lambda point: point.target_input_power_dbm,
+            )
+            if not targets:
+                raise AmplifierInputError(
+                    f"驱动映射目标表缺少测试频率 {frequency_value.key} 的目标点"
+                )
+            scan_points = tuple(
+                (
+                    PowerDbm(point.target_input_power_dbm),
+                    PowerDbm(point.source_power_dbm),
+                    PowerDbm(point.driver_output_power_dbm),
+                )
+                for point in targets
+            )
         self.inst_ctrl.rf_output_on()
         try:
-            for index, sg_power in enumerate(points):
+            for index, (sweep_point, driver_source, driver_output) in enumerate(scan_points):
                 self._check_cancelled()
-                dut_input = calculate_dut_input_power(
-                    sg_power,
-                    frequency_value,
-                    self.loss_table,
-                    self.driver_table,
-                )
+                if driver_output is not None and driver_source is not None:
+                    sg_power = driver_source
+                    dut_input = driver_output
+                else:
+                    sg_power = sweep_point
+                    dut_input = calculate_dut_input_power(
+                        sg_power,
+                        frequency_value,
+                        self.loss_table,
+                        None,
+                    )
                 if dut_input.dbm > maximum:
                     self._message(
                         f"DUT 输入保护触发: {frequency} GHz, {dut_input.dbm:.2f} dBm > {maximum:.2f} dBm"
@@ -620,7 +652,7 @@ class AmplifierMeasurementService(_Service):
                                             "output_power": output.dbm, "gain": gain.db,
                                             "efficiency": data["efficiency"][-1],
                                             "dc_power": dc_power}}))
-                self._progress((index + 1) / max(len(points), 1), "scan")
+                self._progress((index + 1) / max(len(scan_points), 1), "scan")
                 if index >= 3 and (
                     Decibels(float(np.mean(data["gain"][:3]))) - gain
                 ).db >= compression_value.db:

@@ -3,6 +3,7 @@ import warnings
 from pathlib import Path
 from unittest.mock import Mock
 
+from application.dto import DriverMappingInput
 from application.inputs import ResultInputReader
 from application.ports.result_input_reader import ResultInputReader as ResultInputReaderPort
 
@@ -22,7 +23,15 @@ def _driver_document(**overrides):
                 }
             ]
         },
-        "target_mapping": {},
+        "target_mapping": {
+            "1.0": [
+                {
+                    "target_input_power_dbm": 2.0,
+                    "source_power_dbm": -20.0,
+                    "driver_output_power_dbm": 2.0,
+                }
+            ]
+        },
     }
     document.update(overrides)
     return document
@@ -54,15 +63,44 @@ class ResultInputReaderTests(unittest.TestCase):
             Path("runs/run-1/inputs/cable_loss.json").resolve()
         )
 
-    def test_explicit_driver_mapping_path_does_not_scan_latest(self):
+    def test_explicit_driver_mapping_path_returns_the_target_grid(self):
         repository = Mock()
         repository.load.return_value = _driver_document()
         reader = ResultInputReader(repository)
 
         result = reader.read_driver_mapping(Path("provided/mapping.json"))
 
-        self.assertEqual(result, {"1.0": {"-20.0": 2.0}})
+        self.assertIsInstance(result, DriverMappingInput)
+        # 正式输入的主视图是目标网格，不是原始“源功率 -> 输出”审计表。
+        self.assertEqual(result.target_mapping(), {"1.0": {2.0: (-20.0, 2.0)}})
+        self.assertEqual(result.raw_mapping(), {"1.0": {"-20.0": 2.0}})
+        self.assertEqual(result.target_points[0].target_input_power_dbm, 2.0)
         repository.load.assert_called_once_with((Path("provided/mapping.json")).resolve())
+
+    def test_empty_target_grid_is_not_a_formal_input(self):
+        repository = Mock()
+        repository.load.return_value = _driver_document(target_mapping={})
+
+        with self.assertRaisesRegex(ValueError, "目标网格"):
+            ResultInputReader(repository).read_driver_mapping("mapping.json")
+
+    def test_target_frequency_must_have_raw_points(self):
+        document = _driver_document()
+        document["target_mapping"]["2.4"] = document["target_mapping"].pop("1.0")
+        repository = Mock()
+        repository.load.return_value = document
+
+        with self.assertRaisesRegex(ValueError, "缺少原始实测点"):
+            ResultInputReader(repository).read_driver_mapping("mapping.json")
+
+    def test_target_source_power_must_stay_inside_the_raw_curve(self):
+        document = _driver_document()
+        document["target_mapping"]["1.0"][0]["source_power_dbm"] = -30.0
+        repository = Mock()
+        repository.load.return_value = document
+
+        with self.assertRaisesRegex(ValueError, "超出原始映射覆盖范围"):
+            ResultInputReader(repository).read_driver_mapping("mapping.json")
 
     def test_explicit_path_does_not_warn(self):
         repository = Mock()

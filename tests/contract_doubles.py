@@ -14,7 +14,13 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Mapping
+
+from application.dto import (
+    DriverMappingInput,
+    DriverMappingRawPoint,
+    DriverMappingTargetPoint,
+)
 
 DEFAULT_RUN_ID = "20260101T000000Z_contract"
 
@@ -253,7 +259,32 @@ class MappingInputReader:
             raise self.error
         if self.driver_mapping is None:
             raise FileNotFoundError(f"驱动映射输入不存在: {path}")
-        return self.driver_mapping
+        if isinstance(self.driver_mapping, DriverMappingInput):
+            return self.driver_mapping
+        return _driver_mapping_input(self.driver_mapping)
+
+
+def _driver_mapping_input(mapping: Mapping[str, Mapping[str, float]]) -> DriverMappingInput:
+    """把测试用的原始“源功率 -> 输出”表包装成正式双层输入。"""
+    raw_points = tuple(
+        DriverMappingRawPoint(
+            frequency_ghz=frequency,
+            source_power_dbm=float(source),
+            driver_output_power_dbm=float(output),
+        )
+        for frequency, bucket in mapping.items()
+        for source, output in bucket.items()
+    )
+    target_points = tuple(
+        DriverMappingTargetPoint(
+            frequency_ghz=point.frequency_ghz,
+            target_input_power_dbm=point.driver_output_power_dbm,
+            source_power_dbm=point.source_power_dbm,
+            driver_output_power_dbm=point.driver_output_power_dbm,
+        )
+        for point in raw_points
+    )
+    return DriverMappingInput(raw_points=raw_points, target_points=target_points)
 
 
 __all__ = [

@@ -569,10 +569,15 @@ class DriverPowerMappingMeasurementResult(MeasurementResult):
             )
         if raw_value is not None:
             raw_points = _raw_mapping_points(raw_value, require_gain=False)
+        elif "power_mapping" in payload:
+            # 服务层的 ``power_mapping`` 是原始实测表（源功率 -> 补偿后输出）。
+            # 这个适配入口只服务尚未迁移的驱动扫描服务，转换结果仍是审计点，
+            # 不会成为目标输入表；正式文档读取路径不接受该字段。
+            raw_points = _raw_points_from_power_mapping(payload["power_mapping"])
         else:
-            # 服务层的 ``power_mapping`` 是原始实测表（源功率 -> 补偿后输出），
-            # 只在内部载荷转换时读取；它不是正式文档的目标网格字段。
-            raw_points = _raw_points_from_power_mapping(payload.get("power_mapping"))
+            raise ValueError(
+                "驱动映射服务载荷缺少原始映射点（raw_points 或 power_mapping）"
+            )
         return cls(
             run_id=run_id,
             status=_service_status(payload.get("status")) if status is None else status,
@@ -658,6 +663,79 @@ class DriverPowerMappingMeasurementResult(MeasurementResult):
                 }
             )
         return {frequency: tuple(rows) for frequency, rows in grouped.items()}
+
+
+@dataclass(frozen=True)
+class DriverMappingInput:
+    """驱动映射阶段交给正式测试的**已校验**输入。
+
+    - :attr:`target_points` 是正式测试唯一消费的数据：目标 DUT 输入功率、反查源功率
+      和插值驱放输出；它不能为空，否则映射还没有生成可执行的目标网格。
+    - :attr:`raw_points` 是原始实测审计数据。``raw_mapping()`` 只为仍在迁移中的
+      主功放扫描实现保留，不得把它的键当作目标输入功率；目标网格的正式消费切换
+      属于重构步骤 9。
+
+    本对象只在**输入读取边界**构造：正式文档已经通过
+    :func:`measurement_result_from_document` 的 schema、版本和字段校验，这里再补上
+    “目标表可用”与“原始曲线覆盖目标源功率”的交叉校验。
+    """
+
+    raw_points: tuple[DriverMappingRawPoint, ...]
+    target_points: tuple[DriverMappingTargetPoint, ...]
+
+    def __post_init__(self) -> None:
+        raw_points = _rows(self.raw_points, DriverMappingRawPoint, "raw_points")
+        target_points = _rows(
+            self.target_points, DriverMappingTargetPoint, "target_points"
+        )
+        if not target_points:
+            raise ValueError(
+                "驱动映射输入缺少目标网格映射（target_mapping 为空），"
+                "不能用于正式测试；请先完成驱动映射并生成目标表"
+            )
+        _validate_unique_driver_values(
+            raw_points, "source_power_dbm", "驱动映射原始点的源功率"
+        )
+        _validate_unique_driver_values(
+            target_points, "target_input_power_dbm", "驱动映射目标点"
+        )
+        _validate_target_grid_coverage(raw_points, target_points)
+        object.__setattr__(self, "raw_points", raw_points)
+        object.__setattr__(self, "target_points", target_points)
+
+    @classmethod
+    def from_result(
+        cls, result: DriverPowerMappingMeasurementResult
+    ) -> "DriverMappingInput":
+        """从已校验的双层结果构造正式输入；其它测量类型直接拒绝。"""
+        if not isinstance(result, DriverPowerMappingMeasurementResult):
+            raise ValueError("驱动映射输入必须来自 driver_power_mapping 结果")
+        return cls(
+            raw_points=result.raw_points,
+            target_points=result.target_points,
+        )
+
+    def target_mapping(self) -> dict[str, dict[float, tuple[float, float]]]:
+        """按频点组织的目标网格视图：目标输入 -> (源功率, 插值驱放输出)。"""
+        mapping: dict[str, dict[float, tuple[float, float]]] = {}
+        for point in self.target_points:
+            mapping.setdefault(point.frequency_ghz, {})[
+                point.target_input_power_dbm
+            ] = (point.source_power_dbm, point.driver_output_power_dbm)
+        return mapping
+
+    def raw_mapping(self) -> dict[str, dict[str, float]]:
+        """按频点组织的原始实测审计视图：源功率 -> 补偿后驱放输出。
+
+        只用于兼容尚未切换的主功放扫描实现（重构步骤 9 会改为消费
+        :meth:`target_mapping`）；它不是目标输入功率表。
+        """
+        mapping: dict[str, dict[str, float]] = {}
+        for point in self.raw_points:
+            mapping.setdefault(point.frequency_ghz, {})[
+                str(point.source_power_dbm)
+            ] = point.driver_output_power_dbm
+        return mapping
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1024,6 +1102,41 @@ def _validate_unique_driver_values(
         seen.add(key)
 
 
+def _validate_target_grid_coverage(
+    raw_points: tuple[DriverMappingRawPoint, ...],
+    target_points: tuple[DriverMappingTargetPoint, ...],
+) -> None:
+    """目标表的源功率必须落在同频点原始实测曲线的覆盖范围内。
+
+    这是输入可用性的结构检查，不做插值一致性计算（步骤 5 的曲线模块负责单调性、
+    插值和输出一致性）。这里只保证正式测试不会拿目标表去反查一条不存在的曲线。
+    """
+    raw_sources: dict[Frequency, list[float]] = {}
+    for point in raw_points:
+        frequency = Frequency.from_document_key(point.frequency_ghz)
+        raw_sources.setdefault(frequency, []).append(point.source_power_dbm)
+    for point in target_points:
+        frequency = Frequency.from_document_key(point.frequency_ghz)
+        sources = raw_sources.get(frequency)
+        if not sources:
+            raise ValueError(
+                f"驱动映射目标点 {point.frequency_ghz} GHz 缺少原始实测点，"
+                "无法反查源功率"
+            )
+        low, high = min(sources), max(sources)
+        tolerance = 1e-9 * max(
+            1.0, abs(low), abs(high), abs(point.source_power_dbm)
+        )
+        if point.source_power_dbm < low - tolerance or (
+            point.source_power_dbm > high + tolerance
+        ):
+            raise ValueError(
+                f"驱动映射目标点 {point.frequency_ghz} GHz 的源功率 "
+                f"{point.source_power_dbm} dBm 超出原始映射覆盖范围 "
+                f"[{low}, {high}] dBm，禁止外推"
+            )
+
+
 def _service_status(value: Any) -> MeasurementStatus:
     """把服务层载荷状态收敛为正式状态；服务只使用 waiting/finished 两个别名。"""
     if isinstance(value, MeasurementStatus):
@@ -1064,9 +1177,10 @@ def _raw_points_from_power_mapping(value: Any) -> tuple[DriverMappingRawPoint, .
 
     这个入口只用于**服务载荷**；正式结果文档没有这个字段。服务载荷的含义就是
     “源功率 -> 补偿后驱放输出”，转换后仍是原始点，不会成为目标输入表。
+    ``None`` 不是“没有原始点”，而是缺值，直接拒绝。
     """
     if value is None:
-        return ()
+        raise ValueError("power_mapping 不能为空值")
     if not isinstance(value, Mapping):
         raise ValueError("power_mapping 必须是映射")
     points = []
@@ -1468,6 +1582,7 @@ __all__ = [
     "DriverPowerMappingMeasurementResult",
     "AmplifierMeasurementResult",
     "CableLossRow",
+    "DriverMappingInput",
     "DriverMappingRawPoint",
     "DriverMappingTargetPoint",
     "AmplifierCompressionPoint",

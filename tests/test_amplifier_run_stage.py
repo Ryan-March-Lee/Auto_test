@@ -28,6 +28,7 @@ from app.gui_runtime import (
 from application.dto import (
     AmplifierMeasurementRequest,
     DriverMappingRawPoint,
+    DriverMappingTargetPoint,
     DriverPowerMappingMeasurementResult,
 )
 from application.inputs import ResultInputReader
@@ -141,13 +142,14 @@ class _Instrument:
         self.measured = 0
         self.fail = fail
         self.rf_off_calls = 0
+        self.powers = []
 
     def setup_driver_amplifier_power(self): pass
     def power_on_driver(self): pass
     def setup_dut_power(self): pass
     def power_on_sequence(self): pass
     def power_off_sequence(self): pass
-    def set_power(self, _power): pass
+    def set_power(self, power): self.powers.append(power)
     def set_frequency(self, _frequency): pass
     def set_center_frequency(self, _frequency): pass
     def set_span(self, _span): pass
@@ -239,6 +241,17 @@ class AmplifierRunStageTests(unittest.TestCase):
             raw_points=tuple(
                 DriverMappingRawPoint(
                     frequency_ghz=frequency,
+                    source_power_dbm=float(source),
+                    driver_output_power_dbm=float(output),
+                )
+                for frequency, bucket in mapping.items()
+                for source, output in bucket.items()
+            ),
+            # 正式输入要求每个测试频点都有目标点；测试用目标输入等于原始输出。
+            target_points=tuple(
+                DriverMappingTargetPoint(
+                    frequency_ghz=frequency,
+                    target_input_power_dbm=float(output),
                     source_power_dbm=float(source),
                     driver_output_power_dbm=float(output),
                 )
@@ -370,12 +383,20 @@ class AmplifierRunStageTests(unittest.TestCase):
             self._request(instrument=instrument, driver_enabled=True),
             sleep_fn=lambda _: None,
         )
-        # 驱动映射输入来自当前运行，服务使用插值后的 DUT 输入功率。
-        self.assertEqual(use_case.driver_mapping, POWER_MAPPING)
+        # 驱动映射输入来自当前运行；正式对象携带目标网格，原始点只作审计。
+        self.assertEqual(use_case.driver_mapping.raw_mapping(), POWER_MAPPING)
+        self.assertEqual(
+            use_case.driver_mapping.target_mapping(), {"1.0": {-10.0: (-20.0, -10.0)}}
+        )
 
-        use_case.measure_all_frequencies()
+        result = use_case.measure_all_frequencies()
 
         self.assertEqual(instrument.measured, 1)
+        # 扫描直接使用目标网格：信号源设为反查源功率，DUT 输入取插值驱放输出。
+        self.assertEqual(instrument.powers, [-40, -20.0])
+        frequency = result.frequencies[0]
+        self.assertEqual(frequency.sweep_data["sg_power"], (-20.0,))
+        self.assertEqual(frequency.sweep_data["input_power_dut"], (-10.0,))
         manifest = self.repository.load_manifest(RUN_ID)
         self.assertEqual(manifest.stage(STAGE_DRIVER_MAPPING).status, StageStatus.COMPLETED)
         self.assertEqual(manifest.stage(STAGE_AMPLIFIER).status, StageStatus.COMPLETED)

@@ -11,7 +11,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Mapping
 
-from application.dto import MeasurementType, measurement_result_from_document
+from application.dto import (
+    DriverMappingInput,
+    MeasurementType,
+    measurement_result_from_document,
+)
 from application.ports.result_input_reader import ResultInputReader as ResultInputReaderPort
 from application.ports.result_repository import MeasurementResultRepository, PathLike
 
@@ -41,23 +45,24 @@ class ResultInputReader(ResultInputReaderPort):
         return Path(path).expanduser().resolve()
 
     @staticmethod
-    def _driver_raw_mapping(document: Mapping[str, Any]) -> Mapping[str, Any]:
-        """把双层驱动映射文档收敛为当前主功放输入读取器可消费的原始表。
+    def _driver_mapping_input(document: Mapping[str, Any]) -> DriverMappingInput:
+        """把正式驱动映射文档收敛为可执行的**目标网格输入**。
 
         正式输入必须是 ``schema_version=2.0`` 的双层契约；旧 ``power_mapping``
-        文档会被正式结果读取器明确拒绝，不会被当成目标输入表。目标网格的消费
-        切换（主功放按目标输入反查源功率）属于后续步骤，本读取器暂不改变返回形状。
+        文档会被正式结果读取器明确拒绝，不会被当成目标输入表。目标网格为空
+        （映射尚未生成目标表）或目标源功率落在原始曲线之外时，同样不能作为正式
+        测试输入。原始点只随输入对象携带供审计，不作为目标表返回。
         """
         result = measurement_result_from_document(document)
         if result.measurement_type is not MeasurementType.DRIVER_POWER_MAPPING:
             raise ValueError("驱动映射输入必须是 driver_power_mapping 结果")
-        return result.raw_mapping()
+        return DriverMappingInput.from_result(result)
 
     def read_cable_loss(self, path: PathLike | None) -> Mapping[str, Any]:
         return self.repository.load(self._explicit_path(path))
 
-    def read_driver_mapping(self, path: PathLike | None) -> Mapping[str, Any]:
-        return self._driver_raw_mapping(
+    def read_driver_mapping(self, path: PathLike | None) -> DriverMappingInput:
+        return self._driver_mapping_input(
             self.repository.load(self._explicit_path(path))
         )
 

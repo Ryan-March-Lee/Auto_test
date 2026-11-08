@@ -261,16 +261,17 @@ class DriverMappingRunStageTests(unittest.TestCase):
         # 线损阶段不受驱动映射结果写入影响。
         self.assertEqual(manifest.stage(STAGE_CABLE_LOSS).status, StageStatus.COMPLETED)
 
-    def test_mapping_result_is_loadable_from_run_directory(self):
+    def test_mapping_without_target_grid_is_not_a_formal_input(self):
+        """目标网格生成属于后续步骤；当前扫描结果只能保存为审计结果。"""
+
         layout = self._create_run()
         self._complete_cable_loss()
         DriverPowerMappingUseCase(self._request(), sleep_fn=lambda _: None).measure_all_frequencies()
 
         result_path = layout.run_directory / DRIVER_MAPPING_INPUT_PATH
         reader = ResultInputReader(self.result_repository)
-        mapping = reader.read_driver_mapping(result_path)
-        self.assertIn("1.0", mapping)
-        self.assertEqual(len(mapping["1.0"]), 1)
+        with self.assertRaisesRegex(ValueError, "目标网格"):
+            reader.read_driver_mapping(result_path)
 
     def test_current_run_input_does_not_use_deprecated_latest_lookup(self):
         self._create_run()

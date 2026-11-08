@@ -16,6 +16,7 @@ from application.dto import (
     AmplifierMeasurementInputs,
     AmplifierMeasurementRequest,
     AmplifierMeasurementResult,
+    DriverMappingInput,
     MeasurementResult,
     MeasurementStatus,
 )
@@ -24,7 +25,6 @@ from application.measurements.services import AmplifierMeasurementService
 from application.ports.measurement_session import CleanupRecord
 from domain.measurement.values import (
     CableLossTable,
-    DriverOutputTable,
     Frequency,
     MeasurementValueError,
     PowerDbm,
@@ -107,6 +107,7 @@ class AmplifierMeasurementUseCase:
             self.inputs,
             self.inst_ctrl,
             self.loss_data,
+            # 主功放驱动扫描直接消费目标网格；原始实测点只留在结果文档供审计。
             self.driver_mapping,
             run_id=self.run_id,
             safety_cleanup=self.safety_cleanup,
@@ -219,17 +220,18 @@ class AmplifierMeasurementUseCase:
         """
         return self._read_run_input(STAGE_CABLE_LOSS)
 
-    def _load_driver_mapping(self) -> Mapping[str, Any] | None:
+    def _load_driver_mapping(self) -> DriverMappingInput | None:
         """解析本次运行实际消费的驱动映射输入。
 
         驱动模式关闭时不要求映射文件存在，直接返回 ``None``；启用时强制校验
-        ``inputs/driver_mapping.json`` 已完成且校验值一致。
+        ``inputs/driver_mapping.json`` 已完成且校验值一致，并收敛为带目标网格的
+        正式输入对象。返回类型不是裸映射，避免下游把原始曲线误当成目标输入表。
         """
         if not self._driver_mode_enabled():
             return None
         return self._read_run_input(STAGE_DRIVER_MAPPING)
 
-    def _read_run_input(self, stage: str) -> Mapping[str, Any]:
+    def _read_run_input(self, stage: str) -> Mapping[str, Any] | DriverMappingInput:
         if self.input_reader is None:
             raise ValueError("主功放读取当前运行输入时必须注入 input_reader")
         path = self.stage_recorder.verified_result_path(stage)
@@ -321,9 +323,10 @@ def validate_amplifier_calibration_inputs(
     - ``cable_losses`` 必须是对象，且包含每个测试频率对应对象；
     - 无驱动时每个频率必须包含 ``cable1``（DUT 输入功率 = sg_power - cable1）；
     - 补偿 DUT 输出功率始终需要 ``cable2`` 与 ``cable4``；
-    - 驱动模式启用时，每个测试频率必须有非空的驱动映射子对象。
+    - 驱动模式启用时，每个测试频率必须在正式目标网格中有目标点；原始实测点不参与
+      主功放扫描，只作审计。
 
-    文档在边界处收敛为 :class:`CableLossTable` / :class:`DriverOutputTable`；
+    文档在边界处收敛为 :class:`CableLossTable` / :class:`DriverMappingInput`；
     “某个计算路径需要哪几段线缆”由 :class:`CableLossProfile` 的
     ``require_*_path()`` 方法表达，本函数不再解释 ``cable1`` 等字符串字段名。
 
@@ -352,18 +355,19 @@ def validate_amplifier_calibration_inputs(
             raise AmplifierCalibrationError(str(error)) from error
     if not driver_enabled:
         return
-    if not isinstance(driver_mapping, Mapping):
-        raise AmplifierCalibrationError("驱动模式启用时缺少有效的驱动映射输入")
-    try:
-        driver_table = DriverOutputTable.from_mapping(
-            driver_mapping, source="驱动映射输入"
+    if not isinstance(driver_mapping, DriverMappingInput):
+        raise AmplifierCalibrationError(
+            "驱动模式启用时缺少有效的双层驱动映射输入；"
+            "请重新读取当前运行的 driver_mapping.json"
         )
-    except (TypeError, ValueError) as error:
-        raise AmplifierCalibrationError(str(error)) from error
+    target_frequencies = {
+        Frequency.from_document_key(point.frequency_ghz)
+        for point in driver_mapping.target_points
+    }
     for frequency in frequency_values:
-        if not driver_table.has_points(frequency):
+        if frequency not in target_frequencies:
             raise AmplifierCalibrationError(
-                f"驱动映射缺少测试频率 {frequency.key} 的有效映射数据"
+                f"驱动映射目标表缺少测试频率 {frequency.key} 的目标点"
             )
 
 

@@ -3,13 +3,8 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QDialog, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QGroupBox, QWidget
 
-from application.dto import (
-    AmplifierCompressionPoint,
-    AmplifierFrequencyResult,
-    AmplifierMeasurementResult,
-)
 from presentation.qt.amplifier_page import AmplifierPage
 from presentation.qt.measurement_controller_contract import MeasurementCommand
 from presentation.qt.measurement_controls import MeasurementAction
@@ -96,7 +91,7 @@ class AmplifierPageTests(unittest.TestCase):
 
         self.assertTrue(self.page.amplifier_test_btn.isEnabled())
         self.assertFalse(self.page.stop_btn.isEnabled())
-        self.assertEqual(self.page.result_table.columnCount(), 4)
+        self.assertFalse(hasattr(self.page, "result_table"))
 
         self.assertEqual(self.controller.signals.message.slots, [])
         self.assertEqual(self.controller.signals.rejected.slots, [])
@@ -139,40 +134,17 @@ class AmplifierPageTests(unittest.TestCase):
         self.assertEqual(checked.calls[0][0], "start")
         self.assertEqual(replacement.calls, [])
 
-    def test_realtime_data_and_result_update_page_models(self):
-        self.controller.signals.data_update.emit({"frequency": "4.0", "sweep_data": {"output_power_dut": [10]}})
-        self.controller.signals.result.emit(type("Reference", (), {
-            "kind": MeasurementKind.AMPLIFIER,
-            "value": AmplifierMeasurementResult(
-                run_id="run-amplifier",
-                status=MeasurementStatus.COMPLETED,
-                frequencies=(
-                    AmplifierFrequencyResult(
-                        frequency_ghz="4.0",
-                        compression_type="1dB",
-                        compression_point=AmplifierCompressionPoint(output_power_dbm=20.0),
-                        small_signal_gain_db=12.5,
-                        compression_achieved=True,
-                        sweep_data={"output_power_dut": [20]},
-                    ),
-                ),
-            ),
-        })())
-        self.assertEqual(self.page.result_table.rowCount(), 1)
-        self.assertEqual(self.page.result_table.item(0, 0).text(), "4.0")
-        self.assertEqual(self.page.result_table.item(0, 2).text(), "12.5")
+    def test_result_signal_is_not_subscribed(self):
+        """测量结果只在应用层保存与归档，页面不再接收结果信号做展示。"""
+        self.assertEqual(self.controller.signals.result.slots, [])
+
+    def test_realtime_data_updates_the_browse_plot(self):
+        self.controller.signals.data_update.emit(
+            {"frequency": "4.0", "sweep_data": {"output_power_dut": [10]}}
+        )
+
         self.assertEqual(self.page.amplifier_plot_widget.updated[-1]["frequency"], "4.0")
-
-    def test_non_formal_result_is_reported_and_not_displayed(self):
-        errors = []
-        self.page._error_callback = errors.append
-        self.controller.signals.result.emit(type("Reference", (), {
-            "kind": MeasurementKind.AMPLIFIER,
-            "value": {"results": {"4.0": {"small_signal_gain": 12.5}}},
-        })())
-
-        self.assertEqual(self.page.result_table.rowCount(), 0)
-        self.assertEqual(errors, ["主功放测量结果不是正式结果模型，无法显示"])
+        self.assertEqual(self.page.realtime_buffer.frequencies, [4.0])
 
     def test_stop_and_error_restore_controls(self):
         self.controller.signals.state_changed.emit(type("State", (), {
@@ -216,15 +188,13 @@ class AmplifierPageTests(unittest.TestCase):
         self.assertEqual(lefts, sorted(lefts))
         page.close()
 
-    def test_left_column_holds_controls_and_plot_takes_the_right(self):
-        from PySide6.QtWidgets import QGroupBox
-
+    def test_left_column_holds_only_controls_and_plot_takes_the_right(self):
         page = self.page
         page.resize(1600, 900)
         page.show()
         self.app.processEvents()
         titles = [box.title() for box in page.control_panel.findChildren(QGroupBox)]
-        self.assertEqual(titles, ["测量控制", "测量结果"])
+        self.assertEqual(titles, ["测量控制"])
         # 接线说明只保留连接图按钮，按钮归入测量控制。
         self.assertEqual(page.show_amp_diagram_btn.parent().title(), "测量控制")
         self.assertLessEqual(page.control_panel.width(), 520)
@@ -235,9 +205,9 @@ class AmplifierPageTests(unittest.TestCase):
         page.close()
 
     def test_close_disconnects_controller_signals(self):
-        self.assertEqual(len(self.controller.signals.result.slots), 1)
+        self.assertEqual(len(self.controller.signals.data_update.slots), 1)
         self.page.close()
-        self.assertEqual(self.controller.signals.result.slots, [])
+        self.assertEqual(self.controller.signals.data_update.slots, [])
         self.page.close()
 
     def test_connection_diagram_follows_the_driver_mode(self):

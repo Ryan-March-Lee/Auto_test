@@ -154,16 +154,6 @@ class DriverMappingPageResultState(PageResultState):
         super().__post_init__()
 
 
-@dataclass(frozen=True)
-class AmplifierPageResultState(PageResultState):
-    kind: MeasurementKind = MeasurementKind.AMPLIFIER
-
-    def __post_init__(self) -> None:
-        if self.kind is not MeasurementKind.AMPLIFIER:
-            raise ValueError("AmplifierPageResultState 的 kind 必须为 amplifier")
-        super().__post_init__()
-
-
 __all__ = [
     "MeasurementKind",
     "MeasurementStatus",
@@ -172,5 +162,4 @@ __all__ = [
     "PageResultState",
     "CableLossPageResultState",
     "DriverMappingPageResultState",
-    "AmplifierPageResultState",
 ]

@@ -1,7 +1,6 @@
 import unittest
 
 from presentation.qt.measurement_state import (
-    AmplifierPageResultState,
     CableLossPageResultState,
     DriverMappingPageResultState,
     MeasurementKind,
@@ -69,7 +68,7 @@ class MeasurementStateTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             CableLossPageResultState(kind=MeasurementKind.AMPLIFIER)
 
-        result = AmplifierPageResultState(
+        result = CableLossPageResultState(
             rows=({"nested": [{"value": 1}]},),
             metadata={"labels": ["gain"]},
         )
@@ -91,7 +90,6 @@ class MeasurementStateTests(unittest.TestCase):
         result_types = (
             CableLossPageResultState,
             DriverMappingPageResultState,
-            AmplifierPageResultState,
         )
         for result_type in result_types:
             result = result_type(rows=({"frequency_hz": 1.0},))

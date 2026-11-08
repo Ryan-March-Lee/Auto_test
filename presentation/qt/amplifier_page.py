@@ -10,24 +10,19 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
-    QHeaderView,
-    QLabel,
     QMessageBox,
     QPushButton,
-    QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from application.dto import AmplifierMeasurementResult
 from .archival_page import ArchivalPageMixin
 from .measurement_controls import (
     MeasurementAction,
     MeasurementControlPresenter,
 )
 from .measurement_start_facade import MeasurementStartFacade, StartMeasurementRequest
-from .measurement_state import AmplifierPageResultState, MeasurementKind
+from .measurement_state import MeasurementKind
 from .pages import PageControllerBindingMixin
 from .realtime_buffer import RealtimeMeasurementBuffer
 from .realtime_page import RealtimePageMixin
@@ -37,7 +32,7 @@ from .theme import set_button_variant
 class AmplifierPage(
     RealtimePageMixin, ArchivalPageMixin, PageControllerBindingMixin, QWidget
 ):
-    """主功放测量的输入、接线确认、进度和结果展示。"""
+    """主功放测量的输入、接线确认、进度和实时曲线展示。"""
 
     def __init__(
         self,
@@ -83,7 +78,8 @@ class AmplifierPage(
         layout.setContentsMargins(0, 4, 0, 0)
         layout.setSpacing(12)
 
-        # 左侧窄栏：测量控制、测量结果；右侧整块留给四张图。
+        # 左侧窄栏只放测量控制；右侧整块留给四张图。测量结果由频点浏览图
+        # 按频点展示，页面不再重复列一份结果表。
         # 接线说明只保留连接图入口：测试者已知道仪器怎么接，按钮只用于防止忘记。
         left_panel = QWidget()
         left_panel.setMinimumWidth(420)
@@ -123,24 +119,7 @@ class AmplifierPage(
             control_layout.addWidget(button, 0, column)
         control_layout.addWidget(self.show_amp_diagram_btn, 1, 0, 1, 2)
         left_layout.addWidget(control_group)
-
-        result_group = QGroupBox("测量结果")
-        result_layout = QVBoxLayout(result_group)
-        self.result_table = QTableWidget()
-        self.result_table.setColumnCount(4)
-        self.result_table.setHorizontalHeaderLabels(["频率(GHz)", "压缩点", "小信号增益(dB)", "是否达到压缩"])
-        self.result_table.verticalHeader().setVisible(False)
-        self.result_table.setAlternatingRowColors(True)
-        header = self.result_table.horizontalHeader()
-        for column in range(3):
-            header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.Stretch)
-        result_layout.addWidget(self.result_table)
-        self.result_empty_hint = QLabel("尚无测量结果：开始测试后每个频点的压缩点与增益会在此列出。")
-        self.result_empty_hint.setObjectName("emptyHint")
-        result_layout.addWidget(self.result_empty_hint)
-        # 结果表占据左栏剩余高度，但不再横向铺满整个页面。
-        left_layout.addWidget(result_group, 1)
+        left_layout.addStretch(1)
         self.control_panel = left_panel
         layout.addWidget(left_panel)
 
@@ -158,7 +137,6 @@ class AmplifierPage(
         self._connect_signal(signals.progress, self._progress_callback)
         self._connect_archival_signals(controller)
         self._connect_signal(signals.data_update, self.update_realtime)
-        self._connect_signal(signals.result, self.show_result)
         self._connect_signal(signals.state_changed, self._on_state_changed)
         self._connect_signal(signals.error, self._on_error)
         self._connect_signal(signals.stopped, self._on_stopped)
@@ -179,8 +157,6 @@ class AmplifierPage(
             return
         self._log_callback("主功放现场接线已确认")
         self.reset_realtime_data()
-        self.result_table.setRowCount(0)
-        self._sync_empty_hint()
         self._log_callback("开始主功放测试...")
         # “等待归档”只在 controller 接受启动之后出现。
         self._archival_try_start(
@@ -204,36 +180,6 @@ class AmplifierPage(
     def show_connection_diagram(self) -> None:
         diagram = "amplifier_test" if self._driver_mode_provider() else "amplifier_test_no_driver"
         self._connection_dialog_factory(diagram, self).exec()
-
-    def show_result(self, reference: Any) -> None:
-        if getattr(reference, "kind", None) is not MeasurementKind.AMPLIFIER:
-            return
-        value = getattr(reference, "value", None)
-        if isinstance(value, AmplifierPageResultState):
-            rows = value.rows
-        elif isinstance(value, AmplifierMeasurementResult):
-            rows = tuple(_amplifier_row(item) for item in value.frequencies)
-        else:
-            self._error_callback("主功放测量结果不是正式结果模型，无法显示")
-            return
-        self.result_table.setRowCount(0)
-        for row_data in rows:
-            row = self.result_table.rowCount()
-            self.result_table.insertRow(row)
-            values = (row_data.get("frequency", ""), row_data.get("compression_point", ""), row_data.get("small_signal_gain", ""), row_data.get("compression_achieved", ""))
-            for column, value_item in enumerate(values):
-                self.result_table.setItem(row, column, QTableWidgetItem(str(value_item)))
-            sweep = row_data.get("sweep_data")
-            if isinstance(sweep, Mapping):
-                self.update_realtime({"frequency": row_data.get("frequency", ""), "sweep_data": dict(sweep)})
-        self.result_table.resizeColumnsToContents()
-        self._sync_empty_hint()
-
-    def _sync_empty_hint(self) -> None:
-        """空表时给出说明，避免用户把空白表格当成“数据没显示出来”。"""
-        hint = getattr(self, "result_empty_hint", None)
-        if hint is not None:
-            hint.setVisible(self.result_table.rowCount() == 0)
 
     def _update_plot(self, data: Mapping[str, Any]) -> None:
         update_plot = getattr(self.amplifier_plot_widget, "update_plot", None)
@@ -269,23 +215,6 @@ class AmplifierPage(
 
     def _show_error(self, message: str) -> None:
         QMessageBox.critical(self, "错误", message)
-
-
-def _amplifier_row(item: Any) -> Mapping[str, Any]:
-    """把一个频点的正式主功放结果转换为表格行。"""
-    point = item.compression_point
-    return {
-        "frequency": item.frequency_ghz,
-        "compression_point": "" if point is None or point.output_power_dbm is None
-        else point.output_power_dbm,
-        "small_signal_gain": ""
-        if item.small_signal_gain_db is None
-        else item.small_signal_gain_db,
-        "compression_achieved": ""
-        if item.compression_achieved is None
-        else item.compression_achieved,
-        "sweep_data": item.sweep_data,
-    }
 
 
 __all__ = ["AmplifierPage"]

@@ -249,7 +249,7 @@ def validate_config(config: Dict[str, Any]) -> ConfigValidationResult:
             "驱放测试模式关闭时不能配置驱动功放上电计划",
         )
 
-    errors.extend(simulated_binding_issues(root))
+    warnings.extend(simulated_binding_issues(root))
 
     return ConfigValidationResult(errors=errors, warnings=warnings)
 
@@ -627,11 +627,14 @@ def _validate_plan_applied_supplies(
 
 
 def simulated_binding_issues(document: Any) -> List[ConfigIssue]:
-    """返回“模拟扫描写入的设备绑定”问题列表。
+    """返回“模拟扫描写入的设备绑定”的警告列表。
 
     模拟扫描只用于没有设备网络的开发机；它产生的地址与完整设备码不是现场事实。这样的
-    绑定可以被保存用于演示，但绝不能进入真实运行：否则一次演示点击就会让测量对着
-    演示地址（或干脆连不上）跑出看似有效的结果。
+    绑定可以保存、也可以带着它启动界面做点击演示，但绝不能进入真实运行：否则一次演示
+    点击就会让测量对着演示地址（或干脆连不上）跑出看似有效的结果。
+
+    因此这里产出 ``warning`` 而不是 ``error``：文件校验只提示、不阻断，模拟配置照样能
+    打开界面；真正的硬门禁在创建运行之前（``app.gui_runtime`` 的模拟绑定拒绝逻辑）。
 
     绑定结构是“信号源 / 频谱仪各一条 + ``power_supplies`` 里按 ``supply_id`` 的多条”，
     两类都要检查：只查顶层键会让电源绑定绕过这条门禁。
@@ -653,10 +656,10 @@ def simulated_binding_issues(document: Any) -> List[ConfigIssue]:
             continue
         issues.append(
             ConfigIssue(
-                "error",
+                "warning",
                 f"{path}.source",
-                "该设备绑定来自模拟扫描，只能用于离线演示：请用“真实网络扫描”重新获取设备"
-                "并应用后再创建运行",
+                "该设备绑定来自模拟扫描，只能用于离线演示：可以保存并启动界面，但不能创建"
+                "真实运行；请用“真实网络扫描”重新获取设备并应用后再创建运行",
             )
         )
     return issues

@@ -130,7 +130,7 @@ class LauncherTests(unittest.TestCase):
                 self.assertEqual(launcher.validate_default_config(), launcher.EXIT_SUCCESS)
 
     def test_validate_config_rejects_flat_config_without_official_sections(self):
-        """只有扁平硬件字段的配置不能被启动器放行（步骤 5 契约）。"""
+        """只有扁平硬件字段的配置不能被 ``--validate-config`` 放行（步骤 5 契约）。"""
         document = json.loads(CONFIG_FIXTURE.read_text(encoding="utf-8"))
         for key in ("schema_version", "test_plan", "run_mapping"):
             document.pop(key, None)
@@ -303,7 +303,9 @@ class LauncherTests(unittest.TestCase):
         with patch.object(launcher, "check_environment", return_value=True), patch.object(
             launcher, "check_packages", return_value={}
         ), patch.object(
-            launcher, "validate_default_config", return_value=launcher.EXIT_SUCCESS
+            launcher,
+            "validate_default_config",
+            side_effect=AssertionError("启动 GUI 不应校验配置"),
         ), patch.object(
             launcher, "setup_logging", side_effect=lambda: calls.append("log")
         ), patch.object(
@@ -313,11 +315,27 @@ class LauncherTests(unittest.TestCase):
                 self.assertEqual(launcher.main([]), launcher.EXIT_SUCCESS)
         self.assertEqual(calls, ["log", "gui"])
 
+    def test_gui_start_does_not_validate_configuration(self):
+        """GUI 是配置编辑器：启动时不校验配置，配置缺失或有问题也要能打开。"""
+        with patch.object(launcher, "check_environment", return_value=True), patch.object(
+            launcher, "check_packages", return_value={}
+        ), patch.object(
+            launcher,
+            "validate_default_config",
+            side_effect=AssertionError("启动 GUI 不应校验配置"),
+        ), patch.object(launcher, "setup_logging"), patch.object(
+            launcher, "launch_gui", return_value=True
+        ):
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(launcher.main([]), launcher.EXIT_SUCCESS)
+
     def test_logging_failure_does_not_block_gui_start(self):
         with patch.object(launcher, "check_environment", return_value=True), patch.object(
             launcher, "check_packages", return_value={}
         ), patch.object(
-            launcher, "validate_default_config", return_value=launcher.EXIT_SUCCESS
+            launcher,
+            "validate_default_config",
+            side_effect=AssertionError("启动 GUI 不应校验配置"),
         ), patch.object(
             launcher, "setup_logging", side_effect=OSError("磁盘不可写")
         ), patch.object(
@@ -330,7 +348,9 @@ class LauncherTests(unittest.TestCase):
         with patch.object(launcher, "check_environment", return_value=True), patch.object(
             launcher, "check_packages", return_value={}
         ), patch.object(
-            launcher, "validate_default_config", return_value=launcher.EXIT_SUCCESS
+            launcher,
+            "validate_default_config",
+            side_effect=AssertionError("启动 GUI 不应校验配置"),
         ), patch.object(
             launcher, "setup_logging"
         ), patch.object(

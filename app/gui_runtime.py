@@ -174,12 +174,22 @@ def _load_hardware_config(config_path: str) -> dict[str, Any]:
 
 
 def _reject_simulated_bindings(hardware_config: Mapping[str, Any]) -> None:
-    """模拟扫描留下的设备绑定不能用于真实运行。"""
+    """模拟扫描留下的设备绑定不能用于真实运行。
+
+    这是唯一的硬门禁：``validate_config``/启动器只把模拟绑定标成 warning，允许配置
+    加载、保存和启动界面；本函数在创建运行目录之前拒绝，避免冻结一份对着演示地址的
+    运行快照。
+    """
     issues = simulated_binding_issues(hardware_config)
     if not issues:
         return
-    details = "; ".join(f"{issue.path}: {issue.message}" for issue in issues)
-    raise ConfigurationError(f"配置中的设备绑定来自模拟扫描，不能创建真实运行: {details}")
+    details = "；".join(issue.path for issue in issues)
+    raise ConfigurationError(
+        "配置中的设备绑定来自模拟扫描，不能创建真实运行："
+        "请用“真实网络扫描”重新获取设备并应用后再创建运行（"
+        + details
+        + "）"
+    )
 
 
 def _hardware_config_path(prepared_run: PreparedRun) -> str:

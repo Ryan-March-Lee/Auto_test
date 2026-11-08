@@ -1,6 +1,7 @@
 """正式配置文件加载与文件级校验入口。
 
-``validate_config_file`` 是启动器和离线检查唯一使用的文件级校验入口，同时检查两件事：
+``validate_config_file`` 是 ``launcher --validate-config`` 与离线检查唯一使用的文件级校验入口，
+同时检查两件事：
 
 - **正式运行配置 schema**：根 ``schema_version`` 与 ``test_plan`` / ``run_mapping``
   两个正式段，由 :func:`infrastructure.config.json_config_repository.load_combined_configuration`
@@ -8,9 +9,13 @@
 - **硬件装配段**：``instruments`` / ``power_supply_assignment`` 等硬件装配所读取的字段，
   由 :func:`domain.configuration.rules.validate_config` 校验。
 
-只有两者都通过，启动器才认为这份生产配置可以进入运行创建流程。旧扁平配置的自动转换已
+只有两者都通过，``--validate-config`` 才认为这份生产配置可以进入运行创建流程。旧扁平配置的自动转换已
 删除，因此只有扁平字段、缺少正式段的文件会在这里明确失败，而不是等到创建运行甚至连接仪器
 时才发现问题。
+
+“运行就绪”以外的演示数据不阻断启动：模拟扫描写入的设备绑定只产生 warning，配置照常
+加载、界面照常打开；创建真实运行前由
+:func:`app.gui_runtime._reject_simulated_bindings` 单独拒绝。
 """
 
 from __future__ import annotations

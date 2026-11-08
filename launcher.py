@@ -327,8 +327,8 @@ def show_help() -> None:
     print("退出码:")
     for line in (
         "   0  成功",
-        "   2  配置校验失败",
-        "   3  配置文件不存在或 JSON 无效",
+        "   2  --validate-config 配置校验失败",
+        "   3  --validate-config 配置文件不存在或 JSON 无效",
         "   4  Python 运行环境不满足要求",
         "   5  缺少 GUI 必需依赖",
         "   6  GUI 启动失败",
@@ -405,9 +405,10 @@ def main(argv: object = None) -> int:
                 show_installation_guide(packages)
             return EXIT_DEPENDENCY_ERROR
 
-        config_exit_code = validate_default_config()
-        if config_exit_code != EXIT_SUCCESS:
-            return config_exit_code
+        # 启动 GUI 不校验配置：界面本身就是配置编辑器，配置缺失或有问题时必须先能打开，
+        # 用户才能在界面里扫描设备、生成并保存新配置。运行就绪性由“创建运行”边界
+        # （prepare_configuration / create_run_snapshot）保证；需要只读诊断时用
+        # ``--validate-config``。
         # 阶段 0.3：进入 GUI 前初始化最小日志；失败不阻断启动。
         try:
             setup_logging()

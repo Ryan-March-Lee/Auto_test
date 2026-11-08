@@ -341,7 +341,7 @@ class OfficialConfigFileValidationTests(unittest.TestCase):
     def test_flat_fields_alone_are_not_a_valid_configuration(self):
         """扁平硬件字段全部合法、但缺正式段时，文件校验必须失败。
 
-        这是步骤 5 的关键契约：启动器不得用只认扁平字段的旧校验放行无法创建运行的配置。
+        这是步骤 5 的关键契约：``--validate-config`` 不得用只认扁平字段的旧校验放行无法创建运行的配置。
         """
         with tempfile.TemporaryDirectory() as directory:
             result = validate_config_file(self._write(directory, self._flat_only_config()))
@@ -427,14 +427,21 @@ class OfficialConfigFileValidationTests(unittest.TestCase):
 
 
 class SimulatedDeviceBindingValidationTests(unittest.TestCase):
-    """模拟扫描写入的设备绑定可以保存，但绝不能通过真实运行校验。"""
+    """模拟扫描的绑定只警告：可以保存、可以启动界面，但不能创建真实运行。"""
 
     @classmethod
     def setUpClass(cls):
         with FIXTURE_PATH.open("r", encoding="utf-8") as config_file:
             cls.base_config = json.load(config_file)
 
-    def test_simulated_binding_is_rejected_with_a_pointed_message(self):
+    def _assert_simulated_warning(self, result, expected_path):
+        self.assertTrue(result.valid, result.errors)
+        paths = {issue.path for issue in result.warnings}
+        self.assertIn(expected_path, paths)
+        self.assertIn("模拟扫描", result.warnings[-1].message)
+        self.assertIn("不能创建真实运行", result.warnings[-1].message)
+
+    def test_simulated_binding_is_a_warning_with_a_pointed_message(self):
         config = copy.deepcopy(self.base_config)
         config["device_bindings"] = {
             "signal_generator": {
@@ -444,14 +451,12 @@ class SimulatedDeviceBindingValidationTests(unittest.TestCase):
             }
         }
 
-        result = validate_config(config)
+        self._assert_simulated_warning(
+            validate_config(config), "device_bindings.signal_generator.source"
+        )
 
-        paths = {issue.path for issue in result.errors}
-        self.assertIn("device_bindings.signal_generator.source", paths)
-        self.assertIn("模拟扫描", result.errors[-1].message)
-
-    def test_simulated_power_supply_binding_is_rejected_too(self):
-        """电源在 ``power_supplies`` 集合里逐台检查，不能因为嵌套结构绕过门禁。"""
+    def test_simulated_power_supply_binding_is_reported_too(self):
+        """电源在 ``power_supplies`` 集合里逐台检查，不能因为嵌套结构漏报。"""
         config = copy.deepcopy(self.base_config)
         config["device_bindings"] = {
             "power_supplies": {
@@ -462,11 +467,26 @@ class SimulatedDeviceBindingValidationTests(unittest.TestCase):
             }
         }
 
-        result = validate_config(config)
+        self._assert_simulated_warning(
+            validate_config(config),
+            "device_bindings.power_supplies.DP8B1519.source",
+        )
 
-        paths = {issue.path for issue in result.errors}
-        self.assertIn("device_bindings.power_supplies.DP8B1519.source", paths)
-        self.assertIn("模拟扫描", result.errors[-1].message)
+    def test_simulated_binding_does_not_block_the_file_check(self):
+        """``--validate-config`` 的文件校验只提示：模拟绑定不阻止读取，也不阻止启动界面。"""
+        config = copy.deepcopy(self.base_config)
+        config["device_bindings"] = {
+            "signal_generator": {
+                "full_code": "105462",
+                "device_key": "rohde&schwarz:105462",
+                "source": "simulated",
+            }
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            result = validate_config_file(self._write(directory, config))
+        self._assert_simulated_warning(
+            result, "device_bindings.signal_generator.source"
+        )
 
     def test_real_scan_binding_is_accepted(self):
         config = copy.deepcopy(self.base_config)
@@ -480,9 +500,10 @@ class SimulatedDeviceBindingValidationTests(unittest.TestCase):
 
         result = validate_config(config)
 
-        self.assertFalse(
-            any(issue.path.startswith("device_bindings") for issue in result.errors)
-        )
+        for issues in (result.errors, result.warnings):
+            self.assertFalse(
+                any(issue.path.startswith("device_bindings") for issue in issues)
+            )
 
     def test_missing_or_malformed_bindings_are_ignored_by_this_rule(self):
         for bindings in (None, [], "text", {"signal_generator": "not-a-record"}):
@@ -491,9 +512,19 @@ class SimulatedDeviceBindingValidationTests(unittest.TestCase):
                 if bindings is not None:
                     config["device_bindings"] = bindings
                 result = validate_config(config)
-                self.assertFalse(
-                    any(issue.path.startswith("device_bindings") for issue in result.errors)
-                )
+                for issues in (result.errors, result.warnings):
+                    self.assertFalse(
+                        any(
+                            issue.path.startswith("device_bindings")
+                            for issue in issues
+                        )
+                    )
+
+    @staticmethod
+    def _write(directory, document):
+        path = Path(directory) / "config.json"
+        path.write_text(json.dumps(document), encoding="utf-8")
+        return path
 
 
 class HardwareConnectionValidationTests(unittest.TestCase):
@@ -587,7 +618,7 @@ class HardwareConnectionValidationTests(unittest.TestCase):
 
 
 class ShippedConfigValidationTests(unittest.TestCase):
-    """仓库默认生产配置必须通过启动器使用的同一套文件级校验。"""
+    """仓库默认生产配置必须通过 ``--validate-config`` 使用的同一套文件级校验。"""
 
     def test_repository_config_passes_the_launcher_file_check(self):
         result = validate_config_file(PROJECT_ROOT / "config.json")

@@ -4,7 +4,7 @@
 ``RunConfiguration``（``test_plan`` + ``run_mapping``），也不是冻结运行对象
 ``PreparedRun``：草稿只存在于内存，不含 Qt 控件、文件路径、仪器对象或运行标识。
 
-设计约束（见 `docs/配置领域词汇与模块归属.md`）：
+设计约束：
 
 - 频率、功率扫描、压缩点、衰减器与 DUT 输入限制优先复用 domain 值对象
   （``Frequency`` / ``PowerSweep`` / ``Decibels`` / ``PowerDbm``），单位由类型表达；

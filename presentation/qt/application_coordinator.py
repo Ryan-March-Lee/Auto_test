@@ -9,7 +9,7 @@
 错误回调与窗口交互。这样它既不需要知道控件名字，也可以用纯 Python 替身单独测试。
 两页的片段在本层合并成唯一编辑草稿：参数页先写，独立电源页只覆盖自己负责的电源字段。
 
-归属（见 `docs/配置领域词汇与模块归属.md`）：presentation controller。它持有呈现层配置状态并
+归属：presentation controller。它持有呈现层配置状态并
 编排 application 用例（配置保存、运行创建/加载、仪器端口生命周期），不读控件、不定义业务规则；
 规则来源仍是 :mod:`application.run_service` 与 :mod:`domain.configuration.rules`；
 正式配置文档由 :class:`application.configuration_authoring.ConfigurationAuthoringService`

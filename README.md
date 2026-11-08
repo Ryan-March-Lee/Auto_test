@@ -176,8 +176,8 @@ conda activate Auto_test
 再执行内存编译检查、依赖核对，最后按改动面跑测试；任一步失败即终止。
 
 静态质量门禁（裸 `except`、静默宽泛捕获、生产 `print`、已退役模块导入、动态设备路由）
-与异常分类契约在窄范围运行中先于测试执行，失败即终止本次验证，细节见
-[异常分类与静态质量门禁](docs/异常分类与静态质量门禁.md)。
+与异常分类契约在窄范围运行中先于测试执行，失败即终止本次验证，细节以
+`tests/test_exception_taxonomy.py` 与 `tests/test_static_quality_gate.py` 为准。
 
 `tests/` 按改动面分层：纯界面改动只需 `tools/run_tests.py --layer ui`（表现层测试 + 全部门禁，
 约 45 秒），涉及真实窗口与后端接线用 `--layer integration`；全量离线测试仍是交付前的

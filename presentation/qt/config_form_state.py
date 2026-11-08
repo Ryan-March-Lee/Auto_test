@@ -8,7 +8,7 @@
 绑定记录本身的读取与规范化（``supply_id`` 集合、旧结构折叠、不可用记录的问题清单）
 在 :mod:`presentation.qt.config_form_bindings`，这里只消费它给出的结果。
 
-归属（见 `docs/配置领域词汇与模块归属.md`）：presentation adapter。读数后的合法性判据属于
+归属：presentation adapter。读数后的合法性判据属于
 `domain` 配置规则；正式运行校验与正式配置编写都委托
 `application.configuration_authoring`，本模块只把当前的读数包成配置编辑 DTO 并展示
 返回的消息。上电计划的判据只由 domain 定义（步骤 13 收口），这里不再保留页面副本。

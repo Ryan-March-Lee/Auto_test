@@ -1,6 +1,6 @@
 """配置编辑页的状态视图模型（GUI 重构步骤 6）。
 
-归属（见 `docs/配置领域词汇与模块归属.md`）：application 页面状态边界，纯 Python。
+归属：application 页面状态边界，纯 Python。
 本模块让配置页从“控件就是状态源”改为“视图模型持有状态、页面按状态渲染”：
 
 - 状态包含配置草稿 :class:`ConfigurationDraft`、设备绑定快照、最近一次结构化问题、

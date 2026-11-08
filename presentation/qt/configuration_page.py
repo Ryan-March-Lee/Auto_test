@@ -21,7 +21,7 @@
 与窗口的信号接线是 ``finalize_run_requested``。连接成功前运行只是内部待提交对象，
 不会成为测量页可消费的正式运行。
 
-归属（见 `docs/配置领域词汇与模块归属.md`）：Qt 视图。页面只负责控件、布局、信号与派生界面
+归属：Qt 视图。页面只负责控件、布局、信号与派生界面
 状态；设备选择的角色唯一性、引用/身份校验与整批替换规则在
 :class:`application.device_binding.DeviceBindingService`（步骤 5），
 :meth:`ConfigurationPage.apply_device_selection` 只提交本次勾选结果并投影返回的绑定集合。

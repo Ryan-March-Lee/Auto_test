@@ -11,7 +11,7 @@
 :mod:`domain.configuration.rules` 与 :mod:`infrastructure.config.validation`。这里既不
 构造正式 schema，也不决定设备身份（身份只来自设备发现结果与设备表）。
 
-归属（见 `docs/配置领域词汇与模块归属.md`）：presentation adapter。本模块只保留绑定记录的
+归属：presentation adapter。本模块只保留绑定记录的
 读取、规范化与旧结构折叠；**记录级**身份一致性判定、`supply_id` 可用性、角色/设备唯一性
 与整批替换规则都在 `application.device_binding`（步骤 5），这里只导入并复用，不再定义第二份。
 """

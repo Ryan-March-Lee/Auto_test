@@ -437,9 +437,8 @@ class ResultArchivalService:
         兜底，会向上抛出并让该产物停在 ``pending``，由调用方或恢复流程重新检查；
         端口实现有责任把可预期的渲染/写入/空数据失败显式包成
         :class:`ArtifactGenerationError`。缺陷路径不在这里记日志：项目的宽泛捕获基线
-        禁止在运行时包里新增 ``except Exception``（见
-        ``docs/异常分类与静态质量门禁.md``），把缺陷降级成日志等于把它伪装成一次可
-        恢复的生成失败。
+        禁止在运行时包里新增 ``except Exception``（项目的宽泛捕获基线门禁），把缺陷
+        降级成日志等于把它伪装成一次可恢复的生成失败。
         """
         target_path = default_artifact_path(stage, record.kind)
         request = ArtifactGenerationRequest(

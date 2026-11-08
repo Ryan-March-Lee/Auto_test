@@ -468,7 +468,7 @@ class WorkerReusesPreparedRunTests(unittest.TestCase):
         with patch("app.gui_runtime.prepare_configuration") as prepare:
             worker.start()
             self.assertTrue(service.measure_called.wait(1))
-            worker.continue_measurement()
+            worker.continue_stage2_measurement()
             self.assertTrue(service.continue_called.wait(1))
             worker.wait(1000)
 

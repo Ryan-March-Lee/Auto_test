@@ -109,9 +109,9 @@ class _FakeController:
         self.workers[-1][1].stop()
         return True
 
-    def continue_cable_loss(self):
+    def continue_cable_loss_stage2(self):
         if self.state.status is not MeasurementStatus.WAITING_FOR_CONTINUE:
-            self.signals.rejected.emit("线损测量当前不在等待继续状态")
+            self.signals.rejected.emit("线损测量当前不在等待二阶段继续状态")
             return False
         return True
 
@@ -133,10 +133,10 @@ class MeasurementControllerContractTests(unittest.TestCase):
         with self.assertRaises((TypeError, AttributeError)):
             command.options["frequencies"].append(3)
 
-    def test_continue_is_rejected_outside_cable_loss_checkpoint(self):
+    def test_stage2_continue_is_rejected_outside_cable_loss_checkpoint(self):
         controller = _FakeController()
-        self.assertFalse(controller.continue_cable_loss())
-        self.assertEqual(controller.rejections, ["线损测量当前不在等待继续状态"])
+        self.assertFalse(controller.continue_cable_loss_stage2())
+        self.assertEqual(controller.rejections, ["线损测量当前不在等待二阶段继续状态"])
 
     def test_controller_state_requires_matching_view_state(self):
         view_state = MeasurementViewState(MeasurementKind.CABLE_LOSS).prepare().run()

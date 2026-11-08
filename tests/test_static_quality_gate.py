@@ -193,7 +193,7 @@ BROAD_CATCH_BASELINE = {
     "presentation/qt/measurement_controller.py": (
         "MeasurementController._start#1",
         "MeasurementController._request_stop#1",
-        "MeasurementController.continue_cable_loss#1",
+        "MeasurementController.continue_cable_loss_stage2#1",
     ),
     "presentation/qt/pages.py": (
         "PageControllerBindingMixin.bind_controller#1",

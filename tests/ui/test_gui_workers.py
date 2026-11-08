@@ -109,7 +109,7 @@ class GuiWorkerTests(unittest.TestCase):
             while not worker._waiting_for_continue and time.monotonic() < deadline:
                 time.sleep(0.01)
             self.assertTrue(worker.isRunning())
-            worker.continue_measurement()
+            worker.continue_stage2_measurement()
             self.assertTrue(service.continue_called.wait(1))
             worker.wait(1000)
 

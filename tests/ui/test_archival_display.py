@@ -92,8 +92,8 @@ class Controller:
     def cancel(self):
         return self._record("cancel")
 
-    def continue_cable_loss(self):
-        return self._record("continue_cable_loss")
+    def continue_cable_loss_stage2(self):
+        return self._record("continue_cable_loss_stage2")
 
 
 class Dialog:
@@ -389,7 +389,7 @@ class CableLossPageArchivalLogTests(unittest.TestCase):
         self.page.bind_controller(self.controller)
 
     def test_stage_archive_is_announced_without_deliverables(self):
-        self.page.start_measurement()
+        self.page.start_stage1_measurement()
         self.controller.signals.archival.emit(
             _partial_outcome("cable_loss", "inputs/cable_loss.json")
         )
@@ -400,7 +400,7 @@ class CableLossPageArchivalLogTests(unittest.TestCase):
         self.assertIn(f"结果目录：{RUN_DIRECTORY}", text)
 
     def test_loading_a_historical_result_clears_the_archive_summary(self):
-        self.page.start_measurement()
+        self.page.start_stage1_measurement()
         self.page.show_loaded_result(
             type("Reference", (), {"kind": MeasurementKind.CABLE_LOSS, "value": None})()
         )
@@ -414,7 +414,7 @@ class CableLossPageArchivalLogTests(unittest.TestCase):
             {"kind": MeasurementKind.AMPLIFIER, "status": MeasurementStatus.RUNNING, "is_active": True},
         )()
 
-        self.page.start_measurement()
+        self.page.start_stage1_measurement()
 
         self.assertEqual(self.controller.calls, [])
         self.assertIsNone(self.page._archival_summary)
@@ -423,7 +423,7 @@ class CableLossPageArchivalLogTests(unittest.TestCase):
     def test_rejected_start_does_not_leave_a_waiting_log(self):
         self.controller.start_result = False
 
-        self.page.start_measurement()
+        self.page.start_stage1_measurement()
 
         self.assertIsNone(self.page._archival_summary)
         self.assertFalse(self.page._archival_pending)

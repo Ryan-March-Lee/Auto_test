@@ -180,8 +180,8 @@ class MeasurementControllerProtocol(Protocol):
         """请求普通停止；无可停止测量时返回 False 并拒绝。"""
         ...
 
-    def continue_cable_loss(self) -> bool:
-        """仅在 waiting_for_continue 状态接受线损第二步继续。"""
+    def continue_cable_loss_stage2(self) -> bool:
+        """仅在 waiting_for_continue 状态接受线损二阶段继续。"""
         ...
 
 

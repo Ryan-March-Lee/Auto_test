@@ -344,6 +344,11 @@ class MeasurementPagesUseTheFacadeTests(unittest.TestCase):
     """三个页面不再各自构造命令或复制运行契约判据。"""
 
     def test_pages_delegate_startup_to_the_facade(self):
+        start_methods = {
+            "cable_loss_page.py": "start_stage1_measurement",
+            "driver_mapping_page.py": "start_measurement",
+            "amplifier_page.py": "start_measurement",
+        }
         for name in PAGE_NAMES:
             with self.subTest(page=name):
                 source = (QT_ROOT / name).read_text(encoding="utf-8")
@@ -355,7 +360,8 @@ class MeasurementPagesUseTheFacadeTests(unittest.TestCase):
                 start = next(
                     node
                     for node in ast.walk(tree)
-                    if isinstance(node, ast.FunctionDef) and node.name == "start_measurement"
+                    if isinstance(node, ast.FunctionDef)
+                    and node.name == start_methods[name]
                 )
                 attributes = {
                     node.attr
@@ -365,10 +371,10 @@ class MeasurementPagesUseTheFacadeTests(unittest.TestCase):
                 self.assertIn("prepare", attributes)
                 self.assertIn("launch", attributes)
 
-    def test_cable_loss_keeps_the_second_step_continue_as_page_behaviour(self):
+    def test_cable_loss_keeps_the_stage2_continue_as_page_behaviour(self):
         source = (QT_ROOT / "cable_loss_page.py").read_text(encoding="utf-8")
-        self.assertIn("def continue_measurement", source)
-        self.assertIn("continue_cable_loss", source)
+        self.assertIn("def continue_stage2_measurement", source)
+        self.assertIn("continue_cable_loss_stage2", source)
 
     def test_facade_is_pure_python(self):
         tree = ast.parse(FACADE_SOURCE.read_text(encoding="utf-8"), str(FACADE_SOURCE))

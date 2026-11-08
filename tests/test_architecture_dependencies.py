@@ -434,7 +434,7 @@ class ProductionDependencyTests(unittest.TestCase):
                 if isinstance(node, ast.FunctionDef) and node.name == callback
             )
             callback_source = ast.get_source_segment(source, method)
-            self.assertNotIn("cable_loss_btn", callback_source)
+            self.assertNotIn("stage1_measurement_btn", callback_source)
             self.assertNotIn("driver_mapping_btn", callback_source)
             self.assertNotIn("amplifier_test_btn", callback_source)
 

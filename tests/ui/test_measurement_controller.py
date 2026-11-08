@@ -59,7 +59,7 @@ class Worker:
     def stop(self):
         self.stop_calls += 1
 
-    def continue_measurement(self):
+    def continue_stage2_measurement(self):
         self.continue_calls += 1
 
     def wait(self, timeout=None):
@@ -176,13 +176,13 @@ class MeasurementControllerTests(unittest.TestCase):
         self.assertIsNone(self.controller.current_worker)
         self.assertTrue(self.controller.start_cable_loss(command))
 
-    def test_cable_loss_pause_and_continue_are_controller_operations(self):
+    def test_cable_loss_pause_and_stage2_continue_are_controller_operations(self):
         command = MeasurementCommand("config.json", _PREPARED_RUN)
         self.assertTrue(self.controller.start_cable_loss(command))
         worker = self.workers[-1]
         worker.signals.step_pause.emit("请接线")
         self.assertEqual(self.controller.state.status, MeasurementStatus.WAITING_FOR_CONTINUE)
-        self.assertTrue(self.controller.continue_cable_loss())
+        self.assertTrue(self.controller.continue_cable_loss_stage2())
         self.assertEqual(worker.continue_calls, 1)
         self.assertEqual(self.controller.state.status, MeasurementStatus.RUNNING)
 

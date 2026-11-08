@@ -343,13 +343,13 @@ class MeasurementController:
         self.signals.thread_finished.emit()
         return True
 
-    def continue_cable_loss(self) -> bool:
+    def continue_cable_loss_stage2(self) -> bool:
         if self._state.kind is not MeasurementKind.CABLE_LOSS or self._state.status is not MeasurementStatus.WAITING_FOR_CONTINUE or self._worker is None:
-            self.signals.rejected.emit("线损测量当前不在等待继续状态")
+            self.signals.rejected.emit("线损测量当前不在等待二阶段继续状态")
             return False
-        method = getattr(self._worker, "continue_measurement", None)
+        method = getattr(self._worker, "continue_stage2_measurement", None)
         if method is None:
-            self.signals.rejected.emit("当前线损 worker 不支持继续")
+            self.signals.rejected.emit("当前线损 worker 不支持二阶段继续")
             return False
         try:
             method()

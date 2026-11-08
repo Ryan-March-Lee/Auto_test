@@ -142,6 +142,7 @@ def _page(
     page.start_power = _Value(-10.0)
     page.stop_power = _Value(0.0)
     page.power_step = _Value(1.0)
+    page.driver_gain = _Text("")
     page.max_input_power = _Value(30.0)
     page.compression_combo = _Combo(("1dB", "3dB", "5dB"))
     page.attenuator_combo = _Combo(("30dB", "40dB"))

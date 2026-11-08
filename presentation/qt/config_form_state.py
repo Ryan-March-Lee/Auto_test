@@ -52,6 +52,24 @@ def _dict_copy(value: Any) -> dict:
     return copy.deepcopy(value) if isinstance(value, dict) else {}
 
 
+def driver_gain_value(text: Any) -> float | str | None:
+    """把“驱动功放预估增益”控件的文本转成编辑文档里的值。
+
+    空文本表示尚未填写（``None``），不折叠成 0；能解析成数字时写数字，否则把原文
+    交给配置 DTO 校验并报出“必须是有限数值”。页面不判断范围或有限性，也不承担任何
+    增益推算——控件只负责把用户输入原样交给正式校验。
+    """
+    if not isinstance(text, str):
+        text = "" if text is None else str(text)
+    text = text.strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return text
+
+
 def _formal_validation_errors(
     document: Mapping[str, Any], *, scope: str = "all"
 ) -> list[str]:
@@ -301,14 +319,19 @@ class ConfigFormState:
     def _read_driver_mode(self, w: Any) -> dict:
         """读取驱放测试模式；供电方式由驱动功放上电计划是否有路由表达。
 
-        ``estimated_gain_db`` 是测试配置里的全局驱动增益预估。步骤 2 尚未提供对应
-        控件，因此从基线文档原样保留；没有该键时保持缺失，由配置编写服务在保存时
-        补齐新语义占位键。
+        ``estimated_gain_db`` 是测试配置里的全局驱动增益预估，读自页面的
+        ``driver_gain`` 控件：空文本写 ``None``（尚未填写），非法文本原样交给配置
+        DTO 报错。控件不存在时（旧替身或尚未接入的表单）保留基线值，不擅自改写；
+        驱动关闭时增益不是运行必填项，页面仍保留用户已填写的内容。
         """
         mode: dict = {"enabled": bool(getattr(w, "test_mode_enabled", False))}
-        existing = _dict_copy(self.config.get("driver_mode"))
-        if "estimated_gain_db" in existing:
-            mode["estimated_gain_db"] = existing.get("estimated_gain_db")
+        gain_widget = getattr(w, "driver_gain", None)
+        if gain_widget is None:
+            existing = _dict_copy(self.config.get("driver_mode"))
+            if "estimated_gain_db" in existing:
+                mode["estimated_gain_db"] = existing.get("estimated_gain_db")
+            return mode
+        mode["estimated_gain_db"] = driver_gain_value(self._text(gain_widget))
         return mode
 
     def read_power_supply_config(self) -> dict:

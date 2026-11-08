@@ -56,6 +56,8 @@ DEFAULT_SIGNAL_SOURCE = {"start_power": -38.0, "stop_power": -16.0, "step": 1.0}
 DEFAULT_COMPRESSION_TYPE = "5dB"
 DEFAULT_ATTENUATOR_TYPE = "40dB"
 DEFAULT_DRIVER_MODE_ENABLED = True
+# 驱动功放预估增益的空配置基线：空文本表示“尚未填写”，不是 0 dB。
+DEFAULT_DRIVER_GAIN_ESTIMATE = ""
 DEFAULT_MAX_INPUT_POWER = 33.5
 DEFAULT_PA_UNIT_COUNT = "2"
 # 电源通道的空配置基线：重置时把工作值/保护值填成它，卡片输入框也把非法或缺失的字段
@@ -222,6 +224,7 @@ def reset_control_widgets(widgets: Any) -> None:
     set_combo(widgets.compression_combo, DEFAULT_COMPRESSION_TYPE)
     set_combo(widgets.attenuator_combo, DEFAULT_ATTENUATOR_TYPE)
     widgets.test_mode_enabled = DEFAULT_DRIVER_MODE_ENABLED
+    widgets.driver_gain.setText(DEFAULT_DRIVER_GAIN_ESTIMATE)
     widgets.max_input_power.setValue(DEFAULT_MAX_INPUT_POWER)
     set_combo(widgets.pa_unit_count_combo, DEFAULT_PA_UNIT_COUNT)
     reset_power_controls(widgets)
@@ -263,6 +266,11 @@ def _apply_test_parameter_widgets(widgets: Any, config: Mapping[str, Any]) -> No
     mode = config.get("driver_mode")
     mode = mode if isinstance(mode, dict) else {}
     widgets.test_mode_enabled = bool_or_default(mode.get("enabled"), DEFAULT_DRIVER_MODE_ENABLED)
+    # 预估增益缺失或类型不对时回到空基线（“尚未填写”），不替用户猜一个 0 dB。
+    gain = number_or_none(mode.get("estimated_gain_db"))
+    widgets.driver_gain.setText(
+        DEFAULT_DRIVER_GAIN_ESTIMATE if gain is None else f"{gain:g}"
+    )
     dut = config.get("dut_config")
     dut = dut if isinstance(dut, dict) else {}
     value = number_or_none(dut.get("max_input_power"))
@@ -315,6 +323,7 @@ __all__ = [
     "ConfigBackfillError",
     "DEFAULT_ATTENUATOR_TYPE",
     "DEFAULT_COMPRESSION_TYPE",
+    "DEFAULT_DRIVER_GAIN_ESTIMATE",
     "DEFAULT_DRIVER_MODE_ENABLED",
     "DEFAULT_FREQUENCY_EXTRA_TEXT",
     "DEFAULT_FREQUENCY_START",

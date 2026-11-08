@@ -12,6 +12,7 @@ from pathlib import Path
 from presentation.qt.config_projection import (
     DEFAULT_ATTENUATOR_TYPE,
     DEFAULT_COMPRESSION_TYPE,
+    DEFAULT_DRIVER_GAIN_ESTIMATE,
     DEFAULT_FREQUENCY_EXTRA_TEXT,
     DEFAULT_FREQUENCY_START,
     DEFAULT_FREQUENCY_STEP,
@@ -174,6 +175,7 @@ class FakeForm:
         self.start_power = _Value()
         self.stop_power = _Value()
         self.power_step = _Value()
+        self.driver_gain = _Text()
         self.max_input_power = _Value()
         self.compression_combo = _Combo(("1dB", "3dB", "5dB"))
         self.attenuator_combo = _Combo(("30dB", "40dB"))
@@ -264,6 +266,20 @@ class ConfigProjectionTests(unittest.TestCase):
         # 返回值是独立副本：调用方持有自己的文档，不与控件或入参共享结构。
         projected["test_frequencies"].append(9.9)
         self.assertEqual(form.freq_stop.value(), 2.6)
+
+    def test_projection_applies_and_clears_the_driver_gain(self):
+        """预估增益回填为文本；缺失时回到“尚未填写”，不伪造 0 dB。"""
+        form = FakeForm()
+
+        project_authoring_config(
+            form,
+            {"driver_mode": {"enabled": True, "estimated_gain_db": 20.5}},
+        )
+        self.assertTrue(form.test_mode_enabled)
+        self.assertEqual(form.driver_gain.text(), "20.5")
+
+        project_authoring_config(form, {"driver_mode": {"enabled": True}})
+        self.assertEqual(form.driver_gain.text(), DEFAULT_DRIVER_GAIN_ESTIMATE)
 
     def test_projection_sets_the_protection_switches_without_threshold_widgets(self):
         """保护阈值已改为自动推导，投影只恢复启用开关，不再有阈值输入框。"""
@@ -358,6 +374,7 @@ class ConfigProjectionTests(unittest.TestCase):
         self.assertEqual(form.freq_extra.text(), DEFAULT_FREQUENCY_EXTRA_TEXT)
         self.assertIsNone(form.frequency_import_error)
         self.assertEqual(form.start_power.value(), DEFAULT_SIGNAL_SOURCE["start_power"])
+        self.assertEqual(form.driver_gain.text(), DEFAULT_DRIVER_GAIN_ESTIMATE)
         self.assertEqual(form.compression_combo.currentText(), DEFAULT_COMPRESSION_TYPE)
         self.assertEqual(form.attenuator_combo.currentText(), DEFAULT_ATTENUATOR_TYPE)
         self.assertEqual(form.pa_unit_count_combo.currentText(), DEFAULT_PA_UNIT_COUNT)

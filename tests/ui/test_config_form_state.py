@@ -128,7 +128,38 @@ class ConfigFormStateTests(unittest.TestCase):
             old_state.read_test_parameters()["signal_source"],
         )
 
-    def test_driver_gain_estimate_is_preserved_until_the_ui_exposes_it(self):
+    def test_driver_gain_control_is_read_into_the_driver_mode(self):
+        widgets = _form_widgets()
+        widgets.test_mode_enabled = True
+        widgets.driver_gain = _Text("20.5")
+
+        mode = ConfigFormState({}, widgets).read_test_parameters()["driver_mode"]
+
+        self.assertTrue(mode["enabled"])
+        self.assertEqual(mode["estimated_gain_db"], 20.5)
+
+    def test_empty_driver_gain_stays_unset_instead_of_becoming_zero(self):
+        widgets = _form_widgets()
+        widgets.driver_gain = _Text("  ")
+
+        mode = ConfigFormState({}, widgets).read_test_parameters()["driver_mode"]
+
+        self.assertIsNone(mode["estimated_gain_db"])
+
+    def test_invalid_driver_gain_text_is_passed_to_the_config_dto(self):
+        """控件不做增益校验：非法文本原样进入文档，由正式校验报“必须是有限数值”。"""
+        widgets = _form_widgets()
+        widgets.test_mode_enabled = True
+        widgets.driver_gain = _Text("not-a-gain")
+
+        mode = ConfigFormState({}, widgets).read_test_parameters()["driver_mode"]
+        errors = ConfigFormState({}, widgets).validation_errors()
+
+        self.assertEqual(mode["estimated_gain_db"], "not-a-gain")
+        self.assertTrue(any("有限数值" in error for error in errors), errors)
+
+    def test_forms_without_a_driver_gain_control_keep_the_baseline_value(self):
+        """旧替身还没有增益控件时沿用基线，避免读取路径悄悄改写配置。"""
         widgets = _form_widgets()
         widgets.test_mode_enabled = True
         state = ConfigFormState(
@@ -138,7 +169,6 @@ class ConfigFormStateTests(unittest.TestCase):
 
         mode = state.read_test_parameters()["driver_mode"]
 
-        self.assertTrue(mode["enabled"])
         self.assertEqual(mode["estimated_gain_db"], 20.5)
 
     def test_protection_threshold_is_110_percent_rounded_to_two_decimals(self):

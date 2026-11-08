@@ -36,9 +36,15 @@
 :mod:`presentation.qt.frequency_sweep` 生成配置文档仍使用的 ``test_frequencies``
 列表。结束频率必须落在步长上；旧配置里非等步长的列表不做兼容拆分，页面保留原列表
 并禁止保存，直到用户重新输入合法扫描参数。
+
+起止功率表示**主功放输入功率**，功率步长是目标输入功率网格的间隔；“驱动功放预估
+增益 (dB)”是测试配置里的单一全局值，只在启用驱动模式时可用。页面不做功率反算或
+增益推算，数值合法性由配置 DTO 校验；驱动关闭时保留已填写的增益，但不作为运行
+必填项。
 """
 
 import copy
+import math
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -63,6 +69,7 @@ from .config_form_adapter import ConfigurationFormAdapter
 from .config_projection import (
     DEFAULT_ATTENUATOR_TYPE,
     DEFAULT_COMPRESSION_TYPE,
+    DEFAULT_DRIVER_GAIN_ESTIMATE,
     DEFAULT_DRIVER_MODE_ENABLED,
     DEFAULT_FREQUENCY_EXTRA_TEXT,
     DEFAULT_FREQUENCY_START,
@@ -235,8 +242,22 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         self.freq_preview.setWordWrap(True)
         self.freq_preview.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.start_power = spin_box(test.get("start_power", DEFAULT_SIGNAL_SOURCE["start_power"]), -50, 20)
+        self.start_power.setToolTip(
+            "主功放输入功率扫描起点（dBm），不是信号源输出功率；"
+            "无驱动时按 cable1 损耗反算信号源设定"
+        )
         self.stop_power = spin_box(test.get("stop_power", DEFAULT_SIGNAL_SOURCE["stop_power"]), -50, 20)
+        self.stop_power.setToolTip(
+            "主功放输入功率扫描终点（dBm）；与 DUT 最大输入功率取较小值，"
+            "限制点不在步进网格上时作为最后一点补入"
+        )
         self.power_step = spin_box(test.get("step", DEFAULT_SIGNAL_SOURCE["step"]), 0.1, 5)
+        self.power_step.setToolTip("目标主功放输入功率网格的步进（dB）")
+        # 驱动功放预估增益是测试配置里的单一全局值（dB）。空文本表示尚未填写；
+        # 增益的业务校验（有限数值、驱动模式下必填）由配置 DTO 承担，页面不推算。
+        self.driver_gain = QLineEdit(str(DEFAULT_DRIVER_GAIN_ESTIMATE))
+        self.driver_gain.setPlaceholderText("例如 30.0（启用驱动时填写）")
+        self.driver_gain.setMaximumWidth(140)
         compression = self.config.get("compression_point", {})
         attenuator = self.config.get("attenuator", {})
         if not isinstance(compression, dict): compression = {}
@@ -246,6 +267,10 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         mode = self.config.get("driver_mode", {})
         mode = mode if isinstance(mode, dict) else {}
         self.test_mode_enabled = bool(mode.get("enabled", DEFAULT_DRIVER_MODE_ENABLED))
+        gain = mode.get("estimated_gain_db")
+        if isinstance(gain, (int, float)) and not isinstance(gain, bool):
+            if math.isfinite(float(gain)):
+                self.driver_gain.setText(f"{float(gain):g}")
         dut = self.config.get("dut_config", {})
         if not isinstance(dut, dict): dut = {}
         self.max_input_power = spin_box(dut.get("max_input_power", DEFAULT_MAX_INPUT_POWER), 0, 50)
@@ -265,17 +290,22 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
                 form.addWidget(field_label, row, column * 2)
                 form.addWidget(widget, row, column * 2 + 1)
         form.addWidget(self.freq_preview, 2, 0, 1, 4)
-        parameter_rows = (("起始功率 (dBm)", self.start_power),
-                          ("结束功率 (dBm)", self.stop_power),
-                          ("功率步长 (dB)", self.power_step),
+        parameter_rows = (("起始主功放输入功率 (dBm)", self.start_power),
+                          ("结束主功放输入功率 (dBm)", self.stop_power),
+                          ("输入功率步长 (dB)", self.power_step),
+                          ("驱动功放预估增益 (dB)", self.driver_gain),
                           ("压缩点", self.compression_combo), ("衰减器", self.attenuator_combo),
                           ("DUT最大输入功率 (dBm)", self.max_input_power), ("PA单元数量", self.pa_unit_count_combo))
         for offset, (label, widget) in enumerate(parameter_rows):
             row, column = divmod(offset, 2)
             field_label = QLabel(label)
             field_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            if widget is self.driver_gain:
+                # 驱动关闭时连同标签一起禁用，已填写的值仍保留在控件里。
+                self.driver_gain_label = field_label
             form.addWidget(field_label, row + 3, column * 2)
             form.addWidget(widget, row + 3, column * 2 + 1)
+        self._apply_driver_gain_state()
         page_column.addWidget(params)
         # 运行入口紧随测试参数，保存与返回放在页面底部固定操作栏。
         self._build_run_widgets(page_column)
@@ -609,9 +639,26 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
             config.pop("device_bindings", None)
         return config
 
+    def _apply_driver_gain_state(self) -> None:
+        """按驱动模式启用/禁用“驱动功放预估增益”控件。
+
+        只在启用驱动模式时可用；禁用时保留已填写的值（不清空、不折叠成 0），
+        驱动关闭时它也不是运行必填项。是否必填与数值合法性都由配置 DTO 判定，
+        页面只呈现可用状态。
+        """
+        enabled = bool(self.test_mode_enabled)
+        for widget in (self.driver_gain_label, self.driver_gain):
+            widget.setEnabled(enabled)
+        self.driver_gain.setToolTip(
+            "驱动功放预估增益（dB），用于推算驱动映射的起点；仅启用驱动模式时填写"
+            if enabled
+            else "当前为无驱动测试；启用驱动模式后才能填写驱动功放预估增益"
+        )
+
     def set_test_mode(self, enabled: bool) -> None:
         """设置欢迎页选择的测试模式；上电计划与漏极归独立电源页。"""
         self.test_mode_enabled = bool(enabled)
+        self._apply_driver_gain_state()
         self._dirty_baseline = copy.deepcopy(self.build_config(self.config))
         # 切换测试模式本身不算“已修改”：页面与视图模型同时重置干净基线。
         self.view_model.mark_clean()
@@ -665,6 +712,7 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
             raise
         self.config = projected
         self._refresh_frequency_preview()
+        self._apply_driver_gain_state()
         self.binding_problems = self._binding_problems_of(config)
         # 面板归连接页所有：窗口在回填后调用 ``InstrumentSetupPage.enter()``，由它按新的
         # 只读视图重置面板；本页只在日志里报告读入时就不可用的绑定。

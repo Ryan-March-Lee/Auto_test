@@ -3,7 +3,7 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel
 
 from application.device_binding import ApplyDeviceSelectionRequest
 from presentation.qt.configuration_page import ConfigurationPage
@@ -59,6 +59,70 @@ class ConfigurationPageTests(unittest.TestCase):
         self.assertEqual(changes[-1], False)
         page.set_test_mode(True)
         self.assertEqual(changes[-1], True)
+
+    def test_power_labels_describe_main_amplifier_input_power(self):
+        """步骤 3：起止功率与步长都表示主功放输入功率，不再是信号源输出功率。"""
+        page = self.make_page()
+
+        texts = {label.text() for label in page.findChildren(QLabel)}
+
+        self.assertIn("起始主功放输入功率 (dBm)", texts)
+        self.assertIn("结束主功放输入功率 (dBm)", texts)
+        self.assertIn("输入功率步长 (dB)", texts)
+        self.assertIn("驱动功放预估增益 (dB)", texts)
+        self.assertIn("主功放输入功率", page.start_power.toolTip())
+
+    def test_driver_gain_control_follows_the_driver_mode(self):
+        page = self.make_page()
+        page.driver_gain.setText("20.5")
+
+        page.set_test_mode(False)
+
+        self.assertFalse(page.driver_gain.isEnabled())
+        self.assertFalse(page.driver_gain_label.isEnabled())
+        self.assertEqual(page.driver_gain.text(), "20.5", "禁用时保留已填写的值")
+
+        page.set_test_mode(True)
+
+        self.assertTrue(page.driver_gain.isEnabled())
+        self.assertTrue(page.driver_gain_label.isEnabled())
+        self.assertEqual(page.driver_gain.text(), "20.5")
+
+    def test_driver_gain_round_trips_through_save_and_backfill(self):
+        page = self.make_page(driver_mode={"enabled": True})
+        self.assertEqual(page.driver_gain.text(), "", "缺失的增益不伪造默认值")
+
+        page.driver_gain.setText("20.5")
+        self.assertEqual(
+            page.build_config()["driver_mode"]["estimated_gain_db"], 20.5
+        )
+
+        page.driver_gain.setText("")
+        self.assertIsNone(
+            page.build_config()["driver_mode"]["estimated_gain_db"]
+        )
+
+        page.apply_config(
+            {
+                "test_frequencies": [1.0],
+                "driver_mode": {"enabled": True, "estimated_gain_db": 31.5},
+                "instruments": {"power_supplies": {}},
+            }
+        )
+
+        self.assertEqual(page.driver_gain.text(), "31.5")
+        self.assertTrue(page.driver_gain.isEnabled())
+
+    def test_invalid_driver_gain_is_rejected_by_the_config_dto(self):
+        """页面不预判增益：非法文本进入文档，由正式校验给出“必须是有限数值”。"""
+        page = self.make_page(driver_mode={"enabled": True})
+        failures = []
+        page.validation_failed.connect(failures.append)
+
+        page.driver_gain.setText("not-a-gain")
+
+        self.assertFalse(page.validate())
+        self.assertIn("有限数值", "；".join(failures))
 
     def test_power_controls_live_on_the_independent_page(self):
         """步骤 12：电源控件与上电计划不再由参数配置页创建或读取。"""

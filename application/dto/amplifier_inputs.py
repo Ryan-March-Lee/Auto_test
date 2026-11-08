@@ -13,6 +13,10 @@
   端口和运行上下文提供，不进测试参数 DTO（``ServicePlan`` 与 ``PreparedRun`` 的
   分工不变）。
 
+除了输入 DTO，本模块还提供目标输入功率网格的纯计算入口
+:func:`target_input_power_grid`：它只把扫描参数与 DUT 限制换算成正式测试目标点，
+不读取配置、不接触仪器。
+
 字段来源、单位与必填性（:class:`AmplifierMeasurementInputs`）：
 
 | 字段 | 类型（单位） | 来源 | 必填 | 非法值处理 |
@@ -71,6 +75,7 @@ __all__ = [
     "PowerPlan",
     "PowerSweep",
     "SupplyChannel",
+    "target_input_power_grid",
 ]
 
 
@@ -564,6 +569,16 @@ class DrainChannel:
         return self
 
 
+def _sweep_endpoint_tolerance(start: float, stop: float, step: float) -> float:
+    """功率网格端点比较的共享相对容差（dB）。
+
+    :meth:`PowerSweep.points` 与 :func:`target_input_power_grid` 必须用同一个规则，
+    否则同一次配置可能出现“扫描点含终点、目标点不含终点”的漂移。容差只吸收
+    浮点表述误差（1e-12 量级），不会放过用户真实填写的越界值。
+    """
+    return max(abs(start), abs(stop), abs(step), 1.0) * 1e-12
+
+
 @dataclass(frozen=True)
 class PowerSweep:
     """信号源功率扫描参数：起始功率、终止功率与步进。
@@ -595,12 +610,63 @@ class PowerSweep:
         stop = self.stop.dbm
         step = self.step.db
         count = math.floor((stop - start) / step + 1e-12)
-        tolerance = max(abs(start), abs(stop), abs(step), 1.0) * 1e-12
+        tolerance = _sweep_endpoint_tolerance(start, stop, step)
         while count >= 0 and start + count * step > stop + tolerance:
             count -= 1
         while start + (count + 1) * step <= stop + tolerance:
             count += 1
         return tuple(PowerDbm(start + index * step) for index in range(count + 1))
+
+
+def target_input_power_grid(
+    sweep: PowerSweep,
+    max_dut_input_power: PowerDbm,
+) -> tuple[PowerDbm, ...]:
+    """生成正式测试的目标 DUT 输入功率网格（纯计算，不接触配置或仪器）。
+
+    起始功率、结束功率与步长来自 ``sweep``；有效上限取扫描结束功率与 DUT 最大
+    输入功率的较小值。网格按步长从起始功率向上推进，绝不越过有效上限：
+
+    - 上限正好落在网格上时，它作为普通点只出现一次；
+    - 上限不在网格上时，作为额外的最后一点补入（例如 0/1.0/0.6dB 得到
+      0、0.6、1.0）；
+    - 起始功率高于有效上限时拒绝配置，不生成任何点；起始功率与上限的差距落在
+      浮点容差内时视为同一点，只返回上限本身（略低于上限的起点因此被吸附到上限）。
+
+    端点比较沿用 :meth:`PowerSweep.points` 的相对容差（两者共用
+    :func:`_sweep_endpoint_tolerance`）：浮点误差既不会造出重复点，也不会让最后
+    一个点越过上限；落在容差内的末点会被吸附到上限本身。返回值只含
+    :class:`PowerDbm`，调用方不需要再解释单位。
+    """
+    _require_value(sweep, PowerSweep, "功率扫描参数")
+    limit = _require_value(max_dut_input_power, PowerDbm, "DUT 最大输入功率")
+    start = sweep.start.dbm
+    upper = min(sweep.stop.dbm, limit.dbm)
+    step = sweep.step.db
+    tolerance = _sweep_endpoint_tolerance(start, upper, step)
+    if start > upper + tolerance:
+        raise AmplifierInputError(
+            "目标输入功率起始值高于有效上限："
+            f"{start}dBm > {upper}dBm（扫描结束 {sweep.stop.dbm}dBm 与 "
+            f"DUT 最大输入 {limit.dbm}dBm 取较小值）"
+        )
+    if start >= upper - tolerance:
+        # 起始点与有效上限只差浮点误差（略高或略低）：只有一个目标点，且使用
+        # 上限本身，保证不越过限制。
+        return (PowerDbm(upper),)
+    points = [
+        point.dbm
+        for point in PowerSweep(
+            start=sweep.start,
+            stop=PowerDbm(upper),
+            step=sweep.step,
+        ).points()
+    ]
+    if abs(points[-1] - upper) <= tolerance:
+        points[-1] = upper
+    else:
+        points.append(upper)
+    return tuple(PowerDbm(point) for point in points)
 
 
 @dataclass(frozen=True, kw_only=True)

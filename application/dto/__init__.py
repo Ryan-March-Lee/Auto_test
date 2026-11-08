@@ -10,6 +10,7 @@ from .amplifier_inputs import (
     PowerPlan,
     PowerSweep,
     SupplyChannel,
+    target_input_power_grid,
 )
 from .measurement_requests import (
     AmplifierMeasurementRequest,
@@ -49,6 +50,7 @@ __all__ = [
     "PowerPlan",
     "PowerSweep",
     "SupplyChannel",
+    "target_input_power_grid",
     "ExportFormat",
     "ExportOutcome",
     "ExportRequest",

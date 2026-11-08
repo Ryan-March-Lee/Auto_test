@@ -55,6 +55,7 @@ def _form_widgets(**attributes):
     widgets.start_power = type("V", (), {"value": lambda self: -10.0})()
     widgets.stop_power = type("V", (), {"value": lambda self: 0.0})()
     widgets.power_step = type("V", (), {"value": lambda self: 1.0})()
+    widgets.driver_gain = _Text("")
     widgets.max_input_power = type("V", (), {"value": lambda self: 30.0})()
     widgets.pa_unit_count_combo = type("C", (), {"currentText": lambda self: "1"})()
     widgets.compression_combo = type("C", (), {"currentText": lambda self: "5dB"})()
@@ -158,10 +159,29 @@ class ConfigFormStateTests(unittest.TestCase):
         self.assertEqual(mode["estimated_gain_db"], "not-a-gain")
         self.assertTrue(any("有限数值" in error for error in errors), errors)
 
+    def test_a_typed_gain_is_kept_while_the_driver_mode_is_off(self):
+        """驱动关闭只禁用控件：已填写的增益仍按原值写回，不作为运行必填项。"""
+        widgets = _form_widgets()
+        widgets.test_mode_enabled = False
+        widgets.driver_gain = _Text("20.5")
+        state = ConfigFormState({}, widgets)
+
+        mode = state.read_test_parameters()["driver_mode"]
+        errors = state.validation_errors()
+
+        self.assertFalse(mode["enabled"])
+        self.assertEqual(mode["estimated_gain_db"], 20.5)
+        self.assertFalse(
+            [error for error in errors if "增益" in error or "estimated_gain_db" in error],
+            errors,
+        )
+
     def test_forms_without_a_driver_gain_control_keep_the_baseline_value(self):
         """旧替身还没有增益控件时沿用基线，避免读取路径悄悄改写配置。"""
         widgets = _form_widgets()
         widgets.test_mode_enabled = True
+        # 页面形状的替身本来就有增益控件；这里显式去掉它，模拟尚未接入该控件的旧表单。
+        del widgets.driver_gain
         state = ConfigFormState(
             {"driver_mode": {"enabled": True, "estimated_gain_db": 20.5}},
             widgets,

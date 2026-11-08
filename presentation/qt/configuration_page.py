@@ -44,7 +44,6 @@
 """
 
 import copy
-import math
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -80,6 +79,8 @@ from .config_projection import (
     DEFAULT_SIGNAL_SOURCE,
     ConfigBackfillError,
     apply_frequency_fields,
+    bool_or_default,
+    driver_gain_text,
 )
 from .config_page_widgets import build_action_bar, combo_box, spin_box
 from .frequency_sweep import (
@@ -255,7 +256,7 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         self.power_step.setToolTip("目标主功放输入功率网格的步进（dB）")
         # 驱动功放预估增益是测试配置里的单一全局值（dB）。空文本表示尚未填写；
         # 增益的业务校验（有限数值、驱动模式下必填）由配置 DTO 承担，页面不推算。
-        self.driver_gain = QLineEdit(str(DEFAULT_DRIVER_GAIN_ESTIMATE))
+        self.driver_gain = QLineEdit(DEFAULT_DRIVER_GAIN_ESTIMATE)
         self.driver_gain.setPlaceholderText("例如 30.0（启用驱动时填写）")
         self.driver_gain.setMaximumWidth(140)
         compression = self.config.get("compression_point", {})
@@ -266,11 +267,12 @@ class ConfigurationPage(PageControllerBindingMixin, QWidget):
         self.attenuator_combo = combo_box(("30dB", "40dB"), attenuator.get("type", DEFAULT_ATTENUATOR_TYPE))
         mode = self.config.get("driver_mode", {})
         mode = mode if isinstance(mode, dict) else {}
-        self.test_mode_enabled = bool(mode.get("enabled", DEFAULT_DRIVER_MODE_ENABLED))
-        gain = mode.get("estimated_gain_db")
-        if isinstance(gain, (int, float)) and not isinstance(gain, bool):
-            if math.isfinite(float(gain)):
-                self.driver_gain.setText(f"{float(gain):g}")
+        # 与配置回填使用同一套解析：只接受真正的布尔值（``"false"``/``0``/``None``
+        # 都按缺失处理），增益渲染也复用投影规则，构造与 ``apply_config`` 不会各判一次。
+        self.test_mode_enabled = bool_or_default(
+            mode.get("enabled"), DEFAULT_DRIVER_MODE_ENABLED
+        )
+        self.driver_gain.setText(driver_gain_text(mode.get("estimated_gain_db")))
         dut = self.config.get("dut_config", {})
         if not isinstance(dut, dict): dut = {}
         self.max_input_power = spin_box(dut.get("max_input_power", DEFAULT_MAX_INPUT_POWER), 0, 50)

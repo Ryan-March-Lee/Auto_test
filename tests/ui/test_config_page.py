@@ -113,6 +113,44 @@ class ConfigurationPageTests(unittest.TestCase):
         self.assertEqual(page.driver_gain.text(), "31.5")
         self.assertTrue(page.driver_gain.isEnabled())
 
+    def test_driver_mode_value_is_parsed_the_same_way_by_construction_and_backfill(self):
+        """构造与 ``apply_config`` 共用解析：非布尔值按缺失处理，不会一边启用一边禁用。"""
+        document = {
+            "test_frequencies": [1.0],
+            "driver_mode": {"enabled": None},
+            "instruments": {"power_supplies": {}},
+        }
+        constructed = ConfigurationPage(document)
+        page = self.make_page()
+
+        page.apply_config(document)
+
+        self.assertTrue(
+            constructed.test_mode_enabled,
+            "非布尔值按默认值（启用）处理，与回填一致",
+        )
+        self.assertTrue(constructed.driver_gain.isEnabled())
+        self.assertEqual(page.test_mode_enabled, constructed.test_mode_enabled)
+        self.assertEqual(
+            page.driver_gain.isEnabled(), constructed.driver_gain.isEnabled()
+        )
+
+    def test_backfilled_driver_gain_keeps_the_full_precision(self):
+        """回填不截断高精度增益，避免打开再保存时悄悄改写用户的配置。"""
+        page = self.make_page(driver_mode={"enabled": True})
+        page.apply_config(
+            {
+                "test_frequencies": [1.0],
+                "driver_mode": {"enabled": True, "estimated_gain_db": 20.1234567},
+                "instruments": {"power_supplies": {}},
+            }
+        )
+
+        self.assertEqual(page.driver_gain.text(), "20.1234567")
+        self.assertEqual(
+            page.build_config()["driver_mode"]["estimated_gain_db"], 20.1234567
+        )
+
     def test_invalid_driver_gain_is_rejected_by_the_config_dto(self):
         """页面不预判增益：非法文本进入文档，由正式校验给出“必须是有限数值”。"""
         page = self.make_page(driver_mode={"enabled": True})

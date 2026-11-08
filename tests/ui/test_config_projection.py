@@ -281,6 +281,38 @@ class ConfigProjectionTests(unittest.TestCase):
         project_authoring_config(form, {"driver_mode": {"enabled": True}})
         self.assertEqual(form.driver_gain.text(), DEFAULT_DRIVER_GAIN_ESTIMATE)
 
+    def test_non_boolean_driver_mode_values_fall_back_to_the_default(self):
+        """``"false"``/``0``/``None`` 都不是布尔值：按缺失处理，回填默认启用。"""
+        form = FakeForm()
+
+        for value in (None, 0, 1, "", "false", "true"):
+            with self.subTest(enabled=value):
+                project_authoring_config(
+                    form, {"driver_mode": {"enabled": value}}
+                )
+                self.assertTrue(form.test_mode_enabled)
+
+    def test_driver_gain_rendering_keeps_precision_and_rejects_non_numbers(self):
+        """回填文本保留数值精度；非数值/非有限值回到空基线，不静默改写配置。"""
+        form = FakeForm()
+
+        project_authoring_config(
+            form,
+            {"driver_mode": {"enabled": True, "estimated_gain_db": 20.1234567}},
+        )
+        self.assertEqual(form.driver_gain.text(), "20.1234567")
+        self.assertEqual(float(form.driver_gain.text()), 20.1234567)
+
+        for value in (None, True, False, "20.5", float("nan"), float("inf")):
+            with self.subTest(value=value):
+                project_authoring_config(
+                    form,
+                    {"driver_mode": {"enabled": True, "estimated_gain_db": value}},
+                )
+                self.assertEqual(
+                    form.driver_gain.text(), DEFAULT_DRIVER_GAIN_ESTIMATE
+                )
+
     def test_projection_sets_the_protection_switches_without_threshold_widgets(self):
         """保护阈值已改为自动推导，投影只恢复启用开关，不再有阈值输入框。"""
         form = FakeForm(("DP8B1519",))

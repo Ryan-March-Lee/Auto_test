@@ -86,6 +86,20 @@ def number_or_none(value: Any) -> float | None:
     return float(value)
 
 
+def driver_gain_text(value: Any) -> str:
+    """把配置里的驱动功放预估增益渲染成控件文本。
+
+    只接受有限数值：``None``、布尔值、字符串与非有限值都回到空基线（“尚未填写”），
+    不替用户猜一个 0 dB。数值用最短往返表示，避免把用户填的高精度增益截成近似值；
+    控件文本怎么解析回数字由 :func:`presentation.qt.config_form_state.driver_gain_value`
+    负责，两处不各写一套格式。
+    """
+    gain = number_or_none(value)
+    if gain is None or not math.isfinite(gain):
+        return DEFAULT_DRIVER_GAIN_ESTIMATE
+    return repr(gain)
+
+
 def set_combo(combo, value) -> None:
     """把组合框切到已知选项；布尔值与未知选项视为缺失，保持当前项。"""
     if isinstance(value, bool) or value is None:
@@ -267,10 +281,7 @@ def _apply_test_parameter_widgets(widgets: Any, config: Mapping[str, Any]) -> No
     mode = mode if isinstance(mode, dict) else {}
     widgets.test_mode_enabled = bool_or_default(mode.get("enabled"), DEFAULT_DRIVER_MODE_ENABLED)
     # 预估增益缺失或类型不对时回到空基线（“尚未填写”），不替用户猜一个 0 dB。
-    gain = number_or_none(mode.get("estimated_gain_db"))
-    widgets.driver_gain.setText(
-        DEFAULT_DRIVER_GAIN_ESTIMATE if gain is None else f"{gain:g}"
-    )
+    widgets.driver_gain.setText(driver_gain_text(mode.get("estimated_gain_db")))
     dut = config.get("dut_config")
     dut = dut if isinstance(dut, dict) else {}
     value = number_or_none(dut.get("max_input_power"))
@@ -335,6 +346,8 @@ __all__ = [
     "DEFAULT_SIGNAL_SOURCE",
     "DEFAULT_TEST_FREQUENCIES",
     "apply_frequency_fields",
+    "bool_or_default",
+    "driver_gain_text",
     "project_authoring_config",
     "project_power_config",
     "reset_control_widgets",

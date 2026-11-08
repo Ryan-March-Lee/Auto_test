@@ -520,17 +520,6 @@ class RuntimeContractDocumentationTests(unittest.TestCase):
         )
         self.assertIn("--validate-config", document)
 
-    def test_readme_points_at_the_lock_file(self):
-        readme = (ROOT / "README.md").read_text(encoding="utf-8-sig")
-        for marker in ("requirements.lock.txt", "Python：3.11", "依赖与运行时契约"):
-            self.assertIn(marker, readme)
-        self.assertNotIn("python launcher.py", readme)
-
-    def test_startup_guide_uses_the_project_interpreter(self):
-        guide = (ROOT / "README.md").read_text(encoding="utf-8-sig")
-        self.assertIn("AUTO_TEST_PYTHON", guide)
-        self.assertNotIn("\npython launcher.py", guide)
-
 
 if __name__ == "__main__":
     unittest.main()

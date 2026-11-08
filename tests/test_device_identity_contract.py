@@ -8,7 +8,7 @@
 2. 注册表保存出的新条目只写 ``full_code`` / ``label`` / 角色与地址，不写旧字段；
 3. 生产代码只在登记过的历史读取边界出现 ``serial``，不再有 ``build_instrument_name``、
    ``get_by_name``、``get_by_serial``、``next_model_index``、``known_name``；
-4. 新写出的契约文档（README、fixture README）只在“历史读取边界”的说明里提到 ``serial``，
+4. 新写出的契约文档（fixture README）只在“历史读取边界”的说明里提到 ``serial``，
    不再把它当成现行字段。
 """
 
@@ -63,7 +63,6 @@ RETIRED_IDENTIFIERS = (
 
 # 新写出的契约文档：出现 ``serial`` 的行必须明确说明它是历史字段。
 CONTRACT_DOCUMENTS = (
-    "README.md",
     "tests/fixtures/power_supply_identity/README.md",
 )
 _HISTORY_MARKERS = ("历史", "旧", "退役", "不再", "兼容", "读取边界")

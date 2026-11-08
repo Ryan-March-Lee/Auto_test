@@ -152,7 +152,7 @@ PAGE_CONTEXT_FIELDS = (
 # 单源在 ``tests/support/run_flow_contract.py``；这里冻结 Qt 页面与窗口的接线。
 #
 # 文件 -> 必须具备的入口名（信号与方法都按声明名匹配）。只冻结契约与事务编排，
-# 不冻结页面外观；按钮文案由页面测试与 README 各自维护。
+# 不冻结页面外观；按钮文案由页面测试各自维护。
 FINALIZATION_ENTRY_BASELINE = {
     "configuration_page.py": (
         "finalize_run_requested",

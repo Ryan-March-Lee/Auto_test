@@ -6,7 +6,7 @@
 - 生产可执行代码与测试都不再导入这些模块（静态导入与常量字符串动态导入一并检查）；
 - 旧兼容接口标识不再以名字或字符串属性访问的形式出现在生产代码中；
 - 发布清单不再登记 `rollback` / `compatibility` 文件列表；
-- 正式替代入口可导入且导出预期符号，README 与实际目录结构一致。
+- 正式替代入口可导入且导出预期符号。
 
 门禁只约束可执行代码；注释、docstring 与 git 历史中保留的旧名称属于审计证据。
 """
@@ -21,7 +21,6 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).parents[1]
-README = ROOT / "README.md"
 
 # 步骤 16 整文件退役的根目录纯再导出模块（相对路径，导入名同名）。
 RETIRED_ROOT_MODULES = (
@@ -445,18 +444,6 @@ class ReleaseManifestSurfaceTests(unittest.TestCase):
         for module in RETIRED_MODULE_NAMES:
             with self.subTest(module=module):
                 self.assertNotIn(module, release_manifest.RELEASE_FILES)
-
-
-class DocumentationConsistencyTests(unittest.TestCase):
-    """文档以当前正式架构为准，不再把已删除的兼容模块描述为现行文件。"""
-
-    def test_readme_file_tree_does_not_list_retired_modules(self):
-        readme = README.read_text(encoding="utf-8")
-        for module in RETIRED_MODULE_NAMES:
-            for branch in ("├──", "└──"):
-                with self.subTest(module=module, branch=branch):
-                    self.assertNotIn(f"{branch} {module}", readme)
-        self.assertNotIn("尚未收口的兼容再导出入口", readme)
 
 
 if __name__ == "__main__":

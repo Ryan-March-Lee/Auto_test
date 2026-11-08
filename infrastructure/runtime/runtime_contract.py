@@ -96,7 +96,7 @@ def interpreter_command(*arguments: str) -> str:
 def verification_commands() -> dict[str, str]:
     """测试、编译、启动检查、静态门禁和配置校验的官方命令集合。
 
-    启动器帮助、README、发布清单和 CI 都引用这一份结果，避免各自维护
+    启动器帮助、发布清单和 CI 都引用这一份结果，避免各自维护
     裸 ``python`` 命令而产生解释器漂移。
     """
     return {

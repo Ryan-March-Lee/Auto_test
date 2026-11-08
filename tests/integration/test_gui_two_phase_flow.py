@@ -17,8 +17,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from PySide6.QtCore import QCoreApplication
-
 from app.run_context import PreparedRun, load_prepared_run
 from app.gui_runtime import create_cable_loss_measurement, prepare_configuration
 from application.run_service import RunNotResumable
@@ -450,7 +448,15 @@ class WorkerReusesPreparedRunTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.qt_app = QCoreApplication.instance() or QCoreApplication([])
+        # 这个模块里有 GUI 用例；先建 QApplication，别让 QCoreApplication 抢先成为
+        # ``instance()``。QCoreApplication 一旦存在就无法再创建 QApplication，
+        # 之后任何 QWidget 构造都会直接终止进程（0xC0000409）。
+        import os
+
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtWidgets import QApplication
+
+        cls.qt_app = QApplication.instance() or QApplication([])
 
     def test_cable_loss_worker_does_not_reprepare_when_run_is_given(self):
         service = _CableService()

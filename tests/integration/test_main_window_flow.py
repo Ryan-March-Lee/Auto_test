@@ -5,6 +5,7 @@
 静态门禁来判断所有权。
 """
 
+import gc
 import json
 import os
 import tempfile
@@ -98,12 +99,18 @@ def _destroy_window(window) -> None:
     ``close()`` 只隐藏窗口：C++ 对象仍在 ``QApplication.allWidgets()`` 里，之后每次
     全应用 ``setStyleSheet`` / ``processEvents`` 都要为它付代价。用例之间累积几百个
     这样的窗口时，同一个离屏用例会从毫秒级涨到秒级。
+
+    销毁后立刻收一次循环垃圾。窗口、页面和协调器之间的信号连接（Qt 槽保存绑定方法）
+    构成 Python 引用环，不显式回收就要等解释器在某个分配点做分代回收；若那一次回收
+    恰好落在 ``processEvents`` 里，Qt 正在遍历控件时销毁整棵窗口/页面树，就是一次
+    ``0xC0000005``。在用例边界回收，Qt 不在调用栈上，销毁顺序是安全的。
     """
     from PySide6.QtCore import QCoreApplication, QEvent
 
     window.close()
     window.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    gc.collect()
 
 
 @unittest.skipUnless(gui_dependencies_available(), "当前环境缺少完整 GUI 依赖")

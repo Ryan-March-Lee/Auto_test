@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Callable
 
-from app.cancellation import CancellationMode, CancellationToken, MeasurementCancelled
+from app.cancellation import CancellationToken, MeasurementCancelled
 from application.archival_service import ArchivalOutcome, archive_completed_stage
 from application.dto import (
     CableLossMeasurementRequest,
@@ -137,8 +137,7 @@ class CableLossUseCase:
             return result
         except MeasurementCancelled as error:
             try:
-                if error.mode is CancellationMode.STOP:
-                    self._save_partial(error.reason)
+                self._save_partial(error.reason)
             finally:
                 # 停止必须是确定的终态：部分结果保存（含意外异常）不得让阶段
                 # 停留在 running，也不得改动“本次已停止”的语义。
@@ -172,8 +171,7 @@ class CableLossUseCase:
             return result
         except MeasurementCancelled as error:
             try:
-                if error.mode is CancellationMode.STOP:
-                    self._save_partial(error.reason)
+                self._save_partial(error.reason)
             finally:
                 # 停止必须是确定的终态：部分结果保存（含意外异常）不得让阶段
                 # 停留在 running，也不得改动“本次已停止”的语义。
@@ -190,13 +188,9 @@ class CableLossUseCase:
 
     def stop_measurement(self) -> None:
         self._token.request_stop(reason="用户停止")
-        self._abort_waiting("用户停止", save_partial=True)
+        self._abort_waiting("用户停止")
 
-    def emergency_stop(self) -> None:
-        self._token.request_emergency_stop(reason="紧急停止")
-        self._abort_waiting("紧急停止", save_partial=False)
-
-    def _abort_waiting(self, reason: str, *, save_partial: bool) -> None:
+    def _abort_waiting(self, reason: str) -> None:
         """在等待路径2确认时停止：清理仪器并把阶段标记为已取消。
 
         清理失败是明确的运行终态：阶段记录为失败并抛出携带结构化记录的
@@ -213,8 +207,7 @@ class CableLossUseCase:
                 self._record_failure(error)
                 raise
             try:
-                if save_partial:
-                    self._save_partial(reason)
+                self._save_partial(reason)
             finally:
                 # 即使部分结果保存失败，等待路径2时的停止也必须落到 cancelled。
                 self._record_cancel(reason)

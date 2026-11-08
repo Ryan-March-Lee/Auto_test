@@ -99,9 +99,6 @@ class DriverMappingPage(
         self.driver_stop_btn = QPushButton("停止测量")
         set_button_variant(self.driver_stop_btn, "secondary")
         self.driver_stop_btn.clicked.connect(self.stop_measurement)
-        self.driver_emergency_stop_btn = QPushButton("紧急停止")
-        set_button_variant(self.driver_emergency_stop_btn, "danger")
-        self.driver_emergency_stop_btn.clicked.connect(self.emergency_stop_measurement)
         self.show_driver_diagram_btn = QPushButton("查看连接图")
         set_button_variant(self.show_driver_diagram_btn, "secondary")
         self.show_driver_diagram_btn.clicked.connect(self.show_connection_diagram)
@@ -110,7 +107,6 @@ class DriverMappingPage(
             {
                 MeasurementAction.START: self.driver_mapping_btn,
                 MeasurementAction.STOP: self.driver_stop_btn,
-                MeasurementAction.EMERGENCY_STOP: self.driver_emergency_stop_btn,
             },
         )
         self.controls.show_idle()
@@ -119,11 +115,10 @@ class DriverMappingPage(
             (
                 self.driver_mapping_btn,
                 self.driver_stop_btn,
-                self.driver_emergency_stop_btn,
             )
         ):
             control_layout.addWidget(button, 0, column)
-        control_layout.addWidget(self.show_driver_diagram_btn, 1, 0, 1, 3)
+        control_layout.addWidget(self.show_driver_diagram_btn, 1, 0, 1, 2)
         left_layout.addWidget(control_group)
         left_layout.addStretch(1)
         self.control_panel = left_panel
@@ -178,16 +173,6 @@ class DriverMappingPage(
     def stop_measurement(self) -> None:
         if self.controller is not None:
             self.controller.stop()
-
-    def emergency_stop_measurement(self) -> None:
-        if self.controller is None:
-            return
-        if QMessageBox.question(
-            self, "紧急停止", "确定要紧急停止当前驱动映射测试吗？",
-            QMessageBox.Yes | QMessageBox.No,
-        ) == QMessageBox.Yes:
-            self.controller.emergency_stop()
-            self._log_callback("用户执行驱动映射紧急停止！")
 
     def show_connection_diagram(self) -> None:
         self._connection_dialog_factory("driver_mapping", self).exec()

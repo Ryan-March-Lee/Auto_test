@@ -246,9 +246,6 @@ class _Worker:
     def stop(self):
         pass
 
-    def emergency_stop(self):
-        pass
-
 
 class RunContractReopenTests(unittest.TestCase):
     def setUp(self):

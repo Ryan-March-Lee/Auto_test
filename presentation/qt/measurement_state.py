@@ -78,8 +78,8 @@ class MeasurementViewState:
             raise ValueError("progress 必须在 0 到 100 之间")
         if self.status is MeasurementStatus.FAILED and not self.error_text:
             raise ValueError("failed 状态必须包含 error_text")
-        if self.status in {MeasurementStatus.CANCELLED, MeasurementStatus.EMERGENCY_STOPPED} and not self.stop_reason:
-            raise ValueError("取消或紧急停止状态必须包含 stop_reason")
+        if self.status is MeasurementStatus.CANCELLED and not self.stop_reason:
+            raise ValueError("取消状态必须包含 stop_reason")
         if self.result is not None and self.result.kind is not self.kind:
             raise ValueError("结果类型必须与测量类型一致")
 
@@ -106,11 +106,6 @@ class MeasurementViewState:
             raise ValueError("停止原因不能为空")
         status = MeasurementStatus.STOPPING if stopping else MeasurementStatus.CANCELLED
         return self.transition(status, stop_reason=reason)
-
-    def emergency_stop(self, reason: str) -> "MeasurementViewState":
-        if not reason.strip():
-            raise ValueError("紧急停止原因不能为空")
-        return self.transition(MeasurementStatus.EMERGENCY_STOPPED, stop_reason=reason)
 
     def fail(self, error_text: str) -> "MeasurementViewState":
         if not error_text.strip():

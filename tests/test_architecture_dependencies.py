@@ -17,7 +17,6 @@ MEASUREMENT_STATE_FIELDS = {
     "current_worker",
     "instrument_ctrl",
     "instrument_worker",
-    "emergency_stop",
     "real_time_data",
     "rt_frequency_list",
     "rt_current_freq_index",
@@ -26,7 +25,6 @@ MEASUREMENT_STATE_FIELDS = {
 LEGACY_MAIN_WINDOW_MEASUREMENT_WRITES = {
     "instrument_ctrl",
     "instrument_worker",
-    "emergency_stop",
     "real_time_data",
     "rt_frequency_list",
     "rt_current_freq_index",

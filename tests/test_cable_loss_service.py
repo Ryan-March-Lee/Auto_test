@@ -164,7 +164,7 @@ class CableLossServiceCleanupFailureTests(unittest.TestCase):
 
 
 class CableLossServiceCleanupRecordTests(unittest.TestCase):
-    """步骤 7：正常、取消、异常与紧急停止都产生结构化清理记录。"""
+    """步骤 7：正常、停止与异常都产生结构化清理记录。"""
 
     def test_normal_run_records_every_cleanup_step(self):
         instrument = _NormalInstrument()

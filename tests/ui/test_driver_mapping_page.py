@@ -1,10 +1,9 @@
 import os
 import unittest
-from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QWidget
 
 from application.dto import DriverPowerMappingMeasurementResult, DriverPowerPoint
 from presentation.qt.driver_mapping_page import DriverMappingPage
@@ -57,10 +56,6 @@ class Controller:
         self.calls.append(("stop",))
         return True
 
-    def emergency_stop(self):
-        self.calls.append(("emergency_stop",))
-        return True
-
 
 class Dialog:
     def __init__(self, result=QDialog.Accepted):
@@ -111,7 +106,6 @@ class DriverMappingPageTests(unittest.TestCase):
 
         self.assertTrue(self.page.driver_mapping_btn.isEnabled())
         self.assertFalse(self.page.driver_stop_btn.isEnabled())
-        self.assertFalse(self.page.driver_emergency_stop_btn.isEnabled())
 
         self.assertEqual(self.controller.signals.message.slots, [])
         self.assertEqual(self.controller.signals.rejected.slots, [])
@@ -219,7 +213,6 @@ class DriverMappingPageTests(unittest.TestCase):
         )
         self.assertFalse(self.page.driver_mapping_btn.isEnabled())
         self.assertTrue(self.page.driver_stop_btn.isEnabled())
-        self.assertTrue(self.page.driver_emergency_stop_btn.isEnabled())
         self.page.stop_measurement()
         self.assertEqual(self.controller.calls, [("stop",)])
         self.controller.signals.stopped.emit("用户停止")
@@ -239,7 +232,6 @@ class DriverMappingPageTests(unittest.TestCase):
                 {
                     MeasurementAction.START,
                     MeasurementAction.STOP,
-                    MeasurementAction.EMERGENCY_STOP,
                 }
             ),
         )
@@ -248,12 +240,10 @@ class DriverMappingPageTests(unittest.TestCase):
         )
         self.assertFalse(self.page.driver_mapping_btn.isEnabled())
         self.assertTrue(self.page.driver_stop_btn.isEnabled())
-        self.assertTrue(self.page.driver_emergency_stop_btn.isEnabled())
 
         self.controller.signals.stopped.emit("用户停止")
         self.assertTrue(self.page.driver_mapping_btn.isEnabled())
         self.assertFalse(self.page.driver_stop_btn.isEnabled())
-        self.assertFalse(self.page.driver_emergency_stop_btn.isEnabled())
 
     def test_other_measurement_terminal_events_are_ignored(self):
         self.controller.state = type(
@@ -274,11 +264,6 @@ class DriverMappingPageTests(unittest.TestCase):
         self.assertEqual(self.prepared, [])
         self.assertIn("已有测量正在运行", self.logs)
 
-    @patch("presentation.qt.driver_mapping_page.QMessageBox.question", return_value=QMessageBox.Yes)
-    def test_emergency_stop_uses_controller_emergency_operation(self, _question):
-        self.page.emergency_stop_measurement()
-        self.assertEqual(self.controller.calls, [("emergency_stop",)])
-
     def test_control_buttons_share_one_row(self):
         page = self.page
         page.resize(1200, 800)
@@ -287,7 +272,6 @@ class DriverMappingPageTests(unittest.TestCase):
         buttons = (
             page.driver_mapping_btn,
             page.driver_stop_btn,
-            page.driver_emergency_stop_btn,
         )
         tops = {button.geometry().top() for button in buttons}
         self.assertEqual(len(tops), 1)

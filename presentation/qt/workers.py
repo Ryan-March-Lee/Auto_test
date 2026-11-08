@@ -10,7 +10,6 @@ import time
 from PySide6.QtCore import QThread, QObject, Signal
 
 from app.cancellation import MeasurementCancelled
-from application.lifecycle import StopIntent
 from infrastructure.logging.app_logging import get_logger
 from .run_contract import require_prepared_run
 
@@ -55,7 +54,6 @@ class BaseWorker(QThread):
         self.signals = WorkerSignals()
         self._service = None
         self._stop_requested = False
-        self._termination_intent: StopIntent | None = None
         self._termination_reason: str | None = None
 
     @property
@@ -66,45 +64,21 @@ class BaseWorker(QThread):
     def stop_reason(self) -> str:
         return self._termination_reason or "用户停止"
 
-    @property
-    def termination_intent(self) -> StopIntent | None:
-        return self._termination_intent
-
-    def _request_termination(self, intent: StopIntent, reason: str) -> bool:
-        if self._termination_intent is StopIntent.EMERGENCY_STOP:
+    def _request_termination(self, reason: str) -> bool:
+        if self._stop_requested:
             return False
-        if self._termination_intent is not None:
-            if intent is not StopIntent.EMERGENCY_STOP:
-                return False
-        self._termination_intent = intent
         self._termination_reason = reason
         self._stop_requested = True
         return True
 
     def stop(self) -> None:
-        if not self._request_termination(StopIntent.STOP, "用户停止"):
+        if not self._request_termination("用户停止"):
             return
         if self._service is not None:
             self._service.stop_measurement()
 
-    def emergency_stop(self) -> None:
-        if not self._request_termination(StopIntent.EMERGENCY_STOP, "紧急停止"):
-            return
-        if self._service is not None:
-            emergency_stop = getattr(self._service, "emergency_stop", None)
-            if emergency_stop is None:
-                raise RuntimeError("测量服务不支持紧急停止")
-            emergency_stop()
-
     def _stop_service(self) -> None:
-        if self._service is None:
-            return
-        if self._termination_intent is StopIntent.EMERGENCY_STOP:
-            emergency_stop = getattr(self._service, "emergency_stop", None)
-            if emergency_stop is None:
-                raise RuntimeError("测量服务不支持紧急停止")
-            emergency_stop()
-        else:
+        if self._service is not None:
             self._service.stop_measurement()
 
     def _emit_stopped(self, reason: str) -> None:
@@ -130,7 +104,7 @@ class BaseWorker(QThread):
         if isinstance(error, MeasurementCancelled):
             self._emit_stopped(error.reason)
             return
-        if self._termination_intent is not None:
+        if self._stop_requested:
             # 用户已经请求停止：停止后的次生异常（例如部分结果保存失败）不得把
             # “已停止”改写成“测量失败”。异常详情写入运行日志，终态仍是停止。
             self.emit_message(f"{label}: {error}")
@@ -296,10 +270,6 @@ class CableLossWorker(BaseWorker):
 
     def stop(self) -> None:
         super().stop()
-        self._continue_event.set()
-
-    def emergency_stop(self) -> None:
-        super().emergency_stop()
         self._continue_event.set()
 
 

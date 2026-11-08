@@ -12,12 +12,6 @@ class MeasurementLifecycleTests(unittest.TestCase):
         self.assertEqual(stopped.status, MeasurementStatus.CANCELLED)
         self.assertEqual(stopped.stop_intent, StopIntent.NORMAL)
 
-    def test_emergency_stop_cannot_be_downgraded_by_worker_reason(self):
-        lifecycle = MeasurementLifecycle().prepare().start().request_stop("紧急停止", emergency=True)
-        stopped = lifecycle.worker_stopped("用户停止")
-        self.assertEqual(stopped.status, MeasurementStatus.EMERGENCY_STOPPED)
-        self.assertEqual(stopped.stop_intent, StopIntent.EMERGENCY)
-
     def test_idle_is_not_terminal_and_terminal_states_cannot_continue(self):
         self.assertFalse(MeasurementStatus.IDLE.is_terminal)
         completed = MeasurementLifecycle().prepare().start().complete()

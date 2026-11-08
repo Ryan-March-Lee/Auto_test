@@ -451,7 +451,7 @@ class DriverMappingRunStageTests(unittest.TestCase):
         layout = self._create_run()
         self._complete_cable_loss()
         token = CancellationToken()
-        token.request_emergency_stop(reason="test")
+        token.request_stop(reason="test")
         use_case = DriverPowerMappingUseCase(
             self._request(token=token), sleep_fn=lambda _: None
         )

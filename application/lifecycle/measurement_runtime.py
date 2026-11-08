@@ -18,21 +18,15 @@ class RuntimeDecision:
 
 
 class MeasurementRuntimeCoordinator:
-    """集中处理 worker 终态和终止意图的优先级。"""
+    """集中处理 worker 终态和停止意图。"""
 
     def __init__(self) -> None:
         self.stop_intent: StopIntent | None = None
 
     def request(self, intent: StopIntent) -> None:
-        if self.stop_intent is StopIntent.EMERGENCY_STOP:
-            return
-        if self.stop_intent is None or intent is StopIntent.EMERGENCY_STOP:
-            self.stop_intent = intent
+        self.stop_intent = intent
 
     def stopped(self, reason: str = "") -> RuntimeDecision:
-        intent = self.stop_intent or StopIntent.STOP
-        if intent is StopIntent.EMERGENCY_STOP:
-            return RuntimeDecision(MeasurementStatus.EMERGENCY_STOPPED, reason or "紧急停止")
         return RuntimeDecision(MeasurementStatus.CANCELLED, reason or "用户停止")
 
     def finished(self, result: Any) -> RuntimeDecision:

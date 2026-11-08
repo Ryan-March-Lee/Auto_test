@@ -102,9 +102,6 @@ class AmplifierPage(
         self.stop_btn = QPushButton("停止测量")
         set_button_variant(self.stop_btn, "secondary")
         self.stop_btn.clicked.connect(self.stop_measurement)
-        self.emergency_stop_btn = QPushButton("紧急停止")
-        set_button_variant(self.emergency_stop_btn, "danger")
-        self.emergency_stop_btn.clicked.connect(self.emergency_stop_measurement)
         self.show_amp_diagram_btn = QPushButton("查看连接图")
         set_button_variant(self.show_amp_diagram_btn, "secondary")
         self.show_amp_diagram_btn.clicked.connect(self.show_connection_diagram)
@@ -113,7 +110,6 @@ class AmplifierPage(
             {
                 MeasurementAction.START: self.amplifier_test_btn,
                 MeasurementAction.STOP: self.stop_btn,
-                MeasurementAction.EMERGENCY_STOP: self.emergency_stop_btn,
             },
         )
         self.controls.show_idle()
@@ -122,11 +118,10 @@ class AmplifierPage(
             (
                 self.amplifier_test_btn,
                 self.stop_btn,
-                self.emergency_stop_btn,
             )
         ):
             control_layout.addWidget(button, 0, column)
-        control_layout.addWidget(self.show_amp_diagram_btn, 1, 0, 1, 3)
+        control_layout.addWidget(self.show_amp_diagram_btn, 1, 0, 1, 2)
         left_layout.addWidget(control_group)
 
         result_group = QGroupBox("测量结果")
@@ -205,13 +200,6 @@ class AmplifierPage(
     def stop_measurement(self) -> None:
         if self.controller is not None:
             self.controller.stop()
-
-    def emergency_stop_measurement(self) -> None:
-        if self.controller is None:
-            return
-        if QMessageBox.question(self, "紧急停止", "确定要紧急停止当前测试吗？", QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
-            self.controller.emergency_stop()
-            self._log_callback("用户执行紧急停止！")
 
     def show_connection_diagram(self) -> None:
         diagram = "amplifier_test" if self._driver_mode_provider() else "amplifier_test_no_driver"

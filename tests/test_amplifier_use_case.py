@@ -213,7 +213,7 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
     def test_cancelled_request_is_cleaned_by_service(self):
         instrument = _Instrument()
         token = CancellationToken()
-        token.request_emergency_stop(reason="test")
+        token.request_stop(reason="test")
         use_case = AmplifierMeasurementUseCase(
             _request(instrument, token=token), sleep_fn=lambda _: None
         )

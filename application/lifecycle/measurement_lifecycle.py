@@ -10,9 +10,7 @@ from application.dto.measurement_results import MeasurementStatus
 
 class StopIntent(str, Enum):
     STOP = "stop"
-    EMERGENCY_STOP = "emergency_stop"
     NORMAL = "stop"
-    EMERGENCY = "emergency_stop"
 
 
 @dataclass(frozen=True)
@@ -36,37 +34,33 @@ class MeasurementLifecycle:
             MeasurementStatus.PREPARING: {
                 MeasurementStatus.RUNNING, MeasurementStatus.STOPPING,
                 MeasurementStatus.FAILED, MeasurementStatus.CANCELLED,
-                MeasurementStatus.EMERGENCY_STOPPED,
             },
             MeasurementStatus.RUNNING: {
                 MeasurementStatus.RUNNING, MeasurementStatus.WAITING_FOR_CONTINUE,
                 MeasurementStatus.STOPPING, MeasurementStatus.COMPLETED,
                 MeasurementStatus.FAILED, MeasurementStatus.CANCELLED,
-                MeasurementStatus.EMERGENCY_STOPPED,
             },
             MeasurementStatus.WAITING_FOR_CONTINUE: {
                 MeasurementStatus.RUNNING, MeasurementStatus.STOPPING,
                 MeasurementStatus.FAILED, MeasurementStatus.CANCELLED,
-                MeasurementStatus.EMERGENCY_STOPPED,
             },
             MeasurementStatus.STOPPING: {
-                MeasurementStatus.CANCELLED, MeasurementStatus.EMERGENCY_STOPPED,
+                MeasurementStatus.CANCELLED,
                 MeasurementStatus.FAILED,
             },
             MeasurementStatus.COMPLETED: set(),
             MeasurementStatus.FAILED: set(),
             MeasurementStatus.CANCELLED: set(),
+            # 历史结果中可能出现的终止状态；当前运行不再产生，只作为终态保留。
             MeasurementStatus.EMERGENCY_STOPPED: set(),
         }
         if status not in allowed[self.status]:
             raise ValueError(f"状态 {self.status.value} 不能转换为 {status.value}")
-        if status in {MeasurementStatus.CANCELLED, MeasurementStatus.EMERGENCY_STOPPED} and not reason:
-            raise ValueError("取消或紧急停止必须提供原因")
+        if status is MeasurementStatus.CANCELLED and not reason:
+            raise ValueError("取消必须提供原因")
         if status is MeasurementStatus.FAILED and not error:
             raise ValueError("失败状态必须提供错误信息")
         intent = self.stop_intent
-        if status is MeasurementStatus.EMERGENCY_STOPPED:
-            intent = StopIntent.EMERGENCY_STOP
         return MeasurementLifecycle(status, intent, reason, error)
 
     def prepare(self) -> "MeasurementLifecycle":
@@ -81,28 +75,22 @@ class MeasurementLifecycle:
     def continue_running(self) -> "MeasurementLifecycle":
         return self.transition(MeasurementStatus.RUNNING)
 
-    def request_stop(self, reason: str, *, emergency: bool = False) -> "MeasurementLifecycle":
+    def request_stop(self, reason: str) -> "MeasurementLifecycle":
         if not reason.strip():
             raise ValueError("停止原因不能为空")
-        if self.stop_intent is StopIntent.EMERGENCY_STOP:
+        if self.stop_intent is not None:
             return self
-        if self.stop_intent is not None and not emergency and self.stop_intent is not StopIntent.STOP:
-            return self
-        intent = StopIntent.EMERGENCY_STOP if emergency else StopIntent.STOP
+        intent = StopIntent.STOP
         if self.status is MeasurementStatus.STOPPING:
             return MeasurementLifecycle(self.status, intent, reason, self.error)
         state = self.transition(MeasurementStatus.STOPPING, reason=reason)
         return MeasurementLifecycle(state.status, intent, reason, state.error)
 
     def worker_stopped(self, reason: str = "") -> "MeasurementLifecycle":
-        intent = self.stop_intent or StopIntent.NORMAL
         final_reason = reason.strip() or self.reason or "用户停止"
-        target = MeasurementStatus.EMERGENCY_STOPPED if intent is StopIntent.EMERGENCY_STOP else MeasurementStatus.CANCELLED
-        return self.transition(target, reason=final_reason)
+        return self.transition(MeasurementStatus.CANCELLED, reason=final_reason)
 
     def complete(self) -> "MeasurementLifecycle":
-        if self.stop_intent is StopIntent.EMERGENCY_STOP:
-            return self.worker_stopped()
         return self.transition(MeasurementStatus.COMPLETED)
 
     def fail(self, error: str) -> "MeasurementLifecycle":

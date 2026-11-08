@@ -1,6 +1,6 @@
 """测量页面公共按钮状态绑定测试（GUI 重构步骤 10，不需要 QApplication）。
 
-三个测量页面共享的“测量状态 -> 开始/停止/紧急停止/继续按钮可用性”映射在这里
+三个测量页面共享的“测量状态 -> 开始/停止/继续按钮可用性”映射在这里
 验证；页面自己的接线图、日志、归档与结果展示仍由各自的页面测试覆盖。本模块不启动
 Qt，也不连接 controller signal。
 """
@@ -61,7 +61,6 @@ class MeasurementControlAvailabilityTests(unittest.TestCase):
         )
         self.assertTrue(availability.is_enabled(MeasurementAction.START))
         self.assertFalse(availability.is_enabled(MeasurementAction.STOP))
-        self.assertFalse(availability.is_enabled(MeasurementAction.EMERGENCY_STOP))
 
     def test_availability_normalizes_and_rejects_bad_actions(self):
         availability = MeasurementControlAvailability([MeasurementAction.START])
@@ -76,14 +75,12 @@ class MeasurementControlPresenterTests(unittest.TestCase):
     def setUp(self):
         self.start = _Sink()
         self.stop = _Sink()
-        self.emergency = _Sink()
         self.continue_ = _Sink()
         self.presenter = _presenter(
             MeasurementKind.CABLE_LOSS,
             {
                 MeasurementAction.START: self.start,
                 MeasurementAction.STOP: self.stop,
-                MeasurementAction.EMERGENCY_STOP: self.emergency,
                 MeasurementAction.CONTINUE: self.continue_,
             },
         )
@@ -93,7 +90,6 @@ class MeasurementControlPresenterTests(unittest.TestCase):
 
         self.assertTrue(self.start.enabled)
         self.assertFalse(self.stop.enabled)
-        self.assertFalse(self.emergency.enabled)
         self.assertFalse(self.continue_.enabled)
 
     def test_active_measurement_of_this_page_disables_start(self):
@@ -103,14 +99,12 @@ class MeasurementControlPresenterTests(unittest.TestCase):
 
         self.assertFalse(self.start.enabled)
         self.assertTrue(self.stop.enabled)
-        self.assertTrue(self.emergency.enabled)
         self.assertFalse(self.continue_.enabled)
         self.assertEqual(
             availability.enabled,
             frozenset(
                 {
                     MeasurementAction.STOP,
-                    MeasurementAction.EMERGENCY_STOP,
                 }
             ),
         )
@@ -131,7 +125,6 @@ class MeasurementControlPresenterTests(unittest.TestCase):
 
         self.assertTrue(self.start.enabled)
         self.assertFalse(self.stop.enabled)
-        self.assertFalse(self.emergency.enabled)
         self.assertFalse(self.continue_.enabled)
 
     def test_terminal_state_restores_the_idle_buttons(self):
@@ -253,12 +246,12 @@ class MeasurementControlPresenterTests(unittest.TestCase):
             MeasurementAction.STOP: self.stop,
         }
         presenter = MeasurementControlPresenter(MeasurementKind.CABLE_LOSS, buttons)
-        buttons[MeasurementAction.STOP] = self.emergency
+        buttons[MeasurementAction.STOP] = self.continue_
 
         presenter.show_idle()
 
         self.assertFalse(self.stop.enabled)
-        self.assertIsNone(self.emergency.enabled)
+        self.assertIsNone(self.continue_.enabled)
 
 
 class MeasurementPagesUseThePresenterTests(unittest.TestCase):
@@ -270,10 +263,10 @@ class MeasurementPagesUseThePresenterTests(unittest.TestCase):
                 "START", "STOP", "CONTINUE",
             },
             "driver_mapping_page.py": {
-                "START", "STOP", "EMERGENCY_STOP",
+                "START", "STOP",
             },
             "amplifier_page.py": {
-                "START", "STOP", "EMERGENCY_STOP",
+                "START", "STOP",
             },
         }
         for name in PAGE_NAMES:

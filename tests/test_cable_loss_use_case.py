@@ -140,19 +140,19 @@ class CableLossUseCaseTests(unittest.TestCase):
 
         self.assertEqual(prompts, ["请连接路径2"])
 
-    def test_emergency_stop_while_waiting_produces_a_cleanup_record(self):
+    def test_stop_while_waiting_produces_a_cleanup_record(self):
         instrument = _Instrument()
         use_case = CableLossUseCase(_request(instrument), sleep_fn=lambda _: None)
         use_case.measure_all_frequencies()
 
-        use_case.emergency_stop()
+        use_case.stop_measurement()
 
         record = use_case.last_cleanup_record
         self.assertIsNotNone(record)
         self.assertTrue(record.succeeded)
         self.assertEqual(instrument.close_calls, 1)
 
-    def test_emergency_stop_cleanup_failure_is_an_explicit_terminal_error(self):
+    def test_stop_cleanup_failure_is_an_explicit_terminal_error(self):
         class _CloseFailingInstrument(_Instrument):
             def close_all(self, close_rf=False):
                 self.close_calls += 1
@@ -163,7 +163,7 @@ class CableLossUseCaseTests(unittest.TestCase):
         use_case.measure_all_frequencies()
 
         with self.assertRaisesRegex(SafetyCleanupError, "测量安全清理存在失败"):
-            use_case.emergency_stop()
+            use_case.stop_measurement()
 
         record = use_case.last_cleanup_record
         self.assertIsNotNone(record)
@@ -273,7 +273,7 @@ class CableLossUseCaseTests(unittest.TestCase):
     def test_cancelled_request_does_not_open_rf(self):
         instrument = _Instrument()
         token = CancellationToken()
-        token.request_emergency_stop(reason="test")
+        token.request_stop(reason="test")
         use_case = CableLossUseCase(_request(instrument, token=token), sleep_fn=lambda _: None)
 
         with self.assertRaises(MeasurementCancelled):

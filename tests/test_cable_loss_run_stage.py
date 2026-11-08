@@ -245,7 +245,7 @@ class CableLossRunStageTests(unittest.TestCase):
 
     def test_cancelled_token_does_not_complete_the_stage(self):
         token = CancellationToken()
-        token.request_emergency_stop(reason="test")
+        token.request_stop(reason="test")
         request = self._request(token=token)
         use_case = CableLossUseCase(request, sleep_fn=lambda _: None)
 

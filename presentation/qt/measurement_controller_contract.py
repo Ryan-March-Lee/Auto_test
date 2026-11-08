@@ -120,10 +120,6 @@ class MeasurementWorker(Protocol):
         """执行普通停止。"""
         ...
 
-    def emergency_stop(self) -> Any:
-        """执行不可降级的紧急停止。"""
-        ...
-
 
 @runtime_checkable
 class WorkerFactory(Protocol):
@@ -182,10 +178,6 @@ class MeasurementControllerProtocol(Protocol):
 
     def stop(self) -> bool:
         """请求普通停止；无可停止测量时返回 False 并拒绝。"""
-        ...
-
-    def emergency_stop(self) -> bool:
-        """请求紧急停止；不得调用普通 stop 代替。"""
         ...
 
     def continue_cable_loss(self) -> bool:

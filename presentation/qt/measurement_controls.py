@@ -1,8 +1,8 @@
 """三个测量页面共享的按钮可用性绑定（GUI 重构步骤 10）。
 
-页面只声明自己支持哪些动作（开始、停止、取消、紧急停止、继续）；本模块把
-controller 的只读状态快照映射成这些动作的可用性，并写到页面提供的按钮上。
-状态判据仍来自 :class:`presentation.qt.measurement_controller_contract.ControllerState`
+页面只声明自己支持哪些动作（开始、停止、继续）；本模块把 controller 的只读
+状态快照映射成这些动作的可用性，并写到页面提供的按钮上。状态判据仍来自
+:class:`presentation.qt.measurement_controller_contract.ControllerState`
 与 :class:`presentation.qt.measurement_state.MeasurementViewState`，这里不新增第二套
 测量状态机。
 
@@ -25,7 +25,6 @@ class MeasurementAction(str, Enum):
 
     START = "start"
     STOP = "stop"
-    EMERGENCY_STOP = "emergency_stop"
     CONTINUE = "continue"
 
 
@@ -119,10 +118,7 @@ class MeasurementControlPresenter:
         kind, status, active = _state_snapshot(state)
         if kind is not self._kind or not active:
             return self._availability({MeasurementAction.START})
-        enabled = {
-            MeasurementAction.STOP,
-            MeasurementAction.EMERGENCY_STOP,
-        }
+        enabled = {MeasurementAction.STOP}
         if status is MeasurementStatus.WAITING_FOR_CONTINUE:
             enabled.add(MeasurementAction.CONTINUE)
         return self._availability(enabled)

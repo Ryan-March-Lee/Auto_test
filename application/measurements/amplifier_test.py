@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import domain.measurement.calculations as measurement_calculations
-from app.cancellation import CancellationMode, CancellationToken, MeasurementCancelled
+from app.cancellation import CancellationToken, MeasurementCancelled
 from application.archival_service import ArchivalOutcome, archive_completed_stage
 from application.dto import (
     AmplifierMeasurementInputs,
@@ -130,9 +130,6 @@ class AmplifierMeasurementUseCase:
     def stop_measurement(self) -> None:
         self._token.request_stop(reason="用户停止")
 
-    def emergency_stop(self) -> None:
-        self._token.request_emergency_stop(reason="紧急停止")
-
     def calculate_actual_power(self, frequency: float, measured_power: float) -> float:
         """按强类型值对象补偿 DUT 输出功率，对外仍返回 dBm 浮点数。
 
@@ -166,8 +163,7 @@ class AmplifierMeasurementUseCase:
             return result
         except MeasurementCancelled as error:
             try:
-                if error.mode is CancellationMode.STOP:
-                    self._save_partial(error.reason)
+                self._save_partial(error.reason)
             finally:
                 # 停止必须是确定的终态：部分结果保存（含意外异常）不得让阶段
                 # 停留在 running，也不得改动“本次已停止”的语义。

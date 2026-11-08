@@ -92,9 +92,6 @@ class Controller:
     def cancel(self):
         return self._record("cancel")
 
-    def emergency_stop(self):
-        return self._record("emergency_stop")
-
     def continue_cable_loss(self):
         return self._record("continue_cable_loss")
 
@@ -550,9 +547,6 @@ class ControllerArchivalForwardingTests(unittest.TestCase):
             return None
 
         def cancel(self):
-            return None
-
-        def emergency_stop(self):
             return None
 
     def setUp(self):

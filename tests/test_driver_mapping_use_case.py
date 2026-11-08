@@ -151,7 +151,7 @@ class DriverPowerMappingUseCaseTests(unittest.TestCase):
     def test_cancelled_request_stops_before_measurement_and_cleans_up(self):
         instrument = _Instrument()
         token = CancellationToken()
-        token.request_emergency_stop(reason="test")
+        token.request_stop(reason="test")
         use_case = DriverPowerMappingUseCase(
             _request(instrument, token=token),
             sleep_fn=lambda _: None,

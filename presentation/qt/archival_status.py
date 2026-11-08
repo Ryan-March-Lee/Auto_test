@@ -9,7 +9,7 @@
 - 成功：结果已保存且适用产物已生成；
 - 部分产物失败：正式结果保留，提示可定位的运行 ID 与重新生成入口；
 - 测试异常：本次没有归档结果，给出失败原因；
-- 停止/紧急停止：本次没有归档结果，给出停止原因；用户停止时保存的部分结果会一并说明位置。
+- 停止：本次没有归档结果，给出停止原因；用户停止时保存的部分结果会一并说明位置。
 
 归档进行中同样有明确状态（:func:`summarize_archival_running` 与
 :func:`summarize_archival_missing`），避免用户误以为测试结束后一切都已完成。
@@ -203,7 +203,7 @@ def summarize_test_failure(kind: MeasurementKind | str, error: str) -> ArchivalS
 def summarize_test_stopped(
     kind: MeasurementKind | str, reason: str, partial_path: str | None = None
 ) -> ArchivalSummary:
-    """停止或紧急停止：本次没有归档结果；有部分结果时说明保存位置。"""
+    """停止：本次没有归档结果；有部分结果时说明保存位置。"""
     label = _kind_label(kind)
     stop_reason = (reason or "").strip() or "用户停止"
     if partial_path:

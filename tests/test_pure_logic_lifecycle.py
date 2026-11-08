@@ -27,22 +27,6 @@ class CancellationTokenTests(unittest.TestCase):
         self.assertIs(context.exception.mode, CancellationMode.NORMAL)
         self.assertEqual(context.exception.reason, "用户停止")
 
-    def test_emergency_request_cannot_be_downgraded(self):
-        token = CancellationToken()
-        token.request_emergency_stop(reason="过流保护")
-        token.request_stop(reason="普通停止")
-
-        self.assertEqual(token.mode, CancellationMode.EMERGENCY)
-        self.assertEqual(token.reason, "过流保护")
-
-    def test_normal_request_can_be_escalated_to_emergency(self):
-        token = CancellationToken()
-        token.request_stop(reason="用户停止")
-        token.request_emergency_stop(reason="紧急停止")
-
-        self.assertEqual(token.mode, CancellationMode.EMERGENCY)
-        self.assertEqual(token.reason, "紧急停止")
-
 
 class MeasurementSessionTests(unittest.TestCase):
     def test_normal_lifecycle_records_timestamps_and_clean_state(self):

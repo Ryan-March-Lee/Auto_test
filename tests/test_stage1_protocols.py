@@ -1,6 +1,5 @@
 import unittest
 
-from app.cancellation import CancellationMode, CancellationToken, MeasurementCancelled
 from app.events import CompletedEvent, ProgressEvent
 from application.dto import (
     AmplifierFrequencyResult,
@@ -89,21 +88,6 @@ class Stage1ProtocolTests(unittest.TestCase):
         self.assertEqual(driver.points[0].output_power_dbm, 19.0)
         self.assertEqual(amplifier.sweep_rows()["1.0"][0]["efficiency"], 50.0)
         self.assertIsInstance(cable, MeasurementResult)
-
-    def test_cancellation_preserves_emergency_semantics(self):
-        token = CancellationToken()
-        token.request_stop(reason="用户停止")
-        token.request_emergency_stop(reason="保护触发")
-        self.assertEqual(token.mode, CancellationMode.EMERGENCY)
-        with self.assertRaises(MeasurementCancelled) as raised:
-            token.raise_if_cancelled()
-        self.assertEqual(raised.exception.reason, "保护触发")
-
-    def test_emergency_cancellation_cannot_be_downgraded(self):
-        token = CancellationToken()
-        token.request_emergency_stop(reason="窗口关闭")
-        token.request_stop(reason="普通停止")
-        self.assertEqual(token.mode, CancellationMode.EMERGENCY)
 
     def test_events_are_plain_python_values(self):
         progress = ProgressEvent(run_id="run-1", fraction=0.5, stage="scan")

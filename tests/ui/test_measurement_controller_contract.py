@@ -57,16 +57,12 @@ class _Worker:
         self.signals = _Signals()
         self.started = False
         self.stop_calls = 0
-        self.emergency_stop_calls = 0
 
     def start(self):
         self.started = True
 
     def stop(self):
         self.stop_calls += 1
-
-    def emergency_stop(self):
-        self.emergency_stop_calls += 1
 
 
 class _FakeController:
@@ -113,13 +109,6 @@ class _FakeController:
         self.workers[-1][1].stop()
         return True
 
-    def emergency_stop(self):
-        if not self.state.is_active:
-            self.signals.rejected.emit("当前没有可紧急停止的测量")
-            return False
-        self.workers[-1][1].emergency_stop()
-        return True
-
     def continue_cable_loss(self):
         if self.state.status is not MeasurementStatus.WAITING_FOR_CONTINUE:
             self.signals.rejected.emit("线损测量当前不在等待继续状态")
@@ -143,16 +132,6 @@ class MeasurementControllerContractTests(unittest.TestCase):
         self.assertEqual(controller.rejections, ["已有测量正在运行", "已有测量正在运行"])
         with self.assertRaises((TypeError, AttributeError)):
             command.options["frequencies"].append(3)
-
-    def test_normal_and_emergency_stop_are_distinct_worker_operations(self):
-        controller = _FakeController()
-        controller.start_amplifier(MeasurementCommand("config.json", _PREPARED_RUN))
-        worker = controller.workers[-1][1]
-
-        self.assertTrue(controller.stop())
-        self.assertTrue(controller.emergency_stop())
-        self.assertEqual(worker.stop_calls, 1)
-        self.assertEqual(worker.emergency_stop_calls, 1)
 
     def test_continue_is_rejected_outside_cable_loss_checkpoint(self):
         controller = _FakeController()

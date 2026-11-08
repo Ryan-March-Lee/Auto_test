@@ -1,4 +1,4 @@
-"""与 UI 无关的普通停止和紧急停止协议。"""
+"""与 UI 无关的普通停止协议。"""
 
 from __future__ import annotations
 
@@ -8,13 +8,11 @@ from threading import Event, Lock
 
 class CancellationMode(str, Enum):
     STOP = "stop"
-    EMERGENCY_STOP = "emergency_stop"
     NORMAL = "stop"
-    EMERGENCY = "emergency_stop"
 
 
 class MeasurementCancelled(Exception):
-    """测量在安全边界或紧急路径被取消。"""
+    """测量在安全边界被取消。"""
 
     def __init__(self, mode: CancellationMode, reason: str | None = None):
         self.mode = mode
@@ -25,8 +23,7 @@ class MeasurementCancelled(Exception):
 class CancellationToken:
     """可注入测量服务的线程安全取消令牌。
 
-    普通停止要求服务在当前安全边界结束；紧急停止要求服务立即进入
-    RF 优先的清理路径。令牌本身不执行硬件动作。
+    停止要求服务在当前安全边界结束；令牌本身不执行硬件动作。
     """
 
     def __init__(self) -> None:
@@ -50,22 +47,16 @@ class CancellationToken:
         return self._event.is_set()
 
     def cancel(self, mode: CancellationMode = CancellationMode.STOP, *, reason: str | None = None) -> None:
-        """设置终止请求；紧急停止不可降级，普通意图不可互相改写。"""
+        """设置停止请求；停止原因以最后一次请求为准。"""
         with self._lock:
-            if self._mode is CancellationMode.EMERGENCY_STOP:
-                return
             if self._mode is not None and self._mode is not mode:
-                if mode is not CancellationMode.EMERGENCY_STOP:
-                    return
+                return
             self._mode = mode
             self._reason = reason or mode.value
             self._event.set()
 
     def request_stop(self, *, reason: str | None = None) -> None:
         self.cancel(CancellationMode.STOP, reason=reason)
-
-    def request_emergency_stop(self, *, reason: str | None = None) -> None:
-        self.cancel(CancellationMode.EMERGENCY_STOP, reason=reason)
 
     def raise_if_cancelled(self) -> None:
         if self.is_cancelled:

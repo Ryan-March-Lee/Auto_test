@@ -166,7 +166,7 @@ class ArchivalPageMixin:
         )
 
     def _archival_test_stopped(self, reason: str, partial_path: str | None = None) -> None:
-        """停止或紧急停止：本次没有归档结果；有部分结果时说明保存位置。"""
+        """停止：本次没有归档结果；有部分结果时说明保存位置。"""
         self._archival_pending = False
         self._archival_saving = False
         self._archival_terminal_events += 1

@@ -21,11 +21,6 @@ class MeasurementStateTests(unittest.TestCase):
         self.assertTrue(MeasurementStatus.EMERGENCY_STOPPED.is_terminal)
         self.assertFalse(MeasurementStatus.IDLE.is_terminal)
 
-    def test_emergency_stop_has_distinct_terminal_state(self):
-        state = MeasurementViewState(MeasurementKind.AMPLIFIER).prepare().run()
-        stopped = state.stop("紧急停止", stopping=True).emergency_stop("紧急停止")
-        self.assertEqual(stopped.status, MeasurementStatus.EMERGENCY_STOPPED)
-
     def test_cable_loss_wait_continue_and_finish(self):
         state = MeasurementViewState(MeasurementKind.CABLE_LOSS)
         state = state.prepare().run()

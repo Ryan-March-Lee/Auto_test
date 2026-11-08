@@ -26,6 +26,7 @@ from .measurement_state import MeasurementKind
 from .pages import PageControllerBindingMixin
 from .realtime_buffer import RealtimeMeasurementBuffer
 from .realtime_page import RealtimePageMixin
+from .status_panel import StatusSlot
 from .theme import set_button_variant
 
 
@@ -78,8 +79,8 @@ class AmplifierPage(
         layout.setContentsMargins(0, 4, 0, 0)
         layout.setSpacing(12)
 
-        # 左侧窄栏只放测量控制；右侧整块留给四张图。测量结果由频点浏览图
-        # 按频点展示，页面不再重复列一份结果表。
+        # 左侧窄栏自上而下放测量控制与状态面板（进度 + 实时日志）；右侧整块留给四张图。
+        # 测量结果由频点浏览图按频点展示，页面不再重复列一份结果表。
         # 接线说明只保留连接图入口：测试者已知道仪器怎么接，按钮只用于防止忘记。
         left_panel = QWidget()
         left_panel.setMinimumWidth(420)
@@ -119,7 +120,9 @@ class AmplifierPage(
             control_layout.addWidget(button, 0, column)
         control_layout.addWidget(self.show_amp_diagram_btn, 1, 0, 1, 2)
         left_layout.addWidget(control_group)
-        left_layout.addStretch(1)
+        # 进度与实时日志由窗口挂进这块容器，占满控制框以下的剩余高度。
+        self.status_slot = StatusSlot()
+        left_layout.addWidget(self.status_slot, 1)
         self.control_panel = left_panel
         layout.addWidget(left_panel)
 

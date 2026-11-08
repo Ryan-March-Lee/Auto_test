@@ -691,7 +691,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIn("功放测试", visible_titles())
 
     def test_configuration_page_hides_progress_and_log_panel(self):
-        """测试配置页只做配置与连接：右侧进度与实时日志不出现，切页后再回来。"""
+        """测试配置页只做配置与连接：进度与实时日志不出现，切页后挂回测量页左栏。"""
         self._silence_dialogs()
         window = self._window()
         window._enter_test_mode(True)
@@ -703,13 +703,32 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         window.add_log_message("配置页日志")
         self.assertIn("配置页日志", window.log_text.toPlainText())
 
-        window.tab_widget.setCurrentIndex(
-            window.tab_widget.indexOf(window.pages["cable_loss"])
-        )
+        cable_loss = window.pages["cable_loss"]
+        window.tab_widget.setCurrentIndex(window.tab_widget.indexOf(cable_loss))
         self.assertFalse(window.status_panel.isHidden())
+        self.assertIs(window.status_panel.parentWidget(), cable_loss.status_slot)
 
         window.tab_widget.setCurrentIndex(window.tab_widget.indexOf(window.test_config_page))
         self.assertTrue(window.status_panel.isHidden())
+
+    def test_progress_and_log_follow_the_active_measurement_page(self):
+        """三个测量页共用同一份状态面板：切页时移入新页左栏，日志历史不丢。"""
+        self._silence_dialogs()
+        window = self._window()
+        window._enter_test_mode(True)
+
+        window.tab_widget.setCurrentIndex(
+            window.tab_widget.indexOf(window.cable_loss_page)
+        )
+        window.add_log_message("线损页日志")
+        window.tab_widget.setCurrentIndex(
+            window.tab_widget.indexOf(window.amplifier_page)
+        )
+
+        self.assertFalse(window.status_panel.isHidden())
+        self.assertIs(window.status_panel.parentWidget(), window.amplifier_page.status_slot)
+        self.assertIn("线损页日志", window.log_text.toPlainText())
+        self.assertEqual(window.pages["cable_loss"].status_slot.layout().count(), 0)
 
     def test_config_page_save_signal_writes_the_official_configuration(self):
         self._silence_dialogs()

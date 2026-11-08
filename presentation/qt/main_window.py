@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
-    QSplitter,
     QStackedWidget,
     QTabWidget,
     QVBoxLayout,
@@ -133,7 +132,7 @@ class MainWindow(QMainWindow):
         return self.coordinator.realtime_buffer.current_index
 
     def init_ui(self):
-        """初始化用户界面：欢迎页/工作区堆栈 + 右侧纵向状态面板（标签栏承载模式徽标）。"""
+        """初始化用户界面：欢迎页/工作区堆栈；进度与日志在测量页左栏内。"""
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
@@ -170,21 +169,10 @@ class MainWindow(QMainWindow):
         workspace_layout = QVBoxLayout(self.workspace_page)
         workspace_layout.setContentsMargins(0, 0, 0, 0)
         workspace_layout.setSpacing(0)
-        # 左右分栏：左侧标签页占满剩余宽度，右侧状态面板纵向铺满并保持自身宽度。
-        # 分隔条让用户可以按需拉宽日志栏；子控件不可折叠，避免拖出隐藏区域。
-        self.workspace_splitter = QSplitter(Qt.Orientation.Horizontal)
-        self.workspace_splitter.setObjectName("workspaceSplitter")
-        self.workspace_splitter.setHandleWidth(6)
-        self.workspace_splitter.setChildrenCollapsible(False)
-        self.workspace_splitter.addWidget(left_widget)
-        self.create_status_panel(self.workspace_splitter)
-        self.workspace_splitter.setStretchFactor(0, 1)
-        self.workspace_splitter.setStretchFactor(1, 0)
-        self.workspace_splitter.setSizes([1180, 420])
-        # 面板分栏宽度：默认 1180/420，用户拖动后由下一次隐藏更新。窗口还没布局时
-        # ``sizes()`` 只是按当时可用宽度缩放的结果，不能拿它当恢复值。
-        self._status_panel_sizes = [1180, 420]
-        workspace_layout.addWidget(self.workspace_splitter, 1)
+        # 标签页占满工作区：状态面板不在右侧另占一栏，而是挂在当前测量页左栏的
+        # “测量控制”下方，把横向空间整块留给结果表与频点浏览图。
+        workspace_layout.addWidget(left_widget, 1)
+        self.create_status_panel()
         self.view_stack.addWidget(self.workspace_page)
 
         # 仪表配置是欢迎页之后的整屏页面，不登记进标签栏：先选设备，再配测试参数，
@@ -365,35 +353,35 @@ class MainWindow(QMainWindow):
         self._sync_status_panel_visibility()
 
     def _sync_status_panel_visibility(self) -> None:
-        """按当前页面决定右侧状态面板是否出现。
+        """把唯一的进度与日志面板挂到当前测量页左栏。
 
-        “测试配置”页只做配置与连接，不需要盯测量进度与实时日志，右侧面板在该页
-        隐藏、把宽度让给表单；面板本身仍是全局唯一的进度与日志接收方，日志照常
-        入队，切回测量/结果页时按上次的分栏宽度原样恢复。
+        只有三个测量页有 ``status_slot``：面板挂进去后占满“测量控制”以下的剩余高度。
+        测试配置、数据可视化和历史运行页没有这块位置，面板在那里收起；它仍是全部
+        日志的接收方，日志照常入队，切回任一测量页时原样出现（历史、进度与清除操作
+        都只有一份）。
         """
         panel = getattr(self, "status_panel", None)
-        splitter = getattr(self, "workspace_splitter", None)
-        if panel is None or splitter is None:
+        if panel is None:
             return
-        current = self.tab_widget.currentWidget()
-        editor = getattr(self, "configuration_editor", None)
-        test_config_page = getattr(self, "test_config_page", None)
-        should_hide = current is not None and (
-            current is test_config_page or (editor is not None and editor.contains(current))
-        )
-        if should_hide == panel.isHidden():
+        slot = self._current_status_slot()
+        previous = getattr(self, "_status_panel_slot", None)
+        if slot is previous:
             return
-        if should_hide:
-            # 只有布局完成的可见分栏才记录真实宽度：初始化阶段的 sizes() 是按当时
-            # 可用宽度缩放出来的，记下来会让面板第一次出现时被压到最小宽度。
-            if splitter.isVisible():
-                self._status_panel_sizes = splitter.sizes()
+        if previous is not None:
+            previous.unmount(panel)
+        self._status_panel_slot = slot
+        if slot is None:
             panel.hide()
             return
-        panel.show()
-        sizes = getattr(self, "_status_panel_sizes", None)
-        if sizes:
-            splitter.setSizes(sizes)
+        slot.mount(panel)
+
+    def _current_status_slot(self):
+        """当前标签页给状态面板准备的位置；非测量页返回 ``None``。"""
+        current = self.tab_widget.currentWidget()
+        for page in getattr(self, "pages", {}).values():
+            if page is current:
+                return getattr(page, "status_slot", None)
+        return None
 
     def create_test_config_tab(self):
         """创建测试配置选项卡；配置页与协调器在这里互相登记。"""
@@ -456,12 +444,17 @@ class MainWindow(QMainWindow):
         )
         return self.run_history_page
 
-    def create_status_panel(self, main_layout):
-        """创建右侧状态面板（纵向铺满），并暴露进度条与日志控件。"""
+    def create_status_panel(self):
+        """创建唯一的进度与日志面板，并暴露进度条与日志控件。
+
+        面板先隐藏；页面切换时由 :meth:`_sync_status_panel_visibility` 挂进当前
+        测量页左栏的 ``status_slot``。
+        """
         self.status_panel = StatusPanel(parent=self)
         self.progress_bar = self.status_panel.progress_bar
         self.log_text = self.status_panel.log_text
-        main_layout.addWidget(self.status_panel)
+        self.status_panel.hide()
+        self._status_panel_slot = None
 
     # ---- 配置与运行入口（逻辑在协调器，窗口只转发） ----
 

@@ -30,6 +30,7 @@ from .measurement_controls import (
 )
 from .measurement_state import CableLossPageResultState, MeasurementKind, MeasurementStatus
 from .pages import PageControllerBindingMixin
+from .status_panel import StatusSlot
 from .theme import set_button_variant
 
 
@@ -73,7 +74,8 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         layout.setContentsMargins(0, 4, 0, 0)
         layout.setSpacing(12)
 
-        # 左侧窄栏只放测量控制；右侧整块留给结果表。接线说明只由连接图承担。
+        # 左侧窄栏自上而下放测量控制与状态面板（进度 + 实时日志）；右侧整块留给结果表。
+        # 接线说明只由连接图承担。
         left_panel = QWidget()
         left_panel.setMinimumWidth(420)
         left_panel.setMaximumWidth(520)
@@ -122,7 +124,9 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         control_layout.setColumnStretch(0, 1)
         control_layout.setColumnStretch(1, 1)
         left_layout.addWidget(control_group)
-        left_layout.addStretch(1)
+        # 进度与实时日志由窗口挂进这块容器，占满控制框以下的剩余高度。
+        self.status_slot = StatusSlot()
+        left_layout.addWidget(self.status_slot, 1)
         layout.addWidget(left_panel)
 
         result_group = QGroupBox("测量结果")

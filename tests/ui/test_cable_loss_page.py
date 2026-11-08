@@ -3,7 +3,7 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QDialog
+from PySide6.QtWidgets import QApplication, QDialog, QGroupBox
 
 from application.dto import CableLossMeasurementResult, CableLossRow
 from presentation.qt.cable_loss_page import CableLossPage
@@ -245,6 +245,19 @@ class CableLossPageTests(unittest.TestCase):
         self.assertEqual(self.page.show_path1_btn.parent().title(), "测量控制")
         self.assertEqual(self.page.show_path2_btn.parent().title(), "测量控制")
         self.assertEqual(self.page.findChildren(QTextEdit), [])
+
+    def test_status_slot_sits_below_the_measurement_controls(self):
+        """左栏在“测量控制”下面留出状态区：进度与日志由窗口挂进来。"""
+        page = self.page
+        page.resize(1200, 900)
+        page.show()
+        self.app.processEvents()
+        group = next(
+            box for box in page.findChildren(QGroupBox) if box.title() == "测量控制"
+        )
+        self.assertIs(page.status_slot.parentWidget(), group.parentWidget())
+        self.assertGreaterEqual(page.status_slot.y(), group.y() + group.height())
+        page.close()
 
 
 if __name__ == "__main__":

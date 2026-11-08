@@ -1,4 +1,5 @@
 import ast
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -348,74 +349,98 @@ class MainWindowCloseEventTests(unittest.TestCase):
         window.coordinator.abandon_pending_run.assert_not_called()
         event.accept.assert_called_once_with()
 
-class _FakeStatusPanel:
-    """状态面板替身：只记录显隐调用，可见性语义与真实 ``StatusPanel`` 一致。"""
+class StatusPanelPlacementTests(unittest.TestCase):
+    """唯一的进度与日志面板跟着当前测量页走：测量页挂进左栏，浏览/配置页收起。"""
 
-    def __init__(self):
-        self.hidden = False
-        self.hide = Mock(side_effect=self._mark_hidden)
-        self.show = Mock(side_effect=self._mark_shown)
+    @classmethod
+    def setUpClass(cls):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtWidgets import QApplication
 
-    def _mark_hidden(self):
-        self.hidden = True
+        cls.app = QApplication.instance() or QApplication([])
 
-    def _mark_shown(self):
-        self.hidden = False
-
-    def isHidden(self):
-        return self.hidden
-
-
-class StatusPanelVisibilityTests(unittest.TestCase):
-    """测试配置页不显示测量进度与实时日志，其余页面按上次分栏宽度恢复。"""
-
-    def _window(self, current_page, *, panel=None, sizes=None):
+    def _window(self, current_page, *, pages=None):
         from presentation.qt.main_window import MainWindow
+        from presentation.qt.status_panel import StatusPanel
 
-        panel = panel or _FakeStatusPanel()
-        splitter = Mock()
-        splitter.sizes.return_value = [1200, 400]
+        panel = StatusPanel()
         window = SimpleNamespace(
             status_panel=panel,
-            workspace_splitter=splitter,
+            pages=pages or {},
             tab_widget=SimpleNamespace(currentWidget=lambda: current_page),
-            test_config_page=SimpleNamespace(),
-            _status_panel_sizes=sizes,
+            _status_panel_slot=None,
         )
         window._sync_status_panel_visibility = (
             lambda: MainWindow._sync_status_panel_visibility(window)
         )
-        return window, panel, splitter
+        window._current_status_slot = (
+            lambda: MainWindow._current_status_slot(window)
+        )
+        return window, panel
 
-    def test_configuration_page_hides_the_panel_and_remembers_the_width(self):
-        window, panel, _splitter = self._window(None)
-        window.tab_widget = SimpleNamespace(currentWidget=lambda: window.test_config_page)
+    @staticmethod
+    def _page(slot=None):
+        return SimpleNamespace(status_slot=slot)
+
+    def test_measurement_page_receives_the_panel_in_its_status_slot(self):
+        from presentation.qt.status_panel import StatusSlot
+
+        slot = StatusSlot()
+        page = self._page(slot)
+        window, panel = self._window(page, pages={"cable_loss": page})
 
         window._sync_status_panel_visibility()
 
-        self.assertTrue(panel.isHidden())
-        self.assertEqual(window._status_panel_sizes, [1200, 400])
-
-    def test_measurement_page_shows_the_panel_with_the_last_width(self):
-        panel = _FakeStatusPanel()
-        panel.hide()
-        window, panel, splitter = self._window(object(), panel=panel, sizes=[1180, 420])
-
-        window._sync_status_panel_visibility()
-
+        self.assertIs(panel.parentWidget(), slot)
         self.assertFalse(panel.isHidden())
-        splitter.setSizes.assert_called_once_with([1180, 420])
 
-    def test_syncing_the_same_page_again_does_not_touch_the_splitter(self):
-        panel = _FakeStatusPanel()
-        panel.hide()
-        window, _panel, splitter = self._window(None, panel=panel, sizes=[1180, 420])
-        window.tab_widget = SimpleNamespace(currentWidget=lambda: window.test_config_page)
+    def test_browsing_page_hides_the_panel_but_the_log_keeps_receiving(self):
+        from presentation.qt.status_panel import StatusSlot
 
+        slot = StatusSlot()
+        page = self._page(slot)
+        window, panel = self._window(page, pages={"cable_loss": page})
+        window._sync_status_panel_visibility()
+        panel.add_log_message("配置页日志")
+
+        browsing = SimpleNamespace()
+        window.tab_widget = SimpleNamespace(currentWidget=lambda: browsing)
+        window.pages = {"cable_loss": page, "visualization": browsing}
         window._sync_status_panel_visibility()
 
-        splitter.setSizes.assert_not_called()
         self.assertTrue(panel.isHidden())
+        self.assertIn("配置页日志", panel.log_text.toPlainText())
+        self.assertEqual(slot.layout().count(), 0)
+
+    def test_switching_measurement_pages_moves_the_same_panel(self):
+        from presentation.qt.status_panel import StatusSlot
+
+        first_slot, second_slot = StatusSlot(), StatusSlot()
+        first, second = self._page(first_slot), self._page(second_slot)
+        window, panel = self._window(
+            first, pages={"cable_loss": first, "amplifier": second}
+        )
+        window._sync_status_panel_visibility()
+
+        window.tab_widget = SimpleNamespace(currentWidget=lambda: second)
+        window._sync_status_panel_visibility()
+
+        self.assertIs(panel.parentWidget(), second_slot)
+        self.assertEqual(first_slot.layout().count(), 0)
+        self.assertEqual(second_slot.layout().indexOf(panel), 0)
+
+    def test_syncing_the_same_page_again_does_not_mount_twice(self):
+        from presentation.qt.status_panel import StatusSlot
+
+        slot = StatusSlot()
+        page = self._page(slot)
+        window, panel = self._window(page, pages={"cable_loss": page})
+
+        window._sync_status_panel_visibility()
+        window._sync_status_panel_visibility()
+
+        self.assertEqual(slot.layout().count(), 1)
+        self.assertIs(panel.parentWidget(), slot)
 
 
 class MainWindowAssemblyBoundaryTests(unittest.TestCase):

@@ -204,6 +204,17 @@ class AmplifierPageTests(unittest.TestCase):
         )
         page.close()
 
+    def test_status_slot_sits_below_the_measurement_controls(self):
+        """左栏在“测量控制”下面留出状态区：进度与日志由窗口挂进来。"""
+        page = self.page
+        page.resize(1200, 900)
+        page.show()
+        self.app.processEvents()
+        group = next(box for box in page.control_panel.findChildren(QGroupBox))
+        self.assertIs(page.status_slot.parentWidget(), page.control_panel)
+        self.assertGreaterEqual(page.status_slot.y(), group.y() + group.height())
+        page.close()
+
     def test_close_disconnects_controller_signals(self):
         self.assertEqual(len(self.controller.signals.data_update.slots), 1)
         self.page.close()

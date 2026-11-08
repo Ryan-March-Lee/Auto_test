@@ -1082,16 +1082,10 @@ QScrollBar::add-page, QScrollBar::sub-page {
 }
 
 /* ===== 状态区 ===== */
+/* 状态面板嵌在测量页左栏里：不画自己的外框，由“测量控制”分组框与日志凹槽给出边界。 */
 QFrame#statusPanel {
-    background-color: $surface;
-    border-left: 1px solid $border;
-}
-/* 工作区分隔条：本身不可见，边界由状态面板的左边线给出。 */
-QSplitter#workspaceSplitter {
     background: transparent;
-}
-QSplitter#workspaceSplitter::handle {
-    background: transparent;
+    border: none;
 }
 QWidget#plotPanel {
     background-color: $surface;

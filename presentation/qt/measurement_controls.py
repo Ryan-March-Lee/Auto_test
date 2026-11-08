@@ -1,7 +1,7 @@
 """三个测量页面共享的按钮可用性绑定（GUI 重构步骤 10）。
 
-页面只声明自己支持哪些动作（开始、停止、继续）；本模块把 controller 的只读
-状态快照映射成这些动作的可用性，并写到页面提供的按钮上。状态判据仍来自
+页面只声明自己支持哪些动作（开始、停止）；本模块把 controller 的只读状态快照
+映射成这些动作的可用性，并写到页面提供的按钮上。状态判据仍来自
 :class:`presentation.qt.measurement_controller_contract.ControllerState`
 与 :class:`presentation.qt.measurement_state.MeasurementViewState`，这里不新增第二套
 测量状态机。
@@ -25,7 +25,6 @@ class MeasurementAction(str, Enum):
 
     START = "start"
     STOP = "stop"
-    CONTINUE = "continue"
 
 
 @runtime_checkable
@@ -60,11 +59,11 @@ _MISSING = object()
 def _state_snapshot(state: Any) -> tuple[MeasurementKind | None, MeasurementStatus, bool]:
     """读取 controller 状态快照；缺少 ``is_active`` 时按状态推导（ViewState 也适用）。
 
-    用户可见行为只取决于“是不是本页面的活动测量”和“是否在等待第二步继续”：
-    前者来自 ``ControllerState.is_active``（或 ``MeasurementViewState.status``），
-    后者来自 ``status``。缺少 ``is_active`` 的属性才按状态推导；属性存在但不是
-    ``bool``（包括显式 ``None``）视为调用方契约错误并抛 ``TypeError``，避免把
-    ``"false"`` 之类的值当真值悄悄点亮停止类按钮。
+    用户可见行为只取决于“是不是本页面的活动测量”：前者来自
+    ``ControllerState.is_active``（或 ``MeasurementViewState.status``）。缺少
+    ``is_active`` 的属性才按状态推导；属性存在但不是 ``bool``（包括显式 ``None``）
+    视为调用方契约错误并抛 ``TypeError``，避免把 ``"false"`` 之类的值当真值悄悄点亮
+    停止类按钮。
     """
     kind = getattr(state, "kind", None)
     if kind is not None and not isinstance(kind, MeasurementKind):
@@ -115,13 +114,10 @@ class MeasurementControlPresenter:
 
     def availability(self, state: Any) -> MeasurementControlAvailability:
         """计算某个 controller 状态下本页面各动作的可用性，不写控件。"""
-        kind, status, active = _state_snapshot(state)
+        kind, _status, active = _state_snapshot(state)
         if kind is not self._kind or not active:
             return self._availability({MeasurementAction.START})
-        enabled = {MeasurementAction.STOP}
-        if status is MeasurementStatus.WAITING_FOR_CONTINUE:
-            enabled.add(MeasurementAction.CONTINUE)
-        return self._availability(enabled)
+        return self._availability({MeasurementAction.STOP})
 
     def apply(self, state: Any) -> MeasurementControlAvailability:
         """按 controller 状态更新已登记按钮，并返回本次可用性。"""

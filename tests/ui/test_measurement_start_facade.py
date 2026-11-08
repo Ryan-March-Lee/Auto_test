@@ -345,7 +345,7 @@ class MeasurementPagesUseTheFacadeTests(unittest.TestCase):
 
     def test_pages_delegate_startup_to_the_facade(self):
         start_methods = {
-            "cable_loss_page.py": "start_stage1_measurement",
+            "cable_loss_page.py": "start_measurement",
             "driver_mapping_page.py": "start_measurement",
             "amplifier_page.py": "start_measurement",
         }
@@ -371,10 +371,11 @@ class MeasurementPagesUseTheFacadeTests(unittest.TestCase):
                 self.assertIn("prepare", attributes)
                 self.assertIn("launch", attributes)
 
-    def test_cable_loss_keeps_the_stage2_continue_as_page_behaviour(self):
+    def test_cable_loss_continues_path2_from_the_step_pause_checkpoint(self):
         source = (QT_ROOT / "cable_loss_page.py").read_text(encoding="utf-8")
-        self.assertIn("def continue_stage2_measurement", source)
+        self.assertIn("def _on_step_pause", source)
         self.assertIn("continue_cable_loss_stage2", source)
+        self.assertNotIn("stage2_measurement_btn", source)
 
     def test_facade_is_pure_python(self):
         tree = ast.parse(FACADE_SOURCE.read_text(encoding="utf-8"), str(FACADE_SOURCE))

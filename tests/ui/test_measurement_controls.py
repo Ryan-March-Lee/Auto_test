@@ -1,6 +1,6 @@
 """测量页面公共按钮状态绑定测试（GUI 重构步骤 10，不需要 QApplication）。
 
-三个测量页面共享的“测量状态 -> 开始/停止/继续按钮可用性”映射在这里
+三个测量页面共享的“测量状态 -> 开始/停止按钮可用性”映射在这里
 验证；页面自己的接线图、日志、归档与结果展示仍由各自的页面测试覆盖。本模块不启动
 Qt，也不连接 controller signal。
 """
@@ -75,13 +75,11 @@ class MeasurementControlPresenterTests(unittest.TestCase):
     def setUp(self):
         self.start = _Sink()
         self.stop = _Sink()
-        self.continue_ = _Sink()
         self.presenter = _presenter(
             MeasurementKind.CABLE_LOSS,
             {
                 MeasurementAction.START: self.start,
                 MeasurementAction.STOP: self.stop,
-                MeasurementAction.CONTINUE: self.continue_,
             },
         )
 
@@ -90,7 +88,6 @@ class MeasurementControlPresenterTests(unittest.TestCase):
 
         self.assertTrue(self.start.enabled)
         self.assertFalse(self.stop.enabled)
-        self.assertFalse(self.continue_.enabled)
 
     def test_active_measurement_of_this_page_disables_start(self):
         availability = self.presenter.apply(
@@ -99,7 +96,6 @@ class MeasurementControlPresenterTests(unittest.TestCase):
 
         self.assertFalse(self.start.enabled)
         self.assertTrue(self.stop.enabled)
-        self.assertFalse(self.continue_.enabled)
         self.assertEqual(
             availability.enabled,
             frozenset(
@@ -109,23 +105,11 @@ class MeasurementControlPresenterTests(unittest.TestCase):
             ),
         )
 
-    def test_continue_is_only_enabled_while_waiting_for_the_second_step(self):
-        waiting = _controller_state(
-            MeasurementKind.CABLE_LOSS, MeasurementStatus.WAITING_FOR_CONTINUE
-        )
-
-        self.presenter.apply(waiting)
-
-        self.assertTrue(self.continue_.enabled)
-        self.assertTrue(self.stop.enabled)
-        self.assertFalse(self.start.enabled)
-
     def test_measurement_of_another_page_keeps_this_page_idle(self):
         self.presenter.apply(_controller_state(MeasurementKind.AMPLIFIER))
 
         self.assertTrue(self.start.enabled)
         self.assertFalse(self.stop.enabled)
-        self.assertFalse(self.continue_.enabled)
 
     def test_terminal_state_restores_the_idle_buttons(self):
         self.presenter.apply(_controller_state(MeasurementKind.CABLE_LOSS))
@@ -135,7 +119,6 @@ class MeasurementControlPresenterTests(unittest.TestCase):
 
         self.assertTrue(self.start.enabled)
         self.assertFalse(self.stop.enabled)
-        self.assertFalse(self.continue_.enabled)
 
     def test_view_state_without_is_active_is_accepted(self):
         running = MeasurementViewState(MeasurementKind.CABLE_LOSS).prepare().run()
@@ -197,25 +180,18 @@ class MeasurementControlPresenterTests(unittest.TestCase):
         })
 
     def test_unsupported_action_is_absent_from_availability(self):
-        cable = _presenter(
+        start_only = _presenter(
             MeasurementKind.CABLE_LOSS,
-            {
-                MeasurementAction.START: self.start,
-                MeasurementAction.CONTINUE: self.continue_,
-            },
+            {MeasurementAction.START: self.start},
         )
 
-        running = cable.apply(_controller_state(MeasurementKind.CABLE_LOSS))
+        running = start_only.apply(_controller_state(MeasurementKind.CABLE_LOSS))
 
         self.assertEqual(running.enabled, frozenset())
-        self.assertFalse(self.continue_.enabled)
+        self.assertFalse(self.start.enabled)
 
-        waiting = cable.apply(
-            _controller_state(
-                MeasurementKind.CABLE_LOSS, MeasurementStatus.WAITING_FOR_CONTINUE
-            )
-        )
-        self.assertEqual(waiting.enabled, frozenset({MeasurementAction.CONTINUE}))
+        start_only.show_idle()
+        self.assertTrue(self.start.enabled)
 
     def test_constructor_and_state_contract_errors_raise_type_error(self):
         with self.assertRaises(TypeError):
@@ -246,12 +222,13 @@ class MeasurementControlPresenterTests(unittest.TestCase):
             MeasurementAction.STOP: self.stop,
         }
         presenter = MeasurementControlPresenter(MeasurementKind.CABLE_LOSS, buttons)
-        buttons[MeasurementAction.STOP] = self.continue_
+        replacement = _Sink()
+        buttons[MeasurementAction.STOP] = replacement
 
         presenter.show_idle()
 
         self.assertFalse(self.stop.enabled)
-        self.assertIsNone(self.continue_.enabled)
+        self.assertIsNone(replacement.enabled)
 
 
 class MeasurementPagesUseThePresenterTests(unittest.TestCase):
@@ -260,7 +237,7 @@ class MeasurementPagesUseThePresenterTests(unittest.TestCase):
     def test_pages_declare_actions_and_delegate_both_state_and_terminal_events(self):
         expected_actions = {
             "cable_loss_page.py": {
-                "START", "STOP", "CONTINUE",
+                "START", "STOP",
             },
             "driver_mapping_page.py": {
                 "START", "STOP",

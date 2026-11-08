@@ -216,7 +216,7 @@ class CableLossWorker(BaseWorker):
 
     def run(self) -> None:
         try:
-            self.emit_message("开始一阶段线损测量...")
+            self.emit_message("开始线损测量...")
             try:
                 create_measurement = self.measurement_factory or self._default_factory("create_cable_loss_measurement")
                 # 缺少运行契约时明确失败，绝不在 worker 内隐式创建运行。

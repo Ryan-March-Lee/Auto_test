@@ -87,18 +87,15 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         control_layout = QGridLayout(control_group)
         control_layout.setHorizontalSpacing(10)
         control_layout.setVerticalSpacing(8)
-        self.stage1_measurement_btn = QPushButton("一阶段测量")
+        self.start_measurement_btn = QPushButton("开始测量")
         self.load_cable_results_btn = QPushButton("加载测量结果")
         self.stop_cable_loss_btn = QPushButton("停止测量")
-        self.stage2_measurement_btn = QPushButton("二阶段测量")
-        set_button_variant(self.stage1_measurement_btn, "primary")
-        set_button_variant(self.stage2_measurement_btn, "primary")
+        set_button_variant(self.start_measurement_btn, "primary")
         set_button_variant(self.stop_cable_loss_btn, "secondary")
         set_button_variant(self.load_cable_results_btn, "secondary")
-        self.stage1_measurement_btn.clicked.connect(self.start_stage1_measurement)
+        self.start_measurement_btn.clicked.connect(self.start_measurement)
         self.load_cable_results_btn.clicked.connect(self.load_result_requested.emit)
         self.stop_cable_loss_btn.clicked.connect(self.stop_measurement)
-        self.stage2_measurement_btn.clicked.connect(self.continue_stage2_measurement)
         # 接线说明只保留连接图入口：测试者已知道仪器怎么接，按钮只用于防止忘记。
         self.show_path1_btn = QPushButton("查看路径1连接图")
         self.show_path2_btn = QPushButton("查看路径2连接图")
@@ -109,18 +106,16 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         self.controls = MeasurementControlPresenter(
             MeasurementKind.CABLE_LOSS,
             {
-                MeasurementAction.START: self.stage1_measurement_btn,
+                MeasurementAction.START: self.start_measurement_btn,
                 MeasurementAction.STOP: self.stop_cable_loss_btn,
-                MeasurementAction.CONTINUE: self.stage2_measurement_btn,
             },
         )
         self.controls.show_idle()
-        control_layout.addWidget(self.stage1_measurement_btn, 0, 0)
+        control_layout.addWidget(self.start_measurement_btn, 0, 0)
         control_layout.addWidget(self.stop_cable_loss_btn, 0, 1)
-        control_layout.addWidget(self.stage2_measurement_btn, 1, 0, 1, 2)
-        control_layout.addWidget(self.load_cable_results_btn, 2, 0, 1, 2)
-        control_layout.addWidget(self.show_path1_btn, 3, 0)
-        control_layout.addWidget(self.show_path2_btn, 3, 1)
+        control_layout.addWidget(self.load_cable_results_btn, 1, 0, 1, 2)
+        control_layout.addWidget(self.show_path1_btn, 2, 0)
+        control_layout.addWidget(self.show_path2_btn, 2, 1)
         control_layout.setColumnStretch(0, 1)
         control_layout.setColumnStretch(1, 1)
         left_layout.addWidget(control_group)
@@ -160,7 +155,7 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         self._connect_signal(signals.stopped, self._on_stopped)
         self._connect_signal(signals.finished, self._on_finished)
 
-    def start_stage1_measurement(self) -> None:
+    def start_measurement(self) -> None:
         # controller 只在 prepare 时读取一次：决策携带检查过的那个对象，接线对话框
         # 的嵌套事件循环返回后不会重新读取 self.controller。
         decision = self._start_facade.prepare(
@@ -168,20 +163,20 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
                 MeasurementKind.CABLE_LOSS, self._run_provider()
             ),
             controller=self.controller,
-            confirm_connection=self._confirm_stage1_connection,
+            confirm_connection=self._confirm_start_connection,
         )
         if not decision.ready:
             decision.report(self._log_callback, self._error_callback)
             return
-        self._log_callback("线损一阶段现场接线已确认（路径1）")
+        self._log_callback("线损路径1现场接线已确认")
         self.clear_results()
-        self._log_callback("开始一阶段线损测量...")
+        self._log_callback("开始线损测量...")
         self._archival_try_start(
             lambda: decision.launch(),
             "线损测量未能启动，未开始测量",
         )
 
-    def _confirm_stage1_connection(self) -> bool:
+    def _confirm_start_connection(self) -> bool:
         return (
             self._connection_dialog_factory("cable_loss_path1", self).exec()
             == QDialog.Accepted
@@ -190,10 +185,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
     def stop_measurement(self) -> None:
         if self.controller is not None:
             self.controller.stop()
-
-    def continue_stage2_measurement(self) -> None:
-        if self.controller is not None:
-            self.controller.continue_cable_loss_stage2()
 
     def _show_diagram(self, diagram_type: str) -> None:
         self._connection_dialog_factory(diagram_type, self).exec()

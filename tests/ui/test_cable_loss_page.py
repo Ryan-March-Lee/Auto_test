@@ -93,13 +93,12 @@ class CableLossPageTests(unittest.TestCase):
         self.page.bind_controller(self.controller)
 
         self.assertEqual(self.page.cable_loss_table.columnCount(), 5)
-        self.assertEqual(self.page.stage1_measurement_btn.text(), "一阶段测量")
-        self.assertEqual(self.page.stage2_measurement_btn.text(), "二阶段测量")
+        self.assertEqual(self.page.start_measurement_btn.text(), "开始测量")
         self.assertFalse(self.page.stop_cable_loss_btn.isEnabled())
-        self.assertFalse(self.page.stage2_measurement_btn.isEnabled())
+        self.assertFalse(hasattr(self.page, "stage2_measurement_btn"))
 
     def test_start_is_forwarded_as_measurement_command(self):
-        self.page.start_stage1_measurement()
+        self.page.start_measurement()
 
         self.assertEqual(self.controller.calls[0][0], "start")
         command = self.controller.calls[0][1]
@@ -110,7 +109,7 @@ class CableLossPageTests(unittest.TestCase):
     def test_missing_current_run_does_not_start_measurement(self):
         self.page._run_provider = lambda: None
 
-        self.page.start_stage1_measurement()
+        self.page.start_measurement()
 
         self.assertEqual(self.controller.calls, [])
 
@@ -118,7 +117,7 @@ class CableLossPageTests(unittest.TestCase):
         self.page._run_provider = lambda: type(
             "LegacyRun", (), {"run_id": "legacy", "run_repository": object()}
         )()
-        self.page.start_stage1_measurement()
+        self.page.start_measurement()
         self.assertEqual(self.controller.calls, [])
 
     def test_start_submits_to_the_controller_checked_before_the_dialog(self):
@@ -133,7 +132,7 @@ class CableLossPageTests(unittest.TestCase):
 
         self.page._connection_dialog_factory = factory
 
-        self.page.start_stage1_measurement()
+        self.page.start_measurement()
 
         self.assertEqual(len(checked.calls), 1)
         self.assertEqual(checked.calls[0][0], "start")
@@ -207,7 +206,6 @@ class CableLossPageTests(unittest.TestCase):
                 {
                     MeasurementAction.START,
                     MeasurementAction.STOP,
-                    MeasurementAction.CONTINUE,
                 }
             ),
         )
@@ -218,14 +216,12 @@ class CableLossPageTests(unittest.TestCase):
                 "is_active": True,
             }
         )())
-        self.assertFalse(self.page.stage1_measurement_btn.isEnabled())
+        self.assertFalse(self.page.start_measurement_btn.isEnabled())
         self.assertTrue(self.page.stop_cable_loss_btn.isEnabled())
-        self.assertTrue(self.page.stage2_measurement_btn.isEnabled())
 
         self.controller.signals.stopped.emit("用户停止")
-        self.assertTrue(self.page.stage1_measurement_btn.isEnabled())
+        self.assertTrue(self.page.start_measurement_btn.isEnabled())
         self.assertFalse(self.page.stop_cable_loss_btn.isEnabled())
-        self.assertFalse(self.page.stage2_measurement_btn.isEnabled())
 
     def test_non_formal_result_is_reported_and_not_displayed(self):
         self.page.show_loaded_result(MeasurementResultReference(

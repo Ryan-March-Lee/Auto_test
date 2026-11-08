@@ -28,6 +28,7 @@ from __future__ import annotations
 import math
 import time
 from collections.abc import Mapping as MappingABC
+from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Protocol
 
 import numpy as np
@@ -35,6 +36,7 @@ import numpy as np
 from app.cancellation import CancellationToken
 from app.events import CheckpointEvent, EventSink, MessageEvent, ProgressEvent, RealtimeDataEvent
 from app.events import StoppedEvent
+from application.errors import MeasurementError
 from application.ports.measurement_session import (
     CleanupRecord,
     MeasurementSessionBinding,
@@ -45,7 +47,9 @@ from application.ports.measurement_session import (
 from application.dto.amplifier_inputs import (
     AmplifierInputError,
     AmplifierMeasurementInputs,
+    PowerSweep,
     SupplyChannel,
+    target_input_power_grid,
 )
 from application.dto.measurement_results import DriverMappingInput
 from domain.measurement.calculations import (
@@ -72,6 +76,38 @@ from instrument.ports import (
     MeasurementInstrumentPort,
     require_measurement_capabilities,
 )
+
+
+# 驱动映射扫描的收敛与安全边界（重构步骤 6）。
+#
+# 起点公式来自重构决定：最低目标输入 - 驱动功放预估增益 - 安全余量。扫描在
+# 该起点向上自适应推进；源功率无论起点推算结果如何都不得越过硬件可设范围。
+DRIVER_MAPPING_SAFETY_MARGIN_DB = 10.0
+DRIVER_MAPPING_HIT_TOLERANCE_DB = 0.2
+DRIVER_MAPPING_MAX_ATTEMPTS_PER_TARGET = 32
+DRIVER_MAPPING_MIN_STEP_DB = 0.05
+DRIVER_MAPPING_MAX_STEP_DB = 10.0
+DRIVER_MAPPING_MIN_SLOPE = 0.05
+DRIVER_MAPPING_SOURCE_MIN_DBM = -50.0
+DRIVER_MAPPING_SOURCE_MAX_DBM = 20.0
+_DRIVER_MAPPING_SOURCE_EPSILON_DB = 1e-9
+
+
+class DriverMappingError(MeasurementError):
+    """驱动映射扫描无法在源功率范围内为某个目标取得实测命中点。"""
+
+
+@dataclass
+class _DriverMappingProbe:
+    """单个频点的一次实测：源功率、补偿后驱放输出与是否已分配给目标。
+
+    原始点必须保留每一次测量，命中读数只标记 ``used``，不从曲线中删除；同一读数
+    不能再次满足另一个目标。
+    """
+
+    source_power: PowerDbm
+    output_power: PowerDbm
+    used: bool = False
 
 
 class ResultRepository(Protocol):
@@ -145,6 +181,24 @@ def _mapping_config(config: Any) -> Mapping[str, Any]:
     if not isinstance(config, MappingABC):
         raise TypeError("测量服务配置必须是 Mapping")
     return config
+
+
+def _config_number(config: Mapping[str, Any], key: str, label: str) -> float:
+    """读取驱动映射必需的有限数值配置；缺失/非数值在硬件动作前失败。"""
+    value = config.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"驱动映射配置缺少有效的{label}: {key}")
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"驱动映射配置的{label}必须是有限数值: {key}={value!r}")
+    return number
+
+
+def _signal_source_number(config: Mapping[str, Any], key: str) -> float:
+    source = config.get("signal_source")
+    if not isinstance(source, MappingABC):
+        raise ValueError("驱动映射配置缺少 signal_source 功率范围")
+    return _config_number(source, key, f"信号源 {key}")
 
 
 class _Service:
@@ -386,7 +440,21 @@ class CableLossService(_Service):
 
 
 class DriverPowerMappingService(_Service):
-    """Measure driver output mapping and publish each point as an event."""
+    """自适应测量驱放曲线，为每个目标输入功率找到独立实测命中点。
+
+    起点与推进规则（重构步骤 6）：
+
+    - 每个频点从 ``最低目标输入 - 预估增益 - 10 dB`` 起步（源功率始终限制在
+      -50～20 dBm）；
+    - 依据当前实测输出与目标的误差调整源功率，接近目标时步长自然收缩；
+    - 已形成目标两侧区间后改用区间二分，不再按固定步长扫完整范围；
+    - 每个目标要求一次独立实测输出落在 ±0.2 dB 内，已命中读数不会再次分配给
+      另一个目标；目标间隔小于容差时仍会新测一个源功率；
+    - 每个目标有固定测量上限；到界、无有效进展或达到上限仍未命中时直接失败，
+      不返回可供正式测试使用的完整映射；
+    - 停止请求在测量返回、命中分配和完整结果提交三个边界都会生效，被取消的频点
+      不计入完整映射。
+    """
 
     measurement_type = "driver_power_mapping"
 
@@ -397,12 +465,35 @@ class DriverPowerMappingService(_Service):
         # 服务只保留解析后的表，不再同时持有原始文档副本。
         self.loss_table = _loss_table(loss_data)
         self.attenuator_value = Decibels.parse(config["attenuator"]["type"])
-        # 每个完整频点的映射；停止时只保存已经完整扫完的频点。
-        self._mapping: dict[str, dict[str, float]] = {}
+        self.gain_estimate = Decibels(
+            _config_number(config, "driver_gain_estimate_db", "驱动功放预估增益")
+        )
+        # 目标网格与主功放正式测试共用同一个纯计算入口（步骤 1）：扫描结束与 DUT
+        # 最大输入取较小值，非整步上限补入最后一点。
+        self.target_powers = self._target_powers(config)
+        # 每个完整频点的原始映射点；停止时只保存已经完整扫完的频点。
+        self._mapping: dict[str, list[dict[str, float]]] = {}
+
+    @staticmethod
+    def _target_powers(config: Mapping[str, Any]) -> tuple[PowerDbm, ...]:
+        sweep = PowerSweep(
+            start=PowerDbm(_signal_source_number(config, "start_power")),
+            stop=PowerDbm(_signal_source_number(config, "stop_power")),
+            step=Decibels(_signal_source_number(config, "step")),
+        )
+        limit = PowerDbm(
+            _config_number(config, "max_dut_input_power", "DUT 最大输入功率")
+        )
+        return target_input_power_grid(sweep, limit)
 
     def partial_payload(self) -> dict[str, Any]:
-        """返回已经完整扫完的驱动映射频点。"""
-        return {"power_mapping": {key: dict(value) for key, value in self._mapping.items()}}
+        """返回已经完整扫完的驱动映射频点（原始实测点）。"""
+        return {
+            "raw_points": {
+                key: [dict(point) for point in points]
+                for key, points in self._mapping.items()
+            }
+        }
 
     @classmethod
     def required_capabilities(cls, config: Mapping[str, Any]) -> tuple[str, ...]:
@@ -411,6 +502,8 @@ class DriverPowerMappingService(_Service):
     def run(self) -> dict[str, Any]:
         mapping = self._mapping
         try:
+            # 停止请求优先于任何设备动作：已经取消的运行不再给驱放上电。
+            self._check_cancelled()
             self.inst_ctrl.setup_driver_amplifier_power()
             self.inst_ctrl.power_on_driver()
             frequencies = tuple(
@@ -418,45 +511,333 @@ class DriverPowerMappingService(_Service):
             )
             for frequency_index, frequency in enumerate(frequencies):
                 self._check_cancelled()
-                self.inst_ctrl.set_power(-40)
-                self.inst_ctrl.set_frequency(frequency.ghz)
-                self.inst_ctrl.set_center_frequency(frequency.ghz)
-                self.inst_ctrl.set_span(10)
-                values: dict[str, float] = {}
-                points = np.arange(self.config["signal_source"]["start_power"],
-                                   self.config["signal_source"]["stop_power"] + self.config["signal_source"]["step"],
-                                   self.config["signal_source"]["step"])
-                self.inst_ctrl.rf_output_on()
-                try:
-                    for point_index, input_power in enumerate(points):
-                        self._check_cancelled()
-                        self.inst_ctrl.set_power(input_power)
-                        self.sleep_fn(self.settle_delay_s)
-                        raw = self.inst_ctrl.measure_power_with_average()
-                        actual = compensate_driver_output_power(
-                            PowerDbm(raw),
-                            frequency,
-                            self.loss_table,
-                            self.attenuator_value,
-                        ).dbm
-                        values[str(input_power)] = actual
-                        sweep_data = {
-                            "input_power_sg": [float(key) for key in values],
-                            "output_power_driver": list(values.values()),
-                            "gain": [output - float(key) for key, output in values.items()],
-                        }
-                        _publish(self.event_sink, RealtimeDataEvent(self.run_id, measurement=self.measurement_type,
-                            data={"frequency": frequency.ghz, "sweep_data": sweep_data,
-                                  "current_point": {"input_power": input_power, "output_power": actual}}))
-                        self._progress((frequency_index + (point_index + 1) / len(points)) / len(frequencies), "scan")
-                finally:
-                    self.inst_ctrl.rf_output_off()
-                mapping[frequency.key] = values
-            result = {"power_mapping": mapping}
+                mapping[frequency.key] = self._measure_frequency(
+                    frequency,
+                    frequency_index=frequency_index,
+                    frequency_count=len(frequencies),
+                )
+            # 提交完整结果前的最后一道门：最后一个频点完成后到达的停止请求不能被
+            # 当成正常完成，映射不得进入正式测试输入。
+            self._check_cancelled()
+            result = {
+                "raw_points": {
+                    key: [dict(point) for point in points]
+                    for key, points in mapping.items()
+                }
+            }
             self._save(result)
             return result
         finally:
             self._cleanup(power_cleanup=self.inst_ctrl.power_off_driver)
+
+    # -- 单频点扫描 --------------------------------------------------------
+
+    def _measure_frequency(self, frequency: Frequency, *, frequency_index: int,
+                           frequency_count: int) -> list[dict[str, float]]:
+        probes: list[_DriverMappingProbe] = []
+        self.inst_ctrl.set_power(-40)
+        self.inst_ctrl.set_frequency(frequency.ghz)
+        self.inst_ctrl.set_center_frequency(frequency.ghz)
+        self.inst_ctrl.set_span(10)
+        self.inst_ctrl.rf_output_on()
+        try:
+            self._measure_probe(
+                frequency,
+                self._initial_source_power(),
+                probes,
+                frequency_index=frequency_index,
+                frequency_count=frequency_count,
+                completed_targets=0,
+            )
+            for target_index, target in enumerate(self.target_powers):
+                self._check_cancelled()
+                hit = self._find_unused_hit(probes, target.dbm)
+                if hit is None:
+                    hit = self._search_target(
+                        frequency,
+                        target.dbm,
+                        probes,
+                        frequency_index=frequency_index,
+                        frequency_count=frequency_count,
+                        completed_targets=target_index,
+                    )
+                # 分配命中是状态转移：读数返回后到达的停止请求不得让最后一个目标
+                # 以“已完成”的身份进入结果。
+                self._check_cancelled()
+                hit.used = True
+                self._progress(
+                    (
+                        frequency_index
+                        + (target_index + 1) / len(self.target_powers)
+                    )
+                    / frequency_count,
+                    "scan",
+                )
+            return [
+                {
+                    "source_power_dbm": probe.source_power.dbm,
+                    "driver_output_power_dbm": probe.output_power.dbm,
+                    "gain_db": probe.output_power.dbm - probe.source_power.dbm,
+                }
+                for probe in probes
+            ]
+        finally:
+            self.inst_ctrl.rf_output_off()
+
+    def _initial_source_power(self) -> float:
+        """最低目标输入 - 预估增益 - 安全余量，并收敛到硬件可设范围。"""
+        value = (
+            self.target_powers[0].dbm
+            - self.gain_estimate.db
+            - DRIVER_MAPPING_SAFETY_MARGIN_DB
+        )
+        return min(
+            max(value, DRIVER_MAPPING_SOURCE_MIN_DBM),
+            DRIVER_MAPPING_SOURCE_MAX_DBM,
+        )
+
+    def _measure_probe(
+        self,
+        frequency: Frequency,
+        source_power: float,
+        probes: list[_DriverMappingProbe],
+        *,
+        frequency_index: int,
+        frequency_count: int,
+        completed_targets: int,
+    ) -> _DriverMappingProbe:
+        self._check_cancelled()
+        source = PowerDbm(source_power)
+        self.inst_ctrl.set_power(source.dbm)
+        self.sleep_fn(self.settle_delay_s)
+        raw = self.inst_ctrl.measure_power_with_average()
+        output = compensate_driver_output_power(
+            PowerDbm(raw),
+            frequency,
+            self.loss_table,
+            self.attenuator_value,
+        )
+        probe = _DriverMappingProbe(source, output)
+        probes.append(probe)
+        sweep_data = {
+            "input_power_sg": [point.source_power.dbm for point in probes],
+            "output_power_driver": [point.output_power.dbm for point in probes],
+            "gain": [
+                point.output_power.dbm - point.source_power.dbm for point in probes
+            ],
+        }
+        _publish(
+            self.event_sink,
+            RealtimeDataEvent(
+                self.run_id,
+                measurement=self.measurement_type,
+                data={
+                    "frequency": frequency.ghz,
+                    "sweep_data": sweep_data,
+                    "current_point": {
+                        "input_power": source.dbm,
+                        "output_power": output.dbm,
+                    },
+                },
+            ),
+        )
+        self._progress(
+            (
+                frequency_index
+                + completed_targets / len(self.target_powers)
+            )
+            / frequency_count,
+            "scan",
+        )
+        # 读数已经产生，但停止请求在测量期间到达时必须在这里生效：命中判定与
+        # 后续目标都不得越过取消边界，当前频点也不会被计入完整结果。
+        self._check_cancelled()
+        return probe
+
+    def _search_target(
+        self,
+        frequency: Frequency,
+        target_dbm: float,
+        probes: list[_DriverMappingProbe],
+        *,
+        frequency_index: int,
+        frequency_count: int,
+        completed_targets: int,
+    ) -> _DriverMappingProbe:
+        attempts = 0
+        tolerance = DRIVER_MAPPING_HIT_TOLERANCE_DB + _DRIVER_MAPPING_SOURCE_EPSILON_DB
+        while attempts < DRIVER_MAPPING_MAX_ATTEMPTS_PER_TARGET:
+            source = self._next_source(frequency, target_dbm, probes)
+            probe = self._measure_probe(
+                frequency,
+                source,
+                probes,
+                frequency_index=frequency_index,
+                frequency_count=frequency_count,
+                completed_targets=completed_targets,
+            )
+            attempts += 1
+            if abs(probe.output_power.dbm - target_dbm) <= tolerance:
+                return probe
+        lower, upper = self._bracket(probes, target_dbm)
+        if lower is not None and upper is not None:
+            interval = (
+                f"目标已被源功率 [{lower.source_power.dbm}, "
+                f"{upper.source_power.dbm}] dBm 包围"
+            )
+        else:
+            interval = "目标仍未被实测输出包围"
+        raise DriverMappingError(
+            f"驱动映射 {frequency.key} GHz 在 "
+            f"{DRIVER_MAPPING_MAX_ATTEMPTS_PER_TARGET} 次测量内未为 "
+            f"{target_dbm} dBm 目标找到 ±{DRIVER_MAPPING_HIT_TOLERANCE_DB} dB "
+            f"命中点（{interval}）"
+        )
+
+    def _next_source(
+        self,
+        frequency: Frequency,
+        target_dbm: float,
+        probes: list[_DriverMappingProbe],
+    ) -> float:
+        lower, upper = self._bracket(probes, target_dbm)
+        candidates: list[float] = []
+        if lower is not None and upper is not None:
+            # 目标两侧都有实测点：在区间内二分，接近目标时区间会自然收缩。
+            middle = (lower.source_power.dbm + upper.source_power.dbm) / 2.0
+            candidates = [
+                middle,
+                (lower.source_power.dbm + middle) / 2.0,
+                (middle + upper.source_power.dbm) / 2.0,
+            ]
+        else:
+            if lower is not None:
+                reference = lower
+            elif upper is not None:
+                reference = upper
+            else:
+                reference = min(
+                    probes,
+                    key=lambda point: abs(point.output_power.dbm - target_dbm),
+                )
+            error = target_dbm - reference.output_power.dbm
+            step = abs(error) / self._slope_hint(probes)
+            step = min(
+                max(step, DRIVER_MAPPING_MIN_STEP_DB),
+                DRIVER_MAPPING_MAX_STEP_DB,
+            )
+            direction = 1.0 if error > 0 else -1.0
+            candidates = [
+                reference.source_power.dbm + direction * step * factor
+                for factor in (1.0, 0.5, 1.5)
+            ]
+        for candidate in candidates:
+            bounded = min(
+                max(candidate, DRIVER_MAPPING_SOURCE_MIN_DBM),
+                DRIVER_MAPPING_SOURCE_MAX_DBM,
+            )
+            if not self._is_measured(probes, bounded):
+                return bounded
+        raise DriverMappingError(
+            self._no_progress_reason(frequency, target_dbm, candidates)
+        )
+
+    @staticmethod
+    def _no_progress_reason(
+        frequency: Frequency, target_dbm: float, candidates: list[float]
+    ) -> str:
+        """区分“源功率到界”和一般无进展，两种失败都必须可诊断。"""
+        boundary: str | None = None
+        for candidate in candidates:
+            if candidate <= (
+                DRIVER_MAPPING_SOURCE_MIN_DBM + _DRIVER_MAPPING_SOURCE_EPSILON_DB
+            ):
+                boundary = f"下界 {DRIVER_MAPPING_SOURCE_MIN_DBM:g} dBm"
+                break
+            if candidate >= (
+                DRIVER_MAPPING_SOURCE_MAX_DBM - _DRIVER_MAPPING_SOURCE_EPSILON_DB
+            ):
+                boundary = f"上界 {DRIVER_MAPPING_SOURCE_MAX_DBM:g} dBm"
+                break
+        if boundary is not None:
+            return (
+                f"驱动映射 {frequency.key} GHz 的 {target_dbm} dBm 目标在源功率"
+                f"{boundary} 已无有效进展：目标超出可设源功率范围，"
+                "未生成完整映射"
+            )
+        return (
+            f"驱动映射 {frequency.key} GHz 无法在源功率 "
+            f"[{DRIVER_MAPPING_SOURCE_MIN_DBM}, {DRIVER_MAPPING_SOURCE_MAX_DBM}] dBm "
+            f"内为 {target_dbm} dBm 目标找到新的可测点（无有效进展）"
+        )
+
+    @staticmethod
+    def _is_measured(probes: list[_DriverMappingProbe], source_power: float) -> bool:
+        return any(
+            abs(point.source_power.dbm - source_power)
+            <= _DRIVER_MAPPING_SOURCE_EPSILON_DB
+            for point in probes
+        )
+
+    @staticmethod
+    def _bracket(
+        probes: list[_DriverMappingProbe], target_dbm: float
+    ) -> tuple[_DriverMappingProbe | None, _DriverMappingProbe | None]:
+        lower: _DriverMappingProbe | None = None
+        upper: _DriverMappingProbe | None = None
+        for probe in probes:
+            if probe.output_power.dbm < target_dbm:
+                if (
+                    lower is None
+                    or probe.output_power.dbm > lower.output_power.dbm
+                    or (
+                        probe.output_power.dbm == lower.output_power.dbm
+                        and probe.source_power.dbm > lower.source_power.dbm
+                    )
+                ):
+                    lower = probe
+            elif probe.output_power.dbm > target_dbm:
+                if (
+                    upper is None
+                    or probe.output_power.dbm < upper.output_power.dbm
+                    or (
+                        probe.output_power.dbm == upper.output_power.dbm
+                        and probe.source_power.dbm < upper.source_power.dbm
+                    )
+                ):
+                    upper = probe
+        return lower, upper
+
+    def _slope_hint(self, probes: list[_DriverMappingProbe]) -> float:
+        ordered = sorted(probes, key=lambda point: point.source_power.dbm)
+        for left, right in reversed(list(zip(ordered, ordered[1:]))):
+            delta_source = right.source_power.dbm - left.source_power.dbm
+            if delta_source <= _DRIVER_MAPPING_SOURCE_EPSILON_DB:
+                continue
+            slope = (
+                right.output_power.dbm - left.output_power.dbm
+            ) / delta_source
+            if slope > 0.0:
+                return max(slope, DRIVER_MAPPING_MIN_SLOPE)
+        return max(abs(self.gain_estimate.db), DRIVER_MAPPING_MIN_SLOPE)
+
+    @staticmethod
+    def _find_unused_hit(
+        probes: list[_DriverMappingProbe], target_dbm: float
+    ) -> _DriverMappingProbe | None:
+        tolerance = DRIVER_MAPPING_HIT_TOLERANCE_DB + _DRIVER_MAPPING_SOURCE_EPSILON_DB
+        candidates = [
+            probe
+            for probe in probes
+            if not probe.used
+            and abs(probe.output_power.dbm - target_dbm) <= tolerance
+        ]
+        if not candidates:
+            return None
+        return min(
+            candidates,
+            key=lambda point: abs(point.output_power.dbm - target_dbm),
+        )
 
 
 class AmplifierMeasurementService(_Service):
@@ -695,6 +1076,7 @@ __all__ = [
     "ResultRepository",
     "NullEventSink",
     "CableLossService",
+    "DriverMappingError",
     "DriverPowerMappingService",
     "AmplifierMeasurementService",
 ]

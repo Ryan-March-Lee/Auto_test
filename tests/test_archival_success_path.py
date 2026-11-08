@@ -71,6 +71,7 @@ class _Instrument:
 
     def __init__(self):
         self.measured = 0
+        self.power = 0.0
 
     def setup_driver_amplifier_power(self):
         pass
@@ -90,8 +91,8 @@ class _Instrument:
     def power_off_driver(self):
         pass
 
-    def set_power(self, _power):
-        pass
+    def set_power(self, power):
+        self.power = power
 
     def set_frequency(self, _frequency):
         pass
@@ -116,7 +117,8 @@ class _Instrument:
 
     def measure_power_with_average(self):
         self.measured += 1
-        return -10.0
+        # 补偿后输出跟随源功率（增益 1 dB），服务按配置加回线损补偿。
+        return self.power + 1.0 - 12.0
 
     def close_all(self, close_rf=False):
         return []
@@ -265,6 +267,8 @@ class SuccessPathArchivalTests(unittest.TestCase):
                 "test_frequencies": [1.0],
                 "attenuator": {"type": "10dB"},
                 "signal_source": {"start_power": -20, "stop_power": -20, "step": 1},
+                "max_dut_input_power": 100.0,
+                "driver_gain_estimate_db": 1.0,
             },
             context=SimpleNamespace(run_id=RUN_ID),
             run_directory=layout.run_directory,

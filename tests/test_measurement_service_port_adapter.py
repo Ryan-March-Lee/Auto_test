@@ -62,7 +62,9 @@ class MeasurementServicePortAdapterTests(unittest.TestCase):
             {
                 "attenuator": {"type": "0dB"},
                 "test_frequencies": [1.0],
-                "signal_source": {"start_power": -20, "stop_power": -20, "step": 1},
+                "signal_source": {"start_power": -30, "stop_power": -30, "step": 1},
+                "max_dut_input_power": 100.0,
+                "driver_gain_estimate_db": 1.0,
             },
             adapter,
             {"cable_losses": {"1.0": {"cable2": 0.0}}},
@@ -71,7 +73,7 @@ class MeasurementServicePortAdapterTests(unittest.TestCase):
             sleep_fn=lambda _: None,
             settle_delay_s=0,
         ).run()
-        self.assertEqual(list(result["power_mapping"]), ["1.0"])
+        self.assertEqual(list(result["raw_points"]), ["1.0"])
         self.assertEqual(session.state.value, "cleaned")
         self.assertIn(("signal_generator", "rf_off", None), recorder.commands)
 
@@ -83,7 +85,9 @@ class MeasurementServicePortAdapterTests(unittest.TestCase):
                 {
                     "attenuator": {"type": "0dB"},
                     "test_frequencies": [1.0],
-                    "signal_source": {"start_power": -20, "stop_power": -20, "step": 1},
+                    "signal_source": {"start_power": -30, "stop_power": -30, "step": 1},
+                    "max_dut_input_power": 100.0,
+                    "driver_gain_estimate_db": 1.0,
                 },
                 adapter,
                 {"cable_losses": {"1.0": {"cable2": 0.0}}},

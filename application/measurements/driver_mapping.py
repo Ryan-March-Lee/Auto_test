@@ -232,4 +232,8 @@ def _service_config(configuration: Any) -> Mapping[str, Any]:
             "stop_power": plan.stop_power,
             "step": plan.power_step,
         },
+        # 驱动映射扫描需要目标网格上限与起点预估增益；缺失时服务在构造阶段失败，
+        # 不会带着猜测值开始硬件动作。
+        "max_dut_input_power": plan.max_input_power,
+        "driver_gain_estimate_db": plan.driver_gain_estimate_db,
     }

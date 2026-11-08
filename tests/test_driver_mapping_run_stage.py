@@ -56,7 +56,7 @@ def _fully_valid_gui_config() -> dict:
         "test_frequencies": [2.4],
         "signal_source": {"start_power": -10.0, "stop_power": 0.0, "step": 1.0},
         "compression_point": {"type": "5dB"},
-        "driver_mode": {"enabled": False},
+        "driver_mode": {"enabled": True, "estimated_gain_db": 1.0},
         "attenuator": {"type": "30dB"},
         "dut_config": {
             "max_input_power": 30.0,
@@ -114,13 +114,15 @@ class _Instrument:
     def __init__(self, *, fail=False):
         self.measured = 0
         self.fail = fail
+        self.power = 0.0
+        self.frequency = None
         self.rf_off_calls = 0
         self.driver_off_calls = 0
 
     def setup_driver_amplifier_power(self): pass
     def power_on_driver(self): pass
-    def set_power(self, _power): pass
-    def set_frequency(self, _frequency): pass
+    def set_power(self, power): self.power = power
+    def set_frequency(self, frequency): self.frequency = frequency
     def rf_output_on(self): pass
     def set_center_frequency(self, _frequency): pass
     def set_span(self, _span): pass
@@ -131,7 +133,8 @@ class _Instrument:
         if self.fail:
             raise RuntimeError("measurement failed")
         self.measured += 1
-        return -10.0
+        # 补偿后输出 = 源功率 + 1 dB；线损补偿由服务按当前配置加回。
+        return self.power + 1.0 - 12.0
 
     def close_all(self, close_rf=False):
         return []
@@ -198,6 +201,8 @@ class DriverMappingRunStageTests(unittest.TestCase):
                 "test_frequencies": [1.0],
                 "attenuator": {"type": "10dB"},
                 "signal_source": {"start_power": -20, "stop_power": -20, "step": 1},
+                "max_dut_input_power": 100.0,
+                "driver_gain_estimate_db": 1.0,
             },
             context=_Context(run_id),
             run_directory=layout.run_directory,

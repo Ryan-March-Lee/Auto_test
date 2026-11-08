@@ -32,6 +32,7 @@ from application.errors import (
 from application.export_service import ExportRequestError
 from application.dto import AmplifierInputError
 from application.measurements import AmplifierCalibrationError
+from application.measurements.services import DriverMappingError
 from application.ports.measurement_session import (
     CleanupRecord,
     CleanupStepStatus,
@@ -113,6 +114,7 @@ class ExistingErrorClassificationTests(unittest.TestCase):
             ConfigBackfillError,
         ):
             self.assertIs(error_type.category, ErrorCategory.CONFIGURATION)
+        self.assertIs(DriverMappingError.category, ErrorCategory.MEASUREMENT)
 
     def test_historical_builtin_bases_are_preserved(self):
         """分类是叠加：既有 except RuntimeError / except ValueError 处理器继续生效。"""

@@ -18,20 +18,23 @@ CABLE_LOSS = {"cable_losses": {"1.0": {"cable2": 2.0}}}
 class _Instrument:
     def __init__(self):
         self.measured = 0
+        self.power = 0.0
+        self.frequency = None
         self.rf_off_calls = 0
         self.driver_off_calls = 0
 
     def setup_driver_amplifier_power(self): pass
     def power_on_driver(self): pass
-    def set_power(self, _power): pass
-    def set_frequency(self, _frequency): pass
+    def set_power(self, power): self.power = power
+    def set_frequency(self, frequency): self.frequency = frequency
     def set_center_frequency(self, _frequency): pass
     def set_span(self, _span): pass
     def rf_output_on(self): pass
 
     def measure_power_with_average(self):
         self.measured += 1
-        return -10.0
+        # 补偿后输出 = 源功率 + 1 dB：线损补偿（衰减器 10dB + 线②2dB）由服务加回。
+        return self.power + 1.0 - 12.0
 
     def rf_output_off(self):
         self.rf_off_calls += 1
@@ -69,6 +72,8 @@ def _request(
         "test_frequencies": list(frequencies),
         "attenuator": {"type": "10dB"},
         "signal_source": {"start_power": -20, "stop_power": -20, "step": 1},
+        "max_dut_input_power": 100.0,
+        "driver_gain_estimate_db": 1.0,
     }
     return DriverPowerMappingRequest(
         configuration=configuration,
@@ -168,11 +173,10 @@ class DriverPowerMappingUseCaseTests(unittest.TestCase):
         token = CancellationToken()
 
         class _StoppingInstrument(_Instrument):
-            def measure_power_with_average(self):
-                value = super().measure_power_with_average()
-                if self.measured == 1:
+            def set_frequency(self, frequency):
+                super().set_frequency(frequency)
+                if frequency == 2.0 and not token.is_cancelled:
                     token.request_stop(reason="用户停止")
-                return value
 
         instrument = _StoppingInstrument()
         recorder = RecordingStageRecorder("run-mapping")
@@ -197,7 +201,7 @@ class DriverPowerMappingUseCaseTests(unittest.TestCase):
         self.assertEqual(set(payload["raw_points"]), {"1.0"})
         self.assertEqual(payload["target_mapping"], {})
         self.assertEqual(use_case.last_partial_result.status.value, "cancelled")
-        self.assertEqual(len(use_case.last_partial_result.raw_points), 1)
+        self.assertEqual(len(use_case.last_partial_result.raw_points), 2)
         self.assertIn((STAGE_DRIVER_MAPPING, "用户停止"), recorder.cancelled)
 
     def test_unexpected_partial_save_failure_still_cancels_the_stage(self):
@@ -209,11 +213,10 @@ class DriverPowerMappingUseCaseTests(unittest.TestCase):
                 raise RuntimeError("partial registry down")
 
         class _StoppingInstrument(_Instrument):
-            def measure_power_with_average(self):
-                value = super().measure_power_with_average()
-                if self.measured == 1:
+            def set_frequency(self, frequency):
+                super().set_frequency(frequency)
+                if frequency == 2.0 and not token.is_cancelled:
                     token.request_stop(reason="用户停止")
-                return value
 
         recorder = _FailingPartialRecorder("run-mapping")
         use_case = DriverPowerMappingUseCase(

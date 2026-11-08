@@ -510,11 +510,11 @@ class AcceptanceCase:
     # ---- 生命周期 --------------------------------------------------------
 
     def open(self, factory: Callable[[str], Any]) -> "AcceptanceCase":
-        from presentation.qt.configuration_page import ConfigurationPage
+        from presentation.qt.test_configuration_page import TestConfigurationPage
         from presentation.qt.configuration_session import ConfigurationSession
         from presentation.qt.instrument_setup_page import InstrumentSetupPage
 
-        self.page = ConfigurationPage(dict(ACCEPTANCE_CONFIG))
+        self.page = TestConfigurationPage(dict(ACCEPTANCE_CONFIG))
         session = ConfigurationSession(self.page)
         self.window = InstrumentSetupPage(session, scanner_factory=factory)
         self.window.setWindowTitle(f"PA 自动测试 · 真实窗口验收 · {self.result.title}")

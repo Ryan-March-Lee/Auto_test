@@ -1,6 +1,7 @@
-"""配置页面及其控件联动（``ConfigurationPage``）。
+"""测试配置页面及其控件联动（``TestConfigurationPage``）。
 
-模块与页面类都使用领域名称“configuration”。
+模块与页面类都使用领域名称“test configuration”，与
+:mod:`presentation.qt.power_configuration_page` 的“power configuration”成对命名。
 
 页面拥有配置控件，窗口只通过信号协调保存和连接。该模块只负责控件组合、用户意图
 转发和派生界面状态（驱动模式）；电源参数、通道上电计划与漏极已移入
@@ -24,7 +25,7 @@
 归属：Qt 视图。页面只负责控件、布局、信号与派生界面
 状态；设备选择的角色唯一性、引用/身份校验与整批替换规则在
 :class:`application.device_binding.DeviceBindingService`（步骤 5），
-:meth:`ConfigurationPage.apply_device_selection` 只提交本次勾选结果并投影返回的绑定集合。
+:meth:`TestConfigurationPage.apply_device_selection` 只提交本次勾选结果并投影返回的绑定集合。
 
 页面业务状态由 :class:`application.configuration_view_model.ConfigurationViewModel` 持有
 （步骤 6）：测试参数、设备绑定、运行状态与 dirty。本页只把测试参数与连接信息的读数
@@ -95,11 +96,11 @@ from .theme import PAGE_CONTENT_MAX_WIDTH, set_button_variant, set_tone
 
 __all__ = [
     "ConfigBackfillError",
-    "ConfigurationPage",
+    "TestConfigurationPage",
 ]
 
 
-class ConfigurationPage(PageControllerBindingMixin, QWidget):
+class TestConfigurationPage(PageControllerBindingMixin, QWidget):
     save_requested = Signal()
     finalize_run_requested = Signal()
     load_run_requested = Signal(str)

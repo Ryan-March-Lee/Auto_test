@@ -1,6 +1,6 @@
 """两个配置页共享一份编辑草稿的装配器（步骤 13）。
 
-``ConfigurationPage`` 拥有测试参数、设备连接与运行入口，``PowerConfigurationPage``
+``TestConfigurationPage`` 拥有测试参数、设备连接与运行入口，``PowerConfigurationPage``
 拥有电源参数、上电计划与漏极。窗口把两个页面实例交给本模块，由它统一：
 
 - 连接“设备绑定写回”这一跨页派生事件；
@@ -8,7 +8,7 @@
 - 在最终动作期间同时禁用两页。
 
 回填由模块级 :func:`apply_config_to_pages` 完成：两页要么都接受新草稿，要么都回到
-调用前的读数，不会停在“参数页已是新配置、电源页还是旧配置”的中间状态；运行快照的
+调用前的读数，不会停在“测试配置页已是新配置、电源页还是旧配置”的中间状态；运行快照的
 回填也复用同一入口。
 
 编辑器只依赖页面的窄接口（``apply_config`` / ``is_dirty`` / ``mark_clean`` /
@@ -66,26 +66,26 @@ def apply_config_to_pages(
 
 
 class ConfigurationEditor:
-    """把参数页与独立电源页装配成一份共享编辑状态。"""
+    """把测试配置页与独立电源页装配成一份共享编辑状态。"""
 
     def __init__(
         self,
-        config_page: Any,
+        test_config_page: Any,
         power_page: Any | None = None,
         *,
         log: Callable[[str], Any] | None = None,
     ) -> None:
-        self.config_page = config_page
+        self.test_config_page = test_config_page
         self.power_page = power_page
         self._log = log
         self.read_only_reason: str | None = None
         self._connect()
 
     def pages(self) -> list[Any]:
-        """当前存在的配置页（参数页在前）。"""
+        """当前存在的配置页（测试配置页在前）。"""
         return [
             page
-            for page in (self.config_page, self.power_page)
+            for page in (self.test_config_page, self.power_page)
             if page is not None
         ]
 
@@ -93,7 +93,7 @@ class ConfigurationEditor:
         return widget is not None and widget in self.pages()
 
     def _connect(self) -> None:
-        page, power = self.config_page, self.power_page
+        page, power = self.test_config_page, self.power_page
         if page is None or power is None:
             return
         page.device_selection_finished.connect(self._refresh_power_bindings)
@@ -108,7 +108,7 @@ class ConfigurationEditor:
         power = self.power_page
         if power is None:
             return
-        power.apply_device_bindings(getattr(self.config_page, "device_bindings", {}))
+        power.apply_device_bindings(getattr(self.test_config_page, "device_bindings", {}))
 
     # ---- 页面状态 -----------------------------------------------------------
 

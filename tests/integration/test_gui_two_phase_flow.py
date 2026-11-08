@@ -579,7 +579,7 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
             warn=warn,
             instrument_worker_factory=_RecordingWorker,
         )
-        coordinator.config_page = page
+        coordinator.test_config_page = page
         coordinator.config = {}
         coordinator.update_configuration_from_ui = MagicMock()
         coordinator.save_configuration = MagicMock(return_value=True)
@@ -610,7 +610,7 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         page = MagicMock()
         page.validate.return_value = False
         coordinator = self._coordinator()
-        coordinator.config_page = page
+        coordinator.test_config_page = page
 
         with patch(
             "presentation.qt.application_coordinator.prepare_configuration"
@@ -626,7 +626,7 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         page = MagicMock()
         page.validate.return_value = True
         coordinator = self._coordinator()
-        coordinator.config_page = page
+        coordinator.test_config_page = page
         coordinator.update_configuration_from_ui = MagicMock()
         coordinator.save_configuration = MagicMock(return_value=True)
 
@@ -643,7 +643,7 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         page = MagicMock()
         page.validate.return_value = True
         coordinator = self._coordinator()
-        coordinator.config_page = page
+        coordinator.test_config_page = page
         coordinator.config = {}
         coordinator.instrument_ctrl = port
         coordinator.update_configuration_from_ui = MagicMock()
@@ -670,7 +670,7 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         page.validate.return_value = True
         warn = MagicMock()
         coordinator = self._coordinator(warn=warn)
-        coordinator.config_page = page
+        coordinator.test_config_page = page
         coordinator.config = {}
         coordinator.instrument_ctrl = port
         coordinator.prepared_run = previous_run
@@ -698,7 +698,7 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         page = MagicMock()
         page.validate.return_value = True
         coordinator = self._coordinator()
-        coordinator.config_page = page
+        coordinator.test_config_page = page
         coordinator.config = {}
         coordinator.instrument_ctrl = port
         coordinator.prepared_run = previous_run
@@ -822,8 +822,8 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
             log=log, warn=MagicMock(), instrument_worker_factory=worker_factory
         )
         coordinator.prepared_run = _resolvable_contract_run()
-        coordinator.config_page = MagicMock()
-        coordinator.config_page.is_dirty.return_value = True
+        coordinator.test_config_page = MagicMock()
+        coordinator.test_config_page.is_dirty.return_value = True
 
         self.assertTrue(coordinator.connect_instruments())
 
@@ -835,14 +835,14 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
             )
         )
 
-    def test_connecting_stays_quiet_when_the_config_page_is_clean(self):
+    def test_connecting_stays_quiet_when_the_test_config_page_is_clean(self):
         log = MagicMock()
         coordinator = self._coordinator(
             log=log, warn=MagicMock(), instrument_worker_factory=MagicMock()
         )
         coordinator.prepared_run = _resolvable_contract_run()
-        coordinator.config_page = MagicMock()
-        coordinator.config_page.is_dirty.return_value = False
+        coordinator.test_config_page = MagicMock()
+        coordinator.test_config_page.is_dirty.return_value = False
 
         self.assertTrue(coordinator.connect_instruments())
 
@@ -857,7 +857,7 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         port = _ClosedPort()
         page = MagicMock()
         coordinator = self._coordinator()
-        coordinator.config_page = page
+        coordinator.test_config_page = page
         coordinator.instrument_ctrl = port
 
         prepared = type(
@@ -880,7 +880,7 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         self.assertEqual(coordinator.config, {"test_frequencies": [2.4]})
 
     def test_load_run_reports_backfill_failure_instead_of_success(self):
-        from presentation.qt.configuration_page import ConfigBackfillError
+        from presentation.qt.test_configuration_page import ConfigBackfillError
 
         current_port = _ClosedPort()
         current_run = object()
@@ -889,7 +889,7 @@ class ApplicationCoordinatorRunLifecycleTests(unittest.TestCase):
         page = MagicMock()
         page.apply_config.side_effect = ConfigBackfillError("坏配置")
         coordinator = self._coordinator(log=log, warn=warn)
-        coordinator.config_page = page
+        coordinator.test_config_page = page
         coordinator.instrument_ctrl = current_port
         coordinator.prepared_run = current_run
         coordinator.config = {"sentinel": True}
@@ -995,9 +995,9 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def test_finalize_run_signal_is_emitted_after_validation(self):
-        from presentation.qt.configuration_page import ConfigurationPage
+        from presentation.qt.test_configuration_page import TestConfigurationPage
 
-        page = ConfigurationPage(_fully_valid_gui_config())
+        page = TestConfigurationPage(_fully_valid_gui_config())
         requested = []
         page.finalize_run_requested.connect(lambda: requested.append(True))
         page.finalize_run_btn.click()
@@ -1018,9 +1018,9 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         self.assertIn("必须至少登记一台本机供电电源", failures[0])
 
     def test_load_run_signal_carries_the_run_id(self):
-        from presentation.qt.configuration_page import ConfigurationPage
+        from presentation.qt.test_configuration_page import TestConfigurationPage
 
-        page = ConfigurationPage({})
+        page = TestConfigurationPage({})
         requested = []
         page.load_run_requested.connect(requested.append)
         page.load_run_id_edit.setText(RUN_ID)
@@ -1059,9 +1059,9 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         self.assertFalse(any("供电角色" in message for message in failures), failures)
 
     def test_load_run_requires_a_run_id(self):
-        from presentation.qt.configuration_page import ConfigurationPage
+        from presentation.qt.test_configuration_page import TestConfigurationPage
 
-        page = ConfigurationPage({})
+        page = TestConfigurationPage({})
         failures = []
         requested = []
         page.validation_failed.connect(failures.append)
@@ -1071,17 +1071,17 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         self.assertEqual(len(failures), 1)
 
     def test_run_status_label_is_updated_by_the_window(self):
-        from presentation.qt.configuration_page import ConfigurationPage
+        from presentation.qt.test_configuration_page import TestConfigurationPage
 
-        page = ConfigurationPage({})
+        page = TestConfigurationPage({})
         page.set_run_status(f"当前运行: {RUN_ID}")
         self.assertEqual(page.run_status_label.text(), f"当前运行: {RUN_ID}")
 
     def test_apply_config_reflects_a_frozen_run_on_the_widgets(self):
-        from presentation.qt.configuration_page import ConfigurationPage
+        from presentation.qt.test_configuration_page import TestConfigurationPage
         from presentation.qt.power_configuration_page import PowerConfigurationPage
 
-        page = ConfigurationPage({})
+        page = TestConfigurationPage({})
         power = PowerConfigurationPage({})
         frozen = _fully_valid_gui_config()
         frozen["test_frequencies"] = [2.4, 2.6]
@@ -1112,9 +1112,9 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
 
     def test_config_page_build_config_does_not_write_channel_roles(self):
         """步骤 6：通道 role 不再进入保存文档；控件默认值只是旧页面的显示状态。"""
-        from presentation.qt.configuration_page import ConfigurationPage
+        from presentation.qt.test_configuration_page import TestConfigurationPage
 
-        page = ConfigurationPage({})
+        page = TestConfigurationPage({})
         page.apply_config(_fully_valid_gui_config())
 
         built = page.build_config()
@@ -1124,13 +1124,13 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         self.assertNotIn("role", channels["CH2"])
 
     def test_config_page_does_not_keep_channel_roles_from_the_configuration(self):
-        from presentation.qt.configuration_page import ConfigurationPage
+        from presentation.qt.test_configuration_page import TestConfigurationPage
         from presentation.qt.power_configuration_page import PowerConfigurationPage
 
         config = _fully_valid_gui_config()
         config["instruments"]["power_supplies"]["DP8B1519"]["channels"]["CH1"]["role"] = "drain"
         config["instruments"]["power_supplies"]["DP8B1519"]["channels"]["CH2"]["role"] = "gate"
-        page = ConfigurationPage({})
+        page = TestConfigurationPage({})
         power = PowerConfigurationPage({})
         page.apply_config(config)
         power.apply_config(config)
@@ -1146,10 +1146,10 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         self.assertNotIn("role", channels["CH2"])
 
     def test_apply_config_clears_previous_values(self):
-        from presentation.qt.configuration_page import ConfigurationPage
+        from presentation.qt.test_configuration_page import TestConfigurationPage
         from presentation.qt.power_configuration_page import PowerConfigurationPage
 
-        page = ConfigurationPage({})
+        page = TestConfigurationPage({})
         power = PowerConfigurationPage({})
         page.apply_config(_fully_valid_gui_config())
         power.apply_config(_fully_valid_gui_config())
@@ -1185,7 +1185,7 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         self.assertEqual(power.get_enabled_power_supplies(), [])
 
     def test_apply_config_projects_all_supported_fields(self):
-        from presentation.qt.configuration_page import ConfigurationPage
+        from presentation.qt.test_configuration_page import TestConfigurationPage
         from presentation.qt.power_configuration_page import PowerConfigurationPage
 
         frozen = {
@@ -1267,7 +1267,7 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
             },
         }
 
-        page = ConfigurationPage({})
+        page = TestConfigurationPage({})
         power = PowerConfigurationPage({})
         page.apply_config(frozen)
         power.apply_config(frozen)
@@ -1321,13 +1321,13 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         )
 
     def test_apply_config_matches_a_freshly_built_page(self):
-        from presentation.qt.configuration_page import ConfigurationPage
+        from presentation.qt.test_configuration_page import TestConfigurationPage
         from presentation.qt.power_configuration_page import PowerConfigurationPage
 
         partial = {"test_frequencies": [9.0], "driver_mode": {"enabled": False}}
-        rebuilt = ConfigurationPage(partial)
+        rebuilt = TestConfigurationPage(partial)
         rebuilt_power = PowerConfigurationPage(partial)
-        page = ConfigurationPage({})
+        page = TestConfigurationPage({})
         power = PowerConfigurationPage({})
         page.apply_config(_fully_valid_gui_config())
         power.apply_config(_fully_valid_gui_config())
@@ -1356,19 +1356,19 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         )
 
     def test_apply_config_reports_invalid_payload(self):
-        from presentation.qt.configuration_page import ConfigBackfillError, ConfigurationPage
+        from presentation.qt.test_configuration_page import ConfigBackfillError, TestConfigurationPage
 
-        page = ConfigurationPage({})
+        page = TestConfigurationPage({})
         for payload in (None, ["not", "a", "mapping"], "text"):
             with self.subTest(payload=payload):
                 with self.assertRaises(ConfigBackfillError):
                     page.apply_config(payload)
 
     def test_apply_config_uses_defaults_for_invalid_field_types(self):
-        from presentation.qt.configuration_page import ConfigurationPage
+        from presentation.qt.test_configuration_page import TestConfigurationPage
         from presentation.qt.power_configuration_page import PowerConfigurationPage
 
-        page = ConfigurationPage({})
+        page = TestConfigurationPage({})
         power = PowerConfigurationPage({})
         payload = {
             "test_frequencies": ["invalid"],
@@ -1411,9 +1411,9 @@ class ConfigurationPageRunEntryTests(unittest.TestCase):
         self.assertFalse(channel["current_protection_enabled"].isChecked())
 
     def test_apply_config_rejects_invalid_frequency_lists(self):
-        from presentation.qt.configuration_page import ConfigurationPage
+        from presentation.qt.test_configuration_page import TestConfigurationPage
 
-        page = ConfigurationPage({})
+        page = TestConfigurationPage({})
         for bad in (None, "not-a-list", [], ["bad"], [True], [float("nan")], [[]]):
             with self.subTest(bad=bad):
                 page.apply_config({"test_frequencies": bad})

@@ -729,7 +729,7 @@ class ConfigurationViewModelBoundaryTests(unittest.TestCase):
 
     def test_configuration_page_delegates_state_and_actions_to_the_view_model(self):
         page_source = (
-            ROOT / "presentation" / "qt" / "configuration_page.py"
+            ROOT / "presentation" / "qt" / "test_configuration_page.py"
         ).read_text(encoding="utf-8-sig")
 
         self.assertIn("from application.configuration_view_model import", page_source)
@@ -743,7 +743,7 @@ class ConfigurationViewModelBoundaryTests(unittest.TestCase):
     def test_page_no_longer_copies_the_binding_validation_loop(self):
         """步骤 5 的边界保持不变：页面不出现三轮校验的服务调用与规则副本。"""
         page_source = (
-            ROOT / "presentation" / "qt" / "configuration_page.py"
+            ROOT / "presentation" / "qt" / "test_configuration_page.py"
         ).read_text(encoding="utf-8-sig")
         for rule_copy in ("_checked_devices", "supply_id_problem(", "binding_identity_problem("):
             self.assertNotIn(rule_copy, page_source)

@@ -1,6 +1,6 @@
 """步骤 10 收尾：真实 MainWindow + ApplicationCoordinator 的离屏流程回归。
 
-这些用例不使用协调器替身：它们构造真实窗口、真实 ConfigurationPage 和真实运行契约，
+这些用例不使用协调器替身：它们构造真实窗口、真实 TestConfigurationPage 和真实运行契约，
 固定“页面信号 → 协调器 → 运行目录 / 状态栏”的端到端接线，避免只靠属性写入的
 静态门禁来判断所有权。
 """
@@ -222,7 +222,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIs(window.config, window.coordinator.config)
         self.assertIsNone(window.prepared_run)
         self.assertEqual(
-            window.config_page.run_status_label.text(), "当前运行: 未创建"
+            window.test_config_page.run_status_label.text(), "当前运行: 未创建"
         )
 
     def test_a_10_configuration_opens_both_pages_read_only(self):
@@ -234,25 +234,25 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         window = self._window()
 
         # 构造即同步：不经过欢迎页也必须已经只读，避免出现可编辑窗口。
-        self.assertIn("迁移器", window.config_page.read_only_reason)
+        self.assertIn("迁移器", window.test_config_page.read_only_reason)
         self.assertIn("迁移器", window.power_page.read_only_reason)
 
         window._enter_test_mode(False)
-        window._open_configuration_page()
+        window._open_test_configuration_page()
 
-        self.assertIn("迁移器", window.config_page.read_only_reason)
+        self.assertIn("迁移器", window.test_config_page.read_only_reason)
         self.assertIn("迁移器", window.power_page.read_only_reason)
-        self.assertFalse(window.config_page.read_only_notice.isHidden())
+        self.assertFalse(window.test_config_page.read_only_notice.isHidden())
         self.assertFalse(window.power_page.read_only_notice.isHidden())
-        self.assertFalse(window.config_page.save_config_btn.isEnabled())
-        self.assertFalse(window.config_page.finalize_run_btn.isEnabled())
+        self.assertFalse(window.test_config_page.save_config_btn.isEnabled())
+        self.assertFalse(window.test_config_page.finalize_run_btn.isEnabled())
         self.assertFalse(window.power_page.power_section.isEnabled())
-        self.assertTrue(window.config_page.return_welcome_btn.isEnabled())
+        self.assertTrue(window.test_config_page.return_welcome_btn.isEnabled())
         # 配置页被登记成协调器的窄接口，而不是控件宿主。
-        self.assertIs(window.coordinator.config_page, window.config_page)
+        self.assertIs(window.coordinator.test_config_page, window.test_config_page)
 
     def test_finalize_enters_the_workspace_only_after_the_connection_succeeds(self):
-        """最终按钮承诺“连接仪器”：运行冻结后还要等连接成功才离开参数页。"""
+        """最终按钮承诺“连接仪器”：运行冻结后还要等连接成功才离开测试配置页。"""
         self._silence_dialogs()
         window = self._window()
         window._enter_test_mode(False)
@@ -262,7 +262,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIs(window.coordinator.state, RunFlowState.FINALIZING)
         self.assertIsNone(window.prepared_run, "待提交运行不能提前成为当前运行")
         self.assertIs(window.view_stack.currentWidget(), window.connection_page)
-        self.assertFalse(window.config_page.finalize_run_btn.isEnabled(), "连接中不能重复提交")
+        self.assertFalse(window.test_config_page.finalize_run_btn.isEnabled(), "连接中不能重复提交")
 
         port = _ConnectedPort()
         window.on_instrument_controller_ready(port)
@@ -272,7 +272,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIs(window.coordinator.instrument_ctrl, port)
         self.assertIs(window.coordinator.state, RunFlowState.CONNECTED)
         self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
-        self.assertTrue(window.config_page.finalize_run_btn.isEnabled())
+        self.assertTrue(window.test_config_page.finalize_run_btn.isEnabled())
 
     def test_finalize_stays_on_the_configuration_page_when_the_connection_fails(self):
         self._silence_dialogs()
@@ -287,7 +287,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIsNone(window.coordinator._pending_run)
         self.assertIs(window.coordinator.state, RunFlowState.CONFIGURING)
         self.assertIs(window.view_stack.currentWidget(), window.connection_page)
-        self.assertTrue(window.config_page.finalize_run_btn.isEnabled(), "失败后允许重试")
+        self.assertTrue(window.test_config_page.finalize_run_btn.isEnabled(), "失败后允许重试")
 
     def test_user_stop_compensates_the_pending_run_without_navigating(self):
         self._silence_dialogs()
@@ -301,7 +301,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIsNone(window.coordinator._pending_run)
         self.assertIs(window.coordinator.state, RunFlowState.CONFIGURING)
         self.assertIs(window.view_stack.currentWidget(), window.connection_page)
-        self.assertTrue(window.config_page.finalize_run_btn.isEnabled())
+        self.assertTrue(window.test_config_page.finalize_run_btn.isEnabled())
 
     def test_failed_connection_removes_the_unstarted_run_directory(self):
         self._silence_dialogs()
@@ -355,7 +355,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         )
         self.assertTrue(window.coordinator.has_unreleased_ports())
         self.assertIs(window.view_stack.currentWidget(), window.connection_page)
-        self.assertTrue(window.config_page.finalize_run_btn.isEnabled())
+        self.assertTrue(window.test_config_page.finalize_run_btn.isEnabled())
         self.assertTrue(dialogs["warning"].called, "清理未完成必须提示用户")
 
     def test_finished_event_does_not_enter_the_workspace_before_commit(self):
@@ -369,7 +369,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         # 只有 result 已经原子提交后才导航；单独的完成事件不能宣称成功。
         self.assertIs(window.coordinator.state, RunFlowState.FINALIZING)
         self.assertIs(window.view_stack.currentWidget(), window.connection_page)
-        self.assertTrue(window.config_page.finalize_run_btn.isEnabled())
+        self.assertTrue(window.test_config_page.finalize_run_btn.isEnabled())
 
     def test_finalize_restores_the_page_when_the_connection_cannot_start(self):
         self._silence_dialogs()
@@ -382,10 +382,10 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
             window._finalize_run()
 
         self.assertIs(window.view_stack.currentWidget(), window.connection_page)
-        self.assertTrue(window.config_page.finalize_run_btn.isEnabled())
+        self.assertTrue(window.test_config_page.finalize_run_btn.isEnabled())
 
     def test_finalize_signal_routes_to_the_coordinator_once(self):
-        """参数页信号必须由主窗口转给唯一最终化入口，页面不直接调用协调器。"""
+        """测试配置页信号必须由主窗口转给唯一最终化入口，页面不直接调用协调器。"""
         self._silence_dialogs()
         window = self._window()
         window._enter_test_mode(False)
@@ -393,7 +393,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         with patch.object(
             window.coordinator, "finalize_configuration", return_value=False
         ) as finalize:
-            window.config_page.finalize_run_requested.emit()
+            window.test_config_page.finalize_run_requested.emit()
 
         finalize.assert_called_once()
 
@@ -403,9 +403,9 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
 
         self.assertIs(window.view_stack.currentWidget(), window.welcome_page)
         window._enter_test_mode(True)
-        # 选好测试模式后先进“仪器连接配置”页（整屏，不占标签），再进仪器配置页。
+        # 选好测试模式后先进“仪器连接配置”页（整屏，不占标签），再进测试配置页。
         self.assertIs(window.view_stack.currentWidget(), window.connection_page)
-        self.assertTrue(window.config_page.driver_mode_requested())
+        self.assertTrue(window.test_config_page.driver_mode_requested())
         self.assertTrue(window.config["driver_mode"]["enabled"])
 
         self._scan_and_select(window)
@@ -432,10 +432,10 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         window.power_page.finish_card_morph()
         self.assertTrue(window.power_page.intro_visible())
 
-        # 电源配置的下一步才进入工作区的“仪器配置”标签页。
+        # 电源配置的下一步才进入工作区的“测试配置”标签页。
         window.power_page.next_btn.click()
         self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
-        self.assertIs(window.tab_widget.currentWidget(), window.config_page)
+        self.assertIs(window.tab_widget.currentWidget(), window.test_config_page)
 
     def test_first_entry_to_the_power_step_starts_from_default_channels(self):
         """上次保存的电源配置不再带入页面：首次进入全是 OFF / 0 / 2s。"""
@@ -450,7 +450,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
             "用例前提：保存的配置里 CH1/CH2 都是 DUT",
         )
 
-        window._open_configuration_page()
+        window._open_test_configuration_page()
         window.power_page.finish_card_morph()
 
         card = window.power_page.card_wall.supply_card("DP8B1519")
@@ -494,7 +494,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertTrue(window.status_panel.isHidden())
 
     def test_previous_step_returns_to_the_connection_page(self):
-        """仪器配置页的“上一步”回到仪器连接配置页，“下一步”再回来。"""
+        """测试配置页的“上一步”回到仪器连接配置页，“下一步”再回来。"""
         self._silence_dialogs()
         window = self._window()
 
@@ -510,7 +510,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         window.power_page.next_btn.click()
         self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
 
-        window.config_page.previous_step_btn.click()
+        window.test_config_page.previous_step_btn.click()
         self.assertIs(window.view_stack.currentWidget(), window.connection_page)
 
         # 回到仪表配置页会清空上一次结果：必须重新查找并选择，不能沿用旧绑定直接推进。
@@ -524,7 +524,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         window.power_page.finish_card_morph()
         window.power_page.next_btn.click()
         self.assertIs(window.view_stack.currentWidget(), window.workspace_page)
-        self.assertIs(window.tab_widget.currentWidget(), window.config_page)
+        self.assertIs(window.tab_widget.currentWidget(), window.test_config_page)
 
     def test_rack_previous_step_returns_to_the_same_selection_result(self):
         """仪器排布页的“上一步”回到本次选择结果，卡片与勾选都还在。"""
@@ -662,8 +662,8 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIs(window.view_stack.currentWidget(), window.welcome_page)
 
         window._enter_test_mode(False)
-        window.config_page.freq_start.setValue(9.0)
-        window.config_page.freq_stop.setValue(9.0)
+        window.test_config_page.freq_start.setValue(9.0)
+        window.test_config_page.freq_stop.setValue(9.0)
         window._return_to_welcome()
         dialogs["question"].assert_called_once()
         self.assertIs(window.view_stack.currentWidget(), window.welcome_page)
@@ -691,12 +691,12 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIn("功放测试", visible_titles())
 
     def test_configuration_page_hides_progress_and_log_panel(self):
-        """仪器配置页只做配置与连接：右侧进度与实时日志不出现，切页后再回来。"""
+        """测试配置页只做配置与连接：右侧进度与实时日志不出现，切页后再回来。"""
         self._silence_dialogs()
         window = self._window()
         window._enter_test_mode(True)
 
-        self.assertIs(window.tab_widget.currentWidget(), window.config_page)
+        self.assertIs(window.tab_widget.currentWidget(), window.test_config_page)
         self.assertTrue(window.status_panel.isHidden())
 
         # 面板隐藏期间仍是全部日志的接收方：配置页的日志不会因为看不见而丢。
@@ -708,7 +708,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         )
         self.assertFalse(window.status_panel.isHidden())
 
-        window.tab_widget.setCurrentIndex(window.tab_widget.indexOf(window.config_page))
+        window.tab_widget.setCurrentIndex(window.tab_widget.indexOf(window.test_config_page))
         self.assertTrue(window.status_panel.isHidden())
 
     def test_config_page_save_signal_writes_the_official_configuration(self):
@@ -735,7 +735,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertNotIn("power_configuration", window.pages)
         self.assertEqual(
             window.configuration_editor.pages(),
-            [window.config_page, window.power_page],
+            [window.test_config_page, window.power_page],
         )
         self.assertIs(
             window.power_page.parent(),
@@ -748,7 +748,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self._silence_dialogs()
         window = self._window()
         window._enter_test_mode(False)
-        window._open_configuration_page()
+        window._open_test_configuration_page()
         window.power_page.finish_card_morph()
         channel = window.power_page.power_config_widgets["DP8B1519"]["channels"]["CH1"]
         channel["voltage"].setValue(7.5)
@@ -791,7 +791,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
             ("DP8B1234", "DP8B174401234"),
         )
 
-        result = window.config_page.apply_device_selection(
+        result = window.test_config_page.apply_device_selection(
             ApplyDeviceSelectionRequest.from_assignments(
                 [
                     {
@@ -845,7 +845,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         expected_drain = power.read_drain_channels()
         self.assertTrue(window.configuration_editor.is_dirty())
 
-        window.config_page.apply_device_selection(
+        window.test_config_page.apply_device_selection(
             ApplyDeviceSelectionRequest.from_assignments(
                 [
                     {
@@ -887,7 +887,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         )
 
         # 旧电源失去绑定：未提交的编辑仍留在页面上，引用保持空选择并交给校验报告。
-        window.config_page.apply_device_selection(
+        window.test_config_page.apply_device_selection(
             ApplyDeviceSelectionRequest.from_assignments(
                 [
                     {
@@ -920,11 +920,11 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         window = self._window()
 
         window._enter_test_mode(False)
-        self.assertFalse(window.config_page.driver_mode_requested())
+        self.assertFalse(window.test_config_page.driver_mode_requested())
         self.assertFalse(window.power_page.driver_power_plan_editor.is_active)
 
         window._enter_test_mode(True)
-        self.assertTrue(window.config_page.driver_mode_requested())
+        self.assertTrue(window.test_config_page.driver_mode_requested())
         self.assertTrue(window.power_page.driver_power_plan_editor.is_active)
 
     def test_create_run_freezes_the_run_and_updates_the_page(self):
@@ -937,7 +937,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertIs(window.prepared_run, prepared)
         self.assertTrue(prepared.run_directory.is_dir())
         self.assertEqual(
-            window.config_page.run_status_label.text(), f"当前运行: {prepared.run_id}"
+            window.test_config_page.run_status_label.text(), f"当前运行: {prepared.run_id}"
         )
         # 创建运行只冻结参数：接线不再是配置字段，冻结快照与保存的配置里都没有它。
         frozen = json.loads(prepared.config_path.read_text(encoding="utf-8"))
@@ -966,7 +966,7 @@ class MainWindowCoordinatorFlowTests(unittest.TestCase):
         self.assertEqual(port.close_calls, 1)
         self.assertTrue(window.coordinator.has_unreleased_ports())
         self.assertEqual(
-            window.config_page.run_status_label.text(), "当前运行: 未创建"
+            window.test_config_page.run_status_label.text(), "当前运行: 未创建"
         )
         dialogs["warning"].assert_called_once()
 

@@ -367,7 +367,7 @@ class _FakeStatusPanel:
 
 
 class StatusPanelVisibilityTests(unittest.TestCase):
-    """仪器配置页不显示测量进度与实时日志，其余页面按上次分栏宽度恢复。"""
+    """测试配置页不显示测量进度与实时日志，其余页面按上次分栏宽度恢复。"""
 
     def _window(self, current_page, *, panel=None, sizes=None):
         from presentation.qt.main_window import MainWindow
@@ -379,7 +379,7 @@ class StatusPanelVisibilityTests(unittest.TestCase):
             status_panel=panel,
             workspace_splitter=splitter,
             tab_widget=SimpleNamespace(currentWidget=lambda: current_page),
-            config_page=SimpleNamespace(),
+            test_config_page=SimpleNamespace(),
             _status_panel_sizes=sizes,
         )
         window._sync_status_panel_visibility = (
@@ -389,7 +389,7 @@ class StatusPanelVisibilityTests(unittest.TestCase):
 
     def test_configuration_page_hides_the_panel_and_remembers_the_width(self):
         window, panel, _splitter = self._window(None)
-        window.tab_widget = SimpleNamespace(currentWidget=lambda: window.config_page)
+        window.tab_widget = SimpleNamespace(currentWidget=lambda: window.test_config_page)
 
         window._sync_status_panel_visibility()
 
@@ -410,7 +410,7 @@ class StatusPanelVisibilityTests(unittest.TestCase):
         panel = _FakeStatusPanel()
         panel.hide()
         window, _panel, splitter = self._window(None, panel=panel, sizes=[1180, 420])
-        window.tab_widget = SimpleNamespace(currentWidget=lambda: window.config_page)
+        window.tab_widget = SimpleNamespace(currentWidget=lambda: window.test_config_page)
 
         window._sync_status_panel_visibility()
 
@@ -455,7 +455,7 @@ class MainWindowAssemblyBoundaryTests(unittest.TestCase):
 
     def test_main_window_stays_small_and_assembly_focused(self):
         line_count = len(self.source.splitlines())
-        # 步骤 13 起窗口装配两个配置页（参数页 + 独立电源页）；仪器排布与电源配置
+        # 步骤 13 起窗口装配两个配置页（测试配置页 + 独立电源页）；仪器排布与电源配置
         # 是第三个、第四个整屏步骤，窗口只多出创建、接线与切换几行。上限随这次装配
         # 增加，但不再放宽：业务读数/校验/保存仍在页面与协调器。
         self.assertLessEqual(

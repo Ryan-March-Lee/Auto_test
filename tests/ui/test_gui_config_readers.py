@@ -77,10 +77,10 @@ def channel_widgets(voltage, voltage_enabled, current, current_enabled, role=Non
     return controls
 
 
-class ConfigurationPageStub:
+class TestConfigurationPageStub:
     """配置页替身：只实现协调器需要的窄接口。
 
-    控件读取仍交给 :class:`ConfigFormState`，与真实 ``ConfigurationPage.build_config()``
+    控件读取仍交给 :class:`ConfigFormState`，与真实 ``TestConfigurationPage.build_config()``
     走同一条组装路径，因此协调器测试不复制配置组装逻辑。
     """
 
@@ -109,7 +109,7 @@ class ConfigurationPageStub:
 
 
 def _coordinator(*, config=None, service=None, widgets=None, log=None, warn=None, error=None):
-    page = ConfigurationPageStub(widgets, config) if widgets is not None else None
+    page = TestConfigurationPageStub(widgets, config) if widgets is not None else None
     coordinator = ApplicationCoordinator(
         log=log or (lambda _message: None),
         warn=warn or (lambda _title, _message: None),
@@ -121,7 +121,7 @@ def _coordinator(*, config=None, service=None, widgets=None, log=None, warn=None
     if config is not None:
         coordinator.config = config
     if page is not None:
-        coordinator.bind_config_page(page)
+        coordinator.bind_test_config_page(page)
     return coordinator
 
 
@@ -203,7 +203,7 @@ class ConfigFormStateReaderTests(unittest.TestCase):
             self.assertEqual(set(group), {'power_plan'}, '不再写 supplies / power_supply_count')
 
     def test_power_assignment_reader_is_silent_without_plan_editors(self):
-        """参数页没有计划控件：不能把已保存的电源段改写成空段。"""
+        """测试配置页没有计划控件：不能把已保存的电源段改写成空段。"""
         self.assertEqual(self.reader.read_power_assignment(), {})
 
     def test_instrument_reader_wraps_instruments_and_preserves_existing_fields(self):
@@ -553,7 +553,7 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
         self.assertEqual(self.coordinator.config['test_frequencies'], [1.0, 2.0])
         self.assertEqual(self.coordinator.config['dut_config']['power_supply_count'], 2)
         # 配置页持有的副本必须与协调器一致。
-        self.assertIs(self.coordinator.config_page.config, self.coordinator.config)
+        self.assertIs(self.coordinator.test_config_page.config, self.coordinator.config)
 
     def test_build_top_level_keys_match_legacy(self):
         result = self.coordinator.build_configuration_from_ui()
@@ -642,7 +642,7 @@ class CoordinatorConfigSaveTests(unittest.TestCase):
 
         legacy = {"schema_version": "1.0", "test_frequencies": [1.0]}
         coordinator = _coordinator(config=legacy, service=self.service)
-        coordinator.bind_config_page(_LegacyPage())
+        coordinator.bind_test_config_page(_LegacyPage())
 
         self.assertEqual(coordinator.update_configuration_from_ui(), legacy)
         self.assertFalse(coordinator.save_configuration())

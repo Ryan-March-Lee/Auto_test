@@ -704,7 +704,7 @@ class InstrumentSetupPageNextWriteTests(InstrumentSetupPageTestCase):
         self.assertIn("重复选择", panel.status_label.text())
 
     def test_next_before_any_scan_is_refused_even_with_saved_bindings(self):
-        """未查找时不能沿用已保存的绑定进入参数页：页面不提供绕过查找的入口。"""
+        """未查找时不能沿用已保存的绑定进入测试配置页：页面不提供绕过查找的入口。"""
         page = self.make_page(
             {
                 "test_frequencies": [1.0],

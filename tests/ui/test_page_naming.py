@@ -4,7 +4,7 @@ import ast
 import unittest
 from pathlib import Path
 
-from presentation.qt.configuration_page import ConfigurationPage
+from presentation.qt.test_configuration_page import TestConfigurationPage
 from presentation.qt.instrument_discovery_panel import (
     InstrumentDiscoveryPanel,
     _USE_SCREENSHOT_FRONTS,
@@ -31,11 +31,11 @@ def _class_names(path: Path):
 
 class PageNamingTests(unittest.TestCase):
     def test_new_page_classes_are_the_canonical_definitions(self):
-        self.assertEqual(ConfigurationPage.__name__, "ConfigurationPage")
+        self.assertEqual(TestConfigurationPage.__name__, "TestConfigurationPage")
         self.assertEqual(InstrumentDiscoveryPanel.__name__, "InstrumentDiscoveryPanel")
         self.assertEqual(InstrumentSetupPage.__name__, "InstrumentSetupPage")
         self.assertIn(
-            "ConfigurationPage", _class_names(QT_ROOT / "configuration_page.py")
+            "TestConfigurationPage", _class_names(QT_ROOT / "test_configuration_page.py")
         )
         self.assertIn(
             "InstrumentDiscoveryPanel",
@@ -49,18 +49,19 @@ class PageNamingTests(unittest.TestCase):
     def test_old_page_modules_and_class_aliases_are_removed(self):
         for old_name in (
             "config_page.py",
+            "configuration_page.py",
             "connection_page.py",
             "device_discovery_panel.py",
         ):
             with self.subTest(module=old_name):
                 self.assertFalse((QT_ROOT / old_name).exists())
-        self.assertFalse(hasattr(ConfigurationPage, "ConfigPage"))
+        self.assertFalse(hasattr(TestConfigurationPage, "ConfigPage"))
         self.assertFalse(hasattr(InstrumentSetupPage, "ConnectionPage"))
         self.assertFalse(hasattr(InstrumentDiscoveryPanel, "DeviceDiscoveryPanel"))
 
     def test_window_assembly_imports_the_new_modules(self):
         source = (QT_ROOT / "main_window.py").read_text(encoding="utf-8-sig")
-        self.assertIn("from presentation.qt.configuration_page import", source)
+        self.assertIn("from presentation.qt.test_configuration_page import", source)
         self.assertIn("from presentation.qt.instrument_setup_page import", source)
         self.assertNotIn("from presentation.qt.config_page import", source)
         self.assertNotIn("from presentation.qt.connection_page import", source)

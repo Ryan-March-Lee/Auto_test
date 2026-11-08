@@ -1,6 +1,6 @@
 """连接页与文档化窄接口（GUI 重构步骤 8）：用替身端口独立验证页面行为。
 
-这里不构造 ``ConfigurationPage``：连接页只依赖
+这里不构造 ``TestConfigurationPage``：连接页只依赖
 :class:`application.ports.device_binding.DeviceBindingPort`。测试断言页面读的是只读
 ``ConfigurationViewState``、提交的是 ``ApplyDeviceSelectionRequest``，并且“连接仪器”
 只发出用户意图。
@@ -102,10 +102,10 @@ class InstrumentSetupPagePortTests(unittest.TestCase):
         self.addCleanup(page.close)
         return page
 
-    def test_constructor_takes_a_port_instead_of_a_config_page(self):
+    def test_constructor_takes_a_port_instead_of_a_test_config_page(self):
         page = self.make_page(_StubPort())
 
-        self.assertFalse(hasattr(page, "config_page"))
+        self.assertFalse(hasattr(page, "test_config_page"))
         self.assertIs(page.binding_port.__class__, _StubPort)
 
     def test_enter_reads_the_read_only_view_state(self):
@@ -212,7 +212,7 @@ class InstrumentSetupPagePortTests(unittest.TestCase):
         self.assertEqual(requested, [])
 
     def test_connect_button_no_longer_exists(self):
-        """连接仪器已并入参数配置页的最终动作：仪表配置页没有连接入口。"""
+        """连接仪器已并入测试配置页的最终动作：仪表配置页没有连接入口。"""
         page = self.make_page(_StubPort())
 
         self.assertFalse(hasattr(page, "connect_btn"))
@@ -256,11 +256,11 @@ class InstrumentSetupPageBoundaryTests(unittest.TestCase):
         )
 
         for fragment in (
-            "self.config_page",
-            "from .config_page",
-            "ConfigurationPage(",
-            "config_page.device_bindings",
-            "config_page.config",
+            "self.test_config_page",
+            "from .test_configuration_page",
+            "TestConfigurationPage(",
+            "test_config_page.device_bindings",
+            "test_config_page.config",
         ):
             with self.subTest(fragment=fragment):
                 self.assertNotIn(fragment, source)

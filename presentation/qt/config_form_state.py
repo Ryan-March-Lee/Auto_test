@@ -105,7 +105,7 @@ def _formal_validation_errors(
 def strip_channel_roles(supplies: Any) -> None:
     """原地删除电源通道里的旧 ``role`` 字段（1.1 编辑段不再包含它）。
 
-    电源参数已拆到独立页，但参数页组装文档时仍会带上基线里的旧字段；两条写入路径
+    电源参数已拆到独立页，但测试配置页组装文档时仍会带上基线里的旧字段；两条写入路径
     都调用这里，保证保存出的文档不因页面上没有对应控件而把 1.0 角色写回去。
     """
     if not isinstance(supplies, Mapping):
@@ -199,7 +199,7 @@ class ConfigFormState:
         return widget.currentText()
 
     def validation_errors(self) -> list[str]:
-        """参数页要显示的用户错误：只报本页负责的字段。
+        """测试配置页要显示的用户错误：只报本页负责的字段。
 
         整份配置的正式校验按页面归属拆开：本页只展示测试参数、设备连接等非电源问题；
         上电计划、通道与漏极的问题由独立电源页展示。两页合起来仍是完整校验，因此最终
@@ -243,7 +243,7 @@ class ConfigFormState:
     def formal_validation_errors(self) -> list[str]:
         """按整张表单做正式校验（含设备连接与电源段）。
 
-        参数页不再调用它；保留为共享实现，供电源页与单独校验表单状态的测试使用。
+        测试配置页不再调用它；保留为共享实现，供电源页与单独校验表单状态的测试使用。
         """
         return _formal_validation_errors(self.build_config())
 
@@ -383,7 +383,7 @@ class ConfigFormState:
         )
         dut_editor = getattr(self.widgets, "dut_power_plan_editor", None)
         if driver_editor is None and dut_editor is None:
-            # 参数页没有计划控件：它不拥有电源段，不能把旧编辑字段顺手改写掉。
+            # 测试配置页没有计划控件：它不拥有电源段，不能把旧编辑字段顺手改写掉。
             return {}
         driver_plan = self._read_power_plan(
             "driver_power_plan_editor", driver_existing.get("power_plan")
@@ -480,7 +480,7 @@ class ConfigFormState:
             supplies[name] = target
         # 连接状态只来自设备绑定：电源页校验的是“这次绑定的设备能不能按计划上电”，
         # 因此先把每台电源的地址/启用状态按当前绑定刷新一遍，再交给正式校验。绑定写入
-        # 与参数页共用同一个 `_apply_device_binding`，不另立一套判据。
+        # 与测试配置页共用同一个 `_apply_device_binding`，不另立一套判据。
         bindings = getattr(self.widgets, "device_bindings", None)
         if isinstance(bindings, Mapping):
             records = power_supply_bindings(bindings)
@@ -507,7 +507,7 @@ class ConfigFormState:
 
         校验对象仍是应用边界的同一套编写与正式校验：页面只把读数包成编辑文档并
         展示返回的消息，不在这里复制计划/漏极/计划候选规则。这里只保留电源字段的
-        问题，测试参数与设备连接的错误由参数页报告。
+        问题，测试参数与设备连接的错误由测试配置页报告。
         """
         return _formal_validation_errors(
             self.build_power_config(base), scope="power"
@@ -543,7 +543,7 @@ class ConfigFormState:
             channels.update(copy.deepcopy(value.get("channels", {})))
             target["channels"] = channels
             config["instruments"]["power_supplies"][name] = target
-        # 1.1 正式文档不再包含通道 role：电源表单已拆到独立页，参数页仍不能把基线里
+        # 1.1 正式文档不再包含通道 role：电源表单已拆到独立页，测试配置页仍不能把基线里
         # 的旧值原样写回。整组清理一次，不依赖本页是否存在电源控件。
         strip_channel_roles(config["instruments"]["power_supplies"])
         assignment = self.read_power_assignment()

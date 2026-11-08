@@ -28,7 +28,7 @@ from presentation.qt.config_projection import (
 
 ROOT = Path(__file__).resolve().parents[2]
 PROJECTION_SOURCE = ROOT / "presentation" / "qt" / "config_projection.py"
-PAGE_SOURCE = ROOT / "presentation" / "qt" / "configuration_page.py"
+PAGE_SOURCE = ROOT / "presentation" / "qt" / "test_configuration_page.py"
 ADAPTER_SOURCE = ROOT / "presentation" / "qt" / "config_form_adapter.py"
 AUTHORING_SOURCE = ROOT / "application" / "configuration_authoring.py"
 BACKFILL_HELPERS = (

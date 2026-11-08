@@ -12,10 +12,10 @@
 
 本模块属于 presentation controller：只做装配与转发，不读控件、不定义设备绑定规则，也不
 写文件或连接仪器。路径规划中的“MainWindow 或配置会话协调器负责把连接页结果交给
-ViewModel”由这里承担；连接意图不再经过本会话，参数配置页的最终按钮直接发出最终动作。
+ViewModel”由这里承担；连接意图不再经过本会话，测试配置页的最终按钮直接发出最终动作。
 
 依赖方向：本模块只认结构类型 :class:`ConfigurationBindingTarget` 与
-:class:`DiscoveryPanelPort`（两个 Protocol），不把具体 ``ConfigurationPage`` / ``QWidget`` 写进
+:class:`DiscoveryPanelPort`（两个 Protocol），不把具体 ``TestConfigurationPage`` / ``QWidget`` 写进
 接口，因此会话可以用纯 Python 替身单独测试。
 """
 

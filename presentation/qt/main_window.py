@@ -27,7 +27,7 @@ from infrastructure.logging.app_logging import get_logger, setup_logging
 from presentation.qt.application_coordinator import ApplicationCoordinator, RunFlowState
 from presentation.qt.composition import build_device_scanner_factory, default_paths
 from presentation.qt.configuration_editor import ConfigurationEditor
-from presentation.qt.configuration_page import ConfigurationPage
+from presentation.qt.test_configuration_page import TestConfigurationPage
 from presentation.qt.configuration_session import ConfigurationSession
 from presentation.qt.connection_dialog import ConnectionDialog
 from presentation.qt.instrument_setup_page import InstrumentSetupPage
@@ -151,7 +151,7 @@ class MainWindow(QMainWindow):
         self.tab_widget.setDocumentMode(True)
         left_layout.addWidget(self.tab_widget)
         self._register_pages()
-        # 电源配置是整屏步骤：在标签页之外创建，进入工作区前单独切页；参数页与它由
+        # 电源配置是整屏步骤：在标签页之外创建，进入工作区前单独切页；测试配置页与它由
         # 同一个编辑器装配成共享草稿。
         self.power_page = self.create_power_page()
         # 页面一建好就对齐只读态：绕过欢迎页也不能先呈现为可编辑。
@@ -188,9 +188,9 @@ class MainWindow(QMainWindow):
         self.view_stack.addWidget(self.workspace_page)
 
         # 仪表配置是欢迎页之后的整屏页面，不登记进标签栏：先选设备，再配测试参数，
-        # 最后由参数配置页的“完成配置并连接仪器”提交最终动作。仪表配置页只依赖配置
+        # 最后由测试配置页的“完成配置并连接仪器”提交最终动作。仪表配置页只依赖配置
         # 会话的窄接口，不持有配置页实例；面板回写由窗口装配给会话。
-        self.configuration_session = ConfigurationSession(self.config_page)
+        self.configuration_session = ConfigurationSession(self.test_config_page)
         self.connection_page = InstrumentSetupPage(
             self.configuration_session,
             scanner_factory=build_device_scanner_factory(self.paths),
@@ -198,13 +198,13 @@ class MainWindow(QMainWindow):
         self.connection_page.next_requested.connect(self._open_rack_overview_page)
         self.connection_page.return_welcome_requested.connect(self._return_to_welcome)
         self.connection_page.log_message.connect(self.add_log_message)
-        self.config_page.discovery_message.connect(self.connection_page.log_message.emit)
+        self.test_config_page.discovery_message.connect(self.connection_page.log_message.emit)
         self.configuration_session.attach_discovery_panel(
             self.connection_page.discovery_panel
         )
         self.view_stack.insertWidget(1, self.connection_page)
         self.rack_page = RackOverviewPage(self)
-        self.rack_page.next_requested.connect(self._open_configuration_page)
+        self.rack_page.next_requested.connect(self._open_test_configuration_page)
         self.rack_page.back_requested.connect(
             lambda: self._return_to_connection_page(keep_results=True)
         )
@@ -219,7 +219,7 @@ class MainWindow(QMainWindow):
         central_layout.addWidget(self.view_stack)
 
         self.view_stack.setCurrentWidget(self.welcome_page)
-        # 初始标签页就是“仪器配置”：进入工作区后右侧不应出现进度与日志。
+        # 初始标签页就是“测试配置”：进入工作区后右侧不应出现进度与日志。
         self._sync_status_panel_visibility()
 
     def _build_mode_badge(self):
@@ -246,7 +246,7 @@ class MainWindow(QMainWindow):
         self._sync_status_panel_visibility()
 
     def _open_rack_overview_page(self) -> None:
-        """仪表配置完成：先在“仪器排布”确认电源架位，再进入参数页。"""
+        """仪表配置完成：先在“仪器排布”确认电源架位，再进入测试配置页。"""
         cards = [card for card in self.connection_page.discovery_panel.cards()
                  if card.is_checked()]
         self.view_stack.setCurrentWidget(self.rack_page)
@@ -255,7 +255,7 @@ class MainWindow(QMainWindow):
             entries, driver_enabled=self.coordinator.amplifier_driver_mode()
         )
 
-    def _open_configuration_page(self) -> None:
+    def _open_test_configuration_page(self) -> None:
         """排布完成：进整屏电源配置页，把排布页的电源卡片展开成通道卡片。"""
         self.coordinator.begin_configuration()
         # 新测试会话的第一次进入从电源初始值开始；本次会话内返回再进入保留已填参数。
@@ -267,12 +267,12 @@ class MainWindow(QMainWindow):
         self.power_page.play_card_morph(self.rack_page.power_tile_rects_global())
 
     def _open_workspace_configuration(self) -> None:
-        """电源配置完成：回工作区的“仪器配置”标签页，继续参数与连接。
+        """电源配置完成：回工作区的“测试配置”标签页，继续参数与连接。
 
         电源配置本身是整屏步骤，不占标签；工作区的标签栏与右侧状态面板到这里才
         重新出现。
         """
-        self.tab_widget.setCurrentIndex(self.tab_widget.indexOf(self.config_page))
+        self.tab_widget.setCurrentIndex(self.tab_widget.indexOf(self.test_config_page))
         self.view_stack.setCurrentWidget(self.workspace_page)
         self._sync_status_panel_visibility()
         self._sync_finalize_entry()
@@ -286,7 +286,7 @@ class MainWindow(QMainWindow):
         self._sync_finalize_entry()
 
     def _return_to_connection_page(self, *, keep_results: bool = False) -> None:
-        """回上一步：参数配置页重新查找；排布页保留本次选择结果（``keep_results``）。"""
+        """回上一步：测试配置页重新查找；排布页保留本次选择结果（``keep_results``）。"""
         enter = self.connection_page.resume if keep_results else self.connection_page.enter
         enter()
         self.view_stack.setCurrentWidget(self.connection_page)
@@ -324,7 +324,7 @@ class MainWindow(QMainWindow):
             driver_realtime_data_callback=self.coordinator.store_realtime_data,
             amplifier_realtime_data_callback=self.coordinator.store_realtime_data,
             clear_realtime_callback=self.clear_real_time_data,
-            build_configuration=self.create_config_tab,
+            build_configuration=self.create_test_config_tab,
             build_visualization=self.create_visualization_tab,
             build_run_history=self.create_run_history_tab,
         )
@@ -367,7 +367,7 @@ class MainWindow(QMainWindow):
     def _sync_status_panel_visibility(self) -> None:
         """按当前页面决定右侧状态面板是否出现。
 
-        “仪器配置”页只做配置与连接，不需要盯测量进度与实时日志，右侧面板在该页
+        “测试配置”页只做配置与连接，不需要盯测量进度与实时日志，右侧面板在该页
         隐藏、把宽度让给表单；面板本身仍是全局唯一的进度与日志接收方，日志照常
         入队，切回测量/结果页时按上次的分栏宽度原样恢复。
         """
@@ -377,9 +377,9 @@ class MainWindow(QMainWindow):
             return
         current = self.tab_widget.currentWidget()
         editor = getattr(self, "configuration_editor", None)
-        config_page = getattr(self, "config_page", None)
+        test_config_page = getattr(self, "test_config_page", None)
         should_hide = current is not None and (
-            current is config_page or (editor is not None and editor.contains(current))
+            current is test_config_page or (editor is not None and editor.contains(current))
         )
         if should_hide == panel.isHidden():
             return
@@ -395,9 +395,9 @@ class MainWindow(QMainWindow):
         if sizes:
             splitter.setSizes(sizes)
 
-    def create_config_tab(self):
-        """创建仪器配置选项卡；配置页与协调器在这里互相登记。"""
-        tab = ConfigurationPage(self.config, self)
+    def create_test_config_tab(self):
+        """创建测试配置选项卡；配置页与协调器在这里互相登记。"""
+        tab = TestConfigurationPage(self.config, self)
         tab.save_requested.connect(self.save_config)
         tab.finalize_run_requested.connect(self._finalize_run)
         tab.load_run_requested.connect(self.coordinator.load_prepared_run)
@@ -407,14 +407,14 @@ class MainWindow(QMainWindow):
         tab.validation_failed.connect(
             lambda message: self.add_log_message(f"配置校验失败: {message}")
         )
-        self.config_page = tab
-        self.coordinator.bind_config_page(tab)
+        self.test_config_page = tab
+        self.coordinator.bind_test_config_page(tab)
         return tab
 
     def create_power_page(self):
         """创建整屏电源配置页，并把它接入共享编辑状态。
 
-        电源配置是排布页之后的整屏步骤，不再登记进工作区标签栏；它和参数页仍由
+        电源配置是排布页之后的整屏步骤，不再登记进工作区标签栏；它和测试配置页仍由
         同一个 :class:`ConfigurationEditor` 装配成一份共享草稿。
         """
         page = PowerConfigurationPage(self.config, self)
@@ -422,7 +422,7 @@ class MainWindow(QMainWindow):
         page.bind_controller(self.measurement_controller)
         self.coordinator.bind_power_page(page)
         self.configuration_editor = ConfigurationEditor(
-            self.config_page,
+            self.test_config_page,
             page,
             log=self.add_log_message,
         )
@@ -486,7 +486,7 @@ class MainWindow(QMainWindow):
 
     def _finalize_run(self):
         """执行一次最终化事务；连接成功且端口提交后才进入测量区。"""
-        page = getattr(self, "config_page", None)
+        page = getattr(self, "test_config_page", None)
         if page is None or self.coordinator.state is RunFlowState.FINALIZING:
             return
         editor = getattr(self, "configuration_editor", None)
@@ -496,17 +496,17 @@ class MainWindow(QMainWindow):
             self._bind_instrument_worker_signals
         )
         if not started:
-            self._restore_config_page()
+            self._restore_test_config_page()
 
-    def _restore_config_page(self):
-        """恢复参数页控件并按协调器状态同步最终按钮语义。"""
+    def _restore_test_config_page(self):
+        """恢复测试配置页控件并按协调器状态同步最终按钮语义。"""
         editor = getattr(self, "configuration_editor", None)
         if editor is not None:
             editor.set_finalizing(False)
         self._sync_finalize_entry()
 
     def _sync_finalize_entry(self):
-        page = getattr(self, "config_page", None)
+        page = getattr(self, "test_config_page", None)
         if page is not None:
             page.set_reconnect_required(
                 self.coordinator.state is RunFlowState.RECONNECT_REQUIRED
@@ -529,11 +529,11 @@ class MainWindow(QMainWindow):
         """连接完成：只有协调器已提交运行和端口才进入测量区，不自动开始测量。"""
         self.progress_bar.setValue(0)
         if self.coordinator.state is not RunFlowState.CONNECTED:
-            self._restore_config_page()
+            self._restore_test_config_page()
             self.add_log_message("仪器连接结束但最终动作未提交；配置页保留，可重试")
             return
         self.add_log_message("所有仪器连接成功！")
-        self._restore_config_page()
+        self._restore_test_config_page()
         self.tab_widget.setCurrentIndex(0)
         self.view_stack.setCurrentWidget(self.workspace_page)
         self._sync_status_panel_visibility()
@@ -543,13 +543,13 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "错误", error_message)
         self.progress_bar.setValue(0)
         self.coordinator.fail_finalization(error_message)
-        self._restore_config_page()
+        self._restore_test_config_page()
 
     def on_instrument_stopped(self, reason):
         self.add_log_message(f"仪器连接线程已停止: {reason}")
         self.progress_bar.setValue(0)
         self.coordinator.cancel_finalization(reason)
-        self._restore_config_page()
+        self._restore_test_config_page()
 
     def _on_measurement_controller_thread_finished(self):
         """测量线程结束后释放端口；端口所有权在协调器。"""

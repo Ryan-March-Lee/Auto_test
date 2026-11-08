@@ -6,10 +6,10 @@
 进入本页时，排布页的电源卡片从屏幕原位展开成完整卡片
 （:mod:`presentation.qt.power_card_morph`），卡片落位后标题与底部导航再淡入；
 卡片墙与过渡层共用同一份卡片位置。设备绑定信息不在本页显示：绑定只在上游
-“仪器配置”页确认，本页只消费它生成的电源集合。
+“测试配置”页确认，本页只消费它生成的电源集合。
 
 底部“上一步”回仪器排布页（格位与卡片位置原样保留），“下一步”进入工作区的
-“仪器配置”标签页；页面只发信号，切页由主窗口完成。
+“测试配置”标签页；页面只发信号，切页由主窗口完成。
 
 卡片是通道参数的唯一编辑面：每个通道上角的竖直滚筒写 ``OFF`` / ``Driver`` / ``DUT``，
 表示该通道关闭、给驱放供电、给功放供电。滚筒靠卡面中央的一侧还有 ``Cal.`` 效率
@@ -24,7 +24,7 @@
 推导。两个通道始终保留在配置里，上电角色、顺序与每通道间隔都在卡片上设置。
 
 电源参数、通道上电计划与漏极路由都归本页；测试参数、运行入口与
-设备发现仍属于 :mod:`presentation.qt.configuration_page` 与
+设备发现仍属于 :mod:`presentation.qt.test_configuration_page` 与
 :mod:`presentation.qt.instrument_setup_page`。页面只把控件组合成显式的电源片段，
 不写文件、不连接仪器、不导入基础设施或硬件模块；统一保存、版本门禁与运行冻结由
 协调器/配置会话在后续接线中完成。
@@ -36,7 +36,7 @@
 重建卡片时保留操作者尚未提交的工作值、保护勾选、上电顺序、间隔与 Cal. 标记。
 
 窗口用 :class:`presentation.qt.configuration_editor.ConfigurationEditor` 把本页与
-参数页装配成共享编辑状态，整份草稿的合并/校验/保存仍由
+测试配置页装配成共享编辑状态，整份草稿的合并/校验/保存仍由
 :class:`presentation.qt.application_coordinator.ApplicationCoordinator` 完成；页面
 不持有另一页的实例，也不写文件。
 
@@ -123,7 +123,7 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
     fragment_changed = Signal()
     #: 底部“上一步”：回仪器排布页；切页由主窗口完成。
     back_requested = Signal()
-    #: 底部“下一步”：进入工作区的“仪器配置”标签页；切页由主窗口完成。
+    #: 底部“下一步”：进入工作区的“测试配置”标签页；切页由主窗口完成。
     next_requested = Signal()
 
     def __init__(self, config: Any = None, parent: Any = None) -> None:
@@ -230,7 +230,7 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
         self.back_btn.setToolTip("回到仪器排布页，保留本次电源架位")
         set_button_variant(self.back_btn, "secondary")
         self.next_btn = QPushButton("下一步")
-        self.next_btn.setToolTip("进入仪器配置，设置测试参数并连接仪器")
+        self.next_btn.setToolTip("进入测试配置，设置测试参数并连接仪器")
         set_button_variant(self.next_btn, "primary")
         footer.addWidget(self.back_btn)
         footer.addStretch(1)
@@ -1125,7 +1125,7 @@ class PowerConfigurationPage(PageControllerBindingMixin, QWidget):
     def validate(self) -> bool:
         """校验电源片段；错误经 ``validation_failed`` 交给统一状态行。
 
-        绑定记录在“仪器配置”页应用设备时已经由 application.device_binding 判定；本页
+        绑定记录在“测试配置”页应用设备时已经由 application.device_binding 判定；本页
         不再重复展示绑定问题，只校验通道参数、上电计划与漏极。
         """
         errors = list(self.form_adapter.power_validation_errors(self.config))

@@ -1,7 +1,7 @@
 """步骤 12：独立电源配置页的纯 UI 测试。
 
 覆盖独立创建、驱动模式派生、通道参数/保护开关/上电计划/漏极回填、片段提交与
-校验消息。页面只消费配置文档与设备绑定，不启动完整参数页或真实后端。
+校验消息。页面只消费配置文档与设备绑定，不启动完整测试配置页或真实后端。
 """
 
 import os
@@ -774,7 +774,7 @@ class PowerConfigurationPageTests(unittest.TestCase):
         self.assertTrue(page.power_section.isEnabled())
 
     def test_the_page_has_no_device_binding_box(self):
-        """绑定只在上游“仪器配置”页确认，电源页不再显示绑定状态框。"""
+        """绑定只在上游“测试配置”页确认，电源页不再显示绑定状态框。"""
         page = self.make_page()
 
         self.assertFalse(hasattr(page, "binding_group"))
@@ -1120,7 +1120,7 @@ class PowerConfigurationPageTests(unittest.TestCase):
         self.assertIn("电源", failures[0])
 
     def test_validation_does_not_report_parameter_errors_as_power_errors(self):
-        """正式校验按页面归属拆分：测试参数的问题由参数页报告。"""
+        """正式校验按页面归属拆分：测试参数的问题由测试配置页报告。"""
         config = valid_config()
         config["test_frequencies"] = []
         page = PowerConfigurationPage(config)

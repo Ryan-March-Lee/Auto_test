@@ -386,7 +386,7 @@ class ProductionDependencyTests(unittest.TestCase):
         self.assertNotIn("on_pa_unit_count_changed", methods)
 
     def test_configuration_modules_do_not_depend_on_main_window(self):
-        for path in (Path("presentation/qt/configuration_page.py"), Path("presentation/qt/config_form_state.py")):
+        for path in (Path("presentation/qt/test_configuration_page.py"), Path("presentation/qt/config_form_state.py")):
             source = path.read_text(encoding="utf-8-sig")
             self.assertNotIn("enhanced_main_gui", source)
             self.assertNotIn("MeasurementController", source)
@@ -395,7 +395,7 @@ class ProductionDependencyTests(unittest.TestCase):
         source = MAIN_WINDOW_SOURCE.read_text(encoding="utf-8-sig")
         self.assertNotIn("_legacy_tab", source)
         self.assertNotIn("on_measurement_finished", source)
-        self.assertIn("build_configuration=self.create_config_tab", source)
+        self.assertIn("build_configuration=self.create_test_config_tab", source)
         self.assertIn("build_visualization=self.create_visualization_tab", source)
         self.assertIn("build_run_history=self.create_run_history_tab", source)
         self.assertIn("self.tab_widget.addTab(page, definition.title)", source)
@@ -517,7 +517,7 @@ class ProductionDependencyTests(unittest.TestCase):
 
     def test_gui_data_pages_do_not_access_storage_implementations(self):
         sources = (
-            ROOT / "presentation" / "qt" / "configuration_page.py",
+            ROOT / "presentation" / "qt" / "test_configuration_page.py",
             ROOT / "presentation" / "qt" / "config_projection.py",
             ROOT / "presentation" / "qt" / "history_view_model.py",
             ROOT / "presentation" / "qt" / "visualization_page.py",
@@ -686,7 +686,7 @@ class ProductionDependencyTests(unittest.TestCase):
             "MainWindow 不得直接调用 app.gui_runtime 测量组装函数: " + ", ".join(sorted(calls)),
         )
 
-    def test_run_coordinator_talks_to_the_config_page_through_a_narrow_port(self):
+    def test_run_coordinator_talks_to_the_test_config_page_through_a_narrow_port(self):
         """步骤 10：协调器不读控件，只依赖配置页的五个窄接口。"""
         source = COORDINATOR_SOURCE.read_text(encoding="utf-8-sig")
         tree = _tree(COORDINATOR_SOURCE)
@@ -704,10 +704,10 @@ class ProductionDependencyTests(unittest.TestCase):
             self.assertNotIn(
                 widget,
                 source,
-                f"协调器不得引用控件 {widget}；配置页应通过 ConfigurationPagePort 交互",
+                f"协调器不得引用控件 {widget}；配置页应通过 TestConfigurationPagePort 交互",
             )
 
-        protocol = _class_node(tree, "ConfigurationPagePort")
+        protocol = _class_node(tree, "TestConfigurationPagePort")
         members = {
             node.name for node in protocol.body if isinstance(node, ast.FunctionDef)
         }
@@ -717,8 +717,8 @@ class ProductionDependencyTests(unittest.TestCase):
             "配置页端口能力集合变化时必须同步更新协调器与页面，而不是放开断言",
         )
         page = _class_node(
-            _tree(ROOT / "presentation" / "qt" / "configuration_page.py"),
-            "ConfigurationPage",
+            _tree(ROOT / "presentation" / "qt" / "test_configuration_page.py"),
+            "TestConfigurationPage",
         )
         page_methods = {
             node.name for node in page.body if isinstance(node, ast.FunctionDef)
@@ -726,7 +726,7 @@ class ProductionDependencyTests(unittest.TestCase):
         self.assertEqual(
             members - page_methods,
             set(),
-            "ConfigurationPage 必须实现配置页端口的全部能力",
+            "TestConfigurationPage 必须实现配置页端口的全部能力",
         )
 
     def test_run_coordinator_requires_explicit_user_feedback_callbacks(self):
@@ -928,7 +928,7 @@ class ProductionDependencyTests(unittest.TestCase):
 
     def test_configuration_page_delegates_backfill_to_the_projection_module(self):
         """步骤 7 / 11 / 12：配置页与独立电源页只经表单 Adapter 回填。"""
-        page_source = (ROOT / "presentation" / "qt" / "configuration_page.py").read_text(
+        page_source = (ROOT / "presentation" / "qt" / "test_configuration_page.py").read_text(
             encoding="utf-8-sig"
         )
         power_page_source = (

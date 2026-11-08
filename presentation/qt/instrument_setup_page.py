@@ -5,11 +5,11 @@
 本页只做一件事：扫描网段、勾选本次测试使用的仪器，并在点“下一步”时把所选设备的
 当前地址与设备身份（完整设备码）写进配置里的设备绑定。写入边界与派生界面（电源卡片、
 计划候选、读入时的坏绑定提示）都归
-:class:`presentation.qt.configuration_page.ConfigurationPage`：本页只通过窄接口
+:class:`presentation.qt.test_configuration_page.TestConfigurationPage`：本页只通过窄接口
 :class:`application.ports.device_binding.DeviceBindingPort` 读取只读配置视图并提交
 :class:`application.device_binding.ApplyDeviceSelectionRequest`，由配置会话协调器交给
 配置页的视图模型。本页不持有配置页实例、不写文件、不解析配置文档，也不自己连仪器；
-连接仪器是参数配置页最终按钮的职责。
+连接仪器是测试配置页最终按钮的职责。
 
 版式分两层：静态骨架（页面标题、居中滚动区、页面动作的声明位置）由 Qt Designer 文件
 ``presentation/qt/ui/instrument_setup_page.ui`` 描述，改排列或文案只动那个文件；动态部分
@@ -33,7 +33,7 @@ Python 里构建并插进骨架。“返回欢迎页”不再与它们同排：�
 
 “全选”只在本次扫描出现可应用设备后与“下一步”一起出现：点击后选中所有可应用的
 卡片，按钮随即变成白底灰框灰字、不可点；用户取消任意一张卡片后恢复白底黑框黑字。
-“下一步”先把本次勾选的设备写入配置（整批替换），再切到仪器配置页；配置文件仍随
+“下一步”先把本次勾选的设备写入配置（整批替换），再切到测试配置页；配置文件仍随
 “保存配置”或最终按钮一起落盘，因此从本页离开不会产生半保存的配置。首次查找前、扫描中、
 扫描失败或没有可应用设备时两个按钮都不出现；必须从本次扫描结果中选择设备才能推进。
 """
@@ -421,7 +421,7 @@ class InstrumentSetupPage(QWidget):
             else "选中本次扫描结果中所有可应用的设备"
         )
         self.next_btn.setToolTip(
-            "进入仪器配置页，配置测试参数并完成仪器连接"
+            "进入测试配置页，配置测试参数并完成仪器连接"
             if self.next_btn.isEnabled()
             else "请先在本次扫描结果中勾选要使用的设备"
         )
@@ -460,7 +460,7 @@ class InstrumentSetupPage(QWidget):
         self.discovery_panel.select_all_devices()
 
     def request_next(self) -> None:
-        """写入本次勾选的设备，然后进入“仪器配置”页。
+        """写入本次勾选的设备，然后进入“测试配置”页。
 
         勾选就是本次测试的设备清单，写入按整批替换：勾了几台，配置里就只留这几台，
         没勾的旧角色与旧电源随地址一起失效。因此不再需要单独的“应用”按钮，也没有
@@ -473,7 +473,7 @@ class InstrumentSetupPage(QWidget):
         - 扫描出了结果却一台都没勾：明确阻止，避免用户以为“没勾选=没改”而带着上一批
           设备继续；
         - 勾选有歧义（同一角色两台设备等）：留在本页，面板状态行说明原因；
-        - 绑定端口拒绝：留在本页，不进入参数配置。
+        - 绑定端口拒绝：留在本页，不进入测试配置。
         """
         panel = self.discovery_panel
         if not panel.is_interactive():

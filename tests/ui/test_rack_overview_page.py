@@ -115,7 +115,7 @@ class RackOverviewPageTests(unittest.TestCase):
         page.finish_transition()
 
         self.assertFalse(page.transition_running())
-        self.assertFalse(page.next_btn.isEnabled(), "电源还没摆好，不能进入参数页")
+        self.assertFalse(page.next_btn.isEnabled(), "电源还没摆好，不能进入测试配置页")
 
     def test_no_power_supplies_allows_next_after_the_transition(self):
         page = self._page(_entries(power_codes=()))

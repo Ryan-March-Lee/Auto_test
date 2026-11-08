@@ -4,10 +4,10 @@
 连接以及端口清理都在这里完成。
 
 协调器是 **Qt 表现层** 组件，但不接触任何具体控件：它只通过
-:class:`ConfigurationPagePort` 与 :class:`PowerConfigurationPagePort` 两个窄接口
+:class:`TestConfigurationPagePort` 与 :class:`PowerConfigurationPagePort` 两个窄接口
 （校验、组装、回填、运行状态、驱动模式）与两个配置页交互，并通过注入的日志/告警/
 错误回调与窗口交互。这样它既不需要知道控件名字，也可以用纯 Python 替身单独测试。
-两页的片段在本层合并成唯一编辑草稿：参数页先写，独立电源页只覆盖自己负责的电源字段。
+两页的片段在本层合并成唯一编辑草稿：测试配置页先写，独立电源页只覆盖自己负责的电源字段。
 
 归属：presentation controller。它持有呈现层配置状态并
 编排 application 用例（配置保存、运行创建/加载、仪器端口生命周期），不读控件、不定义业务规则；
@@ -52,7 +52,7 @@ _MEASUREMENT_KINDS = frozenset(
     }
 )
 
-_CONFIG_PAGE_MEMBERS = (
+_TEST_CONFIG_PAGE_MEMBERS = (
     "validate",
     "build_config",
     "apply_config",
@@ -86,7 +86,7 @@ class RunFlowState(str, Enum):
 
 
 @runtime_checkable
-class ConfigurationPagePort(Protocol):
+class TestConfigurationPagePort(Protocol):
     """配置页必须向协调器提供的窄接口。
 
     协调器只依赖这五个能力，不读取任何控件；页面内部如何布局、控件叫什么名字与
@@ -240,7 +240,7 @@ class ApplicationCoordinator:
         self._warn = warn
         self._error = error
         self._instrument_worker_factory = instrument_worker_factory
-        self.config_page: ConfigurationPagePort | None = None
+        self.test_config_page: TestConfigurationPagePort | None = None
         self.power_page: PowerConfigurationPagePort | None = None
         self.config: dict[str, Any] = {}
         self.prepared_run: Any = None
@@ -274,7 +274,7 @@ class ApplicationCoordinator:
         self._set_state(RunFlowState.DEVICE_SELECTION)
 
     def begin_configuration(self) -> None:
-        """设备绑定已应用：进入参数配置；已提交运行不受影响。"""
+        """设备绑定已应用：进入测试配置；已提交运行不受影响。"""
         if self._state is RunFlowState.DEVICE_SELECTION:
             self._set_state(RunFlowState.CONFIGURING)
 
@@ -298,14 +298,14 @@ class ApplicationCoordinator:
 
     # ---- 配置页适配 ----
 
-    def bind_config_page(self, page: Any) -> None:
-        """登记配置页；页面只需实现 :class:`ConfigurationPagePort` 的五个能力。"""
+    def bind_test_config_page(self, page: Any) -> None:
+        """登记配置页；页面只需实现 :class:`TestConfigurationPagePort` 的五个能力。"""
         missing = [
-            name for name in _CONFIG_PAGE_MEMBERS if not callable(getattr(page, name, None))
+            name for name in _TEST_CONFIG_PAGE_MEMBERS if not callable(getattr(page, name, None))
         ]
         if missing:
             raise TypeError("配置页缺少协调器所需能力: " + ", ".join(missing))
-        self.config_page = page
+        self.test_config_page = page
         self.run_status_changed(self.run_status_text())
 
     def bind_power_page(self, page: Any) -> None:
@@ -317,8 +317,8 @@ class ApplicationCoordinator:
             raise TypeError("电源配置页缺少协调器所需能力: " + ", ".join(missing))
         self.power_page = page
 
-    def _require_config_page(self) -> ConfigurationPagePort:
-        page = self.config_page
+    def _require_test_config_page(self) -> TestConfigurationPagePort:
+        page = self.test_config_page
         if page is None:
             raise RuntimeError("未登记配置页，无法读写界面配置")
         return page
@@ -349,21 +349,21 @@ class ApplicationCoordinator:
     def _sync_page_read_only(self) -> str | None:
         """把编辑文档的只读结论同步到两页；返回只读原因（可编辑时为 ``None``）。"""
         reason = self.editing_read_only_reason()
-        for page in (self.config_page, self.power_page):
+        for page in (self.test_config_page, self.power_page):
             setter = getattr(page, "set_read_only", None)
             if callable(setter):
                 setter(reason)
         return reason
 
     def build_configuration_from_ui(self) -> dict[str, Any]:
-        """合并两页的片段：参数页先写，电源页只覆盖自己负责的字段。
+        """合并两页的片段：测试配置页先写，电源页只覆盖自己负责的字段。
 
-        顺序固定为“参数页 → 电源页”：参数页拥有测试参数、PA 单元数量与设备连接，
+        顺序固定为“测试配置页 → 电源页”：测试配置页拥有测试参数、PA 单元数量与设备连接，
         电源页只把 ``instruments.power_supplies``、``power_supply_assignment`` 与
         ``dut_config.drain_channel`` 合并进来，因此两页尚未保存的编辑都不会被对方
         整段覆盖。
         """
-        page = self._require_config_page()
+        page = self._require_test_config_page()
         config = page.build_config(self.config)
         power = self.power_page
         if power is not None:
@@ -374,11 +374,11 @@ class ApplicationCoordinator:
         """统一校验两页；最终动作只在这里放行。
 
         先把两页当前读数合成唯一草稿（并回推两页），再让各页校验自己负责的字段：
-        参数页看测试参数、绑定与非电源部分的正式校验，电源页只看电源字段的问题。
+        测试配置页看测试参数、绑定与非电源部分的正式校验，电源页只看电源字段的问题。
         两页结果合起来仍是完整正式校验，因此最终动作不会放行一份有问题的配置；同时
         各自的问题只出现在自己的页面上，不会互相误报。
         """
-        page = self.config_page
+        page = self.test_config_page
         if page is None:
             return False
         self.update_configuration_from_ui()
@@ -408,7 +408,7 @@ class ApplicationCoordinator:
         退化为数据协议），但页面组装与保存都以它作为基线，因此协调器写完配置后仍要
         同步这一份副本。两页共享同一份编辑草稿，页面之间不互相持有实例。
         """
-        for page in (self.config_page, self.power_page):
+        for page in (self.test_config_page, self.power_page):
             if page is not None:
                 page.config = self.config
 
@@ -454,7 +454,7 @@ class ApplicationCoordinator:
         run = self.prepared_run
         if run is None:
             raise RunNotResumable(
-                "尚未创建运行，不能连接仪器；请先在“仪器配置”页点击“完成配置并连接仪器”"
+                "尚未创建运行，不能连接仪器；请先在“测试配置”页点击“完成配置并连接仪器”"
             )
         resolver = getattr(run, "hardware_connection_path", None)
         if resolver is None:
@@ -476,7 +476,7 @@ class ApplicationCoordinator:
             )
             return None
         if self.prepared_run is None:
-            self._error("尚未创建运行：请先在“仪器配置”页点击“完成配置并连接仪器”")
+            self._error("尚未创建运行：请先在“测试配置”页点击“完成配置并连接仪器”")
             return None
         if self.instrument_ctrl is None:
             self._error("请先重新连接仪器；上一次连接或测量结束后端口已安全释放")
@@ -544,7 +544,7 @@ class ApplicationCoordinator:
                 "存在未完成的仪器清理；请在现场确认仪器已断开并重试清理后再提交",
             )
             return None
-        page = self.config_page
+        page = self.test_config_page
         if page is None or not self.validate_configuration():
             self._log("配置校验失败：未保存配置，也未创建运行")
             return None
@@ -569,7 +569,7 @@ class ApplicationCoordinator:
             self._log(f"配置保存失败: {self.last_save_error}")
             self._warn("最终化失败", f"配置保存失败: {self.last_save_error}")
             return False
-        for page in (self.config_page, self.power_page):
+        for page in (self.test_config_page, self.power_page):
             mark_clean = getattr(page, "mark_clean", None)
             if callable(mark_clean):
                 mark_clean()
@@ -815,7 +815,7 @@ class ApplicationCoordinator:
 
     def apply_run_configuration(self, prepared: Any) -> bool:
         """把已冻结运行配置同步到配置页；返回是否回填成功。"""
-        page = self.config_page
+        page = self.test_config_page
         config = getattr(prepared, "hardware_config", None)
         if page is None:
             return False
@@ -847,7 +847,7 @@ class ApplicationCoordinator:
 
     def run_status_changed(self, text: str) -> None:
         """把运行状态写进配置页；窗口可覆盖此方法改变展示位置。"""
-        page = self.config_page
+        page = self.test_config_page
         if page is not None:
             page.set_run_status(text)
 
@@ -859,7 +859,7 @@ class ApplicationCoordinator:
             plan = getattr(configuration, "test_plan", None)
             if plan is not None:
                 return bool(getattr(plan, "driver_enabled", False))
-        page = self.config_page
+        page = self.test_config_page
         if page is not None:
             return bool(page.driver_mode_requested())
         return False
@@ -907,7 +907,7 @@ class ApplicationCoordinator:
 
     # ---- 仪器连接与端口生命周期 ----
 
-    def _configuration_page_is_dirty(self) -> bool:
+    def _test_config_page_is_dirty(self) -> bool:
         """配置页是否有尚未冻结为运行的修改；只用于给用户一条日志提示。
 
         连接仪器一律使用当前运行的冻结快照（步骤 5），因此界面上的改动不会生效。
@@ -915,7 +915,7 @@ class ApplicationCoordinator:
         在日志里说出来，不能静默。``is_dirty()`` 只是控件值与基线的比较，不吞异常：
         它抛错说明配置页状态已坏，应当在连接前暴露，而不是被这条提示掩盖。
         """
-        checker = getattr(self.config_page, "is_dirty", None)
+        checker = getattr(self.test_config_page, "is_dirty", None)
         if not callable(checker):
             return False
         return checker() is True
@@ -934,10 +934,10 @@ class ApplicationCoordinator:
         run = self.prepared_run
         if run is None:
             self._log(
-                "无法连接仪器: 尚未创建运行；请先在“仪器配置”页点击“完成配置并连接仪器”"
+                "无法连接仪器: 尚未创建运行；请先在“测试配置”页点击“完成配置并连接仪器”"
             )
             self._warn(
-                "仪器连接失败", "尚未创建运行：请先在“仪器配置”页完成配置并连接仪器"
+                "仪器连接失败", "尚未创建运行：请先在“测试配置”页完成配置并连接仪器"
             )
             return False
         if self.instrument_ctrl is not None:
@@ -975,18 +975,18 @@ class ApplicationCoordinator:
             return False
         if run is None:
             self._log(
-                "无法连接仪器: 尚未创建运行；请先在“仪器配置”页点击“完成配置并连接仪器”"
+                "无法连接仪器: 尚未创建运行；请先在“测试配置”页点击“完成配置并连接仪器”"
             )
             self._warn(
-                "仪器连接失败", "尚未创建运行：请先在“仪器配置”页完成配置并连接仪器"
+                "仪器连接失败", "尚未创建运行：请先在“测试配置”页完成配置并连接仪器"
             )
             return False
         self._log(
             f"使用已冻结的运行配置连接仪器: {getattr(run, 'run_id', run)}"
         )
-        if self._configuration_page_is_dirty():
+        if self._test_config_page_is_dirty():
             self._log(
-                "注意：仪器配置页存在尚未创建运行的修改；本次连接仍使用运行 "
+                "注意：测试配置页存在尚未创建运行的修改；本次连接仍使用运行 "
                 f"{getattr(run, 'run_id', run)} 的冻结快照，"
                 "若要应用修改请重新“完成配置并连接仪器”"
             )
@@ -1212,7 +1212,7 @@ class ApplicationCoordinator:
 
 __all__ = [
     "ApplicationCoordinator",
-    "ConfigurationPagePort",
+    "TestConfigurationPagePort",
     "RunFlowState",
     "close_instrument_port",
     "describe_cleanup_errors",

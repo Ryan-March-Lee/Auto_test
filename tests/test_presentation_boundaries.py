@@ -89,7 +89,7 @@ CONFIGURATION_BUSINESS_IMPORT_BASELINE = {
             "ConfigurationEditingDocument",
         },
     },
-    "configuration_page.py": {
+    "test_configuration_page.py": {
         "application.device_binding": {"ApplyDeviceSelectionRequest"},
     },
     "config_power_section.py": {},
@@ -109,7 +109,7 @@ CONFIGURATION_BUSINESS_IMPORT_BASELINE = {
 # 可以导入页面类型；其他页面必须通过窄接口/端口拿依赖，不能持有另一个页面实例。
 REGISTERED_PAGE_MODULES = frozenset(
     {
-        "configuration_page",
+        "test_configuration_page",
         "power_configuration_page",
         "instrument_setup_page",
         "rack_overview_page",
@@ -148,13 +148,13 @@ PAGE_CONTEXT_FIELDS = (
 # 阶段五：运行流程入口的长期基线。
 #
 # 阶段一删除了“先创建运行、再单独连接”的旧用户入口：设备发现页的“连接仪器”按钮、
-# 参数页的 ``request_connect``，以及窗口里的旧连接接线。旧入口名称与 AST 扫描规则
+# 测试配置页的 ``request_connect``，以及窗口里的旧连接接线。旧入口名称与 AST 扫描规则
 # 单源在 ``tests/support/run_flow_contract.py``；这里冻结 Qt 页面与窗口的接线。
 #
 # 文件 -> 必须具备的入口名（信号与方法都按声明名匹配）。只冻结契约与事务编排，
 # 不冻结页面外观；按钮文案由页面测试各自维护。
 FINALIZATION_ENTRY_BASELINE = {
-    "configuration_page.py": (
+    "test_configuration_page.py": (
         "finalize_run_requested",
         "set_finalizing",
         "set_reconnect_required",
@@ -381,7 +381,7 @@ def _page_constructor_violations(page_class, page_names):
 
 
 def _imported_page_modules(tree):
-    """返回模块导入的已登记页面模块，例如 ``presentation.qt.configuration_page``。"""
+    """返回模块导入的已登记页面模块，例如 ``presentation.qt.test_configuration_page``。"""
     imported = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -716,13 +716,13 @@ class LongTermChangeBoundaryTests(unittest.TestCase):
 
     def test_page_import_scan_detects_relative_and_absolute_forms(self):
         tree = ast.parse(
-            "from .configuration_page import ConfigurationPage\n"
+            "from .test_configuration_page import TestConfigurationPage\n"
             "import presentation.qt.instrument_setup_page\n"
         )
         self.assertEqual(
             _imported_page_modules(tree),
             {
-                "presentation.qt.configuration_page",
+                "presentation.qt.test_configuration_page",
                 "presentation.qt.instrument_setup_page",
             },
         )
@@ -761,19 +761,19 @@ class LongTermChangeBoundaryTests(unittest.TestCase):
         """门禁自身要能识别 *args/**kwargs、页面类型注解与页面实例参数。"""
         tree = ast.parse(
             "class DemoPage:\n"
-            "    def __init__(self, config_page, parent=None, **options):\n"
+            "    def __init__(self, test_config_page, parent=None, **options):\n"
             "        pass\n"
             "class TypedPage:\n"
-            "    def __init__(self, other: 'ConfigurationPage') -> None:\n"
+            "    def __init__(self, other: 'TestConfigurationPage') -> None:\n"
             "        pass\n"
             "class NarrowPage:\n"
             "    def __init__(self, *, port, parent=None):\n"
             "        pass\n"
             "class DefaultPage:\n"
-            "    def __init__(self, factory=ConfigurationPage):\n"
+            "    def __init__(self, factory=TestConfigurationPage):\n"
             "        pass\n"
         )
-        names = {"ConfigurationPage"}
+        names = {"TestConfigurationPage"}
         demo = _page_constructor_violations(tree.body[0], names)
         typed = _page_constructor_violations(tree.body[1], names)
         narrow = _page_constructor_violations(tree.body[2], names)
@@ -782,10 +782,10 @@ class LongTermChangeBoundaryTests(unittest.TestCase):
             any("**kwargs" in violation for violation in demo), demo
         )
         self.assertTrue(
-            any("config_page" in violation for violation in demo), demo
+            any("test_config_page" in violation for violation in demo), demo
         )
         self.assertTrue(
-            any("ConfigurationPage" in violation for violation in typed), typed
+            any("TestConfigurationPage" in violation for violation in typed), typed
         )
         self.assertTrue(any("factory" in violation for violation in defaulted), defaulted)
         self.assertEqual(narrow, [])
@@ -833,7 +833,7 @@ class RunFlowEntryBoundaryTests(unittest.TestCase):
         self.assertEqual(
             offenders,
             [],
-            "设备发现页的连接按钮与参数页的独立连接入口已在阶段一删除，不得以属性、"
+            "设备发现页的连接按钮与测试配置页的独立连接入口已在阶段一删除，不得以属性、"
             "名字或字符串访问回到生产 Qt 代码: " + ", ".join(offenders),
         )
 
@@ -880,11 +880,11 @@ class RunFlowEntryBoundaryTests(unittest.TestCase):
         )
 
     def test_page_requests_finalization_only_through_its_signal(self):
-        """参数页不直接调用协调器：最终动作只经页面自己的信号交给窗口。"""
-        page = function_definitions(_tree(QT_ROOT / "configuration_page.py"))
+        """测试配置页不直接调用协调器：最终动作只经页面自己的信号交给窗口。"""
+        page = function_definitions(_tree(QT_ROOT / "test_configuration_page.py"))
         request = page.get("request_finalize_run")
         self.assertIsNotNone(
-            request, "参数页必须保留唯一的最终动作请求入口 request_finalize_run"
+            request, "测试配置页必须保留唯一的最终动作请求入口 request_finalize_run"
         )
         self.assertIn(
             "finalize_run_requested",

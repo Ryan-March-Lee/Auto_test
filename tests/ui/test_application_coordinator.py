@@ -5,7 +5,7 @@
 1. 端口清理结果必须结构化：``close_all()`` 返回的错误列表不能被当成成功，
    失败端口进入未决清理清单（引用不丢）并可重试。
 2. 运行切换只有在旧端口确实释放后才提交；否则保持当前运行不变并明确告警。
-3. 协调器只通过 ``ConfigurationPagePort`` 与配置页交互，不读取控件；
+3. 协调器只通过 ``TestConfigurationPagePort`` 与配置页交互，不读取控件；
    缺少用户可见反馈回调时在构造阶段失败，不允许失败路径静默。
 """
 
@@ -21,7 +21,7 @@ from unittest.mock import MagicMock, patch
 from domain.run.models import RunStatus, default_manifest
 from presentation.qt.application_coordinator import (
     ApplicationCoordinator,
-    ConfigurationPagePort,
+    TestConfigurationPagePort,
     RunFlowState,
     close_instrument_port,
     describe_cleanup_errors,
@@ -173,7 +173,7 @@ def _coordinator(*, page=None, controller=None, service=None, **overrides):
         **overrides,
     )
     if page is not None:
-        coordinator.bind_config_page(page)
+        coordinator.bind_test_config_page(page)
     coordinator.messages = messages
     coordinator.warnings = warnings
     coordinator.errors = errors
@@ -718,7 +718,7 @@ class FinalizationTransactionTests(unittest.TestCase):
 
     def test_pending_run_is_invisible_to_measurement_pages(self):
         coordinator = self._finalization_coordinator()
-        coordinator.config_page = _Page()
+        coordinator.test_config_page = _Page()
         coordinator._pending_run = _prepared_run()
         coordinator.instrument_ctrl = _OkPort()
 
@@ -814,23 +814,23 @@ class ConfigurationPagePortTests(unittest.TestCase):
         coordinator = _coordinator()
 
         with self.assertRaises(TypeError) as raised:
-            coordinator.bind_config_page(SimpleNamespace(validate=lambda: True))
+            coordinator.bind_test_config_page(SimpleNamespace(validate=lambda: True))
 
         message = str(raised.exception)
         for name in ("build_config", "apply_config", "set_run_status", "driver_mode_requested"):
             self.assertIn(name, message)
 
-    def test_real_config_page_satisfies_the_port(self):
+    def test_real_test_config_page_satisfies_the_port(self):
         import os
 
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         from PySide6.QtWidgets import QApplication
 
-        from presentation.qt.configuration_page import ConfigurationPage
+        from presentation.qt.test_configuration_page import TestConfigurationPage
 
         self.assertIsNotNone(QApplication.instance() or QApplication([]))
-        page = ConfigurationPage({})
-        self.assertIsInstance(page, ConfigurationPagePort)
+        page = TestConfigurationPage({})
+        self.assertIsInstance(page, TestConfigurationPagePort)
 
     def test_building_configuration_requires_a_bound_page(self):
         coordinator = _coordinator()
@@ -888,7 +888,7 @@ class ConfigurationPagePortTests(unittest.TestCase):
 
         self.assertFalse(coordinator.apply_run_configuration(prepared))
 
-        # 参数页先回填了新配置，随后电源页失败：参数页必须回到调用前的读数。
+        # 测试配置页先回填了新配置，随后电源页失败：测试配置页必须回到调用前的读数。
         self.assertEqual(
             page.applied, [{"test_frequencies": [1.0]}, {}]
         )

@@ -7,7 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
 
 from presentation.qt.pages import BasePage, PageProtocol
-from presentation.qt.configuration_page import ConfigurationPage
+from presentation.qt.test_configuration_page import TestConfigurationPage
 
 
 class _Signal:
@@ -64,7 +64,7 @@ class PageContractTests(unittest.TestCase):
         cls.application = QApplication.instance() or QApplication([])
 
     def test_config_page_implements_page_lifecycle_hooks(self):
-        page = ConfigurationPage({})
+        page = TestConfigurationPage({})
 
         self.assertIsInstance(page, PageProtocol)
         page.on_activated()

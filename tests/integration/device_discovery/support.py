@@ -22,7 +22,7 @@ from infrastructure.discovery.instrument_discovery import (
 )
 from infrastructure.discovery.simulated_network import demo_idn_responses
 from infrastructure.persistence.instrument_registry import InstrumentRegistry
-from presentation.qt.configuration_page import ConfigurationPage
+from presentation.qt.test_configuration_page import TestConfigurationPage
 from presentation.qt.configuration_session import ConfigurationSession
 from presentation.qt.instrument_setup_page import InstrumentSetupPage
 from presentation.qt.instrument_discovery_panel import InstrumentDiscoveryPanel
@@ -245,7 +245,7 @@ class InstrumentSetupPageTestCase(unittest.TestCase):
             if config is not None
             else {"test_frequencies": [1.0], "instruments": {"power_supplies": {}}}
         )
-        page = ConfigurationPage(config)
+        page = TestConfigurationPage(config)
         # 步骤 12/13：电源控件在独立页；绑定写入后窗口会把结果同步给电源页，
         # 这里用同样的接线让测试覆盖真实的两页协作。
         power_page = PowerConfigurationPage(config)

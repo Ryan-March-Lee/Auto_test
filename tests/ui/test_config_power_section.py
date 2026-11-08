@@ -22,7 +22,7 @@ from presentation.qt import config_power_section as section
 from presentation.qt.config_power_section import PowerFormSection
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-PAGE_SOURCE = PROJECT_ROOT / "presentation" / "qt" / "configuration_page.py"
+PAGE_SOURCE = PROJECT_ROOT / "presentation" / "qt" / "test_configuration_page.py"
 POWER_PAGE_SOURCE = (
     PROJECT_ROOT / "presentation" / "qt" / "power_configuration_page.py"
 )
@@ -31,7 +31,7 @@ CARD_SOURCE = PROJECT_ROOT / "presentation" / "qt" / "power_card.py"
 WALL_SOURCE = PROJECT_ROOT / "presentation" / "qt" / "power_card_wall.py"
 
 
-def _page_class(tree, name: str = "ConfigurationPage") -> ast.ClassDef:
+def _page_class(tree, name: str = "TestConfigurationPage") -> ast.ClassDef:
     return next(
         node
         for node in tree.body

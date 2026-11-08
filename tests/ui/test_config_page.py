@@ -6,7 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication, QLabel
 
 from application.device_binding import ApplyDeviceSelectionRequest
-from presentation.qt.configuration_page import ConfigurationPage
+from presentation.qt.test_configuration_page import TestConfigurationPage
 
 
 def apply_devices(page, assignments):
@@ -24,7 +24,7 @@ class ConfigurationPageTests(unittest.TestCase):
     def make_page(self, **extra):
         config = {"test_frequencies": [1.0], "instruments": {"power_supplies": {}}}
         config.update(extra)
-        page = ConfigurationPage(config)
+        page = TestConfigurationPage(config)
         page.show()
         self.app.processEvents()
         return page
@@ -120,7 +120,7 @@ class ConfigurationPageTests(unittest.TestCase):
             "driver_mode": {"enabled": None},
             "instruments": {"power_supplies": {}},
         }
-        constructed = ConfigurationPage(document)
+        constructed = TestConfigurationPage(document)
         page = self.make_page()
 
         page.apply_config(document)
@@ -163,7 +163,7 @@ class ConfigurationPageTests(unittest.TestCase):
         self.assertIn("有限数值", "；".join(failures))
 
     def test_power_controls_live_on_the_independent_page(self):
-        """步骤 12：电源控件与上电计划不再由参数配置页创建或读取。"""
+        """步骤 12：电源控件与上电计划不再由测试配置页创建或读取。"""
         page = self.make_page()
         for name in (
             "power_section",
@@ -177,7 +177,7 @@ class ConfigurationPageTests(unittest.TestCase):
 
     def test_validation_does_not_report_power_section_errors_owned_by_the_power_page(self):
         """正式校验按页面归属拆分：供电分配/计划/漏极的问题归独立电源页。"""
-        page = ConfigurationPage(
+        page = TestConfigurationPage(
             {
                 "test_frequencies": [2.4],
                 "signal_source": {"start_power": -10.0, "stop_power": 0.0, "step": 1.0},
@@ -217,7 +217,7 @@ class ConfigurationPageTests(unittest.TestCase):
                         }
                     },
                 },
-                # 引用一台没有已应用设备的电源：这是电源页的问题，不应由参数页报告。
+                # 引用一台没有已应用设备的电源：这是电源页的问题，不应由测试配置页报告。
                 "power_supply_assignment": {
                     "dut_amplifier": {
                         "power_plan": {
@@ -241,7 +241,7 @@ class ConfigurationPageTests(unittest.TestCase):
         self.assertEqual(failures, [])
 
     def test_validation_still_reports_parameter_errors_on_the_parameter_page(self):
-        page = ConfigurationPage({"test_frequencies": [], "instruments": {}})
+        page = TestConfigurationPage({"test_frequencies": [], "instruments": {}})
         page.show()
         self.app.processEvents()
         failures = []
@@ -253,7 +253,7 @@ class ConfigurationPageTests(unittest.TestCase):
         self.assertIn("频率", failures[0])
 
     def test_build_config_keeps_the_power_section_owned_by_the_other_page(self):
-        """参数页只读测试参数；电源字段由独立电源页提交，不被本页清空。"""
+        """测试配置页只读测试参数；电源字段由独立电源页提交，不被本页清空。"""
         assignment = {
             "dut_amplifier": {
                 "power_plan": {
@@ -296,7 +296,7 @@ class ConfigurationPageTests(unittest.TestCase):
             "test_frequencies": [4.0, 4.4, 4.8, 5.2, 5.6, 5.8],
             "instruments": {"power_supplies": {}},
         }
-        page = ConfigurationPage(config)
+        page = TestConfigurationPage(config)
         page.show()
         self.app.processEvents()
 
@@ -597,7 +597,7 @@ class ConfigurationPageViewModelTests(unittest.TestCase):
     def make_page(self, **extra):
         config = {"test_frequencies": [1.0], "instruments": {"power_supplies": {}}}
         config.update(extra)
-        page = ConfigurationPage(config)
+        page = TestConfigurationPage(config)
         page.show()
         self.app.processEvents()
         return page

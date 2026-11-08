@@ -1,7 +1,7 @@
 """阶段五：运行流程契约的测试单源。
 
 ``tests/test_static_quality_gate.py`` 与 ``tests/test_presentation_boundaries.py``
-共同约束“仪表配置 → 参数配置 → 完成配置并连接仪器”这一条路径。两个门禁需要同一份
+共同约束“仪表配置 → 测试配置 → 完成配置并连接仪器”这一条路径。两个门禁需要同一份
 旧入口名称、最终化节点和 AST 扫描规则；放在这里单源维护，避免只更新一个文件后另一个
 继续按旧清单通过。
 
@@ -17,7 +17,7 @@ from pathlib import Path
 #: 阶段一删除、永远不得复用的旧运行流程入口。
 #:
 #: 这些名字横跨设备发现页的“连接仪器”按钮（``connect_btn`` /
-#: ``connect_requested``）、参数页的独立连接入口（``request_connect``）、窗口旧连接槽
+#: ``connect_requested``）、测试配置页的独立连接入口（``request_connect``）、窗口旧连接槽
 #: （``_set_connect_enabled``），以及后来改名为 ``finalize_run_requested`` 的旧创建
 #: 运行信号（``create_run_requested``）。删除后不许以属性、裸名字、声明名或字符串
 #: 名字回到正式运行代码。

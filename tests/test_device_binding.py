@@ -312,13 +312,13 @@ class PresentationDelegationTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        source_path = ROOT / "presentation" / "qt" / "configuration_page.py"
+        source_path = ROOT / "presentation" / "qt" / "test_configuration_page.py"
         cls.source = source_path.read_text(encoding="utf-8-sig")
         cls.tree = ast.parse(cls.source)
         cls.page = next(
             node
             for node in cls.tree.body
-            if isinstance(node, ast.ClassDef) and node.name == "ConfigurationPage"
+            if isinstance(node, ast.ClassDef) and node.name == "TestConfigurationPage"
         )
         cls.method = next(
             node

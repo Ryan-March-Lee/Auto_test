@@ -154,15 +154,15 @@ class ConfigurationSessionTests(unittest.TestCase):
 class ConfigurationSessionBoundaryTests(unittest.TestCase):
     """静态边界：会话只认 Protocol，不绑具体页面或 Qt 类型。"""
 
-    def test_module_has_no_qt_or_config_page_dependency(self):
+    def test_module_has_no_qt_or_test_config_page_dependency(self):
         source = (
             ROOT / "presentation" / "qt" / "configuration_session.py"
         ).read_text(encoding="utf-8-sig")
 
         self.assertNotIn("from PySide6", source)
         self.assertNotIn("import PySide6", source)
-        self.assertNotIn("from .config_page", source)
-        self.assertNotIn("config_page.", source)
+        self.assertNotIn("from .test_configuration_page", source)
+        self.assertNotIn("test_config_page.", source)
 
 
 if __name__ == "__main__":

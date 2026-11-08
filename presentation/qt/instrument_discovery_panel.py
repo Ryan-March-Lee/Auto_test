@@ -2263,7 +2263,7 @@ class InstrumentDiscoveryPanel(QWidget):
     def has_selectable_devices(self) -> bool:
         """本次结果里是否有可应用的设备（身份可解析且设备表登记了角色）。
 
-        页面用它决定“下一步”是否出现：没有可勾选的设备时，进入参数配置没有意义。
+        页面用它决定“下一步”是否出现：没有可勾选的设备时，进入测试配置没有意义。
         """
         return any(row["card"].checkable for row in self._rows)
 

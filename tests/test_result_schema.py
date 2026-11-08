@@ -43,7 +43,30 @@ def _driver_document(**overrides):
         "run_id": "driver-run",
         "measurement_type": "driver_power_mapping",
         "status": "completed",
-        "power_mapping": {"1.0": {"-40.0": 5.0, "-30.0": 15.0}},
+        "schema_version": "2.0",
+        "raw_points": {
+            "1.0": [
+                {
+                    "source_power_dbm": -40.0,
+                    "driver_output_power_dbm": 5.0,
+                    "gain_db": 45.0,
+                },
+                {
+                    "source_power_dbm": -30.0,
+                    "driver_output_power_dbm": 15.0,
+                    "gain_db": 45.0,
+                },
+            ]
+        },
+        "target_mapping": {
+            "1.0": [
+                {
+                    "target_input_power_dbm": 0.0,
+                    "source_power_dbm": -30.0,
+                    "driver_output_power_dbm": 0.0,
+                }
+            ]
+        },
     }
     document.update(overrides)
     return document
@@ -93,11 +116,15 @@ class FormalResultDocumentTests(unittest.TestCase):
         result = measurement_result_from_document(_driver_document())
 
         self.assertIsInstance(result, DriverPowerMappingMeasurementResult)
-        self.assertEqual(len(result.points), 2)
-        self.assertEqual(result.points[0].input_power_dbm, -40.0)
-        self.assertEqual(result.points[0].output_power_dbm, 5.0)
+        self.assertEqual(len(result.raw_points), 2)
+        self.assertEqual(result.raw_points[0].source_power_dbm, -40.0)
+        self.assertEqual(result.raw_points[0].driver_output_power_dbm, 5.0)
+        self.assertEqual(result.raw_points[0].gain_db, 45.0)
+        self.assertEqual(len(result.target_points), 1)
+        self.assertEqual(result.target_points[0].target_input_power_dbm, 0.0)
+        self.assertEqual(result.target_points[0].source_power_dbm, -30.0)
         self.assertEqual(
-            result.sweep_rows()["1.0"][1]["gain"], 15.0 - (-30.0)
+            result.sweep_rows()["1.0"][1]["gain"], 45.0
         )
 
     def test_amplifier_document_reads_columnar_sweep_data(self):
@@ -213,7 +240,17 @@ class NonFormalResultRejectionTests(unittest.TestCase):
     def test_non_finite_numbers_are_rejected(self):
         with self.assertRaises(ValueError):
             measurement_result_from_document(
-                _driver_document(power_mapping={"1.0": {"-40.0": float("nan")}})
+                _driver_document(
+                    raw_points={
+                        "1.0": [
+                            {
+                                "source_power_dbm": -40.0,
+                                "driver_output_power_dbm": float("nan"),
+                                "gain_db": 45.0,
+                            }
+                        ]
+                    }
+                )
             )
         with self.assertRaises(ValueError):
             measurement_result_from_document(
@@ -223,7 +260,17 @@ class NonFormalResultRejectionTests(unittest.TestCase):
     def test_invalid_frequency_key_is_rejected(self):
         for document in (
             _cable_document(cable_losses={"invalid": {"cable1": 1.0}}),
-            _driver_document(power_mapping={"invalid": {"-40.0": 5.0}}),
+            _driver_document(
+                raw_points={
+                    "invalid": [
+                        {
+                            "source_power_dbm": -40.0,
+                            "driver_output_power_dbm": 5.0,
+                            "gain_db": 45.0,
+                        }
+                    ]
+                }
+            ),
             _amplifier_document(results={"invalid": {"sweep_data": {"gain": [1.0]}}}),
         ):
             with self.subTest(document=document["measurement_type"]):
@@ -241,12 +288,17 @@ class NonFormalResultRejectionTests(unittest.TestCase):
                 self.assertEqual(result.points[0].frequency_ghz, key)
                 self.assertEqual(result.to_dict()["cable_losses"], {key: {"cable1": 1.0}})
 
-    def test_driver_mapping_legacy_object_shape_is_rejected(self):
-        with self.assertRaises(ValueError):
+    def test_driver_mapping_legacy_power_mapping_is_rejected_with_migration_hint(self):
+        with self.assertRaisesRegex(ValueError, "power_mapping"):
             measurement_result_from_document(
-                _driver_document(
-                    power_mapping={"1.0": {"input_power": 0.0, "output_power": 10.0}}
-                )
+                {
+                    "run_id": "driver-run",
+                    "measurement_type": "driver_power_mapping",
+                    "status": "completed",
+                    "schema_version": "2.0",
+                    "power_mapping": {"1.0": {"-40.0": 5.0}},
+                    "target_mapping": {},
+                }
             )
 
     def test_non_mapping_document_is_rejected(self):

@@ -25,7 +25,11 @@ from app.gui_runtime import (
     create_cable_loss_measurement,
     prepare_configuration,
 )
-from application.dto import AmplifierMeasurementRequest
+from application.dto import (
+    AmplifierMeasurementRequest,
+    DriverMappingRawPoint,
+    DriverPowerMappingMeasurementResult,
+)
 from application.inputs import ResultInputReader
 from application.measurements import AmplifierCalibrationError, AmplifierMeasurementUseCase
 from application.measurements.amplifier_test import AMPLIFIER_SPLIT_SCHEMA_VERSION
@@ -230,10 +234,22 @@ class AmplifierRunStageTests(unittest.TestCase):
 
     def _complete_driver_mapping(self, run_id=RUN_ID, *, mapping=POWER_MAPPING):
         recorder = RunStageRecorder(self.repository, run_id)
+        result = DriverPowerMappingMeasurementResult(
+            run_id=run_id,
+            raw_points=tuple(
+                DriverMappingRawPoint(
+                    frequency_ghz=frequency,
+                    source_power_dbm=float(source),
+                    driver_output_power_dbm=float(output),
+                )
+                for frequency, bucket in mapping.items()
+                for source, output in bucket.items()
+            ),
+        )
         recorder.start(STAGE_DRIVER_MAPPING, now=CREATED_AT)
         recorder.complete(
             STAGE_DRIVER_MAPPING,
-            {"run_id": run_id, "power_mapping": mapping},
+            result.to_dict(),
             now=CREATED_AT,
         )
         return recorder

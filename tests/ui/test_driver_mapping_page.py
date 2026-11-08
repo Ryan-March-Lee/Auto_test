@@ -5,7 +5,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QDialog, QWidget
 
-from application.dto import DriverPowerMappingMeasurementResult, DriverPowerPoint
+from application.dto import DriverMappingRawPoint, DriverPowerMappingMeasurementResult
 from presentation.qt.driver_mapping_page import DriverMappingPage
 from presentation.qt.measurement_controller_contract import MeasurementCommand
 from presentation.qt.measurement_controls import MeasurementAction
@@ -165,11 +165,11 @@ class DriverMappingPageTests(unittest.TestCase):
                 "value": DriverPowerMappingMeasurementResult(
                     run_id="run-driver",
                     status=MeasurementStatus.COMPLETED,
-                    points=(
-                        DriverPowerPoint(
+                    raw_points=(
+                        DriverMappingRawPoint(
                             frequency_ghz="3.0",
-                            input_power_dbm=-8.0,
-                            output_power_dbm=4.0,
+                            source_power_dbm=-8.0,
+                            driver_output_power_dbm=4.0,
                         ),
                     ),
                 ),

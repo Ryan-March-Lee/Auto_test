@@ -6,8 +6,8 @@ from application.dto import (
     AmplifierMeasurementResult,
     CableLossMeasurementResult,
     CableLossRow,
+    DriverMappingRawPoint,
     DriverPowerMappingMeasurementResult,
-    DriverPowerPoint,
     MeasurementResult,
 )
 from domain.models import (
@@ -72,7 +72,13 @@ class Stage1ProtocolTests(unittest.TestCase):
         )
         driver = DriverPowerMappingMeasurementResult(
             run_id="run-1",
-            points=(DriverPowerPoint(frequency_ghz="1.0", input_power_dbm=0.0, output_power_dbm=19.0),),
+            raw_points=(
+                DriverMappingRawPoint(
+                    frequency_ghz="1.0",
+                    source_power_dbm=0.0,
+                    driver_output_power_dbm=19.0,
+                ),
+            ),
         )
         amplifier = AmplifierMeasurementResult(
             run_id="run-1",
@@ -85,7 +91,7 @@ class Stage1ProtocolTests(unittest.TestCase):
             ),
         )
         self.assertEqual(cable.to_dict()["measurement_type"], "cable_loss")
-        self.assertEqual(driver.points[0].output_power_dbm, 19.0)
+        self.assertEqual(driver.raw_points[0].driver_output_power_dbm, 19.0)
         self.assertEqual(amplifier.sweep_rows()["1.0"][0]["efficiency"], 50.0)
         self.assertIsInstance(cable, MeasurementResult)
 

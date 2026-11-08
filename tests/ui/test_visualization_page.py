@@ -18,7 +18,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from application.dto import (
     AmplifierFrequencyResult,
     AmplifierMeasurementResult,
-    DriverPowerPoint,
+    DriverMappingRawPoint,
     DriverPowerMappingMeasurementResult,
 )
 from application.dto.export_requests import ExportFormat, ExportOutcome
@@ -50,9 +50,9 @@ def _amplifier_result() -> AmplifierMeasurementResult:
 def _driver_result() -> DriverPowerMappingMeasurementResult:
     return DriverPowerMappingMeasurementResult(
         run_id=RUN_ID,
-        points=(
-            DriverPowerPoint(
-                frequency_ghz="4.8", input_power_dbm=-20.0, output_power_dbm=-10.0
+        raw_points=(
+            DriverMappingRawPoint(
+                frequency_ghz="4.8", source_power_dbm=-20.0, driver_output_power_dbm=-10.0
             ),
         ),
     )

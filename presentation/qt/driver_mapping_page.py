@@ -195,10 +195,10 @@ class DriverMappingPage(
             rows = (
                 {
                     "frequency": point.frequency_ghz,
-                    "input_power": point.input_power_dbm,
-                    "output_power": point.output_power_dbm,
+                    "input_power": point.source_power_dbm,
+                    "output_power": point.driver_output_power_dbm,
                 }
-                for point in value.points
+                for point in value.raw_points
             )
         else:
             self._error_callback("驱动映射测量结果不是正式结果模型，无法显示")

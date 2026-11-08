@@ -13,8 +13,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from application.dto import (
     AmplifierFrequencyResult,
     AmplifierMeasurementResult,
+    DriverMappingRawPoint,
     DriverPowerMappingMeasurementResult,
-    DriverPowerPoint,
     MeasurementResult,
     MeasurementType,
     measurement_result_from_document,
@@ -63,9 +63,9 @@ def _amplifier_result() -> AmplifierMeasurementResult:
 def _driver_result() -> DriverPowerMappingMeasurementResult:
     return DriverPowerMappingMeasurementResult(
         run_id="viz-run",
-        points=(
-            DriverPowerPoint(frequency_ghz="4.8", input_power_dbm=-20.0, output_power_dbm=-10.0),
-            DriverPowerPoint(frequency_ghz="4.8", input_power_dbm=-10.0, output_power_dbm=1.0),
+        raw_points=(
+            DriverMappingRawPoint(frequency_ghz="4.8", source_power_dbm=-20.0, driver_output_power_dbm=-10.0),
+            DriverMappingRawPoint(frequency_ghz="4.8", source_power_dbm=-10.0, driver_output_power_dbm=1.0),
         ),
     )
 

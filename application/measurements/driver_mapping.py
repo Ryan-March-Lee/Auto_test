@@ -99,7 +99,7 @@ class DriverPowerMappingUseCase:
                 payload,
                 run_id=self.run_id,
             )
-            self.power_mapping = result.power_mapping()
+            self.power_mapping = result.raw_mapping()
             result = self._save(result)
             self.last_result = result
             return result
@@ -131,7 +131,7 @@ class DriverPowerMappingUseCase:
                 status=MeasurementStatus.CANCELLED,
                 termination={"intent": "stop", "reason": reason or "用户停止"},
             )
-            if not result.points:
+            if not result.raw_points:
                 logger.info("停止时没有完整的驱动映射频点，未保存部分结果")
                 return
             reference = self.stage_recorder.save_partial(

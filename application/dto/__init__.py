@@ -21,13 +21,15 @@ from .measurement_requests import (
 )
 from .export_requests import ExportFormat, ExportOutcome, ExportRequest
 from .measurement_results import (
+    DRIVER_MAPPING_SCHEMA_VERSION,
     AmplifierCompressionPoint,
     AmplifierFrequencyResult,
     AmplifierMeasurementResult,
     CableLossMeasurementResult,
     CableLossRow,
+    DriverMappingRawPoint,
+    DriverMappingTargetPoint,
     DriverPowerMappingMeasurementResult,
-    DriverPowerPoint,
     MeasurementResult,
     MeasurementStatus,
     MeasurementType,
@@ -63,7 +65,9 @@ __all__ = [
     "DriverPowerMappingMeasurementResult",
     "AmplifierMeasurementResult",
     "CableLossRow",
-    "DriverPowerPoint",
+    "DriverMappingRawPoint",
+    "DriverMappingTargetPoint",
+    "DRIVER_MAPPING_SCHEMA_VERSION",
     "AmplifierCompressionPoint",
     "AmplifierFrequencyResult",
     "measurement_result_from_document",

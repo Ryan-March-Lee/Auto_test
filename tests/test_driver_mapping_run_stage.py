@@ -241,7 +241,9 @@ class DriverMappingRunStageTests(unittest.TestCase):
         self.assertTrue(result_path.is_file())
         payload = json.loads(result_path.read_text(encoding="utf-8"))
         self.assertEqual(payload["run_id"], RUN_ID)
-        self.assertIn("power_mapping", payload)
+        self.assertIn("raw_points", payload)
+        self.assertIn("target_mapping", payload)
+        self.assertEqual(payload["schema_version"], "2.0")
 
         manifest = self.repository.load_manifest(RUN_ID)
         self.assertEqual(manifest.status, RunStatus.RUNNING)

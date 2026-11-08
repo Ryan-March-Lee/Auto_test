@@ -3,7 +3,8 @@
 结果模型只描述正式结果：
 
 - 线损按频点保存四条线缆分摊损耗；
-- 驱动映射按频点保存“输入功率 -> 输出功率”点；
+- 驱动映射保存两层：原始“源功率 -> 补偿后输出”实测点用于审计，目标网格
+  “目标 DUT 输入 -> 反查源功率 + 插值输出”用于正式测试；
 - 主功放按频点保存压缩点、小信号增益和扫描数据。
 
 结果不继承 ``Mapping``，也不保存服务层的原始载荷。``to_dict()`` 是唯一的结果
@@ -36,6 +37,11 @@ from types import MappingProxyType
 from typing import Any
 
 from domain.measurement.values import CableLossProfile, Frequency
+
+
+# 驱动映射结果的双层契约版本：原始实测点与目标网格分别序列化。
+# 旧 ``power_mapping``（输入 -> 输出）文档没有这个版本，不能作为目标网格读取。
+DRIVER_MAPPING_SCHEMA_VERSION = "2.0"
 
 
 class MeasurementType(str, Enum):
@@ -148,19 +154,71 @@ class CableLossRow:
 
 
 @dataclass(frozen=True)
-class DriverPowerPoint:
-    """单个驱动映射点：信号源输入功率到 DUT 补偿后输出功率。"""
+class DriverMappingRawPoint:
+    """驱动映射原始实测点：信号源输出功率 -> 驱放补偿后输出功率。
+
+    原始点只描述实际测量结果，是映射审计依据；正式测试不使用它直接当作目标输入。
+    ``gain_db`` 是补偿后输出与源功率之差。构造时可以省略（按两端功率计算），但正式
+    结果文档必须显式保存该字段，读取时也会校验它与两端功率一致。
+    """
 
     frequency_ghz: str
-    input_power_dbm: float
-    output_power_dbm: float
+    source_power_dbm: float
+    driver_output_power_dbm: float
+    gain_db: float | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
-            self, "frequency_ghz", _frequency_key(self.frequency_ghz, "驱动映射结果")
+            self, "frequency_ghz", _frequency_key(self.frequency_ghz, "驱动映射原始点")
         )
-        object.__setattr__(self, "input_power_dbm", _float(self.input_power_dbm, "input_power_dbm"))
-        object.__setattr__(self, "output_power_dbm", _float(self.output_power_dbm, "output_power_dbm"))
+        source = _float(self.source_power_dbm, "source_power_dbm")
+        output = _float(self.driver_output_power_dbm, "driver_output_power_dbm")
+        expected_gain = output - source
+        if self.gain_db is None:
+            gain = expected_gain
+        else:
+            gain = _float(self.gain_db, "gain_db")
+            if not math.isclose(gain, expected_gain, rel_tol=0.0, abs_tol=1e-6):
+                raise ValueError(
+                    "gain_db 必须等于补偿后输出功率减源功率："
+                    f"{gain}dB != {output}dBm - {source}dBm"
+                )
+        object.__setattr__(self, "source_power_dbm", source)
+        object.__setattr__(self, "driver_output_power_dbm", output)
+        object.__setattr__(self, "gain_db", gain)
+
+
+@dataclass(frozen=True)
+class DriverMappingTargetPoint:
+    """目标网格上的驱动映射点：目标 DUT 输入功率与正式测试采用的源/输出功率。
+
+    目标点是正式测试消费的数据：``target_input_power_dbm`` 是横向目标，
+    ``source_power_dbm`` 是反查得到的信号源设定，``driver_output_power_dbm`` 是
+    插值曲线在该源功率处的驱放输出（即正式测试采用的 ``input_power_dut``）。
+    """
+
+    frequency_ghz: str
+    target_input_power_dbm: float
+    source_power_dbm: float
+    driver_output_power_dbm: float
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "frequency_ghz", _frequency_key(self.frequency_ghz, "驱动映射目标点")
+        )
+        object.__setattr__(
+            self,
+            "target_input_power_dbm",
+            _float(self.target_input_power_dbm, "target_input_power_dbm"),
+        )
+        object.__setattr__(
+            self, "source_power_dbm", _float(self.source_power_dbm, "source_power_dbm")
+        )
+        object.__setattr__(
+            self,
+            "driver_output_power_dbm",
+            _float(self.driver_output_power_dbm, "driver_output_power_dbm"),
+        )
 
 
 @dataclass(frozen=True)
@@ -450,10 +508,19 @@ class CableLossMeasurementResult(MeasurementResult):
 
 @dataclass(frozen=True, kw_only=True)
 class DriverPowerMappingMeasurementResult(MeasurementResult):
-    """驱动映射结果：每个频点的输入功率到补偿后输出功率。"""
+    """驱动映射结果：原始实测点与目标网格映射的双层契约。
+
+    - ``raw_points`` 保存实际扫描到的“源功率 -> 补偿后驱放输出”，是审计依据；
+    - ``target_points`` 保存正式测试目标输入功率、反查源功率和插值输出功率；
+      映射阶段尚未生成目标表时允许为空，但字段本身必须在结果文档中存在。
+
+    两类点不能互相替代：旧 ``power_mapping``（输入 -> 输出）字典不是目标网格，
+    读取正式文档时会明确拒绝。
+    """
 
     measurement_type: MeasurementType | str = MeasurementType.DRIVER_POWER_MAPPING
-    points: tuple[DriverPowerPoint, ...] = ()
+    raw_points: tuple[DriverMappingRawPoint, ...] = ()
+    target_points: tuple[DriverMappingTargetPoint, ...] = ()
 
     @property
     def is_formal_result(self) -> bool:
@@ -465,7 +532,24 @@ class DriverPowerMappingMeasurementResult(MeasurementResult):
             raise ValueError(
                 "DriverPowerMappingMeasurementResult 的 measurement_type 必须为 driver_power_mapping"
             )
-        object.__setattr__(self, "points", _rows(self.points, DriverPowerPoint, "points"))
+        raw_points = _rows(self.raw_points, DriverMappingRawPoint, "raw_points")
+        target_points = _rows(
+            self.target_points, DriverMappingTargetPoint, "target_points"
+        )
+        _validate_unique_driver_values(
+            raw_points, "source_power_dbm", "驱动映射原始点的源功率"
+        )
+        _validate_unique_driver_values(
+            target_points, "target_input_power_dbm", "驱动映射目标点"
+        )
+        object.__setattr__(self, "raw_points", raw_points)
+        object.__setattr__(self, "target_points", target_points)
+
+    def to_dict(self) -> dict[str, Any]:
+        """返回正式文档，并显式标明双层映射契约的 schema 版本。"""
+        document = super().to_dict()
+        document["schema_version"] = DRIVER_MAPPING_SCHEMA_VERSION
+        return document
 
     @classmethod
     def from_service_payload(
@@ -478,58 +562,99 @@ class DriverPowerMappingMeasurementResult(MeasurementResult):
     ) -> "DriverPowerMappingMeasurementResult":
         if not isinstance(payload, Mapping):
             raise ValueError("驱动映射结果载荷必须是映射")
+        raw_value = payload.get("raw_points")
+        if raw_value is not None and "power_mapping" in payload:
+            raise ValueError(
+                "驱动映射服务载荷不能同时包含 raw_points 与旧 power_mapping"
+            )
+        if raw_value is not None:
+            raw_points = _raw_mapping_points(raw_value, require_gain=False)
+        else:
+            # 服务层的 ``power_mapping`` 是原始实测表（源功率 -> 补偿后输出），
+            # 只在内部载荷转换时读取；它不是正式文档的目标网格字段。
+            raw_points = _raw_points_from_power_mapping(payload.get("power_mapping"))
         return cls(
             run_id=run_id,
             status=_service_status(payload.get("status")) if status is None else status,
             termination=termination,
-            points=_power_mapping_points(payload.get("power_mapping")),
+            raw_points=raw_points,
+            target_points=_target_mapping_points(payload.get("target_mapping")),
         )
 
     @classmethod
     def from_document(
         cls, document: Mapping[str, Any], *, run_id: str
     ) -> "DriverPowerMappingMeasurementResult":
-        if "power_mapping" not in document:
-            raise ValueError("驱动映射结果文档缺少 power_mapping 字段")
+        _reject_legacy_power_mapping(document)
+        _require_driver_mapping_schema(document)
+        if "raw_points" not in document:
+            raise ValueError("驱动映射结果文档缺少 raw_points 字段")
+        if "target_mapping" not in document:
+            raise ValueError("驱动映射结果文档缺少 target_mapping 字段")
         return cls(
             run_id=run_id,
             status=_document_status(document),
-            points=_power_mapping_points(document.get("power_mapping")),
+            raw_points=_raw_mapping_points(document.get("raw_points"), require_gain=True),
+            target_points=_target_mapping_points(document.get("target_mapping")),
             created_at=_created_at(document),
             **_contract_fields(document),
         )
 
-    def power_mapping(self) -> dict[str, dict[str, float]]:
-        """按频点分组的“输入功率 -> 输出功率”表。"""
-        return self.result_document()["power_mapping"]
+    def raw_mapping(self) -> dict[str, dict[str, float]]:
+        """按频点分组的“源功率 -> 补偿后输出”审计视图。
+
+        这不是目标输入功率表；正式测试必须使用 :attr:`target_points`。
+        """
+        mapping: dict[str, dict[str, float]] = {}
+        for point in self.raw_points:
+            mapping.setdefault(point.frequency_ghz, {})[
+                str(point.source_power_dbm)
+            ] = point.driver_output_power_dbm
+        return mapping
 
     def result_document(self) -> dict[str, Any]:
-        mapping: dict[str, dict[str, float]] = {}
-        for point in self.points:
-            mapping.setdefault(point.frequency_ghz, {})[
-                str(point.input_power_dbm)
-            ] = point.output_power_dbm
-        return {"power_mapping": mapping}
+        raw_points: dict[str, list[dict[str, float]]] = {}
+        for point in self.raw_points:
+            raw_points.setdefault(point.frequency_ghz, []).append(
+                {
+                    "source_power_dbm": point.source_power_dbm,
+                    "driver_output_power_dbm": point.driver_output_power_dbm,
+                    "gain_db": point.gain_db,
+                }
+            )
+        target_mapping: dict[str, list[dict[str, float]]] = {}
+        for point in self.target_points:
+            target_mapping.setdefault(point.frequency_ghz, []).append(
+                {
+                    "target_input_power_dbm": point.target_input_power_dbm,
+                    "source_power_dbm": point.source_power_dbm,
+                    "driver_output_power_dbm": point.driver_output_power_dbm,
+                }
+            )
+        return {
+            "raw_points": raw_points,
+            "target_mapping": target_mapping,
+        }
 
     def report_rows(self) -> tuple[dict[str, Any], ...]:
         return tuple(
             {
                 "frequency_ghz": point.frequency_ghz,
-                "input_power_dbm": point.input_power_dbm,
-                "output_power_dbm": point.output_power_dbm,
-                "gain_db": point.output_power_dbm - point.input_power_dbm,
+                "source_power_dbm": point.source_power_dbm,
+                "driver_output_power_dbm": point.driver_output_power_dbm,
+                "gain_db": point.gain_db,
             }
-            for point in self.points
+            for point in self.raw_points
         )
 
     def sweep_rows(self) -> Mapping[str, tuple[dict[str, Any], ...]]:
         grouped: dict[str, list[dict[str, Any]]] = {}
-        for point in self.points:
+        for point in self.raw_points:
             grouped.setdefault(point.frequency_ghz, []).append(
                 {
-                    "input_power_sg": point.input_power_dbm,
-                    "output_power_driver": point.output_power_dbm,
-                    "gain": point.output_power_dbm - point.input_power_dbm,
+                    "input_power_sg": point.source_power_dbm,
+                    "output_power_driver": point.driver_output_power_dbm,
+                    "gain": point.gain_db,
                 }
             )
         return {frequency: tuple(rows) for frequency, rows in grouped.items()}
@@ -637,8 +762,9 @@ def measurement_result_from_document(document: Mapping[str, Any]) -> Measurement
     只接受 ``to_dict()`` 产生的正式 schema：
 
     - ``run_id``、``measurement_type``、``status`` 必须存在且有效；
-    - 测量类型必须与结果数据字段一一对应（``cable_losses`` / ``power_mapping`` /
-      ``results``），类型与数据不一致视为非正式文档；
+    - 测量类型必须与结果数据字段一一对应（``cable_losses`` / ``raw_points`` +
+      ``target_mapping`` / ``results``），类型与数据不一致视为非正式文档；
+    - 驱动映射只接受双层契约：旧 ``power_mapping`` 字典不能静默解释为目标网格；
     - 旧字段别名、``legacy_payload``、未知字段一律 ``ValueError``；
     - 写入层补充的 ``result_type`` / ``schema_version`` / ``saved_at`` 必须自洽，
       与 ``measurement_type`` 冲突时同样报错。
@@ -678,6 +804,8 @@ def measurement_result_from_document(document: Mapping[str, Any]) -> Measurement
     legacy = sorted(_LEGACY_DOCUMENT_KEYS & set(document))
     if legacy:
         raise ValueError(f"不是正式结果 schema：包含旧字段 {', '.join(legacy)}")
+    if kind is MeasurementType.DRIVER_POWER_MAPPING:
+        _reject_legacy_power_mapping(document)
     data_fields = _TYPE_ALLOWED_FIELDS[kind]
     others = sorted(
         {
@@ -747,21 +875,36 @@ _COMMON_DOCUMENT_KEYS = frozenset(
 _TYPE_REQUIRED_FIELDS: Mapping[MeasurementType, frozenset[str]] = MappingProxyType(
     {
         MeasurementType.CABLE_LOSS: frozenset({"cable_losses"}),
-        MeasurementType.DRIVER_POWER_MAPPING: frozenset({"power_mapping"}),
+        MeasurementType.DRIVER_POWER_MAPPING: frozenset(
+            {"raw_points", "target_mapping"}
+        ),
         MeasurementType.AMPLIFIER: frozenset({"results"}),
     }
 )
 _TYPE_ALLOWED_FIELDS: Mapping[MeasurementType, frozenset[str]] = MappingProxyType(
     {
         MeasurementType.CABLE_LOSS: frozenset({"attenuator_value", "cable_losses"}),
-        MeasurementType.DRIVER_POWER_MAPPING: frozenset({"power_mapping"}),
+        MeasurementType.DRIVER_POWER_MAPPING: frozenset(
+            {"raw_points", "target_mapping"}
+        ),
         MeasurementType.AMPLIFIER: frozenset({"results"}),
     }
 )
 # 结果文件由写入层补充的工件元数据；它们是正式字段，不是历史别名。
 _ARTIFACT_METADATA_KEYS = frozenset({"schema_version", "result_type", "saved_at"})
-# 正式结果文档当前唯一支持的 schema 版本。
-_SUPPORTED_RESULT_SCHEMA_VERSIONS = frozenset({"1.0"})
+# 正式结果文档支持的 schema 版本：驱动映射的双层契约单独使用 2.0，
+# 其它结果仍为 1.0，避免把旧 power_mapping 当目标网格读取。
+_SUPPORTED_RESULT_SCHEMA_VERSIONS: Mapping[MeasurementType, frozenset[str]] = (
+    MappingProxyType(
+        {
+            MeasurementType.CABLE_LOSS: frozenset({"1.0"}),
+            MeasurementType.DRIVER_POWER_MAPPING: frozenset(
+                {DRIVER_MAPPING_SCHEMA_VERSION}
+            ),
+            MeasurementType.AMPLIFIER: frozenset({"1.0"}),
+        }
+    )
+)
 # canonical model 工件（``*_model.json``）的外层结构。
 _CANONICAL_ARTIFACT_TYPE = "versioned_measurement_result"
 _CANONICAL_ARTIFACT_KEYS = frozenset(
@@ -824,15 +967,61 @@ def _validate_artifact_metadata(document: Mapping[str, Any], kind: MeasurementTy
             raise ValueError(
                 f"result_type 与 measurement_type 不一致: {label!r} != {kind.value!r}"
             )
-    if "schema_version" in document:
+    if kind is MeasurementType.DRIVER_POWER_MAPPING:
+        # 双层映射契约必须显式带版本；缺失版本就是旧的 power_mapping 文档。
+        _require_driver_mapping_schema(document)
+    elif "schema_version" in document:
         version = document.get("schema_version")
         text = str(version).strip() if version is not None else ""
-        if text not in _SUPPORTED_RESULT_SCHEMA_VERSIONS:
+        if text not in _SUPPORTED_RESULT_SCHEMA_VERSIONS[kind]:
             raise ValueError(f"不支持的测量结果 schema_version: {version!r}")
     if "saved_at" in document:
         saved_at = document.get("saved_at")
         if not isinstance(saved_at, str) or not saved_at.strip():
             raise ValueError("saved_at 必须是非空字符串")
+
+
+def _reject_legacy_power_mapping(document: Mapping[str, Any]) -> None:
+    """拒绝旧的“输入 -> 输出”字典，避免被误读成目标输入 -> 源功率。"""
+    if "power_mapping" in document:
+        raise ValueError(
+            "旧驱动映射格式 power_mapping 不包含目标输入功率网格，"
+            "不能作为新的 target_mapping（目标输入 -> 源功率）读取；"
+            "请重新执行驱动映射并保存双层映射契约（schema_version "
+            f"{DRIVER_MAPPING_SCHEMA_VERSION}）"
+        )
+
+
+def _require_driver_mapping_schema(document: Mapping[str, Any]) -> None:
+    """校验驱动映射文档的 schema 版本；缺失版本视为旧格式。"""
+    version = document.get("schema_version")
+    if version is None:
+        raise ValueError(
+            "驱动映射结果缺少 schema_version；旧 power_mapping 格式不能作为"
+            f"目标网格读取，请重新执行驱动映射（当前版本 "
+            f"{DRIVER_MAPPING_SCHEMA_VERSION}）"
+        )
+    text = str(version).strip()
+    if text != DRIVER_MAPPING_SCHEMA_VERSION:
+        raise ValueError(
+            f"不支持的驱动映射结果 schema_version: {version!r}；"
+            f"当前只接受 {DRIVER_MAPPING_SCHEMA_VERSION}，"
+            "旧映射请重新执行驱动映射"
+        )
+
+
+def _validate_unique_driver_values(
+    points: tuple[Any, ...], attribute: str, label: str
+) -> None:
+    """同一频点内的锚点功率必须唯一，避免目标表/反查出现二义性。"""
+    seen: set[tuple[Frequency, float]] = set()
+    for point in points:
+        frequency = Frequency.from_document_key(point.frequency_ghz)
+        value = getattr(point, attribute)
+        key = (frequency, value)
+        if key in seen:
+            raise ValueError(f"{label}在 {point.frequency_ghz} GHz 重复: {value} dBm")
+        seen.add(key)
 
 
 def _service_status(value: Any) -> MeasurementStatus:
@@ -862,7 +1051,20 @@ def _cable_loss_rows(value: Any) -> tuple[CableLossRow, ...]:
     return tuple(rows)
 
 
-def _power_mapping_points(value: Any) -> tuple[DriverPowerPoint, ...]:
+_RAW_MAPPING_POINT_KEYS = frozenset(
+    {"source_power_dbm", "driver_output_power_dbm", "gain_db"}
+)
+_TARGET_MAPPING_POINT_KEYS = frozenset(
+    {"target_input_power_dbm", "source_power_dbm", "driver_output_power_dbm"}
+)
+
+
+def _raw_points_from_power_mapping(value: Any) -> tuple[DriverMappingRawPoint, ...]:
+    """把服务层的原始 ``power_mapping`` 载荷转换为审计点。
+
+    这个入口只用于**服务载荷**；正式结果文档没有这个字段。服务载荷的含义就是
+    “源功率 -> 补偿后驱放输出”，转换后仍是原始点，不会成为目标输入表。
+    """
     if value is None:
         return ()
     if not isinstance(value, Mapping):
@@ -871,12 +1073,81 @@ def _power_mapping_points(value: Any) -> tuple[DriverPowerPoint, ...]:
     for frequency, bucket in value.items():
         if not isinstance(bucket, Mapping):
             raise ValueError(f"驱动映射结果 {frequency!r} 必须是映射")
-        for input_power, output_power in bucket.items():
+        for source_power, output_power in bucket.items():
             points.append(
-                DriverPowerPoint(
+                DriverMappingRawPoint(
                     frequency_ghz=str(frequency),
-                    input_power_dbm=input_power,
-                    output_power_dbm=output_power,
+                    source_power_dbm=source_power,
+                    driver_output_power_dbm=output_power,
+                )
+            )
+    return tuple(points)
+
+
+def _raw_mapping_points(
+    value: Any, *, require_gain: bool
+) -> tuple[DriverMappingRawPoint, ...]:
+    """读取按频点分组的原始映射点序列。"""
+    if value is None:
+        return ()
+    if not isinstance(value, Mapping):
+        raise ValueError("raw_points 必须是频率到原始映射点的映射")
+    points = []
+    required = (
+        _RAW_MAPPING_POINT_KEYS
+        if require_gain
+        else _RAW_MAPPING_POINT_KEYS - {"gain_db"}
+    )
+    for frequency, bucket in value.items():
+        if isinstance(bucket, (str, bytes)) or not isinstance(bucket, (list, tuple)):
+            raise ValueError(f"驱动映射原始点 {frequency!r} 必须是序列")
+        for index, item in enumerate(bucket):
+            label = f"驱动映射原始点 {frequency!r}[{index}]"
+            if not isinstance(item, Mapping):
+                raise ValueError(f"{label} 必须是映射")
+            unknown = sorted(set(item) - _RAW_MAPPING_POINT_KEYS)
+            if unknown:
+                raise ValueError(f"{label} 包含未知字段: {', '.join(unknown)}")
+            missing = sorted(required - set(item))
+            if missing:
+                raise ValueError(f"{label} 缺少字段: {', '.join(missing)}")
+            points.append(
+                DriverMappingRawPoint(
+                    frequency_ghz=str(frequency),
+                    source_power_dbm=item.get("source_power_dbm"),
+                    driver_output_power_dbm=item.get("driver_output_power_dbm"),
+                    gain_db=item.get("gain_db"),
+                )
+            )
+    return tuple(points)
+
+
+def _target_mapping_points(value: Any) -> tuple[DriverMappingTargetPoint, ...]:
+    """读取按频点分组的目标网格映射点序列。"""
+    if value is None:
+        return ()
+    if not isinstance(value, Mapping):
+        raise ValueError("target_mapping 必须是频率到目标映射点的映射")
+    points = []
+    for frequency, bucket in value.items():
+        if isinstance(bucket, (str, bytes)) or not isinstance(bucket, (list, tuple)):
+            raise ValueError(f"驱动映射目标点 {frequency!r} 必须是序列")
+        for index, item in enumerate(bucket):
+            label = f"驱动映射目标点 {frequency!r}[{index}]"
+            if not isinstance(item, Mapping):
+                raise ValueError(f"{label} 必须是映射")
+            unknown = sorted(set(item) - _TARGET_MAPPING_POINT_KEYS)
+            if unknown:
+                raise ValueError(f"{label} 包含未知字段: {', '.join(unknown)}")
+            missing = sorted(_TARGET_MAPPING_POINT_KEYS - set(item))
+            if missing:
+                raise ValueError(f"{label} 缺少字段: {', '.join(missing)}")
+            points.append(
+                DriverMappingTargetPoint(
+                    frequency_ghz=str(frequency),
+                    target_input_power_dbm=item.get("target_input_power_dbm"),
+                    source_power_dbm=item.get("source_power_dbm"),
+                    driver_output_power_dbm=item.get("driver_output_power_dbm"),
                 )
             )
     return tuple(points)
@@ -1189,6 +1460,7 @@ def _validate_termination(value: Mapping[str, Any] | None, expected: str | None)
 
 
 __all__ = [
+    "DRIVER_MAPPING_SCHEMA_VERSION",
     "MeasurementType",
     "MeasurementStatus",
     "MeasurementResult",
@@ -1196,7 +1468,8 @@ __all__ = [
     "DriverPowerMappingMeasurementResult",
     "AmplifierMeasurementResult",
     "CableLossRow",
-    "DriverPowerPoint",
+    "DriverMappingRawPoint",
+    "DriverMappingTargetPoint",
     "AmplifierCompressionPoint",
     "AmplifierFrequencyResult",
     "measurement_result_from_document",

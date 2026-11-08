@@ -7,6 +7,27 @@ from application.inputs import ResultInputReader
 from application.ports.result_input_reader import ResultInputReader as ResultInputReaderPort
 
 
+def _driver_document(**overrides):
+    document = {
+        "run_id": "run-1",
+        "measurement_type": "driver_power_mapping",
+        "status": "completed",
+        "schema_version": "2.0",
+        "raw_points": {
+            "1.0": [
+                {
+                    "source_power_dbm": -20.0,
+                    "driver_output_power_dbm": 2.0,
+                    "gain_db": 22.0,
+                }
+            ]
+        },
+        "target_mapping": {},
+    }
+    document.update(overrides)
+    return document
+
+
 class ResultInputReaderTests(unittest.TestCase):
     def test_application_input_package_exports_only_the_formal_reader(self):
         import application.inputs as inputs
@@ -35,17 +56,17 @@ class ResultInputReaderTests(unittest.TestCase):
 
     def test_explicit_driver_mapping_path_does_not_scan_latest(self):
         repository = Mock()
-        repository.load.return_value = {"power_mapping": {"1.0": 2.0}}
+        repository.load.return_value = _driver_document()
         reader = ResultInputReader(repository)
 
         result = reader.read_driver_mapping(Path("provided/mapping.json"))
 
-        self.assertEqual(result, {"1.0": 2.0})
+        self.assertEqual(result, {"1.0": {"-20.0": 2.0}})
         repository.load.assert_called_once_with((Path("provided/mapping.json")).resolve())
 
     def test_explicit_path_does_not_warn(self):
         repository = Mock()
-        repository.load.return_value = {"power_mapping": {}}
+        repository.load.return_value = _driver_document()
         reader = ResultInputReader(repository)
 
         with warnings.catch_warnings():
@@ -64,11 +85,25 @@ class ResultInputReaderTests(unittest.TestCase):
 
         repository.load.assert_not_called()
 
-    def test_driver_mapping_requires_power_mapping_field(self):
+    def test_legacy_power_mapping_document_is_rejected(self):
         repository = Mock()
-        repository.load.return_value = {"result": {}}
+        repository.load.return_value = {
+            "run_id": "run-1",
+            "measurement_type": "driver_power_mapping",
+            "status": "completed",
+            "power_mapping": {"1.0": {"-20.0": 2.0}},
+        }
 
         with self.assertRaisesRegex(ValueError, "power_mapping"):
+            ResultInputReader(repository).read_driver_mapping("mapping.json")
+
+    def test_driver_mapping_requires_new_schema_version(self):
+        repository = Mock()
+        document = _driver_document()
+        document.pop("schema_version")
+        repository.load.return_value = document
+
+        with self.assertRaisesRegex(ValueError, "schema_version"):
             ResultInputReader(repository).read_driver_mapping("mapping.json")
 
 

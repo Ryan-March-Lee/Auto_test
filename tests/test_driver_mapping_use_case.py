@@ -194,9 +194,10 @@ class DriverPowerMappingUseCaseTests(unittest.TestCase):
         self.assertEqual(stage, STAGE_DRIVER_MAPPING)
         self.assertEqual(path, "results/driver_mapping_partial.json")
         self.assertEqual(payload["status"], "cancelled")
-        self.assertEqual(set(payload["power_mapping"]), {"1.0"})
+        self.assertEqual(set(payload["raw_points"]), {"1.0"})
+        self.assertEqual(payload["target_mapping"], {})
         self.assertEqual(use_case.last_partial_result.status.value, "cancelled")
-        self.assertEqual(len(use_case.last_partial_result.points), 1)
+        self.assertEqual(len(use_case.last_partial_result.raw_points), 1)
         self.assertIn((STAGE_DRIVER_MAPPING, "用户停止"), recorder.cancelled)
 
     def test_unexpected_partial_save_failure_still_cancels_the_stage(self):

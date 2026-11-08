@@ -290,10 +290,12 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
         )
         self.assertIs(result.measurement_type, MeasurementType.DRIVER_POWER_MAPPING)
         self.assertIs(result.status, MeasurementStatus.COMPLETED)
-        self.assertEqual(result.points[0].frequency_ghz, "900.0")
-        self.assertEqual(result.points[0].input_power_dbm, -40.0)
-        self.assertEqual(result.points[0].output_power_dbm, 10.0)
+        self.assertEqual(result.raw_points[0].frequency_ghz, "900.0")
+        self.assertEqual(result.raw_points[0].source_power_dbm, -40.0)
+        self.assertEqual(result.raw_points[0].driver_output_power_dbm, 10.0)
+        self.assertEqual(result.raw_points[0].gain_db, 50.0)
         self.assertEqual(result.to_dict()["run_id"], "run-result")
+        self.assertEqual(result.to_dict()["schema_version"], "2.0")
         with self.assertRaises(TypeError):
             result["power_mapping"]
 
@@ -303,7 +305,7 @@ class MeasurementRequestAssemblyTests(unittest.TestCase):
             source, run_id="run-result"
         )
         source["power_mapping"]["900.0"]["-40.0"] = 2.0
-        self.assertEqual(result.points[0].output_power_dbm, 1.0)
+        self.assertEqual(result.raw_points[0].driver_output_power_dbm, 1.0)
         with self.assertRaises(TypeError):
             result.configuration_snapshot["new"] = True
         with self.assertRaises(ValueError):

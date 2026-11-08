@@ -290,6 +290,7 @@ def save_measurement_model(
     }
     return save_json_result(
         target, payload, result_type="versioned_measurement_result",
+        schema_version=str(model_dict.get("schema_version", "1.0")),
         encoder=encoder,
     )
 

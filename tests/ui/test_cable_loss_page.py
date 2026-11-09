@@ -3,7 +3,13 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QDialog, QGroupBox
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QDialog,
+    QGroupBox,
+)
 
 from application.dto import CableLossMeasurementResult, CableLossRow
 from presentation.qt.cable_loss_page import CableLossPage
@@ -161,6 +167,19 @@ class CableLossPageTests(unittest.TestCase):
         self.assertEqual(self.page.cable_loss_table.rowCount(), 1)
         self.assertEqual(self.page.cable_loss_table.item(0, 1).text(), "1.234")
         self.assertEqual(self.page.cable_loss_table.item(0, 2).text(), "2.345")
+
+    def test_result_table_is_a_read_only_display_panel(self):
+        self.controller.signals.data_update.emit({
+            "frequency": "2.4",
+            "cable_losses": {"cable1": 1.234},
+        })
+
+        table = self.page.cable_loss_table
+        self.assertEqual(table.editTriggers(), QAbstractItemView.NoEditTriggers)
+        for column in (0, 1):
+            item = table.item(0, column)
+            self.assertIsNotNone(item)
+            self.assertFalse(item.flags() & Qt.ItemIsEditable)
 
     def test_pause_accept_continues_and_reject_stops(self):
         self.controller.state = type(

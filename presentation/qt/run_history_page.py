@@ -27,7 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from PySide6.QtCore import QSignalBlocker, QUrl
+from PySide6.QtCore import QSignalBlocker, Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -171,6 +171,8 @@ class RunHistoryPage(QWidget):
         self.run_table.verticalHeader().setVisible(False)
         self.run_table.setAlternatingRowColors(True)
         self.run_table.setSelectionBehavior(QTableWidget.SelectRows)
+        # 历史运行是只读展示面板：用户只能选择、查看与导出，不能就地改写词条。
+        self.run_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.run_table.setMinimumHeight(140)
         _fit_columns(self.run_table, stretch_column=len(_RUN_COLUMNS) - 1)
         self.run_table.itemSelectionChanged.connect(self._on_run_selection_changed)
@@ -205,6 +207,8 @@ class RunHistoryPage(QWidget):
         self.result_table.verticalHeader().setVisible(False)
         self.result_table.setAlternatingRowColors(True)
         self.result_table.setSelectionBehavior(QTableWidget.SelectRows)
+        # 历史结果同样只用于查看与导出副本，不提供单元格编辑。
+        self.result_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.result_table.setMinimumHeight(140)
         result_header = self.result_table.horizontalHeader()
         result_header.setSectionResizeMode(0, QHeaderView.Stretch)
@@ -575,6 +579,8 @@ def _fit_columns(table: QTableWidget, *, stretch_column: int) -> None:
 def _set_cell(table: QTableWidget, row: int, column: int, text: str) -> None:
     """写入一个单元格；完整文本同时放进 tooltip，列宽不够时仍可查看。"""
     item = QTableWidgetItem(text)
+    # 双重保险：即使将来误开了编辑触发器，条目本身也不接受就地编辑。
+    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
     item.setToolTip(text)
     table.setItem(row, column, item)
 

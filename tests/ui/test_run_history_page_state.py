@@ -20,6 +20,9 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QAbstractItemView
+
 from application.dto.run_history import (
     RunArchiveState,
     RunArtifactSummary,
@@ -266,6 +269,22 @@ class RunHistoryPageRenderingTests(unittest.TestCase):
         self.assertFalse(page.regenerate_button.isEnabled())
         self.assertFalse(page.open_run_dir_button.isEnabled())
         self.assertFalse(page.open_report_button.isEnabled())
+
+    def test_both_tables_are_read_only_display_panels(self):
+        page = _page(
+            summaries=[_summary()], query=_ResultQuery(rows=[_result_file()])
+        )
+
+        for table in (page.run_table, page.result_table):
+            with self.subTest(table=table):
+                self.assertEqual(
+                    table.editTriggers(), QAbstractItemView.NoEditTriggers
+                )
+                for row in range(table.rowCount()):
+                    for column in range(table.columnCount()):
+                        item = table.item(row, column)
+                        if item is not None:
+                            self.assertFalse(item.flags() & Qt.ItemIsEditable)
 
     def test_refresh_renders_rows_and_selection_enables_regeneration(self):
         page = _page(summaries=[_summary()])

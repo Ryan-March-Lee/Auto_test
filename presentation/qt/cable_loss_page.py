@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Callable
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QDialog,
     QGridLayout,
@@ -133,6 +133,8 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         )
         self.cable_loss_table.verticalHeader().setVisible(False)
         self.cable_loss_table.setAlternatingRowColors(True)
+        # 结果表只展示测量值：允许选中查看，不允许就地改写。
+        self.cable_loss_table.setEditTriggers(QTableWidget.NoEditTriggers)
         header = self.cable_loss_table.horizontalHeader()
         for column in range(5):
             header.setSectionResizeMode(column, QHeaderView.Stretch)
@@ -253,7 +255,7 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
         values = [losses.get(f"cable{index}") for index in range(1, 5)] if losses else [None] * 4
         for column, value in enumerate(values, start=1):
             if value is not None:
-                self.cable_loss_table.setItem(row, column, QTableWidgetItem(f"{value:.3f}"))
+                self.cable_loss_table.setItem(row, column, _read_only_item(f"{value:.3f}"))
         self.cable_loss_table.resizeColumnsToContents()
         self._sync_empty_hint()
 
@@ -282,11 +284,18 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
                 return row
         row = self.cable_loss_table.rowCount()
         self.cable_loss_table.insertRow(row)
-        self.cable_loss_table.setItem(row, 0, QTableWidgetItem(frequency))
+        self.cable_loss_table.setItem(row, 0, _read_only_item(frequency))
         return row
 
     def _show_error(self, message: str) -> None:
         QMessageBox.critical(self, "错误", message)
+
+
+def _read_only_item(text: str) -> QTableWidgetItem:
+    """构造只读表格条目：展示文本不接受就地编辑，仍可选中与查看。"""
+    item = QTableWidgetItem(text)
+    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+    return item
 
 
 __all__ = ["CableLossPage"]

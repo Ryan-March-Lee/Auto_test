@@ -20,9 +20,9 @@ temp_loaded_data.json
 # Generated reports and temporary files
 test_results/**
 !test_results/.gitkeep
-# Generated baseline samples (see baseline/README.md; local-only artifacts, never force-add)
+# Generated baseline samples (local-only artifacts, never force-add)
 baseline/collected/**
-# Local archive of the site baseline samples (see baseline/README.md; never force-add)
+# Local archive of generated samples (never force-add)
 archive/
 temp/
 /temp

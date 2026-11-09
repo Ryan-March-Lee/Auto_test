@@ -1,6 +1,5 @@
 """阶段 0.1 基线整理脚本测试。"""
 
-import hashlib
 import json
 import shutil
 import subprocess
@@ -15,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class BaselineRepositoryHygieneTests(unittest.TestCase):
-    """生成型基线数据只留在本地，仓库里只保留小型模板夹具。"""
+    """生成型基线数据只留在本地；仓库不跟踪生成产物或归档包。"""
 
     def _git(self, *args: str) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -64,80 +63,6 @@ class BaselineRepositoryHygieneTests(unittest.TestCase):
             [],
             "archive/ 是本地/受控归档区，不能进入版本控制",
         )
-
-    def test_retained_baseline_fixtures_are_templates(self):
-        for name in ("test_plan.json", "run_mapping.json"):
-            payload = json.loads((ROOT / "baseline" / name).read_text(encoding="utf-8"))
-            self.assertIs(payload.get("template"), True, f"baseline/{name} 必须保持脱敏模板")
-
-    def test_retained_baseline_fixtures_carry_no_site_identifiers(self):
-        plan_text = (ROOT / "baseline" / "test_plan.json").read_text(encoding="utf-8")
-        mapping_text = (ROOT / "baseline" / "run_mapping.json").read_text(encoding="utf-8")
-        plan = json.loads(plan_text)
-        mapping = json.loads(mapping_text)
-
-        for name, text in (("test_plan.json", plan_text), ("run_mapping.json", mapping_text)):
-            self.assertNotRegex(text, r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", f"baseline/{name} 不得含 IP 地址")
-            self.assertNotIn("tcpip", text.lower(), f"baseline/{name} 不得含 VISA 资源地址")
-
-        self.assertIsNone(mapping["run_id"])
-        self.assertIsNone(mapping["run_datetime"])
-        self.assertIsNone(mapping["operator"])
-        for role, instrument in mapping["instruments"].items():
-            if role == "power_supplies":
-                self.assertEqual({}, instrument, "模板电源集合必须为空")
-                continue
-            self.assertIsNone(instrument["visa_address"], f"模板 instruments.{role} 地址必须为空")
-        self.assertEqual([], mapping["driver_mode"]["power_plan"]["power_sequence"])
-        self.assertEqual([], mapping["dut_power_plan"]["power_sequence"])
-        for kind, path in mapping["result_files"].items():
-            self.assertIsNone(path, f"模板 result_files.{kind} 必须为空")
-
-        self.assertEqual([], plan["frequencies"]["values"])
-        for key in ("start_power", "stop_power", "step"):
-            self.assertIsNone(plan["signal_source"][key], f"模板 signal_source.{key} 必须为空")
-        self.assertIsNone(plan["attenuator"]["value"])
-        self.assertIsNone(plan["dut"]["max_input_power"])
-        self.assertIsNone(plan["dut"]["drain_channel"])
-        self.assertEqual([], plan["dut"]["channel_settings"])
-        self.assertEqual([], plan["driver_mode"]["channel_settings"])
-
-        # 模板是新 schema 的样例：不能重新出现 1.0 的通道角色/枚举结构。
-        for name, payload in (("test_plan.json", plan), ("run_mapping.json", mapping)):
-            text = json.dumps(payload, ensure_ascii=False)
-            for legacy in ('"power_roles"', '"power_channels"', '"dut_power_channels"', '"role"'):
-                self.assertNotIn(legacy, text, f"baseline/{name} 不得写 1.0 旧字段 {legacy}")
-
-    def test_collected_archive_checksum_records_are_well_formed(self):
-        entries = self._archive_checksum_entries()
-        self.assertEqual(len(entries), 8, "归档校验清单必须完整覆盖样例的 8 个文件；新增归档样例时同步更新本门禁")
-        for digest, relative_path in entries:
-            self.assertRegex(digest, r"^[0-9a-f]{64}$", f"无效的 SHA-256: {relative_path}")
-            self.assertTrue(
-                relative_path.startswith("collected/20260925-203233-586899/"),
-                f"清单只能描述已归档样例: {relative_path}",
-            )
-
-    def test_collected_archive_checksums_match_local_sample(self):
-        entries = self._archive_checksum_entries()
-        local_sample = ROOT / "baseline" / "collected" / "20260925-203233-586899"
-        if not local_sample.is_dir():
-            self.skipTest("本地样例副本已移交归档，跳过逐文件哈希比对")
-        for digest, relative_path in entries:
-            artifact = ROOT / "baseline" / relative_path
-            self.assertTrue(artifact.is_file(), f"清单中的文件缺失: {relative_path}")
-            actual = hashlib.sha256(artifact.read_bytes()).hexdigest()
-            self.assertEqual(actual, digest, f"归档校验清单与本地文件的哈希不一致: {relative_path}")
-
-    def _archive_checksum_entries(self) -> list[tuple[str, str]]:
-        text = (ROOT / "baseline" / "collected_archive.sha256").read_text(encoding="utf-8")
-        entries = []
-        for line in text.splitlines():
-            if not line.strip() or line.lstrip().startswith("#"):
-                continue
-            digest, _, relative_path = line.partition("  ")
-            entries.append((digest.strip(), relative_path.strip()))
-        return entries
 
 
 class CollectBaselineTests(unittest.TestCase):

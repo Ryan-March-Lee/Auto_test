@@ -13,14 +13,7 @@ from domain.configuration.models import (
     validate_run_mapping,
     validate_test_plan,
 )
-from infrastructure.config.json_config_repository import (
-    load_run_configuration,
-    load_run_mapping,
-    load_test_plan,
-)
-
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+from infrastructure.config.json_config_repository import load_run_configuration
 
 
 def complete_plan():
@@ -160,14 +153,6 @@ class ConfigModelTests(unittest.TestCase):
         self.assertNotIn("wiring", parsed.to_dict())
         result = validate_run_mapping(parsed)
         self.assertTrue(result.valid, result.errors)
-
-    def test_templates_load_but_do_not_pass_formal_validation(self):
-        plan = load_test_plan(PROJECT_ROOT / "baseline" / "test_plan.json")
-        mapping = load_run_mapping(PROJECT_ROOT / "baseline" / "run_mapping.json")
-        self.assertTrue(plan.template)
-        self.assertTrue(mapping.template)
-        self.assertFalse(validate_test_plan(plan).valid)
-        self.assertFalse(validate_run_mapping(mapping).valid)
 
     def test_complete_plan_supports_different_per_channel_values(self):
         plan = TestPlan.from_dict(complete_plan())

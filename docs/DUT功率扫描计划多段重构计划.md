@@ -468,7 +468,7 @@
 
 **执行策略**
 
-- 更新 `config.json`、`baseline/test_plan.json`、`baseline/run_mapping.json` 及相关 golden fixture 的计划结构。
+- 更新 `config.json`、配置模板夹具及相关 golden fixture 的计划结构。
 - 在运行配置说明中加入多段计划示例、衔接规则、DUT 上限处理和旧配置升级说明。
 
 **技术决定**

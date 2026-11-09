@@ -4,9 +4,9 @@
 **历史管理**，页面类名、路由与模块名都不再沿用“导出页”语义：
 
 - 上半部分列出历史运行，并显示每次运行的阶段进度、正式结果数与交付产物状态；
-- 下半部分列出历史结果，作为“导出副本”的数据来源；
+- 下半部分列出历史结果，作为“另存为”的数据来源；
 - 辅助动作只保留两类：对失败产物执行“重新生成”（写回原运行目录），以及对单个结果
-  执行“导出副本”（由用户选择目标路径）。
+  执行“另存为”（JSON/CSV/测试报告副本，由用户在菜单里选择格式）。
 
 页面职责边界：
 
@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMenu,
     QMessageBox,
     QPushButton,
     QTableWidget,
@@ -68,14 +69,30 @@ _EXPORT_FILTERS = {
     ExportFormat.JSON: "JSON files (*.json)",
     ExportFormat.CSV: "CSV files (*.csv)",
 }
-# 导出副本按钮：文本与格式一一对应，按钮只提交导出意图。
-_EXPORT_BUTTONS = (
-    ("导出JSON副本", ExportFormat.JSON),
-    ("导出CSV副本", ExportFormat.CSV),
-    ("导出测试报告副本", ExportFormat.REPORT),
+# “另存为”菜单：一个入口覆盖 JSON、CSV 与测试报告副本，具体格式由用户选择。
+_SAVE_AS_ACTIONS = (
+    ("JSON…", ExportFormat.JSON),
+    ("CSV…", ExportFormat.CSV),
+    ("测试报告…", ExportFormat.REPORT),
 )
 # 历史运行表格的列顺序；页面只按视图模型给出的文本填表。
 _RUN_COLUMNS = ("运行", "创建时间", "状态", "阶段", "正式结果", "交付产物", "说明")
+
+
+def _save_dialog_title(export_format: ExportFormat) -> str:
+    """“另存为”文件对话框标题；测试报告不使用文件对话框。"""
+    if export_format is ExportFormat.JSON:
+        return "另存结果"
+    if export_format is ExportFormat.CSV:
+        return "另存 CSV"
+    raise ValueError(f"该格式不使用文件对话框: {export_format}")
+
+
+def _save_action_text(export_format: ExportFormat) -> str:
+    """日志里区分“另存为”和“生成报告副本”，避免文案与操作不符。"""
+    if export_format is ExportFormat.REPORT:
+        return "测试报告副本生成"
+    return f"{export_format.label} 另存为"
 
 
 @dataclass(frozen=True)
@@ -130,7 +147,7 @@ class RunHistoryPageState:
 
 
 class RunHistoryPage(QWidget):
-    """历史运行/结果管理页：运行与产物状态、失败产物重新生成、结果导出副本。"""
+    """历史运行/结果管理页：运行与产物状态、失败产物重新生成、结果另存为。"""
 
     def __init__(
         self,
@@ -171,7 +188,7 @@ class RunHistoryPage(QWidget):
         self.run_table.verticalHeader().setVisible(False)
         self.run_table.setAlternatingRowColors(True)
         self.run_table.setSelectionBehavior(QTableWidget.SelectRows)
-        # 历史运行是只读展示面板：用户只能选择、查看与导出，不能就地改写词条。
+        # 历史运行是只读展示面板：用户只能选择、查看与另存为，不能就地改写词条。
         self.run_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.run_table.setMinimumHeight(140)
         _fit_columns(self.run_table, stretch_column=len(_RUN_COLUMNS) - 1)
@@ -207,7 +224,7 @@ class RunHistoryPage(QWidget):
         self.result_table.verticalHeader().setVisible(False)
         self.result_table.setAlternatingRowColors(True)
         self.result_table.setSelectionBehavior(QTableWidget.SelectRows)
-        # 历史结果同样只用于查看与导出副本，不提供单元格编辑。
+        # 历史结果同样只用于查看与另存为，不提供单元格编辑。
         self.result_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.result_table.setMinimumHeight(140)
         result_header = self.result_table.horizontalHeader()
@@ -236,13 +253,19 @@ class RunHistoryPage(QWidget):
         set_button_variant(self.regenerate_button, "primary")
         self.regenerate_button.clicked.connect(self.regenerate_failed_artifacts)
         action_layout.addWidget(self.regenerate_button)
-        for text, export_format in _EXPORT_BUTTONS:
-            button = QPushButton(text)
-            set_button_variant(button, "secondary")
-            button.clicked.connect(
+        self.save_as_button = QPushButton("另存为…")
+        set_button_variant(self.save_as_button, "secondary")
+        self.save_as_button.setToolTip(
+            "将选中的历史结果另存为 JSON、CSV 或测试报告副本"
+        )
+        self.save_as_menu = QMenu(self.save_as_button)
+        for text, export_format in _SAVE_AS_ACTIONS:
+            action = self.save_as_menu.addAction(text)
+            action.triggered.connect(
                 lambda _checked=False, value=export_format: self.export(value)
             )
-            action_layout.addWidget(button)
+        self.save_as_button.setMenu(self.save_as_menu)
+        action_layout.addWidget(self.save_as_button)
         action_layout.addStretch(1)
         layout.addWidget(action_group)
 
@@ -385,7 +408,7 @@ class RunHistoryPage(QWidget):
         """把结果表格选中行交给视图模型；未选中时提示并返回 ``None``。"""
         row = self.history.select(self.result_table.currentRow())
         if row is None:
-            QMessageBox.warning(self, "导出副本", "请先选择要导出的结果")
+            QMessageBox.warning(self, "另存为", "请先选择要另存的历史结果")
         return row
 
     # -- 打开运行目录 / 测试报告 --------------------------------------------
@@ -491,22 +514,22 @@ class RunHistoryPage(QWidget):
                 parts.append(f"{label} 不适用")
         return f"运行 {outcome.run_id} 的交付产物：" + "；".join(parts)
 
-    # -- 导出副本 -----------------------------------------------------------
+    # -- 另存为 -------------------------------------------------------------
 
     def export(self, export_format: ExportFormat):
-        """按格式导出当前选择的历史结果；页面只构造导出请求。"""
+        """按选定格式另存当前历史结果；页面只构造导出请求。"""
         row = self.selected_row()
         if row is None:
             return False
         blocker = self._export_blocker(row)
         if blocker is not None:
-            QMessageBox.warning(self, "无法导出", blocker)
+            QMessageBox.warning(self, "无法另存为", blocker)
             return False
         target = None
         if export_format.needs_target:
             target, _ = QFileDialog.getSaveFileName(
                 self,
-                f"保存{export_format.label}文件",
+                _save_dialog_title(export_format),
                 row.suggested_filename(export_format.suffix),
                 _EXPORT_FILTERS[export_format],
             )
@@ -518,44 +541,44 @@ class RunHistoryPage(QWidget):
             )
             outcome = self.export_service.execute(request)
             message = self._success_message(outcome)
-        except Exception as error:  # noqa: BLE001 - 导出失败必须让用户看到原因
-            self.log_callback(f"{export_format.label}导出失败: {error}")
-            QMessageBox.warning(self, "导出失败", str(error))
+        except Exception as error:  # noqa: BLE001 - 另存失败必须让用户看到原因
+            self.log_callback(f"{_save_action_text(export_format)}失败: {error}")
+            QMessageBox.warning(self, "另存为失败", str(error))
             return False
         self.log_callback(message)
-        QMessageBox.information(self, "导出成功", message)
+        QMessageBox.information(self, "另存为成功", message)
         return True
 
     def _export_blocker(self, row: HistoryRow) -> str | None:
-        """导出副本的运行级前置条件；返回 ``None`` 表示可以导出。
+        """另存为的运行级前置条件；返回 ``None`` 表示可以另存为。
 
         判定绑定**结果所属的运行**（``HistoryRow.run_id``），而不是只看运行表格的当前
-        选中行：两张表格可以各选一行，只看选中行会让“界面说运行不可用、实际导出另一
-        次运行的结果”成为可能。三种情况拒绝导出：
+        选中行：两张表格可以各选一行，只看选中行会让“界面说运行不可用、实际另存另一
+        次运行的结果”成为可能。三种情况拒绝另存为：
 
-        1. 运行表格里选中了不可用的运行：当前上下文本身就不可导出；
+        1. 运行表格里选中了不可用的运行：当前上下文本身就不可另存为；
         2. 结果所属运行不在历史运行列表里（含未登记运行的结果）：无法确认可用性；
-        3. 结果所属运行与选中运行不是同一次运行：避免用户以为自己导出了选中的那一次。
+        3. 结果所属运行与选中运行不是同一次运行：避免用户以为自己另存了选中的那一次。
 
         未装配运行摘要来源时（例如可视化页复用本页面的结果列表）只保留第 1 项的
         基础判定，其余交给导出用例与历史查询端口。
         """
         selected = self.history.selected_run
         if selected is not None and not selected.browsable:
-            return f"运行 {selected.run_id} {selected.state_text}，不能导出其结果"
+            return f"运行 {selected.run_id} {selected.state_text}，不能另存其结果"
         if self.history.run_source is None:
             return None
         if row.run_id is None:
-            return "所选结果没有登记到运行目录，不能导出副本"
+            return "所选结果没有登记到运行目录，不能另存为副本"
         owner = self.history.run_row(row.run_id)
         if owner is None:
             return f"运行 {row.run_id} 不在历史运行列表中，请刷新后重试"
         if not owner.browsable:
-            return f"运行 {owner.run_id} {owner.state_text}，不能导出其结果"
+            return f"运行 {owner.run_id} {owner.state_text}，不能另存其结果"
         if selected is not None and selected.run_id != owner.run_id:
             return (
                 f"所选结果属于运行 {owner.run_id}，与当前选中的运行 "
-                f"{selected.run_id} 不是同一次运行；请选择该运行自己的结果再导出"
+                f"{selected.run_id} 不是同一次运行；请选择该运行自己的结果再另存为"
             )
         return None
 
@@ -565,8 +588,10 @@ class RunHistoryPage(QWidget):
         if not isinstance(outcome, ExportOutcome):
             raise TypeError("导出服务必须返回 ExportOutcome")
         if outcome.format is ExportFormat.REPORT:
-            return f"测试报告已生成副本: {outcome.artifact_path}"
-        return f"{outcome.filename} 已导出到 {outcome.artifact_path}（副本）"
+            return f"测试报告副本已生成: {outcome.artifact_path}"
+        if outcome.format is ExportFormat.JSON:
+            return f"结果已另存为: {outcome.artifact_path}"
+        return f"CSV 已另存为: {outcome.artifact_path}"
 
 
 def _fit_columns(table: QTableWidget, *, stretch_column: int) -> None:

@@ -23,13 +23,11 @@
   :class:`ArtifactGenerationError`，由归档服务把该产物登记为 ``failed`` 并保留正式结果；
   其它异常不兜底，避免把编程缺陷伪装成“产物生成失败”。
 
-报告只写一个 HTML 文件（``artifacts/amplifier_report.html``），不调用 matplotlib
-渲染图表：自动归档发生在测量成功之后，必须在任何环境下都不拖垮测量进程，图表渲染
-留给用户在可视化/历史页显式触发。报告里引用的图表按契约与报告同目录，适配器将来
-若补图表，也应写在 ``artifacts/`` 内。
-
-报告与 CSV 是两个彼此独立的产物：CSV 失败不阻止报告生成，但报告**只能**链接真实
-存在的同目录 CSV ——“CSV 已登记为 ``completed`` 且文件仍与 manifest 登记值一致”才写
+报告默认生成与报告同目录的 PNG 图表，图表失败只记录原因并回退为无图报告，不会让
+正式结果或整份报告一起丢失：自动归档发生在测量成功之后，报告必须始终可交付。
+图表按契约写在 ``artifacts/`` 内，报告只按文件名引用它们，因此交付产物换一台机器仍可
+打开。报告与 CSV 是两个彼此独立的产物：CSV 失败不阻止报告生成，但报告**只能**链接
+真实存在的同目录 CSV ——“CSV 已登记为 ``completed`` 且文件仍与 manifest 登记值一致”才写
 链接，否则省略链接而不是留下指向不存在文件的死链。
 """
 
@@ -69,6 +67,28 @@ logger = get_logger(__name__)
 
 # 自动报告的标题只在这里定义一次，页面与报告不各写一套文案。
 _REPORT_TITLE = "PA 测量报告"
+
+# 报告图表渲染入口：返回 ``(图表名称 -> PNG 路径, 失败原因)``。默认实现留在 analysis
+# 边界，报告生成器只消费结果，不直接依赖 matplotlib。
+ReportPlotSet = tuple[dict[str, Path], tuple[str, ...]]
+ReportPlotRenderer = Callable[[AmplifierMeasurementResult, Path], ReportPlotSet]
+
+
+def _default_report_plots(
+    result: AmplifierMeasurementResult, output_dir: Path
+) -> ReportPlotSet:
+    """渲染自动报告使用的 PNG 图表；标题前缀避免与 CSV/报告文件混淆。"""
+    # 延迟导入：只有真正生成报告时才需要 matplotlib，测试可以注入轻量替身。
+    from analysis.visualization import DataVisualization
+
+    visualizer = DataVisualization(
+        output_dir=output_dir,
+        filename_prefix="amplifier_",
+        include_pdf=False,
+        dpi=150,
+        quiet=True,
+    )
+    return visualizer.create_report_plots(result)
 
 
 class _RegisteredResultGenerator:
@@ -249,18 +269,37 @@ class ReportArtifactGenerator(_RegisteredResultGenerator):
     supported_kinds = frozenset({ArtifactKind.REPORT})
     required_run_methods = ("read_run_json", "load_manifest", "verify_artifact")
 
+    def __init__(
+        self,
+        runs: RunRepositoryPort,
+        *,
+        plot_renderer: ReportPlotRenderer | None = None,
+    ) -> None:
+        super().__init__(runs)
+        if plot_renderer is not None and not callable(plot_renderer):
+            raise TypeError("报告图表渲染入口必须可调用")
+        self.plot_renderer = plot_renderer or _default_report_plots
+
     def generate(self, request: ArtifactGenerationRequest) -> GeneratedArtifact:
         """把已登记的正式结果写成 ``artifacts/<stage>_report.html``。
 
         报告内容只来自正式结果 DTO（运行标识、状态、指标表、配置快照与计算摘要），
-        并只链接**真实存在**的同目录 CSV 交付产物。图表文件属于报告产物的一部分，
-        本实现不生成，因此报告不会引用任何不存在的文件。
+        并链接同目录的 PNG 图表与**真实存在**的 CSV 交付产物。单张图表渲染失败时
+        不放弃整份报告：报告仍会生成，失败原因写入报告备注与应用日志。
         """
         request = self._require_request(request, ArtifactKind.REPORT)
         layout = self._layout(request.run_id)
         target = self._target_path(layout, request.target_path)
         result = self._amplifier_result(request)
         data_file = self._csv_sibling_name(request)
+        plot_paths, plot_failures = self._render_plots(result, target.parent)
+        for failure in plot_failures:
+            logger.warning(
+                "自动报告图表生成失败 run=%s detail=%s",
+                request.run_id,
+                failure,
+            )
+        notes = tuple(f"图表生成失败：{failure}" for failure in plot_failures)
         self._publish(
             target,
             lambda destination: render_html_report(
@@ -268,10 +307,37 @@ class ReportArtifactGenerator(_RegisteredResultGenerator):
                 destination,
                 title=_REPORT_TITLE,
                 data_file=data_file,
+                plot_paths=tuple(plot_paths.values()),
+                notes=notes,
             ),
             error_label="报告写入失败",
         )
         return self._generated(request, target)
+
+    def _render_plots(
+        self, result: AmplifierMeasurementResult, output_dir: Path
+    ) -> ReportPlotSet:
+        """调用图表渲染入口；渲染器不可用时退化为无图报告，而不是让报告失败。"""
+        try:
+            plots, failures = self.plot_renderer(result, output_dir)
+        except (OSError, ValueError, RuntimeError) as error:
+            reason = str(error).strip() or type(error).__name__
+            logger.warning(
+                "自动报告图表渲染不可用 run=%s error=%s", result.run_id, reason
+            )
+            return {}, (f"图表渲染不可用: {reason}",)
+        if not isinstance(plots, Mapping):
+            raise TypeError("报告图表渲染入口必须返回图表映射")
+        normalized: dict[str, Path] = {}
+        for name, path in plots.items():
+            if not isinstance(name, str) or not isinstance(path, (str, Path)):
+                raise TypeError("报告图表映射必须是 名称 -> 路径")
+            normalized[name] = Path(path)
+        if isinstance(failures, (str, bytes)) or not isinstance(
+            failures, (list, tuple)
+        ):
+            raise TypeError("报告图表失败原因必须是字符串序列")
+        return normalized, tuple(str(item) for item in failures)
 
     def _csv_sibling_name(self, request: ArtifactGenerationRequest) -> str | None:
         """返回可安全链接的 CSV 兄弟文件名；CSV 不可用时返回 ``None``。
@@ -320,11 +386,15 @@ class ArchiveArtifactGenerator:
         runs: RunRepositoryPort,
         *,
         generators: Iterable[object] | None = None,
+        report_plot_renderer: ReportPlotRenderer | None = None,
     ) -> None:
         built = (
             tuple(generators)
             if generators is not None
-            else (CsvArtifactGenerator(runs), ReportArtifactGenerator(runs))
+            else (
+                CsvArtifactGenerator(runs),
+                ReportArtifactGenerator(runs, plot_renderer=report_plot_renderer),
+            )
         )
         mapping: dict[ArtifactKind, object] = {}
         for generator in built:

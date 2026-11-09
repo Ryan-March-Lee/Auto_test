@@ -117,7 +117,7 @@ class HistoryRow:
         return self.modified_at.strftime("%Y-%m-%d %H:%M:%S")
 
     def suggested_filename(self, suffix: str) -> str:
-        """导出对话框使用的默认文件名；后缀与记录一致。"""
+        """另存为对话框使用的默认文件名；后缀与记录一致。"""
         stem = self.filename.rsplit(".", 1)[0] if "." in self.filename else self.filename
         return f"{stem}.{suffix.lstrip('.')}"
 
@@ -263,7 +263,7 @@ def _problem_text(summary: RunHistorySummary) -> str:
     """
     parts = [summary.problem] if summary.problem else []
     parts.extend(
-        f"{artifact_kind_text(item.kind)} 已生成但文件缺失，请用导出副本重新获取"
+        f"{artifact_kind_text(item.kind)} 已生成但文件缺失，请用“另存为”重新获取"
         for item in summary.missing_artifacts
     )
     parts.extend(
@@ -429,8 +429,8 @@ class HistoryViewModel:
     def reset_runs(self) -> None:
         """丢弃当前运行摘要与选中运行（运行摘要读取失败后的状态对齐）。
 
-        运行表格被清空后，视图模型若保留旧摘要，``run_row()`` 仍会拿陈旧数据给导出
-        做可用性判定，出现“表格里看不到这次运行，导出却按它放行/拒绝”的分裂。
+        运行表格被清空后，视图模型若保留旧摘要，``run_row()`` 仍会拿陈旧数据给另存为
+        做可用性判定，出现“表格里看不到这次运行，另存为却按它放行/拒绝”的分裂。
         """
         self._run_rows = ()
         self._selected_run_index = None
@@ -438,7 +438,7 @@ class HistoryViewModel:
     def run_row(self, run_id: str | None) -> RunHistoryRow | None:
         """按运行标识查找当前列表中的运行摘要。
 
-        导出副本按“结果所属的运行”判定可用性，而不是按运行表格里的当前选中行：
+        另存为按“结果所属的运行”判定可用性，而不是按运行表格里的当前选中行：
         两者可能指向不同运行。标识缺失或该运行不在列表里都返回 ``None``，由调用方
         决定拒绝还是放行。
         """

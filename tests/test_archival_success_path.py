@@ -16,6 +16,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from application.archival_service import (
     ArchivalRequestError,
@@ -47,6 +48,7 @@ from domain.run.models import (
     RunStatus,
     StageStatus,
 )
+from infrastructure.persistence import artifact_generator
 from infrastructure.persistence.artifact_generator import ArchiveArtifactGenerator
 from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from infrastructure.persistence.run_repository import RunRepository
@@ -64,6 +66,15 @@ REPORT_PATH = "artifacts/amplifier_report.html"
 ARCHIVAL_LOGGER = "pa_auto_test.application.archival_service"
 
 CABLE_LOSSES = {"1.0": {"cable1": 0.5, "cable2": 0.5, "cable3": 0.0, "cable4": 0.0}}
+
+
+def _fake_report_plots(result, output_dir):
+    """轻量图表替身：归档接线测试不真实渲染 matplotlib。"""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / "amplifier_p_in_vs_p_out.png"
+    path.write_bytes(b"fake-plot")
+    return {"p_in_vs_p_out": path}, ()
 
 
 class _Instrument:
@@ -218,6 +229,11 @@ class SuccessPathArchivalTests(unittest.TestCase):
         self.result_repository = FileMeasurementResultRepository(
             results_directory=self.base / "test_results"
         )
+        self._plot_patch = patch.object(
+            artifact_generator, "_default_report_plots", _fake_report_plots
+        )
+        self._plot_patch.start()
+        self.addCleanup(self._plot_patch.stop)
 
     # -- 夹具 ---------------------------------------------------------------
 

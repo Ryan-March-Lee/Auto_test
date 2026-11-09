@@ -11,11 +11,11 @@
   但 manifest 记录不被改写；
 - ``HistoryViewModel``：运行摘要转成展示文本，选择清空规则，产物文件缺失的文案；
   读取失败时 ``reset_runs()`` / ``reset_results()`` 一并丢弃陈旧行与选择；
-- ``RunHistoryPage``：显示运行与产物状态、按失败产物启用“重新生成”、不可用运行禁止导出，
-  导出副本按**结果所属运行**判定可用性（两张表格各选一行时不会张冠李戴）；
+- ``RunHistoryPage``：显示运行与产物状态、按失败产物启用“重新生成”、不可用运行禁止另存为，
+  另存为按**结果所属运行**判定可用性（两张表格各选一行时不会张冠李戴）；
 - 步骤 9 补充的页面边界：无效运行不能重新生成、部分运行（进行中 / 未归档）与没有产物
   记录的运行如实显示“无交付产物”、已完成产物文件缺失时提示“文件缺失”且正式结果仍可
-  导出副本。
+  另存为。
 """
 
 import os
@@ -58,6 +58,7 @@ from domain.run.models import (
 )
 from infrastructure.filesystem.paths import PathService
 from infrastructure.gui_data_service import ResultExportAdapter, ResultQueryAdapter
+from infrastructure.persistence import artifact_generator
 from infrastructure.persistence.artifact_generator import ArchiveArtifactGenerator
 from infrastructure.persistence.run_history_repository import FileRunHistoryRepository
 from infrastructure.persistence.run_repository import RunRepository
@@ -71,6 +72,15 @@ CREATED_AT = datetime(2026, 10, 28, 1, 2, 3, tzinfo=timezone.utc)
 # 归档服务的日志挂在应用日志树（``pa_auto_test``）下，才进得了 ``setup_logging()``
 # 的文件；这里按契约名断言，不跟随实现里的 logger 变量。
 ARCHIVAL_LOGGER = "pa_auto_test.application.archival_service"
+
+
+def _fake_report_plots(result, output_dir):
+    """历史页集成测试不真实渲染 matplotlib；只验证报告与图表文件的接线。"""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / "amplifier_p_in_vs_p_out.png"
+    path.write_bytes(b"fake-plot")
+    return {"p_in_vs_p_out": path}, ()
 
 
 def _amplifier_payload(*, run_id=RUN_ID) -> dict:
@@ -388,6 +398,11 @@ class RunSummaryFixture(unittest.TestCase):
         self.paths = PathService(self.base)
         self.runs = RunRepository(self.paths.test_results_dir / "runs")
         self.history = FileRunHistoryRepository(runs=self.runs)
+        self._plot_patch = patch.object(
+            artifact_generator, "_default_report_plots", _fake_report_plots
+        )
+        self._plot_patch.start()
+        self.addCleanup(self._plot_patch.stop)
 
     def _create_run(self):
         layout, _manifest = self.runs.create_run({"run_id": RUN_ID}, run_id=RUN_ID)
@@ -603,7 +618,7 @@ class RunHistoryViewModelTests(unittest.TestCase):
 
         self.assertEqual(row.artifact_text, "CSV 已生成（文件缺失）")
         self.assertIn("CSV 已生成但文件缺失", row.problem_text)
-        self.assertIn("导出副本", row.problem_text)
+        self.assertIn("另存为", row.problem_text)
         self.assertFalse(row.can_regenerate)
 
     def test_selection_is_cleared_when_the_run_disappears(self):
@@ -690,6 +705,11 @@ class RunHistoryPageTests(unittest.TestCase):
             patcher = patch(f"presentation.qt.run_history_page.QMessageBox.{name}")
             setattr(self, f"{name}_dialog", patcher.start())
             self.addCleanup(patcher.stop)
+        self._plot_patch = patch.object(
+            artifact_generator, "_default_report_plots", _fake_report_plots
+        )
+        self._plot_patch.start()
+        self.addCleanup(self._plot_patch.stop)
 
     def _complete_amplifier_run(self, run_id=RUN_ID):
         self.runs.create_run({"run_id": run_id}, run_id=run_id)
@@ -944,7 +964,7 @@ class RunHistoryPageTests(unittest.TestCase):
         self.assertIn("不在历史运行列表中", self.warning_dialog.call_args.args[2])
 
     def test_export_without_a_run_selection_uses_the_result_owner(self):
-        """未选运行行时以结果所属运行的可用性为准，正常结果仍可导出副本。"""
+        """未选运行行时以结果所属运行的可用性为准，正常结果仍可另存为。"""
         self._complete_amplifier_run()
         page = self._page()
         page.result_table.setCurrentCell(0, 0)
@@ -1126,7 +1146,7 @@ class RunHistoryPageTests(unittest.TestCase):
         self.assertIs(records[ArtifactKind.CSV].status, ArtifactStatus.COMPLETED)
         self.assertEqual(records[ArtifactKind.CSV].path, "artifacts/amplifier.csv")
 
-        # 正式结果不受影响：仍可用“导出副本”重新取得数据。
+        # 正式结果不受影响：仍可用“另存为”重新取得数据。
         page.result_table.setCurrentCell(0, 0)
         target = self.root / "copy.json"
         with patch(

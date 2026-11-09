@@ -312,11 +312,11 @@ class ExportLayeringTests(unittest.TestCase):
         )
 
         self.assertTrue(
-            any("导出到" in text for text in runtime),
-            "导出成功文案应由页面生成",
+            any("已另存为" in text for text in runtime),
+            "另存为成功文案应由页面生成",
         )
         self.assertTrue(
-            any("测试报告已生成" in text for text in runtime),
+            any("测试报告副本已生成" in text for text in runtime),
             "报告成功文案应由页面生成",
         )
 

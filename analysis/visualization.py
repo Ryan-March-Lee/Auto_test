@@ -37,6 +37,18 @@ except FileNotFoundError:
     chinese_font = FontProperties(family='sans-serif')
     english_font = FontProperties(family='serif')
 
+# 报告使用的图表集合：键是报告里的稳定名称，值是 ``DataVisualization`` 的绘图方法。
+# 自动报告与导出报告共用这一份列表，避免两处各写一套图表。
+_REPORT_PLOTS: tuple[tuple[str, str], ...] = (
+    ("p_in_vs_p_out", "plot_p_in_vs_p_out"),
+    ("p_out_vs_gain", "plot_p_out_vs_gain"),
+    ("p_out_vs_efficiency", "plot_p_out_vs_efficiency"),
+    ("p_out_vs_eff_and_gain", "plot_p_out_vs_eff_and_gain_combined"),
+    ("freq_vs_sat_efficiency", "plot_freq_vs_saturation_metrics"),
+    ("freq_vs_sat_pout_gain", "plot_freq_vs_sat_power_and_gain"),
+    ("freq_vs_all_sat_metrics", "plot_freq_vs_all_sat_metrics_combined"),
+)
+
 BASE_COLOR_PALETTE = [
     '#1f77b4',  # 蓝色
     '#ff7f0e',  # 橙色  
@@ -75,12 +87,40 @@ def _coerce_result(data: ResultSource) -> ReportResult:
     return require_report_result(data)
 
 
+def _plot_prefix(value: str) -> str:
+    """校验图表文件名前缀：只允许同目录文件名的一部分，不能引入路径。"""
+    if not isinstance(value, str):
+        raise ValueError("图表文件名前缀必须是字符串")
+    prefix = value.strip()
+    if "\x00" in prefix or "/" in prefix or "\\" in prefix or ".." in prefix:
+        raise ValueError(f"图表文件名前缀不能包含路径片段: {value!r}")
+    return prefix
+
+
 class DataVisualization:
     """面向扫描结果的纯分析入口：生成图表、CSV 与 HTML 报告。"""
 
-    def __init__(self, *, output_dir: str | Path):
+    def __init__(
+        self,
+        *,
+        output_dir: str | Path,
+        filename_prefix: str = "",
+        include_pdf: bool = True,
+        dpi: int = 300,
+        quiet: bool = False,
+    ):
         configure_plot_style()
         self.output_dir = Path(output_dir)
+        self.filename_prefix = _plot_prefix(filename_prefix)
+        if isinstance(dpi, bool) or not isinstance(dpi, int) or dpi <= 0:
+            raise ValueError(f"图表 dpi 必须是正整数，收到: {dpi!r}")
+        if not isinstance(include_pdf, bool):
+            raise ValueError("include_pdf 必须是布尔值")
+        if not isinstance(quiet, bool):
+            raise ValueError("quiet 必须是布尔值")
+        self.include_pdf = include_pdf
+        self.dpi = dpi
+        self.quiet = quiet
         self.base_color_palette = list(BASE_COLOR_PALETTE)
 
     def _ensure_output_dir(self) -> Path:
@@ -89,12 +129,26 @@ class DataVisualization:
 
     def _save_plot(self, fig, base_name: str) -> Path:
         self._ensure_output_dir()
-        save_path_png = self.output_dir / f"{base_name}.png"
-        save_path_pdf = self.output_dir / f"{base_name}.pdf"
-        fig.savefig(save_path_png, dpi=300, bbox_inches='tight')
-        fig.savefig(save_path_pdf, bbox_inches='tight')
-        plt.close(fig)
-        print(f"图表已保存: {save_path_png.name}, {save_path_pdf.name}")
+        name = f"{self.filename_prefix}{base_name}"
+        save_path_png = self.output_dir / f"{name}.png"
+        try:
+            fig.savefig(save_path_png, dpi=self.dpi, bbox_inches='tight')
+            if self.include_pdf:
+                fig.savefig(self.output_dir / f"{name}.pdf", bbox_inches='tight')
+        except (OSError, ValueError, RuntimeError):
+            # 失败时不留下半张 PNG；调用方（报告装配）随后决定是否回退为无图报告。
+            try:
+                save_path_png.unlink()
+            except OSError:
+                pass
+            raise
+        finally:
+            plt.close(fig)
+        if not self.quiet:
+            saved = f"{name}.png"
+            if self.include_pdf:
+                saved += f", {name}.pdf"
+            print(f"图表已保存: {saved}")
         return save_path_png
 
     def export_model_reports(self, result, *, csv_path: str | Path, html_path: str | Path):
@@ -120,6 +174,29 @@ class DataVisualization:
         for point in points:
             point["frequency"] = float(point["frequency"])
         return pd.DataFrame(points)
+
+    def create_report_plots(
+        self, data: ResultSource
+    ) -> tuple[Dict[str, Path], tuple[str, ...]]:
+        """渲染报告使用的图表集合，单张图失败只记录原因、不阻断报告。
+
+        返回 ``(plots, failures)``：``plots`` 是稳定名称到 PNG 路径的映射，
+        ``failures`` 是未能渲染的图表及原因。调用方可以据此生成无图报告并注明失败，
+        而不是让一次图表故障连带丢掉整份测试报告。
+        """
+        result = _coerce_result(data)
+        plots: Dict[str, Path] = {}
+        failures: list[str] = []
+        for key, method_name in _REPORT_PLOTS:
+            try:
+                path = getattr(self, method_name)(result)
+            except (OSError, ValueError, TypeError, KeyError, RuntimeError) as error:
+                reason = str(error).strip() or type(error).__name__
+                failures.append(f"{key}: {reason}")
+                continue
+            if path is not None:
+                plots[key] = path
+        return plots, tuple(failures)
 
     # --- MODIFIED: Applied specific fonts to all plotting functions ---
 
@@ -287,13 +364,15 @@ class DataVisualization:
             all_dfs.append(df_copy)
 
         if not all_dfs:
-            print("没有可导出的数据。")
+            if not self.quiet:
+                print("没有可导出的数据。")
             return None
 
         self._ensure_output_dir()
         full_df = pd.concat(all_dfs, ignore_index=True)
         full_df.to_csv(csv_path, index=False, encoding='utf-8-sig')
-        print(f"CSV报告已保存: {csv_path.name}")
+        if not self.quiet:
+            print(f"CSV报告已保存: {csv_path.name}")
         return csv_path
 
     def create_summary_report(
@@ -313,16 +392,7 @@ class DataVisualization:
             or result.run_id
         )
 
-        plot_paths = {
-            "p_in_vs_p_out": self.plot_p_in_vs_p_out(result),
-            "p_out_vs_gain": self.plot_p_out_vs_gain(result),
-            "p_out_vs_efficiency": self.plot_p_out_vs_efficiency(result),
-            "p_out_vs_eff_and_gain": self.plot_p_out_vs_eff_and_gain_combined(result),
-            "freq_vs_sat_efficiency": self.plot_freq_vs_saturation_metrics(result),
-            "freq_vs_sat_pout_gain": self.plot_freq_vs_sat_power_and_gain(result),
-            "freq_vs_all_sat_metrics": self.plot_freq_vs_all_sat_metrics_combined(result),
-        }
-        plot_paths = {name: path for name, path in plot_paths.items() if path is not None}
+        plot_paths, plot_failures = self.create_report_plots(result)
         combined_plots = {
             name: path
             for name, path in plot_paths.items()
@@ -347,6 +417,14 @@ class DataVisualization:
             if csv_path
             else ''
         )
+        failure_section = ""
+        if plot_failures:
+            items = "".join(
+                f"<li>{html.escape(failure)}</li>" for failure in plot_failures
+            )
+            failure_section = (
+                f'<div class="section"><h2>图表生成失败</h2><ul>{items}</ul></div>'
+            )
 
         # HTML report generation remains the same
         with open(report_file, 'w', encoding='utf-8') as f:
@@ -368,6 +446,8 @@ class DataVisualization:
                 <p>数据文件: {safe_filename}</p>
                 {csv_section}
             </div>
+
+            {failure_section}
 
             <div class="section">
                 <h2>详细性能曲线</h2>
@@ -396,6 +476,7 @@ class DataVisualization:
             </div>
 
             </div></body></html>""")
-        print(f"\nHTML报告已生成: {report_file}")
+        if not self.quiet:
+            print(f"\nHTML报告已生成: {report_file}")
 
         return report_file

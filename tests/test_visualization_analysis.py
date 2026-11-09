@@ -172,6 +172,38 @@ class VisualizationAnalysisTests(unittest.TestCase):
                 visualizer.create_summary_report(_sample_result())
             baseline.assert_not_called()
 
+    def test_report_plot_failures_are_reported_without_losing_the_report(self):
+        def _broken(_self, _data):
+            raise ValueError("字体不可用")
+
+        with tempfile.TemporaryDirectory() as directory:
+            visualizer = self._visualizer(directory)
+            with _patch_plots(), patch.object(
+                AnalysisDataVisualization, "plot_p_out_vs_gain", _broken
+            ):
+                plots, failures = visualizer.create_report_plots(_sample_result())
+                report = visualizer.create_summary_report(_sample_result())
+            self.assertNotIn("p_out_vs_gain", plots)
+            self.assertTrue(any("p_out_vs_gain" in item for item in failures))
+            html = report.read_text(encoding="utf-8")
+            self.assertIn("图表生成失败", html)
+            self.assertIn("字体不可用", html)
+
+    def test_visualizer_rejects_unsafe_prefix_and_bad_dpi(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for prefix in ("../out", r"sub\\plot", "a/b"):
+                with self.subTest(prefix=prefix):
+                    with self.assertRaises(ValueError):
+                        AnalysisDataVisualization(
+                            output_dir=Path(directory), filename_prefix=prefix
+                        )
+            for dpi in (0, -1, True, "150"):
+                with self.subTest(dpi=dpi):
+                    with self.assertRaises(ValueError):
+                        AnalysisDataVisualization(
+                            output_dir=Path(directory), dpi=dpi
+                        )
+
     def test_analysis_module_has_no_infrastructure_imports(self):
         source = (
             Path(__file__).resolve().parents[1] / "analysis" / "visualization.py"

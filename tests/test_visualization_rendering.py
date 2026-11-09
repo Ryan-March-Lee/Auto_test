@@ -99,6 +99,27 @@ class VisualizationRenderingTests(unittest.TestCase):
             self.assertTrue(png.is_file())
             self.assertGreater(png.stat().st_size, 0)
 
+    def test_auto_report_plots_can_prefix_names_and_skip_pdf(self):
+        """自动报告的图表只写 PNG，并带运行阶段前缀，避免与 CSV/报告混淆。"""
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir = Path(directory) / "artifacts"
+            visualizer = DataVisualization(
+                output_dir=output_dir,
+                filename_prefix="amplifier_",
+                include_pdf=False,
+                dpi=80,
+                quiet=True,
+            )
+
+            plots, failures = visualizer.create_report_plots(SAMPLE_DATA)
+
+            self.assertEqual(failures, ())
+            self.assertTrue(plots)
+            for path in plots.values():
+                self.assertTrue(path.is_file())
+                self.assertTrue(path.name.startswith("amplifier_"))
+            self.assertEqual(list(output_dir.glob("*.pdf")), [])
+
 
 if __name__ == "__main__":
     unittest.main()

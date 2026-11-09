@@ -61,6 +61,17 @@ _METRIC_COLUMNS = (
 )
 
 
+_REPORT_STYLE = (
+    "<style>"
+    "body{font-family:'Segoe UI',Arial,sans-serif;margin:24px;}"
+    "img{max-width:100%;height:auto;border:1px solid #ddd;border-radius:4px;}"
+    "table{border-collapse:collapse;margin:8px 0;}"
+    "th,td{border:1px solid #ddd;padding:4px 8px;text-align:left;}"
+    ".report-note{background:#fff3cd;border:1px solid #ffe08a;padding:8px;}"
+    "</style>"
+)
+
+
 def render_html_report(
     result: ReportResult,
     destination: str | Path,
@@ -68,6 +79,7 @@ def render_html_report(
     title: str = "PA 测量报告",
     plot_paths: Iterable[str | Path] = (),
     data_file: str | None = None,
+    notes: Iterable[str] = (),
 ) -> Path:
     """Assemble a diagnostic HTML report without touching measurement objects.
 
@@ -75,6 +87,9 @@ def render_html_report(
     图表写进运行目录同一个 ``artifacts/``，报告只能引用文件名，不能引用绝对位置，
     否则交付产物换一台机器就断链。报告内容只来自正式结果 DTO：运行标识、状态、指标
     表、配置快照与计算摘要。
+
+    ``notes`` 用于如实说明图表等可降级环节的失败；它不改变报告主体，也不会把产物
+    状态伪装成完整成功。
 
     ``data_file`` 按文件名严格校验（拒绝目录分隔符、盘符与 ``..``），因为它是报告唯一的
     外部数据链接；图表路径取其文件名，因此也只能是同目录兄弟文件。
@@ -96,6 +111,10 @@ def render_html_report(
         if data_file
         else ""
     )
+    note_block = "".join(
+        f'<p class="report-note">{html.escape(note)}</p>'
+        for note in _note_texts(notes)
+    )
     body = {
         "run_id": result.run_id,
         "measurement_type": result.measurement_type_value,
@@ -106,14 +125,14 @@ def render_html_report(
     }
     content = (
         "<!doctype html><html><head><meta charset='utf-8'>"
-        f"<title>{html.escape(title)}</title></head><body>"
+        f"<title>{html.escape(title)}</title>{_REPORT_STYLE}</head><body>"
         f"<h1>{html.escape(title)}</h1><p>run_id: {html.escape(result.run_id)}</p>"
         f"<p>measurement_type: {html.escape(result.measurement_type_value)}</p>"
         f"<p>status: {html.escape(result.status_value)}</p>"
         f"<p>points: {result.point_count}</p>"
         f"<p>measurement_time: {html.escape(str(result.measurement_time or '—'))}</p>"
         f"<p>source_file: {html.escape(str(result.source_filename or '—'))}</p>"
-        f"{data_link}{_metrics_table(result)}{gallery}"
+        f"{data_link}{note_block}{_metrics_table(result)}{gallery}"
         f"<pre>{html.escape(json.dumps(body, ensure_ascii=False, indent=2))}</pre>"
         "</body></html>"
     )
@@ -153,6 +172,14 @@ def _metric_cell(value: Any) -> str:
     if isinstance(value, float):
         return f"{value:.3f}".rstrip("0").rstrip(".")
     return str(value)
+
+
+def _note_texts(value: Iterable[str]) -> tuple[str, ...]:
+    """把报告备注规范化成非空字符串序列；单个字符串不会被拆成字符。"""
+    if isinstance(value, (str, bytes)):
+        raise ValueError("报告备注必须是字符串序列")
+    notes = tuple(str(item).strip() for item in value)
+    return tuple(note for note in notes if note)
 
 
 def _plot_file_name(path: str | Path) -> str:

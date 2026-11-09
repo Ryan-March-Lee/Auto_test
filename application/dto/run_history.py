@@ -95,7 +95,7 @@ class RunArtifactSummary:
     ``missing`` 只由适配器按运行目录的事实填写：``completed`` 产物登记的文件已经不在
     运行目录里。它是**只读诊断**——不改变 manifest 登记的产物状态，也不代表可以原地
     重新生成（``completed`` 仍是终态，见 :attr:`ArtifactStatus.COMPLETED`）。缺少文件时
-    用户应通过“导出副本”重新取得交付数据，或按运行目录修复。
+    用户应通过“另存为”重新取得交付数据，或按运行目录修复。
     """
 
     kind: ArtifactKind

@@ -8,7 +8,8 @@
 - 部分完成、线损、驱动映射、取消/异常不生成完整报告（``not_applicable``）；
 - 报告生成失败只把该产物登记为 ``failed`` 并保留正式结果，显式重试（``retry_failed``）
   是唯一的重新生成入口；
-- 报告只引用与它同目录的兄弟文件，不写绝对路径，也不依赖 matplotlib 渲染；
+- 报告引用与它同目录的兄弟图表与 CSV，不写绝对路径；单张图表渲染失败时回退为
+  无图报告并在报告中注明失败原因；
 - 组合端口把 CSV 与报告合成一个生成入口，类型派发与声明一致性在装配阶段校验。
 """
 
@@ -126,6 +127,18 @@ def _report_request(
     )
 
 
+def _fake_report_plots(result, output_dir):
+    """轻量图表替身：不加载 matplotlib，只验证报告装配与兄弟文件引用。"""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    plots = {}
+    for name in ("p_in_vs_p_out", "p_out_vs_gain"):
+        path = output_dir / f"amplifier_{name}.png"
+        path.write_bytes(b"fake-plot")
+        plots[name] = path
+    return plots, ()
+
+
 class _CountingGenerator:
     """包住真实组合端口，统计各产物类型的生成调用次数（验证幂等复用）。"""
 
@@ -151,6 +164,13 @@ class RunDirectoryFixture(unittest.TestCase):
             {"run_id": RUN_ID}, run_id=RUN_ID, now=CREATED_AT
         )
         self.run_directory = self.layout.run_directory
+        # 报告默认会真实渲染 matplotlib；单元测试注入轻量替身，真实渲染由受门禁
+        # 控制的渲染用例覆盖。补丁按模块属性查找，因此直接构造生成器也会生效。
+        self._plot_patch = patch.object(
+            artifact_generator, "_default_report_plots", _fake_report_plots
+        )
+        self._plot_patch.start()
+        self.addCleanup(self._plot_patch.stop)
 
     def _recorder(self):
         return RunStageRecorder(self.repository, RUN_ID)
@@ -268,6 +288,38 @@ class ReportArtifactGeneratorTests(RunDirectoryFixture):
         # 正式结果与已登记的报告都不受这次“只读判断”影响。
         self.assertTrue((self.run_directory / AMPLIFIER_RESULT_PATH).is_file())
         self.assertTrue(self._report_file().is_file())
+
+    def test_report_links_rendered_plot_siblings(self):
+        """自动报告默认带图：图表只写兄弟文件名，不泄漏运行目录绝对路径。"""
+        self._complete_cable_loss()
+        self._complete_amplifier()
+
+        ReportArtifactGenerator(self.repository).generate(_report_request())
+
+        html = self._report_file().read_text(encoding="utf-8")
+        self.assertIn('src="amplifier_p_in_vs_p_out.png"', html)
+        self.assertIn('src="amplifier_p_out_vs_gain.png"', html)
+        self.assertNotIn(str(self.run_directory), html)
+
+    def test_plot_failure_falls_back_to_a_chartless_report(self):
+        """单张图表失败不放弃报告：报告仍生成，并在备注里说明失败原因。"""
+        self._complete_cable_loss()
+        self._complete_amplifier()
+        generator = ReportArtifactGenerator(
+            self.repository,
+            plot_renderer=lambda _result, _output: (
+                {},
+                ("p_in_vs_p_out: 字体不可用",),
+            ),
+        )
+
+        generated = generator.generate(_report_request())
+
+        self.assertEqual(generated.path, REPORT_PATH)
+        self.assertTrue(self._report_file().is_file())
+        html = self._report_file().read_text(encoding="utf-8")
+        self.assertIn("图表生成失败", html)
+        self.assertIn("字体不可用", html)
 
     def test_result_document_from_another_run_is_rejected(self):
         """正式结果内容自称属于别的运行：它不是本次运行的正式结果。"""
@@ -496,6 +548,23 @@ class ReportRenderingTests(unittest.TestCase):
                     Path(directory) / "amplifier_report.html",
                     plot_paths=("",),
                 )
+
+    def test_notes_are_rendered_and_escaped(self):
+        from analysis.reporting import render_html_report
+
+        result = _render_sample_result()
+        with tempfile.TemporaryDirectory() as directory:
+            report = render_html_report(
+                result,
+                Path(directory) / "amplifier_report.html",
+                notes=("图表生成失败：<font 不可用>",),
+            )
+            html = report.read_text(encoding="utf-8")
+
+        self.assertIn('class="report-note"', html)
+        self.assertIn("图表生成失败", html)
+        self.assertNotIn("<font 不可用>", html)
+        self.assertIn("&lt;font 不可用&gt;", html)
 
 
 # -- 组合端口 -------------------------------------------------------------

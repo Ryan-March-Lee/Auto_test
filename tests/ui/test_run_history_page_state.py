@@ -270,6 +270,16 @@ class RunHistoryPageRenderingTests(unittest.TestCase):
         self.assertFalse(page.open_run_dir_button.isEnabled())
         self.assertFalse(page.open_report_button.isEnabled())
 
+    def test_save_as_menu_offers_json_csv_and_report(self):
+        """三个格式合并进一个“另存为”入口，不再保留三个独立导出按钮。"""
+        page = _page()
+
+        self.assertEqual(page.save_as_button.text(), "另存为…")
+        self.assertEqual(
+            [action.text() for action in page.save_as_menu.actions()],
+            ["JSON…", "CSV…", "测试报告…"],
+        )
+
     def test_both_tables_are_read_only_display_panels(self):
         page = _page(
             summaries=[_summary()], query=_ResultQuery(rows=[_result_file()])

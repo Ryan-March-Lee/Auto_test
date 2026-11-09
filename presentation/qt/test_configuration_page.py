@@ -33,7 +33,7 @@
 提交，窗口用 :class:`presentation.qt.configuration_editor.ConfigurationEditor` 统一
 回填/切换模式/汇总 dirty，协调器负责合并整份草稿与最终校验（步骤 13）。
 
-测试频率不再逐点输入：页面提供“起始/结束/步长/增补”四个控件，由
+测试频率不再逐点输入：页面提供“起始/步长/结束/增补”四个控件，由
 :mod:`presentation.qt.frequency_sweep` 生成配置文档仍使用的 ``test_frequencies``
 列表。结束频率必须落在步长上；旧配置里非等步长的列表不做兼容拆分，页面保留原列表
 并禁止保存，直到用户重新输入合法扫描参数。
@@ -83,7 +83,7 @@ from .config_projection import (
     bool_or_default,
     driver_gain_text,
 )
-from .config_page_widgets import build_action_bar, combo_box, spin_box
+from .config_page_widgets import build_action_bar, combo_box, number_field
 from .frequency_sweep import (
     FrequencySweepError,
     format_frequency,
@@ -221,16 +221,16 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         form.setColumnStretch(3, 1)
         test = self.config.get("signal_source", {})
         if not isinstance(test, dict): test = {}
-        self.freq_start = spin_box(
-            DEFAULT_FREQUENCY_START, 0.0, 1000.0, decimals=6, single_step=0.1
+        self.freq_start = number_field(
+            DEFAULT_FREQUENCY_START, 0.0, 1000.0, decimals=6
         )
         self.freq_start.setToolTip("频率扫描起始值，单位 GHz")
-        self.freq_stop = spin_box(
-            DEFAULT_FREQUENCY_STOP, 0.0, 1000.0, decimals=6, single_step=0.1
+        self.freq_stop = number_field(
+            DEFAULT_FREQUENCY_STOP, 0.0, 1000.0, decimals=6
         )
         self.freq_stop.setToolTip("结束频率是扫描上限，必须等于 起始频率 + 整数 × 步长")
-        self.freq_step = spin_box(
-            DEFAULT_FREQUENCY_STEP, 0.000001, 1000.0, decimals=6, single_step=0.1
+        self.freq_step = number_field(
+            DEFAULT_FREQUENCY_STEP, 0.000001, 1000.0, decimals=6
         )
         self.freq_step.setToolTip("相邻频点的间隔，单位 GHz")
         self.freq_extra = QLineEdit(DEFAULT_FREQUENCY_EXTRA_TEXT)
@@ -243,17 +243,17 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         self.freq_preview.setProperty("role", "note")
         self.freq_preview.setWordWrap(True)
         self.freq_preview.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.start_power = spin_box(test.get("start_power", DEFAULT_SIGNAL_SOURCE["start_power"]), -50, 20)
+        self.start_power = number_field(test.get("start_power", DEFAULT_SIGNAL_SOURCE["start_power"]), -50, 20)
         self.start_power.setToolTip(
             "主功放输入功率扫描起点（dBm），不是信号源输出功率；"
             "无驱动时按 cable1 损耗反算信号源设定"
         )
-        self.stop_power = spin_box(test.get("stop_power", DEFAULT_SIGNAL_SOURCE["stop_power"]), -50, 20)
+        self.stop_power = number_field(test.get("stop_power", DEFAULT_SIGNAL_SOURCE["stop_power"]), -50, 20)
         self.stop_power.setToolTip(
             "主功放输入功率扫描终点（dBm）；与 DUT 最大输入功率取较小值，"
             "限制点不在步进网格上时作为最后一点补入"
         )
-        self.power_step = spin_box(test.get("step", DEFAULT_SIGNAL_SOURCE["step"]), 0.1, 5)
+        self.power_step = number_field(test.get("step", DEFAULT_SIGNAL_SOURCE["step"]), 0.1, 5)
         self.power_step.setToolTip("目标主功放输入功率网格的步进（dB）")
         # 驱动功放预估增益是测试配置里的单一全局值（dB）。空文本表示尚未填写；
         # 增益的业务校验（有限数值、驱动模式下必填）由配置 DTO 承担，页面不推算。
@@ -276,23 +276,29 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         self.driver_gain.setText(driver_gain_text(mode.get("estimated_gain_db")))
         dut = self.config.get("dut_config", {})
         if not isinstance(dut, dict): dut = {}
-        self.max_input_power = spin_box(dut.get("max_input_power", DEFAULT_MAX_INPUT_POWER), 0, 50)
+        self.max_input_power = number_field(dut.get("max_input_power", DEFAULT_MAX_INPUT_POWER), 0, 50)
         self.pa_unit_count_combo = combo_box(("1", "2", "3"), str(dut.get("power_supply_count", DEFAULT_PA_UNIT_COUNT)))
-        frequency_rows = (
-            ("起始频率 (GHz)", self.freq_start, "结束频率 (GHz)", self.freq_stop),
-            ("频率步长 (GHz)", self.freq_step, "增补频点 (GHz)", self.freq_extra),
-        )
-        for row, (left_label, left_widget, right_label, right_widget) in enumerate(
-            frequency_rows
+        # 四种频率设置放在同一行：单位只在行首出现一次，各字段用“起始/步长/结束/增补”
+        # 短标签，避免四个“(GHz)”挤占输入框宽度。预览紧随其后，跨满整行。
+        frequency_row = QHBoxLayout()
+        frequency_row.setSpacing(6)
+        frequency_prefix = QLabel("频率（GHz）：")
+        frequency_prefix.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        frequency_row.addWidget(frequency_prefix)
+        for label, widget in (
+            ("起始", self.freq_start),
+            ("步长", self.freq_step),
+            ("结束", self.freq_stop),
+            ("增补", self.freq_extra),
         ):
-            for column, (label, widget) in enumerate(
-                ((left_label, left_widget), (right_label, right_widget))
-            ):
-                field_label = QLabel(label)
-                field_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-                form.addWidget(field_label, row, column * 2)
-                form.addWidget(widget, row, column * 2 + 1)
-        form.addWidget(self.freq_preview, 2, 0, 1, 4)
+            field_label = QLabel(label)
+            field_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            frequency_row.addWidget(field_label)
+            frequency_row.addWidget(widget)
+            frequency_row.addSpacing(6)
+        frequency_row.addStretch(1)
+        form.addLayout(frequency_row, 0, 0, 1, 4)
+        form.addWidget(self.freq_preview, 1, 0, 1, 4)
         parameter_rows = (("起始主功放输入功率 (dBm)", self.start_power),
                           ("结束主功放输入功率 (dBm)", self.stop_power),
                           ("输入功率步长 (dB)", self.power_step),
@@ -306,8 +312,8 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
             if widget is self.driver_gain:
                 # 驱动关闭时连同标签一起禁用，已填写的值仍保留在控件里。
                 self.driver_gain_label = field_label
-            form.addWidget(field_label, row + 3, column * 2)
-            form.addWidget(widget, row + 3, column * 2 + 1)
+            form.addWidget(field_label, row + 2, column * 2)
+            form.addWidget(widget, row + 2, column * 2 + 1)
         self._apply_driver_gain_state()
         page_column.addWidget(params)
         # 运行入口紧随测试参数，保存与返回放在页面底部固定操作栏。

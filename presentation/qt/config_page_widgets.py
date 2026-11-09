@@ -8,25 +8,21 @@
 
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
-from .input_controls import KeyboardOnlyDoubleSpinBox, WheelSafeComboBox
+from .input_controls import NumericTextField, WheelSafeComboBox
 from .theme import set_button_variant
 
 # 配置页表单里数值框的固定宽度：长数字不撑开列宽，两列表单的输入列才能对齐。
-_SPIN_BOX_MAXIMUM_WIDTH = 140
+_NUMBER_FIELD_MAXIMUM_WIDTH = 140
 
 
-def spin_box(value, minimum, maximum, *, decimals=2, single_step=1.0):
-    """建一个带范围的浮点数值框；宽度按配置页表单固定，避免长数字撑开列宽。
+def number_field(value, minimum, maximum, *, decimals=2):
+    """建一个纯文本数值输入框；宽度按配置页表单固定，避免长数字撑开列宽。
 
-    ``decimals`` 与 ``single_step`` 由调用点声明：频率需要 kHz 级精度，功率沿用
-    原来的两位小数与 1 单位步进。默认值保持既有调用点的显示行为。
+    ``decimals`` 由调用点声明：频率需要 kHz 级精度，功率沿用两位小数。控件只提供
+    文本直输与范围/精度处理，不再有上下步进按钮。
     """
-    widget = KeyboardOnlyDoubleSpinBox()
-    widget.setRange(minimum, maximum)
-    widget.setDecimals(decimals)
-    widget.setSingleStep(single_step)
-    widget.setValue(float(value))
-    widget.setMaximumWidth(_SPIN_BOX_MAXIMUM_WIDTH)
+    widget = NumericTextField(value, minimum, maximum, decimals=decimals)
+    widget.setMaximumWidth(_NUMBER_FIELD_MAXIMUM_WIDTH)
     return widget
 
 
@@ -72,5 +68,5 @@ def build_action_bar(page) -> QWidget:
 __all__ = [
     "build_action_bar",
     "combo_box",
-    "spin_box",
+    "number_field",
 ]

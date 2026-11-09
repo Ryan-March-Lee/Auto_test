@@ -9,9 +9,9 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QLineEdit, QWidget
 
-from presentation.qt.config_page_widgets import build_action_bar, combo_box, spin_box
+from presentation.qt.config_page_widgets import build_action_bar, combo_box, number_field
 
 
 class BuildActionBarTests(unittest.TestCase):
@@ -40,12 +40,14 @@ class InputFactoryTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_spin_box_sets_the_range_value_and_page_width(self):
-        widget = spin_box(3.5, 0, 50)
+    def test_number_field_is_a_plain_text_box_with_range_and_width(self):
+        widget = number_field(3.5, 0, 50)
 
+        self.assertIsInstance(widget, QLineEdit)
         self.assertEqual((widget.minimum(), widget.maximum()), (0, 50))
         self.assertEqual(widget.value(), 3.5)
         self.assertEqual(widget.maximumWidth(), 140)
+        self.assertFalse(hasattr(widget, "stepUp"))
 
     def test_combo_box_selects_a_matching_current_text(self):
         widget = combo_box(("1dB", "3dB", "5dB"), "3dB")

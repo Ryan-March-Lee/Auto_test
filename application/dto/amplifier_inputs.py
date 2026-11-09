@@ -13,16 +13,31 @@
   端口和运行上下文提供，不进测试参数 DTO（``ServicePlan`` 与 ``PreparedRun`` 的
   分工不变）。
 
-除了输入 DTO，本模块还提供目标输入功率网格的纯计算入口
-:func:`target_input_power_grid`：它只把扫描参数与 DUT 限制换算成正式测试目标点，
-不读取配置、不接触仪器。
+除了输入 DTO，本模块还提供 DUT 功率扫描计划的不可变值对象
+:class:`PowerScanSchedule` 和目标输入功率网格的纯计算入口
+:func:`target_input_power_grid`：前者按用户填写顺序保存一段或多段扫描计划，
+后者只把扫描参数与 DUT 限制换算成正式测试目标点，不读取配置、不接触仪器。
+``PowerScanSchedule`` 目前是独立的计划集合值对象，尚未替换
+:class:`AmplifierMeasurementInputs` 的单段字段；正式测量链路的接入属于后续阶段。
+
+功率扫描的非法输入按层报错，三处边界各自负责一件事，不互相复制校验：
+
+- 非有限数值（``NaN``/``inf``）在 :class:`PowerDbm` / :class:`Decibels` 构造期由
+  ``MeasurementValueError`` 拒绝，不会等到计划集合构造才失败；
+- 非正步长与“起点大于终点”由 :class:`PowerSweep` 以 :class:`AmplifierInputError`
+  拒绝，因为问题出在单段参数关系；
+- 空集合、非 ``list``/``tuple`` 容器和非法元素由 :class:`PowerScanSchedule` 以
+  :class:`AmplifierInputError` 拒绝，错误信息带元素下标，便于映射到配置行。
+
+分段点位生成（非整步终点补点、共享边界去重、DUT 上限）与相邻段连续性校验不在
+上述值对象的构造期实现，由后续纯计算入口统一负责。
 
 字段来源、单位与必填性（:class:`AmplifierMeasurementInputs`）：
 
 | 字段 | 类型（单位） | 来源 | 必填 | 非法值处理 |
 | --- | --- | --- | --- | --- |
 | `frequencies` | `tuple[Frequency, ...]`（内部 GHz） | 测试方案的频率列表 | 是，非空 | 空列表、重复频率、非 `Frequency` 值 → `AmplifierInputError` |
-| `input_power_sweep` | `PowerSweep`（起始/终止 dBm，步进 dB） | 测试方案的**主功放输入功率**扫描参数 | 是 | 起始大于终止、步进非正、非值对象 → `AmplifierInputError` |
+| `input_power_sweep` | `PowerSweep`（起始/终止 dBm，步进 dB） | 测试方案的**主功放输入功率**扫描参数 | 是 | 起始大于终止、步进非正、非值对象 → `AmplifierInputError`（当前仍为单段；多段集合见 `PowerScanSchedule`，替换本字段属于阶段四） |
 | `compression_target` | `Decibels`（dB） | 测试方案的压缩点要求（1/3/5 dB） | 是 | 不在 `AMPLIFIER_COMPRESSION_TARGETS_DB` 内 → `AmplifierInputError` |
 | `attenuator` | `Decibels`（dB，非负） | 测试方案的衰减器设定 | 是 | 负值、非值对象 → `AmplifierInputError` |
 | `max_dut_input_power` | `PowerDbm`（dBm） | 测试方案的 DUT 输入功率限制 | 是 | 非值对象 → `AmplifierInputError`（不再默认“不限制”） |
@@ -51,7 +66,7 @@ DUT 必须有漏极。
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
@@ -77,6 +92,7 @@ __all__ = [
     "INPUT_POWER_REFERENCE",
     "MAX_INTER_CHANNEL_DELAY_S",
     "PowerPlan",
+    "PowerScanSchedule",
     "PowerSweep",
     "SupplyChannel",
     "target_input_power_grid",
@@ -620,6 +636,77 @@ class PowerSweep:
         while start + (count + 1) * step <= stop + tolerance:
             count += 1
         return tuple(PowerDbm(start + index * step) for index in range(count + 1))
+
+
+def _ordered_sweeps(values: Any, label: str) -> tuple[PowerSweep, ...]:
+    """把功率扫描计划收敛为受控 tuple，并拒绝空集合与非法元素。
+
+    顺序就是执行顺序，因此只接受 ``list``/``tuple``：集合与生成器没有稳定顺序，
+    不能在这里被悄悄展开成某种“刚好可用”的序列。其他有序容器（如 ``deque``）也
+    不例外，避免同一份公共契约出现“有些调用方给序列表、有些给别的容器”的分叉。
+    多段至少需要一段计划，空集合直接失败；元素必须是已构造好的
+    :class:`PowerSweep`，错误信息带下标，便于定位到具体计划行。各段之间的连续性
+    （空档/重叠）属于独立校验，不在本函数重复。构造时复制为新 tuple，调用方之后
+    修改自己持有的列表不会改变计划集合。
+    """
+    if not isinstance(values, (list, tuple)):
+        raise AmplifierInputError(
+            f"{label}必须是有序序列（列表或元组），"
+            f"收到 {type(values).__name__}"
+        )
+    sweeps = tuple(values)
+    if not sweeps:
+        raise AmplifierInputError(
+            f"{label}不能为空：功率扫描至少需要一段有效计划"
+        )
+    for index, sweep in enumerate(sweeps):
+        if not isinstance(sweep, PowerSweep):
+            raise AmplifierInputError(
+                f"{label}[{index}] 必须是 PowerSweep，"
+                f"收到 {type(sweep).__name__}"
+            )
+    return sweeps
+
+
+@dataclass(frozen=True)
+class PowerScanSchedule:
+    """按用户填写顺序执行的 DUT 功率扫描计划集合。
+
+    每个元素是一段 :class:`PowerSweep`（起点、步长、终点）；``plans`` 的
+    **元组顺序就是执行顺序**，不做按起点排序，也不允许用无序容器顶替。构造时只
+    接受 ``list``/``tuple`` 并复制为新 tuple：其他容器一律拒绝，调用方之后修改自己
+    的列表不会影响已构造的计划集合。
+
+    值对象只回答“计划集合本身是否成立”：至少一段、元素类型正确、容器形状受控。
+    非法输入按层报错，避免把不同原因混成一种异常：
+
+    - 非有限数值（``NaN``/``inf``）已在 ``PowerDbm`` / ``Decibels`` 构造期由
+      ``MeasurementValueError`` 拒绝，不会进入本对象；
+    - 非正步长与起点大于终点由 :class:`PowerSweep` 以 :class:`AmplifierInputError`
+      拒绝；
+    - 空集合、非 ``list``/``tuple`` 容器和非法元素由本对象以
+      :class:`AmplifierInputError` 拒绝，元素错误带下标。
+
+    相邻计划的衔接、DUT 上限与点位生成属于后续纯计算入口，不在构造期实现——
+    这里既不排序，也不补点，也不校验空档/重叠。
+
+    单段扫描允许 ``start == stop``（单点扫描）；多段计划的最小合法性只要求至少
+    一段，而“多段”与“单段”由列表长度自然表达。对象不可变，测量过程中不会被 UI
+    状态改变。
+    """
+
+    plans: tuple[PowerSweep, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "plans", _ordered_sweeps(self.plans, "功率扫描计划")
+        )
+
+    def __len__(self) -> int:
+        return len(self.plans)
+
+    def __iter__(self) -> Iterator[PowerSweep]:
+        return iter(self.plans)
 
 
 def target_input_power_grid(

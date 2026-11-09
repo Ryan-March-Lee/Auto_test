@@ -100,6 +100,8 @@
 - 计划顺序使用 tuple 保存，不使用 set 或按起点自动排序。
 - 单段起止相等允许作为单点扫描。
 - 多段至少需要一段有效计划。
+- 非法输入按层归属，不把不同原因混成一种异常：非有限数值由 `PowerDbm` / `Decibels` 构造期以 `MeasurementValueError` 拒绝；非正步长与起点大于终点由 `PowerSweep` 以 `AmplifierInputError` 拒绝；空集合、非 `list`/`tuple` 容器与非法元素由计划集合以 `AmplifierInputError` 拒绝，元素错误带下标。
+- 计划集合构造期不生成点位、不校验相邻段连续性；这两件事分别由步骤 1.2、1.3 的纯计算入口负责。
 
 **完成标准**
 

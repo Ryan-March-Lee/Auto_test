@@ -13,6 +13,7 @@ from .amplifier_inputs import (
     PowerSweep,
     SupplyChannel,
     target_input_power_grid,
+    validate_power_scan_schedule,
 )
 from .measurement_requests import (
     AmplifierMeasurementRequest,
@@ -58,6 +59,7 @@ __all__ = [
     "PowerSweep",
     "SupplyChannel",
     "target_input_power_grid",
+    "validate_power_scan_schedule",
     "ExportFormat",
     "ExportOutcome",
     "ExportRequest",

@@ -12,6 +12,9 @@ r"""步骤 1.1 测试：DUT 功率扫描计划的不可变值对象。
    非正步长和起点大于终点由 ``PowerSweep`` 以 ``AmplifierInputError`` 拒绝。
 
 本步骤只定义值对象，不生成点位、不校验相邻计划衔接，也不读取配置或接触 Qt。
+相邻计划的连续性校验（步骤 1.3）由同一模块的
+``validate_power_scan_schedule`` 负责，测试见本文件末尾的
+``PlanContinuityTests``；点位生成见 ``tests.test_target_input_power_grid``。
 
 验证方式（``application`` 层改动，使用仓库 runner，包含编译与依赖锁门禁；
 只跑单个模块可改用 ``-m unittest tests.test_power_scan_schedule``，但不替代交付验证）：
@@ -29,6 +32,7 @@ from application.dto import (
     AmplifierInputError,
     PowerScanSchedule,
     PowerSweep,
+    validate_power_scan_schedule,
 )
 from domain.measurement.values import Decibels, MeasurementValueError, PowerDbm
 
@@ -132,6 +136,102 @@ class PowerScanScheduleTests(unittest.TestCase):
 
         with self.assertRaises(FrozenInstanceError):
             schedule.plans = ()
+
+
+class PlanContinuityTests(unittest.TestCase):
+    """步骤 1.3：相邻计划必须首尾相接，且错误能定位到计划行。"""
+
+    def test_continuous_plans_pass_and_the_schedule_is_returned(self):
+        schedule = PowerScanSchedule(
+            plans=(_sweep(-38.0, -10.0), _sweep(-10.0, -2.0, 0.25))
+        )
+
+        self.assertIs(validate_power_scan_schedule(schedule), schedule)
+
+    def test_a_single_plan_has_no_adjacent_pair_to_check(self):
+        schedule = PowerScanSchedule(plans=(_sweep(-5.0, -5.0),))
+
+        self.assertIs(validate_power_scan_schedule(schedule), schedule)
+
+    def test_a_single_sweep_is_accepted_by_the_same_entry(self):
+        sweep = _sweep(-20.0, 0.0)
+
+        self.assertEqual(validate_power_scan_schedule(sweep).plans, (sweep,))
+
+    def test_gap_reports_both_plan_indices_and_values(self):
+        schedule = PowerScanSchedule(
+            plans=(_sweep(-20.0, -10.0), _sweep(-8.0, 0.0))
+        )
+
+        with self.assertRaises(AmplifierInputError) as raised:
+            validate_power_scan_schedule(schedule)
+
+        message = str(raised.exception)
+        self.assertIn("空档", message)
+        self.assertIn("第 1 段终止功率 -10.0dBm", message)
+        self.assertIn("第 2 段起始功率 -8.0dBm", message)
+
+    def test_overlap_reports_both_plan_indices_and_values(self):
+        schedule = PowerScanSchedule(
+            plans=(_sweep(-20.0, -10.0), _sweep(-12.0, 0.0))
+        )
+
+        with self.assertRaises(AmplifierInputError) as raised:
+            validate_power_scan_schedule(schedule)
+
+        message = str(raised.exception)
+        self.assertIn("重叠", message)
+        self.assertIn("第 1 段终止功率 -10.0dBm", message)
+        self.assertIn("第 2 段起始功率 -12.0dBm", message)
+
+    def test_the_reported_index_follows_the_plan_order_not_the_power_order(self):
+        # 顺序就是执行顺序：即使后一段起点更低，编号仍按列表位置给出。
+        schedule = PowerScanSchedule(
+            plans=(_sweep(-2.0, 0.0), _sweep(-20.0, -10.0), _sweep(-10.0, 0.0))
+        )
+
+        with self.assertRaises(AmplifierInputError) as raised:
+            validate_power_scan_schedule(schedule)
+
+        message = str(raised.exception)
+        self.assertIn("第 1 段终止功率 0.0dBm", message)
+        self.assertIn("第 2 段起始功率 -20.0dBm", message)
+
+    def test_floating_point_noise_at_the_boundary_is_tolerated(self):
+        noisy_start = -10.0 + 1e-13
+        schedule = PowerScanSchedule(
+            plans=(_sweep(-20.0, -10.0), _sweep(noisy_start, 0.0))
+        )
+
+        self.assertIs(validate_power_scan_schedule(schedule), schedule)
+
+    def test_a_boundary_difference_beyond_tolerance_is_rejected(self):
+        for start, expected in ((1e-9, "空档"), (-1e-9, "重叠")):
+            with self.subTest(start=start):
+                schedule = PowerScanSchedule(
+                    plans=(_sweep(-20.0, -10.0), _sweep(-10.0 + start, 0.0))
+                )
+
+                with self.assertRaises(AmplifierInputError) as raised:
+                    validate_power_scan_schedule(schedule)
+
+                self.assertIn(expected, str(raised.exception))
+
+    def test_validating_does_not_reorder_or_modify_the_schedule(self):
+        fine = _sweep(-10.0, -2.0, 0.25)
+        coarse = _sweep(-38.0, -10.0)
+        schedule = PowerScanSchedule(plans=(coarse, fine))
+
+        validate_power_scan_schedule(schedule)
+
+        self.assertEqual(schedule.plans, (coarse, fine))
+
+    def test_a_non_plan_argument_is_rejected(self):
+        for value in (None, (-20.0, 0.0, 1.0), "plan"):
+            with self.subTest(value=type(value).__name__):
+                with self.assertRaises(AmplifierInputError) as raised:
+                    validate_power_scan_schedule(value)
+                self.assertIn("PowerScanSchedule", str(raised.exception))
 
 
 if __name__ == "__main__":

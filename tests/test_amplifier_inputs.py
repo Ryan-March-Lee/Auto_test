@@ -237,12 +237,19 @@ class PowerSweepTests(unittest.TestCase):
 
         self.assertIn("起始功率不能大于终止功率", str(raised.exception))
 
-    def test_points_do_not_cross_stop_when_interval_is_not_divisible(self):
+    def test_points_include_stop_when_interval_is_not_divisible(self):
         sweep = PowerSweep(
             start=PowerDbm(0.0), stop=PowerDbm(1.0), step=Decibels(0.6)
         )
 
-        self.assertEqual([point.dbm for point in sweep.points()], [0.0, 0.6])
+        self.assertEqual([point.dbm for point in sweep.points()], [0.0, 0.6, 1.0])
+
+    def test_single_point_sweep_has_one_point(self):
+        sweep = PowerSweep(
+            start=PowerDbm(-5.0), stop=PowerDbm(-5.0), step=Decibels(1.0)
+        )
+
+        self.assertEqual([point.dbm for point in sweep.points()], [-5.0])
 
     def test_points_include_stop_when_it_is_on_the_step_grid(self):
         sweep = PowerSweep(

@@ -14,30 +14,38 @@
   分工不变）。
 
 除了输入 DTO，本模块还提供 DUT 功率扫描计划的不可变值对象
-:class:`PowerScanSchedule` 和目标输入功率网格的纯计算入口
-:func:`target_input_power_grid`：前者按用户填写顺序保存一段或多段扫描计划，
-后者只把扫描参数与 DUT 限制换算成正式测试目标点，不读取配置、不接触仪器。
-``PowerScanSchedule`` 目前是独立的计划集合值对象，尚未替换
+:class:`PowerScanSchedule`，以及三个纯计算入口：:func:`validate_power_scan_schedule`
+校验相邻计划首尾相接，:meth:`PowerSweep.points` 生成单段预览点，
+:func:`target_input_power_grid` 生成预览与测量共用的合并目标点。三者都不读取配置、
+不接触仪器。``PowerScanSchedule`` 目前是独立的计划集合值对象，尚未替换
 :class:`AmplifierMeasurementInputs` 的单段字段；正式测量链路的接入属于后续阶段。
 
-功率扫描的非法输入按层报错，三处边界各自负责一件事，不互相复制校验：
+点位只由一处算法产出：单段点位（:meth:`PowerSweep.points`）与合并点位
+（:func:`target_input_power_grid`）共用 ``_step_lattice`` / ``_segment_points``，
+因此终止点始终可见，不在步长网格上的终止点作为额外最后一点补入。多段合并由
+:func:`target_input_power_grid` 完成：先校验相邻计划首尾相接，再让公共边界只保留
+一次；DUT 最大输入也在同一个入口截断，调用方不需要各自再补点、去重或截断。
+
+功率扫描的非法输入按层报错，四处边界各自负责一件事，不互相复制校验：
 
 - 非有限数值（``NaN``/``inf``）在 :class:`PowerDbm` / :class:`Decibels` 构造期由
   ``MeasurementValueError`` 拒绝，不会等到计划集合构造才失败；
 - 非正步长与“起点大于终点”由 :class:`PowerSweep` 以 :class:`AmplifierInputError`
   拒绝，因为问题出在单段参数关系；
 - 空集合、非 ``list``/``tuple`` 容器和非法元素由 :class:`PowerScanSchedule` 以
-  :class:`AmplifierInputError` 拒绝，错误信息带元素下标，便于映射到配置行。
+  :class:`AmplifierInputError` 拒绝，错误信息带元素下标，便于映射到配置行；
+- 相邻计划的空档/重叠由 :func:`validate_power_scan_schedule` 以
+  :class:`AmplifierInputError` 拒绝，错误信息带相邻两段的编号和功率值。
 
-分段点位生成（非整步终点补点、共享边界去重、DUT 上限）与相邻段连续性校验不在
-上述值对象的构造期实现，由后续纯计算入口统一负责。
+值对象与点位生成都保持“不排序、不修补”：连续性校验只报告问题，不会静默调整用户
+填写的计划顺序或端点。
 
 字段来源、单位与必填性（:class:`AmplifierMeasurementInputs`）：
 
 | 字段 | 类型（单位） | 来源 | 必填 | 非法值处理 |
 | --- | --- | --- | --- | --- |
 | `frequencies` | `tuple[Frequency, ...]`（内部 GHz） | 测试方案的频率列表 | 是，非空 | 空列表、重复频率、非 `Frequency` 值 → `AmplifierInputError` |
-| `input_power_sweep` | `PowerSweep`（起始/终止 dBm，步进 dB） | 测试方案的**主功放输入功率**扫描参数 | 是 | 起始大于终止、步进非正、非值对象 → `AmplifierInputError`（当前仍为单段；多段集合见 `PowerScanSchedule`，替换本字段属于阶段四） |
+| `input_power_sweep` | `PowerSweep`（起始/终止 dBm，步进 dB） | 测试方案的**主功放输入功率**扫描参数 | 是 | 起始大于终止、步进非正、非值对象 → `AmplifierInputError`（当前仍为单段，预览与测量已共用 `target_input_power_grid`；多段集合见 `PowerScanSchedule`，替换本字段属于阶段四） |
 | `compression_target` | `Decibels`（dB） | 测试方案的压缩点要求（1/3/5 dB） | 是 | 不在 `AMPLIFIER_COMPRESSION_TARGETS_DB` 内 → `AmplifierInputError` |
 | `attenuator` | `Decibels`（dB，非负） | 测试方案的衰减器设定 | 是 | 负值、非值对象 → `AmplifierInputError` |
 | `max_dut_input_power` | `PowerDbm`（dBm） | 测试方案的 DUT 输入功率限制 | 是 | 非值对象 → `AmplifierInputError`（不再默认“不限制”） |
@@ -589,14 +597,57 @@ class DrainChannel:
         return self
 
 
+_RELATIVE_TOLERANCE = 1e-12
+
+
+def _boundary_tolerance(left: float, right: float) -> float:
+    """两段功率端点相等判断的共享相对容差（dB）。
+
+    相邻计划的“首尾相接”是端点与端点的比较，与步长无关，因此步长不参与这里的
+    容差；浮点表述误差（1e-12 量级）之外的差异都是用户真实填写的空档或重叠。
+    """
+    return max(abs(left), abs(right), 1.0) * _RELATIVE_TOLERANCE
+
+
 def _sweep_endpoint_tolerance(start: float, stop: float, step: float) -> float:
     """功率网格端点比较的共享相对容差（dB）。
 
-    :meth:`PowerSweep.points` 与 :func:`target_input_power_grid` 必须用同一个规则，
-    否则同一次配置可能出现“扫描点含终点、目标点不含终点”的漂移。容差只吸收
-    浮点表述误差（1e-12 量级），不会放过用户真实填写的越界值。
+    单段点位（:meth:`PowerSweep.points`）、合并点位
+    （:func:`target_input_power_grid`）与相邻计划边界去重必须用同一个规则，否则
+    同一次配置可能出现“扫描点含终点、目标点不含终点”的漂移。容差只吸收浮点表述
+    误差（1e-12 量级），不会放过用户真实填写的越界值。
     """
-    return max(abs(start), abs(stop), abs(step), 1.0) * 1e-12
+    return max(_boundary_tolerance(start, stop), abs(step) * _RELATIVE_TOLERANCE)
+
+
+def _step_lattice(start: float, stop: float, step: float) -> list[float]:
+    """按步长从 ``start`` 推进到不超过 ``stop`` 的网格点（不含额外补入的终点）。
+
+    只回答“哪些点落在步长网格上”：末端不会被推过 ``stop``，落在浮点容差内的末点
+    由调用方按需求吸附到端点。单段点位与多段合并共用这一处容差循环。
+    """
+    tolerance = _sweep_endpoint_tolerance(start, stop, step)
+    count = math.floor((stop - start) / step + 1e-12)
+    while count >= 0 and start + count * step > stop + tolerance:
+        count -= 1
+    while start + (count + 1) * step <= stop + tolerance:
+        count += 1
+    return [start + index * step for index in range(count + 1)]
+
+
+def _segment_points(start: float, stop: float, step: float) -> list[float]:
+    """单段点位：步长网格点 + 始终可见的终止点。
+
+    ``start == stop`` 时只有一个点。终止点不在网格上时作为额外最后一点补入；
+    网格末点与终止点只差浮点误差时吸附到终止点本身，避免出现两个几乎相同的值。
+    """
+    tolerance = _sweep_endpoint_tolerance(start, stop, step)
+    points = _step_lattice(start, stop, step)
+    if abs(points[-1] - stop) <= tolerance:
+        points[-1] = stop
+    else:
+        points.append(stop)
+    return points
 
 
 @dataclass(frozen=True)
@@ -605,7 +656,8 @@ class PowerSweep:
 
     起始/终止是**主功放（DUT）输入功率**的绝对功率（dBm），步进是目标输入功率
     网格的相对增量（dB）；三者都不接受裸数值，避免“把步进当成绝对功率”这类单位
-    混用。``stop`` 是扫描上限，非整步时不额外插入终点。
+    混用。``stop`` 是扫描上限，但始终作为最后一点可见：不在步长网格上时作为额外
+    终点补入。
     """
 
     start: PowerDbm
@@ -625,17 +677,15 @@ class PowerSweep:
             )
 
     def points(self) -> tuple[PowerDbm, ...]:
-        """返回扫描点；``stop`` 是上限，不会为凑整步长而越过它。"""
-        start = self.start.dbm
-        stop = self.stop.dbm
-        step = self.step.db
-        count = math.floor((stop - start) / step + 1e-12)
-        tolerance = _sweep_endpoint_tolerance(start, stop, step)
-        while count >= 0 and start + count * step > stop + tolerance:
-            count -= 1
-        while start + (count + 1) * step <= stop + tolerance:
-            count += 1
-        return tuple(PowerDbm(start + index * step) for index in range(count + 1))
+        """返回本段扫描点；不会越过 ``stop``，且 ``stop`` 始终是最后一点。
+
+        终止点正好落在步长网格上时只出现一次；不在网格上时作为额外最后一点补入，
+        因此单段预览与实际目标点不会出现“少一个终点”的差异。
+        """
+        return tuple(
+            PowerDbm(point)
+            for point in _segment_points(self.start.dbm, self.stop.dbm, self.step.db)
+        )
 
 
 def _ordered_sweeps(values: Any, label: str) -> tuple[PowerSweep, ...]:
@@ -687,8 +737,8 @@ class PowerScanSchedule:
     - 空集合、非 ``list``/``tuple`` 容器和非法元素由本对象以
       :class:`AmplifierInputError` 拒绝，元素错误带下标。
 
-    相邻计划的衔接、DUT 上限与点位生成属于后续纯计算入口，不在构造期实现——
-    这里既不排序，也不补点，也不校验空档/重叠。
+    相邻计划的衔接、DUT 上限与点位合并由后续纯计算入口负责（点位合并见
+    :func:`target_input_power_grid`）；构造期既不排序，也不补点，也不校验空档/重叠。
 
     单段扫描允许 ``start == stop``（单点扫描）；多段计划的最小合法性只要求至少
     一段，而“多段”与“单段”由列表长度自然表达。对象不可变，测量过程中不会被 UI
@@ -709,55 +759,128 @@ class PowerScanSchedule:
         return iter(self.plans)
 
 
+def _as_power_scan_schedule(scan: Any) -> PowerScanSchedule:
+    """允许单段以 :class:`PowerSweep` 传入，统一收敛为计划集合。"""
+    if isinstance(scan, PowerScanSchedule):
+        return scan
+    if isinstance(scan, PowerSweep):
+        return PowerScanSchedule(plans=(scan,))
+    raise AmplifierInputError(
+        "功率扫描计划必须是 PowerScanSchedule（多段）或 PowerSweep（单段），"
+        f"收到 {type(scan).__name__}"
+    )
+
+
+def validate_power_scan_schedule(
+    scan: PowerScanSchedule | PowerSweep,
+) -> PowerScanSchedule:
+    """校验相邻计划首尾相接，并把合法计划原样返回（纯计算）。
+
+    只回答“计划顺序是否连续”：第 N 段的终止功率必须等于第 N+1 段的起始功率，比较
+    使用 :func:`_boundary_tolerance` 的相对容差，因此浮点运算造成的 1e-12 级差异不会
+    误报，真实填写的空档或重叠也不会被放过。
+
+    - 后一段起点更高：空档；
+    - 后一段起点更低：重叠（只允许相邻计划共享一个边界点）；
+    - 只按用户填写顺序比较相邻两项，不排序、不修补，因此错误里的编号就是配置里的
+      计划行号。
+
+    错误信息同时给出两段编号和两个功率值，便于映射到
+    ``signal_source.power_scan_plans[N]``。单段计划没有相邻关系，直接通过。
+    """
+    schedule = _as_power_scan_schedule(scan)
+    plans = schedule.plans
+    for index in range(len(plans) - 1):
+        previous_stop = plans[index].stop.dbm
+        following_start = plans[index + 1].start.dbm
+        tolerance = _boundary_tolerance(previous_stop, following_start)
+        if following_start > previous_stop + tolerance:
+            raise AmplifierInputError(
+                f"第 {index + 1} 段终止功率 {previous_stop}dBm 与 "
+                f"第 {index + 2} 段起始功率 {following_start}dBm 之间存在空档："
+                "相邻计划必须首尾相接"
+            )
+        if following_start < previous_stop - tolerance:
+            raise AmplifierInputError(
+                f"第 {index + 1} 段终止功率 {previous_stop}dBm 与 "
+                f"第 {index + 2} 段起始功率 {following_start}dBm 重叠："
+                "只允许相邻计划共享一个边界点"
+            )
+    return schedule
+
+
 def target_input_power_grid(
-    sweep: PowerSweep,
+    scan: PowerScanSchedule | PowerSweep,
     max_dut_input_power: PowerDbm,
 ) -> tuple[PowerDbm, ...]:
-    """生成正式测试的目标 DUT 输入功率网格（纯计算，不接触配置或仪器）。
+    """生成正式测试的合并目标 DUT 输入功率网格（纯计算，不接触配置或仪器）。
 
-    起始功率、结束功率与步长来自 ``sweep``；有效上限取扫描结束功率与 DUT 最大
-    输入功率的较小值。网格按步长从起始功率向上推进，绝不越过有效上限：
+    ``scan`` 可以是单段 :class:`PowerSweep`（兼容现有单计划调用方），也可以是
+    有序的 :class:`PowerScanSchedule`。这是预览与实际测量共用的唯一入口：各段按
+    列表顺序生成点位，``stop`` 始终可见，不在步长网格上的终止点作为额外最后一点
+    补入。有效上限取最后一段结束功率与 DUT 最大输入功率的较小值，DUT 限制在同一个
+    入口截断，调用方不需要再自行补点或去重：
 
-    - 上限正好落在网格上时，它作为普通点只出现一次；
-    - 上限不在网格上时，作为额外的最后一点补入（例如 0/1.0/0.6dB 得到
-      0、0.6、1.0）；
-    - 起始功率高于有效上限时拒绝配置，不生成任何点；起始功率与上限的差距落在
-      浮点容差内时视为同一点，只返回上限本身（略低于上限的起点因此被吸附到上限）。
+    - 进入合并前先用 :func:`validate_power_scan_schedule` 校验相邻计划首尾相接，
+      因此空档或重叠在这里直接拒绝，不会生成一份“看起来能用”的点列；
+    - 相邻计划的公共边界只保留一次；
+    - 上限落在某段中间时，该段在达到上限后停止，后续整段跳过；
+    - 上限正好落在网格上时作为普通点只出现一次；不在网格上时补入为最后一点；
+    - 首个目标点高于有效上限时拒绝配置；起点与上限只差浮点误差时视为同一点，
+      只返回上限本身；
+    - 输出按升序排列且没有重复点。
 
-    端点比较沿用 :meth:`PowerSweep.points` 的相对容差（两者共用
+    端点比较沿用 :meth:`PowerSweep.points` 的相对容差（共用
     :func:`_sweep_endpoint_tolerance`）：浮点误差既不会造出重复点，也不会让最后
-    一个点越过上限；落在容差内的末点会被吸附到上限本身。返回值只含
-    :class:`PowerDbm`，调用方不需要再解释单位。
+    一个点越过上限。返回值只含 :class:`PowerDbm`，调用方不需要再解释单位。
     """
-    _require_value(sweep, PowerSweep, "功率扫描参数")
+    schedule = validate_power_scan_schedule(scan)
     limit = _require_value(max_dut_input_power, PowerDbm, "DUT 最大输入功率")
-    start = sweep.start.dbm
-    upper = min(sweep.stop.dbm, limit.dbm)
-    step = sweep.step.db
-    tolerance = _sweep_endpoint_tolerance(start, upper, step)
-    if start > upper + tolerance:
+    plans = schedule.plans
+    last_stop = plans[-1].stop.dbm
+    upper = min(last_stop, limit.dbm)
+    first = plans[0]
+    first_tolerance = _sweep_endpoint_tolerance(
+        first.start.dbm, upper, first.step.db
+    )
+    if first.start.dbm > upper + first_tolerance:
         raise AmplifierInputError(
             "目标输入功率起始值高于有效上限："
-            f"{start}dBm > {upper}dBm（扫描结束 {sweep.stop.dbm}dBm 与 "
+            f"{first.start.dbm}dBm > {upper}dBm（最后一段结束 {last_stop}dBm 与 "
             f"DUT 最大输入 {limit.dbm}dBm 取较小值）"
         )
-    if start >= upper - tolerance:
-        # 起始点与有效上限只差浮点误差（略高或略低）：只有一个目标点，且使用
-        # 上限本身，保证不越过限制。
-        return (PowerDbm(upper),)
-    points = [
-        point.dbm
-        for point in PowerSweep(
-            start=sweep.start,
-            stop=PowerDbm(upper),
-            step=sweep.step,
-        ).points()
-    ]
-    if abs(points[-1] - upper) <= tolerance:
-        points[-1] = upper
-    else:
-        points.append(upper)
-    return tuple(PowerDbm(point) for point in points)
+
+    merged: list[float] = []
+    for sweep in plans:
+        start = sweep.start.dbm
+        step = sweep.step.db
+        tolerance = _sweep_endpoint_tolerance(start, upper, step)
+        if start > upper + tolerance:
+            # 有效上限已经在前面的计划里到达，后续计划完全在上限之上，不产生目标点。
+            continue
+        segment_stop = min(sweep.stop.dbm, upper)
+        if start >= segment_stop - tolerance:
+            # 起点与这段的有效终点只差浮点误差（略低或略高）：只保留上限本身。
+            points = [segment_stop]
+        else:
+            points = _segment_points(start, segment_stop, step)
+        for point in points:
+            if not merged:
+                merged.append(point)
+                continue
+            previous = merged[-1]
+            if abs(point - previous) <= _boundary_tolerance(previous, point):
+                # 相邻计划共享边界，总点列只保留一次。
+                continue
+            if point < previous:
+                # 连续性校验后不应出现；保留为内部不变量，避免另一段代码改动后
+                # 悄悄产出一份乱序点列。
+                raise AmplifierInputError(
+                    "目标输入功率点列必须按升序排列："
+                    f"{point}dBm 小于前一点 {previous}dBm"
+                )
+            merged.append(point)
+    return tuple(PowerDbm(point) for point in merged)
 
 
 @dataclass(frozen=True, kw_only=True)

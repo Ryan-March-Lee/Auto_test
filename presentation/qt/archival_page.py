@@ -2,8 +2,8 @@
 
 三个测量页面的“等待归档 / 正在保存 / 展示结果 / 终止事件”完全同构，差异只有测量
 类型。本模块只保留这份状态机，让页面不再各写一套：任何页面都不读文件、不判断产物
-是否存在，也不拼接导出规则，只把状态 DTO 写成运行日志；交付产物失败时另有一条可
-操作的提示条，让用户就地补生成。
+是否存在，也不拼接导出规则，只把状态 DTO 写成运行日志；交付产物失败时另有一条只读
+的状态提示条，不再提供重复的手动补生成按钮。
 
 页面使用顺序：
 
@@ -44,7 +44,8 @@ class ArchivalPageMixin:
     页面负责按钮、表格和接线确认；本类只负责归档状态与日志文案。页面必须在
     ``build_ui`` 之前调用 :meth:`_setup_archival`，并在左栏用
     :meth:`_build_archival_banner` 放一条失败提示条：归档结果仍写运行日志，提示条只
-    在“正式结果已保存、交付产物失败”时出现，提供一个不重跑测量的补生成入口。
+    在“正式结果已保存、交付产物失败”时出现；补生成由历史运行页自动执行，这里不提供
+    第二个手动入口。
     """
 
     def _setup_archival(
@@ -81,24 +82,14 @@ class ArchivalPageMixin:
     def _build_archival_banner(self):
         """创建失败提示条；页面必须把它加入左栏布局（默认隐藏）。
 
-        提示条自己不调用应用层：点击只发出运行标识，由窗口转给历史运行用例。页面
-        没有装配 ``regenerate_artifacts_requested`` 时保持只读，按钮点击只记一条日志。
+        提示条只展示归档失败事实，不调用应用层；交付产物补生成由历史运行页在激活时
+        自动执行，避免测量页与历史页各有一个重复入口。
         """
         from .archival_banner import ArchivalBanner
 
         banner = ArchivalBanner()
-        banner.regenerate_requested.connect(self._request_archival_repair)
         self._archival_banner = banner
         return banner
-
-    def _request_archival_repair(self, run_id: str) -> None:
-        """把提示条上的点击转成页面信号；页面不持有历史运行服务。"""
-        signal = getattr(self, "regenerate_artifacts_requested", None)
-        if signal is None:
-            self._log_callback("当前页面没有装配补生成入口，无法补生成交付产物")
-            return
-        self._log_callback(f"正在补生成运行 {run_id} 的交付产物…")
-        signal.emit(run_id)
 
     # -- controller 事件 ---------------------------------------------------
 
@@ -264,7 +255,8 @@ class ArchivalPageMixin:
         """把归档提示写进运行日志，并刷新失败提示条。
 
         保存位置仍只在日志里说明；提示条只在摘要声明“可补生成”时出现，成功后由
-        :meth:`_clear_archival_summary` 收起。
+        :meth:`_clear_archival_summary` 收起。提示条没有操作按钮，补生成由历史运行页
+        自动执行。
         """
         self._archival_summary = summary
         message = f"{summary.headline}：{summary.detail}"

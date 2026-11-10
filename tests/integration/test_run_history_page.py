@@ -11,10 +11,10 @@
   但 manifest 记录不被改写；
 - ``HistoryViewModel``：运行摘要转成展示文本，选择清空规则，产物文件缺失的文案；
   读取失败时 ``reset_runs()`` / ``reset_results()`` 一并丢弃陈旧行与选择；
-- ``RunHistoryPage``：显示运行与产物状态、按失败产物启用“重新生成”；历史结果列表与
-  结果另存为已移到数据可视化页，由该页的测试覆盖；
-- 步骤 9 补充的页面边界：无效运行不能重新生成、部分运行（进行中 / 未归档）与没有产物
-  记录的运行如实显示“无交付产物”、已完成产物文件缺失时提示“文件缺失”。
+- ``RunHistoryPage``：显示运行与产物状态，激活/刷新时自动补生成文件缺失或失败的
+  交付产物；历史结果列表与结果另存为已移到数据可视化页，由该页的测试覆盖；
+- 步骤 9 补充的页面边界：无效运行不参与补生成、部分运行（进行中 / 未归档）与没有产物
+  记录的运行如实显示“无交付产物”、已完成产物文件缺失时提示“文件缺失”并可自动恢复。
 """
 
 import os
@@ -22,16 +22,17 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from application.archival_service import ResultArchivalService
 from application.dto.archival import (
-    ArchivalOutcome,
     ArchivalRequest,
     ArchivalTestStatus,
-    ArchivedArtifact,
+    ArtifactRepairFailure,
+    ArtifactRepairOutcome,
 )
 from application.dto.run_history import (
     ResultReportState,
@@ -375,6 +376,76 @@ class RunHistoryServiceTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RunHistoryRequestError, "重新生成失败"):
             service.regenerate_failed_artifacts(RUN_ID)
+
+    def test_repair_artifacts_uses_the_registered_run(self):
+        class RepairArchival:
+            def __init__(self):
+                self.calls = []
+
+            def archive(self, request, *, retry_failed=False, now=None):
+                raise AssertionError("补生成用例不应走归档入口")
+
+            def repair_artifacts(self, run_id):
+                self.calls.append(run_id)
+                return ArtifactRepairOutcome(
+                    run_id=run_id, repaired=(ArtifactKind.CSV,)
+                )
+
+        archival = RepairArchival()
+        service = RunHistoryService(
+            statuses=StaticStatusPort([_summary()]), archival=archival
+        )
+
+        outcome = service.repair_artifacts(RUN_ID)
+
+        self.assertEqual(outcome.repaired, (ArtifactKind.CSV,))
+        self.assertEqual(archival.calls, [RUN_ID])
+
+    def test_repair_artifacts_rejects_unknown_or_invalid_runs(self):
+        service = RunHistoryService(
+            statuses=StaticStatusPort(
+                [
+                    _summary(),
+                    _summary(
+                        run_id=OTHER_RUN_ID,
+                        state=RunArchiveState.INVALID,
+                        problem="manifest 损坏",
+                        stages=(),
+                        artifacts=(),
+                    ),
+                ]
+            ),
+            archival=SimpleNamespace(
+                archive=lambda *args, **kwargs: None,
+                repair_artifacts=lambda run_id: ArtifactRepairOutcome(run_id=run_id),
+            ),
+        )
+
+        with self.assertRaisesRegex(RunHistoryRequestError, "不在历史列表中"):
+            service.repair_artifacts("20260101T000000Z_ffffffff")
+        with self.assertRaisesRegex(RunHistoryRequestError, "不可用"):
+            service.repair_artifacts(OTHER_RUN_ID)
+
+    def test_repair_artifacts_requires_the_archival_capability(self):
+        service = RunHistoryService(statuses=StaticStatusPort([_summary()]))
+
+        with self.assertRaisesRegex(RunHistoryRequestError, "未装配归档服务"):
+            service.repair_artifacts(RUN_ID)
+
+    def test_repair_artifacts_contract_errors_become_history_request_errors(self):
+        class BrokenArchival:
+            def archive(self, request, *, retry_failed=False, now=None):
+                raise AssertionError("补生成用例不应走归档入口")
+
+            def repair_artifacts(self, run_id):
+                raise ValueError("manifest 写回失败")
+
+        service = RunHistoryService(
+            statuses=StaticStatusPort([_summary()]), archival=BrokenArchival()
+        )
+
+        with self.assertRaisesRegex(RunHistoryRequestError, "补生成失败"):
+            service.repair_artifacts(RUN_ID)
 
     def test_constructor_rejects_objects_without_the_port_methods(self):
         with self.assertRaises(TypeError):
@@ -764,8 +835,9 @@ class RunHistoryViewModelTests(unittest.TestCase):
 
         self.assertEqual(row.artifact_text, "CSV 已生成（文件缺失）")
         self.assertIn("CSV 已生成但文件缺失", row.problem_text)
-        self.assertIn("另存为", row.problem_text)
+        self.assertIn("自动补生成", row.problem_text)
         self.assertFalse(row.can_regenerate)
+        self.assertTrue(row.needs_repair)
 
     def test_selection_is_cleared_when_the_run_disappears(self):
         view_model = self._view_model([_summary()])
@@ -952,7 +1024,7 @@ class RunHistoryPageTests(unittest.TestCase):
         with self.assertLogs(ARCHIVAL_LOGGER, level="WARNING"):
             return self._archive(FailingGenerator())
 
-    def _page(self):
+    def _page(self, *, auto_repair=False, repair_synchronously=False, log_callback=None):
         service = RunHistoryService(
             statuses=self.history,
             archival=ResultArchivalService(
@@ -963,6 +1035,9 @@ class RunHistoryPageTests(unittest.TestCase):
         return RunHistoryPage(
             history=HistoryViewModel(runs=service),
             run_service=service,
+            log_callback=log_callback,
+            auto_repair=auto_repair,
+            repair_synchronously=repair_synchronously,
         )
 
     def _run_row_index(self, page, run_id: str) -> int:
@@ -986,13 +1061,10 @@ class RunHistoryPageTests(unittest.TestCase):
         self.assertEqual(page.run_table.item(0, 5).text(), "CSV 失败、报告 失败")
         self.assertIn("CSV 失败", page.run_table.item(0, 6).text())
         self.assertIn("故意失败", page.run_table.item(0, 6).text())
-        self.assertFalse(page.regenerate_button.isEnabled())
-
-        page.run_table.setCurrentCell(0, 0)
-        self.assertTrue(page.regenerate_button.isEnabled())
+        self.assertFalse(hasattr(page, "regenerate_button"))
 
     def test_page_exposes_only_run_maintenance_actions(self):
-        """历史页只保留运行维护：不再暴露目录或报告打开动作。"""
+        """历史页只保留运行维护：不再暴露目录、报告或补生成按钮。"""
         self._complete_amplifier_run()
         self._archive(ArchiveArtifactGenerator(self.runs))
         page = self._page()
@@ -1002,7 +1074,7 @@ class RunHistoryPageTests(unittest.TestCase):
         self.assertFalse(hasattr(page, "open_run_directory"))
         self.assertFalse(hasattr(page, "open_report_button"))
         self.assertFalse(hasattr(page, "open_test_report"))
-        self.assertTrue(hasattr(page, "regenerate_button"))
+        self.assertFalse(hasattr(page, "regenerate_button"))
         self.assertTrue(hasattr(page, "delete_runs_button"))
 
     def test_artifact_location_matches_the_requested_source_result(self):
@@ -1076,33 +1148,28 @@ class RunHistoryPageTests(unittest.TestCase):
         self.assertEqual(page.run_table.rowCount(), 2)
         self.assertEqual({row.run_id for row in runs}, {RUN_ID, OTHER_RUN_ID})
 
-    def test_regenerate_button_is_disabled_for_completed_artifacts(self):
-        self._complete_amplifier_run()
-        self._archive(ArchiveArtifactGenerator(self.runs))
-
-        page = self._page()
-        page.run_table.setCurrentCell(0, 0)
-
-        self.assertFalse(page.regenerate_button.isEnabled())
-        self.assertFalse(page.regenerate_failed_artifacts())
-        self.warning_dialog.assert_called_once()
-
-    def test_regenerate_writes_artifacts_into_the_run_directory(self):
+    def test_auto_repair_retries_failed_artifacts(self):
         self._complete_amplifier_run()
         self._archive_failing()
-        page = self._page()
-        page.run_table.setCurrentCell(0, 0)
+        logs = []
+        page = self._page(
+            auto_repair=True,
+            repair_synchronously=True,
+            log_callback=logs.append,
+        )
 
-        with patch.object(page, "refresh") as refresh:
-            self.assertTrue(page.regenerate_failed_artifacts())
+        page.on_activated()
 
         run_dir = self.runs.layout(RUN_ID).run_directory
         self.assertTrue((run_dir / "artifacts" / "amplifier.csv").is_file())
         self.assertTrue((run_dir / "artifacts" / "amplifier_report.html").is_file())
-        message = self.information_dialog.call_args.args[2]
-        self.assertIn(RUN_ID, message)
-        self.assertIn("amplifier.csv", message)
-        refresh.assert_called_once_with()
+        self.assertTrue(any("已补生成 CSV" in line for line in logs))
+        records = {
+            record.kind: record
+            for record in self.runs.load_manifest(RUN_ID).artifacts
+        }
+        self.assertIs(records[ArtifactKind.CSV].status, ArtifactStatus.COMPLETED)
+        self.assertIs(records[ArtifactKind.REPORT].status, ArtifactStatus.COMPLETED)
 
     def test_invalid_run_is_listed_as_unavailable(self):
         """无效运行仍出现在运行表里，并带出不可用原因。"""
@@ -1145,7 +1212,7 @@ class RunHistoryPageTests(unittest.TestCase):
         )
 
         self.assertEqual(page.run_table.rowCount(), 0)
-        self.assertFalse(page.regenerate_button.isEnabled())
+        self.assertFalse(page.delete_runs_button.isEnabled())
         self.assertTrue(any("读取历史运行失败" in message for message in messages))
 
     def test_page_without_run_service_shows_no_runs(self):
@@ -1153,37 +1220,35 @@ class RunHistoryPageTests(unittest.TestCase):
         page = RunHistoryPage(history=HistoryViewModel())
 
         self.assertEqual(page.run_table.rowCount(), 0)
-        self.assertFalse(page.regenerate_button.isEnabled())
 
 
     # -- 步骤 9：无效运行、部分运行与产物缺失 --------------------------------
 
-    def test_invalid_run_cannot_be_regenerated(self):
-        """无效运行不能被重新生成；同批次的有效运行仍可重试失败产物。"""
+    def test_invalid_run_is_not_auto_repaired(self):
+        """无效运行不能被补生成；同批次的有效运行仍会自动重试失败产物。"""
         self._complete_amplifier_run()
         self._archive_failing()
-        broken = self.runs.root / "20260101T000000Z_ffffffff"
+        broken_id = "20260101T000000Z_ffffffff"
+        broken = self.runs.root / broken_id
         broken.mkdir(parents=True)
         (broken / "manifest.json").write_text("{not json", encoding="utf-8")
-        page = self._page()
+        logs = []
+        page = self._page(
+            auto_repair=True,
+            repair_synchronously=True,
+            log_callback=logs.append,
+        )
         invalid_row = next(
             index
             for index in range(page.run_table.rowCount())
             if "不可用" in page.run_table.item(index, 2).text()
         )
 
-        page.run_table.setCurrentCell(invalid_row, 0)
+        page.on_activated()
 
-        self.assertFalse(page.regenerate_button.isEnabled())
-        self.assertFalse(page.regenerate_failed_artifacts())
-        self.warning_dialog.assert_called_once()
-        self.assertIn(
-            "没有待补生成的交付产物", self.warning_dialog.call_args.args[2]
-        )
         self.assertIn("manifest", page.run_table.item(invalid_row, 6).text())
-
-        page.run_table.setCurrentCell(self._run_row_index(page, RUN_ID), 0)
-        self.assertTrue(page.regenerate_button.isEnabled())
+        self.assertFalse(any(broken_id in line for line in logs))
+        self.assertTrue(any(RUN_ID in line for line in logs))
 
     def test_partial_run_is_listed_without_deliverables(self):
         self._complete_cable_loss_run()
@@ -1195,10 +1260,7 @@ class RunHistoryPageTests(unittest.TestCase):
         self.assertEqual(page.run_table.item(0, 3).text(), "1/3 已完成")
         self.assertEqual(page.run_table.item(0, 4).text(), "1 个正式结果")
         self.assertEqual(page.run_table.item(0, 5).text(), "无交付产物")
-        page.run_table.setCurrentCell(0, 0)
-        self.assertFalse(page.regenerate_button.isEnabled())
-        self.assertFalse(page.regenerate_failed_artifacts())
-        self.warning_dialog.assert_called_once()
+        self.assertFalse(page.history.run_rows[0].needs_repair)
 
     def test_partial_run_archives_deliverables_as_not_applicable(self):
         self._complete_cable_loss_run()
@@ -1210,8 +1272,7 @@ class RunHistoryPageTests(unittest.TestCase):
 
         self.assertEqual(page.run_table.item(0, 2).text(), "进行中")
         self.assertEqual(page.run_table.item(0, 5).text(), "CSV 不适用、报告 不适用")
-        page.run_table.setCurrentCell(0, 0)
-        self.assertFalse(page.regenerate_button.isEnabled())
+        self.assertFalse(page.history.run_rows[0].needs_repair)
 
     def test_run_without_artifact_records_shows_no_deliverables(self):
         """旧流程或归档未接入的运行：没有产物记录时页面不假装有产物。"""
@@ -1221,10 +1282,9 @@ class RunHistoryPageTests(unittest.TestCase):
 
         self.assertEqual(page.run_table.item(0, 2).text(), "已完成")
         self.assertEqual(page.run_table.item(0, 5).text(), "无交付产物")
-        page.run_table.setCurrentCell(0, 0)
-        self.assertFalse(page.regenerate_button.isEnabled())
+        self.assertFalse(page.history.run_rows[0].needs_repair)
 
-    def test_missing_completed_artifact_is_flagged_without_changing_the_manifest(self):
+    def test_missing_completed_artifact_is_flagged_before_auto_repair(self):
         self._complete_amplifier_run()
         self._archive(ArchiveArtifactGenerator(self.runs))
         csv_path = (
@@ -1237,10 +1297,7 @@ class RunHistoryPageTests(unittest.TestCase):
         self.assertIn("CSV 已生成（文件缺失）", page.run_table.item(0, 5).text())
         self.assertIn("报告 已生成", page.run_table.item(0, 5).text())
         self.assertIn("文件缺失", page.run_table.item(0, 6).text())
-        page.run_table.setCurrentCell(0, 0)
-        self.assertFalse(page.regenerate_button.isEnabled())
-        self.assertFalse(page.regenerate_failed_artifacts())
-        self.warning_dialog.assert_called_once()
+        self.assertTrue(page.history.run_rows[0].needs_repair)
 
         # 只读诊断不改写 manifest：completed 仍是登记事实。
         records = {
@@ -1250,30 +1307,63 @@ class RunHistoryPageTests(unittest.TestCase):
         self.assertIs(records[ArtifactKind.CSV].status, ArtifactStatus.COMPLETED)
         self.assertEqual(records[ArtifactKind.CSV].path, "artifacts/amplifier.csv")
 
+    def test_auto_repair_restores_a_deleted_completed_artifact(self):
+        self._complete_amplifier_run()
+        self._archive(ArchiveArtifactGenerator(self.runs))
+        csv_path = (
+            self.runs.layout(RUN_ID).run_directory / "artifacts" / "amplifier.csv"
+        )
+        csv_path.unlink()
+        logs = []
+        page = self._page(
+            auto_repair=True,
+            repair_synchronously=True,
+            log_callback=logs.append,
+        )
 
-class RegenerationMessageTests(unittest.TestCase):
-    """页面文案：逐个产物说明结果，部分仍失败时不说成“全部完成”。"""
+        page.on_activated()
 
-    def test_message_reports_each_artifact_state(self):
-        outcome = ArchivalOutcome(
+        self.assertTrue(csv_path.is_file())
+        self.assertIn("CSV 已生成", page.run_table.item(0, 5).text())
+        self.assertNotIn("文件缺失", page.run_table.item(0, 6).text())
+        self.assertTrue(any("已补生成 CSV" in line for line in logs))
+        # 补生成不重写 manifest：completed 记录保持原样。
+        records = {
+            record.kind: record
+            for record in self.runs.load_manifest(RUN_ID).artifacts
+        }
+        self.assertIs(records[ArtifactKind.CSV].status, ArtifactStatus.COMPLETED)
+        self.assertEqual(records[ArtifactKind.CSV].path, "artifacts/amplifier.csv")
+
+
+class RepairMessageTests(unittest.TestCase):
+    """页面文案：逐个产物说明补生成结果，仍失败时不说成“全部完成”。"""
+
+    def test_message_reports_repaired_and_unresolved_artifacts(self):
+        outcome = ArtifactRepairOutcome(
             run_id=RUN_ID,
-            stage=STAGE_AMPLIFIER,
-            test_status=ArchivalTestStatus.COMPLETED,
-            formal_result_path=AMPLIFIER_RESULT_PATH,
-            artifacts=(
-                ArchivedArtifact.completed(ArtifactKind.CSV, "artifacts/amplifier.csv"),
-                ArchivedArtifact.failed(ArtifactKind.REPORT, "模板缺失"),
+            repaired=(ArtifactKind.CSV,),
+            failures=(
+                ArtifactRepairFailure(ArtifactKind.REPORT, "模板缺失"),
             ),
         )
 
-        message = RunHistoryPage._regeneration_message(outcome)
+        message = RunHistoryPage._repair_message(RUN_ID, outcome, None)
 
-        self.assertIn("CSV 已生成: artifacts/amplifier.csv", message)
-        self.assertIn("报告 未生成: 模板缺失", message)
+        self.assertIn("已补生成 CSV", message)
+        self.assertIn("报告 未补生成: 模板缺失", message)
+
+    def test_message_reports_the_repair_error(self):
+        message = RunHistoryPage._repair_message(
+            RUN_ID, None, "磁盘只读，无法写入产物"
+        )
+
+        self.assertIn("自动补生成失败", message)
+        self.assertIn("磁盘只读", message)
 
     def test_message_rejects_non_dto_outcomes(self):
         with self.assertRaises(TypeError):
-            RunHistoryPage._regeneration_message(object())
+            RunHistoryPage._repair_message(RUN_ID, object(), None)
 
 
 class CompositionWiringTests(unittest.TestCase):

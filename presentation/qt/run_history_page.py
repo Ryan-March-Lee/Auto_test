@@ -4,20 +4,22 @@
 **历史管理**，页面类名、路由与模块名都不再沿用“导出页”语义：
 
 - 页面只列出历史运行，并显示每次运行的阶段进度、正式结果数与交付产物状态；
-- 页面动作只保留运行级维护：对未生成的交付产物执行“补生成”（写回原运行目录，不重跑
-  测量），以及删除用户明确选中的历史运行（整目录删除，进行中的运行不允许删除）。
-  历史结果浏览、测试报告查看与另存为都属于“查看结果”的动作，已移到数据可视化页
-  （见 ``visualization_page``）；页面不再提供文件系统入口。
+- 交付产物不再提供“补生成”按钮：页面在激活或刷新时检查 ``needs_repair`` 的运行，
+  由应用层自动补生成文件缺失或生成失败的产物（写回原运行目录，不重跑测量）。补生成
+  在后台执行，结果只写运行日志，避免阻塞列表操作。
+- 页面动作只保留用户明确发起的运行级维护：删除选中的历史运行（整目录删除，进行中的
+  运行不允许删除）。历史结果浏览、测试报告查看与另存为都属于“查看结果”的动作，已移到
+  数据可视化页（见 ``visualization_page``）；页面不再提供文件系统入口。
 
 页面职责边界：
 
 - 列表与状态全部来自只读历史视图模型（``HistoryViewModel`` + 应用层运行摘要），页面
   不读 manifest、不拼接运行目录路径，也不判断文件是否存在。
-- 补生成走应用层的 ``RunHistoryServicePort``：页面只传“已列出的运行标识”，不传阶段、
-  不传路径；应用层决定用哪个阶段重试，并把产物写回受控位置。
+- 补生成走应用层的 ``RunHistoryServicePort.repair_artifacts``：页面只传“已列出的运行
+  标识”，不传阶段、不传路径；应用层决定如何重建并把产物写回受控位置。
 - 删除同样只传“已列出的运行标识”：页面对多选行做确认与文案，目录边界、进行中复核与
   实际删除由应用层和删除适配器完成，页面不调用任何文件系统删除接口。
-- 用户可见文案属于本页面：应用层返回结构化结果（``ArchivalOutcome`` /
+- 用户可见文案属于本页面：应用层返回结构化结果（``ArtifactRepairOutcome`` /
   ``RunDeletionOutcome``），页面据此生成日志与对话框文本。
 - 页面可见状态只有一个渲染入口：刷新、选中变化与读取失败都只更新表格数据，再由
   ``render_state()`` 按只读的 ``RunHistoryPageState`` 一次渲染空表说明与按钮可用性。
@@ -28,9 +30,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from PySide6.QtCore import QSignalBlocker, Qt
+from PySide6.QtCore import QSignalBlocker, Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -43,7 +46,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from application.dto.archival import ArchivalOutcome
+from application.dto.archival import ArtifactRepairOutcome
 from application.dto.run_deletion import RunDeletionOutcome
 from application.ports.gui_data_service import (
     GuiDataService,
@@ -68,7 +71,7 @@ class RunHistoryPageState:
     页面不再在刷新、选中与读取失败分支里各自调用 ``setVisible`` / ``setEnabled``：
     这些分支只更新运行表格的数据，再交给 :meth:`RunHistoryPage.render_state` 一次渲染。
     状态对象因此只保留驱动外观所需的事实（行数、当前运行与多选运行），行内展示文本与
-    “能否重新生成/删除”仍由视图模型给出。以后增加淡入、禁用或
+    “能否删除”仍由视图模型给出。以后增加淡入、禁用或
     局部过渡时只改渲染入口，不需要追踪每个回调。
     """
 
@@ -98,11 +101,6 @@ class RunHistoryPageState:
         return self.run_count == 0
 
     @property
-    def can_regenerate(self) -> bool:
-        """选中的运行是否有可重新生成的失败产物。"""
-        return self.selected_run is not None and self.selected_run.can_regenerate
-
-    @property
     def deletable_runs(self) -> tuple[RunHistoryRow, ...]:
         """多选运行中允许删除的部分（进行中的运行不在其中）。"""
         return tuple(row for row in self.selected_runs if row.can_delete)
@@ -114,7 +112,7 @@ class RunHistoryPageState:
 
 
 class RunHistoryPage(QWidget):
-    """历史运行页：运行与产物状态、失败产物重新生成、删除选中的运行。"""
+    """历史运行页：运行与产物状态、自动补生成、删除选中的运行。"""
 
     def __init__(
         self,
@@ -122,19 +120,35 @@ class RunHistoryPage(QWidget):
         history: HistoryViewModel,
         run_service: RunHistoryServicePort | None = None,
         log_callback: Callable[[str], Any] | None = None,
+        auto_repair: bool = False,
+        repair_synchronously: bool = False,
         parent=None,
     ):
         if not isinstance(history, HistoryViewModel):
             raise TypeError("历史管理页必须使用只读 HistoryViewModel")
-        if run_service is not None and not callable(
-            getattr(run_service, "regenerate_failed_artifacts", None)
+        if not isinstance(auto_repair, bool):
+            raise TypeError("auto_repair 必须是布尔值")
+        if not isinstance(repair_synchronously, bool):
+            raise TypeError("repair_synchronously 必须是布尔值")
+        if auto_repair and run_service is not None and not callable(
+            getattr(run_service, "repair_artifacts", None)
         ):
-            raise TypeError("历史运行服务必须提供 regenerate_failed_artifacts(run_id)")
+            raise TypeError("自动补生成需要历史运行服务提供 repair_artifacts(run_id)")
         super().__init__(parent)
         self.history = history
         self.run_service = run_service
         self.log_callback = log_callback or (lambda _message: None)
+        self._auto_repair = auto_repair
+        self._repair_synchronously = repair_synchronously
+        # 本会话内已经尝试过的运行：失败产物不在每次刷新时反复重试。
+        self._repair_attempted: set[str] = set()
+        self._repair_worker: _HistoryRepairWorker | None = None
         self._build_ui()
+        if self._auto_repair:
+            app = QApplication.instance()
+            if app is not None:
+                app.aboutToQuit.connect(self._wait_for_repair_worker)
+        # 构造时不启动补生成：页面可能只是被窗口预先创建，等用户激活历史页再检查。
         self.refresh()
 
     def _build_ui(self):
@@ -175,35 +189,24 @@ class RunHistoryPage(QWidget):
         run_layout.addLayout(run_actions)
         layout.addWidget(run_group, 1)
 
-        action_group = QGroupBox("交付产物")
-        action_layout = QHBoxLayout(action_group)
-        action_layout.setSpacing(10)
-        self.regenerate_button = QPushButton("补生成未生成的产物")
-        self.regenerate_button.setToolTip(
-            "使用已保存的正式结果补生成 CSV 或测试报告，不会重跑测量"
-        )
-        set_button_variant(self.regenerate_button, "primary")
-        self.regenerate_button.clicked.connect(self.regenerate_failed_artifacts)
-        action_layout.addWidget(self.regenerate_button)
-        action_layout.addStretch(1)
-        layout.addWidget(action_group)
-
     # -- 生命周期 -----------------------------------------------------------
 
     def on_activated(self):
-        """页面可见时刷新运行列表：历史运行可能在别处变化。"""
-        self.refresh()
+        """页面可见时刷新运行列表，并检查是否需要自动补生成产物。"""
+        self.refresh(repair=True)
 
-    def refresh(self):
+    def refresh(self, *, repair: bool = False):
         """刷新历史运行列表。
 
         测量可能在别的页签完成，所以完成信号与页面激活都会走这里。读取失败由
         :meth:`_load_run_rows` 处理：清空表格、丢弃视图模型里的陈旧行并记日志，
         刷新失败不能让完成信号或切换标签页抛异常。表格填好之后只调用一次
-        :meth:`render_state`。
+        :meth:`render_state`；``repair`` 为真时再对缺失/失败产物安排一次后台补生成。
         """
         rows = self._load_run_rows()
         self.render_state()
+        if repair:
+            self._schedule_auto_repair(rows)
         return rows
 
     # -- 状态渲染 -----------------------------------------------------------
@@ -224,7 +227,6 @@ class RunHistoryPage(QWidget):
         elif not isinstance(state, RunHistoryPageState):
             raise TypeError("页面渲染必须使用 RunHistoryPageState")
         self.run_empty_hint.setVisible(state.run_list_empty)
-        self.regenerate_button.setEnabled(state.can_regenerate)
         deletion_ready = self._deletion_service_ready()
         self.delete_runs_button.setEnabled(state.can_delete and deletion_ready)
         return state
@@ -240,8 +242,7 @@ class RunHistoryPage(QWidget):
         selection = self.run_table.selectionModel()
         indexes = () if selection is None else selection.selectedRows()
         self.history.select_runs(index.row() for index in indexes)
-        # 单运行动作（补生成）跟随当前行：只有当前行确实在多选里时才推进，
-        # 避免把用户为删除而做的多选收敛掉。
+        # 当前行只用于页面状态；多选是删除动作的完整选择，不因当前行变化而收敛。
         current = self.run_table.currentRow()
         if current in self.history.selected_run_indices:
             self.history.select_run(current)
@@ -257,10 +258,8 @@ class RunHistoryPage(QWidget):
     # -- 列表 ---------------------------------------------------------------
 
     def refresh_run_list(self):
-        """重新读取历史运行摘要并刷新表格，然后渲染一次页面状态。"""
-        rows = self._load_run_rows()
-        self.render_state()
-        return rows
+        """重新读取历史运行摘要、渲染页面状态，并检查是否需要自动补生成。"""
+        return self.refresh(repair=True)
 
     def _load_run_rows(self):
         """读取历史运行摘要并填表；失败时清空表格与陈旧摘要并返回空元组。"""
@@ -286,61 +285,97 @@ class RunHistoryPage(QWidget):
         return rows
 
     def _on_run_selection_changed(self):
-        """选中运行变化时只推进状态：按钮是否可点由 :meth:`render_state` 统一决定。"""
+        """选中运行变化时只推进状态：删除按钮是否可点由 :meth:`render_state` 统一决定。"""
         self.render_state()
 
-    def selected_run_row(self) -> RunHistoryRow | None:
-        """把运行表格选中行交给视图模型；未选中时提示并返回 ``None``。"""
-        row = self.history.select_run(self.run_table.currentRow())
-        if row is None:
-            QMessageBox.warning(self, "历史运行", "请先选择一次历史运行")
-        return row
+    # -- 自动补生成交付产物 -------------------------------------------------
 
-    # -- 补生成失败产物 -----------------------------------------------------
+    def _schedule_auto_repair(self, rows) -> None:
+        """对缺失/失败产物的运行启动一次后台补生成。
 
-    def regenerate_failed_artifacts(self):
-        """对选中的历史运行补生成未生成的交付产物（写回原运行目录）。"""
-        row = self.selected_run_row()
-        if row is None:
-            return False
-        if not row.can_regenerate:
-            QMessageBox.warning(
-                self,
-                "无法补生成",
-                f"运行 {row.run_id} 没有待补生成的交付产物"
-                f"（当前产物状态：{row.artifact_text}）",
-            )
-            return False
-        if self.run_service is None:
-            QMessageBox.warning(self, "无法补生成", "未装配历史运行服务")
-            return False
-        try:
-            outcome = self.run_service.regenerate_failed_artifacts(row.run_id)
-            message = self._regeneration_message(outcome)
-        except (OSError, ValueError, RuntimeError) as error:
-            self.log_callback(f"补生成交付产物失败: {error}")
-            QMessageBox.warning(self, "补生成失败", str(error))
-            return False
-        self.log_callback(message)
-        QMessageBox.information(self, "补生成结果", message)
+        只在本会话首次发现该运行时尝试；仍然失败的产物不在每次刷新时反复重试。
+        """
+        if not self._auto_repair or self.run_service is None:
+            return
+        pending = tuple(
+            row.run_id
+            for row in rows
+            if row.needs_repair and row.run_id not in self._repair_attempted
+        )
+        if not pending:
+            return
+        worker = self._repair_worker
+        if worker is not None and worker.isRunning():
+            return
+        self._repair_attempted.update(pending)
+        if self._repair_synchronously:
+            self._on_repairs_finished(self._run_repairs(pending))
+            return
+        worker = _HistoryRepairWorker(
+            self.run_service.repair_artifacts, pending, self
+        )
+        worker.completed.connect(self._on_repairs_finished)
+        worker.finished.connect(self._clear_repair_worker)
+        worker.finished.connect(worker.deleteLater)
+        self._repair_worker = worker
+        worker.start()
+
+    def _run_repairs(self, run_ids):
+        """同步执行补生成；供测试与 ``repair_synchronously`` 使用。"""
+        results = []
+        for run_id in run_ids:
+            try:
+                outcome = self.run_service.repair_artifacts(run_id)
+            except (OSError, ValueError, RuntimeError) as error:
+                results.append((run_id, None, str(error) or type(error).__name__))
+            else:
+                results.append((run_id, outcome, None))
+        return tuple(results)
+
+    def _on_repairs_finished(self, results) -> None:
+        """记录自动补生成结果，并在完成后刷新一次列表。"""
+        for run_id, outcome, error in results:
+            self.log_callback(self._repair_message(run_id, outcome, error))
         self.refresh()
-        return True
+        # 已完全恢复的运行可以在本会话后续再次检查：用户可能又删了产物；
+        # 仍有失败产物的运行保留在已尝试集合里，避免每次刷新反复重试持久故障。
+        self._repair_attempted.difference_update(
+            run_id
+            for run_id, outcome, error in results
+            if error is None
+            and isinstance(outcome, ArtifactRepairOutcome)
+            and not outcome.has_failures
+        )
+
+    def _clear_repair_worker(self) -> None:
+        self._repair_worker = None
+
+    def _wait_for_repair_worker(self) -> None:
+        """应用退出前等待后台补生成结束，避免销毁运行中的 QThread。"""
+        worker = self._repair_worker
+        if worker is not None and worker.isRunning():
+            worker.wait(5000)
 
     @staticmethod
-    def _regeneration_message(outcome: ArchivalOutcome) -> str:
-        """把结构化归档结果写成用户可见文案。"""
-        if not isinstance(outcome, ArchivalOutcome):
-            raise TypeError("历史运行服务必须返回 ArchivalOutcome")
+    def _repair_message(run_id: str, outcome, error: str | None) -> str:
+        """把结构化补生成结果写成运行日志文案。"""
+        if error is not None:
+            return f"运行 {run_id} 自动补生成失败: {error}"
+        if not isinstance(outcome, ArtifactRepairOutcome):
+            raise TypeError("历史运行服务必须返回 ArtifactRepairOutcome")
         parts = []
-        for artifact in outcome.artifacts:
-            label = artifact_kind_text(artifact.kind)
-            if artifact.path is not None:
-                parts.append(f"{label} 已生成: {artifact.path}")
-            elif artifact.reason:
-                parts.append(f"{label} 未生成: {artifact.reason}")
-            else:
-                parts.append(f"{label} 不适用")
-        return f"运行 {outcome.run_id} 的交付产物：" + "；".join(parts)
+        if outcome.repaired:
+            parts.append(
+                "已补生成 "
+                + "、".join(artifact_kind_text(kind) for kind in outcome.repaired)
+            )
+        for failure in outcome.failures:
+            parts.append(
+                f"{artifact_kind_text(failure.kind)} 未补生成: {failure.reason}"
+            )
+        if not parts:
+            parts.append("无需补生成")
+        return f"运行 {run_id} 的交付产物自动检查: " + "；".join(parts)
 
     # -- 删除历史运行 ---------------------------------------------------------
 
@@ -433,6 +468,37 @@ class RunHistoryPage(QWidget):
         return "；".join(parts)
 
 
+class _HistoryRepairWorker(QThread):
+    """在后台串行补生成多个运行的交付产物。
+
+    页面只把运行标识交给它；产物路径、阶段与校验都由应用层决定。单个运行失败不会
+    中断同批次的其它运行，结果以 ``(run_id, outcome, error)`` 元组回传。
+    """
+
+    completed = Signal(object)
+
+    def __init__(
+        self,
+        repair: Callable[[str], Any],
+        run_ids: tuple[str, ...],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._repair = repair
+        self._run_ids = tuple(run_ids)
+
+    def run(self) -> None:
+        results = []
+        for run_id in self._run_ids:
+            try:
+                outcome = self._repair(run_id)
+            except (OSError, ValueError, RuntimeError) as error:
+                results.append((run_id, None, str(error) or type(error).__name__))
+            else:
+                results.append((run_id, outcome, None))
+        self.completed.emit(tuple(results))
+
+
 def _fit_columns(table: QTableWidget, *, stretch_column: int) -> None:
     """按内容排列表头，并让指定列吃掉剩余宽度（文件名/说明这类长短不一的文本列）。"""
     header = table.horizontalHeader()
@@ -476,15 +542,17 @@ def build_run_history_page(
 ) -> RunHistoryPage:
     """按 GUI 数据门面装配历史运行页。
 
-    窗口只做装配：页面需要的运行摘要/重新生成依赖来自同一个门面，页面自己持有视图
+    窗口只做装配：页面需要的运行摘要/补生成依赖来自同一个门面，页面自己持有视图
     模型，窗口不再逐项拼装页面内部结构。历史结果浏览、报告查看与另存为属于数据
-    可视化页，页面不再提供打开运行目录动作。
+    可视化页，页面不再提供打开运行目录动作。补生成在历史页激活/刷新时自动执行，
+    不提供独立按钮。
     """
     run_service = gui_data_service.run_history
     return RunHistoryPage(
         history=HistoryViewModel(runs=run_service),
         run_service=run_service,
         log_callback=log_callback,
+        auto_repair=True,
         parent=parent,
     )
 

@@ -20,6 +20,8 @@ from application.dto.archival import (
     ArchivalStatus,
     ArchivalTestStatus,
     ArchivedArtifact,
+    ArtifactRepairFailure,
+    ArtifactRepairOutcome,
 )
 from domain.run.models import (
     AMPLIFIER_RESULT_PATH,
@@ -716,6 +718,46 @@ class ArchivalOutcomeTests(unittest.TestCase):
         self.assertIs(outcome.report, outcome.artifact(ArtifactKind.REPORT))
 
 
+class ArtifactRepairContractTests(unittest.TestCase):
+    """补生成结果 DTO：恢复/失败/跳过互斥，失败原因必填。"""
+
+    def test_outcome_reports_disjoint_results(self):
+        outcome = ArtifactRepairOutcome(
+            run_id=RUN_ID,
+            repaired=(ArtifactKind.CSV,),
+            failures=(
+                ArtifactRepairFailure(ArtifactKind.REPORT, "模板缺失"),
+            ),
+        )
+
+        self.assertTrue(outcome.changed)
+        self.assertTrue(outcome.has_failures)
+        self.assertEqual(outcome.repaired, (ArtifactKind.CSV,))
+        self.assertEqual(outcome.failures[0].kind, ArtifactKind.REPORT)
+
+    def test_same_kind_cannot_be_in_two_result_lists(self):
+        with self.assertRaises(ValueError):
+            ArtifactRepairOutcome(
+                run_id=RUN_ID,
+                repaired=(ArtifactKind.CSV,),
+                skipped=(ArtifactKind.CSV,),
+            )
+        with self.assertRaises(ValueError):
+            ArtifactRepairOutcome(
+                run_id=RUN_ID,
+                repaired=(ArtifactKind.CSV,),
+                failures=(ArtifactRepairFailure(ArtifactKind.CSV, "写入失败"),),
+            )
+
+    def test_only_deliverables_and_non_empty_reasons_are_accepted(self):
+        with self.assertRaises(ValueError):
+            ArtifactRepairFailure("pdf", "不支持")
+        with self.assertRaises(ValueError):
+            ArtifactRepairFailure(ArtifactKind.CSV, " ")
+        with self.assertRaises(ValueError):
+            ArtifactRepairOutcome(run_id=RUN_ID, repaired=("pdf",))
+
+
 class ArchivalContractLayeringTests(unittest.TestCase):
     """归档 DTO 是纯数据契约：不依赖 Qt、文件系统或基础设施。"""
 
@@ -734,7 +776,12 @@ class ArchivalContractLayeringTests(unittest.TestCase):
                 self.assertNotIn(forbidden, roots)
 
     def test_dto_carries_no_ui_wording_field(self):
-        for dataclass_type in (ArchivalOutcome, ArchivedArtifact):
+        for dataclass_type in (
+            ArchivalOutcome,
+            ArchivedArtifact,
+            ArtifactRepairFailure,
+            ArtifactRepairOutcome,
+        ):
             annotated = [field.name for field in fields(dataclass_type)]
             with self.subTest(dataclass=dataclass_type.__name__):
                 self.assertNotIn("message", annotated)

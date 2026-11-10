@@ -45,14 +45,19 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from datetime import datetime
+from pathlib import Path
+from uuid import uuid4
 
 from application.dto.archival import (
     ArchivalOutcome,
     ArchivalRequest,
     ArchivalTestStatus,
     ArchivedArtifact,
+    ArtifactRepairFailure,
+    ArtifactRepairOutcome,
 )
 from application.ports.result_artifacts import (
     ArtifactGenerationError,
@@ -197,6 +202,204 @@ class ResultArchivalService:
             ),
             archived_at=utc_now_iso(now),
         )
+
+    def repair_artifacts(
+        self, run_id: str, *, now: datetime | None = None
+    ) -> ArtifactRepairOutcome:
+        """按原样补生成已登记的交付产物，写回原运行目录。
+
+        与 :meth:`archive` 的区别：本入口不重新推导产物状态，也不创建新的归档结果；
+        它只处理两类可恢复事实：
+
+        - ``completed`` 产物文件被删除或替换：按 manifest 登记的 ``sha256`` / 大小
+          重新生成到临时受控路径，复核一致后才原子替换原文件，**不改写** ``completed``
+          记录；
+        - ``failed`` 产物：显式重试一次，成功后登记为 ``completed``；仍失败则保留
+          最新失败原因。
+
+        ``pending`` 产物按生成端口能力补生成，``not_applicable`` 与无需处理的产物
+        进入 ``skipped``。只有完整成功的主功放运行才允许补生成交付产物；其它运行
+        直接按归档请求错误拒绝，避免给部分运行伪造交付物。
+        """
+        if not isinstance(run_id, str) or not run_id.strip():
+            raise ArchivalRequestError("补生成必须指定运行标识")
+        with _run_lock(run_id):
+            return self._repair_artifacts_locked(run_id, now=now)
+
+    def _repair_artifacts_locked(
+        self, run_id: str, *, now: datetime | None
+    ) -> ArtifactRepairOutcome:
+        """在已持有该运行归档锁的前提下执行一次补生成。"""
+        manifest = self._load(run_id)
+        test_status = _derive_test_status(manifest, STAGE_AMPLIFIER)
+        if test_status is not ArchivalTestStatus.COMPLETED:
+            raise ArchivalRequestError(
+                f"运行 {run_id} 不是完整成功的主功放运行"
+                f"（{test_status.value}），不能补生成交付产物"
+            )
+        request = ArchivalRequest(run_id=run_id, stage=STAGE_AMPLIFIER)
+        formal_result = self._formal_result(manifest, request, test_status)
+        if formal_result is None:
+            raise ArchivalRequestError(
+                f"运行 {run_id} 没有可用的正式结果，不能补生成交付产物"
+            )
+
+        repaired: list[ArtifactKind] = []
+        failures: list[ArtifactRepairFailure] = []
+        skipped: list[ArtifactKind] = []
+        for kind in _DELIVERABLES:
+            record = manifest.find_artifact(kind, source_result=formal_result)
+            if record is None:
+                # 本入口只修复已登记产物；旧运行完全没有产物记录时不在这里补登记。
+                skipped.append(kind)
+                continue
+            if record.status is ArtifactStatus.NOT_APPLICABLE:
+                skipped.append(kind)
+                continue
+            if record.status is ArtifactStatus.COMPLETED:
+                try:
+                    self.runs.verify_artifact(run_id, record)
+                except (OSError, ValueError):
+                    failure = self._repair_completed_artifact(
+                        record,
+                        stage=STAGE_AMPLIFIER,
+                        source_result=formal_result,
+                        run_id=run_id,
+                    )
+                    if failure is None:
+                        repaired.append(kind)
+                    else:
+                        failures.append(failure)
+                else:
+                    skipped.append(kind)
+                continue
+            if self.generator is None or kind not in self.supported_kinds:
+                failures.append(
+                    ArtifactRepairFailure(kind, "当前生成端口不支持该产物")
+                )
+                continue
+            if record.status is ArtifactStatus.FAILED:
+                manifest = self._commit(
+                    manifest.retry_artifact(
+                        kind, source_result=formal_result, now=now
+                    ),
+                    now=now,
+                )
+                record = manifest.find_artifact(kind, source_result=formal_result)
+            updated = self._generate_one(
+                record,
+                stage=STAGE_AMPLIFIER,
+                source_result=formal_result,
+                run_id=run_id,
+                now=now,
+            )
+            manifest = self._commit(
+                manifest.with_artifact(updated, now=now), now=now
+            )
+            if updated.status is ArtifactStatus.COMPLETED:
+                repaired.append(kind)
+            else:
+                failures.append(
+                    ArtifactRepairFailure(
+                        kind, updated.error or "产物生成失败"
+                    )
+                )
+        return ArtifactRepairOutcome(
+            run_id=run_id,
+            repaired=tuple(repaired),
+            failures=tuple(failures),
+            skipped=tuple(skipped),
+        )
+
+    def _repair_completed_artifact(
+        self,
+        record: ArtifactRecord,
+        *,
+        stage: str,
+        source_result: str,
+        run_id: str,
+    ) -> ArtifactRepairFailure | None:
+        """按 manifest 登记的校验值原样重建一个 completed 产物。
+
+        成功返回 ``None``（文件已原子替换回原路径，manifest 记录保持不变）；失败返回
+        带原因的结构化失败，绝不把不同内容覆盖到原路径上。
+        """
+        if self.generator is None or record.kind not in self.supported_kinds:
+            return ArtifactRepairFailure(
+                record.kind, "当前生成端口不支持该产物"
+            )
+        if record.path is None or record.sha256 is None or record.size_bytes is None:
+            return ArtifactRepairFailure(
+                record.kind, "completed 产物缺少路径或校验值"
+            )
+        temp_abs: Path | None = None
+        try:
+            # 临时目标仍在 artifacts/ 下，报告图表也会落在同一目录；只有校验值
+            # 与登记一致时才替换正式路径，避免应用版本变化后悄悄交付另一份内容。
+            request = ArtifactGenerationRequest(
+                run_id=run_id,
+                stage=stage,
+                kind=record.kind,
+                source_result=source_result,
+                target_path=record.path + f".repair-{uuid4().hex}.tmp",
+            )
+            temp_abs = self._artifact_absolute_path(run_id, request.target_path)
+            final_abs = self._artifact_absolute_path(run_id, record.path)
+            generated = self.generator.generate(request)
+            if not isinstance(generated, GeneratedArtifact):
+                raise ArtifactGenerationError(
+                    "产物生成端口必须返回 GeneratedArtifact，实际: "
+                    f"{type(generated).__name__}"
+                )
+            if generated.path != request.target_path:
+                raise ArtifactGenerationError(
+                    "产物生成端口返回的路径与请求的受控目标不一致: "
+                    f"期望 {request.target_path}，实际 {generated.path}"
+                )
+            if (
+                generated.sha256 != record.sha256
+                or generated.size_bytes != record.size_bytes
+            ):
+                raise ArtifactGenerationError(
+                    "重新生成的内容与 manifest 登记不一致"
+                    "（应用版本或运行环境已变化），未覆盖原路径"
+                )
+            os.replace(temp_abs, final_abs)
+            try:
+                self.runs.verify_artifact(run_id, record)
+            except (OSError, ValueError) as error:
+                # 复核失败时不能让一份未通过校验的文件留在“已生成”位置。
+                _remove_quietly(final_abs)
+                raise ArtifactGenerationError(
+                    f"补生成后的产物复核失败: {error}"
+                ) from error
+        except (ArtifactGenerationError, OSError, ValueError) as error:
+            if temp_abs is not None:
+                _remove_quietly(temp_abs)
+            reason = _failure_text(error)
+            logger.warning(
+                "交付产物补生成失败: run=%s kind=%s error=%s",
+                run_id,
+                record.kind.value,
+                reason,
+            )
+            return ArtifactRepairFailure(record.kind, reason)
+        return None
+
+    def _artifact_absolute_path(self, run_id: str, relative_path: str) -> Path:
+        """把运行目录内的产物相对路径解析成绝对路径。"""
+        layout_factory = getattr(self.runs, "layout", None)
+        if not callable(layout_factory):
+            raise ArtifactGenerationError(
+                "运行仓储不提供 layout()，无法定位运行目录内的产物"
+            )
+        try:
+            layout = layout_factory(run_id)
+        except (OSError, ValueError) as error:
+            raise ArtifactGenerationError(
+                f"运行 {run_id} 的目录布局不可用: {error}"
+            ) from error
+        return Path(layout.run_directory) / Path(*relative_path.split("/"))
 
     # -- 事实校验 ---------------------------------------------------------
 
@@ -668,6 +871,14 @@ def _failure_text(error: BaseException) -> str:
     """把产物生成失败转成可登记的非空文本。"""
     message = str(error).strip()
     return message or type(error).__name__
+
+
+def _remove_quietly(path: Path) -> None:
+    """清理补生成的临时文件；清理失败不覆盖已经上报的原因。"""
+    try:
+        path.unlink()
+    except OSError:
+        pass
 
 
 __all__ = [

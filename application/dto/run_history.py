@@ -93,9 +93,9 @@ class RunArtifactSummary:
     无法对应时为 ``None``，这种产物不能作为“重新生成”的输入。
 
     ``missing`` 只由适配器按运行目录的事实填写：``completed`` 产物登记的文件已经不在
-    运行目录里。它是**只读诊断**——不改变 manifest 登记的产物状态，也不代表可以原地
-    重新生成（``completed`` 仍是终态，见 :attr:`ArtifactStatus.COMPLETED`）。缺少文件时
-    用户应通过“另存为”重新取得交付数据，或按运行目录修复。
+    运行目录里。它是**只读诊断**——不改变 manifest 登记的产物状态；文件缺失由补生成
+    用例按 manifest 登记的校验值原样重建，``completed`` 仍是终态。缺少文件时历史页
+    会触发一次自动补生成，失败则保留原因供排查。
     """
 
     kind: ArtifactKind
@@ -262,6 +262,18 @@ class RunHistorySummary:
     def can_regenerate(self) -> bool:
         """只有结构完整且存在可定位失败产物的运行才能重新生成。"""
         return self.state is RunArchiveState.USABLE and self.regeneration_stage is not None
+
+    @property
+    def needs_repair(self) -> bool:
+        """是否存在需要自动补生成的产物：文件缺失或生成失败。
+
+        与 :attr:`can_regenerate` 不同，``missing_artifacts`` 也参与判断：文件被误删
+        时产物记录仍是 ``completed``，但交付文件已经不在，必须按原样重建。``invalid``
+        运行不读取 manifest，不能作为修复输入。
+        """
+        return self.state is not RunArchiveState.INVALID and bool(
+            self.missing_artifacts or self.failed_artifacts
+        )
 
 
 def _stages(value: Any) -> tuple[RunStageSummary, ...]:

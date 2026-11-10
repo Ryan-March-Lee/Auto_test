@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Iterable, Mapping, Protocol
 
-from application.dto.archival import ArchivalOutcome
+from application.dto.archival import ArchivalOutcome, ArtifactRepairOutcome
 from application.dto.export_requests import ExportOutcome, ExportRequest
 from application.dto.measurement_results import MeasurementResult
 from application.dto.run_deletion import RunDeletionOutcome
@@ -148,7 +148,7 @@ class RunDeletionPort(Protocol):
 
 
 class RunHistoryServicePort(Protocol):
-    """历史运行管理的应用用例入口（查询 + 重新生成 + 位置定位 + 删除）。"""
+    """历史运行管理的应用用例入口（查询 + 补生成 + 位置定位 + 删除）。"""
 
     def list_runs(self) -> tuple[RunHistorySummary, ...]:
         """返回历史运行摘要列表。"""
@@ -159,6 +159,14 @@ class RunHistoryServicePort(Protocol):
 
         只接受历史列表中的 ``run_id``；运行不可用、没有失败产物或归档失败时抛出
         ``application.run_history_service.RunHistoryRequestError``。
+        """
+
+    def repair_artifacts(self, run_id: str) -> ArtifactRepairOutcome:
+        """自动补生成运行中缺失或失败的交付产物，写回原运行目录。
+
+        文件缺失的 ``completed`` 产物按 manifest 登记的校验值原样重建；``failed``
+        产物显式重试一次。只接受历史列表中的 ``run_id``，运行不可用或归档契约失败时
+        抛出 ``RunHistoryRequestError``。
         """
         ...
 

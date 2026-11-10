@@ -170,7 +170,7 @@ def _group_titles(page) -> list[str]:
 
 
 class MeasurementPagesHaveNoArchiveBoxTests(unittest.TestCase):
-    """三个测量页都不保留“归档结果”分组框，只用一条可操作的失败提示条。"""
+    """三个测量页都不保留“归档结果”分组框，只用一条只读的失败提示条。"""
 
     @classmethod
     def setUpClass(cls):
@@ -203,7 +203,8 @@ class MeasurementPagesHaveNoArchiveBoxTests(unittest.TestCase):
                 self.assertFalse(hasattr(page, "archival_view"))
                 # 提示条默认收起；没有失败产物时不占据左栏空间。
                 self.assertTrue(page.archival_banner.isHidden())
-                self.assertEqual(page.archival_banner.regenerate_button.text(), "补生成产物")
+                self.assertFalse(hasattr(page.archival_banner, "regenerate_button"))
+                self.assertFalse(hasattr(page, "regenerate_artifacts_requested"))
 
 
 class AmplifierPageArchivalLogTests(unittest.TestCase):
@@ -270,10 +271,7 @@ class AmplifierPageArchivalLogTests(unittest.TestCase):
         self.assertIn("写入失败", text)
         self.assertEqual(self.page._archival_summary.tone, TONE_WARNING)
 
-    def test_failed_artifact_offers_inline_repair_with_the_run_id(self):
-        requests = []
-        self.page.regenerate_artifacts_requested.connect(requests.append)
-
+    def test_failed_artifact_shows_a_read_only_banner_with_the_run_id(self):
         self.controller.signals.archival.emit(
             _amplifier_outcome(csv=ArchivedArtifact.failed(ArtifactKind.CSV, "写入失败"))
         )
@@ -282,11 +280,8 @@ class AmplifierPageArchivalLogTests(unittest.TestCase):
         self.assertFalse(banner.isHidden())
         self.assertEqual(banner.run_id, RUN_ID)
         self.assertIn("补生成", banner.message.text())
-
-        banner.regenerate_button.click()
-
-        self.assertEqual(requests, [RUN_ID])
-        self.assertTrue(any("正在补生成" in line for line in self.logs))
+        self.assertFalse(hasattr(banner, "regenerate_button"))
+        self.assertFalse(hasattr(self.page, "regenerate_artifacts_requested"))
 
     def test_completed_outcome_keeps_the_repair_banner_hidden(self):
         self.controller.signals.archival.emit(_amplifier_outcome())

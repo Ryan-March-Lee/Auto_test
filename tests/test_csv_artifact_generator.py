@@ -27,6 +27,7 @@ from application.dto.archival import ArchivalRequest, ArchivalStatus
 from application.ports.result_artifacts import (
     ArtifactGenerationError,
     ArtifactGenerationRequest,
+    GeneratedArtifact,
 )
 from application.run_stages import RunStageRecorder
 from domain.run.models import (
@@ -39,7 +40,10 @@ from domain.run.models import (
     ArtifactStatus,
 )
 from infrastructure.persistence import artifact_generator
-from infrastructure.persistence.artifact_generator import CsvArtifactGenerator
+from infrastructure.persistence.artifact_generator import (
+    ArchiveArtifactGenerator,
+    CsvArtifactGenerator,
+)
 from infrastructure.persistence.run_history_repository import FileRunHistoryRepository
 from infrastructure.persistence.run_repository import RunRepository
 
@@ -97,6 +101,15 @@ def _amplifier_payload(*, results=None) -> dict:
         "run_id": RUN_ID,
         "results": results,
     }
+
+
+def _fake_report_plots(result, output_dir):
+    """轻量图表替身：补生成测试不真实渲染 matplotlib。"""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / "amplifier_p_in_vs_p_out.png"
+    path.write_bytes(b"fake-plot")
+    return {"p_in_vs_p_out": path}, ()
 
 
 def _csv_request(
@@ -564,6 +577,160 @@ class ArchivalCsvIntegrationTests(RunDirectoryFixture):
 
         with self.assertRaisesRegex(ValueError, "不一致"):
             self.repository.verify_artifact_files(RUN_ID)
+
+
+# -- 补生成 ---------------------------------------------------------------
+
+
+class _FailOnceGenerator:
+    """第一次生成 CSV 时失败，之后委托真实生成器（模拟暂时性写入失败）。"""
+
+    def __init__(self, inner):
+        self.inner = inner
+        self.supported_kinds = inner.supported_kinds
+        self.failed = False
+
+    def generate(self, request):
+        if request.kind is ArtifactKind.CSV and not self.failed:
+            self.failed = True
+            raise ArtifactGenerationError("磁盘已满")
+        return self.inner.generate(request)
+
+
+class _WrongDigestGenerator:
+    """生成成功但报告与 manifest 不同的校验值，模拟版本变化。"""
+
+    supported_kinds = frozenset({ArtifactKind.CSV})
+
+    def __init__(self, inner):
+        self.inner = inner
+
+    def generate(self, request):
+        generated = self.inner.generate(request)
+        return GeneratedArtifact(
+            path=generated.path,
+            sha256="0" * 64,
+            size_bytes=generated.size_bytes,
+        )
+
+
+class ArtifactRepairTests(RunDirectoryFixture):
+    def _archive_service(self, generator=None):
+        return ResultArchivalService(
+            runs=self.repository,
+            generator=generator
+            or ArchiveArtifactGenerator(
+                self.repository, report_plot_renderer=_fake_report_plots
+            ),
+        )
+
+    def _archive(self, generator=None):
+        return self._archive_service(generator).archive(
+            ArchivalRequest(RUN_ID, STAGE_AMPLIFIER), now=NOW
+        )
+
+    def test_repair_restores_a_deleted_completed_artifact_without_rewriting_the_record(self):
+        self._complete_cable_loss()
+        self._complete_amplifier()
+        self._archive()
+        original = self._csv_file().read_bytes()
+        record = self.repository.load_manifest(RUN_ID).find_artifact(
+            ArtifactKind.CSV, source_result=AMPLIFIER_RESULT_PATH
+        )
+        self._csv_file().unlink()
+
+        outcome = self._archive_service().repair_artifacts(RUN_ID, now=NOW)
+
+        self.assertEqual(outcome.repaired, (ArtifactKind.CSV,))
+        self.assertFalse(outcome.has_failures)
+        self.assertEqual(self._csv_file().read_bytes(), original)
+        stored = self.repository.load_manifest(RUN_ID).find_artifact(
+            ArtifactKind.CSV, source_result=AMPLIFIER_RESULT_PATH
+        )
+        self.assertIs(stored.status, ArtifactStatus.COMPLETED)
+        self.assertEqual(stored.sha256, record.sha256)
+        self.repository.verify_artifact_files(RUN_ID)
+        self.assertEqual(self._temporary_files(), [])
+
+    def test_repair_retries_a_failed_artifact(self):
+        self._complete_cable_loss()
+        self._complete_amplifier()
+        real = ArchiveArtifactGenerator(
+            self.repository, report_plot_renderer=_fake_report_plots
+        )
+        self._archive(_FailOnceGenerator(real))
+
+        outcome = self._archive_service().repair_artifacts(RUN_ID, now=NOW)
+
+        self.assertEqual(outcome.repaired, (ArtifactKind.CSV,))
+        self.assertFalse(outcome.has_failures)
+        self.assertIs(
+            self.repository.load_manifest(RUN_ID)
+            .find_artifact(ArtifactKind.CSV, source_result=AMPLIFIER_RESULT_PATH)
+            .status,
+            ArtifactStatus.COMPLETED,
+        )
+        self.repository.verify_artifact_files(RUN_ID)
+
+    def test_repair_does_not_overwrite_when_regenerated_content_differs(self):
+        self._complete_cable_loss()
+        self._complete_amplifier()
+        self._archive()
+        record = self.repository.load_manifest(RUN_ID).find_artifact(
+            ArtifactKind.CSV, source_result=AMPLIFIER_RESULT_PATH
+        )
+        self._csv_file().unlink()
+        service = ResultArchivalService(
+            runs=self.repository,
+            generator=_WrongDigestGenerator(CsvArtifactGenerator(self.repository)),
+        )
+
+        outcome = service.repair_artifacts(RUN_ID, now=NOW)
+
+        self.assertEqual(outcome.repaired, ())
+        self.assertTrue(outcome.has_failures)
+        self.assertIn("不一致", outcome.failures[0].reason)
+        self.assertFalse(self._csv_file().exists())
+        stored = self.repository.load_manifest(RUN_ID).find_artifact(
+            ArtifactKind.CSV, source_result=AMPLIFIER_RESULT_PATH
+        )
+        self.assertIs(stored.status, ArtifactStatus.COMPLETED)
+        self.assertEqual(stored.sha256, record.sha256)
+        self.assertEqual(self._temporary_files(), [])
+
+    def test_repair_skips_runs_without_artifact_records(self):
+        self._complete_cable_loss()
+        self._complete_amplifier()
+
+        outcome = self._archive_service().repair_artifacts(RUN_ID, now=NOW)
+
+        self.assertEqual(outcome.repaired, ())
+        self.assertFalse(outcome.has_failures)
+        self.assertEqual(
+            set(outcome.skipped), {ArtifactKind.CSV, ArtifactKind.REPORT}
+        )
+        self.assertFalse((self.run_directory / "artifacts" / "amplifier.csv").exists())
+
+    def test_repair_rejects_a_partial_run(self):
+        self._complete_cable_loss()
+
+        with self.assertRaisesRegex(ArchivalRequestError, "不是完整成功|尚未完成"):
+            self._archive_service().repair_artifacts(RUN_ID, now=NOW)
+
+    def test_repair_without_a_generator_reports_the_missing_capability(self):
+        self._complete_cable_loss()
+        self._complete_amplifier()
+        self._archive()
+        self._csv_file().unlink()
+
+        outcome = ResultArchivalService(runs=self.repository).repair_artifacts(
+            RUN_ID, now=NOW
+        )
+
+        self.assertEqual(outcome.repaired, ())
+        self.assertTrue(outcome.has_failures)
+        self.assertIn("不支持", outcome.failures[0].reason)
+        self.assertFalse(self._csv_file().exists())
 
 
 # -- 端口声明 -------------------------------------------------------------

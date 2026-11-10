@@ -3,7 +3,7 @@
 覆盖：
 
 - ``RunHistoryPageState`` 是只读快照：拒绝负行数、布尔/浮点行数与不合法的选中运行；
-- ``render_state()`` 是空表说明与“重新生成”按钮的唯一写入点：显式快照按键值渲染，
+- ``render_state()`` 是空表说明与删除按钮状态的唯一写入点：显式快照按键值渲染，
   不传快照时从运行表格与视图模型推导；
 - 全量刷新、单表刷新与选中变化都只调用一次渲染入口；
 - 读取失败时表格与视图模型一起清空：看不到的行不能继续参与选择；
@@ -59,7 +59,6 @@ _STATE_WRITE_OWNERS = frozenset(
 _DYNAMIC_STATE_WIDGETS = frozenset(
     {
         "self.run_empty_hint",
-        "self.regenerate_button",
         "self.delete_runs_button",
     }
 )
@@ -141,8 +140,8 @@ class _FakeRunService:
         self.outcomes = dict(outcomes or {})
         self.batches = []
 
-    def regenerate_failed_artifacts(self, run_id):
-        raise AssertionError("删除用例不应触发重新生成")
+    def repair_artifacts(self, run_id):
+        raise AssertionError("删除用例不应触发补生成")
 
     def delete_runs(self, run_ids):
         ids = tuple(run_ids)
@@ -224,11 +223,10 @@ def _page_source_calls() -> set[tuple[str, str | None, str]]:
 class RunHistoryPageStateTests(unittest.TestCase):
     """状态对象只描述外观所需事实，不合法输入立即失败。"""
 
-    def test_default_state_is_empty_and_cannot_regenerate(self):
+    def test_default_state_is_empty(self):
         state = RunHistoryPageState()
 
         self.assertTrue(state.run_list_empty)
-        self.assertFalse(state.can_regenerate)
 
     def test_counts_must_be_non_negative_integers(self):
         for value in (-1, True, 1.5, "2"):
@@ -239,16 +237,6 @@ class RunHistoryPageStateTests(unittest.TestCase):
     def test_selected_run_must_come_from_the_view_model(self):
         with self.assertRaises(TypeError):
             RunHistoryPageState(selected_run=object())
-
-    def test_can_regenerate_follows_the_selected_run(self):
-        self.assertFalse(
-            RunHistoryPageState(selected_run=_run_row(can_regenerate=False))
-            .can_regenerate
-        )
-        self.assertTrue(
-            RunHistoryPageState(selected_run=_run_row(can_regenerate=True))
-            .can_regenerate
-        )
 
     def test_delete_follows_all_selected_runs(self):
         terminal = _run_row()
@@ -284,11 +272,10 @@ class RunHistoryPageRenderingTests(unittest.TestCase):
 
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_initial_render_shows_empty_hint_and_disables_regeneration(self):
+    def test_initial_render_shows_empty_hint(self):
         page = _page()
 
         self.assertFalse(page.run_empty_hint.isHidden())
-        self.assertFalse(page.regenerate_button.isEnabled())
 
     def test_run_table_is_a_read_only_display_panel(self):
         page = _page(summaries=[_summary()])
@@ -301,16 +288,11 @@ class RunHistoryPageRenderingTests(unittest.TestCase):
                 if item is not None:
                     self.assertFalse(item.flags() & Qt.ItemIsEditable)
 
-    def test_refresh_renders_rows_and_selection_enables_regeneration(self):
+    def test_refresh_renders_rows(self):
         page = _page(summaries=[_summary()])
 
         self.assertEqual(page.run_table.rowCount(), 1)
         self.assertTrue(page.run_empty_hint.isHidden())
-        self.assertFalse(page.regenerate_button.isEnabled())
-
-        page.run_table.setCurrentCell(0, 0)
-
-        self.assertTrue(page.regenerate_button.isEnabled())
 
     def test_explicit_state_is_rendered_without_reading_the_tables(self):
         page = _page(summaries=[_summary(can_regenerate=False)])
@@ -320,7 +302,6 @@ class RunHistoryPageRenderingTests(unittest.TestCase):
         # 表格里明明有运行，但显式快照说“空”：渲染只认快照。
         self.assertEqual(page.run_table.rowCount(), 1)
         self.assertFalse(page.run_empty_hint.isHidden())
-        self.assertFalse(page.regenerate_button.isEnabled())
 
         page.render_state(
             RunHistoryPageState(
@@ -330,7 +311,6 @@ class RunHistoryPageRenderingTests(unittest.TestCase):
         )
 
         self.assertTrue(page.run_empty_hint.isHidden())
-        self.assertTrue(page.regenerate_button.isEnabled())
 
     def test_derived_state_clears_a_stale_selection(self):
         page = _page(summaries=[_summary()])
@@ -342,7 +322,6 @@ class RunHistoryPageRenderingTests(unittest.TestCase):
 
         self.assertEqual(page.run_table.rowCount(), 0)
         self.assertIsNone(page.history.selected_run)
-        self.assertFalse(page.regenerate_button.isEnabled())
         self.assertFalse(page.run_empty_hint.isHidden())
 
     def test_render_state_rejects_foreign_values(self):
@@ -378,7 +357,6 @@ class RunHistoryPageRenderingTests(unittest.TestCase):
 
         # 显式快照是纯投影：只按键值渲染，不回写表格选择。
         self.assertEqual(page.history.selected_run_index, 0)
-        self.assertFalse(page.regenerate_button.isEnabled())
 
     def test_run_list_failure_clears_the_stale_runs_and_selection(self):
         page = _page(summaries=[_summary()])
@@ -394,7 +372,6 @@ class RunHistoryPageRenderingTests(unittest.TestCase):
         # 表格已空，视图模型里的旧摘要与选中运行必须一起消失。
         self.assertIsNone(page.history.selected_run)
         self.assertIsNone(page.history.run_row(RUN_ID))
-        self.assertFalse(page.regenerate_button.isEnabled())
         self.assertFalse(page.run_empty_hint.isHidden())
 
     def test_state_writes_stay_inside_the_renderer(self):

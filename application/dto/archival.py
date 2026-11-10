@@ -145,6 +145,65 @@ class ArchivedArtifact:
 
 
 @dataclass(frozen=True)
+class ArtifactRepairFailure:
+    """一条未能按原样补生成的交付产物及原因。"""
+
+    kind: ArtifactKind
+    reason: str
+
+    def __post_init__(self) -> None:
+        kind = coerce_status(self.kind, ArtifactKind, field_name="产物类型")
+        if kind not in DELIVERABLE_ARTIFACT_KINDS:
+            raise ValueError(f"补生成只汇总 CSV 和报告产物，收到: {kind.value}")
+        if not isinstance(self.reason, str) or not self.reason.strip():
+            raise ValueError("补生成失败原因必须是非空字符串")
+        object.__setattr__(self, "kind", kind)
+        object.__setattr__(self, "reason", self.reason.strip())
+
+
+@dataclass(frozen=True)
+class ArtifactRepairOutcome:
+    """一次交付产物补生成的结构化结果。
+
+    补生成只修复**已登记产物**：``completed`` 文件缺失时按原样重建，``failed``
+    产物显式重试一次。它不创建新的产物记录，也不改写 ``completed`` 记录；因此
+    manifest 的 ``completed`` 终态约束保持不变。``repaired`` 是本次实际恢复的产物，
+    ``failures`` 是仍未能恢复的产物，``skipped`` 是无需处理或不适用的产物。
+    """
+
+    run_id: str
+    repaired: tuple[ArtifactKind, ...] = ()
+    failures: tuple[ArtifactRepairFailure, ...] = ()
+    skipped: tuple[ArtifactKind, ...] = ()
+
+    def __post_init__(self) -> None:
+        validate_run_id(self.run_id)
+        repaired = _artifact_kinds(self.repaired, "repaired")
+        skipped = _artifact_kinds(self.skipped, "skipped")
+        failures = tuple(self.failures)
+        if not all(isinstance(item, ArtifactRepairFailure) for item in failures):
+            raise ValueError("failures 中的每项必须是 ArtifactRepairFailure")
+        failure_kinds = tuple(item.kind for item in failures)
+        if len(set(failure_kinds)) != len(failure_kinds):
+            raise ValueError("同一产物类型只能记录一次补生成失败")
+        recorded = (*repaired, *skipped, *failure_kinds)
+        if len(set(recorded)) != len(recorded):
+            raise ValueError("同一产物类型不能同时出现在补生成结果的不同列表中")
+        object.__setattr__(self, "repaired", repaired)
+        object.__setattr__(self, "failures", failures)
+        object.__setattr__(self, "skipped", skipped)
+
+    @property
+    def changed(self) -> bool:
+        """本次是否真的恢复了至少一个产物。"""
+        return bool(self.repaired)
+
+    @property
+    def has_failures(self) -> bool:
+        return bool(self.failures)
+
+
+@dataclass(frozen=True)
 class ArchivalRequest:
     """一次自动归档请求：只标识运行与阶段，不携带用户路径。
 
@@ -324,10 +383,26 @@ def _expected_result_path(stage: str) -> str:
     return expected
 
 
+def _artifact_kinds(value: object, field_name: str) -> tuple[ArtifactKind, ...]:
+    """把补生成结果里的产物类型序列规范化并去重校验。"""
+    if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple)):
+        raise ValueError(f"{field_name} 必须是产物类型序列")
+    kinds = tuple(
+        coerce_status(item, ArtifactKind, field_name=field_name) for item in value
+    )
+    if any(kind not in DELIVERABLE_ARTIFACT_KINDS for kind in kinds):
+        raise ValueError(f"{field_name} 只能包含 CSV 与报告产物")
+    if len(set(kinds)) != len(kinds):
+        raise ValueError(f"{field_name} 不能包含重复的产物类型")
+    return kinds
+
+
 __all__ = [
     "ArchivalOutcome",
     "ArchivalRequest",
     "ArchivalStatus",
     "ArchivalTestStatus",
     "ArchivedArtifact",
+    "ArtifactRepairFailure",
+    "ArtifactRepairOutcome",
 ]

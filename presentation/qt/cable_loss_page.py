@@ -43,9 +43,6 @@ class CableLossPage(ArchivalPageMixin, PageControllerBindingMixin, QWidget):
 
     load_result_requested = Signal()
 
-    #: 失败产物的补生成请求：只带运行标识，由窗口转给应用层用例。
-    regenerate_artifacts_requested = Signal(str)
-
     def __init__(
         self,
         *,

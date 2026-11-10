@@ -7,7 +7,7 @@
 对照重构计划步骤 6，四类状态各有独立提示：
 
 - 成功：结果已保存且适用产物已生成；
-- 部分产物失败：正式结果保留，提示可定位的运行 ID 与就地补生成入口；
+- 部分产物失败：正式结果保留，提示可定位的运行 ID；补生成由历史运行页自动执行；
 - 测试异常：本次没有归档结果，给出失败原因；
 - 停止：本次没有归档结果，给出停止原因；用户停止时保存的部分结果会一并说明位置。
 
@@ -58,7 +58,7 @@ class ArchivalSummary:
     detail: str
     tone: str = TONE_INFO
     run_id: str | None = None
-    #: 是否存在可“补生成”的失败产物；提示条据此决定是否给出操作按钮。
+    #: 是否存在可“补生成”的失败产物；提示条据此决定是否显示失败提示。
     can_regenerate: bool = False
 
     def __post_init__(self) -> None:
@@ -148,7 +148,7 @@ def _summarize_completed(
         headline=f"{label}结果已保存，但部分交付产物生成失败",
         detail=(
             f"运行 {run_id}：{lines}。正式结果已保留；"
-            "可点“补生成产物”重试，不会重跑测量。"
+            "系统会在历史运行页自动补生成，不会重跑测量。"
         ),
         tone=TONE_WARNING,
         run_id=run_id,

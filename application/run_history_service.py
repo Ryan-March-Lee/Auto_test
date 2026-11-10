@@ -4,10 +4,10 @@
 
 1. **列出历史运行及其阶段/产物状态**：事实来自 :class:`RunArchiveStatusPort`
    （只读 manifest 与运行目录），页面不接触路径，也不判断文件是否存在；
-2. **重新生成失败的交付产物**：复用 :class:`application.archival_service.
-   ResultArchivalService` 的 ``retry_failed=True`` 入口，把产物写回**原运行目录**的
-   受控路径，而不是另存副本（另存副本走 :class:`application.export_service.
-   ResultExportUseCase`）；
+2. **补生成交付产物**：缺失的 ``completed`` 产物按 manifest 登记的校验值原样重建，
+   ``failed`` 产物显式重试一次；两者都复用 :class:`application.archival_service.
+   ResultArchivalService`，把产物写回**原运行目录**的受控路径，而不是另存副本
+   （另存副本走 :class:`application.export_service.ResultExportUseCase`）；
 3. **删除用户选中的历史运行**：整目录删除，只接受历史列表中的运行标识；进行中的
    运行明确拒绝，未知运行与单个删除失败按运行逐项返回，不影响同批次的其它运行；
 4. **按结果定位最终报告**：数据可视化页加载一条历史结果后，用例把结果映射到所属
@@ -34,7 +34,11 @@ import logging
 from typing import Any, Iterable
 
 from application.archival_service import ResultArchivalService
-from application.dto.archival import ArchivalOutcome, ArchivalRequest
+from application.dto.archival import (
+    ArchivalOutcome,
+    ArchivalRequest,
+    ArtifactRepairOutcome,
+)
 from application.dto.run_deletion import RunDeletionFailure, RunDeletionOutcome
 from application.dto.run_history import (
     ResultReportLocation,
@@ -57,7 +61,7 @@ class RunHistoryRequestError(ValueError):
 
 
 class RunHistoryService:
-    """历史运行查询、失败产物重新生成与用户删除的用例入口。"""
+    """历史运行查询、交付产物补生成与用户删除的用例入口。"""
 
     def __init__(
         self,
@@ -129,6 +133,27 @@ class RunHistoryService:
             # 可预期的归档失败转成历史请求错误，正式结果与 manifest 保持原样。
             raise RunHistoryRequestError(
                 f"运行 {summary.run_id} 的产物重新生成失败: {error}"
+            ) from error
+
+    def repair_artifacts(self, run_id: str) -> ArtifactRepairOutcome:
+        """自动补生成已登记运行中缺失或失败的交付产物。
+
+        与 :meth:`regenerate_failed_artifacts` 不同，本入口同时处理“文件被误删”：
+        ``completed`` 记录的文件缺失时按 manifest 登记的校验值原样重建，不重跑测量，
+        也不改写 ``completed`` 记录。运行必须先出现在历史列表中；运行不可用、没有
+        归档服务或归档契约失败时抛出 :class:`RunHistoryRequestError`。
+        """
+        summary = self._require_run(run_id)
+        if self.archival is None:
+            raise RunHistoryRequestError("未装配归档服务，无法补生成交付产物")
+        repair = getattr(self.archival, "repair_artifacts", None)
+        if not callable(repair):
+            raise RunHistoryRequestError("归档服务不支持补生成交付产物")
+        try:
+            return repair(summary.run_id)
+        except (OSError, ValueError) as error:
+            raise RunHistoryRequestError(
+                f"运行 {summary.run_id} 的交付产物补生成失败: {error}"
             ) from error
 
     # -- 删除 ---------------------------------------------------------------

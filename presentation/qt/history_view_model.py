@@ -170,6 +170,8 @@ class RunHistoryRow:
     artifact_text: str
     problem_text: str = ""
     can_regenerate: bool = False
+    #: 是否存在需要历史页自动补生成的产物（文件缺失或失败）。
+    needs_repair: bool = False
     # 删除只跟随“不是进行中”：终态、损坏与结构不完整的运行都允许用户清理；
     # 进行中的运行目录可能仍在写入，页面与应用层都不允许删除。
     can_delete: bool = True
@@ -189,6 +191,7 @@ class RunHistoryRow:
             artifact_text=_artifact_text(summary),
             problem_text=_problem_text(summary),
             can_regenerate=summary.can_regenerate,
+            needs_repair=summary.needs_repair,
             can_delete=summary.run_status is not RunStatus.RUNNING,
         )
 
@@ -247,7 +250,7 @@ def _problem_text(summary: RunHistorySummary) -> str:
     parts = [summary.problem] if summary.problem else []
     parts.extend(
         f"{artifact_kind_text(item.kind)} 已生成但文件缺失，"
-        f"请到“数据可视化”页用“另存为”重新获取"
+        f"系统会用已保存的正式结果尝试自动补生成"
         for item in summary.missing_artifacts
     )
     parts.extend(

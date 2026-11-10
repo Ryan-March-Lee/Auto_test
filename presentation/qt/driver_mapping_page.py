@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Callable
 
-from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QDialog,
     QGridLayout,
@@ -43,9 +42,6 @@ class DriverMappingPage(
     RealtimePageMixin, ArchivalPageMixin, PageControllerBindingMixin, QWidget
 ):
     """驱动映射输入、接线确认、进度和结构化结果展示。"""
-
-    #: 失败产物的补生成请求：只带运行标识，由窗口转给应用层用例。
-    regenerate_artifacts_requested = Signal(str)
 
     def __init__(
         self,

@@ -1060,10 +1060,12 @@ class ConfigurationAuthoringServiceTests(unittest.TestCase):
 class GoldenConfigurationTests(unittest.TestCase):
     """1.2 正式文档基线：整个输出逐字节比较。
 
-    输入是 1.1 规范编辑段（用户顺序、间隔、漏极与通道参数），期望值经步骤 2 评审后
-    一次性生成，见 ``tests/fixtures/configuration_authoring/README.md``。它冻结正式段的
-    字段名、键序与透传行为：1.1 的标量扫描被重写成 ``power_scan_plans``，旧标量不再
-    出现在编辑段或正式段；1.0 输入的拒绝由本模块的版本门禁测试单独覆盖。
+    输入以 1.1 规范编辑段为主（用户顺序、间隔、漏极与通道参数），另含一条 1.2 多段
+    计划样例；期望值经步骤 2 / 步骤 5.4 评审后一次性生成，见
+    ``tests/fixtures/configuration_authoring/README.md``。它冻结正式段的字段名、键序与
+    透传行为：1.1 的标量扫描被重写成单段 ``power_scan_plans``，1.2 的多段列表保持
+    原有顺序，旧标量不再出现在编辑段或正式段；1.0 输入的拒绝由本模块的版本门禁测试
+    单独覆盖。
     """
 
     def test_authoring_reproduces_the_current_document(self):

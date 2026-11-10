@@ -5,9 +5,19 @@
         3.0
     ],
     "signal_source": {
-        "start_power": -10.0,
-        "stop_power": 15.0,
-        "step": 1.0
+        "power_scan_plans": [
+            {
+                "start_power": -10.0,
+                "step": 1.0,
+                "stop_power": 0.0
+            },
+            {
+                "start_power": 0.0,
+                "step": 0.5,
+                "stop_power": 15.0
+            }
+        ],
+        "power_reference": "dut_input"
     },
     "compression_point": {
         "type": "5dB"
@@ -149,9 +159,9 @@
             }
         }
     },
-    "schema_version": "1.1",
+    "schema_version": "1.2",
     "test_plan": {
-        "schema_version": "1.1",
+        "schema_version": "1.2",
         "template": false,
         "plan_id": "gui-configuration",
         "frequencies": {
@@ -163,10 +173,20 @@
             "unit": "GHz"
         },
         "signal_source": {
-            "start_power": -10.0,
-            "stop_power": 15.0,
-            "step": 1.0,
-            "unit": "dBm"
+            "power_scan_plans": [
+                {
+                    "start_power": -10.0,
+                    "step": 1.0,
+                    "stop_power": 0.0
+                },
+                {
+                    "start_power": 0.0,
+                    "step": 0.5,
+                    "stop_power": 15.0
+                }
+            ],
+            "unit": "dBm",
+            "power_reference": "dut_input"
         },
         "compression_point": {
             "type": "5dB"
@@ -211,7 +231,7 @@
         "other_parameters": {}
     },
     "run_mapping": {
-        "schema_version": "1.1",
+        "schema_version": "1.2",
         "template": false,
         "run_id": null,
         "run_datetime": null,

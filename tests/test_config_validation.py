@@ -6,13 +6,17 @@ from pathlib import Path
 
 from domain.configuration.models import RunResourceMapping, validate_run_mapping
 from domain.configuration.rules import validate_config, validate_hardware_connections
-from infrastructure.config.validation import load_config, validate_config_file
+from infrastructure.config.validation import (
+    load_config,
+    validate_config_file,
+    validate_official_config,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "config_driver_enabled_no_assignment.json"
 # 旧运行映射（单数 ``instruments.power_supply``、裸通道名）的固定样例。历史运行目录
-# 仍按 1.0 读取；仓库当前生产配置已经是 1.1，不能再用它当旧格式样例。
+# 仍按 1.0 读取；仓库当前生产配置已经是 1.2，不能再用它当旧格式样例。
 LEGACY_RUN_MAPPING_PATH = (
     Path(__file__).resolve().parent
     / "fixtures"
@@ -45,11 +49,13 @@ class ConfigValidationTests(unittest.TestCase):
 
     def test_invalid_power_range_and_step_are_errors(self):
         config = copy.deepcopy(self.base_config)
-        config["signal_source"].update({"start_power": 0, "stop_power": -1, "step": 0})
+        config["signal_source"]["power_scan_plans"][0].update(
+            {"start_power": 0, "stop_power": -1, "step": 0}
+        )
         result = validate_config(config)
         paths = {issue.path for issue in result.errors}
-        self.assertIn("signal_source", paths)
-        self.assertIn("signal_source.step", paths)
+        self.assertIn("signal_source.power_scan_plans[0]", paths)
+        self.assertIn("signal_source.power_scan_plans[0].step", paths)
 
     def test_invalid_db_value_is_error(self):
         config = copy.deepcopy(self.base_config)
@@ -60,12 +66,12 @@ class ConfigValidationTests(unittest.TestCase):
     def test_non_finite_numbers_are_errors(self):
         config = copy.deepcopy(self.base_config)
         config["test_frequencies"][0] = float("nan")
-        config["signal_source"]["start_power"] = float("inf")
+        config["signal_source"]["power_scan_plans"][0]["start_power"] = float("inf")
         config["instruments"]["power_supplies"]["PS4"]["channels"]["CH1"]["voltage"]["value"] = float("-inf")
         result = validate_config(config)
         paths = {issue.path for issue in result.errors}
         self.assertIn("test_frequencies[0]", paths)
-        self.assertIn("signal_source.start_power", paths)
+        self.assertIn("signal_source.power_scan_plans[0].start_power", paths)
         self.assertIn("instruments.power_supplies.PS4.channels.CH1.voltage.value", paths)
 
     def test_channel_power_on_delay_must_be_in_range(self):
@@ -337,6 +343,25 @@ class OfficialConfigFileValidationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             result = validate_config_file(self._write(directory, self.base_config))
         self.assertTrue(result.valid, result.errors)
+
+    def test_shipped_fixture_uses_only_the_current_1_2_format(self):
+        """步骤 5.4：随仓库交付的样例只写 1.2，旧标量只出现在兼容测试的内联文档里。
+
+        样例同时展示“粗扫 + 细扫”两段，因此不能退化成单段；三段版本号必须一致，
+        否则文件级校验会按混合文档处理。
+        """
+        self.assertEqual(self.base_config["schema_version"], "1.2")
+        self.assertEqual(self.base_config["test_plan"]["schema_version"], "1.2")
+        self.assertEqual(self.base_config["run_mapping"]["schema_version"], "1.2")
+        for section in (
+            self.base_config["signal_source"],
+            self.base_config["test_plan"]["signal_source"],
+        ):
+            for legacy in ("start_power", "stop_power", "step"):
+                self.assertNotIn(legacy, section)
+            plans = section["power_scan_plans"]
+            self.assertIsInstance(plans, list)
+            self.assertGreaterEqual(len(plans), 2, "样例需要同时展示粗扫与细扫")
 
     def test_flat_fields_alone_are_not_a_valid_configuration(self):
         """扁平硬件字段全部合法、但缺正式段时，文件校验必须失败。
@@ -636,12 +661,29 @@ class PowerScanPlanValidationTests(unittest.TestCase):
         return config
 
     def test_1_1_scalar_scan_remains_readable(self):
-        """旧文件仍按标量形状打开：升级只发生在显式保存，不改写只读输入。"""
-        self.assertEqual(self.base_config["schema_version"], "1.1")
-        self.assertNotIn("power_scan_plans", self.base_config["signal_source"])
-        self.assertNotIn("power_reference", self.base_config["signal_source"])
+        """旧文件仍按标量形状打开：升级只发生在显式保存，不改写只读输入。
 
-        result = validate_config(self.base_config)
+        这里把整份文档降到 1.1（编辑段、``test_plan``、``run_mapping`` 三处版本与两处
+        扫描形状），并用文件级校验入口验证：只改编辑段会得到一份“编辑段 1.1、正式段
+        1.2”的混合文档，无法证明真正的旧文件仍能打开。
+        """
+        legacy = copy.deepcopy(self.base_config)
+        legacy["schema_version"] = "1.1"
+        legacy["signal_source"] = {
+            "start_power": -10.0,
+            "stop_power": 15.0,
+            "step": 1.0,
+        }
+        legacy["test_plan"]["schema_version"] = "1.1"
+        legacy["test_plan"]["signal_source"] = {
+            "start_power": -10.0,
+            "stop_power": 15.0,
+            "step": 1.0,
+            "unit": "dBm",
+        }
+        legacy["run_mapping"]["schema_version"] = "1.1"
+
+        result = validate_official_config(legacy)
 
         self.assertTrue(result.valid, result.errors)
         self.assertFalse(
@@ -660,6 +702,11 @@ class PowerScanPlanValidationTests(unittest.TestCase):
             ),
             result.warnings,
         )
+        # 只读校验不重写输入：调用方拿到的仍是 1.1 标量形状。
+        self.assertEqual(
+            set(legacy["signal_source"]), {"start_power", "stop_power", "step"}
+        )
+        self.assertNotIn("power_scan_plans", legacy["test_plan"]["signal_source"])
 
     def test_1_2_multi_plan_document_is_valid(self):
         """1.2 的多段计划文档可以通过编辑段校验。"""

@@ -1,6 +1,6 @@
 {
-  "description": "1.2 配置编写基线：每条 expected 是当前 authoring 对 1.1 input 生成的完整文档（功率扫描重写为 power_scan_plans）。",
-  "source": "1.2 contract (docs/DUT功率扫描计划多段重构计划.md 2.2)；2026-11 阶段二步骤 2.1-2.4",
+  "description": "1.2 配置编写基线：每条 expected 是当前 authoring 对 input 生成的完整文档（1.1 功率扫描重写为单段 power_scan_plans，1.2 多段计划原样透传）。",
+  "source": "1.2 contract (docs/DUT功率扫描计划多段重构计划.md 2.2)；2026-11 阶段二步骤 2.1-2.4；阶段五步骤 5.4 补 multi_plan_scan_1_2",
   "cases": [
     {
       "name": "flat_minimal",
@@ -3902,6 +3902,346 @@
         },
         "driver_mode": {
           "estimated_gain_db": null
+        }
+      }
+    },
+    {
+      "name": "multi_plan_scan_1_2",
+      "input": {
+        "test_frequencies": [
+          2.4
+        ],
+        "signal_source": {
+          "power_scan_plans": [
+            {
+              "start_power": -10.0,
+              "step": 2.0,
+              "stop_power": 0.0
+            },
+            {
+              "start_power": 0.0,
+              "step": 0.5,
+              "stop_power": 4.0
+            }
+          ],
+          "power_reference": "dut_input"
+        },
+        "compression_point": {
+          "type": "5dB"
+        },
+        "driver_mode": {
+          "enabled": false
+        },
+        "attenuator": {
+          "type": "30dB"
+        },
+        "dut_config": {
+          "max_input_power": 30.0,
+          "power_supply_count": 1,
+          "drain_channel": {
+            "supply_id": "DP8B1519",
+            "channel": "CH2"
+          }
+        },
+        "instruments": {
+          "signal_generator": {
+            "address": "sim::sg",
+            "model": "SG",
+            "enabled": true
+          },
+          "spectrum_analyzer": {
+            "address": "sim::sa",
+            "model": "SA",
+            "enabled": true
+          },
+          "power_supplies": {
+            "DP8B1519": {
+              "label": "DP8B1519",
+              "model": "DP832A",
+              "full_code": "DP8B214901519",
+              "device_key": "rigol technologies:dp8b214901519",
+              "address": "sim::ps1",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 2.8
+                  },
+                  "current": {
+                    "value": 0.1
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 2.0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "power_supply_assignment": {
+          "driver_amplifier": {
+            "power_supply_count": 0,
+            "supplies": {},
+            "power_plan": {
+              "power_sequence": [],
+              "inter_channel_delay_s": 0.0
+            }
+          },
+          "dut_amplifier": {
+            "power_supply_count": 1,
+            "supplies": {
+              "carrier": {
+                "supply_id": "DP8B1519",
+                "channel": [
+                  "CH1",
+                  "CH2"
+                ]
+              }
+            },
+            "power_plan": {
+              "power_sequence": [
+                {
+                  "supply_id": "DP8B1519",
+                  "channel": "CH1"
+                },
+                {
+                  "supply_id": "DP8B1519",
+                  "channel": "CH2"
+                }
+              ],
+              "inter_channel_delay_s": 2.0
+            }
+          }
+        },
+        "schema_version": "1.2"
+      },
+      "expected": {
+        "test_frequencies": [
+          2.4
+        ],
+        "signal_source": {
+          "power_scan_plans": [
+            {
+              "start_power": -10.0,
+              "step": 2.0,
+              "stop_power": 0.0
+            },
+            {
+              "start_power": 0.0,
+              "step": 0.5,
+              "stop_power": 4.0
+            }
+          ],
+          "power_reference": "dut_input"
+        },
+        "compression_point": {
+          "type": "5dB"
+        },
+        "driver_mode": {
+          "enabled": false,
+          "estimated_gain_db": null
+        },
+        "attenuator": {
+          "type": "30dB"
+        },
+        "dut_config": {
+          "max_input_power": 30.0,
+          "power_supply_count": 1,
+          "drain_channel": {
+            "supply_id": "DP8B1519",
+            "channel": "CH2"
+          }
+        },
+        "instruments": {
+          "signal_generator": {
+            "address": "sim::sg",
+            "model": "SG",
+            "enabled": true
+          },
+          "spectrum_analyzer": {
+            "address": "sim::sa",
+            "model": "SA",
+            "enabled": true
+          },
+          "power_supplies": {
+            "DP8B1519": {
+              "label": "DP8B1519",
+              "model": "DP832A",
+              "full_code": "DP8B214901519",
+              "device_key": "rigol technologies:dp8b214901519",
+              "address": "sim::ps1",
+              "enabled": true,
+              "channels": {
+                "CH1": {
+                  "voltage": {
+                    "value": 2.8
+                  },
+                  "current": {
+                    "value": 0.1
+                  }
+                },
+                "CH2": {
+                  "voltage": {
+                    "value": 28.0
+                  },
+                  "current": {
+                    "value": 2.0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "power_supply_assignment": {
+          "driver_amplifier": {
+            "power_plan": {
+              "power_sequence": [],
+              "inter_channel_delay_s": 0.0
+            }
+          },
+          "dut_amplifier": {
+            "power_plan": {
+              "power_sequence": [
+                {
+                  "supply_id": "DP8B1519",
+                  "channel": "CH1"
+                },
+                {
+                  "supply_id": "DP8B1519",
+                  "channel": "CH2"
+                }
+              ],
+              "inter_channel_delay_s": 2.0
+            }
+          }
+        },
+        "schema_version": "1.2",
+        "test_plan": {
+          "schema_version": "1.2",
+          "template": false,
+          "plan_id": "gui-configuration",
+          "frequencies": {
+            "values": [
+              2.4
+            ],
+            "unit": "GHz"
+          },
+          "signal_source": {
+            "power_scan_plans": [
+              {
+                "start_power": -10.0,
+                "step": 2.0,
+                "stop_power": 0.0
+              },
+              {
+                "start_power": 0.0,
+                "step": 0.5,
+                "stop_power": 4.0
+              }
+            ],
+            "unit": "dBm",
+            "power_reference": "dut_input"
+          },
+          "compression_point": {
+            "type": "5dB"
+          },
+          "attenuator": {
+            "value": 30.0,
+            "unit": "dB"
+          },
+          "dut": {
+            "max_input_power": 30.0,
+            "drain_channel": {
+              "supply_id": "DP8B1519",
+              "channel": "CH2"
+            },
+            "channel_settings": [
+              {
+                "supply_id": "DP8B1519",
+                "channel": "CH1",
+                "voltage": 2.8,
+                "current": 0.1,
+                "voltage_protection": null,
+                "current_protection": null,
+                "unit_voltage": "V",
+                "unit_current": "A"
+              },
+              {
+                "supply_id": "DP8B1519",
+                "channel": "CH2",
+                "voltage": 28.0,
+                "current": 2.0,
+                "voltage_protection": null,
+                "current_protection": null,
+                "unit_voltage": "V",
+                "unit_current": "A"
+              }
+            ]
+          },
+          "driver_mode": {
+            "enabled": false,
+            "estimated_gain_db": null,
+            "channel_settings": []
+          },
+          "other_parameters": {}
+        },
+        "run_mapping": {
+          "schema_version": "1.2",
+          "template": false,
+          "run_id": null,
+          "run_datetime": null,
+          "operator": null,
+          "instruments": {
+            "signal_generator": {
+              "label": null,
+              "model": "SG",
+              "full_code": null,
+              "device_key": null,
+              "visa_address": "sim::sg"
+            },
+            "spectrum_analyzer": {
+              "label": null,
+              "model": "SA",
+              "full_code": null,
+              "device_key": null,
+              "visa_address": "sim::sa"
+            },
+            "power_supplies": {
+              "DP8B1519": {
+                "label": "DP8B1519",
+                "model": "DP832A",
+                "full_code": "DP8B214901519",
+                "device_key": "rigol technologies:dp8b214901519",
+                "visa_address": "sim::ps1"
+              }
+            }
+          },
+          "driver_mode": {
+            "enabled": false,
+            "power_plan": {
+              "power_sequence": [],
+              "inter_channel_delay_s": 0.0
+            }
+          },
+          "dut_power_plan": {
+            "power_sequence": [
+              {
+                "supply_id": "DP8B1519",
+                "channel": "CH1"
+              },
+              {
+                "supply_id": "DP8B1519",
+                "channel": "CH2"
+              }
+            ],
+            "inter_channel_delay_s": 2.0
+          },
+          "notes": null
         }
       }
     }

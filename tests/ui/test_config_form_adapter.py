@@ -122,6 +122,16 @@ def _bindings(*supply_ids):
     return result
 
 
+class _ScanRow:
+    """动态功率扫描行替身：父编辑器只读取 ``values()``。"""
+
+    def __init__(self, start, step, stop):
+        self._values = (float(start), float(step), float(stop))
+
+    def values(self):
+        return self._values
+
+
 def _page(
     config=None,
     *,
@@ -130,6 +140,7 @@ def _page(
     stop_frequency=1.0,
     step=0.4,
     extra="",
+    power_scan_plans=None,
 ):
     page = type("Page", (), {})()
     page.config = config if isinstance(config, dict) else {}
@@ -142,6 +153,10 @@ def _page(
     page.start_power = _Value(-10.0)
     page.stop_power = _Value(0.0)
     page.power_step = _Value(1.0)
+    if power_scan_plans is not None:
+        page.power_scan_plan_rows = [
+            _ScanRow(start, step, stop) for start, step, stop in power_scan_plans
+        ]
     page.driver_gain = _Text("")
     page.max_input_power = _Value(30.0)
     page.compression_combo = _Combo(("1dB", "3dB", "5dB"))
@@ -216,6 +231,33 @@ class ConfigurationFormAdapterReadTests(unittest.TestCase):
         # “这次没有读到频率”；两者来自同一次控件读数，不各自再读一遍。
         self.assertEqual(reading.document["test_frequencies"], [9.9])
         self.assertEqual(reading.test_parameters.frequencies, ())
+
+    def test_multiple_plan_rows_reach_both_the_document_and_the_typed_snapshot(self):
+        page = _page(
+            power_scan_plans=[
+                (-38.0, 1.0, -10.0),
+                (-10.0, 0.25, -2.0),
+            ]
+        )
+        adapter = ConfigurationFormAdapter(page)
+
+        reading = adapter.read_form()
+
+        self.assertEqual(
+            reading.document["signal_source"]["power_scan_plans"],
+            [
+                {"start_power": -38.0, "step": 1.0, "stop_power": -10.0},
+                {"start_power": -10.0, "step": 0.25, "stop_power": -2.0},
+            ],
+        )
+        self.assertEqual(
+            [
+                (sweep.start.dbm, sweep.step.db, sweep.stop.dbm)
+                for sweep in reading.test_parameters.sweeps
+            ],
+            [(-38.0, 1.0, -10.0), (-10.0, 0.25, -2.0)],
+        )
+
 
 class ConfigurationFormAdapterWriteTests(unittest.TestCase):
     def test_apply_configuration_projects_the_document_onto_widgets(self):

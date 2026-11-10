@@ -20,6 +20,7 @@ from presentation.qt.config_projection import (
     DEFAULT_MAX_INPUT_POWER,
     DEFAULT_PA_UNIT_COUNT,
     DEFAULT_POWER_CHANNEL_VALUE,
+    DEFAULT_POWER_SCAN_PLAN,
     DEFAULT_SIGNAL_SOURCE,
     ConfigBackfillError,
     project_authoring_config,
@@ -196,6 +197,19 @@ class FakeForm:
             }
             for name in supplies
         }
+
+
+class DynamicPlanForm(FakeForm):
+    """带动态计划入口的页面替身：计划行由页面持有，投影只请求重置/回填。"""
+
+    def __init__(self):
+        super().__init__()
+        self.plans = []
+        self.reset_calls = 0
+
+    def reset_power_scan_plans(self):
+        self.reset_calls += 1
+        self.plans = [DEFAULT_POWER_SCAN_PLAN]
 
 
 class ConfigProjectionTests(unittest.TestCase):
@@ -385,6 +399,27 @@ class ConfigProjectionTests(unittest.TestCase):
                 self.assertEqual(channel[key].value(), DEFAULT_POWER_CHANNEL_VALUE)
         self.assertFalse(channel["voltage_protection_enabled"].isChecked())
         self.assertFalse(channel["current_protection_enabled"].isChecked())
+
+    def test_default_plan_is_the_single_source_for_the_legacy_scalars(self):
+        """动态行与旧单计划控件的默认值必须同源，避免空配置出现两套基线。"""
+        self.assertEqual(
+            DEFAULT_POWER_SCAN_PLAN,
+            (
+                DEFAULT_SIGNAL_SOURCE["start_power"],
+                DEFAULT_SIGNAL_SOURCE["step"],
+                DEFAULT_SIGNAL_SOURCE["stop_power"],
+            ),
+        )
+
+    def test_reset_delegates_the_plan_rows_to_the_page(self):
+        """页面持有计划行：重置走 ``reset_power_scan_plans``，不是只改第一行三个框。"""
+        form = DynamicPlanForm()
+        form.plans = [(-50.0, 2.0, -40.0), (-40.0, 1.0, -30.0)]
+
+        reset_control_widgets(form)
+
+        self.assertEqual(form.reset_calls, 1)
+        self.assertEqual(form.plans, [DEFAULT_POWER_SCAN_PLAN])
 
     def test_projection_resets_before_applying(self):
         form = FakeForm()

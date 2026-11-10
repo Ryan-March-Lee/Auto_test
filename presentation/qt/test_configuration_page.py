@@ -83,7 +83,7 @@ from .config_projection import (
     DEFAULT_FREQUENCY_STOP,
     DEFAULT_MAX_INPUT_POWER,
     DEFAULT_PA_UNIT_COUNT,
-    DEFAULT_SIGNAL_SOURCE,
+    DEFAULT_POWER_SCAN_PLAN,
     ConfigBackfillError,
     apply_frequency_fields,
     bool_or_default,
@@ -153,8 +153,9 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         # 功率扫描计划的动态编辑器状态：列表顺序就是执行顺序，页面负责新增、删除、
         # 编号与布局；计划是否连续、点位如何生成仍由 application/domain 校验。
         self.power_scan_plan_rows: list[PowerSweepPlanRow] = []
-        # 计划结构本身无法读出时（空列表、非对象元素等）留下的用户错误；正常行编辑
-        # 会清除它。多段计划的连续性错误由正式校验按索引报告。
+        # 计划结构本身无法读出时（空列表、非对象元素等）留下的用户错误。它不由行编辑
+        # 清除：只有“重建计划”或整份配置回填才解除，避免改一行就吞掉读不出来的其它段。
+        # 多段计划的连续性错误由正式校验按索引报告。
         self.power_scan_import_error: str | None = None
         # 页面业务状态由 application 的视图模型持有（步骤 6）：测试参数、设备绑定、运行
         # 状态与 dirty 都在那里；设备选择的业务规则仍只在 DeviceBindingService（步骤 5）。
@@ -330,11 +331,11 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
     # -- DUT 功率扫描计划编辑器 ---------------------------------------------
     @staticmethod
     def _default_power_scan_values() -> tuple[float, float, float]:
-        """空配置的一行计划：``(起始, 步长, 终止)``，与页面原有默认扫描一致。"""
+        """空配置的一行计划：``(起始, 步长, 终止)``，与投影的空配置基线同源。"""
         return (
-            float(DEFAULT_SIGNAL_SOURCE["start_power"]),
-            float(DEFAULT_SIGNAL_SOURCE["step"]),
-            float(DEFAULT_SIGNAL_SOURCE["stop_power"]),
+            float(DEFAULT_POWER_SCAN_PLAN[0]),
+            float(DEFAULT_POWER_SCAN_PLAN[1]),
+            float(DEFAULT_POWER_SCAN_PLAN[2]),
         )
 
     #: 旧 1.1 单计划的标量字段；只在三个字段整体存在时才能包装成一段。
@@ -465,6 +466,14 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         self._replace_power_scan_plan_rows(plans)
         self._sync_power_scan_plan_actions()
         return error
+
+    def reset_power_scan_plans(self) -> None:
+        """把动态计划编辑器恢复为空配置的一行默认计划（投影重置入口）。
+
+        回填投影在应用文档前先整组重置控件；行对象归页面所有，因此由页面负责重建。
+        这里复用缺省计划的同一入口：编号、删除按钮、汇总与预览都按一行默认计划刷新。
+        """
+        self.apply_power_scan_plans(None)
 
     def rebuild_power_scan_plans(self) -> None:
         """用户确认以当前可见行重建计划，解除“旧计划读不出来”的导入错误。

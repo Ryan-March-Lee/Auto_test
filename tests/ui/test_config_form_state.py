@@ -648,6 +648,13 @@ class PowerSupplyConnectionTests(unittest.TestCase):
         self.assertFalse([error for error in errors if "VISA 地址" in error], errors)
 
 
+def _scan_row(start_power, step, stop_power):
+    """动态计划行的最小读数替身：只有父编辑器读取的三个值。"""
+    return type(
+        "Row", (), {"values": lambda self: (start_power, step, stop_power)}
+    )()
+
+
 class PowerScanDraftTests(unittest.TestCase):
     """1.2 计划列表在页面读数边界的行为：单段可编辑，多段只读保留。"""
 
@@ -660,6 +667,66 @@ class PowerScanDraftTests(unittest.TestCase):
         self.assertEqual(
             fragment["signal_source"]["power_scan_plans"],
             [{"start_power": -10.0, "step": 1.0, "stop_power": 0.0}],
+        )
+
+    def test_dynamic_rows_are_read_in_page_order(self):
+        """真实页面用行列表读数：顺序就是执行顺序，不在读数时重排。"""
+        widgets = _form_widgets(
+            power_scan_plan_rows=[
+                _scan_row(-38.0, 1.0, -10.0),
+                _scan_row(-10.0, 0.25, -2.0),
+            ]
+        )
+        state = ConfigFormState({}, widgets)
+
+        fragment = state.read_test_parameters()
+
+        self.assertEqual(
+            fragment["signal_source"]["power_scan_plans"],
+            [
+                {"start_power": -38.0, "step": 1.0, "stop_power": -10.0},
+                {"start_power": -10.0, "step": 0.25, "stop_power": -2.0},
+            ],
+        )
+
+    def test_dynamic_rows_are_the_only_source_when_present(self):
+        """行列表存在时不能再用基线里的旧计划覆盖当前可见计划。"""
+        widgets = _form_widgets(power_scan_plan_rows=[_scan_row(-20.0, 0.5, -5.0)])
+        state = ConfigFormState(
+            {
+                "signal_source": {
+                    "power_scan_plans": [
+                        {"start_power": -38.0, "step": 1.0, "stop_power": -10.0},
+                        {"start_power": -10.0, "step": 0.25, "stop_power": -2.0},
+                    ]
+                }
+            },
+            widgets,
+        )
+
+        plans = state.read_test_parameters()["signal_source"]["power_scan_plans"]
+
+        self.assertEqual(
+            plans, [{"start_power": -20.0, "step": 0.5, "stop_power": -5.0}]
+        )
+
+    def test_empty_dynamic_row_list_does_not_fall_back_to_stale_plans(self):
+        """页面已重建为空时读取空计划，让正式校验报告缺失，而不是复活旧段。"""
+        widgets = _form_widgets(power_scan_plan_rows=[])
+        state = ConfigFormState(
+            {
+                "signal_source": {
+                    "power_scan_plans": [
+                        {"start_power": -38.0, "step": 1.0, "stop_power": -10.0},
+                        {"start_power": -10.0, "step": 0.25, "stop_power": -2.0},
+                    ]
+                }
+            },
+            widgets,
+        )
+
+        self.assertEqual(
+            state.read_test_parameters()["signal_source"]["power_scan_plans"], []
         )
 
     def test_multiple_plans_are_preserved_instead_of_collapsed(self):

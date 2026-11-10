@@ -55,7 +55,17 @@ from .frequency_sweep import (
 
 # 配置页受控控件的空配置基线。``project_authoring_config()`` 先把控件重置到这些默认值，
 # 再逐字段投影配置编写文档，从而保证投影结果与直接用同一份文档构造页面的结果一致。
-DEFAULT_SIGNAL_SOURCE = {"start_power": -38.0, "stop_power": -16.0, "step": 1.0}
+#
+# 功率扫描的计划默认值只有一处：``DEFAULT_POWER_SCAN_PLAN`` 按控件显示顺序保存
+# ``(起始, 步长, 终止)``，动态行编辑器与旧单计划控件都从这里取值，不再各自写一遍。
+# ``DEFAULT_SIGNAL_SOURCE`` 只是旧标量控件基线的派生别名（保留键名兼容），新增代码
+# 应直接读元组，不要把它当成第二个默认值来源。
+DEFAULT_POWER_SCAN_PLAN = (-38.0, 1.0, -16.0)
+DEFAULT_SIGNAL_SOURCE = {
+    "start_power": DEFAULT_POWER_SCAN_PLAN[0],
+    "step": DEFAULT_POWER_SCAN_PLAN[1],
+    "stop_power": DEFAULT_POWER_SCAN_PLAN[2],
+}
 DEFAULT_COMPRESSION_TYPE = "5dB"
 DEFAULT_ATTENUATOR_TYPE = "40dB"
 DEFAULT_DRIVER_MODE_ENABLED = True
@@ -232,19 +242,35 @@ def apply_frequency_fields(widgets: Any, frequencies: Any) -> None:
     widgets.frequency_import_error = None
 
 
+def reset_power_scan_fields(widgets: Any) -> None:
+    """把 DUT 功率扫描计划重置为空配置基线的一行默认计划。
+
+    动态行编辑器由页面持有，回填前必须整组回到默认行，不能只改第一行的三个输入框；
+    页面提供 ``reset_power_scan_plans`` 时由它重建行（含编号、删除按钮与预览）。
+    没有该入口的旧替身仍按三个单计划控件复位，保持替身测试与页面的空配置口径一致。
+    """
+    reset_rows = getattr(widgets, "reset_power_scan_plans", None)
+    if callable(reset_rows):
+        reset_rows()
+        return
+    widgets.start_power.setValue(DEFAULT_POWER_SCAN_PLAN[0])
+    widgets.power_step.setValue(DEFAULT_POWER_SCAN_PLAN[1])
+    widgets.stop_power.setValue(DEFAULT_POWER_SCAN_PLAN[2])
+    widgets.power_scan_import_error = None
+
+
 def reset_control_widgets(widgets: Any) -> None:
     """把所有受控控件重置到空配置基线，消除上一次运行的残留值。"""
     reset_frequency_fields(widgets)
-    widgets.start_power.setValue(DEFAULT_SIGNAL_SOURCE["start_power"])
-    widgets.stop_power.setValue(DEFAULT_SIGNAL_SOURCE["stop_power"])
-    widgets.power_step.setValue(DEFAULT_SIGNAL_SOURCE["step"])
-    widgets.power_scan_import_error = None
     set_combo(widgets.compression_combo, DEFAULT_COMPRESSION_TYPE)
     set_combo(widgets.attenuator_combo, DEFAULT_ATTENUATOR_TYPE)
     widgets.test_mode_enabled = DEFAULT_DRIVER_MODE_ENABLED
     widgets.driver_gain.setText(DEFAULT_DRIVER_GAIN_ESTIMATE)
     widgets.max_input_power.setValue(DEFAULT_MAX_INPUT_POWER)
     set_combo(widgets.pa_unit_count_combo, DEFAULT_PA_UNIT_COUNT)
+    # 计划重置放在上限之后：页面重建行时会按 DUT 上限刷新预览，先用新上限才能得到
+    # 与回填后一致的灰色点位文本。
+    reset_power_scan_fields(widgets)
     reset_power_controls(widgets)
 
 
@@ -306,8 +332,8 @@ def _power_scan_projection(
         return ("配置的 DUT 功率扫描计划格式不正确", None, None, None)
     if len(plans) > 1:
         return (
-            "配置包含多段 DUT 功率扫描计划，当前页面只能编辑单段；"
-            "为避免丢失已确认的计划，保存已被阻止（动态计划编辑器属于后续版本）",
+            "配置包含多段 DUT 功率扫描计划，当前控件只能编辑单段；"
+            "为避免丢失已确认的计划，保存已被阻止",
             starts[0],
             stops[-1],
             steps[0],
@@ -409,6 +435,7 @@ __all__ = [
     "DEFAULT_MAX_INPUT_POWER",
     "DEFAULT_PA_UNIT_COUNT",
     "DEFAULT_POWER_CHANNEL_VALUE",
+    "DEFAULT_POWER_SCAN_PLAN",
     "DEFAULT_SIGNAL_SOURCE",
     "DEFAULT_TEST_FREQUENCIES",
     "apply_frequency_fields",
@@ -420,5 +447,6 @@ __all__ = [
     "reset_control_widgets",
     "reset_frequency_fields",
     "reset_power_controls",
+    "reset_power_scan_fields",
     "supply_option_label",
 ]

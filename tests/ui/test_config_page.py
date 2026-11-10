@@ -331,6 +331,106 @@ class ConfigurationPageTests(unittest.TestCase):
         self.assertIsNone(page.power_scan_import_error)
         self.assertFalse(page.rebuild_power_scan_plan_btn.isVisibleTo(page))
 
+    def test_backfill_from_multi_plan_then_empty_leaves_no_old_rows(self):
+        """配置 A 回填后再回填空配置：A 的行、编号与预览都不能残留。"""
+        page = self.make_page()
+        page.apply_config(
+            {
+                "test_frequencies": [1.0],
+                "instruments": {"power_supplies": {}},
+                "signal_source": {
+                    "power_scan_plans": [
+                        {"start_power": -38.0, "step": 1.0, "stop_power": -10.0},
+                        {"start_power": -10.0, "step": 0.25, "stop_power": -2.0},
+                        {"start_power": -2.0, "step": 0.5, "stop_power": 0.0},
+                    ]
+                },
+            }
+        )
+        self.assertEqual(len(page.power_scan_plan_rows), 3)
+        self.assertIn("3 段", page.power_scan_summary.text())
+
+        page.apply_config({})
+
+        self.assertIsNone(page.power_scan_import_error)
+        self.assertEqual(len(page.power_scan_plan_rows), 1)
+        self.assertEqual(page.power_scan_plan_rows[0].values(), (-38.0, 1.0, -16.0))
+        self.assertEqual(page.power_scan_plan_rows[0].number(), 1)
+        self.assertIn("1 段", page.power_scan_summary.text())
+        self.assertEqual(
+            page.build_config()["signal_source"]["power_scan_plans"],
+            [{"start_power": -38.0, "step": 1.0, "stop_power": -16.0}],
+        )
+        # 类型化快照同样只保留空配置的一行默认计划：A 的三段不能残留在视图模型里。
+        self.assertEqual(
+            [
+                (sweep.start.dbm, sweep.step.db, sweep.stop.dbm)
+                for sweep in page.view_model.state.draft.sweeps
+            ],
+            [(-38.0, 1.0, -16.0)],
+        )
+        self.assertFalse(page.is_dirty())
+
+    def test_multi_plan_config_round_trips_through_save_and_reopen(self):
+        """保存后重新打开：行数、顺序、数值与逐行预览保持一致。"""
+        page = self.make_page()
+        page.power_scan_plan_rows[0].set_values(-38.0, 1.0, -10.0)
+        page.add_power_scan_plan().set_values(-10.0, 0.25, -2.0)
+        saved = page.build_config()
+        values = [row.values() for row in page.power_scan_plan_rows]
+        previews = [row.preview.text() for row in page.power_scan_plan_rows]
+        summary = page.power_scan_summary.text()
+
+        reopened = self.make_page(**saved)
+
+        self.assertEqual(
+            [row.values() for row in reopened.power_scan_plan_rows], values
+        )
+        self.assertEqual([row.number() for row in reopened.power_scan_plan_rows], [1, 2])
+        self.assertEqual(
+            [row.preview.text() for row in reopened.power_scan_plan_rows], previews
+        )
+        self.assertEqual(reopened.power_scan_summary.text(), summary)
+        self.assertEqual(
+            reopened.build_config()["signal_source"]["power_scan_plans"],
+            saved["signal_source"]["power_scan_plans"],
+        )
+        self.assertEqual(
+            [
+                (sweep.start.dbm, sweep.step.db, sweep.stop.dbm)
+                for sweep in reopened.view_model.state.draft.sweeps
+            ],
+            values,
+        )
+
+    def test_plan_row_edits_drive_dirty_and_mark_clean(self):
+        """dirty 以整组计划比较：改值变脏、改回变干净，增删空段也能复位。"""
+        page = self.make_page()
+        self.assertFalse(page.is_dirty())
+        row = page.power_scan_plan_rows[0]
+
+        row.set_values(-37.0, 1.0, -16.0)
+        self.assertTrue(page.is_dirty())
+        self.assertEqual(
+            [sweep.start.dbm for sweep in page.view_model.state.draft.sweeps], [-37.0]
+        )
+
+        row.set_values(-38.0, 1.0, -16.0)
+        self.assertFalse(page.is_dirty(), "计划改回基线后不应仍显示已修改")
+
+        added = page.add_power_scan_plan()
+        self.assertTrue(page.is_dirty())
+        page.remove_power_scan_plan(added)
+        self.assertFalse(page.is_dirty(), "删除刚加的空段后计划回到基线")
+
+        row.set_values(-36.0, 1.0, -16.0)
+        page.mark_clean()
+        self.assertFalse(page.is_dirty())
+        self.assertFalse(page.view_model.dirty)
+        self.assertEqual(
+            [sweep.start.dbm for sweep in page.view_model.state.draft.sweeps], [-36.0]
+        )
+
     def test_config_with_signal_source_but_no_plans_is_an_import_error(self):
         """声明了扫描区却没有计划时，默认行只是占位，不能被当成可保存的配置。"""
         page = self.make_page()

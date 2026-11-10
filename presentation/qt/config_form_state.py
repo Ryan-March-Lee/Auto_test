@@ -294,8 +294,10 @@ class ConfigFormState:
     def power_scan_plans(self) -> list[dict]:
         """按页面行列表读出功率扫描计划，顺序即执行顺序。
 
-        动态编辑器把每行 ``(起始, 步长, 终止)`` 作为一段；没有行列表的旧替身仍按三个
-        单计划控件读数。旧替身携带多段计划时保留原列表，不把已确认的段折叠成一段。
+        动态编辑器的行列表一旦存在就是唯一读数来源：即使列表为空也如实返回空计划，
+        不再退回基线里的旧计划，避免“页面已经删光/重建”却被旧配置覆盖。没有行列表
+        的旧替身仍按三个单计划控件读数；旧替身携带多段计划时保留原列表，不把已确认的
+        段折叠成一段。
         """
         rows = getattr(self.widgets, "power_scan_plan_rows", None)
         if rows is not None:
@@ -309,8 +311,7 @@ class ConfigFormState:
                         "stop_power": stop,
                     }
                 )
-            if plans:
-                return plans
+            return plans
         existing_source = _dict_copy(self.config.get("signal_source"))
         existing_plans = existing_source.get("power_scan_plans")
         if isinstance(existing_plans, list) and len(existing_plans) > 1:

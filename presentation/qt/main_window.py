@@ -417,18 +417,18 @@ class MainWindow(QMainWindow):
         return page
 
     def create_visualization_tab(self):
-        """创建数据可视化选项卡（浏览历史结果与生成报告副本）"""
+        """创建数据可视化选项卡（浏览历史结果，并对已加载结果另存为）"""
         self.visualization_page = VisualizationPage(
             # 历史查看状态归只读视图模型：列表、选中项、已加载结果与频率浏览。
             history=HistoryViewModel(self.gui_data_service.results),
-            chooser=self.gui_data_service.results.choose_and_load,
-            # 报告只有一个应用层实现：页面只提交“对哪条结果生成报告”的导出请求。
+            # 另存为只有一个应用层实现：页面只提交“对哪条结果、哪种格式”的导出请求。
             export_service=self.gui_data_service.export_requests,
             log_callback=self.add_log_message,
             parent=self,
         )
         self.load_data_btn = self.visualization_page.load_data_btn
-        self.generate_report_btn = self.visualization_page.generate_report_btn
+        self.save_as_button = self.visualization_page.save_as_button
+        self.save_as_menu = self.visualization_page.save_as_menu
         self.freq_prev_btn = self.visualization_page.freq_prev_btn
         self.freq_label = self.visualization_page.freq_label
         self.freq_next_btn = self.visualization_page.freq_next_btn
@@ -574,7 +574,7 @@ class MainWindow(QMainWindow):
         self.cable_loss_page.show_loaded_result(reference)
 
     def refresh_history(self):
-        """测量结束后刷新历史运行与结果列表：页面自己容忍读取失败。"""
+        """测量结束后刷新历史运行列表：页面自己容忍读取失败。"""
         page = getattr(self, "run_history_page", None)
         return None if page is None else page.refresh()
 

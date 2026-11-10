@@ -187,9 +187,6 @@ BROAD_CATCH_BASELINE = {
         "ApplicationCoordinator.apply_run_configuration#1",
         "ApplicationCoordinator._start_connection_worker#1",
     ),
-    "presentation/qt/run_history_page.py": (
-        "RunHistoryPage.export#1",
-    ),
     "presentation/qt/measurement_controller.py": (
         "MeasurementController._start#1",
         "MeasurementController._request_stop#1",
@@ -205,7 +202,7 @@ BROAD_CATCH_BASELINE = {
     ),
     "presentation/qt/visualization_page.py": (
         "VisualizationPage.load_test_data#1",
-        "VisualizationPage.generate_report#1",
+        "VisualizationPage.export#1",
     ),
     "presentation/qt/workers.py": (
         "InstrumentWorker._close_own_port#1",

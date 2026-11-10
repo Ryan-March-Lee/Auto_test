@@ -91,9 +91,6 @@ class _FakeQuery:
     def read_bytes(self, result_id):  # pragma: no cover - 历史查看不使用
         raise AssertionError("历史查看不得逐字节读取结果")
 
-    def choose_and_load(self):  # pragma: no cover - 文件选择属于基础设施
-        raise AssertionError("视图模型不得打开文件对话框")
-
     def latest_result(self, result_type):  # pragma: no cover - 步骤 8 已移除隐式来源
         raise AssertionError("视图模型不得按“最新结果”加载")
 
@@ -120,16 +117,6 @@ class HistoryRowTests(unittest.TestCase):
     def test_row_rejects_objects_that_are_not_history_rows(self):
         with self.assertRaises(TypeError):
             HistoryRow.from_dto({"result_id": "x"})
-
-    def test_suggested_filename_swaps_the_suffix(self):
-        row = HistoryRow.from_dto(_row("results/amplifier_measurement.json"))
-
-        self.assertEqual(
-            row.suggested_filename("csv"), "amplifier_measurement.csv"
-        )
-        self.assertEqual(
-            row.suggested_filename(".json"), "amplifier_measurement.json"
-        )
 
 
 class HistoryViewModelTests(unittest.TestCase):

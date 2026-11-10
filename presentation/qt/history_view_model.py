@@ -116,11 +116,6 @@ class HistoryRow:
     def modified_text(self) -> str:
         return self.modified_at.strftime("%Y-%m-%d %H:%M:%S")
 
-    def suggested_filename(self, suffix: str) -> str:
-        """另存为对话框使用的默认文件名；后缀与记录一致。"""
-        stem = self.filename.rsplit(".", 1)[0] if "." in self.filename else self.filename
-        return f"{stem}.{suffix.lstrip('.')}"
-
 
 # -- 历史运行摘要的展示文本 -------------------------------------------------
 
@@ -263,7 +258,8 @@ def _problem_text(summary: RunHistorySummary) -> str:
     """
     parts = [summary.problem] if summary.problem else []
     parts.extend(
-        f"{artifact_kind_text(item.kind)} 已生成但文件缺失，请用“另存为”重新获取"
+        f"{artifact_kind_text(item.kind)} 已生成但文件缺失，"
+        f"请到“数据可视化”页用“另存为”重新获取"
         for item in summary.missing_artifacts
     )
     parts.extend(
@@ -344,7 +340,7 @@ class HistoryViewModel:
 
     def __init__(
         self,
-        query: ResultQueryPort,
+        query: ResultQueryPort | None = None,
         *,
         runs: RunSummarySource | None = None,
     ):
@@ -367,6 +363,8 @@ class HistoryViewModel:
 
     def reload(self) -> tuple[HistoryRow, ...]:
         """重新读取历史列表；选中项已不存在时清空，不保留陈旧选择。"""
+        if self.query is None:
+            raise RuntimeError("未配置历史结果查询，无法读取结果列表")
         self._rows = tuple(
             HistoryRow.from_dto(row) for row in self.query.list_results()
         )
@@ -494,6 +492,8 @@ class HistoryViewModel:
         row = self.selected
         if row is None:
             raise ValueError("请先在历史列表中选择一条结果")
+        if self.query is None:
+            raise RuntimeError("未配置历史结果查询，无法加载结果")
         return self.show(self.query.load(row.result_id))
 
     def clear(self) -> None:

@@ -7,7 +7,8 @@
   生产包导入；
 - 页面路由 key 为 ``run_history``，用户可见标题仍是“历史运行”，不再保留 ``export`` key；
 - 主窗口只持有页面对象，不再把页面的表格与导出按钮复制成窗口状态；
-- 页面只保留 ``export(format)`` 一个导出入口，不再为每种格式额外写一份转发方法；
+- 数据可视化页只保留 ``export(format)`` 一个导出入口，不再为每种格式额外写一份转发
+  方法；历史运行页只负责运行与产物状态，不再导出；
 - 运行时文案（页面标题、窗口标题、提示、日志与生成的报告文本）不把“导出”描述成正常
   测试流程的必经页面：扫描范围是全部运行时生产包，不是只有 ``presentation/qt``；
 - 应用层导出用例保留：历史重试与外部调用仍需要 ``ResultExportUseCase``。
@@ -22,6 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 QT_ROOT = ROOT / "presentation" / "qt"
 RUN_HISTORY_PAGE = QT_ROOT / "run_history_page.py"
+VISUALIZATION_PAGE = QT_ROOT / "visualization_page.py"
 MAIN_WINDOW = QT_ROOT / "main_window.py"
 PAGES = QT_ROOT / "pages.py"
 # 运行时生产包：菜单/页面标题、窗口标题、提示、日志与生成的产物文案都只在这些包里出现。
@@ -120,7 +122,7 @@ class ExportPageSemanticsRetirementTests(unittest.TestCase):
             self.assertNotIn(attribute, source)
 
     def test_page_only_exposes_one_export_entry(self):
-        methods = _method_names(RUN_HISTORY_PAGE)
+        methods = _method_names(VISUALIZATION_PAGE)
         self.assertIn("export", methods)
         for duplicate in ("export_json", "export_csv", "export_report"):
             self.assertNotIn(
@@ -128,6 +130,11 @@ class ExportPageSemanticsRetirementTests(unittest.TestCase):
                 methods,
                 "页面只保留 export(format)，不再为每种格式写转发方法",
             )
+        self.assertNotIn(
+            "export",
+            _method_names(RUN_HISTORY_PAGE),
+            "结果另存为已移到数据可视化页，历史运行页不再导出",
+        )
 
     def test_ui_text_does_not_require_a_separate_export_page(self):
         """运行时文案门禁覆盖全部生产包：提示、日志与生成的报告文本一起查。"""

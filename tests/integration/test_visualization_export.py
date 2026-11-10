@@ -31,13 +31,13 @@ from domain.run.models import (
     CABLE_LOSS_INPUT_PATH,
     STAGE_AMPLIFIER,
     STAGE_CABLE_LOSS,
+    STAGE_DRIVER_MAPPING,
 )
 from infrastructure.filesystem.paths import PathService
 from infrastructure.gui_data_service import ResultExportAdapter, ResultQueryAdapter
 from infrastructure.persistence.run_history_repository import FileRunHistoryRepository
 from infrastructure.persistence.run_repository import RunRepository
-from presentation.qt.run_history_page import RunHistoryPage
-from presentation.qt.visualization_page import result_plot_series
+from presentation.qt.visualization_page import VisualizationPage, result_plot_series
 
 
 def _amplifier_result() -> AmplifierMeasurementResult:
@@ -141,7 +141,6 @@ class RunHistoryOnlyTests(unittest.TestCase):
         adapter = ResultQueryAdapter(
             paths,
             run_history=run_history,
-            runs_root=paths.test_results_dir / "runs",
         )
         return paths, runs, adapter
 
@@ -379,49 +378,9 @@ class RunHistoryOnlyTests(unittest.TestCase):
                     with self.assertRaises((ValueError, FileNotFoundError)):
                         adapter.load(result_id)
 
-    def test_choose_and_load_rejects_files_outside_the_runs_root(self):
-        with tempfile.TemporaryDirectory() as directory:
-            paths, runs, adapter = self._setup(directory)
-            self._complete_cable_loss(runs, losses={"1.0": {"cable1": 1.0}})
-            outside = paths.test_results_dir / "cable_loss_results.json"
-            outside.write_text("{}", encoding="utf-8")
 
-            with patch(
-                "infrastructure.gui_data_service.QFileDialog.getOpenFileName",
-                return_value=(str(outside), "JSON files (*.json)"),
-            ):
-                with self.assertRaises(ValueError):
-                    adapter.choose_and_load()
-
-    def test_run_history_page_shows_the_source_of_each_result(self):
-        with tempfile.TemporaryDirectory() as directory:
-            paths, runs, adapter = self._setup(directory)
-            self._complete_cable_loss(runs, losses={"1.0": {"cable1": 1.0}})
-            self._write_legacy_copy(paths, losses={"1.0": 99.0})
-
-            from PySide6.QtWidgets import QApplication
-
-            from application.export_service import ResultExportUseCase
-            from presentation.qt.history_view_model import HistoryViewModel
-
-            app = QApplication.instance() or QApplication([])
-            page = RunHistoryPage(
-                history=HistoryViewModel(adapter),
-                export_service=ResultExportUseCase(
-                    history=adapter, exports=ResultExportAdapter(adapter, paths)
-                ),
-            )
-            labels = [
-                page.result_table.item(row, 2).text()
-                for row in range(page.result_table.rowCount())
-            ]
-
-        self.assertTrue(labels)
-        self.assertTrue(all(label.startswith("运行 ") for label in labels))
-
-
-class RunHistoryPageRequestTests(unittest.TestCase):
-    """步骤 11：历史管理页只构造 ExportRequest，导出由应用用例执行。"""
+class VisualizationPageRequestTests(unittest.TestCase):
+    """步骤 8/11：可视化页只对已加载结果构造 ExportRequest，导出由应用用例执行。"""
 
     RUN_ID = RunHistoryOnlyTests.RUN_ID
 
@@ -435,11 +394,11 @@ class RunHistoryPageRequestTests(unittest.TestCase):
         self.root = Path(self._temporary.name)
         # 离屏环境里任何模态对话框都会永久阻塞：统一替身并记录调用。
         for name in ("warning", "information", "critical"):
-            patcher = patch(f"presentation.qt.run_history_page.QMessageBox.{name}")
+            patcher = patch(f"presentation.qt.visualization_page.QMessageBox.{name}")
             setattr(self, f"{name}_dialog", patcher.start())
             self.addCleanup(patcher.stop)
 
-    def _page(self, *, amplifier=True):
+    def _page(self, *, kind="amplifier", load=True):
         from application.export_service import ResultExportUseCase
         from presentation.qt.history_view_model import HistoryViewModel
 
@@ -448,11 +407,10 @@ class RunHistoryPageRequestTests(unittest.TestCase):
         query = ResultQueryAdapter(
             paths,
             run_history=FileRunHistoryRepository(runs=runs),
-            runs_root=paths.test_results_dir / "runs",
         )
         runs.create_run({"run_id": self.RUN_ID}, run_id=self.RUN_ID)
         recorder = RunStageRecorder(runs, self.RUN_ID)
-        if amplifier:
+        if kind == "amplifier":
             recorder.complete(
                 STAGE_AMPLIFIER,
                 {
@@ -472,6 +430,20 @@ class RunHistoryPageRequestTests(unittest.TestCase):
                 },
                 result_path=AMPLIFIER_RESULT_PATH,
             )
+        elif kind == "driver":
+            recorder.complete(
+                STAGE_DRIVER_MAPPING,
+                DriverPowerMappingMeasurementResult(
+                    run_id=self.RUN_ID,
+                    raw_points=(
+                        DriverMappingRawPoint(
+                            frequency_ghz="5.2",
+                            source_power_dbm=-10.0,
+                            driver_output_power_dbm=0.0,
+                        ),
+                    ),
+                ).to_dict(),
+            )
         else:
             recorder.complete(
                 STAGE_CABLE_LOSS,
@@ -482,21 +454,24 @@ class RunHistoryPageRequestTests(unittest.TestCase):
                     "cable_losses": {"1.0": {"cable1": 1.0}},
                 },
             )
-        page = RunHistoryPage(
+        loaded = query.load(query.list_results()[0].result_id)
+        page = VisualizationPage(
             history=HistoryViewModel(query),
+            chooser=lambda: loaded,
             export_service=ResultExportUseCase(
                 history=query, exports=ResultExportAdapter(query, paths)
             ),
         )
-        page.result_table.setCurrentCell(0, 0)
+        if load:
+            self.assertTrue(page.load_test_data())
         return page
 
-    def test_json_export_writes_the_selected_history_result(self):
+    def test_json_export_writes_the_loaded_history_result(self):
         page = self._page()
         target = self.root / "exported.json"
 
         with patch(
-            "presentation.qt.run_history_page.QFileDialog.getSaveFileName",
+            "presentation.qt.visualization_page.QFileDialog.getSaveFileName",
             return_value=(str(target), "JSON files (*.json)"),
         ):
             self.assertTrue(page.export(ExportFormat.JSON))
@@ -507,11 +482,11 @@ class RunHistoryPageRequestTests(unittest.TestCase):
         self.assertIn(str(target), message)
 
     def test_csv_export_is_rejected_for_non_amplifier_results(self):
-        page = self._page(amplifier=False)
+        page = self._page(kind="driver")
         target = self.root / "exported.csv"
 
         with patch(
-            "presentation.qt.run_history_page.QFileDialog.getSaveFileName",
+            "presentation.qt.visualization_page.QFileDialog.getSaveFileName",
             return_value=(str(target), "CSV files (*.csv)"),
         ):
             self.assertFalse(page.export(ExportFormat.CSV))
@@ -529,19 +504,18 @@ class RunHistoryPageRequestTests(unittest.TestCase):
         self.assertTrue(Path(message.split(": ", 1)[1]).is_file())
 
     def test_report_export_requires_an_amplifier_result(self):
-        page = self._page(amplifier=False)
+        page = self._page(kind="driver")
 
         self.assertFalse(page.export(ExportFormat.REPORT))
 
         self.warning_dialog.assert_called_once()
         self.information_dialog.assert_not_called()
 
-    def test_export_without_a_selection_warns_and_does_nothing(self):
-        page = self._page()
-        page.result_table.setCurrentCell(-1, -1)
+    def test_export_without_a_loaded_result_warns_and_does_nothing(self):
+        page = self._page(load=False)
 
         with patch(
-            "presentation.qt.run_history_page.QFileDialog.getSaveFileName"
+            "presentation.qt.visualization_page.QFileDialog.getSaveFileName"
         ) as dialog:
             self.assertFalse(page.export(ExportFormat.JSON))
 

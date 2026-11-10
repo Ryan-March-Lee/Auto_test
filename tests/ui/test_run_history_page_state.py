@@ -1,14 +1,14 @@
-"""步骤 11：历史管理页的页面状态渲染入口（纯表现层）。
+"""步骤 11：历史运行页的页面状态渲染入口（纯表现层）。
 
 覆盖：
 
 - ``RunHistoryPageState`` 是只读快照：拒绝负行数、布尔/浮点行数与不合法的选中运行；
 - ``render_state()`` 是空表说明与“重新生成”按钮的唯一写入点：显式快照按键值渲染，
-  不传快照时从两张表格与视图模型推导；
+  不传快照时从运行表格与视图模型推导；
 - 全量刷新、单表刷新与选中变化都只调用一次渲染入口；
-- 读取失败时表格与视图模型一起清空：看不到的行不能继续参与选择或导出判定；
-- 生产代码里没有渲染入口与一次性构造函数之外的状态写入，三个动态控件更是只由渲染
-  入口写入，后续加过渡时不会漏掉分支。
+- 读取失败时表格与视图模型一起清空：看不到的行不能继续参与选择；
+- 生产代码里没有渲染入口与一次性构造函数之外的状态写入，动态控件更是只由渲染入口
+  写入，后续加过渡时不会漏掉分支。
 """
 
 import ast
@@ -29,7 +29,6 @@ from application.dto.run_history import (
     RunHistorySummary,
     RunStageSummary,
 )
-from application.ports.gui_data_service import ResultFileDto
 from domain.run.models import (
     AMPLIFIER_RESULT_PATH,
     STAGE_AMPLIFIER,
@@ -53,33 +52,16 @@ _STATE_WRITE_METHODS = frozenset({"setVisible", "setEnabled", "setText", "setPro
 _STATE_WRITE_OWNERS = frozenset(
     {"RunHistoryPage._build_ui", "RunHistoryPage.render_state"}
 )
-# 这三个控件的值随状态变化（而不是随结构生成）：只允许渲染入口写它们，
+# 这些控件的值随状态变化（而不是随结构生成）：只允许渲染入口写它们，
 # 比“整个 _build_ui 都放行”更精确。
 _DYNAMIC_STATE_WIDGETS = frozenset(
     {
         "self.run_empty_hint",
-        "self.result_empty_hint",
         "self.regenerate_button",
         "self.open_run_dir_button",
         "self.open_report_button",
     }
 )
-
-
-class _ResultQuery:
-    """状态测试不读文件：按给定行返回结果描述，失败可由 ``failure`` 注入。"""
-
-    def __init__(self, rows=(), *, failure=None):
-        self.rows = tuple(rows)
-        self.failure = failure
-
-    def list_results(self):
-        if self.failure is not None:
-            raise self.failure
-        return list(self.rows)
-
-    def load(self, result_id):
-        raise AssertionError(f"状态测试不加载结果: {result_id}")
 
 
 class _StaticRuns:
@@ -93,13 +75,6 @@ class _StaticRuns:
         if self.failure is not None:
             raise self.failure
         return self.summaries
-
-
-class _StubExport:
-    """导出服务替身：状态测试不触发导出。"""
-
-    def execute(self, request):
-        raise AssertionError("状态测试不导出")
 
 
 def _summary(
@@ -143,23 +118,11 @@ def _run_row(*, can_regenerate: bool = True) -> RunHistoryRow:
     return RunHistoryRow.from_summary(_summary(can_regenerate=can_regenerate))
 
 
-def _result_file() -> ResultFileDto:
-    return ResultFileDto(
-        result_id=f"run::{RUN_ID}::results/amplifier_measurement_1.0.json",
-        filename="amplifier_measurement_1.0.json",
-        file_type="amplifier",
-        modified_at=CREATED_AT,
-        run_id=RUN_ID,
-    )
-
-
-def _page(*, summaries=(), runs=None, query=None, log_callback=None) -> RunHistoryPage:
+def _page(*, summaries=(), runs=None, log_callback=None) -> RunHistoryPage:
     return RunHistoryPage(
         history=HistoryViewModel(
-            _ResultQuery() if query is None else query,
-            runs=_StaticRuns(summaries) if runs is None else runs,
+            runs=_StaticRuns(summaries) if runs is None else runs
         ),
-        export_service=_StubExport(),
         log_callback=log_callback,
     )
 
@@ -211,7 +174,6 @@ class RunHistoryPageStateTests(unittest.TestCase):
         state = RunHistoryPageState()
 
         self.assertTrue(state.run_list_empty)
-        self.assertTrue(state.result_list_empty)
         self.assertFalse(state.can_regenerate)
 
     def test_counts_must_be_non_negative_integers(self):
@@ -219,8 +181,6 @@ class RunHistoryPageStateTests(unittest.TestCase):
             with self.subTest(value=value):
                 with self.assertRaises(ValueError):
                     RunHistoryPageState(run_count=value)
-                with self.assertRaises(ValueError):
-                    RunHistoryPageState(result_count=value)
 
     def test_selected_run_must_come_from_the_view_model(self):
         with self.assertRaises(TypeError):
@@ -261,40 +221,24 @@ class RunHistoryPageRenderingTests(unittest.TestCase):
 
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_initial_render_shows_empty_hints_and_disables_regeneration(self):
+    def test_initial_render_shows_empty_hint_and_disables_regeneration(self):
         page = _page()
 
         self.assertFalse(page.run_empty_hint.isHidden())
-        self.assertFalse(page.result_empty_hint.isHidden())
         self.assertFalse(page.regenerate_button.isEnabled())
         self.assertFalse(page.open_run_dir_button.isEnabled())
         self.assertFalse(page.open_report_button.isEnabled())
 
-    def test_save_as_menu_offers_json_csv_and_report(self):
-        """三个格式合并进一个“另存为”入口，不再保留三个独立导出按钮。"""
-        page = _page()
+    def test_run_table_is_a_read_only_display_panel(self):
+        page = _page(summaries=[_summary()])
 
-        self.assertEqual(page.save_as_button.text(), "另存为…")
-        self.assertEqual(
-            [action.text() for action in page.save_as_menu.actions()],
-            ["JSON…", "CSV…", "测试报告…"],
-        )
-
-    def test_both_tables_are_read_only_display_panels(self):
-        page = _page(
-            summaries=[_summary()], query=_ResultQuery(rows=[_result_file()])
-        )
-
-        for table in (page.run_table, page.result_table):
-            with self.subTest(table=table):
-                self.assertEqual(
-                    table.editTriggers(), QAbstractItemView.NoEditTriggers
-                )
-                for row in range(table.rowCount()):
-                    for column in range(table.columnCount()):
-                        item = table.item(row, column)
-                        if item is not None:
-                            self.assertFalse(item.flags() & Qt.ItemIsEditable)
+        table = page.run_table
+        self.assertEqual(table.editTriggers(), QAbstractItemView.NoEditTriggers)
+        for row in range(table.rowCount()):
+            for column in range(table.columnCount()):
+                item = table.item(row, column)
+                if item is not None:
+                    self.assertFalse(item.flags() & Qt.ItemIsEditable)
 
     def test_refresh_renders_rows_and_selection_enables_regeneration(self):
         page = _page(summaries=[_summary()])
@@ -310,9 +254,7 @@ class RunHistoryPageRenderingTests(unittest.TestCase):
     def test_explicit_state_is_rendered_without_reading_the_tables(self):
         page = _page(summaries=[_summary(can_regenerate=False)])
 
-        page.render_state(
-            RunHistoryPageState(run_count=0, result_count=0, selected_run=None)
-        )
+        page.render_state(RunHistoryPageState(run_count=0, selected_run=None))
 
         # 表格里明明有运行，但显式快照说“空”：渲染只认快照。
         self.assertEqual(page.run_table.rowCount(), 1)
@@ -322,13 +264,11 @@ class RunHistoryPageRenderingTests(unittest.TestCase):
         page.render_state(
             RunHistoryPageState(
                 run_count=5,
-                result_count=2,
                 selected_run=_run_row(can_regenerate=True),
             )
         )
 
         self.assertTrue(page.run_empty_hint.isHidden())
-        self.assertTrue(page.result_empty_hint.isHidden())
         self.assertTrue(page.regenerate_button.isEnabled())
 
     def test_derived_state_clears_a_stale_selection(self):
@@ -366,10 +306,6 @@ class RunHistoryPageRenderingTests(unittest.TestCase):
         self.assertEqual(render.call_count, 1)
 
         with patch.object(page, "render_state", wraps=page.render_state) as render:
-            page.refresh_result_list()
-        self.assertEqual(render.call_count, 1)
-
-        with patch.object(page, "render_state", wraps=page.render_state) as render:
             page.run_table.setCurrentCell(0, 0)
         self.assertEqual(render.call_count, 1)
 
@@ -400,36 +336,6 @@ class RunHistoryPageRenderingTests(unittest.TestCase):
         self.assertFalse(page.regenerate_button.isEnabled())
         self.assertFalse(page.run_empty_hint.isHidden())
 
-    def test_result_list_failure_clears_the_stale_results_and_selection(self):
-        query = _ResultQuery([_result_file()])
-        messages = []
-        page = _page(query=query, log_callback=messages.append)
-        page.result_table.setCurrentCell(0, 0)
-        # 结果表没有选中信号：真实路径由导出动作把当前行写回视图模型。
-        self.assertIsNotNone(page.selected_row())
-        query.failure = OSError("结果根目录不可读")
-
-        with patch.object(page, "render_state", wraps=page.render_state) as render:
-            page.refresh_result_list()
-
-        self.assertEqual(render.call_count, 1)
-        self.assertEqual(page.result_table.rowCount(), 0)
-        self.assertIsNone(page.history.selected)
-        self.assertIsNone(page.history.row_at(0))
-        self.assertFalse(page.result_empty_hint.isHidden())
-        self.assertTrue(any("读取历史结果失败" in message for message in messages))
-
-    def test_result_failure_during_refresh_does_not_raise_and_renders_once(self):
-        """单表刷新与全量刷新共用同一条失败路径：都不抛异常、都只渲染一次。"""
-        query = _ResultQuery([_result_file()], failure=OSError("结果根目录不可读"))
-
-        with patch.object(RunHistoryPage, "render_state", autospec=True) as render:
-            page = _page(summaries=[_summary()], query=query)
-
-        self.assertEqual(render.call_count, 1)
-        self.assertEqual(page.result_table.rowCount(), 0)
-        self.assertEqual(page.run_table.rowCount(), 1)
-
     def test_state_writes_stay_inside_the_renderer(self):
         owners = {owner for owner, _receiver, _method in _page_source_calls()}
 
@@ -450,9 +356,9 @@ class RunHistoryPageRenderingTests(unittest.TestCase):
                 if receiver in _DYNAMIC_STATE_WIDGETS
             },
             {"RunHistoryPage.render_state"},
-            "空表说明与“重新生成”按钮只能由 render_state 写入",
+            "空表说明与运行动作按钮只能由 render_state 写入",
         )
-        # 门禁不能因为“没人写”而空过：三个动态控件都必须真的由渲染入口写入。
+        # 门禁不能因为“没人写”而空过：这些动态控件都必须真的由渲染入口写入。
         self.assertEqual(
             {
                 receiver

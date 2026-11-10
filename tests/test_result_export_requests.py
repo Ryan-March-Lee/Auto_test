@@ -76,9 +76,6 @@ class _FakeHistory:
     def read_bytes(self, result_id):  # pragma: no cover - 导出走端口
         raise AssertionError("导出用例不直接读取结果字节")
 
-    def choose_and_load(self):  # pragma: no cover
-        raise AssertionError("导出用例不打开文件对话框")
-
     def latest_result(self, result_type):  # pragma: no cover
         raise AssertionError("导出用例不查询最新结果")
 
@@ -306,9 +303,9 @@ class ExportLayeringTests(unittest.TestCase):
                 offenders, [], f"应用层不得拼接界面文案（{wording}）: {offenders}"
             )
 
-    def test_run_history_page_owns_the_user_wording(self):
+    def test_visualization_page_owns_the_user_wording(self):
         runtime = self._runtime_strings(
-            ROOT / "presentation" / "qt" / "run_history_page.py"
+            ROOT / "presentation" / "qt" / "visualization_page.py"
         )
 
         self.assertTrue(

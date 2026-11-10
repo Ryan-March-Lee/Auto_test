@@ -1,12 +1,12 @@
-"""步骤 8：可视化页只保留浏览，报告副本走唯一的应用层导出用例。
+"""步骤 8：可视化页浏览历史结果，并只对已加载结果执行“另存为”。
 
 覆盖：
 
-- 报告只针对**当前已加载结果**执行：页面提交 ``ExportRequest(format=REPORT)``，来源是
-  已加载结果的历史标识，不再回退到“最新结果”；
+- “另存为”只针对**当前已加载结果**：页面提交 ``ExportRequest``（JSON/CSV/测试报告由
+  菜单选择），来源是已加载结果的历史标识，不再回退到“最新结果”；
 - 未加载结果、未装配导出用例、导出用例拒绝（例如非主功放结果）都明确提示并返回失败，
   页面自己不再比较结果类型、也不再拼接报告规则；
-- 加载、频率浏览与绘图仍按视图模型工作，加载失败回到空状态。
+- 加载、频率浏览与绘图仍按视图模型工作，加载失败回到空状态并禁用“另存为”。
 """
 
 import os
@@ -23,6 +23,7 @@ from application.dto import (
 )
 from application.dto.export_requests import ExportFormat, ExportOutcome
 from application.ports.gui_data_service import LoadedResultDto
+from PySide6.QtWidgets import QDialog
 from presentation.qt.history_view_model import HistoryViewModel
 from presentation.qt.visualization_page import VisualizationPage
 
@@ -74,9 +75,6 @@ class _FakeQuery:
     def read_bytes(self, result_id):  # pragma: no cover
         raise AssertionError("可视化页不逐字节读取结果")
 
-    def choose_and_load(self):  # pragma: no cover - 文件选择由窗口注入
-        raise AssertionError("可视化页不自己打开文件对话框")
-
     def latest_result(self, result_type):  # pragma: no cover - 步骤 8 已移除
         raise AssertionError("可视化页不得加载“最新结果”")
 
@@ -123,7 +121,18 @@ class VisualizationPageTests(unittest.TestCase):
         self.assertTrue(page.load_test_data())
         return page
 
-    # -- 报告：只针对已加载结果 ---------------------------------------------
+    # -- 另存为：只针对已加载结果 -------------------------------------------
+
+    def test_save_as_menu_offers_json_csv_and_report(self):
+        """三个格式合并进一个“另存为”入口，不再保留独立报告按钮。"""
+        page = self._page()
+
+        self.assertEqual(page.save_as_button.text(), "另存为…")
+        self.assertEqual(
+            [action.text() for action in page.save_as_menu.actions()],
+            ["JSON…", "CSV…", "测试报告…"],
+        )
+        self.assertFalse(page.save_as_button.isEnabled())
 
     def test_report_requests_the_loaded_result_from_the_export_use_case(self):
         export = _RecordingExport(
@@ -136,7 +145,7 @@ class VisualizationPageTests(unittest.TestCase):
         )
         page = self._page_with_loaded_result(export)
 
-        self.assertTrue(page.generate_report())
+        self.assertTrue(page.export(ExportFormat.REPORT))
 
         request = export.requests[0]
         self.assertEqual(request.result_id, RESULT_ID)
@@ -145,24 +154,79 @@ class VisualizationPageTests(unittest.TestCase):
         message = self.information_dialog.call_args.args[2]
         self.assertIn("report.html", message)
 
-    def test_report_without_a_loaded_result_never_falls_back_to_the_latest_result(self):
+    def test_json_save_as_uses_the_loaded_filename_as_default(self):
+        export = _RecordingExport(
+            outcome=ExportOutcome(
+                result_id=RESULT_ID,
+                format=ExportFormat.JSON,
+                filename="amplifier_measurement.json",
+                artifact_path="copy.json",
+            )
+        )
+        page = self._page_with_loaded_result(export)
+
+        with patch(
+            "presentation.qt.visualization_page.QFileDialog.getSaveFileName",
+            return_value=("copy.json", "JSON files (*.json)"),
+        ) as dialog:
+            self.assertTrue(page.export(ExportFormat.JSON))
+
+        self.assertEqual(dialog.call_args.args[2], "amplifier_measurement.json")
+        self.assertEqual(export.requests[0].target, "copy.json")
+        self.assertIs(export.requests[0].format, ExportFormat.JSON)
+
+    def test_csv_save_as_requests_a_csv_target(self):
+        export = _RecordingExport(
+            outcome=ExportOutcome(
+                result_id=RESULT_ID,
+                format=ExportFormat.CSV,
+                filename="amplifier_measurement.json",
+                artifact_path="copy.csv",
+            )
+        )
+        page = self._page_with_loaded_result(export)
+
+        with patch(
+            "presentation.qt.visualization_page.QFileDialog.getSaveFileName",
+            return_value=("copy.csv", "CSV files (*.csv)"),
+        ) as dialog:
+            self.assertTrue(page.export(ExportFormat.CSV))
+
+        self.assertEqual(dialog.call_args.args[2], "amplifier_measurement.csv")
+        self.assertEqual(export.requests[0].target, "copy.csv")
+
+    def test_cancelled_save_dialog_does_not_execute_the_export(self):
+        export = _RecordingExport(outcome=None)
+        page = self._page_with_loaded_result(export)
+
+        with patch(
+            "presentation.qt.visualization_page.QFileDialog.getSaveFileName",
+            return_value=("", ""),
+        ):
+            self.assertFalse(page.export(ExportFormat.JSON))
+
+        self.assertEqual(export.requests, [])
+        self.warning_dialog.assert_not_called()
+
+    def test_save_as_without_a_loaded_result_never_falls_back_to_the_latest_result(self):
         export = _RecordingExport(outcome=None)
         page = self._page(export_service=export)
 
-        self.assertFalse(page.generate_report())
+        self.assertFalse(page.save_as_button.isEnabled())
+        self.assertFalse(page.export(ExportFormat.REPORT))
 
         self.assertEqual(export.requests, [])
         self.warning_dialog.assert_called_once()
         self.assertIn("先加载", self.warning_dialog.call_args.args[2])
         self.assertIsNone(page.loaded_result_id)
 
-    def test_report_without_an_export_service_is_refused(self):
+    def test_save_as_without_an_export_service_is_refused(self):
         page = self._page_with_loaded_result(None)
 
-        self.assertFalse(page.generate_report())
+        self.assertFalse(page.export(ExportFormat.REPORT))
 
         self.warning_dialog.assert_called_once()
-        self.assertIn("未配置报告生成服务", self.warning_dialog.call_args.args[2])
+        self.assertIn("未配置导出服务", self.warning_dialog.call_args.args[2])
 
     def test_export_refusal_is_surfaced_without_page_level_report_rules(self):
         """非主功放结果由导出用例拒绝；页面只转述原因，不自己判断类型。"""
@@ -176,14 +240,14 @@ class VisualizationPageTests(unittest.TestCase):
         )
         self.assertTrue(page.load_test_data())
 
-        self.assertFalse(page.generate_report())
+        self.assertFalse(page.export(ExportFormat.REPORT))
 
         self.assertEqual(page.loaded_result_id, RESULT_ID)
         self.warning_dialog.assert_called_once()
         self.assertIn("只有功放测试结果支持", self.warning_dialog.call_args.args[2])
-        self.assertTrue(any("报告生成失败" in line for line in self.logs))
+        self.assertTrue(any("测试报告副本生成失败" in line for line in self.logs))
 
-    def test_unexpected_export_outcome_is_not_reported_as_success(self):
+    def test_mismatched_export_outcome_is_not_reported_as_success(self):
         export = _RecordingExport(
             outcome=ExportOutcome(
                 result_id=RESULT_ID,
@@ -194,10 +258,48 @@ class VisualizationPageTests(unittest.TestCase):
         )
         page = self._page_with_loaded_result(export)
 
-        self.assertFalse(page.generate_report())
+        self.assertFalse(page.export(ExportFormat.REPORT))
 
         self.information_dialog.assert_not_called()
         self.warning_dialog.assert_called_once()
+
+    # -- 选择历史结果 -------------------------------------------------------
+
+    def test_default_chooser_opens_the_history_result_dialog(self):
+        class _Dialog:
+            def __init__(self, history, *, log_callback=None, parent=None):
+                self.history = history
+                self.loaded_result = _amplifier_dto()
+
+            def exec(self):
+                return QDialog.Accepted
+
+        page = self._page()
+
+        with patch(
+            "presentation.qt.visualization_page.HistoryResultDialog", _Dialog
+        ):
+            self.assertTrue(page.load_test_data())
+
+        self.assertEqual(page.loaded_result_id, RESULT_ID)
+
+    def test_cancelled_history_result_dialog_keeps_the_page_empty(self):
+        class _Dialog:
+            def __init__(self, history, *, log_callback=None, parent=None):
+                self.loaded_result = None
+
+            def exec(self):
+                return QDialog.Rejected
+
+        page = self._page()
+
+        with patch(
+            "presentation.qt.visualization_page.HistoryResultDialog", _Dialog
+        ):
+            self.assertFalse(page.load_test_data())
+
+        self.assertIsNone(page.loaded_result_id)
+        self.assertEqual(page.freq_label.text(), "未加载数据")
 
     # -- 浏览 ---------------------------------------------------------------
 
@@ -213,6 +315,7 @@ class VisualizationPageTests(unittest.TestCase):
         self.assertEqual(page.freq_label.text(), "4.8 GHz (1/2)")
         self.assertFalse(page.freq_prev_btn.isEnabled())
         self.assertTrue(page.freq_next_btn.isEnabled())
+        self.assertTrue(page.save_as_button.isEnabled())
 
     def test_frequency_navigation_updates_the_label(self):
         page = self._page(chooser=lambda: _amplifier_dto())
@@ -236,6 +339,7 @@ class VisualizationPageTests(unittest.TestCase):
         self.assertIsNone(page.loaded_result_id)
         self.assertEqual(page.freq_label.text(), "未加载数据")
         self.assertFalse(page.freq_next_btn.isEnabled())
+        self.assertFalse(page.save_as_button.isEnabled())
 
     def test_load_failure_returns_to_the_empty_state(self):
         page = self._page(chooser=lambda: _amplifier_dto())
@@ -247,6 +351,7 @@ class VisualizationPageTests(unittest.TestCase):
         self.assertIsNone(page.loaded_result)
         self.assertIsNone(page.loaded_result_id)
         self.assertEqual(page.freq_label.text(), "数据加载失败")
+        self.assertFalse(page.save_as_button.isEnabled())
         self.assertTrue(any("数据加载失败" in line for line in self.logs))
 
     @staticmethod

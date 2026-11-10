@@ -520,6 +520,7 @@ class ProductionDependencyTests(unittest.TestCase):
             ROOT / "presentation" / "qt" / "test_configuration_page.py",
             ROOT / "presentation" / "qt" / "config_projection.py",
             ROOT / "presentation" / "qt" / "history_view_model.py",
+            ROOT / "presentation" / "qt" / "history_result_dialog.py",
             ROOT / "presentation" / "qt" / "visualization_page.py",
             ROOT / "presentation" / "qt" / "run_history_page.py",
         )
@@ -844,9 +845,9 @@ class ProductionDependencyTests(unittest.TestCase):
                     )
                 self.assertNotIn("legacy_payload", source)
 
-    def test_run_history_page_only_builds_export_requests(self):
+    def test_visualization_page_only_builds_export_requests(self):
         """步骤 11：导出由 application 用例执行，页面只描述意图并生成文案。"""
-        source = (ROOT / "presentation" / "qt" / "run_history_page.py").read_text(
+        source = (ROOT / "presentation" / "qt" / "visualization_page.py").read_text(
             encoding="utf-8-sig"
         )
         self.assertIn("ExportRequest(", source)
@@ -866,6 +867,14 @@ class ProductionDependencyTests(unittest.TestCase):
                 source,
                 "导出页面不得直接调用导出端口；必须构造 ExportRequest",
             )
+        run_history_source = (
+            ROOT / "presentation" / "qt" / "run_history_page.py"
+        ).read_text(encoding="utf-8-sig")
+        self.assertNotIn(
+            "ExportRequest(",
+            run_history_source,
+            "结果另存为已移到数据可视化页，历史运行页不再导出",
+        )
 
     def test_visualization_page_only_requests_reports_through_the_export_use_case(self):
         """步骤 8：报告只有一个应用层实现，可视化页不再自己生成报告。"""

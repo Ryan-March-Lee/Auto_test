@@ -49,7 +49,6 @@ class HistoryIsolationTests(unittest.TestCase):
         self.adapter = ResultQueryAdapter(
             self.paths,
             run_history=FileRunHistoryRepository(runs=self.runs),
-            runs_root=self.base / "runs",
         )
 
     def _complete_cable_loss(self, *, cable_losses=RUN_LOSSES):

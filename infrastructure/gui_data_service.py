@@ -42,7 +42,6 @@ from infrastructure.filesystem.paths import (
     PathService,
     unique_directory_name,
 )
-from PySide6.QtWidgets import QFileDialog
 
 
 logger = logging.getLogger(__name__)
@@ -116,11 +115,9 @@ class ResultQueryAdapter:
         paths: PathService,
         *,
         run_history: RunHistoryRepository,
-        runs_root: Path | None = None,
     ):
         self.paths = paths
         self.run_history = run_history
-        self.runs_root = runs_root
 
     # -- 列表 ---------------------------------------------------------------
 
@@ -186,30 +183,6 @@ class ResultQueryAdapter:
         """逐字节读取运行结果，供 JSON 导出使用。"""
         run_id, relative_path = self._decode(result_id)
         return self.run_history.read_bytes(run_id, relative_path)
-
-    def choose_and_load(self) -> LoadedResultDto | None:
-        """从运行目录中选择一个已登记结果；运行目录外的文件一律拒绝。"""
-        if self.runs_root is None:
-            raise RuntimeError("未配置运行结果目录")
-        selected, _ = QFileDialog.getOpenFileName(
-            None, "选择运行结果文件", str(self.runs_root),
-            "JSON files (*.json);;All files (*.*)",
-        )
-        if not selected:
-            return None
-        path = Path(selected).expanduser().resolve()
-        try:
-            relative = path.relative_to(self.runs_root.resolve())
-        except ValueError as error:
-            raise ValueError(f"结果文件必须位于运行目录内: {path}") from error
-        if not path.is_file():
-            raise FileNotFoundError(path.name)
-        if len(relative.parts) < 2:
-            raise ValueError(f"结果文件必须位于运行目录内: {path}")
-        run_id = relative.parts[0]
-        return self.load(
-            _encode_run_result_id(run_id, Path(*relative.parts[1:]).as_posix())
-        )
 
     def latest_result(self, result_type: str) -> LoadedResultDto:
         """返回最新的**可校验**正式运行结果。

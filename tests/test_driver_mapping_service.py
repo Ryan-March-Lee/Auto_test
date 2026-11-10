@@ -7,6 +7,7 @@
 - 已命中读数不会复用于另一个目标，目标间隔小于容差时仍会新测；
 - 命中容差为 ±0.2 dB（含边界）；
 - 目标不可达或源功率到界时明确失败，不生成完整映射；
+- 步骤 4.2：目标表覆盖多段计划的全部目标点，且能作为正式驱动输入读取；
 - 停止/异常路径仍然关闭 RF 并执行驱动电源清理。
 """
 
@@ -82,26 +83,36 @@ def _config(
     start=-20.0,
     stop=-20.0,
     step=1.0,
+    plans=None,
     max_input=100.0,
     gain=1.0,
     frequencies=(1.0,),
     attenuator="10dB",
 ):
+    """驱动映射服务配置：默认一段计划，``plans`` 传入 ``(start, step, stop)`` 多段。"""
+    scan_plans = (
+        [
+            {"start_power": plan_start, "step": plan_step, "stop_power": plan_stop}
+            for plan_start, plan_step, plan_stop in plans
+        ]
+        if plans is not None
+        else [{"start_power": start, "step": step, "stop_power": stop}]
+    )
     return {
         "test_frequencies": list(frequencies),
         "attenuator": {"type": attenuator},
-        "signal_source": {
-            "start_power": start,
-            "stop_power": stop,
-            "step": step,
-        },
+        "signal_source": {"power_scan_plans": scan_plans},
         "max_dut_input_power": max_input,
         "driver_gain_estimate_db": gain,
     }
 
 
-def _loss_data(cable2=0.0):
-    return {"cable_losses": {"1.0": {"cable2": cable2}}}
+def _loss_data(cable2=0.0, frequencies=("1.0",)):
+    return {
+        "cable_losses": {
+            frequency: {"cable2": cable2} for frequency in frequencies
+        }
+    }
 
 
 def _service(
@@ -110,13 +121,14 @@ def _service(
     config=None,
     instrument=None,
     token=None,
+    loss_data=None,
     **instrument_kwargs,
 ):
     instrument = instrument or _FakeInstrument(response, **instrument_kwargs)
     return DriverPowerMappingService(
         config or _config(),
         instrument,
-        _loss_data(),
+        loss_data or _loss_data(),
         run_id="run-driver-mapping-service",
         safety_cleanup=safety_cleanup_for(instrument),
         cancellation_token=token,
@@ -127,6 +139,10 @@ def _service(
 
 def _points(result, frequency="1.0"):
     return result["raw_points"][frequency]
+
+
+def _target_rows(result, frequency="1.0"):
+    return result["target_mapping"][frequency]
 
 
 class DriverMappingStartPointTests(unittest.TestCase):
@@ -175,6 +191,126 @@ class DriverMappingStartPointTests(unittest.TestCase):
                 ),
                 f"目标 {target} dBm 没有命中读数: {outputs}",
             )
+
+
+class DriverMappingMultiPlanTests(unittest.TestCase):
+    """步骤 4.2：驱动映射目标网格来自多段 DUT 功率扫描计划。"""
+
+    def test_every_frequency_uses_the_same_multi_segment_target_grid(self):
+        plans = ((-10.0, 2.0, -6.0), (-6.0, 1.0, -3.0))
+        instrument = _FakeInstrument(lambda source: source + 1.0)
+        service = _service(
+            lambda source: source + 1.0,
+            config=_config(plans=plans, gain=1.0, frequencies=(1.0, 2.4)),
+            instrument=instrument,
+            loss_data=_loss_data(frequencies=("1.0", "2.4")),
+        )
+
+        # 粗段与细段合并成一条点列，公共边界 -6 dBm 只出现一次。
+        self.assertEqual(
+            [target.dbm for target in service.target_powers],
+            [-10.0, -8.0, -6.0, -5.0, -4.0, -3.0],
+        )
+
+        result = service.run()
+
+        expected_targets = [-10.0, -8.0, -6.0, -5.0, -4.0, -3.0]
+        for frequency in ("1.0", "2.4"):
+            rows = _target_rows(result, frequency)
+            # 目标表主键就是共享点位生成器给出的目标 DUT 输入功率，顺序不变。
+            self.assertEqual(
+                [row["target_input_power_dbm"] for row in rows], expected_targets
+            )
+            raw_sources = {
+                point["source_power_dbm"] for point in _points(result, frequency)
+            }
+            for row in rows:
+                # 每一行都来自该目标的独立实测命中点，不是外推或补点。
+                self.assertIn(row["source_power_dbm"], raw_sources)
+                self.assertLessEqual(
+                    abs(
+                        row["driver_output_power_dbm"]
+                        - row["target_input_power_dbm"]
+                    ),
+                    DRIVER_MAPPING_HIT_TOLERANCE_DB,
+                )
+
+    def test_target_table_uses_exact_grid_even_when_hit_is_within_tolerance(self):
+        """命中点在容差内不精确等于目标时，目标表主键仍是目标功率，输出是实测值。"""
+        result = _service(lambda source: source + 11.2).run()
+
+        rows = _target_rows(result)
+        self.assertEqual(
+            [row["target_input_power_dbm"] for row in rows], [-20.0]
+        )
+        self.assertAlmostEqual(rows[0]["source_power_dbm"], -31.0)
+        self.assertAlmostEqual(rows[0]["driver_output_power_dbm"], -19.8)
+
+    def test_completed_scan_can_be_read_as_formal_driver_input(self):
+        """步骤 4.2：完整映射经结果契约转换后必须能作为正式驱动输入。"""
+        from application.dto import (
+            DriverMappingInput,
+            DriverPowerMappingMeasurementResult,
+        )
+
+        plans = ((-10.0, 2.0, -6.0), (-6.0, 1.0, -3.0))
+        result = _service(
+            lambda source: source + 1.0,
+            config=_config(plans=plans, gain=1.0),
+        ).run()
+
+        measurement = DriverPowerMappingMeasurementResult.from_service_payload(
+            result, run_id="run-driver-mapping-service"
+        )
+        driver_input = DriverMappingInput.from_result(measurement)
+
+        self.assertEqual(
+            sorted(driver_input.target_mapping()["1.0"]),
+            [-10.0, -8.0, -6.0, -5.0, -4.0, -3.0],
+        )
+        # 目标表每个源功率都必须落在原始实测曲线覆盖范围内，禁止外推。
+        raw_sources = sorted(
+            point.source_power_dbm for point in driver_input.raw_points
+        )
+        for target, (source, _output) in driver_input.target_mapping()["1.0"].items():
+            self.assertGreaterEqual(
+                source, raw_sources[0], f"{target} dBm 目标的源功率低于原始覆盖"
+            )
+            self.assertLessEqual(
+                source, raw_sources[-1], f"{target} dBm 目标的源功率高于原始覆盖"
+            )
+
+    def test_gap_between_plans_fails_before_any_hardware_action(self):
+        instrument = _FakeInstrument(lambda source: source + 1.0)
+
+        with self.assertRaisesRegex(ValueError, "空档"):
+            _service(
+                lambda source: source + 1.0,
+                config=_config(plans=((-10.0, 1.0, -6.0), (-5.0, 1.0, -3.0))),
+                instrument=instrument,
+            )
+
+        self.assertEqual(instrument.measurements, [])
+        self.assertEqual(instrument.rf_on_calls, 0)
+
+    def test_legacy_scalar_power_range_is_not_silently_used(self):
+        """服务只接受计划列表；旧单段标量不能成为第二来源。"""
+        config = _config()
+        config["signal_source"] = {
+            "start_power": -20.0,
+            "stop_power": -20.0,
+            "step": 1.0,
+        }
+        instrument = _FakeInstrument(lambda source: source + 1.0)
+
+        with self.assertRaisesRegex(ValueError, "power_scan_plans"):
+            _service(
+                lambda source: source + 1.0,
+                config=config,
+                instrument=instrument,
+            )
+
+        self.assertEqual(instrument.rf_on_calls, 0)
 
 
 class DriverMappingConvergenceTests(unittest.TestCase):

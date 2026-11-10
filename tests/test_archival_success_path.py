@@ -282,7 +282,11 @@ class SuccessPathArchivalTests(unittest.TestCase):
             configuration={
                 "test_frequencies": [1.0],
                 "attenuator": {"type": "10dB"},
-                "signal_source": {"start_power": -20, "stop_power": -20, "step": 1},
+                "signal_source": {
+                    "power_scan_plans": [
+                        {"start_power": -20, "step": 1, "stop_power": -20}
+                    ]
+                },
                 "max_dut_input_power": 100.0,
                 "driver_gain_estimate_db": 1.0,
             },

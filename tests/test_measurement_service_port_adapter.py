@@ -62,7 +62,11 @@ class MeasurementServicePortAdapterTests(unittest.TestCase):
             {
                 "attenuator": {"type": "0dB"},
                 "test_frequencies": [1.0],
-                "signal_source": {"start_power": -30, "stop_power": -30, "step": 1},
+                "signal_source": {
+                    "power_scan_plans": [
+                        {"start_power": -30, "step": 1, "stop_power": -30}
+                    ]
+                },
                 "max_dut_input_power": 100.0,
                 "driver_gain_estimate_db": 1.0,
             },
@@ -74,6 +78,10 @@ class MeasurementServicePortAdapterTests(unittest.TestCase):
             settle_delay_s=0,
         ).run()
         self.assertEqual(list(result["raw_points"]), ["1.0"])
+        self.assertEqual(list(result["target_mapping"]), ["1.0"])
+        self.assertEqual(
+            result["target_mapping"]["1.0"][0]["target_input_power_dbm"], -30.0
+        )
         self.assertEqual(session.state.value, "cleaned")
         self.assertIn(("signal_generator", "rf_off", None), recorder.commands)
 
@@ -85,7 +93,11 @@ class MeasurementServicePortAdapterTests(unittest.TestCase):
                 {
                     "attenuator": {"type": "0dB"},
                     "test_frequencies": [1.0],
-                    "signal_source": {"start_power": -30, "stop_power": -30, "step": 1},
+                    "signal_source": {
+                        "power_scan_plans": [
+                            {"start_power": -30, "step": 1, "stop_power": -30}
+                        ]
+                    },
                     "max_dut_input_power": 100.0,
                     "driver_gain_estimate_db": 1.0,
                 },

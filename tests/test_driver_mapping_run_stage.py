@@ -200,7 +200,11 @@ class DriverMappingRunStageTests(unittest.TestCase):
             configuration={
                 "test_frequencies": [1.0],
                 "attenuator": {"type": "10dB"},
-                "signal_source": {"start_power": -20, "stop_power": -20, "step": 1},
+                "signal_source": {
+                    "power_scan_plans": [
+                        {"start_power": -20, "step": 1, "stop_power": -20}
+                    ]
+                },
                 "max_dut_input_power": 100.0,
                 "driver_gain_estimate_db": 1.0,
             },
@@ -266,17 +270,26 @@ class DriverMappingRunStageTests(unittest.TestCase):
         # 线损阶段不受驱动映射结果写入影响。
         self.assertEqual(manifest.stage(STAGE_CABLE_LOSS).status, StageStatus.COMPLETED)
 
-    def test_mapping_without_target_grid_is_not_a_formal_input(self):
-        """目标网格生成属于后续步骤；当前扫描结果只能保存为审计结果。"""
+    def test_completed_mapping_is_a_formal_input(self):
+        """步骤 4.2：完整扫描生成目标表，可直接作为正式驱动输入读取。"""
 
         layout = self._create_run()
         self._complete_cable_loss()
         DriverPowerMappingUseCase(self._request(), sleep_fn=lambda _: None).measure_all_frequencies()
 
         result_path = layout.run_directory / DRIVER_MAPPING_INPUT_PATH
-        reader = ResultInputReader(self.result_repository)
-        with self.assertRaisesRegex(ValueError, "目标网格"):
-            reader.read_driver_mapping(result_path)
+        driver_input = ResultInputReader(self.result_repository).read_driver_mapping(
+            result_path
+        )
+
+        # 目标表主键是目标 DUT 输入功率；源功率和输出来自该目标的实测命中点。
+        self.assertEqual(
+            driver_input.target_mapping(), {"1.0": {-20.0: (-21.0, -20.0)}}
+        )
+        self.assertEqual(
+            [point.target_input_power_dbm for point in driver_input.target_points],
+            [-20.0],
+        )
 
     def test_current_run_input_does_not_use_deprecated_latest_lookup(self):
         self._create_run()
@@ -554,13 +567,59 @@ class DriverMappingRunStageTests(unittest.TestCase):
         self.assertTrue((run_directory / CABLE_LOSS_INPUT_PATH).is_file())
         mapping_path = run_directory / DRIVER_MAPPING_INPUT_PATH
         self.assertTrue(mapping_path.is_file())
+        payload = json.loads(mapping_path.read_text(encoding="utf-8"))
+        self.assertEqual(payload["run_id"], RUN_ID)
+        # 端到端：正式 1.2 配置 -> 映射服务 -> 目标表覆盖同一套目标功率点。
         self.assertEqual(
-            json.loads(mapping_path.read_text(encoding="utf-8"))["run_id"], RUN_ID
+            [
+                row["target_input_power_dbm"]
+                for row in payload["target_mapping"]["2.4"]
+            ],
+            [float(value) for value in range(-10, 1)],
         )
 
         manifest = self.repository.load_manifest(RUN_ID)
         self.assertEqual(manifest.stage(STAGE_CABLE_LOSS).status, StageStatus.COMPLETED)
         self.assertEqual(manifest.stage(STAGE_DRIVER_MAPPING).status, StageStatus.COMPLETED)
+
+    def test_service_config_passes_multi_segment_plans_in_order(self):
+        """步骤 4.2：运行配置的 1.2 计划列表原样交给映射服务，不再写旧标量。"""
+        from application.measurements.driver_mapping import _service_config
+        from domain.configuration.models import TestPlan
+
+        plan = TestPlan.from_dict(
+            {
+                "schema_version": "1.2",
+                "frequencies": {"values": [1.0, 2.4], "unit": "GHz"},
+                "signal_source": {
+                    "power_scan_plans": [
+                        {"start_power": -20.0, "step": 2.0, "stop_power": -16.0},
+                        {"start_power": -16.0, "step": 1.0, "stop_power": -13.0},
+                    ],
+                    "unit": "dBm",
+                    "power_reference": "dut_input",
+                },
+                "compression_point": {"type": "1dB"},
+                "attenuator": {"value": 10.0, "unit": "dB"},
+                "dut": {"max_input_power": 30.0},
+                "driver_mode": {"enabled": True, "estimated_gain_db": 1.0},
+            }
+        )
+
+        config = _service_config(SimpleNamespace(test_plan=plan))
+
+        self.assertEqual(
+            config["signal_source"]["power_scan_plans"],
+            [
+                {"start_power": -20.0, "step": 2.0, "stop_power": -16.0},
+                {"start_power": -16.0, "step": 1.0, "stop_power": -13.0},
+            ],
+        )
+        self.assertNotIn("start_power", config["signal_source"])
+        self.assertNotIn("stop_power", config["signal_source"])
+        self.assertNotIn("step", config["signal_source"])
+        self.assertEqual(config["max_dut_input_power"], 30.0)
+        self.assertEqual(config["driver_gain_estimate_db"], 1.0)
 
     def test_composition_checks_input_before_connecting_instruments(self):
         layout = self._create_run()

@@ -227,10 +227,18 @@ def _service_config(configuration: Any) -> Mapping[str, Any]:
     return {
         "test_frequencies": list(plan.frequencies),
         "attenuator": {"type": f"{attenuator}dB"},
+        # 目标网格的正式来源是 1.2 的有序计划列表。1.1 单段在 TestPlan 读取时已经
+        # 合成为一段计划，因此这里不再写旧 start_power/stop_power/step 标量，避免
+        # 映射服务出现“列表与标量”两个来源。
         "signal_source": {
-            "start_power": plan.start_power,
-            "stop_power": plan.stop_power,
-            "step": plan.power_step,
+            "power_scan_plans": [
+                {
+                    "start_power": item.start_power,
+                    "step": item.step,
+                    "stop_power": item.stop_power,
+                }
+                for item in plan.power_scan_plans
+            ],
         },
         # 驱动映射扫描需要目标网格上限与起点预估增益；缺失时服务在构造阶段失败，
         # 不会带着猜测值开始硬件动作。

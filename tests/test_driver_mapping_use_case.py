@@ -71,7 +71,11 @@ def _request(
     configuration = {
         "test_frequencies": list(frequencies),
         "attenuator": {"type": "10dB"},
-        "signal_source": {"start_power": -20, "stop_power": -20, "step": 1},
+        "signal_source": {
+            "power_scan_plans": [
+                {"start_power": -20, "step": 1, "stop_power": -20}
+            ]
+        },
         "max_dut_input_power": 100.0,
         "driver_gain_estimate_db": 1.0,
     }
@@ -117,6 +121,25 @@ class DriverPowerMappingUseCaseTests(unittest.TestCase):
         self.assertTrue(any(isinstance(event, RealtimeDataEvent) for event in events.events))
         self.assertEqual(instrument.rf_off_calls, 1)
         self.assertEqual(instrument.driver_off_calls, 1)
+
+    def test_completed_result_contains_the_target_grid(self):
+        """步骤 4.2：完整映射写入目标表，正式测量可直接消费。"""
+        result = DriverPowerMappingUseCase(
+            _request(_Instrument()), sleep_fn=lambda _: None
+        ).measure_all_frequencies()
+
+        self.assertEqual(
+            result.to_dict()["target_mapping"],
+            {
+                "1.0": [
+                    {
+                        "target_input_power_dbm": -20.0,
+                        "source_power_dbm": -21.0,
+                        "driver_output_power_dbm": -20.0,
+                    }
+                ]
+            },
+        )
 
     def test_unfinished_cable_loss_stage_is_rejected_before_hardware_action(self):
         """前置阶段没有完成时，映射测量必须在任何硬件动作前失败。"""

@@ -47,6 +47,7 @@ from application.ports.measurement_session import (
 from application.dto.amplifier_inputs import (
     AmplifierInputError,
     AmplifierMeasurementInputs,
+    PowerScanSchedule,
     PowerSweep,
     SupplyChannel,
     target_input_power_grid,
@@ -194,11 +195,58 @@ def _config_number(config: Mapping[str, Any], key: str, label: str) -> float:
     return number
 
 
-def _signal_source_number(config: Mapping[str, Any], key: str) -> float:
+def _power_scan_schedule(config: Mapping[str, Any]) -> PowerScanSchedule:
+    """把驱动映射配置的 ``signal_source.power_scan_plans`` 收敛为计划集合。
+
+    驱动映射的目标网格与配置页预览、主功放正式输入共用
+    :func:`target_input_power_grid`，因此这里只负责把内部映射配置逐段读成
+    :class:`PowerSweep`，不另写点位算法。列表顺序就是执行顺序；空列表、非列表、
+    非对象元素以及段内非数值都在构造阶段失败，不会带着猜测值打开仪器。
+
+    正式运行配置由 :func:`application.measurements.driver_mapping._service_config`
+    从 1.2 ``TestPlan.power_scan_plans`` 生成，不再写旧单段标量；这里只接受计划
+    列表，避免“有列表却仍沿旧标量”的第二来源。
+    """
     source = config.get("signal_source")
     if not isinstance(source, MappingABC):
-        raise ValueError("驱动映射配置缺少 signal_source 功率范围")
-    return _config_number(source, key, f"信号源 {key}")
+        raise ValueError("驱动映射配置缺少 signal_source 功率扫描计划")
+    plans = source.get("power_scan_plans")
+    if not isinstance(plans, (list, tuple)):
+        raise ValueError(
+            "驱动映射配置缺少 signal_source.power_scan_plans 列表："
+            "目标网格必须来自 DUT 功率扫描计划"
+        )
+    if not plans:
+        raise ValueError(
+            "驱动映射配置的 signal_source.power_scan_plans 至少要有一段计划"
+        )
+    sweeps: list[PowerSweep] = []
+    for index, item in enumerate(plans):
+        path = f"signal_source.power_scan_plans[{index}]"
+        if not isinstance(item, MappingABC):
+            raise ValueError(
+                f"驱动映射配置的 {path} 必须是 "
+                "{start_power, step, stop_power} 对象"
+            )
+        try:
+            sweeps.append(
+                PowerSweep(
+                    start=PowerDbm(
+                        _config_number(item, "start_power", f"{path} 起始功率")
+                    ),
+                    stop=PowerDbm(
+                        _config_number(item, "stop_power", f"{path} 终止功率")
+                    ),
+                    step=Decibels(
+                        _config_number(item, "step", f"{path} 步进")
+                    ),
+                )
+            )
+        except AmplifierInputError as error:
+            # 单段参数关系错误本身不带计划下标；补上配置页使用的路径，硬件动作前
+            # 的失败信息才能直接对应到具体计划行。
+            raise ValueError(f"{path} {error}") from error
+    return PowerScanSchedule(plans=tuple(sweeps))
 
 
 class _Service:
@@ -454,6 +502,11 @@ class DriverPowerMappingService(_Service):
       不返回可供正式测试使用的完整映射；
     - 停止请求在测量返回、命中分配和完整结果提交三个边界都会生效，被取消的频点
       不计入完整映射。
+
+    结果包含两层：``raw_points`` 保留每一次实测（审计用），``target_mapping`` 按
+    目标 DUT 输入功率给出正式测试消费的目标表。目标表的每一行都直接来自该目标的
+    独立实测命中点，因此目标网格必定被完整覆盖，也不会出现外推；主键始终是目标
+    DUT 输入功率，计划编号不会进入结果 schema。
     """
 
     measurement_type = "driver_power_mapping"
@@ -476,18 +529,24 @@ class DriverPowerMappingService(_Service):
 
     @staticmethod
     def _target_powers(config: Mapping[str, Any]) -> tuple[PowerDbm, ...]:
-        sweep = PowerSweep(
-            start=PowerDbm(_signal_source_number(config, "start_power")),
-            stop=PowerDbm(_signal_source_number(config, "stop_power")),
-            step=Decibels(_signal_source_number(config, "step")),
-        )
+        """配置计划 -> 全部频点共用的目标 DUT 输入功率网格。
+
+        每个频点都复用构造期算出的同一份 ``target_powers``：段数、顺序、公共边界
+        去重和 DUT 上限截断都只发生一次，不会因为频点不同而漂移。空档/重叠由共享
+        入口拒绝，因此不会带着不完整的计划进入硬件动作。
+        """
+        schedule = _power_scan_schedule(config)
         limit = PowerDbm(
             _config_number(config, "max_dut_input_power", "DUT 最大输入功率")
         )
-        return target_input_power_grid(sweep, limit)
+        return target_input_power_grid(schedule, limit)
 
     def partial_payload(self) -> dict[str, Any]:
-        """返回已经完整扫完的驱动映射频点（原始实测点）。"""
+        """返回已经完整扫完的驱动映射频点（原始实测点）。
+
+        停止路径只保存审计数据，不生成目标表：只有完整覆盖全部目标点的映射才能
+        作为正式输入，避免把“部分频点”伪装成可执行的目标网格。
+        """
         return {
             "raw_points": {
                 key: [dict(point) for point in points]
@@ -501,6 +560,8 @@ class DriverPowerMappingService(_Service):
 
     def run(self) -> dict[str, Any]:
         mapping = self._mapping
+        # 目标表只登记完整扫完的频点；键是目标 DUT 输入功率，不是源功率。
+        target_mapping: dict[str, list[dict[str, float]]] = {}
         try:
             # 停止请求优先于任何设备动作：已经取消的运行不再给驱放上电。
             self._check_cancelled()
@@ -511,11 +572,15 @@ class DriverPowerMappingService(_Service):
             )
             for frequency_index, frequency in enumerate(frequencies):
                 self._check_cancelled()
-                mapping[frequency.key] = self._measure_frequency(
+                raw_rows, target_rows = self._measure_frequency(
                     frequency,
                     frequency_index=frequency_index,
                     frequency_count=len(frequencies),
                 )
+                # 两个视图同进同退：一个频点只有完整覆盖全部目标后才会被登记，
+                # 取消或失败不会留下“有原始点但没有目标表”的半成品。
+                mapping[frequency.key] = raw_rows
+                target_mapping[frequency.key] = target_rows
             # 提交完整结果前的最后一道门：最后一个频点完成后到达的停止请求不能被
             # 当成正常完成，映射不得进入正式测试输入。
             self._check_cancelled()
@@ -523,7 +588,11 @@ class DriverPowerMappingService(_Service):
                 "raw_points": {
                     key: [dict(point) for point in points]
                     for key, points in mapping.items()
-                }
+                },
+                "target_mapping": {
+                    key: [dict(point) for point in points]
+                    for key, points in target_mapping.items()
+                },
             }
             self._save(result)
             return result
@@ -532,9 +601,23 @@ class DriverPowerMappingService(_Service):
 
     # -- 单频点扫描 --------------------------------------------------------
 
-    def _measure_frequency(self, frequency: Frequency, *, frequency_index: int,
-                           frequency_count: int) -> list[dict[str, float]]:
+    def _measure_frequency(
+        self,
+        frequency: Frequency,
+        *,
+        frequency_index: int,
+        frequency_count: int,
+    ) -> tuple[list[dict[str, float]], list[dict[str, float]]]:
+        """扫描一个频点，返回（原始实测点, 目标表）。
+
+        目标表与原始点来自同一次扫描：每个目标命中后立即把该命中点写成一行
+        ``target_input_power_dbm / source_power_dbm / driver_output_power_dbm``。
+        命中容差意味着实测输出不一定精确等于目标值，因此不能靠“从原始曲线反插值”
+        生成目标表（曲线端点可能覆盖不到目标），直接采用实际命中点既保证覆盖全部
+        目标，也保证源功率一定落在已实测范围内。
+        """
         probes: list[_DriverMappingProbe] = []
+        target_rows: list[dict[str, float]] = []
         self.inst_ctrl.set_power(-40)
         self.inst_ctrl.set_frequency(frequency.ghz)
         self.inst_ctrl.set_center_frequency(frequency.ghz)
@@ -565,6 +648,13 @@ class DriverPowerMappingService(_Service):
                 # 以“已完成”的身份进入结果。
                 self._check_cancelled()
                 hit.used = True
+                target_rows.append(
+                    {
+                        "target_input_power_dbm": target.dbm,
+                        "source_power_dbm": hit.source_power.dbm,
+                        "driver_output_power_dbm": hit.output_power.dbm,
+                    }
+                )
                 self._progress(
                     (
                         frequency_index
@@ -580,7 +670,7 @@ class DriverPowerMappingService(_Service):
                     "gain_db": probe.output_power.dbm - probe.source_power.dbm,
                 }
                 for probe in probes
-            ]
+            ], target_rows
         finally:
             self.inst_ctrl.rf_output_off()
 

@@ -741,6 +741,37 @@ class PowerScanDraftTests(unittest.TestCase):
 
         self.assertEqual(fragment["signal_source"]["power_scan_plans"], plans)
 
+    def test_power_reference_marker_survives_a_multi_plan_reading(self):
+        """多段计划读数只替换计划列表，基线里的功率语义标记仍原样保留。"""
+        widgets = _form_widgets(
+            power_scan_plan_rows=[
+                _scan_row(-38.0, 1.0, -10.0),
+                _scan_row(-10.0, 0.25, -2.0),
+            ]
+        )
+        state = ConfigFormState(
+            {
+                "signal_source": {
+                    "power_scan_plans": [
+                        {"start_power": -20.0, "step": 0.5, "stop_power": -5.0}
+                    ],
+                    "power_reference": "dut_input",
+                }
+            },
+            widgets,
+        )
+
+        signal_source = state.read_test_parameters()["signal_source"]
+
+        self.assertEqual(
+            signal_source["power_scan_plans"],
+            [
+                {"start_power": -38.0, "step": 1.0, "stop_power": -10.0},
+                {"start_power": -10.0, "step": 0.25, "stop_power": -2.0},
+            ],
+        )
+        self.assertEqual(signal_source["power_reference"], "dut_input")
+
     def test_import_error_is_shown_and_blocks_saving(self):
         widgets = _form_widgets(
             power_scan_import_error="配置包含多段 DUT 功率扫描计划"

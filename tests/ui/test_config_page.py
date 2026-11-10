@@ -7,6 +7,7 @@ from PySide6.QtCore import QCoreApplication, QEvent
 from PySide6.QtWidgets import QApplication, QLabel
 
 from application.device_binding import ApplyDeviceSelectionRequest
+from presentation.qt.power_sweep_plan_row import PowerSweepPlanRow
 from presentation.qt.test_configuration_page import TestConfigurationPage
 
 
@@ -146,6 +147,55 @@ class ConfigurationPageTests(unittest.TestCase):
         self.assertEqual(
             [row.number() for row in page.power_scan_plan_rows], [1, 2]
         )
+
+    def test_rebuilding_plans_destroys_the_previous_rows(self):
+        """整组回填后旧行被销毁：页面里不会累积上一次配置的动态控件。"""
+        page = self.make_page()
+        page.power_scan_plan_rows[0].set_values(-38.0, 1.0, -10.0)
+        page.add_power_scan_plan()
+        page.add_power_scan_plan()
+        stale_names = set()
+        for index, row in enumerate(page.power_scan_plan_rows, 1):
+            name = f"stalePowerScanPlanRow{index}"
+            row.setObjectName(name)
+            stale_names.add(name)
+
+        page.apply_config(
+            {
+                "test_frequencies": [1.0],
+                "signal_source": {
+                    "power_scan_plans": [
+                        {"start_power": -20.0, "step": 0.5, "stop_power": -5.0}
+                    ]
+                },
+            }
+        )
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+
+        self.assertFalse(
+            stale_names
+            & {widget.objectName() for widget in QApplication.allWidgets()},
+            "回填后旧计划行仍留在应用控件树里",
+        )
+        self.assertEqual(
+            page.power_scan_plan_container.findChildren(PowerSweepPlanRow),
+            page.power_scan_plan_rows,
+        )
+
+    def test_reset_restores_one_default_plan_and_refreshes_the_preview(self):
+        page = self.make_page()
+        page.power_scan_plan_rows[0].set_values(-38.0, 1.0, -10.0)
+        page.add_power_scan_plan().set_values(-10.0, 0.25, -2.0)
+
+        page.reset_power_scan_plans()
+
+        self.assertEqual(len(page.power_scan_plan_rows), 1)
+        row = page.power_scan_plan_rows[0]
+        self.assertEqual(row.values(), (-38.0, 1.0, -16.0))
+        self.assertEqual(row.number(), 1)
+        self.assertFalse(row.delete_button.isEnabled())
+        self.assertIn("共 23 点", row.preview.text())
+        self.assertIn("共 23 个目标点", page.power_scan_summary.text())
 
     def test_power_scan_preview_updates_when_a_plan_field_changes(self):
         """步骤 3.3：改起始/步长/终止后，灰色点位预览立即按新值重算。"""

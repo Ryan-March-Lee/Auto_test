@@ -212,6 +212,19 @@ class DynamicPlanForm(FakeForm):
         self.plans = [DEFAULT_POWER_SCAN_PLAN]
 
 
+class DynamicApplyPlanForm(FakeForm):
+    """带按行回填入口的页面替身：投影交出原始 ``signal_source``，错误由页面返回。"""
+
+    def __init__(self, error=None):
+        super().__init__()
+        self.applied = []
+        self.plan_error = error
+
+    def apply_power_scan_plans(self, signal_source):
+        self.applied.append(signal_source)
+        return self.plan_error
+
+
 class ConfigProjectionTests(unittest.TestCase):
     def test_projection_applies_authoring_fields(self):
         form = FakeForm(("DP8B1519", "DP8B0885", "DP8B0950"))
@@ -420,6 +433,42 @@ class ConfigProjectionTests(unittest.TestCase):
 
         self.assertEqual(form.reset_calls, 1)
         self.assertEqual(form.plans, [DEFAULT_POWER_SCAN_PLAN])
+
+    def test_dynamic_page_receives_the_raw_signal_source(self):
+        """真实页面按行回填：投影交出原始 ``signal_source`` 并保留页面返回的结构错误。"""
+        form = DynamicApplyPlanForm(
+            error="配置的 DUT 功率扫描计划无法完整读取：第 2 段缺少有效的起始/步长/终止功率"
+        )
+        signal_source = {
+            "power_scan_plans": [
+                {"start_power": -38.0, "step": 1.0, "stop_power": -10.0},
+                {"start_power": -10.0, "step": 0.25, "stop_power": -2.0},
+            ],
+            "power_reference": "dut_input",
+        }
+
+        project_authoring_config(form, {"signal_source": signal_source})
+
+        self.assertEqual(form.applied, [signal_source])
+        self.assertEqual(form.power_scan_import_error, form.plan_error)
+        # 行回填入口存在时不再把计划折成三个标量控件：它们保持空配置基线。
+        self.assertEqual(
+            (
+                form.start_power.value(),
+                form.power_step.value(),
+                form.stop_power.value(),
+            ),
+            DEFAULT_POWER_SCAN_PLAN,
+        )
+
+    def test_absent_signal_source_is_handed_to_the_page_as_none(self):
+        """键缺失（新页面空基线）与显式空对象是两回事：投影不自行构造计划。"""
+        form = DynamicApplyPlanForm()
+
+        project_authoring_config(form, {})
+
+        self.assertEqual(form.applied, [None])
+        self.assertIsNone(form.power_scan_import_error)
 
     def test_projection_resets_before_applying(self):
         form = FakeForm()

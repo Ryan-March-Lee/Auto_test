@@ -258,6 +258,36 @@ class ConfigurationFormAdapterReadTests(unittest.TestCase):
             [(-38.0, 1.0, -10.0), (-10.0, 0.25, -2.0)],
         )
 
+    def test_document_writes_only_the_plan_list_not_the_legacy_scalars(self):
+        """1.2 保存来源只有 ``power_scan_plans``：不再同时写旧的三个标量字段。"""
+        page = _page(power_scan_plans=[(-38.0, 1.0, -10.0)])
+        adapter = ConfigurationFormAdapter(page)
+
+        signal_source = adapter.read_form().document["signal_source"]
+
+        self.assertEqual(
+            set(signal_source),
+            {"power_scan_plans"},
+            "保存文档不能同时出现列表与旧标量两个来源",
+        )
+
+    def test_empty_plan_rows_stay_empty_in_both_readings(self):
+        """页面已清空计划时如实读空：文档与类型化快照都不回退到旧计划。"""
+        page = _page(power_scan_plans=[])
+        page.config = {
+            "signal_source": {
+                "power_scan_plans": [
+                    {"start_power": -20.0, "step": 0.5, "stop_power": -5.0}
+                ]
+            }
+        }
+        adapter = ConfigurationFormAdapter(page)
+
+        reading = adapter.read_form()
+
+        self.assertEqual(reading.document["signal_source"]["power_scan_plans"], [])
+        self.assertEqual(reading.test_parameters.sweeps, ())
+
 
 class ConfigurationFormAdapterWriteTests(unittest.TestCase):
     def test_apply_configuration_projects_the_document_onto_widgets(self):

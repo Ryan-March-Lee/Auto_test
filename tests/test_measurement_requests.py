@@ -30,7 +30,7 @@ from tests.contract_doubles import RecordingStageRecorder
 def _valid_domain_snapshot(run_id: str) -> dict:
     """构造一份可通过完整运行校验的领域配置快照（供契约替身返回）。"""
     plan = TestPlan(
-        schema_version="1.1",
+        schema_version="1.2",
         frequencies=[2.4],
         start_power=-10.0,
         stop_power=0.0,
@@ -54,7 +54,7 @@ def _valid_domain_snapshot(run_id: str) -> dict:
         driver_enabled=False,
     )
     mapping = RunResourceMapping(
-        schema_version="1.1",
+        schema_version="1.2",
         instruments={
             "signal_generator": InstrumentMapping("SG", "sim::sg"),
             "spectrum_analyzer": InstrumentMapping("SA", "sim::sa"),

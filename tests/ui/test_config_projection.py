@@ -172,6 +172,7 @@ class FakeForm:
         self.freq_step = _Value()
         self.freq_extra = _Text()
         self.frequency_import_error = None
+        self.power_scan_import_error = None
         self.start_power = _Value()
         self.stop_power = _Value()
         self.power_step = _Value()
@@ -511,6 +512,45 @@ class ConfigurationPageOwnershipTests(unittest.TestCase):
             [],
             "电源分配缺省值必须来自当前绑定集合，而不是固定槽位",
         )
+
+    def test_single_plan_projects_into_the_three_widgets(self):
+        form = FakeForm()
+
+        project_authoring_config(
+            form,
+            {
+                "signal_source": {
+                    "power_scan_plans": [
+                        {"start_power": -30.0, "step": 0.5, "stop_power": -5.0}
+                    ]
+                }
+            },
+        )
+
+        self.assertEqual(form.start_power.value(), -30.0)
+        self.assertEqual(form.stop_power.value(), -5.0)
+        self.assertEqual(form.power_step.value(), 0.5)
+        self.assertIsNone(form.power_scan_import_error)
+
+    def test_multiple_plans_block_saving_instead_of_collapsing_to_one(self):
+        form = FakeForm()
+
+        project_authoring_config(
+            form,
+            {
+                "signal_source": {
+                    "power_scan_plans": [
+                        {"start_power": -38.0, "step": 1.0, "stop_power": -10.0},
+                        {"start_power": -10.0, "step": 0.25, "stop_power": -2.0},
+                    ]
+                }
+            },
+        )
+
+        self.assertIn("多段", form.power_scan_import_error)
+        # 展示首段起点与末段终点；保存被阻止，行不会因此被折叠成一段。
+        self.assertEqual(form.start_power.value(), -38.0)
+        self.assertEqual(form.stop_power.value(), -2.0)
 
     def test_projection_module_is_qt_free(self):
         tree = ast.parse(PROJECTION_SOURCE.read_text(encoding="utf-8"))

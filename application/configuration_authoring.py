@@ -28,14 +28,19 @@
   ``dut_power_plan`` / ``driver_mode.power_plan``，``dut_config.drain_channel`` 写成
   ``test_plan.dut.drain_channel``（单条写对象、多条写列表，多漏极在测量时求和）。
   本服务不推断角色/顺序，也不按 ``CH1``/``CH2`` 猜漏极。
-- 1.1 正式段不再写通道 ``role``、``power_roles``、``power_channels``、``connection``
-  与 ``dut_power_channels``；每路由工作值/保护值只写 ``channel_settings``（无序集合）。
+- 当前版本（1.2）正式段不再写通道 ``role``、``power_roles``、``power_channels``、
+  ``connection`` 与 ``dut_power_channels``；每路由工作值/保护值只写 ``channel_settings``
+  （无序集合）。
 - 起止功率是新语义**主功放输入功率**：保存时在编辑段与正式段同时写入
   ``signal_source.power_reference = "dut_input"``，并保留/补齐
   ``driver_mode.estimated_gain_db``。旧配置缺少该标记时不会被自动换算，读取只给
   兼容提示；保存即表示用户确认新语义。
-- authoring 同时是**版本门禁**：输入缺失版本（新建草稿）或等于当前版本才允许保存；
-  1.0、更高版本，以及“无版本但含 1.0 遗留电源字段”的文档一律拒绝。旧配置只能先经
+- 当前版本（1.2）的功率扫描只写 ``signal_source.power_scan_plans`` 列表（每段
+  ``start_power`` / ``step`` / ``stop_power``），不再写旧的三个标量。1.1 的单段标量
+  在保存边界被包装成一段计划；计划与标量同时出现时拒绝，不选其中一个来源。
+- authoring 同时是**版本门禁**：输入缺失版本（新建草稿）、等于当前版本，或属于可显式
+  重写的 1.1 才允许保存；1.0、更高版本，以及“无版本但含 1.0 遗留电源字段”的文档一律
+  拒绝。1.1 在保存时由 authoring 重写为当前版本，但不会隐式修改文件；1.0 只能先经
   迁移器升级（§6.11.3、§6.14），authoring 不做隐式升级。
 - 正式 ``run_mapping`` 的电源段是**集合** ``instruments.power_supplies.<supply_id>``：
   每台在上电计划里**实际使用**的电源各占一条，条目自带 ``label`` / ``model`` /
@@ -65,7 +70,9 @@ from application.errors import ConfigurationError
 from domain.configuration.models import (
     DRIVER_GAIN_FIELD,
     INPUT_POWER_REFERENCE,
+    LEGACY_POWER_SCAN_FIELDS,
     LEGACY_SCHEMA_VERSION,
+    REWRITABLE_SCHEMA_VERSIONS,
     RunConfiguration,
     RunResourceMapping,
     SIGNAL_SOURCE_REFERENCE_FIELD,
@@ -240,6 +247,7 @@ class ConfigurationAuthoringService:
             )
         values = document.to_mapping()
         _require_saveable_document(values)
+        _normalize_signal_source(values)
         _strip_legacy_editing_fields(values)
         _stamp_power_semantics(values)
         values["schema_version"] = OFFICIAL_SCHEMA_VERSION
@@ -270,11 +278,12 @@ class ConfigurationAuthoringService:
     def stale_formal_sections(
         self, document: ConfigurationEditingDocument
     ) -> tuple[ValidationIssue, ...]:
-        """1.1 编辑文档的正式段是否与“用编辑段重新编写”的结果不一致。
+        """当前版本编辑文档的正式段是否与“用编辑段重新编写”的结果不一致。
 
         配置文件同时保存编辑段与派生段；若手改文件或写入中断，页面上的顺序与运行时的
         顺序会分叉。这里只比较语义数据（键序/缩进不参与），并忽略运行元数据
-        ``run_id`` / ``run_datetime`` / ``operator``。1.0 文档不参与该比对（只读，走迁移器）。
+        ``run_id`` / ``run_datetime`` / ``operator``。1.0/1.1 文档不参与该比对：1.0 只读，
+        1.1 在保存时才重写为当前版本。
         """
         values = document.to_mapping()
         if values.get("schema_version") != OFFICIAL_SCHEMA_VERSION:
@@ -428,15 +437,21 @@ def parse_db_value(value: Any) -> float | None:
 def _require_saveable_document(document: Mapping[str, Any]) -> None:
     """保存版本门禁（v1.1 §6.11.3、§6.12 规则 20）。
 
-    只有“缺失版本的新草稿”或“版本等于当前写入版本”的文档允许进入 authoring。
-    1.0 与更高版本都拒绝，唯一升级路径是迁移器；无版本但含 1.0 遗留电源字段的文档
-    同样按 1.0 处理，避免一份旧文件被“打开→保存”悄悄写成半新半旧。
+    只有“缺失版本的新草稿”、“版本等于当前写入版本”或“可直接重写的 1.1 文档”允许
+    进入 authoring。1.1 的字段形状由 authoring 重写为当前版本（保存即用户确认），
+    不会隐式修改原文件；1.0 与更高版本都拒绝，1.0 的唯一升级路径是迁移器。无版本但
+    含 1.0 遗留电源字段的文档同样按 1.0 处理，避免一份旧文件被“打开→保存”悄悄写成
+    半新半旧。
     """
     version = document.get("schema_version")
     if version is not None:
         if version == OFFICIAL_SCHEMA_VERSION:
             # 当前版本允许编辑段残留旧角色字段：它们在写出时被剥离（见
-            # ``_strip_legacy_editing_fields``），不会进入 1.1 输出。
+            # ``_strip_legacy_editing_fields``），不会进入当前版本输出。
+            return
+        if version in REWRITABLE_SCHEMA_VERSIONS:
+            # 1.1 与当前版本共用电源结构，只差 DUT 功率扫描字段；保存时由 authoring
+            # 生成当前版本。文件本身要等调用方写回才会改变，这里不做隐式升级。
             return
         if version == LEGACY_SCHEMA_VERSION:
             raise ConfigurationAuthoringError(
@@ -586,6 +601,67 @@ def _normalized_section(value: Any, section: str) -> Any:
     return data
 
 
+def _scan_plan_documents(value: Any) -> Any:
+    """正式 ``test_plan`` 的功率扫描：只输出 ``power_scan_plans`` 列表。
+
+    值原样透传（不做截断、补点或默认段），结构/数值问题交给正式校验按索引报告；
+    缺失计划写 ``None`` 而不是伪造一段，避免把坏配置掩盖成“能用”。
+    """
+    if not isinstance(value, (list, tuple)):
+        return None
+    return [
+        {
+            "start_power": (
+                item.get("start_power") if isinstance(item, Mapping) else None
+            ),
+            "step": item.get("step") if isinstance(item, Mapping) else None,
+            "stop_power": (
+                item.get("stop_power") if isinstance(item, Mapping) else None
+            ),
+        }
+        for item in value
+    ]
+
+
+def _normalize_signal_source(values: dict[str, Any]) -> None:
+    """把编辑段的功率扫描统一重写为当前 1.2 的列表形状。
+
+    1.1 的 ``start_power`` / ``stop_power`` / ``step`` 只在保存边界包装成一段计划
+    （保存动作本身就是用户对旧数值的确认）；1.2 文档原样保留 ``power_scan_plans``。
+    两种形状同时出现时拒绝，而不是选一个来源继续运行；缺失或非法的计划不被补全，
+    交给正式校验报告。这里不推断功率语义，也不改写数值。
+    """
+    section = values.get("signal_source")
+    if not isinstance(section, Mapping):
+        return
+    plans = section.get("power_scan_plans")
+    legacy = [key for key in LEGACY_POWER_SCAN_FIELDS if key in section]
+    if plans is not None:
+        if legacy:
+            raise ConfigurationAuthoringError(
+                "signal_source 同时包含 power_scan_plans 与 "
+                + "、".join(legacy)
+                + "：功率扫描只能有一个来源",
+                path="signal_source",
+            )
+        return
+    if len(legacy) != len(LEGACY_POWER_SCAN_FIELDS):
+        return
+    normalized = {
+        key: value
+        for key, value in section.items()
+        if key not in LEGACY_POWER_SCAN_FIELDS
+    }
+    normalized["power_scan_plans"] = [
+        {
+            "start_power": section.get("start_power"),
+            "step": section.get("step"),
+            "stop_power": section.get("stop_power"),
+        }
+    ]
+    values["signal_source"] = normalized
+
+
 def _author_test_plan(document: Mapping[str, Any]) -> dict[str, Any]:
     signal_source = _mapping(document.get("signal_source"))
     compression = _mapping(document.get("compression_point"))
@@ -601,9 +677,9 @@ def _author_test_plan(document: Mapping[str, Any]) -> dict[str, Any]:
             "unit": "GHz",
         },
         "signal_source": {
-            "start_power": signal_source.get("start_power"),
-            "stop_power": signal_source.get("stop_power"),
-            "step": signal_source.get("step"),
+            "power_scan_plans": _scan_plan_documents(
+                signal_source.get("power_scan_plans")
+            ),
             "unit": "dBm",
             "power_reference": signal_source.get(
                 SIGNAL_SOURCE_REFERENCE_FIELD, INPUT_POWER_REFERENCE

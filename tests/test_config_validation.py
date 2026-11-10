@@ -617,6 +617,64 @@ class HardwareConnectionValidationTests(unittest.TestCase):
         )
 
 
+class PowerScanPlanValidationTests(unittest.TestCase):
+    """步骤 2.4：编辑文档的计划列表与正式 TestPlan 使用同一套连续性规则。"""
+
+    def setUp(self):
+        with FIXTURE_PATH.open("r", encoding="utf-8") as config_file:
+            self.base_config = json.load(config_file)
+
+    def _with_plans(self, *plans):
+        config = copy.deepcopy(self.base_config)
+        config["signal_source"] = {
+            "power_scan_plans": [
+                {"start_power": start, "step": step, "stop_power": stop}
+                for start, step, stop in plans
+            ]
+        }
+        return config
+
+    def test_continuous_plans_are_valid(self):
+        result = validate_config(self._with_plans((-10.0, 1.0, 0.0), (0.0, 0.5, 5.0)))
+
+        self.assertTrue(result.valid, result.errors)
+
+    def test_gap_and_overlap_point_at_the_following_segment(self):
+        for plans, keyword in (
+            (((-10.0, 1.0, 0.0), (1.0, 0.5, 5.0)), "空档"),
+            (((-10.0, 1.0, 0.0), (-1.0, 0.5, 5.0)), "重叠"),
+        ):
+            with self.subTest(keyword=keyword):
+                result = validate_config(self._with_plans(*plans))
+                issues = [
+                    issue
+                    for issue in result.errors
+                    if issue.path == "signal_source.power_scan_plans[1]"
+                ]
+                self.assertTrue(
+                    any(keyword in issue.message for issue in issues),
+                    [f"{issue.path}: {issue.message}" for issue in result.errors],
+                )
+
+    def test_scalar_and_plan_fields_together_are_an_error(self):
+        config = self._with_plans((-10.0, 1.0, 0.0))
+        config["signal_source"].update(
+            {"start_power": -10.0, "stop_power": 0.0, "step": 1.0}
+        )
+
+        paths = {issue.path for issue in validate_config(config).errors}
+
+        self.assertIn("signal_source", paths)
+
+    def test_invalid_element_reports_its_index(self):
+        config = self._with_plans((-10.0, 1.0, 0.0))
+        config["signal_source"]["power_scan_plans"].append("not-a-plan")
+
+        paths = {issue.path for issue in validate_config(config).errors}
+
+        self.assertIn("signal_source.power_scan_plans[1]", paths)
+
+
 class ShippedConfigValidationTests(unittest.TestCase):
     """仓库默认生产配置必须通过 ``--validate-config`` 使用的同一套文件级校验。"""
 

@@ -95,11 +95,20 @@ class MeasurementRequest:
             if plan is None and isinstance(self.configuration, Mapping):
                 source = self.configuration.get("signal_source", {})
                 source = source if isinstance(source, Mapping) else {}
-                values = (
-                    source.get("start_power"),
-                    source.get("stop_power"),
-                    source.get("step"),
-                )
+                plans = source.get("power_scan_plans")
+                if isinstance(plans, list) and len(plans) == 1:
+                    single = plans[0] if isinstance(plans[0], Mapping) else {}
+                    values = (
+                        single.get("start_power"),
+                        single.get("stop_power"),
+                        single.get("step"),
+                    )
+                else:
+                    values = (
+                        source.get("start_power"),
+                        source.get("stop_power"),
+                        source.get("step"),
+                    )
             else:
                 values = (
                     getattr(plan, "start_power", None),

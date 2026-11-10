@@ -648,5 +648,40 @@ class PowerSupplyConnectionTests(unittest.TestCase):
         self.assertFalse([error for error in errors if "VISA 地址" in error], errors)
 
 
+class PowerScanDraftTests(unittest.TestCase):
+    """1.2 计划列表在页面读数边界的行为：单段可编辑，多段只读保留。"""
+
+    def test_single_plan_row_is_read_back_as_one_plan(self):
+        widgets = _form_widgets()
+        state = ConfigFormState({}, widgets)
+
+        fragment = state.read_test_parameters()
+
+        self.assertEqual(
+            fragment["signal_source"]["power_scan_plans"],
+            [{"start_power": -10.0, "step": 1.0, "stop_power": 0.0}],
+        )
+
+    def test_multiple_plans_are_preserved_instead_of_collapsed(self):
+        plans = [
+            {"start_power": -38.0, "step": 1.0, "stop_power": -10.0},
+            {"start_power": -10.0, "step": 0.25, "stop_power": -2.0},
+        ]
+        widgets = _form_widgets()
+        state = ConfigFormState({"signal_source": {"power_scan_plans": plans}}, widgets)
+
+        fragment = state.read_test_parameters()
+
+        self.assertEqual(fragment["signal_source"]["power_scan_plans"], plans)
+
+    def test_import_error_is_shown_and_blocks_saving(self):
+        widgets = _form_widgets(
+            power_scan_import_error="配置包含多段 DUT 功率扫描计划"
+        )
+        state = ConfigFormState({}, widgets)
+
+        self.assertIn("多段", " ".join(state.validation_errors()))
+
+
 if __name__ == "__main__":
     unittest.main()

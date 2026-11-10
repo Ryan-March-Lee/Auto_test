@@ -68,6 +68,10 @@ from application.configuration_authoring import (
     ConfigurationEditingDocument,
     OFFICIAL_SCHEMA_VERSION,
 )
+from domain.configuration.models import (
+    REWRITABLE_SCHEMA_VERSIONS,
+    SUPPORTED_SCHEMA_VERSION,
+)
 from domain.configuration.rules import (
     ASSIGNMENT_GROUPS,
     assignment_supply_id,
@@ -721,8 +725,9 @@ def migrate_legacy_power_supplies(
     - ``power_supply_assignment.<组>.power_supply_count`` 按该组仍能落地的引用数重算；
       ``dut_config.power_supply_count`` 是测试方案里的现场参数，**不重算**（迁移不改测试方案）；
     - 正式 ``test_plan`` / ``run_mapping`` 由 authoring 从编辑段重新生成，迁移输出
-      ``schema_version = 1.1``，不再保留 ``role`` / ``power_roles`` / ``power_channels`` /
-      ``connection`` / ``dut_power_channels``。``runs/`` 下的历史快照不迁移、不改写。
+      当前写入版本（``schema_version = 1.2``），不再保留 ``role`` / ``power_roles`` /
+      ``power_channels`` / ``connection`` / ``dut_power_channels``。``runs/`` 下的历史快照
+      不迁移、不改写。
 
     返回值里的 :attr:`LegacyMigrationResult.writable` 说明这次迁移是否已完整；只有它为真时
     才允许用 :func:`save_migrated_configuration` 写盘。
@@ -766,9 +771,9 @@ def migrate_legacy_power_supplies(
     migrated_by_old = {
         entry.old_key: entry for entry in entries if entry.status == STATUS_MIGRATED
     }
-    # 已经是当前 1.1 且不含旧槽位/旧角色字段的文档原样返回：迁移必须可重复执行，也不能
-    # 把用户已经确认的顺序或漏极重写成空计划。唯一例外是已退役的驱放供电方式：它不参与
-    # 计划判定，删掉它既不改写计划，又保证迁移输出总是干净的 1.1。
+    # 已经是可保存的新版（1.1/1.2）且不含旧槽位/旧角色字段的文档原样返回：迁移必须可
+    # 重复执行，也不能把用户已经确认的顺序或漏极重写成空计划。唯一例外是已退役的驱放
+    # 供电方式：它不参与计划判定，删掉它既不改写计划，又保证迁移输出总是干净的新版。
     if _is_current_clean_document(config):
         _strip_driver_power_source(target)
         return LegacyMigrationResult(
@@ -1150,12 +1155,15 @@ def _current_binding_record(record: Any) -> Any:
 
 
 def _is_current_clean_document(config: Mapping[str, Any]) -> bool:
-    """这份文档是否已经是当前 1.1、且不含任何 1.0 电源字段。
+    """这份文档是否已经是可以保存的版本、且不含任何 1.0 电源字段。
 
     只有“已经迁移干净”的文档才原样返回；迁移可重复执行，但绝不能把用户确认过的
-    顺序、间隔或漏极重新写成空计划。
+    顺序、间隔或漏极重新写成空计划。可接受的是当前版本与显式可重写版本
+    （:data:`REWRITABLE_SCHEMA_VERSIONS`，当前为 1.1）：1.1 交给配置页显式重新
+    保存升级到 1.2，不由迁移器隐式改写；1.0 与未知版本仍按旧逻辑迁移/拒绝。
     """
-    if config.get("schema_version") != OFFICIAL_SCHEMA_VERSION:
+    version = config.get("schema_version")
+    if version not in (*REWRITABLE_SCHEMA_VERSIONS, SUPPORTED_SCHEMA_VERSION):
         return False
     return not _has_legacy_power_inputs(config)
 
@@ -1195,7 +1203,7 @@ def _write_empty_power_plans(target: Dict[str, Any]) -> None:
     """把每组计划写成空计划；从不根据旧角色生成顺序（§6.14 规则 4）。
 
     走到这里的文档都含 1.0 遗留电源字段，本次迁移必须把顺序交回用户确认：旧角色不能
-    变成顺序，残留的 ``power_plan`` 也不能当成“已经确认过”而沿用。已经迁移干净的 1.1
+    变成顺序，残留的 ``power_plan`` 也不能当成“已经确认过”而沿用。已经迁移干净的新版
     文档在 :func:`migrate_legacy_power_supplies` 里提前返回，用户确认过的顺序、间隔与
     漏极不会因此被清空。
     """
@@ -1209,10 +1217,11 @@ def _write_empty_power_plans(target: Dict[str, Any]) -> None:
 
 
 def _author_migrated_document(target: Dict[str, Any]) -> Dict[str, Any]:
-    """把编辑段交给 authoring，生成 1.1 正式段（§6.14 规则 5）。
+    """把编辑段交给 authoring，生成当前版本正式段（§6.14 规则 5）。
 
     迁移器自己不改写 ``test_plan`` / ``run_mapping``；通道 ``role``、旧 ``name`` 别名与
-    旧正式段都在这一步消失。
+    旧正式段都在这一步消失，1.0 的标量功率扫描也在 authoring 的保存边界包装为
+    当前版本的 ``power_scan_plans`` 列表。
     """
     target["schema_version"] = OFFICIAL_SCHEMA_VERSION
     return ConfigurationAuthoringService().author_document(

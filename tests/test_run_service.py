@@ -52,7 +52,7 @@ RUN_ID = "20261022T153000Z_a1b2c3d4"
 
 def _valid_configuration(*, start_power: float = -10.0) -> RunConfiguration:
     plan = TestPlan(
-        schema_version="1.1",
+        schema_version="1.2",
         frequencies=[2.2, 2.4],
         start_power=start_power,
         stop_power=0.0,
@@ -77,7 +77,7 @@ def _valid_configuration(*, start_power: float = -10.0) -> RunConfiguration:
         driver_enabled=False,
     )
     mapping = RunResourceMapping(
-        schema_version="1.1",
+        schema_version="1.2",
         instruments={
             "signal_generator": InstrumentMapping("SG", "sim::sg"),
             "spectrum_analyzer": InstrumentMapping("SA", "sim::sa"),

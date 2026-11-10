@@ -1,4 +1,4 @@
-# 正式配置编写基线（v1.1）
+# 正式配置编写基线（1.2）
 
 `official_configuration_golden.json` 是电源配置独立化步骤 6 的**行为回归基准**：
 每一条 `expected` 都是当前 `application/configuration_authoring.py` 对同一条 1.1 `input`
@@ -7,14 +7,17 @@
 
 步骤 6 的业务变更（相对步骤 4 的 1.0 基线）：
 
-- 正式段版本改为 `1.1`；
+- 正式段版本改为 `1.1`；阶段二步骤 2.1 起写出版本为 `1.2`，输入仍可用 1.1；
+- 1.2 的功率扫描只写 `signal_source.power_scan_plans` 列表：1.1 的
+  `start_power` / `stop_power` / `step` 在保存边界包装成一段计划，编辑段与正式段
+  同时升级，不再保留旧标量来源；
 - `test_plan.dut` 只写 `drain_channel` 与 `channel_settings`，不再写 `power_roles`；
 - `test_plan.driver_mode` 写 `channel_settings`，不再写 `power_roles`；
 - `driver_mode` 不再写 `power_source`：驱动功放计划为空即自带供电，计划非空即由本机
   直流电源供电；
 - `run_mapping` 写 `dut_power_plan` / `driver_mode.power_plan`，不再写
   `dut_power_channels` / `driver_mode.power_channels`；
-- 编辑段的通道 `role` 与旧槽位 `name` 引用不再进入 1.1 文档；1.0 输入由 authoring
+- 编辑段的通道 `role` 与旧槽位 `name` 引用不再进入当前版本文档；1.0 输入由 authoring
   版本门禁拒绝（见 `tests/test_configuration_authoring.py` 的门禁用例）。
 - 步骤 2 起，保存时在编辑段与正式段同时写入主功放输入功率语义标记
   `signal_source.power_reference = "dut_input"`；`driver_mode.estimated_gain_db`

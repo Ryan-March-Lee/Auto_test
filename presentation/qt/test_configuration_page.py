@@ -137,6 +137,9 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         # 频率扫描控件与旧配置的只读展示状态：非等步长列表会在这里留下错误，页面禁止
         # 保存，直到用户重新输入合法的起始/结束/步长/增补。
         self.frequency_import_error: str | None = None
+        # 功率扫描的只读展示状态：配置含多段计划时页面只有一行编辑器，保存会被阻止，
+        # 避免把用户已确认的其它段折叠成一段（动态计划编辑器属于阶段三）。
+        self.power_scan_import_error: str | None = None
         # 页面业务状态由 application 的视图模型持有（步骤 6）：测试参数、设备绑定、运行
         # 状态与 dirty 都在那里；设备选择的业务规则仍只在 DeviceBindingService（步骤 5）。
         self.view_model = ConfigurationViewModel()

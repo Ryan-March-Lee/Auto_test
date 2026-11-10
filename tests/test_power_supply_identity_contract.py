@@ -476,7 +476,7 @@ class ConfigContractTests(unittest.TestCase):
         self.assertEqual(sorted(supplies), ["DP8B0885", "DP8B1519"])
         for slot in POWER_SUPPLY_SLOTS:
             self.assertNotIn(slot, supplies, "迁移结果不能保留旧槽位键")
-        self.assertEqual(config["schema_version"], "1.1")
+        self.assertEqual(config["schema_version"], "1.2")
         dut = config["power_supply_assignment"]["dut_amplifier"]
         self.assertEqual(
             set(dut), {"power_plan"}, "迁移结果只保留上电计划，不再留未绑定引用"

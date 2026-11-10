@@ -427,7 +427,10 @@ class ConfigurationPageTests(unittest.TestCase):
         QTest.keyClick(widget, Qt.Key_Return)
         self.assertEqual(widget.text(), "-12.5")
         self.assertEqual(
-            page.build_config()["signal_source"]["start_power"], -12.5
+            page.build_config()["signal_source"]["power_scan_plans"][0][
+                "start_power"
+            ],
+            -12.5,
         )
 
     def test_typing_a_frequency_refreshes_the_preview_live(self):

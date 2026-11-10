@@ -252,7 +252,7 @@ class ConfigFormStateReaderTests(unittest.TestCase):
         result = self.reader.read_test_parameters()
 
         self.assertNotIn('test_frequencies', result)
-        self.assertEqual(result['signal_source']['step'], 1)
+        self.assertEqual(result['signal_source']['power_scan_plans'][0]['step'], 1)
         self.assertEqual(result['compression_point']['type'], '5dB')
         self.assertFalse(result['driver_mode']['enabled'])
 
@@ -456,8 +456,12 @@ class CoordinatorConfigBuildTests(unittest.TestCase):
         result = self.coordinator.build_configuration_from_ui()
 
         self.assertEqual(result['test_frequencies'], [1.0, 2.0])
-        self.assertEqual(result['signal_source']['start_power'], -10)
-        self.assertEqual(result['signal_source']['step'], 1)
+        self.assertEqual(
+            result['signal_source']['power_scan_plans'][0]['start_power'], -10
+        )
+        self.assertEqual(
+            result['signal_source']['power_scan_plans'][0]['step'], 1
+        )
         self.assertEqual(result['compression_point']['type'], '5dB')
         self.assertEqual(result['attenuator']['type'], '30dB')
         self.assertFalse(result['driver_mode']['enabled'])

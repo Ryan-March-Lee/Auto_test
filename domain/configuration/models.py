@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Mapping, Optional, Union
+from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
 from domain.configuration.types import ConfigIssue, ConfigValidationResult
 
@@ -21,8 +21,13 @@ PathLike = Union[str, os.PathLike[str]]
 # SUPPORTED_SCHEMA_VERSION；读取接受 READABLE_SCHEMA_VERSIONS（按旧→新排列）。
 # 其它 ``schema_version`` 轴（运行快照包装、manifest、设备表、迁移摘要、结果文件）
 # 各自定义，不引用这里的值。
-SUPPORTED_SCHEMA_VERSION = "1.1"
-READABLE_SCHEMA_VERSIONS = ("1.0", "1.1")
+SUPPORTED_SCHEMA_VERSION = "1.2"
+READABLE_SCHEMA_VERSIONS = ("1.0", "1.1", "1.2")
+# 可以由 authoring 在用户明确保存时**重写**为当前版本的旧版本。这里必须显式列出，
+# 不能从 READABLE_SCHEMA_VERSIONS 推导：将来新增的更高版本默认不可重写，否则
+# ``authoring`` 会悄悄接受并降级比它更新的文档。1.0 是角色化电源段的只读历史形状，
+# 只能走迁移器，也不在这个集合里。
+REWRITABLE_SCHEMA_VERSIONS = ("1.1",)
 # 旧角色化电源段的最后版本；1.0 只读，不能保存或创建新运行。
 LEGACY_SCHEMA_VERSION = READABLE_SCHEMA_VERSIONS[0]
 SUPPORTED_COMPRESSION_POINTS = {"1dB", "3dB", "5dB"}
@@ -35,6 +40,23 @@ PLACEHOLDER_VALUES = {"", "无", "待填写", "<channel_name>", "<gate_or_drain_
 INPUT_POWER_REFERENCE = "dut_input"
 SIGNAL_SOURCE_REFERENCE_FIELD = "power_reference"
 DRIVER_GAIN_FIELD = "estimated_gain_db"
+# 功率扫描端点比较的相对容差。单段点位、合并点位与相邻计划连续性校验必须共用
+# 同一个规则：浮点表述误差（1e-12 量级）既不能造出“空档/重叠”，也不能让终点消失。
+POWER_SCAN_RELATIVE_TOLERANCE = 1e-12
+# 1.2 计划条目的规范字段（顺序即写出顺序）与 1.1 的旧标量字段。配置校验、草稿读取
+# 与 authoring 重写共用这两个集合，避免某一层漏掉字段而让同一份文档出现两个来源。
+POWER_SCAN_PLAN_FIELDS = ("start_power", "step", "stop_power")
+LEGACY_POWER_SCAN_FIELDS = ("start_power", "stop_power", "step")
+
+
+def power_scan_boundary_tolerance(left: float, right: float) -> float:
+    """两个功率端点“相等”的共享相对容差（dB）。
+
+    只吸收浮点表述误差；用户真实填写的空档或重叠一定大于该容差。domain 与
+    application 的纯计算入口共用本函数，避免配置校验和点位生成各写一份。
+    """
+    return max(abs(float(left)), abs(float(right)), 1.0) * POWER_SCAN_RELATIVE_TOLERANCE
+
 # 旧配置缺少语义标记时的加载提示：只提示，不阻断读取，用户可以在配置页核对后保存。
 POWER_REFERENCE_LEGACY_WARNING = (
     "旧配置未声明功率范围语义：起止功率可能表示信号源输出功率；"
@@ -122,15 +144,55 @@ class PowerChannelPlan:
 
 
 @dataclass(frozen=True)
+class PowerScanPlan:
+    """一段 DUT 输入功率扫描计划：起始功率、步长、终止功率（1.2 正式形状）。
+
+    一个 :class:`TestPlan` 至少包含一段；列表顺序就是执行顺序，不自动排序。
+    这里只承载值，不判断相邻计划的衔接与 DUT 上限：那些判据由
+    :func:`validate_test_plan`（配置边界）和 application 的纯计算入口统一实现，
+    domain 不引入第二份点位算法。字段保持文档原名与原始 JSON 值，解析阶段不做
+    宽松换算；非法值由校验报告到 ``signal_source.power_scan_plans[N]``。
+    """
+
+    start_power: Any = None
+    step: Any = None
+    stop_power: Any = None
+
+    @classmethod
+    def from_dict(cls, value: Any) -> "PowerScanPlan":
+        """按文档键读取；非对象元素也保留为一个空计划，以便校验按索引报错。"""
+        if not isinstance(value, Mapping):
+            return cls()
+        return cls(
+            start_power=value.get("start_power"),
+            step=value.get("step"),
+            stop_power=value.get("stop_power"),
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """写出规范键序 ``start_power`` / ``step`` / ``stop_power``。"""
+        return {
+            "start_power": self.start_power,
+            "step": self.step,
+            "stop_power": self.stop_power,
+        }
+
+
+@dataclass(frozen=True)
 class TestPlan:
     """稳定的测试方法和参数。
 
-    功率扫描字段的语义（v1.1 起）：``start_power`` / ``stop_power`` / ``power_step``
-    表示**主功放输入功率**范围与目标输入功率网格间隔，不是信号源输出功率。新保存的
-    配置在 ``signal_source.power_reference`` 写入 :data:`INPUT_POWER_REFERENCE`；
-    缺少该标记的旧配置仍可读取，但校验只给出兼容提示，不按历史数值猜测或换算。
-    ``driver_gain_estimate_db`` 是驱动功放的全局预估增益（dB），用于驱动映射的起点
-    推算；驱动关闭时允许为空。
+    功率扫描的正式来源（1.2 起）是 :attr:`power_scan_plans`：一段或多段
+    :class:`PowerScanPlan`，列表顺序就是执行顺序。``start_power`` / ``stop_power`` /
+    ``power_step`` 只是**单段兼容属性**：从 1.1 标量形状读取时合成一段计划、从单段
+    计划反推，供尚未迁移到多段集合的调用方使用；多段计划下它们保持 ``None``，
+    运行链路必须改用计划集合，不能把第一段当成全部。
+
+    正式语义仍是**主功放输入功率**范围与目标输入功率网格间隔，不是信号源输出功率。
+    新保存的配置在 ``signal_source.power_reference`` 写入
+    :data:`INPUT_POWER_REFERENCE`；缺少该标记的旧配置仍可读取，但校验只给出兼容
+    提示，不按历史数值猜测或换算。``driver_gain_estimate_db`` 是驱动功放的全局预估
+    增益（dB），用于驱动映射的起点推算；驱动关闭时允许为空。
     """
 
     schema_version: str = SUPPORTED_SCHEMA_VERSION
@@ -138,9 +200,12 @@ class TestPlan:
     plan_id: Optional[str] = None
     frequencies: List[Any] = field(default_factory=list)
     frequency_unit: str = "GHz"
+    # 单段兼容属性：见类文档。新代码只读 ``power_scan_plans``。
     start_power: Optional[float] = None
     stop_power: Optional[float] = None
     power_step: Optional[float] = None
+    # 1.2 正式功率扫描计划；顺序即执行顺序，至少一段。
+    power_scan_plans: Tuple[PowerScanPlan, ...] = ()
     power_unit: str = "dBm"
     power_reference: Optional[str] = None
     compression_point: Optional[str] = None
@@ -183,6 +248,11 @@ class TestPlan:
             start_power=signal_source.get("start_power") if isinstance(signal_source, Mapping) else None,
             stop_power=signal_source.get("stop_power") if isinstance(signal_source, Mapping) else None,
             power_step=signal_source.get("step") if isinstance(signal_source, Mapping) else None,
+            power_scan_plans=_scan_plans(
+                signal_source.get("power_scan_plans")
+                if isinstance(signal_source, Mapping)
+                else None
+            ),
             power_unit=signal_source.get("unit", "dBm") if isinstance(signal_source, Mapping) else "dBm",
             power_reference=(
                 signal_source.get(SIGNAL_SOURCE_REFERENCE_FIELD)
@@ -215,12 +285,47 @@ class TestPlan:
             raw=dict(value),
         )
 
+    def __post_init__(self) -> None:
+        """把两套扫描表示收敛成一个来源，并补齐单段兼容属性。
+
+        - 直接构造时只给标量（旧调用方/测试）→ 合成一段计划，``to_dict`` 因此总能
+          写出 1.2 需要的列表；这不是“猜测”，只是把单段形状显式化。
+        - 只给计划（1.2 文档）且只有一段 → 用该段回填兼容属性，单段消费方继续可用；
+          多段时兼容属性保持 ``None``，避免把“第一段”误当成全部。
+        """
+        plans = self.power_scan_plans
+        if not isinstance(plans, tuple):
+            plans = tuple(plans) if isinstance(plans, (list, tuple)) else ()
+        if not plans and all(
+            value is not None
+            for value in (self.start_power, self.stop_power, self.power_step)
+        ):
+            plans = (
+                PowerScanPlan(
+                    start_power=self.start_power,
+                    step=self.power_step,
+                    stop_power=self.stop_power,
+                ),
+            )
+        object.__setattr__(self, "power_scan_plans", plans)
+        if len(plans) == 1:
+            single = plans[0]
+            for name, value in (
+                ("start_power", single.start_power),
+                ("stop_power", single.stop_power),
+                ("power_step", single.step),
+            ):
+                if getattr(self, name) is None:
+                    object.__setattr__(self, name, value)
+
     def to_dict(self) -> Dict[str, Any]:
         """按版本写出正式测试方案。
 
         1.0 是历史只读形状（角色键参数），只有 ``schema_version == "1.0"`` 的读取结果
         才会再写成它；当前版本一律写 ``drain_channel`` / ``channel_settings``，绝不
-        重新输出 ``power_roles`` / ``power_channels``。
+        重新输出 ``power_roles`` / ``power_channels``。功率扫描同理：1.2 只写
+        ``signal_source.power_scan_plans``，不再写 ``start_power`` / ``stop_power`` /
+        ``step`` 标量，避免同一份配置出现两个来源。
         """
         if self.schema_version == LEGACY_SCHEMA_VERSION:
             dut: Dict[str, Any] = {
@@ -251,12 +356,18 @@ class TestPlan:
             }
             if self.driver_gain_estimate_db is not None:
                 driver_mode[DRIVER_GAIN_FIELD] = self.driver_gain_estimate_db
-        signal_source = {
-            "start_power": self.start_power,
-            "stop_power": self.stop_power,
-            "step": self.power_step,
-            "unit": self.power_unit,
-        }
+        if self.schema_version == SUPPORTED_SCHEMA_VERSION:
+            signal_source: Dict[str, Any] = {
+                "power_scan_plans": [plan.to_dict() for plan in self.power_scan_plans],
+                "unit": self.power_unit,
+            }
+        else:
+            signal_source = {
+                "start_power": self.start_power,
+                "stop_power": self.stop_power,
+                "step": self.power_step,
+                "unit": self.power_unit,
+            }
         if (
             self.power_reference is not None
             and self.schema_version != LEGACY_SCHEMA_VERSION
@@ -586,11 +697,7 @@ def validate_test_plan(plan: Union[TestPlan, Mapping[str, Any]]) -> ConfigValida
         numeric_frequencies = [float(item) for item in plan.frequencies if _is_finite_number(item)]
         if len(set(numeric_frequencies)) != len(numeric_frequencies):
             error("frequencies.values", "不能包含重复频率")
-    start = _number(plan.start_power, "signal_source.start_power", error)
-    stop = _number(plan.stop_power, "signal_source.stop_power", error)
-    _number(plan.power_step, "signal_source.step", error, positive=True)
-    if start is not None and stop is not None and start > stop:
-        error("signal_source", "start_power 不能大于 stop_power")
+    _validate_power_scan(plan, error)
     if plan.compression_point not in SUPPORTED_COMPRESSION_POINTS:
         error("compression_point.type", "必须是 1dB、3dB 或 5dB")
     _number(plan.attenuator_value, "attenuator.value", error, non_negative=True)
@@ -608,11 +715,11 @@ def validate_test_plan(plan: Union[TestPlan, Mapping[str, Any]]) -> ConfigValida
             path="driver_mode.power_channels",
         )
     else:
-        # 1.1 不能再写 1.0 的角色化电源字段：两套结构同时存在就没有唯一来源。
+        # 当前版本不能再写 1.0 的角色化电源字段：两套结构同时存在就没有唯一来源。
         if "power_roles" in _mapping_value(plan.raw.get("dut")) or "power_channels" in _mapping_value(plan.raw.get("dut")):
-            error("dut.power_roles", "1.1 不再写 power_roles/power_channels；电源参数只写 channel_settings")
+            error("dut.power_roles", "当前版本不再写 power_roles/power_channels；电源参数只写 channel_settings")
         if "power_roles" in _mapping_value(plan.raw.get("driver_mode")) or "power_channels" in _mapping_value(plan.raw.get("driver_mode")):
-            error("driver_mode.power_roles", "1.1 不再写 power_roles/power_channels；电源参数只写 channel_settings")
+            error("driver_mode.power_roles", "当前版本不再写 power_roles/power_channels；电源参数只写 channel_settings")
         for section_path, section in (
             ("dut", _mapping_value(plan.raw.get("dut"))),
             ("driver_mode", _mapping_value(plan.raw.get("driver_mode"))),
@@ -676,9 +783,9 @@ def validate_run_mapping(mapping: Union[RunResourceMapping, Mapping[str, Any]]) 
         )
     else:
         if "dut_power_channels" in mapping.raw:
-            error("dut_power_channels", "1.1 不再写 dut_power_channels；上电顺序只写 dut_power_plan")
+            error("dut_power_channels", "当前版本不再写 dut_power_channels；上电顺序只写 dut_power_plan")
         if "power_channels" in _mapping_value(mapping.raw.get("driver_mode")):
-            error("driver_mode.power_channels", "1.1 不再写 power_channels；上电顺序只写 power_plan")
+            error("driver_mode.power_channels", "当前版本不再写 power_channels；上电顺序只写 power_plan")
         dut_sequence = _validate_plan_document(
             mapping.dut_power_plan, "dut_power_plan", error
         )
@@ -727,7 +834,26 @@ def validate_run_configuration(
         )
     elif require_runnable:
         errors.extend(_validate_current_power_configuration(configuration))
+        errors.extend(_validate_power_scan_runnable(configuration.test_plan))
     return ConfigValidationResult(errors=errors, warnings=warnings)
+
+
+def _validate_power_scan_runnable(plan: TestPlan) -> List[ConfigIssue]:
+    """运行前的功率扫描门禁（阶段二临时限制）。
+
+    配置契约已经可以保存多段计划，但驱动映射与主功放测量链路仍只消费单段
+    （阶段四接入 ``PowerScanSchedule``）。在此之前阻止多段配置开始运行，避免
+    “第一段被当成全部”或运行到一半才失败；保存与迁移不受这条限制。
+    """
+    if len(plan.power_scan_plans) <= 1:
+        return []
+    return [
+        ConfigIssue(
+            "error",
+            "signal_source.power_scan_plans",
+            "多段 DUT 功率扫描计划的运行链路尚未接入；当前只能运行单段计划",
+        )
+    ]
 
 
 def require_current_schema_version(
@@ -735,23 +861,37 @@ def require_current_schema_version(
 ) -> List[ConfigIssue]:
     """创建/继续运行前的版本门禁：两段都必须等于当前写入版本。
 
-    读取/查看/导出按 :data:`READABLE_SCHEMA_VERSIONS` 处理，1.0 的历史配置因此仍能
-    打开；本判据只在“要基于它创建或继续运行”时使用（v1.1 §6.12 规则 16）。
+    读取/查看/导出按 :data:`READABLE_SCHEMA_VERSIONS` 处理，1.0 与 1.1 的历史配置
+    因此仍能打开；本判据只在“要基于它创建或继续运行”时使用（v1.1 §6.12 规则 16）。
+    1.0 只能经迁移器升级；:data:`REWRITABLE_SCHEMA_VERSIONS` 里的版本（当前只有
+    1.1）可以在配置页核对后重新保存为当前版本；两者都不允许直接把旧配置送进硬件。
     """
     issues: List[ConfigIssue] = []
     for section, version in (
         ("test_plan.schema_version", configuration.test_plan.schema_version),
         ("run_mapping.schema_version", configuration.run_mapping.schema_version),
     ):
-        if version != SUPPORTED_SCHEMA_VERSION:
-            issues.append(
-                ConfigIssue(
-                    "error",
-                    section,
-                    f"旧版配置不能创建或继续运行，请先用迁移器升级到 "
-                    f"{SUPPORTED_SCHEMA_VERSION}；当前为 {version!r}",
-                )
+        if version == SUPPORTED_SCHEMA_VERSION:
+            continue
+        if version == LEGACY_SCHEMA_VERSION:
+            instruction = f"请先用迁移器升级到 {SUPPORTED_SCHEMA_VERSION}"
+        elif version in REWRITABLE_SCHEMA_VERSIONS:
+            instruction = (
+                "请在配置页核对功率语义并重新保存为 "
+                f"{SUPPORTED_SCHEMA_VERSION}（保存会显式升级配置）"
             )
+        else:
+            instruction = (
+                "版本不受支持，请检查配置；当前可读取 "
+                + "、".join(READABLE_SCHEMA_VERSIONS)
+            )
+        issues.append(
+            ConfigIssue(
+                "error",
+                section,
+                f"旧版配置不能创建或继续运行，{instruction}；当前为 {version!r}",
+            )
+        )
     return issues
 
 
@@ -799,9 +939,7 @@ def validate_driver_mapping_configuration(configuration: RunConfiguration) -> Co
     _finite_list(plan.frequencies, "frequencies.values", error, positive=True)
     if not plan.frequencies:
         error("frequencies.values", "必须是非空列表")
-    _number(plan.start_power, "signal_source.start_power", error)
-    _number(plan.stop_power, "signal_source.stop_power", error)
-    _number(plan.power_step, "signal_source.step", error, positive=True)
+    _validate_power_scan(plan, error)
     _number(plan.attenuator_value, "attenuator.value", error, non_negative=True)
 
     for name in ("signal_generator", "spectrum_analyzer"):
@@ -984,6 +1122,17 @@ def _power_supply_mappings(value: Any) -> Dict[str, PowerSupplyMapping]:
     }
 
 
+def _scan_plans(value: Any) -> Tuple[PowerScanPlan, ...]:
+    """把 ``signal_source.power_scan_plans`` 读成有序值对象；非列表按空集合。
+
+    元素保持原始 JSON 值，解析阶段不抛异常：结构/数值问题由
+    :func:`_validate_power_scan_plans` 按索引报告，读取本身不会因为一份坏配置失败。
+    """
+    if not isinstance(value, (list, tuple)):
+        return ()
+    return tuple(PowerScanPlan.from_dict(item) for item in value)
+
+
 def _validate_version(value: Any, path: str, error: Any) -> None:
     if value not in READABLE_SCHEMA_VERSIONS:
         if isinstance(value, str) and value > SUPPORTED_SCHEMA_VERSION:
@@ -995,6 +1144,120 @@ def _validate_version(value: Any, path: str, error: Any) -> None:
             return
         expected = " 或 ".join(READABLE_SCHEMA_VERSIONS)
         error(path, f"schema_version 必须是 {expected}，收到 {value!r}")
+
+
+def _validate_power_scan(plan: TestPlan, error: Any) -> None:
+    """按版本校验功率扫描：1.2 只接受计划列表，1.0/1.1 保持历史标量形状。
+
+    1.2 的唯一正式来源是 ``signal_source.power_scan_plans``；同一份文档里再出现
+    ``start_power`` / ``stop_power`` / ``step`` 就说明存在两个来源，直接报告而不是
+    选择其中一个继续运行。
+    """
+    if plan.schema_version == SUPPORTED_SCHEMA_VERSION:
+        _validate_power_scan_plans(plan, error)
+        return
+    start = _number(plan.start_power, "signal_source.start_power", error)
+    stop = _number(plan.stop_power, "signal_source.stop_power", error)
+    _number(plan.power_step, "signal_source.step", error, positive=True)
+    if start is not None and stop is not None and start > stop:
+        error("signal_source", "start_power 不能大于 stop_power")
+
+
+_POWER_SCAN_PLAN_FIELDS = frozenset(POWER_SCAN_PLAN_FIELDS)
+
+
+def _validate_power_scan_plans(plan: TestPlan, error: Any) -> None:
+    """校验 1.2 的多段计划：结构、数值、连续性、DUT 上限。
+
+    错误路径统一指向具体段：``signal_source.power_scan_plans[N]``（或它的子字段），
+    连续性错误指向后一段，便于页面把问题标到相邻两行。相邻计划的“首尾相接”与点位
+    生成共用 :func:`power_scan_boundary_tolerance`，所以容差内的浮点误差不会误报。
+    """
+    raw_signal = _mapping_value(plan.raw.get("signal_source"))
+    legacy_keys = [key for key in LEGACY_POWER_SCAN_FIELDS if key in raw_signal]
+    if legacy_keys:
+        error(
+            "signal_source",
+            "1.2 的功率扫描只写 power_scan_plans；不能再写 " + "、".join(legacy_keys),
+        )
+    raw_plans = raw_signal.get("power_scan_plans")
+    if "power_scan_plans" in raw_signal and not isinstance(raw_plans, (list, tuple)):
+        error("signal_source.power_scan_plans", "必须是列表")
+        return
+    plans = plan.power_scan_plans
+    if not plans:
+        error(
+            "signal_source.power_scan_plans",
+            "必须是非空列表：至少需要一段功率扫描计划",
+        )
+        return
+
+    bounds: List[Tuple[Optional[float], Optional[float]]] = []
+    for index, item in enumerate(plans):
+        path = f"signal_source.power_scan_plans[{index}]"
+        raw_item = (
+            raw_plans[index]
+            if isinstance(raw_plans, (list, tuple)) and index < len(raw_plans)
+            else None
+        )
+        if raw_item is not None and not isinstance(raw_item, Mapping):
+            error(path, "功率扫描计划必须是 {start_power, step, stop_power} 对象")
+            bounds.append((None, None))
+            continue
+        if isinstance(raw_item, Mapping):
+            unknown = {
+                key for key in raw_item if key not in _POWER_SCAN_PLAN_FIELDS
+            }
+            if unknown:
+                error(
+                    path,
+                    "不能包含未知字段: "
+                    + "、".join(sorted(str(key) for key in unknown)),
+                )
+        start = _number(item.start_power, f"{path}.start_power", error)
+        _number(item.step, f"{path}.step", error, positive=True)
+        stop = _number(item.stop_power, f"{path}.stop_power", error)
+        if start is not None and stop is not None and start > stop:
+            error(path, "start_power 不能大于 stop_power")
+        bounds.append((start, stop))
+
+    # 相邻计划必须首尾相接：后一段起点等于前一段终点，公共边界只保留一次。
+    for index in range(len(bounds) - 1):
+        previous_stop = bounds[index][1]
+        following_start = bounds[index + 1][0]
+        if previous_stop is None or following_start is None:
+            continue
+        tolerance = power_scan_boundary_tolerance(previous_stop, following_start)
+        path = f"signal_source.power_scan_plans[{index + 1}]"
+        if following_start > previous_stop + tolerance:
+            error(
+                path,
+                f"与前一段存在空档：第 {index + 1} 段终止功率 {previous_stop:g}dBm，"
+                f"本段起始功率 {following_start:g}dBm；相邻计划必须首尾相接",
+            )
+        elif following_start < previous_stop - tolerance:
+            error(
+                path,
+                f"与前一段重叠：第 {index + 1} 段终止功率 {previous_stop:g}dBm，"
+                f"本段起始功率 {following_start:g}dBm；只允许共享一个边界点",
+            )
+
+    # DUT 最大输入是最终硬上限：有效上限取最后一段终点与 DUT 上限的较小值。
+    first_start = bounds[0][0]
+    last_stop = bounds[-1][1]
+    if (
+        first_start is not None
+        and last_stop is not None
+        and _is_finite_number(plan.max_input_power)
+    ):
+        limit = float(plan.max_input_power)
+        upper = min(last_stop, limit)
+        if first_start > upper + power_scan_boundary_tolerance(first_start, upper):
+            error(
+                "signal_source.power_scan_plans[0].start_power",
+                f"起始功率 {first_start:g}dBm 高于有效上限 {upper:g}dBm"
+                f"（最后一段终止 {last_stop:g}dBm 与 DUT 最大输入 {limit:g}dBm 取较小值）",
+            )
 
 
 def _validate_power_reference(

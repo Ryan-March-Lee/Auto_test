@@ -115,17 +115,25 @@ def load_combined_configuration(
                     f"{section}.schema_version 必须与根节点一致（{root_version}）",
                 )
             )
-    # 规则 17：1.1 组合文档的正式段必须等于“用编辑段重新编写”的结果。是否带编辑段
+    # 规则 17：当前版本组合文档的正式段必须等于“用编辑段重新编写”的结果。是否带编辑段
     # 由 authoring 的统一判据回答（任一编辑段字段即可），不能只看某一个字段；拆分文件
-    # 与运行快照不经过本入口。
+    # 与运行快照不经过本入口。1.1 文档保存时才重写，不做该比对。
     if root_version == READABLE_SCHEMA_VERSIONS[-1] and has_editing_section(document):
         try:
             stale = ConfigurationAuthoringService().stale_formal_sections(
                 ConfigurationEditingDocument.from_mapping(document)
             )
-        except ConfigurationAuthoringError:
-            # 版本/遗留字段问题已由 authoring 自己的门禁报告；这里不把“旧配置”误报成
-            # “正式段过期”，读取仍按 1.0 只读路径继续。
+        except ConfigurationAuthoringError as failure:
+            # 当前版本走到这里的 authoring 错误是编辑段自身的结构冲突（例如
+            # ``power_scan_plans`` 与旧标量并存）。它不是“正式段过期”，但同样必须
+            # 让读取方看到，不能吞掉后当作一份可用配置。
+            errors.append(
+                ConfigIssue(
+                    "error",
+                    getattr(failure, "path", "configuration"),
+                    str(failure),
+                )
+            )
             stale = ()
         for issue in stale:
             errors.append(

@@ -4,9 +4,13 @@ import unittest
 from pathlib import Path
 
 from domain.configuration.models import (
+    READABLE_SCHEMA_VERSIONS,
+    REWRITABLE_SCHEMA_VERSIONS,
+    SUPPORTED_SCHEMA_VERSION,
     RunConfiguration,
     RunResourceMapping,
     TestPlan,
+    require_current_schema_version,
     validate_run_configuration,
     validate_cable_loss_configuration,
     validate_driver_mapping_configuration,
@@ -308,6 +312,250 @@ class ConfigModelTests(unittest.TestCase):
             configuration = load_run_configuration(plan_path, mapping_path)
             self.assertEqual(configuration.test_plan.plan_id, "plan-1")
             self.assertEqual(configuration.run_mapping.run_id, "run-1")
+
+
+class SchemaVersionGateTests(unittest.TestCase):
+    """步骤 2.1：写入版本为 1.2，旧版仍可读取，运行创建只接受当前版本。"""
+
+    def test_current_version_and_readable_set(self):
+        self.assertEqual(SUPPORTED_SCHEMA_VERSION, "1.2")
+        self.assertEqual(READABLE_SCHEMA_VERSIONS, ("1.0", "1.1", "1.2"))
+
+    def test_current_plan_version_is_not_treated_as_unknown(self):
+        plan = complete_current_plan()
+        plan["schema_version"] = SUPPORTED_SCHEMA_VERSION
+
+        result = validate_test_plan(plan)
+
+        self.assertFalse(
+            any(issue.path == "schema_version" for issue in result.errors),
+            result.errors,
+        )
+
+    def test_newer_version_is_reported_as_written_by_a_newer_program(self):
+        plan = complete_current_plan()
+        plan["schema_version"] = "1.3"
+
+        issues = [
+            issue
+            for issue in validate_test_plan(plan).errors
+            if issue.path == "schema_version"
+        ]
+
+        self.assertTrue(issues)
+        self.assertIn("更新版本", issues[0].message)
+
+    def test_run_creation_gate_accepts_only_the_current_version(self):
+        current = RunConfiguration(
+            TestPlan.from_dict(
+                {**complete_current_plan(), "schema_version": SUPPORTED_SCHEMA_VERSION}
+            ),
+            RunResourceMapping(schema_version=SUPPORTED_SCHEMA_VERSION),
+        )
+
+        self.assertEqual(require_current_schema_version(current), [])
+
+    def test_1_1_requires_an_explicit_resave_before_creating_a_run(self):
+        previous = RunConfiguration(
+            TestPlan.from_dict(complete_current_plan()),
+            RunResourceMapping(schema_version="1.1"),
+        )
+
+        issues = require_current_schema_version(previous)
+
+        self.assertEqual(
+            {issue.path for issue in issues},
+            {"test_plan.schema_version", "run_mapping.schema_version"},
+        )
+        self.assertTrue(all("重新保存" in issue.message for issue in issues))
+
+    def test_1_0_still_points_at_the_migrator(self):
+        legacy = RunConfiguration(
+            TestPlan.from_dict(complete_plan()),
+            RunResourceMapping(schema_version="1.0"),
+        )
+
+        issues = require_current_schema_version(legacy)
+
+        self.assertTrue(issues)
+        self.assertTrue(all("迁移器" in issue.message for issue in issues))
+
+    def test_rewritable_versions_are_explicit_not_derived_from_readable_ones(self):
+        """将来新增更高可读版本时不能自动获得重写权限。"""
+        self.assertEqual(REWRITABLE_SCHEMA_VERSIONS, ("1.1",))
+        self.assertNotIn(SUPPORTED_SCHEMA_VERSION, REWRITABLE_SCHEMA_VERSIONS)
+        self.assertNotIn("1.0", REWRITABLE_SCHEMA_VERSIONS)
+
+
+def _current_plan_with_plans(*plans):
+    """1.2 测试方案：显式给出功率扫描计划（每段为 start, step, stop）。"""
+    plan = complete_current_plan()
+    plan["schema_version"] = SUPPORTED_SCHEMA_VERSION
+    plan["signal_source"] = {
+        "power_scan_plans": [
+            {"start_power": start, "step": step, "stop_power": stop}
+            for start, step, stop in plans
+        ],
+        "unit": "dBm",
+    }
+    return plan
+
+
+class PowerScanPlanModelTests(unittest.TestCase):
+    """步骤 2.2：1.2 只写计划列表，1.1 单段只作为读取兼容。"""
+
+    def test_1_2_writes_power_scan_plans_and_no_scalar_fields(self):
+        plan = TestPlan.from_dict(_current_plan_with_plans((-38.0, 1.0, -10.0)))
+
+        signal_source = plan.to_dict()["signal_source"]
+
+        self.assertEqual(
+            signal_source["power_scan_plans"],
+            [{"start_power": -38.0, "step": 1.0, "stop_power": -10.0}],
+        )
+        for key in ("start_power", "stop_power", "step"):
+            self.assertNotIn(key, signal_source)
+
+    def test_multiple_segments_round_trip_in_order(self):
+        document = _current_plan_with_plans((-38.0, 1.0, -10.0), (-10.0, 0.25, -2.0))
+
+        plan = TestPlan.from_dict(document)
+        written = plan.to_dict()
+
+        self.assertEqual(
+            [segment.to_dict() for segment in plan.power_scan_plans],
+            document["signal_source"]["power_scan_plans"],
+        )
+        self.assertEqual(
+            written["signal_source"]["power_scan_plans"],
+            document["signal_source"]["power_scan_plans"],
+        )
+        # 多段计划下不能把第一段冒充成“完整范围”。
+        self.assertIsNone(plan.start_power)
+        self.assertIsNone(plan.stop_power)
+        self.assertIsNone(plan.power_step)
+
+    def test_1_1_scalar_shape_is_read_as_a_single_plan(self):
+        plan = TestPlan.from_dict(complete_current_plan())
+
+        self.assertEqual(len(plan.power_scan_plans), 1)
+        self.assertEqual(plan.power_scan_plans[0].start_power, 0)
+        self.assertEqual(plan.power_scan_plans[0].step, 1)
+        self.assertEqual(plan.power_scan_plans[0].stop_power, 10)
+        self.assertEqual(plan.start_power, 0)
+
+    def test_plan_and_scalar_together_are_rejected(self):
+        document = _current_plan_with_plans((-10.0, 1.0, 0.0))
+        document["signal_source"].update(
+            {"start_power": -10.0, "stop_power": 0.0, "step": 1.0}
+        )
+
+        result = validate_test_plan(document)
+
+        self.assertTrue(
+            any(
+                issue.path == "signal_source"
+                and "power_scan_plans" in issue.message
+                for issue in result.errors
+            ),
+            result.errors,
+        )
+
+    def test_missing_plans_are_reported_instead_of_invented(self):
+        document = _current_plan_with_plans()
+        document["signal_source"].pop("power_scan_plans")
+
+        result = validate_test_plan(document)
+
+        self.assertTrue(
+            any(
+                issue.path == "signal_source.power_scan_plans"
+                for issue in result.errors
+            ),
+            result.errors,
+        )
+
+    def test_invalid_element_reports_its_index(self):
+        document = _current_plan_with_plans((-10.0, 1.0, 0.0))
+        document["signal_source"]["power_scan_plans"] = [
+            {"start_power": -10.0, "step": 1.0, "stop_power": 0.0},
+            "not-a-plan",
+        ]
+
+        paths = {issue.path for issue in validate_test_plan(document).errors}
+
+        self.assertIn("signal_source.power_scan_plans[1]", paths)
+
+    def test_negative_step_and_reversed_range_report_the_segment_path(self):
+        document = _current_plan_with_plans((-10.0, 0.0, 0.0))
+
+        paths = {issue.path for issue in validate_test_plan(document).errors}
+
+        self.assertIn("signal_source.power_scan_plans[0].step", paths)
+
+        document = _current_plan_with_plans((0.0, 1.0, -10.0))
+        paths = {issue.path for issue in validate_test_plan(document).errors}
+        self.assertIn("signal_source.power_scan_plans[0]", paths)
+
+    def test_gap_and_overlap_between_adjacent_plans_are_rejected(self):
+        gap = _current_plan_with_plans((-38.0, 1.0, -10.0), (-9.0, 0.5, -2.0))
+        overlap = _current_plan_with_plans((-38.0, 1.0, -10.0), (-11.0, 0.5, -2.0))
+        continuous = _current_plan_with_plans((-38.0, 1.0, -10.0), (-10.0, 0.5, -2.0))
+
+        gap_errors = validate_test_plan(gap).errors
+        overlap_errors = validate_test_plan(overlap).errors
+
+        self.assertTrue(
+            any(
+                issue.path == "signal_source.power_scan_plans[1]"
+                and "空档" in issue.message
+                for issue in gap_errors
+            ),
+            gap_errors,
+        )
+        self.assertTrue(
+            any(
+                issue.path == "signal_source.power_scan_plans[1]"
+                and "重叠" in issue.message
+                for issue in overlap_errors
+            ),
+            overlap_errors,
+        )
+        self.assertFalse(
+            any("空档" in issue.message or "重叠" in issue.message
+                for issue in validate_test_plan(continuous).errors)
+        )
+
+    def test_start_above_the_effective_dut_limit_is_rejected(self):
+        document = _current_plan_with_plans((8.0, 1.0, 20.0))
+        document["dut"]["max_input_power"] = 5
+
+        paths = {issue.path for issue in validate_test_plan(document).errors}
+
+        self.assertIn("signal_source.power_scan_plans[0].start_power", paths)
+
+    def test_multi_segment_configuration_saves_but_is_not_runnable_yet(self):
+        plan = TestPlan.from_dict(
+            _current_plan_with_plans((-38.0, 1.0, -10.0), (-10.0, 0.5, -2.0))
+        )
+        configuration = RunConfiguration(
+            plan, RunResourceMapping(schema_version=SUPPORTED_SCHEMA_VERSION)
+        )
+
+        saved = validate_run_configuration(configuration, require_runnable=False)
+        runnable = validate_run_configuration(configuration)
+
+        self.assertFalse(
+            any("尚未接入" in issue.message for issue in saved.errors), saved.errors
+        )
+        self.assertTrue(
+            any(
+                issue.path == "signal_source.power_scan_plans"
+                and "尚未接入" in issue.message
+                for issue in runnable.errors
+            ),
+            runnable.errors,
+        )
 
 
 class PowerSemanticsTests(unittest.TestCase):

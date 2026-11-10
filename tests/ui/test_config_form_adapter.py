@@ -176,7 +176,9 @@ class ConfigurationFormAdapterReadTests(unittest.TestCase):
         config = adapter.read_configuration()
 
         self.assertEqual(config["test_frequencies"], [1.0])
-        self.assertEqual(config["signal_source"]["start_power"], -10.0)
+        self.assertEqual(
+            config["signal_source"]["power_scan_plans"][0]["start_power"], -10.0
+        )
         self.assertEqual(config["compression_point"]["type"], "1dB")
         self.assertEqual(config["instruments"]["signal_generator"]["address"],
                          "TCPIP0::192.168.1.201::inst0::INSTR")

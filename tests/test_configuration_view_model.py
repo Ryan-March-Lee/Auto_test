@@ -462,7 +462,7 @@ class ConfigurationViewModelValidationTests(unittest.TestCase):
         self.assertEqual(action.kind, SAVE_CONFIGURATION)
         self.assertTrue(action.ok, action.validation.messages())
         document = action.to_document()
-        self.assertEqual(document["schema_version"], "1.1")
+        self.assertEqual(document["schema_version"], "1.2")
         self.assertIn("test_plan", document)
         self.assertIn("run_mapping", document)
         self.assertEqual(document["test_frequencies"], [2.4])

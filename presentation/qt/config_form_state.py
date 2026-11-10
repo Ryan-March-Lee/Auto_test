@@ -206,6 +206,9 @@ class ConfigFormState:
         动作不需要第二份校验入口，也不会把电源故障写进本页。
         """
         errors = []
+        power_scan_error = getattr(self.widgets, "power_scan_import_error", None)
+        if power_scan_error:
+            errors.append(str(power_scan_error))
         frequency_error = self.frequency_error()
         if frequency_error:
             errors.append(frequency_error)
@@ -298,14 +301,24 @@ class ConfigFormState:
                 pass
             else:
                 result["test_frequencies"] = list(frequencies)
-        signal_source = {
-            "start_power": self._value(w.start_power),
-            "stop_power": self._value(w.stop_power),
-            "step": self._value(w.power_step),
-        }
+        existing_source = _dict_copy(self.config.get("signal_source"))
+        existing_plans = existing_source.get("power_scan_plans")
+        if isinstance(existing_plans, list) and len(existing_plans) > 1:
+            # 页面只有一行编辑器：保留已确认的多段计划，不把它折叠成当前这一行。
+            # 保存由 ``power_scan_import_error`` 阻止，等动态计划编辑器接入后再编辑。
+            signal_source = {"power_scan_plans": copy.deepcopy(existing_plans)}
+        else:
+            signal_source = {
+                "power_scan_plans": [
+                    {
+                        "start_power": self._value(w.start_power),
+                        "step": self._value(w.power_step),
+                        "stop_power": self._value(w.stop_power),
+                    }
+                ]
+            }
         # 功率语义标记不是页面可编辑字段：基线里有就原样保留（新配置），没有也保持缺失
         # （旧配置）。是否写入新语义只由保存边界决定，不能在每次读数时悄悄改写。
-        existing_source = _dict_copy(self.config.get("signal_source"))
         if "power_reference" in existing_source:
             signal_source["power_reference"] = existing_source.get("power_reference")
         result.update({

@@ -45,6 +45,7 @@ from application.dto.amplifier_inputs import (
     PowerSweep,
     SupplyChannel,
 )
+from domain.configuration.models import LEGACY_POWER_SCAN_FIELDS
 from domain.instruments.models import INSTRUMENT_ROLES
 from domain.measurement.values import Decibels, Frequency, PowerDbm
 
@@ -399,7 +400,11 @@ class ConfigurationDraft:
     """用户正在编辑的配置；配置页状态的唯一业务数据模型。"""
 
     frequencies: tuple[Frequency, ...] = ()
+    # 单段兼容属性：只给一个扫描段时与 ``sweeps`` 同值；多段计划下保持 ``None``，
+    # 调用方必须改读 ``sweeps``。新代码只写 ``sweeps``。
     sweep: PowerSweep | None = None
+    # 1.2 的功率扫描计划集合：顺序即执行顺序；空元组表示文档没有计划。
+    sweeps: tuple[PowerSweep, ...] = ()
     # 起止功率的语义标记；None 表示来源文档没有声明（旧配置），写回时固定写新语义。
     power_reference: str | None = None
     compression_target: Decibels | None = None
@@ -425,6 +430,14 @@ class ConfigurationDraft:
             self, "frequencies", _tuple_of(self.frequencies, Frequency, "测试频率")
         )
         _require_optional(self.sweep, PowerSweep, "功率扫描参数")
+        sweeps = _tuple_of(self.sweeps, PowerSweep, "功率扫描计划")
+        if sweeps and self.sweep is not None and sweeps != (self.sweep,):
+            raise ValueError("sweep 与 sweeps 不能同时提供：功率扫描只有 sweeps 一个来源")
+        if not sweeps and self.sweep is not None:
+            sweeps = (self.sweep,)
+        object.__setattr__(self, "sweeps", sweeps)
+        if self.sweep is None and len(sweeps) == 1:
+            object.__setattr__(self, "sweep", sweeps[0])
         if self.power_reference is not None:
             if not isinstance(self.power_reference, str):
                 raise TypeError(
@@ -519,13 +532,13 @@ class ConfigurationDraft:
             document = {}
 
         frequencies = _read_frequencies(document.get("test_frequencies"), issues)
-        sweep = _read_sweep(document.get("signal_source"), issues)
+        sweeps = _read_sweeps(document.get("signal_source"), issues)
         power_reference, reference_valid = _read_power_reference(
             document.get("signal_source"), issues
         )
         if not reference_valid:
             # 声明了不认识的功率语义时不能保留扫描参数：那会把旧数值静默当成新语义。
-            sweep = None
+            sweeps = ()
         compression_target = _read_decibels(
             document.get("compression_point"), "compression_point.type", issues
         )
@@ -548,7 +561,7 @@ class ConfigurationDraft:
 
         draft = cls(
             frequencies=frequencies,
-            sweep=sweep,
+            sweeps=sweeps,
             power_reference=power_reference,
             compression_target=compression_target,
             attenuator=attenuator,
@@ -596,7 +609,7 @@ class ConfigurationDraft:
             )
         return {
             "test_frequencies": [frequency.ghz for frequency in self.frequencies],
-            "signal_source": _sweep_document(self.sweep, self.power_reference),
+            "signal_source": _sweep_document(self.sweeps, self.power_reference),
             "compression_point": {
                 "type": _decibels_text(self.compression_target)
             },
@@ -789,26 +802,94 @@ def _read_frequencies(
     return tuple(frequencies)
 
 
-def _read_sweep(
+def _read_sweeps(
     value: Any, issues: list[ValidationIssue]
-) -> PowerSweep | None:
+) -> tuple[PowerSweep, ...]:
+    """读取 ``signal_source`` 的功率扫描：1.2 计划列表或 1.1 单段标量。
+
+    1.2 的 ``power_scan_plans`` 是唯一来源；旧文件的 ``start_power`` /
+    ``stop_power`` / ``step`` 只在读取边界包装成一段计划，随后草稿保存为新列表。
+    两者同时出现说明文件存在两个来源，直接报结构冲突，不选择其中一个继续。
+    列表元素保持原始顺序；非法元素按索引报告并跳过，剩下的合法段仍可编辑。
+    """
     if value is None:
-        return None
+        return ()
     section = _mapping(value, "signal_source", issues)
     if not section:
-        return None
+        return ()
+    plans = section.get("power_scan_plans")
+    scalar_keys = [key for key in LEGACY_POWER_SCAN_FIELDS if key in section]
+    if plans is not None:
+        if scalar_keys:
+            issues.append(
+                _issue(
+                    "signal_source",
+                    _CODE_INVALID_SWEEP,
+                    "power_scan_plans 与 start_power/stop_power/step 不能同时出现："
+                    "功率扫描只能有一个来源",
+                )
+            )
+            return ()
+        if not isinstance(plans, (list, tuple)):
+            issues.append(
+                _issue(
+                    "signal_source.power_scan_plans",
+                    _CODE_INVALID_TYPE,
+                    "必须是功率扫描计划列表",
+                )
+            )
+            return ()
+        if not plans:
+            issues.append(
+                _issue(
+                    "signal_source.power_scan_plans",
+                    _CODE_INVALID_SWEEP,
+                    "至少需要一段功率扫描计划",
+                )
+            )
+            return ()
+        sweeps: list[PowerSweep] = []
+        for index, item in enumerate(plans):
+            path = f"signal_source.power_scan_plans[{index}]"
+            if not isinstance(item, Mapping):
+                issues.append(
+                    _issue(
+                        path,
+                        _CODE_INVALID_TYPE,
+                        "功率扫描计划必须是 {start_power, step, stop_power} 对象",
+                    )
+                )
+                continue
+            start = _finite_number(item.get("start_power"), f"{path}.start_power", issues)
+            step = _finite_number(item.get("step"), f"{path}.step", issues)
+            stop = _finite_number(item.get("stop_power"), f"{path}.stop_power", issues)
+            if start is None or step is None or stop is None:
+                continue
+            try:
+                sweeps.append(
+                    PowerSweep(
+                        start=PowerDbm(start), stop=PowerDbm(stop), step=Decibels(step)
+                    )
+                )
+            except (TypeError, ValueError) as error:
+                issues.append(_issue(path, _CODE_INVALID_SWEEP, str(error)))
+        return tuple(sweeps)
+    if not scalar_keys:
+        return ()
     start = _finite_number(section.get("start_power"), "signal_source.start_power", issues)
     stop = _finite_number(section.get("stop_power"), "signal_source.stop_power", issues)
     step = _finite_number(section.get("step"), "signal_source.step", issues)
     if start is None or stop is None or step is None:
-        return None
+        return ()
     try:
-        return PowerSweep(
-            start=PowerDbm(start), stop=PowerDbm(stop), step=Decibels(step)
+        return (
+            PowerSweep(
+                start=PowerDbm(start), stop=PowerDbm(stop), step=Decibels(step)
+            ),
         )
     except (TypeError, ValueError) as error:
         issues.append(_issue("signal_source", _CODE_INVALID_SWEEP, str(error)))
-        return None
+        return ()
 
 
 def _read_power_reference(
@@ -1271,19 +1352,31 @@ def _decibels_text(value: Decibels | None) -> str | None:
 
 
 def _sweep_document(
-    value: PowerSweep | None, power_reference: str | None
+    values: tuple[PowerSweep, ...], power_reference: str | None
 ) -> dict[str, Any]:
-    # 新保存的编辑段一律声明主功放输入功率语义；旧文档被读取后重新保存时也写新语义，
-    # 不根据历史数值猜测或换算原功率范围。
-    document: dict[str, Any] = {
-        "start_power": None if value is None else value.start.dbm,
-        "stop_power": None if value is None else value.stop.dbm,
-        "step": None if value is None else value.step.db,
+    """写出当前 1.2 编辑段的功率扫描：只用 ``power_scan_plans``，不写旧标量。
+
+    缺失计划保持 ``None``（不伪造一组默认计划掩盖配置问题）；新保存的编辑段一律
+    声明主功放输入功率语义，旧文档被读取后重新保存时也写新语义，不根据历史数值
+    猜测或换算原功率范围。
+    """
+    return {
+        "power_scan_plans": (
+            [
+                {
+                    "start_power": sweep.start.dbm,
+                    "step": sweep.step.db,
+                    "stop_power": sweep.stop.dbm,
+                }
+                for sweep in values
+            ]
+            if values
+            else None
+        ),
         "power_reference": (
             power_reference if power_reference is not None else INPUT_POWER_REFERENCE
         ),
     }
-    return document
 
 
 def _driver_mode_document(draft: ConfigurationDraft) -> dict[str, Any]:

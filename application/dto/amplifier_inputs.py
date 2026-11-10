@@ -87,6 +87,7 @@ from domain.configuration.models import (
     PLACEHOLDER_VALUES,
     SUPPORTED_COMPRESSION_POINTS,
     power_reference_confirmation_error,
+    power_scan_boundary_tolerance,
 )
 from domain.measurement.values import Decibels, Frequency, PowerDbm
 
@@ -605,8 +606,9 @@ def _boundary_tolerance(left: float, right: float) -> float:
 
     相邻计划的“首尾相接”是端点与端点的比较，与步长无关，因此步长不参与这里的
     容差；浮点表述误差（1e-12 量级）之外的差异都是用户真实填写的空档或重叠。
+    容差本身由 domain 配置模型定义，配置校验与点位生成共用同一个数值。
     """
-    return max(abs(left), abs(right), 1.0) * _RELATIVE_TOLERANCE
+    return power_scan_boundary_tolerance(left, right)
 
 
 def _sweep_endpoint_tolerance(start: float, stop: float, step: float) -> float:
@@ -984,15 +986,23 @@ class AmplifierMeasurementInputs:
         unconfirmed = power_reference_confirmation_error(plan)
         if unconfirmed is not None:
             raise AmplifierInputError(unconfirmed)
+        plans = tuple(getattr(plan, "power_scan_plans", ()) or ())
+        if len(plans) != 1:
+            # 多段计划的运行链路属于阶段四；在这里失败比“只跑第一段”安全。
+            raise AmplifierInputError(
+                "主功放正式输入目前只支持单段 DUT 功率扫描计划；"
+                f"当前计划为 {len(plans)} 段，多段运行链路尚未接入"
+            )
+        sweep = plans[0]
         try:
             return cls(
                 frequencies=tuple(
                     Frequency.from_ghz(value) for value in plan.frequencies
                 ),
                 input_power_sweep=PowerSweep(
-                    start=PowerDbm(plan.start_power),
-                    stop=PowerDbm(plan.stop_power),
-                    step=Decibels(plan.power_step),
+                    start=PowerDbm(sweep.start_power),
+                    stop=PowerDbm(sweep.stop_power),
+                    step=Decibels(sweep.step),
                 ),
                 compression_target=Decibels.parse(plan.compression_point),
                 attenuator=Decibels(plan.attenuator_value),

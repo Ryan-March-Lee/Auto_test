@@ -18,13 +18,14 @@
 6. **步骤 14：旧角色不再驱动顺序或漏极**：每组 ``power_plan`` 是空计划，摘要列出候选
    路由；只有唯一且可映射的旧 ``role == "drain"`` 才写 ``drain_channel``；通道参数只在
    旧 ``power_roles`` 与旧快照 role 集合唯一配对时搬运，否则摘要标记 ``unmapped``；
-   只有“已迁移干净”的 1.1 文档提前返回，仍带旧字段的文档一律改写，残留计划也清空；
-7. **输出是 authoring 生成的 1.1**：迁移只改编辑段，正式段由 authoring 重写，不再保留
-   ``role`` / ``power_roles`` / ``power_channels`` / ``connection`` / ``dut_power_channels``；
+   只有“已迁移干净”的新版文档提前返回，仍带旧字段的文档一律改写，残留计划也清空；
+7. **输出是 authoring 生成的当前版本（1.2）**：迁移只改编辑段，正式段由 authoring
+   重写，不再保留 ``role`` / ``power_roles`` / ``power_channels`` / ``connection`` /
+   ``dut_power_channels``；
 8. **只有完整迁移才写盘**：``save_migrated_configuration`` 默认就跑文件级校验，任何
    ``needs_rescan`` / ``unidentifiable`` / ``conflict``、或仍未落地的分配引用都拒绝写入，
    原文件逐字节不变；认不出的参数靠 ``save_migration_summary`` 保存的摘要留存；
-9. **迁移可重复执行**：对已迁移干净的 1.1 配置再跑一次，结果与第一次相同（不重排计划）；
+9. **迁移可重复执行**：对已迁移干净的新版配置再跑一次，结果与第一次相同（不重排计划）；
 10. **设备表不被悄悄改写**：迁移只读设备表；要让旧槽位的短标签落盘，必须显式调用
     :func:`persist_registry_labels`；
 11. **认不出的条目不会变成电源条目**：目标配置里没有它的电源条目，未绑定的引用写成
@@ -262,8 +263,21 @@ class MigrationFixtureTests(unittest.TestCase):
             mapping["driver_mode"]["power_plan"],
             {"power_sequence": [], "inter_channel_delay_s": 0.0},
         )
-        self.assertEqual(config["schema_version"], "1.1")
-        self.assertEqual(config["test_plan"]["schema_version"], "1.1")
+        self.assertEqual(config["schema_version"], "1.2")
+        self.assertEqual(config["test_plan"]["schema_version"], "1.2")
+        # 1.0 的标量扫描在迁移输出里已经包装成 1.2 的列表，不再写旧标量。
+        plans = config["test_plan"]["signal_source"]["power_scan_plans"]
+        self.assertEqual(len(plans), 1)
+        self.assertEqual(set(plans[0]), {"start_power", "step", "stop_power"})
+        self.assertEqual(
+            config["signal_source"]["power_scan_plans"], plans
+        )
+        for section in (
+            config["signal_source"],
+            config["test_plan"]["signal_source"],
+        ):
+            for key in ("start_power", "stop_power", "step"):
+                self.assertNotIn(key, section)
         self.assertNotIn("power_roles", config["test_plan"]["dut"])
         self.assertNotIn("role", json.dumps(config, ensure_ascii=False))
 
@@ -1099,7 +1113,7 @@ class IdentityContradictionTests(unittest.TestCase):
 
 
 class AlreadyMigratedConfigurationTests(unittest.TestCase):
-    """已经写成 1.1 且不含旧角色字段的配置不被迁移器改写。"""
+    """已经写成新版（1.1/1.2）且不含旧角色字段的配置不被迁移器改写。"""
 
     def test_new_format_configuration_is_left_alone(self):
         config = complete_combined_config()

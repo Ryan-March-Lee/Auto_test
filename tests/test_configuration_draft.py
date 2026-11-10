@@ -295,6 +295,59 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
             document["dut_config"]["drain_channel"],
         )
 
+    def test_multiple_power_scan_plans_round_trip_in_order(self):
+        document = _document()
+        plans = [
+            {"start_power": -38.0, "step": 1.0, "stop_power": -10.0},
+            {"start_power": -10.0, "step": 0.25, "stop_power": -2.0},
+        ]
+        document["signal_source"] = {"power_scan_plans": plans}
+
+        result = ConfigurationDraft.from_document(document)
+
+        self.assertTrue(result.valid, result.messages())
+        self.assertEqual(len(result.draft.sweeps), 2)
+        self.assertIsNone(result.draft.sweep)
+        self.assertEqual(result.draft.to_document()["signal_source"]["power_scan_plans"], plans)
+
+    def test_plan_and_scalar_scan_fields_together_are_reported(self):
+        document = _document()
+        document["signal_source"]["power_scan_plans"] = [
+            {"start_power": -38.0, "step": 1.0, "stop_power": -16.0}
+        ]
+
+        result = ConfigurationDraft.from_document(document)
+
+        self.assertFalse(result.valid)
+        self.assertIn("configuration.invalid_sweep", {issue.code for issue in result.issues})
+        self.assertEqual(result.draft.sweeps, ())
+
+    def test_empty_plan_list_is_reported_instead_of_defaulted(self):
+        document = _document()
+        document["signal_source"] = {"power_scan_plans": []}
+
+        result = ConfigurationDraft.from_document(document)
+
+        self.assertFalse(result.valid)
+        self.assertEqual(result.draft.sweeps, ())
+        self.assertIsNone(result.draft.to_document()["signal_source"]["power_scan_plans"])
+
+    def test_invalid_plan_element_reports_its_index(self):
+        document = _document()
+        document["signal_source"] = {
+            "power_scan_plans": [
+                {"start_power": -38.0, "step": 1.0, "stop_power": -16.0},
+                "not-a-plan",
+            ]
+        }
+
+        result = ConfigurationDraft.from_document(document)
+
+        self.assertIn(
+            "signal_source.power_scan_plans[1]",
+            {issue.path for issue in result.issues},
+        )
+
     def test_document_round_trip_keeps_current_key_shape(self):
         first = ConfigurationDraft.from_document(_document())
         document = first.draft.to_document()
@@ -310,9 +363,9 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
         self.assertEqual(
             document["signal_source"],
             {
-                "start_power": -38.0,
-                "stop_power": -16.0,
-                "step": 1.0,
+                "power_scan_plans": [
+                    {"start_power": -38.0, "step": 1.0, "stop_power": -16.0}
+                ],
                 "power_reference": "dut_input",
             },
         )
@@ -503,9 +556,7 @@ class ConfigurationDraftDocumentTests(unittest.TestCase):
         self.assertEqual(
             document["signal_source"],
             {
-                "start_power": None,
-                "stop_power": None,
-                "step": None,
+                "power_scan_plans": None,
                 "power_reference": "dut_input",
             },
         )

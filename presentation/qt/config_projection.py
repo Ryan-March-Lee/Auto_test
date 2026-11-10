@@ -18,6 +18,9 @@
   哪个通道给哪个器件上电”的唯一来源；
 - 电源候选（计划列表的可选项）由页面按设备绑定与电源声明的通道生成，投影不挑选电源、
   不补默认值；引用了未绑定电源的路由保留在计划里，由正式校验报告；
+- 功率扫描：``signal_source.power_scan_plans`` 的单段映射到起始/终止/步长三个输入框；
+  多段在页面只有一行编辑器时只展示首段起点与末段终点，并在
+  ``power_scan_import_error`` 上留下错误以阻止保存，绝不静默折叠成一段；
 - 失败必须可识别：非 JSON 对象输入抛出 :class:`ConfigBackfillError`，不会被静默当作
   回填成功；缺失或类型不正确的字段落到明确默认值，绝不残留上一次运行的显示状态。
 
@@ -235,6 +238,7 @@ def reset_control_widgets(widgets: Any) -> None:
     widgets.start_power.setValue(DEFAULT_SIGNAL_SOURCE["start_power"])
     widgets.stop_power.setValue(DEFAULT_SIGNAL_SOURCE["stop_power"])
     widgets.power_step.setValue(DEFAULT_SIGNAL_SOURCE["step"])
+    widgets.power_scan_import_error = None
     set_combo(widgets.compression_combo, DEFAULT_COMPRESSION_TYPE)
     set_combo(widgets.attenuator_combo, DEFAULT_ATTENUATOR_TYPE)
     widgets.test_mode_enabled = DEFAULT_DRIVER_MODE_ENABLED
@@ -256,6 +260,58 @@ def _reset_power_supply_channels(widgets: Any) -> None:
                 delay_control.setValue(DEFAULT_POWER_ON_DELAY_S)
 
 
+def _power_scan_projection(
+    signal_source: Mapping[str, Any],
+) -> tuple[str | None, float | None, float | None, float | None]:
+    """把配置里的功率扫描投影成单行控件的 ``(错误, 起始, 终止, 步长)``。
+
+    1.2 文档的扫描来源是 ``power_scan_plans``；当前页面只有一行编辑器，因此：
+
+    - 单段计划：正常回填三个控件，保存时会按控件读数重写这一段；
+    - 多段计划：控件只用于展示首段起点与末段终点，并在页面上留下错误，禁止保存
+      ——静默折叠成一段会丢掉用户已确认的后面几段（动态计划编辑器属于阶段三）；
+    - 计划缺失/为空/不是列表：同样给出导入错误，不把空计划伪装成默认值。
+
+    旧 1.1 文档的标量形状继续按三个字段读取，保证旧配置仍可打开与重新保存。
+    """
+    plans = signal_source.get("power_scan_plans")
+    if plans is None:
+        return (
+            None,
+            number_or_none(signal_source.get("start_power")),
+            number_or_none(signal_source.get("stop_power")),
+            number_or_none(signal_source.get("step")),
+        )
+    if not isinstance(plans, list) or not plans:
+        return ("配置的 DUT 功率扫描计划为空或格式不正确", None, None, None)
+    starts = [
+        number_or_none(item.get("start_power"))
+        for item in plans
+        if isinstance(item, Mapping)
+    ]
+    stops = [
+        number_or_none(item.get("stop_power"))
+        for item in plans
+        if isinstance(item, Mapping)
+    ]
+    steps = [
+        number_or_none(item.get("step"))
+        for item in plans
+        if isinstance(item, Mapping)
+    ]
+    if not starts or not stops or not steps:
+        return ("配置的 DUT 功率扫描计划格式不正确", None, None, None)
+    if len(plans) > 1:
+        return (
+            "配置包含多段 DUT 功率扫描计划，当前页面只能编辑单段；"
+            "为避免丢失已确认的计划，保存已被阻止（动态计划编辑器属于后续版本）",
+            starts[0],
+            stops[-1],
+            steps[0],
+        )
+    return (None, starts[0], stops[0], steps[0])
+
+
 def _apply_test_parameter_widgets(widgets: Any, config: Mapping[str, Any]) -> None:
     # 键缺席时保留空配置基线；键存在但值非法/不等步长时由 apply_frequency_fields
     # 写入错误状态，页面据此禁止保存。
@@ -263,12 +319,13 @@ def _apply_test_parameter_widgets(widgets: Any, config: Mapping[str, Any]) -> No
         apply_frequency_fields(widgets, config.get("test_frequencies"))
     signal_source = config.get("signal_source")
     signal_source = signal_source if isinstance(signal_source, dict) else {}
-    for widget, key in (
-        (widgets.start_power, "start_power"),
-        (widgets.stop_power, "stop_power"),
-        (widgets.power_step, "step"),
+    scan_error, start, stop, step = _power_scan_projection(signal_source)
+    widgets.power_scan_import_error = scan_error
+    for widget, value in (
+        (widgets.start_power, start),
+        (widgets.stop_power, stop),
+        (widgets.power_step, step),
     ):
-        value = number_or_none(signal_source.get(key))
         if value is not None:
             widget.setValue(value)
     compression = config.get("compression_point")

@@ -593,7 +593,7 @@ class ConfigurationAuthoringServiceTests(unittest.TestCase):
         source = source_path.read_text(encoding="utf-8")
         self.assertIn('values["test_plan"]', source)
         self.assertIn('values["run_mapping"]', source)
-        self.assertEqual(OFFICIAL_SCHEMA_VERSION, "1.1")
+        self.assertEqual(OFFICIAL_SCHEMA_VERSION, "1.2")
 
     def test_editing_document_accepts_only_objects(self):
         document = ConfigurationEditingDocument({"test_frequencies": [1.0]})
@@ -720,11 +720,13 @@ class ConfigurationAuthoringServiceTests(unittest.TestCase):
         self.assertEqual(caught.exception.path, "schema_version")
 
     def test_save_block_reason_is_the_same_gate_as_saving(self):
-        """只读判定与保存门禁同源：1.0 给出原因，1.1 允许保存。"""
+        """只读判定与保存门禁同源：1.0 给出原因，1.1 与当前版允许（1.1 重写保存）。"""
         service = ConfigurationAuthoringService()
         legacy = _flat_config()
         legacy["schema_version"] = "1.0"
+        previous = _flat_config()
         current = _flat_config()
+        current["schema_version"] = "1.2"
 
         self.assertIn(
             "迁移器", service.save_block_reason(
@@ -733,9 +735,67 @@ class ConfigurationAuthoringServiceTests(unittest.TestCase):
         )
         self.assertIsNone(
             service.save_block_reason(
+                ConfigurationEditingDocument.from_mapping(previous)
+            )
+        )
+        self.assertIsNone(
+            service.save_block_reason(
                 ConfigurationEditingDocument.from_mapping(current)
             )
         )
+
+    def test_1_1_document_is_rewritten_to_the_current_version(self):
+        """1.1 输入在保存边界显式重写为当前版本，标量包装成单段计划。"""
+        flat = _flat_config()
+        self.assertEqual(flat["schema_version"], "1.1")
+
+        document = author_official_configuration(flat)
+
+        self.assertEqual(document["schema_version"], OFFICIAL_SCHEMA_VERSION)
+        self.assertEqual(
+            document["test_plan"]["schema_version"], OFFICIAL_SCHEMA_VERSION
+        )
+        self.assertEqual(
+            document["run_mapping"]["schema_version"], OFFICIAL_SCHEMA_VERSION
+        )
+        expected_plan = {"start_power": -10.0, "step": 1.0, "stop_power": 0.0}
+        self.assertEqual(
+            document["test_plan"]["signal_source"]["power_scan_plans"],
+            [expected_plan],
+        )
+        # 编辑段也一起升级，保存后的文件不再保留旧标量来源。
+        self.assertEqual(
+            document["signal_source"]["power_scan_plans"], [expected_plan]
+        )
+        for section in (document["signal_source"], document["test_plan"]["signal_source"]):
+            for key in ("start_power", "stop_power", "step"):
+                self.assertNotIn(key, section)
+
+    def test_multiple_power_scan_plans_keep_their_order(self):
+        flat = _flat_config()
+        plans = [
+            {"start_power": -38.0, "step": 1.0, "stop_power": -10.0},
+            {"start_power": -10.0, "step": 0.25, "stop_power": -2.0},
+        ]
+        flat["signal_source"] = {"power_scan_plans": plans}
+
+        document = author_official_configuration(flat)
+
+        self.assertEqual(
+            document["test_plan"]["signal_source"]["power_scan_plans"], plans
+        )
+        self.assertEqual(document["signal_source"]["power_scan_plans"], plans)
+
+    def test_plan_and_scalar_scan_fields_together_are_refused(self):
+        flat = _flat_config()
+        flat["signal_source"]["power_scan_plans"] = [
+            {"start_power": -10.0, "step": 1.0, "stop_power": 0.0}
+        ]
+
+        with self.assertRaises(ConfigurationAuthoringError) as caught:
+            author_official_configuration(flat)
+
+        self.assertEqual(caught.exception.path, "signal_source")
 
     def test_newer_schema_version_is_refused(self):
         flat = _flat_config()
@@ -800,7 +860,8 @@ class ConfigurationAuthoringServiceTests(unittest.TestCase):
 
     def test_stale_formal_sections_are_reported(self):
         flat = _flat_config()
-        flat["test_plan"] = {"schema_version": "1.1", "template": False}
+        flat["schema_version"] = "1.2"
+        flat["test_plan"] = {"schema_version": "1.2", "template": False}
         issues = ConfigurationAuthoringService().stale_formal_sections(
             ConfigurationEditingDocument.from_mapping(flat)
         )
@@ -840,14 +901,15 @@ class ConfigurationAuthoringServiceTests(unittest.TestCase):
 
 
 class GoldenConfigurationTests(unittest.TestCase):
-    """v1.1 正式文档基线：整个输出逐字节比较。
+    """1.2 正式文档基线：整个输出逐字节比较。
 
-    输入是规范 1.1 编辑段（用户顺序、间隔、漏极与通道参数），期望值经步骤 6 评审后
+    输入是 1.1 规范编辑段（用户顺序、间隔、漏极与通道参数），期望值经步骤 2 评审后
     一次性生成，见 ``tests/fixtures/configuration_authoring/README.md``。它冻结正式段的
-    字段名、键序与透传行为；1.0 输入的拒绝由本模块的版本门禁测试单独覆盖。
+    字段名、键序与透传行为：1.1 的标量扫描被重写成 ``power_scan_plans``，旧标量不再
+    出现在编辑段或正式段；1.0 输入的拒绝由本模块的版本门禁测试单独覆盖。
     """
 
-    def test_authoring_reproduces_the_v1_1_document(self):
+    def test_authoring_reproduces_the_current_document(self):
         fixture = json.loads(GOLDEN_FIXTURE.read_text(encoding="utf-8"))
 
         self.assertTrue(fixture["cases"], "编写基线不能为空")
@@ -860,7 +922,7 @@ class GoldenConfigurationTests(unittest.TestCase):
     def test_fixture_records_the_contract_it_came_from(self):
         fixture = json.loads(GOLDEN_FIXTURE.read_text(encoding="utf-8"))
 
-        self.assertIn("v1.1", fixture["source"])
+        self.assertIn("1.2", fixture["source"])
         for case in fixture["cases"]:
             with self.subTest(case=case["name"]):
                 output = json.dumps(case["expected"], ensure_ascii=False)

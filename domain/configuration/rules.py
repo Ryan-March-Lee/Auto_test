@@ -14,9 +14,12 @@ from domain.configuration.types import ConfigIssue, ConfigValidationResult
 from domain.configuration.models import (
     DRIVER_GAIN_FIELD,
     INPUT_POWER_REFERENCE,
+    LEGACY_POWER_SCAN_FIELDS,
     MAX_INTER_CHANNEL_DELAY_S,
     POWER_REFERENCE_LEGACY_WARNING,
+    POWER_SCAN_PLAN_FIELDS,
     SIGNAL_SOURCE_REFERENCE_FIELD,
+    power_scan_boundary_tolerance,
 )
 
 
@@ -174,14 +177,9 @@ def validate_config(config: Dict[str, Any]) -> ConfigValidationResult:
         for index, frequency in enumerate(frequencies):
             number(frequency, f"test_frequencies[{index}]", positive=True)
 
-    start_power = stop_power = None
     if "signal_source" in present_sections:
         signal_source = get_mapping(root.get("signal_source"), "signal_source")
-        start_power = number(require(signal_source, "start_power", "signal_source.start_power"), "signal_source.start_power")
-        stop_power = number(require(signal_source, "stop_power", "signal_source.stop_power"), "signal_source.stop_power")
-        number(require(signal_source, "step", "signal_source.step"), "signal_source.step", positive=True)
-        if start_power is not None and stop_power is not None and start_power > stop_power:
-            error("signal_source", "start_power 不能大于 stop_power")
+        _validate_signal_source_scan(signal_source, error)
         reference = signal_source.get(SIGNAL_SOURCE_REFERENCE_FIELD)
         reference_path = f"signal_source.{SIGNAL_SOURCE_REFERENCE_FIELD}"
         if reference is None:
@@ -789,6 +787,103 @@ def _validate_finite_number(value: Any, path: str, error: Any, *, non_negative: 
     if non_negative and parsed < 0:
         error(path, "必须大于或等于 0")
     return parsed
+
+
+def _scan_number(
+    mapping: Dict[str, Any],
+    key: str,
+    path: str,
+    error: Any,
+    *,
+    positive: bool = False,
+) -> Optional[float]:
+    """读取功率扫描的一个数值字段；缺键与非法值分别报告，不互相替代。"""
+    if key not in mapping:
+        error(path, "缺少必需字段")
+        return None
+    value = mapping.get(key)
+    if not _is_finite_number(value):
+        error(path, "必须是有限数值")
+        return None
+    parsed = float(value)
+    if positive and parsed <= 0:
+        error(path, "必须大于 0")
+    return parsed
+
+
+def _validate_signal_source_scan(signal_source: Dict[str, Any], error: Any) -> None:
+    """校验编辑段 ``signal_source`` 的功率扫描形状。
+
+    1.2 只允许 ``power_scan_plans`` 列表；1.1 的历史标量形状仍可读取（旧文件不会
+    因为升级而打不开）。两者同时出现视为结构冲突，不选择其中一个继续。计划本身的
+    数值、连续性与 DUT 上限判据与正式 ``TestPlan`` 共用同一个容差
+    （``power_scan_boundary_tolerance``），避免页面和运行前校验给出不同结论。
+    """
+    plans = signal_source.get("power_scan_plans")
+    if plans is None:
+        start = _scan_number(
+            signal_source, "start_power", "signal_source.start_power", error
+        )
+        stop = _scan_number(
+            signal_source, "stop_power", "signal_source.stop_power", error
+        )
+        _scan_number(signal_source, "step", "signal_source.step", error, positive=True)
+        if start is not None and stop is not None and start > stop:
+            error("signal_source", "start_power 不能大于 stop_power")
+        return
+
+    present = [key for key in LEGACY_POWER_SCAN_FIELDS if key in signal_source]
+    if present:
+        error(
+            "signal_source",
+            "1.2 的功率扫描只写 power_scan_plans；不能再写 " + "、".join(present),
+        )
+    if not isinstance(plans, list) or not plans:
+        error(
+            "signal_source.power_scan_plans",
+            "必须是非空列表：至少需要一段功率扫描计划",
+        )
+        return
+
+    bounds: List[Tuple[Optional[float], Optional[float]]] = []
+    for index, item in enumerate(plans):
+        path = f"signal_source.power_scan_plans[{index}]"
+        if not isinstance(item, dict):
+            error(path, "功率扫描计划必须是 {start_power, step, stop_power} 对象")
+            bounds.append((None, None))
+            continue
+        unknown = [key for key in item if key not in POWER_SCAN_PLAN_FIELDS]
+        if unknown:
+            error(
+                path,
+                "不能包含未知字段: " + "、".join(sorted(str(key) for key in unknown)),
+            )
+        start = _scan_number(item, "start_power", f"{path}.start_power", error)
+        _scan_number(item, "step", f"{path}.step", error, positive=True)
+        stop = _scan_number(item, "stop_power", f"{path}.stop_power", error)
+        if start is not None and stop is not None and start > stop:
+            error(path, "start_power 不能大于 stop_power")
+        bounds.append((start, stop))
+
+    for index in range(len(bounds) - 1):
+        previous_stop = bounds[index][1]
+        following_start = bounds[index + 1][0]
+        if previous_stop is None or following_start is None:
+            continue
+        tolerance = power_scan_boundary_tolerance(previous_stop, following_start)
+        path = f"signal_source.power_scan_plans[{index + 1}]"
+        if following_start > previous_stop + tolerance:
+            error(
+                path,
+                f"与前一段存在空档：第 {index + 1} 段终止功率 {previous_stop:g}dBm，"
+                f"本段起始功率 {following_start:g}dBm；相邻计划必须首尾相接",
+            )
+        elif following_start < previous_stop - tolerance:
+            error(
+                path,
+                f"与前一段重叠：第 {index + 1} 段终止功率 {previous_stop:g}dBm，"
+                f"本段起始功率 {following_start:g}dBm；只允许共享一个边界点",
+            )
 
 
 def _validate_supply_addresses(

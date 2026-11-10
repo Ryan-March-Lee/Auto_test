@@ -118,6 +118,38 @@ class ConfigurationRepositoryTests(unittest.TestCase):
         self.assertFalse(result.valid)
         self.assertIn("test_plan", {issue.path for issue in result.validation.errors})
 
+    def test_editing_section_with_both_scan_shapes_is_rejected(self):
+        """当前版本文档的编辑段不能同时保留计划列表与旧标量。"""
+        document = complete_combined_config()
+        document["signal_source"].update(
+            {"start_power": -10.0, "stop_power": 0.0, "step": 1.0}
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            result = ConfigurationRepository().load(path)
+
+        self.assertFalse(result.valid)
+        self.assertTrue(
+            any(
+                issue.path == "signal_source" and "power_scan_plans" in issue.message
+                for issue in result.validation.errors
+            ),
+            [f"{issue.path}: {issue.message}" for issue in result.validation.errors],
+        )
+
+    def test_saved_current_document_contains_only_the_plan_list(self):
+        document = complete_combined_config()
+
+        self.assertEqual(
+            document["test_plan"]["signal_source"]["power_scan_plans"],
+            [{"start_power": -10.0, "step": 1.0, "stop_power": 0.0}],
+        )
+        for section in (document, document["test_plan"]):
+            for key in ("start_power", "stop_power", "step"):
+                self.assertNotIn(key, section["signal_source"])
+
     def test_stale_check_does_not_depend_on_a_single_editing_field(self):
         """只要是带编辑段的 1.1 组合文件就比对，不能拿 test_frequencies 当开关。"""
         document = complete_combined_config()

@@ -235,6 +235,36 @@ class DriverMappingMultiPlanTests(unittest.TestCase):
                     DRIVER_MAPPING_HIT_TOLERANCE_DB,
                 )
 
+    def test_multi_plan_target_grid_is_truncated_at_the_dut_limit(self):
+        """步骤 5.3：DUT 上限落在某段中间时，后续整段不再成为目标点。"""
+
+        instrument = _FakeInstrument(lambda source: source + 1.0)
+        service = _service(
+            lambda source: source + 1.0,
+            config=_config(
+                plans=((-10.0, 2.0, -6.0), (-6.0, 1.0, -3.0)),
+                gain=1.0,
+                max_input=-7.5,
+            ),
+            instrument=instrument,
+        )
+
+        self.assertEqual(
+            [target.dbm for target in service.target_powers],
+            [-10.0, -8.0, -7.5],
+        )
+
+        result = service.run()
+
+        self.assertEqual(
+            [row["target_input_power_dbm"] for row in _target_rows(result)],
+            [-10.0, -8.0, -7.5],
+        )
+        self.assertNotIn(
+            -6.0,
+            [row["target_input_power_dbm"] for row in _target_rows(result)],
+        )
+
     def test_target_table_uses_exact_grid_even_when_hit_is_within_tolerance(self):
         """命中点在容差内不精确等于目标时，目标表主键仍是目标功率，输出是实测值。"""
         result = _service(lambda source: source + 11.2).run()

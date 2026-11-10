@@ -618,6 +618,22 @@ class PowerScanScheduleInputTests(unittest.TestCase):
             [point.dbm for point in inputs.target_input_powers], [-10.0, -9.0, -8.0, -7.5]
         )
 
+    def test_multi_plan_target_grid_stops_at_the_dut_limit(self):
+        """步骤 5.3：DUT 上限落在前一段中间时，后续计划不生成目标点。"""
+
+        inputs = _inputs(
+            power_scan_schedule=self._schedule(
+                (-10.0, 2.0, -6.0),
+                (-6.0, 1.0, -3.0),
+            ),
+            max_dut_input_power=PowerDbm(-7.5),
+        )
+
+        self.assertEqual(
+            [point.dbm for point in inputs.target_input_powers],
+            [-10.0, -8.0, -7.5],
+        )
+
     def test_start_above_the_effective_limit_is_rejected(self):
         with self.assertRaises(AmplifierInputError) as raised:
             _inputs(

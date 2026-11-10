@@ -13,14 +13,31 @@ import json
 import threading
 import unittest
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from app.run_context import PreparedRun, load_prepared_run
-from app.gui_runtime import create_cable_loss_measurement, prepare_configuration
+from app.gui_runtime import (
+    create_amplifier_measurement,
+    create_cable_loss_measurement,
+    create_driver_mapping_measurement,
+    prepare_configuration,
+)
 from application.run_service import RunNotResumable
-from domain.run.models import HARDWARE_CONFIG_INPUT_PATH, RunStatus
+from application.run_stages import RunStageRecorder
+from domain.run.models import (
+    AMPLIFIER_RESULT_PATH,
+    CABLE_LOSS_INPUT_PATH,
+    DRIVER_MAPPING_INPUT_PATH,
+    HARDWARE_CONFIG_INPUT_PATH,
+    STAGE_CABLE_LOSS,
+    STAGE_DRIVER_MAPPING,
+    RunStatus,
+    StageStatus,
+)
+from infrastructure.persistence.result_repository import FileMeasurementResultRepository
 from infrastructure.persistence.run_repository import RunRepository
 from application.configuration_authoring import author_official_configuration
 from presentation.qt.measurement_controller import MeasurementController
@@ -35,14 +52,20 @@ from tests.contract_doubles import contract_run
 RUN_ID = "20261022T153000Z_a1b2c3d4"
 
 
-def _fully_valid_gui_config() -> dict:
-    """完整有效的 GUI 组合配置（驱动模式关闭，DUT 通道已确认接线）。"""
+def _fully_valid_gui_config(
+    *, driver_enabled: bool = False, estimated_gain_db: float = 1.0
+) -> dict:
+    """完整有效的 GUI 组合配置（默认驱动模式关闭，DUT 通道已确认接线）。"""
     return author_official_configuration({
         "schema_version": "1.1",
         "test_frequencies": [2.4],
         "signal_source": {"start_power": -10.0, "stop_power": 0.0, "step": 1.0},
         "compression_point": {"type": "5dB"},
-        "driver_mode": {"enabled": False},
+        "driver_mode": (
+            {"enabled": True, "estimated_gain_db": estimated_gain_db}
+            if driver_enabled
+            else {"enabled": False}
+        ),
         "attenuator": {"type": "30dB"},
         "dut_config": {
             "max_input_power": 30.0,
@@ -208,6 +231,49 @@ class _MappingService:
 
     def stop_measurement(self):
         pass
+
+
+class _AmplifierSweepInstrument:
+    """测量链路假仪器：记录下发功率，按源功率返回固定增益读数。
+
+    既可驱动主功放扫描，也可驱动映射服务；映射用例通过不同的 ``gain_db`` 表示
+    驱放接线下的补偿后输出。
+    """
+
+    def __init__(self, *, gain_db=20.0):
+        self.gain_db = gain_db
+        self.powers = []
+        self.measured = 0
+        self.rf_on_calls = 0
+        self.rf_off_calls = 0
+        self._source_power = 0.0
+
+    def setup_driver_amplifier_power(self): pass
+    def power_on_driver(self): pass
+    def setup_dut_power(self): pass
+    def power_on_sequence(self): pass
+    def power_off_sequence(self): pass
+    def power_off_driver(self): pass
+
+    def set_power(self, power):
+        self._source_power = float(power)
+        self.powers.append(float(power))
+
+    def set_frequency(self, _frequency): pass
+    def set_center_frequency(self, _frequency): pass
+    def set_span(self, _span): pass
+    def rf_output_on(self): self.rf_on_calls += 1
+    def rf_output_off(self): self.rf_off_calls += 1
+
+    def measure_power_with_average(self):
+        self.measured += 1
+        return self._source_power + self.gain_db
+
+    def read_voltage(self, _name, _channel): return 28.0
+    def read_current(self, _name, _channel): return 1.0
+
+    def close_all(self, *, close_rf=False):
+        return []
 
 
 class _Signal:
@@ -1636,6 +1702,248 @@ class ContractRepositoryCapabilityTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RunNotResumable, "仓储不完整"):
             run.hardware_connection_path()
+
+
+class MultiPlanGuiToMeasurementFlowTests(unittest.TestCase):
+    """步骤 5.3：GUI 多段计划经 authoring、冻结运行和正式测量端到端一致。
+
+    集成测试从真实配置页读数开始，不直接拼内部 DTO：配置页 → 正式 authoring →
+    运行目录冻结快照 → 正式测量输入。驱动用例继续串起真实驱动映射产物与主功放
+    扫描，验证同一条目标点列贯穿全链路。
+    """
+
+    PLANS = [
+        {"start_power": -20.0, "step": 2.0, "stop_power": -16.0},
+        {"start_power": -16.0, "step": 1.0, "stop_power": -13.0},
+    ]
+    TARGETS = (-20.0, -18.0, -16.0, -15.0, -14.0, -13.0)
+
+    @classmethod
+    def setUpClass(cls):
+        import os
+
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtWidgets import QApplication
+
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        import tempfile
+
+        self._temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temporary.cleanup)
+        self.base = Path(self._temporary.name)
+        self.repository = RunRepository(self.base / "runs")
+        self.result_repository = FileMeasurementResultRepository(
+            results_directory=self.base / "test_results"
+        )
+
+    @staticmethod
+    def _destroy_page(page):
+        """离屏用例结束时销毁顶层页面，避免控件在后续用例中累积。"""
+        from PySide6.QtCore import QCoreApplication, QEvent
+
+        page.close()
+        page.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+
+    def _page_with_multi_plan(self, *, driver_enabled=False):
+        """从 GUI 配置页填写两段计划，返回真实页面读数入口。"""
+        from presentation.qt.test_configuration_page import TestConfigurationPage
+
+        authored = _fully_valid_gui_config(driver_enabled=driver_enabled)
+        editing = {
+            key: value
+            for key, value in authored.items()
+            if key not in {"test_plan", "run_mapping"}
+        }
+        page = TestConfigurationPage(editing)
+        self.addCleanup(self._destroy_page, page)
+        page.power_scan_plan_rows[0].set_values(-20.0, 2.0, -16.0)
+        page.add_power_scan_plan().set_values(-16.0, 1.0, -13.0)
+        return page
+
+    def _official_from_page(self, page, *, driver_enabled=False):
+        """页面读数经正式 authoring 生成正式配置（而不是手工拼 DTO）。"""
+        flat = page.build_config()
+        # 正式段是 authoring 的产物，不属于编辑文档；页面只提交编辑字段。
+        flat.pop("test_plan", None)
+        flat.pop("run_mapping", None)
+        official = author_official_configuration(flat)
+        self.assertEqual(
+            official["test_plan"]["signal_source"]["power_scan_plans"], self.PLANS
+        )
+        self.assertEqual(
+            official["test_plan"]["driver_mode"]["enabled"], driver_enabled
+        )
+        return official
+
+    def _create_run(self, official):
+        config_path = self.base / "config.json"
+        config_path.write_text(json.dumps(official), encoding="utf-8")
+        prepared = prepare_configuration(
+            str(config_path),
+            run_id=RUN_ID,
+            run_repository=self.repository,
+        )
+        self.assertEqual(
+            [
+                plan.to_dict()
+                for plan in prepared.configuration.test_plan.power_scan_plans
+            ],
+            self.PLANS,
+        )
+        return prepared, config_path
+
+    def _seed_cable_loss(self, *, cable_losses=None):
+        """种入当前运行的线损输入（前置阶段产物，不是本次要验证的链路）。"""
+        created_at = datetime(2026, 10, 22, 15, 30, tzinfo=timezone.utc)
+        recorder = RunStageRecorder(self.repository, RUN_ID)
+        recorder.start(STAGE_CABLE_LOSS, now=created_at)
+        recorder.complete(
+            STAGE_CABLE_LOSS,
+            {
+                "run_id": RUN_ID,
+                "cable_losses": cable_losses
+                or {
+                    "2.4": {
+                        "cable1": 1.0,
+                        "cable2": 0.0,
+                        "cable3": 0.0,
+                        "cable4": 0.0,
+                    }
+                },
+            },
+            now=created_at,
+        )
+
+    def _measure_amplifier(self, prepared, instrument):
+        return create_amplifier_measurement(
+            prepared_run=prepared,
+            measurement_port=instrument,
+            result_repository=self.result_repository,
+            sleep_fn=lambda _: None,
+        ).measure_all_frequencies()
+
+    def test_gui_multi_plan_reaches_frozen_run_and_measurement_unchanged(self):
+        page = self._page_with_multi_plan()
+        official = self._official_from_page(page)
+        prepared, _config_path = self._create_run(official)
+        self._seed_cable_loss()
+
+        instrument = _AmplifierSweepInstrument()
+        result = self._measure_amplifier(prepared, instrument)
+
+        sweep = result.frequencies[0].sweep_data
+        self.assertEqual(sweep["input_power_dut"], self.TARGETS)
+        self.assertEqual(
+            sweep["sg_power"], tuple(value + 1.0 for value in self.TARGETS)
+        )
+        self.assertEqual(
+            instrument.powers,
+            [-40.0] + [value + 1.0 for value in self.TARGETS],
+        )
+
+        saved = json.loads(
+            (prepared.run_directory / AMPLIFIER_RESULT_PATH).read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            saved["results"]["2.4"]["sweep_data"]["input_power_dut"],
+            list(self.TARGETS),
+        )
+        self.assertTrue(
+            (prepared.run_directory / CABLE_LOSS_INPUT_PATH).is_file()
+        )
+        self.assertEqual(
+            self.repository.load_manifest(RUN_ID).status, RunStatus.COMPLETED
+        )
+
+    def test_gui_multi_plan_driver_flow_reaches_mapping_and_amplifier(self):
+        """同一条多段点列：配置页 → 冻结运行 → 驱动映射产物 → 主功放扫描。"""
+
+        page = self._page_with_multi_plan(driver_enabled=True)
+        self.assertTrue(page.driver_mode_requested())
+        official = self._official_from_page(page, driver_enabled=True)
+        _prepared, config_path = self._create_run(official)
+
+        # 冻结证据：改写全局编辑文档后，按 run_id 重开仍使用运行目录内的多段计划
+        # 与驱动设置；后续测量也只接收这个重开出来的运行契约。
+        changed = _fully_valid_gui_config(driver_enabled=True)
+        changed["test_plan"]["signal_source"] = {
+            "power_scan_plans": [
+                {"start_power": 0.0, "step": 1.0, "stop_power": 1.0}
+            ]
+        }
+        changed["test_plan"]["driver_mode"]["enabled"] = False
+        config_path.write_text(json.dumps(changed), encoding="utf-8")
+        frozen = load_prepared_run(
+            RUN_ID, config_path=config_path, run_repository=self.repository
+        )
+        self.assertEqual(
+            [
+                plan.to_dict()
+                for plan in frozen.configuration.test_plan.power_scan_plans
+            ],
+            self.PLANS,
+        )
+        self.assertTrue(frozen.configuration.test_plan.driver_enabled)
+
+        # 线损：cable2=2 dB，衰减器 30 dB。映射假仪器返回源功率 -11 dB 的读数，
+        # 补偿后输出 = 源功率 + 21 dB，因此每个目标都能在源功率范围内命中。
+        self._seed_cable_loss(
+            cable_losses={
+                "2.4": {
+                    "cable1": 1.0,
+                    "cable2": 2.0,
+                    "cable3": 0.0,
+                    "cable4": 0.0,
+                }
+            }
+        )
+        mapping_case = create_driver_mapping_measurement(
+            prepared_run=frozen,
+            measurement_port=_AmplifierSweepInstrument(gain_db=-11.0),
+            result_repository=self.result_repository,
+            sleep_fn=lambda _: None,
+        )
+        mapping_case.measure_all_frequencies()
+
+        mapping_path = frozen.run_directory / DRIVER_MAPPING_INPUT_PATH
+        mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
+        rows = mapping["target_mapping"]["2.4"]
+        self.assertEqual(
+            tuple(row["target_input_power_dbm"] for row in rows), self.TARGETS
+        )
+
+        instrument = _AmplifierSweepInstrument(gain_db=0.0)
+        result = self._measure_amplifier(frozen, instrument)
+
+        sweep = result.frequencies[0].sweep_data
+        sources = tuple(row["source_power_dbm"] for row in rows)
+        driver_outputs = tuple(row["driver_output_power_dbm"] for row in rows)
+        # 主功放直接消费映射产物的目标表：信号源功率与 DUT 输入都逐点来自文件。
+        self.assertEqual(sweep["sg_power"], sources)
+        self.assertEqual(sweep["input_power_dut"], driver_outputs)
+        self.assertEqual(instrument.powers, [-40.0] + list(sources))
+
+        saved = json.loads(
+            (frozen.run_directory / AMPLIFIER_RESULT_PATH).read_text(
+                encoding="utf-8"
+            )
+        )
+        saved_sweep = saved["results"]["2.4"]["sweep_data"]
+        self.assertEqual(tuple(saved_sweep["sg_power"]), sources)
+        self.assertEqual(
+            tuple(saved_sweep["input_power_dut"]), driver_outputs
+        )
+
+        manifest = self.repository.load_manifest(RUN_ID)
+        self.assertEqual(
+            manifest.stage(STAGE_DRIVER_MAPPING).status, StageStatus.COMPLETED
+        )
+        self.assertEqual(manifest.status, RunStatus.COMPLETED)
 
 
 if __name__ == "__main__":

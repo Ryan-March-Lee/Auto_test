@@ -36,6 +36,7 @@ from application.inputs import ResultInputReader
 from application.measurements import AmplifierCalibrationError, AmplifierMeasurementUseCase
 from application.measurements.amplifier_test import AMPLIFIER_SPLIT_SCHEMA_VERSION
 from application.run_stages import RunStageRecorder, StageInputUnavailable
+from domain.measurement.values import Frequency
 from domain.run.models import (
     AMPLIFIER_RESULT_PATH,
     CABLE_LOSS_INPUT_PATH,
@@ -144,6 +145,7 @@ class _Instrument:
     def __init__(self, *, fail=False):
         self.measured = 0
         self.fail = fail
+        self.rf_on_calls = 0
         self.rf_off_calls = 0
         self.powers = []
 
@@ -156,7 +158,7 @@ class _Instrument:
     def set_frequency(self, _frequency): pass
     def set_center_frequency(self, _frequency): pass
     def set_span(self, _span): pass
-    def rf_output_on(self): pass
+    def rf_output_on(self): self.rf_on_calls += 1
     def rf_output_off(self): self.rf_off_calls += 1
     def power_off_driver(self): pass
     def read_voltage(self, _name, _channel): return 28.0
@@ -170,6 +172,33 @@ class _Instrument:
 
     def close_all(self, close_rf=False):
         return []
+
+
+class _CompressingInstrument(_Instrument):
+    """按当前信号源功率返回带压缩的读数。
+
+    默认曲线在源功率高于 -16 dBm 后把增益降到 19 dB（下降 1 dB）。测试也可以传入
+    ``gain_for`` 自定义增益曲线，用于验证跨段扫描时压缩判据仍沿用全局小信号增益。
+    测试令线损与衰减器为 0，补偿后的 DUT 输出就等于这里返回的原始功率，因此增益
+    下降完全来自被测件曲线，与线损计算无关。
+    """
+
+    def __init__(self, gain_for=None):
+        super().__init__()
+        self._source_power = 0.0
+        self._gain_for = (
+            gain_for
+            if gain_for is not None
+            else (lambda source: 20.0 if source <= -16.0 else 19.0)
+        )
+
+    def set_power(self, power):
+        self._source_power = float(power)
+        super().set_power(power)
+
+    def measure_power_with_average(self):
+        self.measured += 1
+        return self._source_power + self._gain_for(self._source_power)
 
 
 class _Context:
@@ -486,6 +515,190 @@ class AmplifierRunStageTests(unittest.TestCase):
             (self._run_directory() / DRIVER_MAPPING_INPUT_PATH).exists()
         )
         self.assertEqual(manifest.stage(STAGE_AMPLIFIER).status, StageStatus.COMPLETED)
+
+    # -- 多段功率扫描：无驱动反算与驱动目标网格 ------------------------------
+
+    def test_no_driver_multi_plan_uses_shared_targets_and_per_frequency_cable_loss(self):
+        """步骤 5.3：多段计划合并后的目标点逐频点进入无驱动扫描。"""
+
+        inputs = replace(
+            amplifier_inputs(
+                power_scan_plans=((-10.0, 2.0, -6.0), (-6.0, 1.0, -3.0)),
+                attenuator_db=0.0,
+                max_input_power_dbm=100.0,
+                compression_db=5.0,
+            ),
+            frequencies=(Frequency.from_ghz(1.0), Frequency.from_ghz(2.4)),
+        )
+        self._create_run()
+        self._complete_cable_loss(
+            cable_losses={
+                "1.0": {"cable1": 1.0, "cable2": 0.0, "cable3": 0.0, "cable4": 0.0},
+                "2.4": {"cable1": 2.0, "cable2": 0.0, "cable3": 0.0, "cable4": 0.0},
+            }
+        )
+        instrument = _Instrument()
+
+        result = AmplifierMeasurementUseCase(
+            self._request(instrument=instrument, driver_enabled=False, inputs=inputs),
+            sleep_fn=lambda _: None,
+        ).measure_all_frequencies()
+
+        expected_targets = [-10.0, -8.0, -6.0, -5.0, -4.0, -3.0]
+        sweeps = {item.frequency_ghz: item.sweep_data for item in result.frequencies}
+        self.assertEqual(sweeps["1.0"]["input_power_dut"], tuple(expected_targets))
+        self.assertEqual(sweeps["2.4"]["input_power_dut"], tuple(expected_targets))
+        # 线①按频点各自反算：1.0 GHz 加 1 dB，2.4 GHz 加 2 dB。
+        self.assertEqual(
+            sweeps["1.0"]["sg_power"],
+            tuple(value + 1.0 for value in expected_targets),
+        )
+        self.assertEqual(
+            sweeps["2.4"]["sg_power"],
+            tuple(value + 2.0 for value in expected_targets),
+        )
+        self.assertEqual(instrument.measured, len(expected_targets) * 2)
+        self.assertEqual(
+            instrument.powers,
+            [-40]
+            + [value + 1.0 for value in expected_targets]
+            + [-40]
+            + [value + 2.0 for value in expected_targets],
+        )
+
+    def test_no_driver_multi_plan_source_limit_fails_before_rf_or_scan(self):
+        """步骤 5.3：前段合法、后段越界时，整组点在任何 RF/扫描动作之前失败。"""
+
+        # 1 GHz 上线①为 2 dB：第一段 16/18 dBm 反算 18/20 dBm 都合法；第二段
+        # 的 19 dBm 反算到 21 dBm 才越界。单段用例无法发现“只预检第一段”的回归。
+        inputs = amplifier_inputs(
+            power_scan_plans=((16.0, 2.0, 18.0), (18.0, 1.0, 19.0)),
+            attenuator_db=0.0,
+            max_input_power_dbm=100.0,
+        )
+        self._create_run()
+        self._complete_cable_loss(
+            cable_losses={
+                "1.0": {"cable1": 2.0, "cable2": 0.0, "cable3": 0.0, "cable4": 0.0}
+            }
+        )
+        instrument = _Instrument()
+
+        with self.assertRaisesRegex(AmplifierInputError, r"19 dBm.*21 dBm"):
+            AmplifierMeasurementUseCase(
+                self._request(instrument=instrument, driver_enabled=False, inputs=inputs),
+                sleep_fn=lambda _: None,
+            ).measure_all_frequencies()
+
+        self.assertEqual(instrument.rf_on_calls, 0)
+        self.assertEqual(instrument.measured, 0)
+        self.assertEqual(instrument.powers, [])
+        self.assertEqual(
+            self.repository.load_manifest(RUN_ID).stage(STAGE_AMPLIFIER).status,
+            StageStatus.FAILED,
+        )
+        self.assertFalse((self._run_directory() / AMPLIFIER_RESULT_PATH).exists())
+
+    def test_no_driver_multi_plan_stops_at_the_compression_target(self):
+        """步骤 5.3：达到压缩目标后停止，不会把后面的计划点扫完。"""
+
+        inputs = amplifier_inputs(
+            power_scan_plans=((-20.0, 2.0, -14.0), (-14.0, 1.0, -11.0)),
+            attenuator_db=0.0,
+            max_input_power_dbm=100.0,
+            compression_db=1.0,
+        )
+        self._create_run()
+        self._complete_cable_loss(
+            cable_losses={
+                "1.0": {"cable1": 0.0, "cable2": 0.0, "cable3": 0.0, "cable4": 0.0}
+            }
+        )
+        instrument = _CompressingInstrument()
+
+        result = AmplifierMeasurementUseCase(
+            self._request(instrument=instrument, driver_enabled=False, inputs=inputs),
+            sleep_fn=lambda _: None,
+        ).measure_all_frequencies()
+
+        sweep = result.frequencies[0].sweep_data
+        self.assertEqual(sweep["input_power_dut"], (-20.0, -18.0, -16.0, -14.0))
+        self.assertEqual(sweep["sg_power"], (-20.0, -18.0, -16.0, -14.0))
+        self.assertEqual(instrument.measured, 4)
+        self.assertTrue(result.frequencies[0].compression_achieved)
+
+    def test_no_driver_multi_plan_compression_is_measured_from_the_global_small_signal_gain(self):
+        """步骤 5.3：第二段才达到压缩目标时，判据仍用全局小信号增益且保留触发点。"""
+
+        # 目标点：-20,-18,-16,-14 | -13,-12,-11,-10。第二段从 -14 起增益缓慢下降：
+        # -13: -0.4 dB、-12: -0.8 dB、-11: -1.2 dB（达到 1 dB 压缩目标）。
+        # 若实现每段重置基线，-11 相对第二段自身基线只降 0.8 dB，不会停止；
+        # 只有沿用第一段小信号增益才会在 -11 停止，并留下尚未扫描的 -10。
+        inputs = amplifier_inputs(
+            power_scan_plans=((-20.0, 2.0, -14.0), (-14.0, 1.0, -10.0)),
+            attenuator_db=0.0,
+            max_input_power_dbm=100.0,
+            compression_db=1.0,
+        )
+        self._create_run()
+        self._complete_cable_loss(
+            cable_losses={
+                "1.0": {"cable1": 0.0, "cable2": 0.0, "cable3": 0.0, "cable4": 0.0}
+            }
+        )
+        instrument = _CompressingInstrument(
+            gain_for=lambda source: (
+                20.0 if source <= -14.0 else 20.0 - (source + 14.0) * 0.4
+            )
+        )
+
+        result = AmplifierMeasurementUseCase(
+            self._request(instrument=instrument, driver_enabled=False, inputs=inputs),
+            sleep_fn=lambda _: None,
+        ).measure_all_frequencies()
+
+        sweep = result.frequencies[0].sweep_data
+        self.assertEqual(
+            sweep["input_power_dut"], (-20.0, -18.0, -16.0, -14.0, -13.0, -12.0, -11.0)
+        )
+        self.assertEqual(
+            sweep["sg_power"], (-20.0, -18.0, -16.0, -14.0, -13.0, -12.0, -11.0)
+        )
+        self.assertEqual(instrument.measured, 7)
+        self.assertTrue(result.frequencies[0].compression_achieved)
+
+    def test_driver_mode_multi_plan_consumes_every_target_in_order(self):
+        """步骤 5.3：驱动模式使用映射目标表的完整多段点列。"""
+
+        inputs = amplifier_inputs(
+            power_scan_plans=((-10.0, 2.0, -6.0), (-6.0, 1.0, -3.0)),
+            driver_enabled=True,
+            attenuator_db=0.0,
+            max_input_power_dbm=100.0,
+            compression_db=5.0,
+        )
+        self._create_run()
+        self._complete_cable_loss()
+        targets = (-10.0, -8.0, -6.0, -5.0, -4.0, -3.0)
+        mapping = {
+            "1.0": {str(target - 1.0): target for target in targets},
+        }
+        self._complete_driver_mapping(mapping=mapping)
+        instrument = _Instrument()
+
+        result = AmplifierMeasurementUseCase(
+            self._request(instrument=instrument, driver_enabled=True, inputs=inputs),
+            sleep_fn=lambda _: None,
+        ).measure_all_frequencies()
+
+        sweep = result.frequencies[0].sweep_data
+        self.assertEqual(sweep["input_power_dut"], targets)
+        self.assertEqual(
+            sweep["sg_power"], tuple(target - 1.0 for target in targets)
+        )
+        self.assertEqual(
+            instrument.powers, [-40] + [target - 1.0 for target in targets]
+        )
 
     # -- 输入隔离与前置失败 ------------------------------------------------
 

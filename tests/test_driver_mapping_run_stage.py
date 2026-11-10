@@ -49,12 +49,21 @@ CREATED_AT = datetime(2026, 10, 22, 15, 30, tzinfo=timezone.utc)
 CABLE_LOSSES = {"1.0": {"cable2": 2.0}}
 
 
-def _fully_valid_gui_config() -> dict:
-    """完整有效的 GUI 组合配置（驱动模式关闭，DUT 通道已确认接线）。"""
+def _fully_valid_gui_config(*, power_scan_plans=None) -> dict:
+    """完整有效的 GUI 组合配置（驱动模式开启，DUT 通道已确认接线）。
+
+    ``power_scan_plans`` 传入 ``[{"start_power", "step", "stop_power"}, ...]`` 时
+    使用多段 1.2 计划；省略时沿用单段 1.1 标量（保存时由 authoring 包装成一段）。
+    """
+    signal_source = (
+        {"power_scan_plans": power_scan_plans}
+        if power_scan_plans is not None
+        else {"start_power": -10.0, "stop_power": 0.0, "step": 1.0}
+    )
     return author_official_configuration({
         "schema_version": "1.1",
         "test_frequencies": [2.4],
-        "signal_source": {"start_power": -10.0, "stop_power": 0.0, "step": 1.0},
+        "signal_source": signal_source,
         "compression_point": {"type": "5dB"},
         "driver_mode": {"enabled": True, "estimated_gain_db": 1.0},
         "attenuator": {"type": "30dB"},
@@ -581,6 +590,46 @@ class DriverMappingRunStageTests(unittest.TestCase):
         manifest = self.repository.load_manifest(RUN_ID)
         self.assertEqual(manifest.stage(STAGE_CABLE_LOSS).status, StageStatus.COMPLETED)
         self.assertEqual(manifest.stage(STAGE_DRIVER_MAPPING).status, StageStatus.COMPLETED)
+
+    def test_composition_entry_uses_the_full_multi_plan_target_grid(self):
+        """步骤 5.3：GUI 多段计划经 authoring 冻结后，映射目标表覆盖全部目标点。"""
+
+        plans = [
+            {"start_power": -10.0, "step": 2.0, "stop_power": -6.0},
+            {"start_power": -6.0, "step": 1.0, "stop_power": -3.0},
+        ]
+        config_path = self.base / "config.json"
+        config_path.write_text(
+            json.dumps(_fully_valid_gui_config(power_scan_plans=plans)),
+            encoding="utf-8",
+        )
+        prepared = prepare_configuration(
+            str(config_path),
+            run_id=RUN_ID,
+            run_repository=self.repository,
+        )
+        self._complete_cable_loss(cable_losses={"2.4": {"cable2": 2.0}})
+
+        mapping_case = create_driver_mapping_measurement(
+            prepared_run=prepared,
+            measurement_port=_Instrument(),
+            result_repository=self.result_repository,
+            sleep_fn=lambda _: None,
+        )
+        mapping_case.measure_all_frequencies()
+
+        mapping_path = prepared.run_directory / DRIVER_MAPPING_INPUT_PATH
+        payload = json.loads(mapping_path.read_text(encoding="utf-8"))
+        rows = payload["target_mapping"]["2.4"]
+        self.assertEqual(
+            [row["target_input_power_dbm"] for row in rows],
+            [-10.0, -8.0, -6.0, -5.0, -4.0, -3.0],
+        )
+        # 公共边界 -6 dBm 只出现一次，粗段与细段都进入同一张目标表。
+        self.assertEqual(
+            len({row["target_input_power_dbm"] for row in rows}),
+            len(rows),
+        )
 
     def test_service_config_passes_multi_segment_plans_in_order(self):
         """步骤 4.2：运行配置的 1.2 计划列表原样交给映射服务，不再写旧标量。"""

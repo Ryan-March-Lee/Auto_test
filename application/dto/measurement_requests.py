@@ -18,7 +18,7 @@ from domain.configuration.models import RunConfiguration
 from application.ports.result_repository import MeasurementResultRepository
 from application.ports.result_input_reader import ResultInputReader
 from application.ports.measurement_session import SafetyCleanupPort
-from .measurement_results import MeasurementType, freeze
+from .measurement_results import DriverMappingInput, MeasurementType, freeze
 from .amplifier_inputs import AmplifierMeasurementInputs
 
 if TYPE_CHECKING:  # pragma: no cover - 仅用于类型标注，避免运行时循环导入
@@ -154,17 +154,40 @@ class DriverPowerMappingRequest(MeasurementRequest):
 
 
 @dataclass(frozen=True)
+class AmplifierCalibrationInputs:
+    """本次运行已经读取并结构校验过的主功放校准输入。
+
+    组合入口在连接仪器前必须读取 ``inputs/cable_loss.json``（以及驱动模式下的
+    ``inputs/driver_mapping.json``）来完成预检。把这些对象随请求交给用例，入口预检
+    与实际测量消费的就是同一份对象：既不会重复读取同一个运行文件，也不会出现“入口
+    校验的是 A、测量消费的是 B”的漂移。
+
+    只允许组合入口在完成运行目录校验（``verified_result_path`` 与校验值比对）后填写；
+    独立构造请求的调用方省略本对象，用例按运行目录自行读取。
+    """
+
+    loss_data: Mapping[str, Any]
+    driver_mapping: DriverMappingInput | None = None
+
+
+@dataclass(frozen=True)
 class AmplifierMeasurementRequest(MeasurementRequest):
     """Inputs for amplifier measurement; its calibration inputs come from the run.
 
     ``inputs`` 是主功放唯一的正式输入表示（技术债步骤 7/8）：频率、功率扫描、压缩
     目标、衰减器、DUT 输入限制、驱动模式与 DUT 供电通道都在这里类型化表达，用例不再
     读取历史配置字典。构造期即拒绝缺失或类型不符的输入。
+
+    ``calibration_inputs`` 是组合入口预检时已读取的同一份线损/驱动映射；省略时用例
+    仍按当前运行目录读取，行为与旧调用方一致。
     """
 
     measurement_type: MeasurementType | str = MeasurementType.AMPLIFIER
     _expected_measurement_type: ClassVar[MeasurementType] = MeasurementType.AMPLIFIER
     inputs: AmplifierMeasurementInputs = field(kw_only=True)
+    calibration_inputs: AmplifierCalibrationInputs | None = field(
+        default=None, kw_only=True
+    )
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -172,4 +195,12 @@ class AmplifierMeasurementRequest(MeasurementRequest):
             raise ValueError(
                 "AmplifierMeasurementRequest.inputs 必须是 "
                 f"AmplifierMeasurementInputs，收到 {type(self.inputs).__name__}"
+            )
+        if self.calibration_inputs is not None and not isinstance(
+            self.calibration_inputs, AmplifierCalibrationInputs
+        ):
+            raise ValueError(
+                "AmplifierMeasurementRequest.calibration_inputs 必须是 "
+                "AmplifierCalibrationInputs 或 None，收到 "
+                f"{type(self.calibration_inputs).__name__}"
             )

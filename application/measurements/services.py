@@ -53,6 +53,7 @@ from application.dto.amplifier_inputs import (
     target_input_power_grid,
 )
 from application.dto.measurement_results import DriverMappingInput
+from application.measurements.driver_target_grid import require_driver_target_grid
 from domain.measurement.calculations import (
     calculate_cable_losses,
     calculate_compression_result,
@@ -1005,9 +1006,11 @@ class AmplifierMeasurementService(_Service):
         # 校准输入在构造阶段收敛为值对象，缺字段或错误单位不会等到扫描中途才暴露；
         # 服务只保留解析后的表，不再同时持有原始文档副本。
         self.loss_table = _loss_table(loss_data)
-        # 驱动模式只消费目标网格（目标 DUT 输入 -> 源功率 + 插值驱放输出）；
-        # 原始曲线留在结果文档中供审计，不再参与主功放扫描。
-        self.driver_input = driver_input
+        # 驱动模式只消费目标网格（目标 DUT 输入 -> 源功率 + 插值驱放输出）；原始
+        # 曲线留在驱动映射结果文档中供审计，不进入本服务。目标表必须与配置生成的
+        # 目标 DUT 点逐点一致（4.4）：数量、顺序、频率和功率唯一性在构造阶段校验，
+        # 缺点/重复点/旧单计划目标表都不会进入硬件动作。
+        self._driver_targets = require_driver_target_grid(inputs, driver_input)
         self.attenuator_value = inputs.attenuator
         self.compression_value = inputs.compression_target
         self.configuration_snapshot = dict(configuration_snapshot or {})
@@ -1051,7 +1054,7 @@ class AmplifierMeasurementService(_Service):
         返回 ``(目标 DUT 输入, 实际下发的源功率, 驱放输出或 None)``。无驱动模式
         的第三项恒为 ``None``，``input_power_dut`` 直接记录第一项，不再二次扣减线损。
         """
-        if self.driver_input is None:
+        if not self.inputs.driver_enabled:
             cable1 = self.loss_table.profile_at(frequency).dut_input_path_loss()
             reverse_calculated = tuple(
                 (target, PowerDbm(target.dbm + cable1.db))
@@ -1059,15 +1062,10 @@ class AmplifierMeasurementService(_Service):
             )
             checked = _require_source_power_in_range(frequency, reverse_calculated)
             return tuple((target, source, None) for target, source in checked)
-        targets = sorted(
-            (
-                point
-                for point in self.driver_input.target_points
-                if Frequency.from_document_key(point.frequency_ghz) == frequency
-            ),
-            key=lambda point: point.target_input_power_dbm,
-        )
-        if not targets:
+        # 驱动模式直接消费构造阶段已校验的目标表；顺序、数量和功率在构造时已与
+        # 配置生成的目标 DUT 点对齐，这里不再过滤、排序或自行补点。
+        targets = self._driver_targets.get(frequency)
+        if targets is None:
             raise AmplifierInputError(
                 f"驱动映射目标表缺少测试频率 {frequency.key} 的目标点"
             )

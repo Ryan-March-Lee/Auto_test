@@ -16,6 +16,7 @@ from .amplifier_inputs import (
     validate_power_scan_schedule,
 )
 from .measurement_requests import (
+    AmplifierCalibrationInputs,
     AmplifierMeasurementRequest,
     CableLossMeasurementRequest,
     DriverPowerMappingRequest,
@@ -46,6 +47,7 @@ __all__ = [
     "MeasurementRequest",
     "CableLossMeasurementRequest",
     "DriverPowerMappingRequest",
+    "AmplifierCalibrationInputs",
     "AmplifierMeasurementRequest",
     "AMPLIFIER_COMPRESSION_TARGETS_DB",
     "AmplifierInputError",

@@ -21,6 +21,7 @@ from application.dto import (
     MeasurementStatus,
 )
 from application.errors import ConfigurationError
+from application.measurements.driver_target_grid import require_driver_target_grid
 from application.measurements.services import AmplifierMeasurementService
 from application.ports.measurement_session import CleanupRecord
 from domain.measurement.values import (
@@ -101,6 +102,10 @@ class AmplifierMeasurementUseCase:
             frequencies=tuple(item.ghz for item in self.inputs.frequencies),
             driver_enabled=self.inputs.driver_enabled,
         )
+        # 驱动模式的目标表必须与配置生成的 DUT 目标点逐点一致（4.4）。这里与
+        # 服务构造期使用同一个纯校验入口，数量、顺序、频率或功率不一致都在任何
+        # 仪器动作之前失败，而不是扫到某个频点才发现目标表不完整。
+        require_driver_target_grid(self.inputs, self.driver_mapping)
         self.sleep_fn = sleep_fn or time.sleep
         self._token = request.cancellation_token or CancellationToken()
         self._service = AmplifierMeasurementService(
@@ -216,8 +221,12 @@ class AmplifierMeasurementUseCase:
         当前运行目录是唯一输入来源：通过
         :meth:`RunStageRecorder.verified_result_path` 强制校验
         ``inputs/cable_loss.json`` 已完成且校验值一致，绝不回退到全局兼容结果或
-        按时间扫描的“最新结果”读取。
+        按时间扫描的“最新结果”读取。组合入口已在预检时读取并交出同一份对象时直接
+        复用，避免同一运行文件被读取两次。
         """
+        preloaded = self.request.calibration_inputs
+        if preloaded is not None:
+            return preloaded.loss_data
         return self._read_run_input(STAGE_CABLE_LOSS)
 
     def _load_driver_mapping(self) -> DriverMappingInput | None:
@@ -226,9 +235,15 @@ class AmplifierMeasurementUseCase:
         驱动模式关闭时不要求映射文件存在，直接返回 ``None``；启用时强制校验
         ``inputs/driver_mapping.json`` 已完成且校验值一致，并收敛为带目标网格的
         正式输入对象。返回类型不是裸映射，避免下游把原始曲线误当成目标输入表。
+
+        组合入口在连接仪器前已完成同一份读取与结构校验时直接复用该对象，正式测量
+        消费的就正是入口校验过的目标表，不会因两次读取之间文件变化而漂移。
         """
         if not self._driver_mode_enabled():
             return None
+        preloaded = self.request.calibration_inputs
+        if preloaded is not None:
+            return preloaded.driver_mapping
         return self._read_run_input(STAGE_DRIVER_MAPPING)
 
     def _read_run_input(self, stage: str) -> Mapping[str, Any] | DriverMappingInput:

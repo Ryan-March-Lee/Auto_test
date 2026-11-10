@@ -12,7 +12,10 @@ from app.gui_runtime import (
     create_driver_mapping_measurement,
     prepare_configuration,
 )
-from application.dto import AmplifierMeasurementRequest
+from application.dto import (
+    AmplifierCalibrationInputs,
+    AmplifierMeasurementRequest,
+)
 from application.errors import ConfigurationError
 from application.inputs import ResultInputReader
 from application.measurements import (
@@ -157,7 +160,13 @@ class GuiRuntimeAssemblyTests(unittest.TestCase):
         # 只断言“端口与请求拿到同一份快照”，因此把它们替换成空动作。
         self.enterContext(patch("app.gui_runtime._ensure_run_snapshots_are_intact"))
         self.enterContext(patch("app.gui_runtime._require_stage_inputs"))
-        self.enterContext(patch("app.gui_runtime._preflight_amplifier_inputs"))
+        # 预检替身必须返回真实校准输入 DTO：正式请求会携带它交给用例复用。
+        self.enterContext(
+            patch(
+                "app.gui_runtime._preflight_amplifier_inputs",
+                return_value=AmplifierCalibrationInputs(loss_data={"cable_losses": {}}),
+            )
+        )
         # 自动归档服务要求仓储具备 read_run_json 等能力；装配测试用的替身仓储没有
         # 这些能力，也不在本用例的验证范围内。
         self.enterContext(patch("app.gui_runtime.ArchiveArtifactGenerator"))

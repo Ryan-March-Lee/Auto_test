@@ -26,6 +26,7 @@ from app.gui_runtime import (
     prepare_configuration,
 )
 from application.dto import (
+    AmplifierInputError,
     AmplifierMeasurementRequest,
     DriverMappingRawPoint,
     DriverMappingTargetPoint,
@@ -58,7 +59,9 @@ OTHER_RUN_ID = "20261022T160000Z_b2c3d4e5"
 CREATED_AT = datetime(2026, 10, 22, 15, 30, tzinfo=timezone.utc)
 
 CABLE_LOSSES = {"1.0": {"cable1": 0.0, "cable2": 0.0, "cable3": 0.0, "cable4": 0.0}}
-POWER_MAPPING = {"1.0": {"-20.0": -10.0}}
+# 目标 DUT 输入 -20 dBm 与默认 amplifier_inputs 的单点扫描计划一致；驱动映射
+# 目标表必须与配置生成的目标点逐点相同（4.4）。
+POWER_MAPPING = {"1.0": {"-20.0": -20.0}}
 
 
 def _fully_valid_gui_config(*, driver_enabled=False) -> dict:
@@ -275,6 +278,7 @@ class AmplifierRunStageTests(unittest.TestCase):
         token=None,
         repository=None,
         driver_enabled=False,
+        inputs=None,
     ):
         layout = self.repository.layout(run_id)
         instrument = instrument or _Instrument()
@@ -283,7 +287,7 @@ class AmplifierRunStageTests(unittest.TestCase):
             context=_Context(run_id),
             run_directory=layout.run_directory,
             measurement_port=instrument,
-            inputs=amplifier_inputs(driver_enabled=driver_enabled),
+            inputs=inputs or amplifier_inputs(driver_enabled=driver_enabled),
             safety_cleanup=safety_cleanup_for(instrument),
             result_repository=repository or self.result_repository,
             input_reader=ResultInputReader(self.result_repository),
@@ -386,7 +390,7 @@ class AmplifierRunStageTests(unittest.TestCase):
         # 驱动映射输入来自当前运行；正式对象携带目标网格，原始点只作审计。
         self.assertEqual(use_case.driver_mapping.raw_mapping(), POWER_MAPPING)
         self.assertEqual(
-            use_case.driver_mapping.target_mapping(), {"1.0": {-10.0: (-20.0, -10.0)}}
+            use_case.driver_mapping.target_mapping(), {"1.0": {-20.0: (-20.0, -20.0)}}
         )
 
         result = use_case.measure_all_frequencies()
@@ -396,11 +400,75 @@ class AmplifierRunStageTests(unittest.TestCase):
         self.assertEqual(instrument.powers, [-40, -20.0])
         frequency = result.frequencies[0]
         self.assertEqual(frequency.sweep_data["sg_power"], (-20.0,))
-        self.assertEqual(frequency.sweep_data["input_power_dut"], (-10.0,))
+        self.assertEqual(frequency.sweep_data["input_power_dut"], (-20.0,))
         manifest = self.repository.load_manifest(RUN_ID)
         self.assertEqual(manifest.stage(STAGE_DRIVER_MAPPING).status, StageStatus.COMPLETED)
         self.assertEqual(manifest.stage(STAGE_AMPLIFIER).status, StageStatus.COMPLETED)
         self.assertEqual(manifest.status, RunStatus.COMPLETED)
+
+    def test_driver_mode_rejects_mapping_with_wrong_target_power_before_hardware(self):
+        """步骤 4.4：目标表功率与配置生成的 DUT 目标点不同时不得开始扫描。"""
+
+        self._create_run()
+        self._complete_cable_loss()
+        self._complete_driver_mapping(mapping={"1.0": {"-20.0": -10.0}})
+        instrument = _Instrument()
+
+        with self.assertRaisesRegex(AmplifierInputError, "目标点|不一致"):
+            AmplifierMeasurementUseCase(
+                self._request(instrument=instrument, driver_enabled=True),
+                sleep_fn=lambda _: None,
+            )
+
+        self.assertEqual(instrument.measured, 0)
+        self.assertFalse((self._run_directory() / AMPLIFIER_RESULT_PATH).exists())
+
+    def test_driver_mode_rejects_mapping_with_missing_target_points(self):
+        """步骤 4.4：目标表缺点时不能把部分映射当作完整网格。"""
+
+        self._create_run()
+        self._complete_cable_loss()
+        self._complete_driver_mapping(mapping={"1.0": {"-20.0": -20.0}})
+        instrument = _Instrument()
+        inputs = amplifier_inputs(
+            driver_enabled=True,
+            start_power_dbm=-21.0,
+            stop_power_dbm=-20.0,
+            step_db=1.0,
+        )
+
+        with self.assertRaisesRegex(AmplifierInputError, "数量|缺少|完整覆盖"):
+            AmplifierMeasurementUseCase(
+                self._request(instrument=instrument, driver_enabled=True, inputs=inputs),
+                sleep_fn=lambda _: None,
+            )
+
+        self.assertEqual(instrument.measured, 0)
+
+    def test_driver_mode_rejects_mapping_with_out_of_order_targets(self):
+        """步骤 4.4：顺序不同的目标表不静默排序，必须拒绝。"""
+
+        self._create_run()
+        self._complete_cable_loss()
+        # 目标表按 -20 → -21 写入，而配置生成的目标点顺序是 -21 → -20。
+        self._complete_driver_mapping(
+            mapping={"1.0": {"-20.0": -20.0, "-21.0": -21.0}}
+        )
+        instrument = _Instrument()
+        inputs = amplifier_inputs(
+            driver_enabled=True,
+            start_power_dbm=-21.0,
+            stop_power_dbm=-20.0,
+            step_db=1.0,
+        )
+
+        with self.assertRaisesRegex(AmplifierInputError, "第 1 个目标点|不一致"):
+            AmplifierMeasurementUseCase(
+                self._request(instrument=instrument, driver_enabled=True, inputs=inputs),
+                sleep_fn=lambda _: None,
+            )
+
+        self.assertEqual(instrument.measured, 0)
 
     def test_disabled_driver_mode_marks_mapping_stage_skipped(self):
         self._create_run()
@@ -741,6 +809,59 @@ class AmplifierRunStageTests(unittest.TestCase):
         with patch("app.gui_runtime.connect_instruments") as connect:
             with self.assertRaises(StageInputUnavailable):
                 create_amplifier_measurement(prepared_run=prepared)
+
+        connect.assert_not_called()
+
+    def test_composition_hands_preflighted_calibration_inputs_to_the_use_case(self):
+        """步骤 4.4：入口预检与正式测量消费同一份线损/驱动映射对象。"""
+
+        config_path = self.base / "config.json"
+        config_path.write_text(
+            json.dumps(_fully_valid_gui_config(driver_enabled=True)), encoding="utf-8"
+        )
+        prepared = prepare_configuration(
+            str(config_path),
+            run_id=RUN_ID,
+            run_repository=self.repository,
+        )
+        self._complete_cable_loss()
+        self._complete_driver_mapping()
+
+        with patch("app.gui_runtime.connect_instruments", return_value=_Instrument()):
+            use_case = create_amplifier_measurement(
+                prepared_run=prepared,
+                result_repository=self.result_repository,
+                sleep_fn=lambda _: None,
+            )
+
+        calibration_inputs = use_case.request.calibration_inputs
+        self.assertIsNotNone(calibration_inputs)
+        self.assertIs(use_case.driver_mapping, calibration_inputs.driver_mapping)
+        self.assertIs(use_case.loss_data, calibration_inputs.loss_data)
+        self.assertEqual(use_case.driver_mapping.raw_mapping(), POWER_MAPPING)
+
+    def test_composition_rejects_inconsistent_driver_target_grid_before_connecting(self):
+        """步骤 4.4：目标表与配置网格不一致时，组合入口在连接仪器前失败。"""
+
+        config_path = self.base / "config.json"
+        config_path.write_text(
+            json.dumps(_fully_valid_gui_config(driver_enabled=True)), encoding="utf-8"
+        )
+        prepared = prepare_configuration(
+            str(config_path),
+            run_id=RUN_ID,
+            run_repository=self.repository,
+        )
+        self._complete_cable_loss()
+        # 目标 -10 dBm 与配置的 -20 dBm 单点扫描不一致：旧目标表不得进入硬件。
+        self._complete_driver_mapping(mapping={"1.0": {"-20.0": -10.0}})
+
+        with patch("app.gui_runtime.connect_instruments") as connect:
+            with self.assertRaises(AmplifierInputError):
+                create_amplifier_measurement(
+                    prepared_run=prepared,
+                    result_repository=self.result_repository,
+                )
 
         connect.assert_not_called()
 

@@ -31,6 +31,7 @@ from application.measurements import (
     DriverPowerMappingUseCase,
     validate_amplifier_calibration_inputs,
 )
+from application.measurements.driver_target_grid import require_driver_target_grid
 from application.run_service import (
     RunNotResumable,
     ensure_run_repository_supports_run_contract,
@@ -41,6 +42,7 @@ from application.run_service import (
 from domain.configuration.models import require_current_schema_version
 from app.events import MessageEvent, ProgressEvent, RealtimeDataEvent
 from application.dto import (
+    AmplifierCalibrationInputs,
     AmplifierMeasurementInputs,
     AmplifierMeasurementRequest,
     CableLossMeasurementRequest,
@@ -246,11 +248,17 @@ def _test_frequencies(prepared_run: PreparedRun) -> tuple[Any, ...]:
     return tuple(getattr(plan, "frequencies", ()) or ())
 
 
-def _preflight_amplifier_inputs(prepared_run: PreparedRun, input_reader: Any) -> None:
+def _preflight_amplifier_inputs(
+    prepared_run: PreparedRun, input_reader: Any
+) -> AmplifierCalibrationInputs:
     """在连接仪器前读取并校验主功放的当前运行校准输入。
 
     只从当前运行目录读取已校验的线损与（按需）驱动映射，再做结构校验，因此结构
     无效的输入会在打开仪器或执行任何 RF 动作前失败。
+
+    返回本次读取到的校准输入：调用方在构造正式输入后继续用它校验目标表与 DUT
+    功率扫描计划是否逐点一致，并把同一个对象交给用例，正式测量因此不会重复读取
+    同一份运行文件，也不会消费与预检不同的对象。
     """
     recorder = _stage_recorder(prepared_run)
     loss_data = input_reader.read_cable_loss(recorder.verified_result_path(STAGE_CABLE_LOSS))
@@ -265,6 +273,10 @@ def _preflight_amplifier_inputs(prepared_run: PreparedRun, input_reader: Any) ->
         driver_mapping,
         frequencies=_test_frequencies(prepared_run),
         driver_enabled=driver_enabled,
+    )
+    return AmplifierCalibrationInputs(
+        loss_data=loss_data,
+        driver_mapping=driver_mapping,
     )
 
 
@@ -465,13 +477,17 @@ def create_amplifier_measurement(*, prepared_run: PreparedRun, **callbacks: Any)
         # 驱动模式启用时才需要驱动映射。输入只从当前运行目录读取并做结构校验，因此
         # 结构无效或配置漂移都在打开仪器或执行任何 RF 动作前失败。随后按领域/硬件
         # 两套职责分别校验冻结快照。
-        _preflight_amplifier_inputs(prepared_run, input_reader)
+        calibration_inputs = _preflight_amplifier_inputs(prepared_run, input_reader)
         _ensure_run_snapshots_are_intact(prepared_run)
         # 正式输入模型在应用边界构造（技术债步骤 8）：非法配置在打开任何仪器之前
         # 收敛为 AmplifierInputError；用例与服务只消费这一个类型化对象。
         inputs = AmplifierMeasurementInputs.from_run_configuration(
             prepared_run.configuration
         )
+        # 驱动模式的目标表必须与配置生成的目标 DUT 点逐点一致（4.4）；在这里校验
+        # 可以把“缺点/重复点/旧单计划目标表”挡在连接仪器之前，而不是等用例或扫描
+        # 中途才发现。未启用驱动模式时该校验直接返回空网格。
+        require_driver_target_grid(inputs, calibration_inputs.driver_mapping)
         if owned_port:
             callbacks["measurement_port"] = connect_instruments(prepared_run)
         callbacks["owns_measurement_port"] = owned_port
@@ -479,7 +495,10 @@ def create_amplifier_measurement(*, prepared_run: PreparedRun, **callbacks: Any)
         callbacks["input_reader"] = input_reader
         callbacks.setdefault("event_sink", _CallbackEventSink(callbacks))
         request = AmplifierMeasurementRequest(
-            **_request_kwargs(prepared_run, callbacks), inputs=inputs
+            **_request_kwargs(prepared_run, callbacks),
+            inputs=inputs,
+            # 预检已经读取并校验过同一份校准输入；用例直接复用，不再二次读取。
+            calibration_inputs=calibration_inputs,
         )
         return AmplifierMeasurementUseCase(request, sleep_fn=callbacks.get("sleep_fn"))
     except Exception:

@@ -5,7 +5,11 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.cancellation import CancellationToken, MeasurementCancelled
-from application.dto import AmplifierMeasurementInputs, AmplifierMeasurementRequest
+from application.dto import (
+    AmplifierCalibrationInputs,
+    AmplifierMeasurementInputs,
+    AmplifierMeasurementRequest,
+)
 from application.measurements import AmplifierMeasurementUseCase
 from application.measurements.amplifier_test import AMPLIFIER_RESULT_PATH
 from domain.configuration.models import (
@@ -181,6 +185,27 @@ class AmplifierMeasurementUseCaseTests(unittest.TestCase):
             ),
             attenuator_value=Decibels.parse("10dB"),
         )
+
+    def test_preloaded_calibration_inputs_are_reused_without_reading_the_run(self):
+        """组合入口预检过的校准输入随请求复用，不再二次读取运行目录。"""
+
+        class _UnreadableReader:
+            def read_cable_loss(self, path):
+                raise AssertionError(f"不应再次读取线损: {path}")
+
+            def read_driver_mapping(self, path):
+                raise AssertionError(f"不应再次读取驱动映射: {path}")
+
+        loss_data = {"cable_losses": CABLE_LOSSES}
+        request = replace(
+            _request(_Instrument(), reader=_UnreadableReader()),
+            calibration_inputs=AmplifierCalibrationInputs(loss_data=loss_data),
+        )
+
+        use_case = AmplifierMeasurementUseCase(request, sleep_fn=lambda _: None)
+
+        self.assertIs(use_case.loss_data, loss_data)
+        self.assertIsNone(use_case.driver_mapping)
 
     def test_completes_and_saves_structured_result(self):
         instrument = _Instrument()

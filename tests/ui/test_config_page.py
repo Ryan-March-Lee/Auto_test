@@ -147,6 +147,134 @@ class ConfigurationPageTests(unittest.TestCase):
             [row.number() for row in page.power_scan_plan_rows], [1, 2]
         )
 
+    def test_power_scan_preview_updates_when_a_plan_field_changes(self):
+        """步骤 3.3：改起始/步长/终止后，灰色点位预览立即按新值重算。"""
+        page = self.make_page()
+        row = page.power_scan_plan_rows[0]
+
+        row.set_values(-38.0, 1.0, -10.0)
+        self.assertIn("共 29 点", row.preview.text())
+
+        row.step.setValue(2.0)
+        self.assertIn("共 15 点", row.preview.text())
+
+        row.stop_power.setValue(-9.0)
+        self.assertIn("共 16 点", row.preview.text())
+
+    def test_power_scan_preview_applies_the_dut_max_input_limit(self):
+        page = self.make_page()
+        page.max_input_power.setValue(3.0)
+        row = page.power_scan_plan_rows[0]
+        row.set_values(-38.0, 1.0, 10.0)
+
+        self.assertIn("受 DUT 最大输入 3 dBm 限制", row.preview.text())
+        self.assertIn("止于 3 dBm", row.preview.text())
+        self.assertIn("42 个目标点", page.power_scan_summary.text())
+        self.assertIn("受 DUT 最大输入 3 dBm 截断", page.power_scan_summary.text())
+
+    def test_power_scan_summary_counts_the_merged_grid_once(self):
+        page = self.make_page()
+        first = page.power_scan_plan_rows[0]
+        first.set_values(-38.0, 1.0, -10.0)
+        second = page.add_power_scan_plan()
+        second.set_values(-10.0, 0.25, -2.0)
+
+        # 两段共享 -10 dBm，合并后只算一个目标点：29 + 33 - 1。
+        self.assertIn("共 61 个目标点", page.power_scan_summary.text())
+        self.assertIn("共 29 点", first.preview.text())
+        self.assertIn("共 33 点", second.preview.text())
+        self.assertIn("-38", page.power_scan_summary.text())
+        self.assertIn("-2 dBm", page.power_scan_summary.text())
+
+    def test_plan_gap_is_shown_on_the_next_row_and_blocks_saving(self):
+        """空档标在后一段并汇总进 validation_failed；保存与运行入口都被阻止。"""
+        page = self.make_page()
+        first = page.power_scan_plan_rows[0]
+        first.set_values(-38.0, 1.0, -10.0)
+        second = page.add_power_scan_plan()
+        second.set_values(-9.0, 0.25, -2.0)
+
+        self.assertIn("空档", second.preview.text())
+        self.assertIn("第 1 段", second.preview.text())
+        self.assertIn("第 2 段", second.preview.text())
+        self.assertEqual(second.preview.property("tone"), "warning")
+        self.assertIn("1 个问题", page.power_scan_summary.text())
+
+        failures = []
+        saves = []
+        finalizes = []
+        page.validation_failed.connect(failures.append)
+        page.save_requested.connect(lambda: saves.append(True))
+        page.finalize_run_requested.connect(lambda: finalizes.append(True))
+
+        page.request_save()
+        page.request_finalize_run()
+
+        self.assertEqual(saves, [])
+        self.assertEqual(finalizes, [])
+        self.assertIn("空档", "；".join(failures))
+
+    def test_plan_overlap_is_shown_on_the_next_row(self):
+        page = self.make_page()
+        page.power_scan_plan_rows[0].set_values(-38.0, 1.0, -10.0)
+        second = page.add_power_scan_plan()
+        second.set_values(-11.0, 0.25, -2.0)
+
+        self.assertIn("重叠", second.preview.text())
+        self.assertIn("第 1 段", second.preview.text())
+        self.assertIn("第 2 段", second.preview.text())
+
+    def test_invalid_plan_replaces_the_old_preview_with_the_error(self):
+        page = self.make_page()
+        row = page.power_scan_plan_rows[0]
+        row.set_values(-38.0, 1.0, -10.0)
+        self.assertIn("共 29 点", row.preview.text())
+
+        row.set_values(-5.0, 1.0, -10.0)
+
+        self.assertIn("起始功率不能大于终止功率", row.preview.text())
+        self.assertNotIn("共 ", row.preview.text())
+        self.assertEqual(row.preview.property("tone"), "warning")
+
+    def test_long_plan_preview_keeps_the_full_point_list_in_the_tooltip(self):
+        page = self.make_page()
+        row = page.power_scan_plan_rows[0]
+        row.set_values(-38.0, 0.1, -10.0)
+
+        self.assertIn("共 281 点", row.preview.text())
+        self.assertIn("…", row.preview.text())
+        self.assertIn("共 281 点", row.preview.toolTip())
+        self.assertGreater(
+            row.preview.toolTip().count("，"), row.preview.text().count("，")
+        )
+
+    def test_plan_preview_follows_backfill_and_row_removal(self):
+        page = self.make_page()
+        page.power_scan_plan_rows[0].set_values(-38.0, 1.0, -10.0)
+        second = page.add_power_scan_plan()
+        second.set_values(-10.0, 0.25, -2.0)
+
+        page.apply_config(
+            {
+                "test_frequencies": [1.0],
+                "signal_source": {
+                    "power_scan_plans": [
+                        {"start_power": -20.0, "step": 0.5, "stop_power": -5.0}
+                    ]
+                },
+            }
+        )
+
+        self.assertEqual(len(page.power_scan_plan_rows), 1)
+        self.assertIn("共 31 点", page.power_scan_plan_rows[0].preview.text())
+        self.assertIn("共 31 个目标点", page.power_scan_summary.text())
+
+        page.add_power_scan_plan()
+        self.assertEqual(len(page.power_scan_plan_rows), 2)
+        page.remove_power_scan_plan(page.power_scan_plan_rows[1])
+
+        self.assertIn("共 31 点", page.power_scan_plan_rows[0].preview.text())
+
     def test_apply_config_restores_plans_in_order(self):
         page = self.make_page()
         plans = [
@@ -276,6 +404,11 @@ class ConfigurationPageTests(unittest.TestCase):
 
         self.assertIn("第 2 段", page.power_scan_import_error)
         self.assertTrue(page.rebuild_power_scan_plan_btn.isVisibleTo(page))
+        # 可见行只是一个不完整的近似：汇总不能让人以为目标序列已经确定。
+        self.assertIn("计划未完整读取", page.power_scan_summary.text())
+        self.assertIn("只按当前可见行估算", page.power_scan_summary.text())
+        self.assertEqual(page.power_scan_summary.property("tone"), "warning")
+        self.assertIn("第 2 段", page.power_scan_summary.toolTip())
         self.assertTrue(
             any(
                 "第 2 段" in message
@@ -304,6 +437,10 @@ class ConfigurationPageTests(unittest.TestCase):
 
         self.assertIsNone(page.power_scan_import_error)
         self.assertFalse(page.rebuild_power_scan_plan_btn.isVisibleTo(page))
+        # 结构错误解除后，可见行就是完整计划：汇总回到正常的点位数说明。
+        self.assertNotIn("计划未完整读取", page.power_scan_summary.text())
+        self.assertIn("个目标点", page.power_scan_summary.text())
+        self.assertEqual(page.power_scan_summary.property("tone"), "muted")
         self.assertEqual(
             page.build_config()["signal_source"]["power_scan_plans"],
             [{"start_power": -38.0, "step": 1.0, "stop_power": -10.0}],

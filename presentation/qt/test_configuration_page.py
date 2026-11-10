@@ -42,6 +42,12 @@
 增益 (dB)”是测试配置里的单一全局值，只在启用驱动模式时可用。页面不做功率反算或
 增益推算，数值合法性由配置 DTO 校验；驱动关闭时保留已填写的增益，但不作为运行
 必填项。
+
+DUT 功率扫描计划按行编辑：每行由 :mod:`presentation.qt.power_sweep_plan_row` 提供
+“起始/步长/终止”三个输入框，页面持有行列表、编号与增删规则。行内灰色点位预览和
+汇总标签只负责显示：点位生成、相邻计划衔接判断与 DUT 上限都经
+:mod:`presentation.qt.power_scan_preview` 调用 ``application.dto`` 的共享入口，页面
+不另写一套步长或连续性算法，也不为修复空档/重叠而改写用户输入。
 """
 
 import copy
@@ -97,6 +103,7 @@ from .frequency_sweep import (
 )
 from .instrument_discovery_panel import role_label
 from .pages import PageControllerBindingMixin
+from .power_scan_preview import preview_power_scan_plans
 from .power_sweep_plan_row import PowerSweepPlanRow
 from .theme import PAGE_CONTENT_MAX_WIDTH, set_button_variant, set_tone
 
@@ -435,14 +442,27 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         self.power_scan_plan_layout.setSpacing(6)
         form.addWidget(self.power_scan_plan_container, row + 1, 0, 1, 4)
 
+        # 汇总把“多段是否真的首尾相接”变成可见数字：合并后的目标点总数与首尾范围；
+        # 有点位问题时就地显示问题数，完整原因同时放在 tooltip 里。
+        self.power_scan_summary = QLabel()
+        self.power_scan_summary.setObjectName("powerScanPlanSummary")
+        self.power_scan_summary.setProperty("role", "note")
+        self.power_scan_summary.setWordWrap(True)
+        self.power_scan_summary.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        form.addWidget(self.power_scan_summary, row + 2, 0, 1, 4)
+
         self.apply_power_scan_plans(signal_source)
-        return row + 2
+        return row + 3
 
     def apply_power_scan_plans(self, signal_source) -> str | None:
-        """把配置里的扫描段重建为行；返回结构错误，供回填投影写入页面状态。"""
+        """把配置里的扫描段重建为行；返回结构错误，供回填投影写入页面状态。
+
+        结构错误先写进页面状态再重建行：预览汇总要用它判断“当前可见行是否就是配置里
+        的全部计划”，否则回填后的第一次刷新会按上一份配置的错误结论排版。
+        """
         plans, error = self._power_scan_plan_values(signal_source)
-        self._replace_power_scan_plan_rows(plans)
         self.power_scan_import_error = error
+        self._replace_power_scan_plan_rows(plans)
         self._sync_power_scan_plan_actions()
         return error
 
@@ -455,6 +475,7 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         """
         self.power_scan_import_error = None
         self._sync_power_scan_plan_actions()
+        self._refresh_power_scan_previews()
 
     def _sync_power_scan_plan_actions(self) -> None:
         """结构错误存在时显示“重建计划”，正常编辑时不打扰用户。"""
@@ -496,6 +517,7 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
             parent=self.power_scan_plan_container,
         )
         row.remove_requested.connect(self.remove_power_scan_plan)
+        row.values_changed.connect(self._refresh_power_scan_previews)
         self.power_scan_plan_layout.addWidget(row)
         self.power_scan_plan_rows.append(row)
         return row
@@ -511,11 +533,50 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         self._refresh_power_scan_plan_rows()
 
     def _refresh_power_scan_plan_rows(self) -> None:
-        """刷新编号；只剩一行时禁用删除，保证列表至少保留一段。"""
+        """刷新编号与预览；只剩一行时禁用删除，保证列表至少保留一段。"""
         removable = len(self.power_scan_plan_rows) > 1
         for number, row in enumerate(self.power_scan_plan_rows, 1):
             row.set_number(number)
             row.delete_button.setEnabled(removable)
+        self._refresh_power_scan_previews()
+
+    def _refresh_power_scan_previews(self) -> None:
+        """按当前行读数刷新每段点位文本与汇总；只改显示，不改用户输入。
+
+        点位生成与相邻计划校验都走 :mod:`presentation.qt.power_scan_preview` 背后的
+        ``application.dto`` 共享入口，页面不再实现第二套步长/连续性算法。输入暂时
+        非法时行内显示具体错误（不保留旧预览），保存是否被阻止仍由 :meth:`validate`
+        汇总的正式校验决定。
+
+        结构导入错误存在时，可见行不一定是配置里的全部计划，汇总必须说明点数只是
+        按可见行估算；否则用户会以为一份读不全的计划已经有确定的目标序列。
+        """
+        preview = preview_power_scan_plans(
+            (row.values() for row in self.power_scan_plan_rows),
+            self.max_input_power.value(),
+        )
+        for row, row_preview in zip(self.power_scan_plan_rows, preview.rows):
+            row.set_preview(
+                row_preview.text,
+                tone=row_preview.tone,
+                tooltip=row_preview.tooltip,
+            )
+        if self.power_scan_import_error:
+            summary_text = (
+                f"{preview.summary}；计划未完整读取，预览只按当前可见行估算"
+            )
+            summary_tooltip = (
+                f"{self.power_scan_import_error}\n\n{preview.summary_tooltip}"
+            )
+            summary_tone = "warning"
+        else:
+            summary_text = preview.summary
+            summary_tooltip = preview.summary_tooltip
+            summary_tone = preview.summary_tone
+        self.power_scan_summary.setText(summary_text)
+        self.power_scan_summary.setToolTip(summary_tooltip)
+        if self.power_scan_summary.property("tone") != summary_tone:
+            set_tone(self.power_scan_summary, summary_tone)
 
     #: 单行兼容读数：仍指向第一段计划，供尚未迁移到行列表的调用方与测试使用。
     @property
@@ -653,6 +714,7 @@ class TestConfigurationPage(PageControllerBindingMixin, QWidget):
         self.previous_step_btn.clicked.connect(self.connection_step_requested.emit)
         self.add_power_scan_plan_btn.clicked.connect(self.add_power_scan_plan)
         self.rebuild_power_scan_plan_btn.clicked.connect(self.rebuild_power_scan_plans)
+        self.max_input_power.valueChanged.connect(self._refresh_power_scan_previews)
         for widget in (self.freq_start, self.freq_stop, self.freq_step):
             widget.valueChanged.connect(self._on_frequency_changed)
         self.freq_extra.textChanged.connect(self._on_frequency_changed)

@@ -775,6 +775,8 @@ def _as_power_scan_schedule(scan: Any) -> PowerScanSchedule:
 
 def validate_power_scan_schedule(
     scan: PowerScanSchedule | PowerSweep,
+    *,
+    first_plan_number: int = 1,
 ) -> PowerScanSchedule:
     """校验相邻计划首尾相接，并把合法计划原样返回（纯计算）。
 
@@ -787,25 +789,42 @@ def validate_power_scan_schedule(
     - 只按用户填写顺序比较相邻两项，不排序、不修补，因此错误里的编号就是配置里的
       计划行号。
 
+    ``first_plan_number`` 只影响错误文案里的编号：调用方只把相邻两项交给本函数校验
+    时（例如页面逐行预览），传入后一项在完整列表里的 1 基编号，错误仍指向真实的
+    计划行，不需要自己改写共享校验的文案。
+
     错误信息同时给出两段编号和两个功率值，便于映射到
     ``signal_source.power_scan_plans[N]``。单段计划没有相邻关系，直接通过。
     """
+    if not isinstance(first_plan_number, int) or isinstance(
+        first_plan_number, bool
+    ):
+        raise AmplifierInputError(
+            "first_plan_number 必须是整数，"
+            f"收到 {type(first_plan_number).__name__}"
+        )
+    if first_plan_number < 1:
+        raise AmplifierInputError(
+            f"first_plan_number 必须从 1 开始，收到 {first_plan_number}"
+        )
     schedule = _as_power_scan_schedule(scan)
     plans = schedule.plans
     for index in range(len(plans) - 1):
         previous_stop = plans[index].stop.dbm
         following_start = plans[index + 1].start.dbm
+        previous_number = first_plan_number + index
+        following_number = previous_number + 1
         tolerance = _boundary_tolerance(previous_stop, following_start)
         if following_start > previous_stop + tolerance:
             raise AmplifierInputError(
-                f"第 {index + 1} 段终止功率 {previous_stop}dBm 与 "
-                f"第 {index + 2} 段起始功率 {following_start}dBm 之间存在空档："
+                f"第 {previous_number} 段终止功率 {previous_stop}dBm 与 "
+                f"第 {following_number} 段起始功率 {following_start}dBm 之间存在空档："
                 "相邻计划必须首尾相接"
             )
         if following_start < previous_stop - tolerance:
             raise AmplifierInputError(
-                f"第 {index + 1} 段终止功率 {previous_stop}dBm 与 "
-                f"第 {index + 2} 段起始功率 {following_start}dBm 重叠："
+                f"第 {previous_number} 段终止功率 {previous_stop}dBm 与 "
+                f"第 {following_number} 段起始功率 {following_start}dBm 重叠："
                 "只允许相邻计划共享一个边界点"
             )
     return schedule

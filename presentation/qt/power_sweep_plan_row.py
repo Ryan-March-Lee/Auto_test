@@ -130,11 +130,19 @@ class PowerSweepPlanRow(QWidget):
         if self.values() != before:
             self.values_changed.emit()
 
-    def set_preview(self, text: str, *, tone: str = "muted") -> None:
-        """设置灰色预览文本；``tone`` 只改变语义色，不解释文本内容。"""
+    def set_preview(
+        self, text: str, *, tone: str = "muted", tooltip: str | None = None
+    ) -> None:
+        """设置灰色预览文本；``tone`` 只改变语义色，不解释文本内容。
+
+        ``tooltip`` 用于放完整点列：行内文本对长列表只保留首尾和总数，悬停仍能看到
+        全部目标点。``None`` 表示本次不改变 tooltip（旧调用点只关心文本与语义色）。
+        """
         self.preview.setText(text)
         if self.preview.property("tone") != tone:
             set_tone(self.preview, tone)
+        if tooltip is not None and self.preview.toolTip() != tooltip:
+            self.preview.setToolTip(tooltip)
 
     def _on_value_changed(self, *_args) -> None:
         self.values_changed.emit()

@@ -197,6 +197,29 @@ class PlanContinuityTests(unittest.TestCase):
         self.assertIn("第 1 段终止功率 0.0dBm", message)
         self.assertIn("第 2 段起始功率 -20.0dBm", message)
 
+    def test_error_numbers_can_follow_the_full_list_when_only_a_pair_is_checked(self):
+        """页面逐对校验相邻计划时，编号仍指向完整列表里的真实行。"""
+        schedule = PowerScanSchedule(
+            plans=(_sweep(-20.0, -10.0), _sweep(-8.0, 0.0))
+        )
+
+        with self.assertRaises(AmplifierInputError) as raised:
+            validate_power_scan_schedule(schedule, first_plan_number=2)
+
+        message = str(raised.exception)
+        self.assertIn("第 2 段终止功率 -10.0dBm", message)
+        self.assertIn("第 3 段起始功率 -8.0dBm", message)
+
+    def test_an_invalid_plan_number_offset_is_rejected(self):
+        schedule = PowerScanSchedule(plans=(_sweep(-20.0, -10.0),))
+
+        for value in (0, -1, True, "2"):
+            with self.subTest(value=value):
+                with self.assertRaises(AmplifierInputError):
+                    validate_power_scan_schedule(
+                        schedule, first_plan_number=value
+                    )
+
     def test_floating_point_noise_at_the_boundary_is_tolerated(self):
         noisy_start = -10.0 + 1e-13
         schedule = PowerScanSchedule(

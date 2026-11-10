@@ -259,17 +259,36 @@ class ConfigurationFormAdapterReadTests(unittest.TestCase):
         )
 
     def test_document_writes_only_the_plan_list_not_the_legacy_scalars(self):
-        """1.2 保存来源只有 ``power_scan_plans``：不再同时写旧的三个标量字段。"""
-        page = _page(power_scan_plans=[(-38.0, 1.0, -10.0)])
+        """1.2 保存来源只有 ``power_scan_plans``：基线里的旧标量不会被带回。"""
+        page = _page(
+            {
+                "signal_source": {
+                    "power_scan_plans": [
+                        {"start_power": -20.0, "step": 0.5, "stop_power": -5.0}
+                    ],
+                    "start_power": -20.0,
+                    "step": 0.5,
+                    "stop_power": -5.0,
+                    "power_reference": "dut_input",
+                }
+            },
+            power_scan_plans=[(-38.0, 1.0, -10.0)],
+        )
         adapter = ConfigurationFormAdapter(page)
 
         signal_source = adapter.read_form().document["signal_source"]
 
         self.assertEqual(
             set(signal_source),
-            {"power_scan_plans"},
+            {"power_scan_plans", "power_reference"},
             "保存文档不能同时出现列表与旧标量两个来源",
         )
+        self.assertEqual(
+            signal_source["power_scan_plans"],
+            [{"start_power": -38.0, "step": 1.0, "stop_power": -10.0}],
+            "保存必须以当前行读数为准，不能回退到基线里的旧计划",
+        )
+        self.assertEqual(signal_source["power_reference"], "dut_input")
 
     def test_empty_plan_rows_stay_empty_in_both_readings(self):
         """页面已清空计划时如实读空：文档与类型化快照都不回退到旧计划。"""

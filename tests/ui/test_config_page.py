@@ -39,6 +39,15 @@ class ConfigurationPageTests(unittest.TestCase):
         self.app.processEvents()
         return page
 
+    def _live_plan_rows(self):
+        """投递挂起的删除后，返回应用里仍存活的计划行；脱离父对象的孤立行也计入。"""
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+        return [
+            widget
+            for widget in QApplication.allWidgets()
+            if isinstance(widget, PowerSweepPlanRow)
+        ]
+
     def test_a_read_only_document_blocks_editing_and_saving(self):
         """1.0 编辑文档只读：提示可见、参数与保存入口禁用，回退入口保持可用。"""
         page = self.make_page()
@@ -123,7 +132,22 @@ class ConfigurationPageTests(unittest.TestCase):
         third = page.add_power_scan_plan()
         third.set_values(-2.0, 0.1, 0.0)
 
+        # 删除不只是从列表里摘掉：C++ 对象必须真正销毁，否则每次增删都会留下孤立行。
+        removed_destroyed = []
+        kept_destroyed = []
+        second.destroyed.connect(lambda *_: removed_destroyed.append(True))
+        first.destroyed.connect(lambda *_: kept_destroyed.append(True))
+        third.destroyed.connect(lambda *_: kept_destroyed.append(True))
+
         self.assertTrue(page.remove_power_scan_plan(second))
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+
+        self.assertEqual(removed_destroyed, [True], "被删除的计划行没有被销毁")
+        self.assertEqual(kept_destroyed, [], "保留的计划行不能被连带销毁")
+        self.assertEqual(
+            page.power_scan_plan_container.findChildren(PowerSweepPlanRow),
+            page.power_scan_plan_rows,
+        )
 
         self.assertEqual(
             [row.values() for row in page.power_scan_plan_rows],
@@ -148,47 +172,65 @@ class ConfigurationPageTests(unittest.TestCase):
             [row.number() for row in page.power_scan_plan_rows], [1, 2]
         )
 
-    def test_rebuilding_plans_destroys_the_previous_rows(self):
-        """整组回填后旧行被销毁：页面里不会累积上一次配置的动态控件。"""
+    def test_repeated_backfill_leaves_only_the_current_plan_rows(self):
+        """连续整组回填只留下当前行：中间默认行与脱离父对象的旧行都必须销毁。"""
         page = self.make_page()
         page.power_scan_plan_rows[0].set_values(-38.0, 1.0, -10.0)
-        page.add_power_scan_plan()
-        page.add_power_scan_plan()
-        stale_names = set()
-        for index, row in enumerate(page.power_scan_plan_rows, 1):
-            name = f"stalePowerScanPlanRow{index}"
-            row.setObjectName(name)
-            stale_names.add(name)
+        page.add_power_scan_plan().set_values(-10.0, 0.25, -2.0)
+        old_rows = list(page.power_scan_plan_rows)
+        destroyed = []
+        for row in old_rows:
+            row.destroyed.connect(lambda *_: destroyed.append(True))
+        # 只比较计划行类型相对基线的差集，不假设整个应用里没有其它控件的残留。
+        others = len(self._live_plan_rows()) - len(page.power_scan_plan_rows)
 
-        page.apply_config(
-            {
-                "test_frequencies": [1.0],
-                "signal_source": {
-                    "power_scan_plans": [
-                        {"start_power": -20.0, "step": 0.5, "stop_power": -5.0}
-                    ]
-                },
-            }
-        )
-        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+        for plans in (
+            [
+                {"start_power": -38.0, "step": 1.0, "stop_power": -10.0},
+                {"start_power": -10.0, "step": 0.5, "stop_power": -2.0},
+                {"start_power": -2.0, "step": 0.25, "stop_power": 0.0},
+            ],
+            [
+                {"start_power": -20.0, "step": 0.5, "stop_power": -5.0},
+                {"start_power": -5.0, "step": 0.5, "stop_power": 0.0},
+            ],
+            [{"start_power": -20.0, "step": 0.5, "stop_power": -5.0}],
+        ):
+            page.apply_config(
+                {"test_frequencies": [1.0], "signal_source": {"power_scan_plans": plans}}
+            )
 
-        self.assertFalse(
-            stale_names
-            & {widget.objectName() for widget in QApplication.allWidgets()},
-            "回填后旧计划行仍留在应用控件树里",
-        )
+            # 回填内部会先建默认行再整组替换：只检查最终存活行数能同时发现
+            # 中间行残留和 setParent(None) 之后的孤立行。
+            self.assertEqual(
+                len(self._live_plan_rows()),
+                others + len(page.power_scan_plan_rows),
+                "回填后仍有上一次配置的计划行存活",
+            )
+            self.assertEqual(
+                page.power_scan_plan_container.findChildren(PowerSweepPlanRow),
+                page.power_scan_plan_rows,
+            )
+
         self.assertEqual(
-            page.power_scan_plan_container.findChildren(PowerSweepPlanRow),
-            page.power_scan_plan_rows,
+            destroyed, [True] * len(old_rows), "回填前的旧计划行没有被销毁"
         )
 
     def test_reset_restores_one_default_plan_and_refreshes_the_preview(self):
         page = self.make_page()
         page.power_scan_plan_rows[0].set_values(-38.0, 1.0, -10.0)
         page.add_power_scan_plan().set_values(-10.0, 0.25, -2.0)
+        old_rows = list(page.power_scan_plan_rows)
+        destroyed = []
+        for row in old_rows:
+            row.destroyed.connect(lambda *_: destroyed.append(True))
 
         page.reset_power_scan_plans()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
 
+        self.assertEqual(
+            len(destroyed), len(old_rows), "重置后旧计划行必须被销毁，不能只移出列表"
+        )
         self.assertEqual(len(page.power_scan_plan_rows), 1)
         row = page.power_scan_plan_rows[0]
         self.assertEqual(row.values(), (-38.0, 1.0, -16.0))
